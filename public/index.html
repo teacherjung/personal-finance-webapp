@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>個人理財中心</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="/vendor/chart.js" defer></script>
+  <script src="app.js" type="module" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-mark" src="assets/brand.png" alt="榮" />
+      <div>
+        <div class="brand-title">個人理財中心</div>
+      </div>
+    </div>
+    <nav id="nav">
+      <a data-route="dashboard" class="active"><span class="nav-ic" data-icon="dashboard"></span>總覽</a>
+      <a data-route="transactions"><span class="nav-ic" data-icon="wallet"></span>收支記帳</a>
+      <a data-route="assets"><span class="nav-ic" data-icon="pie"></span>資產配置</a>
+      <a data-route="ib"><span class="nav-ic" data-icon="trending"></span>投資組合</a>
+      <a data-route="subscriptions"><span class="nav-ic" data-icon="repeat"></span>訂閱追蹤</a>
+      <a data-route="cards"><span class="nav-ic" data-icon="card"></span>卡片追蹤</a>
+      <a data-route="insurance"><span class="nav-ic" data-icon="shield"></span>保險追蹤</a>
+      <a data-route="settings"><span class="nav-ic" data-icon="settings"></span>設定</a>
+    </nav>
+    <div class="sidebar-foot">
+      <button id="snapshotBtn" class="btn-ghost" title="記錄本月淨資產，用於追蹤變化"><span data-icon="camera" data-size="16"></span>記錄本月快照</button>
+      <div class="foot-note">資料存於本機<br><code>data/store.json</code></div>
+    </div>
+  </aside>
+
+  <main id="view"><div class="loading">載入中…</div></main>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+</body>
+</html>

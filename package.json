@@ -1,0 +1,14 @@
+{
+  "name": "rongxiangsen-finance",
+  "version": "0.1.0",
+  "description": "個人理財網頁 — 本機優先、隱私安全的財務掌握工具",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "express": "^4.19.2",
+    "fast-xml-parser": "^4.4.1"
+  }
+}

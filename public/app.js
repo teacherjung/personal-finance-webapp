@@ -1,0 +1,166 @@
+// 個人理財中心 — 前端主程式
+import { renderDashboard } from './modules/dashboard.js';
+import { renderTransactions } from './modules/transactions.js';
+import { renderAssets } from './modules/assets.js';
+import { renderPortfolio } from './modules/portfolio.js';
+import { renderSubscriptions } from './modules/subscriptions.js';
+import { renderCards } from './modules/cards.js';
+import { renderInsurance } from './modules/insurance.js';
+import { renderSettings } from './modules/settings.js';
+import { hydrateIcons } from './modules/icons.js';
+export { icon } from './modules/icons.js';
+
+// ---------- 共用工具 ----------
+export const $ = (sel, root = document) => root.querySelector(sel);
+export const view = () => $('#view');
+
+export async function api(path, opts = {}) {
+  const res = await fetch('/api' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// ---------- 金額格式（全站統一：卡片大數字用「萬」、明細用「元」）----------
+// 負號一律 U+2212「−」；正號由呼叫端視情況加 ASCII「+」。
+const withSign = (n, body) => { const v = Number(n || 0); return (v < 0 ? '−' : '') + body(Math.abs(v)); };
+// 明細金額：整數 + 千分位 +「元」後綴（1,234,567 元）
+export const money = (n) => withSign(n, v => Math.round(v).toLocaleString('en-US') + ' 元');
+// 明細原幣：非台幣顯示原幣後綴（2,500 USD、5.4 USD）；<10 保留一位小數
+export const moneyCur = (n, cur) => (!cur || cur === 'TWD') ? money(n)
+  : withSign(n, v => (v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US')) + ' ' + cur);
+// 統計卡片大數字：以「萬」為單位（≥10 萬取整、<10 萬一位小數），不加「元」（2,134 萬、6.5 萬）
+export const wan = (n) => withSign(n, v => { const w = v / 10000; return (w >= 10 ? Math.round(w).toLocaleString('en-US') : w.toFixed(1)) + ' 萬'; });
+export const pct = (n) => (Number(n || 0)).toFixed(1) + '%';
+export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- 日期工具（全站共用）----------
+// 幾天後（負數＝已過期）；無日期回 Infinity
+export const daysUntil = (d) => { if (!d) return Infinity; const t = new Date(d); t.setHours(0, 0, 0, 0); const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); };
+// 月份鍵 YYYY-MM（可帶日期字串，預設本月）
+export function monthKey(d) { const t = d ? new Date(d) : new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
+// 今天 YYYY-MM-DD
+export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+// ---------- 圖表色（dataviz 共用）----------
+export const PALETTE = ['#c96442', '#7fa37f', '#6b8cae', '#caa34a', '#b08aae', '#d99a6c', '#a3937c', '#8aa0a0'];
+export const AXIS = '#8a887f', GRID = '#ece9e0';
+
+export function toast(msg, isErr = false) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (isErr ? ' err' : '');
+  t.textContent = msg;
+  $('#toast-root').appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+// 通用彈窗表單。fields: [{key,label,type,options?,full?,required?,placeholder?,step?}]
+export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
+  const root = $('#modal-root');
+  const fieldHtml = fields.map(f => {
+    const v = values[f.key] ?? f.default ?? '';
+    const id = 'f_' + f.key;
+    let input;
+    if (f.type === 'select') {
+      input = `<select id="${id}">${f.options.map(o => {
+        const ov = typeof o === 'string' ? o : o.value;
+        const ol = typeof o === 'string' ? o : o.label;
+        return `<option value="${esc(ov)}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`;
+      }).join('')}</select>`;
+    } else if (f.type === 'textarea') {
+      input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
+    } else if (f.type === 'checkbox') {
+      input = `<select id="${id}"><option value="true" ${v !== false ? 'selected' : ''}>是</option><option value="false" ${v === false ? 'selected' : ''}>否</option></select>`;
+    } else {
+      input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
+    }
+    return `<div class="${f.full ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
+  }).join('');
+
+  root.innerHTML = `<div class="modal-bg"><div class="modal">
+    <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
+    <div class="modal-body"><form id="modalForm"><div class="form-grid">${fieldHtml}</div>
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
+      <button type="submit" class="btn">儲存</button></div></form></div>
+  </div></div>`;
+
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  root.querySelector('#modalForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const out = {};
+    for (const f of fields) {
+      let val = root.querySelector('#f_' + f.key).value;
+      if (f.type === 'number') val = val === '' ? null : Number(val);
+      if (f.type === 'checkbox') val = val === 'true';
+      out[f.key] = val;
+    }
+    try { await onSubmit(out); close(); }
+    catch (err) { toast(err.message, true); }
+  };
+  if (onMount) onMount(root);
+}
+
+// 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。opts.wide 用寬版（放表格）。
+export function openInfo(title, bodyHtml, opts = {}) {
+  const root = $('#modal-root');
+  root.innerHTML = `<div class="modal-bg"><div class="modal${opts.wide ? ' wide' : ''}">
+    <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
+    <div class="modal-body"><div class="info-body">${bodyHtml}</div>
+      <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>
+  </div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-close]').onclick = close;
+  root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+}
+
+export async function confirmDelete(name, fn) {
+  if (!window.confirm(`確定要刪除「${name}」嗎？此動作無法復原。`)) return;
+  try { await fn(); toast('已刪除'); router(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ---------- 路由 ----------
+const ROUTES = {
+  dashboard: renderDashboard,
+  transactions: renderTransactions,
+  assets: renderAssets,
+  ib: renderPortfolio,
+  subscriptions: renderSubscriptions,
+  cards: renderCards,
+  insurance: renderInsurance,
+  settings: renderSettings
+};
+
+export async function router() {
+  const route = location.hash.replace('#', '') || 'dashboard';
+  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === route));
+  const fn = ROUTES[route] || renderDashboard;
+  view().innerHTML = '<div class="loading">載入中…</div>';
+  try { await fn(); }
+  catch (e) { view().innerHTML = `<div class="hint">載入失敗：${esc(e.message)}</div>`; }
+  hydrateIcons(view());
+}
+
+document.querySelectorAll('#nav a').forEach(a => {
+  a.addEventListener('click', () => { location.hash = a.dataset.route; });
+});
+window.addEventListener('hashchange', router);
+
+$('#snapshotBtn').addEventListener('click', async () => {
+  try { await api('/snapshot', { method: 'POST' }); toast('已記錄本月淨資產快照 📸'); router(); }
+  catch (e) { toast(e.message, true); }
+});
+
+hydrateIcons(document);
+router();

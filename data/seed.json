@@ -1,0 +1,788 @@
+{
+  "settings": {
+    "currency": "TWD",
+    "usdTwd": 32,
+    "emergencyFundMonths": 6,
+    "allocationDriftPct": 5,
+    "ibConcentrationPct": 5,
+    "ibIdleCashAlert": 5000,
+    "ib": {
+      "flexToken": "",
+      "flexQueryId": "",
+      "lastSync": null
+    },
+    "qqqmMaxPct": 30,
+    "capeManual": "",
+    "fxHigh": 32,
+    "fxLow": 28,
+    "fxTwd": {
+      "GBP": 40.8,
+      "JPY": 0.215
+    }
+  },
+  "accounts": [
+    {
+      "id": "a1",
+      "name": "台新銀行 活存",
+      "type": "cash",
+      "class": "現金",
+      "currency": "TWD",
+      "balance": 350000
+    },
+    {
+      "id": "a2",
+      "name": "台新銀行 定存",
+      "type": "cash",
+      "class": "現金",
+      "currency": "TWD",
+      "balance": 500000
+    },
+    {
+      "id": "a3",
+      "name": "IBKR 美元現金",
+      "type": "cash",
+      "class": "現金",
+      "currency": "USD",
+      "balance": 2500,
+      "ibCashCur": "USD"
+    },
+    {
+      "id": "a4",
+      "name": "IBKR 英鎊現金",
+      "type": "cash",
+      "class": "現金",
+      "currency": "GBP",
+      "balance": 400,
+      "ibCashCur": "GBP"
+    },
+    {
+      "id": "a5",
+      "name": "黃金（存摺/實體）",
+      "type": "other",
+      "class": "黃金",
+      "currency": "TWD",
+      "balance": 80000
+    }
+  ],
+  "assetTargets": [
+    {
+      "id": "t1",
+      "class": "股票",
+      "targetPct": 60
+    },
+    {
+      "id": "t2",
+      "class": "債券",
+      "targetPct": 25
+    },
+    {
+      "id": "t3",
+      "class": "現金",
+      "targetPct": 10
+    },
+    {
+      "id": "t4",
+      "class": "黃金",
+      "targetPct": 5
+    }
+  ],
+  "transactions": [
+    {
+      "id": "x1",
+      "date": "2026-06-05",
+      "type": "income",
+      "category": "薪資",
+      "amount": 95000,
+      "account": "台新活存",
+      "note": "本薪"
+    },
+    {
+      "id": "x2",
+      "date": "2026-06-05",
+      "type": "expense",
+      "category": "房貸",
+      "amount": 32000,
+      "account": "富邦",
+      "note": "本月房貸"
+    },
+    {
+      "id": "x3",
+      "date": "2026-06-08",
+      "type": "expense",
+      "category": "飲食",
+      "amount": 18500,
+      "account": "信用卡",
+      "note": "三餐+外食"
+    },
+    {
+      "id": "x4",
+      "date": "2026-06-12",
+      "type": "expense",
+      "category": "保險",
+      "amount": 12000,
+      "account": "信用卡",
+      "note": "醫療險月繳"
+    },
+    {
+      "id": "x5",
+      "date": "2026-06-15",
+      "type": "income",
+      "category": "投資",
+      "amount": 8200,
+      "account": "IB",
+      "note": "ETF 配息"
+    },
+    {
+      "id": "x6",
+      "date": "2026-06-20",
+      "type": "expense",
+      "category": "子女教育",
+      "amount": 15000,
+      "account": "台新活存",
+      "note": "才藝+補習"
+    },
+    {
+      "id": "x7",
+      "date": "2026-06-25",
+      "type": "expense",
+      "category": "訂閱",
+      "amount": 1450,
+      "account": "信用卡",
+      "note": "各項訂閱"
+    },
+    {
+      "id": "x8",
+      "date": "2026-05-05",
+      "type": "income",
+      "category": "薪資",
+      "amount": 95000,
+      "account": "台新活存",
+      "note": "本薪"
+    },
+    {
+      "id": "x9",
+      "date": "2026-05-10",
+      "type": "expense",
+      "category": "飲食",
+      "amount": 21000,
+      "account": "信用卡",
+      "note": ""
+    },
+    {
+      "id": "x10",
+      "date": "2026-05-12",
+      "type": "expense",
+      "category": "房貸",
+      "amount": 32000,
+      "account": "富邦",
+      "note": ""
+    },
+    {
+      "id": "x11",
+      "date": "2026-05-18",
+      "type": "expense",
+      "category": "生活雜支",
+      "amount": 14000,
+      "account": "信用卡",
+      "note": ""
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "s1",
+      "name": "Netflix 高級",
+      "category": "娛樂",
+      "card": "台新",
+      "amount": 390,
+      "cycle": "monthly",
+      "nextCharge": "2026-07-02",
+      "email": "Gmail",
+      "active": true,
+      "since": "2026-06",
+      "status": "ending",
+      "endsOn": "2026-07-02"
+    },
+    {
+      "id": "s2",
+      "name": "Spotify 家庭",
+      "category": "娛樂",
+      "card": "富邦",
+      "amount": 268,
+      "cycle": "monthly",
+      "nextCharge": "2026-07-10",
+      "email": "Gmail",
+      "active": true,
+      "since": "2026-06",
+      "status": "active"
+    },
+    {
+      "id": "s3",
+      "name": "iCloud 2TB",
+      "category": "工具",
+      "card": "台新",
+      "amount": 300,
+      "cycle": "monthly",
+      "nextCharge": "2026-06-30",
+      "email": "Gmail",
+      "active": true,
+      "since": "2026-06",
+      "status": "active"
+    },
+    {
+      "id": "s4",
+      "name": "ChatGPT Plus",
+      "category": "學習",
+      "card": "遠銀",
+      "amount": 640,
+      "cycle": "monthly",
+      "nextCharge": "2026-07-15",
+      "email": "Gmail",
+      "active": true,
+      "since": "2026-06",
+      "status": "active"
+    },
+    {
+      "id": "s5",
+      "name": "Costco 會員",
+      "category": "生活",
+      "card": "富邦",
+      "amount": 1350,
+      "cycle": "yearly",
+      "nextCharge": "2026-11-01",
+      "email": "Gmail",
+      "active": true,
+      "since": "2026-06",
+      "status": "active"
+    }
+  ],
+  "insurance": [
+    {
+      "id": "i1",
+      "policyName": "AIA 醫療終身險",
+      "insurer": "AIA 友邦",
+      "policyholder": "榮祥森",
+      "insured": "榮祥森",
+      "beneficiary": "連怡閔",
+      "premium": 36000,
+      "premiumCycle": "yearly",
+      "nextPayment": "2026-09-01",
+      "coverage": "住院日額 3000、手術倍數型、終身醫療",
+      "startDate": "2019-09-01",
+      "endDate": "",
+      "cashValue": 180000
+    },
+    {
+      "id": "i2",
+      "policyName": "國泰重大疾病險",
+      "insurer": "國泰人壽",
+      "policyholder": "榮祥森",
+      "insured": "連怡閔",
+      "beneficiary": "榮祥森",
+      "premium": 28000,
+      "premiumCycle": "yearly",
+      "nextPayment": "2026-07-20",
+      "coverage": "重大疾病一次給付 200 萬",
+      "startDate": "2020-03-01",
+      "endDate": "2045-03-01",
+      "cashValue": 90000
+    },
+    {
+      "id": "i3",
+      "policyName": "子女醫療＋意外（敏煦）",
+      "insurer": "新光人壽",
+      "policyholder": "榮祥森",
+      "insured": "榮敏煦",
+      "beneficiary": "榮祥森",
+      "premium": 18000,
+      "premiumCycle": "yearly",
+      "nextPayment": "2026-08-15",
+      "coverage": "意外身故 100 萬、醫療日額 2000",
+      "startDate": "2021-01-10",
+      "endDate": "",
+      "cashValue": 60000
+    },
+    {
+      "id": "i4",
+      "policyName": "子女醫療＋意外（煦煦）",
+      "insurer": "新光人壽",
+      "policyholder": "榮祥森",
+      "insured": "榮煦煦",
+      "beneficiary": "榮祥森",
+      "premium": 18000,
+      "premiumCycle": "yearly",
+      "nextPayment": "2026-10-05",
+      "coverage": "意外身故 100 萬、醫療日額 2000",
+      "startDate": "2022-06-01",
+      "endDate": "",
+      "cashValue": 45000
+    }
+  ],
+  "ibPositions": [
+    {
+      "symbol": "VTI",
+      "description": "Vanguard Total Stock Market ETF",
+      "assetClass": "STK",
+      "currency": "USD",
+      "quantity": 120,
+      "costBasis": 28800,
+      "marketPrice": 285.5,
+      "marketValue": 34260,
+      "unrealizedPnl": 5460
+    },
+    {
+      "symbol": "VXUS",
+      "description": "Vanguard Total Intl Stock ETF",
+      "assetClass": "STK",
+      "currency": "USD",
+      "quantity": 200,
+      "costBasis": 12000,
+      "marketPrice": 64.2,
+      "marketValue": 12840,
+      "unrealizedPnl": 840
+    },
+    {
+      "symbol": "BND",
+      "description": "Vanguard Total Bond Market ETF",
+      "assetClass": "STK",
+      "currency": "USD",
+      "quantity": 100,
+      "costBasis": 7400,
+      "marketPrice": 73.1,
+      "marketValue": 7310,
+      "unrealizedPnl": -90
+    },
+    {
+      "symbol": "AAPL",
+      "description": "Apple Inc",
+      "assetClass": "STK",
+      "currency": "USD",
+      "quantity": 30,
+      "costBasis": 4800,
+      "marketPrice": 212,
+      "marketValue": 6360,
+      "unrealizedPnl": 1560
+    }
+  ],
+  "snapshots": [
+    {
+      "month": "2026-01",
+      "date": "2026-01-31",
+      "netWorth": 8400000,
+      "assets": 15300000,
+      "liabilities": 6900000,
+      "byClass": {
+        "現金": 700000,
+        "股票": 1700000,
+        "債券": 550000,
+        "房地產": 12000000,
+        "保險": 350000
+      }
+    },
+    {
+      "month": "2026-02",
+      "date": "2026-02-28",
+      "netWorth": 8480000,
+      "assets": 15360000,
+      "liabilities": 6880000,
+      "byClass": {
+        "現金": 720000,
+        "股票": 1740000,
+        "債券": 560000,
+        "房地產": 12000000,
+        "保險": 340000
+      }
+    },
+    {
+      "month": "2026-03",
+      "date": "2026-03-31",
+      "netWorth": 8560000,
+      "assets": 15420000,
+      "liabilities": 6860000,
+      "byClass": {
+        "現金": 760000,
+        "股票": 1770000,
+        "債券": 570000,
+        "房地產": 12000000,
+        "保險": 320000
+      }
+    },
+    {
+      "month": "2026-04",
+      "date": "2026-04-30",
+      "netWorth": 8610000,
+      "assets": 15450000,
+      "liabilities": 6840000,
+      "byClass": {
+        "現金": 780000,
+        "股票": 1790000,
+        "債券": 580000,
+        "房地產": 12000000,
+        "保險": 300000
+      }
+    },
+    {
+      "month": "2026-05",
+      "date": "2026-05-31",
+      "netWorth": 8680000,
+      "assets": 15500000,
+      "liabilities": 6820000,
+      "byClass": {
+        "現金": 820000,
+        "股票": 1810000,
+        "債券": 590000,
+        "房地產": 12000000,
+        "保險": 280000
+      }
+    }
+  ],
+  "cards": [
+    {
+      "id": "c1",
+      "type": "credit",
+      "name": "台新",
+      "issuer": "台新銀行",
+      "network": "Mastercard",
+      "lastFour": "1234",
+      "statementDay": 5,
+      "dueDay": 23,
+      "annualFee": 0,
+      "expiry": "2028-09-30",
+      "benefits": "指定通路最高 3% 回饋、行動支付加碼"
+    },
+    {
+      "id": "c2",
+      "type": "credit",
+      "name": "富邦",
+      "issuer": "台北富邦銀行",
+      "network": "Mastercard",
+      "lastFour": "5678",
+      "statementDay": 8,
+      "dueDay": 26,
+      "annualFee": 0,
+      "expiry": "2027-12-31",
+      "benefits": "Costco 賣場 3%、海外 2.5%、加油 2%"
+    },
+    {
+      "id": "c3",
+      "type": "credit",
+      "name": "遠銀",
+      "issuer": "遠東商銀",
+      "network": "VISA",
+      "lastFour": "9012",
+      "statementDay": 12,
+      "dueDay": 1,
+      "annualFee": 0,
+      "expiry": "2029-03-31",
+      "benefits": "HAPPY GO 點數回饋、遠東集團通路加碼"
+    },
+    {
+      "id": "c4",
+      "type": "membership",
+      "name": "Costco 好市多會員卡",
+      "issuer": "好市多",
+      "memberId": "1119 2233 4455",
+      "level": "金星卡",
+      "expiry": "2026-12-31",
+      "benefits": "賣場購物資格、加油站"
+    },
+    {
+      "id": "c5",
+      "type": "membership",
+      "name": "誠品人會員卡",
+      "issuer": "誠品",
+      "memberId": "ES-887766",
+      "level": "白金",
+      "expiry": "",
+      "benefits": "消費集點、會員價、生日禮"
+    }
+  ],
+  "history": [
+    {
+      "id": "h1",
+      "month": "2026-01",
+      "amount": 1450
+    },
+    {
+      "id": "h2",
+      "month": "2026-02",
+      "amount": 1450
+    },
+    {
+      "id": "h3",
+      "month": "2026-03",
+      "amount": 1600
+    },
+    {
+      "id": "h4",
+      "month": "2026-04",
+      "amount": 1600
+    },
+    {
+      "id": "h5",
+      "month": "2026-05",
+      "amount": 1700
+    }
+  ],
+  "holdings": [
+    {
+      "id": "h01",
+      "symbol": "CSPX",
+      "name": "美國",
+      "layer": "core",
+      "currency": "USD",
+      "quantity": 50,
+      "price": 705,
+      "cost": 33000,
+      "quoteSymbol": "CSPX.L",
+      "avgCost": 660
+    },
+    {
+      "id": "h02",
+      "symbol": "QQQM",
+      "name": "美國科技",
+      "layer": "core",
+      "currency": "USD",
+      "quantity": 25,
+      "price": 245,
+      "cost": 5750,
+      "quoteSymbol": "QQQM",
+      "avgCost": 230
+    },
+    {
+      "id": "h03",
+      "symbol": "00719B",
+      "name": "美債 1-3 年",
+      "layer": "bond",
+      "currency": "TWD",
+      "quantity": 12000,
+      "price": 33.2,
+      "cost": 390000,
+      "quoteSymbol": "00719B.TWO",
+      "avgCost": 32.5
+    },
+    {
+      "id": "h04",
+      "symbol": "00720B",
+      "name": "投資級公司債",
+      "layer": "bond",
+      "currency": "TWD",
+      "quantity": 6000,
+      "price": 41.8,
+      "cost": 246000,
+      "quoteSymbol": "00720B.TWO",
+      "avgCost": 41
+    },
+    {
+      "id": "h05",
+      "symbol": "EIMI",
+      "name": "新興",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 100,
+      "price": 44,
+      "cost": 4100,
+      "quoteSymbol": "EIMI.L",
+      "avgCost": 41
+    },
+    {
+      "id": "h06",
+      "symbol": "XUSE",
+      "name": "美國以外成熟市場",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 120,
+      "price": 36.5,
+      "cost": 4200,
+      "quoteSymbol": "XUSE.L",
+      "avgCost": 35
+    },
+    {
+      "id": "h07",
+      "symbol": "ICHN",
+      "name": "中國",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 45,
+      "price": 58,
+      "cost": 2750,
+      "quoteSymbol": "ICHN.L",
+      "avgCost": 61.1111
+    },
+    {
+      "id": "h08",
+      "symbol": "KWEB",
+      "name": "中國",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 70,
+      "price": 37,
+      "cost": 2700,
+      "quoteSymbol": "KWEB",
+      "avgCost": 38.5714
+    },
+    {
+      "id": "h09",
+      "symbol": "CSKR",
+      "name": "韓國",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 28,
+      "price": 55,
+      "cost": 1420,
+      "quoteSymbol": "CSKR.L",
+      "avgCost": 50.7143
+    },
+    {
+      "id": "h10",
+      "symbol": "SJPA",
+      "name": "日本",
+      "layer": "satellite",
+      "currency": "USD",
+      "quantity": 90,
+      "price": 23.5,
+      "cost": 2050,
+      "quoteSymbol": "SJPA.L",
+      "avgCost": 22.7778
+    },
+    {
+      "id": "h11",
+      "symbol": "GOOGL",
+      "name": "Google",
+      "layer": "stock",
+      "currency": "USD",
+      "quantity": 14,
+      "price": 212,
+      "cost": 2660,
+      "quoteSymbol": "GOOGL",
+      "avgCost": 190
+    },
+    {
+      "id": "h12",
+      "symbol": "AAPL",
+      "name": "Apple",
+      "layer": "stock",
+      "currency": "USD",
+      "quantity": 12,
+      "price": 238,
+      "cost": 2620,
+      "quoteSymbol": "AAPL",
+      "avgCost": 218.3333
+    },
+    {
+      "id": "h13",
+      "symbol": "TSLA",
+      "name": "Tesla",
+      "layer": "stock",
+      "currency": "USD",
+      "quantity": 7,
+      "price": 342,
+      "cost": 2480,
+      "quoteSymbol": "TSLA",
+      "avgCost": 354.2857
+    },
+    {
+      "id": "h14",
+      "symbol": "SPACEX",
+      "name": "SpaceX（未上市，手動估值）",
+      "layer": "stock",
+      "currency": "USD",
+      "quantity": 6,
+      "price": 280,
+      "cost": 1500,
+      "quoteSymbol": "",
+      "avgCost": 250
+    }
+  ],
+  "watchlist": [
+    {
+      "id": "w1",
+      "symbol": "QQQM",
+      "name": "Invesco NASDAQ 100",
+      "targetPrice": 210,
+      "currency": "USD",
+      "quoteSymbol": "QQQM",
+      "note": "大跌時核心轉 QQQM（配合 CAPE）"
+    },
+    {
+      "id": "w2",
+      "symbol": "ICHN",
+      "name": "iShares MSCI China",
+      "targetPrice": 50,
+      "currency": "USD",
+      "quoteSymbol": "ICHN.L",
+      "note": "中國回檔加碼"
+    },
+    {
+      "id": "w3",
+      "symbol": "KWEB",
+      "name": "中國網路",
+      "targetPrice": 30,
+      "currency": "USD",
+      "quoteSymbol": "KWEB",
+      "note": ""
+    },
+    {
+      "id": "w4",
+      "symbol": "CSKR",
+      "name": "iShares MSCI Korea",
+      "targetPrice": 48,
+      "currency": "USD",
+      "quoteSymbol": "CSKR.L",
+      "note": ""
+    },
+    {
+      "id": "w5",
+      "symbol": "SJPA",
+      "name": "MSCI Japan IMI",
+      "targetPrice": 21,
+      "currency": "USD",
+      "quoteSymbol": "SJPA.L",
+      "note": ""
+    }
+  ],
+  "research": [
+    {
+      "id": "r1",
+      "symbol": "GOOGL",
+      "thesis": "重度使用者：Search／YouTube／Cloud／Gemini。想驗證的論點：AI 會強化還是侵蝕搜尋的護城河？",
+      "metrics": "營收成長率、營業利益率、Cloud 成長率、資本支出佔營收比",
+      "risks": "反壟斷訴訟、AI 對搜尋廣告的替代、資本支出過高壓縮自由現金流",
+      "checkpoints": [
+        {
+          "date": "2026-07",
+          "note": "建立小部位，先觀察兩季財報。"
+        }
+      ]
+    },
+    {
+      "id": "r2",
+      "symbol": "AAPL",
+      "thesis": "每天使用的生態系：硬體＋服務的黏著度。想驗證的論點：服務營收能否持續撐起目前估值？",
+      "metrics": "服務營收成長、整體毛利率、iPhone 出貨趨勢、庫藏股回購規模",
+      "risks": "中國市場銷售、AI 進度落後疑慮、估值相對成長偏高",
+      "checkpoints": [
+        {
+          "date": "2026-07",
+          "note": "建立小部位。留意 WWDC 後的 AI 路線圖。"
+        }
+      ]
+    }
+  ],
+  "portfolioSnapshots": [
+    {
+      "month": "2026-04",
+      "cost": 2550000,
+      "value": 2610000
+    },
+    {
+      "month": "2026-05",
+      "cost": 2650000,
+      "value": 2700000
+    },
+    {
+      "month": "2026-06",
+      "cost": 2720000,
+      "value": 2790000
+    }
+  ]
+}

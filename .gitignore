@@ -1,0 +1,21 @@
+# 個人實際資料與憑證（含 IBKR flexToken、帳戶餘額）——絕不進版控
+data/store.json
+data/store.json.bak
+data/store.manual-backup-*.json
+data/*backup*
+*.bak
+
+# Claude Code 本機設定（各機不同）
+.claude/settings.local.json
+
+# 相依套件
+node_modules/
+
+# 產生的檔案
+tmp/
+output/
+*.log
+
+# 系統
+.DS_Store
+**/.DS_Store
