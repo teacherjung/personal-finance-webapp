@@ -12,7 +12,7 @@ export async function renderSettings() {
         <div><label>緊急預備金目標（月）</label><input id="emergencyFundMonths" type="number" value="${esc(s.emergencyFundMonths)}" /></div>
         <div><label>美元兌台幣匯率 (USD→TWD)</label><input id="usdTwd" type="number" step="0.01" value="${esc(s.usdTwd)}" /></div>
         <div><label>資產配置偏離提醒（%）</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
-        <div><label>IB 單一持股過重門檻（%）</label><input id="ibConcentrationPct" type="number" value="${esc(s.ibConcentrationPct)}" /></div>
+        <div><label>單一個股上限（% 淨資產）</label><input id="ibConcentrationPct" type="number" value="${esc(s.ibConcentrationPct)}" /></div>
         <div><label>IB 閒置現金提醒門檻（美元 USD）</label><input id="ibIdleCashAlert" type="number" value="${esc(s.ibIdleCashAlert)}" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="saveThresholds">儲存門檻</button></div>
