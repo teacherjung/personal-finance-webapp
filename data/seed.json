@@ -9,7 +9,7 @@
     "countryCapPct": 15,
     "chinaCapPct": 15,
     "levCapPct": 1.3,
-    "levCapSignalPct": 1.6,
+    "ibMaintenancePct": 25,
     "ibIdleCashAlert": 5000,
     "ib": {
       "flexToken": "",

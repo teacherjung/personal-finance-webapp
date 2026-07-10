@@ -219,7 +219,7 @@ export async function renderPortfolio() {
     country: Number(settings.countryCapPct ?? 15),
     china: Number(settings.chinaCapPct ?? settings.countryCapPct ?? 15),
     lev: Number(settings.levCapPct ?? 1.3),
-    levSig: Number(settings.levCapSignalPct ?? 1.6)
+    maint: Number(settings.ibMaintenancePct ?? 25)
   };
   const capForRegion = (rg) => rg === '中國' ? CAPS.china : CAPS.country;
   FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
@@ -252,12 +252,12 @@ export async function renderPortfolio() {
       <div class="card"><h3><button type="button" class="info-link" id="assetStockInfo">股票</button> / <button type="button" class="info-link" id="assetBondInfo">債券</button> / <button type="button" class="info-link" id="assetCashInfo">現金</button> / <button type="button" class="info-link" id="assetGoldInfo">黃金</button></h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
         <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:${CHART.blue}"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:${CHART.green}"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:${CHART.gray}"></div><div style="flex:1;background:${CHART.brown}"></div></div></div>
-      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage >= 1.6 ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
+      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage > CAPS.lev ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
         <div class="stat-sub">IB 淨值 ${MONEY(netEquity)}｜<span class="neg" style="font-weight:700">IB 融資 ${MONEY(loanTwd)}</span></div>
-        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.levSig ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
+        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.lev + 0.15 ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
     </div>
 
-    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS)}
+    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd)}
     ${fxSection(rows, accounts, fx)}
     ${incomeSection(settings)}
     ${tradesSection(ibTrades, settings)}
@@ -362,7 +362,8 @@ export async function renderPortfolio() {
     <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>
     <p><b>軟上限</b>：超標＝<b>凍結加碼</b>（禁止再買進），但不強制賣出，讓部位隨時間自然稀釋。在「編輯持股」把凍結中的標的加碼時，會跳出確認提醒。</p>
     <p><b>怎麼看圖</b>：黑色刻度＝上限位置；長條＝目前部位，<span style="color:var(--pos)">綠色</span>＝上限內、<span style="color:var(--neg)">紅色</span>＝超出上限的部分。</p>
-    <p><b>目前上限</b>：單一個股 ${CAPS.stock}%・股票總曝險 ${CAPS.equity}%・單一國家 ${CAPS.country}%（中國 ${CAPS.china}%）・IB 融資槓桿平時 ${CAPS.lev}x／估值訊號期 ${CAPS.levSig}x。到「設定 → 投資原則」即可調整。</p>`);
+    <p><b>目前上限</b>：單一個股 ${CAPS.stock}%・股票總曝險 ${CAPS.equity}%・單一國家 ${CAPS.country}%（中國 ${CAPS.china}%）・IB 融資槓桿 ${CAPS.lev}x（<b>任何時期適用</b>；估值訊號期加碼只用新資金與現金，不舉新債）。到「設定 → 投資原則」即可調整。</p>
+    <p><b>斷頭距離</b>：市場跌時借款不會跟著縮水，跌到「淨值 ÷ 持倉」低於 IB 維持保證金率（${CAPS.maint}%，設定頁可調）的那一刻，IB 會<b>即時自動強制平倉，不打電話、無寬限期</b>。這個數字＝從現在起市場還能跌多少。它是假設全部持倉維持率一致的近似值；IB 在危機時會調高維持率（2020 年 3 月發生過），所以旁邊附了壓力情境。最高指導原則：<b>要一個在所有環境都活著的系統，而不是在多數環境賺更多的系統</b>。</p>`);
   view().querySelectorAll('[data-edit-h]').forEach(b => b.onclick = () => openHoldingForm(holdings.find(h => h.id === b.dataset.editH)));
   view().querySelectorAll('[data-del-h]').forEach(b => b.onclick = () => {
     const h = holdings.find(x => x.id === b.dataset.delH);
@@ -395,7 +396,24 @@ function capBar(value, cap) {
   const markL = (cap / scale * 100).toFixed(1);
   return `<div class="cap-bar"><div class="cb-ok" style="width:${okW}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${markL}%"></div></div>`;
 }
-function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
+// 斷頭距離：市場再跌 x% 觸及 IB 強平線（借款固定、資產縮水；假設全部持倉維持率一致的近似值）
+// x = 1 − 借款 ÷ ((1 − 維持率) × 持倉市值)
+function marginCallDistance(ibValTwd, loanTwd, maintPct) {
+  if (!(loanTwd > 0) || !(ibValTwd > 0)) return null;
+  return Math.max(0, 1 - loanTwd / ((1 - maintPct / 100) * ibValTwd)) * 100;
+}
+function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
+  if (!(loanTwd > 0)) return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：目前無融資借款，不存在強制平倉風險。</div>`;
+  const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint);
+  const stress = Math.min(CAPS.maint + 10, 50);
+  const dStress = marginCallDistance(ibValTwd, loanTwd, stress);
+  const tone = d < 35 ? 'var(--neg)' : d < 50 ? 'var(--warn)' : 'var(--pos)';
+  const judge = d < 35 ? '危險：一次大型回檔就會觸及' : d < 50 ? '偏緊：撐不過 2008 級回檔（−57%）' : '尚有餘裕（2008 級回檔 −57%）';
+  return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：IB 持倉市值再跌
+    <b style="color:${tone};font-size:15px">${d.toFixed(0)}%</b> 會觸及強平線（維持率 ${CAPS.maint}%）——${judge}。
+    <span class="muted">若 IB 危機時調高維持率到 ${stress}%，距離縮到 ${dStress.toFixed(0)}%。IB 強平為即時自動執行、無寬限期。</span></div>`;
+}
+function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd) {
   if (!(netWorth > 0)) return '';
   const pn = (v) => v / netWorth * 100;
   const row = (label, value, cap, unit = '%', overLabel = '🔒 凍結') => {
@@ -419,6 +437,7 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
   return `<div class="chart-card" style="margin-bottom:16px">
     <h3><button type="button" class="info-link" id="disciplineInfo">紀律檢查</button></h3>
     <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
+    ${marginDistanceBlock(ibValTwd, loanTwd, CAPS)}
   </div>`;
 }
 
