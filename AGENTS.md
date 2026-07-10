@@ -51,6 +51,7 @@
 - **Claude 與 Codex 都直接在本機這個資料夾工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
 - **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。同一時間**只有一個 agent** 改本機工作樹；真要平行用 `git worktree`。
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
+- **堆疊 PR（base 指向另一個 PR 分支）合併時，不要用 `--delete-branch`**——刪掉基底分支會讓上層 PR 被 GitHub 直接關閉而非自動轉指向（2026-07-10 實際發生，#3/#5 被誤關）。先由下而上全部合併完，再一次刪分支；或乾脆避免堆疊、等前一個合併後再開下一個。
 - 使用者是最終合併者。Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。
 
