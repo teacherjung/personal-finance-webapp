@@ -130,6 +130,28 @@ app.get('/api/cape', async (req, res) => {
   }
 });
 
+// ---- 美 10 年期實質利率（FRED DFII10，免金鑰 CSV），12 小時快取；失敗退回手動值 ----
+// 用於估值訊號的 ECY＝1/CAPE − 實質利率
+let realYieldCache = null;
+app.get('/api/realyield', async (req, res) => {
+  if (realYieldCache && Date.now() - realYieldCache.t < 12 * 3600 * 1000) return res.json(realYieldCache);
+  try {
+    const r = await fetchWithTimeout('https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10', 8000);
+    const lines = (await r.text()).trim().split('\n');
+    for (let i = lines.length - 1; i > 0; i--) {   // 由後往前找最後一筆有值的（假日為空）
+      const [date, v] = lines[i].split(',');
+      if (v && v.trim() && v.trim() !== '.' && isFinite(Number(v))) {
+        realYieldCache = { t: Date.now(), value: Number(v), date, source: 'FRED DFII10' };
+        return res.json(realYieldCache);
+      }
+    }
+    throw new Error('parse failed');
+  } catch {
+    const manual = load().settings?.signals?.realYieldManual;
+    res.json({ t: Date.now(), value: (manual != null && manual !== '') ? Number(manual) : null, source: 'manual' });
+  }
+});
+
 // ---- IBKR Flex Query 同步：持倉合併進 holdings、現金更新到帳戶 ----
 // 新代號的預設分層（找不到就歸「區域衛星」，之後可在編輯裡改）
 const DEFAULT_LAYER = {

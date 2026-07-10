@@ -9,7 +9,7 @@
     "countryCapPct": 15,
     "chinaCapPct": 15,
     "levCapPct": 1.3,
-    "levCapSignalPct": 1.6,
+    "ibMaintenancePct": 25,
     "ibIdleCashAlert": 5000,
     "ib": {
       "flexToken": "",
@@ -18,6 +18,7 @@
     },
     "qqqmMaxPct": 30,
     "capeManual": "",
+    "signals": { "realYieldManual": "", "china": "12.3", "japan": "1.25", "korea": "0.95", "taiwanPE": "17.5", "taiwanYield": "3.2" },
     "fxHigh": 32,
     "fxLow": 28,
     "fxTwd": {

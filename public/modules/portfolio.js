@@ -219,7 +219,7 @@ export async function renderPortfolio() {
     country: Number(settings.countryCapPct ?? 15),
     china: Number(settings.chinaCapPct ?? settings.countryCapPct ?? 15),
     lev: Number(settings.levCapPct ?? 1.3),
-    levSig: Number(settings.levCapSignalPct ?? 1.6)
+    maint: Number(settings.ibMaintenancePct ?? 25)
   };
   const capForRegion = (rg) => rg === '中國' ? CAPS.china : CAPS.country;
   FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
@@ -252,12 +252,12 @@ export async function renderPortfolio() {
       <div class="card"><h3><button type="button" class="info-link" id="assetStockInfo">股票</button> / <button type="button" class="info-link" id="assetBondInfo">債券</button> / <button type="button" class="info-link" id="assetCashInfo">現金</button> / <button type="button" class="info-link" id="assetGoldInfo">黃金</button></h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
         <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:${CHART.blue}"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:${CHART.green}"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:${CHART.gray}"></div><div style="flex:1;background:${CHART.brown}"></div></div></div>
-      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage >= 1.6 ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
+      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage > CAPS.lev ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
         <div class="stat-sub">IB 淨值 ${MONEY(netEquity)}｜<span class="neg" style="font-weight:700">IB 融資 ${MONEY(loanTwd)}</span></div>
-        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.levSig ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
+        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.lev + 0.15 ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
     </div>
 
-    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS)}
+    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd)}
     ${fxSection(rows, accounts, fx)}
     ${incomeSection(settings)}
     ${tradesSection(ibTrades, settings)}
@@ -267,6 +267,12 @@ export async function renderPortfolio() {
     ${holdingsDonut(rows, total)}
     ${holdingsTable(rows, total)}
     ${watchlistSection(watchlist)}
+
+    <div class="chart-card" style="margin-bottom:16px" id="signalsCard">
+      <h3><button type="button" class="info-link" id="signalsInfo">估值訊號儀表</button> <span class="stat-sub" style="font-weight:400;margin:0">（五市場檔位 → 動態股債比；每月檢視）</span>
+        <button class="btn-link btn-sm" id="signalsEdit" style="float:right">更新區域數值</button></h3>
+      <div id="signalsBody"><p class="muted small" style="margin-top:8px">讀取中…</p></div>
+    </div>
 
     <div class="chart-card" style="margin-bottom:16px" id="capeCard">
       <h3>Shiller PE（CAPE）估值儀表 <span class="stat-sub" style="font-weight:400;margin:0">（CSPX ⇄ QQQM 輪動的紀律閘門）</span></h3>
@@ -356,7 +362,8 @@ export async function renderPortfolio() {
     <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>
     <p><b>軟上限</b>：超標＝<b>凍結加碼</b>（禁止再買進），但不強制賣出，讓部位隨時間自然稀釋。在「編輯持股」把凍結中的標的加碼時，會跳出確認提醒。</p>
     <p><b>怎麼看圖</b>：黑色刻度＝上限位置；長條＝目前部位，<span style="color:var(--pos)">綠色</span>＝上限內、<span style="color:var(--neg)">紅色</span>＝超出上限的部分。</p>
-    <p><b>目前上限</b>：單一個股 ${CAPS.stock}%・股票總曝險 ${CAPS.equity}%・單一國家 ${CAPS.country}%（中國 ${CAPS.china}%）・IB 融資槓桿平時 ${CAPS.lev}x／估值訊號期 ${CAPS.levSig}x。到「設定 → 投資原則」即可調整。</p>`);
+    <p><b>目前上限</b>：單一個股 ${CAPS.stock}%・股票總曝險 ${CAPS.equity}%・單一國家 ${CAPS.country}%（中國 ${CAPS.china}%）・IB 融資槓桿 ${CAPS.lev}x（<b>任何時期適用</b>；估值訊號期加碼只用新資金與現金，不舉新債）。到「設定 → 投資原則」即可調整。</p>
+    <p><b>斷頭距離</b>：市場跌時借款不會跟著縮水，跌到「淨值 ÷ 持倉」低於 IB 維持保證金率（${CAPS.maint}%，設定頁可調）的那一刻，IB 會<b>即時自動強制平倉，不打電話、無寬限期</b>。這個數字＝從現在起市場還能跌多少。它是假設全部持倉維持率一致的近似值；IB 在危機時會調高維持率（2020 年 3 月發生過），所以旁邊附了壓力情境。最高指導原則：<b>要一個在所有環境都活著的系統，而不是在多數環境賺更多的系統</b>。</p>`);
   view().querySelectorAll('[data-edit-h]').forEach(b => b.onclick = () => openHoldingForm(holdings.find(h => h.id === b.dataset.editH)));
   view().querySelectorAll('[data-del-h]').forEach(b => b.onclick = () => {
     const h = holdings.find(x => x.id === b.dataset.delH);
@@ -374,6 +381,11 @@ export async function renderPortfolio() {
 
   drawInvestChart(psnaps, totalCost, total);
   loadCape(settings, qqqmShare, qqqmMax);
+  loadSignals(settings);
+  const sInfo = document.getElementById('signalsInfo');
+  if (sInfo) sInfo.onclick = () => openInfo('估值訊號儀表', SIGNALS_INFO_HTML, { size: 'md' });
+  const sEdit = document.getElementById('signalsEdit');
+  if (sEdit) sEdit.onclick = () => openSignalsForm(settings);
 }
 
 // ---- 投資原則：紀律檢查卡（唯讀；口徑 % 淨資產、穿透；黑刻度＝上限、紅＝超出）----
@@ -384,7 +396,24 @@ function capBar(value, cap) {
   const markL = (cap / scale * 100).toFixed(1);
   return `<div class="cap-bar"><div class="cb-ok" style="width:${okW}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${markL}%"></div></div>`;
 }
-function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
+// 斷頭距離：市場再跌 x% 觸及 IB 強平線（借款固定、資產縮水；假設全部持倉維持率一致的近似值）
+// x = 1 − 借款 ÷ ((1 − 維持率) × 持倉市值)
+function marginCallDistance(ibValTwd, loanTwd, maintPct) {
+  if (!(loanTwd > 0) || !(ibValTwd > 0)) return null;
+  return Math.max(0, 1 - loanTwd / ((1 - maintPct / 100) * ibValTwd)) * 100;
+}
+function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
+  if (!(loanTwd > 0)) return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：目前無融資借款，不存在強制平倉風險。</div>`;
+  const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint);
+  const stress = Math.min(CAPS.maint + 10, 50);
+  const dStress = marginCallDistance(ibValTwd, loanTwd, stress);
+  const tone = d < 35 ? 'var(--neg)' : d < 50 ? 'var(--warn)' : 'var(--pos)';
+  const judge = d < 35 ? '危險：一次大型回檔就會觸及' : d < 50 ? '偏緊：撐不過 2008 級回檔（−57%）' : '尚有餘裕（2008 級回檔 −57%）';
+  return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：IB 持倉市值再跌
+    <b style="color:${tone};font-size:15px">${d.toFixed(0)}%</b> 會觸及強平線（維持率 ${CAPS.maint}%）——${judge}。
+    <span class="muted">若 IB 危機時調高維持率到 ${stress}%，距離縮到 ${dStress.toFixed(0)}%。IB 強平為即時自動執行、無寬限期。</span></div>`;
+}
+function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd) {
   if (!(netWorth > 0)) return '';
   const pn = (v) => v / netWorth * 100;
   const row = (label, value, cap, unit = '%', overLabel = '🔒 凍結') => {
@@ -408,6 +437,7 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
   return `<div class="chart-card" style="margin-bottom:16px">
     <h3><button type="button" class="info-link" id="disciplineInfo">紀律檢查</button></h3>
     <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
+    ${marginDistanceBlock(ibValTwd, loanTwd, CAPS)}
   </div>`;
 }
 
@@ -945,6 +975,117 @@ function watchlistSection(watchlist) {
       <tbody>${rowsHtml || '<tr><td colspan="7" class="empty">尚無項目</td></tr>'}</tbody>
     </table></div>
   </div>`;
+}
+
+// ---- 估值訊號儀表（五市場檔位 → 動態股債比；美股 ECY 自動、區域每月手動）----
+// 檔位：0 常態、1 加碼、2 重壓（越貴 tier 越低）。門檻依 [[investment-principles]]。
+const TIER_META = [
+  { label: '常態', color: 'var(--text-dim)' },
+  { label: '加碼', color: CHART.green },
+  { label: '重壓', color: '#2E6B2A' }
+];
+const US_RATIO = ['70 : 30', '80 : 20', '90 : 10'];   // 美股檔位 → 股債比
+const SIGNALS_INFO_HTML = `
+  <p><b>這是什麼</b>：每月檢視五個市場的估值，換算成「檔位」——常態、加碼、重壓——據以動態調整配置。不是憑感覺，是指標換檔。</p>
+  <p><b>美股（自動）</b>：ECY＝1/CAPE − 美 10 年期實質利率（FRED DFII10）。ECY 越高＝股票比安全資產多賺越多＝越值得加碼。<br>
+  <b>ECY &lt; 3%</b> 常態（股債 70:30）／<b>3–5%</b> 加碼（80:20）／<b>&gt; 5%</b> 重壓（90:10）。</p>
+  <p><b>區域（每月手動更新）</b>：中股滬深300 本益比、日股與韓股整體 P/B、台股大盤本益比與殖利率——這些無穩定免費 API，請每月自行查一次填入（按右上「更新區域數值」）。</p>
+  <p class="muted">門檻：中股 PE &gt;13／10.5–11.5／&lt;10；日股 P/B &gt;1.3／1.1–1.2／&lt;1.0；韓股 P/B ~1.0／&lt;0.9／&lt;0.8；台股 PE 15–18／&lt;13 或殖利率&gt;4.5%／&lt;11 或&gt;5.5%。重壓訊號建議再等 VIX&gt;30 或信用利差擴大雙確認後才動手。</p>`;
+
+// 各市場檔位計算（回傳 0/1/2 或 null＝未輸入）
+function regionTier(key, v) {
+  const n = Number(v);
+  if (v == null || v === '' || !isFinite(n)) return null;
+  if (key === 'us') return n > 5 ? 2 : n >= 3 ? 1 : 0;          // ECY %
+  if (key === 'china') return n < 10 ? 2 : n <= 11.5 ? 1 : 0;   // 滬深300 PE
+  if (key === 'japan') return n < 1.0 ? 2 : n <= 1.2 ? 1 : 0;   // 日股 P/B
+  if (key === 'korea') return n < 0.8 ? 2 : n < 0.9 ? 1 : 0;    // KOSPI P/B
+  return null;
+}
+function taiwanTier(pe, yld) {
+  const p = Number(pe), y = Number(yld);
+  const hp = isFinite(p) && p > 0, hy = isFinite(y) && y > 0;
+  if (!hp && !hy) return null;
+  if ((hp && p < 11) || (hy && y > 5.5)) return 2;
+  if ((hp && p < 13) || (hy && y > 4.5)) return 1;
+  return 0;
+}
+function tierBadge(t) {
+  if (t == null) return '<span class="muted" style="font-size:11px">未輸入</span>';
+  const m = TIER_META[t];
+  return `<span style="display:inline-block;padding:1px 9px;border-radius:20px;font-size:11px;font-weight:600;background:${m.color}1f;color:${m.color}">${m.label}</span>`;
+}
+function signalRow(label, valTxt, tier, thresholds) {
+  return `<div class="rrow" style="grid-template-columns:130px 1fr 64px;align-items:center">
+    <span class="nowrap">${esc(label)}</span>
+    <span class="muted small">${valTxt}　<span style="opacity:.7">門檻 ${thresholds}</span></span>
+    <span style="text-align:right">${tierBadge(tier)}</span>
+  </div>`;
+}
+
+async function loadSignals(settings) {
+  const body = document.getElementById('signalsBody');
+  if (!body) return;
+  const sig = settings.signals || {};
+  let cape = null, ry = null;
+  try { [cape, ry] = await Promise.all([api('/cape'), api('/realyield')]); } catch {}
+  // 美股 ECY
+  const capeV = cape && cape.value ? Number(cape.value) : null;
+  const ryV = ry && ry.value != null ? Number(ry.value) : null;
+  const ecy = (capeV && ryV != null) ? (100 / capeV - ryV) : null;
+  const usTier = ecy != null ? regionTier('us', ecy) : null;
+  const usValTxt = ecy != null
+    ? `ECY <b>${ecy.toFixed(1)}%</b>（CAPE ${capeV.toFixed(1)}・實質利率 ${ryV.toFixed(2)}%）`
+    : 'ECY <span class="muted">無法計算（缺 CAPE 或利率）</span>';
+
+  const twTier = taiwanTier(sig.taiwanPE, sig.taiwanYield);
+  const twVal = (sig.taiwanPE || sig.taiwanYield)
+    ? `PE ${sig.taiwanPE || '—'}・殖利率 ${sig.taiwanYield ? sig.taiwanYield + '%' : '—'}` : '—';
+  const rows = [
+    signalRow('🇺🇸 美股（ECY）', usValTxt, usTier, '&lt;3／3–5／&gt;5%'),
+    signalRow('🇨🇳 中股（滬深300 PE）', sig.china ? `PE <b>${esc(sig.china)}</b>` : '—', regionTier('china', sig.china), '&gt;13／10.5–11.5／&lt;10'),
+    signalRow('🇯🇵 日股（P/B）', sig.japan ? `P/B <b>${esc(sig.japan)}</b>` : '—', regionTier('japan', sig.japan), '&gt;1.3／1.1–1.2／&lt;1.0'),
+    signalRow('🇰🇷 韓股（P/B）', sig.korea ? `P/B <b>${esc(sig.korea)}</b>` : '—', regionTier('korea', sig.korea), '~1.0／&lt;0.9／&lt;0.8'),
+    signalRow('🇹🇼 台股（PE／殖利率）', twVal, twTier, 'PE&lt;13 或殖&gt;4.5%')
+  ].join('');
+
+  // 摘要：美股檔位 → 股債比；加碼/重壓清單
+  const tilts = [
+    ['中股', regionTier('china', sig.china)], ['日股', regionTier('japan', sig.japan)],
+    ['韓股', regionTier('korea', sig.korea)], ['台股', twTier]
+  ];
+  const t1 = tilts.filter(([, t]) => t === 1).map(([n]) => n);
+  const t2 = tilts.filter(([, t]) => t === 2).map(([n]) => n);
+  const summary = usTier != null
+    ? `<div class="rc-block" style="margin-bottom:12px"><b>建議股債比 ${US_RATIO[usTier]}</b>（美股 ${TIER_META[usTier].label}）
+       ${t2.length ? `｜<span style="color:${TIER_META[2].color}">重壓：${t2.join('、')}</span>` : ''}
+       ${t1.length ? `｜<span style="color:${TIER_META[1].color}">加碼：${t1.join('、')}</span>` : ''}
+       ${!t1.length && !t2.length ? '｜區域無加碼訊號' : ''}</div>`
+    : '<div class="rc-block muted" style="margin-bottom:12px">美股 ECY 暫時無法計算——CAPE 或實質利率抓取失敗，可在「更新區域數值」填入手動實質利率。</div>';
+
+  body.innerHTML = summary + `<div class="region-rows">${rows}</div>
+    <p class="muted small" style="margin-top:8px">美股自動（CAPE＋FRED 實質利率）；區域四市場為每月手動更新。加碼＝乘 1.5、重壓＝乘 2 的衛星傾斜（詳見標題說明）。</p>`;
+}
+
+function openSignalsForm(settings) {
+  const sig = settings.signals || {};
+  openForm({
+    title: '更新估值訊號（區域市場，每月一次）',
+    size: 'md',
+    fields: [
+      { key: 'china', label: '中股 滬深300 本益比', type: 'number', step: '0.1', placeholder: '例：12.3' },
+      { key: 'japan', label: '日股 整體 P/B', type: 'number', step: '0.01', placeholder: '例：1.25' },
+      { key: 'korea', label: '韓股 KOSPI P/B', type: 'number', step: '0.01', placeholder: '例：0.95' },
+      { key: 'taiwanPE', label: '台股 大盤本益比', type: 'number', step: '0.1', placeholder: '例：17.5' },
+      { key: 'taiwanYield', label: '台股 大盤殖利率（%）', type: 'number', step: '0.1', placeholder: '例：3.2' },
+      { key: 'realYieldManual', label: '美10年實質利率手動值（%，FRED 失敗時才需填）', type: 'number', step: '0.01', full: true }
+    ],
+    values: sig,
+    onSubmit: async (data) => {
+      await api('/settings', { method: 'PUT', body: { signals: { ...sig, ...data } } });
+      toast('估值訊號已更新'); renderPortfolio();
+    }
+  });
 }
 
 // ---- ③ CAPE 儀表 ----
