@@ -49,9 +49,8 @@ export function monthKey(d) { const t = d ? new Date(d) : new Date(); return `${
 // 今天 YYYY-MM-DD
 export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
-// ---------- 圖表色（dataviz 共用）----------
-export const PALETTE = ['#c96442', '#7fa37f', '#6b8cae', '#caa34a', '#b08aae', '#d99a6c', '#a3937c', '#8aa0a0'];
-export const AXIS = '#8a887f', GRID = '#ece9e0';
+// 圖表色（CHART/PALETTE/AXIS/GRID）定義在零依賴的 modules/theme.js，各模組直接 import——
+// 不從 app.js 轉手：模組在檔案頂層就取用色票，經由 app.js 會踩循環 import 的 TDZ。
 
 export function toast(msg, isErr = false) {
   const t = document.createElement('div');
@@ -61,8 +60,14 @@ export function toast(msg, isErr = false) {
   setTimeout(() => t.remove(), 3200);
 }
 
+const MODAL_SIZES = new Set(['sm', 'md', 'lg', 'xl']);
+export function modalSizeClass(size = 'sm') {
+  const safeSize = MODAL_SIZES.has(size) ? size : 'sm';
+  return `modal modal-${safeSize}`;
+}
+
 // 通用彈窗表單。fields: [{key,label,type,options?,full?,required?,placeholder?,step?}]
-export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
+export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
   const root = $('#modal-root');
   const fieldHtml = fields.map(f => {
     const v = values[f.key] ?? f.default ?? '';
@@ -84,7 +89,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
     return `<div class="${f.full ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
   }).join('');
 
-  root.innerHTML = `<div class="modal-bg"><div class="modal">
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><form id="modalForm"><div class="form-grid">${fieldHtml}</div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
@@ -110,10 +115,10 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
   if (onMount) onMount(root);
 }
 
-// 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。opts.wide 用寬版（放表格）。
+// 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
-  root.innerHTML = `<div class="modal-bg"><div class="modal${opts.wide ? ' wide' : ''}">
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
       <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>

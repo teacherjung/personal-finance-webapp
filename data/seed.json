@@ -5,6 +5,11 @@
     "emergencyFundMonths": 6,
     "allocationDriftPct": 5,
     "ibConcentrationPct": 5,
+    "equityCapPct": 90,
+    "countryCapPct": 15,
+    "chinaCapPct": 15,
+    "levCapPct": 1.3,
+    "levCapSignalPct": 1.6,
     "ibIdleCashAlert": 5000,
     "ib": {
       "flexToken": "",

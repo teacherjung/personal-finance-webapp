@@ -7,12 +7,25 @@ export async function renderSettings() {
     <div class="page-head"><div><h1>設定</h1><p>提醒門檻、IB 連線、資料備份</p></div></div>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">投資原則</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">口徑：% 淨資產、區域穿透計算。全部是<b>軟上限</b>：超標＝凍結加碼（總覽提醒＋投資組合「紀律檢查」卡），不強制減碼。</p>
+      <div class="form-grid">
+        <div><label>單一個股上限（%）</label><input id="ibConcentrationPct" type="number" step="0.5" value="${esc(s.ibConcentrationPct ?? 5)}" /></div>
+        <div><label>股票總曝險上限（%）</label><input id="equityCapPct" type="number" value="${esc(s.equityCapPct ?? 90)}" /></div>
+        <div><label>單一國家上限（%，美國與「其他」不設限）</label><input id="countryCapPct" type="number" value="${esc(s.countryCapPct ?? 15)}" /></div>
+        <div><label>中國上限（%，可與國家上限不同）</label><input id="chinaCapPct" type="number" value="${esc(s.chinaCapPct ?? 15)}" /></div>
+        <div><label>融資槓桿上限：平時（x）</label><input id="levCapPct" type="number" step="0.1" value="${esc(s.levCapPct ?? 1.3)}" /></div>
+        <div><label>融資槓桿上限：訊號期（x）</label><input id="levCapSignalPct" type="number" step="0.1" value="${esc(s.levCapSignalPct ?? 1.6)}" /></div>
+      </div>
+      <div class="form-actions"><button class="btn" id="savePrinciples">儲存投資原則</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:14px">提醒門檻</h3>
       <div class="form-grid">
         <div><label>緊急預備金目標（月）</label><input id="emergencyFundMonths" type="number" value="${esc(s.emergencyFundMonths)}" /></div>
         <div><label>美元兌台幣匯率 (USD→TWD)</label><input id="usdTwd" type="number" step="0.01" value="${esc(s.usdTwd)}" /></div>
         <div><label>資產配置偏離提醒（%）</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
-        <div><label>IB 單一持股過重門檻（%）</label><input id="ibConcentrationPct" type="number" value="${esc(s.ibConcentrationPct)}" /></div>
         <div><label>IB 閒置現金提醒門檻（美元 USD）</label><input id="ibIdleCashAlert" type="number" value="${esc(s.ibIdleCashAlert)}" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="saveThresholds">儲存門檻</button></div>
@@ -45,12 +58,22 @@ export async function renderSettings() {
     </div>
   `;
 
+  document.getElementById('savePrinciples').onclick = async () => {
+    await api('/settings', { method: 'PUT', body: {
+      ibConcentrationPct: Number(val('ibConcentrationPct')),
+      equityCapPct: Number(val('equityCapPct')),
+      countryCapPct: Number(val('countryCapPct')),
+      chinaCapPct: Number(val('chinaCapPct')),
+      levCapPct: Number(val('levCapPct')),
+      levCapSignalPct: Number(val('levCapSignalPct'))
+    }});
+    toast('投資原則已儲存');
+  };
   document.getElementById('saveThresholds').onclick = async () => {
     await api('/settings', { method: 'PUT', body: {
       emergencyFundMonths: Number(val('emergencyFundMonths')),
       usdTwd: Number(val('usdTwd')),
       allocationDriftPct: Number(val('allocationDriftPct')),
-      ibConcentrationPct: Number(val('ibConcentrationPct')),
       ibIdleCashAlert: Number(val('ibIdleCashAlert'))
     }});
     toast('門檻已儲存');

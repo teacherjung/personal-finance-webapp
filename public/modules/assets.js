@@ -1,4 +1,5 @@
-import { api, view, wan, money, moneyCur, pct, esc, PALETTE, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast } from '../app.js';
+import { PALETTE, CHART } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
   { value: 'cash', label: '現金 / 存款' }, { value: 'investment', label: '投資（股票/ETF/IB）' },
@@ -40,7 +41,7 @@ export async function renderAssets() {
               <span class="muted">${r.actualPct.toFixed(1)}% / 目標 ${r.targetPct}%</span>
             </div>
             <div class="pill-bar" style="height:9px;position:relative">
-              <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? 'var(--warn)' : 'var(--pos)'}"></div>
+              <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? CHART.orange : CHART.green}"></div>
               <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(r.targetPct, 100)}%;width:2px;background:var(--text)" title="目標"></div>
             </div></div>`;
         }).join('') || '<p class="muted">尚未設定。</p>'}
@@ -119,7 +120,7 @@ function openTargets(targets) {
     <div style="display:flex;gap:8px"><input data-k="targetPct" type="number" value="${esc(t.targetPct ?? '')}" placeholder="目標 %" />
     <button type="button" class="btn-danger btn-sm" data-rm="${i}" title="刪除">${icon('trash', 15)}</button></div>
   </div>`).join('');
-  root.innerHTML = `<div class="modal-bg"><div class="modal">
+  root.innerHTML = `<div class="modal-bg"><div class="modal modal-md">
     <div class="modal-head"><h2>設定目標資產配置</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div id="tRows">${rows()}</div>
       <button type="button" class="btn-ghost btn-sm" id="addRow">${icon('plus', 15)}新增類別</button>

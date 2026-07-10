@@ -10,10 +10,11 @@
   --text-dim: #73726c;    /* 次文字 */
   --accent: #c96442;      /* Claude 珊瑚紅 */
   --accent-soft: #f3e6df; /* 珊瑚淡底 */
-  --pos: #3f7a52;         /* 收入 / 獲利（暖綠）*/
-  --neg: #c0392b;         /* 支出 / 虧損 */
-  --warn: #b8762e;        /* 提醒（暖琥珀）*/
-  --danger: #c0392b;
+  /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
+  --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
+  --neg: #B84A39;         /* 支出 / 虧損（六色盤紅 #D96352 加深）*/
+  --warn: #A8681F;        /* 提醒（六色盤橘 #E8944A 加深）*/
+  --danger: #B84A39;
   --info: #6b7f99;        /* 資訊（霧藍）*/
   --shadow: 0 1px 3px rgba(60,50,40,.06), 0 1px 2px rgba(60,50,40,.04);
   --shadow-lg: 0 8px 30px rgba(60,50,40,.10);
@@ -102,9 +103,9 @@ main { flex: 1; min-width: 0; width: 100%; padding: 34px 42px; max-width: 1140px
 /* 跨頁鑽取連結（如資產配置 → 投資組合明細） */
 .drill-link { font-size: 11px; color: var(--accent); text-decoration: none; white-space: nowrap; }
 .drill-link:hover { text-decoration: underline; }
-/* 名詞說明連結：點擊跳出說明彈窗（虛線底線暗示可點） */
-.info-link { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: none; text-underline-offset: 2px; }
-.info-link:hover { color: var(--accent); text-decoration: underline; }
+/* 名詞說明連結：點擊跳出說明彈窗（無底線，hover 變珊瑚色） */
+.info-link { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: none; }
+.info-link:hover { color: var(--accent); }
 .info-body { font-size: 13.5px; line-height: 1.7; color: var(--text); }
 .info-body p { margin-bottom: 10px; }
 .info-body p:last-child { margin-bottom: 0; }
@@ -143,9 +144,9 @@ tbody tr:hover { background: var(--card-2); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .tag { font-size: 11px; padding: 2px 9px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
-.tag.green { background: rgba(63,122,82,.12); color: var(--pos); }
+.tag.green { background: rgba(71,121,62,.12); color: var(--pos); }
 .tag.blue { background: rgba(107,127,153,.14); color: var(--info); }
-.tag.amber { background: rgba(184,118,46,.13); color: var(--warn); }
+.tag.amber { background: rgba(168,104,31,.13); color: var(--warn); }
 
 /* ---------- Buttons / forms ---------- */
 .page-actions { display: flex; align-items: center; gap: 8px; }
@@ -156,7 +157,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 9px
 .btn-ghost:hover { background: var(--card-2); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
 .btn-danger { background: transparent; color: var(--neg); border: 1px solid var(--line-2); }
-.btn-danger:hover { background: rgba(192,57,43,.08); }
+.btn-danger:hover { background: rgba(184,74,57,.08); }
 .btn-link { background: none; color: var(--accent); padding: 5px 8px; }
 .btn-link:hover { text-decoration: underline; }
 .icon-btn { width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
@@ -179,19 +180,32 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* ---------- Modal ---------- */
 .modal-bg { position: fixed; inset: 0; background: rgba(40,34,28,.32); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 100; padding: 20px; }
-.modal { background: var(--card); border: 1px solid var(--line); border-radius: 16px; width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(40,34,28,.22); }
-.modal.wide { max-width: 860px; }
+.modal { background: var(--card); border: 1px solid var(--line); border-radius: 16px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(40,34,28,.22); }
+.modal-sm { max-width: 520px; }
+.modal-md { max-width: 640px; }
+.modal-lg { max-width: 760px; }
+.modal-xl { max-width: 920px; }
 .modal-head { padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { font-family: var(--serif); font-size: 19px; font-weight: 500; }
 .modal-body { padding: 24px; }
 .x-close { background: none; color: var(--text-dim); font-size: 22px; padding: 0 6px; }
 .x-close:hover { color: var(--text); }
-.cost-detail-modal { max-width: 760px; }
 .cost-detail-total { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 12px 14px; margin-bottom: 14px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text-dim); }
 .cost-detail-total b { color: var(--text); font-family: var(--serif); font-size: 20px; font-weight: 500; }
+.cost-detail-total.compact-summary { display: grid; grid-template-columns: repeat(2, 1fr); align-items: center; gap: 0; padding: 10px 8px; text-align: center; }
+.cost-detail-total.compact-summary b { font-family: inherit; font-size: 12.5px; font-weight: 500; }
+.cost-detail-total.compact-summary.three-col { grid-template-columns: 38% 38% 24%; }
 .cost-detail-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
 .cost-detail-table { min-width: 620px; }
 .cost-detail-table th, .cost-detail-table td { padding: 11px 14px; }
+.cost-detail-table-wrap.compact { overflow-x: hidden; }
+.cost-detail-table.compact { width: 100%; min-width: 0; table-layout: fixed; }
+.cost-detail-table.compact th, .cost-detail-table.compact td { padding: 10px 8px; font-size: 12.5px; text-align: center; }
+.cost-detail-table.compact th:first-child, .cost-detail-table.compact td:first-child,
+.cost-detail-table.compact th:nth-child(2), .cost-detail-table.compact td:nth-child(2) { width: 50%; }
+.cost-detail-table.compact.three-col th:first-child, .cost-detail-table.compact.three-col td:first-child { width: 38%; }
+.cost-detail-table.compact.three-col th:nth-child(2), .cost-detail-table.compact.three-col td:nth-child(2) { width: 38%; }
+.cost-detail-table.compact.three-col th:nth-child(3), .cost-detail-table.compact.three-col td:nth-child(3) { width: 24%; }
 
 /* ---------- Charts ---------- */
 .chart-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow); }
@@ -294,6 +308,13 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .rbar { height: 8px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
 .rbar > div { height: 100%; border-radius: 6px; }
 .rval { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 紀律檢查卡：現值 vs 上限 進度條（黑刻度＝上限、紅＝超標溢出） */
+.cap-row { grid-template-columns: 110px 1fr 190px; }
+.cap-bar { position: relative; display: flex; height: 8px; background: var(--card-2); border-radius: 6px; }
+/* 條的填色用六色盤「色塊亮版」（=theme.js CHART.green/red），與其他圖表條一致；深色 token 只給文字 */
+.cap-bar .cb-ok { height: 100%; background: #6FA75F; border-radius: 6px; }
+.cap-bar .cb-over { height: 100%; background: #D96352; border-radius: 0 6px 6px 0; margin-left: -2px; }
+.cap-bar .cb-mark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); border-radius: 1px; }
 /* 幣別曝險：百分比在長條右邊、金額在長條下方（避免超出卡片） */
 .fx-row { grid-template-columns: 96px 1fr 64px; align-items: start; }
 .fx-row .rbar { margin-top: 4px; }

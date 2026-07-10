@@ -1,4 +1,5 @@
 import { api, view, wan, money, esc, monthKey, openForm, confirmDelete, toast, router } from '../app.js';
+import { CHART } from './theme.js';
 import { icon } from './icons.js';
 
 const CATEGORIES = ['薪資', '投資', '獎金', '其他收入', '房貸', '飲食', '保險', '子女教育', '交通', '生活雜支', '醫療', '娛樂', '訂閱', '稅務', '其他支出'];
@@ -43,7 +44,7 @@ export async function renderTransactions() {
         ${topCats.length ? topCats.map(([c, v]) => `
           <div style="margin-bottom:8px">
             <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
-            <div class="pill-bar"><div style="width:${(v / maxCat * 100).toFixed(0)}%;background:var(--neg)"></div></div>
+            <div class="pill-bar"><div style="width:${(v / maxCat * 100).toFixed(0)}%;background:${CHART.red}"></div></div>
           </div>`).join('') : '<p class="muted">本月尚無支出。</p>'}
       </div>
     </div>
