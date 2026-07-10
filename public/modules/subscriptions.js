@@ -1,4 +1,4 @@
-import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { api, view, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -225,9 +225,9 @@ export async function renderSubscriptions() {
     </div></div>` : ''}
 
     <div class="cards">
-      <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${wan(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
-      <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${wan(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + wan(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
-      <div class="card"><h3>每年總額</h3><div class="stat sm">${wan(thisMonth * 12)}</div></div>
+      <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${fmtFee(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
+      <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${fmtFee(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
+      <div class="card"><h3>每年總額</h3><div class="stat sm">${fmtFee(thisMonth * 12)}</div></div>
       <div class="card"><h3>即將停用</h3><div class="stat sm">${endingCount} 項</div></div>
     </div>
 
