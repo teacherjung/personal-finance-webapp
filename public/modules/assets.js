@@ -1,5 +1,5 @@
 import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast } from '../app.js';
-import { PALETTE } from './theme.js';
+import { PALETTE, CHART } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
   { value: 'cash', label: '現金 / 存款' }, { value: 'investment', label: '投資（股票/ETF/IB）' },
@@ -41,7 +41,7 @@ export async function renderAssets() {
               <span class="muted">${r.actualPct.toFixed(1)}% / 目標 ${r.targetPct}%</span>
             </div>
             <div class="pill-bar" style="height:9px;position:relative">
-              <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? 'var(--warn)' : 'var(--pos)'}"></div>
+              <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? CHART.orange : CHART.green}"></div>
               <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(r.targetPct, 100)}%;width:2px;background:var(--text)" title="目標"></div>
             </div></div>`;
         }).join('') || '<p class="muted">尚未設定。</p>'}

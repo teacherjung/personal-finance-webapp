@@ -298,8 +298,9 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 /* 紀律檢查卡：現值 vs 上限 進度條（黑刻度＝上限、紅＝超標溢出） */
 .cap-row { grid-template-columns: 110px 1fr 190px; }
 .cap-bar { position: relative; display: flex; height: 8px; background: var(--card-2); border-radius: 6px; }
-.cap-bar .cb-ok { height: 100%; background: var(--pos); border-radius: 6px; }
-.cap-bar .cb-over { height: 100%; background: var(--neg); border-radius: 0 6px 6px 0; margin-left: -2px; }
+/* 條的填色用六色盤「色塊亮版」（=theme.js CHART.green/red），與其他圖表條一致；深色 token 只給文字 */
+.cap-bar .cb-ok { height: 100%; background: #6FA75F; border-radius: 6px; }
+.cap-bar .cb-over { height: 100%; background: #D96352; border-radius: 0 6px 6px 0; margin-left: -2px; }
 .cap-bar .cb-mark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); border-radius: 1px; }
 /* 幣別曝險：百分比在長條右邊、金額在長條下方（避免超出卡片） */
 .fx-row { grid-template-columns: 96px 1fr 64px; align-items: start; }

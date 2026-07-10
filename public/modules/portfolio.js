@@ -207,7 +207,7 @@ export async function renderPortfolio() {
         <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:${CHART.blue}"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:${CHART.green}"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:${CHART.gray}"></div><div style="flex:1;background:${CHART.brown}"></div></div></div>
       <div class="card"><h3>融資槓桿</h3><div class="stat sm ${leverage >= 1.6 ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
         <div class="stat-sub">淨值 ${MONEY(netEquity)}｜<span class="neg" style="font-weight:700">融資 ${MONEY(loanTwd)}</span></div>
-        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage >= 1.6 ? 'var(--neg)' : leverage >= 1.3 ? 'var(--warn)' : 'var(--pos)'}"></div></div></div>
+        <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.levSig ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
     </div>
 
     ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS)}
