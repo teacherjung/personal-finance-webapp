@@ -20,18 +20,18 @@
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
 4. **色彩分工**：
-   - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。
+   - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
    - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
    - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
 5. **金額格式**（app.js 統一格式器，不要自己 toLocaleString）：
-   - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）
+   - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
 6. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。
 
 ## 投資領域語意（改相關程式前必讀）
 
 - **投資原則（使用者拍板）**：所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)/`levCapSignalPct`(1.6)，設定頁「投資原則」卡可調。
-- **融資槓桿只算 IB**：IB 持倉（`source:'ib'`）÷ IB 淨值；融資＝`ibCashCur` 帳戶負餘額。排除台新現金與台股，文案標「IB」前綴。
+- **融資槓桿只算 IB**：**優先用 IB 官方淨值摘要 `settings.ib.lastEquity`**（同步時更新、基準幣別 USD：stock ÷ (stock+cash)）；沒有同步資料才自算（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額）。排除台新現金與台股，文案標「IB」前綴。`ibIdleCashAlert`＝IB 正現金閒置提醒門檻（USD）。
 - **多幣別損益**：已實現損益/現金流換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。
 - 台股（0050/006208/00719B/00720B）無 API、手動維護股數；報價 Yahoo（台債後綴 `.TWO`；GBp 便士 ÷100 轉 GBP）。
 
@@ -41,7 +41,8 @@
 |---|---|
 | `public/modules/portfolio.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
 | `portfolio.js` `fxSection.exposureCurrency` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
-| IB 槓桿公式（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額） | `lib/derive.js` 規則 7 ↔ `portfolio.js` render 內，兩份要一致 |
+| 新增 ETF 持股 | `portfolio.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表 |
+| IB 槓桿公式（lastEquity 優先、自算 fallback） | `lib/derive.js` 規則 7 ↔ `portfolio.js` render 內，兩份要一致 |
 | `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
 

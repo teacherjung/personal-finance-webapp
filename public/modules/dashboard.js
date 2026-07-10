@@ -1,5 +1,5 @@
 import { api, view, wan, money, pct, esc } from '../app.js';
-import { PALETTE, AXIS, GRID } from './theme.js';
+import { PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
 let chartRefs = [];
@@ -61,15 +61,15 @@ export async function renderDashboard() {
 
 function drawTrend(snaps) {
   const ctx = document.getElementById('trendChart');
-  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="muted">尚無歷史快照，按左下角「記錄本月快照」開始累積。</p>'; return; }
+  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，按左下角「記錄本月快照」開始累積。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',
     data: {
       labels: snaps.map(s => s.month),
       datasets: [{
         label: '淨資產', data: snaps.map(s => s.netWorth),
-        borderColor: '#c96442', backgroundColor: 'rgba(201,100,66,.10)',
-        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: '#c96442'
+        borderColor: ACCENT, backgroundColor: ACCENT_SOFT,
+        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: ACCENT
       }]
     },
     options: baseOpts(true)
@@ -79,7 +79,7 @@ function drawTrend(snaps) {
 function drawAlloc(byClass) {
   const ctx = document.getElementById('allocChart');
   const labels = Object.keys(byClass);
-  if (!ctx || !labels.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="muted">尚無資產資料。</p>'; return; }
+  if (!ctx || !labels.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無資產資料。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'doughnut',
     data: { labels, datasets: [{ data: labels.map(l => byClass[l]), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }] },

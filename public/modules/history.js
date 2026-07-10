@@ -1,4 +1,4 @@
-import { api, esc, wan, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
+import { api, esc, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 const MONTH_LABELS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -30,9 +30,9 @@ export async function renderHistorySection(root) {
       <select id="histYearSel" style="width:auto">${years.map(y => `<option value="${esc(y)}" ${y === selectedYear ? 'selected' : ''}>${esc(y)} 年</option>`).join('')}</select>
     </div>
 
-    <div class="cards" style="margin-bottom:16px">
-      <div class="card"><h3>${esc(selectedYear)} 年訂閱費合計</h3><div class="stat sm">${wan(yearTotal)}</div><div class="stat-sub">已紀錄 ${recordedCount} 個月</div></div>
-      <div class="card"><h3>平均每月</h3><div class="stat sm">${wan(recordedCount ? yearTotal / recordedCount : 0)}</div></div>
+    <div class="cards">
+      <div class="card"><h3>${esc(selectedYear)} 年訂閱費合計</h3><div class="stat sm">${money(yearTotal)}</div><div class="stat-sub">已紀錄 ${recordedCount} 個月</div></div>
+      <div class="card"><h3>平均每月</h3><div class="stat sm">${money(recordedCount ? yearTotal / recordedCount : 0)}</div></div>
     </div>
 
     <div class="chart-card" style="margin-bottom:16px">

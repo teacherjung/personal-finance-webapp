@@ -16,7 +16,7 @@ export async function renderCards() {
       <button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button>
     </div>
 
-    <div class="cards" style="margin-bottom:22px">
+    <div class="cards">
       <div class="card"><h3>信用卡</h3><div class="stat sm">${credit.length} 張</div></div>
       <div class="card"><h3>會員卡</h3><div class="stat sm">${member.length} 張</div></div>
       <div class="card"><h3>信用卡年費合計</h3><div class="stat sm">${wan(annualFees)}</div></div>

@@ -23,7 +23,7 @@ export async function renderInsurance() {
       <button class="btn" id="addIns">${icon('plus', 16)}新增保單</button>
     </div>
 
-    <div class="cards" style="margin-bottom:20px">
+    <div class="cards">
       <div class="card"><h3>保單數</h3><div class="stat sm">${list.length}</div></div>
       <div class="card"><h3>年化保費</h3><div class="stat sm">${wan(annual)}</div></div>
       <div class="card"><h3>保單現金價值</h3><div class="stat sm">${wan(totalCv)}</div></div>

@@ -1,7 +1,7 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, esc, moneyCur, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
-import { CHART, AXIS, GRID } from './theme.js';
+import { api, view, esc, moneyCur, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
@@ -75,6 +75,34 @@ const COMPOSITION = {
 const compOf = (h) => COMPOSITION[(h.symbol || '').toUpperCase()]
   || { type: h.layer === 'bond' ? 'bond' : h.layer === 'gold' ? 'gold' : 'equity', regions: { 其他: 1 } };
 
+// ---- ETF 內含「公司」穿透（各 ETF 前十大成分的近似權重，可隨基金年報更新）----
+// 未列入前十大的成分不拆（視為 ETF 其餘部分）；直接持股走 DIRECT_COMPANY 以全額計。
+const T50 = { 台積電: 0.56, 鴻海: 0.05, 聯發科: 0.04, 台達電: 0.025, 廣達: 0.02, 富邦金: 0.015, 國泰金: 0.014, 中信金: 0.012, 日月光: 0.012, 聯電: 0.01 };
+const COMPANY_WEIGHTS = {
+  CSPX: { 輝達: 0.075, 微軟: 0.065, 蘋果: 0.065, Alphabet: 0.04, 亞馬遜: 0.04, Meta: 0.026, 博通: 0.025, 特斯拉: 0.02, 波克夏: 0.016, 禮來: 0.012 },
+  QQQM: { 輝達: 0.09, 微軟: 0.085, 蘋果: 0.08, 亞馬遜: 0.055, Alphabet: 0.05, 博通: 0.05, Meta: 0.05, 特斯拉: 0.03, Netflix: 0.025, Costco: 0.025 },
+  SMH:  { 輝達: 0.20, 台積電: 0.12, 博通: 0.08, 超微: 0.05, 艾司摩爾: 0.05, 德儀: 0.04, 高通: 0.04, 美光: 0.04, 應用材料: 0.04, 科林研發: 0.04 },
+  '0050': T50,
+  '006208': T50,   // 富邦台50 與 0050 追蹤同一指數
+  EIMI: { 台積電: 0.085, 騰訊: 0.04, 三星電子: 0.03, 阿里巴巴: 0.025, 小米: 0.012, 美團: 0.01, HDFC銀行: 0.01, 信實工業: 0.009, 拼多多: 0.008 },
+  KWEB: { 騰訊: 0.11, 阿里巴巴: 0.10, 拼多多: 0.08, 美團: 0.08, 網易: 0.05, 京東: 0.05, 百度: 0.05, 攜程: 0.05, 快手: 0.04, 貝殼: 0.03 },
+  ICHN: { 騰訊: 0.14, 阿里巴巴: 0.09, 拼多多: 0.05, 美團: 0.04, 小米: 0.04, 比亞迪: 0.025, 網易: 0.02, 京東: 0.02, 百度: 0.015 },
+  SJPA: { 豐田: 0.045, 三菱UFJ: 0.03, Sony: 0.03, 日立: 0.025, 三井住友金融: 0.02, 東京威力科創: 0.02, 任天堂: 0.015, Keyence: 0.015, 迅銷: 0.015, 軟銀集團: 0.015 },
+  CSKR: { 三星電子: 0.28, SK海力士: 0.13, 現代汽車: 0.04, 起亞: 0.03, Celltrion: 0.03, NAVER: 0.03, KB金融: 0.03, 新韓金融: 0.025, 三星生物: 0.025, LG新能源: 0.02 }
+};
+// 直接持股 → 公司（以全額計）
+const DIRECT_COMPANY = { AAPL: '蘋果', GOOGL: 'Alphabet', TSLA: '特斯拉', SPCX: 'SpaceX' };
+// 公司 → 國家（決定長條顏色，與「持股曝險」區域卡同一套色）
+const COMPANY_REGION = {
+  台積電: '台灣', 鴻海: '台灣', 聯發科: '台灣', 台達電: '台灣', 廣達: '台灣', 富邦金: '台灣', 國泰金: '台灣', 中信金: '台灣', 日月光: '台灣', 聯電: '台灣',
+  輝達: '美國', 微軟: '美國', 蘋果: '美國', Alphabet: '美國', 亞馬遜: '美國', Meta: '美國', 博通: '美國', 特斯拉: '美國', 波克夏: '美國', 禮來: '美國',
+  Netflix: '美國', Costco: '美國', 超微: '美國', 德儀: '美國', 高通: '美國', 美光: '美國', 應用材料: '美國', 科林研發: '美國', SpaceX: '美國',
+  騰訊: '中國', 阿里巴巴: '中國', 拼多多: '中國', 美團: '中國', 網易: '中國', 京東: '中國', 百度: '中國', 攜程: '中國', 快手: '中國', 貝殼: '中國', 比亞迪: '中國', 小米: '中國',
+  三星電子: '韓國', SK海力士: '韓國', 現代汽車: '韓國', 起亞: '韓國', Celltrion: '韓國', NAVER: '韓國', KB金融: '韓國', 新韓金融: '韓國', 三星生物: '韓國', LG新能源: '韓國',
+  豐田: '日本', 三菱UFJ: '日本', Sony: '日本', 日立: '日本', 三井住友金融: '日本', 東京威力科創: '日本', 任天堂: '日本', Keyence: '日本', 迅銷: '日本', 軟銀集團: '日本',
+  HDFC銀行: '印度', 信實工業: '印度', 艾司摩爾: '其他'
+};
+
 // ---- CAPE 歷史分位（1881 起月資料的近似分位數）與規則帶 ----
 const CAPE_PCT = [[4.8, 0], [9.6, 10], [11.6, 20], [13.7, 30], [15.5, 40], [16.9, 50], [18.9, 60], [21.2, 70], [24.4, 80], [28.4, 90], [32, 95], [44.2, 100]];
 function capePercentile(v) {
@@ -135,10 +163,17 @@ export async function renderPortfolio() {
   const goldV = rows.filter(r => compOf(r).type === 'gold').reduce((s, r) => s + r.valueTwd, 0);
   const eqV = total - bondV - goldV;
   const accTwd = (a) => Number(a.balance || 0) * (fx[a.currency || 'TWD'] || 1);
-  // 融資槓桿只看 IBKR：IB 持倉 ÷ IB 淨值；融資＝IB 現金帳戶(ibCashCur)負餘額。
-  // 排除台新現金存款與台新證券的台股，避免灌大或稀釋槓桿。
-  const ibValTwd = rows.filter(r => r.source === 'ib').reduce((s, r) => s + r.valueTwd, 0);
-  const negCashTwd = (accounts || []).filter(a => a.ibCashCur).reduce((s, a) => { const v = accTwd(a); return v < 0 ? s + v : s; }, 0);
+  // IB 融資槓桿：優先用 IB 官方淨值摘要（settings.ib.lastEquity，IBKR 同步時更新、基準幣別 USD），
+  // 沒有才自算（source:'ib' 持倉 ÷ 淨值、融資＝ibCashCur 負餘額）。與 lib/derive.js 規則 7 為同步點。
+  const eqIb = settings.ib?.lastEquity;
+  let ibValTwd, negCashTwd;
+  if (eqIb && Number(eqIb.stock) > 0) {
+    ibValTwd = Number(eqIb.stock) * fx.USD;
+    negCashTwd = Math.min(Number(eqIb.cash) || 0, 0) * fx.USD;
+  } else {
+    ibValTwd = rows.filter(r => r.source === 'ib').reduce((s, r) => s + r.valueTwd, 0);
+    negCashTwd = (accounts || []).filter(a => a.ibCashCur).reduce((s, a) => { const v = accTwd(a); return v < 0 ? s + v : s; }, 0);
+  }
   const loanTwd = -negCashTwd;
   const netEquity = ibValTwd + negCashTwd;
   const leverage = loanTwd > 0 && netEquity > 0 ? ibValTwd / netEquity : 1;
@@ -212,7 +247,7 @@ export async function renderPortfolio() {
       </div>
     </div>
 
-    <div class="cards" style="margin-bottom:18px">
+    <div class="cards">
       <div class="card"><h3><button type="button" class="info-link" id="totalValueInfo">總市值</button></h3><div class="stat sm">${MONEY(total)}</div><div class="stat-sub"><button type="button" class="info-link" id="totalCostInfo">成本</button> ${MONEY(totalCost)}｜<span class="${totalPnl >= 0 ? 'pos' : 'neg'}" style="font-weight:700">未實現損益 ${totalPnl >= 0 ? '+' : ''}${MONEY(totalPnl)}</span></div></div>
       <div class="card"><h3><button type="button" class="info-link" id="assetStockInfo">股票</button> / <button type="button" class="info-link" id="assetBondInfo">債券</button> / <button type="button" class="info-link" id="assetCashInfo">現金</button> / <button type="button" class="info-link" id="assetGoldInfo">黃金</button></h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
@@ -227,6 +262,7 @@ export async function renderPortfolio() {
     ${incomeSection(settings)}
     ${tradesSection(ibTrades, settings)}
     ${regionSection(regionMap, eqV)}
+    ${companiesSection(rows, eqV)}
     ${layerSection(layerV, total)}
     ${holdingsDonut(rows, total)}
     ${holdingsTable(rows, total)}
@@ -375,8 +411,8 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
   </div>`;
 }
 
-// ---- 幣別曝險（各幣別淨曝險＝股票＋債券＋黃金＋現金，折台幣）----
-function fxSection(rows, accounts, fx) {
+// ---- 幣別底層曝險：頁面與列印共用的計算（00719B/00720B 歸美元、黃金獨立一列、現金含負融資）----
+function fxExposure(rows, accounts, fx) {
   const exposureCurrency = (r) => {
     const sym = String(r.symbol || '').toUpperCase();
     if (compOf(r).type === 'gold') return '黃金';
@@ -385,32 +421,32 @@ function fxSection(rows, accounts, fx) {
   };
   const byCur = {};
   const bucket = (cur) => byCur[cur] = byCur[cur] || { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 };
-  const addHolding = (r) => {
+  for (const r of rows) {
     const c = bucket(exposureCurrency(r));
     const type = compOf(r).type;
     if (type === 'bond') c.bondTwd += r.valueTwd;
     else if (type === 'gold') c.goldTwd += r.valueTwd;
     else c.stockTwd += r.valueTwd;
-  };
-  const addCash = (cur, twd) => {
-    bucket(cur).cashTwd += twd;
-  };
-  const partsText = (v) => [
-    ['股票', v.stockTwd],
-    ['債券', v.bondTwd],
-    ['黃金', v.goldTwd],
-    ['現金', v.cashTwd]
-  ].filter(([, val]) => Math.round(Math.abs(val)) > 0)
-    .map(([label, val]) => `${label} ${MONEY(val)}`)
-    .join(' ＋ ');
-  rows.forEach(addHolding);
-  (accounts || []).forEach(a => {
+  }
+  for (const a of accounts || []) {
     const bal = Number(a.balance || 0);
-    if (!bal) return;
+    if (!bal) continue;
     const cur = a.currency || 'TWD';
-    addCash(cur, bal * (fx[cur] || 1));
-  });
+    bucket(cur).cashTwd += bal * (fx[cur] || 1);
+  }
   for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;
+  return byCur;
+}
+// 各幣別組成說明（股票＋債券＋黃金＋現金，略過 0；fmt 由呼叫端決定格式器）
+const fxParts = (v, fmt) => [['股票', v.stockTwd], ['債券', v.bondTwd], ['黃金', v.goldTwd], ['現金', v.cashTwd]]
+  .filter(([, x]) => Math.round(Math.abs(x)) > 0)
+  .map(([label, x]) => `${label} ${fmt(x)}`)
+  .join(' ＋ ');
+
+// ---- 幣別曝險卡（各幣別淨曝險＝股票＋債券＋黃金＋現金，折台幣）----
+function fxSection(rows, accounts, fx) {
+  const byCur = fxExposure(rows, accounts, fx);
+  const partsText = (v) => fxParts(v, MONEY);
   const totalTwd = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
   const curs = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd);
   const maxTwd = Math.max(...curs.map(([, c]) => Math.abs(c.netTwd)), 1);
@@ -628,85 +664,57 @@ function tradesModalHtml(trades) {
     </div>`;
 }
 
+// 資產明細彈窗共用產生器（成本/股/債/現/金）：items=[{label,value,pct?}]，有 pct 走三欄版
+const pctOf = (v, base) => base ? Math.round(v / base * 100) : 0;
+function detailTableHtml({ head, items, total, totalPct, emptyText }) {
+  const three = head.length >= 3;
+  const body = items.length ? items.map(it => `<tr>
+    <td class="nowrap"><b>${esc(it.label)}</b></td>
+    <td class="num">${MONEY(it.value)}</td>${three ? `
+    <td class="num">${it.pct}%</td>` : ''}
+  </tr>`).join('') : `<tr><td colspan="${head.length}" class="muted" style="text-align:center;padding:22px">${esc(emptyText)}</td></tr>`;
+  return `<div class="cost-detail-total compact-summary${three ? ' three-col' : ''}">
+      <span></span>
+      <b>合計：${MONEY(total)}</b>${three ? `
+      <b>合計：${totalPct}%</b>` : ''}
+    </div>
+    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
+      <table class="cost-detail-table compact${three ? ' three-col' : ''}">
+        <thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
 function costDetailHtml(rows, totalCost) {
-  const body = rows.slice().sort((a, b) => b.costTwd - a.costTwd).map(r => `<tr>
-    <td class="nowrap"><b>${esc(r.symbol)}</b></td>
-    <td class="num">${MONEY(r.costTwd)}</td>
-  </tr>`).join('');
-  return `<div class="cost-detail-total compact-summary">
-      <span></span>
-      <b>合計：${MONEY(totalCost)}</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact">
-        <thead><tr><th>標的</th><th class="num">成本</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['標的', '成本'],
+    items: rows.slice().sort((a, b) => b.costTwd - a.costTwd).map(r => ({ label: r.symbol, value: r.costTwd })),
+    total: totalCost, emptyText: '目前沒有持股'
+  });
 }
-
 function assetHoldingDetailHtml(label, rows, totalValue, baseValue) {
-  const body = rows.length ? rows.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(r => `<tr>
-    <td class="nowrap"><b>${esc(r.symbol)}</b></td>
-    <td class="num">${MONEY(r.valueTwd)}</td>
-    <td class="num">${baseValue ? Math.round(r.valueTwd / baseValue * 100) : 0}%</td>
-  </tr>`).join('') : `<tr><td colspan="3" class="muted" style="text-align:center;padding:22px">目前沒有${esc(label)}部位</td></tr>`;
-  return `<div class="cost-detail-total compact-summary three-col">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-      <b>合計：${baseValue ? Math.round(totalValue / baseValue * 100) : 0}%</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact three-col">
-        <thead><tr><th>標的</th><th class="num">市值</th><th class="num">佔比</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['標的', '市值', '佔比'],
+    items: rows.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(r => ({ label: r.symbol, value: r.valueTwd, pct: pctOf(r.valueTwd, baseValue) })),
+    total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: `目前沒有${label}部位`
+  });
 }
-
 function assetAccountDetailHtml(label, accounts, totalValue) {
-  const body = accounts.length ? accounts.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(a => `<tr>
-    <td><b>${esc(a.name || '未命名帳戶')}</b></td>
-    <td class="num">${MONEY(a.valueTwd)}</td>
-  </tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center;padding:22px">目前沒有${esc(label)}帳戶</td></tr>`;
-  return `<div class="cost-detail-total compact-summary">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact">
-        <thead><tr><th>帳戶</th><th class="num">金額</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['帳戶', '金額'],
+    items: accounts.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(a => ({ label: a.name || '未命名帳戶', value: a.valueTwd })),
+    total: totalValue, emptyText: `目前沒有${label}帳戶`
+  });
 }
-
 function assetGoldDetailHtml(rows, accounts, totalValue, baseValue) {
-  const holdingRows = rows.map(r => ({
-    item: r.symbol,
-    valueTwd: r.valueTwd
-  }));
-  const accountRows = accounts.map(a => ({
-    item: a.name || '黃金帳戶',
-    valueTwd: a.valueTwd
-  }));
-  const items = holdingRows.concat(accountRows).sort((a, b) => b.valueTwd - a.valueTwd);
-  const body = items.length ? items.map(item => `<tr>
-    <td><b>${esc(item.item)}</b></td>
-    <td class="num">${MONEY(item.valueTwd)}</td>
-    <td class="num">${baseValue ? Math.round(item.valueTwd / baseValue * 100) : 0}%</td>
-  </tr>`).join('') : `<tr><td colspan="3" class="muted" style="text-align:center;padding:22px">目前沒有黃金部位</td></tr>`;
-  return `<div class="cost-detail-total compact-summary three-col">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-      <b>合計：${baseValue ? Math.round(totalValue / baseValue * 100) : 0}%</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact three-col">
-        <thead><tr><th>項目</th><th class="num">市值</th><th class="num">佔比</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  const items = rows.map(r => ({ label: r.symbol, value: r.valueTwd }))
+    .concat(accounts.map(a => ({ label: a.name || '黃金帳戶', value: a.valueTwd })))
+    .sort((a, b) => b.value - a.value)
+    .map(it => ({ ...it, pct: pctOf(it.value, baseValue) }));
+  return detailTableHtml({
+    head: ['項目', '市值', '佔比'],
+    items, total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: '目前沒有黃金部位'
+  });
 }
 
 // ---- ② 穿透式區域曝險 ----
@@ -726,6 +734,44 @@ function regionSection(regionMap, eqV) {
     </div>
     <p class="muted small" style="margin-top:10px">EIMI 內含的中國／印度／台灣／韓國權重已拆入各區域（近似值，可隨年報更新）。
     你真實的中國曝險 ${fmtPct(china)}＝ICHN＋KWEB＋EIMI 的中國成分；不看好的印度目前實佔 ${fmtPct(india)}。</p>
+  </div>`;
+}
+
+// ---- 持股公司 Top 20（穿透：直接持股全額＋ETF 前十大成分近似拆分）----
+function companiesSection(rows, eqV) {
+  if (!(eqV > 0)) return '';
+  const agg = {};   // 公司 → { v, src: { 持股代號: 金額 } }
+  const add = (co, v, sym) => {
+    const a = agg[co] = agg[co] || { v: 0, src: {} };
+    a.v += v; a.src[sym] = (a.src[sym] || 0) + v;
+  };
+  for (const r of rows) {
+    if (compOf(r).type !== 'equity' || !(r.valueTwd > 0)) continue;
+    const sym = String(r.symbol || '').toUpperCase();
+    if (DIRECT_COMPANY[sym]) { add(DIRECT_COMPANY[sym], r.valueTwd, sym); continue; }
+    const w = COMPANY_WEIGHTS[sym];
+    if (!w) continue;   // 沒有成分表的 ETF 不拆
+    for (const [co, f] of Object.entries(w)) add(co, r.valueTwd * f, sym);
+  }
+  const top = Object.entries(agg).sort((a, b) => b[1].v - a[1].v).slice(0, 20);
+  if (!top.length) return '';
+  const maxV = top[0][1].v;
+  const coveredPct = top.reduce((s, [, a]) => s + a.v, 0) / eqV * 100;
+  return `<div class="chart-card" style="margin-bottom:16px">
+    <h3>持股公司 Top 20 <span class="stat-sub" style="font-weight:400;margin:0">（穿透 ETF 成分，佔股票部位 %；顏色＝公司所屬國家）</span></h3>
+    <div class="region-rows">
+      ${top.map(([co, a], i) => {
+        const color = REGION_COLOR[COMPANY_REGION[co]] || CHART.gray;
+        const srcTxt = Object.entries(a.src).sort((x, y) => y[1] - x[1]).map(([s, v]) => `${s} ${MONEY(v)}`).join('、');
+        return `<div class="rrow" title="${esc(co)} ＝ ${esc(srcTxt)}">
+        <span class="rlabel nowrap"><span class="muted" style="font-size:10.5px;display:inline-block;width:16px">${i + 1}</span><span class="cat-dot" style="background:${color}"></span>${esc(co)}</span>
+        <div class="rbar"><div style="width:${(a.v / maxV * 100).toFixed(1)}%;background:${color}"></div></div>
+        <span class="rval">${fmtPct(a.v / eqV * 100)} <span class="muted">${MONEY(a.v)}</span></span>
+      </div>`;
+      }).join('')}
+    </div>
+    <p class="muted small" style="margin-top:10px">ETF 只拆前十大成分（近似權重，可隨年報更新），其餘部分不入列；直接持股（AAPL、GOOGL…）以全額計。
+    Top 20 合計約佔股票部位 ${fmtPct(coveredPct)}。滑鼠移到列上可見「這家公司是透過哪幾筆持股持有」。</p>
   </div>`;
 }
 
@@ -767,7 +813,7 @@ function holdingsDonut(rows, total) {
     const c2 = [1, 3, 5].map(i => parseInt(h2.slice(i, i + 2), 16));
     return '#' + c1.map((x, j) => Math.round(x + (c2[j] - x) * t).toString(16).padStart(2, '0')).join('');
   };
-  const rampAt = (i, n) => mix('#C96442', '#FBEAE1', n <= 1 ? 0 : i / (n - 1));
+  const rampAt = (i, n) => mix(ACCENT, '#FBEAE1', n <= 1 ? 0 : i / (n - 1));   // 品牌色 → 淺膚色內插
 
   const W = 780, H = 400, cx = 390, cy = 200, r = 118, sw = 26;
   const polar = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
@@ -966,7 +1012,7 @@ function drawInvestChart(psnaps, curCost, curValue) {
     type: 'line',
     data: { labels, datasets: [
       { label: '投入成本', data: costs, borderColor: AXIS, backgroundColor: AXIS, borderDash: [5, 4], borderWidth: 2, pointRadius: 3, fill: false, tension: .25 },
-      { label: '市值', data: values, borderColor: '#c96442', backgroundColor: 'rgba(201,100,66,.10)', borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
+      { label: '市值', data: values, borderColor: ACCENT, backgroundColor: ACCENT_SOFT, borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
     ] },
     options: { responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: true, labels: { color: AXIS, boxWidth: 14, padding: 12 } },
@@ -1180,23 +1226,13 @@ async function printPortfolioReport(d) {
     }).join('');
   }).join('');
 
-  // 幣別淨曝險
-  const byCur = {};
-  const addCur = (cur, orig, twd) => {
-    const c = byCur[cur] = byCur[cur] || { orig: 0, twd: 0, debtOrig: 0, debtTwd: 0 };
-    if (twd >= 0) { c.orig += orig; c.twd += twd; } else { c.debtOrig += orig; c.debtTwd += twd; }
-  };
-  rows.forEach(r => addCur(r.currency || 'USD', Number(r.price || 0) * Number(r.quantity || 0), r.valueTwd));
-  (accounts || []).forEach(a => { const bal = Number(a.balance || 0); if (!bal) return; const cur = a.currency || 'TWD'; addCur(cur, bal, bal * (fx[cur] || 1)); });
-  const curTotal = Object.values(byCur).reduce((s, c) => s + c.twd + c.debtTwd, 0);
-  const curRows = Object.entries(byCur).sort((a, b) => (b[1].twd + b[1].debtTwd) - (a[1].twd + a[1].debtTwd)).map(([cur, v]) => {
-    const net = v.twd + v.debtTwd, netOrig = v.orig + v.debtOrig;
-    return `<tr><td>${esc(cur)}</td>
-      <td class="num">${Math.round(netOrig).toLocaleString('en-US')} ${esc(cur)}</td>
-      <td class="num">${val(net)}</td>
-      <td class="num">${pctf(curTotal ? net / curTotal * 100 : 0)}</td>
-      <td>${v.debtTwd < 0 ? `已扣融資 ${Math.round(Math.abs(v.debtOrig)).toLocaleString('en-US')} ${esc(cur)}` : ''}</td></tr>`;
-  }).join('');
+  // 幣別底層曝險（與頁面 fxSection 同口徑，共用 fxExposure）
+  const byCur = fxExposure(rows, accounts, fx);
+  const curTotal = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
+  const curRows = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd).map(([cur, v]) => `<tr><td>${esc(cur)}</td>
+      <td class="num">${val(v.netTwd)}</td>
+      <td class="num">${pctf(curTotal ? v.netTwd / curTotal * 100 : 0)}</td>
+      <td>${fxParts(v, val)}</td></tr>`).join('');
   const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
   const fxZone = fx.USD >= hi ? `已進入「美元→台幣」分批區（≥${hi}）` : fx.USD <= lo ? `已進入「台幣→美元」分批區（≤${lo}）` : `中間區（${lo}–${hi}），不動作`;
 
@@ -1231,22 +1267,11 @@ async function printPortfolioReport(d) {
     ? `<p class="muted">Shiller PE（CAPE）：<b>${Number(cape.value).toFixed(2)}</b>（歷史分位 ~${capePercentile(Number(cape.value)).toFixed(0)}%，${(CAPE_BANDS.find(b => Number(cape.value) < b.to) || CAPE_BANDS[CAPE_BANDS.length - 1]).label}）</p>` : '';
 
   const base3 = eqV + bondV + goldAll;
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>投資組合報表 ${generated}</title>
-    <style>
-      @page { size: A4; margin: 14mm; }
-      * { box-sizing: border-box; }
-      body { margin: 0; color: #2f2b27; background: #ebe6dc; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", sans-serif; font-size: 12px; }
-      .preview-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(47,43,39,.92); color: #fff; box-shadow: 0 8px 24px rgba(47,43,39,.18); }
-      .preview-bar strong { font-size: 14px; }
-      .preview-bar button { border: 1px solid rgba(255,255,255,.28); background: #fff; color: #2f2b27; border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
-      .preview-shell { min-height: 100vh; padding: 24px 18px 42px; }
-      .paper { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 14mm; background: #fff; box-shadow: 0 18px 60px rgba(47,43,39,.24); }
+  const extraCss = `
       h1, h2 { margin: 0; font-weight: 600; }
       h1 { font-size: 26px; letter-spacing: .02em; }
       h2 { font-size: 16px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ded8cc; padding-bottom: 8px; }
       h2 span { font-size: 13px; color: #c96442; font-weight: 500; }
-      .cover { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; border-bottom: 2px solid #2f2b27; padding-bottom: 16px; margin-bottom: 16px; }
-      .muted { color: #8a887f; }
       .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
       .metric { border: 1px solid #ded8cc; border-radius: 8px; padding: 12px; }
       .metric span { color: #8a887f; display: block; margin-bottom: 6px; }
@@ -1260,14 +1285,8 @@ async function printPortfolioReport(d) {
       .center { text-align: center; }
       td.group { background: #faf7f0; font-weight: 600; }
       footer { margin-top: 14px; border-top: 1px solid #ded8cc; padding-top: 10px; font-size: 10.5px; color: #8a887f; line-height: 1.6; }
-      @media (max-width: 900px) { .paper { width: 100%; min-height: auto; } .preview-shell { padding: 14px; } }
-      @media print {
-        body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-        .preview-bar { display: none; }
-        .preview-shell { padding: 0; }
-        .paper { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
-      }
-    </style></head><body>
+`;
+  openPrintWindow(`投資組合報表 ${generated}`, extraCss, `
     <div class="preview-bar"><div><strong>投資組合報表預覽</strong></div><button onclick="window.print()">列印 / 另存</button></div>
     <main class="preview-shell"><article class="paper">
       <header class="cover">
@@ -1287,7 +1306,7 @@ async function printPortfolioReport(d) {
         <table><thead><tr><th>代號</th><th>說明</th><th class="num">均價</th><th class="num">現價</th><th class="num">市值</th><th class="num">損益</th><th class="num">報酬率</th><th class="num">佔比</th></tr></thead>
         <tbody>${holdingRows}</tbody></table></section>
       <section><h2>幣別淨曝險與匯率 <span>${esc(fxZone)}</span></h2>
-        <table><thead><tr><th>幣別</th><th class="num">淨曝險（原幣）</th><th class="num">折${isUS ? '美元' : '台幣'}</th><th class="num">佔比</th><th>備註</th></tr></thead>
+        <table><thead><tr><th>幣別</th><th class="num">折${isUS ? '美元' : '台幣'}</th><th class="num">佔比</th><th>組成</th></tr></thead>
         <tbody>${curRows}</tbody></table></section>
       <section><h2>持股曝險 <span>佔股票部位 %（已合併 ETF 內含成分）</span></h2>
         <table><thead><tr><th>區域</th><th class="num">金額</th><th class="num">佔股票部位</th></tr></thead>
@@ -1296,10 +1315,5 @@ async function printPortfolioReport(d) {
       ${tradesHtml}
       ${capeHtml}
       <footer>口徑說明：持股成本為 FIFO 成本基礎（與 IBKR 一致，含手續費）；IBKR 部位與現金來自 Flex Query（前一交易日）；報價來自 Yahoo Finance（可能延遲 15–20 分鐘）；融資借款列為負債，淨值＝總部位−融資；區域權重為近似值。本報表僅供個人記錄，非投資建議。</footer>
-    </article></main></body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) return toast('瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。', true);
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+    </article></main>`);
 }

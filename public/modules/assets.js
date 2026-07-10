@@ -23,7 +23,7 @@ export async function renderAssets() {
 
     <div class="hint">股票／債券的金額由「投資組合」的持股<b>自動換算併入</b>（含外幣→台幣），這裡只需要記現金、黃金等帳戶，不用重複記投資部位。</div>
 
-    <div class="cards" style="margin-bottom:18px">
+    <div class="cards">
       <div class="card"><h3>總資產</h3><div class="stat sm pos">${wan(alloc.assets)}</div></div>
       <div class="card"><h3>總負債</h3><div class="stat sm neg">${wan(alloc.liabilities)}</div></div>
       <div class="card"><h3>淨資產</h3><div class="stat sm">${wan(alloc.netWorth)}</div></div>
@@ -44,7 +44,7 @@ export async function renderAssets() {
               <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? CHART.orange : CHART.green}"></div>
               <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(r.targetPct, 100)}%;width:2px;background:var(--text)" title="目標"></div>
             </div></div>`;
-        }).join('') || '<p class="muted">尚未設定。</p>'}
+        }).join('') || '<p class="empty">尚未設定目標配置。</p>'}
         <p class="muted" style="font-size:11px;margin-top:6px">深色直線＝目標比例</p>
       </div>
     </div>
@@ -84,7 +84,7 @@ function typeLabel(t) { return (ACCOUNT_TYPES.find(a => a.value === t) || {}).la
 function drawPie(byClass) {
   const ctx = document.getElementById('pie');
   const labels = Object.keys(byClass);
-  if (!labels.length) { ctx.parentElement.innerHTML = '<p class="muted">尚無資產資料。</p>'; return; }
+  if (!labels.length) { ctx.parentElement.innerHTML = '<p class="empty">尚無資產資料。</p>'; return; }
   chart = new Chart(ctx, {
     type: 'doughnut',
     data: { labels, datasets: [{ data: labels.map(l => byClass[l]), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }] },

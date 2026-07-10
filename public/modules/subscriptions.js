@@ -1,4 +1,4 @@
-import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
+import { api, view, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -224,10 +224,10 @@ export async function renderSubscriptions() {
       <div><div class="r-title">續費卡已失效</div><div class="r-detail">有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</div></div>
     </div></div>` : ''}
 
-    <div class="cards" style="margin-bottom:18px">
-      <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${wan(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
-      <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${wan(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + wan(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
-      <div class="card"><h3>每年總額</h3><div class="stat sm">${wan(thisMonth * 12)}</div></div>
+    <div class="cards">
+      <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${fmtFee(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
+      <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${fmtFee(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
+      <div class="card"><h3>每年總額</h3><div class="stat sm">${fmtFee(thisMonth * 12)}</div></div>
       <div class="card"><h3>即將停用</h3><div class="stat sm">${endingCount} 項</div></div>
     </div>
 
@@ -475,44 +475,28 @@ function reportBreakdown(subs, mk) {
   </div></section>`;
 }
 
+// 續費時間線（列印報表版，佈局與頁面卡片共用 timelinePoints）
 function reportTimeline(subs) {
-  const upcoming = subs.filter(s => subStatus(s) === 'active' && !isLifetimeSub(s))
-    .map(s => ({ name: s.name, amount: Number(s.amount || 0), days: daysUntil(s.nextCharge), date: s.nextCharge, cat: s.category }))
-    .filter(s => isFinite(s.days) && s.days >= 0 && s.days <= 30)
-    .sort((a, b) => a.days - b.days);
+  const { upcoming, points } = timelinePoints(subs, {
+    pos: (d) => Math.max(5, Math.min(95, 5 + d / 30 * 90)),
+    topLevels: [12, 44], bottomLevels: [122, 154, 186], labelH: 40
+  });
   if (!upcoming.length) return `<section><h2>未來 30 天續費時間線</h2><p class="muted">未來 30 天沒有預定續費。</p></section>`;
-  const axisY = 98;
-  const dotY = axisY - 6;
-  const topLevels = [12, 44];
-  const bottomLevels = [122, 154, 186];
-  const lastBySide = { top: [], bottom: [] };
-  const points = upcoming.map((s, i) => {
-    const left = Math.max(5, Math.min(95, 5 + s.days / 30 * 90));
-    const side = i % 2 === 0 ? 'top' : 'bottom';
-    const levels = side === 'top' ? topLevels : bottomLevels;
-    let level = 0;
-    while (lastBySide[side][level] != null && left - lastBySide[side][level] < 14 && level < levels.length - 1) level++;
-    lastBySide[side][level] = left;
-    const labelTop = levels[level];
-    const labelBottom = labelTop + 40;
-    const lineTop = side === 'top' ? labelBottom : axisY;
-    const lineHeight = side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY);
-    return `<div class="report-tl-point ${side}" style="left:${left.toFixed(2)}%;--label-top:${labelTop}px;--line-top:${lineTop}px;--line-height:${lineHeight}px;--dot-top:${dotY}px">
+  const pointsHtml = points.map(p => `<div class="report-tl-point ${p.side}" style="left:${p.left.toFixed(2)}%;--label-top:${p.labelTop}px;--line-top:${p.lineTop}px;--line-height:${p.lineHeight}px;--dot-top:${p.dotY}px">
       <div class="report-tl-label">
-        <b>${esc(s.name)}</b>
-        <span>（${fmtFee(s.amount)}）</span>
-        <small>${s.days === 0 ? '今天' : `${s.days} 天後`}</small>
+        <b>${esc(p.name)}</b>
+        <span>（${fmtFee(p.amount)}）</span>
+        <small>${p.days === 0 ? '今天' : `${p.days} 天後`}</small>
       </div>
       <em></em>
-      <i style="background:${CAT_COLOR[s.cat] || CHART.gray}"></i>
-    </div>`;
-  }).join('');
+      <i style="background:${CAT_COLOR[p.cat] || CHART.gray}"></i>
+    </div>`).join('');
   return `<section><h2>未來 30 天續費時間線</h2>
     <div class="report-timeline">
       <div class="report-tl-axis"></div>
       <div class="report-tl-tick start">今天</div>
       <div class="report-tl-tick end">+30 天</div>
-      ${points}
+      ${pointsHtml}
     </div>
   </section>`;
 }
@@ -551,24 +535,12 @@ function printSubscriptionReport(subs, curMk, nextMk) {
   const thisMonth = amortizedForMonth(subs, curMk);
   const nextMonth = amortizedForMonth(subs, nextMk);
   const generated = todayStr();
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>訂閱追蹤報表 ${curMk}</title>
-    <style>
-      @page { size: A4; margin: 14mm; }
-      * { box-sizing: border-box; }
-      body { margin: 0; color: #2f2b27; background: #ebe6dc; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", sans-serif; font-size: 12px; }
-      .preview-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(47,43,39,.92); color: #fff; box-shadow: 0 8px 24px rgba(47,43,39,.18); }
-      .preview-bar strong { font-size: 14px; }
-      .preview-bar span { color: rgba(255,255,255,.72); font-size: 12px; margin-left: 8px; }
-      .preview-bar button { border: 1px solid rgba(255,255,255,.28); background: #fff; color: #2f2b27; border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
-      .preview-shell { min-height: 100vh; padding: 24px 18px 42px; }
-      .paper { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 14mm; background: #fff; box-shadow: 0 18px 60px rgba(47,43,39,.24); }
+  const extraCss = `
       h1, h2, h3 { margin: 0; font-weight: 600; }
       h1 { font-size: 26px; letter-spacing: .02em; }
       h2 { font-size: 17px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ded8cc; padding-bottom: 8px; }
       h2 span { font-size: 14px; color: #c96442; }
       h3 { font-size: 13px; margin: 12px 0 8px; color: #5d574f; }
-      .cover { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; border-bottom: 2px solid #2f2b27; padding-bottom: 16px; margin-bottom: 16px; }
-      .muted { color: #8a887f; }
       .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
       .metric { border: 1px solid #ded8cc; border-radius: 8px; padding: 12px; }
       .metric span { color: #8a887f; display: block; margin-bottom: 6px; }
@@ -620,14 +592,8 @@ function printSubscriptionReport(subs, curMk, nextMk) {
       .report-tl-label small { display: block; font-size: 9.5px; color: #8a887f; }
       ul { margin: 0; padding-left: 18px; }
       li { margin: 0 0 6px; }
-      @media (max-width: 900px) { .paper { width: 100%; min-height: auto; } .preview-shell { padding: 14px; } }
-      @media print {
-        body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-        .preview-bar { display: none; }
-        .preview-shell { padding: 0; }
-        .paper { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
-      }
-    </style></head><body>
+`;
+  openPrintWindow(`訂閱追蹤報表 ${curMk}`, extraCss, `
       <div class="preview-bar">
         <div><strong>訂閱追蹤報表預覽</strong></div>
         <button onclick="window.print()">列印 / 另存</button>
@@ -646,35 +612,17 @@ function printSubscriptionReport(subs, curMk, nextMk) {
         ${reportBreakdown(subs, curMk)}
         ${reportSuggestions(subs, curMk)}
         ${reportStatusLists(subs)}
-      </article></main>
-    </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) return toast('瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。', true);
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+      </article></main>`);
 }
 
-// 續費時間線：未來 30 天會續費的服務（一維座標）
-function chargeTimelineHtml(subs) {
+// ---- 未來 30 天續費時間線：頁面卡片與列印報表共用的佈局演算法 ----
+// 上下交錯放標籤；同側水平距離 <14% 時自動換到下一層，避免重疊
+function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH }) {
   const upcoming = subs.filter(s => subStatus(s) === 'active' && !isLifetimeSub(s))
     .map(s => ({ name: s.name, amount: Number(s.amount || 0), days: daysUntil(s.nextCharge), date: s.nextCharge, cat: s.category }))
     .filter(c => isFinite(c.days) && c.days >= 0 && c.days <= 30)
     .sort((a, b) => a.days - b.days);
-  const total = upcoming.reduce((t, c) => t + c.amount, 0);
-  const PAD = 7;
-  const pos = (d) => PAD + (Math.max(0, Math.min(30, d)) / 30) * (100 - PAD * 2);
-  const ticks = [0, 10, 20, 30].map(d => `<div class="tl-tick" style="left:${pos(d).toFixed(2)}%">${d === 0 ? '今天' : '+' + d + '天'}</div>`).join('');
-
-  if (!upcoming.length) {
-    return `<div class="chart-card timeline-card"><h3>續費時間線</h3>
-      <p class="muted" style="font-size:12.5px;margin-top:6px">未來 30 天內沒有預定續費 🎉</p></div>`;
-  }
-
-  const axisY = 98;
-  const dotY = axisY - 6;
-  const topLevels = [10, 42];
-  const bottomLevels = [122, 154, 186];
+  const axisY = 98, dotY = axisY - 6;
   const lastBySide = { top: [], bottom: [] };
   const points = upcoming.map((c, i) => {
     const left = pos(c.days);
@@ -684,25 +632,43 @@ function chargeTimelineHtml(subs) {
     while (lastBySide[side][level] != null && left - lastBySide[side][level] < 14 && level < levels.length - 1) level++;
     lastBySide[side][level] = left;
     const labelTop = levels[level];
-    const labelBottom = labelTop + 42;
-    const lineTop = side === 'top' ? labelBottom : axisY;
-    const lineHeight = side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY);
-    return `<div class="tl-point ${side}" style="left:${left.toFixed(2)}%;--label-top:${labelTop}px;--line-top:${lineTop}px;--line-height:${lineHeight}px;--dot-top:${dotY}px">
+    const labelBottom = labelTop + labelH;
+    return { ...c, left, side, labelTop, dotY,
+      lineTop: side === 'top' ? labelBottom : axisY,
+      lineHeight: side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY) };
+  });
+  return { upcoming, points };
+}
+
+// 續費時間線卡片（頁面版）
+function chargeTimelineHtml(subs) {
+  const PAD = 7;
+  const pos = (d) => PAD + (Math.max(0, Math.min(30, d)) / 30) * (100 - PAD * 2);
+  const { upcoming, points } = timelinePoints(subs, { pos, topLevels: [10, 42], bottomLevels: [122, 154, 186], labelH: 42 });
+  const total = upcoming.reduce((t, c) => t + c.amount, 0);
+  const ticks = [0, 10, 20, 30].map(d => `<div class="tl-tick" style="left:${pos(d).toFixed(2)}%">${d === 0 ? '今天' : '+' + d + '天'}</div>`).join('');
+
+  if (!upcoming.length) {
+    return `<div class="chart-card timeline-card"><h3>續費時間線</h3>
+      <p class="muted" style="font-size:12.5px;margin-top:6px">未來 30 天內沒有預定續費 🎉</p></div>`;
+  }
+
+  const pointsHtml = points.map(p => `<div class="tl-point ${p.side}" style="left:${p.left.toFixed(2)}%;--label-top:${p.labelTop}px;--line-top:${p.lineTop}px;--line-height:${p.lineHeight}px;--dot-top:${p.dotY}px">
       <div class="tl-label">
-        <div class="tl-name">${esc(c.name)}</div>
-        <div class="tl-amt">（${fmtFee(c.amount)}）</div>
-        <div class="tl-day">${c.days === 0 ? '今天' : c.days + ' 天後'}</div>
+        <div class="tl-name">${esc(p.name)}</div>
+        <div class="tl-amt">（${fmtFee(p.amount)}）</div>
+        <div class="tl-day">${p.days === 0 ? '今天' : p.days + ' 天後'}</div>
       </div>
       <div class="tl-stem"></div>
-      <div class="tl-dot" style="background:${CAT_COLOR[c.cat] || CHART.gray}"></div>
-    </div>`;
-  }).join('');
+      <div class="tl-dot" style="background:${CAT_COLOR[p.cat] || CHART.gray}"></div>
+    </div>`).join('');
+  
 
   return `<div class="chart-card timeline-card">
     <h3>續費時間線 <span class="stat-sub" style="font-weight:400;margin:0">（合計 <b>${money(total)}</b>）</span></h3>
     <div class="timeline">
       <div class="tl-axis"></div>
-      ${points}
+      ${pointsHtml}
       ${ticks}
     </div>
   </div>`;
@@ -821,7 +787,7 @@ function drawBreakdown(activeThis, curMk) {
         }, displayColors: false }
       } },
     plugins: [percentLabels]
-  })); else catCtx.parentElement.innerHTML = '<p class="muted">本月尚無使用中訂閱。</p>';
+  })); else catCtx.parentElement.innerHTML = '<p class="empty">本月尚無使用中訂閱。</p>';
 
   // 依類別金額（水平長條）：同樣依金額由高到低，補足圓環不易比較金額差距的弱點。
   const catBarCtx = document.getElementById('catBarChart');
@@ -882,7 +848,7 @@ function drawBreakdown(activeThis, curMk) {
   cardTable.innerHTML = cardRows.length ? `<table class="summary-table">
     <thead><tr><th>信用卡</th><th class="num">扣款金額</th></tr></thead>
     <tbody>${cardRows.map(([card, amount]) => `<tr><td>${esc(card)}</td><td class="num">${fmtFee(amount)}</td></tr>`).join('')}</tbody>
-  </table>` : '<p class="muted">本月尚無信用卡訂閱扣款。</p>';
+  </table>` : '<p class="empty">本月尚無信用卡訂閱扣款。</p>';
 }
 
 function openSubForm(sub, creditCards = []) {
