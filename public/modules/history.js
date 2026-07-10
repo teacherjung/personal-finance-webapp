@@ -1,4 +1,5 @@
-import { api, esc, wan, money, monthKey, AXIS, GRID, openForm, confirmDelete, toast } from '../app.js';
+import { api, esc, wan, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
+import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 const MONTH_LABELS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 let histChart = null;
@@ -80,7 +81,7 @@ function drawChart(monthsData, curMk) {
   const colors = monthsData.map((h, i) => {
     const mk = `${selectedYear}-${String(i + 1).padStart(2, '0')}`;
     if (!h) return 'rgba(189,184,171,.25)';
-    return mk === curMk ? '#c96442' : '#7fa37f';
+    return mk === curMk ? CHART.red : CHART.green;
   });
   histChart = new Chart(ctx, {
     type: 'bar',

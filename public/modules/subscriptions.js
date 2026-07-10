@@ -1,9 +1,10 @@
-import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, PALETTE, AXIS, GRID, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, openForm, confirmDelete, toast } from '../app.js';
+import { CHART, PALETTE, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
 
 const CATEGORIES = ['工具', '學習', '生活', '娛樂', '健康'];
-const CAT_COLOR = { '工具': '#5a8fcb', '健康': '#d9604f', '學習': '#7bae74', '娛樂': '#9b6fae', '生活': '#f19e54', '未分類': '#a3937c' };
+const CAT_COLOR = { '工具': CHART.blue, '健康': CHART.red, '學習': CHART.green, '娛樂': CHART.orange, '生活': CHART.yellow, '未分類': CHART.gray };
 const EMAIL_OPTIONS = ['Yahoo', 'Gmail', 'iCloud', 'EIEI'];
 const RECORD_START = '2026-06';   // 從這個月開始記錄訂閱費
 
@@ -484,10 +485,10 @@ function reportBreakdown(subs, mk) {
     const start = total ? acc / total * 100 : 0;
     acc += val;
     const end = total ? acc / total * 100 : 0;
-    stops.push(`${CAT_COLOR[cat] || '#a3937c'} ${start.toFixed(2)}% ${end.toFixed(2)}%`);
+    stops.push(`${CAT_COLOR[cat] || CHART.gray} ${start.toFixed(2)}% ${end.toFixed(2)}%`);
   }
   const donut = stops.length ? `<div class="report-donut" style="background:conic-gradient(${stops.join(',')})"></div>` : '<div class="report-donut empty"></div>';
-  const catList = catRows.map(([cat, val]) => `<div><i style="background:${CAT_COLOR[cat] || '#a3937c'}"></i><b>${esc(cat)}</b><span>${total ? Math.round(val / total * 100) : 0}%</span><span>${fmtFee(val)}</span></div>`).join('');
+  const catList = catRows.map(([cat, val]) => `<div><i style="background:${CAT_COLOR[cat] || CHART.gray}"></i><b>${esc(cat)}</b><span>${total ? Math.round(val / total * 100) : 0}%</span><span>${fmtFee(val)}</span></div>`).join('');
   const cardRows = Object.entries(byCard).sort((a, b) => b[1] - a[1]).map(([card, val]) => [esc(card), fmtFee(val)]);
   return `<section><h2>本月統計</h2><div class="report-grid">
     <div class="report-panel"><h3>依類別佔比</h3><div class="report-donut-wrap">${donut}<div class="report-legend">${catList || '<p class="muted">無資料</p>'}</div></div></div>
@@ -524,7 +525,7 @@ function reportTimeline(subs) {
         <small>${s.days === 0 ? '今天' : `${s.days} 天後`}</small>
       </div>
       <em></em>
-      <i style="background:${CAT_COLOR[s.cat] || '#a3937c'}"></i>
+      <i style="background:${CAT_COLOR[s.cat] || CHART.gray}"></i>
     </div>`;
   }).join('');
   return `<section><h2>未來 30 天續費時間線</h2>
@@ -714,7 +715,7 @@ function chargeTimelineHtml(subs) {
         <div class="tl-day">${c.days === 0 ? '今天' : c.days + ' 天後'}</div>
       </div>
       <div class="tl-stem"></div>
-      <div class="tl-dot" style="background:${CAT_COLOR[c.cat] || '#c96442'}"></div>
+      <div class="tl-dot" style="background:${CAT_COLOR[c.cat] || CHART.gray}"></div>
     </div>`;
   }).join('');
 
@@ -743,7 +744,7 @@ function subRow(s, validSet) {
   const whenCell = `<div class="when-date">${dateStr}</div>`;
 
   return `<tr data-id="${s.id}" style="${off ? 'opacity:.5' : ''}">
-    <td class="grip-col"><span class="drag-handle" style="color:${CAT_COLOR[cat] || '#a3937c'}" title="拖曳調整順序">${icon('grip', 15, true)}</span></td>
+    <td class="grip-col"><span class="drag-handle" style="color:${CAT_COLOR[cat] || CHART.gray}" title="拖曳調整順序">${icon('grip', 15, true)}</span></td>
     <td class="nowrap">${serviceNameHtml(s)}<span class="cancel-dot${s.considerCancel ? ' on' : ''}"></span></td>
     <td class="num">${fmtFee(feeMonthVal(s))}</td>
     <td class="num">${fmtFee(feeYearVal(s))}</td>
@@ -831,7 +832,7 @@ function drawBreakdown(activeThis, curMk) {
   };
   if (catLabels.length) charts.push(new Chart(catCtx, {
     type: 'doughnut',
-    data: { labels: catLabels, datasets: [{ data: catValues, backgroundColor: catLabels.map(l => CAT_COLOR[l] || '#a3937c'), borderColor: '#fff', borderWidth: 2 }] },
+    data: { labels: catLabels, datasets: [{ data: catValues, backgroundColor: catLabels.map(l => CAT_COLOR[l] || CHART.gray), borderColor: '#fff', borderWidth: 2 }] },
     options: { responsive: true, maintainAspectRatio: false, cutout: '58%',
       plugins: {
         legend: { display: false },
@@ -880,7 +881,7 @@ function drawBreakdown(activeThis, curMk) {
   };
   if (catLabels.length && catBarCtx) charts.push(new Chart(catBarCtx, {
     type: 'bar',
-    data: { labels: catLabels, datasets: [{ data: catValues, backgroundColor: catLabels.map(l => CAT_COLOR[l] || '#a3937c'), borderRadius: 6, maxBarThickness: 24 }] },
+    data: { labels: catLabels, datasets: [{ data: catValues, backgroundColor: catLabels.map(l => CAT_COLOR[l] || CHART.gray), borderRadius: 6, maxBarThickness: 24 }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: { callbacks: {
         title: (items) => items[0]?.label || '',

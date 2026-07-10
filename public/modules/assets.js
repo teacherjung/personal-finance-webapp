@@ -1,4 +1,5 @@
-import { api, view, wan, money, moneyCur, pct, esc, PALETTE, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast } from '../app.js';
+import { PALETTE } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
   { value: 'cash', label: '現金 / 存款' }, { value: 'investment', label: '投資（股票/ETF/IB）' },

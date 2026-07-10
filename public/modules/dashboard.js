@@ -1,4 +1,5 @@
-import { api, view, wan, money, pct, esc, PALETTE, AXIS, GRID } from '../app.js';
+import { api, view, wan, money, pct, esc } from '../app.js';
+import { PALETTE, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 
 let chartRefs = [];

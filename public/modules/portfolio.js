@@ -1,6 +1,7 @@
 // 投資組合：核心–衛星架構儀表板
 // ② 穿透式區域曝險 → ① 分層配置＋上限 → 持股表 → ④ 願望清單 → ③ CAPE → ⑥ 投入vs市值 → ⑤ 研究卡
-import { api, view, esc, todayStr, AXIS, GRID, openForm, openInfo, confirmDelete, toast } from '../app.js';
+import { api, view, esc, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
+import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
@@ -17,7 +18,7 @@ const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.rou
 
 // ---- 幣別 ----
 const CURRENCIES = ['USD', 'TWD', 'GBP', 'JPY'];
-const CUR_COLOR = { USD: '#5a8fcb', TWD: '#55a06a', GBP: '#9b6fae', JPY: '#c49a3c' };
+const CUR_COLOR = { USD: CHART.blue, TWD: CHART.green, GBP: CHART.brown, JPY: CHART.yellow };
 const fxTable = (settings) => ({
   TWD: 1,
   USD: Number(settings.usdTwd || 32),
@@ -38,16 +39,16 @@ const MONEY = (twd) => viewCur === 'USD'
 
 // ---- 分層（核心–衛星）與目標區間 ----
 const LAYERS = {
-  core:      { label: '核心（美股）', color: '#5a8fcb', min: 45, max: 65 },
-  satellite: { label: '衛星',         color: '#c49a3c', min: 8,  max: 20 },
-  bond:      { label: '債券',         color: '#55a06a', min: 15, max: 30 },
-  gold:      { label: '黃金',         color: '#a8842c', min: 0,  max: 10 },
-  stock:     { label: '個股',         color: '#9b6fae', min: 0,  max: 20 }
+  core:      { label: '核心（美股）', color: CHART.blue,   min: 45, max: 65 },
+  satellite: { label: '衛星',         color: CHART.yellow, min: 8,  max: 20 },
+  bond:      { label: '債券',         color: CHART.green,  min: 15, max: 30 },
+  gold:      { label: '黃金',         color: CHART.brown,  min: 0,  max: 10 },
+  stock:     { label: '個股',         color: CHART.orange, min: 0,  max: 20 }
 };
 const LAYER_ORDER = ['core', 'satellite', 'stock', 'bond', 'gold'];
 
 // ---- ETF 成分穿透（近似權重；可隨基金年報更新）----
-const REGION_COLOR = { '美國': '#5a8fcb', '中國': '#d9604f', '日本': '#9b6fae', '韓國': '#c49a3c', '台灣': '#55a06a', '印度': '#b8762e', '其他': '#7d7dc0' };
+const REGION_COLOR = { '美國': CHART.blue, '中國': CHART.red, '日本': CHART.yellow, '韓國': CHART.brown, '台灣': CHART.green, '印度': CHART.orange, '其他': CHART.gray };
 const COMPOSITION = {
   CSPX:   { type: 'equity', regions: { 美國: 1 } },
   QQQM:   { type: 'equity', regions: { 美國: 1 } },
@@ -86,10 +87,10 @@ function capePercentile(v) {
 }
 const CAPE_MIN = 5, CAPE_MAX = 45;
 const CAPE_BANDS = [
-  { from: CAPE_MIN, to: 20, color: '#55a06a', label: '偏低—可依紀律加碼 QQQM' },
-  { from: 20, to: 28, color: '#c49a3c', label: '中性—定期定額為主' },
-  { from: 28, to: 33, color: '#b8762e', label: '偏高—節制 QQQM，新資金以 CSPX／債券為主' },
-  { from: 33, to: CAPE_MAX, color: '#d9604f', label: '歷史高檔—不加碼 QQQM' }
+  { from: CAPE_MIN, to: 20, color: CHART.green, label: '偏低—可依紀律加碼 QQQM' },
+  { from: 20, to: 28, color: CHART.yellow, label: '中性—定期定額為主' },
+  { from: 28, to: 33, color: CHART.orange, label: '偏高—節制 QQQM，新資金以 CSPX／債券為主' },
+  { from: 33, to: CAPE_MAX, color: CHART.red, label: '歷史高檔—不加碼 QQQM' }
 ];
 
 let lineChart = null;
@@ -203,7 +204,7 @@ export async function renderPortfolio() {
       <div class="card"><h3>總市值</h3><div class="stat sm">${MONEY(total)}</div><div class="stat-sub">成本 ${MONEY(totalCost)}｜<span class="${totalPnl >= 0 ? 'pos' : 'neg'}" style="font-weight:700">未實現損益 ${totalPnl >= 0 ? '+' : ''}${MONEY(totalPnl)}</span></div></div>
       <div class="card"><h3>股票 / 債券 / 現金 / 黃金</h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
-        <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:#5a8fcb"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:#55a06a"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:#a3937c"></div><div style="flex:1;background:#a8842c"></div></div></div>
+        <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:${CHART.blue}"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:${CHART.green}"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:${CHART.gray}"></div><div style="flex:1;background:${CHART.brown}"></div></div></div>
       <div class="card"><h3>融資槓桿</h3><div class="stat sm ${leverage >= 1.6 ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
         <div class="stat-sub">淨值 ${MONEY(netEquity)}｜<span class="neg" style="font-weight:700">融資 ${MONEY(loanTwd)}</span></div>
         <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage >= 1.6 ? 'var(--neg)' : leverage >= 1.3 ? 'var(--warn)' : 'var(--pos)'}"></div></div></div>
@@ -363,9 +364,9 @@ function fxSection(rows, accounts, fx) {
     <h3>幣別曝險 <span class="stat-sub" style="font-weight:400;margin:0">（持股＋現金帳戶）</span></h3>
     <div class="region-rows">
       ${curs.map(([cur, v]) => `<div class="rrow fx-row">
-        <span class="rlabel"><span class="cat-dot" style="background:${CUR_COLOR[cur] || '#7d7dc0'}"></span>${esc(cur)}</span>
+        <span class="rlabel"><span class="cat-dot" style="background:${CUR_COLOR[cur] || CHART.gray}"></span>${esc(cur)}</span>
         <div>
-          <div class="rbar"><div style="width:${(Math.abs(v.netTwd) / maxTwd * 100).toFixed(1)}%;background:${v.netTwd < 0 ? '#d9604f' : (CUR_COLOR[cur] || '#7d7dc0')}"></div></div>
+          <div class="rbar"><div style="width:${(Math.abs(v.netTwd) / maxTwd * 100).toFixed(1)}%;background:${v.netTwd < 0 ? CHART.red : (CUR_COLOR[cur] || CHART.gray)}"></div></div>
           <div class="fx-amt muted">${MONEY(v.netTwd)}${v.debtTwd < 0 ? `（已扣融資 ${MONEY(Math.abs(v.debtTwd))}）` : ''}</div>
         </div>
         <span class="rval ${v.netTwd < 0 ? 'neg' : ''}">${fmtPct(totalTwd ? v.netTwd / totalTwd * 100 : 0)}</span>
@@ -390,9 +391,9 @@ function fxGaugeSection(fx, settings) {
     </div>
     <div class="gauge-wrap">
       <div class="gauge">
-        <div style="width:${seg(MIN, lo)}%;background:#5a8fcb;opacity:.55"></div>
+        <div style="width:${seg(MIN, lo)}%;background:${CHART.blue};opacity:.55"></div>
         <div style="width:${seg(lo, hi)}%;background:#bdb8ab;opacity:.55"></div>
-        <div style="width:${seg(hi, MAX)}%;background:#55a06a;opacity:.55"></div>
+        <div style="width:${seg(hi, MAX)}%;background:${CHART.green};opacity:.55"></div>
         <div class="gauge-marker" style="left:${((marker - MIN) / (MAX - MIN) * 100).toFixed(1)}%"></div>
       </div>
       <div class="fx-scale">
@@ -541,8 +542,8 @@ function regionSection(regionMap, eqV) {
     <h3>持股曝險 <span class="stat-sub" style="font-weight:400;margin:0">（已合併 ETF 內含成分，佔股票部位 %）</span></h3>
     <div class="region-rows">
       ${regs.map(([reg, v]) => `<div class="rrow">
-        <span class="rlabel"><span class="cat-dot" style="background:${REGION_COLOR[reg] || '#7d7dc0'}"></span>${esc(reg)}</span>
-        <div class="rbar"><div style="width:${(v / maxV * 100).toFixed(1)}%;background:${REGION_COLOR[reg] || '#7d7dc0'}"></div></div>
+        <span class="rlabel"><span class="cat-dot" style="background:${REGION_COLOR[reg] || CHART.gray}"></span>${esc(reg)}</span>
+        <div class="rbar"><div style="width:${(v / maxV * 100).toFixed(1)}%;background:${REGION_COLOR[reg] || CHART.gray}"></div></div>
         <span class="rval">${fmtPct(eqV > 0 ? v / eqV * 100 : 0)} <span class="muted">${MONEY(v)}</span></span>
       </div>`).join('')}
     </div>

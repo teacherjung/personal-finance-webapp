@@ -49,9 +49,8 @@ export function monthKey(d) { const t = d ? new Date(d) : new Date(); return `${
 // 今天 YYYY-MM-DD
 export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
-// ---------- 圖表色（dataviz 共用）----------
-export const PALETTE = ['#c96442', '#7fa37f', '#6b8cae', '#caa34a', '#b08aae', '#d99a6c', '#a3937c', '#8aa0a0'];
-export const AXIS = '#8a887f', GRID = '#ece9e0';
+// 圖表色（CHART/PALETTE/AXIS/GRID）定義在零依賴的 modules/theme.js，各模組直接 import——
+// 不從 app.js 轉手：模組在檔案頂層就取用色票，經由 app.js 會踩循環 import 的 TDZ。
 
 export function toast(msg, isErr = false) {
   const t = document.createElement('div');
