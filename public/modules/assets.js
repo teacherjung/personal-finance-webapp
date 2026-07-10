@@ -1,4 +1,4 @@
-import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
 import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
@@ -120,7 +120,7 @@ function openTargets(targets) {
     <div style="display:flex;gap:8px"><input data-k="targetPct" type="number" value="${esc(t.targetPct ?? '')}" placeholder="目標 %" />
     <button type="button" class="btn-danger btn-sm" data-rm="${i}" title="刪除">${icon('trash', 15)}</button></div>
   </div>`).join('');
-  root.innerHTML = `<div class="modal-bg"><div class="modal modal-md">
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
     <div class="modal-head"><h2>設定目標資產配置</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div id="tRows">${rows()}</div>
       <button type="button" class="btn-ghost btn-sm" id="addRow">${icon('plus', 15)}新增類別</button>
