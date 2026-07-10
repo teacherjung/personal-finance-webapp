@@ -60,8 +60,14 @@ export function toast(msg, isErr = false) {
   setTimeout(() => t.remove(), 3200);
 }
 
+const MODAL_SIZES = new Set(['sm', 'md', 'lg', 'xl']);
+export function modalSizeClass(size = 'sm') {
+  const safeSize = MODAL_SIZES.has(size) ? size : 'sm';
+  return `modal modal-${safeSize}`;
+}
+
 // 通用彈窗表單。fields: [{key,label,type,options?,full?,required?,placeholder?,step?}]
-export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
+export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
   const root = $('#modal-root');
   const fieldHtml = fields.map(f => {
     const v = values[f.key] ?? f.default ?? '';
@@ -83,7 +89,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
     return `<div class="${f.full ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
   }).join('');
 
-  root.innerHTML = `<div class="modal-bg"><div class="modal">
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><form id="modalForm"><div class="form-grid">${fieldHtml}</div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
@@ -109,10 +115,10 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount }) {
   if (onMount) onMount(root);
 }
 
-// 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。opts.wide 用寬版（放表格）。
+// 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
-  root.innerHTML = `<div class="modal-bg"><div class="modal${opts.wide ? ' wide' : ''}">
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
       <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>

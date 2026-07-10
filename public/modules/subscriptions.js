@@ -403,7 +403,7 @@ function openCostDetailModal(subs, mk) {
   </tr>`).join('') : `<tr><td colspan="4" class="muted" style="text-align:center;padding:26px">這個月份沒有計入訂閱費用</td></tr>`;
 
   const root = document.getElementById('modal-root');
-  root.innerHTML = `<div class="modal-bg"><div class="modal cost-detail-modal">
+  root.innerHTML = `<div class="modal-bg"><div class="modal modal-lg">
     <div class="modal-head"><h2>${esc(mk)} 計算方式</h2><button class="x-close">×</button></div>
     <div class="modal-body">
       <div class="cost-detail-total"><span>合計</span><b>${fmtFee(total)}</b></div>
