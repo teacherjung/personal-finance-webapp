@@ -208,16 +208,17 @@ app.post('/api/ib/sync', async (req, res) => {
     const missing = db.holdings
       .filter(h => h.source === 'ib' && !seen.has(String(h.symbol || '').toUpperCase()))
       .map(h => ({ id: h.id, symbol: h.symbol }));
-    if (data.equity) db.settings.ib.lastEquity = data.equity;   // { cash(負=融資), stock, date }
-    if (data.income) {
-      db.settings.ib.income = {
-        dividends: r2(data.income.dividends), paymentInLieu: r2(data.income.paymentInLieu),
-        withholdingTax: r2(data.income.withholdingTax), interestPaid: r2(data.income.interestPaid),
-        interestReceived: r2(data.income.interestReceived), other: r2(data.income.other),
-        count: data.income.count, from: data.period?.from || '', to: data.period?.to || ''
-      };
-    }
-    if (Array.isArray(data.trades) && data.trades.length) db.ibTrades = data.trades;   // 已實現損益（交易摘要）使用中；XIRR 之後接
+    // 缺席的區塊要「清空」而不是留舊值：看得見的退化（fallback/卡片消失）勝過
+    // 默默拿過期的官方淨值算槓桿與斷頭距離。必要的 Flex 區塊清單見設定頁說明。
+    db.settings.ib.lastEquity = data.equity || null;   // { cash(負=融資), stock, date }；無 NAV 區塊時槓桿退回自算
+    db.settings.ib.income = data.income ? {
+      dividends: r2(data.income.dividends), paymentInLieu: r2(data.income.paymentInLieu),
+      withholdingTax: r2(data.income.withholdingTax), interestPaid: r2(data.income.interestPaid),
+      interestReceived: r2(data.income.interestReceived), other: r2(data.income.other),
+      count: data.income.count, skippedNoFx: data.income.skippedNoFx || 0,
+      from: data.period?.from || '', to: data.period?.to || ''
+    } : null;
+    db.ibTrades = Array.isArray(data.trades) ? data.trades : [];   // 交易摘要與 XIRR 已實現損益修正使用中
     db.settings.ib.lastSync = new Date().toISOString();
     save(db);
     res.json({ ok: true, updated, created, missing, cash: data.cashByCurrency, equity: data.equity, account: data.account });

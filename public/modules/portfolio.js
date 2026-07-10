@@ -1057,7 +1057,7 @@ async function loadSignals(settings) {
 
   const twTier = taiwanTier(sig.taiwanPE, sig.taiwanYield);
   const twVal = (sig.taiwanPE || sig.taiwanYield)
-    ? `PE ${sig.taiwanPE || '—'}・殖利率 ${sig.taiwanYield ? sig.taiwanYield + '%' : '—'}` : '—';
+    ? `PE ${sig.taiwanPE ? esc(sig.taiwanPE) : '—'}・殖利率 ${sig.taiwanYield ? esc(sig.taiwanYield) + '%' : '—'}` : '—';
   const rows = [
     signalRow('🇺🇸 美股（ECY）', usValTxt, usTier, '&lt;3／3–5／&gt;5%'),
     signalRow('🇨🇳 中股（滬深300 PE）', sig.china ? `PE <b>${esc(sig.china)}</b>` : '—', regionTier('china', sig.china), '&gt;13／10.5–11.5／&lt;10'),
@@ -1461,7 +1461,8 @@ async function printPortfolioReport(d) {
   const incomeHtml = inc ? `<section><h2>IBKR 現金流 <span>${fmtD(inc.from)}–${fmtD(inc.to)}</span></h2>
     <table><thead><tr><th class="num">股息（含替代股息）</th><th class="num">融資利息</th><th class="num">利息收入</th><th class="num">淨現金流</th></tr></thead>
     <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(inc.interestPaid || 0) * rate)}</td>
-    <td class="num">+${val((inc.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table></section>` : '';
+    <td class="num">+${val((inc.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
+    ${inc.skippedNoFx > 0 ? `<p class="muted">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率，未計入上列金額。</p>` : ''}</section>` : '';
 
   let tradesHtml = '';
   if (ibTrades && ibTrades.length) {
