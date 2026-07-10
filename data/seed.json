@@ -18,6 +18,7 @@
     },
     "qqqmMaxPct": 30,
     "capeManual": "",
+    "signals": { "realYieldManual": "", "china": "12.3", "japan": "1.25", "korea": "0.95", "taiwanPE": "17.5", "taiwanYield": "3.2" },
     "fxHigh": 32,
     "fxLow": 28,
     "fxTwd": {
