@@ -233,6 +233,9 @@ export async function renderPortfolio() {
     FREEZE.equity = eqV / netWorth * 100 > CAPS.equity;
   }
 
+  // 資金加權年化報酬（XIRR）——資料齊了在此同步計算，直接嵌進模板
+  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD);
+
   view().innerHTML = `
     <div class="page-head">
       <div><h1>投資組合</h1><p>核心–衛星架構：掌握配置、留意風險、等待機會。</p></div>
@@ -280,9 +283,12 @@ export async function renderPortfolio() {
     </div>
 
     <div class="chart-card" style="margin-bottom:16px">
-      <h3>投入 vs 市值 <span class="stat-sub" style="font-weight:400;margin:0">（每月快照，按左下「記錄本月快照」累積）</span></h3>
+      <h3><button type="button" class="info-link" id="xirrInfo">投入 vs 市值</button> <span class="stat-sub" style="font-weight:400;margin:0">（每月快照，按左下「記錄本月快照」累積）</span>
+        <span style="float:right;font-size:13px">${xr.ok
+          ? `年化報酬（XIRR）<b class="${xr.rate >= 0 ? 'pos' : 'neg'}">${xr.rate >= 0 ? '+' : ''}${xr.rate.toFixed(1)}%</b>${xr.years < 1 ? ' <span class="muted small">未滿 1 年僅供參考</span>' : ''}`
+          : `<span class="muted small">XIRR：${xr.why}</span>`}</span></h3>
       <div class="chart-box" style="height:240px"><canvas id="investChart"></canvas></div>
-      <p class="muted small" style="margin-top:8px">兩線的差距＝未實現損益。市值線的波動是市場的事；投入線持續墊高，才是你能控制的事。（精確 XIRR 需逐筆交易紀錄，之後接 IB 匯入再補上）</p>
+      <p class="muted small" style="margin-top:8px">兩線的差距＝未實現損益。市值線的波動是市場的事；投入線持續墊高，才是你能控制的事。年化報酬（XIRR）按你每筆投入的時間點計算，點標題看說明。</p>
     </div>
 
     <div class="section-title">個股研究卡</div>
@@ -357,6 +363,8 @@ export async function renderPortfolio() {
   if (assetCashInfo) assetCashInfo.onclick = () => openInfo('現金', assetAccountDetailHtml('現金', cashAccounts, cashV), { size: 'sm' });
   const assetGoldInfo = document.getElementById('assetGoldInfo');
   if (assetGoldInfo) assetGoldInfo.onclick = () => openInfo('黃金', assetGoldDetailHtml(goldRows, goldAccounts, goldAll, allBase), { size: 'sm' });
+  const xInfo = document.getElementById('xirrInfo');
+  if (xInfo) xInfo.onclick = () => openInfo('年化報酬（XIRR）', XIRR_INFO_HTML, { size: 'md' });
   const dInfo = document.getElementById('disciplineInfo');
   if (dInfo) dInfo.onclick = () => openInfo('紀律檢查', `
     <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>
@@ -1137,6 +1145,62 @@ function openCapeManual(settings) {
       toast('已更新 CAPE 手動值'); renderPortfolio();
     }
   });
+}
+
+// ---- 資金加權年化報酬（XIRR）----
+// 現金流（台幣）：期初＝第一筆快照市值流出、每月＝快照投入增量流出、
+// IB 賣出已實現損益逐筆按成交日流入（pnlBase USD × 今日匯率）、期末＝今日市值流入。
+// 不含股息利息（略低估）；台股手動賣出的已實現損益無紀錄、未納入。
+const XIRR_INFO_HTML = `
+  <p><b>XIRR（資金加權年化報酬）</b>：把每一筆投入與拿回的錢、連同發生的時間點一起解出的年化報酬率——「你的錢實際上長多快」。與只看漲跌幅的報酬率不同，它會反映你進出場時點的效果：同樣的市場，早投入多投入的人 XIRR 較高。</p>
+  <p><b>資料來源</b>：每月「記錄本月快照」的投入增量＝流出；IB 賣出的已實現損益逐筆按成交日計入；今日市值＝期末流入。口徑為台幣。</p>
+  <p class="muted">限制：不含股息與利息（結果略為低估）；台股手動賣出的已實現損益未納入；快照為月頻、時點以月底近似；IB 交易紀錄僅涵蓋同步期間。歷史未滿 1 年時，年化會放大短期波動，僅供參考。</p>`;
+
+// 解 XIRR：對 NPV(r)=Σ v/(1+r)^年 做二分法（區間 −95%～+1000%）
+function xirrRate(flows) {
+  const t0 = flows[0].t;
+  const yrs = (f) => (f.t - t0) / 31557600000;   // 365.25 天
+  const npv = (r) => flows.reduce((s, f) => s + f.v / Math.pow(1 + r, yrs(f)), 0);
+  let lo = -0.95, hi = 1e4, flo = npv(lo), fhi = npv(hi);
+  if (!isFinite(flo) || !isFinite(fhi) || flo * fhi > 0) return null;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2, fm = npv(mid);
+    if (Math.abs(fm) < 1e-7) return mid;
+    if (flo * fm < 0) hi = mid; else { lo = mid; flo = fm; }
+  }
+  return (lo + hi) / 2;
+}
+
+function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd) {
+  if (!Array.isArray(psnaps) || !psnaps.length || !(curValue > 0)) return { ok: false, why: '需先記錄月快照' };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const eom = (mk) => {   // 快照時點以月底近似（本月快照則視為今天）
+    const [y, m] = mk.split('-').map(Number);
+    const d = new Date(y, m, 0);
+    return d > today ? today : d;
+  };
+  const flows = [{ t: eom(psnaps[0].month), v: -Number(psnaps[0].value || 0) }];
+  for (let i = 1; i < psnaps.length; i++) {
+    flows.push({ t: eom(psnaps[i].month), v: -(Number(psnaps[i].cost || 0) - Number(psnaps[i - 1].cost || 0)) });
+  }
+  const t0 = flows[0].t;
+  for (const tr of ibTrades || []) {   // 賣出時投入額只減成本，已實現損益要另外補回現金流
+    if (tr.buySell !== 'SELL' || tr.pnlBase == null) continue;
+    const ds = String(tr.date || '');
+    const d = new Date(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);
+    if (isNaN(d) || d <= t0) continue;
+    flows.push({ t: d > today ? today : d, v: Number(tr.pnlBase) * usd });
+  }
+  const lastCost = Number(psnaps[psnaps.length - 1].cost || 0);
+  flows.push({ t: today, v: curValue - (curCost - lastCost) });   // 期末市值＋最後一筆快照之後的投入增量
+  flows.sort((a, b) => a.t - b.t);
+  const spanDays = (today - t0) / 86400000;
+  if (spanDays < 60) return { ok: false, why: '快照未滿兩個月' };
+  const r = xirrRate(flows);
+  if (r == null) return { ok: false, why: '無法計算' };
+  // 年化超過 ±500% 代表資料有問題（如快照與市值口徑不符），不顯示誤導數字
+  if (Math.abs(r) > 5) return { ok: false, why: '資料異常（檢查快照是否為真實紀錄）' };
+  return { ok: true, rate: r * 100, years: spanDays / 365.25 };
 }
 
 // ---- ⑥ 投入 vs 市值 ----
