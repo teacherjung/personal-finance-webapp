@@ -14,8 +14,8 @@ export async function renderSettings() {
         <div><label>股票總曝險上限（%）</label><input id="equityCapPct" type="number" value="${esc(s.equityCapPct ?? 90)}" /></div>
         <div><label>單一國家上限（%，美國與「其他」不設限）</label><input id="countryCapPct" type="number" value="${esc(s.countryCapPct ?? 15)}" /></div>
         <div><label>中國上限（%，可與國家上限不同）</label><input id="chinaCapPct" type="number" value="${esc(s.chinaCapPct ?? 15)}" /></div>
-        <div><label>融資槓桿上限：平時（x）</label><input id="levCapPct" type="number" step="0.1" value="${esc(s.levCapPct ?? 1.3)}" /></div>
-        <div><label>融資槓桿上限：訊號期（x）</label><input id="levCapSignalPct" type="number" step="0.1" value="${esc(s.levCapSignalPct ?? 1.6)}" /></div>
+        <div><label>融資槓桿上限（x，任何時期；訊號期加碼只用新資金）</label><input id="levCapPct" type="number" step="0.1" value="${esc(s.levCapPct ?? 1.3)}" /></div>
+        <div><label>IB 維持保證金率（%，斷頭距離計算用）</label><input id="ibMaintenancePct" type="number" step="1" value="${esc(s.ibMaintenancePct ?? 25)}" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="savePrinciples">儲存投資原則</button></div>
     </div>
@@ -65,7 +65,7 @@ export async function renderSettings() {
       countryCapPct: Number(val('countryCapPct')),
       chinaCapPct: Number(val('chinaCapPct')),
       levCapPct: Number(val('levCapPct')),
-      levCapSignalPct: Number(val('levCapSignalPct'))
+      ibMaintenancePct: Number(val('ibMaintenancePct'))
     }});
     toast('投資原則已儲存');
   };
