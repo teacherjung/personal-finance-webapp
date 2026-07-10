@@ -54,12 +54,17 @@ const REGION_COLOR = { '美國': CHART.blue, '中國': CHART.red, '日本': CHAR
 const COMPOSITION = {
   CSPX:   { type: 'equity', regions: { 美國: 1 } },
   QQQM:   { type: 'equity', regions: { 美國: 1 } },
+  VUAA:   { type: 'equity', regions: { 美國: 1 } },
+  SPY:    { type: 'equity', regions: { 美國: 1 } },
+  VOO:    { type: 'equity', regions: { 美國: 1 } },
   GOOGL:  { type: 'equity', regions: { 美國: 1 } },
+  GOOG:   { type: 'equity', regions: { 美國: 1 } },
   AAPL:   { type: 'equity', regions: { 美國: 1 } },
   TSLA:   { type: 'equity', regions: { 美國: 1 } },
   SPACEX: { type: 'equity', regions: { 美國: 1 } },
   EIMI:   { type: 'equity', regions: { 中國: 0.25, 印度: 0.22, 台灣: 0.19, 韓國: 0.09, 其他: 0.25 } },
   XUSE:   { type: 'equity', regions: { 日本: 0.21, 其他: 0.79 } },
+  EXUS:   { type: 'equity', regions: { 日本: 0.21, 其他: 0.79 } },
   ICHN:   { type: 'equity', regions: { 中國: 1 } },
   KWEB:   { type: 'equity', regions: { 中國: 1 } },
   CSKR:   { type: 'equity', regions: { 韓國: 1 } },
@@ -69,6 +74,8 @@ const COMPOSITION = {
   SMH:      { type: 'equity', regions: { 美國: 1 } },
   SPCX:     { type: 'equity', regions: { 美國: 1 } },
   SGLD:     { type: 'gold', regions: {} },
+  GLD:      { type: 'gold', regions: {} },
+  IAU:      { type: 'gold', regions: {} },
   '00719B': { type: 'bond', regions: {} },
   '00720B': { type: 'bond', regions: {} }
 };
@@ -77,6 +84,7 @@ const compOf = (h) => COMPOSITION[(h.symbol || '').toUpperCase()]
 
 // ---- ETF 內含「公司」穿透（各 ETF 前十大成分的近似權重，可隨基金年報更新）----
 // 未列入前十大的成分不拆（視為 ETF 其餘部分）；直接持股走 DIRECT_COMPANY 以全額計。
+// XUSE/EXUS（世界除美國）刻意不列：成分極分散、前十大各僅約 1–2%，公司穿透貢獻可忽略，只做區域穿透。
 const T50 = { 台積電: 0.56, 鴻海: 0.05, 聯發科: 0.04, 台達電: 0.025, 廣達: 0.02, 富邦金: 0.015, 國泰金: 0.014, 中信金: 0.012, 日月光: 0.012, 聯電: 0.01 };
 const COMPANY_WEIGHTS = {
   CSPX: { 輝達: 0.075, 微軟: 0.065, 蘋果: 0.065, Alphabet: 0.04, 亞馬遜: 0.04, Meta: 0.026, 博通: 0.025, 特斯拉: 0.02, 波克夏: 0.016, 禮來: 0.012 },
@@ -583,6 +591,7 @@ function incomeSection(settings) {
       ${item(infoBtn('interestReceived', '利息收入'), inc.interestReceived, 'pos')}
       ${item('淨現金流', net, net >= 0 ? 'pos' : 'neg')}
     </div>
+    ${inc.skippedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率，未計入上列金額（重新同步通常可補齊）。</p>` : ''}
   </div>`;
 }
 
