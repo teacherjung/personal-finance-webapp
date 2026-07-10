@@ -10,10 +10,11 @@
   --text-dim: #73726c;    /* 次文字 */
   --accent: #c96442;      /* Claude 珊瑚紅 */
   --accent-soft: #f3e6df; /* 珊瑚淡底 */
-  --pos: #3f7a52;         /* 收入 / 獲利（暖綠）*/
-  --neg: #c0392b;         /* 支出 / 虧損 */
-  --warn: #b8762e;        /* 提醒（暖琥珀）*/
-  --danger: #c0392b;
+  /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
+  --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
+  --neg: #B84A39;         /* 支出 / 虧損（六色盤紅 #D96352 加深）*/
+  --warn: #A8681F;        /* 提醒（六色盤橘 #E8944A 加深）*/
+  --danger: #B84A39;
   --info: #6b7f99;        /* 資訊（霧藍）*/
   --shadow: 0 1px 3px rgba(60,50,40,.06), 0 1px 2px rgba(60,50,40,.04);
   --shadow-lg: 0 8px 30px rgba(60,50,40,.10);
@@ -143,9 +144,9 @@ tbody tr:hover { background: var(--card-2); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .tag { font-size: 11px; padding: 2px 9px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
-.tag.green { background: rgba(63,122,82,.12); color: var(--pos); }
+.tag.green { background: rgba(71,121,62,.12); color: var(--pos); }
 .tag.blue { background: rgba(107,127,153,.14); color: var(--info); }
-.tag.amber { background: rgba(184,118,46,.13); color: var(--warn); }
+.tag.amber { background: rgba(168,104,31,.13); color: var(--warn); }
 
 /* ---------- Buttons / forms ---------- */
 .page-actions { display: flex; align-items: center; gap: 8px; }
@@ -156,7 +157,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 9px
 .btn-ghost:hover { background: var(--card-2); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
 .btn-danger { background: transparent; color: var(--neg); border: 1px solid var(--line-2); }
-.btn-danger:hover { background: rgba(192,57,43,.08); }
+.btn-danger:hover { background: rgba(184,74,57,.08); }
 .btn-link { background: none; color: var(--accent); padding: 5px 8px; }
 .btn-link:hover { text-decoration: underline; }
 .icon-btn { width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
