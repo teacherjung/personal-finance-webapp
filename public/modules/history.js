@@ -27,7 +27,7 @@ export async function renderHistorySection(root) {
   root.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin:32px 0 14px">
       <div class="section-title" style="margin:0">歷史紀錄</div>
-      <select id="histYearSel" style="width:auto">${years.map(y => `<option value="${y}" ${y === selectedYear ? 'selected' : ''}>${y} 年</option>`).join('')}</select>
+      <select id="histYearSel" style="width:auto">${years.map(y => `<option value="${esc(y)}" ${y === selectedYear ? 'selected' : ''}>${esc(y)} 年</option>`).join('')}</select>
     </div>
 
     <div class="cards" style="margin-bottom:16px">

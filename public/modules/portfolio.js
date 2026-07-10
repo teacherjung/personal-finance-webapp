@@ -1,10 +1,11 @@
 // 投資組合：核心–衛星架構儀表板
-// ② 穿透式區域曝險 → ① 分層配置＋上限 → 持股表 → ④ 願望清單 → ③ CAPE → ⑥ 投入vs市值 → ⑤ 研究卡
-import { api, view, esc, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
+// 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
+import { api, view, esc, moneyCur, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
+const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
 const fmtPrice = (p, cur) => Number(p || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ' + (cur || '');
 // 表格用價格：整數；單價 <10 保留一位小數（例：5.4 USD）
 const fmtPrice0 = (p, cur) => {
@@ -33,9 +34,10 @@ let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
 // 投資原則凍結名單（每次 render 重算；供「編輯持股」加碼警告用）
 let FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
-const MONEY = (twd) => viewCur === 'USD'
-  ? kNum(Number(twd || 0) / usdRate) + ' K USD'
-  : wanNum(Number(twd || 0)) + ' 萬';
+const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
+  const n = Number(twd || 0), sign = n < 0 ? '−' : '', v = Math.abs(n);
+  return viewCur === 'USD' ? sign + kNum(v / usdRate) + ' K USD' : sign + wanNum(v) + ' 萬';
+};
 
 // ---- 分層（核心–衛星）與目標區間 ----
 const LAYERS = {
@@ -98,11 +100,12 @@ let lineChart = null;
 // 持股表排序（分組內排序，市值/損益/報酬率/佔比）
 let hSortKey = localStorage.getItem('pf_hSortKey') || 'value';
 let hSortDir = localStorage.getItem('pf_hSortDir') || 'desc';
+const byValueTwd = (a, b) => a.valueTwd - b.valueTwd;
 const H_SORTERS = {
-  value: (a, b) => a.valueTwd - b.valueTwd,
+  value: byValueTwd,
   pnl: (a, b) => a.pnlTwd - b.pnlTwd,
   ret: (a, b) => (a.costTwd ? a.pnlTwd / a.costTwd : 0) - (b.costTwd ? b.pnlTwd / b.costTwd : 0),
-  weight: (a, b) => a.valueTwd - b.valueTwd
+  weight: byValueTwd   // 佔比＝市值÷總額（總額固定），排序與市值等價
 };
 function hTri(key) {
   if (hSortKey === key) return `<span class="sort-tri active">${hSortDir === 'asc' ? '▲' : '▼'}</span>`;
@@ -260,7 +263,7 @@ export async function renderPortfolio() {
     try {
       const r = await api('/ib/sync', { method: 'POST' });
       const cashTxt = r.cash && Object.keys(r.cash).length
-        ? '；現金 ' + Object.entries(r.cash).map(([c, v]) => `${Math.round(v).toLocaleString('en-US')} ${c}`).join('、') : '';
+        ? '；現金 ' + Object.entries(r.cash).map(([c, v]) => moneyCur(v, c)).join('、') : '';
       toast(`IBKR 同步完成：更新 ${r.updated} 檔、新增 ${r.created} 檔${cashTxt}`);
       // IBKR 報表中已消失的持股（可能已出清）→ 確認後移除
       if (r.missing && r.missing.length) {
@@ -493,7 +496,6 @@ function incomeSection(settings) {
       ? sign + (Math.abs(n) / 1000).toFixed(2) + ' K USD'
       : sign + (Math.abs(n) * usdRate / 10000).toFixed(2) + ' 萬';
   };
-  const fmtD = (d) => d ? `${d.slice(0, 4)}/${d.slice(4, 6)}` : '';
   const item = (label, val, cls) => `<div style="min-width:150px">
     <div class="muted" style="font-size:11.5px">${label}</div>
     <div class="${cls}" style="font-family:var(--serif);font-size:19px;font-variant-numeric:tabular-nums">${usd(val)}</div>
@@ -570,7 +572,6 @@ function tradeSummary(trades, settings = {}) {
 function tradesSection(trades, settings) {
   if (!trades || !trades.length) return '';
   const inc = settings.ib?.income || {};
-  const fmtD = (d) => d ? `${d.slice(0, 4)}/${d.slice(4, 6)}` : '';
   const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, missingCurrencies } = tradeSummary(trades, settings);
   // 跟著計價切換（USD→K、TWD→萬）
   const usd = (n) => {
@@ -964,7 +965,7 @@ function drawInvestChart(psnaps, curCost, curValue) {
   lineChart = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets: [
-      { label: '投入成本', data: costs, borderColor: '#8a887f', backgroundColor: '#8a887f', borderDash: [5, 4], borderWidth: 2, pointRadius: 3, fill: false, tension: .25 },
+      { label: '投入成本', data: costs, borderColor: AXIS, backgroundColor: AXIS, borderDash: [5, 4], borderWidth: 2, pointRadius: 3, fill: false, tension: .25 },
       { label: '市值', data: values, borderColor: '#c96442', backgroundColor: 'rgba(201,100,66,.10)', borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
     ] },
     options: { responsive: true, maintainAspectRatio: false,
@@ -1144,8 +1145,7 @@ async function printPortfolioReport(d) {
   const val = (twd) => isUS
     ? Math.round(Number(twd || 0) / rate).toLocaleString('en-US') + ' USD'
     : Math.round(Number(twd || 0)).toLocaleString('en-US') + ' 元';
-  const big = (twd) => MONEY(twd);   // 摘要：萬 / K USD（隨計價）
-  const pctf = (n, dd = 1) => (Number(n) || 0).toFixed(dd) + '%';
+  const big = MONEY, pctf = fmtPct;   // 沿用模組級格式器（萬 / K USD 隨計價）
   const generated = todayStr();
 
   let cape = null;
@@ -1206,7 +1206,6 @@ async function printPortfolioReport(d) {
 
   // IBKR 現金流與交易摘要（原始為美元，統一轉台幣基準再依計價輸出）
   const inc = settings.ib?.income;
-  const fmtD = (x) => x ? `${x.slice(0, 4)}/${x.slice(4, 6)}` : '';
   const divTotal = inc ? (inc.dividends || 0) + (inc.paymentInLieu || 0) : 0;
   const netFlow = inc ? divTotal + (inc.withholdingTax || 0) + (inc.interestPaid || 0) + (inc.interestReceived || 0) : 0;
   const incomeHtml = inc ? `<section><h2>IBKR 現金流 <span>${fmtD(inc.from)}–${fmtD(inc.to)}</span></h2>

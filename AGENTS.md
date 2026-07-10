@@ -41,7 +41,8 @@
 |---|---|
 | `public/modules/portfolio.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
 | `portfolio.js` `fxSection.exposureCurrency` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
-| `subscriptions.js` export 的共用函式（monthlyCost/subStatus/addMonths…） | `history.js` 有 import（單向） |
+| IB 槓桿公式（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額） | `lib/derive.js` 規則 7 ↔ `portfolio.js` render 內，兩份要一致 |
+| `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
 
 ## 協作流程
