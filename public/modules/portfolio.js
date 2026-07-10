@@ -581,15 +581,17 @@ function layerSection(layerV, total) {
 }
 
 // ---- 持股佔比圓環圖（單色珊瑚漸層：身分由標籤直接標示，顏色只表大小順序）----
-const DONUT_RAMP = ['#C96442', '#D47B5B', '#DE9174', '#E7A78E', '#EFBCA8', '#F4CDBB', '#F8DCCE', '#FBE7DC'];
 function holdingsDonut(rows, total) {
   if (!(total > 0)) return '';
-  // 市值前 7 檔＋其他合併（圓環超過 8 片會難讀）
+  // 全部持股各自成片（依市值排序）；漸層由深到淺內插
   const sorted = rows.filter(r => r.valueTwd > 0).slice().sort((a, b) => b.valueTwd - a.valueTwd);
-  const top = sorted.slice(0, 7);
-  const restV = sorted.slice(7).reduce((s, r) => s + r.valueTwd, 0);
-  const items = top.map(r => ({ label: r.symbol, v: r.valueTwd }));
-  if (restV > 0) items.push({ label: `其他 ${sorted.length - 7} 檔`, v: restV });
+  const items = sorted.map(r => ({ label: r.symbol, v: r.valueTwd }));
+  const mix = (h1, h2, t) => {
+    const c1 = [1, 3, 5].map(i => parseInt(h1.slice(i, i + 2), 16));
+    const c2 = [1, 3, 5].map(i => parseInt(h2.slice(i, i + 2), 16));
+    return '#' + c1.map((x, j) => Math.round(x + (c2[j] - x) * t).toString(16).padStart(2, '0')).join('');
+  };
+  const rampAt = (i, n) => mix('#C96442', '#FBEAE1', n <= 1 ? 0 : i / (n - 1));
 
   const W = 780, H = 400, cx = 390, cy = 200, r = 118, sw = 26;
   const polar = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
@@ -602,39 +604,47 @@ function holdingsDonut(rows, total) {
     return s;
   });
 
-  // 弧線
+  // 弧線（每片都有原生 title 提示，標籤被省略的小部位滑鼠移上仍可見明細）
   const arcs = slices.map(s => {
     const g = Math.min(gap, (s.a1 - s.a0) / 4);
     const [x0, y0] = polar(r, s.a0 + g), [x1, y1] = polar(r, s.a1 - g);
     const large = (s.a1 - s.a0 - g * 2) > Math.PI ? 1 : 0;
     return `<path d="M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}"
-      fill="none" stroke="${DONUT_RAMP[s.i] || DONUT_RAMP[DONUT_RAMP.length - 1]}" stroke-width="${sw}"
+      fill="none" stroke="${rampAt(s.i, slices.length)}" stroke-width="${sw}"
       ><title>${esc(s.label)}　${MONEY(s.v)}（${s.pct.toFixed(1)}%）</title></path>`;
   }).join('');
 
-  // 外圈標籤：左右分側、由上而下防重疊
+  // 外圈標籤：左右分側；「大部位優先」佔位，放不下的省略（塞不下就不顯示）
+  const GAPY = 18;
   const sides = { L: [], R: [] };
   slices.forEach(s => sides[Math.cos(s.mid) >= 0 ? 'R' : 'L'].push({ ...s, ty: cy + Math.sin(s.mid) * (r + 34) }));
   const labels = [];
   for (const side of ['L', 'R']) {
-    const list = sides[side].sort((x, y) => x.ty - y.ty);
-    let prev = -Infinity;
-    for (const s of list) {
-      const y = Math.min(Math.max(s.ty, prev + 21, 18), H - 10);
-      prev = y;
+    const placed = [];
+    for (const s of sides[side].sort((x, y) => y.v - x.v)) {
+      const base = Math.min(Math.max(s.ty, 16), H - 8);
+      let y = null;
+      for (const off of [0, -7, 7, -14, 14, -21, 21, -28, 28, -35, 35, -42, 42, -49, 49, -56, 56, -63, 63]) {   // 允許上下挪動找空位
+        const cand = base + off;
+        if (cand < 16 || cand > H - 8) continue;
+        if (placed.every(p => Math.abs(p - cand) >= GAPY)) { y = cand; break; }
+      }
+      if (y == null) continue;   // 真的塞不下 → 省略標籤（title 提示仍在）
+      placed.push(y);
       const [px, py] = polar(r + sw / 2 + 4, s.mid);
       const tx = side === 'R' ? cx + r + 76 : cx - r - 76;
       const lineEnd = side === 'R' ? tx - 6 : tx + 6;
+      // 小部位（<2.5%）只放代號，省空間讓更多名稱擠得進來
+      const detail = s.pct < 2.5 ? '' : `<tspan fill="var(--text-dim)"> ${MONEY(s.v)}（${s.pct.toFixed(1)}%）</tspan>`;
       labels.push(`<line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${lineEnd}" y2="${(y - 4).toFixed(1)}" stroke="var(--line-2)" stroke-width="1"/>
         <text x="${tx}" y="${y.toFixed(1)}" text-anchor="${side === 'R' ? 'start' : 'end'}" font-size="12.5">
-          <tspan fill="var(--text)" font-weight="600">${esc(s.label)}</tspan>
-          <tspan fill="var(--text-dim)"> ${MONEY(s.v)}（${s.pct.toFixed(1)}%）</tspan>
+          <tspan fill="var(--text)" font-weight="600">${esc(s.label)}</tspan>${detail}
         </text>`);
     }
   }
 
   return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>持股佔比 <span class="stat-sub" style="font-weight:400;margin:0">（依市值，前 7 檔＋其他；中心總市值隨計價切換）</span></h3>
+    <h3>持股佔比 <span class="stat-sub" style="font-weight:400;margin:0">（全部持股依市值；標籤放不下的小部位省略，滑鼠移上色塊可見明細）</span></h3>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:820px;display:block;margin:0 auto" role="img" aria-label="持股佔比圓環圖">
       ${arcs}
       ${labels.join('')}
