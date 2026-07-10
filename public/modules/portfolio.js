@@ -75,6 +75,34 @@ const COMPOSITION = {
 const compOf = (h) => COMPOSITION[(h.symbol || '').toUpperCase()]
   || { type: h.layer === 'bond' ? 'bond' : h.layer === 'gold' ? 'gold' : 'equity', regions: { 其他: 1 } };
 
+// ---- ETF 內含「公司」穿透（各 ETF 前十大成分的近似權重，可隨基金年報更新）----
+// 未列入前十大的成分不拆（視為 ETF 其餘部分）；直接持股走 DIRECT_COMPANY 以全額計。
+const T50 = { 台積電: 0.56, 鴻海: 0.05, 聯發科: 0.04, 台達電: 0.025, 廣達: 0.02, 富邦金: 0.015, 國泰金: 0.014, 中信金: 0.012, 日月光: 0.012, 聯電: 0.01 };
+const COMPANY_WEIGHTS = {
+  CSPX: { 輝達: 0.075, 微軟: 0.065, 蘋果: 0.065, Alphabet: 0.04, 亞馬遜: 0.04, Meta: 0.026, 博通: 0.025, 特斯拉: 0.02, 波克夏: 0.016, 禮來: 0.012 },
+  QQQM: { 輝達: 0.09, 微軟: 0.085, 蘋果: 0.08, 亞馬遜: 0.055, Alphabet: 0.05, 博通: 0.05, Meta: 0.05, 特斯拉: 0.03, Netflix: 0.025, Costco: 0.025 },
+  SMH:  { 輝達: 0.20, 台積電: 0.12, 博通: 0.08, 超微: 0.05, 艾司摩爾: 0.05, 德儀: 0.04, 高通: 0.04, 美光: 0.04, 應用材料: 0.04, 科林研發: 0.04 },
+  '0050': T50,
+  '006208': T50,   // 富邦台50 與 0050 追蹤同一指數
+  EIMI: { 台積電: 0.085, 騰訊: 0.04, 三星電子: 0.03, 阿里巴巴: 0.025, 小米: 0.012, 美團: 0.01, HDFC銀行: 0.01, 信實工業: 0.009, 拼多多: 0.008 },
+  KWEB: { 騰訊: 0.11, 阿里巴巴: 0.10, 拼多多: 0.08, 美團: 0.08, 網易: 0.05, 京東: 0.05, 百度: 0.05, 攜程: 0.05, 快手: 0.04, 貝殼: 0.03 },
+  ICHN: { 騰訊: 0.14, 阿里巴巴: 0.09, 拼多多: 0.05, 美團: 0.04, 小米: 0.04, 比亞迪: 0.025, 網易: 0.02, 京東: 0.02, 百度: 0.015 },
+  SJPA: { 豐田: 0.045, 三菱UFJ: 0.03, Sony: 0.03, 日立: 0.025, 三井住友金融: 0.02, 東京威力科創: 0.02, 任天堂: 0.015, Keyence: 0.015, 迅銷: 0.015, 軟銀集團: 0.015 },
+  CSKR: { 三星電子: 0.28, SK海力士: 0.13, 現代汽車: 0.04, 起亞: 0.03, Celltrion: 0.03, NAVER: 0.03, KB金融: 0.03, 新韓金融: 0.025, 三星生物: 0.025, LG新能源: 0.02 }
+};
+// 直接持股 → 公司（以全額計）
+const DIRECT_COMPANY = { AAPL: '蘋果', GOOGL: 'Alphabet', TSLA: '特斯拉', SPCX: 'SpaceX' };
+// 公司 → 國家（決定長條顏色，與「持股曝險」區域卡同一套色）
+const COMPANY_REGION = {
+  台積電: '台灣', 鴻海: '台灣', 聯發科: '台灣', 台達電: '台灣', 廣達: '台灣', 富邦金: '台灣', 國泰金: '台灣', 中信金: '台灣', 日月光: '台灣', 聯電: '台灣',
+  輝達: '美國', 微軟: '美國', 蘋果: '美國', Alphabet: '美國', 亞馬遜: '美國', Meta: '美國', 博通: '美國', 特斯拉: '美國', 波克夏: '美國', 禮來: '美國',
+  Netflix: '美國', Costco: '美國', 超微: '美國', 德儀: '美國', 高通: '美國', 美光: '美國', 應用材料: '美國', 科林研發: '美國', SpaceX: '美國',
+  騰訊: '中國', 阿里巴巴: '中國', 拼多多: '中國', 美團: '中國', 網易: '中國', 京東: '中國', 百度: '中國', 攜程: '中國', 快手: '中國', 貝殼: '中國', 比亞迪: '中國', 小米: '中國',
+  三星電子: '韓國', SK海力士: '韓國', 現代汽車: '韓國', 起亞: '韓國', Celltrion: '韓國', NAVER: '韓國', KB金融: '韓國', 新韓金融: '韓國', 三星生物: '韓國', LG新能源: '韓國',
+  豐田: '日本', 三菱UFJ: '日本', Sony: '日本', 日立: '日本', 三井住友金融: '日本', 東京威力科創: '日本', 任天堂: '日本', Keyence: '日本', 迅銷: '日本', 軟銀集團: '日本',
+  HDFC銀行: '印度', 信實工業: '印度', 艾司摩爾: '其他'
+};
+
 // ---- CAPE 歷史分位（1881 起月資料的近似分位數）與規則帶 ----
 const CAPE_PCT = [[4.8, 0], [9.6, 10], [11.6, 20], [13.7, 30], [15.5, 40], [16.9, 50], [18.9, 60], [21.2, 70], [24.4, 80], [28.4, 90], [32, 95], [44.2, 100]];
 function capePercentile(v) {
@@ -227,6 +255,7 @@ export async function renderPortfolio() {
     ${incomeSection(settings)}
     ${tradesSection(ibTrades, settings)}
     ${regionSection(regionMap, eqV)}
+    ${companiesSection(rows, eqV)}
     ${layerSection(layerV, total)}
     ${holdingsDonut(rows, total)}
     ${holdingsTable(rows, total)}
@@ -726,6 +755,44 @@ function regionSection(regionMap, eqV) {
     </div>
     <p class="muted small" style="margin-top:10px">EIMI 內含的中國／印度／台灣／韓國權重已拆入各區域（近似值，可隨年報更新）。
     你真實的中國曝險 ${fmtPct(china)}＝ICHN＋KWEB＋EIMI 的中國成分；不看好的印度目前實佔 ${fmtPct(india)}。</p>
+  </div>`;
+}
+
+// ---- 持股公司 Top 20（穿透：直接持股全額＋ETF 前十大成分近似拆分）----
+function companiesSection(rows, eqV) {
+  if (!(eqV > 0)) return '';
+  const agg = {};   // 公司 → { v, src: { 持股代號: 金額 } }
+  const add = (co, v, sym) => {
+    const a = agg[co] = agg[co] || { v: 0, src: {} };
+    a.v += v; a.src[sym] = (a.src[sym] || 0) + v;
+  };
+  for (const r of rows) {
+    if (compOf(r).type !== 'equity' || !(r.valueTwd > 0)) continue;
+    const sym = String(r.symbol || '').toUpperCase();
+    if (DIRECT_COMPANY[sym]) { add(DIRECT_COMPANY[sym], r.valueTwd, sym); continue; }
+    const w = COMPANY_WEIGHTS[sym];
+    if (!w) continue;   // 沒有成分表的 ETF 不拆
+    for (const [co, f] of Object.entries(w)) add(co, r.valueTwd * f, sym);
+  }
+  const top = Object.entries(agg).sort((a, b) => b[1].v - a[1].v).slice(0, 20);
+  if (!top.length) return '';
+  const maxV = top[0][1].v;
+  const coveredPct = top.reduce((s, [, a]) => s + a.v, 0) / eqV * 100;
+  return `<div class="chart-card" style="margin-bottom:16px">
+    <h3>持股公司 Top 20 <span class="stat-sub" style="font-weight:400;margin:0">（穿透 ETF 成分，佔股票部位 %；顏色＝公司所屬國家）</span></h3>
+    <div class="region-rows">
+      ${top.map(([co, a], i) => {
+        const color = REGION_COLOR[COMPANY_REGION[co]] || CHART.gray;
+        const srcTxt = Object.entries(a.src).sort((x, y) => y[1] - x[1]).map(([s, v]) => `${s} ${MONEY(v)}`).join('、');
+        return `<div class="rrow" title="${esc(co)} ＝ ${esc(srcTxt)}">
+        <span class="rlabel nowrap"><span class="muted" style="font-size:10.5px;display:inline-block;width:16px">${i + 1}</span><span class="cat-dot" style="background:${color}"></span>${esc(co)}</span>
+        <div class="rbar"><div style="width:${(a.v / maxV * 100).toFixed(1)}%;background:${color}"></div></div>
+        <span class="rval">${fmtPct(a.v / eqV * 100)} <span class="muted">${MONEY(a.v)}</span></span>
+      </div>`;
+      }).join('')}
+    </div>
+    <p class="muted small" style="margin-top:10px">ETF 只拆前十大成分（近似權重，可隨年報更新），其餘部分不入列；直接持股（AAPL、GOOGL…）以全額計。
+    Top 20 合計約佔股票部位 ${fmtPct(coveredPct)}。滑鼠移到列上可見「這家公司是透過哪幾筆持股持有」。</p>
   </div>`;
 }
 
