@@ -1,0 +1,58 @@
+# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書
+
+這是三方協作（使用者 + Claude Code + Codex）的**單一真相來源**。動手前先讀完；改動若牽涉本文件的規則，請一併更新本文件。
+
+## 專案概觀
+
+本機優先（隱私第一）的個人理財網頁。**零建置**：改完存檔即生效，沒有 bundler/transpiler，不要引入 npm 前端相依。
+
+- 後端：`server.js`（Express，只聽 `127.0.0.1`，埠 `PORT` 環境變數或 4321）
+- 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
+- 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
+- IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
+- 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（一頁一檔）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）
+
+啟動：`npm start` → http://localhost:4321 。注意：使用者常自己開著一個伺服器佔 4321，`.claude/launch.json` 已設 `autoPort`。
+
+## 鐵則（違反會壞事）
+
+1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股）。
+2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
+3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
+4. **色彩分工**：
+   - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。
+   - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
+   - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
+5. **金額格式**（app.js 統一格式器，不要自己 toLocaleString）：
+   - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）
+   - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
+6. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。
+
+## 投資領域語意（改相關程式前必讀）
+
+- **投資原則（使用者拍板）**：所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)/`levCapSignalPct`(1.6)，設定頁「投資原則」卡可調。
+- **融資槓桿只算 IB**：IB 持倉（`source:'ib'`）÷ IB 淨值；融資＝`ibCashCur` 帳戶負餘額。排除台新現金與台股，文案標「IB」前綴。
+- **多幣別損益**：已實現損益/現金流換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。
+- 台股（0050/006208/00719B/00720B）無 API、手動維護股數；報價 Yahoo（台債後綴 `.TWO`；GBp 便士 ÷100 轉 GBP）。
+
+## ⚠️ 同步點清單（改一處必須檢查另一處）
+
+| 改這裡 | 記得同步這裡 |
+|---|---|
+| `public/modules/portfolio.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
+| `portfolio.js` `fxSection.exposureCurrency` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
+| `subscriptions.js` export 的共用函式（monthlyCost/subStatus/addMonths…） | `history.js` 有 import（單向） |
+| settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
+
+## 協作流程
+
+- `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
+- 同一時間**只有一個 agent** 改本機工作樹；需要平行用 `git worktree`。
+- 使用者是最終合併者。Commit 訊息用繁體中文、講清楚動機。
+- 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。
+
+## 已知待辦（背景脈絡）
+
+- 估值訊號儀表（五市場指標：美 ECY、滬深300 PE、日/韓 P/B、台 PE/殖利率 → tier 判定）尚未實作。
+- XIRR 未做（需入金紀錄）。
+- 個股基本面分析方法待建立（AAPL/GOOGL 等）。
