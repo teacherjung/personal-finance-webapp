@@ -1,6 +1,6 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, esc, moneyCur, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
+import { api, view, esc, moneyCur, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -664,85 +664,57 @@ function tradesModalHtml(trades) {
     </div>`;
 }
 
+// 資產明細彈窗共用產生器（成本/股/債/現/金）：items=[{label,value,pct?}]，有 pct 走三欄版
+const pctOf = (v, base) => base ? Math.round(v / base * 100) : 0;
+function detailTableHtml({ head, items, total, totalPct, emptyText }) {
+  const three = head.length >= 3;
+  const body = items.length ? items.map(it => `<tr>
+    <td class="nowrap"><b>${esc(it.label)}</b></td>
+    <td class="num">${MONEY(it.value)}</td>${three ? `
+    <td class="num">${it.pct}%</td>` : ''}
+  </tr>`).join('') : `<tr><td colspan="${head.length}" class="muted" style="text-align:center;padding:22px">${esc(emptyText)}</td></tr>`;
+  return `<div class="cost-detail-total compact-summary${three ? ' three-col' : ''}">
+      <span></span>
+      <b>合計：${MONEY(total)}</b>${three ? `
+      <b>合計：${totalPct}%</b>` : ''}
+    </div>
+    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
+      <table class="cost-detail-table compact${three ? ' three-col' : ''}">
+        <thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
 function costDetailHtml(rows, totalCost) {
-  const body = rows.slice().sort((a, b) => b.costTwd - a.costTwd).map(r => `<tr>
-    <td class="nowrap"><b>${esc(r.symbol)}</b></td>
-    <td class="num">${MONEY(r.costTwd)}</td>
-  </tr>`).join('');
-  return `<div class="cost-detail-total compact-summary">
-      <span></span>
-      <b>合計：${MONEY(totalCost)}</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact">
-        <thead><tr><th>標的</th><th class="num">成本</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['標的', '成本'],
+    items: rows.slice().sort((a, b) => b.costTwd - a.costTwd).map(r => ({ label: r.symbol, value: r.costTwd })),
+    total: totalCost, emptyText: '目前沒有持股'
+  });
 }
-
 function assetHoldingDetailHtml(label, rows, totalValue, baseValue) {
-  const body = rows.length ? rows.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(r => `<tr>
-    <td class="nowrap"><b>${esc(r.symbol)}</b></td>
-    <td class="num">${MONEY(r.valueTwd)}</td>
-    <td class="num">${baseValue ? Math.round(r.valueTwd / baseValue * 100) : 0}%</td>
-  </tr>`).join('') : `<tr><td colspan="3" class="muted" style="text-align:center;padding:22px">目前沒有${esc(label)}部位</td></tr>`;
-  return `<div class="cost-detail-total compact-summary three-col">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-      <b>合計：${baseValue ? Math.round(totalValue / baseValue * 100) : 0}%</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact three-col">
-        <thead><tr><th>標的</th><th class="num">市值</th><th class="num">佔比</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['標的', '市值', '佔比'],
+    items: rows.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(r => ({ label: r.symbol, value: r.valueTwd, pct: pctOf(r.valueTwd, baseValue) })),
+    total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: `目前沒有${label}部位`
+  });
 }
-
 function assetAccountDetailHtml(label, accounts, totalValue) {
-  const body = accounts.length ? accounts.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(a => `<tr>
-    <td><b>${esc(a.name || '未命名帳戶')}</b></td>
-    <td class="num">${MONEY(a.valueTwd)}</td>
-  </tr>`).join('') : `<tr><td colspan="2" class="muted" style="text-align:center;padding:22px">目前沒有${esc(label)}帳戶</td></tr>`;
-  return `<div class="cost-detail-total compact-summary">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact">
-        <thead><tr><th>帳戶</th><th class="num">金額</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  return detailTableHtml({
+    head: ['帳戶', '金額'],
+    items: accounts.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(a => ({ label: a.name || '未命名帳戶', value: a.valueTwd })),
+    total: totalValue, emptyText: `目前沒有${label}帳戶`
+  });
 }
-
 function assetGoldDetailHtml(rows, accounts, totalValue, baseValue) {
-  const holdingRows = rows.map(r => ({
-    item: r.symbol,
-    valueTwd: r.valueTwd
-  }));
-  const accountRows = accounts.map(a => ({
-    item: a.name || '黃金帳戶',
-    valueTwd: a.valueTwd
-  }));
-  const items = holdingRows.concat(accountRows).sort((a, b) => b.valueTwd - a.valueTwd);
-  const body = items.length ? items.map(item => `<tr>
-    <td><b>${esc(item.item)}</b></td>
-    <td class="num">${MONEY(item.valueTwd)}</td>
-    <td class="num">${baseValue ? Math.round(item.valueTwd / baseValue * 100) : 0}%</td>
-  </tr>`).join('') : `<tr><td colspan="3" class="muted" style="text-align:center;padding:22px">目前沒有黃金部位</td></tr>`;
-  return `<div class="cost-detail-total compact-summary three-col">
-      <span></span>
-      <b>合計：${MONEY(totalValue)}</b>
-      <b>合計：${baseValue ? Math.round(totalValue / baseValue * 100) : 0}%</b>
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact three-col">
-        <thead><tr><th>項目</th><th class="num">市值</th><th class="num">佔比</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
+  const items = rows.map(r => ({ label: r.symbol, value: r.valueTwd }))
+    .concat(accounts.map(a => ({ label: a.name || '黃金帳戶', value: a.valueTwd })))
+    .sort((a, b) => b.value - a.value)
+    .map(it => ({ ...it, pct: pctOf(it.value, baseValue) }));
+  return detailTableHtml({
+    head: ['項目', '市值', '佔比'],
+    items, total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: '目前沒有黃金部位'
+  });
 }
 
 // ---- ② 穿透式區域曝險 ----
@@ -1295,22 +1267,11 @@ async function printPortfolioReport(d) {
     ? `<p class="muted">Shiller PE（CAPE）：<b>${Number(cape.value).toFixed(2)}</b>（歷史分位 ~${capePercentile(Number(cape.value)).toFixed(0)}%，${(CAPE_BANDS.find(b => Number(cape.value) < b.to) || CAPE_BANDS[CAPE_BANDS.length - 1]).label}）</p>` : '';
 
   const base3 = eqV + bondV + goldAll;
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>投資組合報表 ${generated}</title>
-    <style>
-      @page { size: A4; margin: 14mm; }
-      * { box-sizing: border-box; }
-      body { margin: 0; color: #2f2b27; background: #ebe6dc; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", sans-serif; font-size: 12px; }
-      .preview-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(47,43,39,.92); color: #fff; box-shadow: 0 8px 24px rgba(47,43,39,.18); }
-      .preview-bar strong { font-size: 14px; }
-      .preview-bar button { border: 1px solid rgba(255,255,255,.28); background: #fff; color: #2f2b27; border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
-      .preview-shell { min-height: 100vh; padding: 24px 18px 42px; }
-      .paper { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 14mm; background: #fff; box-shadow: 0 18px 60px rgba(47,43,39,.24); }
+  const extraCss = `
       h1, h2 { margin: 0; font-weight: 600; }
       h1 { font-size: 26px; letter-spacing: .02em; }
       h2 { font-size: 16px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ded8cc; padding-bottom: 8px; }
       h2 span { font-size: 13px; color: #c96442; font-weight: 500; }
-      .cover { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; border-bottom: 2px solid #2f2b27; padding-bottom: 16px; margin-bottom: 16px; }
-      .muted { color: #8a887f; }
       .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
       .metric { border: 1px solid #ded8cc; border-radius: 8px; padding: 12px; }
       .metric span { color: #8a887f; display: block; margin-bottom: 6px; }
@@ -1324,14 +1285,8 @@ async function printPortfolioReport(d) {
       .center { text-align: center; }
       td.group { background: #faf7f0; font-weight: 600; }
       footer { margin-top: 14px; border-top: 1px solid #ded8cc; padding-top: 10px; font-size: 10.5px; color: #8a887f; line-height: 1.6; }
-      @media (max-width: 900px) { .paper { width: 100%; min-height: auto; } .preview-shell { padding: 14px; } }
-      @media print {
-        body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-        .preview-bar { display: none; }
-        .preview-shell { padding: 0; }
-        .paper { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
-      }
-    </style></head><body>
+`;
+  openPrintWindow(`投資組合報表 ${generated}`, extraCss, `
     <div class="preview-bar"><div><strong>投資組合報表預覽</strong></div><button onclick="window.print()">列印 / 另存</button></div>
     <main class="preview-shell"><article class="paper">
       <header class="cover">
@@ -1360,10 +1315,5 @@ async function printPortfolioReport(d) {
       ${tradesHtml}
       ${capeHtml}
       <footer>口徑說明：持股成本為 FIFO 成本基礎（與 IBKR 一致，含手續費）；IBKR 部位與現金來自 Flex Query（前一交易日）；報價來自 Yahoo Finance（可能延遲 15–20 分鐘）；融資借款列為負債，淨值＝總部位−融資；區域權重為近似值。本報表僅供個人記錄，非投資建議。</footer>
-    </article></main></body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) return toast('瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。', true);
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+    </article></main>`);
 }

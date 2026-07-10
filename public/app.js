@@ -128,6 +128,40 @@ export function openInfo(title, bodyHtml, opts = {}) {
   root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
 }
 
+// ---------- 列印報表共用外殼（訂閱/投組報表） ----------
+// A4 預覽視窗的共通 CSS（預覽列、紙張、封面列、列印媒體規則）；各報表把自己的內容 CSS 接在後面
+const PRINT_SHELL_CSS = `
+      @page { size: A4; margin: 14mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: #2f2b27; background: #ebe6dc; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", sans-serif; font-size: 12px; }
+      .preview-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(47,43,39,.92); color: #fff; box-shadow: 0 8px 24px rgba(47,43,39,.18); }
+      .preview-bar strong { font-size: 14px; }
+      .preview-bar span { color: rgba(255,255,255,.72); font-size: 12px; margin-left: 8px; }
+      .preview-bar button { border: 1px solid rgba(255,255,255,.28); background: #fff; color: #2f2b27; border-radius: 8px; padding: 8px 13px; font: inherit; cursor: pointer; }
+      .preview-shell { min-height: 100vh; padding: 24px 18px 42px; }
+      .paper { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 14mm; background: #fff; box-shadow: 0 18px 60px rgba(47,43,39,.24); }
+      .cover { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; border-bottom: 2px solid #2f2b27; padding-bottom: 16px; margin-bottom: 16px; }
+      .muted { color: #8a887f; }
+      @media (max-width: 900px) { .paper { width: 100%; min-height: auto; } .preview-shell { padding: 14px; } }
+      @media print {
+        body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .preview-bar { display: none; }
+        .preview-shell { padding: 0; }
+        .paper { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+      }`;
+
+// 開啟列印預覽視窗（popup 被擋時提示）；bodyHtml 需含 .preview-bar 與 .paper 內容
+export function openPrintWindow(title, extraCss, bodyHtml) {
+  const win = window.open('', '_blank');
+  if (!win) return toast('瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。', true);
+  win.document.open();
+  win.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>${PRINT_SHELL_CSS}
+${extraCss}
+    </style></head><body>${bodyHtml}</body></html>`);
+  win.document.close();
+}
+
 export async function confirmDelete(name, fn) {
   if (!window.confirm(`確定要刪除「${name}」嗎？此動作無法復原。`)) return;
   try { await fn(); toast('已刪除'); router(); }
