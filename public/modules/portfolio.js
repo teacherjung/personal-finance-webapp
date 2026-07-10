@@ -30,6 +30,8 @@ const holdingCost = (h) => (h.avgCost != null && h.avgCost !== '') ? Number(h.av
 // 雙計價顯示：TWD（台幣計價，單位「萬」）或 USD（美元計價，單位「K」），記在 localStorage
 let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
+// 投資原則凍結名單（每次 render 重算；供「編輯持股」加碼警告用）
+let FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
 const MONEY = (twd) => viewCur === 'USD'
   ? kNum(Number(twd || 0) / usdRate) + ' K USD'
   : wanNum(Number(twd || 0)) + ' 萬';
@@ -107,8 +109,8 @@ function hTri(key) {
 }
 
 export async function renderPortfolio() {
-  const [holdings, watchlist, research, settings, psnaps, accounts, ibTrades] = await Promise.all([
-    api('/holdings'), api('/watchlist'), api('/research'), api('/settings'), api('/portfolioSnapshots'), api('/accounts'), api('/ibTrades')
+  const [holdings, watchlist, research, settings, psnaps, accounts, ibTrades, summary] = await Promise.all([
+    api('/holdings'), api('/watchlist'), api('/research'), api('/settings'), api('/portfolioSnapshots'), api('/accounts'), api('/ibTrades'), api('/summary')
   ]);
   if (lineChart) { lineChart.destroy(); lineChart = null; }
   const fx = fxTable(settings);
@@ -161,6 +163,28 @@ export async function renderPortfolio() {
   const qqqmShare = (qqqm + cspx) > 0 ? qqqm / (qqqm + cspx) * 100 : 0;
   const qqqmMax = Number(settings.qqqmMaxPct || 30);
 
+  // 投資原則（口徑 % 淨資產、穿透；軟上限）：上限值與凍結名單
+  const netWorth = Number(summary?.netWorth || 0);
+  const CAPS = {
+    stock: Number(settings.ibConcentrationPct ?? 5),
+    equity: Number(settings.equityCapPct ?? 90),
+    country: Number(settings.countryCapPct ?? 15),
+    china: Number(settings.chinaCapPct ?? settings.countryCapPct ?? 15),
+    lev: Number(settings.levCapPct ?? 1.3),
+    levSig: Number(settings.levCapSignalPct ?? 1.6)
+  };
+  const capForRegion = (rg) => rg === '中國' ? CAPS.china : CAPS.country;
+  FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
+  if (netWorth > 0) {
+    rows.filter(r => r.layer === 'stock' && r.valueTwd / netWorth * 100 > CAPS.stock)
+      .forEach(r => FREEZE.symbols.add(String(r.symbol || '').toUpperCase()));
+    for (const [rg, v] of Object.entries(regionMap)) {
+      if (rg === '美國' || rg === '其他') continue;
+      if (v / netWorth * 100 > capForRegion(rg)) FREEZE.regions.add(rg);
+    }
+    FREEZE.equity = eqV / netWorth * 100 > CAPS.equity;
+  }
+
   view().innerHTML = `
     <div class="page-head">
       <div><h1>投資組合</h1><p>核心–衛星架構：掌握配置、留意風險、等待機會。</p></div>
@@ -185,6 +209,7 @@ export async function renderPortfolio() {
         <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage >= 1.6 ? 'var(--neg)' : leverage >= 1.3 ? 'var(--warn)' : 'var(--pos)'}"></div></div></div>
     </div>
 
+    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS)}
     ${fxSection(rows, accounts, fx)}
     ${incomeSection(settings)}
     ${tradesSection(ibTrades, settings)}
@@ -277,6 +302,42 @@ export async function renderPortfolio() {
 
   drawInvestChart(psnaps, totalCost, total);
   loadCape(settings, qqqmShare, qqqmMax);
+}
+
+// ---- 投資原則：紀律檢查卡（唯讀；口徑 % 淨資產、穿透；黑刻度＝上限、紅＝超出）----
+function capBar(value, cap) {
+  const scale = Math.max(value, cap) * 1.12 || 1;
+  const okW = (Math.min(value, cap) / scale * 100).toFixed(1);
+  const overW = Math.max(0, value - cap) / scale * 100;
+  const markL = (cap / scale * 100).toFixed(1);
+  return `<div class="cap-bar"><div class="cb-ok" style="width:${okW}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${markL}%"></div></div>`;
+}
+function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
+  if (!(netWorth > 0)) return '';
+  const pn = (v) => v / netWorth * 100;
+  const row = (label, value, cap, unit = '%', overLabel = '🔒 凍結') => {
+    const over = value > cap;
+    const valTxt = unit === 'x' ? value.toFixed(2) + 'x' : fmtPct(value);
+    const capTxt = unit === 'x' ? cap + 'x' : cap + '%';
+    return `<div class="rrow cap-row">
+      <span class="nowrap">${label}</span>
+      ${capBar(value, cap)}
+      <span class="rval">${valTxt} / ${capTxt}　${over ? `<b class="neg">${overLabel}</b>` : '<span class="pos">✓</span>'}</span>
+    </div>`;
+  };
+  const items = [];
+  items.push(row('股票總曝險', pn(eqV), CAPS.equity));
+  rows.filter(r => r.layer === 'stock').sort((a, b) => b.valueTwd - a.valueTwd)
+    .forEach(r => items.push(row(esc(r.symbol), pn(r.valueTwd), CAPS.stock)));
+  Object.entries(regionMap).filter(([rg]) => rg !== '美國' && rg !== '其他')
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([rg, v]) => items.push(row(`${esc(rg)}（穿透）`, pn(v), rg === '中國' ? CAPS.china : CAPS.country)));
+  items.push(row('融資槓桿', leverage, CAPS.lev, 'x', '🔒 停借'));
+  return `<div class="chart-card" style="margin-bottom:16px">
+    <h3>紀律檢查 <span class="stat-sub" style="font-weight:400;margin:0">（投資原則：% 淨資產、穿透；超標＝凍結加碼。上限在設定頁調整）</span></h3>
+    <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
+    <p class="muted small" style="margin-top:8px">黑色刻度＝上限，紅色＝超出部分。融資槓桿平時上限 ${CAPS.lev}x、估值訊號期上限 ${CAPS.levSig}x。</p>
+  </div>`;
 }
 
 // ---- 幣別曝險（各幣別淨曝險＝持股＋現金－融資，折台幣）----
@@ -737,6 +798,20 @@ function openHoldingForm(h) {
     ],
     values: h ? { ...h, avgCost: h.avgCost != null ? Math.round(Number(h.avgCost) * 100) / 100 : (Number(h.quantity) ? Math.round(Number(h.cost || 0) / Number(h.quantity) * 100) / 100 : '') } : { currency: 'USD', layer: 'core' },
     onSubmit: async (data) => {
+      // 投資原則：凍結名單加碼警告（軟上限——確認後仍可儲存；減碼/改備註不受影響）
+      const oldQty = h ? Number(h.quantity || 0) : 0;
+      const newQty = Number(data.quantity || 0);
+      if (newQty > oldQty) {
+        const sym = String(data.symbol || '').toUpperCase().trim();
+        const comp = compOf({ symbol: sym, layer: data.layer });
+        const reasons = [];
+        if (FREEZE.symbols.has(sym)) reasons.push('單一個股上限');
+        for (const rg of Object.keys(comp.regions || {})) if (FREEZE.regions.has(rg)) reasons.push(`${rg}上限`);
+        if (comp.type === 'equity' && FREEZE.equity) reasons.push('股票總曝險上限');
+        if (reasons.length && !window.confirm(`⚠️ ${sym} 目前凍結加碼（超過：${reasons.join('、')}）。\n依投資原則不應加碼，確定仍要儲存？`)) {
+          throw new Error('已取消：該標的凍結加碼中');
+        }
+      }
       data.avgCost = Math.round(Number(data.avgCost || 0) * 100) / 100;   // 均價統一兩位小數
       data.price = Math.round(Number(data.price || 0) * 100) / 100;
       data.cost = Math.round((data.avgCost * Number(data.quantity || 0)) * 100) / 100;  // 投入成本＝均價×股數
