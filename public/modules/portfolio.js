@@ -216,6 +216,7 @@ export async function renderPortfolio() {
     ${tradesSection(ibTrades, settings)}
     ${regionSection(regionMap, eqV)}
     ${layerSection(layerV, total)}
+    ${holdingsDonut(rows, total)}
     ${holdingsTable(rows, total)}
     ${watchlistSection(watchlist)}
 
@@ -576,6 +577,70 @@ function layerSection(layerV, total) {
       <thead><tr><th>層</th><th>金額</th><th>佔比</th><th>目標區間</th><th>狀態</th></tr></thead>
       <tbody>${rowsHtml}</tbody></table></div>
     <p class="muted small">目標區間可依你的規劃調整（跟我說一聲即可改）。</p>
+  </div>`;
+}
+
+// ---- 持股佔比圓環圖（單色珊瑚漸層：身分由標籤直接標示，顏色只表大小順序）----
+const DONUT_RAMP = ['#C96442', '#D47B5B', '#DE9174', '#E7A78E', '#EFBCA8', '#F4CDBB', '#F8DCCE', '#FBE7DC'];
+function holdingsDonut(rows, total) {
+  if (!(total > 0)) return '';
+  // 市值前 7 檔＋其他合併（圓環超過 8 片會難讀）
+  const sorted = rows.filter(r => r.valueTwd > 0).slice().sort((a, b) => b.valueTwd - a.valueTwd);
+  const top = sorted.slice(0, 7);
+  const restV = sorted.slice(7).reduce((s, r) => s + r.valueTwd, 0);
+  const items = top.map(r => ({ label: r.symbol, v: r.valueTwd }));
+  if (restV > 0) items.push({ label: `其他 ${sorted.length - 7} 檔`, v: restV });
+
+  const W = 780, H = 400, cx = 390, cy = 200, r = 118, sw = 26;
+  const polar = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
+  const gap = 2.5 / r;   // 片與片之間 ~2.5px 縫
+  let a = -Math.PI / 2;
+  const slices = items.map((it, i) => {
+    const span = it.v / total * Math.PI * 2;
+    const s = { ...it, i, a0: a, a1: a + span, mid: a + span / 2, pct: it.v / total * 100 };
+    a += span;
+    return s;
+  });
+
+  // 弧線
+  const arcs = slices.map(s => {
+    const g = Math.min(gap, (s.a1 - s.a0) / 4);
+    const [x0, y0] = polar(r, s.a0 + g), [x1, y1] = polar(r, s.a1 - g);
+    const large = (s.a1 - s.a0 - g * 2) > Math.PI ? 1 : 0;
+    return `<path d="M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}"
+      fill="none" stroke="${DONUT_RAMP[s.i] || DONUT_RAMP[DONUT_RAMP.length - 1]}" stroke-width="${sw}"
+      ><title>${esc(s.label)}　${MONEY(s.v)}（${s.pct.toFixed(1)}%）</title></path>`;
+  }).join('');
+
+  // 外圈標籤：左右分側、由上而下防重疊
+  const sides = { L: [], R: [] };
+  slices.forEach(s => sides[Math.cos(s.mid) >= 0 ? 'R' : 'L'].push({ ...s, ty: cy + Math.sin(s.mid) * (r + 34) }));
+  const labels = [];
+  for (const side of ['L', 'R']) {
+    const list = sides[side].sort((x, y) => x.ty - y.ty);
+    let prev = -Infinity;
+    for (const s of list) {
+      const y = Math.min(Math.max(s.ty, prev + 21, 18), H - 10);
+      prev = y;
+      const [px, py] = polar(r + sw / 2 + 4, s.mid);
+      const tx = side === 'R' ? cx + r + 76 : cx - r - 76;
+      const lineEnd = side === 'R' ? tx - 6 : tx + 6;
+      labels.push(`<line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${lineEnd}" y2="${(y - 4).toFixed(1)}" stroke="var(--line-2)" stroke-width="1"/>
+        <text x="${tx}" y="${y.toFixed(1)}" text-anchor="${side === 'R' ? 'start' : 'end'}" font-size="12.5">
+          <tspan fill="var(--text)" font-weight="600">${esc(s.label)}</tspan>
+          <tspan fill="var(--text-dim)"> ${MONEY(s.v)}（${s.pct.toFixed(1)}%）</tspan>
+        </text>`);
+    }
+  }
+
+  return `<div class="chart-card" style="margin-bottom:16px">
+    <h3>持股佔比 <span class="stat-sub" style="font-weight:400;margin:0">（依市值，前 7 檔＋其他；中心總市值隨計價切換）</span></h3>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:820px;display:block;margin:0 auto" role="img" aria-label="持股佔比圓環圖">
+      ${arcs}
+      ${labels.join('')}
+      <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="30" font-weight="500" style="font-family:var(--serif)" fill="var(--text)">${MONEY(total)}</text>
+      <text x="${cx}" y="${cy + 24}" text-anchor="middle" font-size="12.5" fill="var(--text-dim)">總市值</text>
+    </svg>
   </div>`;
 }
 
