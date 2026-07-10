@@ -287,6 +287,12 @@ export async function renderPortfolio() {
   });
   const tradesFullBtn = document.getElementById('tradesFull');
   if (tradesFullBtn) tradesFullBtn.onclick = () => openInfo('完整交易明細', tradesModalHtml(ibTrades), { wide: true });
+  const dInfo = document.getElementById('disciplineInfo');
+  if (dInfo) dInfo.onclick = () => openInfo('紀律檢查', `
+    <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>
+    <p><b>軟上限</b>：超標＝<b>凍結加碼</b>（禁止再買進），但不強制賣出，讓部位隨時間自然稀釋。在「編輯持股」把凍結中的標的加碼時，會跳出確認提醒。</p>
+    <p><b>怎麼看圖</b>：黑色刻度＝上限位置；長條＝目前部位，<span style="color:var(--pos)">綠色</span>＝上限內、<span style="color:var(--neg)">紅色</span>＝超出上限的部分。</p>
+    <p><b>目前上限</b>：單一個股 ${CAPS.stock}%・股票總曝險 ${CAPS.equity}%・單一國家 ${CAPS.country}%（中國 ${CAPS.china}%）・融資槓桿平時 ${CAPS.lev}x／估值訊號期 ${CAPS.levSig}x。到「設定 → 投資原則」即可調整。</p>`);
   view().querySelectorAll('[data-edit-h]').forEach(b => b.onclick = () => openHoldingForm(holdings.find(h => h.id === b.dataset.editH)));
   view().querySelectorAll('[data-del-h]').forEach(b => b.onclick = () => {
     const h = holdings.find(x => x.id === b.dataset.delH);
@@ -336,9 +342,8 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
     .forEach(([rg, v]) => items.push(row(`${esc(rg)}（穿透）`, pn(v), rg === '中國' ? CAPS.china : CAPS.country)));
   items.push(row('融資槓桿', leverage, CAPS.lev, 'x', '🔒 停借'));
   return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>紀律檢查 <span class="stat-sub" style="font-weight:400;margin:0">（投資原則：% 淨資產、穿透；超標＝凍結加碼。上限在設定頁調整）</span></h3>
+    <h3><button type="button" class="info-link" id="disciplineInfo">紀律檢查</button></h3>
     <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
-    <p class="muted small" style="margin-top:8px">黑色刻度＝上限，紅色＝超出部分。融資槓桿平時上限 ${CAPS.lev}x、估值訊號期上限 ${CAPS.levSig}x。</p>
   </div>`;
 }
 
