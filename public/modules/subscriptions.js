@@ -224,7 +224,7 @@ export async function renderSubscriptions() {
       <div><div class="r-title">續費卡已失效</div><div class="r-detail">有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</div></div>
     </div></div>` : ''}
 
-    <div class="cards" style="margin-bottom:18px">
+    <div class="cards">
       <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${wan(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
       <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${wan(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + wan(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
       <div class="card"><h3>每年總額</h3><div class="stat sm">${wan(thisMonth * 12)}</div></div>
@@ -821,7 +821,7 @@ function drawBreakdown(activeThis, curMk) {
         }, displayColors: false }
       } },
     plugins: [percentLabels]
-  })); else catCtx.parentElement.innerHTML = '<p class="muted">本月尚無使用中訂閱。</p>';
+  })); else catCtx.parentElement.innerHTML = '<p class="empty">本月尚無使用中訂閱。</p>';
 
   // 依類別金額（水平長條）：同樣依金額由高到低，補足圓環不易比較金額差距的弱點。
   const catBarCtx = document.getElementById('catBarChart');
@@ -882,7 +882,7 @@ function drawBreakdown(activeThis, curMk) {
   cardTable.innerHTML = cardRows.length ? `<table class="summary-table">
     <thead><tr><th>信用卡</th><th class="num">扣款金額</th></tr></thead>
     <tbody>${cardRows.map(([card, amount]) => `<tr><td>${esc(card)}</td><td class="num">${fmtFee(amount)}</td></tr>`).join('')}</tbody>
-  </table>` : '<p class="muted">本月尚無信用卡訂閱扣款。</p>';
+  </table>` : '<p class="empty">本月尚無信用卡訂閱扣款。</p>';
 }
 
 function openSubForm(sub, creditCards = []) {

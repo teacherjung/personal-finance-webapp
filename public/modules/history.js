@@ -30,7 +30,7 @@ export async function renderHistorySection(root) {
       <select id="histYearSel" style="width:auto">${years.map(y => `<option value="${esc(y)}" ${y === selectedYear ? 'selected' : ''}>${esc(y)} 年</option>`).join('')}</select>
     </div>
 
-    <div class="cards" style="margin-bottom:16px">
+    <div class="cards">
       <div class="card"><h3>${esc(selectedYear)} 年訂閱費合計</h3><div class="stat sm">${wan(yearTotal)}</div><div class="stat-sub">已紀錄 ${recordedCount} 個月</div></div>
       <div class="card"><h3>平均每月</h3><div class="stat sm">${wan(recordedCount ? yearTotal / recordedCount : 0)}</div></div>
     </div>

@@ -28,7 +28,7 @@ export async function renderTransactions() {
       <button class="btn" id="addTx">${icon('plus', 16)}新增一筆</button>
     </div>
 
-    <div class="cards" style="margin-bottom:8px">
+    <div class="cards">
       <div class="card"><h3>本月收入</h3><div class="stat sm pos">${wan(income)}</div></div>
       <div class="card"><h3>本月支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
       <div class="card"><h3>本月結餘</h3><div class="stat sm ${income - expense >= 0 ? 'pos' : 'neg'}">${income - expense >= 0 ? '+' : ''}${wan(income - expense)}</div></div>
@@ -45,7 +45,7 @@ export async function renderTransactions() {
           <div style="margin-bottom:8px">
             <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
             <div class="pill-bar"><div style="width:${(v / maxCat * 100).toFixed(0)}%;background:${CHART.red}"></div></div>
-          </div>`).join('') : '<p class="muted">本月尚無支出。</p>'}
+          </div>`).join('') : '<p class="empty">本月尚無支出。</p>'}
       </div>
     </div>
 

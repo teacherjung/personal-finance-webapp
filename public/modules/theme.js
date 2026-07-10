@@ -4,3 +4,5 @@
 export const CHART = { red: '#D96352', blue: '#5A8FD3', yellow: '#D2A038', green: '#6FA75F', orange: '#E8944A', brown: '#B07C3F', gray: '#A3937C' };
 export const PALETTE = [CHART.red, CHART.blue, CHART.yellow, CHART.green, CHART.orange, CHART.brown, CHART.gray, '#8AA0A0'];
 export const AXIS = '#8a887f', GRID = '#ece9e0';
+// 品牌珊瑚色（趨勢線/單色漸層專用；分類請用 CHART，語意請用 --pos/--neg/--warn）
+export const ACCENT = '#C96442', ACCENT_SOFT = 'rgba(201,100,66,.10)';

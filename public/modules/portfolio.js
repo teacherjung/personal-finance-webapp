@@ -1,7 +1,7 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
 import { api, view, esc, moneyCur, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
-import { CHART, AXIS, GRID } from './theme.js';
+import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
@@ -163,10 +163,17 @@ export async function renderPortfolio() {
   const goldV = rows.filter(r => compOf(r).type === 'gold').reduce((s, r) => s + r.valueTwd, 0);
   const eqV = total - bondV - goldV;
   const accTwd = (a) => Number(a.balance || 0) * (fx[a.currency || 'TWD'] || 1);
-  // 融資槓桿只看 IBKR：IB 持倉 ÷ IB 淨值；融資＝IB 現金帳戶(ibCashCur)負餘額。
-  // 排除台新現金存款與台新證券的台股，避免灌大或稀釋槓桿。
-  const ibValTwd = rows.filter(r => r.source === 'ib').reduce((s, r) => s + r.valueTwd, 0);
-  const negCashTwd = (accounts || []).filter(a => a.ibCashCur).reduce((s, a) => { const v = accTwd(a); return v < 0 ? s + v : s; }, 0);
+  // IB 融資槓桿：優先用 IB 官方淨值摘要（settings.ib.lastEquity，IBKR 同步時更新、基準幣別 USD），
+  // 沒有才自算（source:'ib' 持倉 ÷ 淨值、融資＝ibCashCur 負餘額）。與 lib/derive.js 規則 7 為同步點。
+  const eqIb = settings.ib?.lastEquity;
+  let ibValTwd, negCashTwd;
+  if (eqIb && Number(eqIb.stock) > 0) {
+    ibValTwd = Number(eqIb.stock) * fx.USD;
+    negCashTwd = Math.min(Number(eqIb.cash) || 0, 0) * fx.USD;
+  } else {
+    ibValTwd = rows.filter(r => r.source === 'ib').reduce((s, r) => s + r.valueTwd, 0);
+    negCashTwd = (accounts || []).filter(a => a.ibCashCur).reduce((s, a) => { const v = accTwd(a); return v < 0 ? s + v : s; }, 0);
+  }
   const loanTwd = -negCashTwd;
   const netEquity = ibValTwd + negCashTwd;
   const leverage = loanTwd > 0 && netEquity > 0 ? ibValTwd / netEquity : 1;
@@ -240,7 +247,7 @@ export async function renderPortfolio() {
       </div>
     </div>
 
-    <div class="cards" style="margin-bottom:18px">
+    <div class="cards">
       <div class="card"><h3><button type="button" class="info-link" id="totalValueInfo">總市值</button></h3><div class="stat sm">${MONEY(total)}</div><div class="stat-sub"><button type="button" class="info-link" id="totalCostInfo">成本</button> ${MONEY(totalCost)}｜<span class="${totalPnl >= 0 ? 'pos' : 'neg'}" style="font-weight:700">未實現損益 ${totalPnl >= 0 ? '+' : ''}${MONEY(totalPnl)}</span></div></div>
       <div class="card"><h3><button type="button" class="info-link" id="assetStockInfo">股票</button> / <button type="button" class="info-link" id="assetBondInfo">債券</button> / <button type="button" class="info-link" id="assetCashInfo">現金</button> / <button type="button" class="info-link" id="assetGoldInfo">黃金</button></h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
@@ -404,8 +411,8 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS) {
   </div>`;
 }
 
-// ---- 幣別曝險（各幣別淨曝險＝股票＋債券＋黃金＋現金，折台幣）----
-function fxSection(rows, accounts, fx) {
+// ---- 幣別底層曝險：頁面與列印共用的計算（00719B/00720B 歸美元、黃金獨立一列、現金含負融資）----
+function fxExposure(rows, accounts, fx) {
   const exposureCurrency = (r) => {
     const sym = String(r.symbol || '').toUpperCase();
     if (compOf(r).type === 'gold') return '黃金';
@@ -414,32 +421,32 @@ function fxSection(rows, accounts, fx) {
   };
   const byCur = {};
   const bucket = (cur) => byCur[cur] = byCur[cur] || { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 };
-  const addHolding = (r) => {
+  for (const r of rows) {
     const c = bucket(exposureCurrency(r));
     const type = compOf(r).type;
     if (type === 'bond') c.bondTwd += r.valueTwd;
     else if (type === 'gold') c.goldTwd += r.valueTwd;
     else c.stockTwd += r.valueTwd;
-  };
-  const addCash = (cur, twd) => {
-    bucket(cur).cashTwd += twd;
-  };
-  const partsText = (v) => [
-    ['股票', v.stockTwd],
-    ['債券', v.bondTwd],
-    ['黃金', v.goldTwd],
-    ['現金', v.cashTwd]
-  ].filter(([, val]) => Math.round(Math.abs(val)) > 0)
-    .map(([label, val]) => `${label} ${MONEY(val)}`)
-    .join(' ＋ ');
-  rows.forEach(addHolding);
-  (accounts || []).forEach(a => {
+  }
+  for (const a of accounts || []) {
     const bal = Number(a.balance || 0);
-    if (!bal) return;
+    if (!bal) continue;
     const cur = a.currency || 'TWD';
-    addCash(cur, bal * (fx[cur] || 1));
-  });
+    bucket(cur).cashTwd += bal * (fx[cur] || 1);
+  }
   for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;
+  return byCur;
+}
+// 各幣別組成說明（股票＋債券＋黃金＋現金，略過 0；fmt 由呼叫端決定格式器）
+const fxParts = (v, fmt) => [['股票', v.stockTwd], ['債券', v.bondTwd], ['黃金', v.goldTwd], ['現金', v.cashTwd]]
+  .filter(([, x]) => Math.round(Math.abs(x)) > 0)
+  .map(([label, x]) => `${label} ${fmt(x)}`)
+  .join(' ＋ ');
+
+// ---- 幣別曝險卡（各幣別淨曝險＝股票＋債券＋黃金＋現金，折台幣）----
+function fxSection(rows, accounts, fx) {
+  const byCur = fxExposure(rows, accounts, fx);
+  const partsText = (v) => fxParts(v, MONEY);
   const totalTwd = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
   const curs = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd);
   const maxTwd = Math.max(...curs.map(([, c]) => Math.abs(c.netTwd)), 1);
@@ -834,7 +841,7 @@ function holdingsDonut(rows, total) {
     const c2 = [1, 3, 5].map(i => parseInt(h2.slice(i, i + 2), 16));
     return '#' + c1.map((x, j) => Math.round(x + (c2[j] - x) * t).toString(16).padStart(2, '0')).join('');
   };
-  const rampAt = (i, n) => mix('#C96442', '#FBEAE1', n <= 1 ? 0 : i / (n - 1));
+  const rampAt = (i, n) => mix(ACCENT, '#FBEAE1', n <= 1 ? 0 : i / (n - 1));   // 品牌色 → 淺膚色內插
 
   const W = 780, H = 400, cx = 390, cy = 200, r = 118, sw = 26;
   const polar = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
@@ -1033,7 +1040,7 @@ function drawInvestChart(psnaps, curCost, curValue) {
     type: 'line',
     data: { labels, datasets: [
       { label: '投入成本', data: costs, borderColor: AXIS, backgroundColor: AXIS, borderDash: [5, 4], borderWidth: 2, pointRadius: 3, fill: false, tension: .25 },
-      { label: '市值', data: values, borderColor: '#c96442', backgroundColor: 'rgba(201,100,66,.10)', borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
+      { label: '市值', data: values, borderColor: ACCENT, backgroundColor: ACCENT_SOFT, borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
     ] },
     options: { responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: true, labels: { color: AXIS, boxWidth: 14, padding: 12 } },
@@ -1247,23 +1254,13 @@ async function printPortfolioReport(d) {
     }).join('');
   }).join('');
 
-  // 幣別淨曝險
-  const byCur = {};
-  const addCur = (cur, orig, twd) => {
-    const c = byCur[cur] = byCur[cur] || { orig: 0, twd: 0, debtOrig: 0, debtTwd: 0 };
-    if (twd >= 0) { c.orig += orig; c.twd += twd; } else { c.debtOrig += orig; c.debtTwd += twd; }
-  };
-  rows.forEach(r => addCur(r.currency || 'USD', Number(r.price || 0) * Number(r.quantity || 0), r.valueTwd));
-  (accounts || []).forEach(a => { const bal = Number(a.balance || 0); if (!bal) return; const cur = a.currency || 'TWD'; addCur(cur, bal, bal * (fx[cur] || 1)); });
-  const curTotal = Object.values(byCur).reduce((s, c) => s + c.twd + c.debtTwd, 0);
-  const curRows = Object.entries(byCur).sort((a, b) => (b[1].twd + b[1].debtTwd) - (a[1].twd + a[1].debtTwd)).map(([cur, v]) => {
-    const net = v.twd + v.debtTwd, netOrig = v.orig + v.debtOrig;
-    return `<tr><td>${esc(cur)}</td>
-      <td class="num">${Math.round(netOrig).toLocaleString('en-US')} ${esc(cur)}</td>
-      <td class="num">${val(net)}</td>
-      <td class="num">${pctf(curTotal ? net / curTotal * 100 : 0)}</td>
-      <td>${v.debtTwd < 0 ? `已扣融資 ${Math.round(Math.abs(v.debtOrig)).toLocaleString('en-US')} ${esc(cur)}` : ''}</td></tr>`;
-  }).join('');
+  // 幣別底層曝險（與頁面 fxSection 同口徑，共用 fxExposure）
+  const byCur = fxExposure(rows, accounts, fx);
+  const curTotal = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
+  const curRows = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd).map(([cur, v]) => `<tr><td>${esc(cur)}</td>
+      <td class="num">${val(v.netTwd)}</td>
+      <td class="num">${pctf(curTotal ? v.netTwd / curTotal * 100 : 0)}</td>
+      <td>${fxParts(v, val)}</td></tr>`).join('');
   const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
   const fxZone = fx.USD >= hi ? `已進入「美元→台幣」分批區（≥${hi}）` : fx.USD <= lo ? `已進入「台幣→美元」分批區（≤${lo}）` : `中間區（${lo}–${hi}），不動作`;
 
@@ -1354,7 +1351,7 @@ async function printPortfolioReport(d) {
         <table><thead><tr><th>代號</th><th>說明</th><th class="num">均價</th><th class="num">現價</th><th class="num">市值</th><th class="num">損益</th><th class="num">報酬率</th><th class="num">佔比</th></tr></thead>
         <tbody>${holdingRows}</tbody></table></section>
       <section><h2>幣別淨曝險與匯率 <span>${esc(fxZone)}</span></h2>
-        <table><thead><tr><th>幣別</th><th class="num">淨曝險（原幣）</th><th class="num">折${isUS ? '美元' : '台幣'}</th><th class="num">佔比</th><th>備註</th></tr></thead>
+        <table><thead><tr><th>幣別</th><th class="num">折${isUS ? '美元' : '台幣'}</th><th class="num">佔比</th><th>組成</th></tr></thead>
         <tbody>${curRows}</tbody></table></section>
       <section><h2>持股曝險 <span>佔股票部位 %（已合併 ETF 內含成分）</span></h2>
         <table><thead><tr><th>區域</th><th class="num">金額</th><th class="num">佔股票部位</th></tr></thead>
