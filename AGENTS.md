@@ -16,7 +16,7 @@
 
 ## 鐵則（違反會壞事）
 
-1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股）。
+1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
 4. **色彩分工**：
@@ -46,8 +46,9 @@
 
 ## 協作流程
 
+- **Claude 與 Codex 都直接在本機這個資料夾工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
+- **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。同一時間**只有一個 agent** 改本機工作樹；真要平行用 `git worktree`。
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
-- 同一時間**只有一個 agent** 改本機工作樹；需要平行用 `git worktree`。
 - 使用者是最終合併者。Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。
 
