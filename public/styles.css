@@ -83,6 +83,11 @@ main { flex: 1; min-width: 0; width: 100%; padding: 34px 42px; max-width: 1140px
 .card-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
 /* 卡片內「欄位：值」明細格（卡片 / 保單共用） */
 .detail-grid { margin: 13px 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font-size: 12.5px; }
+/* 卡片頭列（名稱＋右側標籤，卡片/保單共用） */
+.card-head { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+/* 卡片內說明小塊（權益/保障） */
+.note-block { font-size: 12.5px; background: var(--bg); border-radius: 8px; padding: 9px 11px; color: var(--text-dim); }
+.note-block b { color: var(--text); }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 16px; }
 .card {
   background: var(--card); border: 1px solid var(--line);
@@ -181,7 +186,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* ---------- Modal ---------- */
 .modal-bg { position: fixed; inset: 0; background: rgba(40,34,28,.32); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 100; padding: 20px; }
 .modal { background: var(--card); border: 1px solid var(--line); border-radius: 16px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(40,34,28,.22); }
-.modal-sm { max-width: 520px; }
+.modal-sm { max-width: 520px; }   /* ＝ .modal 基底預設，保留供明確指定 */
 .modal-md { max-width: 640px; }
 .modal-lg { max-width: 760px; }
 .modal-xl { max-width: 920px; }
@@ -331,7 +336,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .gauge > div { height: 100%; border-radius: 3px; }
 .gauge-marker { position: absolute; top: -6px; width: 2.5px; height: 22px; background: var(--text); border-radius: 2px; transform: translateX(-1px); }
 .gauge-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-top: 5px; }
-/* 幣別匯率儀表刻度：門檻值對齊長條縫隙，區間標籤置中於各色條下方 */
+/* 幣別匯率儀表刻度（⏸ 休眠：僅停放中的 fxGaugeSection 使用，隨儀表恢復） */
 .fx-scale { position: relative; height: 30px; margin-top: 6px; font-size: 10.5px; color: var(--text-dim); }
 .fx-scale .fx-num { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
 .fx-scale .fx-num.fx-end-l { left: 0; transform: none; }
@@ -340,7 +345,6 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .rc-block { background: var(--bg); border-radius: 8px; padding: 8px 11px; color: var(--text-dim); line-height: 1.55; }
 .rc-block b { color: var(--text); }
 .muted { color: var(--text-dim); }
-.right { text-align: right; }
 .pill-bar { height: 7px; background: var(--card-2); border-radius: 20px; overflow: hidden; margin-top: 6px; }
 .pill-bar > div { height: 100%; border-radius: 20px; }
 .hint { background: var(--accent-soft); border: 1px solid #ecd9cf; border-radius: 10px; padding: 14px 17px; font-size: 12.5px; color: #8a4a32; margin-bottom: 18px; line-height: 1.6; }

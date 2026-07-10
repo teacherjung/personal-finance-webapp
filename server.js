@@ -131,7 +131,6 @@ app.get('/api/cape', async (req, res) => {
 });
 
 // ---- IBKR Flex Query 同步：持倉合併進 holdings、現金更新到帳戶 ----
-app.get('/api/ib', (req, res) => res.json(computeIb(load())));
 // 新代號的預設分層（找不到就歸「區域衛星」，之後可在編輯裡改）
 const DEFAULT_LAYER = {
   CSPX: 'core', QQQM: 'core', VUAA: 'core', SPY: 'core', VOO: 'core',
@@ -147,11 +146,11 @@ app.post('/api/ib/sync', async (req, res) => {
   try {
     const data = await fetchFlex(flexToken, flexQueryId);
     db.holdings = db.holdings || [];
+    const r2 = (x) => Math.round(Number(x || 0) * 100) / 100;   // 金額統一到小數點後兩位
     let updated = 0, created = 0;
     for (const p of data.positions) {
       const sym = String(p.symbol || '').toUpperCase().trim();
       if (!sym) continue;
-      const r2 = (x) => Math.round(Number(x || 0) * 100) / 100;   // 統一到小數點後兩位
       const h = db.holdings.find(x => String(x.symbol || '').toUpperCase() === sym);
       if (h) {
         h.quantity = p.quantity;
@@ -179,7 +178,7 @@ app.post('/api/ib/sync', async (req, res) => {
         acc = { id: uid(), name: `IBKR ${cur} 現金`, type: 'cash', class: '現金', currency: cur, ibCashCur: cur, balance: 0 };
         (db.accounts = db.accounts || []).push(acc);
       }
-      acc.balance = Math.round(cash * 100) / 100;
+      acc.balance = r2(cash);
       acc.currency = cur;
     }
     // 曾由 IB 同步、但這次報表已找不到的持股 → 可能已出清，回報給前端確認
@@ -189,15 +188,14 @@ app.post('/api/ib/sync', async (req, res) => {
       .map(h => ({ id: h.id, symbol: h.symbol }));
     if (data.equity) db.settings.ib.lastEquity = data.equity;   // { cash(負=融資), stock, date }
     if (data.income) {
-      const r2i = (x) => Math.round(Number(x || 0) * 100) / 100;
       db.settings.ib.income = {
-        dividends: r2i(data.income.dividends), paymentInLieu: r2i(data.income.paymentInLieu),
-        withholdingTax: r2i(data.income.withholdingTax), interestPaid: r2i(data.income.interestPaid),
-        interestReceived: r2i(data.income.interestReceived), other: r2i(data.income.other),
+        dividends: r2(data.income.dividends), paymentInLieu: r2(data.income.paymentInLieu),
+        withholdingTax: r2(data.income.withholdingTax), interestPaid: r2(data.income.interestPaid),
+        interestReceived: r2(data.income.interestReceived), other: r2(data.income.other),
         count: data.income.count, from: data.period?.from || '', to: data.period?.to || ''
       };
     }
-    if (Array.isArray(data.trades) && data.trades.length) db.ibTrades = data.trades;   // 供之後 XIRR／已實現損益用
+    if (Array.isArray(data.trades) && data.trades.length) db.ibTrades = data.trades;   // 已實現損益（交易摘要）使用中；XIRR 之後接
     db.settings.ib.lastSync = new Date().toISOString();
     save(db);
     res.json({ ok: true, updated, created, missing, cash: data.cashByCurrency, equity: data.equity, account: data.account });

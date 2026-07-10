@@ -91,7 +91,7 @@ function drawAlloc(byClass) {
   }));
 }
 
-export function baseOpts(isMoney = false) {
+function baseOpts(isMoney = false) {
   return {
     responsive: true, maintainAspectRatio: false,
     plugins: { legend: { display: false },

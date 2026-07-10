@@ -1,5 +1,5 @@
 import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast } from '../app.js';
-import { PALETTE, CHART } from './theme.js';
+import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
   { value: 'cash', label: '現金 / 存款' }, { value: 'investment', label: '投資（股票/ETF/IB）' },
@@ -89,7 +89,7 @@ function drawPie(byClass) {
     type: 'doughnut',
     data: { labels, datasets: [{ data: labels.map(l => byClass[l]), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }] },
     options: { responsive: true, maintainAspectRatio: false, cutout: '58%',
-      plugins: { legend: { position: 'right', labels: { color: '#8a887f', boxWidth: 12, padding: 10 } },
+      plugins: { legend: { position: 'right', labels: { color: AXIS, boxWidth: 12, padding: 10 } },
         tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)} (${pct(c.parsed / c.dataset.data.reduce((x, y) => x + y, 0) * 100)})` } } } }
   });
 }

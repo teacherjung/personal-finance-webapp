@@ -8,10 +8,9 @@ import { renderCards } from './modules/cards.js';
 import { renderInsurance } from './modules/insurance.js';
 import { renderSettings } from './modules/settings.js';
 import { hydrateIcons } from './modules/icons.js';
-export { icon } from './modules/icons.js';
 
 // ---------- 共用工具 ----------
-export const $ = (sel, root = document) => root.querySelector(sel);
+const $ = (sel, root = document) => root.querySelector(sel);
 export const view = () => $('#view');
 
 export async function api(path, opts = {}) {

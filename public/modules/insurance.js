@@ -47,7 +47,7 @@ function card(p) {
   const d = daysUntil(p.nextPayment);
   const soon = d >= 0 && d <= 30;
   return `<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+    <div class="card-head">
       <div><div class="item-title">${esc(p.policyName)}</div>
         <div class="muted" style="font-size:12px">${esc(p.insurer || '')}</div></div>
       <span class="tag ${soon ? 'amber' : 'blue'}">${esc(p.insured || '')}</span>
@@ -61,8 +61,8 @@ function card(p) {
       ${row('保障期限', `${esc(p.startDate || '?')} ～ ${esc(p.endDate || '終身')}`)}
       ${row('現金價值', money(p.cashValue))}
     </div>
-    <div style="font-size:12.5px;background:var(--bg);border-radius:8px;padding:9px 11px;color:var(--text-dim)">
-      <b style="color:var(--text)">保障：</b>${esc(p.coverage || '—')}</div>
+    <div class="note-block">
+      <b>保障：</b>${esc(p.coverage || '—')}</div>
     <div class="row-actions" style="margin-top:12px">
       <button class="btn-link btn-sm" data-edit="${p.id}" title="編輯">${icon('edit', 15)}</button>
       <button class="btn-danger btn-sm" data-del="${p.id}" title="刪除">${icon('trash', 15)}</button>

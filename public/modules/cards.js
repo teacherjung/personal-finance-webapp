@@ -56,7 +56,7 @@ function card(c) {
     ['發卡機構', c.issuer], ['會員編號', c.memberId], ['等級', c.level], ['有效期限', c.expiry]
   ];
   return `<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+    <div class="card-head">
       <div style="display:flex;align-items:center;gap:9px">
         <span style="color:var(--accent)">${icon('card', 18)}</span>
         <div class="item-title">${esc(c.name)}</div>
@@ -66,7 +66,7 @@ function card(c) {
     <div class="detail-grid">
       ${rows.filter(r => r[1]).map(r => `<span class="muted">${r[0]}</span><span>${esc(r[1])}${r[0] === '有效期限' && expSoon ? `　<span class="tag amber">${d} 天後停用</span>` : ''}</span>`).join('')}
     </div>
-    ${c.benefits ? `<div style="font-size:12.5px;background:var(--bg);border-radius:8px;padding:9px 11px;color:var(--text-dim)"><b style="color:var(--text)">權益：</b>${esc(c.benefits)}</div>` : ''}
+    ${c.benefits ? `<div class="note-block"><b>權益：</b>${esc(c.benefits)}</div>` : ''}
     ${c.note ? `<div class="muted" style="font-size:12px;margin-top:8px">${esc(c.note)}</div>` : ''}
     <div class="row-actions" style="margin-top:12px">
       <button class="btn-link btn-sm" data-edit="${c.id}" title="編輯">${icon('edit', 15)}</button>

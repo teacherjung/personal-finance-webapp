@@ -1,4 +1,4 @@
-import { api, view, wan, money, esc, monthKey, openForm, confirmDelete, toast, router } from '../app.js';
+import { api, view, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, router } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 
@@ -37,7 +37,7 @@ export async function renderTransactions() {
     <div class="two-col" style="margin:18px 0">
       <div>
         <label>月份</label>
-        <select id="monthSel">${months.map(m => `<option value="${m}" ${m === monthFilter ? 'selected' : ''}>${m}</option>`).join('') || `<option>${monthFilter}</option>`}</select>
+        <select id="monthSel">${months.map(m => `<option value="${esc(m)}" ${m === monthFilter ? 'selected' : ''}>${esc(m)}</option>`).join('') || `<option>${monthFilter}</option>`}</select>
       </div>
       <div class="chart-card" style="padding:14px 18px">
         <h3 style="margin-bottom:10px">本月支出分類</h3>
@@ -81,7 +81,7 @@ function openTxForm(tx) {
   openForm({
     title: tx ? '編輯記錄' : '新增收支',
     fields: [
-      { key: 'date', label: '日期', type: 'date', required: true, default: new Date().toISOString().slice(0, 10) },
+      { key: 'date', label: '日期', type: 'date', required: true, default: todayStr() },   // 用本地時區（UTC 版在台灣早上 8 點前會差一天）
       { key: 'type', label: '類型', type: 'select', options: [{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }] },
       { key: 'category', label: '分類', type: 'select', options: CATEGORIES },
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },

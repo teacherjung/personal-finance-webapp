@@ -1,5 +1,5 @@
-import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, openForm, confirmDelete, toast } from '../app.js';
-import { CHART, PALETTE, AXIS, GRID } from './theme.js';
+import { api, view, esc, money, wan, daysUntil, monthKey, todayStr, openForm, openInfo, confirmDelete, toast } from '../app.js';
+import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
 
@@ -39,13 +39,13 @@ function normEmail(e) {
   return e;
 }
 
-export const monthlyCost = (s) => isLifetimeSub(s) ? 0 : Number(s.amount || 0) / cycleMonths(s);
+const monthlyCost = (s) => isLifetimeSub(s) ? 0 : Number(s.amount || 0) / cycleMonths(s);
 
 // ---- 月份工具（monthKey 由 app.js 提供）----
-export function addMonths(mk, n) { let [y, m] = mk.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; }
+function addMonths(mk, n) { let [y, m] = mk.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; }
 
 // ---- 狀態：使用中 / 即將停用 / 已停用 ----
-export function subStatus(s) {
+function subStatus(s) {
   if (s.status === 'ended' || s.active === false) return 'ended';
   if (s.status === 'ending' || s.endsOn) return daysUntil(s.endsOn) > 0 ? 'ending' : 'ended';
   return 'active';
@@ -57,7 +57,7 @@ function dayOfMonth(dateStr) {
 }
 
 // 某訂閱在指定月份應計入的金額（月繳用月費；季/年繳攤提到每月，停用當月按天數比例）
-export function costForMonth(s, mk) {
+function costForMonth(s, mk) {
   if (isLifetimeSub(s)) return 0;
   const since = s.since || RECORD_START;
   if (mk < since) return 0;
@@ -72,17 +72,17 @@ export function costForMonth(s, mk) {
 }
 
 // 某訂閱在指定月份是否仍需付費
-export function activeInMonth(s, mk) {
+function activeInMonth(s, mk) {
   return costForMonth(s, mk) > 0;
 }
 
 // 某月份的訂閱攤提總額。依「當下所有訂閱狀態」即時計算
-export function amortizedForMonth(subs, mk) {
+function amortizedForMonth(subs, mk) {
   return subs.reduce((t, s) => t + costForMonth(s, mk), 0);
 }
 
 // 月份結束後，把「已完成月份」的實際攤提凍結到歷史紀錄（只補尚未紀錄的）
-export async function freezeCompletedMonths(subs) {
+async function freezeCompletedMonths(subs) {
   const hist = await api('/history');
   const have = new Set(hist.map(h => h.month));
   const lastDone = addMonths(monthKey(), -1);   // 上個（已結束）月份
@@ -304,17 +304,7 @@ function subscriptionsTableHtml(rows, validSet, opts = {}) {
   const extraClass = opts.extraClass ? ` ${opts.extraClass}` : '';
   return `<div class="tbl-wrap${extraClass}" data-list-key="${listKey}">
     <table class="subs-table">
-    <colgroup>
-      <col class="col-grip">
-      <col class="col-service">
-      <col class="col-fee-month">
-      <col class="col-fee-year">
-      <col class="col-cycle">
-      <col class="col-date">
-      <col class="col-card">
-      <col class="col-email">
-      <col class="col-actions">
-    </colgroup>
+    <colgroup><col><col><col><col><col><col><col><col><col></colgroup>
     <thead><tr>
       <th class="grip-col"></th>
       <th class="sortable" data-sort="category">${serviceHeader} ${triHtml(listKey, 'category')}</th>
@@ -399,24 +389,15 @@ function openCostDetailModal(subs, mk) {
     <td>${esc(r.service)}</td>
     <td>${esc(r.cycle)}</td>
     <td class="muted">${esc(r.formula)}</td>
-    <td class="right">${fmtFee(r.amount)}</td>
+    <td class="num">${fmtFee(r.amount)}</td>
   </tr>`).join('') : `<tr><td colspan="4" class="muted" style="text-align:center;padding:26px">這個月份沒有計入訂閱費用</td></tr>`;
 
-  const root = document.getElementById('modal-root');
-  root.innerHTML = `<div class="modal-bg"><div class="modal modal-lg">
-    <div class="modal-head"><h2>${esc(mk)} 計算方式</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
-      <div class="cost-detail-total"><span>合計</span><b>${fmtFee(total)}</b></div>
-      <div class="cost-detail-table-wrap"><table class="cost-detail-table">
-        <thead><tr><th>服務</th><th>週期</th><th>計算方式</th><th class="right">計入金額</th></tr></thead>
-        <tbody>${tbody}</tbody>
-      </table></div>
-    </div>
-  </div></div>`;
-
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
-  root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  openInfo(`${mk} 計算方式`, `
+    <div class="cost-detail-total"><span>合計</span><b>${fmtFee(total)}</b></div>
+    <div class="cost-detail-table-wrap"><table class="cost-detail-table">
+      <thead><tr><th>服務</th><th>週期</th><th>計算方式</th><th class="num">計入金額</th></tr></thead>
+      <tbody>${tbody}</tbody>
+    </table></div>`, { size: 'lg' });
 }
 
 function reportTable(headers, rows, empty = '無資料') {
@@ -425,9 +406,6 @@ function reportTable(headers, rows, empty = '無資料') {
   return `<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-function shortDate(dateStr) {
-  return String(dateStr || '').slice(5) || '—';
-}
 
 function sortByMonthlyCost(rows) {
   return rows.slice().sort((a, b) => feeMonthVal(b) - feeMonthVal(a) || (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
@@ -441,8 +419,9 @@ function sortByStatusThenCost(rows) {
 }
 
 function reportCostTable(subs, mk, label) {
-  const rows = costDetailRows(subs, mk).map(r => [esc(r.service), esc(r.cycle), esc(r.formula), fmtFee(r.amount)]);
-  const total = costDetailRows(subs, mk).reduce((sum, r) => sum + r.amount, 0);
+  const detail = costDetailRows(subs, mk);
+  const rows = detail.map(r => [esc(r.service), esc(r.cycle), esc(r.formula), fmtFee(r.amount)]);
+  const total = detail.reduce((sum, r) => sum + r.amount, 0);
   const body = rows.length ? rows.map(row => `<tr>${row.map((cell, i) => `<td class="${i === row.length - 1 ? 'num' : ''}">${cell}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="4" class="muted center">這個月份沒有計入訂閱費用</td></tr>`;
   return `<section><h2>${esc(mk)} （${esc(label)}） <span>${fmtFee(total)}</span></h2>
