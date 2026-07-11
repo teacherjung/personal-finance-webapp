@@ -711,7 +711,8 @@ const SUB_CAT_TO_EXPENSE = {
   '娛樂': ['娛樂', 'Netflix及影音串流'],
   '學習': ['學習', '學習型訂閱服務'],
   '工具': ['工作', '其他工作成本'],
-  '生活': ['生活', '其他生活雜支']
+  '生活': ['生活', '其他生活雜支'],
+  '健康': ['健康', '運動課程']
 };
 async function recordToAccounting(s) {
   const amt = Number(s.amount || 0);
