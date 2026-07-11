@@ -18,7 +18,7 @@ export async function renderCards() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>卡片追蹤</h1><p>信用卡與會員卡的卡別、末四碼、結帳/繳款日、年費、權益、停用</p></div>
+      <div><h1>卡片追蹤</h1><p>信用卡與會員卡的卡片類別、末四碼、結帳/繳款日、年費、權益、停用</p></div>
       <button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button>
     </div>
 
@@ -53,10 +53,10 @@ function card(c) {
   const d = daysUntil(expiryEnd(c.expiry));
   const expSoon = d >= 0 && d <= 60;
   const rows = credit ? [
-    ['發卡銀行', c.issuer], ['卡別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
+    ['發卡銀行', c.issuer], ['卡片類別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
     ['結帳日', c.statementDay ? `每月 ${c.statementDay} 日` : ''],
     ['繳款日', c.dueDay ? `每月 ${c.dueDay} 日` : ''],
-    ['年費', c.annualFee != null && c.annualFee !== '' ? money(c.annualFee) : ''],
+    ['年費', Number(c.annualFee) > 0 ? money(c.annualFee) : ''],   // 0 元或未填都不顯示
     ['有效期限', (c.expiry || '').slice(0, 7)]
   ] : [
     ['發卡機構', c.issuer], ['會員編號', c.memberId], ['等級', c.level], ['有效期限', (c.expiry || '').slice(0, 7)]
@@ -88,7 +88,7 @@ function openCardForm(c) {
       { key: 'type', label: '卡片類型', type: 'select', options: [{ value: 'credit', label: '信用卡' }, { value: 'membership', label: '會員卡' }], default: 'credit' },
       { key: 'name', label: '卡片名稱', type: 'text', required: true, placeholder: '例：台新 GOGO 卡' },
       { key: 'issuer', label: '發卡銀行 / 機構', type: 'text', placeholder: '例：台新銀行' },
-      { key: 'network', label: '卡別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
+      { key: 'network', label: '卡片類別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
       { key: 'lastFour', label: '末四碼', type: 'text', placeholder: '1234' },
       { key: 'statementDay', label: '結帳日（信用卡，幾號）', type: 'number', placeholder: '5' },
       { key: 'dueDay', label: '繳款日（信用卡，幾號）', type: 'number', placeholder: '20' },
