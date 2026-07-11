@@ -347,6 +347,8 @@ export async function renderPortfolio() {
   });
   // ⏸ 休眠中：#fxBandEdit 只有在 fxGaugeSection（目前停放、未插入頁面）渲染時才存在；
   //   等匯率儀表決定放回頁面時，這段與 openFxBands() 一起恢復作用。
+  //   註：fxHigh/fxLow 的「調整入口」現已改由設定頁「提醒門檻」管理（換匯提醒即時生效），
+  //   停放的 openFxBands 若日後恢復，屬儀表上的便捷入口、非唯一調整途徑。
   const fxEdit = document.getElementById('fxBandEdit');
   if (fxEdit) fxEdit.onclick = () => openFxBands(settings);
   view().querySelectorAll('.info-link[data-info]').forEach(b => b.onclick = () => {
