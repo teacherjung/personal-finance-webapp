@@ -244,12 +244,13 @@ app.post('/api/cards/:id/statement/preview', async (req, res) => {
     const db = load();
     const card = (db.cards || []).find(c => c.id === req.params.id);
     if (!card) return res.status(404).json({ error: '找不到卡片' });
-    // 支援 PDF（富邦）與 XLSX（台新）：parseStatement 依位元組自動偵測格式。
+    // parseStatement 依位元組自動偵測 PDF/XLSX，PDF 再依「文件內容」判斷富邦/台新——
+    // 不看使用者選的卡片（卡片只決定記到哪＋提供 PDF 密碼，選錯可事後整批改）。
     // 密碼僅加密 PDF 需要（用卡片設定的密碼）；XLSX 與官網下載 PDF 通常無密碼。
     const b64 = String(req.body.data || '');
     if (!b64) return res.status(400).json({ error: '沒有收到檔案內容' });
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
-    const parsed = await parseStatement(bytes, card.pdfPassword, card.issuer || card.name || '');
+    const parsed = await parseStatement(bytes, card.pdfPassword);
     // 重複偵測：與既有記帳的 stmtRef 比對（同卡+消費日+金額+說明 視為同一筆）
     const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
     const transactions = parsed.transactions.map(t => {
@@ -268,6 +269,8 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
   if (!card) return res.status(404).json({ error: '找不到卡片' });
   const rows = Array.isArray(req.body.transactions) ? req.body.transactions : [];
   const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
+  const batchId = uid();                       // 這次匯入的批次代號（供事後整批改卡片）
+  const importedAt = new Date().toISOString();
   let imported = 0, skipped = 0;
   for (const r of rows) {
     const amount = Number(r.amount);
@@ -277,13 +280,57 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
       id: uid(), date: r.date, type: 'expense',
       category: String(r.category || '生活'), subcategory: String(r.subcategory || ''), amount,
       account: card.name, note: String(r.desc || ''),
-      stmtRef: r.stmtRef, source: 'stmt'
+      stmtRef: r.stmtRef, source: 'stmt', importBatch: batchId, importedAt
     });
     existing.add(r.stmtRef);
     imported++;
   }
   save(db);
-  res.json({ ok: true, imported, skipped });
+  res.json({ ok: true, imported, skipped, batchId, cardId: card.id, cardName: card.name });
+});
+
+// ---- 匯入批次：事後「整批改卡片」（使用者選錯卡片時，一鍵把整批消費改到另一張卡）----
+// 批次清單：把 source:'stmt' 的交易依 importBatch 聚合，回卡片名/日期範圍/筆數/金額。
+app.get('/api/statement/batches', (req, res) => {
+  const db = load();
+  const groups = {};
+  for (const t of db.transactions || []) {
+    if (t.source !== 'stmt' || !t.importBatch) continue;
+    const g = groups[t.importBatch] || (groups[t.importBatch] = {
+      batchId: t.importBatch, cardName: t.account || '', importedAt: t.importedAt || '',
+      count: 0, amount: 0, minDate: t.date, maxDate: t.date
+    });
+    g.count++; g.amount += Number(t.amount) || 0;
+    if (t.date < g.minDate) g.minDate = t.date;
+    if (t.date > g.maxDate) g.maxDate = t.date;
+  }
+  const list = Object.values(groups).sort((a, b) => String(b.importedAt).localeCompare(String(a.importedAt)));
+  res.json(list);
+});
+// 整批改卡片：改 account＋重寫 stmtRef 的卡片前綴（cardId|date|amount|desc）；目標卡已有同筆則丟棄重複。
+app.post('/api/statement/reassign', (req, res) => {
+  const db = load();
+  const batchId = String(req.body.batchId || '');
+  const card = (db.cards || []).find(c => c.id === String(req.body.toCardId || ''));
+  if (!batchId) return res.status(400).json({ error: '缺少批次代號' });
+  if (!card) return res.status(404).json({ error: '找不到目標卡片' });
+  const others = new Set((db.transactions || [])
+    .filter(t => t.importBatch !== batchId).map(t => t.stmtRef).filter(Boolean));   // 目標卡既有 stmtRef（排除本批）
+  let moved = 0, dropped = 0;
+  const kept = [];
+  for (const t of db.transactions || []) {
+    if (t.importBatch !== batchId) { kept.push(t); continue; }
+    const ref = String(t.stmtRef || '');
+    const idx = ref.indexOf('|');
+    const newRef = idx >= 0 ? card.id + ref.slice(idx) : ref;
+    if (others.has(newRef)) { dropped++; continue; }   // 目標卡已有同筆消費 → 丟棄重複
+    others.add(newRef);
+    kept.push({ ...t, account: card.name, stmtRef: newRef });
+    moved++;
+  }
+  db.transactions = kept;
+  save(db);
+  res.json({ ok: true, moved, dropped, cardName: card.name });
 });
 
 // ---- 舊分類 → 新兩層分類 一次性轉換（冪等；save() 會自動備份 .bak）----
