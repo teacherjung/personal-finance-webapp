@@ -706,13 +706,21 @@ function subRow(s, validSet) {
   </tr>`;
 }
 
+// 訂閱自身類別 → 收支記帳的兩層分類（新分類已無「訂閱」大類）
+const SUB_CAT_TO_EXPENSE = {
+  '娛樂': ['娛樂', 'Netflix及影音串流'],
+  '學習': ['學習', '學習型訂閱服務'],
+  '工具': ['工作', '其他工作成本'],
+  '生活': ['生活', '其他生活雜支']
+};
 async function recordToAccounting(s) {
   const amt = Number(s.amount || 0);
   const cycleLbl = CYCLE_FEE_LABELS[s.cycle] || '月費';
   if (!confirm(`要把這筆記入「收支記帳」嗎？\n\n${s.name}（${cycleLbl}） ${fmtFee(amt)}\n續費卡：${cardLabel(s.card)}\n日期：${todayStr()}`)) return;
+  const [cat, subcat] = SUB_CAT_TO_EXPENSE[s.category] || ['生活', '其他生活雜支'];
   try {
     await api('/transactions', { method: 'POST', body: {
-      date: todayStr(), type: 'expense', category: '訂閱', amount: amt,
+      date: todayStr(), type: 'expense', category: cat, subcategory: subcat, amount: amt,
       account: s.card || '', note: `${s.name}（訂閱${cycleLbl}）`
     }});
     toast(`已記入收支記帳：${fmtFee(amt)} ✅`);
