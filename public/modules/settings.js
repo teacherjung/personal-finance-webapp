@@ -27,6 +27,8 @@ export async function renderSettings() {
         <div><label>美元兌台幣匯率 (USD→TWD)</label><input id="usdTwd" type="number" step="0.01" value="${esc(s.usdTwd)}" /></div>
         <div><label>資產配置偏離提醒（%）</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
         <div><label>IB 閒置現金提醒門檻（美元 USD）</label><input id="ibIdleCashAlert" type="number" value="${esc(s.ibIdleCashAlert)}" /></div>
+        <div><label>換匯區間：美元→台幣（≥ 此值提醒分批換台幣）</label><input id="fxHigh" type="number" step="0.1" value="${esc(s.fxHigh ?? 32)}" /></div>
+        <div><label>換匯區間：台幣→美元（≤ 此值提醒分批換美元）</label><input id="fxLow" type="number" step="0.1" value="${esc(s.fxLow ?? 28)}" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="saveThresholds">儲存門檻</button></div>
     </div>
@@ -82,7 +84,9 @@ export async function renderSettings() {
       emergencyFundMonths: Number(val('emergencyFundMonths')),
       usdTwd: Number(val('usdTwd')),
       allocationDriftPct: Number(val('allocationDriftPct')),
-      ibIdleCashAlert: Number(val('ibIdleCashAlert'))
+      ibIdleCashAlert: Number(val('ibIdleCashAlert')),
+      fxHigh: Number(val('fxHigh')),
+      fxLow: Number(val('fxLow'))
     }});
     toast('門檻已儲存');
   };
