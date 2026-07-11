@@ -2,7 +2,7 @@ import { api, view, wan, money, esc, monthKey, todayStr, openForm, confirmDelete
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 
-const CATEGORIES = ['薪資', '投資', '獎金', '其他收入', '房貸', '飲食', '保險', '子女教育', '交通', '生活雜支', '醫療', '娛樂', '訂閱', '稅務', '其他支出'];
+const CATEGORIES = ['薪資', '投資', '獎金', '其他收入', '房貸', '飲食', '保險', '子女教育', '交通', '旅遊', '生活雜支', '醫療', '娛樂', '訂閱', '稅務', '其他支出'];
 
 let monthFilter = monthKey();
 
