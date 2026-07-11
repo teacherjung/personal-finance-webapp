@@ -87,6 +87,7 @@ function openCardForm(c) {
       { key: 'statementDay', label: '結帳日（信用卡，幾號）', type: 'number', placeholder: '5' },
       { key: 'dueDay', label: '繳款日（信用卡，幾號）', type: 'number', placeholder: '20' },
       { key: 'annualFee', label: '年費（信用卡）', type: 'number' },
+      { key: 'pdfPassword', label: '帳單 PDF 密碼（只存這台電腦、永不上傳）', type: 'password', placeholder: '通常是身分證字號' },
       { key: 'memberId', label: '會員編號（會員卡）', type: 'text' },
       { key: 'level', label: '等級（會員卡）', type: 'text', placeholder: '例：金卡 / 鑽石' },
       { key: 'expiry', label: '有效期限', type: 'date' },

@@ -4,11 +4,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, save, uid, emptyDb } from './lib/store.js';
 import { fetchFlex } from './lib/ib.js';
+import { parseStatementPdf } from './lib/statement.js';
 import { buildSummary, computeIb, monthKey, computeAssets } from './lib/derive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '15mb' }));   // 上傳帳單 PDF 以 base64 走 JSON，需要較大上限
 app.use(express.static(join(__dirname, 'public')));
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
 app.use('/vendor/chart.js', express.static(join(__dirname, 'node_modules/chart.js/dist/chart.umd.js')));
@@ -234,6 +235,54 @@ app.post('/api/ib/sync', async (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
   }
+});
+
+// ---- 信用卡帳單匯入（PDF 解密→解析→分類；密碼取自卡片 pdfPassword，PDF 不落地保存）----
+// 預覽：回傳解析結果與重複標記，尚未寫入任何資料
+app.post('/api/cards/:id/statement/preview', async (req, res) => {
+  try {
+    const db = load();
+    const card = (db.cards || []).find(c => c.id === req.params.id);
+    if (!card) return res.status(404).json({ error: '找不到卡片' });
+    if (!card.pdfPassword) return res.status(400).json({ error: '這張卡片尚未設定「帳單 PDF 密碼」，請先到卡片追蹤編輯卡片補上。' });
+    const b64 = String(req.body.data || '');
+    if (!b64) return res.status(400).json({ error: '沒有收到 PDF 內容' });
+    const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
+    const parsed = await parseStatementPdf(bytes, card.pdfPassword, card.issuer || card.name || '');
+    // 重複偵測：與既有記帳的 stmtRef 比對（同卡+消費日+金額+說明 視為同一筆）
+    const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
+    const transactions = parsed.transactions.map(t => {
+      const stmtRef = `${card.id}|${t.date}|${t.amount}|${t.desc}`;
+      return { ...t, stmtRef, duplicate: existing.has(stmtRef) };
+    });
+    res.json({ bank: parsed.bank, card: { id: card.id, name: card.name }, transactions });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+// 匯入：把使用者確認過的列寫進記帳（再做一次重複防呆）
+app.post('/api/cards/:id/statement/import', (req, res) => {
+  const db = load();
+  const card = (db.cards || []).find(c => c.id === req.params.id);
+  if (!card) return res.status(404).json({ error: '找不到卡片' });
+  const rows = Array.isArray(req.body.transactions) ? req.body.transactions : [];
+  const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
+  let imported = 0, skipped = 0;
+  for (const r of rows) {
+    const amount = Number(r.amount);
+    if (!r.date || !(amount > 0) || !r.stmtRef) { skipped++; continue; }   // 負數（繳款/退款）不入帳
+    if (existing.has(r.stmtRef)) { skipped++; continue; }
+    (db.transactions ||= []).push({
+      id: uid(), date: r.date, type: 'expense',
+      category: String(r.category || '其他支出'), amount,
+      account: card.name, note: String(r.desc || ''),
+      stmtRef: r.stmtRef, source: 'stmt'
+    });
+    existing.add(r.stmtRef);
+    imported++;
+  }
+  save(db);
+  res.json({ ok: true, imported, skipped });
 });
 
 // ---- 匯出 / 匯入備份 ----
