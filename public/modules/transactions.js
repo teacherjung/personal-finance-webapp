@@ -1,8 +1,13 @@
 import { api, view, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, router, modalSizeClass } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
+import { EXPENSE_TREE, EXPENSE_PARENTS, INCOME_CATEGORIES, subsOf } from './categories.js';
 
-const CATEGORIES = ['薪資', '投資', '獎金', '其他收入', '房貸', '飲食', '保險', '子女教育', '交通', '旅遊', '生活雜支', '醫療', '身心', '娛樂', '訂閱', '稅務', '其他'];
+// 表單大類選單＝收入類＋11 個支出大類；type 由所選大類自動推導
+const ALL_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_PARENTS];
+// 子類 <option>s（含「不分子類」空選項）
+const subOptions = (parent, cur = '') => ['', ...subsOf(parent)]
+  .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
 
@@ -73,7 +78,7 @@ function rowHtml(t) {
   return `<tr>
     <td>${esc(t.date)}</td>
     <td><span class="tag ${isIn ? 'green' : 'amber'}">${isIn ? '收入' : '支出'}</span></td>
-    <td>${esc(t.category)}</td>
+    <td>${esc(t.category)}${t.subcategory ? ` <span class="muted">· ${esc(t.subcategory)}</span>` : ''}</td>
     <td class="muted">${esc(t.account || '—')}</td>
     <td class="muted">${esc(t.note || '')}</td>
     <td class="num ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(t.amount)}</td>
@@ -86,24 +91,31 @@ function openTxForm(tx) {
     title: tx ? '編輯記錄' : '新增收支',
     fields: [
       { key: 'date', label: '日期', type: 'date', required: true, default: todayStr() },   // 用本地時區（UTC 版在台灣早上 8 點前會差一天）
-      { key: 'type', label: '類型', type: 'select', options: [{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }] },
-      { key: 'category', label: '分類', type: 'select', options: CATEGORIES },
+      { key: 'category', label: '分類（收入類或支出大類）', type: 'select', options: ALL_CATEGORIES, default: '飲食' },
+      { key: 'subcategory', label: '子類（支出才有）', type: 'select', options: [] },   // 由 onMount 依大類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'account', label: '帳戶 / 信用卡', type: 'text', placeholder: '例：台新活存、富邦卡' },
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
     values: tx || {},
+    onMount: (root) => {
+      const catSel = root.querySelector('#f_category');
+      const subSel = root.querySelector('#f_subcategory');
+      const fill = (parent, cur) => { subSel.innerHTML = subOptions(parent, cur); subSel.disabled = INCOME_CATEGORIES.includes(parent); };
+      fill(catSel.value, tx?.subcategory || '');
+      catSel.onchange = () => fill(catSel.value, '');
+    },
     onSubmit: async (data) => {
-      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body: data });
-      else await api('/transactions', { method: 'POST', body: data });
+      const type = INCOME_CATEGORIES.includes(data.category) ? 'income' : 'expense';
+      const body = { ...data, type, subcategory: type === 'income' ? '' : (data.subcategory || '') };
+      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });
+      else await api('/transactions', { method: 'POST', body });
       toast('已儲存'); renderTransactions();
     }
   });
 }
 
 // ---- 信用卡帳單匯入（上傳 PDF → 後端解密解析分類 → 預覽確認 → 寫入記帳）----
-const EXPENSE_CATEGORIES = CATEGORIES.filter(c => !['薪資', '獎金', '其他收入', '投資'].includes(c));
-
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -137,11 +149,12 @@ async function openStatementUpload() {
   });
 }
 
-// 預覽確認：分類可改、可勾選；重複與繳款/退款預設不匯入
+// 預覽確認：大類→子類連動下拉、可勾選；重複與繳款/退款預設不匯入
 function openStatementPreview(cardId, r) {
   const root = document.getElementById('modal-root');
-  const catSel = (i, cur) => `<select data-cat="${i}">${EXPENSE_CATEGORIES.map(c =>
+  const catSelHtml = (i, cur) => `<select data-cat="${i}">${EXPENSE_PARENTS.map(c =>
     `<option value="${esc(c)}" ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+  const subSelHtml = (i, parent, cur) => `<select data-sub="${i}">${subOptions(parent, cur)}</select>`;
   const rowsHtml = r.transactions.map((t, i) => {
     const dis = t.isPayment;                       // 繳款/退款不可匯入
     const checked = !dis && !t.duplicate;          // 重複預設不勾
@@ -151,7 +164,8 @@ function openStatementPreview(cardId, r) {
       <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
       <td class="nowrap">${esc(t.date || '')}</td>
       <td>${esc(t.desc)}</td>
-      <td>${dis ? '—' : catSel(i, t.category)}</td>
+      <td>${dis ? '—' : catSelHtml(i, t.category)}</td>
+      <td>${dis ? '' : subSelHtml(i, t.category, t.subcategory)}</td>
       <td class="num ${t.amount < 0 ? 'pos' : ''}">${money(Math.abs(t.amount))}${t.amount < 0 ? '（負）' : ''}</td>
       <td>${status}</td>
     </tr>`;
@@ -159,9 +173,9 @@ function openStatementPreview(cardId, r) {
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('xl')}">
     <div class="modal-head"><h2>帳單預覽：${esc(r.card?.name || '')}（${esc(r.bank || '')}）</h2><button class="x-close">×</button></div>
     <div class="modal-body">
-      <p class="muted" style="font-size:12.5px;margin-bottom:10px">共 ${r.transactions.length} 筆。分類是自動判斷的初稿，可逐筆修改；「已存在」＝之前匯入過（預設不重複記）；繳款/退款不列入支出。按「匯入」才會寫進記帳。</p>
+      <p class="muted" style="font-size:12.5px;margin-bottom:10px">共 ${r.transactions.length} 筆。大類與子類是自動判斷的初稿，可逐筆修改（改大類時子類會跟著換）；「已存在」＝之前匯入過（預設不重複記）；繳款/退款不列入支出。按「匯入」才會寫進記帳。</p>
       <div class="tbl-wrap" style="max-height:50vh;overflow-y:auto">
-        <table><thead><tr><th></th><th>消費日</th><th>說明</th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
+        <table><thead><tr><th></th><th>消費日</th><th>說明</th><th>大類</th><th>子類</th><th class="num">金額</th><th>狀態</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table>
       </div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
@@ -171,12 +185,21 @@ function openStatementPreview(cardId, r) {
   const close = () => { root.innerHTML = ''; };
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
+  // 改大類 → 子類選單跟著重建
+  root.querySelectorAll('select[data-cat]').forEach(sel => {
+    sel.onchange = () => {
+      const sub = root.querySelector(`select[data-sub="${sel.dataset.cat}"]`);
+      if (sub) sub.innerHTML = subOptions(sel.value, '');
+    };
+  });
   root.querySelector('#doImport').onclick = async () => {
     const picked = [];
     root.querySelectorAll('input[data-row]:checked').forEach(cb => {
-      const t = r.transactions[Number(cb.dataset.row)];
-      const sel = root.querySelector(`select[data-cat="${cb.dataset.row}"]`);
-      picked.push({ ...t, category: sel ? sel.value : t.category });
+      const i = cb.dataset.row;
+      const t = r.transactions[Number(i)];
+      const cat = root.querySelector(`select[data-cat="${i}"]`);
+      const sub = root.querySelector(`select[data-sub="${i}"]`);
+      picked.push({ ...t, category: cat ? cat.value : t.category, subcategory: sub ? sub.value : t.subcategory });
     });
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {

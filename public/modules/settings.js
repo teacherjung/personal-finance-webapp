@@ -49,6 +49,12 @@ export async function renderSettings() {
       <div class="form-actions"><button class="btn" id="saveIb">儲存 IB 設定</button></div>
     </div>
 
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">分類轉換（一次性）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把舊的單層分類（房貸、生活雜支、旅遊、訂閱…）轉成新的兩層分類（居住／房貸…）。可重複執行、只改到得動的舊標籤，轉換前會自動備份。</p>
+      <div><button class="btn-ghost" id="migrateBtn">${icon('refresh', 16) || ''}轉換舊分類 → 新分類</button></div>
+    </div>
+
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.json</code>。建議定期匯出備份。</p>
@@ -83,6 +89,14 @@ export async function renderSettings() {
   document.getElementById('saveIb').onclick = async () => {
     await api('/settings', { method: 'PUT', body: { ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } } });
     toast('IB 設定已儲存，可到 IB 投資組合頁同步');
+  };
+  document.getElementById('migrateBtn').onclick = async () => {
+    if (!confirm('要把舊分類轉換成新的兩層分類嗎？（會先自動備份，可重複執行）')) return;
+    try {
+      const r = await api('/migrate/categories', { method: 'POST' });
+      const detail = Object.entries(r.byOldCategory || {}).map(([k, v]) => `${k}×${v}`).join('、');
+      toast(r.changed ? `已轉換 ${r.changed} 筆${detail ? '（' + detail + '）' : ''}` : '沒有需要轉換的舊分類');
+    } catch (err) { toast('轉換失敗：' + err.message, true); }
   };
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').onchange = async (e) => {

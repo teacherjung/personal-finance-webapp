@@ -113,10 +113,11 @@
       "id": "x2",
       "date": "2026-06-05",
       "type": "expense",
-      "category": "房貸",
+      "category": "居住",
       "amount": 32000,
       "account": "富邦",
-      "note": "本月房貸"
+      "note": "本月房貸",
+      "subcategory": "房貸"
     },
     {
       "id": "x3",
@@ -125,7 +126,8 @@
       "category": "飲食",
       "amount": 18500,
       "account": "信用卡",
-      "note": "三餐+外食"
+      "note": "三餐+外食",
+      "subcategory": "餐廳"
     },
     {
       "id": "x4",
@@ -134,7 +136,8 @@
       "category": "保險",
       "amount": 12000,
       "account": "信用卡",
-      "note": "醫療險月繳"
+      "note": "醫療險月繳",
+      "subcategory": "醫療險"
     },
     {
       "id": "x5",
@@ -149,19 +152,21 @@
       "id": "x6",
       "date": "2026-06-20",
       "type": "expense",
-      "category": "子女教育",
+      "category": "養育",
       "amount": 15000,
       "account": "台新活存",
-      "note": "才藝+補習"
+      "note": "才藝+補習",
+      "subcategory": "補習／才藝"
     },
     {
       "id": "x7",
       "date": "2026-06-25",
       "type": "expense",
-      "category": "訂閱",
+      "category": "娛樂",
       "amount": 1450,
       "account": "信用卡",
-      "note": "各項訂閱"
+      "note": "各項訂閱",
+      "subcategory": "Netflix及影音串流"
     },
     {
       "id": "x8",
@@ -179,25 +184,28 @@
       "category": "飲食",
       "amount": 21000,
       "account": "信用卡",
-      "note": ""
+      "note": "",
+      "subcategory": "超市"
     },
     {
       "id": "x10",
       "date": "2026-05-12",
       "type": "expense",
-      "category": "房貸",
+      "category": "居住",
       "amount": 32000,
       "account": "富邦",
-      "note": ""
+      "note": "",
+      "subcategory": "房貸"
     },
     {
       "id": "x11",
       "date": "2026-05-18",
       "type": "expense",
-      "category": "生活雜支",
+      "category": "生活",
       "amount": 14000,
       "account": "信用卡",
-      "note": ""
+      "note": "",
+      "subcategory": "日用品"
     }
   ],
   "subscriptions": [
