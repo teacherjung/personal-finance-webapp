@@ -141,10 +141,11 @@ async function openStatementUpload() {
       if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
     onSubmit: async (data) => {
-      if (!file) throw new Error('請先選擇帳單 PDF 檔案');
+      if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
       const b64 = await fileToBase64(file);
       const r = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64 } });
-      openStatementPreview(data.cardId, r);
+      // openForm 送出後會清空 #modal-root，預覽也在 #modal-root，故延到關閉之後再畫，否則會被一起清掉
+      setTimeout(() => openStatementPreview(data.cardId, r), 0);
     }
   });
 }
