@@ -52,7 +52,8 @@
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
 | 支出分類（兩層：大類/子類） | **單一真相＝`public/modules/categories.js` 的 `EXPENSE_TREE`**（前端 import `./categories.js`、後端 `lib/statement.js`+`server.js` import `../public/modules/categories.js` 共用同一份）。`statement.js CATEGORY_RULES` 的 `[大類,子類]` 字串、`server.js CATEGORY_MIGRATION` 的目標分類，都必須對得上 EXPENSE_TREE。交易存 `category`(大類)+`subcategory`(子類)；收入類走 `INCOME_CATEGORIES`、無子類。未知支出預設 `DEFAULT_EXPENSE`（生活/其他生活雜支） |
-| `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 特殊指定要排在通用前：YouTube→學習、ChatGPT/Claude/Notion/Canva→工作、汽車保險→交通（在保險前）、健身→身心。新增銀行帳單＝加 `parseXxx()` 並在 `parseStatementPdf` 依 issuer 分流（v1 只有富邦，`parseFubon` 支援郵寄電子帳單〔加密、說明同列〕與官網下載版〔無密碼、說明換行下一列〕）。重複判定鍵＝`stmtRef`（卡id+消費日+金額+說明） |
+| `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 特殊指定要排在通用前：YouTube→學習、ChatGPT/Claude/Notion/Canva→工作、汽車保險→交通（在保險前）、健身→身心、外送前綴（FP-/foodpanda）放飲食各子類之後當保底。重複判定鍵＝`stmtRef`（卡id+消費日+金額+說明） |
+| 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX 分流） | **富邦＝PDF**（`parseFubon`：郵寄加密版說明同列、官網無密碼版說明換行下一列、民國日期）；**台新＝XLSX**（`parseTaishinXlsx`＋SheetJS，官網下載「信用卡明細」，西元日期、金額獨立欄）。台新 PDF 排版翻頁不穩→擋下建議改 XLSX。各解析器回原始明細後共走 `finalize()`（分類＋國外交易服務費繼承）。新增銀行＝加 `parseXxx()` 在 `parseStatement` 分流。`parseStatementPdf` 為 `parseStatement` 別名（相容） |
 
 ## 協作流程
 

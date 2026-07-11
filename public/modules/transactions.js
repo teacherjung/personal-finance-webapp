@@ -130,15 +130,15 @@ async function openStatementUpload() {
   if (!cards.length) return toast('請先到「卡片追蹤」新增一張信用卡', true);
   let file = null;
   openForm({
-    title: '上傳信用卡帳單（PDF）',
+    title: '上傳信用卡帳單',
     fields: [
-      { key: 'cardId', label: '卡片（密碼自動取用卡片的「帳單 PDF 密碼」）', type: 'select',
-        options: cards.map(c => ({ value: c.id, label: c.pdfPassword ? c.name : `${c.name}（未設定 PDF 密碼）` })) },
-      { key: 'file', label: '帳單 PDF 檔案', type: 'file', full: true }
+      { key: 'cardId', label: '卡片（PDF 加密時自動取用卡片的「帳單 PDF 密碼」）', type: 'select',
+        options: cards.map(c => ({ value: c.id, label: c.name })) },
+      { key: 'file', label: '帳單檔案（富邦 PDF／台新 XLSX）', type: 'file', full: true }
     ],
     onMount: (root) => {
       const inp = root.querySelector('#f_file');
-      if (inp) { inp.accept = 'application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
+      if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
     onSubmit: async (data) => {
       if (!file) throw new Error('請先選擇帳單 PDF 檔案');
