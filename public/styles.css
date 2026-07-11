@@ -230,6 +230,62 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 @media (max-width: 900px) { .two-col, .form-grid { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .cat-donut-layout { grid-template-columns: 1fr; } .cat-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
+/* ---------- 總覽儀表板（B 暖白版） ---------- */
+/* Hero：淨資產大字＋迷你走勢＋狀態晶片 */
+.dash-hero {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 24px 26px; box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.dh-lab { font-size: 11.5px; color: var(--text-dim); letter-spacing: .14em; text-transform: uppercase; }
+.dh-net { font-family: var(--serif); font-size: 44px; font-weight: 500; letter-spacing: -.03em; line-height: 1.04; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.dh-spark { margin-top: 8px; }
+.dh-spark-svg { display: block; }
+.dh-spark-empty { font-size: 12px; color: var(--text-dim); margin-top: 8px; max-width: 240px; }
+.dh-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dchip { font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 8px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
+.dchip.bad { background: #f6ead6; color: var(--warn); }
+.dchip.good { background: var(--accent-soft); color: var(--pos); }
+
+/* KPI 一排（四格，細線分隔） */
+.kpi-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; margin-bottom: 18px;
+}
+.kpi { background: var(--card); padding: 16px 18px; }
+.kpi-lab { font-size: 11px; color: var(--text-dim); font-weight: 600; letter-spacing: .04em; }
+.kpi-v { font-family: var(--serif); font-size: 22px; font-weight: 500; margin-top: 7px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.kpi-v.warn { color: var(--warn); }
+.kpi-d { font-size: 11.5px; color: var(--text-dim); margin-top: 5px; }
+.kpi-d.warn { color: var(--warn); }
+
+/* 需要處理 ｜ 資產配置 兩欄 */
+.dash-two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; margin-bottom: 8px; }
+.dash-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+.dash-h { font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--text-dim); margin-bottom: 13px; display: flex; gap: 8px; align-items: center; }
+.dash-ct { background: var(--warn); color: #fff; border-radius: 20px; padding: 0 8px; font-size: 11px; font-weight: 700; }
+.dact-list { display: flex; flex-direction: column; gap: 8px; }
+.dact { display: flex; gap: 12px; align-items: flex-start; padding: 11px 13px; border-radius: 10px; background: var(--bg); border-left: 3px solid var(--warn); }
+.dact.hi { border-left-color: var(--neg); }
+.dact.info { border-left-color: var(--line-2); }
+.dact-sev { font-size: 11px; font-weight: 700; color: var(--warn); width: 20px; flex-shrink: 0; text-align: center; margin-top: 1px; }
+.dact.hi .dact-sev { color: var(--neg); }
+.dact.info .dact-sev { color: var(--text-dim); }
+.dact-t { font-weight: 600; font-size: 13px; }
+.dact-d { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.dact-tag { margin-left: auto; font-size: 10.5px; color: var(--text-dim); background: var(--card-2); padding: 2px 9px; border-radius: 6px; flex-shrink: 0; align-self: center; }
+.dact-empty { color: var(--pos); font-size: 13px; padding: 6px 2px; }
+/* 資產配置長條 */
+.dalloc-bar { display: flex; height: 26px; border-radius: 7px; overflow: hidden; margin-bottom: 14px; }
+.dalloc-bar i { display: block; }
+.dalloc-legend { display: flex; flex-direction: column; gap: 10px; }
+.dalloc-lg { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.dalloc-lg .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.dalloc-lg .pc { margin-left: auto; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.dalloc-lg .amt { font-variant-numeric: tabular-nums; width: 68px; text-align: right; }
+@media (max-width: 820px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } .dash-two { grid-template-columns: 1fr; } }
+
 /* ---------- Toast ---------- */
 #toast-root { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
 .toast { background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow-lg); animation: slidein .2s; font-weight: 500; }
