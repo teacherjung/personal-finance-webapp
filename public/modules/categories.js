@@ -1,4 +1,4 @@
-// 支出兩層分類（大類 → 子類），單一真相來源。
+// 支出兩層分類（分類 → 子類），單一真相來源。
 // 前端記帳表單/帳單預覽用它建連動下拉；後端 statement.js 的自動分類規則、
 // server.js 的舊資料轉換，其分類字串都必須對得上這裡（AGENTS.md 同步點）。
 // 零相依純資料檔——前端 import './categories.js'、後端 import '../public/modules/categories.js' 共用同一份。
