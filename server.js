@@ -166,7 +166,15 @@ app.post('/api/ib/sync', async (req, res) => {
   const db = load();
   const { flexToken, flexQueryId } = db.settings.ib || {};
   try {
-    const data = await fetchFlex(flexToken, flexQueryId);
+    // 現金流缺 IBKR 匯率時，用設定匯率估算為 USD 基準（與交易摘要同口徑，AGENTS.md 優先序）
+    const fxToBase = (cur) => {
+      const c = String(cur || 'USD').toUpperCase();
+      if (c === 'USD') return 1;
+      const usdTwd = Number(db.settings.usdTwd || 32);
+      const curTwd = c === 'TWD' ? 1 : Number(db.settings.fxTwd?.[c] || 0);
+      return (curTwd > 0 && usdTwd > 0) ? curTwd / usdTwd : null;
+    };
+    const data = await fetchFlex(flexToken, flexQueryId, fxToBase);
     db.holdings = db.holdings || [];
     const r2 = (x) => Math.round(Number(x || 0) * 100) / 100;   // 金額統一到小數點後兩位
     let updated = 0, created = 0;
@@ -216,6 +224,7 @@ app.post('/api/ib/sync', async (req, res) => {
       withholdingTax: r2(data.income.withholdingTax), interestPaid: r2(data.income.interestPaid),
       interestReceived: r2(data.income.interestReceived), other: r2(data.income.other),
       count: data.income.count, skippedNoFx: data.income.skippedNoFx || 0,
+      estimatedNoFx: data.income.estimatedNoFx || 0, estimatedCurrencies: data.income.estimatedCurrencies || [],
       from: data.period?.from || '', to: data.period?.to || ''
     } : null;
     db.ibTrades = Array.isArray(data.trades) ? data.trades : [];   // 交易摘要與 XIRR 已實現損益修正使用中

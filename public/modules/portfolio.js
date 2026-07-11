@@ -242,7 +242,7 @@ export async function renderPortfolio() {
   }
 
   // 資金加權年化報酬（XIRR）——資料齊了在此同步計算，直接嵌進模板
-  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD);
+  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD, settings);
 
   view().innerHTML = `
     <div class="page-head">
@@ -293,7 +293,7 @@ export async function renderPortfolio() {
     <div class="chart-card" style="margin-bottom:16px">
       <h3><button type="button" class="info-link" id="xirrInfo">投入 vs 市值</button> <span class="stat-sub" style="font-weight:400;margin:0">（每月快照，按左下「記錄本月快照」累積）</span>
         <span style="float:right;font-size:13px">${xr.ok
-          ? `年化報酬（XIRR）<b class="${xr.rate >= 0 ? 'pos' : 'neg'}">${xr.rate >= 0 ? '+' : ''}${xr.rate.toFixed(1)}%</b>${xr.years < 1 ? ' <span class="muted small">未滿 1 年僅供參考</span>' : ''}`
+          ? `年化報酬（XIRR）<b class="${xr.rate >= 0 ? 'pos' : 'neg'}">${xr.rate >= 0 ? '+' : ''}${xr.rate.toFixed(1)}%</b>${xr.years < 1 ? ' <span class="muted small">未滿 1 年僅供參考</span>' : ''}${xr.estimated ? ' <span class="muted small">含匯率估算</span>' : ''}`
           : `<span class="muted small">XIRR：${xr.why}</span>`}</span></h3>
       <div class="chart-box" style="height:240px"><canvas id="investChart"></canvas></div>
       <p class="muted small" style="margin-top:8px">兩線的差距＝未實現損益。市值線的波動是市場的事；投入線持續墊高，才是你能控制的事。年化報酬（XIRR）按你每筆投入的時間點計算，點標題看說明。</p>
@@ -591,7 +591,8 @@ function incomeSection(settings) {
       ${item(infoBtn('interestReceived', '利息收入'), inc.interestReceived, 'pos')}
       ${item('淨現金流', net, net >= 0 ? 'pos' : 'neg')}
     </div>
-    ${inc.skippedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率，未計入上列金額（重新同步通常可補齊）。</p>` : ''}
+    ${inc.estimatedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
+    ${inc.skippedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
   </div>`;
 }
 
@@ -606,36 +607,36 @@ const INCOME_INFO = {
 };
 
 // 交易摘要計算（頁面與列印共用）：已實現損益換成基準幣別(USD)、獲利/虧損前三
+// 交易已實現損益 → 基準幣別（USD）。優先序（AGENTS.md）：
+// pnlBase → fxRateToBase → USD 直通 → 設定匯率估算 → 缺匯率(0)。回傳 { base, source, cur }。
+// 交易摘要與 XIRR 共用，確保多幣別口徑一致（否則 XIRR 會漏估外幣賣出、年化偏低）。
+function tradePnlBase(t, settings = {}) {
+  const pnl = Number(t.pnl) || 0;
+  const cur = String(t.currency || 'USD').toUpperCase();
+  if (t.pnlBase != null && t.pnlBase !== '' && Number.isFinite(Number(t.pnlBase)))
+    return { base: Number(t.pnlBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
+  if (t.fxRateToBase != null && t.fxRateToBase !== '' && Number.isFinite(Number(t.fxRateToBase)) && Number(t.fxRateToBase) > 0)
+    return { base: pnl * Number(t.fxRateToBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
+  if (cur === 'USD') return { base: pnl, source: 'usd', cur };
+  const usdTwd = Number(settings.usdTwd || 32);
+  const curTwd = cur === 'TWD' ? 1 : Number(settings.fxTwd?.[cur] || 0);
+  const rate = (curTwd > 0 && usdTwd > 0) ? curTwd / usdTwd : null;
+  if (rate) return { base: pnl * rate, source: 'estimated', cur };
+  return { base: 0, source: 'missing', cur };
+}
+
 function tradeSummary(trades, settings = {}) {
-  const fxToBase = (cur) => {
-    const c = String(cur || 'USD').toUpperCase();
-    if (c === 'USD') return 1;
-    const usdTwd = Number(settings.usdTwd || 32);
-    const curTwd = c === 'TWD' ? 1 : Number(settings.fxTwd?.[c] || 0);
-    return curTwd > 0 && usdTwd > 0 ? curTwd / usdTwd : null;
-  };
   const ibkr = new Set();
   const estimated = new Set();
   const missing = new Set();
   const pnlBase = (t) => {
-    const pnl = Number(t.pnl) || 0;
-    const cur = String(t.currency || 'USD').toUpperCase();
-    if (t.pnlBase != null && t.pnlBase !== '' && Number.isFinite(Number(t.pnlBase))) {
-      if (cur !== 'USD') ibkr.add(cur);
-      return Number(t.pnlBase);
+    const { base, source, cur } = tradePnlBase(t, settings);
+    if (cur !== 'USD') {
+      if (source === 'ibkr') ibkr.add(cur);
+      else if (source === 'estimated') estimated.add(cur);
+      else if (source === 'missing') missing.add(cur);
     }
-    if (t.fxRateToBase != null && t.fxRateToBase !== '' && Number.isFinite(Number(t.fxRateToBase)) && Number(t.fxRateToBase) > 0) {
-      if (cur !== 'USD') ibkr.add(cur);
-      return pnl * Number(t.fxRateToBase);
-    }
-    if (cur === 'USD') return pnl;
-    const fallback = fxToBase(cur);
-    if (fallback) {
-      estimated.add(cur);
-      return pnl * fallback;
-    }
-    missing.add(cur);
-    return 0;
+    return base;
   };
   const realized = trades.reduce((s, t) => s + pnlBase(t), 0);
   const bySym = {};
@@ -1163,7 +1164,7 @@ function openCapeManual(settings) {
 const XIRR_INFO_HTML = `
   <p><b>XIRR（資金加權年化報酬）</b>：把每一筆投入與拿回的錢、連同發生的時間點一起解出的年化報酬率——「你的錢實際上長多快」。與只看漲跌幅的報酬率不同，它會反映你進出場時點的效果：同樣的市場，早投入多投入的人 XIRR 較高。</p>
   <p><b>資料來源</b>：每月「記錄本月快照」的投入增量＝流出；IB 賣出的已實現損益逐筆按成交日計入；今日市值＝期末流入。口徑為台幣。</p>
-  <p class="muted">限制：不含股息與利息（結果略為低估）；台股手動賣出的已實現損益未納入；快照為月頻、時點以月底近似；IB 交易紀錄僅涵蓋同步期間。歷史未滿 1 年時，年化會放大短期波動，僅供參考。</p>`;
+  <p class="muted">限制：不含股息與利息（結果略為低估）；台股手動賣出的已實現損益未納入；快照為月頻、時點以月底近似；IB 交易紀錄僅涵蓋同步期間。外幣賣出缺 IBKR 匯率時以設定匯率估算（標示「含匯率估算」）。歷史未滿 1 年時，年化會放大短期波動，僅供參考。</p>`;
 
 // 解 XIRR：對 NPV(r)=Σ v/(1+r)^年 做二分法（區間 −95%～+1000%）
 function xirrRate(flows) {
@@ -1180,7 +1181,7 @@ function xirrRate(flows) {
   return (lo + hi) / 2;
 }
 
-function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd) {
+function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) {
   if (!Array.isArray(psnaps) || !psnaps.length || !(curValue > 0)) return { ok: false, why: '需先記錄月快照' };
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const eom = (mk) => {   // 快照時點以月底近似（本月快照則視為今天）
@@ -1193,12 +1194,18 @@ function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd) {
     flows.push({ t: eom(psnaps[i].month), v: -(Number(psnaps[i].cost || 0) - Number(psnaps[i - 1].cost || 0)) });
   }
   const t0 = flows[0].t;
-  for (const tr of ibTrades || []) {   // 賣出時投入額只減成本，已實現損益要另外補回現金流
-    if (tr.buySell !== 'SELL' || tr.pnlBase == null) continue;
+  // 賣出時投入額只減成本，已實現損益要另外補回現金流。換算與交易摘要同口徑
+  // （tradePnlBase：pnlBase→fxRateToBase→USD→設定匯率估算），避免漏估外幣賣出讓年化偏低。
+  let estimated = false;
+  for (const tr of ibTrades || []) {
+    if (tr.buySell !== 'SELL') continue;
+    const { base, source } = tradePnlBase(tr, settings);
+    if (source === 'missing' || !base) continue;
+    if (source === 'estimated') estimated = true;
     const ds = String(tr.date || '');
     const d = new Date(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);
     if (isNaN(d) || d <= t0) continue;
-    flows.push({ t: d > today ? today : d, v: Number(tr.pnlBase) * usd });
+    flows.push({ t: d > today ? today : d, v: base * usd });
   }
   const lastCost = Number(psnaps[psnaps.length - 1].cost || 0);
   flows.push({ t: today, v: curValue - (curCost - lastCost) });   // 期末市值＋最後一筆快照之後的投入增量
@@ -1209,7 +1216,7 @@ function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd) {
   if (r == null) return { ok: false, why: '無法計算' };
   // 年化超過 ±500% 代表資料有問題（如快照與市值口徑不符），不顯示誤導數字
   if (Math.abs(r) > 5) return { ok: false, why: '資料異常（檢查快照是否為真實紀錄）' };
-  return { ok: true, rate: r * 100, years: spanDays / 365.25 };
+  return { ok: true, rate: r * 100, years: spanDays / 365.25, estimated };
 }
 
 // ---- ⑥ 投入 vs 市值 ----
@@ -1462,7 +1469,8 @@ async function printPortfolioReport(d) {
     <table><thead><tr><th class="num">股息（含替代股息）</th><th class="num">融資利息</th><th class="num">利息收入</th><th class="num">淨現金流</th></tr></thead>
     <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(inc.interestPaid || 0) * rate)}</td>
     <td class="num">+${val((inc.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
-    ${inc.skippedNoFx > 0 ? `<p class="muted">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率，未計入上列金額。</p>` : ''}</section>` : '';
+    ${inc.estimatedNoFx > 0 ? `<p class="muted">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
+    ${inc.skippedNoFx > 0 ? `<p class="muted">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}</section>` : '';
 
   let tradesHtml = '';
   if (ibTrades && ibTrades.length) {

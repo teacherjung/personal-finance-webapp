@@ -33,8 +33,8 @@
 - **投資原則（使用者拍板）**：最高指導原則＝**生存優先**（在所有環境活著 > 多數環境賺更多），規則衝突時以此裁決。所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)，設定頁「投資原則」卡可調。
 - **融資槓桿只算 IB**：**優先用 IB 官方淨值摘要 `settings.ib.lastEquity`**（同步時更新、基準幣別 USD：stock ÷ (stock+cash)）；沒有同步資料才自算（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額）。排除台新現金與台股，文案標「IB」前綴。`ibIdleCashAlert`＝IB 正現金閒置提醒門檻（USD）。
 - **槓桿上限任何時期 1.3x**（2026-07-10 修訂，取消訊號期 1.6x——1.6x 撐不過 2008 級回檔）：估值訊號期加碼**只用新資金與現金、不舉新債**。**斷頭距離**＝市場再跌 x% 觸及 IB 強平線，`x = 1 − 借款 ÷ ((1−維持率) × IB 持倉市值)`（假設全倉維持率一致的近似）；維持率存 `settings.ibMaintenancePct`(25)。公式在 `portfolio.js marginCallDistance()` 與 `lib/derive.js` 規則 7 各一份（同步點）。
-- **多幣別損益**：已實現損益/現金流換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。
-- **XIRR（資金加權年化，台幣）**：現金流＝第一筆月快照市值（流出）＋各月快照投入增量（流出）＋IB 賣出已實現損益逐筆按成交日（`pnlBase`×usdTwd，流入）＋今日市值（流入）。**賣出只用 Δcost 會漏掉已實現損益，必須用 ibTrades 修正**。不含股息利息；台股手動賣出未納入；快照未滿 60 天不顯示；|年化|>500% 視為資料異常。實作在 `portfolio.js portfolioXirr()/xirrRate()`（僅此一份）。快照資料曾含 seed 示範殘留（2026-07-10 已清），**判斷 XIRR 異常先懷疑快照資料**。
+- **多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。**交易損益**（交易摘要＋XIRR）共用 `portfolio.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`server.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
+- **XIRR（資金加權年化，台幣）**：現金流＝第一筆月快照市值（流出）＋各月快照投入增量（流出）＋IB 賣出已實現損益逐筆按成交日（`tradePnlBase`×usdTwd，流入，與交易摘要同口徑、含設定匯率估算）＋今日市值（流入）。**賣出只用 Δcost 會漏掉已實現損益，必須用 ibTrades 修正**；用估算時 header 標「含匯率估算」。不含股息利息；台股手動賣出未納入；快照未滿 60 天不顯示；|年化|>500% 視為資料異常。實作在 `portfolio.js portfolioXirr()/xirrRate()`（僅此一份）。快照資料曾含 seed 示範殘留（2026-07-10 已清），**判斷 XIRR 異常先懷疑快照資料**。
 - 台股（0050/006208/00719B/00720B）無 API、手動維護股數；報價 Yahoo（台債後綴 `.TWO`；GBp 便士 ÷100 轉 GBP）。
 
 ## ⚠️ 同步點清單（改一處必須檢查另一處）
