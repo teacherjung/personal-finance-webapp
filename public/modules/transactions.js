@@ -31,6 +31,7 @@ export async function renderTransactions() {
     <div class="page-head">
       <div><h1>收支記帳</h1><p>記錄每一筆收入與支出，掌握現金流</p></div>
       <div class="page-actions">
+        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost" id="stmtBatches">${icon('card', 16)}帳單批次</button>` : ''}
         <button class="btn-ghost" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
         <button class="btn" id="addTx">${icon('plus', 16)}新增一筆</button>
       </div>
@@ -65,6 +66,8 @@ export async function renderTransactions() {
 
   document.getElementById('addTx').onclick = () => openTxForm();
   document.getElementById('uploadStmt').onclick = () => openStatementUpload();
+  const batchBtn = document.getElementById('stmtBatches');
+  if (batchBtn) batchBtn.onclick = () => openBatchManager();
   document.getElementById('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
@@ -132,9 +135,9 @@ async function openStatementUpload() {
   openForm({
     title: '上傳信用卡帳單',
     fields: [
-      { key: 'cardId', label: '卡片（PDF 加密時自動取用卡片的「帳單 PDF 密碼」）', type: 'select',
+      { key: 'cardId', label: '記到哪張卡片（PDF 加密時用這張卡的密碼解鎖；選錯可事後整批改）', type: 'select',
         options: cards.map(c => ({ value: c.id, label: c.name })) },
-      { key: 'file', label: '帳單檔案（富邦 PDF／台新 XLSX）', type: 'file', full: true }
+      { key: 'file', label: '帳單檔案（PDF 或 XLSX，系統自動辨識富邦／台新）', type: 'file', full: true }
     ],
     onMount: (root) => {
       const inp = root.querySelector('#f_file');
@@ -199,9 +202,82 @@ function openStatementPreview(cardId, r) {
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {
       const out = await api(`/cards/${cardId}/statement/import`, { method: 'POST', body: { transactions: picked } });
-      close();
-      toast(`已匯入 ${out.imported} 筆${out.skipped ? `，略過 ${out.skipped} 筆（重複或不可匯入）` : ''}`);
+      if (out.imported > 0) openImportDone(out);
+      else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
       renderTransactions();
     } catch (e) { toast('匯入失敗：' + e.message, true); }
   };
+}
+
+// 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「帳單批次」改）。
+function openImportDone(out) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('sm')}">
+    <div class="modal-head"><h2>匯入完成</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p>已匯入 <b>${out.imported}</b> 筆到「<b>${esc(out.cardName || '')}</b>」${out.skipped ? `<span class="muted">，略過 ${out.skipped} 筆（重複或不可匯入）</span>` : ''}。</p>
+      <p class="muted" style="font-size:12.5px;margin-top:6px">記錯卡片了嗎？可以現在整批改到別張卡（之後也能從右上「帳單批次」改）。</p>
+      <div class="form-actions">
+        <button type="button" class="btn-ghost" data-reassign>改到其他卡片</button>
+        <button type="button" class="btn" data-done>完成</button>
+      </div>
+    </div>
+  </div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-done]').onclick = close;
+  root.querySelector('[data-reassign]').onclick = () =>
+    openReassignPicker({ batchId: out.batchId, fromCardId: out.cardId, cardName: out.cardName }, () => { close(); renderTransactions(); });
+}
+
+// 帳單批次管理：列出每次匯入（卡片／日期範圍／筆數／金額），可整批改卡片。
+async function openBatchManager() {
+  const [batches, cards] = await Promise.all([api('/statement/batches'), api('/cards')]);
+  const root = document.getElementById('modal-root');
+  const render = (list) => {
+    const rows = list.map(b => `<tr>
+      <td>${esc(b.cardName || '—')}</td>
+      <td class="nowrap muted">${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}</td>
+      <td class="num">${b.count}</td>
+      <td class="num">${money(b.amount)}</td>
+      <td><button class="btn-link btn-sm" data-reassign="${esc(b.batchId)}">改卡片</button></td>
+    </tr>`).join('');
+    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+      <div class="modal-head"><h2>帳單匯入批次</h2><button class="x-close">×</button></div>
+      <div class="modal-body">
+        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>卡片</th><th>消費日範圍</th><th class="num">筆數</th><th class="num">金額</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5" class="empty">尚無匯入批次。</td></tr>'}</tbody>
+        </table></div>
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
+      </div>
+    </div></div>`;
+    root.querySelector('.x-close').onclick = () => { root.innerHTML = ''; };
+    root.querySelector('[data-close]').onclick = () => { root.innerHTML = ''; };
+    root.querySelectorAll('[data-reassign]').forEach(btn => btn.onclick = () => {
+      const b = list.find(x => x.batchId === btn.dataset.reassign);
+      openReassignPicker({ batchId: b.batchId, cardName: b.cardName }, openBatchManager, cards);
+    });
+  };
+  render(batches);
+}
+
+// 改卡片選擇器：挑目標卡片 → 呼叫 reassign。cardsCache 可省一次請求。
+async function openReassignPicker({ batchId, fromCardId, cardName }, onDone, cardsCache) {
+  const cards = (cardsCache || await api('/cards')).filter(c => (c.type || 'credit') === 'credit' && c.id !== fromCardId);
+  if (!cards.length) return toast('沒有其他信用卡可改（請先到「卡片追蹤」新增）', true);
+  openForm({
+    title: '整批改到其他卡片',
+    size: 'sm',
+    fields: [
+      { key: 'toCardId', label: `目前記在「${cardName || '—'}」，改到：`, type: 'select',
+        options: cards.map(c => ({ value: c.id, label: c.name })) }
+    ],
+    onSubmit: async (data) => {
+      const r = await api('/statement/reassign', { method: 'POST', body: { batchId, toCardId: data.toCardId } });
+      toast(`已改到「${r.cardName}」，${r.moved} 筆${r.dropped ? `（${r.dropped} 筆與該卡重複已略過）` : ''}`);
+      if (onDone) setTimeout(onDone, 0);   // 待 openForm 關閉清空 modal-root 後再重繪，避免被 close() 蓋掉
+    }
+  });
 }
