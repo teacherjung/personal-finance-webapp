@@ -31,7 +31,7 @@ export async function renderAssets() {
 
     <div class="two-col">
       <div class="chart-card"><h3>資產配置圓餅圖</h3><div class="chart-box"><canvas id="pie"></canvas></div></div>
-      <div class="chart-card"><h3>大類配置 vs 目標 <span class="stat-sub" style="font-weight:400;margin:0">（現金・股・債・金・房地產等大類）</span></h3>
+      <div class="chart-card"><h3>資產配置 vs 目標 <span class="stat-sub" style="font-weight:400;margin:0">（現金・股・債・金・房地產等資產類別）</span></h3>
         ${a.rows.filter(r => r.value > 0 || r.targetPct > 0).map(r => {
           const off = Math.abs(r.diff) >= (db.settings.allocationDriftPct || 5);
           const fromPf = ['股票', '債券'].includes(r.class);
