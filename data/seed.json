@@ -18,7 +18,14 @@
     },
     "qqqmMaxPct": 30,
     "capeManual": "",
-    "signals": { "realYieldManual": "", "china": "12.3", "japan": "1.25", "korea": "0.95", "taiwanPE": "17.5", "taiwanYield": "3.2" },
+    "signals": {
+      "realYieldManual": "",
+      "china": "12.3",
+      "japan": "1.25",
+      "korea": "0.95",
+      "taiwanPE": "17.5",
+      "taiwanYield": "3.2"
+    },
     "fxHigh": 32,
     "fxLow": 28,
     "fxTwd": {
@@ -321,52 +328,6 @@
       "startDate": "2022-06-01",
       "endDate": "",
       "cashValue": 45000
-    }
-  ],
-  "ibPositions": [
-    {
-      "symbol": "VTI",
-      "description": "Vanguard Total Stock Market ETF",
-      "assetClass": "STK",
-      "currency": "USD",
-      "quantity": 120,
-      "costBasis": 28800,
-      "marketPrice": 285.5,
-      "marketValue": 34260,
-      "unrealizedPnl": 5460
-    },
-    {
-      "symbol": "VXUS",
-      "description": "Vanguard Total Intl Stock ETF",
-      "assetClass": "STK",
-      "currency": "USD",
-      "quantity": 200,
-      "costBasis": 12000,
-      "marketPrice": 64.2,
-      "marketValue": 12840,
-      "unrealizedPnl": 840
-    },
-    {
-      "symbol": "BND",
-      "description": "Vanguard Total Bond Market ETF",
-      "assetClass": "STK",
-      "currency": "USD",
-      "quantity": 100,
-      "costBasis": 7400,
-      "marketPrice": 73.1,
-      "marketValue": 7310,
-      "unrealizedPnl": -90
-    },
-    {
-      "symbol": "AAPL",
-      "description": "Apple Inc",
-      "assetClass": "STK",
-      "currency": "USD",
-      "quantity": 30,
-      "costBasis": 4800,
-      "marketPrice": 212,
-      "marketValue": 6360,
-      "unrealizedPnl": 1560
     }
   ],
   "snapshots": [
