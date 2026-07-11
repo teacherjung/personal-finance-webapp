@@ -244,7 +244,8 @@ app.post('/api/cards/:id/statement/preview', async (req, res) => {
     const db = load();
     const card = (db.cards || []).find(c => c.id === req.params.id);
     if (!card) return res.status(404).json({ error: '找不到卡片' });
-    if (!card.pdfPassword) return res.status(400).json({ error: '這張卡片尚未設定「帳單 PDF 密碼」，請先到卡片追蹤編輯卡片補上。' });
+    // 密碼可有可無：郵寄電子帳單有加密（用卡片設定的密碼）、官網下載版通常無密碼。
+    // 若 PDF 有加密而密碼缺/錯，parseStatementPdf 會給友善錯誤。
     const b64 = String(req.body.data || '');
     if (!b64) return res.status(400).json({ error: '沒有收到 PDF 內容' });
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));

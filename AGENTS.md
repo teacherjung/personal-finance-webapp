@@ -50,7 +50,7 @@
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
-| `lib/statement.js` `CATEGORY_RULES` 的分類名稱 | 必須存在於 `transactions.js` `CATEGORIES`（分類下拉共用同一組）。新增銀行帳單＝加 `parseXxx()` 並在 `parseStatementPdf` 依 issuer 分流（v1 只有富邦）。帳單匯入的重複判定鍵＝交易的 `stmtRef`（卡id+消費日+金額+說明） |
+| `lib/statement.js` `CATEGORY_RULES` 的分類名稱 | 必須存在於 `transactions.js` `CATEGORIES`（分類下拉共用同一組）。新增銀行帳單＝加 `parseXxx()` 並在 `parseStatementPdf` 依 issuer 分流（v1 只有富邦，`parseFubon` 同時支援郵寄電子帳單〔加密、說明同列〕與官網下載版〔無密碼、說明換行到下一列〕）。密碼可有可無：加密檔缺密碼時給友善錯誤。帳單匯入的重複判定鍵＝交易的 `stmtRef`（卡id+消費日+金額+說明） |
 
 ## 協作流程
 
