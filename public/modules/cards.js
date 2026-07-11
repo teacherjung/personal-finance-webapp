@@ -4,6 +4,12 @@ import { icon } from './icons.js';
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
 const TYPE_LABEL = { credit: '信用卡', membership: '會員卡' };
 
+// 卡片效期只記年/月（卡面 MM/YY），有效到該月「月底」——倒數與停用判斷都以月底計。
+// 兼容舊資料的完整日期（YYYY-MM-DD 原樣沿用）。
+const expiryEnd = (e) => /^\d{4}-\d{2}$/.test(e || '')
+  ? `${e}-${String(new Date(Number(e.slice(0, 4)), Number(e.slice(5, 7)), 0).getDate()).padStart(2, '0')}`
+  : e;
+
 export async function renderCards() {
   const list = await api('/cards');
   const credit = list.filter(c => (c.type || 'credit') === 'credit');
@@ -12,7 +18,7 @@ export async function renderCards() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>卡片追蹤</h1><p>信用卡與會員卡的卡別、末四碼、結帳/繳款日、年費、權益、停用</p></div>
+      <div><h1>卡片追蹤</h1><p>信用卡與會員卡的卡片類別、末四碼、結帳/繳款日、年費、權益、停用</p></div>
       <button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button>
     </div>
 
@@ -20,7 +26,7 @@ export async function renderCards() {
       <div class="card"><h3>信用卡</h3><div class="stat sm">${credit.length} 張</div></div>
       <div class="card"><h3>會員卡</h3><div class="stat sm">${member.length} 張</div></div>
       <div class="card"><h3>信用卡年費合計</h3><div class="stat sm">${wan(annualFees)}</div></div>
-      <div class="card"><h3>30 天內停用</h3><div class="stat sm">${list.filter(c => { const d = daysUntil(c.expiry); return d >= 0 && d <= 30; }).length} 張</div></div>
+      <div class="card"><h3>30 天內停用</h3><div class="stat sm">${list.filter(c => { const d = daysUntil(expiryEnd(c.expiry)); return d >= 0 && d <= 30; }).length} 張</div></div>
     </div>
 
     <div class="section-title">信用卡</div>
@@ -44,16 +50,17 @@ export async function renderCards() {
 
 function card(c) {
   const credit = (c.type || 'credit') === 'credit';
-  const d = daysUntil(c.expiry);
+  const d = daysUntil(expiryEnd(c.expiry));
   const expSoon = d >= 0 && d <= 60;
   const rows = credit ? [
-    ['發卡銀行', c.issuer], ['卡別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
+    ['發卡銀行', c.issuer], ['卡片類別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
     ['結帳日', c.statementDay ? `每月 ${c.statementDay} 日` : ''],
-    ['繳款日', c.dueDay ? `每月 ${c.dueDay} 日` : ''],
-    ['年費', c.annualFee != null && c.annualFee !== '' ? money(c.annualFee) : ''],
-    ['有效期限', c.expiry]
+    // 繳款日比結帳日小＝跨到下個月（如富邦：24 日結帳、次月 9 日繳款）
+    ['繳款日', c.dueDay ? `${Number(c.statementDay) && Number(c.dueDay) < Number(c.statementDay) ? '次月' : '每月'} ${c.dueDay} 日` : ''],
+    ['年費', Number(c.annualFee) > 0 ? money(c.annualFee) : ''],   // 0 元或未填都不顯示
+    ['有效期限', (c.expiry || '').slice(0, 7)]
   ] : [
-    ['發卡機構', c.issuer], ['會員編號', c.memberId], ['等級', c.level], ['有效期限', c.expiry]
+    ['發卡機構', c.issuer], ['會員編號', c.memberId], ['等級', c.level], ['有效期限', (c.expiry || '').slice(0, 7)]
   ];
   return `<div class="card">
     <div class="card-head">
@@ -82,18 +89,19 @@ function openCardForm(c) {
       { key: 'type', label: '卡片類型', type: 'select', options: [{ value: 'credit', label: '信用卡' }, { value: 'membership', label: '會員卡' }], default: 'credit' },
       { key: 'name', label: '卡片名稱', type: 'text', required: true, placeholder: '例：台新 GOGO 卡' },
       { key: 'issuer', label: '發卡銀行 / 機構', type: 'text', placeholder: '例：台新銀行' },
-      { key: 'network', label: '卡別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
+      { key: 'network', label: '卡片類別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
       { key: 'lastFour', label: '末四碼', type: 'text', placeholder: '1234' },
       { key: 'statementDay', label: '結帳日（信用卡，幾號）', type: 'number', placeholder: '5' },
       { key: 'dueDay', label: '繳款日（信用卡，幾號）', type: 'number', placeholder: '20' },
       { key: 'annualFee', label: '年費（信用卡）', type: 'number' },
+      { key: 'pdfPassword', label: '帳單 PDF 密碼（只存這台電腦、永不上傳）', type: 'password', placeholder: '通常是身分證字號' },
       { key: 'memberId', label: '會員編號（會員卡）', type: 'text' },
       { key: 'level', label: '等級（會員卡）', type: 'text', placeholder: '例：金卡 / 鑽石' },
-      { key: 'expiry', label: '有效期限', type: 'date' },
+      { key: 'expiry', label: '有效期限（年/月，卡面 MM/YY）', type: 'month' },
       { key: 'benefits', label: '權益 / 回饋', type: 'textarea', full: true, placeholder: '例：國內 3% 回饋、機場接送 2 次' },
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
-    values: c || {},
+    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : {},   // 舊資料完整日期 → 年/月預填
     onSubmit: async (data) => {
       if (c) await api('/cards/' + c.id, { method: 'PUT', body: data });
       else await api('/cards', { method: 'POST', body: data });

@@ -16,7 +16,7 @@
 
 ## 鐵則（違反會壞事）
 
-1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。
+1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken、**卡片的帳單 PDF 密碼 `pdfPassword`＝身分證字號**）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股；**seed 的卡片不可放真實 pdfPassword**）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。帳單 PDF 只在記憶體解析、不落地保存。
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
 4. **色彩分工**：
@@ -50,6 +50,7 @@
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
+| `lib/statement.js` `CATEGORY_RULES` 的分類名稱 | 必須存在於 `transactions.js` `CATEGORIES`（分類下拉共用同一組）。新增銀行帳單＝加 `parseXxx()` 並在 `parseStatementPdf` 依 issuer 分流（v1 只有富邦）。帳單匯入的重複判定鍵＝交易的 `stmtRef`（卡id+消費日+金額+說明） |
 
 ## 協作流程
 
