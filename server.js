@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, save, uid, emptyDb } from './lib/store.js';
 import { fetchFlex } from './lib/ib.js';
-import { parseStatementPdf } from './lib/statement.js';
+import { parseStatement } from './lib/statement.js';
 import { buildSummary, computeIb, monthKey, computeAssets } from './lib/derive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -244,12 +244,12 @@ app.post('/api/cards/:id/statement/preview', async (req, res) => {
     const db = load();
     const card = (db.cards || []).find(c => c.id === req.params.id);
     if (!card) return res.status(404).json({ error: '找不到卡片' });
-    // 密碼可有可無：郵寄電子帳單有加密（用卡片設定的密碼）、官網下載版通常無密碼。
-    // 若 PDF 有加密而密碼缺/錯，parseStatementPdf 會給友善錯誤。
+    // 支援 PDF（富邦）與 XLSX（台新）：parseStatement 依位元組自動偵測格式。
+    // 密碼僅加密 PDF 需要（用卡片設定的密碼）；XLSX 與官網下載 PDF 通常無密碼。
     const b64 = String(req.body.data || '');
-    if (!b64) return res.status(400).json({ error: '沒有收到 PDF 內容' });
+    if (!b64) return res.status(400).json({ error: '沒有收到檔案內容' });
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
-    const parsed = await parseStatementPdf(bytes, card.pdfPassword, card.issuer || card.name || '');
+    const parsed = await parseStatement(bytes, card.pdfPassword, card.issuer || card.name || '');
     // 重複偵測：與既有記帳的 stmtRef 比對（同卡+消費日+金額+說明 視為同一筆）
     const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
     const transactions = parsed.transactions.map(t => {
@@ -297,8 +297,8 @@ const CATEGORY_MIGRATION = {
   '醫療': ['身心', '看診'],
   '訂閱': ['生活', '其他生活雜支'],   // 舊訂閱看不出是影音/學習/工作，先歸生活雜項（使用者定）
   '稅務': ['生活', '所得稅'],
-  '其他': ['生活', '其他生活雜支'],
-  '其他支出': ['生活', '其他生活雜支']
+  '其他': ['其他', '未分類'],       // 舊「其他/其他支出」＝無法判斷 → 新的「其他」大類
+  '其他支出': ['其他', '未分類']
 };
 app.post('/api/migrate/categories', (req, res) => {
   const db = load();
