@@ -275,7 +275,7 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     if (existing.has(r.stmtRef)) { skipped++; continue; }
     (db.transactions ||= []).push({
       id: uid(), date: r.date, type: 'expense',
-      category: String(r.category || '其他支出'), amount,
+      category: String(r.category || '生活'), subcategory: String(r.subcategory || ''), amount,
       account: card.name, note: String(r.desc || ''),
       stmtRef: r.stmtRef, source: 'stmt'
     });
@@ -284,6 +284,37 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
   }
   save(db);
   res.json({ ok: true, imported, skipped });
+});
+
+// ---- 舊分類 → 新兩層分類 一次性轉換（冪等；save() 會自動備份 .bak）----
+// 只改「已不存在於新大類」的舊標籤；飲食/交通/身心/娛樂/保險 本身就是新大類，原樣保留。
+// 收入分類（薪資/投資/獎金/其他收入）不動。
+const CATEGORY_MIGRATION = {
+  '房貸': ['居住', '房貸'],
+  '子女教育': ['養育', ''],
+  '旅遊': ['娛樂', '旅遊'],
+  '生活雜支': ['生活', '其他生活雜支'],
+  '醫療': ['身心', '看診'],
+  '訂閱': ['生活', '其他生活雜支'],   // 舊訂閱看不出是影音/學習/工作，先歸生活雜項（使用者定）
+  '稅務': ['生活', '所得稅'],
+  '其他': ['生活', '其他生活雜支'],
+  '其他支出': ['生活', '其他生活雜支']
+};
+app.post('/api/migrate/categories', (req, res) => {
+  const db = load();
+  let changed = 0;
+  const byCat = {};
+  for (const t of db.transactions || []) {
+    const m = CATEGORY_MIGRATION[t.category];
+    if (m) {
+      byCat[t.category] = (byCat[t.category] || 0) + 1;
+      t.category = m[0];
+      if (m[1] && !t.subcategory) t.subcategory = m[1];
+      changed++;
+    }
+  }
+  save(db);
+  res.json({ ok: true, changed, byOldCategory: byCat });
 });
 
 // ---- 匯出 / 匯入備份 ----
