@@ -55,7 +55,8 @@ function card(c) {
   const rows = credit ? [
     ['發卡銀行', c.issuer], ['卡片類別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
     ['結帳日', c.statementDay ? `每月 ${c.statementDay} 日` : ''],
-    ['繳款日', c.dueDay ? `每月 ${c.dueDay} 日` : ''],
+    // 繳款日比結帳日小＝跨到下個月（如富邦：24 日結帳、次月 9 日繳款）
+    ['繳款日', c.dueDay ? `${Number(c.statementDay) && Number(c.dueDay) < Number(c.statementDay) ? '次月' : '每月'} ${c.dueDay} 日` : ''],
     ['年費', Number(c.annualFee) > 0 ? money(c.annualFee) : ''],   // 0 元或未填都不顯示
     ['有效期限', (c.expiry || '').slice(0, 7)]
   ] : [

@@ -89,7 +89,7 @@ function openTxForm(tx) {
       { key: 'type', label: '類型', type: 'select', options: [{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }] },
       { key: 'category', label: '分類', type: 'select', options: CATEGORIES },
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
-      { key: 'account', label: '帳戶 / 卡別', type: 'text', placeholder: '例：台新活存、信用卡' },
+      { key: 'account', label: '帳戶 / 信用卡', type: 'text', placeholder: '例：台新活存、富邦卡' },
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
     values: tx || {},
