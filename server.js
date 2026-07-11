@@ -275,7 +275,7 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     if (existing.has(r.stmtRef)) { skipped++; continue; }
     (db.transactions ||= []).push({
       id: uid(), date: r.date, type: 'expense',
-      category: String(r.category || '其他支出'), amount,
+      category: String(r.category || '其他'), amount,
       account: card.name, note: String(r.desc || ''),
       stmtRef: r.stmtRef, source: 'stmt'
     });
