@@ -135,9 +135,7 @@ async function openStatementUpload() {
   openForm({
     title: '上傳信用卡帳單',
     fields: [
-      { key: 'cardId', label: '記到哪張卡片（PDF 加密時用這張卡的密碼解鎖；選錯可事後整批改）', type: 'select',
-        options: cards.map(c => ({ value: c.id, label: c.name })) },
-      { key: 'file', label: '帳單檔案（PDF 或 XLSX，系統自動辨識富邦／台新）', type: 'file', full: true }
+      { key: 'file', label: '帳單檔案（PDF 或 XLSX；系統自動辨識銀行與卡片，認不出才會請你選）', type: 'file', full: true }
     ],
     onMount: (root) => {
       const inp = root.querySelector('#f_file');
@@ -146,53 +144,53 @@ async function openStatementUpload() {
     onSubmit: async (data) => {
       if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
       const b64 = await fileToBase64(file);
-      const r = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64 } });
-      // openForm 送出後會清空 #modal-root，預覽也在 #modal-root，故延到關閉之後再畫，否則會被一起清掉
-      setTimeout(() => openStatementPreview(data.cardId, r), 0);
+      const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
+      // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫
+      setTimeout(() => handlePreviewResult(r, b64, cards), 0);
     }
   });
 }
 
-// 預覽確認：只讓使用者選「分類」（子類是自動判斷用的、不在此暴露）；可勾選；重複與繳款/退款預設不匯入。
-// 子類：分類未被改動時沿用自動判斷的子類；使用者改了分類則清空子類（原子類已不屬於新分類）。
-function openStatementPreview(cardId, r) {
+// 自動預覽結果：判得出卡片就直接預覽；認不出就請使用者從候選（或全部卡）選一張。
+function handlePreviewResult(r, b64, cards) {
+  if (r.resolvedCard) return openStatementPreview(r.resolvedCard.id, r, b64, cards);
+  openCardChoice(r, b64, cards);
+}
+
+// 認不出卡片時請使用者選（候選優先，無候選則列全部信用卡），選後用該卡重新解析預覽。
+function openCardChoice(r, b64, cards) {
+  const pick = (r.candidates && r.candidates.length) ? r.candidates : cards;
+  const detail = `${r.bank ? r.bank + '帳單' : '這份帳單'}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}`;
+  openForm({
+    title: '選擇要記到哪張卡片',
+    size: 'sm',
+    fields: [
+      { key: 'cardId', label: `${detail}，系統無法確定是哪張卡，請選：`, type: 'select',
+        options: pick.map(c => ({ value: c.id, label: c.name + (c.lastFour ? `（${c.lastFour}）` : '') })) }
+    ],
+    onSubmit: async (data) => {
+      const pr = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64 } });
+      setTimeout(() => openStatementPreview(data.cardId, pr, b64, cards), 0);
+    }
+  });
+}
+
+// 預覽確認：頂部可改「記到哪張卡」（改了就用該卡重新解析＝重算重複標記）；只選「分類」（子類自動判斷用）；
+// 可勾選；重複與繳款/退款預設不匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
+function openStatementPreview(cardId, r, b64, cards) {
   const root = document.getElementById('modal-root');
+  let curCard = cardId, curR = r;
+  const detected = `${curR.bank ? esc(curR.bank) : '未知'}${curR.lastFour ? ` · 末四碼 ${esc(curR.lastFour)}` : ''}`;
+  const close = () => { root.innerHTML = ''; };
   const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${EXPENSE_PARENTS.map(c =>
     `<option value="${esc(c)}" ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
-  const rowsHtml = r.transactions.map((t, i) => {
-    const dis = t.isPayment;                       // 繳款/退款不可匯入
-    const checked = !dis && !t.duplicate;          // 重複預設不勾
-    const status = t.isPayment ? '<span class="tag">繳款/退款</span>'
-      : t.duplicate ? '<span class="tag amber">已存在</span>' : '<span class="tag green">新</span>';
-    return `<tr class="${dis ? 'muted' : ''}">
-      <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
-      <td class="nowrap">${esc(t.date || '')}</td>
-      <td>${esc(t.desc)}</td>
-      <td>${dis ? '—' : catSelHtml(i, t.category, t.subcategory)}</td>
-      <td class="num ${t.amount < 0 ? 'pos' : ''}">${money(Math.abs(t.amount))}${t.amount < 0 ? '（負）' : ''}</td>
-      <td>${status}</td>
-    </tr>`;
-  }).join('');
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('xl')}">
-    <div class="modal-head"><h2>帳單預覽：${esc(r.card?.name || '')}（${esc(r.bank || '')}）</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
-      <p class="muted" style="font-size:12.5px;margin-bottom:10px">共 ${r.transactions.length} 筆。分類是自動判斷的初稿，可逐筆修改；「已存在」＝之前匯入過（預設不重複記）；繳款/退款不列入支出。按「匯入」才會寫進記帳。</p>
-      <div class="tbl-wrap" style="max-height:50vh;overflow-y:auto">
-        <table><thead><tr><th></th><th>消費日</th><th>說明</th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
-        <tbody>${rowsHtml}</tbody></table>
-      </div>
-      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
-        <button type="button" class="btn" id="doImport">匯入勾選項目</button></div>
-    </div>
-  </div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
-  root.querySelector('[data-cancel]').onclick = close;
-  root.querySelector('#doImport').onclick = async () => {
+  const cardOpts = () => cards.map(c => `<option value="${c.id}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
+
+  const doImport = async () => {
     const picked = [];
     root.querySelectorAll('input[data-row]:checked').forEach(cb => {
       const i = cb.dataset.row;
-      const t = r.transactions[Number(i)];
+      const t = curR.transactions[Number(i)];
       const cat = root.querySelector(`select[data-cat="${i}"]`);
       const category = cat ? cat.value : t.category;
       // 分類沒改→沿用自動子類；改了→子類清空（原子類不屬於新分類）
@@ -201,12 +199,57 @@ function openStatementPreview(cardId, r) {
     });
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {
-      const out = await api(`/cards/${cardId}/statement/import`, { method: 'POST', body: { transactions: picked } });
+      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked } });
       if (out.imported > 0) openImportDone(out);
       else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
       renderTransactions();
     } catch (e) { toast('匯入失敗：' + e.message, true); }
   };
+
+  const draw = () => {
+    const rowsHtml = curR.transactions.map((t, i) => {
+      const dis = t.isPayment;                       // 繳款/退款不可匯入
+      const checked = !dis && !t.duplicate;          // 重複預設不勾
+      const status = t.isPayment ? '<span class="tag">繳款/退款</span>'
+        : t.duplicate ? '<span class="tag amber">已存在</span>' : '<span class="tag green">新</span>';
+      return `<tr class="${dis ? 'muted' : ''}">
+        <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
+        <td class="nowrap">${esc(t.date || '')}</td>
+        <td>${esc(t.desc)}</td>
+        <td>${dis ? '—' : catSelHtml(i, t.category, t.subcategory)}</td>
+        <td class="num ${t.amount < 0 ? 'pos' : ''}">${money(Math.abs(t.amount))}${t.amount < 0 ? '（負）' : ''}</td>
+        <td>${status}</td>
+      </tr>`;
+    }).join('');
+    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('xl')}">
+      <div class="modal-head"><h2>帳單預覽（${detected}）</h2><button class="x-close">×</button></div>
+      <div class="modal-body">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="margin:0;display:flex;align-items:center;gap:8px">記到卡片
+            <select id="previewCard">${cardOpts()}</select></label>
+          <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；繳款/退款不列入。</span>
+        </div>
+        <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
+          <table><thead><tr><th></th><th>消費日</th><th>說明</th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
+          <tbody>${rowsHtml}</tbody></table>
+        </div>
+        <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
+          <button type="button" class="btn" id="doImport">匯入勾選項目</button></div>
+      </div>
+    </div></div>`;
+    root.querySelector('.x-close').onclick = close;
+    root.querySelector('[data-cancel]').onclick = close;
+    root.querySelector('#doImport').onclick = doImport;
+    root.querySelector('#previewCard').onchange = async (e) => {
+      const newId = e.target.value;
+      try {
+        const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64 } });
+        curCard = newId; curR = pr; draw();   // 重算該卡的重複標記
+      } catch (err) { toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }
+    };
+  };
+
+  draw();
 }
 
 // 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「帳單批次」改）。
