@@ -323,7 +323,7 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     (db.transactions ||= []).push({
       id: uid(), date: r.date, type: 'expense',
       category: String(r.category || '生活'), subcategory: String(r.subcategory || ''), amount,
-      account: card.name, note: String(r.desc || ''),
+      account: card.name, note: String(r.store || r.desc || ''),   // 顯示用清理過的店名；stmtRef 仍用原始 desc
       stmtRef: r.stmtRef, source: 'stmt', importBatch: batchId, importedAt
     });
     existing.add(r.stmtRef);
