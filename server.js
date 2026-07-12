@@ -52,8 +52,15 @@ for (const col of COLLECTIONS) {
     if (i < 0) return res.status(404).json({ error: 'not found' });
     list[i] = { ...list[i], ...req.body, id: req.params.id };
     // 帳單交易改分類 → 自動學習（只學帳單來源，避免手動記帳污染）
-    if (col === 'transactions' && list[i].source === 'stmt' && list[i].note) {
-      (db.learnedCategories ||= {})[list[i].note] = { category: list[i].category || '', subcategory: list[i].subcategory || '' };
+    if (col === 'transactions' && list[i].source === 'stmt') {
+      const key = list[i].storeKey || list[i].note;   // 穩定 key（改顯示名也不變）；舊資料無 storeKey 時退用 note
+      if (key) {
+        const e = (db.learnedCategories ||= {})[key] || {};
+        e.category = list[i].category || ''; e.subcategory = list[i].subcategory || '';
+        if (list[i].note && list[i].note !== key) e.name = list[i].note;   // 使用者改了顯示店名 → 記住
+        else delete e.name;                                                 // 改回自動名則清除
+        db.learnedCategories[key] = e;
+      }
     }
     save(db);
     res.json(list[i]);
@@ -255,8 +262,14 @@ const issuerMatchesBank = (issuer, bank) => String(issuer || '').includes(bank);
 function applyLearned(db, txs) {
   const learned = db.learnedCategories || {};
   return txs.map(t => {
-    const l = t.store && learned[t.store];
-    return l ? { ...t, category: l.category, subcategory: l.subcategory || '' } : t;
+    const key = t.store || '';                 // cleanStore(desc)＝穩定 key（即使之後改顯示名也不變）
+    const l = learned[key];
+    const out = { ...t, storeKey: key };        // 帶著穩定 key 給匯入端存起來、日後學習用
+    if (l) {
+      if (l.name) out.store = l.name;                                                     // 套用學過的顯示店名
+      if (l.category) { out.category = l.category; out.subcategory = l.subcategory || ''; } // 套用學過的分類
+    }
+    return out;
   });
 }
 
@@ -333,16 +346,20 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     if (!r.date || !(amount > 0) || !r.stmtRef) { skipped++; continue; }   // 負數（繳款/退款）不入帳
     if (existing.has(r.stmtRef)) { skipped++; continue; }
     const category = String(r.category || '生活'), subcategory = String(r.subcategory || '');
+    const storeKey = String(r.storeKey || r.store || '');   // 穩定 key（清理後原名）；顯示名可能已被學習覆蓋
     (db.transactions ||= []).push({
       id: uid(), date: r.date, type: 'expense', category, subcategory, amount,
-      account: card.name, note: String(r.store || r.desc || ''),   // 顯示用清理過的店名；stmtRef 仍用原始 desc
+      account: card.name, note: String(r.store || r.desc || ''), storeKey,   // note＝顯示店名；storeKey＝穩定 key；stmtRef 用原始 desc
       stmtRef: r.stmtRef, source: 'stmt', importBatch: batchId, importedAt
     });
-    // 自動學習：使用者選的分類與內建規則不同 → 記住「這家店→這個分類」，下次自動套用
-    const key = String(r.store || '');
-    if (key) {
+    // 自動學習：使用者選的分類與內建規則不同 → 記住「這家店→這個分類」（key 用 storeKey，保留既有的顯示名學習）
+    if (storeKey) {
       const [rc, rs] = categorize(String(r.desc || ''));
-      if (category !== rc || subcategory !== (rs || '')) (db.learnedCategories ||= {})[key] = { category, subcategory };
+      if (category !== rc || subcategory !== (rs || '')) {
+        const e = (db.learnedCategories ||= {})[storeKey] || {};
+        e.category = category; e.subcategory = subcategory;
+        db.learnedCategories[storeKey] = e;
+      }
     }
     existing.add(r.stmtRef);
     imported++;
