@@ -81,7 +81,7 @@ function rowHtml(t) {
   return `<tr>
     <td>${esc(t.date)}</td>
     <td><span class="tag ${isIn ? 'green' : 'amber'}">${isIn ? '收入' : '支出'}</span></td>
-    <td>${esc(t.category)}${t.subcategory ? ` <span class="muted">· ${esc(t.subcategory)}</span>` : ''}</td>
+    <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
     <td class="muted">${esc(t.note || '')}</td>
     <td class="num ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(t.amount)}</td>
