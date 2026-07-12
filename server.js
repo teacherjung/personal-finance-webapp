@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, save, uid, emptyDb } from './lib/store.js';
 import { fetchFlex } from './lib/ib.js';
-import { parseStatement } from './lib/statement.js';
+import { parseStatement, categorize } from './lib/statement.js';
 import { buildSummary, computeIb, monthKey, computeAssets } from './lib/derive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -51,6 +51,10 @@ for (const col of COLLECTIONS) {
     const i = list.findIndex(x => x.id === req.params.id);
     if (i < 0) return res.status(404).json({ error: 'not found' });
     list[i] = { ...list[i], ...req.body, id: req.params.id };
+    // 帳單交易改分類 → 自動學習（只學帳單來源，避免手動記帳污染）
+    if (col === 'transactions' && list[i].source === 'stmt' && list[i].note) {
+      (db.learnedCategories ||= {})[list[i].note] = { category: list[i].category || '', subcategory: list[i].subcategory || '' };
+    }
     save(db);
     res.json(list[i]);
   });
@@ -247,6 +251,14 @@ function stmtDupFlag(db, cardId, txs) {
   });
 }
 const issuerMatchesBank = (issuer, bank) => String(issuer || '').includes(bank);
+// 自動學習：依店名（cleanStore 後的 store）套用使用者過往修正過的分類，優先於內建規則。
+function applyLearned(db, txs) {
+  const learned = db.learnedCategories || {};
+  return txs.map(t => {
+    const l = t.store && learned[t.store];
+    return l ? { ...t, category: l.category, subcategory: l.subcategory || '' } : t;
+  });
+}
 
 // 自動預覽：不必先選卡。系統試各卡密碼解密→判銀行＋末四碼→自動歸卡；認不出才回候選讓使用者選。
 app.post('/api/statement/preview', async (req, res) => {
@@ -282,7 +294,7 @@ app.post('/api/statement/preview', async (req, res) => {
     const base = { bank: parsed.bank, lastFour: parsed.lastFour || null };
     if (resolved) {
       return res.json({ ...base, resolvedCard: { id: resolved.id, name: resolved.name, lastFour: resolved.lastFour || null },
-        transactions: stmtDupFlag(db, resolved.id, parsed.transactions) });
+        transactions: stmtDupFlag(db, resolved.id, applyLearned(db, parsed.transactions)) });
     }
     res.json({ ...base, resolvedCard: null,
       candidates: candidates.map(c => ({ id: c.id, name: c.name, lastFour: c.lastFour || null })) });
@@ -301,7 +313,7 @@ app.post('/api/cards/:id/statement/preview', async (req, res) => {
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
     const parsed = await parseStatement(bytes, card.pdfPassword);
     res.json({ bank: parsed.bank, lastFour: parsed.lastFour || null,
-      card: { id: card.id, name: card.name }, transactions: stmtDupFlag(db, card.id, parsed.transactions) });
+      card: { id: card.id, name: card.name }, transactions: stmtDupFlag(db, card.id, applyLearned(db, parsed.transactions)) });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
   }
@@ -320,17 +332,33 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     const amount = Number(r.amount);
     if (!r.date || !(amount > 0) || !r.stmtRef) { skipped++; continue; }   // 負數（繳款/退款）不入帳
     if (existing.has(r.stmtRef)) { skipped++; continue; }
+    const category = String(r.category || '生活'), subcategory = String(r.subcategory || '');
     (db.transactions ||= []).push({
-      id: uid(), date: r.date, type: 'expense',
-      category: String(r.category || '生活'), subcategory: String(r.subcategory || ''), amount,
+      id: uid(), date: r.date, type: 'expense', category, subcategory, amount,
       account: card.name, note: String(r.store || r.desc || ''),   // 顯示用清理過的店名；stmtRef 仍用原始 desc
       stmtRef: r.stmtRef, source: 'stmt', importBatch: batchId, importedAt
     });
+    // 自動學習：使用者選的分類與內建規則不同 → 記住「這家店→這個分類」，下次自動套用
+    const key = String(r.store || '');
+    if (key) {
+      const [rc, rs] = categorize(String(r.desc || ''));
+      if (category !== rc || subcategory !== (rs || '')) (db.learnedCategories ||= {})[key] = { category, subcategory };
+    }
     existing.add(r.stmtRef);
     imported++;
   }
   save(db);
   res.json({ ok: true, imported, skipped, batchId, cardId: card.id, cardName: card.name });
+});
+
+// ---- 帳單分類自動學習：檢視／刪除（設定頁用）----
+app.get('/api/learned', (req, res) => res.json(load().learnedCategories || {}));
+app.post('/api/learned/delete', (req, res) => {
+  const db = load();
+  const key = String(req.body.key || '');
+  if (db.learnedCategories && key in db.learnedCategories) delete db.learnedCategories[key];
+  save(db);
+  res.json({ ok: true });
 });
 
 // ---- 匯入批次：事後「整批改卡片」（使用者選錯卡片時，一鍵把整批消費改到另一張卡）----
