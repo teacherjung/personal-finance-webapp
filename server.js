@@ -376,6 +376,17 @@ app.post('/api/statement/reassign', (req, res) => {
   save(db);
   res.json({ ok: true, moved, dropped, cardName: card.name });
 });
+// 刪除整批：把某次匯入的所有消費從記帳移除（用於解析/分類不對時，整批砍掉重匯）。
+app.post('/api/statement/batch/delete', (req, res) => {
+  const db = load();
+  const batchId = String(req.body.batchId || '');
+  if (!batchId) return res.status(400).json({ error: '缺少批次代號' });
+  const before = (db.transactions || []).length;
+  db.transactions = (db.transactions || []).filter(t => t.importBatch !== batchId);
+  const removed = before - db.transactions.length;
+  save(db);
+  res.json({ ok: true, removed });
+});
 
 // ---- 舊分類 → 新兩層分類 一次性轉換（冪等；save() 會自動備份 .bak）----
 // 只改「已不存在於新分類」的舊標籤；飲食/交通/健康/娛樂/保險 本身就是新分類，原樣保留。
