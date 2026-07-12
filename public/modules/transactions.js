@@ -200,6 +200,11 @@ function openStatementPreview(cardId, r, b64, cards) {
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {
       const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked } });
+      // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
+      const mc = {};
+      picked.forEach(t => { const m = (t.date || '').slice(0, 7); if (m) mc[m] = (mc[m] || 0) + 1; });
+      const topMonth = Object.entries(mc).sort((a, b) => b[1] - a[1])[0];
+      if (topMonth) monthFilter = topMonth[0];
       if (out.imported > 0) openImportDone(out);
       else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
       renderTransactions();
@@ -283,7 +288,10 @@ async function openBatchManager() {
       <td class="nowrap muted">${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}</td>
       <td class="num">${b.count}</td>
       <td class="num">${money(b.amount)}</td>
-      <td><button class="btn-link btn-sm" data-reassign="${esc(b.batchId)}">改卡片</button></td>
+      <td><div class="row-actions">
+        <button class="btn-link btn-sm" data-reassign="${esc(b.batchId)}">改卡片</button>
+        <button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button>
+      </div></td>
     </tr>`).join('');
     root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
       <div class="modal-head"><h2>帳單匯入批次</h2><button class="x-close">×</button></div>
@@ -301,6 +309,14 @@ async function openBatchManager() {
     root.querySelectorAll('[data-reassign]').forEach(btn => btn.onclick = () => {
       const b = list.find(x => x.batchId === btn.dataset.reassign);
       openReassignPicker({ batchId: b.batchId, cardName: b.cardName }, openBatchManager, cards);
+    });
+    root.querySelectorAll('[data-delbatch]').forEach(btn => btn.onclick = () => {
+      const b = list.find(x => x.batchId === btn.dataset.delbatch);
+      confirmDelete(`整批 ${b.count} 筆（${b.cardName}，${b.minDate}~${b.maxDate}）`, async () => {
+        const r = await api('/statement/batch/delete', { method: 'POST', body: { batchId: b.batchId } });
+        toast(`已刪除 ${r.removed} 筆`);
+        setTimeout(() => { openBatchManager(); renderTransactions(); }, 0);
+      });
     });
   };
   render(batches);
