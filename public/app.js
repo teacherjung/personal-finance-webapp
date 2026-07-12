@@ -41,10 +41,16 @@ export const pct = (n) => (Number(n || 0)).toFixed(1) + '%';
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ---------- 日期工具（全站共用）----------
+// 解析 YYYY-MM-DD 為「本地時區」的 Date：new Date('YYYY-MM-DD') 會被當 UTC，在 UTC 以西時區差一天。
+const parseLocalDate = (d) => {
+  if (d instanceof Date) return d;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d ?? ''));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(d);
+};
 // 幾天後（負數＝已過期）；無日期回 Infinity
-export const daysUntil = (d) => { if (!d) return Infinity; const t = new Date(d); t.setHours(0, 0, 0, 0); const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); };
-// 月份鍵 YYYY-MM（可帶日期字串，預設本月）
-export function monthKey(d) { const t = d ? new Date(d) : new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
+export const daysUntil = (d) => { if (!d) return Infinity; const t = parseLocalDate(d); t.setHours(0, 0, 0, 0); const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); };
+// 月份鍵 YYYY-MM（可帶日期字串，預設本月）；日期字串直接取前 7 碼，免受時區影響
+export function monthKey(d) { if (typeof d === 'string') { const m = /^(\d{4})-(\d{2})/.exec(d); if (m) return `${m[1]}-${m[2]}`; } const t = d ? parseLocalDate(d) : new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
 // 今天 YYYY-MM-DD
 export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
