@@ -46,7 +46,7 @@
 | 新增 ETF 持股 | `portfolio.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%） |
 | `server.js` `DEFAULT_LAYER` 新增代號 | 兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉） |
 | IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端單一真相＝`lib/derive.js computeLeverage()`（規則 7＋buildSummary 都用它、summary 有 `ib.leverage/loan/mcDist/hasLoan`）↔ 前端 `portfolio.js` 的 `marginCallDistance()` 與 render 內槓桿計算，前後端兩份要一致 |
-| 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | `subscriptions.js costForMonth()` ↔ `lib/derive.js subCostForMonth()`（buildSummary「本月固定訂閱」用它），兩份口徑要一致 |
+| 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | `subscriptions.js costForMonth()` ↔ `lib/derive.js subCostForMonth()`（buildSummary「本月固定訂閱」＋`avgMonthlyExpense` 無歷史時的緊急預備金 fallback 都用它），三處口徑要一致；**勿在任何訂閱加總改回 `filter(active!==false)+monthlyCost`（會把已停用訂閱算進去）** |
 | 訂閱狀態（使用中/即將停用/已停用） | 前端 `subscriptions.js subStatus()` ↔ 後端 `lib/derive.js subActive()`（buildSummary 訂閱**項數**用它，只算未停用；否則總覽與訂閱頁項數打架）。判斷靠 `daysUntil(endsOn)`，兩份口徑要一致 |
 | YYYY-MM-DD 日期解析 | 前端 `app.js parseLocalDate` ↔ 後端 `derive.js parseLocalDate`（各一份）：一律用**本地時區**拆日期，`new Date('YYYY-MM-DD')` 會被當 UTC，在 UTC 以西時區差一天（月份/提醒天數/星期全錯）。`daysUntil`/`monthKey`/`formatDateWithWeekday` 都走它 |
 | `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
