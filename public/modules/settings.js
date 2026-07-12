@@ -6,12 +6,13 @@ export async function renderSettings() {
   const learned = await api('/learned');
   const learnedEntries = Object.entries(learned || {});
   const learnedRows = learnedEntries.length ? `<div class="tbl-wrap"><table>
-        <thead><tr><th>店名</th><th>學到的分類</th><th></th></tr></thead>
+        <thead><tr><th>原店名</th><th>顯示為</th><th>分類</th><th></th></tr></thead>
         <tbody>${learnedEntries.map(([store, v]) => `<tr>
           <td>${esc(store)}</td>
-          <td>${esc(v.category || '')}${v.subcategory ? ` <span class="muted">· ${esc(v.subcategory)}</span>` : ''}</td>
+          <td>${v.name ? esc(v.name) : '<span class="muted">（同原名）</span>'}</td>
+          <td>${v.category ? esc(v.category) + (v.subcategory ? ` <span class="muted">· ${esc(v.subcategory)}</span>` : '') : '<span class="muted">（未學）</span>'}</td>
           <td><button class="btn-danger btn-sm" data-unlearn="${esc(store)}" title="刪除這筆學習">${icon('trash', 15)}</button></td>
-        </tr>`).join('')}</tbody></table></div>` : '<p class="empty">尚無學習紀錄。改過帳單消費的分類後就會出現在這裡。</p>';
+        </tr>`).join('')}</tbody></table></div>` : '<p class="empty">尚無學習紀錄。改過帳單消費的分類或店名後就會出現在這裡。</p>';
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>提醒門檻、IB 連線、資料備份</p></div></div>
 
@@ -67,8 +68,8 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">帳單分類學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改分類時，系統會自動記住「店名 → 分類」，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
+      <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改<b>分類</b>、或在編輯裡改<b>店名（說明）</b>時，系統會自動記住，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
       ${learnedRows}
     </div>
 
