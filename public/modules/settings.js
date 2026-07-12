@@ -3,6 +3,15 @@ import { icon } from './icons.js';
 
 export async function renderSettings() {
   const s = await api('/settings');
+  const learned = await api('/learned');
+  const learnedEntries = Object.entries(learned || {});
+  const learnedRows = learnedEntries.length ? `<div class="tbl-wrap"><table>
+        <thead><tr><th>店名</th><th>學到的分類</th><th></th></tr></thead>
+        <tbody>${learnedEntries.map(([store, v]) => `<tr>
+          <td>${esc(store)}</td>
+          <td>${esc(v.category || '')}${v.subcategory ? ` <span class="muted">· ${esc(v.subcategory)}</span>` : ''}</td>
+          <td><button class="btn-danger btn-sm" data-unlearn="${esc(store)}" title="刪除這筆學習">${icon('trash', 15)}</button></td>
+        </tr>`).join('')}</tbody></table></div>` : '<p class="empty">尚無學習紀錄。改過帳單消費的分類後就會出現在這裡。</p>';
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>提醒門檻、IB 連線、資料備份</p></div></div>
 
@@ -57,6 +66,12 @@ export async function renderSettings() {
       <div><button class="btn-ghost" id="migrateBtn">${icon('refresh', 16) || ''}轉換舊分類 → 新分類</button></div>
     </div>
 
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">帳單分類學習</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改分類時，系統會自動記住「店名 → 分類」，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
+      ${learnedRows}
+    </div>
+
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.json</code>。建議定期匯出備份。</p>
@@ -102,6 +117,10 @@ export async function renderSettings() {
       toast(r.changed ? `已轉換 ${r.changed} 筆${detail ? '（' + detail + '）' : ''}` : '沒有需要轉換的舊分類');
     } catch (err) { toast('轉換失敗：' + err.message, true); }
   };
+  view().querySelectorAll('[data-unlearn]').forEach(b => b.onclick = async () => {
+    try { await api('/learned/delete', { method: 'POST', body: { key: b.dataset.unlearn } }); toast('已刪除學習'); renderSettings(); }
+    catch (err) { toast('刪除失敗：' + err.message, true); }
+  });
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
