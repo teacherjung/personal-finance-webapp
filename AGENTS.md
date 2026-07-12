@@ -14,6 +14,8 @@
 
 啟動：`npm start` → http://localhost:4321 。注意：使用者常自己開著一個伺服器佔 4321，`.claude/launch.json` 已設 `autoPort`。
 
+**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入 `lib/derive.js`**（改它請保持 `npm run typecheck` 乾淨）；要擴到其他核心檔（如 `lib/statement.js`、`lib/derive` 之外）＝加 `// @ts-check`＋補型別到乾淨即可（外部 import 如 pdfjs/xlsx 可用 `// @ts-ignore` 或補型別）。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
+
 ## 鐵則（違反會壞事）
 
 1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken、**卡片的帳單 PDF 密碼 `pdfPassword`＝身分證字號**）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股；**seed 的卡片不可放真實 pdfPassword**）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。帳單 PDF 只在記憶體解析、不落地保存。
