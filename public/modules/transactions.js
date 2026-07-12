@@ -220,7 +220,7 @@ function openStatementPreview(cardId, r, b64, cards) {
       return `<tr class="${dis ? 'muted' : ''}">
         <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
         <td class="nowrap">${esc(t.date || '')}</td>
-        <td>${esc(t.desc)}</td>
+        <td title="${esc(t.desc)}">${esc(t.store || t.desc)}</td>
         <td>${dis ? '—' : catSelHtml(i, t.category, t.subcategory)}</td>
         <td class="num ${t.amount < 0 ? 'pos' : ''}">${money(Math.abs(t.amount))}${t.amount < 0 ? '（負）' : ''}</td>
         <td>${status}</td>
