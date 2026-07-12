@@ -4,7 +4,8 @@
   "description": "個人理財網頁 — 本機優先、隱私安全的財務掌握工具",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "typecheck": "npx -y --package typescript@5.6 -- tsc -p jsconfig.json"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

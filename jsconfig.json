@@ -1,0 +1,15 @@
+{
+  "//": "零建置的 TypeScript 抓錯：不 build、不改副檔名。checkJs=false＝只檢查有 `// @ts-check` 的檔案（逐檔 opt-in）。編輯器(VS Code)會自動套用；CI/本機可跑 `npx -y --package typescript -- tsc -p jsconfig.json` 當守門。",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "strictNullChecks": true,
+    "skipLibCheck": true
+  },
+  "include": ["lib/**/*.js", "public/**/*.js", "server.js"]
+}
