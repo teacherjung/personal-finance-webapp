@@ -66,8 +66,8 @@ export async function renderTransactions() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr><th>日期</th><th>類型</th><th>分類</th><th>帳戶</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／備註排序">備註 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
+      <table><thead><tr><th>日期</th><th>分類</th><th>信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="6" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
     </div>
   `;
 
@@ -92,7 +92,6 @@ function rowHtml(t) {
   const isIn = t.type === 'income';
   return `<tr>
     <td>${esc(t.date)}</td>
-    <td><span class="tag ${isIn ? 'green' : 'amber'}">${isIn ? '收入' : '支出'}</span></td>
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
     <td class="muted">${esc(t.note || '')}</td>
