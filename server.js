@@ -238,26 +238,70 @@ app.post('/api/ib/sync', async (req, res) => {
 });
 
 // ---- 信用卡帳單匯入（PDF 解密→解析→分類；密碼取自卡片 pdfPassword，PDF 不落地保存）----
-// 預覽：回傳解析結果與重複標記，尚未寫入任何資料
+// 重複偵測：每筆算 stmtRef（卡id+消費日+金額+說明），與既有記帳比對標記 duplicate。
+function stmtDupFlag(db, cardId, txs) {
+  const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
+  return txs.map(t => {
+    const stmtRef = `${cardId}|${t.date}|${t.amount}|${t.desc}`;
+    return { ...t, stmtRef, duplicate: existing.has(stmtRef) };
+  });
+}
+const issuerMatchesBank = (issuer, bank) => String(issuer || '').includes(bank);
+
+// 自動預覽：不必先選卡。系統試各卡密碼解密→判銀行＋末四碼→自動歸卡；認不出才回候選讓使用者選。
+app.post('/api/statement/preview', async (req, res) => {
+  try {
+    const db = load();
+    const b64 = String(req.body.data || '');
+    if (!b64) return res.status(400).json({ error: '沒有收到檔案內容' });
+    const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
+    const cards = (db.cards || []).filter(c => (c.type || 'credit') === 'credit');
+    // 逐一試密碼：空字串（未加密/XLSX）＋各卡去重後的 pdfPassword（多為同組身分證字號）
+    const pwList = ['', ...new Set(cards.map(c => c.pdfPassword).filter(Boolean))];
+    let parsed = null, lastErr = null;
+    for (const pw of pwList) {
+      try { parsed = await parseStatement(bytes, pw); break; }
+      catch (e) {
+        lastErr = e;
+        if (!/密碼|加密|Password/i.test(String(e.message || ''))) break;   // 非密碼錯誤（格式/無明細）直接回報
+      }
+    }
+    if (!parsed) return res.status(400).json({ error: String(lastErr?.message || '解析失敗') });
+    // 對卡：①末四碼唯一命中→自動；②該銀行只有一張卡→自動；③否則回候選（該銀行優先，無則全部信用卡）
+    const bankCards = cards.filter(c => issuerMatchesBank(c.issuer, parsed.bank));
+    let resolved = null, candidates = [];
+    if (parsed.lastFour) {
+      const hit = cards.filter(c => String(c.lastFour) === String(parsed.lastFour));
+      if (hit.length === 1) resolved = hit[0];
+      else if (hit.length > 1) candidates = hit;
+    }
+    if (!resolved && !candidates.length) {
+      if (bankCards.length === 1) resolved = bankCards[0];
+      else candidates = bankCards.length ? bankCards : cards;
+    }
+    const base = { bank: parsed.bank, lastFour: parsed.lastFour || null };
+    if (resolved) {
+      return res.json({ ...base, resolvedCard: { id: resolved.id, name: resolved.name, lastFour: resolved.lastFour || null },
+        transactions: stmtDupFlag(db, resolved.id, parsed.transactions) });
+    }
+    res.json({ ...base, resolvedCard: null,
+      candidates: candidates.map(c => ({ id: c.id, name: c.name, lastFour: c.lastFour || null })) });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+// 指定卡片預覽（自動判斷失敗時使用者選卡、或預覽中改卡後重解析）：用該卡密碼解密、歸該卡。
 app.post('/api/cards/:id/statement/preview', async (req, res) => {
   try {
     const db = load();
     const card = (db.cards || []).find(c => c.id === req.params.id);
     if (!card) return res.status(404).json({ error: '找不到卡片' });
-    // parseStatement 依位元組自動偵測 PDF/XLSX，PDF 再依「文件內容」判斷富邦/台新——
-    // 不看使用者選的卡片（卡片只決定記到哪＋提供 PDF 密碼，選錯可事後整批改）。
-    // 密碼僅加密 PDF 需要（用卡片設定的密碼）；XLSX 與官網下載 PDF 通常無密碼。
     const b64 = String(req.body.data || '');
     if (!b64) return res.status(400).json({ error: '沒有收到檔案內容' });
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
     const parsed = await parseStatement(bytes, card.pdfPassword);
-    // 重複偵測：與既有記帳的 stmtRef 比對（同卡+消費日+金額+說明 視為同一筆）
-    const existing = new Set((db.transactions || []).map(t => t.stmtRef).filter(Boolean));
-    const transactions = parsed.transactions.map(t => {
-      const stmtRef = `${card.id}|${t.date}|${t.amount}|${t.desc}`;
-      return { ...t, stmtRef, duplicate: existing.has(stmtRef) };
-    });
-    res.json({ bank: parsed.bank, card: { id: card.id, name: card.name }, transactions });
+    res.json({ bank: parsed.bank, lastFour: parsed.lastFour || null,
+      card: { id: card.id, name: card.name }, transactions: stmtDupFlag(db, card.id, parsed.transactions) });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
   }
