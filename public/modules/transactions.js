@@ -10,14 +10,21 @@ const subOptions = (parent, cur = '') => ['', ...subsOf(parent)]
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
+let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依備註/店名）
 
 export async function renderTransactions() {
   const all = await api('/transactions');
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
 
-  const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter)
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const byDate = (a, b) => (b.date || '').localeCompare(a.date || '');
+  const listSorters = {
+    'date': byDate,
+    'note-asc': (a, b) => (a.note || '').localeCompare(b.note || '', 'zh-Hant') || byDate(a, b),
+    'note-desc': (a, b) => (b.note || '').localeCompare(a.note || '', 'zh-Hant') || byDate(a, b)
+  };
+  const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter).sort(listSorters[listSort] || byDate);
+  const noteSortInd = listSort === 'note-asc' ? '▲' : listSort === 'note-desc' ? '▼' : '⇅';
   const income = rows.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount || 0), 0);
   const expense = rows.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount || 0), 0);
 
@@ -59,7 +66,7 @@ export async function renderTransactions() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr><th>日期</th><th>類型</th><th>分類</th><th>帳戶</th><th>備註</th><th class="num">金額</th><th></th></tr></thead>
+      <table><thead><tr><th>日期</th><th>類型</th><th>分類</th><th>帳戶</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／備註排序">備註 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
     </div>
   `;
@@ -69,6 +76,11 @@ export async function renderTransactions() {
   const batchBtn = document.getElementById('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   document.getElementById('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
+  // 備註欄排序：日期 → 店名 A→Z → 店名 Z→A → 日期（循環）
+  document.getElementById('sortNote').onclick = () => {
+    listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
+    renderTransactions();
+  };
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const t = all.find(x => x.id === b.dataset.del);
@@ -179,9 +191,22 @@ function openCardChoice(r, b64, cards) {
 // 可勾選；重複與繳款/退款預設不匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
 function openStatementPreview(cardId, r, b64, cards) {
   const root = document.getElementById('modal-root');
-  let curCard = cardId, curR = r;
+  let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
   const detected = `${curR.bank ? esc(curR.bank) : '未知'}${curR.lastFour ? ` · 末四碼 ${esc(curR.lastFour)}` : ''}`;
   const close = () => { root.innerHTML = ''; };
+  // 重繪前把目前的勾選與分類選擇存回資料，排序後不遺失
+  const syncEdits = () => curR.transactions.forEach((t, i) => {
+    const cb = root.querySelector(`input[data-row="${i}"]`);
+    if (cb) t._checked = cb.checked;
+    const cat = root.querySelector(`select[data-cat="${i}"]`);
+    if (cat) { t.subcategory = (cat.value === cat.dataset.autocat) ? cat.dataset.autosub : ''; t.category = cat.value; }
+  });
+  const applyPreviewSort = () => {
+    const key = (t) => (t.store || t.desc || '');
+    if (previewSort === 'asc') curR.transactions.sort((a, b) => key(a).localeCompare(key(b), 'zh-Hant'));
+    else if (previewSort === 'desc') curR.transactions.sort((a, b) => key(b).localeCompare(key(a), 'zh-Hant'));
+    else curR.transactions.sort((a, b) => (a._ord || 0) - (b._ord || 0));   // 還原原始順序
+  };
   const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${EXPENSE_PARENTS.map(c =>
     `<option value="${esc(c)}" ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
   const cardOpts = () => cards.map(c => `<option value="${c.id}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
@@ -212,9 +237,11 @@ function openStatementPreview(cardId, r, b64, cards) {
   };
 
   const draw = () => {
+    curR.transactions.forEach((t, i) => { if (t._ord === undefined) t._ord = i; });   // 記原始順序（供「取消排序」還原）
+    const sortInd = previewSort === 'asc' ? '▲' : previewSort === 'desc' ? '▼' : '⇅';
     const rowsHtml = curR.transactions.map((t, i) => {
       const dis = t.isPayment;                       // 繳款/退款不可匯入
-      const checked = !dis && !t.duplicate;          // 重複預設不勾
+      const checked = t._checked !== undefined ? t._checked : (!dis && !t.duplicate);   // 沿用使用者勾選，否則重複預設不勾
       const status = t.isPayment ? '<span class="tag">繳款/退款</span>'
         : t.duplicate ? '<span class="tag amber">已存在</span>' : '<span class="tag green">新</span>';
       return `<tr class="${dis ? 'muted' : ''}">
@@ -235,7 +262,7 @@ function openStatementPreview(cardId, r, b64, cards) {
           <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；繳款/退款不列入。</span>
         </div>
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
-          <table><thead><tr><th></th><th>消費日</th><th>說明</th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
+          <table><thead><tr><th></th><th>消費日</th><th id="pvSortNote" style="cursor:pointer;user-select:none" title="依店名排序">說明 <span class="muted">${sortInd}</span></th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
           <tbody>${rowsHtml}</tbody></table>
         </div>
         <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
@@ -245,11 +272,17 @@ function openStatementPreview(cardId, r, b64, cards) {
     root.querySelector('.x-close').onclick = close;
     root.querySelector('[data-cancel]').onclick = close;
     root.querySelector('#doImport').onclick = doImport;
+    root.querySelector('#pvSortNote').onclick = () => {   // 說明欄排序：原始 → 店名 A→Z → Z→A → 原始
+      syncEdits();
+      previewSort = previewSort === 'asc' ? 'desc' : previewSort === 'desc' ? 'none' : 'asc';
+      applyPreviewSort();
+      draw();
+    };
     root.querySelector('#previewCard').onchange = async (e) => {
       const newId = e.target.value;
       try {
         const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64 } });
-        curCard = newId; curR = pr; draw();   // 重算該卡的重複標記
+        curCard = newId; curR = pr; previewSort = 'none'; draw();   // 換卡＝重算重複標記、排序回原始
       } catch (err) { toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }
     };
   };
