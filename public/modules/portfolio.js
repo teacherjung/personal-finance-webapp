@@ -1,7 +1,7 @@
 // @ts-check
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, byId, esc, moneyCur, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -1210,7 +1210,7 @@ function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) 
     if (source === 'missing' || !base) continue;
     if (source === 'estimated') estimated = true;
     const ds = String(tr.date || '');
-    const d = new Date(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);
+    const d = parseLocalDate(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);   // 本地解析（XIRR 其他日期皆本地建構，口徑一致）
     if (isNaN(d.getTime()) || d <= t0) continue;
     flows.push({ t: d > today ? today : d, v: base * usd });
   }

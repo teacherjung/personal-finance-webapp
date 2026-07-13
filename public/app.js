@@ -53,7 +53,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;
 
 // ---------- 日期工具（全站共用）----------
 // 解析 YYYY-MM-DD 為「本地時區」的 Date：new Date('YYYY-MM-DD') 會被當 UTC，在 UTC 以西時區差一天。
-const parseLocalDate = (d) => {
+export const parseLocalDate = (d) => {
   if (d instanceof Date) return d;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d ?? ''));
   return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(d);
