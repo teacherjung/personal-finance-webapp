@@ -2,7 +2,8 @@
 # 自動守門（本機門）：git push 之前自動跑「校對＋考試」，任一不過就擋下 push。
 # 啟用方式（每個 clone 一次）：git config core.hooksPath scripts/git-hooks
 # 緊急跳過（不建議）：git push --no-verify
-echo "🚧 自動守門：先校對再考試，通過才放行 push…"
+echo "🚧 自動守門：校對→糾察→考試，全過才放行 push…"
 npm run typecheck || { echo "❌ 校對（typecheck）沒過，push 已擋下。修好再推。"; exit 1; }
+npm run lint || { echo "❌ 糾察（lint）沒過，push 已擋下。修好再推。"; exit 1; }
 npm test || { echo "❌ 考試（test）沒過，push 已擋下。修好再推。"; exit 1; }
 echo "✅ 守門通過，放行 push。"
