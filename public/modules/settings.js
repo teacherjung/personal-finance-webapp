@@ -1,4 +1,5 @@
-import { api, view, esc, toast } from '../app.js';
+// @ts-check
+import { api, view, byId, esc, toast } from '../app.js';
 import { icon } from './icons.js';
 
 export async function renderSettings() {
@@ -84,7 +85,7 @@ export async function renderSettings() {
     </div>
   `;
 
-  document.getElementById('savePrinciples').onclick = async () => {
+  byId('savePrinciples').onclick = async () => {
     await api('/settings', { method: 'PUT', body: {
       ibConcentrationPct: Number(val('ibConcentrationPct')),
       equityCapPct: Number(val('equityCapPct')),
@@ -95,7 +96,7 @@ export async function renderSettings() {
     }});
     toast('投資原則已儲存');
   };
-  document.getElementById('saveThresholds').onclick = async () => {
+  byId('saveThresholds').onclick = async () => {
     await api('/settings', { method: 'PUT', body: {
       emergencyFundMonths: Number(val('emergencyFundMonths')),
       usdTwd: Number(val('usdTwd')),
@@ -106,11 +107,11 @@ export async function renderSettings() {
     }});
     toast('門檻已儲存');
   };
-  document.getElementById('saveIb').onclick = async () => {
+  byId('saveIb').onclick = async () => {
     await api('/settings', { method: 'PUT', body: { ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } } });
     toast('IB 設定已儲存，可到 IB 投資組合頁同步');
   };
-  document.getElementById('migrateBtn').onclick = async () => {
+  byId('migrateBtn').onclick = async () => {
     if (!confirm('要把舊分類轉換成新的兩層分類嗎？（會先自動備份，可重複執行）')) return;
     try {
       const r = await api('/migrate/categories', { method: 'POST' });
@@ -122,12 +123,12 @@ export async function renderSettings() {
     try { await api('/learned/delete', { method: 'POST', body: { key: b.dataset.unlearn } }); toast('已刪除學習'); renderSettings(); }
     catch (err) { toast('刪除失敗：' + err.message, true); }
   });
-  document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
-  document.getElementById('importFile').onchange = async (e) => {
+  byId('importBtn').onclick = () => byId('importFile').click();
+  byId('importFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     if (!confirm('匯入會覆蓋目前所有資料，確定嗎？')) return;
     try { await api('/import', { method: 'POST', body: JSON.parse(await file.text()) }); toast('已匯入'); location.hash = 'dashboard'; }
     catch (err) { toast('匯入失敗：' + err.message, true); }
   };
 }
-const val = (id) => document.getElementById(id).value;
+const val = (id) => byId(id).value;
