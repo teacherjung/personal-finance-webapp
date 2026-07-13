@@ -158,6 +158,55 @@ test('匯入型別驗證（Codex#2-2）：備份 settings.usdTwd 錯型別 → �
   await POST('/import', backup);   // 還原
 });
 
+test('集合型別驗證（Codex#3-1）：holdings.price 錯型別被剝，summary 不變 NaN', async () => {
+  const created = await (await POST('/holdings', {
+    symbol: 'BADX', name: 'x', layer: 'stock', currency: 'TWD', quantity: 1, price: 'oops',
+  })).json();
+  assert.ok(created.id);
+  assert.ok(!('price' in created) || typeof created.price === 'number', 'price:oops 不可被存成字串');
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth), 'netWorth 不可為 NaN');
+  await DELETE_(`/holdings/${created.id}`);
+});
+
+test('集合數值：合法數字與數字字串都收、null 清空', async () => {
+  const a = await (await POST('/holdings', { symbol: 'AAA', currency: 'TWD', quantity: 2, price: 100 })).json();
+  assert.equal(a.price, 100);
+  const b2 = await (await POST('/holdings', { symbol: 'BBB', currency: 'TWD', quantity: 1, price: '250' })).json();
+  assert.equal(b2.price, 250, '數字字串應轉成數字');
+  await DELETE_(`/holdings/${a.id}`); await DELETE_(`/holdings/${b2.id}`);
+});
+
+test('匯入集合型別驗證（Codex#3-2）：備份 holdings.price 錯型別 → 剝掉，summary 正常', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, holdings: [...(backup.holdings || []), { id: 'x1', symbol: 'BAD', quantity: 1, price: 'oops', currency: 'TWD', source: 'manual' }] };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true);
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth), 'holdings 壞值不可污染 summary');
+  await POST('/import', backup);   // 還原
+});
+
+test('匯入 IB lastEquity 深層驗證（Codex#3-3）：cash 錯型別 → 丟棄 lastEquity 走 fallback', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, settings: { ...backup.settings, ib: { ...backup.settings.ib, lastEquity: { stock: 100, cash: 'oops' } } } };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true);
+  const s = await GET('/settings');
+  assert.ok(!s.ib?.lastEquity || typeof s.ib.lastEquity?.cash === 'number', '壞的 lastEquity 應被丟棄（不可留字串 cash 低估槓桿風險）');
+  await POST('/import', backup);   // 還原
+});
+
+test('估值訊號回歸（#62 修正）：signals/capeManual 以數字送出可存進（表單是 number 型）', async () => {
+  const before = await GET('/settings');
+  await PUT('/settings', { signals: { china: 13, japan: 1.2, korea: 0.9, taiwanPE: 15, taiwanYield: 3, realYieldManual: 2.1 } });
+  await PUT('/settings', { capeManual: 34.5 });
+  const s = await GET('/settings');
+  assert.equal(s.signals?.china, 13, '數字型的估值訊號要存得進（#62 曾誤剝）');
+  assert.equal(s.capeManual, 34.5, '數字型 capeManual 要存得進');
+  await PUT('/settings', { signals: before.signals || {}, capeManual: before.capeManual ?? '' });   // 還原
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
