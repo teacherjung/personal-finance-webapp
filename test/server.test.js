@@ -112,6 +112,38 @@ test('輸入防呆：改不存在的交易 → 404', async () => {
   assert.equal(res.status, 404);
 });
 
+test('設定白名單（Codex）：擋下 IB 同步擁有欄位與未知欄位、合法欄位照寫', async () => {
+  const before = await GET('/settings');
+  await PUT('/settings', {
+    usdTwd: before.usdTwd,                              // 合法：照常寫入
+    ib: { lastEquity: { stock: 99999, cash: -99999 }, flexQueryId: before.ib?.flexQueryId || '' },
+    fxTwd: { GBP: 41.5, EVIL: 'x' },                    // GBP 數值收、EVIL 非數值剝掉
+    evilTop: 1,                                         // 未知頂層欄位剝掉
+  });
+  const s = await GET('/settings');
+  assert.ok(!('evilTop' in s), '未知頂層欄位不該寫入');
+  assert.notEqual(s.ib?.lastEquity?.stock, 99999, 'lastEquity 屬 IB 同步、前端不可偽造（影響槓桿/斷頭）');
+  assert.equal(s.fxTwd?.GBP, 41.5, '合法匯率照常寫入');
+  assert.ok(!('EVIL' in (s.fxTwd || {})), 'fxTwd 非數值項要被剝掉');
+  assert.ok('flexToken' in (s.ib || {}), 'ib 既有欄位保留');
+});
+
+test('匯入防呆（Codex）：集合型別錯誤 → 400，且不寫壞資料', async () => {
+  const backup = await GET('/db');
+  const res = await POST('/import', { settings: backup.settings, subscriptions: 'oops', holdings: 'oops' });
+  assert.equal(res.status, 400);
+  const sum = await GET('/summary');   // 確認沒被寫壞
+  assert.equal(typeof sum.netWorth, 'number');
+});
+
+test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
+  const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
+  const res = await (await POST('/import', backup)).json();
+  assert.equal(res.ok, true);
+  const sum = await GET('/summary');
+  assert.ok(sum.netWorth > 0);
+});
+
 test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', () => {
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');
