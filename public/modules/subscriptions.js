@@ -1,4 +1,5 @@
-import { api, view, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+// @ts-check
+import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -129,7 +130,7 @@ function setListSort(listKey, k, d) {
 }
 let charts = [];
 function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
-let syncColsTimer = 0;
+/** @type {any} */ let syncColsTimer = 0;   // setTimeout 的代號（瀏覽器是數字、Node 型別是物件，標 any 兩邊都通）
 
 // 排序用的「續費/停用」生效日期
 const effDate = (s) => isLifetimeSub(s) ? '9999-12-31' : (subStatus(s) === 'active' ? s.nextCharge : s.endsOn) || s.nextCharge || '';
@@ -255,8 +256,8 @@ export async function renderSubscriptions() {
     <div id="historySection"></div>
   `;
 
-  document.getElementById('addSub').onclick = () => openSubForm(null, creditCards);
-  document.getElementById('printSubs').onclick = () => printSubscriptionReport(subs, curMk, nextMk);
+  byId('addSub').onclick = () => openSubForm(null, creditCards);
+  byId('printSubs').onclick = () => printSubscriptionReport(subs, curMk, nextMk);
   view().querySelectorAll('[data-cost-detail]').forEach(b => b.onclick = () => openCostDetailModal(subs, b.dataset.costDetail));
   view().querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
     const k = th.dataset.sort;
@@ -278,7 +279,7 @@ export async function renderSubscriptions() {
   syncSubscriptionColumnWidths();
 
   drawBreakdown(activeThis, curMk);
-  renderHistorySection(document.getElementById('historySection'));
+  renderHistorySection(byId('historySection'));
 }
 
 function syncSubscriptionColumnWidths() {
@@ -623,6 +624,7 @@ function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH }) {
     .filter(c => isFinite(c.days) && c.days >= 0 && c.days <= 30)
     .sort((a, b) => a.days - b.days);
   const axisY = 98, dotY = axisY - 6;
+  /** @type {{top:number[], bottom:number[]}} */
   const lastBySide = { top: [], bottom: [] };
   const points = upcoming.map((c, i) => {
     const left = pos(c.days);
@@ -744,7 +746,7 @@ function drawBreakdown(activeThis, curMk) {
   const catTotal = catLabels.reduce((t, l) => t + Number(byCat[l] || 0), 0);
 
   // 依類別佔比（甜甜圈）
-  const catCtx = document.getElementById('catChart');
+  const catCtx = byId('catChart');
   const catValues = catLabels.map(l => Math.round(byCat[l]));
   const percentLabels = {
     id: 'percentLabels',
@@ -799,7 +801,7 @@ function drawBreakdown(activeThis, curMk) {
   })); else catCtx.parentElement.innerHTML = '<p class="empty">本月尚無使用中訂閱。</p>';
 
   // 依類別金額（水平長條）：同樣依金額由高到低，補足圓環不易比較金額差距的弱點。
-  const catBarCtx = document.getElementById('catBarChart');
+  const catBarCtx = byId('catBarChart');
   const barValueLabels = {
     id: 'barValueLabels',
     afterDatasetsDraw(chart) {
@@ -852,7 +854,7 @@ function drawBreakdown(activeThis, curMk) {
   const byCard = {};
   activeThis.forEach(s => { const c = cardLabel(s.card || '未指定'); byCard[c] = (byCard[c] || 0) + costForMonth(s, curMk); });
   const cardRows = Object.entries(byCard).sort((a, b) => b[1] - a[1]);
-  const cardTable = document.getElementById('cardTotalsTable');
+  const cardTable = byId('cardTotalsTable');
   if (!cardTable) return;
   cardTable.innerHTML = cardRows.length ? `<table class="summary-table">
     <thead><tr><th>信用卡</th><th class="num">扣款金額</th></tr></thead>
@@ -881,7 +883,7 @@ function openSubForm(sub, creditCards = []) {
       { key: 'email', label: '使用的信箱', type: 'select', options: EMAIL_OPTIONS, default: 'Gmail' }
     ],
     values: sub ? { ...sub, status: initStatus, email: normEmail(sub.email), whenDate: whenVal } : { status: 'active' },
-    onMount: (root) => {
+    onMount: (/** @type {any} */ root) => {
       // 狀態切換時，把日期欄的標籤在「下次續費日 / 停用日」之間切換
       const statusSel = root.querySelector('#f_status');
       const cycleSel = root.querySelector('#f_cycle');
