@@ -52,6 +52,18 @@ test('緊急預備金：已停用訂閱不該灌進去（Codex #39 修正）', (
   assert.ok(!reminders.some(r => /緊急預備金/.test(r.title)), '不應誤報緊急預備金不足');
 });
 
+test('訂閱提醒：status ended（旗標未寫回）不該再跳續費提醒（Codex 第三輪 #4）', () => {
+  const d = new Date(); d.setDate(d.getDate() + 3);   // 三天後（在 7 天提醒窗內）
+  const soon = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const db = {
+    settings: { usdTwd: 32 },
+    accounts: [], holdings: [], transactions: [],
+    subscriptions: [{ id: 's', name: '已停用但旗標未寫回', amount: 100, cycle: 'monthly', status: 'ended', active: true, nextCharge: soon }],
+  };
+  const reminders = buildSummary(db).reminders;
+  assert.ok(!reminders.some(r => /續費/.test(r.title)), '已停用訂閱不應出現續費提醒');
+});
+
 test('computeLeverage：用 IB 官方淨值算融資槓桿', () => {
   const db = { settings: { usdTwd: 32, ib: { lastEquity: { stock: 100, cash: -50 } } }, holdings: [], accounts: [] };
   const lev = computeLeverage(db, computeIb(db));

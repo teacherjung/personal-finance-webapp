@@ -27,6 +27,8 @@ export const INCOME_CATEGORIES = ['薪資', '投資', '獎金', '其他收入'];
 export const isIncomeCat = (c) => INCOME_CATEGORIES.includes(c);
 /** @param {string} parent @returns {string[]} */
 export const subsOf = (parent) => EXPENSE_TREE[parent] || [];
+// 注意：子類「空字串」＝合法值（＝不分子類）。分類器可只給大類（如 地價稅→居住、OMGYES→健康），
+// 表單也有「（不分子類）」選項——空子類不是資料錯誤（刻意設計，勿改成強制填子類）。
 // 自動分類判斷不出來時的預設歸屬＝「其他/未分類」（讓使用者一眼看出哪些待手動確認）
 /** @type {[string, string]} [分類, 子類] */
 export const DEFAULT_EXPENSE = ['其他', '未分類'];

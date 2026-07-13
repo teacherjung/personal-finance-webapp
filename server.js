@@ -82,7 +82,9 @@ app.post('/api/snapshot', (req, res) => {
   const db = load();
   const a = computeAssets(db);
   const mk = monthKey();
-  const snap = { month: mk, date: new Date().toISOString().slice(0, 10),
+  const d = new Date();   // 本地日期（toISOString 是 UTC，台灣早上 8 點前會差一天）
+  const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const snap = { month: mk, date: localDate,
     netWorth: a.netWorth, assets: a.assets, liabilities: a.liabilities, byClass: a.byClass };
   db.snapshots = (db.snapshots || []).filter(s => s.month !== mk);
   db.snapshots.push(snap);
