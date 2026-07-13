@@ -4,7 +4,17 @@
 
 ## 專案概觀
 
-本機優先（隱私第一）的個人理財網頁。**零建置**：改完存檔即生效，沒有 bundler/transpiler，不要引入 npm 前端相依。
+本機優先（隱私第一）的個人理財網頁。**runtime 零建置**：改完存檔即生效，前端沒有 bundler/transpiler、不引入前端 npm 相依。**開發工具（devDependencies）為刻意引入**：typescript/@types（校對）、eslint（糾察）——只在開發/CI 使用、不影響 app 執行；新增 runtime 相依採「謹慎地裝」原則（要有明確理由，2026-07-13 使用者拍板放寬）。
+
+## 發展方向與階段路線圖（2026-07-13 使用者拍板）
+
+**終點＝多人註冊使用的服務**（幫他人保管理財資料＝重大安全責任，安全永遠第一優先）。分三階段、每階段讓下一階段變安全：
+
+- **階段 A 安全網（✅ 完工）**：自動考試（`npm test`）→ 型別校對全覆蓋（`npm run typecheck`）→ 自動守門（pre-push hook＋GitHub Actions CI）→ 格式糾察（`npm run lint`）。
+- **階段 B 骨架改建（下一步）**：①`server.js` 分層拆房間（路由/業務邏輯/資料存取分離）②資料存取收斂到單一 repository 櫃檯 ③`store.json` → SQLite（含資料防呆）。**app 外觀與操作不變。**
+- **階段 C 多人前置（未動工）**：帳號系統（註冊/登入/密碼雜湊）、每人資料隔離、HTTPS、敏感資料加密存放（`pdfPassword`＝身分證字號絕不能明文上伺服器）；前端要不要換框架到 C 再評估。
+
+審查與建議請以此方向為前提（例：store.json 的深度優化價值有限——B 階段會換 SQLite；但正確性 bug 照抓）。
 
 - 後端：`server.js`（Express，只聽 `127.0.0.1`，埠 `PORT` 環境變數或 4321）
 - 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
@@ -28,7 +38,8 @@
 5. **金額格式**（app.js 統一格式器，不要自己 toLocaleString）：
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
-6. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。
+6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「8 頁 reload 無錯」把關，型別檢查主力放資料邏輯）。`portfolio.js` 的 `fxGaugeSection`＝**刻意休眠停放**（註解與 eslint-disable 已標明），非死碼、勿刪。
+7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。
 
 ## 投資領域語意（改相關程式前必讀）
 
