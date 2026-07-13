@@ -520,6 +520,7 @@ function fxSection(rows, accounts, fx) {
 }
 
 // ---- 美元/台幣匯率儀表（暫時從頁面移除，之後再決定位置；要放回頁面時把 ${fxGaugeSection(fx, settings)} 插進 render 即可）----
+// eslint-disable-next-line no-unused-vars -- 刻意停放（見上行註解），要恢復時插回 render 即可
 function fxGaugeSection(fx, settings) {
   const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
   const MIN = 26, MAX = 34;
@@ -1176,7 +1177,8 @@ function xirrRate(flows) {
   const t0 = flows[0].t;
   const yrs = (f) => (f.t - t0) / 31557600000;   // 365.25 天
   const npv = (r) => flows.reduce((s, f) => s + f.v / Math.pow(1 + r, yrs(f)), 0);
-  let lo = -0.95, hi = 1e4, flo = npv(lo), fhi = npv(hi);
+  let lo = -0.95, hi = 1e4, flo = npv(lo);
+  const fhi = npv(hi);   // 只用於下行的同號檢查，二分法過程不更新它
   if (!isFinite(flo) || !isFinite(fhi) || flo * fhi > 0) return null;
   for (let i = 0; i < 200; i++) {
     const mid = (lo + hi) / 2, fm = npv(mid);

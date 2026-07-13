@@ -69,8 +69,8 @@
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
 - **堆疊 PR（base 指向另一個 PR 分支）合併時，不要用 `--delete-branch`**——刪掉基底分支會讓上層 PR 被 GitHub 直接關閉而非自動轉指向（2026-07-10 實際發生，#3/#5 被誤關）。先由下而上全部合併完，再一次刪分支；或乾脆避免堆疊、等前一個合併後再開下一個。
 - 使用者是最終合併者。Commit 訊息用繁體中文、講清楚動機。
-- 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。**
-- **自動守門（兩道，2026-07-13 起）**：①**本機門**＝versioned pre-push hook（`scripts/git-hooks/pre-push`，啟用：`git config core.hooksPath scripts/git-hooks`，本 clone 已設好）——push 前自動跑 typecheck＋test，不過就擋下（緊急跳過 `--no-verify`，不建議）；②**雲端門**＝GitHub Actions（`.github/workflows/ci.yml`）——每個 PR 自動跑同兩關並在 PR 頁顯示 ✅/❌，**使用者合併前先確認綠勾**。新 clone 記得重新 `git config core.hooksPath scripts/git-hooks`。
+- 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。**第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。
+- **自動守門（兩道，2026-07-13 起）**：①**本機門**＝versioned pre-push hook（`scripts/git-hooks/pre-push`，啟用：`git config core.hooksPath scripts/git-hooks`，本 clone 已設好）——push 前自動跑 typecheck＋lint＋test，不過就擋下（緊急跳過 `--no-verify`，不建議）；②**雲端門**＝GitHub Actions（`.github/workflows/ci.yml`）——每個 PR 自動跑同三關並在 PR 頁顯示 ✅/❌，**使用者合併前先確認綠勾**。新 clone 記得重新 `git config core.hooksPath scripts/git-hooks`。
 
 ### 審查分工：Codex 審、Claude 改（2026-07-10 使用者拍板）
 

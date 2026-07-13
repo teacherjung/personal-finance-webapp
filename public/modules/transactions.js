@@ -1,8 +1,8 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, router, modalSizeClass } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
-import { EXPENSE_TREE, EXPENSE_PARENTS, INCOME_CATEGORIES, subsOf } from './categories.js';
+import { EXPENSE_PARENTS, INCOME_CATEGORIES, subsOf } from './categories.js';
 
 // 表單分類選單＝收入類＋11 個支出分類；type 由所選分類自動推導
 const ALL_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_PARENTS];
@@ -153,7 +153,7 @@ async function openStatementUpload() {
       const inp = root.querySelector('#f_file');
       if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
-    onSubmit: async (data) => {
+    onSubmit: async () => {
       if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
       const b64 = await fileToBase64(file);
       const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });

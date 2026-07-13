@@ -20,5 +20,7 @@ jobs:
         run: npm ci
       - name: 校對（型別檢查）
         run: npm run typecheck
+      - name: 格式糾察（lint）
+        run: npm run lint
       - name: 考試（自動測試）
         run: npm test
