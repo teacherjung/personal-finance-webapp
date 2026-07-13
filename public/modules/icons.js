@@ -1,5 +1,7 @@
+// @ts-check
 // 簡單、單色的線條圖示庫（Lucide / Feather 風格，類似 Notion）。
 // 全部用 currentColor，會自動跟著文字顏色走。
+/** @type {Record<string, string>} 圖示名 → SVG path 片段 */
 const P = {
   // 導覽
   dashboard: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
@@ -35,6 +37,7 @@ const P = {
   spark: '<path d="M12 2.5c.4 4.6 2.4 6.6 7 7-4.6.4-6.6 2.4-7 7-.4-4.6-2.4-6.6-7-7 4.6-.4 6.6-2.4 7-7Z"/>'
 };
 
+/** @param {string} name @param {number=} size @param {boolean=} filled @returns {string} SVG 字串 */
 export function icon(name, size = 18, filled = false) {
   const path = P[name] || '';
   const isSpark = name === 'spark';
@@ -46,9 +49,9 @@ export function icon(name, size = 18, filled = false) {
 
 // 把頁面上所有 <span data-icon="名稱"> 換成對應 SVG
 export function hydrateIcons(root = document) {
-  root.querySelectorAll('[data-icon]').forEach(el => {
+  root.querySelectorAll('[data-icon]').forEach((/** @type {HTMLElement} */ el) => {
     if (el.dataset.done) return;
-    el.innerHTML = icon(el.dataset.icon, Number(el.dataset.size) || 18);
+    el.innerHTML = icon(el.dataset.icon || '', Number(el.dataset.size) || 18);
     el.dataset.done = '1';
   });
 }

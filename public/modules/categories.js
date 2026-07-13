@@ -1,7 +1,9 @@
+// @ts-check
 // 支出兩層分類（分類 → 子類），單一真相來源。
 // 前端記帳表單/帳單預覽用它建連動下拉；後端 statement.js 的自動分類規則、
 // server.js 的舊資料轉換，其分類字串都必須對得上這裡（AGENTS.md 同步點）。
 // 零相依純資料檔——前端 import './categories.js'、後端 import '../public/modules/categories.js' 共用同一份。
+/** @type {Record<string, string[]>} 分類 → 子類清單 */
 export const EXPENSE_TREE = {
   '飲食': ['超市', '買菜／食材', '餐廳', '早餐／便當', '飲料／咖啡', '聚餐', '外送', '零食'],
   '生活': ['一般必要開支', '日用品', '清潔用品', '衣服', '鞋子', '3C產品', '手機及配件', '個人用品', '所得稅', '行政規費', '其他生活雜支'],
@@ -21,7 +23,10 @@ export const EXPENSE_TREE = {
 export const EXPENSE_PARENTS = Object.keys(EXPENSE_TREE);
 export const INCOME_CATEGORIES = ['薪資', '投資', '獎金', '其他收入'];
 
+/** @param {string} c */
 export const isIncomeCat = (c) => INCOME_CATEGORIES.includes(c);
+/** @param {string} parent @returns {string[]} */
 export const subsOf = (parent) => EXPENSE_TREE[parent] || [];
 // 自動分類判斷不出來時的預設歸屬＝「其他/未分類」（讓使用者一眼看出哪些待手動確認）
+/** @type {[string, string]} [分類, 子類] */
 export const DEFAULT_EXPENSE = ['其他', '未分類'];

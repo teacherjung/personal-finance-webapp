@@ -1,3 +1,4 @@
+// @ts-check
 // 個人理財中心 — 前端主程式
 import { renderDashboard } from './modules/dashboard.js';
 import { renderTransactions } from './modules/transactions.js';
@@ -13,6 +14,7 @@ import { hydrateIcons } from './modules/icons.js';
 const $ = (sel, root = document) => root.querySelector(sel);
 export const view = () => $('#view');
 
+/** 呼叫後端 API（自動帶 JSON）。 @param {string} path 例 '/transactions' @param {{method?:string, body?:any}=} opts @returns {Promise<any>} */
 export async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
     headers: { 'Content-Type': 'application/json' },
@@ -31,14 +33,19 @@ export async function api(path, opts = {}) {
 // 負號一律 U+2212「−」；正號由呼叫端視情況加 ASCII「+」。
 const withSign = (n, body) => { const v = Number(n || 0); return (v < 0 ? '−' : '') + body(Math.abs(v)); };
 // 明細金額：整數 + 千分位 +「元」後綴（1,234,567 元）
+/** @param {number|string|null|undefined} n */
 export const money = (n) => withSign(n, v => Math.round(v).toLocaleString('en-US') + ' 元');
 // 明細原幣：非台幣顯示原幣後綴（2,500 USD、5.4 USD）；<10 保留一位小數
+/** @param {number|string|null|undefined} n @param {string=} cur */
 export const moneyCur = (n, cur) => (!cur || cur === 'TWD') ? money(n)
   : withSign(n, v => (v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US')) + ' ' + cur);
 // 統計卡片大數字：以「萬」為單位（≥10 萬取整、<10 萬一位小數），不加「元」（2,134 萬、6.5 萬）
+/** @param {number|string|null|undefined} n */
 export const wan = (n) => withSign(n, v => { const w = v / 10000; return (w >= 10 ? Math.round(w).toLocaleString('en-US') : w.toFixed(1)) + ' 萬'; });
+/** @param {number|string|null|undefined} n */
 export const pct = (n) => (Number(n || 0)).toFixed(1) + '%';
-export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/** 插入 innerHTML 前必過（XSS 鐵則）。 @param {unknown} s @returns {string} */
+export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c));
 
 // ---------- 日期工具（全站共用）----------
 // 解析 YYYY-MM-DD 為「本地時區」的 Date：new Date('YYYY-MM-DD') 會被當 UTC，在 UTC 以西時區差一天。
@@ -48,7 +55,7 @@ const parseLocalDate = (d) => {
   return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(d);
 };
 // 幾天後（負數＝已過期）；無日期回 Infinity
-export const daysUntil = (d) => { if (!d) return Infinity; const t = parseLocalDate(d); t.setHours(0, 0, 0, 0); const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); };
+export const daysUntil = (d) => { if (!d) return Infinity; const t = parseLocalDate(d); t.setHours(0, 0, 0, 0); const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t.getTime() - n.getTime()) / 86400000); };
 // 月份鍵 YYYY-MM（可帶日期字串，預設本月）；日期字串直接取前 7 碼，免受時區影響
 export function monthKey(d) { if (typeof d === 'string') { const m = /^(\d{4})-(\d{2})/.exec(d); if (m) return `${m[1]}-${m[2]}`; } const t = d ? parseLocalDate(d) : new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
 // 今天 YYYY-MM-DD
@@ -57,6 +64,7 @@ export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}
 // 圖表色（CHART/PALETTE/AXIS/GRID）定義在零依賴的 modules/theme.js，各模組直接 import——
 // 不從 app.js 轉手：模組在檔案頂層就取用色票，經由 app.js 會踩循環 import 的 TDZ。
 
+/** 右下角提示訊息。 @param {string} msg @param {boolean=} isErr 紅色錯誤樣式 */
 export function toast(msg, isErr = false) {
   const t = document.createElement('div');
   t.className = 'toast' + (isErr ? ' err' : '');
@@ -71,7 +79,20 @@ export function modalSizeClass(size = 'sm') {
   return `modal modal-${safeSize}`;
 }
 
-// 通用彈窗表單。fields: [{key,label,type,options?,full?,required?,placeholder?,step?}]
+/** 彈窗表單的一個欄位。
+ * @typedef {Object} FormField
+ * @property {string} key
+ * @property {string} label
+ * @property {string} [type]        'text'(預設)|'number'|'date'|'select'|'textarea'|'checkbox'|'file'
+ * @property {Array<string|{value:string, label:string}>} [options]  select 專用
+ * @property {boolean} [full]       佔滿整列
+ * @property {boolean} [required]
+ * @property {string} [placeholder]
+ * @property {string} [step]        number 專用
+ * @property {*} [default]
+ */
+// 通用彈窗表單。
+/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
   const root = $('#modal-root');
   const fieldHtml = fields.map(f => {
@@ -79,7 +100,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     const id = 'f_' + f.key;
     let input;
     if (f.type === 'select') {
-      input = `<select id="${id}">${f.options.map(o => {
+      input = `<select id="${id}">${(f.options || []).map(o => {   // 忘給 options 時顯示空下拉、不整頁掛掉
         const ov = typeof o === 'string' ? o : o.value;
         const ol = typeof o === 'string' ? o : o.label;
         return `<option value="${esc(ov)}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`;
@@ -121,6 +142,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
 }
 
 // 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
+/** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
@@ -157,6 +179,7 @@ const PRINT_SHELL_CSS = `
       }`;
 
 // 開啟列印預覽視窗（popup 被擋時提示）；bodyHtml 需含 .preview-bar 與 .paper 內容
+/** @param {string} title @param {string} extraCss @param {string} bodyHtml */
 export function openPrintWindow(title, extraCss, bodyHtml) {
   const win = window.open('', '_blank');
   if (!win) return toast('瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。', true);
@@ -168,6 +191,7 @@ ${extraCss}
   win.document.close();
 }
 
+/** 確認後執行刪除並重繪。 @param {string} name @param {() => any} fn */
 export async function confirmDelete(name, fn) {
   if (!window.confirm(`確定要刪除「${name}」嗎？此動作無法復原。`)) return;
   try { await fn(); toast('已刪除'); router(); }
@@ -188,7 +212,7 @@ const ROUTES = {
 
 export async function router() {
   const route = location.hash.replace('#', '') || 'dashboard';
-  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === route));
+  document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
   const fn = ROUTES[route] || renderDashboard;
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }
@@ -196,8 +220,8 @@ export async function router() {
   hydrateIcons(view());
 }
 
-document.querySelectorAll('#nav a').forEach(a => {
-  a.addEventListener('click', () => { location.hash = a.dataset.route; });
+document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
+  a.addEventListener('click', () => { location.hash = a.dataset.route || ''; });
 });
 window.addEventListener('hashchange', router);
 
