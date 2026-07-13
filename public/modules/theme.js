@@ -1,3 +1,4 @@
+// @ts-check
 // 圖表色主題（獨立模組、零依賴——各模組直接 import，避免經由 app.js 的循環 import TDZ）
 // 柔和六色盤（2026-07-10 使用者選定，已通過 dataviz validate_palette：亮度帶/彩度/CVD/對比）
 // 分類色只從這裡取；獲利/虧損等語意色仍走 CSS 的 --pos/--neg/--warn，兩者不混用。
