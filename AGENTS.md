@@ -16,7 +16,7 @@
 
 審查與建議請以此方向為前提（例：store.json 的深度優化價值有限——B 階段會換 SQLite；但正確性 bug 照抓）。
 
-- 後端：`server.js`（Express，只聽 `127.0.0.1`，埠 `PORT` 環境變數或 4321）
+- 後端（B2 已分層）：`server.js`＝薄殼（啟動＋掛路由，只聽 `127.0.0.1`，埠 `PORT` 或 4321）→ `lib/routes/*.js`（HTTP 路由：core/crud/market/ib/statement）→ `lib/services/*.js`（業務邏輯：learning/snapshot/ib-sync/statement-import）→ `lib/repo.js`（資料存取單一櫃檯）→ `lib/store.js`（store.json）。欄位白名單在 `lib/schema.js`
 - 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
 - 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
 - IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
@@ -46,7 +46,7 @@
 - **投資原則（使用者拍板）**：最高指導原則＝**生存優先**（在所有環境活著 > 多數環境賺更多），規則衝突時以此裁決。所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)，設定頁「投資原則」卡可調。
 - **融資槓桿只算 IB**：**優先用 IB 官方淨值摘要 `settings.ib.lastEquity`**（同步時更新、基準幣別 USD：stock ÷ (stock+cash)）；沒有同步資料才自算（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額）。排除台新現金與台股，文案標「IB」前綴。`ibIdleCashAlert`＝IB 正現金閒置提醒門檻（USD）。
 - **槓桿上限任何時期 1.3x**（2026-07-10 修訂，取消訊號期 1.6x——1.6x 撐不過 2008 級回檔）：估值訊號期加碼**只用新資金與現金、不舉新債**。**斷頭距離**＝市場再跌 x% 觸及 IB 強平線，`x = 1 − 借款 ÷ ((1−維持率) × IB 持倉市值)`（假設全倉維持率一致的近似）；維持率存 `settings.ibMaintenancePct`(25)。公式在 `portfolio.js marginCallDistance()` 與 `lib/derive.js` 規則 7 各一份（同步點）。
-- **多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。**交易損益**（交易摘要＋XIRR）共用 `portfolio.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`server.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
+- **多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。**交易損益**（交易摘要＋XIRR）共用 `portfolio.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`lib/services/ib-sync.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
 - **XIRR（資金加權年化，台幣）**：現金流＝第一筆月快照市值（流出）＋各月快照投入增量（流出）＋IB 賣出已實現損益逐筆按成交日（`tradePnlBase`×usdTwd，流入，與交易摘要同口徑、含設定匯率估算）＋今日市值（流入）。**賣出只用 Δcost 會漏掉已實現損益，必須用 ibTrades 修正**；用估算時 header 標「含匯率估算」。不含股息利息；台股手動賣出未納入；快照未滿 60 天不顯示；|年化|>500% 視為資料異常。實作在 `portfolio.js portfolioXirr()/xirrRate()`（僅此一份）。快照資料曾含 seed 示範殘留（2026-07-10 已清），**判斷 XIRR 異常先懷疑快照資料**。
 - 台股（0050/006208/00719B/00720B）無 API、手動維護股數；報價 Yahoo（台債後綴 `.TWO`；GBp 便士 ÷100 轉 GBP）。
 
@@ -57,16 +57,17 @@
 | `public/modules/portfolio.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
 | `portfolio.js` `fxSection.exposureCurrency` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
 | 新增 ETF 持股 | `portfolio.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%） |
-| `server.js` `DEFAULT_LAYER` 新增代號 | 兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉） |
+| `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | 兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉） |
 | IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端單一真相＝`lib/derive.js computeLeverage()`（規則 7＋buildSummary 都用它、summary 有 `ib.leverage/loan/mcDist/hasLoan`）↔ 前端 `portfolio.js` 的 `marginCallDistance()` 與 render 內槓桿計算，前後端兩份要一致 |
 | 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | `subscriptions.js costForMonth()` ↔ `lib/derive.js subCostForMonth()`（buildSummary「本月固定訂閱」＋`avgMonthlyExpense` 無歷史時的緊急預備金 fallback 都用它），三處口徑要一致；**勿在任何訂閱加總改回 `filter(active!==false)+monthlyCost`（會把已停用訂閱算進去）** |
 | 訂閱狀態（使用中/即將停用/已停用） | 前端 `subscriptions.js subStatus()` ↔ 後端 `lib/derive.js subActive()`（buildSummary 訂閱**項數**用它，只算未停用；否則總覽與訂閱頁項數打架）。判斷靠 `daysUntil(endsOn)`，兩份口徑要一致 |
 | YYYY-MM-DD 日期解析 | 前端 `app.js parseLocalDate` ↔ 後端 `derive.js parseLocalDate`（各一份）：一律用**本地時區**拆日期，`new Date('YYYY-MM-DD')` 會被當 UTC，在 UTC 以西時區差一天（月份/提醒天數/星期全錯）。`daysUntil`/`monthKey`/`formatDateWithWeekday` 都走它 |
 | `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI＋`lib/types.js` 的 `Settings` typedef（否則 server.js 讀該欄 typecheck 報「不存在」） |
+| 集合新增欄位（表單加新欄） | **`lib/schema.js` 的 `WRITABLE_FIELDS` 白名單**（B2 起後端只收白名單內欄位，漏加會被默默剝掉——伺服器 console 會警告）＋`lib/types.js` 對應 typedef |
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
-| 支出分類（兩層：分類/子類） | **單一真相＝`public/modules/categories.js` 的 `EXPENSE_TREE`**（前端 import `./categories.js`、後端 `lib/statement.js`+`server.js` import `../public/modules/categories.js` 共用同一份）。`statement.js CATEGORY_RULES` 的 `[分類,子類]` 字串、`server.js CATEGORY_MIGRATION` 的目標分類，都必須對得上 EXPENSE_TREE。交易存 `category`(分類)+`subcategory`(子類)；收入類走 `INCOME_CATEGORIES`、無子類。未知支出預設 `DEFAULT_EXPENSE`（其他/未分類——與「生活/其他生活雜支」區隔：後者是已知生活雜項，前者是還沒判斷出來的） |
+| 支出分類（兩層：分類/子類） | **單一真相＝`public/modules/categories.js` 的 `EXPENSE_TREE`**（前端 import `./categories.js`、後端 `lib/statement.js`+`lib/services/learning.js` import `../public/modules/categories.js` 共用同一份）。`statement.js CATEGORY_RULES` 的 `[分類,子類]` 字串、`lib/routes/core.js CATEGORY_MIGRATION` 的目標分類，都必須對得上 EXPENSE_TREE。交易存 `category`(分類)+`subcategory`(子類)；收入類走 `INCOME_CATEGORIES`、無子類。未知支出預設 `DEFAULT_EXPENSE`（其他/未分類——與「生活/其他生活雜支」區隔：後者是已知生活雜項，前者是還沒判斷出來的） |
 | `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 特殊指定要排在通用前：YouTube→學習、ChatGPT/Claude/Notion/Canva→工作、汽車保險→交通（在保險前）、健身→健康、**地價稅→居住（排在生活/行政規費前）**、**TAPPAY/台灣國際開發→交通/停車費（第三方支付、使用者的多為停車）**、外送前綴（FP-/foodpanda）放飲食各子類之後當保底。重複判定鍵＝`stmtRef`（卡id+消費日+金額+說明） |
 | 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX；PDF 再依**文件內容**判富邦/台新） | **PDF 銀行由文件內容判斷，不看使用者選的卡片**（`parsePdfAuto`：用「台新/富邦」行名關鍵字定方向，命中的解析器有結果就採用、否則挑筆數多者；卡片只決定記到哪＋提供 PDF 密碼）。**富邦＝PDF**（`parseFubon`：郵寄加密版說明同列、官網無密碼版說明換行下一列）；**台新＝PDF**（`parseTaishinPdf`：郵寄加密版，說明有時拆三行、支援斜線 115/06/02 與 7 碼 1150602 兩種民國日期、金額＝兩日期後第一個純整數）＋**XLSX**（`parseTaishinXlsx`＋SheetJS，官網下載，西元日期、金額獨立欄）。台新 PDF 已用同月 XLSX 交叉驗證（3月94/94、7月66/66，日期+金額零誤差）。各解析器回原始明細後共走 `finalize()`（分類＋國外交易服務費繼承＋`cleanStore()` 產生顯示用店名 `store`）。`parseStatement` 另回 `lastFour`（`extractLastFour` 從內容抓卡號末四碼，盡力而為、抓不到回 null）。**`store`＝清理過的顯示名，匯入後存進 `note` 顯示用；分類與 `stmtRef`（去重）一律用原始 `desc`，勿改用 `store`（否則分類失準、跨格式去重對不上）。`cleanStore` 流程：①先比對 `STORE_CANON` 已知品牌標準名（eTag停車/foodpanda/馬可先生/六必居/OMGYES/悠遊卡自動加值…，命中直接顯示標準名，使用者可續加）②否則走一般規則：去金流前綴（`連加*`/`騰加數位*`/`OPENAI*`/`TAPPAY_`/`FP-`）、截斷括號後段（`石二鍋(林口家樂`→`石二鍋`）、`、`後段、公司型態字（股份有限公司/有限公司…）、結尾 `/TW`、分店定位碼＋城市、設備碼、中文後殘留英文（`摩斯漢堡Mos B`→`摩斯漢堡`）。台新 PDF/XLSX 都常截斷店名（`LOUISA COFFE`/`台灣國際開`），救不回被截字（盡力而為）。無公開店名對照表可匯入。**新增銀行＝加 `parseXxx()` 並補進 `parsePdfAuto`。`parseStatementPdf` 為 `parseStatement` 別名（相容） |
 | 帳單上傳「免選卡」自動歸卡（`POST /api/statement/preview`） | 上傳只丟檔案、不先選卡。後端逐一試各卡 `pdfPassword` 解密（`['', ...各卡去重密碼]`，只在密碼類錯誤才換下一個）→ 判銀行＋末四碼 → **對卡決策樹**：①末四碼唯一命中→自動；②該銀行單卡→自動；③否則回 `candidates`（該銀行優先、無則全部信用卡）請使用者選。`issuerMatchesBank`＝`card.issuer` 含 bank 字串。認不出時前端用 `POST /api/cards/:id/statement/preview`（指定卡）重解析。**卡片對應靠 `card.lastFour`**——末四碼抓取樣式（`extractLastFour`）真實帳單校準後再補；抓不到/對不準一律退回請使用者選（＝保底、不會卡住）。預覽頂部可改「記到卡片」（改了用該卡重解析＝重算重複標記）。**同步點：改 `stmtDupFlag` 的 stmtRef 格式要連動 reassign 前綴重寫。** **坑（已修 PR #30）：pdfjs `getDocument` 會 detach 傳入的 ArrayBuffer，試密碼迴圈重用同一份 bytes 第 2 次起會爆「Cannot transfer object of unsupported type」→ `extractLines` 一律傳 `new Uint8Array(data)` 副本，勿改回直接傳 data。** |

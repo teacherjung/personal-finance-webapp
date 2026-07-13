@@ -32,7 +32,7 @@ lib/derive.js        → 計算大腦（維持現狀，已型別化＋考試覆�
 - 建 `repo.js`：`getCollection/addItem/updateItem/deleteItem/getSettings/updateSettings/getDb/saveDb`。
 - `server.js` 內所有 `load()/save()` 改走 repo。**行為完全不變**，B0-3 的測試護體。
 
-### B2. 路由與業務邏輯拆檔
+### B2. 路由與業務邏輯拆檔 ✅ 已完成（2026-07-13）
 - 把 `server.js` 的各主題端點搬到 `lib/routes/*.js`；較重的邏輯（帳單匯入、學習、IB 同步、快照）
   搬到 `lib/services/*.js`。`server.js` 收斂成薄薄的掛載。
 - 順便補上「欄位白名單」（見安全地圖 B2）——只在這步、有測試護體時做。
