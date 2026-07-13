@@ -1,6 +1,7 @@
+// @ts-check
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, esc, moneyCur, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { api, view, byId, esc, moneyCur, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -293,7 +294,7 @@ export async function renderPortfolio() {
     <div class="chart-card" style="margin-bottom:16px">
       <h3><button type="button" class="info-link" id="xirrInfo">投入 vs 市值</button> <span class="stat-sub" style="font-weight:400;margin:0">（每月快照，按左下「記錄本月快照」累積）</span>
         <span style="float:right;font-size:13px">${xr.ok
-          ? `年化報酬（XIRR）<b class="${xr.rate >= 0 ? 'pos' : 'neg'}">${xr.rate >= 0 ? '+' : ''}${xr.rate.toFixed(1)}%</b>${xr.years < 1 ? ' <span class="muted small">未滿 1 年僅供參考</span>' : ''}${xr.estimated ? ' <span class="muted small">含匯率估算</span>' : ''}`
+          ? `年化報酬（XIRR）<b class="${(xr.rate ?? 0) >= 0 ? 'pos' : 'neg'}">${(xr.rate ?? 0) >= 0 ? '+' : ''}${(xr.rate ?? 0).toFixed(1)}%</b>${(xr.years ?? 0) < 1 ? ' <span class="muted small">未滿 1 年僅供參考</span>' : ''}${xr.estimated ? ' <span class="muted small">含匯率估算</span>' : ''}`
           : `<span class="muted small">XIRR：${xr.why}</span>`}</span></h3>
       <div class="chart-box" style="height:240px"><canvas id="investChart"></canvas></div>
       <p class="muted small" style="margin-top:8px">兩線的差距＝未實現損益。市值線的波動是市場的事；投入線持續墊高，才是你能控制的事。年化報酬（XIRR）按你每筆投入的時間點計算，點標題看說明。</p>
@@ -306,14 +307,14 @@ export async function renderPortfolio() {
   `;
 
   // ---- handlers ----
-  document.getElementById('addHolding').onclick = () => openHoldingForm(null);
-  document.getElementById('refreshQuotes').onclick = (e) => refreshQuotes(e.target, holdings, watchlist, settings);
-  document.getElementById('printPortfolio').onclick = () => printPortfolioReport({
+  byId('addHolding').onclick = () => openHoldingForm(null);
+  byId('refreshQuotes').onclick = (e) => refreshQuotes(e.target, holdings, watchlist, settings);
+  byId('printPortfolio').onclick = () => printPortfolioReport({
     rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
     layerV, regionMap, eqV, bondV, goldAll,
     loanTwd, netEquity, leverage
   });
-  document.getElementById('ibSync').onclick = async (e) => {
+  byId('ibSync').onclick = async (/** @type {any} */ e) => {
     const btn = e.currentTarget;
     btn.disabled = true; btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
     try {
@@ -349,33 +350,33 @@ export async function renderPortfolio() {
   //   等匯率儀表決定放回頁面時，這段與 openFxBands() 一起恢復作用。
   //   註：fxHigh/fxLow 的「調整入口」現已改由設定頁「提醒門檻」管理（換匯提醒即時生效），
   //   停放的 openFxBands 若日後恢復，屬儀表上的便捷入口、非唯一調整途徑。
-  const fxEdit = document.getElementById('fxBandEdit');
+  const fxEdit = byId('fxBandEdit');
   if (fxEdit) fxEdit.onclick = () => openFxBands(settings);
   view().querySelectorAll('.info-link[data-info]').forEach(b => b.onclick = () => {
     const info = INCOME_INFO[b.dataset.info];
     if (info) openInfo(info[0], info[1]);
   });
-  const tradesFullBtn = document.getElementById('tradesFull');
+  const tradesFullBtn = byId('tradesFull');
   if (tradesFullBtn) tradesFullBtn.onclick = () => openInfo('完整交易明細', tradesModalHtml(ibTrades), { size: 'xl' });
-  const totalValueInfo = document.getElementById('totalValueInfo');
+  const totalValueInfo = byId('totalValueInfo');
   if (totalValueInfo) totalValueInfo.onclick = () => openInfo('總市值', `
     <p><b>總市值 ＝ 股票市值 + 債券市值 + 黃金市值</b></p>
     <p style="font-family:var(--serif);font-size:20px;margin-top:10px">${MONEY(total)} ＝ 股票 ${MONEY(eqV)} + 債券 ${MONEY(bondV)} + 黃金 ${MONEY(goldV)}</p>
     <p class="muted small" style="margin-top:10px">這裡只計算投資持股市值，不包含現金，也不扣除融資。</p>
   `, { size: 'md' });
-  const totalCostInfo = document.getElementById('totalCostInfo');
+  const totalCostInfo = byId('totalCostInfo');
   if (totalCostInfo) totalCostInfo.onclick = () => openInfo('成本', costDetailHtml(rows, totalCost), { size: 'sm' });
-  const assetStockInfo = document.getElementById('assetStockInfo');
+  const assetStockInfo = byId('assetStockInfo');
   if (assetStockInfo) assetStockInfo.onclick = () => openInfo('股票', assetHoldingDetailHtml('股票', stockRows, eqV, allBase), { size: 'sm' });
-  const assetBondInfo = document.getElementById('assetBondInfo');
+  const assetBondInfo = byId('assetBondInfo');
   if (assetBondInfo) assetBondInfo.onclick = () => openInfo('債券', assetHoldingDetailHtml('債券', bondRows, bondV, allBase), { size: 'sm' });
-  const assetCashInfo = document.getElementById('assetCashInfo');
+  const assetCashInfo = byId('assetCashInfo');
   if (assetCashInfo) assetCashInfo.onclick = () => openInfo('現金', assetAccountDetailHtml('現金', cashAccounts, cashV), { size: 'sm' });
-  const assetGoldInfo = document.getElementById('assetGoldInfo');
+  const assetGoldInfo = byId('assetGoldInfo');
   if (assetGoldInfo) assetGoldInfo.onclick = () => openInfo('黃金', assetGoldDetailHtml(goldRows, goldAccounts, goldAll, allBase), { size: 'sm' });
-  const xInfo = document.getElementById('xirrInfo');
+  const xInfo = byId('xirrInfo');
   if (xInfo) xInfo.onclick = () => openInfo('年化報酬（XIRR）', XIRR_INFO_HTML, { size: 'md' });
-  const dInfo = document.getElementById('disciplineInfo');
+  const dInfo = byId('disciplineInfo');
   if (dInfo) dInfo.onclick = () => openInfo('紀律檢查', `
     <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>
     <p><b>軟上限</b>：超標＝<b>凍結加碼</b>（禁止再買進），但不強制賣出，讓部位隨時間自然稀釋。在「編輯持股」把凍結中的標的加碼時，會跳出確認提醒。</p>
@@ -387,7 +388,7 @@ export async function renderPortfolio() {
     const h = holdings.find(x => x.id === b.dataset.delH);
     confirmDelete(h.symbol, () => api('/holdings/' + h.id, { method: 'DELETE' }));
   });
-  const addW = document.getElementById('addWatch');
+  const addW = byId('addWatch');
   if (addW) addW.onclick = () => openWatchForm(null);
   view().querySelectorAll('[data-edit-w]').forEach(b => b.onclick = () => openWatchForm(watchlist.find(w => w.id === b.dataset.editW)));
   view().querySelectorAll('[data-del-w]').forEach(b => b.onclick = () => {
@@ -400,9 +401,9 @@ export async function renderPortfolio() {
   drawInvestChart(psnaps, totalCost, total);
   loadCape(settings, qqqmShare, qqqmMax);
   loadSignals(settings);
-  const sInfo = document.getElementById('signalsInfo');
+  const sInfo = byId('signalsInfo');
   if (sInfo) sInfo.onclick = () => openInfo('估值訊號儀表', SIGNALS_INFO_HTML, { size: 'md' });
-  const sEdit = document.getElementById('signalsEdit');
+  const sEdit = byId('signalsEdit');
   if (sEdit) sEdit.onclick = () => openSignalsForm(settings);
 }
 
@@ -422,9 +423,9 @@ function marginCallDistance(ibValTwd, loanTwd, maintPct) {
 }
 function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
   if (!(loanTwd > 0)) return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：目前無融資借款，不存在強制平倉風險。</div>`;
-  const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint);
+  const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint) ?? 0;   // null＝有借款但持倉 0（已貼強平線）→ 顯示 0%
   const stress = Math.min(CAPS.maint + 10, 50);
-  const dStress = marginCallDistance(ibValTwd, loanTwd, stress);
+  const dStress = marginCallDistance(ibValTwd, loanTwd, stress) ?? 0;
   const tone = d < 35 ? 'var(--neg)' : d < 50 ? 'var(--warn)' : 'var(--pos)';
   const judge = d < 35 ? '危險：一次大型回檔就會觸及' : d < 50 ? '偏緊：撐不過 2008 級回檔（−57%）' : '尚有餘裕（2008 級回檔 −57%）';
   return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：IB 持倉市值再跌
@@ -716,6 +717,7 @@ function tradesModalHtml(trades) {
 
 // 資產明細彈窗共用產生器（成本/股/債/現/金）：items=[{label,value,pct?}]，有 pct 走三欄版
 const pctOf = (v, base) => base ? Math.round(v / base * 100) : 0;
+/** @param {{head:string[], items:any[], total?:any, totalPct?:any, emptyText?:string}} cfg */
 function detailTableHtml({ head, items, total, totalPct, emptyText }) {
   const three = head.length >= 3;
   const body = items.length ? items.map(it => `<tr>
@@ -888,6 +890,7 @@ function holdingsDonut(rows, total) {
 
   // 外圈標籤：左右分側；「大部位優先」佔位，放不下的省略（塞不下就不顯示）
   const GAPY = 18;
+  /** @type {{L:any[], R:any[]}} */
   const sides = { L: [], R: [] };
   slices.forEach(s => sides[Math.cos(s.mid) >= 0 ? 'R' : 'L'].push({ ...s, ty: cy + Math.sin(s.mid) * (r + 34) }));
   const labels = [];
@@ -1044,7 +1047,7 @@ function signalRow(label, valTxt, tier, thresholds) {
 }
 
 async function loadSignals(settings) {
-  const body = document.getElementById('signalsBody');
+  const body = byId('signalsBody');
   if (!body) return;
   const sig = settings.signals || {};
   let cape = null, ry = null;
@@ -1055,7 +1058,7 @@ async function loadSignals(settings) {
   const ecy = (capeV && ryV != null) ? (100 / capeV - ryV) : null;
   const usTier = ecy != null ? regionTier('us', ecy) : null;
   const usValTxt = ecy != null
-    ? `ECY <b>${ecy.toFixed(1)}%</b>（CAPE ${capeV.toFixed(1)}・實質利率 ${ryV.toFixed(2)}%）`
+    ? `ECY <b>${ecy.toFixed(1)}%</b>（CAPE ${(capeV ?? 0).toFixed(1)}・實質利率 ${(ryV ?? 0).toFixed(2)}%）`
     : 'ECY <span class="muted">無法計算（缺 CAPE 或利率）</span>';
 
   const twTier = taiwanTier(sig.taiwanPE, sig.taiwanYield);
@@ -1112,12 +1115,12 @@ function openSignalsForm(settings) {
 async function loadCape(settings, qqqmShare, qqqmMax) {
   let cape = null;
   try { cape = await api('/cape'); } catch {}
-  const body = document.getElementById('capeBody');
+  const body = byId('capeBody');
   if (!body) return;
   const v = cape && cape.value ? Number(cape.value) : null;
   if (!v) {
     body.innerHTML = `<p class="muted" style="margin-top:8px">無法自動取得 CAPE。<button class="btn-link btn-sm" id="capeManualBtn">手動設定</button></p>`;
-    const b = document.getElementById('capeManualBtn');
+    const b = byId('capeManualBtn');
     if (b) b.onclick = () => openCapeManual(settings);
     return;
   }
@@ -1143,7 +1146,7 @@ async function loadCape(settings, qqqmShare, qqqmMax) {
     <p class="muted small" style="margin-top:6px">QQQM 佔美股核心 <b style="color:${qqqmOk ? 'var(--pos)' : 'var(--neg)'}">${fmtPct(qqqmShare)}</b>（上限 ${qqqmMax}%）${qqqmOk ? '——在限內。' : '——已超限，漲勢中依紀律轉回 CSPX。'}
     提醒：CAPE 是 S&P 500 的估值指標，當「紀律閘門」用，不當精準擇時訊號；它可以在高檔停留很多年。</p>
   `;
-  const b = document.getElementById('capeManualBtn');
+  const b = byId('capeManualBtn');
   if (b) b.onclick = () => openCapeManual(settings);
 }
 
@@ -1206,13 +1209,13 @@ function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) 
     if (source === 'estimated') estimated = true;
     const ds = String(tr.date || '');
     const d = new Date(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);
-    if (isNaN(d) || d <= t0) continue;
+    if (isNaN(d.getTime()) || d <= t0) continue;
     flows.push({ t: d > today ? today : d, v: base * usd });
   }
   const lastCost = Number(psnaps[psnaps.length - 1].cost || 0);
   flows.push({ t: today, v: curValue - (curCost - lastCost) });   // 期末市值＋最後一筆快照之後的投入增量
-  flows.sort((a, b) => a.t - b.t);
-  const spanDays = (today - t0) / 86400000;
+  flows.sort((a, b) => a.t.getTime() - b.t.getTime());
+  const spanDays = (today.getTime() - t0.getTime()) / 86400000;
   if (spanDays < 60) return { ok: false, why: '快照未滿兩個月' };
   const r = xirrRate(flows);
   if (r == null) return { ok: false, why: '無法計算' };
@@ -1223,7 +1226,7 @@ function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) 
 
 // ---- ⑥ 投入 vs 市值 ----
 function drawInvestChart(psnaps, curCost, curValue) {
-  const ctx = document.getElementById('investChart');
+  const ctx = byId('investChart');
   if (!ctx) return;
   const conv = (twd) => viewCur === 'USD' ? Math.round(twd / usdRate) : Math.round(twd);
   const labels = [...psnaps.map(s => s.month), '本月（現在）'];
@@ -1273,7 +1276,7 @@ function researchCard(holding, research) {
 }
 
 async function addCheckpoint(symbol, research) {
-  const input = document.getElementById('cp_' + symbol);
+  const input = byId('cp_' + symbol);
   const note = (input?.value || '').trim();
   if (!note) return toast('先輸入筆記內容', true);
   const r = research.find(x => (x.symbol || '').toUpperCase() === symbol.toUpperCase());
