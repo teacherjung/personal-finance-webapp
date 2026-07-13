@@ -1,4 +1,5 @@
-import { api, view, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, router, modalSizeClass } from '../app.js';
+// @ts-check
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, router, modalSizeClass } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { EXPENSE_TREE, EXPENSE_PARENTS, INCOME_CATEGORIES, subsOf } from './categories.js';
@@ -71,13 +72,13 @@ export async function renderTransactions() {
     </div>
   `;
 
-  document.getElementById('addTx').onclick = () => openTxForm();
-  document.getElementById('uploadStmt').onclick = () => openStatementUpload();
-  const batchBtn = document.getElementById('stmtBatches');
+  byId('addTx').onclick = () => openTxForm();
+  byId('uploadStmt').onclick = () => openStatementUpload();
+  const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
-  document.getElementById('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
+  byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
   // 備註欄排序：日期 → 店名 A→Z → 店名 Z→A → 日期（循環）
-  document.getElementById('sortNote').onclick = () => {
+  byId('sortNote').onclick = () => {
     listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
     renderTransactions();
   };
@@ -112,7 +113,7 @@ function openTxForm(tx) {
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
     values: tx || {},
-    onMount: (root) => {
+    onMount: (/** @type {any} */ root) => {
       const catSel = root.querySelector('#f_category');
       const subSel = root.querySelector('#f_subcategory');
       const fill = (parent, cur) => { subSel.innerHTML = subOptions(parent, cur); subSel.disabled = INCOME_CATEGORIES.includes(parent); };
@@ -148,7 +149,7 @@ async function openStatementUpload() {
     fields: [
       { key: 'file', label: '帳單檔案（PDF 或 XLSX；系統自動辨識銀行與卡片，認不出才會請你選）', type: 'file', full: true }
     ],
-    onMount: (root) => {
+    onMount: (/** @type {any} */ root) => {
       const inp = root.querySelector('#f_file');
       if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
@@ -189,7 +190,7 @@ function openCardChoice(r, b64, cards) {
 // 預覽確認：頂部可改「記到哪張卡」（改了就用該卡重新解析＝重算重複標記）；只選「分類」（子類自動判斷用）；
 // 可勾選；重複與繳款/退款預設不匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
 function openStatementPreview(cardId, r, b64, cards) {
-  const root = document.getElementById('modal-root');
+  const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
   const detected = `${curR.bank ? esc(curR.bank) : '未知'}${curR.lastFour ? ` · 末四碼 ${esc(curR.lastFour)}` : ''}`;
   const close = () => { root.innerHTML = ''; };
@@ -291,7 +292,7 @@ function openStatementPreview(cardId, r, b64, cards) {
 
 // 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「帳單批次」改）。
 function openImportDone(out) {
-  const root = document.getElementById('modal-root');
+  const root = byId('modal-root');
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('sm')}">
     <div class="modal-head"><h2>匯入完成</h2><button class="x-close">×</button></div>
     <div class="modal-body">
@@ -313,7 +314,7 @@ function openImportDone(out) {
 // 帳單批次管理：列出每次匯入（卡片／日期範圍／筆數／金額），可整批改卡片。
 async function openBatchManager() {
   const [batches, cards] = await Promise.all([api('/statement/batches'), api('/cards')]);
-  const root = document.getElementById('modal-root');
+  const root = byId('modal-root');
   const render = (list) => {
     const rows = list.map(b => `<tr>
       <td>${esc(b.cardName || '—')}</td>
@@ -340,7 +341,9 @@ async function openBatchManager() {
     root.querySelector('[data-close]').onclick = () => { root.innerHTML = ''; };
     root.querySelectorAll('[data-reassign]').forEach(btn => btn.onclick = () => {
       const b = list.find(x => x.batchId === btn.dataset.reassign);
-      openReassignPicker({ batchId: b.batchId, cardName: b.cardName }, openBatchManager, cards);
+      // 補上 fromCardId（由卡名反查）：候選清單才會排除原卡，不會「改到同一張」做白工
+      const fromCardId = cards.find(c => c.name === b.cardName)?.id;
+      openReassignPicker({ batchId: b.batchId, fromCardId, cardName: b.cardName }, openBatchManager, cards);
     });
     root.querySelectorAll('[data-delbatch]').forEach(btn => btn.onclick = () => {
       const b = list.find(x => x.batchId === btn.dataset.delbatch);
@@ -355,6 +358,7 @@ async function openBatchManager() {
 }
 
 // 改卡片選擇器：挑目標卡片 → 呼叫 reassign。cardsCache 可省一次請求。
+/** @param {{batchId:string, fromCardId?:string, cardName?:string}} src 來源批次（fromCardId 有給才能從候選排除原卡） @param {(() => void)=} onDone @param {any[]=} cardsCache */
 async function openReassignPicker({ batchId, fromCardId, cardName }, onDone, cardsCache) {
   const cards = (cardsCache || await api('/cards')).filter(c => (c.type || 'credit') === 'credit' && c.id !== fromCardId);
   if (!cards.length) return toast('沒有其他信用卡可改（請先到「卡片追蹤」新增）', true);
