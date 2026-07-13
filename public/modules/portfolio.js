@@ -185,7 +185,10 @@ export async function renderPortfolio() {
   }
   const loanTwd = -negCashTwd;
   const netEquity = ibValTwd + negCashTwd;
-  const leverage = loanTwd > 0 && netEquity > 0 ? ibValTwd / netEquity : 1;
+  // 與 lib/derive.js computeLeverage 同步：有借款且持倉>0 時，淨值≤0＝已跌破本金（比斷頭更慘），
+  // 應為 Infinity（極度危險），不可 fallback 成 1（會把最危險狀態顯示成「無槓桿」，Codex 實測）。
+  const hasLoan = loanTwd > 0 && ibValTwd > 0;
+  const leverage = hasLoan ? (netEquity > 0 ? ibValTwd / netEquity : Infinity) : 1;
   const goldAccV = (accounts || []).filter(a => Number(a.balance) > 0 && a.class === '黃金').reduce((s, a) => s + accTwd(a), 0);
   const goldAll = goldV + goldAccV;
   // 現金：正餘額的現金帳戶（type=cash 或 class=現金，排除黃金；融資負餘額不計）
@@ -264,7 +267,7 @@ export async function renderPortfolio() {
       <div class="card"><h3><button type="button" class="info-link" id="assetStockInfo">股票</button> / <button type="button" class="info-link" id="assetBondInfo">債券</button> / <button type="button" class="info-link" id="assetCashInfo">現金</button> / <button type="button" class="info-link" id="assetGoldInfo">黃金</button></h3><div class="stat sm">${shr(eqV)} / ${shr(bondV)} / ${shr(cashV)} / ${shr(goldAll)}</div>
         <div class="stat-sub">含黃金存摺與現金</div>
         <div class="split-bar"><div style="width:${allBase ? eqV / allBase * 100 : 0}%;background:${CHART.blue}"></div><div style="width:${allBase ? bondV / allBase * 100 : 0}%;background:${CHART.green}"></div><div style="width:${allBase ? cashV / allBase * 100 : 0}%;background:${CHART.gray}"></div><div style="flex:1;background:${CHART.brown}"></div></div></div>
-      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage > CAPS.lev ? 'neg' : ''}">${leverage.toFixed(2)} 倍</div>
+      <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage > CAPS.lev ? 'neg' : ''}">${isFinite(leverage) ? leverage.toFixed(2) + ' 倍' : '⚠️ 淨值已為負'}</div>
         <div class="stat-sub">IB 淨值 ${MONEY(netEquity)}｜<span class="neg" style="font-weight:700">IB 融資 ${MONEY(loanTwd)}</span></div>
         <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.lev + 0.15 ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
     </div>
@@ -437,11 +440,12 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibVal
   const pn = (v) => v / netWorth * 100;
   const row = (label, value, cap, unit = '%', overLabel = '🔒 凍結') => {
     const over = value > cap;
-    const valTxt = unit === 'x' ? value.toFixed(2) + 'x' : fmtPct(value);
+    const finite = isFinite(value);
+    const valTxt = unit === 'x' ? (finite ? value.toFixed(2) + 'x' : '∞') : fmtPct(value);
     const capTxt = unit === 'x' ? cap + 'x' : cap + '%';
     return `<div class="rrow cap-row">
       <span class="nowrap">${label}</span>
-      ${capBar(value, cap)}
+      ${capBar(finite ? value : cap * 2, cap)}
       <span class="rval">${valTxt} / ${capTxt}　${over ? `<b class="neg">${overLabel}</b>` : '<span class="pos">✓</span>'}</span>
     </div>`;
   };
@@ -1526,7 +1530,7 @@ async function printPortfolioReport(d) {
       <div class="summary">
         <div class="metric"><span>總市值</span><b>${big(total)}</b><small>投入成本 ${big(totalCost)}</small></div>
         <div class="metric"><span>損益</span><b>${totalPnl >= 0 ? '+' : ''}${big(totalPnl)}</b><small>累積報酬率 ${totalCost ? pctf(totalPnl / totalCost * 100) : '—'}</small></div>
-        <div class="metric"><span>IB 淨值</span><b>${big(netEquity)}</b><small>IB 融資 ${big(loanTwd)}・IB 融資槓桿 ${leverage.toFixed(2)}x</small></div>
+        <div class="metric"><span>IB 淨值</span><b>${big(netEquity)}</b><small>IB 融資 ${big(loanTwd)}・IB 融資槓桿 ${isFinite(leverage) ? leverage.toFixed(2) + 'x' : '∞'}</small></div>
         <div class="metric"><span>股 / 債 / 金</span><b>${[eqV, bondV, goldAll].map(v => base3 ? Math.round(v / base3 * 100) : 0).join(' / ')}</b><small>含黃金存摺，不含現金</small></div>
       </div>
       <section><h2>分層配置 vs 目標</h2>

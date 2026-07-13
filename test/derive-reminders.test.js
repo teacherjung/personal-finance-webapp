@@ -45,6 +45,14 @@ test('computeLeverage｜斷頭距離：借款越多、距離越近', () => {
   assert.ok(light.mcDist > 0 && light.mcDist <= 100);
 });
 
+test('computeLeverage｜淨值≤0（跌破本金）→ leverage=Infinity、mcDist=0（前端須同步顯示危險）', () => {
+  const db = { settings: { usdTwd: 1, ib: { lastEquity: { stock: 100, cash: -150 } }, ibMaintenancePct: 25 }, holdings: [], accounts: [] };
+  const lev = computeLeverage(db, { positions: [] });
+  assert.equal(lev.leverage, Infinity, '有借款且淨值≤0 不可算成有限值（更不可是 1）');
+  assert.equal(lev.hasLoan, true);
+  assert.equal(lev.mcDist, 0, '已在強平線上');
+});
+
 test('computeLeverage｜無融資時 leverage=1、hasLoan=false', () => {
   const lev = computeLeverage({ settings: { usdTwd: 1, ib: { lastEquity: { stock: 100, cash: 50 } } }, holdings: [], accounts: [] }, { positions: [] });
   assert.equal(lev.leverage, 1);
