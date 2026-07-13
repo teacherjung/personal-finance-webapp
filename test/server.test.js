@@ -136,6 +136,28 @@ test('匯入防呆（Codex）：集合型別錯誤 → 400，且不寫壞資料'
   assert.equal(typeof sum.netWorth, 'number');
 });
 
+test('設定型別驗證（Codex#2-1）：usdTwd 錯型別被剝，summary 不變 NaN/null', async () => {
+  const before = await GET('/settings');
+  await PUT('/settings', { usdTwd: 'oops' });   // 字串 → Number()變 NaN 會污染核心計算
+  const s = await GET('/settings');
+  assert.equal(s.usdTwd, before.usdTwd, '錯型別的 usdTwd 應被剝掉、保留原值');
+  const sum = await GET('/summary');
+  assert.equal(typeof sum.netWorth, 'number');
+  assert.ok(!Number.isNaN(sum.netWorth), 'netWorth 不可為 NaN');
+  assert.notEqual(sum.netWorth, null, 'netWorth 不可為 null');
+});
+
+test('匯入型別驗證（Codex#2-2）：備份 settings.usdTwd 錯型別 → 剝掉補預設，summary 正常', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, settings: { ...backup.settings, usdTwd: 'oops' } };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true, '合法結構的備份仍可匯入（壞值被剝、非整檔退回）');
+  const sum = await GET('/summary');
+  assert.equal(typeof sum.netWorth, 'number');
+  assert.ok(!Number.isNaN(sum.netWorth) && sum.netWorth !== null, 'usdTwd 壞值不可污染 summary');
+  await POST('/import', backup);   // 還原
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
