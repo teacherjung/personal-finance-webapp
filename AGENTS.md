@@ -64,7 +64,7 @@
 | YYYY-MM-DD 日期解析 | 前端 `app.js parseLocalDate` ↔ 後端 `derive.js parseLocalDate`（各一份）：一律用**本地時區**拆日期，`new Date('YYYY-MM-DD')` 會被當 UTC，在 UTC 以西時區差一天（月份/提醒天數/星期全錯）。`daysUntil`/`monthKey`/`formatDateWithWeekday` 都走它 |
 | `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI＋`lib/types.js` 的 `Settings` typedef＋**`lib/schema.js` 的 settings 白名單**（前端可寫的頂層欄位進 `SETTINGS_WRITABLE_FIELDS`、signals 進 `SIGNALS_WRITABLE_FIELDS`、ib 進 `IB_WRITABLE_FIELDS`；漏加會在 `/api/settings` 被剝掉、console 有警告。IB 同步擁有的 lastEquity/income/lastSync 刻意不在白名單、只由 `lib/services/ib-sync.js` 寫） |
-| 集合新增欄位（表單加新欄） | **`lib/schema.js` 的 `WRITABLE_FIELDS` 白名單**（B2 起後端只收白名單內欄位，漏加會被默默剝掉——伺服器 console 會警告）＋`lib/types.js` 對應 typedef |
+| 集合新增欄位（表單加新欄） | **`lib/schema.js` 的 `WRITABLE_FIELDS` 白名單**（B2 起後端只收白名單內欄位，漏加會被默默剝掉——伺服器 console 會警告）；**若是數值欄位，同時補進 `NUMERIC_FIELDS`**（否則型別驗證管不到、壞值仍可能 NaN 污染）＋`lib/types.js` 對應 typedef |
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
 | 支出分類（兩層：分類/子類） | **單一真相＝`public/modules/categories.js` 的 `EXPENSE_TREE`**（前端 import `./categories.js`、後端 `lib/statement.js`+`lib/services/learning.js` import `../public/modules/categories.js` 共用同一份）。`statement.js CATEGORY_RULES` 的 `[分類,子類]` 字串、`lib/routes/core.js CATEGORY_MIGRATION` 的目標分類，都必須對得上 EXPENSE_TREE。交易存 `category`(分類)+`subcategory`(子類)；收入類走 `INCOME_CATEGORIES`、無子類。未知支出預設 `DEFAULT_EXPENSE`（其他/未分類——與「生活/其他生活雜支」區隔：後者是已知生活雜項，前者是還沒判斷出來的） |
