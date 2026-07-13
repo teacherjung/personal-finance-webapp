@@ -9,7 +9,8 @@ import { parseStatement, categorize } from './lib/statement.js';
 import { buildSummary, computeIb, monthKey, computeAssets } from './lib/derive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const app = express();
+// export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
+export const app = express();
 app.use(express.json({ limit: '15mb' }));   // 上傳帳單 PDF 以 base64 走 JSON，需要較大上限
 app.use(express.static(join(__dirname, 'public')));
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
@@ -493,8 +494,12 @@ app.post('/api/import', (req, res) => {
 });
 
 const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串；app.listen 要 number）
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`\n  個人理財網頁已啟動 ✅`);
-  console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
-  console.log(`  資料只存在本機 data/store.json，按 Ctrl+C 可關閉。\n`);
-});
+// 只有「直接執行」（npm start / node server.js）才啟動監聽；被測試 import 時不開埠（B0）
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMain) {
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`\n  個人理財網頁已啟動 ✅`);
+    console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
+    console.log(`  資料只存在本機 data/store.json，按 Ctrl+C 可關閉。\n`);
+  });
+}
