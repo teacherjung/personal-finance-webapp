@@ -14,7 +14,7 @@
 
 啟動：`npm start` → http://localhost:4321 。注意：使用者常自己開著一個伺服器佔 4321，`.claude/launch.json` 已設 `autoPort`。
 
-**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入 `lib/derive.js`＋`lib/statement.js`**（改它們請保持 `npm run typecheck` 乾淨；帳單解析型別 `RawTx`/`ParsedTx`/`StatementResult` 在 `lib/types.js`）；pdfjs/xlsx 的型別會自動解析（`getTextContent` 的 items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。要再擴到其他核心檔＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
+**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，dev-only、不影響 runtime/不需 build；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入 `lib/derive.js`＋`lib/statement.js`＋`server.js`**（改它們請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`server.js` 的 `db`（load() 回傳）暫留 any**——完整 db 逐欄型別化（Card/Holding/Account/Settings 全欄＋IB 同步物件）是**未動工的獨立一步**，做的話要先把 `lib/types.js` 的 typedef 補齊、再給 `store.js load()` 標 `@returns {Db}`。要再擴到其他核心檔＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
 
 ## 鐵則（違反會壞事）
 

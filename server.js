@@ -1,3 +1,4 @@
+// @ts-check
 // 本機伺服器：只在你的 Mac 上的 127.0.0.1 監聽，不對外開放。
 import express from 'express';
 import { dirname, join } from 'node:path';
@@ -489,7 +490,7 @@ app.post('/api/import', (req, res) => {
   res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 4321;
+const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串；app.listen 要 number）
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  個人理財網頁已啟動 ✅`);
   console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
