@@ -16,6 +16,14 @@
 - 審查對象＝目前的 main 分支（審查前先 `git checkout main && git pull` 確認最新）。
 - 絕對不要讀取 `data/store.json`（含真實個資與 token）；要看資料形狀請看 `data/seed.json`。
 
+開始審查前，先跑三道自動關卡並確認全過（若有不過，直接把輸出列為發現）：
+
+```
+npm run typecheck && npm run lint && npm test
+```
+
+（若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
+
 請針對以下面向檢視程式，找出值得處理的問題：
 
 1. 正確性 bug（邏輯錯誤、邊界條件、多幣別/匯率換算、日期時區）
@@ -30,7 +38,9 @@
   表在前後端各一份是刻意的同步點），請照樣列出，但標註「可能為刻意設計，
   待 Claude 判斷」，不要直接斷定是錯的。
 - 之前輪次已判定為「刻意設計」的項目（記錄在 AGENTS.md 的同步點清單與
-  例外說明中）**不要重複提出**。
+  例外說明中）**不要重複提出**。特別提醒：AGENTS.md 鐵則 6 的前端型別放寬
+  （byId any／onMount any／Chart any／fxGaugeSection 休眠停放）與
+  devDependencies（typescript/eslint/@types）都是刻意引入，非問題。
 
 輸出格式（讓使用者可以整段複製轉交）：把發現條列，每條用這個格式——
 
