@@ -14,7 +14,7 @@
 
 啟動：`npm start` → http://localhost:4321 。注意：使用者常自己開著一個伺服器佔 4321，`.claude/launch.json` 已設 `autoPort`。
 
-**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，dev-only、不影響 runtime/不需 build；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入 `lib/derive.js`＋`lib/statement.js`＋`server.js`**（改它們請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`server.js` 的 `db`（load() 回傳）暫留 any**——完整 db 逐欄型別化（Card/Holding/Account/Settings 全欄＋IB 同步物件）是**未動工的獨立一步**，做的話要先把 `lib/types.js` 的 typedef 補齊、再給 `store.js load()` 標 `@returns {Db}`。要再擴到其他核心檔＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
+**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，dev-only、不影響 runtime/不需 build；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入 `lib/derive.js`＋`lib/statement.js`＋`server.js`**（改它們請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`store.js load()` 已標 `@returns {Db}`，`db.x` 全程型別化**（`Db`/`Settings`/`Card`/`Account`/`Holding`/`IbSettings`… 都在 `lib/types.js`；`settings` 與 `settings.ib` 視為一律存在）。**改 store 結構（emptyDb 加欄位）＝同步更新 `lib/types.js` 的對應 typedef**（否則 server.js 讀該欄會報「不存在」）。要再擴到其他核心檔（如前端 `app.js`）＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
 
 ## 鐵則（違反會壞事）
 
@@ -52,7 +52,7 @@
 | 訂閱狀態（使用中/即將停用/已停用） | 前端 `subscriptions.js subStatus()` ↔ 後端 `lib/derive.js subActive()`（buildSummary 訂閱**項數**用它，只算未停用；否則總覽與訂閱頁項數打架）。判斷靠 `daysUntil(endsOn)`，兩份口徑要一致 |
 | YYYY-MM-DD 日期解析 | 前端 `app.js parseLocalDate` ↔ 後端 `derive.js parseLocalDate`（各一份）：一律用**本地時區**拆日期，`new Date('YYYY-MM-DD')` 會被當 UTC，在 UTC 以西時區差一天（月份/提醒天數/星期全錯）。`daysUntil`/`monthKey`/`formatDateWithWeekday` 都走它 |
 | `theme.js` 的 CHART.green/red | `styles.css` `.cb-ok/.cb-over` 寫死同色 hex（CSS 無法 import JS） |
-| settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI |
+| settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI＋`lib/types.js` 的 `Settings` typedef（否則 server.js 讀該欄 typecheck 報「不存在」） |
 | 估值訊號門檻（`portfolio.js` `regionTier`/`taiwanTier`/`US_RATIO`） | 投資原則規則書（memory）＋標題說明彈窗 `SIGNALS_INFO_HTML`，三處門檻要一致 |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動 |
 | 支出分類（兩層：分類/子類） | **單一真相＝`public/modules/categories.js` 的 `EXPENSE_TREE`**（前端 import `./categories.js`、後端 `lib/statement.js`+`server.js` import `../public/modules/categories.js` 共用同一份）。`statement.js CATEGORY_RULES` 的 `[分類,子類]` 字串、`server.js CATEGORY_MIGRATION` 的目標分類，都必須對得上 EXPENSE_TREE。交易存 `category`(分類)+`subcategory`(子類)；收入類走 `INCOME_CATEGORIES`、無子類。未知支出預設 `DEFAULT_EXPENSE`（其他/未分類——與「生活/其他生活雜支」區隔：後者是已知生活雜項，前者是還沒判斷出來的） |
