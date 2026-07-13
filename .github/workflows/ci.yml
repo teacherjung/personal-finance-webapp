@@ -1,0 +1,24 @@
+# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「校對（typecheck）＋考試（test）」。
+# PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（AGENTS.md 驗證要求的自動化版）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安裝相依（含 typescript/@types 開發工具）
+        run: npm ci
+      - name: 校對（型別檢查）
+        run: npm run typecheck
+      - name: 考試（自動測試）
+        run: npm test
