@@ -83,6 +83,25 @@ test('自動學習：帳單交易改分類 → /api/learned 記住 → 可刪除
   await DELETE_(`/transactions/${tx.id}`);
 });
 
+test('欄位白名單：白名單外的欄位（含企圖覆寫 id）寫入時被剝掉', async () => {
+  const created = await (await POST('/transactions', {
+    id: 'HACK-ID', date: '2026-07-07', type: 'expense', category: '飲食', amount: 10,
+    evil: '不在白名單', leverage: 999,
+  })).json();
+  assert.notEqual(created.id, 'HACK-ID', 'id 由伺服器配發，不可被覆寫');
+  assert.ok(!('evil' in created) && !('leverage' in created), '白名單外欄位不該被存起來');
+  assert.equal(created.amount, 10, '合法欄位照常寫入');
+  await DELETE_(`/transactions/${created.id}`);
+});
+
+test('欄位白名單：更新時白名單外欄位一樣被剝掉', async () => {
+  const tx = await (await POST('/transactions', { date: '2026-07-08', type: 'expense', category: '飲食', amount: 20 })).json();
+  const updated = await (await PUT(`/transactions/${tx.id}`, { amount: 30, hack: 'x' })).json();
+  assert.equal(updated.amount, 30);
+  assert.ok(!('hack' in updated), '白名單外欄位不該進資料');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
 test('輸入防呆：batch/delete 缺批次代號 → 400（在寫檔前擋下）', async () => {
   const res = await POST('/statement/batch/delete', {});
   assert.equal(res.status, 400);
