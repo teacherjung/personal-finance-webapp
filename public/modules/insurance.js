@@ -1,4 +1,5 @@
-import { api, view, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
+// @ts-check
+import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
 import { icon } from './icons.js';
 
 const CYCLES = [
@@ -35,7 +36,7 @@ export async function renderInsurance() {
     </div>
   `;
 
-  document.getElementById('addIns').onclick = () => openInsForm();
+  byId('addIns').onclick = () => openInsForm();
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openInsForm(list.find(p => p.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const p = list.find(x => x.id === b.dataset.del);

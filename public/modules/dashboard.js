@@ -1,4 +1,5 @@
-import { api, view, wan, pct, esc } from '../app.js';
+// @ts-check
+import { api, view, byId, wan, pct, esc } from '../app.js';
 import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -127,7 +128,7 @@ export async function renderDashboard() {
 }
 
 function drawTrend(snaps) {
-  const ctx = document.getElementById('trendChart');
+  const ctx = byId('trendChart');
   if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，按左下角「記錄本月快照」開始累積。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',

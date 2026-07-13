@@ -11,5 +11,5 @@
     "strictNullChecks": true,
     "skipLibCheck": true
   },
-  "include": ["lib/**/*.js", "public/**/*.js", "server.js"]
+  "include": ["lib/**/*.js", "public/**/*.js", "public/**/*.d.ts", "server.js"]
 }

@@ -1,4 +1,5 @@
-import { api, esc, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
+// @ts-check
+import { api, byId, esc, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 const MONTH_LABELS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -75,7 +76,7 @@ function rowHtml(year, m, lbl, rec) {
 }
 
 function drawChart(monthsData, curMk) {
-  const ctx = document.getElementById('histChart');
+  const ctx = byId('histChart');
   if (!ctx) return;
   const data = monthsData.map(h => h ? Number(h.amount || 0) : 0);
   const colors = monthsData.map((h, i) => {

@@ -1,4 +1,5 @@
-import { api, view, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
+// @ts-check
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
 import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 const ACCOUNT_TYPES = [
@@ -57,8 +58,8 @@ export async function renderAssets() {
   `;
 
   drawPie(alloc.byClass);
-  document.getElementById('addAcc').onclick = () => openAccForm();
-  document.getElementById('editTargets').onclick = () => openTargets(db.assetTargets || []);
+  byId('addAcc').onclick = () => openAccForm();
+  byId('editTargets').onclick = () => openTargets(db.assetTargets || []);
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAccForm(accounts.find(x => x.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const x = accounts.find(y => y.id === b.dataset.del);
@@ -82,7 +83,7 @@ function accRow(x) {
 function typeLabel(t) { return (ACCOUNT_TYPES.find(a => a.value === t) || {}).label || t; }
 
 function drawPie(byClass) {
-  const ctx = document.getElementById('pie');
+  const ctx = byId('pie');
   const labels = Object.keys(byClass);
   if (!labels.length) { ctx.parentElement.innerHTML = '<p class="empty">尚無資產資料。</p>'; return; }
   chart = new Chart(ctx, {
@@ -114,7 +115,7 @@ function openAccForm(acc) {
 }
 
 function openTargets(targets) {
-  const root = document.getElementById('modal-root');
+  const root = byId('modal-root');
   const rows = () => targets.map((t, i) => `<div class="form-grid" style="margin-bottom:8px" data-i="${i}">
     <input data-k="class" value="${esc(t.class || '')}" placeholder="類別 (例：股票)" />
     <div style="display:flex;gap:8px"><input data-k="targetPct" type="number" value="${esc(t.targetPct ?? '')}" placeholder="目標 %" />

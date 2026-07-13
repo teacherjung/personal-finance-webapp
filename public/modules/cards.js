@@ -1,4 +1,5 @@
-import { api, view, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
+// @ts-check
+import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
 import { icon } from './icons.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
@@ -40,7 +41,7 @@ export async function renderCards() {
     </div>
   `;
 
-  document.getElementById('addCard').onclick = () => openCardForm();
+  byId('addCard').onclick = () => openCardForm();
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openCardForm(list.find(c => c.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const c = list.find(x => x.id === b.dataset.del);
