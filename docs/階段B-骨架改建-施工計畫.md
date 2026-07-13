@@ -28,7 +28,7 @@ lib/derive.js        → 計算大腦（維持現狀，已型別化＋考試覆�
 3. **加伺服器端測試**（用 B0-1 的隔離資料檔）：GET /api/summary、一個集合的新增→讀回→修改→刪除、
    settings 存取、snapshot。這是 B 階段大改建的**安全網**（現有 34 題不涵蓋 HTTP 端點）。
 
-### B1. 資料存取收斂到 `lib/repo.js`（單一櫃檯）
+### B1. 資料存取收斂到 `lib/repo.js`（單一櫃檯）✅ 已完成（2026-07-13）
 - 建 `repo.js`：`getCollection/addItem/updateItem/deleteItem/getSettings/updateSettings/getDb/saveDb`。
 - `server.js` 內所有 `load()/save()` 改走 repo。**行為完全不變**，B0-3 的測試護體。
 

@@ -3,7 +3,8 @@
 import express from 'express';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { load, save, uid, emptyDb } from './lib/store.js';
+// 資料存取一律走「單一櫃檯」lib/repo.js（B1）——server.js 不再直接碰 store.js
+import { getDb, saveDb, getCollection, addItem, updateItem, deleteItem, getSettings, updateSettings, uid, emptyDb } from './lib/repo.js';
 import { fetchFlex } from './lib/ib.js';
 import { parseStatement, categorize } from './lib/statement.js';
 import { buildSummary, computeIb, monthKey, computeAssets } from './lib/derive.js';
@@ -22,65 +23,45 @@ const COLLECTIONS = ['accounts', 'assetTargets', 'transactions', 'subscriptions'
 const READONLY_COLLECTIONS = ['portfolioSnapshots', 'ibTrades'];
 
 // ---- 整份資料 ----
-app.get('/api/db', (req, res) => res.json(load()));
-app.get('/api/summary', (req, res) => res.json(buildSummary(load())));
+app.get('/api/db', (req, res) => res.json(getDb()));
+app.get('/api/summary', (req, res) => res.json(buildSummary(getDb())));
 
-app.get('/api/settings', (req, res) => res.json(load().settings));
-app.put('/api/settings', (req, res) => {
-  const db = load();
-  db.settings = {
-    ...db.settings, ...req.body,
-    ib: { ...db.settings.ib, ...(req.body.ib || {}) },
-    fxTwd: { ...db.settings.fxTwd, ...(req.body.fxTwd || {}) }
-  };
-  save(db);
-  res.json(db.settings);
-});
+app.get('/api/settings', (req, res) => res.json(getSettings()));
+app.put('/api/settings', (req, res) => res.json(updateSettings(req.body)));
 
-// ---- 通用 CRUD ----
+// ---- 通用 CRUD（一律走 repo 櫃檯）----
+// 帳單交易改分類 → 自動學習（只學帳單來源，避免手動記帳污染）。
+// 以 beforeSave 掛進 updateItem：更新＋學習同一次寫檔完成。
+function learnFromStmtEdit(db, item) {
+  if (item.source !== 'stmt') return;
+  const key = item.storeKey || item.note;   // 穩定 key（改顯示名也不變）；舊資料無 storeKey 時退用 note
+  if (!key) return;
+  const e = (db.learnedCategories ||= {})[key] || {};
+  e.category = item.category || ''; e.subcategory = item.subcategory || '';
+  if (item.note && item.note !== key) e.name = item.note;   // 使用者改了顯示店名 → 記住
+  else delete e.name;                                        // 改回自動名則清除
+  db.learnedCategories[key] = e;
+}
 for (const col of COLLECTIONS) {
-  app.get(`/api/${col}`, (req, res) => res.json(load()[col] || []));
-  app.post(`/api/${col}`, (req, res) => {
-    const db = load();
-    const item = { id: uid(), ...req.body };
-    (db[col] ||= []).push(item);
-    save(db);
+  app.get(`/api/${col}`, (req, res) => res.json(getCollection(col)));
+  app.post(`/api/${col}`, (req, res) => res.json(addItem(col, req.body)));
+  app.put(`/api/${col}/:id`, (req, res) => {
+    const item = updateItem(col, req.params.id, req.body, col === 'transactions' ? learnFromStmtEdit : undefined);
+    if (!item) return res.status(404).json({ error: 'not found' });
     res.json(item);
   });
-  app.put(`/api/${col}/:id`, (req, res) => {
-    const db = load();
-    const list = db[col] || [];
-    const i = list.findIndex(x => x.id === req.params.id);
-    if (i < 0) return res.status(404).json({ error: 'not found' });
-    list[i] = { ...list[i], ...req.body, id: req.params.id };
-    // 帳單交易改分類 → 自動學習（只學帳單來源，避免手動記帳污染）
-    if (col === 'transactions' && list[i].source === 'stmt') {
-      const key = list[i].storeKey || list[i].note;   // 穩定 key（改顯示名也不變）；舊資料無 storeKey 時退用 note
-      if (key) {
-        const e = (db.learnedCategories ||= {})[key] || {};
-        e.category = list[i].category || ''; e.subcategory = list[i].subcategory || '';
-        if (list[i].note && list[i].note !== key) e.name = list[i].note;   // 使用者改了顯示店名 → 記住
-        else delete e.name;                                                 // 改回自動名則清除
-        db.learnedCategories[key] = e;
-      }
-    }
-    save(db);
-    res.json(list[i]);
-  });
   app.delete(`/api/${col}/:id`, (req, res) => {
-    const db = load();
-    db[col] = (db[col] || []).filter(x => x.id !== req.params.id);
-    save(db);
+    deleteItem(col, req.params.id);
     res.json({ ok: true });
   });
 }
 for (const col of READONLY_COLLECTIONS) {
-  app.get(`/api/${col}`, (req, res) => res.json(load()[col] || []));
+  app.get(`/api/${col}`, (req, res) => res.json(getCollection(col)));
 }
 
 // ---- 每月淨資產快照（隨時間變化的主軸）----
 app.post('/api/snapshot', (req, res) => {
-  const db = load();
+  const db = getDb();
   const a = computeAssets(db);
   const mk = monthKey();
   const d = new Date();   // 本地日期（toISOString 是 UTC，台灣早上 8 點前會差一天）
@@ -95,7 +76,7 @@ app.post('/api/snapshot', (req, res) => {
   db.portfolioSnapshots = (db.portfolioSnapshots || []).filter(s => s.month !== mk);
   db.portfolioSnapshots.push({ month: mk, cost: Math.round(ib.totalCost), value: Math.round(ib.totalValue) });
   db.portfolioSnapshots.sort((x, y) => x.month.localeCompare(y.month));
-  save(db);
+  saveDb(db);
   res.json(snap);
 });
 
@@ -141,7 +122,7 @@ app.get('/api/cape', async (req, res) => {
     if (m) { capeCache = { t: Date.now(), value: Number(m[1]), source: 'multpl.com' }; return res.json(capeCache); }
     throw new Error('parse failed');
   } catch {
-    const manual = load().settings?.capeManual;
+    const manual = getSettings()?.capeManual;
     res.json({ t: Date.now(), value: manual ? Number(manual) : null, source: 'manual' });
   }
 });
@@ -163,7 +144,7 @@ app.get('/api/realyield', async (req, res) => {
     }
     throw new Error('parse failed');
   } catch {
-    const manual = load().settings?.signals?.realYieldManual;
+    const manual = getSettings()?.signals?.realYieldManual;
     res.json({ t: Date.now(), value: (manual != null && manual !== '') ? Number(manual) : null, source: 'manual' });
   }
 });
@@ -179,7 +160,7 @@ const DEFAULT_LAYER = {
   SGLD: 'gold', GLD: 'gold', IAU: 'gold'
 };
 app.post('/api/ib/sync', async (req, res) => {
-  const db = load();
+  const db = getDb();
   const { flexToken, flexQueryId } = db.settings.ib || {};
   try {
     // 現金流缺 IBKR 匯率時，用設定匯率估算為 USD 基準（與交易摘要同口徑，AGENTS.md 優先序）
@@ -245,7 +226,7 @@ app.post('/api/ib/sync', async (req, res) => {
     } : null;
     db.ibTrades = Array.isArray(data.trades) ? data.trades : [];   // 交易摘要與 XIRR 已實現損益修正使用中
     db.settings.ib.lastSync = new Date().toISOString();
-    save(db);
+    saveDb(db);
     res.json({ ok: true, updated, created, missing, cash: data.cashByCurrency, equity: data.equity, account: data.account });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -280,7 +261,7 @@ function applyLearned(db, txs) {
 // 自動預覽：不必先選卡。系統試各卡密碼解密→判銀行＋末四碼→自動歸卡；認不出才回候選讓使用者選。
 app.post('/api/statement/preview', async (req, res) => {
   try {
-    const db = load();
+    const db = getDb();
     const b64 = String(req.body.data || '');
     if (!b64) return res.status(400).json({ error: '沒有收到檔案內容' });
     const bytes = new Uint8Array(Buffer.from(b64, 'base64'));
@@ -322,7 +303,7 @@ app.post('/api/statement/preview', async (req, res) => {
 // 指定卡片預覽（自動判斷失敗時使用者選卡、或預覽中改卡後重解析）：用該卡密碼解密、歸該卡。
 app.post('/api/cards/:id/statement/preview', async (req, res) => {
   try {
-    const db = load();
+    const db = getDb();
     const card = (db.cards || []).find(c => c.id === req.params.id);
     if (!card) return res.status(404).json({ error: '找不到卡片' });
     const b64 = String(req.body.data || '');
@@ -337,7 +318,7 @@ app.post('/api/cards/:id/statement/preview', async (req, res) => {
 });
 // 匯入：把使用者確認過的列寫進記帳（再做一次重複防呆）
 app.post('/api/cards/:id/statement/import', (req, res) => {
-  const db = load();
+  const db = getDb();
   const card = (db.cards || []).find(c => c.id === req.params.id);
   if (!card) return res.status(404).json({ error: '找不到卡片' });
   const rows = Array.isArray(req.body.transactions) ? req.body.transactions : [];
@@ -368,24 +349,24 @@ app.post('/api/cards/:id/statement/import', (req, res) => {
     existing.add(r.stmtRef);
     imported++;
   }
-  save(db);
+  saveDb(db);
   res.json({ ok: true, imported, skipped, batchId, cardId: card.id, cardName: card.name });
 });
 
 // ---- 帳單分類自動學習：檢視／刪除（設定頁用）----
-app.get('/api/learned', (req, res) => res.json(load().learnedCategories || {}));
+app.get('/api/learned', (req, res) => res.json(getDb().learnedCategories || {}));
 app.post('/api/learned/delete', (req, res) => {
-  const db = load();
+  const db = getDb();
   const key = String(req.body.key || '');
   if (db.learnedCategories && key in db.learnedCategories) delete db.learnedCategories[key];
-  save(db);
+  saveDb(db);
   res.json({ ok: true });
 });
 
 // ---- 匯入批次：事後「整批改卡片」（使用者選錯卡片時，一鍵把整批消費改到另一張卡）----
 // 批次清單：把 source:'stmt' 的交易依 importBatch 聚合，回卡片名/日期範圍/筆數/金額。
 app.get('/api/statement/batches', (req, res) => {
-  const db = load();
+  const db = getDb();
   const groups = {};
   for (const t of db.transactions || []) {
     if (t.source !== 'stmt' || !t.importBatch) continue;
@@ -402,7 +383,7 @@ app.get('/api/statement/batches', (req, res) => {
 });
 // 整批改卡片：改 account＋重寫 stmtRef 的卡片前綴（cardId|date|amount|desc）；目標卡已有同筆則丟棄重複。
 app.post('/api/statement/reassign', (req, res) => {
-  const db = load();
+  const db = getDb();
   const batchId = String(req.body.batchId || '');
   const card = (db.cards || []).find(c => c.id === String(req.body.toCardId || ''));
   if (!batchId) return res.status(400).json({ error: '缺少批次代號' });
@@ -422,22 +403,22 @@ app.post('/api/statement/reassign', (req, res) => {
     moved++;
   }
   db.transactions = kept;
-  save(db);
+  saveDb(db);
   res.json({ ok: true, moved, dropped, cardName: card.name });
 });
 // 刪除整批：把某次匯入的所有消費從記帳移除（用於解析/分類不對時，整批砍掉重匯）。
 app.post('/api/statement/batch/delete', (req, res) => {
-  const db = load();
+  const db = getDb();
   const batchId = String(req.body.batchId || '');
   if (!batchId) return res.status(400).json({ error: '缺少批次代號' });
   const before = (db.transactions || []).length;
   db.transactions = (db.transactions || []).filter(t => t.importBatch !== batchId);
   const removed = before - db.transactions.length;
-  save(db);
+  saveDb(db);
   res.json({ ok: true, removed });
 });
 
-// ---- 舊分類 → 新兩層分類 一次性轉換（冪等；save() 會自動備份 .bak）----
+// ---- 舊分類 → 新兩層分類 一次性轉換（冪等；存檔會自動備份 .bak）----
 // 只改「已不存在於新分類」的舊標籤；飲食/交通/健康/娛樂/保險 本身就是新分類，原樣保留。
 // 收入分類（薪資/投資/獎金/其他收入）不動。
 const CATEGORY_MIGRATION = {
@@ -453,7 +434,7 @@ const CATEGORY_MIGRATION = {
   '其他支出': ['其他', '未分類']
 };
 app.post('/api/migrate/categories', (req, res) => {
-  const db = load();
+  const db = getDb();
   let changed = 0;
   const byCat = {};
   for (const t of db.transactions || []) {
@@ -465,14 +446,14 @@ app.post('/api/migrate/categories', (req, res) => {
       changed++;
     }
   }
-  save(db);
+  saveDb(db);
   res.json({ ok: true, changed, byOldCategory: byCat });
 });
 
 // ---- 匯出 / 匯入備份 ----
 app.get('/api/export', (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="finance-backup-${monthKey()}.json"`);
-  res.json(load());
+  res.json(getDb());
 });
 app.post('/api/import', (req, res) => {
   const b = req.body;
@@ -489,7 +470,7 @@ app.post('/api/import', (req, res) => {
       ib: { ...base.settings.ib, ...(b.settings.ib || {}) }
     }
   };
-  save(merged);
+  saveDb(merged);
   res.json({ ok: true });
 });
 
