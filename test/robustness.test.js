@@ -41,6 +41,25 @@ test('統一錯誤處理：壞的 JSON body → 乾淨 JSON 400，不洩漏伺�
   assert.ok(!/node_modules|server\.js|\/Users\//.test(body), '不可洩漏伺服器檔案路徑');
 });
 
+test('IB 同步幣別牆（Codex#7）：未支援幣別跳過並回報，不寫進資料', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  const fake = async () => ({
+    positions: [
+      { symbol: 'CSPX', currency: 'USD', quantity: 10, marketPrice: 500, avgCost: 480 },
+      { symbol: 'VWCE', currency: 'EUR', quantity: 5, marketPrice: 100, avgCost: 90 },   // 未支援 → 跳過
+    ],
+    cashByCurrency: { USD: 1000, EUR: 200 },   // EUR 現金 → 跳過
+    equity: { stock: 5000, cash: 1000 }, income: null, trades: [], account: 'TEST', period: {},
+  });
+  const r = await syncIb(/** @type {any} */ (fake));
+  assert.deepEqual(r.skippedCurrencies, ['VWCE(EUR)', '現金(EUR)'], '未支援幣別要明確回報');
+  const db = JSON.parse(readFileSync(TEST_STORE, 'utf8'));
+  assert.ok(!db.holdings.some((h) => h.symbol === 'VWCE'), 'EUR 持股不可寫入（會被錯誤匯率計價）');
+  assert.ok(db.holdings.some((h) => h.symbol === 'CSPX' && h.currency === 'USD'), 'USD 持股照常同步');
+  assert.ok(!db.accounts.some((a) => a.ibCashCur === 'EUR'), 'EUR 現金帳戶不可建立');
+  assert.ok(db.accounts.some((a) => a.ibCashCur === 'USD' && a.balance === 1000), 'USD 現金照常更新');
+});
+
 test('報價端點在 store 損毀時不拖垮程式（回退而非未處理例外）', async () => {
   writeFileSync(TEST_STORE, '{ 這不是合法 JSON');   // 故意弄壞 store
   const res = await fetch(base + '/api/cape');       // 離線→外部抓取失敗→走 fallback（會讀 settings）

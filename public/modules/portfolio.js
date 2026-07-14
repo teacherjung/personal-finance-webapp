@@ -325,6 +325,10 @@ export async function renderPortfolio() {
       const cashTxt = r.cash && Object.keys(r.cash).length
         ? '；現金 ' + Object.entries(r.cash).map(([c, v]) => moneyCur(v, c)).join('、') : '';
       toast(`IBKR 同步完成：更新 ${r.updated} 檔、新增 ${r.created} 檔${cashTxt}`);
+      // 未支援幣別被跳過（系統僅支援 TWD/USD/GBP/JPY）→ 明確告知，不默默吞掉（看得見的退化）
+      if (r.skippedCurrencies && r.skippedCurrencies.length) {
+        toast(`注意：這些項目因幣別尚未支援而跳過：${r.skippedCurrencies.join('、')}`, true);
+      }
       // IBKR 報表中已消失的持股（可能已出清）→ 確認後移除
       if (r.missing && r.missing.length) {
         const names = r.missing.map(m => m.symbol).join('、');
