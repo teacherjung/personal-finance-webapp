@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 import { once } from 'node:events';
 
 // 必須在 import server.js「之前」設好（store.js 在載入時就決定檔案路徑）
-const TEST_STORE = join(tmpdir(), `finance-test-store-${process.pid}.json`);
+const TEST_STORE = join(tmpdir(), `finance-test-store-${process.pid}.db`);   // B3 起為 SQLite 檔
 process.env.STORE_FILE = TEST_STORE;
 
 const { app } = await import('../server.js');
@@ -26,7 +26,7 @@ const POST = SEND('POST'), PUT = SEND('PUT'), DELETE_ = SEND('DELETE');
 
 after(() => {
   server.close();
-  try { rmSync(TEST_STORE); rmSync(TEST_STORE + '.bak'); } catch { /* 沒有 .bak 也沒關係 */ }
+  for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 
 test('GET /api/summary：回傳完整總覽（seed 資料）', async () => {

@@ -14,7 +14,7 @@
 
 - 只提意見，不改任何檔案、不 commit、不 push。
 - 審查對象＝目前的 main 分支（審查前先 `git checkout main && git pull` 確認最新）。
-- 絕對不要讀取 `data/store.json`（含真實個資與 token）；要看資料形狀請看 `data/seed.json`。
+- 絕對不要讀取 `data/store.db`（含 `.bak`/`-wal`/`-shm`）與 `data/store.json`（真實個資與 token；B3 起主資料庫為 SQLite `store.db`、舊 `store.json` 保留為備份）；要看資料形狀請看 `data/seed.json`，要實測請用 `STORE_FILE` 指向暫存 `.db` 檔。
 
 開始審查前，先跑三道自動關卡並確認全過（若有不過，直接把輸出列為發現）：
 

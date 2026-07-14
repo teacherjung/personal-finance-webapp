@@ -37,7 +37,7 @@ lib/derive.js        → 計算大腦（維持現狀，已型別化＋考試覆�
   搬到 `lib/services/*.js`。`server.js` 收斂成薄薄的掛載。
 - 順便補上「欄位白名單」（見安全地圖 B2）——只在這步、有測試護體時做。
 
-### B3. 換 SQLite（只動 `repo.js` 後面）
+### B3. 換 SQLite（只動 `repo.js` 後面）✅ 已完成（2026-07-14，含「驗證入櫃檯」）
 - 用 Node 內建 `node:sqlite`（或 better-sqlite3）；schema 對應現有集合。
 - 寫「一次性搬家」：把現有 `store.json` 匯入 SQLite。
 - **因為所有讀寫都走 repo，這步理論上只改 `repo.js` 內部**，其他房間不動。
