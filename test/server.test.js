@@ -207,6 +207,43 @@ test('估值訊號回歸（#62 修正）：signals/capeManual 以數字送出可
   await PUT('/settings', { signals: before.signals || {}, capeManual: before.capeManual ?? '' });   // 還原
 });
 
+test('匯入每筆須為物件（Codex#4-1）：holdings:[null] 被濾掉，summary 不崩', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, holdings: [...(backup.holdings || []), null, 'garbage'] };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true);
+  const sum = await GET('/summary');   // 修前：讀 null.currency → TypeError → 崩
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth), '非物件元素不可讓 summary 崩');
+  await POST('/import', backup);   // 還原
+});
+
+test('集合布林/枚舉驗證（Codex#4-2）：active:"false" 轉 boolean、cycle 亂值被剝', async () => {
+  const sub = await (await POST('/subscriptions', {
+    name: '測試', category: '娛樂', amount: 100, cycle: 'yearlyy', status: 'active', active: 'false',
+  })).json();
+  assert.equal(sub.active, false, "字串 'false' 應轉成 boolean false（否則被當使用中、多算月費）");
+  assert.ok(!('cycle' in sub), '非法 cycle 枚舉值應被剝掉（不可當月費算）');
+  await DELETE_(`/subscriptions/${sub.id}`);
+});
+
+test('集合布林/枚舉：合法值照常寫入', async () => {
+  const sub = await (await POST('/subscriptions', {
+    name: '測試2', category: '娛樂', amount: 1200, cycle: 'yearly', status: 'active', active: true, considerCancel: false,
+  })).json();
+  assert.equal(sub.cycle, 'yearly');
+  assert.equal(sub.active, true);
+  assert.equal(sub.considerCancel, false);
+  await DELETE_(`/subscriptions/${sub.id}`);
+});
+
+test('research.checkpoints 須為陣列：字串被剝', async () => {
+  const r = await (await POST('/research', { symbol: 'ZZZ', thesis: 't', checkpoints: 'nope' })).json();
+  assert.ok(!('checkpoints' in r) || Array.isArray(r.checkpoints), 'checkpoints 非陣列應被剝');
+  const r2 = await (await POST('/research', { symbol: 'YYY', checkpoints: [{ note: 'x' }] })).json();
+  assert.ok(Array.isArray(r2.checkpoints) && r2.checkpoints.length === 1, '合法陣列 checkpoints 保留');
+  await DELETE_(`/research/${r.id}`); await DELETE_(`/research/${r2.id}`);
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
