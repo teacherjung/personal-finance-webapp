@@ -76,7 +76,7 @@ export async function renderSettings() {
 
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.json</code>。建議定期匯出備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.db</code>（SQLite）。建議定期匯出備份（匯出格式為 JSON）。</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <a class="btn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
         <button class="btn-ghost" id="importBtn">${icon('upload', 16)}匯入備份</button>
