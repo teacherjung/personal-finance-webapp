@@ -96,3 +96,24 @@ test('computeAssets｜負餘額帳戶算負債', () => {
   assert.equal(r.liabilities, 400);
   assert.equal(r.netWorth, 600);
 });
+
+test('自審｜持股缺 currency 預設台幣、不被當美元灌 32 倍', () => {
+  const usd = computeAssets({ settings: { usdTwd: 32 }, accounts: [], holdings: [{ symbol: 'CSPX', currency: 'USD', quantity: 1, price: 500 }] });
+  assert.equal(usd.assets, 16000, '有標 USD → ×32');
+  const noCur = computeAssets({ settings: { usdTwd: 32 }, accounts: [], holdings: [{ symbol: '0050', quantity: 1000, price: 180 }] });
+  assert.equal(noCur.assets, 180000, '缺 currency → 台幣（非 5,760,000）');
+});
+
+test('自審｜緊急預備金：現金分散在「現金」與「cash」兩種 class 都要算', () => {
+  const db = {
+    settings: { usdTwd: 32 },
+    accounts: [{ type: 'cash', class: '現金', currency: 'TWD', balance: 120000 }, { type: 'cash', currency: 'TWD', balance: 900000 }],
+    holdings: [], subscriptions: [], transactions: [{ date: '2026-06-05', type: 'expense', amount: 30000 }],
+  };
+  assert.ok(!buildSummary(db).reminders.some((x) => /緊急預備金/.test(x.title)), '總現金 102 萬≈34 個月，不該誤報不足');
+});
+
+test('自審｜沒有日期的交易不算進當月現金流', () => {
+  const db = { settings: { usdTwd: 32 }, accounts: [], holdings: [], subscriptions: [], transactions: [{ type: 'expense', amount: 9999 }] };
+  assert.equal(buildSummary(db).cashflow.expense, 0, '缺日期的支出不歸入當月');
+});
