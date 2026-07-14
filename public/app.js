@@ -49,7 +49,8 @@ export const wan = (n) => withSign(n, v => { const w = v / 10000; return (w >= 1
 /** @param {number|string|null|undefined} n */
 export const pct = (n) => (Number(n || 0)).toFixed(1) + '%';
 /** 插入 innerHTML 前必過（XSS 鐵則）。 @param {unknown} s @returns {string} */
-export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c));
+// 連單引號一起跳脫（&#39;）：目前全站屬性都用雙引號、尚未被利用，但補上後單/雙引號屬性都安全（多人化前的預防）
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 
 // ---------- 日期工具（全站共用）----------
 // 解析 YYYY-MM-DD 為「本地時區」的 Date：new Date('YYYY-MM-DD') 會被當 UTC，在 UTC 以西時區差一天。

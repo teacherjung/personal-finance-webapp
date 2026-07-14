@@ -25,6 +25,13 @@ app.use(marketRoutes);      // /quotes /cape /realyield
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
 
+// 統一錯誤處理（4 參數＝Express 錯誤中介）：壞的 JSON body 等會落到這裡，回乾淨 JSON，
+// 而不是 Express 預設的「含伺服器絕對路徑的 HTML 堆疊」（資訊外洩，多人化前尤其重要）。
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  res.status(err.status || 400).json({ error: '請求格式不正確' });
+});
+
 const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串；app.listen 要 number）
 // 只有「直接執行」（npm start / node server.js）才啟動監聽；被測試 import 時不開埠（B0）
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
