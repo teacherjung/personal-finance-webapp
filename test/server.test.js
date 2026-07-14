@@ -292,6 +292,40 @@ test('research.checkpoints 須為陣列：字串被剝', async () => {
   await DELETE_(`/research/${r.id}`); await DELETE_(`/research/${r2.id}`);
 });
 
+test('幣別枚舉（Codex#6-1）：holdings.currency 亂值→400；合法幣別照寫', async () => {
+  const bad = await POST('/holdings', { symbol: 'FX1', currency: 'TWDx', quantity: 1, price: 100 });
+  assert.equal(bad.status, 400, '錯幣別會讓 derive fallback 到 USD、金額算錯，應拒絕');
+  const ok = await (await POST('/holdings', { symbol: 'FX2', currency: 'JPY', quantity: 1, price: 100 })).json();
+  assert.equal(ok.currency, 'JPY');
+  await DELETE_(`/holdings/${ok.id}`);
+});
+
+test('source 是 IB 同步擁有（Codex#6-2）：CRUD 不可寫 source、匯入 source 亂值→400', async () => {
+  const h = await (await POST('/holdings', { symbol: 'SRC', currency: 'USD', quantity: 1, price: 10, source: 'ib' })).json();
+  assert.ok(!('source' in h), 'CRUD 不可設定 source（IB 同步擁有，避免偽裝 IB 持股藏槓桿）');
+  await DELETE_(`/holdings/${h.id}`);
+  const backup = await GET('/db');
+  const poisoned = { ...backup, holdings: [...(backup.holdings || []), { id: 's1', symbol: 'X', currency: 'USD', quantity: 1, price: 1, source: 'ibx' }] };
+  assert.equal((await POST('/import', poisoned)).status, 400, '匯入 source:ibx 應被拒絕');
+});
+
+test('ibCashCur 是 IB 同步擁有（Codex#6-3）：CRUD 不可寫', async () => {
+  const a = await (await POST('/accounts', { name: '假IB', type: 'cash', class: '現金', currency: 'TWD', balance: -50, ibCashCur: 'TWD' })).json();
+  assert.ok(!('ibCashCur' in a), 'CRUD 不可設定 ibCashCur（避免非 IB 帳戶被當 IB 融資污染槓桿）');
+  await DELETE_(`/accounts/${a.id}`);
+});
+
+test('匯率須為正數（Codex#6-4）：負匯率被剝、usdTwd≤0 被剝、summary 不變負', async () => {
+  const before = await GET('/settings');
+  await PUT('/settings', { fxTwd: { GBP: -1 }, usdTwd: -5 });
+  const s = await GET('/settings');
+  assert.notEqual(s.fxTwd?.GBP, -1, '負匯率不可寫入（會讓外幣資產變負）');
+  assert.ok(s.usdTwd > 0, 'usdTwd 必須為正');
+  const sum = await GET('/summary');
+  assert.ok(sum.netWorth === null || typeof sum.netWorth === 'number');
+  await PUT('/settings', { usdTwd: before.usdTwd, fxTwd: before.fxTwd || {} });   // 還原
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
