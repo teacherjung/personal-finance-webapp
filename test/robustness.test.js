@@ -42,6 +42,13 @@ test('驗證入櫃檯（B3）：任何路徑寫入非法枚舉 → save() 當場
   assert.throws(() => store.save(bad2), /type/, '非法 accounts.type 必須被攔下');
 });
 
+test('驗證入櫃檯：settings 也過牆（Codex#8-2）——usdTwd 錯型別在唯一寫入口被攔下', () => {
+  const bad = { ...store.emptyDb(), settings: { ...store.emptyDb().settings, usdTwd: 'oops' } };
+  assert.throws(() => store.save(/** @type {any} */ (bad)), /usdTwd/, '設定壞值不可繞過櫃檯（會讓匯率換算全錯）');
+  const bad2 = { ...store.emptyDb(), settings: { ...store.emptyDb().settings, fxTwd: { GBP: -1 } } };
+  assert.throws(() => store.save(/** @type {any} */ (bad2)), /fxTwd/, '負匯率不可繞過櫃檯');
+});
+
 test('驗證入櫃檯：非物件元素在寫入口被濾除（不用等匯入端記得清）', () => {
   const dirty = { ...store.emptyDb(), holdings: [null, { id: 'h1', symbol: 'CSPX', currency: 'USD', quantity: 1, price: 10 }, 'junk'] };
   store.save(/** @type {any} */ (dirty));
@@ -65,6 +72,50 @@ test('舊資料自動搬家（B3）：store.json → SQLite，資料完整、原
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
     assert.equal(r.amount, 777, '舊 json 的資料要完整搬進 SQLite');
     assert.equal(readFileSync(jsonPath, 'utf8').includes('777'), true, '原 store.json 保留不動（備份）');
+  } finally {
+    for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
+  }
+});
+
+test('搬家重搬規則（Codex#8-1）：db 沒寫過→安全重搬；兩邊都寫過→fail closed 不自動覆蓋', () => {
+  const dbPath = join(tmpdir(), `finance-remigrate-${process.pid}.db`);
+  const jsonPath = dbPath.slice(0, -3) + '.json';
+  const runChild = (/** @type {string} */ code) => execFileSync(process.execPath, ['--input-type=module', '-e', code],
+    { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
+  const IMPORT = `import { load, save, emptyDb } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';`;
+  try {
+    // 步驟1：首次搬家（json 標記 A）
+    writeFileSync(jsonPath, JSON.stringify({ ...store.emptyDb(), history: [{ id: 'A', month: '2026-01', amount: 1 }] }));
+    runChild(`${IMPORT} load();`);
+    // 步驟2：db「沒被寫過」、json 變新（標記 B）→ 應安全重搬、以 json 為準
+    writeFileSync(jsonPath, JSON.stringify({ ...store.emptyDb(), history: [{ id: 'B', month: '2026-02', amount: 2 }] }));
+    const out1 = runChild(`${IMPORT} console.log(JSON.stringify(load().history.map(h=>h.id)));`);
+    assert.deepEqual(JSON.parse(out1.trim().split('\n').pop() || '[]'), ['B'], 'db 未寫過時應以較新的 json 重搬');
+    // 步驟3：db 被寫過（新增 C）、json 又變新（標記 D）→ 兩邊都有新資料，必須 fail closed
+    runChild(`${IMPORT} const db = load(); db.history.push({ id: 'C', month: '2026-03', amount: 3 }); save(db);`);
+    writeFileSync(jsonPath, JSON.stringify({ ...store.emptyDb(), history: [{ id: 'D', month: '2026-04', amount: 4 }] }));
+    let threw = false, msg = '';
+    try { runChild(`${IMPORT} load();`); }
+    catch (e) { threw = true; msg = String(/** @type {any} */ (e).stderr || e); }
+    assert.ok(threw, '兩邊都改過時不可自動覆蓋（會遺失其中一邊）——必須停下來請使用者選');
+    assert.ok(/store\.json.*store\.db|二選一/s.test(msg), '錯誤訊息要給使用者明確的二選一指引');
+  } finally {
+    for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
+  }
+});
+
+test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝除補預設，不污染計算', () => {
+  const dbPath = join(tmpdir(), `finance-migbad-${process.pid}.db`);
+  const jsonPath = dbPath.slice(0, -3) + '.json';
+  const legacy = { ...store.emptyDb(), settings: { ...store.emptyDb().settings, usdTwd: 'oops' } };
+  writeFileSync(jsonPath, JSON.stringify(legacy));
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { load } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';
+      console.log(JSON.stringify({ usdTwd: load().settings.usdTwd }));
+    `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
+    const r = JSON.parse(out.trim().split('\n').pop() || '{}');
+    assert.equal(r.usdTwd, 32, '壞的 usdTwd 應被剝除、由預設 32 接手（不可留字串）');
   } finally {
     for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
   }

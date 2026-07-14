@@ -39,6 +39,6 @@ if (isMain) {
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`\n  個人理財網頁已啟動 ✅`);
     console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
-    console.log(`  資料只存在本機 data/store.json，按 Ctrl+C 可關閉。\n`);
+    console.log(`  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);
   });
 }
