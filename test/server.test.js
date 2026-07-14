@@ -326,6 +326,29 @@ test('匯率須為正數（Codex#6-4）：負匯率被剝、usdTwd≤0 被剝、
   await PUT('/settings', { usdTwd: before.usdTwd, fxTwd: before.fxTwd || {} });   // 還原
 });
 
+test('自審｜migrate 冪等：連跑兩次，第二次 changed=0', async () => {
+  const tx = await (await POST('/transactions', { date: '2026-07-01', type: 'expense', category: '身心', amount: 100 })).json();
+  await POST('/migrate/categories');                       // 第一次：把所有可轉的轉掉
+  const second = await (await POST('/migrate/categories')).json();
+  assert.equal(second.changed, 0, '第二次不該再有任何變更（冪等；含 其他→其他 自對映）');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('自審｜帳單金額上限：破億的列被跳過（防解析誤抓參考號碼）', async () => {
+  const card = await (await POST('/cards', { name: '測試卡', type: 'credit', issuer: '台新' })).json();
+  const res = await (await POST(`/cards/${card.id}/statement/import`, {
+    transactions: [
+      { date: '2026-07-01', amount: 999999999999, store: '亂數', desc: 'X', stmtRef: 'selftest-huge' },
+      { date: '2026-07-01', amount: 500, store: '正常', desc: 'Y', stmtRef: 'selftest-ok' },
+    ],
+  })).json();
+  assert.equal(res.imported, 1, '只匯入正常那筆');
+  assert.equal(res.skipped, 1, '破億那筆被跳過');
+  await DELETE_(`/cards/${card.id}`);
+  const txs = await GET('/transactions');
+  for (const t of txs.filter((x) => x.stmtRef === 'selftest-ok')) await DELETE_(`/transactions/${t.id}`);
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
