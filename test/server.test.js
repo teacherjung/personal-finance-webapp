@@ -217,13 +217,61 @@ test('匯入每筆須為物件（Codex#4-1）：holdings:[null] 被濾掉，summ
   await POST('/import', backup);   // 還原
 });
 
-test('集合布林/枚舉驗證（Codex#4-2）：active:"false" 轉 boolean、cycle 亂值被剝', async () => {
+test('集合布林轉換（Codex#4-2）：active:"false" 轉成 boolean false', async () => {
   const sub = await (await POST('/subscriptions', {
-    name: '測試', category: '娛樂', amount: 100, cycle: 'yearlyy', status: 'active', active: 'false',
+    name: '測試', category: '娛樂', amount: 100, cycle: 'monthly', status: 'active', active: 'false',
   })).json();
   assert.equal(sub.active, false, "字串 'false' 應轉成 boolean false（否則被當使用中、多算月費）");
-  assert.ok(!('cycle' in sub), '非法 cycle 枚舉值應被剝掉（不可當月費算）');
   await DELETE_(`/subscriptions/${sub.id}`);
+});
+
+test('枚舉非法→400 而非剝掉（Codex#5-1）：cycle 亂值不可落到「月繳」危險預設', async () => {
+  const res = await POST('/subscriptions', { name: 'x', category: '娛樂', amount: 1200, cycle: 'yearlyy', status: 'active' });
+  assert.equal(res.status, 400, '非法 cycle 應拒絕（剝掉會被當月繳 1200→年 14400）');
+});
+
+test('accounts.type 枚舉→400（Codex#5-2）：擋 mortgagex 讓負債被當資產（淨值方向相反）', async () => {
+  const bad = await POST('/accounts', { name: 'x', type: 'mortgagex', class: '負債', currency: 'TWD', balance: 100 });
+  assert.equal(bad.status, 400, '非法 accounts.type 應拒絕');
+  const ok = await (await POST('/accounts', { name: 'y', type: 'mortgage', class: '負債', currency: 'TWD', balance: 100 })).json();
+  assert.equal(ok.type, 'mortgage', '合法 type 照常寫入');
+  await DELETE_(`/accounts/${ok.id}`);
+});
+
+test('匯入雪快照非物件元素（Codex#5-3）：snapshots:[null] 被濾掉、dashboard 資料不崩', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, snapshots: [...(backup.snapshots || []), null, 'garbage'] };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true);
+  const db = await GET('/db');
+  assert.ok((db.snapshots || []).every((s) => s && typeof s === 'object'), 'snapshots 不應留下非物件元素');
+  await POST('/import', backup);
+});
+
+test('匯入 learnedCategories 清理（Codex#5-4）：{bad:null} 被丟棄，設定頁讀 v.name 不崩', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, learnedCategories: { ...(backup.learnedCategories || {}), 壞資料: null, 好資料: { category: '飲食', name: '早餐店' } } };
+  const res = await (await POST('/import', poisoned)).json();
+  assert.equal(res.ok, true);
+  const db = await GET('/db');
+  assert.ok(!('壞資料' in (db.learnedCategories || {})), 'value 非物件應被丟棄');
+  assert.equal(db.learnedCategories?.好資料?.name, '早餐店', '合法學習保留');
+  await POST('/import', backup);
+});
+
+test('陣列元素形狀（Codex#5-5）：checkpoints:[null] 的壞元素被過濾', async () => {
+  const r = await (await POST('/research', { symbol: 'CP1', checkpoints: [{ date: '2026-07-01', note: 'ok' }, null, 'garbage'] })).json();
+  assert.ok(Array.isArray(r.checkpoints) && r.checkpoints.length === 1, '非物件元素應被過濾（否則研究卡讀 c.date 崩）');
+  await DELETE_(`/research/${r.id}`);
+});
+
+test('匯入枚舉非法→整份拒絕（Codex#5-1 import）：備份含壞 cycle → 400', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, subscriptions: [...(backup.subscriptions || []), { id: 'z1', name: 'bad', amount: 1200, cycle: 'yearlyy', status: 'active' }] };
+  const res = await POST('/import', poisoned);
+  assert.equal(res.status, 400, '壞枚舉值的備份應被中止匯入');
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth));
 });
 
 test('集合布林/枚舉：合法值照常寫入', async () => {
