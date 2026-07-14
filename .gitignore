@@ -1,6 +1,11 @@
 # 個人實際資料與憑證（含 IBKR flexToken、帳戶餘額）——絕不進版控
 data/store.json
 data/store.json.bak
+data/store.db
+data/store.db.bak
+data/*.db
+data/*.db-wal
+data/*.db-shm
 data/store.manual-backup-*.json
 data/*backup*
 *.bak
