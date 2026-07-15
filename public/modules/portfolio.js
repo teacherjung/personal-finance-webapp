@@ -415,12 +415,14 @@ export async function renderPortfolio() {
 }
 
 // ---- 投資原則：紀律檢查卡（唯讀；口徑 % 淨資產、穿透；黑刻度＝上限、紅＝超出）----
+// 上限黑線固定在每條 bar 的同一位置（CAP_X%），讓各列黑線上下對齊；
+// 綠/紅長度照「值 ÷ 上限」等比縮放（上限＝CAP_X 寬），超過的部分往右畫紅、超很多就填滿到底。
 function capBar(value, cap) {
-  const scale = Math.max(value, cap) * 1.12 || 1;
-  const okW = (Math.min(value, cap) / scale * 100).toFixed(1);
-  const overW = Math.max(0, value - cap) / scale * 100;
-  const markL = (cap / scale * 100).toFixed(1);
-  return `<div class="cap-bar"><div class="cb-ok" style="width:${okW}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${markL}%"></div></div>`;
+  const CAP_X = 70;
+  const ratio = cap > 0 ? value / cap : 0;
+  const okW = Math.max(0, Math.min(ratio, 1)) * CAP_X;                         // 綠：到上限為止
+  const overW = ratio > 1 ? Math.min((ratio - 1) * CAP_X, 100 - CAP_X) : 0;    // 紅：超過上限的部分（同比例、clamp 到底）
+  return `<div class="cap-bar"><div class="cb-ok" style="width:${okW.toFixed(1)}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${CAP_X}%"></div></div>`;
 }
 // 斷頭距離：市場再跌 x% 觸及 IB 強平線（借款固定、資產縮水；假設全部持倉維持率一致的近似值）
 // x = 1 − 借款 ÷ ((1 − 維持率) × 持倉市值)
@@ -442,15 +444,16 @@ function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
 function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd) {
   if (!(netWorth > 0)) return '';
   const pn = (v) => v / netWorth * 100;
-  const row = (label, value, cap, unit = '%', overLabel = '🔒 凍結') => {
+  const row = (label, value, cap, unit = '%', overLabel = '凍結') => {
     const over = value > cap;
     const finite = isFinite(value);
     const valTxt = unit === 'x' ? (finite ? value.toFixed(2) + 'x' : '∞') : fmtPct(value);
     const capTxt = unit === 'x' ? cap + 'x' : cap + '%';
+    const tag = over ? `<b class="neg rv-tag">${overLabel}</b>` : '<span class="pos rv-tag">✓</span>';
     return `<div class="rrow cap-row">
       <span class="nowrap">${label}</span>
       ${capBar(finite ? value : cap * 2, cap)}
-      <span class="rval">${valTxt} / ${capTxt}　${over ? `<b class="neg">${overLabel}</b>` : '<span class="pos">✓</span>'}</span>
+      <span class="rval"><span class="rv-val">${valTxt}</span><span class="rv-sep">/</span><span class="rv-cap">${capTxt}</span>${tag}</span>
     </div>`;
   };
   const items = [];
@@ -460,7 +463,7 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibVal
   Object.entries(regionMap).filter(([rg]) => rg !== '美國' && rg !== '其他')
     .sort((a, b) => b[1] - a[1])
     .forEach(([rg, v]) => items.push(row(`${esc(rg)}（穿透）`, pn(v), rg === '中國' ? CAPS.china : CAPS.country)));
-  items.push(row('IB 融資槓桿', leverage, CAPS.lev, 'x', '🔒 停借'));
+  items.push(row('IB 融資槓桿', leverage, CAPS.lev, 'x', '停借'));
   return `<div class="chart-card" style="margin-bottom:16px">
     <h3><button type="button" class="info-link" id="disciplineInfo">紀律檢查</button></h3>
     <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
