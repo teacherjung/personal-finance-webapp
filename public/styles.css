@@ -369,6 +369,12 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .rbar { height: 8px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
 .rbar > div { height: 100%; border-radius: 6px; }
 .rval { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 紀律檢查右側：值｜/｜上限｜狀態 各占固定欄位，右對齊 → 上下對齊 */
+.cap-row .rval { display: grid; grid-template-columns: 52px 8px 40px 40px; gap: 4px; align-items: baseline; justify-self: end; }
+.cap-row .rv-val { text-align: right; }
+.cap-row .rv-sep { text-align: center; color: var(--muted); }
+.cap-row .rv-cap { text-align: right; color: var(--muted); }
+.cap-row .rv-tag { text-align: right; }
 /* 紀律檢查卡：現值 vs 上限 進度條（黑刻度＝上限、紅＝超標溢出） */
 .cap-row { grid-template-columns: 110px 1fr 190px; }
 .cap-bar { position: relative; display: flex; height: 8px; background: var(--card-2); border-radius: 6px; }
