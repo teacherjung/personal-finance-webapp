@@ -171,6 +171,21 @@ test('IB 同步幣別牆（Codex#7）：未支援幣別跳過並回報，不寫�
   assert.ok((db.accounts || []).some((a) => a.ibCashCur === 'USD' && a.balance === 1000), 'USD 現金照常更新');
 });
 
+test('櫃檯也擋缺必填（Codex#11-1）：save() 遇缺 month 的 history 當場 throw', () => {
+  const bad = { ...store.emptyDb(), history: [{ id: 'x', amount: 100 }] };
+  assert.throws(() => store.save(/** @type {any} */ (bad)), /month/, '任何寫入路徑都不可能塞進缺主鍵欄的資料');
+});
+
+test('IB 錯誤口徑（Codex#11-2）：fetchFlex 類錯誤標 400、內部錯誤不標', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  const failFetch = async () => { throw new Error('IB 連線失敗 (HTTP 500)'); };
+  let caught = null;
+  try { await syncIb(/** @type {any} */ (failFetch)); } catch (e) { caught = /** @type {any} */ (e); }
+  assert.ok(caught, '要拋錯');
+  assert.equal(caught.status, 400, 'IB 連線類＝使用者層錯誤，路由要能原味回應');
+  assert.match(caught.message, /IB 連線失敗/, '訊息保留原味');
+});
+
 test('市場端點防崩：/api/cape 一律優雅回應（外部失敗走手動值退路）', async () => {
   const res = await fetch(base + '/api/cape');
   assert.equal(res.status, 200);
