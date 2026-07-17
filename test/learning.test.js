@@ -1,0 +1,52 @@
+// 帳單自動學習的考題：什麼該學、什麼不該學。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { applyLearned, learnFromStmtEdit, learnFromImport } from '../lib/services/learning.js';
+import { isServiceFee } from '../lib/statement.js';
+
+test('isServiceFee：認得國外交易服務費（finalize 與 learning 共用同一判準）', () => {
+  assert.equal(isServiceFee('國外交易服務費-2350.00'), true);
+  assert.equal(isServiceFee('國外交易服務費'), true);
+  assert.equal(isServiceFee('星巴克'), false);
+  assert.equal(isServiceFee(''), false);
+  assert.equal(isServiceFee(/** @type {any} */ (null)), false);
+});
+
+test('服務費不學（編輯）：改服務費的分類不會寫進學習表', () => {
+  const db = { learnedCategories: {} };
+  learnFromStmtEdit(db, { source: 'stmt', storeKey: '國外交易服務費-2350.00', note: '國外交易服務費-2350.00', category: '健康', subcategory: '' });
+  assert.deepEqual(db.learnedCategories, {}, '帶金額的服務費 key 永遠不會再命中，學了只會讓學習表膨脹');
+});
+
+test('服務費不學（匯入）：匯入時選的分類不會寫進學習表', () => {
+  const db = { learnedCategories: {} };
+  learnFromImport(db, '國外交易服務費-170.00', '國外交易服務費-170.00', '娛樂', '遊戲');
+  assert.deepEqual(db.learnedCategories, {});
+});
+
+test('一般店家照常學（回歸）：編輯與匯入都要學得起來', () => {
+  const db = { learnedCategories: {} };
+  learnFromStmtEdit(db, { source: 'stmt', storeKey: '佳音林口文化二路', note: '佳音林口文化二路', category: '交通', subcategory: '停車費' });
+  assert.deepEqual(db.learnedCategories['佳音林口文化二路'], { category: '交通', subcategory: '停車費' });
+  // 匯入：與內建規則不同才學（佳音 內建＝養育/補習／才藝）
+  const db2 = { learnedCategories: {} };
+  learnFromImport(db2, '佳音林口文化二路', '佳音林口文化二路', '交通', '停車費');
+  assert.equal(db2.learnedCategories['佳音林口文化二路']?.category, '交通');
+});
+
+test('學習優先於內建規則：個案覆蓋，不誤傷通則', () => {
+  const db = { learnedCategories: { '佳音林口文化二路': { category: '交通', subcategory: '停車費' } } };
+  const [parkingLot, cramSchool] = applyLearned(db, [
+    { store: '佳音林口文化二路', category: '養育', subcategory: '補習／才藝' },   // 內建規則判的
+    { store: '佳音美語內湖', category: '養育', subcategory: '補習／才藝' },       // 沒學過 → 維持內建
+  ]);
+  assert.equal(parkingLot.category, '交通', '學過的停車場要被覆蓋成交通');
+  assert.equal(parkingLot.subcategory, '停車費');
+  assert.equal(cramSchool.category, '養育', '沒學過的佳音補習班仍走內建規則、不被誤傷');
+});
+
+test('手動記帳不污染學習表（只學帳單來源）', () => {
+  const db = { learnedCategories: {} };
+  learnFromStmtEdit(db, { source: 'manual', storeKey: '自己打的', note: '自己打的', category: '飲食', subcategory: '' });
+  assert.deepEqual(db.learnedCategories, {});
+});
