@@ -429,6 +429,31 @@ test('整批改卡片（HTTP 全鏈路）：stmtRef 前綴重寫＋帳戶名更�
   await DELETE_(`/cards/${cardA.id}`); await DELETE_(`/cards/${cardB.id}`);
 });
 
+test('型別牆封角（Codex#10-1/2）：cards.expiry 數字→400、history.month null→400', async () => {
+  const r1 = await POST('/cards', { name: 'x', type: 'credit', expiry: 202612 });
+  assert.equal(r1.status, 400, 'expiry 數字會讓卡片頁 .slice 崩，必須擋');
+  const r2 = await POST('/history', { month: null, amount: 100 });
+  assert.equal(r2.status, 400, 'history.month 是主鍵欄，null 會讓歷史頁崩，必須擋');
+});
+
+test('匯入唯讀集合也過牆（Codex#10-3）：ibTrades.date 數字 → 400', async () => {
+  const backup = await GET('/db');
+  const poisoned = { ...backup, ibTrades: [{ symbol: 'X', date: 20260101 }] };
+  assert.equal((await POST('/import', poisoned)).status, 400, '數字 date 會讓投組頁 .localeCompare 崩');
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth));
+});
+
+test('匯入巢狀設定 fail-closed（Codex#10-4）：settings.signals 陣列 → 400、設定不動', async () => {
+  const before = await GET('/settings');
+  const backup = await GET('/db');
+  const poisoned = { ...backup, settings: { ...backup.settings, signals: ['oops'] } };
+  assert.equal((await POST('/import', poisoned)).status, 400, '巢狀陣列不可被靜默重設成預設');
+  const after = await GET('/settings');
+  assert.equal(after.usdTwd, before.usdTwd);
+  assert.deepEqual(after.signals, before.signals, 'signals 不可被清掉');
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();

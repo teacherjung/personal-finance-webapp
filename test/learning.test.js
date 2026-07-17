@@ -58,11 +58,10 @@ test('套用端也擋服務費（自審r2-M2）：舊的服務費學習紀錄不
   assert.equal(fee.store, '國外交易服務費-700.00', '顯示名也不可被舊學習紀錄改掉');
 });
 
-test('舊資料改名縫隙（自審r2-L1）：無 storeKey 的服務費改顯示名也不學', () => {
+test('無 storeKey 的舊資料一律不學（Codex#10-8）：note 可被改名、身分不可考', () => {
   const db = { learnedCategories: {} };
   learnFromStmtEdit(db, { source: 'stmt', storeKey: '', note: '手續費', category: '生活', subcategory: '' });
-  // note 已被改成「手續費」、storeKey 空——舊版會學到錯 key；現版：storeKey/note 任一像服務費都擋。
-  // 這裡 note 不含服務費字樣、storeKey 空 → 會學（一般舊資料行為）；但若 storeKey 是服務費則擋：
+  assert.deepEqual(db.learnedCategories, {}, '退用 note 會把規則掛在錯的 key 上（劫持同名店家）——一律不學');
   const db2 = { learnedCategories: {} };
   learnFromStmtEdit(db2, { source: 'stmt', storeKey: '國外交易服務費-99.00', note: '手續費', category: '生活', subcategory: '' });
   assert.deepEqual(db2.learnedCategories, {}, 'storeKey 是服務費時，改了顯示名也不可學');
