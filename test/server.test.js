@@ -454,6 +454,21 @@ test('匯入巢狀設定 fail-closed（Codex#10-4）：settings.signals 陣列 �
   assert.deepEqual(after.signals, before.signals, 'signals 不可被清掉');
 });
 
+test('必填欄位（Codex#11-1）：完全沒傳 month 的三種路徑全被擋', async () => {
+  // ① CRUD 新增
+  const r1 = await POST('/history', { amount: 100 });
+  assert.equal(r1.status, 400, 'POST history 缺 month → 400（修前入庫後歷史頁 .slice 崩）');
+  // ② 匯入 portfolioSnapshots 缺 month
+  const backup = await GET('/db');
+  const p2 = { ...backup, portfolioSnapshots: [{ cost: 100, value: 120 }] };
+  assert.equal((await POST('/import', p2)).status, 400, '匯入缺 month 的投組快照 → 400（修前投組頁 .split 崩）');
+  // ③ 匯入 snapshots 缺 month
+  const p3 = { ...backup, snapshots: [{ netWorth: 100, assets: 100, liabilities: 0, date: '2026-07-01' }] };
+  assert.equal((await POST('/import', p3)).status, 400, '匯入缺 month 的淨值快照 → 400（修前快照排序崩）');
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth), '全部擋下、summary 正常');
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();
