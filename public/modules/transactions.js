@@ -14,7 +14,7 @@ let monthFilter = monthKey();
 let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依說明/店名）
 
 export async function renderTransactions() {
-  const all = await api('/transactions');
+  const [all, accounts, cards] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards')]);
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
 
@@ -67,12 +67,12 @@ export async function renderTransactions() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr><th>日期</th><th>分類</th><th>信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
+      <table><thead><tr><th>日期</th><th>分類</th><th>帳戶 / 信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="6" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
     </div>
   `;
 
-  byId('addTx').onclick = () => openTxForm();
+  byId('addTx').onclick = () => openTxForm(null, accounts, cards);
   byId('uploadStmt').onclick = () => openStatementUpload();
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
@@ -82,7 +82,7 @@ export async function renderTransactions() {
     listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
     renderTransactions();
   };
-  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit)));
+  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const t = all.find(x => x.id === b.dataset.del);
     confirmDelete(`${t.category} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
@@ -101,7 +101,22 @@ function rowHtml(t) {
   </tr>`;
 }
 
-function openTxForm(tx) {
+// 「帳戶 / 信用卡」下拉選項＝現有帳戶＋信用卡的名稱（account 存的就是名稱字串，與帳單匯入同口徑）。
+// ⚠️ 保留現有值：若這筆的 account 不在清單裡（卡片改名/刪除、或舊資料），要補進選項——
+// 否則 select 找不到相符項會自動跳到第一項，一存檔就把使用者的資料默默改掉。
+/** @param {any[]} accounts @param {any[]} cards @param {string=} current */
+function accountOptions(accounts, cards, current) {
+  const names = [
+    ...(accounts || []).map(a => a.name),
+    ...(cards || []).filter(c => (c.type || 'credit') === 'credit').map(c => c.name)
+  ].filter(Boolean);
+  const uniq = [...new Set(names)];
+  if (current && !uniq.includes(current)) uniq.unshift(current);
+  return [{ value: '', label: '（不指定）' }, ...uniq.map(n => ({ value: n, label: n }))];
+}
+
+/** @param {any=} tx @param {any[]=} accounts @param {any[]=} cards */
+function openTxForm(tx, accounts = [], cards = []) {
   openForm({
     title: tx ? '編輯記錄' : '新增收支',
     fields: [
@@ -109,7 +124,7 @@ function openTxForm(tx) {
       { key: 'category', label: '分類', type: 'select', options: ALL_CATEGORIES, default: '飲食' },
       { key: 'subcategory', label: '子類（支出才有，可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
-      { key: 'account', label: '帳戶 / 信用卡', type: 'text', placeholder: '例：台新活存、富邦卡' },
+      { key: 'account', label: '帳戶 / 信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
       { key: 'note', label: '說明（店名）', type: 'text', full: true, placeholder: '例：全聯、星巴克' }   // 標籤與列表表頭一致（使用者定）
     ],
     values: tx || {},
