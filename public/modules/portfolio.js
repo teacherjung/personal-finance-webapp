@@ -419,6 +419,9 @@ export async function renderPortfolio() {
 // 綠/紅長度照「值 ÷ 上限」等比縮放（上限＝CAP_X 寬），超過的部分往右畫紅、超很多就填滿到底。
 function capBar(value, cap) {
   const CAP_X = 70;
+  if (!(cap > 0) && value > 0) {   // 上限 0（如中國上限設 0）＝任何曝險都超標：整段畫紅（自審 r2，低）
+    return `<div class="cap-bar"><div class="cb-over" style="width:${100 - CAP_X}%;margin-left:${CAP_X}%"></div><div class="cb-mark" style="left:${CAP_X}%"></div></div>`;
+  }
   const ratio = cap > 0 ? value / cap : 0;
   const okW = Math.max(0, Math.min(ratio, 1)) * CAP_X;                         // 綠：到上限為止
   const overW = ratio > 1 ? Math.min((ratio - 1) * CAP_X, 100 - CAP_X) : 0;    // 紅：超過上限的部分（同比例、clamp 到底）

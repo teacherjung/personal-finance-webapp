@@ -121,6 +121,26 @@ test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝�
   }
 });
 
+test('fail-closed 每次都擋（自審r2-H1）：搬家失敗後重試不可拿到空資料庫', () => {
+  const dbPath = join(tmpdir(), `finance-failclosed-${process.pid}.db`);
+  const jsonPath = dbPath.slice(0, -3) + '.json';
+  writeFileSync(jsonPath, '{ 這不是合法 JSON');   // 舊檔損毀＋新庫不存在 → 首次搬家必失敗
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { load } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';
+      let first = null, second = null;
+      try { load(); } catch (e) { first = e.message; }
+      try { load(); } catch (e) { second = e.message; }
+      console.log(JSON.stringify({ firstThrew: !!first, secondThrew: !!second }));
+    `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
+    const r = JSON.parse(out.trim().split('\n').pop() || '{}');
+    assert.equal(r.firstThrew, true, '第一次要擋');
+    assert.equal(r.secondThrew, true, '第二次也要擋（修前：第二次會拿到空資料庫繼續運作）');
+  } finally {
+    for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
+  }
+});
+
 test('統一錯誤處理：壞的 JSON body → 乾淨 JSON 400，不洩漏伺服器路徑', async () => {
   const res = await fetch(base + '/api/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{bad json',

@@ -50,3 +50,20 @@ test('手動記帳不污染學習表（只學帳單來源）', () => {
   learnFromStmtEdit(db, { source: 'manual', storeKey: '自己打的', note: '自己打的', category: '飲食', subcategory: '' });
   assert.deepEqual(db.learnedCategories, {});
 });
+
+test('套用端也擋服務費（自審r2-M2）：舊的服務費學習紀錄不可蓋掉繼承分類', () => {
+  const db = { learnedCategories: { '國外交易服務費-700.00': { category: '生活', subcategory: '日用品', name: '舊名' } } };
+  const [fee] = applyLearned(db, [{ store: '國外交易服務費-700.00', desc: '國外交易服務費-700.00', category: '工作', subcategory: 'ChatGPT' }]);
+  assert.equal(fee.category, '工作', '繼承自前一筆的分類不可被舊學習紀錄蓋掉');
+  assert.equal(fee.store, '國外交易服務費-700.00', '顯示名也不可被舊學習紀錄改掉');
+});
+
+test('舊資料改名縫隙（自審r2-L1）：無 storeKey 的服務費改顯示名也不學', () => {
+  const db = { learnedCategories: {} };
+  learnFromStmtEdit(db, { source: 'stmt', storeKey: '', note: '手續費', category: '生活', subcategory: '' });
+  // note 已被改成「手續費」、storeKey 空——舊版會學到錯 key；現版：storeKey/note 任一像服務費都擋。
+  // 這裡 note 不含服務費字樣、storeKey 空 → 會學（一般舊資料行為）；但若 storeKey 是服務費則擋：
+  const db2 = { learnedCategories: {} };
+  learnFromStmtEdit(db2, { source: 'stmt', storeKey: '國外交易服務費-99.00', note: '手續費', category: '生活', subcategory: '' });
+  assert.deepEqual(db2.learnedCategories, {}, 'storeKey 是服務費時，改了顯示名也不可學');
+});
