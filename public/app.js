@@ -96,6 +96,21 @@ export function modalSizeClass(size = 'sm') {
  * @property {string} [step]        number 專用
  * @property {*} [default]
  */
+/**
+ * 點背景關閉彈窗：只有「按下」與「放開」都落在背景上才關。
+ * 不能只看 click 的 e.target——瀏覽器把 click 算在「按下處與放開處的共同祖先」上，
+ * 所以在彈窗內選取文字、滑鼠拖到彈窗外才放開時，click 會落在 .modal-bg 而誤關（使用者回報的 bug）。
+ * @param {Element} root 內含 .modal-bg 的容器 @param {() => void} close
+ */
+export function bindBackdropClose(root, close) {
+  const bg = root.querySelector('.modal-bg');
+  if (!bg) return;
+  let downOnBg = false, upOnBg = false;
+  bg.addEventListener('mousedown', (e) => { downOnBg = e.target === bg; });
+  bg.addEventListener('mouseup', (e) => { upOnBg = e.target === bg; });
+  bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
+}
+
 // 通用彈窗表單。
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
@@ -130,7 +145,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
   const close = () => { root.innerHTML = ''; };
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
-  root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  bindBackdropClose(root, close);
   root.querySelector('#modalForm').onsubmit = async (e) => {
     e.preventDefault();
     const out = {};
@@ -158,7 +173,7 @@ export function openInfo(title, bodyHtml, opts = {}) {
   const close = () => { root.innerHTML = ''; };
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-close]').onclick = close;
-  root.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  bindBackdropClose(root, close);
 }
 
 // ---------- 列印報表共用外殼（訂閱/投組報表） ----------
