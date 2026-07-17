@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose } from '../app.js';
 import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -136,7 +136,7 @@ function openRebalance(allocRows) {
     </div></div></div>`;
   const close = () => root.innerHTML = '';
   root.querySelector('.x-close').onclick = close;
-  root.querySelector('.modal-bg').onclick = (e) => { if (/** @type {any} */ (e.target).classList.contains('modal-bg')) close(); };
+  bindBackdropClose(root, close);
   const render = () => {
     const cash = Number(/** @type {any} */ (byId('rebCash')).value || 0);
     const plan = rebalancePlan(allocRows, { buyOnly, cash });
