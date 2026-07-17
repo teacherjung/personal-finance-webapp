@@ -349,6 +349,86 @@ test('自審｜帳單金額上限：破億的列被跳過（防解析誤抓參�
   for (const t of txs.filter((x) => x.stmtRef === 'selftest-ok')) await DELETE_(`/transactions/${t.id}`);
 });
 
+test('日期型別牆（自審r2-H2）：endsOn 塞數字→400（修前會讓總覽永久崩潰）、壞日期→400', async () => {
+  const r1 = await POST('/subscriptions', { name: 'x', category: '娛樂', amount: 100, cycle: 'monthly', status: 'active', endsOn: 20991231 });
+  assert.equal(r1.status, 400, 'endsOn 數字會讓 derive 的 .slice() 炸掉 summary，必須擋');
+  const r2 = await POST('/transactions', { date: 'garbage', type: 'expense', category: '飲食', amount: 100 });
+  assert.equal(r2.status, 400, '壞格式日期會默默不被計入月現金流，必須擋');
+  const r3 = await POST('/holdings', { symbol: 123, currency: 'TWD', quantity: 1, price: 10 });
+  assert.equal(r3.status, 400, '數字代號會讓 .toUpperCase() 炸掉 computeAssets，必須擋');
+  const sum = await GET('/summary');
+  assert.ok(typeof sum.netWorth === 'number' && !Number.isNaN(sum.netWorth), '擋下後 summary 一切正常');
+});
+
+test('匯入 settings 陣列洞（自審r2-M5）：settings:[] → 400，設定不被默默重設', async () => {
+  const before = await GET('/settings');
+  const res = await POST('/import', { settings: ['oops'], transactions: [] });
+  assert.equal(res.status, 400, 'typeof []===object 不可繞過檢查');
+  const after = await GET('/settings');
+  assert.equal(after.usdTwd, before.usdTwd, '匯率不可被重設');
+  assert.equal(after.ib?.flexToken, before.ib?.flexToken, 'IB token 不可被清空');
+});
+
+test('signals 巢狀合併（自審r2-M6）：只更新一個市場不可抹掉其他市場的手動估值', async () => {
+  const before = await GET('/settings');
+  await PUT('/settings', { signals: { china: 11, japan: 1.1, korea: 0.9, taiwanPE: 15, taiwanYield: 3, realYieldManual: 2 } });
+  await PUT('/settings', { signals: { china: 12 } });   // 部分更新（修前：其他五個會被抹掉）
+  const s = await GET('/settings');
+  assert.equal(s.signals?.china, 12);
+  assert.equal(s.signals?.japan, 1.1, '只更新中國不可抹掉日本');
+  assert.equal(s.signals?.taiwanPE, 15, '只更新中國不可抹掉台股 PE');
+  await PUT('/settings', { signals: before.signals || {} });   // 還原
+});
+
+test('服務費不學（HTTP 全鏈路）：PUT 改服務費分類 → learned 不長新鍵', async () => {
+  const tx = await (await POST('/transactions', {
+    date: '2026-07-01', type: 'expense', category: '工作', subcategory: 'ChatGPT',
+    amount: 70, note: '國外交易服務費-70.00', storeKey: '國外交易服務費-70.00', source: 'stmt',
+  })).json();
+  await PUT(`/transactions/${tx.id}`, { category: '生活', subcategory: '日用品' });
+  const learned = await GET('/learned');
+  assert.ok(!('國外交易服務費-70.00' in learned), 'beforeSave 鏈路也不可學服務費');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('未知 API 路徑 → JSON 404（不再回 HTML）', async () => {
+  const res = await fetch(base + '/nonexistent-endpoint');
+  assert.equal(res.status, 404);
+  assert.ok((res.headers.get('content-type') || '').includes('application/json'));
+});
+
+test('匯出備份：Content-Disposition 正確、內容可解析（資料安全最後防線）', async () => {
+  const res = await fetch(base + '/export');
+  assert.match(res.headers.get('content-disposition') || '', /attachment; filename="finance-backup-\d{4}-\d{2}\.json"/);
+  const body = await res.json();
+  assert.ok(body.settings && Array.isArray(body.transactions), '備份要含 settings 與集合');
+});
+
+test('整批改卡片（HTTP 全鏈路）：stmtRef 前綴重寫＋帳戶名更換＋目標卡去重', async () => {
+  const cardA = await (await POST('/cards', { name: '甲卡', type: 'credit', issuer: '台新' })).json();
+  const cardB = await (await POST('/cards', { name: '乙卡', type: 'credit', issuer: '富邦' })).json();
+  // 甲卡匯入兩筆；乙卡先放一筆與其中一筆「同消費」（日期/金額/說明相同）
+  const rows = [
+    { date: '2026-07-02', amount: 100, desc: '店家一', store: '店家一', category: '飲食', subcategory: '', stmtRef: `${cardA.id}|2026-07-02|100|店家一` },
+    { date: '2026-07-03', amount: 200, desc: '店家二', store: '店家二', category: '飲食', subcategory: '', stmtRef: `${cardA.id}|2026-07-03|200|店家二` },
+  ];
+  const imp = await (await POST(`/cards/${cardA.id}/statement/import`, { transactions: rows })).json();
+  assert.equal(imp.imported, 2);
+  await POST(`/cards/${cardB.id}/statement/import`, { transactions: [
+    { date: '2026-07-02', amount: 100, desc: '店家一', store: '店家一', category: '飲食', subcategory: '', stmtRef: `${cardB.id}|2026-07-02|100|店家一` },
+  ] });
+  const r = await (await POST('/statement/reassign', { batchId: imp.batchId, toCardId: cardB.id })).json();
+  assert.equal(r.moved, 1, '一筆成功搬到乙卡');
+  assert.equal(r.dropped, 1, '與乙卡既有同筆消費 → 去重丟棄');
+  const txs = await GET('/transactions');
+  const moved = txs.find((t) => t.note === '店家二');
+  assert.equal(moved.account, '乙卡');
+  assert.ok(moved.stmtRef.startsWith(cardB.id + '|'), 'stmtRef 前綴要換成新卡 id');
+  // 清理
+  for (const t of txs.filter((x) => ['店家一', '店家二'].includes(x.note))) await DELETE_(`/transactions/${t.id}`);
+  await DELETE_(`/cards/${cardA.id}`); await DELETE_(`/cards/${cardB.id}`);
+});
+
 test('匯入正常：合法備份可還原、且還原後 summary 正常', async () => {
   const backup = await GET('/db');   // 用現有 db 當備份 → 冪等，不影響其他考題
   const res = await (await POST('/import', backup)).json();

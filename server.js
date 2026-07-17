@@ -25,11 +25,18 @@ app.use(marketRoutes);      // /quotes /cape /realyield
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
 
-// 統一錯誤處理（4 參數＝Express 錯誤中介）：壞的 JSON body 等會落到這裡，回乾淨 JSON，
-// 而不是 Express 預設的「含伺服器絕對路徑的 HTML 堆疊」（資訊外洩，多人化前尤其重要）。
-// eslint-disable-next-line no-unused-vars
+// 不存在的 API 路徑 → 明確 JSON 404（而非 Express 預設 HTML「Cannot GET…」）；前端打錯 URL 時看得懂
+app.use('/api', (req, res) => res.status(404).json({ error: '不存在的 API 路徑' }));
+
+// 統一錯誤處理（4 參數＝Express 錯誤中介）：回乾淨 JSON，不回含伺服器絕對路徑的 HTML 堆疊。
+// ⚠️ 自審 r2（中）：診斷不可吞——搬家衝突的「二選一」指引、schema tripwire 的「寫入端漏了驗證」
+// 都靠這裡送達；一律 console.error 留紀錄。有 status＝請求端問題（如壞 JSON body）回泛用訊息；
+// 無 status＝伺服器內部錯誤 → 500＋err.message（訊息皆為我們自己寫的中文指引，無堆疊、無路徑洩漏）。
 app.use((err, req, res, next) => {
-  res.status(err.status || 400).json({ error: '請求格式不正確' });
+  console.error('[api error]', /** @type {any} */ (err)?.message || err);
+  if (res.headersSent) return next(err);
+  if (/** @type {any} */ (err)?.status) return res.status(/** @type {any} */ (err).status).json({ error: '請求格式不正確' });
+  res.status(500).json({ error: String(/** @type {any} */ (err)?.message || '伺服器內部錯誤') });
 });
 
 const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串；app.listen 要 number）
