@@ -11,7 +11,7 @@ const subOptions = (parent, cur = '') => ['', ...subsOf(parent)]
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
-let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依備註/店名）
+let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依說明/店名）
 
 export async function renderTransactions() {
   const all = await api('/transactions');
@@ -77,7 +77,7 @@ export async function renderTransactions() {
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
-  // 備註欄排序：日期 → 店名 A→Z → 店名 Z→A → 日期（循環）
+  // 說明欄排序：日期 → 店名 A→Z → 店名 Z→A → 日期（循環）
   byId('sortNote').onclick = () => {
     listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
     renderTransactions();
@@ -110,7 +110,7 @@ function openTxForm(tx) {
       { key: 'subcategory', label: '子類（支出才有，可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'account', label: '帳戶 / 信用卡', type: 'text', placeholder: '例：台新活存、富邦卡' },
-      { key: 'note', label: '備註', type: 'text', full: true }
+      { key: 'note', label: '說明（店名）', type: 'text', full: true, placeholder: '例：全聯、星巴克' }   // 標籤與列表表頭一致（使用者定）
     ],
     values: tx || {},
     onMount: (/** @type {any} */ root) => {
