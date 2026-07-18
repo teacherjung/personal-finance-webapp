@@ -24,6 +24,33 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
+## 本輪審查重點（2026-07-19；上輪審到 #96，本輪範圍＝#97–#111 店名系統大改）
+
+這一批把「店名」拆成三層：**帳單原文**（stmtRef 第 4 段，不可變）→ **身分鑰匙 storeKey**
+（品牌層＝`storeKeyOf(desc)`，辨識「同一家店」、學習與店家檔案聚合靠它）→ **顯示名 note**
+（`cleanStore(desc)`＋`applyDisplayLabels` 顯示標記，帶分店、可自訂）。請特別檢驗這些不變量：
+
+1. **鑰匙純淨性**：storeKey 絕不可含顯示標記（（FP）（UE）停車費（））或分店括號。
+   檢查 `storeKeyOf`/`storeKeyOfName`/`stripBranch` 與所有寫入 storeKey 的路徑
+   （finalize、importRows、normalizeBranches、renameStoreDisplay）。
+2. **學習兩層分工**（learning.js）：分類學品牌層 key、顯示名只學原文級——
+   `learnFromStmtEdit` 分兩層寫；但**舊資料**若品牌層 key 未變（remap 時 nk===k）、
+   其 entry 裡殘留 name，會不會繼續連動改到同品牌其他分店？（remap 只在 key 變動時丟 name）
+3. **整理的自訂 vs 自動**（statement-import.js normalizeBranches）：自訂名以學習表為準、
+   平台殘骸名（isPlatformArtifactName）丟棄重生——邊界對嗎？會不會誤殺真自訂名？
+   nameByOrig 搬家與 skMap 撞 key 的先後順序有沒有漏洞？
+4. **優步分流**（statement.js）：叫車（TAXI_FLEET）→「Uber（車隊）」鑰匙 Uber；
+   外送→餐廳本身＋（UE）。cleanStore 裡 UBER_PREFIX 在規則鏈與分流兩處出現，順序/重複剔除有沒有問題？
+5. **reset 共用學習**（renameStoreDisplay）：鑰匙改品牌層後「被其他原文共用」變成常態，
+   reset 幾乎永遠不刪品牌層學習——這是刻意保守，但有沒有反而清不掉錯誤學習的死角？
+6. **店家檔案彈窗**（transactions.js openStoreProfile）：聚合口徑 storeIdOf、排行、月平均
+   （不含本月）的計算正確性；手動記帳（無 storeKey）用 note 聚合的邊界。
+7. **同步點**：AGENTS.md 的 cleanStore/顯示標記/學習列是否與程式一致（這輪改了很多次）。
+
+（此段每輪審查後由 Claude 更新範圍；常青規則在下方不變。）
+
+---
+
 請針對以下面向檢視程式，找出值得處理的問題：
 
 1. 正確性 bug（邏輯錯誤、邊界條件、多幣別/匯率換算、日期時區）
