@@ -192,9 +192,9 @@ test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP
   assert.equal(ub('優步-好麥永和豆漿店'), '好麥永和豆漿店（UE）', '外送要標');
   assert.equal(ub('優步-傳承永和豆漿大王林口店'), '傳承永和豆漿大王（UE）', '外送不留分店');
   assert.equal(ub('優步福爾摩沙股份有公司-好麥永和豆漿'), '好麥永和豆漿（UE）', '公司全名版同理');
-  assert.equal(ub('優步-皇冠大車隊'), '皇冠大車隊', '叫車不標');
-  assert.equal(ub('優步-Q2 Taxi車隊Taipei'), 'Q2 Taxi車隊', '叫車不標（英文 Taxi）');
-  assert.equal(ub('優步福爾摩沙股份有公司'), '優步福爾摩沙股份有公司', '沒有店家名＝不標');
+  assert.equal(ub('優步-皇冠大車隊'), 'Uber（皇冠大車隊）', '叫車＝店家是 Uber、車隊當分店，不加標記');
+  assert.equal(ub('優步-Q2 Taxi車隊Taipei'), 'Uber（Q2 Taxi車隊）', '英文 Taxi 也認得');
+  assert.equal(ub('優步福爾摩沙股份有公司'), 'Uber', '只有平台名＝Uber');
 });
 
 test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 → 停車費（原店名）', () => {
