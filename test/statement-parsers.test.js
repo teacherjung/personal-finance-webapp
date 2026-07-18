@@ -178,6 +178,14 @@ test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP
   assert.equal(applyDisplayLabels('12MINI（FP）', { desc: fpDesc }), '12MINI（FP）', '已是主體（FP）＝冪等');
   // 外幣註記不被當分店摘掉
   assert.equal(applyDisplayLabels('全家商店（漢中店）（USD/9.99）', { desc: 'FP-全家' }), '全家商店（FP）（USD/9.99）');
+  // 優食＝Uber Eats（使用者定 2026-07-18）：同一套規則，標記換成（優食）；平台名不可變成店名
+  const ue = (desc) => applyDisplayLabels(cleanStore(desc), { desc });
+  assert.equal(ue('優食-好麥永和豆漿店'), '好麥永和豆漿店（優食）');
+  assert.equal(cleanStore('優食-好麥永和豆漿店'), '好麥永和豆漿店', '鑰匙／清理後店名＝餐廳本身，不是平台');
+  assert.equal(ue('優食-八方雲集林口遠雄'), '八方雲集（優食）', '外送不留分店');
+  assert.equal(applyDisplayLabels('好麥永和豆漿店（優食）', { desc: '優食-好麥永和豆漿店' }), '好麥永和豆漿店（優食）', '冪等');
+  assert.equal(ue('優食'), '優食', '只有平台名（店名救不回）＝不加贅括號');
+  assert.equal(stripDisplayLabels('好麥永和豆漿店（優食）'), '好麥永和豆漿店');
 });
 
 test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 → 停車費（原店名）', () => {
