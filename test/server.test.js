@@ -509,6 +509,24 @@ test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同
   // 改回自動名（cleanStore(origA)＝截斷括號後＝「測試分店」）＝取消自訂：學習清除
   await POST('/statement/rename-store', { orig: origA, name: '測試分店' });
   assert.ok(!(await GET('/learned'))[origA]?.name, '改回自動名要清除自訂');
+  // 分類一起編輯（合併卡）：同原文整批改分類＋學習記分類（與自動分類不同才記）
+  await POST('/statement/rename-store', { orig: origA, name: '測試分店（桃園店）', category: '交通', subcategory: '停車費' });
+  const after2 = await GET('/transactions');
+  const g2 = (id) => after2.find(t => t.id === id);
+  assert.equal(g2(t1.id).category, '交通'); assert.equal(g2(t1.id).subcategory, '停車費');
+  assert.equal(g2(t3.id).category, '交通', '同原文的分類整批改');
+  assert.equal(g2(t2.id).category, '飲食', '不同原文的分類不可被連動');
+  const le = (await GET('/learned'))[origA];
+  assert.equal(le?.category, '交通', '分類與自動判斷不同→記進學習（未來匯入沿用）');
+  assert.equal(le?.name, '測試分店（桃園店）');
+  // 還原自動判斷（reset）：店名回 cleanStore、分類回自動分類、學習整筆清除
+  const rr = await (await POST('/statement/rename-store', { orig: origA, reset: true })).json();
+  assert.ok(rr.changed >= 2);
+  const after3 = await GET('/transactions');
+  const g3 = (id) => after3.find(t => t.id === id);
+  assert.equal(g3(t1.id).note, '測試分店', 'reset 後店名回自動清理名');
+  assert.equal(g3(t1.id).category, '其他', 'reset 後分類回自動判斷（無關鍵字命中→其他/未分類）');
+  assert.ok(!(await GET('/learned'))[origA], 'reset 清除整筆學習');
   // 防呆：缺原文／空名 → 400
   assert.equal((await POST('/statement/rename-store', { name: 'x' })).status, 400);
   assert.equal((await POST('/statement/rename-store', { orig: origA, name: '  ' })).status, 400);

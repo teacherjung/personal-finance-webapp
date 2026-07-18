@@ -71,12 +71,15 @@ test('原文級覆蓋（2026-07-18 店名對照表逐列改名）：learned[原�
   // 銀行截斷讓兩個分店共用 storeKey（12MINI 案例）：原文級各自取名、互不連動
   const db = { learnedCategories: {
     '測試分店': { name: '粗鑰匙名' },                          // storeKey 級（舊機制）
-    '測試分店 (桃X999 Taipei': { name: '測試分店（桃園店）' }   // 原文級（細）
+    '測試分店 (桃X999 Taipei': { name: '測試分店（桃園店）', category: '交通', subcategory: '停車費' }   // 原文級（細，含分類）
   } };
   const [tao, xin] = applyLearned(db, [
     { store: '測試分店', desc: '測試分店 (桃X999 Taipei', category: '飲食', subcategory: '' },
     { store: '測試分店', desc: '測試分店 (新X999 Taipei', category: '飲食', subcategory: '' }
   ]);
   assert.equal(tao.store, '測試分店（桃園店）', '有原文級學習→用原文級（優先於 storeKey 級）');
+  assert.equal(tao.category, '交通', '原文級分類也套用（合併卡的分類編輯）');
+  assert.equal(tao.subcategory, '停車費');
   assert.equal(xin.store, '粗鑰匙名', '沒有原文級→退回 storeKey 級');
+  assert.equal(xin.category, '飲食', '沒有原文級分類→維持原判斷');
 });
