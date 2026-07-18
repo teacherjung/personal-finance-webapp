@@ -264,7 +264,8 @@ function openBranchPreview(count, changes) {
     try {
       const r = await api('/statement/normalize-branches', { method: 'POST', body: {} });
       close();
-      toast(r.changed ? `已整理 ${r.changed} 筆說明格式` : '沒有需要整理的說明格式');
+      const extra = r.learnedNamesFixed ? `，並修正 ${r.learnedNamesFixed} 筆學過的舊店名` : '';
+      toast(r.changed ? `已整理 ${r.changed} 筆說明格式${extra}` : (r.learnedNamesFixed ? `已修正 ${r.learnedNamesFixed} 筆學過的舊店名` : '沒有需要整理的說明格式'));
       renderSettings();
     } catch (err) { toast('整理失敗：' + err.message, true); }
   };

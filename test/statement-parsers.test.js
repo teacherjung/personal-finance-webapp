@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rocToIso, parseFubon, parseTaishinPdf, finalize, parsePdfAuto,
-  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize, normalizeStoreDisplay, applyDisplayLabels
+  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize, normalizeStoreDisplay, applyDisplayLabels,
+  stripDisplayLabels
 } from '../lib/statement.js';
 
 test('rocToIso：民國日期 → 西元 ISO', () => {
@@ -142,8 +143,12 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('台亞加油站'), '台亞加油站');                 // 已是品牌名＝不變（冪等）
   assert.equal(normalizeStoreDisplay('台亞加油站（林口第二交流道南站）'), '台亞加油站（林口第二交流道南站）');   // 冪等
   assert.equal(normalizeStoreDisplay('台亞加油站林口二站'), '台亞加油站（林口二站）');   // 品牌後直接接分店也切
-  // 台灣普客二四 → Times Parking
-  assert.equal(normalizeStoreDisplay('台灣普客二四'), 'Times Parking');
+  // 台灣普客二四（使用者定 2026-07-18：改回中文名，反轉先前的 → Times Parking）：中英寫法統一
+  assert.equal(normalizeStoreDisplay('台灣普客二四'), '台灣普客二四');           // 冪等
+  assert.equal(normalizeStoreDisplay('Times Parking'), '台灣普客二四');          // 舊資料英文殘留 → 統一
+  assert.equal(normalizeStoreDisplay('台灣普客二四股份有'), '台灣普客二四');     // 公司字尾截斷殘尾不當分店
+  assert.equal(normalizeStoreDisplay('TIMESPARKING'), '台灣普客二四');           // 無空格寫法也統一
+  assert.equal(normalizeStoreDisplay('Times Square'), 'Times Square');           // 只認 Times Parking，別的 Times 開頭不誤傷
   // Codex#5：品牌正規化不可丟掉分店與外幣註記
   assert.equal(normalizeStoreDisplay('台亞加油站-林口站'), '台亞加油站（林口站）');           // 帶連字號的分店
   assert.equal(normalizeStoreDisplay('台亞林口站（USD/9.99）'), '台亞加油站（林口站）（USD/9.99）');   // 外幣尾碼保留
@@ -184,4 +189,35 @@ test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 �
   assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
   // 兩個標記可併存（FP 外送的停車費，理論組合；順序＝FP 先、停車包在外層）
   assert.equal(applyDisplayLabels('某場', { desc: 'FP-某場', subcategory: '停車費' }), '停車費（某場（FP））');
+});
+
+test('雜訊主體拆殼（使用者回報 2026-07-18）：聯信／停車場被誤當主體 → 拆出真店名再正規化', () => {
+  // 舊規則把收單方「聯信」、類別詞「停車場」當成主體，真店名被關進括號——整理要能治這些舊 note
+  assert.equal(normalizeStoreDisplay('聯信（Times Parking股份有）'), '台灣普客二四');   // 拆殼＋修殘尾＋統一中文名
+  assert.equal(normalizeStoreDisplay('停車場（Times）'), '台灣普客二四');               // 「Times」單獨出現＝普客二四舊縮寫
+  assert.equal(normalizeStoreDisplay('停車場（俥亭停車）'), '俥亭停車');
+  assert.equal(normalizeStoreDisplay('聯信（台灣普客二四股份有）'), '台灣普客二四');
+  // 拆完是乾淨名 → 再走一圈不變（冪等）
+  assert.equal(normalizeStoreDisplay('俥亭停車'), '俥亭停車');
+  // 只認白名單主體：其他店名的括號分店不拆
+  assert.equal(normalizeStoreDisplay('統一超商（德權）'), '統一超商（德權）');
+});
+
+test('stripDisplayLabels：把顯示標記拆回乾淨店名（店名格式整理用）', () => {
+  assert.equal(stripDisplayLabels('停車費（台灣普客二四）'), '台灣普客二四');
+  assert.equal(stripDisplayLabels('停車費（停車場（Times））'), '停車場（Times）');   // 巢狀括號取最外層
+  assert.equal(stripDisplayLabels('12MINI（FP）'), '12MINI');
+  assert.equal(stripDisplayLabels('品田牧場（FP）（USD/9.99）'), '品田牧場（USD/9.99）');   // 外幣註記保留
+  assert.equal(stripDisplayLabels('停車費（某場（FP））'), '某場');                    // 兩層標記都拆
+  assert.equal(stripDisplayLabels('普通店名'), '普通店名');                            // 沒標記＝不動
+  // 拆→整理→重上標記＝冪等（正確的 note 走整理流程不變）
+  const roundtrip = (note, desc, sub) =>
+    applyDisplayLabels(normalizeStoreDisplay(stripDisplayLabels(note)), { desc, subcategory: sub });
+  assert.equal(roundtrip('停車費（台灣普客二四）', '聯信-台灣普客二四股份有A0145 TAIPEI', '停車費'), '停車費（台灣普客二四）');
+  assert.equal(roundtrip('停車費（eTag停車）', 'eTag停車3087-H8:xxx', '停車費'), '停車費（eTag停車）');
+  assert.equal(roundtrip('12MINI（FP）', 'FP-12MINI (桃O2732 Taipei', '餐廳'), '12MINI（FP）');
+  // 治療路徑：包著標記的舊爛 note 一圈就修好
+  assert.equal(roundtrip('停車費（停車場（Times））', '聯信-台灣普客二四股份有A0145 NEW TA', '停車費'), '停車費（台灣普客二四）');
+  assert.equal(roundtrip('停車費（聯信（Times Parking股份有））', '聯信-台灣普客二四股份有A0145 TAIPEI', '停車費'), '停車費（台灣普客二四）');
+  assert.equal(roundtrip('停車費（停車場（俥亭停車））', '連加*?亭停車事業股份Taipei', '停車費'), '停車費（俥亭停車）');
 });

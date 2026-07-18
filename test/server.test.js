@@ -557,6 +557,46 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   await DELETE_(`/transactions/${tx.id}`);
 });
 
+test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整理拆殼修舊 note、storeKey 搬家、學習表錯名一併治', async () => {
+  const origT = '聯信-台灣普客二四股份有A0145 NEW TA';
+  // 舊爛資料重現：note 包著標記的錯名（巢狀括號）、storeKey 是舊規則的產物
+  const tx = await (await POST('/transactions', {
+    date: '2026-07-13', type: 'expense', category: '交通', subcategory: '停車費', amount: 40,
+    note: '停車費（停車場（Times））', storeKey: '聯信（Times Parking股份有）',
+    stmtRef: `c9|2026-07-13|40|${origT}`, source: 'stmt',
+  })).json();
+  // 學習表塞當年的垃圾（原文級錯名＋舊 storeKey 級學習）——經備份匯入路徑 seed
+  const backup = await GET('/db');
+  const seeded = { ...(backup.learnedCategories || {}) };
+  seeded[origT] = { name: '停車場（Times）' };
+  seeded['聯信（Times Parking股份有）'] = { name: 'Times Parking', category: '交通', subcategory: '停車費' };
+  assert.equal((await POST('/import', { ...backup, learnedCategories: seeded })).status, 200);
+  // 店名格式整理（套用）：note 先拆殼再治、storeKey 用原文重算、學習 key 跟著 storeKey 搬、學過的錯名一併治
+  const applied = await (await POST('/statement/normalize-branches', {})).json();
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after.note, '停車費（台灣普客二四）', '包著停車標記的舊 note 要能治（拆殼→整理→重上標記）');
+  assert.equal(after.storeKey, '台灣普客二四', 'storeKey 用原文重算：聯信前綴＋「股份有」殘尾都修掉');
+  const learned = await GET('/learned');
+  assert.equal(learned[origT]?.name, '台灣普客二四', '原文級學習：key 不動、錯名治好');
+  assert.ok(!learned['聯信（Times Parking股份有）'], '舊 storeKey 的學習不可原地留下');
+  assert.equal(learned['台灣普客二四']?.name, '台灣普客二四', '學習跟著 storeKey 搬家、錯名（Times Parking）治好');
+  assert.equal(learned['台灣普客二四']?.category, '交通', '搬家不可弄丟分類學習');
+  assert.ok(applied.learnedNamesFixed >= 2, '治了幾個學過的錯名要回報');
+  // 冪等：治好的不再出現在預覽
+  const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok(!(again.changes || []).some(c => c.id === tx.id), '治好的筆不再出現');
+  // 還原自動判斷：#97 起 autoName 帶標記、storeKey 不帶——共用學習必須用 storeKey（cleanStore）找才清得掉
+  const rr = await (await POST('/statement/rename-store', { orig: origT, reset: true })).json();
+  assert.equal(rr.ok, true);
+  const learned2 = await GET('/learned');
+  assert.ok(!learned2[origT], 'reset 清原文級學習');
+  assert.ok(!learned2['台灣普客二四'], 'reset 也清無人共用的 storeKey 級學習（修：不可拿帶標記的 autoName 當 key 找）');
+  const after2 = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after2.note, '停車費（台灣普客二四）', 'reset 後＝自動判斷名（帶停車標記）');
+  assert.equal(after2.subcategory, '停車費', '分類回自動判斷（普客二四 是停車費關鍵字）');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
 test('自訂分類（HTTP）：GET 回生效樹、POST 改名連動舊交易，測後還原樹', async () => {
   const orig = await GET('/categories');
   assert.ok(orig['娛樂'] && orig['其他'].includes('未分類'), 'GET 回內建預設樹');
