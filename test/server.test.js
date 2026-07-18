@@ -597,6 +597,31 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
   await DELETE_(`/transactions/${tx.id}`);
 });
 
+test('店名格式整理｜自訂 vs 自動（使用者定 2026-07-18）：沒自訂的從原文重生（eTag 場站名救回）、自訂的保留', async () => {
+  // A：自動名（學習表沒 name）——舊 note 已丟場站名，只有原文還留著 → 整理用現行規則從原文重生
+  const ta = await (await POST('/transactions', {
+    date: '2026-07-14', type: 'expense', category: '交通', subcategory: '停車費', amount: 60,
+    note: '停車費（eTag停車）', storeKey: 'eTag停車',
+    stmtRef: 'c9|2026-07-14|60|eTag停車3087-H8:救國團林口運動中心', source: 'stmt',
+  })).json();
+  // B：自訂名（rename-store 學了 name）——整理不可把自訂名洗掉
+  const origB = 'QQ小館X999 Taipei';
+  const tb = await (await POST('/transactions', {
+    date: '2026-07-13', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 300,
+    note: 'QQ小館', storeKey: 'QQ小館', stmtRef: `c9|2026-07-13|300|${origB}`, source: 'stmt',
+  })).json();
+  await POST('/statement/rename-store', { orig: origB, name: '我的愛店' });
+  await (await POST('/statement/normalize-branches', {})).json();
+  const after = await GET('/transactions');
+  const g = (id) => after.find(t => t.id === id);
+  assert.equal(g(ta.id).note, 'eTag 停車（救國團林口運動中心）', '非自訂 → 從原文重生：場站名救回、名字已含停車不再包停車費（）');
+  assert.equal(g(ta.id).storeKey, 'eTag 停車（救國團林口運動中心）', 'storeKey 同步重算');
+  assert.equal(g(tb.id).note, '我的愛店', '自訂名（學習表有 name）→ 就地整理、保留自訂');
+  // 清理：B 先還原自動（清學習）再刪
+  await POST('/statement/rename-store', { orig: origB, reset: true });
+  await DELETE_(`/transactions/${ta.id}`); await DELETE_(`/transactions/${tb.id}`);
+});
+
 test('自訂分類（HTTP）：GET 回生效樹、POST 改名連動舊交易，測後還原樹', async () => {
   const orig = await GET('/categories');
   assert.ok(orig['娛樂'] && orig['其他'].includes('未分類'), 'GET 回內建預設樹');

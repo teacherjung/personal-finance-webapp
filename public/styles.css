@@ -431,6 +431,27 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .ending-list,
 .ended-list { margin-top: 16px; }
 
+/* 店家消費檔案（收支列表點店名開啟，使用者定 2026-07-18） */
+.store-open { cursor: pointer; border-bottom: 1px dashed var(--line-2); }
+.store-open:hover { color: var(--accent); border-bottom: 1px solid var(--accent); }
+.store-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+.store-rank { font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.store-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.store-stats > div { background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.store-stats .muted { font-size: 12px; }
+.store-stats .stat.sm { margin-top: 3px; }
+.store-freq { color: var(--text-dim); margin-bottom: 4px; }
+.store-freq b, .store-sec-head b { color: var(--text); }
+.store-sec { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
+.store-sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.store-sec-title { font-size: 12px; color: var(--text-dim); display: inline-block; margin-bottom: 4px; }
+.store-bars { display: flex; align-items: flex-end; gap: 8px; height: 64px; margin-top: 8px; }
+.store-bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; text-align: center; }
+.store-bar { background: var(--accent); opacity: .38; border-radius: 3px 3px 0 0; }
+.store-bar.cur { opacity: 1; }
+.store-bar-col > span { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.store-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 2.5px 0; }
+
 @media (max-width: 820px) {
   main { padding: 28px 24px; }
   .page-head { align-items: flex-start; }
