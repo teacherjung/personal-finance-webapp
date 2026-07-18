@@ -185,6 +185,9 @@ test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 �
   assert.equal(park('eTag停車'), '停車費（eTag停車）');
   // 冪等：已是「停車費（…）」不再包一層
   assert.equal(park('停車費（嘟嘟房台北西門站）'), '停車費（嘟嘟房台北西門站）');
+  // 例外白名單（使用者定 2026-07-18）：「儲值」不是在某停車場繳費 → 維持原名不包
+  assert.equal(park('eTag自動儲值'), 'eTag自動儲值');
+  assert.equal(park('eTag停車'), '停車費（eTag停車）', 'eTag停車＝真的在停車場繳費，照包');
   // 不是停車費子類的不套用（即使店名有「停車」二字）
   assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
   // 兩個標記可併存（FP 外送的停車費，理論組合；順序＝FP 先、停車包在外層）
@@ -217,6 +220,7 @@ test('stripDisplayLabels：把顯示標記拆回乾淨店名（店名格式整�
   assert.equal(roundtrip('停車費（eTag停車）', 'eTag停車3087-H8:xxx', '停車費'), '停車費（eTag停車）');
   assert.equal(roundtrip('12MINI（FP）', 'FP-12MINI (桃O2732 Taipei', '餐廳'), '12MINI（FP）');
   // 治療路徑：包著標記的舊爛 note 一圈就修好
+  assert.equal(roundtrip('停車費（eTag自動儲值）', 'eTag自動儲值3087-H8', '停車費'), 'eTag自動儲值', '被包錯的儲值拆回原名（例外白名單）');
   assert.equal(roundtrip('停車費（停車場（Times））', '聯信-台灣普客二四股份有A0145 NEW TA', '停車費'), '停車費（台灣普客二四）');
   assert.equal(roundtrip('停車費（聯信（Times Parking股份有））', '聯信-台灣普客二四股份有A0145 TAIPEI', '停車費'), '停車費（台灣普客二四）');
   assert.equal(roundtrip('停車費（停車場（俥亭停車））', '連加*?亭停車事業股份Taipei', '停車費'), '停車費（俥亭停車）');
