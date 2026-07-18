@@ -10,7 +10,7 @@ const TEST_STORE = join(tmpdir(), `finance-cats-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const repo = await import('../lib/repo.js');
-const { effectiveTree, sanitizeTree, conform, saveTree } = await import('../lib/services/categories.js');
+const { effectiveTree, sanitizeTree, conform, saveTree, resolveImportCategory } = await import('../lib/services/categories.js');
 
 after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
@@ -93,6 +93,54 @@ test('saveTree｜刪子類：交易子類清空（不分子類），大類不變
   saveTree({ tree: nt });
   assert.equal(txById('t4').category, '飲食');
   assert.equal(txById('t4').subcategory, '', '被刪的子類→不分子類');
+});
+
+test('別名｜改名內建大類：未來自動分類輸出的舊名 → 對映到新名（使用者定 2026-07）', () => {
+  seed();
+  const nt = renameKey(effectiveTree(repo.getDb()), '娛樂', '休閒');
+  saveTree({ tree: nt, parentRenames: [{ from: '娛樂', to: '休閒' }] });
+  // 分類器仍會輸出內建名「娛樂」；resolveImportCategory 要把它變「休閒」
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '娛樂', '電影'), ['休閒', '電影']);
+  assert.deepEqual(repo.getDb().settings.categoryAliases, { '娛樂': '休閒' }, '別名有存進 settings');
+});
+
+test('別名｜刪除大類：不建別名，自動分類的該分類 → 其他/未分類', () => {
+  seed();
+  const nt = effectiveTree(repo.getDb());
+  delete nt['生活'];
+  saveTree({ tree: nt });
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '生活', '日用品'), ['其他', '未分類']);
+  assert.ok(!('生活' in (repo.getDb().settings.categoryAliases || {})), '刪除不建別名');
+});
+
+test('別名｜連續改名（娛樂→休閒→放鬆）：舊名鏈式對映到最終名', () => {
+  seed();
+  let nt = renameKey(effectiveTree(repo.getDb()), '娛樂', '休閒');
+  saveTree({ tree: nt, parentRenames: [{ from: '娛樂', to: '休閒' }] });
+  nt = renameKey(effectiveTree(repo.getDb()), '休閒', '放鬆');
+  saveTree({ tree: nt, parentRenames: [{ from: '休閒', to: '放鬆' }] });
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '娛樂', '電影'), ['放鬆', '電影'], '最早的舊名也對映到最終名');
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '休閒', '電影'), ['放鬆', '電影']);
+});
+
+test('別名｜子類改名：未來自動分類的舊子類 → 新子類', () => {
+  seed();
+  const nt = effectiveTree(repo.getDb());
+  nt['飲食'] = nt['飲食'].map(s => s === '餐廳' ? '正餐' : s);
+  saveTree({ tree: nt, subRenames: [{ parent: '飲食', from: '餐廳', to: '正餐' }] });
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '飲食', '餐廳'), ['飲食', '正餐']);
+});
+
+test('別名｜改名後又用同名新增回舊名：別名自清（不再誤導）', () => {
+  seed();
+  let nt = renameKey(effectiveTree(repo.getDb()), '娛樂', '休閒');
+  saveTree({ tree: nt, parentRenames: [{ from: '娛樂', to: '休閒' }] });
+  // 現在把「娛樂」當全新大類加回來（無 rename）→ 「娛樂」是真分類了，別名 key 娛樂 應被修剪掉
+  nt = effectiveTree(repo.getDb());
+  nt['娛樂'] = ['電影'];
+  saveTree({ tree: nt });
+  assert.ok(!('娛樂' in (repo.getDb().settings.categoryAliases || {})), '娛樂 已是真分類，別名自清');
+  assert.deepEqual(resolveImportCategory(repo.getDb(), '娛樂', '電影'), ['娛樂', '電影']);
 });
 
 test('saveTree｜刪光也保底：其他/未分類 永遠存在', () => {
