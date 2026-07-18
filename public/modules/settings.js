@@ -3,35 +3,29 @@ import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openFor
 import { icon } from './icons.js';
 
 export async function renderSettings() {
-  const [s, learned, txs] = await Promise.all([api('/settings'), api('/learned'), api('/transactions')]);
-  const learnedEntries = Object.entries(learned || {});
-  // 店名對照表（使用者定 2026-07）：帳單原文（藏在 stmtRef 的第 4 段起）→ 目前顯示名（note——
-  // 自動清理後的，或使用者手動改過就是改過的版本）。同一種對照去重只列一次；原文＝顯示的不列（精簡）。
-  const pairSeen = new Map();
+  const [s, txs, expTree] = await Promise.all([api('/settings'), api('/transactions'), api('/categories')]);
+  // 帳單店名／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
+  // 顯示名/分類取「該原文最新一筆」為代表（編輯時整批統一）。編輯以原文為準——不同分店各自取名/分類。
+  const byOrig = new Map();
   for (const t of txs || []) {
     if (t.source !== 'stmt' || !t.stmtRef) continue;
     const parts = String(t.stmtRef).split('|');   // stmtRef＝卡id|消費日|金額|原始說明
     if (parts.length < 4) continue;
     const orig = parts.slice(3).join('|').trim();   // 原文可能含「|」→ 取第 3 個分隔後全部
-    const cur = String(t.note || '').trim();
-    if (!orig || !cur || orig === cur) continue;
-    const k = orig + '\u0000' + cur;
-    if (!pairSeen.has(k)) pairSeen.set(k, { orig, cur });   // 編輯顯示名以 orig（帳單原文）為準——每列獨立、不同分店可各自取名
+    if (!orig) continue;
+    const prev = byOrig.get(orig);
+    if (!prev || String(t.date || '') > prev.date) {
+      byOrig.set(orig, { orig, date: String(t.date || ''), cur: String(t.note || '').trim(),
+        cat: String(t.category || ''), sub: String(t.subcategory || '') });
+    }
   }
-  const storePairs = [...pairSeen.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
-  const storeMapRows = storePairs.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
-        <thead><tr><th>帳單原文</th><th>顯示為</th><th></th></tr></thead>
-        <tbody>${storePairs.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td>
-          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" title="修改這一列的顯示名">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
-    : '<p class="empty">尚無有調整的店名。匯入信用卡帳單後，這裡會列出「帳單原文 → 顯示名」的對照。</p>';
-  const learnedRows = learnedEntries.length ? `<div class="tbl-wrap"><table>
-        <thead><tr><th>原店名</th><th>顯示為</th><th>分類</th><th></th></tr></thead>
-        <tbody>${learnedEntries.map(([store, v]) => `<tr>
-          <td>${esc(store)}</td>
-          <td>${v.name ? esc(v.name) : '<span class="muted">（同原名）</span>'}</td>
-          <td>${v.category ? esc(v.category) + (v.subcategory ? ` <span class="muted">· ${esc(v.subcategory)}</span>` : '') : '<span class="muted">（未學）</span>'}</td>
-          <td><button class="btn-danger btn-sm" data-unlearn="${esc(store)}" title="刪除這筆學習">${icon('trash', 15)}</button></td>
-        </tr>`).join('')}</tbody></table></div>` : '<p class="empty">尚無學習紀錄。改過帳單消費的分類或店名後就會出現在這裡。</p>';
+  const storeRows = [...byOrig.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
+  const storeMapRows = storeRows.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
+        <thead><tr><th>帳單原文</th><th>顯示為</th><th>分類</th><th></th></tr></thead>
+        <tbody>${storeRows.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td>
+          <td>${esc(p.cat)}${p.sub ? ` <span class="muted">· ${esc(p.sub)}</span>` : ''}</td>
+          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="empty">尚無帳單記錄。匯入信用卡帳單後，這裡會列出每家店的顯示名與分類。</p>';
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
 
@@ -57,15 +51,9 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">店名對照表（帳單原文 → 顯示名）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。<b>按列尾的編輯鈕可直接改顯示名</b>——只影響該列原文的記錄（同原文的各月份整批改），未來匯入同原文也自動用新名；把顯示名改回自動清理的結果＝取消自訂。</p>
-      ${storeMapRows}
-    </div>
-
-    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改<b>分類</b>、或在編輯裡改<b>店名（說明）</b>時，系統會自動記住，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
-      ${learnedRows}
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
+      ${storeMapRows}
     </div>
 
     <h2 class="section-title">資產配置</h2>
@@ -195,25 +183,52 @@ export async function renderSettings() {
       openBranchPreview(prev.changed, prev.changes || []);
     } catch (err) { toast('整理失敗：' + err.message, true); }
   };
-  // 店名對照表：修改顯示名——以「這一列的帳單原文」為準（同原文整批改＋記學習，未來匯入沿用；
-  // 不同分店即使共用內部鑰匙也可各自取名，2026-07-18 使用者定）
+  // 帳單店名／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
+  //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
+  const expParents = Object.keys(expTree || {});
   view().querySelectorAll('[data-editstore]').forEach(b => b.onclick = () => {
-    const orig = /** @type {HTMLElement} */ (b).dataset.editstore || '';
-    const cur = /** @type {HTMLElement} */ (b).dataset.cur || '';
+    const el = /** @type {HTMLElement} */ (b);
+    const orig = el.dataset.editstore || '';
+    const cur = el.dataset.cur || '', cat0 = el.dataset.cat || '', sub0 = el.dataset.sub || '';
+    const catOpts = (cat0 && !expParents.includes(cat0)) ? [cat0, ...expParents] : expParents;   // 保留目前值（防默默改資料）
     openForm({
-      title: '修改顯示名（只影響這一列）',
-      fields: [{ key: 'name', label: `原文「${orig}」的顯示名`, type: 'text', required: true, full: true }],
-      values: { name: cur },
+      title: '編輯店名與分類（只影響這一列）',
+      fields: [
+        { key: 'name', label: `原文「${orig}」的顯示名`, type: 'text', required: true, full: true },
+        { key: 'category', label: '分類', type: 'select', options: catOpts, default: cat0 || expParents[0] },
+        { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] }   // 由 onMount 依分類連動
+      ],
+      values: { name: cur, category: cat0, subcategory: sub0 },
+      onMount: (/** @type {any} */ root) => {
+        const catSel = root.querySelector('#f_category');
+        const subSel = root.querySelector('#f_subcategory');
+        const fill = (/** @type {string} */ parent, /** @type {string} */ curSub) => {
+          const subs = ['', ...((expTree || {})[parent] || [])];
+          if (curSub && !subs.includes(curSub)) subs.unshift(curSub);
+          subSel.innerHTML = subs.map(x => `<option value="${esc(x)}" ${x === curSub ? 'selected' : ''}>${x === '' ? '（不分子類）' : esc(x)}</option>`).join('');
+        };
+        fill(catSel.value, sub0);
+        catSel.onchange = () => fill(catSel.value, '');
+        // 還原自動判斷：整列恢復系統的自動店名＋自動分類、清除這一列的學習
+        const rb = document.createElement('button');
+        rb.type = 'button'; rb.className = 'btn-ghost'; rb.textContent = '還原自動判斷';
+        rb.onclick = async () => {
+          if (!confirm('還原成系統自動判斷的店名與分類？（此原文的所有記錄一起還原，並清除學習）')) return;
+          try {
+            const r = await api('/statement/rename-store', { method: 'POST', body: { orig, reset: true } });
+            root.querySelector('.x-close').click();
+            toast(`已還原 ${r.changed} 筆`);
+            renderSettings();
+          } catch (e2) { toast('還原失敗：' + e2.message, true); }
+        };
+        root.querySelector('.form-actions')?.prepend(rb);
+      },
       onSubmit: async (d) => {
-        const r = await api('/statement/rename-store', { method: 'POST', body: { orig, name: d.name } });
-        toast(`已更新 ${r.changed} 筆記錄的顯示名`);
+        const r = await api('/statement/rename-store', { method: 'POST', body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '' } });
+        toast(`已更新 ${r.changed} 筆記錄`);
         renderSettings();
       }
     });
-  });
-  view().querySelectorAll('[data-unlearn]').forEach(b => b.onclick = async () => {
-    try { await api('/learned/delete', { method: 'POST', body: { key: b.dataset.unlearn } }); toast('已刪除學習'); renderSettings(); }
-    catch (err) { toast('刪除失敗：' + err.message, true); }
   });
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
