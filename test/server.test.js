@@ -615,7 +615,7 @@ test('店名格式整理｜自訂 vs 自動（使用者定 2026-07-18）：沒�
   const after = await GET('/transactions');
   const g = (id) => after.find(t => t.id === id);
   assert.equal(g(ta.id).note, 'eTag 停車（救國團林口運動中心）', '非自訂 → 從原文重生：場站名救回、名字已含停車不再包停車費（）');
-  assert.equal(g(ta.id).storeKey, 'eTag 停車（救國團林口運動中心）', 'storeKey 同步重算');
+  assert.equal(g(ta.id).storeKey, 'eTag 停車', 'storeKey＝品牌層身分鑰匙（場站在顯示名）');
   assert.equal(g(tb.id).note, '我的愛店', '自訂名（學習表有 name）→ 就地整理、保留自訂');
   // 清理：B 先還原自動（清學習）再刪
   await POST('/statement/rename-store', { orig: origB, reset: true });
