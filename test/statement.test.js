@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -147,8 +147,10 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     assert.equal(cleanStore(raw), display, `顯示名(${raw})`);
     assert.equal(storeKeyOf(raw), key, `身分鑰匙(${raw})`);
   }
-  // 外幣註記不可被當分店摘掉
-  assert.equal(storeKeyOfName('品田牧場（USD/9.99）'), '品田牧場（USD/9.99）');
+  // 外幣註記＝這一筆的金額，不是店家身分 → 鑰匙要脫掉（Codex#6；顯示名照舊保留幣別）
+  assert.equal(storeKeyOfName('品田牧場（USD/9.99）'), '品田牧場');
+  assert.equal(storeKeyOf('APPLE.COM/BILL（USD/9.99）'), storeKeyOf('APPLE.COM/BILL（USD/19.99）'),
+    '同一家店不可因為每筆金額不同而裂成兩把鑰匙');
   // 沒有分店的名字＝原樣
   assert.equal(storeKeyOfName('石二鍋'), '石二鍋');
   assert.equal(storeKeyOf('eTag停車3087-H8:救國團林口運動中心'), 'eTag 停車', '場站屬顯示層，鑰匙只到品牌');
@@ -172,4 +174,13 @@ test('假自訂名 isPlatformArtifactName（使用者定 2026-07-18）：平台�
   assert.equal(isPlatformArtifactName('優食堂'), false, '店名剛好以平台名開頭但不是「平台（…）」格式');
   assert.equal(isPlatformArtifactName(''), false);
   assert.equal(isPlatformArtifactName(undefined), false);
+});
+
+test('Codex#1｜優步分類與顯示標記同口徑：認不出店家的一律當外送', () => {
+  // 顯示標記說（UE）＝外送，分類就不能說「交通/計程車」——兩邊必須同一判準
+  assert.deepEqual(categorize('優步-XYZ商行'), ['飲食', '外送'], '非車隊店家＝外送');
+  assert.equal(applyDisplayLabels(cleanStore('優步-XYZ商行'), { desc: '優步-XYZ商行' }), 'XYZ商行（UE）');
+  assert.deepEqual(categorize('優步-皇冠大車隊'), ['交通', '計程車／Uber'], '車隊＝叫車（回歸）');
+  assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '只有平台名＝叫車（回歸）');
+  assert.deepEqual(categorize('星巴克'), ['飲食', '飲料／咖啡'], '一般店家不受影響');
 });

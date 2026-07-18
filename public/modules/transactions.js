@@ -125,6 +125,8 @@ function rowHtml(t) {
 // 合併計算、彈窗內各列小計）；手動記帳沒有 storeKey → 用說明文字，與品牌同名會自然併入。
 /** @param {any} x @returns {string} */
 const storeIdOf = (x) => String(x.storeKey || x.note || '').trim();
+// 外送標記（顯示名尾巴）：與後端 DELIVERY_PREFIXES 的 tag 對齊——加平台時兩邊都要補（Codex#10）
+const DELIVERY_TAG_RE = /（(?:FP|UE)）/;
 /** 彈窗金額格式（使用者定 2026-07-18：「358 NT」；僅此彈窗，全站其他地方仍用 money() 的「元」） @param {number} n */
 const fmtNT = (n) => Math.round(n).toLocaleString('en-US') + ' NT';
 
@@ -174,13 +176,15 @@ function openStoreProfile(t, all) {
     const h = v > 0 ? Math.max(Math.round(v / maxM * 100), 5) : 0;
     return `<div class="store-bar-col" title="${m}：${fmtNT(v)}"><div class="store-bar${m === curM ? ' cur' : ''}" style="height:${h}%"></div><span>${Number(m.slice(5))}月</span></div>`;
   }).join('');
-  const histMonths = Object.keys(byMonth).filter(m => m !== curM);
-  const histAvg = histMonths.length ? histMonths.reduce((s, m) => s + byMonth[m], 0) / histMonths.length : 0;
+  // 比較基準＝圖上「前 5 個完整月」的平均，沒消費的月份算 0（Codex#7）：原本只平均「有消費的月份」
+  // 又不限於圖表區間，會拿三年前的月份跟本月比，且偶爾才來的店平均被灌高。標籤也寫明區間，免得誤讀。
+  const winMonths = months.slice(0, 5);
+  const histAvg = winMonths.reduce((s, m) => s + (byMonth[m] || 0), 0) / winMonths.length;
   const curV = byMonth[curM] || 0;
   let monthTxt = curV > 0 ? `本月 <b>${fmtNT(curV)}</b>` : '本月還沒來過';
   if (curV > 0 && histAvg > 0) {
     const pct = Math.round((curV - histAvg) / histAvg * 100);
-    monthTxt += pct === 0 ? ` · 與月平均（${fmtNT(histAvg)}）差不多` : ` · 比月平均（${fmtNT(histAvg)}）${pct > 0 ? '多' : '少'} ${Math.abs(pct)}%`;
+    monthTxt += pct === 0 ? ` · 與前 5 個月平均（${fmtNT(histAvg)}）差不多` : ` · 比前 5 個月平均（${fmtNT(histAvg)}）${pct > 0 ? '多' : '少'} ${Math.abs(pct)}%`;
   }
   // 同店不同寫法（外送／分店）小計：只有一種寫法就不顯示這區
   /** @type {Record<string, {count: number, total: number}>} */
@@ -189,7 +193,7 @@ function openStoreProfile(t, all) {
   const vEntries = Object.entries(variants).sort((a, b) => b[1].total - a[1].total);
   const variantHtml = vEntries.length > 1 ? `
     <div class="store-sec"><div class="store-sec-title">包含哪些店（分店／不同寫法）</div>
-      ${vEntries.map(([n, v]) => `<div class="store-line"><span>${esc(n)}${/（FP）/.test(n) ? ' <span class="muted">外送</span>' : ''}</span><span class="muted">${v.count} 次 · ${fmtNT(v.total)}</span></div>`).join('')}
+      ${vEntries.map(([n, v]) => `<div class="store-line"><span>${esc(n)}${DELIVERY_TAG_RE.test(n) ? ' <span class="muted">外送</span>' : ''}</span><span class="muted">${v.count} 次 · ${fmtNT(v.total)}</span></div>`).join('')}
     </div>` : '';
   const recentHtml = grp.slice(0, 5).map(x =>
     `<div class="store-line"><span class="muted">${esc(String(x.date || '').slice(5).replace('-', '/'))}</span><span>${fmtNT(Number(x.amount || 0))}</span></div>`).join('');

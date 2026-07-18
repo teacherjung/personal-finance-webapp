@@ -219,6 +219,12 @@ export async function renderSettings() {
             const r = await api('/statement/rename-store', { method: 'POST', body: { orig, reset: true } });
             root.querySelector('.x-close').click();
             toast(`已還原 ${r.changed} 筆`);
+            // 同品牌共用的分類規則不會被自動清（清了會誤傷其他分店），但留著代表「還原只是暫時的」：
+            // 下次匯入本原文又會被套回舊分類 → 問使用者要不要一起清（Codex#4）
+            if (r.brandRule && confirm(`「${r.brandRule.key}」還有同品牌共用的分類規則（另 ${r.brandRule.sharedCount} 個帳單原文在用）。\n不清除的話，下次匯入這家店會再被套回舊分類。\n\n要一併清除嗎？（會影響同品牌其他分店）`)) {
+              await api('/statement/rename-store', { method: 'POST', body: { orig, reset: true, clearBrand: true } });
+              toast('已一併清除同品牌分類規則');
+            }
             renderSettings();
           } catch (e2) { toast('還原失敗：' + e2.message, true); }
         };
