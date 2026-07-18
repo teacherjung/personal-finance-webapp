@@ -4,7 +4,7 @@ import { icon } from './icons.js';
 
 export async function renderSettings() {
   const [s, txs, expTree] = await Promise.all([api('/settings'), api('/transactions'), api('/categories')]);
-  // 帳單店名／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
+  // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
   // 顯示名/分類取「該原文最新一筆」為代表（編輯時整批統一）。編輯以原文為準——不同分店各自取名/分類。
   const byOrig = new Map();
   for (const t of txs || []) {
@@ -52,7 +52,7 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
+      <h3 style="margin-bottom:6px">帳單說明／分類學習</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。三欄＝店名的三層：<b>帳單原文</b>（銀行印的）→ <b>身分鑰匙</b>（辨識「同一家店」的乾淨名，學習靠它）→ <b>顯示名</b>（你看到的，可自訂）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
       ${storeMapRows}
     </div>
@@ -184,7 +184,7 @@ export async function renderSettings() {
       openBranchPreview(prev.changed, prev.changes || []);
     } catch (err) { toast('整理失敗：' + err.message, true); }
   };
-  // 帳單店名／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
+  // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
   const expParents = Object.keys(expTree || {});
   view().querySelectorAll('[data-editstore]').forEach(b => b.onclick = () => {
