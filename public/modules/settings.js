@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, esc, toast } from '../app.js';
+import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose } from '../app.js';
 import { icon } from './icons.js';
 
 export async function renderSettings() {
@@ -69,6 +69,12 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">分店格式整理（一次性）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的分店統一成「主體（分店）」格式，例如「統一超商-百福」→「統一超商（百福）」、「誠品生活新店」→「誠品生活（新店）」。會先<b>預覽</b>再套用，套用前自動備份、可重複執行。有分隔符（-）的一律自動處理；無分隔符的連鎖（如誠品生活）需在白名單內才會切分店，未涵蓋到的告訴我再補。</p>
+      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名分店格式</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改<b>分類</b>、或在編輯裡改<b>店名（說明）</b>時，系統會自動記住，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
       ${learnedRows}
@@ -119,6 +125,13 @@ export async function renderSettings() {
       toast(r.changed ? `已轉換 ${r.changed} 筆${detail ? '（' + detail + '）' : ''}` : '沒有需要轉換的舊分類');
     } catch (err) { toast('轉換失敗：' + err.message, true); }
   };
+  byId('normBranchBtn').onclick = async () => {
+    try {
+      const prev = await api('/statement/normalize-branches', { method: 'POST', body: { dryRun: true } });
+      if (!prev.changed) { toast('沒有需要整理的說明格式'); return; }
+      openBranchPreview(prev.changed, prev.changes || []);
+    } catch (err) { toast('整理失敗：' + err.message, true); }
+  };
   view().querySelectorAll('[data-unlearn]').forEach(b => b.onclick = async () => {
     try { await api('/learned/delete', { method: 'POST', body: { key: b.dataset.unlearn } }); toast('已刪除學習'); renderSettings(); }
     catch (err) { toast('刪除失敗：' + err.message, true); }
@@ -129,6 +142,37 @@ export async function renderSettings() {
     if (!confirm('匯入會覆蓋目前所有資料，確定嗎？')) return;
     try { await api('/import', { method: 'POST', body: JSON.parse(await file.text()) }); toast('已匯入'); location.hash = 'dashboard'; }
     catch (err) { toast('匯入失敗：' + err.message, true); }
+  };
+}
+
+// 分店格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
+/** @param {number} count @param {{id:string,before:string,after:string}[]} changes */
+function openBranchPreview(count, changes) {
+  const root = byId('modal-root');
+  const rows = changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
+  const capNote = count > changes.length
+    ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${changes.length} 筆，套用時會處理全部 ${count} 筆）</p>` : '';
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
+    <div class="modal-head"><h2>分店格式整理預覽</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會統一成「主體（分店）」格式。套用前會自動備份、可重複執行。請確認以下變更：</p>
+      <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
+        <thead><tr><th>目前說明</th><th></th><th>整理後</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      ${capNote}
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="branchApply">套用整理（${count} 筆）</button></div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  bindBackdropClose(root, close);
+  byId('branchApply').onclick = async () => {
+    try {
+      const r = await api('/statement/normalize-branches', { method: 'POST', body: {} });
+      close();
+      toast(r.changed ? `已整理 ${r.changed} 筆說明格式` : '沒有需要整理的說明格式');
+      renderSettings();
+    } catch (err) { toast('整理失敗：' + err.message, true); }
   };
 }
 const val = (id) => byId(id).value;
