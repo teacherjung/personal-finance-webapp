@@ -149,3 +149,26 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('台亞林口站（USD/9.99）'), '台亞加油站（林口站）（USD/9.99）');   // 外幣尾碼保留
   assert.equal(normalizeStoreDisplay('台亞加油站（USD/9.99）'), '台亞加油站（USD/9.99）');     // 純品牌＋外幣（無分店）
 });
+
+test('FP 外送標記（使用者定 2026-07）：店名尾加（FP）', () => {
+  assert.equal(cleanStore('FP-麥味登'), '麥味登（FP）');
+  assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋（FP）');   // 清理＋標記併行
+  assert.equal(cleanStore('FP*珍煮丹'), '珍煮丹（FP）');                        // 星號分隔
+  assert.equal(cleanStore('FP 21PLUS'), '21PLUS（FP）');                        // 空白分隔
+  // 不誤傷：FP 後面沒有分隔符的店名（本來就叫 FPxxx）不算外送
+  assert.equal(cleanStore('FPGROUP企業'), 'FPGROUP企業');
+  // 冪等：已標記過的不再重複加
+  assert.equal(normalizeStoreDisplay('麥味登（FP）'), '麥味登（FP）');
+  // foodpanda 自家扣款（非餐廳）維持標準名、不加標記
+  assert.equal(cleanStore('foodpanda-ECO2732 Taipei'), 'foodpanda');
+});
+
+test('停車標記（使用者定 2026-07）：含「停車」→ 停車費（原店名）', () => {
+  assert.equal(normalizeStoreDisplay('西門町停車場'), '停車費（西門町停車場）');
+  assert.equal(normalizeStoreDisplay('市府路停車'), '停車費（市府路停車）');
+  assert.equal(cleanStore('eTag停車3087-H8:救國團林口運動中心'), '停車費（eTag停車）');   // 品牌標準名也走顯示層
+  // 冪等：已是「停車費（…）」不再包一層
+  assert.equal(normalizeStoreDisplay('停車費（西門町停車場）'), '停車費（西門町停車場）');
+  // 名字沒有「停車」二字的停車場不套用（靠分類識別，非店名字面）
+  assert.equal(normalizeStoreDisplay('嘟嘟房台北西門站'), '嘟嘟房台北西門站');
+});
