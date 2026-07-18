@@ -431,9 +431,9 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .ending-list,
 .ended-list { margin-top: 16px; }
 
-/* 店家消費檔案（收支列表點店名開啟，使用者定 2026-07-18） */
-.store-open { cursor: pointer; border-bottom: 1px dashed var(--line-2); }
-.store-open:hover { color: var(--accent); border-bottom: 1px solid var(--accent); }
+/* 店家消費檔案（收支列表點店名開啟，使用者定 2026-07-18；無底線——使用者定，hover 變色示意可點） */
+.store-open { cursor: pointer; }
+.store-open:hover { color: var(--accent); }
 .store-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
 .store-rank { font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
 .store-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }

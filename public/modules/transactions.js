@@ -102,7 +102,7 @@ export async function renderTransactions() {
 function rowHtml(t) {
   const isIn = t.type === 'income';
   // 滑到顯示名＝看帳單原文（使用者定 2026-07-18：只放原文本身，不加前綴、不加點擊說明）；
-  // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑）；手動記帳無原文＝無 tooltip（虛線底線已示意可點）
+  // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑）；手動記帳無原文＝無 tooltip（hover 變色已示意可點）
   const parts = String(t.stmtRef || '').split('|');
   const orig = (t.source === 'stmt' && parts.length >= 4) ? parts.slice(3).join('|').trim() : '';
   const tip = orig ? ` title="${esc(orig)}"` : '';
