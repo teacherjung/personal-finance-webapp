@@ -101,7 +101,8 @@ test('cleanStore：更多雜訊清理樣式', () => {
   // 中文主體-中文分店：cleanStore 收尾把分隔符轉全形括號＋品牌簡稱（全家便利商店→全家商店，使用者定 2026-07）
   assert.equal(cleanStore('全家便利商店-三重新陽店A0145 TAIPEI'), '全家商店（三重新陽店）');
   assert.equal(cleanStore('統一超商-德權A2716 TAIPEI'), '統一超商（德權）');
-  assert.equal(cleanStore('DECATHLON迪卡儂A0145 TAIPEI'), 'DECATHLON迪卡儂');   // 英文起頭不切
+  assert.equal(cleanStore('MUJI無印良品A0145 TAIPEI'), 'MUJI無印良品');   // 英文起頭不切（分店格式規則）
+  assert.equal(cleanStore('DECATHLON迪卡儂A0145 TAIPEI'), 'DECATHLON');   // 已進 STORE_CANON（使用者定 2026-07-18）
   assert.equal(cleanStore('momo*印用製所TAIPEI'), '印用製所');           // marketplace 前綴
   assert.equal(cleanStore('eTag自動儲值3087-H8'), 'eTag自動儲值');       // 結尾設備碼
 });
@@ -178,6 +179,14 @@ test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP
   assert.equal(applyDisplayLabels('12MINI（FP）', { desc: fpDesc }), '12MINI（FP）', '已是主體（FP）＝冪等');
   // 外幣註記不被當分店摘掉
   assert.equal(applyDisplayLabels('全家商店（漢中店）（USD/9.99）', { desc: 'FP-全家' }), '全家商店（FP）（USD/9.99）');
+  // 優食＝Uber Eats（使用者定 2026-07-18）：同一套規則，標記＝（UE）；平台名不可變成店名、鑰匙不帶標記
+  const ue = (desc) => applyDisplayLabels(cleanStore(desc), { desc });
+  assert.equal(ue('優食-好麥永和豆漿店'), '好麥永和豆漿店（UE）');
+  assert.equal(cleanStore('優食-好麥永和豆漿店'), '好麥永和豆漿店', '鑰匙／清理後店名＝餐廳本身，不是平台');
+  assert.equal(ue('優食-八方雲集林口遠雄'), '八方雲集（UE）', '外送不留分店');
+  assert.equal(applyDisplayLabels('好麥永和豆漿店（UE）', { desc: '優食-好麥永和豆漿店' }), '好麥永和豆漿店（UE）', '冪等');
+  assert.equal(ue('優食'), '優食', '只有平台名（店名救不回）＝不加贅括號');
+  assert.equal(stripDisplayLabels('好麥永和豆漿店（UE）'), '好麥永和豆漿店');
 });
 
 test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 → 停車費（原店名）', () => {
