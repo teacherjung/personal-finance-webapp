@@ -342,12 +342,9 @@ test('匯率須為正數（Codex#6-4）：負匯率被剝、usdTwd≤0 被剝、
   await PUT('/settings', { usdTwd: before.usdTwd, fxTwd: before.fxTwd || {} });   // 還原
 });
 
-test('自審｜migrate 冪等：連跑兩次，第二次 changed=0', async () => {
-  const tx = await (await POST('/transactions', { date: '2026-07-01', type: 'expense', category: '身心', amount: 100 })).json();
-  await POST('/migrate/categories');                       // 第一次：把所有可轉的轉掉
-  const second = await (await POST('/migrate/categories')).json();
-  assert.equal(second.changed, 0, '第二次不該再有任何變更（冪等；含 其他→其他 自對映）');
-  await DELETE_(`/transactions/${tx.id}`);
+test('已移除的舊分類轉換端點 → JSON 404（使用者定 2026-07-18，改走分類管理）', async () => {
+  const res = await POST('/migrate/categories');
+  assert.equal(res.status, 404);
 });
 
 test('自審｜帳單金額上限：破億的列被跳過（防解析誤抓參考號碼）', async () => {
