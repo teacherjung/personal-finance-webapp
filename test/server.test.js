@@ -490,6 +490,28 @@ test('匯入正常：合法備份可還原、且還原後 summary 正常', async
   assert.ok(sum.netWorth > 0);
 });
 
+test('店名對照表編輯（HTTP 全鏈路）：同 storeKey 整批改顯示名＋記學習、改回自動名清除', async () => {
+  // 同一家店兩筆帳單交易（不同 stmtRef）
+  const t1 = await (await POST('/transactions', { date: '2026-07-10', type: 'expense', category: '飲食', amount: 55, note: '測試合作社', storeKey: '測試合作社', stmtRef: 'c1|2026-07-10|55|測試合作社A123', source: 'stmt' })).json();
+  const t2 = await (await POST('/transactions', { date: '2026-07-11', type: 'expense', category: '飲食', amount: 66, note: '測試合作社', storeKey: '測試合作社', stmtRef: 'c1|2026-07-11|66|測試合作社B456', source: 'stmt' })).json();
+  // 整批改名
+  const r = await (await POST('/statement/rename-store', { storeKey: '測試合作社', name: '合作社（測試）' })).json();
+  assert.equal(r.changed, 2, '兩筆都要改到');
+  const after = await GET('/transactions');
+  assert.ok(after.filter(t => [t1.id, t2.id].includes(t.id)).every(t => t.note === '合作社（測試）'), '兩筆 note 都更新');
+  assert.equal((await GET('/learned'))['測試合作社']?.name, '合作社（測試）', '學習表記住新顯示名（未來匯入沿用）');
+  // 改回自動名＝取消自訂：note 恢復、學習表 name 清除
+  await POST('/statement/rename-store', { storeKey: '測試合作社', name: '測試合作社' });
+  const learned2 = await GET('/learned');
+  assert.ok(!learned2['測試合作社']?.name, '改回自動名要清除 name');
+  // 防呆：缺 storeKey／空名 → 400
+  assert.equal((await POST('/statement/rename-store', { name: 'x' })).status, 400);
+  assert.equal((await POST('/statement/rename-store', { storeKey: '測試合作社', name: '  ' })).status, 400);
+  // 清理
+  await DELETE_(`/transactions/${t1.id}`); await DELETE_(`/transactions/${t2.id}`);
+  await POST('/learned/delete', { key: '測試合作社' });
+});
+
 test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note＋storeKey、冪等', async () => {
   const tx = await (await POST('/transactions', {
     date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市',
