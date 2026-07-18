@@ -176,6 +176,24 @@ test('櫃檯也擋缺必填（Codex#11-1）：save() 遇缺 month 的 history �
   assert.throws(() => store.save(/** @type {any} */ (bad)), /month/, '任何寫入路徑都不可能塞進缺主鍵欄的資料');
 });
 
+test('strip 模式：必填 month「有值但格式錯」整筆濾除，不只刪欄位（Codex#12-1）', async () => {
+  const { sanitizeDbForWrite } = await import('../lib/schema.js');
+  // 每個集合放一筆合法 + 一筆「month 存在但壞」（字串壞格式、數字），壞的要整筆消失、不能只剩缺 month 的殘骸
+  const input = {
+    ...store.emptyDb(),
+    history: [{ id: 'ok', month: '2026-07', amount: 1 }, { id: 'bad1', month: 'not-a-month', amount: 2 }, { id: 'bad2', month: 202607, amount: 3 }],
+    portfolioSnapshots: [{ id: 'ok', month: '2026-07', cost: 1, value: 2 }, { id: 'bad', month: 202607, cost: 1, value: 2 }],
+    snapshots: [{ id: 'ok', month: '2026-07', netWorth: 1 }, { id: 'bad', month: 'xxxx', netWorth: 1 }]
+  };
+  const out = sanitizeDbForWrite(/** @type {any} */ (input), { mode: 'strip' });
+  // 壞筆整筆濾除：只留合法筆，且留下的每一筆都必有合法 month（不可有「刪了 month 的殘骸」）
+  for (const col of ['history', 'portfolioSnapshots', 'snapshots']) {
+    assert.equal(out[col].length, 1, `${col}：壞 month 筆應整筆濾除，只剩 1 筆合法`);
+    assert.equal(out[col][0].id, 'ok', `${col}：留下的是合法筆`);
+    assert.ok(out[col].every((/** @type {any} */ r) => /^\d{4}-\d{2}$/.test(r.month)), `${col}：不可留下缺/壞 month 的殘骸`);
+  }
+});
+
 test('IB 錯誤口徑（Codex#11-2）：fetchFlex 類錯誤標 400、內部錯誤不標', async () => {
   const { syncIb } = await import('../lib/services/ib-sync.js');
   const failFetch = async () => { throw new Error('IB 連線失敗 (HTTP 500)'); };
