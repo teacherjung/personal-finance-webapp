@@ -63,6 +63,12 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">分類管理（自訂大類／子類）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的支出分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。收入分類（薪資／投資…）維持固定。儲存前自動備份。</p>
+      <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理分類</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">分類轉換（一次性）</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">把舊的單層分類（房貸、生活雜支、旅遊、訂閱…）轉成新的兩層分類（居住／房貸…）。可重複執行、只改到得動的舊標籤，轉換前會自動備份。</p>
       <div><button class="btn-ghost" id="migrateBtn">${icon('refresh', 16) || ''}轉換舊分類 → 新分類</button></div>
@@ -125,6 +131,10 @@ export async function renderSettings() {
       toast(r.changed ? `已轉換 ${r.changed} 筆${detail ? '（' + detail + '）' : ''}` : '沒有需要轉換的舊分類');
     } catch (err) { toast('轉換失敗：' + err.message, true); }
   };
+  byId('manageCatsBtn').onclick = async () => {
+    try { openCategoryEditor(await api('/categories')); }
+    catch (err) { toast('讀取分類失敗：' + err.message, true); }
+  };
   byId('normBranchBtn').onclick = async () => {
     try {
       const prev = await api('/statement/normalize-branches', { method: 'POST', body: { dryRun: true } });
@@ -173,6 +183,107 @@ function openBranchPreview(count, changes) {
       toast(r.changed ? `已整理 ${r.changed} 筆說明格式` : '沒有需要整理的說明格式');
       renderSettings();
     } catch (err) { toast('整理失敗：' + err.message, true); }
+  };
+}
+
+// 分類管理編輯器：把整棵分類樹載入成可編輯狀態（每列記「原名」以偵測改名），一次儲存。
+// 為保留輸入焦點：打字時不重繪，只有結構性動作（新增/刪除/搬移）才 syncFromDom→重繪。
+/** @param {Record<string,string[]>} tree */
+function openCategoryEditor(tree) {
+  const root = byId('modal-root');
+  // 狀態：[{orig, name, subs:[{orig,name}]}]，orig=null＝新增（非改名）；'其他'／'未分類' 受保護不可刪改
+  /** @type {{orig: string|null, name: string, subs: {orig: string|null, name: string}[]}[]} */
+  const state = Object.entries(tree || {}).map(([name, subs]) => ({
+    orig: /** @type {string|null} */ (name), name, subs: (subs || []).map(s => ({ orig: /** @type {string|null} */ (s), name: s }))
+  }));
+  const isOther = (p) => p.orig === '其他';
+
+  const syncFromDom = () => {
+    root.querySelectorAll('input.cat-name').forEach(inp => { const p = Number(inp.dataset.p); if (state[p]) state[p].name = inp.value; });
+    root.querySelectorAll('input.sub-name').forEach(inp => { const p = Number(inp.dataset.p), s = Number(inp.dataset.s); if (state[p] && state[p].subs[s]) state[p].subs[s].name = inp.value; });
+  };
+
+  const blockHtml = (p, i) => `
+    <div class="cat-block">
+      <div class="cat-block-head">
+        <input class="cat-name" data-p="${i}" value="${esc(p.name)}" placeholder="大類名稱" ${isOther(p) ? 'readonly title="系統退路，不可改名"' : ''} />
+        <span class="cat-block-btns">
+          <button type="button" class="btn-icon" data-act="up" data-p="${i}" title="上移" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="btn-icon" data-act="down" data-p="${i}" title="下移" ${i === state.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="btn-icon danger" data-act="delP" data-p="${i}" title="刪除大類" ${isOther(p) ? 'disabled' : ''}>✕</button>
+        </span>
+      </div>
+      <div class="cat-subs">
+        ${p.subs.map((s, j) => { const lock = isOther(p) && s.orig === '未分類';
+          return `<span class="sub-chip"><input class="sub-name" data-p="${i}" data-s="${j}" value="${esc(s.name)}" placeholder="子類" ${lock ? 'readonly' : ''} /><button type="button" class="sub-x" data-act="delS" data-p="${i}" data-s="${j}" title="刪除子類" ${lock ? 'disabled' : ''}>×</button></span>`; }).join('')}
+        <button type="button" class="btn-ghost btn-sm" data-act="addS" data-p="${i}">＋子類</button>
+      </div>
+    </div>`;
+
+  const redraw = () => { byId('catEditorBody').innerHTML = state.map((p, i) => blockHtml(p, i)).join(''); };
+
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+    <div class="modal-head"><h2>分類管理</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">改名會套用到所有舊交易與學習表；刪除有交易的分類，那些交易會改歸「其他／未分類」。收入分類固定、不在此。</p>
+      <div id="catEditorBody" style="max-height:52vh;overflow:auto"></div>
+      <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="addP">＋ 新增大類</button></div>
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="catSave">儲存分類</button></div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  bindBackdropClose(root, close);
+  redraw();
+
+  // 委派按鈕事件（結構性動作：先 syncFromDom 保住已打的字，再改 state、重繪）
+  root.querySelector('.modal-body').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act, p = Number(btn.dataset.p), s = Number(btn.dataset.s);
+    syncFromDom();
+    if (act === 'addP') state.push({ orig: null, name: '', subs: [] });
+    else if (act === 'delP') { if (state[p] && !isOther(state[p])) state.splice(p, 1); }
+    else if (act === 'up') { if (p > 0) [state[p - 1], state[p]] = [state[p], state[p - 1]]; }
+    else if (act === 'down') { if (p < state.length - 1) [state[p + 1], state[p]] = [state[p], state[p + 1]]; }
+    else if (act === 'addS') { if (state[p]) state[p].subs.push({ orig: null, name: '' }); }
+    else if (act === 'delS') { const sub = state[p]?.subs[s]; if (state[p] && !(isOther(state[p]) && sub?.orig === '未分類')) state[p].subs.splice(s, 1); }
+    else return;
+    redraw();
+  });
+
+  byId('catSave').onclick = async () => {
+    syncFromDom();
+    /** @type {Record<string,string[]>} */
+    const outTree = {};
+    /** @type {{from:string,to:string}[]} */
+    const parentRenames = [];
+    /** @type {{parent:string,from:string,to:string}[]} */
+    const subRenames = [];
+    const seenP = new Set();
+    for (const p of state) {
+      const name = p.name.trim();
+      if (!name) return toast('有大類名稱是空的，請填寫或刪除', true);
+      if (seenP.has(name)) return toast(`大類「${name}」重複了`, true);
+      seenP.add(name);
+      const subs = []; const seenS = new Set();
+      for (const s of p.subs) {
+        const sn = s.name.trim();
+        if (!sn) return toast(`「${name}」底下有子類是空的，請填寫或刪除`, true);
+        if (seenS.has(sn)) return toast(`「${name}」的子類「${sn}」重複了`, true);
+        seenS.add(sn); subs.push(sn);
+        if (s.orig && s.orig !== sn) subRenames.push({ parent: name, from: s.orig, to: sn });
+      }
+      outTree[name] = subs;
+      if (p.orig && p.orig !== name) parentRenames.push({ from: p.orig, to: name });
+    }
+    try {
+      const r = await api('/categories', { method: 'POST', body: { tree: outTree, parentRenames, subRenames } });
+      close();
+      const n = r.changedTx || 0;
+      toast(n ? `分類已儲存，${n} 筆舊交易一併更新` : '分類已儲存');
+      renderSettings();
+    } catch (err) { toast('儲存失敗：' + err.message, true); }
   };
 }
 const val = (id) => byId(id).value;
