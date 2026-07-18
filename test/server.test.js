@@ -493,6 +493,29 @@ test('匯入正常：合法備份可還原、且還原後 summary 正常', async
   assert.ok(sum.netWorth > 0);
 });
 
+test('分店格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note＋storeKey、冪等', async () => {
+  const tx = await (await POST('/transactions', {
+    date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 55, note: '統一超商-百福', storeKey: '統一超商-百福', source: 'stmt',
+  })).json();
+  // 預覽（dryRun）：回 before→after，且不改資料
+  const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok(prev.changed >= 1);
+  assert.ok((prev.changes || []).some(c => c.before === '統一超商-百福' && c.after === '統一超商（百福）'));
+  const still = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(still.note, '統一超商-百福', 'dryRun 不可改資料');
+  // 正式套用：note 與 storeKey 一併正規化
+  const applied = await (await POST('/statement/normalize-branches', {})).json();
+  assert.ok(applied.changed >= 1);
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after.note, '統一超商（百福）', '套用後 note 已正規化');
+  assert.equal(after.storeKey, '統一超商（百福）', 'storeKey 一併對齊');
+  // 冪等：此筆已正規化，再預覽不應再出現
+  const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok(!(again.changes || []).some(c => c.id === tx.id), '已正規化的筆不再出現在預覽');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
 test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', () => {
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');
