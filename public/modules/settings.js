@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openForm } from '../app.js';
 import { icon } from './icons.js';
 
 export async function renderSettings() {
@@ -16,12 +16,13 @@ export async function renderSettings() {
     const cur = String(t.note || '').trim();
     if (!orig || !cur || orig === cur) continue;
     const k = orig + '\u0000' + cur;
-    if (!pairSeen.has(k)) pairSeen.set(k, { orig, cur });
+    if (!pairSeen.has(k)) pairSeen.set(k, { orig, cur, key: String(t.storeKey || '') });   // key＝學習用穩定鑰匙（編輯顯示名時整批套用）
   }
   const storePairs = [...pairSeen.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
   const storeMapRows = storePairs.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
-        <thead><tr><th>帳單原文</th><th>顯示為</th></tr></thead>
-        <tbody>${storePairs.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td></tr>`).join('')}</tbody></table></div>`
+        <thead><tr><th>帳單原文</th><th>顯示為</th><th></th></tr></thead>
+        <tbody>${storePairs.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td>
+          <td style="width:36px">${p.key ? `<button class="btn-link btn-sm" data-editstore="${esc(p.key)}" data-cur="${esc(p.cur)}" title="修改顯示名">${icon('edit', 15)}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty">尚無有調整的店名。匯入信用卡帳單後，這裡會列出「帳單原文 → 顯示名」的對照。</p>';
   const learnedRows = learnedEntries.length ? `<div class="tbl-wrap"><table>
         <thead><tr><th>原店名</th><th>顯示為</th><th>分類</th><th></th></tr></thead>
@@ -57,7 +58,7 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名對照表（帳單原文 → 顯示名）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。<b>按列尾的編輯鈕可直接改顯示名</b>——同一家店的所有記錄整批改、未來匯入也自動用新名。</p>
       ${storeMapRows}
     </div>
 
@@ -194,6 +195,21 @@ export async function renderSettings() {
       openBranchPreview(prev.changed, prev.changes || []);
     } catch (err) { toast('整理失敗：' + err.message, true); }
   };
+  // 店名對照表：修改顯示名（同一家店整批改＋記學習，未來匯入沿用）
+  view().querySelectorAll('[data-editstore]').forEach(b => b.onclick = () => {
+    const key = /** @type {HTMLElement} */ (b).dataset.editstore || '';
+    const cur = /** @type {HTMLElement} */ (b).dataset.cur || '';
+    openForm({
+      title: '修改顯示名',
+      fields: [{ key: 'name', label: `顯示名（自動名：${key}；填回自動名＝取消自訂）`, type: 'text', required: true, full: true }],
+      values: { name: cur },
+      onSubmit: async (d) => {
+        const r = await api('/statement/rename-store', { method: 'POST', body: { storeKey: key, name: d.name } });
+        toast(`已更新 ${r.changed} 筆記錄的顯示名`);
+        renderSettings();
+      }
+    });
+  });
   view().querySelectorAll('[data-unlearn]').forEach(b => b.onclick = async () => {
     try { await api('/learned/delete', { method: 'POST', body: { key: b.dataset.unlearn } }); toast('已刪除學習'); renderSettings(); }
     catch (err) { toast('刪除失敗：' + err.message, true); }
