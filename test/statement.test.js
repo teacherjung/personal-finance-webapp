@@ -107,6 +107,18 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     // 好市多（使用者定 2026-07-18）：無分隔符連鎖白名單
     ['好市多中和店A0145 TAIPEI', '好市多（中和店）', '好市多'],
     ['好市多北投店A0145 TAIPEI', '好市多（北投店）', '好市多'],
+    // 標準名（使用者定 2026-07-18）：銀行截斷／英文原名 → 看得懂的名字，鑰匙同值
+    ['肯德基KFC炸雞漢A0145 TAIPEI', '肯德基', '肯德基'],
+    ['STARBUCKSA0145 TAIPEI', '星巴克', '星巴克'],
+    ['星巴克MITSUI門市A0145 TAIPEI', '星巴克', '星巴克'],
+    ['DECATHLON TAIWATaichu', 'DECATHLON', 'DECATHLON'],
+    ['DECATHLON迪卡儂A0145 TAIPEI', 'DECATHLON', 'DECATHLON'],
+    ['長庚醫療財團法人林口長庚紀念醫', '林口長庚醫院', '林口長庚醫院'],
+    ['三新奧特萊斯林口I館A0145 TAIPEI', '林口三井', '林口三井'],
+    ['卡哇依A0145 TAIPEI', '兒童新樂園', '兒童新樂園'],
+    // 威秀影城＝分店白名單（顯示留分店、鑰匙只到品牌）
+    ['威秀影城信義分A0145 TAIPEI', '威秀影城（信義分）', '威秀影城'],
+    ['威秀影城新店A0145 TAIPEI', '威秀影城（新店）', '威秀影城'],
   ];
   for (const [raw, display, key] of cases) {
     assert.equal(cleanStore(raw), display, `顯示名(${raw})`);
