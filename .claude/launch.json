@@ -7,6 +7,12 @@
       "runtimeArgs": ["start"],
       "port": 4321,
       "autoPort": true
+    },
+    {
+      "name": "finance-test",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["STORE_FILE=/tmp/finance-test-store.db", "PORT=4587", "node", "server.js"],
+      "port": 4587
     }
   ]
 }

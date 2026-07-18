@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { INCOME_CATEGORIES } from './categories.js';
@@ -93,18 +93,114 @@ export async function renderTransactions() {
     const t = all.find(x => x.id === b.dataset.del);
     confirmDelete(`${t.category} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
   });
+  view().querySelectorAll('[data-store]').forEach(el => el.addEventListener('click', () => {
+    const t = all.find(x => x.id === /** @type {HTMLElement} */ (el).dataset.store);
+    if (t) openStoreProfile(t, all);
+  }));
 }
 
 function rowHtml(t) {
   const isIn = t.type === 'income';
+  // 支出且有店名 → 店名可點（開「店家消費檔案」彈窗）；收入或空說明維持純文字
+  const noteCell = (!isIn && String(t.note || '').trim())
+    ? `<span class="store-open" data-store="${t.id}" title="看這家店的消費檔案">${esc(t.note)}</span>`
+    : esc(t.note || '');
   return `<tr>
     <td>${esc(t.date)}</td>
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
-    <td class="muted">${esc(t.note || '')}</td>
+    <td class="muted">${noteCell}</td>
     <td class="num ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(t.amount)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
+}
+
+// ---------- 店家消費檔案（點收支列表的店名開啟；使用者定 2026-07-18） ----------
+// 「同一家店」以身分鑰匙聚合：帳單交易用 storeKey（品牌層級，「麥味登（FP）」與「麥味登（林口感恩店）」
+// 合併計算、彈窗內各列小計）；手動記帳沒有 storeKey → 用說明文字，與品牌同名會自然併入。
+/** @param {any} x @returns {string} */
+const storeIdOf = (x) => String(x.storeKey || x.note || '').trim();
+/** 彈窗金額格式（使用者定 2026-07-18：「358 NT」；僅此彈窗，全站其他地方仍用 money() 的「元」） @param {number} n */
+const fmtNT = (n) => Math.round(n).toLocaleString('en-US') + ' NT';
+
+/** @param {any} t 被點的那筆 @param {any[]} all 全部交易 */
+function openStoreProfile(t, all) {
+  const key = storeIdOf(t);
+  if (!key) return;
+  /** @param {any} x */
+  const isExp = (x) => x.type === 'expense' && Number(x.amount) > 0;
+  const grp = all.filter(x => isExp(x) && storeIdOf(x) === key)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  if (!grp.length) return;
+  const total = grp.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const count = grp.length;
+  const last = String(grp[0].date || ''), first = String(grp[count - 1].date || '');
+  // 排行：所有店家（同聚合口徑）依「總消費」排序，讓數字有份量感
+  /** @type {Record<string, number>} */
+  const totals = {};
+  for (const x of all) { if (!isExp(x)) continue; const k = storeIdOf(x); if (k) totals[k] = (totals[k] || 0) + Number(x.amount || 0); }
+  const rank = Object.entries(totals).sort((a, b) => b[1] - a[1]).findIndex(([k]) => k === key) + 1;
+  // 頻率＋近況（白話）：只有一筆就不算平均間隔
+  const since = -daysUntil(last);
+  const sinceTxt = since <= 0 ? '今天' : since === 1 ? '昨天' : `${since} 天前`;
+  const firstTxt = `${first.slice(0, 4)}/${Number(first.slice(5, 7))}`;
+  let freqLine;
+  if (count === 1) {
+    freqLine = `目前只有一筆：${sinceTxt}（${esc(last)}）`;
+  } else {
+    const span = Math.max(1, -daysUntil(first) - since);
+    const gap = Math.max(1, Math.round(span / (count - 1)));
+    const gapTxt = gap >= 45 ? `約 ${Math.round(gap / 30)} 個月來一次` : `約 ${gap} 天來一次`;
+    freqLine = `平均${gapTxt}，最近一次是 <b>${sinceTxt}</b>（${esc(last)}）· 從 ${esc(firstTxt)} 消費至今`;
+  }
+  // 近 6 個月長條＋「本月 vs 月平均」解讀（月平均不含本月，本月還沒過完）
+  const now = new Date();
+  const months = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  /** @type {Record<string, number>} */
+  const byMonth = {};
+  for (const x of grp) { if (!x.date) continue; const m = monthKey(x.date); byMonth[m] = (byMonth[m] || 0) + Number(x.amount || 0); }
+  const curM = monthKey();
+  const maxM = Math.max(...months.map(m => byMonth[m] || 0), 1);
+  const bars = months.map(m => {
+    const v = byMonth[m] || 0;
+    const h = v > 0 ? Math.max(Math.round(v / maxM * 100), 5) : 0;
+    return `<div class="store-bar-col" title="${m}：${fmtNT(v)}"><div class="store-bar${m === curM ? ' cur' : ''}" style="height:${h}%"></div><span>${Number(m.slice(5))}月</span></div>`;
+  }).join('');
+  const histMonths = Object.keys(byMonth).filter(m => m !== curM);
+  const histAvg = histMonths.length ? histMonths.reduce((s, m) => s + byMonth[m], 0) / histMonths.length : 0;
+  const curV = byMonth[curM] || 0;
+  let monthTxt = curV > 0 ? `本月 <b>${fmtNT(curV)}</b>` : '本月還沒來過';
+  if (curV > 0 && histAvg > 0) {
+    const pct = Math.round((curV - histAvg) / histAvg * 100);
+    monthTxt += pct === 0 ? ` · 與月平均（${fmtNT(histAvg)}）差不多` : ` · 比月平均（${fmtNT(histAvg)}）${pct > 0 ? '多' : '少'} ${Math.abs(pct)}%`;
+  }
+  // 同店不同寫法（外送／分店）小計：只有一種寫法就不顯示這區
+  /** @type {Record<string, {count: number, total: number}>} */
+  const variants = {};
+  for (const x of grp) { const n = String(x.note || '（無說明）'); const v = (variants[n] ||= { count: 0, total: 0 }); v.count++; v.total += Number(x.amount || 0); }
+  const vEntries = Object.entries(variants).sort((a, b) => b[1].total - a[1].total);
+  const variantHtml = vEntries.length > 1 ? `
+    <div class="store-sec"><div class="store-sec-title">同一家店的不同寫法／分店</div>
+      ${vEntries.map(([n, v]) => `<div class="store-line"><span>${esc(n)}${/（FP）/.test(n) ? ' <span class="muted">外送</span>' : ''}</span><span class="muted">${v.count} 次 · ${fmtNT(v.total)}</span></div>`).join('')}
+    </div>` : '';
+  const recentHtml = grp.slice(0, 5).map(x =>
+    `<div class="store-line"><span class="muted">${esc(String(x.date || '').slice(5).replace('-', '/'))}</span><span>${fmtNT(Number(x.amount || 0))}</span></div>`).join('');
+  openInfo(key, `
+    <div class="store-top"><span class="muted">${esc(t.category || '')}</span><span class="store-rank">店家消費排行 第 ${rank} 名</span></div>
+    <div class="store-stats">
+      <div><div class="muted">總共花了</div><div class="stat sm">${fmtNT(total)}</div></div>
+      <div><div class="muted">來過</div><div class="stat sm">${count} 次</div></div>
+      <div><div class="muted">平均每次</div><div class="stat sm">${fmtNT(total / count)}</div></div>
+    </div>
+    <p class="store-freq">${freqLine}</p>
+    <div class="store-sec"><div class="store-sec-head"><span class="store-sec-title">近 6 個月</span><span class="muted">${monthTxt}</span></div>
+      <div class="store-bars">${bars}</div></div>
+    ${variantHtml}
+    <div class="store-sec"><div class="store-sec-title">最近 ${Math.min(5, count)} 筆</div>${recentHtml}</div>
+  `, { size: 'md' });
 }
 
 // 「帳戶 / 信用卡」下拉選項＝現有帳戶＋信用卡的名稱（account 存的就是名稱字串，與帳單匯入同口徑）。
