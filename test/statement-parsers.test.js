@@ -162,6 +162,13 @@ test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP
   assert.equal(applyDisplayLabels('麥味登（FP）', { desc: 'FP-麥味登' }), '麥味登（FP）');
   // storeKey（身分鑰匙）保持乾淨、不含標記
   assert.equal(cleanStore('FP-麥味登'), '麥味登');
+  // 外送不留分店（使用者定 2026-07-18）：顯示名尾端的分店括號被摘掉 → 主體（FP）
+  const fpDesc = 'FP-12MINI (桃O2732 Taipei';
+  assert.equal(applyDisplayLabels('12MINI（桃園龜山復興一店）', { desc: fpDesc }), '12MINI（FP）');
+  assert.equal(applyDisplayLabels('12MINI（新店萬家福店）', { desc: fpDesc }), '12MINI（FP）');
+  assert.equal(applyDisplayLabels('12MINI（FP）', { desc: fpDesc }), '12MINI（FP）', '已是主體（FP）＝冪等');
+  // 外幣註記不被當分店摘掉
+  assert.equal(applyDisplayLabels('全家商店（漢中店）（USD/9.99）', { desc: 'FP-全家' }), '全家商店（FP）（USD/9.99）');
 });
 
 test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 → 停車費（原店名）', () => {
@@ -175,6 +182,6 @@ test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 �
   assert.equal(park('停車費（嘟嘟房台北西門站）'), '停車費（嘟嘟房台北西門站）');
   // 不是停車費子類的不套用（即使店名有「停車」二字）
   assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
-  // 兩個標記可併存（FP 外送的停車費，理論組合）
-  assert.equal(applyDisplayLabels('某場', { desc: 'FP-某場', subcategory: '停車費' }), '停車費（某場）（FP）');
+  // 兩個標記可併存（FP 外送的停車費，理論組合；順序＝FP 先、停車包在外層）
+  assert.equal(applyDisplayLabels('某場', { desc: 'FP-某場', subcategory: '停車費' }), '停車費（某場（FP））');
 });
