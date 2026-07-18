@@ -32,7 +32,52 @@ export async function renderSettings() {
           <td><button class="btn-danger btn-sm" data-unlearn="${esc(store)}" title="刪除這筆學習">${icon('trash', 15)}</button></td>
         </tr>`).join('')}</tbody></table></div>` : '<p class="empty">尚無學習紀錄。改過帳單消費的分類或店名後就會出現在這裡。</p>';
   view().innerHTML = `
-    <div class="page-head"><div><h1>設定</h1><p>提醒門檻、IB 連線、資料備份</p></div></div>
+    <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
+
+    <h2 class="section-title" style="margin-top:4px">收支記帳</h2>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:14px">緊急預備金</h3>
+      <div class="form-grid">
+        <div><label>緊急預備金目標（月）——現金可支撐幾個月支出，低於此值總覽會提醒</label><input id="emergencyFundMonths" type="number" value="${esc(s.emergencyFundMonths)}" /></div>
+      </div>
+      <div class="form-actions"><button class="btn" id="saveEfund">儲存</button></div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">分類管理（自訂大類／子類）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的支出分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。收入分類（薪資／投資…）維持固定。儲存前自動備份。</p>
+      <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理分類</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">店名格式整理</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「台灣普客二四」→「Times Parking」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
+      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">店名對照表（帳單原文 → 顯示名）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。</p>
+      ${storeMapRows}
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改<b>分類</b>、或在編輯裡改<b>店名（說明）</b>時，系統會自動記住，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
+      ${learnedRows}
+    </div>
+
+    <h2 class="section-title">資產配置</h2>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:14px">配置偏離提醒</h3>
+      <div class="form-grid">
+        <div><label>資產配置偏離提醒（%）——實際與目標差超過此值，總覽會提醒再平衡</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
+      </div>
+      <div class="form-actions"><button class="btn" id="saveAlloc">儲存</button></div>
+    </div>
+
+    <h2 class="section-title">投資組合</h2>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">投資原則</h3>
@@ -49,16 +94,14 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:14px">提醒門檻</h3>
+      <h3 style="margin-bottom:14px">匯率與現金提醒</h3>
       <div class="form-grid">
-        <div><label>緊急預備金目標（月）</label><input id="emergencyFundMonths" type="number" value="${esc(s.emergencyFundMonths)}" /></div>
         <div><label>美元兌台幣匯率 (USD→TWD)</label><input id="usdTwd" type="number" step="0.01" value="${esc(s.usdTwd)}" /></div>
-        <div><label>資產配置偏離提醒（%）</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
         <div><label>IB 閒置現金提醒門檻（美元 USD）</label><input id="ibIdleCashAlert" type="number" value="${esc(s.ibIdleCashAlert)}" /></div>
         <div><label>換匯區間：美元→台幣（≥ 此值提醒分批換台幣）</label><input id="fxHigh" type="number" step="0.1" value="${esc(s.fxHigh ?? 32)}" /></div>
         <div><label>換匯區間：台幣→美元（≤ 此值提醒分批換美元）</label><input id="fxLow" type="number" step="0.1" value="${esc(s.fxLow ?? 28)}" /></div>
       </div>
-      <div class="form-actions"><button class="btn" id="saveThresholds">儲存門檻</button></div>
+      <div class="form-actions"><button class="btn" id="saveFxCash">儲存</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
@@ -79,35 +122,22 @@ export async function renderSettings() {
       <div class="form-actions"><button class="btn" id="saveIb">儲存 IB 設定</button></div>
     </div>
 
+    <h2 class="section-title">訂閱追蹤</h2>
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">分類管理（自訂大類／子類）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的支出分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。收入分類（薪資／投資…）維持固定。儲存前自動備份。</p>
-      <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理分類</button></div>
+      <p class="muted" style="font-size:12px">續費日／停用日前 7 天內會在總覽提醒（固定值）。目前沒有其他可調整的設定——想把提醒天數開放成可調整，跟我說一聲。</p>
     </div>
 
+    <h2 class="section-title">卡片追蹤</h2>
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">分類轉換（一次性）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把舊的單層分類（房貸、生活雜支、旅遊、訂閱…）轉成新的兩層分類（居住／房貸…）。可重複執行、只改到得動的舊標籤，轉換前會自動備份。</p>
-      <div><button class="btn-ghost" id="migrateBtn">${icon('refresh', 16) || ''}轉換舊分類 → 新分類</button></div>
+      <p class="muted" style="font-size:12px">繳款日前 7 天內會在總覽提醒、3 天內升級為警告（固定值）。目前沒有其他可調整的設定——想調整跟我說一聲。</p>
     </div>
 
+    <h2 class="section-title">保險追蹤</h2>
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">分店格式整理（一次性）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的分店統一成「主體（分店）」格式，例如「統一超商-百福」→「統一超商（百福）」、「誠品生活新店」→「誠品生活（新店）」。會先<b>預覽</b>再套用，套用前自動備份、可重複執行。有分隔符（-）的一律自動處理；無分隔符的連鎖（如誠品生活）需在白名單內才會切分店，未涵蓋到的告訴我再補。</p>
-      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名分店格式</button></div>
+      <p class="muted" style="font-size:12px">保費繳費前 30 天內提醒（7 天內升級為警告）、保單保障到期前 90 天提醒（固定值）。目前沒有其他可調整的設定——想調整跟我說一聲。</p>
     </div>
 
-    <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">店名對照表（帳單原文 → 顯示名）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。</p>
-      ${storeMapRows}
-    </div>
-
-    <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">你在匯入預覽或事後把帳單消費改<b>分類</b>、或在編輯裡改<b>店名（說明）</b>時，系統會自動記住，下次匯入同一家店就自動套用（優先於內建規則）。學錯了在這裡刪掉即可。</p>
-      ${learnedRows}
-    </div>
+    <h2 class="section-title">資料與備份</h2>
 
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
@@ -131,28 +161,27 @@ export async function renderSettings() {
     }});
     toast('投資原則已儲存');
   };
-  byId('saveThresholds').onclick = async () => {
+  // 提醒門檻已依分頁拆成三張卡（收支／資產配置／投資組合），各自儲存自己的欄位（PUT /settings 為部分更新）
+  byId('saveEfund').onclick = async () => {
+    await api('/settings', { method: 'PUT', body: { emergencyFundMonths: Number(val('emergencyFundMonths')) } });
+    toast('已儲存');
+  };
+  byId('saveAlloc').onclick = async () => {
+    await api('/settings', { method: 'PUT', body: { allocationDriftPct: Number(val('allocationDriftPct')) } });
+    toast('已儲存');
+  };
+  byId('saveFxCash').onclick = async () => {
     await api('/settings', { method: 'PUT', body: {
-      emergencyFundMonths: Number(val('emergencyFundMonths')),
       usdTwd: Number(val('usdTwd')),
-      allocationDriftPct: Number(val('allocationDriftPct')),
       ibIdleCashAlert: Number(val('ibIdleCashAlert')),
       fxHigh: Number(val('fxHigh')),
       fxLow: Number(val('fxLow'))
     }});
-    toast('門檻已儲存');
+    toast('已儲存');
   };
   byId('saveIb').onclick = async () => {
     await api('/settings', { method: 'PUT', body: { ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } } });
     toast('IB 設定已儲存，可到 IB 投資組合頁同步');
-  };
-  byId('migrateBtn').onclick = async () => {
-    if (!confirm('要把舊分類轉換成新的兩層分類嗎？（會先自動備份，可重複執行）')) return;
-    try {
-      const r = await api('/migrate/categories', { method: 'POST' });
-      const detail = Object.entries(r.byOldCategory || {}).map(([k, v]) => `${k}×${v}`).join('、');
-      toast(r.changed ? `已轉換 ${r.changed} 筆${detail ? '（' + detail + '）' : ''}` : '沒有需要轉換的舊分類');
-    } catch (err) { toast('轉換失敗：' + err.message, true); }
   };
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories')); }
@@ -178,7 +207,7 @@ export async function renderSettings() {
   };
 }
 
-// 分店格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
+// 店名格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
 /** @param {number} count @param {{id:string,before:string,after:string}[]} changes */
 function openBranchPreview(count, changes) {
   const root = byId('modal-root');
@@ -186,9 +215,9 @@ function openBranchPreview(count, changes) {
   const capNote = count > changes.length
     ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${changes.length} 筆，套用時會處理全部 ${count} 筆）</p>` : '';
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
-    <div class="modal-head"><h2>分店格式整理預覽</h2><button class="x-close">×</button></div>
+    <div class="modal-head"><h2>店名格式整理預覽</h2><button class="x-close">×</button></div>
     <div class="modal-body">
-      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會統一成「主體（分店）」格式。套用前會自動備份、可重複執行。請確認以下變更：</p>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會整理成統一格式（分店括號、品牌名）。套用前會自動備份、可重複執行。請確認以下變更：</p>
       <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
         <thead><tr><th>目前說明</th><th></th><th>整理後</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
