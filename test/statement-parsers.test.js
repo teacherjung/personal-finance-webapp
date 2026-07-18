@@ -144,4 +144,8 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('台亞加油站林口二站'), '台亞加油站（林口二站）');   // 品牌後直接接分店也切
   // 台灣普客二四 → Times Parking
   assert.equal(normalizeStoreDisplay('台灣普客二四'), 'Times Parking');
+  // Codex#5：品牌正規化不可丟掉分店與外幣註記
+  assert.equal(normalizeStoreDisplay('台亞加油站-林口站'), '台亞加油站（林口站）');           // 帶連字號的分店
+  assert.equal(normalizeStoreDisplay('台亞林口站（USD/9.99）'), '台亞加油站（林口站）（USD/9.99）');   // 外幣尾碼保留
+  assert.equal(normalizeStoreDisplay('台亞加油站（USD/9.99）'), '台亞加油站（USD/9.99）');     // 純品牌＋外幣（無分店）
 });

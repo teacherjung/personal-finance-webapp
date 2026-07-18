@@ -40,6 +40,18 @@ test('sanitizeTree：清掉壞 key/value、去重、強制保留 其他/未分�
   assert.deepEqual(t['其他'], ['未分類'], '一定含 其他/未分類');
 });
 
+test('Codex#7｜分類名撞 JS 原生屬性（toString/constructor）：不消失、不拋錯', () => {
+  const t = sanitizeTree({ 'toString': ['x'], 'constructor': ['y'], '飲食': ['餐廳'] });
+  assert.deepEqual(t['toString'], ['x'], 'toString 當分類名要保留');
+  assert.deepEqual(t['constructor'], ['y']);
+  assert.deepEqual(t['其他'], ['未分類']);
+  // conform 對原生屬性名不可呼叫到 Object.prototype 的函式而崩
+  assert.deepEqual(conform(t, 'toString', 'x'), ['toString', 'x']);
+  const bare = { '飲食': ['餐廳'], '其他': ['未分類'] };
+  assert.deepEqual(conform(bare, 'toString', 'x'), ['其他', '未分類'], '不在樹內的原生屬性名→其他/未分類（不拋錯）');
+  assert.deepEqual(conform(bare, 'constructor', ''), ['其他', '未分類']);
+});
+
 test('conform：不在樹內→其他/未分類；子類不合→清空；合法→原樣', () => {
   const tree = { '飲食': ['餐廳', '超市'], '其他': ['未分類'] };
   assert.deepEqual(conform(tree, '飲食', '餐廳'), ['飲食', '餐廳']);

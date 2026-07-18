@@ -83,3 +83,22 @@ test('原文級覆蓋（2026-07-18 店名對照表逐列改名）：learned[原�
   assert.equal(xin.store, '粗鑰匙名', '沒有原文級→退回 storeKey 級');
   assert.equal(xin.category, '飲食', '沒有原文級分類→維持原判斷');
 });
+
+test('Codex#2｜learnFromImport 不把別名結果重記成共用 storeKey 學習', () => {
+  // 樹有「休閒」（原娛樂改名）、別名 娛樂→休閒；categorize(NETFLIX)=娛樂→resolveImport 校正成休閒＝完整自動
+  const db = { settings: { expenseTree: { '休閒': ['Netflix及影音串流'], '其他': ['未分類'] }, categoryAliases: { '娛樂': '休閒' } }, learnedCategories: {} };
+  learnFromImport(db, 'Netflix', 'NETFLIX', '休閒', 'Netflix及影音串流');
+  assert.deepEqual(db.learnedCategories, {}, '別名結果＝完整自動，不該再記成 storeKey 規則（否則移除別名仍被鎖住）');
+});
+
+test('Codex#2｜learnFromImport 不把原文級學習升級成共用 storeKey', () => {
+  const db = { settings: {}, learnedCategories: { '桃分店原文': { category: '交通', subcategory: '停車費' } } };
+  learnFromImport(db, '共用店', '桃分店原文', '交通', '停車費');
+  assert.ok(!db.learnedCategories['共用店'], '原文級已涵蓋→不寫共用 storeKey（否則污染同店其他分店）');
+});
+
+test('Codex#2｜learnFromImport 對「真的手動改成與自動不同」仍照常學', () => {
+  const db = { settings: {}, learnedCategories: {} };
+  learnFromImport(db, '星巴克', '星巴克門市X', '娛樂', '');   // 自動＝飲食；使用者選娛樂
+  assert.equal(db.learnedCategories['星巴克']?.category, '娛樂', '手動改成與自動不同→照常記 storeKey 學習');
+});
