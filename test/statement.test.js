@@ -73,6 +73,15 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
   }
 });
 
+test('categorize：優步（Uber）叫車 vs 外送（使用者定 2026-07-18）', () => {
+  // 「優步」不再當叫車關鍵字（會把外送全判成交通）；叫車認「車隊/Taxi」，認不出店家才走檔尾保底
+  assert.deepEqual(categorize('優步-好麥永和豆漿店'), ['飲食', '早餐／便當']);
+  assert.deepEqual(categorize('優步-傳承永和豆漿大王林口店'), ['飲食', '早餐／便當']);
+  assert.deepEqual(categorize('優步-皇冠大車隊'), ['交通', '計程車／Uber']);
+  assert.deepEqual(categorize('優步-Yoxi車隊'), ['交通', '計程車／Uber']);
+  assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '保底：認不出店家＝叫車');
+});
+
 test('cleanStore：分類仍用原始說明、不受清理影響', () => {
   // FP-石二鍋 清成身分名「石二鍋」（「（FP）」是顯示層標記），分類仍用原始字串判斷 → 飲食/餐廳
   assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋');
