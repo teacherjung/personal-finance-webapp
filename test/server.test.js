@@ -716,3 +716,79 @@ test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', 
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');
 });
+
+test('Codex#3/#2/#5｜整理：品牌層 name 一律搬原文級（key 沒變也要）、撞 key 欄位合併、缺 storeKey 補回', async () => {
+  const origA = '統一超商-百福X999 TAIPEI', origB = '統一超商-德權X999 TAIPEI';
+  const t1 = await (await POST('/transactions', { date: '2026-07-21', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 51, note: '統一超商（百福）', storeKey: '統一超商', stmtRef: `cX|2026-07-21|51|${origA}`, source: 'stmt' })).json();
+  const t2 = await (await POST('/transactions', { date: '2026-07-22', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 52, note: '統一超商（德權）', storeKey: '統一超商', stmtRef: `cX|2026-07-22|52|${origB}`, source: 'stmt' })).json();
+  // Codex#5：帳單交易完全沒有 storeKey（學習機制上線前匯入的舊資料）
+  const origC = '石二鍋(林口家樂X999 Taipei';
+  const t3 = await (await POST('/transactions', { date: '2026-07-23', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 53, note: '石二鍋', stmtRef: `cX|2026-07-23|53|${origC}`, source: 'stmt' })).json();
+  // 種學習表：品牌層殘留 name（key 不會變動）＋撞 key 的兩條（一條只有 name、一條只有分類）
+  const backup = await GET('/db');
+  const seeded = { ...(backup.learnedCategories || {}) };
+  seeded['統一超商'] = { name: '統一超商（舊自訂分店）', category: '飲食', subcategory: '超市' };
+  seeded['全家便利商店'] = { name: '全家便利商店（漢中店）' };   // 整理後 key→全家商店，name 被摘掉剩空殼
+  seeded['全家商店'] = { category: '飲食', subcategory: '超市' };   // 撞 key：分類不可被空殼擋掉
+  assert.equal((await POST('/import', { ...backup, learnedCategories: seeded })).status, 200);
+
+  await (await POST('/statement/normalize-branches', {})).json();
+  const after = await GET('/transactions');
+  const g = (id) => after.find(t => t.id === id);
+  // Codex#3：品牌 key 沒變（統一超商→統一超商）時，殘留的 name 以前留在品牌層＝往後每次整理都連動所有分店。
+  // 搬家後「目前畫面不變」是刻意的（不驚嚇使用者），真正的不變量是「品牌層不再有 name」＋「之後改一家不連動另一家」。
+  const learned = await GET('/learned');
+  assert.ok(!learned['統一超商']?.name, '品牌層 entry 一律不留 name（否則同品牌全部連動）');
+  assert.equal(learned['統一超商']?.category, '飲食', '品牌層的分類學習要留著');
+  assert.equal(learned[origA]?.name, '統一超商（舊自訂分店）', 'name 改掛到原文級（正確的層）');
+  assert.equal(learned[origB]?.name, '統一超商（舊自訂分店）', '共用該名字的每個原文都各自掛一份');
+  // 真正的驗收：改其中一個原文，另一個不受影響
+  await POST('/statement/rename-store', { orig: origA, name: '統一超商（百福門市）' });
+  const after2 = await GET('/transactions');
+  assert.equal(after2.find(t => t.id === t1.id).note, '統一超商（百福門市）');
+  assert.equal(after2.find(t => t.id === t2.id).note, '統一超商（舊自訂分店）', '改一家分店不可連動另一家');
+  // Codex#2：撞 key 時欄位層級合併——先到者被摘成空殼不可擋掉後到者的分類
+  assert.equal(learned['全家商店']?.category, '飲食', '空物件（{}）不可吃掉另一條的分類學習');
+  // Codex#5：缺 storeKey 的舊帳單資料要被補回品牌層鑰匙
+  assert.equal(g(t3.id).storeKey, '石二鍋', '整理要替沒有鑰匙的帳單交易補寫鑰匙');
+  for (const id of [t1.id, t2.id, t3.id]) await DELETE_(`/transactions/${id}`);
+});
+
+test('Codex#8｜匯入一律從帳單原文重算鑰匙，不信前端傳來的衍生值', async () => {
+  const cards = await GET('/cards');
+  const card = cards[0] || (await (await POST('/cards', { name: '測試卡X', type: 'credit' })).json());
+  const desc = '統一超商-百福Z999 TAIPEI';
+  const res = await (await POST(`/cards/${card.id}/statement/import`, { transactions: [{
+    date: '2026-07-24', amount: 45, desc, store: '統一超商（百福）',
+    storeKey: '停車費（全家便利商店（台北））（FP）',   // 惡意/舊分頁污染值
+    category: '飲食', subcategory: '超市', stmtRef: `${card.id}|2026-07-24|45|${desc}`,
+  }] })).json();
+  assert.equal(res.imported, 1);
+  const tx = (await GET('/transactions')).find(t => t.stmtRef === `${card.id}|2026-07-24|45|${desc}`);
+  assert.equal(tx.storeKey, '統一超商', '鑰匙以帳單原文重算，前端傳的髒值不採用');
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選擇一併清除', async () => {
+  const origA = '八方雲集中山Y999 TAIPEI', origB = '八方雲集松江Y999 TAIPEI';
+  const t1 = await (await POST('/transactions', { date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 61, note: '八方雲集（中山）', storeKey: '八方雲集', stmtRef: `cY|2026-07-25|61|${origA}`, source: 'stmt' })).json();
+  const t2 = await (await POST('/transactions', { date: '2026-07-26', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 62, note: '八方雲集（松江）', storeKey: '八方雲集', stmtRef: `cY|2026-07-26|62|${origB}`, source: 'stmt' })).json();
+  const backup = await GET('/db');
+  assert.equal((await POST('/import', { ...backup,
+    learnedCategories: { ...(backup.learnedCategories || {}), '八方雲集': { category: '娛樂', subcategory: '' } } })).status, 200);
+  // 只還原 A：品牌規則被 B 共用 → 保留，但要回報（否則使用者以為還原了，下次匯入又被套回去）
+  const r1 = await (await POST('/statement/rename-store', { orig: origA, reset: true })).json();
+  assert.equal(r1.brandRule?.key, '八方雲集');
+  assert.ok(r1.brandRule.sharedCount >= 1, '要告訴使用者被幾個原文共用');
+  assert.equal((await GET('/learned'))['八方雲集']?.category, '娛樂', '未經確認不可擅自清掉共用規則');
+  // 使用者確認後一併清除
+  const r2 = await (await POST('/statement/rename-store', { orig: origA, reset: true, clearBrand: true })).json();
+  assert.equal(r2.ok, true);
+  assert.ok(!(await GET('/learned'))['八方雲集'], 'clearBrand 才真的清掉共用規則');
+  for (const id of [t1.id, t2.id]) await DELETE_(`/transactions/${id}`);
+});
