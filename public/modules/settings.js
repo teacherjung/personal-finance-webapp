@@ -16,13 +16,14 @@ export async function renderSettings() {
     const prev = byOrig.get(orig);
     if (!prev || String(t.date || '') > prev.date) {
       byOrig.set(orig, { orig, date: String(t.date || ''), cur: String(t.note || '').trim(),
-        cat: String(t.category || ''), sub: String(t.subcategory || '') });
+        key: String(t.storeKey || '').trim(), cat: String(t.category || ''), sub: String(t.subcategory || '') });
     }
   }
   const storeRows = [...byOrig.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
+  // 三層一次看（使用者定 2026-07-18）：帳單原文（銀行印的）→ 身分鑰匙（辨識同一家店的乾淨名，學習用）→ 顯示名（你看到的，可自訂）
   const storeMapRows = storeRows.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
-        <thead><tr><th>帳單原文</th><th>顯示名</th><th>分類</th><th></th></tr></thead>
-        <tbody>${storeRows.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td>
+        <thead><tr><th>帳單原文</th><th>身分鑰匙</th><th>顯示名</th><th>分類</th><th></th></tr></thead>
+        <tbody>${storeRows.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td class="muted">${esc(p.key || '—')}</td><td>${esc(p.cur)}</td>
           <td>${esc(p.cat)}${p.sub ? ` <span class="muted">· ${esc(p.sub)}</span>` : ''}</td>
           <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty">尚無帳單記錄。匯入信用卡帳單後，這裡會列出每家店的顯示名與分類。</p>';
@@ -46,13 +47,13 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名格式整理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「台灣普客二四」→「Times Parking」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「Times Parking」→「台灣普客二四」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
       <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">帳單店名／分類學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。三欄＝店名的三層：<b>帳單原文</b>（銀行印的）→ <b>身分鑰匙</b>（辨識「同一家店」的乾淨名，學習靠它）→ <b>顯示名</b>（你看到的，可自訂）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
       ${storeMapRows}
     </div>
 
