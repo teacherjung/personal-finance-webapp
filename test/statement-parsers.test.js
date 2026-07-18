@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rocToIso, parseFubon, parseTaishinPdf, finalize, parsePdfAuto,
-  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize
+  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize, normalizeStoreDisplay
 } from '../lib/statement.js';
 
 test('rocToIso：民國日期 → 西元 ISO', () => {
@@ -97,8 +97,8 @@ test('categorize：各大類都命中一個代表商家（防止規則被誤刪�
 });
 
 test('cleanStore：更多雜訊清理樣式', () => {
-  // 中文主體-中文分店：cleanStore 收尾會把分隔符轉全形括號（branchNormalize，使用者定 2026-07）
-  assert.equal(cleanStore('全家便利商店-三重新陽店A0145 TAIPEI'), '全家便利商店（三重新陽店）');
+  // 中文主體-中文分店：cleanStore 收尾把分隔符轉全形括號＋品牌簡稱（全家便利商店→全家商店，使用者定 2026-07）
+  assert.equal(cleanStore('全家便利商店-三重新陽店A0145 TAIPEI'), '全家商店（三重新陽店）');
   assert.equal(cleanStore('統一超商-德權A2716 TAIPEI'), '統一超商（德權）');
   assert.equal(cleanStore('DECATHLON迪卡儂A0145 TAIPEI'), 'DECATHLON迪卡儂');   // 英文起頭不切
   assert.equal(cleanStore('momo*印用製所TAIPEI'), '印用製所');           // marketplace 前綴
@@ -125,4 +125,15 @@ test('branchNormalize：分店統一成「主體（分店）」（使用者定 2
   assert.equal(branchNormalize('LADY-M'), 'LADY-M');
   assert.equal(branchNormalize('柑園加油站林口二站'), '柑園加油站林口二站');   // 非白名單連鎖，不猜切
   assert.equal(branchNormalize(''), '');
+});
+
+test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店→全家商店，使用者定 2026-07）', () => {
+  // 品牌簡稱保留分店
+  assert.equal(normalizeStoreDisplay('全家便利商店（漢中店）'), '全家商店（漢中店）');
+  // 與分店切分組合：先切分店、再套簡稱
+  assert.equal(normalizeStoreDisplay('全家便利商店-三重新陽店'), '全家商店（三重新陽店）');
+  // 冪等：已是簡稱不再變
+  assert.equal(normalizeStoreDisplay('全家商店（漢中店）'), '全家商店（漢中店）');
+  // 不影響其他店家
+  assert.equal(normalizeStoreDisplay('統一超商-德權'), '統一超商（德權）');
 });
