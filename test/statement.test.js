@@ -49,6 +49,11 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
     ['OPENAI* CHATGPT CREDITOPENAI', 'OpenAI'],
     ['COURSERA.ORGO5190 COURSE（USD/17.00）', 'COURSERA.ORGO5190 COURSE（USD/17.00）'],
     ['TAPPAY_台灣國際開A2716 TAIPEI', '台灣國際開'],
+    // 停車三案（使用者回報 2026-07-18）：聯信＝收單方前綴要砍、公司字尾截斷殘尾要修、「?亭」＝俥亭缺字
+    ['聯信-台灣普客二四股份有A0145 TAIPEI', '台灣普客二四'],   // 聯信-＋股份有（截斷）都是雜訊
+    ['聯信-台灣普客二四股份有A0145 NEW TA', '台灣普客二四'],
+    ['連加*?亭停車事業股份Taipei', '俥亭停車'],               // ?＝「俥」超出 Big5 的銀行缺字；事業股份＝截斷殘尾
+    ['聯信-%Arabica象A0145 TAIPEI', '%Arabica象'],            // 聯信- 砍掉後其餘照常清理
   ];
   for (const [raw, expected] of cases) {
     assert.equal(cleanStore(raw), expected, `cleanStore(${raw})`);
