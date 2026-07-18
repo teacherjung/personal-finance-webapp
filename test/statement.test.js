@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -73,6 +73,15 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
   }
 });
 
+test('categorize：優步（Uber）叫車 vs 外送（使用者定 2026-07-18）', () => {
+  // 「優步」不再當叫車關鍵字（會把外送全判成交通）；叫車認「車隊/Taxi」，認不出店家才走檔尾保底
+  assert.deepEqual(categorize('優步-好麥永和豆漿店'), ['飲食', '早餐／便當']);
+  assert.deepEqual(categorize('優步-傳承永和豆漿大王林口店'), ['飲食', '早餐／便當']);
+  assert.deepEqual(categorize('優步-皇冠大車隊'), ['交通', '計程車／Uber']);
+  assert.deepEqual(categorize('優步-Yoxi車隊'), ['交通', '計程車／Uber']);
+  assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '保底：認不出店家＝叫車');
+});
+
 test('cleanStore：分類仍用原始說明、不受清理影響', () => {
   // FP-石二鍋 清成身分名「石二鍋」（「（FP）」是顯示層標記），分類仍用原始字串判斷 → 飲食/餐廳
   assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋');
@@ -119,6 +128,20 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     // 威秀影城＝分店白名單（顯示留分店、鑰匙只到品牌）
     ['威秀影城信義分A0145 TAIPEI', '威秀影城（信義分）', '威秀影城'],
     ['威秀影城新店A0145 TAIPEI', '威秀影城（新店）', '威秀影城'],
+    // 金流／平台前綴（使用者定 2026-07-18）：藍新＝金流商、點點付＝金流商、優步＝Uber 平台
+    ['藍新-聲島咖啡BeingCa', '聲島咖啡', '聲島咖啡'],
+    ['點點付-水灣餐廳_碧潭店A2716 TAIPEI', '水灣餐廳（碧潭店）', '水灣餐廳'],   // 底線也切分店
+    ['蘋果電腦-台灣-ECA0145 Taipei', '蘋果電腦', '蘋果電腦'],
+    // 優步＝Uber：底下混著叫車與外送，平台名不可當店家（否則全部共用一把鑰匙）
+    ['優步-皇冠大車隊', 'Uber（皇冠大車隊）', 'Uber'],           // 叫車＝店家是 Uber，車隊當分店
+    ['優步-Q2 Taxi車隊Taipei', 'Uber（Q2 Taxi車隊）', 'Uber'],
+    ['優步福爾摩沙股份有公司', 'Uber', 'Uber'],                    // 只有平台名（沒帶店家）
+    ['優步-好麥永和豆漿店', '好麥永和豆漿店', '好麥永和豆漿店'],   // 外送＝店家是餐廳
+    // 銀行截斷版併回完整名（使用者定 2026-07-18）：截斷與完整寫法要同一把鑰匙，統計才不會拆開
+    ['優步福爾摩沙股份有公司-傳承永和豆漿', '傳承永和豆漿大王', '傳承永和豆漿大王'],
+    ['優步福爾摩沙股份有公司-好麥永和豆漿', '好麥永和豆漿店', '好麥永和豆漿店'],
+    ['傳承永和豆漿大王林口店A0145 TAIPEI', '傳承永和豆漿大王（林口店）', '傳承永和豆漿大王'],   // 併回不吃掉分店
+    ['優步-傳承永和豆漿大王林口店', '傳承永和豆漿大王（林口店）', '傳承永和豆漿大王'],
   ];
   for (const [raw, display, key] of cases) {
     assert.equal(cleanStore(raw), display, `顯示名(${raw})`);
@@ -137,4 +160,16 @@ test('origFromStmtRef：從 stmtRef 取回帳單原文（原文可含「|」）'
   assert.equal(origFromStmtRef('c1|2026-07-15|55'), '');
   assert.equal(origFromStmtRef(''), '');
   assert.equal(origFromStmtRef(undefined), '');
+});
+
+test('假自訂名 isPlatformArtifactName（使用者定 2026-07-18）：平台被當店名時留下的殘骸', () => {
+  assert.equal(isPlatformArtifactName('優食（UE）'), true, '店名被外送規則吃掉、只剩平台＋標記');
+  assert.equal(isPlatformArtifactName('優食（永和豆漿大王林口店）'), true, '舊版把平台當主體時使用者跟著取的名字');
+  assert.equal(isPlatformArtifactName('優步（皇冠大車隊）'), true);
+  assert.equal(isPlatformArtifactName('優食'), true);
+  assert.equal(isPlatformArtifactName('好麥永和豆漿店'), false, '真的自訂名不可誤判');
+  assert.equal(isPlatformArtifactName('Uber Eats'), false);
+  assert.equal(isPlatformArtifactName('優食堂'), false, '店名剛好以平台名開頭但不是「平台（…）」格式');
+  assert.equal(isPlatformArtifactName(''), false);
+  assert.equal(isPlatformArtifactName(undefined), false);
 });
