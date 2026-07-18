@@ -232,7 +232,9 @@ function openTxForm(tx, accounts = [], cards = []) {
       { key: 'subcategory', label: '子類（支出才有，可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'account', label: '帳戶 / 信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
-      { key: 'note', label: '說明（店名）', type: 'text', full: true, placeholder: '例：全聯、星巴克' }   // 標籤與列表表頭一致（使用者定）
+      // 標籤與列表表頭一致（使用者定）；「店名／品項」＝這欄也常拿來記買了什麼（LG 18升除濕機（momo）），
+      // 不是只有店名（使用者定 2026-07-19）
+      { key: 'note', label: '說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' }
     ],
     values: tx || {},
     onMount: (/** @type {any} */ root) => {
