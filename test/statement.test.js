@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -82,4 +82,44 @@ test('cleanStore：分類仍用原始說明、不受清理影響', () => {
 test('normalizeDesc：全形英數→半形、去 CJK 間多餘空白', () => {
   assert.equal(normalizeDesc('ＡＢＣ１２３'), 'ABC123');
   assert.equal(normalizeDesc('台  北  富  邦'), '台北富邦');
+});
+
+test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（使用者定 2026-07-18）', () => {
+  // 顯示名帶分店、鑰匙只到品牌——兩者分工
+  const cases = [
+    ['統一超商-百福A2716 TAIPEI', '統一超商（百福）', '統一超商'],
+    ['全家便利商店-三重新陽店A0145 TAIPEI', '全家商店（三重新陽店）', '全家商店'],
+    ['八方雲集林口遠雄A0145 TAIPEI', '八方雲集（林口遠雄）', '八方雲集'],
+    ['少年家宵夜食堂新北林口A0145 TAIPEI', '少年家宵夜食堂（新北林口）', '少年家宵夜食堂'],
+    ['石二鍋林口家樂福A0145 TAIPEI', '石二鍋（林口家樂福）', '石二鍋'],
+    ['三顧茅廬-林口文O2732 Taipei', '三顧茅廬（林口文）', '三顧茅廬'],
+    ['無老鍋-台北永康店A0145 TAIPEI', '無老鍋（台北永康店）', '無老鍋'],
+    ['台北101-室內觀景台A0145 TAIPEI', '台北101（室內觀景台）', '台北101'],
+    ['LOUISA COFFEA0145 NEW TA', '路易莎咖啡（林口文三門市）', '路易莎咖啡'],
+    ['台灣麥當勞MOP-056', '麥當勞', '麥當勞'],
+    ['紅陽科技六本木', '六松今苑壽喜燒', '六松今苑壽喜燒'],
+    // 加油站：各品牌顯示名照舊，鑰匙一律「加油站」（使用者定：所有加油站算同一件事）
+    ['中油-林口工三站A0145 TAIPEI', '中油（林口工三站）', '加油站'],
+    ['台亞林口中山站', '台亞加油站（林口中山站）', '加油站'],
+    ['車容坊加油站-文二站A0145 TAIPEI', '車容坊加油站（文二站）', '加油站'],
+    ['柑園加油站有限公司林口二站TAIPEI', '柑園加油站林口二站', '加油站'],
+    ['世新加油站A0145 TAIPEI', '世新加油站', '加油站'],
+  ];
+  for (const [raw, display, key] of cases) {
+    assert.equal(cleanStore(raw), display, `顯示名(${raw})`);
+    assert.equal(storeKeyOf(raw), key, `身分鑰匙(${raw})`);
+  }
+  // 外幣註記不可被當分店摘掉
+  assert.equal(storeKeyOfName('品田牧場（USD/9.99）'), '品田牧場（USD/9.99）');
+  // 沒有分店的名字＝原樣
+  assert.equal(storeKeyOfName('石二鍋'), '石二鍋');
+  assert.equal(storeKeyOf('eTag停車3087-H8:救國團林口運動中心'), 'eTag 停車', '場站屬顯示層，鑰匙只到品牌');
+});
+
+test('origFromStmtRef：從 stmtRef 取回帳單原文（原文可含「|」）', () => {
+  assert.equal(origFromStmtRef('c1|2026-07-15|55|統一超商-百福A2716'), '統一超商-百福A2716');
+  assert.equal(origFromStmtRef('c1|2026-07-15|55|A|B'), 'A|B');
+  assert.equal(origFromStmtRef('c1|2026-07-15|55'), '');
+  assert.equal(origFromStmtRef(''), '');
+  assert.equal(origFromStmtRef(undefined), '');
 });

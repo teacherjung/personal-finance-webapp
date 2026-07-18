@@ -550,7 +550,7 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   assert.ok(applied.changed >= 1);
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '統一超商（百福）', '套用後 note 已正規化');
-  assert.equal(after.storeKey, '統一超商（百福）', 'storeKey 一併對齊');
+  assert.equal(after.storeKey, '統一超商', 'storeKey＝身分鑰匙（品牌層、不含分店）');
   // 冪等：此筆已正規化，再預覽不應再出現
   const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(!(again.changes || []).some(c => c.id === tx.id), '已正規化的筆不再出現在預覽');
@@ -579,9 +579,9 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
   const learned = await GET('/learned');
   assert.equal(learned[origT]?.name, '台灣普客二四', '原文級學習：key 不動、錯名治好');
   assert.ok(!learned['聯信（Times Parking股份有）'], '舊 storeKey 的學習不可原地留下');
-  assert.equal(learned['台灣普客二四']?.name, '台灣普客二四', '學習跟著 storeKey 搬家、錯名（Times Parking）治好');
   assert.equal(learned['台灣普客二四']?.category, '交通', '搬家不可弄丟分類學習');
-  assert.ok(applied.learnedNamesFixed >= 2, '治了幾個學過的錯名要回報');
+  assert.ok(!learned['台灣普客二四']?.name, '品牌層 key 不留顯示名——帶分店的名字改掛原文級（否則同品牌其他分店被連動改名）');
+  assert.ok(applied.learnedNamesFixed >= 1, '治了幾個學過的錯名要回報');
   // 冪等：治好的不再出現在預覽
   const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(!(again.changes || []).some(c => c.id === tx.id), '治好的筆不再出現');

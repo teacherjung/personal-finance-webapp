@@ -102,3 +102,32 @@ test('Codex#2｜learnFromImport 對「真的手動改成與自動不同」仍照
   learnFromImport(db, '星巴克', '星巴克門市X', '娛樂', '');   // 自動＝飲食；使用者選娛樂
   assert.equal(db.learnedCategories['星巴克']?.category, '娛樂', '手動改成與自動不同→照常記 storeKey 學習');
 });
+
+test('身分鑰匙改品牌層後（2026-07-18）：分類學品牌層、顯示名學原文級——同品牌其他分店不被連動改名', () => {
+  // 情境：兩家統一超商分店（不同原文、同一個品牌鑰匙）。改其中一家的顯示名＋分類。
+  const origA = '統一超商-百福A2716 TAIPEI', origB = '統一超商-德權A2716 TAIPEI';
+  const db = { learnedCategories: {} };
+  learnFromStmtEdit(db, {
+    source: 'stmt', storeKey: '統一超商', stmtRef: `c1|2026-07-15|55|${origA}`,
+    note: '統一超商（百福門市）', category: '飲食', subcategory: '超市',
+  });
+  assert.deepEqual(db.learnedCategories['統一超商'], { category: '飲食', subcategory: '超市' },
+    '分類學在品牌層（同品牌各分店共用，本來就該一起）');
+  assert.equal(db.learnedCategories[origA]?.name, '統一超商（百福門市）',
+    '顯示名學在原文級——含分店的名字掛品牌層會連動改到其他分店');
+  assert.ok(!db.learnedCategories['統一超商'].name, '品牌層不可留顯示名');
+  // 套用：B 分店只吃到分類，名字仍是自己的
+  const [a, b] = applyLearned(db, [
+    { store: '統一超商（百福）', storeKey: '統一超商', desc: origA, category: '生活', subcategory: '' },
+    { store: '統一超商（德權）', storeKey: '統一超商', desc: origB, category: '生活', subcategory: '' },
+  ]);
+  assert.equal(a.store, '統一超商（百福門市）'); assert.equal(a.category, '飲食');
+  assert.equal(b.store, '統一超商（德權）', '沒被改名的分店維持自己的顯示名');
+  assert.equal(b.category, '飲食', '分類則共用品牌層學習');
+  // 改回自動名 → 清掉原文級 name（自我修剪）
+  learnFromStmtEdit(db, {
+    source: 'stmt', storeKey: '統一超商', stmtRef: `c1|2026-07-15|55|${origA}`,
+    note: '統一超商（百福）', category: '飲食', subcategory: '超市',
+  });
+  assert.ok(!db.learnedCategories[origA], '改回自動名＝不需要規則');
+});

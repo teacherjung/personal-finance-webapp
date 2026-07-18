@@ -188,7 +188,7 @@ function openStoreProfile(t, all) {
   for (const x of grp) { const n = String(x.note || '（無說明）'); const v = (variants[n] ||= { count: 0, total: 0 }); v.count++; v.total += Number(x.amount || 0); }
   const vEntries = Object.entries(variants).sort((a, b) => b[1].total - a[1].total);
   const variantHtml = vEntries.length > 1 ? `
-    <div class="store-sec"><div class="store-sec-title">同一家店的不同寫法／分店</div>
+    <div class="store-sec"><div class="store-sec-title">包含哪些店（分店／不同寫法）</div>
       ${vEntries.map(([n, v]) => `<div class="store-line"><span>${esc(n)}${/（FP）/.test(n) ? ' <span class="muted">外送</span>' : ''}</span><span class="muted">${v.count} 次 · ${fmtNT(v.total)}</span></div>`).join('')}
     </div>` : '';
   const recentHtml = grp.slice(0, 5).map(x =>
