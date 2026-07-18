@@ -92,9 +92,9 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">分店格式整理（一次性）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的分店統一成「主體（分店）」格式，例如「統一超商-百福」→「統一超商（百福）」、「誠品生活新店」→「誠品生活（新店）」。會先<b>預覽</b>再套用，套用前自動備份、可重複執行。有分隔符（-）的一律自動處理；無分隔符的連鎖（如誠品生活）需在白名單內才會切分店，未涵蓋到的告訴我再補。</p>
-      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名分店格式</button></div>
+      <h3 style="margin-bottom:6px">店名格式整理</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「台灣普客二四」→「Times Parking」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
+      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
@@ -178,7 +178,7 @@ export async function renderSettings() {
   };
 }
 
-// 分店格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
+// 店名格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
 /** @param {number} count @param {{id:string,before:string,after:string}[]} changes */
 function openBranchPreview(count, changes) {
   const root = byId('modal-root');
@@ -186,9 +186,9 @@ function openBranchPreview(count, changes) {
   const capNote = count > changes.length
     ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${changes.length} 筆，套用時會處理全部 ${count} 筆）</p>` : '';
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
-    <div class="modal-head"><h2>分店格式整理預覽</h2><button class="x-close">×</button></div>
+    <div class="modal-head"><h2>店名格式整理預覽</h2><button class="x-close">×</button></div>
     <div class="modal-body">
-      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會統一成「主體（分店）」格式。套用前會自動備份、可重複執行。請確認以下變更：</p>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會整理成統一格式（分店括號、品牌名）。套用前會自動備份、可重複執行。請確認以下變更：</p>
       <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
         <thead><tr><th>目前說明</th><th></th><th>整理後</th></tr></thead>
         <tbody>${rows}</tbody></table></div>

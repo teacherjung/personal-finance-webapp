@@ -493,7 +493,7 @@ test('匯入正常：合法備份可還原、且還原後 summary 正常', async
   assert.ok(sum.netWorth > 0);
 });
 
-test('分店格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note＋storeKey、冪等', async () => {
+test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note＋storeKey、冪等', async () => {
   const tx = await (await POST('/transactions', {
     date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市',
     amount: 55, note: '統一超商-百福', storeKey: '統一超商-百福', source: 'stmt',
