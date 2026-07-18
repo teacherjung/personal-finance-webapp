@@ -252,3 +252,12 @@ $('#snapshotBtn').addEventListener('click', async () => {
 
 hydrateIcons(document);
 router();
+
+// 1-1：開 app 自動記錄本月快照（每個本地日曆日至多一次；同日重開不重複寫）。
+// 靜默進行——真的寫入了才提示＋刷新目前頁面；失敗不打擾（手動「記錄本月快照」鈕仍可用）。
+(async () => {
+  try {
+    const r = await api('/snapshot/auto', { method: 'POST' });
+    if (r && r.recorded) { toast('已自動記錄本月快照 📸'); router(); }
+  } catch { /* 自動快照失敗靜默略過，不影響 app 使用 */ }
+})();

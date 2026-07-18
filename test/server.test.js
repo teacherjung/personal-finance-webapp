@@ -69,6 +69,22 @@ test('POST /api/snapshot：記錄本月快照（本地日期，非 UTC）', asyn
   assert.equal(typeof snap.netWorth, 'number');
 });
 
+test('POST /api/snapshot/auto（1-1）：同一天至多記一次，第二次跳過不重複寫', async () => {
+  const r1 = await (await POST('/snapshot/auto')).json();
+  assert.equal(typeof r1.recorded, 'boolean');
+  assert.match(r1.snap.month, /^\d{4}-\d{2}$/);
+  const thisMk = r1.snap.month;
+  // 記錄後本月只會有一筆快照（同月覆蓋），且日期＝今天
+  const after1 = ((await GET('/db')).snapshots || []).filter(s => s.month === thisMk);
+  assert.equal(after1.length, 1, '本月快照唯一（同月覆蓋）');
+  assert.ok(after1[0].date.startsWith(thisMk), '快照日期落在本月');
+  // 第二次同日呼叫：recorded=false（跳過），本月快照數量不變
+  const r2 = await (await POST('/snapshot/auto')).json();
+  assert.equal(r2.recorded, false, '同一天第二次應跳過');
+  const after2 = ((await GET('/db')).snapshots || []).filter(s => s.month === thisMk);
+  assert.equal(after2.length, 1, '跳過後不會多出重複筆');
+});
+
 test('自動學習：帳單交易改分類 → /api/learned 記住 → 可刪除', async () => {
   const tx = await (await POST('/transactions', {
     date: '2026-07-06', type: 'expense', category: '其他', subcategory: '未分類',

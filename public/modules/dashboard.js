@@ -9,7 +9,7 @@ function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; 
 // 淨資產走勢迷你線（hero 內，取自真實月快照）
 function sparklineSvg(snaps) {
   const pts = (snaps || []).map(s => Number(s.netWorth) || 0);
-  if (pts.length < 2) return '<div class="dh-spark-empty">每月按左下「記錄本月快照」，這裡會長出淨資產走勢。</div>';
+  if (pts.length < 2) return '<div class="dh-spark-empty">每月開啟 app 會自動記錄快照，累積幾個月後這裡會長出淨資產走勢。</div>';
   const w = 240, h = 40, pad = 4;
   const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
   const step = w / (pts.length - 1);
@@ -129,7 +129,7 @@ export async function renderDashboard() {
 
 function drawTrend(snaps) {
   const ctx = byId('trendChart');
-  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，按左下角「記錄本月快照」開始累積。</p>'; return; }
+  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，開啟 app 會自動記錄，累積後這裡會顯示走勢。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',
     data: {
