@@ -3,9 +3,26 @@ import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose } from '
 import { icon } from './icons.js';
 
 export async function renderSettings() {
-  const s = await api('/settings');
-  const learned = await api('/learned');
+  const [s, learned, txs] = await Promise.all([api('/settings'), api('/learned'), api('/transactions')]);
   const learnedEntries = Object.entries(learned || {});
+  // 店名對照表（使用者定 2026-07）：帳單原文（藏在 stmtRef 的第 4 段起）→ 目前顯示名（note——
+  // 自動清理後的，或使用者手動改過就是改過的版本）。同一種對照去重只列一次；原文＝顯示的不列（精簡）。
+  const pairSeen = new Map();
+  for (const t of txs || []) {
+    if (t.source !== 'stmt' || !t.stmtRef) continue;
+    const parts = String(t.stmtRef).split('|');   // stmtRef＝卡id|消費日|金額|原始說明
+    if (parts.length < 4) continue;
+    const orig = parts.slice(3).join('|').trim();   // 原文可能含「|」→ 取第 3 個分隔後全部
+    const cur = String(t.note || '').trim();
+    if (!orig || !cur || orig === cur) continue;
+    const k = orig + '\u0000' + cur;
+    if (!pairSeen.has(k)) pairSeen.set(k, { orig, cur });
+  }
+  const storePairs = [...pairSeen.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
+  const storeMapRows = storePairs.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
+        <thead><tr><th>帳單原文</th><th>顯示為</th></tr></thead>
+        <tbody>${storePairs.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td>${esc(p.cur)}</td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="empty">尚無有調整的店名。匯入信用卡帳單後，這裡會列出「帳單原文 → 顯示名」的對照。</p>';
   const learnedRows = learnedEntries.length ? `<div class="tbl-wrap"><table>
         <thead><tr><th>原店名</th><th>顯示為</th><th>分類</th><th></th></tr></thead>
         <tbody>${learnedEntries.map(([store, v]) => `<tr>
@@ -78,6 +95,12 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">分店格式整理（一次性）</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的分店統一成「主體（分店）」格式，例如「統一超商-百福」→「統一超商（百福）」、「誠品生活新店」→「誠品生活（新店）」。會先<b>預覽</b>再套用，套用前自動備份、可重複執行。有分隔符（-）的一律自動處理；無分隔符的連鎖（如誠品生活）需在白名單內才會切分店，未涵蓋到的告訴我再補。</p>
       <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名分店格式</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">店名對照表（帳單原文 → 顯示名）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時，說明（店名）會自動清理成好讀的顯示名；你手動改過的就顯示你改的版本。同一種對照只列一次（目前 ${storePairs.length} 種），原文與顯示相同的不列。</p>
+      ${storeMapRows}
     </div>
 
     <div class="card" style="margin-bottom:18px">
