@@ -101,9 +101,14 @@ export async function renderTransactions() {
 
 function rowHtml(t) {
   const isIn = t.type === 'income';
+  // 滑到顯示名可看「帳單原文」（使用者定 2026-07-18）：原文＝stmtRef 第 4 段（與後端整理/對照表同口徑）
+  const parts = String(t.stmtRef || '').split('|');
+  const orig = (t.source === 'stmt' && parts.length >= 4) ? parts.slice(3).join('|').trim() : '';
+  // 換行實體 &#10; 要放在 esc() 外面拼（esc 會把 & 轉成 &amp;，換行就失效）
+  const tip = orig ? `${esc(`帳單原文：${orig}`)}&#10;（點擊看這家店的消費檔案）` : '看這家店的消費檔案';
   // 支出且有店名 → 店名可點（開「店家消費檔案」彈窗）；收入或空說明維持純文字
   const noteCell = (!isIn && String(t.note || '').trim())
-    ? `<span class="store-open" data-store="${t.id}" title="看這家店的消費檔案">${esc(t.note)}</span>`
+    ? `<span class="store-open" data-store="${t.id}" title="${tip}">${esc(t.note)}</span>`
     : esc(t.note || '');
   return `<tr>
     <td>${esc(t.date)}</td>
