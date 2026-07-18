@@ -66,3 +66,17 @@ test('無 storeKey 的舊資料一律不學（Codex#10-8）：note 可被改名�
   learnFromStmtEdit(db2, { source: 'stmt', storeKey: '國外交易服務費-99.00', note: '手續費', category: '生活', subcategory: '' });
   assert.deepEqual(db2.learnedCategories, {}, 'storeKey 是服務費時，改了顯示名也不可學');
 });
+
+test('原文級覆蓋（2026-07-18 店名對照表逐列改名）：learned[原文].name 優先於 storeKey 級', () => {
+  // 銀行截斷讓兩個分店共用 storeKey（12MINI 案例）：原文級各自取名、互不連動
+  const db = { learnedCategories: {
+    '測試分店': { name: '粗鑰匙名' },                          // storeKey 級（舊機制）
+    '測試分店 (桃X999 Taipei': { name: '測試分店（桃園店）' }   // 原文級（細）
+  } };
+  const [tao, xin] = applyLearned(db, [
+    { store: '測試分店', desc: '測試分店 (桃X999 Taipei', category: '飲食', subcategory: '' },
+    { store: '測試分店', desc: '測試分店 (新X999 Taipei', category: '飲食', subcategory: '' }
+  ]);
+  assert.equal(tao.store, '測試分店（桃園店）', '有原文級學習→用原文級（優先於 storeKey 級）');
+  assert.equal(xin.store, '粗鑰匙名', '沒有原文級→退回 storeKey 級');
+});
