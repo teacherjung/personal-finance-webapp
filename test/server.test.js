@@ -622,6 +622,28 @@ test('還原自動判斷清共用學習——僅當 storeKey 未被其他原文�
   await DELETE_(`/transactions/${a1.id}`);
 });
 
+test('顯示標記（HTTP 全鏈路）：店名格式整理替舊資料補上（FP）與停車費（），storeKey 不受污染', async () => {
+  // 舊資料樣態：匯入當時 FP 前綴已被砍掉、也還沒有停車標記
+  const fpOrig = 'FP-ZZ測試小吃';
+  const parkOrig = 'ZZ測試嘟嘟房A1234 TAIPEI';
+  const t1 = await (await POST('/transactions', { date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '外送', amount: 88, note: 'ZZ測試小吃', storeKey: 'ZZ測試小吃', stmtRef: `z|2026-07-25|88|${fpOrig}`, source: 'stmt' })).json();
+  const t2 = await (await POST('/transactions', { date: '2026-07-26', type: 'expense', category: '交通', subcategory: '停車費', amount: 60, note: 'ZZ測試嘟嘟房', storeKey: 'ZZ測試嘟嘟房', stmtRef: `z|2026-07-26|60|${parkOrig}`, source: 'stmt' })).json();
+  const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok((prev.changes || []).some(c => c.after === 'ZZ測試小吃（FP）'), '預覽要看得到 FP 標記');
+  assert.ok((prev.changes || []).some(c => c.after === '停車費（ZZ測試嘟嘟房）'), '預覽要看得到停車標記（名字沒有「停車」二字也涵蓋）');
+  await POST('/statement/normalize-branches', {});
+  const after = await GET('/transactions');
+  const g = (id) => after.find(t => t.id === id);
+  assert.equal(g(t1.id).note, 'ZZ測試小吃（FP）', '舊 FP 記錄由帳單原文補回標記');
+  assert.equal(g(t1.id).storeKey, 'ZZ測試小吃', 'storeKey（身分鑰匙）不含標記');
+  assert.equal(g(t2.id).note, '停車費（ZZ測試嘟嘟房）', '停車依分類套用');
+  assert.equal(g(t2.id).storeKey, 'ZZ測試嘟嘟房', 'storeKey 不含標記');
+  // 冪等：再跑一次不再變動這兩筆
+  const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok(!(again.changes || []).some(c => [t1.id, t2.id].includes(c.id)), '已標記過的不再重複變動');
+  for (const id of [t1.id, t2.id]) await DELETE_(`/transactions/${id}`);
+});
+
 test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', () => {
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');

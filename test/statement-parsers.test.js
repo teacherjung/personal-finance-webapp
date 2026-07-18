@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rocToIso, parseFubon, parseTaishinPdf, finalize, parsePdfAuto,
-  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize, normalizeStoreDisplay
+  extractLastFour, normalizeDesc, cleanStore, categorize, branchNormalize, normalizeStoreDisplay, applyDisplayLabels
 } from '../lib/statement.js';
 
 test('rocToIso：民國日期 → 西元 ISO', () => {
@@ -150,25 +150,31 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('台亞加油站（USD/9.99）'), '台亞加油站（USD/9.99）');     // 純品牌＋外幣（無分店）
 });
 
-test('FP 外送標記（使用者定 2026-07）：店名尾加（FP）', () => {
-  assert.equal(cleanStore('FP-麥味登'), '麥味登（FP）');
-  assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋（FP）');   // 清理＋標記併行
-  assert.equal(cleanStore('FP*珍煮丹'), '珍煮丹（FP）');                        // 星號分隔
-  assert.equal(cleanStore('FP 21PLUS'), '21PLUS（FP）');                        // 空白分隔
-  // 不誤傷：FP 後面沒有分隔符的店名（本來就叫 FPxxx）不算外送
-  assert.equal(cleanStore('FPGROUP企業'), 'FPGROUP企業');
+test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP 前綴 → 店名尾加（FP）', () => {
+  const fp = (desc) => applyDisplayLabels(cleanStore(desc), { desc });
+  assert.equal(fp('FP-麥味登'), '麥味登（FP）');
+  assert.equal(fp('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋（FP）');   // 清理＋標記併行
+  assert.equal(fp('FP*珍煮丹'), '珍煮丹（FP）');                        // 星號分隔
+  assert.equal(fp('FP 21PLUS'), '21PLUS（FP）');                        // 空白分隔
+  assert.equal(fp('FPGROUP企業'), 'FPGROUP企業');                       // FP 後無分隔符＝本來就叫 FPxxx，不誤傷
+  assert.equal(fp('foodpanda-ECO2732 Taipei'), 'foodpanda');            // foodpanda 自家扣款（非餐廳）不標記
   // 冪等：已標記過的不再重複加
-  assert.equal(normalizeStoreDisplay('麥味登（FP）'), '麥味登（FP）');
-  // foodpanda 自家扣款（非餐廳）維持標準名、不加標記
-  assert.equal(cleanStore('foodpanda-ECO2732 Taipei'), 'foodpanda');
+  assert.equal(applyDisplayLabels('麥味登（FP）', { desc: 'FP-麥味登' }), '麥味登（FP）');
+  // storeKey（身分鑰匙）保持乾淨、不含標記
+  assert.equal(cleanStore('FP-麥味登'), '麥味登');
 });
 
-test('停車標記（使用者定 2026-07）：含「停車」→ 停車費（原店名）', () => {
-  assert.equal(normalizeStoreDisplay('西門町停車場'), '停車費（西門町停車場）');
-  assert.equal(normalizeStoreDisplay('市府路停車'), '停車費（市府路停車）');
-  assert.equal(cleanStore('eTag停車3087-H8:救國團林口運動中心'), '停車費（eTag停車）');   // 品牌標準名也走顯示層
+test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 → 停車費（原店名）', () => {
+  const park = (name) => applyDisplayLabels(name, { subcategory: '停車費' });
+  // 依「分類」而非店名字面——名字沒有「停車」二字的停車場也涵蓋得到
+  assert.equal(park('嘟嘟房台北西門站'), '停車費（嘟嘟房台北西門站）');
+  assert.equal(park('阜爾運通'), '停車費（阜爾運通）');
+  assert.equal(park('Times Parking'), '停車費（Times Parking）');
+  assert.equal(park('eTag停車'), '停車費（eTag停車）');
   // 冪等：已是「停車費（…）」不再包一層
-  assert.equal(normalizeStoreDisplay('停車費（西門町停車場）'), '停車費（西門町停車場）');
-  // 名字沒有「停車」二字的停車場不套用（靠分類識別，非店名字面）
-  assert.equal(normalizeStoreDisplay('嘟嘟房台北西門站'), '嘟嘟房台北西門站');
+  assert.equal(park('停車費（嘟嘟房台北西門站）'), '停車費（嘟嘟房台北西門站）');
+  // 不是停車費子類的不套用（即使店名有「停車」二字）
+  assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
+  // 兩個標記可併存（FP 外送的停車費，理論組合）
+  assert.equal(applyDisplayLabels('某場', { desc: 'FP-某場', subcategory: '停車費' }), '停車費（某場）（FP）');
 });

@@ -36,7 +36,7 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
     ['21PLUS、21O2732 Taipei', '21PLUS'],
     ['摩斯漢堡Mos BO2732 Taipei', '摩斯漢堡'],
     ['OMGYESA2716 OMGYES', 'OMGYES'],
-    ['eTag停車3087-H8:救國團林口運動中心', '停車費（eTag停車）'],   // 停車標記（使用者定 2026-07）
+    ['eTag停車3087-H8:救國團林口運動中心', 'eTag停車'],   // cleanStore＝乾淨身分；「停車費（）」標記在顯示層
     ['悠遊卡自動加值-正好停—正好停— /TW', '悠遊卡自動加值'],
     ['柑園加油站有限公司林口二站TAIPEI', '柑園加油站林口二站'],
     ['foodpanda-ECO2732 Taipei', 'foodpanda'],
@@ -44,7 +44,7 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
     ['五桐號WooTEA0145 Taipei', '五桐號'],
     ['順康資產管理顧問有限公司', '順康資產管理顧問'],
     ['六必居潮州一品沙A0145', '六必居'],
-    ['FP-石二鍋(林口家樂O2732 Taipei', '石二鍋（FP）'],   // FP 外送標記（使用者定 2026-07）
+    ['FP-石二鍋(林口家樂O2732 Taipei', '石二鍋'],   // cleanStore 砍掉 FP 前綴＝乾淨身分；「（FP）」標記在顯示層
     // 額外：OPENAI* 不當金流前綴、外幣註記保留、截斷只能到某處
     ['OPENAI* CHATGPT CREDITOPENAI', 'OpenAI'],
     ['COURSERA.ORGO5190 COURSE（USD/17.00）', 'COURSERA.ORGO5190 COURSE（USD/17.00）'],
@@ -56,8 +56,8 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
 });
 
 test('cleanStore：分類仍用原始說明、不受清理影響', () => {
-  // FP-石二鍋 顯示清成「石二鍋（FP）」，但分類是用原始字串判斷 → 仍是飲食/餐廳
-  assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋（FP）');
+  // FP-石二鍋 清成身分名「石二鍋」（「（FP）」是顯示層標記），分類仍用原始字串判斷 → 飲食/餐廳
+  assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋');
   assert.deepEqual(categorize('FP-石二鍋(林口家樂O2732 Taipei'), ['飲食', '餐廳']);
 });
 
