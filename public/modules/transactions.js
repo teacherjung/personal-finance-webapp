@@ -2,19 +2,25 @@
 import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, modalSizeClass } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
-import { EXPENSE_PARENTS, INCOME_CATEGORIES, subsOf } from './categories.js';
+import { INCOME_CATEGORIES } from './categories.js';
 
-// 表單分類選單＝收入類＋11 個支出分類；type 由所選分類自動推導
-const ALL_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_PARENTS];
+// 支出分類樹改為「使用者可自訂」：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設），
+// 存這個 module 變數供表單/匯入預覽的下拉共用。收入分類仍固定（INCOME_CATEGORIES）。
+/** @type {Record<string, string[]>} */
+let expTree = {};
+const expenseParents = () => Object.keys(expTree);
+// 表單分類選單＝收入類＋支出大類；type 由所選分類自動推導
+const allCategories = () => [...INCOME_CATEGORIES, ...expenseParents()];
 // 子類 <option>s（含「不分子類」空選項）
-const subOptions = (parent, cur = '') => ['', ...subsOf(parent)]
+const subOptions = (parent, cur = '') => ['', ...(expTree[parent] || [])]
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
 let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依說明/店名）
 
 export async function renderTransactions() {
-  const [all, accounts, cards] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards')]);
+  const [all, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
+  expTree = tree && typeof tree === 'object' ? tree : {};
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
 
@@ -121,7 +127,7 @@ function openTxForm(tx, accounts = [], cards = []) {
     title: tx ? '編輯記錄' : '新增收支',
     fields: [
       { key: 'date', label: '日期', type: 'date', required: true, default: todayStr() },   // 用本地時區（UTC 版在台灣早上 8 點前會差一天）
-      { key: 'category', label: '分類', type: 'select', options: ALL_CATEGORIES, default: '飲食' },
+      { key: 'category', label: '分類', type: 'select', options: allCategories(), default: expTree['飲食'] ? '飲食' : (expenseParents()[0] || '其他') },
       { key: 'subcategory', label: '子類（支出才有，可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'account', label: '帳戶 / 信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
@@ -222,7 +228,7 @@ function openStatementPreview(cardId, r, b64, cards) {
     else if (previewSort === 'desc') curR.transactions.sort((a, b) => key(b).localeCompare(key(a), 'zh-Hant'));
     else curR.transactions.sort((a, b) => (a._ord || 0) - (b._ord || 0));   // 還原原始順序
   };
-  const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${EXPENSE_PARENTS.map(c =>
+  const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${expenseParents().map(c =>
     `<option value="${esc(c)}" ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
   const cardOpts = () => cards.map(c => `<option value="${c.id}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
 

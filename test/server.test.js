@@ -516,6 +516,24 @@ test('分店格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   await DELETE_(`/transactions/${tx.id}`);
 });
 
+test('自訂分類（HTTP）：GET 回生效樹、POST 改名連動舊交易，測後還原樹', async () => {
+  const orig = await GET('/categories');
+  assert.ok(orig['娛樂'] && orig['其他'].includes('未分類'), 'GET 回內建預設樹');
+  const tx = await (await POST('/transactions', { date: '2026-07-09', type: 'expense', category: '娛樂', subcategory: '電影', amount: 120 })).json();
+  // 娛樂 → 休閒
+  const nt = {}; for (const k of Object.keys(orig)) nt[k === '娛樂' ? '休閒' : k] = orig[k];
+  const r = await (await POST('/categories', { tree: nt, parentRenames: [{ from: '娛樂', to: '休閒' }] })).json();
+  assert.equal(r.ok, true);
+  assert.ok(r.changedTx >= 1);
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after.category, '休閒', '舊交易一併改名');
+  const tree2 = await GET('/categories');
+  assert.ok('休閒' in tree2 && !('娛樂' in tree2), 'GET 回新樹');
+  // 還原：休閒→娛樂、刪測試交易（避免污染其他考題）
+  await POST('/categories', { tree: orig, parentRenames: [{ from: '休閒', to: '娛樂' }] });
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
 test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', () => {
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');
