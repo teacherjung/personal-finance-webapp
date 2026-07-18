@@ -137,6 +137,9 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('全家商店（漢中店）'), '全家商店（漢中店）');
   // 不影響其他店家
   assert.equal(normalizeStoreDisplay('統一超商-德權'), '統一超商（德權）');
+  // 麥味登（使用者定 2026-07-18）：銀行兩種寫法統一短的；分店保留
+  assert.equal(normalizeStoreDisplay('麥味登早午餐'), '麥味登');
+  assert.equal(normalizeStoreDisplay('麥味登'), '麥味登');
   // 台亞（加油站）品牌正規化（使用者定 2026-07）：一律「台亞加油站」，有分店才加（分店）
   assert.equal(normalizeStoreDisplay('台亞林口第二交流道南站'), '台亞加油站（林口第二交流道南站）');
   assert.equal(normalizeStoreDisplay('台亞'), '台亞加油站');                       // 無分店＝只回品牌
@@ -185,8 +188,9 @@ test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 �
   assert.equal(park('eTag停車'), '停車費（eTag停車）');
   // 冪等：已是「停車費（…）」不再包一層
   assert.equal(park('停車費（嘟嘟房台北西門站）'), '停車費（嘟嘟房台北西門站）');
-  // 例外白名單（使用者定 2026-07-18）：「儲值」不是在某停車場繳費 → 維持原名不包
+  // 例外白名單（使用者定 2026-07-18）：「儲值/加值」不是在某停車場繳費 → 維持原名不包
   assert.equal(park('eTag自動儲值'), 'eTag自動儲值');
+  assert.equal(park('悠遊卡自動加值'), '悠遊卡自動加值');
   assert.equal(park('eTag停車'), '停車費（eTag停車）', 'eTag停車＝真的在停車場繳費，照包');
   // 不是停車費子類的不套用（即使店名有「停車」二字）
   assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
@@ -221,6 +225,8 @@ test('stripDisplayLabels：把顯示標記拆回乾淨店名（店名格式整�
   assert.equal(roundtrip('12MINI（FP）', 'FP-12MINI (桃O2732 Taipei', '餐廳'), '12MINI（FP）');
   // 治療路徑：包著標記的舊爛 note 一圈就修好
   assert.equal(roundtrip('停車費（eTag自動儲值）', 'eTag自動儲值3087-H8', '停車費'), 'eTag自動儲值', '被包錯的儲值拆回原名（例外白名單）');
+  assert.equal(roundtrip('停車費（悠遊卡自動加值）', '悠遊卡自動加值-停車場亞東科技/TW', '停車費'), '悠遊卡自動加值', '加值同儲值：拆回原名');
+  assert.equal(roundtrip('麥味登早午餐（FP）', 'FP-麥味登早午餐(未O2732 Taipei', '早餐'), '麥味登（FP）', '品牌簡稱在 FP 標記內也生效');
   assert.equal(roundtrip('停車費（停車場（Times））', '聯信-台灣普客二四股份有A0145 NEW TA', '停車費'), '停車費（台灣普客二四）');
   assert.equal(roundtrip('停車費（聯信（Times Parking股份有））', '聯信-台灣普客二四股份有A0145 TAIPEI', '停車費'), '停車費（台灣普客二四）');
   assert.equal(roundtrip('停車費（停車場（俥亭停車））', '連加*?亭停車事業股份Taipei', '停車費'), '停車費（俥亭停車）');
