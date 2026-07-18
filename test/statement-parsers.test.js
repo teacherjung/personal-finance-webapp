@@ -136,4 +136,12 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('全家商店（漢中店）'), '全家商店（漢中店）');
   // 不影響其他店家
   assert.equal(normalizeStoreDisplay('統一超商-德權'), '統一超商（德權）');
+  // 台亞（加油站）品牌正規化（使用者定 2026-07）：一律「台亞加油站」，有分店才加（分店）
+  assert.equal(normalizeStoreDisplay('台亞林口第二交流道南站'), '台亞加油站（林口第二交流道南站）');
+  assert.equal(normalizeStoreDisplay('台亞'), '台亞加油站');                       // 無分店＝只回品牌
+  assert.equal(normalizeStoreDisplay('台亞加油站'), '台亞加油站');                 // 已是品牌名＝不變（冪等）
+  assert.equal(normalizeStoreDisplay('台亞加油站（林口第二交流道南站）'), '台亞加油站（林口第二交流道南站）');   // 冪等
+  assert.equal(normalizeStoreDisplay('台亞加油站林口二站'), '台亞加油站（林口二站）');   // 品牌後直接接分店也切
+  // 台灣普客二四 → Times Parking
+  assert.equal(normalizeStoreDisplay('台灣普客二四'), 'Times Parking');
 });
