@@ -575,6 +575,53 @@ test('自訂分類（HTTP）：GET 回生效樹、POST 改名連動舊交易，�
   await DELETE_(`/transactions/${tx.id}`);
 });
 
+test('POST /api/categories 缺 tree → 400、不把分類刪光（Codex#6）', async () => {
+  const before = await GET('/categories');
+  const res = await POST('/categories', {});
+  assert.equal(res.status, 400, '缺 tree 要 400');
+  const after = await GET('/categories');
+  assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort(), '缺 tree 不可把分類刪光');
+});
+
+test('匯入保留自訂分類樹與別名（Codex#1）：export→import 不遺失', async () => {
+  const orig = await GET('/categories');
+  const nt = {}; for (const k of Object.keys(orig)) nt[k === '娛樂' ? '休閒' : k] = orig[k];
+  await POST('/categories', { tree: nt, parentRenames: [{ from: '娛樂', to: '休閒' }] });
+  const backup = await GET('/db');
+  assert.ok(backup.settings.expenseTree?.['休閒'], '匯出含 expenseTree');
+  assert.equal(backup.settings.categoryAliases?.['娛樂'], '休閒', '匯出含別名');
+  await POST('/import', backup);   // 重新匯入自己的備份
+  const s = await GET('/settings');
+  assert.ok(s.expenseTree?.['休閒'], '匯入後 expenseTree 保留（不該退回系統預設）');
+  assert.equal(s.categoryAliases?.['娛樂'], '休閒', '匯入後別名保留');
+  await POST('/categories', { tree: orig, parentRenames: [{ from: '休閒', to: '娛樂' }] });   // 還原、免污染後續
+});
+
+test('店名整理不改壞原文級學習 key（Codex#4）', async () => {
+  const orig = '全家便利商店-ZZ測試店A0145 TAIPEI';
+  const tx = await (await POST('/transactions', { date: '2026-07-22', type: 'expense', category: '飲食', amount: 33, note: '全家商店（ZZ測試店）', storeKey: '全家商店（ZZ測試店）', stmtRef: `z|2026-07-22|33|${orig}`, source: 'stmt' })).json();
+  await POST('/statement/rename-store', { orig, name: '全家（ZZ我的店）' });   // 原文級學習（key＝原文）
+  assert.equal((await GET('/learned'))[orig]?.name, '全家（ZZ我的店）', '前置：原文級學習存在');
+  await POST('/statement/normalize-branches', {});   // 跑店名整理
+  assert.equal((await GET('/learned'))[orig]?.name, '全家（ZZ我的店）', '原文級 key 不可被 normalizeStoreDisplay 改寫');
+  await DELETE_(`/transactions/${tx.id}`);
+  await POST('/learned/delete', { key: orig });
+});
+
+test('還原自動判斷清共用學習——僅當 storeKey 未被其他原文共用（Codex#3）', async () => {
+  const sk = 'ZZ共用店', oA = 'ZZ共用店 (甲X1 Taipei', oB = 'ZZ共用店 (乙X1 Taipei';
+  const a1 = await (await POST('/transactions', { date: '2026-07-20', type: 'expense', category: '飲食', amount: 11, note: sk, storeKey: sk, stmtRef: `z|2026-07-20|11|${oA}`, source: 'stmt' })).json();
+  const b1 = await (await POST('/transactions', { date: '2026-07-21', type: 'expense', category: '飲食', amount: 22, note: sk, storeKey: sk, stmtRef: `z|2026-07-21|22|${oB}`, source: 'stmt' })).json();
+  await PUT(`/transactions/${a1.id}`, { category: '交通', subcategory: '停車費' });   // 造 storeKey 級學習
+  assert.equal((await GET('/learned'))[sk]?.category, '交通', '前置：storeKey 學習已建立');
+  await POST('/statement/rename-store', { orig: oA, reset: true });   // 共用時 reset
+  assert.equal((await GET('/learned'))[sk]?.category, '交通', '共用時不可刪共用學習（誤傷其他分店）');
+  await DELETE_(`/transactions/${b1.id}`);   // oB 移除→sk 變 oA 獨佔
+  await POST('/statement/rename-store', { orig: oA, reset: true });
+  assert.ok(!(await GET('/learned'))[sk], '獨佔時 reset 才清共用學習（未來匯入才是自動）');
+  await DELETE_(`/transactions/${a1.id}`);
+});
+
 test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', () => {
   assert.ok(TEST_STORE.startsWith(tmpdir()), '資料檔必須在系統暫存目錄');
   assert.ok(!TEST_STORE.includes('榮祥森'), '不可指向專案資料夾');
