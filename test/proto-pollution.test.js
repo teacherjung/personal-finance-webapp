@@ -154,3 +154,41 @@ test('r5#4｜sanitizeCategorySettings：__proto__ 鍵丟棄並回報 bad（匯�
   assert.ok(bad.filter(b => b.includes('__proto__')).length >= 4, '每一處丟棄都要回報，不靜默');
   assert.equal(inherited('a'), undefined);
 });
+
+// ---------- Codex r6#3：第三輪掃蕩——後端可直測的三處（前端三處見 PR 說明） ----------
+const { listBatches } = await import('../lib/services/statement-import.js');
+const { resolveImportCategory } = await import('../lib/services/categories.js');
+const { computeAssets, buildSummary } = await import('../lib/derive.js');
+
+test('r6#3｜resolveImportCategory：舊分類叫 toString → 原樣保留，不可誤改成 其他/未分類', () => {
+  // 裸讀 pA[cat] 會撈到原型上的函式（truthy）→ c 變成函式 → conform 對不上 → 合法舊分類被毀
+  const db = { settings: { expenseTree: { 'toString': ['x'], '其他': ['未分類'] } } };
+  assert.deepEqual(resolveImportCategory(db, 'toString', 'x'), ['toString', 'x'],
+    '讀取容忍舊資料：樹裡真的有這個分類就要對得上');
+  assert.deepEqual(resolveImportCategory(db, '不存在的', ''), ['其他', '未分類'], '正常校正不受影響');
+});
+
+test('r6#3｜listBatches：批次 id 是 __proto__ → 批次照常出現在清單、不污染全域', () => {
+  store.save({ ...store.emptyDb(), transactions: [
+    { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
+      source: 'stmt', stmtRef: 'c|2026-07-01|100|某店', importBatch: '__proto__', importedAt: '2026-07-01T00:00:00Z' },
+  ] });
+  const batches = listBatches();
+  assert.equal(batches.length, 1, '以前這一批會從清單消失（讀到原型本尊、永遠不進 groups 的自有鍵）');
+  assert.equal(batches[0].batchId, '__proto__');
+  assert.equal(batches[0].count, 1);
+  assert.equal(inherited('count'), undefined, '而且不可在 Object.prototype 上累加 count/amount');
+  assert.equal(inherited('amount'), undefined);
+});
+
+test('r6#3｜資產類別叫 toString：淨值聚合與配置目標都要算成數字，不可變函式字串', () => {
+  const db = { ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'x', type: 'cash', class: 'toString', currency: 'TWD', balance: 100 }],
+    assetTargets: [{ id: 'g1', class: 'toString', targetPct: 50 }] };
+  const a = computeAssets(db);
+  assert.equal(a.byClass['toString'], 100, '裸物件的 || 0 會撈到原型函式、加總變字串');
+  const rows = buildSummary(db).allocation.rows;   // computeAllocation 是內部函式，經 buildSummary 驗
+  const row = rows.find(r => r.class === 'toString');
+  assert.equal(row?.targetPct, 50);
+  assert.equal(typeof row?.actualPct, 'number');
+});
