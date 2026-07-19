@@ -207,6 +207,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .sub-x { border: none; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 7px; font-size: 15px; line-height: 1; }
 .sub-x:hover:not(:disabled) { color: var(--danger); }
 .sub-x:disabled { opacity: .35; cursor: default; }
+/* 店名規則編輯器（第三帖）：沿用分類管理編輯器的視覺語彙（區塊卡＋小輸入列） */
+.rule-sec { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--card-2); }
+.rule-sec h4 { font-size: 13.5px; margin: 0 0 2px; }
+.rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.rule-row input, .rule-row select { padding: 5px 8px; font-size: 12.5px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--card); color: var(--text); }
+.rule-row input { flex: 1; min-width: 0; }
+.rule-row select { flex-shrink: 0; }
+.rule-row .btn-icon { flex-shrink: 0; }
+@media (max-width: 640px) { .rule-row { flex-wrap: wrap; } .rule-row input { flex-basis: 100%; } }
+
 .modal-head { padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { font-family: var(--serif); font-size: 19px; font-weight: 500; }
 .modal-body { padding: 24px; }
