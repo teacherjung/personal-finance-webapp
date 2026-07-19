@@ -545,8 +545,12 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   assert.ok((prev.changes || []).some(c => c.before === '統一超商-百福' && c.after === '統一超商（百福）'));
   const still = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(still.note, '統一超商-百福', 'dryRun 不可改資料');
-  // 正式套用：note 與 storeKey 一併正規化
-  const applied = await (await POST('/statement/normalize-branches', {})).json();
+  // 不帶 force 的套用要被擋（Codex r5#8）：這條維護路不經確認閘門，繞過必須「明說」
+  const noForce = await POST('/statement/normalize-branches', {});
+  assert.equal(noForce.status, 400, '空 body 不可默默套用');
+  assert.equal((await GET('/transactions')).find(t => t.id === tx.id).note, '統一超商-百福', '被擋下＝資料不動');
+  // 正式套用（明確帶 force）：note 與 storeKey 一併正規化
+  const applied = await (await POST('/statement/normalize-branches', { force: true })).json();
   assert.ok(applied.changed >= 1);
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '統一超商（百福）', '套用後 note 已正規化');
@@ -572,7 +576,7 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
   seeded['聯信（Times Parking股份有）'] = { name: 'Times Parking', category: '交通', subcategory: '停車費' };
   assert.equal((await POST('/import', { ...backup, learnedCategories: seeded })).status, 200);
   // 店名格式整理（套用）：note 先拆殼再治、storeKey 用原文重算、學習 key 跟著 storeKey 搬、學過的錯名一併治
-  const applied = await (await POST('/statement/normalize-branches', {})).json();
+  const applied = await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '停車費（台灣普客二四）', '包著停車標記的舊 note 要能治（拆殼→整理→重上標記）');
   assert.equal(after.storeKey, '台灣普客二四', 'storeKey 用原文重算：聯信前綴＋「股份有」殘尾都修掉');
@@ -611,7 +615,7 @@ test('店名格式整理｜自訂 vs 自動（使用者定 2026-07-18）：沒�
     note: 'QQ小館', storeKey: 'QQ小館', stmtRef: `c9|2026-07-13|300|${origB}`, source: 'stmt',
   })).json();
   await POST('/statement/rename-store', { orig: origB, name: '我的愛店' });
-  await (await POST('/statement/normalize-branches', {})).json();
+  await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = await GET('/transactions');
   const g = (id) => after.find(t => t.id === id);
   assert.equal(g(ta.id).note, 'eTag 停車（救國團林口運動中心）', '非自訂 → 從原文重生：場站名救回、名字已含停車不再包停車費（）');
@@ -667,7 +671,7 @@ test('店名整理不改壞原文級學習 key（Codex#4）', async () => {
   const tx = await (await POST('/transactions', { date: '2026-07-22', type: 'expense', category: '飲食', amount: 33, note: '全家商店（ZZ測試店）', storeKey: '全家商店（ZZ測試店）', stmtRef: `z|2026-07-22|33|${orig}`, source: 'stmt' })).json();
   await POST('/statement/rename-store', { orig, name: '全家（ZZ我的店）' });   // 原文級學習（key＝原文）
   assert.equal((await GET('/learned'))[orig]?.name, '全家（ZZ我的店）', '前置：原文級學習存在');
-  await POST('/statement/normalize-branches', {});   // 跑店名整理
+  await POST('/statement/normalize-branches', { force: true });   // 跑店名整理
   assert.equal((await GET('/learned'))[orig]?.name, '全家（ZZ我的店）', '原文級 key 不可被 normalizeStoreDisplay 改寫');
   await DELETE_(`/transactions/${tx.id}`);
   await POST('/learned/delete', { key: orig });
@@ -698,7 +702,7 @@ test('顯示標記（HTTP 全鏈路）：店名格式整理替舊資料補上（
   const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok((prev.changes || []).some(c => c.after === 'ZZ測試小吃（FP）'), '預覽要看得到 FP 標記');
   assert.ok((prev.changes || []).some(c => c.after === '停車費（ZZ測試嘟嘟房）'), '預覽要看得到停車標記（名字沒有「停車」二字也涵蓋）');
-  await POST('/statement/normalize-branches', {});
+  await POST('/statement/normalize-branches', { force: true });
   const after = await GET('/transactions');
   const g = (id) => after.find(t => t.id === id);
   assert.equal(g(t1.id).note, 'ZZ測試小吃（FP）', '舊 FP 記錄由帳單原文補回標記');
@@ -735,7 +739,7 @@ test('Codex#3/#2/#5｜整理：品牌層 name 一律搬原文級（key 沒變也
   seeded['全家商店'] = { category: '飲食', subcategory: '超市' };   // 撞 key：分類不可被空殼擋掉
   assert.equal((await POST('/import', { ...backup, learnedCategories: seeded })).status, 200);
 
-  await (await POST('/statement/normalize-branches', {})).json();
+  await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = await GET('/transactions');
   const g = (id) => after.find(t => t.id === id);
   // Codex#3：品牌 key 沒變（統一超商→統一超商）時，殘留的 name 以前留在品牌層＝往後每次整理都連動所有分店。
@@ -933,7 +937,7 @@ test('r2-Codex#1｜孤兒學習（交易已刪）不可被整理當成品牌級�
   const orphan = '統一超商-德權';   // 沒有任何交易用這個 key／原文
   assert.equal((await POST('/import', { ...backup,
     learnedCategories: { ...(backup.learnedCategories || {}), [orphan]: { name: '我的自訂名', category: '飲食', subcategory: '超市' } } })).status, 200);
-  await (await POST('/statement/normalize-branches', {})).json();
+  await (await POST('/statement/normalize-branches', { force: true })).json();
   const learned = await GET('/learned');
   assert.ok(learned[orphan], '孤兒學習的 key 不可被改寫（改了未來匯入兩邊都命中不到）');
   assert.equal(learned[orphan].name, '我的自訂名', '孤兒學習的自訂名不可被當成品牌層摘掉');
