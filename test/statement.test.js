@@ -231,12 +231,18 @@ test('Codex#1｜優步分類與顯示標記同口徑：認不出店家的一律�
   assert.deepEqual(categorize('星巴克'), ['飲食', '飲料／咖啡'], '一般店家不受影響');
 });
 
-test('extractStatementMonth：從帳單表頭讀出期別（使用者定 2026-07-19：不可用消費日回推）', () => {
-  assert.equal(extractStatementMonth('台北富邦銀行信用卡消費明細 115年06月份 結帳日115/06/21'), '2026-06', '民國年月');
-  assert.equal(extractStatementMonth('民國 115 年 1 月 帳單'), '2026-01', '有空白、個位數月份');
-  assert.equal(extractStatementMonth('信用卡帳單 2026年6月'), '2026-06', '西元年月');
-  assert.equal(extractStatementMonth('台新銀行 結帳日：115/06/21 繳款截止日 115/07/06'), '2026-06', '沒寫年月時用結帳日');
-  assert.equal(extractStatementMonth('帳單日期：2026/06/21 本期應繳'), '2026-06');
+test('extractStatementMonth：從帳單表頭讀期別，以結帳日為準（使用者定 2026-07-19）', () => {
+  // ①結帳日最優先，**一律算結帳日當月**（不論月初月尾——使用者原說月初算上月，後更正）
+  assert.equal(extractStatementMonth('台新 帳單結帳日：2026/02/02 繳款截止日'), '2026-02', '使用者原例');
+  assert.equal(extractStatementMonth('台新 帳單結帳日：115/01/04 繳款截止日 115/01/20'), '2026-01', '月初也算當月');
+  assert.equal(extractStatementMonth('富邦 結帳日115/06/21 本期應繳'), '2026-06');
+  // 衝突時以結帳日為準（標題說 2026/02、結帳日說 115/01）
+  assert.equal(extractStatementMonth('台新銀行 2026/02 信用卡明細 帳單結帳日：115/01/04'), '2026-01', '結帳日優先於標題');
+  // ②富邦明寫的期別欄位 ③年月寫法 ④台新標題型
+  assert.equal(extractStatementMonth('富邦銀行 帳單年月：115/01 本期應繳'), '2026-01');
+  assert.equal(extractStatementMonth('台北富邦 115年06月份 帳單'), '2026-06');
+  assert.equal(extractStatementMonth('民國 115 年 1 月 帳單'), '2026-01');
+  assert.equal(extractStatementMonth('台新銀行 2026/02 信用卡明細'), '2026-02');
   // 不可誤抓消費明細裡的交易日（只掃表頭區）
   assert.equal(extractStatementMonth('消費明細\n2026-06-21 星巴克 150\n2026-06-22 全聯 300'), null);
   assert.equal(extractStatementMonth('115年13月'), null, '不合法月份不採用');
