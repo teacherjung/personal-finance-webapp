@@ -29,24 +29,19 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（2026-07-20；上輪＝r6 審到 #149 交 3 條全數成立，本輪範圍＝#150–#151）
+## 本輪審查重點（2026-07-21；上輪＝r7 審到 #151 交 4 條（1 中 3 低）全數成立，本輪範圍＝#152–#154）
 
-本輪驗收 r6 三條的修正：#150（r6#3 原型污染第三輪九處）、#151（r6#1 只有 BASE_SUMMARY 的合法報表以基準幣別彙總入帳＋r6#2 多帳戶報表整包 400）。
+本輪是**收官確認輪**：r7 四條已修（#154：設定說明六區塊＋Account Information、cashCollapsed/cashBaseUnsupported 提示分流、accountCount 訊息分流、r7#4 四處 hasOwn/null-proto）；#152/#153 是純前端 UI（收支列表全欄位排序＋子分類欄、按鈕等寬改名）。
 歷史經驗不變：**修正比原始程式更容易出錯**。
 
-1. **彙總入帳的語意**（#151）：只有彙總列＋基準幣別可判定時「原子取代」（基準幣別入帳、其他幣別歸零防重複）。
-   請驗：①BASE_SUMMARY 的 endingCash 語意（是否含應計利息/在途款之類會讓「彙總≠各幣別和」的成分）
-   ②交錯情境：明細報表↔彙總報表輪流同步時會不會震盪或殘留 ③AccountInformation 缺 currency 欄的真實頻率。
-2. **多帳戶擋門的邊界**（#151）：statementCount 判準是 FlexStatement 節點數。有沒有「單帳戶卻多個
-   FlexStatement」的合法報表（如多期間切割）會被誤擋？
-3. **原型污染收官檢查**（#150）：r4–r6 三輪共治了學習表/分類樹/前端聚合/查表約二十處。請做**最後一次**
-   全庫掃蕩（grep 使用者文字當 key 的所有寫法變體：m[k]=、m[k]||=、m[k]||(、({...})[k]、in 運算子），
-   宣告這個 bug class 關閉、或列出最後的漏網。
-4. **前端三處不可測的驗證**（#150）：transactions variants／settings outTree／subscriptions cardLabel
-   是讀碼修的（DOM 模組進不了 node --test）。請用你的方式獨立驗證行為正確。
+1. **r7 修正本身**（#154）：訊息分流的三岔路（多帳戶／bundle／彙總不支援幣別）有沒有漏的組合？
+   cashCollapsed 與 cashZeroed 在「明細↔彙總交錯同步」下的計數對不對？
+2. **收支列表排序**（#152）：全欄位 toggle 排序與子分類欄有沒有邊角（空值、收入列、混排）？
+3. **原型污染 bug class**：r7#4 的四處已補。若本輪掃不出新漏網，請在回覆中明確寫一句
+   「原型污染 bug class 掃蕩完成、宣告關閉」——之後此類只在新程式碼出現時個案處理。
 
-**收官條件（與使用者約定）**：0 高、≤2 輕微 → 硬化循環收官，回主線（架構健檢第一包 → D1 報價自動更新）。
+**收官條件（與使用者約定）**：0 高、≤2 輕微 → 硬化循環正式收官，回主線（架構健檢第一包 → D1 報價自動更新）。
 
 ### 自我檢查（開審前）
-- `git fetch origin && git checkout --detach origin/main`；`git log --oneline -3` 應含 #151；三關全綠再開審。
+- `git fetch origin && git checkout --detach origin/main`；`git log --oneline -3` 應含 #154；三關全綠再開審。
 - **絕不在 codex worktree commit**；`?? node_modules`＝舊樹快照，先更新再看。

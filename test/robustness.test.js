@@ -287,6 +287,8 @@ test('r6#1｜只有 BASE_SUMMARY＋基準幣別可判定 → 以彙總入帳（�
   assert.equal(accs.find(a => a.ibCashCur === 'USD')?.balance, 500, '基準幣別以彙總金額入帳（舊值 1000 不可殘留）');
   assert.equal(accs.find(a => a.ibCashCur === 'GBP')?.balance, 0, '其他幣別歸零＝原子取代，避免與彙總重複計算');
   assert.equal(r.cashFromSummary, true);
+  assert.equal(r.cashCollapsed, 1, '折疊記在 cashCollapsed（Codex r7#2）——這不是「提領/轉走」');
+  assert.equal(r.cashZeroed, 0, '真歸零與折疊分開，前端才不會同時說兩句矛盾的話');
   assert.equal(r.cashDetailMissing, false, '拿到可用資料就不再掛「缺明細」警告');
 });
 
@@ -319,7 +321,7 @@ test('r6#2｜多帳戶報表 → 400 整包拒絕，不寫入任何東西（現�
     accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
   await assert.rejects(() => syncIb(/** @type {any} */ (async () => ({
     positions: [{ symbol: 'CSPX', currency: 'USD', quantity: 1, marketPrice: 500 }],
-    cashByCurrency: { USD: 200 }, hasCashReport: true, hasCashDetail: true, statementCount: 2,
+    cashByCurrency: { USD: 200 }, hasCashReport: true, hasCashDetail: true, statementCount: 2, accountCount: 2,
     equity: null, income: null, trades: [], account: 'B', period: {} }))), /個帳戶/);
   const back = store.load();
   assert.equal(back.accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '擋下＝資料一個字都不動');
@@ -340,4 +342,38 @@ test('r6#1/#2｜ib.js 解析器：BASE_SUMMARY 金額留底、AccountInformation
     { CashReport: { CashReportCurrency: [{ currency: 'USD', endingCash: 200 }] } },
   ] } } });
   assert.equal(two.statementCount, 2, '多帳戶要誠實回報，讓同步端擋下');
+});
+
+
+test('r7#2｜基準幣別判定得出但不支援（EUR）→ 保留舊值＋明確回報「幣別不支援」而非「缺欄位」', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false,
+    baseCurrency: 'EUR', baseSummaryCash: 500, statementCount: 1, accountCount: 1,
+    equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '不支援＝不可入帳，保留舊值');
+  assert.equal(r.cashBaseUnsupported, 'EUR', '原因要說對：是幣別不支援，不是缺 Account Information');
+  assert.equal(r.cashDetailMissing, false);
+});
+
+test('r7#3｜多 statement 的訊息分流：多帳戶說「多帳戶」、單帳戶 bundle 說「多份報表」（都拒絕）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb() });
+  const mk = (/** @type {number} */ stmts, /** @type {number} */ accts) => (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: false, hasCashDetail: false,
+    statementCount: stmts, accountCount: accts,
+    equity: null, income: null, trades: [], account: 'T', period: {} }));
+  await assert.rejects(() => syncIb(/** @type {any} */ (mk(2, 2))), /個帳戶/);
+  await assert.rejects(() => syncIb(/** @type {any} */ (mk(3, 1))), /份報表/, '同帳戶的模型 bundle 要講對病因，使用者才修得對地方');
+});
+
+test('r7#3｜ib.js 解析器：accountCount＝去重帳戶數（節點數≠帳戶數）', async () => {
+  const { parseStatement } = await import('../lib/ib.js');
+  const r = parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: [
+    { accountId: 'U111' }, { accountId: 'U111' }, { accountId: 'U222' },
+  ] } } });
+  assert.equal(r.statementCount, 3);
+  assert.equal(r.accountCount, 2, '同帳戶多 statement 只算一個帳戶');
 });

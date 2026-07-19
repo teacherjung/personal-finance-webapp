@@ -338,7 +338,10 @@ export async function renderPortfolio() {
         toast('注意：Cash Report 只有彙總列、且無法判定基準幣別——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 的 Flex Query 勾選 Account Information。', true);
       }
       if (r.cashFromSummary) {
-        toast('說明：這份報表的現金只有彙總列——已用基準幣別總額入帳（拿不到各幣別明細，多幣別現金會合併顯示為基準幣別）。');
+        toast('說明：這份報表的現金只有彙總列——已用基準幣別總額入帳' + (r.cashCollapsed ? `（${r.cashCollapsed} 個其他幣別帳戶已併入彙總顯示）` : '') + '。');
+      }
+      if (r.cashBaseUnsupported) {
+        toast(`注意：報表現金只有彙總列、且基準幣別 ${r.cashBaseUnsupported} 尚未支援——IB 現金沿用上次的舊值（可能過期）。`, true);
       }
       if (r.cashZeroed) {
         toast(`提醒：${r.cashZeroed} 個 IB 現金帳戶這次報表已無該幣別，餘額已歸零（現金提領/轉走後的正常結果）。`);
