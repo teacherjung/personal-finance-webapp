@@ -456,3 +456,18 @@ test('r4#4｜跨規則串接（甲→乙、丙→甲）不冪等 → 儲存時�
   // 一步到位的正常規則不誤擋
   assert.equal(checkRulesIdempotent(sanitizeStoreRules({ chains: ['鮮芋仙'], rename: [{ match: '全家便利商店', to: '全家' }] })).length, 0);
 });
+
+test('r5#6｜rename 產物撞內建標準名（STORE_CANON）→ 擋下：完整管線會把它清成另一個品牌', async () => {
+  const { checkRulesIdempotent, saveStoreRules } = await import('../lib/services/store-rules.js');
+  store.save(store.emptyDb());
+  // 「STARBUCKS SHOP」過得了 normalizeStoreDisplay（就地整理的固定點），
+  // 但 cleanStore 開頭的 STORE_CANON 會把 STARBUCKS 開頭清成「星巴克」——
+  // 未來哪張帳單直接印這串字＝同一家店兩種顯示名、兩把鑰匙（Codex r5#6 實測抓到）
+  const errs = checkRulesIdempotent(sanitizeStoreRules({ rename: [{ match: '怪店X', to: 'STARBUCKS SHOP' }] }));
+  assert.ok(errs.length, '要抓到品牌口徑漂移');
+  assert.ok(errs[0].includes('星巴克'), '訊息要講出它會變成哪個品牌');
+  assert.throws(() => saveStoreRules({ rename: [{ match: '怪店X', to: 'STARBUCKS SHOP' }] }), /愈整理愈亂/);
+  // 帶分店的合法目標不可誤殺：cleanStore 摘尾端「（分店）」是裝飾差、不是品牌漂移
+  assert.equal(checkRulesIdempotent(sanitizeStoreRules({ rename: [{ match: '統一超-百福', to: '統一超商（百福）' }] })).length, 0,
+    '分店裝飾差異放行');
+});
