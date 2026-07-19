@@ -171,16 +171,42 @@ test('IB 同步幣別牆（Codex#7）：未支援幣別跳過並回報，不寫�
   assert.ok((db.accounts || []).some((a) => a.ibCashCur === 'USD' && a.balance === 1000), 'USD 現金照常更新');
 });
 
-test('IB 現金幣別從報表消失 → 歸零，淨資產不虛增（Codex r4#3）', async () => {
+test('IB 現金幣別從報表消失 → 歸零，淨資產不虛增（Codex r4#3；r5#2 收緊判準）', async () => {
   const { syncIb } = await import('../lib/services/ib-sync.js');
   store.save({ ...store.emptyDb(),
     accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
-  // 報表有 Cash Report 區塊，但這次 USD 現金已提光（不再出現在 cashByCurrency）
+  // 報表的 Cash Report 有「真實幣別明細」（GBP 還在），但 USD 已提光、不再列——這才可以歸零。
+  // （r5#2：光有區塊不夠，要有明細列在場才證明「沒列＝真的沒了」而不是「報表不完整」）
   const r = await syncIb(/** @type {any} */ (async () => ({
-    positions: [], cashByCurrency: {}, hasCashReport: true, equity: null, income: null, trades: [], account: 'T', period: {} })));
+    positions: [], cashByCurrency: { GBP: 50 }, hasCashReport: true, hasCashDetail: true, equity: null, income: null, trades: [], account: 'T', period: {} })));
   const acc = store.load().accounts?.find(a => a.ibCashCur === 'USD');
   assert.equal(acc?.balance, 0, '報表不再列這個幣別＝現金已清空，帳上不可殘留舊餘額');
   assert.equal(r.cashZeroed, 1, '要回報歸零了幾個幣別');
+});
+
+test('Cash Report 只有 BASE_SUMMARY 彙總列（無任何幣別明細）→ 保留舊值＋回報，不可歸零（Codex r5#2）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  // 區塊在、明細空（部分報表/精簡設定的長相）——舊判準「區塊存在就歸零」會把真實現金誤清
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false, equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '沒有明細＝沒資料，保留舊值');
+  assert.equal(r.cashZeroed, 0);
+  assert.equal(r.cashDetailMissing, true, '要回報「有區塊沒明細」讓使用者看得見異常');
+});
+
+test('ib.js 解析器旗標語意：只有 BASE_SUMMARY → hasCashReport:true 而 hasCashDetail:false（中間那棒也要考）', async () => {
+  const { parseStatement } = await import('../lib/ib.js');
+  const mk = (/** @type {any[]} */ rows) => parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: {
+    CashReport: { CashReportCurrency: rows } } } } });
+  const onlySummary = mk([{ currency: 'BASE_SUMMARY', endingCash: 1234 }]);
+  assert.equal(onlySummary.hasCashReport, true);
+  assert.equal(onlySummary.hasCashDetail, false, '彙總列不算明細——據此歸零就會誤清真實現金');
+  assert.deepEqual(onlySummary.cashByCurrency, {});
+  const withDetail = mk([{ currency: 'BASE_SUMMARY', endingCash: 1234 }, { currency: 'USD', endingCash: 1000 }]);
+  assert.equal(withDetail.hasCashDetail, true);
+  assert.deepEqual(withDetail.cashByCurrency, { USD: 1000 });
 });
 
 test('Cash Report 區塊整個缺失 → 保留舊值＋回報（缺資料 ≠ 現金為 0，Codex r4#3）', async () => {

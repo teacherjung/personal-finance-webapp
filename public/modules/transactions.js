@@ -35,8 +35,9 @@ export async function renderTransactions() {
   const income = rows.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount || 0), 0);
   const expense = rows.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount || 0), 0);
 
-  // 本月支出分類
-  const byCat = {};
+  // 本月支出分類。Object.create(null)（Codex r5#5）：分類名是使用者取的，取成 toString 這類
+  // 原生屬性名時，普通物件的 `byCat[k] || 0` 會撈到原型上的函式 → 加總變成「函式原始碼+金額」的字串。
+  const byCat = Object.create(null);
   rows.filter(t => t.type === 'expense').forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + Number(t.amount || 0); });
   const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = topCats[0]?.[1] || 1;
@@ -142,9 +143,10 @@ function openStoreProfile(t, all) {
   const total = grp.reduce((s, x) => s + Number(x.amount || 0), 0);
   const count = grp.length;
   const last = String(grp[0].date || ''), first = String(grp[count - 1].date || '');
-  // 排行：所有店家（同聚合口徑）依「總消費」排序，讓數字有份量感
+  // 排行：所有店家（同聚合口徑）依「總消費」排序，讓數字有份量感。
+  // Object.create(null)（Codex r5#5）：店家鑰匙來自帳單文字，撞到原生屬性名時普通物件會算錯（見 byCat）。
   /** @type {Record<string, number>} */
-  const totals = {};
+  const totals = Object.create(null);
   for (const x of all) { if (!isExp(x)) continue; const k = storeIdOf(x); if (k) totals[k] = (totals[k] || 0) + Number(x.amount || 0); }
   const rank = Object.entries(totals).sort((a, b) => b[1] - a[1]).findIndex(([k]) => k === key) + 1;
   // 頻率＋近況（白話）：只有一筆就不算平均間隔
