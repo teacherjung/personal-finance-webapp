@@ -16,7 +16,9 @@ const subOptions = (parent, cur = '') => ['', ...(expTree[parent] || [])]
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
-let listSort = 'date';   // 收支列表排序：'date'（日期新→舊，預設）｜'note-asc'｜'note-desc'（依說明/店名）
+// 收支列表排序（使用者定 2026-07-21：**所有欄位**皆可點表頭排序）：key＝欄位、dir＝asc/desc。
+// 預設日期新→舊；換欄位時日期/金額預設降冪（新的/大的在前）、文字欄預設升冪（A→Z）。
+let listSort = { key: 'date', dir: 'desc' };
 
 export async function renderTransactions() {
   const [all, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
@@ -24,14 +26,26 @@ export async function renderTransactions() {
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
 
-  const byDate = (a, b) => (b.date || '').localeCompare(a.date || '');
-  const listSorters = {
-    'date': byDate,
-    'note-asc': (a, b) => (a.note || '').localeCompare(b.note || '', 'zh-Hant') || byDate(a, b),
-    'note-desc': (a, b) => (b.note || '').localeCompare(a.note || '', 'zh-Hant') || byDate(a, b)
+  const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '');
+  const zh = (/** @type {any} */ x, /** @type {any} */ y) => String(x || '').localeCompare(String(y || ''), 'zh-Hant');
+  // 各欄位的「升冪」比較器（降冪＝整體反轉）；文字欄同值時以日期新→舊當第二鍵，結果穩定不跳動
+  /** @type {Record<string, (a: any, b: any) => number>} */
+  const SORTERS = {
+    date: (a, b) => (a.date || '').localeCompare(b.date || ''),
+    account: (a, b) => zh(a.account, b.account) || byDateDesc(a, b),
+    note: (a, b) => zh(a.note, b.note) || byDateDesc(a, b),
+    category: (a, b) => zh(a.category, b.category) || zh(a.subcategory, b.subcategory) || byDateDesc(a, b),
+    subcategory: (a, b) => zh(a.subcategory, b.subcategory) || byDateDesc(a, b),
+    amount: (a, b) => Number(a.amount || 0) - Number(b.amount || 0)
   };
-  const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter).sort(listSorters[listSort] || byDate);
-  const noteSortInd = listSort === 'note-asc' ? '▲' : listSort === 'note-desc' ? '▼' : '⇅';
+  const cmp = SORTERS[listSort.key] || SORTERS.date;
+  const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter)
+    .sort((a, b) => listSort.dir === 'desc' ? -cmp(a, b) : cmp(a, b));
+  // 表頭三角形＝訂閱頁同款（th.sortable＋.sort-tri，styles.css 既有樣式）
+  const th = (/** @type {string} */ key, /** @type {string} */ label, cls = '') => {
+    const on = listSort.key === key;
+    return `<th class="sortable ${cls}" data-sort="${key}" title="點擊排序">${label} <span class="sort-tri${on ? ' active' : ''}">${on ? (listSort.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+  };
   const income = rows.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount || 0), 0);
   const expense = rows.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount || 0), 0);
 
@@ -74,8 +88,8 @@ export async function renderTransactions() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr><th>消費日</th><th>分類</th><th>帳戶 / 信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="6" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
+      <table><thead><tr>${th('date', '消費日')}${th('account', '帳戶 / 信用卡')}${th('note', '說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
     </div>
   `;
 
@@ -84,11 +98,13 @@ export async function renderTransactions() {
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
-  // 說明欄排序：日期 → 店名 A→Z → 店名 Z→A → 日期（循環）
-  byId('sortNote').onclick = () => {
-    listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
+  // 點表頭排序：同欄再點＝反轉方向；換欄＝日期/金額預設降冪（新/大在前）、文字欄預設升冪
+  view().querySelectorAll('th.sortable').forEach(el => /** @type {HTMLElement} */ (el).onclick = () => {
+    const key = /** @type {HTMLElement} */ (el).dataset.sort || 'date';
+    if (listSort.key === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+    else listSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
     renderTransactions();
-  };
+  });
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const t = all.find(x => x.id === b.dataset.del);
@@ -113,9 +129,10 @@ function rowHtml(t) {
     : esc(t.note || '');
   return `<tr>
     <td>${esc(t.date)}</td>
-    <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
     <td class="muted">${noteCell}</td>
+    <td>${esc(t.category)}</td>
+    <td class="muted">${esc(t.subcategory || '—')}</td>
     <td class="num ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(t.amount)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
