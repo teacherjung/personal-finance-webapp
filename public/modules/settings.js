@@ -7,17 +7,21 @@ export async function renderSettings() {
   // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
   // 顯示名/分類取「該原文最新一筆」為代表（編輯時整批統一）。編輯以原文為準——不同分店各自取名/分類。
   const byOrig = new Map();
+  const keyCount = new Map();   // 品牌鑰匙 → 帳單交易總筆數（「同店一起改」算「其他 N 筆」用）
   for (const t of txs || []) {
     if (t.source !== 'stmt' || !t.stmtRef) continue;
     const parts = String(t.stmtRef).split('|');   // stmtRef＝卡id|消費日|金額|原始說明
     if (parts.length < 4) continue;
     const orig = parts.slice(3).join('|').trim();   // 原文可能含「|」→ 取第 3 個分隔後全部
     if (!orig) continue;
+    const k = String(t.storeKey || '').trim();
+    if (k) keyCount.set(k, (keyCount.get(k) || 0) + 1);
     const prev = byOrig.get(orig);
+    const cnt = (prev?.cnt || 0) + 1;
     if (!prev || String(t.date || '') > prev.date) {
-      byOrig.set(orig, { orig, date: String(t.date || ''), cur: String(t.note || '').trim(),
-        key: String(t.storeKey || '').trim(), cat: String(t.category || ''), sub: String(t.subcategory || '') });
-    }
+      byOrig.set(orig, { orig, cnt, date: String(t.date || ''), cur: String(t.note || '').trim(),
+        key: k, cat: String(t.category || ''), sub: String(t.subcategory || '') });
+    } else prev.cnt = cnt;
   }
   const storeRows = [...byOrig.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
   // 三層一次看（使用者定 2026-07-18）：帳單原文（銀行印的）→ 身分鑰匙（辨識同一家店的乾淨名，學習用）→ 顯示名（你看到的，可自訂）
@@ -25,7 +29,7 @@ export async function renderSettings() {
         <thead><tr><th>帳單原文</th><th>身分鑰匙</th><th>顯示名</th><th>分類</th><th></th></tr></thead>
         <tbody>${storeRows.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td class="muted">${esc(p.key || '—')}</td><td>${esc(p.cur)}</td>
           <td>${esc(p.cat)}${p.sub ? ` <span class="muted">· ${esc(p.sub)}</span>` : ''}</td>
-          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
+          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" data-key="${esc(p.key)}" data-others="${Math.max(0, (keyCount.get(p.key) || 0) - p.cnt)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty">尚無帳單記錄。匯入信用卡帳單後，這裡會列出每家店的顯示名與分類。</p>';
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
@@ -191,13 +195,16 @@ export async function renderSettings() {
     const el = /** @type {HTMLElement} */ (b);
     const orig = el.dataset.editstore || '';
     const cur = el.dataset.cur || '', cat0 = el.dataset.cat || '', sub0 = el.dataset.sub || '';
+    // 同店一起改（使用者定 2026-07-19，與收支列表編輯同一招）：同品牌鑰匙下「其他原文」還有幾筆
+    const key = el.dataset.key || '', others = Number(el.dataset.others || 0);
     const catOpts = (cat0 && !expParents.includes(cat0)) ? [cat0, ...expParents] : expParents;   // 保留目前值（防默默改資料）
     openForm({
       title: '編輯店名與分類（只影響這一列）',
       fields: [
         { key: 'name', label: `原文「${orig}」的顯示名`, type: 'text', required: true, full: true },
         { key: 'category', label: '分類', type: 'select', options: catOpts, default: cat0 || expParents[0] },
-        { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] }   // 由 onMount 依分類連動
+        { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
+        ...(key && others > 0 ? [{ key: 'applyAll', label: `同時套用分類到「${key}」的其他 ${others} 筆記錄（顯示名不會跟過去）`, type: 'checkbox', full: true }] : []),
       ],
       values: { name: cur, category: cat0, subcategory: sub0 },
       onMount: (/** @type {any} */ root) => {
@@ -232,7 +239,11 @@ export async function renderSettings() {
       },
       onSubmit: async (d) => {
         const r = await api('/statement/rename-store', { method: 'POST', body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '' } });
-        toast(`已更新 ${r.changed} 筆記錄`);
+        if (d.applyAll && key) {
+          const r2 = await api('/statement/apply-category', { method: 'POST',
+            body: { storeKey: key, category: d.category, subcategory: d.subcategory || '' } });
+          toast(`已更新 ${r.changed} 筆，並把「${key}」的其他 ${r2.changed} 筆一起改成 ${d.category}${d.subcategory ? `·${d.subcategory}` : ''}`);
+        } else toast(`已更新 ${r.changed} 筆記錄`);
         renderSettings();
       }
     });
