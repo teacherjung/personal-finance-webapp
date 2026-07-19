@@ -14,7 +14,7 @@ process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
-const { recordDailyValue, takeSnapshotIfDue } = await import('../lib/services/snapshot.js');
+const { recordDailyValue, takeSnapshotIfDue, takeSnapshot } = await import('../lib/services/snapshot.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -76,6 +76,18 @@ test('日線：缺 date／壞 date 進不了櫃檯（date 是主鍵欄）', () =
     '只有年月（非 YYYY-MM-DD）也不行');
   assert.throws(() => store.save({ ...base, dailyValues: [{ date: '', netWorth: 1 }] }), /date/,
     '空字串 date 也是壞資料（不是「未設定」）');
+});
+
+test('手動按「記錄本月快照」也會更新日線（否則日線停在早上的舊值，差異引擎會對不上）', () => {
+  seed(1000);
+  takeSnapshotIfDue();                       // 模擬早上開 app
+  const db = getDb();
+  /** @type {any} */ (db.accounts)[0].balance = 5000;   // 白天改了一筆大額資產
+  saveDb(db);
+  takeSnapshot();                            // 使用者按下手動快照鈕
+  const rows = getDb().dailyValues || [];
+  assert.equal(rows.length, 1, '仍然只有今天這一行');
+  assert.equal(rows[0].netWorth, 5000, '日線要跟著手動快照更新，不能停在早上的值');
 });
 
 test('開 app 的 auto 流程：月快照跳過時，日線仍然照寫（同日資產變動要跟得上）', () => {
