@@ -305,8 +305,10 @@ async function openHealthCheck() {
   });
   root.querySelectorAll('[data-hskip]').forEach(b => b.addEventListener('click', async () => {
     const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hskip)];
-    await api('/statement/health/dismiss', { method: 'POST', body: { id: it.id } });
-    redo('已略過（同一狀況不再提醒）');
+    try {
+      await api('/statement/health/dismiss', { method: 'POST', body: { id: it.id } });
+      redo('已略過（同一狀況不再提醒）');
+    } catch (e) { toast('略過失敗：' + e.message, true); await openHealthCheck(); }   // 資料已變動→重抓最新佇列
   }));
   root.querySelectorAll('[data-hcopy]').forEach(b => b.addEventListener('click', async () => {
     const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hcopy)];

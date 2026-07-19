@@ -878,11 +878,20 @@ test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久�
   assert.ok(h.items.some(x => x.id === 'D1|潮味決↔潮味決.湯滷專門店'), 'D1 前綴鑰匙對');
   assert.ok(h.items.some(x => x.type === 'key-dup' && x.data.keys.includes('LINEPAY*NONE')), 'D6 大小寫分家');
   assert.ok(h.items.some(x => x.type === 'installment' && x.data.keys.length === 2), 'D7 分期分裂聚成一件');
-  const d4 = h.items.find(x => x.id === 'D4|STARBUCKSH9 TAIPEI');
+  const d4 = h.items.find(x => x.id.startsWith('D4|STARBUCKSH9 TAIPEI|'));
   assert.ok(d4, 'D4 分類漂移（星巴克≠娛樂、無學習）');
   assert.equal(d4.data.auto.category, '飲食');
-  assert.ok(h.items.some(x => x.id === 'D3|八方雲集H10'), 'D3 顯示名殘留城市名');
+  assert.ok(h.items.some(x => x.id.startsWith('D3|八方雲集H10|')), 'D3 顯示名殘留城市名');
   assert.ok(h.items[0].severity >= h.items[h.items.length - 1].severity, '嚴重度大到小排序');
+  // r2-Codex#5：ID 要含「內容指紋」，內容變了舊的略過才不會永久蓋住新問題
+  // D2/D3/D4/D7 加內容雜湊；D1/D6 的 ID 本來就含全部相關鑰匙＝已含內容；D5 刻意只用店家 key（見服務層說明）
+  for (const it of h.items) {
+    if (!['D2|', 'D3|', 'D4|', 'D7|'].some(pre => it.id.startsWith(pre))) continue;
+    assert.ok(it.id.split('|').length >= 3, `項目 ID 要含內容指紋：${it.id}`);
+  }
+  // r2-Codex#7：略過只收「目前真的存在」的編號
+  assert.equal((await POST('/statement/health/dismiss', { id: 'D9|完全不存在的項目' })).status, 400,
+    '不存在的編號不可被寫進略過清單');
   // 略過：持久化＋還原
   const before = h.items.length;
   await POST('/statement/health/dismiss', { id: 'D5|NEXTGEN' });
@@ -917,4 +926,54 @@ test('第二帖｜匯入留底 autoCat/autoSub（日後精確分辨「人改的 
   assert.equal(tx.autoSub, '飲料／咖啡');
   await DELETE_(`/transactions/${tx.id}`);
   await POST('/learned/delete', { key: '星巴克' });   // learnFromImport 學走的，清掉免污染其他考題
+});
+
+test('r2-Codex#1｜孤兒學習（交易已刪）不可被整理當成品牌級改寫或摘掉自訂名', async () => {
+  const backup = await GET('/db');
+  const orphan = '統一超商-德權';   // 沒有任何交易用這個 key／原文
+  assert.equal((await POST('/import', { ...backup,
+    learnedCategories: { ...(backup.learnedCategories || {}), [orphan]: { name: '我的自訂名', category: '飲食', subcategory: '超市' } } })).status, 200);
+  await (await POST('/statement/normalize-branches', {})).json();
+  const learned = await GET('/learned');
+  assert.ok(learned[orphan], '孤兒學習的 key 不可被改寫（改了未來匯入兩邊都命中不到）');
+  assert.equal(learned[orphan].name, '我的自訂名', '孤兒學習的自訂名不可被當成品牌層摘掉');
+  assert.equal(learned[orphan].category, '飲食');
+  await POST('/learned/delete', { key: orphan });
+});
+
+test('r2-Codex#2/#3/#4｜同店整批改：清原文級分類、擋服務費、擋不存在的鑰匙', async () => {
+  const origA = '八方雲集-中山R2 TAIPEI', origB = '八方雲集-松江R2 TAIPEI';
+  const mk = (d, amt, orig, note) => POST('/transactions', { date: d, type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: amt, note, storeKey: '八方雲集', stmtRef: `cR|${d}|${amt}|${orig}`, source: 'stmt' });
+  const a = await (await mk('2026-08-01', 51, origA, '八方（中山）')).json();
+  const b = await (await mk('2026-08-02', 52, origB, '八方（松江）')).json();
+  // A 有自己的原文級分類學習（單獨設過）
+  await POST('/statement/rename-store', { orig: origA, name: '八方（中山）', category: '娛樂', subcategory: '電影' });
+  assert.equal((await GET('/learned'))[origA]?.category, '娛樂');
+  // 整店改分類 → 原文級的分類要被清掉（否則未來匯入 A 又被套回娛樂），但 name 保留
+  const r = await (await POST('/statement/apply-category', { storeKey: '八方雲集', category: '交通', subcategory: '大眾運輸' })).json();
+  assert.ok(r.origCleared >= 1, '要回報清掉幾筆原文級分類');
+  const learned = await GET('/learned');
+  assert.ok(!learned[origA]?.category, '原文級分類要清掉（品牌整批改的語意＝整個品牌都算這一類）');
+  assert.equal(learned[origA]?.name, '八方（中山）', '顯示名是各分店自己的事，要保留');
+  assert.equal(learned['八方雲集']?.category, '交通');
+  // #4 不存在的鑰匙 → 404 且不留隱形規則
+  assert.equal((await POST('/statement/apply-category', { storeKey: '根本不存在的店R2', category: '娛樂' })).status, 404);
+  assert.ok(!(await GET('/learned'))['根本不存在的店R2'], '找不到交易就不可種下隱形品牌規則');
+  // #3 服務費整組拒絕
+  const fee = await (await POST('/transactions', { date: '2026-08-03', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 30, note: '國外交易服務費（-900）', storeKey: '國外交易服務費（-900）',
+    stmtRef: 'cR|2026-08-03|30|國外交易服務費-900.00', source: 'stmt' })).json();
+  assert.equal((await POST('/statement/apply-category', { storeKey: '國外交易服務費（-900）', category: '娛樂' })).status, 400);
+  assert.equal((await GET('/transactions')).find(t => t.id === fee.id).category, '飲食', '服務費的分類由所屬消費決定，不可被整批改');
+  for (const id of [a.id, b.id, fee.id]) await DELETE_(`/transactions/${id}`);
+  await POST('/learned/delete', { key: '八方雲集' });
+  await POST('/learned/delete', { key: origA });
+});
+
+test('r2-Codex#8｜autoCat/autoSub 不可由通用 CRUD 寫入（匯入服務層仍寫得進去）', async () => {
+  const tx = await (await POST('/transactions', { date: '2026-08-04', type: 'expense', category: '飲食', amount: 10,
+    autoCat: '娛樂', autoSub: '電影' })).json();
+  assert.ok(!('autoCat' in tx) && !('autoSub' in tx), '前端不可偽造留底（偽造了體檢的人改/機器判會失準）');
+  await DELETE_(`/transactions/${tx.id}`);
 });
