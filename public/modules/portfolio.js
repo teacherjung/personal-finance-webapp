@@ -329,6 +329,17 @@ export async function renderPortfolio() {
       if (r.skippedCurrencies && r.skippedCurrencies.length) {
         toast(`注意：這些項目因幣別尚未支援而跳過：${r.skippedCurrencies.join('、')}`, true);
       }
+      // 現金資料異常（Codex r5#7）：後端保留舊值/歸零時本來只寫 server console，前端卻無條件
+      // 報「同步完成」＝使用者不知道淨值裡的 IB 現金可能是過期的。三種情況都要說出來：
+      if (r.cashReportMissing) {
+        toast('注意：這份報表沒有 Cash Report 區塊——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Flex Query 有勾 Cash Report。', true);
+      }
+      if (r.cashDetailMissing) {
+        toast('注意：Cash Report 只有彙總列、沒有各幣別明細——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Cash Report 有勾 Currency Breakout。', true);
+      }
+      if (r.cashZeroed) {
+        toast(`提醒：${r.cashZeroed} 個 IB 現金帳戶這次報表已無該幣別，餘額已歸零（現金提領/轉走後的正常結果）。`);
+      }
       // IBKR 報表中已消失的持股（可能已出清）→ 確認後移除
       if (r.missing && r.missing.length) {
         const names = r.missing.map(m => m.symbol).join('、');
