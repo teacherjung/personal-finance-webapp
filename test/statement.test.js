@@ -91,6 +91,20 @@ test('categorize：自動加值排在交通之前（帳務體檢 D2 回報，202
   assert.deepEqual(categorize('和雲行動服務'), ['交通', '停車費'], '真的和雲停車不受影響');
 });
 
+test('categorize：場所保底層（使用者定 2026-07-19「具體店家 > 場所」）', () => {
+  // 認得出店家 → 店家規則先接走（在百貨裡也一樣）
+  assert.deepEqual(categorize('FP-八方雲集(林口三井店)'), ['飲食', '麵食'], '百貨裡的麵店＝麵店');
+  assert.deepEqual(categorize('FP-八方雲集(新店中A0145 Taipei'), ['飲食', '麵食'], '同店各分店同分類（D2 異質消失）');
+  assert.deepEqual(categorize('石二鍋林口三井店'), ['飲食', '餐廳'], '曾被「三井」搶走');
+  assert.deepEqual(categorize('小北百貨'), ['生活', '日用品'], '曾被「百貨」蓋死的專屬關鍵字，救活');
+  // 認不出是哪家店 → 才落到場所層
+  assert.deepEqual(categorize('新光三越'), ['娛樂', '興趣用品']);
+  assert.deepEqual(categorize('誠品生活新店'), ['娛樂', '興趣用品']);
+  assert.deepEqual(categorize('三井OUTLET'), ['娛樂', '興趣用品']);
+  // 比場所層更高的專屬規則不受影響
+  assert.deepEqual(categorize('誠品書店'), ['學習', '書籍']);
+});
+
 test('cleanStore：分類仍用原始說明、不受清理影響', () => {
   // FP-石二鍋 清成身分名「石二鍋」（「（FP）」是顯示層標記），分類仍用原始字串判斷 → 飲食/餐廳
   assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋');
