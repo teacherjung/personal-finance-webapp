@@ -162,6 +162,10 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     ['LINEPAY*noneTaipei', 'LINE Pay', 'LINE Pay'],
     ['LINEPAY*NONE', 'LINE Pay', 'LINE Pay'],
     ['FP-達卡印度廚房?Dhaka In', '達卡印度廚房', '達卡印度廚房'],   // 中英之間夾缺字符號也要清
+    // 分期（使用者定 2026-07-19，體檢 D7）：期數留顯示名、不進鑰匙——一筆分期 N 期＝同一把鑰匙
+    ['Apple Xinyi A第03/12期/TW', 'Apple Xinyi A第03/12期', 'Apple Xinyi A'],
+    ['Apple Xinyi A第07/12期/TW', 'Apple Xinyi A第07/12期', 'Apple Xinyi A'],
+    ['誠品傢俱第1/6期A0145 TAIPEI', '誠品傢俱第1/6期', '誠品傢俱'],   // 中文分期同理
     ['三新奧特萊斯林口I館A0145 TAIPEI', '林口三井', '林口三井'],
     ['卡哇依A0145 TAIPEI', '兒童新樂園', '兒童新樂園'],
     // 威秀影城＝分店白名單（顯示留分店、鑰匙只到品牌）
