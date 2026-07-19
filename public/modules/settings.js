@@ -3,7 +3,13 @@ import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openFor
 import { icon } from './icons.js';
 
 export async function renderSettings() {
-  const [s, txs, expTree, health] = await Promise.all([api('/settings'), api('/transactions'), api('/categories'), api('/statement/health').catch(() => ({ items: [], dismissed: 0 }))]);
+  const [s, txs, expTree, health, rulesRes, orphans] = await Promise.all([
+    api('/settings'), api('/transactions'), api('/categories'),
+    api('/statement/health').catch(() => ({ items: [], dismissed: 0 })),
+    api('/statement/rules').catch(() => ({ rules: null })),
+    api('/statement/learned/orphans').catch(() => ({ items: [], total: 0 }))]);
+  const myRules = rulesRes?.rules || null;
+  const ruleCount = myRules ? Object.values(myRules).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0) : 0;
   // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
   // 顯示名/分類取「該原文最新一筆」為代表（編輯時整批統一）。編輯以原文為準——不同分店各自取名/分類。
   const byOrig = new Map();
@@ -56,6 +62,12 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄（自動備份）。</p>
+      <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">帳務體檢 ${health.items.length ? `<span class="store-rank">${health.items.length} 件待確認</span>` : '<span class="muted" style="font-size:12px">✅ 目前乾淨</span>'}</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">系統主動檢查可疑的店名、身分鑰匙與分類問題（同店被拆成兩把鑰匙、分期分裂、未分類累積、名字殘留雜訊…），排成清單讓你一鍵處理或略過。每次開啟即時重算，按過略過的不再出現${health.dismissed ? `（已略過 ${health.dismissed} 件）` : ''}。</p>
       <div><button class="btn-ghost" id="healthBtn">${icon('refresh', 16) || ''}開始體檢</button></div>
@@ -65,6 +77,7 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">帳單說明／分類學習</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。三欄＝店名的三層：<b>帳單原文</b>（銀行印的）→ <b>身分鑰匙</b>（辨識「同一家店」用，<b>只到品牌、不含分店</b>——所以各分店的消費會合併統計；所有加油站一律算「加油站」）→ <b>顯示名</b>（你看到的，含分店、可自訂）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
       ${storeMapRows}
+      ${orphans.items.length ? `<p class="muted" style="font-size:12px;margin-top:12px">另有 <b>${orphans.items.length}</b> 條學習規則目前沒對到任何記錄（刪過那批帳單、或改過店名規則），平常看不到但下次匯入仍會生效。<button class="btn-link btn-sm" id="orphanBtn">查看／清理</button></p>` : ''}
     </div>
 
     <h2 class="section-title">資產配置</h2>
@@ -255,6 +268,8 @@ export async function renderSettings() {
     });
   });
   byId('healthBtn').onclick = () => openHealthCheck();
+  byId('storeRulesBtn').onclick = () => openStoreRulesEditor(myRules);
+  if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -482,4 +497,215 @@ function openCategoryEditor(tree) {
     } catch (err) { toast('儲存失敗：' + err.message, true); }
   };
 }
+// ---------- 店名規則自助管理（第三帖，使用者定 2026-07-19） ----------
+// 以前每發現一條店名規則要改，就得等 Claude 改程式→PR→合併→重啟。這裡把規則變成可編輯的資料。
+// 兩個 UI 上的堅持：
+// ①**表單而非正規表示式**：使用者填純文字＋選比對方式，後端負責跳脫（沒有程式背景也不會誤傷全庫）。
+// ②**先預覽再儲存**：規則是全庫生效的，一條寫太寬會改壞幾百筆——所以「儲存」前一定先看到影響。
+/** 五種規則的表單定義（欄位與後端 lib/store-rules.js 的形狀一一對應）。 */
+const RULE_SECTIONS = [
+  { key: 'canon', title: '這些寫法是同一家店', mode: true,
+    hint: '帳單上同一家店有好幾種寫法時，統一成一個名字。例：帳單印「XX咖啡 A1234 Taipei」和「XX咖啡館」，填「XX咖啡」→「XX咖啡」。<b>分店會被併掉</b>（整家店算一個），要保留分店請用下面那一種。',
+    ph: ['帳單上出現的字', '要顯示成'] },
+  { key: 'brand', title: '併回品牌名（保留分店）', mode: false,
+    hint: '銀行把店名截斷成兩種寫法、變成兩家店時用這個。例：「好麥永和豆漿」和「好麥永和豆漿店」是同一家 → 填「好麥永和豆漿」→「好麥永和豆漿店」。後面的分店名會保留。',
+    ph: ['開頭是（含被截斷的寫法）', '完整品牌名'] },
+  { key: 'rename', title: '顯示名改寫', mode: false,
+    hint: '單純想換個看得順眼的名字。例：「全家便利商店」→「全家商店」。只換字、分店與其他部分都保留。',
+    ph: ['原本的字', '改成'] },
+  { key: 'chains', title: '連鎖店（沒有分隔符也要切分店）', mode: false, single: true,
+    hint: '帳單把品牌和分店黏在一起、中間沒有符號時用。例：填「鮮芋仙」→「鮮芋仙林口店」會變成「鮮芋仙（林口店）」。電腦看不出主體在哪結束，所以要你告訴它。',
+    ph: ['連鎖品牌名'] },
+  { key: 'parkExempt', title: '不要包成「停車費（…）」', mode: false, single: true,
+    hint: '分類是停車費的消費，顯示名預設會包成「停車費（店名）」。有些名字包了反而怪（例：儲值、加值），填在這裡就維持原名。',
+    ph: ['要維持原名的店名'] }
+];
+
+/** @param {any} rules 目前規則（後端 GET /statement/rules） */
+function openStoreRulesEditor(rules) {
+  const root = byId('modal-root');
+  /** @type {Record<string, any[]>} 編輯中的狀態（一律轉成物件陣列，single 型的存 {to}） */
+  const state = {};
+  for (const sec of RULE_SECTIONS) {
+    const list = (rules && rules[sec.key]) || [];
+    state[sec.key] = sec.single ? list.map((/** @type {string} */ v) => ({ to: v }))
+      : list.map((/** @type {any} */ e) => ({ match: e.match || '', to: e.to || '', mode: e.mode || 'contains' }));
+  }
+
+  // 打字時不重繪（保住焦點）；結構性動作（新增/刪除）才 syncFromDom→重繪，同 openCategoryEditor 的做法
+  const syncFromDom = () => {
+    root.querySelectorAll('[data-rk]').forEach((/** @type {any} */ inp) => {
+      const row = state[inp.dataset.rk]?.[Number(inp.dataset.ri)];
+      if (row) row[inp.dataset.rf] = inp.value;
+    });
+  };
+
+  const rowHtml = (/** @type {any} */ sec, /** @type {any} */ r, /** @type {number} */ i) => {
+    const cell = (/** @type {string} */ f, /** @type {number} */ n) =>
+      `<input data-rk="${sec.key}" data-ri="${i}" data-rf="${f}" value="${esc(r[f] || '')}" placeholder="${esc(sec.ph[n])}" />`;
+    const modeSel = sec.mode ? `<select data-rk="${sec.key}" data-ri="${i}" data-rf="mode">
+        ${[['contains', '包含'], ['startsWith', '開頭是'], ['exact', '完全等於']].map(([v, t]) =>
+    `<option value="${v}"${r.mode === v ? ' selected' : ''}>${t}</option>`).join('')}</select>` : '';
+    return `<div class="rule-row">
+      ${sec.single ? cell('to', 0) : `${cell('match', 0)}${modeSel}<span class="muted">→</span>${cell('to', 1)}`}
+      <button type="button" class="btn-icon danger" data-ract="del" data-rk="${sec.key}" data-ri="${i}" title="刪除這條">✕</button>
+    </div>`;
+  };
+
+  const secHtml = (/** @type {any} */ sec) => `
+    <div class="rule-sec">
+      <h4>${esc(sec.title)} <span class="muted" style="font-weight:400">（${state[sec.key].length}）</span></h4>
+      <p class="muted" style="font-size:11.5px;margin:2px 0 8px">${sec.hint}</p>
+      ${state[sec.key].map((r, i) => rowHtml(sec, r, i)).join('') || '<p class="empty" style="margin:0 0 6px">尚無規則</p>'}
+      <button type="button" class="btn-ghost btn-sm" data-ract="add" data-rk="${sec.key}">＋ 加一條</button>
+    </div>`;
+
+  const redraw = () => { byId('ruleEditorBody').innerHTML = RULE_SECTIONS.map(secHtml).join(''); };
+
+  /**
+   * 把編輯狀態轉回後端形狀。預設丟掉「填一半」的列（送出去也會被後端丟棄，不如不送）；
+   * keepPartial＝保留半成品，給「離開又回來」用——不然使用者打到一半去看預覽，回來就整片空白。
+   * @param {boolean} [keepPartial]
+   */
+  const collect = (keepPartial = false) => {
+    syncFromDom();
+    /** @type {Record<string, any>} */
+    const out = {};
+    for (const sec of RULE_SECTIONS) {
+      const rows = state[sec.key].map(r => ({ match: String(r.match || '').trim(), to: String(r.to || '').trim(), mode: r.mode || 'contains' }));
+      out[sec.key] = sec.single
+        ? rows.map(r => r.to).filter(r => keepPartial || r)
+        : rows.filter(r => keepPartial || (r.match && r.to));
+    }
+    return out;
+  };
+
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+    <div class="modal-head"><h2>店名規則</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">你自己加的規則<b>優先於系統內建規則</b>。填的都是<b>普通文字</b>（不是程式碼），系統會照字面比對。
+      規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。儲存前自動備份。</p>
+      <div id="ruleEditorBody" style="max-height:50vh;overflow:auto"></div>
+      <div class="form-actions">
+        <button type="button" class="btn-ghost" data-cancel>取消</button>
+        <button type="button" class="btn-ghost" id="rulePreview">預覽影響</button>
+        <button type="button" class="btn" id="ruleSave">儲存並套用</button>
+      </div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  bindBackdropClose(root, close);
+  redraw();
+
+  root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
+    const btn = e.target.closest('[data-ract]');
+    if (!btn) return;
+    syncFromDom();
+    const k = btn.dataset.rk;
+    if (btn.dataset.ract === 'add') state[k].push({ match: '', to: '', mode: 'contains' });
+    else state[k].splice(Number(btn.dataset.ri), 1);
+    redraw();
+  });
+
+  byId('rulePreview').onclick = async () => {
+    try {
+      const r = await api('/statement/rules/preview', { method: 'POST', body: { rules: collect() } });
+      if (!r.changed && !r.keyChanged) return toast('這些規則不會改動任何既有記錄（未來匯入時仍會生效）');
+      // 回上一頁＝用「目前編輯到的內容」重開編輯窗（含填一半的列）。
+      // ⚠️ 不可以用 innerHTML 快照還原（實測踩到）：使用者打進 input 的字不會反映到 HTML 屬性上，
+      // 還原回去會整片空白——去看一眼預覽就把心血全弄丟，是最不能忍的那種 bug。
+      const snapshot = collect(true);
+      openRulePreview(r, () => openStoreRulesEditor(snapshot));
+    } catch (e) { toast('預覽失敗：' + e.message, true); }
+  };
+  byId('ruleSave').onclick = async () => {
+    try {
+      const rules = collect();
+      // 「預覽影響」是自願按的，但學習表衝突是不可逆的——直接按儲存的人更需要被擋一下。
+      // 先偷跑一次預覽，只有真的會蓋掉教過的設定時才出聲（沒衝突就安靜地存，不多一步打擾）。
+      const pre = await api('/statement/rules/preview', { method: 'POST', body: { rules } }).catch(() => null);
+      const cf = pre?.learnedConflicts || [];
+      if (cf.length && !confirm(`有 ${cf.length} 項你教過的設定會被蓋掉，刪掉規則也救不回來：\n\n`
+        + cf.slice(0, 5).map(c => `・「${c.key}」：留下 ${c.kept}，捨棄 ${c.dropped}`).join('\n')
+        + (cf.length > 5 ? `\n…另外 ${cf.length - 5} 項` : '') + '\n\n確定要套用嗎？')) return;
+      const r = await api('/statement/rules', { method: 'POST', body: { rules } });
+      close();
+      const bits = [r.changed && `${r.changed} 筆顯示名`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
+        r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
+      toast(bits.length ? `規則已儲存，整理了 ${bits.join('、')} ✨` : '規則已儲存（沒有既有記錄需要整理）');
+      renderSettings();
+    } catch (e) { toast('儲存失敗：' + e.message, true); }
+  };
+}
+
+// 規則影響預覽：只看、不套用（真正的套用在編輯窗按「儲存並套用」）——
+// 分成兩件事講，因為它們的嚴重度不同：顯示名改錯了再改回來就好，**身分鑰匙**改了會影響
+// 「哪些消費算同一家店」（統計、排行、學習全部跟著動），所以獨立標出來。
+/** @param {{changed:number, keyChanged:number, changes:{id:string,before:string,after:string}[],
+ *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[]}} r
+ *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開） */
+function openRulePreview(r, onBack) {
+  const root = byId('modal-root');
+  const rows = r.changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
+  // 學習表衝突＝整個自助化唯一「刪掉規則也救不回來」的效果：兩把鑰匙併成一把時，
+  // 兩邊手動教過的分類只留得下一個。不講出來的話，使用者看到「4 筆顯示名會變」就按下去了。
+  const FIELD_LABEL = { category: '分類', subcategory: '子分類', name: '顯示名' };
+  const conflicts = r.learnedConflicts || [];
+  const conflictHtml = conflicts.length ? `
+    <div class="rule-warn">
+      <b>⚠️ 有 ${conflicts.length} 項你教過的設定會被蓋掉，而且刪掉規則也救不回來</b>
+      <p>這些店被合併成同一家，但你當初教系統的答案不一樣——只能留一個：</p>
+      <ul>${conflicts.map(c => `<li>「${esc(c.key)}」的${esc(FIELD_LABEL[c.field] || c.field)}：留下 <b>${esc(c.kept)}</b>，<span class="rule-drop">捨棄 ${esc(c.dropped)}</span></li>`).join('')}</ul>
+      <p>如果捨棄的那個才是你要的，先回去把它改成一致，再套用規則。</p>
+    </div>` : '';
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
+    <div class="modal-head"><h2>規則影響預覽</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">套用後：<b>${r.changed}</b> 筆顯示名會改變${r.keyChanged
+    ? `，<b>${r.keyChanged}</b> 筆的「店家身分」會改變（＝哪些消費算同一家店，會影響統計與排行）` : ''}。這裡只是預覽，還沒有存。</p>
+      ${conflictHtml}
+      ${rows ? `<div class="tbl-wrap" style="max-height:${conflicts.length ? '30vh' : '44vh'};overflow:auto"><table>
+        <thead><tr><th>目前顯示名</th><th></th><th>改成</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : '<p class="empty">顯示名沒有變化（只有店家身分會變）。</p>'}
+      ${r.changed > r.changes.length ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${r.changes.length} 筆）</p>` : ''}
+      <div class="form-actions"><button type="button" class="btn" data-back>回去繼續編輯</button></div>
+    </div></div></div>`;
+  root.querySelector('.x-close').onclick = onBack;
+  root.querySelector('[data-back]').onclick = onBack;
+}
+
+// 孤兒學習條目：對不上任何現存交易的學習規則——刪過整批帳單、或改規則讓鑰匙搬家後留下的。
+// 它們看不見卻仍會在「下次匯入」生效，所以要有地方看得到、刪得掉（第三帖配套）。
+/** @param {{items:{key:string,name?:string,category?:string,subcategory?:string}[], total:number}} r */
+function openOrphanLearned(r) {
+  const root = byId('modal-root');
+  const rows = r.items.map(it => `<tr><td>${esc(it.key)}</td><td>${esc(it.name || '—')}</td>
+    <td>${esc(it.category || '—')}${it.subcategory ? ` <span class="muted">· ${esc(it.subcategory)}</span>` : ''}</td>
+    <td style="width:36px"><button class="btn-link btn-sm danger" data-dellearn="${esc(it.key)}" title="刪除這條學習">✕</button></td></tr>`).join('');
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
+    <div class="modal-head"><h2>沒對到記錄的學習規則（${r.items.length}）</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">這些是系統幫你記住的店名／分類規則，但目前<b>沒有任何一筆記錄用得到它們</b>——通常是你刪過那批帳單，或改了店名規則。
+      它們平常看不到，卻會在<b>下次匯入同一家店時默默生效</b>。留著沒關係（下次匯入就會派上用場），確定不要了才刪。</p>
+      ${rows ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
+        <thead><tr><th>對應的名字</th><th>學到的顯示名</th><th>學到的分類</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : '<p class="empty">尚無孤兒條目 ✅</p>'}
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>關閉</button></div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  bindBackdropClose(root, close);
+  root.querySelectorAll('[data-dellearn]').forEach(b => b.addEventListener('click', async () => {
+    const key = /** @type {HTMLElement} */ (b).dataset.dellearn;
+    if (!confirm(`刪除「${key}」這條學習規則？下次匯入這家店會改用系統的自動判斷。`)) return;
+    try {
+      await api('/learned/delete', { method: 'POST', body: { key } });
+      toast('已刪除');
+      openOrphanLearned(await api('/statement/learned/orphans'));   // 重抓，確認真的消失
+    } catch (e) { toast('刪除失敗：' + e.message, true); }
+  }));
+}
+
 const val = (id) => byId(id).value;
