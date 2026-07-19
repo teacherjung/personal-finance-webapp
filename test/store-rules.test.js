@@ -15,8 +15,8 @@ const TEST_STORE = join(tmpdir(), `finance-rules-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { setUserRules, sanitizeStoreRules, compileStoreRules, escapeRe } = await import('../lib/store-rules.js');
-const { cleanStore, storeKeyOf, applyDisplayLabels, categorize } = await import('../lib/statement.js');
+const { setUserRules, sanitizeStoreRules, compileStoreRules, escapeRe, isProtoKey } = await import('../lib/store-rules.js');
+const { cleanStore, storeKeyOf, applyDisplayLabels, categorize, normalizeStoreDisplay } = await import('../lib/statement.js');
 const { previewStoreRules, saveStoreRules, getStoreRules, listOrphanLearned } = await import('../lib/services/store-rules.js');
 
 after(() => {
@@ -109,13 +109,46 @@ test('rename：取代字串裡的 $ 不可被當成樣式（自審 r3）', () =>
   assert.equal(cleanStore('小店'), 'A$&B');
 });
 
-test('原型鍵擋在門外：規則的 to 不可以是 __proto__（會讓學習表整條蒸發，自審 r3）', () => {
+test('原型鍵擋在門外：不只 __proto__，Object.prototype 全部的名字都不行（Codex r3#4）', () => {
+  // 只擋三個名字不夠：toString／hasOwnProperty／valueOf… 一樣會讓 learnedCategories[key]=…
+  // 去碰原型而不是建立鍵，那條學習就人間蒸發（Codex 實測 toString 可過驗證、學習沒存下來）。
   const r = sanitizeStoreRules({
-    canon: [{ match: 'X', to: '__proto__' }, { match: 'Y', to: 'constructor' }, { match: 'Z', to: '正常店名' }],
-    chains: ['__proto__', '好店']
+    canon: [{ match: 'X', to: '__proto__' }, { match: 'Y', to: 'toString' },
+      { match: 'W', to: 'hasOwnProperty' }, { match: 'Z', to: '正常店名' }],
+    chains: ['valueOf', '好店']
   });
-  assert.deepEqual(r.canon.map(e => e.to), ['正常店名'], '原型鍵直接拒收');
+  assert.deepEqual(r.canon.map(e => e.to), ['正常店名'], '繼承屬性名一律拒收');
   assert.deepEqual(r.chains, ['好店']);
+  // 真的用得出來才算數：拿 toString 當店名時，學習表要能正常存取
+  assert.ok(isProtoKey('toString') && isProtoKey('__proto__') && !isProtoKey('星巴克'));
+});
+
+test('rename 必須冪等：整理跑第二次名字不可以繼續膨脹（Codex r3#5）', () => {
+  // 整理會重複執行（規則指紋變動、開 app 自動跑），ABC→台灣ABC 跑兩次會變台灣台灣ABC。
+  const r = sanitizeStoreRules({ rename: [{ match: 'ABC', to: '台灣ABC' }, { match: '早午餐', to: '早餐' }] });
+  assert.equal(r.rename.length, 1, '「改成的名字裡還含有要被取代的字」的規則直接拒收');
+  assert.equal(r.rename[0].to, '早餐', '正常的改寫照收');
+
+  // 收下來的規則，連續正規化兩次結果必須相同
+  setUserRules({ rename: [{ match: '早午餐', to: '早餐' }] });
+  const once = cleanStore('麥味登早午餐-林口店');
+  assert.equal(normalizeStoreDisplay(once), once, '再整理一次結果不變（冪等）');
+});
+
+test('儲存這條路要嚴格：形狀不對整包拒絕，不可默默把規則清空（Codex r3#6）', () => {
+  store.save({ ...store.emptyDb() });
+  saveStoreRules({ chains: ['既有規則'] });
+  assert.deepEqual(getStoreRules().rules.chains, ['既有規則'], '前置條件：先有一條規則');
+
+  // 型別打錯 → 舊版會當成空物件、回報成功、把全部規則清空
+  assert.throws(() => saveStoreRules('oops'), /規則沒有儲存/);
+  assert.deepEqual(getStoreRules().rules.chains, ['既有規則'], '被拒絕時原有規則必須原封不動');
+
+  assert.throws(() => saveStoreRules({ chains: 'not-an-array' }), /清單/);
+  assert.throws(() => saveStoreRules({ canon: [{ match: 'A', to: 'B', mode: 'containz' }] }), /比對方式/,
+    '拼錯的比對方式要明講，不可默默降成最寬的 contains');
+  assert.throws(() => saveStoreRules({ rename: [{ match: 'ABC', to: '台灣ABC' }] }), /愈來愈長/);
+  assert.deepEqual(getStoreRules().rules.chains, ['既有規則'], '以上每一次都不可動到既有規則');
 });
 
 test('沒收的條目要報對位置、超過上限要出聲（自審 r3：使用者才知道哪條沒生效）', () => {
@@ -326,11 +359,19 @@ test('空字串子分類是合法值，不是「沒有值」：與非空值衝�
   assert.equal(c.dropped, '餐廳', '被捨棄的是有資訊的那個，更該講出來');
 });
 
-test('存規則：壞條目被丟掉，不會寫進資料庫', () => {
+test('存規則：壞條目改成「整包拒絕」而非默默丟掉（Codex r3#6 之後的新口徑）', () => {
   store.save(store.emptyDb());
-  const r = saveStoreRules({ chains: ['好店', ''], canon: [{ match: 'A', to: '' }] });
+  // 舊口徑是「壞的丟掉、好的照存」——問題是使用者看不出哪條沒收，而且同一套寬鬆邏輯
+  // 讓 saveStoreRules('oops') 變成「清空全部規則還回報成功」。儲存這條路改成嚴格：
+  // 有問題就整包退回並說明是第幾條、為什麼，使用者改好再存。
+  assert.throws(() => saveStoreRules({ chains: ['好店', ''], canon: [{ match: 'A', to: '' }] }),
+    /規則沒有儲存/, '有空欄位就整包退回');
+  assert.deepEqual(getStoreRules().rules.chains, [], '被拒絕時什麼都不該寫進去');
+
+  // 全部合法才存得進去
+  const r = saveStoreRules({ chains: ['好店'], canon: [{ match: 'A', to: 'B' }] });
   assert.deepEqual(r.rules.chains, ['好店']);
-  assert.equal(r.rules.canon.length, 0);
+  assert.equal(r.rules.canon.length, 1);
 });
 
 test('存規則：沒帶內容回 400（避免手滑把規則清空）', () => {
