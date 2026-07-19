@@ -343,6 +343,9 @@ export async function renderPortfolio() {
       if (r.cashBaseUnsupported) {
         toast(`注意：報表現金只有彙總列、且基準幣別 ${r.cashBaseUnsupported} 尚未支援——IB 現金沿用上次的舊值（可能過期）。`, true);
       }
+      if (r.cashDetailIncomplete) {
+        toast('注意：部分幣別的現金金額讀不到——讀得到的已更新，讀不到的沿用舊值（不歸零）。請到 IBKR 確認 Cash Report 有勾 Ending Cash。', true);
+      }
       if (r.cashSummaryMissing) {
         toast('注意：報表現金只有彙總列、且彙總列沒有可用金額——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Cash Report 有勾 Ending Cash。', true);
       }
@@ -966,7 +969,7 @@ function holdingsDonut(rows, total) {
 
 // ---- 持股表（依層分組）----
 function holdingsTable(rows, total) {
-  const cmp = H_SORTERS[hSortKey] || H_SORTERS.value;
+  const cmp = (Object.hasOwn(H_SORTERS, hSortKey) && H_SORTERS[hSortKey]) || H_SORTERS.value;   // hasOwn（Codex r9#3）：排序鍵存在 localStorage、可被改成原型名
   const groups = LAYER_ORDER.map(k => {
     const list = rows.filter(r => (LAYERS[r.layer] ? r.layer : 'satellite') === k).sort(cmp);
     if (hSortDir === 'desc') list.reverse();
@@ -1470,7 +1473,7 @@ async function printPortfolioReport(d) {
   }).join('');
 
   // 持股明細（依層分組，沿用頁面排序）
-  const cmp = H_SORTERS[hSortKey] || H_SORTERS.value;
+  const cmp = (Object.hasOwn(H_SORTERS, hSortKey) && H_SORTERS[hSortKey]) || H_SORTERS.value;   // hasOwn（Codex r9#3）：排序鍵存在 localStorage、可被改成原型名
   const holdingRows = LAYER_ORDER.map(k => {
     const list = rows.filter(r => (LAYERS[r.layer] ? r.layer : 'satellite') === k).sort(cmp);
     if (hSortDir === 'desc') list.reverse();

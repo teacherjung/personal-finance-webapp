@@ -99,11 +99,14 @@ async function freezeCompletedMonths(subs) {
   return added.length;
 }
 
+const VALID_SORT_KEYS = ['manual', 'feeMonth', 'feeYear', 'when', 'card', 'email', 'category'];   // 與 SORTERS 同步
 function normalizeSortKey(k) {
   if (k === 'fee') return 'feeMonth';
   if (k === 'name') return 'category';
   if (k === 'status') return 'when';
-  return k || 'when';
+  // 白名單（Codex r9#3）：localStorage 的值可被手改成 hasOwnProperty 之類的原型名，
+  // 裸查 SORTERS[key] 會拿到原型函式、.sort() 直接 TypeError、整頁掛掉
+  return VALID_SORT_KEYS.includes(k) ? k : 'when';
 }
 const legacySortKey = normalizeSortKey(localStorage.getItem('sub_sortKey') || 'when');
 const legacySortDir = localStorage.getItem('sub_sortDir') || 'asc';
@@ -157,7 +160,7 @@ function triHtml(listKey, key) {
 
 function sortTableRows(rows, listKey) {
   const s = getListSort(listKey);
-  const out = rows.slice().sort(SORTERS[s.key] || SORTERS.when);
+  const out = rows.slice().sort((Object.hasOwn(SORTERS, s.key) && SORTERS[s.key]) || SORTERS.when);
   if (s.dir === 'desc') out.reverse();
   if (listKey === 'active') out.sort((a, b) => Number(isLifetimeSub(a)) - Number(isLifetimeSub(b)));
   return out;

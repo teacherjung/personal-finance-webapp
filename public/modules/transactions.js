@@ -39,7 +39,7 @@ export async function renderTransactions() {
     note: (a, b) => zh(a.note, b.note),
     category: (a, b) => zh(a.category, b.category) || zh(a.subcategory, b.subcategory),
     subcategory: (a, b) => zh(a.subcategory, b.subcategory),
-    amount: (a, b) => Number(a.amount || 0) - Number(b.amount || 0)
+    amount: (a, b) => Math.abs(Number(a.amount || 0)) - Math.abs(Number(b.amount || 0))   // 絕對值（Codex r9#2：規格寫絕對大小，手動記帳可輸入負數，不取絕對值時降冪會把 -100 排在 50 後面）
   };
   const cmp = SORTERS[listSort.key] || SORTERS.date;
   const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter)

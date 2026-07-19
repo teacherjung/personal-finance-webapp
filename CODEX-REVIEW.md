@@ -29,19 +29,18 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（2026-07-21；上輪＝r8 審到 #154 交 4 條低（無高中）全數處理，本輪範圍＝#155–#156）
+## 本輪審查重點（2026-07-21；上輪＝r9 審到 #156 交 4 條（1 高 3 低）全數屬實，本輪範圍＝#157 起的新合併）
 
-本輪是**第二次收官確認**：r8 四條已修（#156：cashSummaryMissing 病因分流、排序第二鍵固定日期新→舊、
-原型鍵七處補（CAT_COLOR 全五處＋帶點號兩處、subOptions/fill、bySym）、金額排序口徑裁定＝絕對大小並記明規格）；
-#155 是純文案 UI（匯入紀錄改名＋條列說明）。
+r9 四條已修（#157）：現金金額欄嚴格取值（空白/非法/期初一律不當 0、歸零需明細完整＋cashDetailIncomplete 全管線五情境考題）、金額排序 Math.abs、localStorage 排序鍵白名單＋hasOwn 三處、subsOf 死碼移除、AGENTS 舊按鈕名。
+另有 Claude 自主全面體檢的產出（見各 PR 說明）。
 
-1. **r8 修正本身**（#156）：IB 現金的病因分流現在有五岔（缺區塊／缺明細+缺基準幣別／基準幣別不支援／
-   彙總缺金額／正常彙總入帳）——有沒有漏的組合或說錯話的路徑？排序修正的第二鍵行為對不對？
-2. **原型污染 bug class**：r8#3 點名的與自掃的共七處已補。同樣的請求：掃不出新漏網就明確宣告
-   「原型污染 bug class 掃蕩完成、宣告關閉」；若仍有，請一次列全（別再一輪擠三處）。
+1. **r9#1 修正本身**：cashAmt 嚴格取值有沒有漏的空值形態（0 字串 '0' 要是合法零！）？
+   cashDetailIncomplete 與 cashCollapsed/cashZeroed 的組合矩陣有沒有說錯話的格子？
+2. **自主體檢修正**：照各 PR 說明逐項驗。
+3. **原型鍵 bug class**：r9#3 的 localStorage 軌與死碼已處理。同樣的請求：掃不出新漏網就宣告關閉。
 
 **收官條件（與使用者約定）**：0 高、≤2 輕微 → 硬化循環正式收官，回主線（架構健檢第一包 → D1）。
 
 ### 自我檢查（開審前）
-- `git fetch origin && git checkout --detach origin/main`；`git log --oneline -3` 應含 #156；三關全綠再開審。
+- `git fetch origin && git checkout --detach origin/main`；三關全綠再開審。
 - **絕不在 codex worktree commit**；`?? node_modules`＝舊樹快照，先更新再看。
