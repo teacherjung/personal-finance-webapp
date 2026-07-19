@@ -985,12 +985,15 @@ test('帳單年月（使用者定 2026-07-19）：匯入時存進每一筆、批
   const ref = `${card.id}|2026-06-15|60|${d}`;
   const out = await (await POST(`/cards/${card.id}/statement/import`, { transactions: [{
     date: '2026-06-15', amount: 60, desc: d, store: '星巴克', category: '飲食', subcategory: '飲料', stmtRef: ref,
-  }], statementMonth: '2026-06' })).json();
+  }], statementMonth: '2026-06', statementDue: 46299 })).json();
   assert.equal(out.imported, 1);
   const tx = (await GET('/transactions')).find(t => t.stmtRef === ref);
   assert.equal(tx.stmtMonth, '2026-06', '帳單期別存進交易');
+  assert.equal(tx.stmtDue, 46299, '應繳金額存進交易');
+  assert.notEqual(tx.stmtDue, 60, '應繳金額≠這批的消費總和，兩者是不同概念');
   const batch = (await GET('/statement/batches')).find(b => b.batchId === out.batchId);
   assert.equal(batch.stmtMonth, '2026-06', '批次列表回報期別');
+  assert.equal(batch.stmtDue, 46299, '批次列表回報帳單應繳金額（與匯入金額本就不同）');
   // 手動修正（表頭讀不出或讀錯時的退路）
   const r = await (await POST('/statement/batch/month', { batchId: out.batchId, month: '2026-07' })).json();
   assert.equal(r.changed, 1);

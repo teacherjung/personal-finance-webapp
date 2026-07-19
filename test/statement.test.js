@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, extractStatementMonth } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, extractStatementMonth, extractStatementDue } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -247,4 +247,14 @@ test('extractStatementMonth：從帳單表頭讀期別，以結帳日為準（�
   assert.equal(extractStatementMonth('消費明細\n2026-06-21 星巴克 150\n2026-06-22 全聯 300'), null);
   assert.equal(extractStatementMonth('115年13月'), null, '不合法月份不採用');
   assert.equal(extractStatementMonth(''), null);
+});
+test('extractStatementDue：抓帳單自己印的應繳金額（使用者定 2026-07-19）', () => {
+  // 台新兩個欄位並存 → 以「本期應繳總金額」為主
+  assert.equal(extractStatementDue('台新 本期應繳總金額 NT$46,299 本期累計應繳金額 50,000'), 46299);
+  assert.equal(extractStatementDue('富邦 本期應繳總額：12,345 元'), 12345, '富邦寫法');
+  assert.equal(extractStatementDue('台新 本期累計應繳金額 8,888'), 8888, '只有累計欄位時退而用它');
+  assert.equal(extractStatementDue('本期應繳總金額 -1,200'), -1200, '溢繳（負數）也要讀得到');
+  assert.equal(extractStatementDue('本期應繳總金額 46,299.50'), 46299.5);
+  assert.equal(extractStatementDue('沒有這個欄位的帳單'), null);
+  assert.equal(extractStatementDue(''), null);
 });
