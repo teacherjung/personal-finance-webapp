@@ -161,6 +161,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 9px
 .btn-ghost { background: var(--card); color: var(--text); padding: 9px 15px; border: 1px solid var(--line-2); }
 .btn-ghost:hover { background: var(--card-2); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
+.btn-eq { width: 132px; padding-left: 0; padding-right: 0; text-align: center; }   /* 收支頁三顆動作鈕等寬（使用者定 2026-07-21） */
 .btn-danger { background: transparent; color: var(--neg); border: 1px solid var(--line-2); }
 .btn-danger:hover { background: rgba(184,74,57,.08); }
 .btn-link { background: none; color: var(--accent); padding: 5px 8px; }
