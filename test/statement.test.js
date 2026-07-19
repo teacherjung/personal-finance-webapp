@@ -31,7 +31,7 @@ test('categorize：消費說明 → 正確的分類/子類', () => {
 
 test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）', () => {
   const cases = [
-    ['Apple Xinyi A第03/12期/TW', 'Apple Xinyi A第03/12期'],
+    ['Apple Xinyi A第03/12期/TW', 'Apple Xinyi第03/12期'],   // 定位碼被期數擠成的「A」併回品牌（2026-07-19）
     ['連加*阜爾運通股份有限Taipei', '阜爾運通'],
     ['21PLUS、21O2732 Taipei', '21PLUS'],
     ['摩斯漢堡Mos BO2732 Taipei', '摩斯漢堡'],
@@ -163,8 +163,11 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     ['LINEPAY*NONE', 'LINE Pay', 'LINE Pay'],
     ['FP-達卡印度廚房?Dhaka In', '達卡印度廚房', '達卡印度廚房'],   // 中英之間夾缺字符號也要清
     // 分期（使用者定 2026-07-19，體檢 D7）：期數留顯示名、不進鑰匙——一筆分期 N 期＝同一把鑰匙
-    ['Apple Xinyi A第03/12期/TW', 'Apple Xinyi A第03/12期', 'Apple Xinyi A'],
-    ['Apple Xinyi A第07/12期/TW', 'Apple Xinyi A第07/12期', 'Apple Xinyi A'],
+    // Apple 信義（體檢回報 2026-07-19）：定位碼被期數擠成單一個「A」→ 與沒分期的那筆併回同一把鑰匙；
+    // 期數屬「單筆註記」，品牌正規化時先摘下再接回（同外幣註記），顯示名照樣看得到第幾期
+    ['Apple Xinyi A2716 Taipei', 'Apple Xinyi', 'Apple Xinyi'],
+    ['Apple Xinyi A第03/12期/TW', 'Apple Xinyi第03/12期', 'Apple Xinyi'],
+    ['Apple Xinyi A第07/12期/TW', 'Apple Xinyi第07/12期', 'Apple Xinyi'],
     ['誠品傢俱第1/6期A0145 TAIPEI', '誠品傢俱第1/6期', '誠品傢俱'],   // 中文分期同理
     ['三新奧特萊斯林口I館A0145 TAIPEI', '林口三井', '林口三井'],
     ['卡哇依A0145 TAIPEI', '兒童新樂園', '兒童新樂園'],
