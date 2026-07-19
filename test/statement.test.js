@@ -307,3 +307,20 @@ test('extractStatementDue：台新官網 XLSX 叫「本期帳單金額」（2026
   // 只有「最低應繳金額」（沒有任何總額欄）＝不可誤把最低繳款額當應繳總額
   assert.equal(extractStatementDue('最低應繳金額 新臺幣 2,345'), null);
 });
+
+test('extractStatementDue：標籤內部被 PDF 拆出空格 → 併回括號組對位（Codex r5#3 實測抓錯）', () => {
+  // 同一張郵寄版摘要，但「(已繳款金額 + 本期退款)」被 PDF 抽字拆出內部空格：
+  // 舊寫法把它算成兩個欄位 → 序數整體右移一格 → 抓到「本期最低應繳金額」的 9,999
+  const spaced = [
+    '上期應款總額 - (已繳款金額 + 本期退款) + 本期新增款項 = 本期累計應繳金額 本期最低應繳金額',
+    '13,577 13,577 64,821 64,821 9,999'
+  ].join('\n');
+  assert.equal(extractStatementDue(spaced), 64821, '要併回括號組再對位，不可抓到隔壁欄的最低應繳');
+
+  // 併完括號組仍對不齊（欄位 4 個、數字 5 個）＝不認得的版型 → 誠實回 null，不硬猜
+  const misaligned = [
+    '上期應款總額 本期新增款項 本期累計應繳金額 本期最低應繳金額',
+    '1,000 2,000 3,000 4,000 5,000'
+  ].join('\n');
+  assert.equal(extractStatementDue(misaligned), null, '欄位數≠數字數時序數對位沒有意義');
+});
