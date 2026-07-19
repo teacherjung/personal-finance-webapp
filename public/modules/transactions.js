@@ -60,9 +60,9 @@ export async function renderTransactions() {
     <div class="page-head">
       <div><h1>收支記帳</h1><p>記錄每一筆收入與支出，掌握現金流</p></div>
       <div class="page-actions">
-        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost" id="stmtBatches">${icon('card', 16)}帳單批次</button>` : ''}
-        <button class="btn-ghost" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
-        <button class="btn" id="addTx">${icon('plus', 16)}新增一筆</button>
+        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}帳單批次</button>` : ''}
+        <button class="btn-ghost btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
+        <button class="btn btn-eq" id="addTx">${icon('plus', 16)}新增一筆</button>
       </div>
     </div>
 
