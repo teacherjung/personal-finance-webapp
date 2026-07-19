@@ -233,7 +233,7 @@ const ROUTES = {
 export async function router() {
   const route = location.hash.replace('#', '') || 'dashboard';
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
-  const fn = ROUTES[route] || renderDashboard;
+  const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }
   catch (e) { view().innerHTML = `<div class="hint">載入失敗：${esc(e.message)}</div>`; }

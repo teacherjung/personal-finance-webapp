@@ -723,7 +723,7 @@ async function recordToAccounting(s) {
   const amt = Number(s.amount || 0);
   const cycleLbl = CYCLE_FEE_LABELS[s.cycle] || '月費';
   if (!confirm(`要把這筆記入「收支記帳」嗎？\n\n${s.name}（${cycleLbl}） ${fmtFee(amt)}\n續費卡：${cardLabel(s.card)}\n日期：${todayStr()}`)) return;
-  const [cat, subcat] = SUB_CAT_TO_EXPENSE[s.category] || ['生活', '其他生活雜支'];
+  const [cat, subcat] = (Object.hasOwn(SUB_CAT_TO_EXPENSE, s.category) && SUB_CAT_TO_EXPENSE[s.category]) || ['生活', '其他生活雜支'];   // hasOwn（Codex r7#4）：舊資料分類叫 toString 會解構到原型函式而 TypeError
   try {
     await api('/transactions', { method: 'POST', body: {
       date: todayStr(), type: 'expense', category: cat, subcategory: subcat, amount: amt,

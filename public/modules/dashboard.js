@@ -32,7 +32,7 @@ function allocSection(byClass) {
   const entries = Object.entries(byClass || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   if (!entries.length) return '<p class="empty">尚無資產資料。</p>';
   const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
-  const colorOf = (k, i) => CLASS_COLOR[k] || PALETTE[i % PALETTE.length];
+  const colorOf = (k, i) => (Object.hasOwn(CLASS_COLOR, k) && CLASS_COLOR[k]) || PALETTE[i % PALETTE.length];   // hasOwn（Codex r7#4）：自由輸入的資產類別撞原生屬性名會查到原型函式
   const bar = entries.map(([k, v], i) => `<i style="width:${(v / total * 100).toFixed(2)}%;background:${colorOf(k, i)}"></i>`).join('');
   const legend = entries.map(([k, v], i) => `<div class="dalloc-lg">
     <span class="dot" style="background:${colorOf(k, i)}"></span>${esc(k)}

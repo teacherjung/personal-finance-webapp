@@ -115,9 +115,10 @@ export async function renderSettings() {
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">IBKR Flex Query 連線（唯讀）</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px;line-height:1.7">
-        ① Client Portal → <b>Performance &amp; Reports → Flex Queries</b> → Activity Flex Query 按「＋」新增，勾選五個區塊（欄位都全選）：
+        ① Client Portal → <b>Performance &amp; Reports → Flex Queries</b> → Activity Flex Query 按「＋」新增，勾選六個區塊（欄位都全選）：
         <b>Open Positions</b>（持倉）、<b>Cash Report</b>（各幣別現金）、<b>Trades</b>（成交——交易摘要與 XIRR 用）、
-        <b>Cash Transactions</b>（股息/利息現金流）、<b>Net Asset Value (NAV) in Base</b>（官方淨值摘要——融資槓桿與斷頭距離用）。
+        <b>Cash Transactions</b>（股息/利息現金流）、<b>Net Asset Value (NAV) in Base</b>（官方淨值摘要——融資槓桿與斷頭距離用）、
+        <b>Account Information</b>（至少勾 <b>Currency</b>＝帳戶基準幣別——現金報表只有彙總列時靠它判定入帳幣別）。
         格式 <b>XML</b>、期間建議 <b>Last 365 Calendar Days</b> → 儲存後記下 <b>Query ID</b>。<br>
         ② 右上頭像 → <b>Settings → Account Settings → Flex Web Service</b> → 啟用並產生 <b>Token</b>（效期可設一年）。<br>
         ③ 兩者貼到下方儲存，再到「投資組合」頁按 <b>IBKR 同步</b>：持倉會自動合併（股數/均價/現價），各幣別現金更新到帳戶。
