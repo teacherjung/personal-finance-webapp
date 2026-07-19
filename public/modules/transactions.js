@@ -479,7 +479,7 @@ async function openBatchManager() {
   const render = (list) => {
     const rows = list.map(b => `<tr>
       <td>${esc(b.cardName || '—')}</td>
-      <td class="nowrap muted">${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}</td>
+      <td class="nowrap" title="消費日範圍：${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}">${esc(monthKey(b.maxDate || ''))}</td>
       <td class="num">${b.count}</td>
       <td class="num">${money(b.amount)}</td>
       <td><div class="row-actions">
@@ -490,9 +490,9 @@ async function openBatchManager() {
     root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
       <div class="modal-head"><h2>帳單匯入批次</h2><button class="x-close">×</button></div>
       <div class="modal-body">
-        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
+        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。<b>帳單年月</b>取該批最後一筆消費日的月份（滑上去可看完整消費日範圍——分期會把範圍拉到很早，屬正常）。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
         <div class="tbl-wrap"><table>
-          <thead><tr><th>卡片</th><th>消費日範圍</th><th class="num">筆數</th><th class="num">金額</th><th></th></tr></thead>
+          <thead><tr><th>卡片</th><th>帳單年月</th><th class="num">筆數</th><th class="num">金額</th><th></th></tr></thead>
           <tbody>${rows || '<tr><td colspan="5" class="empty">尚無匯入批次。</td></tr>'}</tbody>
         </table></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
