@@ -261,3 +261,15 @@ router();
     if (r && r.recorded) { toast('已自動記錄本月快照 📸'); router(); }
   } catch { /* 自動快照失敗靜默略過，不影響 app 使用 */ }
 })();
+
+// 店名規則更新後自動整理（使用者定 2026-07-19）：規則住在程式碼裡，以前要「合併→重啟→**記得手動按整理**」，
+// 少一步就沒生效（使用者實際踩過）。改成開 app 自動比對規則指紋，同一版只跑一次；有動到才出聲。
+(async () => {
+  try {
+    const r = await api('/statement/normalize-auto', { method: 'POST' });
+    if (!r?.ran) return;
+    const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
+      r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
+    if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
+  } catch { /* 自動整理失敗靜默略過；設定頁的手動「整理店名格式」仍可用 */ }
+})();
