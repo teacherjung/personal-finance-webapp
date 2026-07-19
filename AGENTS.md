@@ -86,9 +86,23 @@
 
 ## 協作流程
 
-- **Claude 與 Codex 都直接在本機這個資料夾工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
-- **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。同一時間**只有一個 agent** 改本機工作樹；真要平行用 `git worktree`。
+- **Claude 與 Codex 都在本機工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
+- **三個工作目錄，一人一個**（Codex 提議、使用者定 2026-07-19。起因：審查當下 Claude 在同一個目錄裡 rebase／切分支十幾次，Codex 正在讀的樹在腳下移動，看到新舊混雜的程式碼）：
+
+  | 目錄 | 角色 | 分支狀態 |
+  |---|---|---|
+  | `榮祥森（投資理財）` | **跑 app、放真實資料**（`data/store.db`）、使用者的桌面捷徑指向這裡 | 永遠 `main`、永遠乾淨，只接收合併結果 |
+  | `榮祥森（投資理財）-claude` | Claude 實作 | 功能分支（`git checkout -B <branch> main`） |
+  | `榮祥森（投資理財）-codex` | Codex 唯讀審查 | **detached** 於 `origin/main` |
+
+  - ⚠️ **Codex 的 worktree 必須 detached**：Git 不允許同一個分支被兩個 worktree 同時 checkout，而主目錄佔著 `main`。更新方式＝`git fetch origin && git checkout --detach origin/main`（`git pull` 在 detached 狀態下沒有意義）。
+  - ⚠️ **`node_modules` 用 symlink 指回主目錄**（純 JS 相依，不必各裝一份）：`ln -s "<主目錄>/node_modules" "<worktree>/node_modules"`。三道關與 pre-push hook 都照常運作（`core.hooksPath` 是 repo 層設定，worktree 自動繼承）。
+  - ⚠️⚠️ **`.gitignore` 必須寫 `node_modules`（不帶斜線）**——帶斜線的 `node_modules/` 只比對「目錄」，而 symlink 對 Git 來說**不是目錄**，會被 `git add -A` 當成一般檔案收進 commit（模式 `120000`），還把本機絕對路徑一起帶進版控。2026-07-19 實際踩到並修掉（symlink 一度進了 PR #136；CI 竟然還是綠的，所以**別指望三道關會攔這種東西**）。同理，日後在 worktree 裡建任何 symlink 都要先確認 `git check-ignore -v <path>` 擋得住。
+  - ✅ **順帶補強鐵則 1**：`data/store.db`（真實餘額、IBKR flexToken、`pdfPassword`＝身分證字號）只存在主目錄，兩個 worktree 的 `data/` 只有 `seed.json`——「不要讀 store.db」從君子協定變成**結構上讀不到**。
+  - 建立指令留檔：`git worktree add ../<repo>-claude -b wt-claude` ／ `git worktree add --detach ../<repo>-codex origin/main`；`git worktree list` 查看、`git worktree remove <path>` 移除。
+- **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。分了 worktree 之後兩邊可以同時工作，但**同一個 worktree 仍然只有一個 agent 動**。
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
+- **同時開多個 PR 時先講清楚相依性**（2026-07-19 踩到）：程式碼互不相依**不等於**可以任意順序合併——只要它們都改到 `AGENTS.md`（本檔是一張大表，人人都往裡面加字），合併第一個之後其餘全部會衝突。開 PR 時就要說明「合併第一個之後我要 rebase 其餘的」，別讓使用者以為隨便挑一個合併就好。
 - **堆疊 PR（base 指向另一個 PR 分支）合併時，不要用 `--delete-branch`**——刪掉基底分支會讓上層 PR 被 GitHub 直接關閉而非自動轉指向（2026-07-10 實際發生，#3/#5 被誤關）。先由下而上全部合併完，再一次刪分支；或乾脆避免堆疊、等前一個合併後再開下一個。
 - 使用者是最終合併者。Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → 8 個頁面 reload 無 console error；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。****資料存取單一櫃檯（B1）**：讀寫資料一律走 `lib/repo.js`（getDb/saveDb/getCollection/addItem/updateItem/deleteItem/getSettings/updateSettings；uid/emptyDb 也由它轉供）——**除了 repo.js 自己，任何檔案都不要直接 import `lib/store.js`**。附帶效果要與更新同一次寫檔時用 `updateItem` 的 `beforeSave`（例：帳單交易改分類→寫學習表）。未來換資料庫（B3 SQLite）只改 repo.js。**驗證入櫃檯（B3）**：`store.save()` 是唯一寫入口、每次寫入自動過 `schema.js sanitizeDbForWrite`——枚舉/布林非法值會直接 throw（＝寫入端程式有 bug，考試會抓到），任何新寫入路徑**結構上不可能**繞過驗證牆（七輪審查的病根根治）。新增欄位照舊補 `WRITABLE_FIELDS`/`FIELD_SCHEMA`。**日期／月份走「真實日曆」判準（`isRealMonth`／`isRealDate`，Codex r3#9）**：`date`/`datereq`/`month`/`monthreq` 四種型別**共用同一套**，不可各寫一份。以前只驗長相（`\d{4}-\d{2}`），`2026-13`／`2026-99-99`／`2026-02-31` 全都過得了關——後果不是崩潰而是**默默算錯**（月份排序把 `2026-13` 排到 `2026-02` 後面、提醒天數、費用攤提、日線的「找最接近的既有日」全偏掉，畫面上卻一切正常）。閏年用 `Date.UTC` 建構回比對（避開本地時區在月初月底的位移）。服務層的手動輸入（`setBatchMonth`、`importRows` 的 `statementMonth`）也一律改用同一個判準。⚠️ 這是**收緊**：萬一舊資料裡真的躺著一個假日期，下次寫入會在櫃檯 throw（訊息已指出集合/索引/值）——那是刻意的，發現了就把那筆改掉，不要為了它把驗證放寬回去。 **必填欄位機制（`REQUIRED_FIELDS`，目前＝history/portfolioSnapshots/snapshots 的 `month` 主鍵欄＋`dailyValues` 的 `date`）**：三個強制點——CRUD 新增回乾淨 400、匯入逐筆列 errors→整份 400、櫃檯 throw 模式當場 throw。**strip 模式（舊 JSON 搬家專用）對必填欄位「缺席／空值／格式錯／數字型」一律整筆濾除，不可只刪欄位**（只刪欄位會留下缺主鍵的殘骸，讓讀取端 `.slice`/`.split` 崩，Codex#12）；PUT 部分更新天然安全（合併保留舊值）。新增「不可缺的主鍵欄」時補進 `REQUIRED_FIELDS`。**測試隔離慣例（B0）**：`lib/store.js` 的資料檔路徑可用 `STORE_FILE` 環境變數覆寫（測試一律指到 os 暫存目錄的 `.db` 檔、絕不碰真實 `data/`）；`server.js` `export const app`、只有直接執行才 `listen`（測試 import app 後在隨機埠自行監聽）——`test/server.test.js` 是階段 B 改建的行為安全網，改後端端點要保持它全過。第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。

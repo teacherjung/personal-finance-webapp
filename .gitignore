@@ -14,7 +14,10 @@ data/*backup*
 .claude/settings.local.json
 
 # 相依套件
-node_modules/
+# ⚠️ 不可寫成 `node_modules/`（帶斜線＝只比對「目錄」）：worktree 會把 node_modules 做成
+# **symlink** 指回主目錄，而 symlink 對 Git 來說不是目錄 → 不帶斜線才擋得住
+#（2026-07-19 實際踩到：symlink 被 git add -A 收進 commit，還把本機絕對路徑一起帶上去）
+node_modules
 
 # 產生的檔案
 tmp/
