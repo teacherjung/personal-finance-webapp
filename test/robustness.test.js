@@ -271,3 +271,73 @@ test('市場端點防崩：/api/cape 一律優雅回應（外部失敗走手動�
   const j = await res.json();
   assert.ok('value' in j);
 });
+
+test('r6#1｜只有 BASE_SUMMARY＋基準幣別可判定 → 以彙總入帳（原子取代），不再永遠沿用舊值', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(), accounts: [
+    { id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 },
+    { id: 'a2', name: 'IBKR GBP 現金', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: 50 },
+  ] });
+  // 合法的「只有彙總列」報表（Codex r6#1）：基準幣別總額本來就住在 BASE_SUMMARY
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false,
+    baseCurrency: 'USD', baseSummaryCash: 500, statementCount: 1,
+    equity: null, income: null, trades: [], account: 'T', period: {} })));
+  const accs = store.load().accounts || [];
+  assert.equal(accs.find(a => a.ibCashCur === 'USD')?.balance, 500, '基準幣別以彙總金額入帳（舊值 1000 不可殘留）');
+  assert.equal(accs.find(a => a.ibCashCur === 'GBP')?.balance, 0, '其他幣別歸零＝原子取代，避免與彙總重複計算');
+  assert.equal(r.cashFromSummary, true);
+  assert.equal(r.cashDetailMissing, false, '拿到可用資料就不再掛「缺明細」警告');
+});
+
+test('r6#1｜首次同步＋只有彙總列 → 直接建立基準幣別現金帳戶（Codex 實測的原始情境）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb() });
+  await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false,
+    baseCurrency: 'USD', baseSummaryCash: 500, statementCount: 1,
+    equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 500, '以前這裡完全不會建立現金帳戶');
+});
+
+test('r6#1｜只有彙總列但基準幣別判定不了 → 維持 r5#2 保守路線（保留舊值＋警告）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false,
+    baseCurrency: '', baseSummaryCash: 500, statementCount: 1,
+    equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '判定不了＝真的沒把握，保留舊值');
+  assert.equal(r.cashDetailMissing, true);
+  assert.equal(r.cashFromSummary, false);
+});
+
+test('r6#2｜多帳戶報表 → 400 整包拒絕，不寫入任何東西（現金/淨值只剩最後帳戶＝默默算錯）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  await assert.rejects(() => syncIb(/** @type {any} */ (async () => ({
+    positions: [{ symbol: 'CSPX', currency: 'USD', quantity: 1, marketPrice: 500 }],
+    cashByCurrency: { USD: 200 }, hasCashReport: true, hasCashDetail: true, statementCount: 2,
+    equity: null, income: null, trades: [], account: 'B', period: {} }))), /個帳戶/);
+  const back = store.load();
+  assert.equal(back.accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '擋下＝資料一個字都不動');
+  assert.ok(!(back.holdings || []).some(h => h.symbol === 'CSPX'));
+});
+
+test('r6#1/#2｜ib.js 解析器：BASE_SUMMARY 金額留底、AccountInformation 給基準幣別、statementCount 誠實回報', async () => {
+  const { parseStatement } = await import('../lib/ib.js');
+  const one = parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: {
+    AccountInformation: { currency: 'usd' },
+    CashReport: { CashReportCurrency: [{ currency: 'BASE_SUMMARY', endingCash: 500 }] } } } } });
+  assert.equal(one.baseCurrency, 'USD');
+  assert.equal(one.baseSummaryCash, 500);
+  assert.equal(one.hasCashDetail, false);
+  assert.equal(one.statementCount, 1);
+  const two = parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: [
+    { CashReport: { CashReportCurrency: [{ currency: 'USD', endingCash: 100 }] } },
+    { CashReport: { CashReportCurrency: [{ currency: 'USD', endingCash: 200 }] } },
+  ] } } });
+  assert.equal(two.statementCount, 2, '多帳戶要誠實回報，讓同步端擋下');
+});
