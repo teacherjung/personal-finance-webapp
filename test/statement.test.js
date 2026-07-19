@@ -82,6 +82,15 @@ test('categorize：優步（Uber）叫車 vs 外送（使用者定 2026-07-18）
   assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '保底：認不出店家＝叫車');
 });
 
+test('categorize：自動加值排在交通之前（帳務體檢 D2 回報，2026-07-19）', () => {
+  // 使用者定「自動加值歸生活」——但加值可能在停車場/車隊觸發，規則排後面會被停車關鍵字搶走
+  assert.deepEqual(categorize('悠遊卡自動加值-和雲行動服和雲行動服'), ['生活', '其他生活雜支'], '和雲觸發的加值也是加值');
+  assert.deepEqual(categorize('悠遊卡自動加值-太古食品1110 /TW'), ['生活', '其他生活雜支']);
+  assert.deepEqual(categorize('悠遊卡自動加值-正好停—正好停— /TW'), ['生活', '其他生活雜支'], '正好停觸發的也是');
+  assert.deepEqual(categorize('eTag自動儲值3087-H8'), ['交通', '停車費'], 'eTag自動儲值＝「儲值」字樣，維持停車費（明確關鍵字）');
+  assert.deepEqual(categorize('和雲行動服務'), ['交通', '停車費'], '真的和雲停車不受影響');
+});
+
 test('cleanStore：分類仍用原始說明、不受清理影響', () => {
   // FP-石二鍋 清成身分名「石二鍋」（「（FP）」是顯示層標記），分類仍用原始字串判斷 → 飲食/餐廳
   assert.equal(cleanStore('FP-石二鍋(林口家樂O2732 Taipei'), '石二鍋');
