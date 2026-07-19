@@ -258,3 +258,32 @@ test('extractStatementDue：抓帳單自己印的應繳金額（使用者定 202
   assert.equal(extractStatementDue('沒有這個欄位的帳單'), null);
   assert.equal(extractStatementDue(''), null);
 });
+
+test('extractStatementDue：台新郵寄版「標籤行＋數值行」要依欄位序數對位（2026-07-20 實帳單抓錯）', () => {
+  // 真實版面結構（數字改用合成值）：摘要一行標籤、下一行全是數字。
+  // 舊寫法的 regex 跨行滑進數值行，「本期累計應繳金額」抓到第一個數字＝上期欄的值。
+  const mailed = [
+    '帳單結帳日：115/01/04 繳款截止日：115/01/19',
+    '上期應款總額 - (已繳款金額+本期退款) + 本期新增款項 = 本期累計應繳金額 本期最低應繳金額',
+    '13,577 13,577 64,821 64,821 9,999',
+    '循環信用利率： 5.00%'
+  ].join('\n');
+  assert.equal(extractStatementDue(mailed), 64821,
+    '要取「本期累計應繳金額」欄位序數對到的 64,821，不是數值行開頭的上期值 13,577');
+
+  // 同行版面（富邦/台新官網版）優先且不受影響
+  assert.equal(extractStatementDue('本期應繳總金額 NT$46,299\n上期 10,000'), 46299);
+
+  // 單一標籤配數值行＝無歧義，直接取
+  assert.equal(extractStatementDue('本期應繳總額\n12,345 元'), 12345);
+
+  // 序數對不上（標籤 5 欄、數字只有 3 個）＝不硬猜，回 null（列表誠實顯示「—」）
+  const mismatch = [
+    '上期應款總額 - (已繳款金額+本期退款) + 本期新增款項 = 本期累計應繳金額 本期最低應繳金額',
+    '13,577 13,577 64,821'
+  ].join('\n');
+  assert.equal(extractStatementDue(mismatch), null);
+
+  // 鍵在行尾、下一行是「明細列」（含日期文字、非純數值行）＝不可誤觸序數對位
+  assert.equal(extractStatementDue('說明含本期應繳金額字樣\n2026-01-02 星巴克 150'), null);
+});
