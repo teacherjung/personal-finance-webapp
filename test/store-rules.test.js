@@ -285,6 +285,47 @@ test('唯一不可逆的效果：併鑰匙會蓋掉教過的分類——而且�
     '被捨棄的「鮮芋仙新店店」救不回來——所以預覽的警告是必要的，不是可有可無的提示');
 });
 
+test('預覽要講出「你自己取的店名會被改掉」——即使筆數全是 0（Codex r3#2，高）', () => {
+  // 孤兒學習（交易已刪、學習刻意留給未來匯入）的自訂名被新規則改到時：
+  // 顯示名 0 筆、鑰匙 0 筆、分類無衝突 → 舊版預覽會回報「不會改動任何既有記錄」，
+  // 使用者放心按下去，取好的名字就沒了、而且刪掉規則也還原不回來。
+  store.save({ ...store.emptyDb(),
+    transactions: [],
+    learnedCategories: { 'OLD SHOP': { name: 'OLD SHOP' } } });
+
+  const pre = previewStoreRules({ rename: [{ match: 'OLD', to: 'NEW' }] });
+  assert.equal(pre.changed, 0, '前置條件：沒有任何交易會被改到');
+  assert.equal(pre.keyChanged, 0, '前置條件：也沒有鑰匙變動');
+  assert.equal(pre.learnedConflicts.length, 0, '前置條件：沒有分類衝突');
+  assert.equal(pre.learnedNameChanges.length, 1, '但「自訂名會被改掉」這件事一定要講出來');
+  assert.equal(pre.learnedNameChanges[0].before, 'OLD SHOP');
+  assert.equal(pre.learnedNameChanges[0].after, 'NEW SHOP');
+
+  // 而且確實是不可逆的（這就是非講不可的原因）
+  saveStoreRules({ rename: [{ match: 'OLD', to: 'NEW' }] });
+  assert.equal(store.load().learnedCategories?.['OLD SHOP']?.name, 'NEW SHOP');
+  saveStoreRules({ rename: [] });
+  assert.equal(store.load().learnedCategories?.['OLD SHOP']?.name, 'NEW SHOP',
+    '刪掉規則救不回原本的名字——所以預覽非講不可');
+});
+
+test('空字串子分類是合法值，不是「沒有值」：與非空值衝突時要警告（Codex r3#3）', () => {
+  store.save({ ...store.emptyDb(),
+    transactions: [
+      { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
+        note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|100|鮮芋仙林口店' },
+      { id: 't2', date: '2026-07-02', type: 'expense', category: '飲食', amount: 120,
+        note: '鮮芋仙新店店', storeKey: '鮮芋仙新店店', source: 'stmt', stmtRef: 'c1|2026-07-02|120|鮮芋仙新店店' }],
+    learnedCategories: {
+      '鮮芋仙林口店': { category: '飲食', subcategory: '' },       // 刻意不分子類（合法）
+      '鮮芋仙新店店': { category: '飲食', subcategory: '餐廳' }
+    } });
+  const pre = previewStoreRules({ chains: ['鮮芋仙'] });
+  const c = pre.learnedConflicts.find(x => x.field === 'subcategory');
+  assert.ok(c, '一邊空字串、一邊「餐廳」，合併後只留得下一個——用 truthy 判斷會把空字串當成「沒有值」而漏報');
+  assert.equal(c.dropped, '餐廳', '被捨棄的是有資訊的那個，更該講出來');
+});
+
 test('存規則：壞條目被丟掉，不會寫進資料庫', () => {
   store.save(store.emptyDb());
   const r = saveStoreRules({ chains: ['好店', ''], canon: [{ match: 'A', to: '' }] });
