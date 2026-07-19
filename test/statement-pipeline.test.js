@@ -19,7 +19,7 @@ const TEST_STORE = join(tmpdir(), `finance-pipeline-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { previewAuto, previewForCard, importRows, listBatches } = await import('../lib/services/statement-import.js');
+const { previewAuto, previewForCard, importRows, listBatches, setBatchMonth } = await import('../lib/services/statement-import.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -97,4 +97,42 @@ test('讀不到表頭時要誠實留空（退回推估），不可硬塞值', as
   const t = (store.load().transactions || [])[0];
   assert.ok(!('stmtMonth' in t), '讀不到就不寫欄位，不要塞空字串進資料');
   assert.ok(!('stmtDue' in t), '同上');
+});
+
+// ---------- 日期／月份的真實日曆驗證（Codex r3#9）----------
+// 長期以來只驗長相：2026-13、2026-99-99、2026-02-31 全都過得了關。
+// 後果不是崩潰而是**默默算錯**——月份排序（localeCompare 把 2026-13 排在 2026-02 後面）、
+// 提醒天數、費用攤提、日線的「找最接近的既有日」都會偏掉，而且畫面上看起來一切正常。
+
+test('真實日曆驗證：月份要 01–12、日期要真的存在（Codex r3#9）', async () => {
+  const { isRealMonth, isRealDate } = await import('../lib/schema.js');
+  // 月份
+  assert.equal(isRealMonth('2026-01'), true);
+  assert.equal(isRealMonth('2026-12'), true);
+  assert.equal(isRealMonth('2026-13'), false, '13 月不存在');
+  assert.equal(isRealMonth('2026-00'), false);
+  // 日期
+  assert.equal(isRealDate('2026-02-28'), true);
+  assert.equal(isRealDate('2028-02-29'), true, '2028 是閏年');
+  assert.equal(isRealDate('2026-02-29'), false, '2026 不是閏年');
+  assert.equal(isRealDate('2026-02-31'), false, '2 月沒有 31 號');
+  assert.equal(isRealDate('2026-04-31'), false, '4 月只有 30 天');
+  assert.equal(isRealDate('2026-99-99'), false);
+  assert.equal(isRealDate('2026-13-01'), false);
+});
+
+test('櫃檯擋得住假日期：壞的月份/日期進不了資料庫', () => {
+  const base = store.emptyDb();
+  assert.throws(() => store.save({ ...base, history: [{ id: 'h', month: '2026-13', amount: 1 }] }), /month/,
+    '13 月會讓 history 頁的排序與 slice 全部偏掉');
+  assert.throws(() => store.save({ ...base, dailyValues: [{ date: '2026-02-31', netWorth: 1 }] }), /date/,
+    '不存在的日子會讓差異引擎「找最接近的既有日」對錯');
+  assert.throws(() => store.save({ ...base,
+    transactions: [{ id: 't', date: '2026-04-31', type: 'expense', category: '飲食', amount: 1 }] }), /date/,
+    '交易日期同理（壞日期會讓該筆默默不被計入月現金流）');
+});
+
+test('手動修正帳單年月也走同一套判準（不可只驗長相）', () => {
+  assert.throws(() => setBatchMonth('any', '2026-13'), /YYYY-MM/,
+    'Codex 實測舊版會回成功、資料庫真的存下 2026-13');
 });
