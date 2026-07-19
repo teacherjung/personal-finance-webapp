@@ -24,28 +24,34 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（2026-07-19；上輪審到 #96，本輪範圍＝#97–#111 店名系統大改）
+## 本輪審查重點（2026-07-19 深夜；上輪審到 #111，本輪範圍＝#113–#121）
 
-這一批把「店名」拆成三層：**帳單原文**（stmtRef 第 4 段，不可變）→ **身分鑰匙 storeKey**
-（品牌層＝`storeKeyOf(desc)`，辨識「同一家店」、學習與店家檔案聚合靠它）→ **顯示名 note**
-（`cleanStore(desc)`＋`applyDisplayLabels` 顯示標記，帶分店、可自訂）。請特別檢驗這些不變量：
+本輪主軸是「**讓使用者不必一直手動修**」的兩帖新功能，外加你上輪 11 條的修正驗收。
+新檔一個：`lib/services/health-check.js`（帳務體檢，宣稱純唯讀）。請重點檢驗：
 
-1. **鑰匙純淨性**：storeKey 絕不可含顯示標記（（FP）（UE）停車費（））或分店括號。
-   檢查 `storeKeyOf`/`storeKeyOfName`/`stripBranch` 與所有寫入 storeKey 的路徑
-   （finalize、importRows、normalizeBranches、renameStoreDisplay）。
-2. **學習兩層分工**（learning.js）：分類學品牌層 key、顯示名只學原文級——
-   `learnFromStmtEdit` 分兩層寫；但**舊資料**若品牌層 key 未變（remap 時 nk===k）、
-   其 entry 裡殘留 name，會不會繼續連動改到同品牌其他分店？（remap 只在 key 變動時丟 name）
-3. **整理的自訂 vs 自動**（statement-import.js normalizeBranches）：自訂名以學習表為準、
-   平台殘骸名（isPlatformArtifactName）丟棄重生——邊界對嗎？會不會誤殺真自訂名？
-   nameByOrig 搬家與 skMap 撞 key 的先後順序有沒有漏洞？
-4. **優步分流**（statement.js）：叫車（TAXI_FLEET）→「Uber（車隊）」鑰匙 Uber；
-   外送→餐廳本身＋（UE）。cleanStore 裡 UBER_PREFIX 在規則鏈與分流兩處出現，順序/重複剔除有沒有問題？
-5. **reset 共用學習**（renameStoreDisplay）：鑰匙改品牌層後「被其他原文共用」變成常態，
-   reset 幾乎永遠不刪品牌層學習——這是刻意保守，但有沒有反而清不掉錯誤學習的死角？
-6. **店家檔案彈窗**（transactions.js openStoreProfile）：聚合口徑 storeIdOf、排行、月平均
-   （不含本月）的計算正確性；手動記帳（無 storeKey）用 note 聚合的邊界。
-7. **同步點**：AGENTS.md 的 cleanStore/顯示標記/學習列是否與程式一致（這輪改了很多次）。
+1. **你上輪 11 條的修正是否真的修對**（#113）——特別是這幾條的**新**實作有沒有引入新問題：
+   - #2 學習表撞 key 改成欄位層級合併（`{...val, ...prev}`）：先到者優先的語意對嗎？
+   - #3「品牌層 entry 一律不留 name、一律搬回原文級」：同一品牌多原文共用同一個舊 name 時，
+     每個原文都掛一份——這是刻意（保持畫面不變），但會不會有「該搬沒搬 / 搬錯層」的邊界？
+   - #6 鑰匙脫外幣、#1 categorize 優步保底與顯示標記同口徑：有沒有反向誤傷？
+2. **自動整理（#114）的安全性**：`normalizeIfRulesChanged` 以 `lib/statement.js` 內容雜湊為指紋，
+   開 app 自動跑 `normalizeBranches(false)`（會寫資料）。請檢視：指紋計算與快取（`rulesHashCache`
+   跨請求常駐）、「沒變動就不寫檔」的判定是否涵蓋所有寫入路徑（含 learned 重建）、
+   自動跑失敗時的狀態一致性（hash 已記但整理失敗？順序對嗎）、與手動整理併發的可能。
+3. **`applyCategoryToStore`（#114/#115）**：品牌層整批改分類＋寫品牌層學習、`delete e.name`。
+   權限/驗證（storeKey 任意字串）、服務費排除、與 `learnFromStmtEdit` 兩層分工是否一致。
+4. **`health-check.js` 宣稱唯讀**——請驗證：除 `dismissHealthItem` 外真的沒有任何寫入/副作用；
+   `runHealthCheck` 對 847 筆規模的複雜度（D1 是 O(n²) 巢狀迴圈掃鑰匙，n＝不重複鑰匙數）；
+   偵測器誤報邏輯（D2 用 `categorize(原文)` 判大類異質、D4 用 `resolveImportCategory` 完整鏈
+   ＋學習表雙查、D3 樣式表）；`healthDismissed` 指紋含鑰匙/原文，鑰匙變動後舊指紋變孤兒——
+   會不會無限累積？是否該清理？
+5. **`autoCat/autoSub` 留底（#116）**：只在 `importRows` 寫、已進 `WRITABLE_FIELDS`。
+   匯入預覽改分類的情境下，留底的是「純自動」而非「使用者選的」——這個口徑在
+   `resolveImportCategory(db, ...categorize(desc))` 的實作上真的成立嗎（別名/生效樹校正時機）？
+6. **CATEGORY_RULES 三層架構（#117/#118）**：①特殊指定 ②店家 ③**場所保底排表尾**。
+   移動規則位置是高風險操作（先中先贏），請檢查有沒有把原本正確的分類改壞
+   （例如「自動加值」上移到交通之前、場所詞下移到表尾的連帶影響）。
+7. **同步點**：AGENTS.md 的 cleanStore／storeKeyOf／體檢／自動整理各列是否與程式一致。
 
 （此段每輪審查後由 Claude 更新範圍；常青規則在下方不變。）
 
