@@ -90,6 +90,45 @@ test('brand：使用者加一條就能把「銀行截斷的兩種寫法」併回
   assert.equal(cleanStore('禾豐日式料理-林口店'), '禾豐日式料理（林口店）', '顯示名仍保留分店');
 });
 
+test('brand：反向填（長寫法→短品牌名）也要對，分店不可被吃掉（自審 r3）', () => {
+  // 使用者一樣可能反過來填：match＝帳單上的長寫法、to＝想要的短品牌名。
+  // 編譯時若沒把兩個寫法「長的排前面」，JS 的 | 會先中短的，
+  // 「…印度咖哩風味-林口店」就會在短品牌處切開、把「印度咖哩風味」當成分店、真分店反而不見。
+  setUserRules({ brand: [{ match: 'Zaika札伊卡印度咖哩風味', to: 'Zaika札伊卡' }] });
+  assert.equal(cleanStore('Zaika札伊卡印度咖哩風味'), 'Zaika札伊卡', '長寫法收斂成短品牌名，不可生出假分店');
+  assert.equal(cleanStore('Zaika札伊卡印度咖哩風味-林口店'), 'Zaika札伊卡（林口店）', '真正的分店要留住');
+  assert.equal(cleanStore('Zaika札伊卡-林口店'), 'Zaika札伊卡（林口店）', '短寫法也對');
+  assert.equal(storeKeyOf('Zaika札伊卡印度咖哩風味'), storeKeyOf('Zaika札伊卡-林口店'), '兩種寫法同一把鑰匙');
+});
+
+test('rename：取代字串裡的 $ 不可被當成樣式（自審 r3）', () => {
+  // `to` 進的是 String.replace 的取代字串，$&／$`／$'／$$ 在那裡是有意義的樣式。
+  setUserRules({ rename: [{ match: '小店', to: "X$'Y" }] });
+  assert.equal(cleanStore('小店東西'), "X$'Y東西", "使用者打的 $' 就是兩個字面字元，不可複製半個店名進去");
+  setUserRules({ rename: [{ match: '小店', to: 'A$&B' }] });
+  assert.equal(cleanStore('小店'), 'A$&B');
+});
+
+test('原型鍵擋在門外：規則的 to 不可以是 __proto__（會讓學習表整條蒸發，自審 r3）', () => {
+  const r = sanitizeStoreRules({
+    canon: [{ match: 'X', to: '__proto__' }, { match: 'Y', to: 'constructor' }, { match: 'Z', to: '正常店名' }],
+    chains: ['__proto__', '好店']
+  });
+  assert.deepEqual(r.canon.map(e => e.to), ['正常店名'], '原型鍵直接拒收');
+  assert.deepEqual(r.chains, ['好店']);
+});
+
+test('沒收的條目要報對位置、超過上限要出聲（自審 r3：使用者才知道哪條沒生效）', () => {
+  const bad = [];
+  sanitizeStoreRules({ chains: ['ok1', '', 'ok2', '', 'ok3'] }, bad);
+  assert.deepEqual(bad, ['storeRules.chains[1]', 'storeRules.chains[3]'],
+    '報的是「輸入的第幾條」，不是已收下的筆數（混著好壞時會報錯位置）');
+
+  const bad2 = [];
+  sanitizeStoreRules({ chains: Array.from({ length: 250 }, (_, i) => `店${i}`) }, bad2);
+  assert.ok(bad2.some(b => b.includes('上限')), '默默吃掉 50 條規則的話，使用者只會覺得「怎麼有些沒生效」');
+});
+
 test('chains：使用者把自家常去的連鎖加進白名單 → 沒有分隔符也切得出分店', () => {
   assert.equal(cleanStore('鮮芋仙林口店'), '鮮芋仙林口店', '不在白名單時整串當店名');
   setUserRules({ chains: ['鮮芋仙'] });
@@ -148,9 +187,20 @@ test('預覽（dryRun）不留副作用：跑完還原、不寫檔', () => {
   assert.equal(store.load().transactions?.[0].note, '鮮芋仙林口店', '預覽不可寫檔');
 });
 
-test('預覽中途拋錯也要還原（finally，不是「順順跑完才還原」）', () => {
-  assert.throws(() => previewStoreRules(Object.defineProperty({}, 'canon', { get() { throw new Error('boom'); } })));
-  assert.equal(cleanStore('鮮芋仙林口店'), '鮮芋仙林口店', '拋錯後候選規則仍須失效');
+test('連續預覽互不汙染：前一次的候選規則不可以滲進下一次', () => {
+  // ⚠️ 自審 r3 誠實註記：原本這裡是一題「預覽中途拋錯也要還原」，但它是**空的**——
+  // 那個會拋錯的物件在 `sanitizeStoreRules` 階段就炸了，當下覆蓋層還沒設，`finally` 從沒被走過。
+  // 想補一題真的「設好覆蓋層之後才拋錯」，得先讓 normalizeBranches 中途爆掉；試過髒交易
+  //（數字 storeKey／壞 note／壞學習值）都被櫃檯驗證或 `String(...)` 擋掉了，用公開 API 造不出來。
+  // 與其留一題假考題，改測「同一件事的可觀察後果」：覆蓋層有沒有確實在每次預覽後歸零。
+  //（`try/finally` 本身仍在 `withRules`，那是拋錯情境的保險。）
+  store.save({ ...store.emptyDb(),
+    transactions: [{ id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
+      note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|100|鮮芋仙林口店' }] });
+  previewStoreRules({ chains: ['鮮芋仙'] });
+  assert.equal(cleanStore('鮮芋仙林口店'), '鮮芋仙林口店', '第一次預覽後候選規則必須失效');
+  const second = previewStoreRules({ chains: [] });
+  assert.equal(second.changed, 0, '第二次預覽（空規則）不可看到上一次規則的效果');
 });
 
 test('預覽的候選規則蓋得過「規則入櫃檯」（getDb 會重設規則，覆蓋層才蓋得住）', () => {
@@ -176,6 +226,63 @@ test('存規則＝存完就生效（不必再記得按一次「整理店名格�
   assert.equal(db.transactions?.[0].note, '鮮芋仙（林口店）', '既有資料當場被整理');
   assert.equal(db.transactions?.[0].storeKey, '鮮芋仙', '鑰匙也跟著對齊');
   assert.deepEqual(getStoreRules().rules.chains, ['鮮芋仙'], '規則存進 settings');
+});
+
+test('後悔了可以還原：刪掉規則 → 顯示名、鑰匙、學習表 key 全部回到原樣（自助化的安全網）', () => {
+  const seed = () => store.save({ ...store.emptyDb(),
+    transactions: [
+      { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
+        note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|100|鮮芋仙林口店' },
+      { id: 't2', date: '2026-07-02', type: 'expense', category: '飲食', amount: 120,
+        note: '鮮芋仙新店店', storeKey: '鮮芋仙新店店', source: 'stmt', stmtRef: 'c1|2026-07-02|120|鮮芋仙新店店' }],
+    learnedCategories: { '鮮芋仙林口店': { category: '飲食', subcategory: '零食' } } });
+  const snap = () => { const d = store.load();
+    return { notes: (d.transactions || []).map(t => t.note),
+      keys: (d.transactions || []).map(t => t.storeKey),
+      learned: Object.keys(d.learnedCategories || {}) }; };
+
+  seed();
+  const before = snap();
+  saveStoreRules({ chains: ['鮮芋仙'] });
+  const during = snap();
+  assert.deepEqual(during.keys, ['鮮芋仙', '鮮芋仙'], '規則生效：兩家分店合併成一把鑰匙');
+  assert.deepEqual(during.learned, ['鮮芋仙'], '學習表 key 跟著搬到品牌層');
+
+  saveStoreRules({ chains: [] });   // 使用者把規則刪掉
+  assert.deepEqual(snap(), before,
+    '刪掉規則要能完全回到原樣——不然使用者不敢試，自助化就沒人敢用');
+});
+
+test('唯一不可逆的效果：併鑰匙會蓋掉教過的分類——而且預覽一定要先講出來（自審 r3，高）', () => {
+  store.save({ ...store.emptyDb(),
+    transactions: [
+      { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
+        note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|100|鮮芋仙林口店' },
+      { id: 't2', date: '2026-07-02', type: 'expense', category: '飲食', amount: 120,
+        note: '鮮芋仙新店店', storeKey: '鮮芋仙新店店', source: 'stmt', stmtRef: 'c1|2026-07-02|120|鮮芋仙新店店' }],
+    // 兩家分店被手動教成**不同**分類 → 併成一把鑰匙時只留得下一個
+    learnedCategories: {
+      '鮮芋仙林口店': { category: '飲食', subcategory: '零食' },
+      '鮮芋仙新店店': { category: '娛樂', subcategory: '看電影' }
+    } });
+
+  const pre = previewStoreRules({ chains: ['鮮芋仙'] });
+  assert.ok(pre.learnedConflicts.length >= 1,
+    '預覽（＝套用前唯一的安全帶）必須看得到這件事；以前整段計算包在 !dryRun 裡，預覽對它完全盲目');
+  const c = pre.learnedConflicts.find(x => x.field === 'category');
+  assert.ok(c, '要指出是哪個欄位衝突');
+  assert.equal(c.key, '鮮芋仙', '要指出合併到哪一把鑰匙');
+  assert.ok(c.kept && c.dropped && c.kept !== c.dropped, '要講清楚留下哪個、捨棄哪個');
+
+  // 而且預覽真的沒有寫檔（衝突是「將會發生」，不是「已經發生」）
+  assert.equal(Object.keys(store.load().learnedCategories || {}).length, 2, '預覽不可動到學習表');
+
+  // 實際套用後確認：確實只剩一個，且刪掉規則也救不回被捨棄的那個（這就是要事先講的原因）
+  saveStoreRules({ chains: ['鮮芋仙'] });
+  assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙']);
+  saveStoreRules({ chains: [] });
+  assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙林口店'],
+    '被捨棄的「鮮芋仙新店店」救不回來——所以預覽的警告是必要的，不是可有可無的提示');
 });
 
 test('存規則：壞條目被丟掉，不會寫進資料庫', () => {

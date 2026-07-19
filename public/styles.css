@@ -216,6 +216,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .rule-row select { flex-shrink: 0; }
 .rule-row .btn-icon { flex-shrink: 0; }
 @media (max-width: 640px) { .rule-row { flex-wrap: wrap; } .rule-row input { flex-basis: 100%; } }
+/* 規則預覽的不可逆警告（學習表衝突）：唯一「刪掉規則也救不回來」的效果，視覺上要跳出來 */
+.rule-warn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 10px; padding: 11px 14px; margin-bottom: 12px; background: var(--card-2); font-size: 12.5px; }
+.rule-warn b { color: var(--warn); }
+.rule-warn p { color: var(--text-dim); margin: 6px 0 0; }
+.rule-warn ul { margin: 6px 0 0 18px; }
+.rule-warn li { margin-bottom: 3px; }
+.rule-drop { color: var(--neg); }
 
 .modal-head { padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { font-family: var(--serif); font-size: 19px; font-weight: 500; }
