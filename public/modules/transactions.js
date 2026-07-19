@@ -88,7 +88,7 @@ export async function renderTransactions() {
     listSort = listSort === 'note-asc' ? 'note-desc' : listSort === 'note-desc' ? 'date' : 'note-asc';
     renderTransactions();
   };
-  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards));
+  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const t = all.find(x => x.id === b.dataset.del);
     confirmDelete(`${t.category} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
@@ -226,8 +226,13 @@ function accountOptions(accounts, cards, current) {
   return [{ value: '', label: '（不指定）' }, ...uniq.map(n => ({ value: n, label: n }))];
 }
 
-/** @param {any=} tx @param {any[]=} accounts @param {any[]=} cards */
-function openTxForm(tx, accounts = [], cards = []) {
+/** @param {any=} tx @param {any[]=} accounts @param {any[]=} cards @param {any[]=} all 全部交易（算「同店還有幾筆」用） */
+function openTxForm(tx, accounts = [], cards = [], all = []) {
+  // 傳播提示（使用者定 2026-07-19：解「改一筆以為修好了」的錯覺）：帳單交易若同一把身分鑰匙
+  // 還有別筆分類不同，給一個勾選框整店一起改——不然使用者要逐筆點，或誤以為已經全改好。
+  const sk = tx?.source === 'stmt' ? String(tx.storeKey || '') : '';
+  const siblings = sk ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
+  const propagable = siblings.length;
   openForm({
     title: tx ? '編輯記錄' : '新增收支',
     fields: [
@@ -238,7 +243,8 @@ function openTxForm(tx, accounts = [], cards = []) {
       { key: 'account', label: '帳戶 / 信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
       // 標籤與列表表頭一致（使用者定）；「店名／品項」＝這欄也常拿來記買了什麼（LG 18升除濕機（momo）），
       // 不是只有店名（使用者定 2026-07-19）
-      { key: 'note', label: '說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' }
+      { key: 'note', label: '說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' },
+      ...(propagable ? [{ key: 'applyAll', label: `同時套用分類到「${sk}」的其他 ${propagable} 筆記錄`, type: 'checkbox', full: true }] : []),
     ],
     values: tx || {},
     onMount: (/** @type {any} */ root) => {
@@ -249,11 +255,21 @@ function openTxForm(tx, accounts = [], cards = []) {
       catSel.onchange = () => fill(catSel.value, '');
     },
     onSubmit: async (data) => {
-      const type = INCOME_CATEGORIES.includes(data.category) ? 'income' : 'expense';
-      const body = { ...data, type, subcategory: type === 'income' ? '' : (data.subcategory || '') };
+      const { applyAll, ...rest } = data;
+      const fields = /** @type {any} */ (rest);
+      const type = INCOME_CATEGORIES.includes(fields.category) ? 'income' : 'expense';
+      const body = { ...fields, type, subcategory: type === 'income' ? '' : (fields.subcategory || '') };
       if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });
       else await api('/transactions', { method: 'POST', body });
-      toast('已儲存'); renderTransactions();
+      if (applyAll && sk) {
+        const r = await api('/statement/apply-category', { method: 'POST',
+          body: { storeKey: sk, category: body.category, subcategory: body.subcategory } });
+        toast(`已儲存，並把「${sk}」的其他 ${r.changed} 筆一起改成 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
+      } else if (sk) {
+        // 學習是隱形的＝使用者不知道系統記住了什麼（今天「改一筆以為修好了」的一半原因）→ 說出來
+        toast(`已儲存。以後「${sk}」的消費會自動歸到 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
+      } else toast('已儲存');
+      renderTransactions();
     }
   });
 }
@@ -419,12 +435,29 @@ function openStatementPreview(cardId, r, b64, cards) {
 }
 
 // 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「帳單批次」改）。
+// 匯入完成摘要（使用者定 2026-07-19）：把「這批有什麼需要你看一眼」講出來——第一次見到的店家
+// （名字/分類可能還沒學好）與落在「其他」的筆數。非阻斷：只是提示，不擋匯入流程。
+/** @param {any} out */
+function importSummaryHtml(out) {
+  const news = Array.isArray(out.newStores) ? out.newStores : [];
+  const un = Number(out.uncategorized || 0);
+  if (!news.length && !un) return '';
+  const shown = news.slice(0, 6).map(s => esc(s)).join('、');
+  return `<div class="hint" style="margin:10px 0 0">
+    ${news.length ? `<div>🆕 第一次見到 <b>${news.length}</b> 家店：${shown}${news.length > 6 ? ` 等${news.length}家` : ''}<br>
+      <span style="font-size:11.5px">名字或分類不對的話，到「設定 → 帳單說明／分類學習」改一次，以後就記住了。</span></div>` : ''}
+    ${un ? `<div style="${news.length ? 'margin-top:8px' : ''}">📂 有 <b>${un}</b> 筆落在「其他／未分類」——在收支列表點該筆編輯，勾「同時套用到這家店的其他筆」一次搞定。</div>` : ''}
+  </div>`;
+}
+
+/** @param {any} out */
 function openImportDone(out) {
   const root = byId('modal-root');
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('sm')}">
     <div class="modal-head"><h2>匯入完成</h2><button class="x-close">×</button></div>
     <div class="modal-body">
       <p>已匯入 <b>${out.imported}</b> 筆到「<b>${esc(out.cardName || '')}</b>」${out.skipped ? `<span class="muted">，略過 ${out.skipped} 筆（重複或不可匯入）</span>` : ''}。</p>
+      ${importSummaryHtml(out)}
       <p class="muted" style="font-size:12.5px;margin-top:6px">記錯卡片了嗎？可以現在整批改到別張卡（之後也能從右上「帳單批次」改）。</p>
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-reassign>改到其他卡片</button>

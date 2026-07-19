@@ -792,3 +792,57 @@ test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選�
   assert.ok(!(await GET('/learned'))['八方雲集'], 'clearBrand 才真的清掉共用規則');
   for (const id of [t1.id, t2.id]) await DELETE_(`/transactions/${id}`);
 });
+
+test('第一帖｜規則更新後自動整理：同一版規則只跑一次、有變動才寫檔', async () => {
+  // 先塞一筆待整理的舊資料（規則升級後名字會變）
+  const tx = await (await POST('/transactions', { date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 33, note: '統一超商-德權', storeKey: '統一超商-德權', source: 'stmt' })).json();
+  // 第一次：這個 DB 還沒記過任何規則指紋 → 會跑
+  const r1 = await (await POST('/statement/normalize-auto', {})).json();
+  assert.equal(r1.ran, true, '沒記過指紋＝規則等於「新的」，要跑一次');
+  assert.ok(r1.rulesHash, '要回報這次套用的規則指紋');
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after.note, '統一超商（德權）', '自動整理真的有套用（使用者不必記得按套用）');
+  assert.equal(after.storeKey, '統一超商', '鑰匙同步對齊到品牌層');
+  // 第二次：同一版規則 → 不重跑（否則每次開 app 都白洗一次 .bak）
+  const r2 = await (await POST('/statement/normalize-auto', {})).json();
+  assert.equal(r2.ran, false, '同一版規則只跑一次');
+  assert.equal(r2.rulesHash, r1.rulesHash);
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('第一帖｜同店整批改分類＋預覽也回報鑰匙變動數', async () => {
+  const mk = (d, note, amt) => POST('/transactions', { date: d, type: 'expense', category: '其他', subcategory: '未分類',
+    amount: amt, note, storeKey: '八方雲集', stmtRef: `cZ|${d}|${amt}|八方雲集${note}Z9 TAIPEI`, source: 'stmt' });
+  const a = await (await mk('2026-07-28', '中山', 71)).json();
+  const b = await (await mk('2026-07-29', '松江', 72)).json();
+  const r = await (await POST('/statement/apply-category', { storeKey: '八方雲集', category: '飲食', subcategory: '餐廳' })).json();
+  assert.equal(r.changed, 2, '同一把鑰匙的帳單交易全部改');
+  const after = await GET('/transactions');
+  for (const id of [a.id, b.id]) assert.equal(after.find(t => t.id === id).category, '飲食');
+  assert.equal((await GET('/learned'))['八方雲集']?.category, '飲食', '分類學在品牌層（同品牌共用）');
+  assert.ok(!(await GET('/learned'))['八方雲集']?.name, '品牌層不留顯示名');
+  // 防呆
+  assert.equal((await POST('/statement/apply-category', { category: '飲食' })).status, 400);
+  assert.equal((await POST('/statement/apply-category', { storeKey: '八方雲集' })).status, 400);
+  // 預覽要回報鑰匙變動數（自動整理沒有預覽，事後至少要說清楚改了什麼）
+  const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.equal(typeof prev.keyChanged, 'number', 'dryRun 也要算鑰匙變動');
+  for (const id of [a.id, b.id]) await DELETE_(`/transactions/${id}`);
+});
+
+test('第一帖｜匯入完成摘要：回報第一次見到的店家與未分類筆數', async () => {
+  const cards = await GET('/cards');
+  const card = cards[0] || (await (await POST('/cards', { name: '摘要測試卡', type: 'credit' })).json());
+  const d1 = '全新神秘小店QQ9 TAIPEI', d2 = '統一超商-德權QQ9 TAIPEI';
+  const rows = [
+    { date: '2026-07-30', amount: 11, desc: d1, store: '全新神秘小店', category: '其他', subcategory: '未分類', stmtRef: `${card.id}|2026-07-30|11|${d1}` },
+    { date: '2026-07-30', amount: 12, desc: d2, store: '統一超商（德權）', category: '飲食', subcategory: '超市', stmtRef: `${card.id}|2026-07-30|12|${d2}` },
+  ];
+  const out = await (await POST(`/cards/${card.id}/statement/import`, { transactions: rows })).json();
+  assert.equal(out.imported, 2);
+  assert.ok(out.newStores.includes('全新神秘小店'), '沒見過的店要列進「第一次見到」');
+  assert.equal(out.uncategorized, 1, '落在其他/未分類的筆數要回報');
+  const txs = await GET('/transactions');
+  for (const r of rows) { const t = txs.find(x => x.stmtRef === r.stmtRef); if (t) await DELETE_(`/transactions/${t.id}`); }
+});
