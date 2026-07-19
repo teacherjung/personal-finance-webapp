@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, extractStatementMonth } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -229,4 +229,16 @@ test('Codex#1｜優步分類與顯示標記同口徑：認不出店家的一律�
   assert.deepEqual(categorize('優步-皇冠大車隊'), ['交通', '計程車／Uber'], '車隊＝叫車（回歸）');
   assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '只有平台名＝叫車（回歸）');
   assert.deepEqual(categorize('星巴克'), ['飲食', '飲料／咖啡'], '一般店家不受影響');
+});
+
+test('extractStatementMonth：從帳單表頭讀出期別（使用者定 2026-07-19：不可用消費日回推）', () => {
+  assert.equal(extractStatementMonth('台北富邦銀行信用卡消費明細 115年06月份 結帳日115/06/21'), '2026-06', '民國年月');
+  assert.equal(extractStatementMonth('民國 115 年 1 月 帳單'), '2026-01', '有空白、個位數月份');
+  assert.equal(extractStatementMonth('信用卡帳單 2026年6月'), '2026-06', '西元年月');
+  assert.equal(extractStatementMonth('台新銀行 結帳日：115/06/21 繳款截止日 115/07/06'), '2026-06', '沒寫年月時用結帳日');
+  assert.equal(extractStatementMonth('帳單日期：2026/06/21 本期應繳'), '2026-06');
+  // 不可誤抓消費明細裡的交易日（只掃表頭區）
+  assert.equal(extractStatementMonth('消費明細\n2026-06-21 星巴克 150\n2026-06-22 全聯 300'), null);
+  assert.equal(extractStatementMonth('115年13月'), null, '不合法月份不採用');
+  assert.equal(extractStatementMonth(''), null);
 });

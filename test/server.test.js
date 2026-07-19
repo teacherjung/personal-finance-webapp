@@ -977,3 +977,29 @@ test('r2-Codex#8｜autoCat/autoSub 不可由通用 CRUD 寫入（匯入服務層
   assert.ok(!('autoCat' in tx) && !('autoSub' in tx), '前端不可偽造留底（偽造了體檢的人改/機器判會失準）');
   await DELETE_(`/transactions/${tx.id}`);
 });
+
+test('帳單年月（使用者定 2026-07-19）：匯入時存進每一筆、批次回報、可手動修正', async () => {
+  const cards = await GET('/cards');
+  const card = cards[0] || (await (await POST('/cards', { name: '期別測試卡', type: 'credit' })).json());
+  const d = '星巴克SM1 TAIPEI';
+  const ref = `${card.id}|2026-06-15|60|${d}`;
+  const out = await (await POST(`/cards/${card.id}/statement/import`, { transactions: [{
+    date: '2026-06-15', amount: 60, desc: d, store: '星巴克', category: '飲食', subcategory: '飲料', stmtRef: ref,
+  }], statementMonth: '2026-06' })).json();
+  assert.equal(out.imported, 1);
+  const tx = (await GET('/transactions')).find(t => t.stmtRef === ref);
+  assert.equal(tx.stmtMonth, '2026-06', '帳單期別存進交易');
+  const batch = (await GET('/statement/batches')).find(b => b.batchId === out.batchId);
+  assert.equal(batch.stmtMonth, '2026-06', '批次列表回報期別');
+  // 手動修正（表頭讀不出或讀錯時的退路）
+  const r = await (await POST('/statement/batch/month', { batchId: out.batchId, month: '2026-07' })).json();
+  assert.equal(r.changed, 1);
+  assert.equal((await GET('/statement/batches')).find(b => b.batchId === out.batchId).stmtMonth, '2026-07');
+  // 清除 → 退回推估（欄位不存在，前端顯示推估值）
+  await POST('/statement/batch/month', { batchId: out.batchId, month: '' });
+  assert.ok(!(await GET('/statement/batches')).find(b => b.batchId === out.batchId).stmtMonth);
+  // 防呆
+  assert.equal((await POST('/statement/batch/month', { batchId: out.batchId, month: '2026/07' })).status, 400);
+  assert.equal((await POST('/statement/batch/month', { batchId: '不存在的批次', month: '2026-07' })).status, 404);
+  await DELETE_(`/transactions/${tx.id}`);
+});
