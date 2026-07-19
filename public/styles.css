@@ -461,3 +461,9 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .stat.sm { font-size: 21px; }
   .tbl-wrap { border-radius: 10px; }
 }
+
+/* 帳務體檢佇列（第二帖，使用者定 2026-07-19） */
+.health-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.health-row:first-child { border-top: none; }
+.health-desc { flex: 1; font-size: 13px; line-height: 1.65; }
+.health-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }

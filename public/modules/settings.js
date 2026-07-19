@@ -3,7 +3,7 @@ import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openFor
 import { icon } from './icons.js';
 
 export async function renderSettings() {
-  const [s, txs, expTree] = await Promise.all([api('/settings'), api('/transactions'), api('/categories')]);
+  const [s, txs, expTree, health] = await Promise.all([api('/settings'), api('/transactions'), api('/categories'), api('/statement/health').catch(() => ({ items: [], dismissed: 0 }))]);
   // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
   // 顯示名/分類取「該原文最新一筆」為代表（編輯時整批統一）。編輯以原文為準——不同分店各自取名/分類。
   const byOrig = new Map();
@@ -53,6 +53,12 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">店名格式整理</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「Times Parking」→「台灣普客二四」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
       <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">帳務體檢 ${health.items.length ? `<span class="store-rank">${health.items.length} 件待確認</span>` : '<span class="muted" style="font-size:12px">✅ 目前乾淨</span>'}</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">系統主動檢查可疑的店名、身分鑰匙與分類問題（同店被拆成兩把鑰匙、分期分裂、未分類累積、名字殘留雜訊…），排成清單讓你一鍵處理或略過。每次開啟即時重算，按過略過的不再出現${health.dismissed ? `（已略過 ${health.dismissed} 件）` : ''}。</p>
+      <div><button class="btn-ghost" id="healthBtn">${icon('refresh', 16) || ''}開始體檢</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
@@ -248,6 +254,7 @@ export async function renderSettings() {
       }
     });
   });
+  byId('healthBtn').onclick = () => openHealthCheck();
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -255,6 +262,90 @@ export async function renderSettings() {
     try { await api('/import', { method: 'POST', body: JSON.parse(await file.text()) }); toast('已匯入'); location.hash = 'dashboard'; }
     catch (err) { toast('匯入失敗：' + err.message, true); }
   };
+}
+
+// ---------- 帳務體檢佇列（第二帖，使用者定 2026-07-19） ----------
+// 佇列即時算（GET /statement/health）；動作走既有端點：未分類→apply-category（品牌層）、
+// 分類漂移→rename-store（原文層，改成自動 or 保留現值）、鑰匙類→複製回報文字貼給 Claude。
+// 每個動作完成後整窗重新抓資料重畫（項目消失＝真的修好，不是前端假裝）。
+async function openHealthCheck() {
+  const root = byId('modal-root');
+  const [health, tree] = await Promise.all([api('/statement/health'), api('/categories')]);
+  const parents = Object.keys(tree || {});
+  const catSelHtml = (/** @type {number} */ i) => `<select data-hcat="${i}" style="width:auto;max-width:9em">${parents.map(c => `<option>${esc(c)}</option>`).join('')}</select>
+    <select data-hsub="${i}" style="width:auto;max-width:9em">${['', ...(tree[parents[0]] || [])].map(x => `<option value="${esc(x)}">${x === '' ? '（不分子類）' : esc(x)}</option>`).join('')}</select>`;
+  const rowHtml = (/** @type {any} */ it, /** @type {number} */ i) => {
+    const chipCls = it.severity >= 3 ? 'red' : it.severity === 2 ? 'amber' : '';
+    const act = it.type === 'uncategorized' ? `${catSelHtml(i)} <button class="btn-ghost btn-sm" data-hfix="${i}">套用</button>`
+      : it.type === 'cat-drift' ? `<button class="btn-ghost btn-sm" data-hauto="${i}">改成自動</button> <button class="btn-ghost btn-sm" data-hkeep="${i}">保留現值</button>`
+      : `<button class="btn-ghost btn-sm" data-hcopy="${i}" title="複製問題描述，貼給 Claude 加規則">複製回報</button>`;
+    return `<div class="health-row"><span class="tag ${chipCls}" style="white-space:nowrap">${esc(it.chip)}</span>
+      <div class="health-desc">${esc(it.desc)}</div>
+      <div class="health-acts">${act} <button class="btn-link btn-sm" data-hskip="${i}" title="這是正常的，別再提醒">略過</button></div></div>`;
+  };
+  const items = health.items || [];
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+    <div class="modal-head"><h2>帳務體檢${items.length ? `（${items.length} 件待確認）` : ''}</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      ${items.length ? `<p class="muted" style="font-size:12px;margin-bottom:10px">這些是系統覺得「怪怪的」的地方——不一定是錯，你說了算：處理、或按略過讓它永久安靜。</p>
+        <div style="max-height:56vh;overflow:auto">${items.map(rowHtml).join('')}</div>`
+        : '<p class="empty">目前一切乾淨 ✅ 沒有待確認的項目。</p>'}
+      <div class="form-actions">
+        ${health.dismissed ? `<button type="button" class="btn-link" data-hreset>重新顯示已略過的 ${health.dismissed} 件</button>` : ''}
+        <button type="button" class="btn" data-close>關閉</button></div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-close]').onclick = close;
+  bindBackdropClose(root, close);
+  const redo = async (/** @type {string} */ msg) => { toast(msg); await openHealthCheck(); };
+  root.querySelector('[data-hreset]')?.addEventListener('click', async () => {
+    await api('/statement/health/dismiss', { method: 'POST', body: { clearAll: true } });
+    redo('已重新顯示全部項目');
+  });
+  root.querySelectorAll('[data-hskip]').forEach(b => b.addEventListener('click', async () => {
+    const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hskip)];
+    await api('/statement/health/dismiss', { method: 'POST', body: { id: it.id } });
+    redo('已略過（同一狀況不再提醒）');
+  }));
+  root.querySelectorAll('[data-hcopy]').forEach(b => b.addEventListener('click', async () => {
+    const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hcopy)];
+    try { await navigator.clipboard.writeText(String(it.data.report || it.desc)); toast('已複製，貼給 Claude 就能加規則 📋'); }
+    catch { toast('複製失敗，請手動選取', true); }
+  }));
+  // 未分類：分類連動子類 → 套用（apply-category＝整店改＋品牌層學習）
+  root.querySelectorAll('[data-hcat]').forEach(sel => sel.addEventListener('change', () => {
+    const i = /** @type {HTMLElement} */ (sel).dataset.hcat;
+    const sub = root.querySelector(`[data-hsub="${i}"]`);
+    const subs = ['', ...(tree[/** @type {HTMLSelectElement} */ (sel).value] || [])];
+    sub.innerHTML = subs.map(x => `<option value="${esc(x)}">${x === '' ? '（不分子類）' : esc(x)}</option>`).join('');
+  }));
+  root.querySelectorAll('[data-hfix]').forEach(b => b.addEventListener('click', async () => {
+    const i = Number(/** @type {HTMLElement} */ (b).dataset.hfix);
+    const it = items[i];
+    const cat = /** @type {HTMLSelectElement} */ (root.querySelector(`[data-hcat="${i}"]`)).value;
+    const sub = /** @type {HTMLSelectElement} */ (root.querySelector(`[data-hsub="${i}"]`)).value;
+    try {
+      const r = await api('/statement/apply-category', { method: 'POST', body: { storeKey: it.data.key, category: cat, subcategory: sub } });
+      redo(`已把「${it.data.key}」${r.changed} 筆歸到 ${cat}${sub ? `·${sub}` : ''}，以後也自動歸`);
+    } catch (e) { toast('套用失敗：' + e.message, true); }
+  }));
+  // 分類漂移：改成自動（分類跟上現行規則、名字不動）／保留現值（把現值學起來，之後不再報）
+  const drift = async (/** @type {any} */ it, /** @type {{category: string, subcategory: string}} */ target, /** @type {string} */ msg) => {
+    try {
+      await api('/statement/rename-store', { method: 'POST',
+        body: { orig: it.data.orig, name: it.data.note || it.data.orig, category: target.category, subcategory: target.subcategory || '' } });
+      redo(msg);
+    } catch (e) { toast('處理失敗：' + e.message, true); }
+  };
+  root.querySelectorAll('[data-hauto]').forEach(b => b.addEventListener('click', () => {
+    const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hauto)];
+    drift(it, it.data.auto, `已改成 ${it.data.auto.category}${it.data.auto.subcategory ? `·${it.data.auto.subcategory}` : ''}（${it.data.count} 筆）`);
+  }));
+  root.querySelectorAll('[data-hkeep]').forEach(b => b.addEventListener('click', () => {
+    const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hkeep)];
+    drift(it, it.data.current, '已把現在的分類學起來，之後不再提醒');
+  }));
 }
 
 // 店名格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
