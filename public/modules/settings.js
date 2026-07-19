@@ -57,13 +57,13 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名格式整理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「Times Parking」→「台灣普客二四」）。會先<b>預覽</b>再套用，套用前自動備份、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「Times Parking」→「台灣普客二四」）。會先<b>預覽</b>再套用（套用前會另存一份還原檔 <code>data/store.db.pre-normalize.bak</code>）、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
       <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄（自動備份）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄（套用前會另存一份還原檔 <code>data/store.db.pre-rules.bak</code>）。</p>
       <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
     </div>
 
@@ -611,7 +611,12 @@ function openStoreRulesEditor(rules) {
   byId('rulePreview').onclick = async () => {
     try {
       const r = await api('/statement/rules/preview', { method: 'POST', body: { rules: collect() } });
-      if (!r.changed && !r.keyChanged) return toast('這些規則不會改動任何既有記錄（未來匯入時仍會生效）');
+      // 「什麼都不會改」的判斷要**把不可逆的兩種也算進去**（Codex r3#2）：
+      // 孤兒學習的自訂名被改到時，changed 與 keyChanged 都是 0——只看這兩個數字就會在這裡早退，
+      // 跳出「不會改動任何既有記錄」的安心訊息，然後使用者按儲存、名字就沒了。
+      const nothing = !r.changed && !r.keyChanged
+        && !(r.learnedConflicts || []).length && !(r.learnedNameChanges || []).length;
+      if (nothing) return toast('這些規則不會改動任何既有記錄（未來匯入時仍會生效）');
       // 回上一頁＝用「目前編輯到的內容」重開編輯窗（含填一半的列）。
       // ⚠️ 不可以用 innerHTML 快照還原（實測踩到）：使用者打進 input 的字不會反映到 HTML 屬性上，
       // 還原回去會整片空白——去看一眼預覽就把心血全弄丟，是最不能忍的那種 bug。
@@ -624,11 +629,22 @@ function openStoreRulesEditor(rules) {
       const rules = collect();
       // 「預覽影響」是自願按的，但學習表衝突是不可逆的——直接按儲存的人更需要被擋一下。
       // 先偷跑一次預覽，只有真的會蓋掉教過的設定時才出聲（沒衝突就安靜地存，不多一步打擾）。
-      const pre = await api('/statement/rules/preview', { method: 'POST', body: { rules } }).catch(() => null);
+      // ⚠️ 預覽失敗就**不要儲存**（Codex r3#7）：原本用 .catch(() => null) 吞掉錯誤照樣往下存，
+      // 等於在「算不出有什麼不可逆變更」的情況下硬做——安全帶斷了就該停車，不是繼續開。
+      let pre;
+      try { pre = await api('/statement/rules/preview', { method: 'POST', body: { rules } }); }
+      catch (e) { return toast('無法確認這些規則會改到什麼，為安全起見沒有儲存：' + e.message, true); }
       const cf = pre?.learnedConflicts || [];
-      if (cf.length && !confirm(`有 ${cf.length} 項你教過的設定會被蓋掉，刪掉規則也救不回來：\n\n`
-        + cf.slice(0, 5).map(c => `・「${c.key}」：留下 ${c.kept}，捨棄 ${c.dropped}`).join('\n')
-        + (cf.length > 5 ? `\n…另外 ${cf.length - 5} 項` : '') + '\n\n確定要套用嗎？')) return;
+      const nc = pre?.learnedNameChanges || [];
+      if (cf.length || nc.length) {
+        const lines = [
+          ...cf.slice(0, 5).map(c => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
+          ...nc.slice(0, 5).map(c => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)
+        ];
+        const extra = (cf.length > 5 ? cf.length - 5 : 0) + (nc.length > 5 ? nc.length - 5 : 0);
+        if (!confirm(`有 ${cf.length + nc.length} 項你教過／取過的東西會被蓋掉，刪掉規則也救不回來：\n\n`
+          + lines.join('\n') + (extra ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
+      }
       const r = await api('/statement/rules', { method: 'POST', body: { rules } });
       close();
       const bits = [r.changed && `${r.changed} 筆顯示名`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
@@ -643,7 +659,8 @@ function openStoreRulesEditor(rules) {
 // 分成兩件事講，因為它們的嚴重度不同：顯示名改錯了再改回來就好，**身分鑰匙**改了會影響
 // 「哪些消費算同一家店」（統計、排行、學習全部跟著動），所以獨立標出來。
 /** @param {{changed:number, keyChanged:number, changes:{id:string,before:string,after:string}[],
- *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[]}} r
+ *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[],
+ *            learnedNameChanges:{key:string,before:string,after:string}[]}} r
  *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開） */
 function openRulePreview(r, onBack) {
   const root = byId('modal-root');
@@ -652,6 +669,8 @@ function openRulePreview(r, onBack) {
   // 兩邊手動教過的分類只留得下一個。不講出來的話，使用者看到「4 筆顯示名會變」就按下去了。
   const FIELD_LABEL = { category: '分類', subcategory: '子分類', name: '顯示名' };
   const conflicts = r.learnedConflicts || [];
+  const nameChanges = r.learnedNameChanges || [];
+  const blank = (/** @type {string} */ v) => v || '（清除，改回系統自動判斷）';
   const conflictHtml = conflicts.length ? `
     <div class="rule-warn">
       <b>⚠️ 有 ${conflicts.length} 項你教過的設定會被蓋掉，而且刪掉規則也救不回來</b>
@@ -659,13 +678,22 @@ function openRulePreview(r, onBack) {
       <ul>${conflicts.map(c => `<li>「${esc(c.key)}」的${esc(FIELD_LABEL[c.field] || c.field)}：留下 <b>${esc(c.kept)}</b>，<span class="rule-drop">捨棄 ${esc(c.dropped)}</span></li>`).join('')}</ul>
       <p>如果捨棄的那個才是你要的，先回去把它改成一致，再套用規則。</p>
     </div>` : '';
+  // 學過的「自訂店名」被改寫／清除——比分類衝突更隱蔽：這些可能是已經沒有交易對應的孤兒學習，
+  // 顯示名與鑰匙的計數都是 0，不特別講出來，畫面上會顯示成「什麼都不會改」。
+  const nameHtml = nameChanges.length ? `
+    <div class="rule-warn">
+      <b>⚠️ 有 ${nameChanges.length} 個你自己取的店名會被新規則改掉，刪掉規則也還原不回來</b>
+      <p>這些是你當初手動命名、系統記住的名字（有些目前沒有對應的記錄，所以上面的筆數看不到它們）：</p>
+      <ul>${nameChanges.map(c => `<li>「${esc(c.key)}」：<b>${esc(c.before)}</b> → <span class="rule-drop">${esc(blank(c.after))}</span></li>`).join('')}</ul>
+      <p>想留住原本的名字，就先回去把規則改得窄一點，別命中這幾家。</p>
+    </div>` : '';
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
     <div class="modal-head"><h2>規則影響預覽</h2><button class="x-close">×</button></div>
     <div class="modal-body">
       <p class="muted" style="font-size:12px;margin-bottom:10px">套用後：<b>${r.changed}</b> 筆顯示名會改變${r.keyChanged
     ? `，<b>${r.keyChanged}</b> 筆的「店家身分」會改變（＝哪些消費算同一家店，會影響統計與排行）` : ''}。這裡只是預覽，還沒有存。</p>
-      ${conflictHtml}
-      ${rows ? `<div class="tbl-wrap" style="max-height:${conflicts.length ? '30vh' : '44vh'};overflow:auto"><table>
+      ${conflictHtml}${nameHtml}
+      ${rows ? `<div class="tbl-wrap" style="max-height:${(conflicts.length || nameChanges.length) ? '28vh' : '44vh'};overflow:auto"><table>
         <thead><tr><th>目前顯示名</th><th></th><th>改成</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : '<p class="empty">顯示名沒有變化（只有店家身分會變）。</p>'}
       ${r.changed > r.changes.length ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${r.changes.length} 筆）</p>` : ''}
