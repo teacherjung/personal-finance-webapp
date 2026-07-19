@@ -377,3 +377,17 @@ test('r7#3｜ib.js 解析器：accountCount＝去重帳戶數（節點數≠帳�
   assert.equal(r.statementCount, 3);
   assert.equal(r.accountCount, 2, '同帳戶多 statement 只算一個帳戶');
 });
+
+test('r8#1｜基準幣別齊全、彙總金額缺失 → 保留舊值＋cashSummaryMissing（不誤說「缺 Account Information」）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, hasCashDetail: false,
+    baseCurrency: 'USD', baseSummaryCash: null, statementCount: 1, accountCount: 1,
+    equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '金額缺失＝沒把握，保留舊值');
+  assert.equal(r.cashSummaryMissing, true, '病因要說對：是彙總列缺金額欄，不是缺 Account Information');
+  assert.equal(r.cashDetailMissing, false);
+  assert.equal(r.cashFromSummary, false);
+});

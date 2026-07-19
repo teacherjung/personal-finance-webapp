@@ -12,7 +12,7 @@ const expenseParents = () => Object.keys(expTree);
 // 表單分類選單＝收入類＋支出大類；type 由所選分類自動推導
 const allCategories = () => [...INCOME_CATEGORIES, ...expenseParents()];
 // 子類 <option>s（含「不分子類」空選項）
-const subOptions = (parent, cur = '') => ['', ...(expTree[parent] || [])]
+const subOptions = (parent, cur = '') => ['', ...((Object.hasOwn(expTree, parent) && expTree[parent]) || [])]   // hasOwn（Codex r8#3）：分類叫 toString 且不在樹裡時會展開到原型函式而 TypeError
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
@@ -28,19 +28,22 @@ export async function renderTransactions() {
 
   const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '');
   const zh = (/** @type {any} */ x, /** @type {any} */ y) => String(x || '').localeCompare(String(y || ''), 'zh-Hant');
-  // 各欄位的「升冪」比較器（降冪＝整體反轉）；文字欄同值時以日期新→舊當第二鍵，結果穩定不跳動
+  // 各欄位的「主鍵」比較器（升冪）。⚠️ 升降冪只作用在主鍵：同值時的第二鍵**固定**日期新→舊，
+  // 不跟著反轉（Codex r8#2：把整個比較器乘 -1 會把第二鍵一起反轉，降冪時同名資料變舊→新）。
+  // 金額口徑＝**絕對金額大小**（收/支金額都存正數；這欄的用途是找「大筆」，收支混排時比正負值直覺——
+  // Codex r8#4 裁定維持並記明規格）。
   /** @type {Record<string, (a: any, b: any) => number>} */
   const SORTERS = {
     date: (a, b) => (a.date || '').localeCompare(b.date || ''),
-    account: (a, b) => zh(a.account, b.account) || byDateDesc(a, b),
-    note: (a, b) => zh(a.note, b.note) || byDateDesc(a, b),
-    category: (a, b) => zh(a.category, b.category) || zh(a.subcategory, b.subcategory) || byDateDesc(a, b),
-    subcategory: (a, b) => zh(a.subcategory, b.subcategory) || byDateDesc(a, b),
+    account: (a, b) => zh(a.account, b.account),
+    note: (a, b) => zh(a.note, b.note),
+    category: (a, b) => zh(a.category, b.category) || zh(a.subcategory, b.subcategory),
+    subcategory: (a, b) => zh(a.subcategory, b.subcategory),
     amount: (a, b) => Number(a.amount || 0) - Number(b.amount || 0)
   };
   const cmp = SORTERS[listSort.key] || SORTERS.date;
   const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter)
-    .sort((a, b) => listSort.dir === 'desc' ? -cmp(a, b) : cmp(a, b));
+    .sort((a, b) => (listSort.dir === 'desc' ? -cmp(a, b) : cmp(a, b)) || byDateDesc(a, b));
   // 表頭三角形＝訂閱頁同款（th.sortable＋.sort-tri，styles.css 既有樣式）
   const th = (/** @type {string} */ key, /** @type {string} */ label, cls = '') => {
     const on = listSort.key === key;
