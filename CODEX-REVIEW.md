@@ -24,34 +24,49 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（2026-07-19 深夜；上輪審到 #111，本輪範圍＝#113–#121）
+## 本輪審查重點（2026-07-19；上輪審到 #121，本輪範圍＝#123–#129）
 
-本輪主軸是「**讓使用者不必一直手動修**」的兩帖新功能，外加你上輪 11 條的修正驗收。
-新檔一個：`lib/services/health-check.js`（帳務體檢，宣稱純唯讀）。請重點檢驗：
+本輪合併了兩件**架構層級**的改動，兩者都在既有的「單一櫃檯」上加東西，請重點打這裡。
+新檔三個：`lib/store-rules.js`（純模組）、`lib/services/store-rules.js`、`test/store-rules.test.js`。
 
-1. **你上輪 11 條的修正是否真的修對**（#113）——特別是這幾條的**新**實作有沒有引入新問題：
-   - #2 學習表撞 key 改成欄位層級合併（`{...val, ...prev}`）：先到者優先的語意對嗎？
-   - #3「品牌層 entry 一律不留 name、一律搬回原文級」：同一品牌多原文共用同一個舊 name 時，
-     每個原文都掛一份——這是刻意（保持畫面不變），但會不會有「該搬沒搬 / 搬錯層」的邊界？
-   - #6 鑰匙脫外幣、#1 categorize 優步保底與顯示標記同口徑：有沒有反向誤傷？
-2. **自動整理（#114）的安全性**：`normalizeIfRulesChanged` 以 `lib/statement.js` 內容雜湊為指紋，
-   開 app 自動跑 `normalizeBranches(false)`（會寫資料）。請檢視：指紋計算與快取（`rulesHashCache`
-   跨請求常駐）、「沒變動就不寫檔」的判定是否涵蓋所有寫入路徑（含 learned 重建）、
-   自動跑失敗時的狀態一致性（hash 已記但整理失敗？順序對嗎）、與手動整理併發的可能。
-3. **`applyCategoryToStore`（#114/#115）**：品牌層整批改分類＋寫品牌層學習、`delete e.name`。
-   權限/驗證（storeKey 任意字串）、服務費排除、與 `learnFromStmtEdit` 兩層分工是否一致。
-4. **`health-check.js` 宣稱唯讀**——請驗證：除 `dismissHealthItem` 外真的沒有任何寫入/副作用；
-   `runHealthCheck` 對 847 筆規模的複雜度（D1 是 O(n²) 巢狀迴圈掃鑰匙，n＝不重複鑰匙數）；
-   偵測器誤報邏輯（D2 用 `categorize(原文)` 判大類異質、D4 用 `resolveImportCategory` 完整鏈
-   ＋學習表雙查、D3 樣式表）；`healthDismissed` 指紋含鑰匙/原文，鑰匙變動後舊指紋變孤兒——
-   會不會無限累積？是否該清理？
-5. **`autoCat/autoSub` 留底（#116）**：只在 `importRows` 寫、已進 `WRITABLE_FIELDS`。
-   匯入預覽改分類的情境下，留底的是「純自動」而非「使用者選的」——這個口徑在
-   `resolveImportCategory(db, ...categorize(desc))` 的實作上真的成立嗎（別名/生效樹校正時機）？
-6. **CATEGORY_RULES 三層架構（#117/#118）**：①特殊指定 ②店家 ③**場所保底排表尾**。
-   移動規則位置是高風險操作（先中先贏），請檢查有沒有把原本正確的分類改壞
-   （例如「自動加值」上移到交通之前、場所詞下移到表尾的連帶影響）。
-7. **同步點**：AGENTS.md 的 cleanStore／storeKeyOf／體檢／自動整理各列是否與程式一致。
+> 註：#123（你上輪 8 條的修正）、#124–#127（分期期數脫鑰匙、帳單年月、應繳金額）也在範圍內，
+> 但主力請放在 1–5 項。另外，本輪已由兩個獨立審查代理做過對抗性自審、修掉 8 條
+> （其中 1 條高：預覽對「唯一不可逆的效果」盲目）——**請不要因為「已自審過」就放輕**，
+> 反而請特別檢查那些修正本身有沒有引入新問題（歷史經驗：修正比原始程式更容易出錯）。
+
+1. **「規則入櫃檯」（#129）＝本輪最該打的地方**：`lib/repo.js` 現在每次讀取都會呼叫
+   `setUserRules(db.settings?.storeRules)`，把使用者規則餵進 `lib/store-rules.js` 的**模組級單例**。
+   請檢驗：①`repo.js` 內是否真的所有讀取都走 `loadSynced()`（漏一處＝該路徑吃到過期規則）
+   ②模組級可變狀態在「同一個 Node 行程、多個 HTTP 請求交錯」下的正確性
+   ③`setUserRules` 的 JSON 字串比對當快取鍵，有沒有值變了卻比對相同的情況
+   ④這個設計是否讓 `lib/statement.js` 從「純函式」變成「有隱藏輸入」——對既有測試的可信度有無影響。
+
+2. **預覽的覆蓋層（`setRulesOverride`）**：`lib/services/store-rules.js` 的 `withRules` 用
+   try/finally 設定與清除覆蓋層。請檢驗：**巢狀或重入**時的行為（內層 finally 會直接清成 null、
+   而不是還原外層的值——目前是否真的不可能重入？未來哪種呼叫會踩到？）、
+   以及 `previewStoreRules` 之外有沒有別的路徑該用覆蓋層卻用了 `setUserRules`。
+
+3. **使用者可控字串的安全性（#129）**：`storeRules` 的 `to` 會成為交易的 `storeKey`，
+   也就是**使用者第一次能決定學習表的 key**。已擋 `__proto__`/`constructor`/`prototype`，
+   但請自己找漏：其他原型污染路徑、`escapeRe` 是否涵蓋所有 regex 元字元、
+   `rename` 的取代字串 `$` 跳脫是否完整、規則造成的 `storeKey` 為空字串或純空白的情形、
+   以及 `sanitizeStoreRules` 與 `compileStoreRules` 兩處對「合法」的認定是否完全一致。
+
+4. **`normalizeBranches` 的 dryRun 語意改變（#129）**：學習表區塊原本整段包在 `if (!dryRun)`，
+   現在**計算照跑、只有寫入跳過**，並回傳 `learnedConflicts`。請檢驗：
+   ①dryRun 路徑真的沒有任何副作用了嗎（該區塊會就地改 `v.name`，已改為淺拷貝——夠不夠？）
+   ②`learnedConflicts` 的判定（兩邊都有值且不同才算衝突）會不會漏報真正會遺失的資料
+   ③這個改動有沒有讓「沒變動就不寫檔」的判定失準。
+
+5. **D0 日線（#128）**：`dailyValues` 進了 `READONLY_COLLECTIONS`，新型別 `datereq`。
+   `takeSnapshotIfDue` 刻意呼叫私有的 `writeMonthlySnapshot` 而非 `takeSnapshot`（避免寫兩遍）。
+   請檢驗：同日覆寫/跨日累積的邊界（跨月、跨年、系統時間被調整）、
+   `recordDailyValue` 每次開 app 都寫一次全庫的代價、
+   以及**與 `syncIb` 跨 await 覆寫的互動**（已知既有問題：`syncIb` 請求前讀、請求後把過期快照寫回；
+   已另列待辦，**這條不必重複提**，但若你發現 D0 讓它從「一天一次」變成「每次開 app」而有新後果，請說）。
+
+6. **同步點**：AGENTS.md 新增了三列（使用者自訂店名規則／規則入櫃檯／規則的 API 與 UI）
+   與 `dailyValues` 一列，請對照程式檢查是否一致、有無漏記的新同步點。
 
 （此段每輪審查後由 Claude 更新範圍；常青規則在下方不變。）
 
