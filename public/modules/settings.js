@@ -55,11 +55,6 @@ export async function renderSettings() {
       <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理分類</button></div>
     </div>
 
-    <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">店名格式整理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">把帳單說明的店名整理成好讀格式：分店統一為「主體（分店）」（例：「統一超商-百福」→「統一超商（百福）」）、品牌名統一（例：「全家便利商店」→「全家商店」、「Times Parking」→「台灣普客二四」）。會先<b>預覽</b>再套用（套用前會另存一份還原檔 <code>data/store.db.pre-normalize.bak</code>）、可重複執行——之後每次新增整理規則，再跑一次即可套到舊資料。未涵蓋到的連鎖或想改的品牌名，告訴我再補。</p>
-      <div><button class="btn-ghost" id="normBranchBtn">${icon('refresh', 16) || ''}整理店名格式</button></div>
-    </div>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
@@ -199,13 +194,6 @@ export async function renderSettings() {
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories')); }
     catch (err) { toast('讀取分類失敗：' + err.message, true); }
-  };
-  byId('normBranchBtn').onclick = async () => {
-    try {
-      const prev = await api('/statement/normalize-branches', { method: 'POST', body: { dryRun: true } });
-      if (!prev.changed) { toast('沒有需要整理的說明格式'); return; }
-      openBranchPreview(prev.changed, prev.changes || []);
-    } catch (err) { toast('整理失敗：' + err.message, true); }
   };
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
@@ -363,38 +351,6 @@ async function openHealthCheck() {
     const it = items[Number(/** @type {HTMLElement} */ (b).dataset.hkeep)];
     drift(it, it.data.current, '已把現在的分類學起來，之後不再提醒');
   }));
-}
-
-// 店名格式整理的預覽彈窗：可捲動的 before→after 清單＋套用/取消（比 confirm 更適合逐筆核對大量變更）。
-/** @param {number} count @param {{id:string,before:string,after:string}[]} changes */
-function openBranchPreview(count, changes) {
-  const root = byId('modal-root');
-  const rows = changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
-  const capNote = count > changes.length
-    ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${changes.length} 筆，套用時會處理全部 ${count} 筆）</p>` : '';
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
-    <div class="modal-head"><h2>店名格式整理預覽</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
-      <p class="muted" style="font-size:12px;margin-bottom:10px">共 <b>${count}</b> 筆說明會整理成統一格式（分店括號、品牌名）。套用前會自動備份、可重複執行。請確認以下變更：</p>
-      <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
-        <thead><tr><th>目前說明</th><th></th><th>整理後</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>
-      ${capNote}
-      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="branchApply">套用整理（${count} 筆）</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
-  root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
-  byId('branchApply').onclick = async () => {
-    try {
-      const r = await api('/statement/normalize-branches', { method: 'POST', body: {} });
-      close();
-      const extra = r.learnedNamesFixed ? `，並修正 ${r.learnedNamesFixed} 筆學過的舊店名` : '';
-      toast(r.changed ? `已整理 ${r.changed} 筆說明格式${extra}` : (r.learnedNamesFixed ? `已修正 ${r.learnedNamesFixed} 筆學過的舊店名` : '沒有需要整理的說明格式'));
-      renderSettings();
-    } catch (err) { toast('整理失敗：' + err.message, true); }
-  };
 }
 
 // 分類管理編輯器：把整棵分類樹載入成可編輯狀態（每列記「原名」以偵測改名），一次儲存。
