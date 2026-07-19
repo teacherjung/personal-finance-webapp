@@ -171,6 +171,41 @@ test('IB 同步幣別牆（Codex#7）：未支援幣別跳過並回報，不寫�
   assert.ok((db.accounts || []).some((a) => a.ibCashCur === 'USD' && a.balance === 1000), 'USD 現金照常更新');
 });
 
+test('IB 現金幣別從報表消失 → 歸零，淨資產不虛增（Codex r4#3）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  // 報表有 Cash Report 區塊，但這次 USD 現金已提光（不再出現在 cashByCurrency）
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: true, equity: null, income: null, trades: [], account: 'T', period: {} })));
+  const acc = store.load().accounts?.find(a => a.ibCashCur === 'USD');
+  assert.equal(acc?.balance, 0, '報表不再列這個幣別＝現金已清空，帳上不可殘留舊餘額');
+  assert.equal(r.cashZeroed, 1, '要回報歸零了幾個幣別');
+});
+
+test('Cash Report 區塊整個缺失 → 保留舊值＋回報（缺資料 ≠ 現金為 0，Codex r4#3）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  // 沒有 Cash Report 區塊（Flex 漏勾/查詢失敗）→ 不可硬歸零，那會誤清真實餘額
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: false, equity: null, income: null, trades: [], account: 'T', period: {} })));
+  const acc = store.load().accounts?.find(a => a.ibCashCur === 'USD');
+  assert.equal(acc?.balance, 1000, '整個區塊缺失＝沒資料，保留舊值不誤清');
+  assert.equal(r.cashZeroed, 0);
+  assert.equal(r.cashReportMissing, true, '要回報「這次沒拿到現金資料」讓使用者看得見異常');
+});
+
+test('有 Cash Report、幣別仍在 → 照常更新，不誤歸零（保護不可誤傷正常情況）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: { USD: 1500 }, hasCashReport: true, equity: null, income: null, trades: [], account: 'T', period: {} })));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1500, '有出現的幣別照常更新');
+  assert.equal(r.cashZeroed, 0);
+});
+
 test('櫃檯也擋缺必填（Codex#11-1）：save() 遇缺 month 的 history 當場 throw', () => {
   const bad = { ...store.emptyDb(), history: [{ id: 'x', amount: 100 }] };
   assert.throws(() => store.save(/** @type {any} */ (bad)), /month/, '任何寫入路徑都不可能塞進缺主鍵欄的資料');

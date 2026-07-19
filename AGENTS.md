@@ -44,6 +44,7 @@
 ## 投資領域語意（改相關程式前必讀）
 
 - **投資原則（使用者拍板）**：最高指導原則＝**生存優先**（在所有環境活著 > 多數環境賺更多），規則衝突時以此裁決。所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)，設定頁「投資原則」卡可調。
+**IB 現金幣別歸零**（Codex r4#3）：`syncIb` 對「這次報表沒出現、但過去由 IB 同步建立的現金幣別帳戶」歸零——否則某幣別現金提光後、下次報表不再列它，帳上永久殘留舊餘額、淨資產無聲虛增（實測 USD 1000 提光後仍算 32000 TWD）。⚠️**只在 Cash Report 區塊「確實存在」時歸零**：整個區塊缺失（Flex 漏勾/查詢失敗）＝「沒資料」不是「現金為 0」，此時保留舊值＋回報 `cashReportMissing`（比照持股的 `missing` 確認流程）。`lib/ib.js parseStatement` 回 `hasCashReport` 布林供判斷。
 - **融資槓桿只算 IB**：**優先用 IB 官方淨值摘要 `settings.ib.lastEquity`**（同步時更新、基準幣別 USD：stock ÷ (stock+cash)）；沒有同步資料才自算（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額）。排除台新現金與台股，文案標「IB」前綴。`ibIdleCashAlert`＝IB 正現金閒置提醒門檻（USD）。
 - **槓桿上限任何時期 1.3x**（2026-07-10 修訂，取消訊號期 1.6x——1.6x 撐不過 2008 級回檔）：估值訊號期加碼**只用新資金與現金、不舉新債**。**斷頭距離**＝市場再跌 x% 觸及 IB 強平線，`x = 1 − 借款 ÷ ((1−維持率) × IB 持倉市值)`（假設全倉維持率一致的近似）；維持率存 `settings.ibMaintenancePct`(25)。公式在 `portfolio.js marginCallDistance()` 與 `lib/derive.js` 規則 7 各一份（同步點）。
 - **多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。**交易損益**（交易摘要＋XIRR）共用 `portfolio.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`lib/services/ib-sync.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
