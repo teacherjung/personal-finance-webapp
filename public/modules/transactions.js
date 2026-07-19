@@ -60,7 +60,7 @@ export async function renderTransactions() {
     <div class="page-head">
       <div><h1>收支記帳</h1><p>記錄每一筆收入與支出，掌握現金流</p></div>
       <div class="page-actions">
-        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}帳單批次</button>` : ''}
+        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
         <button class="btn-ghost btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
         <button class="btn btn-eq" id="addTx">${icon('plus', 16)}新增一筆</button>
       </div>
@@ -454,7 +454,7 @@ function openStatementPreview(cardId, r, b64, cards) {
   draw();
 }
 
-// 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「帳單批次」改）。
+// 匯入完成：確認記到哪張卡，選錯可當場整批改（其餘晚點也能從「匯入紀錄」改）。
 // 匯入完成摘要（使用者定 2026-07-19）：把「這批有什麼需要你看一眼」講出來——第一次見到的店家
 // （名字/分類可能還沒學好）與落在「其他」的筆數。非阻斷：只是提示，不擋匯入流程。
 /** @param {any} out */
@@ -478,7 +478,7 @@ function openImportDone(out) {
     <div class="modal-body">
       <p>已匯入 <b>${out.imported}</b> 筆到「<b>${esc(out.cardName || '')}</b>」${out.skipped ? `<span class="muted">，略過 ${out.skipped} 筆（重複或不可匯入）</span>` : ''}。</p>
       ${importSummaryHtml(out)}
-      <p class="muted" style="font-size:12.5px;margin-top:6px">記錯卡片了嗎？可以現在整批改到別張卡（之後也能從右上「帳單批次」改）。</p>
+      <p class="muted" style="font-size:12.5px;margin-top:6px">記錯卡片了嗎？可以現在整批改到別張卡（之後也能從右上「匯入紀錄」改）。</p>
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-reassign>改到其他卡片</button>
         <button type="button" class="btn" data-done>完成</button>
@@ -511,9 +511,17 @@ async function openBatchManager() {
       </div></td>
     </tr>`).join('');
     root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-      <div class="modal-head"><h2>帳單匯入批次</h2><button class="x-close">×</button></div>
+      <div class="modal-head"><h2>匯入紀錄</h2><button class="x-close">×</button></div>
       <div class="modal-body">
-        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。<b>帳單年月</b>讀自帳單表頭（期別／結帳日）；讀不出來會標「推估」（用最後一筆消費日推的），<b>點年月可手動修正</b>。滑上去可看完整消費日範圍——分期會把範圍拉到很早（分期每期都掛回原始消費日），屬正常。<b>匯入金額</b>＝這次記進帳的消費總和；<b>應繳金額</b>＝帳單自己印的「本期應繳總金額」——兩者本來就不同（應繳還含上期未繳、分期本期、年費利息，並扣掉已繳款）。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
+        <ul class="muted batch-help" style="font-size:12.5px;margin:0 0 12px 18px;line-height:1.9;padding:0">
+          <li>每一列都代表<b class="hl">「一份帳單」</b>的匯入。</li>
+          <li>帳單年月 → 由帳單<b class="hl">「結帳日」</b>決定；讀取失敗時會依<b class="hl">「最後一筆消費日」</b>推估。</li>
+          <li>點擊<b class="hl">「帳單年月」</b>可手動修改<b class="hl">「年月」</b>。</li>
+          <li>若有分期，消費紀錄會歸到<b class="hl">「消費日」</b>當月。</li>
+          <li>匯入金額 ＝ 該帳單匯入的<b class="hl">「消費總和」</b>。</li>
+          <li>應繳金額 ＝ 帳單上的<b class="hl">「本期應繳總金額」</b>。<br>（可能包含上期未繳、分期、年費、利息，並扣除已繳款，因此通常不會等於匯入金額。）</li>
+          <li>若匯入時選錯信用卡，可按<b class="hl">「改卡片」</b>，一次將整批帳單移至正確的卡片。</li>
+        </ul>
         <div class="tbl-wrap"><table>
           <thead><tr><th>卡片</th><th>帳單年月</th><th class="num">筆數</th><th class="num">匯入金額</th><th class="num">應繳金額</th><th></th></tr></thead>
           <tbody>${rows || '<tr><td colspan="6" class="empty">尚無匯入批次。</td></tr>'}</tbody>
