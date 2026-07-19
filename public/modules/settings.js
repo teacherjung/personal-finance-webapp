@@ -422,7 +422,7 @@ function openCategoryEditor(tree) {
   byId('catSave').onclick = async () => {
     syncFromDom();
     /** @type {Record<string,string[]>} */
-    const outTree = {};
+    const outTree = Object.create(null);   // 大類名是使用者文字：普通物件遇「__proto__」不是寫鍵、是換原型——鍵在送出前就消失，後端收到 {} 卻回報「儲存成功」（Codex r6#3）。null-proto 讓保留字成為自有鍵、真的送到後端拿 400，使用者才看得到真錯誤
     /** @type {{from:string,to:string}[]} */
     const parentRenames = [];
     /** @type {{parent:string,from:string,to:string}[]} */

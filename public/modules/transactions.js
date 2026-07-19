@@ -190,7 +190,7 @@ function openStoreProfile(t, all) {
   }
   // 同店不同寫法（外送／分店）小計：只有一種寫法就不顯示這區
   /** @type {Record<string, {count: number, total: number}>} */
-  const variants = {};
+  const variants = Object.create(null);   // 備註是使用者/帳單文字：普通物件遇「__proto__」時 ||= 撈到的是 Object.prototype 本尊（truthy 不重新賦值）→ 直接在全域原型上 count++（Codex r6#3 實測）
   for (const x of grp) { const n = String(x.note || '（無說明）'); const v = (variants[n] ||= { count: 0, total: 0 }); v.count++; v.total += Number(x.amount || 0); }
   const vEntries = Object.entries(variants).sort((a, b) => b[1].total - a[1].total);
   const variantHtml = vEntries.length > 1 ? `

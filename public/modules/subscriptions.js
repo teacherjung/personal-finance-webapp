@@ -28,7 +28,9 @@ function serviceNameHtml(s) {
   return `<b class="service-name">${esc(s.name)}</b>`;
 }
 function cardLabel(name) {
-  return ({ '台新': '台新卡', '富邦': '富邦卡', '遠銀': '遠銀卡' })[name] || name || '—';
+  // hasOwn（Codex r6#3）：name='toString' 時裸查表撈到原型上的函式（truthy）→ 標籤變函式原始碼、總額算成字串
+  const MAP = { '台新': '台新卡', '富邦': '富邦卡', '遠銀': '遠銀卡' };
+  return (Object.hasOwn(MAP, name) ? MAP[name] : '') || name || '—';
 }
 function normEmail(e) {
   if (!e) return '';
@@ -851,8 +853,8 @@ function drawBreakdown(activeThis, curMk) {
     plugins: [barValueLabels]
   }));
 
-  // 各信用卡總額
-  const byCard = {};
+  // 各信用卡總額。Object.create(null)：卡片名是使用者文字（Codex r6#3——r5#5 那輪漏了這一份）
+  const byCard = Object.create(null);
   activeThis.forEach(s => { const c = cardLabel(s.card || '未指定'); byCard[c] = (byCard[c] || 0) + costForMonth(s, curMk); });
   const cardRows = Object.entries(byCard).sort((a, b) => b[1] - a[1]);
   const cardTable = byId('cardTotalsTable');
