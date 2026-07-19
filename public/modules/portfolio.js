@@ -343,6 +343,9 @@ export async function renderPortfolio() {
       if (r.cashBaseUnsupported) {
         toast(`注意：報表現金只有彙總列、且基準幣別 ${r.cashBaseUnsupported} 尚未支援——IB 現金沿用上次的舊值（可能過期）。`, true);
       }
+      if (r.cashSummaryMissing) {
+        toast('注意：報表現金只有彙總列、且彙總列沒有可用金額——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Cash Report 有勾 Ending Cash。', true);
+      }
       if (r.cashZeroed) {
         toast(`提醒：${r.cashZeroed} 個 IB 現金帳戶這次報表已無該幣別，餘額已歸零（現金提領/轉走後的正常結果）。`);
       }
@@ -674,7 +677,7 @@ function tradeSummary(trades, settings = {}) {
     return base;
   };
   const realized = trades.reduce((s, t) => s + pnlBase(t), 0);
-  const bySym = {};
+  const bySym = Object.create(null);   // null-proto（Codex r8#3）：代號來自 IB/備份匯入的自由字串
   trades.forEach(t => { const p = pnlBase(t); if (p) bySym[t.symbol] = (bySym[t.symbol] || 0) + p; });
   const sorted = Object.entries(bySym).sort((a, b) => b[1] - a[1]);
   return {

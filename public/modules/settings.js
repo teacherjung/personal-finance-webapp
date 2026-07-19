@@ -219,7 +219,7 @@ export async function renderSettings() {
         const catSel = root.querySelector('#f_category');
         const subSel = root.querySelector('#f_subcategory');
         const fill = (/** @type {string} */ parent, /** @type {string} */ curSub) => {
-          const subs = ['', ...((expTree || {})[parent] || [])];
+          const subs = ['', ...((Object.hasOwn(expTree || {}, parent) && (expTree || {})[parent]) || [])];   // hasOwn（Codex r8#3）：同 transactions.js subOptions
           if (curSub && !subs.includes(curSub)) subs.unshift(curSub);
           subSel.innerHTML = subs.map(x => `<option value="${esc(x)}" ${x === curSub ? 'selected' : ''}>${x === '' ? '（不分子類）' : esc(x)}</option>`).join('');
         };
