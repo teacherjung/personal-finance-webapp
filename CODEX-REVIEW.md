@@ -29,57 +29,37 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（2026-07-19；上輪審到 #121，本輪範圍＝#123–#129）
+## 本輪審查重點（2026-07-20；上輪＝r4 審到 #137，本輪範圍＝#138–#142）
 
-本輪合併了兩件**架構層級**的改動，兩者都在既有的「單一櫃檯」上加東西，請重點打這裡。
-新檔三個：`lib/store-rules.js`（純模組）、`lib/services/store-rules.js`、`test/store-rules.test.js`。
+本輪是**驗收輪**：主要對象是「你 r4 六條的修正本身」（#139–#142）＋#138。
+歷史經驗（本週已驗證兩次）：**修正比原始程式更容易出錯**——請帶著這個預期審。
 
-> 註：#123（你上輪 8 條的修正）、#124–#127（分期期數脫鑰匙、帳單年月、應繳金額）也在範圍內，
-> 但主力請放在 1–5 項。另外，本輪已由兩個獨立審查代理做過對抗性自審、修掉 8 條
-> （其中 1 條高：預覽對「唯一不可逆的效果」盲目）——**請不要因為「已自審過」就放輕**，
-> 反而請特別檢查那些修正本身有沒有引入新問題（歷史經驗：修正比原始程式更容易出錯）。
+1. **safe-map 的覆蓋率（#139 的漏網）**：#139 只硬化了學習表（learning.js/schema.js sanitizeLearned）
+   與分類別名（categories.js saveTree 的四張 map）。請找**其他**「使用者文字當 key」的表有沒有同型漏洞：
+   `expenseTree`（Claude 快查過兩條路徑守得住，但 HTTP body 帶「自有 __proto__ 鍵」經 sanitizeTree 的
+   路徑值得你再驗）、`settings.healthDismissed`（ID 含 storeKey）、`storeRules` 各欄、
+   前端 modules 裡的任何同型 map。判準：`JSON.parse('{"__proto__":…}')` 能造出自有鍵，
+   光 `Object.create(null)` 不夠，讀寫兩端都要走 `lib/safe-map.js`。
 
-1. **「規則入櫃檯」（#129）＝本輪最該打的地方**：`lib/repo.js` 現在每次讀取都會呼叫
-   `setUserRules(db.settings?.storeRules)`，把使用者規則餵進 `lib/store-rules.js` 的**模組級單例**。
-   請檢驗：①`repo.js` 內是否真的所有讀取都走 `loadSynced()`（漏一處＝該路徑吃到過期規則）
-   ②模組級可變狀態在「同一個 Node 行程、多個 HTTP 請求交錯」下的正確性
-   ③`setUserRules` 的 JSON 字串比對當快取鍵，有沒有值變了卻比對相同的情況
-   ④這個設計是否讓 `lib/statement.js` 從「純函式」變成「有隱藏輸入」——對既有測試的可信度有無影響。
+2. **#140 IB 現金歸零的誤傷面**：`hasCashReport` 判斷在 IB Flex 真實形狀下（多個 FlexStatement、
+   CashReport 存在但只有 BASE_SUMMARY 列、幣別牆跳過的幣別）會不會把不該歸零的歸零？
+   特別是：EUR 現金被幣別牆跳過時不在 cashSeen 裡——若曾有 EUR 帳戶會被歸零嗎？該嗎？
 
-2. **預覽的覆蓋層（`setRulesOverride`）**：`lib/services/store-rules.js` 的 `withRules` 用
-   try/finally 設定與清除覆蓋層。請檢驗：**巢狀或重入**時的行為（內層 finally 會直接清成 null、
-   而不是還原外層的值——目前是否真的不可能重入？未來哪種呼叫會踩到？）、
-   以及 `previewStoreRules` 之外有沒有別的路徑該用覆蓋層卻用了 `setUserRules`。
+3. **#141 閘門的互動與繞過**：①手動 `POST /api/statement/normalize-branches`（維護用途，UI 已移除）
+   **沒有閘門**、直接套用——這是「維護後門刻意繞過」還是漏洞？請評估後標註，由 Claude 判斷。
+   ②不記指紋＝每次開 app 都 dry-run 一次全庫直到使用者確認——成本與騷擾頻率可接受嗎？
+   ③與 `saveStoreRules(force)` 的組合有沒有「不經確認就套用」的縫。
 
-3. **使用者可控字串的安全性（#129）**：`storeRules` 的 `to` 會成為交易的 `storeKey`，
-   也就是**使用者第一次能決定學習表的 key**。已擋 `__proto__`/`constructor`/`prototype`，
-   但請自己找漏：其他原型污染路徑、`escapeRe` 是否涵蓋所有 regex 元字元、
-   `rename` 的取代字串 `$` 跳脫是否完整、規則造成的 `storeKey` 為空字串或純空白的情形、
-   以及 `sanitizeStoreRules` 與 `compileStoreRules` 兩處對「合法」的認定是否完全一致。
+4. **#142 冪等檢查的 false negative**：`checkRulesIdempotent` 對每條規則的產物 `to` 再清一次——
+   會不會漏掉「產物被內建規則（branchNormalize/BRAND_CANON）而非使用者規則二次改寫」的情形？
+   「跑兩次結果相同」的整組性質，有沒有這個檢查抓不到的反例？
 
-4. **`normalizeBranches` 的 dryRun 語意改變（#129）**：學習表區塊原本整段包在 `if (!dryRun)`，
-   現在**計算照跑、只有寫入跳過**，並回傳 `learnedConflicts`。請檢驗：
-   ①dryRun 路徑真的沒有任何副作用了嗎（該區塊會就地改 `v.name`，已改為淺拷貝——夠不夠？）
-   ②`learnedConflicts` 的判定（兩邊都有值且不同才算衝突）會不會漏報真正會遺失的資料
-   ③這個改動有沒有讓「沒變動就不寫檔」的判定失準。
+5. **平行 PR 會合縫（新 bug class，rebase 時實際抓到）**：#141 寫確認視窗時用 `cf.length`，
+   #142 才引入真實總數——兩個同日 PR 各自全綠，會合後出現「計數用被截斷的長度」縫（已修）。
+   請掃 #139–#142 之間還有沒有同型：A PR 引入的機制，B PR 的新程式碼不知道要用。
 
-5. **D0 日線（#128）**：`dailyValues` 進了 `READONLY_COLLECTIONS`，新型別 `datereq`。
-   `takeSnapshotIfDue` 刻意呼叫私有的 `writeMonthlySnapshot` 而非 `takeSnapshot`（避免寫兩遍）。
-   請檢驗：同日覆寫/跨日累積的邊界（跨月、跨年、系統時間被調整）、
-   `recordDailyValue` 每次開 app 都寫一次全庫的代價、
-   以及**與 `syncIb` 跨 await 覆寫的互動**（已知既有問題：`syncIb` 請求前讀、請求後把過期快照寫回；
-   已另列待辦，**這條不必重複提**，但若你發現 D0 讓它從「一天一次」變成「每次開 app」而有新後果，請說）。
-
-6. **「兩端都測了、中間沒測」這一類漏洞（本輪最想請你找的 bug class）**：
-   使用者實測抓到一個典型案例——`extractStatementMonth`/`extractStatementDue` 有十幾題純解析考題、
-   `importRows` 也有給定明確參數的考題，**但沒有一題測「預覽有沒有把解析到的值交給匯入」**，
-   而前端正是從預覽的回應讀這兩個值再回送的 → 預覽的回傳物件漏挑欄位，值在中間被默默丟掉，
-   症狀是每一批都退回「推估」年月、應繳金額永遠空白（已於 #131 修好並補端到端考題，**不必重複提**）。
-   請用這個角度掃一遍其他跨模組交接：**A 產出 → B 轉手 → C 消費**的鏈路上，B 有沒有漏挑欄位？
-   特別看 `lib/routes/*` 與 `lib/services/*` 之間、以及服務層回傳給前端的物件是否涵蓋前端真的會讀的欄位。
-
-7. **同步點**：AGENTS.md 新增了三列（使用者自訂店名規則／規則入櫃檯／規則的 API 與 UI）
-   與 `dailyValues` 一列，請對照程式檢查是否一致、有無漏記的新同步點。
+6. **#138（顯示名跟著分類走）**：`learnFromStmtEdit` 靠 `updateItem` 的 `prev` 判斷「這次改了什麼」；
+   `applyCategoryToStore` 重算 note。兩條路與 #141/#142 的學習表變動有沒有互相踩。
 
 （此段每輪審查後由 Claude 更新範圍；常青規則在下方不變。）
 
