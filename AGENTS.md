@@ -31,6 +31,7 @@
 1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken、**卡片的帳單 PDF 密碼 `pdfPassword`＝身分證字號**）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股；**seed 的卡片不可放真實 pdfPassword**）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。帳單 PDF 只在記憶體解析、不落地保存。
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
+3.5. **原型污染**（Codex r4#1）：凡是**以使用者文字為 key 的 map**（學習表、分類別名 `categoryAliases`/`subAliases`、將來任何同型的表），寫入前一律過 `lib/safe-map.js`——`setOwn`（原型名回 false 拒收）、`getOwn`（只讀自有屬性）、`emptyMap`（null prototype）、`safeMap`（重建時丟掉原型名 key）。理由：`map['__proto__']={…}` 會污染全域 `Object.prototype`，**實測連 pdfjs 都當場崩潰**（`Object.defineProperty called on non-object`），不只是資料錯。學習表進出資料庫的必經之路＝`schema.sanitizeLearned`（已改 null-proto＋丟原型名）。⚠️ 光靠 `Object.create(null)` 不夠——`JSON.parse('{"__proto__":…}')` 造得出「自有的 __proto__ 鍵」，JSON 來回一趟就退化，所以讀寫兩端都要用 safe-map。
 4. **色彩分工**：
    - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
    - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
