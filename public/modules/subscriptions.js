@@ -451,7 +451,8 @@ function reportStatusTable(headers, rows, empty) {
 
 function reportBreakdown(subs, mk) {
   const active = subs.filter(s => activeInMonth(s, mk));
-  const byCat = {}, byCard = {};
+  // Object.create(null)（Codex r5#5）：分類/卡片名是使用者文字，撞原生屬性名時普通物件會算錯
+  const byCat = Object.create(null), byCard = Object.create(null);
   active.forEach(s => {
     const cost = costForMonth(s, mk);
     byCat[s.category || '未分類'] = (byCat[s.category || '未分類'] || 0) + cost;
@@ -739,8 +740,8 @@ async function toggleCancel(s) {
 }
 
 function drawBreakdown(activeThis, curMk) {
-  // 依類別彙總（每月攤提）
-  const byCat = {};
+  // 依類別彙總（每月攤提）。Object.create(null)：同 reportBreakdown（Codex r5#5）
+  const byCat = Object.create(null);
   activeThis.forEach(s => { const c = s.category || '未分類'; byCat[c] = (byCat[c] || 0) + costForMonth(s, curMk); });
   const catLabels = Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]);
   const catTotal = catLabels.reduce((t, l) => t + Number(byCat[l] || 0), 0);
