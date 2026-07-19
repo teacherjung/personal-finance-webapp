@@ -73,7 +73,7 @@ export async function renderTransactions() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr><th>日期</th><th>分類</th><th>帳戶 / 信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
+      <table><thead><tr><th>消費日</th><th>分類</th><th>帳戶 / 信用卡</th><th id="sortNote" style="cursor:pointer;user-select:none" title="點擊依店名／說明排序">說明 <span class="muted">${noteSortInd}</span></th><th class="num">金額</th><th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="6" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
     </div>
   `;
@@ -369,7 +369,7 @@ function openStatementPreview(cardId, r, b64, cards) {
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {
       // 帳單期別由後端從帳單表頭讀出（curR.statementMonth），跟著匯入一起存進每一筆（使用者定 2026-07-19）
-      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '' } });
+      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null } });
       // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
       const mc = {};
       picked.forEach(t => { const m = (t.date || '').slice(0, 7); if (m) mc[m] = (mc[m] || 0) + 1; });
@@ -485,6 +485,7 @@ async function openBatchManager() {
         ${b.stmtMonth ? '' : '<span class="muted" style="font-size:11px" title="帳單表頭讀不出期別，這是用最後一筆消費日推估的；點左邊可修正">（推估）</span>'}</td>
       <td class="num">${b.count}</td>
       <td class="num">${money(b.amount)}</td>
+      <td class="num" title="帳單自己印的「本期應繳總金額」。與匯入金額本就不同：應繳＝上期未繳＋本期新增＋分期本期＋年費利息−已繳款/退款，而匯入金額只算這次記進帳的消費">${b.stmtDue != null ? money(b.stmtDue) : '<span class="muted">—</span>'}</td>
       <td><div class="row-actions">
         <button class="btn-link btn-sm" data-reassign="${esc(b.batchId)}">改卡片</button>
         <button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button>
@@ -493,10 +494,10 @@ async function openBatchManager() {
     root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
       <div class="modal-head"><h2>帳單匯入批次</h2><button class="x-close">×</button></div>
       <div class="modal-body">
-        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。<b>帳單年月</b>讀自帳單表頭（期別／結帳日）；讀不出來會標「推估」（用最後一筆消費日推的），<b>點年月可手動修正</b>。滑上去可看完整消費日範圍——分期會把範圍拉到很早，屬正常。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
+        <p class="muted" style="font-size:12.5px;margin-bottom:10px">每一列是一次帳單匯入。<b>帳單年月</b>讀自帳單表頭（期別／結帳日）；讀不出來會標「推估」（用最後一筆消費日推的），<b>點年月可手動修正</b>。滑上去可看完整消費日範圍——分期會把範圍拉到很早（分期每期都掛回原始消費日），屬正常。<b>匯入金額</b>＝這次記進帳的消費總和；<b>應繳金額</b>＝帳單自己印的「本期應繳總金額」——兩者本來就不同（應繳還含上期未繳、分期本期、年費利息，並扣掉已繳款）。若當初選錯卡片，按「改卡片」整批改到正確的卡。</p>
         <div class="tbl-wrap"><table>
-          <thead><tr><th>卡片</th><th>帳單年月</th><th class="num">筆數</th><th class="num">金額</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="5" class="empty">尚無匯入批次。</td></tr>'}</tbody>
+          <thead><tr><th>卡片</th><th>帳單年月</th><th class="num">筆數</th><th class="num">匯入金額</th><th class="num">應繳金額</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6" class="empty">尚無匯入批次。</td></tr>'}</tbody>
         </table></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
       </div>
