@@ -267,6 +267,20 @@ router();
 (async () => {
   try {
     const r = await api('/statement/normalize-auto', { method: 'POST' });
+    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用（Codex r4#2）：平時無感自動跑，
+    // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
+    if (r?.needsConfirmation) {
+      const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
+      const lines = [
+        ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
+        ...nc.slice(0, 4).map((/** @type {any} */ c) => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)];
+      const ok = confirm('店名規則有更新，套用後會蓋掉以下你教過／取過的東西（刪掉規則也救不回來）：\n\n'
+        + lines.join('\n') + `\n\n共 ${cf.length + nc.length} 項。要現在套用嗎？（選取消可稍後到設定頁處理）`);
+      if (!ok) return;
+      const r2 = await api('/statement/normalize-auto', { method: 'POST', body: { force: true } });
+      if (r2?.ran) { toast('店名規則已更新並套用 ✨'); router(); }
+      return;
+    }
     if (!r?.ran) return;
     const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
       r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
