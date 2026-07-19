@@ -846,3 +846,75 @@ test('第一帖｜匯入完成摘要：回報第一次見到的店家與未分�
   const txs = await GET('/transactions');
   for (const r of rows) { const t = txs.find(x => x.stmtRef === r.stmtRef); if (t) await DELETE_(`/transactions/${t.id}`); }
 });
+
+test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久化與還原', async () => {
+  const mk = (d, amt, cat, sub, note, key, orig) => POST('/transactions', {
+    date: d, type: 'expense', category: cat, subcategory: sub, amount: amt,
+    note, storeKey: key, stmtRef: `cH|${d}|${amt}|${orig}`, source: 'stmt' });
+  const made = [];
+  const add = async (...a) => { made.push((await (await mk(...a)).json()).id); };
+  // D5 未分類（兩筆同店）
+  await add('2026-07-01', 99, '其他', '未分類', 'NextGen（USD/9.99）', 'NEXTGEN', 'NEXTGEN.AIH99');
+  await add('2026-06-01', 99, '其他', '未分類', 'NextGen（USD/9.99）', 'NEXTGEN', 'NEXTGEN.AIH88');
+  // D2 鑰匙吃錯店：醫院鑰匙底下混進火鍋店原文（真實案例）
+  await add('2026-07-02', 800, '健康', '看診', '林口長庚醫院', '林口長庚醫院', '長庚醫療財團法人林口長庚紀念醫H1');
+  await add('2026-07-03', 700, '健康', '看診', '林口長庚醫院', '林口長庚醫院', 'FP-錢都日式涮涮鍋(林口長庚店H2');
+  // D1 前綴對＋D6 簽名對＋D7 分期
+  await add('2026-07-04', 100, '飲食', '餐廳', '潮味決', '潮味決', '潮味決H3');
+  await add('2026-07-05', 200, '飲食', '餐廳', '潮味決.湯滷專門店', '潮味決.湯滷專門店', '潮味決.湯滷專門店H4');
+  await add('2026-07-06', 50, '生活', '3C產品', 'LINEPAY*none', 'LINEPAY*none', 'LINEPAY*noneH5');
+  await add('2026-07-07', 60, '生活', '3C產品', 'LINEPAY*NONE', 'LINEPAY*NONE', 'LINEPAY*NONEH6');
+  await add('2026-07-08', 1000, '生活', '3C產品', 'Apple A第03/12期', 'Apple A第03/12期', 'Apple A第03/12期H7');
+  await add('2026-07-09', 1000, '生活', '3C產品', 'Apple A第04/12期', 'Apple A第04/12期', 'Apple A第04/12期H8');
+  // D4 分類漂移：星巴克被記成娛樂（無學習）；D3 雜訊：尾端城市名
+  await add('2026-07-10', 150, '娛樂', '電影', '星巴克', '星巴克', 'STARBUCKSH9 TAIPEI');
+  await add('2026-07-11', 80, '飲食', '餐廳', '八方雲集Taipei', '八方雲集', '八方雲集H10');
+
+  const h = await GET('/statement/health');
+  const types = (id) => h.items.filter(x => x.id.startsWith(id));
+  assert.ok(types('D5|NEXTGEN').length === 1, 'D5 未分類要聚合成一件');
+  assert.equal(types('D5|NEXTGEN')[0].data.count, 2);
+  assert.ok(types('D2|林口長庚醫院').length === 1, 'D2 要抓到鑰匙底下分類異質（醫院混火鍋）');
+  assert.ok(h.items.some(x => x.id === 'D1|潮味決↔潮味決.湯滷專門店'), 'D1 前綴鑰匙對');
+  assert.ok(h.items.some(x => x.type === 'key-dup' && x.data.keys.includes('LINEPAY*NONE')), 'D6 大小寫分家');
+  assert.ok(h.items.some(x => x.type === 'installment' && x.data.keys.length === 2), 'D7 分期分裂聚成一件');
+  const d4 = h.items.find(x => x.id === 'D4|STARBUCKSH9 TAIPEI');
+  assert.ok(d4, 'D4 分類漂移（星巴克≠娛樂、無學習）');
+  assert.equal(d4.data.auto.category, '飲食');
+  assert.ok(h.items.some(x => x.id === 'D3|八方雲集H10'), 'D3 顯示名殘留城市名');
+  assert.ok(h.items[0].severity >= h.items[h.items.length - 1].severity, '嚴重度大到小排序');
+  // 略過：持久化＋還原
+  const before = h.items.length;
+  await POST('/statement/health/dismiss', { id: 'D5|NEXTGEN' });
+  const h2 = await GET('/statement/health');
+  assert.equal(h2.items.length, before - 1, '略過的不再出現');
+  assert.equal(h2.dismissed, 1);
+  await POST('/statement/health/dismiss', { clearAll: true });
+  const h3 = await GET('/statement/health');
+  assert.equal(h3.items.length, before, '清空略過＝全部重新顯示');
+  assert.equal((await POST('/statement/health/dismiss', {})).status, 400, '缺 id 又沒 clearAll → 400');
+  // D4 的兩個動作走 rename-store（既有端點）：保留現值 → 學起來 → 不再報
+  await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', name: '星巴克', category: '娛樂', subcategory: '電影' });
+  const h4 = await GET('/statement/health');
+  assert.ok(!h4.items.some(x => x.id === 'D4|STARBUCKSH9 TAIPEI'), '學過＝使用者故意的，不再報漂移');
+  await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', reset: true });
+  for (const id of made) await DELETE_(`/transactions/${id}`);
+  await POST('/statement/health/dismiss', { clearAll: true });
+});
+
+test('第二帖｜匯入留底 autoCat/autoSub（日後精確分辨「人改的 vs 機器判的」）', async () => {
+  const cards = await GET('/cards');
+  const card = cards[0] || (await (await POST('/cards', { name: '留底測試卡', type: 'credit' })).json());
+  const desc = 'STARBUCKSAB12 TAIPEI';
+  // 使用者在預覽把分類改成娛樂（≠自動的飲食）→ 匯入後留底要記「自動＝飲食」
+  const out = await (await POST(`/cards/${card.id}/statement/import`, { transactions: [{
+    date: '2026-07-31', amount: 120, desc, store: '星巴克', category: '娛樂', subcategory: '電影',
+    stmtRef: `${card.id}|2026-07-31|120|${desc}` }] })).json();
+  assert.equal(out.imported, 1);
+  const tx = (await GET('/transactions')).find(t => t.stmtRef === `${card.id}|2026-07-31|120|${desc}`);
+  assert.equal(tx.category, '娛樂', '使用者選的分類照存');
+  assert.equal(tx.autoCat, '飲食', '匯入當下的純自動判斷留底');
+  assert.equal(tx.autoSub, '飲料／咖啡');
+  await DELETE_(`/transactions/${tx.id}`);
+  await POST('/learned/delete', { key: '星巴克' });   // learnFromImport 學走的，清掉免污染其他考題
+});
