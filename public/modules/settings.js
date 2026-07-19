@@ -592,14 +592,18 @@ function openStoreRulesEditor(rules) {
       catch (e) { return toast('無法確認這些規則會改到什麼，為安全起見沒有儲存：' + e.message, true); }
       const cf = pre?.learnedConflicts || [];
       const nc = pre?.learnedNameChanges || [];
-      if (cf.length || nc.length) {
+      // ⚠️ 用**真實總數**（Total），不是被截到 50 的陣列長度（Codex r4#5）：
+      // 52 家併起來理論上 51 個衝突，明細只回 50，若用 cf.length 算，第 51 個會被無聲捨棄。
+      const cfTotal = pre?.learnedConflictTotal ?? cf.length;
+      const ncTotal = pre?.learnedNameChangeTotal ?? nc.length;
+      if (cfTotal || ncTotal) {
         const lines = [
           ...cf.slice(0, 5).map(c => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
           ...nc.slice(0, 5).map(c => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)
         ];
-        const extra = (cf.length > 5 ? cf.length - 5 : 0) + (nc.length > 5 ? nc.length - 5 : 0);
-        if (!confirm(`有 ${cf.length + nc.length} 項你教過／取過的東西會被蓋掉，刪掉規則也救不回來：\n\n`
-          + lines.join('\n') + (extra ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
+        const extra = cfTotal + ncTotal - Math.min(cf.length, 5) - Math.min(nc.length, 5);
+        if (!confirm(`有 ${cfTotal + ncTotal} 項你教過／取過的東西會被蓋掉，刪掉規則也救不回來：\n\n`
+          + lines.join('\n') + (extra > 0 ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
       }
       const r = await api('/statement/rules', { method: 'POST', body: { rules } });
       close();
@@ -615,8 +619,8 @@ function openStoreRulesEditor(rules) {
 // 分成兩件事講，因為它們的嚴重度不同：顯示名改錯了再改回來就好，**身分鑰匙**改了會影響
 // 「哪些消費算同一家店」（統計、排行、學習全部跟著動），所以獨立標出來。
 /** @param {{changed:number, keyChanged:number, changes:{id:string,before:string,after:string}[],
- *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[],
- *            learnedNameChanges:{key:string,before:string,after:string}[]}} r
+ *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[], learnedConflictTotal?:number,
+ *            learnedNameChanges:{key:string,before:string,after:string}[], learnedNameChangeTotal?:number}} r
  *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開） */
 function openRulePreview(r, onBack) {
   const root = byId('modal-root');
@@ -626,21 +630,22 @@ function openRulePreview(r, onBack) {
   const FIELD_LABEL = { category: '分類', subcategory: '子分類', name: '顯示名' };
   const conflicts = r.learnedConflicts || [];
   const nameChanges = r.learnedNameChanges || [];
+  const cfTotal = r.learnedConflictTotal ?? conflicts.length, ncTotal = r.learnedNameChangeTotal ?? nameChanges.length;
   const blank = (/** @type {string} */ v) => v || '（清除，改回系統自動判斷）';
   const conflictHtml = conflicts.length ? `
     <div class="rule-warn">
-      <b>⚠️ 有 ${conflicts.length} 項你教過的設定會被蓋掉，而且刪掉規則也救不回來</b>
+      <b>⚠️ 有 ${cfTotal} 項你教過的設定會被蓋掉，而且刪掉規則也救不回來</b>
       <p>這些店被合併成同一家，但你當初教系統的答案不一樣——只能留一個：</p>
-      <ul>${conflicts.map(c => `<li>「${esc(c.key)}」的${esc(FIELD_LABEL[c.field] || c.field)}：留下 <b>${esc(c.kept)}</b>，<span class="rule-drop">捨棄 ${esc(c.dropped)}</span></li>`).join('')}</ul>
+      <ul>${conflicts.map(c => `<li>「${esc(c.key)}」的${esc(FIELD_LABEL[c.field] || c.field)}：留下 <b>${esc(c.kept)}</b>，<span class="rule-drop">捨棄 ${esc(c.dropped)}</span></li>`).join('')}${cfTotal > conflicts.length ? `<li class="muted">…另外 ${cfTotal - conflicts.length} 項（清單僅顯示前 ${conflicts.length} 筆）</li>` : ''}</ul>
       <p>如果捨棄的那個才是你要的，先回去把它改成一致，再套用規則。</p>
     </div>` : '';
   // 學過的「自訂店名」被改寫／清除——比分類衝突更隱蔽：這些可能是已經沒有交易對應的孤兒學習，
   // 顯示名與鑰匙的計數都是 0，不特別講出來，畫面上會顯示成「什麼都不會改」。
   const nameHtml = nameChanges.length ? `
     <div class="rule-warn">
-      <b>⚠️ 有 ${nameChanges.length} 個你自己取的店名會被新規則改掉，刪掉規則也還原不回來</b>
+      <b>⚠️ 有 ${ncTotal} 個你自己取的店名會被新規則改掉，刪掉規則也還原不回來</b>
       <p>這些是你當初手動命名、系統記住的名字（有些目前沒有對應的記錄，所以上面的筆數看不到它們）：</p>
-      <ul>${nameChanges.map(c => `<li>「${esc(c.key)}」：<b>${esc(c.before)}</b> → <span class="rule-drop">${esc(blank(c.after))}</span></li>`).join('')}</ul>
+      <ul>${nameChanges.map(c => `<li>「${esc(c.key)}」：<b>${esc(c.before)}</b> → <span class="rule-drop">${esc(blank(c.after))}</span></li>`).join('')}${ncTotal > nameChanges.length ? `<li class="muted">…另外 ${ncTotal - nameChanges.length} 項（清單僅顯示前 ${nameChanges.length} 筆）</li>` : ''}</ul>
       <p>想留住原本的名字，就先回去把規則改得窄一點，別命中這幾家。</p>
     </div>` : '';
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">

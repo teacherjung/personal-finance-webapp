@@ -411,3 +411,48 @@ test('孤兒學習清單：列出「對不上任何現存交易」的學習條�
   assert.deepEqual(r.items.map(i => i.key), ['早就刪掉的店']);
   assert.equal(r.items[0].category, '娛樂', '要帶出內容，使用者才判斷得了要不要刪');
 });
+
+// ---------- Codex 第四輪的三條（規則驗證收尾）----------
+
+test('r4#6｜非法 mode 整條剝除，不默默降成最寬的 contains', () => {
+  const bad = [];
+  const r = sanitizeStoreRules({ canon: [
+    { match: 'A', to: 'X', mode: 'containz' },   // 拼錯 → 整條丟掉（原本會變 contains，命中一大票）
+    { match: 'B', to: 'Y' },                     // mode 缺席 → 用預設 contains（合法）
+    { match: 'C', to: 'Z', mode: 'exact' }
+  ] }, bad);
+  assert.deepEqual(r.canon.map(e => e.match), ['B', 'C'], '拼錯 mode 的那條要被丟掉');
+  assert.equal(r.canon[0].mode, 'contains', 'mode 缺席才用預設');
+  assert.ok(bad.some(b => b.includes('canon')), '要回報哪條被丟');
+});
+
+test('r4#5｜預覽回傳「真實總數」，不是被截到 50 的陣列長度', async () => {
+  const { previewStoreRules } = await import('../lib/services/store-rules.js');
+  // 52 個原文各學過不同分類、storeKey 也各異，一條 chains 規則把它們併成同一把 → 產生大量衝突
+  /** @type {any[]} */
+  const txs = [];
+  /** @type {Record<string, any>} */
+  const learned = {};
+  for (let i = 0; i < 52; i++) {
+    const branch = String.fromCharCode(0x4e00 + i) + '店';   // 純中文分店（chains 才切得動）
+    const orig = `合作社${branch}`;
+    txs.push({ id: 't' + i, date: '2026-07-01', type: 'expense', category: '飲食', amount: 1,
+      note: orig, storeKey: `合作社${branch}`, source: 'stmt', stmtRef: `c1|2026-07-01|1|${orig}` });
+    learned[`合作社${branch}`] = { category: i % 2 ? '飲食' : '娛樂', subcategory: i % 2 ? '零食' : '電影' };
+  }
+  store.save({ ...store.emptyDb(), transactions: txs, learnedCategories: learned });
+  const r = previewStoreRules({ chains: ['合作社'] });
+  assert.ok(r.learnedConflicts.length <= 50, '明細有截斷（控制回應大小）');
+  assert.ok(r.learnedConflictTotal > r.learnedConflicts.length, '但總數要回報真實值，不是被截的長度');
+});
+
+test('r4#4｜跨規則串接（甲→乙、丙→甲）不冪等 → 儲存時擋下', async () => {
+  const { saveStoreRules, checkRulesIdempotent } = await import('../lib/services/store-rules.js');
+  store.save(store.emptyDb());
+  // 兩條互不包含、各自都過自我冪等，但串起來會讓「丙」每整理一次再變一次（丙→甲→乙）
+  assert.ok(checkRulesIdempotent(sanitizeStoreRules({ rename: [{ match: '甲', to: '乙' }, { match: '丙', to: '甲' }] })).length,
+    '冪等檢查要抓到串接');
+  assert.throws(() => saveStoreRules({ rename: [{ match: '甲', to: '乙' }, { match: '丙', to: '甲' }] }), /愈整理愈亂/);
+  // 一步到位的正常規則不誤擋
+  assert.equal(checkRulesIdempotent(sanitizeStoreRules({ chains: ['鮮芋仙'], rename: [{ match: '全家便利商店', to: '全家' }] })).length, 0);
+});
