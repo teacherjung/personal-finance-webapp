@@ -194,11 +194,21 @@ function openTargets(targets) {
   root.querySelector('#addRow').onclick = () => { targets = collect(); targets.push({ class: '', targetPct: 0 }); root.querySelector('#tRows').innerHTML = rows(); bind(); };
   function bind() { root.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { targets = collect(); targets.splice(Number(b.dataset.rm), 1); root.querySelector('#tRows').innerHTML = rows(); bind(); }); }
   bind();
-  root.querySelector('#saveT').onclick = async () => {
+  const saveBtn = /** @type {HTMLButtonElement} */ (root.querySelector('#saveT'));
+  saveBtn.onclick = async () => {
+    if (saveBtn.disabled) return;                          // 防連點（自主體檢：連點＝重複 POST 讓目標翻倍）
+    saveBtn.disabled = true;
     const next = collect();
-    const cur = await api('/assetTargets');
-    for (const t of cur) await api('/assetTargets/' + t.id, { method: 'DELETE' });
-    for (const t of next) await api('/assetTargets', { method: 'POST', body: t });
-    toast('目標配置已更新'); close(); renderAssets();
+    try {
+      const cur = await api('/assetTargets');
+      for (const t of cur) await api('/assetTargets/' + t.id, { method: 'DELETE' });
+      for (const t of next) await api('/assetTargets', { method: 'POST', body: t });
+      toast('目標配置已更新'); close(); renderAssets();
+    } catch (err) {
+      // 中途失敗：舊的已刪一部分、新的沒建完 → 明確告知並刷新呈現真實狀態（自主體檢）
+      saveBtn.disabled = false;
+      toast('儲存目標配置時發生錯誤，請重新開啟確認目前狀態：' + (/** @type {any} */ (err).message || ''), true);
+      renderAssets();
+    }
   };
 }

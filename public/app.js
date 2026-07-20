@@ -128,7 +128,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     } else if (f.type === 'textarea') {
       input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
     } else if (f.type === 'checkbox') {
-      input = `<select id="${id}"><option value="true" ${v !== false ? 'selected' : ''}>是</option><option value="false" ${v === false ? 'selected' : ''}>否</option></select>`;
+      // 預設「否」（自主體檢，高）：只有明確 v===true 才選「是」——否則新表單的 applyAll（同時套用整店分類）
+      // 會預設勾選，編輯單筆就默默整店改分類＋種品牌學習。opt-in 型旗標寧可預設關。
+      input = `<select id="${id}"><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
     } else {
       input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
     }
@@ -148,15 +150,21 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
   bindBackdropClose(root, close);
   root.querySelector('#modalForm').onsubmit = async (e) => {
     e.preventDefault();
+    const submitBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#modalForm button[type="submit"], #modalForm .btn'));
+    if (submitBtn?.disabled) return;                       // 已在送出中（防雙擊建兩筆，自主體檢）
     const out = {};
     for (const f of fields) {
-      let val = root.querySelector('#f_' + f.key).value;
-      if (f.type === 'number') val = val === '' ? null : Number(val);
-      if (f.type === 'checkbox') val = val === 'true';
+      const raw = root.querySelector('#f_' + f.key).value;
+      // required 真的驗（自主體檢：以前只畫星號，金額留空可送出寫進 amount=null）
+      if (f.required && String(raw).trim() === '') { toast(`「${f.label}」不能空白`, true); return; }
+      let val = raw;
+      if (f.type === 'number') val = raw === '' ? null : Number(raw);
+      if (f.type === 'checkbox') val = raw === 'true';
       out[f.key] = val;
     }
+    if (submitBtn) submitBtn.disabled = true;
     try { await onSubmit(out); close(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); }   // 失敗才解鎖重試；成功已 close
   };
   if (onMount) onMount(root);
 }
