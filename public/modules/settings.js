@@ -1,13 +1,15 @@
 // @ts-check
-import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openForm } from '../app.js';
+import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openForm, stmtOrig, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
 
 export async function renderSettings() {
+  const seq = currentRouteSeq();
   const [s, txs, expTree, health, rulesRes, orphans] = await Promise.all([
     api('/settings'), api('/transactions'), api('/categories'),
     api('/statement/health').catch(() => ({ items: [], dismissed: 0 })),
     api('/statement/rules').catch(() => ({ rules: null })),
     api('/statement/learned/orphans').catch(() => ({ items: [], total: 0 }))]);
+  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   const myRules = rulesRes?.rules || null;
   const ruleCount = myRules ? Object.values(myRules).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0) : 0;
   // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
@@ -16,9 +18,7 @@ export async function renderSettings() {
   const keyCount = new Map();   // 品牌鑰匙 → 帳單交易總筆數（「同店一起改」算「其他 N 筆」用）
   for (const t of txs || []) {
     if (t.source !== 'stmt' || !t.stmtRef) continue;
-    const parts = String(t.stmtRef).split('|');   // stmtRef＝卡id|消費日|金額|原始說明
-    if (parts.length < 4) continue;
-    const orig = parts.slice(3).join('|').trim();   // 原文可能含「|」→ 取第 3 個分隔後全部
+    const orig = stmtOrig(t.stmtRef);   // 剝去重序號 |#N（Codex r10#5）——不然同店第 2 筆會裂成「星巴克|#2」另一列
     if (!orig) continue;
     const k = String(t.storeKey || '').trim();
     if (k) keyCount.set(k, (keyCount.get(k) || 0) + 1);
@@ -126,6 +126,7 @@ export async function renderSettings() {
       </p>
       <div class="form-grid">
         <div class="full"><label>Flex Web Service Token</label><input id="flexToken" type="password" value="" placeholder="${s.ib?.flexTokenSet ? '已設定，留空＝不變更' : '貼上 token'}" /></div>
+        ${s.ib?.flexTokenSet ? '<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearFlexToken" type="checkbox"> 清除已存的 Token（改回未設定）</label></div>' : ''}
         <div class="full"><label>Flex Query ID</label><input id="flexQueryId" value="${esc(s.ib?.flexQueryId || '')}" placeholder="例：123456" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="saveIb">儲存 IB 設定</button></div>
@@ -184,7 +185,9 @@ export async function renderSettings() {
   byId('saveIb').onclick = () => {
     // flexToken 留空＝不變更（後端 ib 是巢狀合併，不送就保留舊 token，自主體檢 Q3）
     const ib = /** @type {any} */ ({ flexQueryId: val('flexQueryId') });
-    if (val('flexToken')) ib.flexToken = val('flexToken');
+    // 勾「清除」→ 明確送空字串清空（後端接受 '' ＝清除，Codex r10#10）；否則有打才更新、留空＝不變更
+    if (/** @type {HTMLInputElement} */ (byId('clearFlexToken'))?.checked) ib.flexToken = '';
+    else if (val('flexToken')) ib.flexToken = val('flexToken');
     saveSettings({ ib }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
   };
   byId('manageCatsBtn').onclick = async () => {

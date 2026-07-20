@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, pct, esc } from '../app.js';
+import { api, view, byId, wan, pct, esc, currentRouteSeq } from '../app.js';
 import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -57,7 +57,9 @@ function actionList(reminders) {
 }
 
 export async function renderDashboard() {
+  const seq = currentRouteSeq();
   const s = await api('/summary');
+  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6：router 事後檢查太晚，寫入在 render 內部）
   destroyCharts();
 
   const cf = s.cashflow;

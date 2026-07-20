@@ -150,9 +150,11 @@ function hTri(key) {
 }
 
 export async function renderPortfolio() {
+  const seq = currentRouteSeq();
   const [holdings, watchlist, research, settings, psnaps, accounts, ibTrades, summary] = await Promise.all([
     api('/holdings'), api('/watchlist'), api('/research'), api('/settings'), api('/portfolioSnapshots'), api('/accounts'), api('/ibTrades'), api('/summary')
   ]);
+  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）——初次渲染以前沒守，只有背景 ibSync 有守
   if (lineChart) { lineChart.destroy(); lineChart = null; }
   const fx = fxTable(settings);
   usdRate = fx.USD;
@@ -178,7 +180,9 @@ export async function renderPortfolio() {
   // 沒有才自算（source:'ib' 持倉 ÷ 淨值、融資＝ibCashCur 負餘額）。與 lib/derive.js 規則 7 為同步點。
   const eqIb = settings.ib?.lastEquity;
   let ibValTwd, negCashTwd;
-  if (eqIb && Number(eqIb.stock) > 0) {
+  // 持股>0 或現金為負（欠款）就採用官方資料（Codex r10#1，與後端同步點）——全平倉只剩欠款
+  // （stock=0, cash<0）別被 stock>0 的門擋掉退回自算、把融資訊號弄丟。
+  if (eqIb && (Number(eqIb.stock) > 0 || Number(eqIb.cash) < 0)) {
     ibValTwd = Number(eqIb.stock) * fx.USD;
     negCashTwd = Math.min(Number(eqIb.cash) || 0, 0) * fx.USD;
   } else {
@@ -189,7 +193,7 @@ export async function renderPortfolio() {
   const netEquity = ibValTwd + negCashTwd;
   // 與 lib/derive.js computeLeverage 同步：有借款且持倉>0 時，淨值≤0＝已跌破本金（比斷頭更慘），
   // 應為 Infinity（極度危險），不可 fallback 成 1（會把最危險狀態顯示成「無槓桿」，Codex 實測）。
-  const hasLoan = loanTwd > 0 && ibValTwd > 0;
+  const hasLoan = loanTwd > 0;   // 有欠款就成立（Codex r10#1）——不再要求 ibValTwd>0，否則持股歸零只剩欠款判不出融資
   const leverage = hasLoan ? (netEquity > 0 ? ibValTwd / netEquity : Infinity) : 1;
   const goldAccV = (accounts || []).filter(a => Number(a.balance) > 0 && a.class === '黃金').reduce((s, a) => s + accTwd(a), 0);
   const goldAll = goldV + goldAccV;
@@ -1438,8 +1442,9 @@ async function refreshQuotes(btn, holdings, watchlist, settings) {
     for (const h of holdings) {
       const q = h.quoteSymbol && quotes[h.quoteSymbol];
       if (!q || q.price == null) { if (h.quoteSymbol) skip++; continue; }
-      // 防呆：報價幣別與持股幣別不符（例如 GBp）就跳過
-      if (q.currency && q.currency.toUpperCase() !== (h.currency || 'USD').toUpperCase()) { skip++; continue; }
+      // 防呆：報價幣別與持股幣別不符（例如 GBp）就跳過。缺幣別預設 TWD（Codex r10#8，與估值端 h.currency||'TWD'
+      // 同口徑）——原本這裡預設 USD，害缺幣別的台股收到 Yahoo 的 TWD 報價被誤判「幣別不符」而不更新。
+      if (q.currency && q.currency.toUpperCase() !== (h.currency || 'TWD').toUpperCase()) { skip++; continue; }
       await api('/holdings/' + h.id, { method: 'PUT', body: { price: Math.round(q.price * 100) / 100 } });
       ok++;
     }

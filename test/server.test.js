@@ -1016,3 +1016,44 @@ test('帳單年月（使用者定 2026-07-19）：匯入時存進每一筆、批
   assert.equal((await POST('/statement/batch/month', { batchId: '不存在的批次', month: '2026-07' })).status, 404);
   await DELETE_(`/transactions/${tx.id}`);
 });
+
+// ---- Codex r10 修正（HTTP 全鏈路）----
+
+test('r10#2｜寫入端也剝機密：PUT /settings 與卡片 POST/PUT 回應不可含 flexToken／pdfPassword', async () => {
+  // 先設一個 token，再改別的欄位 → PUT 回應不可把 token 送回（只 GET 剝、PUT 不剝＝改匯率就外洩）
+  await PUT('/settings', { ib: { flexToken: 'SECRET_TOK_123', flexQueryId: 'Q1' } });
+  const putRes = await (await PUT('/settings', { usdTwd: 33 })).json();
+  assert.ok(!('flexToken' in (putRes.ib || {})), 'PUT /settings 回應不可含 flexToken');
+  assert.equal(putRes.ib?.flexTokenSet, true, 'PUT /settings 回應改以 flexTokenSet 布林告知');
+  // 卡片 POST：帶 pdfPassword → 回應剝掉、改回報 pdfPasswordSet
+  const created = await (await POST('/cards', { name: 'r10投影卡', type: 'credit', pdfPassword: 'A123456789' })).json();
+  assert.ok(!('pdfPassword' in created), 'POST /cards 回應不可含 pdfPassword');
+  assert.equal(created.pdfPasswordSet, true);
+  // 卡片 PUT：只改名字、沒送密碼 → 回應也不可把存的密碼吐回
+  const putc = await (await PUT('/cards/' + created.id, { name: 'r10投影卡改名' })).json();
+  assert.ok(!('pdfPassword' in putc), 'PUT /cards 回應不可含 pdfPassword（即使沒送也別把存的吐回）');
+  await DELETE_('/cards/' + created.id);
+  await PUT('/settings', { ib: { flexToken: '' } });   // 清掉，不污染後續
+});
+
+test('r10#3｜匯入內層也 fail-closed：自訂分類/店名規則有壞值 → 整份退回 400、不清空既有資料', async () => {
+  const before = await GET('/categories');
+  // 內層值型別錯（expenseTree 的值該是 string[]、storeRules.rename 該是陣列）→ 以前靜默剝除回 200、把樹/規則清空
+  assert.equal((await POST('/import', { settings: { expenseTree: { 餐飲: 'oops' } } })).status, 400, 'expenseTree 內層壞值 → 400');
+  assert.equal((await POST('/import', { settings: { storeRules: { rename: 'oops' } } })).status, 400, 'storeRules 內層壞值 → 400');
+  assert.deepEqual(await GET('/categories'), before, '被拒的匯入不可改動既有分類樹（什麼都不動）');
+});
+
+test('r10#10｜可以真正清除機密：送空字串 → flexToken／pdfPassword 清空（flexTokenSet／pdfPasswordSet 變 false）', async () => {
+  // flexToken
+  await PUT('/settings', { ib: { flexToken: 'TOK_TO_CLEAR' } });
+  assert.equal((await GET('/settings')).ib?.flexTokenSet, true, '設定後 flexTokenSet=true');
+  await PUT('/settings', { ib: { flexToken: '' } });
+  assert.equal((await GET('/settings')).ib?.flexTokenSet, false, '送空字串 → 清除，flexTokenSet=false');
+  // pdfPassword
+  const card = await (await POST('/cards', { name: 'r10清除卡', type: 'credit', pdfPassword: 'A123456789' })).json();
+  assert.equal(card.pdfPasswordSet, true);
+  await PUT('/cards/' + card.id, { pdfPassword: '' });
+  assert.equal((await GET('/cards')).find(c => c.id === card.id)?.pdfPasswordSet, false, '送空字串 → 清除 pdfPassword');
+  await DELETE_('/cards/' + card.id);
+});
