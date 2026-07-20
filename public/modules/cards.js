@@ -95,15 +95,18 @@ function openCardForm(c) {
       { key: 'statementDay', label: '結帳日（信用卡，幾號）', type: 'number', placeholder: '5' },
       { key: 'dueDay', label: '繳款日（信用卡，幾號）', type: 'number', placeholder: '20' },
       { key: 'annualFee', label: '年費（信用卡）', type: 'number' },
-      { key: 'pdfPassword', label: '帳單 PDF 密碼（只存這台電腦、永不上傳）', type: 'password', placeholder: '通常是身分證字號' },
+      { key: 'pdfPassword', label: '帳單 PDF 密碼（只存這台電腦、永不上傳）', type: 'password', placeholder: c?.pdfPasswordSet ? '已設定，留空＝不變更' : '通常是身分證字號' },
       { key: 'memberId', label: '會員編號（會員卡）', type: 'text' },
       { key: 'level', label: '等級（會員卡）', type: 'text', placeholder: '例：金卡 / 鑽石' },
       { key: 'expiry', label: '有效期限（年/月，卡面 MM/YY）', type: 'month' },
       { key: 'benefits', label: '權益 / 回饋', type: 'textarea', full: true, placeholder: '例：國內 3% 回饋、機場接送 2 次' },
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
-    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : {},   // 舊資料完整日期 → 年/月預填
+    // 機密不預填（自主體檢）：GET /api/cards 已剝掉 pdfPassword，編輯時本來就沒有值可填
+    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : {},
     onSubmit: async (data) => {
+      // 編輯時 pdfPassword 留空＝不變更（後端 PUT 是部分合併，不送就保留舊密碼）；有打才更新
+      if (c && (data.pdfPassword == null || data.pdfPassword === '')) delete data.pdfPassword;
       if (c) await api('/cards/' + c.id, { method: 'PUT', body: data });
       else await api('/cards', { method: 'POST', body: data });
       toast('已儲存'); renderCards();

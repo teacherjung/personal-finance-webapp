@@ -479,3 +479,32 @@ test('自主體檢｜dismissHealthItem(clearAll)：pruned 回真實清除數（�
   assert.equal(r.pruned, 3, '清空前有 3 筆，pruned 要回 3（原本清完再數＝恆 0）');
   assert.deepEqual(store.load().settings.healthDismissed, {}, '確實清空');
 });
+
+test('自主體檢｜機密投影：/cards /db /settings 不外洩 pdfPassword/flexToken，但 /export 完整保留', async () => {
+  await fetch(base + '/api/cards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '卡', type: 'credit', issuer: '台新', pdfPassword: 'A123456789' }) });
+  await fetch(base + '/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ib: { flexToken: 'TK', flexQueryId: 'Q1' } }) });
+  const cards = await (await fetch(base + '/api/cards')).json();
+  assert.ok(!('pdfPassword' in cards[0]), '/cards 不可外洩 pdfPassword（身分證字號）');
+  assert.equal(cards[0].pdfPasswordSet, true, '改以 pdfPasswordSet 布林告知已設定');
+  const settings = await (await fetch(base + '/api/settings')).json();
+  assert.ok(!('flexToken' in settings.ib), '/settings 不可外洩 flexToken');
+  assert.equal(settings.ib.flexTokenSet, true);
+  const db = await (await fetch(base + '/api/db')).json();
+  assert.ok(!('pdfPassword' in db.cards[0]) && !('flexToken' in db.settings.ib), '/db 兩者都剝');
+  const exp = await (await fetch(base + '/api/export')).json();
+  assert.equal(exp.cards.find(c => c.name === '卡').pdfPassword, 'A123456789', '備份必須完整保留密碼（否則還原遺失）');
+  assert.equal(exp.settings.ib.flexToken, 'TK', '備份保留 token');
+});
+
+test('自主體檢｜編輯卡片密碼留空＝不變更：PUT 不帶 pdfPassword，舊密碼保留', async () => {
+  const card = await (await fetch(base + '/api/cards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '卡2', type: 'credit', issuer: '富邦', pdfPassword: 'B222222222' }) })).json();
+  await fetch(`${base}/api/cards/${card.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '卡2改名' }) });   // 不帶 pdfPassword＝前端留空的效果
+  const exp = await (await fetch(base + '/api/export')).json();
+  const c = exp.cards.find(x => x.id === card.id);
+  assert.equal(c.name, '卡2改名');
+  assert.equal(c.pdfPassword, 'B222222222', '留空不送＝後端部分合併保留舊密碼');
+});
