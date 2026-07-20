@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq } from '../app.js';
 import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -12,7 +12,9 @@ const ACCOUNT_TYPES = [
 let chart;
 
 export async function renderAssets() {
+  const seq = currentRouteSeq();
   const [db, alloc] = await Promise.all([api('/db'), api('/summary')]);
+  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）
   const accounts = db.accounts || [];
   const a = alloc.allocation;
   if (chart) { chart.destroy(); chart = null; }

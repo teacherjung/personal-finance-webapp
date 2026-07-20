@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass, stmtOrig, currentRouteSeq } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { INCOME_CATEGORIES } from './categories.js';
@@ -21,7 +21,9 @@ let monthFilter = monthKey();
 let listSort = { key: 'date', dir: 'desc' };
 
 export async function renderTransactions() {
+  const seq = currentRouteSeq();
   const [all, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
+  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   expTree = tree && typeof tree === 'object' ? tree : {};
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
@@ -122,9 +124,8 @@ export async function renderTransactions() {
 function rowHtml(t) {
   const isIn = t.type === 'income';
   // 滑到顯示名＝看帳單原文（使用者定 2026-07-18：只放原文本身，不加前綴、不加點擊說明）；
-  // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑）；手動記帳無原文＝無 tooltip（hover 變色已示意可點）
-  const parts = String(t.stmtRef || '').split('|');
-  const orig = (t.source === 'stmt' && parts.length >= 4) ? parts.slice(3).join('|').trim() : '';
+  // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑，剝去重序號 |#N，Codex r10#5）；手動記帳無原文＝無 tooltip
+  const orig = t.source === 'stmt' ? stmtOrig(t.stmtRef) : '';
   const tip = orig ? ` title="${esc(orig)}"` : '';
   // 支出且有店名 → 店名可點（開「店家消費檔案」彈窗）；收入或空說明維持純文字
   const noteCell = (!isIn && String(t.note || '').trim())

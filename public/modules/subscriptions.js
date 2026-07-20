@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -202,8 +202,12 @@ async function autoExpire(subs) {
 }
 
 export async function renderSubscriptions() {
+  const seq = currentRouteSeq();
   const [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
-  if (await autoExpire(raw)) return renderSubscriptions();   // 停用日背景作業有更新→重新載入
+  if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
+  const expired = await autoExpire(raw);
+  if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
+  if (expired) return renderSubscriptions();   // 停用日背景作業有更新→重新載入（此時 seq 確認仍是當前，遞迴安全）
   const creditCards = cards.filter(c => (c.type || 'credit') === 'credit').map(c => c.name);
   const validSet = new Set(creditCards);
   freezeCompletedMonths(raw).catch(() => {});   // 月份結束後自動凍結到歷史紀錄
