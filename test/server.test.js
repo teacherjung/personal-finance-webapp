@@ -1124,3 +1124,23 @@ test('三層重構｜還原「重構前舊備份」(交易 source:stmt、缺 led
   assert.deepEqual([manual.category, manual.subcategory], ['工作', '薪資'], '舊平面收入分類歸新樹');
   await POST('/import', backup);   // 還原
 });
+
+test('三層重構 stage 2｜帳戶完整帳號 accountNo 投影：GET 剝除只回 set/last4、export 保留完整、可清除', async () => {
+  const acc = await (await POST('/accounts', { name: '帳號投影卡', type: 'cash', currency: 'TWD', balance: 100, accountNo: '2097101234567890', balanceAsOf: '2099-01-01' })).json();
+  assert.equal('accountNo' in acc, false, 'POST 回傳不含完整帳號');
+  assert.equal(acc.accountNoSet, true);
+  assert.equal(acc.accountNoLast4, '7890');
+  assert.equal(acc.balanceAsOf, undefined, 'balanceAsOf 不在白名單、POST 帶了也被剝');
+  const got = (await GET('/accounts')).find(a => a.id === acc.id);
+  assert.equal('accountNo' in got, false, 'GET /accounts 不外洩完整帳號');
+  assert.equal(got.accountNoSet, true);
+  // export 一定要保留完整帳號（備份漏了還原就永久遺失）
+  const backup = await GET('/db');   // 注意：/db 是投影過的，export 才完整
+  assert.equal('accountNo' in (backup.accounts.find(a => a.id === acc.id)), false, '/api/db 也投影');
+  const exp = await GET('/export');
+  assert.equal(exp.accounts.find(a => a.id === acc.id).accountNo, '2097101234567890', '/api/export 保留完整帳號（供還原）');
+  // 清除：送空字串
+  await PUT('/accounts/' + acc.id, { accountNo: '' });
+  assert.equal((await GET('/accounts')).find(a => a.id === acc.id).accountNoSet, false, '送空字串→清除');
+  await DELETE_('/accounts/' + acc.id);
+});

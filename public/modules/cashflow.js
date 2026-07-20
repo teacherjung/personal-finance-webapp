@@ -164,7 +164,7 @@ async function openBankUpload() {
   });
 }
 
-const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單較舊）' };
+const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）' };
 /** @param {any} r 預覽結果 @param {string} b64 @param {string} pw */
 function showBankPreview(r, b64, pw) {
   const rows = r.rows || [];
@@ -188,7 +188,7 @@ function showBankPreview(r, b64, pw) {
     if (btn) btn.onclick = async () => {
       try {
         const res = await api('/bank-statement/apply', { method: 'POST', body: { data: b64, password: pw } });
-        toast(`已更新 ${res.updated} 個帳戶餘額、新建 ${res.created} 個${res.skipped ? `、跳過 ${res.skipped} 個較舊` : ''}`);
+        toast(`已更新 ${res.updated} 個帳戶餘額、新建 ${res.created} 個${res.skipped ? `、跳過 ${res.skipped} 個同期/較舊` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}`);
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
       } catch (e) { toast(/** @type {any} */ (e).message || '更新失敗', true); }

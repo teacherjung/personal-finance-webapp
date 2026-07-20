@@ -119,3 +119,62 @@ test('預覽｜列出 update/create/skip-stale，不改 db', () => {
   assert.equal(pv.rows.find(r => r.suffix === '9999').action, 'create');
   assert.equal(JSON.stringify(db), before, '預覽不可改 db');
 });
+
+// ---- 對抗審查補強：matchAccount 收緊（避免財務資料靜默損毀，生存優先）----
+const accM = (masked, currency, balance) => ({ suffix: (masked.match(/\*+(\d+)$/) || [])[1] || '', masked, balance, currency, label: '活存', note: '' });
+
+test('餘額更新｜只比對現金帳戶：末碼相同的負債/保單帳戶不可被覆蓋（負債翻資產＝淨資產算錯）', () => {
+  const db = { accounts: [{ id: 'loan', name: '房貸', type: 'mortgage', currency: 'TWD', accountNo: '123450122', balance: -2000000 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 23)]));
+  assert.equal(db.accounts.find(a => a.id === 'loan').balance, -2000000, '房貸餘額不可被帳單覆蓋');
+  assert.equal(r.updated, 0);
+  assert.equal(r.created, 1, '改成新建一個現金帳戶');
+});
+
+test('餘額更新｜可見前綴防碰撞：末碼同 0122 但前綴不同（209710 vs 288810）＝兩個不同帳戶', () => {
+  const db = { accounts: [] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('288810****0122', 'TWD', 200)]));
+  assert.equal(r.created, 2, '前綴不同→兩個帳戶，不可合成一個');
+  assert.deepEqual(db.accounts.map(a => a.balance).sort((x, y) => x - y), [100, 200]);
+});
+
+test('餘額更新｜同批快照比對：兩筆不同前綴不會比對到「本批剛新建的」而互吃', () => {
+  // 既有一個完整帳號對到 209710...0122；帳單同時有 209710****0122（→update）與 288810****0122（→create）
+  const db = { accounts: [{ id: 'x', type: 'cash', currency: 'TWD', accountNo: '20971000000122', balance: 5 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('288810****0122', 'TWD', 200)]));
+  assert.equal(r.updated, 1);
+  assert.equal(r.created, 1);
+  assert.equal(db.accounts.find(a => a.id === 'x').balance, 100);
+});
+
+test('餘額更新｜同批完全重複的遮罩列去重（不會建兩個）', () => {
+  const db = { accounts: [] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('209710****0122', 'TWD', 100)]));
+  assert.equal(r.created, 1, '同遮罩同幣別＝同一戶，去重');
+});
+
+test('餘額更新｜不支援幣別 graceful skip，不擋整張帳單（有效的照更新）', () => {
+  const db = { accounts: [] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('111111****0122', 'TWD', 23), accM('222222****0999', 'EUR', 9999)]));
+  assert.equal(r.created, 1, 'TWD 照建');
+  assert.equal(r.unsupported, 1, 'EUR 略過、不 throw');
+  assert.ok(!db.accounts.some(a => a.currency === 'EUR'));
+});
+
+test('餘額更新｜壞的現值參考日（2026/13/45）→ 400，不寫進 balanceAsOf 撞櫃檯 500', () => {
+  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed('2026-13-45', [accM('x****0122', 'TWD', 23)])),
+    (/** @type {any} */ e) => e.status === 400);
+});
+
+test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯入間的手動修正）', () => {
+  const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '209710****0122', balance: 88888, balanceAsOf: '2026-06-30' }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 23)]));
+  assert.equal(r.skipped, 1);
+  assert.equal(db.accounts[0].balance, 88888, '同一天再匯不覆蓋手改值');
+});
+
+test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 400 一致）', () => {
+  const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****0122', 'TWD', 23)]));
+  assert.equal(pv.blocked, true);
+  assert.equal(pv.rows[0].action, 'blocked');
+});
