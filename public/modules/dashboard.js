@@ -70,7 +70,9 @@ export async function renderDashboard() {
   const levOver = s.reminders.some(r => r.title.includes('融資槓桿') && (r.level === 'warn' || r.level === 'danger'));
   let levVal, levSub, levCls = '';
   if (!lev.hasLoan) { levVal = '無融資'; levSub = '目前未使用槓桿'; }
-  else {
+  else if (lev.equityWiped || !Number.isFinite(Number(lev.leverage)) || lev.leverage == null) {
+    levVal = '⚠️ 淨值為負'; levSub = '借款已超過持股市值，請立即確認 IBKR'; levCls = 'warn';
+  } else {
     levVal = `${Number(lev.leverage).toFixed(2)}x`;
     levCls = levOver ? 'warn' : '';
     levSub = levOver ? '超過上限，停借新錢' : `斷頭距離約 ${Math.round(lev.mcDist)}%`;
