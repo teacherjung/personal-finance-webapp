@@ -238,13 +238,17 @@ const ROUTES = {
   settings: renderSettings
 };
 
+let routeSeq = 0;
+export const currentRouteSeq = () => routeSeq;   // 供長流程（ibSync/refreshQuotes）完成後判斷「還在同一頁嗎」（自主體檢）
 export async function router() {
+  const seq = ++routeSeq;   // 序號防護：快速切頁時，舊頁的 async fn 完成後不可覆蓋新頁面
   const route = location.hash.replace('#', '') || 'dashboard';
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }
-  catch (e) { view().innerHTML = `<div class="hint">載入失敗：${esc(e.message)}</div>`; }
+  catch (e) { if (seq === routeSeq) view().innerHTML = `<div class="hint">載入失敗：${esc(e.message)}</div>`; }
+  if (seq !== routeSeq) return;   // 期間又切了頁＝這次結果已過期，不覆蓋新頁面
   hydrateIcons(view());
 }
 
