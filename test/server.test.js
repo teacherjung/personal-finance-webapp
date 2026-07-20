@@ -13,6 +13,11 @@ const TEST_STORE = join(tmpdir(), `finance-test-store-${process.pid}.db`);   // 
 process.env.STORE_FILE = TEST_STORE;
 
 const { app } = await import('../server.js');
+// stmtRef/storeKey/source/importBatch/importedAt 是服務層擁有的欄位、已退出 CRUD 白名單（Codex r11）：
+// 考題要種「帳單交易」假資料時，以服務層身分走 repo 直寫（同 importRows，不經 pickWritable；
+// 型別仍由櫃檯 sanitizeDbForWrite 驗）。絕不可為了種資料把白名單加回去。
+const { addItem } = await import('../lib/repo.js');
+const seedTx = (fields) => addItem('transactions', fields);
 const server = app.listen(0, '127.0.0.1');   // 0＝隨機空埠，不會撞到 4321
 await once(server, 'listening');
 const port = /** @type {any} */ (server.address()).port;
@@ -86,10 +91,10 @@ test('POST /api/snapshot/auto（1-1）：同一天至多記一次，第二次跳
 });
 
 test('自動學習：帳單交易改分類 → /api/learned 記住 → 可刪除', async () => {
-  const tx = await (await POST('/transactions', {
+  const tx = seedTx({
     date: '2026-07-06', type: 'expense', category: '其他', subcategory: '未分類',
     amount: 50, note: '端點測試店', storeKey: '端點測試店', source: 'stmt',
-  })).json();
+  });
   await PUT(`/transactions/${tx.id}`, { category: '娛樂', subcategory: '' });
   const learned = await GET('/learned');
   assert.equal(learned['端點測試店']?.category, '娛樂', '改分類要被學起來');
@@ -397,10 +402,10 @@ test('signals 巢狀合併（自審r2-M6）：只更新一個市場不可抹掉�
 });
 
 test('服務費不學（HTTP 全鏈路）：PUT 改服務費分類 → learned 不長新鍵', async () => {
-  const tx = await (await POST('/transactions', {
+  const tx = seedTx({
     date: '2026-07-01', type: 'expense', category: '工作', subcategory: 'ChatGPT',
     amount: 70, note: '國外交易服務費-70.00', storeKey: '國外交易服務費-70.00', source: 'stmt',
-  })).json();
+  });
   await PUT(`/transactions/${tx.id}`, { category: '生活', subcategory: '日用品' });
   const learned = await GET('/learned');
   assert.ok(!('國外交易服務費-70.00' in learned), 'beforeSave 鏈路也不可學服務費');
@@ -496,9 +501,9 @@ test('匯入正常：合法備份可還原、且還原後 summary 正常', async
 test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同 storeKey 的不同分店可各自取名', async () => {
   // 銀行截斷情境：兩個不同原文（桃/新分店）共用同一個 storeKey（使用者實際踩到的 12MINI 案例）
   const origA = '測試分店 (桃X999 Taipei', origB = '測試分店 (新X999 Taipei';
-  const t1 = await (await POST('/transactions', { date: '2026-07-10', type: 'expense', category: '飲食', amount: 55, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-10|55|${origA}`, source: 'stmt' })).json();
-  const t2 = await (await POST('/transactions', { date: '2026-07-11', type: 'expense', category: '飲食', amount: 66, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-11|66|${origB}`, source: 'stmt' })).json();
-  const t3 = await (await POST('/transactions', { date: '2026-07-12', type: 'expense', category: '飲食', amount: 77, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-12|77|${origA}`, source: 'stmt' })).json();
+  const t1 = seedTx({ date: '2026-07-10', type: 'expense', category: '飲食', amount: 55, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-10|55|${origA}`, source: 'stmt' });
+  const t2 = seedTx({ date: '2026-07-11', type: 'expense', category: '飲食', amount: 66, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-11|66|${origB}`, source: 'stmt' });
+  const t3 = seedTx({ date: '2026-07-12', type: 'expense', category: '飲食', amount: 77, note: '測試分店', storeKey: '測試分店', stmtRef: `c1|2026-07-12|77|${origA}`, source: 'stmt' });
   // 只改原文 A（桃）：A 的兩筆整批改，B（新）不動
   const r = await (await POST('/statement/rename-store', { orig: origA, name: '測試分店（桃園店）' })).json();
   assert.equal(r.changed, 2, '同原文的兩筆都改、不同原文不動');
@@ -538,10 +543,10 @@ test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同
 });
 
 test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note＋storeKey、冪等', async () => {
-  const tx = await (await POST('/transactions', {
+  const tx = seedTx({
     date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市',
     amount: 55, note: '統一超商-百福', storeKey: '統一超商-百福', source: 'stmt',
-  })).json();
+  });
   // 預覽（dryRun）：回 before→after，且不改資料
   const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(prev.changed >= 1);
@@ -567,11 +572,11 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
 test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整理拆殼修舊 note、storeKey 搬家、學習表錯名一併治', async () => {
   const origT = '聯信-台灣普客二四股份有A0145 NEW TA';
   // 舊爛資料重現：note 包著標記的錯名（巢狀括號）、storeKey 是舊規則的產物
-  const tx = await (await POST('/transactions', {
+  const tx = seedTx({
     date: '2026-07-13', type: 'expense', category: '交通', subcategory: '停車費', amount: 40,
     note: '停車費（停車場（Times））', storeKey: '聯信（Times Parking股份有）',
     stmtRef: `c9|2026-07-13|40|${origT}`, source: 'stmt',
-  })).json();
+  });
   // 學習表塞當年的垃圾（原文級錯名＋舊 storeKey 級學習）——經備份匯入路徑 seed
   const backup = await GET('/db');
   const seeded = { ...(backup.learnedCategories || {}) };
@@ -609,17 +614,17 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
 
 test('店名格式整理｜自訂 vs 自動（使用者定 2026-07-18）：沒自訂的從原文重生（eTag 場站名救回）、自訂的保留', async () => {
   // A：自動名（學習表沒 name）——舊 note 已丟場站名，只有原文還留著 → 整理用現行規則從原文重生
-  const ta = await (await POST('/transactions', {
+  const ta = seedTx({
     date: '2026-07-14', type: 'expense', category: '交通', subcategory: '停車費', amount: 60,
     note: '停車費（eTag停車）', storeKey: 'eTag停車',
     stmtRef: 'c9|2026-07-14|60|eTag停車3087-H8:救國團林口運動中心', source: 'stmt',
-  })).json();
+  });
   // B：自訂名（rename-store 學了 name）——整理不可把自訂名洗掉
   const origB = 'QQ小館X999 Taipei';
-  const tb = await (await POST('/transactions', {
+  const tb = seedTx({
     date: '2026-07-13', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 300,
     note: 'QQ小館', storeKey: 'QQ小館', stmtRef: `c9|2026-07-13|300|${origB}`, source: 'stmt',
-  })).json();
+  });
   await POST('/statement/rename-store', { orig: origB, name: '我的愛店' });
   await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = await GET('/transactions');
@@ -674,7 +679,7 @@ test('匯入保留自訂分類樹與別名（Codex#1）：export→import 不遺
 
 test('店名整理不改壞原文級學習 key（Codex#4）', async () => {
   const orig = '全家便利商店-ZZ測試店A0145 TAIPEI';
-  const tx = await (await POST('/transactions', { date: '2026-07-22', type: 'expense', category: '飲食', amount: 33, note: '全家商店（ZZ測試店）', storeKey: '全家商店（ZZ測試店）', stmtRef: `z|2026-07-22|33|${orig}`, source: 'stmt' })).json();
+  const tx = seedTx({ date: '2026-07-22', type: 'expense', category: '飲食', amount: 33, note: '全家商店（ZZ測試店）', storeKey: '全家商店（ZZ測試店）', stmtRef: `z|2026-07-22|33|${orig}`, source: 'stmt' });
   await POST('/statement/rename-store', { orig, name: '全家（ZZ我的店）' });   // 原文級學習（key＝原文）
   assert.equal((await GET('/learned'))[orig]?.name, '全家（ZZ我的店）', '前置：原文級學習存在');
   await POST('/statement/normalize-branches', { force: true });   // 跑店名整理
@@ -685,8 +690,8 @@ test('店名整理不改壞原文級學習 key（Codex#4）', async () => {
 
 test('還原自動判斷清共用學習——僅當 storeKey 未被其他原文共用（Codex#3）', async () => {
   const sk = 'ZZ共用店', oA = 'ZZ共用店 (甲X1 Taipei', oB = 'ZZ共用店 (乙X1 Taipei';
-  const a1 = await (await POST('/transactions', { date: '2026-07-20', type: 'expense', category: '飲食', amount: 11, note: sk, storeKey: sk, stmtRef: `z|2026-07-20|11|${oA}`, source: 'stmt' })).json();
-  const b1 = await (await POST('/transactions', { date: '2026-07-21', type: 'expense', category: '飲食', amount: 22, note: sk, storeKey: sk, stmtRef: `z|2026-07-21|22|${oB}`, source: 'stmt' })).json();
+  const a1 = seedTx({ date: '2026-07-20', type: 'expense', category: '飲食', amount: 11, note: sk, storeKey: sk, stmtRef: `z|2026-07-20|11|${oA}`, source: 'stmt' });
+  const b1 = seedTx({ date: '2026-07-21', type: 'expense', category: '飲食', amount: 22, note: sk, storeKey: sk, stmtRef: `z|2026-07-21|22|${oB}`, source: 'stmt' });
   await PUT(`/transactions/${a1.id}`, { category: '交通', subcategory: '停車費' });   // 造 storeKey 級學習
   assert.equal((await GET('/learned'))[sk]?.category, '交通', '前置：storeKey 學習已建立');
   await POST('/statement/rename-store', { orig: oA, reset: true });   // 共用時 reset
@@ -701,10 +706,10 @@ test('顯示標記（HTTP 全鏈路）：店名格式整理替舊資料補上（
   // 舊資料樣態：匯入當時 FP 前綴已被砍掉、也還沒有停車標記
   const fpOrig = 'FP-ZZ測試小吃';
   const parkOrig = 'ZZ測試嘟嘟房A1234 TAIPEI';
-  const t1 = await (await POST('/transactions', { date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '外送', amount: 88, note: 'ZZ測試小吃', storeKey: 'ZZ測試小吃', stmtRef: `z|2026-07-25|88|${fpOrig}`, source: 'stmt' })).json();
-  const t2 = await (await POST('/transactions', { date: '2026-07-26', type: 'expense', category: '交通', subcategory: '停車費', amount: 60, note: 'ZZ測試嘟嘟房', storeKey: 'ZZ測試嘟嘟房', stmtRef: `z|2026-07-26|60|${parkOrig}`, source: 'stmt' })).json();
+  const t1 = seedTx({ date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '外送', amount: 88, note: 'ZZ測試小吃', storeKey: 'ZZ測試小吃', stmtRef: `z|2026-07-25|88|${fpOrig}`, source: 'stmt' });
+  const t2 = seedTx({ date: '2026-07-26', type: 'expense', category: '交通', subcategory: '停車費', amount: 60, note: 'ZZ測試嘟嘟房', storeKey: 'ZZ測試嘟嘟房', stmtRef: `z|2026-07-26|60|${parkOrig}`, source: 'stmt' });
   // 舊的 FP 記錄若曾被手動改成「主體（分店）」→ 整理後分店摘掉、變「主體（FP）」（外送不留分店）
-  const t3 = await (await POST('/transactions', { date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 99, note: 'ZZ迷你鍋（桃園店）', storeKey: 'ZZ迷你鍋', stmtRef: 'z|2026-07-27|99|FP-ZZ迷你鍋 (桃X9 Taipei', source: 'stmt' })).json();
+  const t3 = seedTx({ date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 99, note: 'ZZ迷你鍋（桃園店）', storeKey: 'ZZ迷你鍋', stmtRef: 'z|2026-07-27|99|FP-ZZ迷你鍋 (桃X9 Taipei', source: 'stmt' });
   const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok((prev.changes || []).some(c => c.after === 'ZZ測試小吃（FP）'), '預覽要看得到 FP 標記');
   assert.ok((prev.changes || []).some(c => c.after === '停車費（ZZ測試嘟嘟房）'), '預覽要看得到停車標記（名字沒有「停車」二字也涵蓋）');
@@ -729,14 +734,14 @@ test('隔離確認：測試用的是暫存資料檔，不是真實 store.json', 
 
 test('Codex#3/#2/#5｜整理：品牌層 name 一律搬原文級（key 沒變也要）、撞 key 欄位合併、缺 storeKey 補回', async () => {
   const origA = '統一超商-百福X999 TAIPEI', origB = '統一超商-德權X999 TAIPEI';
-  const t1 = await (await POST('/transactions', { date: '2026-07-21', type: 'expense', category: '飲食', subcategory: '超市',
-    amount: 51, note: '統一超商（百福）', storeKey: '統一超商', stmtRef: `cX|2026-07-21|51|${origA}`, source: 'stmt' })).json();
-  const t2 = await (await POST('/transactions', { date: '2026-07-22', type: 'expense', category: '飲食', subcategory: '超市',
-    amount: 52, note: '統一超商（德權）', storeKey: '統一超商', stmtRef: `cX|2026-07-22|52|${origB}`, source: 'stmt' })).json();
+  const t1 = seedTx({ date: '2026-07-21', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 51, note: '統一超商（百福）', storeKey: '統一超商', stmtRef: `cX|2026-07-21|51|${origA}`, source: 'stmt' });
+  const t2 = seedTx({ date: '2026-07-22', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 52, note: '統一超商（德權）', storeKey: '統一超商', stmtRef: `cX|2026-07-22|52|${origB}`, source: 'stmt' });
   // Codex#5：帳單交易完全沒有 storeKey（學習機制上線前匯入的舊資料）
   const origC = '石二鍋(林口家樂X999 Taipei';
-  const t3 = await (await POST('/transactions', { date: '2026-07-23', type: 'expense', category: '飲食', subcategory: '餐廳',
-    amount: 53, note: '石二鍋', stmtRef: `cX|2026-07-23|53|${origC}`, source: 'stmt' })).json();
+  const t3 = seedTx({ date: '2026-07-23', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 53, note: '石二鍋', stmtRef: `cX|2026-07-23|53|${origC}`, source: 'stmt' });
   // 種學習表：品牌層殘留 name（key 不會變動）＋撞 key 的兩條（一條只有 name、一條只有分類）
   const backup = await GET('/db');
   const seeded = { ...(backup.learnedCategories || {}) };
@@ -784,10 +789,10 @@ test('Codex#8｜匯入一律從帳單原文重算鑰匙，不信前端傳來的�
 
 test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選擇一併清除', async () => {
   const origA = '八方雲集中山Y999 TAIPEI', origB = '八方雲集松江Y999 TAIPEI';
-  const t1 = await (await POST('/transactions', { date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '餐廳',
-    amount: 61, note: '八方雲集（中山）', storeKey: '八方雲集', stmtRef: `cY|2026-07-25|61|${origA}`, source: 'stmt' })).json();
-  const t2 = await (await POST('/transactions', { date: '2026-07-26', type: 'expense', category: '飲食', subcategory: '餐廳',
-    amount: 62, note: '八方雲集（松江）', storeKey: '八方雲集', stmtRef: `cY|2026-07-26|62|${origB}`, source: 'stmt' })).json();
+  const t1 = seedTx({ date: '2026-07-25', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 61, note: '八方雲集（中山）', storeKey: '八方雲集', stmtRef: `cY|2026-07-25|61|${origA}`, source: 'stmt' });
+  const t2 = seedTx({ date: '2026-07-26', type: 'expense', category: '飲食', subcategory: '餐廳',
+    amount: 62, note: '八方雲集（松江）', storeKey: '八方雲集', stmtRef: `cY|2026-07-26|62|${origB}`, source: 'stmt' });
   const backup = await GET('/db');
   assert.equal((await POST('/import', { ...backup,
     learnedCategories: { ...(backup.learnedCategories || {}), '八方雲集': { category: '娛樂', subcategory: '' } } })).status, 200);
@@ -805,8 +810,8 @@ test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選�
 
 test('第一帖｜規則更新後自動整理：同一版規則只跑一次、有變動才寫檔', async () => {
   // 先塞一筆待整理的舊資料（規則升級後名字會變）
-  const tx = await (await POST('/transactions', { date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '超市',
-    amount: 33, note: '統一超商-德權', storeKey: '統一超商-德權', source: 'stmt' })).json();
+  const tx = seedTx({ date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '超市',
+    amount: 33, note: '統一超商-德權', storeKey: '統一超商-德權', source: 'stmt' });
   // 第一次：這個 DB 還沒記過任何規則指紋 → 會跑
   const r1 = await (await POST('/statement/normalize-auto', {})).json();
   assert.equal(r1.ran, true, '沒記過指紋＝規則等於「新的」，要跑一次');
@@ -822,10 +827,10 @@ test('第一帖｜規則更新後自動整理：同一版規則只跑一次、�
 });
 
 test('第一帖｜同店整批改分類＋預覽也回報鑰匙變動數', async () => {
-  const mk = (d, note, amt) => POST('/transactions', { date: d, type: 'expense', category: '其他', subcategory: '未分類',
+  const mk = (d, note, amt) => seedTx({ date: d, type: 'expense', category: '其他', subcategory: '未分類',
     amount: amt, note, storeKey: '八方雲集', stmtRef: `cZ|${d}|${amt}|八方雲集${note}Z9 TAIPEI`, source: 'stmt' });
-  const a = await (await mk('2026-07-28', '中山', 71)).json();
-  const b = await (await mk('2026-07-29', '松江', 72)).json();
+  const a = mk('2026-07-28', '中山', 71);
+  const b = mk('2026-07-29', '松江', 72);
   const r = await (await POST('/statement/apply-category', { storeKey: '八方雲集', category: '飲食', subcategory: '餐廳' })).json();
   assert.equal(r.changed, 2, '同一把鑰匙的帳單交易全部改');
   const after = await GET('/transactions');
@@ -858,11 +863,11 @@ test('第一帖｜匯入完成摘要：回報第一次見到的店家與未分�
 });
 
 test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久化與還原', async () => {
-  const mk = (d, amt, cat, sub, note, key, orig) => POST('/transactions', {
+  const mk = (d, amt, cat, sub, note, key, orig) => seedTx({
     date: d, type: 'expense', category: cat, subcategory: sub, amount: amt,
     note, storeKey: key, stmtRef: `cH|${d}|${amt}|${orig}`, source: 'stmt' });
   const made = [];
-  const add = async (...a) => { made.push((await (await mk(...a)).json()).id); };
+  const add = async (...a) => { made.push(mk(...a).id); };
   // D5 未分類（兩筆同店）
   await add('2026-07-01', 99, '其他', '未分類', 'NextGen（USD/9.99）', 'NEXTGEN', 'NEXTGEN.AIH99');
   await add('2026-06-01', 99, '其他', '未分類', 'NextGen（USD/9.99）', 'NEXTGEN', 'NEXTGEN.AIH88');
@@ -953,10 +958,10 @@ test('r2-Codex#1｜孤兒學習（交易已刪）不可被整理當成品牌級�
 
 test('r2-Codex#2/#3/#4｜同店整批改：清原文級分類、擋服務費、擋不存在的鑰匙', async () => {
   const origA = '八方雲集-中山R2 TAIPEI', origB = '八方雲集-松江R2 TAIPEI';
-  const mk = (d, amt, orig, note) => POST('/transactions', { date: d, type: 'expense', category: '飲食', subcategory: '餐廳',
+  const mk = (d, amt, orig, note) => seedTx({ date: d, type: 'expense', category: '飲食', subcategory: '餐廳',
     amount: amt, note, storeKey: '八方雲集', stmtRef: `cR|${d}|${amt}|${orig}`, source: 'stmt' });
-  const a = await (await mk('2026-08-01', 51, origA, '八方（中山）')).json();
-  const b = await (await mk('2026-08-02', 52, origB, '八方（松江）')).json();
+  const a = mk('2026-08-01', 51, origA, '八方（中山）');
+  const b = mk('2026-08-02', 52, origB, '八方（松江）');
   // A 有自己的原文級分類學習（單獨設過）
   await POST('/statement/rename-store', { orig: origA, name: '八方（中山）', category: '娛樂', subcategory: '電影' });
   assert.equal((await GET('/learned'))[origA]?.category, '娛樂');
@@ -971,9 +976,9 @@ test('r2-Codex#2/#3/#4｜同店整批改：清原文級分類、擋服務費、�
   assert.equal((await POST('/statement/apply-category', { storeKey: '根本不存在的店R2', category: '娛樂' })).status, 404);
   assert.ok(!(await GET('/learned'))['根本不存在的店R2'], '找不到交易就不可種下隱形品牌規則');
   // #3 服務費整組拒絕
-  const fee = await (await POST('/transactions', { date: '2026-08-03', type: 'expense', category: '飲食', subcategory: '餐廳',
+  const fee = seedTx({ date: '2026-08-03', type: 'expense', category: '飲食', subcategory: '餐廳',
     amount: 30, note: '國外交易服務費（-900）', storeKey: '國外交易服務費（-900）',
-    stmtRef: 'cR|2026-08-03|30|國外交易服務費-900.00', source: 'stmt' })).json();
+    stmtRef: 'cR|2026-08-03|30|國外交易服務費-900.00', source: 'stmt' });
   assert.equal((await POST('/statement/apply-category', { storeKey: '國外交易服務費（-900）', category: '娛樂' })).status, 400);
   assert.equal((await GET('/transactions')).find(t => t.id === fee.id).category, '飲食', '服務費的分類由所屬消費決定，不可被整批改');
   for (const id of [a.id, b.id, fee.id]) await DELETE_(`/transactions/${id}`);
@@ -986,6 +991,49 @@ test('r2-Codex#8｜autoCat/autoSub 不可由通用 CRUD 寫入（匯入服務層
     autoCat: '娛樂', autoSub: '電影' })).json();
   assert.ok(!('autoCat' in tx) && !('autoSub' in tx), '前端不可偽造留底（偽造了體檢的人改/機器判會失準）');
   await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('Codex r11｜服務層欄位不可由通用 CRUD 寫入：stmtRef/storeKey/source/importBatch/importedAt 全剝', async () => {
+  // 手動記帳不可偽裝成帳單交易——source:'stmt' 會混進學習/批次列表/帳務體檢的口徑
+  const tx = await (await POST('/transactions', { date: '2026-08-05', type: 'expense', category: '飲食', amount: 10,
+    stmtRef: 'cE|2026-08-05|10|假原文', storeKey: '假鑰匙', source: 'stmt',
+    importBatch: 'B假批次', importedAt: '2026-08-05T00:00:00.000Z' })).json();
+  for (const f of ['stmtRef', 'storeKey', 'source', 'importBatch', 'importedAt']) {
+    assert.ok(!(f in tx), `${f} 是帳單匯入服務層擁有的欄位，通用 CRUD 不可寫`);
+  }
+  await DELETE_(`/transactions/${tx.id}`);
+});
+
+test('Codex r11｜PUT 挾帶假 storeKey 不可劫持學習（毒化學習表的路要斷）', async () => {
+  const orig = 'ZZ毒化測試店R11 TAIPEI';
+  const tx = seedTx({ date: '2026-08-06', type: 'expense', category: '其他', subcategory: '未分類',
+    amount: 42, note: 'ZZ毒化測試店', storeKey: 'ZZ毒化測試店', stmtRef: `cE|2026-08-06|42|${orig}`, source: 'stmt' });
+  // 修正前：storeKey 通過 pickWritable → 合併進 item → learnFromStmtEdit 把分類學到假鑰匙上，
+  // 未來匯入命中假鑰匙的店全被套錯分類（實測重現 2026-07-20）
+  await PUT(`/transactions/${tx.id}`, { category: '娛樂', subcategory: '', storeKey: '假鑰匙星巴克' });
+  const learned = await GET('/learned');
+  assert.ok(!('假鑰匙星巴克' in learned), '假鑰匙不可長進學習表');
+  assert.equal(learned['ZZ毒化測試店']?.category, '娛樂', '學習要落在庫裡的正牌鑰匙');
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after.storeKey, 'ZZ毒化測試店', '交易上的鑰匙不可被挾帶改寫');
+  await DELETE_(`/transactions/${tx.id}`);
+  await POST('/learned/delete', { key: 'ZZ毒化測試店' });
+});
+
+test('Codex r11｜還原備份保留服務層欄位（stmtRef 被剝＝帳單交易失去原文/去重/批次，絕不允許）', async () => {
+  const ref = 'cE|2026-08-07|77|備份測試店E1 TAIPEI';
+  const tx = seedTx({ date: '2026-08-07', type: 'expense', category: '飲食', subcategory: '', amount: 77,
+    note: '備份測試店', storeKey: '備份測試店', stmtRef: ref,
+    source: 'stmt', importBatch: 'B備份測試', importedAt: '2026-07-20T00:00:00.000Z' });
+  const backup = await GET('/db');   // export→import 一圈（匯入走 validateImportItem：只驗型別、不剝白名單外欄位）
+  assert.equal((await POST('/import', backup)).status, 200);
+  const after = (await GET('/transactions')).find(t => t.id === tx.id);
+  assert.equal(after?.stmtRef, ref, '還原後 stmtRef 原樣保留');
+  assert.equal(after.storeKey, '備份測試店');
+  assert.equal(after.source, 'stmt');
+  assert.equal(after.importBatch, 'B備份測試');
+  assert.equal(after.importedAt, '2026-07-20T00:00:00.000Z');
+  await DELETE_(`/transactions/${after.id}`);
 });
 
 test('帳單年月（使用者定 2026-07-19）：匯入時存進每一筆、批次回報、可手動修正', async () => {
