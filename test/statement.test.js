@@ -339,3 +339,11 @@ test('自主體檢｜rocToIso 真日曆驗證：假日期回 null，不流進交
   assert.equal(rocToIso('115/06/02'), '2026-06-02', '真日期照常');
   assert.equal(rocToIso('1160229'), null, '2027 非閏年無 2/29');
 });
+
+test('自主體檢｜origFromStmtRef：剝掉同帳單重複消費的序號段 #N，原文正確', async () => {
+  const { origFromStmtRef } = await import('../lib/statement.js');
+  assert.equal(origFromStmtRef('c1|2026-07-01|100|星巴克'), '星巴克', '一般 4 段照舊');
+  assert.equal(origFromStmtRef('c1|2026-07-01|100|星巴克|#2'), '星巴克', '第 2 筆的序號段要剝掉');
+  assert.equal(origFromStmtRef('c1|2026-07-01|100|A|B|#3'), 'A|B', '原文本身含 | 時，只剝末段序號');
+  assert.equal(origFromStmtRef('c1|2026-07-01|100|#2'), '#2', '4 段時末段是說明本身（不是序號），不可誤剝');
+});

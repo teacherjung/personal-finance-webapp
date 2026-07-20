@@ -136,3 +136,36 @@ test('手動修正帳單年月也走同一套判準（不可只驗長相）', ()
   assert.throws(() => setBatchMonth('any', '2026-13'), /YYYY-MM/,
     'Codex 實測舊版會回成功、資料庫真的存下 2026-13');
 });
+
+test('自主體檢｜同帳單同店同日同額兩筆真消費：都匯入；重匯同帳單仍正確去重', async () => {
+  const store = await import('../lib/store.js');
+  const { previewForCard, importRows } = await import('../lib/services/statement-import.js');
+  const { default: XLSX } = await import('xlsx');
+  // 合成台新 XLSX：同一天、同店、同金額兩筆（真的買兩杯一樣的咖啡）
+  const rows = [
+    ['台新銀行'], ['2026/07 信用卡明細'], ['本期帳單金額', '新臺幣 500'],
+    ['交易日', '入帳日', '說明', '', '金額', '', '', ''],
+    ['2026/07/03', '2026/07/05', '星巴克', '', '150', '', '', ''],
+    ['2026/07/03', '2026/07/05', '星巴克', '', '150', '', '', ''],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  const b64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+
+  store.save({ ...store.emptyDb(), cards: [{ id: 'k1', name: '台新卡', type: 'credit', issuer: '台新' }] });
+  const prev = await previewForCard('k1', b64);
+  const coffees = prev.transactions.filter(t => t.desc === '星巴克');
+  assert.equal(coffees.length, 2, '兩筆都在預覽');
+  assert.notEqual(coffees[0].stmtRef, coffees[1].stmtRef, '兩筆的 stmtRef 要不同（第二筆帶 #2）');
+  assert.ok(!coffees[0].duplicate && !coffees[1].duplicate, '同帳單內兩筆都不算重複');
+
+  const r1 = importRows('k1', prev.transactions);
+  assert.equal(r1.imported, 2, '兩筆真消費都要進帳（修正前第二筆被吃掉）');
+
+  // 重匯同一份帳單：序號依解析順序固定 → 兩筆都被判重複、都跳過（不會多出來）
+  const prev2 = await previewForCard('k1', b64);
+  assert.ok(prev2.transactions.filter(t => t.desc === '星巴克').every(t => t.duplicate), '重匯時兩筆都標重複');
+  const r2 = importRows('k1', prev2.transactions);
+  assert.equal(r2.imported, 0, '重匯不可多出任何一筆');
+  assert.equal(store.load().transactions.filter(t => String(t.note).includes('星巴克')).length, 2, '總數仍是 2');
+});
