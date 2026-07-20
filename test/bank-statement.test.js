@@ -261,3 +261,67 @@ test('預覽交易｜統計 income/expense/transfer＋重複標記（已匯入�
   assert.equal(pv.counts.expense, 1, 'CD提款算支出');
   assert.ok(pv.rows.find(r => r.summary === '存款息').duplicate);
 });
+
+// ---- stage 3 對抗審查補強 ----
+test('明細｜方向以 running 餘額為權威：小額右對齊被 x 判反，餘額差校正回來', () => {
+  // 同帳戶三列，餘額遞減＝連續支出；第 2、3 列小額手續費即使 x 落在存入側，也靠餘額差判成 out
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [222, '支票號碼'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
+    D(83, [[53, '288810****8791'], [124, '2026/06/24'], [177, '跨轉手續費'], [325, '$15'], [414, '$172,733']]),   // $15 x325 落存入側，但餘額 -15 → out
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs[1].direction, 'out', '餘額 172748→172733 差 -15 → 支出（不被 x 幾何判反）');
+  assert.equal(txs[1].amount, 15);
+});
+
+test('明細｜表頭逐字拆/讀不到欄位 → 丟可見錯誤，不靜默歸零（無聲總損）', () => {
+  const lines = [
+    D(120, [[75, '帳'], [80, '號'], [272, '支'], [278, '出'], [284, '金'], [290, '額'], [331, '存'], [337, '入'], [343, '金'], [349, '額'], [396, '帳'], [402, '戶'], [408, '餘'], [414, '額']]),
+    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
+  ];
+  assert.throws(() => parseBankDetail(lines), (/** @type {any} */ e) => e.status === 400, '表頭抓不到欄位 x → 400，不回 [] 靜默漏光');
+});
+
+test('明細｜摘要區的序號數字不被誤當交易金額（txnCell 下界）', () => {
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [222, '支票號碼'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, '轉帳存入'], [205, '12345'], [349, '$8,000'], [414, '$100,000']]),   // 摘要區 12345@x205 不可當金額
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs[0].amount, 8000, '真金額 8000，不是摘要序號 12345');
+  assert.equal(txs[0].direction, 'in');
+});
+
+test('分箱｜方向護欄：出方向的「透支利息/電子發票工本費」是支出，不被翻成收入（生存優先）', () => {
+  assert.equal(classifyBankTx(btx({ summary: '透支利息', direction: 'out', amount: 3000 }), new Set()).type, 'expense', '利息扣款(out)＝支出');
+  assert.equal(classifyBankTx(btx({ summary: '轉帳支取', direction: 'out', note: '電子發票工本費' }), new Set()).type, 'expense', '發票工本費(out)＝支出、不判中獎');
+  // in 方向的存款息/中獎才是收入
+  assert.equal(classifyBankTx(btx({ summary: '存款息', direction: 'in' }), new Set()).type, 'income');
+  assert.equal(classifyBankTx(btx({ summary: '媒體轉帳', direction: 'in', note: '中獎發票' }), new Set()).category, '被動');
+});
+
+test('分箱｜ownSuffixSet 只認現金帳戶＋4碼：登記的房貸帳戶繳款仍算支出、末3碼不誤中', () => {
+  const db = { accounts: [
+    { id: 'm', type: 'mortgage', currency: 'TWD', accountNo: '111222****5678' },   // 房貸帳戶（非現金）
+    { id: 'c', type: 'cash', currency: 'TWD', accountNo: '00100200789' },           // 現金帳戶，末3碼 789
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [] };
+  const own = (previewBankTxForDb(db, { ...parsed, transactions: [
+    btx({ summary: '媒體轉出', direction: 'out', note: '房屋貸款繳款111222****5678' }),   // 房貸帳戶末碼→不算內轉
+    btx({ summary: '轉帳存入', direction: 'in', amount: 500000, note: '收款自812****789王小明' }),   // 末3碼789 不誤中
+  ] }));
+  assert.equal(own.rows[0].type, 'expense', '登記的房貸帳戶（非現金）繳款仍算支出、不被當內轉');
+  assert.equal(own.rows[0].category, '居住');
+  assert.equal(own.rows[1].type, 'income', '第三方末3碼撞到現金帳戶末3碼→不誤判內轉（只比4碼）');
+});
+
+test('匯入｜bankRef 含 note：餘額讀不到(null)時，同日同額不同備註的兩筆不被誤去重', () => {
+  const db = { accounts: [], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '跨行轉出', amount: 1000, balance: null, note: '付給A' }),
+    btx({ summary: '跨行轉出', amount: 1000, balance: null, note: '付給B' }),
+  ] };
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.imported, 2, '不同備註＝不同交易，不可去重掉');
+});
