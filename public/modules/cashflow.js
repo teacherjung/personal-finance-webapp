@@ -4,7 +4,7 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -50,6 +50,7 @@ export async function renderCashflow() {
     <div class="page-head">
       <div><h1>收支記帳</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
       <div class="page-actions">
+        <button class="btn-ghost btn-eq" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
         <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
       </div>
     </div>
@@ -78,6 +79,7 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
+  byId('uploadBank').onclick = () => openBankUpload();
   byId('monthSel').onchange = (e) => { monthFilter = /** @type {any} */ (e.target).value; renderCashflow(); };
   view().querySelectorAll('[data-flow]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
@@ -127,6 +129,71 @@ function subOptionsFor(flow, parent, cur = '') {
   const allowBlank = flow !== 'transfer';   // 內轉一定要選出/入；收支可不分子類
   return [...(allowBlank ? [''] : []), ...subs]
     .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
+}
+
+// ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
+/** 檔案 → base64（同 transactions.js 的做法；密碼只在記憶體、隨請求送、不落檔）。 @param {File} file */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+    fr.onerror = () => reject(new Error('讀取檔案失敗'));
+    fr.readAsDataURL(file);
+  });
+}
+
+async function openBankUpload() {
+  let file = null;
+  openForm({
+    title: '上傳銀行對帳單',
+    fields: [
+      { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
+      { key: 'password', label: '對帳單密碼（只在這台電腦解密、不會上傳、不會儲存）', type: 'password', full: true, placeholder: '通常是身分證字號' },
+    ],
+    onMount: (/** @type {any} */ root) => {
+      const inp = root.querySelector('#f_file');
+      if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
+    },
+    onSubmit: async (/** @type {any} */ data) => {
+      if (!file) throw new Error('請先選擇對帳單 PDF');
+      const b64 = await fileToBase64(file);
+      const pw = data.password || '';
+      const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+      setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+    }
+  });
+}
+
+const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單較舊）' };
+/** @param {any} r 預覽結果 @param {string} b64 @param {string} pw */
+function showBankPreview(r, b64, pw) {
+  const rows = r.rows || [];
+  const willUpdate = rows.filter((/** @type {any} */ x) => x.action === 'update').length;
+  const willCreate = rows.filter((/** @type {any} */ x) => x.action === 'create').length;
+  const body = `
+    <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　只有帳單較新時才會覆蓋餘額。</p>
+    <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
+    <tbody>${rows.map((/** @type {any} */ x) => `<tr>
+      <td>${esc(x.matchedName || x.label || '')}<span class="muted">・末${esc(x.suffix)}</span></td>
+      <td class="muted">${esc(x.currency)}</td>
+      <td class="num">${money(x.balance)}</td>
+      <td class="num muted">${x.oldBalance == null ? '—' : money(x.oldBalance)}</td>
+      <td>${esc(ACTION_LABEL[x.action] || x.action)}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
+    <p class="muted" style="margin-top:10px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶。餘額會反映在「資產配置」頁。</p>
+    <div class="page-actions" style="margin-top:14px"><button class="btn" id="bankApply">${icon('check', 16)}確認更新</button></div>`;
+  openInfo('銀行對帳單預覽', body, { size: 'lg' });
+  setTimeout(() => {
+    const btn = byId('bankApply');
+    if (btn) btn.onclick = async () => {
+      try {
+        const res = await api('/bank-statement/apply', { method: 'POST', body: { data: b64, password: pw } });
+        toast(`已更新 ${res.updated} 個帳戶餘額、新建 ${res.created} 個${res.skipped ? `、跳過 ${res.skipped} 個較舊` : ''}`);
+        document.querySelector('#modal-root')?.replaceChildren();
+        renderCashflow();
+      } catch (e) { toast(/** @type {any} */ (e).message || '更新失敗', true); }
+    };
+  }, 0);
 }
 
 /** @param {any=} tx @param {any[]=} accounts */
