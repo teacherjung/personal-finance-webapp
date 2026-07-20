@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
 
 const CYCLES = [
@@ -9,7 +9,9 @@ const CYCLES = [
 const cycleLabel = (c) => (CYCLES.find(x => x.value === c) || {}).label || c || '—';
 
 export async function renderInsurance() {
+  const seq = currentRouteSeq();
   const list = (await api('/insurance')).slice().sort((a, b) => daysUntil(a.nextPayment) - daysUntil(b.nextPayment));
+  if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6 idiom；r11#2 補上漏掉的兩頁）——寫 DOM 前必守，router 的事後檢查救不了 renderer 內部的寫入
 
   // 依被保險人分組統計年繳保費
   const annual = list.reduce((s, p) => {

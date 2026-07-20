@@ -1,5 +1,5 @@
 // @ts-check
-import { api, byId, esc, money, monthKey, openForm, confirmDelete, toast } from '../app.js';
+import { api, byId, esc, money, monthKey, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 const MONTH_LABELS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -10,7 +10,11 @@ let sectionRoot = null;
 // 把「歷史紀錄」渲染到指定容器（嵌在訂閱追蹤頁裡）
 export async function renderHistorySection(root) {
   sectionRoot = root;
+  const seq = currentRouteSeq();
   const hist = await api('/history');
+  // fetch 期間切走了頁（Codex r11 對抗審查）：root 是 detach 節點、寫了無害，但 histChart 是**模組級共用變數**——
+  // 舊的 pending 呼叫晚到會 destroy 掉「切回來的新頁」剛畫好的圖，畫面上歷史圖表變空白。與 r10#6 同 idiom。
+  if (seq !== currentRouteSeq()) return;
   if (histChart) { histChart.destroy(); histChart = null; }
 
   const years = [...new Set(hist.map(h => h.month.slice(0, 4)))].sort();
