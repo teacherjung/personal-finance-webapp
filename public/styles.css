@@ -487,3 +487,13 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .health-row:first-child { border-top: none; }
 .health-desc { flex: 1; font-size: 13px; line-height: 1.65; }
 .health-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
+
+/* 收支頁：金流篩選 chip 與列表金流標籤（三層重構 stage 1） */
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12.5px; padding: 6px 13px; border-radius: 20px; background: var(--card); color: var(--text-dim);
+  border: 1px solid var(--line-2); cursor: pointer; white-space: nowrap; }
+.chip:hover { background: var(--card-2); }
+.chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.flow-tag { font-size: 10.5px; padding: 1px 7px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); }
+.flow-tag.pos { background: rgba(71,121,62,.12); color: var(--pos); }
+.flow-tag.neg { background: rgba(184,74,57,.12); color: var(--neg); }

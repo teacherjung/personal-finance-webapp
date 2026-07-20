@@ -21,12 +21,46 @@ export const EXPENSE_TREE = {
 };
 
 export const EXPENSE_PARENTS = Object.keys(EXPENSE_TREE);
+
+// 收入兩層分類樹（金流＝收入時用；使用者定 2026-07-20 三層重構）。與支出樹完全分開、各自一棵。
+// 支出的「分類/子分類」直接沿用上面的 EXPENSE_TREE（信用卡與銀行支出共用一套，統計才合得起來）。
+// 內轉（金流＝transfer）無分類樹（固定 內轉出/內轉入）。
+/** @type {Record<string, string[]>} 收入分類 → 子類清單 */
+export const INCOME_TREE = {
+  '工作': ['薪資', '鐘點', '獎金'],
+  '被動': ['租金', '股息', '利息', '中獎', '投資'],
+  '其他': ['其他收入']
+};
+export const INCOME_PARENTS = Object.keys(INCOME_TREE);
+// 收入未命中時的退路（其他/其他收入）——類比支出的 DEFAULT_EXPENSE。
+/** @type {[string, string]} */
+export const DEFAULT_INCOME = ['其他', '其他收入'];
+
+// 舊平面收入分類（薪資/投資/獎金/其他收入）＝三層重構前的收入 category。保留供資料搬家對照，
+// 勿再新增用途——新收入一律走 INCOME_TREE。搬家（lib/store.js migrateLedgerIfNeeded）用下表把
+// 舊平面分類歸進新樹；對不上的落 DEFAULT_INCOME。
+/** @type {Record<string, [string, string]>} 舊收入分類 → [新分類, 新子類] */
+export const LEGACY_INCOME_MAP = {
+  '薪資': ['工作', '薪資'],
+  '獎金': ['工作', '獎金'],
+  '投資': ['被動', '投資'],
+  '其他收入': ['其他', '其他收入']
+};
 export const INCOME_CATEGORIES = ['薪資', '投資', '獎金', '其他收入'];
 
-/** @param {string} c */
+/** @param {string} c 舊平面收入分類判斷（相容既有程式；新樹用 INCOME_PARENTS 判大類） */
 export const isIncomeCat = (c) => INCOME_CATEGORIES.includes(c);
 // 注意：子類「空字串」＝合法值（＝不分子類）。分類器可只給大類（如 地價稅→居住、OMGYES→健康），
 // 表單也有「（不分子類）」選項——空子類不是資料錯誤（刻意設計，勿改成強制填子類）。
 // 自動分類判斷不出來時的預設歸屬＝「其他/未分類」（讓使用者一眼看出哪些待手動確認）
 /** @type {[string, string]} [分類, 子類] */
 export const DEFAULT_EXPENSE = ['其他', '未分類'];
+
+/**
+ * 帳本歸屬判準（三層重構 stage 1，使用者定 2026-07-20）——**唯一一份**，前後端共用（後端經 lib/derive.js 轉供）。
+ * 'card'＝信用卡消費明細帳本：分析/查帳用，**不進現金流**（那些消費的現金流出＝日後銀行帳本的「繳卡費」，
+ * 兩邊都算＝重複）。判準用「排除法」：明確標 card、或還沒搬家的舊卡匯入（缺 ledger 但 source:'stmt'）
+ * 才算 card；其餘（含缺 ledger 的舊手動列）一律當 cashflow——遷移期/還原舊備份不掉帳。
+ * @param {any} t @returns {boolean}
+ */
+export const isCardTx = (t) => t?.ledger === 'card' || (t?.ledger == null && t?.source === 'stmt');
