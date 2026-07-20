@@ -38,7 +38,7 @@
 
 **三層分類（金流→分類→子分類）**：金流＝交易的 `type`（`income`/`expense`/**新增 `transfer`=內轉**，derive 只加總 income/expense，transfer 天然不進本月收入/支出）。**支出分類直接沿用 `expenseTree`（card 與 cashflow 共用一棵——`saveTree` remap 全部 expense 交易＝正確、不加 ledger 過濾，跨帳本連動是要的、統計才合得起來）**；**收入分類＝新的 `settings.incomeTree`**（`effectiveIncomeTree`/`saveIncomeTree`，`GET/POST /api/income-categories`，退路＝其他/其他收入，無別名機制——收入是手動選、沒有自動分類器）；內轉無分類樹（固定 內轉出/內轉入）。**繳卡費（stage 3 銀行匯入）category 留空**：計入現金流總額、但不進分類統計（卡明細已把那些消費分好類，重算會重複）。
 
-⚠️**緊急預備金公式（使用者定 2026-07-20）**＝**台幣現金（`type='cash'` 且 `currency='TWD'`，活存＋定存都算、排除外幣）÷ 過去六個月現金流平均支出**（`avgMonthlyExpense` 窗口 6、只算有現金流資料的月份——半記錄月不拉低平均，是安全網保險）。自癒依賴＝每月匯銀行帳單，繳卡費那筆補回「刷卡消費的現金基礎支出」，否則卡消費月會看起來零支出→月數虛高→該示警時靜音（生存優先）。
+⚠️**緊急預備金公式（使用者定 2026-07-20）**＝**台幣現金（`type='cash'` 且 `currency='TWD'`，活存＋定存都算、排除外幣）÷ 過去六個月現金流平均支出**（`avgMonthlyExpense` 窗口 6、只算有現金流資料的月份——半記錄月不拉低平均，是安全網保險）。自癒依賴＝每月匯銀行帳單，繳卡費那筆補回「刷卡消費的現金基礎支出」。⚠️**過渡期安全網保險（stage1→3 空窗，對抗審查抓到）**：卡消費排除後、還沒匯銀行帳單時 cashflow 支出≈0→月數虛高→緊急預備金提醒會**無聲關閉**（生存優先大忌）。解法＝`avgMonthlyCardExpense` 偵測「信用卡帳本近月平均消費 > 現金流支出基礎」時，**主動出聲**「緊急預備金月數可能被高估」（`computeReminders` 規則 2 後）——安全網不無聲關閉、明說原因與補法；銀行對帳單匯入後 cashflow 支出追上，此提醒自動消失。
 
 ⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**分階段：stage 1＝拆帳本＋總覽改吃現金流＋收入樹（本段）；stage 2＝帳戶完整帳號；stage 3＝銀行對帳單解析＋內轉自動判定＋繳卡費核對＋領現金分類。** 排序 infra 共用 `public/modules/tx-sort.js`（絕對值排序 r9#2＋日期次鍵 r8#2 封在那）。
 

@@ -19,6 +19,18 @@ after(() => {
   for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 
+// ---- importRows 蓋 ledger:'card'（stage 1 核心行為；手動記帳缺 ledger 靠排除法歸 cashflow）----
+test('匯入｜帳單匯入的交易蓋 ledger:card；被 isCardLedger 判為信用卡帳本', () => {
+  const db = repo.getDb();
+  (db.cards ||= []).push({ id: 'cfcard', name: '測試卡', type: 'credit' });
+  repo.saveDb(db);
+  const r = importRows('cfcard', [{ date: '2026-03-10', amount: 250, desc: '匯入測試店', category: '飲食', subcategory: '餐廳', stmtRef: 'cfcard|2026-03-10|250|匯入測試店' }]);
+  assert.equal(r.imported, 1);
+  const t = repo.getDb().transactions.find(x => x.importBatch === r.batchId);
+  assert.equal(t.ledger, 'card', '帳單匯入一律 ledger:card');
+  assert.equal(isCardLedger(t), true);
+});
+
 // ---- normalizeLedger（搬家核心；與 /api/import 舊備份還原共用同一判準）----
 test('搬家｜source:stmt→card、其餘→cashflow；舊平面收入分類歸新樹', () => {
   const txs = [
@@ -80,25 +92,47 @@ test('現金流｜信用卡帳本不進本月收入/支出；手動與內轉的�
 });
 
 // ---- 緊急預備金：台幣現金（含定存、排除外幣）÷ 六個月平均支出 ----
-test('緊急預備金｜分子只算台幣現金（活存＋定存、排除外幣）', () => {
-  // 上個月一筆現金流支出 30000 → avgExp=30000；TWD 現金 60000 → 2.0 個月（< 6 才示警）。
-  // 外幣 USD 100000 若被算進來，現金會暴增、月數變大到不示警——用「有沒有示警＋月數」反推是否排除外幣。
+// 過去 N 個月前的月份鍵（測試可用 new Date；工作流腳本才禁）
+function monthsAgoKey(n) {
   const now = new Date();
-  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 15);
-  const prevMk = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  const d = new Date(now.getFullYear(), now.getMonth() - n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+test('緊急預備金｜分子只算台幣現金（活存＋定存、排除外幣、排除透支）＋六個月窗口', () => {
+  // 近 4 個月各一筆現金流支出 30000 → avgExp=30000（若窗口誤縮成 3 也是 30000，故另放第 5 月一筆
+  // 90000 讓「窗口 6」與「窗口 3」算出不同平均：窗口 6 → (30000×4+90000)/5=42000；窗口 3 → 30000）。
+  const txs = [];
+  for (let i = 1; i <= 4; i++) txs.push({ id: 'e' + i, date: `${monthsAgoKey(i)}-10`, type: 'expense', category: '居住', amount: 30000, ledger: 'cashflow' });
+  txs.push({ id: 'e5', date: `${monthsAgoKey(5)}-10`, type: 'expense', category: '居住', amount: 90000, ledger: 'cashflow' });
   const db = {
     settings: { emergencyFundMonths: 6 }, holdings: [], subscriptions: [], insurance: [], snapshots: [],
     accounts: [
       { id: 'tw1', name: '台新活存', type: 'cash', class: '現金', currency: 'TWD', balance: 20000 },
       { id: 'tw2', name: '台新定存', type: 'cash', class: '現金', currency: 'TWD', balance: 40000 },   // 定存也算
       { id: 'us1', name: 'IB USD', type: 'cash', class: '現金', currency: 'USD', balance: 100000 },    // 外幣不算
+      { id: 'od', name: '透支帳戶', type: 'cash', class: '現金', currency: 'TWD', balance: -500000 },  // 負餘額不灌進分子
     ],
-    transactions: [{ id: 'e', date: `${prevMk}-10`, type: 'expense', category: '居住', amount: 30000, ledger: 'cashflow' }],
+    transactions: txs,
   };
-  const s = buildSummary(db);
-  const r = s.reminders.find(x => x.title && x.title.includes('緊急預備金'));
-  assert.ok(r, '台幣現金 6 萬 ÷ 3 萬 = 2 個月 < 6 → 要示警（外幣沒被算進來）');
-  assert.match(r.detail, /2\.0 個月/, `月數＝6萬/3萬=2.0，實得：${r?.detail}`);
+  const r = buildSummary(db).reminders.find(x => x.title === '緊急預備金不足');
+  assert.ok(r, '台幣現金 6 萬 ÷ 六月平均 4.2 萬 ≈ 1.4 個月 < 6 → 示警（外幣/透支都沒混進來）');
+  assert.match(r.detail, /1\.4 個月/, `月數＝60000/42000=1.43，若窗口誤縮成3會變2.0，實得：${r?.detail}`);
+});
+
+test('緊急預備金｜過渡期保險：支出全刷卡、現金流帳本無支出時，主動出聲「月數可能被高估」（生存優先）', () => {
+  // 對抗審查抓到的回歸：卡消費排除後 cashflow 支出≈0 → avgExp 極小 → 月數虛高 → 緊急預備金提醒靜音。
+  const txs = [];
+  for (let i = 1; i <= 6; i++) txs.push({ id: 'c' + i, date: `${monthsAgoKey(i)}-10`, type: 'expense', category: '飲食', amount: 40000, ledger: 'card', source: 'stmt' });
+  txs.push({ id: 'inc', date: `${monthsAgoKey(1)}-05`, type: 'income', category: '工作', subcategory: '薪資', amount: 95000, ledger: 'cashflow' });
+  const db = {
+    settings: { emergencyFundMonths: 6 }, holdings: [], subscriptions: [], insurance: [], snapshots: [],
+    accounts: [{ id: 'tw1', name: '台新活存', type: 'cash', class: '現金', currency: 'TWD', balance: 120000 }],
+    transactions: txs,
+  };
+  const r = buildSummary(db).reminders.find(x => x.title && x.title.includes('可能被高估'));
+  assert.ok(r, '卡帳有近月消費、現金流帳本支出低於它 → 要明確出聲，不可讓安全網無聲關閉');
+  assert.match(r.detail, /信用卡帳單/);
 });
 
 // ---- 收入樹：獨立、改名只連動 cashflow 收入 ----

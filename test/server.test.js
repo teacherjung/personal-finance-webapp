@@ -1105,3 +1105,22 @@ test('r10#10｜可以真正清除機密：送空字串 → flexToken／pdfPasswo
   assert.equal((await GET('/cards')).find(c => c.id === card.id)?.pdfPasswordSet, false, '送空字串 → 清除 pdfPassword');
   await DELETE_('/cards/' + card.id);
 });
+
+test('三層重構｜還原「重構前舊備份」(交易 source:stmt、缺 ledger)：/api/import 補上 ledger:card，手動列歸 cashflow', async () => {
+  const backup = await GET('/db');
+  const poisoned = {
+    ...backup,
+    transactions: [
+      { id: 'legacy-card', date: '2026-04-10', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 500, account: '測試卡', source: 'stmt', stmtRef: 'x|2026-04-10|500|舊卡消費', note: '舊卡消費' },  // 舊卡消費，缺 ledger
+      { id: 'legacy-manual', date: '2026-04-11', type: 'income', category: '薪資', subcategory: '', amount: 30000, note: '舊薪資' },  // 舊手動收入，缺 ledger、舊平面分類
+    ],
+  };
+  assert.equal((await POST('/import', poisoned)).status, 200);
+  const txs = await GET('/transactions');
+  const card = txs.find(t => t.id === 'legacy-card');
+  const manual = txs.find(t => t.id === 'legacy-manual');
+  assert.equal(card.ledger, 'card', 'source:stmt 的舊卡消費 → 匯入端 normalizeLedger 補 ledger:card（否則會被當現金流雙算繳卡費）');
+  assert.equal(manual.ledger, 'cashflow', '舊手動 → cashflow');
+  assert.deepEqual([manual.category, manual.subcategory], ['工作', '薪資'], '舊平面收入分類歸新樹');
+  await POST('/import', backup);   // 還原
+});

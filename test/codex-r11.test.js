@@ -15,7 +15,7 @@ const { learnFromStmtEdit, migrateBrandName, customStoreName } = await import('.
 const { storeKeyOf } = await import('../lib/statement.js');
 
 after(() => {
-  for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
+  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 
 // 每題自備乾淨卡片；交易透過 importRows 或直接種進 db（服務層路徑，不經 CRUD 白名單）。
