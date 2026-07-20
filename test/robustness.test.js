@@ -391,3 +391,56 @@ test('r8#1｜基準幣別齊全、彙總金額缺失 → 保留舊值＋cashSumm
   assert.equal(r.cashDetailMissing, false);
   assert.equal(r.cashFromSummary, false);
 });
+
+test('r9#1｜金額欄嚴格取值：空白/缺欄/非法/只有期初 一律不當 0（解析層五情境）', async () => {
+  const { parseStatement } = await import('../lib/ib.js');
+  const mk = (/** @type {any[]} */ rows) => parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: {
+    AccountInformation: { currency: 'USD' }, CashReport: { CashReportCurrency: rows } } } } });
+  // ①彙總列金額空白：Number('')=0 的陷阱——不可變成「彙總=0 → 清空現金」
+  assert.equal(mk([{ currency: 'BASE_SUMMARY', endingCash: '' }]).baseSummaryCash, null, '空白＝沒有金額，不是零');
+  // ②明細列缺金額欄
+  const r2 = mk([{ currency: 'USD' }]);
+  assert.deepEqual(r2.cashByCurrency, {}, '缺金額不可寫成 0');
+  assert.equal(r2.cashDetailIncomplete, true);
+  // ③非法金額
+  const r3 = mk([{ currency: 'USD', endingCash: 'abc' }]);
+  assert.deepEqual(r3.cashByCurrency, {});
+  assert.equal(r3.cashDetailIncomplete, true, '非法金額＝明細不完整，不可觸發歸零');
+  // ④只有期初 startingCash：期初不是目前現金
+  const r4 = mk([{ currency: 'USD', startingCash: 500 }]);
+  assert.deepEqual(r4.cashByCurrency, {}, '不可拿期初餘額冒充期末');
+  // ⑤混合：有效列照收、無效列標不完整
+  const r5 = mk([{ currency: 'USD', endingCash: 100 }, { currency: 'GBP', endingCash: '' }]);
+  assert.deepEqual(r5.cashByCurrency, { USD: 100 });
+  assert.equal(r5.cashDetailIncomplete, true);
+  assert.equal(r5.hasCashDetail, true);
+});
+
+test('r9#1｜同步層：明細不完整 → 讀得到的更新、讀不到的沿用舊值、絕不歸零', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  store.save({ ...store.emptyDb(), accounts: [
+    { id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 },
+    { id: 'a2', name: 'IBKR GBP 現金', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: 50 },
+  ] });
+  const r = await syncIb(/** @type {any} */ (async () => ({
+    positions: [], cashByCurrency: { USD: 200 }, hasCashReport: true, hasCashDetail: true, cashDetailIncomplete: true,
+    statementCount: 1, accountCount: 1, equity: null, income: null, trades: [], account: 'T', period: {} })));
+  const accs = store.load().accounts || [];
+  assert.equal(accs.find(a => a.ibCashCur === 'USD')?.balance, 200, '有效幣別照常更新');
+  assert.equal(accs.find(a => a.ibCashCur === 'GBP')?.balance, 50, 'GBP 金額讀不到＝沿用舊值，不可被「沒出現就歸零」誤清');
+  assert.equal(r.cashZeroed, 0);
+  assert.equal(r.cashDetailIncomplete, true, '要回報讓前端說明');
+});
+
+test('r9#1｜全管線：彙總列金額空白 → cashSummaryMissing、既有現金原封不動（Codex 實測情境）', async () => {
+  const { syncIb } = await import('../lib/services/ib-sync.js');
+  const { parseStatement } = await import('../lib/ib.js');
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: 'IBKR USD 現金', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: 1000 }] });
+  const parsed = parseStatement({ FlexQueryResponse: { FlexStatements: { FlexStatement: {
+    AccountInformation: { currency: 'USD' }, CashReport: { CashReportCurrency: [{ currency: 'BASE_SUMMARY', endingCash: '' }] } } } } });
+  const r = await syncIb(/** @type {any} */ (async () => parsed));
+  assert.equal(store.load().accounts?.find(a => a.ibCashCur === 'USD')?.balance, 1000, '修正前這裡會被寫成 0');
+  assert.equal(r.cashSummaryMissing, true);
+  assert.equal(r.cashFromSummary, false);
+});
