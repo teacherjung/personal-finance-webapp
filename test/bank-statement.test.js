@@ -16,8 +16,8 @@ after(() => {
   for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 
-/** 合成一列（依 x 排序的 {x,s} 儲存格）。 @param {[number,string][]} pairs */
-const L = (pairs) => pairs.map(([x, s]) => ({ x, s }));
+/** 合成一列（{y,cells}；概要解析不看 y，統一給 0）。 @param {[number,string][]} pairs */
+const L = (pairs) => ({ y: 0, cells: pairs.map(([x, s]) => ({ x, s })) });
 
 // ---- 小工具 ----
 test('accountSuffix：遮罩帳號取末尾數字；parseAmount：去 $ 與千分位', () => {
@@ -177,4 +177,87 @@ test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 
   const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****0122', 'TWD', 23)]));
   assert.equal(pv.blocked, true);
   assert.equal(pv.rows[0].action, 'blocked');
+});
+
+// ---- stage 3：明細解析＋分箱 ----
+const { parseBankDetail } = await import('../lib/bank-statement.js');
+const { classifyBankTx, previewBankTxForDb, importBankTxToDb } = await import('../lib/services/bank-import.js');
+
+/** 合成明細列 {y, cells}。 */
+const D = (y, pairs) => ({ y, cells: pairs.map(([x, s]) => ({ x, s })) });
+
+test('明細｜方向靠 x 分欄（支出/存入）＋換行備註靠 y 歸位', () => {
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '209710****0122'], [124, '2026/06/11'], [177, '轉帳存入'], [349, '$36,669'], [418, '$36,669 轉出288810****8791']]),   // 存入（x349 在存入欄）
+    D(83, [[53, '209710****0122'], [124, '2026/06/16'], [177, '媒體轉出'], [289, '$16,333'], [418, '$20,336 房屋貸款']]),              // 支出（x289 在支出欄）
+    D(66, [[53, '288810****8791'], [124, '2026/06/02'], [180, 'CD轉入'], [349, '$24,600'], [414, '$413,829']]),
+    D(50, [[450, 'ATM 806 William鐘點']]),   // 換行備註（高 x、無帳號）→ 最近列 y66
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs.length, 3);
+  assert.equal(txs[0].direction, 'in');
+  assert.equal(txs[0].amount, 36669);
+  assert.equal(txs[0].note, '轉出288810****8791');
+  assert.equal(txs[1].direction, 'out');
+  assert.equal(txs[1].note, '房屋貸款');
+  assert.equal(txs[2].note, 'ATM 806 William鐘點', '換行備註歸到 CD轉入 那列');
+});
+
+const btx = (o) => ({ acctSuffix: '8791', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
+
+test('分箱｜劃撥（證券交割，備註不在摘要）→ 內轉，不計入收支（真實資料曾誤判成收入）', () => {
+  const c = classifyBankTx(btx({ summary: '轉帳存入', direction: 'in', note: '劃撥轉帳元大台灣50' }), new Set());
+  assert.equal(c.type, 'transfer');
+  assert.equal(c.category, '內轉');
+});
+
+test('分箱｜備註含自己帳號末碼 → 內轉；不含 → 照收支', () => {
+  const own = new Set(['8791', '0122']);
+  assert.equal(classifyBankTx(btx({ note: '轉入209710****0122' }), own).type, 'transfer', '對到自己帳號→內轉');
+  assert.equal(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入288810****3047養育費' }), own).type, 'expense', '3047非自己帳號→真支出');
+});
+
+test('分箱｜繳卡費→支出不分類（卡明細已分）；領現金→生活/其他生活雜支；手續費/房貸/養育/利息/配息各就位', () => {
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉帳', note: '台新卡費榮祥森' }), new Set())), ['expense', '', '']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: 'CD提款', note: 'ATM/跨行交易' }), new Set())), ['expense', '生活', '其他生活雜支']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '跨轉手續費' }), new Set())), ['expense', '其他', '手續費']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉出', note: '房屋貸款富邦人壽' }), new Set())), ['expense', '居住', '房貸']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入288810****3047養育費' }), new Set())), ['expense', '養育', '贍養費']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '存款息', direction: 'in' }), new Set())), ['income', '被動', '利息']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉入', direction: 'in', note: '基金配息群益' }), new Set())), ['income', '被動', '股息']);
+});
+
+test('分箱｜其餘：存入→收入其他、支出→支出其他（留給使用者在收支頁改）', () => {
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '轉帳存入', direction: 'in', note: '不明來源' }), new Set())), ['income', '其他', '其他收入']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: 'CD轉出', direction: 'out', note: '數位跨行' }), new Set())), ['expense', '其他', '未分類']);
+});
+
+function pick(c) { return [c.type, c.category, c.subcategory]; }
+
+test('匯入｜寫進現金流帳本（ledger:cashflow、source:bank）；bankRef 去重；重匯 0 筆', () => {
+  const db = { accounts: [], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '8791', masked: '288810****8791' }],
+    transactions: [btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
+  const r1 = importBankTxToDb(db, parsed);
+  assert.equal(r1.imported, 2);
+  const t = db.transactions[0];
+  assert.equal(t.ledger, 'cashflow');
+  assert.equal(t.source, 'bank');
+  assert.ok(t.bankRef);
+  const r2 = importBankTxToDb(db, parsed);
+  assert.equal(r2.imported, 0, '重匯全去重');
+  assert.equal(r2.skipped, 2);
+});
+
+test('預覽交易｜統計 income/expense/transfer＋重複標記（已匯入的標 duplicate）', () => {
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '8791', masked: '288810****8791' }],
+    transactions: [btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
+  // 先把第一筆的 bankRef 種進 db（模擬已匯過）
+  const db0 = { accounts: [], transactions: [] };
+  importBankTxToDb(db0, { ...parsed, transactions: [parsed.transactions[0]] });
+  const pv = previewBankTxForDb(db0, parsed);
+  assert.equal(pv.counts.duplicate, 1, '已匯過的存款息標 duplicate');
+  assert.equal(pv.counts.expense, 1, 'CD提款算支出');
+  assert.ok(pv.rows.find(r => r.summary === '存款息').duplicate);
 });
