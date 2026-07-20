@@ -54,6 +54,8 @@ function subStatus(s) {
   return 'active';
 }
 
+// 該月實際天數（自主體檢 Q4：分母用實際天數，2/28 滿月停用＝算滿月，不再固定 30 天打折）
+function daysInMonth(mk) { const [y, m] = String(mk).split('-').map(Number); return new Date(y, m, 0).getDate(); }
 function dayOfMonth(dateStr) {
   const n = Number(String(dateStr || '').slice(8, 10));
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -70,7 +72,7 @@ function costForMonth(s, mk) {
   const endMk = endsOn.slice(0, 7);
   if (endMk < mk) return 0;
   if (s.cycle === 'monthly') return endMk === mk ? 0 : base;
-  if (endMk === mk) return base * Math.min(dayOfMonth(endsOn), 30) / 30;
+  if (endMk === mk) { const dim = daysInMonth(mk); return base * Math.min(dayOfMonth(endsOn), dim) / dim; }
   return base;
 }
 
@@ -379,7 +381,7 @@ function costFormula(s, mk) {
   const day = dayOfMonth(s.endsOn);
   if (s.cycle === 'monthly') return '月費';
   const base = `${CYCLE_FEE_LABELS[s.cycle] || '月費'} ÷ ${cycleMonths(s)}`;
-  if (s.endsOn && endMk === mk) return `${base} × ${Math.min(day, 30)} / 30`;
+  if (s.endsOn && endMk === mk) { const dim = daysInMonth(mk); return `${base} × ${Math.min(day, dim)} / ${dim}`; }
   return base;
 }
 

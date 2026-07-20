@@ -117,3 +117,35 @@ test('自審｜沒有日期的交易不算進當月現金流', () => {
   const db = { settings: { usdTwd: 32 }, accounts: [], holdings: [], subscriptions: [], transactions: [{ type: 'expense', amount: 9999 }] };
   assert.equal(buildSummary(db).cashflow.expense, 0, '缺日期的支出不歸入當月');
 });
+
+test('自主體檢 Q2｜保險/訂閱繳費日已過未更新 → 出「已過期」提醒（不再無聲消失）', async () => {
+  const { buildSummary } = await import('../lib/derive.js');
+  const iso = (delta) => { const d = new Date(); d.setDate(d.getDate() + delta); return d.toISOString().slice(0, 10); };
+  const db = /** @type {any} */ ({ settings: {},
+    insurance: [{ id: 'p1', policyName: '壽險A', nextPayment: iso(-3), premium: 1000, premiumCycle: 'yearly' }],
+    subscriptions: [{ id: 's1', name: 'Netflix', cycle: 'monthly', amount: 390, nextCharge: iso(-2), status: 'active' }] });
+  const r = buildSummary(db).reminders;
+  const ins = r.find(x => x.title.includes('壽險A') && x.title.includes('已過'));
+  assert.ok(ins, '保險過期要出提醒');
+  assert.equal(ins.level, 'danger');
+  const sub = r.find(x => x.title.includes('Netflix') && x.title.includes('已過'));
+  assert.ok(sub, '訂閱過期要出提醒');
+  assert.equal(sub.level, 'warn');
+  // 逾越視窗（保險 60 天、訂閱 30 天）不再洗
+  const old = /** @type {any} */ ({ settings: {},
+    insurance: [{ id: 'p2', policyName: '壽險B', nextPayment: iso(-100), premium: 1, premiumCycle: 'yearly' }], subscriptions: [] });
+  assert.ok(!buildSummary(old).reminders.some(x => x.title.includes('壽險B')), '過期太久（舊資料）不再狂洗');
+});
+
+test('自主體檢 Q4｜停用當月攤提用該月實際天數：2/28 滿月停用＝算滿月（不再打 93 折）', async () => {
+  const { subCostForMonth } = await import('../lib/derive.js');
+  const sub = { cycle: 'yearly', amount: 1200, since: '2020-01', status: 'active' };   // 年繳 1200 → 月攤 100
+  // 2/28（二月最後一天）停用 → 滿月 100（舊寫死 30 天會算成 28/30≈93.3）
+  assert.equal(subCostForMonth({ ...sub, endsOn: '2027-02-28' }, '2027-02'), 100, '滿月停用＝算滿額');
+  assert.equal(subCostForMonth({ ...sub, endsOn: '2028-02-29' }, '2028-02'), 100, '閏年 2/29 滿月也算滿額');
+  // 1/30（31 天的一月，少用最後一天）→ 30/31，略少於滿月（舊寫死 30 會誤算成滿月 100）
+  const jan = subCostForMonth({ ...sub, endsOn: '2027-01-30' }, '2027-01');
+  assert.ok(jan > 96 && jan < 100, `1/30 應為 30/31≈96.8，實得 ${jan}`);
+  // 月中停用照常按比例
+  assert.equal(subCostForMonth({ ...sub, endsOn: '2027-04-15' }, '2027-04'), 50, '4/15＝15/30 滿月半額');
+});
