@@ -1,7 +1,7 @@
 // @ts-check
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast } from '../app.js';
+import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 
@@ -320,6 +320,7 @@ export async function renderPortfolio() {
     loanTwd, netEquity, leverage
   });
   byId('ibSync').onclick = async (/** @type {any} */ e) => {
+    const seqAtStart = currentRouteSeq();
     const btn = e.currentTarget;
     btn.disabled = true; btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
     try {
@@ -362,7 +363,7 @@ export async function renderPortfolio() {
           toast(`已移除 ${r.missing.length} 檔已出清持股`);
         }
       }
-      renderPortfolio();
+      if (seqAtStart === currentRouteSeq()) renderPortfolio();   // 同步期間可能切走了頁（自主體檢）
     } catch (err) {
       toast('IBKR 同步失敗：' + err.message, true);
       btn.disabled = false; btn.innerHTML = icon('download', 16) + 'IBKR 同步';
@@ -1414,6 +1415,7 @@ function openWatchForm(w) {
 
 // ---- 更新報價（持股＋願望清單共用）----
 async function refreshQuotes(btn, holdings, watchlist, settings) {
+  const seqAtStart = currentRouteSeq();
   const FX_SYMS = { 'TWD=X': 'USD', 'GBPTWD=X': 'GBP', 'JPYTWD=X': 'JPY' };   // Yahoo 匯率代號 → 幣別
   const syms = [...new Set([
     ...holdings.map(h => h.quoteSymbol).filter(Boolean),
@@ -1447,7 +1449,7 @@ async function refreshQuotes(btn, holdings, watchlist, settings) {
       await api('/watchlist/' + w.id, { method: 'PUT', body: { lastPrice: Math.round(q.price * 100) / 100, lastAt: todayStr() } });
     }
     toast(`已更新 ${ok} 檔報價與匯率${skip ? `，${skip} 檔略過（無資料或幣別不符）` : ''}`);
-    renderPortfolio();
+    if (seqAtStart === currentRouteSeq()) renderPortfolio();   // 更新期間可能切走了頁（自主體檢）
   } catch (e) {
     toast('更新失敗：' + e.message, true);
     btn.disabled = false; btn.innerHTML = icon('refresh', 16) + '更新報價';

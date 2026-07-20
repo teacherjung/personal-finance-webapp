@@ -85,7 +85,10 @@ function amortizedForMonth(subs, mk) {
 }
 
 // 月份結束後，把「已完成月份」的實際攤提凍結到歷史紀錄（只補尚未紀錄的）
+let freezeInFlight = null;
 async function freezeCompletedMonths(subs) {
+  if (freezeInFlight) return freezeInFlight;   // 防重入（自主體檢）：雙 render 併發會各讀到「還沒寫」的 history、各寫一份重複月份列
+  freezeInFlight = (async () => {
   const hist = await api('/history');
   const have = new Set(hist.map(h => h.month));
   const lastDone = addMonths(monthKey(), -1);   // 上個（已結束）月份
@@ -97,6 +100,8 @@ async function freezeCompletedMonths(subs) {
   }
   for (const rec of added) await api('/history', { method: 'POST', body: rec });
   return added.length;
+  })();
+  try { return await freezeInFlight; } finally { freezeInFlight = null; }
 }
 
 const VALID_SORT_KEYS = ['manual', 'feeMonth', 'feeYear', 'when', 'card', 'email', 'category'];   // 與 SORTERS 同步

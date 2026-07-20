@@ -471,3 +471,11 @@ test('自主體檢｜匯入備份 fail-closed：自訂分類樹/店名規則型�
   assert.equal(await bad({ categoryAliases: 'x' }), 400);
   assert.equal(await bad({ subAliases: 3 }), 400);
 });
+
+test('自主體檢｜dismissHealthItem(clearAll)：pruned 回真實清除數（不是恆 0）', async () => {
+  const { dismissHealthItem } = await import('../lib/services/health-check.js');
+  store.save({ ...store.emptyDb(), settings: { ...store.emptyDb().settings, healthDismissed: { a: '2026-07-01', b: '2026-07-02', c: '2026-07-03' } } });
+  const r = dismissHealthItem(null, true);
+  assert.equal(r.pruned, 3, '清空前有 3 筆，pruned 要回 3（原本清完再數＝恆 0）');
+  assert.deepEqual(store.load().settings.healthDismissed, {}, '確實清空');
+});

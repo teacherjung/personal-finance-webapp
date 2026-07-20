@@ -159,39 +159,29 @@ export async function renderSettings() {
     </div>
   `;
 
-  byId('savePrinciples').onclick = async () => {
-    await api('/settings', { method: 'PUT', body: {
-      ibConcentrationPct: Number(val('ibConcentrationPct')),
-      equityCapPct: Number(val('equityCapPct')),
-      countryCapPct: Number(val('countryCapPct')),
-      chinaCapPct: Number(val('chinaCapPct')),
-      levCapPct: Number(val('levCapPct')),
-      ibMaintenancePct: Number(val('ibMaintenancePct'))
-    }});
-    toast('投資原則已儲存');
+  // 小工具（自主體檢 #13）：儲存失敗別假報「已儲存」——包 try/catch，錯誤讓使用者看得見
+  const saveSettings = async (/** @type {any} */ body, /** @type {string} */ okMsg) => {
+    try { await api('/settings', { method: 'PUT', body }); toast(okMsg); }
+    catch (err) { toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true); }
   };
+  byId('savePrinciples').onclick = () => saveSettings({
+    ibConcentrationPct: Number(val('ibConcentrationPct')),
+    equityCapPct: Number(val('equityCapPct')),
+    countryCapPct: Number(val('countryCapPct')),
+    chinaCapPct: Number(val('chinaCapPct')),
+    levCapPct: Number(val('levCapPct')),
+    ibMaintenancePct: Number(val('ibMaintenancePct'))
+  }, '投資原則已儲存');
   // 提醒門檻已依分頁拆成三張卡（收支／資產配置／投資組合），各自儲存自己的欄位（PUT /settings 為部分更新）
-  byId('saveEfund').onclick = async () => {
-    await api('/settings', { method: 'PUT', body: { emergencyFundMonths: Number(val('emergencyFundMonths')) } });
-    toast('已儲存');
-  };
-  byId('saveAlloc').onclick = async () => {
-    await api('/settings', { method: 'PUT', body: { allocationDriftPct: Number(val('allocationDriftPct')) } });
-    toast('已儲存');
-  };
-  byId('saveFxCash').onclick = async () => {
-    await api('/settings', { method: 'PUT', body: {
-      usdTwd: Number(val('usdTwd')),
-      ibIdleCashAlert: Number(val('ibIdleCashAlert')),
-      fxHigh: Number(val('fxHigh')),
-      fxLow: Number(val('fxLow'))
-    }});
-    toast('已儲存');
-  };
-  byId('saveIb').onclick = async () => {
-    await api('/settings', { method: 'PUT', body: { ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } } });
-    toast('IB 設定已儲存，可到 IB 投資組合頁同步');
-  };
+  byId('saveEfund').onclick = () => saveSettings({ emergencyFundMonths: Number(val('emergencyFundMonths')) }, '已儲存');
+  byId('saveAlloc').onclick = () => saveSettings({ allocationDriftPct: Number(val('allocationDriftPct')) }, '已儲存');
+  byId('saveFxCash').onclick = () => saveSettings({
+    usdTwd: Number(val('usdTwd')),
+    ibIdleCashAlert: Number(val('ibIdleCashAlert')),
+    fxHigh: Number(val('fxHigh')),
+    fxLow: Number(val('fxLow'))
+  }, '已儲存');
+  byId('saveIb').onclick = () => saveSettings({ ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories')); }
     catch (err) { toast('讀取分類失敗：' + err.message, true); }
@@ -261,10 +251,14 @@ export async function renderSettings() {
   if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    if (!confirm('匯入會覆蓋目前所有資料，確定嗎？')) return;
-    try { await api('/import', { method: 'POST', body: JSON.parse(await file.text()) }); toast('已匯入'); location.hash = 'dashboard'; }
-    catch (err) { toast('匯入失敗：' + err.message, true); }
+    const input = e.target;
+    const file = input.files[0]; if (!file) return;
+    try {
+      if (!confirm('匯入會覆蓋目前所有資料，確定嗎？')) return;
+      await api('/import', { method: 'POST', body: JSON.parse(await file.text()) });
+      toast('已匯入'); location.hash = 'dashboard';
+    } catch (err) { toast('匯入失敗：' + err.message, true); }
+    finally { input.value = ''; }   // 清空（自主體檢）：不清的話取消 confirm 或匯入失敗後，同一檔案重選不觸發 onchange
   };
 }
 
