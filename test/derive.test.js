@@ -81,3 +81,16 @@ test('buildSummary：用 seed 範例資料能正常算出總覽（結構檢查�
   assert.ok(Array.isArray(s.reminders));
   assert.ok(Array.isArray(s.snapshots));
 });
+
+test('自主體檢｜淨值歸零：summary 不輸出 Infinity（equityWiped 旗標）、提醒不印 Infinityx', async () => {
+  const { buildSummary } = await import('../lib/derive.js');
+  const db = /** @type {any} */ ({ settings: { usdTwd: 32, ib: { lastEquity: { stock: 100000, cash: -150000 } } },
+    holdings: [{ id: 'h1', symbol: 'CSPX', currency: 'USD', quantity: 1, price: 100, source: 'ib' }] });
+  const s = buildSummary(db);
+  assert.equal(s.ib.leverage, null, 'Infinity 不可流進 JSON（會變 null 被前端當 0.00x）');
+  assert.equal(s.ib.equityWiped, true, '要給前端明確訊號');
+  const t = s.reminders.find(r => r.title.includes('淨值已為負'));
+  assert.ok(t, '要有危險級提醒');
+  assert.equal(t.level, 'danger');
+  assert.ok(!s.reminders.some(r => r.title.includes('Infinity')), '不可出現 Infinityx 字樣');
+});

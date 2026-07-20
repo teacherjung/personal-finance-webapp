@@ -158,7 +158,9 @@ export async function renderPortfolio() {
   usdRate = fx.USD;
 
   const rows = holdings.map(h => {
-    const r = fx[h.currency || 'USD'] || fx.USD;
+    // 缺 currency 預設台幣（自主體檢）：與 lib/derive.js:163 同口徑——後端（總覽/快照/日線）當台幣、
+    // 這裡當美元的話，同一筆持股兩邊差 32 倍，且投組頁的歷史快照點與「現在」點口徑打架
+    const r = fx[h.currency || 'TWD'] || 1;
     const valueTwd = Number(h.price || 0) * Number(h.quantity || 0) * r;
     const costTwd = holdingCost(h) * r;
     return { ...h, valueTwd, costTwd, pnlTwd: valueTwd - costTwd };
@@ -500,7 +502,7 @@ function fxExposure(rows, accounts, fx) {
     const sym = String(r.symbol || '').toUpperCase();
     if (compOf(r).type === 'gold') return '黃金';
     if (sym === '00719B' || sym === '00720B') return 'USD';   // 台幣交易的美元債 ETF，曝險歸美元
-    return r.currency || 'USD';
+    return r.currency || 'TWD';   // 缺幣別預設台幣（與 derive/上面 rows 同口徑，自主體檢）
   };
   const byCur = {};
   const bucket = (cur) => byCur[cur] = byCur[cur] || { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 };
@@ -511,9 +513,14 @@ function fxExposure(rows, accounts, fx) {
     else if (type === 'gold') c.goldTwd += r.valueTwd;
     else c.stockTwd += r.valueTwd;
   }
+  // ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js:9 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）
+  const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
   for (const a of accounts || []) {
-    const bal = Number(a.balance || 0);
+    let bal = Number(a.balance || 0);
     if (!bal) continue;
+    // 負債型帳戶填「正數」是允許的資料形狀（derive.js:152 兜住了淨資產）——這裡不跟著兜的話，
+    // 幣別曝險會把房貸當「+690 萬現金曝險」，方向整個反掉（自主體檢實測）
+    if (LIABILITY_TYPES.has(a.type || '') && bal > 0) bal = -bal;
     const cur = a.currency || 'TWD';
     bucket(cur).cashTwd += bal * (fx[cur] || 1);
   }
