@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast } from '../app.js';
+import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
@@ -12,7 +12,9 @@ const expiryEnd = (e) => /^\d{4}-\d{2}$/.test(e || '')
   : e;
 
 export async function renderCards() {
+  const seq = currentRouteSeq();
   const list = await api('/cards');
+  if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6 idiom；r11#2 補上漏掉的兩頁）——寫 DOM 前必守，router 的事後檢查救不了 renderer 內部的寫入
   const credit = list.filter(c => (c.type || 'credit') === 'credit');
   const member = list.filter(c => c.type === 'membership');
   const annualFees = credit.reduce((s, c) => s + Number(c.annualFee || 0), 0);
