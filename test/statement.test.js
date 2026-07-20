@@ -324,3 +324,18 @@ test('extractStatementDue：標籤內部被 PDF 拆出空格 → 併回括號組
   ].join('\n');
   assert.equal(extractStatementDue(misaligned), null, '欄位數≠數字數時序數對位沒有意義');
 });
+
+test('自主體檢｜extractStatementMonth：「上期／下次結帳日」不可劫持期別', () => {
+  assert.equal(extractStatementMonth('上期結帳日：115/01/04 本期結帳日：115/02/04'), '2026-02', '要取本期、不是最早出現的那個');
+  assert.equal(extractStatementMonth('下次結帳日 115/03/05 本期結帳日 115/02/04'), '2026-02');
+  assert.equal(extractStatementMonth('結帳日 2026/02/02'), '2026-02', '裸「結帳日」照常可用');
+  assert.equal(extractStatementMonth('上期結帳日：115/01/04 繳款截止日'), null, '只有上期＝寧可讀不到（退推估），不可標成上一期');
+});
+
+test('自主體檢｜rocToIso 真日曆驗證：假日期回 null，不流進交易毒死整批匯入', async () => {
+  const { rocToIso } = await import('../lib/statement.js');
+  assert.equal(rocToIso('115/13/45'), null, '13 月 45 日不存在');
+  assert.equal(rocToIso('1150632'), null, '6 月 32 日不存在');
+  assert.equal(rocToIso('115/06/02'), '2026-06-02', '真日期照常');
+  assert.equal(rocToIso('1160229'), null, '2027 非閏年無 2/29');
+});

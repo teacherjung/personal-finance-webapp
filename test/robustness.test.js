@@ -444,3 +444,15 @@ test('r9#1｜全管線：彙總列金額空白 → cashSummaryMissing、既有�
   assert.equal(r.cashSummaryMissing, true);
   assert.equal(r.cashFromSummary, false);
 });
+
+test('自主體檢｜匯入列含 null/非物件 → 以 skipped 計，不可炸 500 毒整批', async () => {
+  const card = await (await fetch(base + '/api/cards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '測試卡', type: 'credit', issuer: '台新' }) })).json();
+  const res = await fetch(`${base}/api/cards/${card.id}/statement/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transactions: [null, 'junk', { date: '2026-07-01', amount: 100, desc: '好店', store: '好店', category: '飲食', subcategory: '', stmtRef: `${card.id}|2026-07-01|100|好店` }] }) });
+  assert.equal(res.status, 200, '不可 500');
+  const r = await res.json();
+  assert.equal(r.imported, 1, '合法列照常匯入');
+  assert.equal(r.skipped, 2, '壞列以 skipped 誠實回報');
+  await fetch(`${base}/api/cards/${card.id}`, { method: 'DELETE' });
+});
