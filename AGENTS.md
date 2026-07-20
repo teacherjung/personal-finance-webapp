@@ -28,6 +28,20 @@
 
 **型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，dev-only、不影響 runtime/不需 build；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入全部前後端檔案**（lib/、routes/、services/、public/ 全數 `// @ts-check`；改動請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`store.js load()` 已標 `@returns {Db}`，`db.x` 全程型別化**（`Db`/`Settings`/`Card`/`Account`/`Holding`/`IbSettings`… 都在 `lib/types.js`；`settings` 與 `settings.ib` 視為一律存在）。**改 store 結構（emptyDb 加欄位）＝同步更新 `lib/types.js` 的對應 typedef**（否則 server.js 讀該欄會報「不存在」）。要再擴到其他核心檔（如前端 `app.js`）＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
 
+## 收支三層架構（三層重構 stage 1，使用者定 2026-07-20）
+
+交易表 `transactions` 靠 **`ledger` 欄位**分成兩本帳，語意完全不同：
+- **信用卡消費明細**（`ledger:'card'`，帳單匯入 `source:'stmt'` 自動蓋）：消費分析＋查帳用，**絕不進現金流加總**（那些消費的現金流出＝銀行帳本日後的「繳卡費」，兩邊都算就重複）。前端＝`public/modules/transactions.js`（信用卡明細頁）。
+- **收入支出／現金流**（`ledger:'cashflow'`，手動記帳＋未來銀行對帳單匯入）：**現金流真相**。前端＝`public/modules/cashflow.js`（收支頁）。
+
+⚠️**帳本判準單一真相＝`public/modules/categories.js` 的 `isCardTx(t)`**（後端經 `lib/derive.js` 以 `isCardLedger` 別名轉供，沒有前後端同步點）。用**排除法**：`ledger==='card'` 或（缺 ledger 且 `source==='stmt'`）＝card，其餘一律 cashflow——**缺 ledger 的舊資料/還原舊備份不掉帳**。讀現金流的地方（`derive.computeCashflow`、`cashflow.js` 月加總、店家檔案）都要 `isCardTx` 排除 card。
+
+**三層分類（金流→分類→子分類）**：金流＝交易的 `type`（`income`/`expense`/**新增 `transfer`=內轉**，derive 只加總 income/expense，transfer 天然不進本月收入/支出）。**支出分類直接沿用 `expenseTree`（card 與 cashflow 共用一棵——`saveTree` remap 全部 expense 交易＝正確、不加 ledger 過濾，跨帳本連動是要的、統計才合得起來）**；**收入分類＝新的 `settings.incomeTree`**（`effectiveIncomeTree`/`saveIncomeTree`，`GET/POST /api/income-categories`，退路＝其他/其他收入，無別名機制——收入是手動選、沒有自動分類器）；內轉無分類樹（固定 內轉出/內轉入）。**繳卡費（stage 3 銀行匯入）category 留空**：計入現金流總額、但不進分類統計（卡明細已把那些消費分好類，重算會重複）。
+
+⚠️**緊急預備金公式（使用者定 2026-07-20）**＝**台幣現金（`type='cash'` 且 `currency='TWD'`，活存＋定存都算、排除外幣）÷ 過去六個月現金流平均支出**（`avgMonthlyExpense` 窗口 6、只算有現金流資料的月份——半記錄月不拉低平均，是安全網保險）。自癒依賴＝每月匯銀行帳單，繳卡費那筆補回「刷卡消費的現金基礎支出」，否則卡消費月會看起來零支出→月數虛高→該示警時靜音（生存優先）。
+
+⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**分階段：stage 1＝拆帳本＋總覽改吃現金流＋收入樹（本段）；stage 2＝帳戶完整帳號；stage 3＝銀行對帳單解析＋內轉自動判定＋繳卡費核對＋領現金分類。** 排序 infra 共用 `public/modules/tx-sort.js`（絕對值排序 r9#2＋日期次鍵 r8#2 封在那）。
+
 ## 鐵則（違反會壞事）
 
 1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken、**卡片的帳單 PDF 密碼 `pdfPassword`＝身分證字號**）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股；**seed 的卡片不可放真實 pdfPassword**）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。帳單 PDF 只在記憶體解析、不落地保存。**機密投影要套在所有回應、含寫入端**（Codex r10#2）：`lib/secret-fields.js` 的 `projectCard`/`projectSettings`/`projectDb` 不只掛在 GET——`/api/cards` 的 POST/PUT、`PUT /api/settings` 的**回應**也要投影（改個名字/匯率就把存的 `pdfPassword`/`flexToken` 送回瀏覽器＝洩漏）。唯一例外＝`/api/export`（備份必須完整含機密，投影過的備份還原後密碼永久遺失）。「留空＝不變更」保留，但要另給明確的「清除已設定」入口（送空字串清空，Codex r10#10）。

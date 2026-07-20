@@ -1,80 +1,60 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass, stmtOrig, currentRouteSeq } from '../app.js';
+// 信用卡消費明細頁（三層重構 stage 1，使用者定 2026-07-20）：**只顯示信用卡帳本（ledger:'card'）**。
+// 用途＝消費分析＋查帳＋和「收支頁的繳卡費」核對應繳金額；**不進現金流加總**（收支頁才是現金流真相）。
+// 手動記帳與收入請走「收支記帳」頁（cashflow.js）；這頁是帳單匯入 + 編輯既有卡消費。
+import { api, view, byId, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass, stmtOrig, currentRouteSeq } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
-import { INCOME_CATEGORIES } from './categories.js';
+import { isCardTx } from './categories.js';
+import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 
-// 支出分類樹改為「使用者可自訂」：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設），
-// 存這個 module 變數供表單/匯入預覽的下拉共用。收入分類仍固定（INCOME_CATEGORIES）。
+// 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
+// 表單分類＝支出大類（收入在收支頁、走 incomeTree）。
 /** @type {Record<string, string[]>} */
 let expTree = {};
 const expenseParents = () => Object.keys(expTree);
-// 表單分類選單＝收入類＋支出大類；type 由所選分類自動推導
-const allCategories = () => [...INCOME_CATEGORIES, ...expenseParents()];
+const allCategories = () => expenseParents();
 // 子類 <option>s（含「不分子類」空選項）
 const subOptions = (parent, cur = '') => ['', ...((Object.hasOwn(expTree, parent) && expTree[parent]) || [])]   // hasOwn（Codex r8#3）：分類叫 toString 且不在樹裡時會展開到原型函式而 TypeError
   .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 
 let monthFilter = monthKey();
-// 收支列表排序（使用者定 2026-07-21：**所有欄位**皆可點表頭排序）：key＝欄位、dir＝asc/desc。
-// 預設日期新→舊；換欄位時日期/金額預設降冪（新的/大的在前）、文字欄預設升冪（A→Z）。
-let listSort = { key: 'date', dir: 'desc' };
+// 排序（使用者定 2026-07-21：所有欄位皆可點表頭排序）——共用 tx-sort.js（絕對值排序 r9#2＋日期次鍵 r8#2 封在那）。
+const listSort = { key: 'date', dir: 'desc' };
 
 export async function renderTransactions() {
   const seq = currentRouteSeq();
-  const [all, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
+  const [allRaw, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   expTree = tree && typeof tree === 'object' ? tree : {};
+  // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
+  const all = allRaw.filter(isCardTx);
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
 
-  const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '');
-  const zh = (/** @type {any} */ x, /** @type {any} */ y) => String(x || '').localeCompare(String(y || ''), 'zh-Hant');
-  // 各欄位的「主鍵」比較器（升冪）。⚠️ 升降冪只作用在主鍵：同值時的第二鍵**固定**日期新→舊，
-  // 不跟著反轉（Codex r8#2：把整個比較器乘 -1 會把第二鍵一起反轉，降冪時同名資料變舊→新）。
-  // 金額口徑＝**絕對金額大小**（收/支金額都存正數；這欄的用途是找「大筆」，收支混排時比正負值直覺——
-  // Codex r8#4 裁定維持並記明規格）。
-  /** @type {Record<string, (a: any, b: any) => number>} */
-  const SORTERS = {
-    date: (a, b) => (a.date || '').localeCompare(b.date || ''),
-    account: (a, b) => zh(a.account, b.account),
-    note: (a, b) => zh(a.note, b.note),
-    category: (a, b) => zh(a.category, b.category) || zh(a.subcategory, b.subcategory),
-    subcategory: (a, b) => zh(a.subcategory, b.subcategory),
-    amount: (a, b) => Math.abs(Number(a.amount || 0)) - Math.abs(Number(b.amount || 0))   // 絕對值（Codex r9#2：規格寫絕對大小，手動記帳可輸入負數，不取絕對值時降冪會把 -100 排在 50 後面）
-  };
-  const cmp = SORTERS[listSort.key] || SORTERS.date;
-  const rows = all.filter(t => t.date?.slice(0, 7) === monthFilter)
-    .sort((a, b) => (listSort.dir === 'desc' ? -cmp(a, b) : cmp(a, b)) || byDateDesc(a, b));
-  // 表頭三角形＝訂閱頁同款（th.sortable＋.sort-tri，styles.css 既有樣式）
-  const th = (/** @type {string} */ key, /** @type {string} */ label, cls = '') => {
-    const on = listSort.key === key;
-    return `<th class="sortable ${cls}" data-sort="${key}" title="點擊排序">${label} <span class="sort-tri${on ? ' active' : ''}">${on ? (listSort.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
-  };
-  const income = rows.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount || 0), 0);
-  const expense = rows.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount || 0), 0);
+  const th = thBuilder(listSort);
+  const rows = sortRows(all.filter(t => t.date?.slice(0, 7) === monthFilter), listSort);
+  const expense = rows.reduce((s, t) => s + Number(t.amount || 0), 0);   // 信用卡帳本全是支出
 
-  // 本月支出分類。Object.create(null)（Codex r5#5）：分類名是使用者取的，取成 toString 這類
+  // 本月消費分類。Object.create(null)（Codex r5#5）：分類名是使用者取的，取成 toString 這類
   // 原生屬性名時，普通物件的 `byCat[k] || 0` 會撈到原型上的函式 → 加總變成「函式原始碼+金額」的字串。
   const byCat = Object.create(null);
-  rows.filter(t => t.type === 'expense').forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + Number(t.amount || 0); });
+  rows.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + Number(t.amount || 0); });
   const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = topCats[0]?.[1] || 1;
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>收支記帳</h1><p>記錄每一筆收入與支出，掌握現金流</p></div>
+      <div><h1>信用卡消費明細</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
       <div class="page-actions">
-        ${all.some(t => t.source === 'stmt' && t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
-        <button class="btn-ghost btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
-        <button class="btn btn-eq" id="addTx">${icon('plus', 16)}新增一筆</button>
+        ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
+        <button class="btn btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
       </div>
     </div>
 
     <div class="cards">
-      <div class="card"><h3>本月收入</h3><div class="stat sm pos">${wan(income)}</div></div>
-      <div class="card"><h3>本月支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
-      <div class="card"><h3>本月結餘</h3><div class="stat sm ${income - expense >= 0 ? 'pos' : 'neg'}">${income - expense >= 0 ? '+' : ''}${wan(income - expense)}</div></div>
+      <div class="card"><h3>本月消費</h3><div class="stat sm neg">${money(expense)}</div></div>
+      <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div></div>
     </div>
 
     <div class="two-col" style="margin:18px 0">
@@ -83,33 +63,26 @@ export async function renderTransactions() {
         <select id="monthSel">${months.map(m => `<option value="${esc(m)}" ${m === monthFilter ? 'selected' : ''}>${esc(m)}</option>`).join('') || `<option>${monthFilter}</option>`}</select>
       </div>
       <div class="chart-card" style="padding:14px 18px">
-        <h3 style="margin-bottom:10px">本月支出分類</h3>
+        <h3 style="margin-bottom:10px">本月消費分類</h3>
         ${topCats.length ? topCats.map(([c, v]) => `
           <div style="margin-bottom:8px">
             <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
             <div class="pill-bar"><div style="width:${(v / maxCat * 100).toFixed(0)}%;background:${CHART.red}"></div></div>
-          </div>`).join('') : '<p class="empty">本月尚無支出。</p>'}
+          </div>`).join('') : '<p class="empty">本月尚無消費。</p>'}
       </div>
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr>${th('date', '消費日')}${th('account', '帳戶 / 信用卡')}${th('note', '說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無記錄，點右上角新增。</td></tr>`}</tbody></table>
+      <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳帳單」匯入。</td></tr>`}</tbody></table>
     </div>
   `;
 
-  byId('addTx').onclick = () => openTxForm(null, accounts, cards);
   byId('uploadStmt').onclick = () => openStatementUpload();
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
-  // 點表頭排序：同欄再點＝反轉方向；換欄＝日期/金額預設降冪（新/大在前）、文字欄預設升冪
-  view().querySelectorAll('th.sortable').forEach(el => /** @type {HTMLElement} */ (el).onclick = () => {
-    const key = /** @type {HTMLElement} */ (el).dataset.sort || 'date';
-    if (listSort.key === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
-    else listSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
-    renderTransactions();
-  });
+  bindSortClicks(view(), listSort, renderTransactions);   // 共用排序 infra（tx-sort.js）
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const t = all.find(x => x.id === b.dataset.del);
@@ -257,31 +230,30 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
   const siblings = sk ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
   const propagable = siblings.length;
   openForm({
-    title: tx ? '編輯記錄' : '新增收支',
+    title: '編輯消費',   // 信用卡明細＝匯入 + 編輯；手動新增走收支頁
     fields: [
-      { key: 'date', label: '日期', type: 'date', required: true, default: todayStr() },   // 用本地時區（UTC 版在台灣早上 8 點前會差一天）
+      { key: 'date', label: '消費日', type: 'date', required: true, default: todayStr() },   // 用本地時區（UTC 版在台灣早上 8 點前會差一天）
       { key: 'category', label: '分類', type: 'select', options: allCategories(), default: expTree['飲食'] ? '飲食' : (expenseParents()[0] || '其他') },
-      { key: 'subcategory', label: '子類（支出才有，可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
+      { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
-      { key: 'account', label: '帳戶 / 信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
+      { key: 'account', label: '信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
       // 標籤與列表表頭一致（使用者定）；「店名／品項」＝這欄也常拿來記買了什麼（LG 18升除濕機（momo）），
       // 不是只有店名（使用者定 2026-07-19）
-      { key: 'note', label: '說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' },
+      { key: 'note', label: '消費說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' },
       ...(propagable ? [{ key: 'applyAll', label: `同時套用分類到「${sk}」的其他 ${propagable} 筆記錄`, type: 'checkbox', full: true }] : []),
     ],
     values: tx || {},
     onMount: (/** @type {any} */ root) => {
       const catSel = root.querySelector('#f_category');
       const subSel = root.querySelector('#f_subcategory');
-      const fill = (parent, cur) => { subSel.innerHTML = subOptions(parent, cur); subSel.disabled = INCOME_CATEGORIES.includes(parent); };
+      const fill = (parent, cur) => { subSel.innerHTML = subOptions(parent, cur); };
       fill(catSel.value, tx?.subcategory || '');
       catSel.onchange = () => fill(catSel.value, '');
     },
     onSubmit: async (data) => {
       const { applyAll, ...rest } = data;
       const fields = /** @type {any} */ (rest);
-      const type = INCOME_CATEGORIES.includes(fields.category) ? 'income' : 'expense';
-      const body = { ...fields, type, subcategory: type === 'income' ? '' : (fields.subcategory || '') };
+      const body = { ...fields, type: 'expense', subcategory: fields.subcategory || '' };   // 信用卡明細一律支出（ledger:'card' 由後端保留，前端不送）
       if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });
       else await api('/transactions', { method: 'POST', body });
       if (applyAll && sk) {

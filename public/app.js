@@ -1,6 +1,7 @@
 // @ts-check
 // 個人理財中心 — 前端主程式
 import { renderDashboard } from './modules/dashboard.js';
+import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
 import { renderAssets } from './modules/assets.js';
 import { renderPortfolio } from './modules/portfolio.js';
@@ -237,6 +238,7 @@ export async function confirmDelete(name, fn) {
 // ---------- 路由 ----------
 const ROUTES = {
   dashboard: renderDashboard,
+  cashflow: renderCashflow,
   transactions: renderTransactions,
   assets: renderAssets,
   ib: renderPortfolio,
