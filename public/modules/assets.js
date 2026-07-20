@@ -110,7 +110,7 @@ function openAccForm(acc) {
       { key: 'balance', label: '目前餘額（原幣，負債請填負數）', type: 'number', required: true },
       // 完整帳號（三層重構 stage 2）：只存這台電腦、GET 剝除只回末四碼；供銀行對帳單匯入時用末碼比對到這個帳戶。
       { key: 'accountNo', label: '完整帳號（選填，只存這台電腦）', type: 'text', full: true,
-        placeholder: acc?.accountNoSet ? `已設定（末四碼 ${acc.accountNoLast4 || '****'}），留空＝不變更` : '例：2097101234 50122（銀行對帳單匯入時用來對到這個帳戶）' },
+        placeholder: acc?.accountNoSet ? `已設定（末四碼 ${acc.accountNoLast4 || '****'}），留空＝不變更` : '例：9001001234 53301（銀行對帳單匯入時用來對到這個帳戶）' },
       ...(acc?.accountNoSet ? [{ key: 'clearAccountNo', label: '清除已存的帳號（改回未設定）', type: 'checkbox', full: true }] : []),
     ],
     values: acc || { currency: 'TWD' },

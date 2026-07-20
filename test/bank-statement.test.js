@@ -21,8 +21,8 @@ const L = (pairs) => ({ y: 0, cells: pairs.map(([x, s]) => ({ x, s })) });
 
 // ---- 小工具 ----
 test('accountSuffix：遮罩帳號取末尾數字；parseAmount：去 $ 與千分位', () => {
-  assert.equal(accountSuffix('209710****0122'), '0122');
-  assert.equal(accountSuffix('88875****162'), '162');
+  assert.equal(accountSuffix('900100****3301'), '3301');
+  assert.equal(accountSuffix('900300****363'), '363');
   assert.equal(accountSuffix('沒有帳號'), '');
   assert.equal(parseAmount('$1,615,555'), 1615555);
   assert.equal(parseAmount('$0'), 0);
@@ -34,29 +34,29 @@ test('概要區｜台幣區：末碼＋餘額＋參考日；外幣區：取原�
   const lines = [
     L([[47, '新臺幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
     L([[78, '帳號類別'], [163, '帳戶號碼'], [433, '帳戶餘額'], [509, '備註']]),
-    L([[50, '新臺幣活存'], [150, '209710****0122'], [473, '$23']]),
-    L([[50, '新臺幣活存_母帳戶'], [150, '288810****8791'], [453, '$136,185'], [521, 'Richart']]),
+    L([[50, '新臺幣活存'], [150, '900100****3301'], [473, '$23']]),
+    L([[50, '新臺幣活存_母帳戶'], [150, '900200****3302'], [453, '$136,185'], [521, 'Richart']]),
     L([[47, '合計'], [445, '$2,052,207']]),
     L([[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
     L([[367, 'JPY']]),
-    L([[56, '外幣活存'], [108, '88875****162'], [436, '$0'], [491, '$0'], [513, 'Richart']]),
+    L([[56, '外幣活存'], [108, '900300****363'], [436, '$0'], [491, '$0'], [513, 'Richart']]),
     L([[358, '0.196327']]),
     L([[366, 'USD']]),
-    L([[56, '外幣活存'], [108, '88875****162'], [436, '$500'], [491, '$15,900'], [513, 'Richart']]),
+    L([[56, '外幣活存'], [108, '900300****363'], [436, '$500'], [491, '$15,900'], [513, 'Richart']]),
     L([[362, '31.855']]),
     L([[47, '合計'], [490, '0']]),
   ];
   const r = parseBankSummary(lines);
   assert.equal(r.referenceDate, '2026-06-30');
   assert.equal(r.accounts.length, 4, '2 台幣 + 2 外幣（幣別各異）');
-  assert.deepEqual(r.accounts[0], { suffix: '0122', masked: '209710****0122', balance: 23, currency: 'TWD', label: '新臺幣活存', note: '' });
+  assert.deepEqual(r.accounts[0], { suffix: '3301', masked: '900100****3301', balance: 23, currency: 'TWD', label: '新臺幣活存', note: '' });
   assert.equal(r.accounts[1].balance, 136185);
   assert.equal(r.accounts[1].note, 'Richart');
   const jpy = r.accounts.find(a => a.currency === 'JPY');
   const usd = r.accounts.find(a => a.currency === 'USD');
   assert.equal(jpy.balance, 0);
   assert.equal(usd.balance, 500, '外幣取原幣（$500）不是新臺幣（$15,900）——避免 derive 重複換匯');
-  assert.equal(usd.suffix, '162');
+  assert.equal(usd.suffix, '363');
 });
 
 test('概要區｜透支負餘額帳戶（餘額欄留空）略過、不當成 0', () => {
@@ -76,46 +76,46 @@ const parsed = (referenceDate, accounts) => ({ bank: '台新', referenceDate, ac
 const acc = (suffix, currency, balance) => ({ suffix, masked: `x****${suffix}`, balance, currency, label: '活存', note: '' });
 
 test('餘額更新｜末碼＋幣別比對既有帳戶就更新、沒有的自動建（type=cash/class=現金、不設 ibCashCur）', () => {
-  const db = { accounts: [{ id: 'a1', name: '我的台新', type: 'cash', class: '現金', currency: 'TWD', accountNo: '209710123450122', balance: 5 }] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [acc('0122', 'TWD', 23), acc('8791', 'TWD', 136185)]));
+  const db = { accounts: [{ id: 'a1', name: '我的台新', type: 'cash', class: '現金', currency: 'TWD', accountNo: '900100123453301', balance: 5 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [acc('3301', 'TWD', 23), acc('3302', 'TWD', 136185)]));
   assert.equal(r.updated, 1);
   assert.equal(r.created, 1);
-  assert.equal(db.accounts.find(a => a.id === 'a1').balance, 23, '末碼 0122 比對到既有帳戶→更新餘額');
+  assert.equal(db.accounts.find(a => a.id === 'a1').balance, 23, '末碼 3301 比對到既有帳戶→更新餘額');
   assert.equal(db.accounts.find(a => a.id === 'a1').balanceAsOf, '2026-06-30');
-  const created = db.accounts.find(a => a.accountNo === 'x****8791');
+  const created = db.accounts.find(a => a.accountNo === 'x****3302');
   assert.ok(created && created.type === 'cash' && created.class === '現金' && !created.ibCashCur, '自動建帳戶不設 ibCashCur');
 });
 
 test('餘額更新｜較舊帳單不覆蓋（現值參考日 < 既有 balanceAsOf → skip）', () => {
-  const db = { accounts: [{ id: 'a1', type: 'cash', currency: 'TWD', accountNo: '****0122', balance: 999, balanceAsOf: '2026-06-30' }] };
-  const r = applyBalancesToDb(db, parsed('2026-05-31', [acc('0122', 'TWD', 111)]));
+  const db = { accounts: [{ id: 'a1', type: 'cash', currency: 'TWD', accountNo: '****3301', balance: 999, balanceAsOf: '2026-06-30' }] };
+  const r = applyBalancesToDb(db, parsed('2026-05-31', [acc('3301', 'TWD', 111)]));
   assert.equal(r.skipped, 1);
   assert.equal(r.updated, 0);
   assert.equal(db.accounts[0].balance, 999, '較舊帳單不可把餘額洗回去');
 });
 
-test('餘額更新｜同末碼不同幣別＝不同帳戶（162 JPY vs 162 USD 各自比對/建立）', () => {
-  const db = { accounts: [{ id: 'j', type: 'cash', currency: 'JPY', accountNo: '****162', balance: 0 }] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [acc('162', 'JPY', 300), acc('162', 'USD', 500)]));
-  assert.equal(r.updated, 1, 'JPY 162 更新');
-  assert.equal(r.created, 1, 'USD 162 是不同帳戶→新建');
+test('餘額更新｜同末碼不同幣別＝不同帳戶（363 JPY vs 363 USD 各自比對/建立）', () => {
+  const db = { accounts: [{ id: 'j', type: 'cash', currency: 'JPY', accountNo: '****363', balance: 0 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [acc('363', 'JPY', 300), acc('363', 'USD', 500)]));
+  assert.equal(r.updated, 1, 'JPY 363 更新');
+  assert.equal(r.created, 1, 'USD 363 是不同帳戶→新建');
   assert.equal(db.accounts.find(a => a.id === 'j').balance, 300);
 });
 
 test('餘額更新｜沒有現值參考日 → 400（不敢亂更新）', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed(null, [acc('0122', 'TWD', 23)])),
+  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed(null, [acc('3301', 'TWD', 23)])),
     (/** @type {any} */ e) => e.status === 400);
 });
 
 test('預覽｜列出 update/create/skip-stale，不改 db', () => {
   const db = { accounts: [
-    { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', accountNo: '****0122', balance: 5 },
-    { id: 'a2', name: '乙', type: 'cash', currency: 'TWD', accountNo: '****8791', balance: 9, balanceAsOf: '2026-06-30' },
+    { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', accountNo: '****3301', balance: 5 },
+    { id: 'a2', name: '乙', type: 'cash', currency: 'TWD', accountNo: '****3302', balance: 9, balanceAsOf: '2026-06-30' },
   ] };
   const before = JSON.stringify(db);
-  const pv = previewBalancesForDb(db, parsed('2026-05-01', [acc('0122', 'TWD', 23), acc('8791', 'TWD', 100), acc('9999', 'TWD', 7)]));
-  assert.equal(pv.rows.find(r => r.suffix === '0122').action, 'update');
-  assert.equal(pv.rows.find(r => r.suffix === '8791').action, 'skip-stale', '帳單較舊→標 skip-stale');
+  const pv = previewBalancesForDb(db, parsed('2026-05-01', [acc('3301', 'TWD', 23), acc('3302', 'TWD', 100), acc('9999', 'TWD', 7)]));
+  assert.equal(pv.rows.find(r => r.suffix === '3301').action, 'update');
+  assert.equal(pv.rows.find(r => r.suffix === '3302').action, 'skip-stale', '帳單較舊→標 skip-stale');
   assert.equal(pv.rows.find(r => r.suffix === '9999').action, 'create');
   assert.equal(JSON.stringify(db), before, '預覽不可改 db');
 });
@@ -124,24 +124,24 @@ test('預覽｜列出 update/create/skip-stale，不改 db', () => {
 const accM = (masked, currency, balance) => ({ suffix: (masked.match(/\*+(\d+)$/) || [])[1] || '', masked, balance, currency, label: '活存', note: '' });
 
 test('餘額更新｜只比對現金帳戶：末碼相同的負債/保單帳戶不可被覆蓋（負債翻資產＝淨資產算錯）', () => {
-  const db = { accounts: [{ id: 'loan', name: '房貸', type: 'mortgage', currency: 'TWD', accountNo: '123450122', balance: -2000000 }] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 23)]));
+  const db = { accounts: [{ id: 'loan', name: '房貸', type: 'mortgage', currency: 'TWD', accountNo: '123453301', balance: -2000000 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 23)]));
   assert.equal(db.accounts.find(a => a.id === 'loan').balance, -2000000, '房貸餘額不可被帳單覆蓋');
   assert.equal(r.updated, 0);
   assert.equal(r.created, 1, '改成新建一個現金帳戶');
 });
 
-test('餘額更新｜可見前綴防碰撞：末碼同 0122 但前綴不同（209710 vs 288810）＝兩個不同帳戶', () => {
+test('餘額更新｜可見前綴防碰撞：末碼同 3301 但前綴不同（900100 vs 900200）＝兩個不同帳戶', () => {
   const db = { accounts: [] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('288810****0122', 'TWD', 200)]));
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 100), accM('900200****3301', 'TWD', 200)]));
   assert.equal(r.created, 2, '前綴不同→兩個帳戶，不可合成一個');
   assert.deepEqual(db.accounts.map(a => a.balance).sort((x, y) => x - y), [100, 200]);
 });
 
 test('餘額更新｜同批快照比對：兩筆不同前綴不會比對到「本批剛新建的」而互吃', () => {
-  // 既有一個完整帳號對到 209710...0122；帳單同時有 209710****0122（→update）與 288810****0122（→create）
-  const db = { accounts: [{ id: 'x', type: 'cash', currency: 'TWD', accountNo: '20971000000122', balance: 5 }] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('288810****0122', 'TWD', 200)]));
+  // 既有一個完整帳號對到 900100...3301；帳單同時有 900100****3301（→update）與 900200****3301（→create）
+  const db = { accounts: [{ id: 'x', type: 'cash', currency: 'TWD', accountNo: '90010000003301', balance: 5 }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 100), accM('900200****3301', 'TWD', 200)]));
   assert.equal(r.updated, 1);
   assert.equal(r.created, 1);
   assert.equal(db.accounts.find(a => a.id === 'x').balance, 100);
@@ -149,32 +149,32 @@ test('餘額更新｜同批快照比對：兩筆不同前綴不會比對到「�
 
 test('餘額更新｜同批完全重複的遮罩列去重（不會建兩個）', () => {
   const db = { accounts: [] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 100), accM('209710****0122', 'TWD', 100)]));
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 100), accM('900100****3301', 'TWD', 100)]));
   assert.equal(r.created, 1, '同遮罩同幣別＝同一戶，去重');
 });
 
 test('餘額更新｜不支援幣別 graceful skip，不擋整張帳單（有效的照更新）', () => {
   const db = { accounts: [] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('111111****0122', 'TWD', 23), accM('222222****0999', 'EUR', 9999)]));
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('111111****3301', 'TWD', 23), accM('222222****0999', 'EUR', 9999)]));
   assert.equal(r.created, 1, 'TWD 照建');
   assert.equal(r.unsupported, 1, 'EUR 略過、不 throw');
   assert.ok(!db.accounts.some(a => a.currency === 'EUR'));
 });
 
 test('餘額更新｜壞的現值參考日（2026/13/45）→ 400，不寫進 balanceAsOf 撞櫃檯 500', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed('2026-13-45', [accM('x****0122', 'TWD', 23)])),
+  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed('2026-13-45', [accM('x****3301', 'TWD', 23)])),
     (/** @type {any} */ e) => e.status === 400);
 });
 
 test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯入間的手動修正）', () => {
-  const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '209710****0122', balance: 88888, balanceAsOf: '2026-06-30' }] };
-  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('209710****0122', 'TWD', 23)]));
+  const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '900100****3301', balance: 88888, balanceAsOf: '2026-06-30' }] };
+  const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 23)]));
   assert.equal(r.skipped, 1);
   assert.equal(db.accounts[0].balance, 88888, '同一天再匯不覆蓋手改值');
 });
 
 test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 400 一致）', () => {
-  const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****0122', 'TWD', 23)]));
+  const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****3301', 'TWD', 23)]));
   assert.equal(pv.blocked, true);
   assert.equal(pv.rows[0].action, 'blocked');
 });
@@ -189,22 +189,22 @@ const D = (y, pairs) => ({ y, cells: pairs.map(([x, s]) => ({ x, s })) });
 test('明細｜方向靠 x 分欄（支出/存入）＋換行備註靠 y 歸位', () => {
   const lines = [
     D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
-    D(100, [[53, '209710****0122'], [124, '2026/06/11'], [177, '轉帳存入'], [349, '$36,669'], [418, '$36,669 轉出288810****8791']]),   // 存入（x349 在存入欄）
-    D(83, [[53, '209710****0122'], [124, '2026/06/16'], [177, '媒體轉出'], [289, '$16,333'], [418, '$20,336 房屋貸款']]),              // 支出（x289 在支出欄）
-    D(66, [[53, '288810****8791'], [124, '2026/06/02'], [180, 'CD轉入'], [349, '$24,600'], [414, '$413,829']]),
-    D(50, [[450, 'ATM 806 William鐘點']]),   // 換行備註（高 x、無帳號）→ 最近列 y66
+    D(100, [[53, '900100****3301'], [124, '2026/06/11'], [177, '轉帳存入'], [349, '$36,669'], [418, '$36,669 轉出900200****3302']]),   // 存入（x349 在存入欄）
+    D(83, [[53, '900100****3301'], [124, '2026/06/16'], [177, '媒體轉出'], [289, '$16,333'], [418, '$20,336 房屋貸款']]),              // 支出（x289 在支出欄）
+    D(66, [[53, '900200****3302'], [124, '2026/06/02'], [180, 'CD轉入'], [349, '$24,600'], [414, '$413,829']]),
+    D(50, [[450, 'ATM 806 鐘點薪資']]),   // 換行備註（高 x、無帳號）→ 最近列 y66
   ];
   const txs = parseBankDetail(lines);
   assert.equal(txs.length, 3);
   assert.equal(txs[0].direction, 'in');
   assert.equal(txs[0].amount, 36669);
-  assert.equal(txs[0].note, '轉出288810****8791');
+  assert.equal(txs[0].note, '轉出900200****3302');
   assert.equal(txs[1].direction, 'out');
   assert.equal(txs[1].note, '房屋貸款');
-  assert.equal(txs[2].note, 'ATM 806 William鐘點', '換行備註歸到 CD轉入 那列');
+  assert.equal(txs[2].note, 'ATM 806 鐘點薪資', '換行備註歸到 CD轉入 那列');
 });
 
-const btx = (o) => ({ acctSuffix: '8791', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
+const btx = (o) => ({ acctSuffix: '3302', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
 
 test('分箱｜劃撥（證券交割，備註不在摘要）→ 內轉，不計入收支（真實資料曾誤判成收入）', () => {
   const c = classifyBankTx(btx({ summary: '轉帳存入', direction: 'in', note: '劃撥轉帳元大台灣50' }), new Set());
@@ -213,17 +213,17 @@ test('分箱｜劃撥（證券交割，備註不在摘要）→ 內轉，不計�
 });
 
 test('分箱｜備註含自己帳號末碼 → 內轉；不含 → 照收支', () => {
-  const own = new Set(['8791', '0122']);
-  assert.equal(classifyBankTx(btx({ note: '轉入209710****0122' }), own).type, 'transfer', '對到自己帳號→內轉');
-  assert.equal(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入288810****3047養育費' }), own).type, 'expense', '3047非自己帳號→真支出');
+  const own = new Set(['3302', '3301']);
+  assert.equal(classifyBankTx(btx({ note: '轉入900100****3301' }), own).type, 'transfer', '對到自己帳號→內轉');
+  assert.equal(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入900200****7788養育費' }), own).type, 'expense', '7788非自己帳號→真支出');
 });
 
 test('分箱｜繳卡費→支出不分類（卡明細已分）；領現金→生活/其他生活雜支；手續費/房貸/養育/利息/配息各就位', () => {
-  assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉帳', note: '台新卡費榮祥森' }), new Set())), ['expense', '', '']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉帳', note: '台新卡費' }), new Set())), ['expense', '', '']);
   assert.deepEqual(pick(classifyBankTx(btx({ summary: 'CD提款', note: 'ATM/跨行交易' }), new Set())), ['expense', '生活', '其他生活雜支']);
   assert.deepEqual(pick(classifyBankTx(btx({ summary: '跨轉手續費' }), new Set())), ['expense', '其他', '手續費']);
   assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉出', note: '房屋貸款富邦人壽' }), new Set())), ['expense', '居住', '房貸']);
-  assert.deepEqual(pick(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入288810****3047養育費' }), new Set())), ['expense', '養育', '贍養費']);
+  assert.deepEqual(pick(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入900200****7788養育費' }), new Set())), ['expense', '養育', '贍養費']);
   assert.deepEqual(pick(classifyBankTx(btx({ summary: '存款息', direction: 'in' }), new Set())), ['income', '被動', '利息']);
   assert.deepEqual(pick(classifyBankTx(btx({ summary: '媒體轉入', direction: 'in', note: '基金配息群益' }), new Set())), ['income', '被動', '股息']);
 });
@@ -237,7 +237,7 @@ function pick(c) { return [c.type, c.category, c.subcategory]; }
 
 test('匯入｜寫進現金流帳本（ledger:cashflow、source:bank）；bankRef 去重；重匯 0 筆', () => {
   const db = { accounts: [], transactions: [] };
-  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '8791', masked: '288810****8791' }],
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '3302', masked: '900200****3302' }],
     transactions: [btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
   const r1 = importBankTxToDb(db, parsed);
   assert.equal(r1.imported, 2);
@@ -251,7 +251,7 @@ test('匯入｜寫進現金流帳本（ledger:cashflow、source:bank）；bankRe
 });
 
 test('預覽交易｜統計 income/expense/transfer＋重複標記（已匯入的標 duplicate）', () => {
-  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '8791', masked: '288810****8791' }],
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '3302', masked: '900200****3302' }],
     transactions: [btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
   // 先把第一筆的 bankRef 種進 db（模擬已匯過）
   const db0 = { accounts: [], transactions: [] };
@@ -267,8 +267,8 @@ test('明細｜方向以 running 餘額為權威：小額右對齊被 x 判反�
   // 同帳戶三列，餘額遞減＝連續支出；第 2、3 列小額手續費即使 x 落在存入側，也靠餘額差判成 out
   const lines = [
     D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [222, '支票號碼'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
-    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
-    D(83, [[53, '288810****8791'], [124, '2026/06/24'], [177, '跨轉手續費'], [325, '$15'], [414, '$172,733']]),   // $15 x325 落存入側，但餘額 -15 → out
+    D(100, [[53, '900200****3302'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
+    D(83, [[53, '900200****3302'], [124, '2026/06/24'], [177, '跨轉手續費'], [325, '$15'], [414, '$172,733']]),   // $15 x325 落存入側，但餘額 -15 → out
   ];
   const txs = parseBankDetail(lines);
   assert.equal(txs[1].direction, 'out', '餘額 172748→172733 差 -15 → 支出（不被 x 幾何判反）');
@@ -278,7 +278,7 @@ test('明細｜方向以 running 餘額為權威：小額右對齊被 x 判反�
 test('明細｜表頭逐字拆/讀不到欄位 → 丟可見錯誤，不靜默歸零（無聲總損）', () => {
   const lines = [
     D(120, [[75, '帳'], [80, '號'], [272, '支'], [278, '出'], [284, '金'], [290, '額'], [331, '存'], [337, '入'], [343, '金'], [349, '額'], [396, '帳'], [402, '戶'], [408, '餘'], [414, '額']]),
-    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
+    D(100, [[53, '900200****3302'], [124, '2026/06/24'], [177, 'CD轉出'], [289, '$15,000'], [414, '$172,748']]),
   ];
   assert.throws(() => parseBankDetail(lines), (/** @type {any} */ e) => e.status === 400, '表頭抓不到欄位 x → 400，不回 [] 靜默漏光');
 });
@@ -286,7 +286,7 @@ test('明細｜表頭逐字拆/讀不到欄位 → 丟可見錯誤，不靜默�
 test('明細｜摘要區的序號數字不被誤當交易金額（txnCell 下界）', () => {
   const lines = [
     D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [222, '支票號碼'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
-    D(100, [[53, '288810****8791'], [124, '2026/06/24'], [177, '轉帳存入'], [205, '12345'], [349, '$8,000'], [414, '$100,000']]),   // 摘要區 12345@x205 不可當金額
+    D(100, [[53, '900200****3302'], [124, '2026/06/24'], [177, '轉帳存入'], [205, '12345'], [349, '$8,000'], [414, '$100,000']]),   // 摘要區 12345@x205 不可當金額
   ];
   const txs = parseBankDetail(lines);
   assert.equal(txs[0].amount, 8000, '真金額 8000，不是摘要序號 12345');
