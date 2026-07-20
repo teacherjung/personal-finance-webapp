@@ -125,7 +125,7 @@ export async function renderSettings() {
         此 Token 僅能讀取報表，<b>無法下單或轉帳</b>。
       </p>
       <div class="form-grid">
-        <div class="full"><label>Flex Web Service Token</label><input id="flexToken" type="password" value="${esc(s.ib?.flexToken || '')}" placeholder="貼上 token" /></div>
+        <div class="full"><label>Flex Web Service Token</label><input id="flexToken" type="password" value="" placeholder="${s.ib?.flexTokenSet ? '已設定，留空＝不變更' : '貼上 token'}" /></div>
         <div class="full"><label>Flex Query ID</label><input id="flexQueryId" value="${esc(s.ib?.flexQueryId || '')}" placeholder="例：123456" /></div>
       </div>
       <div class="form-actions"><button class="btn" id="saveIb">儲存 IB 設定</button></div>
@@ -181,7 +181,12 @@ export async function renderSettings() {
     fxHigh: Number(val('fxHigh')),
     fxLow: Number(val('fxLow'))
   }, '已儲存');
-  byId('saveIb').onclick = () => saveSettings({ ib: { flexToken: val('flexToken'), flexQueryId: val('flexQueryId') } }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
+  byId('saveIb').onclick = () => {
+    // flexToken 留空＝不變更（後端 ib 是巢狀合併，不送就保留舊 token，自主體檢 Q3）
+    const ib = /** @type {any} */ ({ flexQueryId: val('flexQueryId') });
+    if (val('flexToken')) ib.flexToken = val('flexToken');
+    saveSettings({ ib }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
+  };
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories')); }
     catch (err) { toast('讀取分類失敗：' + err.message, true); }

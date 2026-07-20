@@ -141,7 +141,10 @@ test('設定白名單（Codex）：擋下 IB 同步擁有欄位與未知欄位�
   assert.notEqual(s.ib?.lastEquity?.stock, 99999, 'lastEquity 屬 IB 同步、前端不可偽造（影響槓桿/斷頭）');
   assert.equal(s.fxTwd?.GBP, 41.5, '合法匯率照常寫入');
   assert.ok(!('EVIL' in (s.fxTwd || {})), 'fxTwd 非數值項要被剝掉');
-  assert.ok('flexToken' in (s.ib || {}), 'ib 既有欄位保留');
+  // 機密投影（自主體檢）：GET /settings 剝掉 flexToken、改回報 flexTokenSet 布林（既有 flexQueryId 仍在）
+  assert.ok(!('flexToken' in (s.ib || {})), 'flexToken 不可回傳到前端（機密投影）');
+  assert.equal(typeof s.ib?.flexTokenSet, 'boolean', '改以 flexTokenSet 布林告知「已設定/未設定」');
+  assert.ok('flexQueryId' in (s.ib || {}), 'ib 的非機密既有欄位（flexQueryId）保留');
 });
 
 test('匯入防呆（Codex）：集合型別錯誤 → 400，且不寫壞資料', async () => {
