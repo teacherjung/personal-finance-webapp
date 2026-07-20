@@ -456,3 +456,18 @@ test('自主體檢｜匯入列含 null/非物件 → 以 skipped 計，不可炸
   assert.equal(r.skipped, 2, '壞列以 skipped 誠實回報');
   await fetch(`${base}/api/cards/${card.id}`, { method: 'DELETE' });
 });
+
+test('自主體檢｜uid 唯一性：同毫秒連呼不碰撞（syncIb 一次建多檔持股不共用 id）', async () => {
+  const { uid } = await import('../lib/store.js');
+  const ids = Array.from({ length: 1000 }, () => uid());
+  assert.equal(new Set(ids).size, 1000, '1000 次連呼必須全部唯一（否則 deleteItem 的 filter 會多刪）');
+});
+
+test('自主體檢｜匯入備份 fail-closed：自訂分類樹/店名規則型別壞 → 400，不可靜默剝除回 200', async () => {
+  const bad = (patch) => fetch(base + '/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: { usdTwd: 32, ...patch } }) }).then(r => r.status);
+  assert.equal(await bad({ expenseTree: 'oops' }), 400, 'expenseTree 非物件要擋（否則自訂分類樹默默消失）');
+  assert.equal(await bad({ storeRules: [] }), 400, 'storeRules 陣列要擋（手做店名規則默默消失）');
+  assert.equal(await bad({ categoryAliases: 'x' }), 400);
+  assert.equal(await bad({ subAliases: 3 }), 400);
+});
