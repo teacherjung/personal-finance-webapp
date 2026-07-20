@@ -581,7 +581,10 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
   // 店名格式整理（套用）：note 先拆殼再治、storeKey 用原文重算、學習 key 跟著 storeKey 搬、學過的錯名一併治
   const applied = await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
-  assert.equal(after.note, '停車費（台灣普客二四）', '包著停車標記的舊 note 要能治（拆殼→整理→重上標記）');
+  // 自訂名逐字（使用者定 2026-07-20）：殘骸名治好＝乾淨店名「台灣普客二四」，但不再自動補「停車費（）」包裝——
+  // 停車費屬性由分類欄呈現（下方 subcategory 斷言），顯示名逐字，才不會把使用者刻意拿掉的包裝硬加回去。
+  assert.equal(after.note, '台灣普客二四', '包著停車標記的舊殘骸名要能治（拆殼→整理成乾淨店名），但不自動補停車包裝');
+  assert.equal(after.subcategory, '停車費', '停車屬性保留在分類欄');
   assert.equal(after.storeKey, '台灣普客二四', 'storeKey 用原文重算：聯信前綴＋「股份有」殘尾都修掉');
   const learned = await GET('/learned');
   assert.equal(learned[origT]?.name, '台灣普客二四', '原文級學習：key 不動、錯名治好');

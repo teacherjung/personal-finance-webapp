@@ -52,13 +52,14 @@ test('這次真的改了店名：以使用者取的名字為準並學起來（�
   assert.equal(db.learnedCategories?.[ORIG]?.name, '公司樓下停車場', '而且要學起來，下次匯入沿用');
 });
 
-test('已有自訂名 + 只改分類：包裝跟著分類走，但自訂名本身不動', () => {
+test('已有自訂名 + 只改分類：自訂名逐字不動，不自動貼標記（使用者定 2026-07-20）', () => {
+  // 使用者刻意取的顯示名＝逐字照登：就算子類改成「停車費」，也不自動包成「停車費（公司樓下）」——
+  // 使用者在編輯框看到的本來就是完整顯示名，沒打標記＝他的選擇（不希望 app 再貼）。
   seed({ note: '公司樓下' }, { [ORIG]: { name: '公司樓下' } });
   updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   const db = store.load();
-  assert.equal(db.transactions?.[0].note, '停車費（公司樓下）', '以自訂名為底重上標記');
-  assert.equal(db.learnedCategories?.[ORIG]?.name, '公司樓下',
-    '學習值不該帶標記——存的是使用者取的底名，標記由顯示層重上（AGENTS.md）');
+  assert.equal(db.transactions?.[0].note, '公司樓下', '自訂名逐字保留，不自動貼「停車費（）」');
+  assert.equal(db.learnedCategories?.[ORIG]?.name, '公司樓下', '學習表存的自訂名也不動');
 });
 
 test('冪等：同樣的編輯再存一次，顯示名與學習表都不再變動', () => {
@@ -106,7 +107,7 @@ test('同店一起改：那 N 筆的顯示名也要跟著新分類重算', async
     '整店改分類之後，每一筆的顯示名都要跟上');
 });
 
-test('同店一起改：有自訂名的那一筆，以自訂名為底重上標記', async () => {
+test('同店一起改：有自訂名的那一筆，逐字保留、不自動貼標記（使用者定 2026-07-20）', async () => {
   const { applyCategoryToStore } = await import('../lib/services/statement-import.js');
   const orig = '阜爾運通信義店';
   store.save({ ...store.emptyDb(),
@@ -115,7 +116,7 @@ test('同店一起改：有自訂名的那一筆，以自訂名為底重上標�
     learnedCategories: { [orig]: { name: '公司樓下' } } });
 
   applyCategoryToStore('阜爾運通', '交通', '停車費');
-  assert.equal(store.load().transactions?.[0].note, '停車費（公司樓下）', '不可拿自動名蓋掉使用者取的名字');
+  assert.equal(store.load().transactions?.[0].note, '公司樓下', '自訂名逐字保留，不自動包成「停車費（）」');
   assert.equal(store.load().learnedCategories?.[orig]?.name, '公司樓下', '自訂名本身不動');
 });
 
