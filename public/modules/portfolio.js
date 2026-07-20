@@ -311,7 +311,7 @@ export async function renderPortfolio() {
 
   // ---- handlers ----
   byId('addHolding').onclick = () => openHoldingForm(null);
-  byId('refreshQuotes').onclick = (e) => refreshQuotes(e.target, holdings, watchlist, settings);
+  byId('refreshQuotes').onclick = (e) => refreshQuotes(e.currentTarget, holdings, watchlist, settings);   // currentTarget＝按鈕本身（e.target 可能是內層圖示，disabled 會設錯對象，自主體檢）
   byId('printPortfolio').onclick = () => printPortfolioReport({
     rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
     layerV, regionMap, eqV, bondV, goldAll,

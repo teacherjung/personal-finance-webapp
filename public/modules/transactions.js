@@ -364,8 +364,14 @@ function openStatementPreview(cardId, r, b64, cards) {
   const syncEdits = () => curR.transactions.forEach((t, i) => {
     const cb = root.querySelector(`input[data-row="${i}"]`);
     if (cb) t._checked = cb.checked;
-    const cat = root.querySelector(`select[data-cat="${i}"]`);
-    if (cat) { t.subcategory = (cat.value === cat.dataset.autocat) ? cat.dataset.autosub : ''; t.category = cat.value; }
+    const cat = /** @type {any} */ (root.querySelector(`select[data-cat="${i}"]`));
+    // data-autocat/autosub 是「這筆的原始自動判斷」＝固定基準，不可被使用者選值覆蓋（自主體檢）：
+    // 選回原分類時，子類要能還原成原本的 autosub（存 t._autoSub 一次、往後都拿它比）
+    if (cat) {
+      if (t._autoCat === undefined) { t._autoCat = cat.dataset.autocat; t._autoSub = cat.dataset.autosub || ''; }
+      t.category = cat.value;
+      t.subcategory = (cat.value === t._autoCat) ? t._autoSub : '';
+    }
   });
   const applyPreviewSort = () => {
     const key = (t) => (t.store || t.desc || '');
