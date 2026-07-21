@@ -119,6 +119,26 @@ test('PUT applyAll 於「國外交易服務費」列：略過傳播、本筆編�
   assert.equal(after.find(t => t.id === 'f2').category, '其他', '服務費不整批改：兄弟筆維持原分類');
 });
 
+// ---------- ③c 其他「傳播不適用」情形 applyAll 也不可 rollback 本筆（G3 對抗審查複審）----------
+test('PUT applyAll 但清空分類：略過傳播、本筆編輯照存（空分類無從整批套，不 rollback）', async () => {
+  reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
+  const res = await PUT('/transactions/a', { category: '', subcategory: '', applyAll: true });
+  assert.equal(res.status, 200, '空分類不該把本筆編輯 rollback');
+  const r = await res.json();
+  assert.equal(r.category, '', '本筆編輯（清空分類）照常存');
+  assert.equal(r.applied, undefined, '空分類→略過傳播');
+  assert.equal((await GET('/transactions')).find(t => t.id === 'b').category, '其他', '兄弟筆不動');
+});
+
+test('PUT applyAll 但 storeKey 是保留字（防禦）：略過傳播、本筆編輯照存', async () => {
+  reset([{ id: 'pk', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 10, note: 'x', storeKey: 'constructor', source: 'stmt', stmtRef: 'c1|2026-07-11|10|x', ledger: 'card' }]);
+  const res = await PUT('/transactions/pk', { category: '飲食', subcategory: '餐廳', applyAll: true });
+  assert.equal(res.status, 200, '保留字 storeKey 不該 rollback 本筆');
+  const r = await res.json();
+  assert.equal(r.category, '飲食', '本筆編輯照常存');
+  assert.equal(r.applied, undefined, '保留字 storeKey→略過傳播');
+});
+
 // ---------- ④ 工作函式純度（原子性的地基）：*ToDb 只改 in-memory、不落檔 ----------
 test('applyCategoryToStoreDb 是純的：改傳入的 db 物件、但不自己 saveDb（原子呼叫端才寫）', () => {
   reset([stmtTx('a', '2026-07-11', '星巴克信義店')]);
