@@ -275,13 +275,17 @@ $('#snapshotBtn').addEventListener('click', async () => {
 hydrateIcons(document);
 router();
 
-// 1-1：開 app 自動記錄本月快照（每個本地日曆日至多一次；同日重開不重複寫）。
-// 靜默進行——真的寫入了才提示＋刷新目前頁面；失敗不打擾（手動「記錄本月快照」鈕仍可用）。
+// 1-1：開 app 自動刷新報價（D1）＋記錄本月快照。順序：先刷報價（>1 小時舊才抓，失敗靜默用舊價），
+// 日線才反映新價；再記月快照/日線。真的寫入了或報價有更新才提示＋刷新目前頁面；失敗不打擾（手動鈕仍可用）。
 (async () => {
+  let refreshed = false;
+  try { const q = await api('/quotes/refresh-auto', { method: 'POST' }); refreshed = !!(q && q.refreshed); } catch { /* 報價自動更新失敗靜默：用舊價 */ }
+  // ↑ 用 q.refreshed（不是 q.updated）：只更新匯率、沒動持股價時 updated 為 0，但外幣持股的台幣估值仍變了、要重繪
   try {
     const r = await api('/snapshot/auto', { method: 'POST' });
-    if (r && r.recorded) { toast('已自動記錄本月快照 📸'); router(); }
-  } catch { /* 自動快照失敗靜默略過，不影響 app 使用 */ }
+    if (r && r.recorded) toast('已自動記錄本月快照 📸');
+    if ((r && r.recorded) || refreshed) router();   // 月快照寫入或報價有更新 → 重繪反映最新
+  } catch { if (refreshed) router(); /* 自動快照失敗靜默略過，不影響 app 使用 */ }
 })();
 
 // 店名規則更新後自動整理（使用者定 2026-07-19）：規則住在程式碼裡，以前要「合併→重啟→**記得手動按整理**」，
