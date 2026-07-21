@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-banklearn-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb, listLearnedBank, deleteLearnedBank, applyLearnedBankToExisting } = await import('../lib/services/bank-import.js');
+const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb, listLearnedBank, deleteLearnedBank, applyLearnedBankToExisting, reconcileBankTxAccountNames } = await import('../lib/services/bank-import.js');
 const { sanitizeLearnedBank } = await import('../lib/schema.js');
 const { saveIncomeTree } = await import('../lib/services/categories.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
@@ -131,6 +131,27 @@ test('匯入：存下 autoNote＝摘要・原始備註（清空自訂說明時�
   const db = baseDb();
   importBankTxToDb(db, parsed([btx({ summary: '存款息', note: '利息2元', direction: 'in', amount: 2 })]));
   assert.equal(db.transactions.at(-1).autoNote, '存款息・利息2元');
+});
+
+// ---------- 帳戶改名連動（身分比對，使用者定 2026-07-21「改一次、處處同步」）----------
+test('reconcileBankTxAccountNames：用遮罩帳號身分把 stale 顯示名對齊到帳戶現名；同末碼靠前綴區分', () => {
+  const db = {
+    accounts: [
+      { id: 'a', name: '【台新】活儲（Richart）', type: 'cash', currency: 'TWD', accountNo: '900100****8791' },
+      { id: 'b', name: '別的帳戶', type: 'cash', currency: 'TWD', accountNo: '900200****8791' },   // 同末碼、不同前綴
+    ],
+    transactions: [
+      { id: 't1', source: 'bank', account: '台新 8791', bankRef: 'bank|900100****8791|2026-06-01|in|100||存款息|' },   // 舊自動名，屬 a
+      { id: 't2', source: 'bank', account: '台新 8791', bankRef: 'bank|900200****8791|2026-06-02|out|50||提款|' },     // 屬 b
+      { id: 'm1', source: 'manual', account: '手打帳戶', note: 'x' },   // 手動無 bankRef，不動
+    ],
+  };
+  const changed = reconcileBankTxAccountNames(db);
+  assert.equal(changed, 2);
+  assert.equal(db.transactions.find(t => t.id === 't1').account, '【台新】活儲（Richart）');
+  assert.equal(db.transactions.find(t => t.id === 't2').account, '別的帳戶', '同末碼靠前綴區分、不誤對');
+  assert.equal(db.transactions.find(t => t.id === 'm1').account, '手打帳戶', '手動記帳（無 bankRef）不受影響');
+  assert.equal(reconcileBankTxAccountNames(db), 0, '冪等：再跑一次無變動');
 });
 test('匯入：交割角色改名「結算」後，學過交割的鑰匙套到出帳 → 保留結算(方向中性)，不誤翻成內轉出（Codex r13#4）', () => {
   const db = baseDb();
