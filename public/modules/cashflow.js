@@ -315,15 +315,17 @@ function openCashflowForm(tx, accounts = [], all = []) {
         category: flow === 'transfer' ? '內轉' : (data.category || ''),
         subcategory: data.subcategory || '', amount: data.amount,
       };
-      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });   // PUT 會觸發 learnFromBankEdit（銀行交易）
-      else await api('/transactions', { method: 'POST', body });
-      // 同類一起改（Q2乙）：勾了就把剛學到的規則套用到既有同鑰匙的其他筆（PUT 已先學好）
-      if (data.applyAll && bankKey) {
-        try {
-          const r = await api('/bank-tx/apply-learned', { method: 'POST', body: { bankKey } });
-          toast(`已儲存，並把其他 ${r.changed} 筆同類一起改了${r.skipped ? `（${r.skipped} 筆方向不符，未動）` : ''}`);
-        } catch (e) { toast('已儲存；同類套用失敗：' + (/** @type {any} */ (e).message || ''), true); }
-      } else toast('已儲存');
+      if (tx) {
+        // 同類一起改（Q2乙）原子化（護欄 G3）：勾了就把 applyAll 併進 PUT，後端一次寫檔完成編輯（含學習）＋傳播——
+        // 不再前端第二次呼叫（原本第二次失敗只能靠 try/catch 補救成「已儲存但套用失敗」的半套用狀態）
+        if (data.applyAll && bankKey) body.applyAll = true;
+        const r = await api('/transactions/' + tx.id, { method: 'PUT', body });   // PUT 會觸發 learnFromBankEdit（銀行交易）＋同鑰匙傳播
+        if (r.applied) toast(`已儲存，並把其他 ${r.applied.changed} 筆同類一起改了${r.applied.skipped ? `（${r.applied.skipped} 筆方向不符，未動）` : ''}`);
+        else toast('已儲存');
+      } else {
+        await api('/transactions', { method: 'POST', body });
+        toast('已儲存');
+      }
       renderCashflow();
     }
   });

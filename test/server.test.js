@@ -262,6 +262,16 @@ test('accounts.type 枚舉→400（Codex#5-2）：擋 mortgagex 讓負債被當�
   await DELETE_(`/accounts/${ok.id}`);
 });
 
+test('watchlist.lastAt 型別驗證（護欄 G5）：壞日期→400（防觀察清單 .slice 崩）；合法 YYYY-MM-DD 照存', async () => {
+  const w = await (await POST('/watchlist', { symbol: 'AAPL', name: 'Apple' })).json();
+  const bad = await PUT('/watchlist/' + w.id, { lastAt: '20260722' });   // 非 YYYY-MM-DD＝壞格式
+  assert.equal(bad.status, 400, '壞 lastAt 應拒絕（date 型別非法→400，不剝成危險空值）');
+  const good = await (await PUT('/watchlist/' + w.id, { lastPrice: 195.5, lastAt: '2026-07-22' })).json();
+  assert.equal(good.lastAt, '2026-07-22', '合法報價更新日照存');
+  assert.equal(good.lastPrice, 195.5);
+  await DELETE_(`/watchlist/${w.id}`);
+});
+
 test('匯入雪快照非物件元素（Codex#5-3）：snapshots:[null] 被濾掉、dashboard 資料不崩', async () => {
   const backup = await GET('/db');
   const poisoned = { ...backup, snapshots: [...(backup.snapshots || []), null, 'garbage'] };

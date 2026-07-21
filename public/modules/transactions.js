@@ -227,7 +227,10 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
   // 傳播提示（使用者定 2026-07-19：解「改一筆以為修好了」的錯覺）：帳單交易若同一把身分鑰匙
   // 還有別筆分類不同，給一個勾選框整店一起改——不然使用者要逐筆點，或誤以為已經全改好。
   const sk = tx?.source === 'stmt' ? String(tx.storeKey || '') : '';
-  const siblings = sk ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
+  // 國外交易服務費不支援整批改（分類跟隨所屬消費，r2-Codex#3；後端 lib/statement.js isServiceFee 為單一真相）
+  // → 不給「同店一起改」勾選框：勾了後端也會略過傳播，顯示框只會誤導（G3 對抗審查 confirmed）。
+  const isFeeKey = /國外交易服務費/.test(sk);
+  const siblings = (sk && !isFeeKey) ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
   const propagable = siblings.length;
   openForm({
     title: '編輯消費',   // 信用卡明細＝匯入 + 編輯；手動新增走收支頁
@@ -254,16 +257,19 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
       const { applyAll, ...rest } = data;
       const fields = /** @type {any} */ (rest);
       const body = { ...fields, type: 'expense', subcategory: fields.subcategory || '' };   // 信用卡明細一律支出（ledger:'card' 由後端保留，前端不送）
-      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });
-      else await api('/transactions', { method: 'POST', body });
-      if (applyAll && sk) {
-        const r = await api('/statement/apply-category', { method: 'POST',
-          body: { storeKey: sk, category: body.category, subcategory: body.subcategory } });
-        toast(`已儲存，並把「${sk}」的其他 ${r.changed} 筆一起改成 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
-      } else if (sk) {
+      if (tx) {
+        // 「同店一起改」原子化（護欄 G3）：勾了就把 applyAll 併進同一個 PUT，後端一次寫檔完成編輯＋傳播——
+        // 不再前端「PUT 再另呼 apply-category」兩次寫（中途失敗會半套用、且這條原本沒接錯誤）
+        if (applyAll && sk) body.applyAll = true;
+        const r = await api('/transactions/' + tx.id, { method: 'PUT', body });
+        if (r.applied) toast(`已儲存，並把「${sk}」的其他 ${r.applied.changed} 筆一起改成 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
         // 學習是隱形的＝使用者不知道系統記住了什麼（今天「改一筆以為修好了」的一半原因）→ 說出來
-        toast(`已儲存。以後「${sk}」的消費會自動歸到 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
-      } else toast('已儲存');
+        else if (sk) toast(`已儲存。以後「${sk}」的消費會自動歸到 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
+        else toast('已儲存');
+      } else {
+        await api('/transactions', { method: 'POST', body });
+        toast('已儲存');
+      }
       renderTransactions();
     }
   });

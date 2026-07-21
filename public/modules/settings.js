@@ -233,6 +233,8 @@ export async function renderSettings() {
     const cur = el.dataset.cur || '', cat0 = el.dataset.cat || '', sub0 = el.dataset.sub || '';
     // 同店一起改（使用者定 2026-07-19，與收支列表編輯同一招）：同品牌鑰匙下「其他原文」還有幾筆
     const key = el.dataset.key || '', others = Number(el.dataset.others || 0);
+    // 國外交易服務費不支援整批改（r2-Codex#3；後端 isServiceFee 為單一真相）→ 不給「同店一起改」勾選框（同 transactions.js）
+    const isFeeKey = /國外交易服務費/.test(orig) || /國外交易服務費/.test(key);
     const catOpts = (cat0 && !expParents.includes(cat0)) ? [cat0, ...expParents] : expParents;   // 保留目前值（防默默改資料）
     openForm({
       title: '編輯店名與分類（只影響這一列）',
@@ -240,7 +242,7 @@ export async function renderSettings() {
         { key: 'name', label: `原文「${orig}」的顯示名`, type: 'text', required: true, full: true },
         { key: 'category', label: '分類', type: 'select', options: catOpts, default: cat0 || expParents[0] },
         { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
-        ...(key && others > 0 ? [{ key: 'applyAll', label: `同時套用分類到「${key}」的其他 ${others} 筆記錄（顯示名不會跟過去）`, type: 'checkbox', full: true }] : []),
+        ...(key && others > 0 && !isFeeKey ? [{ key: 'applyAll', label: `同時套用分類到「${key}」的其他 ${others} 筆記錄（顯示名不會跟過去）`, type: 'checkbox', full: true }] : []),
       ],
       values: { name: cur, category: cat0, subcategory: sub0 },
       onMount: (/** @type {any} */ root) => {
@@ -274,12 +276,12 @@ export async function renderSettings() {
         root.querySelector('.form-actions')?.prepend(rb);
       },
       onSubmit: async (d) => {
-        const r = await api('/statement/rename-store', { method: 'POST', body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '' } });
-        if (d.applyAll && key) {
-          const r2 = await api('/statement/apply-category', { method: 'POST',
-            body: { storeKey: key, category: d.category, subcategory: d.subcategory || '' } });
-          toast(`已更新 ${r.changed} 筆，並把「${key}」的其他 ${r2.changed} 筆一起改成 ${d.category}${d.subcategory ? `·${d.subcategory}` : ''}`);
-        } else toast(`已更新 ${r.changed} 筆記錄`);
+        // 「同店一起改」原子化（護欄 G3）：把 applyAll 併進 rename-store，後端一次寫檔完成改名＋分類傳播——
+        // 不再前端「rename-store 再另呼 apply-category」兩次寫（中途失敗會半套用、且這條原本沒接錯誤）
+        const r = await api('/statement/rename-store', { method: 'POST',
+          body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '', applyAll: !!(d.applyAll && key) } });
+        if (r.applied) toast(`已更新 ${r.changed} 筆，並把「${key}」的其他 ${r.applied.changed} 筆一起改成 ${d.category}${d.subcategory ? `·${d.subcategory}` : ''}`);
+        else toast(`已更新 ${r.changed} 筆記錄`);
         renderSettings();
       }
     });
