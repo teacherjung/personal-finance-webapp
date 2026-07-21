@@ -588,6 +588,13 @@ test('POST /accounts/reconcile-names（開 app 自動）：既有 stale 銀行�
   await DELETE_('/transactions/' + bt.id); await DELETE_('/accounts/' + acc.id);
 });
 
+test('POST /accounts/reconcile-names：順手補回被洗空的銀行交易說明（存款息，使用者回報 2026-07-22）', async () => {
+  const bt = seedTx({ source: 'bank', account: '台新', note: '', type: 'income', category: '被動', subcategory: '利息', amount: 7, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900999****3301|2026-06-01|in|7||存款息|' });
+  await POST('/accounts/reconcile-names', {});
+  assert.equal((await GET('/transactions')).find(t => t.id === bt.id).note, '存款息', '空說明→自動名（bankRef 反解）');
+  await DELETE_('/transactions/' + bt.id);
+});
+
 test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同 storeKey 的不同分店可各自取名', async () => {
   // 銀行截斷情境：兩個不同原文（桃/新分店）共用同一個 storeKey（使用者實際踩到的 12MINI 案例）
   const origA = '測試分店 (桃X999 Taipei', origB = '測試分店 (新X999 Taipei';

@@ -150,9 +150,14 @@ tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--card-2); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
-/* 銀行帳戶表：欄位間更寬鬆、第一欄（帳戶名）吃剩餘寬度，其餘依內容收窄（使用者定 2026-07-21 視覺舒適） */
-.bank-acc-tbl th, .bank-acc-tbl td { padding: 14px 26px; white-space: nowrap; }
-.bank-acc-tbl th:first-child, .bank-acc-tbl td:first-child { width: 100%; white-space: normal; }
+/* 銀行帳戶表：欄寬固定分配、把空間平均分攤到各欄（使用者定 2026-07-22），不再讓帳戶名獨吞、其餘擠右 */
+.bank-acc-tbl { table-layout: fixed; }
+.bank-acc-tbl th, .bank-acc-tbl td { padding: 14px 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bank-acc-tbl th:nth-child(1), .bank-acc-tbl td:nth-child(1) { width: 32%; white-space: normal; }   /* 銀行帳戶：最寬、可換行 */
+.bank-acc-tbl th:nth-child(2), .bank-acc-tbl td:nth-child(2) { width: 18%; }   /* 帳戶末4碼 */
+.bank-acc-tbl th:nth-child(3), .bank-acc-tbl td:nth-child(3) { width: 16%; }   /* 幣別 */
+.bank-acc-tbl th:nth-child(4), .bank-acc-tbl td:nth-child(4) { width: 20%; }   /* 餘額 */
+.bank-acc-tbl th:nth-child(5), .bank-acc-tbl td:nth-child(5) { width: 14%; }   /* 動作 */
 .tag { font-size: 11px; padding: 2px 9px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
 .tag.green { background: rgba(71,121,62,.12); color: var(--pos); }
 .tag.blue { background: rgba(107,127,153,.14); color: var(--info); }

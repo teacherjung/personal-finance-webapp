@@ -70,6 +70,20 @@ test('learnFromBankEdit：舊資料無 autoNote → 從 bankRef 尾兩段反解�
   learnFromBankEdit(db, item, { note: '自訂' });
   assert.equal(item.note, '轉帳存入・ATM 對方帳號', '無 autoNote→bankRef 尾兩段反解');
 });
+test('learnFromBankEdit：光禿摘要（存款息，無 bankKey 不可學）清空自訂說明 → 一樣回自動名（使用者回報 2026-07-21）', () => {
+  const db = { learnedBank: {} };
+  // 存款息 bankKey 為空（太籠統不學）——但「清空→回自動名」是顯示層，與能不能學無關，先前被 early-return 擋掉
+  const item = { source: 'bank', bankKey: '', type: 'income', category: '被動', subcategory: '利息', note: '', autoNote: '存款息' };
+  learnFromBankEdit(db, item, { note: '我改的名字' });
+  assert.equal(item.note, '存款息', '無 bankKey 也要回自動名（不再停在空白）');
+  assert.deepEqual(db.learnedBank, {}, '光禿摘要不學（learnedBank 仍空）');
+});
+test('learnFromBankEdit：本來就空白（prev 也空）的說明，儲存時也回自動名（修既有被洗空的資料，2026-07-22）', () => {
+  const db = { learnedBank: {} };
+  const item = { source: 'bank', bankKey: '', type: 'income', category: '被動', subcategory: '利息', note: '', autoNote: '存款息' };
+  learnFromBankEdit(db, item, { note: '' });   // prev.note 也是空 → 不再要求「這次才清空」
+  assert.equal(item.note, '存款息', '空→空 也回自動名');
+});
 test('learnFromBankEdit：非 bank 來源不學（手動/信用卡不污染）', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db, { source: 'stmt', bankKey: 'k', type: 'expense', category: '生活', note: 'a' }, { note: 'b' });
