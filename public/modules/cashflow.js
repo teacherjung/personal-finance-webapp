@@ -73,7 +73,7 @@ export async function renderCashflow() {
     </div>
 
     <div class="tbl-wrap">
-      <table><thead><tr>${th('date', '存提日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+      <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「信用卡消費明細」上傳帳單。</td></tr>`}</tbody></table>
     </div>
   `;
@@ -95,12 +95,12 @@ export async function renderCashflow() {
 function rowHtml(t) {
   const f = flowOf(t);
   return `<tr>
-    <td>${esc(t.date)}</td>
+    <td class="nowrap">${esc(t.date)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
-    <td class="muted">${esc(t.note || '—')}</td>
-    <td><span class="flow-tag ${f.cls}">${f.label}</span> ${esc(t.category || '—')}</td>
+    <td class="muted"><div class="cf-note" title="${esc(t.note || '')}">${esc(t.note || '—')}</div></td>
+    <td>${esc(t.category || '—')}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
-    <td class="num ${f.cls}">${f.sign}${money(t.amount)}</td>
+    <td class="num nowrap ${f.cls}">${f.sign}${money(t.amount)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
