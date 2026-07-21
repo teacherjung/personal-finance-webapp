@@ -192,3 +192,26 @@ test('D2 提醒 key｜per-entity 用穩定 id：兩張卡的繳款提醒 key 各
   const keys = buildSummary(db).reminders.filter(r => r.module === '卡片').map(r => r.key);
   assert.ok(keys.includes('card-due-cardA') && keys.includes('card-due-cardB'), '每張卡的提醒 key 各含自己的 id');
 });
+
+// D2 自審修正：個股集中度按 symbol 彙總（同一檔多筆手動持股）
+test('D2 提醒 key｜個股集中度按 symbol 彙總：同一檔多筆手動持股→單一提醒（key 唯一）＋彙總%', () => {
+  const db = { settings: { usdTwd: 1, ibConcentrationPct: 5 }, accounts: [], transactions: [], subscriptions: [],
+    holdings: [
+      { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 8, source: 'manual' },
+      { id: 'h2', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 8, source: 'manual' },
+    ] };
+  const hits = buildSummary(db).reminders.filter(r => r.key === 'conc-stock-TSLA');
+  assert.equal(hits.length, 1, '同 symbol 兩筆只出一則提醒（key 唯一、不撞）');
+  assert.match(hits[0].title, /100\.0%/, '兩筆彙總＝100%（非各 50%）');
+});
+
+test('守門補洞｜拆單逃避個股上限：TSLA 3%+3%=6%>5% 現在會被抓（per-position 曾各 3% 漏掉）', () => {
+  const db = { settings: { usdTwd: 1, ibConcentrationPct: 5 }, transactions: [], subscriptions: [],
+    accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 94 }],
+    holdings: [
+      { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3, source: 'manual' },
+      { id: 'h2', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3, source: 'manual' },
+    ] };
+  // netWorth = 94(現金) + 6(2×TSLA3) = 100；TSLA 合計 6% > 5% → 該抓（生存級守門，拆單不可逃）
+  assert.ok(buildSummary(db).reminders.some(r => r.key === 'conc-stock-TSLA' && /6\.0%/.test(r.title)), '拆單合計超標要抓到');
+});
