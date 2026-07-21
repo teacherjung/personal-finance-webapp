@@ -4,7 +4,7 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, modalSizeClass } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -50,6 +50,7 @@ export async function renderCashflow() {
     <div class="page-head">
       <div><h1>收支記帳</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
       <div class="page-actions">
+        ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
         <button class="btn-ghost btn-eq" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
         <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
       </div>
@@ -80,6 +81,7 @@ export async function renderCashflow() {
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
   byId('uploadBank').onclick = () => openBankUpload();
+  { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
   byId('monthSel').onchange = (e) => { monthFilter = /** @type {any} */ (e.target).value; renderCashflow(); };
   view().querySelectorAll('[data-flow]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
@@ -212,6 +214,50 @@ function showBankPreview(r, b64, pw) {
       } catch (e) { toast(/** @type {any} */ (e).message || '更新失敗', true); }
     };
   }, 0);
+}
+
+// ---- 銀行對帳單匯入紀錄（比照信用卡帳單的「匯入紀錄」）：列出每次上傳匯入的批次，可整批刪除後重新上傳。----
+// 刪除只移除該批「現金流交易」、不動帳戶餘額（餘額是當前快照；重新上傳同帳單會依現值參考日重設）。
+async function openBankBatchManager() {
+  const batches = await api('/bank-statement/batches');
+  const root = byId('modal-root');
+  const render = (/** @type {any[]} */ list) => {
+    const rows = list.map(b => `<tr>
+      <td class="nowrap" title="存提日範圍">${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}</td>
+      <td class="num">${b.count}</td>
+      <td class="num pos">${b.income ? '+' + money(b.income) : '<span class="muted">—</span>'}</td>
+      <td class="num neg">${b.expense ? '−' + money(b.expense) : '<span class="muted">—</span>'}</td>
+      <td class="num muted">${b.transfer ? money(b.transfer) : '—'}</td>
+      <td><button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button></td>
+    </tr>`).join('');
+    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+      <div class="modal-head"><h2>銀行對帳單匯入紀錄</h2><button class="x-close">×</button></div>
+      <div class="modal-body">
+        <ul class="muted batch-help" style="font-size:12.5px;margin:0 0 12px 18px;line-height:1.9;padding:0">
+          <li>每一列代表<b class="hl">「一次對帳單上傳」</b>匯入的現金流交易。</li>
+          <li>分箱判斷不對、或想換一份帳單重來，可整批<b class="hl">「刪除」</b>後重新上傳。</li>
+          <li>刪除只移除這批<b class="hl">「收支交易」</b>；<b class="hl">帳戶餘額不動</b>（重新上傳同一份帳單會自動重設）。</li>
+        </ul>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>日期範圍</th><th class="num">筆數</th><th class="num">收入</th><th class="num">支出</th><th class="num">內轉</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6" class="empty">尚無銀行對帳單匯入批次。</td></tr>'}</tbody>
+        </table></div>
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
+      </div>
+    </div></div>`;
+    root.querySelector('.x-close').onclick = () => { root.innerHTML = ''; };
+    root.querySelector('[data-close]').onclick = () => { root.innerHTML = ''; };
+    root.querySelectorAll('[data-delbatch]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = () => {
+      const b = list.find(x => x.batchId === /** @type {HTMLElement} */ (btn).dataset.delbatch);
+      confirmDelete(`整批 ${b.count} 筆（${b.minDate}~${b.maxDate}）`, async () => {
+        const r = await api('/bank-statement/batch/delete', { method: 'POST', body: { batchId: b.batchId } });
+        toast(`已刪除 ${r.removed} 筆，可重新上傳`);
+        const rest = await api('/bank-statement/batches');   // 刪光了就關視窗（不留「尚無批次」的死巷，因入口鈕也一併消失）；還有批次才重繪
+        setTimeout(() => { if (rest.length) render(rest); else root.innerHTML = ''; }, 0);
+      });
+    });
+  };
+  render(batches);
 }
 
 /** @param {any=} tx @param {any[]=} accounts */
