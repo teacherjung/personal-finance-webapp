@@ -348,3 +348,14 @@ test('applyLearnedBankToExisting：舊資料無 dir → 從 type 推方向（inc
   const r = applyLearnedBankToExisting('k3');
   assert.equal(r.changed, 0); assert.equal(r.skipped, 1);   // income 推得 in、支出只套 out → 略過，不誤把進帳改成支出
 });
+test('applyLearnedBankToExisting：舊資料無 dir 但 bankRef=out → 用 bankRef 原始方向，教收入套不上（Codex r13 複審#1，高）', () => {
+  const db = getDb();
+  db.settings = { ...db.settings, incomeTree: { '工作': ['鐘點'], '其他': ['其他收入'] } };
+  db.learnedBank = { k: { type: 'income', category: '工作', subcategory: '鐘點', name: '家教費' } };
+  // 舊批次留下的不一致：bankRef 明確 out，但子分類卻是「內轉入」（只靠 type/子類會誤推成 in、把出帳改成收入）
+  db.transactions = [{ id: 'old', source: 'bank', bankKey: 'k', type: 'transfer', category: '內轉', subcategory: '內轉入', note: '舊筆', ledger: 'cashflow', date: '2026-06-01', amount: 500, bankRef: 'bank|900100****3301|2026-06-01|out|500||轉帳支取|對方' }];
+  saveDb(db);
+  const r = applyLearnedBankToExisting('k');
+  assert.equal(r.changed, 0); assert.equal(r.skipped, 1);   // bankRef=out 勝過分類 → 收入規則方向不符 → 略過
+  assert.equal(getDb().transactions.find(t => t.id === 'old').type, 'transfer');   // 出帳沒被改成收入
+});
