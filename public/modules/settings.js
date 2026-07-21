@@ -62,6 +62,12 @@ export async function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">內轉分類管理</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">內轉沒有大類，只有一串子分類。<b>內轉出／內轉入／交割</b>是系統自動判斷用的（錢出／進、證券劃撥）——<b>改名／刪除都可以</b>，自動判斷會跟著你改的走（刪掉的話，該類的自動判斷會變成空白，仍是內轉、只是沒子分類）。你也可以新增自己的（例：還卡費、定存互轉）。<b>改名</b>會套用到所有舊的內轉交易。</p>
+      <div><button class="btn-ghost" id="manageTransferSubsBtn">${icon('refresh', 16) || ''}管理內轉分類</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">銀行收支學習</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">你在收支頁改過的銀行交易分類／說明，系統會以「<b>摘要＋對方帳號</b>」記起來，未來匯入自動套用（改一次記一輩子）。這裡可以<b>檢視</b>教過哪些規則、<b>刪掉</b>教錯的（刪掉不影響已匯入的交易；下次匯入該對象就回到自動判斷）。</p>
       <div><button class="btn-ghost" id="manageBankLearnedBtn">${icon('history', 16) || ''}管理已學規則</button></div>
@@ -213,6 +219,10 @@ export async function renderSettings() {
   byId('manageBankLearnedBtn').onclick = async () => {
     try { openBankLearnedManager(await api('/bank-learned')); }
     catch (err) { toast('讀取已學規則失敗：' + err.message, true); }
+  };
+  byId('manageTransferSubsBtn').onclick = async () => {
+    try { openTransferSubEditor(await api('/transfer-subcategories')); }
+    catch (err) { toast('讀取內轉分類失敗：' + err.message, true); }
   };
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
@@ -481,6 +491,79 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
       close();
       const n = r.changedTx || 0;
       toast(n ? `分類已儲存，${n} 筆舊交易一併更新` : '分類已儲存');
+      renderSettings();
+    } catch (err) { toast('儲存失敗：' + err.message, true); }
+  };
+}
+
+// ---------- 內轉分類管理（使用者定 2026-07-21，全可編輯）：扁平清單編輯器 ----------
+// 每項一列（改名/上下移/刪除）＋新增；系統角色 out/in/settle 用 tag 標記、跟著改名走。存檔送 {subs,renames}。
+/** @param {{label:string, role?:string}[]} list */
+function openTransferSubEditor(list) {
+  const root = byId('modal-root');
+  /** @type {Record<string,string>} */
+  const roleLabel = { out: '出', in: '進', settle: '交割' };
+  /** @type {{orig: string|null, label: string, role?: string}[]} */
+  const state = (list || []).map(s => ({ orig: s.label, label: s.label, role: s.role }));
+  const syncFromDom = () => {
+    root.querySelectorAll('input.tsub-name').forEach((/** @type {any} */ inp) => { const i = Number(inp.dataset.i); if (state[i]) state[i].label = inp.value; });
+  };
+  const rowHtml = (/** @type {any} */ s, /** @type {number} */ i) => `
+    <div class="cat-block-head" style="margin-bottom:8px">
+      <input class="tsub-name cat-name" data-i="${i}" value="${esc(s.label)}" placeholder="內轉子分類名稱" />
+      ${s.role ? `<span class="tag blue" title="系統自動判斷用">系統・${esc(roleLabel[s.role] || s.role)}</span>` : ''}
+      <span class="cat-block-btns">
+        <button type="button" class="btn-icon" data-act="up" data-i="${i}" title="上移" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="btn-icon" data-act="down" data-i="${i}" title="下移" ${i === state.length - 1 ? 'disabled' : ''}>↓</button>
+        <button type="button" class="btn-icon danger" data-act="del" data-i="${i}" title="刪除">✕</button>
+      </span>
+    </div>`;
+  const redraw = () => { byId('tsubEditorBody').innerHTML = state.map(rowHtml).join(''); };
+  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
+    <div class="modal-head"><h2>內轉分類管理</h2><button class="x-close">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12px;margin-bottom:10px">標「系統」的三項（出／進／交割）是自動判斷用的：改名沒問題（自動判斷跟著走）、刪掉的話該類自動判斷會變空白。改名會套用到所有舊的內轉交易。</p>
+      <div id="tsubEditorBody"></div>
+      <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="add">＋ 新增內轉分類</button></div>
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="tsubSave">儲存</button></div>
+    </div></div></div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.x-close').onclick = close;
+  root.querySelector('[data-cancel]').onclick = close;
+  bindBackdropClose(root, close);
+  redraw();
+  root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act, i = Number(btn.dataset.i);
+    syncFromDom();
+    if (act === 'add') state.push({ orig: null, label: '' });
+    else if (act === 'del') state.splice(i, 1);
+    else if (act === 'up') { if (i > 0) [state[i - 1], state[i]] = [state[i], state[i - 1]]; }
+    else if (act === 'down') { if (i < state.length - 1) [state[i + 1], state[i]] = [state[i], state[i + 1]]; }
+    else return;
+    redraw();
+  });
+  byId('tsubSave').onclick = async () => {
+    syncFromDom();
+    /** @type {{label:string, role?:string}[]} */
+    const subs = [];
+    /** @type {{from:string, to:string}[]} */
+    const renames = [];
+    const seen = new Set();
+    for (const s of state) {
+      const label = s.label.trim();
+      if (!label) return toast('有內轉分類是空的，請填寫或刪除', true);
+      if (seen.has(label)) return toast(`「${label}」重複了`, true);
+      seen.add(label);
+      subs.push(s.role ? { label, role: s.role } : { label });
+      if (s.orig && s.orig !== label) renames.push({ from: s.orig, to: label });
+    }
+    if (!subs.length) return toast('至少要保留一個內轉分類', true);
+    try {
+      const r = await api('/transfer-subcategories', { method: 'POST', body: { subs, renames } });
+      close();
+      toast(r.changedTx ? `已儲存，${r.changedTx} 筆舊內轉交易一併更新` : '內轉分類已儲存');
       renderSettings();
     } catch (err) { toast('儲存失敗：' + err.message, true); }
   };
