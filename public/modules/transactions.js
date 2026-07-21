@@ -227,7 +227,10 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
   // 傳播提示（使用者定 2026-07-19：解「改一筆以為修好了」的錯覺）：帳單交易若同一把身分鑰匙
   // 還有別筆分類不同，給一個勾選框整店一起改——不然使用者要逐筆點，或誤以為已經全改好。
   const sk = tx?.source === 'stmt' ? String(tx.storeKey || '') : '';
-  const siblings = sk ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
+  // 國外交易服務費不支援整批改（分類跟隨所屬消費，r2-Codex#3；後端 lib/statement.js isServiceFee 為單一真相）
+  // → 不給「同店一起改」勾選框：勾了後端也會略過傳播，顯示框只會誤導（G3 對抗審查 confirmed）。
+  const isFeeKey = /國外交易服務費/.test(sk);
+  const siblings = (sk && !isFeeKey) ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
   const propagable = siblings.length;
   openForm({
     title: '編輯消費',   // 信用卡明細＝匯入 + 編輯；手動新增走收支頁

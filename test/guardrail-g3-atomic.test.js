@@ -104,6 +104,21 @@ test('POST /statement/rename-store applyAll：改名＋分類傳播一次寫檔�
   assert.equal(after.find(t => t.id === 'a').note, '公司樓下', '被編輯原文用自訂顯示名');
 });
 
+// ---------- ③b 服務費列 applyAll：不支援整批改，但**本筆編輯不可被 rollback**（G3 對抗審查 confirmed）----------
+test('PUT applyAll 於「國外交易服務費」列：略過傳播、本筆編輯照存（不因無效整批請求 rollback）', async () => {
+  reset([
+    { id: 'f1', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 30, note: '國外交易服務費（-30）', storeKey: '國外交易服務費', source: 'stmt', stmtRef: 'c1|2026-07-11|30|國外交易服務費', ledger: 'card' },
+    { id: 'f2', date: '2026-07-12', type: 'expense', category: '其他', subcategory: '未分類', amount: 40, note: '國外交易服務費（-40）', storeKey: '國外交易服務費', source: 'stmt', stmtRef: 'c1|2026-07-12|40|國外交易服務費', ledger: 'card' },
+  ]);
+  const res = await PUT('/transactions/f1', { category: '飲食', subcategory: '餐廳', applyAll: true });
+  assert.equal(res.status, 200, '不再 400 把整筆編輯 rollback（舊 atomic 路徑會）');
+  const r = await res.json();
+  assert.equal(r.category, '飲食', '本筆編輯照常存下（不因無效的整批請求丟失）');
+  assert.equal(r.applied, undefined, '服務費略過傳播（不支援整批改，r2-Codex#3）');
+  const after = await GET('/transactions');
+  assert.equal(after.find(t => t.id === 'f2').category, '其他', '服務費不整批改：兄弟筆維持原分類');
+});
+
 // ---------- ④ 工作函式純度（原子性的地基）：*ToDb 只改 in-memory、不落檔 ----------
 test('applyCategoryToStoreDb 是純的：改傳入的 db 物件、但不自己 saveDb（原子呼叫端才寫）', () => {
   reset([stmtTx('a', '2026-07-11', '星巴克信義店')]);

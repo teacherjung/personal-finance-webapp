@@ -233,6 +233,8 @@ export async function renderSettings() {
     const cur = el.dataset.cur || '', cat0 = el.dataset.cat || '', sub0 = el.dataset.sub || '';
     // 同店一起改（使用者定 2026-07-19，與收支列表編輯同一招）：同品牌鑰匙下「其他原文」還有幾筆
     const key = el.dataset.key || '', others = Number(el.dataset.others || 0);
+    // 國外交易服務費不支援整批改（r2-Codex#3；後端 isServiceFee 為單一真相）→ 不給「同店一起改」勾選框（同 transactions.js）
+    const isFeeKey = /國外交易服務費/.test(orig) || /國外交易服務費/.test(key);
     const catOpts = (cat0 && !expParents.includes(cat0)) ? [cat0, ...expParents] : expParents;   // 保留目前值（防默默改資料）
     openForm({
       title: '編輯店名與分類（只影響這一列）',
@@ -240,7 +242,7 @@ export async function renderSettings() {
         { key: 'name', label: `原文「${orig}」的顯示名`, type: 'text', required: true, full: true },
         { key: 'category', label: '分類', type: 'select', options: catOpts, default: cat0 || expParents[0] },
         { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
-        ...(key && others > 0 ? [{ key: 'applyAll', label: `同時套用分類到「${key}」的其他 ${others} 筆記錄（顯示名不會跟過去）`, type: 'checkbox', full: true }] : []),
+        ...(key && others > 0 && !isFeeKey ? [{ key: 'applyAll', label: `同時套用分類到「${key}」的其他 ${others} 筆記錄（顯示名不會跟過去）`, type: 'checkbox', full: true }] : []),
       ],
       values: { name: cur, category: cat0, subcategory: sub0 },
       onMount: (/** @type {any} */ root) => {
