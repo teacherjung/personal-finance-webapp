@@ -208,15 +208,15 @@ test('明細｜方向靠 x 分欄（支出/存入）＋換行備註靠 y 歸位'
 
 const btx = (o) => ({ acctSuffix: '3302', acctMasked: '900200****3302', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
 
-test('分箱｜劃撥（證券交割，備註不在摘要）→ 內轉，不計入收支（真實資料曾誤判成收入）', () => {
+test('分箱｜劃撥（證券交割）→ 內轉/交割（獨立子分類、不計收支；使用者定 2026-07-21）', () => {
   const c = classifyBankTx(btx({ summary: '轉帳存入', direction: 'in', note: '劃撥轉帳元大台灣50' }), new Set());
-  assert.equal(c.type, 'transfer');
-  assert.equal(c.category, '內轉');
+  assert.equal(c.type, 'transfer'); assert.equal(c.category, '內轉'); assert.equal(c.subcategory, '交割');
 });
 
-test('分箱｜備註含自己帳號末碼 → 內轉；不含 → 照收支', () => {
+test('分箱｜備註含自己帳號末碼 → 內轉出/入（非劃撥用方向子類，不是交割）；不含 → 照收支', () => {
   const own = new Set(['3302', '3301']);
-  assert.equal(classifyBankTx(btx({ note: '轉入900100****3301' }), own).type, 'transfer', '對到自己帳號→內轉');
+  const inTx = classifyBankTx(btx({ note: '轉入900100****3301' }), own);   // 自己帳號、非劃撥、direction out
+  assert.equal(inTx.type, 'transfer'); assert.equal(inTx.subcategory, '內轉出');   // 依方向、不是交割
   assert.equal(classifyBankTx(btx({ summary: '轉帳支取', note: '轉入900200****7788養育費' }), own).type, 'expense', '7788非自己帳號→真支出');
 });
 

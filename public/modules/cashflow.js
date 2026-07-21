@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
-const TRANSFER_SUBS = ['內轉出', '內轉入'];   // 內轉無分類樹，固定兩個子類（哪個帳戶出/入）
+const TRANSFER_SUBS = ['內轉出', '內轉入', '交割'];   // 內轉無分類樹：帳戶出/入＋證券劃撥交割（使用者定 2026-07-21）
 
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
