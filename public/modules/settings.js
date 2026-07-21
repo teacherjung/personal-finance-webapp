@@ -274,12 +274,12 @@ export async function renderSettings() {
         root.querySelector('.form-actions')?.prepend(rb);
       },
       onSubmit: async (d) => {
-        const r = await api('/statement/rename-store', { method: 'POST', body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '' } });
-        if (d.applyAll && key) {
-          const r2 = await api('/statement/apply-category', { method: 'POST',
-            body: { storeKey: key, category: d.category, subcategory: d.subcategory || '' } });
-          toast(`已更新 ${r.changed} 筆，並把「${key}」的其他 ${r2.changed} 筆一起改成 ${d.category}${d.subcategory ? `·${d.subcategory}` : ''}`);
-        } else toast(`已更新 ${r.changed} 筆記錄`);
+        // 「同店一起改」原子化（護欄 G3）：把 applyAll 併進 rename-store，後端一次寫檔完成改名＋分類傳播——
+        // 不再前端「rename-store 再另呼 apply-category」兩次寫（中途失敗會半套用、且這條原本沒接錯誤）
+        const r = await api('/statement/rename-store', { method: 'POST',
+          body: { orig, name: d.name, category: d.category, subcategory: d.subcategory || '', applyAll: !!(d.applyAll && key) } });
+        if (r.applied) toast(`已更新 ${r.changed} 筆，並把「${key}」的其他 ${r.applied.changed} 筆一起改成 ${d.category}${d.subcategory ? `·${d.subcategory}` : ''}`);
+        else toast(`已更新 ${r.changed} 筆記錄`);
         renderSettings();
       }
     });
