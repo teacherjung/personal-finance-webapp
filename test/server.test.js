@@ -566,9 +566,26 @@ test('帳戶改名連動既有交易 account（改一次、處處同步，使用
   const t2 = await (await POST('/transactions', { type: 'income', date: '2026-06-02', amount: 200, account: '別的帳戶ABC', note: '薪水', category: '工作', subcategory: '' })).json();
   await PUT('/accounts/' + acc.id, { name: '台新活存NEW' });
   const txs = await GET('/transactions');
-  assert.equal(txs.find(t => t.id === t1.id).account, '台新活存NEW', '同帳戶名的交易跟著改');
+  assert.equal(txs.find(t => t.id === t1.id).account, '台新活存NEW', '同帳戶名的手動交易跟著改（字串連動）');
   assert.equal(txs.find(t => t.id === t2.id).account, '別的帳戶ABC', '別帳戶的交易不受影響');
   await DELETE_('/transactions/' + t1.id); await DELETE_('/transactions/' + t2.id); await DELETE_('/accounts/' + acc.id);
+});
+
+test('帳戶改名連動銀行交易：身分比對修既有 stale（匯入叫「台新 X」、改名後舊交易也對齊，使用者定 2026-07-21）', async () => {
+  const acc = await (await POST('/accounts', { name: '台新 9999', type: 'cash', currency: 'TWD', balance: 0, accountNo: '900100****9999' })).json();
+  const bt = seedTx({ source: 'bank', account: '過期自動名 9999', type: 'income', category: '被動', subcategory: '利息', amount: 10, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900100****9999|2026-06-01|in|10||存款息|' });
+  await PUT('/accounts/' + acc.id, { name: '【台新】活儲9999' });   // 顯示字串完全不同，仍靠遮罩帳號身分對齊
+  assert.equal((await GET('/transactions')).find(t => t.id === bt.id).account, '【台新】活儲9999', '舊 stale 銀行交易也對齊到現名');
+  await DELETE_('/transactions/' + bt.id); await DELETE_('/accounts/' + acc.id);
+});
+
+test('POST /accounts/reconcile-names（開 app 自動）：既有 stale 銀行交易顯示名對齊到帳戶現名', async () => {
+  const acc = await (await POST('/accounts', { name: '對齊測試帳戶', type: 'cash', currency: 'TWD', balance: 0, accountNo: '900300****7777' })).json();
+  const bt = seedTx({ source: 'bank', account: '過期名 7777', type: 'expense', category: '其他', subcategory: '未分類', amount: 5, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900300****7777|2026-06-01|out|5||跨轉手續費|' });
+  const r = await (await POST('/accounts/reconcile-names', {})).json();
+  assert.ok(r.changed >= 1, '有 stale → 回報改動筆數');
+  assert.equal((await GET('/transactions')).find(t => t.id === bt.id).account, '對齊測試帳戶');
+  await DELETE_('/transactions/' + bt.id); await DELETE_('/accounts/' + acc.id);
 });
 
 test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同 storeKey 的不同分店可各自取名', async () => {
