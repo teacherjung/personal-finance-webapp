@@ -560,6 +560,17 @@ test('備份 round-trip（護欄 G2）：所有服務層 settings＋頂層 KV（
   await POST('/import', orig);   // 還原完整備份
 });
 
+test('帳戶改名連動既有交易 account（改一次、處處同步，使用者定 2026-07-21）', async () => {
+  const acc = await (await POST('/accounts', { name: '台新舊名XYZ', type: 'cash', currency: 'TWD', balance: 1000 })).json();
+  const t1 = await (await POST('/transactions', { type: 'expense', date: '2026-06-01', amount: 100, account: '台新舊名XYZ', note: '午餐', category: '飲食', subcategory: '' })).json();
+  const t2 = await (await POST('/transactions', { type: 'income', date: '2026-06-02', amount: 200, account: '別的帳戶ABC', note: '薪水', category: '工作', subcategory: '' })).json();
+  await PUT('/accounts/' + acc.id, { name: '台新活存NEW' });
+  const txs = await GET('/transactions');
+  assert.equal(txs.find(t => t.id === t1.id).account, '台新活存NEW', '同帳戶名的交易跟著改');
+  assert.equal(txs.find(t => t.id === t2.id).account, '別的帳戶ABC', '別帳戶的交易不受影響');
+  await DELETE_('/transactions/' + t1.id); await DELETE_('/transactions/' + t2.id); await DELETE_('/accounts/' + acc.id);
+});
+
 test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同 storeKey 的不同分店可各自取名', async () => {
   // 銀行截斷情境：兩個不同原文（桃/新分店）共用同一個 storeKey（使用者實際踩到的 12MINI 案例）
   const origA = '測試分店 (桃X999 Taipei', origB = '測試分店 (新X999 Taipei';

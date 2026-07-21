@@ -57,6 +57,19 @@ test('learnFromBankEdit：改名成空 → 清除自訂名', () => {
   learnFromBankEdit(db, { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '' }, { note: '舊名' });
   assert.deepEqual(db.learnedBank['k'], { type: 'income', category: '其他', subcategory: '' });
 });
+test('learnFromBankEdit：清空自訂說明 → 回復預設自動名（autoNote）＋清學習名（使用者定 2026-07-21）', () => {
+  const db = { learnedBank: { k: { type: 'income', category: '其他', name: '小明還錢' } } };
+  const item = { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '', autoNote: '轉帳存入・ATM 對方' };
+  learnFromBankEdit(db, item, { note: '小明還錢' });
+  assert.equal(item.note, '轉帳存入・ATM 對方', '清空→回復 autoNote');
+  assert.ok(!db.learnedBank['k']?.name, '清空→學習的自訂名清掉');
+});
+test('learnFromBankEdit：舊資料無 autoNote → 從 bankRef 尾兩段反解回復自動名', () => {
+  const db = { learnedBank: { k: { type: 'income', category: '其他', name: '自訂' } } };
+  const item = { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '', bankRef: 'bank|900100****3301|2026-06-01|in|5000||轉帳存入|ATM 對方帳號' };
+  learnFromBankEdit(db, item, { note: '自訂' });
+  assert.equal(item.note, '轉帳存入・ATM 對方帳號', '無 autoNote→bankRef 尾兩段反解');
+});
 test('learnFromBankEdit：非 bank 來源不學（手動/信用卡不污染）', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db, { source: 'stmt', bankKey: 'k', type: 'expense', category: '生活', note: 'a' }, { note: 'b' });
@@ -113,6 +126,11 @@ test('匯入：存下的 dir＝本筆實際方向（出帳→out）', () => {
   const db = baseDb();
   importBankTxToDb(db, parsed([btx({ summary: '跨行轉帳', note: '手續費', direction: 'out', amount: 15 })]));
   assert.equal(db.transactions.at(-1).dir, 'out');
+});
+test('匯入：存下 autoNote＝摘要・原始備註（清空自訂說明時回復用，使用者定 2026-07-21）', () => {
+  const db = baseDb();
+  importBankTxToDb(db, parsed([btx({ summary: '存款息', note: '利息2元', direction: 'in', amount: 2 })]));
+  assert.equal(db.transactions.at(-1).autoNote, '存款息・利息2元');
 });
 test('匯入：交割角色改名「結算」後，學過交割的鑰匙套到出帳 → 保留結算(方向中性)，不誤翻成內轉出（Codex r13#4）', () => {
   const db = baseDb();
