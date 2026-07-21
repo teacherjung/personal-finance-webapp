@@ -170,8 +170,15 @@ function showBankPreview(r, b64, pw) {
   const rows = r.rows || [];
   const willUpdate = rows.filter((/** @type {any} */ x) => x.action === 'update').length;
   const willCreate = rows.filter((/** @type {any} */ x) => x.action === 'create').length;
+  const tx = r.transactions || { rows: [], counts: {} };
+  const c = tx.counts || {};
+  // 交易分箱預覽（前 12 筆；金流用顏色）：讓使用者匯入前看到自動分箱，之後可在收支列表逐筆改
+  const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
+  const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
+  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).slice(0, 12);
   const body = `
-    <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　只有帳單較新時才會覆蓋餘額。</p>
+    <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
     <tbody>${rows.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.matchedName || x.label || '')}<span class="muted">・末${esc(x.suffix)}</span></td>
@@ -180,15 +187,26 @@ function showBankPreview(r, b64, pw) {
       <td class="num muted">${x.oldBalance == null ? '—' : money(x.oldBalance)}</td>
       <td>${esc(ACTION_LABEL[x.action] || x.action)}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
-    <p class="muted" style="margin-top:10px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶。餘額會反映在「資產配置」頁。</p>
-    <div class="page-actions" style="margin-top:14px"><button class="btn" id="bankApply">${icon('check', 16)}確認更新</button></div>`;
-  openInfo('銀行對帳單預覽', body, { size: 'lg' });
+    <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
+
+    <div class="section-title">交易分箱（自動判斷，匯入後可在收支列表逐筆改）</div>
+    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。</p>
+    ${previewTx.length ? `<div class="tbl-wrap"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
+    <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
+      <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
+      <td class="muted">${esc(String(x.summary || ''))}</td>
+      <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
+      <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
+    </tr>`).join('')}</tbody></table></div>${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length > 12 ? `<p class="muted" style="font-size:11px;margin-top:6px">…只顯示前 12 筆，共 ${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length} 筆</p>` : ''}` : '<p class="empty">帳單裡沒有新交易。</p>'}
+    <div class="page-actions" style="margin-top:16px"><button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button></div>`;
+  openInfo('銀行對帳單預覽', body, { size: 'xl' });
   setTimeout(() => {
     const btn = byId('bankApply');
     if (btn) btn.onclick = async () => {
       try {
         const res = await api('/bank-statement/apply', { method: 'POST', body: { data: b64, password: pw } });
-        toast(`已更新 ${res.updated} 個帳戶餘額、新建 ${res.created} 個${res.skipped ? `、跳過 ${res.skipped} 個同期/較舊` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}`);
+        const t = res.transactions || {};
+        toast(`帳戶：更新 ${res.updated}、新建 ${res.created}${res.skipped ? `、跳過 ${res.skipped}` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}；交易：匯入 ${t.imported || 0}${t.skipped ? `、去重 ${t.skipped}` : ''}`);
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
       } catch (e) { toast(/** @type {any} */ (e).message || '更新失敗', true); }
