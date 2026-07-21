@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-banklearn-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb } = await import('../lib/services/bank-import.js');
+const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb, listLearnedBank, deleteLearnedBank } = await import('../lib/services/bank-import.js');
 const { sanitizeLearnedBank } = await import('../lib/schema.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 
@@ -195,4 +195,37 @@ test('持久化：learnedBank 存得進、讀得出', () => {
 test('持久化：缺 learnedBank 列 → 讀成空物件 {}（不是 undefined/[]）', () => {
   const db = getDb();
   assert.ok(db.learnedBank && typeof db.learnedBank === 'object' && !Array.isArray(db.learnedBank));
+});
+
+// ---------- 已學規則管理（設定頁「銀行收支學習」）----------
+test('listLearnedBank：攤成陣列並把鑰匙拆成可讀的摘要/對方（#帳號去井號、描述原樣）', () => {
+  const db = getDb();
+  db.learnedBank = {
+    'CD轉入|#806-00204127****1206': { type: 'income', category: '工作', subcategory: '鐘點', name: 'William 家教費' },
+    '媒體轉入|基金配息群益主權': { type: 'income', category: '被動', subcategory: '股息' },
+  };
+  saveDb(db);
+  const list = listLearnedBank();
+  assert.equal(list.length, 2);
+  const a = list.find(x => x.key.startsWith('CD轉入'));
+  assert.equal(a.summary, 'CD轉入'); assert.equal(a.counterparty, '806-00204127****1206'); assert.equal(a.name, 'William 家教費');
+  const b = list.find(x => x.key.startsWith('媒體轉入'));
+  assert.equal(b.summary, '媒體轉入'); assert.equal(b.counterparty, '基金配息群益主權'); assert.equal(b.name, '');
+});
+test('deleteLearnedBank：刪指定鑰匙、其他不動；不存在的鑰匙安全略過', () => {
+  const db = getDb();
+  db.learnedBank = { k1: { type: 'income', category: '工作' }, k2: { type: 'expense', category: '生活' } };
+  saveDb(db);
+  deleteLearnedBank('k1');
+  const left = getDb().learnedBank;
+  assert.equal(left.k1, undefined); assert.ok(left.k2);
+  deleteLearnedBank('不存在');   // 不炸
+  assert.ok(getDb().learnedBank.k2);
+});
+test('deleteLearnedBank：保留字鑰匙用 hasOwn 判、不誤刪原型（比照 deleteLearned）', () => {
+  const db = getDb();
+  db.learnedBank = { real: { type: 'income', category: 'x' } };
+  saveDb(db);
+  deleteLearnedBank('toString');   // 'in' 會查到原型；hasOwn 不會 → 安全略過、real 還在
+  assert.ok(getDb().learnedBank.real);
 });

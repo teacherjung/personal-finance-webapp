@@ -61,6 +61,12 @@ export async function renderSettings() {
       <div><button class="btn-ghost" id="manageIncomeCatsBtn">${icon('refresh', 16) || ''}管理收入分類</button></div>
     </div>
 
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">銀行收支學習</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">你在收支頁改過的銀行交易分類／說明，系統會以「<b>摘要＋對方帳號</b>」記起來，未來匯入自動套用（改一次記一輩子）。這裡可以<b>檢視</b>教過哪些規則、<b>刪掉</b>教錯的（刪掉不影響已匯入的交易；下次匯入該對象就回到自動判斷）。</p>
+      <div><button class="btn-ghost" id="manageBankLearnedBtn">${icon('history', 16) || ''}管理已學規則</button></div>
+    </div>
+
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
@@ -203,6 +209,10 @@ export async function renderSettings() {
   byId('manageIncomeCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/income-categories'), CAT_CFG.income); }
     catch (err) { toast('讀取收入分類失敗：' + err.message, true); }
+  };
+  byId('manageBankLearnedBtn').onclick = async () => {
+    try { openBankLearnedManager(await api('/bank-learned')); }
+    catch (err) { toast('讀取已學規則失敗：' + err.message, true); }
   };
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
@@ -475,6 +485,51 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
     } catch (err) { toast('儲存失敗：' + err.message, true); }
   };
 }
+
+// ---------- 銀行收支「真·學習」已學規則管理（使用者定 2026-07-21）----------
+// 一列＝一條「摘要＋對方帳號 → type/分類/顯示名」的學過規則。可檢視、逐條刪除（教錯的救援）。
+// 刪除只影響「下次匯入該對象」（回自動判斷），不動已匯入的交易。
+/** @param {any[]} list */
+function openBankLearnedManager(list) {
+  const root = byId('modal-root');
+  const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
+  const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
+  const render = (/** @type {any[]} */ rows) => {
+    const body = rows.map(r => `<tr>
+      <td>${esc(r.summary)}${r.counterparty ? `<br><span class="muted" style="font-size:11px">→ ${esc(r.counterparty)}</span>` : ''}</td>
+      <td><span class="flow-tag ${flowCls(r.type)}">${flowLbl(r.type)}</span> ${esc(r.category || '（不分類）')}${r.subcategory ? '・' + esc(r.subcategory) : ''}</td>
+      <td class="muted">${r.name ? esc(r.name) : '<span class="muted">（用原始說明）</span>'}</td>
+      <td><button class="btn-danger btn-sm" data-del="${esc(r.key)}" title="刪除這條規則">${icon('trash', 15)}</button></td>
+    </tr>`).join('');
+    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
+      <div class="modal-head"><h2>銀行收支學習</h2><button class="x-close">×</button></div>
+      <div class="modal-body">
+        <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是你教過的一條規則（摘要＋對方帳號 → 分類／顯示名）。刪掉只是讓下次匯入該對象回到自動判斷，<b>不影響</b>已經匯入的交易。</p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>摘要／對方</th><th>金流・分類</th><th>顯示說明</th><th></th></tr></thead>
+          <tbody>${body || '<tr><td colspan="4" class="empty">還沒有學過任何規則。到收支頁改一筆銀行交易的分類／說明，就會自動學起來。</td></tr>'}</tbody>
+        </table></div>
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
+      </div>
+    </div></div>`;
+    const close = () => { root.innerHTML = ''; };
+    root.querySelector('.x-close').onclick = close;
+    root.querySelector('[data-close]').onclick = close;
+    bindBackdropClose(root, close);
+    root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
+      const key = /** @type {HTMLElement} */ (btn).dataset.del;
+      const r = rows.find(x => x.key === key);
+      if (!window.confirm(`確定刪掉這條學過的規則嗎？（${r.summary}${r.counterparty ? ' → ' + r.counterparty : ''}）\n刪掉不影響已匯入的交易，只是下次匯入該對象回到自動判斷。`)) return;
+      try {
+        await api('/bank-learned/delete', { method: 'POST', body: { key } });
+        toast('已刪除這條規則');
+        render(rows.filter(x => x.key !== key));   // 就地移除、不必重抓
+      } catch (e) { toast('刪除失敗：' + /** @type {any} */ (e).message, true); }
+    });
+  };
+  render(list || []);
+}
+
 // ---------- 店名規則自助管理（第三帖，使用者定 2026-07-19） ----------
 // 以前每發現一條店名規則要改，就得等 Claude 改程式→PR→合併→重啟。這裡把規則變成可編輯的資料。
 // 兩個 UI 上的堅持：
