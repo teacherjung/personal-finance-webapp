@@ -183,8 +183,10 @@ test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 
 const { parseBankDetail } = await import('../lib/bank-statement.js');
 const { classifyBankTx, previewBankTxForDb, importBankTxToDb } = await import('../lib/services/bank-import.js');
 
-/** 合成明細列 {y, cells}。 */
+/** 合成明細列 {y, cells}（不帶寬度 w→解析走「左緣」退路）。 */
 const D = (y, pairs) => ({ y, cells: pairs.map(([x, s]) => ({ x, s })) });
+/** 合成明細列（帶寬度 w：[x, w, s]）——測「右緣分欄」（右對齊金額靠 x+w 判欄）。 */
+const DW = (y, pairs) => ({ y, cells: pairs.map(([x, w, s]) => ({ x, w, s })) });
 
 test('明細｜方向靠 x 分欄（支出/存入）＋換行備註靠 y 歸位', () => {
   const lines = [
@@ -204,7 +206,7 @@ test('明細｜方向靠 x 分欄（支出/存入）＋換行備註靠 y 歸位'
   assert.equal(txs[2].note, 'ATM 806 鐘點薪資', '換行備註歸到 CD轉入 那列');
 });
 
-const btx = (o) => ({ acctSuffix: '3302', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
+const btx = (o) => ({ acctSuffix: '3302', acctMasked: '900200****3302', date: '2026-06-01', summary: '', direction: 'out', amount: 100, balance: 0, note: '', ...o });
 
 test('分箱｜劃撥（證券交割，備註不在摘要）→ 內轉，不計入收支（真實資料曾誤判成收入）', () => {
   const c = classifyBankTx(btx({ summary: '轉帳存入', direction: 'in', note: '劃撥轉帳元大台灣50' }), new Set());
@@ -324,4 +326,116 @@ test('匯入｜bankRef 含 note：餘額讀不到(null)時，同日同額不同�
   ] };
   const r = importBankTxToDb(db, parsed);
   assert.equal(r.imported, 2, '不同備註＝不同交易，不可去重掉');
+});
+
+// ---- Codex r12 對抗審查修正的回歸考題（8 findings）----
+test('r12#1 明細｜同列獨立「備註欄」的文字要收進 note（劃撥放備註欄→內轉，不漏收成收入）', () => {
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '900100****3301'], [124, '2026/06/11'], [177, '轉帳存入'], [349, '$500,000'], [500, '劃撥轉帳元大台灣50']]),
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs.length, 1);
+  assert.equal(txs[0].note, '劃撥轉帳元大台灣50', '獨立備註欄(x≥xNote)的文字要收進 note');
+  assert.equal(classifyBankTx(txs[0], new Set()).type, 'transfer', '劃撥→內轉（note 有收到才判得出來）');
+});
+
+test('r12#2 分箱｜外幣帳戶明細不計入台幣現金流：預覽標 foreign、匯入跳過（尚無歷史匯率）', () => {
+  const parsed = { bank: '台新', referenceDate: '2026-06-30',
+    accounts: [{ suffix: '3302', masked: '900200****3302', currency: 'TWD' }, { suffix: '363', masked: '900300****363', currency: 'USD' }],
+    transactions: [
+      btx({ acctMasked: '900200****3302', acctSuffix: '3302', summary: '存款息', direction: 'in', amount: 23, balance: 23 }),
+      btx({ acctMasked: '900300****363', acctSuffix: '363', summary: '轉帳支取', direction: 'out', amount: 1000, balance: 5000 }),
+    ] };
+  const db = { accounts: [], transactions: [] };
+  const pv = previewBankTxForDb(db, parsed);
+  assert.equal(pv.counts.foreign, 1, 'USD 那筆標 foreign');
+  assert.ok(pv.rows.find(r => r.currency === 'USD').foreign);
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.foreign, 1, 'USD 不匯入');
+  assert.equal(r.imported, 1, '只匯入 TWD 那筆');
+  assert.ok(!db.transactions.some(t => t.amount === 1000), 'USD 1000 原幣不進台幣現金流');
+});
+
+test('r12#3 明細｜方向靠右緣：帳戶第一筆小額支出(左緣越過中線)仍判支出，不被中線翻成存入', () => {
+  // 支出欄 [272,331)；$15 右對齊右緣 325（在支出欄）但左緣 315（>中線 301.5）。第一筆、無餘額→無法靠餘額校正
+  const lines = [
+    DW(120, [[75, 0, '帳號'], [135, 0, '日期'], [185, 0, '摘要'], [222, 0, '支票號碼'], [272, 0, '支出金額'], [331, 0, '存入金額'], [396, 0, '帳戶餘額'], [489, 0, '備註']]),
+    DW(100, [[53, 40, '900200****3302'], [124, 50, '2026/06/24'], [177, 30, '跨轉手續費'], [315, 10, '$15']]),
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs[0].direction, 'out', '右緣 325 落支出欄 [272,331)→支出（非靠中線 301.5 判成存入）');
+  assert.equal(txs[0].amount, 15);
+});
+
+test('r12#4 明細｜純數字支票號碼不被當交易金額（右緣落支票號碼欄→忽略）', () => {
+  const lines = [
+    DW(120, [[75, 0, '帳號'], [135, 0, '日期'], [185, 0, '摘要'], [222, 0, '支票號碼'], [272, 0, '支出金額'], [331, 0, '存入金額'], [396, 0, '帳戶餘額'], [489, 0, '備註']]),
+    DW(100, [[53, 40, '900200****3302'], [124, 50, '2026/06/24'], [177, 30, '轉帳支取'], [235, 30, '12345'], [300, 25, '$8,000'], [430, 45, '$100,000']]),
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs[0].amount, 8000, '真金額 8000（支票號碼 12345 右緣落 [222,272)→忽略）');
+  assert.equal(txs[0].direction, 'out');
+  assert.equal(txs[0].balance, 100000);
+});
+
+test('r12#5 明細｜末碼相同、前綴不同的兩帳戶不可混：餘額差分組用完整遮罩、去重不撞', () => {
+  // 兩帳戶都末碼 3301、各一筆支出；餘額差剛好=金額，若用末碼分組會把第二筆誤校正成收入
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '900100****3301'], [124, '2026/06/01'], [177, '轉帳支取'], [289, '$1,000'], [414, '$50,000']]),
+    D(83, [[53, '900200****3301'], [124, '2026/06/01'], [177, '轉帳支取'], [289, '$1,000'], [414, '$51,000']]),
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs[0].direction, 'out');
+  assert.equal(txs[1].direction, 'out', '不同帳戶→不因跨帳戶餘額差(50000→51000=1000)誤校正成收入');
+  assert.notEqual(txs[0].acctMasked, txs[1].acctMasked, '保留完整遮罩帳號');
+  const db = { accounts: [], transactions: [] };
+  const r = importBankTxToDb(db, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: txs });
+  assert.equal(r.imported, 2, '兩不同帳戶同額同日不被誤去重（去重鍵含完整遮罩帳號）');
+});
+
+test('r12#6 匯入｜完全相同、餘額讀不到(null)的兩筆真實交易靠批內出現序不被誤去重', () => {
+  const db = { accounts: [], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '跨轉手續費', amount: 15, balance: null, note: '' }),
+    btx({ summary: '跨轉手續費', amount: 15, balance: null, note: '' }),
+  ] };
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.imported, 2, '同日同額同備註、餘額 null 的兩筆＝各自出現序，不被誤去重');
+  const r2 = importBankTxToDb(db, parsed);
+  assert.equal(r2.imported, 0, '重匯全去重（出現序穩定）');
+  assert.equal(r2.skipped, 2);
+});
+
+test('r12#7 明細｜壞日期（不存在的 2026/02/31）整筆跳過，不讓匯入時撞 schema 500', () => {
+  const lines = [
+    D(120, [[75, '帳號'], [135, '日期'], [185, '摘要'], [272, '支出金額'], [331, '存入金額'], [396, '帳戶餘額'], [489, '備註']]),
+    D(100, [[53, '900200****3302'], [124, '2026/02/31'], [177, '轉帳支取'], [289, '$100'], [414, '$5,000']]),
+    D(83, [[53, '900200****3302'], [124, '2026/06/15'], [177, '轉帳支取'], [289, '$200'], [414, '$4,800']]),
+  ];
+  const txs = parseBankDetail(lines);
+  assert.equal(txs.length, 1, '壞日期那筆跳過（格式對但日曆上不存在）');
+  assert.equal(txs[0].date, '2026-06-15');
+});
+
+test('r12#8 分箱｜支出自動分箱套用使用者的分類改名（resolveImportCategory）：不寫樹外孤兒', () => {
+  const db = { accounts: [], transactions: [], settings: {
+    categoryAliases: { '生活': '日常' },
+    expenseTree: { '日常': ['其他生活雜支'], '其他': ['未分類', '手續費'] },
+  } };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: 'CD提款', direction: 'out', amount: 2000, balance: 1000, note: 'ATM' }),
+  ] };
+  const pv = previewBankTxForDb(db, parsed);
+  assert.deepEqual([pv.rows[0].category, pv.rows[0].subcategory], ['日常', '其他生活雜支'], '領現金→改名後的「日常」，非樹外「生活」');
+});
+
+test('r12#8b 分箱｜收入分箱 conform 到生效收入樹：被刪的收入分類落其他/其他收入（不留孤兒）', () => {
+  const db = { accounts: [], transactions: [], settings: { incomeTree: { '其他': ['其他收入'] } } };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }),
+  ] };
+  const pv = previewBankTxForDb(db, parsed);
+  assert.deepEqual([pv.rows[0].category, pv.rows[0].subcategory], ['其他', '其他收入'], '被刪的「被動」→落其他/其他收入');
 });
