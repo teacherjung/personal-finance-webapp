@@ -149,3 +149,69 @@ test('自主體檢 Q4｜停用當月攤提用該月實際天數：2/28 滿月停
   // 月中停用照常按比例
   assert.equal(subCostForMonth({ ...sub, endsOn: '2027-04-15' }, '2027-04'), 50, '4/15＝15/30 滿月半額');
 });
+
+// ---------- D2：提醒穩定鑰匙（每日洞察引擎差異引擎的地基）----------
+// 一組會觸發多條「日期無關」提醒的狀態（免受測試當天日期影響）：股票超上限＋股票總曝險超上限＋
+// 融資槓桿＋匯率高。key 必須穩定、含實體識別、同次互異，且**不隨標題金額變動**。
+const keyDb = (over = {}) => ({
+  settings: { usdTwd: 33, fxHigh: 32, fxLow: 28, ibConcentrationPct: 5, equityCapPct: 90, ibMaintenancePct: 25, ib: { lastEquity: { stock: 100, cash: -60 } }, ...over },
+  accounts: [], transactions: [], subscriptions: [],
+  holdings: [{ id: 'h', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: over.price || 100, source: 'ib' }],
+});
+
+test('D2 提醒 key｜每條都有非空字串 key，同一次計算內互異', () => {
+  const rs = buildSummary(keyDb()).reminders;
+  assert.ok(rs.length >= 3, '這組狀態要觸發多條提醒');
+  for (const r of rs) assert.ok(typeof r.key === 'string' && r.key.length > 0, `每條提醒要有 key（${r.title}）`);
+  const keys = rs.map(r => r.key);
+  assert.equal(new Set(keys).size, keys.length, '同一次計算內 key 不可重複');
+});
+
+test('D2 提醒 key｜同狀態兩次計算 → key 集合完全相同（穩定、不漂移）', () => {
+  const a = buildSummary(keyDb()).reminders.map(r => r.key).sort();
+  const b = buildSummary(keyDb()).reminders.map(r => r.key).sort();
+  assert.deepEqual(a, b, '同一份資料算兩次，key 必須一致');
+  assert.ok(a.includes('conc-stock-TSLA'), 'key 含實體識別（個股用 symbol）');
+  assert.ok(a.includes('fx-usd-high') && a.includes('ib-leverage'), '規則代號 key 就位');
+});
+
+test('D2 提醒 key｜不隨標題數字變動：同一底層狀況（匯率不同但都達區間）key 相同', () => {
+  const k1 = buildSummary(keyDb({ usdTwd: 33 })).reminders.find(r => r.key === 'fx-usd-high');
+  const k2 = buildSummary(keyDb({ usdTwd: 40 })).reminders.find(r => r.key === 'fx-usd-high');
+  assert.ok(k1 && k2, '兩種匯率（都 ≥ fxHigh）都應觸發分批換匯提醒');
+  assert.notEqual(k1.title, k2.title, '標題含匯率數字，確實不同（33 vs 40）');
+  assert.equal(k1.key, k2.key, '但 key 不含數字 → 相同（差異引擎才能判「持續中」而非「新出現」）');
+});
+
+test('D2 提醒 key｜per-entity 用穩定 id：兩張卡的繳款提醒 key 各含卡 id', () => {
+  // 用「今天」當繳款日 → daysUntilDayOfMonth=0，穩定觸發（不論測試當天幾號）
+  const today = new Date();
+  const dueDay = today.getDate();
+  const db = { settings: {}, accounts: [], holdings: [], transactions: [], subscriptions: [],
+    cards: [{ id: 'cardA', type: 'credit', name: '卡A', dueDay }, { id: 'cardB', type: 'credit', name: '卡B', dueDay }] };
+  const keys = buildSummary(db).reminders.filter(r => r.module === '卡片').map(r => r.key);
+  assert.ok(keys.includes('card-due-cardA') && keys.includes('card-due-cardB'), '每張卡的提醒 key 各含自己的 id');
+});
+
+// D2 自審修正：個股集中度按 symbol 彙總（同一檔多筆手動持股）
+test('D2 提醒 key｜個股集中度按 symbol 彙總：同一檔多筆手動持股→單一提醒（key 唯一）＋彙總%', () => {
+  const db = { settings: { usdTwd: 1, ibConcentrationPct: 5 }, accounts: [], transactions: [], subscriptions: [],
+    holdings: [
+      { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 8, source: 'manual' },
+      { id: 'h2', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 8, source: 'manual' },
+    ] };
+  const hits = buildSummary(db).reminders.filter(r => r.key === 'conc-stock-TSLA');
+  assert.equal(hits.length, 1, '同 symbol 兩筆只出一則提醒（key 唯一、不撞）');
+  assert.match(hits[0].title, /100\.0%/, '兩筆彙總＝100%（非各 50%）');
+});
+
+test('守門補洞｜拆單逃避個股上限：TSLA 3%+3%=6%>5% 現在會被抓（per-position 曾各 3% 漏掉）', () => {
+  const db = { settings: { usdTwd: 1, ibConcentrationPct: 5 }, transactions: [], subscriptions: [],
+    accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 94 }],
+    holdings: [
+      { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3, source: 'manual' },
+      { id: 'h2', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3, source: 'manual' },
+    ] };
+  // netWorth = 94(現金) + 6(2×TSLA3) = 100；TSLA 合計 6% > 5% → 該抓（生存級守門，拆單不可逃）
+  assert.ok(buildSummary(db).reminders.some(r => r.key === 'conc-stock-TSLA' && /6\.0%/.test(r.title)), '拆單合計超標要抓到');
+});
