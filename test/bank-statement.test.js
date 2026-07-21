@@ -439,3 +439,56 @@ test('r12#8b 分箱｜收入分箱 conform 到生效收入樹：被刪的收入�
   const pv = previewBankTxForDb(db, parsed);
   assert.deepEqual([pv.rows[0].category, pv.rows[0].subcategory], ['其他', '其他收入'], '被刪的「被動」→落其他/其他收入');
 });
+
+// ---- Codex r12 修正的「對抗式回歸審查」再補強（txCurrency fail-open / cash 護欄 / 名稱退回 / 舊鍵相容）----
+test('r12v2 概要｜餘額空白的外幣帳戶仍記幣別到 accountCurrency（明細判幣別不 fail-open 成 TWD）', () => {
+  const lines = [
+    L([[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
+    L([[366, 'USD']]),
+    L([[56, '外幣活存'], [108, '900300****363']]),   // 餘額空白→不進 accounts，但幣別要記
+  ];
+  const r = parseBankSummary(lines);
+  assert.equal(r.accounts.length, 0, '餘額空白→不進餘額更新清單');
+  assert.equal(r.accountCurrency['900300****363'], 'USD', '幣別仍被記下（供明細可靠判幣別）');
+});
+
+test('r12v2 分箱｜外幣帳戶(概要餘額空白、db 未登記)的明細靠 accountCurrency 判外幣→匯入跳過、不以面值計台幣', () => {
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [],
+    accountCurrency: { '900300****363': 'USD' },
+    transactions: [btx({ acctMasked: '900300****363', acctSuffix: '363', summary: '轉帳支取', direction: 'out', amount: 1000, balance: 5000 })] };
+  const db = { accounts: [], transactions: [] };
+  assert.equal(previewBankTxForDb(db, parsed).counts.foreign, 1);
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.foreign, 1);
+  assert.equal(r.imported, 0, 'USD 1000 不以面值計入台幣現金流');
+});
+
+test('r12v2 分箱｜真台幣現金流不因撞到「同前綴末碼的外幣非現金帳戶」被誤判 foreign 靜默漏帳（cash 護欄）', () => {
+  const db = { accounts: [{ id: 'inv', type: 'investment', currency: 'USD', accountNo: '900100999993301' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], accountCurrency: {},
+    transactions: [btx({ acctMasked: '900100****3301', acctSuffix: '3301', summary: '薪資轉入', direction: 'in', amount: 50000, balance: 80000 })] };
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.foreign, 0, '不因撞到外幣非現金帳戶被判外幣');
+  assert.equal(r.imported, 1, '真台幣薪資照匯入（現金流不漏帳）');
+});
+
+test('r12v2 帳戶名｜登記 accountNo 未含遮罩前綴時仍靠末碼配到自己的現金帳戶；不抓同末碼的非現金帳戶名', () => {
+  const db = { accounts: [
+    { id: 'loan', name: '房貸', type: 'mortgage', currency: 'TWD', accountNo: '999993301' },   // 非現金、同末碼→不可當名
+    { id: 'cash', name: '我的台新活存', type: 'cash', currency: 'TWD', accountNo: '3301' },       // 只登記末碼、無前綴
+  ], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], accountCurrency: { '900100****3301': 'TWD' },
+    transactions: [btx({ acctMasked: '900100****3301', acctSuffix: '3301', summary: '轉帳存入', direction: 'in', amount: 100, balance: 100 })] };
+  importBankTxToDb(db, parsed);
+  assert.equal(db.transactions[0].account, '我的台新活存', '配到現金帳戶（只登記末碼也行）、不抓房貸');
+});
+
+test('r12v2 匯入｜向後相容：db 有舊版格式 bankRef 的銀行交易，新匯入認得、不重複計（現金流不翻倍）', () => {
+  const tx = btx({ acctMasked: '900200****3302', acctSuffix: '3302', summary: '存款息', direction: 'in', amount: 23, balance: 23 });
+  const legacy = 'bank|3302|2026-06-01|in|23|23|存款息|';   // 舊版鍵＝末碼、無出現序
+  const db = { accounts: [], transactions: [{ id: 'old', bankRef: legacy, ledger: 'cashflow', source: 'bank' }] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], accountCurrency: {}, transactions: [tx] };
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.imported, 0, '舊版已匯入→認得舊 bankRef、不重覆匯入');
+  assert.equal(r.skipped, 1);
+});
