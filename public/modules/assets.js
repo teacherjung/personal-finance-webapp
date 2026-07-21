@@ -107,12 +107,20 @@ function openAccForm(acc) {
       { key: 'type', label: '帳戶類型', type: 'select', options: ACCOUNT_TYPES },
       { key: 'currency', label: '幣別', type: 'select', options: ['TWD', 'USD', 'GBP', 'JPY'] },
       { key: 'class', label: '資產類別（用於配置圓餅圖）', type: 'text', placeholder: '例：現金、黃金', full: true },
-      { key: 'balance', label: '目前餘額（原幣，負債請填負數）', type: 'number', required: true }
+      { key: 'balance', label: '目前餘額（原幣，負債請填負數）', type: 'number', required: true },
+      // 完整帳號（三層重構 stage 2）：只存這台電腦、GET 剝除只回末四碼；供銀行對帳單匯入時用末碼比對到這個帳戶。
+      { key: 'accountNo', label: '完整帳號（選填，只存這台電腦）', type: 'text', full: true,
+        placeholder: acc?.accountNoSet ? `已設定（末四碼 ${acc.accountNoLast4 || '****'}），留空＝不變更` : '例：9001001234 53301（銀行對帳單匯入時用來對到這個帳戶）' },
+      ...(acc?.accountNoSet ? [{ key: 'clearAccountNo', label: '清除已存的帳號（改回未設定）', type: 'checkbox', full: true }] : []),
     ],
     values: acc || { currency: 'TWD' },
     onSubmit: async (data) => {
-      if (acc) await api('/accounts/' + acc.id, { method: 'PUT', body: data });
-      else await api('/accounts', { method: 'POST', body: data });
+      const { clearAccountNo, ...body } = data;
+      // 勾「清除」→ 送空字串清空；否則留空＝不變更（PUT 部分合併保留舊帳號，同 pdfPassword 慣例）
+      if (acc && clearAccountNo) body.accountNo = '';
+      else if (acc && (body.accountNo == null || body.accountNo === '')) delete body.accountNo;
+      if (acc) await api('/accounts/' + acc.id, { method: 'PUT', body });
+      else await api('/accounts', { method: 'POST', body });
       toast('已儲存'); renderAssets();
     }
   });
