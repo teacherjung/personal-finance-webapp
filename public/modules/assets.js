@@ -142,7 +142,7 @@ export async function renderBankAccounts() {
       <div class="page-actions"><button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button></div>
     </div>
     <div class="tbl-wrap">
-      <table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">餘額</th><th>對帳單末碼</th><th></th></tr></thead>
+      <table class="bank-acc-tbl"><thead><tr><th>銀行帳戶</th><th>帳戶末4碼</th><th>幣別</th><th class="num">餘額</th><th></th></tr></thead>
       <tbody>${accounts.map(bankAccRow).join('') || `<tr><td colspan="5" class="empty">尚無銀行帳戶。點右上「新增銀行帳戶」，或到「收支記帳」上傳銀行對帳單自動建立。</td></tr>`}</tbody></table>
     </div>
   `;
@@ -158,9 +158,9 @@ function bankAccRow(x) {
   const neg = Number(x.balance) < 0;
   return `<tr>
     <td>${esc(x.name)}${x.class && x.class !== '現金' ? ` <span class="muted">・${esc(x.class)}</span>` : ''}</td>
+    <td class="muted">${x.accountNoLast4 ? '…' + esc(x.accountNoLast4) : '—'}</td>
     <td class="muted">${esc(cur)}</td>
     <td class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
-    <td class="muted">${x.accountNoLast4 ? '…' + esc(x.accountNoLast4) : '<span class="muted">—</span>'}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${x.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${x.id}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }

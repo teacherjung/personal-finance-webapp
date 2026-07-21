@@ -150,6 +150,9 @@ tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--card-2); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* 銀行帳戶表：欄位間更寬鬆、第一欄（帳戶名）吃剩餘寬度，其餘依內容收窄（使用者定 2026-07-21 視覺舒適） */
+.bank-acc-tbl th, .bank-acc-tbl td { padding: 14px 26px; white-space: nowrap; }
+.bank-acc-tbl th:first-child, .bank-acc-tbl td:first-child { width: 100%; white-space: normal; }
 .tag { font-size: 11px; padding: 2px 9px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
 .tag.green { background: rgba(71,121,62,.12); color: var(--pos); }
 .tag.blue { background: rgba(107,127,153,.14); color: var(--info); }

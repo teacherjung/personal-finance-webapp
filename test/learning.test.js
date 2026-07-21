@@ -24,6 +24,19 @@ test('服務費不學（匯入）：匯入時選的分類不會寫進學習表',
   assert.deepEqual(db.learnedCategories, {});
 });
 
+test('learnFromStmtEdit：清空消費說明 → 回復預設自動名（cleanStore）＋清學習名（使用者定 2026-07-21）', () => {
+  const db = { learnedCategories: {} };
+  const stmtRef = 'c1|2026-07-01|100|全聯';
+  // 先改成自訂名（學起來）
+  learnFromStmtEdit(db, { source: 'stmt', storeKey: '全聯', stmtRef, note: '週末採買', category: '飲食', subcategory: '' }, { note: '全聯' });
+  assert.equal(db.learnedCategories['全聯'].name, '週末採買', '改名→學自訂名');
+  // 清空 note → item.note 回自動名、學習的自訂名清掉
+  const item = { source: 'stmt', storeKey: '全聯', stmtRef, note: '', category: '飲食', subcategory: '' };
+  learnFromStmtEdit(db, item, { note: '週末採買' });
+  assert.equal(item.note, '全聯', '清空→回復 cleanStore 自動名');
+  assert.ok(!db.learnedCategories['全聯']?.name, '清空→學習的自訂名清掉');
+});
+
 test('一般店家照常學（回歸）：編輯與匯入都要學得起來', () => {
   const db = { learnedCategories: {} };
   learnFromStmtEdit(db, { source: 'stmt', storeKey: '佳音林口文化二路', note: '佳音林口文化二路', category: '交通', subcategory: '停車費' });
