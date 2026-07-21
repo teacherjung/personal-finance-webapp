@@ -475,6 +475,19 @@ test('匯入巢狀設定 fail-closed（Codex#10-4）：settings.signals 陣列 �
   assert.deepEqual(after.signals, before.signals, 'signals 不可被清掉');
 });
 
+test('匯入 fail-closed（Codex r13 複審#2）：收入別名型別錯（外層陣列／內層非字串）→ 400、設定不動', async () => {
+  const before = await GET('/settings');
+  const backup = await GET('/db');
+  // ① 外層陣列（typeof []==='object' 會繞過 sanitize 的靜默剝除）→ 走匯入第 79 行巢狀物件檢查
+  const p1 = { ...backup, settings: { ...backup.settings, incomeCategoryAliases: ['oops'] } };
+  assert.equal((await POST('/import', p1)).status, 400, 'incomeCategoryAliases 陣列不可靜默剝除');
+  // ② 內層值非字串 → sanitize 記 bad、走第 134 行 wiped 判斷（同 expenseTree/categoryAliases 口徑）
+  const p2 = { ...backup, settings: { ...backup.settings, incomeSubAliases: { '工作': { '薪資': 123 } } } };
+  assert.equal((await POST('/import', p2)).status, 400, 'incomeSubAliases 內層非字串不可靜默剝除');
+  const after = await GET('/settings');
+  assert.equal(after.usdTwd, before.usdTwd, '被拒的匯入不可動到其他設定');
+});
+
 test('必填欄位（Codex#11-1）：完全沒傳 month 的三種路徑全被擋', async () => {
   // ① CRUD 新增
   const r1 = await POST('/history', { amount: 100 });
