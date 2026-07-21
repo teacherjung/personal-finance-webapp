@@ -130,6 +130,48 @@ test('D3 同日第二次開：第一次讀吸收 🆕，第二次讀無新事件
   assert.equal(second.firstRun, false);
 });
 
+// ---------- D3 自審修正 ----------
+test('D3 自審#1：顧慮升級（將至→已過）同 key → 判持續中，不謊報 ✓已解除＋🆕（生存級）', async () => {
+  const iso = (delta) => { const d = new Date(); d.setDate(d.getDate() + delta); return d.toISOString().slice(0, 10); };
+  const db = getDb();
+  db.settings = { ...db.settings, usdTwd: 30, fxHigh: 32, fxLow: 28 };
+  db.accounts = []; db.holdings = []; db.transactions = []; db.subscriptions = []; db.cards = []; db.assetTargets = []; db.dailyValues = [];
+  db.insurance = [{ id: 'pol1', policyName: '壽險A', nextPayment: iso(-3), premium: 1000, premiumCycle: 'yearly' }];   // 已過 3 天＝danger，key=ins-pay-pol1
+  db.insightState = bmSeed({ reminders: [{ key: 'ins-pay-pol1', title: '壽險A 5 天後繳費', module: '保險', level: 'warn' }] });   // 上次看＝將至
+  saveDb(db);
+  const r = await run();
+  assert.ok(r.reminders.ongoing.some(x => x.key === 'ins-pay-pol1'), '升級後同 key → 持續中');
+  assert.equal(r.reminders.cleared.length, 0, '不可謊報「已解除 👍」');
+  assert.ok(!r.reminders.new.some(x => x.key === 'ins-pay-pol1'), '不是新出現');
+});
+
+test('D3 自審#2/#5：殘缺書籤（缺 reminders 陣列／缺 lastSeenAt）→ 退回首次執行，不洪水標 🆕', async () => {
+  reset({ usdTwd: 33, insightState: { lastSeenAt: '2026-07-15T00:00:00Z', netWorth: 1000, tiers: { us: null, china: null, japan: null, korea: null, taiwan: null } } });
+  const r1 = await run();
+  assert.equal(r1.firstRun, true, '缺 reminders 陣列＝當首次執行');
+  assert.equal(r1.reminders.new.length, 0, '不洪水標 🆕');
+
+  reset({ usdTwd: 33, insightState: { reminders: [], netWorth: 1000 } });   // 缺 lastSeenAt
+  const r2 = await run();
+  assert.equal(r2.firstRun, true, '缺 lastSeenAt＝當首次執行');
+  assert.equal(r2.reminders.new.length, 0);
+});
+
+test('D3 自審#3：基期 0 但有變動 → 不平靜（500k 從 0 起跳，pct 算不出也不可當平靜）', async () => {
+  reset({ usdTwd: 30, insightState: bmSeed({ reminders: [] }), dailyValues: [{ date: '2026-07-21', netWorth: 0 }, { date: '2026-07-22', netWorth: 500000 }] });
+  const r = await run();
+  assert.equal(r.windows.today.pct, null, '基期 0 → pct 算不出');
+  assert.equal(r.windows.today.delta, 500000);
+  assert.equal(r.calm, false, '有 500k 變動不可當平靜');
+});
+
+test('D3 自審#4：淨值為負時 Δ% 用 abs(基期)：-1000→-500（變好）＝+50%，不是 -50%', async () => {
+  reset({ usdTwd: 30, dailyValues: [{ date: '2026-07-21', netWorth: -1000 }, { date: '2026-07-22', netWorth: -500 }] });
+  const r = await run();
+  assert.equal(r.windows.today.delta, 500);
+  assert.ok(Math.abs(r.windows.today.pct - 50) < 1e-9, '變好＝+50%（方向正確，不因負基期反轉）');
+});
+
 // ---------- sanitizer：壞形狀→安全 ----------
 test('sanitizeInsightState：非物件→{}；壞欄位丟棄、保留合法形狀', () => {
   assert.deepEqual(sanitizeInsightState(null), {});
