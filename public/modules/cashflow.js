@@ -87,7 +87,7 @@ export async function renderCashflow() {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
   });
   bindSortClicks(view(), listSort, renderCashflow);
-  view().querySelectorAll('[data-edit]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => openCashflowForm(all.find(t => t.id === /** @type {HTMLElement} */ (b).dataset.edit), accounts));
+  view().querySelectorAll('[data-edit]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => openCashflowForm(all.find(t => t.id === /** @type {HTMLElement} */ (b).dataset.edit), accounts, all));
   view().querySelectorAll('[data-del]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     const t = all.find(x => x.id === /** @type {HTMLElement} */ (b).dataset.del);
     confirmDelete(`${flowOf(t).label} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
@@ -260,10 +260,14 @@ async function openBankBatchManager() {
   render(batches);
 }
 
-/** @param {any=} tx @param {any[]=} accounts */
-function openCashflowForm(tx, accounts = []) {
+/** @param {any=} tx @param {any[]=} accounts @param {any[]=} all 全部現金流交易（算「同類還有幾筆」用） */
+function openCashflowForm(tx, accounts = [], all = []) {
   // 金流別由既有 type 推導（編輯）或預設收入（新增）
   const initFlow = tx ? (tx.type === 'income' ? 'income' : tx.type === 'transfer' ? 'transfer' : 'expense') : 'income';
+  // 同類一起改（Q2乙）：編輯銀行交易時，若同一把學習鑰匙（摘要＋對方帳號）還有別筆，給勾選框整批一起改。
+  const bankKey = tx?.source === 'bank' ? String(tx.bankKey || '') : '';
+  const siblings = bankKey ? (all || []).filter(x => x.id !== tx.id && x.source === 'bank' && String(x.bankKey || '') === bankKey) : [];
+  const propagable = siblings.length;
   openForm({
     title: tx ? '編輯收支' : '記一筆收支',
     fields: [
@@ -275,6 +279,7 @@ function openCashflowForm(tx, accounts = []) {
       { key: 'subcategory', label: '子分類', type: 'select', options: [] },   // onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'note', label: '收支說明', type: 'text', full: true, placeholder: '例：房租、William 鐘點、統一發票中獎' },
+      ...(propagable ? [{ key: 'applyAll', label: `同時套用到其他 ${propagable} 筆同類（同摘要＋對方帳號）`, type: 'checkbox', full: true }] : []),
     ],
     values: tx ? { ...tx, flow: initFlow } : {},
     onMount: (/** @type {any} */ root) => {
@@ -300,9 +305,15 @@ function openCashflowForm(tx, accounts = []) {
         category: flow === 'transfer' ? '內轉' : (data.category || ''),
         subcategory: data.subcategory || '', amount: data.amount,
       };
-      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });
+      if (tx) await api('/transactions/' + tx.id, { method: 'PUT', body });   // PUT 會觸發 learnFromBankEdit（銀行交易）
       else await api('/transactions', { method: 'POST', body });
-      toast('已儲存');
+      // 同類一起改（Q2乙）：勾了就把剛學到的規則套用到既有同鑰匙的其他筆（PUT 已先學好）
+      if (data.applyAll && bankKey) {
+        try {
+          const r = await api('/bank-tx/apply-learned', { method: 'POST', body: { bankKey } });
+          toast(`已儲存，並把其他 ${r.changed} 筆同類一起改了`);
+        } catch (e) { toast('已儲存；同類套用失敗：' + (/** @type {any} */ (e).message || ''), true); }
+      } else toast('已儲存');
       renderCashflow();
     }
   });

@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-banklearn-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb, listLearnedBank, deleteLearnedBank } = await import('../lib/services/bank-import.js');
+const { bankKeyOf, learnFromBankEdit, importBankTxToDb, previewBankTxForDb, listLearnedBank, deleteLearnedBank, applyLearnedBankToExisting } = await import('../lib/services/bank-import.js');
 const { sanitizeLearnedBank } = await import('../lib/schema.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 
@@ -235,4 +235,40 @@ test('deleteLearnedBank：保留字鑰匙用 hasOwn 判、不誤刪原型（比�
   saveDb(db);
   deleteLearnedBank('toString');   // 'in' 會查到原型；hasOwn 不會 → 安全略過、real 還在
   assert.ok(getDb().learnedBank.real);
+});
+
+// ---------- 同類一起改（Q2乙）----------
+test('applyLearnedBankToExisting：把學過的規則套到所有既有同鑰匙的銀行交易（別鑰匙/手動來源不動）', () => {
+  const db = getDb();
+  db.learnedBank = { k1: { type: 'transfer', category: '內轉', subcategory: '交割', name: '基金申購' } };
+  db.transactions = [
+    { id: 't1', source: 'bank', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '原文1', ledger: 'cashflow', date: '2026-06-01', amount: 100 },
+    { id: 't2', source: 'bank', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '原文2', ledger: 'cashflow', date: '2026-06-02', amount: 200 },
+    { id: 't3', source: 'bank', bankKey: 'other', type: 'income', category: '其他', subcategory: '其他收入', note: '別鑰匙', ledger: 'cashflow', date: '2026-06-03', amount: 300 },
+    { id: 'm1', source: 'manual', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '手動', ledger: 'cashflow', date: '2026-06-04', amount: 400 },
+  ];
+  saveDb(db);
+  const r = applyLearnedBankToExisting('k1');
+  assert.equal(r.changed, 2);
+  const after = getDb().transactions;
+  const t1 = after.find(t => t.id === 't1');
+  assert.equal(t1.type, 'transfer'); assert.equal(t1.category, '內轉'); assert.equal(t1.subcategory, '交割'); assert.equal(t1.note, '基金申購');   // 有自訂名 → 覆蓋
+  assert.equal(after.find(t => t.id === 't3').type, 'income', '別鑰匙不動');
+  assert.equal(after.find(t => t.id === 'm1').type, 'income', '手動來源不動');
+});
+test('applyLearnedBankToExisting：沒有自訂名 → 只改分類、各自 note 保留', () => {
+  const db = getDb();
+  db.learnedBank = { k1: { type: 'transfer', category: '內轉', subcategory: '內轉出' } };   // 無 name
+  db.transactions = [{ id: 't1', source: 'bank', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '原文A', ledger: 'cashflow', date: '2026-06-01', amount: 100 }];
+  saveDb(db);
+  applyLearnedBankToExisting('k1');
+  const t1 = getDb().transactions.find(t => t.id === 't1');
+  assert.equal(t1.subcategory, '內轉出'); assert.equal(t1.note, '原文A');   // 沒自訂名 → 保留原 note
+});
+test('applyLearnedBankToExisting：沒學過/找不到目標/保留字 → 明確錯誤（不靜默）', () => {
+  const db = getDb(); db.learnedBank = {}; db.transactions = []; saveDb(db);
+  assert.throws(() => applyLearnedBankToExisting('nokey'), /還沒有學過/);
+  assert.throws(() => applyLearnedBankToExisting('__proto__'), /保留字/);
+  const db2 = getDb(); db2.learnedBank = { k: { type: 'income', category: '其他' } }; db2.transactions = []; saveDb(db2);
+  assert.throws(() => applyLearnedBankToExisting('k'), /找不到/);
 });
