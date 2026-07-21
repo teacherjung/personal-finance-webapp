@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
-const TRANSFER_SUBS = ['內轉出', '內轉入', '交割'];   // 內轉無分類樹：帳戶出/入＋證券劃撥交割（使用者定 2026-07-21）
+/** @type {string[]} */ let transferSubs = ['內轉出', '內轉入', '交割'];   // 內轉子分類（可全編輯，使用者定 2026-07-21）；renderCashflow 從 /transfer-subcategories 載入現行清單
 
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
@@ -26,11 +26,12 @@ function flowOf(t) {
 
 export async function renderCashflow() {
   const seq = currentRouteSeq();
-  const [allRaw, accounts, expTreeRes, incTreeRes] = await Promise.all([
-    api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories')]);
+  const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = await Promise.all([
+    api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   expTree = expTreeRes && typeof expTreeRes === 'object' ? expTreeRes : {};
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
+  if (Array.isArray(transferRes) && transferRes.length) transferSubs = transferRes.map(s => s.label).filter(Boolean);
   const all = allRaw.filter(t => !isCardTx(t));   // 只吃現金流帳本
   const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
   if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
@@ -125,12 +126,15 @@ function parentsForFlow(flow) {
 /** 依金流別＋分類回傳子類 <option>s（含不分子類）。 @param {string} flow @param {string} parent @param {string} cur */
 function subOptionsFor(flow, parent, cur = '') {
   let subs;
-  if (flow === 'transfer') subs = TRANSFER_SUBS;
+  if (flow === 'transfer') subs = transferSubs;
   else if (flow === 'income') subs = (Object.hasOwn(incTree, parent) && incTree[parent]) || [];
   else subs = (Object.hasOwn(expTree, parent) && expTree[parent]) || [];
-  const allowBlank = flow !== 'transfer';   // 內轉一定要選出/入；收支可不分子類
-  return [...(allowBlank ? [''] : []), ...subs]
-    .map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
+  // 內轉一般要選子分類；但「刪掉某內轉子分類後既有交易會變空白」是合法狀態（對抗審查 2026-07-21）——
+  // 現值是空白或不在清單內時要放行空白，否則編輯這種交易會被 <select> 默默選成第一項而改錯。
+  const allowBlank = flow !== 'transfer' || cur === '' || !subs.includes(cur);
+  const opts = [...(allowBlank ? [''] : []), ...subs];
+  if (cur && !opts.includes(cur)) opts.unshift(cur);   // 現值是清單外的孤兒（改名/刪除後的舊值）→ 保留可選，不被改成第一項
+  return opts.map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
 }
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
