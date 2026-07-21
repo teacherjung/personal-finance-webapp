@@ -50,9 +50,15 @@ export async function renderSettings() {
       <div class="form-actions"><button class="btn" id="saveEfund">儲存</button></div>
     </div>
     <div class="card" style="margin-bottom:18px">
-      <h3 style="margin-bottom:6px">分類管理（自訂大類／子類）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的支出分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。收入分類（薪資／投資…）維持固定。儲存前自動備份。</p>
-      <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理分類</button></div>
+      <h3 style="margin-bottom:6px">支出分類管理</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>支出</b>分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。儲存前自動備份。</p>
+      <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理支出分類</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">收入分類管理</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供收支記帳的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。儲存前自動備份。</p>
+      <div><button class="btn-ghost" id="manageIncomeCatsBtn">${icon('refresh', 16) || ''}管理收入分類</button></div>
     </div>
 
 
@@ -191,8 +197,12 @@ export async function renderSettings() {
     saveSettings({ ib }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
   };
   byId('manageCatsBtn').onclick = async () => {
-    try { openCategoryEditor(await api('/categories')); }
+    try { openCategoryEditor(await api('/categories'), CAT_CFG.expense); }
     catch (err) { toast('讀取分類失敗：' + err.message, true); }
+  };
+  byId('manageIncomeCatsBtn').onclick = async () => {
+    try { openCategoryEditor(await api('/income-categories'), CAT_CFG.income); }
+    catch (err) { toast('讀取收入分類失敗：' + err.message, true); }
   };
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
@@ -356,17 +366,26 @@ async function openHealthCheck() {
   }));
 }
 
+// 支出／收入分類管理各自的設定（同一個編輯器兩用）：端點、標題、受保護的退路節點、修改說明。
+// 收入樹的後端（saveIncomeTree/effectiveIncomeTree）與支出對稱，退路＝其他/其他收入；收入無自動分類器，故不提「學習表」。
+const CAT_CFG = {
+  expense: { title: '支出分類管理', endpoint: '/categories', otherCat: '其他', otherSub: '未分類',
+    note: '改名會套用到所有舊交易與學習表；刪除有交易的分類，那些交易會改歸「其他／未分類」。' },
+  income: { title: '收入分類管理', endpoint: '/income-categories', otherCat: '其他', otherSub: '其他收入',
+    note: '改名會套用到所有舊的收入交易；刪除有交易的分類，那些交易會改歸「其他／其他收入」。' },
+};
+
 // 分類管理編輯器：把整棵分類樹載入成可編輯狀態（每列記「原名」以偵測改名），一次儲存。
 // 為保留輸入焦點：打字時不重繪，只有結構性動作（新增/刪除/搬移）才 syncFromDom→重繪。
-/** @param {Record<string,string[]>} tree */
-function openCategoryEditor(tree) {
+/** @param {Record<string,string[]>} tree @param {typeof CAT_CFG.expense} [cfg] 支出或收入的設定（預設支出） */
+function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
   const root = byId('modal-root');
-  // 狀態：[{orig, name, subs:[{orig,name}]}]，orig=null＝新增（非改名）；'其他'／'未分類' 受保護不可刪改
+  // 狀態：[{orig, name, subs:[{orig,name}]}]，orig=null＝新增（非改名）；退路大類（其他）與其退路子類受保護不可刪改
   /** @type {{orig: string|null, name: string, subs: {orig: string|null, name: string}[]}[]} */
   const state = Object.entries(tree || {}).map(([name, subs]) => ({
     orig: /** @type {string|null} */ (name), name, subs: (subs || []).map(s => ({ orig: /** @type {string|null} */ (s), name: s }))
   }));
-  const isOther = (p) => p.orig === '其他';
+  const isOther = (p) => p.orig === cfg.otherCat;
 
   const syncFromDom = () => {
     root.querySelectorAll('input.cat-name').forEach(inp => { const p = Number(inp.dataset.p); if (state[p]) state[p].name = inp.value; });
@@ -384,7 +403,7 @@ function openCategoryEditor(tree) {
         </span>
       </div>
       <div class="cat-subs">
-        ${p.subs.map((s, j) => { const lock = isOther(p) && s.orig === '未分類';
+        ${p.subs.map((s, j) => { const lock = isOther(p) && s.orig === cfg.otherSub;
           return `<span class="sub-chip"><input class="sub-name" data-p="${i}" data-s="${j}" value="${esc(s.name)}" placeholder="子類" ${lock ? 'readonly' : ''} /><button type="button" class="sub-x" data-act="delS" data-p="${i}" data-s="${j}" title="刪除子類" ${lock ? 'disabled' : ''}>×</button></span>`; }).join('')}
         <button type="button" class="btn-ghost btn-sm" data-act="addS" data-p="${i}">＋子類</button>
       </div>
@@ -393,9 +412,9 @@ function openCategoryEditor(tree) {
   const redraw = () => { byId('catEditorBody').innerHTML = state.map((p, i) => blockHtml(p, i)).join(''); };
 
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-    <div class="modal-head"><h2>分類管理</h2><button class="x-close">×</button></div>
+    <div class="modal-head"><h2>${esc(cfg.title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body">
-      <p class="muted" style="font-size:12px;margin-bottom:10px">改名會套用到所有舊交易與學習表；刪除有交易的分類，那些交易會改歸「其他／未分類」。收入分類固定、不在此。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">${esc(cfg.note)}</p>
       <div id="catEditorBody" style="max-height:52vh;overflow:auto"></div>
       <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="addP">＋ 新增大類</button></div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="catSave">儲存分類</button></div>
@@ -417,7 +436,7 @@ function openCategoryEditor(tree) {
     else if (act === 'up') { if (p > 0) [state[p - 1], state[p]] = [state[p], state[p - 1]]; }
     else if (act === 'down') { if (p < state.length - 1) [state[p + 1], state[p]] = [state[p], state[p + 1]]; }
     else if (act === 'addS') { if (state[p]) state[p].subs.push({ orig: null, name: '' }); }
-    else if (act === 'delS') { const sub = state[p]?.subs[s]; if (state[p] && !(isOther(state[p]) && sub?.orig === '未分類')) state[p].subs.splice(s, 1); }
+    else if (act === 'delS') { const sub = state[p]?.subs[s]; if (state[p] && !(isOther(state[p]) && sub?.orig === cfg.otherSub)) state[p].subs.splice(s, 1); }
     else return;
     redraw();
   });
@@ -448,7 +467,7 @@ function openCategoryEditor(tree) {
       if (p.orig && p.orig !== name) parentRenames.push({ from: p.orig, to: name });
     }
     try {
-      const r = await api('/categories', { method: 'POST', body: { tree: outTree, parentRenames, subRenames } });
+      const r = await api(cfg.endpoint, { method: 'POST', body: { tree: outTree, parentRenames, subRenames } });
       close();
       const n = r.changedTx || 0;
       toast(n ? `分類已儲存，${n} 筆舊交易一併更新` : '分類已儲存');
