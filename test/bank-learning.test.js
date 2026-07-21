@@ -145,6 +145,13 @@ test('內轉出/入隨本筆方向，不重播學到的方向（同鑰匙反向�
   const t = db.transactions.at(-1);
   assert.equal(t.type, 'transfer'); assert.equal(t.subcategory, '內轉出');   // 這次是出帳 → 內轉出
 });
+test('學過的「交割」子分類是方向中性 → 不被改成內轉出/入（使用者定 2026-07-21）', () => {
+  const db = baseDb();
+  db.learnedBank['網轉|#900300****2162'] = { type: 'transfer', category: '內轉', subcategory: '交割' };
+  importBankTxToDb(db, parsed([btx({ summary: '網轉', note: '900300****2162', direction: 'out', amount: 1000000 })]));
+  const t = db.transactions.at(-1);
+  assert.equal(t.type, 'transfer'); assert.equal(t.subcategory, '交割');   // 保留交割，不因方向改成內轉出
+});
 
 test('learnFromBankEdit｜改了 note → 逐字記為自訂顯示名（銀行 note 靜態、刻意不做 auto 自我修剪）', () => {
   const db = { learnedBank: {} };
