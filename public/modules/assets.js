@@ -249,14 +249,13 @@ function openTargets(targets) {
     saveBtn.disabled = true;
     const next = collect();
     try {
-      const cur = await api('/assetTargets');
-      for (const t of cur) await api('/assetTargets/' + t.id, { method: 'DELETE' });
-      for (const t of next) await api('/assetTargets', { method: 'POST', body: t });
+      // 原子整批取代（護欄 G1）：一次呼叫、後端單次寫檔——不再 GET→逐筆 DELETE→逐筆 POST（中途失敗會半刪半建救不回）
+      await api('/assetTargets/replace', { method: 'POST', body: { targets: next } });
       toast('目標配置已更新'); close(); renderAssets();
     } catch (err) {
-      // 中途失敗：舊的已刪一部分、新的沒建完 → 明確告知並刷新呈現真實狀態（自主體檢）
+      // 整批原子：失敗＝什麼都沒動，維持原狀即可（不再是「半完成需重新確認」）
       saveBtn.disabled = false;
-      toast('儲存目標配置時發生錯誤，請重新開啟確認目前狀態：' + (/** @type {any} */ (err).message || ''), true);
+      toast('儲存目標配置時發生錯誤：' + (/** @type {any} */ (err).message || ''), true);
       renderAssets();
     }
   };

@@ -511,6 +511,55 @@ test('匯入正常：合法備份可還原、且還原後 summary 正常', async
   assert.ok(sum.netWorth > 0);
 });
 
+test('資產配置目標整批取代（護欄 G1）：一次原子取代；壞一筆＝整批 400、原目標完全不動', async () => {
+  const orig = await GET('/assetTargets');   // 收尾還原，免污染其他考題
+  const r = await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] });
+  assert.equal(r.status, 200);
+  const cur = await GET('/assetTargets');
+  assert.deepEqual(cur.map(t => t.class).sort(), ['股票', '債券'].sort());
+  assert.ok(cur.every(t => t.id), '取代後每筆有配 id');
+  // 壞一筆（targetPct 非數字）→ 整批 400，原目標完全不動（原子：先全驗才寫；壞在第 2 筆，第 1 筆也不可落地）
+  const bad = await POST('/assetTargets/replace', { targets: [{ class: '現金', targetPct: 50 }, { class: '黃金', targetPct: 'oops' }] });
+  assert.equal(bad.status, 400);
+  assert.deepEqual((await GET('/assetTargets')).map(t => t.class).sort(), ['股票', '債券'].sort(), '壞資料被拒→原目標沒被半刪半建');
+  // 空陣列 → 原子清空；非陣列 → 400
+  await POST('/assetTargets/replace', { targets: [] });
+  assert.deepEqual(await GET('/assetTargets'), []);
+  assert.equal((await POST('/assetTargets/replace', { targets: 'oops' })).status, 400);
+  await POST('/assetTargets/replace', { targets: orig.map(t => ({ class: t.class, targetPct: t.targetPct })) });   // 還原 seed
+});
+
+test('備份 round-trip（護欄 G2）：所有服務層 settings＋頂層 KV（收入樹/收入別名/內轉子分類/銀行學習）都活得過 export→import', async () => {
+  const orig = await GET('/export');   // 完整備份（含機密），收尾還原免污染
+  const seeded = {
+    ...orig,
+    learnedBank: { 'CD轉入|#806****1206': { type: 'income', category: '工作', subcategory: '鐘點', name: 'William 家教費' } },
+    transferSubs: [{ label: '匯出', role: 'out' }, { label: '匯入', role: 'in' }, { label: '結算', role: 'settle' }, { label: '還卡費' }],
+    settings: {
+      ...orig.settings,
+      incomeTree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] },
+      incomeCategoryAliases: { '被動': '投資收入' },
+      incomeSubAliases: { '投資收入': { '配息': '股息' } },
+    },
+  };
+  assert.equal((await POST('/import', seeded)).status, 200);
+  const exported = await GET('/export');                      // 匯出自己
+  assert.equal((await POST('/import', exported)).status, 200);   // 再匯入（round-trip）
+  const db = await GET('/db');
+  // 頂層 KV
+  const lb = db.learnedBank['CD轉入|#806****1206'];
+  assert.ok(lb, 'learnedBank 保留');
+  assert.equal(lb.type, 'income'); assert.equal(lb.category, '工作'); assert.equal(lb.subcategory, '鐘點'); assert.equal(lb.name, 'William 家教費');
+  assert.deepEqual(db.transferSubs.map(s => s.label), ['匯出', '匯入', '結算', '還卡費'], 'transferSubs 標籤與順序保留');
+  assert.equal(db.transferSubs.find(s => s.label === '結算').role, 'settle', '角色保留');
+  assert.ok(!db.transferSubs.find(s => s.label === '還卡費').role, '自訂項無角色');
+  // settings 服務層欄位（r13 新增）
+  assert.ok(db.settings.incomeTree['投資收入'], 'incomeTree 保留');
+  assert.equal(db.settings.incomeCategoryAliases['被動'], '投資收入', '收入大類別名保留');
+  assert.equal(db.settings.incomeSubAliases['投資收入']['配息'], '股息', '收入子類別名保留');
+  await POST('/import', orig);   // 還原完整備份
+});
+
 test('店名對照表編輯（HTTP 全鏈路）：以「原文」為準——同 storeKey 的不同分店可各自取名', async () => {
   // 銀行截斷情境：兩個不同原文（桃/新分店）共用同一個 storeKey（使用者實際踩到的 12MINI 案例）
   const origA = '測試分店 (桃X999 Taipei', origB = '測試分店 (新X999 Taipei';
