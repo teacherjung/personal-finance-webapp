@@ -215,3 +215,14 @@ test('守門補洞｜拆單逃避個股上限：TSLA 3%+3%=6%>5% 現在會被抓
   // netWorth = 94(現金) + 6(2×TSLA3) = 100；TSLA 合計 6% > 5% → 該抓（生存級守門，拆單不可逃）
   assert.ok(buildSummary(db).reminders.some(r => r.key === 'conc-stock-TSLA' && /6\.0%/.test(r.title)), '拆單合計超標要抓到');
 });
+
+// D3 自審#1：升級提醒（將至→已過）共用穩定 key（差異引擎才判「持續中」而非「已解除＋新出現」）
+test('D3 自審#1｜訂閱/保險「已過」與「將至」共用 <base>-<id>，不用 -overdue- 另一把 key', () => {
+  const iso = (delta) => { const d = new Date(); d.setDate(d.getDate() + delta); return d.toISOString().slice(0, 10); };
+  const rs = buildSummary({ settings: {}, accounts: [], holdings: [], transactions: [],
+    subscriptions: [{ id: 's9', name: 'X', cycle: 'monthly', amount: 100, nextCharge: iso(-2), status: 'active' }],
+    insurance: [{ id: 'p9', policyName: 'Y', nextPayment: iso(-2), premium: 100, premiumCycle: 'yearly' }] }).reminders;
+  assert.ok(rs.some(r => r.key === 'sub-charge-s9'), '訂閱已過用 sub-charge-<id>');
+  assert.ok(rs.some(r => r.key === 'ins-pay-p9'), '保險已過用 ins-pay-<id>');
+  assert.ok(!rs.some(r => /-overdue-/.test(r.key)), '不再有 -overdue- 分裂 key');
+});

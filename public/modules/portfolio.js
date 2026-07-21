@@ -4,6 +4,7 @@
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
+import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -1052,12 +1053,9 @@ function watchlistSection(watchlist) {
 
 // ---- 估值訊號儀表（五市場檔位 → 動態股債比；美股 ECY 自動、區域每月手動）----
 // 檔位：0 常態、1 加碼、2 重壓（越貴 tier 越低）。門檻依 [[investment-principles]]。
-const TIER_META = [
-  { label: '常態', color: 'var(--text-dim)' },
-  { label: '加碼', color: CHART.green },
-  { label: '重壓', color: '#2E6B2A' }
-];
-const US_RATIO = ['70 : 30', '80 : 20', '90 : 10'];   // 美股檔位 → 股債比
+// 檔位顏色（presentation）；label 取自 signal-tiers.js 的 TIER_LABELS（單一真相，免走鐘）。US_RATIO/檔位函式也 import 自那裡。
+const TIER_COLORS = ['var(--text-dim)', CHART.green, '#2E6B2A'];
+const TIER_META = TIER_LABELS.map((label, i) => ({ label, color: TIER_COLORS[i] }));
 const SIGNALS_INFO_HTML = `
   <p><b>這是什麼</b>：每月檢視五個市場的估值，換算成「檔位」——常態、加碼、重壓——據以動態調整配置。不是憑感覺，是指標換檔。</p>
   <p><b>美股（自動）</b>：ECY＝1/CAPE − 美 10 年期實質利率（FRED DFII10）。ECY 越高＝股票比安全資產多賺越多＝越值得加碼。<br>
@@ -1065,24 +1063,7 @@ const SIGNALS_INFO_HTML = `
   <p><b>區域（每月手動更新）</b>：中股滬深300 本益比、日股與韓股整體 P/B、台股大盤本益比與殖利率——這些無穩定免費 API，請每月自行查一次填入（按右上「更新區域數值」）。</p>
   <p class="muted">門檻：中股 PE &gt;13／10.5–11.5／&lt;10；日股 P/B &gt;1.3／1.1–1.2／&lt;1.0；韓股 P/B ~1.0／&lt;0.9／&lt;0.8；台股 PE 15–18／&lt;13 或殖利率&gt;4.5%／&lt;11 或&gt;5.5%。重壓訊號建議再等 VIX&gt;30 或信用利差擴大雙確認後才動手。</p>`;
 
-// 各市場檔位計算（回傳 0/1/2 或 null＝未輸入）
-function regionTier(key, v) {
-  const n = Number(v);
-  if (v == null || v === '' || !isFinite(n)) return null;
-  if (key === 'us') return n > 5 ? 2 : n >= 3 ? 1 : 0;          // ECY %
-  if (key === 'china') return n < 10 ? 2 : n <= 11.5 ? 1 : 0;   // 滬深300 PE
-  if (key === 'japan') return n < 1.0 ? 2 : n <= 1.2 ? 1 : 0;   // 日股 P/B
-  if (key === 'korea') return n < 0.8 ? 2 : n < 0.9 ? 1 : 0;    // KOSPI P/B
-  return null;
-}
-function taiwanTier(pe, yld) {
-  const p = Number(pe), y = Number(yld);
-  const hp = isFinite(p) && p > 0, hy = isFinite(y) && y > 0;
-  if (!hp && !hy) return null;
-  if ((hp && p < 11) || (hy && y > 5.5)) return 2;
-  if ((hp && p < 13) || (hy && y > 4.5)) return 1;
-  return 0;
-}
+// regionTier / taiwanTier / ecyOf / US_RATIO 由 './signal-tiers.js' import（估值檔位單一真相，前後端共用）。
 function tierBadge(t) {
   if (t == null) return '<span class="muted" style="font-size:11px">未輸入</span>';
   const m = TIER_META[t];
@@ -1105,7 +1086,7 @@ async function loadSignals(settings) {
   // 美股 ECY
   const capeV = cape && cape.value ? Number(cape.value) : null;
   const ryV = ry && ry.value != null ? Number(ry.value) : null;
-  const ecy = (capeV && ryV != null) ? (100 / capeV - ryV) : null;
+  const ecy = ecyOf(capeV, ryV);
   const usTier = ecy != null ? regionTier('us', ecy) : null;
   const usValTxt = ecy != null
     ? `ECY <b>${ecy.toFixed(1)}%</b>（CAPE ${(capeV ?? 0).toFixed(1)}・實質利率 ${(ryV ?? 0).toFixed(2)}%）`
