@@ -13,7 +13,7 @@ const repo = await import('../lib/repo.js');
 const { normalizeLedger } = await import('../lib/store.js');
 const { buildSummary, isCardLedger, monthKey } = await import('../lib/derive.js');
 const { importRows } = await import('../lib/services/statement-import.js');
-const { effectiveIncomeTree, saveIncomeTree, conformIncome } = await import('../lib/services/categories.js');
+const { effectiveIncomeTree, saveIncomeTree, conformIncome, resolveImportIncome } = await import('../lib/services/categories.js');
 
 after(() => {
   for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -157,4 +157,18 @@ test('收入樹｜改名連動 cashflow 收入交易，不動卡帳本、不動�
   assert.equal(after.transactions.find(t => t.id === 'i1').category, '工作坊');
   assert.equal(after.transactions.find(t => t.id === 'i2').category, '工作', '卡帳本不被動（isCardTx 擋）');
   assert.equal(after.transactions.find(t => t.id === 'x1').category, '工作', '支出樹的「工作」不被收入改名波及');
+});
+test('收入樹｜改名建收入別名＋連動 learnedBank 收入規則；resolveImportIncome 沿用新名（Codex r13#3）', () => {
+  const db = repo.getDb();
+  db.transactions = [];
+  db.learnedBank = { k: { type: 'income', category: '被動', subcategory: '利息' }, ke: { type: 'expense', category: '生活', subcategory: '外食' } };
+  db.settings = { ...db.settings, incomeTree: { '被動': ['利息', '股息'], '其他': ['其他收入'] } };
+  repo.saveDb(db);
+  const r = saveIncomeTree({ tree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] }, parentRenames: [{ from: '被動', to: '投資收入' }] });
+  assert.equal(r.changedLearned, 1, '只連動收入的 learnedBank 規則');
+  const after = repo.getDb();
+  assert.equal(after.settings.incomeCategoryAliases['被動'], '投資收入', '建立收入改名別名');
+  assert.equal(after.learnedBank.k.category, '投資收入', 'learnedBank 收入規則連動改名');
+  assert.equal(after.learnedBank.ke.category, '生活', '支出 learnedBank 不受收入改名影響');
+  assert.deepEqual(resolveImportIncome(after, '被動', '利息'), ['投資收入', '利息'], '匯入自動分類經別名沿用新名');
 });

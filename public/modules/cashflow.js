@@ -270,8 +270,14 @@ function openCashflowForm(tx, accounts = [], all = []) {
   const initFlow = tx ? (tx.type === 'income' ? 'income' : tx.type === 'transfer' ? 'transfer' : 'expense') : 'income';
   // 同類一起改（Q2乙）：編輯銀行交易時，若同一把學習鑰匙（摘要＋對方帳號）還有別筆，給勾選框整批一起改。
   const bankKey = tx?.source === 'bank' ? String(tx.bankKey || '') : '';
+  // 只算「方向可安全套用」的同類（Codex r13#2）：收入/支出只可套用到同方向的同類（後端逐筆方向護欄會擋反向、
+  // 免把出帳誤標成收入），內轉方向中性可套兩向。方向優先用不可竄改的 tx.dir（缺→從 type 推）。
+  const dirOf = (/** @type {any} */ x) => (x?.dir === 'in' || x?.dir === 'out') ? x.dir : (x?.type === 'income' ? 'in' : x?.type === 'expense' ? 'out' : null);
+  const txDir = dirOf(tx);
   const siblings = bankKey ? (all || []).filter(x => x.id !== tx.id && x.source === 'bank' && String(x.bankKey || '') === bankKey) : [];
-  const propagable = siblings.length;
+  // 內轉＝全部同類可套；收入/支出＝同方向（或方向不明的舊資料，交給後端護欄判）者才算
+  const applicable = tx?.type === 'transfer' ? siblings : siblings.filter(x => { const d = dirOf(x); return d == null || d === txDir; });
+  const propagable = applicable.length;
   openForm({
     title: tx ? '編輯收支' : '記一筆收支',
     fields: [
@@ -315,7 +321,7 @@ function openCashflowForm(tx, accounts = [], all = []) {
       if (data.applyAll && bankKey) {
         try {
           const r = await api('/bank-tx/apply-learned', { method: 'POST', body: { bankKey } });
-          toast(`已儲存，並把其他 ${r.changed} 筆同類一起改了`);
+          toast(`已儲存，並把其他 ${r.changed} 筆同類一起改了${r.skipped ? `（${r.skipped} 筆方向不符，未動）` : ''}`);
         } catch (e) { toast('已儲存；同類套用失敗：' + (/** @type {any} */ (e).message || ''), true); }
       } else toast('已儲存');
       renderCashflow();

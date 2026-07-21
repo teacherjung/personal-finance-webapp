@@ -121,3 +121,26 @@ test('refreshQuotesIfStale：抓取整個丟例外 → 不擋、回 fetch-failed
   assert.equal(r.refreshed, false);
   assert.equal(getDb().holdings[0].price, 400);
 });
+
+test('refreshQuotesIfStale：報價期間的並發寫入不被 await 前的舊快照覆蓋（Codex r13#1，高）', async () => {
+  seedDb([{ id: 'h1', symbol: 'VOO', quoteSymbol: 'VOO', currency: 'USD', price: 400, quantity: 10 }], { quotesLastAt: '' });
+  // 假 fetch：在「網路等待期間」模擬另一條路徑（開 app 同時跑的店名整理/記帳）寫入一筆交易。
+  // 舊碼在 await 前 getDb()、await 後拿那份舊快照整包寫回 → 這筆會消失；新碼 await 後重讀才寫 → 存活。
+  let injected = false;
+  const q = { 'TWD=X': { price: 32, currency: 'TWD' }, 'VOO': { price: 680, currency: 'USD' } };
+  const fetchImpl = async (/** @type {string} */ url) => {
+    if (!injected) {
+      injected = true;
+      const d = getDb();
+      d.transactions = [...(d.transactions || []), { id: 'concurrent', type: 'expense', category: '生活', subcategory: '外食', amount: 50, date: '2026-06-01', ledger: 'cashflow' }];
+      saveDb(d);
+    }
+    return makeFetch(q)(url);
+  };
+  const r = await refreshQuotesIfStale({ fetchImpl, quoteTtlMs: 0 });
+  assert.equal(r.refreshed, true);
+  const after = getDb();
+  assert.ok(after.transactions?.find(t => t.id === 'concurrent'), '報價期間新增的交易必須存活（不被 await 前的舊 db 覆蓋）');
+  assert.equal(after.holdings.find(h => h.symbol === 'VOO').price, 680, '報價仍有更新');
+  assert.equal(after.settings.usdTwd, 32);
+});
