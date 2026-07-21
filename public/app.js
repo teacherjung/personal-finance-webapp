@@ -3,7 +3,7 @@
 import { renderDashboard } from './modules/dashboard.js';
 import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
-import { renderAssets } from './modules/assets.js';
+import { renderAssets, renderBankAccounts } from './modules/assets.js';
 import { renderPortfolio } from './modules/portfolio.js';
 import { renderSubscriptions } from './modules/subscriptions.js';
 import { renderCards } from './modules/cards.js';
@@ -241,6 +241,7 @@ const ROUTES = {
   cashflow: renderCashflow,
   transactions: renderTransactions,
   assets: renderAssets,
+  bank: renderBankAccounts,
   ib: renderPortfolio,
   subscriptions: renderSubscriptions,
   cards: renderCards,

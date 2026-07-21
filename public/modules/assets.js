@@ -16,6 +16,7 @@ export async function renderAssets() {
   const [db, alloc] = await Promise.all([api('/db'), api('/summary')]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）
   const accounts = db.accounts || [];
+  const nonCash = accounts.filter(x => (x.type || 'cash') !== 'cash');   // 銀行/現金帳戶獨立到「銀行帳戶」頁（使用者定 2026-07-21）
   const a = alloc.allocation;
   if (chart) { chart.destroy(); chart = null; }
 
@@ -25,7 +26,7 @@ export async function renderAssets() {
       <div class="page-actions"><button class="btn-ghost" id="rebalBtn">${icon('repeat', 16)}再平衡計算</button><button class="btn-ghost" id="editTargets">${icon('settings', 16)}設定目標配置</button><button class="btn" id="addAcc">${icon('plus', 16)}新增帳戶</button></div>
     </div>
 
-    <div class="hint">股票／債券的金額由「投資組合」的持股<b>自動換算併入</b>（含外幣→台幣），這裡只需要記現金、黃金等帳戶，不用重複記投資部位。</div>
+    <div class="hint">股票／債券的金額由「投資組合」的持股<b>自動換算併入</b>（含外幣→台幣）；<b>銀行／現金帳戶</b>請到「<a href="#bank">銀行帳戶</a>」頁管理；這裡記黃金、房地產、保單現金價值、其他資產與負債。（配置圓餅圖與淨資產仍含現金。）</div>
 
     <div class="cards">
       <div class="card"><h3>總資產</h3><div class="stat sm pos">${wan(alloc.assets)}</div></div>
@@ -53,10 +54,10 @@ export async function renderAssets() {
       </div>
     </div>
 
-    <div class="section-title">帳戶明細</div>
+    <div class="section-title">帳戶明細 <span class="stat-sub" style="font-weight:400">（投資／房地產／負債等；銀行帳戶見「<a href="#bank">銀行帳戶</a>」）</span></div>
     <div class="tbl-wrap">
       <table><thead><tr><th>帳戶</th><th>類別</th><th>資產類別</th><th class="num">餘額</th><th></th></tr></thead>
-      <tbody>${accounts.map(accRow).join('') || `<tr><td colspan="5" class="empty">尚無帳戶</td></tr>`}</tbody></table>
+      <tbody>${nonCash.map(accRow).join('') || `<tr><td colspan="5" class="empty">尚無非現金帳戶。銀行/現金帳戶請到「銀行帳戶」頁。</td></tr>`}</tbody></table>
     </div>
   `;
 
@@ -99,7 +100,9 @@ function drawPie(byClass) {
   });
 }
 
-function openAccForm(acc) {
+/** @param {any=} acc @param {{defaultType?:string, onDone?:()=>any}=} opts 新增預設類型／存檔後重繪哪一頁（銀行帳戶頁共用此表單） */
+function openAccForm(acc, opts = {}) {
+  const done = opts.onDone || renderAssets;
   openForm({
     title: acc ? '編輯帳戶' : '新增帳戶',
     fields: [
@@ -113,7 +116,7 @@ function openAccForm(acc) {
         placeholder: acc?.accountNoSet ? `已設定（末四碼 ${acc.accountNoLast4 || '****'}），留空＝不變更` : '例：9001001234 53301（銀行對帳單匯入時用來對到這個帳戶）' },
       ...(acc?.accountNoSet ? [{ key: 'clearAccountNo', label: '清除已存的帳號（改回未設定）', type: 'checkbox', full: true }] : []),
     ],
-    values: acc || { currency: 'TWD' },
+    values: acc || { currency: 'TWD', ...(opts.defaultType ? { type: opts.defaultType } : {}) },
     onSubmit: async (data) => {
       const { clearAccountNo, ...body } = data;
       // 勾「清除」→ 送空字串清空；否則留空＝不變更（PUT 部分合併保留舊帳號，同 pdfPassword 慣例）
@@ -121,9 +124,45 @@ function openAccForm(acc) {
       else if (acc && (body.accountNo == null || body.accountNo === '')) delete body.accountNo;
       if (acc) await api('/accounts/' + acc.id, { method: 'PUT', body });
       else await api('/accounts', { method: 'POST', body });
-      toast('已儲存'); renderAssets();
+      toast('已儲存'); done();
     }
   });
+}
+
+// ---- 銀行帳戶頁（獨立自資產配置，使用者定 2026-07-21）：只列現金/銀行帳戶（type:'cash'），管理餘額＋對帳單末碼。----
+// 配置圓餅圖與淨資產仍含現金（在資產配置頁）；這裡只是把「銀行帳戶的管理」搬出來獨立一頁。
+export async function renderBankAccounts() {
+  const seq = currentRouteSeq();
+  const db = await api('/db');
+  if (seq !== currentRouteSeq()) return;
+  const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
+  view().innerHTML = `
+    <div class="page-head">
+      <div><h1>銀行帳戶</h1><p>各銀行／現金帳戶的餘額。上傳銀行對帳單時，會用帳號末碼自動對到這裡的帳戶並更新餘額。</p></div>
+      <div class="page-actions"><button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button></div>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">餘額</th><th>對帳單末碼</th><th></th></tr></thead>
+      <tbody>${accounts.map(bankAccRow).join('') || `<tr><td colspan="5" class="empty">尚無銀行帳戶。點右上「新增銀行帳戶」，或到「收支記帳」上傳銀行對帳單自動建立。</td></tr>`}</tbody></table>
+    </div>
+  `;
+  byId('addBankAcc').onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });
+  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAccForm(accounts.find(x => x.id === b.dataset.edit), { onDone: renderBankAccounts }));
+  view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    const x = accounts.find(y => y.id === b.dataset.del);
+    confirmDelete(x.name, () => api('/accounts/' + x.id, { method: 'DELETE' }));   // confirmDelete 內建 router() 重繪目前頁（銀行帳戶）
+  });
+}
+function bankAccRow(x) {
+  const cur = x.currency || 'TWD';
+  const neg = Number(x.balance) < 0;
+  return `<tr>
+    <td>${esc(x.name)}${x.class && x.class !== '現金' ? ` <span class="muted">・${esc(x.class)}</span>` : ''}</td>
+    <td class="muted">${esc(cur)}</td>
+    <td class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
+    <td class="muted">${x.accountNoLast4 ? '…' + esc(x.accountNoLast4) : '<span class="muted">—</span>'}</td>
+    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${x.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${x.id}" title="刪除">${icon('trash', 15)}</button></div></td>
+  </tr>`;
 }
 
 // 再平衡計算器（3-13）：唯讀試算、不改任何資料。預設「只買不賣」（符合投資原則：加碼只用新資金）。

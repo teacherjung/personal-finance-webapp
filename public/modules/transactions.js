@@ -45,7 +45,7 @@ export async function renderTransactions() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>信用卡消費明細</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
+      <div><h1>卡費明細</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
       <div class="page-actions">
         ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
         <button class="btn btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
