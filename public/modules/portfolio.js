@@ -10,6 +10,13 @@ import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfoli
 import { buildPortfolioModel } from './portfolio-model.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
 import { buildPortfolioReport } from './portfolio-report.js';
+import {
+  assetAccountDetailHtml,
+  assetGoldDetailHtml,
+  assetHoldingDetailHtml,
+  costDetailHtml,
+  tradesModalHtml
+} from './portfolio-details.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -36,6 +43,8 @@ const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
   const n = Number(twd || 0), sign = n < 0 ? '−' : '', v = Math.abs(n);
   return viewCur === 'USD' ? sign + kNum(v / usdRate) + ' K USD' : sign + wanNum(v) + ' 萬';
 };
+// app.js 與頁面模組互相 import；要到使用時才讀 esc，避免頂層循環 import 的 TDZ 白屏。
+const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
 
 // ---- 分層（核心–衛星）與目標區間 ----
 const LAYERS = {
@@ -260,7 +269,7 @@ export async function renderPortfolio() {
     if (info) openInfo(info[0], info[1]);
   });
   const tradesFullBtn = byId('tradesFull');
-  if (tradesFullBtn) tradesFullBtn.onclick = () => openInfo('完整交易明細', tradesModalHtml(ibTrades), { size: 'xl' });
+  if (tradesFullBtn) tradesFullBtn.onclick = () => openInfo('完整交易明細', tradesModalHtml(ibTrades, { escapeHtml: esc }), { size: 'xl' });
   const totalValueInfo = byId('totalValueInfo');
   if (totalValueInfo) totalValueInfo.onclick = () => openInfo('總市值', `
     <p><b>總市值 ＝ 股票市值 + 債券市值 + 黃金市值</b></p>
@@ -268,15 +277,15 @@ export async function renderPortfolio() {
     <p class="muted small" style="margin-top:10px">這裡只計算投資持股市值，不包含現金，也不扣除融資。</p>
   `, { size: 'md' });
   const totalCostInfo = byId('totalCostInfo');
-  if (totalCostInfo) totalCostInfo.onclick = () => openInfo('成本', costDetailHtml(rows, totalCost), { size: 'sm' });
+  if (totalCostInfo) totalCostInfo.onclick = () => openInfo('成本', costDetailHtml(rows, totalCost, detailFormatters()), { size: 'sm' });
   const assetStockInfo = byId('assetStockInfo');
-  if (assetStockInfo) assetStockInfo.onclick = () => openInfo('股票', assetHoldingDetailHtml('股票', stockRows, eqV, allBase), { size: 'sm' });
+  if (assetStockInfo) assetStockInfo.onclick = () => openInfo('股票', assetHoldingDetailHtml('股票', stockRows, eqV, allBase, detailFormatters()), { size: 'sm' });
   const assetBondInfo = byId('assetBondInfo');
-  if (assetBondInfo) assetBondInfo.onclick = () => openInfo('債券', assetHoldingDetailHtml('債券', bondRows, bondV, allBase), { size: 'sm' });
+  if (assetBondInfo) assetBondInfo.onclick = () => openInfo('債券', assetHoldingDetailHtml('債券', bondRows, bondV, allBase, detailFormatters()), { size: 'sm' });
   const assetCashInfo = byId('assetCashInfo');
-  if (assetCashInfo) assetCashInfo.onclick = () => openInfo('現金', assetAccountDetailHtml('現金', cashAccounts, cashV), { size: 'sm' });
+  if (assetCashInfo) assetCashInfo.onclick = () => openInfo('現金', assetAccountDetailHtml('現金', cashAccounts, cashV, detailFormatters()), { size: 'sm' });
   const assetGoldInfo = byId('assetGoldInfo');
-  if (assetGoldInfo) assetGoldInfo.onclick = () => openInfo('黃金', assetGoldDetailHtml(goldRows, goldAccounts, goldAll, allBase), { size: 'sm' });
+  if (assetGoldInfo) assetGoldInfo.onclick = () => openInfo('黃金', assetGoldDetailHtml(goldRows, goldAccounts, goldAll, allBase, detailFormatters()), { size: 'sm' });
   const xInfo = byId('xirrInfo');
   if (xInfo) xInfo.onclick = () => openInfo('年化報酬（XIRR）', XIRR_INFO_HTML, { size: 'md' });
   const dInfo = byId('disciplineInfo');
@@ -518,88 +527,6 @@ function tradesSection(trades, settings) {
     ${missingCurrencies.length ? `<p class="neg small" style="margin-top:10px">提醒：${missingCurrencies.map(esc).join('、')} 交易缺少可用匯率，暫未計入已實現損益。</p>` : ''}
     <p class="muted small" style="margin-top:10px">已實現＋未實現＋股息－利息，才是完整的投資成績。</p>
   </div>`;
-}
-
-// 完整交易明細（彈窗內容）：全部成交逐筆，依日期新→舊
-function tradesModalHtml(trades) {
-  const buys = trades.filter(t => t.buySell === 'BUY').length;
-  const sells = trades.length - buys;
-  const fmtDate = (d) => (d && d.length === 8) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : (d || '');
-  const n = (x, dec = 0) => Number(x || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-  const rows = trades.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(t => {
-    const p = Number(t.pnl) || 0;
-    return `<tr>
-      <td class="nowrap">${esc(fmtDate(t.date))}</td>
-      <td class="nowrap"><b>${esc(t.symbol)}</b></td>
-      <td><span class="tag ${t.buySell === 'BUY' ? 'blue' : 'amber'}">${t.buySell === 'BUY' ? '買' : '賣'}</span></td>
-      <td class="num">${n(Math.abs(t.quantity))}</td>
-      <td class="num">${n(t.price, 2)}</td>
-      <td class="num">${n(t.netCash, 2)}</td>
-      <td class="num ${p > 0 ? 'pos' : p < 0 ? 'neg' : ''}">${p ? n(p, 2) : '—'}</td>
-      <td class="muted nowrap">${esc(t.currency || '')}</td>
-    </tr>`;
-  }).join('');
-  return `<div class="cost-detail-total"><span>買 ${buys}／賣 ${sells}</span><b>共 ${trades.length} 筆</b></div>
-    <div class="cost-detail-table-wrap" style="max-height:58vh;overflow:auto">
-      <table class="cost-detail-table">
-        <thead><tr><th>日期</th><th>代號</th><th>買賣</th><th class="num">股數</th><th class="num">價格</th><th class="num">淨現金</th><th class="num">已實現損益</th><th>幣別</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-}
-
-// 資產明細彈窗共用產生器（成本/股/債/現/金）：items=[{label,value,pct?}]，有 pct 走三欄版
-const pctOf = (v, base) => base ? Math.round(v / base * 100) : 0;
-/** @param {{head:string[], items:any[], total?:any, totalPct?:any, emptyText?:string}} cfg */
-function detailTableHtml({ head, items, total, totalPct, emptyText }) {
-  const three = head.length >= 3;
-  const body = items.length ? items.map(it => `<tr>
-    <td class="nowrap"><b>${esc(it.label)}</b></td>
-    <td class="num">${MONEY(it.value)}</td>${three ? `
-    <td class="num">${it.pct}%</td>` : ''}
-  </tr>`).join('') : `<tr><td colspan="${head.length}" class="muted" style="text-align:center;padding:22px">${esc(emptyText)}</td></tr>`;
-  return `<div class="cost-detail-total compact-summary${three ? ' three-col' : ''}">
-      <span></span>
-      <b>合計：${MONEY(total)}</b>${three ? `
-      <b>合計：${totalPct}%</b>` : ''}
-    </div>
-    <div class="cost-detail-table-wrap compact" style="max-height:52vh;overflow-y:auto">
-      <table class="cost-detail-table compact${three ? ' three-col' : ''}">
-        <thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>`;
-}
-function costDetailHtml(rows, totalCost) {
-  return detailTableHtml({
-    head: ['標的', '成本'],
-    items: rows.slice().sort((a, b) => b.costTwd - a.costTwd).map(r => ({ label: r.symbol, value: r.costTwd })),
-    total: totalCost, emptyText: '目前沒有持股'
-  });
-}
-function assetHoldingDetailHtml(label, rows, totalValue, baseValue) {
-  return detailTableHtml({
-    head: ['標的', '市值', '佔比'],
-    items: rows.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(r => ({ label: r.symbol, value: r.valueTwd, pct: pctOf(r.valueTwd, baseValue) })),
-    total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: `目前沒有${label}部位`
-  });
-}
-function assetAccountDetailHtml(label, accounts, totalValue) {
-  return detailTableHtml({
-    head: ['帳戶', '金額'],
-    items: accounts.slice().sort((a, b) => b.valueTwd - a.valueTwd).map(a => ({ label: a.name || '未命名帳戶', value: a.valueTwd })),
-    total: totalValue, emptyText: `目前沒有${label}帳戶`
-  });
-}
-function assetGoldDetailHtml(rows, accounts, totalValue, baseValue) {
-  const items = rows.map(r => ({ label: r.symbol, value: r.valueTwd }))
-    .concat(accounts.map(a => ({ label: a.name || '黃金帳戶', value: a.valueTwd })))
-    .sort((a, b) => b.value - a.value)
-    .map(it => ({ ...it, pct: pctOf(it.value, baseValue) }));
-  return detailTableHtml({
-    head: ['項目', '市值', '佔比'],
-    items, total: totalValue, totalPct: pctOf(totalValue, baseValue), emptyText: '目前沒有黃金部位'
-  });
 }
 
 // ---- ② 穿透式區域曝險 ----
