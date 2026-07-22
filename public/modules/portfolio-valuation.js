@@ -16,6 +16,43 @@ export const CAPE_BANDS = [
   { from: 33, to: CAPE_MAX, color: CHART.red, label: '歷史高檔—不加碼 QQQM' }
 ];
 
+/**
+ * 美元／台幣匯率儀表（目前刻意休眠，等待日後決定頁面位置）。
+ * @param {{ USD:number }} fx
+ * @param {{ fxLow?:number, fxHigh?:number }} settings
+ */
+export function fxGaugeHtml(fx, settings) {
+  const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
+  const MIN = 26, MAX = 34;
+  const rate = fx.USD;
+  const marker = Math.min(Math.max(rate, MIN), MAX);
+  const seg = (a, b) => ((b - a) / (MAX - MIN) * 100).toFixed(1);
+  const pos = (x) => ((x - MIN) / (MAX - MIN) * 100).toFixed(1);
+  return `<div class="chart-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+      <span class="muted" style="font-size:12.5px">美元／台幣</span>
+      <span class="stat sm">${rate.toFixed(2)}</span>
+      <button class="btn-link btn-sm" id="fxBandEdit">區間調整</button>
+    </div>
+    <div class="gauge-wrap">
+      <div class="gauge">
+        <div style="width:${seg(MIN, lo)}%;background:${CHART.blue};opacity:.55"></div>
+        <div style="width:${seg(lo, hi)}%;background:#bdb8ab;opacity:.55"></div>
+        <div style="width:${seg(hi, MAX)}%;background:${CHART.green};opacity:.55"></div>
+        <div class="gauge-marker" style="left:${((marker - MIN) / (MAX - MIN) * 100).toFixed(1)}%"></div>
+      </div>
+      <div class="fx-scale">
+        <span class="fx-num fx-end-l">${MIN}</span>
+        <span class="fx-num" style="left:${pos(lo)}%">${lo}</span>
+        <span class="fx-num" style="left:${pos(hi)}%">${hi}</span>
+        <span class="fx-num fx-end-r">${MAX}</span>
+        <span class="fx-zone" style="left:${pos((MIN + lo) / 2)}%">（換美元區）</span>
+        <span class="fx-zone" style="left:${pos((hi + MAX) / 2)}%">（換台幣區）</span>
+      </div>
+    </div>
+  </div>`;
+}
+
 export const SIGNALS_INFO_HTML = `
   <p><b>這是什麼</b>：每月檢視五個市場的估值，換算成「檔位」——常態、加碼、重壓——據以動態調整配置。不是憑感覺，是指標換檔。</p>
   <p><b>美股（自動）</b>：ECY＝1/CAPE − 美 10 年期實質利率（FRED DFII10）。ECY 越高＝股票比安全資產多賺越多＝越值得加碼。<br>
