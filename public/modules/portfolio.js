@@ -2,7 +2,7 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
-import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
+import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { portfolioXirr } from './portfolio-calculations.js';
 import { compOf } from './portfolio-exposure.js';
@@ -37,6 +37,7 @@ import {
   xirrSectionHtml,
   XIRR_INFO_HTML
 } from './portfolio-overview.js';
+import { investmentChartConfig } from './portfolio-chart.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
@@ -355,24 +356,12 @@ function openCapeManual(settings) {
 function drawInvestChart(psnaps, curCost, curValue) {
   const ctx = byId('investChart');
   if (!ctx) return;
-  const conv = (twd) => viewCur === 'USD' ? Math.round(twd / usdRate) : Math.round(twd);
-  const labels = [...psnaps.map(s => s.month), '本月（現在）'];
-  const costs = [...psnaps.map(s => conv(s.cost)), conv(curCost)];
-  const values = [...psnaps.map(s => conv(s.value)), conv(curValue)];
-  const yTick = (v) => viewCur === 'USD' ? (v / 1000).toFixed(0) + ' K' : (v / 10000).toFixed(0) + ' 萬';
-  const tipVal = (v) => viewCur === 'USD' ? kNum(v) + ' K USD' : wanNum(v) + ' 萬';
-  lineChart = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets: [
-      { label: '投入成本', data: costs, borderColor: AXIS, backgroundColor: AXIS, borderDash: [5, 4], borderWidth: 2, pointRadius: 3, fill: false, tension: .25 },
-      { label: '市值', data: values, borderColor: ACCENT, backgroundColor: ACCENT_SOFT, borderWidth: 2, pointRadius: 3, fill: true, tension: .25 }
-    ] },
-    options: { responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: true, labels: { color: AXIS, boxWidth: 14, padding: 12 } },
-        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${tipVal(c.parsed.y)}` } } },
-      scales: { x: { ticks: { color: AXIS }, grid: { color: GRID } },
-        y: { ticks: { color: AXIS, callback: yTick }, grid: { color: GRID } } } }
-  });
+  lineChart = new Chart(ctx, investmentChartConfig(psnaps, curCost, curValue, {
+    viewCurrency: viewCur,
+    usdRate,
+    formatK: kNum,
+    formatWan: wanNum
+  }));
 }
 
 async function addCheckpoint(symbol, research) {
