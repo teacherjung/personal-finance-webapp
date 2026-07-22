@@ -221,7 +221,7 @@ test('投資原則同步｜同代號大小寫不同仍合併成一則個股提�
     accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 94 }],
     holdings: [
       { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3 },
-      { id: 'h2', symbol: 'tsla', layer: 'stock', currency: 'TWD', quantity: 1, price: 3 },
+      { id: 'h2', symbol: ' tsla ', layer: 'stock', currency: 'TWD', quantity: 1, price: 3 },
     ] };
   const hits = buildSummary(db).reminders.filter(r => r.key === 'conc-stock-TSLA');
   assert.equal(hits.length, 1);

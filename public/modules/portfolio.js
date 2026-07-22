@@ -45,6 +45,7 @@ const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPer
 const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent });
 
 let lineChart = null;
+let portfolioRenderGeneration = 0;
 
 // 持股表排序（分組內排序，市值/損益/報酬率/佔比）
 let hSortKey = localStorage.getItem('pf_hSortKey') || 'value';
@@ -52,10 +53,14 @@ let hSortDir = localStorage.getItem('pf_hSortDir') || 'desc';
 
 export async function renderPortfolio() {
   const seq = currentRouteSeq();
+  const generation = ++portfolioRenderGeneration;
+  const isCurrentRoute = () => seq === currentRouteSeq();
+  const isCurrentRender = () => isCurrentRoute() && generation === portfolioRenderGeneration;
+  const rerenderIfCurrentRoute = () => { if (isCurrentRoute()) renderPortfolio(); };
   const [holdings, watchlist, research, settings, psnaps, accounts, ibTrades, summary] = await Promise.all([
     api('/holdings'), api('/watchlist'), api('/research'), api('/settings'), api('/portfolioSnapshots'), api('/accounts'), api('/ibTrades'), api('/summary')
   ]);
-  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）——初次渲染以前沒守，只有背景 ibSync 有守
+  if (!isCurrentRender()) return;   // 切頁或同頁已有更新一代 render：舊請求都不可再動 DOM／圖表。
   if (lineChart) { lineChart.destroy(); lineChart = null; }
   const {
     fx, rows, total, totalCost, totalPnl,
@@ -77,7 +82,7 @@ export async function renderPortfolio() {
     api,
     openForm,
     toast,
-    rerender: renderPortfolio,
+    rerender: rerenderIfCurrentRoute,
     confirmFreeze: message => window.confirm(message),
     getFreeze: () => FREEZE,
     layers: LAYERS,
@@ -98,7 +103,8 @@ export async function renderPortfolio() {
     openForm,
     openInfo,
     toast,
-    rerender: renderPortfolio,
+    rerender: rerenderIfCurrentRoute,
+    isCurrentRender,
     escapeHtml: esc,
     formatPercent
   });
@@ -115,7 +121,7 @@ export async function renderPortfolio() {
     getAll: selector => view().querySelectorAll(selector),
     openForm,
     toast,
-    rerender: renderPortfolio,
+    rerender: rerenderIfCurrentRoute,
     today: todayStr
   });
 

@@ -34,8 +34,8 @@ test('投資研究互動｜空白檢查點只提示，不寫入也不重畫', as
 
 test('投資研究互動｜既有研究追加檢查點；新代號建立完整空研究卡', async () => {
   const state = setup();
-  state.elements.set('cp_aapl', { value: '  追蹤服務營收  ' });
-  await state.actions.addCheckpoint('aapl', [{ id: 'r1', symbol: 'AAPL', checkpoints: [{ date: '2026-06-01', note: '舊筆記' }] }]);
+  state.elements.set('cp_AAPL', { value: '  追蹤服務營收  ' });
+  await state.actions.addCheckpoint(' aapl ', [{ id: 'r1', symbol: 'AAPL', checkpoints: [{ date: '2026-06-01', note: '舊筆記' }] }]);
   state.elements.set('cp_GOOGL', { value: '檢查 AI 收入' });
   await state.actions.addCheckpoint('GOOGL', []);
 
@@ -75,7 +75,7 @@ test('投資研究互動｜檢查點寫入失敗只報錯，不重畫', async ()
 test('投資研究互動｜表單依既有資料選 PUT，新代號選 POST', async () => {
   const state = setup();
   state.actions.openResearchForm('aapl', [{ id: 'r1', symbol: 'AAPL', thesis: '既有' }]);
-  assert.equal(state.getForm().title, 'aapl 研究卡');
+  assert.equal(state.getForm().title, 'AAPL 研究卡');
   await state.getForm().onSubmit({ thesis: '更新' });
   state.actions.openResearchForm('GOOGL', []);
   await state.getForm().onSubmit({ thesis: '新論點', metrics: '', risks: '' });

@@ -12,6 +12,7 @@ import { capeFormModel, fxBandsFormModel, signalsFormModel } from './portfolio-f
  *   openInfo: (title:string, html:string, options?:any) => void,
  *   toast: (message:string, error?:boolean) => void,
  *   rerender: () => any,
+ *   isCurrentRender: () => boolean,
  *   escapeHtml: (value:any) => string,
  *   formatPercent: (value:number, digits?:number) => string
  * }} deps
@@ -39,6 +40,7 @@ export function createPortfolioValuationActions(deps) {
     try {
       [cape, realYield] = await Promise.all([deps.api('/cape'), deps.api('/realyield')]);
     } catch {}
+    if (!deps.isCurrentRender() || body !== deps.getElement('signalsBody')) return;
     body.innerHTML = signalsBodyHtml(settings, cape, realYield, { escapeHtml: deps.escapeHtml });
   }
 
@@ -57,10 +59,11 @@ export function createPortfolioValuationActions(deps) {
 
   /** @param {any} settings @param {number} qqqmShare @param {number} qqqmMax */
   async function loadCape(settings, qqqmShare, qqqmMax) {
-    let cape = null;
-    try { cape = await deps.api('/cape'); } catch {}
     const body = deps.getElement('capeBody');
     if (!body) return;
+    let cape = null;
+    try { cape = await deps.api('/cape'); } catch {}
+    if (!deps.isCurrentRender() || body !== deps.getElement('capeBody')) return;
     body.innerHTML = capeBodyHtml(cape, qqqmShare, qqqmMax, {
       escapeHtml: deps.escapeHtml,
       formatPercent: deps.formatPercent

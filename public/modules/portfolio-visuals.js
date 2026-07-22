@@ -4,6 +4,7 @@
 import { ACCENT, CHART } from './theme.js';
 import { marginCallDistance } from './portfolio-calculations.js';
 import { companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
+import { stockExposureBySymbol } from './portfolio-risk.js';
 
 /** @typedef {{ symbol?: string, layer?: string, currency?: string, valueTwd: number }} VisualRow */
 /** @typedef {{ type?: string, currency?: string, balance?: number }} VisualAccount */
@@ -79,8 +80,8 @@ export function disciplineSection(rows, regionMap, equityValue, netWorth, levera
   };
   const items = [];
   items.push(row('股票總曝險', percentOfNetWorth(equityValue), caps.equity));
-  rows.filter(item => item.layer === 'stock').sort((a, b) => b.valueTwd - a.valueTwd)
-    .forEach(item => items.push(row(esc(item.symbol), percentOfNetWorth(item.valueTwd), caps.stock)));
+  Object.entries(stockExposureBySymbol(rows)).sort((a, b) => b[1] - a[1])
+    .forEach(([symbol, value]) => items.push(row(esc(symbol), percentOfNetWorth(value), caps.stock)));
   Object.entries(regionMap).filter(([region]) => region !== '美國' && region !== '其他')
     .sort((a, b) => b[1] - a[1])
     .forEach(([region, value]) => items.push(row(`${esc(region)}（穿透）`, percentOfNetWorth(value), region === '中國' ? caps.china : caps.country)));

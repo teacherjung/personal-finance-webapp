@@ -2,13 +2,30 @@
 // 個股研究卡：把研究內容與表單規格整理成純資料／HTML，不碰 DOM、API 或頁面狀態。
 
 import { icon } from './icons.js';
+import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 
 /** @typedef {{escapeHtml:(value:any)=>string, formatPercent:(value:number, digits?:number)=>string}} ResearchFormatters */
 
 /** @param {string} symbol @param {any[]} research */
 function findResearch(symbol, research) {
-  const key = String(symbol || '').toUpperCase();
-  return research.find(item => String(item.symbol || '').toUpperCase() === key) || null;
+  const key = normalizePortfolioSymbol(symbol);
+  return research.find(item => normalizePortfolioSymbol(item.symbol) === key) || null;
+}
+
+/** @param {any[]} rows */
+function researchHoldings(rows) {
+  /** @type {Record<string, any>} */
+  const grouped = Object.create(null);
+  for (const row of rows) {
+    if (row.layer !== 'stock') continue;
+    const symbol = normalizePortfolioSymbol(row.symbol);
+    if (!symbol) continue;
+    if (!grouped[symbol]) grouped[symbol] = { ...row, symbol, costTwd: 0, pnlTwd: 0 };
+    grouped[symbol].costTwd += Number(row.costTwd || 0);
+    grouped[symbol].pnlTwd += Number(row.pnlTwd || 0);
+    if (!grouped[symbol].name && row.name) grouped[symbol].name = row.name;
+  }
+  return Object.values(grouped);
 }
 
 /**
@@ -19,7 +36,7 @@ function findResearch(symbol, research) {
  */
 export function researchSectionHtml(rows, research, formatters) {
   const { escapeHtml: esc, formatPercent: pct } = formatters;
-  const cards = rows.filter(row => row.layer === 'stock').map(holding => {
+  const cards = researchHoldings(rows).map(holding => {
     const entry = findResearch(holding.symbol, research);
     const checkpoints = (entry?.checkpoints || []).slice().reverse().slice(0, 4);
     const block = (title, text) => text ? `<div class="rc-block"><b>${title}</b>${esc(text)}</div>` : '';
@@ -57,10 +74,12 @@ export function researchSectionHtml(rows, research, formatters) {
  * @param {any[]} research
  */
 export function researchFormModel(symbol, research) {
-  const existing = findResearch(symbol, research);
+  const normalizedSymbol = normalizePortfolioSymbol(symbol);
+  const existing = findResearch(normalizedSymbol, research);
   return {
+    symbol: normalizedSymbol,
     existing,
-    title: `${symbol} 研究卡`,
+    title: `${normalizedSymbol} 研究卡`,
     fields: [
       { key: 'thesis', label: '投資論點（為什麼買？想驗證什麼？）', type: 'textarea', full: true },
       { key: 'metrics', label: '關鍵指標（每季對照）', type: 'textarea', full: true },

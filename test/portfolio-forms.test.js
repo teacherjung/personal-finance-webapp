@@ -33,17 +33,40 @@ test('投資表單｜持股送出統一價格精度並重算成本，不改動�
   const data = { symbol: ' cspx ', layer: 'core', quantity: 3, avgCost: 10.126, price: 12.345 };
   const result = holdingSubmission(null, data, { symbols: new Set(), regions: new Set(), equity: false });
   assert.equal(result.symbol, 'CSPX');
-  assert.deepEqual(result.body, { ...data, avgCost: 10.13, price: 12.35, cost: 30.39 });
+  assert.deepEqual(result.body, { ...data, symbol: 'CSPX', avgCost: 10.13, price: 12.35, cost: 30.39 });
   assert.equal(data.cost, undefined);
 });
 
 test('投資表單｜只有加碼才列凍結原因，且依單一個股、區域、股票總曝險排序', () => {
   const freeze = { symbols: new Set(['AAPL']), regions: new Set(['美國']), equity: true };
-  const added = holdingSubmission({ quantity: 1 }, { symbol: 'aapl', layer: 'stock', quantity: 2 }, freeze);
+  const added = holdingSubmission({ symbol: 'AAPL', layer: 'stock', quantity: 1 }, { symbol: 'aapl', layer: 'stock', quantity: 2 }, freeze);
   assert.deepEqual(added.freezeReasons, ['單一個股上限', '美國上限', '股票總曝險上限']);
 
-  const reduced = holdingSubmission({ quantity: 2 }, { symbol: 'aapl', layer: 'stock', quantity: 1 }, freeze);
+  const reduced = holdingSubmission({ symbol: 'AAPL', layer: 'stock', quantity: 2 }, { symbol: 'aapl', layer: 'stock', quantity: 1 }, freeze);
   assert.deepEqual(reduced.freezeReasons, []);
+});
+
+test('投資表單｜股數不變但改成已凍結標的仍要警告，不能靠換代號繞過上限', () => {
+  const freeze = { symbols: new Set(['AAPL']), regions: new Set(['美國']), equity: true };
+  const changed = holdingSubmission(
+    { symbol: 'GOOGL', layer: 'stock', quantity: 2 },
+    { symbol: ' aapl ', layer: 'stock', quantity: 2 },
+    freeze
+  );
+
+  assert.equal(changed.body.symbol, 'AAPL');
+  assert.deepEqual(changed.freezeReasons, ['單一個股上限', '美國上限', '股票總曝險上限']);
+});
+
+test('投資表單｜股數不變但改進個股層仍要重新檢查凍結上限', () => {
+  const freeze = { symbols: new Set(['AAPL']), regions: new Set(), equity: false };
+  const changed = holdingSubmission(
+    { symbol: 'AAPL', layer: 'core', quantity: 2 },
+    { symbol: 'AAPL', layer: 'stock', quantity: 2 },
+    freeze
+  );
+
+  assert.deepEqual(changed.freezeReasons, ['單一個股上限']);
 });
 
 test('投資表單｜願望清單、估值、CAPE 與休眠匯率表單保留原預設', () => {
