@@ -1,0 +1,105 @@
+// @ts-check
+// 投資組合的曝險資料與純計算：不碰 DOM、API 或頁面狀態。
+
+/** @typedef {{ type: 'equity'|'bond'|'gold', regions: Record<string, number> }} Composition */
+/** @typedef {{ symbol?: string, layer?: string, valueTwd: number }} ExposureRow */
+/** @typedef {{ v: number, src: Record<string, number> }} CompanyExposure */
+
+// ETF 成分穿透（近似權重；可隨基金年報更新）。
+// 與 lib/derive.js 的同名複本是刻意同步點，前後端無法直接共用 runtime 模組。
+/** @type {Record<string, Composition>} */
+const COMPOSITION = {
+  CSPX: { type: 'equity', regions: { 美國: 1 } },
+  QQQM: { type: 'equity', regions: { 美國: 1 } },
+  VUAA: { type: 'equity', regions: { 美國: 1 } },
+  SPY: { type: 'equity', regions: { 美國: 1 } },
+  VOO: { type: 'equity', regions: { 美國: 1 } },
+  GOOGL: { type: 'equity', regions: { 美國: 1 } },
+  GOOG: { type: 'equity', regions: { 美國: 1 } },
+  AAPL: { type: 'equity', regions: { 美國: 1 } },
+  TSLA: { type: 'equity', regions: { 美國: 1 } },
+  SPACEX: { type: 'equity', regions: { 美國: 1 } },
+  EIMI: { type: 'equity', regions: { 中國: 0.25, 印度: 0.22, 台灣: 0.19, 韓國: 0.09, 其他: 0.25 } },
+  XUSE: { type: 'equity', regions: { 日本: 0.21, 其他: 0.79 } },
+  EXUS: { type: 'equity', regions: { 日本: 0.21, 其他: 0.79 } },
+  ICHN: { type: 'equity', regions: { 中國: 1 } },
+  KWEB: { type: 'equity', regions: { 中國: 1 } },
+  CSKR: { type: 'equity', regions: { 韓國: 1 } },
+  SJPA: { type: 'equity', regions: { 日本: 1 } },
+  '0050': { type: 'equity', regions: { 台灣: 1 } },
+  '006208': { type: 'equity', regions: { 台灣: 1 } },
+  SMH: { type: 'equity', regions: { 美國: 1 } },
+  SPCX: { type: 'equity', regions: { 美國: 1 } },
+  SGLD: { type: 'gold', regions: {} },
+  GLD: { type: 'gold', regions: {} },
+  IAU: { type: 'gold', regions: {} },
+  '00719B': { type: 'bond', regions: {} },
+  '00720B': { type: 'bond', regions: {} }
+};
+
+/** ETF/持股 → 成分（型別、區域穿透）；未知代號依 layer 退回。 @param {{symbol?: string, layer?: string}} h @returns {Composition} */
+export const compOf = (h) => COMPOSITION[(h.symbol || '').toUpperCase()]
+  || { type: h.layer === 'bond' ? 'bond' : h.layer === 'gold' ? 'gold' : 'equity', regions: { 其他: 1 } };
+
+// ETF 內含公司穿透（各 ETF 前十大成分的近似權重）。
+// XUSE/EXUS 刻意不列：成分極分散，僅做區域穿透。
+const T50 = { 台積電: 0.56, 鴻海: 0.05, 聯發科: 0.04, 台達電: 0.025, 廣達: 0.02, 富邦金: 0.015, 國泰金: 0.014, 中信金: 0.012, 日月光: 0.012, 聯電: 0.01 };
+const COMPANY_WEIGHTS = {
+  CSPX: { 輝達: 0.075, 微軟: 0.065, 蘋果: 0.065, Alphabet: 0.04, 亞馬遜: 0.04, Meta: 0.026, 博通: 0.025, 特斯拉: 0.02, 波克夏: 0.016, 禮來: 0.012 },
+  QQQM: { 輝達: 0.09, 微軟: 0.085, 蘋果: 0.08, 亞馬遜: 0.055, Alphabet: 0.05, 博通: 0.05, Meta: 0.05, 特斯拉: 0.03, Netflix: 0.025, Costco: 0.025 },
+  SMH: { 輝達: 0.20, 台積電: 0.12, 博通: 0.08, 超微: 0.05, 艾司摩爾: 0.05, 德儀: 0.04, 高通: 0.04, 美光: 0.04, 應用材料: 0.04, 科林研發: 0.04 },
+  '0050': T50,
+  '006208': T50,
+  EIMI: { 台積電: 0.085, 騰訊: 0.04, 三星電子: 0.03, 阿里巴巴: 0.025, 小米: 0.012, 美團: 0.01, HDFC銀行: 0.01, 信實工業: 0.009, 拼多多: 0.008 },
+  KWEB: { 騰訊: 0.11, 阿里巴巴: 0.10, 拼多多: 0.08, 美團: 0.08, 網易: 0.05, 京東: 0.05, 百度: 0.05, 攜程: 0.05, 快手: 0.04, 貝殼: 0.03 },
+  ICHN: { 騰訊: 0.14, 阿里巴巴: 0.09, 拼多多: 0.05, 美團: 0.04, 小米: 0.04, 比亞迪: 0.025, 網易: 0.02, 京東: 0.02, 百度: 0.015 },
+  SJPA: { 豐田: 0.045, 三菱UFJ: 0.03, Sony: 0.03, 日立: 0.025, 三井住友金融: 0.02, 東京威力科創: 0.02, 任天堂: 0.015, Keyence: 0.015, 迅銷: 0.015, 軟銀集團: 0.015 },
+  CSKR: { 三星電子: 0.28, SK海力士: 0.13, 現代汽車: 0.04, 起亞: 0.03, Celltrion: 0.03, NAVER: 0.03, KB金融: 0.03, 新韓金融: 0.025, 三星生物: 0.025, LG新能源: 0.02 }
+};
+
+const DIRECT_COMPANY = { AAPL: '蘋果', GOOGL: 'Alphabet', TSLA: '特斯拉', SPCX: 'SpaceX' };
+const COMPANY_REGION = {
+  台積電: '台灣', 鴻海: '台灣', 聯發科: '台灣', 台達電: '台灣', 廣達: '台灣', 富邦金: '台灣', 國泰金: '台灣', 中信金: '台灣', 日月光: '台灣', 聯電: '台灣',
+  輝達: '美國', 微軟: '美國', 蘋果: '美國', Alphabet: '美國', 亞馬遜: '美國', Meta: '美國', 博通: '美國', 特斯拉: '美國', 波克夏: '美國', 禮來: '美國',
+  Netflix: '美國', Costco: '美國', 超微: '美國', 德儀: '美國', 高通: '美國', 美光: '美國', 應用材料: '美國', 科林研發: '美國', SpaceX: '美國',
+  騰訊: '中國', 阿里巴巴: '中國', 拼多多: '中國', 美團: '中國', 網易: '中國', 京東: '中國', 百度: '中國', 攜程: '中國', 快手: '中國', 貝殼: '中國', 比亞迪: '中國', 小米: '中國',
+  三星電子: '韓國', SK海力士: '韓國', 現代汽車: '韓國', 起亞: '韓國', Celltrion: '韓國', NAVER: '韓國', KB金融: '韓國', 新韓金融: '韓國', 三星生物: '韓國', LG新能源: '韓國',
+  豐田: '日本', 三菱UFJ: '日本', Sony: '日本', 日立: '日本', 三井住友金融: '日本', 東京威力科創: '日本', 任天堂: '日本', Keyence: '日本', 迅銷: '日本', 軟銀集團: '日本',
+  HDFC銀行: '印度', 信實工業: '印度', 艾司摩爾: '其他'
+};
+
+/** @param {ExposureRow[]} rows @returns {Record<string, number>} */
+export function regionExposure(rows) {
+  /** @type {Record<string, number>} */
+  const regions = {};
+  rows.forEach(row => {
+    const composition = compOf(row);
+    if (composition.type !== 'equity') return;
+    for (const [region, weight] of Object.entries(composition.regions)) regions[region] = (regions[region] || 0) + row.valueTwd * weight;
+  });
+  return regions;
+}
+
+/** @param {ExposureRow[]} rows @param {number} [limit=20] @returns {{ top: [string, CompanyExposure][], coveredValue: number }} */
+export function companyExposure(rows, limit = 20) {
+  /** @type {Record<string, CompanyExposure>} */
+  const aggregate = {};
+  const add = (company, value, symbol) => {
+    const item = aggregate[company] = aggregate[company] || { v: 0, src: {} };
+    item.v += value;
+    item.src[symbol] = (item.src[symbol] || 0) + value;
+  };
+  for (const row of rows) {
+    if (compOf(row).type !== 'equity' || !(row.valueTwd > 0)) continue;
+    const symbol = String(row.symbol || '').toUpperCase();
+    if (DIRECT_COMPANY[symbol]) { add(DIRECT_COMPANY[symbol], row.valueTwd, symbol); continue; }
+    const weights = COMPANY_WEIGHTS[symbol];
+    if (!weights) continue;
+    for (const [company, fraction] of Object.entries(weights)) add(company, row.valueTwd * fraction, symbol);
+  }
+  const top = Object.entries(aggregate).sort((a, b) => b[1].v - a[1].v).slice(0, limit);
+  return { top, coveredValue: top.reduce((sum, [, item]) => sum + item.v, 0) };
+}
+
+/** @param {string} company @returns {string|undefined} */
+export const companyRegionOf = (company) => COMPANY_REGION[company];
