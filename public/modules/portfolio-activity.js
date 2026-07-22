@@ -2,6 +2,7 @@
 // 投資組合 IBKR 活動卡：把現金流與交易摘要格式化成 HTML，不碰 DOM、API 或頁面狀態。
 
 import { tradeSummary } from './portfolio-calculations.js';
+import { formatK, formatWan } from './portfolio-format.js';
 
 /** @typedef {import('../../lib/types.js').Settings} Settings */
 /** @typedef {Record<string, any>} Trade */
@@ -9,11 +10,6 @@ import { tradeSummary } from './portfolio-calculations.js';
 
 /** @param {unknown} value */
 const fmtD = (value) => value ? `${String(value).slice(0, 4)}/${String(value).slice(4, 6)}` : '';
-/** @param {number} value */
-const kNum = (value) => { const n = value / 1000; return Math.abs(n) >= 10 ? Math.round(n).toLocaleString('en-US') : n.toFixed(1); };
-/** @param {number} value */
-const wanNum = (value) => { const n = value / 10000; return Math.abs(n) >= 10 ? Math.round(n).toLocaleString('en-US') : n.toFixed(1); };
-
 /** @param {number} value @param {ActivityOptions} options */
 function incomeMoney(value, { viewCurrency, usdRate }) {
   const sign = value < 0 ? '−' : '+';
@@ -26,8 +22,8 @@ function incomeMoney(value, { viewCurrency, usdRate }) {
 function tradeMoney(value, { viewCurrency, usdRate }) {
   const sign = value < 0 ? '−' : '+';
   return viewCurrency === 'USD'
-    ? sign + kNum(Math.abs(value)) + ' K USD'
-    : sign + wanNum(Math.abs(value) * usdRate) + ' 萬';
+    ? sign + formatK(Math.abs(value)) + ' K USD'
+    : sign + formatWan(Math.abs(value) * usdRate) + ' 萬';
 }
 
 /**

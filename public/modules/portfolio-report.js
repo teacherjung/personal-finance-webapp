@@ -3,18 +3,13 @@
 
 import { tradeSummary } from './portfolio-calculations.js';
 import { fxExposure } from './portfolio-exposure.js';
+import { formatPercent as fmtPct, formatPortfolioMoney } from './portfolio-format.js';
 
 /** @typedef {Record<string, any> & { valueTwd:number }} ReportRow */
 /** @typedef {Record<string, any>} ReportAccount */
 /** @typedef {{ label:string, min:number, max:number }} ReportLayer */
 /** @typedef {{ value:number, percentile:number, label:string }|null} CapeInfo */
 
-/** @param {number} n */
-const kNum = (n) => { const v = n / 1000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
-/** @param {number} n */
-const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
-/** @param {unknown} n @param {number} digits */
-const fmtPct = (n, digits = 1) => (Number(n) || 0).toFixed(digits) + '%';
 /** @param {unknown} d */
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';
 /** @param {unknown} p @param {unknown} cur */
@@ -56,10 +51,7 @@ export function buildPortfolioReport(data, options) {
   const val = (twd) => isUS
     ? Math.round(Number(twd || 0) / rate).toLocaleString('en-US') + ' USD'
     : Math.round(Number(twd || 0)).toLocaleString('en-US') + ' 元';
-  const big = (twd) => {
-    const n = Number(twd || 0), sign = n < 0 ? '−' : '', value = Math.abs(n);
-    return isUS ? sign + kNum(value / rate) + ' K USD' : sign + wanNum(value) + ' 萬';
-  };
+  const big = (twd) => formatPortfolioMoney(twd, { viewCurrency, usdRate: rate });
 
   const layerRows = layerOrder.map(key => {
     const config = layers[key];

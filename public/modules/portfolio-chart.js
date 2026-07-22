@@ -2,15 +2,16 @@
 // 投資頁折線圖設定：整理投入／市值資料與 Chart.js 設定，不碰 DOM 或圖表生命週期。
 
 import { AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
+import { formatK, formatWan } from './portfolio-format.js';
 
 /**
  * @param {Array<{month:string,cost:number,value:number}>} snapshots
  * @param {number} currentCost
  * @param {number} currentValue
- * @param {{viewCurrency:string,usdRate:number,formatK:(value:number)=>string,formatWan:(value:number)=>string}} options
+ * @param {{viewCurrency:string,usdRate:number}} options
  */
 export function investmentChartConfig(snapshots, currentCost, currentValue, options) {
-  const { viewCurrency, usdRate, formatK, formatWan } = options;
+  const { viewCurrency, usdRate } = options;
   const convert = (twd) => viewCurrency === 'USD' ? Math.round(twd / usdRate) : Math.round(twd);
   const labels = [...snapshots.map(snapshot => snapshot.month), '本月（現在）'];
   const costs = [...snapshots.map(snapshot => convert(snapshot.cost)), convert(currentCost)];
