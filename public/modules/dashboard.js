@@ -1,11 +1,14 @@
 // @ts-check
-import { api, view, byId, wan, pct, esc, currentRouteSeq, openInfo, bootSettled } from '../app.js';
+import { api, view, byId, wan, money, pct, esc, currentRouteSeq, openInfo, toast, bootSettled } from '../app.js';
 import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
+import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml } from './monthly-review-card.js';
 
 let chartRefs = [];
-function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; }
+let monthlyReviewChart = null;
+let monthlyReviewRequest = 0;
+function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; monthlyReviewChart = null; }
 
 // 每日洞察（D4）：**一次 app-open 只抓一次 /insights**，且**等開機序列（bootSettled：報價+快照）落定後才抓**。
 // - 一次只抓：讀取＝更新書籤（看過了），開機重繪若每次重抓會把剛冒出的 🆕 秒吸收掉——快取整個 Promise，書籤只更新一次。
@@ -163,10 +166,67 @@ function patchInsights(ins, s, seq) {
   if (block) { block.innerHTML = insightSection(ins, s.reminders); wireTierButtons(ins); }
 }
 
+function wireMonthlyReviewInfo(review) {
+  const block = byId('monthlyReviewBlock');
+  if (!block) return;
+  block.querySelectorAll('[data-mr-info]').forEach(button => {
+    const el = /** @type {HTMLElement} */ (button);
+    el.onclick = () => {
+      const key = String(el.dataset.mrInfo || '');
+      const info = Object.hasOwn(MONTHLY_REVIEW_INFO, key) ? MONTHLY_REVIEW_INFO[key] : null;
+      if (!info) return;
+      const html = key === 'refund' ? unmatchedRefundInfoHtml(review, { esc, money }) : info.html;
+      openInfo(info.title, html, { size: key === 'refund' ? 'md' : 'sm' });
+    };
+  });
+}
+
+function drawMonthlyReview(review, seq) {
+  if (monthlyReviewChart) {
+    monthlyReviewChart.destroy();
+    chartRefs = chartRefs.filter(c => c !== monthlyReviewChart);
+    monthlyReviewChart = null;
+  }
+  const ctx = byId('monthlyReviewChart');
+  if (!ctx || !review?.months?.length) return;
+  monthlyReviewChart = new Chart(ctx, monthlyReviewChartConfig(review, {
+    money,
+    onSelect: (month) => selectMonthlyReview(month, seq),
+  }));
+  chartRefs.push(monthlyReviewChart);
+}
+
+function renderMonthlyReview(review, seq) {
+  if (seq !== currentRouteSeq()) return;
+  const block = byId('monthlyReviewBlock');
+  if (!block) return;
+  block.removeAttribute('aria-busy');
+  block.innerHTML = monthlyReviewCardHtml(review, { esc, money, wan, pct });
+  wireMonthlyReviewInfo(review);
+  drawMonthlyReview(review, seq);
+}
+
+async function selectMonthlyReview(month, seq) {
+  const request = ++monthlyReviewRequest;
+  const block = byId('monthlyReviewBlock');
+  if (block) block.setAttribute('aria-busy', 'true');
+  try {
+    const review = await api(`/monthly-review?month=${encodeURIComponent(month)}`);
+    if (seq !== currentRouteSeq() || request !== monthlyReviewRequest) return;
+    renderMonthlyReview(review, seq);
+  } catch {
+    if (seq === currentRouteSeq() && request === monthlyReviewRequest) {
+      if (block) block.removeAttribute('aria-busy');
+      toast('月度回顧切換失敗，請稍後再試。', true);
+    }
+  }
+}
+
 export async function renderDashboard() {
   const seq = currentRouteSeq();
-  // 只等 /summary，畫面即時出來（不被慢的 /insights 卡住，Codex r14#1）。洞察在 bootSettled 後非阻塞補上（見下）。
-  const s = await api('/summary');
+  ++monthlyReviewRequest;   // 讓上一代總覽仍在路上的月份切換結果失效。
+  // /summary 與本機月度回顧並行；外部資料較慢的 /insights 仍在 bootSettled 後非阻塞補上。
+  const [s, review] = await Promise.all([api('/summary'), api('/monthly-review').catch(() => null)]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6：router 事後檢查太晚，寫入在 render 內部）
   destroyCharts();
 
@@ -231,11 +291,15 @@ export async function renderDashboard() {
       </div>
     </div>
 
+    <div id="monthlyReviewBlock">${monthlyReviewCardHtml(review, { esc, money, wan, pct })}</div>
+
     <div class="section-title">淨資產走勢</div>
     <div class="chart-card"><div class="chart-box"><canvas id="trendChart"></canvas></div></div>
   `;
 
   drawTrend(s.snapshots);
+  wireMonthlyReviewInfo(review);
+  drawMonthlyReview(review, seq);
   // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
 }
