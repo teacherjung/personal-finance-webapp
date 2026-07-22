@@ -29,6 +29,7 @@ import {
 } from './portfolio-visuals.js';
 import { capeBodyHtml, capeInfoOf, signalsBodyHtml, SIGNALS_INFO_HTML } from './portfolio-valuation.js';
 import { holdingsTableHtml, watchlistSectionHtml } from './portfolio-tables.js';
+import { researchFormModel, researchSectionHtml } from './portfolio-research.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
@@ -148,10 +149,7 @@ export async function renderPortfolio() {
       <p class="muted small" style="margin-top:8px">兩線的差距＝未實現損益。市值線的波動是市場的事；投入線持續墊高，才是你能控制的事。年化報酬（XIRR）按你每筆投入的時間點計算，點標題看說明。</p>
     </div>
 
-    <div class="section-title">個股研究卡</div>
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr));margin-bottom:8px">
-      ${rows.filter(r => r.layer === 'stock').map(r => researchCard(r, research)).join('') || '<div class="empty">尚無個股研究卡——把持股的「層」設為「個股」即可出現。</div>'}
-    </div>
+    ${researchSectionHtml(rows, research, { escapeHtml: esc, formatPercent: fmtPct })}
   `;
 
   // ---- handlers ----
@@ -418,33 +416,6 @@ function drawInvestChart(psnaps, curCost, curValue) {
   });
 }
 
-// ---- ⑤ 研究卡 ----
-function researchCard(holding, research) {
-  const r = research.find(x => (x.symbol || '').toUpperCase() === (holding.symbol || '').toUpperCase());
-  const cps = (r?.checkpoints || []).slice().reverse().slice(0, 4);
-  const block = (title, txt) => txt ? `<div class="rc-block"><b>${title}</b>${esc(txt)}</div>` : '';
-  return `<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <div class="item-title">${esc(holding.symbol)} <span class="muted" style="font-weight:400;font-size:12px">${esc(holding.name || '')}</span></div>
-      <span class="tag ${holding.pnlTwd >= 0 ? 'green' : 'amber'}">${holding.pnlTwd >= 0 ? '+' : ''}${fmtPct(holding.costTwd ? holding.pnlTwd / holding.costTwd * 100 : 0)}</span>
-    </div>
-    <div style="margin-top:11px;display:flex;flex-direction:column;gap:8px;font-size:12.5px">
-      ${block('投資論點：', r?.thesis) || '<div class="rc-block muted">還沒寫投資論點——寫下「為什麼買」，之後漲跌都能對照檢驗。</div>'}
-      ${block('關鍵指標：', r?.metrics)}
-      ${block('風險：', r?.risks)}
-    </div>
-    ${cps.length ? `<div style="margin-top:10px"><b style="font-size:12px">檢查點</b>
-      <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
-        ${cps.map(c => `<div class="muted" style="font-size:12px"><span style="color:var(--text)">${esc(c.date)}</span>　${esc(c.note)}</div>`).join('')}
-      </div></div>` : ''}
-    <div style="display:flex;gap:6px;margin-top:12px;align-items:center">
-      <input type="text" id="cp_${esc(holding.symbol)}" placeholder="新增檢查點筆記…" style="flex:1;font-size:12px;padding:6px 9px">
-      <button class="btn-ghost btn-sm" data-add-cp="${esc(holding.symbol)}">記一筆</button>
-      <button class="btn-link btn-sm" data-edit-r="${esc(holding.symbol)}" title="編輯研究卡">${icon('edit', 15)}</button>
-    </div>
-  </div>`;
-}
-
 async function addCheckpoint(symbol, research) {
   const input = byId('cp_' + symbol);
   const note = (input?.value || '').trim();
@@ -459,17 +430,13 @@ async function addCheckpoint(symbol, research) {
 }
 
 function openResearchForm(symbol, research) {
-  const r = research.find(x => (x.symbol || '').toUpperCase() === symbol.toUpperCase());
+  const form = researchFormModel(symbol, research);
   openForm({
-    title: `${symbol} 研究卡`,
-    fields: [
-      { key: 'thesis', label: '投資論點（為什麼買？想驗證什麼？）', type: 'textarea', full: true },
-      { key: 'metrics', label: '關鍵指標（每季對照）', type: 'textarea', full: true },
-      { key: 'risks', label: '風險清單', type: 'textarea', full: true }
-    ],
-    values: r || {},
+    title: form.title,
+    fields: form.fields,
+    values: form.values,
     onSubmit: async (data) => {
-      if (r) await api('/research/' + r.id, { method: 'PUT', body: data });
+      if (form.existing) await api('/research/' + form.existing.id, { method: 'PUT', body: data });
       else await api('/research', { method: 'POST', body: { symbol, ...data, checkpoints: [] } });
       toast('已儲存'); renderPortfolio();
     }
