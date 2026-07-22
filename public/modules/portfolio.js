@@ -5,7 +5,7 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
-import { marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-calculations.js';
+import { marginCallDistance, portfolioXirr } from './portfolio-calculations.js';
 import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
@@ -17,9 +17,9 @@ import {
   costDetailHtml,
   tradesModalHtml
 } from './portfolio-details.js';
+import { incomeActivityHtml, INCOME_INFO, tradesActivityHtml } from './portfolio-activity.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
-const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
 const fmtPrice = (p, cur) => Number(p || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ' + (cur || '');
 // 表格用價格：整數；單價 <10 保留一位小數（例：5.4 USD）
 const fmtPrice0 = (p, cur) => {
@@ -45,6 +45,7 @@ const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
 };
 // app.js 與頁面模組互相 import；要到使用時才讀 esc，避免頂層循環 import 的 TDZ 白屏。
 const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
+const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
 
 // ---- 分層（核心–衛星）與目標區間 ----
 const LAYERS = {
@@ -155,8 +156,8 @@ export async function renderPortfolio() {
 
     ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd)}
     ${fxSection(rows, accounts, fx)}
-    ${incomeSection(settings)}
-    ${tradesSection(ibTrades, settings)}
+    ${incomeActivityHtml(settings, activityOptions())}
+    ${tradesActivityHtml(ibTrades, settings, activityOptions())}
     ${regionSection(regionMap, eqV)}
     ${companiesSection(rows, eqV)}
     ${layerSection(layerV, total)}
@@ -454,79 +455,6 @@ function openFxBands(settings) {
       toast('已更新換匯區間'); renderPortfolio();
     }
   });
-}
-
-// ---- IBKR 現金流（股息 vs 融資利息，近一年）----
-function incomeSection(settings) {
-  const inc = settings.ib?.income;
-  if (!inc) return '';
-  const divTotal = (inc.dividends || 0) + (inc.paymentInLieu || 0);
-  const net = divTotal + (inc.withholdingTax || 0) + (inc.interestPaid || 0) + (inc.interestReceived || 0);
-  // 現金流卡：兩位小數，跟著計價切換（USD→K、TWD→萬）
-  const usd = (n) => {
-    const sign = n < 0 ? '−' : '+';
-    return viewCur === 'USD'
-      ? sign + (Math.abs(n) / 1000).toFixed(2) + ' K USD'
-      : sign + (Math.abs(n) * usdRate / 10000).toFixed(2) + ' 萬';
-  };
-  const item = (label, val, cls) => `<div style="min-width:150px">
-    <div class="muted" style="font-size:11.5px">${label}</div>
-    <div class="${cls}" style="font-family:var(--serif);font-size:19px;font-variant-numeric:tabular-nums">${usd(val)}</div>
-  </div>`;
-  const infoBtn = (key, text) => `<button type="button" class="info-link" data-info="${key}">${text}</button>`;
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>IB 現金流 <span class="stat-sub" style="font-weight:400;margin:0">（${fmtD(inc.from)}–${fmtD(inc.to)}）</span></h3>
-    <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:12px">
-      ${item(`股息（含${infoBtn('pil', '替代股息')}）`, divTotal, 'pos')}
-      ${item(infoBtn('interestPaid', '融資利息'), inc.interestPaid, 'neg')}
-      ${item(infoBtn('interestReceived', '利息收入'), inc.interestReceived, 'pos')}
-      ${item('淨現金流', net, net >= 0 ? 'pos' : 'neg')}
-    </div>
-    ${inc.estimatedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
-    ${inc.skippedNoFx > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
-  </div>`;
-}
-
-// 現金流名詞說明（點擊 .info-link 時跳出）
-const INCOME_INFO = {
-  pil: ['替代股息（Payment in Lieu）',
-    '<p>當你持有的股票被券商的融資／借券機制借出時，你不會直接收到公司發的股息，而是收到一筆<b>等額的現金給付</b>來替代，這就是「替代股息」。</p><p>金額上與原本的股息相同，但<b>稅務處理可能不同</b>（例如不適用某些股利優惠稅率），報稅時要留意。</p>'],
-  interestPaid: ['融資利息',
-    '<p>你借入資金（融資）維持槓桿部位時，IBKR 按日計收的<b>利息成本</b>。</p><p>這是持有槓桿的固定開銷——當你的股息收入<b>蓋不過</b>融資利息時，該槓桿部位就是「負現金流」持倉，長期會侵蝕報酬。</p>'],
-  interestReceived: ['利息收入',
-    '<p>IBKR 對你帳戶中<b>閒置現金餘額</b>支付的利息（通常要超過一定門檻才有，且分幣別計算）。</p><p>與融資利息方向相反：這是錢放著自動產生的收入。</p>']
-};
-
-// ---- 交易摘要：已實現損益（FIFO，來自 IBKR 成交紀錄）----
-function tradesSection(trades, settings) {
-  if (!trades || !trades.length) return '';
-  const inc = settings.ib?.income || {};
-  const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, missingCurrencies } = tradeSummary(trades, settings);
-  // 跟著計價切換（USD→K、TWD→萬）
-  const usd = (n) => {
-    const sign = n < 0 ? '−' : '+';
-    return viewCur === 'USD'
-      ? sign + kNum(Math.abs(n)) + ' K USD'
-      : sign + wanNum(Math.abs(n) * usdRate) + ' 萬';
-  };
-  const li = (arr) => arr.length
-    ? arr.map(([s, p]) => `<div style="display:flex;justify-content:space-between;gap:14px"><span>${esc(s)}</span><b class="${p >= 0 ? 'pos' : 'neg'}">${usd(p)}</b></div>`).join('')
-    : '<span class="muted">—</span>';
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>交易摘要 <span class="stat-sub" style="font-weight:400;margin:0">（${fmtD(inc.from)}–${fmtD(inc.to)}）</span> <button type="button" class="btn-link btn-sm" id="tradesFull">完整交易</button></h3>
-    <div style="display:flex;gap:40px;flex-wrap:wrap;margin-top:12px;align-items:flex-start">
-      <div style="min-width:150px">
-        <div class="muted" style="font-size:11.5px">已實現損益（FIFO）</div>
-        <div class="${realized >= 0 ? 'pos' : 'neg'}" style="font-family:var(--serif);font-size:22px;font-variant-numeric:tabular-nums">${usd(realized)}</div>
-      </div>
-      <div style="min-width:180px;font-size:12.5px"><div class="muted" style="font-size:11.5px;margin-bottom:5px">已實現獲利 前三</div>${li(winners)}</div>
-      <div style="min-width:180px;font-size:12.5px"><div class="muted" style="font-size:11.5px;margin-bottom:5px">已實現虧損 前三</div>${li(losers)}</div>
-    </div>
-    ${ibkrCurrencies.length ? `<p class="muted small" style="margin-top:10px">註解：換算匯率來自 IBKR</p>` : ''}
-    ${estimatedCurrencies.length ? `<p class="muted small" style="margin-top:10px">提醒：${estimatedCurrencies.map(esc).join('、')} 舊交易缺少 IBKR 匯率欄位，已先用目前設定匯率估算；下次 IBKR 同步若有勾選 FX Rate to Base，會改用 IBKR 匯率。</p>` : ''}
-    ${missingCurrencies.length ? `<p class="neg small" style="margin-top:10px">提醒：${missingCurrencies.map(esc).join('、')} 交易缺少可用匯率，暫未計入已實現損益。</p>` : ''}
-    <p class="muted small" style="margin-top:10px">已實現＋未實現＋股息－利息，才是完整的投資成績。</p>
-  </div>`;
 }
 
 // ---- ② 穿透式區域曝險 ----
