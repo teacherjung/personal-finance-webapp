@@ -34,14 +34,14 @@ export async function renderTransactions() {
 
   const th = thBuilder(listSort);
   const rows = sortRows(all.filter(t => t.date?.slice(0, 7) === monthFilter), listSort);
-  const expense = rows.reduce((s, t) => s + Number(t.amount || 0), 0);   // 信用卡帳本全是支出
+  const expense = rows.reduce((s, t) => s + Number(t.amount || 0), 0);   // 退款是負數，這裡顯示帳面淨額
 
   // 本月消費分類。Object.create(null)（Codex r5#5）：分類名是使用者取的，取成 toString 這類
   // 原生屬性名時，普通物件的 `byCat[k] || 0` 會撈到原型上的函式 → 加總變成「函式原始碼+金額」的字串。
   const byCat = Object.create(null);
   rows.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + Number(t.amount || 0); });
-  const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const maxCat = topCats[0]?.[1] || 1;
+  const topCats = Object.entries(byCat).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
+  const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
 
   view().innerHTML = `
     <div class="page-head">
@@ -53,7 +53,7 @@ export async function renderTransactions() {
     </div>
 
     <div class="cards">
-      <div class="card"><h3>本月消費</h3><div class="stat sm neg">${money(expense)}</div></div>
+      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div></div>
       <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div></div>
     </div>
 
@@ -67,7 +67,7 @@ export async function renderTransactions() {
         ${topCats.length ? topCats.map(([c, v]) => `
           <div style="margin-bottom:8px">
             <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
-            <div class="pill-bar"><div style="width:${(v / maxCat * 100).toFixed(0)}%;background:${CHART.red}"></div></div>
+            <div class="pill-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
           </div>`).join('') : '<p class="empty">本月尚無消費。</p>'}
       </div>
     </div>
@@ -96,6 +96,8 @@ export async function renderTransactions() {
 
 function rowHtml(t) {
   const isIn = t.type === 'income';
+  const isRefund = t.type === 'expense' && Number(t.amount) < 0;
+  const isCredit = isIn || isRefund;
   // 滑到顯示名＝看帳單原文（使用者定 2026-07-18：只放原文本身，不加前綴、不加點擊說明）；
   // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑，剝去重序號 |#N，Codex r10#5）；手動記帳無原文＝無 tooltip
   const orig = t.source === 'stmt' ? stmtOrig(t.stmtRef) : '';
@@ -110,7 +112,7 @@ function rowHtml(t) {
     <td class="muted">${noteCell}</td>
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
-    <td class="num ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(t.amount)}</td>
+    <td class="num ${isCredit ? 'pos' : 'neg'}">${isCredit ? '+' : '−'}${money(Math.abs(Number(t.amount) || 0))}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
@@ -333,7 +335,7 @@ function openCardChoice(r, b64, cards) {
 }
 
 // 預覽確認：頂部可改「記到哪張卡」（改了就用該卡重新解析＝重算重複標記）；只選「分類」（子類自動判斷用）；
-// 可勾選；重複與繳款/退款預設不匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
+// 可勾選；重複預設不勾、真正繳款不可匯入、退款可匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
 function openStatementPreview(cardId, r, b64, cards) {
   const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
@@ -392,16 +394,18 @@ function openStatementPreview(cardId, r, b64, cards) {
     curR.transactions.forEach((t, i) => { if (t._ord === undefined) t._ord = i; });   // 記原始順序（供「取消排序」還原）
     const sortInd = previewSort === 'asc' ? '▲' : previewSort === 'desc' ? '▼' : '⇅';
     const rowsHtml = curR.transactions.map((t, i) => {
-      const dis = t.isPayment;                       // 繳款/退款不可匯入
+      const dis = t.isPayment;                       // 只有真正繳款不可匯入；退款是要保留的消費抵減
+      const isRefund = t.isRefund || (Number(t.amount) < 0 && !t.isPayment);
       const checked = t._checked !== undefined ? t._checked : (!dis && !t.duplicate);   // 沿用使用者勾選，否則重複預設不勾
-      const status = t.isPayment ? '<span class="tag">繳款/退款</span>'
-        : t.duplicate ? '<span class="tag amber">已存在</span>' : '<span class="tag green">新</span>';
+      const status = t.isPayment ? '<span class="tag">繳款</span>'
+        : t.duplicate ? '<span class="tag amber">已存在</span>'
+          : isRefund ? '<span class="tag amber">退款</span>' : '<span class="tag green">新</span>';
       return `<tr class="${dis ? 'muted' : ''}">
         <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
         <td class="nowrap">${esc(t.date || '')}</td>
         <td title="${esc(t.desc)}">${esc(t.store || t.desc)}</td>
         <td>${dis ? '—' : catSelHtml(i, t.category, t.subcategory)}</td>
-        <td class="num ${t.amount < 0 ? 'pos' : ''}">${money(Math.abs(t.amount))}${t.amount < 0 ? '（負）' : ''}</td>
+        <td class="num ${isRefund ? 'pos' : ''}">${isRefund ? '+' : ''}${money(Math.abs(t.amount))}</td>
         <td>${status}</td>
       </tr>`;
     }).join('');
@@ -411,7 +415,7 @@ function openStatementPreview(cardId, r, b64, cards) {
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <label style="margin:0;display:flex;align-items:center;gap:8px">記到卡片
             <select id="previewCard">${cardOpts()}</select></label>
-          <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；繳款/退款不列入。</span>
+          <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；真正繳款不匯入，退款會保留為消費抵減。</span>
         </div>
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
           <table><thead><tr><th></th><th>消費日</th><th id="pvSortNote" style="cursor:pointer;user-select:none" title="依店名排序">說明 <span class="muted">${sortInd}</span></th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
@@ -492,7 +496,7 @@ async function openBatchManager() {
         ${b.stmtMonth ? '' : '<span class="muted" style="font-size:11px" title="帳單表頭讀不出期別，這是用最後一筆消費日推估的；點左邊可修正">（推估）</span>'}</td>
       <td class="num">${b.count}</td>
       <td class="num">${money(b.amount)}</td>
-      <td class="num" title="帳單自己印的「本期應繳總金額」。與匯入金額本就不同：應繳＝上期未繳＋本期新增＋分期本期＋年費利息−已繳款/退款，而匯入金額只算這次記進帳的消費">${b.stmtDue != null ? money(b.stmtDue) : '<span class="muted">—</span>'}</td>
+      <td class="num" title="帳單自己印的「本期應繳總金額」。與匯入金額本就不同：應繳會含上期未繳、分期、年費與利息；匯入金額是本批消費扣掉本批退款後的淨額，不含真正繳款">${b.stmtDue != null ? money(b.stmtDue) : '<span class="muted">—</span>'}</td>
       <td><div class="row-actions">
         <button class="btn-link btn-sm" data-reassign="${esc(b.batchId)}">改卡片</button>
         <button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button>
@@ -506,8 +510,8 @@ async function openBatchManager() {
           <li>帳單年月 → 由帳單<b class="hl">「結帳日」</b>決定；讀取失敗時會依<b class="hl">「最後一筆消費日」</b>推估。</li>
           <li>點擊<b class="hl">「帳單年月」</b>可手動修改<b class="hl">「年月」</b>。</li>
           <li>若有分期，消費紀錄會歸到<b class="hl">「消費日」</b>當月。</li>
-          <li>匯入金額 ＝ 該帳單匯入的<b class="hl">「消費總和」</b>。</li>
-          <li>應繳金額 ＝ 帳單上的<b class="hl">「本期應繳總金額」</b>。<br>（可能包含上期未繳、分期、年費、利息，並扣除已繳款，因此通常不會等於匯入金額。）</li>
+          <li>匯入金額 ＝ 該帳單匯入的<b class="hl">「消費扣掉退款後的淨額」</b>，不含真正繳款。</li>
+          <li>應繳金額 ＝ 帳單上的<b class="hl">「本期應繳總金額」</b>。<br>（可能包含上期未繳、分期、年費、利息，因此通常不會等於匯入金額。）</li>
           <li>若匯入時選錯信用卡，可按<b class="hl">「改卡片」</b>，一次將整批帳單移至正確的卡片。</li>
         </ul>
         <div class="tbl-wrap"><table>
