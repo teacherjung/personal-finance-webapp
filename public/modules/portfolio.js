@@ -4,7 +4,6 @@
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
-import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
 import { portfolioXirr } from './portfolio-calculations.js';
 import { compOf } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
@@ -28,6 +27,7 @@ import {
   LAYER_ORDER,
   regionSection
 } from './portfolio-visuals.js';
+import { capeBodyHtml, capeInfoOf, signalsBodyHtml, SIGNALS_INFO_HTML } from './portfolio-valuation.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtPrice = (p, cur) => Number(p || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ' + (cur || '');
@@ -56,26 +56,6 @@ const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
 const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
 const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
 const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
-
-// ---- CAPE 歷史分位（1881 起月資料的近似分位數）與規則帶 ----
-const CAPE_PCT = [[4.8, 0], [9.6, 10], [11.6, 20], [13.7, 30], [15.5, 40], [16.9, 50], [18.9, 60], [21.2, 70], [24.4, 80], [28.4, 90], [32, 95], [44.2, 100]];
-function capePercentile(v) {
-  if (v <= CAPE_PCT[0][0]) return 0;
-  for (let i = 1; i < CAPE_PCT.length; i++) {
-    if (v <= CAPE_PCT[i][0]) {
-      const [x0, y0] = CAPE_PCT[i - 1], [x1, y1] = CAPE_PCT[i];
-      return y0 + (v - x0) / (x1 - x0) * (y1 - y0);
-    }
-  }
-  return 100;
-}
-const CAPE_MIN = 5, CAPE_MAX = 45;
-const CAPE_BANDS = [
-  { from: CAPE_MIN, to: 20, color: CHART.green, label: '偏低—可依紀律加碼 QQQM' },
-  { from: 20, to: 28, color: CHART.yellow, label: '中性—定期定額為主' },
-  { from: 28, to: 33, color: CHART.orange, label: '偏高—節制 QQQM，新資金以 CSPX／債券為主' },
-  { from: 33, to: CAPE_MAX, color: CHART.red, label: '歷史高檔—不加碼 QQQM' }
-];
 
 let lineChart = null;
 
@@ -440,74 +420,12 @@ function watchlistSection(watchlist) {
   </div>`;
 }
 
-// ---- 估值訊號儀表（五市場檔位 → 動態股債比；美股 ECY 自動、區域每月手動）----
-// 檔位：0 常態、1 加碼、2 重壓（越貴 tier 越低）。門檻依 [[investment-principles]]。
-// 檔位顏色（presentation）；label 取自 signal-tiers.js 的 TIER_LABELS（單一真相，免走鐘）。US_RATIO/檔位函式也 import 自那裡。
-const TIER_COLORS = ['var(--text-dim)', CHART.green, '#2E6B2A'];
-const TIER_META = TIER_LABELS.map((label, i) => ({ label, color: TIER_COLORS[i] }));
-const SIGNALS_INFO_HTML = `
-  <p><b>這是什麼</b>：每月檢視五個市場的估值，換算成「檔位」——常態、加碼、重壓——據以動態調整配置。不是憑感覺，是指標換檔。</p>
-  <p><b>美股（自動）</b>：ECY＝1/CAPE − 美 10 年期實質利率（FRED DFII10）。ECY 越高＝股票比安全資產多賺越多＝越值得加碼。<br>
-  <b>ECY &lt; 3%</b> 常態（股債 70:30）／<b>3–5%</b> 加碼（80:20）／<b>&gt; 5%</b> 重壓（90:10）。</p>
-  <p><b>區域（每月手動更新）</b>：中股滬深300 本益比、日股與韓股整體 P/B、台股大盤本益比與殖利率——這些無穩定免費 API，請每月自行查一次填入（按右上「更新區域數值」）。</p>
-  <p class="muted">門檻：中股 PE &gt;13／10.5–11.5／&lt;10；日股 P/B &gt;1.3／1.1–1.2／&lt;1.0；韓股 P/B ~1.0／&lt;0.9／&lt;0.8；台股 PE 15–18／&lt;13 或殖利率&gt;4.5%／&lt;11 或&gt;5.5%。重壓訊號建議再等 VIX&gt;30 或信用利差擴大雙確認後才動手。</p>`;
-
-// regionTier / taiwanTier / ecyOf / US_RATIO 由 './signal-tiers.js' import（估值檔位單一真相，前後端共用）。
-function tierBadge(t) {
-  if (t == null) return '<span class="muted" style="font-size:11px">未輸入</span>';
-  const m = TIER_META[t];
-  return `<span style="display:inline-block;padding:1px 9px;border-radius:20px;font-size:11px;font-weight:600;background:${m.color}1f;color:${m.color}">${m.label}</span>`;
-}
-function signalRow(label, valTxt, tier, thresholds) {
-  return `<div class="rrow" style="grid-template-columns:130px 1fr 64px;align-items:center">
-    <span class="nowrap">${esc(label)}</span>
-    <span class="muted small">${valTxt}　<span style="opacity:.7">門檻 ${thresholds}</span></span>
-    <span style="text-align:right">${tierBadge(tier)}</span>
-  </div>`;
-}
-
 async function loadSignals(settings) {
   const body = byId('signalsBody');
   if (!body) return;
-  const sig = settings.signals || {};
   let cape = null, ry = null;
   try { [cape, ry] = await Promise.all([api('/cape'), api('/realyield')]); } catch {}
-  // 美股 ECY
-  const capeV = cape && cape.value ? Number(cape.value) : null;
-  const ryV = ry && ry.value != null ? Number(ry.value) : null;
-  const ecy = ecyOf(capeV, ryV);
-  const usTier = ecy != null ? regionTier('us', ecy) : null;
-  const usValTxt = ecy != null
-    ? `ECY <b>${ecy.toFixed(1)}%</b>（CAPE ${(capeV ?? 0).toFixed(1)}・實質利率 ${(ryV ?? 0).toFixed(2)}%）`
-    : 'ECY <span class="muted">無法計算（缺 CAPE 或利率）</span>';
-
-  const twTier = taiwanTier(sig.taiwanPE, sig.taiwanYield);
-  const twVal = (sig.taiwanPE || sig.taiwanYield)
-    ? `PE ${sig.taiwanPE ? esc(sig.taiwanPE) : '—'}・殖利率 ${sig.taiwanYield ? esc(sig.taiwanYield) + '%' : '—'}` : '—';
-  const rows = [
-    signalRow('🇺🇸 美股（ECY）', usValTxt, usTier, '&lt;3／3–5／&gt;5%'),
-    signalRow('🇨🇳 中股（滬深300 PE）', sig.china ? `PE <b>${esc(sig.china)}</b>` : '—', regionTier('china', sig.china), '&gt;13／10.5–11.5／&lt;10'),
-    signalRow('🇯🇵 日股（P/B）', sig.japan ? `P/B <b>${esc(sig.japan)}</b>` : '—', regionTier('japan', sig.japan), '&gt;1.3／1.1–1.2／&lt;1.0'),
-    signalRow('🇰🇷 韓股（P/B）', sig.korea ? `P/B <b>${esc(sig.korea)}</b>` : '—', regionTier('korea', sig.korea), '~1.0／&lt;0.9／&lt;0.8'),
-    signalRow('🇹🇼 台股（PE／殖利率）', twVal, twTier, 'PE&lt;13 或殖&gt;4.5%')
-  ].join('');
-
-  // 摘要：美股檔位 → 股債比；加碼/重壓清單
-  const tilts = [
-    ['中股', regionTier('china', sig.china)], ['日股', regionTier('japan', sig.japan)],
-    ['韓股', regionTier('korea', sig.korea)], ['台股', twTier]
-  ];
-  const t1 = tilts.filter(([, t]) => t === 1).map(([n]) => n);
-  const t2 = tilts.filter(([, t]) => t === 2).map(([n]) => n);
-  const summary = usTier != null
-    ? `<div class="rc-block" style="margin-bottom:12px"><b>建議股債比 ${US_RATIO[usTier]}</b>（美股 ${TIER_META[usTier].label}）
-       ${t2.length ? `｜<span style="color:${TIER_META[2].color}">重壓：${t2.join('、')}</span>` : ''}
-       ${t1.length ? `｜<span style="color:${TIER_META[1].color}">加碼：${t1.join('、')}</span>` : ''}
-       ${!t1.length && !t2.length ? '｜區域無加碼訊號' : ''}</div>`
-    : '<div class="rc-block muted" style="margin-bottom:12px">美股 ECY 暫時無法計算——CAPE 或實質利率抓取失敗，可在「更新區域數值」填入手動實質利率。</div>';
-
-  body.innerHTML = summary + `<div class="region-rows">${rows}</div>
-    <p class="muted small" style="margin-top:8px">美股自動（CAPE＋FRED 實質利率）；區域四市場為每月手動更新。加碼＝乘 1.5、重壓＝乘 2 的衛星傾斜（詳見標題說明）。</p>`;
+  body.innerHTML = signalsBodyHtml(settings, cape, ry, { escapeHtml: esc });
 }
 
 function openSignalsForm(settings) {
@@ -537,35 +455,7 @@ async function loadCape(settings, qqqmShare, qqqmMax) {
   try { cape = await api('/cape'); } catch {}
   const body = byId('capeBody');
   if (!body) return;
-  const v = cape && cape.value ? Number(cape.value) : null;
-  if (!v) {
-    body.innerHTML = `<p class="muted" style="margin-top:8px">無法自動取得 CAPE。<button class="btn-link btn-sm" id="capeManualBtn">手動設定</button></p>`;
-    const b = byId('capeManualBtn');
-    if (b) b.onclick = () => openCapeManual(settings);
-    return;
-  }
-  const pct = capePercentile(v);
-  const band = CAPE_BANDS.find(b => v < b.to) || CAPE_BANDS[CAPE_BANDS.length - 1];
-  const clamped = Math.min(Math.max(v, CAPE_MIN), CAPE_MAX);
-  const markerLeft = (clamped - CAPE_MIN) / (CAPE_MAX - CAPE_MIN) * 100;
-  const qqqmOk = qqqmShare <= qqqmMax;
-  body.innerHTML = `
-    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-top:6px">
-      <span class="stat sm">${v.toFixed(2)}</span>
-      <span class="muted" style="font-size:12.5px">歷史分位 ~${pct.toFixed(0)}%・來源 ${esc(cape.source)}
-        <button class="btn-link btn-sm" id="capeManualBtn">手動設定</button></span>
-    </div>
-    <div class="gauge-wrap">
-      <div class="gauge">
-        ${CAPE_BANDS.map(b => `<div style="width:${((b.to - b.from) / (CAPE_MAX - CAPE_MIN) * 100).toFixed(1)}%;background:${b.color};opacity:.55"></div>`).join('')}
-        <div class="gauge-marker" style="left:${markerLeft.toFixed(1)}%"></div>
-      </div>
-      <div class="gauge-scale"><span>5</span><span>20</span><span>28</span><span>33</span><span>45</span></div>
-    </div>
-    <p style="font-size:13px;margin-top:4px"><b style="color:${band.color}">目前規則帶：</b>${band.label}</p>
-    <p class="muted small" style="margin-top:6px">QQQM 佔美股核心 <b style="color:${qqqmOk ? 'var(--pos)' : 'var(--neg)'}">${fmtPct(qqqmShare)}</b>（上限 ${qqqmMax}%）${qqqmOk ? '——在限內。' : '——已超限，漲勢中依紀律轉回 CSPX。'}
-    提醒：CAPE 是 S&P 500 的估值指標，當「紀律閘門」用，不當精準擇時訊號；它可以在高檔停留很多年。</p>
-  `;
+  body.innerHTML = capeBodyHtml(cape, qqqmShare, qqqmMax, { escapeHtml: esc, formatPercent: fmtPct });
   const b = byId('capeManualBtn');
   if (b) b.onclick = () => openCapeManual(settings);
 }
@@ -781,12 +671,7 @@ async function refreshQuotes(btn, holdings, watchlist, settings) {
 async function printPortfolioReport(data) {
   let cape = null;
   try { cape = await api('/cape'); } catch {}
-  const capeValue = cape?.value ? Number(cape.value) : 0;
-  const capeInfo = capeValue ? {
-    value: capeValue,
-    percentile: capePercentile(capeValue),
-    label: (CAPE_BANDS.find(band => capeValue < band.to) || CAPE_BANDS[CAPE_BANDS.length - 1]).label
-  } : null;
+  const capeInfo = capeInfoOf(cape);
   const report = buildPortfolioReport({ ...data, capeInfo }, {
     viewCurrency: viewCur,
     generated: todayStr(),
