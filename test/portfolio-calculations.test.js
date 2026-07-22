@@ -6,6 +6,7 @@ import {
   marginCallDistance,
   tradePnlBase,
   tradeSummary,
+  portfolioXirr,
   xirrRate
 } from '../public/modules/portfolio-calculations.js';
 
@@ -70,4 +71,44 @@ test('投資計算｜XIRR 沒有正負現金流交會時回傳 null', () => {
     { t: new Date(2025, 0, 1), v: -100 },
     { t: new Date(2026, 0, 1), v: -10 }
   ]), null);
+});
+
+const parseLocalDateForTest = (value) => {
+  const [y, m, d] = String(value).split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+test('投資計算｜組合 XIRR 依快照投入、賣出損益與今日市值計算', () => {
+  const result = portfolioXirr([
+    { month: '2025-01', value: 100_000, cost: 100_000 },
+    { month: '2025-07', value: 130_000, cost: 150_000 }
+  ], 180_000, 220_000, [
+    { buySell: 'SELL', pnl: 100, currency: 'GBP', date: '20251015' },
+    { buySell: 'SELL', pnl: 999, currency: 'EUR', date: '2025-11-01' },
+    { buySell: 'BUY', pnl: 999, currency: 'USD', date: '2025-11-01' }
+  ], 32, parseLocalDateForTest, { usdTwd: 32, fxTwd: { GBP: 40 } }, new Date(2026, 0, 15));
+
+  assert.equal(result.ok, true);
+  assert.ok(result.ok);
+  assert.ok(Math.abs(result.rate - 38.28155492633271) < 1e-9);
+  assert.ok(Math.abs(result.years - 0.9555099247091033) < 1e-12);
+  assert.equal(result.estimated, true);
+});
+
+test('投資計算｜組合 XIRR 缺快照或未滿兩個月時不顯示', () => {
+  assert.deepEqual(
+    portfolioXirr([], 0, 100, [], 32, parseLocalDateForTest, {}, new Date(2026, 0, 15)),
+    { ok: false, why: '需先記錄月快照' }
+  );
+  assert.deepEqual(
+    portfolioXirr([{ month: '2026-01', value: 100, cost: 100 }], 100, 110, [], 32, parseLocalDateForTest, {}, new Date(2026, 1, 15)),
+    { ok: false, why: '快照未滿兩個月' }
+  );
+});
+
+test('投資計算｜組合 XIRR 超過正負 500% 時拒絕誤導數字', () => {
+  assert.deepEqual(
+    portfolioXirr([{ month: '2025-01', value: 100, cost: 100 }], 100, 1_000, [], 32, parseLocalDateForTest, {}, new Date(2026, 0, 31)),
+    { ok: false, why: '資料異常（檢查快照是否為真實紀錄）' }
+  );
 });

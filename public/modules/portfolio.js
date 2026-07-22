@@ -5,7 +5,7 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
-import { fxTable, holdingCost, marginCallDistance, tradePnlBase, tradeSummary, xirrRate } from './portfolio-calculations.js';
+import { fxTable, holdingCost, marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-calculations.js';
 import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
@@ -181,7 +181,7 @@ export async function renderPortfolio() {
   }
 
   // 資金加權年化報酬（XIRR）——資料齊了在此同步計算，直接嵌進模板
-  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD, settings);
+  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD, parseLocalDate, settings);
 
   view().innerHTML = `
     <div class="page-head">
@@ -1034,44 +1034,6 @@ const XIRR_INFO_HTML = `
   <p><b>XIRR（資金加權年化報酬）</b>：把每一筆投入與拿回的錢、連同發生的時間點一起解出的年化報酬率——「你的錢實際上長多快」。與只看漲跌幅的報酬率不同，它會反映你進出場時點的效果：同樣的市場，早投入多投入的人 XIRR 較高。</p>
   <p><b>資料來源</b>：每月「記錄本月快照」的投入增量＝流出；IB 賣出的已實現損益逐筆按成交日計入；今日市值＝期末流入。口徑為台幣。</p>
   <p class="muted">限制：不含股息與利息（結果略為低估）；台股手動賣出的已實現損益未納入；快照為月頻、時點以月底近似；IB 交易紀錄僅涵蓋同步期間。外幣賣出缺 IBKR 匯率時以設定匯率估算（標示「含匯率估算」）。歷史未滿 1 年時，年化會放大短期波動，僅供參考。</p>`;
-
-function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) {
-  if (!Array.isArray(psnaps) || !psnaps.length || !(curValue > 0)) return { ok: false, why: '需先記錄月快照' };
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const eom = (mk) => {   // 快照時點以月底近似（本月快照則視為今天）
-    const [y, m] = mk.split('-').map(Number);
-    const d = new Date(y, m, 0);
-    return d > today ? today : d;
-  };
-  const flows = [{ t: eom(psnaps[0].month), v: -Number(psnaps[0].value || 0) }];
-  for (let i = 1; i < psnaps.length; i++) {
-    flows.push({ t: eom(psnaps[i].month), v: -(Number(psnaps[i].cost || 0) - Number(psnaps[i - 1].cost || 0)) });
-  }
-  const t0 = flows[0].t;
-  // 賣出時投入額只減成本，已實現損益要另外補回現金流。換算與交易摘要同口徑
-  // （tradePnlBase：pnlBase→fxRateToBase→USD→設定匯率估算），避免漏估外幣賣出讓年化偏低。
-  let estimated = false;
-  for (const tr of ibTrades || []) {
-    if (tr.buySell !== 'SELL') continue;
-    const { base, source } = tradePnlBase(tr, settings);
-    if (source === 'missing' || !base) continue;
-    if (source === 'estimated') estimated = true;
-    const ds = String(tr.date || '');
-    const d = parseLocalDate(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);   // 本地解析（XIRR 其他日期皆本地建構，口徑一致）
-    if (isNaN(d.getTime()) || d <= t0) continue;
-    flows.push({ t: d > today ? today : d, v: base * usd });
-  }
-  const lastCost = Number(psnaps[psnaps.length - 1].cost || 0);
-  flows.push({ t: today, v: curValue - (curCost - lastCost) });   // 期末市值＋最後一筆快照之後的投入增量
-  flows.sort((a, b) => a.t.getTime() - b.t.getTime());
-  const spanDays = (today.getTime() - t0.getTime()) / 86400000;
-  if (spanDays < 60) return { ok: false, why: '快照未滿兩個月' };
-  const r = xirrRate(flows);
-  if (r == null) return { ok: false, why: '無法計算' };
-  // 年化超過 ±500% 代表資料有問題（如快照與市值口徑不符），不顯示誤導數字
-  if (Math.abs(r) > 5) return { ok: false, why: '資料異常（檢查快照是否為真實紀錄）' };
-  return { ok: true, rate: r * 100, years: spanDays / 365.25, estimated };
-}
 
 // ---- ⑥ 投入 vs 市值 ----
 function drawInvestChart(psnaps, curCost, curValue) {
