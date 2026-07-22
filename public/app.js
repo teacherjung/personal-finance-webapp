@@ -15,7 +15,7 @@ import { hydrateIcons } from './modules/icons.js';
 const $ = (sel, root = document) => root.querySelector(sel);
 export const view = () => $('#view');
 // 取 id 元素（頁面自己渲染的、一定存在）。回傳 any：這個 codebase 以 innerHTML 樣板為主，
-// 元素層級逐處標型別是噪音；DOM 正確性靠「8 頁 reload 無錯」驗證，型別檢查主力放在資料邏輯。
+// 元素層級逐處標型別是噪音；DOM 正確性靠「10 頁 reload 無錯」驗證，型別檢查主力放在資料邏輯。
 /** @param {string} id @returns {any} */
 export const byId = (id) => document.getElementById(id);
 
