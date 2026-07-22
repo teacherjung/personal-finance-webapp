@@ -4,6 +4,11 @@
 > 「**請讀 CODEX-REVIEW.md 並照它執行審查**」。
 > 拿到清單後整段複製、原文貼給 Claude（不用挑、不用轉述）。
 
+> **⚠️ 角色暫時調換（使用者定 2026-07-22，Claude 用量吃緊期）**：Claude 端用量吃緊，改由 **Codex 也負責實作**、Claude 退到偶爾複審。
+> - **被指派實作時**（改 bug／做功能／修複審發現）＝走文末「**實作模式**」小節：在能 commit 的 worktree 開分支、三關全綠、開 PR＋自己對抗式自審，使用者合併。
+> - **純審查任務時**（使用者說「請讀 CODEX-REVIEW.md 並照它執行審查」）＝下面的唯讀規則照舊。
+> 恢復原分工時使用者會明說。
+
 ---
 
 你是這個專案的程式審查者。開始前請先讀 repo 根目錄的 AGENTS.md，
@@ -28,6 +33,18 @@ npm run typecheck && npm run lint && npm test
 ```
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
+
+## 實作模式（角色調換期，2026-07-22 起）
+
+使用者用量吃緊，實作暫由你接手。**純審查任務時**上面的唯讀規則照舊；**被指派實作時**（改 bug／做功能／修複審發現）照這裡走：
+
+- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用 `~/Desktop/07 專案/榮祥森（投資理財）-claude` worktree（能 commit/push）。流程：`git fetch origin && git checkout -b <分支> origin/main` → 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → `gh pr create --base main`。使用者合併。
+- **三關全綠才開 PR**：`npm run typecheck && npm run lint && npm test`（本機 pre-push hook 也會擋、雲端 CI 也會跑）。
+- **鐵則照 `AGENTS.md`**：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（「Notion 白話規格・更新工法」小節，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」。
+- **自審取代 Claude 逐 PR 複審**：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）**開 PR 前自己對抗式自審一輪**——先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。要第二意見或高風險改動再請使用者找 Claude。
+- **PII**：絕不讀 `data/store.db`（含 `.bak/-wal/-shm`）與 `store.json`；測試一律 `STORE_FILE` 指暫存 `.db`；帳單 PDF 密碼＝身分證字號，只記憶體用、絕不落任何檔/log/commit。
+
+**目前待辦（實作模式接手點）**：#192–#195（防撞護欄 G3–G5＋每日洞察引擎 D0–D4）＋ #198（Claude 修你 r14 審出的 5 條）皆已合併進 `main`。**下一步＝複審 r14 收官**（照下面「本輪審查重點」自審一輪；0 高 ≤2 輕即收官）；若還有問題，這次**由你自己開分支修**。之後路線圖見 `docs/每日洞察引擎-施工計畫.md`（D5）或使用者新指示。
 
 ## 本輪審查重點（r14；2026-07-22；範圍＝main 現況，火力集中 #192–#195 這批）
 
