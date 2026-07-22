@@ -23,7 +23,7 @@ import {
   LAYER_ORDER,
   regionSection
 } from './portfolio-visuals.js';
-import { capeBodyHtml, capeInfoOf, signalsBodyHtml, SIGNALS_INFO_HTML } from './portfolio-valuation.js';
+import { capeInfoOf } from './portfolio-valuation.js';
 import { holdingsTableHtml, watchlistSectionHtml } from './portfolio-tables.js';
 import { researchFormModel, researchSectionHtml } from './portfolio-research.js';
 import {
@@ -34,13 +34,9 @@ import {
   XIRR_INFO_HTML
 } from './portfolio-overview.js';
 import { investmentChartConfig } from './portfolio-chart.js';
-import {
-  capeFormModel,
-  fxBandsFormModel,
-  signalsFormModel
-} from './portfolio-forms.js';
 import { createPortfolioEditors } from './portfolio-editors.js';
 import { createPortfolioRemoteActions } from './portfolio-remote-actions.js';
+import { createPortfolioValuationActions } from './portfolio-valuation-actions.js';
 import { formatPercent, formatPortfolioMoney } from './portfolio-format.js';
 import { disciplineInfoHtml, totalValueInfoHtml } from './portfolio-info.js';
 
@@ -104,6 +100,16 @@ export async function renderPortfolio() {
     formatOriginalMoney: moneyCur,
     confirmMissing: message => window.confirm(message)
   });
+  const valuationActions = createPortfolioValuationActions({
+    api,
+    getElement: byId,
+    openForm,
+    openInfo,
+    toast,
+    rerender: renderPortfolio,
+    escapeHtml: esc,
+    formatPercent
+  });
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
@@ -146,11 +152,9 @@ export async function renderPortfolio() {
     renderPortfolio();
   });
   // ⏸ 休眠中：#fxBandEdit 只有在 fxGaugeHtml（目前停放、未插入頁面）渲染時才存在；
-  //   等匯率儀表決定放回頁面時，這段與 openFxBands() 一起恢復作用。
+  //   等匯率儀表決定放回頁面時，控制器內的 openFxBands() 會一起恢復作用。
   //   註：fxHigh/fxLow 的「調整入口」現已改由設定頁「提醒門檻」管理（換匯提醒即時生效），
-  //   停放的 openFxBands 若日後恢復，屬儀表上的便捷入口、非唯一調整途徑。
-  const fxEdit = byId('fxBandEdit');
-  if (fxEdit) fxEdit.onclick = () => openFxBands(settings);
+  //   控制器內停放的 openFxBands 若日後恢復，屬儀表上的便捷入口、非唯一調整途徑。
   view().querySelectorAll('.info-link[data-info]').forEach(b => b.onclick = () => {
     const info = INCOME_INFO[b.dataset.info];
     if (info) openInfo(info[0], info[1]);
@@ -191,69 +195,11 @@ export async function renderPortfolio() {
   view().querySelectorAll('[data-add-cp]').forEach(b => b.onclick = () => addCheckpoint(b.dataset.addCp, research));
 
   drawInvestChart(psnaps, totalCost, total);
-  loadCape(settings, qqqmShare, qqqmMax);
-  loadSignals(settings);
-  const sInfo = byId('signalsInfo');
-  if (sInfo) sInfo.onclick = () => openInfo('估值訊號儀表', SIGNALS_INFO_HTML, { size: 'md' });
-  const sEdit = byId('signalsEdit');
-  if (sEdit) sEdit.onclick = () => openSignalsForm(settings);
+  valuationActions.bind(settings, qqqmShare, qqqmMax);
 }
 
 // 美元／台幣匯率儀表目前刻意停放；純 HTML 組裝已移到 portfolio-valuation.js 的 fxGaugeHtml。
 // 要恢復時再 import 並插入 render；區間調整表單保留在下方，設定頁也有正式入口。
-
-// ⏸ 休眠中：只被停放的 fxGaugeHtml 的「區間調整」鈕呼叫；隨儀表一起恢復。
-function openFxBands(settings) {
-  const form = fxBandsFormModel(settings);
-  openForm({
-    ...form,
-    onSubmit: async (data) => {
-      await api('/settings', { method: 'PUT', body: { fxLow: Number(data.fxLow), fxHigh: Number(data.fxHigh) } });
-      toast('已更新換匯區間'); renderPortfolio();
-    }
-  });
-}
-
-async function loadSignals(settings) {
-  const body = byId('signalsBody');
-  if (!body) return;
-  let cape = null, ry = null;
-  try { [cape, ry] = await Promise.all([api('/cape'), api('/realyield')]); } catch {}
-  body.innerHTML = signalsBodyHtml(settings, cape, ry, { escapeHtml: esc });
-}
-
-function openSignalsForm(settings) {
-  const form = signalsFormModel(settings);
-  openForm({
-    ...form,
-    onSubmit: async (data) => {
-      await api('/settings', { method: 'PUT', body: { signals: { ...form.values, ...data } } });
-      toast('估值訊號已更新'); renderPortfolio();
-    }
-  });
-}
-
-// ---- ③ CAPE 儀表 ----
-async function loadCape(settings, qqqmShare, qqqmMax) {
-  let cape = null;
-  try { cape = await api('/cape'); } catch {}
-  const body = byId('capeBody');
-  if (!body) return;
-  body.innerHTML = capeBodyHtml(cape, qqqmShare, qqqmMax, { escapeHtml: esc, formatPercent });
-  const b = byId('capeManualBtn');
-  if (b) b.onclick = () => openCapeManual(settings);
-}
-
-function openCapeManual(settings) {
-  const form = capeFormModel(settings);
-  openForm({
-    ...form,
-    onSubmit: async (data) => {
-      await api('/settings', { method: 'PUT', body: { capeManual: data.capeManual } });
-      toast('已更新 CAPE 手動值'); renderPortfolio();
-    }
-  });
-}
 
 // ---- ⑥ 投入 vs 市值 ----
 function drawInvestChart(psnaps, curCost, curValue) {
