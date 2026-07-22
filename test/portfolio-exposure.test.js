@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compOf, regionExposure, companyExposure, companyRegionOf } from '../public/modules/portfolio-exposure.js';
+import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from '../public/modules/portfolio-exposure.js';
 
 test('投資曝險｜已知代號走成分表，未知代號依 layer 退回', () => {
   assert.deepEqual(compOf({ symbol: 'eimi', layer: 'core' }), {
@@ -49,4 +49,32 @@ test('投資曝險｜公司所屬區域維持既有顏色查表依據', () => {
   assert.equal(companyRegionOf('蘋果'), '美國');
   assert.equal(companyRegionOf('台積電'), '台灣');
   assert.equal(companyRegionOf('不存在公司'), undefined);
+});
+
+test('投資曝險｜幣別曝險維持美債 ETF、黃金與缺省幣別口徑', () => {
+  assert.deepEqual(fxExposure([
+    { symbol: 'CSPX', layer: 'core', currency: 'USD', valueTwd: 1_000 },
+    { symbol: '00719B', layer: 'bond', currency: 'TWD', valueTwd: 2_000 },
+    { symbol: 'IAU', layer: 'gold', currency: 'USD', valueTwd: 3_000 },
+    { symbol: 'UNKNOWN', layer: 'satellite', valueTwd: 4_000 }
+  ], [], { TWD: 1, USD: 32 }), {
+    USD: { stockTwd: 1_000, bondTwd: 2_000, goldTwd: 0, cashTwd: 0, netTwd: 3_000 },
+    黃金: { stockTwd: 0, bondTwd: 0, goldTwd: 3_000, cashTwd: 0, netTwd: 3_000 },
+    TWD: { stockTwd: 4_000, bondTwd: 0, goldTwd: 0, cashTwd: 0, netTwd: 4_000 }
+  });
+});
+
+test('投資曝險｜現金依匯率換算且正數負債反向計入', () => {
+  assert.deepEqual(fxExposure([], [
+    { type: 'cash', currency: 'TWD', balance: 100 },
+    { type: 'mortgage', currency: 'TWD', balance: 500 },
+    { type: 'cash', currency: 'GBP', balance: 10 },
+    { type: 'loan', currency: 'USD', balance: -20 },
+    { type: 'cash', balance: 50 },
+    { type: 'cash', currency: 'JPY', balance: 0 }
+  ], { TWD: 1, USD: 32, GBP: 40 }), {
+    TWD: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: -350, netTwd: -350 },
+    GBP: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 400, netTwd: 400 },
+    USD: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: -640, netTwd: -640 }
+  });
 });

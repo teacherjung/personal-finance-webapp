@@ -20,7 +20,7 @@
 - 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
 - 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
 - IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
-- 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（頁面模組）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）。投資組合的**零 DOM／零 API 純計算層**分成 `modules/portfolio-calculations.js`（匯率表、持股成本、槓桿距離、交易損益換匯、XIRR 求解）與 `modules/portfolio-exposure.js`（資產型別、ETF 區域／公司穿透）；改這些公式或成分表要在對應檔補固定輸入輸出考題，不要把邏輯塞回 `portfolio.js` 的畫面流程。
+- 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（頁面模組）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）。投資組合的**零 DOM／零 API 純計算層**分成 `modules/portfolio-calculations.js`（匯率表、持股成本、槓桿距離、交易損益換匯、XIRR 求解）與 `modules/portfolio-exposure.js`（資產型別、ETF 區域／公司穿透、幣別底層曝險）；改這些公式或成分表要在對應檔補固定輸入輸出考題，不要把邏輯塞回 `portfolio.js` 的畫面流程。
   - ⚠️ **async render 寫 `#view` 前要 guard 序號**（Codex r10#6）：render 一進場 `const seq = currentRouteSeq()`，`await` 完、**動任何 DOM/圖表（含 `destroyCharts`）之前**先 `if (seq !== currentRouteSeq()) return;`——不然快速切頁時慢頁 resolve 會蓋掉新頁（router 的事後檢查太晚，寫入發生在 render 內部）。有遞迴重載（如 `renderSubscriptions` 的 autoExpire）也要在遞迴分支前 guard。
   - **帳單原文一律用 `origFromStmtRef`（後端）／`stmtOrig`（前端 `app.js`）取**，會剝去重序號 `|#N`（Codex r10#5）；不要在各頁手寫 `split('|').slice(3)`（會把「星巴克｜#2」當原文，改名/分組/tooltip 全對不上）。
 
@@ -75,7 +75,7 @@
 | 改這裡 | 記得同步這裡 |
 |---|---|
 | `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
-| `portfolio.js` `fxSection.exposureCurrency` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
+| `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
 | 新增 ETF 持股 | `portfolio-exposure.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（前端 exposure 與後端 derive 兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%） |
 | `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | 兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉） |
 | IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端單一真相＝`lib/derive.js computeLeverage()`（規則 7＋buildSummary 都用它、summary 有 `ib.leverage/loan/mcDist/hasLoan`）↔ 前端 `portfolio.js` 的 `marginCallDistance()` 與 render 內槓桿計算，前後端兩份要一致。⚠️**mcDist 語意（Codex r11#3）**：100＝「無借款」專用值；**有借款但持股歸零**（已遭平倉/淨值轉負、比貼線更慘）＝回 **0**——前端 `marginCallDistance` 同情境回 null→顯示 0%，兩端口徑一致。別把兩種情境都塞 100（/api/summary 會把最危險講成最安全；test/codex-r11.test.js 鎖住） |
