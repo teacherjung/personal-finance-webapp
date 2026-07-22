@@ -28,15 +28,9 @@ import {
   regionSection
 } from './portfolio-visuals.js';
 import { capeBodyHtml, capeInfoOf, signalsBodyHtml, SIGNALS_INFO_HTML } from './portfolio-valuation.js';
+import { holdingsTableHtml, watchlistSectionHtml } from './portfolio-tables.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
-const fmtPrice = (p, cur) => Number(p || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ' + (cur || '');
-// 表格用價格：整數；單價 <10 保留一位小數（例：5.4 USD）
-const fmtPrice0 = (p, cur) => {
-  const n = Number(p || 0);
-  const s = Math.abs(n) < 10 ? n.toFixed(1) : Math.round(n).toLocaleString('en-US');
-  return s + ' ' + (cur || '');
-};
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
 const kNum = (n) => { const v = n / 1000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
 const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
@@ -56,23 +50,13 @@ const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
 const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
 const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
 const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
+const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
 
 let lineChart = null;
 
 // 持股表排序（分組內排序，市值/損益/報酬率/佔比）
 let hSortKey = localStorage.getItem('pf_hSortKey') || 'value';
 let hSortDir = localStorage.getItem('pf_hSortDir') || 'desc';
-const byValueTwd = (a, b) => a.valueTwd - b.valueTwd;
-const H_SORTERS = {
-  value: byValueTwd,
-  pnl: (a, b) => a.pnlTwd - b.pnlTwd,
-  ret: (a, b) => (a.costTwd ? a.pnlTwd / a.costTwd : 0) - (b.costTwd ? b.pnlTwd / b.costTwd : 0),
-  weight: byValueTwd   // 佔比＝市值÷總額（總額固定），排序與市值等價
-};
-function hTri(key) {
-  if (hSortKey === key) return `<span class="sort-tri active">${hSortDir === 'asc' ? '▲' : '▼'}</span>`;
-  return `<span class="sort-tri">▾</span>`;
-}
 
 export async function renderPortfolio() {
   const seq = currentRouteSeq();
@@ -141,8 +125,8 @@ export async function renderPortfolio() {
     ${companiesSection(rows, eqV, visualFormatters())}
     ${layerSection(layerV, total, visualFormatters())}
     ${holdingsDonut(rows, total, visualFormatters())}
-    ${holdingsTable(rows, total)}
-    ${watchlistSection(watchlist)}
+    ${holdingsTableHtml(rows, total, { sortKey: hSortKey, sortDir: hSortDir, formatters: tableFormatters() })}
+    ${watchlistSectionHtml(watchlist, tableFormatters())}
 
     <div class="chart-card" style="margin-bottom:16px" id="signalsCard">
       <h3><button type="button" class="info-link" id="signalsInfo">估值訊號儀表</button> <span class="stat-sub" style="font-weight:400;margin:0">（五市場檔位 → 動態股債比；每月檢視）</span>
@@ -347,77 +331,6 @@ function openFxBands(settings) {
       toast('已更新換匯區間'); renderPortfolio();
     }
   });
-}
-
-// ---- 持股表（依層分組）----
-function holdingsTable(rows, total) {
-  const cmp = (Object.hasOwn(H_SORTERS, hSortKey) && H_SORTERS[hSortKey]) || H_SORTERS.value;   // hasOwn（Codex r9#3）：排序鍵存在 localStorage、可被改成原型名
-  const groups = LAYER_ORDER.map(k => {
-    const list = rows.filter(r => (LAYERS[r.layer] ? r.layer : 'satellite') === k).sort(cmp);
-    if (hSortDir === 'desc') list.reverse();
-    if (!list.length) return '';
-    return `<tr class="group-row"><td colspan="9"><span class="cat-dot" style="background:${LAYERS[k].color}"></span>${LAYERS[k].label}</td></tr>`
-      + list.map(r => `<tr>
-        <td class="nowrap"><b>${esc(r.symbol)}</b>${r.quoteSymbol ? '' : ' <span class="tag" style="font-size:9px">手動</span>'}</td>
-        <td class="muted nowrap" style="max-width:190px;overflow:hidden;text-overflow:ellipsis">${esc(r.name || '')}</td>
-        <td class="nowrap muted">${fmtPrice0((r.avgCost != null && r.avgCost !== '') ? r.avgCost : (Number(r.quantity) ? Number(r.cost || 0) / Number(r.quantity) : 0), r.currency)}</td>
-        <td class="nowrap">${fmtPrice0(r.price, r.currency)}</td>
-        <td class="num">${MONEY(r.valueTwd)}</td>
-        <td class="num ${r.pnlTwd >= 0 ? 'pos' : 'neg'}">${r.pnlTwd >= 0 ? '+' : ''}${MONEY(r.pnlTwd)}</td>
-        <td class="num ${r.pnlTwd >= 0 ? 'pos' : 'neg'}">${r.costTwd ? fmtPct(r.pnlTwd / r.costTwd * 100) : '—'}</td>
-        <td class="num">${fmtPct(total > 0 ? r.valueTwd / total * 100 : 0)}</td>
-        <td><div class="row-actions">
-          <button class="btn-link btn-sm" data-edit-h="${r.id}" title="編輯">${icon('edit', 15)}</button>
-          <button class="btn-danger btn-sm" data-del-h="${r.id}" title="刪除">${icon('trash', 15)}</button>
-        </div></td>
-      </tr>`).join('');
-  }).join('');
-  return `<div class="tbl-wrap" style="margin-bottom:16px"><table class="subs-table">
-    <thead><tr><th>代號</th><th>說明</th><th>均價</th><th>現價</th>
-      <th class="sortable" data-hsort="value">市值 ${hTri('value')}</th>
-      <th class="sortable" data-hsort="pnl">損益 ${hTri('pnl')}</th>
-      <th class="sortable" data-hsort="ret">報酬率 ${hTri('ret')}</th>
-      <th class="sortable" data-hsort="weight">佔比 ${hTri('weight')}</th>
-      <th></th></tr></thead>
-    <tbody>${groups || '<tr><td colspan="9" class="empty">尚無持股，點右上角新增。</td></tr>'}</tbody>
-  </table></div>`;
-}
-
-// ---- ④ 回檔買進願望清單 ----
-function watchlistSection(watchlist) {
-  const rowsHtml = watchlist.map(w => {
-    const last = Number(w.lastPrice || 0);
-    const target = Number(w.targetPrice || 0);
-    let status = '<span class="muted">—</span>';
-    if (last && target) {
-      const diff = (last - target) / target * 100;
-      status = last <= target
-        ? '<span class="tag green">到價！可依紀律買進</span>'
-        : `<span class="muted">還差 ${fmtPct(diff)}</span>`;
-    }
-    return `<tr>
-      <td class="nowrap"><b>${esc(w.symbol)}</b></td>
-      <td class="muted nowrap">${esc(w.name || '')}</td>
-      <td class="nowrap">${fmtPrice(w.targetPrice, w.currency || 'USD')}</td>
-      <td class="nowrap">${last ? fmtPrice(last, w.currency || 'USD') : '<span class="muted">按「更新報價」</span>'}</td>
-      <td>${status}</td>
-      <td class="muted" style="font-size:12px">${esc(w.note || '')}</td>
-      <td><div class="row-actions">
-        <button class="btn-link btn-sm" data-edit-w="${w.id}" title="編輯">${icon('edit', 15)}</button>
-        <button class="btn-danger btn-sm" data-del-w="${w.id}" title="刪除">${icon('trash', 15)}</button>
-      </div></td>
-    </tr>`;
-  }).join('');
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h3 style="margin:0">回檔買進願望清單 <span class="stat-sub" style="font-weight:400;margin:0">（到價提示，把「等回檔」變成紀律）</span></h3>
-      <button class="btn-ghost btn-sm" id="addWatch">${icon('plus', 14)}新增</button>
-    </div>
-    <div class="tbl-wrap" style="box-shadow:none;border:none;margin-top:8px"><table>
-      <thead><tr><th>代號</th><th>名稱</th><th>目標買價</th><th>現價</th><th>狀態</th><th>備註</th><th></th></tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="7" class="empty">尚無項目</td></tr>'}</tbody>
-    </table></div>
-  </div>`;
 }
 
 async function loadSignals(settings) {
