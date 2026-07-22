@@ -5,8 +5,9 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
-import { fxTable, holdingCost, marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-calculations.js';
-import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
+import { marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-calculations.js';
+import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
+import { buildPortfolioModel } from './portfolio-model.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -90,63 +91,14 @@ export async function renderPortfolio() {
   ]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）——初次渲染以前沒守，只有背景 ibSync 有守
   if (lineChart) { lineChart.destroy(); lineChart = null; }
-  const fx = fxTable(settings);
+  const {
+    fx, rows, total, totalCost, totalPnl,
+    bondV, goldV, eqV, ibValTwd, loanTwd, netEquity, leverage,
+    goldAll, cashV, allBase, stockRows, bondRows, goldRows,
+    cashAccounts, goldAccounts, regionMap
+  } = buildPortfolioModel(holdings, accounts, settings);
   usdRate = fx.USD;
-
-  const rows = holdings.map(h => {
-    // 缺 currency 預設台幣（自主體檢）：與 lib/derive.js:163 同口徑——後端（總覽/快照/日線）當台幣、
-    // 這裡當美元的話，同一筆持股兩邊差 32 倍，且投組頁的歷史快照點與「現在」點口徑打架
-    const r = fx[h.currency || 'TWD'] || 1;
-    const valueTwd = Number(h.price || 0) * Number(h.quantity || 0) * r;
-    const costTwd = holdingCost(h) * r;
-    return { ...h, valueTwd, costTwd, pnlTwd: valueTwd - costTwd };
-  });
-  const total = rows.reduce((s, r) => s + r.valueTwd, 0);
-  const totalCost = rows.reduce((s, r) => s + r.costTwd, 0);
-  const totalPnl = total - totalCost;
-
-  // 股/債/現/金（持股依成分表；現金與黃金存摺來自帳戶）
-  const bondV = rows.filter(r => compOf(r).type === 'bond').reduce((s, r) => s + r.valueTwd, 0);
-  const goldV = rows.filter(r => compOf(r).type === 'gold').reduce((s, r) => s + r.valueTwd, 0);
-  const eqV = total - bondV - goldV;
-  const accTwd = (a) => Number(a.balance || 0) * (fx[a.currency || 'TWD'] || 1);
-  // IB 融資槓桿：優先用 IB 官方淨值摘要（settings.ib.lastEquity，IBKR 同步時更新、基準幣別 USD），
-  // 沒有才自算（source:'ib' 持倉 ÷ 淨值、融資＝ibCashCur 負餘額）。與 lib/derive.js 規則 7 為同步點。
-  const eqIb = settings.ib?.lastEquity;
-  let ibValTwd, negCashTwd;
-  // 持股>0 或現金為負（欠款）就採用官方資料（Codex r10#1，與後端同步點）——全平倉只剩欠款
-  // （stock=0, cash<0）別被 stock>0 的門擋掉退回自算、把融資訊號弄丟。
-  if (eqIb && (Number(eqIb.stock) > 0 || Number(eqIb.cash) < 0)) {
-    ibValTwd = Number(eqIb.stock) * fx.USD;
-    negCashTwd = Math.min(Number(eqIb.cash) || 0, 0) * fx.USD;
-  } else {
-    ibValTwd = rows.filter(r => r.source === 'ib').reduce((s, r) => s + r.valueTwd, 0);
-    negCashTwd = (accounts || []).filter(a => a.ibCashCur).reduce((s, a) => { const v = accTwd(a); return v < 0 ? s + v : s; }, 0);
-  }
-  const loanTwd = -negCashTwd;
-  const netEquity = ibValTwd + negCashTwd;
-  // 與 lib/derive.js computeLeverage 同步：有借款且持倉>0 時，淨值≤0＝已跌破本金（比斷頭更慘），
-  // 應為 Infinity（極度危險），不可 fallback 成 1（會把最危險狀態顯示成「無槓桿」，Codex 實測）。
-  const hasLoan = loanTwd > 0;   // 有欠款就成立（Codex r10#1）——不再要求 ibValTwd>0，否則持股歸零只剩欠款判不出融資
-  const leverage = hasLoan ? (netEquity > 0 ? ibValTwd / netEquity : Infinity) : 1;
-  const goldAccV = (accounts || []).filter(a => Number(a.balance) > 0 && a.class === '黃金').reduce((s, a) => s + accTwd(a), 0);
-  const goldAll = goldV + goldAccV;
-  // 現金：正餘額的現金帳戶（type=cash 或 class=現金，排除黃金；融資負餘額不計）
-  const cashV = (accounts || []).filter(a => Number(a.balance) > 0 && a.class !== '黃金' && (a.type === 'cash' || a.class === '現金')).reduce((s, a) => s + accTwd(a), 0);
-  const allBase = eqV + bondV + cashV + goldAll;   // 股 / 債 / 現金 / 黃金
   const shr = (v) => allBase ? Math.round(v / allBase * 100) : 0;
-  const stockRows = rows.filter(r => compOf(r).type === 'equity');
-  const bondRows = rows.filter(r => compOf(r).type === 'bond');
-  const goldRows = rows.filter(r => compOf(r).type === 'gold');
-  const cashAccounts = (accounts || [])
-    .filter(a => Number(a.balance) > 0 && a.class !== '黃金' && (a.type === 'cash' || a.class === '現金'))
-    .map(a => ({ ...a, valueTwd: accTwd(a) }));
-  const goldAccounts = (accounts || [])
-    .filter(a => Number(a.balance) > 0 && a.class === '黃金')
-    .map(a => ({ ...a, valueTwd: accTwd(a) }));
-
-  // 穿透式區域曝險（僅股票部位）
-  const regionMap = regionExposure(rows);
 
   // 分層
   const layerV = {};
