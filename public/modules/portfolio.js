@@ -5,8 +5,8 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
-import { marginCallDistance, portfolioXirr } from './portfolio-calculations.js';
-import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
+import { portfolioXirr } from './portfolio-calculations.js';
+import { compOf } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
 import { buildPortfolioReport } from './portfolio-report.js';
@@ -18,6 +18,16 @@ import {
   tradesModalHtml
 } from './portfolio-details.js';
 import { incomeActivityHtml, INCOME_INFO, tradesActivityHtml } from './portfolio-activity.js';
+import {
+  companiesSection,
+  disciplineSection,
+  fxSection,
+  holdingsDonut,
+  layerSection,
+  LAYERS,
+  LAYER_ORDER,
+  regionSection
+} from './portfolio-visuals.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtPrice = (p, cur) => Number(p || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ' + (cur || '');
@@ -33,7 +43,6 @@ const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.rou
 
 // ---- 幣別 ----
 const CURRENCIES = ['USD', 'TWD', 'GBP', 'JPY'];
-const CUR_COLOR = { USD: CHART.blue, TWD: CHART.green, GBP: CHART.brown, JPY: CHART.yellow };
 // 雙計價顯示：TWD（台幣計價，單位「萬」）或 USD（美元計價，單位「K」），記在 localStorage
 let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
@@ -46,18 +55,7 @@ const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
 // app.js 與頁面模組互相 import；要到使用時才讀 esc，避免頂層循環 import 的 TDZ 白屏。
 const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
 const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
-
-// ---- 分層（核心–衛星）與目標區間 ----
-const LAYERS = {
-  core:      { label: '核心（美股）', color: CHART.blue,   min: 45, max: 65 },
-  satellite: { label: '衛星',         color: CHART.yellow, min: 8,  max: 20 },
-  bond:      { label: '債券',         color: CHART.green,  min: 15, max: 30 },
-  gold:      { label: '黃金',         color: CHART.brown,  min: 0,  max: 10 },
-  stock:     { label: '個股',         color: CHART.orange, min: 0,  max: 20 }
-};
-const LAYER_ORDER = ['core', 'satellite', 'stock', 'bond', 'gold'];
-
-const REGION_COLOR = { '美國': CHART.blue, '中國': CHART.red, '日本': CHART.yellow, '韓國': CHART.brown, '台灣': CHART.green, '印度': CHART.orange, '其他': CHART.gray };
+const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
 
 // ---- CAPE 歷史分位（1881 起月資料的近似分位數）與規則帶 ----
 const CAPE_PCT = [[4.8, 0], [9.6, 10], [11.6, 20], [13.7, 30], [15.5, 40], [16.9, 50], [18.9, 60], [21.2, 70], [24.4, 80], [28.4, 90], [32, 95], [44.2, 100]];
@@ -113,8 +111,9 @@ export async function renderPortfolio() {
   const shr = (v) => allBase ? Math.round(v / allBase * 100) : 0;
 
   // 分層
+  /** @type {Record<string, number>} */
   const layerV = {};
-  rows.forEach(r => { const l = LAYERS[r.layer] ? r.layer : 'satellite'; layerV[l] = (layerV[l] || 0) + r.valueTwd; });
+  rows.forEach(r => { const l = r.layer && LAYERS[r.layer] ? r.layer : 'satellite'; layerV[l] = (layerV[l] || 0) + r.valueTwd; });
 
   // QQQM 佔美股核心
   const vOf = (sym) => rows.filter(r => (r.symbol || '').toUpperCase() === sym).reduce((s, r) => s + r.valueTwd, 0);
@@ -154,14 +153,14 @@ export async function renderPortfolio() {
         <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > CAPS.lev + 0.15 ? CHART.red : leverage > CAPS.lev ? CHART.orange : CHART.green}"></div></div></div>
     </div>
 
-    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd)}
-    ${fxSection(rows, accounts, fx)}
+    ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd, visualFormatters())}
+    ${fxSection(rows, accounts, fx, visualFormatters())}
     ${incomeActivityHtml(settings, activityOptions())}
     ${tradesActivityHtml(ibTrades, settings, activityOptions())}
-    ${regionSection(regionMap, eqV)}
-    ${companiesSection(rows, eqV)}
-    ${layerSection(layerV, total)}
-    ${holdingsDonut(rows, total)}
+    ${regionSection(regionMap, eqV, visualFormatters())}
+    ${companiesSection(rows, eqV, visualFormatters())}
+    ${layerSection(layerV, total, visualFormatters())}
+    ${holdingsDonut(rows, total, visualFormatters())}
     ${holdingsTable(rows, total)}
     ${watchlistSection(watchlist)}
 
@@ -320,93 +319,6 @@ export async function renderPortfolio() {
   if (sEdit) sEdit.onclick = () => openSignalsForm(settings);
 }
 
-// ---- 投資原則：紀律檢查卡（唯讀；口徑 % 淨資產、穿透；黑刻度＝上限、紅＝超出）----
-// 上限黑線固定在每條 bar 的同一位置（CAP_X%），讓各列黑線上下對齊；
-// 綠/紅長度照「值 ÷ 上限」等比縮放（上限＝CAP_X 寬），超過的部分往右畫紅、超很多就填滿到底。
-function capBar(value, cap) {
-  const CAP_X = 70;
-  if (!(cap > 0) && value > 0) {   // 上限 0（如中國上限設 0）＝任何曝險都超標：整段畫紅（自審 r2，低）
-    return `<div class="cap-bar"><div class="cb-over" style="width:${100 - CAP_X}%;margin-left:${CAP_X}%"></div><div class="cb-mark" style="left:${CAP_X}%"></div></div>`;
-  }
-  const ratio = cap > 0 ? value / cap : 0;
-  const okW = Math.max(0, Math.min(ratio, 1)) * CAP_X;                         // 綠：到上限為止
-  const overW = ratio > 1 ? Math.min((ratio - 1) * CAP_X, 100 - CAP_X) : 0;    // 紅：超過上限的部分（同比例、clamp 到底）
-  return `<div class="cap-bar"><div class="cb-ok" style="width:${okW.toFixed(1)}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${CAP_X}%"></div></div>`;
-}
-function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
-  if (!(loanTwd > 0)) return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：目前無融資借款，不存在強制平倉風險。</div>`;
-  const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint) ?? 0;   // null＝有借款但持倉 0（已貼強平線）→ 顯示 0%
-  const stress = Math.min(CAPS.maint + 10, 50);
-  const dStress = marginCallDistance(ibValTwd, loanTwd, stress) ?? 0;
-  const tone = d < 35 ? 'var(--neg)' : d < 50 ? 'var(--warn)' : 'var(--pos)';
-  const judge = d < 35 ? '危險：一次大型回檔就會觸及' : d < 50 ? '偏緊：撐不過 2008 級回檔（−57%）' : '尚有餘裕（2008 級回檔 −57%）';
-  return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：IB 持倉市值再跌
-    <b style="color:${tone};font-size:15px">${d.toFixed(0)}%</b> 會觸及強平線（維持率 ${CAPS.maint}%）——${judge}。
-    <span class="muted">若 IB 危機時調高維持率到 ${stress}%，距離縮到 ${dStress.toFixed(0)}%。IB 強平為即時自動執行、無寬限期。</span></div>`;
-}
-function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd) {
-  if (!(netWorth > 0)) return '';
-  const pn = (v) => v / netWorth * 100;
-  const row = (label, value, cap, unit = '%', overLabel = '凍結') => {
-    const over = value > cap;
-    const finite = isFinite(value);
-    const valTxt = unit === 'x' ? (finite ? value.toFixed(2) + 'x' : '∞') : fmtPct(value);
-    const capTxt = unit === 'x' ? cap + 'x' : cap + '%';
-    const tag = over ? `<b class="neg rv-tag">${overLabel}</b>` : '<span class="pos rv-tag">✓</span>';
-    return `<div class="rrow cap-row">
-      <span class="nowrap">${label}</span>
-      ${capBar(finite ? value : cap * 2, cap)}
-      <span class="rval"><span class="rv-val">${valTxt}</span><span class="rv-sep">/</span><span class="rv-cap">${capTxt}</span>${tag}</span>
-    </div>`;
-  };
-  const items = [];
-  items.push(row('股票總曝險', pn(eqV), CAPS.equity));
-  rows.filter(r => r.layer === 'stock').sort((a, b) => b.valueTwd - a.valueTwd)
-    .forEach(r => items.push(row(esc(r.symbol), pn(r.valueTwd), CAPS.stock)));
-  Object.entries(regionMap).filter(([rg]) => rg !== '美國' && rg !== '其他')
-    .sort((a, b) => b[1] - a[1])
-    .forEach(([rg, v]) => items.push(row(`${esc(rg)}（穿透）`, pn(v), rg === '中國' ? CAPS.china : CAPS.country)));
-  items.push(row('IB 融資槓桿', leverage, CAPS.lev, 'x', '停借'));
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3><button type="button" class="info-link" id="disciplineInfo">紀律檢查</button></h3>
-    <div class="region-rows" style="margin-top:12px">${items.join('')}</div>
-    ${marginDistanceBlock(ibValTwd, loanTwd, CAPS)}
-  </div>`;
-}
-
-// 各幣別組成說明（股票＋債券＋黃金＋現金，略過 0；fmt 由呼叫端決定格式器）
-const fxParts = (v, fmt) => [['股票', v.stockTwd], ['債券', v.bondTwd], ['黃金', v.goldTwd], ['現金', v.cashTwd]]
-  .filter(([, x]) => Math.round(Math.abs(x)) > 0)
-  .map(([label, x]) => `${label} ${fmt(x)}`)
-  .join(' ＋ ');
-
-// ---- 幣別曝險卡（各幣別淨曝險＝股票＋債券＋黃金＋現金，折台幣）----
-function fxSection(rows, accounts, fx) {
-  const byCur = fxExposure(rows, accounts, fx);
-  const partsText = (v) => fxParts(v, MONEY);
-  const totalTwd = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
-  const curs = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd);
-  const maxTwd = Math.max(...curs.map(([, c]) => Math.abs(c.netTwd)), 1);
-
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>幣別曝險 <span class="stat-sub" style="font-weight:400;margin:0">（依底層曝險＋現金帳戶）</span></h3>
-    <div class="region-rows">
-      ${curs.map(([cur, v]) => {
-        const parts = partsText(v);
-        return `<div class="rrow fx-row">
-        <span class="rlabel"><span class="cat-dot" style="background:${cur === '黃金' ? CHART.brown : (CUR_COLOR[cur] || CHART.gray)}"></span>${esc(cur)}</span>
-        <div>
-          <div class="rbar"><div style="width:${(Math.abs(v.netTwd) / maxTwd * 100).toFixed(1)}%;background:${v.netTwd < 0 ? CHART.red : (cur === '黃金' ? CHART.brown : (CUR_COLOR[cur] || CHART.gray))}"></div></div>
-          <div class="fx-amt muted">${MONEY(v.netTwd)}${parts ? ` ＝ ${parts}` : ''}</div>
-        </div>
-        <span class="rval ${v.netTwd < 0 ? 'neg' : ''}">${fmtPct(totalTwd ? v.netTwd / totalTwd * 100 : 0)}</span>
-      </div>`;
-      }).join('')}
-    </div>
-    <p class="muted small" style="margin-top:10px">註解：換算匯率來自 Yahoo Finance</p>
-  </div>`;
-}
-
 // ---- 美元/台幣匯率儀表（暫時從頁面移除，之後再決定位置；要放回頁面時把 ${fxGaugeSection(fx, settings)} 插進 render 即可）----
 // eslint-disable-next-line no-unused-vars -- 刻意停放（見上行註解），要恢復時插回 render 即可
 function fxGaugeSection(fx, settings) {
@@ -455,154 +367,6 @@ function openFxBands(settings) {
       toast('已更新換匯區間'); renderPortfolio();
     }
   });
-}
-
-// ---- ② 穿透式區域曝險 ----
-function regionSection(regionMap, eqV) {
-  const regs = Object.entries(regionMap).sort((a, b) => b[1] - a[1]);
-  const maxV = regs[0]?.[1] || 1;
-  const india = eqV > 0 ? (regionMap['印度'] || 0) / eqV * 100 : 0;
-  const china = eqV > 0 ? (regionMap['中國'] || 0) / eqV * 100 : 0;
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>持股曝險 <span class="stat-sub" style="font-weight:400;margin:0">（已合併 ETF 內含成分，佔股票部位 %）</span></h3>
-    <div class="region-rows">
-      ${regs.map(([reg, v]) => `<div class="rrow">
-        <span class="rlabel"><span class="cat-dot" style="background:${REGION_COLOR[reg] || CHART.gray}"></span>${esc(reg)}</span>
-        <div class="rbar"><div style="width:${(v / maxV * 100).toFixed(1)}%;background:${REGION_COLOR[reg] || CHART.gray}"></div></div>
-        <span class="rval">${fmtPct(eqV > 0 ? v / eqV * 100 : 0)} <span class="muted">${MONEY(v)}</span></span>
-      </div>`).join('')}
-    </div>
-    <p class="muted small" style="margin-top:10px">EIMI 內含的中國／印度／台灣／韓國權重已拆入各區域（近似值，可隨年報更新）。
-    你真實的中國曝險 ${fmtPct(china)}＝ICHN＋KWEB＋EIMI 的中國成分；不看好的印度目前實佔 ${fmtPct(india)}。</p>
-  </div>`;
-}
-
-// ---- 持股公司 Top 20（穿透：直接持股全額＋ETF 前十大成分近似拆分）----
-function companiesSection(rows, eqV) {
-  if (!(eqV > 0)) return '';
-  const { top, coveredValue } = companyExposure(rows);
-  if (!top.length) return '';
-  const maxV = top[0][1].v;
-  const coveredPct = coveredValue / eqV * 100;
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>持股公司 Top 20 <span class="stat-sub" style="font-weight:400;margin:0">（穿透 ETF 成分，佔股票部位 %；顏色＝公司所屬國家）</span></h3>
-    <div class="region-rows">
-      ${top.map(([co, a], i) => {
-        const region = companyRegionOf(co);
-        const color = (region && REGION_COLOR[region]) || CHART.gray;
-        const srcTxt = Object.entries(a.src).sort((x, y) => y[1] - x[1]).map(([s, v]) => `${s} ${MONEY(v)}`).join('、');
-        return `<div class="rrow" title="${esc(co)} ＝ ${esc(srcTxt)}">
-        <span class="rlabel nowrap"><span class="muted" style="font-size:10.5px;display:inline-block;width:16px">${i + 1}</span><span class="cat-dot" style="background:${color}"></span>${esc(co)}</span>
-        <div class="rbar"><div style="width:${(a.v / maxV * 100).toFixed(1)}%;background:${color}"></div></div>
-        <span class="rval">${fmtPct(a.v / eqV * 100)} <span class="muted">${MONEY(a.v)}</span></span>
-      </div>`;
-      }).join('')}
-    </div>
-    <p class="muted small" style="margin-top:10px">ETF 只拆前十大成分（近似權重，可隨年報更新），其餘部分不入列；直接持股（AAPL、GOOGL…）以全額計。
-    Top 20 合計約佔股票部位 ${fmtPct(coveredPct)}。滑鼠移到列上可見「這家公司是透過哪幾筆持股持有」。</p>
-  </div>`;
-}
-
-// ---- ① 分層配置 vs 目標 ----
-function layerSection(layerV, total) {
-  const rowsHtml = LAYER_ORDER.map(k => {
-    const cfg = LAYERS[k];
-    const v = layerV[k] || 0;
-    const pct = total > 0 ? v / total * 100 : 0;
-    let tag;
-    if (pct > cfg.max) tag = '<span class="tag amber">偏高</span>';
-    else if (pct < cfg.min) tag = '<span class="tag amber">偏低</span>';
-    else tag = '<span class="tag green">符合</span>';
-    return `<tr>
-      <td class="nowrap"><span class="cat-dot" style="background:${cfg.color}"></span>${cfg.label}</td>
-      <td class="nowrap">${MONEY(v)}</td>
-      <td class="nowrap">${fmtPct(pct)}</td>
-      <td class="nowrap muted">${cfg.min}–${cfg.max}%</td>
-      <td>${tag}</td>
-    </tr>`;
-  }).join('');
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>投資分層 vs 目標 <span class="stat-sub" style="font-weight:400;margin:0">（投資組合內部：核心–衛星／債／金／個股）</span></h3>
-    <div class="tbl-wrap" style="box-shadow:none;border:none;margin-top:6px"><table>
-      <thead><tr><th>層</th><th>金額</th><th>佔比</th><th>目標區間</th><th>狀態</th></tr></thead>
-      <tbody>${rowsHtml}</tbody></table></div>
-    <p class="muted small">目標區間可依你的規劃調整（跟我說一聲即可改）。</p>
-  </div>`;
-}
-
-// ---- 持股佔比圓環圖（單色珊瑚漸層：身分由標籤直接標示，顏色只表大小順序）----
-function holdingsDonut(rows, total) {
-  if (!(total > 0)) return '';
-  // 全部持股各自成片（依市值排序）；漸層由深到淺內插
-  const sorted = rows.filter(r => r.valueTwd > 0).slice().sort((a, b) => b.valueTwd - a.valueTwd);
-  const items = sorted.map(r => ({ label: r.symbol, v: r.valueTwd }));
-  const mix = (h1, h2, t) => {
-    const c1 = [1, 3, 5].map(i => parseInt(h1.slice(i, i + 2), 16));
-    const c2 = [1, 3, 5].map(i => parseInt(h2.slice(i, i + 2), 16));
-    return '#' + c1.map((x, j) => Math.round(x + (c2[j] - x) * t).toString(16).padStart(2, '0')).join('');
-  };
-  const rampAt = (i, n) => mix(ACCENT, '#FBEAE1', n <= 1 ? 0 : i / (n - 1));   // 品牌色 → 淺膚色內插
-
-  const W = 780, H = 400, cx = 390, cy = 200, r = 118, sw = 26;
-  const polar = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
-  const gap = 2.5 / r;   // 片與片之間 ~2.5px 縫
-  let a = -Math.PI / 2;
-  const slices = items.map((it, i) => {
-    const span = it.v / total * Math.PI * 2;
-    const s = { ...it, i, a0: a, a1: a + span, mid: a + span / 2, pct: it.v / total * 100 };
-    a += span;
-    return s;
-  });
-
-  // 弧線（每片都有原生 title 提示，標籤被省略的小部位滑鼠移上仍可見明細）
-  const arcs = slices.map(s => {
-    const g = Math.min(gap, (s.a1 - s.a0) / 4);
-    const [x0, y0] = polar(r, s.a0 + g), [x1, y1] = polar(r, s.a1 - g);
-    const large = (s.a1 - s.a0 - g * 2) > Math.PI ? 1 : 0;
-    return `<path d="M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}"
-      fill="none" stroke="${rampAt(s.i, slices.length)}" stroke-width="${sw}"
-      ><title>${esc(s.label)}　${MONEY(s.v)}（${s.pct.toFixed(1)}%）</title></path>`;
-  }).join('');
-
-  // 外圈標籤：左右分側；「大部位優先」佔位，放不下的省略（塞不下就不顯示）
-  const GAPY = 18;
-  /** @type {{L:any[], R:any[]}} */
-  const sides = { L: [], R: [] };
-  slices.forEach(s => sides[Math.cos(s.mid) >= 0 ? 'R' : 'L'].push({ ...s, ty: cy + Math.sin(s.mid) * (r + 34) }));
-  const labels = [];
-  for (const side of ['L', 'R']) {
-    const placed = [];
-    for (const s of sides[side].sort((x, y) => y.v - x.v)) {
-      const base = Math.min(Math.max(s.ty, 16), H - 8);
-      let y = null;
-      for (const off of [0, -7, 7, -14, 14, -21, 21, -28, 28, -35, 35, -42, 42, -49, 49, -56, 56, -63, 63]) {   // 允許上下挪動找空位
-        const cand = base + off;
-        if (cand < 16 || cand > H - 8) continue;
-        if (placed.every(p => Math.abs(p - cand) >= GAPY)) { y = cand; break; }
-      }
-      if (y == null) continue;   // 真的塞不下 → 省略標籤（title 提示仍在）
-      placed.push(y);
-      const [px, py] = polar(r + sw / 2 + 4, s.mid);
-      const tx = side === 'R' ? cx + r + 76 : cx - r - 76;
-      const lineEnd = side === 'R' ? tx - 6 : tx + 6;
-      // 小部位（<2.5%）只放代號，省空間讓更多名稱擠得進來
-      const detail = s.pct < 2.5 ? '' : `<tspan fill="var(--text-dim)"> ${MONEY(s.v)}（${s.pct.toFixed(1)}%）</tspan>`;
-      labels.push(`<line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${lineEnd}" y2="${(y - 4).toFixed(1)}" stroke="var(--line-2)" stroke-width="1"/>
-        <text x="${tx}" y="${y.toFixed(1)}" text-anchor="${side === 'R' ? 'start' : 'end'}" font-size="12.5">
-          <tspan fill="var(--text)" font-weight="600">${esc(s.label)}</tspan>${detail}
-        </text>`);
-    }
-  }
-
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>持股佔比 <span class="stat-sub" style="font-weight:400;margin:0">（全部持股依市值；標籤放不下的小部位省略，滑鼠移上色塊可見明細）</span></h3>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:820px;display:block;margin:0 auto" role="img" aria-label="持股佔比圓環圖">
-      ${arcs}
-      ${labels.join('')}
-      <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="30" font-weight="500" style="font-family:var(--serif)" fill="var(--text)">${MONEY(total)}</text>
-      <text x="${cx}" y="${cy + 24}" text-anchor="middle" font-size="12.5" fill="var(--text-dim)">總市值</text>
-    </svg>
-  </div>`;
 }
 
 // ---- 持股表（依層分組）----
