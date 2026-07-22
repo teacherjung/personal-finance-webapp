@@ -5,7 +5,6 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { portfolioXirr } from './portfolio-calculations.js';
-import { compOf } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
 import { buildPortfolioReport } from './portfolio-report.js';
@@ -39,14 +38,20 @@ import {
 } from './portfolio-overview.js';
 import { investmentChartConfig } from './portfolio-chart.js';
 import { portfolioQuoteSymbols, portfolioQuoteWritePlan } from './portfolio-quotes.js';
+import {
+  capeFormModel,
+  fxBandsFormModel,
+  holdingFormModel,
+  holdingSubmission,
+  signalsFormModel,
+  watchFormModel
+} from './portfolio-forms.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
 const kNum = (n) => { const v = n / 1000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
 const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
 
-// ---- 幣別 ----
-const CURRENCIES = ['USD', 'TWD', 'GBP', 'JPY'];
 // 雙計價顯示：TWD（台幣計價，單位「萬」）或 USD（美元計價，單位「K」），記在 localStorage
 let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
@@ -287,13 +292,9 @@ function fxGaugeSection(fx, settings) {
 
 // ⏸ 休眠中：只被停放的 fxGaugeSection 的「區間調整」鈕呼叫；隨儀表一起恢復。
 function openFxBands(settings) {
+  const form = fxBandsFormModel(settings);
   openForm({
-    title: '調整換匯分批區間',
-    fields: [
-      { key: 'fxLow', label: '低於此值＝台幣→美元 分批區', type: 'number', required: true, step: '0.1' },
-      { key: 'fxHigh', label: '高於此值＝美元→台幣 分批區', type: 'number', required: true, step: '0.1' }
-    ],
-    values: { fxLow: settings.fxLow || 28, fxHigh: settings.fxHigh || 32 },
+    ...form,
     onSubmit: async (data) => {
       await api('/settings', { method: 'PUT', body: { fxLow: Number(data.fxLow), fxHigh: Number(data.fxHigh) } });
       toast('已更新換匯區間'); renderPortfolio();
@@ -310,21 +311,11 @@ async function loadSignals(settings) {
 }
 
 function openSignalsForm(settings) {
-  const sig = settings.signals || {};
+  const form = signalsFormModel(settings);
   openForm({
-    title: '更新估值訊號（區域市場，每月一次）',
-    size: 'md',
-    fields: [
-      { key: 'china', label: '中股 滬深300 本益比', type: 'number', step: '0.1', placeholder: '例：12.3' },
-      { key: 'japan', label: '日股 整體 P/B', type: 'number', step: '0.01', placeholder: '例：1.25' },
-      { key: 'korea', label: '韓股 KOSPI P/B', type: 'number', step: '0.01', placeholder: '例：0.95' },
-      { key: 'taiwanPE', label: '台股 大盤本益比', type: 'number', step: '0.1', placeholder: '例：17.5' },
-      { key: 'taiwanYield', label: '台股 大盤殖利率（%）', type: 'number', step: '0.1', placeholder: '例：3.2' },
-      { key: 'realYieldManual', label: '美10年實質利率手動值（%，FRED 失敗時才需填）', type: 'number', step: '0.01', full: true }
-    ],
-    values: sig,
+    ...form,
     onSubmit: async (data) => {
-      await api('/settings', { method: 'PUT', body: { signals: { ...sig, ...data } } });
+      await api('/settings', { method: 'PUT', body: { signals: { ...form.values, ...data } } });
       toast('估值訊號已更新'); renderPortfolio();
     }
   });
@@ -342,10 +333,9 @@ async function loadCape(settings, qqqmShare, qqqmMax) {
 }
 
 function openCapeManual(settings) {
+  const form = capeFormModel(settings);
   openForm({
-    title: '手動設定 Shiller PE',
-    fields: [{ key: 'capeManual', label: '目前 CAPE 值（multpl.com 可查）', type: 'number', required: true }],
-    values: { capeManual: settings.capeManual || '' },
+    ...form,
     onSubmit: async (data) => {
       await api('/settings', { method: 'PUT', body: { capeManual: data.capeManual } });
       toast('已更新 CAPE 手動值'); renderPortfolio();
@@ -394,56 +384,26 @@ function openResearchForm(symbol, research) {
 
 // ---- 表單：持股 / 願望清單 ----
 function openHoldingForm(h) {
+  const form = holdingFormModel(h, LAYERS, LAYER_ORDER);
   openForm({
-    title: h ? '編輯持股' : '新增持股',
-    fields: [
-      { key: 'symbol', label: '代號', type: 'text', required: true, placeholder: '例：CSPX' },
-      { key: 'name', label: '說明（一眼看懂持有什麼）', type: 'text', placeholder: '例：美國指數' },
-      { key: 'layer', label: '層（核心–衛星）', type: 'select', options: LAYER_ORDER.map(k => ({ value: k, label: LAYERS[k].label })) },
-      { key: 'currency', label: '計價幣別', type: 'select', options: CURRENCIES },
-      { key: 'quantity', label: '股數', type: 'number', required: true },
-      { key: 'avgCost', label: '購買均價（原幣，自動算投入成本）', type: 'number', step: '0.01' },
-      { key: 'price', label: '現價（原幣）', type: 'number', required: true, step: '0.01' },
-      { key: 'quoteSymbol', label: 'Yahoo 報價代號（留空＝手動報價）', type: 'text', placeholder: '例：CSPX.L、00719B.TWO、QQQM' }
-    ],
-    values: h ? { ...h, avgCost: h.avgCost != null ? Math.round(Number(h.avgCost) * 100) / 100 : (Number(h.quantity) ? Math.round(Number(h.cost || 0) / Number(h.quantity) * 100) / 100 : '') } : { currency: 'USD', layer: 'core' },
+    ...form,
     onSubmit: async (data) => {
       // 投資原則：凍結名單加碼警告（軟上限——確認後仍可儲存；減碼/改備註不受影響）
-      const oldQty = h ? Number(h.quantity || 0) : 0;
-      const newQty = Number(data.quantity || 0);
-      if (newQty > oldQty) {
-        const sym = String(data.symbol || '').toUpperCase().trim();
-        const comp = compOf({ symbol: sym, layer: data.layer });
-        const reasons = [];
-        if (FREEZE.symbols.has(sym)) reasons.push('單一個股上限');
-        for (const rg of Object.keys(comp.regions || {})) if (FREEZE.regions.has(rg)) reasons.push(`${rg}上限`);
-        if (comp.type === 'equity' && FREEZE.equity) reasons.push('股票總曝險上限');
-        if (reasons.length && !window.confirm(`⚠️ ${sym} 目前凍結加碼（超過：${reasons.join('、')}）。\n依投資原則不應加碼，確定仍要儲存？`)) {
-          throw new Error('已取消：該標的凍結加碼中');
-        }
+      const submission = holdingSubmission(h, data, FREEZE);
+      if (submission.freezeReasons.length && !window.confirm(`⚠️ ${submission.symbol} 目前凍結加碼（超過：${submission.freezeReasons.join('、')}）。\n依投資原則不應加碼，確定仍要儲存？`)) {
+        throw new Error('已取消：該標的凍結加碼中');
       }
-      data.avgCost = Math.round(Number(data.avgCost || 0) * 100) / 100;   // 均價統一兩位小數
-      data.price = Math.round(Number(data.price || 0) * 100) / 100;
-      data.cost = Math.round((data.avgCost * Number(data.quantity || 0)) * 100) / 100;  // 投入成本＝均價×股數
-      if (h) await api('/holdings/' + h.id, { method: 'PUT', body: data });
-      else await api('/holdings', { method: 'POST', body: data });
+      if (h) await api('/holdings/' + h.id, { method: 'PUT', body: submission.body });
+      else await api('/holdings', { method: 'POST', body: submission.body });
       toast('已儲存'); renderPortfolio();
     }
   });
 }
 
 function openWatchForm(w) {
+  const form = watchFormModel(w);
   openForm({
-    title: w ? '編輯願望清單' : '新增願望清單',
-    fields: [
-      { key: 'symbol', label: '代號', type: 'text', required: true },
-      { key: 'name', label: '說明', type: 'text', placeholder: '例：中國網路' },
-      { key: 'targetPrice', label: '目標買價（原幣）', type: 'number', required: true, step: '0.01' },
-      { key: 'currency', label: '幣別', type: 'select', options: CURRENCIES },
-      { key: 'quoteSymbol', label: 'Yahoo 報價代號', type: 'text', placeholder: '例：KWEB、ICHN.L' },
-      { key: 'note', label: '備註（為什麼等這個價位）', type: 'text', full: true }
-    ],
-    values: w || { currency: 'USD' },
+    ...form,
     onSubmit: async (data) => {
       if (w) await api('/watchlist/' + w.id, { method: 'PUT', body: data });
       else await api('/watchlist', { method: 'POST', body: data });
