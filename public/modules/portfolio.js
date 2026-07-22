@@ -6,7 +6,7 @@ import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
 import { fxTable, holdingCost, marginCallDistance, tradePnlBase, tradeSummary, xirrRate } from './portfolio-calculations.js';
-import { compOf, regionExposure, companyExposure, companyRegionOf } from './portfolio-exposure.js';
+import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -427,37 +427,6 @@ function disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibVal
   </div>`;
 }
 
-// ---- 幣別底層曝險：頁面與列印共用的計算（00719B/00720B 歸美元、黃金獨立一列、現金含負融資）----
-function fxExposure(rows, accounts, fx) {
-  const exposureCurrency = (r) => {
-    const sym = String(r.symbol || '').toUpperCase();
-    if (compOf(r).type === 'gold') return '黃金';
-    if (sym === '00719B' || sym === '00720B') return 'USD';   // 台幣交易的美元債 ETF，曝險歸美元
-    return r.currency || 'TWD';   // 缺幣別預設台幣（與 derive/上面 rows 同口徑，自主體檢）
-  };
-  const byCur = {};
-  const bucket = (cur) => byCur[cur] = byCur[cur] || { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 };
-  for (const r of rows) {
-    const c = bucket(exposureCurrency(r));
-    const type = compOf(r).type;
-    if (type === 'bond') c.bondTwd += r.valueTwd;
-    else if (type === 'gold') c.goldTwd += r.valueTwd;
-    else c.stockTwd += r.valueTwd;
-  }
-  // ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js:9 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）
-  const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
-  for (const a of accounts || []) {
-    let bal = Number(a.balance || 0);
-    if (!bal) continue;
-    // 負債型帳戶填「正數」是允許的資料形狀（derive.js:152 兜住了淨資產）——這裡不跟著兜的話，
-    // 幣別曝險會把房貸當「+690 萬現金曝險」，方向整個反掉（自主體檢實測）
-    if (LIABILITY_TYPES.has(a.type || '') && bal > 0) bal = -bal;
-    const cur = a.currency || 'TWD';
-    bucket(cur).cashTwd += bal * (fx[cur] || 1);
-  }
-  for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;
-  return byCur;
-}
 // 各幣別組成說明（股票＋債券＋黃金＋現金，略過 0；fmt 由呼叫端決定格式器）
 const fxParts = (v, fmt) => [['股票', v.stockTwd], ['債券', v.bondTwd], ['黃金', v.goldTwd], ['現金', v.cashTwd]]
   .filter(([, x]) => Math.round(Math.abs(x)) > 0)

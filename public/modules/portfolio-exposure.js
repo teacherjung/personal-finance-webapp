@@ -2,8 +2,10 @@
 // 投資組合的曝險資料與純計算：不碰 DOM、API 或頁面狀態。
 
 /** @typedef {{ type: 'equity'|'bond'|'gold', regions: Record<string, number> }} Composition */
-/** @typedef {{ symbol?: string, layer?: string, valueTwd: number }} ExposureRow */
+/** @typedef {{ symbol?: string, layer?: string, currency?: string, valueTwd: number }} ExposureRow */
 /** @typedef {{ v: number, src: Record<string, number> }} CompanyExposure */
+/** @typedef {{ type?: string, currency?: string, balance?: number }} ExposureAccount */
+/** @typedef {{ stockTwd: number, bondTwd: number, goldTwd: number, cashTwd: number, netTwd: number }} CurrencyExposure */
 
 // ETF 成分穿透（近似權重；可隨基金年報更新）。
 // 與 lib/derive.js 的同名複本是刻意同步點，前後端無法直接共用 runtime 模組。
@@ -78,6 +80,45 @@ export function regionExposure(rows) {
     for (const [region, weight] of Object.entries(composition.regions)) regions[region] = (regions[region] || 0) + row.valueTwd * weight;
   });
   return regions;
+}
+
+/**
+ * 幣別底層曝險：00719B/00720B 歸美元、黃金獨立一列、現金含負融資。
+ * @param {ExposureRow[]} rows
+ * @param {ExposureAccount[]|undefined} accounts
+ * @param {Record<string, number>} fx
+ * @returns {Record<string, CurrencyExposure>}
+ */
+export function fxExposure(rows, accounts, fx) {
+  const exposureCurrency = (r) => {
+    const sym = String(r.symbol || '').toUpperCase();
+    if (compOf(r).type === 'gold') return '黃金';
+    if (sym === '00719B' || sym === '00720B') return 'USD';   // 台幣交易的美元債 ETF，曝險歸美元
+    return r.currency || 'TWD';   // 缺幣別預設台幣（與 derive/上面 rows 同口徑，自主體檢）
+  };
+  /** @type {Record<string, CurrencyExposure>} */
+  const byCur = {};
+  const bucket = (cur) => byCur[cur] = byCur[cur] || /** @type {CurrencyExposure} */ ({ stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 });
+  for (const r of rows) {
+    const c = bucket(exposureCurrency(r));
+    const type = compOf(r).type;
+    if (type === 'bond') c.bondTwd += r.valueTwd;
+    else if (type === 'gold') c.goldTwd += r.valueTwd;
+    else c.stockTwd += r.valueTwd;
+  }
+  // ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）
+  const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
+  for (const a of accounts || []) {
+    let bal = Number(a.balance || 0);
+    if (!bal) continue;
+    // 負債型帳戶填「正數」是允許的資料形狀（derive.js 也兜住了淨資產）——這裡不跟著兜的話，
+    // 幣別曝險會把房貸當「+690 萬現金曝險」，方向整個反掉（自主體檢實測）
+    if (LIABILITY_TYPES.has(a.type || '') && bal > 0) bal = -bal;
+    const cur = a.currency || 'TWD';
+    bucket(cur).cashTwd += bal * (fx[cur] || 1);
+  }
+  for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;
+  return byCur;
 }
 
 /** @param {ExposureRow[]} rows @param {number} [limit=20] @returns {{ top: [string, CompanyExposure][], coveredValue: number }} */
