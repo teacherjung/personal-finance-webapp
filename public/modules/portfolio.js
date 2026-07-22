@@ -47,26 +47,19 @@ import {
   watchFormModel
 } from './portfolio-forms.js';
 import { ibSyncFeedback } from './portfolio-ib-sync.js';
-
-const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
-// 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
-const kNum = (n) => { const v = n / 1000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
-const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1); };
+import { formatPercent, formatPortfolioMoney } from './portfolio-format.js';
 
 // 雙計價顯示：TWD（台幣計價，單位「萬」）或 USD（美元計價，單位「K」），記在 localStorage
 let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
 // 投資原則凍結名單（每次 render 重算；供「編輯持股」加碼警告用）
 let FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
-const MONEY = (twd) => {   // 負號一律 U+2212（鐵則 5）
-  const n = Number(twd || 0), sign = n < 0 ? '−' : '', v = Math.abs(n);
-  return viewCur === 'USD' ? sign + kNum(v / usdRate) + ' K USD' : sign + wanNum(v) + ' 萬';
-};
+const MONEY = (twd) => formatPortfolioMoney(twd, { viewCurrency: viewCur, usdRate });
 // app.js 與頁面模組互相 import；要到使用時才讀 esc，避免頂層循環 import 的 TDZ 白屏。
 const detailFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY });
 const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
-const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
-const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent: fmtPct });
+const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent });
+const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent });
 
 let lineChart = null;
 
@@ -125,7 +118,7 @@ export async function renderPortfolio() {
     ${valuationPlaceholdersHtml()}
     ${xirrSectionHtml(xr, { escapeHtml: esc })}
 
-    ${researchSectionHtml(rows, research, { escapeHtml: esc, formatPercent: fmtPct })}
+    ${researchSectionHtml(rows, research, { escapeHtml: esc, formatPercent })}
   `;
 
   // ---- handlers ----
@@ -301,7 +294,7 @@ async function loadCape(settings, qqqmShare, qqqmMax) {
   try { cape = await api('/cape'); } catch {}
   const body = byId('capeBody');
   if (!body) return;
-  body.innerHTML = capeBodyHtml(cape, qqqmShare, qqqmMax, { escapeHtml: esc, formatPercent: fmtPct });
+  body.innerHTML = capeBodyHtml(cape, qqqmShare, qqqmMax, { escapeHtml: esc, formatPercent });
   const b = byId('capeManualBtn');
   if (b) b.onclick = () => openCapeManual(settings);
 }
@@ -323,9 +316,7 @@ function drawInvestChart(psnaps, curCost, curValue) {
   if (!ctx) return;
   lineChart = new Chart(ctx, investmentChartConfig(psnaps, curCost, curValue, {
     viewCurrency: viewCur,
-    usdRate,
-    formatK: kNum,
-    formatWan: wanNum
+    usdRate
   }));
 }
 
