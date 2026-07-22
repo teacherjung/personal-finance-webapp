@@ -3,9 +3,8 @@
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
-import { portfolioXirr } from './portfolio-calculations.js';
 import { buildPortfolioModel } from './portfolio-model.js';
-import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
+import { buildPortfolioPageState } from './portfolio-state.js';
 import { buildPortfolioReport } from './portfolio-report.js';
 import {
   assetAccountDetailHtml,
@@ -81,24 +80,15 @@ export async function renderPortfolio() {
     cashAccounts, goldAccounts, regionMap
   } = buildPortfolioModel(holdings, accounts, settings);
   usdRate = fx.USD;
-  // 分層
-  /** @type {Record<string, number>} */
-  const layerV = {};
-  rows.forEach(r => { const l = r.layer && LAYERS[r.layer] ? r.layer : 'satellite'; layerV[l] = (layerV[l] || 0) + r.valueTwd; });
-
-  // QQQM 佔美股核心
-  const vOf = (sym) => rows.filter(r => (r.symbol || '').toUpperCase() === sym).reduce((s, r) => s + r.valueTwd, 0);
-  const qqqm = vOf('QQQM'), cspx = vOf('CSPX');
-  const qqqmShare = (qqqm + cspx) > 0 ? qqqm / (qqqm + cspx) * 100 : 0;
-  const qqqmMax = Number(settings.qqqmMaxPct || 30);
-
-  // 投資原則（口徑 % 淨資產、穿透；軟上限）：上限值與凍結名單
-  const netWorth = Number(summary?.netWorth || 0);
-  const CAPS = portfolioCaps(settings);
-  FREEZE = portfolioFreeze(rows, regionMap, eqV, netWorth, CAPS);
-
-  // 資金加權年化報酬（XIRR）——資料齊了在此同步計算，直接嵌進模板
-  const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD, parseLocalDate, settings);
+  const {
+    layerValues: layerV, qqqmShare, qqqmMax, netWorth,
+    caps: CAPS, freeze, xirr: xr
+  } = buildPortfolioPageState({
+    rows, regionMap, equityValue: eqV, summary, settings,
+    snapshots: psnaps, totalCost, totalValue: total,
+    ibTrades, usdRate: fx.USD, parseLocalDate, layers: LAYERS
+  });
+  FREEZE = freeze;
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
