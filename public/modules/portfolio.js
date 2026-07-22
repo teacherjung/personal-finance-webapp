@@ -46,6 +46,7 @@ import {
   signalsFormModel,
   watchFormModel
 } from './portfolio-forms.js';
+import { ibSyncFeedback } from './portfolio-ib-sync.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
@@ -141,36 +142,9 @@ export async function renderPortfolio() {
     btn.disabled = true; btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
     try {
       const r = await api('/ib/sync', { method: 'POST' });
-      const cashTxt = r.cash && Object.keys(r.cash).length
-        ? '；現金 ' + Object.entries(r.cash).map(([c, v]) => moneyCur(v, c)).join('、') : '';
-      toast(`IBKR 同步完成：更新 ${r.updated} 檔、新增 ${r.created} 檔${cashTxt}`);
-      // 未支援幣別被跳過（系統僅支援 TWD/USD/GBP/JPY）→ 明確告知，不默默吞掉（看得見的退化）
-      if (r.skippedCurrencies && r.skippedCurrencies.length) {
-        toast(`注意：這些項目因幣別尚未支援而跳過：${r.skippedCurrencies.join('、')}`, true);
-      }
       // 現金資料異常（Codex r5#7）：後端保留舊值/歸零時本來只寫 server console，前端卻無條件
-      // 報「同步完成」＝使用者不知道淨值裡的 IB 現金可能是過期的。三種情況都要說出來：
-      if (r.cashReportMissing) {
-        toast('注意：這份報表沒有 Cash Report 區塊——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Flex Query 有勾 Cash Report。', true);
-      }
-      if (r.cashDetailMissing) {
-        toast('注意：Cash Report 只有彙總列、且無法判定基準幣別——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 的 Flex Query 勾選 Account Information。', true);
-      }
-      if (r.cashFromSummary) {
-        toast('說明：這份報表的現金只有彙總列——已用基準幣別總額入帳' + (r.cashCollapsed ? `（${r.cashCollapsed} 個其他幣別帳戶已併入彙總顯示）` : '') + '。');
-      }
-      if (r.cashBaseUnsupported) {
-        toast(`注意：報表現金只有彙總列、且基準幣別 ${r.cashBaseUnsupported} 尚未支援——IB 現金沿用上次的舊值（可能過期）。`, true);
-      }
-      if (r.cashDetailIncomplete) {
-        toast('注意：部分幣別的現金金額讀不到——讀得到的已更新，讀不到的沿用舊值（不歸零）。請到 IBKR 確認 Cash Report 有勾 Ending Cash。', true);
-      }
-      if (r.cashSummaryMissing) {
-        toast('注意：報表現金只有彙總列、且彙總列沒有可用金額——IB 現金沿用上次的舊值（可能過期）。請到 IBKR 確認 Cash Report 有勾 Ending Cash。', true);
-      }
-      if (r.cashZeroed) {
-        toast(`提醒：${r.cashZeroed} 個 IB 現金帳戶這次報表已無該幣別，餘額已歸零（現金提領/轉走後的正常結果）。`);
-      }
+      // 報「同步完成」＝使用者不知道淨值裡的 IB 現金可能是過期的；回報模組把全部旗標逐一翻成看得懂的提醒。
+      for (const feedback of ibSyncFeedback(r, moneyCur)) toast(feedback.message, feedback.error);
       // IBKR 報表中已消失的持股（可能已出清）→ 確認後移除
       if (r.missing && r.missing.length) {
         const names = r.missing.map(m => m.symbol).join('、');
