@@ -10,11 +10,12 @@ import { crudRoutes } from './lib/routes/crud.js';
 import { marketRoutes } from './lib/routes/market.js';
 import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
+import { installJsonBodyParsers } from './lib/http-body.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
 export const app = express();
-app.use(express.json({ limit: '15mb' }));   // 上傳帳單 PDF 以 base64 走 JSON，需要較大上限
+installJsonBodyParsers(app);
 app.use(express.static(join(__dirname, 'public')));
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
 app.use('/vendor/chart.js', express.static(join(__dirname, 'node_modules/chart.js/dist/chart.umd.js')));
@@ -30,11 +31,15 @@ app.use('/api', (req, res) => res.status(404).json({ error: '不存在的 API �
 
 // 統一錯誤處理（4 參數＝Express 錯誤中介）：回乾淨 JSON，不回含伺服器絕對路徑的 HTML 堆疊。
 // ⚠️ 自審 r2（中）：診斷不可吞——搬家衝突的「二選一」指引、schema tripwire 的「寫入端漏了驗證」
-// 都靠這裡送達；一律 console.error 留紀錄。有 status＝請求端問題（如壞 JSON body）回泛用訊息；
+// 都靠這裡送達；一律 console.error 留紀錄。413＝上傳過大、回可操作的白話訊息；其餘有 status＝請求端問題
+// （如壞 JSON body）回泛用訊息；
 // 無 status＝伺服器內部錯誤 → 500＋err.message（訊息皆為我們自己寫的中文指引，無堆疊、無路徑洩漏）。
 app.use((err, req, res, next) => {
   console.error('[api error]', /** @type {any} */ (err)?.message || err);
   if (res.headersSent) return next(err);
+  if (/** @type {any} */ (err)?.status === 413 || /** @type {any} */ (err)?.type === 'entity.too.large') {
+    return res.status(413).json({ error: '上傳內容太大，請縮小檔案或備份後再試' });
+  }
   if (/** @type {any} */ (err)?.status) return res.status(/** @type {any} */ (err).status).json({ error: '請求格式不正確' });
   res.status(500).json({ error: String(/** @type {any} */ (err)?.message || '伺服器內部錯誤') });
 });
