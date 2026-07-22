@@ -2,7 +2,6 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
-import { icon } from './icons.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { buildPortfolioPageState } from './portfolio-state.js';
 import { buildPortfolioReport } from './portfolio-report.js';
@@ -35,14 +34,13 @@ import {
   XIRR_INFO_HTML
 } from './portfolio-overview.js';
 import { investmentChartConfig } from './portfolio-chart.js';
-import { portfolioQuoteSymbols, portfolioQuoteWritePlan } from './portfolio-quotes.js';
 import {
   capeFormModel,
   fxBandsFormModel,
   signalsFormModel
 } from './portfolio-forms.js';
 import { createPortfolioEditors } from './portfolio-editors.js';
-import { ibSyncFeedback } from './portfolio-ib-sync.js';
+import { createPortfolioRemoteActions } from './portfolio-remote-actions.js';
 import { formatPercent, formatPortfolioMoney } from './portfolio-format.js';
 import { disciplineInfoHtml, totalValueInfoHtml } from './portfolio-info.js';
 
@@ -97,6 +95,15 @@ export async function renderPortfolio() {
     layers: LAYERS,
     layerOrder: LAYER_ORDER
   });
+  const remoteActions = createPortfolioRemoteActions({
+    api,
+    toast,
+    rerender: renderPortfolio,
+    getRouteSeq: currentRouteSeq,
+    today: todayStr,
+    formatOriginalMoney: moneyCur,
+    confirmMissing: message => window.confirm(message)
+  });
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
@@ -121,35 +128,13 @@ export async function renderPortfolio() {
 
   // ---- handlers ----
   byId('addHolding').onclick = () => editors.openHolding(null);
-  byId('refreshQuotes').onclick = (e) => refreshQuotes(e.currentTarget, holdings, watchlist, settings);   // currentTarget＝按鈕本身（e.target 可能是內層圖示，disabled 會設錯對象，自主體檢）
+  byId('refreshQuotes').onclick = (e) => remoteActions.refreshQuotes(e.currentTarget, holdings, watchlist, settings);   // currentTarget＝按鈕本身（e.target 可能是內層圖示，disabled 會設錯對象，自主體檢）
   byId('printPortfolio').onclick = () => printPortfolioReport({
     rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
     layerV, regionMap, eqV, bondV, goldAll,
     loanTwd, netEquity, leverage
   });
-  byId('ibSync').onclick = async (/** @type {any} */ e) => {
-    const seqAtStart = currentRouteSeq();
-    const btn = e.currentTarget;
-    btn.disabled = true; btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
-    try {
-      const r = await api('/ib/sync', { method: 'POST' });
-      // 現金資料異常（Codex r5#7）：後端保留舊值/歸零時本來只寫 server console，前端卻無條件
-      // 報「同步完成」＝使用者不知道淨值裡的 IB 現金可能是過期的；回報模組把全部旗標逐一翻成看得懂的提醒。
-      for (const feedback of ibSyncFeedback(r, moneyCur)) toast(feedback.message, feedback.error);
-      // IBKR 報表中已消失的持股（可能已出清）→ 確認後移除
-      if (r.missing && r.missing.length) {
-        const names = r.missing.map(m => m.symbol).join('、');
-        if (confirm(`這些持股在 IBKR 報表中已找不到（可能已出清）：\n\n${names}\n\n要從投資組合移除嗎？`)) {
-          for (const m of r.missing) await api('/holdings/' + m.id, { method: 'DELETE' });
-          toast(`已移除 ${r.missing.length} 檔已出清持股`);
-        }
-      }
-      if (seqAtStart === currentRouteSeq()) renderPortfolio();   // 同步期間可能切走了頁（自主體檢）
-    } catch (err) {
-      toast('IBKR 同步失敗：' + err.message, true);
-      btn.disabled = false; btn.innerHTML = icon('download', 16) + 'IBKR 同步';
-    }
-  };
+  byId('ibSync').onclick = (/** @type {any} */ e) => remoteActions.syncIb(e.currentTarget);
   view().querySelectorAll('.fee-tog[data-cur]').forEach(t => t.onclick = () => {
     if (viewCur !== t.dataset.cur) { viewCur = t.dataset.cur; try { localStorage.setItem('pf_viewCur', viewCur); } catch {} renderPortfolio(); }
   });
@@ -305,26 +290,6 @@ function openResearchForm(symbol, research) {
       toast('已儲存'); renderPortfolio();
     }
   });
-}
-
-// ---- 更新報價（持股＋願望清單共用）----
-async function refreshQuotes(btn, holdings, watchlist, settings) {
-  const seqAtStart = currentRouteSeq();
-  const syms = portfolioQuoteSymbols(holdings, watchlist);
-  if (!syms.length) return toast('沒有可更新的報價代號', true);
-  btn.disabled = true; btn.textContent = '更新中…';
-  try {
-    const quotes = await api('/quotes?symbols=' + encodeURIComponent(syms.join(',')));
-    const plan = portfolioQuoteWritePlan(holdings, watchlist, settings, quotes);
-    if (plan.saveFx) await api('/settings', { method: 'PUT', body: plan.fxBody });
-    for (const write of plan.holdingWrites) await api('/holdings/' + write.id, { method: 'PUT', body: write.body });
-    for (const write of plan.watchWrites) await api('/watchlist/' + write.id, { method: 'PUT', body: { ...write.body, lastAt: todayStr() } });
-    toast(`已更新 ${plan.updatedHoldings} 檔報價與匯率${plan.skippedHoldings ? `，${plan.skippedHoldings} 檔略過（無資料或幣別不符）` : ''}`);
-    if (seqAtStart === currentRouteSeq()) renderPortfolio();   // 更新期間可能切走了頁（自主體檢）
-  } catch (e) {
-    toast('更新失敗：' + e.message, true);
-    btn.disabled = false; btn.innerHTML = icon('refresh', 16) + '更新報價';
-  }
 }
 
 // ---- 列印報表：投資組合（跟隨目前計價：台幣→元/萬、美元→USD/K，A4）----
