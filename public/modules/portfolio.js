@@ -9,6 +9,7 @@ import { marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-cal
 import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
+import { buildPortfolioReport } from './portfolio-report.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -1158,139 +1159,23 @@ async function refreshQuotes(btn, holdings, watchlist, settings) {
 }
 
 // ---- 列印報表：投資組合（跟隨目前計價：台幣→元/萬、美元→USD/K，A4）----
-async function printPortfolioReport(d) {
-  const { rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
-    layerV, regionMap, eqV, bondV, goldAll, loanTwd, netEquity, leverage } = d;
-  const rate = fx.USD;
-  const isUS = viewCur === 'USD';
-  const val = (twd) => isUS
-    ? Math.round(Number(twd || 0) / rate).toLocaleString('en-US') + ' USD'
-    : Math.round(Number(twd || 0)).toLocaleString('en-US') + ' 元';
-  const big = MONEY, pctf = fmtPct;   // 沿用模組級格式器（萬 / K USD 隨計價）
-  const generated = todayStr();
-
+async function printPortfolioReport(data) {
   let cape = null;
   try { cape = await api('/cape'); } catch {}
-
-  // 分層配置表
-  const layerRows = LAYER_ORDER.map(k => {
-    const cfg = LAYERS[k];
-    const v = layerV[k] || 0;
-    const pct = total > 0 ? v / total * 100 : 0;
-    const status = pct > cfg.max ? '偏高' : pct < cfg.min ? '偏低' : '符合';
-    return `<tr><td>${cfg.label}</td><td class="num">${val(v)}</td><td class="num">${pctf(pct)}</td>
-      <td class="center">${cfg.min}–${cfg.max}%</td><td class="center">${status}</td></tr>`;
-  }).join('');
-
-  // 持股明細（依層分組，沿用頁面排序）
-  const cmp = (Object.hasOwn(H_SORTERS, hSortKey) && H_SORTERS[hSortKey]) || H_SORTERS.value;   // hasOwn（Codex r9#3）：排序鍵存在 localStorage、可被改成原型名
-  const holdingRows = LAYER_ORDER.map(k => {
-    const list = rows.filter(r => (LAYERS[r.layer] ? r.layer : 'satellite') === k).sort(cmp);
-    if (hSortDir === 'desc') list.reverse();
-    if (!list.length) return '';
-    return `<tr><td colspan="8" class="group">${LAYERS[k].label}</td></tr>` + list.map(r => {
-      const avg = (r.avgCost != null && r.avgCost !== '') ? r.avgCost : (Number(r.quantity) ? Number(r.cost || 0) / Number(r.quantity) : 0);
-      return `<tr>
-        <td><b>${esc(r.symbol)}</b></td><td>${esc(r.name || '')}</td>
-        <td class="num">${fmtPrice0(avg, r.currency)}</td><td class="num">${fmtPrice0(r.price, r.currency)}</td>
-        <td class="num">${val(r.valueTwd)}</td>
-        <td class="num">${r.pnlTwd >= 0 ? '+' : ''}${val(r.pnlTwd)}</td>
-        <td class="num">${r.costTwd ? pctf(r.pnlTwd / r.costTwd * 100) : '—'}</td>
-        <td class="num">${pctf(total > 0 ? r.valueTwd / total * 100 : 0)}</td>
-      </tr>`;
-    }).join('');
-  }).join('');
-
-  // 幣別底層曝險（與頁面 fxSection 同口徑，共用 fxExposure）
-  const byCur = fxExposure(rows, accounts, fx);
-  const curTotal = Object.values(byCur).reduce((s, c) => s + c.netTwd, 0);
-  const curRows = Object.entries(byCur).sort((a, b) => b[1].netTwd - a[1].netTwd).map(([cur, v]) => `<tr><td>${esc(cur)}</td>
-      <td class="num">${val(v.netTwd)}</td>
-      <td class="num">${pctf(curTotal ? v.netTwd / curTotal * 100 : 0)}</td>
-      <td>${fxParts(v, val)}</td></tr>`).join('');
-  const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
-  const fxZone = fx.USD >= hi ? `已進入「美元→台幣」分批區（≥${hi}）` : fx.USD <= lo ? `已進入「台幣→美元」分批區（≤${lo}）` : `中間區（${lo}–${hi}），不動作`;
-
-  // 區域曝險
-  const regionRows = Object.entries(regionMap).sort((a, b) => b[1] - a[1]).map(([reg, v]) =>
-    `<tr><td>${esc(reg)}</td><td class="num">${val(v)}</td><td class="num">${pctf(eqV > 0 ? v / eqV * 100 : 0)}</td></tr>`).join('');
-
-  // IBKR 現金流與交易摘要（原始為美元，統一轉台幣基準再依計價輸出）
-  const inc = settings.ib?.income;
-  const divTotal = inc ? (inc.dividends || 0) + (inc.paymentInLieu || 0) : 0;
-  const netFlow = inc ? divTotal + (inc.withholdingTax || 0) + (inc.interestPaid || 0) + (inc.interestReceived || 0) : 0;
-  const incomeHtml = inc ? `<section><h2>IBKR 現金流 <span>${fmtD(inc.from)}–${fmtD(inc.to)}</span></h2>
-    <table><thead><tr><th class="num">股息（含替代股息）</th><th class="num">融資利息</th><th class="num">利息收入</th><th class="num">淨現金流</th></tr></thead>
-    <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(inc.interestPaid || 0) * rate)}</td>
-    <td class="num">+${val((inc.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
-    ${inc.estimatedNoFx > 0 ? `<p class="muted">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
-    ${inc.skippedNoFx > 0 ? `<p class="muted">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}</section>` : '';
-
-  let tradesHtml = '';
-  if (ibTrades && ibTrades.length) {
-    const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, missingCurrencies } = tradeSummary(ibTrades, settings);
-    const buys = ibTrades.filter(t => t.buySell === 'BUY').length;
-    const li = (arr) => arr.map(([s, p]) => `${esc(s)} ${p >= 0 ? '+' : '−'}${val(Math.abs(p) * rate)}`).join('、') || '—';
-    const note = ibkrCurrencies.length || estimatedCurrencies.length || missingCurrencies.length
-      ? `<p class="muted">${ibkrCurrencies.length ? '註解：換算匯率來自 IBKR。' : ''}${estimatedCurrencies.length ? `${estimatedCurrencies.map(esc).join('、')} 舊交易以目前設定匯率估算。` : ''}${missingCurrencies.length ? `${missingCurrencies.map(esc).join('、')} 交易因缺少匯率暫未計入。` : ''}</p>` : '';
-    tradesHtml = `<section><h2>交易摘要 <span>共 ${ibTrades.length} 筆（買 ${buys}／賣 ${ibTrades.length - buys}）</span></h2>
-      <table><thead><tr><th>已實現損益（FIFO）</th><th>獲利前三</th><th>虧損前三</th></tr></thead>
-      <tbody><tr><td class="num"><b>${realized >= 0 ? '+' : '−'}${val(Math.abs(realized) * rate)}</b></td>
-      <td>${li(winners)}</td>
-      <td>${li(losers)}</td></tr></tbody></table>${note}</section>`;
-  }
-
-  const capeHtml = (cape && cape.value)
-    ? `<p class="muted">Shiller PE（CAPE）：<b>${Number(cape.value).toFixed(2)}</b>（歷史分位 ~${capePercentile(Number(cape.value)).toFixed(0)}%，${(CAPE_BANDS.find(b => Number(cape.value) < b.to) || CAPE_BANDS[CAPE_BANDS.length - 1]).label}）</p>` : '';
-
-  const base3 = eqV + bondV + goldAll;
-  const extraCss = `
-      h1, h2 { margin: 0; font-weight: 600; }
-      h1 { font-size: 26px; letter-spacing: .02em; }
-      h2 { font-size: 16px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ded8cc; padding-bottom: 8px; }
-      h2 span { font-size: 13px; color: #c96442; font-weight: 500; }
-      .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
-      .metric { border: 1px solid #ded8cc; border-radius: 8px; padding: 12px; }
-      .metric span { color: #8a887f; display: block; margin-bottom: 6px; }
-      .metric b { font-size: 19px; font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
-      .metric small { display: block; color: #8a887f; margin-top: 4px; }
-      section { break-inside: avoid; margin: 0 0 18px; }
-      table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-      th, td { text-align: left; border-bottom: 1px solid #ebe6dc; padding: 6px 8px; vertical-align: top; }
-      th { color: #777167; background: #f5f1e8; font-size: 11px; font-weight: 600; }
-      td.num, th.num, .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .center { text-align: center; }
-      td.group { background: #faf7f0; font-weight: 600; }
-      footer { margin-top: 14px; border-top: 1px solid #ded8cc; padding-top: 10px; font-size: 10.5px; color: #8a887f; line-height: 1.6; }
-`;
-  openPrintWindow(`投資組合報表 ${generated}`, extraCss, `
-    <div class="preview-bar"><div><strong>投資組合報表預覽</strong></div><button onclick="window.print()">列印 / 另存</button></div>
-    <main class="preview-shell"><article class="paper">
-      <header class="cover">
-        <div><h1>「投資組合」報表</h1>
-        <p class="muted">產生日期：${esc(generated)}｜計價：${isUS ? '美元（USD）' : '台幣'}（美元/台幣 ${rate.toFixed(2)}）</p></div>
-      </header>
-      <div class="summary">
-        <div class="metric"><span>總市值</span><b>${big(total)}</b><small>投入成本 ${big(totalCost)}</small></div>
-        <div class="metric"><span>損益</span><b>${totalPnl >= 0 ? '+' : ''}${big(totalPnl)}</b><small>累積報酬率 ${totalCost ? pctf(totalPnl / totalCost * 100) : '—'}</small></div>
-        <div class="metric"><span>IB 淨值</span><b>${big(netEquity)}</b><small>IB 融資 ${big(loanTwd)}・IB 融資槓桿 ${isFinite(leverage) ? leverage.toFixed(2) + 'x' : '∞'}</small></div>
-        <div class="metric"><span>股 / 債 / 金</span><b>${[eqV, bondV, goldAll].map(v => base3 ? Math.round(v / base3 * 100) : 0).join(' / ')}</b><small>含黃金存摺，不含現金</small></div>
-      </div>
-      <section><h2>分層配置 vs 目標</h2>
-        <table><thead><tr><th>層</th><th class="num">金額</th><th class="num">佔比</th><th class="center">目標區間</th><th class="center">狀態</th></tr></thead>
-        <tbody>${layerRows}</tbody></table></section>
-      <section><h2>持股明細 <span>共 ${rows.length} 檔</span></h2>
-        <table><thead><tr><th>代號</th><th>說明</th><th class="num">均價</th><th class="num">現價</th><th class="num">市值</th><th class="num">損益</th><th class="num">報酬率</th><th class="num">佔比</th></tr></thead>
-        <tbody>${holdingRows}</tbody></table></section>
-      <section><h2>幣別淨曝險與匯率 <span>${esc(fxZone)}</span></h2>
-        <table><thead><tr><th>幣別</th><th class="num">折${isUS ? '美元' : '台幣'}</th><th class="num">佔比</th><th>組成</th></tr></thead>
-        <tbody>${curRows}</tbody></table></section>
-      <section><h2>持股曝險 <span>佔股票部位 %（已合併 ETF 內含成分）</span></h2>
-        <table><thead><tr><th>區域</th><th class="num">金額</th><th class="num">佔股票部位</th></tr></thead>
-        <tbody>${regionRows}</tbody></table></section>
-      ${incomeHtml}
-      ${tradesHtml}
-      ${capeHtml}
-      <footer>口徑說明：持股成本為 FIFO 成本基礎（與 IBKR 一致，含手續費）；IBKR 部位與現金來自 Flex Query（前一交易日）；報價來自 Yahoo Finance（可能延遲 15–20 分鐘）；融資借款列為負債，淨值＝總部位−融資；區域權重為近似值。本報表僅供個人記錄，非投資建議。</footer>
-    </article></main>`);
+  const capeValue = cape?.value ? Number(cape.value) : 0;
+  const capeInfo = capeValue ? {
+    value: capeValue,
+    percentile: capePercentile(capeValue),
+    label: (CAPE_BANDS.find(band => capeValue < band.to) || CAPE_BANDS[CAPE_BANDS.length - 1]).label
+  } : null;
+  const report = buildPortfolioReport({ ...data, capeInfo }, {
+    viewCurrency: viewCur,
+    generated: todayStr(),
+    sortKey: hSortKey,
+    sortDir: hSortDir,
+    layers: LAYERS,
+    layerOrder: LAYER_ORDER,
+    escapeHtml: esc
+  });
+  openPrintWindow(report.title, report.extraCss, report.html);
 }
