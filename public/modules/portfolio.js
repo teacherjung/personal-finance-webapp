@@ -8,6 +8,7 @@ import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-t
 import { marginCallDistance, tradeSummary, portfolioXirr } from './portfolio-calculations.js';
 import { compOf, companyExposure, companyRegionOf, fxExposure } from './portfolio-exposure.js';
 import { buildPortfolioModel } from './portfolio-model.js';
+import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -112,25 +113,8 @@ export async function renderPortfolio() {
 
   // 投資原則（口徑 % 淨資產、穿透；軟上限）：上限值與凍結名單
   const netWorth = Number(summary?.netWorth || 0);
-  const CAPS = {
-    stock: Number(settings.ibConcentrationPct ?? 5),
-    equity: Number(settings.equityCapPct ?? 90),
-    country: Number(settings.countryCapPct ?? 15),
-    china: Number(settings.chinaCapPct ?? settings.countryCapPct ?? 15),
-    lev: Number(settings.levCapPct ?? 1.3),
-    maint: Number(settings.ibMaintenancePct ?? 25)
-  };
-  const capForRegion = (rg) => rg === '中國' ? CAPS.china : CAPS.country;
-  FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
-  if (netWorth > 0) {
-    rows.filter(r => r.layer === 'stock' && r.valueTwd / netWorth * 100 > CAPS.stock)
-      .forEach(r => FREEZE.symbols.add(String(r.symbol || '').toUpperCase()));
-    for (const [rg, v] of Object.entries(regionMap)) {
-      if (rg === '美國' || rg === '其他') continue;
-      if (v / netWorth * 100 > capForRegion(rg)) FREEZE.regions.add(rg);
-    }
-    FREEZE.equity = eqV / netWorth * 100 > CAPS.equity;
-  }
+  const CAPS = portfolioCaps(settings);
+  FREEZE = portfolioFreeze(rows, regionMap, eqV, netWorth, CAPS);
 
   // 資金加權年化報酬（XIRR）——資料齊了在此同步計算，直接嵌進模板
   const xr = portfolioXirr(psnaps, totalCost, total, ibTrades, fx.USD, parseLocalDate, settings);
