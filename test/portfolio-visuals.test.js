@@ -38,6 +38,16 @@ test('投資視覺｜紀律檢查鎖住上限、斷頭距離、零上限與文�
   assert.equal(disciplineSection(rows, {}, 80, 0, 1, caps, 0, 0, formatters), '');
 });
 
+test('投資視覺｜同一個股拆成多列時只顯示一列合計曝險，與凍結判斷一致', () => {
+  const html = disciplineSection([
+    { symbol: 'AAPL', layer: 'stock', valueTwd: 3 },
+    { symbol: ' aapl ', layer: 'stock', valueTwd: 3 }
+  ], {}, 6, 100, 1, { equity: 90, stock: 5, china: 15, country: 15, lev: 1.3, maint: 25 }, 0, 0, formatters);
+
+  assert.equal((html.match(/AAPL/g) || []).length, 1);
+  assert.match(html, /AAPL[\s\S]*6\.0%[\s\S]*5%[\s\S]*凍結/);
+});
+
 test('投資視覺｜幣別曝險維持底層資產拆解、負債方向與排序', () => {
   const rows = [
     { symbol: 'AAPL', layer: 'stock', currency: 'USD', valueTwd: 100 },

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { portfolioCaps, portfolioFreeze } from '../public/modules/portfolio-risk.js';
+import { portfolioCaps, portfolioFreeze, stockExposureBySymbol } from '../public/modules/portfolio-risk.js';
 
 test('投資風險｜未設定採預設值，明確設定 0 不被改回預設', () => {
   assert.deepEqual(portfolioCaps({}), {
@@ -19,11 +19,14 @@ test('投資風險｜未設定採預設值，明確設定 0 不被改回預設',
 
 test('投資風險｜同代號多筆且大小寫不同要合併，不能拆單逃過上限', () => {
   const caps = portfolioCaps({ ibConcentrationPct: 5 });
-  const freeze = portfolioFreeze([
+  const rows = [
     { symbol: 'TSLA', layer: 'stock', valueTwd: 3 },
-    { symbol: 'tsla', layer: 'stock', valueTwd: 3 }
-  ], {}, 6, 100, caps);
+    { symbol: ' tsla ', layer: 'stock', valueTwd: 3 },
+    { symbol: 'TSLA', layer: 'core', valueTwd: 99 }
+  ];
+  const freeze = portfolioFreeze(rows, {}, 6, 100, caps);
 
+  assert.deepEqual({ ...stockExposureBySymbol(rows) }, { TSLA: 6 });
   assert.deepEqual([...freeze.symbols], ['TSLA']);
 });
 

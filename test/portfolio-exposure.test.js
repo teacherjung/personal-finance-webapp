@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from '../public/modules/portfolio-exposure.js';
 
 test('投資曝險｜已知代號走成分表，未知代號依 layer 退回', () => {
-  assert.deepEqual(compOf({ symbol: 'eimi', layer: 'core' }), {
+  assert.deepEqual(compOf({ symbol: ' eimi ', layer: 'core' }), {
     type: 'equity',
     regions: { 中國: 0.25, 印度: 0.22, 台灣: 0.19, 韓國: 0.09, 其他: 0.25 }
   });

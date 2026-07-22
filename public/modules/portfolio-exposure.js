@@ -1,6 +1,8 @@
 // @ts-check
 // 投資組合的曝險資料與純計算：不碰 DOM、API 或頁面狀態。
 
+import { normalizePortfolioSymbol } from './portfolio-symbol.js';
+
 /** @typedef {{ type: 'equity'|'bond'|'gold', regions: Record<string, number> }} Composition */
 /** @typedef {{ symbol?: string, layer?: string, currency?: string, valueTwd: number }} ExposureRow */
 /** @typedef {{ v: number, src: Record<string, number> }} CompanyExposure */
@@ -40,7 +42,7 @@ const COMPOSITION = {
 };
 
 /** ETF/持股 → 成分（型別、區域穿透）；未知代號依 layer 退回。 @param {{symbol?: string, layer?: string}} h @returns {Composition} */
-export const compOf = (h) => COMPOSITION[(h.symbol || '').toUpperCase()]
+export const compOf = (h) => COMPOSITION[normalizePortfolioSymbol(h.symbol)]
   || { type: h.layer === 'bond' ? 'bond' : h.layer === 'gold' ? 'gold' : 'equity', regions: { 其他: 1 } };
 
 // ETF 內含公司穿透（各 ETF 前十大成分的近似權重）。
@@ -91,7 +93,7 @@ export function regionExposure(rows) {
  */
 export function fxExposure(rows, accounts, fx) {
   const exposureCurrency = (r) => {
-    const sym = String(r.symbol || '').toUpperCase();
+    const sym = normalizePortfolioSymbol(r.symbol);
     if (compOf(r).type === 'gold') return '黃金';
     if (sym === '00719B' || sym === '00720B') return 'USD';   // 台幣交易的美元債 ETF，曝險歸美元
     return r.currency || 'TWD';   // 缺幣別預設台幣（與 derive/上面 rows 同口徑，自主體檢）
@@ -132,7 +134,7 @@ export function companyExposure(rows, limit = 20) {
   };
   for (const row of rows) {
     if (compOf(row).type !== 'equity' || !(row.valueTwd > 0)) continue;
-    const symbol = String(row.symbol || '').toUpperCase();
+    const symbol = normalizePortfolioSymbol(row.symbol);
     if (DIRECT_COMPANY[symbol]) { add(DIRECT_COMPANY[symbol], row.valueTwd, symbol); continue; }
     const weights = COMPANY_WEIGHTS[symbol];
     if (!weights) continue;

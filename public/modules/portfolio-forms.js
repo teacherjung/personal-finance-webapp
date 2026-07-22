@@ -2,6 +2,7 @@
 // 投資表單的純資料規格：欄位、預設值、持股送出前整理與凍結加碼原因。
 
 import { compOf } from './portfolio-exposure.js';
+import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 
 export const PORTFOLIO_CURRENCIES = ['USD', 'TWD', 'GBP', 'JPY'];
 
@@ -80,12 +81,21 @@ export function holdingFormModel(holding, layers, layerOrder) {
 export function holdingSubmission(holding, data, freeze) {
   const oldQty = holding ? Number(holding.quantity || 0) : 0;
   const newQty = Number(data.quantity || 0);
-  const symbol = String(data.symbol || '').toUpperCase().trim();
+  const symbol = normalizePortfolioSymbol(data.symbol);
   /** @type {string[]} */
   const freezeReasons = [];
 
-  if (newQty > oldQty) {
-    const composition = compOf({ symbol, layer: data.layer });
+  const composition = compOf({ symbol, layer: data.layer });
+  const oldSymbol = normalizePortfolioSymbol(holding?.symbol);
+  const oldComposition = holding ? compOf({ symbol: oldSymbol, layer: holding.layer }) : null;
+  const identityChanged = Boolean(holding) && (
+    symbol !== oldSymbol
+    || data.layer !== holding.layer
+    || composition.type !== oldComposition?.type
+    || JSON.stringify(composition.regions) !== JSON.stringify(oldComposition?.regions)
+  );
+
+  if (newQty > 0 && (newQty > oldQty || identityChanged)) {
     if (freeze.symbols.has(symbol)) freezeReasons.push('單一個股上限');
     for (const region of Object.keys(composition.regions || {})) {
       if (freeze.regions.has(region)) freezeReasons.push(`${region}上限`);
@@ -94,6 +104,7 @@ export function holdingSubmission(holding, data, freeze) {
   }
 
   const body = { ...data };
+  body.symbol = symbol;
   body.avgCost = Math.round(Number(data.avgCost || 0) * 100) / 100;
   body.price = Math.round(Number(data.price || 0) * 100) / 100;
   body.cost = Math.round((body.avgCost * Number(data.quantity || 0)) * 100) / 100;

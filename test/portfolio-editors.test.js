@@ -36,7 +36,7 @@ test('投資編輯流程｜新增持股整理金額後只送一次 POST，成功
     path: '/holdings',
     options: {
       method: 'POST',
-      body: { symbol: ' cspx ', layer: 'core', quantity: 3, avgCost: 10.13, price: 12.35, cost: 30.39 }
+      body: { symbol: 'CSPX', layer: 'core', quantity: 3, avgCost: 10.13, price: 12.35, cost: 30.39 }
     }
   }]);
   assert.deepEqual(state.notices, ['已儲存']);

@@ -12,8 +12,8 @@ const layers = { core: {}, satellite: {}, stock: {}, bond: {}, gold: {} };
 test('投資頁狀態｜分層、QQQM 核心佔比與未知分層退路維持原口徑', () => {
   const state = buildPortfolioPageState({
     rows: [
-      { symbol: 'CSPX', layer: 'core', valueTwd: 75 },
-      { symbol: 'QQQM', layer: 'core', valueTwd: 25 },
+      { symbol: ' CSPX ', layer: 'core', valueTwd: 75 },
+      { symbol: ' QQQM ', layer: 'core', valueTwd: 25 },
       { symbol: 'qqqm', layer: 'core', valueTwd: 25 },
       { symbol: 'AAPL', layer: 'stock', valueTwd: 60 },
       { symbol: 'OTHER', layer: 'unknown', valueTwd: 10 }

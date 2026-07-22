@@ -47,6 +47,17 @@ test('個股研究卡｜空狀態與未寫論點提示維持原樣', () => {
   assert.match(html, /data-add-cp="AAPL"/);
 });
 
+test('個股研究卡｜同代號拆成多筆時只顯示一張卡並合併報酬', () => {
+  const html = researchSectionHtml([
+    holding({ costTwd: 100, pnlTwd: 10 }),
+    holding({ symbol: ' aapl ', costTwd: 50, pnlTwd: 20 })
+  ], [], formatters);
+
+  assert.equal((html.match(/data-add-cp="AAPL"/g) || []).length, 1);
+  assert.equal((html.match(/id="cp_AAPL"/g) || []).length, 1);
+  assert.match(html, />\+20\.0%<\/span>/);
+});
+
 test('個股研究卡｜所有使用者文字與資料屬性進 HTML 前都消毒', () => {
   const symbol = 'X" onmouseover="alert(1)';
   const html = researchSectionHtml([
@@ -57,7 +68,7 @@ test('個股研究卡｜所有使用者文字與資料屬性進 HTML 前都消�
     checkpoints: [{ date: '<b>date</b>', note: '<svg onload=alert(1)>' }]
   }], formatters);
 
-  assert.match(html, /X&quot; onmouseover=&quot;alert\(1\)/);
+  assert.match(html, /X&quot; ONMOUSEOVER=&quot;ALERT\(1\)/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(html, /&lt;svg onload=alert\(1\)&gt;/);
@@ -69,7 +80,8 @@ test('個股研究表單｜回傳既有資料；新代號則使用空值並保�
   const edit = researchFormModel('aapl', [existing]);
   assert.equal(edit.existing, existing);
   assert.equal(edit.values, existing);
-  assert.equal(edit.title, 'aapl 研究卡');
+  assert.equal(edit.symbol, 'AAPL');
+  assert.equal(edit.title, 'AAPL 研究卡');
   assert.deepEqual(edit.fields.map(field => field.key), ['thesis', 'metrics', 'risks']);
 
   const fresh = researchFormModel('GOOGL', [existing]);

@@ -18,6 +18,7 @@ function setup(overrides = {}) {
     openInfo: (title, html, options) => { info = { title, html, options }; },
     toast: message => { notices.push(message); },
     rerender: () => { renders += 1; },
+    isCurrentRender: () => true,
     escapeHtml,
     formatPercent: value => `${Number(value).toFixed(1)}%`,
     ...overrides
@@ -105,4 +106,31 @@ test('投資估值操作｜三種表單維持原寫入內容，成功後才提�
   ]);
   assert.deepEqual(state.notices, ['已更新換匯區間', '估值訊號已更新', '已更新 CAPE 手動值']);
   assert.equal(state.getRenders(), 3);
+});
+
+test('投資估值操作｜舊 render 或已被替換的容器不接收晚回來的估值結果', async () => {
+  /** @type {(value:any) => void} */
+  let resolveCape = () => {};
+  let current = true;
+  const state = setup({
+    api: async () => new Promise(resolve => { resolveCape = resolve; }),
+    isCurrentRender: () => current
+  });
+  const oldBody = { innerHTML: '' };
+  state.elements.set('capeBody', oldBody);
+
+  const staleRouteLoad = state.actions.loadCape({}, 10, 30);
+  current = false;
+  resolveCape({ value: 25 });
+  await staleRouteLoad;
+  assert.equal(oldBody.innerHTML, '');
+
+  current = true;
+  const replacedLoad = state.actions.loadCape({}, 10, 30);
+  const newBody = { innerHTML: '' };
+  state.elements.set('capeBody', newBody);
+  resolveCape({ value: 25 });
+  await replacedLoad;
+  assert.equal(oldBody.innerHTML, '');
+  assert.equal(newBody.innerHTML, '');
 });

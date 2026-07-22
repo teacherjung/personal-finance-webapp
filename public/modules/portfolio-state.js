@@ -3,6 +3,7 @@
 
 import { portfolioXirr } from './portfolio-calculations.js';
 import { portfolioCaps, portfolioFreeze } from './portfolio-risk.js';
+import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 
 /** @typedef {{ symbol?:string, layer?:string, valueTwd?:number|string }} StateRow */
 /** @typedef {{ month:string, value?:number, cost?:number }} StateSnapshot */
@@ -26,7 +27,7 @@ export function buildPortfolioPageState(input) {
   }
 
   const valueOf = (symbol) => input.rows
-    .filter(row => (row.symbol || '').toUpperCase() === symbol)
+    .filter(row => normalizePortfolioSymbol(row.symbol) === symbol)
     .reduce((sum, row) => sum + Number(row.valueTwd || 0), 0);
   const qqqm = valueOf('QQQM');
   const cspx = valueOf('CSPX');
