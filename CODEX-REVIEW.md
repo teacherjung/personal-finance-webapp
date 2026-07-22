@@ -29,24 +29,34 @@ npm run typecheck && npm run lint && npm test
 
 （若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
-## 本輪審查重點（r13；2026-07-21；範圍＝main 現況，火力集中 #175–#184 這批）
+## 本輪審查重點（r14；2026-07-22；範圍＝main 現況，火力集中 #192–#195 這批）
 
-這 10 個 PR 是 Claude **趁使用者運動時自主連做**的一批（匯入紀錄、版面微調、收/支/內轉三套分類管理、銀行「真·學習」記憶版＋同類一起改＋管理畫面、D1 報價自動更新、銀行帳戶獨立頁、卡費明細改名）。#157–#174 已在 r9–r12 審過；本輪對 main 做一輪全面 pass，但**新增碼＝#175–#184 才是未審的火力點**。特徵：①**動到金流／帳務正確性關鍵路徑**（銀行分箱、學習、方向、內轉子分類），②**多條是「修正的修正」**（#178 有兩輪自審、#184 修過 collision）——歷史經驗：修正比原始程式更容易出錯，請帶著這個預期審，尤其盯 Claude 自審「已修正」的地方有沒有留下新破口。
+這 4 個 PR 是 Claude **趁使用者睡覺自主連做**的一批：**防撞護欄 G3–G5（#192）＋每日洞察引擎 D2–D4（#193/#194/#195）**。每一階段 Claude 都跑了**對抗式自審**（多路 reviewer 找碴→再派 agent 逐條「試著推翻」→只留站得住的），confirmed 的都已修＋補回歸考題。特徵：①**D3（#194）是全新子系統、最複雜**——差異引擎有**寫檔副作用（GET /api/insights 讀取即更新書籤）**＋**跨 await 寫檔**，計畫本就指定「合併後建議 Codex 審一輪」；②**G3 動到金流／帳務寫入路徑**（把「編輯＋套同類」改成原子一次寫檔）；③多條是「自審已修」的地方——歷史經驗：**修正比原始程式更容易出錯**，請帶著這個預期，尤其盯下面標「（自審修）」的點有沒有留下新破口。文末有「已自審修正紀錄」省你重工。
 
 **重點檢查（依風險）**：
-1. **銀行學習方向護欄**（#178，**最高風險·生存優先**）：`classifyWithLearning`（`lib/services/bank-import.js:201`）靠 `learnedTypeFitsDirection`（:190）擋「學到的 income 被套到流出方向」。這是第一輪自審抓到的生存級 bug（學過的收入把一筆 out 記成 income → 淨值無聲虛增）。請把 type(income/expense/transfer)×direction(in/out) **六格全列出來驗**：有沒有漏擋的組合？transfer 是否兩向都放行、且子分類角色（交割 vs 內轉出/內轉入）跟著方向走對？
-2. **bankKey 身分鑰匙**（#178）：`bankKeyOf(summary, note)`（:171）＋`counterpartyAcct`（:164，regex 抓遮罩帳號）。太寬＝不同交易被當同一條規則、一次教錯全部套錯；太窄＝白學。請驗：抓對方帳號的 regex 邊界（多段數字、`****` 遮罩變體）；**純摘要無帳號時 key 會不會塌成只剩摘要而過度合併**？空摘要／空備註的退化？
-3. **「同類一起改」批次套用**（#182）：`applyLearnedBankToExisting(bankKey)`（:265）。請驗：範圍是否精確鎖在同 bankKey、不誤改別條？**批次路徑有沒有跟單筆一樣過方向護欄**（否則第 1 點擋住的錯配會從批次這條路漏進去）？改既有交易時分類/子分類/顯示名口徑一致？
-4. **內轉子分類 role-first conform**（#180/#184）：`conformTransferSub`（`lib/services/categories.js:132`）對預設 token（內轉出/內轉入/交割）走**角色優先**、自訂 token 走字面——修過 collision（使用者又自訂一項叫「內轉出」時字面比對誤對）。`saveTransferSubs`（:148）改名連動既有交易、刪除→conform 空。請驗：改名 vs 刪+增（`renames` 標記）分得清？刪某角色後既有交易 conform 到空字串如預期？保留字整組拒絕（400）守住？`resolveCls`（bank-import.js:330）的 transfer 分支有沒有把子分類 conform 到現名？
-5. **D1 報價自動更新**（#179）：`refreshQuotesIfStale`（`lib/services/market-data.js:103`）用 `quotesLastAt`（伺服器擁有、比照 `ib.lastSync`）判 >1h。**已知刻意取捨**＝任何一次成功就蓋時間戳（避免 API 被打爆、不做部分失敗重試）——確認程式與 docstring 一致、且 `quotesLastAt` **沒混進 CRUD/settings 白名單**（前端可寫就能靠改時間戳癱瘓更新）。FX 匯率 symbol 是**前置**到 syms（40 上限砍不到）——驗這條還在。
-6. **新 KV 鍵的入櫃檯與備份**（#178/#184）：`learnedBank`/`transferSubs` 兩個新頂層鍵，`KV_MAP_KEYS`（`lib/store.js:26`）決定預設 `{}`(map) vs `[]`(array)。請驗：`sanitizeLearnedBank`（`lib/schema.js:268`）／`sanitizeTransferSubs`（:294）都掛進 `sanitizeDbForWrite` 單一寫入閘？`learnedBank` 以使用者文字（摘要）為 key＝**原型污染面**（鐵則 3.5）——寫入端拒保留字家族了嗎？**export→import 備份會不會漏帶這兩個鍵**（settings 新欄位同步點）？
-7. **匯入紀錄／整批刪除**（#175）：`listBankBatches`（:450）/`deleteBankBatch`（:475）。請驗：刪一批後 `bankRef` 去重鍵是否一併清掉、讓「重新上傳同一份」冪等重進（不被殘留去重鍵擋住）？空批次／不存在 batchId 的處理？
-8. **收入樹＋帳戶分頁＋版面**（#177/#183/#176，較低風險）：`effectiveIncomeTree`/`saveIncomeTree`（categories.js:59/72）改名連動、退路節點（其他/其他收入）鎖定不可刪；銀行帳戶獨立頁（`type:'cash'` 過濾）有沒有把非現金漏進、或現金漏出；cashflow 版面微調有無 esc/XSS 漏網。
+1. **D3 差異引擎**（`lib/services/insights.js`，**最複雜·計畫指定**）：
+   - **read-await-write**：`getInsights` 先 await `getCape`/`getRealYield` 算 ECY，**await 之後才 `getDb`→算→`saveDb`**。驗：await 到 saveDb 之間確實**無任何 await**（否則同 syncIb r3#1 病）？兩次並發 `/api/insights` 會不會 clobber 書籤？
+   - **GET 的寫檔副作用**：讀取＝更新書籤。驗：算到一半 throw 時 `lib/routes/core.js` 的 try/catch 降級（回平靜空殼）安不安全、會不會留半更新書籤？
+   - **升級同鑰匙（自審修·生存級）**：訂閱/保險「將至→已過」改共用 `sub-charge-<id>`／`ins-pay-<id>`（`lib/derive.js`），不再拆 `-overdue-`——否則升級當下被謊報成「✓已解除 👍」。驗：**還有沒有別的「同一顧慮跨日換 key」的提醒漏網**？
+   - **有效書籤判準（自審修）**：需 `lastSeenAt`(字串)＋`reminders`(陣列) 才算非首次；殘缺書籤退回首次。驗：`sanitizeInsightState`（`lib/schema.js`）清出來的殘缺形狀真的不會洪水標 🆕？
+   - **固定窗 Δ（自審修）**：`computeWindows` 的 `pctOf` 用 **abs(基期)**（負淨值方向不反轉）、基期 0 有變動不算平靜、`closestOnOrBefore` 依賴升冪排序。**已知取捨**＝「今天」窗＝latest vs 前一個既有日，日線稀疏/跨多日時可能把多天標成「今天」——確認這是取捨非 bug。
+2. **signal-tiers.js 抽出的 parity**（`public/modules/signal-tiers.js`）：估值檔位門檻從 `portfolio.js` 搬出成**前後端共用單一真相**（前端儀表＋後端 insights 跳檔都 import）。驗：`regionTier`/`taiwanTier`/`ecyOf` 跟原 portfolio.js **逐一等價**（邊界值 3／5／11.5／1.2／0.9…）？portfolio.js 改 import、`TIER_META` 從 `TIER_LABELS`＋顏色重建後儀表行為不變？後端 `computeSignalTiers` 五市場口徑（us 用 ecy、taiwan 用 PE/殖利率）對？
+3. **G3 同類/同店一起改原子化**（`lib/routes/crud.js` PUT `applyAll`＋`lib/services/statement-import.js applyCategoryToStoreDb`／`bank-import.js applyLearnedBankToDb`）：傳播邏輯抽成**純 in-db worker（不自己 saveDb）**，原子入口在同一次 `updateItem` 內先學再傳播、一次寫檔。驗：worker 真的**不自己 saveDb**（否則雙寫）？傳播 throw 真的**連本筆編輯一起 rollback**（`updateItem` 尚未 save）？**（自審修）** 服務費／空分類／保留字 storeKey 的前提 guard 擋全（別讓 worker 的 throw 把本筆編輯連坐）？**方向護欄（r13#2）在原子路徑仍逐筆生效**？標準端點薄殼（`applyCategoryToStore`/`applyLearnedBankToExisting`）與 worker 同一份？
+4. **G4 停車費身分判準**（`lib/statement.js applyDisplayLabels`＋`lib/services/categories.js parkingSubName`）：包裝觸發改認「停車費」子分類的**身分（現名）**、不字面比對。驗：`parkingSubName` 對「改名／刪除／改名後又重建同名」解析對（自審有個 rename-then-readd 邊角被判 REFUTED＝可接受，請自行判斷）？**六個呼叫點**（conformTxs/importRows/normalizeBranches/applyCategoryToStoreDb/renameStoreDisplay/learnFromStmtEdit）都傳了 `parkSub`？未傳時退回字面相容？
+5. **G5 欄位所有權**（`AGENTS.md`「欄位所有權」表＋`lib/schema.js`）：新增 `watchlist.lastAt` 型別；把 field→owner 整理成表。驗：表與實際 `WRITABLE_FIELDS`/`FIELD_SCHEMA` **一致**、有沒有**漏標的服務層欄位還在 CRUD 白名單**？（表中已註記 watchlist 報價欄目前前端寫、待日後移後端。）
+6. **D2 提醒穩定鑰匙**（`lib/derive.js computeReminders`）：19 條配 key。**（自審修）** 個股集中度改**按 symbol 彙總**（同一檔多筆手動持股不撞 key，順手補「拆單 3%+3%>5% 逃個股上限」的守門洞）。驗：同一次計算 key **必互異**、還有沒有會撞 key 或含易變值（金額/百分比/索引）的 key？
+7. **D4 新聞牆**（`public/modules/dashboard.js`，純前端）：消費 `/api/insights`。驗：insights 失敗**整段退回舊「需要處理」**的 fallback 完整？**（自審修）**「一次 app-open 只抓一次」的 Promise 快取（背景重繪不重抓、免 🆕 被秒吸收）？跳檔 title／cleared title（來自書籤）有沒有 `esc`／XSS 漏網？
 
-**新測試檔**（可先看它們界定了哪些不變量、再找它們沒測到的縫）：`test/bank-learning.test.js`、`test/market-data.test.js`、`test/transfer-subcats.test.js`、`test/bank-import-batches.test.js`（全庫 446 題）。
+**新測試檔**（先看它們界定了哪些不變量，再找沒測到的縫）：`test/guardrail-g3-atomic.test.js`、`test/guardrail-g4-parking-rename.test.js`、`test/signal-tiers.test.js`、`test/insights.test.js`（＋`test/derive-reminders.test.js`／`test/server.test.js` 有新增；全庫 **510** 題）。
 
-**收官條件**：0 高 ≤2 輕 → r13 收官，回主線（每日洞察引擎 D2＝提醒配鑰匙）。
+**已自審修正紀錄（這些已修，請驗「修得對不對、有沒有新破口」，不必重新發現）**：
+- G3：服務費列 applyAll 會把本筆編輯連坐 rollback → 改為傳播不適用就略過、本筆照存（＋空分類/保留字 guard）。
+- D2：`conc-stock-<symbol>` 撞 key → 按 symbol 彙總（＋補拆單逃上限）。
+- D3：5 條——①升級同鑰匙（生存級）②負基期 Δ% 用 abs ③基期 0 有變動不算平靜 ④/⑤殘缺書籤退回首次。
+- D4：/insights 每次重繪把 🆕 秒吸收 → 一次 app-open 只抓一次。
+
+**收官條件**：0 高 ≤2 輕 → r14 收官。之後主線＝每日洞察引擎已完結（D0–D4 全完工），可接 D5（洞察第二批）或使用者新指示。
 
 ### 自我檢查（開審前）
-- `git fetch origin && git checkout --detach origin/main`；`git log --oneline -3` 應含 #184（`3d53894`）；三關全綠再開審。
+- `git fetch origin && git checkout --detach origin/main`；`git log --oneline -5` 應含 #195（`e7d7bdf`，D4）；三關全綠再開審。
 - **絕不在 codex worktree commit**；`?? node_modules`＝舊樹快照，先更新再看。
