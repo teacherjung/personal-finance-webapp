@@ -24,6 +24,9 @@
   - **投資編輯工作流＝`modules/portfolio-editors.js`**：持股／願望清單的表單開啟、凍結加碼確認、POST／PUT、成功提示與重畫集中在這裡；頁面注入 API、彈窗、確認與重畫工具，模組不直接 import `app.js`。改寫入順序或入口時要用假 API 補工作流考題，並維持凍結名單在「按下儲存」時才重讀。
   - **投資遠端操作工作流＝`modules/portfolio-remote-actions.js`**：IBKR 同步、可能已出清持股確認、Yahoo 報價與匯率逐筆寫回、按鈕狀態、成功／失敗提示與切頁序號防護集中在這裡；頁面注入 API、日期、提示與重畫工具，模組不直接 import `app.js`。改遠端操作時要用假 API 鎖住寫入順序、拒絕刪除、錯誤復原，以及「切頁後不重畫舊頁」。
   - **投資估值操作工作流＝`modules/portfolio-valuation-actions.js`**：CAPE／實質利率載入、五市場訊號與休眠匯率入口、三個設定表單、成功提示與重畫集中在這裡；頁面注入 API、DOM 查找、彈窗與格式工具，模組不直接 import `app.js`。改外部估值載入或設定寫回時要用假 API／假 DOM 鎖住雙來源讀取、失敗退路、表單 payload 與按鈕綁定。
+  - **投資說明互動＝`modules/portfolio-info-actions.js`**：總市值、成本、股票／債券／現金／黃金、IB 活動、XIRR 與紀律檢查的唯讀彈窗入口集中在這裡；頁面注入 DOM、彈窗與格式工具，模組不直接 import `app.js`。改彈窗標題、尺寸或內容入口時要用假 DOM 鎖住每個按鈕的對應關係。
+  - **投資研究互動＝`modules/portfolio-research-actions.js`**：研究新增／編輯、檢查點新增、POST／PUT、成功提示與重畫集中在這裡；頁面注入 API、DOM、表單、日期與提示工具，模組不直接 import `app.js`。改研究寫入時要用假 API 鎖住既有／新研究分流、payload、空白檢查點與失敗退路。
+  - **投資頁拆分停止線**：`portfolio.js` 刻意保留八組資料載入、頁面模型／狀態協調、主 HTML 組裝、計價與排序狀態、持股／願望清單刪除綁定、圖表生命週期、各控制器啟動與 A4 報表列印。這些是頁面協調者的合理責任；**不要只為縮短行數繼續拆分**。往後只有責任真正變複雜、能形成獨立契約與考題時才新增模組。
   - **投資顯示格式單一真相＝`modules/portfolio-format.js`**：K／萬／百分比、NT／US 雙計價與 U+2212 負號都由這個零依賴純模組提供；`portfolio.js`、活動卡、A4 報表與折線圖共用。新增投資金額顯示時直接 import，不要另抄 `kNum`／`wanNum`／`fmtPct`；改格式時補固定數字考題並檢查四個使用端。總市值與紀律檢查的說明 HTML 存放在零依賴 `modules/portfolio-info.js`，頁面只接 `openInfo` 事件。休眠中的美元／台幣匯率儀表 HTML 存放在 `portfolio-valuation.js` 的 `fxGaugeHtml`，目前不插入頁面；要恢復時只在 `portfolio.js` 接 DOM 與表單事件，不把 HTML 搬回主流程。
   - ⚠️ **async render 寫 `#view` 前要 guard 序號**（Codex r10#6）：render 一進場 `const seq = currentRouteSeq()`，`await` 完、**動任何 DOM/圖表（含 `destroyCharts`）之前**先 `if (seq !== currentRouteSeq()) return;`——不然快速切頁時慢頁 resolve 會蓋掉新頁（router 的事後檢查太晚，寫入發生在 render 內部）。有遞迴重載（如 `renderSubscriptions` 的 autoExpire）也要在遞迴分支前 guard。
   - **帳單原文一律用 `origFromStmtRef`（後端）／`stmtOrig`（前端 `app.js`）取**，會剝去重序號 `|#N`（Codex r10#5）；不要在各頁手寫 `split('|').slice(3)`（會把「星巴克｜#2」當原文，改名/分組/tooltip 全對不上）。
