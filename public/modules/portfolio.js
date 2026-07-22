@@ -38,6 +38,7 @@ import {
   XIRR_INFO_HTML
 } from './portfolio-overview.js';
 import { investmentChartConfig } from './portfolio-chart.js';
+import { portfolioQuoteSymbols, portfolioQuoteWritePlan } from './portfolio-quotes.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 // 千（K）與萬：>=10 單位取整；<10 單位保留一位小數（2.4 K／6.5 萬）
@@ -454,40 +455,16 @@ function openWatchForm(w) {
 // ---- 更新報價（持股＋願望清單共用）----
 async function refreshQuotes(btn, holdings, watchlist, settings) {
   const seqAtStart = currentRouteSeq();
-  const FX_SYMS = { 'TWD=X': 'USD', 'GBPTWD=X': 'GBP', 'JPYTWD=X': 'JPY' };   // Yahoo 匯率代號 → 幣別
-  const syms = [...new Set([
-    ...holdings.map(h => h.quoteSymbol).filter(Boolean),
-    ...watchlist.map(w => w.quoteSymbol).filter(Boolean),
-    ...Object.keys(FX_SYMS)
-  ])];
+  const syms = portfolioQuoteSymbols(holdings, watchlist);
   if (!syms.length) return toast('沒有可更新的報價代號', true);
   btn.disabled = true; btn.textContent = '更新中…';
   try {
     const quotes = await api('/quotes?symbols=' + encodeURIComponent(syms.join(',')));
-    // 匯率自動更新（美元/英鎊/日幣 兌台幣）
-    const fxBody = {};
-    if (quotes['TWD=X']?.price) fxBody.usdTwd = Math.round(quotes['TWD=X'].price * 1000) / 1000;
-    const fxTwd = { ...(settings.fxTwd || {}) };
-    if (quotes['GBPTWD=X']?.price) fxTwd.GBP = Math.round(quotes['GBPTWD=X'].price * 1000) / 1000;
-    if (quotes['JPYTWD=X']?.price) fxTwd.JPY = Math.round(quotes['JPYTWD=X'].price * 10000) / 10000;
-    fxBody.fxTwd = fxTwd;
-    if (fxBody.usdTwd || quotes['GBPTWD=X'] || quotes['JPYTWD=X']) await api('/settings', { method: 'PUT', body: fxBody });
-    let ok = 0, skip = 0;
-    for (const h of holdings) {
-      const q = h.quoteSymbol && quotes[h.quoteSymbol];
-      if (!q || q.price == null) { if (h.quoteSymbol) skip++; continue; }
-      // 防呆：報價幣別與持股幣別不符（例如 GBp）就跳過。缺幣別預設 TWD（Codex r10#8，與估值端 h.currency||'TWD'
-      // 同口徑）——原本這裡預設 USD，害缺幣別的台股收到 Yahoo 的 TWD 報價被誤判「幣別不符」而不更新。
-      if (q.currency && q.currency.toUpperCase() !== (h.currency || 'TWD').toUpperCase()) { skip++; continue; }
-      await api('/holdings/' + h.id, { method: 'PUT', body: { price: Math.round(q.price * 100) / 100 } });
-      ok++;
-    }
-    for (const w of watchlist) {
-      const q = w.quoteSymbol && quotes[w.quoteSymbol];
-      if (!q || q.price == null) continue;
-      await api('/watchlist/' + w.id, { method: 'PUT', body: { lastPrice: Math.round(q.price * 100) / 100, lastAt: todayStr() } });
-    }
-    toast(`已更新 ${ok} 檔報價與匯率${skip ? `，${skip} 檔略過（無資料或幣別不符）` : ''}`);
+    const plan = portfolioQuoteWritePlan(holdings, watchlist, settings, quotes);
+    if (plan.saveFx) await api('/settings', { method: 'PUT', body: plan.fxBody });
+    for (const write of plan.holdingWrites) await api('/holdings/' + write.id, { method: 'PUT', body: write.body });
+    for (const write of plan.watchWrites) await api('/watchlist/' + write.id, { method: 'PUT', body: { ...write.body, lastAt: todayStr() } });
+    toast(`已更新 ${plan.updatedHoldings} 檔報價與匯率${plan.skippedHoldings ? `，${plan.skippedHoldings} 檔略過（無資料或幣別不符）` : ''}`);
     if (seqAtStart === currentRouteSeq()) renderPortfolio();   // 更新期間可能切走了頁（自主體檢）
   } catch (e) {
     toast('更新失敗：' + e.message, true);
