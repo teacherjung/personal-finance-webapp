@@ -39,11 +39,9 @@ import { portfolioQuoteSymbols, portfolioQuoteWritePlan } from './portfolio-quot
 import {
   capeFormModel,
   fxBandsFormModel,
-  holdingFormModel,
-  holdingSubmission,
-  signalsFormModel,
-  watchFormModel
+  signalsFormModel
 } from './portfolio-forms.js';
+import { createPortfolioEditors } from './portfolio-editors.js';
 import { ibSyncFeedback } from './portfolio-ib-sync.js';
 import { formatPercent, formatPortfolioMoney } from './portfolio-format.js';
 import { disciplineInfoHtml, totalValueInfoHtml } from './portfolio-info.js';
@@ -89,6 +87,16 @@ export async function renderPortfolio() {
     ibTrades, usdRate: fx.USD, parseLocalDate, layers: LAYERS
   });
   FREEZE = freeze;
+  const editors = createPortfolioEditors({
+    api,
+    openForm,
+    toast,
+    rerender: renderPortfolio,
+    confirmFreeze: message => window.confirm(message),
+    getFreeze: () => FREEZE,
+    layers: LAYERS,
+    layerOrder: LAYER_ORDER
+  });
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
@@ -112,7 +120,7 @@ export async function renderPortfolio() {
   `;
 
   // ---- handlers ----
-  byId('addHolding').onclick = () => openHoldingForm(null);
+  byId('addHolding').onclick = () => editors.openHolding(null);
   byId('refreshQuotes').onclick = (e) => refreshQuotes(e.currentTarget, holdings, watchlist, settings);   // currentTarget＝按鈕本身（e.target 可能是內層圖示，disabled 會設錯對象，自主體檢）
   byId('printPortfolio').onclick = () => printPortfolioReport({
     rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
@@ -182,14 +190,14 @@ export async function renderPortfolio() {
   if (xInfo) xInfo.onclick = () => openInfo('年化報酬（XIRR）', XIRR_INFO_HTML, { size: 'md' });
   const dInfo = byId('disciplineInfo');
   if (dInfo) dInfo.onclick = () => openInfo('紀律檢查', disciplineInfoHtml(CAPS));
-  view().querySelectorAll('[data-edit-h]').forEach(b => b.onclick = () => openHoldingForm(holdings.find(h => h.id === b.dataset.editH)));
+  view().querySelectorAll('[data-edit-h]').forEach(b => b.onclick = () => editors.openHolding(holdings.find(h => h.id === b.dataset.editH)));
   view().querySelectorAll('[data-del-h]').forEach(b => b.onclick = () => {
     const h = holdings.find(x => x.id === b.dataset.delH);
     confirmDelete(h.symbol, () => api('/holdings/' + h.id, { method: 'DELETE' }));
   });
   const addW = byId('addWatch');
-  if (addW) addW.onclick = () => openWatchForm(null);
-  view().querySelectorAll('[data-edit-w]').forEach(b => b.onclick = () => openWatchForm(watchlist.find(w => w.id === b.dataset.editW)));
+  if (addW) addW.onclick = () => editors.openWatch(null);
+  view().querySelectorAll('[data-edit-w]').forEach(b => b.onclick = () => editors.openWatch(watchlist.find(w => w.id === b.dataset.editW)));
   view().querySelectorAll('[data-del-w]').forEach(b => b.onclick = () => {
     const w = watchlist.find(x => x.id === b.dataset.delW);
     confirmDelete(w.symbol, () => api('/watchlist/' + w.id, { method: 'DELETE' }));
@@ -294,36 +302,6 @@ function openResearchForm(symbol, research) {
     onSubmit: async (data) => {
       if (form.existing) await api('/research/' + form.existing.id, { method: 'PUT', body: data });
       else await api('/research', { method: 'POST', body: { symbol, ...data, checkpoints: [] } });
-      toast('已儲存'); renderPortfolio();
-    }
-  });
-}
-
-// ---- 表單：持股 / 願望清單 ----
-function openHoldingForm(h) {
-  const form = holdingFormModel(h, LAYERS, LAYER_ORDER);
-  openForm({
-    ...form,
-    onSubmit: async (data) => {
-      // 投資原則：凍結名單加碼警告（軟上限——確認後仍可儲存；減碼/改備註不受影響）
-      const submission = holdingSubmission(h, data, FREEZE);
-      if (submission.freezeReasons.length && !window.confirm(`⚠️ ${submission.symbol} 目前凍結加碼（超過：${submission.freezeReasons.join('、')}）。\n依投資原則不應加碼，確定仍要儲存？`)) {
-        throw new Error('已取消：該標的凍結加碼中');
-      }
-      if (h) await api('/holdings/' + h.id, { method: 'PUT', body: submission.body });
-      else await api('/holdings', { method: 'POST', body: submission.body });
-      toast('已儲存'); renderPortfolio();
-    }
-  });
-}
-
-function openWatchForm(w) {
-  const form = watchFormModel(w);
-  openForm({
-    ...form,
-    onSubmit: async (data) => {
-      if (w) await api('/watchlist/' + w.id, { method: 'PUT', body: data });
-      else await api('/watchlist', { method: 'POST', body: data });
       toast('已儲存'); renderPortfolio();
     }
   });
