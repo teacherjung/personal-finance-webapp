@@ -2,7 +2,6 @@
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
 import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
-import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { portfolioXirr } from './portfolio-calculations.js';
 import { buildPortfolioModel } from './portfolio-model.js';
@@ -162,7 +161,7 @@ export async function renderPortfolio() {
     try { localStorage.setItem('pf_hSortKey', hSortKey); localStorage.setItem('pf_hSortDir', hSortDir); } catch {}
     renderPortfolio();
   });
-  // ⏸ 休眠中：#fxBandEdit 只有在 fxGaugeSection（目前停放、未插入頁面）渲染時才存在；
+  // ⏸ 休眠中：#fxBandEdit 只有在 fxGaugeHtml（目前停放、未插入頁面）渲染時才存在；
   //   等匯率儀表決定放回頁面時，這段與 openFxBands() 一起恢復作用。
   //   註：fxHigh/fxLow 的「調整入口」現已改由設定頁「提醒門檻」管理（換匯提醒即時生效），
   //   停放的 openFxBands 若日後恢復，屬儀表上的便捷入口、非唯一調整途徑。
@@ -223,41 +222,10 @@ export async function renderPortfolio() {
   if (sEdit) sEdit.onclick = () => openSignalsForm(settings);
 }
 
-// ---- 美元/台幣匯率儀表（暫時從頁面移除，之後再決定位置；要放回頁面時把 ${fxGaugeSection(fx, settings)} 插進 render 即可）----
-// eslint-disable-next-line no-unused-vars -- 刻意停放（見上行註解），要恢復時插回 render 即可
-function fxGaugeSection(fx, settings) {
-  const lo = Number(settings.fxLow || 28), hi = Number(settings.fxHigh || 32);
-  const MIN = 26, MAX = 34;
-  const rate = fx.USD;
-  const marker = Math.min(Math.max(rate, MIN), MAX);
-  const seg = (a, b) => ((b - a) / (MAX - MIN) * 100).toFixed(1);
-  const pos = (x) => ((x - MIN) / (MAX - MIN) * 100).toFixed(1);   // 匯率值 → 軸上百分比位置
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
-      <span class="muted" style="font-size:12.5px">美元／台幣</span>
-      <span class="stat sm">${rate.toFixed(2)}</span>
-      <button class="btn-link btn-sm" id="fxBandEdit">區間調整</button>
-    </div>
-    <div class="gauge-wrap">
-      <div class="gauge">
-        <div style="width:${seg(MIN, lo)}%;background:${CHART.blue};opacity:.55"></div>
-        <div style="width:${seg(lo, hi)}%;background:#bdb8ab;opacity:.55"></div>
-        <div style="width:${seg(hi, MAX)}%;background:${CHART.green};opacity:.55"></div>
-        <div class="gauge-marker" style="left:${((marker - MIN) / (MAX - MIN) * 100).toFixed(1)}%"></div>
-      </div>
-      <div class="fx-scale">
-        <span class="fx-num fx-end-l">${MIN}</span>
-        <span class="fx-num" style="left:${pos(lo)}%">${lo}</span>
-        <span class="fx-num" style="left:${pos(hi)}%">${hi}</span>
-        <span class="fx-num fx-end-r">${MAX}</span>
-        <span class="fx-zone" style="left:${pos((MIN + lo) / 2)}%">（換美元區）</span>
-        <span class="fx-zone" style="left:${pos((hi + MAX) / 2)}%">（換台幣區）</span>
-      </div>
-    </div>
-  </div>`;
-}
+// 美元／台幣匯率儀表目前刻意停放；純 HTML 組裝已移到 portfolio-valuation.js 的 fxGaugeHtml。
+// 要恢復時再 import 並插入 render；區間調整表單保留在下方，設定頁也有正式入口。
 
-// ⏸ 休眠中：只被停放的 fxGaugeSection 的「區間調整」鈕呼叫；隨儀表一起恢復。
+// ⏸ 休眠中：只被停放的 fxGaugeHtml 的「區間調整」鈕呼叫；隨儀表一起恢復。
 function openFxBands(settings) {
   const form = fxBandsFormModel(settings);
   openForm({

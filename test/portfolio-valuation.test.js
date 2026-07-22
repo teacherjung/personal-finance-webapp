@@ -4,6 +4,7 @@ import {
   capeBodyHtml,
   capeInfoOf,
   capePercentile,
+  fxGaugeHtml,
   signalsBodyHtml,
   SIGNALS_INFO_HTML
 } from '../public/modules/portfolio-valuation.js';
@@ -13,6 +14,25 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
 })[char]);
 const formatPercent = (value, digits = 1) => (Number(value) || 0).toFixed(digits) + '%';
 const formatters = { escapeHtml, formatPercent };
+
+test('投資估值｜休眠匯率儀表維持區間、色票、標記與調整入口', () => {
+  const html = fxGaugeHtml({ USD: 30.5 }, { fxLow: 28, fxHigh: 32 });
+
+  assert.match(html, /美元／台幣/);
+  assert.match(html, />30\.50<\/span>/);
+  assert.match(html, /width:25\.0%;background:#5A8FD3/);
+  assert.match(html, /width:50\.0%;background:#bdb8ab/);
+  assert.match(html, /width:25\.0%;background:#6FA75F/);
+  assert.match(html, /gauge-marker" style="left:56\.3%"/);
+  assert.match(html, /id="fxBandEdit">區間調整/);
+  assert.match(html, /（換美元區）/);
+  assert.match(html, /（換台幣區）/);
+});
+
+test('投資估值｜休眠匯率儀表超出 26–34 時，標記夾在軸的兩端', () => {
+  assert.match(fxGaugeHtml({ USD: 20 }, {}), /gauge-marker" style="left:0\.0%"/);
+  assert.match(fxGaugeHtml({ USD: 40 }, {}), /gauge-marker" style="left:100\.0%"/);
+});
 
 test('投資估值｜CAPE 分位、規則帶與列印摘要共用同一口徑', () => {
   assert.equal(capePercentile(4.8), 0);
