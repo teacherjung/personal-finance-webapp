@@ -50,7 +50,7 @@ test('parseTaishinPdf：外幣交易把幣別/金額接進說明', () => {
   assert.ok(r[0].desc.includes('USD'), '外幣註記應接進說明');
 });
 
-test('finalize：負數＝繳款/退款（isPayment），不分類', () => {
+test('finalize：真正繳款標成 isPayment，不分類', () => {
   const r = finalize([{ date: '2026-06-02', desc: '自動扣繳信用卡款', amount: -500 }], '台新');
   assert.equal(r.bank, '台新');
   assert.equal(r.transactions[0].isPayment, true);
