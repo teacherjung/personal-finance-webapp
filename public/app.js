@@ -276,6 +276,15 @@ $('#snapshotBtn').addEventListener('click', async () => {
 hydrateIcons(document);
 router();
 
+// 開機序列落定信號（每日洞察引擎 D3/D4，Codex r14#1/#2）：報價自動更新＋月快照/日線跑完才 resolve。
+// **洞察引擎要在這之後才抓 /insights**——否則會用開機前的舊淨值/舊日線算差異，跟重繪後的總覽對不上（#2）；
+// 而且抓 /insights 要等外部估值 API（最長各 8 秒），若擋在總覽首屏會卡「載入中」（#1）。故：總覽先用 /summary
+// 即時出畫面，洞察在 bootSettled 之後非阻塞地補上。**finally 保證即使開機流程出錯也會 resolve**（不會永遠卡住）。
+/** @type {() => void} */
+let _bootResolve = () => {};
+/** @type {Promise<void>} */
+export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
+
 // 1-1：開 app 自動刷新報價（D1）＋記錄本月快照。順序：先刷報價（>1 小時舊才抓，失敗靜默用舊價），
 // 日線才反映新價；再記月快照/日線。真的寫入了或報價有更新才提示＋刷新目前頁面；失敗不打擾（手動鈕仍可用）。
 (async () => {
@@ -287,6 +296,7 @@ router();
     if (r && r.recorded) toast('已自動記錄本月快照 📸');
     if ((r && r.recorded) || refreshed) router();   // 月快照寫入或報價有更新 → 重繪反映最新
   } catch { if (refreshed) router(); /* 自動快照失敗靜默略過，不影響 app 使用 */ }
+  finally { _bootResolve(); }   // 開機序列落定 → 洞察引擎現在抓才反映最新報價/日線
 })();
 
 // 開 app 自動對齊帳戶名（使用者定 2026-07-21「改一次、處處同步」）：修「帳戶改名後、既有交易顯示名沒跟上」的舊資料。

@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, pct, esc, currentRouteSeq, openInfo } from '../app.js';
+import { api, view, byId, wan, pct, esc, currentRouteSeq, openInfo, bootSettled } from '../app.js';
 import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
@@ -7,11 +7,16 @@ import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳�
 let chartRefs = [];
 function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; }
 
-// 每日洞察（D4）：**一次 app-open 只抓一次 /insights**。讀取＝更新書籤（看過了），但開機序列的自動流程
-// （snapshot/auto、報價刷新…）會在資料變動時重繪總覽——若每次重繪都重抓，第二次抓就把剛出現的 🆕 秒吸收掉
-// （瀏覽器實測：畫面閃一下新出現就變「持續中」）。快取整個 Promise：重繪沿用同一份、書籤只更新一次。
+// 每日洞察（D4）：**一次 app-open 只抓一次 /insights**，且**等開機序列（bootSettled：報價+快照）落定後才抓**。
+// - 一次只抓：讀取＝更新書籤（看過了），開機重繪若每次重抓會把剛冒出的 🆕 秒吸收掉——快取整個 Promise，書籤只更新一次。
+// - 等 boot 落定（Codex r14#1/#2）：①不擋總覽首屏——總覽用 /summary 即時出畫面，洞察慢慢補（不被外部估值 API 卡住）；
+//   ②反映最新資料——在報價更新＋今天日線寫入之後才算差異，才不會「舊洞察＋新總覽」混用。抓失敗＝退回舊「需要處理」。
 // 重新整理頁面（真正的「再次開啟」）＝模組重載→快取重置→重抓，語意正確。
 let insightsPromise = null;
+function fetchInsightsOnce() {
+  if (!insightsPromise) insightsPromise = bootSettled.then(() => api('/insights')).catch(() => ({ error: true }));
+  return insightsPromise;
+}
 
 // 淨資產走勢迷你線（hero 內，取自真實月快照）
 function sparklineSvg(snaps) {
@@ -132,12 +137,36 @@ function insightSection(ins, summaryReminders) {
     ${ongoingBlock}`;
 }
 
+// 跳檔卡「白話」按鈕事件掛載（patch 進洞察區後重掛）。
+function wireTierButtons(ins) {
+  const tiers = (ins && ins.tierChanges) || [];
+  view().querySelectorAll('.dins-info[data-tier]').forEach(b => {
+    const el = /** @type {HTMLElement} */ (b);
+    el.onclick = () => {
+      const c = tiers[Number(el.dataset.tier)];
+      if (c) openInfo(`${MARKET_NAMES[c.market] || c.market} 估值跳檔`, tierExplainHtml(c.market, c.from, c.to), { size: 'sm' });
+    };
+  });
+}
+
+// 洞察抓到後**就地補上**（不阻塞首屏）：hero Δ chips／上次開啟／投組自上次 Δ／動態三段。seq 過期＝已切頁，不動 DOM。
+function patchInsights(ins, s, seq) {
+  if (seq !== currentRouteSeq()) return;
+  const deltas = byId('dhDeltas');
+  if (deltas) deltas.innerHTML = pctChip('今天', ins?.windows?.today?.pct) + pctChip('本週', ins?.windows?.week?.pct) + sinceChip(ins);
+  const last = byId('dhLastSeen'), lastSeen = lastSeenText(ins);
+  if (last) last.innerHTML = lastSeen ? `<span class="dchip subtle">${lastSeen}</span>` : '';
+  const pfDelta = ins && ins.sinceLast ? Number(ins.sinceLast.pfValue) : NaN;
+  const kpiPf = byId('kpiPfDelta');
+  if (kpiPf) kpiPf.innerHTML = (isFinite(pfDelta) && pfDelta) ? `・<span class="${pfDelta >= 0 ? 'pos' : 'neg'}">自上次 ${pfDelta >= 0 ? '+' : ''}${wan(pfDelta)}</span>` : '';
+  const block = byId('insightBlock');
+  if (block) { block.innerHTML = insightSection(ins, s.reminders); wireTierButtons(ins); }
+}
+
 export async function renderDashboard() {
   const seq = currentRouteSeq();
-  // 洞察引擎與總覽並行抓；洞察失敗不擋畫面（原則5）→ 退回舊「需要處理」。**/insights 一次 app-open 只抓一次**
-  // （快取 Promise，見上）——讀取＝更新書籤，重繪不重抓、才不會把 🆕 秒吸收。總覽（提醒清單）仍每次重抓。
-  if (!insightsPromise) insightsPromise = api('/insights').catch(() => ({ error: true }));
-  const [s, ins] = await Promise.all([api('/summary'), insightsPromise]);
+  // 只等 /summary，畫面即時出來（不被慢的 /insights 卡住，Codex r14#1）。洞察在 bootSettled 後非阻塞補上（見下）。
+  const s = await api('/summary');
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6：router 事後檢查太晚，寫入在 render 內部）
   destroyCharts();
 
@@ -145,13 +174,6 @@ export async function renderDashboard() {
   const cfSub = (cf.income || cf.expense) ? `收入 ${wan(cf.income)}・支出 ${wan(cf.expense)}` : '本月尚未記帳';
   const pnl = s.ib.totalPnl;
   const warnCount = s.reminders.filter(r => r.level === 'warn' || r.level === 'danger').length;
-
-  // 每日洞察（D4）：hero Δ chips（今天/本週/自上次）、上次開啟、投組自上次 Δ 小字
-  const wins = ins && ins.windows ? ins.windows : {};
-  const deltaChips = pctChip('今天', wins.today?.pct) + pctChip('本週', wins.week?.pct) + sinceChip(ins);
-  const lastSeen = lastSeenText(ins);
-  const pfDelta = ins && ins.sinceLast ? Number(ins.sinceLast.pfValue) : 0;
-  const pfDeltaTxt = (pfDelta && isFinite(pfDelta)) ? `・<span class="${pfDelta >= 0 ? 'pos' : 'neg'}">自上次 ${pfDelta >= 0 ? '+' : ''}${wan(pfDelta)}</span>` : '';
 
   // 融資槓桿 KPI（後端 summary 已提供 leverage / mcDist / hasLoan）
   const lev = s.ib || {};
@@ -173,7 +195,7 @@ export async function renderDashboard() {
       <div class="dh-main">
         <div class="dh-lab">淨資產</div>
         <div class="dh-net">${wan(s.netWorth)}</div>
-        ${deltaChips ? `<div class="dh-deltas">${deltaChips}</div>` : ''}
+        <div class="dh-deltas" id="dhDeltas"></div>
         <div class="dh-spark">${sparklineSvg(s.snapshots)}</div>
       </div>
       <div class="dh-chips">
@@ -182,7 +204,7 @@ export async function renderDashboard() {
         ${warnCount
           ? `<span class="dchip bad">⚠ ${warnCount} 項紀律需注意</span>`
           : `<span class="dchip good">✓ 紀律正常</span>`}
-        ${lastSeen ? `<span class="dchip subtle">${lastSeen}</span>` : ''}
+        <span id="dhLastSeen"></span>
       </div>
     </div>
 
@@ -192,7 +214,7 @@ export async function renderDashboard() {
         <div class="kpi-d">${cfSub}</div></div>
       <div class="kpi"><div class="kpi-lab">投資組合</div>
         <div class="kpi-v">${wan(s.ib.totalValue)}</div>
-        <div class="kpi-d"><span class="${pnl >= 0 ? 'pos' : 'neg'}">未實現 ${pnl >= 0 ? '+' : ''}${wan(pnl)}</span>・${s.ib.count} 檔${pfDeltaTxt}</div></div>
+        <div class="kpi-d"><span class="${pnl >= 0 ? 'pos' : 'neg'}">未實現 ${pnl >= 0 ? '+' : ''}${wan(pnl)}</span>・${s.ib.count} 檔<span id="kpiPfDelta"></span></div></div>
       <div class="kpi"><div class="kpi-lab">融資槓桿</div>
         <div class="kpi-v ${levCls}">${levVal}</div>
         <div class="kpi-d ${levCls}">${levSub}</div></div>
@@ -202,9 +224,7 @@ export async function renderDashboard() {
     </div>
 
     <div class="dash-two">
-      <div class="dash-block">
-        ${insightSection(ins, s.reminders)}
-      </div>
+      <div class="dash-block" id="insightBlock">${insightSection(null, s.reminders)}</div>
       <div class="dash-block">
         <div class="dash-h">資產配置</div>
         <div class="dalloc-card">${allocSection(s.byClass)}</div>
@@ -215,17 +235,9 @@ export async function renderDashboard() {
     <div class="chart-card"><div class="chart-box"><canvas id="trendChart"></canvas></div></div>
   `;
 
-  // 跳檔卡「白話」→ 開白話彈窗（規則說…口吻，教育不建議，原則4）
-  const tiers = (ins && ins.tierChanges) || [];
-  view().querySelectorAll('.dins-info[data-tier]').forEach(b => {
-    const el = /** @type {HTMLElement} */ (b);
-    el.onclick = () => {
-      const c = tiers[Number(el.dataset.tier)];
-      if (c) openInfo(`${MARKET_NAMES[c.market] || c.market} 估值跳檔`, tierExplainHtml(c.market, c.from, c.to), { size: 'sm' });
-    };
-  });
-
   drawTrend(s.snapshots);
+  // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
+  fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
 }
 
 function drawTrend(snaps) {
