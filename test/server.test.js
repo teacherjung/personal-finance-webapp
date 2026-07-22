@@ -160,6 +160,18 @@ test('匯入防呆（Codex）：集合型別錯誤 → 400，且不寫壞資料'
   assert.equal(typeof sum.netWorth, 'number');
 });
 
+test('匯入防呆（Codex r14#4）：物件/陣列型 bankKey → 整份 400（防 String() 成 "[object Object]" 撞鑰匙）；合法字串/缺席照常接受', async () => {
+  const { settings } = await GET('/db');
+  for (const badKey of [{ a: 1 }, ['x']]) {
+    const res = await POST('/import', { settings, transactions: [{ id: 'bx', date: '2026-07-01', type: 'expense', amount: 100, source: 'bank', bankKey: badKey }] });
+    assert.equal(res.status, 400, `${JSON.stringify(badKey)} 型 bankKey 應整份 400`);
+  }
+  const { validateImportItem } = await import('../lib/schema.js');   // 合法字串/缺席不報錯（不 POST 以免蓋掉測試 store）
+  assert.equal(validateImportItem('transactions', { id: 't', bankKey: 'k1', date: '2026-07-01', amount: 1 }).errors.length, 0, '合法字串 bankKey 過關');
+  assert.equal(validateImportItem('transactions', { id: 't', date: '2026-07-01', amount: 1 }).errors.length, 0, '缺席 bankKey 照常接受');
+  assert.equal(typeof (await GET('/summary')).netWorth, 'number', '沒被寫壞');
+});
+
 test('設定型別驗證（Codex#2-1）：usdTwd 錯型別被剝，summary 不變 NaN/null', async () => {
   const before = await GET('/settings');
   await PUT('/settings', { usdTwd: 'oops' });   // 字串 → Number()變 NaN 會污染核心計算

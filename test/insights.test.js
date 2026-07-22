@@ -172,6 +172,15 @@ test('D3 自審#4：淨值為負時 Δ% 用 abs(基期)：-1000→-500（變好�
   assert.ok(Math.abs(r.windows.today.pct - 50) < 1e-9, '變好＝+50%（方向正確，不因負基期反轉）');
 });
 
+test('D3 自審 r14#3：殘缺書籤缺 netWorth → sinceLast.netWorth = null（不謊報「自上次 +全部淨值」）', async () => {
+  reset({ usdTwd: 30, accounts: [{ id: 'a', type: 'cash', class: '現金', currency: 'TWD', balance: 500000 }],
+    insightState: { lastSeenAt: '2026-07-15T00:00:00Z', reminders: [], tiers: { us: null, china: null, japan: null, korea: null, taiwan: null } } });   // 有 lastSeenAt+reminders，但缺 netWorth/pfValue
+  const r = await run();
+  assert.equal(r.firstRun, false, '有 lastSeenAt+reminders → 非首次');
+  assert.equal(r.sinceLast.netWorth, null, '缺上次淨值 → 差額 null（不當成 0 → 不謊報 +500000）');
+  assert.equal(r.sinceLast.pfValue, null, '缺上次投組值同理 → null');
+});
+
 // ---------- sanitizer：壞形狀→安全 ----------
 test('sanitizeInsightState：非物件→{}；壞欄位丟棄、保留合法形狀', () => {
   assert.deepEqual(sanitizeInsightState(null), {});
