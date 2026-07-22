@@ -216,6 +216,32 @@ test('守門補洞｜拆單逃避個股上限：TSLA 3%+3%=6%>5% 現在會被抓
   assert.ok(buildSummary(db).reminders.some(r => r.key === 'conc-stock-TSLA' && /6\.0%/.test(r.title)), '拆單合計超標要抓到');
 });
 
+test('投資原則同步｜同代號大小寫不同仍合併成一則個股提醒', () => {
+  const db = { settings: { usdTwd: 1, ibConcentrationPct: 5 }, transactions: [], subscriptions: [],
+    accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 94 }],
+    holdings: [
+      { id: 'h1', symbol: 'TSLA', layer: 'stock', currency: 'TWD', quantity: 1, price: 3 },
+      { id: 'h2', symbol: 'tsla', layer: 'stock', currency: 'TWD', quantity: 1, price: 3 },
+    ] };
+  const hits = buildSummary(db).reminders.filter(r => r.key === 'conc-stock-TSLA');
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].title, /6\.0%/);
+});
+
+test('投資原則同步｜上限設為 0 就是零容忍，不被後端改回預設值', () => {
+  const baseDb = { settings: { usdTwd: 1, ibConcentrationPct: 0, equityCapPct: 0, countryCapPct: 0 }, transactions: [], subscriptions: [],
+    accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 99 }],
+    holdings: [{ id: 'h', symbol: '0050', layer: 'stock', currency: 'TWD', quantity: 1, price: 1 }] };
+  const keys = buildSummary(baseDb).reminders.map(r => r.key);
+  assert.ok(keys.includes('conc-stock-0050'), '單一個股 0% 上限要生效');
+  assert.ok(keys.includes('conc-equity-total'), '股票總曝險 0% 上限要生效');
+  assert.ok(keys.includes('conc-country-台灣'), '國家 0% 上限要生效');
+
+  const lev = buildSummary({ ...baseDb, settings: { usdTwd: 1, levCapPct: 0, ib: { lastEquity: { stock: 100, cash: -10 } } }, holdings: [] })
+    .reminders.find(r => r.key === 'ib-leverage');
+  assert.match(lev?.title || '', /超過上限 0x/, '槓桿 0x 上限要生效');
+});
+
 // D3 自審#1：升級提醒（將至→已過）共用穩定 key（差異引擎才判「持續中」而非「已解除＋新出現」）
 test('D3 自審#1｜訂閱/保險「已過」與「將至」共用 <base>-<id>，不用 -overdue- 另一把 key', () => {
   const iso = (delta) => { const d = new Date(); d.setDate(d.getDate() + delta); return d.toISOString().slice(0, 10); };
