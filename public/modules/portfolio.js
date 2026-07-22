@@ -5,6 +5,7 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { CHART, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { regionTier, taiwanTier, US_RATIO, TIER_LABELS, ecyOf } from './signal-tiers.js';   // 估值檔位單一真相（前後端共用）
+import { fxTable, holdingCost, marginCallDistance, tradePnlBase, tradeSummary, xirrRate } from './portfolio-calculations.js';
 
 const fmtPct = (n, d = 1) => (Number(n) || 0).toFixed(d) + '%';
 const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';   // IB 期間 YYYYMM → YYYY/MM
@@ -22,15 +23,6 @@ const wanNum = (n) => { const v = n / 10000; return Math.abs(v) >= 10 ? Math.rou
 // ---- 幣別 ----
 const CURRENCIES = ['USD', 'TWD', 'GBP', 'JPY'];
 const CUR_COLOR = { USD: CHART.blue, TWD: CHART.green, GBP: CHART.brown, JPY: CHART.yellow };
-const fxTable = (settings) => ({
-  TWD: 1,
-  USD: Number(settings.usdTwd || 32),
-  GBP: Number(settings.fxTwd?.GBP || 40.8),
-  JPY: Number(settings.fxTwd?.JPY || 0.215)
-});
-// 成本＝均價 × 股數（舊資料退回總成本欄位）
-const holdingCost = (h) => (h.avgCost != null && h.avgCost !== '') ? Number(h.avgCost) * Number(h.quantity || 0) : Number(h.cost || 0);
-
 // 雙計價顯示：TWD（台幣計價，單位「萬」）或 USD（美元計價，單位「K」），記在 localStorage
 let viewCur = localStorage.getItem('pf_viewCur') || 'TWD';
 let usdRate = 32;
@@ -458,12 +450,6 @@ function capBar(value, cap) {
   const overW = ratio > 1 ? Math.min((ratio - 1) * CAP_X, 100 - CAP_X) : 0;    // 紅：超過上限的部分（同比例、clamp 到底）
   return `<div class="cap-bar"><div class="cb-ok" style="width:${okW.toFixed(1)}%"></div>${overW > 0 ? `<div class="cb-over" style="width:${overW.toFixed(1)}%"></div>` : ''}<div class="cb-mark" style="left:${CAP_X}%"></div></div>`;
 }
-// 斷頭距離：市場再跌 x% 觸及 IB 強平線（借款固定、資產縮水；假設全部持倉維持率一致的近似值）
-// x = 1 − 借款 ÷ ((1 − 維持率) × 持倉市值)
-function marginCallDistance(ibValTwd, loanTwd, maintPct) {
-  if (!(loanTwd > 0) || !(ibValTwd > 0)) return null;
-  return Math.max(0, 1 - loanTwd / ((1 - maintPct / 100) * ibValTwd)) * 100;
-}
 function marginDistanceBlock(ibValTwd, loanTwd, CAPS) {
   if (!(loanTwd > 0)) return `<div class="rc-block" style="margin-top:12px"><b>斷頭距離</b>：目前無融資借款，不存在強制平倉風險。</div>`;
   const d = marginCallDistance(ibValTwd, loanTwd, CAPS.maint) ?? 0;   // null＝有借款但持倉 0（已貼強平線）→ 顯示 0%
@@ -659,52 +645,6 @@ const INCOME_INFO = {
   interestReceived: ['利息收入',
     '<p>IBKR 對你帳戶中<b>閒置現金餘額</b>支付的利息（通常要超過一定門檻才有，且分幣別計算）。</p><p>與融資利息方向相反：這是錢放著自動產生的收入。</p>']
 };
-
-// 交易摘要計算（頁面與列印共用）：已實現損益換成基準幣別(USD)、獲利/虧損前三
-// 交易已實現損益 → 基準幣別（USD）。優先序（AGENTS.md）：
-// pnlBase → fxRateToBase → USD 直通 → 設定匯率估算 → 缺匯率(0)。回傳 { base, source, cur }。
-// 交易摘要與 XIRR 共用，確保多幣別口徑一致（否則 XIRR 會漏估外幣賣出、年化偏低）。
-function tradePnlBase(t, settings = {}) {
-  const pnl = Number(t.pnl) || 0;
-  const cur = String(t.currency || 'USD').toUpperCase();
-  if (t.pnlBase != null && t.pnlBase !== '' && Number.isFinite(Number(t.pnlBase)))
-    return { base: Number(t.pnlBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
-  if (t.fxRateToBase != null && t.fxRateToBase !== '' && Number.isFinite(Number(t.fxRateToBase)) && Number(t.fxRateToBase) > 0)
-    return { base: pnl * Number(t.fxRateToBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
-  if (cur === 'USD') return { base: pnl, source: 'usd', cur };
-  const usdTwd = Number(settings.usdTwd || 32);
-  const curTwd = cur === 'TWD' ? 1 : Number(settings.fxTwd?.[cur] || 0);
-  const rate = (curTwd > 0 && usdTwd > 0) ? curTwd / usdTwd : null;
-  if (rate) return { base: pnl * rate, source: 'estimated', cur };
-  return { base: 0, source: 'missing', cur };
-}
-
-function tradeSummary(trades, settings = {}) {
-  const ibkr = new Set();
-  const estimated = new Set();
-  const missing = new Set();
-  const pnlBase = (t) => {
-    const { base, source, cur } = tradePnlBase(t, settings);
-    if (cur !== 'USD') {
-      if (source === 'ibkr') ibkr.add(cur);
-      else if (source === 'estimated') estimated.add(cur);
-      else if (source === 'missing') missing.add(cur);
-    }
-    return base;
-  };
-  const realized = trades.reduce((s, t) => s + pnlBase(t), 0);
-  const bySym = Object.create(null);   // null-proto（Codex r8#3）：代號來自 IB/備份匯入的自由字串
-  trades.forEach(t => { const p = pnlBase(t); if (p) bySym[t.symbol] = (bySym[t.symbol] || 0) + p; });
-  const sorted = Object.entries(bySym).sort((a, b) => b[1] - a[1]);
-  return {
-    realized,
-    winners: sorted.filter(x => x[1] > 0).slice(0, 3),
-    losers: sorted.filter(x => x[1] < 0).slice(-3).reverse(),
-    ibkrCurrencies: [...ibkr],
-    estimatedCurrencies: [...estimated],
-    missingCurrencies: [...missing]
-  };
-}
 
 // ---- 交易摘要：已實現損益（FIFO，來自 IBKR 成交紀錄）----
 function tradesSection(trades, settings) {
@@ -1201,22 +1141,6 @@ const XIRR_INFO_HTML = `
   <p><b>XIRR（資金加權年化報酬）</b>：把每一筆投入與拿回的錢、連同發生的時間點一起解出的年化報酬率——「你的錢實際上長多快」。與只看漲跌幅的報酬率不同，它會反映你進出場時點的效果：同樣的市場，早投入多投入的人 XIRR 較高。</p>
   <p><b>資料來源</b>：每月「記錄本月快照」的投入增量＝流出；IB 賣出的已實現損益逐筆按成交日計入；今日市值＝期末流入。口徑為台幣。</p>
   <p class="muted">限制：不含股息與利息（結果略為低估）；台股手動賣出的已實現損益未納入；快照為月頻、時點以月底近似；IB 交易紀錄僅涵蓋同步期間。外幣賣出缺 IBKR 匯率時以設定匯率估算（標示「含匯率估算」）。歷史未滿 1 年時，年化會放大短期波動，僅供參考。</p>`;
-
-// 解 XIRR：對 NPV(r)=Σ v/(1+r)^年 做二分法（區間 −95%～+1000%）
-function xirrRate(flows) {
-  const t0 = flows[0].t;
-  const yrs = (f) => (f.t - t0) / 31557600000;   // 365.25 天
-  const npv = (r) => flows.reduce((s, f) => s + f.v / Math.pow(1 + r, yrs(f)), 0);
-  let lo = -0.95, hi = 1e4, flo = npv(lo);
-  const fhi = npv(hi);   // 只用於下行的同號檢查，二分法過程不更新它
-  if (!isFinite(flo) || !isFinite(fhi) || flo * fhi > 0) return null;
-  for (let i = 0; i < 200; i++) {
-    const mid = (lo + hi) / 2, fm = npv(mid);
-    if (Math.abs(fm) < 1e-7) return mid;
-    if (flo * fm < 0) hi = mid; else { lo = mid; flo = fm; }
-  }
-  return (lo + hi) / 2;
-}
 
 function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, settings = {}) {
   if (!Array.isArray(psnaps) || !psnaps.length || !(curValue > 0)) return { ok: false, why: '需先記錄月快照' };

@@ -20,7 +20,7 @@
 - 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
 - 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
 - IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
-- 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（一頁一檔）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）
+- 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（頁面模組）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）。`modules/portfolio-calculations.js` 是投資組合的**零 DOM／零 API 純計算層**（匯率表、持股成本、槓桿距離、交易損益換匯、XIRR 求解）；改這些金額公式要在該檔補固定輸入輸出考題，不要把公式塞回 `portfolio.js` 的畫面流程。
   - ⚠️ **async render 寫 `#view` 前要 guard 序號**（Codex r10#6）：render 一進場 `const seq = currentRouteSeq()`，`await` 完、**動任何 DOM/圖表（含 `destroyCharts`）之前**先 `if (seq !== currentRouteSeq()) return;`——不然快速切頁時慢頁 resolve 會蓋掉新頁（router 的事後檢查太晚，寫入發生在 render 內部）。有遞迴重載（如 `renderSubscriptions` 的 autoExpire）也要在遞迴分支前 guard。
   - **帳單原文一律用 `origFromStmtRef`（後端）／`stmtOrig`（前端 `app.js`）取**，會剝去重序號 `|#N`（Codex r10#5）；不要在各頁手寫 `split('|').slice(3)`（會把「星巴克｜#2」當原文，改名/分組/tooltip 全對不上）。
 
@@ -57,7 +57,7 @@
 5. **金額格式**（app.js 統一格式器，不要自己 toLocaleString）：
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
-6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「8 頁 reload 無錯」把關，型別檢查主力放資料邏輯）。`portfolio.js` 的 `fxGaugeSection`＝**刻意休眠停放**（註解與 eslint-disable 已標明），非死碼、勿刪。
+6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「10 頁 reload 無錯」把關，型別檢查主力放資料邏輯）。`portfolio.js` 的 `fxGaugeSection`＝**刻意休眠停放**（註解與 eslint-disable 已標明），非死碼、勿刪。
 7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。
 
 ## 投資領域語意（改相關程式前必讀）
