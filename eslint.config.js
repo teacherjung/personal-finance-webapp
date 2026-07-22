@@ -17,8 +17,8 @@ export default [
       'prefer-const': 'error'
     }
   },
-  { // 後端／測試：Node 環境
-    files: ['server.js', 'lib/**/*.js', 'test/**/*.js'],
+  { // 後端／維護腳本／測試：Node 環境
+    files: ['server.js', 'lib/**/*.js', 'scripts/**/*.js', 'test/**/*.js'],
     languageOptions: { globals: globals.node }
   },
   { // 前端：瀏覽器環境＋Chart 全域（<script> 載入的本機 vendor）
