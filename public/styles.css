@@ -609,3 +609,22 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .flow-tag { font-size: 10.5px; padding: 1px 7px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); }
 .flow-tag.pos { background: rgba(71,121,62,.12); color: var(--pos); }
 .flow-tag.neg { background: rgba(184,74,57,.12); color: var(--neg); }
+
+/* ---------- 證券交易頁（S3）：查詢工具列、分幣別合計卡內列、展開明細 ---------- */
+.sec-toolbar { display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+.sec-toolbar > div { display: flex; flex-direction: column; gap: 6px; }
+.sec-toolbar label { font-size: 12px; color: var(--text-dim); }
+.sec-toolbar select, .sec-toolbar input { width: auto; min-width: 0; }
+.sec-toolbar #secSearch { width: 180px; }
+.sec-info-row { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); margin: -4px 0 16px; }
+.sec-info-row .info-link { color: var(--text-dim); }
+.sec-info-row .info-link:hover { color: var(--accent); }
+.sec-sum-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.sec-sum-rows .row { display: flex; justify-content: space-between; gap: 12px; }
+.sec-sum-rows .row .num { font-variant-numeric: tabular-nums; }
+tr.sec-row { cursor: pointer; }
+tr.sec-detail { display: none; }
+tr.sec-detail.open { display: table-row; }
+tr.sec-detail > td { background: var(--card-2); font-size: 12.5px; }
+.sec-detail-grid { display: flex; gap: 8px 22px; flex-wrap: wrap; }
+.sec-detail-grid .lbl { color: var(--text-dim); margin-right: 5px; }
