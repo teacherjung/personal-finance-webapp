@@ -149,3 +149,33 @@ test('幣別牆：不支援幣別（EUR）在預覽就 fail-closed（否則會�
   const p = buildSecuritiesPreview(getDb(), parsed([{ ...BUY, currency: 'EUR' }]));
   assert.match(p.blockers.join(), /幣別不在系統支援範圍.*EUR/);
 });
+
+test('自審根治｜補印插入不漏記（服務層端到端）：先匯 [X,Y]，補發單 [X,Z,Y] → 只新增 Z、Y 不重複', () => {
+  const db = getDb();
+  const mk = (name) => ({ tradeDate: '2026-03-13', settlementDate: '2026-03-15', rawType: '現買', symbol: '0056', name,
+    quantity: 500, price: 40, grossAmount: 20000, commission: 28, feeDiscount: 0, tax: 0, otherFees: null, netSettlement: 20028, currency: 'TWD' });
+  applySecuritiesImport(db, parsed([mk('X'), mk('Y')]));
+  saveDb(db);
+  const db2 = getDb();
+  const r2 = applySecuritiesImport(db2, parsed([mk('X'), mk('Z'), mk('Y')]));
+  saveDb(db2);
+  assert.equal(r2.imported, 1, '只有 Z 是新的（原 HIGH：Z 被誤判 dup、Y 反被重複插入）');
+  assert.equal(r2.skippedDup, 2);
+  const rows = getDb().securityTrades.filter(r => r.symbol === '0056');
+  assert.equal(rows.length, 3, '共三筆（X/Y/Z 各一）');
+  assert.deepEqual(rows.map(r => r.name).sort(), ['X', 'Y', 'Z'], 'X/Y/Z 各一、無重複無漏');
+});
+
+test('自審 #6｜核心金額（價/成交額/應收付）缺席或非有限 → blocker（藍圖 §七）', () => {
+  const noPrice = buildSecuritiesPreview(getDb(), parsed([{ ...BUY, price: null }]));
+  assert.match(noPrice.blockers.join(), /核心金額讀不到/);
+  const noNet = buildSecuritiesPreview(getDb(), parsed([{ ...BUY, netSettlement: null }]));
+  assert.match(noNet.blockers.join(), /核心金額讀不到/);
+});
+
+test('自審 #7｜裸 /api/securityTrades 通用路由不存在（單一讀取入口 /api/securities）', async () => {
+  const bare = await fetch(base + '/securityTrades');
+  assert.equal(bare.status, 404);
+  const wrapped = await fetch(base + '/securities');
+  assert.equal(wrapped.status, 200);
+});

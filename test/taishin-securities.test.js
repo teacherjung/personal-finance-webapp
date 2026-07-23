@@ -210,6 +210,8 @@ test('S2 拍板｜非月結單（年度/季度跨度）→ isMultiMonthHeader �
   const { isMultiMonthHeader } = await import('../lib/taishin-securities.js');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月~12月 對帳單']])]), true);
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月至3月']])]), true);
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月－3月']])]), true, '全形連接號（自審 #5）');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月〜12月']])]), true, '波浪號（自審 #5）');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月 對帳單']])]), false, '單月不誤擋');
   assert.equal(isMultiMonthHeader([L(900, [[40, '2026年1月']])]), false);
 });

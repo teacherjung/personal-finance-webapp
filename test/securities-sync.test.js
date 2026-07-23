@@ -107,3 +107,27 @@ test('幣別牆：IB 不支援幣別（EUR）成交 → 跳過＋回報，不讓
   assert.ok(r.secTradesSkipped >= 1);
   assert.ok(!getDb().securityTrades.some((/** @type {any} */ x) => x.symbol === 'DAX1'));
 });
+
+test('自審根治｜IB 視窗位移：同指紋兩筆（僅手續費異）→ 位移後只剩一筆時不覆寫另一筆、不長孤兒', async () => {
+  const A = raw({ symbol: 'GLDW', transactionID: '', tradeID: '', ibExecID: '', tradeDate: '2026-02-10', ibCommission: -5 });
+  const B = raw({ symbol: 'GLDW', transactionID: '', tradeID: '', ibExecID: '', tradeDate: '2026-02-10', ibCommission: -7 });
+  await syncIb(feed([A, B], [lean(A), lean(B)]));
+  const twoRows = getDb().securityTrades.filter((/** @type {any} */ x) => x.symbol === 'GLDW');
+  assert.equal(twoRows.length, 2);
+  const r = await syncIb(feed([B], [lean(B)]));   // 視窗位移：A 滾出
+  assert.equal(r.secTradesAdded, 0, '不新增');
+  const after = getDb().securityTrades.filter((/** @type {any} */ x) => x.symbol === 'GLDW');
+  assert.equal(after.length, 2, '歷史保留');
+  assert.deepEqual(after.map((/** @type {any} */ x) => x.commission).sort(), [5, 7], 'A(5) 未被 B(7) 覆寫（原 HIGH：#1 重配蓋掉 A）');
+});
+
+test('自審 #4｜官方識別碼列就地更新＝整列取代：來源欄位消失時舊值不殘留', async () => {
+  const T = raw({ symbol: 'AAPL', transactionID: 'TXN-STALE', settleDateTarget: '2026-01-15' });
+  await syncIb(feed([T], [lean(T)]));
+  assert.equal(getDb().securityTrades.find((/** @type {any} */ x) => x.symbol === 'AAPL').settlementDate, '2026-01-15');
+  const T2 = { ...T }; delete /** @type {any} */ (T2).settleDateTarget;
+  await syncIb(feed([T2], [lean(T2)]));
+  const row = getDb().securityTrades.find((/** @type {any} */ x) => x.symbol === 'AAPL');
+  assert.equal(row.settlementDate, undefined, '來源已無交割日 → 舊值清除、不殘留');
+  assert.ok(row.id && row.importBatch, 'id/批次仍保留首次');
+});
