@@ -16,7 +16,9 @@ import {
 const fmtAmt = (/** @type {any} */ n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const fmtQty = (/** @type {any} */ n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 6 });
 const fmtPrice = (/** @type {any} */ n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
-const FMT = { esc, amt: fmtAmt, qty: fmtQty, price: fmtPrice };
+// ⚠️ esc 包一層箭頭延遲取用：app.js ↔ 本模組是循環 import，檔案頂層直接寫 `{ esc }` 會踩 TDZ
+//（app.js 還沒初始化完就取它的 binding → 整個 app 掛在載入中；同 theme.js 註記的教訓）
+const FMT = { esc: (/** @type {any} */ s) => esc(s), amt: fmtAmt, qty: fmtQty, price: fmtPrice };
 
 // 頁面狀態（模組層物件、就地改欄位，同 transactions/cashflow 的 listSort 慣例；排序預設成交日新→舊）
 const filters = { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' };
@@ -47,9 +49,9 @@ export async function renderSecurities() {
     <div class="page-head">
       <div><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，方便搜尋與對帳（只查帳：不改持股、不計入收支）</p></div>
       <div class="page-actions">
-        <button class="btn-ghost btn-eq" id="secBatches">${icon('history', 16)}匯入紀錄</button>
-        <button class="btn-ghost btn-eq" id="secIbSync" title="與投資組合頁同一套 IBKR 同步（唯讀）">${icon('download', 16)}同步 IBKR</button>
-        <button class="btn btn-eq" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
+        <button class="btn-ghost" id="secBatches">${icon('history', 16)}匯入紀錄</button>
+        <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套 IBKR 同步（唯讀）">${icon('download', 16)}同步 IBKR</button>
+        <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
     ${secSummaryHtml(secSummarize(rows), FMT)}

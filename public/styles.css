@@ -620,7 +620,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .sec-info-row .info-link { color: var(--text-dim); }
 .sec-info-row .info-link:hover { color: var(--accent); }
 .sec-sum-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
-.sec-sum-rows .row { display: flex; justify-content: space-between; gap: 12px; }
+.sec-sum-rows .row { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+.sec-sum-rows .row > span:first-child { white-space: nowrap; }   /* 手機窄卡：標籤不可直排折字（數字擠不下時整個換行右靠） */
 .sec-sum-rows .row .num { font-variant-numeric: tabular-nums; }
 tr.sec-row { cursor: pointer; }
 tr.sec-detail { display: none; }
