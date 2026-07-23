@@ -1,5 +1,5 @@
 // @ts-check
-// 收支記帳頁（三層重構 stage 1，使用者定 2026-07-20）：**現金流真相**——只顯示現金流帳本
+// 銀行收支頁（三層重構 stage 1，使用者定 2026-07-20）：**現金流真相**——只顯示現金流帳本
 //（!isCardTx：手動記帳 + 未來的銀行對帳單匯入）。信用卡刷卡消費不在這裡（在「信用卡消費明細」頁）；
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
@@ -49,7 +49,7 @@ export async function renderCashflow() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>收支記帳</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
+      <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
       <div class="page-actions">
         ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
         <button class="btn btn-upload" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
@@ -76,7 +76,7 @@ export async function renderCashflow() {
 
     <div class="tbl-wrap">
       <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「卡費紀錄」上傳信用卡帳單。</td></tr>`}</tbody></table>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「信用卡費」上傳信用卡帳單。</td></tr>`}</tbody></table>
     </div>
   `;
 
