@@ -20,9 +20,9 @@ const run = () => getInsights({ fetchImpl: failFetch, now: NOW });
 after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 /** 重置：控制當前提醒（用匯率門檻，最乾淨）、書籤、日線、估值訊號。 */
-function reset({ usdTwd = 30, signals = {}, insightState = {}, dailyValues = [], accounts = [] } = {}) {
+function reset({ usdTwd = 30, signals = {}, insightState = {}, dailyValues = [], accounts = [], netWorthTarget = null } = {}) {
   const db = getDb();
-  db.settings = { ...db.settings, usdTwd, fxHigh: 32, fxLow: 28, signals };
+  db.settings = { ...db.settings, usdTwd, fxHigh: 32, fxLow: 28, signals, netWorthTarget };
   db.accounts = accounts; db.holdings = []; db.transactions = []; db.subscriptions = []; db.cards = []; db.insurance = [];
   db.assetTargets = [];   // 清掉種子的配置目標，免 alloc-drift 提醒混進來（要乾淨控制當前提醒集合）
   db.dailyValues = dailyValues;
@@ -128,6 +128,26 @@ test('D3 同日第二次開：第一次讀吸收 🆕，第二次讀無新事件
   const second = await run();   // 書籤已被第一次更新
   assert.equal(second.reminders.new.length, 0, '第二次：不再新（已吸收）');
   assert.equal(second.firstRun, false);
+});
+
+test('P3 達標報喜：未達標→達標只進 new 一次，第二次讀取改列 ongoing', async () => {
+  reset({
+    netWorthTarget: 2_000,
+    accounts: [{ id: 'cash', type: 'cash', class: '現金', currency: 'TWD', balance: 1_000 }],
+    insightState: bmSeed({ netWorth: 1_000, reminders: [] }),
+  });
+  const before = await run();
+  assert.ok(!before.reminders.all.some(x => x.key === 'goal-reached'), '未達標不能先報喜');
+
+  const db = getDb();
+  db.settings.netWorthTarget = 500;
+  saveDb(db);
+  const reached = await run();
+  assert.deepEqual(reached.reminders.new.map(x => x.key), ['goal-reached'], '第一次達標要成為新聞牆新消息');
+
+  const again = await run();
+  assert.ok(!again.reminders.new.some(x => x.key === 'goal-reached'), '同一目標不可重播報喜');
+  assert.ok(again.reminders.ongoing.some(x => x.key === 'goal-reached'), '已看過後收進持續中');
 });
 
 // ---------- D3 自審修正 ----------
