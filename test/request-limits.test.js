@@ -49,7 +49,7 @@ test('/api/import 可還原超過 1 MB 的完整備份', async () => {
   assert.equal(restored.transactions[0].note.length, largeText.length, '大型備份內容要完整寫回，不可截斷');
 });
 
-test('五個帳單端點都可通過超過 1 MB 的 JSON body', async () => {
+test('七個帳單/證券端點都可通過超過 1 MB 的 JSON body', async () => {
   const parserApp = express();
   installJsonBodyParsers(parserApp);
   for (const route of STATEMENT_JSON_POST_ROUTES) {
@@ -67,6 +67,8 @@ test('五個帳單端點都可通過超過 1 MB 的 JSON body', async () => {
       '/api/cards/card-1/statement/import',
       '/api/bank-statement/preview',
       '/api/bank-statement/apply',
+      '/api/securities/preview',
+      '/api/securities/import',
     ];
     assert.equal(concretePaths.length, STATEMENT_JSON_POST_ROUTES.length, '大型帳單端點清單與考題要同步');
 

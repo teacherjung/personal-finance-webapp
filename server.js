@@ -10,6 +10,7 @@ import { crudRoutes } from './lib/routes/crud.js';
 import { marketRoutes } from './lib/routes/market.js';
 import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
+import { securitiesRoutes } from './lib/routes/securities.js';
 import { installJsonBodyParsers } from './lib/http-body.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,7 @@ app.use(crudRoutes);        // 各集合的通用 CRUD（含欄位白名單）
 app.use(marketRoutes);      // /quotes /cape /realyield
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
+app.use(securitiesRoutes);  // /securities* 證券交易（S2：查詢/台新對帳單匯入/匯入紀錄）
 
 // 不存在的 API 路徑 → 明確 JSON 404（而非 Express 預設 HTML「Cannot GET…」）；前端打錯 URL 時看得懂
 app.use('/api', (req, res) => res.status(404).json({ error: '不存在的 API 路徑' }));
