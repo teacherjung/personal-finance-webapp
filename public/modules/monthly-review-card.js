@@ -42,10 +42,14 @@ export function monthlyReviewSummary(review, fmt) {
   const months = Array.isArray(review?.months) ? review.months : [];
   const idx = months.findIndex((/** @type {any} */ row) => row.month === review?.selectedMonth);
   const current = idx >= 0 ? Number(months[idx].total || 0) : Number(selected.total || 0);
-  const previous = idx > 0 ? Number(months[idx - 1].total || 0) : null;
-  const comparison = previous == null
+  // 帳單未匯入的空月不能當比較基準；往前找最近一個真的有消費的月份。
+  const previousRow = idx > 0
+    ? months.slice(0, idx).reverse().find((/** @type {any} */ row) => row.hasData && Number(row.total) > 0)
+    : null;
+  const previous = previousRow ? Number(previousRow.total) : null;
+  const comparison = previous == null || !previousRow
     ? ''
-    : `，比 ${monthlyReviewMonthLabel(months[idx - 1].month)}${current >= previous ? '多' : '少'} ${fmt.money(Math.abs(current - previous))}`;
+    : `，比 ${monthlyReviewMonthLabel(previousRow.month)}${current >= previous ? '多' : '少'} ${fmt.money(Math.abs(current - previous))}`;
   const top = Array.isArray(selected.categories) && selected.categories.length ? selected.categories[0] : null;
   const topText = top ? `；最大宗是 ${fmt.esc(top.name)} ${fmt.pct(top.pct)}` : '';
   const net = Number(selected.cashflow?.net || 0);

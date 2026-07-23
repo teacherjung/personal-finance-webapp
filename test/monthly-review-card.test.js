@@ -44,10 +44,23 @@ test('月度回顧卡：大類先顯示、子類可展開，五個白話入口�
   assert.match(html, /資料可能未齊/);
 });
 
-test('月度回顧摘要：比較前月、最大分類與現金流透支使用同一個選定月', () => {
+test('月度回顧摘要：跳過空月比較最近有消費月份，分類與現金流仍使用選定月', () => {
   const text = monthlyReviewSummary(review, fmt);
-  assert.equal(text, '6 月花了 1.6 萬，比 5 月多 16,000 元；最大宗是 &lt;飲食&gt; 75.0%；當月透支 −8,000 元。');
+  assert.equal(text, '6 月花了 1.6 萬，比 4 月多 6,000 元；最大宗是 &lt;飲食&gt; 75.0%；當月透支 −8,000 元。');
   assert.equal(monthlyReviewMonthLabel('2026-06', true), '2026 年 6 月');
+});
+
+test('月度回顧摘要：沒有更早的實際消費月份時不捏造增減比較', () => {
+  const firstMonth = {
+    ...review,
+    months: [
+      { month: '2026-05', total: 0, hasData: false, possiblyIncomplete: true },
+      { month: '2026-06', total: 16000, hasData: true, possiblyIncomplete: false },
+    ],
+  };
+  const text = monthlyReviewSummary(firstMonth, fmt);
+  assert.doesNotMatch(text, /比 \d+ 月/);
+  assert.match(text, /^6 月花了 1\.6 萬；最大宗是/);
 });
 
 test('月度回顧圖：本月不在資料中、點長條切月，未齊月份 tooltip 會提醒', () => {

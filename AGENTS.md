@@ -83,7 +83,7 @@
 | 改這裡 | 記得同步這裡 |
 |---|---|
 | 信用卡負數交易的繳款／退款判斷 | **單一真相＝`lib/statement.js isCardPayment(desc)`**：`finalize()` 只負責預覽分流，`statement-import.js importRows()` 必須再用同一函式於後端重判，不能相信瀏覽器送來的 `isPayment`。負數且命中＝真正繳款、不匯入；負數且未命中＝退款候選，保留負號、`storeKey` 與服務層欄位 `refundOf:null`。`refundOf` 進 `FIELD_SCHEMA`、不進 `WRITABLE_FIELDS`；P1 只在彙總時一對一配對，不改寫真實退款日期。正負金額都用絕對值守 `1e8` 解析雜訊上限。 |
-| 月度回顧的消費口徑與退款配對 | **單一積木＝`lib/derive.js consumptionByMonth(db)`**：消費視角收信用卡＋現金流兩帳的 `type:'expense'`，排除空分類繳卡費、非台幣與壞日期。退款每次彙總重配「**同卡（stmtRef 卡 id 優先）＋同 storeKey＋金額精準相符＋消費日較早＋未被配過**」的最近消費，一對一抵回原消費月與原分類；部分／孤兒退款不猜、不算進任何月，列 `unmatchedRefunds`。該函式只推導不改 db，`GET /api/monthly-review` 只能呼叫 `buildMonthlyReview`，不另寫公式。分類／子類是使用者文字，彙總 map 必須 null-proto。**兩把尺不可混**：長條／分類用消費視角；透支仍用 `computeCashflow` 現金流視角。 |
+| 月度回顧的消費口徑與退款配對 | **單一積木＝`lib/derive.js consumptionByMonth(db)`**：消費視角收信用卡＋現金流兩帳的 `type:'expense'`，排除空分類繳卡費、非台幣與壞日期。退款每次彙總重配「**同卡（stmtRef 卡 id 優先）＋同 storeKey＋金額精準相符＋消費日較早＋未被配過**」的最近消費，一對一抵回原消費月與原分類；部分／孤兒退款不猜、不算進任何月，列 `unmatchedRefunds`。該函式只推導不改 db，`GET /api/monthly-review` 只能呼叫 `buildMonthlyReview`，不另寫公式。分類／子類是使用者文字，彙總 map 必須 null-proto。**兩把尺不可混**：長條／分類用消費視角；透支仍用 `computeCashflow` 現金流視角。預設選最近一個**實際消費金額大於 0**的已結清月（最新月尚未匯帳單時不先顯示空白），但使用者明點空月仍尊重；摘要比較同樣往前跳過空月，找最近有消費的月份。 |
 | 月度回顧總覽卡 | `public/modules/monthly-review-card.js` 是零 DOM／零 API 的純呈現層，`dashboard.js` 只負責抓 `GET /api/monthly-review`、掛 info-link 與 Chart.js。**前端不得重算消費、退款、分類百分比或現金流**，全部照 API 結果顯示。點長條切月份時要同時守 `currentRouteSeq()` 與 request 序號；完成或失敗都要解除 `#monthlyReviewBlock[aria-busy]`，避免慢回應蓋新月份或整張卡永久鎖住。 |
 | `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
 | `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
