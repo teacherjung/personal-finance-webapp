@@ -4,6 +4,7 @@ import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
 import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml } from './monthly-review-card.js';
+import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
 
 let chartRefs = [];
 let monthlyReviewChart = null;
@@ -266,6 +267,7 @@ export async function renderDashboard() {
           : `<span class="dchip good">✓ 紀律正常</span>`}
         <span id="dhLastSeen"></span>
       </div>
+      ${goalTrackingHtml(s.goalTrack, { wan, pct })}
     </div>
 
     <div class="kpi-row">
@@ -298,10 +300,22 @@ export async function renderDashboard() {
   `;
 
   drawTrend(s.snapshots);
+  wireGoalTrackingInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
   // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
+}
+
+function wireGoalTrackingInfo() {
+  view().querySelectorAll('[data-goal-info]').forEach(button => {
+    const el = /** @type {HTMLElement} */ (button);
+    el.onclick = () => {
+      const key = String(el.dataset.goalInfo || '');
+      const info = Object.hasOwn(GOAL_TRACKING_INFO, key) ? GOAL_TRACKING_INFO[key] : null;
+      if (info) openInfo(info.title, info.html, { size: 'sm' });
+    };
+  });
 }
 
 function drawTrend(snaps) {

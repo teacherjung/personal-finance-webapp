@@ -1,6 +1,7 @@
 // @ts-check
-import { api, view, byId, esc, toast, modalSizeClass, bindBackdropClose, openForm, stmtOrig, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, toast, modalSizeClass, bindBackdropClose, openForm, stmtOrig, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
+import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 
 export async function renderSettings() {
   const seq = currentRouteSeq();
@@ -96,6 +97,16 @@ export async function renderSettings() {
     <h2 class="section-title">資產配置</h2>
 
     <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">淨值目標</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">設定後，總覽會顯示目前進度，並分別用「每月現金結餘」與「整體淨值變化」估算還要多久。留空儲存即可關閉。</p>
+      <div class="form-grid">
+        <div><label>淨值目標（萬元）</label><input id="netWorthTargetWan" type="number" min="0.1" step="0.1" value="${esc(netWorthTargetWanInput(s.netWorthTarget))}" placeholder="例如 5,000" /></div>
+        <div class="goal-target-preview"><span>台幣完整金額</span><b id="netWorthTargetPreview" aria-live="polite">${esc(netWorthTargetPreview(netWorthTargetWanInput(s.netWorthTarget), money))}</b></div>
+      </div>
+      <div class="form-actions"><button class="btn" id="saveGoal">儲存目標</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:14px">配置偏離提醒</h3>
       <div class="form-grid">
         <div><label>資產配置偏離提醒（%）——實際與目標差超過此值，總覽會提醒再平衡</label><input id="allocationDriftPct" type="number" value="${esc(s.allocationDriftPct)}" /></div>
@@ -182,6 +193,16 @@ export async function renderSettings() {
   const saveSettings = async (/** @type {any} */ body, /** @type {string} */ okMsg) => {
     try { await api('/settings', { method: 'PUT', body }); toast(okMsg); }
     catch (err) { toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true); }
+  };
+  const goalInput = /** @type {HTMLInputElement} */ (byId('netWorthTargetWan'));
+  const updateGoalPreview = () => {
+    byId('netWorthTargetPreview').textContent = netWorthTargetPreview(goalInput.value, money);
+  };
+  goalInput.oninput = updateGoalPreview;
+  byId('saveGoal').onclick = () => {
+    const target = netWorthTargetFromWan(goalInput.value);
+    if (Number.isNaN(target)) return toast('淨值目標請輸入大於 0 的數字，或留空關閉。', true);
+    saveSettings({ netWorthTarget: target }, target == null ? '淨值目標已清除' : '淨值目標已儲存');
   };
   byId('savePrinciples').onclick = () => saveSettings({
     ibConcentrationPct: Number(val('ibConcentrationPct')),
