@@ -133,7 +133,7 @@ test('速度不為正：樣本足夠也不輸出負月份或 Infinity', () => {
   assert.equal(result.insufficient, false, '這是近期沒有正成長，不是資料不足');
 });
 
-test('達標只出現在 goalTrack：進度封頂、不出負差距，也不污染提醒牆', () => {
+test('達標：進度封頂、不出負差距；🎉 報喜進提醒牆一次（使用者 2026-07-23 拍板，推翻 P1 原決定）', () => {
   const db = makeDb({ target: 1_000, current: 1_500 });
   const direct = computeGoalTracking(db, NOW);
   assert.equal(direct.reached, true);
@@ -144,7 +144,22 @@ test('達標只出現在 goalTrack：進度封頂、不出負差距，也不污�
 
   const summary = buildSummary(db);
   assert.equal(summary.goalTrack.reached, true);
-  assert.ok(!summary.reminders.some(r => r.key.startsWith('goal-') || r.module === '目標'));
+  const cheer = summary.reminders.find(r => r.key === 'goal-reached');
+  assert.ok(cheer, '達標要出現在提醒牆（新聞牆首次顯示 🆕、之後收進持續中＝天然只報喜一次）');
+  assert.equal(cheer.level, 'info', 'info＝好消息不灌進「需要處理」warn/danger 計數');
+  assert.equal(cheer.module, '目標');
+  assert.match(cheer.title, /🎉/);
+  // D2 穩定 key 規約：同狀態兩次計算 key 相同、title 才帶金額
+  const again = buildSummary(db).reminders.find(r => r.key === 'goal-reached');
+  assert.ok(again);
+  assert.equal(again.key, cheer.key);
+});
+
+test('未達標／未設目標：提醒牆沒有 goal-reached（跌回目標下＝提醒消失→新聞牆誠實顯示「已解除」）', () => {
+  const below = buildSummary(makeDb({ target: 1_000_000, current: 1_500 }));
+  assert.ok(!below.reminders.some(r => r.key === 'goal-reached'), '未達標不報喜');
+  const noGoal = buildSummary(makeDb({ target: null }));
+  assert.ok(!noGoal.reminders.some(r => r.key.startsWith('goal-')), '未設目標整段不出現');
 });
 
 test('HTTP 全鏈路：設定目標後 summary 立即出現，送 null 後真的清除', async () => {
