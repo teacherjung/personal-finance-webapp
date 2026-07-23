@@ -107,3 +107,17 @@ test('buildMonthlyReview：只列已結清月、不補記帳前假月，分類�
   assert.equal(out.selected.categories.find(c => c.name === '飲食').subcategories[0].name, '（未分子類）');
   assert.deepEqual(out.selected.cashflow, { month: '2026-03', income: 250, expense: 400, net: -150, overdraft: true, overdraftAmount: 150 });
 });
+
+test('buildMonthlyReview：未指定月份時跳過尚未匯入的空月，明點空月仍照選', () => {
+  const db = { transactions: [
+    tx('may', '2026-05-08', 500, { category: '飲食' }),
+  ] };
+  const now = new Date(2026, 6, 22);
+
+  const defaultReview = buildMonthlyReview(db, '', now);
+  assert.deepEqual(defaultReview.months.map(m => [m.month, m.total]), [['2026-05', 500], ['2026-06', 0]]);
+  assert.equal(defaultReview.selectedMonth, '2026-05', '最新已結清月空白時，預設應回到最近有消費的月份');
+
+  const requestedEmpty = buildMonthlyReview(db, '2026-06', now);
+  assert.equal(requestedEmpty.selectedMonth, '2026-06', '使用者明點空月時仍須尊重選擇');
+});
