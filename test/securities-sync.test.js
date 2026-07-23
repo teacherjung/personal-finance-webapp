@@ -11,6 +11,9 @@ process.env.STORE_FILE = TEST_STORE;
 
 const { syncIb } = await import('../lib/services/ib-sync.js');
 const { getDb, saveDb, getSettings, updateSettings } = await import('../lib/repo.js');
+const { accountFingerprint } = await import('../lib/services/security-trades.js');
+const { parseStatement } = await import('../lib/ib.js');
+const FP = accountFingerprint('U9990001');
 
 after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 不存在 */ } } });
 
@@ -42,13 +45,13 @@ test('首次同步：正常列入庫、取消列跳過＋回報；ibTrades 鏡�
   assert.equal(db.securityTrades.length, 2);
   assert.equal(db.ibTrades.length, 3, '鏡像維持既有整包取代語意（含取消列，交易摘要/XIRR 口徑不動）');
   const sec = db.securityTrades.find((/** @type {any} */ x) => x.symbol === 'CSPX');
-  assert.equal(sec.sourceRef, 'ib|txn|TXN-1', '官方識別碼 identifier-first');
+  assert.equal(sec.sourceRef, `ib|txn|${FP}|TXN-1`, '官方識別碼 identifier-first（含帳戶指紋段）');
   assert.equal(sec.side, 'buy');
   assert.equal(sec.cashDirection, 'out');
   assert.equal(sec.netSettlement, 8005, '絕對值＋方向分離');
   assert.equal(sec.settlementDate, '2026-01-15', 'Flex settleDateTarget 有值就帶入（藍圖以為只能留空）');
   const eimi = db.securityTrades.find((/** @type {any} */ x) => x.symbol === 'EIMI');
-  assert.equal(eimi.sourceRef, 'ib|exe|EX-2');
+  assert.equal(eimi.sourceRef, `ib|exe|${FP}|EX-2`);
   assert.equal(eimi.quantity, 5, '負數量取絕對值、方向看 side');
   assert.ok(!JSON.stringify(db.securityTrades).includes('U9990001'), '不落帳號原文（只有指紋＋遮罩 label）');
 });
@@ -130,4 +133,55 @@ test('自審 #4｜官方識別碼列就地更新＝整列取代：來源欄位�
   const row = getDb().securityTrades.find((/** @type {any} */ x) => x.symbol === 'AAPL');
   assert.equal(row.settlementDate, undefined, '來源已無交割日 → 舊值清除、不殘留');
   assert.ok(row.id && row.importBatch, 'id/批次仍保留首次');
+});
+
+test('Codex S2r1#1/#2｜缺幣別/缺核心金額/壞列 → 分原因跳過（以原始列數計）、不猜 USD 不入庫', async () => {
+  const NOCUR = raw({ symbol: 'NC1', transactionID: 'TXN-NC', currency: '' });
+  const NOCORE = { accountId: 'U9990001', tradeDate: '2026-01-13', symbol: 'NC2', buySell: 'BUY', quantity: 10, transactionID: 'TXN-NB', currency: 'USD' };
+  const BADROW = raw({ symbol: '', transactionID: 'TXN-BAD' });   // 缺代號＝normalize null
+  const r = await syncIb(feed([NOCUR, NOCORE, BADROW], []));
+  assert.equal(r.secTradesAdded, 0);
+  assert.equal(r.secTradesSkipped, 3, '總數以原始列數為基準（壞列也算）');
+  assert.equal(r.secSkippedReasons.missingCurrency, 1);
+  assert.equal(r.secSkippedReasons.missingCore, 1);
+  assert.equal(r.secSkippedReasons.badRow, 1);
+  assert.ok(!getDb().securityTrades.some((/** @type {any} */ x) => ['NC1', 'NC2'].includes(x.symbol)), '缺幣別/核心金額不入庫');
+});
+
+test('Codex S2r1#2｜Trade 缺 Account ID → 繼承外層 statement 帳戶（parseStatement 層）', () => {
+  const j = { FlexQueryResponse: { FlexStatements: { FlexStatement: {
+    accountId: 'U9990001', fromDate: '2026-01-01', toDate: '2026-01-31',
+    Trades: { Trade: { tradeDate: '2026-01-13', symbol: 'VT', buySell: 'BUY', quantity: 10, tradePrice: 100, tradeMoney: 1000, netCash: -1001, currency: 'USD', transactionID: 'T-IN' } },
+  } } } };
+  const parsed = parseStatement(j);
+  assert.equal(parsed.rawTrades.length, 1);
+  assert.equal(parsed.rawTrades[0].accountId, 'U9990001', '外層帳戶補給缺 Account ID 的 Trade 節點');
+});
+
+test('Codex S2r1#4｜跨帳戶同 transactionID：兩帳戶各自一筆、不互相覆蓋；舊格式鍵一次性遷移', async () => {
+  const A = raw({ symbol: 'XACC', transactionID: 'TXN-42', accountId: 'U1111111' });
+  await syncIb(feed([A], [lean(A)]));
+  const B = raw({ symbol: 'XACC', transactionID: 'TXN-42', accountId: 'U2222222', tradePrice: 999 });
+  await syncIb(feed([B], [lean(B)]));
+  const rows = getDb().securityTrades.filter((/** @type {any} */ x) => x.symbol === 'XACC');
+  assert.equal(rows.length, 2, 'A 不被 B 覆蓋（原 Codex 重現：只剩一筆）');
+  // 遷移：種一筆舊格式官方鍵 → 同步後升級成含指紋段
+  const db = getDb();
+  db.securityTrades.push({ id: 'legacy1', source: 'ibkr', sourceRef: 'ib|txn|LEGACY-9', tradeDate: '2026-01-05', side: 'buy',
+    cashDirection: 'out', quantity: 1, currency: 'USD', symbol: 'LGC', sourceAccountId: 'abcdefabcdef',
+    sourceAccountLabel: 'IBKR …0000', importBatch: 'ib-sync-old', importedAt: '2026-01-05T00:00:00Z' });
+  saveDb(db);
+  await syncIb(feed([], []));
+  const legacy = getDb().securityTrades.find((/** @type {any} */ x) => x.id === 'legacy1');
+  assert.equal(legacy.sourceRef, 'ib|txn|abcdefabcdef|LEGACY-9', '舊鍵補上自帶指紋段（冪等）');
+  await syncIb(feed([], []));
+  assert.equal(getDb().securityTrades.find((/** @type {any} */ x) => x.id === 'legacy1').sourceRef, 'ib|txn|abcdefabcdef|LEGACY-9', '再跑不重複升級');
+});
+
+test('Codex S2r1#3｜commissionCurrency 進庫且過櫃檯（GBP 手續費、USD 交易）', async () => {
+  const GF = raw({ symbol: 'GFEE', transactionID: 'TXN-GF', ibCommissionCurrency: 'GBP' });
+  await syncIb(feed([GF], [lean(GF)]));
+  const row = getDb().securityTrades.find((/** @type {any} */ x) => x.symbol === 'GFEE');
+  assert.equal(row.commissionCurrency, 'GBP');
+  assert.equal(row.currency, 'USD');
 });

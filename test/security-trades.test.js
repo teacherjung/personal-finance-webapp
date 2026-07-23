@@ -14,10 +14,11 @@ const IB_RAW = {
   transactionID: 'T-111', tradeID: 'TR-222', ibExecID: 'EX-333',
 };
 
-test('IB 去重鍵 identifier-first：transactionID → tradeID → ibExecID → 退路指紋', () => {
-  assert.equal(ibSourceRef(IB_RAW), 'ib|txn|T-111');
-  assert.equal(ibSourceRef({ ...IB_RAW, transactionID: '' }), 'ib|trd|TR-222');
-  assert.equal(ibSourceRef({ ...IB_RAW, transactionID: '', tradeID: '' }), 'ib|exe|EX-333');
+test('IB 去重鍵 identifier-first：transactionID → tradeID → ibExecID → 退路指紋（官方鍵含帳戶指紋，Codex S2r1#4）', () => {
+  const FP = accountFingerprint('U0000000');
+  assert.equal(ibSourceRef(IB_RAW), `ib|txn|${FP}|T-111`);
+  assert.equal(ibSourceRef({ ...IB_RAW, transactionID: '' }), `ib|trd|${FP}|TR-222`);
+  assert.equal(ibSourceRef({ ...IB_RAW, transactionID: '', tradeID: '' }), `ib|exe|${FP}|EX-333`);
   const fp = ibSourceRef({ ...IB_RAW, transactionID: '', tradeID: '', ibExecID: '' });
   assert.match(fp, /^ib\|fp\|/, '全缺才退指紋');
   assert.doesNotMatch(fp, /U0000000/, '指紋不可含完整帳號原文');
@@ -118,7 +119,7 @@ test('同批出現序：同鍵多筆補 |#N（同日同價兩筆真交易都唯�
   assert.notEqual(list[0].sourceRef, list[1].sourceRef, '兩筆一模一樣的真交易 ref 必須不同');
   assert.match(list[0].sourceRef, /\|#1$/);
   assert.match(list[1].sourceRef, /\|#2$/);
-  assert.equal(list[2].sourceRef, 'ib|txn|T-111', '官方識別碼天生唯一、不加序（跨批穩定）');
+  assert.match(list[2].sourceRef, /^ib\|txn\|[0-9a-f]{12}\|T-111$/, '官方識別碼（含帳戶指紋段）不加序（跨批穩定）');
   // 冪等基礎：同一份輸入再跑一次 → 同樣的 ref（S2 重匯 0 新增靠這個）
   const c = mk(), d = mk();
   assert.ok(c && d);
@@ -164,8 +165,8 @@ test('自審回歸｜assignSeqSuffix 跨批穩定：退路指紋唯一時也補 
   assert.equal(b2[0].sourceRef, b1[0].sourceRef, '同一筆真交易的 ref 不因批內多一筆而漂移（S2 冪等地基）');
   assert.match(b2[1].sourceRef, /\|#2$/);
   const dup = assignSeqSuffix([normalizeIbTrade(IB_RAW), normalizeIbTrade(IB_RAW)]);
-  assert.equal(dup[0].sourceRef, 'ib|txn|T-111', '官方識別碼重複也不加序（重複＝資料錯、去重成一筆）');
-  assert.equal(dup[1].sourceRef, 'ib|txn|T-111');
+  assert.match(dup[0].sourceRef, /^ib\|txn\|[0-9a-f]{12}\|T-111$/, '官方識別碼重複也不加序（重複＝資料錯、去重成一筆）');
+  assert.equal(dup[1].sourceRef, dup[0].sourceRef);
 });
 
 test('自審回歸｜grossAmount：tradeMoney 空字串時退到 proceeds（?? 對 null 才退位）', () => {
@@ -221,4 +222,32 @@ test('自審根治｜baseRef 剝序；官方識別碼列不參與指紋對帳', 
   const plan = reconcileFingerprintRows([official], [FP_T()]);
   assert.deepEqual(plan.duplicate, [false], '官方列不進指紋池');
   assert.match(String(plan.insertRefs[0]), /\|#1$/);
+});
+
+// ==== Codex S2 複審 r1 的回歸考題（findings 1/3/4）====
+
+test('Codex S2r1#1｜缺幣別不猜 USD：missingCurrency flag；缺核心金額 → missingCore flag', () => {
+  const noCur = normalizeIbTrade({ ...IB_RAW, currency: '' });
+  assert.ok(noCur);
+  assert.equal(noCur.currency, '', '不可默默填 USD');
+  assert.equal(noCur.flags.missingCurrency, true);
+  const bare = normalizeIbTrade({ accountId: 'U0000000', tradeDate: '2026-01-13', symbol: 'VT', buySell: 'BUY', quantity: 10, transactionID: 'T-1', currency: 'USD' });
+  assert.ok(bare);
+  assert.equal(bare.flags.missingCore, true, '缺價/成交額/應收付＝不可入庫材料');
+  assert.ok(!normalizeIbTrade(IB_RAW).flags.missingCore, '欄位齊全無 flag');
+});
+
+test('Codex S2r1#3｜手續費幣別：與交易幣別不同才存 commissionCurrency；相同省略', () => {
+  const gbpFee = normalizeIbTrade({ ...IB_RAW, ibCommissionCurrency: 'GBP' });
+  assert.ok(gbpFee);
+  assert.equal(gbpFee.commissionCurrency, 'GBP', '美元交易收英鎊手續費＝要標明單位');
+  const same = normalizeIbTrade({ ...IB_RAW, ibCommissionCurrency: 'USD' });
+  assert.ok(same);
+  assert.equal(same.commissionCurrency, undefined, '同幣別省略（慣例＝跟交易幣別）');
+});
+
+test('Codex S2r1#4｜跨帳戶同 transactionID → 兩個不同鍵（不互相覆蓋）', () => {
+  const a = ibSourceRef({ ...IB_RAW, accountId: 'U1111111', transactionID: 'TXN-42' });
+  const b = ibSourceRef({ ...IB_RAW, accountId: 'U2222222', transactionID: 'TXN-42' });
+  assert.notEqual(a, b, 'IB 未承諾 ID 跨帳戶唯一——帳戶指紋必須入鍵');
 });

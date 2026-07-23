@@ -15,7 +15,9 @@
  *   cashBaseUnsupported?: string,
  *   cashDetailIncomplete?: boolean,
  *   cashSummaryMissing?: boolean,
- *   cashZeroed?: number
+ *   cashZeroed?: number,
+ *   secTradesSkipped?: number,
+ *   secSkippedReasons?: { badRow?: number, cancelOrUnknown?: number, missingAccount?: number, missingCurrency?: number, missingCore?: number, unsupportedCurrency?: number }
  * }} IbSyncResult
  */
 
@@ -81,6 +83,21 @@ export function ibSyncFeedback(result, formatCurrency) {
     feedback.push({
       message: `提醒：${result.cashZeroed} 個 IB 現金帳戶這次報表已無該幣別，餘額已歸零（現金提領/轉走後的正常結果）。`,
       error: false
+    });
+  }
+  // 證券交易集合的跳過回報（Codex S2r1#2：後端只寫 console＝使用者不知道查帳頁少了列；病因各自說對才修得對地方）
+  if (result.secTradesSkipped) {
+    const r = result.secSkippedReasons || {};
+    const parts = [];
+    if (r.cancelOrUnknown) parts.push(`取消/未知買賣別 ${r.cancelOrUnknown} 筆`);
+    if (r.missingCurrency) parts.push(`缺幣別 ${r.missingCurrency} 筆（請在 Flex 的 Trades 勾 Currency——不會猜成 USD）`);
+    if (r.missingCore) parts.push(`缺核心金額 ${r.missingCore} 筆（請勾 Trade Price／Trade Money／Net Cash）`);
+    if (r.missingAccount) parts.push(`缺帳戶識別 ${r.missingAccount} 筆（請勾 Account ID）`);
+    if (r.unsupportedCurrency) parts.push(`不支援幣別 ${r.unsupportedCurrency} 筆`);
+    if (r.badRow) parts.push(`缺日期/代號/數量 ${r.badRow} 筆`);
+    feedback.push({
+      message: `注意：證券交易紀錄有 ${result.secTradesSkipped} 筆未納入查帳集合（${parts.join('；') || '原因不明'}）。投組持倉與淨值不受影響。`,
+      error: true
     });
   }
 
