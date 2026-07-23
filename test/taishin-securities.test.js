@@ -124,6 +124,8 @@ test('對帳單年月：民國與西元兩款都認得；缺年月由主入口�
   assert.equal(extractSecStatementMonth([L(900, [[40, '115年1月 對帳單']])]), '2026-01');
   assert.equal(extractSecStatementMonth([L(900, [[40, '2026/01 月結單']])]), '2026-01');
   assert.equal(extractSecStatementMonth([L(900, [[40, '沒有年月']])]), null);
+  assert.equal(extractSecStatementMonth([L(900, [[40, '2026年13月']])]), null, '13 月＝假月份（Codex S2r1#7：連鎖毒 MM/DD 年份推斷）');
+  assert.equal(extractSecStatementMonth([L(900, [[40, '2026年00月']])]), null, '00 月同擋');
 });
 
 test('isSecuritiesStatement：證券對帳單認得；銀行綜合對帳單（帳戶概要區）不誤認', () => {

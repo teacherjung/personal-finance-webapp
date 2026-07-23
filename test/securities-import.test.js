@@ -179,3 +179,30 @@ test('自審 #7｜裸 /api/securityTrades 通用路由不存在（單一讀取�
   const wrapped = await fetch(base + '/securities');
   assert.equal(wrapped.status, 200);
 });
+
+test('Codex S2r1#6｜機密投影：GET /api/securities 與 /api/db 都剝 sourceAccountId/sourceRef；export 保留完整', async () => {
+  const list = await (await fetch(base + '/securities')).json();
+  assert.ok(list.trades.length >= 1, '前面考題已種資料');
+  for (const t of list.trades) {
+    assert.equal(t.sourceAccountId, undefined, '帳戶指紋不送瀏覽器');
+    assert.equal(t.sourceRef, undefined, '去重鍵（嵌指紋）不送瀏覽器');
+    assert.ok(t.id && t.sourceAccountLabel !== undefined || t.id, '顯示欄保留');
+  }
+  const dbResp = await (await fetch(base + '/db')).json();
+  for (const t of dbResp.securityTrades || []) assert.equal(t.sourceRef, undefined, '/api/db 同樣投影');
+  const exported = await (await fetch(base + '/export')).json();
+  assert.ok((exported.securityTrades || []).every(t => t.sourceRef), '備份必須完整（還原冪等靠 sourceRef）');
+});
+
+test('Codex S2r1#5｜備份驗證牆＝完整合約：缺 side/currency/source 的殘缺列擋下', () => {
+  const good = { id: 'g2', source: 'taishin', sourceRef: 'ts|f|y|#1', tradeDate: '2026-01-13', side: 'buy',
+    cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050' };
+  assert.equal(validateImportItem('securityTrades', good).errors.length, 0);
+  for (const missing of ['side', 'currency', 'source', 'symbol', 'cashDirection', 'quantity']) {
+    const bad = { ...good, id: 'b-' + missing };
+    delete /** @type {any} */ (bad)[missing];
+    assert.ok(validateImportItem('securityTrades', bad).errors.length > 0, `缺 ${missing} 要報錯（Codex 重現：只驗兩欄＝殘缺列穿牆）`);
+  }
+  const cleaned = sanitizeDbForWrite({ ...structuredClone(getDb()), securityTrades: [good, { ...good, id: 'nb', side: undefined }] }, { mode: 'strip' });
+  assert.ok(cleaned.securityTrades.every((/** @type {any} */ r) => r.side), '殘缺列在櫃檯整筆濾除');
+});

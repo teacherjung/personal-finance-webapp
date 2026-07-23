@@ -57,3 +57,17 @@ test('IBKR 同步回報｜其餘三種舊值警告排在歸零提醒之前', () 
   assert.match(feedback[3].message, /彙總列沒有可用金額/);
   assert.match(feedback[4].message, /2 個 IB 現金帳戶/);
 });
+
+test('Codex S2r1#2｜secTradesSkipped 分原因回報（前端要說話，不只 console）', async () => {
+  const { ibSyncFeedback } = await import('../public/modules/portfolio-ib-sync.js');
+  const fb = ibSyncFeedback({ updated: 1, created: 0, secTradesSkipped: 3,
+    secSkippedReasons: { missingCurrency: 1, missingCore: 1, cancelOrUnknown: 1 } }, (v, c) => `${v} ${c}`);
+  const warn = fb.find(f => f.message.includes('證券交易紀錄'));
+  assert.ok(warn, '要有一則證券交易跳過警告');
+  assert.equal(warn.error, true);
+  assert.match(warn.message, /缺幣別 1 筆.*Currency/, '指路補勾欄位');
+  assert.match(warn.message, /缺核心金額 1 筆/);
+  assert.match(warn.message, /取消\/未知買賣別 1 筆/);
+  const clean = ibSyncFeedback({ updated: 1, created: 0 }, (v, c) => `${v} ${c}`);
+  assert.ok(!clean.some(f => f.message.includes('證券交易紀錄')), '沒跳過就不出現');
+});
