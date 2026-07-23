@@ -76,7 +76,7 @@ export async function renderCashflow() {
 
     <div class="tbl-wrap">
       <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「信用卡消費明細」上傳帳單。</td></tr>`}</tbody></table>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「卡費紀錄」上傳信用卡帳單。</td></tr>`}</tbody></table>
     </div>
   `;
 

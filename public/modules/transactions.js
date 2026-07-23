@@ -45,10 +45,10 @@ export async function renderTransactions() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>卡費明細</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
+      <div><h1>卡費紀錄</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
       <div class="page-actions">
         ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
-        <button class="btn btn-eq" id="uploadStmt">${icon('upload', 16)}上傳帳單</button>
+        <button class="btn btn-eq" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
       </div>
     </div>
 
@@ -74,7 +74,7 @@ export async function renderTransactions() {
 
     <div class="tbl-wrap">
       <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳帳單」匯入。</td></tr>`}</tbody></table>
+      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
     </div>
   `;
 
