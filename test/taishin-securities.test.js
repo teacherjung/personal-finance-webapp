@@ -205,3 +205,13 @@ test('自審回歸｜MM/DD 前向跨年：12 月帳單裡的隔年 1 月交割�
   assert.equal(resolveSecDate('01/02', '2026-12'), '2027-01-02', '12 月帳單的 1 月交割＝隔年 1 月');
   assert.equal(resolveSecDate('12/28', '2026-12'), '2026-12-28', '同月不受影響');
 });
+
+test('S2 拍板｜非月結單（年度/季度跨度）→ isMultiMonthHeader 命中（主入口 400 阻擋，防去重鍵毒化）', async () => {
+  const { isMultiMonthHeader } = await import('../lib/taishin-securities.js');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月~12月 對帳單']])]), true);
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月至3月']])]), true);
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月－3月']])]), true, '全形連接號（自審 #5）');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月〜12月']])]), true, '波浪號（自審 #5）');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月 對帳單']])]), false, '單月不誤擋');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '2026年1月']])]), false);
+});

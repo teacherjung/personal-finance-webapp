@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { normalizeIbTrade, normalizeTaishinTrade, ibSourceRef, ibDate, taishinSide, cashDirectionOf, accountFingerprint, assignSeqSuffix } =
+const { normalizeIbTrade, normalizeTaishinTrade, ibSourceRef, ibDate, taishinSide, cashDirectionOf, accountFingerprint, assignSeqSuffix, reconcileFingerprintRows, baseRef } =
   await import('../lib/services/security-trades.js');
 
 const IB_RAW = {
@@ -87,7 +87,8 @@ test('台新正規化：類別對照單一真相（未知不猜）；sourceRef �
   assert.equal(t.sourceAccountId, accountFingerprint('9001-900100'));
   assert.doesNotMatch(t.sourceRef, /9001-900100/, '去重鍵用指紋、不含帳號原文');
   assert.match(t.sourceRef, /^ts\|/);
-  assert.match(t.sourceRef, /2026-01\|2026-01-13\|0050\|現賣\|1000\|104\|104000\|103540/, '年月＋日＋代號＋類別＋量＋價＋成交額＋應收付全維度');
+  assert.match(t.sourceRef, /2026-01-13\|0050\|現賣\|1000\|104\|104000\|103540/, '日＋代號＋類別＋量＋價＋成交額＋應收付全維度');
+  assert.ok(!t.sourceRef.includes('|2026-01|'), 'S2 拍板：鍵**不含**對帳單年月（重疊月兩份單不可雙記，藍圖 §六 L247）');
   const unknown = normalizeTaishinTrade({ tradeDate: '2026-01-13', settlementDate: null, rawType: '興櫃申購', symbol: 'X1', name: '',
     quantity: 10, price: 1, grossAmount: 10, commission: 0, feeDiscount: 0, tax: 0, otherFees: null, netSettlement: 10, currency: 'TWD' }, ctx);
   assert.ok(unknown);
@@ -171,4 +172,53 @@ test('自審回歸｜grossAmount：tradeMoney 空字串時退到 proceeds（?? �
   const t = normalizeIbTrade({ ...IB_RAW, tradeMoney: '', proceeds: -8005 });
   assert.ok(t);
   assert.equal(t.grossAmount, 8005, '空字串 tradeMoney 不遮蔽 proceeds');
+});
+
+// ==== S2 自審三條 HIGH 的根治考題：內容比對＋計數對帳（reconcileFingerprintRows）====
+
+const FP_T = (over = {}) => {
+  const t = normalizeTaishinTrade({ tradeDate: '2026-02-13', settlementDate: null, rawType: '現買', symbol: '0050', name: 'X',
+    quantity: 1000, price: 104, grossAmount: 104000, commission: 148, feeDiscount: 0, tax: 0, otherFees: null,
+    netSettlement: 104148, currency: 'TWD', ...over }, { accountRaw: '9001-900100', stmtMonth: '2026-02' });
+  assert.ok(t); return t;
+};
+/** 模擬庫列（含序號 ref）。 @param {any} t @param {number} n */
+const stored = (t, n) => ({ ...t, sourceRef: `${t.sourceRef}|#${n}` });
+
+test('自審根治｜視窗位移不覆寫：庫 [A#1,B#2]、批只剩 [B] → 全 dup、0 插入、A 完好（原 HIGH：B 搶走 #1 蓋掉 A）', () => {
+  const A = FP_T({ commission: 5 }), B = FP_T({ commission: 7 });
+  const existing = [stored(A, 1), stored(B, 2)];
+  const plan = reconcileFingerprintRows(existing, [FP_T({ commission: 7 })]);
+  assert.deepEqual(plan.duplicate, [true], '內容比對命中庫內 B，不看位置');
+  assert.deepEqual(plan.insertRefs, [null]);
+  assert.equal(existing[0].commission, 5, '不改動任何既有列');
+});
+
+test('自審根治｜補印插入不漏記：庫 [X#1,Y#2]、批 [X,Z,Y]（Z 為新真交易）→ X/Y dup、Z 插入 #3（原 HIGH：Z 撞舊 #2 被漏）', () => {
+  const X = FP_T({ name: 'X' }), Y = FP_T({ name: 'Y' }), Z = FP_T({ name: 'Z' });
+  const plan = reconcileFingerprintRows([stored(X, 1), stored(Y, 2)], [FP_T({ name: 'X' }), FP_T({ name: 'Z' }), FP_T({ name: 'Y' })]);
+  assert.deepEqual(plan.duplicate, [true, false, true], 'X/Y 內容配對成功、Z 是新的');
+  assert.equal(plan.insertRefs[1], `${Z.sourceRef}|#3`, 'Z 拿庫內最大序+1，不與既有列相撞');
+});
+
+test('自審根治｜重疊月不雙記：同一筆交易印在兩份不同月對帳單 → 鍵相同（無 stmtMonth）、內容相同 → dup（原 HIGH：兩鍵雙記 60 萬）', () => {
+  const jan = normalizeTaishinTrade({ tradeDate: '2026-01-31', settlementDate: null, rawType: '現買', symbol: '2330', name: '台積電',
+    quantity: 1000, price: 600, grossAmount: 600000, commission: 855, feeDiscount: 0, tax: 0, otherFees: null,
+    netSettlement: 600855, currency: 'TWD' }, { accountRaw: '9001-900100', stmtMonth: '2026-01' });
+  const feb = normalizeTaishinTrade({ tradeDate: '2026-01-31', settlementDate: null, rawType: '現買', symbol: '2330', name: '台積電',
+    quantity: 1000, price: 600, grossAmount: 600000, commission: 855, feeDiscount: 0, tax: 0, otherFees: null,
+    netSettlement: 600855, currency: 'TWD' }, { accountRaw: '9001-900100', stmtMonth: '2026-02' });
+  assert.ok(jan && feb);
+  assert.equal(jan.sourceRef, feb.sourceRef, '鍵不含對帳單年月');
+  const plan = reconcileFingerprintRows([stored(jan, 1)], [feb]);
+  assert.deepEqual(plan.duplicate, [true], '2 月那份單裡的同一筆＝重複，不再入帳');
+});
+
+test('自審根治｜baseRef 剝序；官方識別碼列不參與指紋對帳', () => {
+  assert.equal(baseRef('ts|f|x|#12'), 'ts|f|x');
+  assert.equal(baseRef('ib|txn|T-1'), 'ib|txn|T-1');
+  const official = { sourceRef: 'ib|txn|T-1', tradeDate: '2026-01-13' };
+  const plan = reconcileFingerprintRows([official], [FP_T()]);
+  assert.deepEqual(plan.duplicate, [false], '官方列不進指紋池');
+  assert.match(String(plan.insertRefs[0]), /\|#1$/);
 });
