@@ -11,6 +11,7 @@
     "levCapPct": 1.3,
     "ibMaintenancePct": 25,
     "ibIdleCashAlert": 5000,
+    "netWorthTarget": null,
     "ib": {
       "flexToken": "",
       "flexQueryId": "",
