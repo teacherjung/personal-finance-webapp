@@ -89,7 +89,11 @@ export async function renderSecurities() {
   const from = byId('secFrom'), to = byId('secTo');
   if (from) from.onchange = () => { filters.from = from.value; renderSecurities(); };
   if (to) to.onchange = () => { filters.to = to.value; renderSecurities(); };
-  byId('secSearch').onchange = (/** @type {any} */ e) => { filters.q = e.target.value; renderSecurities(); };   // change（Enter/失焦）觸發：整頁重繪會吃掉輸入焦點，不用 oninput
+  // 失焦（change）或按 Enter（keydown）套用搜尋——不用 oninput：整頁重繪會吃掉輸入焦點。
+  // ⚠️ Enter 要自己接：#secSearch 不在 <form> 裡，純 input 按 Enter 瀏覽器不會發 change（自審 r1#1）
+  const search = byId('secSearch');
+  search.onchange = (/** @type {any} */ e) => { filters.q = e.target.value; renderSecurities(); };
+  search.onkeydown = (/** @type {any} */ e) => { if (e.key === 'Enter') { filters.q = e.target.value; renderSecurities(); } };
   // 表頭排序：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪（鍵集合與 tx-sort 不同，故本地綁）
   view().querySelectorAll('th.sortable').forEach((/** @type {any} */ el) => el.onclick = () => {
     const key = el.dataset.sort || 'tradeDate';
@@ -189,11 +193,12 @@ function openSecPreview(/** @type {any} */ p, /** @type {string} */ b64, /** @ty
   const btn = byId('secDoImport');
   if (btn) btn.onclick = async () => {
     btn.disabled = true;   // 防雙擊重複送
+    const seqAtStart = currentRouteSeq();   // 守門（自審 r1#2）：等待匯入期間使用者可能切走頁（modal 擋不住上一頁/hash），回來不可蓋掉新頁面
     try {
       const out = await api('/securities/import', { method: 'POST', body: password ? { file: b64, password } : { file: b64 } });
       close();
       toast(`已匯入 ${out.imported} 筆證券交易${out.skippedDup ? `（略過已存在 ${out.skippedDup} 筆）` : ''}`);
-      renderSecurities();
+      if (seqAtStart === currentRouteSeq()) renderSecurities();
     } catch (err) { btn.disabled = false; toast('匯入失敗：' + /** @type {any} */ (err).message, true); }
   };
 }
@@ -233,11 +238,14 @@ async function openSecBatches() {
     const id = btn.dataset.delbatch || '';
     const b = batches.find((/** @type {any} */ x) => x.batchId === id);
     if (!window.confirm(`確定整批刪除這 ${b ? b.count : ''} 筆台新交易（${b ? b.minDate : ''}〜${b ? b.maxDate : ''}）嗎？\n刪除後可重新上傳同一份對帳單補回。`)) return;
+    const seqAtStart = currentRouteSeq();   // 守門（自審 r1#2）：同確認匯入——切走頁後不可蓋畫面、也不可把關掉的窗彈回來
     try {
       const out = await api('/securities/batch/delete', { method: 'POST', body: { batchId: id } });
       toast(`已刪除 ${out.deleted} 筆`);
-      openSecBatches();      // 重畫紀錄窗（重抓最新）
-      renderSecurities();    // 背後頁面同步更新
+      if (seqAtStart === currentRouteSeq()) {
+        openSecBatches();      // 重畫紀錄窗（重抓最新）
+        renderSecurities();    // 背後頁面同步更新
+      }
     } catch (err) { toast('刪除失敗：' + /** @type {any} */ (err).message, true); }
   });
 }
