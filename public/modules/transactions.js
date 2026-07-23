@@ -48,7 +48,7 @@ export async function renderTransactions() {
       <div><h1>卡費紀錄</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
       <div class="page-actions">
         ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
-        <button class="btn btn-eq" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
+        <button class="btn btn-upload" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
       </div>
     </div>
 

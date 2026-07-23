@@ -172,6 +172,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 9px
 .btn-ghost:hover { background: var(--card-2); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
 .btn-eq { width: 132px; padding-left: 0; padding-right: 0; text-align: center; }   /* 收支頁三顆動作鈕等寬（使用者定 2026-07-21） */
+.btn-upload { width: 156px; padding-left: 0; padding-right: 0; text-align: center; }
 .batch-help li { margin-bottom: 2px; }
 .batch-help .hl { color: var(--accent); font-weight: 600; }   /* 匯入紀錄說明的重點詞（使用者定 2026-07-21 版式） */
 .btn-danger { background: transparent; color: var(--neg); border: 1px solid var(--line-2); }
