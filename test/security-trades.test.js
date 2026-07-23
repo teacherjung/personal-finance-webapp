@@ -95,6 +95,18 @@ test('台新正規化：類別對照單一真相（未知不猜）；sourceRef �
   assert.equal(unknown.flags.unknownType, true, 'S2 預覽據此阻擋');
 });
 
+test('自審回歸｜帳號抽取失敗（空 accountRaw）→ missingAccount flag（避免空指紋跨帳戶互撞去重，S2 fail-closed）', () => {
+  const noAcct = normalizeTaishinTrade({ tradeDate: '2026-01-13', settlementDate: null, rawType: '現買', symbol: '0050', name: '元大台灣50',
+    quantity: 1000, price: 104, grossAmount: 104000, commission: 148, feeDiscount: 0, tax: 0, otherFees: null, netSettlement: 104148, currency: 'TWD' },
+    { accountRaw: '', stmtMonth: '2026-01' });
+  assert.ok(noAcct);
+  assert.equal(noAcct.sourceAccountId, '', '空帳號→空指紋');
+  assert.equal(noAcct.flags.missingAccount, true);
+  const ibNoAcct = normalizeIbTrade({ ...IB_RAW, accountId: '' });
+  assert.ok(ibNoAcct);
+  assert.equal(ibNoAcct.flags.missingAccount, true);
+});
+
 test('同批出現序：同鍵多筆補 |#N（同日同價兩筆真交易都唯一）；唯一鍵（官方識別碼）不動', () => {
   const ctx = { accountRaw: '9001-900100', stmtMonth: '2026-01' };
   const mk = () => normalizeTaishinTrade({ tradeDate: '2026-01-13', settlementDate: null, rawType: '現買', symbol: '0056', name: '元大高股息',
@@ -118,4 +130,45 @@ test('帳戶指紋：不可逆、對空白正規化、非空才產生', () => {
   assert.notEqual(accountFingerprint('9001-900100'), accountFingerprint('9001-900101'));
   assert.equal(accountFingerprint(''), '');
   assert.equal(accountFingerprint('9001-900100').length, 12);
+});
+
+// ==== 對抗式自審確認的 bug 之回歸考題 ====
+
+test("自審回歸｜IB 取消列 'BUY (Ca.)'/'SELL (Ca.)' → side null＋unknownType（不當正常買賣＝避免幽靈雙倍計）", () => {
+  const ca = normalizeIbTrade({ ...IB_RAW, buySell: 'BUY (Ca.)', quantity: -10 });
+  assert.ok(ca);
+  assert.equal(ca.side, null, "'BUY (Ca.)' 不可被 startsWith 認成 buy");
+  assert.equal(ca.cashDirection, null);
+  assert.equal(ca.flags.unknownType, true, 'S2 fail-closed 據此擋下、顯示原文');
+  const sca = normalizeIbTrade({ ...IB_RAW, buySell: 'SELL (Ca.)' });
+  assert.ok(sca);
+  assert.equal(sca.side, null);
+  assert.equal(normalizeIbTrade({ ...IB_RAW, buySell: 'BUY' })?.side, 'buy', '正常 BUY 不受影響');
+});
+
+test('自審回歸｜ibDate 過真實日曆：假日期回 null；normalizeIbTrade 拒收假成交日', () => {
+  assert.equal(ibDate('20260230'), null, '2 月 30 日不存在');
+  assert.equal(ibDate('20261301'), null, '13 月不存在');
+  assert.equal(ibDate('20260113'), '2026-01-13', '真日期照轉');
+  assert.equal(normalizeIbTrade({ ...IB_RAW, tradeDate: '20260230' }), null, '假成交日整筆不收（不流到 S2 寫入才炸）');
+});
+
+test('自審回歸｜assignSeqSuffix 跨批穩定：退路指紋唯一時也補 |#1，multiplicity 變動不漂移；官方識別碼永不加序', () => {
+  const ctx = { accountRaw: '9001-900100', stmtMonth: '2026-01' };
+  const mk = () => normalizeTaishinTrade({ tradeDate: '2026-01-13', settlementDate: null, rawType: '現買', symbol: '0056', name: '元大高股息',
+    quantity: 500, price: 40, grossAmount: 20000, commission: 28, feeDiscount: 0, tax: 0, otherFees: null, netSettlement: 20028, currency: 'TWD' }, ctx);
+  const b1 = assignSeqSuffix([mk()]);
+  assert.match(b1[0].sourceRef, /\|#1$/, '唯一退路指紋也要有序尾，跨批才穩');
+  const b2 = assignSeqSuffix([mk(), mk()]);
+  assert.equal(b2[0].sourceRef, b1[0].sourceRef, '同一筆真交易的 ref 不因批內多一筆而漂移（S2 冪等地基）');
+  assert.match(b2[1].sourceRef, /\|#2$/);
+  const dup = assignSeqSuffix([normalizeIbTrade(IB_RAW), normalizeIbTrade(IB_RAW)]);
+  assert.equal(dup[0].sourceRef, 'ib|txn|T-111', '官方識別碼重複也不加序（重複＝資料錯、去重成一筆）');
+  assert.equal(dup[1].sourceRef, 'ib|txn|T-111');
+});
+
+test('自審回歸｜grossAmount：tradeMoney 空字串時退到 proceeds（?? 對 null 才退位）', () => {
+  const t = normalizeIbTrade({ ...IB_RAW, tradeMoney: '', proceeds: -8005 });
+  assert.ok(t);
+  assert.equal(t.grossAmount, 8005, '空字串 tradeMoney 不遮蔽 proceeds');
 });
