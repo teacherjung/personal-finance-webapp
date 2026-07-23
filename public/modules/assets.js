@@ -143,7 +143,7 @@ export async function renderBankAccounts() {
     </div>
     <div class="tbl-wrap">
       <table class="bank-acc-tbl"><thead><tr><th>銀行帳戶</th><th>帳戶末4碼</th><th>幣別</th><th class="num">餘額</th><th></th></tr></thead>
-      <tbody>${accounts.map(bankAccRow).join('') || `<tr><td colspan="5" class="empty">尚無銀行帳戶。點右上「新增銀行帳戶」，或到「收支記帳」上傳銀行對帳單自動建立。</td></tr>`}</tbody></table>
+      <tbody>${accounts.map(bankAccRow).join('') || `<tr><td colspan="5" class="empty">尚無銀行帳戶。點右上「新增銀行帳戶」，或到「銀行收支」上傳銀行對帳單自動建立。</td></tr>`}</tbody></table>
     </div>
   `;
   byId('addBankAcc').onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });

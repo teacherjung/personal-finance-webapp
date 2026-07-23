@@ -40,7 +40,7 @@ export async function renderSettings() {
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
 
-    <h2 class="section-title" style="margin-top:4px">收支記帳</h2>
+    <h2 class="section-title" style="margin-top:4px">銀行收支</h2>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:14px">緊急預備金</h3>
@@ -57,7 +57,7 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">收入分類管理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供收支記帳的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。儲存前自動備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供銀行收支的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。儲存前自動備份。</p>
       <div><button class="btn-ghost" id="manageIncomeCatsBtn">${icon('refresh', 16) || ''}管理收入分類</button></div>
     </div>
 

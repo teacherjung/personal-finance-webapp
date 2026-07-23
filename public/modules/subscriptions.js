@@ -717,7 +717,7 @@ function subRow(s, validSet) {
     <td class="muted nowrap">${esc(cardLabel(s.card))}${staleCard ? ' <span class="tag amber">卡片已失效</span>' : ''}</td>
     <td class="muted nowrap">${esc(email || '—')}</td>
     <td><div class="row-actions">
-      <button class="btn-link btn-sm" data-record="${s.id}" title="記一筆到收支記帳">${icon('record', 15)}</button>
+      <button class="btn-link btn-sm" data-record="${s.id}" title="記一筆到銀行收支">${icon('record', 15)}</button>
       <button class="btn-link btn-sm flag-action${s.considerCancel ? ' flag-on' : ''}" data-flag="${s.id}" title="${s.considerCancel ? '已標記考慮停用' : '標記考慮停用'}">${icon(s.considerCancel ? 'box-x' : 'box', 15)}</button>
       <button class="btn-link btn-sm" data-edit="${s.id}" title="編輯">${icon('edit', 15)}</button>
       <button class="btn-danger btn-sm" data-del="${s.id}" title="刪除">${icon('trash', 15)}</button>
@@ -725,7 +725,7 @@ function subRow(s, validSet) {
   </tr>`;
 }
 
-// 訂閱自身類別 → 收支記帳的兩層分類（新分類已無「訂閱」分類）
+// 訂閱自身類別 → 銀行收支的兩層分類（新分類已無「訂閱」分類）
 const SUB_CAT_TO_EXPENSE = {
   '娛樂': ['娛樂', 'Netflix及影音串流'],
   '學習': ['學習', '學習型訂閱服務'],
@@ -736,14 +736,14 @@ const SUB_CAT_TO_EXPENSE = {
 async function recordToAccounting(s) {
   const amt = Number(s.amount || 0);
   const cycleLbl = CYCLE_FEE_LABELS[s.cycle] || '月費';
-  if (!confirm(`要把這筆記入「收支記帳」嗎？\n\n${s.name}（${cycleLbl}） ${fmtFee(amt)}\n續費卡：${cardLabel(s.card)}\n日期：${todayStr()}`)) return;
+  if (!confirm(`要把這筆記入「銀行收支」嗎？\n\n${s.name}（${cycleLbl}） ${fmtFee(amt)}\n續費卡：${cardLabel(s.card)}\n日期：${todayStr()}`)) return;
   const [cat, subcat] = (Object.hasOwn(SUB_CAT_TO_EXPENSE, s.category) && SUB_CAT_TO_EXPENSE[s.category]) || ['生活', '其他生活雜支'];   // hasOwn（Codex r7#4）：舊資料分類叫 toString 會解構到原型函式而 TypeError
   try {
     await api('/transactions', { method: 'POST', body: {
       date: todayStr(), type: 'expense', category: cat, subcategory: subcat, amount: amt,
       account: s.card || '', note: `${s.name}（訂閱${cycleLbl}）`
     }});
-    toast(`已記入收支記帳：${fmtFee(amt)} ✅`);
+    toast(`已記入銀行收支：${fmtFee(amt)} ✅`);
   } catch (e) { toast(e.message, true); }
 }
 

@@ -39,8 +39,8 @@
 ## 收支三層架構（三層重構 stage 1，使用者定 2026-07-20）
 
 交易表 `transactions` 靠 **`ledger` 欄位**分成兩本帳，語意完全不同：
-- **信用卡消費明細**（`ledger:'card'`，帳單匯入 `source:'stmt'` 自動蓋）：消費分析＋查帳用，**絕不進現金流加總**（那些消費的現金流出＝銀行帳本日後的「繳卡費」，兩邊都算就重複）。前端＝`public/modules/transactions.js`（信用卡明細頁）。
-- **收入支出／現金流**（`ledger:'cashflow'`，手動記帳＋未來銀行對帳單匯入）：**現金流真相**。前端＝`public/modules/cashflow.js`（收支頁）。
+- **信用卡消費明細**（畫面名稱「信用卡費」；`ledger:'card'`，帳單匯入 `source:'stmt'` 自動蓋）：消費分析＋查帳用，**絕不進現金流加總**（那些消費的現金流出＝銀行帳本日後的「繳卡費」，兩邊都算就重複）。前端＝`public/modules/transactions.js`。
+- **收入支出／現金流**（畫面名稱「銀行收支」；`ledger:'cashflow'`，手動記帳＋銀行對帳單匯入）：**現金流真相**。前端＝`public/modules/cashflow.js`。
 
 ⚠️**帳本判準單一真相＝`public/modules/categories.js` 的 `isCardTx(t)`**（後端經 `lib/derive.js` 以 `isCardLedger` 別名轉供，沒有前後端同步點）。用**排除法**：`ledger==='card'` 或（缺 ledger 且 `source==='stmt'`）＝card，其餘一律 cashflow——**缺 ledger 的舊資料/還原舊備份不掉帳**。讀現金流的地方（`derive.computeCashflow`、`cashflow.js` 月加總、店家檔案）都要 `isCardTx` 排除 card。
 

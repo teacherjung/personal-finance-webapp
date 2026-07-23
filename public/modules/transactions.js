@@ -1,7 +1,7 @@
 // @ts-check
 // 信用卡消費明細頁（三層重構 stage 1，使用者定 2026-07-20）：**只顯示信用卡帳本（ledger:'card'）**。
 // 用途＝消費分析＋查帳＋和「收支頁的繳卡費」核對應繳金額；**不進現金流加總**（收支頁才是現金流真相）。
-// 手動記帳與收入請走「收支記帳」頁（cashflow.js）；這頁是帳單匯入 + 編輯既有卡消費。
+// 手動記帳與收入請走「銀行收支」頁（cashflow.js）；這頁是帳單匯入 + 編輯既有卡消費。
 import { api, view, byId, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass, stmtOrig, currentRouteSeq } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
@@ -45,7 +45,7 @@ export async function renderTransactions() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>卡費紀錄</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「收支記帳」）</p></div>
+      <div><h1>信用卡費</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「銀行收支」）</p></div>
       <div class="page-actions">
         ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
         <button class="btn btn-upload" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
