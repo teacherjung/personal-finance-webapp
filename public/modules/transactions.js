@@ -7,6 +7,7 @@ import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
+import { fileToBase64 } from './file-util.js';
 
 // 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
 // 表單分類＝支出大類（收入在收支頁、走 incomeTree）。
@@ -278,15 +279,7 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
 }
 
 // ---- 信用卡帳單匯入（上傳 PDF → 後端解密解析分類 → 預覽確認 → 寫入記帳）----
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-    fr.onerror = () => reject(new Error('讀取檔案失敗'));
-    fr.readAsDataURL(file);
-  });
-}
-
+// fileToBase64 已歸戶 file-util.js（系統優化 U1）
 async function openStatementUpload() {
   const cards = (await api('/cards')).filter(c => (c.type || 'credit') === 'credit');
   if (!cards.length) return toast('請先到「卡片追蹤」新增一張信用卡', true);
