@@ -87,6 +87,7 @@ test('匯入紀錄＋整批刪除：台新批次可刪；IB 批次擋 400；不�
   const db = getDb();
   db.securityTrades.push({ id: 'ib1', source: 'ibkr', sourceRef: 'ib|txn|T-1', tradeDate: '2026-01-10', side: 'buy',
     cashDirection: 'out', quantity: 1, currency: 'USD', symbol: 'CSPX', sourceAccountId: 'aaaabbbbcccc',
+    price: 800, grossAmount: 800, netSettlement: 801,   // 核心金額必填（Codex S3r2#4）
     sourceAccountLabel: 'IBKR …0000', importBatch: 'ib-sync-x', importedAt: '2026-01-10T00:00:00Z' });
   saveDb(db);
   const batches = listSecuritiesBatches(getDb());
@@ -117,7 +118,7 @@ test('derive 不變式：securityTrades 絕不進現金流/淨值（賣股入金
 
 test('schema 守門＋備份往返：合法列過櫃檯；缺 tradeDate/sourceRef 整筆濾除；匯入驗證接受合法列', () => {
   const good = { id: 'g', source: 'taishin', sourceRef: 'ts|f|x|#1', tradeDate: '2026-01-13', side: 'buy',
-    cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050' };
+    cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050', price: 40, grossAmount: 400, netSettlement: 401 };
   const noDate = { ...good, id: 'b1', tradeDate: '' };
   const noRef = { ...good, id: 'b2', sourceRef: '' };
   delete /** @type {any} */ (noRef).sourceRef;
@@ -196,7 +197,7 @@ test('Codex S2r1#6｜機密投影：GET /api/securities 與 /api/db 都剝 sourc
 
 test('Codex S2r1#5｜備份驗證牆＝完整合約：缺 side/currency/source 的殘缺列擋下', () => {
   const good = { id: 'g2', source: 'taishin', sourceRef: 'ts|f|y|#1', tradeDate: '2026-01-13', side: 'buy',
-    cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050' };
+    cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050', price: 40, grossAmount: 400, netSettlement: 401 };
   assert.equal(validateImportItem('securityTrades', good).errors.length, 0);
   for (const missing of ['side', 'currency', 'source', 'symbol', 'cashDirection', 'quantity']) {
     const bad = { ...good, id: 'b-' + missing };

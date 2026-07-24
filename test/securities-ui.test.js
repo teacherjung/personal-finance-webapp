@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, datePresetRange, filterSecTrades, sortSecTrades,
   rowFees, rowNetSigned, secSummarize, secSummaryHtml, secRowHtml, secTableHtml,
-  previewBodyHtml, canImportPreview,
+  previewBodyHtml, canImportPreview, localDate, localDateTime, missingHoldingsNotice,
 } from '../public/modules/securities-view.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
@@ -177,7 +177,30 @@ test('SECURITIES_INFO：五個必懂概念（分幣別/淨應收付/費稅/去�
   assert.match(SECURITIES_INFO.currency.html, /不能直接相加/);
   assert.match(SECURITIES_INFO.net.html, /買進＝付錢/);
   assert.match(SECURITIES_INFO.dedup.html, /0 筆新增/);
-  assert.match(SECURITIES_INFO.boundary.html, /不會改持股/);
+  // A′ 裁決（2026-07-24）：誠實講明同步是同一套完整同步、會動投組；出清只提醒不自動移除
+  assert.match(SECURITIES_INFO.boundary.html, /同一套完整同步/);
+  assert.match(SECURITIES_INFO.boundary.html, /不會自動移除/);
+});
+
+// ---------- Codex S3r2 修正 ----------
+test('S3r2#5：匯入時間用本地時區顯示（UTC ISO 直接 slice 台灣會慢 8 小時）', () => {
+  // 用本地時間分量造 ISO（測試在任何時區都成立）：本地 2026-06-15 01:30 → toISOString 的 UTC 字串
+  // slice 在台灣會變成 06-14——localDate 必須還原回本地日期
+  const iso = new Date(2026, 5, 15, 1, 30).toISOString();
+  assert.equal(localDate(iso), '2026-06-15');
+  assert.equal(localDateTime(iso), '2026-06-15 01:30');
+  assert.equal(localDate('亂七八糟'), '');
+  assert.equal(localDateTime(''), '');
+});
+
+test('S3r2#3：可能已出清 → 只提醒＋指路投資組合頁（A′：查帳頁不刪持股）', () => {
+  assert.equal(missingHoldingsNotice([]), null);
+  assert.equal(missingHoldingsNotice(undefined), null);
+  const msg = missingHoldingsNotice([{ id: 'h1', symbol: 'VWRA' }, { id: 'h2', symbol: 'EIMI' }]);
+  assert.match(msg, /2 檔/);
+  assert.match(msg, /VWRA、EIMI/);
+  assert.match(msg, /投資組合/);
+  assert.match(msg, /不會動持股/);
 });
 
 test('SEC_NUMERIC_SORT_KEYS：日期與數字欄換欄預設降冪的集合完整', () => {

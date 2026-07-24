@@ -17,7 +17,7 @@
  *   cashSummaryMissing?: boolean,
  *   cashZeroed?: number,
  *   secTradesSkipped?: number,
- *   secSkippedReasons?: { badRow?: number, cancelOrUnknown?: number, missingAccount?: number, missingCurrency?: number, missingCore?: number, unsupportedCurrency?: number }
+ *   secSkippedReasons?: { badRow?: number, cancelOrUnknown?: number, missingAccount?: number, missingCurrency?: number, missingCore?: number, unsupportedCurrency?: number, unsupportedFeeCurrency?: number }
  * }} IbSyncResult
  */
 
@@ -94,6 +94,7 @@ export function ibSyncFeedback(result, formatCurrency) {
     if (r.missingCore) parts.push(`缺核心金額 ${r.missingCore} 筆（請勾 Trade Price／Trade Money／Net Cash）`);
     if (r.missingAccount) parts.push(`缺帳戶識別 ${r.missingAccount} 筆（請勾 Account ID）`);
     if (r.unsupportedCurrency) parts.push(`不支援幣別 ${r.unsupportedCurrency} 筆`);
+    if (r.unsupportedFeeCurrency) parts.push(`不支援的手續費幣別 ${r.unsupportedFeeCurrency} 筆`);
     if (r.badRow) parts.push(`缺日期/代號/數量 ${r.badRow} 筆`);
     feedback.push({
       message: `注意：證券交易紀錄有 ${result.secTradesSkipped} 筆未納入查帳集合（${parts.join('；') || '原因不明'}）。投組持倉與淨值不受影響。`,

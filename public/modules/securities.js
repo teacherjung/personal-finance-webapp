@@ -9,6 +9,7 @@ import { ibSyncFeedback } from './portfolio-ib-sync.js';
 import {
   SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, datePresetRange, filterSecTrades, sortSecTrades,
   secSummarize, secSummaryHtml, secTableHtml, previewBodyHtml, canImportPreview,
+  localDateTime, missingHoldingsNotice,
 } from './securities-view.js';
 
 // 金額格式：**原幣數字**＋千分位、不掛幣別後綴（幣別自己一欄／一卡，掛了 12 欄會擠爆）。
@@ -47,10 +48,10 @@ export async function renderSecurities() {
 
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，方便搜尋與對帳（只查帳：不改持股、不計入收支）</p></div>
+      <div><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，方便搜尋與對帳（成交紀錄只用於查帳，不計入收支）</p></div>
       <div class="page-actions">
         <button class="btn-ghost" id="secBatches">${icon('history', 16)}匯入紀錄</button>
-        <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套 IBKR 同步（唯讀）">${icon('download', 16)}同步 IBKR</button>
+        <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套完整同步：會一併更新持股與各幣別現金">${icon('download', 16)}同步 IBKR</button>
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
@@ -121,8 +122,9 @@ function wireSecInfo() {
   });
 }
 
-// 「同一套同步」（藍圖 §二）：呼叫與投資組合頁**相同的** POST /api/ib/sync＋共用回報翻譯 ibSyncFeedback。
-// 刻意不做投組頁的「已出清持股移除」詢問——查帳頁不能改持股（藍圖 §九邊界）；要清持股請到投資組合頁按同步。
+// 「同一套同步」（藍圖 §二＋A′ 裁決 2026-07-24）：呼叫與投資組合頁**相同的** POST /api/ib/sync＋共用
+// 回報翻譯 ibSyncFeedback（按鈕文案已講明會一併更新持股與現金）。「可能已出清」只提醒＋指路投組頁
+//（Codex S3r2#3）——刪持股的動作留在投資組合頁，查帳頁不做（A′：不自打「頁面上沒有編輯持股功能」）。
 async function syncIbFromSecurities(/** @type {any} */ btn) {
   const seqAtStart = currentRouteSeq();
   btn.disabled = true;
@@ -130,6 +132,8 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
   try {
     const result = await api('/ib/sync', { method: 'POST' });
     for (const f of ibSyncFeedback(result, moneyCur)) toast(f.message, f.error);
+    const notice = missingHoldingsNotice(result.missing);
+    if (notice) toast(notice, true);
     if (seqAtStart === currentRouteSeq()) renderSecurities();
   } catch (err) {
     toast('IBKR 同步失敗：' + /** @type {any} */ (err).message, true);
@@ -215,7 +219,7 @@ async function openSecBatches() {
     <td class="muted">${esc(b.account || '—')}</td>
     <td class="nowrap">${esc(b.minDate || '')}${b.maxDate && b.maxDate !== b.minDate ? `〜${esc(b.maxDate)}` : ''}</td>
     <td class="num">${b.count} <span class="muted">（買 ${b.buyCount}／賣 ${b.sellCount}）</span></td>
-    <td class="muted nowrap">${esc(String(b.importedAt || '').slice(0, 16).replace('T', ' '))}</td>
+    <td class="muted nowrap">${esc(localDateTime(b.importedAt))}</td>
     <td>${b.source === 'taishin'
       ? `<button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="整批刪除（刪掉後可重新上傳同一份對帳單）">${icon('trash', 15)}</button>`
       : '<span class="muted" title="IBKR 同步批次不提供整批刪除（避免誤刪長期歷史）；資料有誤請重新同步同一期間覆寫">—</span>'}</td>

@@ -169,6 +169,7 @@ test('Codex S2r1#4｜跨帳戶同 transactionID：兩帳戶各自一筆、不互
   const db = getDb();
   db.securityTrades.push({ id: 'legacy1', source: 'ibkr', sourceRef: 'ib|txn|LEGACY-9', tradeDate: '2026-01-05', side: 'buy',
     cashDirection: 'out', quantity: 1, currency: 'USD', symbol: 'LGC', sourceAccountId: 'abcdefabcdef',
+    price: 100, grossAmount: 100, netSettlement: 101,   // 核心金額必填（Codex S3r2#4）——種子列也要滿足合約
     sourceAccountLabel: 'IBKR …0000', importBatch: 'ib-sync-old', importedAt: '2026-01-05T00:00:00Z' });
   saveDb(db);
   await syncIb(feed([], []));
@@ -184,4 +185,15 @@ test('Codex S2r1#3｜commissionCurrency 進庫且過櫃檯（GBP 手續費、USD
   const row = getDb().securityTrades.find((/** @type {any} */ x) => x.symbol === 'GFEE');
   assert.equal(row.commissionCurrency, 'GBP');
   assert.equal(row.currency, 'USD');
+});
+
+test('Codex S3r2#1（高）｜不支援的手續費幣別（EUR）→ 跳過該筆＋分原因回報，整次同步不炸', async () => {
+  const before = getDb().securityTrades.length;
+  const EF = raw({ symbol: 'EFEE', transactionID: 'TXN-EF', ibCommissionCurrency: 'EUR' });   // 交易 USD、手續費 EUR
+  const OK = raw({ symbol: 'OKAY', transactionID: 'TXN-OK2' });
+  const r = await syncIb(feed([EF, OK], [lean(EF), lean(OK)]));   // 原重現：EF 走到櫃檯被枚舉拒絕 → 路由 500、OK 也一起陪葬
+  assert.equal(r.secSkippedReasons.unsupportedFeeCurrency, 1, '分原因回報（使用者才知道是手續費幣別）');
+  assert.ok(!getDb().securityTrades.some((/** @type {any} */ x) => x.symbol === 'EFEE'), 'EUR 手續費列不入庫');
+  assert.ok(getDb().securityTrades.some((/** @type {any} */ x) => x.symbol === 'OKAY'), '同批其他合法列照常入庫（同步沒有整次失敗）');
+  assert.equal(getDb().securityTrades.length, before + 1);
 });
