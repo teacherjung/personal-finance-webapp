@@ -50,3 +50,14 @@ test('匯入逐筆｜其他集合不受新不變式波及（transactions 照舊�
   const { errors } = validateImportItem('transactions', { date: '2026-06-01', amount: 100, category: '其他' });
   assert.deepEqual(errors, []);
 });
+
+test('匯入逐筆｜必填數字欄「有填但格式錯」（price:"not-a-number"）→ 點名收進 errors（整份 400），不是剝欄後放行', () => {
+  // Codex r2 收官複審#1：原行為＝剝掉 price、errors 仍空 → 匯入放行、到寫入櫃檯才炸＝備份還原 500 非 400
+  const bad = validateImportItem('securityTrades', row({ price: 'not-a-number' }));
+  assert.ok(bad.errors.some(e => e.includes('price')), '必填型別錯要在匯入逐筆就點名');
+  assert.ok(!('price' in (bad.item || {})), '欄位照樣剝除（item 不留壞值）');
+  // 非必填欄位格式錯照舊：剝欄、不報錯（strip 語意不變，舊備份的壞選填欄不擋整份還原）
+  const opt = validateImportItem('securityTrades', row({ commission: 'oops' }));
+  assert.deepEqual(opt.errors, []);
+  assert.ok(!('commission' in opt.item));
+});
