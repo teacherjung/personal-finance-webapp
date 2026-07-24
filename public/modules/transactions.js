@@ -2,13 +2,14 @@
 // 信用卡消費明細頁（三層重構 stage 1，使用者定 2026-07-20）：**只顯示信用卡帳本（ledger:'card'）**。
 // 用途＝消費分析＋查帳＋和「收支頁的繳卡費」核對應繳金額；**不進現金流加總**（收支頁才是現金流真相）。
 // 手動記帳與收入請走「銀行收支」頁（cashflow.js）；這頁是帳單匯入 + 編輯既有卡消費。
-import { api, view, byId, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, modalSizeClass, stmtOrig, currentRouteSeq } from '../app.js';
+import { api, view, byId, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, stmtOrig, currentRouteSeq } from '../app.js';
 import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
+import { openModalShell } from './modal-shell.js';
 
 // 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
 // 表單分類＝支出大類（收入在收支頁、走 incomeTree）。
@@ -333,7 +334,7 @@ function openCardChoice(r, b64, cards) {
 function openStatementPreview(cardId, r, b64, cards) {
   const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
-  const detected = `${curR.bank ? esc(curR.bank) : '未知'}${curR.lastFour ? ` · 末四碼 ${esc(curR.lastFour)}` : ''}`;
+  const detected = `${curR.bank ? curR.bank : '未知'}${curR.lastFour ? ` · 末四碼 ${curR.lastFour}` : ''}`;   // 原文即可——標題由外殼負責 esc（防雙重跳脫）
   const close = () => { root.innerHTML = ''; };
   // 重繪前把目前的勾選與分類選擇存回資料，排序後不遺失
   const syncEdits = () => curR.transactions.forEach((t, i) => {
@@ -403,9 +404,11 @@ function openStatementPreview(cardId, r, b64, cards) {
         <td>${status}</td>
       </tr>`;
     }).join('');
-    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('xl')}">
-      <div class="modal-head"><h2>帳單預覽（${detected}）</h2><button class="x-close">×</button></div>
-      <div class="modal-body">
+    // 外殼歸戶（U3 擴大②）：backdrop:false＝保留原「無背景點擊關閉」語意——這窗滿是勾選與
+    // 分類編輯，背景誤點不可毀掉編輯（同 openRulePreview 級的保護，原程式本來就沒掛）
+    openModalShell({
+      title: `帳單預覽（${detected}）`, size: 'xl', backdrop: false,
+      bodyHtml: `
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <label style="margin:0;display:flex;align-items:center;gap:8px">記到卡片
             <select id="previewCard">${cardOpts()}</select></label>
@@ -416,10 +419,8 @@ function openStatementPreview(cardId, r, b64, cards) {
           <tbody>${rowsHtml}</tbody></table>
         </div>
         <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
-          <button type="button" class="btn" id="doImport">匯入勾選項目</button></div>
-      </div>
-    </div></div>`;
-    root.querySelector('.x-close').onclick = close;
+          <button type="button" class="btn" id="doImport">匯入勾選項目</button></div>`,
+    });
     root.querySelector('[data-cancel]').onclick = close;
     root.querySelector('#doImport').onclick = doImport;
     root.querySelector('#pvSortNote').onclick = () => {   // 說明欄排序：原始 → 店名 A→Z → Z→A → 原始
@@ -458,21 +459,18 @@ function importSummaryHtml(out) {
 
 /** @param {any} out */
 function openImportDone(out) {
-  const root = byId('modal-root');
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('sm')}">
-    <div class="modal-head"><h2>匯入完成</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大②）：backdrop:false＝原程式本來就沒有背景點擊關閉（搬家不裝修）
+  const { root, close } = openModalShell({
+    title: '匯入完成', size: 'sm', backdrop: false,
+    bodyHtml: `
       <p>已匯入 <b>${out.imported}</b> 筆到「<b>${esc(out.cardName || '')}</b>」${out.skipped ? `<span class="muted">，略過 ${out.skipped} 筆（重複或不可匯入）</span>` : ''}。</p>
       ${importSummaryHtml(out)}
       <p class="muted" style="font-size:12.5px;margin-top:6px">記錯卡片了嗎？可以現在整批改到別張卡（之後也能從右上「匯入紀錄」改）。</p>
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-reassign>改到其他卡片</button>
         <button type="button" class="btn" data-done>完成</button>
-      </div>
-    </div>
-  </div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      </div>`,
+  });
   root.querySelector('[data-done]').onclick = close;
   root.querySelector('[data-reassign]').onclick = () =>
     openReassignPicker({ batchId: out.batchId, fromCardId: out.cardId, cardName: out.cardName }, () => { close(); renderTransactions(); });
@@ -496,9 +494,10 @@ async function openBatchManager() {
         <button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button>
       </div></td>
     </tr>`).join('');
-    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-      <div class="modal-head"><h2>匯入紀錄</h2><button class="x-close">×</button></div>
-      <div class="modal-body">
+    // 外殼歸戶（U3 擴大②）：backdrop:false＝原程式本來就沒有背景點擊關閉（搬家不裝修）
+    const { close } = openModalShell({
+      title: '匯入紀錄', size: 'lg', backdrop: false,
+      bodyHtml: `
         <ul class="muted batch-help" style="font-size:12.5px;margin:0 0 12px 18px;line-height:1.9;padding:0">
           <li>每一列都代表<b class="hl">「一份帳單」</b>的匯入。</li>
           <li>帳單年月 → 由帳單<b class="hl">「結帳日」</b>決定；讀取失敗時會依<b class="hl">「最後一筆消費日」</b>推估。</li>
@@ -512,11 +511,9 @@ async function openBatchManager() {
           <thead><tr><th>卡片</th><th>帳單年月</th><th class="num">筆數</th><th class="num">匯入金額</th><th class="num">應繳金額</th><th></th></tr></thead>
           <tbody>${rows || '<tr><td colspan="6" class="empty">尚無匯入批次。</td></tr>'}</tbody>
         </table></div>
-        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
-      </div>
-    </div></div>`;
-    root.querySelector('.x-close').onclick = () => { root.innerHTML = ''; };
-    root.querySelector('[data-close]').onclick = () => { root.innerHTML = ''; };
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+    });
+    root.querySelector('[data-close]').onclick = close;
     root.querySelectorAll('[data-setmonth]').forEach(el => el.addEventListener('click', async () => {
       const b = /** @type {HTMLElement} */ (el);
       const v = prompt('這份帳單是哪一期？請輸入年月（YYYY-MM，例：2026-01）。留白＝清除、退回用消費日推估。', b.dataset.cur || '');
