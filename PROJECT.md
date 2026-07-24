@@ -37,11 +37,11 @@
 | 系統優化階段一＋二（Claude：共用積木歸戶 U1–U4＋13 窗彈窗外殼；大檔四刀搬家不裝修，全部機械 diff 證明唯一改動＝export；攤提抽純函式＋**前後端公式對照考題**） | `public/modules/`：`file-util`、`route-helpers`（lib/routes）、`modal-shell`、`month-select`、`transactions-import`、`subscriptions-model`、`subscriptions-report`、`settings-store-rules` | #252–#261 |
 | 教學影片定稿文件（流程分工＋EP01 生存優先腳本） | `docs/教學影片/`（**尚未 commit**） | — |
 
-測試現況：**785 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
+測試現況：**791 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
 
 ## 待辦事項（依優先序）
 
-1. **系統優化主線（Claude 實作、Codex 審核；定稿＝`docs/系統優化-施工計畫.md`）**：**階段一收官 ✅**（U1 #252、U2 #253、U3 試點 #254＋擴大 11 窗 #256/#257、U4 #255）。**階段二大檔四刀收官 ✅**——①`transactions-import.js`（#258）②`subscriptions-model.js` 攤提純函式＋前後端對照考題（#259；⚠️**對照考題抓到兩處既有走散點記錄在案待裁決**：缺 since 舊訂閱的歷史月前端有 RECORD_START 地板後端無、endsOn 缺日的停用當月前端算 0 後端算整月——請 Codex 複審表態、William 拍板統一方向）③`subscriptions-report.js`（#261）④`settings-store-rules.js`（本 PR）。四刀皆機械 diff 證明唯一改動＝export 字；③④另過三鏡頭對抗審查 workflow。**下一步＝停止線三題評估交 William 裁決**（階段三 考題補強＋兩地圖更新；階段四 每日備份＋異常輸入防線、等個股研究 P2 後）— **Claude**
+1. **系統優化主線（Claude 實作、Codex 審核；定稿＝`docs/系統優化-施工計畫.md`）**：**階段一收官 ✅**（U1 #252、U2 #253、U3 試點 #254＋擴大 11 窗 #256/#257、U4 #255）。**階段二大檔四刀收官 ✅**——①`transactions-import.js`（#258）②`subscriptions-model.js` 攤提純函式＋前後端對照考題（#259；抓到的兩處走散點已裁決結案＝#264：後端補 RECORD_START 地板、月份型 endsOn 邊界考題化，Codex 收官複審通過）③`subscriptions-report.js`（#261）④`settings-store-rules.js`（#262）。四刀皆機械 diff 證明唯一改動＝export 字；③④另過三鏡頭對抗審查 workflow。**階段三收官 ✅（本 PR）**：三路查證 workflow（安全地圖逐項／覆蓋率地圖差距／缺口獵捕）→ 兩份地圖全面重寫至 2026-07-24 現況、補 4 條 money-critical 缺口考題（銀行方向退路中線判向 H1／日線時鐘倒退護欄 H2／IB fxToBase 換匯與 income 寫回 M3／帳單對卡判定含同末四碼候選 M4）、3 條誠實缺口記錄在案（pdfjs 抽字三胞胎／匯入落盤薄殼／證券路由殼）、AGENTS 同步點補三份抽取器刻意分工。**下一步＝停止線評估後定階段四**（每日備份＋異常輸入防線；原裁決等個股研究 P2 合併後）— **Claude**
 2. **匯入 2025 年更早月份的信用卡帳單**讓舊退款配對生效——已驗證：Klook 3/16 退款 8,800 **已自動抵減 2 月**（二月旅遊淨額 999、三月不計）；目前未對應退款 7 筆（含**友邦人壽 5,198＋15,235**、林口運動中心×3 等，皆 2025-12 的退款），需匯入其原始消費所在的更早月份帳單才配得到；悠遊卡贖回、點數折帳單類本來就無對應消費＝維持不計入 — **William**
 3. **個股研究頁：裁決已完成、Codex 已把裁決寫回計畫（#251 定稿）**——A–F 全採 Codex 推薦＋三件約束性指示（總分五項全評才顯示／E 保留「無持股有研究可開」但入口只從持股表進／F 的 P5 追加 portfolio-research.js）。**Claude 完整審查（5 路查證）與裁決正式紀錄＝`docs/個股研究頁-裁決與審查回覆.md`**。裁決已寫回施工計畫（#251 定稿）；Codex 下一步：**開 P1**（純新檔）。**衝突迴避基準**：用獨立新檔（前端新模組＋新路由檔）；注意既有 `public/modules/portfolio-research*.js` 與 `/api/research`（投組頁的研究筆記功能）——計畫需說明與它的關係（沿用/擴充/並存）；共用檔（app.js ROUTES、index.html 導覽、schema.js）只做最小增添，避免與 Claude 進行中的證券檔案衝突 — **Codex**
 4. **教學影片**：EP01 腳本審稿**擱置**（William 2026-07-24 定）；學習專區未開工（PR 需一併帶入 `docs/教學影片/` 兩份文件） — **暫停**
@@ -55,8 +55,7 @@
 | 檔案／區域 | 目前持有人 | 工作 | 釋放條件 |
 |---|---|---|---|
 | `lib/schema.js`＋`lib/types.js`＋`lib/routes/crud.js` | Codex | 個股研究頁 P2 | PR 合併 |
-| `AGENTS.md`／`PROJECT.md`／`CODEX-REVIEW.md` | Claude | 角色調換文件殘影清理（本 PR） | PR 合併 |
-| `subscriptions-model.js`＋`derive.js` 攤提＋其對照考題 | Claude | 走散點修正 [#264](https://github.com/teacherjung/personal-finance-webapp/pull/264)（待 Codex 複審） | PR 合併 |
+| 兩份地圖＋`AGENTS.md`／`PROJECT.md`＋考題四檔 | Claude | 階段三收官（本 PR） | PR 合併 |
 | 其餘（含 `app.js`） | 無人持有 | — | 開工前登記 |
 
 > 列的 PR 一合併＝該列自動視為釋放；**下一位動本檔的人順手清掉已合併列**（不必為釋放單開 PR——Codex #263 複審建議的落地方式）。

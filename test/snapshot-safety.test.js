@@ -118,3 +118,19 @@ test('沒設定的幣別記 0，不可寫進 undefined 讓櫃檯剝掉', () => {
   const saved = (store.load().dailyValues || [])[0];
   assert.equal(saved.gbpTwd, 0, '存進資料庫後也要在（型別是 number，undefined 會被剝掉）');
 });
+
+// ---------- 階段三缺口 H2：日線的時鐘倒退護欄（r3#8 只考了月快照與手動按鈕，日線這條沒人考過） ----------
+
+test('日線時鐘倒退護欄：資料庫已有「明天」的日線 → 今天寫入被擋（回 null、一列不增不改）', () => {
+  // 這條護欄壞掉的後果＝VM 還原/時區設錯後開 app，用舊日期覆寫較新的淨值歷史——
+  // 程式註解自己說「補不回來」，而 D3 差異引擎的 Δ 全部以這條線為原料。
+  store.save({ ...store.emptyDb(),
+    accounts: [{ id: 'a1', name: '現金', type: 'cash', currency: 'TWD', balance: 1000 }],
+    dailyValues: [{ date: tomorrow(), netWorth: 777 }] });
+  const r = recordDailyValue();
+  assert.equal(r, null, '時鐘倒退＝不寫（硬寫會拿舊資料蓋掉更新的歷史）');
+  const dv = store.load().dailyValues || [];
+  assert.equal(dv.length, 1, '一列不增');
+  assert.equal(dv[0].date, tomorrow());
+  assert.equal(dv[0].netWorth, 777, '既有的較新紀錄一字未動');
+});

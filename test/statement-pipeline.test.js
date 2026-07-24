@@ -63,6 +63,23 @@ test('免選卡預覽（自動歸卡那條路）也要交出這兩個值', async
   assert.equal(r.statementDue, 46299);
 });
 
+test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動選、回候選；末四碼沒中但該銀行唯一一張→自動命中', async () => {
+  // 補發卡情境：兩張卡同末四碼。若回歸成「自動選第一張」＝帳單匯錯卡、跨卡去重失效、同筆消費重複計入分析。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'c1', name: '台新舊卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' },
+    { id: 'c2', name: '台新補發卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' },
+  ] });
+  const r = await previewAuto(taishinXlsxB64());
+  assert.equal(r.resolvedCard, null, '同末四碼多卡＝系統不可硬猜');
+  assert.deepEqual(r.candidates.map((/** @type {any} */ c) => c.id).sort(), ['c1', 'c2'], '兩張都要進候選讓使用者選');
+  // 單卡銀行 fallback：帳單末四碼 1234 對不到 9999，但該銀行只有這一張 → 自動歸它
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'c9', name: '台新唯一卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' },
+  ] });
+  const r2 = await previewAuto(taishinXlsxB64());
+  assert.equal(r2.resolvedCard?.id, 'c9', '末四碼不合但該銀行僅此一張→自動歸卡');
+});
+
 test('整條管線：解析 → 預覽 → 匯入 → 批次列表，四棒都要把值傳下去', async () => {
   // 完全照前端的做法：從預覽的回應拿值，再回送給匯入
   const pre = await previewForCard('card1', taishinXlsxB64());

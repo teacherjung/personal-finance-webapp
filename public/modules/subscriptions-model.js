@@ -5,7 +5,8 @@
 // 固定輸入輸出考題（同 securities-view.js/goal-tracking.js 前例）。
 // ⚠️ subStatus **刻意不在這**：它吃 app.js 的 daysUntil（依「今天」而變）＝非固定輸入輸出，留在頁面層。
 // ⚠️ 同步點：後端 lib/derive.js 的 subCostForMonth 是同一套口徑——**改攤提公式兩邊都要動**，
-// 一致性由 test/subscriptions-model.test.js 的「前後端對照考題」鎖住（含兩處記錄在案的既有走散點）。
+// 一致性由 test/subscriptions-model.test.js 的「前後端對照考題」鎖住（兩處走散點已於 2026-07-24
+// 結案＝#264：缺 since 兩邊同用本檔 RECORD_START、月份型 endsOn 由 schema 邊界題擋在門外）。
 
 export const RECORD_START = '2026-06';   // 從這個月開始記錄訂閱費
 
