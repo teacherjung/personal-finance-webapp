@@ -1,24 +1,21 @@
 // @ts-check
+// 訂閱追蹤頁（頁面協調層）：攤提數學已歸戶 subscriptions-model.js（系統優化階段二②，零依賴純函式＋
+// 前後端對照考題）；本檔留 DOM/圖表/表單/報表版面。subStatus 留此（吃 daysUntil＝依「今天」而變）。
 import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
+import {
+  RECORD_START, CYCLE_LABELS, CYCLE_FEE_LABELS, isLifetimeSub, feeMonthVal, feeYearVal,
+  addMonths, costForMonth, activeInMonth, amortizedForMonth, costDetailRows,
+} from './subscriptions-model.js';
 
 const CATEGORIES = ['工具', '學習', '生活', '娛樂', '健康'];
 const CAT_COLOR = { '工具': CHART.blue, '健康': CHART.red, '學習': CHART.green, '娛樂': CHART.orange, '生活': CHART.yellow, '未分類': CHART.gray };
 const EMAIL_OPTIONS = ['Yahoo', 'Gmail', 'iCloud', 'EIEI'];
-const RECORD_START = '2026-06';   // 從這個月開始記錄訂閱費
 
 const fmtFee = (n) => money(n);   // 明細/表格/報表金額：整數 +「元」（app.js 統一格式器；延遲取值避免循環 import TDZ）
-const CYCLE_MONTHS = { monthly: 1, quarterly: 3, semiannual: 6, yearly: 12, lifetime: 1 };
-const CYCLE_LABELS = { monthly: '月繳', quarterly: '季繳', semiannual: '半年', yearly: '年繳', lifetime: '終身' };
-const CYCLE_FEE_LABELS = { monthly: '月費', quarterly: '季費', semiannual: '半年費', yearly: '年費', lifetime: '終身' };
 const STATUS_LABELS = { active: '使用中', ending: '即將停用', ended: '已停用' };
-// 月費 / 年費 換算（四捨五入到整數）
-const cycleMonths = (s) => CYCLE_MONTHS[s.cycle] || 1;
-const isLifetimeSub = (s) => s.cycle === 'lifetime';
-const feeMonthVal = (s) => isLifetimeSub(s) ? 0 : Math.round(Number(s.amount || 0) / cycleMonths(s));
-const feeYearVal = (s) => isLifetimeSub(s) ? 0 : Math.round(Number(s.amount || 0) * 12 / cycleMonths(s));
 const categoryRank = (s) => {
   const i = CATEGORIES.indexOf(s.category || '未分類');
   return i >= 0 ? i : CATEGORIES.length;
@@ -42,48 +39,12 @@ function normEmail(e) {
   return e;
 }
 
-const monthlyCost = (s) => isLifetimeSub(s) ? 0 : Number(s.amount || 0) / cycleMonths(s);
-
-// ---- 月份工具（monthKey 由 app.js 提供）----
-function addMonths(mk, n) { let [y, m] = mk.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; }
-
 // ---- 狀態：使用中 / 即將停用 / 已停用 ----
+//（不在 subscriptions-model.js：daysUntil 依「今天」而變＝非固定輸入輸出，攤提純函式不收）
 function subStatus(s) {
   if (s.status === 'ended' || s.active === false) return 'ended';
   if (s.status === 'ending' || s.endsOn) return daysUntil(s.endsOn) > 0 ? 'ending' : 'ended';
   return 'active';
-}
-
-// 該月實際天數（自主體檢 Q4：分母用實際天數，2/28 滿月停用＝算滿月，不再固定 30 天打折）
-function daysInMonth(mk) { const [y, m] = String(mk).split('-').map(Number); return new Date(y, m, 0).getDate(); }
-function dayOfMonth(dateStr) {
-  const n = Number(String(dateStr || '').slice(8, 10));
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-// 某訂閱在指定月份應計入的金額（月繳用月費；季/年繳攤提到每月，停用當月按天數比例）
-function costForMonth(s, mk) {
-  if (isLifetimeSub(s)) return 0;
-  const since = s.since || RECORD_START;
-  if (mk < since) return 0;
-  const base = monthlyCost(s);
-  const endsOn = s.endsOn || '';
-  if (!endsOn) return s.active === false || s.status === 'ended' ? 0 : base;
-  const endMk = endsOn.slice(0, 7);
-  if (endMk < mk) return 0;
-  if (s.cycle === 'monthly') return endMk === mk ? 0 : base;
-  if (endMk === mk) { const dim = daysInMonth(mk); return base * Math.min(dayOfMonth(endsOn), dim) / dim; }
-  return base;
-}
-
-// 某訂閱在指定月份是否仍需付費
-function activeInMonth(s, mk) {
-  return costForMonth(s, mk) > 0;
-}
-
-// 某月份的訂閱攤提總額。依「當下所有訂閱狀態」即時計算
-function amortizedForMonth(subs, mk) {
-  return subs.reduce((t, s) => t + costForMonth(s, mk), 0);
 }
 
 // 月份結束後，把「已完成月份」的實際攤提凍結到歷史紀錄（只補尚未紀錄的）
@@ -378,25 +339,6 @@ function wireDragAndDrop() {
       onDrop(draggedId, tr, e.clientY > r.top + r.height / 2);
     });
   });
-}
-
-function costFormula(s, mk) {
-  const endMk = (s.endsOn || '').slice(0, 7);
-  const day = dayOfMonth(s.endsOn);
-  if (s.cycle === 'monthly') return '月費';
-  const base = `${CYCLE_FEE_LABELS[s.cycle] || '月費'} ÷ ${cycleMonths(s)}`;
-  if (s.endsOn && endMk === mk) { const dim = daysInMonth(mk); return `${base} × ${Math.min(day, dim)} / ${dim}`; }
-  return base;
-}
-
-function costDetailRows(subs, mk) {
-  return subs.map(s => ({
-    service: s.name,
-    cycle: CYCLE_LABELS[s.cycle] || '月繳',
-    formula: costFormula(s, mk),
-    amount: costForMonth(s, mk)
-  })).filter(r => r.amount > 0)
-    .sort((a, b) => b.amount - a.amount || a.service.localeCompare(b.service, 'zh-Hant'));
 }
 
 function openCostDetailModal(subs, mk) {
