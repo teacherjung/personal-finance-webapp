@@ -8,6 +8,7 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
+import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 
 // 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
 // 表單分類＝支出大類（收入在收支頁、走 incomeTree）。
@@ -30,8 +31,8 @@ export async function renderTransactions() {
   expTree = tree && typeof tree === 'object' ? tree : {};
   // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
   const all = allRaw.filter(isCardTx);
-  const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
-  if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
+  const months = deriveMonths(all);
+  monthFilter = fallbackMonth(monthFilter, months);
 
   const th = thBuilder(listSort);
   const rows = sortRows(all.filter(t => t.date?.slice(0, 7) === monthFilter), listSort);
@@ -61,7 +62,7 @@ export async function renderTransactions() {
     <div class="two-col" style="margin:18px 0">
       <div>
         <label>月份</label>
-        <select id="monthSel">${months.map(m => `<option value="${esc(m)}" ${m === monthFilter ? 'selected' : ''}>${esc(m)}</option>`).join('') || `<option>${monthFilter}</option>`}</select>
+        <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
       </div>
       <div class="chart-card" style="padding:14px 18px">
         <h3 style="margin-bottom:10px">本月消費分類</h3>
