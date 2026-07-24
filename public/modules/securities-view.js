@@ -27,9 +27,35 @@ export const SECURITIES_INFO = Object.freeze({
   },
   boundary: {
     title: '這頁會影響投資組合或收支嗎？',
-    html: '<p><b>不會。</b>這頁只是「歷史成交的查帳簿」：</p><p>・不會改持股——持股由 IBKR 同步或你在投資組合頁維護。<br>・不會計入銀行收支或淨值——錢的實際進出以銀行對帳單為準。<br>・台新對帳單第一頁的資產概況也<b>不會</b>寫進投資組合（一份月結概況不等於完整交易歷史，直接覆蓋會失真）。</p><p>「同步 IBKR」按鈕和投資組合頁是<b>同一套</b>同步，在哪邊按效果相同。</p>',
+    // A′ 裁決（William 2026-07-24）：保留唯一一套完整同步、文案講明會動投組；出清確認/刪除留在投組頁
+    html: '<p>這一頁<b>自己</b>不會改任何東西：成交紀錄只用來查帳，不計入銀行收支與淨值；頁面上也沒有任何編輯持股的功能。台新對帳單只進查帳集合，第一頁的資產概況<b>不會</b>寫進投資組合（一份月結概況不等於完整交易歷史，直接覆蓋會失真）。</p><p>唯一的例外是「<b>同步 IBKR</b>」：它和投資組合頁是<b>同一套完整同步</b>，按下去除了抓成交紀錄，也會一併更新投資組合的持股與各幣別現金（在哪一頁按，效果相同）。若同步後發現有持股可能已出清，這裡只會<b>提醒你</b>、不會自動移除——確認與移除請到「投資組合」頁做。</p>',
   },
 });
+
+const pad2 = (/** @type {number} */ n) => String(n).padStart(2, '0');
+/** ISO 時間戳 → 本地日期 YYYY-MM-DD（Codex S3r2#5：importedAt 存 UTC ISO，直接 slice 台灣會慢 8 小時，
+ * 凌晨匯入甚至顯示前一天）。看不懂的輸入回空字串。 @param {any} iso */
+export function localDate(iso) {
+  const d = new Date(String(iso || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+/** ISO 時間戳 → 本地「YYYY-MM-DD HH:MM」。 @param {any} iso */
+export function localDateTime(iso) {
+  const d = new Date(String(iso || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${localDate(iso)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/**
+ * 同步後「可能已出清」提示文（A′ 裁決：查帳頁只提醒、不刪持股——確認與移除到投資組合頁）。
+ * 沒有缺漏回 null（呼叫端不彈提示）。 @param {any[]|undefined} missing @returns {string|null}
+ */
+export function missingHoldingsNotice(missing) {
+  if (!Array.isArray(missing) || !missing.length) return null;
+  const names = missing.map(h => String(h?.symbol || '')).filter(Boolean).join('、');
+  return `有 ${missing.length} 檔持股在這次報表中已找不到（可能已出清）${names ? `：${names}` : ''}。這頁不會動持股——請到「投資組合」頁按同步確認是否移除。`;
+}
 
 /**
  * 日期快選 → {from, to}（含頭含尾的 YYYY-MM-DD 字串區間）。
@@ -184,7 +210,7 @@ function secDetailHtml(t, fmt) {
     ${pair('證交稅', amtOr(t.tax))}
     ${pair('其他費用', amtOr(t.otherFees))}
     ${pair('匯入批次', fmt.esc(t.importBatch || ''))}
-    ${pair('匯入時間', fmt.esc(String(t.importedAt || '').slice(0, 10)))}
+    ${pair('匯入時間', fmt.esc(localDate(t.importedAt)))}
   </div>`;
 }
 
