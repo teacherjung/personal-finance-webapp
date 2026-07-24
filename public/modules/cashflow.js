@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
+import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -34,8 +35,8 @@ export async function renderCashflow() {
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
   if (Array.isArray(transferRes) && transferRes.length) transferSubs = transferRes.map(s => s.label).filter(Boolean);
   const all = allRaw.filter(t => !isCardTx(t));   // 只吃現金流帳本
-  const months = [...new Set(all.map(t => t.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
-  if (!months.includes(monthFilter) && months.length) monthFilter = months[0];
+  const months = deriveMonths(all);
+  monthFilter = fallbackMonth(monthFilter, months);
 
   const th = thBuilder(listSort);
   const monthRows = all.filter(t => t.date?.slice(0, 7) === monthFilter);
@@ -67,7 +68,7 @@ export async function renderCashflow() {
     <div class="two-col" style="margin:18px 0;align-items:end">
       <div>
         <label>月份</label>
-        <select id="monthSel">${months.map(m => `<option value="${esc(m)}" ${m === monthFilter ? 'selected' : ''}>${esc(m)}</option>`).join('') || `<option>${monthFilter}</option>`}</select>
+        <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
       </div>
       <div>
         <label>金流</label>
