@@ -1,5 +1,6 @@
 // @ts-check
-import { api, view, byId, esc, money, toast, modalSizeClass, bindBackdropClose, openForm, stmtOrig, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, toast, modalSizeClass, openForm, stmtOrig, currentRouteSeq } from '../app.js';
+import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 
@@ -363,20 +364,18 @@ async function openHealthCheck() {
       <div class="health-acts">${act} <button class="btn-link btn-sm" data-hskip="${i}" title="這是正常的，別再提醒">略過</button></div></div>`;
   };
   const items = health.items || [];
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-    <div class="modal-head"><h2>帳務體檢${items.length ? `（${items.length} 件待確認）` : ''}</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大）：內容與事件照舊自理
+  const { close } = openModalShell({
+    title: `帳務體檢${items.length ? `（${items.length} 件待確認）` : ''}`, size: 'lg',
+    bodyHtml: `
       ${items.length ? `<p class="muted" style="font-size:12px;margin-bottom:10px">這些是系統覺得「怪怪的」的地方——不一定是錯，你說了算：處理、或按略過讓它永久安靜。</p>
         <div style="max-height:56vh;overflow:auto">${items.map(rowHtml).join('')}</div>`
         : '<p class="empty">目前一切乾淨 ✅ 沒有待確認的項目。</p>'}
       <div class="form-actions">
         ${health.dismissed ? `<button type="button" class="btn-link" data-hreset>重新顯示已略過的 ${health.dismissed} 件</button>` : ''}
-        <button type="button" class="btn" data-close>關閉</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+        <button type="button" class="btn" data-close>關閉</button></div>`,
+  });
   root.querySelector('[data-close]').onclick = close;
-  bindBackdropClose(root, close);
   const redo = async (/** @type {string} */ msg) => { toast(msg); await openHealthCheck(); };
   root.querySelector('[data-hreset]')?.addEventListener('click', async () => {
     await api('/statement/health/dismiss', { method: 'POST', body: { clearAll: true } });
@@ -474,18 +473,16 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
 
   const redraw = () => { byId('catEditorBody').innerHTML = state.map((p, i) => blockHtml(p, i)).join(''); };
 
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-    <div class="modal-head"><h2>${esc(cfg.title)}</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大）：title 傳原文（外殼負責 esc，勿雙重跳脫）
+  const { close } = openModalShell({
+    title: cfg.title, size: 'lg',
+    bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">${esc(cfg.note)}</p>
       <div id="catEditorBody" style="max-height:52vh;overflow:auto"></div>
       <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="addP">＋ 新增大類</button></div>
-      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="catSave">儲存分類</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="catSave">儲存分類</button></div>`,
+  });
   root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
   redraw();
 
   // 委派按鈕事件（結構性動作：先 syncFromDom 保住已打的字，再改 state、重繪）
@@ -562,18 +559,16 @@ function openTransferSubEditor(list) {
       </span>
     </div>`;
   const redraw = () => { byId('tsubEditorBody').innerHTML = state.map(rowHtml).join(''); };
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
-    <div class="modal-head"><h2>內轉分類管理</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大）
+  const { close } = openModalShell({
+    title: '內轉分類管理', size: 'md',
+    bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">標「系統」的三項（出／進／交割）是自動判斷用的：改名沒問題（自動判斷跟著走）、刪掉的話該類自動判斷會變空白。改名會套用到所有舊的內轉交易。</p>
       <div id="tsubEditorBody"></div>
       <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="add">＋ 新增內轉分類</button></div>
-      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="tsubSave">儲存</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="tsubSave">儲存</button></div>`,
+  });
   root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
   redraw();
   root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
     const btn = e.target.closest('[data-act]');
@@ -627,21 +622,18 @@ function openBankLearnedManager(list) {
       <td class="muted">${r.name ? esc(r.name) : '<span class="muted">（用原始說明）</span>'}</td>
       <td><button class="btn-danger btn-sm" data-del="${esc(r.key)}" title="刪除這條規則">${icon('trash', 15)}</button></td>
     </tr>`).join('');
-    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-      <div class="modal-head"><h2>銀行收支學習</h2><button class="x-close">×</button></div>
-      <div class="modal-body">
+    // 外殼歸戶（U3 擴大）：render() 每次重畫都重開外殼（刪除後就地重繪的既有行為不變）
+    const { close } = openModalShell({
+      title: '銀行收支學習', size: 'lg',
+      bodyHtml: `
         <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是你教過的一條規則（摘要＋對方帳號 → 分類／顯示名）。刪掉只是讓下次匯入該對象回到自動判斷，<b>不影響</b>已經匯入的交易。</p>
         <div class="tbl-wrap"><table>
           <thead><tr><th>摘要／對方</th><th>金流・分類</th><th>顯示說明</th><th></th></tr></thead>
           <tbody>${body || '<tr><td colspan="4" class="empty">還沒有學過任何規則。到收支頁改一筆銀行交易的分類／說明，就會自動學起來。</td></tr>'}</tbody>
         </table></div>
-        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
-      </div>
-    </div></div>`;
-    const close = () => { root.innerHTML = ''; };
-    root.querySelector('.x-close').onclick = close;
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+    });
     root.querySelector('[data-close]').onclick = close;
-    bindBackdropClose(root, close);
     root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
       const key = /** @type {HTMLElement} */ (btn).dataset.del;
       const r = rows.find(x => x.key === key);
@@ -739,9 +731,10 @@ function openStoreRulesEditor(rules) {
     return out;
   };
 
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-    <div class="modal-head"><h2>店名規則</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大）
+  const { close } = openModalShell({
+    title: '店名規則', size: 'lg',
+    bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">你自己加的規則<b>優先於系統內建規則</b>。填的都是<b>普通文字</b>（不是程式碼），系統會照字面比對。
       規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。儲存前自動備份。</p>
       <div id="ruleEditorBody" style="max-height:50vh;overflow:auto"></div>
@@ -749,12 +742,9 @@ function openStoreRulesEditor(rules) {
         <button type="button" class="btn-ghost" data-cancel>取消</button>
         <button type="button" class="btn-ghost" id="rulePreview">預覽影響</button>
         <button type="button" class="btn" id="ruleSave">儲存並套用</button>
-      </div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      </div>`,
+  });
   root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
   redraw();
 
   root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
@@ -826,6 +816,9 @@ function openStoreRulesEditor(rules) {
  *            learnedNameChanges:{key:string,before:string,after:string}[], learnedNameChangeTotal?:number}} r
  *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開） */
 function openRulePreview(r, onBack) {
+  // ⚠️ 刻意**不用** openModalShell（U3 擴大的記錄在案例外）：這個窗的「×」是**返回編輯**（onBack）
+  // 不是關閉，且**沒有**背景點擊關閉——防止使用者點到背景把「編輯到一半的規則」整窗弄丟。
+  // 外殼會接管 x-close 與 bindBackdropClose，語意不同不可硬套（Codex U3 修訂點名的情況）。
   const root = byId('modal-root');
   const rows = r.changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
   // 學習表衝突＝整個自助化唯一「刪掉規則也救不回來」的效果：兩把鑰匙併成一把時，
@@ -875,20 +868,18 @@ function openOrphanLearned(r) {
   const rows = r.items.map(it => `<tr><td>${esc(it.key)}</td><td>${esc(it.name || '—')}</td>
     <td>${esc(it.category || '—')}${it.subcategory ? ` <span class="muted">· ${esc(it.subcategory)}</span>` : ''}</td>
     <td style="width:36px"><button class="btn-link btn-sm danger" data-dellearn="${esc(it.key)}" title="刪除這條學習">✕</button></td></tr>`).join('');
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
-    <div class="modal-head"><h2>沒對到記錄的學習規則（${r.items.length}）</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼歸戶（U3 擴大）
+  const { close } = openModalShell({
+    title: `沒對到記錄的學習規則（${r.items.length}）`, size: 'md',
+    bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">這些是系統幫你記住的店名／分類規則，但目前<b>沒有任何一筆記錄用得到它們</b>——通常是你刪過那批帳單，或改了店名規則。
       它們平常看不到，卻會在<b>下次匯入同一家店時默默生效</b>。留著沒關係（下次匯入就會派上用場），確定不要了才刪。</p>
       ${rows ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table>
         <thead><tr><th>對應的名字</th><th>學到的顯示名</th><th>學到的分類</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
     : '<p class="empty">尚無孤兒條目 ✅</p>'}
-      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>關閉</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>關閉</button></div>`,
+  });
   root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
   root.querySelectorAll('[data-dellearn]').forEach(b => b.addEventListener('click', async () => {
     const key = /** @type {HTMLElement} */ (b).dataset.dellearn;
     if (!confirm(`刪除「${key}」這條學習規則？下次匯入這家店會改用系統的自動判斷。`)) return;
