@@ -2,7 +2,8 @@
 // 證券交易頁（S3，藍圖 §二/§七/§八）：集中查閱與對帳 IBKR＋台新證券的歷史成交。
 // 分工（藍圖 §九）：這頁忠實呈現與搜尋歷史成交，**不改持股、不做績效分析、不計入收支**——分析在投資組合頁。
 // 呈現邏輯（篩選/排序/合計/HTML 字串）都在 securities-view.js 純函式（node --test 直測）；本檔只做 DOM 接線與 API。
-import { api, view, byId, esc, toast, moneyCur, todayStr, currentRouteSeq, openForm, openInfo, modalSizeClass, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, toast, moneyCur, todayStr, currentRouteSeq, openForm, openInfo } from '../app.js';
+import { openModalShell } from './modal-shell.js';
 import { icon } from './icons.js';
 import { thBuilder } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
@@ -169,23 +170,19 @@ function openSecUpload(/** @type {boolean} */ pwSet) {
   });
 }
 
-/** 預覽彈窗：blockers 存在＝不畫確認鈕（fail-closed）；確認＝把**原始檔**再送 import（後端重解析）。 */
+/** 預覽彈窗：blockers 存在＝不畫確認鈕（fail-closed）；確認＝把**原始檔**再送 import（後端重解析）。
+ * 外殼走 openModalShell（U3 試點）；內容按鈕與送出鎖照舊自理。 */
 function openSecPreview(/** @type {any} */ p, /** @type {string} */ b64, /** @type {string} */ password) {
-  const root = byId('modal-root');
   const ok = canImportPreview(p);
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('xl')}">
-    <div class="modal-head"><h2>台新證券對帳單預覽</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
-      ${previewBodyHtml(p, FMT)}
+  const { root, close } = openModalShell({
+    title: '台新證券對帳單預覽', size: 'xl',
+    bodyHtml: `${previewBodyHtml(p, FMT)}
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-cancel>取消</button>
         ${ok ? `<button type="button" class="btn" id="secDoImport">確認匯入 ${p.counts.importable} 筆</button>` : ''}
-      </div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      </div>`,
+  });
   root.querySelector('[data-cancel]').onclick = close;
-  bindBackdropClose(root, close);
   const btn = byId('secDoImport');
   if (btn) btn.onclick = async () => {
     btn.disabled = true;   // 防雙擊重複送
@@ -204,7 +201,6 @@ async function openSecBatches() {
   let batches;
   try { batches = (await api('/securities/batches')).batches || []; }
   catch (err) { return toast('讀取匯入紀錄失敗：' + /** @type {any} */ (err).message, true); }
-  const root = byId('modal-root');
   const srcName = (/** @type {string} */ s) => s === 'ibkr' ? 'IBKR' : s === 'taishin' ? '台新證券' : (s || '—');
   const rowHtml = (/** @type {any} */ b) => `<tr>
     <td>${esc(srcName(b.source))}</td>
@@ -216,20 +212,18 @@ async function openSecBatches() {
       ? `<button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="整批刪除（刪掉後可重新上傳同一份對帳單）">${icon('trash', 15)}</button>`
       : '<span class="muted" title="IBKR 同步批次不提供整批刪除（避免誤刪長期歷史）；資料有誤請重新同步同一期間覆寫">—</span>'}</td>
   </tr>`;
-  root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-    <div class="modal-head"><h2>匯入紀錄</h2><button class="x-close">×</button></div>
-    <div class="modal-body">
+  // 外殼走 openModalShell（U3 試點）；刪除批次等內容事件照舊自理
+  const { root, close } = openModalShell({
+    title: '匯入紀錄', size: 'lg',
+    bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">台新批次可整批刪除後重新上傳（後悔藥）；IBKR 同步批次不提供刪除——資料有誤時重新同步同一期間即可覆寫，歷史不會消失。</p>
       <div class="tbl-wrap"><table>
         <thead><tr><th>來源</th><th>帳戶</th><th>期間</th><th class="num">筆數</th><th>匯入時間</th><th></th></tr></thead>
         <tbody>${batches.map(rowHtml).join('') || '<tr><td colspan="6" class="empty">還沒有任何匯入或同步。</td></tr>'}</tbody>
       </table></div>
-      <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
-    </div></div></div>`;
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('.x-close').onclick = close;
+      <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+  });
   root.querySelector('[data-close]').onclick = close;
-  bindBackdropClose(root, close);
   root.querySelectorAll('[data-delbatch]').forEach((/** @type {any} */ btn) => btn.onclick = async () => {
     const id = btn.dataset.delbatch || '';
     const b = batches.find((/** @type {any} */ x) => x.batchId === id);
