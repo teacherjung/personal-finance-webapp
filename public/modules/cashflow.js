@@ -4,12 +4,13 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, modalSizeClass } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
+import { openModalShell } from './modal-shell.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -227,9 +228,10 @@ async function openBankBatchManager() {
       <td class="num muted">${b.transfer ? money(b.transfer) : '—'}</td>
       <td><button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button></td>
     </tr>`).join('');
-    root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('lg')}">
-      <div class="modal-head"><h2>銀行對帳單匯入紀錄</h2><button class="x-close">×</button></div>
-      <div class="modal-body">
+    // 外殼歸戶（U3 擴大②）：backdrop:false＝原程式本來就沒有背景點擊關閉（搬家不裝修）
+    const { close } = openModalShell({
+      title: '銀行對帳單匯入紀錄', size: 'lg', backdrop: false,
+      bodyHtml: `
         <ul class="muted batch-help" style="font-size:12.5px;margin:0 0 12px 18px;line-height:1.9;padding:0">
           <li>每一列代表<b class="hl">「一次對帳單上傳」</b>匯入的現金流交易。</li>
           <li>分箱判斷不對、或想換一份帳單重來，可整批<b class="hl">「刪除」</b>後重新上傳。</li>
@@ -239,11 +241,9 @@ async function openBankBatchManager() {
           <thead><tr><th>日期範圍</th><th class="num">筆數</th><th class="num">收入</th><th class="num">支出</th><th class="num">內轉</th><th></th></tr></thead>
           <tbody>${rows || '<tr><td colspan="6" class="empty">尚無銀行對帳單匯入批次。</td></tr>'}</tbody>
         </table></div>
-        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>
-      </div>
-    </div></div>`;
-    root.querySelector('.x-close').onclick = () => { root.innerHTML = ''; };
-    root.querySelector('[data-close]').onclick = () => { root.innerHTML = ''; };
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+    });
+    root.querySelector('[data-close]').onclick = close;
     root.querySelectorAll('[data-delbatch]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = () => {
       const b = list.find(x => x.batchId === /** @type {HTMLElement} */ (btn).dataset.delbatch);
       confirmDelete(`整批 ${b.count} 筆（${b.minDate}~${b.maxDate}）`, async () => {

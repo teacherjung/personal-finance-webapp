@@ -10,10 +10,12 @@ import { byId, esc, modalSizeClass, bindBackdropClose } from '../app.js';
 /**
  * 開一個彈窗外殼：title 經 esc、bodyHtml 為呼叫端組好的內容（含各自的 form-actions 按鈕）。
  * 回傳 { root, close }——呼叫端自行接 [data-cancel]/[data-close] 與內容事件。
- * @param {{ title: string, size?: string, bodyHtml: string }} cfg
+ * backdrop:false＝不掛背景點擊關閉（U3 擴大②校準：transactions/cashflow 老窗**原本就沒有**
+ * 背景關閉——預覽窗滿是勾選與分類編輯、背景誤點會毀掉編輯；搬家不裝修、原語意保留）。
+ * @param {{ title: string, size?: string, bodyHtml: string, backdrop?: boolean }} cfg
  * @returns {{ root: any, close: () => void }}
  */
-export function openModalShell({ title, size = 'md', bodyHtml }) {
+export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }) {
   const root = byId('modal-root');
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
@@ -21,6 +23,6 @@ export function openModalShell({ title, size = 'md', bodyHtml }) {
   </div></div>`;
   const close = () => { root.innerHTML = ''; };
   root.querySelector('.x-close').onclick = close;
-  bindBackdropClose(root, close);
+  if (backdrop) bindBackdropClose(root, close);
   return { root, close };
 }
