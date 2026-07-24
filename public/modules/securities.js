@@ -51,7 +51,7 @@ export async function renderSecurities() {
       <div><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，方便搜尋與對帳（成交紀錄只用於查帳，不計入收支）</p></div>
       <div class="page-actions">
         <button class="btn-ghost" id="secBatches">${icon('history', 16)}匯入紀錄</button>
-        <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套完整同步：會一併更新持股與各幣別現金">${icon('download', 16)}同步 IBKR</button>
+        <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套完整同步：會一併更新持股與各幣別現金">${icon('download', 16)}同步 IBKR 與投資組合</button>
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
@@ -138,7 +138,7 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
   } catch (err) {
     toast('IBKR 同步失敗：' + /** @type {any} */ (err).message, true);
     btn.disabled = false;
-    btn.innerHTML = icon('download', 16) + '同步 IBKR';
+    btn.innerHTML = icon('download', 16) + '同步 IBKR 與投資組合';   // 可見文字含影響範圍（Codex r2 收官#2：手機沒有 hover 看不到 title）
   }
 }
 
