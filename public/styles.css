@@ -227,7 +227,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .rule-row input, .rule-row select { padding: 5px 8px; font-size: 12.5px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--card); color: var(--text); }
 .rule-row input { flex: 1; min-width: 0; }
-.rule-row select { flex-shrink: 0; }
+.rule-row select { flex-shrink: 0; width: auto; }   /* 蓋回全域 select{width:100%}：不蓋的話「包含」下拉獨吞整列、把兩個輸入格擠成看不見的細縫（使用者回報 2026-07-25） */
 .rule-row .btn-icon { flex-shrink: 0; }
 @media (max-width: 640px) { .rule-row { flex-wrap: wrap; } .rule-row input { flex-basis: 100%; } }
 /* 規則預覽的不可逆警告（學習表衝突）：唯一「刪掉規則也救不回來」的效果，視覺上要跳出來 */
