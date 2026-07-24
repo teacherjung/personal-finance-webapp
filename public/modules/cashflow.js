@@ -8,6 +8,7 @@ import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInf
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
+import { fileToBase64 } from './file-util.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -138,16 +139,7 @@ function subOptionsFor(flow, parent, cur = '') {
 }
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
-/** 檔案 → base64（同 transactions.js 的做法；密碼只在記憶體、隨請求送、不落檔）。 @param {File} file */
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-    fr.onerror = () => reject(new Error('讀取檔案失敗'));
-    fr.readAsDataURL(file);
-  });
-}
-
+// fileToBase64 已歸戶 file-util.js（系統優化 U1）
 async function openBankUpload() {
   let file = null;
   openForm({

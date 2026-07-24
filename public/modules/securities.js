@@ -5,6 +5,7 @@
 import { api, view, byId, esc, toast, moneyCur, todayStr, currentRouteSeq, openForm, openInfo, modalSizeClass, bindBackdropClose } from '../app.js';
 import { icon } from './icons.js';
 import { thBuilder } from './tx-sort.js';
+import { fileToBase64 } from './file-util.js';
 import { ibSyncFeedback } from './portfolio-ib-sync.js';
 import {
   SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, datePresetRange, filterSecTrades, sortSecTrades,
@@ -143,16 +144,7 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
 }
 
 // ---- 台新對帳單上傳（藍圖 §五/§七）：選檔＋密碼 → 預覽 → 確認匯入（伺服器端重新解析，不信前端列）----
-/** 檔案 → base64（同 transactions.js 前例；PDF 只在記憶體、不落地）。 @param {File} file @returns {Promise<string>} */
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-    fr.onerror = () => reject(new Error('讀取檔案失敗'));
-    fr.readAsDataURL(file);
-  });
-}
-
+// fileToBase64 已歸戶 file-util.js（系統優化 U1）
 function openSecUpload(/** @type {boolean} */ pwSet) {
   /** @type {File|null} */
   let file = null;
