@@ -161,6 +161,18 @@ export async function renderSettings() {
       <div class="form-actions"><button class="btn" id="saveIb">儲存 IB 設定</button></div>
     </div>
 
+    <h2 class="section-title">證券交易</h2>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">台新證券對帳單密碼</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">存起來後，到「證券交易」頁上傳對帳單就不用每次輸入（通常是身分證字號；只存這台電腦、永不上傳，比照信用卡帳單密碼）。不存也可以——每次上傳時再輸入。</p>
+      <div class="form-grid">
+        <div class="full"><label>PDF 密碼</label><input id="taishinSecPw" type="password" value="" placeholder="${s.taishinSecPdfPasswordSet ? '已設定，留空＝不變更' : '通常是身分證字號'}" /></div>
+        ${s.taishinSecPdfPasswordSet ? '<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearTaishinSecPw" type="checkbox"> 清除已存的密碼（改回每次輸入）</label></div>' : ''}
+      </div>
+      <div class="form-actions"><button class="btn" id="saveTaishinSecPw">儲存</button></div>
+    </div>
+
     <h2 class="section-title">訂閱追蹤</h2>
     <div class="card" style="margin-bottom:18px">
       <p class="muted" style="font-size:12px">續費日／停用日前 7 天內會在總覽提醒（固定值）。目前沒有其他可調整的設定——想把提醒天數開放成可調整，跟我說一聲。</p>
@@ -228,6 +240,14 @@ export async function renderSettings() {
     if (/** @type {HTMLInputElement} */ (byId('clearFlexToken'))?.checked) ib.flexToken = '';
     else if (val('flexToken')) ib.flexToken = val('flexToken');
     saveSettings({ ib }, 'IB 設定已儲存，可到 IB 投資組合頁同步');
+  };
+  byId('saveTaishinSecPw').onclick = () => {
+    // 同 flexToken 慣例（Codex r10#10）：留空＝不變更；勾「清除」＝明確送空字串清空；有打才更新
+    const body = /** @type {any} */ ({});
+    if (/** @type {HTMLInputElement} */ (byId('clearTaishinSecPw'))?.checked) body.taishinSecPdfPassword = '';
+    else if (val('taishinSecPw')) body.taishinSecPdfPassword = val('taishinSecPw');
+    else return toast('沒有變更：輸入新密碼，或勾選清除。', true);
+    saveSettings(body, body.taishinSecPdfPassword === '' ? '已清除證券對帳單密碼' : '證券對帳單密碼已儲存');
   };
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories'), CAT_CFG.expense); }

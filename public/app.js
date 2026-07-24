@@ -5,6 +5,7 @@ import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
 import { renderAssets, renderBankAccounts } from './modules/assets.js';
 import { renderPortfolio } from './modules/portfolio.js';
+import { renderSecurities } from './modules/securities.js';
 import { renderSubscriptions } from './modules/subscriptions.js';
 import { renderCards } from './modules/cards.js';
 import { renderInsurance } from './modules/insurance.js';
@@ -243,6 +244,7 @@ const ROUTES = {
   assets: renderAssets,
   bank: renderBankAccounts,
   ib: renderPortfolio,
+  securities: renderSecurities,
   subscriptions: renderSubscriptions,
   cards: renderCards,
   insurance: renderInsurance,
