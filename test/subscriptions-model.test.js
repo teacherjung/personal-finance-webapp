@@ -12,6 +12,7 @@ import {
   costFormula, costDetailRows,
 } from '../public/modules/subscriptions-model.js';
 import { subCostForMonth } from '../lib/derive.js';
+import { validateImportItem, sanitizeDbForWrite } from '../lib/schema.js';
 
 /** 造一筆合成訂閱（絕不用真實資料）；預設月繳、使用中、從 2026-06 起算 */
 const mk = (over = {}) => ({ id: 'sub-x', name: '測試服務', cycle: 'monthly', amount: 390, status: 'active', active: true, since: '2026-06', ...over });
@@ -173,20 +174,28 @@ test('前後端對照：整包總額（amortizedForMonth vs 後端逐筆加總�
   assert.equal(beSum, 390 + 300 + 300 + 0 + 0 + 150);
 });
 
-// ---------- 記錄在案的既有走散點（2026-07-24 對照考題首跑發現；搬家不裝修＝本 PR 不修） ----------
-// 這兩題斷言「今天的實際行為」：哪天有人把任一邊改一致了，這裡會亮紅燈提醒更新考題與文案。
-// 裁決去向：已寫入 PR 說明與 PROJECT.md，待 Codex 複審意見＋William 拍板要不要統一、統一成哪邊。
+// ---------- 走散點結案（2026-07-24 對照考題首跑發現 → Codex 修正單 → William 照准） ----------
+// ①統一：後端補 RECORD_START 地板（單一真相＝本檔常數、derive.js 直接 import）。
+// ②不改公式：月份型 endsOn 定義為「非法輸入、由資料入口拒絕」——一致性契約範圍＝通過 schema 的合法訂閱資料，
+//   不替結構上進不來的輸入決定該少算還是多算；改用邊界考題證明三個強制點都擋得住。
 
-test('走散點①（記錄在案）：缺 since 的舊訂閱在 2026-06 前的歷史月——前端有 RECORD_START 地板＝0、後端無地板＝照算', () => {
+test('走散點①已修正：缺 since 的舊訂閱——前後端同用 RECORD_START 地板，2026-06 前不虛構歷史費用、當月起正常計費', () => {
   const s = mk({ since: undefined });
-  assert.equal(costForMonth(s, '2026-05'), 0, '前端：RECORD_START 之前不計');
-  assert.equal(subCostForMonth(s, '2026-05'), 390, '後端：沒有地板、照算整月');
-  // 影響面：現行後端呼叫點只用「當月」（≥ RECORD_START），實際不會踩到；風險在未來有人拿它算歷史月。
+  both(s, '2026-05', 0, '地板前的歷史月＝兩邊都 0');
+  both(s, RECORD_START, 390, 'RECORD_START 當月＝兩邊正常計費');
+  both(s, '2026-07', 390, '地板後的月份＝兩邊正常計費');
 });
 
-test('走散點②（記錄在案）：endsOn 只有年月沒有日（壞資料）——停用當月前端算 0、後端算整月', () => {
-  const s = mk({ cycle: 'quarterly', amount: 900, endsOn: '2026-07' });
-  assert.equal(costForMonth(s, '2026-07'), 0, '前端：dayOfMonth 讀不到日→0 天');
-  assert.equal(subCostForMonth(s, '2026-07'), 300, '後端：讀不到日→退整月天數');
-  // 兩邊「寧可怎麼錯」方向相反：前端寧少算、後端寧多算。正常表單存的 endsOn 都是完整日期，僅壞資料會踩。
+test('走散點②結案：endsOn 只有年月＝非法輸入，匯入與寫入櫃檯都拒絕、strip 搬家剝欄——公式永遠收不到 YYYY-MM', () => {
+  const bad = { name: '測試服務', cycle: 'quarterly', amount: 900, status: 'active', active: true, since: '2026-06', endsOn: '2026-07' };
+  // 匯入強制點：逐筆列 errors → 路由整份 400（isRealDate 只認真實 YYYY-MM-DD）
+  const v = validateImportItem('subscriptions', bad);
+  assert.ok(v.errors.some(e => e.includes('endsOn')), `匯入驗證要點名 endsOn（實得：${v.errors.join(',')}）`);
+  // 寫入櫃檯強制點：throw 模式當場擋下（任何寫入路徑結構上繞不過 store.save 的驗證牆）
+  assert.throws(() => sanitizeDbForWrite({ settings: {}, subscriptions: [bad] }, { mode: 'throw' }));
+  // 舊 JSON 搬家 strip 模式：非必填壞欄位剝除、列保留 → 攤提公式永遠收不到月份型 endsOn
+  const stripped = sanitizeDbForWrite({ settings: {}, subscriptions: [bad] }, { mode: 'strip' });
+  assert.equal(stripped.subscriptions.length, 1, 'strip＝剝欄不濾列（endsOn 非必填）');
+  assert.equal('endsOn' in stripped.subscriptions[0], false, 'strip 後 endsOn 已剝除');
+  // CRUD 強制點（400）在 test/server.test.js 有對應 HTTP 考題（同一把 FIELD_SCHEMA 尺）
 });

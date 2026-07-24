@@ -266,6 +266,11 @@ test('枚舉非法→400 而非剝掉（Codex#5-1）：cycle 亂值不可落到�
   assert.equal(res.status, 400, '非法 cycle 應拒絕（剝掉會被當月繳 1200→年 14400）');
 });
 
+test('endsOn 只有年月→400（走散點②結案）：月份型停用日是非法輸入，CRUD 入口就拒絕', async () => {
+  const res = await POST('/subscriptions', { name: 'x', category: '娛樂', amount: 1200, cycle: 'yearly', status: 'active', endsOn: '2026-07' });
+  assert.equal(res.status, 400, '月份型 endsOn 應在入口拒絕（放進去會讓前後端攤提對壞資料各自表述）');
+});
+
 test('accounts.type 枚舉→400（Codex#5-2）：擋 mortgagex 讓負債被當資產（淨值方向相反）', async () => {
   const bad = await POST('/accounts', { name: 'x', type: 'mortgagex', class: '負債', currency: 'TWD', balance: 100 });
   assert.equal(bad.status, 400, '非法 accounts.type 應拒絕');
