@@ -310,10 +310,13 @@ test('匯入 learnedCategories 清理（Codex#5-4）：{bad:null} 被丟棄，�
   await POST('/import', backup);
 });
 
-test('陣列元素形狀（Codex#5-5）：checkpoints:[null] 的壞元素被過濾', async () => {
-  const r = await (await POST('/research', { symbol: 'CP1', checkpoints: [{ date: '2026-07-01', note: 'ok' }, null, 'garbage'] })).json();
-  assert.ok(Array.isArray(r.checkpoints) && r.checkpoints.length === 1, '非物件元素應被過濾（否則研究卡讀 c.date 崩）');
-  await DELETE_(`/research/${r.id}`);
+test('研究陣列元素形狀（P2）：checkpoints 含非物件元素明確 400 且不落庫', async () => {
+  const before = await GET('/db');
+  const res = await POST('/research', { symbol: 'CP1', checkpoints: [{ date: '2026-07-01', note: 'ok' }, null, 'garbage'] });
+  assert.equal(res.status, 400, 'CRUD 收到壞研究元素應明確拒絕');
+  const after = await GET('/db');
+  assert.equal(after.research?.length, before.research?.length, '拒絕後不應新增半成品研究');
+  assert.ok(!(after.research || []).some((r) => r.symbol === 'CP1'), '非法研究不得落庫');
 });
 
 test('匯入枚舉非法→整份拒絕（Codex#5-1 import）：備份含壞 cycle → 400', async () => {
