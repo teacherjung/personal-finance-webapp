@@ -28,7 +28,7 @@ const row = (desc, extra = {}) => ({
   date: '2026-07-01', amount: 1000, desc,
   category: '交通', subcategory: '油錢', stmtRef: `c1|2026-07-01|1000|${desc}`, ...extra });
 
-test('匯入：加油站消費的 note＝「分店加油站」、storeKey 照舊「加油站」', () => {
+test('匯入：加油站消費的 note＝「加油站（XXX）」、storeKey 照舊「加油站」', () => {
   const db = getDb();
   db.cards = [{ id: 'c1', name: '測試卡', type: 'credit', lastFour: '9001' }];   // 合成末四碼（假值）
   db.transactions = [];
@@ -47,16 +47,16 @@ test('匯入：加油站消費的 note＝「分店加油站」、storeKey 照舊
   assert.equal(r.imported, 7);
   const db2 = getDb();
   const noteOf = (d) => db2.transactions.find(t => t.stmtRef.endsWith(d))?.note;
-  assert.equal(noteOf('中油-泰山站(D2158)TAIPEI'), '泰山加油站');
-  assert.equal(noteOf('統一精工-新店站TAIPEI'), '新店加油站');
-  assert.equal(noteOf('台塑-合成站(D9901)TAIPEI'), '合成加油站');
-  assert.equal(noteOf('中油A123 TAIPEI'), '中油加油站', '無分店＝品牌加油站，不可留「中油」');
-  assert.equal(noteOf('統一精工'), '統一精工加油站');
-  assert.equal(noteOf('台塑石油股份有限公司'), '台塑加油站');
-  assert.equal(noteOf('台塑石油合成站'), '合成加油站', '無分隔符也要切出分店');
+  assert.equal(noteOf('中油-泰山站(D2158)TAIPEI'), '加油站（泰山）');
+  assert.equal(noteOf('統一精工-新店站TAIPEI'), '加油站（新店）');
+  assert.equal(noteOf('台塑-合成站(D9901)TAIPEI'), '加油站（合成）');
+  assert.equal(noteOf('中油A123 TAIPEI'), '加油站（中油）', '無分店＝標籤放品牌，不可留「中油」');
+  assert.equal(noteOf('統一精工'), '加油站（統一精工）');
+  assert.equal(noteOf('台塑石油股份有限公司'), '加油站（台塑）');
+  assert.equal(noteOf('台塑石油合成站'), '加油站（合成）', '無分隔符也要切出分店');
   for (const t of db2.transactions) assert.equal(t.storeKey, '加油站', `鑰匙照舊聚合(${t.note})`);
-  // 畫面不會兩種格式並存：全部以「加油站」結尾（Codex 複審的核心訴求）
-  for (const t of db2.transactions) assert.match(t.note, /加油站$/, `顯示格式統一(${t.note})`);
+  // 畫面不會兩種格式並存：全部長成「加油站（XXX）」（Codex 複審的核心訴求＋2026-07-26 改版）
+  for (const t of db2.transactions) assert.match(t.note, /^加油站（[^（）]+）$/, `顯示格式統一(${t.note})`);
 });
 
 test('自訂名「加油站」逐字照登：匯入不覆蓋、整理不動、不跳確認閘', () => {
@@ -87,9 +87,9 @@ test('整理：舊格式（中油（泰山站））收斂到新格式，且整�
   }];
   saveDb(db);
   const prev = normalizeBranches(true);   // 預覽
-  assert.deepEqual(prev.changes.map(c => [c.before, c.after]), [['中油（泰山站）', '泰山加油站']]);
+  assert.deepEqual(prev.changes.map(c => [c.before, c.after]), [['中油（泰山站）', '加油站（泰山）']]);
   normalizeBranches(false);               // 套用
-  assert.equal(getDb().transactions[0].note, '泰山加油站');
+  assert.equal(getDb().transactions[0].note, '加油站（泰山）');
   const again = normalizeBranches(true);  // 再跑一次＝什麼都不該再變（冪等）
   assert.equal(again.changes.length, 0, '整理冪等：新格式不再被改');
 });
