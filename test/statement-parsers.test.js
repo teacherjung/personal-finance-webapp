@@ -220,7 +220,10 @@ test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP
   assert.equal(cleanStore('優食-好麥永和豆漿店'), '好麥永和豆漿店', '鑰匙／清理後店名＝餐廳本身，不是平台');
   assert.equal(ue('優食-八方雲集林口遠雄'), '八方雲集（UE）', '外送不留分店');
   assert.equal(applyDisplayLabels('好麥永和豆漿店（UE）', { desc: '優食-好麥永和豆漿店' }), '好麥永和豆漿店（UE）', '冪等');
-  assert.equal(ue('優食'), '優食', '只有平台名（店名救不回）＝不加贅括號');
+  // 只有平台名（沒帶餐廳）＝店家就是 Uber Eats 本身（使用者定 2026-07-26，取代原本的原樣「優食」）；
+  // 沒有分隔符＝不觸發外送標記，所以不會變成「Uber Eats（UE）」這種贅字
+  assert.equal(ue('優食'), 'Uber Eats');
+  assert.equal(ue('優食台灣股份有限公司'), 'Uber Eats');
   assert.equal(stripDisplayLabels('好麥永和豆漿店（UE）'), '好麥永和豆漿店');
   // 優步（Uber）：叫車與外送共用商戶名 → 用「店家是不是車隊」判要不要標（使用者定 2026-07-18）
   const ub = (desc) => applyDisplayLabels(cleanStore(desc), { desc });
