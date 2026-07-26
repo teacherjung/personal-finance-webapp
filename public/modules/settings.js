@@ -5,6 +5,11 @@ import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
+import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
+import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
+
+/** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
+const storeSort = { ...STORE_SORT_DEFAULT };
 
 export async function renderSettings() {
   const seq = currentRouteSeq();
@@ -33,13 +38,19 @@ export async function renderSettings() {
         key: k, cat: String(t.category || ''), sub: String(t.subcategory || '') });
     } else prev.cnt = cnt;
   }
-  const storeRows = [...byOrig.values()].sort((a, b) => a.cur.localeCompare(b.cur, 'zh-Hant'));
+  const storeRows = [...byOrig.values()];
   // 三層一次看（使用者定 2026-07-18）：帳單原文（銀行印的）→ 身分鑰匙（辨識同一家店的乾淨名，學習用）→ 顯示名（你看到的，可自訂）
-  const storeMapRows = storeRows.length ? `<div class="tbl-wrap" style="max-height:44vh;overflow:auto"><table>
-        <thead><tr><th>帳單原文</th><th>身分鑰匙</th><th>顯示名</th><th>分類</th><th></th></tr></thead>
-        <tbody>${storeRows.map(p => `<tr><td class="muted">${esc(p.orig)}</td><td class="muted">${esc(p.key || '—')}</td><td>${esc(p.cur)}</td>
-          <td>${esc(p.cat)}${p.sub ? ` <span class="muted">· ${esc(p.sub)}</span>` : ''}</td>
-          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" data-key="${esc(p.key)}" data-others="${Math.max(0, (keyCount.get(p.key) || 0) - p.cnt)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table></div>`
+  // 四欄皆可點擊排序（使用者定 2026-07-26）：排序與分類儲存格的規則在 settings-store-table.js（有考題）。
+  const storeTableHtml = () => {
+    const th = thBuilder(storeSort);
+    return `<table>
+        <thead><tr>${th('orig', '帳單原文')}${th('key', '身分鑰匙')}${th('cur', '顯示名')}${th('cat', '分類')}<th></th></tr></thead>
+        <tbody>${sortStoreRows(storeRows, storeSort).map(p => `<tr><td class="muted">${esc(p.orig)}</td><td class="muted">${esc(p.key || '—')}</td><td>${esc(p.cur)}</td>
+          <td>${storeCatCell(p, esc)}</td>
+          <td style="width:36px"><button class="btn-link btn-sm" data-editstore="${esc(p.orig)}" data-cur="${esc(p.cur)}" data-cat="${esc(p.cat)}" data-sub="${esc(p.sub)}" data-key="${esc(p.key)}" data-others="${Math.max(0, (keyCount.get(p.key) || 0) - p.cnt)}" title="編輯這一列的店名與分類">${icon('edit', 15)}</button></td></tr>`).join('')}</tbody></table>`;
+  };
+  const storeMapRows = storeRows.length
+    ? `<div class="tbl-wrap" id="storeMapWrap" style="max-height:44vh;overflow:auto">${storeTableHtml()}</div>`
     : '<p class="empty">尚無帳單記錄。匯入信用卡帳單後，這裡會列出每家店的顯示名與分類。</p>';
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
@@ -92,7 +103,7 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">帳單說明／分類學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。三欄＝店名的三層：<b>帳單原文</b>（銀行印的）→ <b>身分鑰匙</b>（辨識「同一家店」用，<b>只到品牌、不含分店</b>——所以各分店的消費會合併統計；所有加油站一律算「加油站」）→ <b>顯示名</b>（你看到的，含分店、可自訂）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，依顯示名排序。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">信用卡匯入時會自動清理店名、自動判斷分類；你改過的（店名或分類）系統會記住，下次匯入同一家店自動套用（優先於內建規則）。三欄＝店名的三層：<b>帳單原文</b>（銀行印的）→ <b>身分鑰匙</b>（辨識「同一家店」用，<b>只到品牌、不含分店</b>——所以各分店的消費會合併統計；所有加油站一律算「加油站」）→ <b>顯示名</b>（你看到的，含分店、可自訂）。<b>按列尾的編輯鈕可直接改這一列的顯示名與分類</b>——同原文的各月份記錄整批改；彈窗裡的「還原自動判斷」＝清除自訂、恢復系統判斷。共 ${storeRows.length} 家店，<b>點欄位標題可排序</b>（預設依顯示名）。</p>
       ${storeMapRows}
       ${orphans.items.length ? `<p class="muted" style="font-size:12px;margin-top:12px">另有 <b>${orphans.items.length}</b> 條學習規則目前沒對到任何記錄（刪過那批帳單、或改過店名規則），平常看不到但下次匯入仍會生效。<button class="btn-link btn-sm" id="orphanBtn">查看／清理</button></p>` : ''}
     </div>
@@ -271,7 +282,8 @@ export async function renderSettings() {
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
   const expParents = Object.keys(expTree || {});
-  view().querySelectorAll('[data-editstore]').forEach(b => b.onclick = () => {
+  // 排序會重畫表格 → 編輯鈕要重綁：包成函式讓首次渲染與排序回呼共用同一份（兩套會走鐘）
+  const bindStoreEdit = () => view().querySelectorAll('[data-editstore]').forEach(b => b.onclick = () => {
     const el = /** @type {HTMLElement} */ (b);
     const orig = el.dataset.editstore || '';
     const cur = el.dataset.cur || '', cat0 = el.dataset.cat || '', sub0 = el.dataset.sub || '';
@@ -330,6 +342,14 @@ export async function renderSettings() {
       }
     });
   });
+  // 點表頭排序：只重畫表格本身（不重打 6 支 API），重畫後重綁編輯鈕與表頭
+  const bindStoreTable = () => {
+    bindStoreEdit();
+    const wrap = byId('storeMapWrap');
+    if (!wrap) return;   // 沒有帳單記錄＝顯示空狀態、沒有表格
+    bindSortClicks(wrap, storeSort, () => { wrap.innerHTML = storeTableHtml(); bindStoreTable(); });
+  };
+  bindStoreTable();
   byId('healthBtn').onclick = () => openHealthCheck();
   byId('storeRulesBtn').onclick = () => openStoreRulesEditor(myRules);
   if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
