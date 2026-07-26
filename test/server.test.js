@@ -717,12 +717,12 @@ test('停車店名治療（HTTP 全鏈路，使用者回報 2026-07-18）：整�
   // 停車費屬性由分類欄呈現（下方 subcategory 斷言），顯示名逐字，才不會把使用者刻意拿掉的包裝硬加回去。
   assert.equal(after.note, '台灣普客二四', '包著停車標記的舊殘骸名要能治（拆殼→整理成乾淨店名），但不自動補停車包裝');
   assert.equal(after.subcategory, '停車費', '停車屬性保留在分類欄');
-  assert.equal(after.storeKey, '台灣普客二四', 'storeKey 用原文重算：聯信前綴＋「股份有」殘尾都修掉');
+  assert.equal(after.storeKey, '停車費', 'storeKey＝停車聚合（使用者定 2026-07-26：所有停車算同一件事）；顯示名仍治好殘骸＝聯信前綴與「股份有」殘尾都修掉');
   const learned = await GET('/learned');
   assert.equal(learned[origT]?.name, '台灣普客二四', '原文級學習：key 不動、錯名治好');
   assert.ok(!learned['聯信（Times Parking股份有）'], '舊 storeKey 的學習不可原地留下');
-  assert.equal(learned['台灣普客二四']?.category, '交通', '搬家不可弄丟分類學習');
-  assert.ok(!learned['台灣普客二四']?.name, '品牌層 key 不留顯示名——帶分店的名字改掛原文級（否則同品牌其他分店被連動改名）');
+  assert.equal(learned['停車費']?.category, '交通', '搬家不可弄丟分類學習（鑰匙已併成「停車費」）');
+  assert.ok(!learned['停車費']?.name, '品牌層 key 不留顯示名——帶分店的名字改掛原文級（否則同品牌其他分店被連動改名）');
   assert.ok(applied.learnedNamesFixed >= 1, '治了幾個學過的錯名要回報');
   // 冪等：治好的不再出現在預覽
   const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
@@ -756,8 +756,8 @@ test('店名格式整理｜自訂 vs 自動（使用者定 2026-07-18）：沒�
   await (await POST('/statement/normalize-branches', { force: true })).json();
   const after = await GET('/transactions');
   const g = (id) => after.find(t => t.id === id);
-  assert.equal(g(ta.id).note, 'eTag 停車（救國團林口運動中心）', '非自訂 → 從原文重生：場站名救回、名字已含停車不再包停車費（）');
-  assert.equal(g(ta.id).storeKey, 'eTag 停車', 'storeKey＝品牌層身分鑰匙（場站在顯示名）');
+  assert.equal(g(ta.id).note, '停車費（救國團林口運動中心）', '非自訂 → 從原文重生：場站名救回並當地點標籤（2026-07-26 新格式）');
+  assert.equal(g(ta.id).storeKey, '停車費', 'storeKey＝停車聚合（場站仍在顯示名；使用者定 2026-07-26）');
   assert.equal(g(tb.id).note, '我的愛店', '自訂名（學習表有 name）→ 就地整理、保留自訂');
   // 清理：B 先還原自動（清學習）再刪
   await POST('/statement/rename-store', { orig: origB, reset: true });
@@ -846,7 +846,7 @@ test('顯示標記（HTTP 全鏈路）：店名格式整理替舊資料補上（
   assert.equal(g(t1.id).note, 'ZZ測試小吃（FP）', '舊 FP 記錄由帳單原文補回標記');
   assert.equal(g(t1.id).storeKey, 'ZZ測試小吃', 'storeKey（身分鑰匙）不含標記');
   assert.equal(g(t2.id).note, '停車費（ZZ測試嘟嘟房）', '停車依分類套用');
-  assert.equal(g(t2.id).storeKey, 'ZZ測試嘟嘟房', 'storeKey 不含標記');
+  assert.equal(g(t2.id).storeKey, '停車費', 'storeKey＝停車聚合、且不含標記（使用者定 2026-07-26）');
   assert.equal(g(t3.id).note, 'ZZ迷你鍋（FP）', '外送不留分店：主體（分店）→ 主體（FP）');
   // 冪等：再跑一次不再變動這幾筆
   const again = await (await POST('/statement/normalize-branches', { dryRun: true })).json();

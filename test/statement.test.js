@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, extractStatementMonth, extractStatementDue } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, stripDisplayLabels, extractStatementMonth, extractStatementDue } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -53,7 +53,7 @@ test('cleanStore：帳單店名清理（涵蓋使用者指定的 14 條規則）
     // 額外：OPENAI* 不當金流前綴、外幣註記保留、截斷只能到某處
     ['OPENAI* CHATGPT CREDITOPENAI', 'OpenAI'],
     ['COURSERA.ORGO5190 COURSE（USD/17.00）', 'COURSERA.ORGO5190 COURSE（USD/17.00）'],
-    ['TAPPAY_台灣國際開A2716 TAIPEI', '台灣國際開'],
+    ['TAPPAY_台灣國際開A2716 TAIPEI', '台灣國際開發'],   // 銀行截斷併回完整名（使用者定 2026-07-26）
     // 停車三案（使用者回報 2026-07-18）：聯信＝收單方前綴要砍、公司字尾截斷殘尾要修、「?亭」＝俥亭缺字
     ['聯信-台灣普客二四股份有A0145 TAIPEI', '台灣普客二四'],   // 聯信-＋股份有（截斷）都是雜訊
     ['聯信-台灣普客二四股份有A0145 NEW TA', '台灣普客二四'],
@@ -160,18 +160,18 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     ['DECATHLON迪卡儂A0145 TAIPEI', 'DECATHLON', 'DECATHLON'],
     ['長庚醫療財團法人林口長庚紀念醫', '林口長庚醫院', '林口長庚醫院'],
     // 林口長庚收窄（體檢 D2 抓到，2026-07-19）：泊車區＝停車、涮涮鍋分店名帶林口長庚＝火鍋店，都不可被吞成醫院
-    ['林口長庚泊車區A2716 TAOYUA', '林口長庚泊車區', '林口長庚泊車區'],
+    ['林口長庚泊車區A2716 TAOYUA', '林口長庚泊車區', '停車費'],   // 顯示名不含標記（標記由 applyDisplayLabels 加）；鑰匙＝停車聚合
     ['FP-錢都日式涮涮鍋(林口長庚店)', '錢都日式涮涮鍋', '錢都日式涮涮鍋'],
     // 綠界科技＝金流商前綴（體檢 D2 抓到，2026-07-19）：真正的店家要浮出來
     ['綠界科技-思維槓桿股份有A2716 TAIPEI', '思維槓桿', '思維槓桿'],
-    ['綠界科技-林口四維路第2A0145 TAIPEI', '林口四維路第2', '林口四維路第2'],
+    ['綠界科技-林口四維路第2A0145 TAIPEI', '林口四維路第2', '停車費'],   // 路名＝顯示名的地點；鑰匙＝停車聚合（2026-07-26）
     ['綠界科技-Oddle線上A0145 TAIPEI', 'Oddle線上', 'Oddle線上'],
     // 體檢佇列批次（使用者定 2026-07-19）：長短寫法併回／尾端缺字／夾缺字的殘留英文／LINE Pay 不明店家
     ['Zaika札伊卡印度咖哩風味A0145 TAIPEI', 'Zaika札伊卡', 'Zaika札伊卡'],
     ['Zaika札伊卡A0145 TAIPEI', 'Zaika札伊卡', 'Zaika札伊卡'],
     ['潮味決.湯滷專門店A0145 TAIPEI', '潮味決', '潮味決'],
     ['潮味決O2732 Taipei', '潮味決', '潮味決'],
-    ['連加*俥亭停車事業股份?', '俥亭停車', '俥亭停車'],   // 尾端缺字符號剝掉，殘尾規則才接得上
+    ['連加*俥亭停車事業股份?', '俥亭停車', '停車費'],   // 尾端缺字符號剝掉，殘尾規則才接得上；鑰匙＝停車聚合（2026-07-26）
     ['LINEPAY*noneTaipei', 'LINE Pay', 'LINE Pay'],
     ['LINEPAY*NONE', 'LINE Pay', 'LINE Pay'],
     ['FP-達卡印度廚房?Dhaka In', '達卡印度廚房', '達卡印度廚房'],   // 中英之間夾缺字符號也要清
@@ -240,7 +240,45 @@ test('身分鑰匙 storeKeyOf：品牌層（不含分店）＋加油站聚合（
     '同一家店不可因為每筆金額不同而裂成兩把鑰匙');
   // 沒有分店的名字＝原樣
   assert.equal(storeKeyOfName('石二鍋'), '石二鍋');
-  assert.equal(storeKeyOf('eTag停車3087-H8:救國團林口運動中心'), 'eTag 停車', '場站屬顯示層，鑰匙只到品牌');
+  assert.equal(storeKeyOf('eTag停車3087-H8:救國團林口運動中心'), '停車費', '場站屬顯示層；鑰匙＝停車聚合（使用者定 2026-07-26，取代原本的品牌層 eTag 停車）');
+});
+
+test('停車費：鑰匙全併「停車費」、顯示名地點優先（使用者定 2026-07-26）', () => {
+  // 顯示名的規則（使用者原話）：有地點或路名優先，沒有就用品牌，都沒有就「停車費」。
+  // 退費另一種前綴；儲值／加值是例外（鑰匙與顯示名都留自己）。
+  const note = (desc) => applyDisplayLabels(cleanStore(desc), { desc, subcategory: categorize(desc)[1] });
+  const cases = [
+    // [帳單原文, 顯示名, 鑰匙]
+    ['TAPPAY_台灣國際開A2716 TAIPEI', '停車費（台灣國際開發）', '停車費'],   // 品牌（銀行截斷已併回完整名）
+    ['聯信-台灣普客二四股份有A0145 TAIPEI', '停車費（台灣普客二四）', '停車費'],
+    ['連加*?亭停車事業股份Taipei', '停車費（俥亭停車）', '停車費'],
+    ['綠界科技-林口四維路第2A0145 TAIPEI', '停車費（林口四維路第2）', '停車費'],   // 路名
+    ['嘟嘟房-台北101', '停車費（台北101）', '停車費'],                      // 地點優先於品牌
+    ['台灣普客二四-林口文化二路', '停車費（林口文化二路）', '停車費'],            // 路名優先於品牌
+    ['eTag停車3087-H8:救國團林口運動中心', '停車費（救國團林口運動中心）', '停車費'],   // 場站＝地點（2026-07-26 起不再是特例）
+    ['林口長庚泊車區A2716 TAOYUA', '停車費（林口長庚泊車區）', '停車費'],
+    ['新北市停車費退費C-30***H8 -40011', '停車費退費（新北市）', '停車費'],   // 退費：地點在「停車費退費」之前，後面全是雜訊
+  ];
+  for (const [desc, display, key] of cases) {
+    assert.equal(note(desc), display, `顯示名(${desc})`);
+    assert.equal(storeKeyOf(desc), key, `鑰匙(${desc})`);
+  }
+  // 例外（使用者定 2026-07-26）：儲值／加值不是在某停車場繳費 → 鑰匙與顯示名都留自己
+  assert.equal(note('eTag自動儲值3087-H8'), 'eTag自動儲值');
+  assert.equal(storeKeyOf('eTag自動儲值3087-H8'), 'eTag自動儲值');
+  assert.equal(storeKeyOfName('eTag自動儲值'), 'eTag自動儲值', '手動記帳回推也不可被併走');
+  assert.equal(storeKeyOf('悠遊卡自動加值-正好停'), '悠遊卡自動加值');
+  // 顯示名跟著分類走（2026-07-19 裁決）：改成別的子類就不再包停車標記
+  assert.equal(applyDisplayLabels(cleanStore('嘟嘟房-台北101'), { desc: '嘟嘟房-台北101', subcategory: '其他' }), '嘟嘟房（台北101）');
+  // 冪等：同一筆再貼一次標記不變（匯入、整理都會重跑）
+  const once = note('新北市停車費退費C-30***H8 -40011');
+  assert.equal(applyDisplayLabels(once, { desc: '新北市停車費退費C-30***H8 -40011', subcategory: '停車費' }), once);
+  // ⚠️ 手動記帳（沒有帳單原文）整理一輪不可把退費降級成消費——拆標記時「停車費退費（）」整包保留
+  assert.equal(applyDisplayLabels(stripDisplayLabels('停車費退費（新北市）'), { subcategory: '停車費' }), '停車費退費（新北市）');
+  assert.equal(applyDisplayLabels(stripDisplayLabels('停車費（台北101）'), { subcategory: '停車費' }), '停車費（台北101）');
+  // 非停車類不受影響
+  assert.equal(storeKeyOf('統一超商-百福A2716 TAIPEI'), '統一超商');
+  assert.equal(storeKeyOf('中油-泰山站(D2158)TAIPEI'), '加油站');
 });
 
 test('加油站顯示名（使用者定 2026-07-26）：台塑判準＋新格式冪等＋顯示名回推鑰匙', () => {
