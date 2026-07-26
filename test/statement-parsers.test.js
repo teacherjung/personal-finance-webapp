@@ -248,11 +248,12 @@ test('顯示標記｜停車（使用者定 2026-07-18）：子類＝停車費 �
   // 例外白名單（使用者定 2026-07-18）：「儲值/加值」不是在某停車場繳費 → 維持原名不包
   assert.equal(park('eTag自動儲值'), 'eTag自動儲值');
   assert.equal(park('悠遊卡自動加值'), '悠遊卡自動加值');
-  assert.equal(park('eTag 停車（救國團林口運動中心）'), 'eTag 停車（救國團林口運動中心）', '名字已是停車語意（eTag 停車）＝不再包一層');
+  // 2026-07-26 起 eTag 停車不再豁免：統一成「停車費（場站）」＝地點優先（場站就是地點）
+  assert.equal(park('eTag 停車（救國團林口運動中心）'), '停車費（救國團林口運動中心）', '場站當地點標籤，不留品牌與巢狀括號');
   // ③eTag 場站（使用者定 2026-07-18）：鑰匙只到品牌，場站名從原文補回顯示名
   const etagDesc = 'eTag停車3087-H8:救國團林口運動中心';
-  assert.equal(applyDisplayLabels('eTag 停車', { desc: etagDesc, subcategory: '停車費' }), 'eTag 停車（救國團林口運動中心）');
-  assert.equal(applyDisplayLabels('eTag 停車', { desc: 'eTag停車3087-H8', subcategory: '停車費' }), 'eTag 停車', '原文沒場站＝維持品牌名');
+  assert.equal(applyDisplayLabels('eTag 停車', { desc: etagDesc, subcategory: '停車費' }), '停車費（救國團林口運動中心）');
+  assert.equal(applyDisplayLabels('eTag 停車', { desc: 'eTag停車3087-H8', subcategory: '停車費' }), '停車費（eTag 停車）', '原文沒場站＝退回品牌當標籤（使用者定：都沒有地點就用品牌）');
   assert.equal(applyDisplayLabels('我的停車', { desc: etagDesc, subcategory: '停車費' }), '停車費（我的停車）', '使用者自訂名不被場站覆蓋（照一般停車規則包）');
   // 不是停車費子類的不套用（即使店名有「停車」二字）
   assert.equal(applyDisplayLabels('正好停車場旁小吃', { subcategory: '餐廳' }), '正好停車場旁小吃');
@@ -283,7 +284,7 @@ test('stripDisplayLabels：把顯示標記拆回乾淨店名（店名格式整�
   const roundtrip = (note, desc, sub) =>
     applyDisplayLabels(normalizeStoreDisplay(stripDisplayLabels(note)), { desc, subcategory: sub });
   assert.equal(roundtrip('停車費（台灣普客二四）', '聯信-台灣普客二四股份有A0145 TAIPEI', '停車費'), '停車費（台灣普客二四）');
-  assert.equal(roundtrip('停車費（eTag停車）', 'eTag停車3087-H8:xxx', '停車費'), 'eTag 停車（xxx）', '拆掉贅包裝＋場站名從原文補回（顯示層 ③）');
+  assert.equal(roundtrip('停車費（eTag停車）', 'eTag停車3087-H8:xxx', '停車費'), '停車費（xxx）', '拆掉贅包裝＋場站名從原文補回後當地點標籤（2026-07-26 新格式）');
   assert.equal(roundtrip('12MINI（FP）', 'FP-12MINI (桃O2732 Taipei', '餐廳'), '12MINI（FP）');
   // 治療路徑：包著標記的舊爛 note 一圈就修好
   assert.equal(roundtrip('停車費（eTag自動儲值）', 'eTag自動儲值3087-H8', '停車費'), 'eTag自動儲值', '被包錯的儲值拆回原名（例外白名單）');
