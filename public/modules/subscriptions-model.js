@@ -31,6 +31,46 @@ export function dayOfMonth(dateStr) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+// ---- 續費日自動推進（使用者定 2026-07-26：「沒有任何改到的時候直接推到下一期，除非我手動輸入停用日」）----
+// 為什麼需要：`nextCharge` 是使用者手填的固定日期、不會自己走。日期一過，那筆訂閱就從
+// 「未來 30 天」的續費時間線上消失（使用者 2026-07-26 回報「怎麼都沒有即將扣款的訂閱」）。
+// ⚠️ 只動「下一次要扣款的日子」，**不碰任何金額**：攤提（costForMonth）看的是 since／endsOn／
+// amount／cycle，跟 nextCharge 無關——推日期不會改變任何一個月已經算好的錢（有考題鎖住）。
+/** 日期加 N 個月；目標月沒有那天就收到當月最後一天（1/31＋1 月＝2/28）。 @param {string} dateStr YYYY-MM-DD @param {number} n */
+export function addMonthsToDate(dateStr, n) {
+  const [y, m, d] = String(dateStr || '').split('-').map(Number);
+  if (!(y > 0 && m >= 1 && m <= 12 && d >= 1)) return '';
+  const mk = addMonths(`${y}-${String(m).padStart(2, '0')}`, n);
+  const last = daysInMonth(mk);
+  return `${mk}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+/**
+ * 這筆訂閱的續費日該推到哪一天；不需要推（或不該推）回 null。
+ * 不推的情況：終身、已停用／已結束、**使用者手動填了停用日或標成即將停用**（使用者定：這種就別自己動）、
+ * 沒有合法續費日、續費日還沒到（含今天＝今天要扣，維持顯示「今天」）。
+ * 逾期很久也只推到「第一個未來的日期」＝一次補到位，不是每期補一筆（本 app 不記錄過去的扣款）。
+ * ⚠️ 每一期都從**原始日期**加 N 個月算，不是拿收月底後的結果再加——否則 1/31 會一路縮成 28 號。
+ * @param {any} sub @param {string} todayIso YYYY-MM-DD @returns {string|null}
+ */
+export function rolledNextCharge(sub, todayIso) {
+  const s = sub || {};
+  if (isLifetimeSub(s) || s.status === 'ended' || s.active === false) return null;
+  if (s.status === 'ending' || s.endsOn) return null;   // 使用者手動輸入停用日＝不自動推
+  const base = String(s.nextCharge || '');
+  const today = String(todayIso || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
+  if (base >= today) return null;   // 還沒到期（含今天）
+  const step = cycleMonths(s);
+  if (!Number.isFinite(step) || step < 1) return null;
+  for (let k = 1; k <= 1200; k++) {   // 上限 100 年份的期數＝純防呆，正常情況一兩圈就跳出
+    const next = addMonthsToDate(base, step * k);
+    if (!next) return null;
+    if (next >= today) return next === base ? null : next;
+  }
+  return null;
+}
+
 // 某訂閱在指定月份應計入的金額（月繳用月費；季/年繳攤提到每月，停用當月按天數比例）
 export function costForMonth(s, mk) {
   if (isLifetimeSub(s)) return 0;
