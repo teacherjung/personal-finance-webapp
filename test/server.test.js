@@ -1285,6 +1285,13 @@ test('續費日錨點（HTTP）：使用者改日期就換錨點——1/31→2/2
   assert.equal((await read()).nextCharge, '2026-02-28', '二月沒有 31 號 → 收月底');
   assert.equal((await read()).chargeAnchorDay, 31, '錨點記住原本的 31');
 
+  // ⚠️ 只改信箱、日期原封回送（訂閱表單每次儲存都送整份資料）＝**不可當成改過日期**（Codex 複審第二輪）
+  await PUT(`/subscriptions/${sub.id}`, { name: 'ZZ錨點測試', category: '工作', amount: 100, cycle: 'monthly',
+    nextCharge: '2026-02-28', since: '2026-01', email: 'new@example.com' });
+  assert.equal((await read()).chargeAnchorDay, 31, '整份表單回送但日期沒變 → 錨點必須留著（不可被 28 蓋掉）');
+  rollDueSubscriptions('2026-03-05');
+  assert.equal((await read()).nextCharge, '2026-03-31', '錨點還在 → 三月回到 31（不是 3/28）');
+
   // 使用者手動把日期改成 4/30（真心想要 30 號，不是「31 遇到小月」）
   await PUT(`/subscriptions/${sub.id}`, { nextCharge: '2026-04-30' });
   assert.equal((await read()).chargeAnchorDay, 30, '一改日期，錨點就換成新號數（舊的 31 不可復活）');
