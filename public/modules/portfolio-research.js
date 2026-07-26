@@ -28,6 +28,14 @@ function researchHoldings(rows) {
   return Object.values(grouped);
 }
 
+/** @param {string} symbol @param {(value:any)=>string} esc */
+function detailResearchLink(symbol, esc) {
+  const key = normalizePortfolioSymbol(symbol);
+  const href = `#stock?symbol=${encodeURIComponent(key)}`;
+  const title = `在新分頁開啟 ${key} 個股研究`;
+  return `<a class="drill-link" href="${esc(href)}" target="_blank" rel="noopener" aria-label="${esc(title)}" title="${esc(title)}">詳細研究</a>`;
+}
+
 /**
  * 個股研究卡區塊；只有 layer=stock 的持股會出現。
  * @param {any[]} rows
@@ -43,7 +51,10 @@ export function researchSectionHtml(rows, research, formatters) {
     return `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div class="item-title">${esc(holding.symbol)} <span class="muted" style="font-weight:400;font-size:12px">${esc(holding.name || '')}</span></div>
-        <span class="tag ${holding.pnlTwd >= 0 ? 'green' : 'amber'}">${holding.pnlTwd >= 0 ? '+' : ''}${pct(holding.costTwd ? holding.pnlTwd / holding.costTwd * 100 : 0)}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          ${detailResearchLink(holding.symbol, esc)}
+          <span class="tag ${holding.pnlTwd >= 0 ? 'green' : 'amber'}">${holding.pnlTwd >= 0 ? '+' : ''}${pct(holding.costTwd ? holding.pnlTwd / holding.costTwd * 100 : 0)}</span>
+        </div>
       </div>
       <div style="margin-top:11px;display:flex;flex-direction:column;gap:8px;font-size:12.5px">
         ${block('投資論點：', entry?.thesis) || '<div class="rc-block muted">還沒寫投資論點——寫下「為什麼買」，之後漲跌都能對照檢驗。</div>'}
