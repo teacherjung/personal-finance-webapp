@@ -2,6 +2,7 @@
 // 投資組合主表：把持股與願望清單排成 HTML，不碰 DOM、API 或頁面狀態。
 
 import { icon } from './icons.js';
+import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 import { LAYERS, LAYER_ORDER } from './portfolio-visuals.js';
 
 /** @typedef {{escapeHtml:(value:any)=>string, formatMoney:(value:number)=>string, formatPercent:(value:number, digits?:number)=>string}} TableFormatters */
@@ -32,6 +33,17 @@ function sortTriangle(key, sortKey, sortDir) {
   return '<span class="sort-tri">▾</span>';
 }
 
+/** 只有個股層的代號是研究入口；其他資產維持純文字。 @param {any} row @param {(value:any)=>string} esc */
+function holdingSymbolHtml(row, esc) {
+  const displaySymbol = String(row.symbol || '');
+  const symbol = normalizePortfolioSymbol(displaySymbol);
+  const label = `<b>${esc(displaySymbol)}</b>`;
+  if (row.layer !== 'stock' || !symbol) return label;
+  const href = `#stock?symbol=${encodeURIComponent(symbol)}`;
+  const title = `在新分頁開啟 ${symbol} 個股研究`;
+  return `<a class="drill-link" href="${esc(href)}" target="_blank" rel="noopener" aria-label="${esc(title)}" title="${esc(title)}" style="font-size:inherit;font-weight:inherit">${label}</a>`;
+}
+
 /**
  * 持股表（依層分組，組內排序）。
  * @param {any[]} rows
@@ -48,7 +60,7 @@ export function holdingsTableHtml(rows, total, options) {
     if (!list.length) return '';
     return `<tr class="group-row"><td colspan="9"><span class="cat-dot" style="background:${LAYERS[layer].color}"></span>${LAYERS[layer].label}</td></tr>`
       + list.map(row => `<tr>
-        <td class="nowrap"><b>${esc(row.symbol)}</b>${row.quoteSymbol ? '' : ' <span class="tag" style="font-size:9px">手動</span>'}</td>
+        <td class="nowrap">${holdingSymbolHtml(row, esc)}${row.quoteSymbol ? '' : ' <span class="tag" style="font-size:9px">手動</span>'}</td>
         <td class="muted nowrap" style="max-width:190px;overflow:hidden;text-overflow:ellipsis">${esc(row.name || '')}</td>
         <td class="nowrap muted">${formatTablePrice((row.avgCost != null && row.avgCost !== '') ? row.avgCost : (Number(row.quantity) ? Number(row.cost || 0) / Number(row.quantity) : 0), row.currency)}</td>
         <td class="nowrap">${formatTablePrice(row.price, row.currency)}</td>
