@@ -278,6 +278,9 @@ test('停車費：鑰匙全併「停車費」、顯示名地點優先（使用�
     ['eTag停車3087-H8:救國團林口運動中心', '停車費（救國團林口運動中心）', '停車費'],   // 場站＝地點（2026-07-26 起不再是特例）
     ['林口長庚泊車區A2716 TAOYUA', '停車費（林口長庚泊車區）', '停車費'],
     ['新北市停車費退費C-30***H8 -40011', '停車費退費（新北市）', '停車費'],   // 退費：地點在「停車費退費」之前，後面全是雜訊
+    // 繳費說明句同型（使用者定 2026-07-27）：設備碼與金額每筆不同，整串當店名會裂成無數家店
+    ['繳交新北市停車費C-30***H8 -10142', '停車費（新北市）', '停車費'],
+    ['繳納台北市停車費A123', '停車費（台北市）', '停車費'],
   ];
   for (const [desc, display, key] of cases) {
     assert.equal(note(desc), display, `顯示名(${desc})`);
@@ -296,6 +299,13 @@ test('停車費：鑰匙全併「停車費」、顯示名地點優先（使用�
   // ⚠️ 手動記帳（沒有帳單原文）整理一輪不可把退費降級成消費——拆標記時「停車費退費（）」整包保留
   assert.equal(applyDisplayLabels(stripDisplayLabels('停車費退費（新北市）'), { subcategory: '停車費' }), '停車費退費（新北市）');
   assert.equal(applyDisplayLabels(stripDisplayLabels('停車費（台北101）'), { subcategory: '停車費' }), '停車費（台北101）');
+  // 繳費說明句：冪等（匯入、整理都會重跑）＋拆再包不變＋沒有地點時退回光桿「停車費」
+  const paid = note('繳交新北市停車費C-30***H8 -10142');
+  assert.equal(applyDisplayLabels(paid, { desc: '繳交新北市停車費C-30***H8 -10142', subcategory: '停車費' }), paid);
+  assert.equal(applyDisplayLabels(stripDisplayLabels(paid), { subcategory: '停車費' }), '停車費（新北市）');
+  assert.equal(applyDisplayLabels('繳交停車費A123', { subcategory: '停車費' }), '停車費', '只有動詞沒有地點＝不硬造地點');
+  // ⚠️ 有分店括號的正常店名不可被說明句這條攔走（地點優先的既有判準必須贏）
+  assert.equal(applyDisplayLabels('嘟嘟房停車費（台北101）', { subcategory: '停車費' }), '停車費（台北101）');
   // 非停車類不受影響
   assert.equal(storeKeyOf('統一超商-百福A2716 TAIPEI'), '統一超商');
   assert.equal(storeKeyOf('中油-泰山站(D2158)TAIPEI'), '加油站');
