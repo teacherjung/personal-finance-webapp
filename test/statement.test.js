@@ -102,6 +102,18 @@ test('categorize：佳音林口文化二路＝停車場，不可誤傷佳音美�
   assert.equal(refundPairKeyOf('連加*佳音林口文化二路Taipei'), '佳音（林口文化二路）');
 });
 
+test('categorize：詮營＝停車場（使用者確認 2026-07-27）', () => {
+  // 名字看不出是停車 → 內建判「其他/未分類」→ 鑰匙併不進停車聚合（同 佳音林口文化二路 的病）。
+  // 另一半是名字：公司字尾後的「新」是被銀行截斷的分店開頭，救不回也不是店家身分 → STORE_CANON 收成「詮營」。
+  const raw = '聯信-詮營股份有限公司新A0145 NEW TA';
+  assert.deepEqual(categorize(raw), ['交通', '停車費']);
+  assert.equal(cleanStore(raw), '詮營', '截斷殘尾「新」不可留在店名裡（會變成詮營新）');
+  assert.equal(storeKeyOf(raw), '停車費');
+  assert.equal(applyDisplayLabels(cleanStore(raw), { desc: raw, subcategory: '停車費' }), '停車費（詮營）');
+  assert.equal(cleanStore('詮營新'), '詮營', '舊資料的「詮營新」再整理一次也要收斂到同一家');
+  assert.equal(refundPairKeyOf(raw), '詮營', '退款配對用細身分，不會配到別家停車場');
+});
+
 test('categorize：自動加值排在交通之前（帳務體檢 D2 回報，2026-07-19）', () => {
   // 使用者定「自動加值歸生活」——但加值可能在停車場/車隊觸發，規則排後面會被停車關鍵字搶走
   assert.deepEqual(categorize('悠遊卡自動加值-和雲行動服和雲行動服'), ['生活', '其他生活雜支'], '和雲觸發的加值也是加值');
