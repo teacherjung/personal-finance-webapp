@@ -2,7 +2,7 @@
 // 跑法：npm test（用 Node 內建測試工具，零相依）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, stripDisplayLabels, extractStatementMonth, extractStatementDue } from '../lib/statement.js';
+import { categorize, cleanStore, normalizeDesc, storeKeyOf, storeKeyOfName, origFromStmtRef, isPlatformArtifactName, applyDisplayLabels, stripDisplayLabels, refundPairKeyOf, refundPairKeyOfStoreKey, extractStatementMonth, extractStatementDue } from '../lib/statement.js';
 
 test('categorize：消費說明 → 正確的分類/子類', () => {
   const cases = [
@@ -451,4 +451,34 @@ test('自主體檢｜origFromStmtRef：剝掉同帳單重複消費的序號段 #
   assert.equal(origFromStmtRef('c1|2026-07-01|100|星巴克|#2'), '星巴克', '第 2 筆的序號段要剝掉');
   assert.equal(origFromStmtRef('c1|2026-07-01|100|A|B|#3'), 'A|B', '原文本身含 | 時，只剝末段序號');
   assert.equal(origFromStmtRef('c1|2026-07-01|100|#2'), '#2', '4 段時末段是說明本身（不是序號），不可誤剝');
+});
+
+test('退款配對身分：彙總鑰匙（加油站／停車費）不可讓不同店家錯配（Codex 複審 2026-07-26）', () => {
+  // 病根：退款配對用 [卡片, storeKey, 金額] 找「退款日前最近的同額消費」，而加油站／停車費是**彙總鑰匙**
+  // → 退 6/1 嘟嘟房那筆，卻可能被算到 7/9 普客二四頭上。實測確認加油站的錯配在 main 上早就存在。
+  // 修法：配對改用「清理後的顯示名」當細身分；同一站仍配得到，不同站配不上＝列未對應（無法證明就不猜）。
+  const A = '嘟嘟房-台北101', B = '聯信-台灣普客二四股份有A0145 TAIPEI';
+  assert.notEqual(refundPairKeyOf(A), refundPairKeyOf(B), '不同停車場不可共用配對身分');
+  assert.equal(refundPairKeyOf(A), refundPairKeyOf('嘟嘟房-台北101'), '同一場＝同一把（同店退款仍配得到）');
+  assert.notEqual(refundPairKeyOf('中油-泰山站(D2158)TAIPEI'), refundPairKeyOf('台亞林口中山站'), '不同加油站不可共用');
+  assert.equal(refundPairKeyOf('中油-泰山站(D2158)TAIPEI'), refundPairKeyOf('中油-泰山站(D2158)TAIPEI'));
+  // 彙總鑰匙本身（手動記帳或救不回原文）＝證明不了 → 不配對
+  assert.equal(refundPairKeyOfStoreKey('加油站'), '');
+  assert.equal(refundPairKeyOfStoreKey('停車費'), '');
+  assert.equal(refundPairKeyOfStoreKey('統一超商'), '統一超商', '非彙總鑰匙照舊可配');
+  // 非彙總店家維持原本的品牌鑰匙（Klook 這類退款照舊配得到）
+  assert.equal(refundPairKeyOf('統一超商-百福A2716 TAIPEI'), '統一超商');
+  assert.equal(refundPairKeyOf('KLOOK TRAVEL'), storeKeyOf('KLOOK TRAVEL'));
+});
+
+test('停車顯示名：付款方式／方案名不是地點（Codex 複審 2026-07-26）', () => {
+  const note = (desc) => applyDisplayLabels(cleanStore(desc), { desc, subcategory: categorize(desc)[1] });
+  // 判不出地點就退回品牌（同加油站「認不出分店就用品牌」的規矩）
+  assert.equal(note('嘟嘟房-線上支付'), '停車費（嘟嘟房）');
+  assert.equal(note('台灣普客二四-信用卡繳費'), '停車費（台灣普客二四）');
+  assert.equal(note('俥亭停車-月租'), '停車費（俥亭停車）');
+  // ⚠️ 真地點不可被誤殺
+  assert.equal(note('嘟嘟房-台北101'), '停車費（台北101）');
+  assert.equal(note('台灣普客二四-林口文化二路'), '停車費（林口文化二路）');
+  assert.equal(note('嘟嘟房-信義威秀'), '停車費（信義威秀）');
 });
