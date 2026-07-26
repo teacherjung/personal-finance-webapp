@@ -156,9 +156,9 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('中油-好市多站'), '好市多加油站');       // 分店撞連鎖詞照樣轉
   assert.equal(normalizeStoreDisplay(normalizeStoreDisplay('中油-好市多站')), '好市多加油站');   // 兩趟＝一趟（冪等）
   assert.equal(normalizeStoreDisplay('好市多加油站中壢店'), '中壢加油站');   // 前導「加油站」假分店要摘掉
-  // 分店驗證（自審B#8 修）：過不了 BRANCH_TAIL（英數尾/非中文起頭）＝原樣、不硬造
-  assert.equal(normalizeStoreDisplay('速邁樂加油站TAIPEI'), '速邁樂加油站TAIPEI');
-  assert.equal(normalizeStoreDisplay('我的加油站2號'), '我的加油站2號');
+  // 認得出分店用分店、認不出用品牌（使用者定 2026-07-26）：英文雜訊尾不是分店名 → 退回品牌加油站
+  assert.equal(normalizeStoreDisplay('速邁樂加油站TAIPEI'), '速邁樂加油站');
+  assert.equal(normalizeStoreDisplay('我的加油站2號'), '我的加油站');   // 純編號認不出是哪家 → 退回品牌（使用者定 2026-07-26）
   // 分店剝完是空（假分店「（加油站）」「（站）」）＝還原「品牌加油站」、不坍縮（自審B#1）
   assert.equal(normalizeStoreDisplay('中油（站）'), '中油加油站');
   // 無分隔符也無括號（Codex 複審 2026-07-26）：靠 GAS_BRANDS 品牌前綴切——不可留原樣，
@@ -169,10 +169,18 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('速邁樂'), '速邁樂加油站');
   assert.equal(normalizeStoreDisplay('台塑石油新店站'), '新店加油站');   // 無分隔符但有分店
   assert.equal(normalizeStoreDisplay('中油金山站'), '金山加油站');
+  // 純編號＝使用者認不出是哪一家（「我分不出 2 號 3 號的差別」）→ 品牌；地名夾數字仍是分店
+  assert.equal(normalizeStoreDisplay('中油2號站'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油二號站'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油第二站'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油102站'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油林口二站'), '林口二加油站');   // 地名＋數字＝分辨得出，要留
   assert.equal(normalizeStoreDisplay('中油加油站'), '中油加油站');       // 冪等（品牌加油站不再被切）
   assert.equal(normalizeStoreDisplay('台塑加油站'), '台塑加油站');
-  // 剩餘不像分店（不以站／店結尾）＝原樣不動，不硬造「大樓加油站」
-  assert.equal(normalizeStoreDisplay('中油大樓'), '中油大樓');
+  // 設施／服務詞不是分店名 → 用品牌（使用者定 2026-07-26：「自助洗車既然不是分店名，就應該用中油」）
+  assert.equal(normalizeStoreDisplay('中油自助洗車站'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油自助洗車'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油大樓'), '中油加油站');         // 不硬造「大樓加油站」，也不留原樣
   // GAS_BRANDS 刻意不進 BRAND_CANON：那張表對所有店家生效，會把台塑生醫切成「台塑加油站（生醫）」
   assert.equal(normalizeStoreDisplay('台塑生醫'), '台塑生醫');
   // 台灣普客二四（使用者定 2026-07-18：改回中文名，反轉先前的 → Times Parking）：中英寫法統一
