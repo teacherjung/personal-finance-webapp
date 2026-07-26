@@ -315,7 +315,11 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
   try {
     const r = await api('/snapshot/auto', { method: 'POST' });
     if (r && r.recorded) toast('已自動記錄本月快照 📸');
-    if ((r && r.recorded) || refreshed) router();   // 月快照寫入或報價有更新 → 重繪反映最新
+    // 續費日自動推進（Codex 複審 2026-07-26）：資料庫已經改了，畫面也要跟上——
+    // 今天已記過快照、報價也還新鮮時，原本兩個條件都不成立，訂閱頁會停在舊日期直到切頁。
+    const rolled = Array.isArray(r?.subsRolled) ? r.subsRolled.length : 0;
+    if (rolled) toast(`已把 ${rolled} 筆訂閱的續費日更新到下一期 🔄`);
+    if ((r && r.recorded) || refreshed || rolled) router();   // 月快照寫入／報價更新／續費日推進 → 重繪反映最新
   } catch { if (refreshed) router(); /* 自動快照失敗靜默略過，不影響 app 使用 */ }
   finally { _bootResolve(); }   // 開機序列落定 → 洞察引擎現在抓才反映最新報價/日線
 })();

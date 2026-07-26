@@ -36,6 +36,21 @@ export function dayOfMonth(dateStr) {
 // 「未來 30 天」的續費時間線上消失（使用者 2026-07-26 回報「怎麼都沒有即將扣款的訂閱」）。
 // ⚠️ 只動「下一次要扣款的日子」，**不碰任何金額**：攤提（costForMonth）看的是 since／endsOn／
 // amount／cycle，跟 nextCharge 無關——推日期不會改變任何一個月已經算好的錢（有考題鎖住）。
+/**
+ * 這筆訂閱的「扣款日錨點」＝原本約定的號數（Codex 複審 2026-07-26）。
+ * 為什麼要存：推進後只留得下收月底的結果（1/31→2/28），下個月再推就從 28 起算 → 一路縮成 28 號。
+ * 判準：`chargeAnchorDay` 對得上現在的續費日（收月底後相符）才沿用；對不上＝**使用者自己改過日期**，
+ * 改用新日期的號數（不可讓舊錨點復活）。沒存過就用現在的號數。
+ * @param {any} sub @returns {number}
+ */
+export function chargeAnchorDay(sub) {
+  const day = dayOfMonth(sub?.nextCharge);
+  const anchor = Number(sub?.chargeAnchorDay);
+  if (!Number.isInteger(anchor) || anchor < 1 || anchor > 31) return day;
+  const mk = String(sub?.nextCharge || '').slice(0, 7);
+  return (mk && Math.min(anchor, daysInMonth(mk)) === day) ? anchor : day;
+}
+
 /** 日期加 N 個月；目標月沒有那天就收到當月最後一天（1/31＋1 月＝2/28）。 @param {string} dateStr YYYY-MM-DD @param {number} n */
 export function addMonthsToDate(dateStr, n) {
   const [y, m, d] = String(dateStr || '').split('-').map(Number);
@@ -63,9 +78,13 @@ export function rolledNextCharge(sub, todayIso) {
   if (base >= today) return null;   // 還沒到期（含今天）
   const step = cycleMonths(s);
   if (!Number.isFinite(step) || step < 1) return null;
+  // ⚠️ 用「錨點號數」算日期，不是拿收月底後的結果再加（Codex 複審 2026-07-26）：
+  // 1/31 推成 2/28 後，下個月若從 28 起算會變 3/28，一路縮下去回不來。
+  const anchor = chargeAnchorDay(s);
+  const baseMonth = base.slice(0, 7);
   for (let k = 1; k <= 1200; k++) {   // 上限 100 年份的期數＝純防呆，正常情況一兩圈就跳出
-    const next = addMonthsToDate(base, step * k);
-    if (!next) return null;
+    const mk = addMonths(baseMonth, step * k);
+    const next = `${mk}-${String(Math.min(anchor, daysInMonth(mk))).padStart(2, '0')}`;
     if (next >= today) return next === base ? null : next;
   }
   return null;
