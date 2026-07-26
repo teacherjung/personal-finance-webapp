@@ -142,45 +142,46 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   // 麥味登（使用者定 2026-07-18）：銀行兩種寫法統一短的；分店保留
   assert.equal(normalizeStoreDisplay('麥味登早午餐'), '麥味登');
   assert.equal(normalizeStoreDisplay('麥味登'), '麥味登');
-  // 加油站顯示名（使用者定 2026-07-25，全品牌統一；取代 2026-07「台亞加油站（分店）」格式）：
-  // 台亞 canon 仍負責「無分隔符拆分店」，拆出的分店由 gasStationDisplay 收成「分店加油站」
-  assert.equal(normalizeStoreDisplay('台亞林口第二交流道南站'), '林口第二交流道南加油站');
-  assert.equal(normalizeStoreDisplay('台亞'), '台亞加油站');                       // 無分店＝品牌名（已是「…加油站」不再動）
-  assert.equal(normalizeStoreDisplay('台亞加油站'), '台亞加油站');                 // 冪等
-  assert.equal(normalizeStoreDisplay('台亞加油站（林口第二交流道南站）'), '林口第二交流道南加油站');   // 舊格式資料再整理＝收斂到新格式
-  assert.equal(normalizeStoreDisplay('林口第二交流道南加油站'), '林口第二交流道南加油站');   // 新格式冪等（自動整理重複執行不再變）
+  // 加油站顯示名（使用者定 2026-07-26 改版：一律「加油站（XXX）」；取代同月稍早的「XXX加油站」）：
+  // 台亞 canon 仍負責「無分隔符拆分店」，拆出的分店由 gasStationDisplay 包成 加油站（分店）
+  assert.equal(normalizeStoreDisplay('台亞林口第二交流道南站'), '加油站（林口第二交流道南）');
+  assert.equal(normalizeStoreDisplay('台亞'), '加油站（台亞）');                   // 無分店＝標籤放品牌
+  assert.equal(normalizeStoreDisplay('台亞加油站'), '加油站（台亞）');
+  assert.equal(normalizeStoreDisplay('台亞加油站（林口第二交流道南站）'), '加油站（林口第二交流道南）');
+  assert.equal(normalizeStoreDisplay('加油站（林口第二交流道南）'), '加油站（林口第二交流道南）');   // 新格式冪等（自動整理重複執行不再變）
+  assert.equal(normalizeStoreDisplay('林口第二交流道南加油站'), '加油站（林口第二交流道南）');       // 舊格式（07-25 版）收斂
   assert.equal(normalizeStoreDisplay('加油站'), '加油站');   // 使用者自訂名「加油站」＝逐字保留（2026-07-20 鐵則）
-  assert.equal(normalizeStoreDisplay('台亞加油站林口二站'), '林口二加油站');   // 品牌後直接接分店（黏寫）也收
+  assert.equal(normalizeStoreDisplay('台亞加油站林口二站'), '加油站（林口二）');   // 品牌後直接接分店（黏寫）也收
   // 定點短路（自審B#1/#2 修）：「好市多加油站」真實存在，不可被連鎖白名單重切再坍縮成光桿「加油站」
-  assert.equal(normalizeStoreDisplay('好市多加油站'), '好市多加油站');       // 單趟不毀名
-  assert.equal(normalizeStoreDisplay('中油-好市多站'), '好市多加油站');       // 分店撞連鎖詞照樣轉
-  assert.equal(normalizeStoreDisplay(normalizeStoreDisplay('中油-好市多站')), '好市多加油站');   // 兩趟＝一趟（冪等）
-  assert.equal(normalizeStoreDisplay('好市多加油站中壢店'), '中壢加油站');   // 前導「加油站」假分店要摘掉
-  // 認得出分店用分店、認不出用品牌（使用者定 2026-07-26）：英文雜訊尾不是分店名 → 退回品牌加油站
-  assert.equal(normalizeStoreDisplay('速邁樂加油站TAIPEI'), '速邁樂加油站');
-  assert.equal(normalizeStoreDisplay('我的加油站2號'), '我的加油站');   // 純編號認不出是哪家 → 退回品牌（使用者定 2026-07-26）
+  assert.equal(normalizeStoreDisplay('好市多加油站'), '加油站（好市多）');     // 品牌保住，不變成光桿「加油站」
+  assert.equal(normalizeStoreDisplay('中油-好市多站'), '加油站（好市多）');     // 分店撞連鎖詞照樣轉
+  assert.equal(normalizeStoreDisplay(normalizeStoreDisplay('中油-好市多站')), '加油站（好市多）');   // 兩趟＝一趟（冪等）
+  assert.equal(normalizeStoreDisplay('好市多加油站中壢店'), '加油站（中壢）');   // 前導「加油站」假分店要摘掉
+  // 認得出分店用分店、認不出用品牌（使用者定 2026-07-26）：英文雜訊尾、純編號都不是分店名
+  assert.equal(normalizeStoreDisplay('速邁樂加油站TAIPEI'), '加油站（速邁樂）');
+  assert.equal(normalizeStoreDisplay('世新加油站2號'), '加油站（世新）');
   // 分店剝完是空（假分店「（加油站）」「（站）」）＝還原「品牌加油站」、不坍縮（自審B#1）
-  assert.equal(normalizeStoreDisplay('中油（站）'), '中油加油站');
+  assert.equal(normalizeStoreDisplay('中油（站）'), '加油站（中油）');
   // 無分隔符也無括號（Codex 複審 2026-07-26）：靠 GAS_BRANDS 品牌前綴切——不可留原樣，
   // 否則畫面同時存在「泰山加油站」與「中油」兩種格式
-  assert.equal(normalizeStoreDisplay('中油'), '中油加油站');             // 無分店＝品牌加油站
-  assert.equal(normalizeStoreDisplay('統一精工'), '統一精工加油站');
-  assert.equal(normalizeStoreDisplay('台塑石油'), '台塑加油站');         // 台塑石油＝公司名 → 站體招牌
-  assert.equal(normalizeStoreDisplay('速邁樂'), '速邁樂加油站');
-  assert.equal(normalizeStoreDisplay('台塑石油新店站'), '新店加油站');   // 無分隔符但有分店
-  assert.equal(normalizeStoreDisplay('中油金山站'), '金山加油站');
+  assert.equal(normalizeStoreDisplay('中油'), '加油站（中油）');           // 無分店＝標籤放品牌
+  assert.equal(normalizeStoreDisplay('統一精工'), '加油站（統一精工）');
+  assert.equal(normalizeStoreDisplay('台塑石油'), '加油站（台塑）');       // 台塑石油＝公司名 → 站體招牌
+  assert.equal(normalizeStoreDisplay('速邁樂'), '加油站（速邁樂）');
+  assert.equal(normalizeStoreDisplay('台塑石油新店站'), '加油站（新店）');   // 無分隔符但有分店
+  assert.equal(normalizeStoreDisplay('中油金山站'), '加油站（金山）');
   // 純編號＝使用者認不出是哪一家（「我分不出 2 號 3 號的差別」）→ 品牌；地名夾數字仍是分店
-  assert.equal(normalizeStoreDisplay('中油2號站'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油二號站'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油第二站'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油102站'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油林口二站'), '林口二加油站');   // 地名＋數字＝分辨得出，要留
-  assert.equal(normalizeStoreDisplay('中油加油站'), '中油加油站');       // 冪等（品牌加油站不再被切）
-  assert.equal(normalizeStoreDisplay('台塑加油站'), '台塑加油站');
+  assert.equal(normalizeStoreDisplay('中油2號站'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油二號站'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油第二站'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油102站'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油林口二站'), '加油站（林口二）');   // 地名＋數字＝分辨得出，要留
+  assert.equal(normalizeStoreDisplay('中油加油站'), '加油站（中油）');     // 舊格式收斂
+  assert.equal(normalizeStoreDisplay('台塑加油站'), '加油站（台塑）');
   // 設施／服務詞不是分店名 → 用品牌（使用者定 2026-07-26：「自助洗車既然不是分店名，就應該用中油」）
-  assert.equal(normalizeStoreDisplay('中油自助洗車站'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油自助洗車'), '中油加油站');
-  assert.equal(normalizeStoreDisplay('中油大樓'), '中油加油站');         // 不硬造「大樓加油站」，也不留原樣
+  assert.equal(normalizeStoreDisplay('中油自助洗車站'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油自助洗車'), '加油站（中油）');
+  assert.equal(normalizeStoreDisplay('中油大樓'), '加油站（中油）');       // 不硬造「加油站（大樓）」，也不留原樣
   // GAS_BRANDS 刻意不進 BRAND_CANON：那張表對所有店家生效，會把台塑生醫切成「台塑加油站（生醫）」
   assert.equal(normalizeStoreDisplay('台塑生醫'), '台塑生醫');
   // 台灣普客二四（使用者定 2026-07-18：改回中文名，反轉先前的 → Times Parking）：中英寫法統一
@@ -190,9 +191,9 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('TIMESPARKING'), '台灣普客二四');           // 無空格寫法也統一
   assert.equal(normalizeStoreDisplay('Times Square'), 'Times Square');           // 只認 Times Parking，別的 Times 開頭不誤傷
   // Codex#5：品牌正規化不可丟掉分店與外幣註記
-  assert.equal(normalizeStoreDisplay('台亞加油站-林口站'), '林口加油站');           // 帶連字號的分店
-  assert.equal(normalizeStoreDisplay('台亞林口站（USD/9.99）'), '林口加油站（USD/9.99）');   // 外幣尾碼＝單筆註記，先摘再接回
-  assert.equal(normalizeStoreDisplay('台亞加油站（USD/9.99）'), '台亞加油站（USD/9.99）');     // 純品牌＋外幣（無分店）
+  assert.equal(normalizeStoreDisplay('台亞加油站-林口站'), '加油站（林口）');         // 帶連字號的分店
+  assert.equal(normalizeStoreDisplay('台亞林口站（USD/9.99）'), '加油站（林口）（USD/9.99）');   // 外幣尾碼＝單筆註記，先摘再接回
+  assert.equal(normalizeStoreDisplay('台亞加油站（USD/9.99）'), '加油站（台亞）（USD/9.99）');   // 純品牌＋外幣（無分店）
 });
 
 test('顯示標記｜FP 外送（使用者定 2026-07-18）：帳單原文有 FP 前綴 → 店名尾加（FP）', () => {
