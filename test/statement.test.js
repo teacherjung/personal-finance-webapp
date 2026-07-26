@@ -82,6 +82,21 @@ test('categorize：優步（Uber）叫車 vs 外送（使用者定 2026-07-18）
   assert.deepEqual(categorize('優步福爾摩沙股份有公司'), ['交通', '計程車／Uber'], '保底：認不出店家＝叫車');
 });
 
+test('categorize：佳音林口文化二路＝停車場，不可誤傷佳音美語（使用者確認 2026-07-27）', () => {
+  // 內建判成補習 → 鑰匙（只認內建分類、不看使用者改過的分類）就併不進「停車費」那把。
+  // ⚠️ 關鍵字必須是完整字樣：只寫「佳音」會把補習費一起判成停車費。
+  assert.deepEqual(categorize('連加*佳音林口文化二路Taipei'), ['交通', '停車費']);
+  assert.equal(storeKeyOf('連加*佳音林口文化二路Taipei'), '停車費', '鑰匙要併進停車聚合');
+  assert.equal(applyDisplayLabels(cleanStore('連加*佳音林口文化二路Taipei'),
+    { desc: '連加*佳音林口文化二路Taipei', subcategory: '停車費' }), '停車費（佳音林口文化二路）');
+  // 補習班不受影響（這條規則最需要防的誤傷）
+  assert.deepEqual(categorize('佳音美語林口分校'), ['養育', '補習／才藝']);
+  assert.deepEqual(categorize('佳音英語A0145 TAIPEI'), ['養育', '補習／才藝']);
+  assert.equal(storeKeyOf('連加*佳音鋼琴教室Taipei'), '佳音鋼琴教室');
+  // 退款配對仍用細身分（彙總鑰匙抓不到的那一層），不會配到別家停車場
+  assert.equal(refundPairKeyOf('連加*佳音林口文化二路Taipei'), '佳音林口文化二路');
+});
+
 test('categorize：自動加值排在交通之前（帳務體檢 D2 回報，2026-07-19）', () => {
   // 使用者定「自動加值歸生活」——但加值可能在停車場/車隊觸發，規則排後面會被停車關鍵字搶走
   assert.deepEqual(categorize('悠遊卡自動加值-和雲行動服和雲行動服'), ['生活', '其他生活雜支'], '和雲觸發的加值也是加值');

@@ -38,19 +38,22 @@ test('learnFromStmtEdit：清空消費說明 → 回復預設自動名（cleanSt
 });
 
 test('一般店家照常學（回歸）：編輯與匯入都要學得起來', () => {
+  // ⚠️ 範例店名刻意用「內建認不出的店」：原本用佳音林口文化二路，2026-07-27 該店已成內建停車場關鍵字
+  //（使用者確認是停車場）→ 內建與使用者一致、learnFromImport 依設計就不學了，考題會假紅。
   const db = { learnedCategories: {} };
-  learnFromStmtEdit(db, { source: 'stmt', storeKey: '佳音林口文化二路', note: '佳音林口文化二路', category: '交通', subcategory: '停車費' });
-  assert.deepEqual(db.learnedCategories['佳音林口文化二路'], { category: '交通', subcategory: '停車費' });
-  // 匯入：與內建規則不同才學（佳音 內建＝養育/補習／才藝）
+  learnFromStmtEdit(db, { source: 'stmt', storeKey: '某不存在的神秘小店', note: '某不存在的神秘小店', category: '交通', subcategory: '停車費' });
+  assert.deepEqual(db.learnedCategories['某不存在的神秘小店'], { category: '交通', subcategory: '停車費' });
+  // 匯入：與內建規則不同才學（這家內建＝其他/未分類）
   const db2 = { learnedCategories: {} };
-  learnFromImport(db2, '佳音林口文化二路', '佳音林口文化二路', '交通', '停車費');
-  assert.equal(db2.learnedCategories['佳音林口文化二路']?.category, '交通');
+  learnFromImport(db2, '某不存在的神秘小店', '某不存在的神秘小店', '交通', '停車費');
+  assert.equal(db2.learnedCategories['某不存在的神秘小店']?.category, '交通');
 });
 
 test('學習優先於內建規則：個案覆蓋，不誤傷通則', () => {
   const db = { learnedCategories: { '佳音林口文化二路': { category: '交通', subcategory: '停車費' } } };
   const [parkingLot, cramSchool] = applyLearned(db, [
-    { store: '佳音林口文化二路', category: '養育', subcategory: '補習／才藝' },   // 內建規則判的
+    // 刻意餵「2026-07-27 之前的內建判法」（養育/補習）＝證明學習表覆蓋得了內建，不論內建怎麼判
+    { store: '佳音林口文化二路', category: '養育', subcategory: '補習／才藝' },
     { store: '佳音美語內湖', category: '養育', subcategory: '補習／才藝' },       // 沒學過 → 維持內建
   ]);
   assert.equal(parkingLot.category, '交通', '學過的停車場要被覆蓋成交通');
