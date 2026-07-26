@@ -87,14 +87,19 @@ test('categorize：佳音林口文化二路＝停車場，不可誤傷佳音美�
   // ⚠️ 關鍵字必須是完整字樣：只寫「佳音」會把補習費一起判成停車費。
   assert.deepEqual(categorize('連加*佳音林口文化二路Taipei'), ['交通', '停車費']);
   assert.equal(storeKeyOf('連加*佳音林口文化二路Taipei'), '停車費', '鑰匙要併進停車聚合');
+  // 顯示名＝地點優先（使用者定 2026-07-27：要短的那個，與同路的台灣普客二四同一個寫法）——
+  // 靠 BRAND_CANON 把「佳音林口文化二路」切成 佳音（林口文化二路），停車包裝才拿得到地點。
+  assert.equal(cleanStore('連加*佳音林口文化二路Taipei'), '佳音（林口文化二路）');
   assert.equal(applyDisplayLabels(cleanStore('連加*佳音林口文化二路Taipei'),
-    { desc: '連加*佳音林口文化二路Taipei', subcategory: '停車費' }), '停車費（佳音林口文化二路）');
-  // 補習班不受影響（這條規則最需要防的誤傷）
+    { desc: '連加*佳音林口文化二路Taipei', subcategory: '停車費' }), '停車費（林口文化二路）');
+  // 補習班不受影響（這條規則最需要防的誤傷）：分類不被搶走、名字也不可被切成 佳音（美語林口分校）
   assert.deepEqual(categorize('佳音美語林口分校'), ['養育', '補習／才藝']);
   assert.deepEqual(categorize('佳音英語A0145 TAIPEI'), ['養育', '補習／才藝']);
+  assert.equal(cleanStore('佳音美語林口分校'), '佳音美語林口分校', '前瞻限定這條路名＝別的佳音不被切分店');
+  assert.equal(cleanStore('佳音林口分校'), '佳音林口分校');
   assert.equal(storeKeyOf('連加*佳音鋼琴教室Taipei'), '佳音鋼琴教室');
   // 退款配對仍用細身分（彙總鑰匙抓不到的那一層），不會配到別家停車場
-  assert.equal(refundPairKeyOf('連加*佳音林口文化二路Taipei'), '佳音林口文化二路');
+  assert.equal(refundPairKeyOf('連加*佳音林口文化二路Taipei'), '佳音（林口文化二路）');
 });
 
 test('categorize：自動加值排在交通之前（帳務體檢 D2 回報，2026-07-19）', () => {
