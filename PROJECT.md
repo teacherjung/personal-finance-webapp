@@ -36,15 +36,16 @@
 | 帳務體檢 7 偵測器、店名規則資料化、銀行收支學習 | `lib/statement.js`、`lib/store-rules.js`、設定頁 | 大檢討期間 |
 | 系統優化階段一＋二（Claude：共用積木歸戶 U1–U4＋13 窗彈窗外殼；大檔四刀搬家不裝修，全部機械 diff 證明唯一改動＝export；攤提抽純函式＋**前後端公式對照考題**） | `public/modules/`：`file-util`、`route-helpers`（lib/routes）、`modal-shell`、`month-select`、`transactions-import`、`subscriptions-model`、`subscriptions-report`、`settings-store-rules` | #252–#261 |
 | 個股研究頁 P1（持股／研究模型、空狀態、占比組裝、五構面完整評分與同日歷史） | `public/modules/stock-research-model.js`、`public/modules/stock-research-score.js` | #268 |
+| 個股研究頁 P2–P5（資料驗證牆／純畫面／路由與互動／入口）：研究深層資料契約與同代號防重複、七區塊純呈現＋四段就地解釋、`#stock?symbol=` 路由與事件接線、投資主表與研究卡雙入口（只給個股層、正規化代號、新分頁） | `lib/schema.js`／`lib/routes/crud.js`、`public/modules/stock-research-view.js`／`stock-research-page.js`／`portfolio-tables.js`／`portfolio-research.js`、`public/stock-research.css` | #271、#277、#281、#283 |
 | 教學影片定稿文件（流程分工＋EP01 生存優先腳本） | `docs/教學影片/`（**尚未 commit**） | — |
 
-測試現況：**824 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
+測試現況：**864 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
 
 ## 待辦事項（依優先序）
 
 1. **系統優化主線（Claude 實作、Codex 審核；定稿＝`docs/系統優化-施工計畫.md`）**：**階段一收官 ✅**（U1 #252、U2 #253、U3 試點 #254＋擴大 11 窗 #256/#257、U4 #255）。**階段二大檔四刀收官 ✅**——①`transactions-import.js`（#258）②`subscriptions-model.js` 攤提純函式＋前後端對照考題（#259；抓到的兩處走散點已裁決結案＝#264：後端補 RECORD_START 地板、月份型 endsOn 邊界考題化，Codex 收官複審通過）③`subscriptions-report.js`（#261）④`settings-store-rules.js`（#262）。四刀皆機械 diff 證明唯一改動＝export 字；③④另過三鏡頭對抗審查 workflow。**階段三收官 ✅（本 PR）**：三路查證 workflow（安全地圖逐項／覆蓋率地圖差距／缺口獵捕）→ 兩份地圖全面重寫至 2026-07-24 現況、補 4 條 money-critical 缺口考題（銀行方向退路中線判向 H1／日線時鐘倒退護欄 H2／IB fxToBase 換匯與 income 寫回 M3／帳單對卡判定含同末四碼候選 M4）、3 條誠實缺口記錄在案（pdfjs 抽字三胞胎／匯入落盤薄殼／證券路由殼）、AGENTS 同步點補三份抽取器刻意分工。**下一步＝停止線評估後定階段四**（每日備份＋異常輸入防線；原裁決等個股研究 P2 合併後）— **Claude**
 2. **匯入 2025 年更早月份的信用卡帳單**讓舊退款配對生效——已驗證：Klook 3/16 退款 8,800 **已自動抵減 2 月**（二月旅遊淨額 999、三月不計）；目前未對應退款 7 筆（含**友邦人壽 5,198＋15,235**、林口運動中心×3 等，皆 2025-12 的退款），需匯入其原始消費所在的更早月份帳單才配得到；悠遊卡贖回、點數折帳單類本來就無對應消費＝維持不計入 — **William**
-3. **個股研究頁：裁決已完成、Codex 已把裁決寫回計畫（#251 定稿）**——A–F 全採 Codex 推薦＋三件約束性指示（總分五項全評才顯示／E 保留「無持股有研究可開」但入口只從持股表進／F 的 P5 追加 portfolio-research.js）。**Claude 完整審查（5 路查證）與裁決正式紀錄＝`docs/個股研究頁-裁決與審查回覆.md`**。P1 純模型與評分器已合併（#268）；**P2 研究深層資料契約、CRUD／匯入／最後櫃檯驗證與同代號防重複已完工，等待 Claude 複審與 William 合併。下一步＝P3 純顯示元件。** — **Codex**
+3. **個股研究頁：裁決已完成、Codex 已把裁決寫回計畫（#251 定稿）**——A–F 全採 Codex 推薦＋三件約束性指示（總分五項全評才顯示／E 保留「無持股有研究可開」但入口只從持股表進／F 的 P5 追加 portfolio-research.js）。**Claude 完整審查（5 路查證）與裁決正式紀錄＝`docs/個股研究頁-裁決與審查回覆.md`**。P1 純模型與評分器已合併（#268）；**P1–P5 全數完工並經 Claude 複審**：P2 資料驗證牆（#271）、P3 純畫面（#277；複審 1 中 2 低，Codex 已於 P4/P5 全數修掉——`cap` 就地解釋改成永遠顯示且文案補上「軟上限不會叫你賣、分母＝淨資產」、評分理由改多行、雙版型實測）、P4 路由與互動（#281）、P5 雙入口（#283；Claude 複審無需修，另獨立驗過只有個股層產生連結、惡意代號零注入、手機 375 零溢出）。**個股研究頁主線收官** ✅ — **Codex**
 4. **教學影片**：EP01 腳本審稿**擱置**（William 2026-07-24 定）；學習專區未開工（PR 需一併帶入 `docs/教學影片/` 兩份文件）。**分工已議定（2026-07-24 會議，Claude／Codex 共識、與角色分工一致）：Claude 起草腳本＋就地解釋文案，Codex 做 YouTube 嵌入前端** — **暫停**
 5. 證券交易 S4 對帳洞察（可選：台新期末持股 vs 投資組合唯讀差異提示） — **未分配**
 6. D5 第二批剩餘：①股息換算 ②大盤基準（皆比③重，②需新增大盤資料源） — **未分配**
