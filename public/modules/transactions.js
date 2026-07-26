@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
+import { refundLookups, consumptionCategoryTotals, unmatchedRefundsForMonth } from './refund-attribution.js';
 import { openStatementUpload, openBatchManager } from './transactions-import.js';
 
 // 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
@@ -32,7 +33,12 @@ const listSort = { key: 'date', dir: 'desc' };
 
 export async function renderTransactions() {
   const seq = currentRouteSeq();
-  const [allRaw, accounts, cards, tree] = await Promise.all([api('/transactions'), api('/accounts'), api('/cards'), api('/categories')]);
+  // 退款配對表（唯讀）：分類統計與「本月消費」改用**消費歸屬**口徑（使用者定 2026-07-27，與月度回顧一致）。
+  // 抓不到就退回帳面口徑並在畫面明說——靜默降級會讓兩種口徑長得一模一樣、看不出數字換過。
+  const [allRaw, accounts, cards, tree, refundData] = await Promise.all([
+    api('/transactions'), api('/accounts'), api('/cards'), api('/categories'),
+    api('/refund-pairs').then(r => (r && Array.isArray(r.pairs)) ? r : null).catch(() => null),
+  ]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   expTree = tree && typeof tree === 'object' ? tree : {};
   // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
@@ -42,12 +48,15 @@ export async function renderTransactions() {
 
   const th = thBuilder(listSort);
   const rows = sortRows(all.filter(t => t.date?.slice(0, 7) === monthFilter), listSort);
-  const expense = rows.reduce((s, t) => s + Number(t.amount || 0), 0);   // 退款是負數，這裡顯示帳面淨額
 
-  // 本月消費分類。Object.create(null)（Codex r5#5）：分類名是使用者取的，取成 toString 這類
-  // 原生屬性名時，普通物件的 `byCat[k] || 0` 會撈到原型上的函式 → 加總變成「函式原始碼+金額」的字串。
-  const byCat = Object.create(null);
-  rows.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + Number(t.amount || 0); });
+  // 退款歸屬（使用者定 2026-07-27，口徑與月度回顧一致）＝純函式積木 refund-attribution.js，
+  // 這裡只負責接線：兩端標記的查詢表、本月分類加總、本月未對應清單。
+  const pairs = refundData?.pairs || [];
+  const { refundMonthOf, refundedOf } = refundLookups(pairs);
+  const byCat = consumptionCategoryTotals(rows, all, pairs, monthFilter, Boolean(refundData));
+  const expense = Object.values(byCat).reduce((s, v) => s + Number(v || 0), 0);
+  const unmatchedThisMonth = unmatchedRefundsForMonth(refundData?.unmatchedRefunds, all, monthFilter);
+  const unmatchedTotal = unmatchedThisMonth.reduce((s, /** @type {any} */ u) => s + Math.abs(Number(u.amount) || 0), 0);
   const topCats = Object.entries(byCat).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
   const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
 
@@ -61,7 +70,7 @@ export async function renderTransactions() {
     </div>
 
     <div class="cards">
-      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div></div>
+      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>${refundData ? '<div class="muted" style="font-size:11.5px">退款已歸回原消費月</div>' : ''}</div>
       <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div></div>
     </div>
 
@@ -71,18 +80,23 @@ export async function renderTransactions() {
         <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
       </div>
       <div class="chart-card" style="padding:14px 18px">
-        <h3 style="margin-bottom:10px">本月消費分類</h3>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px">
+          <h3 style="margin:0">本月消費分類</h3>
+          <button type="button" class="info-link" id="lensInfo">退款算在哪個月？</button>
+        </div>
         ${topCats.length ? topCats.map(([c, v]) => `
           <div style="margin-bottom:8px">
             <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
             <div class="pill-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
           </div>`).join('') : '<p class="empty">本月尚無消費。</p>'}
+        ${!refundData ? '<p class="muted" style="font-size:12px;margin-top:10px">退款歸屬暫時讀不到，這裡先用帳面口徑（退款算在退款當月）。重新整理可再試一次。</p>' : ''}
+        ${unmatchedThisMonth.length ? `<p class="muted" style="font-size:12px;margin-top:10px">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo">為什麼？</button></p>` : ''}
       </div>
     </div>
 
     <div class="tbl-wrap">
       <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
+      <tbody>${rows.map(t => rowHtml(t, { refundMonthOf, refundedOf })).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
     </div>
   `;
 
@@ -90,6 +104,26 @@ export async function renderTransactions() {
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
+  byId('lensInfo').onclick = () => openInfo('退款算在哪個月？', `
+    <p>上面的「本月消費」與分類統計，用的是<b>消費歸屬</b>：退款會回頭抵掉你<b>當初刷卡的那個月</b>，
+      跟總覽的「月度回顧」同一套算法。你其實沒花那筆錢，帳就記在你原本以為花掉的月份。</p>
+    <p>例：1 月刷 Klook 1,700、3 月收到退款 → <b>1 月的娛樂減 1,700，3 月不動</b>。</p>
+    <p><b>下面的明細列表不搬動</b>——那是銀行帳單上印的東西，日期照帳單走，才對得起帳單。
+      所以<b>圖表金額不會等於明細的加總</b>，這是刻意的：上面看真實花費，下面看帳單原貌。</p>
+    <p>退款要「<b>同一張卡＋同一家店＋金額一樣＋消費日比退款日早</b>」才配得起來；配不到的一律不計入
+      （寧可少抵，也不亂抵到別家店），並列在分類統計下方。</p>`, { size: 'md' });
+  const unmatchedBtn = byId('unmatchedInfo');
+  if (unmatchedBtn) unmatchedBtn.onclick = () => openInfo('這些退款為什麼沒被計入？', `
+    <p>它們找不到能證明是「同一筆消費被退回」的對象，常見原因：</p>
+    <ul>
+      <li><b>原始消費那個月的帳單還沒匯入</b>——補匯之後會自動接上，不用手動修。</li>
+      <li><b>部分退款</b>：退的金額和原始消費對不起來（v1 只做金額完全相同的精準配對）。</li>
+      <li><b>本來就沒有對應消費</b>：點數折抵、儲值贖回這類，天然不會有配對。</li>
+    </ul>
+    <p>配不到就不猜，寧可少抵也不要亂抵到別家店的消費上。</p>
+    <div class="table-wrap"><table class="summary-table"><thead><tr><th>退款日</th><th>店家</th><th class="num">金額</th></tr></thead>
+      <tbody>${unmatchedThisMonth.map((/** @type {any} */ u) =>
+    `<tr><td>${esc(u.date)}</td><td>${esc(u.store)}</td><td class="num">${money(Math.abs(Number(u.amount) || 0))}</td></tr>`).join('')}</tbody></table></div>`, { size: 'md' });
   bindSortClicks(view(), listSort, renderTransactions);   // 共用排序 infra（tx-sort.js）
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
@@ -102,18 +136,29 @@ export async function renderTransactions() {
   }));
 }
 
-function rowHtml(t) {
+/**
+ * @param {any} t
+ * @param {{refundMonthOf?: Map<string,string>, refundedOf?: Map<string,number>}} [ctx]
+ *   退款配對標記（使用者定 2026-07-27，兩端都標）：退款列標「抵到哪個消費月」、消費列標「已退多少」。
+ *   ⚠️ 純呈現：只加在畫面上，**絕不寫進 note／storeKey**——寫進去會被當成分店括號，下次整理店名就切爛了。
+ */
+function rowHtml(t, ctx = {}) {
   const isIn = t.type === 'income';
   const isRefund = t.type === 'expense' && Number(t.amount) < 0;
   const isCredit = isIn || isRefund;
+  const pairedMonth = isRefund ? (ctx.refundMonthOf?.get(String(t.id)) || '') : '';
+  const refunded = !isRefund ? Number(ctx.refundedOf?.get(String(t.id)) || 0) : 0;
+  const pairTag = pairedMonth
+    ? ` <span class="muted" title="這筆退款抵減的是這個月的消費">（${esc(pairedMonth)}）</span>`
+    : (refunded > 0 ? ` <span class="muted" title="這筆消費後來收到退款，已從本月統計扣除">已退 ${money(refunded)}</span>` : '');
   // 滑到顯示名＝看帳單原文（使用者定 2026-07-18：只放原文本身，不加前綴、不加點擊說明）；
   // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑，剝去重序號 |#N，Codex r10#5）；手動記帳無原文＝無 tooltip
   const orig = t.source === 'stmt' ? stmtOrig(t.stmtRef) : '';
   const tip = orig ? ` title="${esc(orig)}"` : '';
   // 支出且有店名 → 店名可點（開「店家消費檔案」彈窗）；收入或空說明維持純文字
-  const noteCell = (!isIn && String(t.note || '').trim())
+  const noteCell = ((!isIn && String(t.note || '').trim())
     ? `<span class="store-open" data-store="${t.id}"${tip}>${esc(t.note)}</span>`
-    : esc(t.note || '');
+    : esc(t.note || '')) + pairTag;
   return `<tr>
     <td>${esc(t.date)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
