@@ -161,6 +161,20 @@ test('normalizeStoreDisplay：分店格式＋品牌簡稱（全家便利商店�
   assert.equal(normalizeStoreDisplay('我的加油站2號'), '我的加油站2號');
   // 分店剝完是空（假分店「（加油站）」「（站）」）＝還原「品牌加油站」、不坍縮（自審B#1）
   assert.equal(normalizeStoreDisplay('中油（站）'), '中油加油站');
+  // 無分隔符也無括號（Codex 複審 2026-07-26）：靠 GAS_BRANDS 品牌前綴切——不可留原樣，
+  // 否則畫面同時存在「泰山加油站」與「中油」兩種格式
+  assert.equal(normalizeStoreDisplay('中油'), '中油加油站');             // 無分店＝品牌加油站
+  assert.equal(normalizeStoreDisplay('統一精工'), '統一精工加油站');
+  assert.equal(normalizeStoreDisplay('台塑石油'), '台塑加油站');         // 台塑石油＝公司名 → 站體招牌
+  assert.equal(normalizeStoreDisplay('速邁樂'), '速邁樂加油站');
+  assert.equal(normalizeStoreDisplay('台塑石油新店站'), '新店加油站');   // 無分隔符但有分店
+  assert.equal(normalizeStoreDisplay('中油金山站'), '金山加油站');
+  assert.equal(normalizeStoreDisplay('中油加油站'), '中油加油站');       // 冪等（品牌加油站不再被切）
+  assert.equal(normalizeStoreDisplay('台塑加油站'), '台塑加油站');
+  // 剩餘不像分店（不以站／店結尾）＝原樣不動，不硬造「大樓加油站」
+  assert.equal(normalizeStoreDisplay('中油大樓'), '中油大樓');
+  // GAS_BRANDS 刻意不進 BRAND_CANON：那張表對所有店家生效，會把台塑生醫切成「台塑加油站（生醫）」
+  assert.equal(normalizeStoreDisplay('台塑生醫'), '台塑生醫');
   // 台灣普客二四（使用者定 2026-07-18：改回中文名，反轉先前的 → Times Parking）：中英寫法統一
   assert.equal(normalizeStoreDisplay('台灣普客二四'), '台灣普客二四');           // 冪等
   assert.equal(normalizeStoreDisplay('Times Parking'), '台灣普客二四');          // 舊資料英文殘留 → 統一

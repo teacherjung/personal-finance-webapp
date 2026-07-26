@@ -38,14 +38,25 @@ test('匯入：加油站消費的 note＝「分店加油站」、storeKey 照舊
     row('中油-泰山站(D2158)TAIPEI'),        // 使用者拍板當天給的驗收例①
     row('統一精工-新店站TAIPEI'),            // 驗收例②
     row('台塑-合成站(D9901)TAIPEI'),         // 台塑關鍵字（合成分店名＋合成代碼）
+    // 無分隔符無括號兩型（Codex 複審 2026-07-26）：①無分店 ②黏寫分店
+    row('中油A123 TAIPEI'),
+    row('統一精工'),
+    row('台塑石油股份有限公司'),
+    row('台塑石油合成站'),
   ]);
-  assert.equal(r.imported, 3);
+  assert.equal(r.imported, 7);
   const db2 = getDb();
   const noteOf = (d) => db2.transactions.find(t => t.stmtRef.endsWith(d))?.note;
   assert.equal(noteOf('中油-泰山站(D2158)TAIPEI'), '泰山加油站');
   assert.equal(noteOf('統一精工-新店站TAIPEI'), '新店加油站');
   assert.equal(noteOf('台塑-合成站(D9901)TAIPEI'), '合成加油站');
+  assert.equal(noteOf('中油A123 TAIPEI'), '中油加油站', '無分店＝品牌加油站，不可留「中油」');
+  assert.equal(noteOf('統一精工'), '統一精工加油站');
+  assert.equal(noteOf('台塑石油股份有限公司'), '台塑加油站');
+  assert.equal(noteOf('台塑石油合成站'), '合成加油站', '無分隔符也要切出分店');
   for (const t of db2.transactions) assert.equal(t.storeKey, '加油站', `鑰匙照舊聚合(${t.note})`);
+  // 畫面不會兩種格式並存：全部以「加油站」結尾（Codex 複審的核心訴求）
+  for (const t of db2.transactions) assert.match(t.note, /加油站$/, `顯示格式統一(${t.note})`);
 });
 
 test('自訂名「加油站」逐字照登：匯入不覆蓋、整理不動、不跳確認閘', () => {
