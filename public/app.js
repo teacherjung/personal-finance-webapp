@@ -10,6 +10,7 @@ import { renderSubscriptions } from './modules/subscriptions.js';
 import { renderCards } from './modules/cards.js';
 import { renderInsurance } from './modules/insurance.js';
 import { renderSettings } from './modules/settings.js';
+import { createStockResearchPage } from './modules/stock-research-page.js';
 import { hydrateIcons } from './modules/icons.js';
 
 // ---------- 共用工具 ----------
@@ -237,6 +238,24 @@ export async function confirmDelete(name, fn) {
 }
 
 // ---------- 路由 ----------
+let routeSeq = 0;
+export const currentRouteSeq = () => routeSeq;   // 供長流程（ibSync/refreshQuotes）完成後判斷「還在同一頁嗎」（自主體檢）
+const renderStockResearch = createStockResearchPage({
+  api,
+  getView: view,
+  getHash: () => location.hash,
+  getRouteSeq: currentRouteSeq,
+  getViewCurrency: () => {
+    try { return localStorage.getItem('pf_viewCur') || 'TWD'; }
+    catch { return 'TWD'; }
+  },
+  esc,
+  openForm,
+  openInfo,
+  toast,
+  today: todayStr
+});
+
 const ROUTES = {
   dashboard: renderDashboard,
   cashflow: renderCashflow,
@@ -248,14 +267,14 @@ const ROUTES = {
   subscriptions: renderSubscriptions,
   cards: renderCards,
   insurance: renderInsurance,
-  settings: renderSettings
+  settings: renderSettings,
+  stock: renderStockResearch
 };
 
-let routeSeq = 0;
-export const currentRouteSeq = () => routeSeq;   // 供長流程（ibSync/refreshQuotes）完成後判斷「還在同一頁嗎」（自主體檢）
 export async function router() {
   const seq = ++routeSeq;   // 序號防護：快速切頁時，舊頁的 async fn 完成後不可覆蓋新頁面
-  const route = location.hash.replace('#', '') || 'dashboard';
+  const route = location.hash.replace(/^#/, '').split('?')[0] || 'dashboard';
+  document.body.classList.toggle('stock-research-route', route === 'stock');
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';

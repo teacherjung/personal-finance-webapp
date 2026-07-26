@@ -160,6 +160,16 @@ test('個股研究畫面｜四個必懂概念都有就地 info-link', () => {
   assert.match(html, /data-score-complete="true"/);
 });
 
+test('個股研究畫面｜正常上限也永遠提供軟上限說明，評分理由保留換行', () => {
+  const model = syncedModel();
+  model.research.scorecard.reasons.business = '第一行\n第二行';
+  model.scorecard = model.research.scorecard;
+  const html = stockResearchViewHtml({ model }, { esc });
+
+  assert.match(html, /data-stock-info="cap">怎麼看？/);
+  assert.match(html, /第一行<br>第二行/);
+});
+
 test('個股研究畫面｜未完成評分不顯示部分總分，缺指標和真的 0 分不混淆', () => {
   const model = syncedModel({
     research: {

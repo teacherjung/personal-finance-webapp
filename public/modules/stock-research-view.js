@@ -24,8 +24,8 @@ export const STOCK_RESEARCH_INFO = Object.freeze({
     html: '<p>不是。「尚未取得」表示目前沒有可用的指標數字；<b>0 是一個真的數值</b>，兩者不能混在一起。</p><p>系統刻意保留這個差別，避免缺資料時看起來像公司真的交出 0 的結果。</p>'
   }),
   cap: Object.freeze({
-    title: '個股上限為 0 代表什麼？',
-    html: '<p>上限設為 0 代表你對個股採取<b>零容忍</b>：只要有部位就會提醒凍結加碼。這不是設定損壞，也不會自動賣出持股。</p><p>個股上限以淨資產為分母，和投資組合頁使用同一套規則。</p>'
+    title: '個股上限怎麼看？',
+    html: '<p>這是以<b>淨資產</b>為分母的軟上限，和投資組合頁使用同一套規則。超過時只會提醒<b>凍結加碼</b>，不會叫你賣，也不會自動賣出持股。</p><p>上限設為 0 代表你對個股採取零容忍：只要有部位就會提醒凍結加碼；這不是設定損壞。</p>'
   })
 });
 
@@ -239,7 +239,7 @@ function positionHtml(view, h) {
   const pnl = finiteOrNull(position.pnlTwd) ?? 0;
   const cap = finiteOrNull(allocation.capPct);
   const capLabel = cap == null ? '—' : `${plainNumber(cap, 1)}%`;
-  const capInfo = cap === 0 ? ` ${h.info('cap', '為什麼是 0？')}` : '';
+  const capInfo = ` ${h.info('cap', '怎麼看？')}`;
   const heldLabel = position.held ? '' : '<span class="tag">目前未持有</span>';
 
   const item = (/** @type {string} */ label, /** @type {string} */ value, /** @type {string} */ extra = '') => (
@@ -296,7 +296,7 @@ function scoreHtml(view, h) {
       <div class="stock-score-name"><b>${item.label}</b><span>權重 ${item.weight}%</span></div>
       <div class="stock-score-track" aria-hidden="true"><span style="width:${fill}%;background:${ACCENT}"></span></div>
       <div class="stock-score-value">${item.complete ? `${item.score}／5` : '尚未評分'}</div>
-      <div class="stock-score-reason">${item.complete ? h.e(item.reason) : '<span class="muted">分數與理由缺一不可</span>'}</div>
+      <div class="stock-score-reason">${item.complete ? h.multiline(item.reason) : '<span class="muted">分數與理由缺一不可</span>'}</div>
     </div>`;
   }).join('');
 
