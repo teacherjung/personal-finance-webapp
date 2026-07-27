@@ -188,6 +188,16 @@ test('C3 gate：/finance 未登入＝轉 /login；登入後 API 與 /finance 都
   assert.match(await okPage.text(), /個人理財中心/);
 });
 
+test('C3 gate：大小寫變體不可繞牆（Codex #302 實測抓到——Express 路由大小寫不敏感）', async () => {
+  for (const p of ['/API/summary', '/Api/Summary', '/API/db', '/aPi/transactions']) {
+    assert.equal((await fetch(`${base}${p}`)).status, 401, `${p} 未登入必 401（不可繞過小寫牆）`);
+  }
+  for (const p of ['/Finance/', '/FINANCE/', '/Finance']) {
+    const r = await fetch(`${base}${p}`, { redirect: 'manual' });
+    assert.equal(r.status, 302, `${p} 未登入必轉登入`);
+  }
+});
+
 test('C3 gate：驗證服務炸掉＝fail-closed 當未登入（絕不放行）', async () => {
   const savedFail = fake.failLogin;
   fake.throwGetUser = true;
