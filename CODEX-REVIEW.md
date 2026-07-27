@@ -16,6 +16,14 @@
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
+> **合併也由 Codex 代執行（William 2026-07-27 追加授權）**：PR 需要合併時，Claude 請 Codex 代替 William 處理，四個步驟缺一不可：
+> 1. 確認**審查結論**（無阻擋問題）與 **CI 全綠**（`gh pr checks`）；有任一不成立就**停下來回報，不要合併**。
+> 2. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**）。
+> 3. 確認遠端分支已刪除。
+> 4. 回報**合併結果**與**是否需要重啟服務**（動到 `lib/`、`server.js`、`package.json` ＝要重啟；只動 `public/` 的前端改動重新整理即可；純文件不必）。
+>
+> ⚠️ Codex 合併前**不可**自行修改程式（審查者角色不變）；發現問題就回報給 Claude 修。
+
 > **常態分工＝三方協作框架 v4（AGENTS.md「三方協作框架」節，2026-07-24 裁決）**：Claude 實作、**Codex 唯讀審查**（獨立複審、對抗測試、同步點檢查、風險分析）、William 決定與驗收。**高風險 PR（金額公式/資料庫/搬家/匯入/機密/共用底層）＝Codex 複審後才合併**——William 指定審某支 PR 時，用 `git fetch origin && git diff origin/main...origin/<branch>` 看內容、不 checkout。
 > 文末「實作模式」**只在 William 明確指派 Codex 做獨立功能時才啟用**（三條件：有獨立施工計畫／不碰 Claude 預約中的共享檔案／Claude 的 PR 需要複審時審查優先），不是常態。
 

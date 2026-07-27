@@ -174,7 +174,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `CODEX-REVIEW.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。
+**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `CODEX-REVIEW.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——四步驟＝確認審查結論與 CI 全綠→`gh pr merge --squash --delete-branch`→確認分支已刪→回報合併結果與是否需要重啟服務；任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **角色分工（含「不負責」邊界）**：
 
