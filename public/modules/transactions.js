@@ -163,7 +163,7 @@ function rowHtml(t, ctx = {}) {
     : esc(t.note || '')) + pairTag;
   return `<tr>
     <td class="nowrap">${esc(t.date)}</td>
-    <td class="muted">${esc(t.account || '—')}</td>
+    <td class="muted nowrap">${esc(t.account || '—')}</td>
     <td class="muted">${noteCell}</td>
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
