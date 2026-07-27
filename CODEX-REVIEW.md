@@ -1,8 +1,20 @@
 # Codex 定期審查指令
 
-> **使用方式（給使用者）**：每批 PR 合併進 `main` 後，對 Codex 說一句：
-> 「**請讀 CODEX-REVIEW.md 並照它執行審查**」。
-> 拿到清單後整段複製、原文貼給 Claude（不用挑、不用轉述）。
+> **使用方式（自動，William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 跑這份審查**，不必 William 手動轉述。指令：
+>
+> ```bash
+> codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
+>   -C "<repo>-codex" "請讀 CODEX-REVIEW.md 並照它執行審查"
+> ```
+>
+> - **一律在 `-codex` 這個獨立 worktree 跑**（先 `git fetch origin && git checkout --detach origin/main`），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
+> - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
+> - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
+> - **審尚未合併的 PR** 時，在提示詞裡指名 branch 與重點，並要求 `git diff origin/main...origin/<branch>`、不要 checkout。
+> - **成本**：每次約 8–13 萬 tokens（走 William 的 ChatGPT 方案額度）。
+> - **回報**：Claude 把 Codex 的**原始回覆原文**貼給 William（不轉述、不挑），再附上自己逐條核對的結論（屬實／誤報／需裁決）；**修不修由 William 決定**，Claude 不因為「Codex 說了」就自動動工。
+>
+> （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
 > **常態分工＝三方協作框架 v4（AGENTS.md「三方協作框架」節，2026-07-24 裁決）**：Claude 實作、**Codex 唯讀審查**（獨立複審、對抗測試、同步點檢查、風險分析）、William 決定與驗收。**高風險 PR（金額公式/資料庫/搬家/匯入/機密/共用底層）＝Codex 複審後才合併**——William 指定審某支 PR 時，用 `git fetch origin && git diff origin/main...origin/<branch>` 看內容、不 checkout。
 > 文末「實作模式」**只在 William 明確指派 Codex 做獨立功能時才啟用**（三條件：有獨立施工計畫／不碰 Claude 預約中的共享檔案／Claude 的 PR 需要複審時審查優先），不是常態。
