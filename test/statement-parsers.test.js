@@ -57,6 +57,16 @@ test('finalize：真正繳款標成 isPayment，不分類', () => {
   assert.equal(r.transactions[0].category, '繳款/退款');
 });
 
+test('finalize：富邦E化繳費網＝上月繳卡費、不是退款（使用者回報 2026-07-27）；正數的繳費網消費不受影響', () => {
+  // 負數＝上月卡費入帳：實際帳單長相（富邦卡預覽曾標成「退款 +11,059」）——必須標 isPayment、不匯入
+  const pay = finalize([{ date: '2026-01-13', desc: '富邦E化繳費網', amount: -11059 }], '富邦');
+  assert.equal(pay.transactions[0].isPayment, true, '負數 E化繳費網＝真正繳款');
+  assert.equal(pay.transactions[0].isRefund, false);
+  // 正數＝用繳費網刷卡繳費（水電之類）＝正常消費，isCardPayment 只在負數列被查、不受新字樣影響
+  const spend = finalize([{ date: '2026-01-20', desc: '富邦E化繳費網', amount: 1200 }], '富邦');
+  assert.equal(spend.transactions[0].isPayment, false, '正數＝一般消費照常匯入');
+});
+
 test('finalize：國外交易服務費繼承前一筆的分類', () => {
   const r = finalize([
     { date: '2026-06-02', desc: 'OPENAI CHATGPT', amount: 320 },
