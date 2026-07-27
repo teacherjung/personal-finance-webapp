@@ -103,7 +103,7 @@ test('cleanStore：更多雜訊清理樣式', () => {
   assert.equal(cleanStore('統一超商-德權A2716 TAIPEI'), '統一超商（德權）');
   assert.equal(cleanStore('MUJI無印良品A0145 TAIPEI'), 'MUJI無印良品');   // 英文起頭不切（分店格式規則）
   assert.equal(cleanStore('DECATHLON迪卡儂A0145 TAIPEI'), 'DECATHLON');   // 已進 STORE_CANON（使用者定 2026-07-18）
-  assert.equal(cleanStore('momo*印用製所TAIPEI'), '印用製所');           // marketplace 前綴
+  assert.equal(cleanStore('momo*印用製所TAIPEI'), 'momo');              // 2026-07-27：所有 momo 購物＝同一家（原「marketplace 前綴砍掉露店家」裁決作廢）
   assert.equal(cleanStore('eTag自動儲值3087-H8'), 'eTag自動儲值');       // 結尾設備碼
 });
 
@@ -115,8 +115,10 @@ test('branchNormalize：分店統一成「主體（分店）」（使用者定 2
   assert.equal(branchNormalize('IKEA-新莊'), 'IKEA（新莊）');           // 英文品牌＋中文分店也切（分店限純中文）
   assert.equal(branchNormalize('COSTCO-內湖'), 'COSTCO（內湖）');
   // ② 無分隔符的已知連鎖（BRANCH_CHAINS 白名單）
-  assert.equal(branchNormalize('誠品生活新店'), '誠品生活（新店）');
-  assert.equal(branchNormalize('誠品生活林口'), '誠品生活（林口）');
+  // 誠品生活 2026-07-27 移到 BRAND_CANON（帶分期的原文要先摘期數才切得出分店）——branchNormalize 單元
+  // 不再認它，教材換仍在白名單的連鎖；誠品生活的全管線行為由 test/store-canon-batch.test.js 鎖住。
+  assert.equal(branchNormalize('好市多內湖'), '好市多（內湖）');
+  assert.equal(branchNormalize('威秀影城林口'), '威秀影城（林口）');
   assert.equal(branchNormalize('健身工廠林口廠'), '健身工廠（林口廠）');   // 使用者定 2026-07-18
   // 冪等：已是「…（分店）」不重複包
   assert.equal(branchNormalize('統一超商（百福）'), '統一超商（百福）');
