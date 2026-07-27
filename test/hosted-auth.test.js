@@ -15,29 +15,33 @@ process.env.NOTEASY_HOSTED = '1';
 process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_ANON_KEY = 'test-anon-key';
 process.env.SITE_ORIGIN = 'https://noteasy.com.tw,http://localhost:4321';
-process.env.NOTEASY_INSECURE_COOKIE = '';   // 預設＝Secure 開
 
-const { setSupabaseFactoryForTest } = await import('../lib/services/auth.js');
+const { setSupabaseFactoryForTest, cookieAdapterFor, serializeCookie } = await import('../lib/services/auth.js');
 const { isHosted, hostedConfig, originAllowed } = await import('../lib/hosted.js');
 const { app } = await import('../server.js');
 
 /** 可控假 client：紀錄呼叫、可指定回應；setAll 走真的 cookie 轉接頭驗旗標。 */
 const fake = { user: { id: 'u-1', email: 'a@x.com' }, failLogin: false, cookieJar: /** @type {any[]} */ ([]) };
-before(() => setSupabaseFactoryForTest((req, res) => ({
+// 假 client **必須走真的 cookieAdapterFor→serializeCookie**（Codex #301 阻擋#2：自己 append Set-Cookie
+// ＝繞過正式 serializer，旗標考題考不到真程式）。這裡只假造 Supabase 的回應，cookie 寫入走正式管線。
+before(() => setSupabaseFactoryForTest((req, res) => {
+  const cookies = cookieAdapterFor(req, res);
+  return {
   auth: {
     signInWithPassword: async () => {
       if (fake.failLogin) return { data: {}, error: { message: 'invalid' } };
-      res.append('Set-Cookie', 'sb-test-auth-token=abc; Path=/; HttpOnly; SameSite=Lax; Secure');
+      cookies.setAll([{ name: 'sb-test-auth-token', value: 'abc' }]);
       return { data: { user: fake.user }, error: null };
     },
-    signOut: async () => { res.append('Set-Cookie', 'sb-test-auth-token=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0'); return { error: null }; },
+    signOut: async () => { cookies.setAll([{ name: 'sb-test-auth-token', value: '', options: { maxAge: 0 } }]); return { error: null }; },
     getUser: async () => (String(req.headers.cookie || '').includes('sb-test-auth-token=abc')
       ? { data: { user: fake.user } } : { data: { user: null } }),
     verifyOtp: async ({ token_hash }) => (token_hash === 'good'
       ? { data: { user: fake.user }, error: null } : { data: {}, error: { message: 'expired' } }),
     updateUser: async () => ({ error: null }),
   },
-})));
+  };
+}));
 
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
@@ -110,6 +114,14 @@ test('HOSTED 靜態：/ 是公開站、/login extensionless、/health JSON、/we
   assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true }, '裁決④：/health 給機器');
   assert.match(await (await fetch(`${base}/wellness`)).text(), /健康｜不簡單/);
   assert.match(await (await fetch(`${base}/finance/`)).text(), /個人理財中心/, '/finance＝既有 SPA（C3 才掛 gate）');
+});
+
+test('serializeCookie：Secure 無條件開、沒有任何環境變數能關（Codex #301 回歸釘）', () => {
+  process.env.NOTEASY_INSECURE_COOKIE = '1';   // 舊開關已刪：就算有人把它設回來也不該有任何效果
+  const c = serializeCookie('sb-x', 'v', { maxAge: 60 });
+  delete process.env.NOTEASY_INSECURE_COOKIE;
+  for (const flag of ['HttpOnly', 'SameSite=Lax', 'Secure', 'Path=/', 'Max-Age=60']) assert.match(c, new RegExp(flag), flag);
+  assert.ok(!c.includes('Domain='), '不設 Domain（P2：避免子網域外洩）');
 });
 
 test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 解碼驗證）', () => {
