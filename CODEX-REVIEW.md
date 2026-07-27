@@ -3,10 +3,17 @@
 > **使用方式（自動，William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 跑這份審查**，不必 William 手動轉述。指令：
 >
 > ```bash
-> codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
+> codex exec -m gpt-5.6-sol -c model_reasoning_effort='"xhigh"' \
+>   -s workspace-write -c sandbox_workspace_write.network_access=true \
 >   -C "<repo>-codex" "請讀 CODEX-REVIEW.md 並照它執行審查"
 > ```
 >
+> - **審查模型＝`gpt-5.6-sol` ＋ `model_reasoning_effort=xhigh`（William 定 2026-07-27）**：設定寫在**指令上**，
+>   **不動 `~/.codex/config.toml` 的全域預設**（改全域會連帶改掉 William 自己的互動式 Codex，超出「調整審查」的範圍）。
+>   為什麼升級：實測有效——升級後的第一次全面重審，在**先前多輪審查都跑過的同一份 `main@272ec9a`** 上
+>   找出 5 項可重現問題（4 High／1 Medium，含一項「備份檔的任意 `id` 造成持久型 XSS」）。
+>   代價：單次約 **72 萬 tokens**（原本 8–13 萬）＋等待較久。**高風險 PR 一律用這組設定**；
+>   低風險小 PR 想省額度可退回預設模型，但要在回報裡註明用了哪一組。
 > - **一律在 `-codex` 這個獨立 worktree 跑**（先 `git fetch origin && git checkout --detach origin/main`），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
 > - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
