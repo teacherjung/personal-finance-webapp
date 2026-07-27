@@ -621,7 +621,7 @@ test('POST /accounts/reconcile-names（開 app 自動）：既有 stale 銀行�
 test('POST /accounts/reconcile-names：順手補回被洗空的銀行交易說明（存款息，使用者回報 2026-07-22）', async () => {
   const bt = await seedTx({ source: 'bank', account: '台新', note: '', type: 'income', category: '被動', subcategory: '利息', amount: 7, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900999****3301|2026-06-01|in|7||存款息|' });
   await POST('/accounts/reconcile-names', {});
-  assert.equal((await GET('/transactions')).find(t => t.id === bt.id).note, '存款息', '空說明→自動名（bankRef 反解）');
+  assert.equal((await GET('/transactions')).find(t => t.id === bt.id).note, '存款利息', '空說明→自動名（bankRef 反解＋過濾器：存款息→存款利息，使用者定 2026-07-27）');
   await DELETE_('/transactions/' + bt.id);
 });
 
