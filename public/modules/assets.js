@@ -138,7 +138,7 @@ export async function renderBankAccounts() {
   const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
   view().innerHTML = `
     <div class="page-head">
-      <div><h1>銀行帳戶</h1><p>各銀行／現金帳戶的餘額。上傳銀行對帳單時，會用帳號末碼自動對到這裡的帳戶並更新餘額。</p></div>
+      <div><h1>銀行帳戶</h1><p>各銀行帳戶的餘額（上傳銀行對帳單時會自動更新）</p></div>
       <div class="page-actions"><button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button></div>
     </div>
     <div class="tbl-wrap">
@@ -158,7 +158,7 @@ function bankAccRow(x) {
   const neg = Number(x.balance) < 0;
   return `<tr>
     <td>${esc(x.name)}${x.class && x.class !== '現金' ? ` <span class="muted">・${esc(x.class)}</span>` : ''}</td>
-    <td class="muted">${x.accountNoLast4 ? '…' + esc(x.accountNoLast4) : '—'}</td>
+    <td class="muted">${x.accountNoLast4 ? esc(x.accountNoLast4) : '—'}</td>
     <td class="muted">${esc(cur)}</td>
     <td class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${x.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${x.id}" title="刪除">${icon('trash', 15)}</button></div></td>
