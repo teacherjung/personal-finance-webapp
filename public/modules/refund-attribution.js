@@ -69,6 +69,24 @@ export function consumptionCategoryTotals(monthRows, allRows, pairs, month, attr
 }
 
 /**
+ * 分類加總 → 畫面要畫的長條（金額絕對值大的在前，最多 limit 條）。
+ * **淨額 0 的分類不畫**（Codex 複審 2026-07-27）：整筆消費被退款完全抵掉時會留下 `{娛樂: 0}`，
+ * 畫出來是一條沒有資訊量的空長條，而且與月度回顧不一致——後端 `derive.js` 輸出分類時就有
+ * `Number(row.total) > 0` 的過濾。全部被抵掉時回空陣列，畫面自然落到「本月尚無消費」空狀態。
+ * ⚠️ **負數要留著**：帳面口徑（配對表載不到的降級路徑）下，某類淨負代表「這個月淨收回」，是真資訊。
+ * @param {Record<string, number>|any} totals
+ * @param {number} [limit=6]
+ * @returns {[string, number][]}
+ */
+export function topSpendCategories(totals, limit = 6) {
+  return Object.entries(totals && typeof totals === 'object' ? totals : {})
+    .map(([name, value]) => /** @type {[string, number]} */ ([name, Number(value) || 0]))
+    .filter(([, value]) => value !== 0)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, Math.max(0, Number(limit) || 0));
+}
+
+/**
  * 本月「配不到原消費」的退款（只留這個帳本裡的）＝統計裡看不到的錢，畫面必須明講。
  * @param {any[]|any} unmatched 後端回的未對應清單
  * @param {any[]} allRows 這個帳本的全部交易

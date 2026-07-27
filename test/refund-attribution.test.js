@@ -2,7 +2,7 @@
 // 與總覽月度回顧同一套判準（配對由後端 derive.pairRefunds 算，這裡只驗「拿配對結果做加總與標記」）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { refundLookups, consumptionCategoryTotals, unmatchedRefundsForMonth } from '../public/modules/refund-attribution.js';
+import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth } from '../public/modules/refund-attribution.js';
 
 const tx = (id, date, category, amount, extra = {}) => ({ id, date, category, amount, ...extra });
 
@@ -74,6 +74,29 @@ test('兩端標記：退款列拿得到原消費日、消費列拿得到退款�
   // 壞資料不可炸畫面
   assert.doesNotThrow(() => refundLookups(null));
   assert.doesNotThrow(() => refundLookups([null, {}]));
+});
+
+test('長條清單：整筆被退掉的分類不畫成 0 元空長條（Codex 複審 2026-07-27）', () => {
+  // 病徵：某月只有一筆 娛樂 1,700，後來配對成功退款 1,700 → byCat={娛樂:0}
+  //       → 舊寫法仍畫出「娛樂 0 元」一條空長條，且與月度回顧不一致（後端輸出分類時就過濾 total>0）
+  const purchase = tx('p1', '2026-01-12', '娛樂', 1700);
+  const refund = tx('r1', '2026-03-16', '娛樂', -1700);
+  const pairs = [{ refundId: 'r1', purchaseId: 'p1', purchaseMonth: '2026-01', amount: 1700 }];
+  const byCat = consumptionCategoryTotals([purchase], [purchase, refund], pairs, '2026-01');
+  assert.deepEqual({ ...byCat }, { 娛樂: 0 }, '加總本身仍是 0（資料層不說謊）');
+  assert.deepEqual(topSpendCategories(byCat), [], '畫面層不畫它 → 落到「本月尚無消費」空狀態');
+});
+
+test('長條清單：排序、取前六、負數要留著', () => {
+  const totals = { 飲食: 860, 娛樂: 0, 交通: -1200, 學習: 80, 生活: 3000, 健康: 500, 保險: 20, 居住: 5 };
+  const got = topSpendCategories(totals);
+  assert.deepEqual(got.map(([n]) => n), ['生活', '交通', '飲食', '健康', '學習', '保險'], '依金額絕對值大到小取前六');
+  assert.equal(got.find(([n]) => n === '交通')?.[1], -1200,
+    '帳面口徑（配對表載不到）下淨負＝這個月淨收回，是真資訊，不可跟著 0 一起濾掉');
+  assert.ok(!got.some(([n]) => n === '娛樂'), '0 不畫');
+  // 壞資料不可炸畫面
+  assert.deepEqual(topSpendCategories(null), []);
+  assert.deepEqual(topSpendCategories({ 飲食: 'abc' }), [], '不是數字＝當 0，不畫');
 });
 
 test('未對應清單：只留本月、且只留這個帳本裡的那幾筆', () => {
