@@ -18,33 +18,19 @@ process.env.SITE_ORIGIN = 'https://noteasy.com.tw,http://localhost:4321';
 
 const { setSupabaseFactoryForTest, cookieAdapterFor, serializeCookie } = await import('../lib/services/auth.js');
 const { isHosted, hostedConfig, originAllowed } = await import('../lib/hosted.js');
+const { createFakePostgres, makeFakeSupabaseFactory } = await import('../test-doubles/fake-supabase.js');
 const { app } = await import('../server.js');
 
-/** 可控假 client：紀錄呼叫、可指定回應；setAll 走真的 cookie 轉接頭驗旗標。 */
-const fake = { user: { id: 'u-1', email: 'a@x.com' }, failLogin: false, throwGetUser: false, cookieJar: /** @type {any[]} */ ([]) };
+/** 可控假 client：只假造 Supabase 的回應，cookie 寫入與資料層一律走正式管線。 */
+const USER = { id: 'u-1', email: 'a@x.com' };
+const fake = { failLogin: false, throwGetUser: false };
 // 假 client **必須走真的 cookieAdapterFor→serializeCookie**（Codex #301 阻擋#2：自己 append Set-Cookie
-// ＝繞過正式 serializer，旗標考題考不到真程式）。這裡只假造 Supabase 的回應，cookie 寫入走正式管線。
-before(() => setSupabaseFactoryForTest((req, res) => {
-  const cookies = cookieAdapterFor(req, res);
-  return {
-  auth: {
-    signInWithPassword: async () => {
-      if (fake.failLogin) return { data: {}, error: { message: 'invalid' } };
-      cookies.setAll([{ name: 'sb-test-auth-token', value: 'abc' }]);
-      return { data: { user: fake.user }, error: null };
-    },
-    signOut: async () => { cookies.setAll([{ name: 'sb-test-auth-token', value: '', options: { maxAge: 0 } }]); return { error: null }; },
-    getUser: async () => {
-      if (fake.throwGetUser) throw new Error('supabase down');
-      return String(req.headers.cookie || '').includes('sb-test-auth-token=abc')
-        ? { data: { user: fake.user } } : { data: { user: null } };
-    },
-    verifyOtp: async ({ token_hash }) => (token_hash === 'good'
-      ? { data: { user: fake.user }, error: null } : { data: {}, error: { message: 'expired' } }),
-    updateUser: async () => ({ error: null }),
-  },
-  };
-}));
+// ＝繞過正式 serializer，旗標考題考不到真程式）。
+// C4b 起假 client 還要接得住資料層（from('kv')／rpc('kv_save')）——HOSTED 模式的讀寫已改走
+// Supabase Postgres，沒有假 Postgres 的話這個檔案裡「登入後 API 通」那幾題會直接 500。
+const pg = createFakePostgres();
+before(() => setSupabaseFactoryForTest(
+  makeFakeSupabaseFactory({ pg, users: { abc: USER }, state: fake, cookieAdapterFor })));
 
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
@@ -177,13 +163,14 @@ test('C3 gate：未登入打理財 API＝401（逐 router 抽樣、含寫入方�
   assert.match(await (await fetch(`${base}/login`)).text(), /登入｜不簡單/);
 });
 
-test('C3 gate：/finance 未登入＝轉 /login；登入後 API 與 /finance 都通（C3 不宣稱隔離＝仍是全域庫）', async () => {
+test('C3 gate：/finance 未登入＝轉 /login；登入後 API 與 /finance 都通', async () => {
   const page = await fetch(`${base}/finance/`, { redirect: 'manual' });
   assert.equal(page.status, 302);
   assert.equal(page.headers.get('location'), '/login');
   // 有 session（假 client 認 sb-test-auth-token=abc）＝放行
+  // ⚠️ 本檔只驗「牆」（401／轉登入）；**A/B 跨使用者隔離歸 C4b**，逐集合列舉在 test/hosted-store-pg.test.js
   const okApi = await fetch(`${base}/api/summary`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
-  assert.equal(okApi.status, 200, '登入後 API 通（資料仍是全域庫＝C3 明示不宣稱隔離，C4 才驗收）');
+  assert.equal(okApi.status, 200, '登入後 API 通');
   const okPage = await fetch(`${base}/finance/`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
   assert.match(await okPage.text(), /個人理財中心/);
 });
