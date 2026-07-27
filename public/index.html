@@ -36,6 +36,10 @@
     </div>
   </aside>
 
+  <!-- 每日備份失敗警告（階段四 A 裁決：不可只記 server log，畫面必須看得到；連續失敗提高強度）。
+       平時是空的，只有備份真的失敗才會被 app.js 填內容。 -->
+  <div id="backup-alert" hidden></div>
+
   <main id="view"><div class="loading">載入中…</div></main>
 
   <div id="modal-root"></div>

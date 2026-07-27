@@ -73,6 +73,26 @@ button .ic, a.btn .ic { vertical-align: -.16em; margin-right: 6px; }
 /* ---------- Layout ---------- */
 main { flex: 1; min-width: 0; width: 100%; padding: 34px 42px; max-width: 1140px; }
 .loading { color: var(--text-dim); padding: 60px; text-align: center; }
+
+/* 每日備份失敗警告（階段四 A 裁決 2026-07-24：不可只記 server log，畫面必須明顯看得到）。
+   **刻意不用會自己消失的 toast**：備份壞掉是「一直存在的狀態」，看漏一次就可能好幾週沒有備份。
+   **刻意不插在 main 之上**：`#view` 每次換頁整個 innerHTML 重寫，插在裡面會被洗掉；body 是 flex row，
+   直接放橫幅會變成第三欄。故用固定定位貼在內容區底部（左側讓開側欄 232px），不影響任何既有版面。
+   連續失敗改用 .danger（更強的紅＋粗左框）提高強度。 */
+#backup-alert { position: fixed; left: 232px; right: 0; bottom: 0; z-index: 40; padding: 0 42px 18px; }
+#backup-alert[hidden] { display: none; }
+.backup-alert {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 16px;
+  background: var(--card); border: 1px solid var(--line);
+  border-left: 3px solid var(--warn); border-radius: 10px; box-shadow: var(--shadow-lg);
+  font-size: 13.5px; line-height: 1.65;
+}
+.backup-alert.danger { border-left-width: 5px; border-left-color: var(--danger); }
+.backup-alert b { color: var(--warn); }
+.backup-alert.danger b { color: var(--danger); }
+.backup-alert .backup-alert-why { color: var(--text-dim); font-size: 12.5px; margin-top: 3px; word-break: break-word; }
+@media (max-width: 820px) { #backup-alert { padding: 0 24px 14px; } }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 26px; gap: 16px; flex-wrap: wrap; }
 .page-head h1 { font-family: var(--serif); font-size: 30px; font-weight: 500; letter-spacing: -.02em; }
 .page-head p { color: var(--text-dim); font-size: 13.5px; margin-top: 4px; }

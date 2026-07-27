@@ -11,7 +11,8 @@ import { renderCards } from './modules/cards.js';
 import { renderInsurance } from './modules/insurance.js';
 import { renderSettings } from './modules/settings.js';
 import { createStockResearchPage } from './modules/stock-research-page.js';
-import { hydrateIcons } from './modules/icons.js';
+import { hydrateIcons, icon } from './modules/icons.js';
+import { backupAlertView } from './modules/backup-alert.js';
 
 // ---------- 共用工具 ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -322,6 +323,23 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
     if ((r && r.recorded) || refreshed || rolled) router();   // 月快照寫入／報價更新／續費日推進 → 重繪反映最新
   } catch { if (refreshed) router(); /* 自動快照失敗靜默略過，不影響 app 使用 */ }
   finally { _bootResolve(); }   // 開機序列落定 → 洞察引擎現在抓才反映最新報價/日線
+})();
+
+// 每日滾動備份（階段四 A）：開 app 檢查今天備份過沒有，沒有就備一份、保留 30 天。
+// **失敗不影響 app 使用**（後端自己吞例外），但畫面要明顯警告、連續失敗提高強度（裁決 2026-07-24）。
+// 抓不到回應（伺服器沒開/網路錯）＝**不警告**：分不出是備份壞了還是連不上，硬報會變狼來了。
+(async () => {
+  let status = null;
+  try { status = await api('/backup/daily', { method: 'POST' }); }
+  catch { /* 連不上就當沒這回事，下次開 app 再說 */ }
+  const v = backupAlertView(status);
+  const box = document.getElementById('backup-alert');
+  if (!box) return;
+  box.hidden = !v.show;
+  box.innerHTML = v.show ? `<div class="backup-alert ${v.level}">
+    ${icon('alert', 18)}
+    <div><b>${esc(v.title)}</b><div>${esc(v.body)}</div>${v.why ? `<div class="backup-alert-why">錯誤訊息：${esc(v.why)}</div>` : ''}</div>
+  </div>` : '';
 })();
 
 // 開 app 自動對齊帳戶名（使用者定 2026-07-21「改一次、處處同步」）：修「帳戶改名後、既有交易顯示名沒跟上」的舊資料。
