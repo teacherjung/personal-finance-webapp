@@ -68,7 +68,8 @@ test('learnFromBankEdit：舊資料無 autoNote → 從 bankRef 尾兩段反解�
   const db = { learnedBank: { k: { type: 'income', category: '其他', name: '自訂' } } };
   const item = { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '', bankRef: 'bank|900100****3301|2026-06-01|in|5000||轉帳存入|ATM 對方帳號' };
   learnFromBankEdit(db, item, { note: '自訂' });
-  assert.equal(item.note, '轉帳存入・ATM 對方帳號', '無 autoNote→bankRef 尾兩段反解');
+  // 2026-07-27 起反解也走收支說明過濾器（轉帳存入→現金存入）——回復到的是好讀版
+  assert.equal(item.note, '現金存入・ATM 對方帳號', '無 autoNote→bankRef 尾兩段反解（過濾器格式）');
 });
 test('learnFromBankEdit：光禿摘要（存款息，無 bankKey 不可學）清空自訂說明 → 一樣回自動名（使用者回報 2026-07-21）', () => {
   const db = { learnedBank: {} };
@@ -141,10 +142,10 @@ test('匯入：存下的 dir＝本筆實際方向（出帳→out）', () => {
   importBankTxToDb(db, parsed([btx({ summary: '跨行轉帳', note: '手續費', direction: 'out', amount: 15 })]));
   assert.equal(db.transactions.at(-1).dir, 'out');
 });
-test('匯入：存下 autoNote＝摘要・原始備註（清空自訂說明時回復用，使用者定 2026-07-21）', () => {
+test('匯入：存下 autoNote＝收支說明過濾器好讀版（清空自訂說明時回復用；2026-07-27 起取代「摘要・原始備註」）', () => {
   const db = baseDb();
   importBankTxToDb(db, parsed([btx({ summary: '存款息', note: '利息2元', direction: 'in', amount: 2 })]));
-  assert.equal(db.transactions.at(-1).autoNote, '存款息・利息2元');
+  assert.equal(db.transactions.at(-1).autoNote, '存款息・利息 2元');   // 存款息不在摘要對照表＝原樣；中文貼數字補空格
 });
 
 // ---------- 帳戶改名連動（身分比對，使用者定 2026-07-21「改一次、處處同步」）----------
