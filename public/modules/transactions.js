@@ -71,7 +71,7 @@ export async function renderTransactions() {
 
     <div class="cards">
       <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>${refundData ? '<div class="muted" style="font-size:11.5px">「退款」金額不會算進「本月消費」裡</div>' : ''}</div>
-      <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div></div>
+      <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div><div class="muted" style="font-size:11.5px">含退款筆數</div></div>
     </div>
 
     <div class="two-col" style="margin:18px 0">
