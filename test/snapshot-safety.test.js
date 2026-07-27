@@ -37,7 +37,7 @@ beforeEach(() => {
 test('IB 同步進行中寫入的日線，同步完成後必須還在（跨 await 不可用過期快照整包蓋回）', async () => {
   // 假的 Flex 回應：在「網路請求進行中」寫一筆日線，模擬使用者同時重新整理頁面觸發 /snapshot/auto
   const fake = async () => {
-    recordDailyValue();                                     // ← 請求期間發生的寫入
+    await recordDailyValue();                               // ← 請求期間發生的寫入
     assert.equal((store.load().dailyValues || []).length, 1, '前置條件：請求期間確實寫進去了');
     return { positions: [{ symbol: 'CSPX', currency: 'USD', quantity: 10, marketPrice: 500, avgCost: 480 }],
       cashByCurrency: { USD: 1000 }, equity: { stock: 5000, cash: 1000 },
@@ -66,12 +66,12 @@ test('IB 同步也不可吃掉請求期間新增的交易（日線會自癒，�
 
 // ---------- r3#8：時鐘倒退不可蓋掉更新的歷史 ----------
 
-test('時鐘倒退：自動快照安靜略過，不拿舊資料蓋掉更新的歷史', () => {
+test('時鐘倒退：自動快照安靜略過，不拿舊資料蓋掉更新的歷史', async () => {
   const db = store.load();
   db.dailyValues = [{ date: tomorrow(), netWorth: 99999, assets: 99999, liabilities: 0 }];
   store.save(db);
 
-  const r = takeSnapshotIfDue();
+  const r = await takeSnapshotIfDue();
   assert.equal(r.recorded, false, '不可寫月快照');
   assert.equal(r.daily, null, '不可寫日線');
   assert.ok(r.skipped, '要回報略過的原因（供前端/log 追查）');
@@ -80,17 +80,17 @@ test('時鐘倒退：自動快照安靜略過，不拿舊資料蓋掉更新的�
   assert.equal(rows[0].netWorth, 99999, '而且值不可被今天的值蓋掉');
 });
 
-test('時鐘倒退：手動按快照鈕要明確擋下並說明（不是安靜略過）', () => {
+test('時鐘倒退：手動按快照鈕要明確擋下並說明（不是安靜略過）', async () => {
   const db = store.load();
   db.dailyValues = [{ date: tomorrow(), netWorth: 99999, assets: 99999, liabilities: 0 }];
   store.save(db);
-  assert.throws(() => takeSnapshot(), /系統時間/,
+  await assert.rejects(() => takeSnapshot(), /系統時間/,
     '使用者主動按的動作要看得見錯誤，他才有機會去修電腦時間');
   assert.equal((store.load().dailyValues || []).length, 1, '擋下後不可留下任何寫入');
 });
 
-test('時間正常時一切照舊（保護不可誤傷正常情況）', () => {
-  const r = takeSnapshotIfDue();
+test('時間正常時一切照舊（保護不可誤傷正常情況）', async () => {
+  const r = await takeSnapshotIfDue();
   assert.equal(r.recorded, true);
   assert.ok(r.daily && r.daily.date === today());
   assert.equal((store.load().dailyValues || []).length, 1);
@@ -98,21 +98,21 @@ test('時間正常時一切照舊（保護不可誤傷正常情況）', () => {
 
 // ---------- r3#10：三種匯率都要留底 ----------
 
-test('日線留下三種匯率，事後才分得出「資產漲了」還是「匯率動了」', () => {
+test('日線留下三種匯率，事後才分得出「資產漲了」還是「匯率動了」', async () => {
   const db = store.load();
   db.settings = { ...db.settings, usdTwd: 31.5, fxTwd: { GBP: 40.8, JPY: 0.215 } };
   store.save(db);
-  const row = recordDailyValue();
+  const row = await recordDailyValue();
   assert.equal(row?.usdTwd, 31.5);
   assert.equal(row?.gbpTwd, 40.8, '系統支援 GBP 資產，只存美元匯率的話英鎊部位的變化解讀不了');
   assert.equal(row?.jpyTwd, 0.215);
 });
 
-test('沒設定的幣別記 0，不可寫進 undefined 讓櫃檯剝掉', () => {
+test('沒設定的幣別記 0，不可寫進 undefined 讓櫃檯剝掉', async () => {
   const db = store.load();
   db.settings = { ...db.settings, usdTwd: 32, fxTwd: {} };
   store.save(db);
-  const row = recordDailyValue();
+  const row = await recordDailyValue();
   assert.equal(row?.gbpTwd, 0);
   assert.equal(row?.jpyTwd, 0);
   const saved = (store.load().dailyValues || [])[0];
@@ -121,13 +121,13 @@ test('沒設定的幣別記 0，不可寫進 undefined 讓櫃檯剝掉', () => {
 
 // ---------- 階段三缺口 H2：日線的時鐘倒退護欄（r3#8 只考了月快照與手動按鈕，日線這條沒人考過） ----------
 
-test('日線時鐘倒退護欄：資料庫已有「明天」的日線 → 今天寫入被擋（回 null、一列不增不改）', () => {
+test('日線時鐘倒退護欄：資料庫已有「明天」的日線 → 今天寫入被擋（回 null、一列不增不改）', async () => {
   // 這條護欄壞掉的後果＝VM 還原/時區設錯後開 app，用舊日期覆寫較新的淨值歷史——
   // 程式註解自己說「補不回來」，而 D3 差異引擎的 Δ 全部以這條線為原料。
   store.save({ ...store.emptyDb(),
     accounts: [{ id: 'a1', name: '現金', type: 'cash', currency: 'TWD', balance: 1000 }],
     dailyValues: [{ date: tomorrow(), netWorth: 777 }] });
-  const r = recordDailyValue();
+  const r = await recordDailyValue();
   assert.equal(r, null, '時鐘倒退＝不寫（硬寫會拿舊資料蓋掉更新的歷史）');
   const dv = store.load().dailyValues || [];
   assert.equal(dv.length, 1, '一列不增');

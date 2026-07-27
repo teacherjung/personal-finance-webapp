@@ -23,8 +23,8 @@ after(() => {
 });
 
 /** 三筆同卡、同額、跨月的合成消費／退款；回傳六月與七月的交通合計與未對應退款數。 */
-function review(rows) {
-  const db = getDb();
+async function review(rows) {
+  const db = await getDb();
   db.cards = [{ id: 'c1', name: '合成卡', type: 'credit', lastFour: '9001' }];   // 合成末四碼（假值）
   db.transactions = rows.map(([date, desc, amount, sub], i) => ({
     id: `t${i}`, date, type: 'expense', category: '交通', subcategory: sub,
@@ -32,18 +32,18 @@ function review(rows) {
     stmtRef: `c1|${date}|${amount}|${desc}`, source: 'stmt', ledger: 'card',
     ...(amount < 0 ? { refundOf: null } : {}),
   }));
-  saveDb(db);
-  const r = consumptionByMonth(getDb());
+  await saveDb(db);
+  const r = consumptionByMonth(await getDb());
   return {
     jun: r.byMonth?.['2026-06']?.['交通']?.total ?? 0,
     jul: r.byMonth?.['2026-07']?.['交通']?.total ?? 0,
     unmatched: r.unmatchedRefunds.length,
-    keys: [...new Set(getDb().transactions.map(t => t.storeKey))],
+    keys: [...new Set((await getDb()).transactions.map(t => t.storeKey))],
   };
 }
 
-test('停車：跨月、同卡、同額、不同停車場的退款不可錯配（Codex 複審重現）', () => {
-  const r = review([
+test('停車：跨月、同卡、同額、不同停車場的退款不可錯配（Codex 複審重現）', async () => {
+  const r = await review([
     ['2026-06-01', '嘟嘟房-台北101', 40, '停車費'],
     ['2026-07-09', '聯信-台灣普客二四股份有A0145 TAIPEI', 40, '停車費'],
     ['2026-07-10', '新北市停車費退費C-30***H8', -40, '停車費'],
@@ -54,8 +54,8 @@ test('停車：跨月、同卡、同額、不同停車場的退款不可錯配�
   assert.equal(r.unmatched, 1, '證明不了原消費 → 列未對應退款（無法證明就不猜）');
 });
 
-test('加油：同型錯配（main 既有）也一併擋住', () => {
-  const r = review([
+test('加油：同型錯配（main 既有）也一併擋住', async () => {
+  const r = await review([
     ['2026-06-01', '中油-泰山站(D2158)TAIPEI', 40, '油錢'],
     ['2026-07-09', '台亞林口中山站', 40, '油錢'],
     ['2026-07-10', '中油-新店站TAIPEI', -40, '油錢'],
@@ -66,8 +66,8 @@ test('加油：同型錯配（main 既有）也一併擋住', () => {
   assert.equal(r.unmatched, 1);
 });
 
-test('同一站／同一場的退款仍然配得到（不可因為修錯配而全部不配）', () => {
-  const gas = review([
+test('同一站／同一場的退款仍然配得到（不可因為修錯配而全部不配）', async () => {
+  const gas = await review([
     ['2026-06-01', '中油-泰山站(D2158)TAIPEI', 40, '油錢'],
     ['2026-07-09', '台亞林口中山站', 40, '油錢'],
     ['2026-07-10', '中油-泰山站(D2158)TAIPEI', -40, '油錢'],
@@ -75,7 +75,7 @@ test('同一站／同一場的退款仍然配得到（不可因為修錯配而�
   assert.equal(gas.jun, 0, '退的就是六月泰山那筆 → 六月歸零');
   assert.equal(gas.jul, 40, '七月不受影響');
   assert.equal(gas.unmatched, 0);
-  const park = review([
+  const park = await review([
     ['2026-06-01', '嘟嘟房-台北101', 40, '停車費'],
     ['2026-07-10', '嘟嘟房-台北101', -40, '停車費'],
   ]);
@@ -83,8 +83,8 @@ test('同一站／同一場的退款仍然配得到（不可因為修錯配而�
   assert.equal(park.unmatched, 0);
 });
 
-test('非彙總店家的配對完全不受影響（Klook 型退款照舊）', () => {
-  const r = review([
+test('非彙總店家的配對完全不受影響（Klook 型退款照舊）', async () => {
+  const r = await review([
     ['2026-06-01', 'KLOOK TRAVEL', 40, ''],
     ['2026-07-10', 'KLOOK TRAVEL', -40, ''],
   ]);

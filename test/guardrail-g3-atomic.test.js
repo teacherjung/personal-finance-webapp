@@ -34,13 +34,13 @@ after(() => {
 });
 
 /** 每題重置：清交易＋學習表，明設分類樹（共用 STORE_FILE，免受別題污染）。 */
-function reset(txns) {
-  const db = getDb();
+async function reset(txns) {
+  const db = await getDb();
   db.transactions = txns;
   db.learnedBank = {};
   db.learnedCategories = {};
   db.settings = { ...db.settings, incomeTree: { 工作: ['鐘點', '薪資'], 其他: ['其他收入'] } };
-  saveDb(db);
+  await saveDb(db);
 }
 
 // 用「星巴克」分店＝storeKeyOf 會把分店收斂成品牌鑰匙「星巴克」（阜爾運通不收斂、兩原文各自成鑰匙），
@@ -56,7 +56,7 @@ const bankTx = (id, date, dir, note, amount = 100) => ({
 
 // ---------- ① 帳單「同店一起改」原子路徑（transactions.js 走的 PUT applyAll）----------
 test('PUT /transactions/:id applyAll（帳單）：一次寫檔完成編輯＋同店傳播，回傳 applied 計數，N 筆全改到', async () => {
-  reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
+  await reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
   const r = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: '停車費', applyAll: true })).json();
   assert.ok(r.applied, '有勾 applyAll → 回傳傳播計數');
   assert.equal(r.applied.changed, 1, '同店另 1 筆一起改到（不含被編輯的本筆）');
@@ -66,7 +66,7 @@ test('PUT /transactions/:id applyAll（帳單）：一次寫檔完成編輯＋�
 });
 
 test('PUT /transactions/:id 不帶 applyAll（帳單）：只改本筆，不傳播、回應無 applied', async () => {
-  reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
+  await reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
   const r = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費' })).json();
   assert.equal(r.applied, undefined, '沒勾 → 不回 applied');
   const after = await GET('/transactions');
@@ -75,7 +75,7 @@ test('PUT /transactions/:id 不帶 applyAll（帳單）：只改本筆，不傳�
 
 // ---------- ② 銀行「同類一起改」原子路徑（cashflow.js 走的 PUT applyAll）+ 方向護欄 ----------
 test('PUT /transactions/:id applyAll（銀行）：同方向同鑰匙一起改；反方向那筆被方向護欄擋下（skipped）', async () => {
-  reset([
+  await reset([
     bankTx('in1', '2026-06-01', 'in', '進帳A'),
     bankTx('in2', '2026-06-02', 'in', '進帳B'),
     bankTx('out1', '2026-06-03', 'out', '出帳'),
@@ -93,7 +93,7 @@ test('PUT /transactions/:id applyAll（銀行）：同方向同鑰匙一起改�
 
 // ---------- ③ 設定頁「同店一起改」原子路徑（settings.js 走的 rename-store applyAll）----------
 test('POST /statement/rename-store applyAll：改名＋分類傳播一次寫檔，回傳 applied 計數', async () => {
-  reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
+  await reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
   const r = await (await POST('/statement/rename-store', {
     orig: '星巴克信義店', name: '公司樓下', category: '交通', subcategory: '停車費', applyAll: true,
   })).json();
@@ -106,7 +106,7 @@ test('POST /statement/rename-store applyAll：改名＋分類傳播一次寫檔�
 
 // ---------- ③b 服務費列 applyAll：不支援整批改，但**本筆編輯不可被 rollback**（G3 對抗審查 confirmed）----------
 test('PUT applyAll 於「國外交易服務費」列：略過傳播、本筆編輯照存（不因無效整批請求 rollback）', async () => {
-  reset([
+  await reset([
     { id: 'f1', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 30, note: '國外交易服務費（-30）', storeKey: '國外交易服務費', source: 'stmt', stmtRef: 'c1|2026-07-11|30|國外交易服務費', ledger: 'card' },
     { id: 'f2', date: '2026-07-12', type: 'expense', category: '其他', subcategory: '未分類', amount: 40, note: '國外交易服務費（-40）', storeKey: '國外交易服務費', source: 'stmt', stmtRef: 'c1|2026-07-12|40|國外交易服務費', ledger: 'card' },
   ]);
@@ -121,7 +121,7 @@ test('PUT applyAll 於「國外交易服務費」列：略過傳播、本筆編�
 
 // ---------- ③c 其他「傳播不適用」情形 applyAll 也不可 rollback 本筆（G3 對抗審查複審）----------
 test('PUT applyAll 但清空分類：略過傳播、本筆編輯照存（空分類無從整批套，不 rollback）', async () => {
-  reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
+  await reset([stmtTx('a', '2026-07-11', '星巴克信義店'), stmtTx('b', '2026-07-12', '星巴克大安店')]);
   const res = await PUT('/transactions/a', { category: '', subcategory: '', applyAll: true });
   assert.equal(res.status, 200, '空分類不該把本筆編輯 rollback');
   const r = await res.json();
@@ -131,7 +131,7 @@ test('PUT applyAll 但清空分類：略過傳播、本筆編輯照存（空分�
 });
 
 test('PUT applyAll 但 storeKey 是保留字（防禦）：略過傳播、本筆編輯照存', async () => {
-  reset([{ id: 'pk', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 10, note: 'x', storeKey: 'constructor', source: 'stmt', stmtRef: 'c1|2026-07-11|10|x', ledger: 'card' }]);
+  await reset([{ id: 'pk', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 10, note: 'x', storeKey: 'constructor', source: 'stmt', stmtRef: 'c1|2026-07-11|10|x', ledger: 'card' }]);
   const res = await PUT('/transactions/pk', { category: '飲食', subcategory: '餐廳', applyAll: true });
   assert.equal(res.status, 200, '保留字 storeKey 不該 rollback 本筆');
   const r = await res.json();
@@ -140,22 +140,22 @@ test('PUT applyAll 但 storeKey 是保留字（防禦）：略過傳播、本筆
 });
 
 // ---------- ④ 工作函式純度（原子性的地基）：*ToDb 只改 in-memory、不落檔 ----------
-test('applyCategoryToStoreDb 是純的：改傳入的 db 物件、但不自己 saveDb（原子呼叫端才寫）', () => {
-  reset([stmtTx('a', '2026-07-11', '星巴克信義店')]);
-  const db = getDb();
+test('applyCategoryToStoreDb 是純的：改傳入的 db 物件、但不自己 saveDb（原子呼叫端才寫）', async () => {
+  await reset([stmtTx('a', '2026-07-11', '星巴克信義店')]);
+  const db = await getDb();
   const r = applyCategoryToStoreDb(db, '星巴克', '交通', '停車費');
   assert.equal(r.changed, 1, '傳入的 db 物件確實被改');
   assert.equal(db.transactions.find(t => t.id === 'a').category, '交通');
   // 關鍵：沒有 saveDb → 重新讀檔應該還是舊值（證明 worker 不寫檔）
-  assert.equal(getDb().transactions.find(t => t.id === 'a').category, '其他', '未落檔：磁碟上仍是原分類');
+  assert.equal((await getDb()).transactions.find(t => t.id === 'a').category, '其他', '未落檔：磁碟上仍是原分類');
 });
 
-test('applyLearnedBankToDb 是純的：改傳入的 db 物件、但不自己 saveDb', () => {
-  reset([bankTx('in1', '2026-06-01', 'in', '進帳')]);
-  const db = getDb();
+test('applyLearnedBankToDb 是純的：改傳入的 db 物件、但不自己 saveDb', async () => {
+  await reset([bankTx('in1', '2026-06-01', 'in', '進帳')]);
+  const db = await getDb();
   db.learnedBank = { k1: { type: 'income', category: '工作', subcategory: '鐘點', name: '家教費' } };
   const r = applyLearnedBankToDb(db, 'k1');
   assert.equal(r.changed, 1);
   assert.equal(db.transactions.find(t => t.id === 'in1').note, '家教費', '傳入 db 被改');
-  assert.equal(getDb().transactions.find(t => t.id === 'in1').note, '進帳', '未落檔：磁碟上仍是原 note');
+  assert.equal((await getDb()).transactions.find(t => t.id === 'in1').note, '進帳', '未落檔：磁碟上仍是原 note');
 });

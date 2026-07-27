@@ -71,23 +71,23 @@ test('rolledNextCharge：不該推的一筆都不能動', () => {
   for (const [sub, why] of cases) assert.equal(rolledNextCharge(sub, TODAY), null, String(why));
 });
 
-test('自動推進（服務層）：只動續費日、金額一分不變、沒得推就不寫檔', () => {
-  const db = getDb();
+test('自動推進（服務層）：只動續費日、金額一分不變、沒得推就不寫檔', async () => {
+  const db = await getDb();
   db.subscriptions = [
     { id: 's1', name: '月繳過期', cycle: 'monthly', amount: 390, since: '2026-01', nextCharge: '2026-07-05', category: '工作' },
     { id: 's2', name: '有停用日', cycle: 'monthly', amount: 200, since: '2026-01', nextCharge: '2026-07-05', endsOn: '2026-09-01', status: 'ending', category: '工作' },
     { id: 's3', name: '未來', cycle: 'monthly', amount: 100, since: '2026-01', nextCharge: '2026-08-20', category: '工作' },
     { id: 's4', name: '終身', cycle: 'lifetime', amount: 3000, since: '2026-01', nextCharge: '2026-07-05', category: '工作' },
   ];
-  saveDb(db);
+  await saveDb(db);
   // 推之前先記下每一筆的每月攤提（推日期不可以改到任何一個月的錢）
   const before = db.subscriptions.map(s => ['2026-06', '2026-07', '2026-08'].map(m => costForMonth(s, m)));
-  const cardBefore = buildSummary(getDb()).subscriptions.monthly;   // ⚠️ 真欄位在 summary.subscriptions.monthly（寫錯名字會變 undefined===undefined 的假斷言）
+  const cardBefore = buildSummary(await getDb()).subscriptions.monthly;   // ⚠️ 真欄位在 summary.subscriptions.monthly（寫錯名字會變 undefined===undefined 的假斷言）
 
-  const r = rollDueSubscriptions(TODAY);
+  const r = await rollDueSubscriptions(TODAY);
   assert.deepEqual(r.rolled, [{ id: 's1', name: '月繳過期', from: '2026-07-05', to: '2026-08-05' }],
     '只有 s1 該推；有停用日／未來／終身都不可被動到');
-  const after = getDb().subscriptions;
+  const after = (await getDb()).subscriptions;
   assert.equal(after.find(s => s.id === 's1').nextCharge, '2026-08-05');
   assert.equal(after.find(s => s.id === 's2').nextCharge, '2026-07-05', '使用者手動輸入停用日的那筆維持原樣');
   assert.equal(after.find(s => s.id === 's3').nextCharge, '2026-08-20');
@@ -96,18 +96,18 @@ test('自動推進（服務層）：只動續費日、金額一分不變、沒�
   assert.deepEqual(after.map(s => ['2026-06', '2026-07', '2026-08'].map(m => costForMonth(s, m))), before,
     '推續費日不可改動任何一個月的攤提金額');
   assert.ok(cardBefore > 0, '前置條件：這批合成訂閱本月確實有金額（否則下一行是空斷言）');
-  assert.equal(buildSummary(getDb()).subscriptions.monthly, cardBefore, '總覽的訂閱月費也不可變');
+  assert.equal(buildSummary(await getDb()).subscriptions.monthly, cardBefore, '總覽的訂閱月費也不可變');
   // 冪等：再跑一次沒有任何一筆要推
-  assert.deepEqual(rollDueSubscriptions(TODAY).rolled, [], '推完再跑＝零變動（每次開 app 都會跑）');
+  assert.deepEqual((await rollDueSubscriptions(TODAY)).rolled, [], '推完再跑＝零變動（每次開 app 都會跑）');
 });
 
-test('過期提醒沒有 30 天下限（使用者要求補漏洞 2026-07-26）', () => {
-  const db = getDb();
+test('過期提醒沒有 30 天下限（使用者要求補漏洞 2026-07-26）', async () => {
+  const db = await getDb();
   // 自動推進「這次沒跑到」的情境（電腦時鐘倒退時整段每日維護會被略過；或使用者手動填了過去的日期後沒再開 app）
   // ——這正是提醒要當安全網的時候：**不呼叫 rollDueSubscriptions**，直接看提醒牆。
   db.subscriptions = [{ id: 'x2', name: '過期很久', cycle: 'monthly', amount: 100, since: '2026-01', nextCharge: '2026-01-05', category: '工作' }];
-  saveDb(db);
-  const overdue = buildSummary(getDb()).reminders.filter(r => /續費日已過/.test(r.title));
+  await saveDb(db);
+  const overdue = buildSummary(await getDb()).reminders.filter(r => /續費日已過/.test(r.title));
   assert.equal(overdue.length, 1);
   assert.match(overdue[0].title, /過期很久/);
   assert.equal(overdue[0].level, 'warn');
@@ -115,46 +115,46 @@ test('過期提醒沒有 30 天下限（使用者要求補漏洞 2026-07-26）',
   assert.ok(Number(/已過 (\d+) 天/.exec(overdue[0].title)?.[1]) > 30, '過期超過 30 天仍然提醒');
 });
 
-test('月底錨點：連續兩次維護（跨月分開跑）不可一路縮到 28 號（Codex 複審 2026-07-26）', () => {
+test('月底錨點：連續兩次維護（跨月分開跑）不可一路縮到 28 號（Codex 複審 2026-07-26）', async () => {
   // 病根：只留得下收月底後的結果 → 1/31 推成 2/28，下個月再推就從 28 起算變 3/28。
-  const db = getDb();
+  const db = await getDb();
   db.subscriptions = [{ id: 'a1', name: '月底扣款', cycle: 'monthly', amount: 100, since: '2026-01', nextCharge: '2026-01-31', category: '工作' }];
-  saveDb(db);
-  rollDueSubscriptions('2026-02-05');          // 第一次開 app（二月）
-  const after1 = getDb().subscriptions[0];
+  await saveDb(db);
+  await rollDueSubscriptions('2026-02-05');    // 第一次開 app（二月）
+  const after1 = (await getDb()).subscriptions[0];
   assert.equal(after1.nextCharge, '2026-02-28', '二月沒有 31 號 → 收到當月最後一天');
   assert.equal(after1.chargeAnchorDay, 31, '原本的號數要留著，否則下個月回不去 31');
-  rollDueSubscriptions('2026-03-05');          // 下個月再開一次
-  assert.equal(getDb().subscriptions[0].nextCharge, '2026-03-31', '三月有 31 號 → 必須回到 31（不是 3/28）');
-  rollDueSubscriptions('2026-04-05');
-  assert.equal(getDb().subscriptions[0].nextCharge, '2026-04-30', '四月只有 30 天 → 收到 30，錨點仍是 31');
-  assert.equal(getDb().subscriptions[0].chargeAnchorDay, 31);
+  await rollDueSubscriptions('2026-03-05');    // 下個月再開一次
+  assert.equal((await getDb()).subscriptions[0].nextCharge, '2026-03-31', '三月有 31 號 → 必須回到 31（不是 3/28）');
+  await rollDueSubscriptions('2026-04-05');
+  assert.equal((await getDb()).subscriptions[0].nextCharge, '2026-04-30', '四月只有 30 天 → 收到 30，錨點仍是 31');
+  assert.equal((await getDb()).subscriptions[0].chargeAnchorDay, 31);
 });
 
-test('月底錨點：閏年 2/29 與「使用者自己改過日期」', () => {
-  const db = getDb();
+test('月底錨點：閏年 2/29 與「使用者自己改過日期」', async () => {
+  const db = await getDb();
   db.subscriptions = [{ id: 'b1', name: '閏年', cycle: 'monthly', amount: 100, since: '2026-01', nextCharge: '2028-01-31', chargeAnchorDay: 31, category: '工作' }];
-  saveDb(db);
-  rollDueSubscriptions('2028-02-05');
-  assert.equal(getDb().subscriptions[0].nextCharge, '2028-02-29', '2028 是閏年 → 29 號');
+  await saveDb(db);
+  await rollDueSubscriptions('2028-02-05');
+  assert.equal((await getDb()).subscriptions[0].nextCharge, '2028-02-29', '2028 是閏年 → 29 號');
   // 使用者把日期改成 15 號（舊錨點 31 不可復活）
-  const db2 = getDb();
+  const db2 = await getDb();
   db2.subscriptions[0].nextCharge = '2028-02-15';
-  saveDb(db2);
-  assert.equal(chargeAnchorDay(getDb().subscriptions[0]), 15, '對不上舊錨點＝使用者改過，改用新號數');
-  rollDueSubscriptions('2028-03-10');   // 今天 3/10：2/15 已過 → 推到 3/15（而不是回到月底）
-  assert.equal(getDb().subscriptions[0].nextCharge, '2028-03-15', '照使用者改的 15 號走');
-  assert.equal(getDb().subscriptions[0].chargeAnchorDay, 15, '錨點也要換成使用者改的號數');
+  await saveDb(db2);
+  assert.equal(chargeAnchorDay((await getDb()).subscriptions[0]), 15, '對不上舊錨點＝使用者改過，改用新號數');
+  await rollDueSubscriptions('2028-03-10');   // 今天 3/10：2/15 已過 → 推到 3/15（而不是回到月底）
+  assert.equal((await getDb()).subscriptions[0].nextCharge, '2028-03-15', '照使用者改的 15 號走');
+  assert.equal((await getDb()).subscriptions[0].chargeAnchorDay, 15, '錨點也要換成使用者改的號數');
 });
 
-test('只動續費日與錨點：整筆物件的其他欄位一字不變（Codex 複審建議的加嚴版）', () => {
-  const db = getDb();
+test('只動續費日與錨點：整筆物件的其他欄位一字不變（Codex 複審建議的加嚴版）', async () => {
+  const db = await getDb();
   const base = { id: 'c1', name: '完整欄位', cycle: 'monthly', amount: 390, since: '2026-01', nextCharge: '2026-07-05',
     category: '工作', card: 'c-1', email: 'x@example.com', status: 'active', active: true, order: 3, considerCancel: false };
   db.subscriptions = [{ ...base }];
-  saveDb(db);
-  rollDueSubscriptions(TODAY);
-  const after = getDb().subscriptions[0];
+  await saveDb(db);
+  await rollDueSubscriptions(TODAY);
+  const after = (await getDb()).subscriptions[0];
   const { nextCharge, chargeAnchorDay: anchor, ...rest } = after;
   const baseRest = { ...base };
   delete baseRest.nextCharge;

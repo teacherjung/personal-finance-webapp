@@ -20,23 +20,23 @@ const { EXPENSE_TREE } = await import('../public/modules/categories.js');
 after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 /** 設定生效樹（直接寫 settings，模擬某個 rename/delete 後的狀態）。 */
-function setTree(tree, subAliases = {}) {
-  const db = getDb();
+async function setTree(tree, subAliases = {}) {
+  const db = await getDb();
   db.settings = { ...db.settings, expenseTree: tree, subAliases, categoryAliases: {} };
   db.transactions = [];
-  saveDb(db);
+  await saveDb(db);
 }
 
 // ---------- parkingSubName：身分解析 ----------
-test('parkingSubName：未改名→「停車費」；改名→現名；刪除→null（不拿 fallback 未分類當停車判準）', () => {
-  setTree({ 交通: ['停車費', '計程車'], 其他: ['未分類'] });
-  assert.equal(parkingSubName(getDb()), '停車費', '未改名＝原名');
+test('parkingSubName：未改名→「停車費」；改名→現名；刪除→null（不拿 fallback 未分類當停車判準）', async () => {
+  await setTree({ 交通: ['停車費', '計程車'], 其他: ['未分類'] });
+  assert.equal(parkingSubName(await getDb()), '停車費', '未改名＝原名');
 
-  setTree({ 交通: ['停車', '計程車'], 其他: ['未分類'] }, { 交通: { 停車費: '停車' } });
-  assert.equal(parkingSubName(getDb()), '停車', '改名→現名（subAliases 對映）');
+  await setTree({ 交通: ['停車', '計程車'], 其他: ['未分類'] }, { 交通: { 停車費: '停車' } });
+  assert.equal(parkingSubName(await getDb()), '停車', '改名→現名（subAliases 對映）');
 
-  setTree({ 交通: ['計程車'], 其他: ['未分類'] });   // 停車費被刪、無別名
-  assert.equal(parkingSubName(getDb()), null, '刪除→null');
+  await setTree({ 交通: ['計程車'], 其他: ['未分類'] });   // 停車費被刪、無別名
+  assert.equal(parkingSubName(await getDb()), null, '刪除→null');
 });
 
 // ---------- applyDisplayLabels：觸發條件認身分 ----------
@@ -52,17 +52,17 @@ test('applyDisplayLabels：改名後的子類現名仍觸發停車包裝；null 
 });
 
 // ---------- 端到端：走真的 saveTree 改名 → 同店整批改分類 → 顯示名仍包停車 ----------
-test('端到端：saveTree 把「停車費」改名成「停車」後，整批改分類仍把嘟嘟房包成「停車費（嘟嘟房）」', () => {
+test('端到端：saveTree 把「停車費」改名成「停車」後，整批改分類仍把嘟嘟房包成「停車費（嘟嘟房）」', async () => {
   // 用內建樹複製一份、把交通的「停車費」換成「停車」，走真的 saveTree（會建 subAliases）
   const renamed = {};
   for (const [cat, subs] of Object.entries(EXPENSE_TREE)) {
     renamed[cat] = cat === '交通' ? subs.map((s) => (s === '停車費' ? '停車' : s)) : [...subs];
   }
-  saveTree({ tree: renamed, subRenames: [{ parent: '交通', from: '停車費', to: '停車' }] });
-  assert.equal(parkingSubName(getDb()), '停車', 'saveTree 後身分解析到現名');
+  await saveTree({ tree: renamed, subRenames: [{ parent: '交通', from: '停車費', to: '停車' }] });
+  assert.equal(parkingSubName(await getDb()), '停車', 'saveTree 後身分解析到現名');
 
   // 種一筆停車場帳單交易（嘟嘟房，名字沒有「停車」二字），走同店整批改分類把它歸回停車
-  const work = getDb();   // 帶著 saveTree 存好的 settings（別名/生效樹）
+  const work = await getDb();   // 帶著 saveTree 存好的 settings（別名/生效樹）
   work.transactions = [{
     id: 'p1', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類', amount: 60,
     note: '嘟嘟房', storeKey: storeKeyOf('嘟嘟房'), source: 'stmt', stmtRef: 'c1|2026-07-11|60|嘟嘟房', ledger: 'card',

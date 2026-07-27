@@ -184,17 +184,17 @@ test('匯入：內轉出角色改名「匯出」後，學過內轉出（舊 toke
   importBankTxToDb(db, parsed([btx({ summary: '轉帳支取', note: '288810****3047', direction: 'out', amount: 500000 })]));
   assert.equal(db.transactions.at(-1).subcategory, '匯出');   // out 角色 → 本筆 out 方向 → 現名匯出
 });
-test('匯入端到端：收入分類改名後，自動分類的收入沿用新名（不掉到「其他」，Codex r13#3）', () => {
-  const db = getDb();
+test('匯入端到端：收入分類改名後，自動分類的收入沿用新名（不掉到「其他」，Codex r13#3）', async () => {
+  const db = await getDb();
   db.transactions = []; db.learnedBank = {};
   db.accounts = [{ id: 'a', name: '台新 3301', type: 'cash', currency: 'TWD', accountNo: '900100****3301' }];
   db.settings = { incomeTree: { '被動': ['利息', '股息'], '其他': ['其他收入'] } };
-  saveDb(db);
-  saveIncomeTree({ tree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] }, parentRenames: [{ from: '被動', to: '投資收入' }] });
-  const d2 = getDb();   // 含改名後的收入樹＋別名
+  await saveDb(db);
+  await saveIncomeTree({ tree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] }, parentRenames: [{ from: '被動', to: '投資收入' }] });
+  const d2 = await getDb();   // 含改名後的收入樹＋別名
   importBankTxToDb(d2, parsed([btx({ summary: '存款息', direction: 'in', amount: 23, note: '' })]));
-  saveDb(d2);
-  const t = getDb().transactions.at(-1);
+  await saveDb(d2);
+  const t = (await getDb()).transactions.at(-1);
   assert.equal(t.category, '投資收入'); assert.equal(t.subcategory, '利息');   // 存款息→(關鍵字)被動/利息→(別名)投資收入/利息
 });
 
@@ -282,54 +282,54 @@ test('sanitizeLearnedBank：壞 type 整筆丟、保留字 key 丟、非字串�
 });
 
 // ---------- 持久化（新 KV 鍵） ----------
-test('持久化：learnedBank 存得進、讀得出', () => {
-  const db = getDb();
+test('持久化：learnedBank 存得進、讀得出', async () => {
+  const db = await getDb();
   db.learnedBank = { 'k|#123****456': { type: 'expense', category: '居住', subcategory: '房貸' } };
-  saveDb(db);
-  const db2 = getDb();
+  await saveDb(db);
+  const db2 = await getDb();
   assert.deepEqual(db2.learnedBank['k|#123****456'], { type: 'expense', category: '居住', subcategory: '房貸' });
 });
-test('持久化：缺 learnedBank 列 → 讀成空物件 {}（不是 undefined/[]）', () => {
-  const db = getDb();
+test('持久化：缺 learnedBank 列 → 讀成空物件 {}（不是 undefined/[]）', async () => {
+  const db = await getDb();
   assert.ok(db.learnedBank && typeof db.learnedBank === 'object' && !Array.isArray(db.learnedBank));
 });
 
 // ---------- 已學規則管理（設定頁「銀行收支學習」）----------
-test('listLearnedBank：攤成陣列並把鑰匙拆成可讀的摘要/對方（#帳號去井號、描述原樣）', () => {
-  const db = getDb();
+test('listLearnedBank：攤成陣列並把鑰匙拆成可讀的摘要/對方（#帳號去井號、描述原樣）', async () => {
+  const db = await getDb();
   db.learnedBank = {
     'CD轉入|#806-00204127****1206': { type: 'income', category: '工作', subcategory: '鐘點', name: 'William 家教費' },
     '媒體轉入|基金配息群益主權': { type: 'income', category: '被動', subcategory: '股息' },
   };
-  saveDb(db);
-  const list = listLearnedBank();
+  await saveDb(db);
+  const list = await listLearnedBank();
   assert.equal(list.length, 2);
   const a = list.find(x => x.key.startsWith('CD轉入'));
   assert.equal(a.summary, 'CD轉入'); assert.equal(a.counterparty, '806-00204127****1206'); assert.equal(a.name, 'William 家教費');
   const b = list.find(x => x.key.startsWith('媒體轉入'));
   assert.equal(b.summary, '媒體轉入'); assert.equal(b.counterparty, '基金配息群益主權'); assert.equal(b.name, '');
 });
-test('deleteLearnedBank：刪指定鑰匙、其他不動；不存在的鑰匙安全略過', () => {
-  const db = getDb();
+test('deleteLearnedBank：刪指定鑰匙、其他不動；不存在的鑰匙安全略過', async () => {
+  const db = await getDb();
   db.learnedBank = { k1: { type: 'income', category: '工作' }, k2: { type: 'expense', category: '生活' } };
-  saveDb(db);
-  deleteLearnedBank('k1');
-  const left = getDb().learnedBank;
+  await saveDb(db);
+  await deleteLearnedBank('k1');
+  const left = (await getDb()).learnedBank;
   assert.equal(left.k1, undefined); assert.ok(left.k2);
-  deleteLearnedBank('不存在');   // 不炸
-  assert.ok(getDb().learnedBank.k2);
+  await deleteLearnedBank('不存在');   // 不炸
+  assert.ok((await getDb()).learnedBank.k2);
 });
-test('deleteLearnedBank：保留字鑰匙用 hasOwn 判、不誤刪原型（比照 deleteLearned）', () => {
-  const db = getDb();
+test('deleteLearnedBank：保留字鑰匙用 hasOwn 判、不誤刪原型（比照 deleteLearned）', async () => {
+  const db = await getDb();
   db.learnedBank = { real: { type: 'income', category: 'x' } };
-  saveDb(db);
-  deleteLearnedBank('toString');   // 'in' 會查到原型；hasOwn 不會 → 安全略過、real 還在
-  assert.ok(getDb().learnedBank.real);
+  await saveDb(db);
+  await deleteLearnedBank('toString');   // 'in' 會查到原型；hasOwn 不會 → 安全略過、real 還在
+  assert.ok((await getDb()).learnedBank.real);
 });
 
 // ---------- 同類一起改（Q2乙）----------
-test('applyLearnedBankToExisting：把學過的規則套到所有既有同鑰匙的銀行交易（別鑰匙/手動來源不動）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：把學過的規則套到所有既有同鑰匙的銀行交易（別鑰匙/手動來源不動）', async () => {
+  const db = await getDb();
   db.learnedBank = { k1: { type: 'transfer', category: '內轉', subcategory: '交割', name: '基金申購' } };
   db.transactions = [
     { id: 't1', source: 'bank', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '原文1', ledger: 'cashflow', date: '2026-06-01', amount: 100 },
@@ -337,78 +337,78 @@ test('applyLearnedBankToExisting：把學過的規則套到所有既有同鑰匙
     { id: 't3', source: 'bank', bankKey: 'other', type: 'income', category: '其他', subcategory: '其他收入', note: '別鑰匙', ledger: 'cashflow', date: '2026-06-03', amount: 300 },
     { id: 'm1', source: 'manual', bankKey: 'k1', type: 'income', category: '其他', subcategory: '其他收入', note: '手動', ledger: 'cashflow', date: '2026-06-04', amount: 400 },
   ];
-  saveDb(db);
-  const r = applyLearnedBankToExisting('k1');
+  await saveDb(db);
+  const r = await applyLearnedBankToExisting('k1');
   assert.equal(r.changed, 2);
-  const after = getDb().transactions;
+  const after = (await getDb()).transactions;
   const t1 = after.find(t => t.id === 't1');
   assert.equal(t1.type, 'transfer'); assert.equal(t1.category, '內轉'); assert.equal(t1.subcategory, '交割'); assert.equal(t1.note, '基金申購');   // 有自訂名 → 覆蓋
   assert.equal(after.find(t => t.id === 't3').type, 'income', '別鑰匙不動');
   assert.equal(after.find(t => t.id === 'm1').type, 'income', '手動來源不動');
 });
-test('applyLearnedBankToExisting：沒有自訂名 → 只改分類、各自 note 保留；內轉子分類依本筆方向（Codex r13#2）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：沒有自訂名 → 只改分類、各自 note 保留；內轉子分類依本筆方向（Codex r13#2）', async () => {
+  const db = await getDb();
   db.learnedBank = { k1: { type: 'transfer', category: '內轉', subcategory: '內轉出' } };   // 無 name（學自某筆出帳）
   // t1 是**進帳**（dir:'in'）——套內轉規則要變「內轉入」，不可盲抄學到的「內轉出」（那會把進帳誤標成出帳型內轉）
   db.transactions = [{ id: 't1', source: 'bank', bankKey: 'k1', dir: 'in', type: 'income', category: '其他', subcategory: '其他收入', note: '原文A', ledger: 'cashflow', date: '2026-06-01', amount: 100 }];
-  saveDb(db);
-  applyLearnedBankToExisting('k1');
-  const t1 = getDb().transactions.find(t => t.id === 't1');
+  await saveDb(db);
+  await applyLearnedBankToExisting('k1');
+  const t1 = (await getDb()).transactions.find(t => t.id === 't1');
   assert.equal(t1.subcategory, '內轉入'); assert.equal(t1.note, '原文A');   // 依本筆方向(in)＝內轉入；沒自訂名→保留原 note
 });
-test('applyLearnedBankToExisting：沒學過/找不到目標/保留字 → 明確錯誤（不靜默）', () => {
-  const db = getDb(); db.learnedBank = {}; db.transactions = []; saveDb(db);
-  assert.throws(() => applyLearnedBankToExisting('nokey'), /還沒有學過/);
-  assert.throws(() => applyLearnedBankToExisting('__proto__'), /保留字/);
-  const db2 = getDb(); db2.learnedBank = { k: { type: 'income', category: '其他' } }; db2.transactions = []; saveDb(db2);
-  assert.throws(() => applyLearnedBankToExisting('k'), /找不到/);
+test('applyLearnedBankToExisting：沒學過/找不到目標/保留字 → 明確錯誤（不靜默）', async () => {
+  const db = await getDb(); db.learnedBank = {}; db.transactions = []; await saveDb(db);
+  await assert.rejects(() => applyLearnedBankToExisting('nokey'), /還沒有學過/);
+  await assert.rejects(() => applyLearnedBankToExisting('__proto__'), /保留字/);
+  const db2 = await getDb(); db2.learnedBank = { k: { type: 'income', category: '其他' } }; db2.transactions = []; await saveDb(db2);
+  await assert.rejects(() => applyLearnedBankToExisting('k'), /找不到/);
 });
-test('applyLearnedBankToExisting：逐筆方向護欄——同鑰匙進帳/出帳，教收入只套進帳、出帳不被誤標成收入（Codex r13#2，生存級）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：逐筆方向護欄——同鑰匙進帳/出帳，教收入只套進帳、出帳不被誤標成收入（Codex r13#2，生存級）', async () => {
+  const db = await getDb();
   db.settings = { ...db.settings, incomeTree: { '工作': ['鐘點', '薪資'], '其他': ['其他收入'] } };   // 明設收入樹，免受別題污染（共用 STORE_FILE）
   db.learnedBank = { k1: { type: 'income', category: '工作', subcategory: '鐘點', name: '家教費' } };
   db.transactions = [
     { id: 'in1', source: 'bank', bankKey: 'k1', dir: 'in', type: 'income', category: '其他', subcategory: '其他收入', note: '進帳', ledger: 'cashflow', date: '2026-06-01', amount: 100 },
     { id: 'out1', source: 'bank', bankKey: 'k1', dir: 'out', type: 'expense', category: '其他', subcategory: '未分類', note: '出帳', ledger: 'cashflow', date: '2026-06-02', amount: 200 },
   ];
-  saveDb(db);
-  const r = applyLearnedBankToExisting('k1');
+  await saveDb(db);
+  const r = await applyLearnedBankToExisting('k1');
   assert.equal(r.changed, 1); assert.equal(r.skipped, 1);   // 只進帳被套；出帳方向不符略過
-  const after = getDb().transactions;
+  const after = (await getDb()).transactions;
   const inTx = after.find(t => t.id === 'in1'), outTx = after.find(t => t.id === 'out1');
   assert.equal(inTx.type, 'income'); assert.equal(inTx.category, '工作'); assert.equal(inTx.note, '家教費');
   assert.equal(outTx.type, 'expense'); assert.equal(outTx.category, '其他'); assert.equal(outTx.subcategory, '未分類');   // 出帳原封不動
 });
-test('applyLearnedBankToExisting：內轉規則套到同鑰匙進帳與出帳 → 子分類各依本筆方向（in→內轉入、out→內轉出）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：內轉規則套到同鑰匙進帳與出帳 → 子分類各依本筆方向（in→內轉入、out→內轉出）', async () => {
+  const db = await getDb();
   db.learnedBank = { k2: { type: 'transfer', category: '內轉', subcategory: '內轉出' } };
   db.transactions = [
     { id: 'i', source: 'bank', bankKey: 'k2', dir: 'in', type: 'income', category: '其他', subcategory: '其他收入', note: 'A', ledger: 'cashflow', date: '2026-06-01', amount: 100 },
     { id: 'o', source: 'bank', bankKey: 'k2', dir: 'out', type: 'expense', category: '其他', subcategory: '未分類', note: 'B', ledger: 'cashflow', date: '2026-06-02', amount: 200 },
   ];
-  saveDb(db);
-  const r = applyLearnedBankToExisting('k2');
+  await saveDb(db);
+  const r = await applyLearnedBankToExisting('k2');
   assert.equal(r.changed, 2); assert.equal(r.skipped, 0);   // 內轉可套兩向
-  const after = getDb().transactions;
+  const after = (await getDb()).transactions;
   assert.equal(after.find(t => t.id === 'i').subcategory, '內轉入');   // 進帳→內轉入
   assert.equal(after.find(t => t.id === 'o').subcategory, '內轉出');   // 出帳→內轉出
 });
-test('applyLearnedBankToExisting：舊資料無 dir → 從 type 推方向（income=in），教支出套不上進帳（保守略過）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：舊資料無 dir → 從 type 推方向（income=in），教支出套不上進帳（保守略過）', async () => {
+  const db = await getDb();
   db.learnedBank = { k3: { type: 'expense', category: '生活', subcategory: '外食' } };
   db.transactions = [{ id: 'x', source: 'bank', bankKey: 'k3', type: 'income', category: '其他', subcategory: '其他收入', note: 'C', ledger: 'cashflow', date: '2026-06-01', amount: 100 }];   // 無 dir
-  saveDb(db);
-  const r = applyLearnedBankToExisting('k3');
+  await saveDb(db);
+  const r = await applyLearnedBankToExisting('k3');
   assert.equal(r.changed, 0); assert.equal(r.skipped, 1);   // income 推得 in、支出只套 out → 略過，不誤把進帳改成支出
 });
-test('applyLearnedBankToExisting：舊資料無 dir 但 bankRef=out → 用 bankRef 原始方向，教收入套不上（Codex r13 複審#1，高）', () => {
-  const db = getDb();
+test('applyLearnedBankToExisting：舊資料無 dir 但 bankRef=out → 用 bankRef 原始方向，教收入套不上（Codex r13 複審#1，高）', async () => {
+  const db = await getDb();
   db.settings = { ...db.settings, incomeTree: { '工作': ['鐘點'], '其他': ['其他收入'] } };
   db.learnedBank = { k: { type: 'income', category: '工作', subcategory: '鐘點', name: '家教費' } };
   // 舊批次留下的不一致：bankRef 明確 out，但子分類卻是「內轉入」（只靠 type/子類會誤推成 in、把出帳改成收入）
   db.transactions = [{ id: 'old', source: 'bank', bankKey: 'k', type: 'transfer', category: '內轉', subcategory: '內轉入', note: '舊筆', ledger: 'cashflow', date: '2026-06-01', amount: 500, bankRef: 'bank|900100****3301|2026-06-01|out|500||轉帳支取|對方' }];
-  saveDb(db);
-  const r = applyLearnedBankToExisting('k');
+  await saveDb(db);
+  const r = await applyLearnedBankToExisting('k');
   assert.equal(r.changed, 0); assert.equal(r.skipped, 1);   // bankRef=out 勝過分類 → 收入規則方向不符 → 略過
-  assert.equal(getDb().transactions.find(t => t.id === 'old').type, 'transfer');   // 出帳沒被改成收入
+  assert.equal((await getDb()).transactions.find(t => t.id === 'old').type, 'transfer');   // 出帳沒被改成收入
 });

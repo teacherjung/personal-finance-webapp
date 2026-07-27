@@ -20,13 +20,13 @@ after(() => {
 });
 
 // ---- importRows 蓋 ledger:'card'（stage 1 核心行為；手動記帳缺 ledger 靠排除法歸 cashflow）----
-test('匯入｜帳單匯入的交易蓋 ledger:card；被 isCardLedger 判為信用卡帳本', () => {
-  const db = repo.getDb();
+test('匯入｜帳單匯入的交易蓋 ledger:card；被 isCardLedger 判為信用卡帳本', async () => {
+  const db = await repo.getDb();
   (db.cards ||= []).push({ id: 'cfcard', name: '測試卡', type: 'credit' });
-  repo.saveDb(db);
-  const r = importRows('cfcard', [{ date: '2026-03-10', amount: 250, desc: '匯入測試店', category: '飲食', subcategory: '餐廳', stmtRef: 'cfcard|2026-03-10|250|匯入測試店' }]);
+  await repo.saveDb(db);
+  const r = await importRows('cfcard', [{ date: '2026-03-10', amount: 250, desc: '匯入測試店', category: '飲食', subcategory: '餐廳', stmtRef: 'cfcard|2026-03-10|250|匯入測試店' }]);
   assert.equal(r.imported, 1);
-  const t = repo.getDb().transactions.find(x => x.importBatch === r.batchId);
+  const t = (await repo.getDb()).transactions.find(x => x.importBatch === r.batchId);
   assert.equal(t.ledger, 'card', '帳單匯入一律 ledger:card');
   assert.equal(isCardLedger(t), true);
 });
@@ -142,31 +142,31 @@ test('收入樹｜effectiveIncomeTree 預設含 工作/被動/其他；conformIn
   assert.deepEqual(conformIncome(t, '不存在的分類', '亂'), ['其他', '其他收入'], '對不上→退路');
 });
 
-test('收入樹｜改名連動 cashflow 收入交易，不動卡帳本、不動支出', () => {
-  const db = repo.getDb();
+test('收入樹｜改名連動 cashflow 收入交易，不動卡帳本、不動支出', async () => {
+  const db = await repo.getDb();
   db.settings.incomeTree = { '工作': ['薪資', '鐘點'], '其他': ['其他收入'] };
   db.transactions = [
     { id: 'i1', type: 'income', category: '工作', subcategory: '薪資', ledger: 'cashflow' },
     { id: 'i2', type: 'income', category: '工作', subcategory: '薪資', ledger: 'card', source: 'stmt' },   // 卡帳本（實務不會有收入，仍不可被動）
     { id: 'x1', type: 'expense', category: '工作', subcategory: 'ChatGPT', ledger: 'cashflow' },            // 支出同名大類，不可被收入改名波及
   ];
-  repo.saveDb(db);
-  const r = saveIncomeTree({ tree: { '工作坊': ['薪資', '鐘點'], '其他': ['其他收入'] }, parentRenames: [{ from: '工作', to: '工作坊' }] });
+  await repo.saveDb(db);
+  const r = await saveIncomeTree({ tree: { '工作坊': ['薪資', '鐘點'], '其他': ['其他收入'] }, parentRenames: [{ from: '工作', to: '工作坊' }] });
   assert.equal(r.changedTx, 1, '只改到 cashflow 那筆收入');
-  const after = repo.getDb();
+  const after = await repo.getDb();
   assert.equal(after.transactions.find(t => t.id === 'i1').category, '工作坊');
   assert.equal(after.transactions.find(t => t.id === 'i2').category, '工作', '卡帳本不被動（isCardTx 擋）');
   assert.equal(after.transactions.find(t => t.id === 'x1').category, '工作', '支出樹的「工作」不被收入改名波及');
 });
-test('收入樹｜改名建收入別名＋連動 learnedBank 收入規則；resolveImportIncome 沿用新名（Codex r13#3）', () => {
-  const db = repo.getDb();
+test('收入樹｜改名建收入別名＋連動 learnedBank 收入規則；resolveImportIncome 沿用新名（Codex r13#3）', async () => {
+  const db = await repo.getDb();
   db.transactions = [];
   db.learnedBank = { k: { type: 'income', category: '被動', subcategory: '利息' }, ke: { type: 'expense', category: '生活', subcategory: '外食' } };
   db.settings = { ...db.settings, incomeTree: { '被動': ['利息', '股息'], '其他': ['其他收入'] } };
-  repo.saveDb(db);
-  const r = saveIncomeTree({ tree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] }, parentRenames: [{ from: '被動', to: '投資收入' }] });
+  await repo.saveDb(db);
+  const r = await saveIncomeTree({ tree: { '投資收入': ['利息', '股息'], '其他': ['其他收入'] }, parentRenames: [{ from: '被動', to: '投資收入' }] });
   assert.equal(r.changedLearned, 1, '只連動收入的 learnedBank 規則');
-  const after = repo.getDb();
+  const after = await repo.getDb();
   assert.equal(after.settings.incomeCategoryAliases['被動'], '投資收入', '建立收入改名別名');
   assert.equal(after.learnedBank.k.category, '投資收入', 'learnedBank 收入規則連動改名');
   assert.equal(after.learnedBank.ke.category, '生活', '支出 learnedBank 不受收入改名影響');
