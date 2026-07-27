@@ -94,11 +94,13 @@ test('brand：反向填（長寫法→短品牌名）也要對，分店不可被
   // 使用者一樣可能反過來填：match＝帳單上的長寫法、to＝想要的短品牌名。
   // 編譯時若沒把兩個寫法「長的排前面」，JS 的 | 會先中短的，
   // 「…印度咖哩風味-林口店」就會在短品牌處切開、把「印度咖哩風味」當成分店、真分店反而不見。
-  setUserRules({ brand: [{ match: 'Zaika札伊卡印度咖哩風味', to: 'Zaika札伊卡' }] });
-  assert.equal(cleanStore('Zaika札伊卡印度咖哩風味'), 'Zaika札伊卡', '長寫法收斂成短品牌名，不可生出假分店');
-  assert.equal(cleanStore('Zaika札伊卡印度咖哩風味-林口店'), 'Zaika札伊卡（林口店）', '真正的分店要留住');
-  assert.equal(cleanStore('Zaika札伊卡-林口店'), 'Zaika札伊卡（林口店）', '短寫法也對');
-  assert.equal(storeKeyOf('Zaika札伊卡印度咖哩風味'), storeKeyOf('Zaika札伊卡-林口店'), '兩種寫法同一把鑰匙');
+  // 教材 2026-07-27 換成虛構品牌：原教材 Zaika 已入內建 STORE_CANON（先中先贏、輪不到使用者 brand 規則），
+  // 本考題測的是「使用者 brand 規則的反向填機制」，用內建不認識的名字才測得到機制本身。
+  setUserRules({ brand: [{ match: '鴻運食堂總匯專門', to: '鴻運食堂' }] });
+  assert.equal(cleanStore('鴻運食堂總匯專門'), '鴻運食堂', '長寫法收斂成短品牌名，不可生出假分店');
+  assert.equal(cleanStore('鴻運食堂總匯專門-林口店'), '鴻運食堂（林口店）', '真正的分店要留住');
+  assert.equal(cleanStore('鴻運食堂-林口店'), '鴻運食堂（林口店）', '短寫法也對');
+  assert.equal(storeKeyOf('鴻運食堂總匯專門'), storeKeyOf('鴻運食堂-林口店'), '兩種寫法同一把鑰匙');
 });
 
 test('rename：取代字串裡的 $ 不可被當成樣式（自審 r3）', () => {
