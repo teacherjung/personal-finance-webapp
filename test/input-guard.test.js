@@ -86,3 +86,40 @@ test('正常使用完全無感：典型資料全部照舊放行', () => {
   const card = pickWritable('cards', { name: '台新Richart卡', benefits: short(3000), pdfPassword: 'A123456789' });
   assert.deepEqual(card.errors, []);
 });
+
+// ---- 服務層新輸入路（Codex #297 複審抓到的繞道）----
+// POST /api/cards/:id/statement/import 吃 req.body.transactions＝HTTP 可直給、不經 pickWritable。
+test('帳單匯入端點：超長 desc＝400 點名且資料庫零寫入（服務層不可繞過防線）', async (t) => {
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { rmSync } = await import('node:fs');
+  const TEST_STORE = join(tmpdir(), `finance-input-guard-svc-${process.pid}.db`);
+  process.env.STORE_FILE = TEST_STORE;
+  const store = await import('../lib/store.js');
+  const { importRows } = await import('../lib/services/statement-import.js');
+  t.after(() => { for (const sfx of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + sfx); } catch { /* 可能不存在 */ } } });
+
+  const db = store.emptyDb();
+  db.cards = [{ id: 'c1', name: '測試卡', type: 'credit' }];
+  store.save(db);
+
+  const bad = { date: '2026-07-01', amount: 100, desc: short(LEN_LONG + 1), stmtRef: 'x' };
+  await assert.rejects(async () => importRows('c1', [bad], '2026-07', null), (/** @type {any} */ e) => {
+    assert.equal(e.status, 400);
+    assert.match(e.message, /desc/, '要點名欄位');
+    assert.match(e.message, /20000/, '要講上限');
+    return true;
+  });
+  assert.equal(store.load().transactions.length, 0, '整批中止、零寫入');
+
+  // 超長 category（短欄）同樣 400
+  await assert.rejects(async () => importRows('c1', [{ date: '2026-07-01', amount: 100, desc: '正常店', stmtRef: 'x', category: short(LEN_SHORT + 1) }], '2026-07', null),
+    (/** @type {any} */ e) => e.status === 400 && /category/.test(e.message));
+
+  // 合法長 desc（>200 但 ≤20000＝匯入內容不被短欄誤傷）照常入庫，note/stmtRef/storeKey 一字不截
+  const longButLegal = 'Ｘ'.repeat(500);
+  const r = importRows('c1', [{ date: '2026-07-02', amount: 200, desc: longButLegal, stmtRef: 'y' }], '2026-07', null);
+  assert.equal(r.imported, 1);
+  const tx = store.load().transactions[0];
+  assert.ok(tx.stmtRef.includes(longButLegal), 'stmtRef 保留完整原文、不截斷');
+});
