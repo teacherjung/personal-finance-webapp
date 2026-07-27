@@ -14,8 +14,41 @@
 <main class="site-main">
 <div class="narrow"><div class="form-card">
   <h1>帳號確認</h1>
-  <p class="sub">邀請信與密碼重設的回呼頁。</p>
-  <div class="notice">帳號系統即將開放；屆時這一頁會引導你完成密碼設定。如果你是從邀請信來到這裡，請稍後再試或聯絡站長。</div>
+  <p class="sub" id="sub">正在確認你的邀請連結…</p>
+  <form id="pwForm" hidden>
+    <label for="pw">設定密碼（至少 10 個字）</label><input id="pw" type="password" autocomplete="new-password" minlength="10" required>
+    <button type="submit" id="pwBtn">完成設定</button>
+  </form>
+  <div class="notice" id="msg" hidden></div>
+  <script>
+  // C2：邀請信連結帶 token_hash（query 或 #hash 都可能）→ 後端 verifyOtp 換 session cookie → 設密碼。
+  (async () => {
+    const q = new URLSearchParams(location.search.slice(1) + '&' + location.hash.slice(1));
+    const tokenHash = q.get('token_hash') || '', type = q.get('type') || 'invite';
+    const sub = document.getElementById('sub'), msg = document.getElementById('msg'), form = document.getElementById('pwForm');
+    const fail = (t) => { sub.textContent = '確認失敗'; msg.textContent = t; msg.hidden = false; };
+    if (!tokenHash) return fail('這一頁需要從邀請信或密碼重設信的連結進來。');
+    try {
+      const r = await fetch('/api/auth/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_hash: tokenHash, type }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '連結無效');
+      sub.textContent = '請設定你的密碼：'; form.hidden = false;
+    } catch (e) { fail(e.message); }
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('pwBtn');
+      btn.disabled = true; btn.textContent = '設定中…';
+      try {
+        const r = await fetch('/api/auth/set-password', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.getElementById('pw').value }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || '設定失敗');
+        location.href = '/finance';
+      } catch (err) { btn.disabled = false; btn.textContent = '完成設定'; msg.textContent = err.message; msg.hidden = false; }
+    });
+  })();
+  </script>
 </div></div>
 </main>
 <footer class="site-footer"><div class="inner">

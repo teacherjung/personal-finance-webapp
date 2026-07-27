@@ -12,12 +12,28 @@ import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
 import { installJsonBodyParsers } from './lib/http-body.js';
+import { isHosted, hostedConfig } from './lib/hosted.js';
+import { authRoutes, csrfOriginGuard } from './lib/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
 export const app = express();
 installJsonBodyParsers(app);
-app.use(express.static(join(__dirname, 'public')));
+// 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
+// ⚠️ LOCAL 分支的行為必須與 C2 之前 byte-for-byte 等價——這是 C0 的「本機版零改動」契約。
+if (isHosted()) {
+  hostedConfig();                       // fail-fast：缺環境變數＝啟動即 throw（不可默默半套上線）
+  app.use(csrfOriginGuard);             // CSRF Origin 牆（變更類請求；C0 威脅模型）
+  app.get('/health', (req, res) => res.json({ ok: true }));   // 機器健康檢查（裁決④：/health 讓給機器）
+  app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
+  // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
+  const site = join(__dirname, 'public-site');
+  app.use(express.static(site, { extensions: ['html'] }));
+  // /finance＝理財 app（C3 才掛 auth gate；C2 先讓路徑存在＝重導到既有 SPA）
+  app.use('/finance', express.static(join(__dirname, 'public')));
+} else {
+  app.use(express.static(join(__dirname, 'public')));
+}
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
 app.use('/vendor/chart.js', express.static(join(__dirname, 'node_modules/chart.js/dist/chart.umd.js')));
 
@@ -50,7 +66,8 @@ const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串
 // 只有「直接執行」（npm start / node server.js）才啟動監聽；被測試 import 時不開埠（B0）
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
-  app.listen(PORT, '127.0.0.1', () => {
+  // P1-6（C0 契約）：HOSTED 聽 0.0.0.0（Render 的健康檢查與流量才進得來）；LOCAL 維持 127.0.0.1 不對外。
+  app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`\n  個人理財網頁已啟動 ✅`);
     console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
     console.log(`  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);

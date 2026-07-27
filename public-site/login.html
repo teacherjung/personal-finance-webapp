@@ -14,12 +14,29 @@
 <main class="site-main">
 <div class="narrow"><div class="form-card">
   <h1>登入</h1><p class="sub">使用受邀時設定的信箱與密碼。</p>
-  <form>
-    <label for="email">電子信箱</label><input id="email" type="email" autocomplete="email" disabled>
-    <label for="password">密碼</label><input id="password" type="password" autocomplete="current-password" disabled>
-    <button type="button" disabled>登入（即將開放）</button>
+  <form id="loginForm">
+    <label for="email">電子信箱</label><input id="email" type="email" autocomplete="email" required>
+    <label for="password">密碼</label><input id="password" type="password" autocomplete="current-password" required>
+    <button type="submit" id="loginBtn">登入</button>
   </form>
-  <div class="notice">帳號系統即將開放。目前為邀請制：收到邀請信的朋友，屆時請從信中連結完成設定。</div>
+  <div class="notice" id="msg">邀請制：使用受邀時設定的信箱與密碼。沒有帳號？請聯絡站長。</div>
+  <script>
+  // C2：呼叫 /api/auth/login（session 放 HttpOnly cookie、由伺服器設；這裡拿不到也不該拿 token）
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('loginBtn'), msg = document.getElementById('msg');
+    btn.disabled = true; btn.textContent = '登入中…';
+    try {
+      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '登入失敗');
+      location.href = '/finance';
+    } catch (err) {
+      msg.textContent = err.message; btn.disabled = false; btn.textContent = '登入';
+    }
+  });
+  </script>
 </div></div>
 </main>
 <footer class="site-footer"><div class="inner">
