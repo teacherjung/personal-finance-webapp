@@ -1,0 +1,69 @@
+/* NotEasy（不簡單）公開站共用樣式（C1，2026-07-27）。
+   設計語言沿用理財 app 的暖紙感 tokens（styles.css 同款色票），但**刻意自含、不 import**——
+   公開站與理財 app 是兩個部署面（C0 雙模式），共用檔案會讓 C2 之後的改動互相牽動。 */
+:root {
+  --bg: #faf9f5; --bg-2: #f0eee6; --card: #ffffff; --card-2: #f5f4ef;
+  --line: #e8e5dc; --text: #1f1e1d; --text-dim: #73726c;
+  --accent: #c96442; --accent-soft: #f3e6df;
+  --shadow: 0 1px 3px rgba(60,50,40,.06), 0 1px 2px rgba(60,50,40,.04);
+  --shadow-lg: 0 8px 30px rgba(60,50,40,.10);
+  --radius: 14px;
+  --serif: "Tiempos Text", "Georgia", "Times New Roman", "Songti TC", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Helvetica Neue", system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* 頁首 */
+.site-header { border-bottom: 1px solid var(--line); background: var(--bg); }
+.site-header .inner { max-width: 980px; margin: 0 auto; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--text); }
+.brand b { font-family: var(--serif); font-size: 20px; letter-spacing: -.01em; }
+.brand span { color: var(--text-dim); font-size: 12.5px; }
+.site-nav { display: flex; gap: 8px; }
+.site-nav a { color: var(--text-dim); text-decoration: none; font-size: 13.5px; padding: 7px 12px; border-radius: 8px; }
+.site-nav a:hover { background: var(--card-2); color: var(--text); }
+.site-nav a.cta { background: var(--accent); color: #fff; font-weight: 600; }
+.site-nav a.cta:hover { background: #b5573a; color: #fff; }
+
+/* 主內容 */
+main.site-main { flex: 1; max-width: 980px; margin: 0 auto; padding: 48px 24px 64px; width: 100%; }
+.hero { text-align: center; padding: 24px 0 40px; }
+.hero h1 { font-family: var(--serif); font-size: 40px; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; }
+.hero p { color: var(--text-dim); margin-top: 14px; font-size: 16px; max-width: 560px; margin-left: auto; margin-right: auto; }
+
+/* 功能入口卡牆 */
+.area-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 8px; }
+.area-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); text-decoration: none; color: var(--text); display: block; transition: box-shadow .15s; }
+.area-card:hover { box-shadow: var(--shadow-lg); }
+.area-card h2 { font-family: var(--serif); font-size: 20px; font-weight: 500; display: flex; align-items: center; gap: 10px; }
+.area-card p { color: var(--text-dim); font-size: 13.5px; margin-top: 8px; }
+.area-card .tag { display: inline-block; margin-top: 12px; font-size: 11.5px; padding: 3px 10px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); }
+.area-card.ready .tag { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* 窄表單頁（登入／註冊／回呼） */
+.narrow { max-width: 420px; margin: 0 auto; }
+.form-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow); }
+.form-card h1 { font-family: var(--serif); font-size: 26px; font-weight: 500; margin-bottom: 6px; }
+.form-card .sub { color: var(--text-dim); font-size: 13.5px; margin-bottom: 20px; }
+.form-card label { display: block; font-size: 13px; color: var(--text-dim); margin: 14px 0 6px; }
+.form-card input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; font: inherit; background: var(--bg); }
+.form-card button { width: 100%; margin-top: 20px; padding: 11px; border: none; border-radius: 9px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.form-card button:disabled { background: var(--card-2); color: var(--text-dim); cursor: not-allowed; }
+.notice { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--card-2); color: var(--text-dim); font-size: 13px; border-left: 3px solid var(--accent); }
+
+/* 準備中頁 */
+.coming { text-align: center; padding: 60px 0; }
+.coming .icon { font-size: 44px; }
+.coming h1 { font-family: var(--serif); font-size: 32px; font-weight: 500; margin-top: 14px; }
+.coming p { color: var(--text-dim); margin-top: 10px; max-width: 480px; margin-left: auto; margin-right: auto; }
+.coming a.back { display: inline-block; margin-top: 26px; color: var(--accent); text-decoration: none; font-weight: 600; }
+
+/* 頁尾 */
+.site-footer { border-top: 1px solid var(--line); color: var(--text-dim); font-size: 12.5px; }
+.site-footer .inner { max-width: 980px; margin: 0 auto; padding: 18px 24px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .hero h1 { font-size: 30px; }
+  main.site-main { padding: 32px 18px 48px; }
+}
