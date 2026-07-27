@@ -144,3 +144,15 @@ test('誤傷防：佳音美語仍是補習、幸福十分的「分」不被當�
   assert.equal(cleanStore('幸福十分'), '幸福十分');           // (?<![十幾滿])分：真店名的「分」不剝
   assert.deepEqual(categorize('LOUISA COFFEA2716 TAIPEI'), ['飲食', '飲料／咖啡']);
 });
+
+test('誤傷防 r1（Codex 抓到＋同型自查）：ONLINEPAY／YOUTUBER／BURGER KITCHEN 不被吸走', () => {
+  assert.notEqual(cleanStore('ONLINEPAY SERVICE'), 'LINE Pay');       // OnlinePay＝真實支付品牌（Codex r1）
+  assert.notEqual(cleanStore('ONLINEPAYMENT CO'), 'LINE Pay');
+  assert.equal(cleanStore('LINEPAY＊某小店'), 'LINE Pay');            // 真 LINE Pay 代收照常中
+  assert.equal(cleanStore('聯信-LINEPAY*NONE'), 'LINE Pay');          // 帶收單前綴也接得到（沒用 ^ 錨定的理由）
+  assert.notEqual(cleanStore('YOUTUBER課程'), 'YouTube');             // 創作者課程＝別家商家（Codex r1）
+  assert.equal(cleanStore('GOOGLE *YOUTUBE'), 'YouTube');
+  assert.equal(cleanStore('YOUTUBE PREMIUM'), 'YouTube');
+  assert.notEqual(cleanStore('BURGER KITCHEN'), 'Burger King');       // 同型自查：KITCHEN 的 KI 不是 KING 截斷
+  assert.equal(cleanStore('BURGER KI'), 'Burger King');
+});
