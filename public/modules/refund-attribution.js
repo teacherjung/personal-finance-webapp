@@ -9,25 +9,26 @@
 /** @typedef {{refundId:string, purchaseId:string, purchaseMonth:string, amount:number}} RefundPair */
 
 /**
- * 配對表 → 兩張查詢表：退款列要標的「原消費月份」、消費列要標的「已退金額」。
+ * 配對表 → 兩張查詢表：退款列要標的「原**消費日**」、消費列要標的「**退款日**」。
+ * 使用者定 2026-07-27（第二版）：兩邊都標**日期**——月份看不出是同一天的哪一筆，
+ * 金額則已經印在同一列的金額欄、標第二次是贅字。
  * @param {RefundPair[]|any} pairs
- * @returns {{refundMonthOf: Map<string,string>, refundedOf: Map<string,number>}}
+ * @returns {{purchaseDateOf: Map<string,string>, refundDateOf: Map<string,string>}}
  */
 export function refundLookups(pairs) {
   const list = Array.isArray(pairs) ? pairs : [];
-  /** @type {Map<string,string>} */
-  const refundMonthOf = new Map();
-  /** @type {Map<string,number>} */
-  const refundedOf = new Map();
+  /** @type {Map<string,string>} 退款 id → 原消費的日期 */
+  const purchaseDateOf = new Map();
+  /** @type {Map<string,string>} 消費 id → 退款的日期 */
+  const refundDateOf = new Map();
   for (const p of list) {
     if (!p) continue;
     const refundId = String(p.refundId || '');
     const purchaseId = String(p.purchaseId || '');
-    if (refundId) refundMonthOf.set(refundId, String(p.purchaseMonth || ''));
-    // 一對一配對，加總只是防禦（同一筆消費不會被配到兩次）
-    if (purchaseId) refundedOf.set(purchaseId, (refundedOf.get(purchaseId) || 0) + Math.abs(Number(p.amount) || 0));
+    if (refundId) purchaseDateOf.set(refundId, String(p.purchaseDate || ''));
+    if (purchaseId) refundDateOf.set(purchaseId, String(p.refundDate || ''));
   }
-  return { refundMonthOf, refundedOf };
+  return { purchaseDateOf, refundDateOf };
 }
 
 /**

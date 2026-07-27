@@ -58,17 +58,19 @@ test('分類名叫 toString／__proto__ 也不會壞掉（原型污染坑）', (
   assert.equal(typeof ({}).toString, 'function', '不可污染到全域原型');
 });
 
-test('兩端標記：退款列拿得到原消費月份、消費列拿得到已退金額', () => {
+test('兩端標記：退款列拿得到原消費日、消費列拿得到退款日（使用者定 2026-07-27 第二版）', () => {
+  // 標日期不標月份：同一個月可能有好幾筆同店消費，月份指不出是哪一筆
   const pairs = [
-    { refundId: 'r1', purchaseId: 'p1', purchaseMonth: '2026-01', amount: 1700 },
-    { refundId: 'r2', purchaseId: 'p2', purchaseMonth: '2026-02', amount: 60 },
+    { refundId: 'r1', purchaseId: 'p1', purchaseDate: '2026-02-22', purchaseMonth: '2026-02', refundDate: '2026-03-16', amount: 8800 },
+    { refundId: 'r2', purchaseId: 'p2', purchaseDate: '2026-01-05', purchaseMonth: '2026-01', refundDate: '2026-02-11', amount: 60 },
   ];
-  const { refundMonthOf, refundedOf } = refundLookups(pairs);
-  assert.equal(refundMonthOf.get('r1'), '2026-01');
-  assert.equal(refundMonthOf.get('r2'), '2026-02');
-  assert.equal(refundedOf.get('p1'), 1700);
-  assert.equal(refundedOf.get('p2'), 60);
-  assert.equal(refundMonthOf.get('沒配到的'), undefined, '沒配到就不該有標記');
+  const { purchaseDateOf, refundDateOf } = refundLookups(pairs);
+  assert.equal(purchaseDateOf.get('r1'), '2026-02-22');
+  assert.equal(purchaseDateOf.get('r2'), '2026-01-05');
+  assert.equal(refundDateOf.get('p1'), '2026-03-16');
+  assert.equal(refundDateOf.get('p2'), '2026-02-11');
+  assert.equal(purchaseDateOf.get('沒配到的'), undefined, '沒配到就不該有標記');
+  assert.equal(refundDateOf.get('沒被退的'), undefined);
   // 壞資料不可炸畫面
   assert.doesNotThrow(() => refundLookups(null));
   assert.doesNotThrow(() => refundLookups([null, {}]));

@@ -52,7 +52,7 @@ export async function renderTransactions() {
   // 退款歸屬（使用者定 2026-07-27，口徑與月度回顧一致）＝純函式積木 refund-attribution.js，
   // 這裡只負責接線：兩端標記的查詢表、本月分類加總、本月未對應清單。
   const pairs = refundData?.pairs || [];
-  const { refundMonthOf, refundedOf } = refundLookups(pairs);
+  const { purchaseDateOf, refundDateOf } = refundLookups(pairs);
   const byCat = consumptionCategoryTotals(rows, all, pairs, monthFilter, Boolean(refundData));
   const expense = Object.values(byCat).reduce((s, v) => s + Number(v || 0), 0);
   const unmatchedThisMonth = unmatchedRefundsForMonth(refundData?.unmatchedRefunds, all, monthFilter);
@@ -96,7 +96,7 @@ export async function renderTransactions() {
 
     <div class="tbl-wrap">
       <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(t => rowHtml(t, { refundMonthOf, refundedOf })).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
+      <tbody>${rows.map(t => rowHtml(t, { purchaseDateOf, refundDateOf })).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
     </div>
   `;
 
@@ -138,19 +138,21 @@ export async function renderTransactions() {
 
 /**
  * @param {any} t
- * @param {{refundMonthOf?: Map<string,string>, refundedOf?: Map<string,number>}} [ctx]
- *   退款配對標記（使用者定 2026-07-27，兩端都標）：退款列標「抵到哪個消費月」、消費列標「已退多少」。
+ * @param {{purchaseDateOf?: Map<string,string>, refundDateOf?: Map<string,string>}} [ctx]
+ *   退款配對標記（使用者定 2026-07-27，兩端都標**日期**）：退款列標「（消費：原消費日）」、
+ *   消費列標「（退款：退款日）」。標日期不標月份＝同一個月可能有好幾筆，日期才指得出是哪一筆；
+ *   金額不重複標＝同一列的金額欄已經印著。
  *   ⚠️ 純呈現：只加在畫面上，**絕不寫進 note／storeKey**——寫進去會被當成分店括號，下次整理店名就切爛了。
  */
 function rowHtml(t, ctx = {}) {
   const isIn = t.type === 'income';
   const isRefund = t.type === 'expense' && Number(t.amount) < 0;
   const isCredit = isIn || isRefund;
-  const pairedMonth = isRefund ? (ctx.refundMonthOf?.get(String(t.id)) || '') : '';
-  const refunded = !isRefund ? Number(ctx.refundedOf?.get(String(t.id)) || 0) : 0;
-  const pairTag = pairedMonth
-    ? ` <span class="muted" title="這筆退款抵減的是這個月的消費">（${esc(pairedMonth)}）</span>`
-    : (refunded > 0 ? ` <span class="muted" title="這筆消費後來收到退款，已從本月統計扣除">已退 ${money(refunded)}</span>` : '');
+  const purchaseDate = isRefund ? (ctx.purchaseDateOf?.get(String(t.id)) || '') : '';
+  const refundDate = !isRefund ? (ctx.refundDateOf?.get(String(t.id)) || '') : '';
+  const pairTag = purchaseDate
+    ? ` <span class="muted nowrap" title="這筆退款抵減的是這一天的消費">（消費：${esc(purchaseDate)}）</span>`
+    : (refundDate ? ` <span class="muted nowrap" title="這筆消費在這一天收到退款，已從消費當月的統計扣除">（退款：${esc(refundDate)}）</span>` : '');
   // 滑到顯示名＝看帳單原文（使用者定 2026-07-18：只放原文本身，不加前綴、不加點擊說明）；
   // 原文＝stmtRef 第 4 段（與後端整理/對照表同口徑，剝去重序號 |#N，Codex r10#5）；手動記帳無原文＝無 tooltip
   const orig = t.source === 'stmt' ? stmtOrig(t.stmtRef) : '';
@@ -160,7 +162,7 @@ function rowHtml(t, ctx = {}) {
     ? `<span class="store-open" data-store="${t.id}"${tip}>${esc(t.note)}</span>`
     : esc(t.note || '')) + pairTag;
   return `<tr>
-    <td>${esc(t.date)}</td>
+    <td class="nowrap">${esc(t.date)}</td>
     <td class="muted">${esc(t.account || '—')}</td>
     <td class="muted">${noteCell}</td>
     <td>${esc(t.category)}</td>
