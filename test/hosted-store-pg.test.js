@@ -29,6 +29,7 @@ process.env.NOTEASY_HOSTED = '1';
 process.env.SUPABASE_URL = 'https://example.supabase.co';
 process.env.SUPABASE_ANON_KEY = 'test-anon-key';
 process.env.SITE_ORIGIN = 'https://noteasy.com.tw';
+process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');   // C5：機密加密主金鑰（考題用固定值）
 
 const { setSupabaseFactoryForTest, cookieAdapterFor } = await import('../lib/services/auth.js');
 const { createFakePostgres, makeFakeSupabaseFactory } = await import('../test-doubles/fake-supabase.js');
