@@ -145,7 +145,7 @@ test('匯入：存下的 dir＝本筆實際方向（出帳→out）', () => {
 test('匯入：存下 autoNote＝收支說明過濾器好讀版（清空自訂說明時回復用；2026-07-27 起取代「摘要・原始備註」）', () => {
   const db = baseDb();
   importBankTxToDb(db, parsed([btx({ summary: '存款息', note: '利息2元', direction: 'in', amount: 2 })]));
-  assert.equal(db.transactions.at(-1).autoNote, '存款息・利息 2元');   // 存款息不在摘要對照表＝原樣；中文貼數字補空格
+  assert.equal(db.transactions.at(-1).autoNote, '存款利息・利息 2元');   // 存款息→存款利息（使用者定 2026-07-27 二修）；中文貼數字補空格
 });
 
 // ---------- 帳戶改名連動（身分比對，使用者定 2026-07-21「改一次、處處同步」）----------
