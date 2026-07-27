@@ -21,7 +21,7 @@ const { isHosted, hostedConfig, originAllowed } = await import('../lib/hosted.js
 const { app } = await import('../server.js');
 
 /** 可控假 client：紀錄呼叫、可指定回應；setAll 走真的 cookie 轉接頭驗旗標。 */
-const fake = { user: { id: 'u-1', email: 'a@x.com' }, failLogin: false, cookieJar: /** @type {any[]} */ ([]) };
+const fake = { user: { id: 'u-1', email: 'a@x.com' }, failLogin: false, throwGetUser: false, cookieJar: /** @type {any[]} */ ([]) };
 // 假 client **必須走真的 cookieAdapterFor→serializeCookie**（Codex #301 阻擋#2：自己 append Set-Cookie
 // ＝繞過正式 serializer，旗標考題考不到真程式）。這裡只假造 Supabase 的回應，cookie 寫入走正式管線。
 before(() => setSupabaseFactoryForTest((req, res) => {
@@ -34,8 +34,11 @@ before(() => setSupabaseFactoryForTest((req, res) => {
       return { data: { user: fake.user }, error: null };
     },
     signOut: async () => { cookies.setAll([{ name: 'sb-test-auth-token', value: '', options: { maxAge: 0 } }]); return { error: null }; },
-    getUser: async () => (String(req.headers.cookie || '').includes('sb-test-auth-token=abc')
-      ? { data: { user: fake.user } } : { data: { user: null } }),
+    getUser: async () => {
+      if (fake.throwGetUser) throw new Error('supabase down');
+      return String(req.headers.cookie || '').includes('sb-test-auth-token=abc')
+        ? { data: { user: fake.user } } : { data: { user: null } };
+    },
     verifyOtp: async ({ token_hash }) => (token_hash === 'good'
       ? { data: { user: fake.user }, error: null } : { data: {}, error: { message: 'expired' } }),
     updateUser: async () => ({ error: null }),
@@ -113,7 +116,8 @@ test('HOSTED 靜態：/ 是公開站、/login extensionless、/health JSON、/we
   assert.match(await (await fetch(`${base}/login`)).text(), /登入｜不簡單/, 'extensionless rewrite');
   assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true }, '裁決④：/health 給機器');
   assert.match(await (await fetch(`${base}/wellness`)).text(), /健康｜不簡單/);
-  assert.match(await (await fetch(`${base}/finance/`)).text(), /個人理財中心/, '/finance＝既有 SPA（C3 才掛 gate）');
+  // C3 上線後 /finance 要登入（本題前提隨 C3 更新）：帶 session 驗 SPA 有掛在這條路徑
+  assert.match(await (await fetch(`${base}/finance/`, { headers: { Cookie: 'sb-test-auth-token=abc' } })).text(), /個人理財中心/, '/finance＝既有 SPA（登入後）');
 });
 
 test('auth 回應不可被快取：setAll 第二參數 headers 有轉發＋/api/auth/* 一律 no-store（Codex #301 r2）', async () => {
@@ -154,4 +158,41 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
     }
   }
   assert.deepEqual(hits, [], 'service_role key＝萬能鑰匙，絕不可進 repo');
+});
+
+// ---- C3 auth gate（P1-1：只宣稱 401／轉登入，不宣稱隔離——隔離歸 C4）----
+test('C3 gate：未登入打理財 API＝401（逐 router 抽樣、含寫入方法）；白名單與公開站不受影響', async () => {
+  // 各 router 抽樣（core/crud/market/ib/statement/securities 都要在牆內）
+  for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/export', '/api/refund-pairs', '/api/backup/daily']) {
+    const r = await fetch(`${base}${p}`);
+    assert.equal(r.status, 401, `GET ${p} 未登入必 401`);
+    assert.deepEqual(await r.json(), { error: '請先登入' });
+  }
+  const post = await fetch(`${base}/api/transactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN }, body: '{}' });
+  assert.equal(post.status, 401, '寫入方法同樣被牆擋（且在 CSRF 之後、業務邏輯之前）');
+  // 白名單：登入功能本身與 /health 照常
+  assert.equal((await fetch(`${base}/api/auth/me`)).status, 200);
+  assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true });
+  // 公開站不經牆
+  assert.match(await (await fetch(`${base}/login`)).text(), /登入｜不簡單/);
+});
+
+test('C3 gate：/finance 未登入＝轉 /login；登入後 API 與 /finance 都通（C3 不宣稱隔離＝仍是全域庫）', async () => {
+  const page = await fetch(`${base}/finance/`, { redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/login');
+  // 有 session（假 client 認 sb-test-auth-token=abc）＝放行
+  const okApi = await fetch(`${base}/api/summary`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
+  assert.equal(okApi.status, 200, '登入後 API 通（資料仍是全域庫＝C3 明示不宣稱隔離，C4 才驗收）');
+  const okPage = await fetch(`${base}/finance/`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
+  assert.match(await okPage.text(), /個人理財中心/);
+});
+
+test('C3 gate：驗證服務炸掉＝fail-closed 當未登入（絕不放行）', async () => {
+  const savedFail = fake.failLogin;
+  fake.throwGetUser = true;
+  const r = await fetch(`${base}/api/db`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
+  fake.throwGetUser = false;
+  fake.failLogin = savedFail;
+  assert.equal(r.status, 401, 'getUser 丟例外＝401，不可放行');
 });

@@ -13,7 +13,7 @@ import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
 import { installJsonBodyParsers } from './lib/http-body.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
-import { authRoutes, csrfOriginGuard } from './lib/routes/auth.js';
+import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
@@ -26,6 +26,7 @@ if (isHosted()) {
   app.use(csrfOriginGuard);             // CSRF Origin 牆（變更類請求；C0 威脅模型）
   app.get('/health', (req, res) => res.json({ ok: true }));   // 機器健康檢查（裁決④：/health 讓給機器）
   app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
+  app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）——只宣稱 401，隔離歸 C4
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
   const site = join(__dirname, 'public-site');
   app.use(express.static(site, { extensions: ['html'] }));
