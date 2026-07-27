@@ -9,7 +9,7 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
-import { refundLookups, consumptionCategoryTotals, unmatchedRefundsForMonth } from './refund-attribution.js';
+import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth } from './refund-attribution.js';
 import { openStatementUpload, openBatchManager } from './transactions-import.js';
 
 // 支出分類樹：每次 render 從 /api/categories 取目前生效的樹（缺→後端回內建預設）。信用卡明細只有支出，
@@ -57,7 +57,7 @@ export async function renderTransactions() {
   const expense = Object.values(byCat).reduce((s, v) => s + Number(v || 0), 0);
   const unmatchedThisMonth = unmatchedRefundsForMonth(refundData?.unmatchedRefunds, all, monthFilter);
   const unmatchedTotal = unmatchedThisMonth.reduce((s, /** @type {any} */ u) => s + Math.abs(Number(u.amount) || 0), 0);
-  const topCats = Object.entries(byCat).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
+  const topCats = topSpendCategories(byCat, 6);   // 淨額 0 的分類不畫（Codex 複審 2026-07-27，與月度回顧同口徑）
   const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
 
   view().innerHTML = `
