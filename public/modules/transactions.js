@@ -70,7 +70,7 @@ export async function renderTransactions() {
     </div>
 
     <div class="cards">
-      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>${refundData ? '<div class="muted" style="font-size:11.5px">退款已歸回原消費月</div>' : ''}</div>
+      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>${refundData ? '<div class="muted" style="font-size:11.5px">「退款」金額不會算進「本月消費」裡</div>' : ''}</div>
       <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div></div>
     </div>
 
@@ -104,14 +104,18 @@ export async function renderTransactions() {
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
+  // 文案＝使用者 2026-07-27 親自改寫的版本（逐字採用，勿順手潤飾）：條列式、關鍵詞標色。
   byId('lensInfo').onclick = () => openInfo('退款算在哪個月？', `
-    <p>上面的「本月消費」與分類統計，用的是<b>消費歸屬</b>：退款會回頭抵掉你<b>當初刷卡的那個月</b>，
-      跟總覽的「月度回顧」同一套算法。你其實沒花那筆錢，帳就記在你原本以為花掉的月份。</p>
-    <p>例：1 月刷 Klook 1,700、3 月收到退款 → <b>1 月的娛樂減 1,700，3 月不動</b>。</p>
-    <p><b>下面的明細列表不搬動</b>——那是銀行帳單上印的東西，日期照帳單走，才對得起帳單。
-      所以<b>圖表金額不會等於明細的加總</b>，這是刻意的：上面看真實花費，下面看帳單原貌。</p>
-    <p>退款要「<b>同一張卡＋同一家店＋金額一樣＋消費日比退款日早</b>」才配得起來；配不到的一律不計入
-      （寧可少抵，也不亂抵到別家店），並列在分類統計下方。</p>`, { size: 'md' });
+    <ul>
+      <li>本月收到的<b class="hl">「退款」</b>不會計算到「本月消費」及「本月消費分類」。</li>
+      <li><b class="hl">「退款」</b>收到的金額會回去抵掉「當初刷卡月」的消費支出。
+        <div class="info-eg">例：1 月刷 Klook 1,700元｜3 月收到退款 → 1 月的消費會減 1,700｜3 月消費則不受影響</div></li>
+      <li>「明細列表」是銀行帳單上印的東西，日期照帳單走，才對得起帳單。</li>
+      <li>所以「本月消費分類」圖表金額不會等於「明細列表」的加總，這是刻意的。</li>
+      <li>「本月消費」及「本月消費分類」看<b class="hl">當月真實花費</b>｜「明細列表」看<b class="hl">帳單原貌</b>。</li>
+      <li>退款要「同一張卡＋同一家店＋同一個金額＋消費日比退款日早」才配得起來。</li>
+      <li>配不到的一律不計入（寧可少抵，也不亂抵到別家店），並列在分類統計下方。</li>
+    </ul>`, { size: 'md' });
   const unmatchedBtn = byId('unmatchedInfo');
   if (unmatchedBtn) unmatchedBtn.onclick = () => openInfo('這些退款為什麼沒被計入？', `
     <p>它們找不到能證明是「同一筆消費被退回」的對象，常見原因：</p>

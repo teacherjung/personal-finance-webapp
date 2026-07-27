@@ -114,6 +114,12 @@ main { flex: 1; min-width: 0; width: 100%; padding: 34px 42px; max-width: 1140px
 .info-body { font-size: 13.5px; line-height: 1.7; color: var(--text); }
 .info-body p { margin-bottom: 10px; }
 .info-body p:last-child { margin-bottom: 0; }
+/* 條列版式與重點詞標色（使用者定 2026-07-27「退款算在哪個月？」版式；.hl 沿用 .batch-help 的既有慣例） */
+.info-body ul { margin: 0; padding-left: 20px; }
+.info-body li { margin-bottom: 8px; }
+.info-body li:last-child { margin-bottom: 0; }
+.info-body .hl { color: var(--accent); font-weight: 600; }
+.info-body .info-eg { margin: 6px 0 2px; color: var(--text-dim); }
 
 /* ---------- Reminders ---------- */
 .reminders { display: flex; flex-direction: column; gap: 9px; }
