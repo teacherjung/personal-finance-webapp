@@ -116,6 +116,20 @@ test('HOSTED 靜態：/ 是公開站、/login extensionless、/health JSON、/we
   assert.match(await (await fetch(`${base}/finance/`)).text(), /個人理財中心/, '/finance＝既有 SPA（C3 才掛 gate）');
 });
 
+test('auth 回應不可被快取：setAll 第二參數 headers 有轉發＋/api/auth/* 一律 no-store（Codex #301 r2）', async () => {
+  // ① adapter 轉發 ssr 傳來的 headers（cookies.js:447 那組防快取標頭）
+  const fakeRes = { headers: /** @type {Record<string,string>} */ ({}), cookies: /** @type {string[]} */ ([]),
+    set(/** @type {string} */ k, /** @type {string} */ v) { this.headers[k] = v; },
+    append(/** @type {string} */ k, /** @type {string} */ v) { this.cookies.push(v); } };
+  cookieAdapterFor({ headers: {} }, fakeRes).setAll([{ name: 'sb-t', value: 'v' }], { 'Cache-Control': 'no-store', Pragma: 'no-cache' });
+  assert.equal(fakeRes.headers['Cache-Control'], 'no-store');
+  assert.equal(fakeRes.headers.Pragma, 'no-cache');
+  assert.match(fakeRes.cookies[0], /Secure/);
+  // ② 就算 ssr 沒傳（讀路徑），/api/auth/* 回應也一律 no-store
+  const me = await fetch(`${base}/api/auth/me`);
+  assert.match(String(me.headers.get('cache-control')), /no-store/);
+});
+
 test('serializeCookie：Secure 無條件開、沒有任何環境變數能關（Codex #301 回歸釘）', () => {
   process.env.NOTEASY_INSECURE_COOKIE = '1';   // 舊開關已刪：就算有人把它設回來也不該有任何效果
   const c = serializeCookie('sb-x', 'v', { maxAge: 60 });
