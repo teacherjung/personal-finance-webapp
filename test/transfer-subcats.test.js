@@ -40,11 +40,11 @@ test('sanitizeTransferSubs：label 去重/去空/去保留字；role 每角色�
 });
 
 // ---------- conformTransferSub ----------
-test('conformTransferSub：現行標籤保留；預設角色標籤被改名→現名；角色刪除/非清單→空', () => {
-  const db = getDb();
+test('conformTransferSub：現行標籤保留；預設角色標籤被改名→現名；角色刪除/非清單→空', async () => {
+  const db = await getDb();
   db.transferSubs = [{ label: '轉出去', role: 'out' }, { label: '內轉入', role: 'in' }, { label: '還卡費' }];   // out 改名、無 settle
-  saveDb(db);
-  const d = getDb();
+  await saveDb(db);
+  const d = await getDb();
   assert.equal(conformTransferSub(d, '轉出去'), '轉出去');   // 現行標籤
   assert.equal(conformTransferSub(d, '內轉出'), '轉出去');   // 預設 out 標籤 → 現名
   assert.equal(conformTransferSub(d, '交割'), '');           // settle 已刪 → 空
@@ -52,24 +52,24 @@ test('conformTransferSub：現行標籤保留；預設角色標籤被改名→�
   assert.equal(conformTransferSub(d, '還卡費'), '還卡費');   // 自訂現行 → 保留
 });
 
-test('conformTransferSub：角色優先——out 改名＋又自訂一項叫「內轉出」時，分類器的內轉出仍對到 out 現名（對抗審查 r1）', () => {
-  const db = getDb();
+test('conformTransferSub：角色優先——out 改名＋又自訂一項叫「內轉出」時，分類器的內轉出仍對到 out 現名（對抗審查 r1）', async () => {
+  const db = await getDb();
   db.transferSubs = [{ label: '轉出', role: 'out' }, { label: '內轉入', role: 'in' }, { label: '交割', role: 'settle' }, { label: '內轉出' }];
-  saveDb(db);
-  assert.equal(conformTransferSub(getDb(), '內轉出'), '轉出');   // 角色優先，不誤對到同名的無角色自訂項
+  await saveDb(db);
+  assert.equal(conformTransferSub(await getDb(), '內轉出'), '轉出');   // 角色優先，不誤對到同名的無角色自訂項
 });
 
 // ---------- effectiveTransferSubs ----------
-test('effectiveTransferSubs：db 空 → 預設；有值 → 清理後回', () => {
-  const db = getDb();
+test('effectiveTransferSubs：db 空 → 預設；有值 → 清理後回', async () => {
+  const db = await getDb();
   db.transferSubs = [];
-  saveDb(db);
-  assert.deepEqual(effectiveTransferSubs(getDb()).map(s => s.label), ['內轉出', '內轉入', '交割']);
+  await saveDb(db);
+  assert.deepEqual(effectiveTransferSubs(await getDb()).map(s => s.label), ['內轉出', '內轉入', '交割']);
 });
 
 // ---------- saveTransferSubs（連動更新） ----------
-test('saveTransferSubs：改名（角色＋自訂）連動既有內轉交易；刪除→conform；支出不動', () => {
-  const db = getDb();
+test('saveTransferSubs：改名（角色＋自訂）連動既有內轉交易；刪除→conform；支出不動', async () => {
+  const db = await getDb();
   db.transferSubs = [{ label: '內轉出', role: 'out' }, { label: '內轉入', role: 'in' }, { label: '交割', role: 'settle' }, { label: '還卡費' }];
   db.transactions = [
     { id: 't1', type: 'transfer', category: '內轉', subcategory: '內轉出', ledger: 'cashflow', date: '2026-06-01', amount: 100 },
@@ -77,21 +77,21 @@ test('saveTransferSubs：改名（角色＋自訂）連動既有內轉交易；�
     { id: 't3', type: 'transfer', category: '內轉', subcategory: '交割', ledger: 'cashflow', date: '2026-06-03', amount: 300 },
     { id: 'e1', type: 'expense', category: '飲食', subcategory: '外食', ledger: 'cashflow', date: '2026-06-04', amount: 50 },
   ];
-  saveDb(db);
-  const r = saveTransferSubs({
+  await saveDb(db);
+  const r = await saveTransferSubs({
     subs: [{ label: '轉出去', role: 'out' }, { label: '內轉入', role: 'in' }, { label: '還信用卡' }],   // 內轉出→轉出去、還卡費→還信用卡、刪交割
     renames: [{ from: '內轉出', to: '轉出去' }, { from: '還卡費', to: '還信用卡' }],
   });
-  const after = getDb().transactions;
+  const after = (await getDb()).transactions;
   assert.equal(after.find(t => t.id === 't1').subcategory, '轉出去');   // 角色改名連動
   assert.equal(after.find(t => t.id === 't2').subcategory, '還信用卡'); // 自訂改名連動
   assert.equal(after.find(t => t.id === 't3').subcategory, '');          // 交割刪除 → conform 空
   assert.equal(after.find(t => t.id === 'e1').subcategory, '外食');      // 支出不受影響
   assert.ok(r.changedTx >= 3);
 });
-test('saveTransferSubs：保留字整組拒絕（400）', () => {
-  assert.throws(() => saveTransferSubs({ subs: [{ label: '__proto__' }] }), /保留字/);
-  assert.throws(() => saveTransferSubs({ subs: [{ label: 'x' }], renames: [{ from: 'a', to: '__proto__' }] }), /保留字/);
+test('saveTransferSubs：保留字整組拒絕（400）', async () => {
+  await assert.rejects(() => saveTransferSubs({ subs: [{ label: '__proto__' }] }), /保留字/);
+  await assert.rejects(() => saveTransferSubs({ subs: [{ label: 'x' }], renames: [{ from: 'a', to: '__proto__' }] }), /保留字/);
 });
 
 // ---------- 整合：自動分類 conform 到現名 ----------

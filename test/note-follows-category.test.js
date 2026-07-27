@@ -32,9 +32,9 @@ const seed = (tx, learned) => store.save({ ...store.emptyDb(),
     amount: 60, note: ORIG, storeKey: '嘟嘟房', source: 'stmt', stmtRef: `c1|2026-07-01|60|${ORIG}`, ...tx }],
   learnedCategories: learned || {} });
 
-test('只改分類：顯示名跟著新分類重算，而且不留假自訂名', () => {
+test('只改分類：顯示名跟著新分類重算，而且不留假自訂名', async () => {
   seed({});
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   const db = store.load();
   assert.equal(db.transactions?.[0].note, '停車費（嘟嘟房林口站）',
     '改完分類顯示名就要跟上，不必再去按「整理店名格式」');
@@ -44,45 +44,45 @@ test('只改分類：顯示名跟著新分類重算，而且不留假自訂名',
     '分類照舊學在品牌層');
 });
 
-test('這次真的改了店名：以使用者取的名字為準並學起來（不可被自動名蓋掉）', () => {
+test('這次真的改了店名：以使用者取的名字為準並學起來（不可被自動名蓋掉）', async () => {
   seed({ category: '交通', subcategory: '停車費', note: '停車費（嘟嘟房林口站）' });
-  updateItem('transactions', 't1', { note: '公司樓下停車場' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { note: '公司樓下停車場' }, learnFromStmtEdit);
   const db = store.load();
   assert.equal(db.transactions?.[0].note, '公司樓下停車場', '使用者打的名字不可被覆寫');
   assert.equal(db.learnedCategories?.[ORIG]?.name, '公司樓下停車場', '而且要學起來，下次匯入沿用');
 });
 
-test('已有自訂名 + 只改分類：自訂名逐字不動，不自動貼標記（使用者定 2026-07-20）', () => {
+test('已有自訂名 + 只改分類：自訂名逐字不動，不自動貼標記（使用者定 2026-07-20）', async () => {
   // 使用者刻意取的顯示名＝逐字照登：就算子類改成「停車費」，也不自動包成「停車費（公司樓下）」——
   // 使用者在編輯框看到的本來就是完整顯示名，沒打標記＝他的選擇（不希望 app 再貼）。
   seed({ note: '公司樓下' }, { [ORIG]: { name: '公司樓下' } });
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   const db = store.load();
   assert.equal(db.transactions?.[0].note, '公司樓下', '自訂名逐字保留，不自動貼「停車費（）」');
   assert.equal(db.learnedCategories?.[ORIG]?.name, '公司樓下', '學習表存的自訂名也不動');
 });
 
-test('冪等：同樣的編輯再存一次，顯示名與學習表都不再變動', () => {
+test('冪等：同樣的編輯再存一次，顯示名與學習表都不再變動', async () => {
   seed({});
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   const after1 = JSON.stringify(store.load());
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   assert.equal(JSON.stringify(store.load()), after1, '重複儲存不可讓名字愈包愈多層');
 });
 
-test('把分類改回非停車：包裝要拆掉，不可留著「停車費（…）」', () => {
+test('把分類改回非停車：包裝要拆掉，不可留著「停車費（…）」', async () => {
   seed({});
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   assert.equal(store.load().transactions?.[0].note, '停車費（嘟嘟房林口站）');
-  updateItem('transactions', 't1', { category: '生活', subcategory: '其他生活雜支' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '生活', subcategory: '其他生活雜支' }, learnFromStmtEdit);
   assert.equal(store.load().transactions?.[0].note, '嘟嘟房林口站', '改錯了改回來，名字也要跟著回去');
 });
 
-test('手動記帳（沒有帳單原文）不受影響', () => {
+test('手動記帳（沒有帳單原文）不受影響', async () => {
   store.save({ ...store.emptyDb(),
     transactions: [{ id: 't1', date: '2026-07-01', type: 'expense', category: '其他', subcategory: '未分類',
       amount: 60, note: '我自己寫的備註' }] });
-  updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
+  await updateItem('transactions', 't1', { category: '交通', subcategory: '停車費' }, learnFromStmtEdit);
   assert.equal(store.load().transactions?.[0].note, '我自己寫的備註', '手動記帳的備註絕不可被改寫');
   assert.deepEqual(store.load().learnedCategories, {}, '手動記帳不學');
 });
@@ -100,7 +100,7 @@ test('同店一起改：那 N 筆的顯示名也要跟著新分類重算', async
   store.save({ ...store.emptyDb(),
     transactions: [mk('2026-07-11', '阜爾運通信義店'), mk('2026-07-12', '阜爾運通大安店')] });
 
-  const r = applyCategoryToStore('阜爾運通', '交通', '停車費');
+  const r = await applyCategoryToStore('阜爾運通', '交通', '停車費');
   assert.equal(r.changed, 2);
   assert.deepEqual((store.load().transactions || []).map(t => t.note),
     ['停車費（阜爾運通信義店）', '停車費（阜爾運通大安店）'],
@@ -115,7 +115,7 @@ test('同店一起改：有自訂名的那一筆，逐字保留、不自動貼�
       amount: 50, note: '公司樓下', storeKey: '阜爾運通', source: 'stmt', stmtRef: `c1|2026-07-11|50|${orig}` }],
     learnedCategories: { [orig]: { name: '公司樓下' } } });
 
-  applyCategoryToStore('阜爾運通', '交通', '停車費');
+  await applyCategoryToStore('阜爾運通', '交通', '停車費');
   assert.equal(store.load().transactions?.[0].note, '公司樓下', '自訂名逐字保留，不自動包成「停車費（）」');
   assert.equal(store.load().learnedCategories?.[orig]?.name, '公司樓下', '自訂名本身不動');
 });
@@ -126,8 +126,8 @@ test('同店一起改：冪等（再跑一次不會愈包愈多層）', async ()
     transactions: [{ id: 't1', date: '2026-07-11', type: 'expense', category: '其他', subcategory: '未分類',
       amount: 50, note: '阜爾運通信義店', storeKey: '阜爾運通', source: 'stmt',
       stmtRef: 'c1|2026-07-11|50|阜爾運通信義店' }] });
-  applyCategoryToStore('阜爾運通', '交通', '停車費');
+  await applyCategoryToStore('阜爾運通', '交通', '停車費');
   const once = store.load().transactions?.[0].note;
-  applyCategoryToStore('阜爾運通', '交通', '停車費');
+  await applyCategoryToStore('阜爾運通', '交通', '停車費');
   assert.equal(store.load().transactions?.[0].note, once, '重複套用結果不變');
 });

@@ -50,9 +50,9 @@ test('safeMap 重建：丟掉自有的 __proto__ 鍵（JSON.parse 做得出這�
   assert.ok(dropped.includes('__proto__'));
 });
 
-test('分類改名：parent 是 __proto__ 不可污染全域原型（Codex r4 實測案例）', () => {
+test('分類改名：parent 是 __proto__ 不可污染全域原型（Codex r4 實測案例）', async () => {
   store.save({ ...store.emptyDb() });
-  saveTree({ tree: { '飲食': ['麵食'] }, subRenames: [{ parent: '__proto__', from: 'x', to: 'codexPolluted' }] });
+  await saveTree({ tree: { '飲食': ['麵食'] }, subRenames: [{ parent: '__proto__', from: 'x', to: 'codexPolluted' }] });
   assert.equal(inherited('codexPolluted'), undefined, 'Object.prototype 不可被污染');
 });
 
@@ -97,40 +97,40 @@ test('r5#1｜learnFromImport：storeKey 是 __proto__ → 不污染原型、不�
   assert.ok(Object.hasOwn(db.learnedCategories, '好店'), '真店名照常寫入');
 });
 
-test('r5#1｜applyCategoryToStore：鑰匙是保留字 → 明確 400，不污染', () => {
+test('r5#1｜applyCategoryToStore：鑰匙是保留字 → 明確 400，不污染', async () => {
   store.save({ ...store.emptyDb() });
-  assert.throws(() => applyCategoryToStore('__proto__', '飲食'), /保留字/);
-  assert.throws(() => applyCategoryToStore('toString', '飲食'), /保留字/);
+  await assert.rejects(() => applyCategoryToStore('__proto__', '飲食'), /保留字/);
+  await assert.rejects(() => applyCategoryToStore('toString', '飲食'), /保留字/);
   assert.equal(inherited('category'), undefined);
 });
 
-test('r5#1｜renameStoreDisplay：原文／新名是保留字 → 明確 400，學習表原型不可被換掉', () => {
+test('r5#1｜renameStoreDisplay：原文／新名是保留字 → 明確 400，學習表原型不可被換掉', async () => {
   store.save({ ...store.emptyDb(), learnedCategories: { '好店': { category: '飲食' } } });
-  assert.throws(() => renameStoreDisplay('__proto__', '新名字'), /保留字/);
-  assert.throws(() => renameStoreDisplay('好店 台北', '__proto__'), /保留字/);
-  const lc = getLearned();
+  await assert.rejects(() => renameStoreDisplay('__proto__', '新名字'), /保留字/);
+  await assert.rejects(() => renameStoreDisplay('好店 台北', '__proto__'), /保留字/);
+  const lc = await getLearned();
   assert.equal(Object.getPrototypeOf(lc) === Object.prototype || Object.getPrototypeOf(lc) === null, true,
     '學習表的原型不可被換成別的物件（lc[__proto__]=e 的後果）');
   assert.ok(Object.hasOwn(lc, '好店'), '既有學習不受影響');
 });
 
-test('r5#1｜deleteLearned：toString 走原型鏈的 in 誤判已修——不誤刪、不拋錯、真鍵照刪', () => {
+test('r5#1｜deleteLearned：toString 走原型鏈的 in 誤判已修——不誤刪、不拋錯、真鍵照刪', async () => {
   store.save({ ...store.emptyDb(), learnedCategories: { '好店': { category: '飲食' } } });
-  assert.deepEqual(deleteLearned('toString'), { ok: true });
-  assert.ok(Object.hasOwn(getLearned(), '好店'), '無關的刪除不可動到既有學習');
-  deleteLearned('好店');
-  assert.ok(!Object.hasOwn(getLearned(), '好店'), '真的自有鍵照常刪');
+  assert.deepEqual(await deleteLearned('toString'), { ok: true });
+  assert.ok(Object.hasOwn(await getLearned(), '好店'), '無關的刪除不可動到既有學習');
+  await deleteLearned('好店');
+  assert.ok(!Object.hasOwn(await getLearned(), '好店'), '真的自有鍵照常刪');
 });
 
 // ---------- Codex r5#4：分類樹——寫入明確拒絕（不靜默吞掉）、讀取容忍舊資料 ----------
-test('r5#4｜saveTree：分類名／子類名／改名目標是保留字 → 明確 400（以前靜默消失＝改名變刪除）', () => {
+test('r5#4｜saveTree：分類名／子類名／改名目標是保留字 → 明確 400（以前靜默消失＝改名變刪除）', async () => {
   store.save({ ...store.emptyDb() });
   // ⚠️ 大類名要用 JSON.parse 做：物件「字面量」裡的 '__proto__' 是設原型的特殊語法、不會成為自有鍵；
   // 真實 HTTP 路徑就是 JSON.parse，做得出這種自有鍵
-  assert.throws(() => saveTree({ tree: JSON.parse('{"__proto__": ["x"]}') }), /保留字/);
-  assert.throws(() => saveTree({ tree: { '飲食': ['__proto__'] } }), /保留字/);
-  assert.throws(() => saveTree({ tree: { 'toString': ['x'] } }), /保留字/, '寫入口徑統一：整個保留字家族都拒（讀取仍容忍舊資料）');
-  assert.throws(() => saveTree({ tree: { '飲食': ['麵食'] }, parentRenames: [{ from: '飲食', to: '__proto__' }] }), /保留字/);
+  await assert.rejects(() => saveTree({ tree: JSON.parse('{"__proto__": ["x"]}') }), /保留字/);
+  await assert.rejects(() => saveTree({ tree: { '飲食': ['__proto__'] } }), /保留字/);
+  await assert.rejects(() => saveTree({ tree: { 'toString': ['x'] } }), /保留字/, '寫入口徑統一：整個保留字家族都拒（讀取仍容忍舊資料）');
+  await assert.rejects(() => saveTree({ tree: { '飲食': ['麵食'] }, parentRenames: [{ from: '飲食', to: '__proto__' }] }), /保留字/);
   assert.equal(inherited('x'), undefined);
 });
 
@@ -168,12 +168,12 @@ test('r6#3｜resolveImportCategory：舊分類叫 toString → 原樣保留，�
   assert.deepEqual(resolveImportCategory(db, '不存在的', ''), ['其他', '未分類'], '正常校正不受影響');
 });
 
-test('r6#3｜listBatches：批次 id 是 __proto__ → 批次照常出現在清單、不污染全域', () => {
+test('r6#3｜listBatches：批次 id 是 __proto__ → 批次照常出現在清單、不污染全域', async () => {
   store.save({ ...store.emptyDb(), transactions: [
     { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 100,
       source: 'stmt', stmtRef: 'c|2026-07-01|100|某店', importBatch: '__proto__', importedAt: '2026-07-01T00:00:00Z' },
   ] });
-  const batches = listBatches();
+  const batches = await listBatches();
   assert.equal(batches.length, 1, '以前這一批會從清單消失（讀到原型本尊、永遠不進 groups 的自有鍵）');
   assert.equal(batches[0].batchId, '__proto__');
   assert.equal(batches[0].count, 1);

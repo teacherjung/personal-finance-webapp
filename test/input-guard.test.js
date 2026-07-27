@@ -118,7 +118,7 @@ test('帳單匯入端點：超長 desc＝400 點名且資料庫零寫入（服�
 
   // 合法長 desc（>200 但 ≤20000＝匯入內容不被短欄誤傷）照常入庫，note/stmtRef/storeKey 一字不截
   const longButLegal = 'Ｘ'.repeat(500);
-  const r = importRows('c1', [{ date: '2026-07-02', amount: 200, desc: longButLegal, stmtRef: 'y' }], '2026-07', null);
+  const r = await importRows('c1', [{ date: '2026-07-02', amount: 200, desc: longButLegal, stmtRef: 'y' }], '2026-07', null);
   assert.equal(r.imported, 1);
   const tx = store.load().transactions[0];
   assert.ok(tx.stmtRef.includes(longButLegal), 'stmtRef 保留完整原文、不截斷');

@@ -22,11 +22,11 @@ test('升級清掃：違約舊列開機時濾除＋備份，合法列存活，ap
     // ① 「上一版」：正常寫入一筆合法列（過現行櫃檯）
     run(`
       import { getDb, saveDb } from ${JSON.stringify(join(ROOT, 'lib/repo.js'))};
-      const db = getDb();
+      const db = await getDb();
       db.securityTrades = [{ id: 'good', source: 'taishin', sourceRef: 'ts|f|ok|#1', tradeDate: '2026-01-13',
         side: 'buy', cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050',
         price: 40, grossAmount: 400, netSettlement: 401 }];
-      saveDb(db);
+      await saveDb(db);
     `);
     // ② 直接改庫模擬「收緊前寫入的違約列」＋清掉一次性旗標。兩種病：
     //    legacy-bad＝缺三個核心金額；sneaky-bad＝price 存了非數字（對抗驗證抓到的狡猾款——
@@ -47,10 +47,10 @@ test('升級清掃：違約舊列開機時濾除＋備份，合法列存活，ap
     // ③ 「新版開機」：載入清掃應濾除違約列，且之後的 saveDb（含無關寫入）完全正常
     const out = run(`
       import { getDb, saveDb } from ${JSON.stringify(join(ROOT, 'lib/repo.js'))};
-      const db = getDb();
+      const db = await getDb();
       db.transactions.push({ id: 't1', date: '2026-06-01', amount: 100, category: '其他', type: 'expense', ledger: 'cashflow' });
-      saveDb(db);   // 沒清掃的話：這裡就在櫃檯炸掉（磚掉重現）
-      console.log(JSON.stringify(getDb().securityTrades.map(r => r.id)));
+      await saveDb(db);   // 沒清掃的話：這裡就在櫃檯炸掉（磚掉重現）
+      console.log(JSON.stringify((await getDb()).securityTrades.map(r => r.id)));
     `);
     assert.deepEqual(JSON.parse(out.trim().split('\n').pop() || '[]'), ['good'], '兩種違約列（缺核心金額／數字欄非數字）都在開機被濾除、合法列存活');
     assert.ok(existsSync(BAK), '清掃前先備份 pre-sec-contract.bak');

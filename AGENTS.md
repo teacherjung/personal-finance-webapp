@@ -16,7 +16,7 @@
 
 審查與建議請以此方向為前提（例：store.json 的深度優化價值有限——B 階段會換 SQLite；但正確性 bug 照抓）。
 
-- 後端（B2 已分層）：`server.js`＝薄殼（啟動＋掛路由，只聽 `127.0.0.1`，埠 `PORT` 或 4321）→ `lib/routes/*.js`（HTTP 路由：core/crud/market/ib/statement）→ `lib/services/*.js`（業務邏輯：learning/snapshot/ib-sync/statement-import）→ `lib/repo.js`（資料存取單一櫃檯）→ `lib/store.js`（**SQLite `data/store.db`**，Node 內建 node:sqlite、WAL＋交易；舊 `store.json` 首次啟動自動搬家、原檔保留當備份）。欄位白名單在 `lib/schema.js`
+- 後端（B2 已分層）：`server.js`＝薄殼（啟動＋掛路由，只聽 `127.0.0.1`，埠 `PORT` 或 4321）→ `lib/routes/*.js`（HTTP 路由：core/crud/market/ib/statement）→ `lib/services/*.js`（業務邏輯：learning/snapshot/ib-sync/statement-import）→ `lib/repo.js`（資料存取單一櫃檯；**C4a 起全介面 async**，見鐵則 8）→ `lib/store.js`（**SQLite `data/store.db`**，Node 內建 node:sqlite、WAL＋交易；舊 `store.json` 首次啟動自動搬家、原檔保留當備份）。欄位白名單在 `lib/schema.js`
 - 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
 - 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
 - IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
@@ -67,6 +67,11 @@
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
 6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「10 頁 reload 無錯」把關，型別檢查主力放資料邏輯）。`portfolio-valuation.js` 的 `fxGaugeHtml`＝**刻意休眠停放**（有固定輸入輸出考題、目前未插入頁面），非死碼、勿刪。
 7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
+8. **repo 櫃檯是 async 的（C4a，2026-07-27；C4b Postgres 的前置）**——四條規矩：
+   ①**呼叫必 `await`**：`getDb`/`saveDb`/`getCollection`/`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`getSettings`/`updateSettings` 全回 Promise（轉供的 `uid`/`emptyDb`/`backupNow`/`normalizeLedger` 仍同步）。最陰的漏法＝`res.json(service())` 忘了 await——**不炸、默默回 `{}`**；tsc 只抓得到「讀屬性」的漏，寫入 fire-and-forget 要靠自查。
+   ②**Express handler 一律包 `wrapRoute`（statement/ib 慣例：帶 status 錯回原味 JSON）或 `asyncRoute`（core/crud/securities 慣例：一切交全域錯誤中介）**——Express 4 不接 async handler 的 rejection，裸的 async handler 拋錯＝unhandled rejection、請求掛死。兩個包裝器語意不同，別混用（會改變既有錯誤口徑）。
+   ③**「getDb→改→saveDb」之間不可夾外部 IO await**（fetch/fs/timer）：LOCAL 下櫃檯呼叫只隔 microtask、Node 清空 microtask queue 前不會處理下一個請求，所以讀改寫鏈對其他請求不可分割（`test/repo-async.test.js` 用 HTTP 並發釘死）；一夾真 IO 就打開 stale-overwrite 窗口（先例＝syncIb r3#1／refreshQuotesIfStale r13#1 的「先抓完外部資料、才 getDb 寫」模式，照抄它）。同一個請求內也**不可 `Promise.all` 兩條寫入鏈**（兩者都會先讀舊快照、後寫蓋前寫）——寫入一律序列 await。
+   ④**`updateItem` 的 `beforeSave` 必須是同步函式**（在讀寫之間對記憶體 db 動手；C4b 的 CAS 依賴此假設）。`effectiveTree`/`effectiveIncomeTree`/`effectiveTransferSubs` 已改**純函式、db 必填**——漏傳不再有預設值可躲（以前 `db = getDb()` 預設參數會拿到 Promise、默默退回內建樹）。
 
 ## 投資領域語意（改相關程式前必讀）
 
@@ -82,6 +87,7 @@
 
 | 改這裡 | 記得同步這裡 |
 |---|---|
+| `lib/repo.js` 介面（加函式／改簽名） | **新函式一律 async**（C4a 契約，鐵則 8）：全部呼叫端 `await`＋handler 包 `wrapRoute`/`asyncRoute`；改完跑 `npm run typecheck`（抓「讀」的漏）＋grep 掃「寫」的 fire-and-forget（tsc 抓不到）；`test/repo-async.test.js` 的簽名鎖與 HTTP 並發考題必須仍綠 |
 | PDF 逐列抽取器（pdfjs → 帶座標的列） | **三份刻意分工、勿合併**（系統優化盤點確認，2026-07-24 入冊）：`lib/statement.js extractLines`（信用卡帳單，**丟座標**、只要文字流）／`lib/bank-statement.js extractBankLines`（銀行對帳單，**保留 x＋y**——支出/存入靠 x 分欄、換行備註靠 y 歸列）／`lib/taishin-securities.js extractSecuritiesLines`（證券對帳單，x/y＋跨頁 y 單調遞減）。三者錯誤文案與容錯策略各自對應其帳單型態；改 pdfjs 版本或抽取邏輯時**三份都要過各自的合成座標考題** |
 | 信用卡負數交易的繳款／退款判斷 | **單一真相＝`lib/statement.js isCardPayment(desc)`**：`finalize()` 只負責預覽分流，`statement-import.js importRows()` 必須再用同一函式於後端重判，不能相信瀏覽器送來的 `isPayment`。負數且命中＝真正繳款、不匯入；負數且未命中＝退款候選，保留負號、`storeKey` 與服務層欄位 `refundOf:null`。`refundOf` 進 `FIELD_SCHEMA`、不進 `WRITABLE_FIELDS`；P1 只在彙總時一對一配對，不改寫真實退款日期。正負金額都用絕對值守 `1e8` 解析雜訊上限。 |
 | 月度回顧的消費口徑與退款配對 | **配對本體＝`lib/derive.js pairRefunds(db)`（單一判準，2026-07-27 拆出）**，月度回顧的加總＝`consumptionByMonth(db)` 呼叫它；信用卡費頁的消費歸屬與兩端標記走 `GET /api/refund-pairs`（同一個 `pairRefunds`）。**配對規則只能改 pairRefunds** ——分成兩份實作就會走散（同一筆退款兩頁抵到不同月）。`consumptionByMonth` 的抵減順序＝pairRefunds 的配對順序（退款日→id），`add` 有 `Math.max(0,…)` 夾底，順序會影響結果、拆分時逐字保留。以下口徑不變：消費視角收信用卡＋現金流兩帳的 `type:'expense'`，排除空分類繳卡費、非台幣與壞日期。退款每次彙總重配「**同卡（stmtRef 卡 id 優先）＋同「配對身分」＋金額精準相符＋消費日較早＋未被配過**」的最近消費（⚠️ **配對身分不是 storeKey**：加油站／停車費是**彙總鑰匙**，用它會讓不同店家撞成同一把——退六月嘟嘟房那筆會被算到七月普客二四頭上，金額歸錯月份（Codex 複審 2026-07-26 重現；**同型錯配在加油站上早就存在於 main**）。改用 `statement.js refundPairKeyOf(原文)`：彙總類用「清理後的顯示名」當細身分（`加油站（泰山）`≠`加油站（新店）`、`嘟嘟房（台北101）`≠`台灣普客二四`），其餘店家維持品牌鑰匙（Klook 型退款照舊配得到）；沒有原文（手動記帳）時 `refundPairKeyOfStoreKey` 讓彙總鑰匙一律**不可配對**＝列未對應。考題＝`test/refund-pairing-aggregate.test.js` 跨月同卡同額不同站四情境），一對一抵回原消費月與原分類；部分／孤兒退款不猜、不算進任何月，列 `unmatchedRefunds`。該函式只推導不改 db，`GET /api/monthly-review` 只能呼叫 `buildMonthlyReview`，不另寫公式。分類／子類是使用者文字，彙總 map 必須 null-proto。**兩把尺不可混**：長條／分類用消費視角；透支仍用 `computeCashflow` 現金流視角。預設選最近一個**實際消費金額大於 0**的已結清月（最新月尚未匯帳單時不先顯示空白），但使用者明點空月仍尊重；摘要比較同樣往前跳過空月，找最近有消費的月份。 |

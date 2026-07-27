@@ -78,52 +78,52 @@ test('learnFromStmtEdit：只改分類、學過的是平台殘骸名 → 落回�
 
 // ---------- ② 匯入：自訂名逐字、自動名照樣貼標記 ----------
 
-test('匯入：使用者把（FP）拿掉、存成純名「阿牛牛排」→ 逐字保留，下次匯入不補回（FP）', () => {
+test('匯入：使用者把（FP）拿掉、存成純名「阿牛牛排」→ 逐字保留，下次匯入不補回（FP）', async () => {
   store.save({ ...store.emptyDb(), cards: [CARD],
     learnedCategories: { 'FP-阿牛牛排': { name: '阿牛牛排' } } });   // 使用者刻意拿掉（FP）
-  importRows('c1', [row('FP-阿牛牛排', '阿牛牛排')]);
+  await importRows('c1', [row('FP-阿牛牛排', '阿牛牛排')]);
   const t = (store.load().transactions || []).find(x => x.stmtRef === 'c1|2026-07-01|100|FP-阿牛牛排');
   assert.equal(t.note, '阿牛牛排', '匯入逐字沿用自訂名，絕不自動把（FP）補回去（使用者的選擇要 stick）');
 });
 
-test('匯入：自訂名本身帶（FP）→ 逐字「阿牛牛排（FP）」，不會變成兩個（冪等）', () => {
+test('匯入：自訂名本身帶（FP）→ 逐字「阿牛牛排（FP）」，不會變成兩個（冪等）', async () => {
   store.save({ ...store.emptyDb(), cards: [CARD],
     learnedCategories: { 'FP-阿牛牛排': { name: '阿牛牛排（FP）' } } });
-  importRows('c1', [row('FP-阿牛牛排', '阿牛牛排（FP）')]);
+  await importRows('c1', [row('FP-阿牛牛排', '阿牛牛排（FP）')]);
   const t = (store.load().transactions || []).find(x => x.stmtRef === 'c1|2026-07-01|100|FP-阿牛牛排');
   assert.equal(t.note, '阿牛牛排（FP）', '自訂名逐字，不重複貼標記');
 });
 
-test('匯入：沒被取過名的 FP 消費 → 自動名照樣貼「（FP）」（回歸：標記機制沒被關掉）', () => {
+test('匯入：沒被取過名的 FP 消費 → 自動名照樣貼「（FP）」（回歸：標記機制沒被關掉）', async () => {
   store.save({ ...store.emptyDb(), cards: [CARD], learnedCategories: {} });
-  importRows('c1', [row('FP-石二鍋', cleanStore('FP-石二鍋'))]);
+  await importRows('c1', [row('FP-石二鍋', cleanStore('FP-石二鍋'))]);
   const t = (store.load().transactions || []).find(x => x.stmtRef === 'c1|2026-07-01|100|FP-石二鍋');
   assert.equal(t.note, '石二鍋（FP）', '自動名（沒有自訂名）仍要貼外送標記');
 });
 
 // ---------- ③ 店名格式整理：不動自訂名、不因它跳確認閘 ----------
 
-test('整理：自訂名「人从众厚切牛排（FP）」逐字不動，不列入變更、不跳確認閘', () => {
+test('整理：自訂名「人从众厚切牛排（FP）」逐字不動，不列入變更、不跳確認閘', async () => {
   const orig = 'FP-人从众厚切牛排';
   store.save({ ...store.emptyDb(), cards: [CARD],
     transactions: [{ id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', subcategory: '餐廳',
       amount: 100, note: '人从众厚切牛排（FP）', storeKey: '人从众厚切牛排', source: 'stmt',
       stmtRef: `c1|2026-07-01|100|${orig}` }],
     learnedCategories: { [orig]: { name: '人从众厚切牛排（FP）' } } });
-  const r = normalizeBranches(true);   // dryRun 預覽
+  const r = await normalizeBranches(true);   // dryRun 預覽
   assert.ok(!(r.changes || []).some(c => c.id === 't1'), 'note 逐字不變，不列入整理清單');
   assert.ok(!(r.learnedNameChanges || []).some(c => c.before === '人从众厚切牛排（FP）'),
     '不再把（FP）拆掉 → 不會跳「刪掉規則也救不回」的確認閘');
 });
 
-test('整理：使用者拿掉（FP）的「人从众厚切牛排」逐字保留，不補回（FP）', () => {
+test('整理：使用者拿掉（FP）的「人从众厚切牛排」逐字保留，不補回（FP）', async () => {
   const orig = 'FP-人从众厚切牛排';
   store.save({ ...store.emptyDb(), cards: [CARD],
     transactions: [{ id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', subcategory: '餐廳',
       amount: 100, note: '人从众厚切牛排', storeKey: '人从众厚切牛排', source: 'stmt',
       stmtRef: `c1|2026-07-01|100|${orig}` }],
     learnedCategories: { [orig]: { name: '人从众厚切牛排' } } });   // 使用者刻意拿掉（FP）
-  normalizeBranches(false);   // 真的套用
+  await normalizeBranches(false);   // 真的套用
   const t = (store.load().transactions || []).find(x => x.id === 't1');
   assert.equal(t.note, '人从众厚切牛排', '整理不把使用者拿掉的（FP）補回去');
 });

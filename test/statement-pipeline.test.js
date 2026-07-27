@@ -83,9 +83,9 @@ test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動�
 test('整條管線：解析 → 預覽 → 匯入 → 批次列表，四棒都要把值傳下去', async () => {
   // 完全照前端的做法：從預覽的回應拿值，再回送給匯入
   const pre = await previewForCard('card1', taishinXlsxB64());
-  importRows('card1', pre.transactions, pre.statementMonth || '', pre.statementDue ?? null);
+  await importRows('card1', pre.transactions, pre.statementMonth || '', pre.statementDue ?? null);
 
-  const batches = listBatches();
+  const batches = await listBatches();
   assert.equal(batches.length, 1);
   assert.equal(batches[0].stmtMonth, '2026-01', '批次列表要顯示真正的帳單年月，不是退回「推估」');
   assert.equal(batches[0].stmtDue, 46299, '批次列表要顯示應繳金額，不是「—」');
@@ -110,7 +110,7 @@ test('讀不到表頭時要誠實留空（退回推估），不可硬塞值', as
   assert.equal(pre.statementMonth, '', '讀不到期別＝空字串（批次列表會標「推估」）');
   assert.equal(pre.statementDue, null, '讀不到應繳金額＝null（批次列表顯示「—」）');
 
-  importRows('card1', pre.transactions, pre.statementMonth || '', pre.statementDue ?? null);
+  await importRows('card1', pre.transactions, pre.statementMonth || '', pre.statementDue ?? null);
   const t = (store.load().transactions || [])[0];
   assert.ok(!('stmtMonth' in t), '讀不到就不寫欄位，不要塞空字串進資料');
   assert.ok(!('stmtDue' in t), '同上');
@@ -149,8 +149,8 @@ test('櫃檯擋得住假日期：壞的月份/日期進不了資料庫', () => {
     '交易日期同理（壞日期會讓該筆默默不被計入月現金流）');
 });
 
-test('手動修正帳單年月也走同一套判準（不可只驗長相）', () => {
-  assert.throws(() => setBatchMonth('any', '2026-13'), /YYYY-MM/,
+test('手動修正帳單年月也走同一套判準（不可只驗長相）', async () => {
+  await assert.rejects(() => setBatchMonth('any', '2026-13'), /YYYY-MM/,
     'Codex 實測舊版會回成功、資料庫真的存下 2026-13');
 });
 
@@ -176,13 +176,13 @@ test('自主體檢｜同帳單同店同日同額兩筆真消費：都匯入；�
   assert.notEqual(coffees[0].stmtRef, coffees[1].stmtRef, '兩筆的 stmtRef 要不同（第二筆帶 #2）');
   assert.ok(!coffees[0].duplicate && !coffees[1].duplicate, '同帳單內兩筆都不算重複');
 
-  const r1 = importRows('k1', prev.transactions);
+  const r1 = await importRows('k1', prev.transactions);
   assert.equal(r1.imported, 2, '兩筆真消費都要進帳（修正前第二筆被吃掉）');
 
   // 重匯同一份帳單：序號依解析順序固定 → 兩筆都被判重複、都跳過（不會多出來）
   const prev2 = await previewForCard('k1', b64);
   assert.ok(prev2.transactions.filter(t => t.desc === '星巴克').every(t => t.duplicate), '重匯時兩筆都標重複');
-  const r2 = importRows('k1', prev2.transactions);
+  const r2 = await importRows('k1', prev2.transactions);
   assert.equal(r2.imported, 0, '重匯不可多出任何一筆');
   assert.equal(store.load().transactions.filter(t => String(t.note).includes('星巴克')).length, 2, '總數仍是 2');
 });

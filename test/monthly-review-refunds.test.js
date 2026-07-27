@@ -63,7 +63,7 @@ test('finalize：退款後的國外交易服務費不可繼承退款分類', () 
     '退款不是一筆正向刷卡，後面的服務費不可把它當前一筆消費來繼承');
 });
 
-test('importRows：後端重判繳款、放行退款，並寫入服務層 refundOf 標記', () => {
+test('importRows：後端重判繳款、放行退款，並寫入服務層 refundOf 標記', async () => {
   const rows = finalize([
     { date: '2026-07-01', desc: '自動轉帳扣繳信用卡款', amount: -8_000 },
     { date: '2026-07-02', desc: '星巴克退款', amount: -500 },
@@ -74,7 +74,7 @@ test('importRows：後端重判繳款、放行退款，並寫入服務層 refund
     stmtRef: `preview-${index}`,
   }));
 
-  const out = importRows('card1', rows);
+  const out = await importRows('card1', rows);
   assert.equal(out.imported, 1);
   assert.equal(out.skipped, 1, '真正繳款即使前端偽造標記仍須擋下');
 
@@ -87,11 +87,11 @@ test('importRows：後端重判繳款、放行退款，並寫入服務層 refund
   assert.equal(txs[0].refundOf, null, 'P0 先標成待配對；P1 彙總時再找原消費');
 });
 
-test('importRows：零元、非數字與正負破億都跳過，不讓解析雜訊變退款', () => {
+test('importRows：零元、非數字與正負破億都跳過，不讓解析雜訊變退款', async () => {
   const mk = (amount, desc) => ({
     date: '2026-07-03', amount, desc, category: '其他', subcategory: '未分類', stmtRef: String(amount),
   });
-  const out = importRows('card1', [
+  const out = await importRows('card1', [
     mk(0, '零元'), mk('oops', '壞金額'), mk(100_000_001, '正破億'), mk(-100_000_001, '負破億退款'),
   ]);
   assert.equal(out.imported, 0);

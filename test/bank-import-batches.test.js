@@ -26,16 +26,16 @@ const tx = (o) => ({
 });
 
 /** 用給定的 transactions 重置隔離庫。 @param {any[]} transactions */
-function seed(transactions) {
-  const db = getDb();
+async function seed(transactions) {
+  const db = await getDb();
   db.transactions = transactions;
-  saveDb(db);
+  await saveDb(db);
 }
 
-beforeEach(() => seed([]));
+beforeEach(async () => { await seed([]); });
 
-test('listBankBatches：只聚合 source:bank，依 importBatch 分組並算收入/支出/內轉與日期範圍', () => {
-  seed([
+test('listBankBatches：只聚合 source:bank，依 importBatch 分組並算收入/支出/內轉與日期範圍', async () => {
+  await seed([
     tx({ id: 't1', importBatch: 'B1', type: 'income', amount: 82381, date: '2026-06-05' }),
     tx({ id: 't2', importBatch: 'B1', type: 'expense', amount: 300, date: '2026-06-20' }),
     tx({ id: 't3', importBatch: 'B1', type: 'transfer', amount: 1000000, date: '2026-06-12' }),
@@ -45,7 +45,7 @@ test('listBankBatches：只聚合 source:bank，依 importBatch 分組並算收�
     { id: 'm1', date: '2026-06-01', type: 'expense', amount: 999, source: 'manual', importBatch: 'B1', ledger: 'cashflow' },
     { id: 'c1', date: '2026-06-01', type: 'expense', amount: 888, source: 'stmt', importBatch: 'B9', ledger: 'card' },
   ]);
-  const batches = listBankBatches();
+  const batches = await listBankBatches();
   assert.equal(batches.length, 2);
   const b1 = batches.find(b => b.batchId === 'B1');
   assert.equal(b1.count, 3);                     // 手動那筆 m1 雖同 importBatch 也不算（source 不是 bank）
@@ -56,60 +56,60 @@ test('listBankBatches：只聚合 source:bank，依 importBatch 分組並算收�
   assert.equal(b1.maxDate, '2026-06-20');
 });
 
-test('listBankBatches：依匯入時間新到舊排序', () => {
-  seed([
+test('listBankBatches：依匯入時間新到舊排序', async () => {
+  await seed([
     tx({ id: 'a', importBatch: 'OLD', importedAt: '2026-07-01T00:00:00.000Z' }),
     tx({ id: 'b', importBatch: 'NEW', importedAt: '2026-07-21T00:00:00.000Z' }),
   ]);
-  const batches = listBankBatches();
+  const batches = await listBankBatches();
   assert.deepEqual(batches.map(b => b.batchId), ['NEW', 'OLD']);
 });
 
-test('listBankBatches：沒有銀行批次回空陣列', () => {
-  seed([{ id: 'm', date: '2026-06-01', type: 'expense', amount: 1, source: 'manual', ledger: 'cashflow' }]);
-  assert.deepEqual(listBankBatches(), []);
+test('listBankBatches：沒有銀行批次回空陣列', async () => {
+  await seed([{ id: 'm', date: '2026-06-01', type: 'expense', amount: 1, source: 'manual', ledger: 'cashflow' }]);
+  assert.deepEqual(await listBankBatches(), []);
 });
 
-test('deleteBankBatch：只刪該批的 source:bank 交易，別批與非銀行來源不動', () => {
-  seed([
+test('deleteBankBatch：只刪該批的 source:bank 交易，別批與非銀行來源不動', async () => {
+  await seed([
     tx({ id: 't1', importBatch: 'B1' }),
     tx({ id: 't2', importBatch: 'B1' }),
     tx({ id: 't3', importBatch: 'B2' }),
     { id: 'm1', date: '2026-06-01', type: 'expense', amount: 1, source: 'manual', importBatch: 'B1', ledger: 'cashflow' },
   ]);
-  const r = deleteBankBatch('B1');
+  const r = await deleteBankBatch('B1');
   assert.equal(r.removed, 2);
-  const left = getDb().transactions.map(t => t.id).sort();
+  const left = (await getDb()).transactions.map(t => t.id).sort();
   assert.deepEqual(left, ['m1', 't3']);          // 手動 m1（同 importBatch）與別批 t3 都保住
 });
 
-test('deleteBankBatch：batchId 撞號時也不誤刪信用卡帳單（雙重比對 source===bank）', () => {
-  seed([
+test('deleteBankBatch：batchId 撞號時也不誤刪信用卡帳單（雙重比對 source===bank）', async () => {
+  await seed([
     tx({ id: 't1', importBatch: 'DUP' }),
     { id: 'c1', date: '2026-06-01', type: 'expense', amount: 888, source: 'stmt', importBatch: 'DUP', ledger: 'card' },
   ]);
-  const r = deleteBankBatch('DUP');
+  const r = await deleteBankBatch('DUP');
   assert.equal(r.removed, 1);
-  assert.deepEqual(getDb().transactions.map(t => t.id), ['c1']);   // 信用卡帳單 c1 不受影響
+  assert.deepEqual((await getDb()).transactions.map(t => t.id), ['c1']);   // 信用卡帳單 c1 不受影響
 });
 
-test('deleteBankBatch：空/缺 batchId → 400，不動資料', () => {
-  seed([tx({ id: 't1', importBatch: 'B1' })]);
-  assert.throws(() => deleteBankBatch(''), /批次代號/);
-  assert.throws(() => deleteBankBatch(undefined), /批次代號/);
-  assert.equal(getDb().transactions.length, 1);
+test('deleteBankBatch：空/缺 batchId → 400，不動資料', async () => {
+  await seed([tx({ id: 't1', importBatch: 'B1' })]);
+  await assert.rejects(() => deleteBankBatch(''), /批次代號/);
+  await assert.rejects(() => deleteBankBatch(undefined), /批次代號/);
+  assert.equal((await getDb()).transactions.length, 1);
 });
 
-test('deleteBankBatch：不存在的 batchId → removed 0，不動資料', () => {
-  seed([tx({ id: 't1', importBatch: 'B1' })]);
-  const r = deleteBankBatch('NOPE');
+test('deleteBankBatch：不存在的 batchId → removed 0，不動資料', async () => {
+  await seed([tx({ id: 't1', importBatch: 'B1' })]);
+  const r = await deleteBankBatch('NOPE');
   assert.equal(r.removed, 0);
-  assert.equal(getDb().transactions.length, 1);
+  assert.equal((await getDb()).transactions.length, 1);
 });
 
-test('listBankBatches：批次 id 是 __proto__ → 批次照常出現、不污染 Object.prototype（比照 proto-pollution r6#3）', () => {
-  seed([tx({ id: 'p1', importBatch: '__proto__', type: 'expense', amount: 42 })]);
-  const batches = listBankBatches();
+test('listBankBatches：批次 id 是 __proto__ → 批次照常出現、不污染 Object.prototype（比照 proto-pollution r6#3）', async () => {
+  await seed([tx({ id: 'p1', importBatch: '__proto__', type: 'expense', amount: 42 })]);
+  const batches = await listBankBatches();
   assert.equal(batches.length, 1);              // Object.create(null) 才不會讓 groups['__proto__'] 讀到原型本尊而漏建
   assert.equal(batches[0].batchId, '__proto__');
   assert.equal(batches[0].count, 1);
@@ -118,9 +118,9 @@ test('listBankBatches：批次 id 是 __proto__ → 批次照常出現、不污�
   assert.equal(Object.prototype.count, undefined);
 });
 
-test('deleteBankBatch：batchId 是 __proto__ 也正常刪、不炸、不誤傷別批', () => {
-  seed([tx({ id: 'p1', importBatch: '__proto__' }), tx({ id: 'k1', importBatch: 'KEEP' })]);
-  const r = deleteBankBatch('__proto__');
+test('deleteBankBatch：batchId 是 __proto__ 也正常刪、不炸、不誤傷別批', async () => {
+  await seed([tx({ id: 'p1', importBatch: '__proto__' }), tx({ id: 'k1', importBatch: 'KEEP' })]);
+  const r = await deleteBankBatch('__proto__');
   assert.equal(r.removed, 1);
-  assert.deepEqual(getDb().transactions.map(t => t.id), ['k1']);
+  assert.deepEqual((await getDb()).transactions.map(t => t.id), ['k1']);
 });

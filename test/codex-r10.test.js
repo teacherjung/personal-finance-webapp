@@ -67,13 +67,13 @@ test('r10#4｜回歸：真的只有彙總列（無任何明細、cashDetailIncom
 });
 
 // ---- [5] 去重序號 |#N：renameStoreDisplay 要一起改到帶序號的那筆 ----
-test('r10#5｜renameStoreDisplay 要改到帶去重序號 |#2 的第二筆（用 origFromStmtRef 剝序號）', () => {
+test('r10#5｜renameStoreDisplay 要改到帶去重序號 |#2 的第二筆（用 origFromStmtRef 剝序號）', async () => {
   store.save({ ...store.emptyDb(), transactions: [
     { id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', subcategory: '飲料／咖啡',
       amount: 150, note: '星巴克', storeKey: '星巴克', source: 'stmt', stmtRef: 'c1|2026-07-01|150|星巴克' },
     { id: 't2', date: '2026-07-01', type: 'expense', category: '飲食', subcategory: '飲料／咖啡',
       amount: 150, note: '星巴克', storeKey: '星巴克', source: 'stmt', stmtRef: 'c1|2026-07-01|150|星巴克|#2' }] });
-  const r = renameStoreDisplay('星巴克', '星巴克咖啡');
+  const r = await renameStoreDisplay('星巴克', '星巴克咖啡');
   assert.equal(r.changed, 2, '同店兩筆都要改（含帶 |#2 的那筆）');
   const notes = store.load().transactions.map(t => t.note);
   assert.deepEqual(notes, ['星巴克咖啡', '星巴克咖啡'], '第二筆不可因 |#2 被當成別的原文而漏改');

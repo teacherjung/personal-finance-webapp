@@ -37,9 +37,9 @@ function seedConflicting() {
       storeRules: { chains: ['鮮芋仙'], canon: [], brand: [], rename: [], parkExempt: [] } } });
 }
 
-test('會動到學習表 → 停下來回報 needsConfirmation，且不套用、不記指紋', () => {
+test('會動到學習表 → 停下來回報 needsConfirmation，且不套用、不記指紋', async () => {
   seedConflicting();
-  const r = normalizeIfRulesChanged();
+  const r = await normalizeIfRulesChanged();
   assert.equal(r.ran, false, '不可默默套用');
   assert.equal(r.needsConfirmation, true, '要明確回報需要確認');
   assert.ok((r.learnedConflicts || []).length >= 1, '要把「哪些會被覆蓋」交出來');
@@ -50,32 +50,32 @@ test('會動到學習表 → 停下來回報 needsConfirmation，且不套用、
   assert.ok(!db.settings?.storeRulesHash, '不可記指紋（維持待決，下次開 app 會再問）');
 });
 
-test('確認後（force）才真的套用並記指紋', () => {
+test('確認後（force）才真的套用並記指紋', async () => {
   seedConflicting();
-  normalizeIfRulesChanged();                 // 第一次：擋下
-  const r = normalizeIfRulesChanged(true);   // 使用者按了確認
+  await normalizeIfRulesChanged();                 // 第一次：擋下
+  const r = await normalizeIfRulesChanged(true);   // 使用者按了確認
   assert.equal(r.ran, true, 'force 之後照常套用');
   assert.ok(store.load().settings?.storeRulesHash, '這次要記指紋（不會每次開 app 重問）');
   assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙'], '兩家併成一把鑰匙');
 });
 
-test('沒有不可逆效果 → 照常自動套用、無需確認（平時無感）', () => {
+test('沒有不可逆效果 → 照常自動套用、無需確認（平時無感）', async () => {
   // 只改顯示名的規則（chains 切分店），沒有學習表衝突、沒有自訂名被改
   store.save({ ...store.emptyDb(),
     transactions: [{ id: 't1', date: '2026-07-01', type: 'expense', category: '飲食', amount: 1,
       note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|1|鮮芋仙林口店' }],
     settings: { ...store.emptyDb().settings,
       storeRules: { chains: ['鮮芋仙'], canon: [], brand: [], rename: [], parkExempt: [] } } });
-  const r = normalizeIfRulesChanged();
+  const r = await normalizeIfRulesChanged();
   assert.equal(r.needsConfirmation, undefined, '沒有不可逆效果就不該打擾使用者');
   assert.equal(r.ran, true, '照常自動套用');
   assert.equal(store.load().transactions?.[0].note, '鮮芋仙（林口店）');
 });
 
-test('同一版規則只跑一次（記過指紋就不再問、不再跑）', () => {
+test('同一版規則只跑一次（記過指紋就不再問、不再跑）', async () => {
   seedConflicting();
-  normalizeIfRulesChanged(true);             // 套用並記指紋
-  const r = normalizeIfRulesChanged();       // 再開一次 app
+  await normalizeIfRulesChanged(true);             // 套用並記指紋
+  const r = await normalizeIfRulesChanged();       // 再開一次 app
   assert.equal(r.ran, false);
   assert.equal(r.needsConfirmation, undefined, '指紋沒變＝這版已處理過，不該再問');
 });
