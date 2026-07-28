@@ -1,0 +1,45 @@
+# Render 部署藍圖（C6）——把「怎麼部署」寫成程式碼，而不是靠記憶點後台按鈕。
+#
+# 怎麼用：Render Dashboard → New → Blueprint → 連上這個 GitHub repo → 它會讀這個檔。
+# 之後每次 push 到 main 就自動部署（autoDeploy）。
+#
+# ⚠️ **這個檔不含任何祕密**。四個 `sync: false` 的變數要在 Render 後台手動填一次
+#（Blueprint 部署時會逐一問你），填法見 `docs/C6-部署與對抗審查-操作手冊.md`。
+services:
+  - type: web
+    name: noteasy
+    runtime: node
+    # 裁決③：Render 沒有台灣區域，新加坡對台延遲最低（~50ms）
+    region: singapore
+    # 測試期 Free（15 分鐘沒人用會睡眠、下次開要等 30–60 秒冷啟動）；
+    # 正式上線改 starter（US$7/月）——裁決③
+    plan: free
+    # 只裝執行時相依：typescript/eslint 那些是開發工具，不必上雲（也縮小攻擊面）
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    # 裁決④：/health 讓給機器（健康領域頁改 /wellness）
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # 模式開關：只認 "1"（lib/hosted.js）。沒有這個變數＝LOCAL＝本機那一套
+      - key: NOTEASY_HOSTED
+        value: "1"
+      # 內建 SQLite 需要 Node ≥22.13.0（package.json engines 也寫了）
+      - key: NODE_VERSION
+        value: "22.13.0"
+      # ---- 以下四個在 Render 後台填，絕不進 repo ----
+      # Supabase 專案網址，如 https://xxxxxxxx.supabase.co
+      - key: SUPABASE_URL
+        sync: false
+      # Supabase 的 **anon** public key（不是 service_role！service_role 繞過 RLS，
+      # 一旦拿它讀寫一般資料，整套租戶隔離就形同虛設——裁決⑥不可退讓）
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # CSRF Origin 白名單（逗號分隔）。上線前先填 Render 給的網址，
+      # DNS 指過去之後再加 https://noteasy.com.tw
+      - key: SITE_ORIGIN
+        sync: false
+      # 機密欄位的主金鑰（C5）：`openssl rand -base64 32` 產生的 32 bytes base64。
+      # ⚠️ 掉了＝所有已加密的 IB token 與 PDF 密碼都要重新輸入一次（資料本身不會壞）
+      - key: NOTEASY_MASTER_KEY
+        sync: false
