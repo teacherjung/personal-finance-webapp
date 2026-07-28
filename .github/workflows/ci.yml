@@ -1,5 +1,16 @@
-# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「校對（typecheck）＋考試（test）」。
+# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「校對（typecheck）＋糾察（lint）＋考試（test）」。
 # PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（AGENTS.md 驗證要求的自動化版）。
+#
+# ⚠️ 兩個 job 是刻意的：
+#   deploy-runtime＝**跟 Render 上線那一顆一模一樣的 Node**（讀 `.node-version`，與 render.yaml 同一份真相）。
+#                   以前這裡寫死 `node-version: 24`、render.yaml 釘 22.13.0、開發機 26，
+#                   結果「真正上線的那顆 runtime，三道關卡一次都沒測到」。
+#   dev-machine   ＝William 本機用的最新版。跑它是為了「只在他機器上壞掉」也能在 PR 就看見。
+#
+# ⚠️ `dev-machine` 刻意 `continue-on-error: true`：它是**前瞻性的探照燈，不是門**。
+#    render.yaml 用 `autoDeployTrigger: checksPass`，任何 required check 紅了就不會自動部署——
+#    要是讓「下一個大版本 Node 出了新狀況」擋住部署，連**安全更新**都上不去，那是本末倒置。
+#    它紅了要看、要處理，但不該有權力封住上線的路。
 name: CI
 
 on:
@@ -8,13 +19,14 @@ on:
   pull_request:
 
 jobs:
-  check:
+  deploy-runtime:
+    name: 上線用的 Node（.node-version）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
       - name: 安裝相依（含 typescript/@types 開發工具）
         run: npm ci
@@ -24,3 +36,16 @@ jobs:
         run: npm run lint
       - name: 考試（自動測試）
         run: npm test
+
+  dev-machine:
+    name: 開發機的 Node（最新版，前瞻｜不擋部署）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm test
