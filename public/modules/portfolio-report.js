@@ -107,7 +107,8 @@ export function buildPortfolioReport(data, options) {
     <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(income.interestPaid || 0) * rate)}</td>
     <td class="num">+${val((income.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
     ${income.estimatedNoFx > 0 ? `<p class="muted">註：${income.estimatedNoFx} 筆${income.estimatedCurrencies?.length ? '（' + income.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
-    ${income.skippedNoFx > 0 ? `<p class="muted">註：${income.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}</section>` : '';
+    ${income.skippedNoFx > 0 ? `<p class="muted">註：${income.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
+    ${Number(income.skippedNoCurrency) > 0 ? `<p class="muted">註：${income.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額（請在 Flex Query 勾選 Currency 欄後重新同步）。</p>` : ''}</section>` : '';
 
   let tradesHtml = '';
   if (ibTrades && ibTrades.length) {

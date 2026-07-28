@@ -52,6 +52,7 @@ export function incomeActivityHtml(settings, options) {
     </div>
     ${Number(inc.estimatedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
     ${Number(inc.skippedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
+    ${Number(inc.skippedNoCurrency) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額。請到 IBKR 的 Flex Query 在 Cash Transactions 勾選 Currency 欄後重新同步。</p>` : ''}
   </div>`;
 }
 

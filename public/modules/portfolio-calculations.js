@@ -48,7 +48,8 @@ export function tradeSummary(trades, settings = {}) {
     if (cur !== 'USD') {
       if (source === 'ibkr') ibkr.add(cur);
       else if (source === 'estimated') estimated.add(cur);
-      else if (source === 'missing') missing.add(cur);
+      // 缺幣別時 cur 是空字串——直接放進去畫面會出現一個空白的頓號（提示亮了卻沒說是什麼）。
+      else if (source === 'missing') missing.add(cur || '未知幣別');
     }
     return base;
   };

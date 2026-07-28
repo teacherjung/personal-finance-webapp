@@ -234,3 +234,21 @@ test('IB 同步｜既有持股的幣別不會被「報表這次沒給幣別」�
   assert.equal(h.currency, 'GBP', '既有持股保住原幣別');
   assert.equal(h.quantity, 3, '數量照常更新（既有持股不因缺幣別被整筆跳過）');
 });
+
+test('IB 同步｜skippedNoCurrency 要**存進 db** 而不只是同步當下的回傳（Codex 複審阻擋#1）', async () => {
+  // 病根：settings.ib.income 是逐欄白名單，漏了新欄位＝同步當下看得到、重新整理就消失，
+  // 而金額總額已經排除了那些筆——「數字少了卻沒有任何註記」正是本專案禁止的默默算錯。
+  const feedIncome = async () => ({
+    positions: [], cashByCurrency: {}, hasCashReport: false, hasCashDetail: false, cashDetailIncomplete: false,
+    baseCurrency: 'USD', baseSummaryCash: null, statementCount: 1, accountCount: 1, equity: null,
+    income: { dividends: 100, paymentInLieu: 0, withholdingTax: 0, interestPaid: 0, interestReceived: 0, other: 0,
+      count: 1, skippedNoFx: 0, skippedNoCurrency: 3, estimatedNoFx: 0, estimatedCurrencies: [] },
+    trades: [], rawTrades: [], period: { from: '2026-01-01', to: '2026-01-31' },
+  });
+  const r = await syncIb(feedIncome);
+  assert.equal(r.incomeNoCurrency, 3, '同步回傳要有');
+  const fresh = await getDb();   // ← 重讀資料庫：這一步才是 Codex 抓到的破口
+  assert.equal(fresh.settings.ib.income.skippedNoCurrency, 3,
+    '重讀之後不見了＝活動卡與 A4 報表會顯示「已排除部分收入的總額」卻不再註明缺漏');
+  assert.equal(fresh.settings.ib.income.dividends, 100, '既有欄位不受影響');
+});
