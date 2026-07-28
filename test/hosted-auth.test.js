@@ -194,3 +194,52 @@ test('C3 gate：驗證服務炸掉＝fail-closed 當未登入（絕不放行）'
   fake.failLogin = savedFail;
   assert.equal(r.status, 401, 'getUser 丟例外＝401，不可放行');
 });
+
+// ---- 身分牆的掛載順序（2026-07-28 修：大件 body parser 搬到 authGate 之後）----
+// 病根：parser 掛在最前面＝「不管誰寄來的包裹都先全部拆開，拆完才到櫃台問這個人能不能進來」。
+// 實測 10 個未登入請求 × 45MB 就把行程 OOM 打死（模擬 Render 512MB 容器）。
+// 這幾題釘住「牆先發言」——它們同時是口徑考題：未登入送壞 body 拿到的是 401，不是 400/413。
+test('掛載順序：未登入送壞 JSON 給大件端點＝401（不是 400——代表 parser 沒在牆前跑）', async () => {
+  for (const p of ['/api/import', '/api/statement/preview', '/api/bank-statement/preview', '/api/securities/import']) {
+    const r = await fetch(`${base}${p}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN }, body: '{壞掉的 JSON',
+    });
+    assert.equal(r.status, 401, `${p} 回 ${r.status}——400 代表 body 已經被解析過了`);
+  }
+});
+
+test('掛載順序：未登入送超過 1MB 的 body＝401（不是 413），伺服器不必吞下它', async () => {
+  const big = JSON.stringify({ settings: {}, pad: 'x'.repeat(2 * 1024 * 1024) });
+  const r = await fetch(`${base}/api/import`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN }, body: big,
+  });
+  assert.equal(r.status, 401, `回 ${r.status}——413 代表伺服器先收下並量了大小才想到要驗身分`);
+});
+
+test('掛載順序：跨站 Origin 的未授權請求也在 parser 之前就被擋（403，不是 400）', async () => {
+  const r = await fetch(`${base}/api/import`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{壞掉的',
+  });
+  assert.equal(r.status, 403, 'CSRF 牆也該在 parser 之前發言');
+});
+
+test('掛載順序：登入端點在牆前，但仍拿得到 body（32KB 專屬 parser）；登入後大件入口照常', async () => {
+  // ① 牆前的登入照常運作（body 讀得到 → 才可能回 401「信箱或密碼不正確」而不是 500）
+  fake.failLogin = true;
+  const login = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN },
+    body: JSON.stringify({ email: 'a@x.com', password: 'wrong' }),
+  });
+  fake.failLogin = false;
+  assert.equal(login.status, 401);
+  assert.match((await login.json()).error, /信箱或密碼不正確/, 'body 有被解析（否則會是別的錯）');
+
+  // ② 登入之後，50MB 那條大件入口仍然存在（>1MB 的完整備份還原得回來——request-limits 的既有承諾）
+  const payload = JSON.stringify({ settings: { usdTwd: 32 }, transactions: [], pad: 'y'.repeat(1.2 * 1024 * 1024) });
+  const imp = await fetch(`${base}/api/import`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: 'sb-test-auth-token=abc' },
+    body: payload,
+  });
+  assert.notEqual(imp.status, 413, '登入後 >1MB 的匯入不可以被 1MB 的通用 parser 擋掉');
+  assert.equal(imp.status, 200, `匯入應成功，實得 ${imp.status}`);
+});
