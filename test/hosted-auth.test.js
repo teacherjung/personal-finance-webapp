@@ -278,7 +278,7 @@ test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住�
   //    不會有任何考題紅。這一題與 `test/server.test.js` 的 LOCAL 反向題共用同一張表——
   //    一張表同時守住「HOSTED 要擋」與「LOCAL 不可以擋」兩個方向。
   const { RATE_LIMITS } = await import('../server.js');
-  assert.ok(RATE_LIMITS.length >= 5, '五道限速少了一道——HOSTED 的資源或上游保護已退化');
+  assert.ok(RATE_LIMITS.length >= 6, '六道限速少了一道——HOSTED 的資源或上游保護已退化');
 
   for (const rl of RATE_LIMITS) {
     /** @type {any} */
@@ -295,4 +295,85 @@ test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住�
     assert.ok(Number(saw429.headers.get('retry-after')) > 0, `「${rl.name}」要告訴使用者等多久`);
     assert.match((await saw429.json()).error, /稍等/, `「${rl.name}」的訊息要可操作`);
   }
+});
+
+test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一樣要計次（Codex #5）', async () => {
+  // 病根：body-parser 遇到壞 JSON 會在自己內部 next(err)，Express 直接跳到全域錯誤中介，
+  // 中間所有一般中介層（含限速）整段被跳過。攻擊者因此有一條「無限次數、不計費」的路可以打登入端點。
+  // 既有考題只送**合法** JSON，所以這個縫一直沒被抓到。
+  const rl = /** @type {any} */ ((await import('../server.js')).RATE_LIMITS).find((/** @type {any} */ x) => x.stage === 'pre-gate');
+  /** @param {string} body */
+  const hit = (body) => fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN }, body,
+  });
+
+  let saw429 = false;
+  for (let i = 0; i < rl.max + 10 && !saw429; i++) {
+    const r = await hit('{ this is not json');
+    if (r.status === 429) saw429 = true;
+    else assert.equal(r.status, 400, `畸形 JSON 應該回 400（第 ${i + 1} 次拿到 ${r.status}）`);
+  }
+  assert.ok(saw429,
+    `連送 ${rl.max + 10} 個畸形 JSON 都沒被限速——限速站在 parser 後面，這條路等於沒有上限`);
+});
+
+// ============================================================================
+// 對外連線端點 × 速率限制的對帳（Codex 收官審查 #6，2026-07-28）
+// ============================================================================
+//
+// 為什麼要有這一題：上一版漏掉 /api/cape、/api/realyield、/api/insights 三條對外端點，
+// 而**沒有任何考題會紅**——因為所有考題都是從 `RATE_LIMITS` 反查的，漏列的當然查不到。
+// 「從清單反查」只證得了「表上的每一道都掛上了」，證不了「該上表的都上了」。
+//
+// 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝我們會去打誰）跟它對帳。
+// 這一題守的不是某個 bug，是**「有人新增 fetch() 卻忘了限速」這個動作**。
+
+test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增 fetch 卻忘了限速就會在這裡紅）', async () => {
+  const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
+  assert.ok(OUTBOUND_ENDPOINTS.length >= 6, '對外端點清單看起來被刪過');
+
+  /** `app.use(路徑, …)` 是前綴比對，所以涵蓋判準也要用前綴。 */
+  const covered = (/** @type {string} */ p) =>
+    RATE_LIMITS.some((/** @type {any} */ rl) => rl.paths.some((/** @type {string} */ base2) =>
+      p === base2 || p.startsWith(base2.endsWith('/') ? base2 : `${base2}/`)));
+
+  /** @type {string[]} */
+  const naked = [];
+  for (const o of OUTBOUND_ENDPOINTS) {
+    for (const p of o.paths) if (!covered(p)) naked.push(`${p}（打 ${o.host}：${o.why}）`);
+  }
+  assert.deepEqual(naked, [],
+    `這些端點會用我們的伺服器去打上游，卻沒有任何速率限制擋著：\n  ${naked.join('\n  ')}\n` +
+    '猛打它們＝拿我們的伺服器去打別人，可能害使用者被上游限流甚至停用。');
+});
+
+test('對帳（反向）：`fetch(` 只准出現在已登記的模組裡（新增對外連線一定要先登記）', async () => {
+  const { readFileSync, readdirSync, statSync } = await import('node:fs');
+  const { join: pjoin, dirname: pdirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
+  const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
+  // 已知會對外的模組——與 OUTBOUND_ENDPOINTS 一一對應。**新增請先想清楚要不要限速。**
+  const ALLOWED = new Set([
+    'lib/ib.js',                          // IBKR Flex
+    'lib/services/market-data.js',        // Yahoo 報價／multpl CAPE／FRED 實質利率
+    'lib/services/stock-fundamentals.js', // SEC
+  ]);
+  /** @param {string} dir @returns {string[]} */
+  const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
+    const rel = `${dir}/${f}`;
+    if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
+    return f.endsWith('.js') ? [rel] : [];
+  });
+  /** @type {string[]} */
+  const unexpected = [];
+  for (const rel of walk('lib')) {
+    const src = readFileSync(pjoin(ROOT, rel), 'utf8');
+    // 只看真的呼叫，不看註解與字串裡提到的字
+    const calls = src.split('\n').filter((l) => /(^|[^.\w])fetch\s*\(/.test(l) && !l.trim().startsWith('//'));
+    if (calls.length && !ALLOWED.has(rel)) unexpected.push(`${rel}: ${calls[0].trim()}`);
+  }
+  assert.deepEqual(unexpected, [],
+    `這些模組出現了未登記的對外連線：\n  ${unexpected.join('\n  ')}\n` +
+    '請在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
 });
