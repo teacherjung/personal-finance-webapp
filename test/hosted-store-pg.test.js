@@ -161,7 +161,7 @@ test('A/B 並發更新同一代號：公開 SEC 請求只抓一輪，兩人的�
     now: () => clock,
     sleep: async (ms) => { clock += ms; },
     minIntervalMs: 0,
-    userAgent: 'Noteasy Test data@example.test',
+    userAgent: 'NotEasy Test data@example.test',
     logger: { warn() {} },
     fetchImpl: async (url) => {
       calls += 1;

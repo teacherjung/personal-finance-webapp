@@ -78,8 +78,12 @@ test('render.yaml：SEC User-Agent 由部署環境提供，不把聯絡資訊硬
   const yaml = uncommented(read('render.yaml'));
   assert.match(yaml, /-\s*key:\s*SEC_USER_AGENT\s*\n\s*sync:\s*false/,
     'SEC 自動請求要有可聯絡 User-Agent；實際值由 Render 環境設定，不可漏掉或寫死在程式');
-  assert.match(read('docs/C6-部署與對抗審查-操作手冊.md'), /Noteasy williamjung@noteasy\.com\.tw/,
-    '部署手冊要留下 William 已確認可收信的正式值，避免上線時再猜一次');
+  assert.match(read('docs/C6-部署與對抗審查-操作手冊.md'), /NotEasy hsiangsenjung@gmail\.com/,
+    '部署手冊要留下 William 拍板的正式值，避免上線時再猜一次');
+  // 產品名稱一律 `NotEasy`（不是 Noteasy／noteasy）——大小寫錯了在畫面上很醒目，
+  // 而 SEC 拿這串當「這是誰的程式」的識別，寫錯等於對外自報錯名字。
+  assert.doesNotMatch(read('docs/C6-部署與對抗審查-操作手冊.md'), /\bNoteasy\b/,
+    '產品名稱是 NotEasy，不是 Noteasy');
 });
 
 test('checksPass 的前提：CI 真的在 main 的每一個 commit 都跑（有路徑過濾就會靜默不部署）', () => {
