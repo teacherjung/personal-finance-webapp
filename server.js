@@ -229,9 +229,20 @@ if (isMain) {
   const server = app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`\n  個人理財網頁已啟動 ✅`);
     console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
-    console.log(`  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);
+    // ⚠️ 這一行以前不分模式都說「資料只存在本機」——HOSTED 下那是假的（資料在 Supabase）。
+    console.log(isHosted()
+      ? `  模式：HOSTED（資料存在雲端資料庫），按 Ctrl+C 可關閉。\n`
+      : `  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);
   });
   // slowloris 防線（2026-07-28）：只收緊 HOSTED——LOCAL 只聽 127.0.0.1、只有自己在用，
   // 收緊只會在「上傳大備份剛好硬碟很慢」時誤殺自己。詳見 lib/parse-limits.js 檔尾。
-  if (isHosted()) applyHostedTimeouts(server);
+  if (isHosted()) {
+    const t = applyHostedTimeouts(server);
+    // ⚠️ **把實際套用的值印出來**（2026-07-28，Codex 收官審查 #8）。兩個理由：
+    //    ① 除錯：上線後有人問「為什麼我的上傳在 4 分半被切斷」，log 裡直接看得到答案。
+    //    ② 這是**唯一能從行程外面證明「接線真的接上了」的訊號**——舊考題只對一個假物件
+    //       直接呼叫 helper，證明得了「helper 會賦值」，證明不了「server 有呼叫 helper」。
+    //       把上面那行刪掉，考題照樣全綠（Codex 實測）。現在刪掉這行，考題會紅。
+    console.log(`  連線逾時（HOSTED）：headers ${t.headersTimeout}ms／request ${t.requestTimeout}ms／keepAlive ${t.keepAliveTimeout}ms\n`);
+  }
 }
