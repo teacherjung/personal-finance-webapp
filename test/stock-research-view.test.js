@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  STOCK_RESEARCH_TABS,
   buildStockResearchViewModel,
+  normalizeStockResearchTab,
   safeResearchUrl,
   stockResearchTrades,
   stockResearchViewHtml,
@@ -102,14 +104,18 @@ const trades = [
   }
 ];
 
+function renderTabs(input, tabs = STOCK_RESEARCH_TABS.map(tab => tab.key)) {
+  return tabs.map(activeTab => stockResearchViewHtml({ ...input, activeTab }, { esc })).join('');
+}
+
 test('個股研究畫面｜完整研究依藍圖顯示摘要、評分、估值、追蹤與原幣交易', () => {
-  const html = stockResearchViewHtml({
+  const html = renderTabs({
     model: syncedModel(),
     trades,
     quote: { price: 220, currency: 'USD', source: 'Yahoo Finance', asOf: '2026-07-25' },
     viewCurrency: 'TWD',
     usdRate: 32
-  }, { esc });
+  });
 
   assert.match(html, /AAPL/);
   assert.match(html, /Apple Inc\./);
@@ -126,6 +132,49 @@ test('個股研究畫面｜完整研究依藍圖顯示摘要、評分、估值�
   assert.match(html, />TWD</);
   assert.doesNotMatch(html, /GOOGL/);
   assert.match(html, /每筆依來源原幣顯示，不跨幣別加總/);
+});
+
+test('個股研究頁籤｜六個固定連結只顯示一個 active panel，選中頁籤與網址一致', () => {
+  assert.deepEqual(STOCK_RESEARCH_TABS.map(tab => tab.key), [
+    'overview', 'fundamentals', 'score', 'valuation', 'thesis', 'trades'
+  ]);
+  const html = stockResearchViewHtml({
+    model: syncedModel(),
+    trades,
+    activeTab: 'valuation'
+  }, { esc });
+
+  assert.equal((html.match(/<a id="stock-tab-/g) || []).length, 6);
+  assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
+  assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation" aria-current="page"/);
+  assert.match(html, /data-stock-tab="valuation"/);
+  assert.match(html, /估值情境/);
+  assert.doesNotMatch(html, /五項評分|我的交易紀錄|關鍵指標/);
+});
+
+test('個股研究頁籤｜非法、缺值與原型名稱 fail-closed 回總覽', () => {
+  for (const value of [undefined, '', 'not-real', '__proto__', 'toString', 'constructor']) {
+    assert.equal(normalizeStockResearchTab(value), 'overview', String(value));
+  }
+  assert.equal(normalizeStockResearchTab(' TRADES '), 'trades');
+});
+
+test('個股研究頁籤｜既有七區塊各歸固定工作頁，不在單頁重複堆疊', () => {
+  const input = { model: syncedModel(), trades };
+  const overview = stockResearchViewHtml({ ...input, activeTab: 'overview' }, { esc });
+  const fundamentals = stockResearchViewHtml({ ...input, activeTab: 'fundamentals' }, { esc });
+  const score = stockResearchViewHtml({ ...input, activeTab: 'score' }, { esc });
+  const valuation = stockResearchViewHtml({ ...input, activeTab: 'valuation' }, { esc });
+  const thesis = stockResearchViewHtml({ ...input, activeTab: 'thesis' }, { esc });
+  const trade = stockResearchViewHtml({ ...input, activeTab: 'trades' }, { esc });
+
+  assert.match(overview, /目前部位[\s\S]*研究結論[\s\S]*最近檢查點/);
+  assert.doesNotMatch(overview, /五項評分|關鍵指標|估值情境|我的交易紀錄/);
+  assert.match(fundamentals, /關鍵指標/);
+  assert.match(score, /五項評分/);
+  assert.match(valuation, /估值情境/);
+  assert.match(thesis, /研究結論[\s\S]*風險與追蹤[\s\S]*資料來源/);
+  assert.match(trade, /我的交易紀錄/);
 });
 
 test('個股研究畫面｜四個必懂概念都有就地 info-link', () => {
@@ -150,7 +199,7 @@ test('個股研究畫面｜四個必懂概念都有就地 info-link', () => {
     }
   });
   zeroCap.scorecard = zeroCap.research.scorecard;
-  const html = stockResearchViewHtml({ model: zeroCap }, { esc });
+  const html = renderTabs({ model: zeroCap }, ['overview', 'fundamentals', 'score']);
 
   for (const key of ['score', 'zero', 'missing', 'cap']) {
     assert.match(html, new RegExp(`class="info-link" data-stock-info="${key}"`));
@@ -164,7 +213,7 @@ test('個股研究畫面｜正常上限也永遠提供軟上限說明，評分�
   const model = syncedModel();
   model.research.scorecard.reasons.business = '第一行\n第二行';
   model.scorecard = model.research.scorecard;
-  const html = stockResearchViewHtml({ model }, { esc });
+  const html = renderTabs({ model }, ['overview', 'score']);
 
   assert.match(html, /data-stock-info="cap">怎麼看？/);
   assert.match(html, /第一行<br>第二行/);
@@ -186,7 +235,7 @@ test('個股研究畫面｜未完成評分不顯示部分總分，缺指標和�
     }
   });
   model.scorecard = model.research.scorecard;
-  const html = stockResearchViewHtml({ model }, { esc });
+  const html = renderTabs({ model }, ['fundamentals', 'score']);
 
   assert.match(html, /已評 1／5 項/);
   assert.doesNotMatch(html, /部分總分|20 分/);
@@ -213,7 +262,7 @@ test('個股研究畫面｜惡意與超長使用者文字全部跳脫，來源�
       ]
     }
   });
-  const html = stockResearchViewHtml({ model }, { esc });
+  const html = stockResearchViewHtml({ model, activeTab: 'thesis' }, { esc });
 
   assert.doesNotMatch(html, /<script>|<img |<svg onload|href="javascript:|href="data:/);
   assert.match(html, /&lt;script&gt;alert\(&#39;thesis&#39;\)&lt;\/script&gt;<br>/);
@@ -232,7 +281,7 @@ test('個股研究畫面｜有持股沒研究時仍顯示部位和交易，不�
     status: { value: 'unreviewed', label: '尚未評估' },
     availability: { state: 'missing-research', label: '尚未撰寫', canEdit: false, canCreate: true }
   });
-  const html = stockResearchViewHtml({ model, trades }, { esc });
+  const html = renderTabs({ model, trades }, ['overview', 'trades']);
 
   assert.match(html, /AAPL 尚未撰寫研究/);
   assert.match(html, /data-stock-create/);
@@ -241,14 +290,31 @@ test('個股研究畫面｜有持股沒研究時仍顯示部位和交易，不�
   assert.doesNotMatch(html, /五項評分|估值情境/);
 });
 
+test('個股研究頁籤｜沒有研究仍可開總覽、基本面與交易，手寫頁籤提供建立入口', () => {
+  const model = baseModel({
+    research: null,
+    scorecard: null,
+    valuationScenarios: null,
+    availability: { state: 'missing-research', label: '尚未撰寫', canEdit: false, canCreate: true }
+  });
+  const fundamentals = stockResearchViewHtml({ model, activeTab: 'fundamentals' }, { esc });
+  const score = stockResearchViewHtml({ model, activeTab: 'score' }, { esc });
+  const trade = stockResearchViewHtml({ model, trades, activeTab: 'trades' }, { esc });
+
+  assert.match(fundamentals, /關鍵指標/);
+  assert.doesNotMatch(fundamentals, /AAPL 尚未撰寫研究/);
+  assert.match(score, /AAPL 尚未撰寫研究[\s\S]*data-stock-create/);
+  assert.match(trade, /我的交易紀錄[\s\S]*IBKR/);
+});
+
 test('個股研究畫面｜賣光但有研究仍可讀；完全空白與缺代號不自動建資料', () => {
   const notHeld = syncedModel({
     position: { symbol: 'AAPL', quantity: 0, costTwd: 0, valueTwd: 0, pnlTwd: 0, held: false },
     allocation: { pct: 0, capPct: 5, frozen: false },
     availability: { state: 'not-held', label: '目前未持有', canEdit: true, canCreate: false }
   });
-  assert.match(stockResearchViewHtml({ model: notHeld }, { esc }), /目前未持有/);
-  assert.match(stockResearchViewHtml({ model: notHeld }, { esc }), /服務收入與生態系黏著度/);
+  assert.match(stockResearchViewHtml({ model: notHeld, activeTab: 'overview' }, { esc }), /目前未持有/);
+  assert.match(stockResearchViewHtml({ model: notHeld, activeTab: 'overview' }, { esc }), /服務收入與生態系黏著度/);
 
   const empty = baseModel({
     symbol: 'NVDA',
@@ -285,7 +351,7 @@ test('個股研究畫面｜舊研究只有文字與檢查點仍能顯示，不�
   });
   legacy.scorecard = null;
   legacy.valuationScenarios = null;
-  const html = stockResearchViewHtml({ model: legacy }, { esc });
+  const html = renderTabs({ model: legacy }, ['fundamentals', 'score', 'valuation', 'thesis']);
 
   assert.match(html, /舊版論點/);
   assert.match(html, /舊版指標說明/);
@@ -338,6 +404,10 @@ test('個股研究樣式｜桌面有彈性欄寬、手機改單欄、長字與�
   assert.match(css, /grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
+  assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*8px 8px 0 0/);
+  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--line-2\)/);
+  assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
+  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*92px/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid,[\s\S]*grid-template-columns:\s*1fr/);
   assert.doesNotMatch(css, /font-size:\s*[^;]*(vw|vh)/);
 });
