@@ -243,3 +243,28 @@ test('掛載順序：登入端點在牆前，但仍拿得到 body（32KB 專屬 
   assert.notEqual(imp.status, 413, '登入後 >1MB 的匯入不可以被 1MB 的通用 parser 擋掉');
   assert.equal(imp.status, 200, `匯入應成功，實得 ${imp.status}`);
 });
+
+// ---- 速率限制（可用性第一層，2026-07-28）----
+// 只驗「牆有掛上、擋得住、訊息可操作」；計數器本身的邊界在 test/rate-limit.test.js（注入時鐘、不等真實時間）。
+test('速率限制：連續猛打登入會被擋成 429＋Retry-After（保護行程，不是取代 Supabase 的防暴力）', async () => {
+  fake.failLogin = true;
+  let saw429 = null;
+  for (let i = 0; i < 40 && !saw429; i++) {
+    const r = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN },
+      body: JSON.stringify({ email: 'a@x.com', password: 'wrong' }),
+    });
+    if (r.status === 429) saw429 = r;
+  }
+  fake.failLogin = false;
+  assert.ok(saw429, '連打 40 次登入竟然沒有任何一次被限速');
+  assert.ok(Number(saw429.headers.get('retry-after')) > 0, '要告訴使用者等多久，不是只說不行');
+  assert.match((await saw429.json()).error, /稍等/, '訊息要可操作');
+});
+
+test('速率限制：/api/auth/me 這種輕量讀取不限速（限了只會擋到正常換頁）', async () => {
+  for (let i = 0; i < 30; i++) {
+    const r = await fetch(`${base}/api/auth/me`);
+    assert.notEqual(r.status, 429, `第 ${i + 1} 次 /api/auth/me 被限速了`);
+  }
+});

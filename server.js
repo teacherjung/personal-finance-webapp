@@ -11,7 +11,9 @@ import { marketRoutes } from './lib/routes/market.js';
 import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
-import { installJsonBodyParsers, AUTH_JSON_LIMIT } from './lib/http-body.js';
+import { installJsonBodyParsers, AUTH_JSON_LIMIT, STATEMENT_JSON_POST_ROUTES } from './lib/http-body.js';
+import { rateLimit, ipKeyOf } from './lib/rate-limit.js';
+import { currentTenant } from './lib/tenant.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
 import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
 
@@ -21,17 +23,36 @@ export const app = express();
 // 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
 // ⚠️ LOCAL 分支的行為必須與 C2 之前 byte-for-byte 等價——這是 C0 的「本機版零改動」契約。
 if (isHosted()) {
-  hostedConfig();                       // fail-fast：缺環境變數＝啟動即 throw（不可默默半套上線）
+  hostedConfig();
+  // ⚠️ Render 之類的平台會在前面代理：不設 trust proxy 的話 `req.ip` 是代理的 IP，
+  // 「每 IP 限制」會退化成「全站共用一個額度」（把正當使用者一起擋掉）。`1` ＝只信任一層代理，
+  // 不無條件相信整串 X-Forwarded-For（那可以偽造）。LOCAL 不設＝維持 Express 預設。
+  app.set('trust proxy', 1);                       // fail-fast：缺環境變數＝啟動即 throw（不可默默半套上線）
   app.use(csrfOriginGuard);             // CSRF Origin 牆（變更類請求；C0 威脅模型）
   app.get('/health', (req, res) => res.json({ ok: true }));   // 機器健康檢查（裁決④：/health 讓給機器）
   // ⚠️ **身分牆之前只准解析登入用的小 body**（2026-07-28 修）：登入端點在牆的白名單裡、
   // 需要 body 才讀得到信箱密碼，所以給它一個 32KB 的專屬 parser——牆前的每一個位元組都是未驗證流量。
   app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }));
+  // 速率限制①：登入類端點按 **IP**（可用性第一層，2026-07-28）。Supabase Auth 自己也有速率限制，
+  // 這一道是**保護我們的行程**——連續猛打登入會把 CPU 與事件圈吃光，牆後的正當使用者跟著遭殃。
+  // 只限「會做事」的三條（login/confirm/set-password）；`me`／`logout` 是輕量讀取、限了只會擋到正常換頁。
+  app.use(['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], rateLimit({
+    windowMs: 5 * 60 * 1000, max: 20, keyOf: ipKeyOf,
+    message: '嘗試次數過多，請稍等幾分鐘再試',
+  }));
   app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
   app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）
   // ⚠️ **大件 parser 一定要掛在 authGate 之後**：以前掛在最前面，等於「不管誰寄來的包裹都先拆開，
   // 拆完才到櫃台問這個人能不能進來」。實測 10 個**未登入**請求 × 45MB 就把行程 OOM 打死
   //（模擬 Render 512MB 容器）；搬到牆後之後同樣的攻擊全數 401、記憶體只多 8MB。
+  // 速率限制②：上傳／解析類端點按 **帳號**（掛在 gate 之後，所以一定有身分可用）。
+  // 這些端點會解 PDF／XLSX／XML，是全站最貴的 CPU 操作——**多人化才成立的攻擊面**：
+  // 以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以。按帳號而不按 IP：
+  // 同一個家庭／公司出口 IP 的兩個人不該互相排擠。
+  app.use([...STATEMENT_JSON_POST_ROUTES, '/api/import'], rateLimit({
+    windowMs: 5 * 60 * 1000, max: 30, keyOf: (req) => currentTenant()?.userId || ipKeyOf(req),
+    message: '上傳與解析的次數過多，請稍等幾分鐘再試（這是為了讓大家的服務都不會被拖慢）',
+  }));
   installJsonBodyParsers(app);
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
   const site = join(__dirname, 'public-site');
