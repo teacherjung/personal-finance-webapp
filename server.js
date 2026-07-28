@@ -29,6 +29,31 @@ const RL_WINDOW_MS = 5 * 60 * 1000;
 const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
 
 /**
+ * **會對外連線的端點清單（單一真相）**——「我們的伺服器會去打別人」的完整名單。
+ *
+ * 為什麼要獨立成一張表（Codex 收官審查 #6，2026-07-28）：`RATE_LIMITS` 原本的註解寫著
+ * 「IB 同步是全站唯一『我們去打別人』的端點」，同一個檔案往下 30 行就自己推翻了（報價也對外）；
+ * 而 `/api/cape`、`/api/realyield`、`/api/insights` 三條同樣對外，**一條都不在表上**。
+ * 實測後果：模擬上游失敗後連打 65 次 `/api/cape`，65 次全部真的出去、0 個 429。
+ *
+ * 病根不是「漏了三條」，是**沒有人負責維護「哪些端點會對外」這件事**——
+ * 註解不是清單，考題也只能從 `RATE_LIMITS` 反查（漏列的當然查不到）。
+ * 所以改成：這張表列出**上游主機 → 端點**，考題拿它跟 `RATE_LIMITS` 對帳，
+ * **少限一條就紅**。新增任何 `fetch()` 的人一定會被這一題攔下來。
+ *
+ * ⚠️ 新增對外連線時：①在這裡登記 ②確認 `RATE_LIMITS` 涵蓋得到（前綴比對也算）。
+ */
+export const OUTBOUND_ENDPOINTS = [
+  { host: 'ndcdyn.interactivebrokers.com', why: 'IBKR Flex Web Service（拉整份報表）', paths: ['/api/ib/sync'] },
+  { host: 'query1.finance.yahoo.com', why: '報價', paths: ['/api/quotes', '/api/quotes/refresh-auto'] },
+  { host: 'www.multpl.com', why: 'CAPE（席勒本益比）', paths: ['/api/cape'] },
+  { host: 'fred.stlouisfed.org', why: '實質利率（FRED）', paths: ['/api/realyield'] },
+  // 洞察引擎自己會呼叫 CAPE 與實質利率兩者，**而且會寫入資料庫**（更新書籤）。
+  { host: 'www.multpl.com + fred.stlouisfed.org', why: '每日洞察（內部再呼叫上面兩者）', paths: ['/api/insights'] },
+  { host: 'www.sec.gov + data.sec.gov', why: 'SEC 官方基本面（三份 JSON）', paths: ['/api/stock-fundamentals/:symbol/refresh'] },
+];
+
+/**
  * **速率限制的路徑表（單一真相）**——`server.js` 依它掛載，考題依它反查。
  *
  * 為什麼要有這張表（2026-07-28）：`test/server.test.js` 的「LOCAL 不限速」反向考題本來是自己
@@ -86,6 +111,22 @@ export const RATE_LIMITS = [
     max: 12, keyOf: tenantKeyOf,
     message: '官方基本面更新太頻繁了，請稍等幾分鐘再試',
   },
+  {
+    // 估值訊號（CAPE／實質利率）與每日洞察：三條都會對外（multpl／FRED），
+    // 而且**失敗時不入快取**（`lib/services/market-data.js` 只在成功時寫 cache），
+    // 所以上游一掛，每一發請求都會真的出去＝穩定的 1:1 放大路徑（Codex 收官審查 #6 實測 65/65）。
+    // 上限訂寬（開一次 app 會刷一輪、總覽頁也會叫 insights），但要有天花板。
+    name: '估值訊號與洞察（按帳號）', stage: 'post-gate',
+    paths: ['/api/cape', '/api/realyield', '/api/insights'],
+    // ⚠️ probe 刻意用 `/api/cape/__probe` 而不是 `/api/cape`：三條路的 handler **都會對外連線**，
+    //    而考題會把 probe 打 `max + 5` 次——直接打 `/api/cape` 等於每次 `npm test` 就對 multpl.com
+    //    發 65 個請求。`app.use(路徑, …)` 是**前綴比對**，所以 `/api/cape/__probe` 一樣會經過
+    //    這道限速（實測：中介層跑到、handler 沒跑到、最後落 404）。
+    //    ＝在不打上游的前提下，考的仍然是「這道限速有沒有真的掛上去」。
+    probe: { method: 'GET', path: '/api/cape/__probe' },
+    max: 60, keyOf: tenantKeyOf,
+    message: '估值資料刷新太頻繁了，請稍等幾分鐘再試',
+  },
 ];
 
 /** 依 `RATE_LIMITS` 掛上某一階段的所有限速（HOSTED 專用）。 @param {string} stage */
@@ -107,14 +148,21 @@ if (isHosted()) {
   app.set('trust proxy', 1);                       // fail-fast：缺環境變數＝啟動即 throw（不可默默半套上線）
   app.use(csrfOriginGuard);             // CSRF Origin 牆（變更類請求；C0 威脅模型）
   app.get('/health', (req, res) => res.json({ ok: true }));   // 機器健康檢查（裁決④：/health 讓給機器）
-  // ⚠️ **身分牆之前只准解析登入用的小 body**（2026-07-28 修）：登入端點在牆的白名單裡、
-  // 需要 body 才讀得到信箱密碼，所以給它一個 32KB 的專屬 parser——牆前的每一個位元組都是未驗證流量。
-  app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }));
   // 速率限制①：登入類端點按 **IP**（可用性第一層，2026-07-28）。Supabase Auth 自己也有速率限制，
   // 這一道是**保護我們的行程**——連續猛打登入會把 CPU 與事件圈吃光，牆後的正當使用者跟著遭殃。
   // 只限「會做事」的三條（login/confirm/set-password）；`me`／`logout` 是輕量讀取、限了只會擋到正常換頁。
   // ⚠️ 這一道**必須掛在 `authGate` 之前**（登入本來就還沒有身分），所以只能按 IP。
+  //
+  // ⚠️ **也必須掛在 JSON parser 之前**（Codex 收官審查 #5，2026-07-28 修）：
+  //    body-parser 遇到畸形 JSON 會在自己內部 `next(err)`，Express 於是**直接跳到全域錯誤中介**，
+  //    中間所有一般中介層——包含這道限速——整段被跳過。實測連送 25 個畸形 JSON：
+  //    25 個 400、**0 個 429**，而上限明明是 20。超過 32KB 的 body（413）也走同一條縫。
+  //    這道限速按 IP 取鍵、**根本不需要 body**，所以擺在 parser 前面沒有任何代價。
+  //    （對照組：post-gate 那幾道本來就掛在 `installJsonBodyParsers` 之前，順序一直是對的。）
   mountRateLimit('pre-gate');
+  // ⚠️ **身分牆之前只准解析登入用的小 body**：登入端點在牆的白名單裡、需要 body 才讀得到信箱密碼，
+  // 所以給它一個 32KB 的專屬 parser——牆前的每一個位元組都是未驗證流量。
+  app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }));
   app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
   app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）
   // ⚠️ **大件 parser 一定要掛在 authGate 之後**：以前掛在最前面，等於「不管誰寄來的包裹都先拆開，
