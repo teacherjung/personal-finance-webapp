@@ -62,7 +62,7 @@ test('投資報表｜美元計價、IB 現金流與交易摘要使用同一換�
     settings: {
       fxLow: 28,
       fxHigh: 35,
-      ib: { income: { from: '202601', to: '202606', dividends: 10, paymentInLieu: 2, withholdingTax: -1, interestPaid: -3, interestReceived: 1 } }
+      ib: { income: { from: '202601', to: '202606', dividends: 10, paymentInLieu: 2, withholdingTax: -1, interestPaid: -3, interestReceived: 1, skippedNoCurrency: 2 } }
     },
     ibTrades: [{ symbol: 'AAPL', buySell: 'SELL', pnl: 5, currency: 'USD' }]
   };
@@ -74,4 +74,27 @@ test('投資報表｜美元計價、IB 現金流與交易摘要使用同一換�
   assert.match(report.html, /IBKR 現金流 <span>2026\/01–2026\/06/);
   assert.match(report.html, /交易摘要 <span>共 1 筆（買 0／賣 1）/);
   assert.match(report.html, /AAPL \+5 USD/);
+});
+
+
+// A4 報表與活動卡是**同一份數字的兩個出口**，註記口徑要一致（2026-07-28）：
+// 列印出來的報表少了註記，讀的人完全沒有機會發現總額不完整。
+test('A4 報表｜報表沒有幣別欄的筆數要跟活動卡一樣出聲', () => {
+  const data = {
+    ...baseData,
+    settings: { fxLow: 28, fxHigh: 35, ib: { income: { from: '202601', to: '202606', dividends: 10, skippedNoCurrency: 2 } } },
+    ibTrades: [],
+  };
+  const report = buildPortfolioReport(data, {
+    viewCurrency: 'USD', generated: '2026-07-22', sortKey: 'toString', sortDir: 'desc', layers, layerOrder, escapeHtml
+  });
+  assert.match(report.html, /2 筆現金交易的報表沒有幣別欄/);
+  assert.match(report.html, /未計入上列金額/);
+
+  const clean = buildPortfolioReport({
+    ...baseData,
+    settings: { fxLow: 28, fxHigh: 35, ib: { income: { from: '202601', to: '202606', dividends: 10 } } },
+    ibTrades: [],
+  }, { viewCurrency: 'USD', generated: '2026-07-22', sortKey: 'toString', sortDir: 'desc', layers, layerOrder, escapeHtml });
+  assert.doesNotMatch(clean.html, /沒有幣別欄/, '沒有缺漏就不該出現註記');
 });

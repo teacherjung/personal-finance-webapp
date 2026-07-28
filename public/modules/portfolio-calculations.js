@@ -24,7 +24,9 @@ export function marginCallDistance(ibValTwd, loanTwd, maintPct) {
 // pnlBase → fxRateToBase → USD 直通 → 設定匯率估算 → 缺匯率(0)。
 export function tradePnlBase(t, settings = {}) {
   const pnl = Number(t.pnl) || 0;
-  const cur = String(t.currency || 'USD').toUpperCase();
+  // ⚠️ 缺幣別不冒充 USD（2026-07-28 修，與 lib/ib.js 的同步點）：空字串會一路落到最後的
+  // `source: 'missing'`，tradeSummary 因此把它列進「缺匯率不計入」的註記——看得見的退化勝過默默算錯。
+  const cur = String(t.currency || '').toUpperCase();
   if (t.pnlBase != null && t.pnlBase !== '' && Number.isFinite(Number(t.pnlBase)))
     return { base: Number(t.pnlBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
   if (t.fxRateToBase != null && t.fxRateToBase !== '' && Number.isFinite(Number(t.fxRateToBase)) && Number(t.fxRateToBase) > 0)
@@ -46,7 +48,8 @@ export function tradeSummary(trades, settings = {}) {
     if (cur !== 'USD') {
       if (source === 'ibkr') ibkr.add(cur);
       else if (source === 'estimated') estimated.add(cur);
-      else if (source === 'missing') missing.add(cur);
+      // 缺幣別時 cur 是空字串——直接放進去畫面會出現一個空白的頓號（提示亮了卻沒說是什麼）。
+      else if (source === 'missing') missing.add(cur || '未知幣別');
     }
     return base;
   };

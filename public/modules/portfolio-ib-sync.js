@@ -8,6 +8,8 @@
  *   created?: number,
  *   cash?: Record<string, number>,
  *   skippedCurrencies?: string[],
+ *   skippedNoCurrency?: string[],
+ *   incomeNoCurrency?: number,
  *   cashReportMissing?: boolean,
  *   cashDetailMissing?: boolean,
  *   cashFromSummary?: boolean,
@@ -40,6 +42,20 @@ export function ibSyncFeedback(result, formatCurrency) {
   if (result.skippedCurrencies?.length) {
     feedback.push({
       message: `注意：這些項目因幣別尚未支援而跳過：${result.skippedCurrencies.join('、')}`,
+      error: true
+    });
+  }
+  // 缺幣別（2026-07-28）：與「幣別不支援」是**兩種病**，訊息必須分開講，使用者才修得到對的地方——
+  // 前者是我們不支援那個幣別，後者是報表根本沒給幣別欄（去 Flex Query 勾一下就好）。
+  if (result.skippedNoCurrency?.length) {
+    feedback.push({
+      message: `注意：這些新持股因為報表沒有幣別欄而沒有建立：${result.skippedNoCurrency.join('、')}。請到 IBKR 的 Flex Query 在 Open Positions 勾選 Currency 欄後重新同步（猜幣別會讓市值與淨資產算錯，所以寧可不建）。`,
+      error: true
+    });
+  }
+  if (result.incomeNoCurrency) {
+    feedback.push({
+      message: `注意：有 ${result.incomeNoCurrency} 筆股息／利息因為報表沒有幣別欄而未計入。請到 IBKR 的 Flex Query 在 Cash Transactions 勾選 Currency 欄後重新同步。`,
       error: true
     });
   }
