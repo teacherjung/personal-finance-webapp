@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createStockResearchPage,
+  revealActiveStockTab,
   stockQuoteFromHoldings,
-  stockSymbolFromHash
+  stockSymbolFromHash,
+  stockTabFromHash
 } from '../public/modules/stock-research-page.js';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -19,6 +21,10 @@ function fakeView(nodes = {}) {
   return {
     innerHTML: '',
     ownerDocument: { getElementById: () => null },
+    querySelector: selector => {
+      const value = nodes[selector];
+      return Array.isArray(value) ? (value[0] || null) : (value || null);
+    },
     querySelectorAll: selector => nodes[selector] || []
   };
 }
@@ -108,6 +114,32 @@ test('個股研究頁路由｜每次從當下 hash 解析代號，非 stock 路�
   assert.equal(stockSymbolFromHash('#ib?symbol=AAPL'), '');
 });
 
+test('個股研究頁路由｜tab 深連結可重載，非法值與原型名稱一律回總覽', () => {
+  assert.equal(stockTabFromHash('#stock?symbol=AAPL&tab=valuation'), 'valuation');
+  assert.equal(stockTabFromHash('#stock?tab=trades&symbol=AAPL'), 'trades');
+  for (const hash of [
+    '#stock?symbol=AAPL',
+    '#stock?symbol=AAPL&tab=not-real',
+    '#stock?symbol=AAPL&tab=__proto__',
+    '#stock?symbol=AAPL&tab=toString',
+    '#ib?tab=trades'
+  ]) {
+    assert.equal(stockTabFromHash(hash), 'overview', hash);
+  }
+});
+
+test('個股研究頁路由｜render 後把目前頁籤捲進可視範圍，缺 DOM 時安全略過', () => {
+  const calls = [];
+  revealActiveStockTab({
+    querySelector: selector => selector === '.stock-tab.active'
+      ? { scrollIntoView: options => calls.push(options) }
+      : null
+  });
+  revealActiveStockTab(null);
+  revealActiveStockTab({});
+  assert.deepEqual(calls, [{ block: 'nearest', inline: 'center' }]);
+});
+
 test('個股研究頁報價｜只讀持股已保存現價，來源與日期不假裝成即時資料', () => {
   const quote = stockQuoteFromHoldings('aapl', baseData().holdings, baseData().settings);
   assert.deepEqual(quote, {
@@ -122,7 +154,7 @@ test('個股研究頁報價｜只讀持股已保存現價，來源與日期不�
   }], baseData().settings), {}, '缺報價不可被 Number(null) 冒充成真的 0');
 });
 
-test('個股研究頁控制器｜平行讀五個唯讀來源並組出持股、研究與交易，不觸發寫入', async () => {
+test('個股研究頁控制器｜平行讀五個唯讀來源，總覽與交易深連結各只顯示自己的內容', async () => {
   const harness = pageHarness();
   await harness.render();
 
@@ -133,8 +165,15 @@ test('個股研究頁控制器｜平行讀五個唯讀來源並組出持股、�
   assert.match(harness.root.innerHTML, /AAPL/);
   assert.match(harness.root.innerHTML, /Apple/);
   assert.match(harness.root.innerHTML, /長期現金流/);
-  assert.match(harness.root.innerHTML, /我的交易紀錄/);
   assert.match(harness.root.innerHTML, /6\.4 萬/);
+  assert.match(harness.root.innerHTML, /data-stock-tab="overview"/);
+  assert.doesNotMatch(harness.root.innerHTML, /我的交易紀錄/);
+
+  harness.setHash('#stock?symbol=AAPL&tab=trades');
+  await harness.render();
+  assert.match(harness.root.innerHTML, /data-stock-tab="trades"/);
+  assert.match(harness.root.innerHTML, /我的交易紀錄/);
+  assert.doesNotMatch(harness.root.innerHTML, /長期現金流|6\.4 萬/);
 });
 
 test('個股研究頁控制器｜缺 symbol 直接顯示引導，不讀資料也不自動建立研究', async () => {
@@ -187,6 +226,48 @@ test('個股研究頁控制器｜同頁較舊請求晚回來也不能蓋掉新�
   await oldRender;
   assert.match(root.innerHTML, /GOOGL/);
   assert.doesNotMatch(root.innerHTML, /AAPL/);
+});
+
+test('個股研究頁控制器｜同代號快速切頁籤時，舊頁晚回來不能蓋掉新頁籤', async () => {
+  let resolveFirst;
+  const firstHoldings = new Promise(resolve => { resolveFirst = resolve; });
+  let hash = '#stock?symbol=AAPL&tab=overview';
+  let holdingCalls = 0;
+  const root = fakeView();
+  const data = baseData();
+  const render = createStockResearchPage({
+    api: async path => {
+      if (path === '/holdings') {
+        holdingCalls += 1;
+        if (holdingCalls === 1) return firstHoldings;
+      }
+      return ({
+        '/holdings': data.holdings,
+        '/research': data.research,
+        '/securities': data.securities,
+        '/summary': data.summary,
+        '/settings': data.settings
+      })[path];
+    },
+    getView: () => root,
+    getHash: () => hash,
+    getRouteSeq: () => 1,
+    getViewCurrency: () => 'TWD',
+    esc,
+    openForm: () => {},
+    openInfo: () => {},
+    toast: () => {},
+    today: () => '2026-07-26'
+  });
+
+  const oldRender = render();
+  hash = '#stock?symbol=AAPL&tab=trades';
+  await render();
+  assert.match(root.innerHTML, /data-stock-tab="trades"/);
+  resolveFirst(data.holdings);
+  await oldRender;
+  assert.match(root.innerHTML, /data-stock-tab="trades"/);
+  assert.doesNotMatch(root.innerHTML, /data-stock-tab="overview"/);
 });
 
 test('個股研究頁互動｜說明、編輯與檢查點都接正確入口，儲存後仍在原頁才重畫', async () => {

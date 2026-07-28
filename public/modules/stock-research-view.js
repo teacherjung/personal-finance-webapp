@@ -40,6 +40,15 @@ const BREAKER_STATUS = Object.freeze({
   cleared: '已解除'
 });
 
+export const STOCK_RESEARCH_TABS = Object.freeze([
+  Object.freeze({ key: 'overview', label: '總覽' }),
+  Object.freeze({ key: 'fundamentals', label: '基本面' }),
+  Object.freeze({ key: 'score', label: '評分' }),
+  Object.freeze({ key: 'valuation', label: '估值' }),
+  Object.freeze({ key: 'thesis', label: '論點與追蹤' }),
+  Object.freeze({ key: 'trades', label: '交易' })
+]);
+
 /** @param {unknown} value */
 function finiteOrNull(value) {
   if (value == null || value === '') return null;
@@ -62,6 +71,12 @@ function objectOrEmpty(value) {
 /** @param {unknown} value */
 function arrayOrEmpty(value) {
   return Array.isArray(value) ? value.slice() : [];
+}
+
+/** @param {unknown} value */
+export function normalizeStockResearchTab(value) {
+  const key = text(value).toLowerCase();
+  return STOCK_RESEARCH_TABS.some(tab => tab.key === key) ? key : 'overview';
 }
 
 /** @param {unknown} value @param {number} maximumFractionDigits */
@@ -140,7 +155,8 @@ export function valuationDistance(quotePrice, quoteCurrency, scenarioValue, scen
  *   trades?:unknown,
  *   quote?:unknown,
  *   viewCurrency?:unknown,
- *   usdRate?:unknown
+ *   usdRate?:unknown,
+ *   activeTab?:unknown
  * }} input
  */
 export function buildStockResearchViewModel(input = {}) {
@@ -180,6 +196,7 @@ export function buildStockResearchViewModel(input = {}) {
     checkpoints,
     scoreHistory,
     trades: stockResearchTrades(model.symbol, input.trades),
+    activeTab: normalizeStockResearchTab(input.activeTab),
     // 美元檢視沒有有效匯率時退回台幣，絕不拿 1:1 捏造美元金額。
     viewCurrency: input.viewCurrency === 'USD' && usdRate != null && usdRate > 0 ? 'USD' : 'TWD',
     usdRate: usdRate != null && usdRate > 0 ? usdRate : 1
@@ -232,6 +249,18 @@ function headerHtml(view, h) {
 }
 
 /** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
+function tabsHtml(view, h) {
+  const links = STOCK_RESEARCH_TABS.map(tab => {
+    const active = tab.key === view.activeTab;
+    const href = `#stock?symbol=${encodeURIComponent(view.symbol)}&tab=${encodeURIComponent(tab.key)}`;
+    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}"${active ? ' aria-current="page"' : ''}>${tab.label}</a>`;
+  }).join('');
+  return `<nav class="stock-tabs" aria-label="個股研究分頁">
+    <div class="stock-tabs-track">${links}</div>
+  </nav>`;
+}
+
+/** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
 function positionHtml(view, h) {
   const position = view.position;
   const allocation = view.allocation;
@@ -259,6 +288,17 @@ function positionHtml(view, h) {
       ${item('占淨資產', percent(allocation.pct))}
       ${item(`個股上限${capInfo}`, capLabel)}
     </div>
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
+function latestCheckpointHtml(view, h) {
+  const latest = view.checkpoints[0];
+  return `<section class="stock-section stock-latest-checkpoint">
+    <div class="stock-section-heading"><h2>最近檢查點</h2></div>
+    ${latest
+      ? `<div class="stock-checkpoint-summary"><time>${h.e(text(latest.date) || '未填日期')}</time><div>${h.multiline(latest.note, '尚未填寫筆記')}</div></div>`
+      : '<p class="empty">尚無檢查點</p>'}
   </section>`;
 }
 
@@ -494,6 +534,27 @@ function missingResearchHtml(view, h) {
   </section>`;
 }
 
+/** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
+function activeTabHtml(view, h) {
+  const needsResearch = !view.research
+    && ['score', 'valuation', 'thesis'].includes(view.activeTab);
+  if (needsResearch) return missingResearchHtml(view, h);
+
+  if (view.activeTab === 'fundamentals') return metricsHtml(view, h);
+  if (view.activeTab === 'score') return scoreHtml(view, h);
+  if (view.activeTab === 'valuation') return valuationHtml(view, h);
+  if (view.activeTab === 'thesis') {
+    return [thesisHtml(view, h), detailsHtml(view, h), sourcesHtml(view, h)].join('');
+  }
+  if (view.activeTab === 'trades') return tradesHtml(view, h);
+
+  return [
+    positionHtml(view, h),
+    view.research ? thesisHtml(view, h) : missingResearchHtml(view, h),
+    view.research ? latestCheckpointHtml(view, h) : ''
+  ].join('');
+}
+
 /**
  * 個股研究頁完整 HTML。P3 只產字串；P4 才接 DOM、API、openInfo 與按鈕事件。
  * @param {Parameters<typeof buildStockResearchViewModel>[0]} input
@@ -526,21 +587,11 @@ export function stockResearchViewHtml(input, formatters) {
     </div>`;
   }
 
-  const researchBody = view.research
-    ? [
-        thesisHtml(view, h),
-        scoreHtml(view, h),
-        metricsHtml(view, h),
-        valuationHtml(view, h),
-        detailsHtml(view, h),
-        sourcesHtml(view, h)
-      ].join('')
-    : missingResearchHtml(view, h);
-
   return `<div class="stock-research-page" data-stock-symbol="${h.e(view.symbol)}">
     ${headerHtml(view, h)}
-    ${positionHtml(view, h)}
-    ${researchBody}
-    ${tradesHtml(view, h)}
+    ${tabsHtml(view, h)}
+    <section class="stock-tab-panel" id="stock-panel-${h.e(view.activeTab)}" aria-labelledby="stock-tab-${h.e(view.activeTab)}" data-stock-tab="${h.e(view.activeTab)}">
+      ${activeTabHtml(view, h)}
+    </section>
   </div>`;
 }

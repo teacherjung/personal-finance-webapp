@@ -6,7 +6,11 @@ import { buildPortfolioModel } from './portfolio-model.js';
 import { createPortfolioResearchActions } from './portfolio-research-actions.js';
 import { buildStockResearchModel, findStockResearch } from './stock-research-model.js';
 import { normalizePortfolioSymbol } from './portfolio-symbol.js';
-import { STOCK_RESEARCH_INFO, stockResearchViewHtml } from './stock-research-view.js';
+import {
+  STOCK_RESEARCH_INFO,
+  normalizeStockResearchTab,
+  stockResearchViewHtml
+} from './stock-research-view.js';
 
 /** @param {unknown} value */
 function objectOrEmpty(value) {
@@ -37,6 +41,24 @@ export function stockSymbolFromHash(hash) {
   if ((queryAt < 0 ? raw : raw.slice(0, queryAt)) !== 'stock') return '';
   const params = new URLSearchParams(queryAt < 0 ? '' : raw.slice(queryAt + 1));
   return normalizePortfolioSymbol(params.get('symbol'));
+}
+
+/**
+ * tab 只接受六個固定 key；缺值、非法值與原型名稱都回總覽。
+ * @param {unknown} hash
+ */
+export function stockTabFromHash(hash) {
+  const raw = String(hash || '').replace(/^#/, '');
+  const queryAt = raw.indexOf('?');
+  if ((queryAt < 0 ? raw : raw.slice(0, queryAt)) !== 'stock') return 'overview';
+  const params = new URLSearchParams(queryAt < 0 ? '' : raw.slice(queryAt + 1));
+  return normalizeStockResearchTab(params.get('tab'));
+}
+
+/** @param {any} root */
+export function revealActiveStockTab(root) {
+  const active = root?.querySelector?.('.stock-tab.active');
+  active?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
 }
 
 /**
@@ -86,10 +108,12 @@ export function createStockResearchPage(deps) {
     const routeSeq = deps.getRouteSeq();
     const generation = ++renderGeneration;
     const symbol = stockSymbolFromHash(deps.getHash());
+    const activeTab = stockTabFromHash(deps.getHash());
     const isCurrent = () => (
       routeSeq === deps.getRouteSeq()
       && generation === renderGeneration
       && stockSymbolFromHash(deps.getHash()) === symbol
+      && stockTabFromHash(deps.getHash()) === activeTab
     );
     const rerenderIfCurrent = () => {
       if (isCurrent()) void renderStockResearch();
@@ -98,7 +122,8 @@ export function createStockResearchPage(deps) {
     if (!symbol) {
       if (!isCurrent()) return;
       deps.getView().innerHTML = stockResearchViewHtml({
-        model: buildStockResearchModel({ symbol: '' })
+        model: buildStockResearchModel({ symbol: '' }),
+        activeTab
       }, { esc: deps.esc });
       return;
     }
@@ -132,9 +157,11 @@ export function createStockResearchPage(deps) {
       trades: arrayOrEmpty(securities.trades),
       quote,
       viewCurrency: deps.getViewCurrency(),
-      usdRate: settings.usdTwd
+      usdRate: settings.usdTwd,
+      activeTab
     }, { esc: deps.esc });
     if (!isCurrent()) return;
+    revealActiveStockTab(root);
 
     root.querySelectorAll('[data-stock-info]').forEach((button) => {
       button.onclick = () => {

@@ -16,8 +16,7 @@
 
 .stock-research-head {
   align-items: flex-start;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
 }
 
 .stock-research-title h1 {
@@ -64,6 +63,73 @@
   justify-content: center;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.stock-tabs {
+  width: 100%;
+  margin-top: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--line-2);
+  scrollbar-width: thin;
+  overscroll-behavior-inline: contain;
+}
+
+.stock-tabs-track {
+  display: flex;
+  align-items: flex-end;
+  width: max-content;
+  min-width: 100%;
+}
+
+.stock-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 94px;
+  min-height: 42px;
+  padding: 9px 16px;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.stock-tab:hover {
+  color: var(--text);
+  background: var(--card-2);
+}
+
+.stock-tab.active {
+  position: relative;
+  z-index: 1;
+  border-color: var(--line-2);
+  color: var(--text);
+  background: var(--bg);
+}
+
+.stock-tab.active::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  background: var(--accent);
+}
+
+.stock-tab-panel {
+  min-height: 420px;
+  padding-top: 22px;
+}
+
+.stock-tab-panel > .stock-position {
+  margin-top: 0;
 }
 
 .stock-position {
@@ -382,6 +448,22 @@
   margin-left: 4px;
 }
 
+.stock-checkpoint-summary {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) minmax(0, 1fr);
+  gap: 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  line-height: 1.7;
+}
+
+.stock-checkpoint-summary time {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .stock-research-empty {
   display: flex;
   flex-direction: column;
@@ -466,6 +548,24 @@
     flex: 1;
   }
 
+  .stock-tabs {
+    margin-right: -18px;
+    margin-left: -18px;
+    width: calc(100% + 36px);
+    padding-left: 18px;
+  }
+
+  .stock-tabs-track {
+    min-width: max-content;
+    padding-right: 18px;
+  }
+
+  .stock-tab {
+    min-width: 92px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
   .stock-position-grid,
   .stock-two-column,
   .stock-detail-columns {
@@ -520,5 +620,10 @@
 
   .stock-quote {
     text-align: left;
+  }
+
+  .stock-checkpoint-summary {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 }
