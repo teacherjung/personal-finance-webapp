@@ -1,0 +1,129 @@
+{
+  "tickerIndex": {
+    "0": {
+      "cik_str": "900002",
+      "ticker": "CAL",
+      "title": "Synthetic Calendar Services"
+    }
+  },
+  "submissions": {
+    "cik": 900002,
+    "name": "Synthetic Calendar Services",
+    "sic": 7370,
+    "fiscalYearEnd": "1231",
+    "tickers": ["CAL"]
+  },
+  "companyFacts": {
+    "cik": "0000900002",
+    "entityName": "Synthetic Calendar Services",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenues",
+          "units": {
+            "USD": [
+              {
+                "start": "2022-01-01",
+                "end": "2022-12-31",
+                "val": 2000,
+                "accn": "0000900002-23-000001",
+                "fy": 2022,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2023-02-01"
+              },
+              {
+                "start": "2023-01-01",
+                "end": "2023-12-31",
+                "val": 2200,
+                "accn": "0000900002-24-000001",
+                "fy": 2023,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2024-02-01"
+              },
+              {
+                "start": "2024-01-01",
+                "end": "2024-12-31",
+                "val": 2400,
+                "accn": "0000900002-25-000001",
+                "fy": 2024,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-02-01"
+              },
+              {
+                "start": "2025-01-01",
+                "end": "2025-12-31",
+                "val": 2600,
+                "accn": "0000900002-26-000001",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2026-02-01"
+              }
+            ],
+            "EUR": [
+              {
+                "start": "2025-01-01",
+                "end": "2025-12-31",
+                "val": 2500,
+                "accn": "0000900002-26-000001",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2026-02-01"
+              }
+            ],
+            "shares": [
+              {
+                "start": "2025-01-01",
+                "end": "2025-12-31",
+                "val": 999999,
+                "accn": "0000900002-26-000001",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2026-02-01"
+              }
+            ]
+          }
+        },
+        "NetIncomeLoss": {
+          "label": "Net income",
+          "units": {
+            "USD": [
+              {
+                "start": "2025-01-01",
+                "end": "2025-12-31",
+                "val": -10,
+                "accn": "0000900002-26-000001",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2026-02-01"
+              }
+            ]
+          }
+        },
+        "NetCashProvidedByUsedInOperatingActivities": {
+          "label": "Operating cash flow",
+          "units": {
+            "USD": [
+              {
+                "start": "2025-01-01",
+                "end": "2025-12-31",
+                "val": 0,
+                "accn": "0000900002-26-000001",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2026-02-01"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
