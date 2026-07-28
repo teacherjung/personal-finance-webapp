@@ -32,6 +32,9 @@ const { app } = await import('../server.js');
 const FLEX = 'FLEXTOKEN-SECRET-0001';
 const TAISHIN = 'A123456789';        // 台新證券 PDF 密碼＝身分證字號（合成假值）
 const CARDPW = 'B987654321';         // 信用卡帳單 PDF 密碼（合成假值）
+const FULL_ACCOUNT_NO = '9001001234567890';   // 完整銀行帳號（PII，合成假值）
+/** @type {string} */
+let ACCOUNT_ID = '';
 
 const A = { id: 'user-sec-a', email: 'a@x.com' };
 const B = { id: 'user-sec-b', email: 'b@x.com' };
@@ -119,6 +122,14 @@ test('at-rest：三個機密欄位存進資料庫時全是密文，明文一個�
   assert.equal(s.status, 200);
   const c = await as('tokA', '/api/cards', { method: 'POST', body: JSON.stringify({ name: '測試卡', pdfPassword: CARDPW }) });
   assert.equal(c.status, 200);
+  // 帳戶也走真寫入路徑建一個（下面兩題要用）。accountNo 是 PII 但**刻意不加密**——
+  // 它只從備份檔剝除，見 lib/secret-fields.js 的兩張清單。
+  const a = await as('tokA', '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({ name: '測試帳戶', type: 'cash', currency: 'TWD', balance: 100, accountNo: FULL_ACCOUNT_NO }),
+  });
+  assert.equal(a.status, 200, `建帳戶應該成功：${await a.clone().text()}`);
+  ACCOUNT_ID = (await a.json()).id;
 
   const raw = rawOf(A.id);
   for (const [label, secret] of [['IB flexToken', FLEX], ['台新證券密碼', TAISHIN], ['卡片 PDF 密碼', CARDPW]]) {
@@ -160,6 +171,29 @@ test('雲端匯出：不含機密（裁決⑤），但其餘資料完整、可�
   assert.equal(dump.settings.ib.flexToken, '');
   assert.equal(dump.cards[0].pdfPassword, '');
   assert.equal(dump.cards[0].name, '測試卡', '非機密資料必須完整');
+});
+
+// ⚠️ 2026-07-28 新增。這是 Codex 收官審查 #7（accountNo）**確認可避免的那一半**：
+//    「資料庫裡要不要加密」仍是 William 的裁決，但「完整帳號跟著備份檔離開伺服器」不必等裁決——
+//    裁決⑤剝掉三個機密欄位的理由（檔案會被下載、可能轉寄或存到別處）對 accountNo 一字不差適用，
+//    當初只是因為 accountNo 不在 C0 第五節的機密清單裡而漏掉。
+test('雲端匯出：完整帳號也不可以跟著備份檔離開伺服器（accountNo）', async () => {
+  const body = await (await as('tokA', '/api/export')).text();
+  assert.ok(!body.includes(FULL_ACCOUNT_NO),
+    `雲端匯出夾帶了完整帳號（${FULL_ACCOUNT_NO}）——那個檔案會被下載到裝置上、可能轉寄`);
+  const dump = JSON.parse(body);
+  const acc = dump.accounts.find((/** @type {any} */ a) => a.id === ACCOUNT_ID);
+  assert.equal(acc.accountNo, '', '欄位要留著且為空＝「未設定」，不是整個消失（還原時才不會少一個鍵）');
+  assert.equal(acc.name, '測試帳戶', '非機密資料必須完整');
+});
+
+test('accountNo 只從備份檔剝除，**沒有**被加密——那是 William 的裁決，不可以順手代決', async () => {
+  // 資料庫裡那一份必須原封不動是明文。加密會連帶影響 matchAccount 的可見前綴比對與 ownSuffixSet
+  // （見 lib/secret-fields.js 檔頭 📌），是另一件事、要另外決定。
+  const raw = JSON.stringify(pg.selectAs(A.id));
+  assert.ok(raw.includes(FULL_ACCOUNT_NO),
+    '資料庫裡的 accountNo 應該還是明文——這一題若變紅，代表有人把 accountNo 加進了加密清單');
+  assert.ok(!raw.includes(`enc:v1:${FULL_ACCOUNT_NO}`), 'sanity');
 });
 
 test('stripSecretsForBackup：深拷貝，不可以順手把記憶體裡那包也清掉', () => {
