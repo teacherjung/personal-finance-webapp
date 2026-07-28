@@ -510,3 +510,39 @@ test('r12v2 匯入｜向後相容：db 有舊版格式 bankRef 的銀行交易�
   assert.equal(r.imported, 0, '舊版已匯入→認得舊 bankRef、不重覆匯入');
   assert.equal(r.skipped, 1);
 });
+
+// ---- 餘額空白的自己帳戶也算「自己人」（2026-07-28 修；Codex gpt-5.6-sol 重審發現）----
+// 病根：`parseBankSummary` 對「餘額欄空白」的帳戶（台新對透支／負餘額帳戶就這樣印）**刻意只記幣別、
+// 不進 accounts**——那份清單是給「餘額更新」用的，沒有餘額就沒得更新。但 `ownSuffixSet` 只讀 accounts，
+// 於是它不算「自己的帳戶」：轉錢過去被判成**支出**、從它轉回來被判成**收入**，現金流兩個方向都髒掉。
+// 而且**每一期都會錯**——applyBalancesToDb 同樣只走 parsed.accounts，那個帳戶永遠不會被自動建進 db。
+test('內轉判定｜概要區「餘額空白」的自己帳戶：轉出與轉入兩個方向都要判成內轉（不是支出／收入）', () => {
+  // 3301 是自己的帳戶但餘額欄空白（透支）→ 只在 accountCurrency，不在 accounts
+  const mkParsed = (tx) => ({
+    bank: '台新', referenceDate: '2026-06-30',
+    accounts: [{ suffix: '3302', masked: '900200****3302', balance: 136185, currency: 'TWD', label: '台新 3302（Richart）', note: '' }],
+    accountCurrency: { '900200****3302': 'TWD', '900100****3301': 'TWD' },
+    transactions: [tx],
+  });
+
+  const out = previewBankTxForDb({ accounts: [], transactions: [] }, mkParsed(
+    btx({ summary: '轉帳支取', direction: 'out', amount: 50000, note: '轉入900100****3301', balance: 86185 }))).rows[0];
+  assert.equal(out.type, 'transfer', '轉給自己的透支戶＝內轉，不可以算成支出（會讓當月支出虛增 5 萬）');
+  assert.equal(out.subcategory, '內轉出');
+
+  const inn = previewBankTxForDb({ accounts: [], transactions: [] }, mkParsed(
+    btx({ summary: '轉帳存入', direction: 'in', amount: 50000, note: '轉自900100****3301', balance: 186185 }))).rows[0];
+  assert.equal(inn.type, 'transfer', '從自己的透支戶轉回來＝內轉，不可以算成收入（收入多算＝現金流數字整個毀掉）');
+  assert.equal(inn.subcategory, '內轉入');
+});
+
+test('內轉判定｜「別人的帳號」仍然是真金流（修完不可以把所有轉帳都當成內轉）', () => {
+  const parsed = {
+    bank: '台新', referenceDate: '2026-06-30', accounts: [],
+    accountCurrency: { '900200****3302': 'TWD' },     // 只有自己這一戶
+    transactions: [btx({ summary: '轉帳支取', direction: 'out', amount: 8000, note: '轉入700500****9999', balance: 1000 })],
+  };
+  const r = previewBankTxForDb({ accounts: [], transactions: [] }, parsed).rows[0];
+  assert.notEqual(r.type, 'transfer', '轉給第三方＝真支出，不可被誤判成內轉而從現金流消失');
+  assert.equal(r.type, 'expense');
+});
