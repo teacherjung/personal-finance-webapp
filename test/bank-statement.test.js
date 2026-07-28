@@ -9,7 +9,8 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-bank-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { parseBankSummary, accountSuffix, parseAmount } = await import('../lib/bank-statement.js');
+const { parseBankSummary, accountSuffix, parseAmount, UNKNOWN_CURRENCY } = await import('../lib/bank-statement.js');
+const { CURRENCIES } = await import('../lib/schema.js');
 const { applyBalancesToDb, previewBalancesForDb } = await import('../lib/services/bank-import.js');
 
 after(() => {
@@ -545,4 +546,65 @@ test('內轉判定｜「別人的帳號」仍然是真金流（修完不可以�
   const r = previewBankTxForDb({ accounts: [], transactions: [] }, parsed).rows[0];
   assert.notEqual(r.type, 'transfer', '轉給第三方＝真支出，不可被誤判成內轉而從現金流消失');
   assert.equal(r.type, 'expense');
+});
+
+// ---- 外幣幣別標題 sticky ＋ 讀不到就 fail-closed（2026-07-28 修；Codex gpt-5.6-sol 重審發現）----
+// 病根一：每解析完一個外幣帳戶就把 pendingCurrency 清空 → 同一個幣別標題下的第二個帳戶落到預設值。
+// 病根二：那個預設值是 'USD'（fail-open）。兩者相乘＝JPY 帳戶被當成 USD，
+// 實測現金從 43,000 TWD 變成 3,221,500 TWD（虛增約 150 倍）、真 JPY 帳戶留在舊餘額、外加一個幽靈帳戶。
+test('概要區｜同一個幣別標題底下的第二個帳戶，幣別要跟著標題（不可退成 USD）', () => {
+  const lines = [
+    L([[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
+    L([[367, 'JPY']]),
+    L([[56, '外幣活存'], [108, '900300****363'], [436, '$100,000'], [513, 'Richart']]),
+    L([[56, '外幣定存'], [108, '900400****777'], [436, '$100,000'], [513, '']]),
+    L([[47, '合計'], [490, '0']]),
+  ];
+  const r = parseBankSummary(lines);
+  assert.equal(r.accounts.length, 2);
+  assert.equal(r.accounts[0].currency, 'JPY');
+  assert.equal(r.accounts[1].currency, 'JPY', '第二戶被判成 USD 的話，10 萬日圓會被當成 10 萬美元');
+  assert.equal(r.accountCurrency['900400****777'], 'JPY');
+});
+
+test('概要區｜外幣區讀不到幣別＝哨兵值（fail-closed），不猜 USD', () => {
+  const lines = [
+    L([[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
+    // 幣別列有三格（版面稍變）→ 認不出來；舊版會整區靜默退成 USD
+    L([[300, '幣別'], [367, 'JPY'], [420, '匯率']]),
+    L([[56, '外幣活存'], [108, '900300****363'], [436, '$100,000'], [513, '']]),
+    L([[47, '合計'], [490, '0']]),
+  ];
+  const r = parseBankSummary(lines);
+  assert.equal(r.accounts[0].currency, UNKNOWN_CURRENCY, '認不出幣別就要說「不知道」，不可以猜');
+  assert.ok(!CURRENCIES.includes(r.accounts[0].currency), '哨兵值必須不在 CURRENCIES 裡，才會走 unsupported 分支');
+});
+
+test('概要區｜幣別不明的帳戶：預覽標 unsupported、套用不建帳戶也不動餘額（fail-closed 一路到底）', () => {
+  const parsed = {
+    bank: '台新', referenceDate: '2026-06-30',
+    accounts: [{ suffix: '363', masked: '900300****363', balance: 100000, currency: UNKNOWN_CURRENCY, label: '外幣活存', note: '' }],
+    accountCurrency: { '900300****363': UNKNOWN_CURRENCY },
+  };
+  const pv = previewBalancesForDb({ accounts: [] }, parsed);
+  assert.equal(pv.rows[0].action, 'unsupported');
+  const db = { accounts: [] };
+  const r = applyBalancesToDb(db, parsed);
+  assert.equal(r.created, 0, '不可以建出一個幣別不明的幽靈帳戶');
+  assert.equal(r.unsupported, 1);
+  assert.equal(db.accounts.length, 0);
+});
+
+test('概要區｜台幣區不受影響（sticky 只作用在外幣區）', () => {
+  const lines = [
+    L([[47, '新臺幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
+    L([[50, '新臺幣活存'], [150, '900100****3301'], [473, '$23']]),
+    L([[47, '合計'], [445, '$23']]),
+    L([[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
+    L([[367, 'JPY']]),
+    L([[56, '外幣活存'], [108, '900300****363'], [436, '$100'], [513, '']]),
+  ];
+  const r = parseBankSummary(lines);
+  assert.equal(r.accounts.find(a => a.suffix === '3301').currency, 'TWD');
+  assert.equal(r.accounts.find(a => a.suffix === '363').currency, 'JPY');
 });
