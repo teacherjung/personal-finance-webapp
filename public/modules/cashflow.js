@@ -107,7 +107,7 @@ function rowHtml(t) {
     <td>${esc(t.category || '—')}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
     <td class="num nowrap ${f.cls}">${f.sign}${money(t.amount)}</td>
-    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
+    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(t.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(t.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
 

@@ -434,7 +434,7 @@ function subRow(s, validSet) {
   const dateStr = `<span style="${dateColor}">${esc(whenDateVal || '—')}${whenDateVal && dateSuffix ? ` <span class="date-suffix ${st}">${dateSuffix}</span>` : ''}</span>`;
   const whenCell = `<div class="when-date">${dateStr}</div>`;
 
-  return `<tr data-id="${s.id}" style="${off ? 'opacity:.5' : ''}">
+  return `<tr data-id="${esc(s.id)}" style="${off ? 'opacity:.5' : ''}">
     <td class="grip-col"><span class="drag-handle" style="color:${((Object.hasOwn(CAT_COLOR, cat) && CAT_COLOR[cat]) || CHART.gray)}" title="拖曳調整順序">${icon('grip', 15, true)}</span></td>
     <td class="nowrap">${serviceNameHtml(s)}<span class="cancel-dot${s.considerCancel ? ' on' : ''}"></span></td>
     <td class="num">${fmtFee(feeMonthVal(s))}</td>
@@ -444,10 +444,10 @@ function subRow(s, validSet) {
     <td class="muted nowrap">${esc(cardLabel(s.card))}${staleCard ? ' <span class="tag amber">卡片已失效</span>' : ''}</td>
     <td class="muted nowrap">${esc(email || '—')}</td>
     <td><div class="row-actions">
-      <button class="btn-link btn-sm" data-record="${s.id}" title="記一筆到銀行收支">${icon('record', 15)}</button>
-      <button class="btn-link btn-sm flag-action${s.considerCancel ? ' flag-on' : ''}" data-flag="${s.id}" title="${s.considerCancel ? '已標記考慮停用' : '標記考慮停用'}">${icon(s.considerCancel ? 'box-x' : 'box', 15)}</button>
-      <button class="btn-link btn-sm" data-edit="${s.id}" title="編輯">${icon('edit', 15)}</button>
-      <button class="btn-danger btn-sm" data-del="${s.id}" title="刪除">${icon('trash', 15)}</button>
+      <button class="btn-link btn-sm" data-record="${esc(s.id)}" title="記一筆到銀行收支">${icon('record', 15)}</button>
+      <button class="btn-link btn-sm flag-action${s.considerCancel ? ' flag-on' : ''}" data-flag="${esc(s.id)}" title="${s.considerCancel ? '已標記考慮停用' : '標記考慮停用'}">${icon(s.considerCancel ? 'box-x' : 'box', 15)}</button>
+      <button class="btn-link btn-sm" data-edit="${esc(s.id)}" title="編輯">${icon('edit', 15)}</button>
+      <button class="btn-danger btn-sm" data-del="${esc(s.id)}" title="刪除">${icon('trash', 15)}</button>
     </div></td>
   </tr>`;
 }

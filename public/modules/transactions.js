@@ -163,7 +163,7 @@ function rowHtml(t, ctx = {}) {
   const tip = orig ? ` title="${esc(orig)}"` : '';
   // 支出且有店名 → 店名可點（開「店家消費檔案」彈窗）；收入或空說明維持純文字
   const noteCell = ((!isIn && String(t.note || '').trim())
-    ? `<span class="store-open" data-store="${t.id}"${tip}>${esc(t.note)}</span>`
+    ? `<span class="store-open" data-store="${esc(t.id)}"${tip}>${esc(t.note)}</span>`
     : esc(t.note || '')) + pairTag;
   return `<tr>
     <td class="nowrap">${esc(t.date)}</td>
@@ -172,7 +172,7 @@ function rowHtml(t, ctx = {}) {
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
     <td class="num ${isCredit ? 'pos' : 'neg'}">${isCredit ? '+' : '−'}${money(Math.abs(Number(t.amount) || 0))}</td>
-    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${t.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${t.id}" title="刪除">${icon('trash', 15)}</button></div></td>
+    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(t.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(t.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
 

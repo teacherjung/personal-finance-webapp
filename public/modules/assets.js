@@ -82,7 +82,7 @@ function accRow(x) {
     <td><span class="tag ${liab ? 'amber' : 'blue'}">${esc(typeLabel(x.type))}</span></td>
     <td class="muted">${esc(x.class || '—')}</td>
     <td class="num ${liab ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
-    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${x.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${x.id}" title="刪除">${icon('trash', 15)}</button></div></td>
+    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
 function typeLabel(t) { return (ACCOUNT_TYPES.find(a => a.value === t) || {}).label || t; }
@@ -161,7 +161,7 @@ function bankAccRow(x) {
     <td class="muted">${x.accountNoLast4 ? esc(x.accountNoLast4) : '—'}</td>
     <td class="muted">${esc(cur)}</td>
     <td class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
-    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${x.id}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${x.id}" title="刪除">${icon('trash', 15)}</button></div></td>
+    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
 

@@ -67,8 +67,8 @@ function card(p) {
     <div class="note-block">
       <b>保障：</b>${esc(p.coverage || '—')}</div>
     <div class="row-actions" style="margin-top:12px">
-      <button class="btn-link btn-sm" data-edit="${p.id}" title="編輯">${icon('edit', 15)}</button>
-      <button class="btn-danger btn-sm" data-del="${p.id}" title="刪除">${icon('trash', 15)}</button>
+      <button class="btn-link btn-sm" data-edit="${esc(p.id)}" title="編輯">${icon('edit', 15)}</button>
+      <button class="btn-danger btn-sm" data-del="${esc(p.id)}" title="刪除">${icon('trash', 15)}</button>
     </div>
   </div>`;
 }
