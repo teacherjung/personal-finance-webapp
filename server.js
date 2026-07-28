@@ -21,6 +21,73 @@ import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
 export const app = express();
+
+/** 五分鐘——四道限速共用同一個窗口（好記、好解釋，也方便對外講「請等五分鐘」）。 */
+const RL_WINDOW_MS = 5 * 60 * 1000;
+/** 按帳號取鍵：掛在 `authGate` 之後所以一定有身分；退回 IP 只是防禦性寫法。 @param {any} req */
+const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
+
+/**
+ * **速率限制的路徑表（單一真相）**——`server.js` 依它掛載，考題依它反查。
+ *
+ * 為什麼要有這張表（2026-07-28）：`test/server.test.js` 的「LOCAL 不限速」反向考題本來是自己
+ * 挑一條路徑打（挑到 `/api/transactions`，而那條**根本沒有掛限速**），於是就算有人把限速誤掛到
+ * LOCAL，那一題照樣是綠的——典型的「補了抓不到病的假考題」。改成從這張表反查之後，
+ * **每加一道限速，正反兩面的考題都自動跟著涵蓋**。
+ *
+ * `probe` ＝考題用的具體 URL（路徑表裡有 `:id` 這種樣板，不能直接打）。
+ * 選 probe 的規矩：**必須是不會對外連線、不會寫壞資料的請求**——
+ * `/api/ib/sync` 在沒有 flexToken 時 `fetchFlex` 一開頭就 throw（`lib/ib.js:205`），
+ * `GET /api/quotes` 不帶 symbols 時 `getQuotes([])` 完全不發外部請求。
+ */
+export const RATE_LIMITS = [
+  {
+    // ⚠️ `stage: 'pre-gate'` ＝必須掛在 `authGate` **之前**（登入本來就還沒有身分），所以只能按 IP。
+    name: '登入類（按 IP）', stage: 'pre-gate',
+    paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'],
+    probe: { method: 'POST', path: '/api/auth/login' },
+    max: 20, keyOf: ipKeyOf,
+    message: '嘗試次數過多，請稍等幾分鐘再試',
+  },
+  {
+    name: '上傳解析類（按帳號）', stage: 'post-gate',
+    paths: [...STATEMENT_JSON_POST_ROUTES, '/api/import'],
+    probe: { method: 'POST', path: '/api/statement/preview' },
+    max: 30, keyOf: tenantKeyOf,
+    message: '上傳與解析的次數過多，請稍等幾分鐘再試（這是為了讓大家的服務都不會被拖慢）',
+  },
+  {
+    // IB 同步會**對外連線**（Flex Web Service）並解析 XML，是全站唯一「我們去打別人」的端點。
+    // 猛打它＝拿我們的伺服器去打 IBKR，可能害使用者的 Flex Query 被 IBKR 限流甚至停用。
+    // 6 次／5 分鐘對正常使用綽綽有餘：入口只有兩個手動按鈕，而且兩處都會先 `btn.disabled = true`
+    //（`public/modules/portfolio-remote-actions.js`、`public/modules/securities.js`），沒有自動排程。
+    name: 'IB 同步（按帳號）', stage: 'post-gate',
+    paths: ['/api/ib/sync'],
+    probe: { method: 'POST', path: '/api/ib/sync' },
+    max: 6, keyOf: tenantKeyOf,
+    message: 'IB 同步太頻繁了，請稍等幾分鐘再試（同步一次會向 IBKR 拉整份報表，打太密可能被對方限流）',
+  },
+  {
+    // 報價同樣會對外連線（Yahoo）。上限比 IB 寬很多——開一次 app 就會刷新一輪報價，是正常操作。
+    // ⚠️ `app.use('/api/quotes', …)` 是**前綴比對**，所以 `POST /api/quotes/refresh-auto` 也一起涵蓋——
+    //    那條同樣會打 Yahoo，本來就該一起限。
+    name: '報價（按帳號）', stage: 'post-gate',
+    paths: ['/api/quotes'],
+    probe: { method: 'GET', path: '/api/quotes' },
+    max: 60, keyOf: tenantKeyOf,
+    message: '報價刷新太頻繁了，請稍等幾分鐘再試',
+  },
+];
+
+/** 依 `RATE_LIMITS` 掛上某一階段的所有限速（HOSTED 專用）。 @param {string} stage */
+function mountRateLimit(stage) {
+  for (const rl of RATE_LIMITS) {
+    if (rl.stage !== stage) continue;
+    app.use(rl.paths, rateLimit({
+      windowMs: RL_WINDOW_MS, max: rl.max, keyOf: rl.keyOf, message: rl.message,
+    }));
+  }
+}
 // 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
 // ⚠️ LOCAL 分支的行為必須與 C2 之前 byte-for-byte 等價——這是 C0 的「本機版零改動」契約。
 if (isHosted()) {
@@ -37,23 +104,19 @@ if (isHosted()) {
   // 速率限制①：登入類端點按 **IP**（可用性第一層，2026-07-28）。Supabase Auth 自己也有速率限制，
   // 這一道是**保護我們的行程**——連續猛打登入會把 CPU 與事件圈吃光，牆後的正當使用者跟著遭殃。
   // 只限「會做事」的三條（login/confirm/set-password）；`me`／`logout` 是輕量讀取、限了只會擋到正常換頁。
-  app.use(['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], rateLimit({
-    windowMs: 5 * 60 * 1000, max: 20, keyOf: ipKeyOf,
-    message: '嘗試次數過多，請稍等幾分鐘再試',
-  }));
+  // ⚠️ 這一道**必須掛在 `authGate` 之前**（登入本來就還沒有身分），所以只能按 IP。
+  mountRateLimit('pre-gate');
   app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
   app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）
   // ⚠️ **大件 parser 一定要掛在 authGate 之後**：以前掛在最前面，等於「不管誰寄來的包裹都先拆開，
   // 拆完才到櫃台問這個人能不能進來」。實測 10 個**未登入**請求 × 45MB 就把行程 OOM 打死
   //（模擬 Render 512MB 容器）；搬到牆後之後同樣的攻擊全數 401、記憶體只多 8MB。
-  // 速率限制②：上傳／解析類端點按 **帳號**（掛在 gate 之後，所以一定有身分可用）。
-  // 這些端點會解 PDF／XLSX／XML，是全站最貴的 CPU 操作——**多人化才成立的攻擊面**：
-  // 以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以。按帳號而不按 IP：
-  // 同一個家庭／公司出口 IP 的兩個人不該互相排擠。
-  app.use([...STATEMENT_JSON_POST_ROUTES, '/api/import'], rateLimit({
-    windowMs: 5 * 60 * 1000, max: 30, keyOf: (req) => currentTenant()?.userId || ipKeyOf(req),
-    message: '上傳與解析的次數過多，請稍等幾分鐘再試（這是為了讓大家的服務都不會被拖慢）',
-  }));
+  // 速率限制②③④：**按帳號**（掛在 gate 之後，所以一定有身分可用）。按帳號而不按 IP：
+  // 同一個家庭／公司出口 IP 的兩個人不該互相排擠。三道各自的理由寫在 `RATE_LIMITS` 表裡。
+  //   ② 上傳解析類：解 PDF／XLSX／XML，全站最貴的 CPU 操作——**多人化才成立的攻擊面**
+  //      （以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以）。
+  //   ③④ IB 同步與報價：**會對外連線**，猛打它們等於拿我們的伺服器去打 IBKR 與 Yahoo。
+  mountRateLimit('post-gate');
   installJsonBodyParsers(app);
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
   const site = join(__dirname, 'public-site');
