@@ -5,6 +5,11 @@
 import { buildPortfolioModel } from './portfolio-model.js';
 import { createPortfolioResearchActions } from './portfolio-research-actions.js';
 import { buildStockResearchModel, findStockResearch } from './stock-research-model.js';
+import {
+  shouldRefreshStockFundamentals,
+  stockFundamentalsFailureState,
+  stockFundamentalsInnerHtml
+} from './stock-research-fundamentals.js';
 import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 import {
   STOCK_RESEARCH_INFO,
@@ -150,6 +155,16 @@ export function createStockResearchPage(deps) {
       netWorth: summary.netWorth,
       settings
     });
+    let fundamentals = null;
+    const fundamentalsPath = `/stock-fundamentals/${encodeURIComponent(symbol)}`;
+    if (activeTab === 'fundamentals' && model.availability.state !== 'empty') {
+      try {
+        fundamentals = await deps.api(fundamentalsPath);
+      } catch (error) {
+        fundamentals = stockFundamentalsFailureState(null, error, symbol);
+      }
+      if (!isCurrent()) return;
+    }
     const quote = stockQuoteFromHoldings(symbol, holdings, settings);
     const root = deps.getView();
     root.innerHTML = stockResearchViewHtml({
@@ -158,19 +173,23 @@ export function createStockResearchPage(deps) {
       quote,
       viewCurrency: deps.getViewCurrency(),
       usdRate: settings.usdTwd,
-      activeTab
+      activeTab,
+      fundamentals
     }, { esc: deps.esc });
     if (!isCurrent()) return;
     revealActiveStockTab(root);
 
-    root.querySelectorAll('[data-stock-info]').forEach((button) => {
-      button.onclick = () => {
-        const key = button.dataset.stockInfo;
-        if (!Object.hasOwn(STOCK_RESEARCH_INFO, key)) return;
-        const info = STOCK_RESEARCH_INFO[key];
-        deps.openInfo(info.title, info.html);
-      };
-    });
+    const bindStockInfo = (scope) => {
+      scope?.querySelectorAll?.('[data-stock-info]').forEach((button) => {
+        button.onclick = () => {
+          const key = button.dataset.stockInfo;
+          if (!Object.hasOwn(STOCK_RESEARCH_INFO, key)) return;
+          const info = STOCK_RESEARCH_INFO[key];
+          deps.openInfo(info.title, info.html);
+        };
+      });
+    };
+    bindStockInfo(root);
 
     const researchActions = createPortfolioResearchActions({
       api: deps.api,
@@ -209,6 +228,65 @@ export function createStockResearchPage(deps) {
         }
       });
     });
+
+    if (activeTab === 'fundamentals' && model.availability.state !== 'empty') {
+      let currentFundamentals = fundamentals;
+      /** @type {Promise<void>|null} */
+      let refreshPromise = null;
+      const manualInput = {
+        watchMetrics: model.research?.watchMetrics,
+        legacyMetrics: model.research?.metrics
+      };
+
+      const bindFundamentalsRefresh = () => {
+        const mount = root.querySelector('[data-stock-fundamentals-root]');
+        mount?.querySelectorAll?.('[data-stock-fundamentals-refresh]').forEach((button) => {
+          button.onclick = () => { void refreshFundamentals(true); };
+        });
+      };
+
+      const drawFundamentals = (refreshing) => {
+        if (!isCurrent()) return;
+        const mount = root.querySelector('[data-stock-fundamentals-root]');
+        if (!mount) return;
+        mount.innerHTML = stockFundamentalsInnerHtml({
+          cache: currentFundamentals,
+          refreshing,
+          ...manualInput
+        }, { esc: deps.esc });
+        bindStockInfo(mount);
+        bindFundamentalsRefresh();
+      };
+
+      const refreshFundamentals = (manual) => {
+        if (refreshPromise) return refreshPromise;
+        refreshPromise = (async () => {
+          drawFundamentals(true);
+          try {
+            currentFundamentals = await deps.api(`${fundamentalsPath}/refresh`, { method: 'POST' });
+            if (!isCurrent()) return;
+            if (manual) {
+              const failed = Boolean(currentFundamentals?.refreshError || currentFundamentals?.refreshed === false);
+              deps.toast(
+                failed ? '官方基本面更新失敗，已保留上次成功資料' : '官方基本面已更新',
+                failed
+              );
+            }
+          } catch (error) {
+            currentFundamentals = stockFundamentalsFailureState(currentFundamentals, error, symbol);
+            if (!isCurrent()) return;
+            if (manual) deps.toast(/** @type {any} */ (error)?.message || '官方基本面更新失敗', true);
+          } finally {
+            refreshPromise = null;
+            drawFundamentals(false);
+          }
+        })();
+        return refreshPromise;
+      };
+
+      bindFundamentalsRefresh();
+      if (shouldRefreshStockFundamentals(currentFundamentals)) void refreshFundamentals(false);
+    }
   }
 
   return renderStockResearch;
