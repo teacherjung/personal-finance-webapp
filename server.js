@@ -11,6 +11,7 @@ import { marketRoutes } from './lib/routes/market.js';
 import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
+import { stockFundamentalsRoutes } from './lib/routes/stock-fundamentals.js';
 import { installJsonBodyParsers, AUTH_JSON_LIMIT, STATEMENT_JSON_POST_ROUTES } from './lib/http-body.js';
 import { rateLimit, ipKeyOf } from './lib/rate-limit.js';
 import { applyHostedTimeouts } from './lib/parse-limits.js';
@@ -22,7 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
 export const app = express();
 
-/** 五分鐘——四道限速共用同一個窗口（好記、好解釋，也方便對外講「請等五分鐘」）。 */
+/** 五分鐘——五道限速共用同一個窗口（好記、好解釋，也方便對外講「請等五分鐘」）。 */
 const RL_WINDOW_MS = 5 * 60 * 1000;
 /** 按帳號取鍵：掛在 `authGate` 之後所以一定有身分；退回 IP 只是防禦性寫法。 @param {any} req */
 const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
@@ -57,7 +58,7 @@ export const RATE_LIMITS = [
     message: '上傳與解析的次數過多，請稍等幾分鐘再試（這是為了讓大家的服務都不會被拖慢）',
   },
   {
-    // IB 同步會**對外連線**（Flex Web Service）並解析 XML，是全站唯一「我們去打別人」的端點。
+    // IB 同步會**對外連線**（Flex Web Service）並解析 XML。
     // 猛打它＝拿我們的伺服器去打 IBKR，可能害使用者的 Flex Query 被 IBKR 限流甚至停用。
     // 6 次／5 分鐘對正常使用綽綽有餘：入口只有兩個手動按鈕，而且兩處都會先 `btn.disabled = true`
     //（`public/modules/portfolio-remote-actions.js`、`public/modules/securities.js`），沒有自動排程。
@@ -76,6 +77,14 @@ export const RATE_LIMITS = [
     probe: { method: 'GET', path: '/api/quotes' },
     max: 60, keyOf: tenantKeyOf,
     message: '報價刷新太頻繁了，請稍等幾分鐘再試',
+  },
+  {
+    // 官方基本面 refresh 會向 SEC 拉三份 JSON；GET 只讀快取、不限，正常開頁不消耗外部額度。
+    name: 'SEC 官方基本面更新（按帳號）', stage: 'post-gate',
+    paths: ['/api/stock-fundamentals/:symbol/refresh'],
+    probe: { method: 'POST', path: '/api/stock-fundamentals/__proto__/refresh' },
+    max: 12, keyOf: tenantKeyOf,
+    message: '官方基本面更新太頻繁了，請稍等幾分鐘再試',
   },
 ];
 
@@ -111,11 +120,11 @@ if (isHosted()) {
   // ⚠️ **大件 parser 一定要掛在 authGate 之後**：以前掛在最前面，等於「不管誰寄來的包裹都先拆開，
   // 拆完才到櫃台問這個人能不能進來」。實測 10 個**未登入**請求 × 45MB 就把行程 OOM 打死
   //（模擬 Render 512MB 容器）；搬到牆後之後同樣的攻擊全數 401、記憶體只多 8MB。
-  // 速率限制②③④：**按帳號**（掛在 gate 之後，所以一定有身分可用）。按帳號而不按 IP：
-  // 同一個家庭／公司出口 IP 的兩個人不該互相排擠。三道各自的理由寫在 `RATE_LIMITS` 表裡。
+  // 速率限制②③④⑤：**按帳號**（掛在 gate 之後，所以一定有身分可用）。按帳號而不按 IP：
+  // 同一個家庭／公司出口 IP 的兩個人不該互相排擠。四道各自的理由寫在 `RATE_LIMITS` 表裡。
   //   ② 上傳解析類：解 PDF／XLSX／XML，全站最貴的 CPU 操作——**多人化才成立的攻擊面**
   //      （以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以）。
-  //   ③④ IB 同步與報價：**會對外連線**，猛打它們等於拿我們的伺服器去打 IBKR 與 Yahoo。
+  //   ③④⑤ IB 同步、報價與 SEC：**會對外連線**，猛打它們等於拿我們的伺服器去打上游服務。
   mountRateLimit('post-gate');
   installJsonBodyParsers(app);
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
@@ -138,6 +147,7 @@ app.use(marketRoutes);      // /quotes /cape /realyield
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
 app.use(securitiesRoutes);  // /securities* 證券交易（S2：查詢/台新對帳單匯入/匯入紀錄）
+app.use(stockFundamentalsRoutes); // /stock-fundamentals/:symbol（SEC 快取讀取／手動更新）
 
 // 不存在的 API 路徑 → 明確 JSON 404（而非 Express 預設 HTML「Cannot GET…」）；前端打錯 URL 時看得懂
 app.use('/api', (req, res) => res.status(404).json({ error: '不存在的 API 路徑' }));

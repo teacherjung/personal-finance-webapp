@@ -3,7 +3,7 @@
 # 怎麼用：Render Dashboard → New → Blueprint → 連上這個 GitHub repo → 它會讀這個檔。
 # 之後每次 push 到 main、**且 GitHub CI 綠了**才自動部署（`autoDeployTrigger: checksPass`）。
 #
-# ⚠️ **這個檔不含任何祕密**。四個 `sync: false` 的變數要在 Render 後台手動填一次
+# ⚠️ **這個檔不含任何祕密**。五個 `sync: false` 的變數要在 Render 後台手動填一次
 #（Blueprint 部署時會逐一問你），填法見 `docs/C6-部署與對抗審查-操作手冊.md`。
 services:
   - type: web
@@ -48,7 +48,7 @@ services:
       #    讀的同一份檔案。**同一個版號只准有一個地方寫**，否則就會回到
       #    「部署跑 22.13.0、CI 跑 24、開發機跑 26，三關一次都沒測到真正上線的那顆 runtime」。
       #    要換 Node 版本＝改 `.node-version` 一個檔，部署與 CI 一起跟著動。
-      # ---- 以下四個在 Render 後台填，絕不進 repo ----
+      # ---- 以下五個在 Render 後台填，絕不把實際值寫進 repo ----
       # Supabase 專案網址，如 https://xxxxxxxx.supabase.co
       - key: SUPABASE_URL
         sync: false
@@ -63,4 +63,8 @@ services:
       # 機密欄位的主金鑰（C5）：`openssl rand -base64 32` 產生的 32 bytes base64。
       # ⚠️ 掉了＝所有已加密的 IB token 與 PDF 密碼都要重新輸入一次（資料本身不會壞）
       - key: NOTEASY_MASTER_KEY
+        sync: false
+      # SEC 自動請求的識別資訊，格式「產品名稱 可收信聯絡信箱」。
+      # 正式值見 docs/C6-部署與對抗審查-操作手冊.md。
+      - key: SEC_USER_AGENT
         sync: false

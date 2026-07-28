@@ -149,14 +149,18 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
 
 // ---- C3 auth gate（P1-1：只宣稱 401／轉登入，不宣稱隔離——隔離歸 C4）----
 test('C3 gate：未登入打理財 API＝401（逐 router 抽樣、含寫入方法）；白名單與公開站不受影響', async () => {
-  // 各 router 抽樣（core/crud/market/ib/statement/securities 都要在牆內）
-  for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/export', '/api/refund-pairs', '/api/backup/daily']) {
+  // 各 router 抽樣（core/crud/market/ib/statement/securities/stock-fundamentals 都要在牆內）
+  for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/stock-fundamentals/CAL', '/api/export', '/api/refund-pairs', '/api/backup/daily']) {
     const r = await fetch(`${base}${p}`);
     assert.equal(r.status, 401, `GET ${p} 未登入必 401`);
     assert.deepEqual(await r.json(), { error: '請先登入' });
   }
   const post = await fetch(`${base}/api/transactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN }, body: '{}' });
   assert.equal(post.status, 401, '寫入方法同樣被牆擋（且在 CSRF 之後、業務邏輯之前）');
+  const refresh = await fetch(`${base}/api/stock-fundamentals/CAL/refresh`, {
+    method: 'POST', headers: { Origin: GOOD_ORIGIN }
+  });
+  assert.equal(refresh.status, 401, 'SEC refresh 未登入也必須在外部連線之前被擋');
   // 白名單：登入功能本身與 /health 照常
   assert.equal((await fetch(`${base}/api/auth/me`)).status, 200);
   assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true });
@@ -274,7 +278,7 @@ test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住�
   //    不會有任何考題紅。這一題與 `test/server.test.js` 的 LOCAL 反向題共用同一張表——
   //    一張表同時守住「HOSTED 要擋」與「LOCAL 不可以擋」兩個方向。
   const { RATE_LIMITS } = await import('../server.js');
-  assert.ok(RATE_LIMITS.length >= 4, '路徑表是空的或被改小了——這一題就沒有在守任何東西');
+  assert.ok(RATE_LIMITS.length >= 5, '五道限速少了一道——HOSTED 的資源或上游保護已退化');
 
   for (const rl of RATE_LIMITS) {
     /** @type {any} */
