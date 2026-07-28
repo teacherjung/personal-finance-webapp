@@ -55,7 +55,7 @@ revoke all on table public.kv from service_role;
 grant select, insert, update, delete on table public.kv to authenticated;
 
 -- ---- 4) 原子寫入：整包 read-modify-write 的 compare-and-swap ---------------
--- 為什麼要一支函式而不是逐列 update：app 端一次寫的是**整包資料**（20 個 key），
+-- 為什麼要一支函式而不是逐列 update：app 端一次寫的是**整包資料**（全部 KV_KEYS），
 -- 必須「全部成功或全部不動」；PostgREST 的逐列 update 做不到跨列原子性。
 -- plpgsql 函式天生在單一交易裡跑＝全有或全無。
 --

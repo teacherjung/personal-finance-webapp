@@ -36,6 +36,7 @@ const { createFakePostgres, makeFakeSupabaseFactory } = await import('../test-do
 const { KV_KEYS, emptyDb } = await import('../lib/store.js');
 const repo = await import('../lib/repo.js');
 const { runWithTenant } = await import('../lib/tenant.js');
+const { setStockFundamentalsOptionsForTest } = await import('../lib/services/stock-fundamentals.js');
 const { app } = await import('../server.js');
 
 // ⚠️ 一定要用 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼，
@@ -87,6 +88,19 @@ function seedTenant(uid, mark) {
   db.holdings = [{ id: `${mark}-holdings`, symbol: `${mark}SYM`.toUpperCase().replace(/[^A-Z]/g, ''), name: `${mark}持股`, shares: 1, avgCost: 1, currency: 'USD', layer: 'core' }];
   db.watchlist = [{ id: `${mark}-watchlist`, symbol: 'WATCH', note: `${mark}願望` }];
   db.research = [{ id: `${mark}-research`, symbol: `${mark}RES`.toUpperCase().replace(/[^A-Z]/g, ''), thesis: `${mark}論點` }];
+  db.stockFundamentals = [{
+    symbol: 'CAL',
+    lastAttemptAt: '2026-07-28T00:00:00.000Z',
+    fetchedAt: '2026-07-28T00:00:00.000Z',
+    data: {
+      symbol: 'CAL',
+      market: 'US',
+      company: { cik: '0000900002', name: `${mark}-stockFundamentals`, sic: null, fiscalYearEnd: '1231' },
+      periods: { annual: [], latestQuarter: null },
+      metrics: {},
+      warnings: []
+    }
+  }];
   db.portfolioSnapshots = [{ id: `${mark}-portfolioSnapshots`, month: '2026-07', invested: 1, value: 1 }];
   db.ibTrades = [{ id: `${mark}-ibTrades`, symbol: 'IBT' }];
   db.dailyValues = [{ id: `${mark}-dailyValues`, date: '2026-07-01', netWorth: 1 }];
@@ -108,13 +122,14 @@ test('A/B 隔離：兩人各自有全套資料，A 打每一個讀取端點都�
   seedTenant(A.id, 'MARKA');
   seedTenant(B.id, 'MARKB');
 
-  // 15 個集合的 GET（crud.js 逐集合產生的 10 條 ＋ READONLY 3 條 ＋ securities 專屬入口）
+  // 所有集合的 GET（通用 CRUD／readonly＋securities／stock-fundamentals 專屬入口）
   // ＋ 會回整包／彙總／學習表／匯出的端點。**這份清單就是「不抽樣」的意思**。
   const READ_ENDPOINTS = [
     '/api/accounts', '/api/assetTargets', '/api/transactions', '/api/subscriptions', '/api/insurance',
     '/api/cards', '/api/history', '/api/holdings', '/api/watchlist', '/api/research',
     '/api/portfolioSnapshots', '/api/ibTrades', '/api/dailyValues',
     '/api/securities', '/api/securities/batches',
+    '/api/stock-fundamentals/CAL',
     '/api/db', '/api/summary', '/api/settings', '/api/export',
     '/api/learned', '/api/bank-learned', '/api/statement/batches', '/api/bank-statement/batches',
     '/api/refund-pairs', '/api/monthly-review', '/api/categories', '/api/income-categories',
@@ -134,6 +149,46 @@ test('A/B 隔離：兩人各自有全套資料，A 打每一個讀取端點都�
   // 而且要真的看得到自己的（否則「都是空的」也會通過上面的斷言）
   assert.match(await (await as('tokA', '/api/transactions')).text(), /MARKA-transactions/);
   assert.match(await (await as('tokB', '/api/transactions')).text(), /MARKB-transactions/);
+  assert.match(await (await as('tokA', '/api/stock-fundamentals/CAL')).text(), /MARKA-stockFundamentals/);
+  assert.match(await (await as('tokB', '/api/stock-fundamentals/CAL')).text(), /MARKB-stockFundamentals/);
+});
+
+test('A/B 並發更新同一代號：公開 SEC 請求只抓一輪，兩人的快取各寫回自己的 RLS namespace', async () => {
+  const fixture = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/sec/calendar-year-company.json'), 'utf8'));
+  let calls = 0;
+  let clock = Date.parse('2026-07-28T06:00:00.000Z');
+  setStockFundamentalsOptionsForTest({
+    now: () => clock,
+    sleep: async (ms) => { clock += ms; },
+    minIntervalMs: 0,
+    userAgent: 'Noteasy Test data@example.test',
+    logger: { warn() {} },
+    fetchImpl: async (url) => {
+      calls += 1;
+      await new Promise(resolve => setTimeout(resolve, 10));   // 讓 A/B handler 確實重疊在同一個 in-flight
+      const path = String(url);
+      if (path.endsWith('company_tickers.json')) return new Response(JSON.stringify(fixture.tickerIndex));
+      if (path.includes('/submissions/')) return new Response(JSON.stringify(fixture.submissions));
+      if (path.includes('/companyfacts/')) return new Response(JSON.stringify(fixture.companyFacts));
+      throw new Error(`未核准 URL：${path}`);
+    }
+  });
+  try {
+    const [a, b] = await Promise.all([
+      as('tokA', '/api/stock-fundamentals/CAL/refresh', { method: 'POST', body: '{}' }),
+      as('tokB', '/api/stock-fundamentals/CAL/refresh', { method: 'POST', body: '{}' })
+    ]);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+    assert.equal(calls, 3, '同一份公開 SEC 資料只抓一輪');
+    const aCache = pg.selectAs(A.id).find(row => row.key === 'stockFundamentals')?.data;
+    const bCache = pg.selectAs(B.id).find(row => row.key === 'stockFundamentals')?.data;
+    assert.equal(aCache?.[0]?.data?.company?.name, 'Synthetic Calendar Services', 'A 的完成分支寫回 A');
+    assert.equal(bCache?.[0]?.data?.company?.name, 'Synthetic Calendar Services', 'B 的完成分支寫回 B');
+    assert.notEqual(aCache, bCache, '兩個租戶不可共用同一個資料列物件');
+  } finally {
+    setStockFundamentalsOptionsForTest(null);
+  }
 });
 
 test('A/B 隔離：A 拿 B 的 id 做 PUT／DELETE，B 的資料一筆都不能少（逐集合列舉）', async () => {
@@ -430,7 +485,7 @@ test('架構：kv 的鍵只有一份真相（store.js 的 KV_KEYS），adapter �
   const pgSrc = readFileSync(join(ROOT, 'lib/store-pg.js'), 'utf8');
   assert.ok(/import\s*\{[^}]*KV_KEYS[^}]*\}\s*from\s*'\.\/store\.js'/.test(pgSrc),
     'KV_KEYS 必須從 store.js 拿；各抄一份＝新增鍵時只改一邊，那個鍵在雲端版永遠寫不進去且不報錯');
-  assert.equal(KV_KEYS.length, 20, 'kv 鍵數變了就要同步檢查 db/supabase-schema.sql 與本檔');
+  assert.equal(KV_KEYS.length, 21, 'kv 鍵數變了就要同步檢查 db/supabase-schema.sql 與本檔');
 });
 
 // ============================================================================

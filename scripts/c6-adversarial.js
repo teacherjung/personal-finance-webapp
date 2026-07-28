@@ -75,6 +75,7 @@ const READ_ENDPOINTS = [
   ...COLLECTIONS.map(c => `/api/${c}`),
   '/api/portfolioSnapshots', '/api/ibTrades', '/api/dailyValues',
   '/api/securities', '/api/securities/batches',
+  '/api/stock-fundamentals/CAL',
   '/api/db', '/api/summary', '/api/settings', '/api/export',
   '/api/learned', '/api/bank-learned', '/api/statement/batches', '/api/bank-statement/batches',
   '/api/refund-pairs', '/api/monthly-review', '/api/categories', '/api/income-categories',

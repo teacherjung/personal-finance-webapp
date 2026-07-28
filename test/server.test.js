@@ -1314,7 +1314,7 @@ test('LOCAL 零改動｜速率限制不在本機生效（一個人用自己的�
   // 這一題照樣是綠的（典型的「補了抓不到病的假考題」）。改成從表反查之後，
   // 每加一道新限速，這一題自動跟著涵蓋。
   const { RATE_LIMITS } = await import('../server.js');
-  assert.ok(RATE_LIMITS.length >= 4, '路徑表是空的或被改小了——這一題就沒有在守任何東西');
+  assert.ok(RATE_LIMITS.length >= 5, '五道限速少了一道——LOCAL 反向考題也會少驗一條路徑');
 
   const root = `http://127.0.0.1:${port}`;
   for (const rl of RATE_LIMITS) {

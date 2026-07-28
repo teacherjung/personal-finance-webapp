@@ -74,6 +74,14 @@ test('render.yaml：用 autoDeployTrigger: checksPass，且不留已淘汰的 au
     '兩個都寫時 autoDeployTrigger 勝出，舊欄位留著只會讓下一個人看錯');
 });
 
+test('render.yaml：SEC User-Agent 由部署環境提供，不把聯絡資訊硬寫成程式常數', () => {
+  const yaml = uncommented(read('render.yaml'));
+  assert.match(yaml, /-\s*key:\s*SEC_USER_AGENT\s*\n\s*sync:\s*false/,
+    'SEC 自動請求要有可聯絡 User-Agent；實際值由 Render 環境設定，不可漏掉或寫死在程式');
+  assert.match(read('docs/C6-部署與對抗審查-操作手冊.md'), /Noteasy williamjung@noteasy\.com\.tw/,
+    '部署手冊要留下 William 已確認可收信的正式值，避免上線時再猜一次');
+});
+
 test('checksPass 的前提：CI 真的在 main 的每一個 commit 都跑（有路徑過濾就會靜默不部署）', () => {
   const ci = read('.github/workflows/ci.yml');
   assert.match(ci, /push:\s*\n\s*branches:\s*\[main\]/,
