@@ -7,8 +7,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_PDF_PAGES, MAX_PDF_TEXT_ITEMS, MAX_IB_ROWS,
+  MAX_PDF_PAGES, MAX_PDF_TEXT_ITEMS, MAX_IB_ROWS, MAX_IB_XML_BYTES, MIN_UPLOAD_BYTES_PER_SEC,
   assertPageLimit, countTextItems, assertXmlSize, assertRowLimit,
+  readCappedText, countXmlRows, assertXmlRowLimits,
   applyHostedTimeouts, HOSTED_HEADERS_TIMEOUT_MS, HOSTED_REQUEST_TIMEOUT_MS, HOSTED_KEEPALIVE_TIMEOUT_MS,
 } from '../lib/parse-limits.js';
 
@@ -38,8 +39,94 @@ test('文字節點：逐頁累加，跨頁加總才擋得到（等整份讀完�
   try {
     for (let i = 0; i < 10; i++) n = countTextItems(n, 50_000, '信用卡帳單 PDF');
   } catch { blocked = true; }
-  assert.equal(blocked, true, '單頁不超標但總量爆掉＝正是壓縮炸彈的形狀，必須擋得到');
+  assert.equal(blocked, true, '單頁不超標但總量爆掉＝**文字節點炸彈**的形狀，必須擋得到');
   assert.equal(countTextItems(0, 1_000, 'x'), 1_000, '正常量要原樣累加回傳');
+});
+
+test('⚠️ 已知未修：真正的「壓縮炸彈」這一層擋不到（看得見的洞，勝過綠燈蓋住的洞）', () => {
+  // 2026-07-28 更正：這一檔以前把 countTextItems 說成「擋得住壓縮炸彈」，**那是誇大的**。
+  // 它擋的是**文字節點很多**的檔案。真正的壓縮炸彈是另一種形狀：
+  //   一份 500KB、**單頁、只有 1000 個文字節點**的 PDF，內部 deflate 比 1024×、解壓後 500MB。
+  //   assertPageLimit(1 頁) 過、countTextItems(1000 個) 過——**兩道牆都摸不到它**。
+  // 為什麼先不修：唯一有效的修法是「行程級隔離＋硬性 RSS 上限」（child_process），
+  //   那是獨立的一支工程；而中間方案（改用 streamTextContent）實測對這種炸彈**零收益**
+  //   （峰值 RSS 640MB vs 640MB），卻是唯一可能讓真實帳單安靜解析錯的改動——
+  //   風險有、收益無，順序不對。
+  // 這一題不是保護，是**紀錄**：把已知的洞寫在會被讀到的地方，而不是讓上面那題的措辭
+  //   讓下一個人以為已經防好了。
+  const 單頁 = 1, 節點數 = 1_000;
+  assert.doesNotThrow(() => assertPageLimit(單頁, '銀行對帳單 PDF'),
+    '壓縮炸彈的頁數是正常的——頁數牆摸不到它');
+  assert.doesNotThrow(() => countTextItems(0, 節點數, '銀行對帳單 PDF'),
+    '壓縮炸彈的節點數是正常的——節點牆也摸不到它');
+});
+
+test('IB 回應：宣告的 Content-Length 超標＝連 body 都不讀就擋（最便宜的那一刀）', async () => {
+  let cancelled = false;
+  const res = /** @type {any} */ ({
+    headers: { get: (/** @type {string} */ k) => (k === 'content-length' ? String(MAX_IB_XML_BYTES + 1) : null) },
+    body: { cancel: async () => { cancelled = true; } },
+  });
+  const err = await readCappedText(res).then(() => null, (/** @type {any} */ e) => e);
+  assert.ok(err, '宣告 4GB 的回應必須當場擋下');
+  assert.equal(err.status, 400);
+  assert.equal(err.code, 'xml_too_large');
+  assert.equal(cancelled, true, '要主動取消，不然連線會一直掛著');
+});
+
+test('IB 回應：**邊收邊數**——超過上限立刻停，不是整包收完才檢查', async () => {
+  // 這一題釘住「檢查的時機」。用 res.text() 的話，是先把任意大小的回應整包放進記憶體，
+  // assertXmlSize 才有機會看到它——那時記憶體早就吃下去了。
+  let pulled = 0;
+  const chunk = new Uint8Array(1024 * 1024);          // 每塊 1MB
+  const res = /** @type {any} */ ({
+    headers: { get: () => null },                      // 故意不宣告 content-length（攻擊者當然不會宣告）
+    body: (async function* () { for (;;) { pulled++; yield chunk; } })(),
+  });
+  const err = await readCappedText(res).then(() => null, (/** @type {any} */ e) => e);
+  assert.ok(err, '無限長的回應必須被擋下（不然就是等 OOM）');
+  assert.equal(err.code, 'xml_too_large');
+  const capMb = MAX_IB_XML_BYTES / 1024 / 1024;
+  assert.ok(pulled <= capMb + 2,
+    `讀了 ${pulled}MB 才停，上限是 ${capMb}MB——「邊收邊數」沒有生效`);
+});
+
+test('IB 回應：正常大小照常讀回來，而且**吃掉 BOM**（res.text() 的語意，不吃會害 XML 解析失敗）', async () => {
+  const xml = '<FlexQueryResponse/>';
+  const bytes = new TextEncoder().encode('﻿' + xml);
+  const res = /** @type {any} */ ({
+    headers: { get: () => String(bytes.byteLength) },
+    body: (async function* () { yield bytes; })(),
+  });
+  assert.equal(await readCappedText(res), xml, 'BOM 沒被吃掉——fast-xml-parser 會解不開');
+});
+
+test('IB 列數：在**原始 XML** 上數，且涵蓋 OpenPosition（以前完全沒數）', () => {
+  assert.equal(countXmlRows('<Trade a="1"/><Trade\nb="2"/><Trade/>', 'Trade'), 3,
+    '後面接空白／換行／斜線都要數到——只認 `<Trade ` 會在 IB 換排版時默默數不到');
+  assert.equal(countXmlRows('<Trades><Trade/></Trades>', 'Trades'), 1, '容器標籤不可以被算進列數');
+  assert.equal(countXmlRows('<Trades><Trade/></Trades>', 'Trade'), 1, '`<Trades>` 不可以被誤數成 Trade');
+
+  const 持倉炸彈 = '<OpenPosition/>'.repeat(MAX_IB_ROWS + 1);
+  let err = /** @type {any} */ (null);
+  try { assertXmlRowLimits(持倉炸彈); } catch (e) { err = e; }
+  assert.ok(err, '20 萬筆持倉以前完全沒被數到，暢行無阻');
+  assert.match(err.message, /持倉/);
+  assert.doesNotThrow(() => assertXmlRowLimits('<Trade/><OpenPosition/><CashTransaction/>'), '正常份數要放行');
+});
+
+test('requestTimeout：是「最大 body ÷ 最慢可接受上傳速度」推導出來的，不是憑感覺訂的', () => {
+  // 舊值 120 秒配 50MB 上限＝隱形要求 437 KB/s（3.5 Mbit/s）。
+  // 實測 300 KB/s 的上傳在 120.0 秒被切斷、只收到 36MB 回 408——**正當的大備份還原被誤殺**。
+  const 最大備份 = 50 * 1024 * 1024;
+  const 推導值秒 = 最大備份 / MIN_UPLOAD_BYTES_PER_SEC;
+  assert.ok(HOSTED_REQUEST_TIMEOUT_MS / 1000 >= 推導值秒,
+    `requestTimeout ${HOSTED_REQUEST_TIMEOUT_MS / 1000}s 小於推導值 ${Math.ceil(推導值秒)}s`
+    + `（50MB ÷ ${MIN_UPLOAD_BYTES_PER_SEC / 1024}KiB/s）——會誤殺走慢線路的大備份還原`);
+  assert.ok(MIN_UPLOAD_BYTES_PER_SEC <= 256 * 1024,
+    '「最慢可接受上傳速度」訂太高＝變相把行動網路使用者排除在外');
+  assert.ok(HOSTED_HEADERS_TIMEOUT_MS < HOSTED_REQUEST_TIMEOUT_MS,
+    'headersTimeout 必須小於 requestTimeout，否則 Node 會用大的那個當實際上限');
 });
 
 test('IB XML：擋在 parse 之前（展開成物件通常是原文的數倍大）', () => {
@@ -69,6 +156,21 @@ test('slowloris：HOSTED 的連線逾時比 Node 預設緊得多，且三個都�
   // Node 預設：headersTimeout 60s／requestTimeout 300s——對「每幾秒滴一個位元組」太寬鬆
   assert.ok(applied.headersTimeout < 60_000, 'header 本來就該一次送完，不必給到一分鐘');
   assert.ok(applied.requestTimeout < 300_000);
-  // 但也不能緊到誤殺正當的大上傳（50MB 備份走比較慢的線路）
+  // 但也不能緊到誤殺正當的大上傳（50MB 備份走比較慢的線路）——實際的下限由上一題推導
   assert.ok(applied.requestTimeout >= 60_000, `requestTimeout ${applied.requestTimeout}ms 太緊，會誤殺大備份還原`);
+});
+
+test('三個 PDF 抽取器：上限 throw 的時候也要放掉 pdfjs 的資源（try/finally）', async () => {
+  // ⚠️ 這一題不打真的 pdfjs（那要造 201 頁的 PDF，慢且脆）。它驗的是**原始碼的形狀**：
+  //    `task.destroy()` 必須在 `finally` 裡。沒有 finally 的話，`assertPageLimit` 一 throw
+  //    就跳過 destroy，pdfjs 的 worker 與已配置的頁面資源留著不放——
+  //    「防資源耗盡」的那條路自己在漏資源，而且**只有被攻擊時才會發生**（正常檔案不會 throw）。
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  for (const f of ['lib/statement.js', 'lib/bank-statement.js', 'lib/taishin-securities.js']) {
+    const src = readFileSync(root + f, 'utf8');
+    assert.match(src, /}\s*finally\s*{\s*\n\s*await task\.destroy\(\);\s*\n\s*}/,
+      `${f} 的 task.destroy() 不在 finally 裡——上限 throw 時會漏掉 pdfjs 的資源`);
+  }
 });
