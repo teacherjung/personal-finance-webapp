@@ -145,7 +145,7 @@ async function seedAll(who, mark, hist) {
 }
 const seedB = await seedAll(B, MARK_B, HIST_B);
 const seedA = await seedAll(A, MARK_A, HIST_A);
-void seedA;   // A 的種子只是為了「各自看得到自己的」那一題與洩漏掃描的反方向
+// A 的種子：①「各自看得到自己的」那一題 ②洩漏掃描的反方向 ③⑥的機密要種在 A 自己的卡片上
 /** 某個集合、某個人的標記值（字串比對用）。 @param {string} col @param {'A'|'B'} who */
 const markOf = (col, who) => (col === 'history'
   ? String(who === 'A' ? HIST_A : HIST_B)
@@ -228,17 +228,32 @@ await check('跨站 Origin 的變更請求＝403', async () => {
   ok(r.status === 403, `回 ${r.status}，應為 403`);
 });
 
-console.log('\n⑤ RLS 直連：拿 A 的 access token 直打 Supabase REST 讀 kv → 只能看到自己的列');
-await check('RLS 直連（這一題只有真 Postgres 測得出來）', async () => {
-  if (!SB_URL || !SB_ANON) throw new Error('略過不得：請設 C6_SUPABASE_URL 與 C6_SUPABASE_ANON_KEY');
-  // 從 cookie 取出 access token（@supabase/ssr 會把 session 存在 sb-*-auth-token cookie）
-  const m = A.jar.match(/sb-[^=]*auth-token[^=]*=([^;]+)/);
+/**
+ * 從某人的 cookie 罐取出 Supabase access token。
+ *
+ * ⚠️ **兩支探針一定要共用這一份**（2026-07-28 修，Codex 收官審查 #3）：
+ *    舊版讀探針有 `?.[0]` 的陣列型退路、也斷言了長度；寫探針卻只有 `?.access_token`、
+ *    而且解不出來時 `access` 是 `null` → Supabase 回 401 → `status >= 400` **當成攻擊被擋住**。
+ *    也就是「token 解不出來」這件事會讓寫探針**穩定假綠**。
+ *    抽成同一支函式＝以後 cookie 格式再變，兩邊一起壞、一起被發現。
+ * @param {any} who
+ */
+function accessTokenOf(who) {
+  const m = who.jar.match(/sb-[^=]*auth-token[^=]*=([^;]+)/);
   ok(m, '從 cookie 取不到 Supabase session（cookie 名稱可能改了，請人工確認）');
   let token = decodeURIComponent(/** @type {any} */ (m)[1]);
   if (token.startsWith('base64-')) token = Buffer.from(token.slice(7), 'base64').toString('utf8');
   const parsed = (() => { try { return JSON.parse(token); } catch { return null; } })();
   const access = parsed?.access_token || parsed?.[0] || null;
-  ok(typeof access === 'string' && access.length > 20, '解不出 access_token（請人工用瀏覽器 DevTools 取一次再測）');
+  ok(typeof access === 'string' && access.length > 20,
+    '解不出 access_token（請人工用瀏覽器 DevTools 取一次再測）——**不可以當成「攻擊被擋住」**');
+  return /** @type {string} */ (access);
+}
+
+console.log('\n⑤ RLS 直連：拿 A 的 access token 直打 Supabase REST 讀 kv → 只能看到自己的列');
+await check('RLS 直連（這一題只有真 Postgres 測得出來）', async () => {
+  if (!SB_URL || !SB_ANON) throw new Error('略過不得：請設 C6_SUPABASE_URL 與 C6_SUPABASE_ANON_KEY');
+  const access = accessTokenOf(A);
 
   const r = await fetch(`${SB_URL}/rest/v1/kv?select=user_id,key`, {
     headers: { apikey: SB_ANON, Authorization: `Bearer ${access}` },
@@ -251,33 +266,103 @@ await check('RLS 直連（這一題只有真 Postgres 測得出來）', async ()
   ok(owners.length === 0 || owners[0] === A.user.id, 'RLS 回了別人的列！');
   console.log(`       （A 直連看到 ${rows.length} 列，全部屬於自己）`);
 });
-await check('RLS 寫入：A 直連想插一列 user_id=B → 必須被拒（P1-3 的 WITH CHECK）', async () => {
+await check('RLS 寫入：A 直連想插一列 user_id=B → 必須被 **RLS** 拒（P1-3 的 WITH CHECK）', async () => {
   if (!SB_URL || !SB_ANON) throw new Error('請設 C6_SUPABASE_URL 與 C6_SUPABASE_ANON_KEY');
-  const m = A.jar.match(/sb-[^=]*auth-token[^=]*=([^;]+)/);
-  let token = decodeURIComponent(/** @type {any} */ (m)[1]);
-  if (token.startsWith('base64-')) token = Buffer.from(token.slice(7), 'base64').toString('utf8');
-  const access = (() => { try { return JSON.parse(token)?.access_token; } catch { return null; } })();
-  const r = await fetch(`${SB_URL}/rest/v1/kv`, {
+  const access = accessTokenOf(A);
+  const insert = (/** @type {any} */ body) => fetch(`${SB_URL}/rest/v1/kv`, {
     method: 'POST',
-    headers: { apikey: SB_ANON, Authorization: `Bearer ${access}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ user_id: B.user.id, key: 'transactions', data: [] }),
+    headers: { apikey: SB_ANON, Authorization: `Bearer ${access}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify(body),
   });
+
+  // ── 正向對照組（缺了它整題就是假綠）──────────────────────────────────────
+  // 沒有這一步，「請求根本沒送成功」（token 壞、欄位打錯、表名改過…）與「RLS 把攻擊擋下來」
+  // 在 `status >= 400` 底下**長得一模一樣**。先證明「同樣形狀的寫入，寫給自己是成功的」，
+  // 後面那個失敗才有意義。
+  const ownKey = `__c6_probe_own_${STAMP}`;
+  const good = await insert({ user_id: A.user.id, key: ownKey, data: [] });
+  ok(good.status === 201,
+    `正向對照失敗：A 連寫自己的列都不行（HTTP ${good.status} ${(await good.text()).slice(0, 200)}）` +
+    '——這代表探針自己壞了，不是 RLS 擋住了。修好探針再測。');
+
+  // ── 真正的攻擊 ─────────────────────────────────────────────────────────
+  // ⚠️ key 一定要用**不存在的隨機鍵**（2026-07-28 修，Codex 收官審查 #3）：
+  //    舊版固定插 `key: 'transactions'`，而 `(user_id, key)` 正是主鍵、B 的種子早就建過那一列。
+  //    PostgreSQL 先跑 RLS 的 WITH CHECK、再跑唯一索引，所以
+  //        牆在 → 42501 → 403
+  //        牆倒 → 23505 → 409
+  //    兩者都 `>= 400`——**這一題在任何政策下都是綠的**。
+  const victimKey = `__c6_probe_victim_${STAMP}`;
+  const r = await insert({ user_id: B.user.id, key: victimKey, data: [] });
+  const body = await r.text();
   ok(r.status >= 400, `插別人的列竟然回 ${r.status}——只寫 USING 沒寫 WITH CHECK 就會這樣`);
+  // ⚠️ 還要核對**擋下來的理由**：只看 4xx 的話，任何「碰巧失敗」都會被當成隔離成功。
+  //    42501 = insufficient_privilege ＝ RLS 政策拒絕，那才是我們要的那個失敗。
+  ok(/42501|row-level security|violates row-level/i.test(body),
+    `被擋下來了，但**不是 RLS 擋的**（HTTP ${r.status}：${body.slice(0, 300)}）——` +
+    '這種綠燈沒有意義，請確認 kv_owner_all 政策真的有 WITH CHECK。');
+
+  // 收尾：正向對照那一列刪掉，別留在資料庫裡
+  await fetch(`${SB_URL}/rest/v1/kv?key=eq.${ownKey}`, {
+    method: 'DELETE', headers: { apikey: SB_ANON, Authorization: `Bearer ${access}` },
+  });
+  // 從資料層再確認一次攻擊那一列真的沒進去（回應碼可能騙人，資料不會）
+  const after = await fetch(`${SB_URL}/rest/v1/kv?select=key&key=eq.${victimKey}`, {
+    headers: { apikey: SB_ANON, Authorization: `Bearer ${access}` },
+  });
+  ok((await after.json()).length === 0, '攻擊那一列竟然寫進去了');
 });
 
 console.log('\n⑥ 機密投影：逐端點驗「只出現 …Set 布林、沒有明文也沒有密文」');
+// ⚠️ **一定要先種真的機密**（2026-07-28 修，Codex 收官審查 #4）。
+//    舊版的種子卡片只有 `{name, type}`、也從沒設過 flexToken／台新密碼，
+//    而四條斷言全是否定式（「回應裡找不到機密」）——於是
+//    **「投影把機密剝掉了」與「這個帳號根本沒有機密可剝」長得一模一樣**。
+//    把正式投影整層刪掉，這一題照樣全綠。
+//    （這正是本腳本自己在檔頭寫過的教訓：「找不到」與「沒有東西可找」必須分得出來。）
+const SEC_FLEX = `C6FLEX${STAMP}`;
+const SEC_TAISHIN = `C6TAI${STAMP}`;
+const SEC_CARDPW = `C6CARD${STAMP}`;
+await check('前置：透過正式 API 種下三個機密，並確認伺服器**真的收到了**', async () => {
+  const s = await req(A.jar, '/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ taishinSecPdfPassword: SEC_TAISHIN, ib: { flexToken: SEC_FLEX, flexQueryId: '123' } }),
+  });
+  ok(s.status === 200, `PUT /api/settings 回 ${s.status}`);
+  const c = await req(A.jar, `/api/cards/${seedA.cards.id}`, {
+    method: 'PUT', body: JSON.stringify({ pdfPassword: SEC_CARDPW }),
+  });
+  ok(c.status === 200, `PUT /api/cards 回 ${c.status}`);
+
+  // 關鍵：用 `…Set` 布林確認「伺服器手上確實有這三個機密」。
+  // 沒有這一步，下面那一題就退化成「什麼都沒有，所以什麼都沒洩漏」。
+  const st = await (await req(A.jar, '/api/settings')).json();
+  ok(st?.ib?.flexTokenSet === true, 'flexTokenSet 不是 true——機密沒種進去，投影考題會變成假綠');
+  ok(st?.taishinSecPdfPasswordSet === true, 'taishinSecPdfPasswordSet 不是 true');
+  const cards = await (await req(A.jar, '/api/cards')).json();
+  const card = cards.find((/** @type {any} */ x) => x.id === seedA.cards.id);
+  ok(card?.pdfPasswordSet === true, 'pdfPasswordSet 不是 true');
+});
 await check('機密不送瀏覽器（含寫入端回應）', async () => {
   const probes = [
     ['/api/settings', 'GET', null], ['/api/cards', 'GET', null], ['/api/db', 'GET', null], ['/api/export', 'GET', null],
     ['/api/settings', 'PUT', '{"usdTwd":32}'],
+    // 卡片的寫入端回應也要驗（改個名字不該把密碼一起吐回來）
+    [`/api/cards/${seedA.cards.id}`, 'PUT', JSON.stringify({ name: MARK_A })],
   ];
   for (const [p, method, body] of probes) {
     const r = await req(A.jar, /** @type {string} */ (p), body ? { method, body } : {});
     const text = await r.text();
+    // ① 形狀檢查（舊版就有）：不准出現任何非空的機密欄位
     ok(!/"pdfPassword"\s*:\s*"[^"]+"/.test(text), `${method} ${p} 回了 pdfPassword 明文`);
     ok(!/"flexToken"\s*:\s*"[^"]+"/.test(text), `${method} ${p} 回了 flexToken 明文`);
     ok(!/"taishinSecPdfPassword"\s*:\s*"[^"]+"/.test(text), `${method} ${p} 回了台新密碼明文`);
     ok(!text.includes('enc:v1:'), `${method} ${p} 回了密文（沒意義又洩漏長度）`);
+    // ② 值檢查（新增）：直接找我們**剛剛親手種下去**的那三串。
+    //    形狀檢查會被「欄位改名」繞過（例如哪天欄位叫 pdf_password），值檢查不會。
+    for (const [label, secret] of [['IB token', SEC_FLEX], ['台新密碼', SEC_TAISHIN], ['卡片密碼', SEC_CARDPW]]) {
+      ok(!text.includes(secret), `${method} ${p} 把${label}送到瀏覽器了`);
+    }
   }
 });
 
