@@ -22,7 +22,7 @@ test('研究方法｜八組問題完整、key 不重複，所有自動證據都�
   }
 });
 
-test('研究方法｜官方值與 Noteasy 衍生值分開，衍生值都有公式與輸入', () => {
+test('研究方法｜官方值與 NotEasy 衍生值分開，衍生值都有公式與輸入', () => {
   assert.equal(new Set(FUNDAMENTAL_METRIC_DEFINITIONS.map(metric => metric.key)).size,
     FUNDAMENTAL_METRIC_DEFINITIONS.length);
   const official = FUNDAMENTAL_METRIC_DEFINITIONS.filter(metric => metric.kind === 'official');

@@ -28,7 +28,7 @@ const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const port = /** @type {any} */ (server.address()).port;
 const base = `http://127.0.0.1:${port}`;
-const SEC_USER_AGENT = 'Noteasy Test data@example.test';
+const SEC_USER_AGENT = 'NotEasy Test data@example.test';
 const silentLogger = { warn() {} };
 
 /** @param {string} url */
