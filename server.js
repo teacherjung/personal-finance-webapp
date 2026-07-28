@@ -11,28 +11,37 @@ import { marketRoutes } from './lib/routes/market.js';
 import { ibRoutes } from './lib/routes/ib.js';
 import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
-import { installJsonBodyParsers } from './lib/http-body.js';
+import { installJsonBodyParsers, AUTH_JSON_LIMIT } from './lib/http-body.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
 import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
 export const app = express();
-installJsonBodyParsers(app);
 // 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
 // ⚠️ LOCAL 分支的行為必須與 C2 之前 byte-for-byte 等價——這是 C0 的「本機版零改動」契約。
 if (isHosted()) {
   hostedConfig();                       // fail-fast：缺環境變數＝啟動即 throw（不可默默半套上線）
   app.use(csrfOriginGuard);             // CSRF Origin 牆（變更類請求；C0 威脅模型）
   app.get('/health', (req, res) => res.json({ ok: true }));   // 機器健康檢查（裁決④：/health 讓給機器）
+  // ⚠️ **身分牆之前只准解析登入用的小 body**（2026-07-28 修）：登入端點在牆的白名單裡、
+  // 需要 body 才讀得到信箱密碼，所以給它一個 32KB 的專屬 parser——牆前的每一個位元組都是未驗證流量。
+  app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }));
   app.use(authRoutes);                  // /api/auth/*（login/logout/me/confirm/set-password）
-  app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）——只宣稱 401，隔離歸 C4
+  app.use(authGate);                    // C3 gate（P1-1）：/finance＋全部 /api/*（白名單除外）
+  // ⚠️ **大件 parser 一定要掛在 authGate 之後**：以前掛在最前面，等於「不管誰寄來的包裹都先拆開，
+  // 拆完才到櫃台問這個人能不能進來」。實測 10 個**未登入**請求 × 45MB 就把行程 OOM 打死
+  //（模擬 Render 512MB 容器）；搬到牆後之後同樣的攻擊全數 401、記憶體只多 8MB。
+  installJsonBodyParsers(app);
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
   const site = join(__dirname, 'public-site');
   app.use(express.static(site, { extensions: ['html'] }));
   // /finance＝理財 app（C3 才掛 auth gate；C2 先讓路徑存在＝重導到既有 SPA）
   app.use('/finance', express.static(join(__dirname, 'public')));
 } else {
+  // LOCAL：位置與改造前**完全相同**（原本就緊接在 if 之前，而 else 的第一行就是 static）——
+  // 中介層堆疊逐層比對過、無差異。本機不對外（只聽 127.0.0.1），沒有未驗證流量的問題。
+  installJsonBodyParsers(app);
   app.use(express.static(join(__dirname, 'public')));
 }
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
