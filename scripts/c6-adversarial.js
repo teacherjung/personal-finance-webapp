@@ -88,16 +88,70 @@ const B = await login(B_EMAIL, B_PW);
 console.log(`登入成功：A=${A.user?.id?.slice(0, 8)}… B=${B.user?.id?.slice(0, 8)}…\n`);
 if (A.user?.id === B.user?.id) { console.error('A 與 B 是同一個帳號，這樣測不出隔離'); process.exit(2); }
 
-// 兩邊各種一顆好認的種子（合成資料）
-const MARK_A = `C6A-${Date.now()}`;
-const MARK_B = `C6B-${Date.now()}`;
-for (const [who, mark] of [[A, MARK_A], [B, MARK_B]]) {
-  const r = await req(/** @type {any} */ (who).jar, '/api/transactions', {
-    method: 'POST',
-    body: JSON.stringify({ date: '2026-07-01', type: 'expense', category: '其他', amount: 12, note: mark }),
-  });
-  if (r.status !== 200) { console.error(`種子寫入失敗：HTTP ${r.status}`); process.exit(2); }
+// ---- 每個集合各種一顆好認的種子（合成資料）----------------------------------
+// ⚠️ 這是本檔最容易生出假綠的地方。舊版只在 `transactions` 建一筆，卻拿它的 id 去打十個集合——
+//    對其他九個集合來說，那個 id **在任何人的資料裡都不存在**：PUT 回 404、DELETE 回 `{ok:true}`，
+//    看起來「攻擊被擋住了」，其實是**打空氣**。同理，只有 transactions 帶得走標記字串，
+//    所以「A 讀不到 B」那一題對其餘九個集合也是空的。
+//    **每個集合都要有一個真的屬於 B 的受害者。**
+//    實測（審查在一個「九個集合全域共用、A 讀得到也刪得掉 B 的信用卡」的假部署上打舊腳本）：
+//    舊腳本印出「通過 15 題，失敗 0 題 ✅ 全部通過」。
+const STAMP = Date.now();
+const MARK_A = `C6A${STAMP}`;
+const MARK_B = `C6B${STAMP}`;
+// history 的可寫欄位只有 month/amount（lib/schema.js WRITABLE_FIELDS），沒有自由字串欄——
+// 標記只能藏在金額裡；用「時間戳＋尾碼」保證這個數字不會出現在其他任何地方。
+const HIST_A = Number(`${STAMP}11`);
+const HIST_B = Number(`${STAMP}22`);
+/** 每個集合一份**通得過欄位白名單與必填檢查**的最小合法 body。 @param {string} mark @param {number} hist */
+const seedBodies = (mark, hist) => (/** @type {Record<string, any>} */ ({
+  accounts: { name: mark, type: 'cash', currency: 'TWD', balance: 1 },
+  assetTargets: { class: mark, targetPct: 1 },
+  transactions: { date: '2026-07-01', type: 'expense', category: '其他', amount: 12, note: mark },
+  subscriptions: { name: mark, amount: 1, cycle: 'monthly' },
+  insurance: { policyName: mark, premium: 1 },
+  cards: { name: mark, type: 'credit' },
+  history: { month: '2019-01', amount: hist },
+  holdings: { symbol: mark, name: mark, layer: 'core', currency: 'USD', quantity: 1, price: 1 },
+  watchlist: { symbol: mark, name: mark, currency: 'USD', note: mark },
+  research: { symbol: mark, thesis: mark },
+}));
+/** 標記藏在哪個欄位（PUT 劫持要蓋的就是它）。 @type {Record<string,string>} */
+const MARK_FIELD = { accounts: 'name', assetTargets: 'class', transactions: 'note', subscriptions: 'name',
+  insurance: 'policyName', cards: 'name', history: 'amount', holdings: 'name', watchlist: 'name', research: 'thesis' };
+// ⚠️ 劫持 patch **必須是該集合白名單內的欄位**。舊版一律送 `{name, note}`——對 assetTargets／
+//    insurance／history／research 這四個集合，兩個欄位都會被 `pickWritable` 剝光，PUT 等於什麼都沒做：
+//    **就算伺服器完全沒有隔離，那一筆也不會變**＝穩定的假綠。
+/** @type {Record<string, any>} */
+const HIJACK = { accounts: { name: 'hijack' }, assetTargets: { class: 'hijack' }, transactions: { note: 'hijack' },
+  subscriptions: { name: 'hijack' }, insurance: { policyName: 'hijack' }, cards: { name: 'hijack' },
+  history: { amount: 1 }, holdings: { name: 'hijack' }, watchlist: { name: 'hijack', note: 'hijack' },
+  research: { thesis: 'hijack' } };
+
+/** 在某個使用者名下把十個集合各種一顆。 @param {any} who @param {string} mark @param {number} hist */
+async function seedAll(who, mark, hist) {
+  const bodies = seedBodies(mark, hist);
+  /** @type {Record<string, any>} */
+  const made = {};
+  for (const col of COLLECTIONS) {
+    const r = await req(who.jar, `/api/${col}`, { method: 'POST', body: JSON.stringify(bodies[col]) });
+    const text = await r.text();
+    if (r.status !== 200) { console.error(`種子寫入失敗：${col} → HTTP ${r.status} ${text.slice(0, 200)}`); process.exit(2); }
+    made[col] = JSON.parse(text);
+    if (!made[col]?.id) { console.error(`種子沒拿到 id：${col} → ${text.slice(0, 200)}`); process.exit(2); }
+  }
+  return made;
 }
+const seedB = await seedAll(B, MARK_B, HIST_B);
+const seedA = await seedAll(A, MARK_A, HIST_A);
+void seedA;   // A 的種子只是為了「各自看得到自己的」那一題與洩漏掃描的反方向
+/** 某個集合、某個人的標記值（字串比對用）。 @param {string} col @param {'A'|'B'} who */
+const markOf = (col, who) => (col === 'history'
+  ? String(who === 'A' ? HIST_A : HIST_B)
+  : (who === 'A' ? MARK_A : MARK_B));
+/** 掃洩漏時要找的所有字串（含 history 藏在金額裡的那個）。 */
+const MARKS_A = [MARK_A, String(HIST_A)];
+const MARKS_B = [MARK_B, String(HIST_B)];
 
 console.log('① 未登入打全部 /api/*（白名單除外）→ 401；/finance → 轉登入');
 await check('未登入逐條 401', async () => {
@@ -122,29 +176,42 @@ await check('A 看不到 B 的資料（兩個方向都驗）', async () => {
   for (const p of READ_ENDPOINTS) {
     const ra = await req(A.jar, p);
     ok(ra.status === 200, `A GET ${p} 回 ${ra.status}`);
-    ok(!(await ra.text()).includes(MARK_B), `A GET ${p} 看得到 B 的資料！`);
-    const rb = await req(B.jar, p);
-    ok(!(await rb.text()).includes(MARK_A), `B GET ${p} 看得到 A 的資料！`);
+    const ta = await ra.text();
+    for (const m of MARKS_B) ok(!ta.includes(m), `A GET ${p} 看得到 B 的資料（標記 ${m}）！`);
+    const tb = await (await req(B.jar, p)).text();
+    for (const m of MARKS_A) ok(!tb.includes(m), `B GET ${p} 看得到 A 的資料（標記 ${m}）！`);
   }
 });
-await check('各自看得到自己的（否則「全都是空的」也會通過上一題）', async () => {
-  ok((await (await req(A.jar, '/api/transactions')).text()).includes(MARK_A), 'A 看不到自己的資料');
-  ok((await (await req(B.jar, '/api/transactions')).text()).includes(MARK_B), 'B 看不到自己的資料');
+await check('各自看得到自己的**每一個集合**（否則「全都是空的」也會通過上一題）', async () => {
+  // ⚠️ 舊版只驗 transactions 一個集合。其餘九個集合天生沒有標記可搜，
+  //    所以上一題對它們而言永遠是綠的——**「找不到」與「沒有東西可找」看起來一模一樣。**
+  for (const col of COLLECTIONS) {
+    ok((await (await req(A.jar, `/api/${col}`)).text()).includes(markOf(col, 'A')), `A 看不到自己的 ${col}`);
+    ok((await (await req(B.jar, `/api/${col}`)).text()).includes(markOf(col, 'B')), `B 看不到自己的 ${col}`);
+  }
 });
 
 console.log('\n③ A 拿 B 的 id 做 PUT／DELETE → B 一筆都不能少（逐集合列舉）');
-await check('跨使用者寫入被擋', async () => {
-  const bList = await (await req(B.jar, '/api/transactions')).json();
-  const victim = bList.find((/** @type {any} */ t) => t.note === MARK_B);
-  ok(victim, '找不到 B 的種子交易');
+await check('跨使用者寫入被擋（**每個集合都用該集合真正的 B 受害者**）', async () => {
   for (const col of COLLECTIONS) {
-    await req(A.jar, `/api/${col}/${encodeURIComponent(victim.id)}`, { method: 'PUT', body: JSON.stringify({ name: 'hijack', note: 'hijack' }) });
-    await req(A.jar, `/api/${col}/${encodeURIComponent(victim.id)}`, { method: 'DELETE' });
+    const victimId = String(seedB[col].id);
+    const mark = markOf(col, 'B');
+    // ① 先證明這個 id 真的是 B 的東西——不然接下來只是對空氣揮拳（舊版最大的假綠）
+    const before = await (await req(B.jar, `/api/${col}`)).json();
+    ok(Array.isArray(before) && before.some((/** @type {any} */ x) => String(x.id) === victimId),
+      `${col}：找不到 B 的種子（id=${victimId}），這一題無效`);
+    // ② A 拿 B 的 id 做 PUT（patch 是該集合白名單內、**真的會蓋掉標記**的欄位）
+    const put = await req(A.jar, `/api/${col}/${encodeURIComponent(victimId)}`, { method: 'PUT', body: JSON.stringify(HIJACK[col]) });
+    ok(!(await put.text()).includes(mark), `A PUT /api/${col}/${victimId} 的**回應**帶回了 B 的資料＝寫入路徑也在洩漏`);
+    // ③ 再 DELETE
+    await req(A.jar, `/api/${col}/${encodeURIComponent(victimId)}`, { method: 'DELETE' });
+    // ④ 回到 B 身上逐集合驗「一筆都不能少、一個字都不能改」
+    const after = await (await req(B.jar, `/api/${col}`)).json();
+    const still = (Array.isArray(after) ? after : []).find((/** @type {any} */ x) => String(x.id) === victimId);
+    ok(still, `A 把 B 的 ${col} 那一筆刪掉了！`);
+    ok(String(still[MARK_FIELD[col]]) === mark,
+      `A 把 B 的 ${col} 那一筆改掉了（${MARK_FIELD[col]} 現在是 ${JSON.stringify(still[MARK_FIELD[col]])}）！`);
   }
-  const after = await (await req(B.jar, '/api/transactions')).json();
-  const still = after.find((/** @type {any} */ t) => t.id === victim.id);
-  ok(still, 'A 把 B 的交易刪掉了！');
-  ok(still.note === MARK_B, 'A 把 B 的交易改掉了！');
 });
 
 console.log('\n④ 偽造／過期 cookie → 401（不是 500）；跨站 POST → 403');
@@ -253,12 +320,27 @@ await check('超大 body → 413/400，之後服務還活著', async () => {
   const alive = await fetch(`${BASE}/health`);
   ok(alive.status === 200, '送完大 body 之後服務掛了！');
 });
-await check('畸形 PDF/XML → 明確錯誤，不含密碼', async () => {
-  for (const p of ['/api/statement/preview', '/api/bank-statement/preview', '/api/securities/preview']) {
-    const r = await req(A.jar, p, { method: 'POST', body: JSON.stringify({ data: 'AAAA', password: 'SHOULD-NOT-ECHO' }) });
+// ⚠️ **三個端點讀的 body 欄位不一樣**（2026-07-28 修）：`/api/securities/preview` 讀的是
+//    `req.body?.file`（lib/routes/securities.js），另外兩個讀 `req.body.data`（lib/routes/statement.js）。
+//    舊版三個都送 `data` → 證券那條在 `parseB64` 就以「沒有收到檔案內容」回 400，
+//    **根本沒碰到 pdfjs**：不管解析器有沒有上限、會不會回顯密碼，那一題都是綠的。
+/** @type {[string, string][]} */
+const PDF_ENDPOINTS = [
+  ['/api/statement/preview', 'data'],
+  ['/api/bank-statement/preview', 'data'],
+  ['/api/securities/preview', 'file'],
+];
+
+await check('畸形 PDF/XML → 明確錯誤，不含密碼（**每個端點送它自己讀的欄位**）', async () => {
+  for (const [p, field] of PDF_ENDPOINTS) {
+    const r = await req(A.jar, p, { method: 'POST', body: JSON.stringify({ [field]: 'AAAA', password: 'SHOULD-NOT-ECHO' }) });
     const text = await r.text();
     ok(r.status >= 400 && r.status < 500, `${p} 回 ${r.status}，應為 4xx`);
     ok(!text.includes('SHOULD-NOT-ECHO'), `${p} 把密碼回顯了！`);
+    // 這一條是「有沒有真的走到解析器」的照妖鏡：送錯欄位的話，訊息會是「沒有收到檔案內容」，
+    // 而不是解析器對一份壞檔該說的話。
+    ok(!/沒有收到檔案內容|沒有檔案/.test(text),
+      `${p} 回「沒有收到檔案內容」＝這一題送錯了欄位（應送 ${field}），根本沒碰到解析器`);
   }
   ok((await fetch(`${BASE}/health`)).status === 200, '服務掛了');
 });
