@@ -37,6 +37,20 @@ test('投資活動｜IB 現金流明說估算與略過筆數，幣別經消毒',
   assert.equal(INCOME_INFO.pil[0], '替代股息（Payment in Lieu）');
 });
 
+// 「缺幣別」與「缺匯率」是兩種病，註記必須分開講（2026-07-28）：
+// 金額總額已經排除了那些筆，**少了註記就是默默算錯**——這是本卡片最不能退讓的一條。
+test('投資活動｜IB 現金流：報表沒有幣別欄的筆數要獨立出聲，並指路 Flex Query', () => {
+  const html = incomeActivityHtml({ ib: { income: { skippedNoCurrency: 3 } } }, twd);
+  assert.match(html, /3 筆現金交易的報表沒有幣別欄/);
+  assert.match(html, /未計入上列金額/, '要說清楚「這個數字不含什麼」');
+  assert.match(html, /Cash Transactions/, '要指路到 Flex Query 的哪一個區塊，使用者才修得到');
+});
+
+test('投資活動｜沒有缺幣別時不出現那行註記（不可以無條件嚇使用者）', () => {
+  const html = incomeActivityHtml({ ib: { income: { dividends: 100, skippedNoCurrency: 0 } } }, twd);
+  assert.doesNotMatch(html, /沒有幣別欄/);
+});
+
 test('投資活動｜交易摘要維持多幣別損益優先序、排名與匯率說明', () => {
   const trades = [
     { symbol: 'AAPL', pnl: 200, currency: 'USD' },

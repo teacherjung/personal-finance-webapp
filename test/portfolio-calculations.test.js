@@ -112,3 +112,15 @@ test('投資計算｜組合 XIRR 超過正負 500% 時拒絕誤導數字', () =>
     { ok: false, why: '資料異常（檢查快照是否為真實紀錄）' }
   );
 });
+
+
+// 缺幣別時 cur 是空字串——直接放進 missingCurrencies 畫面會出現一個空白的頓號
+// （提示亮了卻沒說是什麼）。2026-07-28 改成顯示「未知幣別」。
+test('交易摘要｜完全沒有幣別的交易列成「未知幣別」，不是空白', () => {
+  const summary = tradeSummary([
+    { symbol: 'AAPL', pnl: 100, currency: 'USD' },
+    { symbol: 'NOCUR', pnl: 50 },                    // 報表沒給幣別
+  ], { usdTwd: 32 });
+  assert.deepEqual(summary.missingCurrencies, ['未知幣別']);
+  assert.ok(!summary.missingCurrencies.includes(''), '空字串會讓畫面出現孤零零的頓號');
+});

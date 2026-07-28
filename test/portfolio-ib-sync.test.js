@@ -71,3 +71,25 @@ test('Codex S2r1#2｜secTradesSkipped 分原因回報（前端要說話，不只
   const clean = ibSyncFeedback({ updated: 1, created: 0 }, (v, c) => `${v} ${c}`);
   assert.ok(!clean.some(f => f.message.includes('證券交易紀錄')), '沒跳過就不出現');
 });
+
+
+// 「幣別不支援」與「報表沒給幣別」是兩種病（2026-07-28）：訊息分開講，使用者才修得到對的地方。
+test('IBKR 同步回報｜缺幣別的新持股與現金交易各自出聲，與「幣別不支援」分開', () => {
+  const feedback = ibSyncFeedback({
+    updated: 0, created: 0,
+    skippedCurrencies: ['EUR'],
+    skippedNoCurrency: ['VWRL', 'VUAA'],
+    incomeNoCurrency: 3,
+  }, formatCurrency);
+  const msgs = feedback.map(f => f.message);
+  assert.ok(msgs.some(m => /幣別尚未支援.*EUR/.test(m)), '不支援幣別＝我們不支援那個幣別');
+  assert.ok(msgs.some(m => /VWRL、VUAA/.test(m) && /Open Positions/.test(m)), '缺幣別＝報表沒給，要指路 Open Positions');
+  assert.ok(msgs.some(m => /3 筆股息／利息/.test(m) && /Cash Transactions/.test(m)), '現金交易缺幣別要指路 Cash Transactions');
+  assert.equal(feedback.filter(f => f.error).length, 3, '三種都是要使用者處理的，不可以標成一般訊息');
+});
+
+test('IBKR 同步回報｜沒有缺幣別時完全不提（乾淨的同步不該有雜訊）', () => {
+  const feedback = ibSyncFeedback({ updated: 2, created: 1 }, formatCurrency);
+  assert.equal(feedback.length, 1);
+  assert.doesNotMatch(feedback[0].message, /幣別/);
+});
