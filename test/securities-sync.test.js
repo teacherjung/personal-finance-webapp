@@ -197,3 +197,40 @@ test('Codex S3r2#1（高）｜不支援的手續費幣別（EUR）→ 跳過該�
   assert.ok((await getDb()).securityTrades.some((/** @type {any} */ x) => x.symbol === 'OKAY'), '同批其他合法列照常入庫（同步沒有整次失敗）');
   assert.equal((await getDb()).securityTrades.length, before + 1);
 });
+
+// ---- 新持股缺幣別＝不建、回報（2026-07-28 修；Codex gpt-5.6-sol 重審發現）----
+// 原本 `currency: p.currency || 'USD'` 會把一檔 GBP 標的存成美元，之後市值、淨資產、
+// 單一國家／個股上限全部靜默算錯。猜錯幣別的代價遠大於「少建一檔、畫面出聲」。
+test('IB 同步｜新持股沒有幣別＝不建立、列進 skippedNoCurrency（不可以猜 USD）', async () => {
+  const feedPos = (positions) => async () => ({
+    positions, cashByCurrency: {}, hasCashReport: false, hasCashDetail: false, cashDetailIncomplete: false,
+    baseCurrency: 'USD', baseSummaryCash: null, statementCount: 1, accountCount: 1,
+    equity: null, income: null, trades: [], rawTrades: [], period: { from: '2026-01-01', to: '2026-01-31' },
+  });
+  const before = (await getDb()).holdings.length;
+  const r = await syncIb(feedPos([
+    { symbol: 'NOCUR', description: '沒有幣別的標的', currency: '', quantity: 10, avgCost: 80, marketPrice: 100 },
+    { symbol: 'HASCUR', description: '有幣別', currency: 'USD', quantity: 5, avgCost: 10, marketPrice: 12 },
+  ]));
+  assert.deepEqual(r.skippedNoCurrency, ['NOCUR'], '缺幣別的新持股要被點名回報，不可以靜默建成 USD');
+  const db = await getDb();
+  assert.equal(db.holdings.length, before + 1, '只建了有幣別的那一檔');
+  assert.ok(!db.holdings.find(h => h.symbol === 'NOCUR'), '幣別不明的持股絕不入庫');
+  assert.equal(db.holdings.find(h => h.symbol === 'HASCUR')?.currency, 'USD');
+});
+
+test('IB 同步｜既有持股的幣別不會被「報表這次沒給幣別」洗掉（原本就對，補考題釘住）', async () => {
+  const db0 = await getDb();
+  db0.holdings.push({ id: 'keep-gbp', symbol: 'KEEPGBP', name: 'GBP 標的', layer: 'satellite',
+    currency: 'GBP', quantity: 1, price: 10, avgCost: 10, source: 'ib' });
+  await saveDb(db0);
+  const feedPos = (positions) => async () => ({
+    positions, cashByCurrency: {}, hasCashReport: false, hasCashDetail: false, cashDetailIncomplete: false,
+    baseCurrency: 'USD', baseSummaryCash: null, statementCount: 1, accountCount: 1,
+    equity: null, income: null, trades: [], rawTrades: [], period: { from: '2026-01-01', to: '2026-01-31' },
+  });
+  await syncIb(feedPos([{ symbol: 'KEEPGBP', currency: '', quantity: 3, avgCost: 11, marketPrice: 13 }]));
+  const h = (await getDb()).holdings.find(x => x.symbol === 'KEEPGBP');
+  assert.equal(h.currency, 'GBP', '既有持股保住原幣別');
+  assert.equal(h.quantity, 3, '數量照常更新（既有持股不因缺幣別被整筆跳過）');
+});
