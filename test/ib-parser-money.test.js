@@ -127,3 +127,102 @@ test('IB 解析｜持股缺幣別在 parse 層就是空字串（USD 預設只發
   }, () => null);
   assert.equal(parsed.positions[0].currency, '');
 });
+
+test('列數上限：**跨 statement 累計**（10 份各 3 萬筆＝總量 30 萬筆，以前每份都沒超標就全放行）', async () => {
+  const { MAX_IB_ROWS } = await import('../lib/parse-limits.js');
+  // 每份都在上限之下（六成），但十份加起來遠遠超過
+  const 每份 = Math.floor(MAX_IB_ROWS * 0.6);
+  const 一筆 = { type: 'Dividends', amount: '1', currency: 'USD', fxRateToBase: '1' };
+  const mkStmt = () => ({
+    accountId: 'U-SYNTH', AccountInformation: { currency: 'USD' },
+    CashTransactions: { CashTransaction: Array.from({ length: 每份 }, () => 一筆) },
+  });
+
+  assert.doesNotThrow(() => parseStatement({
+    FlexQueryResponse: { FlexStatements: { FlexStatement: mkStmt() } },
+  }, () => 1), '單獨一份在上限之下，必須照常放行');
+
+  let err = /** @type {any} */ (null);
+  try {
+    parseStatement({
+      FlexQueryResponse: { FlexStatements: { FlexStatement: [mkStmt(), mkStmt()] } },
+    }, () => 1);
+  } catch (e) { err = e; }
+  assert.ok(err, '兩份加起來已經超過上限，卻沒被擋——「每份各自檢查」就是這樣被繞過的');
+  assert.equal(err.status, 400);
+  assert.match(err.message, /現金交易/);
+});
+
+// ---- 整條路真的有用到那兩道牆嗎（不是只有「函式本身是對的」）----------------
+// ⚠️ 這兩題是補上來的：原本只考 readCappedText／assertXmlRowLimits **本身**，
+//    結果把 lib/ib.js 改回 `res.text()`、或把 assertXmlRowLimits 整行刪掉，考題**全綠**。
+//    純函式考題證明的是「牆蓋得對」，證明不了「牆有蓋在路上」。這兩題打的是真的 fetchFlex。
+
+/** 假的 IB 伺服器：第一次回 SendRequest 的成功回應，第二次回你給的報表。 @param {string} statementXml */
+function fakeIbFetch(statementXml) {
+  let call = 0;
+  return async () => {
+    call++;
+    const body = call === 1
+      ? '<FlexStatementResponse><Status>Success</Status><ReferenceCode>1</ReferenceCode><Url>https://x/GetStatement</Url></FlexStatementResponse>'
+      : statementXml;
+    const bytes = new TextEncoder().encode(body);
+    return {
+      ok: true,
+      headers: { get: (/** @type {string} */ k) => (k === 'content-length' ? String(bytes.byteLength) : null) },
+      body: (async function* () { yield bytes; })(),
+    };
+  };
+}
+
+test('整條路｜IB 回應過大：在 getText 就擋掉（不是等 res.text() 把它整包吃進記憶體）', async () => {
+  const { fetchFlex } = await import('../lib/ib.js');
+  const { MAX_IB_XML_BYTES } = await import('../lib/parse-limits.js');
+  const real = globalThis.fetch;
+  // 宣告一個超大的 Content-Length：走 readCappedText 會當場 400，走 res.text() 會開始收
+  globalThis.fetch = /** @type {any} */ (async () => ({
+    ok: true,
+    headers: { get: (/** @type {string} */ k) => (k === 'content-length' ? String(MAX_IB_XML_BYTES + 1) : null) },
+    body: { cancel: async () => {}, [Symbol.asyncIterator]: async function* () { yield new Uint8Array(1); } },
+    text: async () => 'x'.repeat(10),          // ← 走舊路的話會拿到這個、然後一路無事通過
+  }));
+  try {
+    const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
+    assert.ok(err, 'IB 回了一個宣告 40MB+ 的回應，整條路竟然沒有擋——牆沒蓋在路上');
+    assert.equal(err.code, 'xml_too_large');
+    assert.equal(err.status, 400);
+  } finally { globalThis.fetch = real; }
+});
+
+test('整條路｜列數上限擋在 parse 之前，而且涵蓋 OpenPosition（以前完全沒數）', async () => {
+  const { fetchFlex } = await import('../lib/ib.js');
+  const { MAX_IB_ROWS } = await import('../lib/parse-limits.js');
+  const real = globalThis.fetch;
+  // 20 萬筆持倉：parseStatement 對 OpenPosition **一條上限都沒有**，
+  // 所以這一題只有「parse 之前用原始 XML 數」那道牆擋得到。
+  const bomb = '<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1">'
+    + `<OpenPositions>${'<OpenPosition symbol="X" position="1"/>'.repeat(MAX_IB_ROWS + 1)}</OpenPositions>`
+    + '</FlexStatement></FlexStatements></FlexQueryResponse>';
+  globalThis.fetch = /** @type {any} */ (fakeIbFetch(bomb));
+  try {
+    const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
+    assert.ok(err, '20 萬筆持倉暢行無阻——列數牆沒蓋在 parse 之前那條路上');
+    assert.equal(err.code, 'ib_too_many_rows');
+    assert.match(err.message, /持倉/);
+  } finally { globalThis.fetch = real; }
+});
+
+test('整條路｜正常份量的報表照常解析得出來（上限不可以誤殺正常同步）', async () => {
+  const { fetchFlex } = await import('../lib/ib.js');
+  const ok = '<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1" fromDate="20260101" toDate="20261231">'
+    + '<AccountInformation currency="USD"/>'
+    + '<OpenPositions><OpenPosition symbol="CSPX" currency="USD" position="2" costBasisPrice="500" markPrice="600"/></OpenPositions>'
+    + '</FlexStatement></FlexStatements></FlexQueryResponse>';
+  const real = globalThis.fetch;
+  globalThis.fetch = /** @type {any} */ (fakeIbFetch(ok));
+  try {
+    const parsed = await fetchFlex('tok', 'qid', () => 1);
+    assert.equal(parsed.positions.length, 1, '正常報表被擋掉了＝上限訂得有問題');
+    assert.equal(parsed.positions[0].symbol, 'CSPX');
+  } finally { globalThis.fetch = real; }
+});
