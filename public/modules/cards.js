@@ -79,8 +79,8 @@ function card(c) {
     ${c.benefits ? `<div class="note-block"><b>權益：</b>${esc(c.benefits)}</div>` : ''}
     ${c.note ? `<div class="muted" style="font-size:12px;margin-top:8px">${esc(c.note)}</div>` : ''}
     <div class="row-actions" style="margin-top:12px">
-      <button class="btn-link btn-sm" data-edit="${c.id}" title="編輯">${icon('edit', 15)}</button>
-      <button class="btn-danger btn-sm" data-del="${c.id}" title="刪除">${icon('trash', 15)}</button>
+      <button class="btn-link btn-sm" data-edit="${esc(c.id)}" title="編輯">${icon('edit', 15)}</button>
+      <button class="btn-danger btn-sm" data-del="${esc(c.id)}" title="刪除">${icon('trash', 15)}</button>
     </div>
   </div>`;
 }

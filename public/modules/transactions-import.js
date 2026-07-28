@@ -90,7 +90,7 @@ function openStatementPreview(cardId, r, b64, cards) {
   };
   const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${expenseParents().map(c =>
     `<option value="${esc(c)}" ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
-  const cardOpts = () => cards.map(c => `<option value="${c.id}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
+  const cardOpts = () => cards.map(c => `<option value="${esc(c.id)}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
 
   const doImport = async () => {
     const picked = [];
