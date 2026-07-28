@@ -59,6 +59,12 @@ app.use((err, req, res, next) => {
   if (/** @type {any} */ (err)?.status === 413 || /** @type {any} */ (err)?.type === 'entity.too.large') {
     return res.status(413).json({ error: '上傳內容太大，請縮小檔案或備份後再試' });
   }
+  // 409＝並行寫入衝突（C4b compare-and-swap）：**必須回原味訊息**，否則使用者看到的是
+  // 「請求格式不正確」——他的格式明明沒問題，真正該做的是重新整理再存一次。比照 413 的先例
+  // （可操作的白話訊息），不走下面那條泛用訊息。
+  if (/** @type {any} */ (err)?.status === 409) {
+    return res.status(409).json({ error: String(/** @type {any} */ (err)?.message || '資料已被其他裝置更新，請重新整理後再試') });
+  }
   if (/** @type {any} */ (err)?.status) return res.status(/** @type {any} */ (err).status).json({ error: '請求格式不正確' });
   res.status(500).json({ error: String(/** @type {any} */ (err)?.message || '伺服器內部錯誤') });
 });
