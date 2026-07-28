@@ -13,6 +13,7 @@ import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
 import { installJsonBodyParsers, AUTH_JSON_LIMIT, STATEMENT_JSON_POST_ROUTES } from './lib/http-body.js';
 import { rateLimit, ipKeyOf } from './lib/rate-limit.js';
+import { applyHostedTimeouts } from './lib/parse-limits.js';
 import { currentTenant } from './lib/tenant.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
 import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
@@ -104,9 +105,12 @@ const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   // P1-6（C0 契約）：HOSTED 聽 0.0.0.0（Render 的健康檢查與流量才進得來）；LOCAL 維持 127.0.0.1 不對外。
-  app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {
+  const server = app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`\n  個人理財網頁已啟動 ✅`);
     console.log(`  請在瀏覽器打開： http://localhost:${PORT}\n`);
     console.log(`  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);
   });
+  // slowloris 防線（2026-07-28）：只收緊 HOSTED——LOCAL 只聽 127.0.0.1、只有自己在用，
+  // 收緊只會在「上傳大備份剛好硬碟很慢」時誤殺自己。詳見 lib/parse-limits.js 檔尾。
+  if (isHosted()) applyHostedTimeouts(server);
 }
