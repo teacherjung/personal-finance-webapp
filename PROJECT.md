@@ -39,7 +39,7 @@
 | 個股研究頁 P2–P5（資料驗證牆／純畫面／路由與互動／入口）：研究深層資料契約與同代號防重複、七區塊純呈現＋四段就地解釋、`#stock?symbol=` 路由與事件接線、投資主表與研究卡雙入口（只給個股層、正規化代號、新分頁） | `lib/schema.js`／`lib/routes/crud.js`、`public/modules/stock-research-view.js`／`stock-research-page.js`／`portfolio-tables.js`／`portfolio-research.js`、`public/stock-research.css` | #271、#277、#281、#283 |
 | 教學影片定稿文件（流程分工＋EP01 生存優先腳本） | `docs/教學影片/`（**尚未 commit**） | — |
 
-測試現況：**1120 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
+測試現況：**1125 題全綠**（node --test）＋ typecheck ＋ lint（三關＝pre-push 與 CI 門檻）。
 
 ## 待辦事項（依優先序）
 
