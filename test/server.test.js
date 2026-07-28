@@ -1309,10 +1309,26 @@ test('續費日錨點（HTTP）：使用者改日期就換錨點——1/31→2/2
 });
 
 test('LOCAL 零改動｜速率限制不在本機生效（一個人用自己的電腦不該被自己限速）', async () => {
-  // 連打 60 次寫入——HOSTED 的上限是 30/5 分鐘，LOCAL 若誤掛就會在這裡爆掉。
-  // 真實情境：一次補匯十二個月的帳單、或整批套用店名規則，都會短時間打很多次。
-  for (let i = 0; i < 60; i++) {
-    const r = await POST('/transactions', { date: '2026-07-01', type: 'expense', category: '其他', amount: 1, note: `限速探針${i}` });
-    assert.notEqual(r.status, 429, `第 ${i + 1} 次寫入被限速了——LOCAL 不該有速率限制`);
+  // ⚠️ **一定要從 `RATE_LIMITS` 反查、不可以自己挑一條路徑打**：這一題原本挑的是
+  // `/api/transactions`，而那條**根本沒有掛限速**——就算有人把整組限速誤掛到 LOCAL，
+  // 這一題照樣是綠的（典型的「補了抓不到病的假考題」）。改成從表反查之後，
+  // 每加一道新限速，這一題自動跟著涵蓋。
+  const { RATE_LIMITS } = await import('../server.js');
+  assert.ok(RATE_LIMITS.length >= 4, '路徑表是空的或被改小了——這一題就沒有在守任何東西');
+
+  const root = `http://127.0.0.1:${port}`;
+  for (const rl of RATE_LIMITS) {
+    // 打到「比 HOSTED 上限還多」的次數。真實情境：一次補匯十二個月的帳單、
+    // 或整批套用店名規則，都會在短時間內打很多次。
+    const times = rl.max + 5;
+    for (let i = 0; i < times; i++) {
+      const r = await fetch(root + rl.probe.path, {
+        method: rl.probe.method,
+        headers: { 'Content-Type': 'application/json' },
+        ...(rl.probe.method === 'GET' ? {} : { body: '{}' }),
+      });
+      assert.notEqual(r.status, 429,
+        `「${rl.name}」的 ${rl.probe.path} 打到第 ${i + 1} 次就被限速了——LOCAL 不該有速率限制`);
+    }
   }
 });

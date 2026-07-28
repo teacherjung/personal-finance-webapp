@@ -268,3 +268,27 @@ test('速率限制：/api/auth/me 這種輕量讀取不限速（限了只會擋�
     assert.notEqual(r.status, 429, `第 ${i + 1} 次 /api/auth/me 被限速了`);
   }
 });
+
+test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住（漏掛一道就會在這裡紅）', async () => {
+  // ⚠️ 從 `RATE_LIMITS` 反查、不逐條手寫：手寫的話，下一個人加了第五道限速卻忘了掛，
+  //    不會有任何考題紅。這一題與 `test/server.test.js` 的 LOCAL 反向題共用同一張表——
+  //    一張表同時守住「HOSTED 要擋」與「LOCAL 不可以擋」兩個方向。
+  const { RATE_LIMITS } = await import('../server.js');
+  assert.ok(RATE_LIMITS.length >= 4, '路徑表是空的或被改小了——這一題就沒有在守任何東西');
+
+  for (const rl of RATE_LIMITS) {
+    /** @type {any} */
+    let saw429 = null;
+    for (let i = 0; i < rl.max + 10 && !saw429; i++) {
+      const r = await fetch(`${base}${rl.probe.path}`, {
+        method: rl.probe.method,
+        headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: 'sb-test-auth-token=abc' },
+        ...(rl.probe.method === 'GET' ? {} : { body: '{}' }),
+      });
+      if (r.status === 429) saw429 = r;
+    }
+    assert.ok(saw429, `「${rl.name}」的 ${rl.probe.path} 連打 ${rl.max + 10} 次都沒被擋——這道限速沒掛上`);
+    assert.ok(Number(saw429.headers.get('retry-after')) > 0, `「${rl.name}」要告訴使用者等多久`);
+    assert.match((await saw429.json()).error, /稍等/, `「${rl.name}」的訊息要可操作`);
+  }
+});
