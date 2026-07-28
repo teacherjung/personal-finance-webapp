@@ -1,7 +1,7 @@
 # Render 部署藍圖（C6）——把「怎麼部署」寫成程式碼，而不是靠記憶點後台按鈕。
 #
 # 怎麼用：Render Dashboard → New → Blueprint → 連上這個 GitHub repo → 它會讀這個檔。
-# 之後每次 push 到 main 就自動部署（autoDeploy）。
+# 之後每次 push 到 main、**且 GitHub CI 綠了**才自動部署（`autoDeployTrigger: checksPass`）。
 #
 # ⚠️ **這個檔不含任何祕密**。四個 `sync: false` 的變數要在 Render 後台手動填一次
 #（Blueprint 部署時會逐一問你），填法見 `docs/C6-部署與對抗審查-操作手冊.md`。
@@ -19,14 +19,35 @@ services:
     startCommand: node server.js
     # 裁決④：/health 讓給機器（健康領域頁改 /wellness）
     healthCheckPath: /health
-    autoDeploy: true
+    # 等 GitHub CI 綠了才部署（舊的 `autoDeploy: true` ＝每個 commit 立刻上線，型別錯／考題紅也照上）。
+    # ⚠️ 代價講清楚：**沒有任何 check 回報的 commit 不會自動部署**（例如工作流被路徑過濾跳過）。
+    #    本專案的 .github/workflows/ci.yml 是 `on: push: branches: [main]`、沒有路徑過濾，
+    #    所以每個 main 的 commit 都會有 check——真的需要硬上時，到 Render 後台按 Manual Deploy。
+    autoDeployTrigger: checksPass
+    # onrender.com 子網域：**有了 custom domain 之後必須關掉**，否則 noteasy-xxxx.onrender.com
+    # 仍可直連＝繞過 Cloudflare 的 DDoS／WAF／速率限制，邊緣層等於白裝。
+    # ⚠️ 這同時是「限速的來源判定」能不能成立的前提：`app.set('trust proxy', 1)` 取
+    #    X-Forwarded-For 的**最後一個**＝前面那層代理實際看到的來源。只要源站可直達，
+    #    那個值就變成攻擊者自己填的（見 AGENTS.md 速率限制那一列）。
+    # ⚠️ Render 規定：要設 disabled，服務**至少要有一個 custom domain**（沒有就會設定失敗）。
+    #    所以 C6 測試期先明寫 enabled（明寫＝以後不會「忘記有這回事」），
+    #    C7 指好 DNS 的同一支 PR 裡改成下面註解那三行——`test/deploy-config.test.js` 會盯著兩者一起改。
+    renderSubdomainPolicy: enabled
+    # C7 要改成：
+    #   domains:
+    #     - noteasy.com.tw
+    #     - www.noteasy.com.tw
+    #   renderSubdomainPolicy: disabled
     envVars:
       # 模式開關：只認 "1"（lib/hosted.js）。沒有這個變數＝LOCAL＝本機那一套
       - key: NOTEASY_HOSTED
         value: "1"
-      # 內建 SQLite 需要 Node ≥22.13.0（package.json engines 也寫了）
-      - key: NODE_VERSION
-        value: "22.13.0"
+      # ⚠️ **這裡刻意不設 NODE_VERSION**。Render 的優先序是
+      #    NODE_VERSION 環境變數 > .node-version > .nvmrc > package.json engines，
+      #    設了它就會蓋掉 `.node-version`——而 `.node-version` 正是 CI（node-version-file）
+      #    讀的同一份檔案。**同一個版號只准有一個地方寫**，否則就會回到
+      #    「部署跑 22.13.0、CI 跑 24、開發機跑 26，三關一次都沒測到真正上線的那顆 runtime」。
+      #    要換 Node 版本＝改 `.node-version` 一個檔，部署與 CI 一起跟著動。
       # ---- 以下四個在 Render 後台填，絕不進 repo ----
       # Supabase 專案網址，如 https://xxxxxxxx.supabase.co
       - key: SUPABASE_URL
