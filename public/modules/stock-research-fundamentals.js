@@ -266,7 +266,7 @@ function factDisclosureHtml(fact, metric, e, periodLabel = '') {
     <summary>${periodLabel ? `<span>${e(periodLabel)}</span>` : ''}<b>${e(factValue(fact))}</b></summary>
     <div class="stock-fact-popover">
       ${derived
-        ? `<div class="stock-formula"><span>Noteasy 計算</span><code>${e(text(fact.formula || metric.formula) || '公式尚未取得')}</code></div>
+        ? `<div class="stock-formula"><span>NotEasy 計算</span><code>${e(text(fact.formula || metric.formula) || '公式尚未取得')}</code></div>
           ${derivedInputsHtml(fact.inputs, e)}`
         : sourceFactsHtml(fact, e)}
     </div>
@@ -281,7 +281,7 @@ function metricRowHtml(metric, e) {
       factDisclosureHtml(fact, metric, e, text(fact?.periodEnd).slice(0, 4) || '年度')
     )).join('')}</div>`
     : '<span class="muted">尚未取得</span>';
-  const badge = metric.kind === 'derived' ? 'Noteasy 計算' : 'SEC 申報';
+  const badge = metric.kind === 'derived' ? 'NotEasy 計算' : 'SEC 申報';
   return `<tr data-fundamental-metric="${e(metric.key)}">
     <th scope="row">
       <b>${e(metric.label)}</b>
@@ -419,7 +419,7 @@ export function stockFundamentalsInnerHtml(input, formatters) {
     companyHtml(view, e),
     warningsHtml(view, e),
     view.hasData ? metricsTableHtml('SEC 官方指標', view.officialMetrics, e) : '',
-    view.hasData ? metricsTableHtml('Noteasy 衍生指標', view.derivedMetrics, e) : '',
+    view.hasData ? metricsTableHtml('NotEasy 衍生指標', view.derivedMetrics, e) : '',
     methodHtml(view, e),
     manualMetricsHtml(view, e)
   ].join('');
