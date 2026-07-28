@@ -1307,3 +1307,12 @@ test('續費日錨點（HTTP）：使用者改日期就換錨點——1/31→2/2
   assert.equal(after.chargeAnchorDay, 15, '錨點只由後端依新日期決定，前端硬送的 9 不可生效');
   await DELETE_(`/subscriptions/${sub.id}`);
 });
+
+test('LOCAL 零改動｜速率限制不在本機生效（一個人用自己的電腦不該被自己限速）', async () => {
+  // 連打 60 次寫入——HOSTED 的上限是 30/5 分鐘，LOCAL 若誤掛就會在這裡爆掉。
+  // 真實情境：一次補匯十二個月的帳單、或整批套用店名規則，都會短時間打很多次。
+  for (let i = 0; i < 60; i++) {
+    const r = await POST('/transactions', { date: '2026-07-01', type: 'expense', category: '其他', amount: 1, note: `限速探針${i}` });
+    assert.notEqual(r.status, 429, `第 ${i + 1} 次寫入被限速了——LOCAL 不該有速率限制`);
+  }
+});
