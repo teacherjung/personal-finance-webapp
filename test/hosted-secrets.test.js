@@ -265,28 +265,37 @@ test('來回②：三個機密欄位在同一趟來回中也要保住（對照�
   //    修法：**先把機密換成本題專屬的新值**，再走來回，最後斷言新值還在。
   //    這樣受測的那趟匯出匯入就**提供了「受保護狀態被覆寫或清除的機會」**，斷言才有意義
   //    （措辭依 Codex 2026-07-29 定案；不是「唯一能讓斷言成立的路徑」——保存型考題不是那個結構）。
-  const { flex: RT_FLEX, cardId } = await newSecrets('tokA', 'roundtrip2');
-  const settingsRow = () => pg.selectAs(A.id).find(r => r.key === 'settings')?.data;
+  // ⚠️ v5 再修一次（Codex 定向複審第三輪）：原本三個機密只有 flexToken 精確比對，
+  //    另外兩個只驗 `…Set === true`。實測「保留正確 flexToken、把另外兩個換成錯誤的非空值」
+  //    → 25/25 全綠。**「有值」不等於「還是原來那個值」**——換錯人的密碼一樣是 true。
+  //    所以三個一律從假 Postgres 的原始列解密、逐一比對本題剛種下去的確切值。
+  const { flex: RT_FLEX, taishin: RT_TAISHIN, cardPw: RT_CARDPW, cardId } = await newSecrets('tokA', 'roundtrip2');
+  const rowOf = (/** @type {string} */ key) => pg.selectAs(A.id).find(r => r.key === key)?.data;
   // ⚠️ **不可以比對密文本身**：AES-GCM 每次用新的 nonce，同一個明文加密兩次密文必然不同
   //    （第一版就是這樣紅的）。要比**解密之後的值**。
   const { decryptSecret } = await import('../lib/crypto-secrets.js');
-  const plainOf = () => decryptSecret(String(settingsRow()?.ib?.flexToken || ''), `${A.id}|settings.ib.flexToken`);
-  assert.ok(String(settingsRow()?.ib?.flexToken).startsWith('enc:v1:'), '前置條件：新 token 已加密落庫');
-  assert.equal(plainOf(), RT_FLEX, '前置條件：資料庫裡解出來就是本題專屬的新 token');
+  /** 三個機密在資料庫裡「解密之後」各是什麼。 */
+  const plaintexts = () => {
+    const settings = rowOf('settings') || {};
+    const card = (rowOf('cards') || []).find((/** @type {any} */ c) => c.id === cardId) || {};
+    return {
+      flex: decryptSecret(String(settings?.ib?.flexToken || ''), `${A.id}|settings.ib.flexToken`),
+      taishin: decryptSecret(String(settings?.taishinSecPdfPassword || ''), `${A.id}|settings.taishinSecPdfPassword`),
+      cardPw: decryptSecret(String(card?.pdfPassword || ''), `${A.id}|cards.${cardId}.pdfPassword`),
+    };
+  };
+  const expected = { flex: RT_FLEX, taishin: RT_TAISHIN, cardPw: RT_CARDPW };
+  assert.ok(String(rowOf('settings')?.ib?.flexToken).startsWith('enc:v1:'), '前置條件：新 token 已加密落庫');
+  assert.deepEqual(plaintexts(), expected, '前置條件：資料庫裡解出來就是本題種下去的那三個值');
 
   const backup = await (await as('tokA', '/api/export')).json();
   assert.equal(backup.settings.ib.flexToken, '', '前置條件：備份檔本身不含機密（裁決⑤）');
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200, `還原應該成功：${await r.clone().text()}`);
 
-  // 斷言看**資料庫原始列**：密文要與匯入前完全相同（＝那一趟來回沒有把它換掉或清掉）
-  assert.equal(plainOf(), RT_FLEX,
-    '這一趟來回把 IB token 換掉或清掉了（解密後的值必須還是本題種下去的那一個）');
-  const s2 = await (await as('tokA', '/api/settings')).json();
-  assert.equal(s2.ib.flexTokenSet, true, 'IB token 要保住');
-  assert.equal(s2.taishinSecPdfPasswordSet, true, '台新密碼要保住');
-  const cards = await (await as('tokA', '/api/cards')).json();
-  assert.equal(byId(cards, cardId)?.pdfPasswordSet, true, '卡片密碼要保住');
+  // 斷言看**資料庫原始列**：三個解密後的值都要與匯入前一字不差
+  assert.deepEqual(plaintexts(), expected,
+    '這一趟來回把某個機密換掉或清掉了——三個都必須還是本題種下去的那一個（不是「有值就好」）');
 });
 
 test('來回⑤：舊備份**根本沒有 accountNo 欄位**時，現值一樣不可以被洗掉', async () => {
@@ -320,8 +329,14 @@ test('來回③：匯入檔裡帶著完整帳號時要照收（LOCAL 的完整�
   byId(backup.accounts, id).accountNo = NEW_NO;
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200);
+  // ⚠️ v5 修（Codex 定向複審第三輪）：原本只驗末四碼，於是「前 14 碼被改壞、只保留末四碼」
+  //    照樣全綠。投影只吐末四碼，所以要比對**完整字串**就得看資料庫原始列。
   const after = await (await as('tokA', '/api/accounts')).json();
-  assert.equal(byId(after, id)?.accountNoLast4, '7777', '檔案裡有值就要照收');
+  assert.equal(byId(after, id)?.accountNoLast4, NEW_NO.slice(-4), '投影的末四碼要對');
+  const stored = (JSON.parse(rawOf(A.id)).find((/** @type {any} */ x) => x.key === 'accounts')?.data || [])
+    .find((/** @type {any} */ a) => a.id === id);
+  assert.equal(stored?.accountNo, NEW_NO,
+    '完整帳號必須一字不差＝檔案裡帶的值原封不動收下（只驗末四碼的話，前面被改壞也看不出來）');
 });
 
 test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕不可以把甲的帳號寫進乙那一格**', async () => {
@@ -365,6 +380,67 @@ test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕
 
   // 收尾：清掉這兩筆，別影響後面的題目
   await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
+test('來回⑨：id 型別碰撞（目前 `7`、匯入 `"7"`）→ 不可以繼承舊帳號', async () => {
+  // ⚠️ Codex 定向複審 v5 抓到：路徑一律用 `String(id)` 組，所以數字 7 與字串 "7"
+  //    算出**同一條路徑**，而 `lib/schema.js` 的匯入驗證刻意保留任意型別的 id。
+  //    兩側各只有一筆 → 撞號數不出來 → 新帳戶繼承舊帳號、回 200。
+  //    修法＝身分只認**非空字串**（`isStableId`）。
+  const OLD_NO = '9001001212121212';
+  const seed = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { id: 7, name: '數字 id 的舊帳戶', type: 'cash', currency: 'TWD', balance: 1, accountNo: OLD_NO },
+    ] }),
+  });
+  assert.equal(seed.status, 200, `前置條件：種資料應該成功——${await seed.clone().text()}`);
+  assert.ok(rawOf(A.id).includes(OLD_NO), '前置條件：舊帳號真的進資料庫了');
+
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { id: '7', name: '字串 id 的另一個帳戶', type: 'cash', currency: 'TWD', balance: 2, accountNo: '' },
+    ] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功：${await r.clone().text()}`);
+
+  const accs = JSON.parse(rawOf(A.id)).find((/** @type {any} */ x) => x.key === 'accounts')?.data || [];
+  assert.equal(accs.length, 1, '前置條件：匯入後只剩新的那一筆');
+  assert.equal(accs[0].name, '字串 id 的另一個帳戶', '前置條件：確實是新的那一筆');
+  assert.equal(accs[0].accountNo, '',
+    `新帳戶繼承了舊帳號（${OLD_NO}）——數字 id 與字串 id 會算出同一條路徑，不可以當身分`);
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
+test('來回⑩：**機密欄位**同樣要有身分／歧義防線（匯入兩張同 id 的卡不可以共用同一組密碼）', async () => {
+  // ⚠️ Codex 定向複審 v5 抓到的 High：accountNo 那條路修了三輪，**機密那條路完全沒有這道防線**。
+  //    實測：先建一張有 PDF 密碼的卡，再匯入兩張同 id、密碼留空的不同卡 →
+  //    兩張的 pdfPasswordSet 都變 true ＝一張卡的密碼被複製給兩張。
+  //    同一個判準（keepableByPath）現在兩張清單共用。
+  const { cardId, cardPw } = await newSecrets('tokA', 'dupcard');
+  const before = await (await as('tokA', '/api/cards')).json();
+  assert.equal(byId(before, cardId)?.pdfPasswordSet, true, '前置條件：那張卡真的有密碼');
+
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, cards: [
+      { id: cardId, name: '同 id 卡甲', pdfPassword: '' },
+      { id: cardId, name: '同 id 卡乙', pdfPassword: '' },
+    ] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功：${await r.clone().text()}`);
+
+  const cards = await (await as('tokA', '/api/cards')).json();
+  assert.equal(cards.length, 2, '前置條件：兩張同 id 的卡都要真的落庫，這一題才考得到撞號');
+  const withPw = cards.filter((/** @type {any} */ c) => c.pdfPasswordSet);
+  assert.equal(withPw.length, 0,
+    `有 ${withPw.length} 張卡拿到密碼（${withPw.map((/** @type {any} */ c) => c.name).join('、')}）` +
+    '——同 id 撞號時不可以把一張卡的密碼複製給兩張');
+  assert.ok(!rawOf(A.id).includes(cardPw), '資料庫裡不該再有那組密碼的明文');
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, cards: [] }) });
 });
 
 test('來回⑦：目前一筆無 id、匯入另一筆**完全不同的**無 id 帳戶 → 不可以繼承舊帳號', async () => {
@@ -566,4 +642,40 @@ test('錯誤訊息：壞請求打各個端點，回應一律不含機密值', as
     }
     assert.ok(!text.includes('enc:v1:'), `${method} ${p} 的錯誤回應含密文！`);
   }
+});
+
+// ============================================================================
+// HOSTED 的 body 上限：**打正式接線**，不是打 helper
+// ============================================================================
+//
+// ⚠️ Codex 定向複審第三輪抓到：`test/request-limits.test.js` 的 HOSTED 題自建 express app
+//    直接呼叫 `installJsonBodyParsers()`，證明得了 helper 正確，**證明不了 `server.js` 還在用它**。
+//    突變 `server.js` 的 HOSTED 接線改掛通用 15MB parser → 1134 題全綠。
+//    這一檔本來就在 HOSTED 模式下跑真正的 `app`，所以放這裡才打得到正式路徑。
+
+test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是 helper，是 server.js 那條線）', async () => {
+  const { cardId } = await newSecrets('tokA', 'bodylimit');
+
+  // ① 正常規模先過（收緊不可以誤殺真實使用者；真實台新帳單約 122 筆）
+  const transactions = Array.from({ length: 300 }, (_, i) => ({
+    id: `tx-${i}`, date: '2026-07-01', desc: `某某餐飲店股份有限公司台北信義分店-${i}`, amount: 1234,
+  }));
+  const ok = await as('tokA', `/api/cards/${cardId}/statement/import`, {
+    method: 'POST', body: JSON.stringify({ transactions }),
+  });
+  assert.notEqual(ok.status, 413,
+    `HOSTED 的 300 筆真實規模帳單不可以被 413 擋掉（body ${JSON.stringify({ transactions }).length} bytes）`);
+
+  // ② 超過 1MB 必須被擋——這是修法真正保護的那一面（Supabase 的容量）
+  const tooBig = await as('tokA', `/api/cards/${cardId}/statement/import`, {
+    method: 'POST', body: JSON.stringify({ transactions, note: 'x'.repeat(1_100_000) }),
+  });
+  assert.equal(tooBig.status, 413,
+    'HOSTED 的列匯入超過 1 MB 必須擋下——這一題若綠了，代表 server.js 的接線沒在用 installJsonBodyParsers');
+
+  // ③ 吃檔案的端點在 HOSTED 仍維持大入口（收緊只針對吃列的那一條）
+  const file = await as('tokA', '/api/bank-statement/preview', {
+    method: 'POST', body: JSON.stringify({ data: 'x'.repeat(1_100_000) }),
+  });
+  assert.notEqual(file.status, 413, 'HOSTED 也不可以把吃檔案的端點一起掐死');
 });
