@@ -634,6 +634,15 @@ test('stripSecretsForBackup：深拷貝，不可以順手把記憶體裡那包�
   assert.equal(live.cards[0].pdfPassword, CARDPW);
   assert.equal(live.accounts[0].accountNo, FULL_ACCOUNT_NO,
     '原物件的完整帳號也必須完好——匯出順手清掉記憶體裡那包＝使用者的帳號當場消失');
+
+  // ⚠️ **欄位不存在時也要走訪**（同來回⑪⑫那個 High，只是換到 settings 這一側）。
+  //    走匯入路徑碰不到這個情境（`merged.settings` 一定含這些欄位，`emptyDb()` 底稿給的），
+  //    所以只有純函式層釘得住——把 `in` 判斷加回去，這一段會紅。
+  const sparse = /** @type {any} */ (stripSecretsForBackup({ settings: { ib: {} }, cards: [{ id: 'c1' }], accounts: [{ id: 'a1' }] }));
+  assert.equal(sparse.settings.taishinSecPdfPassword, '', '欄位原本不存在也要補成空字串（＝「未設定」）');
+  assert.equal(sparse.settings.ib.flexToken, '');
+  assert.equal(sparse.cards[0].pdfPassword, '');
+  assert.equal(sparse.accounts[0].accountNo, '');
 });
 
 test('匯入：檔案裡夾帶的機密一律不採用，但已設定的憑證要保住（留空＝不變更）', async () => {
