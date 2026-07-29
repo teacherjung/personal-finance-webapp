@@ -382,6 +382,60 @@ test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕
   await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
 });
 
+test('來回⑪：舊備份**省略 pdfPassword 欄位**時，現有密碼一樣不可以被洗掉', async () => {
+  // ⚠️ Codex 定向複審第四輪抓到的 High：`mapSecrets` 原本寫 `'pdfPassword' in c`，
+  //    而 `validateImportItem` 允許舊備份省略非必填欄位——於是那張卡整個被跳過，
+  //    現有密碼沒機會被填回，**匯入回 200 之後永久消失**。
+  //    這是 `mapBackupOnlyPii` v2 修過的同一個病，在 `mapSecrets` 裡沒人修。
+  const { cardPw, cardId } = await newSecrets('tokA', 'omitfield');
+  const before = await (await as('tokA', '/api/cards')).json();
+  assert.equal(byId(before, cardId)?.pdfPasswordSet, true, '前置條件：那張卡真的有密碼');
+
+  const backup = await (await as('tokA', '/api/export')).json();
+  // 模擬「升級前產生的舊備份」：整個欄位不存在（不是空字串）
+  for (const c of backup.cards) delete c.pdfPassword;
+  assert.ok(!('pdfPassword' in byId(backup.cards, cardId)), '前置條件：欄位真的被刪掉了');
+
+  const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(r.status, 200, `舊備份應該還原得回來：${await r.clone().text()}`);
+
+  const after = await (await as('tokA', '/api/cards')).json();
+  assert.equal(byId(after, cardId)?.pdfPasswordSet, true,
+    '舊備份（沒有 pdfPassword 欄位）把現有密碼洗掉了——「留空＝不變更」沒有涵蓋「欄位不存在」');
+  // 「有值」不夠，要**還是原來那一個**
+  const { decryptSecret } = await import('../lib/crypto-secrets.js');
+  const storedCard = (pg.selectAs(A.id).find(r2 => r2.key === 'cards')?.data || [])
+    .find((/** @type {any} */ c) => c.id === cardId);
+  assert.equal(decryptSecret(String(storedCard?.pdfPassword || ''), `${A.id}|cards.${cardId}.pdfPassword`), cardPw,
+    '解出來必須還是本題種下去的那一組密碼');
+});
+
+test('來回⑫：兩張同 id 的卡，其中一張**省略欄位** → 不可以繞過撞號偵測拿到舊密碼', async () => {
+  // ⚠️ 同一個 High 的第二個後果（Codex 實測重現）：目標側只走訪「有欄位」的那一張，
+  //    於是同一條路徑只被數到一次 → **撞號偵測整個繞過** → 舊密碼被填進其中一張。
+  //    來回⑩兩張都明寫 `pdfPassword: ''`，所以打不到這條縫。
+  const { cardId } = await newSecrets('tokA', 'omitdup');
+  assert.equal(byId(await (await as('tokA', '/api/cards')).json(), cardId)?.pdfPasswordSet, true, '前置條件');
+
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, cards: [
+      { id: cardId, name: '同 id 卡甲（有欄位）', pdfPassword: '' },
+      { id: cardId, name: '同 id 卡乙（省略欄位）' },   // ← 刻意沒有 pdfPassword
+    ] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功：${await r.clone().text()}`);
+
+  const cards = await (await as('tokA', '/api/cards')).json();
+  assert.equal(cards.length, 2, '前置條件：兩張同 id 的卡都要真的落庫，這一題才考得到撞號');
+  const withPw = cards.filter((/** @type {any} */ c) => c.pdfPasswordSet);
+  assert.equal(withPw.length, 0,
+    `有 ${withPw.length} 張卡拿到密碼（${withPw.map((/** @type {any} */ c) => c.name).join('、')}）` +
+    '——省略欄位讓目標側少數一次，撞號偵測被繞過');
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, cards: [] }) });
+});
+
 test('來回⑨：id 型別碰撞（目前 `7`、匯入 `"7"`）→ 不可以繼承舊帳號', async () => {
   // ⚠️ Codex 定向複審 v5 抓到：路徑一律用 `String(id)` 組，所以數字 7 與字串 "7"
   //    算出**同一條路徑**，而 `lib/schema.js` 的匯入驗證刻意保留任意型別的 id。
@@ -666,13 +720,17 @@ test('錯誤訊息：壞請求打各個端點，回應一律不含機密值', as
 //    突變 `server.js` 的 HOSTED 接線改掛通用 15MB parser → 1134 題全綠。
 //    這一檔本來就在 HOSTED 模式下跑真正的 `app`，所以放這裡才打得到正式路徑。
 
+// ⚠️ 這一題**刻意用 tokB**：「上傳解析類」限速是**按帳號**每視窗 30 次，而 `/api/import`
+//    與帳單匯入共用同一組（`server.js` RATE_LIMITS）。前面十幾題把 A 的額度用光了，
+//    於是這裡拿到的是 **429 而不是 413**——考的東西被限速搶先擋掉，證明不了 body 上限。
+//    （第一版就是這樣紅的：actual 429, expected 413。）
 test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是 helper，是 server.js 那條線）', async () => {
   // ⚠️ 這一題第一版是**假考題**（Codex 定向複審第四輪抓到）：測資少了 `stmtRef`，
   //    正式服務會把 300 筆**全部略過**（回 `imported:0, skipped:300`），而斷言只寫
   //    `status !== 413`——把正式 handler 突變成明確回 500，它照樣全綠。
   //    「沒有被擋下」不等於「真的匯進去了」。修法＝送合法的列、斷言 `imported === 300`，
   //    再從正式讀取端確認本題專屬的交易確實落庫。
-  const { cardId } = await newSecrets('tokA', 'bodylimit');
+  const { cardId } = await newSecrets('tokB', 'bodylimit');
 
   // ① 正常規模先過（收緊不可以誤殺真實使用者；真實台新帳單約 122 筆）
   //    stmtRef 必須是 `卡id|消費日|金額|原文`（`lib/services/statement-import.js` 會伺服器端重建並比對）
@@ -681,7 +739,7 @@ test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是
     date: '2026-07-01', desc: DESC(i), amount: 1234 + i,
     stmtRef: `${cardId}|2026-07-01|${1234 + i}|${DESC(i)}`,
   }));
-  const ok = await as('tokA', `/api/cards/${cardId}/statement/import`, {
+  const ok = await as('tokB', `/api/cards/${cardId}/statement/import`, {
     method: 'POST', body: JSON.stringify({ transactions }),
   });
   assert.equal(ok.status, 200,
@@ -693,19 +751,19 @@ test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是
   // ⚠️ 落庫的 `note` 是**清理後的顯示店名**、`desc` 根本不存在——原文留在 `stmtRef` 裡。
   //    用這次匯入自己的 `batchId` 數最直接，也不會被別題的資料干擾。
   assert.ok(okBody.batchId, '匯入回應要帶批次代號');
-  const txs = await (await as('tokA', '/api/transactions')).json();
+  const txs = await (await as('tokB', '/api/transactions')).json();
   assert.equal(txs.filter((/** @type {any} */ t) => t.importBatch === okBody.batchId).length, 300,
     '本題這一批的 300 筆交易必須真的落庫（回應說 imported:300 不等於真的寫進去了）');
 
   // ② 超過 1MB 必須被擋——這是修法真正保護的那一面（Supabase 的容量）
-  const tooBig = await as('tokA', `/api/cards/${cardId}/statement/import`, {
+  const tooBig = await as('tokB', `/api/cards/${cardId}/statement/import`, {
     method: 'POST', body: JSON.stringify({ transactions, note: 'x'.repeat(1_100_000) }),
   });
   assert.equal(tooBig.status, 413,
     'HOSTED 的列匯入超過 1 MB 必須擋下——這一題若綠了，代表 server.js 的接線沒在用 installJsonBodyParsers');
 
   // ③ 吃檔案的端點在 HOSTED 仍維持大入口（收緊只針對吃列的那一條）
-  const file = await as('tokA', '/api/bank-statement/preview', {
+  const file = await as('tokB', '/api/bank-statement/preview', {
     method: 'POST', body: JSON.stringify({ data: 'x'.repeat(1_100_000) }),
   });
   assert.notEqual(file.status, 413, 'HOSTED 也不可以把吃檔案的端點一起掐死');
