@@ -9,6 +9,7 @@ import {
   parseSecCompanyFacts
 } from '../lib/stock-fundamentals.js';
 import { FUNDAMENTAL_METRIC_DEFINITIONS } from '../public/modules/stock-research-method.js';
+import { sanitizeDbForWrite } from '../lib/schema.js';
 
 const fixtureUrl = name => new URL(`./fixtures/sec/${name}`, import.meta.url);
 const loadFixture = async name => JSON.parse(await readFile(fixtureUrl(name), 'utf8'));
@@ -251,4 +252,71 @@ test('SEC 輸入牆｜CIK 不一致、壞 ticker 與壞 payload 直接拒絕，�
     submissions: null,
     companyFacts: fixture.companyFacts
   }), /格式/);
+});
+
+// ── 2026-07-29：解析結果必須真的存得進去 ─────────────────────────────────────
+// 起因：GOOGL／AAPL／MSFT 的官方基本面在真環境一律 502，訊息是
+//「data 不是合法的 SEC 解析結果——寫入端漏了驗證」。根因＝`derivedInput()` 無條件複製
+// form／filedAt／accession／taxonomy／tag／filingUrl，而「衍生指標當輸入」時這些欄位不存在，
+// 於是生出 `form: undefined` 這種鍵，被寫入櫃檯的 isSafeFundamentalsJson 當成非法型別整包拒收。
+//
+// 為什麼原本 14 題全綠：`JSON.stringify` 會把 undefined 鍵直接丟掉（GOOGL 實測 24 → 0）。
+// fixture 從 JSON 進來、斷言也比對 JSON，**唯獨「解析器直接餵給寫入櫃檯」那一段沒人走過**——
+// 與 XLSX 那五次繞過同一族：牆跟被保護的東西讀的不是同一份東西。
+// 所以這兩題刻意都**不經過任何 JSON 來回**。
+
+/** 走訪整棵樹，回報所有「值是 undefined」的鍵的路徑。 @param {any} value */
+function undefinedKeyPaths(value, path = 'data', found = /** @type {string[]} */ ([])) {
+  if (value === null || typeof value !== 'object') {
+    if (value === undefined) found.push(path);
+    return found;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => undefinedKeyPaths(item, `${path}[${index}]`, found));
+    return found;
+  }
+  for (const key of Object.keys(value)) undefinedKeyPaths(value[key], `${path}.${key}`, found);
+  return found;
+}
+
+test('SEC 解析｜輸出不得有任何 undefined 值的鍵（衍生指標當輸入時最容易生出來）', async () => {
+  const fixture = await loadFixture('fiscal-year-company.json');
+  const result = parseSecCompanyFacts({
+    symbol: 'FRUIT',
+    cik: '900001',
+    submissions: fixture.submissions,
+    companyFacts: fixture.companyFacts
+  });
+
+  // ⚠️ 先證明「受測的那條路真的跑了」——衍生指標拿另一個衍生指標當輸入。
+  // 少了這段，哪天 fixture 變得算不出 freeCashFlowMargin，這題會無聲地變成空考題。
+  const margin = result.metrics.freeCashFlowMargin;
+  assert.equal(margin.status, 'available', 'fixture 必須算得出自由現金流率，否則本題等於沒考');
+  const nested = margin.annual.find((/** @type {any} */ fact) => fact?.inputs?.freeCashFlow);
+  assert.ok(nested, '必須有「輸入本身也是衍生指標」的那一筆，否則本題等於沒考');
+  assert.equal(nested.inputs.freeCashFlow.metricKey, 'freeCashFlow');
+
+  const paths = undefinedKeyPaths(result);
+  assert.deepEqual(paths, [], `解析結果有 undefined 值的鍵：${paths.slice(0, 5).join('、')}`);
+});
+
+test('SEC 解析｜結果不經 JSON 直接送進正式寫入櫃檯，必須被收下', async () => {
+  const fixture = await loadFixture('fiscal-year-company.json');
+  const data = parseSecCompanyFacts({
+    symbol: 'FRUIT',
+    cik: '900001',
+    submissions: fixture.submissions,
+    companyFacts: fixture.companyFacts
+  });
+  assert.equal(data.metrics.freeCashFlowMargin.status, 'available', 'fixture 必須算得出自由現金流率');
+
+  const at = '2026-07-29T00:00:00.000Z';
+  // 形狀比照 lib/services/stock-fundamentals.js 成功時寫回快取的那一筆。
+  const row = { symbol: 'FRUIT', lastAttemptAt: at, fetchedAt: at, data };
+  const clean = /** @type {any} */ (sanitizeDbForWrite(
+    { settings: {}, stockFundamentals: [row] },
+    { mode: 'throw' }
+  ));
+  assert.equal(clean.stockFundamentals.length, 1, '整包被櫃檯拒收＝正式路徑會回 502');
+  assert.equal(clean.stockFundamentals[0].data.metrics.freeCashFlowMargin.status, 'available');
 });
