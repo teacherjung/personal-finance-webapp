@@ -129,13 +129,32 @@ export const RATE_LIMITS = [
   },
 ];
 
+/**
+ * 實際掛上去的限速中介層。**考題專用**（比照 `setSupabaseFactoryForTest` 的慣例）——
+ * 正式路徑一行都不呼叫它，限速的重點就是不能被重置。
+ *
+ * 為什麼需要（2026-07-29）：`test/hosted-secrets.test.js` 有十幾題各自走 `/api/import`，
+ * 而「上傳解析類」是**每帳號每 5 分鐘 30 次**，於是排在後面的題目拿到的是 **429 而不是它要考的東西**。
+ * 那個失敗長得跟真 bug 一模一樣（實測連續踩到兩次），而且**每加一題就往前推一格**——
+ * 是個會隨時間自己爆炸的地雷。所以給考題一個明確的重置點，別讓它們互相偷額度。
+ * @type {any[]}
+ */
+export const MOUNTED_RATE_LIMITS = [];
+
+/** 考題專用：把所有限速計數歸零（跨題之間互不偷額度）。 */
+export function resetRateLimitsForTest() {
+  for (const mw of MOUNTED_RATE_LIMITS) mw.limiter?.reset();
+}
+
 /** 依 `RATE_LIMITS` 掛上某一階段的所有限速（HOSTED 專用）。 @param {string} stage */
 function mountRateLimit(stage) {
   for (const rl of RATE_LIMITS) {
     if (rl.stage !== stage) continue;
-    app.use(rl.paths, rateLimit({
+    const mw = rateLimit({
       windowMs: RL_WINDOW_MS, max: rl.max, keyOf: rl.keyOf, message: rl.message,
-    }));
+    });
+    MOUNTED_RATE_LIMITS.push(mw);
+    app.use(rl.paths, mw);
   }
 }
 // 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
