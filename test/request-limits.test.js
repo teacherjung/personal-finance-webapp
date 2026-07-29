@@ -52,8 +52,11 @@ test('/api/import 可還原超過 1 MB 的完整備份', async () => {
   assert.equal(restored.transactions[0].note.length, largeText.length, '大型備份內容要完整寫回，不可截斷');
 });
 
-// ⚠️ 這一題 2026-07-28 從「七個端點都可以超過 1MB」改成「**吃檔案的四個**可以、**吃列的三個**不行」。
-//    原因（Codex 收官審查 #10 引出的實測）：那三個只收「預覽已經解析好的列」，身上一個位元組的檔案
+// ⚠️ 這一題 2026-07-28 從「七個端點都可以超過 1MB」改成「**吃檔案的六個**可以、**吃列的一個**不行」。
+//    （2026-07-29 更正註解：一度寫成「四個／三個」，那是按端點名字誤分類時的數字，
+//     正式清單與這一題實際跑的都是六／一。Codex 定向複審抓到——這種數字對不上最容易
+//     讓下一個人再照著錯的判準分一次。）
+//    原因（Codex 收官審查 #10 引出的實測）：那一個只收「預覽已經解析好的列」，身上一個位元組的檔案
 //    都沒有，卻跟吃 base64 PDF/XLSX 的端點共用 15MB 入口。而那些列寫進 kv 時會**放大約 3 倍**——
 //    一個 15MB 的請求塞得下 261 列、落庫 44.9MB。這不是新增限制，是把混進群組的成員請出去。
 test('吃檔案的六個端點可以超過 1 MB；只吃「已解析的列」的那一條不行', async () => {
@@ -130,4 +133,52 @@ test('正常尺寸的帳單匯入照樣通過（防止為了收緊而誤殺真�
   } finally {
     parserServer.close();
   }
+});
+
+// ⚠️ HOSTED 那一半以前完全沒有考題（Codex 定向複審 2026-07-29，高）：
+//    上面那題只跑 LOCAL，只證明「LOCAL 仍可超過 1MB」。把 rowsParser 改回無條件 15MB，
+//    它照樣全綠——**被保護的那一側從來沒被考過**。
+//    `isHosted()` 每次呼叫都重讀 env，而 `installJsonBodyParsers` 是在安裝當下讀，
+//    所以環境變數必須在**掛 parser 之前**設好，跑完還原。
+test('HOSTED：只吃列的那一條降到 1 MB（正常尺寸照過、超限回 413）', async () => {
+  const before = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  /** @type {any} */
+  let parserServer = null;
+  try {
+    const parserApp = express();
+    installJsonBodyParsers(parserApp);   // ← 一定要在設好 env 之後才呼叫
+    for (const route of STATEMENT_JSON_POST_ROUTES) {
+      parserApp.post(route, (req, res) => res.json({ ok: true }));
+    }
+    parserServer = parserApp.listen(0, '127.0.0.1');
+    await once(parserServer, 'listening');
+    const parserPort = /** @type {any} */ (parserServer.address()).port;
+    const rowsPath = '/api/cards/card-1/statement/import';
+
+    // ① 正常規模照過——牆收緊了但不可以誤殺真實使用者（真實台新帳單約 122 筆）
+    const transactions = Array.from({ length: 500 }, (_, i) => ({
+      id: `tx-${i}`, date: '2026-07-01', desc: `某某餐飲店股份有限公司台北信義分店-${i}`, amount: 1234,
+    }));
+    const okResponse = await sendJson(`http://127.0.0.1:${parserPort}${rowsPath}`, { transactions });
+    assert.equal(okResponse.status, 200,
+      `HOSTED 的 500 筆真實規模帳單必須過得去（body ${JSON.stringify({ transactions }).length} bytes）`);
+
+    // ② 超過 1MB 必須被擋——這是修法真正保護的那一面
+    const tooBig = await sendJson(`http://127.0.0.1:${parserPort}${rowsPath}`, { payload: largeText });
+    assert.equal(tooBig.status, 413, 'HOSTED 的列匯入超過 1 MB 必須擋下（保護 Supabase 容量）');
+
+    // ③ 同一個 app 上，吃檔案的端點在 HOSTED 仍維持大入口（收緊只針對吃列的那一條）
+    const filePath = '/api/bank-statement/apply';
+    const fileResponse = await sendJson(`http://127.0.0.1:${parserPort}${filePath}`, { payload: largeText });
+    assert.equal(fileResponse.status, 200, 'HOSTED 也不可以把吃檔案的端點一起掐死');
+  } finally {
+    parserServer?.close();
+    if (before === undefined) delete process.env.NOTEASY_HOSTED;
+    else process.env.NOTEASY_HOSTED = before;
+  }
+});
+
+test('環境變數用完要還原（下一題若跑在 HOSTED 會整串走樣）', () => {
+  assert.notEqual(process.env.NOTEASY_HOSTED, '1');
 });
