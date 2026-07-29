@@ -760,18 +760,43 @@ test('匯入：檔案裡夾帶的機密一律不採用，但已設定的憑證�
 // 四、跨租戶：加密不會變成新的洩漏管道
 // ============================================================================
 
-test('跨租戶：B 存了同一組機密，兩人的密文不同，且互相看不到（C4b 隔離 ＋ C5 加密疊加）', async () => {
-  await as('tokB', '/api/settings', { method: 'PUT', body: JSON.stringify({ ib: { flexToken: FLEX } }) });
-  const rawA = rawOf(A.id);
-  const rawB = rawOf(B.id);
-  assert.ok(rawA.includes('enc:v1:') && rawB.includes('enc:v1:'));
-  assert.notEqual(rawA, rawB);
-  // 同一份明文在兩個人的列上密文不同（IV 隨機＋AAD 綁使用者）→ 無法用「密文相等」比對出誰跟誰用同一組憑證
-  const ctA = JSON.parse(rawA).find((/** @type {any} */ r) => r.key === 'settings')?.data?.ib?.flexToken;
-  const ctB = JSON.parse(rawB).find((/** @type {any} */ r) => r.key === 'settings')?.data?.ib?.flexToken;
-  assert.ok(ctA && ctB && ctA !== ctB, '同一份明文在不同租戶的密文必須不同');
-  const bSettings = await (await as('tokB', '/api/settings')).json();
-  assert.equal(bSettings.taishinSecPdfPasswordSet, false, 'B 沒設過台新密碼，不可以看到 A 的');
+test('跨租戶：兩人存同一份明文，密文不同、解得回同一個值，且互相看不到（C4b 隔離 ＋ C5 加密疊加）', async () => {
+  // ⚠️ 這一題原本是**假考題**（Codex 定向複審第六輪抓到，而且是我自己的隔離重構造成的）：
+  //    它只替 B 寫入，A 那一側靠前一題留下的資料。重構後 A 存的是 `FLEXTOKEN-nosteal`、
+  //    B 存的是 `FLEXTOKEN-SECRET-0001`——**兩份密文不同本來就可能只是因為明文不同**，
+  //    根本沒有證明題名宣稱的「同一明文在不同租戶下密文不同」。單題獨跑更是直接紅。
+  //    修法：本題自己替 A、B 各寫一次**同一個本題專屬的明文**，兩次都確認成功再比。
+  const SHARED = 'FLEXTOKEN-CROSS-TENANT-SAME';
+  for (const tok of ['tokA', 'tokB']) {
+    const r = await as(tok, '/api/settings', {
+      method: 'PUT', body: JSON.stringify({ ib: { flexToken: SHARED, flexQueryId: '123' } }),
+    });
+    assert.equal(r.status, 200, `前置條件：${tok} 寫入應該成功——${await r.clone().text()}`);
+  }
+  const ctOf = (/** @type {string} */ uid) =>
+    pg.selectAs(uid).find((/** @type {any} */ r) => r.key === 'settings')?.data?.ib?.flexToken;
+  const ctA = String(ctOf(A.id) || '');
+  const ctB = String(ctOf(B.id) || '');
+  assert.ok(ctA.startsWith('enc:v1:') && ctB.startsWith('enc:v1:'), '前置條件：兩邊都真的加密落庫了');
+
+  // ① 同一份明文、兩份不同的密文（IV 隨機＋AAD 綁使用者）
+  //    → 拿到整顆資料庫也**無法用「密文相等」比對出誰跟誰用同一組憑證**
+  assert.notEqual(ctA, ctB, '同一份明文在不同租戶的密文必須不同');
+  // ② 但各自都解得回同一個原文（不是「加壞了所以不同」）
+  assert.equal(decryptSecret(ctA, `${A.id}|settings.ib.flexToken`), SHARED);
+  assert.equal(decryptSecret(ctB, `${B.id}|settings.ib.flexToken`), SHARED);
+  // ③ AAD 綁租戶：把 A 的密文搬到 B 的列上也解不開
+  assert.equal(decryptSecret(ctA, `${B.id}|settings.ib.flexToken`), '', 'A 的密文在 B 的列上必須解不開');
+
+  // ④ 隔離：A 有台新密碼、B 沒有 → B 不可以看到 A 的（A 那一側也要本題自己種）
+  const aTaishin = 'TAISHIN-CROSS-TENANT';
+  assert.equal((await as('tokA', '/api/settings', {
+    method: 'PUT', body: JSON.stringify({ taishinSecPdfPassword: aTaishin }),
+  })).status, 200, '前置條件：A 的台新密碼要由本題自己種');
+  assert.equal((await (await as('tokA', '/api/settings')).json()).taishinSecPdfPasswordSet, true, '前置條件：A 真的有');
+  assert.equal((await (await as('tokB', '/api/settings')).json()).taishinSecPdfPasswordSet, false,
+    'B 沒設過台新密碼，不可以看到 A 的');
+  assert.ok(!rawOf(B.id).includes(aTaishin), 'A 的台新密碼不可以出現在 B 的列裡');
 });
 
 // ============================================================================
@@ -794,18 +819,32 @@ test('錯誤訊息：解密失敗的警告只講欄位路徑，不含值也不�
 });
 
 test('錯誤訊息：壞請求打各個端點，回應一律不含機密值', async () => {
+  // ⚠️ 這一題原本是**假考題**（Codex 定向複審第六輪抓到，同樣是我自己的隔離重構造成的）：
+  //    它掃的是檔頭那三個舊常數，但重構後 A 存的是 `newSecrets()` 產生的標籤值——
+  //    **資料庫裡根本沒有它在找的字串**，所以就算錯誤回應把真正的機密整串吐出來，這題也全綠。
+  //    修法：本題自己種三個專屬機密、確認真的落庫，再用**那三個確切明文**掃回應。
+  const { flex, taishin, cardPw } = await newSecrets('tokA', 'errmsg');
+  const raw = rawOf(A.id);
+  assert.ok(raw.includes('enc:v1:'), '前置條件：三個機密真的加密落庫了');
+  for (const secret of [flex, taishin, cardPw]) {
+    assert.ok(!raw.includes(secret), `前置條件：${secret} 不該以明文躺在資料庫（掃描標的要是「加密後的真機密」）`);
+  }
+
   const probes = [
-    ['/api/import', 'POST', '{"settings":{},"transactions":"oops"}'],
-    ['/api/cards/does-not-exist', 'PUT', '{"name":"x"}'],
-    ['/api/settings', 'PUT', '{"usdTwd":"not-a-number"}'],
-    ['/api/statement/preview', 'POST', '{"data":"not-a-pdf"}'],
-    ['/api/securities/preview', 'POST', '{"data":"not-a-pdf"}'],
-    ['/api/bank-statement/preview', 'POST', '{"data":"not-a-pdf"}'],
+    ['/api/import', 'POST', '{"settings":{},"transactions":"oops"}', 400],
+    ['/api/cards/does-not-exist', 'PUT', '{"name":"x"}', 404],
+    ['/api/settings', 'PUT', '{"usdTwd":"not-a-number"}', 200],   // 壞型別被剝欄、其餘照存
+    ['/api/statement/preview', 'POST', '{"data":"not-a-pdf"}', 400],
+    ['/api/securities/preview', 'POST', '{"data":"not-a-pdf"}', 400],
+    ['/api/bank-statement/preview', 'POST', '{"data":"not-a-pdf"}', 400],
   ];
-  for (const [p, method, body] of probes) {
+  for (const [p, method, body, expected] of probes) {
     const r = await as('tokA', p, { method, body });
+    // ⚠️ 先斷言探針**真的走到預定的 handler**：如果哪天路由改了、統一回 404，
+    //    「回應不含機密」會變成廢話——沒到現場當然掃不到東西。
+    assert.equal(r.status, expected, `${method} ${p} 應該回 ${expected}（探針要真的抵達那個 handler）`);
     const text = await r.text();
-    for (const secret of [FLEX, TAISHIN, CARDPW]) {
+    for (const secret of [flex, taishin, cardPw]) {
       assert.ok(!text.includes(secret), `${method} ${p} 的錯誤回應含機密值！`);
     }
     assert.ok(!text.includes('enc:v1:'), `${method} ${p} 的錯誤回應含密文！`);
