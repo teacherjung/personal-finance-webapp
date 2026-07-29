@@ -110,6 +110,34 @@ test('吃檔案的六個端點可以超過 1 MB；只吃「已解析的列」的
   }
 });
 
+// ⚠️ 上面那題自建 `parserApp` 直接呼叫 helper，**證明得了 helper 對、證明不了 `server.js` 還在用它**
+//    （Codex 定向複審第四輪：在 LOCAL 路徑提前插一個 1MB parser 把正式路徑弄壞，整檔仍 5/5 全綠）。
+//    這一題打檔案頂端那個**正式 LOCAL app**，而且要走到底：斷言 200、`imported` 對得上、真的落庫。
+test('LOCAL 正式接線：超過 1 MB 的合法列匯入必須真的寫進去（零改動契約）', async () => {
+  const card = await (await sendJson(`${base}/cards`, { name: 'LOCAL 大 body 測試卡' })).json();
+  assert.ok(card?.id, `前置條件：建卡片應該成功——${JSON.stringify(card)}`);
+
+  // 每一列都合法（`lib/services/statement-import.js` 會伺服器端重建 stmtRef 並比對），
+  // 並把整包撐過 1MB——note 塞在**列裡面**，才是真的「列很大」而不是外面掛個大欄位。
+  const DESC = (/** @type {number} */ i) => `某某餐飲店股份有限公司台北信義分店-local-${i}-${'補'.repeat(600)}`;
+  const transactions = Array.from({ length: 300 }, (_, i) => ({
+    date: '2026-07-01', desc: DESC(i), amount: 1234 + i,
+    stmtRef: `${card.id}|2026-07-01|${1234 + i}|${DESC(i)}`,
+  }));
+  const bytes = Buffer.byteLength(JSON.stringify({ transactions }));
+  assert.ok(bytes > 1_048_576, `前置條件：這一包要真的超過 1MB，否則考不到（目前 ${bytes} bytes）`);
+
+  const response = await sendJson(`${base}/cards/${card.id}/statement/import`, { transactions });
+  assert.equal(response.status, 200,
+    `LOCAL 必須維持原本的大入口（零改動契約）——${bytes} bytes：${await response.clone().text()}`);
+  const body = await response.json();
+  assert.equal(body.imported, 300, `300 筆必須真的匯進去（實際 ${JSON.stringify(body)}）`);
+
+  const txs = await (await fetch(`${base}/transactions`)).json();
+  assert.equal(txs.filter((/** @type {any} */ t) => t.importBatch === body.batchId).length, 300,
+    '本題這一批必須真的落庫（回應說 imported:300 不等於真的寫進去了）');
+});
+
 test('正常尺寸的帳單匯入照樣通過（防止為了收緊而誤殺真實使用者）', async () => {
   const parserApp = express();
   installJsonBodyParsers(parserApp);

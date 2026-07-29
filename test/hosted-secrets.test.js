@@ -562,11 +562,24 @@ test('來回⑥：**匯入檔裡**兩筆用同一個 id → 不可以兩筆都�
 });
 
 test('stripSecretsForBackup：深拷貝，不可以順手把記憶體裡那包也清掉', () => {
-  const live = { settings: { taishinSecPdfPassword: TAISHIN, ib: { flexToken: FLEX } }, cards: [{ id: 'c1', pdfPassword: CARDPW }] };
+  // ⚠️ v6 補 accounts（Codex 定向複審第四輪）：原本測資只有 settings/cards，
+  //    所以「輸出正確、但順手把原物件的 accountNo 清空」這種突變照樣全綠——
+  //    本 PR 新增的那張清單完全沒被這一題涵蓋。
+  const live = {
+    settings: { taishinSecPdfPassword: TAISHIN, ib: { flexToken: FLEX } },
+    cards: [{ id: 'c1', pdfPassword: CARDPW }],
+    accounts: [{ id: 'a1', accountNo: FULL_ACCOUNT_NO }],
+  };
   const out = stripSecretsForBackup(live);
   assert.equal(out.settings.ib.flexToken, '');
+  assert.equal(out.settings.taishinSecPdfPassword, '');
+  assert.equal(out.cards[0].pdfPassword, '');
+  assert.equal(out.accounts[0].accountNo, '', '第二張清單也要剝乾淨');
   assert.equal(live.settings.ib.flexToken, FLEX, '原物件必須完好——它可能還要拿去用');
+  assert.equal(live.settings.taishinSecPdfPassword, TAISHIN);
   assert.equal(live.cards[0].pdfPassword, CARDPW);
+  assert.equal(live.accounts[0].accountNo, FULL_ACCOUNT_NO,
+    '原物件的完整帳號也必須完好——匯出順手清掉記憶體裡那包＝使用者的帳號當場消失');
 });
 
 test('匯入：檔案裡夾帶的機密一律不採用，但已設定的憑證要保住（留空＝不變更）', async () => {
@@ -654,17 +667,35 @@ test('錯誤訊息：壞請求打各個端點，回應一律不含機密值', as
 //    這一檔本來就在 HOSTED 模式下跑真正的 `app`，所以放這裡才打得到正式路徑。
 
 test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是 helper，是 server.js 那條線）', async () => {
+  // ⚠️ 這一題第一版是**假考題**（Codex 定向複審第四輪抓到）：測資少了 `stmtRef`，
+  //    正式服務會把 300 筆**全部略過**（回 `imported:0, skipped:300`），而斷言只寫
+  //    `status !== 413`——把正式 handler 突變成明確回 500，它照樣全綠。
+  //    「沒有被擋下」不等於「真的匯進去了」。修法＝送合法的列、斷言 `imported === 300`，
+  //    再從正式讀取端確認本題專屬的交易確實落庫。
   const { cardId } = await newSecrets('tokA', 'bodylimit');
 
   // ① 正常規模先過（收緊不可以誤殺真實使用者；真實台新帳單約 122 筆）
+  //    stmtRef 必須是 `卡id|消費日|金額|原文`（`lib/services/statement-import.js` 會伺服器端重建並比對）
+  const DESC = (/** @type {number} */ i) => `某某餐飲店股份有限公司台北信義分店-bodylimit-${i}`;
   const transactions = Array.from({ length: 300 }, (_, i) => ({
-    id: `tx-${i}`, date: '2026-07-01', desc: `某某餐飲店股份有限公司台北信義分店-${i}`, amount: 1234,
+    date: '2026-07-01', desc: DESC(i), amount: 1234 + i,
+    stmtRef: `${cardId}|2026-07-01|${1234 + i}|${DESC(i)}`,
   }));
   const ok = await as('tokA', `/api/cards/${cardId}/statement/import`, {
     method: 'POST', body: JSON.stringify({ transactions }),
   });
-  assert.notEqual(ok.status, 413,
-    `HOSTED 的 300 筆真實規模帳單不可以被 413 擋掉（body ${JSON.stringify({ transactions }).length} bytes）`);
+  assert.equal(ok.status, 200,
+    `HOSTED 的 300 筆真實規模帳單必須過得去（body ${JSON.stringify({ transactions }).length} bytes）：${await ok.clone().text()}`);
+  const okBody = await ok.json();
+  assert.equal(okBody.imported, 300,
+    `300 筆必須真的匯進去，不是「沒被 413 擋下」就算數（實際 ${JSON.stringify(okBody)}）`);
+  // 從正式讀取端再確認一次：回應說 imported 也可能是騙人的。
+  // ⚠️ 落庫的 `note` 是**清理後的顯示店名**、`desc` 根本不存在——原文留在 `stmtRef` 裡。
+  //    用這次匯入自己的 `batchId` 數最直接，也不會被別題的資料干擾。
+  assert.ok(okBody.batchId, '匯入回應要帶批次代號');
+  const txs = await (await as('tokA', '/api/transactions')).json();
+  assert.equal(txs.filter((/** @type {any} */ t) => t.importBatch === okBody.batchId).length, 300,
+    '本題這一批的 300 筆交易必須真的落庫（回應說 imported:300 不等於真的寫進去了）');
 
   // ② 超過 1MB 必須被擋——這是修法真正保護的那一面（Supabase 的容量）
   const tooBig = await as('tokA', `/api/cards/${cardId}/statement/import`, {
