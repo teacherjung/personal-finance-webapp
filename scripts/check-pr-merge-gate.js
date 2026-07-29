@@ -24,6 +24,30 @@ import { pathToFileURL } from 'node:url';
 
 /** @typedef {{ baseRefName: string, headRefName: string, isCrossRepository: boolean }} PrInfo */
 
+// ---- 形狀驗證（r3；Codex r2 blocking 2）----------------------------------
+// JSON.parse 成功不代表形狀對：`gh pr list` 回 `{}` 時 `dependents.length` 是 undefined、
+// `undefined > 0` 是 false → 判「無上層」→ 退出碼 0＝放行。**合法但錯形的 JSON 曾經 fail-open。**
+// 所以解析完必過形狀驗證，不符一律退出碼 2（fail-closed）。
+
+/**
+ * @param {unknown} v
+ * @returns {v is PrInfo}
+ */
+export function isPrInfo(v) {
+  return !!v && typeof v === 'object'
+    && typeof (/** @type {any} */ (v).baseRefName) === 'string' && (/** @type {any} */ (v).baseRefName).length > 0
+    && typeof (/** @type {any} */ (v).headRefName) === 'string' && (/** @type {any} */ (v).headRefName).length > 0
+    && typeof (/** @type {any} */ (v).isCrossRepository) === 'boolean';
+}
+
+/**
+ * @param {unknown} v
+ * @returns {v is Array<{ number: number }>}
+ */
+export function isDependentList(v) {
+  return Array.isArray(v) && v.every((d) => !!d && typeof d === 'object' && typeof d.number === 'number');
+}
+
 /**
  * 純判斷層（考題直測）。
  * @param {PrInfo} pr
@@ -54,18 +78,23 @@ function main() {
     console.error('用法：node scripts/check-pr-merge-gate.js <PR 編號>');
     process.exit(2);
   }
-  /** @type {PrInfo} */
-  let pr;
-  /** @type {Array<{ number: number }>} */
-  let dependents;
+  /** @type {unknown} */
+  let prRaw;
+  /** @type {unknown} */
+  let depRaw;
   try {
-    pr = JSON.parse(gh(['pr', 'view', n, '--json', 'baseRefName,headRefName,isCrossRepository']));
+    prRaw = JSON.parse(gh(['pr', 'view', n, '--json', 'baseRefName,headRefName,isCrossRepository']));
+    if (!isPrInfo(prRaw)) throw new Error(`pr view 回傳形狀不對：${JSON.stringify(prRaw).slice(0, 120)}`);
     // 伺服器端 --base 過濾（見檔頭「分頁安全」）；--limit 只是保險，命中列不會因分頁而消失
-    dependents = JSON.parse(gh(['pr', 'list', '--state', 'open', '--base', pr.headRefName, '--json', 'number', '--limit', '200']));
+    depRaw = JSON.parse(gh(['pr', 'list', '--state', 'open', '--base', prRaw.headRefName, '--json', 'number', '--limit', '200']));
+    if (!isDependentList(depRaw)) throw new Error(`pr list 回傳形狀不對：${JSON.stringify(depRaw).slice(0, 120)}`);
   } catch (e) {
-    console.error(`堆疊閘 PR #${n}：gh 查詢失敗（${e instanceof Error ? e.message : String(e)}）——查不清楚一律當堆疊，不准合併`);
+    console.error(`堆疊閘 PR #${n}：gh 查詢失敗或回傳形狀不對（${e instanceof Error ? e.message : String(e)}）——查不清楚一律當堆疊，不准合併`);
     process.exit(2);
   }
+  // 走到這裡＝兩個 isXxx 都過了（沒過會在 catch 裡 exit 2），cast 是安全的
+  const pr = /** @type {PrInfo} */ (prRaw);
+  const dependents = /** @type {Array<{ number: number }>} */ (depRaw);
   const r = evaluateGate(pr, dependents);
   console.log(`堆疊閘 PR #${n}：${r.reason}`);
   process.exit(r.code);

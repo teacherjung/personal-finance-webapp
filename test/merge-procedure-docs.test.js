@@ -45,12 +45,14 @@ test('合併程序：CODEX-REVIEW 的合併步驟必須「在 fenced code 裡」
   const unquoted = raw.split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
   const visible = unquoted.replace(/<!--[\s\S]*?-->/g, '');
 
-  // ① 指令必須在 fenced code 區塊裡——敘述句「請留意堆疊」不是可執行的閘
+  // ① 指令必須在 fenced code 區塊裡的**非註解行、行首**——敘述句不算、HTML 註解不算（r1 繞法）、
+  //    shell 註解行 `# node scripts/...` 也不算（r2 繞法：Codex 示範 includes() 連註解都認）
   const fences = [...visible.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+  const cmdLines = fences.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   assert.ok(
-    fences.includes('scripts/check-pr-merge-gate.js'),
-    '合併步驟裡沒有「可直接複製執行」的堆疊閘指令（node scripts/check-pr-merge-gate.js）。'
-      + '寫成敘述或註解都不算——r1 的關鍵字考題就是這樣被繞過的'
+    cmdLines.some((l) => /^node scripts\/check-pr-merge-gate\.js\b/.test(l)),
+    '合併步驟裡沒有「可直接複製執行」的堆疊閘指令行（node scripts/check-pr-merge-gate.js 開頭、非註解）。'
+      + '敘述、HTML 註解（r1 繞法）、shell 註解行（r2 繞法）都不算數'
   );
 
   // ② 順序：閘在 merge 之前（放在後面＝合併完才檢查＝沒有意義）
