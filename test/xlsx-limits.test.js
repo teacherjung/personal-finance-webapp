@@ -472,22 +472,85 @@ function zip64(files, where) {
   return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
 }
 
-test('繞過⑤｜ZIP64 宣告巨大解壓後大小：三種擺法都要擋（v1 只讀 local header 就會漏）', async () => {
-  // ⚠️ Codex 第三輪找到的形狀（它的報告被自家內容過濾器截斷，只看得到這一項）。
-  //    v1 的宣告值檢查是 `buf.readUInt32LE(off + 22)`——**只讀 local header**，
-  //    完全不看中央目錄，也不解 ZIP64 的 extra field。
-  //    於是「把巨大的 usz 只寫在中央目錄的 ZIP64 欄位」就整個繞過去，
-  //    而 SheetJS 照樣照那個值去配置（實測它丟 ERR_STRING_TOO_LONG，代表真的去要那麼大的空間了）。
+test('繞過⑤｜ZIP64 一律**明確拒絕**——不可以自己解（自己解會讓牆比解析器寬鬆）', async () => {
+  // ⚠️⚠️ 這一題 v3 是**假考題**（規格符合性審查抓到）：它斷言 `xlsx_declared_size_too_large`，
+  //    但**拿掉 `applyZip64` 之後原始的 `0xFFFFFFFF` 本來就 > 16MB**，上限照樣拒絕、考題照樣綠。
+  //    也就是它證明不了「ZIP64 有被正確處理」這件事。
   //
-  //    v2/v3 已改成 `Math.max(中央目錄, local)` ＋ 兩邊都跑 `applyZip64`——這一題把它釘住。
+  // ⚠️ 而且 v3 的做法本身就是錯的方向：我讓掃描器**解** ZIP64（把 sentinel 換成真實的小值），
+  //    但 **SheetJS 0.18.5 根本不解 ZIP64**（`parse_extra_field` 只認 timestamp `0x5455`），
+  //    它會照 `0xFFFFFFFF` 去配置空間。於是：
+  //        掃描器：sentinel → 解成小值 → 「安全」放行
+  //        SheetJS：sentinel → 當成 4GB → 真的去要那麼大的空間
+  //    **我為了「更精確」而多做的解碼，正好製造了一個繞過。**
+  //
+  //    正確做法＝**明確拒絕**（不要自己維護第二份近似解碼器）。
+  //    這一題因此改成斷言 `xlsx_malformed_zip`——把拒絕拿掉就會退回
+  //    `xlsx_declared_size_too_large`，考題會紅。
   const sheet = sheetXml('A1:A1', ONE_CELL);
   for (const where of ['cd', 'local', 'both']) {
     const data = zip64(/** @type {any} */ (shell([sheet])), where);
     assert.ok(data.length < 4000, `攻擊檔應該很小（${where}：${data.length} bytes）`);
     const err = await parseErr(data);
-    assert.equal(err?.code, 'xlsx_declared_size_too_large',
-      `ZIP64 的大小宣告在「${where}」時沒被擋下——牆漏看了那一份 metadata`);
+    assert.equal(err?.code, 'xlsx_malformed_zip',
+      `ZIP64（${where}）應該被**明確拒絕**，而不是靠「數字很大」順便擋下——` +
+      '後者在 sentinel 被解成小值時就失效了');
+    assert.match(String(err.message), /ZIP64/, '訊息要說出真正的原因');
   }
+});
+
+test('繞過⑥｜EOCD 簽章出現在最後 21 個 byte 內：牆要跟 SheetJS 從同一個位置開始找', async () => {
+  // ⚠️ SheetJS 是 `var i = blob.length - 4; while(簽章不符) --i;`——從**最後 4 個 byte**開始往前找。
+  //    v3 從 `length - 22` 開始（因為 EOCD 至少 22 bytes），
+  //    於是簽章出現在最後 21 個 byte 之內時，**兩邊會找到不同的 EOCD**：
+  //      SheetJS → 找到尾巴那個（然後照它讀出完全不同的目錄）
+  //      v3 的牆 → 跳過它，找到前面那個「看起來比較合理」的
+  //    又是同一個病：牆跟解析器看的不是同一個東西。
+  //    修法：起點對齊 `length - 4`，而且**候選位置放不下 22 bytes 就直接拒絕**，
+  //    不可以退回去找另一個。
+  // ⚠️ 要**隔離**這一項：把假簽章做成 EOCD 的**合法註解**，
+  //    這樣「註解長度」那道檢查就不會順手擋掉它，紅的原因才確定是搜尋起點。
+  //    （第一版沒做這件事，結果註解長度檢查把兩種寫法都擋下、給同一個錯誤碼，
+  //     突變測試因此 0 紅——考題「看起來會過」但證明不了它要證明的東西。）
+  const base = Buffer.from(zip(/** @type {any} */ (shell([sheetXml('A1:H3', ONE_CELL)]))));
+  const eocdAt = base.length - 22;
+  base.writeUInt16LE(4, eocdAt + 20);          // 宣告有 4 bytes 的註解
+  // 註解的內容**就是另一個 EOCD 簽章**——完全合法的 ZIP，但 SheetJS 從 length-4 找會先撞到它
+  const data = new Uint8Array(Buffer.concat([base, Buffer.from([0x50, 0x4b, 0x05, 0x06])]));
+  const err = await parseErr(data);
+  assert.equal(err?.code, 'xlsx_malformed_zip',
+    '註解裡藏一個 EOCD 簽章就繞過了——牆的搜尋起點跟 SheetJS 不一樣，兩邊會讀到不同的目錄');
+  assert.match(String(err.message), /截斷/, '應該是「候選位置放不下完整 EOCD」那條路');
+});
+
+test('繞過⑦｜EOCD 之後還有沒交代的資料（註解長度對不上）→ fail-closed', async () => {
+  // 註解長度對不上檔案大小，代表結構裡有我們讀不懂的東西。
+  // 讀不懂就不要猜——猜錯的方向剛好就是「跟解析器的理解分岔」。
+  const base = Buffer.from(zip(/** @type {any} */ (shell([sheetXml('A1:H3', ONE_CELL)]))));
+  const data = new Uint8Array(Buffer.concat([base, Buffer.alloc(16, 0x41)]));   // 尾巴塞 16 bytes，但註解長度仍是 0
+  const err = await parseErr(data);
+  assert.equal(err?.code, 'xlsx_malformed_zip', 'EOCD 後面多出來的資料沒有被察覺');
+  assert.match(String(err.message), /註解長度/, '訊息要說出真正的原因');
+});
+
+test('繞過⑧｜不支援的壓縮方法要**明確拒絕**，不可以「當成 deflate 試試看」', async () => {
+  // SheetJS 只准 method 0 與 8，其餘明確拒絕。
+  // v3 對「非 0 一律當 deflate 試」——那又是一種「兩邊理解不同」：
+  // 我們試著解壓失敗會回「解開之後太大」（錯誤的病因），SheetJS 則直接說不支援。
+  const files = /** @type {any} */ (shell([sheetXml('A1:H3', ONE_CELL)]));
+  const base = Buffer.from(zip(files));
+  // 把第一個 local header 的 method 改成 9（APPNOTE 有定義但 SheetJS 不支援）
+  base.writeUInt16LE(9, 8);
+  const err = await parseErr(new Uint8Array(base));
+  assert.equal(err?.code, 'xlsx_malformed_zip',
+    '不支援的壓縮方法應該明確拒絕，而不是試著解壓然後回報錯誤的病因');
+  assert.match(String(err.message), /壓縮方式/, '訊息要說出真正的原因');
+});
+
+test('相容性｜正常的 32-bit ZIP 不可以被 ZIP64 的拒絕誤傷', async () => {
+  // 拒絕 ZIP64 是對的，但不可以連正常檔案一起擋——真實帳單都是 32-bit ZIP。
+  const r = await parseStatement(realStatement(122));
+  assert.equal(r.transactions.length, 122);
 });
 
 // ============================================================================
