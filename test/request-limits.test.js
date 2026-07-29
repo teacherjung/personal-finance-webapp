@@ -94,10 +94,13 @@ test('吃檔案的六個端點可以超過 1 MB；只吃「已解析的列」的
       assert.equal(response.status, 200, `${path} 收的是檔案本體，不該套到一般 1 MB 上限`);
       assert.deepEqual(await response.json(), { size: largeText.length });
     }
+    // ⚠️ 這一檔跑在 **LOCAL** 模式（沒設 NOTEASY_HOSTED），所以「吃列」那條**維持大入口**——
+    //    1MB 只套 HOSTED（那條牆保護的是 Supabase 的容量，本機沒有那個問題）。
+    //    v2 對兩種模式都套，破了「LOCAL byte-for-byte 等價」；Codex 定向複審抓到。
     for (const path of rowPaths) {
       const response = await sendJson(`http://127.0.0.1:${parserPort}${path}`, { payload: largeText });
-      assert.equal(response.status, 413,
-        `${path} 只收「已解析的列」，不該享有 15MB 入口（落庫會放大約 3 倍）`);
+      assert.equal(response.status, 200,
+        `${path} 在 LOCAL 必須維持原本的大入口（零改動契約）——1MB 是 HOSTED 專屬的`);
     }
   } finally {
     parserServer.close();

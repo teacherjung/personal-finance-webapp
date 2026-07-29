@@ -228,13 +228,58 @@ test('來回①：匯出→匯入回自己的帳號，完整帳號必須還在�
 });
 
 test('來回②：三個機密欄位在同一趟來回中也要保住（對照組）', async () => {
+  // ⚠️ 這一題 v2 是**假考題**（Codex 定向複審：把它自己的 export/import 兩行刪掉，21/21 照樣全過）——
+  //    它只是在檢查「前一題跑完之後機密還在」，證明不了本題宣稱的那趟來回。
+  //    修法：**先把機密換成本題專屬的新值**，再走來回，最後斷言新值還在。
+  //    這樣「本題的匯出匯入」就是唯一能讓斷言成立的路徑。
+  const RT_FLEX = `FLEX-ROUNDTRIP-${Date.now()}`;
+  const put = await as('tokA', '/api/settings', {
+    method: 'PUT', body: JSON.stringify({ ib: { flexToken: RT_FLEX, flexQueryId: '123' } }),
+  });
+  assert.equal(put.status, 200, '前置條件：換上本題專屬的新 token');
+  const settingsRow = () => pg.selectAs(A.id).find(r => r.key === 'settings')?.data;
+  // ⚠️ **不可以比對密文本身**：AES-GCM 每次用新的 nonce，同一個明文加密兩次密文必然不同
+  //    （第一版就是這樣紅的）。要比**解密之後的值**。
+  const { decryptSecret } = await import('../lib/crypto-secrets.js');
+  const plainOf = () => decryptSecret(String(settingsRow()?.ib?.flexToken || ''), `${A.id}|settings.ib.flexToken`);
+  assert.ok(String(settingsRow()?.ib?.flexToken).startsWith('enc:v1:'), '前置條件：新 token 已加密落庫');
+  assert.equal(plainOf(), RT_FLEX, '前置條件：資料庫裡解出來就是本題專屬的新 token');
+
   const backup = await (await as('tokA', '/api/export')).json();
-  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(backup.settings.ib.flexToken, '', '前置條件：備份檔本身不含機密（裁決⑤）');
+  const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(r.status, 200, `還原應該成功：${await r.clone().text()}`);
+
+  // 斷言看**資料庫原始列**：密文要與匯入前完全相同（＝那一趟來回沒有把它換掉或清掉）
+  assert.equal(plainOf(), RT_FLEX,
+    '這一趟來回把 IB token 換掉或清掉了（解密後的值必須還是本題種下去的那一個）');
   const s2 = await (await as('tokA', '/api/settings')).json();
   assert.equal(s2.ib.flexTokenSet, true, 'IB token 要保住');
   assert.equal(s2.taishinSecPdfPasswordSet, true, '台新密碼要保住');
   const cards = await (await as('tokA', '/api/cards')).json();
   assert.equal(cards[0].pdfPasswordSet, true, '卡片密碼要保住');
+});
+
+test('來回⑤：舊備份**根本沒有 accountNo 欄位**時，現值一樣不可以被洗掉', async () => {
+  // ⚠️ Codex 定向複審抓到的 blocking：v2 的 `mapBackupOnlyPii` 寫成 `if ('accountNo' in a)`，
+  //    於是舊備份（升級前產生的、根本沒有那個欄位）整個被跳過 → 還原路徑沒機會把現值填回去
+  //    → 帳號照樣被洗掉，而且回 200。
+  //    「留空＝不變更」的相容性宣稱**必須連「欄位不存在」一起涵蓋**，否則那句話是假的。
+  const before = await (await as('tokA', '/api/accounts')).json();
+  assert.equal(before.find((/** @type {any} */ a) => a.id === ACCOUNT_ID)?.accountNoSet, true, '前置條件');
+
+  const backup = await (await as('tokA', '/api/export')).json();
+  // 模擬「升級前產生的舊備份」：整個欄位不存在（不是空字串）
+  for (const a of backup.accounts) delete a.accountNo;
+  assert.ok(!('accountNo' in backup.accounts.find((/** @type {any} */ a) => a.id === ACCOUNT_ID)),
+    '前置條件：欄位真的被刪掉了（不是空字串）');
+
+  const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(r.status, 200, `舊備份應該還原得回來：${await r.clone().text()}`);
+  const after = await (await as('tokA', '/api/accounts')).json();
+  assert.equal(after.find((/** @type {any} */ a) => a.id === ACCOUNT_ID)?.accountNoSet, true,
+    '舊備份（沒有 accountNo 欄位）把現值洗掉了——「留空＝不變更」沒有涵蓋「欄位不存在」');
+  assert.ok(rawOf(A.id).includes(FULL_ACCOUNT_NO), '資料庫裡的完整帳號必須原封不動');
 });
 
 test('來回③：匯入檔裡帶著完整帳號時要照收（LOCAL 的完整備份搬進雲端不可以反而被清掉）', async () => {
