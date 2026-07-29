@@ -120,6 +120,46 @@ function zipDuplicateCd(files) {
   return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
 }
 
+
+/**
+ * 造一份用 **data descriptor（bit 3）** 的 ZIP：local header 的 crc/大小都是 0，
+ * 真正的值寫在資料**後面**；中央目錄記的是正確值。
+ * LibreOffice Calc 與 Google Sheets 匯出的 xlsx 就是這個形狀。
+ * @param {[string, string][]} files
+ */
+function zipStreaming(files) {
+  const locals = [], cd = [];
+  let off = 0;
+  for (const [name, content] of files) {
+    const data = Buffer.from(content, 'utf8');
+    const comp = deflateRawSync(data, { level: 9 });
+    const n = Buffer.from(name, 'latin1');
+    const crc = crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4);
+    lh.writeUInt16LE(0x08, 6);                      // ← bit 3：data descriptor
+    lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(0, 14); lh.writeUInt32LE(0, 18); lh.writeUInt32LE(0, 22);   // local 這三格是 0
+    lh.writeUInt16LE(n.length, 26);
+    const dd = Buffer.alloc(16);
+    dd.writeUInt32LE(0x08074b50, 0); dd.writeUInt32LE(crc, 4);
+    dd.writeUInt32LE(comp.length, 8); dd.writeUInt32LE(data.length, 12);
+    locals.push(lh, n, comp, dd);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6);
+    ch.writeUInt16LE(0x08, 8); ch.writeUInt16LE(8, 10);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24);
+    ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(off, 42);
+    cd.push(ch, n);
+    off += 30 + n.length + comp.length + dd.length;
+  }
+  const localBuf = Buffer.concat(locals), cdBuf = Buffer.concat(cd);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(files.length, 8); eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(localBuf.length, 16);
+  return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
+}
+
 /** @param {string} dim @param {string} cells */
 const sheetXml = (dim, cells) => `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="${dim}"/><sheetData>${cells}</sheetData></worksheet>`;
 const ONE_CELL = '<row r="1"><c r="A1" t="str"><v>x</v></c></row>';
@@ -300,21 +340,63 @@ test('繞過②｜local 條目之間插填充 byte：牆必須從中央目錄枚
     `應該被大小的牆擋下（代表確實量到了那個條目），實際：${err.code}`);
 });
 
-test('繞過②′｜插填充的「正常」檔案仍然要能解析（新寫法不可以誤殺合法 ZIP）', async () => {
-  // 條目之間有間隙是合法的 ZIP，一般工具打得開——牆不可以因此把正常檔案擋掉。
-  const real = realStatement(122);
-  // 先確認對照組本身會過
-  const ok0 = await parseStatement(real);
-  assert.equal(ok0.transactions.length, 122);
-  // 再用手工組的「有填充但內容正常」的檔案
-  const aoa = [['消費日期', '入帳日', '消費明細', '幣別', '金額', '', '', '外幣']];
-  for (let i = 0; i < 5; i++) aoa.push(['2026/07/01', '2026/07/05', `早餐店${i}`, 'TWD', /** @type {any} */ (120), '', '', '']);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Sheet1');
-  const normal = new Uint8Array(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true }));
-  const err = await parseErr(normal);
-  assert.ok(!err || !/xlsx_/.test(String(err.code)),
-    `正常檔案被新的 ZIP 掃描擋掉了：${err?.code} ${err?.message}`);
+test('繞過②′｜**真的插了填充**的正常檔案仍然要能解析（新寫法不可以誤殺合法 ZIP）', async () => {
+  // ⚠️ 這一題 v2 是**假考題**（Codex 定向複審抓到）：題目叫「插填充的正常檔案」，
+  //    但實際用的是普通 `XLSX.write` 產生的檔，**完全沒有呼叫 `zipWithPadding`**——
+  //    等於它守不住題名宣稱的相容性。這一版真的用有填充的檔案。
+  //    條目之間有間隙是合法的 ZIP，一般工具打得開，牆不可以因此擋掉。
+  const sheet = sheetXml('A1:H3',
+    '<row r="1"><c r="A1" t="inlineStr"><is><t>消費日期</t></is></c></row>');
+  const padded = zipWithPadding(/** @type {any} */ (shell([sheet])), 64);
+  const err = await parseErr(padded);
+  // 這份檔案沒有消費明細，所以會因為「找不到明細」失敗——那是對的；
+  // 重點是**不可以被 ZIP 掃描的那幾道牆擋掉**。
+  assert.ok(!err || !/^xlsx_/.test(String(err.code)),
+    `有填充的合法檔案被 ZIP 掃描擋掉了：${err?.code} ${err?.message}`);
+});
+
+test('相容性｜data descriptor（bit 3）要支援，不可以拒收——LibreOffice／Google Sheets 都用它', async () => {
+  // ⚠️ v2 把 bit 3 一律拒收，註解寫「正常的產生器不會這樣寫」——**那是錯的**
+  //    （Codex 定向複審實測：LibreOffice Calc 與 Google Sheets 匯出的檔案都會用，
+  //     而且 SheetJS 明確支援）。拒收＝擋掉正常使用者的檔案。
+  //    bit 3 時 local header 的大小欄位是 0，要改用中央目錄那一份。
+  const sheet = sheetXml('A1:H3', '<row r="1"><c r="A1" t="inlineStr"><is><t>x</t></is></c></row>');
+  const data = zipStreaming(/** @type {any} */ (shell([sheet])));
+  const err = await parseErr(data);
+  assert.ok(!err || !/^xlsx_/.test(String(err.code)),
+    `用 data descriptor 的合法檔案被擋掉了：${err?.code} ${err?.message}`);
+});
+
+test('相容性｜微軟官方範例那種「117 個部件」的檔案必須過得去（64 的上限會誤殺它）', async () => {
+  // ⚠️ Codex 定向複審實測：微軟官方的 Excel 範例有 **117 個 ZIP 部件**，
+  //    v2 的 64 上限會把它擋掉——那是誤殺正常檔案，不是防禦。
+  //    真實 xlsx 的部件數會因為 styles／theme／sharedStrings／drawing／每張表的 rels 而累積。
+  //    這一題用「一張工作表 ＋ 一堆非工作表部件」模擬那個形狀。
+  const sheet = sheetXml('A1:H3', '<row r="1"><c r="A1" t="inlineStr"><is><t>x</t></is></c></row>');
+  const base = /** @type {[string,string][]} */ (shell([sheet]));
+  /** @type {[string,string][]} */
+  const extras = Array.from({ length: 117 - base.length }, (_, i) =>
+    /** @type {[string,string]} */ ([`xl/theme/theme${i}.xml`, `<?xml version="1.0"?><a k="${i}"/>`]));
+  const data = zip([...base, ...extras]);
+  const err = await parseErr(data);
+  assert.ok(!err || err.code !== 'xlsx_too_many_entries',
+    `117 個部件的檔案被條目上限擋掉了——微軟官方範例就是這個量級（實際：${err?.code}）`);
+});
+
+test('繞過④｜EOCD 的兩個條目數欄位不一致 → fail-closed（牆要跟 SheetJS 讀同一個欄位）', async () => {
+  // ⚠️ 這是這道牆的**第四次**被繞過，而且與第三次是同一個病：牆跟解析器看的不是同一個東西。
+  //    EOCD：+8＝本磁碟條目數（**SheetJS 讀這個**）／+10＝總條目數（v2 讀了這個）。
+  //    造一份「+8=N、+10=0」的 ZIP：v2 量到 0 個條目、回報乾淨，SheetJS 照樣全部解開。
+  const bomb = sheetXml('A1:A1', bigCell(20));
+  const base = Buffer.from(zip(/** @type {any} */ (shell([bomb]))));
+  const eocdAt = base.length - 22;
+  const onDisk = base.readUInt16LE(eocdAt + 8);
+  assert.ok(onDisk > 0, '前置條件：正常檔案的 +8 應該是條目數');
+  base.writeUInt16LE(0, eocdAt + 10);            // 只把「總條目數」改成 0
+  const err = await parseErr(new Uint8Array(base));
+  assert.ok(err, 'EOCD 兩個條目數不一致卻放行了——牆讀錯欄位就會這樣');
+  assert.ok(['xlsx_malformed_zip', 'xlsx_unzipped_too_large', 'xlsx_declared_size_too_large'].includes(err.code),
+    `應該 fail-closed 或量到那些條目，實際：${err.code}`);
 });
 
 test('繞過③｜中央目錄有重複條目（同一個位移出現兩次）：兩次都要算進總量', async () => {
