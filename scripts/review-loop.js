@@ -67,6 +67,33 @@ const CODEX_WT = join(ROOT, '..', '榮祥森（投資理財）-codex');
 /** 審查模型與力度：高風險 PR 一律用這組（CODEX-REVIEW.md 開頭）。 */
 const MODEL = ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="xhigh"'];
 
+/**
+ * **防禦性審查的範圍聲明**——每一個提示詞的開頭都會帶著它。
+ *
+ * ⚠️ 2026-07-29 實測踩到：第三輪審查跑到一半被 Codex 平台的內容過濾器切斷
+ *    （`This content was flagged for possible cybersecurity risk`），
+ *    整份報告因此遺失，只剩片段。原因是先前的提示詞寫得像在**教它造攻擊工具**
+ *    （「請找第三個縫」「造一份能通過這道牆的檔案」）。
+ *
+ * 實際要做的事其實一直是防禦：**檢查既有防線會不會被繞過，並給安全的修正**。
+ * 把這件事在開頭講清楚，既是事實、也避免整輪審查白跑。
+ */
+const SCOPE = `
+## 這次工作的性質與範圍（請先讀完）
+
+這是 **repo 擁有者授權的防禦性程式碼審查**。目標只有一個：
+**檢查既有防線會不會被繞過，並給出 file:line 與安全的修正建議。**
+
+- ✅ 只用**合成資料**；為了證明某道牆有縫，可以寫最小的重現測試（那是驗證，不是攻擊）
+- 🚫 **不碰任何真實憑證或第三方系統**：絕不讀 \`data/store.db\`／\`data/store.json\`（含 .bak/-wal/-shm），
+     不連 Supabase／Render／IBKR／SEC／Yahoo 等任何線上服務
+- 🚫 **不產出可直接照做的攻擊操作步驟或工具**。發現問題就描述**成因與修法**，
+     重現用的東西留在測試碼裡即可
+- 🚫 不啟動主服務、不動 \`data/\`；要實測就把 \`STORE_FILE\` 指到暫存檔
+
+**一次只審一支 PR**（2026-07-29 起的做法）——單次範圍小，報告也不會因為太長而被截斷。
+`;
+
 const ROLE = `
 ## 你的角色（不可逾越）
 
@@ -168,6 +195,7 @@ if (cmd === 'review') {
   runCodex(`請先讀 repo 根目錄的 CODEX-REVIEW.md 與 AGENTS.md（特別是「審查分工」「⚠️ 同步點清單」「鐵則 9」）。
 
 # 第①步：審查分支 \`${branch}\`${flags.pr ? `（PR #${flags.pr}）` : ''}
+${SCOPE}
 ${ROLE}
 
 ## 這支改了什麼
@@ -213,6 +241,7 @@ ${diffStat(branch)}
   runCodex(`請先讀 repo 根目錄的 CODEX-REVIEW.md 與 AGENTS.md（特別是鐵則 9）。
 
 # 第③步：審「**修法提案**」（分支 \`${branch}\`${flags.pr ? `，PR #${flags.pr}` : ''}）
+${SCOPE}
 ${ROLE}
 
 ## ⚠️ 這一步審的是「打算怎麼修」，**不是已經寫好的程式**
