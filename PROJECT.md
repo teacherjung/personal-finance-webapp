@@ -90,7 +90,7 @@
 
 **協作流程**
 - AGENTS.md＝技術單一真相，新慣例必須寫進去（Codex 看不到 Claude 的 memory）。
-- **一步一 PR、三關全綠（test／typecheck／lint）、開 PR 前對抗式自審**；合併＝**William 裁決**，執行可由 William 本人／Codex（常設授權）／Claude（個案指示）任一路徑，一律走 CODEX-REVIEW.md 合併五步驟（含堆疊閘；**決策與執行的完整規則在 AGENTS.md「協作流程」，本檔不另存副本**）；改後端要重啟。
+- **一步一 PR、三關全綠（test／typecheck／lint）、開 PR 前對抗式自審**；合併＝**William 裁決**，執行原則「**實作者不按自己的合併鍵**」＝由審查者執行（Codex↔Claude 對稱常設授權；William 隨時可自行執行或個案指定），一律走 CODEX-REVIEW.md 合併五步驟（含堆疊閘；**決策與執行的完整規則在 AGENTS.md「協作流程」，本檔不另存副本**）；改後端要重啟。
 - 驗證會寫入的功能：**絕不碰真實資料**——瀏覽器只走唯讀或隔離 DB＋合成資料；正確性靠隔離 DB 的 node --test。
 - 教學影片：成片走 YouTube 嵌入（影片不進 git）、示範截圖一律合成資料。
 - **投資頁拆分停止線**（AGENTS.md）：`portfolio.js` 剩下的是資料載入、頁面協調、圖表生命週期等合理職責，**不應再為了縮短行數硬拆**；其他大檔拆不拆看職責分析、不看行數。

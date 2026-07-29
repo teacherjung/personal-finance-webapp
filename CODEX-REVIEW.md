@@ -23,7 +23,7 @@
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
-> **合併也由 Codex 代執行（William 2026-07-27 追加授權）**：PR 需要合併時，Claude 請 Codex 代替 William 處理，五個步驟缺一不可：
+> **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這五個步驟）。五個步驟缺一不可：
 > 1. 確認**審查結論**（無阻擋問題）與 **CI 全綠**（`gh pr checks`）；有任一不成立就**停下來回報，不要合併**。
 > 2. ⚠️ **堆疊閘（機械執行，不可憑印象跳過）**：
 >    ```bash
@@ -78,7 +78,7 @@ npm run typecheck && npm run lint && npm test
 
 啟用條件＝協作框架 v4 的三條件：①有獨立施工計畫（先交 William 裁決再動工）②不碰 Claude 預約中的共享檔案（見 PROJECT.md「共享檔案預約」表）③一旦 Claude 的 PR 需要複審，**審查優先於你的實作**。前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
-- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → `gh pr create --base main`。合併＝**William 裁決**後照上方合併五步驟執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ 你在實作模式寫的 PR 屬「Claude 複審後才合併」的對稱高風險流程時，**不可自己代執行合併**——代合併授權只涵蓋「別人實作、你審過」的支。
+- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → `gh pr create --base main`。合併＝**William 裁決**後照上方合併五步驟執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依同五步驟執行；你的代合併授權只涵蓋「別人實作、你審過」的支。
 - **三關全綠才開 PR**：`npm run typecheck && npm run lint && npm test`（本機 pre-push hook 也會擋、雲端 CI 也會跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（「Notion 白話規格・更新工法」小節，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 2）。
 - **開 PR 前自己對抗式自審一輪**：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
