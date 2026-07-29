@@ -320,3 +320,33 @@ test('SEC 解析｜結果不經 JSON 直接送進正式寫入櫃檯，必須被�
   assert.equal(clean.stockFundamentals.length, 1, '整包被櫃檯拒收＝正式路徑會回 502');
   assert.equal(clean.stockFundamentals[0].data.metrics.freeCashFlowMargin.status, 'available');
 });
+
+test('SEC 解析｜衍生指標的輸入值是 0 時必須保留（不可用真值判斷篩欄位）', async () => {
+  // 突變測試抓到的洞：把「只複製有值的欄位」寫成 `if (fact[field])` 也能讓上面兩題全綠，
+  // 但那會連 `value: 0` 一起吃掉——畫面上就變成「尚未取得」，而 0 是官方真的會申報的數字
+  // （Alphabet 2022 支付股利、2026Q1 股票回購都是 0）。現有 fixture 剛好沒有這個組合，
+  // 所以在記憶體裡補一筆資本支出，讓自由現金流的輸入之一（營業現金流）正好是 0。
+  const fixture = await loadFixture('calendar-year-company.json');
+  const facts = fixture.companyFacts.facts['us-gaap'];
+  assert.equal(
+    facts.NetCashProvidedByUsedInOperatingActivities.units.USD.at(-1).val, 0,
+    'fixture 的營業現金流必須是 0，否則本題等於沒考'
+  );
+  facts.PaymentsToAcquirePropertyPlantAndEquipment = {
+    units: { USD: [{ start: '2025-01-01', end: '2025-12-31', form: '10-K', filed: '2026-02-01', accn: '0000900002-26-000001', fy: 2025, fp: 'FY', val: 100 }] }
+  };
+
+  const result = parseSecCompanyFacts({
+    symbol: 'CAL',
+    submissions: fixture.submissions,
+    companyFacts: fixture.companyFacts
+  });
+  const freeCashFlow = result.metrics.freeCashFlow.annual.at(-1);
+  assert.ok(freeCashFlow, '必須算得出自由現金流，否則本題等於沒考');
+  assert.equal(freeCashFlow.value, -100);
+
+  const cashFlowInput = freeCashFlow.inputs.operatingCashFlow;
+  assert.ok(Object.hasOwn(cashFlowInput, 'value'), '值是 0 的輸入不可以整個鍵消失');
+  assert.equal(cashFlowInput.value, 0);
+  assert.deepEqual(undefinedKeyPaths(result), []);
+});
