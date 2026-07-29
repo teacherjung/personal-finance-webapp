@@ -428,6 +428,68 @@ test('fail-closed｜結構看不懂一律拒收，不可以靜默當成通過', 
   assert.equal((await parseErr(new Uint8Array(badOffset)))?.code, 'xlsx_malformed_zip', '目錄位置越界要拒收');
 });
 
+/**
+ * 造一份用 **ZIP64** 宣告巨大解壓後大小的 ZIP。
+ * ZIP64 的規矩：欄位寫 `0xFFFFFFFF` 當標記，真正的 64-bit 值放進 extra field（header id 0x0001）。
+ * @param {[string,string][]} files @param {string} where 'cd'｜'local'｜'both'
+ */
+function zip64(files, where) {
+  const HUGE = 600 * 1024 * 1024;
+  const locals = [], cd = [];
+  let off = 0;
+  for (const [name, content] of files) {
+    const data = Buffer.from(content, 'utf8');
+    const comp = deflateRawSync(data, { level: 9 });
+    const n = Buffer.from(name, 'latin1');
+    const crc = crc32(data);
+    const isSheet = name.includes('worksheets');
+    const z64 = () => {
+      const e = Buffer.alloc(20);
+      e.writeUInt16LE(0x0001, 0); e.writeUInt16LE(16, 2);
+      e.writeBigUInt64LE(BigInt(HUGE), 4); e.writeBigUInt64LE(BigInt(comp.length), 12);
+      return e;
+    };
+    const lExtra = (isSheet && (where === 'local' || where === 'both')) ? z64() : Buffer.alloc(0);
+    const lUsz = lExtra.length ? 0xFFFFFFFF : data.length;
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(lUsz, 22);
+    lh.writeUInt16LE(n.length, 26); lh.writeUInt16LE(lExtra.length, 28);
+    locals.push(lh, n, lExtra, comp);
+    const cExtra = (isSheet && (where === 'cd' || where === 'both')) ? z64() : Buffer.alloc(0);
+    const cUsz = cExtra.length ? 0xFFFFFFFF : data.length;
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(cUsz, 24);
+    ch.writeUInt16LE(n.length, 28); ch.writeUInt16LE(cExtra.length, 30); ch.writeUInt32LE(off, 42);
+    cd.push(ch, n, cExtra);
+    off += 30 + n.length + lExtra.length + comp.length;
+  }
+  const localBuf = Buffer.concat(locals), cdBuf = Buffer.concat(cd);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(files.length, 8); eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(localBuf.length, 16);
+  return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
+}
+
+test('繞過⑤｜ZIP64 宣告巨大解壓後大小：三種擺法都要擋（v1 只讀 local header 就會漏）', async () => {
+  // ⚠️ Codex 第三輪找到的形狀（它的報告被自家內容過濾器截斷，只看得到這一項）。
+  //    v1 的宣告值檢查是 `buf.readUInt32LE(off + 22)`——**只讀 local header**，
+  //    完全不看中央目錄，也不解 ZIP64 的 extra field。
+  //    於是「把巨大的 usz 只寫在中央目錄的 ZIP64 欄位」就整個繞過去，
+  //    而 SheetJS 照樣照那個值去配置（實測它丟 ERR_STRING_TOO_LONG，代表真的去要那麼大的空間了）。
+  //
+  //    v2/v3 已改成 `Math.max(中央目錄, local)` ＋ 兩邊都跑 `applyZip64`——這一題把它釘住。
+  const sheet = sheetXml('A1:A1', ONE_CELL);
+  for (const where of ['cd', 'local', 'both']) {
+    const data = zip64(/** @type {any} */ (shell([sheet])), where);
+    assert.ok(data.length < 4000, `攻擊檔應該很小（${where}：${data.length} bytes）`);
+    const err = await parseErr(data);
+    assert.equal(err?.code, 'xlsx_declared_size_too_large',
+      `ZIP64 的大小宣告在「${where}」時沒被擋下——牆漏看了那一份 metadata`);
+  }
+});
+
 // ============================================================================
 // 四、門檻本身：要能從「Render 512MB」推導，而且對正常值有足夠餘裕
 // ============================================================================
