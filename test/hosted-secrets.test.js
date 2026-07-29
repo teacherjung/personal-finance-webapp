@@ -27,6 +27,7 @@ const { encryptSecret, decryptSecret, isEncrypted } = await import('../lib/crypt
 const { stripSecretsForBackup } = await import('../lib/secret-fields.js');
 const { hostedConfig } = await import('../lib/hosted.js');
 const { app, resetRateLimitsForTest } = await import('../server.js');
+const { STATEMENT_FILE_POST_ROUTES } = await import('../lib/http-body.js');
 
 // 這三個字串就是「機密」——整份考題到處掃它們，任何回應／錯誤訊息／資料庫列出現就算洩漏
 const FLEX = 'FLEXTOKEN-SECRET-0001';
@@ -413,6 +414,52 @@ test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕
   assert.equal(乙.accountNo, '', '撞號時寧可留空');
 
   // 收尾：清掉這兩筆，別影響後面的題目
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
+test('來回⑮：**數字 id** 的卡片夾帶密碼 → 一樣不可以採用（走訪不能因為身分不明就跳過）', async () => {
+  // ⚠️ Codex 定向複審第八輪抓到的 High：`stable` 只決定「能不能當回填座標」，
+  //    **不決定這個欄位要不要被走訪剝除**——正式實作是對的，但沒有考題釘住這個區分。
+  //    實測突變「mapSecrets 略過非穩定 id 的卡片」→ 原有 32 題全綠，
+  //    因為既有的數字 id 題只驗「不可繼承舊值」，夾帶機密題用的又都是正常字串 id。
+  //    漏掉的後果很嚴重：**匯入檔裡的密碼會被直接採用**（上傳的備份可能來自別處）。
+  const EVIL = 'EVIL-NUMERIC-ID-PW';
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, cards: [{ id: 7, name: '數字 id 的卡', pdfPassword: EVIL }] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功：${await r.clone().text()}`);
+
+  const cards = await (await as('tokA', '/api/cards')).json();
+  assert.equal(cards.length, 1, '前置條件：那張卡真的匯進去了');
+  assert.equal(cards[0].name, '數字 id 的卡', '前置條件：非機密欄位確實被匯入（證明這趟真的跑了）');
+  assert.equal(cards[0].pdfPasswordSet, false,
+    '數字 id 的卡採用了匯入檔裡的密碼——走訪不可以因為身分不明就整張跳過');
+  assert.ok(!rawOf(A.id).includes(EVIL), '匯入檔的密碼不可以進資料庫（明文或密文都不行）');
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, cards: [] }) });
+});
+
+test('來回⑯：**數字 id** 的帳戶，完整帳號一樣不可以跟著備份檔出門', async () => {
+  // 同來回⑮，換到第二張清單。突變「mapBackupOnlyPii 略過數字 id 的帳戶」→ 原有 32 題全綠，
+  // 但實際後果是**完整帳號原封不動印在雲端備份裡**（Codex 實測 rawLeak=true）。
+  const NO = '9001007777888899';
+  const seed = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { id: 7, name: '數字 id 的帳戶', type: 'cash', currency: 'TWD', balance: 1, accountNo: NO },
+    ] }),
+  });
+  assert.equal(seed.status, 200, `前置條件：種資料應該成功——${await seed.clone().text()}`);
+  assert.ok(rawOf(A.id).includes(NO), '前置條件：完整帳號真的進資料庫了（不然下面掃不到東西）');
+
+  const body = await (await as('tokA', '/api/export')).text();
+  const dump = JSON.parse(body);
+  const acc = dump.accounts.find((/** @type {any} */ a) => a.name === '數字 id 的帳戶');
+  assert.ok(acc, '前置條件：那筆帳戶確實在備份檔裡（不是整筆不見了）');
+  assert.equal(acc.accountNo, '', '數字 id 的帳戶沒有被剝除——身分不明不代表可以不剝');
+  assert.ok(!body.includes(NO), `雲端匯出夾帶了完整帳號（${NO}）——那個檔案會被下載、可能轉寄`);
+
   await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
 });
 
@@ -931,9 +978,29 @@ test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是
   assert.equal(tooBig.status, 413,
     'HOSTED 的列匯入超過 1 MB 必須擋下——這一題若綠了，代表 server.js 的接線沒在用 installJsonBodyParsers');
 
-  // ③ 吃檔案的端點在 HOSTED 仍維持大入口（收緊只針對吃列的那一條）
-  const file = await as('tokA', '/api/bank-statement/preview', {
-    method: 'POST', body: JSON.stringify({ data: 'x'.repeat(1_100_000) }),
-  });
-  assert.notEqual(file.status, 413, 'HOSTED 也不可以把吃檔案的端點一起掐死');
+  // ③ 吃檔案的端點在 HOSTED 仍維持大入口——**六條逐一打，不抽驗**
+  //    ⚠️ Codex 定向複審第八輪抓到：原本只抽 `/api/bank-statement/preview` 一條，
+  //       而 helper 那邊的六條遍歷跑的是 **LOCAL**。實測只把 HOSTED 的
+  //       `/api/securities/import` 錯接成 1MB → `request-limits` 6/6 全綠、
+  //       `hosted-secrets` 32/32 全綠，**沒有任何一題發現它被掐死了**。
+  //    ⚠️ 而且不可以只寫 `status !== 413`：那分不出「通過了 parser」與「路由根本不存在」。
+  //       要斷言它**真的走進 handler**（送無效內容 → 各自的 400），才證明 body 過得去。
+  const bigFile = 'x'.repeat(1_100_000);
+  const filePosts = [
+    ['/api/statement/preview', { data: bigFile }],
+    [`/api/cards/${cardId}/statement/preview`, { data: bigFile }],
+    ['/api/bank-statement/preview', { data: bigFile }],
+    ['/api/bank-statement/apply', { data: bigFile }],
+    ['/api/securities/preview', { file: bigFile }],
+    ['/api/securities/import', { file: bigFile }],
+  ];
+  assert.equal(filePosts.length, STATEMENT_FILE_POST_ROUTES.length,
+    '六條吃檔案的端點要與 lib/http-body.js 的清單同步（新增端點時這一題會先紅）');
+  for (const [path, payload] of filePosts) {
+    const res = await as('tokA', path, { method: 'POST', body: JSON.stringify(payload) });
+    assert.notEqual(res.status, 413, `${path} 在 HOSTED 被 1MB 掐死了——它收的是檔案本體`);
+    assert.equal(res.status, 400,
+      `${path} 應該進到 handler 才對（無效內容 → 400）。若不是 400，代表它根本沒抵達那條路，` +
+      `「沒被 413 擋下」就證明不了 body 過得去：${(await res.clone().text()).slice(0, 160)}`);
+  }
 });
