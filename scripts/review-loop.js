@@ -148,8 +148,32 @@ function outPath(branch, stage) {
   return join(OUT_DIR, `${safe}-${stage}-${n}.md`);
 }
 
-/** 叫 Codex 跑一次，把輸出存檔。 @param {string} prompt @param {string} dest */
-function runCodex(prompt, dest) {
+/**
+ * 分支現在的 SHA。**審查一定要釘在一個固定的 commit 上。**
+ *
+ * ⚠️ 2026-07-29 實測踩到：Codex 回報「牆被繞過」並附了真實輸出，
+ *    Claude 造了五種變體都重現不出來，追了半小時才發現
+ *    **它測的是舊版本**（建臨時 worktree 時抓到的那一版，而 Claude 之後又 force-push 了）。
+ *    不是誰的錯——是流程沒有把「審的是哪一版」釘住。
+ * @param {string} branch
+ */
+function shaOf(branch) {
+  try {
+    return execFileSync('git', ['rev-parse', `origin/${branch}`], { cwd: ROOT, encoding: 'utf8' }).trim();
+  } catch { return ''; }
+}
+
+/**
+ * 叫 Codex 跑一次，把輸出存檔。
+ * @param {string} prompt @param {string} dest @param {string} branch
+ */
+function runCodex(prompt, dest, branch) {
+  const shaBefore = shaOf(branch);
+  if (!shaBefore) {
+    console.error(`拿不到 origin/${branch} 的 SHA——分支推上去了嗎？`);
+    process.exit(2);
+  }
+  console.log(`釘選：origin/${branch} @ ${shaBefore.slice(0, 8)}`);
   if (!existsSync(CODEX_WT)) {
     console.error(`找不到 Codex 的審查 worktree：${CODEX_WT}`);
     console.error('建立方式：git worktree add --detach "../<repo>-codex" origin/main');
@@ -159,6 +183,18 @@ function runCodex(prompt, dest) {
   spawnSync('git', ['fetch', 'origin', '-q'], { cwd: CODEX_WT });
   spawnSync('git', ['checkout', '--detach', 'origin/main', '-q'], { cwd: CODEX_WT });
 
+  const pinned = `
+
+## ⚠️ 這次要審的版本（請釘住它）
+
+**\`origin/${branch}\` @ \`${shaBefore}\`**
+
+請在報告的**第一行**寫出你實際審到的 commit（\`git rev-parse origin/${branch}\` 的結果）。
+如果它與上面那個不一樣，代表分支在審查期間被推過——**請停下來回報，不要繼續**，
+那份報告會對不上實際的程式碼（2026-07-29 真的發生過：報告指出一個繞過，
+但那是對舊版本測的，花了半小時才追出來）。
+`;
+  prompt += pinned;
   console.log(`→ 交給 Codex（gpt-5.6-sol / xhigh）…輸出會存到 ${dest.replace(ROOT + '/', '')}\n`);
   const r = spawnSync('codex', [
     'exec', ...MODEL,
@@ -169,16 +205,34 @@ function runCodex(prompt, dest) {
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 });
 
   const out = r.stdout || '';
-  writeFileSync(dest, out);
+  const shaAfter = shaOf(branch);
+  writeFileSync(dest, `<!-- 審查對象：origin/${branch} @ ${shaBefore} -->\n\n${out}`);
   console.log(out.slice(-4000));
   console.log(`\n（完整輸出：${dest.replace(ROOT + '/', '')}）`);
 
-  // ⚠️ 副作用檢查：審查者不該留下任何改動。留下了就是違反角色，要當成發現回報。
+  // ── 跑完的三道檢查（規則 2／3 靠工具驗，不靠自律）────────────────────────
+  // ⚠️ ①**分支在審查期間有沒有被推過**——動過就代表這份報告對不上程式碼。
+  if (shaAfter && shaAfter !== shaBefore) {
+    console.error(`\n⚠️⚠️ 分支在審查期間被推過：`);
+    console.error(`     審查開始：${shaBefore.slice(0, 8)}`);
+    console.error(`     現在    ：${shaAfter.slice(0, 8)}`);
+    console.error('     **這份報告作廢，請重跑。** 審查中不可以推分支（規則：審查釘住 SHA）。');
+  }
+  // ⚠️ ②審查者不該留下任何改動。留下了就是違反唯讀角色，要當成一個發現。
   const dirty = spawnSync('git', ['status', '--porcelain'], { cwd: CODEX_WT, encoding: 'utf8' }).stdout.trim();
   if (dirty) {
     console.error('\n⚠️⚠️ 審查 worktree 不乾淨——審查者動了檔案，違反唯讀角色：');
     console.error(dirty);
     console.error('請人工確認之後 `git checkout -- .`，並把這件事當成一個發現。');
+  }
+  // ⚠️ ③審查者不該自己開臨時 worktree（規則：一律 `git diff origin/main...origin/<branch>`，不 checkout）。
+  //    2026-07-29 實測它會建 `/private/tmp/pr<N>-review.*`——那正是「測到舊版本」的來源。
+  const wts = spawnSync('git', ['worktree', 'list'], { cwd: ROOT, encoding: 'utf8' }).stdout || '';
+  const strays = wts.split('\n').filter(l => /\/(private\/)?tmp\/.*(review|pr\d+)/i.test(l));
+  if (strays.length) {
+    console.error('\n⚠️ 審查期間出現臨時 worktree（審查者不該 checkout，那會讓它審到別的版本）：');
+    for (const w of strays) console.error(`     ${w}`);
+    console.error('     收掉：git worktree remove --force <路徑>');
   }
 }
 
@@ -215,7 +269,7 @@ ${diffStat(branch)}
 4. 新增的考題裡有沒有假考題（只認得一種寫法／斷言的東西本來就不存在／依賴前一題的狀態）。
 
 回報格式：逐條「屬實／誤報／需 William 裁決」，附 file:line 與你自己的重現輸出。
-⚠️ **不要改碼、不要 commit、不要合併、不要改 PR 狀態。**`, outPath(branch, 'review'));
+⚠️ **不要改碼、不要 commit、不要合併、不要改 PR 狀態。**`, outPath(branch, 'review'), branch);
 
 } else if (cmd === 'review-fix') {
   // ── ③ Codex 審「修法提案」（還沒動工）──────────────────────────────────
@@ -272,7 +326,7 @@ ${readFileSync(pf, 'utf8')}
 
 回報格式：逐點「同意／建議改成…／這一項要 William 裁決」，並在最後給一個明確結論：
 **「可以照這個方向動工」** 或 **「先別動工，理由是…」**。
-⚠️ **不要改碼、不要 commit、不要幫忙實作。**`, outPath(branch, 'review-fix'));
+⚠️ **不要改碼、不要 commit、不要幫忙實作。**`, outPath(branch, 'review-fix'), branch);
 
 } else if (cmd === 'status') {
   // ── 看這支走到哪一步 ──────────────────────────────────────────────────
