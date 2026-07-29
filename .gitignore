@@ -20,6 +20,8 @@ data/*backup*
 node_modules
 
 # 產生的檔案
+# 審查循環的產出（scripts/review-loop.js）——每次跑都會長，不進版控
+.codex-reviews/
 tmp/
 output/
 *.log
