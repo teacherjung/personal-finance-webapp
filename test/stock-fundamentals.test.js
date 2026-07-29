@@ -350,3 +350,32 @@ test('SEC 解析｜衍生指標的輸入值是 0 時必須保留（不可用真�
   assert.equal(cashFlowInput.value, 0);
   assert.deepEqual(undefinedKeyPaths(result), []);
 });
+
+test('SEC 解析｜衍生指標的官方輸入必須保留全部申報來源欄位（修 undefined 不可以順手弄丟追溯）', async () => {
+  // ⚠️ Codex 定向複審 #351 指出的保存型缺口：上面三題只守「不可以有 undefined」與「0 要留著」，
+  //    所以「從 DERIVED_INPUT_FIELDS 拿掉 filingUrl」這種修法會全綠通過——
+  //    undefined 沒了、0 也在，但**點開數字追不回原始申報**，而「每個數字都追得到來源」
+  //    正是這個功能存在的理由。少一個欄位就是少一條追溯路徑，而且畫面上只會安靜地變成空白。
+  const fixture = await loadFixture('fiscal-year-company.json');
+  const result = parseSecCompanyFacts({
+    symbol: 'FRUIT',
+    cik: '900001',
+    submissions: fixture.submissions,
+    companyFacts: fixture.companyFacts
+  });
+
+  const latest = result.metrics.operatingMargin.annual.at(-1);
+  assert.ok(latest, '前置條件：fixture 必須算得出營業利益率，否則本題等於沒考');
+  const official = latest.inputs.operatingIncome;
+  assert.ok(official, '前置條件：它的輸入之一必須是官方申報指標（不是另一個衍生指標）');
+  assert.equal(official.metricKey, 'operatingIncome');
+
+  // 逐欄位點名：訊息要說得出「少了哪一個」，不然壞掉時只看到一句 deepEqual 失敗
+  for (const field of ['value', 'unit', 'periodStart', 'periodEnd', 'form', 'filedAt', 'accession', 'taxonomy', 'tag', 'filingUrl']) {
+    assert.ok(Object.hasOwn(official, field), `官方輸入少了 ${field}——追不回原始申報了`);
+    assert.notEqual(official[field], '', `官方輸入的 ${field} 是空的`);
+  }
+  assert.match(official.filingUrl, /^https:\/\/www\.sec\.gov\//, 'filingUrl 要是可點的 SEC 連結');
+  assert.equal(official.taxonomy, 'us-gaap');
+  assert.equal(official.tag, 'OperatingIncomeLoss');
+});

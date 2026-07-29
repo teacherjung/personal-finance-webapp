@@ -321,3 +321,59 @@ test('快取匯入牆：公司身分走散、非標準時間與原型鍵都明�
   polluted.data.metrics = JSON.parse('{"__proto__":{"value":1}}');
   assert.match(validateImportItem('stockFundamentals', polluted).errors.join('/'), /合法的 SEC/);
 });
+
+// ============================================================================
+// ⚠️ 全鏈路回歸（2026-07-29 補；Codex 定向複審 #351 指出的缺口）
+// ============================================================================
+//
+// 上面那些題全都用 calendar fixture，而它**算不出「衍生指標再當輸入」**的組合
+// （沒有資本支出→沒有自由現金流→沒有自由現金流率），所以整組 API 題對這個故障是盲的：
+// 還原舊 bug 後 `node --test test/stock-fundamentals-api.test.js` 仍然 7 pass / 0 fail，
+// 但真環境的 GOOGL／AAPL／MSFT 一律 502。
+//
+// 缺的不是「多一個斷言」，是**沒有任何一題走完整條路**：
+//   route → service → repo mutate → 寫入櫃檯 → 落庫 → 再 GET 回來
+// 純函式題證明得了解析結果的形狀，證明不了「它存得進去」。
+
+const fiscalFixture = JSON.parse(await readFile(
+  new URL('./fixtures/sec/fiscal-year-company.json', import.meta.url),
+  'utf8'
+));
+
+/** @param {string} url */
+function fiscalPayload(url) {
+  if (url === 'https://www.sec.gov/files/company_tickers.json') return fiscalFixture.tickerIndex;
+  if (url === 'https://data.sec.gov/submissions/CIK0000900001.json') return fiscalFixture.submissions;
+  if (url === 'https://data.sec.gov/api/xbrl/companyfacts/CIK0000900001.json') return fiscalFixture.companyFacts;
+  throw new Error(`測試收到未核准的外部 URL：${url}`);
+}
+
+test('全鏈路：「衍生指標當輸入」的公司走完整 refresh → 落庫 → GET，不可以在寫入櫃檯被拒', async () => {
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: silentLogger,
+    fetchImpl: async (url) => jsonResponse(fiscalPayload(String(url)))
+  });
+
+  const refresh = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST' });
+  const text = await refresh.clone().text();
+  assert.equal(refresh.status, 200,
+    `refresh 應該成功。舊 bug 會在這裡回 502「data 不是合法的 SEC 解析結果」——${text}`);
+  const body = await refresh.json();
+  assert.equal(body.refreshed, true);
+
+  // ⚠️ 前置條件：這家公司真的算得出「衍生指標當輸入」，否則本題等於沒考
+  //    （calendar fixture 就是這樣悄悄漏掉這個故障的）。
+  const margin = body.data.metrics.freeCashFlowMargin;
+  assert.equal(margin.status, 'available', 'fixture 必須算得出自由現金流率');
+  const nested = margin.annual.find((/** @type {any} */ fact) => fact?.inputs?.freeCashFlow);
+  assert.ok(nested, '必須有「輸入本身也是衍生指標」的那一筆');
+
+  // 落庫之後再讀一次：證明真的寫進去了，不是只在回應裡好看
+  const cached = await request('/api/stock-fundamentals/FRUIT');
+  assert.equal(cached.status, 200);
+  const stored = await cached.json();
+  assert.equal(stored.freshness, 'fresh');
+  assert.equal(stored.data.metrics.freeCashFlowMargin.status, 'available',
+    '快取裡必須有這個指標——refresh 回 200 但沒落庫的話，下次開頁面又是空的');
+});
