@@ -177,8 +177,11 @@ test('HOSTED：只吃列的那一條降到 1 MB（正常尺寸照過、超限回
     if (before === undefined) delete process.env.NOTEASY_HOSTED;
     else process.env.NOTEASY_HOSTED = before;
   }
-});
 
-test('環境變數用完要還原（下一題若跑在 HOSTED 會整串走樣）', () => {
-  assert.notEqual(process.env.NOTEASY_HOSTED, '1');
+  // ⚠️ 還原的斷言必須留在**本題之內**（Codex 定向複審 v4 抓到）。
+  //    原本另開一題只寫 `assert.notEqual(process.env.NOTEASY_HOSTED, '1')`——
+  //    那是假考題：單獨跑時上面這一段根本沒執行過，它照樣綠。
+  //    考題必須守住「**本題自己**動過環境變數、也自己還原了」。
+  assert.equal(process.env.NOTEASY_HOSTED, before,
+    '本題把 NOTEASY_HOSTED 留在被改過的狀態——後面每一題都會在 HOSTED 下跑，整串走樣');
 });

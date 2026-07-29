@@ -367,6 +367,83 @@ test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕
   await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
 });
 
+test('來回⑦：目前一筆無 id、匯入另一筆**完全不同的**無 id 帳戶 → 不可以繼承舊帳號', async () => {
+  // ⚠️ Codex 定向複審 v4 抓到的 blocking，比來回④⑥更陰：
+  //    兩側**各只有一筆**沒有 id 的帳戶，所以「同一條路徑出現兩次」的撞號偵測**根本不會啟動**——
+  //    但 `accounts..accountNo` 這個座標對兩筆完全不同的帳戶是同一格，於是
+  //    「完全不同的新帳戶」靜靜地繼承了舊帳戶的完整帳號，而且回 200。
+  //    修法不是再多數一輪，而是**缺 id 時根本不給座標**（path === null）。
+  const OLD_NO = '9001001111222233';
+
+  // ① 目前資料：一筆沒有 id、帶完整帳號的舊帳戶
+  const seed = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { name: '舊帳戶', type: 'cash', currency: 'TWD', balance: 1, accountNo: OLD_NO },
+    ] }),
+  });
+  assert.equal(seed.status, 200, `前置條件：種資料應該成功——${await seed.clone().text()}`);
+  assert.ok(rawOf(A.id).includes(OLD_NO), '前置條件：舊帳戶的完整帳號真的進資料庫了');
+
+  // ② 匯入一筆**完全不同的**帳戶（也沒有 id、帳號留空）
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { name: '完全不同的新帳戶', type: 'cash', currency: 'TWD', balance: 2, accountNo: '' },
+    ] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功（不是靠 500 擋下來的）：${await r.clone().text()}`);
+
+  // ③ 前置條件：受測操作真的把它換掉了（不然下面斷言是空歡喜）
+  const accs = JSON.parse(rawOf(A.id)).find((/** @type {any} */ x) => x.key === 'accounts')?.data || [];
+  assert.equal(accs.length, 1, '前置條件：匯入後只剩那一筆新帳戶');
+  assert.equal(accs[0].name, '完全不同的新帳戶', '前置條件：確實是新的那一筆');
+
+  // ④ 關鍵斷言
+  assert.equal(accs[0].accountNo, '',
+    `新帳戶繼承了舊帳戶的完整帳號（${OLD_NO}）——沒有 id 的帳戶不可以拿路徑當身分。` +
+    '錯的帳號會拿去配銀行帳單、判自家末碼、分內轉');
+  assert.ok(!rawOf(A.id).includes(OLD_NO), '資料庫裡不該再有舊帳號');
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
+test('來回⑧：**目前資料**兩筆同 id、匯入只有一筆該 id → 目標不可以拿到任何一個舊帳號', async () => {
+  // ⚠️ Codex 定向複審 v4 的漏考：來回④⑥在「來源側」與「目標側」都放兩筆，
+  //    所以只要目標側的撞號偵測還在，拿掉來源側的照樣全綠——來源側那道防線沒有被鎖住。
+  //    這一題只讓**來源側**撞號，目標側單一筆。
+  const DUP_ID = 'dup-source-id';
+  const NO_1 = '9001004444555566';
+  const NO_2 = '9001006666777788';
+
+  const seed = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { id: DUP_ID, name: '來源甲', type: 'cash', currency: 'TWD', balance: 1, accountNo: NO_1 },
+      { id: DUP_ID, name: '來源乙', type: 'cash', currency: 'TWD', balance: 2, accountNo: NO_2 },
+    ] }),
+  });
+  assert.equal(seed.status, 200, `前置條件：種資料應該成功——${await seed.clone().text()}`);
+  const seeded = JSON.parse(rawOf(A.id)).find((/** @type {any} */ x) => x.key === 'accounts')?.data || [];
+  assert.equal(seeded.length, 2, '前置條件：來源側真的有兩筆同 id（不然這一題考不到來源撞號）');
+
+  // 匯入只有一筆用那個 id、帳號留空
+  const r = await as('tokA', '/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ settings: {}, accounts: [
+      { id: DUP_ID, name: '目標', type: 'cash', currency: 'TWD', balance: 3, accountNo: '' },
+    ] }),
+  });
+  assert.equal(r.status, 200, `匯入應該成功：${await r.clone().text()}`);
+
+  const accs = JSON.parse(rawOf(A.id)).find((/** @type {any} */ x) => x.key === 'accounts')?.data || [];
+  assert.equal(accs.length, 1, '前置條件：匯入後只剩目標那一筆');
+  assert.equal(accs[0].accountNo, '',
+    `目標拿到了 ${accs[0].accountNo}——來源側有兩筆同 id 時，回填來源本身就不確定是誰的，不可以賭一個`);
+
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
 test('來回⑥：**匯入檔裡**兩筆用同一個 id → 不可以兩筆都拿到同一個完整帳號', async () => {
   // ⚠️ Codex 定向複審 2026-07-29 抓到的 blocking：v3 只數「目前資料」那一側的路徑撞號。
   //    那擋得住「現有兩筆沒有 id」（來回④），卻擋不住這一題——目前資料只有一筆、每條路徑都唯一，
