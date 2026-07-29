@@ -196,6 +196,105 @@ test('accountNo 只從備份檔剝除，**沒有**被加密——那是 William 
   assert.ok(!raw.includes(`enc:v1:${FULL_ACCOUNT_NO}`), 'sanity');
 });
 
+// ============================================================================
+// ⚠️ 走完「匯出→匯入」整趟的考題（2026-07-29 補；沒有這些題就是上一版那個 blocking 回歸）
+// ============================================================================
+//
+// 上一版只斷言**匯出端**（備份檔不含完整帳號、資料庫裡未加密），於是
+// 「剝掉之後匯入端沒有對稱地保留回來」這件事完全沒被守住——
+// 匯出→匯入回自己的帳號會把所有帳號洗成空字串，**而且回 200**。
+// 教訓：**剝除與還原是一對，考題也必須成對**。只考單邊等於沒考。
+
+test('來回①：匯出→匯入回自己的帳號，完整帳號必須還在（不可以被洗成空字串）', async () => {
+  const before = await (await as('tokA', '/api/accounts')).json();
+  const acc = before.find((/** @type {any} */ a) => a.id === ACCOUNT_ID);
+  assert.equal(acc?.accountNoSet, true, '前置條件：帳號本來是有設定的');
+
+  const backup = await (await as('tokA', '/api/export')).json();
+  assert.equal(backup.accounts.find((/** @type {any} */ a) => a.id === ACCOUNT_ID).accountNo, '',
+    '前置條件：備份檔本身確實不含完整帳號（那是刻意的）');
+
+  const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(r.status, 200, `還原自己的備份應該成功：${await r.clone().text()}`);
+
+  const after = await (await as('tokA', '/api/accounts')).json();
+  const acc2 = after.find((/** @type {any} */ a) => a.id === ACCOUNT_ID);
+  assert.equal(acc2?.accountNoSet, true,
+    '還原自己的備份之後，完整帳號必須還在——被洗掉的話 matchAccount 會配不到，' +
+    '每期帳單多開一個重複帳戶、淨資產默默多算，而畫面回 200 說成功');
+  assert.equal(acc2?.accountNoLast4, FULL_ACCOUNT_NO.slice(-4), '末四碼要對得上原值');
+  // 資料層再確認一次（API 回應說 ok 正是這個 bug 的一部分）
+  assert.ok(rawOf(A.id).includes(FULL_ACCOUNT_NO), '資料庫裡的完整帳號必須原封不動');
+});
+
+test('來回②：三個機密欄位在同一趟來回中也要保住（對照組）', async () => {
+  const backup = await (await as('tokA', '/api/export')).json();
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  const s2 = await (await as('tokA', '/api/settings')).json();
+  assert.equal(s2.ib.flexTokenSet, true, 'IB token 要保住');
+  assert.equal(s2.taishinSecPdfPasswordSet, true, '台新密碼要保住');
+  const cards = await (await as('tokA', '/api/cards')).json();
+  assert.equal(cards[0].pdfPasswordSet, true, '卡片密碼要保住');
+});
+
+test('來回③：匯入檔裡帶著完整帳號時要照收（LOCAL 的完整備份搬進雲端不可以反而被清掉）', async () => {
+  // accountNo 的語意與機密欄位**刻意不同**：機密一律不採用檔案裡的值（可能來自別處、不可信），
+  // accountNo 走「留空＝不變更」——它不是憑證，只是不該跟著檔案出門。
+  const NEW_NO = '900100999988887777';
+  const backup = await (await as('tokA', '/api/export')).json();
+  backup.accounts.find((/** @type {any} */ a) => a.id === ACCOUNT_ID).accountNo = NEW_NO;
+  const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
+  assert.equal(r.status, 200);
+  const after = await (await as('tokA', '/api/accounts')).json();
+  assert.equal(after.find((/** @type {any} */ a) => a.id === ACCOUNT_ID)?.accountNoLast4, '7777',
+    '檔案裡有值就要照收');
+  // 收尾：改回原值，不影響後續題目
+  await as('tokA', `/api/accounts/${ACCOUNT_ID}`, { method: 'PUT', body: JSON.stringify({ accountNo: FULL_ACCOUNT_NO }) });
+});
+
+test('來回④：沒有 id 的帳戶路徑會撞號 → 一律不還原，**絕不可以把甲的帳號寫進乙那一格**', async () => {
+  // `accounts[].id` 不在必填欄位裡（`lib/schema.js`），兩筆沒有 id 的帳戶會算出同一個
+  // 路徑 `accounts..accountNo`，而還原是**按路徑寫的**——沒有護欄的話會把甲的帳號填進乙那一格。
+  // 與 `lib/store-pg.js` 對 `cards..pdfPassword` 的處置同一個判準：
+  // **寧可少救一個欄位，也不要把資料寫錯。**
+  //
+  // ⚠️ 這一題第一版只斷言「兩筆會算出同一個路徑」——**護欄拿掉照樣綠**（突變測試當場抓到）。
+  //    要走**正式匯入路徑**、斷言「乙沒有拿到甲的號碼」才算數。
+  const A_NO = '111122223333';
+  const B_NO = '444455556666';
+  const twoNoId = {
+    settings: {},
+    accounts: [
+      { name: '無 id 甲', type: 'cash', currency: 'TWD', balance: 1, accountNo: A_NO },
+      { name: '無 id 乙', type: 'cash', currency: 'TWD', balance: 2, accountNo: B_NO },
+    ],
+  };
+  // ① 先用匯入把這兩筆種進去（這是唯一能造出「沒有 id 的帳戶」的正式路徑）
+  assert.equal((await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(twoNoId) })).status, 200);
+  const seeded = JSON.parse(rawOf(A.id));
+  const seededAccounts = seeded.find((/** @type {any} */ r) => r.key === 'accounts')?.data || [];
+  assert.equal(seededAccounts.length, 2, '前置條件：兩筆都進去了');
+
+  // ② 匯出（accountNo 被剝成空）→ 再匯入回來
+  const backup = await (await as('tokA', '/api/export')).json();
+  assert.equal((await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) })).status, 200);
+
+  // ③ 關鍵斷言：**不准出現「甲的號碼跑到乙身上」**
+  const after = JSON.parse(rawOf(A.id));
+  const accs = after.find((/** @type {any} */ r) => r.key === 'accounts')?.data || [];
+  const 甲 = accs.find((/** @type {any} */ a) => a.name === '無 id 甲');
+  const 乙 = accs.find((/** @type {any} */ a) => a.name === '無 id 乙');
+  assert.ok(甲 && 乙, '兩筆帳戶都要還在');
+  assert.notEqual(乙.accountNo, A_NO, '❌ 甲的帳號被寫進乙那一格了——路徑撞號的護欄沒生效');
+  assert.notEqual(甲.accountNo, B_NO, '❌ 乙的帳號被寫進甲那一格了');
+  // 路徑撞號時我們選擇**兩邊都不還原**（空字串），而不是賭一個
+  assert.equal(甲.accountNo, '', '撞號時寧可留空');
+  assert.equal(乙.accountNo, '', '撞號時寧可留空');
+
+  // 收尾：清掉這兩筆，別影響後面的題目
+  await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify({ settings: {}, accounts: [] }) });
+});
+
 test('stripSecretsForBackup：深拷貝，不可以順手把記憶體裡那包也清掉', () => {
   const live = { settings: { taishinSecPdfPassword: TAISHIN, ib: { flexToken: FLEX } }, cards: [{ id: 'c1', pdfPassword: CARDPW }] };
   const out = stripSecretsForBackup(live);

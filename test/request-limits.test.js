@@ -56,7 +56,7 @@ test('/api/import 可還原超過 1 MB 的完整備份', async () => {
 //    原因（Codex 收官審查 #10 引出的實測）：那三個只收「預覽已經解析好的列」，身上一個位元組的檔案
 //    都沒有，卻跟吃 base64 PDF/XLSX 的端點共用 15MB 入口。而那些列寫進 kv 時會**放大約 3 倍**——
 //    一個 15MB 的請求塞得下 261 列、落庫 44.9MB。這不是新增限制，是把混進群組的成員請出去。
-test('吃檔案的四個端點可以超過 1 MB；只吃「已解析的列」的三個不行', async () => {
+test('吃檔案的六個端點可以超過 1 MB；只吃「已解析的列」的那一條不行', async () => {
   const parserApp = express();
   installJsonBodyParsers(parserApp);
   for (const route of STATEMENT_JSON_POST_ROUTES) {
@@ -69,17 +69,20 @@ test('吃檔案的四個端點可以超過 1 MB；只吃「已解析的列」的
 
   try {
     // 吃 base64 檔案本體 → 需要大入口
+    // ⚠️ 判準是「**它從 req.body 讀什麼**」，不是端點名字裡有沒有 import／apply
+    //    （2026-07-29 自審抓到：我第一版照名字分類，把下面兩條 apply/import 誤放進 rows 組，
+    //     結果連 LOCAL 的銀行／證券對帳單匯入都會在「按確認」那步被 413 打斷）。
     const filePaths = [
-      '/api/statement/preview',
-      '/api/cards/card-1/statement/preview',
-      '/api/bank-statement/preview',
-      '/api/securities/preview',
+      '/api/statement/preview',              // req.body.data
+      '/api/cards/card-1/statement/preview', // req.body.data
+      '/api/bank-statement/preview',         // req.body.data
+      '/api/bank-statement/apply',           // req.body.data ← 名字叫 apply，收的是檔案本體
+      '/api/securities/preview',             // req.body?.file
+      '/api/securities/import',              // req.body?.file ← 名字叫 import，收的是檔案本體
     ];
     // 只吃預覽產生的列 → 一般 1MB 就夠（真實帳單一次幾百列、幾十 KB，餘裕約 30 倍）
     const rowPaths = [
-      '/api/cards/card-1/statement/import',
-      '/api/bank-statement/apply',
-      '/api/securities/import',
+      '/api/cards/card-1/statement/import',  // req.body.transactions ← 唯一真的只吃列的
     ];
     assert.equal(filePaths.length + rowPaths.length, STATEMENT_JSON_POST_ROUTES.length,
       '端點清單與考題要同步（兩張清單合起來＝全集）');
