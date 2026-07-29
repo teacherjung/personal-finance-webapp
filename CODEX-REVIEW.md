@@ -23,11 +23,22 @@
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
-> **合併也由 Codex 代執行（William 2026-07-27 追加授權）**：PR 需要合併時，Claude 請 Codex 代替 William 處理，四個步驟缺一不可：
+> **合併也由 Codex 代執行（William 2026-07-27 追加授權）**：PR 需要合併時，Claude 請 Codex 代替 William 處理，五個步驟缺一不可：
 > 1. 確認**審查結論**（無阻擋問題）與 **CI 全綠**（`gh pr checks`）；有任一不成立就**停下來回報，不要合併**。
-> 2. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**）。
-> 3. 確認遠端分支已刪除。
-> 4. 回報**合併結果**與**是否需要重啟服務**（動到 `lib/`、`server.js`、`package.json` ＝要重啟；只動 `public/` 的前端改動重新整理即可；純文件不必）。
+> 2. ⚠️ **堆疊檢查（機械執行，不可憑印象跳過）**——確認這支不是別支 PR 的基底：
+>    ```bash
+>    gh pr view <N> --json headRefName -q .headRefName   # 先取得本支的 head 分支名
+>    gh pr list --state open --json number,baseRefName -q "[.[]|select(.baseRefName==\"<上面那個分支名>\")]|.[].number"
+>    ```
+>    **第二個指令有任何輸出＝這支是別人的基底（堆疊 PR）→ 停下來回報，不要用下一步的指令。**
+>    改走 AGENTS.md「堆疊 PR 的合併程序」：由下而上、每合併一支就把下一支的 base 改成 `main` 並 rebase、
+>    **全程不可 `--delete-branch`**（刪基底會讓上層 PR 被 GitHub 直接關閉為 MERGED 且無法重開），
+>    整疊合併完再抽查最上層 PR 的代表性新檔**是否真的出現在 `main`**。
+>    〔為什麼要機械檢查：這個判斷失敗過兩次——2026-07-10 的 #3/#5 被 `--delete-branch` 誤關、
+>    2026-07-28 的 #311/#312 各自合進自己的 base。**兩次畫面上都是「Merged」＋CI 全綠、零錯誤訊息。**〕
+> 3. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**；`--delete-branch` **僅限步驟 2 確認非堆疊時**）。
+> 4. 確認遠端分支已刪除。
+> 5. 回報**合併結果**與**是否需要重啟服務**（動到 `lib/`、`server.js`、`package.json` ＝要重啟；只動 `public/` 的前端改動重新整理即可；純文件不必）。
 >
 > ⚠️ Codex 合併前**不可**自行修改程式（審查者角色不變）；發現問題就回報給 Claude 修。
 
