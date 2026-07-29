@@ -244,6 +244,28 @@ test('accountNo 只從備份檔剝除，**沒有**被加密——那是 William 
 // 匯出→匯入回自己的帳號會把所有帳號洗成空字串，**而且回 200**。
 // 教訓：**剝除與還原是一對，考題也必須成對**。只考單邊等於沒考。
 
+// ⚠️⚠️ **保存型考題一定要另外證明「受測操作真的執行了」**（鐵則 9③；Codex 定向複審第七輪抓到）。
+//    實測：把 `saveDb` 暫時改成不寫入、handler 仍回 200——來回①②⑤⑪**四題單獨跑全部通過**。
+//    它們不是假考題（破壞保存機制時確實會紅），但少了這道證明就分不清
+//    「保住了」和「這趟匯入根本沒發生」。作法＝在備份裡同時改一個**非機密**標記，
+//    匯入後斷言它已更新；機密／帳號則斷言一字不差。
+/**
+ * 在備份裡種一個**非機密**標記。用 `settings.usdTwd`：它是純數字、一定會來回、
+ * 而且與機密／帳號那兩條路完全無關（不會讓考題自己互相影響）。
+ * @param {any} backup @param {number} mark 每題給一個不同的值
+ */
+function markBackup(backup, mark) {
+  backup.settings = { ...(backup.settings || {}), usdTwd: mark };
+  return mark;
+}
+/** 匯入後確認標記真的落庫了＝這趟匯入確實寫進去。 @param {number} mark */
+async function assertImportRan(mark) {
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings?.usdTwd, mark,
+    `這趟匯入沒有真的寫進去（非機密標記 usdTwd=${mark} 不在資料庫裡）——` +
+    '底下「機密／帳號保住了」的斷言證明不了任何事');
+}
+
 test('來回①：匯出→匯入回自己的帳號，完整帳號必須還在（不可以被洗成空字串）', async () => {
   const NO = '9001005555666677';
   const id = await newAccount('tokA', NO, '測試帳戶-來回1');
@@ -251,9 +273,11 @@ test('來回①：匯出→匯入回自己的帳號，完整帳號必須還在�
   const backup = await (await as('tokA', '/api/export')).json();
   assert.equal(byId(backup.accounts, id).accountNo, '',
     '前置條件：備份檔本身確實不含完整帳號（那是刻意的）');
+  const mark = markBackup(backup, 31.11);
 
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200, `還原自己的備份應該成功：${await r.clone().text()}`);
+  await assertImportRan(mark);
 
   const after = await (await as('tokA', '/api/accounts')).json();
   const acc2 = byId(after, id);
@@ -296,8 +320,10 @@ test('來回②：三個機密欄位在同一趟來回中也要保住（對照�
 
   const backup = await (await as('tokA', '/api/export')).json();
   assert.equal(backup.settings.ib.flexToken, '', '前置條件：備份檔本身不含機密（裁決⑤）');
+  const mark = markBackup(backup, 31.22);
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200, `還原應該成功：${await r.clone().text()}`);
+  await assertImportRan(mark);
 
   // 斷言看**資料庫原始列**：三個解密後的值都要與匯入前一字不差
   assert.deepEqual(plaintexts(), expected,
@@ -317,9 +343,11 @@ test('來回⑤：舊備份**根本沒有 accountNo 欄位**時，現值一樣�
   for (const a of backup.accounts) delete a.accountNo;
   assert.ok(!('accountNo' in byId(backup.accounts, id)),
     '前置條件：欄位真的被刪掉了（不是空字串）');
+  const mark = markBackup(backup, 31.55);
 
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200, `舊備份應該還原得回來：${await r.clone().text()}`);
+  await assertImportRan(mark);
   const after = await (await as('tokA', '/api/accounts')).json();
   assert.equal(byId(after, id)?.accountNoSet, true,
     '舊備份（沒有 accountNo 欄位）把現值洗掉了——「留空＝不變更」沒有涵蓋「欄位不存在」');
@@ -461,9 +489,11 @@ test('來回⑪：舊備份**省略 pdfPassword 欄位**時，現有密碼一樣
   // 模擬「升級前產生的舊備份」：整個欄位不存在（不是空字串）
   for (const c of backup.cards) delete c.pdfPassword;
   assert.ok(!('pdfPassword' in byId(backup.cards, cardId)), '前置條件：欄位真的被刪掉了');
+  const mark = markBackup(backup, 31.99);
 
   const r = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(backup) });
   assert.equal(r.status, 200, `舊備份應該還原得回來：${await r.clone().text()}`);
+  await assertImportRan(mark);
 
   const after = await (await as('tokA', '/api/cards')).json();
   assert.equal(byId(after, cardId)?.pdfPasswordSet, true,
