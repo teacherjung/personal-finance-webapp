@@ -174,6 +174,7 @@ function runCodex(prompt, dest, branch) {
     process.exit(2);
   }
   console.log(`釘選：origin/${branch} @ ${shaBefore.slice(0, 8)}`);
+  const wtsBefore = spawnSync('git', ['worktree', 'list'], { cwd: ROOT, encoding: 'utf8' }).stdout || '';
   if (!existsSync(CODEX_WT)) {
     console.error(`找不到 Codex 的審查 worktree：${CODEX_WT}`);
     console.error('建立方式：git worktree add --detach "../<repo>-codex" origin/main');
@@ -227,8 +228,11 @@ function runCodex(prompt, dest, branch) {
   }
   // ⚠️ ③審查者不該自己開臨時 worktree（規則：一律 `git diff origin/main...origin/<branch>`，不 checkout）。
   //    2026-07-29 實測它會建 `/private/tmp/pr<N>-review.*`——那正是「測到舊版本」的來源。
-  const wts = spawnSync('git', ['worktree', 'list'], { cwd: ROOT, encoding: 'utf8' }).stdout || '';
-  const strays = wts.split('\n').filter(l => /\/(private\/)?tmp\/.*(review|pr\d+)/i.test(l));
+  const wtsAfter = spawnSync('git', ['worktree', 'list'], { cwd: ROOT, encoding: 'utf8' }).stdout || '';
+  // ⚠️ 只提**這一輪新出現的**——舊的殘留另外清，混在一起報會變成每次都響的狼來了警報
+  const before = new Set((wtsBefore || '').split('\n'));
+  const strays = wtsAfter.split('\n').filter(l =>
+    /\/(private\/)?tmp\/.*(review|pr\d+)/i.test(l) && !before.has(l));
   if (strays.length) {
     console.error('\n⚠️ 審查期間出現臨時 worktree（審查者不該 checkout，那會讓它審到別的版本）：');
     for (const w of strays) console.error(`     ${w}`);
@@ -327,6 +331,66 @@ ${readFileSync(pf, 'utf8')}
 回報格式：逐點「同意／建議改成…／這一項要 William 裁決」，並在最後給一個明確結論：
 **「可以照這個方向動工」** 或 **「先別動工，理由是…」**。
 ⚠️ **不要改碼、不要 commit、不要幫忙實作。**`, outPath(branch, 'review-fix'), branch);
+
+} else if (cmd === 'conform') {
+  // ── 規格符合性審查：適合「牆 vs 被保護的解析器」這一類 ──────────────────
+  //
+  // ⚠️ 為什麼要有這個模式（2026-07-29）：`fix/xlsx-resource-limits` 的審查**連續兩次**
+  //    被 Codex 平台的內容過濾器整份切斷（第二次連一個字的審查內容都沒有）。
+  //    第一次以為是提示詞寫得像在教人造攻擊工具，加了 SCOPE 之後 #347 過了——
+  //    但 #342 還是被擋，因為**被審的材料本身**幾乎全是攻擊檔的建構器。
+  //
+  // 更重要的是：回頭看那道牆被打穿的五次（宣告值加總／宣告 0／local vs 中央目錄／
+  // EOCD 欄位偏移／ZIP64 extra field），**沒有一次是「創意攻擊」**，
+  // 全部都是「**牆跟解析器對同一份 metadata 有歧見**」。
+  //
+  // 所以正確的審查問題不是「你能不能找到繞過」，而是
+  // 「**這兩份實作逐步對得起來嗎？跟規格對得起來嗎？**」——
+  // 那更貼近真正的失效模式，而且只要讀程式碼、不必造任何檔案。
+  const against = flags.against;
+  if (!against) {
+    console.error('要指定對照的實作：--against <路徑>');
+    console.error('例：--against node_modules/xlsx/xlsx.js  （我們的牆要跟它讀同一份 metadata）');
+    process.exit(2);
+  }
+  runCodex(`請先讀 repo 根目錄的 CODEX-REVIEW.md 與 AGENTS.md。
+
+# 規格符合性審查：分支 \`${branch}\`${flags.pr ? `（PR #${flags.pr}）` : ''}
+${SCOPE}
+${ROLE}
+
+## 這一次要問的問題（不是「找繞過」，是「對不對得起來」）
+
+這支 PR 裡有一段程式，職責是**在把檔案交給解析器之前，先量它有多貴**。
+它必須跟**被保護的那個解析器讀同一份 metadata**——不然它看到的世界跟解析器看到的不是同一個。
+
+這個專案在這一點上已經出過**五次**問題，每一次都是同一個類別：
+  ① 相信宣告值的加總      ② 相信「宣告 0 ＝沒東西」
+  ③ 枚舉方式不同（循序掃 local header vs 走中央目錄）
+  ④ 讀錯欄位偏移（EOCD 的 +8 vs +10）
+  ⑤ 漏解 ZIP64 的 extra field
+
+**沒有一次是創意攻擊，全部都是「兩份實作對同一份資料的理解有落差」。**
+
+## 請做的事
+
+1. 把 \`git diff origin/main...origin/${branch}\` 裡那段掃描程式**逐步讀完**（不要 checkout）。
+2. 把 \`${against}\` 裡對應的解析流程**也逐步讀完**。
+3. **逐步對照**：兩者在下列每一點上的行為是否一致？不一致的地方就是下一個 ⑥。
+   - 從哪裡開始枚舉？（檔頭？尾部？哪個索引？）
+   - 枚舉幾個項目？讀哪個欄位得到數量？
+   - 每個項目的位置怎麼決定？
+   - 大小從哪一份 metadata 取？有多個來源時以誰為準？
+   - 有哪些欄位／旗標會改變上面任何一項的解讀？
+   - 遇到解讀不了的結構時，各自怎麼處理？
+4. 再對照 **ZIP 規格本身**（APPNOTE）：有沒有規格允許、但兩邊都沒處理的情形？
+
+## 回報
+
+逐點「一致／不一致（附兩邊的 file:line）」。不一致的每一項請說明
+**「解析器會怎麼理解、我們的掃描會怎麼理解、兩者差在哪」**，以及安全的修正方向。
+⚠️ **不需要造任何檔案，也不要寫攻擊步驟**——這一輪要的是逐步對照的結論。
+⚠️ 不要改碼、不要 commit、不要合併。`, outPath(branch, 'conform'), branch);
 
 } else if (cmd === 'status') {
   // ── 看這支走到哪一步 ──────────────────────────────────────────────────
