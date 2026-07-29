@@ -45,21 +45,25 @@ test('合併程序：CODEX-REVIEW 的合併步驟必須「在 fenced code 裡」
   const unquoted = raw.split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
   const visible = unquoted.replace(/<!--[\s\S]*?-->/g, '');
 
-  // ① 指令必須在 fenced code 區塊裡的**非註解行、行首**——敘述句不算、HTML 註解不算（r1 繞法）、
-  //    shell 註解行 `# node scripts/...` 也不算（r2 繞法：Codex 示範 includes() 連註解都認）
+  // ① 指令必須是 fenced code 裡「trim 後整行精確等於」的一行（r4，Codex r3 處方）——
+  //    行首錨定不夠：`node scripts/check-pr-merge-gate.js <N> || true` 照樣匹配，
+  //    而 `|| true` 會把閘的退出碼吞掉＝fail-closed 被拆。整行相等才算數。
+  //    （HTML 註解已剝＝r1 繞法擋掉；`# node …` trim 後不等於指令＝r2 繞法擋掉；帶後綴＝r3 繞法擋掉）
+  const GATE_CMD = 'node scripts/check-pr-merge-gate.js <N>';
   const fences = [...visible.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
-  const cmdLines = fences.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   assert.ok(
-    cmdLines.some((l) => /^node scripts\/check-pr-merge-gate\.js\b/.test(l)),
-    '合併步驟裡沒有「可直接複製執行」的堆疊閘指令行（node scripts/check-pr-merge-gate.js 開頭、非註解）。'
-      + '敘述、HTML 註解（r1 繞法）、shell 註解行（r2 繞法）都不算數'
+    fences.split('\n').some((l) => l.trim() === GATE_CMD),
+    `合併步驟的 fenced code 裡必須有「整行精確等於」的 \`${GATE_CMD}\`——`
+      + '敘述、註解（r1/r2 繞法）、帶 `|| true` 等後綴（r3 繞法：吞掉退出碼＝拆掉 fail-closed）都不算數'
   );
 
-  // ② 順序：閘在 merge 之前（放在後面＝合併完才檢查＝沒有意義）
-  const gateAt = visible.indexOf('check-pr-merge-gate');
-  const mergeAt = visible.indexOf('gh pr merge');
-  assert.ok(mergeAt !== -1, '合併區塊裡找不到 gh pr merge——程序被改寫了，考題要跟著更新');
-  assert.ok(gateAt !== -1 && gateAt < mergeAt, '堆疊閘必須出現在 gh pr merge 之前');
+  // ② 順序：用「精確匹配的那一行」的行號去比，不用 indexOf 子字串——
+  //    r3 繞法：註解掉原指令、把真指令搬到 merge 後面，indexOf 抓到前面敘述裡的字照樣過
+  const vLines = visible.split('\n');
+  const gateLine = vLines.findIndex((l) => l.trim() === GATE_CMD);
+  const mergeLine = vLines.findIndex((l) => l.includes('gh pr merge'));
+  assert.ok(mergeLine !== -1, '合併區塊裡找不到 gh pr merge——程序被改寫了，考題要跟著更新');
+  assert.ok(gateLine !== -1 && gateLine < mergeLine, '堆疊閘那一行（精確匹配）必須在 gh pr merge 之前——放在後面＝合併完才檢查＝沒有意義');
 
   // ③ 被指向的腳本要真的存在（行為正確性由 test/merge-gate.test.js 的假 gh 考題鎖）
   read('scripts/check-pr-merge-gate.js');
