@@ -81,6 +81,45 @@ const shell = (sheets) => /** @type {[string, string][]} */ ([
   ...sheets.map((x, i) => /** @type {[string, string]} */ ([`xl/worksheets/sheet${i + 1}.xml`, x])),
 ]);
 
+
+/**
+ * 造一份「中央目錄同一個項目出現兩次」的 ZIP（fcnt=2，兩個目錄項目指向同一個 local 位移）。
+ * SheetJS 會照 fcnt 解壓兩次——牆如果去重就會少算一半。
+ * @param {[string, string][]} files
+ */
+function zipDuplicateCd(files) {
+  const locals = [], cd = [];
+  let off = 0;
+  for (const [name, content] of files) {
+    const data = Buffer.from(content, 'utf8');
+    const comp = deflateRawSync(data, { level: 9 });
+    const n = Buffer.from(name, 'latin1');
+    const crc = crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22);
+    lh.writeUInt16LE(n.length, 26);
+    locals.push(lh, n, comp);
+    const mk = () => {
+      const ch = Buffer.alloc(46);
+      ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24);
+      ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(off, 42);
+      return [ch, n];
+    };
+    cd.push(...mk());
+    // ⚠️ 同一個 local 位移再登記一次
+    if (name.includes('worksheets')) cd.push(...mk());
+    off += 30 + n.length + comp.length;
+  }
+  const localBuf = Buffer.concat(locals), cdBuf = Buffer.concat(cd);
+  const count = cd.length / 2;
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(count, 8); eocd.writeUInt16LE(count, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(localBuf.length, 16);
+  return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
+}
+
 /** @param {string} dim @param {string} cells */
 const sheetXml = (dim, cells) => `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="${dim}"/><sheetData>${cells}</sheetData></worksheet>`;
 const ONE_CELL = '<row r="1"><c r="A1" t="str"><v>x</v></c></row>';
@@ -203,6 +242,108 @@ test('繞過①｜宣告解壓後大小 = 0：牆不可以相信宣告值，必�
   const err = await parseErr(data);
   assert.equal(err?.code, 'xlsx_unzipped_too_large',
     '宣告 0 卻塞 200MB 必須被「實際解壓量」擋下——這正是第一版設計被破的地方');
+});
+
+// ============================================================================
+// ⚠️ 三之二、v1 的牆被「兩份 metadata 不一致」繞過（2026-07-29 自審抓到）
+// ============================================================================
+//
+// v1 是「從檔頭開始，一個 local header 接一個往下跳」。但 **SheetJS 走的是中央目錄**：
+// 從尾巴找 EOCD → 讀 start_cd → 依每個目錄項目記的**絕對位移** seek 到 local header。
+// 兩者枚舉的**不是同一組條目**——在 local 條目之間插一段填充 byte，
+// v1 讀到非 0x04034b50 就靜默結束、回報「檢查過且乾淨」，SheetJS 卻照樣把炸彈找出來解開。
+//
+// 教訓：**牆要跟被保護的解析器讀同一份 metadata，否則牆看到的世界跟它看到的不是同一個。**
+
+/**
+ * 造一份「local 條目之間插了填充 byte」的 ZIP——中央目錄仍然指到正確位置。
+ * 這是完全合法的 ZIP（規格允許條目之間有間隙），一般解壓工具打得開。
+ * @param {[string, string][]} files @param {number} padding
+ */
+function zipWithPadding(files, padding) {
+  const locals = [], cd = [];
+  let off = 0;
+  for (const [name, content] of files) {
+    const data = Buffer.from(content, 'utf8');
+    const comp = deflateRawSync(data, { level: 9 });
+    const n = Buffer.from(name, 'latin1');
+    const crc = crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22);
+    lh.writeUInt16LE(n.length, 26);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24);
+    ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(off, 42);
+    cd.push(ch, n);
+    locals.push(lh, n, comp);
+    off += 30 + n.length + comp.length;
+    // ⚠️ 關鍵：在條目之間塞填充。中央目錄的 offset 已經算進去了，所以檔案完全合法。
+    if (padding > 0) { locals.push(Buffer.alloc(padding, 0x41)); off += padding; }
+  }
+  const localBuf = Buffer.concat(locals), cdBuf = Buffer.concat(cd);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(files.length, 8); eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(localBuf.length, 16);
+  return new Uint8Array(Buffer.concat([localBuf, cdBuf, eocd]));
+}
+
+test('繞過②｜local 條目之間插填充 byte：牆必須從中央目錄枚舉，不可以循序掃', async () => {
+  // 第一個條目之後插 64 bytes 填充。v1 掃到那裡讀到 0x41414141（不是 PK\x03\x04）就靜默結束，
+  // 於是**後面的炸彈條目一個都沒被量到**，卻回報「檢查過且乾淨」。
+  const files = shell([sheetXml('A1:A1', bigCell(200))]);
+  const data = zipWithPadding(/** @type {any} */ (files), 64);
+  const err = await parseErr(data);
+  assert.ok(err, '插了填充就繞過了——牆還在循序掃 local header');
+  assert.ok(['xlsx_unzipped_too_large', 'xlsx_declared_size_too_large'].includes(err.code),
+    `應該被大小的牆擋下（代表確實量到了那個條目），實際：${err.code}`);
+});
+
+test('繞過②′｜插填充的「正常」檔案仍然要能解析（新寫法不可以誤殺合法 ZIP）', async () => {
+  // 條目之間有間隙是合法的 ZIP，一般工具打得開——牆不可以因此把正常檔案擋掉。
+  const real = realStatement(122);
+  // 先確認對照組本身會過
+  const ok0 = await parseStatement(real);
+  assert.equal(ok0.transactions.length, 122);
+  // 再用手工組的「有填充但內容正常」的檔案
+  const aoa = [['消費日期', '入帳日', '消費明細', '幣別', '金額', '', '', '外幣']];
+  for (let i = 0; i < 5; i++) aoa.push(['2026/07/01', '2026/07/05', `早餐店${i}`, 'TWD', /** @type {any} */ (120), '', '', '']);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Sheet1');
+  const normal = new Uint8Array(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true }));
+  const err = await parseErr(normal);
+  assert.ok(!err || !/xlsx_/.test(String(err.code)),
+    `正常檔案被新的 ZIP 掃描擋掉了：${err?.code} ${err?.message}`);
+});
+
+test('繞過③｜中央目錄有重複條目（同一個位移出現兩次）：兩次都要算進總量', async () => {
+  // SheetJS 會照 fcnt 逐條處理，同一個位移出現兩次就解壓兩次——
+  // 牆如果用「檔名去重」或只算一次，就會少算一半。
+  const bomb = sheetXml('A1:A1', bigCell(12));   // 單條約 12MB，兩條就超過 16MB 上限
+  const files = /** @type {any} */ (shell([bomb]));
+  const data = zipDuplicateCd(files);
+  const err = await parseErr(data);
+  assert.ok(err, '重複條目沒被算兩次');
+  assert.ok(['xlsx_unzipped_too_large', 'xlsx_declared_size_too_large', 'xlsx_malformed_zip'].includes(err.code),
+    `實際：${err.code}`);
+});
+
+test('fail-closed｜結構看不懂一律拒收，不可以靜默當成通過', async () => {
+  // v1 在「讀不到下一個 local header」「內容超出檔案範圍」時 `break` 出迴圈**當成成功**，
+  // 那本身就是第二種繞過方式。
+  const good = shell([sheetXml('A1:H10', ONE_CELL)]);
+  const base = Buffer.from(zip(/** @type {any} */ (good)));
+
+  // ① 沒有 EOCD
+  const noEocd = new Uint8Array(base.subarray(0, base.length - 22));
+  assert.equal((await parseErr(noEocd))?.code, 'xlsx_malformed_zip', '找不到結尾目錄要拒收');
+
+  // ② 中央目錄的位移指到檔案外面
+  const badOffset = Buffer.from(base);
+  const eocdAt = badOffset.length - 22;
+  badOffset.writeUInt32LE(0xFFFFF000, eocdAt + 16);
+  assert.equal((await parseErr(new Uint8Array(badOffset)))?.code, 'xlsx_malformed_zip', '目錄位置越界要拒收');
 });
 
 // ============================================================================
