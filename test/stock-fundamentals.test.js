@@ -497,3 +497,26 @@ test('候選表｜tagGroups 是分組指標的單一真相，tags 由它攤平�
   assert.equal(SEC_METRIC_CANDIDATES.currentDebt.tagGroups.length, 2, '流動債務＝兩組該相加的科目');
   assert.equal(SEC_METRIC_CANDIDATES.noncurrentDebt.tagGroups.length, 1, '非流動債務＝單組替代');
 });
+
+test('流動債務｜相加後的輸出必須過得了寫入櫃檯（#351 的死法：解析器輸出被整包拒收）', () => {
+  // #351＝衍生輸入生出 undefined 鍵 → sanitizeDbForWrite 整包拒收 → 真資料上 100% 502。
+  // 那題的回歸考題用的是 fixture，而 fixture 沒有「兩個債務科目並報」→ 相加後的 formula／inputs
+  // 從來沒走過這道櫃檯。這一題就是把那個缺口補上：純解析器測綠不代表寫得進去。
+  const result = parseWith({
+    ShortTermBorrowings: { USD: [instantRow('2025-06-28', 3000)] },
+    LongTermDebtCurrent: { USD: [instantRow('2025-06-28', 12000)] }
+  });
+  assert.equal(result.metrics.currentDebt.latestQuarter.value, 15000, '前置條件：這一筆必須真的是相加來的');
+  const row = { symbol: 'DEBT', lastAttemptAt: '2026-07-30T00:00:00.000Z', fetchedAt: '2026-07-30T00:00:00.000Z', data: result };
+  const clean = /** @type {any} */ (sanitizeDbForWrite(
+    { settings: {}, stockFundamentals: [row] },
+    { mode: 'throw' }
+  ));
+  assert.equal(clean.stockFundamentals.length, 1, '整包被櫃檯拒收＝正式路徑會回 502');
+  assert.equal(clean.stockFundamentals[0].data.metrics.currentDebt.latestQuarter.value, 15000);
+  assert.equal(
+    clean.stockFundamentals[0].data.metrics.currentDebt.latestQuarter.formula,
+    'ShortTermBorrowings + LongTermDebtCurrent',
+    'formula 被櫃檯洗掉＝來源追不回來了'
+  );
+});
