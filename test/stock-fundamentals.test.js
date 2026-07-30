@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  SecDataContractError,
   SEC_METRIC_CANDIDATES,
   currentDebtLabelAccessions,
   lookupSecTicker,
@@ -303,23 +304,23 @@ test('SEC 輸入牆｜CIK 不一致、壞 ticker 與壞 payload 直接拒絕，�
     cik: '42',
     submissions: fixture.submissions,
     companyFacts: fixture.companyFacts
-  }), /CIK/);
+  }), (e) => e instanceof SecDataContractError && /CIK/.test(e.message));
   assert.throws(() => parseSecCompanyFacts({
     symbol: 'FRUIT',
     cik: 'not-a-cik',
     submissions: fixture.submissions,
     companyFacts: fixture.companyFacts
-  }), /CIK/);
+  }), (e) => e instanceof SecDataContractError && /CIK/.test(e.message));
   assert.throws(() => parseSecCompanyFacts({
     symbol: '__proto__',
     submissions: fixture.submissions,
     companyFacts: fixture.companyFacts
-  }), /ticker/);
+  }), (e) => e instanceof SecDataContractError && /ticker/.test(e.message));
   assert.throws(() => parseSecCompanyFacts({
     symbol: 'FRUIT',
     submissions: null,
     companyFacts: fixture.companyFacts
-  }), /格式/);
+  }), (e) => e instanceof SecDataContractError && /格式/.test(e.message));
 });
 
 // ── 2026-07-29：解析結果必須真的存得進去 ─────────────────────────────────────

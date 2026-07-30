@@ -582,3 +582,46 @@ test('內部例外就算發生在 SEC 管線深處也不得穿上 SEC 外衣（#
     `根因要進日誌：${JSON.stringify(logLines)}`
   );
 });
+
+test('body 串流在 headers 後中斷（terminated）＝可重試的 SEC 連線錯，第三次成功要正常 refresh', async () => {
+  // #358 r2 blocking：undici 的 body 中斷丟 TypeError('terminated')——不是 abort、沒有鋼印，
+  // 曾被誤判成內部錯（不重試、500、不記 lastError；r1 舊版反而會重試三次）。
+  let factsCalls = 0;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    sleep: async () => {},
+    logger: silentLogger,
+    fetchImpl: async (url) => {
+      if (String(url).includes('/companyfacts/')) {
+        factsCalls += 1;
+        if (factsCalls <= 2) {
+          return new Response(new ReadableStream({
+            start(controller) { controller.error(new TypeError('terminated')); }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+  const refresh = await (await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).json();
+  assert.equal(factsCalls, 3, '前兩次中斷要重試，第三次成功');
+  assert.equal(refresh.freshness, 'fresh', `中斷兩次後應成功 refresh：${JSON.stringify(refresh.lastError || refresh)}`);
+  assert.equal(refresh.lastError, null);
+});
+
+test('SEC 資料契約失敗（合法 JSON、身分對不上）＝sec_parse_error 記入 lastError（鎖住 SecDataContractError 這條新分類）', async () => {
+  const badFacts = structuredClone(fixture.companyFacts);
+  badFacts.cik = 999999;   // 與 ticker/submissions 的 CIK 不一致 → 解析器丟 SecDataContractError
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: silentLogger,
+    fetchImpl: async (url) => jsonResponse(
+      String(url).includes('/companyfacts/') ? badFacts : fixturePayload(String(url))
+    )
+  });
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.equal(refresh.status, 502, await refresh.text());
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError?.code, 'sec_parse_error', '資料契約錯是 SEC 端、要記 lastError');
+  assert.equal(view.lastError?.stage, 'parse');
+});
