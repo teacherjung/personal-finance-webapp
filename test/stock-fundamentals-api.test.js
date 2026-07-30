@@ -464,3 +464,164 @@ test('currentDebt 全鏈路｜抓 filer label 排除父子重疊後再相加，�
   assert.equal(stored.data.metrics.currentDebt.latestQuarter.formula, currentDebt.formula);
   assert.equal(calls.length, 4, 'GET 只能讀已通過寫入牆的快取，不可重抓 filer label');
 });
+
+// ---- 錯誤歸因（2026-07-30，#335 複審 contract/security 兩條；r2 依 Codex 建議加硬）-----------
+// 病：SEC 管線與寫入櫃檯的錯混在同一個 catch——內部錯被記成 SEC lastError 永久寫進租戶快取、
+// 內部原文（[schema] …請修程式）吐給瀏覽器、伺服器日誌只印 stage=unknown。#351 花一天查根因就是這個機制。
+// r2：SEC 身分改用模組私有 Symbol（不可偽造）——「帶 stage」不是證明，廣包 catch 會替內部例外補 stage。
+
+/** 先種一筆成功資料，回傳 {fetchedAt, revenue}——三題共用「舊資料必須原封不動」的前置。 */
+async function seedSuccessfulRefresh(logLines) {
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => jsonResponse(fixturePayload(String(url)))
+  });
+  const seeded = await (await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).json();
+  assert.equal(seeded.freshness, 'fresh', '前置：先種成功資料');
+  return { fetchedAt: seeded.fetchedAt, revenue: seeded.data.metrics.revenue.annual.at(-1).value };
+}
+
+test('內部寫入失敗不得洗成 SEC 失敗：500 通用訊息、不寫 lastError、舊資料原封不動、根因進日誌', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  const before = await seedSuccessfulRefresh(logLines);
+  // 向量＝submissions.name 超長（>LEN_LONG）：SEC 抓取與解析全部成功，寫入被櫃檯拒收
+  // ——正是 #351 那族「解析器自己好好的、櫃檯整包拒收」的第二個觸發點（#335 複審 minor 條）。
+  const sub = structuredClone(fixture.submissions);
+  sub.name = 'A'.repeat(30000);
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => jsonResponse(
+      String(url).includes('/submissions/') ? sub : fixturePayload(String(url))
+    )
+  });
+
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  const body = await refresh.json();
+  assert.equal(refresh.status, 500, JSON.stringify(body));
+  // 瀏覽器只准拿通用訊息（wrapRoute 錯誤形狀＝{ error: 訊息 }）：內部原文一個字都不可外洩
+  assert.ok(!JSON.stringify(body).includes('[schema]'), `內部原文外洩到瀏覽器：${JSON.stringify(body)}`);
+  assert.ok(!JSON.stringify(body).includes('請修程式'), '內部指示句外洩到瀏覽器');
+  assert.match(String(body.error || ''), /不是 SEC 的問題/, '要明說不是 SEC 壞了，別讓使用者去冤枉上游');
+
+  // 內部故障絕不寫進租戶快取；種過的成功資料一個位元組都不可動
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError, null, `內部錯被永久記成 SEC 失敗：${JSON.stringify(view.lastError)}`);
+  assert.equal(view.fetchedAt, before.fetchedAt, '內部失敗不可動到成功資料的 fetchedAt');
+  assert.equal(view.data.metrics.revenue.annual.at(-1).value, before.revenue, '成功資料被改動');
+
+  // 根因（含 [schema] 原文）必須在伺服器日誌——舊版連日誌都查不到，方向完全相反
+  assert.ok(
+    logLines.some((line) => line.includes('內部錯誤') && line.includes('[schema]')),
+    `伺服器日誌找不到根因：${JSON.stringify(logLines)}`
+  );
+});
+
+test('SEC 上游失敗：lastError 記對 stage/code/status、舊資料與 fetchedAt 原封不動、日誌含本服務的 message=', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  const before = await seedSuccessfulRefresh(logLines);
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    sleep: async () => {},   // 讓 429/5xx 重試不等真實時間
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => (
+      String(url).includes('/companyfacts/')
+        ? jsonResponse({ error: 'synthetic outage' }, 500)
+        : jsonResponse(fixturePayload(String(url)))
+    )
+  });
+
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  // 契約：已有成功資料時 SEC 失敗回 200＋refreshed:false＋refreshError（保留最後成功資料）
+  assert.equal(refresh.status, 200);
+  const refreshBody = await refresh.json();
+  assert.equal(refreshBody.refreshed, false);
+  assert.equal(refreshBody.refreshError?.code, 'sec_http_error');
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  // r1 版考題被 Codex 判太弱（stage 只驗非 unknown）——r2 鎖死整組欄位
+  assert.ok(view.lastError, 'SEC 真的失敗＝lastError 照舊要記');
+  assert.equal(view.lastError.stage, 'company-facts', '要記到真正失敗的階段');
+  assert.equal(view.lastError.code, 'sec_http_error');
+  assert.equal(view.lastError.status, 500, 'status 要是上游的 HTTP 500');
+  assert.equal(view.fetchedAt, before.fetchedAt, 'SEC 失敗不可動到最後成功資料的 fetchedAt');
+  assert.equal(view.data.metrics.revenue.annual.at(-1).value, before.revenue, '最後成功資料被改動');
+  assert.ok(
+    logLines.some((line) => /symbol=CAL .*code=sec_http_error .*message=/.test(line)),
+    `日誌要有本服務的 message= 根因行：${JSON.stringify(logLines)}`
+  );
+});
+
+test('內部例外就算發生在 SEC 管線深處也不得穿上 SEC 外衣（#358 r1 blocking 的專屬考題）', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  const before = await seedSuccessfulRefresh(logLines);
+  // 注入向量：fetch 連線失敗（合法的可重試 SEC 錯）→ 重試路徑呼叫 opts.sleep → sleep 炸出
+  // 內部例外。舊版廣包 catch 會替它補 stage 包成 sec_network_error＝寫進租戶 lastError。
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    sleep: async () => { throw new Error('內部時鐘壞掉（合成注入）'); },
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => {
+      if (String(url).includes('/companyfacts/')) throw new TypeError('fetch failed（合成網路故障）');
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  const body = await refresh.json();
+  assert.equal(refresh.status, 500, JSON.stringify(body));
+  assert.match(String(body.error || ''), /不是 SEC 的問題/);
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError, null, `內部例外被穿上 SEC 外衣寫進快取：${JSON.stringify(view.lastError)}`);
+  assert.equal(view.fetchedAt, before.fetchedAt);
+  assert.ok(
+    logLines.some((line) => line.includes('內部錯誤') && line.includes('內部時鐘壞掉')),
+    `根因要進日誌：${JSON.stringify(logLines)}`
+  );
+});
+
+test('body 串流在 headers 後中斷（terminated）＝可重試的 SEC 連線錯，第三次成功要正常 refresh', async () => {
+  // #358 r2 blocking：undici 的 body 中斷丟 TypeError('terminated')——不是 abort、沒有鋼印，
+  // 曾被誤判成內部錯（不重試、500、不記 lastError；r1 舊版反而會重試三次）。
+  let factsCalls = 0;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    sleep: async () => {},
+    logger: silentLogger,
+    fetchImpl: async (url) => {
+      if (String(url).includes('/companyfacts/')) {
+        factsCalls += 1;
+        if (factsCalls <= 2) {
+          return new Response(new ReadableStream({
+            start(controller) { controller.error(new TypeError('terminated')); }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+  const refresh = await (await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).json();
+  assert.equal(factsCalls, 3, '前兩次中斷要重試，第三次成功');
+  assert.equal(refresh.freshness, 'fresh', `中斷兩次後應成功 refresh：${JSON.stringify(refresh.lastError || refresh)}`);
+  assert.equal(refresh.lastError, null);
+});
+
+test('SEC 資料契約失敗（合法 JSON、身分對不上）＝sec_parse_error 記入 lastError（鎖住 SecDataContractError 這條新分類）', async () => {
+  const badFacts = structuredClone(fixture.companyFacts);
+  badFacts.cik = 999999;   // 與 ticker/submissions 的 CIK 不一致 → 解析器丟 SecDataContractError
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: silentLogger,
+    fetchImpl: async (url) => jsonResponse(
+      String(url).includes('/companyfacts/') ? badFacts : fixturePayload(String(url))
+    )
+  });
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.equal(refresh.status, 502, await refresh.text());
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError?.code, 'sec_parse_error', '資料契約錯是 SEC 端、要記 lastError');
+  assert.equal(view.lastError?.stage, 'parse');
+});
