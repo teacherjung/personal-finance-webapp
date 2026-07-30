@@ -709,3 +709,112 @@ test('currentDebt source shape｜正式碼不得硬寫第二份 tag 群，兩種
   }
   assert.match(executable, /definition\.currentDebtSources/);
 });
+
+// ---- 五個假綠缺口（2026-07-30，#335 複審 tests 維度；每題各對應一個「刪掉整段仍全綠」的實測突變）----
+// 這五題的存在理由不是「多蓋一點」，是複審實跑證明：unitPriority 整支回 0／instant 分支整段刪掉／
+// per-share 判準放寬／continue→break 一字之差／periods fallback 兩段刪掉——五種破壞當時 23 題全綠。
+
+/** @param {Record<string, Record<string, any[]>>} tagUnits tag → unit → rows */
+function parseMetricsFixture(tagUnits) {
+  return parseSecCompanyFacts({
+    symbol: 'GAP',
+    cik: '900777',
+    submissions: { cik: 900777, name: 'Fake Green Gap Co', sic: '3571', fiscalYearEnd: '1231' },
+    companyFacts: {
+      cik: 900777,
+      entityName: 'Fake Green Gap Co',
+      facts: {
+        'us-gaap': Object.fromEntries(Object.entries(tagUnits).map(([tag, units]) => [tag, { units }]))
+      }
+    }
+  });
+}
+/** 年度 duration 列（10-K FY，一年期） */
+const durAnnual = (year, val, extra = {}) => ({
+  start: `${year - 1}-12-31`, end: `${year}-12-31`, val,
+  form: '10-K', fy: year, fp: 'FY', filed: `${year + 1}-02-01`,
+  accn: `0000900777-${String(year + 1).slice(2)}-000001`, ...extra
+});
+/** 單季 duration 列（10-Q） */
+const durQuarter = (val, extra = {}) => ({
+  start: '2025-01-01', end: '2025-03-31', val,
+  form: '10-Q', fy: 2025, fp: 'Q1', filed: '2025-05-01',
+  accn: '0000900777-25-000002', ...extra
+});
+/** instant 列（資產負債表科目） */
+const instAnnual = (year, val, extra = {}) => ({
+  end: `${year}-12-31`, val, form: '10-K', fy: year, fp: 'FY',
+  filed: `${year + 1}-02-01`, accn: `0000900777-${String(year + 1).slice(2)}-000001`, ...extra
+});
+
+test('假綠①｜USD 優先是契約不是巧合：EUR 筆數更多時仍必須選 USD', () => {
+  // 複審實測：unitPriority 整支回 0 → 23 題全綠——因為 fixture 裡 USD 一直是筆數最多的，
+  // 「優先採 USD」從來只是靠筆數多贏。這裡讓 EUR 三筆、USD 兩筆：靠筆數 EUR 會贏。
+  const result = parseMetricsFixture({
+    Revenues: {
+      EUR: [durAnnual(2022, 900), durAnnual(2023, 950), durAnnual(2024, 980)],
+      USD: [durAnnual(2023, 1000), durAnnual(2024, 1100)]
+    }
+  });
+  assert.equal(result.metrics.revenue.unit, 'USD', 'EUR 筆數較多——選了它就代表 priority 死了、只剩筆數');
+  assert.equal(result.metrics.revenue.annual.at(-1).value, 1100);
+  assert.ok(
+    result.warnings.some(w => w.code === 'MULTIPLE_UNITS' && w.metric === 'revenue'),
+    '多 unit 並存必須出聲'
+  );
+});
+
+test('假綠②｜instant 三支指標（現金／非流動債務）年度與最新值有斷言', () => {
+  // 複審實測：selectPeriods 的 instant 分支整段刪掉 → 當時 23 題全綠（三支 instant 指標零斷言）。
+  const result = parseMetricsFixture({
+    CashAndCashEquivalentsAtCarryingValue: {
+      USD: [instAnnual(2023, 5000), instAnnual(2024, 6000), currentDebtRow(6500, { accn: '0000900777-25-000002' })]
+    },
+    LongTermDebtNoncurrent: { USD: [instAnnual(2024, 90000)] }
+  });
+  const cash = result.metrics.cashAndEquivalents;
+  assert.equal(cash.status, 'available');
+  assert.deepEqual(cash.annual.map(f => [f.periodEnd, f.value]), [['2023-12-31', 5000], ['2024-12-31', 6000]],
+    'instant 年度序列（10-K 期末餘額）');
+  assert.equal(cash.latestQuarter?.value, 6500, 'instant 的最新一季（10-Q 期末餘額）');
+  assert.equal(result.metrics.noncurrentDebt.annual.at(-1)?.value, 90000);
+});
+
+test('假綠③｜per-share 判準：只有錯 unit 時必須 missing，不可含混採用', () => {
+  // 複審實測：per-share 的 validUnit 判準放寬也全綠。EPS 掛在 shares（錯 unit）＝沒有可比較資料。
+  const wrong = parseMetricsFixture({
+    EarningsPerShareDiluted: { shares: [durAnnual(2024, 5.5)] }
+  });
+  assert.equal(wrong.metrics.dilutedEps.status, 'missing', '錯 unit 被採用＝per-share 判準死了');
+  const right = parseMetricsFixture({
+    EarningsPerShareDiluted: { 'USD/shares': [durAnnual(2024, 5.5)] }
+  });
+  assert.equal(right.metrics.dilutedEps.status, 'available');
+  assert.equal(right.metrics.dilutedEps.annual.at(-1).value, 5.5);
+  assert.equal(right.metrics.dilutedEps.unit, 'USD/shares');
+});
+
+test('假綠④｜第一個 tag「存在但零可用列」必須退到下一個 tag（continue→break 的一字之差）', () => {
+  // 複審實測：既有考題只蓋「概念不存在」；「概念存在但零可用列」的退路把 continue 改 break 也全綠
+  // ——而那正是資本支出→自由現金流整族靜靜變 missing 的路徑。
+  const result = parseMetricsFixture({
+    PaymentsToAcquirePropertyPlantAndEquipment: { USD: [] },   // 概念在、零列
+    PaymentsForAdditionsToPropertyPlantAndEquipment: { USD: [durAnnual(2024, 700)] }
+  });
+  const capex = result.metrics.capitalExpenditure;
+  assert.equal(capex.status, 'available', '第一個 tag 零可用列＝要繼續試下一個，不是放棄');
+  assert.equal(capex.tag, 'PaymentsForAdditionsToPropertyPlantAndEquipment');
+  assert.equal(capex.annual.at(-1).value, 700);
+});
+
+test('假綠⑤｜revenue 缺席時 periods 的 fallback：表頭期間改由其他 duration 指標補', () => {
+  // 複審實測：periodSummary 的兩段 fallback 整段刪掉 → 全綠（fixture 永遠有 revenue）。
+  const result = parseMetricsFixture({
+    NetIncomeLoss: { USD: [durAnnual(2023, 300), durAnnual(2024, 350), durQuarter(90)] }
+  });
+  assert.equal(result.metrics.revenue.status, 'missing', '前置：revenue 真的缺席');
+  assert.deepEqual(result.periods.annual.map(p => p.periodEnd), ['2023-12-31', '2024-12-31'],
+    'revenue 缺席＝年度表頭改由其他 duration 指標補，不可整排消失');
+  assert.equal(result.periods.latestQuarter?.periodEnd, '2025-03-31',
+    '最新單季表頭同樣要有 fallback');
+});
