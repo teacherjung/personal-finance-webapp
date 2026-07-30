@@ -464,3 +464,66 @@ test('currentDebt 全鏈路｜抓 filer label 排除父子重疊後再相加，�
   assert.equal(stored.data.metrics.currentDebt.latestQuarter.formula, currentDebt.formula);
   assert.equal(calls.length, 4, 'GET 只能讀已通過寫入牆的快取，不可重抓 filer label');
 });
+
+// ---- 錯誤歸因（2026-07-30，#335 複審 contract/security 兩條）--------------------------
+// 病：SEC 管線與寫入櫃檯的錯混在同一個 catch——內部錯被記成 SEC lastError 永久寫進租戶快取、
+// 內部原文（[schema] …請修程式）吐給瀏覽器、伺服器日誌只印 stage=unknown。#351 花一天查根因就是這個機制。
+
+test('內部寫入失敗不得洗成 SEC 失敗：500 通用訊息、不寫 lastError、根因進伺服器日誌', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  // 向量＝submissions.name 超長（>LEN_LONG）：SEC 抓取與解析全部成功，寫入被櫃檯拒收
+  // ——正是 #351 那族「解析器自己好好的、櫃檯整包拒收」的第二個觸發點（#335 複審 minor 條）。
+  const sub = structuredClone(fixture.submissions);
+  sub.name = 'A'.repeat(30000);
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => jsonResponse(
+      String(url).includes('/submissions/') ? sub : fixturePayload(String(url))
+    )
+  });
+
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  const body = await refresh.json();
+  assert.equal(refresh.status, 500, JSON.stringify(body));
+  // 瀏覽器只准拿通用訊息（wrapRoute 錯誤形狀＝{ error: 訊息 }，沒有 code 欄）：
+  // 內部原文（[schema] 前綴、「請修程式」）一個字都不可外洩
+  assert.ok(!JSON.stringify(body).includes('[schema]'), `內部原文外洩到瀏覽器：${JSON.stringify(body)}`);
+  assert.ok(!JSON.stringify(body).includes('請修程式'), '內部指示句外洩到瀏覽器');
+  assert.match(String(body.error || ''), /不是 SEC 的問題/, '要明說不是 SEC 壞了，別讓使用者去冤枉上游');
+
+  // 內部故障絕不寫進租戶快取的 lastError——那會讓 F5 畫面長期宣稱「SEC 失敗」
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError, null, `內部錯被永久記成 SEC 失敗：${JSON.stringify(view.lastError)}`);
+
+  // 根因（含 [schema] 原文）必須在伺服器日誌——舊版連日誌都查不到，方向完全相反
+  assert.ok(
+    logLines.some((line) => line.includes('內部錯誤') && line.includes('[schema]')),
+    `伺服器日誌找不到根因：${JSON.stringify(logLines)}`
+  );
+});
+
+test('SEC 上游失敗照舊記 lastError，且伺服器日誌要含 message=（舊版只印代碼、根因字串全丟）', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => (
+      String(url).includes('/companyfacts/')
+        ? jsonResponse({ error: 'synthetic outage' }, 500)
+        : jsonResponse(fixturePayload(String(url)))
+    )
+  });
+
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.notEqual(refresh.status, 200);
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.ok(view.lastError, 'SEC 真的失敗＝lastError 照舊要記（保留最後成功資料、只另記錯誤的契約不變）');
+  assert.notEqual(view.lastError.stage, 'unknown', 'SEC 管線的錯必帶真實 stage');
+  assert.ok(
+    logLines.some((line) => line.includes('message=')),
+    `SEC 失敗的日誌行要含 message= 根因：${JSON.stringify(logLines)}`
+  );
+});
