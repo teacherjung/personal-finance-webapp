@@ -959,6 +959,33 @@ test('retry backoff 也在總預算內：剩 1ms 不得睡滿一輪 backoff', as
   assert.ok(slept <= 30, `backoff 沒有夾進剩餘預算：睡了 ${slept}ms（剩餘只有 30ms）`);
 });
 
+test('submissions 呼叫點也受總預算管：ticker 之後 pacing 過線就不得發出 submissions', async () => {
+  // Codex #361 r5 blocking：四個 deadlineAt 呼叫點逐一突變，只有 submissions 這點漏傳仍 24/24 全綠
+  //（傳 undefined 連 typecheck 都過）。收斂冗餘後每個呼叫點都是單點失效，必須各自有題。
+  // 參數關係（實跑校準過，不是推算）：**ticker 耗時 < 預算 ≤ pacing 間隔**
+  //   ticker @0 耗 650 → clock 650、nextAt = 0+800 = 800
+  //   submissions 進場 @650（650 < 700 ⇒ 第一道放行）→ 睡 150 → @800（≥700）⇒ 只有 submissions
+  //   這個呼叫點自己的守門擋得住它
+  // ⚠️ 若 ticker 耗時 ≥ 間隔，pacing 等待會歸零、submissions 直接發出——這題就測不到東西（踩過）
+  let clock = Date.parse('2026-07-30T07:00:00.000Z');
+  let submissionsCalls = 0;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, refreshBudgetMs: 700, minIntervalMs: 800, logger: silentLogger,
+    now: () => clock, sleep: async (ms) => { clock += ms; },
+    fetchImpl: async (url) => {
+      const u = String(url);
+      if (u.includes('company_tickers')) { clock += 650; return jsonResponse(fixturePayload(u)); }
+      if (u.includes('/submissions/')) submissionsCalls += 1;
+      return jsonResponse(fixturePayload(u));
+    }
+  });
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.equal(submissionsCalls, 0, 'submissions 呼叫點漏傳 deadlineAt＝預算耗盡仍發出（r5 的漏網點）');
+  assert.equal(refresh.status, 504, await refresh.text());
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError?.code, 'sec_timeout');
+});
+
 test('pacing sleep 把時間推過總時限之後，不得再發出下一個請求（sleep 後要再驗一次）', async () => {
   let clock = Date.parse('2026-07-30T03:00:00.000Z');
   let factsCalls = 0;
