@@ -379,3 +379,121 @@ test('SEC 解析｜衍生指標的官方輸入必須保留全部申報來源欄�
   assert.equal(official.taxonomy, 'us-gaap');
   assert.equal(official.tag, 'OperatingIncomeLoss');
 });
+
+// ---- 流動債務＝該相加的兩個科目（2026-07-30 補做 #335 高風險複審的發現）------------
+// 病：ShortTermBorrowings（短期借款）與 LongTermDebtCurrent（一年內到期長債）在 US-GAAP 是
+// 互斥且相加的兩科目，舊寫法把它們與同義替代混在一個扁平 tags 清單、first-hit-wins 挑一個
+// → 實測同日申報 3000＋12000 只顯示 3000（低報 80%）、零警告。重槓桿公司兩者並報是常態。
+
+/** 造一筆 instant 申報列（資產負債表科目） */
+const instantRow = (end, val, extra = {}) => ({
+  end, val, form: '10-Q', fy: 2025, fp: 'Q2', filed: '2025-07-25',
+  accn: '0000900001-25-000001', ...extra
+});
+/** @param {Record<string, Record<string, any[]>>} tagUnits tag → unit → rows */
+const parseWith = (tagUnits) => parseSecCompanyFacts({
+  symbol: 'DEBT', cik: '900001',
+  submissions: { cik: 900001, name: 'Leveraged Co', sic: '4911', fiscalYearEnd: '1231' },
+  companyFacts: {
+    cik: 900001, entityName: 'Leveraged Co',
+    facts: { 'us-gaap': Object.fromEntries(
+      Object.entries(tagUnits).map(([tag, units]) => [tag, { units }])
+    ) }
+  }
+});
+const warningsFor = (result, key) => result.warnings.filter(w => w.metric === key);
+
+test('流動債務｜短期借款與一年內到期長債同時申報＝相加，不是挑一個（低報 80% 的病根）', () => {
+  const result = parseWith({
+    ShortTermBorrowings: { USD: [instantRow('2025-06-28', 3000)] },
+    LongTermDebtCurrent: { USD: [instantRow('2025-06-28', 12000)] }
+  });
+  const debt = result.metrics.currentDebt;
+  assert.equal(debt.status, 'available');
+  assert.equal(debt.latestQuarter.value, 15000, '3000 ＋ 12000＝15000；挑一個就會低報 80%');
+  assert.equal(debt.tag, 'ShortTermBorrowings + LongTermDebtCurrent', 'tag 要說得出這是哪兩個科目相加');
+  assert.equal(debt.latestQuarter.formula, 'ShortTermBorrowings + LongTermDebtCurrent');
+  // 來源可追回：兩個科目各自的申報都要留得住
+  assert.deepEqual(
+    Object.keys(debt.latestQuarter.inputs).sort(),
+    ['LongTermDebtCurrent', 'ShortTermBorrowings']
+  );
+  for (const input of Object.values(debt.latestQuarter.inputs)) {
+    assert.match(input.filingUrl, /^https:\/\/www\.sec\.gov\//);
+    assert.equal(input.taxonomy, 'us-gaap');
+  }
+});
+
+test('流動債務｜只申報一種科目＝行為與分組前完全相同（單一 tag、不加 formula）', () => {
+  const result = parseWith({ ShortTermBorrowings: { USD: [instantRow('2025-06-28', 3000)] } });
+  const debt = result.metrics.currentDebt;
+  assert.equal(debt.status, 'available');
+  assert.equal(debt.tag, 'ShortTermBorrowings', '只有一組命中時不可包裝成和');
+  assert.equal(debt.latestQuarter.value, 3000);
+  assert.equal(Object.hasOwn(debt.latestQuarter, 'formula'), false, '沒有相加就不該有 formula');
+  assert.equal(warningsFor(result, 'currentDebt').length, 0);
+});
+
+test('流動債務｜組內仍是同義替代：含融資租賃的寫法優先，不與同組另一個 tag 相加', () => {
+  const result = parseWith({
+    LongTermDebtAndFinanceLeaseObligationsCurrent: { USD: [instantRow('2025-06-28', 12500)] },
+    LongTermDebtCurrent: { USD: [instantRow('2025-06-28', 12000)] }
+  });
+  const debt = result.metrics.currentDebt;
+  assert.equal(debt.tag, 'LongTermDebtAndFinanceLeaseObligationsCurrent');
+  assert.equal(debt.latestQuarter.value, 12500, '同組是替代寫法（一個含融資租賃）——相加會重複計算');
+});
+
+test('流動債務｜fail-closed：各組 unit 不一致就整支歸 missing，不硬加', () => {
+  const result = parseWith({
+    ShortTermBorrowings: { USD: [instantRow('2025-06-28', 3000)] },
+    LongTermDebtCurrent: { EUR: [instantRow('2025-06-28', 12000)] }
+  });
+  assert.equal(result.metrics.currentDebt.status, 'missing');
+  assert.equal(result.metrics.currentDebt.latestQuarter, null);
+  assert.ok(
+    warningsFor(result, 'currentDebt').some(w => w.code === 'ADDITIVE_UNIT_MISMATCH'),
+    '不同幣別相加＝算錯錢，必須出聲而不是靜默'
+  );
+});
+
+test('流動債務｜fail-closed：只有部分科目申報的年度整年丟掉並出聲（不給少一塊的和）', () => {
+  const annual = (end, val) => instantRow(end, val, { form: '10-K', fp: 'FY' });
+  const result = parseWith({
+    ShortTermBorrowings: { USD: [annual('2023-12-31', 1000), annual('2024-12-31', 2000)] },
+    LongTermDebtCurrent: { USD: [annual('2024-12-31', 8000)] }   // 2023 缺
+  });
+  const debt = result.metrics.currentDebt;
+  assert.deepEqual(debt.annual.map(f => [f.periodEnd, f.value]), [['2024-12-31', 10000]],
+    '2023 只有一個科目＝加起來會少一塊，寧可不給那一年');
+  assert.ok(warningsFor(result, 'currentDebt').some(w => w.code === 'ADDITIVE_PERIOD_INCOMPLETE'));
+});
+
+test('流動債務｜fail-closed：最新單季各科目期間對不齊就不輸出單季', () => {
+  const result = parseWith({
+    ShortTermBorrowings: { USD: [instantRow('2025-06-28', 3000)] },
+    LongTermDebtCurrent: { USD: [instantRow('2025-03-29', 12000)] }
+  });
+  assert.equal(result.metrics.currentDebt.latestQuarter, null,
+    '不同資產負債表日的餘額相加沒有意義');
+  assert.ok(warningsFor(result, 'currentDebt').some(w => w.code === 'ADDITIVE_PERIOD_INCOMPLETE'));
+});
+
+test('流動債務｜回歸：非流動債務維持單組替代語意，兩個 tag 並存不相加', () => {
+  const result = parseWith({
+    LongTermDebtAndFinanceLeaseObligationsNoncurrent: { USD: [instantRow('2025-06-28', 90000)] },
+    LongTermDebtNoncurrent: { USD: [instantRow('2025-06-28', 88000)] }
+  });
+  assert.equal(result.metrics.noncurrentDebt.latestQuarter.value, 90000);
+  assert.equal(result.metrics.noncurrentDebt.tag, 'LongTermDebtAndFinanceLeaseObligationsNoncurrent');
+});
+
+test('候選表｜tagGroups 是分組指標的單一真相，tags 由它攤平算出（不可有第二份手寫清單）', () => {
+  for (const [key, definition] of Object.entries(SEC_METRIC_CANDIDATES)) {
+    assert.ok(definition.tagGroups?.length, `${key} 缺 tagGroups`);
+    assert.deepEqual(definition.tags, definition.tagGroups.flat(),
+      `${key} 的 tags 與 tagGroups 攤平後不一致＝兩份清單已經走散`);
+  }
+  assert.equal(SEC_METRIC_CANDIDATES.currentDebt.tagGroups.length, 2, '流動債務＝兩組該相加的科目');
+  assert.equal(SEC_METRIC_CANDIDATES.noncurrentDebt.tagGroups.length, 1, '非流動債務＝單組替代');
+});
