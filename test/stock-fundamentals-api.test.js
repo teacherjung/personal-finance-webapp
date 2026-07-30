@@ -465,6 +465,84 @@ test('currentDebt 全鏈路｜抓 filer label 排除父子重疊後再相加，�
   assert.equal(calls.length, 4, 'GET 只能讀已通過寫入牆的快取，不可重抓 filer label');
 });
 
+test('label best-effort 也受總預算管：必要資料吃光預算後不得再對 SEC Archives 發出（漏傳 deadlineAt 就會紅）', async () => {
+  // Codex #361 r4 blocking：冗餘收斂後佇列層不再自驗期限 ⇒ label 呼叫只要漏傳 deadlineAt
+  // 就完全繞過唯一守門，而當時 23 題全綠。這一題就是它開的處方。
+  let clock = Date.parse('2026-07-30T06:00:00.000Z');
+  const accession = '0000900099-25-000001';
+  const tickerIndex = {
+    0: { cik_str: 900099, ticker: 'DEBT', title: 'Synthetic Current Debt Company' }
+  };
+  const submissions = {
+    cik: '0000900099',
+    name: 'Synthetic Current Debt Company',
+    sic: '3571',
+    fiscalYearEnd: '1231',
+    filings: {
+      recent: {
+        accessionNumber: [accession],
+        primaryDocument: ['debt-20250331.htm']
+      }
+    }
+  };
+  const baseRow = {
+    end: '2025-03-31',
+    form: '10-Q',
+    filed: '2025-05-01',
+    accn: accession,
+    fy: 2025,
+    fp: 'Q1'
+  };
+  const companyFacts = {
+    cik: '0000900099',
+    entityName: 'Synthetic Current Debt Company',
+    facts: {
+      'us-gaap': {
+        ShortTermBorrowings: { units: { USD: [{ ...baseRow, val: 600 }] } },
+        LongTermDebtCurrent: { units: { USD: [{ ...baseRow, val: 500 }] } }
+      }
+    }
+  };
+  const labelXml = [
+    '<link:labelLink xmlns:link="http://www.xbrl.org/2003/linkbase"',
+    ' xmlns:xlink="http://www.w3.org/1999/xlink">',
+    '<link:label xlink:label="lab_us-gaap_ShortTermBorrowings"',
+    ' xlink:role="http://www.xbrl.org/2003/role/terseLabel">Short-term debt</link:label>',
+    '</link:labelLink>'
+  ].join('');
+  const calls = [];
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    minIntervalMs: 0,
+    refreshBudgetMs: 1000,
+    now: () => clock,
+    sleep: async (ms) => { clock += ms; },
+    logger: silentLogger,
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      const u = String(url);
+      if (u === 'https://www.sec.gov/files/company_tickers.json') return jsonResponse(tickerIndex);
+      if (u === 'https://data.sec.gov/submissions/CIK0000900099.json') return jsonResponse(submissions);
+      if (u === 'https://data.sec.gov/api/xbrl/companyfacts/CIK0000900099.json') {
+        clock += 2000;   // 必要資料就把 1000ms 預算吃光
+        return jsonResponse(companyFacts);
+      }
+      if (u.includes('/Archives/edgar/')) return new Response(labelXml, { status: 200, headers: { 'Content-Type': 'application/xml' } });
+      throw new Error(`測試收到未核准的外部 URL：${url}`);
+    }
+  });
+
+  const refresh = await request('/api/stock-fundamentals/DEBT/refresh', { method: 'POST' });
+  assert.equal(refresh.status, 200, await refresh.clone().text());
+  assert.equal(
+    calls.filter((url) => url.includes('/Archives/edgar/')).length, 0,
+    'label 是 best-effort，但預算吃光後仍不得對 SEC 發出——漏傳 deadlineAt 就會繞過唯一守門'
+  );
+  // 沒有 label ⇒ 走保守判準（600 > 500 無法排除父子重疊）＝保留短借原值，不相加
+  const body = await refresh.json();
+  assert.equal(body.data.metrics.currentDebt.latestQuarter.value, 600, '無 label 必須 fail-closed 保留 600，不可硬加成 1100');
+});
+
 // ---- 錯誤歸因（2026-07-30，#335 複審 contract/security 兩條；r2 依 Codex 建議加硬）-----------
 // 病：SEC 管線與寫入櫃檯的錯混在同一個 catch——內部錯被記成 SEC lastError 永久寫進租戶快取、
 // 內部原文（[schema] …請修程式）吐給瀏覽器、伺服器日誌只印 stage=unknown。#351 花一天查根因就是這個機制。
