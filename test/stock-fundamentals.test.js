@@ -3,16 +3,84 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   SEC_METRIC_CANDIDATES,
+  currentDebtLabelAccessions,
   lookupSecTicker,
   normalizeSecCik,
   normalizeSecSymbol,
+  parseCurrentDebtLabelHint,
   parseSecCompanyFacts
 } from '../lib/stock-fundamentals.js';
-import { FUNDAMENTAL_METRIC_DEFINITIONS } from '../public/modules/stock-research-method.js';
+import {
+  FUNDAMENTAL_METRIC_DEFINITIONS,
+  comparableFundamentalSeries
+} from '../public/modules/stock-research-method.js';
 import { sanitizeDbForWrite } from '../lib/schema.js';
 
 const fixtureUrl = name => new URL(`./fixtures/sec/${name}`, import.meta.url);
 const loadFixture = async name => JSON.parse(await readFile(fixtureUrl(name), 'utf8'));
+
+const CURRENT_DEBT_CIK = '0000900099';
+const CURRENT_DEBT_ACCESSION = '0000900099-25-000001';
+
+/** @param {number} val @param {Partial<Record<string, any>>} [overrides] */
+function currentDebtRow(val, overrides = {}) {
+  return {
+    end: '2025-03-31',
+    form: '10-Q',
+    filed: '2025-05-01',
+    accn: CURRENT_DEBT_ACCESSION,
+    fy: 2025,
+    fp: 'Q1',
+    val,
+    ...overrides
+  };
+}
+
+/** @param {Record<string, any[]>} concepts @param {Record<string, string>} [currentDebtLabelHints] */
+function parseCurrentDebtFixture(concepts, currentDebtLabelHints = {}) {
+  return parseSecCompanyFacts({
+    symbol: 'DEBT',
+    cik: CURRENT_DEBT_CIK,
+    submissions: {
+      cik: CURRENT_DEBT_CIK,
+      name: 'Synthetic Current Debt Company',
+      sic: '3571',
+      fiscalYearEnd: '1231'
+    },
+    companyFacts: {
+      cik: CURRENT_DEBT_CIK,
+      entityName: 'Synthetic Current Debt Company',
+      facts: {
+        'us-gaap': Object.fromEntries(Object.entries(concepts).map(([tag, rows]) => [
+          tag,
+          { units: { USD: rows } }
+        ]))
+      }
+    },
+    currentDebtLabelHints
+  });
+}
+
+/** @param {string} tag @param {number} value @param {Partial<Record<string, any>>} [overrides] */
+function expectedCurrentDebtFact(tag, value, overrides = {}) {
+  return {
+    value,
+    unit: 'USD',
+    periodStart: null,
+    periodEnd: '2025-03-31',
+    form: '10-Q',
+    filedAt: '2025-05-01',
+    accession: CURRENT_DEBT_ACCESSION,
+    taxonomy: 'us-gaap',
+    tag,
+    filingUrl: 'https://www.sec.gov/Archives/edgar/data/900099/000090009925000001/0000900099-25-000001-index.html',
+    fiscalYear: 2025,
+    fiscalPeriod: 'Q1',
+    periodType: 'quarter',
+    durationDays: null,
+    ...overrides
+  };
+}
 
 test('SEC ticker／CIK｜正規化、補零、原型名與 URL 字元 fail-closed', async () => {
   const fixture = await loadFixture('fiscal-year-company.json');
@@ -378,4 +446,265 @@ test('SEC 解析｜衍生指標的官方輸入必須保留全部申報來源欄�
   assert.match(official.filingUrl, /^https:\/\/www\.sec\.gov\//, 'filingUrl 要是可點的 SEC 連結');
   assert.equal(official.taxonomy, 'us-gaap');
   assert.equal(official.tag, 'OperatingIncomeLoss');
+});
+
+test('currentDebt 契約｜總額／短借／一年內長債只有一份定義，且本支不改 noncurrentDebt', () => {
+  const currentDebt = /** @type {any} */ (SEC_METRIC_CANDIDATES.currentDebt);
+  assert.deepEqual(currentDebt.currentDebtSources, {
+    total: ['DebtCurrent'],
+    shortTerm: ['ShortTermBorrowings'],
+    currentMaturity: [
+      'LongTermDebtAndCapitalLeaseObligationsCurrent',
+      'LongTermDebtCurrent'
+    ]
+  });
+  assert.deepEqual(
+    currentDebt.tags,
+    Object.values(currentDebt.currentDebtSources).flat(),
+    '所有讀取端都必須從 currentDebtSources 展開，不能另抄 tag 群'
+  );
+  assert.ok(!currentDebt.tags.includes('LongTermDebtAndFinanceLeaseObligationsCurrent'));
+  assert.deepEqual(SEC_METRIC_CANDIDATES.noncurrentDebt.tags, [
+    'LongTermDebtAndFinanceLeaseObligationsNoncurrent',
+    'LongTermDebtNoncurrent'
+  ], 'noncurrentDebt 的既有問題不在本支順手修改');
+});
+
+test('currentDebt 單一來源｜只有短借或一年內長債時，整個官方 metric 與 fact 原樣保留', () => {
+  for (const [tag, value] of [
+    ['ShortTermBorrowings', 123],
+    ['LongTermDebtAndCapitalLeaseObligationsCurrent', 345],
+    ['LongTermDebtCurrent', 456]
+  ]) {
+    const result = parseCurrentDebtFixture({ [tag]: [currentDebtRow(value)] });
+    const fact = expectedCurrentDebtFact(tag, value);
+    assert.deepEqual(result.metrics.currentDebt, {
+      key: 'currentDebt',
+      label: '流動債務',
+      kind: 'official',
+      nature: 'instant',
+      taxonomy: 'us-gaap',
+      tag,
+      unit: 'USD',
+      annual: [],
+      latestQuarter: fact,
+      status: 'available'
+    });
+  }
+});
+
+test('currentDebt 總額優先｜同期間有 DebtCurrent 時忽略兩個成分，不做第二次相加', () => {
+  const result = parseCurrentDebtFixture({
+    DebtCurrent: [currentDebtRow(400_262_000)],
+    ShortTermBorrowings: [currentDebtRow(400_262_000)],
+    LongTermDebtCurrent: [currentDebtRow(399_579_000)]
+  }, {
+    [CURRENT_DEBT_ACCESSION]: 'short-term-only'
+  });
+  assert.deepEqual(
+    result.metrics.currentDebt.latestQuarter,
+    expectedCurrentDebtFact('DebtCurrent', 400_262_000)
+  );
+});
+
+test('currentDebt 總額逐期優先｜舊期 DebtCurrent 不可遮掉較新一期可安全相加的成分', () => {
+  const result = parseCurrentDebtFixture({
+    DebtCurrent: [currentDebtRow(300, {
+      end: '2024-03-31',
+      filed: '2024-05-01',
+      accn: '0000900099-24-000001',
+      fy: 2024
+    })],
+    ShortTermBorrowings: [currentDebtRow(600)],
+    LongTermDebtCurrent: [currentDebtRow(500)]
+  }, {
+    [CURRENT_DEBT_ACCESSION]: 'short-term-only'
+  });
+  assert.equal(result.metrics.currentDebt.latestQuarter.value, 1100);
+  assert.equal(result.metrics.currentDebt.latestQuarter.periodEnd, '2025-03-31');
+  assert.equal(result.metrics.currentDebt.latestQuarter.taxonomy, 'derived');
+});
+
+test('currentDebt filer label｜只採申報者 terse／verbose label，標準 label 不拿來猜父子關係', () => {
+  const standard = '<link:label xlink:label="lab_us-gaap_ShortTermBorrowings" xlink:role="http://www.xbrl.org/2003/role/label">Short-Term Debt</link:label>';
+  const dover = '<link:label xlink:label="lab_us-gaap_ShortTermBorrowings" xlink:role="http://www.xbrl.org/2003/role/terseLabel">Short-term borrowings and current portion of long-term debt</link:label>';
+  const amazon = '<link:label xlink:label="lab_us-gaap_ShortTermBorrowings" xlink:role="http://www.xbrl.org/2003/role/terseLabel">Short-term debt</link:label>';
+  assert.equal(parseCurrentDebtLabelHint(standard), 'unknown');
+  assert.equal(parseCurrentDebtLabelHint(dover), 'includes-current-long-term-debt');
+  assert.equal(parseCurrentDebtLabelHint(amazon), 'short-term-only');
+});
+
+test('currentDebt Dover 型｜ShortTermBorrowings label 已含一年內長債，不可高報 99.8%', () => {
+  const result = parseCurrentDebtFixture({
+    ShortTermBorrowings: [currentDebtRow(400_262_000)],
+    LongTermDebtCurrent: [currentDebtRow(399_579_000)]
+  }, {
+    [CURRENT_DEBT_ACCESSION]: 'includes-current-long-term-debt'
+  });
+  assert.deepEqual(
+    result.metrics.currentDebt.latestQuarter,
+    expectedCurrentDebtFact('ShortTermBorrowings', 400_262_000)
+  );
+  assert.notEqual(result.metrics.currentDebt.latestQuarter.value, 799_841_000);
+});
+
+test('currentDebt 分開申報型｜filer label 證明是純短債時，短債與一年內長債都不能漏報', () => {
+  const result = parseCurrentDebtFixture({
+    ShortTermBorrowings: [currentDebtRow(76_000_000)],
+    LongTermDebtCurrent: [currentDebtRow(5_014_000_000)]
+  }, {
+    [CURRENT_DEBT_ACCESSION]: 'short-term-only'
+  });
+  const fact = result.metrics.currentDebt.latestQuarter;
+  assert.equal(fact.value, 5_090_000_000);
+  assert.equal(fact.taxonomy, 'derived');
+  assert.equal(fact.tag, 'ShortTermBorrowings + LongTermDebtCurrent');
+  assert.equal(fact.formula, fact.tag);
+  assert.equal(fact.inputs.shortTerm.value, 76_000_000);
+  assert.equal(fact.inputs.currentMaturity.value, 5_014_000_000);
+  assert.equal(fact.accession, CURRENT_DEBT_ACCESSION);
+  assert.match(fact.filingUrl, /^https:\/\/www\.sec\.gov\//);
+});
+
+test('currentDebt 無 label｜同脈絡且短借小於一年內長債才可排除父子重疊；反之保守不加', () => {
+  const separate = parseCurrentDebtFixture({
+    ShortTermBorrowings: [currentDebtRow(76)],
+    LongTermDebtCurrent: [currentDebtRow(5_014)]
+  });
+  assert.equal(separate.metrics.currentDebt.latestQuarter.value, 5_090);
+  assert.equal(separate.metrics.currentDebt.latestQuarter.taxonomy, 'derived');
+
+  const ambiguous = parseCurrentDebtFixture({
+    ShortTermBorrowings: [currentDebtRow(400_262)],
+    LongTermDebtCurrent: [currentDebtRow(399_579)]
+  });
+  assert.deepEqual(
+    ambiguous.metrics.currentDebt.latestQuarter,
+    expectedCurrentDebtFact('ShortTermBorrowings', 400_262)
+  );
+  assert.ok(ambiguous.warnings.some(warning => (
+    warning.code === 'CURRENT_DEBT_OVERLAP_UNRESOLVED'
+      && warning.metric === 'currentDebt'
+  )));
+});
+
+test('currentDebt 缺一組的年度｜每期都原樣保留，不因另一組只在別年出現就整期消失或加旗標', () => {
+  const shortRow = currentDebtRow(100, {
+    end: '2023-12-31',
+    form: '10-K',
+    filed: '2024-02-01',
+    accn: '0000900099-24-000001',
+    fy: 2023,
+    fp: 'FY'
+  });
+  const maturityRow = currentDebtRow(200, {
+    end: '2024-12-31',
+    form: '10-K',
+    filed: '2025-02-01',
+    accn: '0000900099-25-000002',
+    fy: 2024,
+    fp: 'FY'
+  });
+  const result = parseCurrentDebtFixture({
+    ShortTermBorrowings: [shortRow],
+    LongTermDebtCurrent: [maturityRow]
+  });
+  assert.deepEqual(result.metrics.currentDebt.annual, [
+    expectedCurrentDebtFact('ShortTermBorrowings', 100, {
+      periodEnd: '2023-12-31',
+      form: '10-K',
+      filedAt: '2024-02-01',
+      accession: '0000900099-24-000001',
+      filingUrl: 'https://www.sec.gov/Archives/edgar/data/900099/000090009924000001/0000900099-24-000001-index.html',
+      fiscalYear: 2023,
+      fiscalPeriod: 'FY',
+      periodType: 'annual'
+    }),
+    expectedCurrentDebtFact('LongTermDebtCurrent', 200, {
+      periodEnd: '2024-12-31',
+      form: '10-K',
+      filedAt: '2025-02-01',
+      accession: '0000900099-25-000002',
+      filingUrl: 'https://www.sec.gov/Archives/edgar/data/900099/000090009925000002/0000900099-25-000002-index.html',
+      fiscalYear: 2024,
+      fiscalPeriod: 'FY',
+      periodType: 'annual'
+    })
+  ]);
+});
+
+test('currentDebt 衍生列｜F5 所需的 row-level taxonomy/tag 齊全，且不經 JSON 可通過正式寫入牆', () => {
+  const accessions = ['0000900099-24-000001', '0000900099-25-000001'];
+  const years = [2023, 2024];
+  const shortRows = years.map((year, index) => currentDebtRow(10 + index, {
+    end: `${year}-12-31`,
+    form: '10-K',
+    filed: `${year + 1}-02-01`,
+    accn: accessions[index],
+    fy: year,
+    fp: 'FY'
+  }));
+  const maturityRows = years.map((year, index) => currentDebtRow(100 + index, {
+    end: `${year}-12-31`,
+    form: '10-K',
+    filed: `${year + 1}-02-01`,
+    accn: accessions[index],
+    fy: year,
+    fp: 'FY'
+  }));
+  const result = parseCurrentDebtFixture({
+    ShortTermBorrowings: shortRows,
+    LongTermDebtCurrent: maturityRows
+  }, Object.fromEntries(accessions.map(accession => [accession, 'short-term-only'])));
+  assert.equal(result.metrics.currentDebt.annual.length, 2);
+  assert.ok(result.metrics.currentDebt.annual.every(fact => (
+    fact.taxonomy === 'derived'
+      && fact.tag === 'ShortTermBorrowings + LongTermDebtCurrent'
+      && fact.formula === fact.tag
+  )));
+  const f5 = comparableFundamentalSeries(result.metrics.currentDebt.annual);
+  assert.notEqual(f5.status, 'missing');
+  assert.ok(f5.availablePoints.every(point => point.taxonomy && point.tag));
+
+  const at = '2026-07-30T00:00:00.000Z';
+  const clean = /** @type {any} */ (sanitizeDbForWrite({
+    settings: {},
+    stockFundamentals: [{ symbol: 'DEBT', lastAttemptAt: at, fetchedAt: at, data: result }]
+  }, { mode: 'throw' }));
+  assert.equal(clean.stockFundamentals[0].data.metrics.currentDebt.annual[1].value, 112);
+});
+
+test('currentDebt label accession｜只抓同一 accession 同時有兩個成分者，並以定義表為來源', () => {
+  const companyFacts = {
+    facts: {
+      'us-gaap': {
+        ShortTermBorrowings: {
+          units: { USD: [currentDebtRow(10), currentDebtRow(20, { accn: '0000900099-24-000001', filed: '2024-05-01' })] }
+        },
+        LongTermDebtCurrent: {
+          units: { USD: [currentDebtRow(100)] }
+        }
+      }
+    }
+  };
+  assert.deepEqual(currentDebtLabelAccessions(companyFacts), [CURRENT_DEBT_ACCESSION]);
+});
+
+test('currentDebt source shape｜正式碼不得硬寫第二份 tag 群，兩種展示過的繞法都會被考題攔下', async () => {
+  const source = await readFile(new URL('../lib/stock-fundamentals.js', import.meta.url), 'utf8');
+  const executable = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const tags = Object.values(
+    /** @type {any} */ (SEC_METRIC_CANDIDATES.currentDebt).currentDebtSources
+  ).flat();
+  for (const tag of tags) {
+    const quoted = new RegExp(`(['"])${tag}\\1`, 'g');
+    assert.equal(
+      [...executable.matchAll(quoted)].length,
+      1,
+      `${tag} 只能在 currentDebtSources 定義一次；production 不可另寫 hardcoded source groups`
+    );
+  }
+  assert.match(executable, /definition\.currentDebtSources/);
 });
