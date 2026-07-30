@@ -625,3 +625,70 @@ test('SEC 資料契約失敗（合法 JSON、身分對不上）＝sec_parse_erro
   assert.equal(view.lastError?.code, 'sec_parse_error', '資料契約錯是 SEC 端、要記 lastError');
   assert.equal(view.lastError?.stage, 'parse');
 });
+
+// ---- 佇列兩道護欄（2026-07-30，#335 複審 dos 條）------------------------------------------
+// 病：全站佇列卡在每一次 fetch 上、無深度上限、無總期限——SEC 一慢，所有租戶的 refresh
+// 一起被拖住十幾分鐘、連線與記憶體全被佔住（#357 的 label 抓取讓單次 refresh 最多 11 個請求，更易發作）。
+
+test('佇列滿＝立即 503 請稍後再試（fail-fast），不無限排隊、不記 lastError、不算內部錯', async () => {
+  /** @type {(() => void)[]} */
+  const gates = [];   // 突變情境下 B 也會走到掛住的 fetch——resolver 要「全部」收集、finally 全放，
+                      // 單一變數會被後來者蓋掉＝前者永遠懸掛、server.close 等不到（實際踩過）
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    maxQueueDepth: 1,
+    timeoutMs: 60000,   // 讓掛住的 fetch 不被 per-fetch 逾時放走，深度保持佔滿
+    logger: silentLogger,
+    fetchImpl: (url) => {
+      if (String(url).includes('company_tickers')) {
+        return new Promise((resolve) => { gates.push(() => resolve(jsonResponse(fixturePayload(String(url))))); });
+      }
+      return Promise.resolve(jsonResponse(fixturePayload(String(url))));
+    }
+  });
+  // A 先進佇列並掛住（深度=1）
+  const pendingA = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  await new Promise((resolve) => setTimeout(resolve, 50));   // 讓 A 真的進到佇列
+  // B（不同代號＝不共享 in-flight）此刻進來：深度已滿 → 必須「立即」503，不是排到天荒地老
+  try {
+    const b = await request('/api/stock-fundamentals/FRUIT/refresh', {
+      method: 'POST', signal: AbortSignal.timeout(1500)   // 突變拆掉深度檢查時 B 會掛住＝這裡 abort＝紅
+    });
+    const bBody = await b.json();
+    assert.equal(b.status, 503, JSON.stringify(bBody));
+    assert.match(String(bBody.error || ''), /稍後再試/, '要講真話：是排隊滿了，不是內部錯誤也不是 SEC 壞了');
+    const viewB = await (await request('/api/stock-fundamentals/FRUIT')).json();
+    assert.equal(viewB.lastError, null, 'back-pressure 不是 SEC 的錯，不得記 lastError');
+  } finally {
+    // 收尾必須在 finally：斷言失敗（含突變紅）時也要放行「全部」懸掛的 fetch，
+    // 否則 server.close 永遠等不到（gates 可能不只 A 的——突變情境下 B 也掛在這）
+    for (const release of gates) release();
+    await pendingA.catch(() => undefined);
+  }
+});
+
+test('單次 refresh 超過總時限＝branded sec_timeout 記入 lastError，最後成功資料原封不動', async () => {
+  /** @type {string[]} */
+  const logLines = [];
+  const seeded = await seedSuccessfulRefresh(logLines);
+  let clock = Date.parse('2026-07-30T01:00:00.000Z');
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    now: () => clock,
+    sleep: async (ms) => { clock += ms; },
+    refreshBudgetMs: 1000,
+    logger: { warn: (line) => logLines.push(String(line)) },
+    fetchImpl: async (url) => {
+      // submissions 這一步吃掉 2 秒（模擬 SEC 變慢）→ 下一個排隊請求（company-facts）
+      // 輪到自己時預算已耗盡，必須不再發出、以 sec_timeout 收場
+      if (String(url).includes('/submissions/')) clock += 2000;
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+  const refresh = await (await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).json();
+  assert.equal(refresh.refreshed, false);
+  assert.equal(refresh.refreshError?.code, 'sec_timeout', JSON.stringify(refresh.refreshError || refresh));
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError?.code, 'sec_timeout', '總時限逾期可歸因 SEC 慢＝要記 lastError 讓使用者看得到原因');
+  assert.equal(view.fetchedAt, seeded.fetchedAt, '最後成功資料原封不動');
+});
