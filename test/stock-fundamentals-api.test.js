@@ -794,35 +794,73 @@ test('排隊等待者在總時限到點就得到 504，不必等輪到隊頭', a
   assert.equal(viewB.lastError?.code, 'sec_timeout');
 });
 
-test('已開始讀 body 時到期＝由 abort 收尾（不可 race 掉取消機制），名額必須還回來', async () => {
-  // Codex #361 r2 blocking 1：r2 無條件 race → 呼叫端收到 504 但 body 沒被取消、
-  // 名額永久洩漏（實測 abortSeen=false、下一支 503）。這題釘住「abort 真的發生」＋「名額還得回來」。
+test('已開始讀 body 時到期：abort 必須真的發生，且名額要還回來（全程不重設 options）', () => {
+  // Codex #361 r3 blocking：r3 版掛住的是「還沒回 headers」的 fetch＝根本沒進 body 階段；
+  // 而且探針前又呼叫 setStockFundamentalsOptionsForTest＝深度被歸零、證明不了名額歸還
+  // （與 r2 指出的同一個錯，我在新題裡又犯一次）。r4 兩點都改：
+  //   ①真的先回 headers、body 掛住不給資料 ②全程同一組 options，用 mode 切換行為
   let abortSeen = false;
+  let mode = 'hang-body';
   let signalEntered = () => {};
   const entered = new Promise((resolve) => { signalEntered = () => resolve(undefined); });
   setStockFundamentalsOptionsForTest({
-    userAgent: SEC_USER_AGENT, maxQueueDepth: 1, refreshBudgetMs: 300, timeoutMs: 60000, logger: silentLogger,
-    fetchImpl: (url, init) => new Promise((resolve, reject) => {
-      if (!String(url).includes('company_tickers')) { resolve(jsonResponse(fixturePayload(String(url)))); return; }
-      signalEntered();
-      const signal = /** @type {any} */ (init)?.signal;
-      signal?.addEventListener('abort', () => {
-        abortSeen = true;
-        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-      });
-    })
+    userAgent: SEC_USER_AGENT, maxQueueDepth: 1, refreshBudgetMs: 300, timeoutMs: 60000,
+    logger: silentLogger,
+    fetchImpl: async (url, init) => {
+      const u = String(url);
+      if (mode === 'hang-body' && u.includes('company_tickers')) {
+        // headers 立刻回、body 永遠不給資料 ⇒ 確實停在 readResponse（佇列內）
+        const body = new ReadableStream({
+          start(controller) {
+            signalEntered();
+            const signal = /** @type {any} */ (init)?.signal;
+            signal?.addEventListener('abort', () => {
+              abortSeen = true;
+              controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+            }, { once: true });
+          }
+        });
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return jsonResponse(fixturePayload(u));
+    }
   });
-  const a = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
-  await entered;
-  const res = await a;
-  assert.equal(res.status, 504, await res.text());
-  assert.ok(abortSeen, '到期卻沒有 abort＝取消機制被 race 拆掉，body 會永遠掛著、名額永不釋放');
-  // 名額真的還回來了：下一支不可以是 503
+  const first = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  return entered
+    .then(() => first)
+    .then(async (res) => {
+      assert.equal(res.status, 504, await res.text());
+      assert.ok(abortSeen, '到期卻沒有 abort＝取消機制被 race 拆掉，body 會永遠掛著、名額永不釋放');
+      // ⚠️ 不重設 options：直接用同一組（maxQueueDepth=1）探測名額是否真的還回來了
+      mode = 'ok';
+      const next = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST' });
+      assert.notEqual(next.status, 503,
+        `abort 路徑沒有還回名額＝深度永久洩漏：${await next.text()}`);
+    });
+});
+
+test('每次 retry 都要用「當下剩餘預算」重夾 abort timer（不得沿用第一次算的值）', async () => {
+  // Codex #361 r3 突變②：沿用第一次的 effTimeoutMs → 800ms 預算被拖成約 1,304ms。
+  let calls = 0;
   setStockFundamentalsOptionsForTest({
-    userAgent: SEC_USER_AGENT, maxQueueDepth: 1, logger: silentLogger,
-    fetchImpl: async (url) => jsonResponse(fixturePayload(String(url)))
+    userAgent: SEC_USER_AGENT, refreshBudgetMs: 800, timeoutMs: 60000, minIntervalMs: 0,
+    logger: silentLogger,
+    fetchImpl: async (url, init) => {
+      calls += 1;
+      if (calls === 1) return jsonResponse({ boom: 1 }, 500);   // 先失敗→進 backoff→第二輪
+      return new Promise((_resolve, reject) => {                 // 第二輪掛住，只能靠 abort 收
+        const signal = /** @type {AbortSignal} */ (/** @type {any} */ (init)?.signal);
+        signal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        }, { once: true });
+      });
+    }
   });
-  assert.notEqual((await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).status, 503);
+  const startedAt = Date.now();
+  const response = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  const elapsed = Date.now() - startedAt;
+  assert.equal(response.status, 504, await response.text());
+  assert.ok(elapsed < 1100, `第二輪沿用初始 timer、總預算被拖長：${elapsed}ms（預算只有 800ms）`);
 });
 
 test('retry backoff 也在總預算內：剩 1ms 不得睡滿一輪 backoff', async () => {
