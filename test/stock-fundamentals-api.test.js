@@ -692,3 +692,111 @@ test('單次 refresh 超過總時限＝branded sec_timeout 記入 lastError，�
   assert.equal(view.lastError?.code, 'sec_timeout', '總時限逾期可歸因 SEC 慢＝要記 lastError 讓使用者看得到原因');
   assert.equal(view.fetchedAt, seeded.fetchedAt, '最後成功資料原封不動');
 });
+
+// ---- r2 考題電池（Codex #361 r1 blocking 3：深度守恆／body 占用／等待者硬期限／預算後不發）----
+
+test('深度守恆電池：正常完成、SEC 失敗、總時限逾期之後，單一名額都必須釋放', async () => {
+  // Codex 實測：只拿掉 `secQueueDepth -= 1` 當時 16/16 全綠＝守恆沒人考。
+  // 全程 maxQueueDepth=1：任何路徑漏遞減，下一次 refresh 就會 503——這一題直接紅。
+  const common = { userAgent: SEC_USER_AGENT, maxQueueDepth: 1, logger: silentLogger };
+  // ①正常完成
+  setStockFundamentalsOptionsForTest({ ...common, fetchImpl: async (url) => jsonResponse(fixturePayload(String(url))) });
+  assert.equal((await (await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).json()).freshness, 'fresh');
+  // ②SEC 失敗（fn 內拋錯路徑）
+  setStockFundamentalsOptionsForTest({ ...common, sleep: async () => {}, fetchImpl: async () => jsonResponse({ boom: 1 }, 500) });
+  assert.notEqual((await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' })).status, 503, '失敗路徑漏遞減的話這裡就滿了');
+  // ③總時限逾期（deadline 丟出路徑）
+  let clock = Date.parse('2026-07-30T02:00:00.000Z');
+  setStockFundamentalsOptionsForTest({
+    ...common, now: () => clock, sleep: async (ms) => { clock += ms; }, refreshBudgetMs: 1000,
+    fetchImpl: async (url) => { if (String(url).includes('/submissions/')) clock += 2000; return jsonResponse(fixturePayload(String(url))); }
+  });
+  await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  // ④名額必須還在：正常 refresh 要成功、不是 503
+  setStockFundamentalsOptionsForTest({ ...common, fetchImpl: async (url) => jsonResponse(fixturePayload(String(url))) });
+  const last = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.equal(last.status, 200, `任一路徑漏釋放名額＝這裡 503：${await last.text()}`);
+});
+
+test('headers 到了但 body 還掛著＝名額仍被占用，第二個 refresh 必須 503 而不是發出第二個 fetch', async () => {
+  // Codex 實測 r1 版：深度在 headers 到達就釋放 → body 掛著時第二個 refresh 照樣發出 fetch。
+  /** @type {ReadableStreamDefaultController|null} */
+  let bodyCtrl = null;
+  let tickerCalls = 0;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, maxQueueDepth: 1, timeoutMs: 60000, logger: silentLogger,
+    fetchImpl: async (url) => {
+      if (String(url).includes('company_tickers')) {
+        tickerCalls += 1;
+        return new Response(new ReadableStream({ start(c) { bodyCtrl = c; } }),   // headers 到了、body 掛住
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+  const pendingA = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  try {
+    const b = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST', signal: AbortSignal.timeout(1500) });
+    assert.equal(b.status, 503, await b.text());
+    assert.equal(tickerCalls, 1, 'body 還掛著就發出第二個 fetch＝深度提早釋放（r1 的洞）');
+  } finally {
+    const c = /** @type {any} */ (bodyCtrl);
+    if (c) { c.enqueue(new TextEncoder().encode(JSON.stringify(fixture.tickerIndex))); c.close(); }
+    await pendingA.catch(() => undefined);
+  }
+});
+
+test('排隊「等待者」在總時限到點就得到回應，不必等輪到隊頭（真實計時器）', async () => {
+  // Codex 實測 r1 版：deadline 只在輪頭檢查 → 深度 16×每支 10 秒＝尾端 150 秒才知道逾時。
+  /** @type {(() => void)[]} */
+  const gates = [];
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, timeoutMs: 60000, refreshBudgetMs: 400, logger: silentLogger,
+    fetchImpl: (url) => {
+      if (String(url).includes('company_tickers')) {
+        return new Promise((resolve) => { gates.push(() => resolve(jsonResponse(fixturePayload(String(url))))); });
+      }
+      return Promise.resolve(jsonResponse(fixturePayload(String(url))));
+    }
+  });
+  const pendingA = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });   // 佔住隊頭
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const startedAt = Date.now();
+  try {
+    const b = await (await request('/api/stock-fundamentals/FRUIT/refresh', {
+      method: 'POST', signal: AbortSignal.timeout(2500)   // 突變拆掉 race＝B 掛住＝abort＝紅
+    })).json();
+    assert.ok(Date.now() - startedAt < 2000,
+      `等待者要在總時限（400ms）附近回應、不是等隊頭放行；實際 ${Date.now() - startedAt}ms`);
+    assert.ok(b, '要拿到回應本體（掛住就會是 abort 例外）');
+  } finally {
+    for (const release of gates) release();
+    await pendingA.catch(() => undefined);
+  }
+  const viewB = await (await request('/api/stock-fundamentals/FRUIT')).json();
+  assert.equal(viewB.lastError?.code, 'sec_timeout', '排隊逾時可歸因 SEC 慢＝記 lastError');
+});
+
+test('pacing sleep 把時間推過總時限之後，不得再發出下一個請求（sleep 後要再驗一次）', async () => {
+  // Codex 實測 r1 版：deadline 檢查在 pacing sleep「之前」——預算 100ms、間隔 200ms 時，
+  // 程式仍在第 200ms 發出請求＝驗了等於沒驗。
+  let clock = Date.parse('2026-07-30T03:00:00.000Z');
+  let submissionsCalls = 0;
+  setStockFundamentalsOptionsForTest({
+    // budget(300) < minInterval(500)：ticker 之後 pacing 必須睡 500ms，睡完就過線
+    userAgent: SEC_USER_AGENT, refreshBudgetMs: 300, minIntervalMs: 500, logger: silentLogger,
+    now: () => clock, sleep: async (ms) => { clock += ms; },
+    fetchImpl: async (url) => {
+      const u = String(url);
+      if (u.includes('/submissions/')) submissionsCalls += 1;
+      return jsonResponse(fixturePayload(u));
+    }
+  });
+  const refresh = await request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+  assert.equal(submissionsCalls, 0, 'pacing 睡完已過線還發出 submissions＝sleep 後沒有再驗');
+  // 沒有既存成功資料 ⇒ 走 throw 分支（wrapRoute 形狀＝{ error }，無 code 欄），身分看 GET 的 lastError
+  assert.equal(refresh.status, 504, await refresh.text());
+  const view = await (await request('/api/stock-fundamentals/CAL')).json();
+  assert.equal(view.lastError?.code, 'sec_timeout');
+});
