@@ -377,3 +377,90 @@ test('全鏈路：「衍生指標當輸入」的公司走完整 refresh → 落�
   assert.equal(stored.data.metrics.freeCashFlowMargin.status, 'available',
     '快取裡必須有這個指標——refresh 回 200 但沒落庫的話，下次開頁面又是空的');
 });
+
+test('currentDebt 全鏈路｜抓 filer label 排除父子重疊後再相加，衍生來源可落庫並從 GET 讀回', async () => {
+  const accession = '0000900099-25-000001';
+  const tickerIndex = {
+    0: { cik_str: 900099, ticker: 'DEBT', title: 'Synthetic Current Debt Company' }
+  };
+  const submissions = {
+    cik: '0000900099',
+    name: 'Synthetic Current Debt Company',
+    sic: '3571',
+    fiscalYearEnd: '1231',
+    filings: {
+      recent: {
+        accessionNumber: [accession],
+        primaryDocument: ['debt-20250331.htm']
+      }
+    }
+  };
+  const baseRow = {
+    end: '2025-03-31',
+    form: '10-Q',
+    filed: '2025-05-01',
+    accn: accession,
+    fy: 2025,
+    fp: 'Q1'
+  };
+  const companyFacts = {
+    cik: '0000900099',
+    entityName: 'Synthetic Current Debt Company',
+    facts: {
+      'us-gaap': {
+        ShortTermBorrowings: { units: { USD: [{ ...baseRow, val: 600 }] } },
+        LongTermDebtCurrent: { units: { USD: [{ ...baseRow, val: 500 }] } }
+      }
+    }
+  };
+  const labelXml = [
+    '<link:labelLink xmlns:link="http://www.xbrl.org/2003/linkbase"',
+    ' xmlns:xlink="http://www.w3.org/1999/xlink">',
+    '<link:label xlink:label="lab_us-gaap_ShortTermBorrowings"',
+    ' xlink:role="http://www.xbrl.org/2003/role/terseLabel">Short-term debt</link:label>',
+    '</link:labelLink>'
+  ].join('');
+  const calls = [];
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT,
+    minIntervalMs: 0,
+    logger: silentLogger,
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      if (String(url) === 'https://www.sec.gov/files/company_tickers.json') return jsonResponse(tickerIndex);
+      if (String(url) === 'https://data.sec.gov/submissions/CIK0000900099.json') {
+        return jsonResponse(submissions);
+      }
+      if (String(url) === 'https://data.sec.gov/api/xbrl/companyfacts/CIK0000900099.json') {
+        return jsonResponse(companyFacts);
+      }
+      if (String(url) === 'https://www.sec.gov/Archives/edgar/data/900099/000090009925000001/debt-20250331_lab.xml') {
+        return new Response(labelXml, { status: 200, headers: { 'Content-Type': 'application/xml' } });
+      }
+      throw new Error(`測試收到未核准的外部 URL：${url}`);
+    }
+  });
+
+  const refresh = await request('/api/stock-fundamentals/DEBT/refresh', { method: 'POST' });
+  assert.equal(refresh.status, 200, await refresh.clone().text());
+  const body = await refresh.json();
+  const currentDebt = body.data.metrics.currentDebt.latestQuarter;
+  assert.equal(currentDebt.value, 1100, '600 > 500，沒有 filer label 時會 fail-closed 保留 600；本題必須證明 label 真的接上');
+  assert.equal(currentDebt.taxonomy, 'derived');
+  assert.equal(currentDebt.tag, 'ShortTermBorrowings + LongTermDebtCurrent');
+  assert.equal(currentDebt.inputs.shortTerm.value, 600);
+  assert.equal(currentDebt.inputs.currentMaturity.value, 500);
+  assert.deepEqual(calls, [
+    'https://www.sec.gov/files/company_tickers.json',
+    'https://data.sec.gov/submissions/CIK0000900099.json',
+    'https://data.sec.gov/api/xbrl/companyfacts/CIK0000900099.json',
+    'https://www.sec.gov/Archives/edgar/data/900099/000090009925000001/debt-20250331_lab.xml'
+  ]);
+
+  const cached = await request('/api/stock-fundamentals/DEBT');
+  assert.equal(cached.status, 200);
+  const stored = await cached.json();
+  assert.equal(stored.data.metrics.currentDebt.latestQuarter.value, 1100);
+  assert.equal(stored.data.metrics.currentDebt.latestQuarter.formula, currentDebt.formula);
+  assert.equal(calls.length, 4, 'GET 只能讀已通過寫入牆的快取，不可重抓 filer label');
+});
