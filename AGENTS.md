@@ -11,13 +11,13 @@
 **終點＝多人註冊使用的服務**（幫他人保管理財資料＝重大安全責任，安全永遠第一優先）。分三階段、每階段讓下一階段變安全：
 
 - **階段 A 安全網（✅ 完工）**：自動考試（`npm test`）→ 型別校對全覆蓋（`npm run typecheck`）→ 自動守門（pre-push hook＋GitHub Actions CI）→ 格式糾察（`npm run lint`）。
-- **階段 B 骨架改建（進行中，B0–B2 ✅）**：①B0 前置（STORE_FILE 隔離＋app 可測試載入＋端點測試）✅ ②B1 資料存取收斂到 `lib/repo.js` 單一櫃檯 ✅ ③B2 分層拆房間（routes/services）＋欄位白名單 ✅ ④B3 `store.json` → SQLite ✅（含**驗證入櫃檯**）——**階段 B 全部完成**。**app 外觀與操作不變。**
-- **階段 C 多人前置（未動工）**：帳號系統（註冊/登入/密碼雜湊）、每人資料隔離、HTTPS、敏感資料加密存放（`pdfPassword`＝身分證字號絕不能明文上伺服器）；前端要不要換框架到 C 再評估。
+- **階段 B 骨架改建（✅ 完工）**：①B0 前置（STORE_FILE 隔離＋app 可測試載入＋端點測試）②B1 資料存取收斂到 `lib/repo.js` 單一櫃檯 ③B2 分層拆房間（routes/services）＋欄位白名單 ④B3 `store.json` → SQLite（含**驗證入櫃檯**）。**app 外觀與操作不變。**
+- **階段 C 多人上線（進行中，C1–C5 ✅）**：雙模式開關（LOCAL／HOSTED）、帳號系統與 auth gate、租戶隔離（RLS＋CAS）、機密 envelope 加密與雲端匯出剝機密、速率限制與資源上限**都已上線**（細節見同步點清單）；剩 **C6**（合成資料的全面對抗審查收官）與 **C7**（真實資料上線＋DNS）。分階段裁決與威脅模型見 `docs/多人上線-施工計畫.md`。
 
-審查與建議請以此方向為前提（例：store.json 的深度優化價值有限——B 階段會換 SQLite；但正確性 bug 照抓）。
+審查與建議請以此方向為前提（正確性 bug 照抓）。
 
-- 後端（B2 已分層）：`server.js`＝薄殼（啟動＋掛路由，只聽 `127.0.0.1`，埠 `PORT` 或 4321）→ `lib/routes/*.js`（HTTP 路由：core/crud/market/ib/statement）→ `lib/services/*.js`（業務邏輯：learning/snapshot/ib-sync/statement-import）→ `lib/repo.js`（資料存取單一櫃檯；**C4a 起全介面 async**，見鐵則 8）→ **兩顆引擎（C4b）**：LOCAL＝`lib/store.js`（**SQLite `data/store.db`**，Node 內建 node:sqlite、WAL＋交易；舊 `store.json` 首次啟動自動搬家、原檔保留當備份）／HOSTED＝`lib/store-pg.js`（**Supabase Postgres**，`kv(user_id,key,data,version)`＋RLS＋compare-and-swap；結構在 `db/supabase-schema.sql`）。分流判準只有 `isHosted()`，**路由與 services 一行都不必知道差別**。欄位白名單在 `lib/schema.js`
-- 資料：`data/store.json`（本機 JSON，**已被 .gitignore 排除**）；首次啟動從 `data/seed.json` 複製
+- 後端（B2 已分層）：`server.js`＝薄殼（啟動＋掛路由；LOCAL 只聽 `127.0.0.1`、HOSTED 聽 `0.0.0.0`，埠 `PORT` 或 4321）→ `lib/routes/*.js`（HTTP 路由：core/crud/market/ib/statement）→ `lib/services/*.js`（業務邏輯：learning/snapshot/ib-sync/statement-import）→ `lib/repo.js`（資料存取單一櫃檯；**C4a 起全介面 async**，見鐵則 8）→ **兩顆引擎（C4b）**：LOCAL＝`lib/store.js`（**SQLite `data/store.db`**，Node 內建 node:sqlite、WAL＋交易；舊 `store.json` 首次啟動自動搬家、原檔保留當備份）／HOSTED＝`lib/store-pg.js`（**Supabase Postgres**，`kv(user_id,key,data,version)`＋RLS＋compare-and-swap；結構在 `db/supabase-schema.sql`）。分流判準只有 `isHosted()`，**路由與 services 一行都不必知道差別**。欄位白名單在 `lib/schema.js`
+- 資料：LOCAL＝`data/store.db`（SQLite，**已被 .gitignore 排除**；首次啟動從 `data/seed.json` 複製、舊 `store.json` 自動搬家）／HOSTED＝Supabase `kv`（新租戶從 `emptyDb()` 乾淨底稿起家、**不種 seed**、無本機備份與搬家）
 - 計算大腦：`lib/derive.js`（淨資產/現金流/提醒/投資原則檢查）
 - IBKR 串接：`lib/ib.js`（Flex Query 唯讀）
 - 前端：`public/` 原生 JS SPA——`app.js`（共用工具+路由）、`modules/*.js`（頁面模組）、`modules/theme.js`（圖表色）、Chart.js（本機 vendor）。投資組合的**零 DOM／零 API 純模組層**分成 `modules/portfolio-calculations.js`（匯率表、持股成本、槓桿距離、交易損益換匯、XIRR 現金流組裝與求解）、`modules/portfolio-exposure.js`（資產型別、ETF 區域／公司穿透、幣別底層曝險）、`modules/portfolio-model.js`（把持股、帳戶與 IB 官方摘要組成頁面共用的台幣金額模型）、`modules/portfolio-state.js`（把金額模型整理成分層金額、QQQM 核心佔比、投資上限／凍結名單與 XIRR 頁面狀態）、`modules/portfolio-risk.js`（前後端共用的投資上限預設＋前端凍結加碼名單）、`modules/portfolio-report.js`（把已算好的投資資料整理成 A4 列印 HTML）、`modules/portfolio-details.js`（把已算好的成本、資產、交易資料排序成彈窗 HTML；格式器由頁面注入，維持 NT／US 雙計價）、`modules/portfolio-activity.js`（IB 現金流、交易摘要與匯率來源說明；只接資料＋目前計價，不碰頁面狀態）、`modules/portfolio-visuals.js`（紀律檢查、幣別／區域／公司曝險、分層配置與持股圓環；只接已算資料與格式器，不碰 DOM/API）、`modules/portfolio-valuation.js`（把 `signal-tiers.js` 算出的五市場檔位、CAPE 分位／規則帶與列印摘要排成 HTML；API、DOM、表單仍由頁面負責，門檻單一真相仍在 `signal-tiers.js`）、`modules/portfolio-tables.js`（把持股分層排序、價格／損益／佔比與願望清單狀態排成主表 HTML；排序狀態、localStorage 與事件仍由頁面負責）、`modules/portfolio-research.js`（把個股論點、指標、風險、最近檢查點與研究表單規格排成 HTML／資料；API 寫入與事件仍由頁面負責）、`modules/portfolio-overview.js`（把頁首、總覽卡、估值占位卡與 XIRR 摘要排成 HTML；金額格式、API、圖表與事件仍由頁面負責）、`modules/portfolio-chart.js`（把投入／市值月序列、NT／US 換算與 Chart.js 設定整理成純資料）、`modules/portfolio-quotes.js`（把 Yahoo 報價代號、匯率精度、幣別護欄與逐筆寫回計畫整理成純資料；API 與真正寫入仍由頁面負責）、`modules/portfolio-forms.js`（把持股／願望清單／估值表單規格、持股成本整理與凍結加碼原因整理成純資料；確認、API 與提示仍由頁面負責）與 `modules/portfolio-ib-sync.js`（把 IBKR 同步成功摘要與現金資料異常旗標翻成使用者回報；同步、寫入與已出清確認仍由頁面負責）。**個股研究頁（Codex P1–P5）另成一組**：`modules/stock-research-model.js`（持股／研究模型、空狀態四型、占比與上限組裝）、`modules/stock-research-score.js`（五構面評分：0 分是合法評分、五項未評完不算總分、同日歷史去重）、`modules/stock-research-view.js`（純呈現層＋四段就地解釋 `STOCK_RESEARCH_INFO`；交易一律**原幣呈現、不跨幣別加總**）、`modules/stock-research-page.js`（DOM／API／事件接線）。**入口只有兩個、且只給 `layer:'stock'`**（P5）：投資主表的代號（`portfolio-tables.js`）與研究摘要卡的「詳細研究」（`portfolio-research.js`），都用 `normalizePortfolioSymbol` 正規化＋`encodeURIComponent` 組 `#stock?symbol=`、`target=_blank`＋`rel=noopener`；ETF／債券／衛星與店名欄維持純文字。⚠️ 路由要吃得下 query（`router()` 的 `.split('?')[0]`）；⚠️ 新分頁會**獨立重跑一次開機序列**（報價／快照／店名整理／訂閱續費日推進）＝既定裁決，伺服器端都有時間閘或冪等保護（`docs/個股研究頁-施工計畫.md` §九）；改這些公式、成分表、頁面狀態、報表、明細、活動卡、視覺、估值、主表、研究卡、摘要、圖表、報價、表單或同步回報口徑要在對應檔補固定輸入輸出考題，不要把邏輯塞回 `portfolio.js` 的畫面流程。
@@ -281,7 +281,7 @@
 
 兩個固定關卡：**合併前一句話檢查**——PR 說明要回答「這支若完全失敗，最糟會失去什麼？」；**合併後五分鐘檢查**——William 重啟 App、以實際操作完成最核心的一條流程（＝每支 PR 附的「驗收法」）。
 
-**共享檔案預約**：PROJECT.md 維護預約短表（檔案／持有人／工作／釋放條件），開工前登記、合併後釋放。規則：同一時間只有一位持有人；其他人可讀可審、不直接修改；發現會造成**金額算錯／資料遺失／機密外洩／頁面或核心路由崩潰**的問題可立即插隊——插隊問題由**持有人**修，發現者提供重現條件並複審。
+**共享檔案預約（2026-07-31 起＝Draft PR，人工預約表退役）**：**開工第一步＝先開 Draft PR**（哪怕只有一個開工 commit），**且 PR 說明開工時就要列出「預計修改的共享檔案／區域」**（還沒 commit 到的也要列——open PR 的 files 只看得到已改的，宣告才蓋得住整個工作範圍）——「誰在做什麼」的唯一即時來源就是 GitHub 的 open PR 清單（`gh pr list`＋各 PR 說明），不再人工維護第二張表（人工表實證會過期：曾經同時開著五支 PR、表上只寫一支）。**工作中途要碰開工時沒宣告的共享檔案＝先更新自己 PR 的說明、並重查其他 open PR 的宣告**；撞到別人已宣告的範圍就停下協調（插隊條件除外），不可先改再說。規則不變：同一檔案同一時間只有一位持有人（＝該 PR 的實作者）；其他人可讀可審、不直接修改；發現會造成**金額算錯／資料遺失／機密外洩／頁面或核心路由崩潰**的問題可立即插隊——插隊問題由**持有人**修，發現者提供重現條件並複審。
 
 **規則衝突**：本檔（AGENTS.md）是最高技術準則。**發現程式碼與本檔不一致時，不可直接選一邊修改**——先查：①Git 紀錄 ②施工計畫 ③固定輸入輸出考題 ④使用者先前裁決；仍無法確認才交 William 裁決。
 
@@ -292,7 +292,7 @@
 | 文件 | 用途 | 更新時機 |
 |---|---|---|
 | AGENTS.md（本檔） | 技術鐵則、公式口徑、同步點 | 技術契約改變的**當支 PR** |
-| PROJECT.md | 做到哪、誰在做、下一步、共享檔預約表 | 每**階段收官**（預約表＝開工前／合併後隨手更新） |
+| PROJECT.md | 做到哪、下一步、待裁決事項（**「誰在做」＝看 open PR 清單，不在本檔**） | 每**階段收官** |
 | 施工計畫 | 這個功能準備怎麼做 | **開工前定稿**（只有高風險與新功能需要） |
 | Notion | 給 William 的白話原理與開發紀錄 | **複審收官後** |
 | PR 說明 | 這一次實際改了什麼＋失敗最糟失去什麼＋驗收法 | 每支 PR |
