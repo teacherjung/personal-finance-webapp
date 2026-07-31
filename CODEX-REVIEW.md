@@ -90,7 +90,7 @@ npm run typecheck && npm run lint && npm test
 - **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方合併五步驟執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依同五步驟執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（「Notion 白話規格・更新工法」小節，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 2）。
-- **開 PR 前自己對抗式自審一輪**：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
+- **完工後、轉 ready 送審前，自己對抗式自審一輪**（開工就開 Draft，所以自審關卡掛在「轉 ready」而不是「開 PR」）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
 - **PII**：絕不讀 `data/store.db`（含 `.bak/-wal/-shm`）與 `store.json`；測試一律 `STORE_FILE` 指暫存 `.db`；帳單 PDF 密碼＝身分證字號，只記憶體用、絕不落任何檔/log/commit。
 
 ### 自我檢查（開審前）
