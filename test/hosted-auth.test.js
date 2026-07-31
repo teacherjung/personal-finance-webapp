@@ -347,37 +347,64 @@ test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新�
     '猛打它們＝拿我們的伺服器去打別人，可能害使用者被上游限流甚至停用。');
 });
 
-test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣例）只准出現在已登記的模組裡，且登記必須真的被偵測到', async () => {
+test('對帳（反向）：對外連線能力（fetch／fetchImpl／Node 網路模組）只准出現在已登記的模組裡，且登記必須真的被偵測到', async () => {
   const { readFileSync, readdirSync, statSync } = await import('node:fs');
   const { join: pjoin, dirname: pdirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
   const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
-  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：
-  // 可注入 `fetchImpl` 正是 AGENTS 要求的可測試慣例——market-data、stock-fundamentals 都這樣寫，
-  // 字面掃描下它們**完全隱形**（實測：舊版三個登記只有 lib/ib.js 真的被掃到，其餘是空轉登記，
-  // 從清單拿掉考題照綠）。下一個照慣例寫的對外模組＝不登記、不限速、零考題紅。
-  // 偵測器（r1 擴大：三種日常繞法實測可穿舊版——transport = fetch 別名、node:https、globalThis['fetch']）：
-  //   ①裸 fetch 識別字（呼叫、別名、預設參數都算）②fetchImpl 慣例 ③globalThis.fetch 點形式
-  //   ④computed 存取（'fetch' 字串）⑤Node 網路模組 ⑥CJS require 同族 ⑦常見第三方 HTTP client。
-  // 只看程式行（跳過 //、*、/* 註解行）。
+  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：可注入 fetchImpl 正是
+  // AGENTS 要求的可測試慣例，字面掃描下全部隱形（實測舊版三個登記只有 lib/ib.js 真的被掃到）。
+  // r1–r3 對抗又實測出八種「日常寫法」繞法（別名、node:https、globalThis['fetch']、裸核心模組、
+  // global.fetch、反引號 import、跨行 import、globalThis?.fetch）——全數入下方 probe matrix。
   // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
   //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
-  /** 只看程式行：// 行、JSDoc 的 * 行與 /* 行都跳過（註解提到慣例不算對外能力）。 @param {string} l */
-  const isCodeLine = (l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); };
-  const OUTBOUND_RE = new RegExp([
-    '(^|[^.\\w])fetch\\b',
-    'fetchImpl',
-    'globalThis\\.fetch',
-    '(^|[^.\\w])global\\.fetch',
-    '[\'"]fetch[\'"]',
-    'node:(?:https?|http2|net|tls|dgram)\\b',
-    '(?:from|import\\s*\\()\\s*[\'"](?:https?|http2|net|tls|dgram)[\'"]',
-    'require\\(\\s*[\'"](?:https?|http2|net|tls|dgram)[\'"]',
-    '(?:from|import\\s*\\()\\s*[\'"](?:undici|axios|node-fetch|got)[\'"]',
+  //   惡意混淆級（eval／字串拼接／getBuiltinModule）依威脅模型留給 code review（本絆索防「忘記登記」）。
+  const CORE_NET = '(?:https?|http2|net|tls|dgram)';
+  const CLIENTS = '(?:undici|axios|node-fetch|got)';
+  const OUTBOUND_LINE_RE = new RegExp([
+    '(^|[^.\\w])fetch\\b',                                     // 裸 fetch：呼叫、別名、預設參數都算
+    'fetchImpl',                                                // AGENTS 慣例
+    '(^|[^.\\w])global(?:This)?\\s*(?:\\.|\\?\\.)\\s*fetch',    // global(This).fetch 含 optional chaining
+    '[\'"`]fetch[\'"`]',                                       // computed 存取
+    `node:${CORE_NET}\\b`,                                      // node: 前綴核心模組
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`]${CORE_NET}['"\`]`,  // 裸核心模組（ESM／動態／CJS）
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`]${CLIENTS}['"\`]`,   // 第三方 client
   ].join('|'));
-  /** 偵測器本體（probe matrix 與全 lib 掃描共用同一支——矩陣才真的在測正式偵測器）。 @param {string} src */
-  const detectsOutbound = (src) => src.split('\n').some((l) => isCodeLine(l) && OUTBOUND_RE.test(l));
+  // 跨行寫法（import(\n 'https'\n) 這種）：拿整份去註解原始碼再掃一次（\s 天然跨行）
+  const OUTBOUND_MULTILINE_RE = new RegExp(`(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CORE_NET.slice(3, -1)}|${CLIENTS.slice(3, -1)})['"\`]`);
+  /** 去註解（r3：只看行首擋不住 block comment 中段行與行尾註解）。行尾 // 只在前面是行首或
+   *  空白時才算註解——保護 'https://…' 這種 URL 字串（有正向 probe 釘住）。 @param {string} src */
+  const stripComments = (src) => {
+    let inBlock = false;
+    return src.split('\n').map((raw) => {
+      let rest = raw; let out = '';
+      if (inBlock) {
+        const end = rest.indexOf('*/');
+        if (end === -1) return { raw, clean: '' };
+        rest = rest.slice(end + 2); inBlock = false;
+      }
+      for (;;) {
+        const st = rest.indexOf('/*');
+        if (st === -1) { out += rest; break; }
+        out += rest.slice(0, st);
+        const end = rest.indexOf('*/', st + 2);
+        if (end === -1) { inBlock = true; break; }
+        rest = rest.slice(end + 2);
+      }
+      const m = out.match(/(^|\s)\/\//);
+      if (m && m.index !== undefined) out = out.slice(0, m.index);
+      return { raw, clean: out };
+    });
+  };
+  /** **唯一偵測器**（r3：矩陣與全 lib 掃描必須走同一支——上一版掃描自帶行內表達式，哨兵突變
+   *  證實矩陣測不到掃描用的那份）。回傳第一個命中的原始行；沒有＝null。 @param {string} src */
+  const outboundHit = (src) => {
+    const lines = stripComments(src);
+    for (const { raw, clean } of lines) if (OUTBOUND_LINE_RE.test(clean)) return raw.trim();
+    const whole = lines.map((l) => l.clean).join('\n');
+    return OUTBOUND_MULTILINE_RE.test(whole) ? '（跨行寫法命中：換行的 import/require）' : null;
+  };
   // 已知會對外的模組（端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞、自己不開新端點）。
   // **新增請先想清楚要不要限速。**
   const ALLOWED = new Map([
@@ -396,9 +423,8 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
   /** @type {Map<string, string>} */
   const detected = new Map();
   for (const rel of walk('lib')) {
-    const src = readFileSync(pjoin(ROOT, rel), 'utf8');
-    const hit = src.split('\n').find((l) => isCodeLine(l) && OUTBOUND_RE.test(l));
-    if (hit !== undefined) detected.set(rel, hit.trim());
+    const hit = outboundHit(readFileSync(pjoin(ROOT, rel), 'utf8'));
+    if (hit !== null) detected.set(rel, hit);
   }
   // ① 正向：偵測到卻沒登記＝新的對外能力溜進來了
   const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
@@ -410,28 +436,33 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
   assert.deepEqual(stale, [],
     `這些登記在偵測器下是隱形的（空轉登記＝絆索退化）：\n  ${stale.join('\n  ')}\n` +
     '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
-
-  // ③ probe matrix（Codex r2 建議）：每條偵測分支都有代表寫法釘住——沒被現行程式命中的
-  //    pattern 被誤刪時，這裡會紅（否則「偵測器自己的空轉分支」永遠沒警報）。r1＋r2 的實測繞法全數入陣。
+  // ③ probe matrix（r2 建議、r3 擴充）：每條偵測分支都有代表寫法釘住——沒被現行程式命中的
+  //    pattern 被誤刪時這裡會紅。r1–r3 的實測繞法全數入陣；矩陣走的就是上面那支 outboundHit。
   const PROBES = [
     ['字面 fetch 呼叫', 'return fetch(url);'],
     ['別名預設參數（r1 繞法）', 'export async function p(url, transport = fetch) { return transport(url); }'],
     ['fetchImpl 慣例', 'async function f(fetchImpl = globalThis.fetch) { return fetchImpl; }'],
     ['globalThis 點形式', 'const f = globalThis.fetch;'],
     ['global.fetch（r2 繞法）', 'export const transport = global.fetch;'],
+    ['optional chaining（r3 繞法）', 'export const transport = globalThis?.fetch;'],
     ['computed 存取（r1 繞法）', "const f = globalThis['fetch'];"],
     ['node: 前綴 ESM（r1 繞法）', "import { request } from 'node:https';"],
     ['裸核心模組 ESM（r2 繞法）', "import https from 'https';"],
     ['動態 import（r2 繞法）', "const h = await import('https');"],
+    ['反引號動態 import（r3 繞法）', 'const h = await import(`https`);'],
+    ['跨行動態 import（r3 繞法）', "const h = await import(\n  'https'\n);"],
     ['CJS require', "const https = require('https');"],
     ['第三方 client', "import { Agent } from 'undici';"],
+    ['URL 字串不掩護同行的 fetch（去註解不可誤刪）', "const u = 'https://example.com'; return fetch(u);"],
   ];
-  for (const [name, snippet] of PROBES) assert.ok(detectsOutbound(snippet), `偵測器抓不到代表寫法：${name}`);
-  // 誤報面也釘住：註解與無關程式不可被當成對外能力
+  for (const [name, snippet] of PROBES) assert.ok(outboundHit(snippet) !== null, `偵測器抓不到代表寫法：${name}`);
+  // 誤報面也釘住（r3 擴充：block comment 中段、行尾註解）
   const CLEAN = [
-    ['註解行', '// 這裡提到 fetch 或 https 都不算'],
-    ['JSDoc 行', ' * @param {typeof fetch} fetchImpl 注入點'],
+    ['行首註解', '// 這裡提到 fetch 或 https 都不算'],
+    ['JSDoc 行', '/**\n * @param {typeof fetch} fetchImpl 注入點\n */'],
+    ['block comment 中段（r3）', '/*\nfetch(1);\nimport https from \'https\';\n*/'],
+    ['行尾註解（r3）', 'const a = 1; // 舊版這裡用 fetch'],
     ['無關程式', 'export const sum = (a, b) => a + b;'],
   ];
-  for (const [name, snippet] of CLEAN) assert.ok(!detectsOutbound(snippet), `偵測器誤報乾淨寫法：${name}`);
+  for (const [name, snippet] of CLEAN) assert.ok(outboundHit(snippet) === null, `偵測器誤報乾淨寫法：${name}`);
 });
