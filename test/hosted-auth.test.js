@@ -357,8 +357,21 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
   // 可注入 `fetchImpl` 正是 AGENTS 要求的可測試慣例——market-data、stock-fundamentals 都這樣寫，
   // 字面掃描下它們**完全隱形**（實測：舊版三個登記只有 lib/ib.js 真的被掃到，其餘是空轉登記，
   // 從清單拿掉考題照綠）。下一個照慣例寫的對外模組＝不登記、不限速、零考題紅。
-  // 偵測器＝字面 fetch( ＋ fetchImpl ＋ globalThis.fetch；只看程式行（跳過 //、*、/* 註解行）。
-  const OUTBOUND_RE = /(^|[^.\w])fetch\s*\(|fetchImpl|globalThis\.fetch/;
+  // 偵測器（r1 擴大：三種日常繞法實測可穿舊版——transport = fetch 別名、node:https、globalThis['fetch']）：
+  //   ①裸 fetch 識別字（呼叫、別名、預設參數都算）②fetchImpl 慣例 ③globalThis.fetch 點形式
+  //   ④computed 存取（'fetch' 字串）⑤Node 網路模組 ⑥CJS require 同族 ⑦常見第三方 HTTP client。
+  // 只看程式行（跳過 //、*、/* 註解行）。
+  // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
+  //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
+  const OUTBOUND_RE = new RegExp([
+    '(^|[^.\\w])fetch\\b',
+    'fetchImpl',
+    'globalThis\\.fetch',
+    '[\'"]fetch[\'"]',
+    'node:(?:https?|http2|net|tls|dgram)\\b',
+    'require\\(\\s*[\'"](?:https?|http2|net|tls|dgram)[\'"]',
+    'from\\s+[\'"](?:undici|axios|node-fetch|got)[\'"]',
+  ].join('|'));
   // 已知會對外的模組（端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞、自己不開新端點）。
   // **新增請先想清楚要不要限速。**
   const ALLOWED = new Map([
