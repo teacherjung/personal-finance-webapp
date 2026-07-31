@@ -116,6 +116,11 @@ test('SEC 候選表｜與研究方法的 14 個官方指標逐項對齊', () => 
     assert.ok(definition.tags.length);
     assert.equal(new Set(definition.tags).size, definition.tags.length);
   }
+  assert.deepEqual(SEC_METRIC_CANDIDATES.revenue.tags, [
+    'Revenues',
+    'RevenueFromContractWithCustomerExcludingAssessedTax',
+    'SalesRevenueNet'
+  ], '營收候選順序就是同期間語意優先序：總額必須在合約收入成分之前');
 });
 
 test('SEC 財年公司｜使用真實期間尾而非曆年，10-K/A 取代同期間舊值且來源可追回', async () => {
@@ -745,6 +750,93 @@ const durQuarter = (val, extra = {}) => ({
 const instAnnual = (year, val, extra = {}) => ({
   end: `${year}-12-31`, val, form: '10-K', fy: year, fp: 'FY',
   filed: `${year + 1}-02-01`, accn: `0000900777-${String(year + 1).slice(2)}-000001`, ...extra
+});
+
+test('selectMetric｜同期間營收總額優先於合約收入成分，衍生淨利率跟著正確', () => {
+  const result = parseMetricsFixture({
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 250000), durQuarter(25000)]
+    },
+    Revenues: { USD: [durAnnual(2024, 400000), durQuarter(40000)] },
+    NetIncomeLoss: { USD: [durAnnual(2024, 100000), durQuarter(10000)] }
+  });
+
+  const revenue = result.metrics.revenue;
+  assert.equal(revenue.tag, 'Revenues', '同期間必須採總額 tag，不可被候選陣列第一個成分攔走');
+  assert.equal(revenue.annual.at(-1)?.value, 400000);
+  assert.equal(revenue.annual.at(-1)?.tag, 'Revenues', 'row-level tag 必須保留，供來源追溯與 F5 比較');
+  assert.equal(result.metrics.netMargin.annual.at(-1)?.value, 0.25, '分母若誤採 250000 會算成 0.4');
+  assert.equal(revenue.latestQuarter?.value, 40000, '單季也必須採同期總額，不可只修年度');
+  assert.equal(revenue.latestQuarter?.tag, 'Revenues');
+  assert.equal(result.metrics.netMargin.latestQuarter?.value, 0.25);
+});
+
+test('selectMetric｜高優先 tag 較舊時，較低優先 tag 補更新期間但不回頭改寫舊期', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2023, 300000),
+        durQuarter(30000, {
+          start: '2024-01-01', end: '2024-03-31', fy: 2024,
+          filed: '2024-05-01', accn: '0000900777-24-000002'
+        })
+      ]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 420000), durQuarter(42000)]
+    }
+  });
+
+  const revenue = result.metrics.revenue;
+  assert.deepEqual(
+    revenue.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2023-12-31', 300000, 'Revenues'],
+      ['2024-12-31', 420000, 'RevenueFromContractWithCustomerExcludingAssessedTax']
+    ],
+    '跨 tag 要逐期間合併：舊期保留總額，新期才由較低優先來源補上'
+  );
+  assert.equal(revenue.tag, 'RevenueFromContractWithCustomerExcludingAssessedTax', '表頭來源跟最新採用列走');
+  assert.deepEqual(
+    [revenue.latestQuarter?.periodEnd, revenue.latestQuarter?.value, revenue.latestQuarter?.tag],
+    ['2025-03-31', 42000, 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+    '較低優先 tag 的更新單季也必須補上，不能只合併年度'
+  );
+
+  const f5 = comparableFundamentalSeries(revenue.annual);
+  assert.equal(f5.status, 'not-comparable', '混合 tag 的歷史列不可被 F5 畫成同口徑趨勢');
+  assert.match(f5.reason, /tag/);
+
+  const at = '2026-08-01T00:00:00.000Z';
+  const clean = /** @type {any} */ (sanitizeDbForWrite({
+    settings: {},
+    stockFundamentals: [{ symbol: 'GAP', lastAttemptAt: at, fetchedAt: at, data: result }]
+  }, { mode: 'throw' }));
+  assert.equal(clean.stockFundamentals[0].data.metrics.revenue.annual.length, 2,
+    '混合來源仍是合法的官方列，必須能原樣通過正式寫入櫃檯');
+});
+
+test('selectMetric｜只有一個可用 tag 時輸出值與來源形狀不變', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [durAnnual(2023, 133974), durAnnual(2024, 134788), durQuarter(34253)]
+    }
+  });
+  const revenue = result.metrics.revenue;
+
+  assert.equal(revenue.tag, 'Revenues');
+  assert.equal(revenue.unit, 'USD');
+  assert.deepEqual(
+    revenue.annual.map(fact => [fact.periodEnd, fact.value, fact.taxonomy, fact.tag]),
+    [
+      ['2023-12-31', 133974, 'us-gaap', 'Revenues'],
+      ['2024-12-31', 134788, 'us-gaap', 'Revenues']
+    ]
+  );
+  assert.deepEqual(
+    [revenue.latestQuarter?.periodEnd, revenue.latestQuarter?.value, revenue.latestQuarter?.tag],
+    ['2025-03-31', 34253, 'Revenues']
+  );
 });
 
 test('假綠①｜USD 優先是契約不是巧合：EUR 筆數更多時仍必須選 USD', () => {

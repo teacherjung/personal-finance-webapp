@@ -4,6 +4,12 @@
 > **內文＝原同步點列逐字照搬**（唯一轉換＝表格列解框成「改這裡／記得同步這裡」兩段）；新增的只有標題與本頁首。
 > **適用檔案清單＝[README.md](README.md) 路由表「投資與 SEC」列（單一真相，本頁首不重複維護一份會走散的副本）**——命中就必讀本檔。
 
+## SEC 官方指標挑值
+
+**改這裡**：SEC 官方指標候選 tag 與 `selectMetric`（`lib/stock-fundamentals.js`）
+
+**記得同步這裡**：候選 tag 的順序是**同一期間的語意優先序**，不是 first-hit-wins，也不是看到較大數字就採用。`revenue` 同期間依序採 `Revenues`（總額）→ `RevenueFromContractWithCustomerExcludingAssessedTax`（合約收入成分）→ `SalesRevenueNet`；其他指標沿用候選表既定的近義 tag 優先序，**不相加、不用數值大小猜總額**。先按 unit 分組且全序列只選一種 unit，再逐完全相同期間去重（duration＝`periodStart＋periodEnd`；instant＝`periodEnd`）：同期間取高優先 tag，不同期間則讓較低優先 tag 補齊較新的申報，最後才裁成最近五年與最新單季。每一列必須保留自己的 `taxonomy/tag` 與申報來源；metric 表頭的 `taxonomy/tag` 跟最新採用列走。F5 趨勢仍只接受同 unit／taxonomy／tag／期間類型，跨 tag 接力的列要 fail-closed，不可混畫成同口徑趨勢。改動必跑三型考題：CBRE 型（同期成分 250000、總額 400000，淨利 100000 時 margin＝25%）、Comcast 型（高優先總額較舊、低優先 tag 補新期）、Verizon 型（單一 tag 前後完全不變），並直接通過 `sanitizeDbForWrite`。`currentDebt` 仍由同一 `selectMetric` 入口分派到下節的逐期總額／成分安全判斷；`noncurrentDebt` 只做近義 tag 逐期退路，絕不相加。
+
 ## SEC currentDebt 流動債務
 
 **改這裡**：SEC `currentDebt`（`lib/stock-fundamentals.js`）
