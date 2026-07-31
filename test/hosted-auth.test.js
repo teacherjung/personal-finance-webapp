@@ -347,75 +347,93 @@ test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新�
     '猛打它們＝拿我們的伺服器去打別人，可能害使用者被上游限流甚至停用。');
 });
 
-test('對帳（反向）：對外連線能力（fetch／fetchImpl／Node 網路模組）只准出現在已登記的模組裡，且登記必須真的被偵測到', async () => {
+test('對帳（反向）：對外連線能力只准出現在已登記的模組裡（雙軌偵測：剝離器 bug 永不靜默漏抓）', async () => {
   const { readFileSync, readdirSync, statSync } = await import('node:fs');
   const { join: pjoin, dirname: pdirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
   const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
   // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：可注入 fetchImpl 正是
-  // AGENTS 要求的可測試慣例，字面掃描下全部隱形（實測舊版三個登記只有 lib/ib.js 真的被掃到）。
-  // r1–r4 對抗共實測出十二種「日常寫法」繞法——全數入下方 probe matrix。
+  // AGENTS 要求的可測試慣例，字面掃描下全部隱形。r1–r5 對抗共實測十四種「日常寫法」繞法，全數入矩陣。
+  // 🏗️ **架構（r5 結構性收官）＝雙軌偵測**：手寫剝離器不可能完美（JS 詞法需要真 parser——巢狀模板、
+  //   regex vs 除法…每輪都能再挖出一種）。與其追求完美，改變失敗方向：
+  //   乾淨軌＝去註解後掃（正常判定）；**生掃軌＝原始碼直接掃（安全網）**。剝離器任何 bug 吃掉真程式碼
+  //   → 生掃軌仍命中 → 本題紅（fail-noisy）。「只有註解提到 fetch」的檔案列 COMMENT_MENTIONS（有 why、
+  //   雙向防空轉）。從此剝離器品質只影響「吵不吵」，不影響「漏不漏」。
   // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
   //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
   //   惡意混淆級（eval／字串拼接／getBuiltinModule）依威脅模型留給 code review（本絆索防「忘記登記」）。
   const CORE_NET = 'https?|http2|net|tls|dgram';
   const CLIENTS = 'undici|axios|node-fetch|got';
-  // 單一整檔 regex（\s 天然跨行——r4 抓到 globalThis␊.fetch 這種換行排版）；^ 只配字串開頭、
-  // 其餘由 [^.\w]（含換行）接手。
   const OUTBOUND_RE = new RegExp([
-    '(^|[^.\\w])fetch\\b',                                        // 裸 fetch：呼叫、別名、預設參數都算
-    'fetchImpl',                                                   // AGENTS 慣例
-    '(^|[^.\\w])global(?:This)?\\s*(?:\\.|\\?\\.)\\s*fetch',       // global(This).fetch 含 optional chaining 與跨行
-    '[\'"`]fetch[\'"`]',                                          // computed 存取
-    `node:(?:${CORE_NET})\\b`,                                     // node: 前綴核心模組
-    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CORE_NET})['"\`]`,  // 裸核心模組（ESM／動態／CJS，跨行）
-    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CLIENTS})['"\`]`,   // 第三方 client
+    '(^|[^.\\w])fetch\\b',                     // 裸 fetch：呼叫、別名、預設參數
+    'fetchImpl',                                // AGENTS 慣例
+    '(?:\\.|\\?\\.)\\s*fetch\\b',               // 成員存取：globalThis.fetch／(globalThis).fetch／?.fetch／跨行（r4+r5）
+    '[\'"`]fetch[\'"`]',                       // computed 存取
+    `node:(?:${CORE_NET})\\b`,
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CORE_NET})['"\`]`,
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CLIENTS})['"\`]`,
   ].join('|'));
-  /** 去註解掃描器（r4 重寫：**必須追蹤字串狀態**——上一版把 '*\/*' 這種 MIME 字串裡的 /* 當註解開始、
-   *  連後面真的 fetch 一起吞掉＝漏抓）。規則：
-   *  - 字串（'、"、反引號）內容**原樣保留**（字串不是註解；'fetch' computed 存取靠它偵測），支援跳脫；
-   *  - 一般字串遇換行視為未終結、回到 code（防呆）；模板字串可跨行；
-   *  - // 與 /* 的前一字元是反斜線＝不當註解（保護 regex literal 的 \/\/——URL regex 是日常寫法）；
-   *  - 殘餘（記錄在案）：regex literal 與除法的完整區分需要真 parser；regex 內含引號會被誤入字串狀態，
-   *    但因字串內容保留、後果只到 fail-noisy（誤報），不會漏抓。 @param {string} src */
+  /** 去註解掃描器（堆疊式；r5 補模板插值 \${}——巢狀反引號曾讓舊版把 URL 的 // 當註解吞掉 fetch）。
+   *  字串內容原樣保留；// 與 /* 前一字元是反斜線＝不當註解（regex literal 的 \/\/）。
+   *  已知殘餘（因雙軌架構已無漏抓風險，僅影響吵度）：regex vs 除法需真 parser。 @param {string} src */
   const stripComments = (src) => {
-    let out = ''; let state = 'code'; let prev = '';
+    let out = ''; let prev = '';
+    /** @type {string[]} */ const stack = ['code'];
+    /** @type {number[]} */ const interpDepth = [];
     for (let i = 0; i < src.length; i++) {
       const c = src[i]; const n = src[i + 1];
-      if (state === 'code') {
-        if (c === '/' && n === '/' && prev !== '\\') { state = 'line'; i++; prev = ''; continue; }
-        if (c === '/' && n === '*' && prev !== '\\') { state = 'block'; i++; prev = ''; continue; }
-        if (c === '\'') state = 's1';
-        else if (c === '"') state = 's2';
-        else if (c === '`') state = 'tpl';
+      const st = stack[stack.length - 1];
+      if (st === 'code' || st === 'interp') {
+        if (c === '/' && n === '/' && prev !== '\\') { stack.push('line'); prev = ''; i++; continue; }
+        if (c === '/' && n === '*' && prev !== '\\') { stack.push('block'); prev = ''; i++; continue; }
+        if (c === '\'') stack.push('s1');
+        else if (c === '"') stack.push('s2');
+        else if (c === '`') stack.push('tpl');
+        else if (st === 'interp') {
+          if (c === '{') interpDepth[interpDepth.length - 1]++;
+          else if (c === '}') {
+            if (interpDepth[interpDepth.length - 1] === 0) { stack.pop(); interpDepth.pop(); out += c; prev = c; continue; }
+            interpDepth[interpDepth.length - 1]--;
+          }
+        }
         out += c; prev = c;
-      } else if (state === 'line') {
-        if (c === '\n') { state = 'code'; out += c; prev = ''; }
-      } else if (state === 'block') {
-        if (c === '*' && n === '/') { state = 'code'; i++; prev = ''; }
-        else if (c === '\n') out += c;   // 保留換行＝行號對得上
-      } else {
+      } else if (st === 'line') {
+        if (c === '\n') { stack.pop(); out += c; prev = ''; }
+      } else if (st === 'block') {
+        if (c === '*' && n === '/') { stack.pop(); i++; prev = ''; }
+        else if (c === '\n') out += c;
+      } else if (st === 'tpl') {
         out += c;
         if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
-        if ((state === 's1' && c === '\'') || (state === 's2' && c === '"') || (state === 'tpl' && c === '`')) state = 'code';
-        else if (state !== 'tpl' && c === '\n') state = 'code';
+        if (c === '`') stack.pop();
+        else if (c === '$' && n === '{') { stack.push('interp'); interpDepth.push(0); out += n; i++; }
+        prev = c;
+      } else {   // s1 / s2
+        out += c;
+        if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+        if ((st === 's1' && c === '\'') || (st === 's2' && c === '"')) stack.pop();
+        else if (c === '\n') stack.pop();   // 一般字串不跨行＝未終結防呆
         prev = c;
       }
     }
     return out;
   };
-  /** **唯一偵測器**（r3 哨兵驗證共用；r4 起整檔單一掃描）。回傳「第 N 行：內容」；沒有＝null。 @param {string} src */
-  const outboundHit = (src) => {
+  /** @param {string} text */
+  const hitOn = (text) => {
+    const m = OUTBOUND_RE.exec(text);
+    if (!m) return null;
+    return { index: m.index, snippet: m[0] };
+  };
+  /** 乾淨軌＋行號回報。 @param {string} src */
+  const cleanHit = (src) => {
     const stripped = stripComments(src);
-    const m = OUTBOUND_RE.exec(stripped);
+    const m = hitOn(stripped);
     if (!m) return null;
     const lineNo = stripped.slice(0, m.index + 1).split('\n').length;
-    const rawLine = (src.split('\n')[lineNo - 1] ?? m[0]).trim();
-    return `第 ${lineNo} 行：${rawLine}`;
+    return `第 ${lineNo} 行：${(src.split('\n')[lineNo - 1] ?? m.snippet).trim()}`;
   };
-  // 已知會對外的模組（端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞、自己不開新端點）。
-  // **新增請先想清楚要不要限速。**
+  // 端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞。**新增請先想清楚要不要限速。**
   const ALLOWED = new Map([
     ['lib/ib.js', '端點主：IBKR Flex（字面 fetch）'],
     ['lib/services/market-data.js', '端點主：Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）'],
@@ -423,30 +441,48 @@ test('對帳（反向）：對外連線能力（fetch／fetchImpl／Node 網路�
     ['lib/services/insights.js', '傳導：把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點'],
     ['lib/services/ib-sync.js', '傳導：注入 fetchFlex（lib/ib.js），自己不開新端點'],
   ]);
+  // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
+  const COMMENT_MENTIONS = new Map([
+    ['lib/parse-limits.js', 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求'],
+    ['lib/repo.js', '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連'],
+  ]);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
     const rel = `${dir}/${f}`;
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
     return f.endsWith('.js') ? [rel] : [];
   });
-  /** @type {Map<string, string>} */
-  const detected = new Map();
+  /** @type {Map<string, string>} */ const detected = new Map();
+  /** @type {Map<string, string>} */ const rawOnly = new Map();
   for (const rel of walk('lib')) {
-    const hit = outboundHit(readFileSync(pjoin(ROOT, rel), 'utf8'));
-    if (hit !== null) detected.set(rel, hit);
+    const src = readFileSync(pjoin(ROOT, rel), 'utf8');
+    const clean = cleanHit(src);
+    if (clean !== null) { detected.set(rel, clean); continue; }
+    const raw = hitOn(src);
+    if (raw) rawOnly.set(rel, raw.snippet);
   }
-  // ① 正向：偵測到卻沒登記＝新的對外能力溜進來了
+  // ① 正向：乾淨軌偵測到卻沒登記
   const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
     `這些模組出現了未登記的對外連線能力：\n  ${unexpected.join('\n  ')}\n` +
     '請在本題 ALLOWED 寫明角色（端點主／傳導），端點主另在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
-  // ② 反向：登記了卻偵測不到＝空轉登記（絆索自己退化——#335 抓到三個登記有兩個隱形，就是這個病）
+  // ①b 安全網：生掃有、乾淨軌沒有、又不在 COMMENT_MENTIONS ＝要嘛新的註解提及要登記、
+  //    要嘛**剝離器把真程式碼吃掉了**——兩種都要人來看（這就是「漏抓變誤報」的機制本體）
+  const suspicious = [...rawOnly].filter(([rel]) => !COMMENT_MENTIONS.has(rel)).map(([rel, s2]) => `${rel}: ${s2}`);
+  assert.deepEqual(suspicious, [],
+    `生掃軌看到 fetch 相關字樣、乾淨軌沒看到，且未列 COMMENT_MENTIONS：\n  ${suspicious.join('\n  ')}\n` +
+    '若只是註解提及＝加進 COMMENT_MENTIONS（附 why）；若是真程式碼＝剝離器有 bug 吃掉它，先修剝離器。');
+  // ② 反向：ALLOWED 空轉（絆索退化——#335 抓到三個登記有兩個隱形）
   const stale = [...ALLOWED.keys()].filter((rel) => !detected.has(rel));
   assert.deepEqual(stale, [],
-    `這些登記在偵測器下是隱形的（空轉登記＝絆索退化）：\n  ${stale.join('\n  ')}\n` +
+    `這些登記在偵測器下是隱形的（空轉登記）：\n  ${stale.join('\n  ')}\n` +
     '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
-  // ③ probe matrix（r2 建議、r3–r4 擴充）：每條偵測分支＋每個實測繞法都被釘住——pattern 或
-  //    stripComments 的保護被誤刪時這裡會紅。矩陣走的就是上面同一支 outboundHit。
+  // ②b COMMENT_MENTIONS 也防空轉：列了卻乾淨軌命中＝其實在對外（搬去 ALLOWED）；列了卻連生掃都沒有＝過期
+  const mentionWrong = [...COMMENT_MENTIONS.keys()].filter((rel) => detected.has(rel) || !rawOnly.has(rel));
+  assert.deepEqual(mentionWrong, [],
+    `COMMENT_MENTIONS 名不符實：\n  ${mentionWrong.join('\n  ')}\n` +
+    '乾淨軌命中＝真的在對外、搬去 ALLOWED；生掃也沒有＝提及已移除、刪掉這條。');
+  // ③ probe matrix（r2 建議、r3–r5 擴充）：三組——必抓（乾淨軌）／註解提及（生掃攔）／完全隱形
   const PROBES = [
     ['字面 fetch 呼叫', 'return fetch(url);'],
     ['別名預設參數（r1）', 'export async function p(url, transport = fetch) { return transport(url); }'],
@@ -455,6 +491,7 @@ test('對帳（反向）：對外連線能力（fetch／fetchImpl／Node 網路�
     ['global.fetch（r2）', 'export const transport = global.fetch;'],
     ['optional chaining（r3）', 'export const transport = globalThis?.fetch;'],
     ['跨行 globalThis.fetch（r4）', 'export const send = (url) => globalThis\n  .fetch(url);'],
+    ['括號成員存取（r5）', 'export const outboundTransport = (globalThis).fetch;'],
     ['computed 存取（r1）', "const f = globalThis['fetch'];"],
     ['node: 前綴 ESM（r1）', "import { request } from 'node:https';"],
     ['裸核心模組 ESM（r2）', "import https from 'https';"],
@@ -466,18 +503,25 @@ test('對帳（反向）：對外連線能力（fetch／fetchImpl／Node 網路�
     ['MIME 字串不掩護同行 fetch（r4）', "const accept = '*/*'; return fetch(url);"],
     ['字串含 // 不掩護同行 fetch（r4）', "const label = ' // literal'; return fetch(url);"],
     ['反引號含 /* 不掩護同行 fetch（r4）', 'const marker = `/*`; return fetch(url);'],
+    ['巢狀模板字串不掩護同行 fetch（r5）', 'return { source: `${secure ? `https://` : `http://`}example.test`, response: await fetch(url) };'],
     ['URL 字串不掩護同行 fetch', "const u = 'https://example.com'; return fetch(u);"],
     ['URL regex 不掩護同行 fetch（\\/\\/ 保護）', 'if (/^https:\\/\\//.test(u)) return fetch(u);'],
   ];
-  for (const [name, snippet] of PROBES) assert.ok(outboundHit(snippet) !== null, `偵測器抓不到代表寫法：${name}`);
-  // 誤報面也釘住（r3–r4 擴充）
-  const CLEAN = [
-    ['行首註解', '// 這裡提到 fetch 或 https 都不算'],
+  for (const [name, snippet] of PROBES) assert.ok(cleanHit(snippet) !== null, `乾淨軌抓不到代表寫法：${name}`);
+  const MENTION_PROBES = [
+    ['行首註解', '// 這裡提到 fetch 也不算外連，但生掃軌要看得到'],
     ['JSDoc 行', '/**\n * @param {typeof fetch} fetchImpl 注入點\n */'],
-    ['block comment 中段（r3）', '/*\nfetch(1);\nimport https from \'https\';\n*/'],
+    ['block comment 中段（r3）', '/*\nfetch(1);\n*/'],
     ['行尾註解', 'const a = 1; // 舊版這裡用 fetch'],
-    ['無空白行尾註解（r4 Normal 根治）', 'export const x = 1;// 舊版這裡用 fetch'],
-    ['無關程式', 'export const sum = (a, b) => a + b;'],
+    ['無空白行尾註解（r4）', 'export const x = 1;// 舊版這裡用 fetch'],
   ];
-  for (const [name, snippet] of CLEAN) assert.ok(outboundHit(snippet) === null, `偵測器誤報乾淨寫法：${name}`);
+  for (const [name, snippet] of MENTION_PROBES) {
+    assert.equal(cleanHit(snippet), null, `乾淨軌誤把註解當外連：${name}`);
+    assert.ok(hitOn(snippet) !== null, `生掃軌（安全網）竟看不到註解提及：${name}`);
+  }
+  const CLEAN = [
+    ['無關程式', 'export const sum = (a, b) => a + b;'],
+    ['無關字串與註解', "// 一般說明\nexport const label = 'https 之類的字省略';"],
+  ];
+  for (const [name, snippet] of CLEAN) assert.equal(hitOn(snippet), null, `連生掃軌都不該看到：${name}`);
 });
