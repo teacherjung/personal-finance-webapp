@@ -363,10 +363,11 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
   //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
   //   惡意混淆級（eval／字串拼接／getBuiltinModule）依威脅模型留給 code review（本絆索防「忘記登記」）。
-  const CORE_NET = 'https?|http2|net|tls|dgram';
+  const CORE_NET = 'https?|http2|net|tls|dgram|dns(?:\\/promises)?';
   const CLIENTS = 'undici|axios|node-fetch|got';
   const OUTBOUND_RE = new RegExp([
     '(^|[^.\\w])fetch\\b',                     // 裸 fetch：呼叫、別名、預設參數
+    '(^|[^.\\w])WebSocket\\b',                 // Node 22+ 內建全域（r6：不需 import 就能對外）
     'fetchImpl',                                // AGENTS 慣例
     '(?:\\.|\\?\\.)\\s*fetch\\b',               // 成員存取：globalThis.fetch／(globalThis).fetch／?.fetch／跨行（r4+r5）
     '[\'"`]fetch[\'"`]',                       // computed 存取
@@ -500,6 +501,9 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['跨行動態 import（r3）', "const h = await import(\n  'https'\n);"],
     ['CJS require', "const https = require('https');"],
     ['第三方 client', "import { Agent } from 'undici';"],
+    ['WebSocket 全域（r6）', 'const ws = new WebSocket(url);'],
+    ['DNS 解析（r6）', "import { resolve4 } from 'node:dns/promises';"],
+    ['裸 dns 模組（r6）', "const dns = require('dns/promises');"],
     ['MIME 字串不掩護同行 fetch（r4）', "const accept = '*/*'; return fetch(url);"],
     ['字串含 // 不掩護同行 fetch（r4）', "const label = ' // literal'; return fetch(url);"],
     ['反引號含 /* 不掩護同行 fetch（r4）', 'const marker = `/*`; return fetch(url);'],
