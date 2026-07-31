@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>榮祥森・森林 UI 實驗室</title>
+  <link rel="stylesheet" href="forest-ui.css" />
+  <script src="/vendor/chart.js" defer></script>
+  <script src="forest-ui.js" type="module" defer></script>
+</head>
+<body>
+  <aside class="forest-rail" aria-label="森林地圖">
+    <a class="forest-brand" href="#overview" aria-label="榮祥森總覽">
+      <span class="brand-seal">榮</span>
+      <span><b>榮祥森</b><small>財務森林</small></span>
+    </a>
+
+    <nav class="trail-nav" aria-label="主要導覽">
+      <a class="active" href="#overview" data-section="overview"><span data-icon="dashboard"></span>森林總覽</a>
+      <a href="#cashflow" data-section="cashflow"><span data-icon="wallet"></span>現金溪流</a>
+      <a href="#holdings" data-section="holdings"><span data-icon="pie"></span>資產丘陵</a>
+      <a href="#research" data-section="research"><span data-icon="trending"></span>研究樹屋</a>
+    </nav>
+
+    <div class="rail-note">
+      <span class="rail-note-leaf" aria-hidden="true"></span>
+      <b>資料安穩</b>
+      <span>最後更新 21:30</span>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">2026 年 7 月 31 日・星期五</p>
+        <h1>森林總覽</h1>
+      </div>
+      <div class="topbar-actions">
+        <div class="currency-toggle" aria-label="計價幣別">
+          <button class="active" type="button" data-currency="TWD">NT</button>
+          <button type="button" data-currency="USD">US</button>
+        </div>
+        <button class="icon-button" type="button" title="匯出本月報告" aria-label="匯出本月報告"><span data-icon="download"></span></button>
+        <button class="avatar-button" type="button" aria-label="開啟個人選單">WJ</button>
+      </div>
+    </header>
+
+    <section class="forest-scene" id="overview" aria-labelledby="scene-title">
+      <img class="scene-art" src="assets/forest-overview.webp" alt="通往遠方木屋的明亮森林小徑" />
+      <div class="scene-copy">
+        <p class="scene-kicker">本月森林天氣</p>
+        <h2 id="scene-title">穩定生長，<br />有兩處需要澆水</h2>
+        <p>現金流轉正，投資部位維持紀律；兩筆訂閱將在七天內續費。</p>
+        <button class="primary-button" id="openReminder" type="button"><span data-icon="alert"></span>查看兩項提醒</button>
+      </div>
+      <div class="scene-badge" aria-label="本月淨資產變化">
+        <span>本月長高</span>
+        <strong class="js-value" data-twd="+2.4%" data-usd="+2.4%">+2.4%</strong>
+      </div>
+    </section>
+
+    <section class="stat-strip" aria-label="本月摘要">
+      <article>
+        <span>淨資產</span>
+        <strong class="js-value" data-twd="1,248 萬" data-usd="383K">1,248 萬</strong>
+        <small class="positive">比上月多 29 萬</small>
+      </article>
+      <article>
+        <span>本月結餘</span>
+        <strong class="js-value" data-twd="+8.6 萬" data-usd="+2.6K">+8.6 萬</strong>
+        <small>收入 19.8 萬</small>
+      </article>
+      <article>
+        <span>緊急預備金</span>
+        <strong>8.2 個月</strong>
+        <small class="positive">高於 6 個月目標</small>
+      </article>
+      <article>
+        <span>投資紀律</span>
+        <strong>4 / 5</strong>
+        <small class="warning">一項接近上限</small>
+      </article>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="paper-panel cashflow-panel" id="cashflow" aria-labelledby="cashflow-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">現金溪流</p>
+            <h2 id="cashflow-title">每月收支</h2>
+          </div>
+          <div class="period-toggle" aria-label="圖表期間">
+            <button type="button" data-period="6">6 月</button>
+            <button class="active" type="button" data-period="12">12 月</button>
+          </div>
+        </div>
+        <div class="chart-summary">
+          <span>平均每月留下</span>
+          <strong class="js-value" data-twd="6.8 萬" data-usd="2.1K">6.8 萬</strong>
+        </div>
+        <div class="chart-frame"><canvas id="cashflowChart" aria-label="過去十二個月收入、支出與結餘折線圖"></canvas></div>
+        <div class="chart-legend" aria-hidden="true">
+          <span><i class="income-dot"></i>收入</span>
+          <span><i class="expense-dot"></i>支出</span>
+          <span><i class="balance-dot"></i>結餘</span>
+        </div>
+      </section>
+
+      <section class="paper-panel guide-panel" aria-labelledby="guide-title">
+        <div class="guide-copy">
+          <p class="eyebrow">今日巡林</p>
+          <h2 id="guide-title">小森的觀察</h2>
+          <ul>
+            <li><span class="status-mark good"></span><b>現金流回正</b><small>連續三個月收入高於支出</small></li>
+            <li><span class="status-mark watch"></span><b>科技股 31.6%</b><small>距離自訂上限還有 3.4%</small></li>
+            <li><span class="status-mark calm"></span><b>備份完成</b><small>今天 21:30 已安全保存</small></li>
+          </ul>
+          <button class="secondary-button" type="button" id="openNotebook"><span data-icon="record"></span>記一則觀察</button>
+        </div>
+        <img class="forest-guide" src="assets/forest-guide.webp" alt="拿著帳本的森林嚮導" />
+      </section>
+    </div>
+
+    <section class="holdings-section" id="holdings" aria-labelledby="holdings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">資產丘陵</p>
+          <h2 id="holdings-title">主要持股</h2>
+        </div>
+        <div class="filter-row" role="group" aria-label="持股篩選">
+          <button class="active" type="button" data-filter="all">全部</button>
+          <button type="button" data-filter="core">核心</button>
+          <button type="button" data-filter="stock">個股</button>
+          <button type="button" data-filter="bond">債券</button>
+        </div>
+      </div>
+
+      <div class="table-paper">
+        <div class="table-scroll" tabindex="0" aria-label="持股明細，可水平捲動">
+          <table>
+            <thead>
+              <tr><th>標的</th><th>角色</th><th class="num">市值</th><th class="num">占比</th><th class="num">損益</th><th>森林狀態</th><th><span class="sr-only">操作</span></th></tr>
+            </thead>
+            <tbody>
+              <tr data-kind="core"><td><b>QQQM</b><small>Nasdaq 100 ETF</small></td><td>核心樹冠</td><td class="num js-value" data-twd="278 萬" data-usd="85.3K">278 萬</td><td class="num">22.3%</td><td class="num positive">+18.6%</td><td><span class="state-tag healthy">茂盛</span></td><td><button class="row-button" type="button" aria-label="查看 QQQM"><span data-icon="trending"></span></button></td></tr>
+              <tr data-kind="core"><td><b>CSPX</b><small>S&amp;P 500 ETF</small></td><td>核心樹冠</td><td class="num js-value" data-twd="231 萬" data-usd="70.9K">231 萬</td><td class="num">18.5%</td><td class="num positive">+12.2%</td><td><span class="state-tag healthy">茂盛</span></td><td><button class="row-button" type="button" aria-label="查看 CSPX"><span data-icon="trending"></span></button></td></tr>
+              <tr data-kind="stock"><td><b>AAPL</b><small>Apple Inc.</small></td><td>研究苗圃</td><td class="num js-value" data-twd="116 萬" data-usd="35.6K">116 萬</td><td class="num">9.3%</td><td class="num positive">+9.1%</td><td><span class="state-tag watch">待修枝</span></td><td><button class="row-button" type="button" aria-label="查看 AAPL"><span data-icon="trending"></span></button></td></tr>
+              <tr data-kind="bond"><td><b>IEF</b><small>7–10 年美國公債</small></td><td>防風林</td><td class="num js-value" data-twd="98 萬" data-usd="30.1K">98 萬</td><td class="num">7.9%</td><td class="num negative">−2.4%</td><td><span class="state-tag calm">休眠</span></td><td><button class="row-button" type="button" aria-label="查看 IEF"><span data-icon="trending"></span></button></td></tr>
+              <tr data-kind="stock"><td><b>BRK.B</b><small>Berkshire Hathaway</small></td><td>研究苗圃</td><td class="num js-value" data-twd="72 萬" data-usd="22.1K">72 萬</td><td class="num">5.8%</td><td class="num positive">+6.8%</td><td><span class="state-tag healthy">茂盛</span></td><td><button class="row-button" type="button" aria-label="查看 BRK.B"><span data-icon="trending"></span></button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer><span>已顯示 5 筆合成持股</span><a href="#research">前往研究樹屋 →</a></footer>
+      </div>
+    </section>
+
+    <section class="research-band" id="research" aria-labelledby="research-title">
+      <div>
+        <p class="eyebrow">研究樹屋</p>
+        <h2 id="research-title">Apple 還值得繼續栽培嗎？</h2>
+        <p>基本面品質維持穩健，但目前價格高於保守估值約 9%。研究結論不是「不能買」，而是先別追高。</p>
+        <div class="research-actions">
+          <button class="primary-button" type="button"><span data-icon="trending"></span>打開完整研究</button>
+          <span>最近檢查：2026-07-28</span>
+        </div>
+      </div>
+      <dl class="research-score">
+        <div><dt>商業品質</dt><dd><b>4.5</b><span>/ 5</span></dd></div>
+        <div><dt>財務體質</dt><dd><b>4.0</b><span>/ 5</span></dd></div>
+        <div><dt>估值安全</dt><dd><b>2.8</b><span>/ 5</span></dd></div>
+      </dl>
+    </section>
+  </main>
+
+  <dialog id="reminderDialog" class="forest-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">需要澆水</p><h2>兩項待處理</h2></div><button class="icon-button close-dialog" value="cancel" aria-label="關閉"><span data-icon="x"></span></button></header>
+      <div class="dialog-list">
+        <label><input type="checkbox" /><span><b>確認兩筆訂閱續費</b><small>Adobe 與 iCloud 將在 7 天內扣款，共 NT$1,190。</small></span></label>
+        <label><input type="checkbox" /><span><b>複查科技股上限</b><small>目前 31.6%，距離 35% 上限剩 3.4%。</small></span></label>
+      </div>
+      <footer><button class="secondary-button" value="cancel">稍後處理</button><button class="primary-button" value="default">保存勾選</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="notebookDialog" class="forest-dialog small-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">巡林筆記</p><h2>記一則觀察</h2></div><button class="icon-button close-dialog" value="cancel" aria-label="關閉"><span data-icon="x"></span></button></header>
+      <label class="field-label" for="noteText">觀察內容</label>
+      <textarea id="noteText" rows="5" placeholder="今天注意到…"></textarea>
+      <footer><button class="secondary-button" value="cancel">取消</button><button class="primary-button" value="default">保存筆記</button></footer>
+    </form>
+  </dialog>
+</body>
+</html>
