@@ -363,15 +363,21 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
   // 只看程式行（跳過 //、*、/* 註解行）。
   // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
   //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
+  /** 只看程式行：// 行、JSDoc 的 * 行與 /* 行都跳過（註解提到慣例不算對外能力）。 @param {string} l */
+  const isCodeLine = (l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); };
   const OUTBOUND_RE = new RegExp([
     '(^|[^.\\w])fetch\\b',
     'fetchImpl',
     'globalThis\\.fetch',
+    '(^|[^.\\w])global\\.fetch',
     '[\'"]fetch[\'"]',
     'node:(?:https?|http2|net|tls|dgram)\\b',
+    '(?:from|import\\s*\\()\\s*[\'"](?:https?|http2|net|tls|dgram)[\'"]',
     'require\\(\\s*[\'"](?:https?|http2|net|tls|dgram)[\'"]',
-    'from\\s+[\'"](?:undici|axios|node-fetch|got)[\'"]',
+    '(?:from|import\\s*\\()\\s*[\'"](?:undici|axios|node-fetch|got)[\'"]',
   ].join('|'));
+  /** 偵測器本體（probe matrix 與全 lib 掃描共用同一支——矩陣才真的在測正式偵測器）。 @param {string} src */
+  const detectsOutbound = (src) => src.split('\n').some((l) => isCodeLine(l) && OUTBOUND_RE.test(l));
   // 已知會對外的模組（端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞、自己不開新端點）。
   // **新增請先想清楚要不要限速。**
   const ALLOWED = new Map([
@@ -387,8 +393,6 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
     return f.endsWith('.js') ? [rel] : [];
   });
-  /** 只看程式行：// 行、JSDoc 的 * 行與 /* 行都跳過（註解提到慣例不算對外能力）。 @param {string} l */
-  const isCodeLine = (l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); };
   /** @type {Map<string, string>} */
   const detected = new Map();
   for (const rel of walk('lib')) {
@@ -406,4 +410,28 @@ test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣�
   assert.deepEqual(stale, [],
     `這些登記在偵測器下是隱形的（空轉登記＝絆索退化）：\n  ${stale.join('\n  ')}\n` +
     '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
+
+  // ③ probe matrix（Codex r2 建議）：每條偵測分支都有代表寫法釘住——沒被現行程式命中的
+  //    pattern 被誤刪時，這裡會紅（否則「偵測器自己的空轉分支」永遠沒警報）。r1＋r2 的實測繞法全數入陣。
+  const PROBES = [
+    ['字面 fetch 呼叫', 'return fetch(url);'],
+    ['別名預設參數（r1 繞法）', 'export async function p(url, transport = fetch) { return transport(url); }'],
+    ['fetchImpl 慣例', 'async function f(fetchImpl = globalThis.fetch) { return fetchImpl; }'],
+    ['globalThis 點形式', 'const f = globalThis.fetch;'],
+    ['global.fetch（r2 繞法）', 'export const transport = global.fetch;'],
+    ['computed 存取（r1 繞法）', "const f = globalThis['fetch'];"],
+    ['node: 前綴 ESM（r1 繞法）', "import { request } from 'node:https';"],
+    ['裸核心模組 ESM（r2 繞法）', "import https from 'https';"],
+    ['動態 import（r2 繞法）', "const h = await import('https');"],
+    ['CJS require', "const https = require('https');"],
+    ['第三方 client', "import { Agent } from 'undici';"],
+  ];
+  for (const [name, snippet] of PROBES) assert.ok(detectsOutbound(snippet), `偵測器抓不到代表寫法：${name}`);
+  // 誤報面也釘住：註解與無關程式不可被當成對外能力
+  const CLEAN = [
+    ['註解行', '// 這裡提到 fetch 或 https 都不算'],
+    ['JSDoc 行', ' * @param {typeof fetch} fetchImpl 注入點'],
+    ['無關程式', 'export const sum = (a, b) => a + b;'],
+  ];
+  for (const [name, snippet] of CLEAN) assert.ok(!detectsOutbound(snippet), `偵測器誤報乾淨寫法：${name}`);
 });
