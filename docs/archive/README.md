@@ -12,3 +12,4 @@
 | [個股研究頁-P1-交接.md](個股研究頁-P1-交接.md) | P1–P5＝#268／#271／#277／#281／#283 | [../個股研究頁-施工計畫.md](../個股研究頁-施工計畫.md)（F 系列仍進行中，留在 docs/） |
 | [目標追蹤-施工計畫.md](目標追蹤-施工計畫.md) | 計畫 #237；P1–P3＝#238／#240／#241 | lib/derive.js（computeGoalTracking）＋goal-tracking.js |
 | [月度回顧-施工計畫.md](月度回顧-施工計畫.md) | P0–P2＝#230／#231／#232；加強 #235 | monthly-review-card.js＋AGENTS.md 同步點 |
+| [PROJECT-完工紀錄.md](PROJECT-完工紀錄.md) | PROJECT.md D3 瘦身搬出的完工表與戰史（凍結於 2026-07-31；之後的完工紀錄＝GitHub merged PR 清單） | [../../PROJECT.md](../../PROJECT.md)（現在進行式） |
