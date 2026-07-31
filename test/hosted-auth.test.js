@@ -347,17 +347,26 @@ test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新�
     '猛打它們＝拿我們的伺服器去打別人，可能害使用者被上游限流甚至停用。');
 });
 
-test('對帳（反向）：`fetch(` 只准出現在已登記的模組裡（新增對外連線一定要先登記）', async () => {
+test('對帳（反向）：對外連線能力（字面 fetch 或 fetchImpl 慣例）只准出現在已登記的模組裡，且登記必須真的被偵測到', async () => {
   const { readFileSync, readdirSync, statSync } = await import('node:fs');
   const { join: pjoin, dirname: pdirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
   const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
-  // 已知會對外的模組——與 OUTBOUND_ENDPOINTS 一一對應。**新增請先想清楚要不要限速。**
-  const ALLOWED = new Set([
-    'lib/ib.js',                          // IBKR Flex
-    'lib/services/market-data.js',        // Yahoo 報價／multpl CAPE／FRED 實質利率
-    'lib/services/stock-fundamentals.js', // SEC
+  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：
+  // 可注入 `fetchImpl` 正是 AGENTS 要求的可測試慣例——market-data、stock-fundamentals 都這樣寫，
+  // 字面掃描下它們**完全隱形**（實測：舊版三個登記只有 lib/ib.js 真的被掃到，其餘是空轉登記，
+  // 從清單拿掉考題照綠）。下一個照慣例寫的對外模組＝不登記、不限速、零考題紅。
+  // 偵測器＝字面 fetch( ＋ fetchImpl ＋ globalThis.fetch；只看程式行（跳過 //、*、/* 註解行）。
+  const OUTBOUND_RE = /(^|[^.\w])fetch\s*\(|fetchImpl|globalThis\.fetch/;
+  // 已知會對外的模組（端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞、自己不開新端點）。
+  // **新增請先想清楚要不要限速。**
+  const ALLOWED = new Map([
+    ['lib/ib.js', '端點主：IBKR Flex（字面 fetch）'],
+    ['lib/services/market-data.js', '端點主：Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）'],
+    ['lib/services/stock-fundamentals.js', '端點主：SEC（fetchImpl 慣例＋globalThis.fetch 預設）'],
+    ['lib/services/insights.js', '傳導：把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點'],
+    ['lib/services/ib-sync.js', '傳導：注入 fetchFlex（lib/ib.js），自己不開新端點'],
   ]);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
@@ -365,15 +374,23 @@ test('對帳（反向）：`fetch(` 只准出現在已登記的模組裡（新�
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
     return f.endsWith('.js') ? [rel] : [];
   });
-  /** @type {string[]} */
-  const unexpected = [];
+  /** 只看程式行：// 行、JSDoc 的 * 行與 /* 行都跳過（註解提到慣例不算對外能力）。 @param {string} l */
+  const isCodeLine = (l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); };
+  /** @type {Map<string, string>} */
+  const detected = new Map();
   for (const rel of walk('lib')) {
     const src = readFileSync(pjoin(ROOT, rel), 'utf8');
-    // 只看真的呼叫，不看註解與字串裡提到的字
-    const calls = src.split('\n').filter((l) => /(^|[^.\w])fetch\s*\(/.test(l) && !l.trim().startsWith('//'));
-    if (calls.length && !ALLOWED.has(rel)) unexpected.push(`${rel}: ${calls[0].trim()}`);
+    const hit = src.split('\n').find((l) => isCodeLine(l) && OUTBOUND_RE.test(l));
+    if (hit !== undefined) detected.set(rel, hit.trim());
   }
+  // ① 正向：偵測到卻沒登記＝新的對外能力溜進來了
+  const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
-    `這些模組出現了未登記的對外連線：\n  ${unexpected.join('\n  ')}\n` +
-    '請在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
+    `這些模組出現了未登記的對外連線能力：\n  ${unexpected.join('\n  ')}\n` +
+    '請在本題 ALLOWED 寫明角色（端點主／傳導），端點主另在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
+  // ② 反向：登記了卻偵測不到＝空轉登記（絆索自己退化——#335 抓到三個登記有兩個隱形，就是這個病）
+  const stale = [...ALLOWED.keys()].filter((rel) => !detected.has(rel));
+  assert.deepEqual(stale, [],
+    `這些登記在偵測器下是隱形的（空轉登記＝絆索退化）：\n  ${stale.join('\n  ')}\n` +
+    '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
 });
