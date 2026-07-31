@@ -931,6 +931,29 @@ test('selectMetric 警示｜兩個實際採用 tag 的 YTD 是兩筆不同來源
   assert.match(warning?.message || '', /略過 2 筆/);
 });
 
+test('selectMetric 警示｜被五年輸出裁掉的舊 tag 不得造成 MIXED_TAG 誤報', () => {
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2017, 170000), durAnnual(2018, 180000)] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2021, 210000), durAnnual(2022, 220000), durAnnual(2023, 230000),
+        durAnnual(2024, 240000), durAnnual(2025, 250000)
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.revenue.annual.map(fact => fact.tag),
+    Array(5).fill('RevenueFromContractWithCustomerExcludingAssessedTax')
+  );
+  assert.equal(
+    result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'revenue'),
+    false,
+    'AAPL 型：實際輸出與 F5 都只有單一來源，警示不可再提已裁掉的舊列'
+  );
+  assert.equal(comparableFundamentalSeries(result.metrics.revenue.annual).status, 'comparable');
+});
+
 test('selectMetric｜年度／季度各自挑第一個可用 tag，不因另一條舊軸丟掉合法資料', () => {
   const quarterFirst = parseMetricsFixture({
     Revenues: {
@@ -998,8 +1021,8 @@ test('selectMetric 衍生值｜跨 tag 接力的年度營收不計算 CAGR', () 
     },
     RevenueFromContractWithCustomerExcludingAssessedTax: {
       USD: [
-        durAnnual(2021, 80000), durAnnual(2022, 84000),
-        durAnnual(2023, 88000), durAnnual(2024, 92000)
+        durAnnual(2021, 100000), durAnnual(2022, 105000),
+        durAnnual(2023, 110000), durAnnual(2024, 120000)
       ]
     }
   });
@@ -1022,8 +1045,8 @@ test('selectMetric 衍生值｜年度比率逐期保留 inputs，跨 tag 的官�
     },
     ProfitLoss: {
       USD: [
-        durAnnual(2021, 20000), durAnnual(2022, 22000),
-        durAnnual(2023, 24000), durAnnual(2024, 26000)
+        durAnnual(2021, 10000), durAnnual(2022, 11000),
+        durAnnual(2023, 12000), durAnnual(2024, 26000)
       ]
     }
   });
@@ -1034,6 +1057,120 @@ test('selectMetric 衍生值｜年度比率逐期保留 inputs，跨 tag 的官�
   assert.equal(comparableFundamentalSeries(result.metrics.netIncome.annual).status, 'not-comparable',
     '逐期比率可以重算，但輸入來源跨 tag 的趨勢不可冒充同口徑');
   assert.ok(result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'netIncome'));
+});
+
+test('selectMetric｜重疊期有實質口徑衝突時，不接低順位新期或產生混算衍生值', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 800000), durAnnual(2023, 1000000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [
+        durAnnual(2022, 740000), durAnnual(2023, 910000), durAnnual(2024, 920000)
+      ]
+    },
+    NetIncomeLoss: {
+      USD: [durAnnual(2022, 400000), durAnnual(2023, 500000), durAnnual(2024, 600000)]
+    },
+    PaymentsToAcquirePropertyPlantAndEquipment: {
+      USD: [durAnnual(2022, 100000), durAnnual(2023, 110000), durAnnual(2024, 120000)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.operatingCashFlow.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2022-12-31', 800000, 'NetCashProvidedByUsedInOperatingActivities'],
+      ['2023-12-31', 1000000, 'NetCashProvidedByUsedInOperatingActivities']
+    ],
+    'Dover 型：重疊期差異 7.5%／9% 已證明口徑不同，2024 continuing-only 不可接上'
+  );
+  assert.equal(result.metrics.cashConversion.annual.some(fact => fact.periodEnd === '2024-12-31'), false);
+  assert.equal(result.metrics.freeCashFlow.annual.some(fact => fact.periodEnd === '2024-12-31'), false);
+  assert.ok(result.warnings.some(item => (
+    item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'operatingCashFlow'
+  )));
+});
+
+test('selectMetric 警示｜低順位 tag 沒有缺期可補時，重疊差異不誤報衝突', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 800000), durAnnual(2023, 1000000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2022, 740000), durAnnual(2023, 910000)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.operatingCashFlow.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2022-12-31', 800000, 'NetCashProvidedByUsedInOperatingActivities'],
+      ['2023-12-31', 1000000, 'NetCashProvidedByUsedInOperatingActivities']
+    ]
+  );
+  assert.equal(
+    result.warnings.some(item => (
+      item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'operatingCashFlow'
+    )),
+    false,
+    '沒有候選缺期時不曾嘗試接續，不能把完全未採用的來源報成輸出衝突'
+  );
+});
+
+test('selectMetric 警示｜低順位 tag 只補到五年輸出外的舊期時，不誤報衝突', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [
+        durAnnual(2021, 1000000), durAnnual(2022, 1100000), durAnnual(2023, 1200000),
+        durAnnual(2024, 1300000), durAnnual(2025, 1400000)
+      ]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2019, 700000), durAnnual(2021, 900000), durAnnual(2022, 950000)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.operatingCashFlow.annual.map(fact => fact.periodEnd),
+    ['2021-12-31', '2022-12-31', '2023-12-31', '2024-12-31', '2025-12-31']
+  );
+  assert.equal(
+    result.warnings.some(item => (
+      item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'operatingCashFlow'
+    )),
+    false,
+    'Apple 型：被五年輸出裁掉的舊缺期，不是使用者目前會看到的來源衝突'
+  );
+});
+
+test('selectMetric｜重疊期只有千位到百萬位進位差時，仍可接低順位新期', () => {
+  const result = parseMetricsFixture({
+    PaymentsToAcquirePropertyPlantAndEquipment: {
+      USD: [durAnnual(2022, 209851000), durAnnual(2023, 220051000)]
+    },
+    PaymentsToAcquireProductiveAssets: {
+      USD: [
+        durAnnual(2022, 210000000), durAnnual(2023, 220000000), durAnnual(2024, 230000000)
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.capitalExpenditure.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2022-12-31', 209851000, 'PaymentsToAcquirePropertyPlantAndEquipment'],
+      ['2023-12-31', 220051000, 'PaymentsToAcquirePropertyPlantAndEquipment'],
+      ['2024-12-31', 230000000, 'PaymentsToAcquireProductiveAssets']
+    ],
+    'CBRE 型：最大相對差 0.071% 屬申報精度差，不應被 Dover 防線誤傷'
+  );
+  assert.equal(
+    result.warnings.some(item => (
+      item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'capitalExpenditure'
+    )),
+    false
+  );
 });
 
 test('selectMetric｜兩個 tag 至少兩期完全同值時，才安全補回中間缺口', () => {
@@ -1078,6 +1215,23 @@ test('selectMetric｜只有一期完全同值不足以證明同口徑，不回�
   assert.deepEqual(
     result.metrics.revenue.annual.map(fact => fact.periodEnd),
     ['2021-12-31', '2023-12-31', '2024-12-31']
+  );
+});
+
+test('selectMetric｜重疊期只有進位近似仍不足以回填舊洞', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [durAnnual(2021, 1000000), durAnnual(2023, 1200000), durAnnual(2024, 1300000)]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2021, 1000500), durAnnual(2022, 1100000), durAnnual(2023, 1199500)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.revenue.annual.map(fact => fact.periodEnd),
+    ['2021-12-31', '2023-12-31', '2024-12-31'],
+    '0.05% 的近似只足以容許接續新期；歷史回填仍須至少兩期完全同值'
   );
 });
 
