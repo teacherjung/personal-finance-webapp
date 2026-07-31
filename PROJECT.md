@@ -28,9 +28,9 @@
 | 大型上傳分流（Codex：一般 1 MB、帳單 15 MB、備份還原 50 MB；保住資料救援入口） | `lib/http-body.js`、`test/request-limits.test.js` | #201 |
 | 測試覆蓋率地圖（財務風險導向；Codex 製作、經 teacherjung 帳號提交） | `docs/測試覆蓋率地圖.md` | #202（`b69989d`，2026-07-22） |
 | 投資頁拆分收官（Codex：`portfolio.js` 1,581 行→223 行、拆出 25 個 `portfolio-*` 子模組、只搬家不改公式；AGENTS.md 已立**拆分停止線**） | `public/modules/portfolio-*.js` | #203–#229（27 支） |
-| 月度回顧＋退款配對抵減（Codex：P0 退款匯入、P1 計算/API、P2 總覽卡；#235 改善預設空月與比較基準） | `public/modules/monthly-review-card.js`、`docs/月度回顧-施工計畫.md` | #230／#231／#232／#235 |
-| 目標追蹤 D5-③（Claude 設計；Codex 審查＋實作：淨值目標、雙速度 ETA、達標報喜進提醒牆） | `lib/derive.js`（computeGoalTracking）、`public/modules/goal-tracking.js`、`docs/目標追蹤-施工計畫.md` | 計畫 #237；P1–P3＝#238／#240／#241 |
-| 證券交易 S0 改名（銀行收支／信用卡費）＋設計藍圖 | `docs/證券交易-設計藍圖.md`（Codex 設計、Claude 審查；使用者裁決與實作修訂記於 §十三） | #236（後續隨 #242 修訂藍圖） |
+| 月度回顧＋退款配對抵減（Codex：P0 退款匯入、P1 計算/API、P2 總覽卡；#235 改善預設空月與比較基準） | `public/modules/monthly-review-card.js`、`docs/archive/月度回顧-施工計畫.md` | #230／#231／#232／#235 |
+| 目標追蹤 D5-③（Claude 設計；Codex 審查＋實作：淨值目標、雙速度 ETA、達標報喜進提醒牆） | `lib/derive.js`（computeGoalTracking）、`public/modules/goal-tracking.js`、`docs/archive/目標追蹤-施工計畫.md` | 計畫 #237；P1–P3＝#238／#240／#241 |
+| 證券交易 S0 改名（銀行收支／信用卡費）＋設計藍圖 | `docs/archive/證券交易-設計藍圖.md`（Codex 設計、Claude 審查；使用者裁決與實作修訂記於 §十三） | #236（後續隨 #242 修訂藍圖） |
 | 證券交易 S1 台新座標解析器＋共同格式正規化器（純函式） | `lib/taishin-securities.js`、`lib/services/security-trades.js` | #239 |
 | 證券交易 S2 儲存＋API＋IB 雙寫（reconcile 去重、機密投影、密碼設定） | `lib/services/securities-import.js`、`lib/routes/securities.js`、`lib/secret-fields.js` | #242＋#243 |
 | 證券交易 S3 前端頁（查閱／篩選／排序／上傳預覽／匯入紀錄／就地解釋×5） | `public/modules/securities.js`＋`securities-view.js`、`test/securities-ui.test.js` | #244 |
