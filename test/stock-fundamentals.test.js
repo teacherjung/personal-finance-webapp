@@ -639,6 +639,32 @@ test('currentDebt 缺一組的年度｜每期都原樣保留，不因另一組�
   ]);
 });
 
+test('currentDebt 保存型｜currentMaturity 同群維持 first-hit，低順位 tag 不接力新舊期間', () => {
+  const annualRow = (year, value) => currentDebtRow(value, {
+    end: `${year}-12-31`,
+    form: '10-K',
+    filed: `${year + 1}-02-01`,
+    accn: `0000900099-${String(year + 1).slice(2)}-000001`,
+    fy: year,
+    fp: 'FY'
+  });
+  const result = parseCurrentDebtFixture({
+    ShortTermBorrowings: [annualRow(2023, 100), annualRow(2024, 100), annualRow(2025, 100)],
+    LongTermDebtAndCapitalLeaseObligationsCurrent: [annualRow(2024, 300)],
+    LongTermDebtCurrent: [annualRow(2023, 200), annualRow(2025, 500)]
+  });
+
+  assert.deepEqual(
+    result.metrics.currentDebt.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2023-12-31', 100, 'ShortTermBorrowings'],
+      ['2024-12-31', 400, 'ShortTermBorrowings + LongTermDebtAndCapitalLeaseObligationsCurrent'],
+      ['2025-12-31', 100, 'ShortTermBorrowings']
+    ],
+    '破壞 currentMaturity 群的 first-hit 會把 2025 從 100 改成 600'
+  );
+});
+
 test('currentDebt 衍生列｜F5 所需的 row-level taxonomy/tag 齊全，且不經 JSON 可通過正式寫入牆', () => {
   const accessions = ['0000900099-24-000001', '0000900099-25-000001'];
   const years = [2023, 2024];
@@ -783,7 +809,7 @@ test('selectMetric｜高優先 tag 較舊時，較低優先 tag 補更新期間�
       ]
     },
     RevenueFromContractWithCustomerExcludingAssessedTax: {
-      USD: [durAnnual(2024, 420000), durQuarter(42000)]
+      USD: [durAnnual(2022, 280000), durAnnual(2024, 420000), durQuarter(42000)]
     }
   });
 
@@ -814,6 +840,57 @@ test('selectMetric｜高優先 tag 較舊時，較低優先 tag 補更新期間�
   }, { mode: 'throw' }));
   assert.equal(clean.stockFundamentals[0].data.metrics.revenue.annual.length, 2,
     '混合來源仍是合法的官方列，必須能原樣通過正式寫入櫃檯');
+});
+
+test('selectMetric 保存型｜noncurrentDebt 維持整條 first-hit，不做跨 tag 逐期接力', () => {
+  const result = parseMetricsFixture({
+    LongTermDebtAndFinanceLeaseObligationsNoncurrent: {
+      USD: [instAnnual(2023, 500), instAnnual(2024, 520)]
+    },
+    LongTermDebtNoncurrent: {
+      USD: [instAnnual(2021, 400), instAnnual(2022, 450), instAnnual(2025, 540)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.noncurrentDebt.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2023-12-31', 500, 'LongTermDebtAndFinanceLeaseObligationsNoncurrent'],
+      ['2024-12-31', 520, 'LongTermDebtAndFinanceLeaseObligationsNoncurrent']
+    ],
+    '近義替代是整條序列退路，不得補舊期、補新期或混合租賃口徑'
+  );
+});
+
+test('selectMetric 警示｜未採用 tag 的重複 YTD 不累加計數', () => {
+  const ytd = durQuarter(180000, {
+    start: '2025-01-01', end: '2025-06-30', fp: 'Q2',
+    filed: '2025-08-01', accn: '0000900777-25-000003'
+  });
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2024, 400000), ytd] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 250000), ytd]
+    }
+  });
+  const warning = result.warnings.find(item => (
+    item.code === 'YTD_EXCLUDED' && item.metric === 'revenue'
+  ));
+
+  assert.match(warning?.message || '', /略過 1 筆/);
+});
+
+test('selectMetric 警示｜低順位 tag 的未採用 unit 不誤報 MULTIPLE_UNITS', () => {
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2024, 400000)] },
+    SalesRevenueNet: { EUR: [durAnnual(2023, 300000)] }
+  });
+
+  assert.equal(result.metrics.revenue.unit, 'USD');
+  assert.equal(
+    result.warnings.some(item => item.code === 'MULTIPLE_UNITS' && item.metric === 'revenue'),
+    false
+  );
 });
 
 test('selectMetric｜只有一個可用 tag 時輸出值與來源形狀不變', () => {

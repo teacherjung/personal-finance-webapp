@@ -8,7 +8,7 @@
 
 **改這裡**：SEC 官方指標候選 tag 與 `selectMetric`（`lib/stock-fundamentals.js`）
 
-**記得同步這裡**：候選 tag 的順序是**同一期間的語意優先序**，不是 first-hit-wins，也不是看到較大數字就採用。`revenue` 同期間依序採 `Revenues`（總額）→ `RevenueFromContractWithCustomerExcludingAssessedTax`（合約收入成分）→ `SalesRevenueNet`；其他指標沿用候選表既定的近義 tag 優先序，**不相加、不用數值大小猜總額**。先按 unit 分組且全序列只選一種 unit，再逐完全相同期間去重（duration＝`periodStart＋periodEnd`；instant＝`periodEnd`）：同期間取高優先 tag，不同期間則讓較低優先 tag 補齊較新的申報，最後才裁成最近五年與最新單季。每一列必須保留自己的 `taxonomy/tag` 與申報來源；metric 表頭的 `taxonomy/tag` 跟最新採用列走。F5 趨勢仍只接受同 unit／taxonomy／tag／期間類型，跨 tag 接力的列要 fail-closed，不可混畫成同口徑趨勢。改動必跑三型考題：CBRE 型（同期成分 250000、總額 400000，淨利 100000 時 margin＝25%）、Comcast 型（高優先總額較舊、低優先 tag 補新期）、Verizon 型（單一 tag 前後完全不變），並直接通過 `sanitizeDbForWrite`。`currentDebt` 仍由同一 `selectMetric` 入口分派到下節的逐期總額／成分安全判斷；`noncurrentDebt` 只做近義 tag 逐期退路，絕不相加。
+**記得同步這裡**：候選 tag 的順序是**同一期間的語意優先序**，不是看到較大數字就採用。`revenue` 同期間依序採 `Revenues`（總額）→ `RevenueFromContractWithCustomerExcludingAssessedTax`（合約收入成分）→ `SalesRevenueNet`；其他一般指標沿用候選表既定順序，**不相加、不用數值大小猜總額**。先由第一個有合法資料的 tag 選定單一 unit；其後的低順位 tag 只能用同一 unit，而且只能補進**比目前已採序列還新**的期間。同期不改寫、舊期缺口不回頭填，最後才裁成最近五年與最新單季。多 unit 與 YTD 警示只統計真正採用的主來源，以及實際補進新期的退路來源，不可把未採用 tag 重複計數。每一列必須保留自己的 `taxonomy/tag` 與申報來源；metric 表頭的 `taxonomy/tag` 跟最新採用列走。F5 趨勢仍只接受同 unit／taxonomy／tag／期間類型，跨 tag 接力的列要 fail-closed，不可混畫成同口徑趨勢。改動必跑三型考題：CBRE 型（同期成分 250000、總額 400000，淨利 100000 時 margin＝25%）、Comcast 型（高優先總額較舊、低優先 tag 只補新期）、Verizon 型（單一 tag 前後完全不變），並直接通過 `sanitizeDbForWrite`。`currentDebt` 仍由同一 `selectMetric` 入口分派到下節的逐期總額／成分安全判斷，但三個來源群內都維持整條 first-hit；`noncurrentDebt` 也維持整條近義 tag first-hit 退路，不做跨 tag 逐期接力。
 
 ## SEC currentDebt 流動債務
 
