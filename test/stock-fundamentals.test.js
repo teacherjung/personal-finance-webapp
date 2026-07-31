@@ -1262,6 +1262,23 @@ test('selectMetric｜同百萬位但相差超過 1% 仍是實質衝突，不可�
   );
 });
 
+test('selectMetric｜任一重疊值不到百萬時，不得套用百萬位進位例外', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 1000000), durAnnual(2023, 1500000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2022, 995000), durAnnual(2023, 1500000), durAnnual(2024, 1600000)]
+    }
+  });
+
+  assert.equal(
+    result.metrics.operatingCashFlow.annual.some(fact => fact.periodEnd === '2024-12-31'),
+    false,
+    '1,000,000 與 995,000 雖同樣四捨五入為一百萬，未達量級下界仍須視為口徑衝突'
+  );
+});
+
 test('selectMetric 警示｜低順位 tag 沒有缺期可補時，重疊差異不誤報衝突', () => {
   const result = parseMetricsFixture({
     NetCashProvidedByUsedInOperatingActivities: {
