@@ -954,6 +954,49 @@ test('selectMetric 警示｜被五年輸出裁掉的舊 tag 不得造成 MIXED_T
   assert.equal(comparableFundamentalSeries(result.metrics.revenue.annual).status, 'comparable');
 });
 
+test('selectMetric 警示｜被五年輸出裁掉的舊 tag 不得造成 YTD_EXCLUDED 誤報', () => {
+  const oldYtd = durQuarter(90000, {
+    start: '2019-01-01', end: '2019-06-30', fp: 'Q2', fy: 2019,
+    filed: '2019-08-01', accn: '0000900777-19-000003'
+  });
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2017, 170000), durAnnual(2018, 180000), oldYtd] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2021, 210000), durAnnual(2022, 220000), durAnnual(2023, 230000),
+        durAnnual(2024, 240000), durAnnual(2025, 250000)
+      ]
+    }
+  });
+
+  assert.equal(
+    result.warnings.some(item => item.code === 'YTD_EXCLUDED' && item.metric === 'revenue'),
+    false,
+    '裁掉的舊來源即使有 YTD，也不是最近五年／最新單季的輸出警示'
+  );
+});
+
+test('selectMetric 警示｜被五年輸出裁掉的舊 tag 不得造成 MULTIPLE_UNITS 誤報', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [durAnnual(2017, 170000), durAnnual(2018, 180000)],
+      EUR: [durAnnual(2017, 150000), durAnnual(2018, 160000)]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2021, 210000), durAnnual(2022, 220000), durAnnual(2023, 230000),
+        durAnnual(2024, 240000), durAnnual(2025, 250000)
+      ]
+    }
+  });
+
+  assert.equal(
+    result.warnings.some(item => item.code === 'MULTIPLE_UNITS' && item.metric === 'revenue'),
+    false,
+    '實際輸出只有低順位 USD tag，不可回頭警告已裁掉舊 tag 的 EUR'
+  );
+});
+
 test('selectMetric｜年度／季度各自挑第一個可用 tag，不因另一條舊軸丟掉合法資料', () => {
   const quarterFirst = parseMetricsFixture({
     Revenues: {
@@ -1092,6 +1135,133 @@ test('selectMetric｜重疊期有實質口徑衝突時，不接低順位新期�
   )));
 });
 
+test('selectMetric｜第六年前的重疊衝突仍要封鎖，不能因每個 tag 先裁五年而漏掉', () => {
+  const fixtures = [
+    {
+      label: '低順位 tag 有七期，自己的 2019 衝突不能被裁掉',
+      tagUnits: {
+        Revenues: {
+          USD: [durAnnual(2019, 295841), durAnnual(2022, 322606), durAnnual(2024, 302400)]
+        },
+        RevenueFromContractWithCustomerExcludingAssessedTax: {
+          USD: [
+            durAnnual(2019, 301900), durAnnual(2020, 300000), durAnnual(2021, 310000),
+            durAnnual(2022, 322606), durAnnual(2023, 305000),
+            durAnnual(2024, 302400), durAnnual(2025, 302500)
+          ]
+        }
+      }
+    },
+    {
+      label: '高順位 tag 有六期，自己的 2019 衝突不能被裁掉',
+      tagUnits: {
+        Revenues: {
+          USD: [
+            durAnnual(2019, 295841), durAnnual(2020, 300000), durAnnual(2021, 310000),
+            durAnnual(2022, 322606), durAnnual(2023, 305000), durAnnual(2024, 302400)
+          ]
+        },
+        RevenueFromContractWithCustomerExcludingAssessedTax: {
+          USD: [
+            durAnnual(2019, 301900), durAnnual(2022, 322606),
+            durAnnual(2024, 302400), durAnnual(2025, 302500)
+          ]
+        }
+      }
+    }
+  ];
+
+  for (const fixture of fixtures) {
+    const result = parseMetricsFixture(fixture.tagUnits);
+    assert.equal(
+      result.metrics.revenue.annual.some(fact => (
+        fact.tag === 'RevenueFromContractWithCustomerExcludingAssessedTax'
+      )),
+      false,
+      fixture.label
+    );
+    assert.ok(
+      result.warnings.some(item => item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'revenue'),
+      fixture.label
+    );
+  }
+});
+
+test('selectMetric｜年度證明 tag 口徑衝突時，同一 tag 的更新季度也不得漏接', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 800000), durAnnual(2023, 1000000), durQuarter(200000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [
+        durAnnual(2022, 740000), durAnnual(2023, 910000), durAnnual(2024, 920000),
+        durQuarter(230000, {
+          start: '2025-04-01', end: '2025-06-30', fp: 'Q2', fy: 2025,
+          filed: '2025-08-01', accn: '0000900777-25-000003'
+        })
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    [result.metrics.operatingCashFlow.latestQuarter?.periodEnd,
+      result.metrics.operatingCashFlow.latestQuarter?.tag],
+    ['2025-03-31', 'NetCashProvidedByUsedInOperatingActivities'],
+    '來源已被年度重疊證據否決，季度軸不可各自為政接上同一來源'
+  );
+});
+
+test('selectMetric｜重疊差異剛超過 0.1% 就必須封鎖，容忍度上界不可漂移', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 1234567), durAnnual(2023, 1500000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2022, 1236420), durAnnual(2023, 1500000), durAnnual(2024, 1600000)]
+    }
+  });
+
+  assert.equal(
+    result.metrics.operatingCashFlow.annual.some(fact => fact.periodEnd === '2024-12-31'),
+    false,
+    '0.1498% 已超過契約上界；容忍度改成 0.2% 或 1% 時本題必須紅'
+  );
+});
+
+test('selectMetric｜非百萬位進位的重疊差異在 0.1% 內時，仍可接低順位新期', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 1234567), durAnnual(2023, 1500000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2022, 1235000), durAnnual(2023, 1500000), durAnnual(2024, 1600000)]
+    }
+  });
+
+  assert.equal(
+    result.metrics.operatingCashFlow.annual.some(fact => fact.periodEnd === '2024-12-31'),
+    true,
+    '0.035% 應由一般相對容忍度接受；把 0.1% 縮成零時本題必須紅'
+  );
+});
+
+test('selectMetric｜同百萬位但相差超過 1% 仍是實質衝突，不可假借進位放行', () => {
+  const result = parseMetricsFixture({
+    NetCashProvidedByUsedInOperatingActivities: {
+      USD: [durAnnual(2022, 10000000), durAnnual(2023, 15000000)]
+    },
+    NetCashProvidedByUsedInOperatingActivitiesContinuingOperations: {
+      USD: [durAnnual(2022, 10400000), durAnnual(2023, 15000000), durAnnual(2024, 16000000)]
+    }
+  });
+
+  assert.equal(
+    result.metrics.operatingCashFlow.annual.some(fact => fact.periodEnd === '2024-12-31'),
+    false,
+    '10.0M 與 10.4M 雖四捨五入到同一百萬，3.85% 差異仍不可視為申報精度'
+  );
+});
+
 test('selectMetric 警示｜低順位 tag 沒有缺期可補時，重疊差異不誤報衝突', () => {
   const result = parseMetricsFixture({
     NetCashProvidedByUsedInOperatingActivities: {
@@ -1147,11 +1317,25 @@ test('selectMetric 警示｜低順位 tag 只補到五年輸出外的舊期時�
 test('selectMetric｜重疊期只有千位到百萬位進位差時，仍可接低順位新期', () => {
   const result = parseMetricsFixture({
     PaymentsToAcquirePropertyPlantAndEquipment: {
-      USD: [durAnnual(2022, 209851000), durAnnual(2023, 220051000)]
+      USD: [
+        durAnnual(2022, 209851000), durAnnual(2023, 220051000),
+        durQuarter(60284000, {
+          start: '2023-01-01', end: '2023-03-31', fy: 2023,
+          filed: '2023-05-01', accn: '0000900777-23-000002'
+        })
+      ]
     },
     PaymentsToAcquireProductiveAssets: {
       USD: [
-        durAnnual(2022, 210000000), durAnnual(2023, 220000000), durAnnual(2024, 230000000)
+        durAnnual(2022, 210000000), durAnnual(2023, 220000000), durAnnual(2024, 230000000),
+        durQuarter(60000000, {
+          start: '2023-01-01', end: '2023-03-31', fy: 2023,
+          filed: '2023-05-01', accn: '0000900777-23-000002'
+        }),
+        durQuarter(65000000, {
+          start: '2023-04-01', end: '2023-06-30', fp: 'Q2', fy: 2023,
+          filed: '2023-08-01', accn: '0000900777-23-000003'
+        })
       ]
     }
   });
@@ -1163,7 +1347,13 @@ test('selectMetric｜重疊期只有千位到百萬位進位差時，仍可接�
       ['2023-12-31', 220051000, 'PaymentsToAcquirePropertyPlantAndEquipment'],
       ['2024-12-31', 230000000, 'PaymentsToAcquireProductiveAssets']
     ],
-    'CBRE 型：最大相對差 0.071% 屬申報精度差，不應被 Dover 防線誤傷'
+    'CBRE 型：年度 0.071% 與單季百萬位進位差都屬申報精度，不應被 Dover 防線誤傷'
+  );
+  assert.deepEqual(
+    [result.metrics.capitalExpenditure.latestQuarter?.periodEnd,
+      result.metrics.capitalExpenditure.latestQuarter?.value],
+    ['2023-06-30', 65000000],
+    '單季 60,284,000 與百萬位申報的 60,000,000 是同一值的精度差，不應封鎖整個 tag'
   );
   assert.equal(
     result.warnings.some(item => (
@@ -1232,6 +1422,29 @@ test('selectMetric｜重疊期只有進位近似仍不足以回填舊洞', () =>
     result.metrics.revenue.annual.map(fact => fact.periodEnd),
     ['2021-12-31', '2023-12-31', '2024-12-31'],
     '0.05% 的近似只足以容許接續新期；歷史回填仍須至少兩期完全同值'
+  );
+});
+
+test('selectMetric｜兩期完全同值之外只要另有一期近似，仍不得回填舊洞', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2020, 1000000), durAnnual(2021, 1100000),
+        durAnnual(2023, 1300000), durAnnual(2024, 1400000)
+      ]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2020, 1000000), durAnnual(2021, 1100000),
+        durAnnual(2022, 1200000), durAnnual(2023, 1300500)
+      ]
+    }
+  });
+
+  assert.equal(
+    result.metrics.revenue.annual.some(fact => fact.periodEnd === '2022-12-31'),
+    false,
+    '兩期 exact 不能遮掉第三期 non-exact；拿掉 !nonExactOverlap 時本題必須紅'
   );
 });
 
