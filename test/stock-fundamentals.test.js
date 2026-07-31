@@ -832,6 +832,10 @@ test('selectMetric｜高優先 tag 較舊時，較低優先 tag 補更新期間�
   const f5 = comparableFundamentalSeries(revenue.annual);
   assert.equal(f5.status, 'not-comparable', '混合 tag 的歷史列不可被 F5 畫成同口徑趨勢');
   assert.match(f5.reason, /tag/);
+  assert.ok(
+    result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'revenue'),
+    '官方列跨 tag 接力必須明確出聲'
+  );
 
   const at = '2026-08-01T00:00:00.000Z';
   const clean = /** @type {any} */ (sanitizeDbForWrite({
@@ -891,6 +895,104 @@ test('selectMetric 警示｜低順位 tag 的未採用 unit 不誤報 MULTIPLE_U
     result.warnings.some(item => item.code === 'MULTIPLE_UNITS' && item.metric === 'revenue'),
     false
   );
+});
+
+test('selectMetric 警示｜實際補期的低順位 tag 有多 unit 時必須出聲', () => {
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2023, 300000)] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 420000)],
+      EUR: [durAnnual(2024, 390000)]
+    }
+  });
+
+  assert.equal(result.metrics.revenue.annual.at(-1)?.value, 420000);
+  assert.ok(
+    result.warnings.some(item => item.code === 'MULTIPLE_UNITS' && item.metric === 'revenue'),
+    '真正參與補期的 tag 有替代 unit，警示不能只檢查第一個 tag'
+  );
+});
+
+test('selectMetric 警示｜兩個實際採用 tag 的 YTD 是兩筆不同來源', () => {
+  const ytd = durQuarter(180000, {
+    start: '2025-01-01', end: '2025-06-30', fp: 'Q2',
+    filed: '2025-08-01', accn: '0000900777-25-000003'
+  });
+  const result = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2023, 300000), ytd] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 420000), ytd]
+    }
+  });
+  const warning = result.warnings.find(item => (
+    item.code === 'YTD_EXCLUDED' && item.metric === 'revenue'
+  ));
+
+  assert.match(warning?.message || '', /略過 2 筆/);
+});
+
+test('selectMetric｜低順位 tag 不可憑空建立主來源沒有的年度／季度軸', () => {
+  const annualOnly = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2024, 400000)] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durQuarter(40000)]
+    },
+    NetIncomeLoss: { USD: [durAnnual(2024, 100000), durQuarter(10000)] }
+  });
+  const quarterOnly = parseMetricsFixture({
+    Revenues: { USD: [durQuarter(30000)] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 420000)]
+    }
+  });
+
+  assert.equal(annualOnly.metrics.revenue.latestQuarter, null);
+  assert.equal(annualOnly.metrics.netMargin.latestQuarter, null,
+    '年度總額不能與只存在於低順位成分 tag 的季度值混算');
+  assert.deepEqual(quarterOnly.metrics.revenue.annual, [],
+    '主來源只有季度時，低順位 tag 不得反過來建立年度趨勢');
+});
+
+test('selectMetric 衍生值｜跨 tag 接力的年度營收不計算 CAGR', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [durAnnual(2021, 100000), durAnnual(2022, 105000), durAnnual(2023, 110000)]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2021, 80000), durAnnual(2022, 84000),
+        durAnnual(2023, 88000), durAnnual(2024, 92000)
+      ]
+    }
+  });
+
+  assert.deepEqual(result.metrics.revenueCagr3y.annual, []);
+  assert.equal(result.metrics.revenueCagr3y.status, 'missing');
+  assert.ok(result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'revenue'));
+});
+
+test('selectMetric 衍生值｜任一輸入跨 tag 時不產生年度比率序列', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2021, 100000), durAnnual(2022, 110000),
+        durAnnual(2023, 120000), durAnnual(2024, 130000)
+      ]
+    },
+    NetIncomeLoss: {
+      USD: [durAnnual(2021, 10000), durAnnual(2022, 11000), durAnnual(2023, 12000)]
+    },
+    ProfitLoss: {
+      USD: [
+        durAnnual(2021, 20000), durAnnual(2022, 22000),
+        durAnnual(2023, 24000), durAnnual(2024, 26000)
+      ]
+    }
+  });
+
+  assert.deepEqual(result.metrics.netMargin.annual, []);
+  assert.equal(result.metrics.netMargin.status, 'missing');
+  assert.ok(result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'netIncome'));
 });
 
 test('selectMetric｜只有一個可用 tag 時輸出值與來源形狀不變', () => {
