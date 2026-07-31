@@ -931,26 +931,64 @@ test('selectMetric 警示｜兩個實際採用 tag 的 YTD 是兩筆不同來源
   assert.match(warning?.message || '', /略過 2 筆/);
 });
 
-test('selectMetric｜低順位 tag 不可憑空建立主來源沒有的年度／季度軸', () => {
-  const annualOnly = parseMetricsFixture({
-    Revenues: { USD: [durAnnual(2024, 400000)] },
-    RevenueFromContractWithCustomerExcludingAssessedTax: {
-      USD: [durQuarter(40000)]
+test('selectMetric｜年度／季度各自挑第一個可用 tag，不因另一條舊軸丟掉合法資料', () => {
+  const quarterFirst = parseMetricsFixture({
+    Revenues: {
+      USD: [durQuarter(30000, {
+        start: '2014-07-01', end: '2014-09-28', fy: 2014,
+        filed: '2014-11-01', accn: '0000900777-14-000002'
+      })]
     },
-    NetIncomeLoss: { USD: [durAnnual(2024, 100000), durQuarter(10000)] }
-  });
-  const quarterOnly = parseMetricsFixture({
-    Revenues: { USD: [durQuarter(30000)] },
     RevenueFromContractWithCustomerExcludingAssessedTax: {
-      USD: [durAnnual(2024, 420000)]
+      USD: [durAnnual(2023, 380000), durAnnual(2024, 420000)]
+    }
+  });
+  const annualFirst = parseMetricsFixture({
+    Revenues: { USD: [durAnnual(2018, 300000)] },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2024, 420000), durQuarter(40000)]
     }
   });
 
-  assert.equal(annualOnly.metrics.revenue.latestQuarter, null);
-  assert.equal(annualOnly.metrics.netMargin.latestQuarter, null,
-    '年度總額不能與只存在於低順位成分 tag 的季度值混算');
-  assert.deepEqual(quarterOnly.metrics.revenue.annual, [],
-    '主來源只有季度時，低順位 tag 不得反過來建立年度趨勢');
+  assert.deepEqual(
+    quarterFirst.metrics.revenue.annual.map(fact => fact.periodEnd),
+    ['2023-12-31', '2024-12-31'],
+    'JNJ 型：高順位 tag 只有舊季度時，低順位年度軸仍要進來'
+  );
+  assert.equal(annualFirst.metrics.revenue.latestQuarter?.value, 40000,
+    'AAPL 型：高順位 tag 只有舊年度時，低順位最新季度仍要進來');
+  assert.ok(annualFirst.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'revenue'));
+});
+
+test('selectMetric 衍生值｜最新季度來源不同於最新年度時，逐期比率仍 fail-closed', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2024, 400000),
+        durQuarter(30000, {
+          start: '2025-01-01', end: '2025-03-31', fy: 2025,
+          filed: '2025-05-01', accn: '0000900777-25-000002'
+        })
+      ]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durQuarter(40000, {
+        start: '2025-04-01', end: '2025-06-30', fp: 'Q2', fy: 2025,
+        filed: '2025-08-01', accn: '0000900777-25-000003'
+      })]
+    },
+    NetIncomeLoss: {
+      USD: [durAnnual(2024, 100000), durQuarter(10000, {
+        start: '2025-04-01', end: '2025-06-30', fp: 'Q2', fy: 2025,
+        filed: '2025-08-01', accn: '0000900777-25-000003'
+      })]
+    }
+  });
+
+  assert.equal(result.metrics.revenue.latestQuarter?.value, 40000,
+    '官方原始值保留，不用 fail-closed 刪合法 SEC fact');
+  assert.equal(result.metrics.netMargin.latestQuarter, null,
+    '刪掉 latestQuarterMatchesAnnualSource 守衛時，本題會錯算成 25%');
 });
 
 test('selectMetric 衍生值｜跨 tag 接力的年度營收不計算 CAGR', () => {
@@ -971,7 +1009,7 @@ test('selectMetric 衍生值｜跨 tag 接力的年度營收不計算 CAGR', () 
   assert.ok(result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'revenue'));
 });
 
-test('selectMetric 衍生值｜任一輸入跨 tag 時不產生年度比率序列', () => {
+test('selectMetric 衍生值｜年度比率逐期保留 inputs，跨 tag 的官方輸入趨勢仍不可比較', () => {
   const result = parseMetricsFixture({
     Revenues: {
       USD: [
@@ -990,9 +1028,79 @@ test('selectMetric 衍生值｜任一輸入跨 tag 時不產生年度比率序�
     }
   });
 
-  assert.deepEqual(result.metrics.netMargin.annual, []);
-  assert.equal(result.metrics.netMargin.status, 'missing');
+  assert.deepEqual(result.metrics.netMargin.annual.map(fact => fact.value), [0.1, 0.1, 0.1, 0.2]);
+  assert.equal(result.metrics.netMargin.status, 'available');
+  assert.equal(result.metrics.netMargin.annual.at(-1)?.inputs.netIncome.tag, 'ProfitLoss');
+  assert.equal(comparableFundamentalSeries(result.metrics.netIncome.annual).status, 'not-comparable',
+    '逐期比率可以重算，但輸入來源跨 tag 的趨勢不可冒充同口徑');
   assert.ok(result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'netIncome'));
+});
+
+test('selectMetric｜兩個 tag 至少兩期完全同值時，才安全補回中間缺口', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2020, 100000), durAnnual(2021, 110000),
+        durAnnual(2023, 130000), durAnnual(2024, 140000), durAnnual(2025, 150000)
+      ]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2020, 100000), durAnnual(2021, 110000), durAnnual(2022, 120000),
+        durAnnual(2023, 130000), durAnnual(2024, 140000)
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.revenue.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2021-12-31', 110000, 'Revenues'],
+      ['2022-12-31', 120000, 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+      ['2023-12-31', 130000, 'Revenues'],
+      ['2024-12-31', 140000, 'Revenues'],
+      ['2025-12-31', 150000, 'Revenues']
+    ],
+    'Alphabet 型：重疊數字證明兩個 tag 同口徑後，2022 不再永久留洞'
+  );
+});
+
+test('selectMetric｜只有一期完全同值不足以證明同口徑，不回填舊洞', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [durAnnual(2021, 110000), durAnnual(2023, 130000), durAnnual(2024, 140000)]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [durAnnual(2021, 110000), durAnnual(2022, 120000)]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.revenue.annual.map(fact => fact.periodEnd),
+    ['2021-12-31', '2023-12-31', '2024-12-31']
+  );
+});
+
+test('selectMetric｜重疊期曾出現衝突時，即使另有兩期同值也不回填舊洞', () => {
+  const result = parseMetricsFixture({
+    Revenues: {
+      USD: [
+        durAnnual(2020, 100000), durAnnual(2021, 110000),
+        durAnnual(2023, 130000), durAnnual(2024, 140000)
+      ]
+    },
+    RevenueFromContractWithCustomerExcludingAssessedTax: {
+      USD: [
+        durAnnual(2020, 100000), durAnnual(2021, 999000),
+        durAnnual(2022, 120000), durAnnual(2023, 130000)
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    result.metrics.revenue.annual.map(fact => fact.periodEnd),
+    ['2020-12-31', '2021-12-31', '2023-12-31', '2024-12-31']
+  );
 });
 
 test('selectMetric｜只有一個可用 tag 時輸出值與來源形狀不變', () => {
