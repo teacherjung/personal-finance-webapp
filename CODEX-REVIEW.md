@@ -12,13 +12,17 @@
 >   **不動 `~/.codex/config.toml` 的全域預設**（改全域會連帶改掉 William 自己的互動式 Codex，超出「調整審查」的範圍）。
 >   為什麼升級：實測有效——升級後的第一次全面重審，在**先前多輪審查都跑過的同一份 `main@272ec9a`** 上
 >   找出 5 項可重現問題（4 High／1 Medium，含一項「備份檔的任意 `id` 造成持久型 XSS」）。
->   代價：單次約 **72 萬 tokens**（原本 8–13 萬）＋等待較久。**高風險 PR 一律用這組設定**；
->   低風險小 PR 想省額度可退回預設模型，但要在回報裡註明用了哪一組。
+>   代價：單次約 **72 萬 tokens**（原本 8–13 萬）＋等待較久。
+>   **審查一律用這組設定（William 2026-07-31 定，取代先前「高風險才用」的分級）**——理由：「這支是低風險」
+>   的判斷本身就會錯（本專案的規則文件就是安全系統本體；合併程序寫錯差點毀掉堆疊 PR、「工具小腳本」藏過
+>   靜默失效 bug），一旦誤判，省下的正好是最需要的那次審查。**AI 不可自行分類降級**；想省額度只能由
+>   William 逐案明說，回報照舊註明用了哪一組。**機械性執行動作不是審查**（合併五步驟、跑三關、查狀態
+>   ＝照表操課），用一般設定即可。
 > - **一律在 `-codex` 這個獨立 worktree 跑**（先 `git fetch origin && git checkout --detach origin/main`），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
 > - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
 > - **審尚未合併的 PR** 時，在提示詞裡指名 branch 與重點，並要求 `git diff origin/main...origin/<branch>`、不要 checkout。
-> - **成本**：每次約 8–13 萬 tokens（走 William 的 ChatGPT 方案額度）。
+> - **成本**：xhigh 單次約 72 萬 tokens（見上；走 William 的 ChatGPT 方案額度）。
 > - **回報**：Claude 把 Codex 的**原始回覆原文**貼給 William（不轉述、不挑），再附上自己逐條核對的結論（屬實／誤報／需裁決）；**修不修由 William 決定**，Claude 不因為「Codex 說了」就自動動工。
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
