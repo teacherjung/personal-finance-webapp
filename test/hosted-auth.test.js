@@ -447,12 +447,20 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/services/ib-sync.js', '傳導：注入 fetchFlex（lib/ib.js），自己不開新端點'],
   ]);
   // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
+  // ⚠️ r8：豁免是**數量級**不是檔案級——登記「預期 raw 命中數」，數量一變就紅。否則既有註解
+  //   會掩護同檔日後新增、又被剝離器誤吞的真程式碼（r8 在 repo.js 實測過這條路）。
   const COMMENT_MENTIONS = new Map([
-    ['lib/parse-limits.js', 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求'],
-    ['lib/repo.js', '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連'],
+    ['lib/parse-limits.js', { count: 1, why: 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求' }],
+    ['lib/repo.js', { count: 1, why: '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連' }],
   ]);
+  const OUTBOUND_RE_G = new RegExp(OUTBOUND_RE.source, 'g');
   // 外部程式呼叫（child_process）＝獨立類別、需登記（William 2026-08-01 裁決）
+  // ⚠️ r8：spawn 也要雙軌——只掃乾淨軌的話，一個 /[//]/ 合法 regex 就能騙剝離器吞掉 import（實測）。
   const SPAWN_RE = /node:(?:child_process|cluster)\b|(?:from|import\s*\(|require\s*\()\s*['"`](?:child_process|cluster|execa|zx|cross-spawn|shelljs)['"`]/;
+  const SPAWN_RE_G = new RegExp(SPAWN_RE.source, 'g');
+  // spawn 的「僅註解提及」豁免（數量級；目前 lib 無任何提及＝空）
+  /** @type {Map<string, {count: number, why: string}>} */
+  const SPAWN_MENTIONS = new Map([]);
   /** @type {Map<string, string>} */
   const SPAWNERS = new Map([
     // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
@@ -464,15 +472,21 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     return f.endsWith('.js') ? [rel] : [];
   });
   /** @type {Map<string, string>} */ const detected = new Map();
-  /** @type {Map<string, string>} */ const rawOnly = new Map();
+  /** @type {Map<string, {count: number, snippet: string}>} */ const rawOnly = new Map();
   /** @type {string[]} */ const spawners = [];
+  /** @type {Map<string, number>} */ const spawnRawOnly = new Map();
   for (const rel of walk('lib')) {
     const src = readFileSync(pjoin(ROOT, rel), 'utf8');
-    if (SPAWN_RE.test(stripComments(src))) spawners.push(rel);
+    const stripped = stripComments(src);
+    if (SPAWN_RE.test(stripped)) spawners.push(rel);
+    else {
+      const sc = [...src.matchAll(SPAWN_RE_G)].length;
+      if (sc > 0) spawnRawOnly.set(rel, sc);
+    }
     const clean = cleanHit(src);
     if (clean !== null) { detected.set(rel, clean); continue; }
-    const raw = hitOn(src);
-    if (raw) rawOnly.set(rel, raw.snippet);
+    const rawM = [...src.matchAll(OUTBOUND_RE_G)];
+    if (rawM.length) rawOnly.set(rel, { count: rawM.length, snippet: rawM[0][0].trim() });
   }
   // ⓪ 外部程式呼叫：偵測到未登記＝紅；登記了偵測不到＝空轉、也紅
   const unregSpawn = spawners.filter((rel) => !SPAWNERS.has(rel));
@@ -481,6 +495,14 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     'curl/wget 等同樣是外連通道（William 2026-08-01 裁決：需登記附 why）。');
   const staleSpawn = [...SPAWNERS.keys()].filter((rel) => !spawners.includes(rel));
   assert.deepEqual(staleSpawn, [], `SPAWNERS 空轉登記：\n  ${staleSpawn.join('\n  ')}`);
+  // ⓪b spawn 生掃安全網（r8）：生掃有、乾淨軌沒有＝剝離器被騙或註解提及——都要人來看
+  const spawnSuspicious = [...spawnRawOnly].filter(([rel, c]) => {
+    const reg = SPAWN_MENTIONS.get(rel);
+    return !reg || reg.count !== c;
+  }).map(([rel, c]) => `${rel}（raw 命中 ${c}）`);
+  assert.deepEqual(spawnSuspicious, [],
+    `spawn 生掃軌看到、乾淨軌沒看到，且未在 SPAWN_MENTIONS 對上數量：\n  ${spawnSuspicious.join('\n  ')}\n` +
+    '若是註解提及＝登記數量；若是真程式碼＝剝離器被騙（如 regex 含 //），先修剝離器。');
   // ① 正向：乾淨軌偵測到卻沒登記
   const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
@@ -488,7 +510,10 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     '請在本題 ALLOWED 寫明角色（端點主／傳導），端點主另在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
   // ①b 安全網：生掃有、乾淨軌沒有、又不在 COMMENT_MENTIONS ＝要嘛新的註解提及要登記、
   //    要嘛**剝離器把真程式碼吃掉了**——兩種都要人來看（這就是「漏抓變誤報」的機制本體）
-  const suspicious = [...rawOnly].filter(([rel]) => !COMMENT_MENTIONS.has(rel)).map(([rel, s2]) => `${rel}: ${s2}`);
+  const suspicious = [...rawOnly].filter(([rel, info]) => {
+    const reg = COMMENT_MENTIONS.get(rel);
+    return !reg || reg.count !== info.count;
+  }).map(([rel, info]) => `${rel}: raw 命中 ${info.count}（首個＝${info.snippet}）`);
   assert.deepEqual(suspicious, [],
     `生掃軌看到 fetch 相關字樣、乾淨軌沒看到，且未列 COMMENT_MENTIONS：\n  ${suspicious.join('\n  ')}\n` +
     '若只是註解提及＝加進 COMMENT_MENTIONS（附 why）；若是真程式碼＝剝離器有 bug 吃掉它，先修剝離器。');
@@ -539,8 +564,13 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['execa 包裝器（r7）', "import { execa } from 'execa';"],
     ['zx 包裝器（r7）', "import { $ } from 'zx';"],
     ['cross-spawn（r7）', "const spawn = require('cross-spawn');"],
+    ['shelljs（r8 記錄補齊）', "const sh = require('shelljs');"],
   ];
   for (const [name, snippet] of SPAWN_PROBES) assert.ok(SPAWN_RE.test(stripComments(snippet)), `SPAWN 偵測抓不到：${name}`);
+  // spawn 安全網探針（r8 機制洞）：剝離器被 regex 騙走時，生掃軌必須還看得到
+  const SPAWN_NET_PROBE = 'const slashMatcher = /[//]/; const cluster2 = await import(\'node:cluster\');';
+  assert.equal(SPAWN_RE.test(stripComments(SPAWN_NET_PROBE)), false, '（前提確認）此探針就是會騙過乾淨軌的形狀');
+  assert.ok(SPAWN_RE.test(SPAWN_NET_PROBE), 'spawn 生掃安全網竟看不到被 regex 掩護的 import');
   const MENTION_PROBES = [
     ['行首註解', '// 這裡提到 fetch 也不算外連，但生掃軌要看得到'],
     ['JSDoc 行', '/**\n * @param {typeof fetch} fetchImpl 注入點\n */'],
