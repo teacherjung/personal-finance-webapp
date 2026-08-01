@@ -109,6 +109,144 @@ document.querySelectorAll('[data-month-return]').forEach((button) => {
 
 renderMonthlyReturn(2.4);
 
+const valuationStocks = {
+  AAPL: { name: 'Apple Inc.', sector: '美國・消費科技', eps: 6.43, price: 214.29, growth: 8, terminalPe: 24 },
+  GOOGL: { name: 'Alphabet Inc.', sector: '美國・數位廣告與雲端', eps: 8.1, price: 191.2, growth: 12, terminalPe: 22 },
+  TSM: { name: 'TSMC (ADR)', sector: '台灣・半導體', eps: 6.72, price: 205.5, growth: 15, terminalPe: 20 }
+};
+
+let selectedValuationStock = 'TSM';
+
+/** @param {string} selector */
+function htmlElement(selector) {
+  return /** @type {HTMLElement|null} */ (document.querySelector(selector));
+}
+
+/** @param {number} value @param {number} decimals */
+function formatUsd(value, decimals = 0) {
+  return `US$${value.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
+/** @param {HTMLInputElement} input */
+function updateRangeFill(input) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const value = Number(input.value);
+  const fill = ((value - min) / (max - min)) * 100;
+  input.style.setProperty('--range-fill', `${fill}%`);
+}
+
+/** @param {number} value @param {number} max */
+function setBarWidth(selector, value, max) {
+  const bar = htmlElement(selector);
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, value / max * 100))}%`;
+}
+
+function renderValuation() {
+  const stock = valuationStocks[selectedValuationStock];
+  const growthInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#growthRange'));
+  const terminalPeInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#terminalPeRange'));
+  const discountInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#discountRange'));
+  if (!stock || !growthInput || !terminalPeInput || !discountInput) return;
+
+  const growth = Number(growthInput.value);
+  const terminalPe = Number(terminalPeInput.value);
+  const discount = Number(discountInput.value);
+  const futureEps = stock.eps * Math.pow(1 + growth / 100, 5);
+  const fairValue = futureEps * terminalPe / Math.pow(1 + discount / 100, 5);
+  const premium = stock.price / fairValue - 1;
+  const axisMax = Math.ceil(Math.max(fairValue, stock.price) * 1.12 / 10) * 10;
+  const fairText = formatUsd(fairValue);
+  const priceText = formatUsd(stock.price, 2);
+
+  const ticker = htmlElement('#valuationTicker');
+  const company = htmlElement('#valuationCompany');
+  const sector = htmlElement('#valuationSector');
+  const growthValue = htmlElement('#growthValue');
+  const terminalPeValue = htmlElement('#terminalPeValue');
+  const discountValue = htmlElement('#discountValue');
+  if (ticker) ticker.textContent = selectedValuationStock;
+  if (company) company.textContent = stock.name;
+  if (sector) sector.textContent = stock.sector;
+  if (growthValue) growthValue.textContent = `${growth}%`;
+  if (terminalPeValue) terminalPeValue.textContent = `${terminalPe}×`;
+  if (discountValue) discountValue.textContent = `${discount}%`;
+  growthInput.setAttribute('aria-valuetext', `${growth}%`);
+  terminalPeInput.setAttribute('aria-valuetext', `${terminalPe} 倍`);
+  discountInput.setAttribute('aria-valuetext', `${discount}%`);
+
+  ['#fairValue', '#fairBarValue'].forEach((selector) => {
+    const element = htmlElement(selector);
+    if (element) element.textContent = fairText;
+  });
+  ['#marketPrice', '#priceBarValue'].forEach((selector) => {
+    const element = htmlElement(selector);
+    if (element) element.textContent = priceText;
+  });
+  const axis = htmlElement('#valueAxisMax');
+  if (axis) axis.textContent = formatUsd(axisMax);
+  setBarWidth('#fairBar', fairValue, axisMax);
+  setBarWidth('#priceBar', stock.price, axisMax);
+
+  const verdict = htmlElement('#valuationVerdict');
+  const guide = /** @type {HTMLImageElement|null} */ (document.querySelector('#valuationGuide'));
+  const verdictText = htmlElement('#verdictText');
+  const premiumText = htmlElement('#premiumText');
+  const note = htmlElement('#valuationNote');
+  if (premium > .1) {
+    if (verdict) verdict.dataset.tone = 'watch';
+    if (guide) {
+      guide.src = 'assets/guide-return-negative.webp';
+      guide.alt = '審慎提醒的小森森';
+    }
+    if (verdictText) verdictText.textContent = '高於估算值，先保留安全邊際';
+    if (premiumText) premiumText.textContent = `目前價格較估算合理價高 ${Math.round(premium * 100)}%`;
+    if (note) note.textContent = '請再用較保守的成長率與終值倍數試算，確認結論不依賴單一樂觀假設。';
+  } else if (premium < -.15) {
+    if (verdict) verdict.dataset.tone = 'good';
+    if (guide) {
+      guide.src = 'assets/guide-return-positive.webp';
+      guide.alt = '微笑提醒的小森森';
+    }
+    if (verdictText) verdictText.textContent = '低於估算值，仍須確認基本面';
+    if (premiumText) premiumText.textContent = `目前價格較估算合理價低 ${Math.round(Math.abs(premium) * 100)}%`;
+    if (note) note.textContent = '估值折價只是研究起點；請先確認競爭優勢與財務體質沒有明顯惡化。';
+  } else {
+    if (verdict) verdict.dataset.tone = 'calm';
+    if (guide) {
+      guide.src = 'assets/guide-return-neutral.webp';
+      guide.alt = '平靜提醒的小森森';
+    }
+    if (verdictText) verdictText.textContent = '接近估算區間，適合分批評估';
+    const distance = Math.round(Math.abs(premium) * 100);
+    if (premiumText) premiumText.textContent = `目前價格與估算合理價相差約 ${distance}%`;
+    if (note) note.textContent = '估值是一個區間，不是單一答案。請用保守、基準與樂觀三組假設交叉檢查。';
+  }
+
+  [growthInput, terminalPeInput, discountInput].forEach(updateRangeFill);
+}
+
+document.querySelectorAll('[data-stock]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const symbol = /** @type {HTMLElement} */ (button).dataset.stock || '';
+    const stock = valuationStocks[symbol];
+    const growthInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#growthRange'));
+    const terminalPeInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#terminalPeRange'));
+    if (!stock || !growthInput || !terminalPeInput) return;
+    selectedValuationStock = symbol;
+    growthInput.value = String(stock.growth);
+    terminalPeInput.value = String(stock.terminalPe);
+    document.querySelectorAll('[data-stock]').forEach((item) => item.classList.toggle('active', item === button));
+    renderValuation();
+  });
+});
+
+document.querySelectorAll('.assumption-control input[type="range"]').forEach((input) => {
+  input.addEventListener('input', renderValuation);
+});
+
+renderValuation();
+
 /** @type {any} */
 let chart;
 
@@ -188,3 +326,13 @@ document.querySelectorAll('.trail-nav a').forEach((link) => {
     link.scrollIntoView({ block: 'nearest', inline: 'center' });
   });
 });
+
+function syncTrailWithHash() {
+  const hash = globalThis.location.hash || '#overview';
+  document.querySelectorAll('.trail-nav a').forEach((link) => {
+    link.classList.toggle('active', link.getAttribute('href') === hash);
+  });
+}
+
+globalThis.addEventListener('hashchange', syncTrailWithHash);
+syncTrailWithHash();

@@ -47,7 +47,9 @@
           <button type="button" data-currency="USD">US</button>
         </div>
         <button class="icon-button" type="button" title="匯出本月報告" aria-label="匯出本月報告"><span data-icon="download"></span></button>
-        <button class="avatar-button" type="button" aria-label="開啟個人選單">WJ</button>
+        <button class="avatar-button" type="button" aria-label="開啟個人選單">
+          <img src="assets/guide-return-neutral.webp" alt="小森森個人頭像" />
+        </button>
       </div>
     </header>
 
@@ -160,21 +162,90 @@
       </div>
     </section>
 
-    <section class="research-band" id="research" aria-labelledby="research-title">
-      <div>
-        <p class="eyebrow">研究樹屋</p>
-        <h2 id="research-title">Apple 目前估值是否合理？</h2>
-        <p>基本面品質維持穩健，但目前價格高於保守估值約 9%。研究結論不是「不能買」，而是先別追高。</p>
-        <div class="research-actions">
-          <button class="primary-button" type="button"><span data-icon="trending"></span>打開完整研究</button>
-          <span>最近檢查：2026-07-28</span>
+    <section class="valuation-section" id="research" aria-labelledby="research-title">
+      <header class="valuation-heading">
+        <div>
+          <p class="eyebrow">研究樹屋・估值試算</p>
+          <h2 id="research-title">用三個假設，估算合理價格區間</h2>
+          <p>以下均為合成資料。滑桿只用來理解假設如何影響估值，不代表投資建議。</p>
         </div>
+        <div class="stock-picker" role="group" aria-label="選擇試算公司">
+          <button type="button" data-stock="AAPL">AAPL</button>
+          <button type="button" data-stock="GOOGL">GOOGL</button>
+          <button class="active" type="button" data-stock="TSM">TSM</button>
+        </div>
+      </header>
+
+      <div class="valuation-workbench">
+        <form class="valuation-controls" aria-label="估值假設" onsubmit="return false">
+          <div class="valuation-company">
+            <span id="valuationTicker">TSM</span>
+            <div><b id="valuationCompany">TSMC (ADR)</b><small id="valuationSector">台灣・半導體</small></div>
+          </div>
+
+          <label class="assumption-control" for="growthRange">
+            <span class="assumption-title"><b>未來 5 年 EPS 年複合成長率</b><output id="growthValue" for="growthRange">15%</output></span>
+            <input id="growthRange" type="range" min="0" max="25" step="1" value="15" />
+            <span class="range-scale"><i>0%</i><i>成熟企業常見 5–12%</i><i>25%</i></span>
+            <small>用於推估第五年的每股盈餘；成長越快，越需要檢查假設是否過度樂觀。</small>
+          </label>
+
+          <label class="assumption-control" for="terminalPeRange">
+            <span class="assumption-title"><b>終值本益比（第 5 年 P/E）</b><output id="terminalPeValue" for="terminalPeRange">20×</output></span>
+            <input id="terminalPeRange" type="range" min="8" max="35" step="1" value="20" />
+            <span class="range-scale"><i>8×</i><i>搭配歷史區間與同業</i><i>35×</i></span>
+            <small>第五年市場願意支付的估值倍數；護城河越深，才有理由採用較高倍數。</small>
+          </label>
+
+          <label class="assumption-control" for="discountRange">
+            <span class="assumption-title"><b>折現率（必要報酬率）</b><output id="discountValue" for="discountRange">10%</output></span>
+            <input id="discountRange" type="range" min="6" max="16" step="1" value="10" />
+            <span class="range-scale"><i>6%</i><i>長期股票常用 8–10%</i><i>16%</i></span>
+            <small>把未來價值折算回今天；要求報酬越高，今天願意支付的合理價格越低。</small>
+          </label>
+        </form>
+
+        <article class="valuation-result" aria-live="polite">
+          <div class="valuation-result-head">
+            <div><span>估算合理價</span><strong id="fairValue">US$168</strong></div>
+            <div><span>目前價格</span><strong id="marketPrice">US$205.50</strong></div>
+          </div>
+
+          <div class="valuation-verdict" id="valuationVerdict" data-tone="watch">
+            <img id="valuationGuide" src="assets/guide-return-negative.webp" alt="審慎提醒的小森森" />
+            <div><span>估值判讀</span><b id="verdictText">高於估算值，先保留安全邊際</b><small id="premiumText">目前價格較估算合理價高 22%</small></div>
+          </div>
+
+          <div class="valuation-bars" aria-label="合理價與目前價格比較">
+            <div class="value-bar-row">
+              <span>估算合理價</span><b id="fairBarValue">US$168</b>
+              <div class="value-bar-track"><i class="value-bar-fill fair" id="fairBar"></i></div>
+            </div>
+            <div class="value-bar-row">
+              <span>目前價格</span><b id="priceBarValue">US$205.50</b>
+              <div class="value-bar-track"><i class="value-bar-fill market" id="priceBar"></i></div>
+            </div>
+            <div class="value-axis" aria-hidden="true"><span>US$0</span><span id="valueAxisMax">US$230</span></div>
+          </div>
+
+          <div class="valuation-note">
+            <img src="assets/guide-return-neutral.webp" alt="小森森提醒" />
+            <p id="valuationNote">估值是一個區間，不是單一答案。請用保守、基準與樂觀三組假設交叉檢查。</p>
+          </div>
+        </article>
       </div>
-      <dl class="research-score">
-        <div><dt>商業品質</dt><dd><b>4.5</b><span>/ 5</span></dd></div>
-        <div><dt>財務體質</dt><dd><b>4.0</b><span>/ 5</span></dd></div>
-        <div><dt>估值安全</dt><dd><b>2.8</b><span>/ 5</span></dd></div>
-      </dl>
+
+      <section class="valuation-reminders" aria-labelledby="valuation-reminders-title">
+        <header>
+          <img src="assets/guide-return-positive.webp" alt="微笑的小森森" />
+          <div><p class="eyebrow">估值前先確認</p><h3 id="valuation-reminders-title">小森森的三個提醒</h3></div>
+        </header>
+        <ol>
+          <li><span>1</span><div><b>輸入假設決定估值結果</b><p>成長率與終值倍數若過度樂觀，合理價也會跟著被高估。</p></div></li>
+          <li><span>2</span><div><b>合理價應保留安全邊際</b><p>估值無法消除預測誤差；預留折價，再決定是否建立或增加部位。</p></div></li>
+          <li><span>3</span><div><b>便宜不等於值得買</b><p>先確認競爭優勢、財務體質與風險，再判斷折價是否具有意義。</p></div></li>
+        </ol>
+      </section>
     </section>
   </main>
 
