@@ -1,3 +1,4 @@
+// @ts-check
 /* global URL, console, process */
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -19,16 +20,17 @@ const fixedFiles = new Map([
   ['/vendor/chart.js', join(repoRoot, 'node_modules/chart.js/dist/chart.umd.js')]
 ]);
 
-const mime = {
+const mime = /** @type {Record<string, string>} */ ({
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.png': 'image/png',
   '.webp': 'image/webp'
-};
+});
 
+/** @param {string} pathname */
 function resolveRequest(pathname) {
-  if (fixedFiles.has(pathname)) return fixedFiles.get(pathname);
+  if (fixedFiles.has(pathname)) return fixedFiles.get(pathname) || null;
   const match = pathname.match(/^\/assets\/([a-z0-9-]+\.(?:png|webp))$/i);
   return match ? join(here, 'assets', match[1]) : null;
 }

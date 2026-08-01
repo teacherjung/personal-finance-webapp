@@ -112,8 +112,10 @@ function buildMonthTrail() {
     button.id = `forest-month-${month.key}`;
     button.dataset.monthIndex = String(index);
     button.dataset.state = state;
+    button.dataset.comparison = !change ? 'baseline' : change.pct === null ? 'zero-base' : 'comparable';
     button.setAttribute('role', 'option');
     button.setAttribute('aria-selected', String(index === selectedMonthIndex));
+    button.tabIndex = index === selectedMonthIndex ? 0 : -1;
     button.setAttribute('aria-label', !change
       ? `${month.yearLabel}，第一筆資料，尚無比較`
       : change.pct === null
@@ -134,6 +136,7 @@ function updateMonthTrailSelection() {
     const button = /** @type {HTMLButtonElement} */ (item);
     const active = Number(button.dataset.monthIndex) === selectedMonthIndex;
     button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
     if (active) {
       const reducedMotion = globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
       button.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
@@ -421,12 +424,14 @@ let focusedCardId = '';
 function applyCardLayout(focusTarget) {
   if (!dashboard) return;
   cardLayout = normalizeCardLayout(cardLayout);
-  cardLayout.forEach((item) => {
+  cardLayout.forEach((item, index) => {
     const card = /** @type {HTMLElement|null} */ (dashboard.querySelector(`[data-card-id="${item.id}"]`));
     if (!card) return;
     card.dataset.size = item.size;
     const select = /** @type {HTMLSelectElement|null} */ (card.querySelector('.card-size-select'));
     if (select) select.value = item.size;
+    card.querySelector('[data-card-action="previous"]')?.setAttribute('aria-disabled', String(index === 0));
+    card.querySelector('[data-card-action="next"]')?.setAttribute('aria-disabled', String(index === cardLayout.length - 1));
     dashboard.append(card);
   });
   if (focusTarget) {
@@ -493,7 +498,12 @@ function setFocusedCard(id) {
   });
   if (!id) {
     const restore = /** @type {HTMLElement|null} */ (previousId ? dashboard?.querySelector(`[data-card-id="${previousId}"] [data-card-action="focus"]`) || null : null);
-    restore?.focus();
+    const restoreCard = /** @type {HTMLElement|null} */ (previousId ? dashboard?.querySelector(`[data-card-id="${previousId}"]`) || null : null);
+    if (restore?.offsetParent) restore.focus();
+    else if (restoreCard) {
+      restoreCard.tabIndex = -1;
+      restoreCard.focus({ preventScroll: true });
+    }
     chart?.resize();
     return;
   }
@@ -517,6 +527,10 @@ dashboard?.addEventListener('click', (event) => {
   const action = target.dataset.cardAction;
   if (!id || action === 'drag' || action === 'size') return;
   if (action === 'previous' || action === 'next') {
+    if (target.getAttribute('aria-disabled') === 'true') {
+      announceLayout(`${card?.dataset.cardLabel || '卡片'}已在${action === 'previous' ? '最前方' : '最後方'}。`);
+      return;
+    }
     cardLayout = moveCard(cardLayout, id, action === 'previous' ? -1 : 1);
     saveCardLayout(cardLayout);
     applyCardLayout({ id, action });
@@ -640,10 +654,12 @@ document.querySelectorAll('[data-ambience]').forEach((button) => {
 });
 
 document.querySelector('#previousMonth')?.addEventListener('click', () => {
+  if (document.querySelector('#previousMonth')?.getAttribute('aria-disabled') === 'true') return;
   selectedMonthIndex = Math.max(0, selectedMonthIndex - 1);
   renderSelectedMonth();
 });
 document.querySelector('#nextMonth')?.addEventListener('click', () => {
+  if (document.querySelector('#nextMonth')?.getAttribute('aria-disabled') === 'true') return;
   selectedMonthIndex = Math.min(MONTHLY_FOREST_DATA.length - 1, selectedMonthIndex + 1);
   renderSelectedMonth();
 });
