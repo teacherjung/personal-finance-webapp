@@ -118,6 +118,7 @@
 
 | 改這裡 | 記得同步這裡 |
 |---|---|
+| SEC 官方指標候選 tag／`selectMetric`（`lib/stock-fundamentals.js`） | 同期依候選語意優先；各 tag 完整歷史先判口徑、最後才裁五年，任一年度／季度重疊衝突就拒絕整個低順位 tag；一般重疊差異 >0.1% 禁止接續，只有受限的百萬位申報進位例外；舊洞只有兩來源至少兩期完全同值才補；先由第一個可用 tag 鎖單一 unit，禁止取最大值或相加；`currentDebt` 各來源群與 `noncurrentDebt` 保留整條 first-hit；row-level taxonomy/tag 保留，`MIXED_TAG`／unit／YTD 只看實際輸出，衝突只警告可能進入輸出的缺期；F5 與 CAGR 等真正跨期比較 fail-closed，逐期比率保留 inputs；CBRE／Comcast／Verizon＋JNJ／AAPL／Alphabet／Dover 型必跑——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#sec-官方指標挑值) |
 | SEC `currentDebt`（`lib/stock-fundamentals.js`） | 逐期間總額優先（DebtCurrent）；相加要 label 或數值證明排除父子重疊、否則保守不加；單源期間原樣保留；tag 單一真相 currentDebtSources；Dover／Amazon／Microsoft 三型考題必跑——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#sec-currentdebt-流動債務) |
 | `lib/repo.js` 介面（加函式／改簽名） | **新函式一律 async**（C4a 契約，鐵則 8）：全部呼叫端 `await`＋handler 包 `wrapRoute`/`asyncRoute`；改完跑 `npm run typecheck`（抓「讀」的漏）＋grep 掃「寫」的 fire-and-forget（tsc 抓不到）；`test/repo-async.test.js` 的簽名鎖與 HTTP 並發考題必須仍綠。**C4b 起還要顧到兩顆引擎**：新的寫入函式要走 `mutate()`（才有 CAS 重試），新的讀取函式要走 `readDb()`（才有規則同步與版本戳）；`test/hosted-store-pg.test.js` 也要仍綠 |
 | **kv 的鍵**（`lib/store.js` 的 `KV_KEYS`／`KV_MAP_KEYS`；`emptyDb()` 加頂層欄位時） | 三處一起：①`KV_KEYS`＋`KV_MAP_KEYS`（漏了那個鍵**永遠寫不進 db 且不報錯**）②`lib/types.js` 的 typedef ③**`db/supabase-schema.sql` 不必改**（kv 是 key/value，加鍵不用改 DDL）——但 `test/hosted-store-pg.test.js` 有「KV_KEYS 長度」的絆索會紅，那是提醒你回來讀這一列。⚠️ `lib/store-pg.js` **必須從 store.js import** 這兩個常數，不可以自己抄一份 |

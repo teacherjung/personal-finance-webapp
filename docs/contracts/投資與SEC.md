@@ -4,6 +4,12 @@
 > **內文＝原同步點列逐字照搬**（唯一轉換＝表格列解框成「改這裡／記得同步這裡」兩段）；新增的只有標題與本頁首。
 > **適用檔案清單＝[README.md](README.md) 路由表「投資與 SEC」列（單一真相，本頁首不重複維護一份會走散的副本）**——命中就必讀本檔。
 
+## SEC 官方指標挑值
+
+**改這裡**：SEC 官方指標候選 tag 與 `selectMetric`（`lib/stock-fundamentals.js`）
+
+**記得同步這裡**：候選 tag 的順序是**同一期間的語意優先序**，不是看到較大數字就採用。`revenue` 同期間依序採 `Revenues`（總額）→ `RevenueFromContractWithCustomerExcludingAssessedTax`（合約收入成分）→ `SalesRevenueNet`；其他一般指標沿用候選表既定順序，**不相加、不用數值大小猜總額**。先由第一個有合法資料的 tag 選定單一 unit；其後的低順位 tag 只能用同一 unit。同期不改寫；年度與季度各自補合法資料，不能因高順位 tag 只在另一種期間有舊資料，就讓 JNJ 型整條年度或 AAPL 型最新季度消失。**每個 tag 先保留完整去重歷史做重疊比對，最後輸出才裁最近五年**；不得讓第六年前的衝突證據因提早裁切而消失。兩來源若有重疊期間，一般任一期相對差異 **>0.1%** 就是實質口徑衝突（Dover／Ford 型）。唯一的進位例外須同時符合：兩值同號且至少百萬、差異不超過 1%、至少一值是百萬整數，且另一值四捨五入到同一百萬（CBRE capex 型）；這不是一般 1% 容忍。年度或季度任一軸證明衝突，就拒絕**整個**低順位 tag 的所有新舊期間，另一軸不可各自接上；只有被拒來源的缺期原本可能進入最近五年或最新單季時，才回 `TAG_OVERLAP_CONFLICT`，畫面外的舊缺期不誤報。舊洞門檻更嚴：仍須至少兩個重疊期間的 unit 與數值**完全相同**且沒有其他非完全相同的重疊，才補中間缺口（Alphabet 型），否則舊洞保留。`MIXED_TAG`、多 unit 與 YTD 警示只看最近五年＋最新單季真正輸出的來源；已被裁掉的舊 tag 不得讓 AAPL 型畫面一邊 F5 `comparable`、一邊誤報混合來源。同一申報脈絡但不同 tag 的 YTD 是兩筆不同來源，不可合併計數。每一列必須保留自己的 `taxonomy/tag` 與申報來源；metric 表頭的 `taxonomy/tag` 跟最新採用列走。實際輸出跨 tag 接力才回 `MIXED_TAG`；F5 趨勢只接受同 unit／taxonomy／tag／期間類型，CAGR 等真正跨期公式的起訖來源也必須相同。毛利率、淨利率、自由現金流等逐期公式只配對同一期間並保留完整 `inputs`，不可因**相容**的別期換 tag 把整條可重算序列刪光；最新季度來源與最新年度來源不同時，季度比率仍 fail-closed。改動必跑 CBRE 型（同期總額、capex 進位差）、Comcast 型（相容 tag 補新期）、Verizon 型（單一 tag 不變）、JNJ／AAPL 型（另一種期間軸不可消失）、Alphabet 型（完全同值證據才補舊洞）與 Dover／Ford 型（實質衝突拒接），並直接通過 `sanitizeDbForWrite`。`currentDebt` 仍由同一 `selectMetric` 入口分派到下節的逐期總額／成分安全判斷，但三個來源群內都維持整條 first-hit；`noncurrentDebt` 也維持整條近義 tag first-hit 退路，不做跨 tag 逐期接力。
+
 ## SEC currentDebt 流動債務
 
 **改這裡**：SEC `currentDebt`（`lib/stock-fundamentals.js`）
