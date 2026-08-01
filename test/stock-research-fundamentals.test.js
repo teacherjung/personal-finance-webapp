@@ -174,10 +174,12 @@ test('基本面 HTML｜每個數字可展開申報來源或公式，五年趨勢
   }, { esc });
 
   assert.match(html, /data-fundamental-metric="revenue"/);
+  assert.match(html, /最近五筆可得年度/);
   assert.match(html, /stock-fact-disclosure/);
   assert.match(html, /2022/);
   assert.match(html, />0 USD</);
   assert.match(html, /310 億 USD/);
+  assert.match(html, /2026-01-01～2026-03-31/);
   assert.match(html, /us-gaap \/ Revenues/);
   assert.match(html, /0000000000-26-000002/);
   assert.match(html, /target="_blank" rel="noopener"/);
@@ -186,6 +188,35 @@ test('基本面 HTML｜每個數字可展開申報來源或公式，五年趨勢
   assert.match(html, /活躍裝置/);
   assert.match(html, />0 台</);
   assert.match(html, /每季檢查毛利率/);
+});
+
+test('基本面 HTML｜各列最新單季直接標自己的期間，不把不同期數字假裝成同一季', () => {
+  const value = cache();
+  value.data.metrics.netIncome = {
+    key: 'netIncome',
+    label: '淨利',
+    kind: 'official',
+    taxonomy: 'us-gaap',
+    annual: [],
+    latestQuarter: fact(112_193_000_000, {
+      periodStart: '2026-04-01',
+      periodEnd: '2026-06-30',
+      periodType: 'quarter',
+      durationDays: 90,
+      form: '10-Q',
+      tag: 'NetIncomeLoss'
+    }),
+    status: 'available'
+  };
+  value.data.warnings.push({
+    code: 'QUARTER_PERIOD_MISMATCH',
+    message: '最新單季分屬不同截止日；請以每列標示期間為準。'
+  });
+
+  const html = stockFundamentalsHtml({ cache: value }, { esc });
+  assert.match(html, /2026-01-01～2026-03-31/);
+  assert.match(html, /2026-04-01～2026-06-30/);
+  assert.match(html, /最新單季分屬不同截止日/);
 });
 
 test('基本面 HTML｜無 SEC 資料仍保留八組研究問題與手動內容；外部文字一律跳脫', () => {

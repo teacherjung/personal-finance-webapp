@@ -214,6 +214,14 @@ function periodText(fact) {
   return start && end ? `${start} 至 ${end}` : end || '尚未取得';
 }
 
+/** @param {any} fact */
+function quarterPeriodLabel(fact) {
+  const start = text(fact?.periodStart);
+  const end = text(fact?.periodEnd);
+  if (start && end) return `${start}～${end}`;
+  return end ? `截至 ${end}` : '單季期間未填';
+}
+
 /** @param {any} fact @param {(value:any)=>string} e */
 function filingLink(fact, e) {
   const url = safeHttpUrl(fact?.filingUrl);
@@ -287,7 +295,12 @@ function metricRowHtml(metric, e) {
       <b>${e(metric.label)}</b>
       <span class="stock-metric-kind">${badge}</span>
     </th>
-    <td>${factDisclosureHtml(metric.latestQuarter, metric, e)}</td>
+    <td>${factDisclosureHtml(
+      metric.latestQuarter,
+      metric,
+      e,
+      metric.latestQuarter ? quarterPeriodLabel(metric.latestQuarter) : ''
+    )}</td>
     <td>${annualHtml}</td>
   </tr>`;
 }
@@ -301,7 +314,7 @@ function metricsTableHtml(title, metrics, e) {
     <div class="stock-section-heading"><h2>${title}</h2><span>點數字展開期間與來源</span></div>
     <div class="tbl-wrap stock-table-wrap">
       <table class="stock-fundamentals-table">
-        <thead><tr><th>指標</th><th>最新單季</th><th>近五年年度</th></tr></thead>
+        <thead><tr><th>指標</th><th>最新單季</th><th>最近五筆可得年度</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>

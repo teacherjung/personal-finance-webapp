@@ -488,6 +488,13 @@
   gap: 2px;
 }
 
+.stock-fundamentals-table td:nth-child(2) .stock-fact-disclosure > summary {
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
 .stock-fact-disclosure {
   position: relative;
   min-width: 0;
