@@ -19,13 +19,15 @@
 //   ① 找問題    → **A**（誰先發現都可以）
 //   ② 提修法    → **B**（另一方）
 //   ③ 審修法    → **A**（＝發現者，**不是**提案者）
-//   ④ 實作      → **一律 Claude**（規則：審查者不可改程式）
+//   ④ 實作      → **預設 Claude**；Codex 僅限 William 明確指派（2026-07-30 三模式邊界），
+//                  該支改由 Claude 複審＋執行合併（對稱授權）
 //   ⑤ 審實作    → **Codex** ＝ 下一輪的 ①，循環因此閉合
 //
 // 兩個方向都合法，差別只在誰先發現：
 //
 //   Codex 先發現：Codex 找 → Claude 提 → **Codex** 審提案 → Claude 實作
 //   Claude 先發現：Claude 找 → Codex 提 → **Claude** 審提案 → Claude 實作
+//   William 指派 Codex 實作（模式③）：Codex 實作 → **Claude** 複審 → Claude 執行合併
 //
 // ⑤ 是關鍵：**實作本身也要有人審**，而它自然接回下一輪的第一步。
 //
@@ -65,6 +67,7 @@ const OUT_DIR = join(ROOT, '.codex-reviews');
 const CODEX_WT = join(ROOT, '..', '榮祥森（投資理財）-codex');
 
 /** 審查模型與力度：高風險 PR 一律用這組（CODEX-REVIEW.md 開頭）。 */
+// 審查一律 xhigh（William 2026-07-31 裁決取代舊分級；AI 不可自行降級，想省額度只能 William 逐案明說）。
 const MODEL = ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="xhigh"'];
 
 /**
