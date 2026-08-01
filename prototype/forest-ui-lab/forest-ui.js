@@ -51,7 +51,7 @@ function formatUsdK(value, signed = false) {
 
 /** @param {number|null} value */
 function formatSignedPct(value) {
-  if (value === null || !Number.isFinite(value)) return '首筆資料';
+  if (value === null || !Number.isFinite(value)) return '無法計算比例';
   if (value < 0) return `−${Math.abs(value).toFixed(1)}%`;
   if (value > 0) return `+${value.toFixed(1)}%`;
   return '0.0%';
@@ -94,7 +94,8 @@ function renderCurrencyValues() {
 /** @param {number} index */
 function monthStateAt(index) {
   const change = netWorthChangeAt(MONTHLY_FOREST_DATA, index);
-  return change ? atmosphereForChange(change.pct ?? 0) : 'neutral';
+  if (!change || change.pct === null) return 'neutral';
+  return atmosphereForChange(change.pct);
 }
 
 function buildMonthTrail() {
@@ -102,16 +103,24 @@ function buildMonthTrail() {
   if (!track) return;
   track.replaceChildren();
   MONTHLY_FOREST_DATA.forEach((month, index) => {
+    const change = netWorthChangeAt(MONTHLY_FOREST_DATA, index);
+    const state = monthStateAt(index);
+    const atmosphere = FOREST_ATMOSPHERES[state];
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'month-dot';
     button.id = `forest-month-${month.key}`;
     button.dataset.monthIndex = String(index);
-    button.dataset.state = monthStateAt(index);
+    button.dataset.state = state;
     button.setAttribute('role', 'option');
     button.setAttribute('aria-selected', String(index === selectedMonthIndex));
+    button.setAttribute('aria-label', !change
+      ? `${month.yearLabel}，第一筆資料，尚無比較`
+      : change.pct === null
+        ? `${month.yearLabel}，上月底淨資產為零，無法計算變動比例`
+        : `${month.yearLabel}，${atmosphere.statusLabel}，${formatSignedPct(change.pct)}`);
     button.textContent = month.label;
-    button.title = month.yearLabel;
+    button.title = button.getAttribute('aria-label') || month.yearLabel;
     button.addEventListener('click', () => {
       selectedMonthIndex = index;
       renderSelectedMonth();
@@ -132,8 +141,8 @@ function updateMonthTrailSelection() {
   });
   const previous = /** @type {HTMLButtonElement|null} */ (document.querySelector('#previousMonth'));
   const next = /** @type {HTMLButtonElement|null} */ (document.querySelector('#nextMonth'));
-  if (previous) previous.disabled = selectedMonthIndex <= 0;
-  if (next) next.disabled = selectedMonthIndex >= MONTHLY_FOREST_DATA.length - 1;
+  if (previous) previous.setAttribute('aria-disabled', String(selectedMonthIndex <= 0));
+  if (next) next.setAttribute('aria-disabled', String(selectedMonthIndex >= MONTHLY_FOREST_DATA.length - 1));
 }
 
 function renderSelectedMonth() {
@@ -142,7 +151,8 @@ function renderSelectedMonth() {
   const change = netWorthChangeAt(MONTHLY_FOREST_DATA, selectedMonthIndex);
   const amount = change?.amount ?? 0;
   const pct = change?.pct ?? null;
-  const state = change ? atmosphereForChange(pct ?? 0) : 'neutral';
+  const hasComparablePct = Boolean(change && pct !== null);
+  const state = hasComparablePct ? atmosphereForChange(/** @type {number} */ (pct)) : 'neutral';
   const atmosphere = FOREST_ATMOSPHERES[state];
   const cashflowNet = month.income - month.expense;
   const windowStart = Math.max(0, selectedMonthIndex - selectedPeriod + 1);
@@ -163,12 +173,18 @@ function renderSelectedMonth() {
     guide.src = atmosphere.guide;
     guide.alt = atmosphere.guideAlt;
   });
-  setText('#scene-title', change ? atmosphere.heading : '從這個月開始記錄淨資產');
-  setText('#sceneSummary', change
-    ? `較上月底${changePhrase(amount)}。這是整體淨資產變動，不等於投資報酬率。`
-    : '這是時間軸中的第一筆資料，尚無上月底資料可比較。');
+  setText('#scene-title', !change
+    ? '從這個月開始記錄淨資產'
+    : hasComparablePct
+      ? atmosphere.heading
+      : '本月淨資產已有金額變動');
+  setText('#sceneSummary', !change
+    ? '這是時間軸中的第一筆資料，尚無上月底資料可比較。'
+    : hasComparablePct
+      ? `較上月底${changePhrase(amount)}。這是整體淨資產變動，不等於投資報酬率。`
+      : `較上月底${changePhrase(amount)}。上月底淨資產為 0，無法計算變動比例；這不等於投資報酬率。`);
   setText('#monthChangeAmount', change ? formatWan(amount, true) : '尚無比較');
-  setText('#monthChangePct', formatSignedPct(pct));
+  setText('#monthChangePct', !change ? '首筆資料' : formatSignedPct(pct));
   setCurrencyValue('#netWorthValue', month.netWorth);
   setCurrencyValue('#cashflowNetValue', cashflowNet, true);
   setCurrencyValue('#cashflowAverageValue', averageCashflow);
@@ -180,21 +196,37 @@ function renderSelectedMonth() {
   }
   setText('#cashflowIncomeText', `收入 ${formatWan(month.income)}・支出 ${formatWan(month.expense)}`);
   setText('#emergencyFundValue', `${month.emergencyMonths.toFixed(1)} 個月`);
+  const emergencyText = htmlElement('#emergencyFundText');
+  if (emergencyText) {
+    const emergencyHealthy = month.emergencyMonths >= 6;
+    emergencyText.textContent = emergencyHealthy ? '高於 6 個月目標' : '低於 6 個月目標';
+    emergencyText.classList.toggle('positive', emergencyHealthy);
+    emergencyText.classList.toggle('negative', !emergencyHealthy);
+  }
   setText('#disciplineValue', `${month.discipline} / 5`);
   setText('#disciplineText', month.discipline >= 5 ? '所有檢查均在範圍內' : month.discipline === 4 ? '一項接近上限' : '兩項需要複查');
+  const disciplineText = htmlElement('#disciplineText');
+  if (disciplineText) {
+    disciplineText.classList.remove('positive', 'warning', 'negative');
+    disciplineText.classList.add(month.discipline >= 5 ? 'positive' : month.discipline === 4 ? 'warning' : 'negative');
+  }
   const statusMark = htmlElement('#returnStatusMark');
   if (statusMark) statusMark.className = `status-mark ${atmosphere.statusClass}`;
   setText('#returnStatusTitle', change ? `本月淨資產${changePhrase(amount)}` : '本月為第一筆淨資產資料');
-  setText('#returnStatusDetail', change
-    ? '包含收支、投資市值、匯率與負債變化，不等於投資報酬率。'
-    : '下個月起才能與上月底比較；目前先建立基準。');
+  setText('#returnStatusDetail', !change
+    ? '下個月起才能與上月底比較；目前先建立基準。'
+    : hasComparablePct
+      ? '包含收支、投資市值、匯率與負債變化，不等於投資報酬率。'
+      : '金額變動仍有意義；但上月底淨資產為 0，因此不顯示變動比例。');
   setText('#guideDialogMonth', month.yearLabel);
-  setText('#guideDialogChange', change
-    ? `淨資產${changePhrase(amount)}（${formatSignedPct(pct)}）`
-    : '第一筆淨資產基準');
-  setText('#guideDialogText', change
-    ? '這是整體淨資產變動，包含收支、投資市值、匯率與負債變化，不等於投資報酬率。'
-    : '這個月先建立淨資產基準；下一筆月資料建立後，才能形成可比較的月變動。');
+  setText('#guideDialogChange', !change
+    ? '第一筆淨資產基準'
+    : `淨資產${changePhrase(amount)}（${formatSignedPct(pct)}）`);
+  setText('#guideDialogText', !change
+    ? '這個月先建立淨資產基準；下一筆月資料建立後，才能形成可比較的月變動。'
+    : hasComparablePct
+      ? '這是整體淨資產變動，包含收支、投資市值、匯率與負債變化，不等於投資報酬率。'
+      : '這個月仍可顯示淨資產金額變動；但上月底淨資產為 0，無法計算有意義的變動比例。');
   renderCurrencyValues();
   updateMonthTrailSelection();
   drawChart();
@@ -385,7 +417,8 @@ let cardLayout = readCardLayout();
 let draggedCardId = '';
 let focusedCardId = '';
 
-function applyCardLayout() {
+/** @param {{id:string,action:string}=} focusTarget */
+function applyCardLayout(focusTarget) {
   if (!dashboard) return;
   cardLayout = normalizeCardLayout(cardLayout);
   cardLayout.forEach((item) => {
@@ -396,6 +429,10 @@ function applyCardLayout() {
     if (select) select.value = item.size;
     dashboard.append(card);
   });
+  if (focusTarget) {
+    const control = /** @type {HTMLElement|null} */ (dashboard.querySelector(`[data-card-id="${focusTarget.id}"] [data-card-action="${focusTarget.action}"]`));
+    control?.focus();
+  }
 }
 
 function buildCardToolbars() {
@@ -441,19 +478,30 @@ function setLayoutEditing(enabled) {
 /** @param {string} id */
 function setFocusedCard(id) {
   const backdrop = htmlElement('#focusBackdrop');
+  const previousId = focusedCardId;
+  const card = /** @type {HTMLElement|null} */ (id ? dashboard?.querySelector(`[data-card-id="${id}"]`) || null : null);
+  if (id && !card) id = '';
+  if (id) setLayoutEditing(false);
   dashboard?.querySelectorAll('.layout-card').forEach((item) => item.classList.remove('is-focused'));
   focusedCardId = id;
   document.body.classList.toggle('card-focused', Boolean(id));
   if (backdrop) backdrop.hidden = !id;
   dashboard?.querySelectorAll('.card-focus').forEach((item) => item.setAttribute('aria-pressed', 'false'));
+  document.querySelectorAll('.forest-rail, .topbar, .month-trail, .forest-scene, .layout-card').forEach((item) => {
+    const element = /** @type {HTMLElement} */ (item);
+    element.inert = Boolean(id) && element !== card;
+  });
   if (!id) {
+    const restore = /** @type {HTMLElement|null} */ (previousId ? dashboard?.querySelector(`[data-card-id="${previousId}"] [data-card-action="focus"]`) || null : null);
+    restore?.focus();
     chart?.resize();
     return;
   }
-  const card = /** @type {HTMLElement|null} */ (dashboard?.querySelector(`[data-card-id="${id}"]`) || null);
   if (!card) return;
   card.classList.add('is-focused');
-  card.querySelector('.card-focus')?.setAttribute('aria-pressed', 'true');
+  const focusButton = /** @type {HTMLElement|null} */ (card.querySelector('.card-focus'));
+  focusButton?.setAttribute('aria-pressed', 'true');
+  focusButton?.focus();
   card.scrollIntoView({ block: 'center', behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   globalThis.setTimeout(() => chart?.resize(), 220);
 }
@@ -471,7 +519,7 @@ dashboard?.addEventListener('click', (event) => {
   if (action === 'previous' || action === 'next') {
     cardLayout = moveCard(cardLayout, id, action === 'previous' ? -1 : 1);
     saveCardLayout(cardLayout);
-    applyCardLayout();
+    applyCardLayout({ id, action });
     announceLayout(`${card?.dataset.cardLabel || '卡片'}已${action === 'previous' ? '往前' : '往後'}移動。`);
   }
   if (action === 'focus') setFocusedCard(focusedCardId === id ? '' : id);
@@ -485,7 +533,7 @@ dashboard?.addEventListener('change', (event) => {
   cardLayout = cardLayout.map((item) => item.id === id ? { ...item, size: select.value } : item);
   cardLayout = normalizeCardLayout(cardLayout);
   saveCardLayout(cardLayout);
-  applyCardLayout();
+  applyCardLayout({ id, action: 'size' });
   announceLayout(`${card?.dataset.cardLabel || '卡片'}已改為${sizeLabels[select.value] || select.value}。`);
 });
 
@@ -522,7 +570,7 @@ dashboard?.addEventListener('drop', (event) => {
   if (dragged && targetIndex >= 0) rest.splice(targetIndex, 0, dragged);
   cardLayout = normalizeCardLayout(rest);
   saveCardLayout(cardLayout);
-  applyCardLayout();
+  applyCardLayout({ id: draggedCardId, action: 'drag' });
   announceLayout(`${target.dataset.cardLabel || '卡片'}前方已插入新位置。`);
 });
 

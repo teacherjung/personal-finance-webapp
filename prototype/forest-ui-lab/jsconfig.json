@@ -12,6 +12,6 @@
     "skipLibCheck": true,
     "maxNodeModuleJsDepth": 0
   },
-  "include": ["forest-ui.js", "forest-ui-model.js", "forest-ui-model.test.js"],
+  "include": ["forest-ui.js", "forest-ui-model.js", "*.test.js"],
   "exclude": ["node_modules", "../../node_modules"]
 }

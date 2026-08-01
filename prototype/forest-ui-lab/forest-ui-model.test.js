@@ -24,7 +24,16 @@ test('本月淨資產變動以目前月減上月底，不冒充投資報酬', ()
     amount: 29,
     pct: 2.378999
   });
+  assert.equal(latest?.reason, 'comparable');
   assert.equal(netWorthChangeAt(MONTHLY_FOREST_DATA, 0), null);
+});
+
+test('上月底淨資產為零時保留金額變動，但不補成 0% 或冒充首筆資料', () => {
+  assert.deepEqual(netWorthChangeAt([{ netWorth: 0 }, { netWorth: 50 }], 1), {
+    amount: 50,
+    pct: null,
+    reason: 'zero-base'
+  });
 });
 
 test('版面保存只接受已知卡片與合法尺寸，缺卡補回預設', () => {

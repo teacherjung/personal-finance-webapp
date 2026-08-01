@@ -79,7 +79,7 @@ export function netWorthChangeAt(months, index) {
   if (!current || !previous) return null;
   const amount = Number(current.netWorth) - Number(previous.netWorth);
   const base = Math.abs(Number(previous.netWorth));
-  return { amount, pct: base ? amount / base * 100 : null };
+  return { amount, pct: base ? amount / base * 100 : null, reason: base ? 'comparable' : 'zero-base' };
 }
 
 export const DEFAULT_CARD_LAYOUT = Object.freeze([
