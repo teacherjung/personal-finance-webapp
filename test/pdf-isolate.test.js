@@ -355,10 +355,16 @@ test('併發上限｜佇列深度滿了立刻 503（不讓等待者持續占住�
   try {
     for (let i = 0; i < PDF_QUEUE_MAX_DEPTH; i++) runs.push(throughPdfQueueForTest(slow));
     assert.equal(pdfQueueDepthForTest(), PDF_QUEUE_MAX_DEPTH, '深度要算「排隊中＋執行中」');
-    const err = await errOf(throughPdfQueueForTest(slow));
+    // ⚠️ 要驗「**立刻** 503」＝fail-fast。用 race 設 500ms 上限：深度上限一旦失效，
+    //    第 7 個會安靜排隊等到天荒地老——那時候本題該**紅**，不該掛住（實測突變踩過）。
+    const err = await errOf(Promise.race([
+      throughPdfQueueForTest(slow),
+      new Promise((_r, rej) => setTimeout(
+        () => rej(Object.assign(new Error('沒有立刻回 503（深度上限失效，請求被安靜排隊）'), { code: 'no_fail_fast' })), 500)),
+    ]));
     assert.ok(err, '滿了竟然還收');
+    assert.equal(err.code, 'pdf_busy', String(err.message));
     assert.equal(err.status, 503);
-    assert.equal(err.code, 'pdf_busy');
   } finally {
     open = true;
     await Promise.allSettled(runs);
