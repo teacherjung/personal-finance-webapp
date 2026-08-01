@@ -363,6 +363,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
   //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
   //   惡意混淆級（eval／字串拼接／getBuiltinModule）依威脅模型留給 code review（本絆索防「忘記登記」）。
+  //   呼叫外部程式（child_process 家族）＝**需登記 SPAWNERS**（William 2026-08-01 裁決）——curl/wget 等
+  //   同樣是外連通道；#350 的 PDF 行程隔離落地時在此登記。
   const CORE_NET = 'https?|http2|net|tls|dgram|dns(?:\\/promises)?';
   const CLIENTS = 'undici|axios|node-fetch|got';
   const OUTBOUND_RE = new RegExp([
@@ -447,6 +449,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/parse-limits.js', 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求'],
     ['lib/repo.js', '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連'],
   ]);
+  // 外部程式呼叫（child_process）＝獨立類別、需登記（William 2026-08-01 裁決）
+  const SPAWN_RE = /node:child_process\b|(?:from|import\s*\(|require\s*\()\s*['"`]child_process['"`]/;
+  /** @type {Map<string, string>} */
+  const SPAWNERS = new Map([
+    // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
+  ]);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
     const rel = `${dir}/${f}`;
@@ -455,13 +463,22 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   });
   /** @type {Map<string, string>} */ const detected = new Map();
   /** @type {Map<string, string>} */ const rawOnly = new Map();
+  /** @type {string[]} */ const spawners = [];
   for (const rel of walk('lib')) {
     const src = readFileSync(pjoin(ROOT, rel), 'utf8');
+    if (SPAWN_RE.test(stripComments(src))) spawners.push(rel);
     const clean = cleanHit(src);
     if (clean !== null) { detected.set(rel, clean); continue; }
     const raw = hitOn(src);
     if (raw) rawOnly.set(rel, raw.snippet);
   }
+  // ⓪ 外部程式呼叫：偵測到未登記＝紅；登記了偵測不到＝空轉、也紅
+  const unregSpawn = spawners.filter((rel) => !SPAWNERS.has(rel));
+  assert.deepEqual(unregSpawn, [],
+    `這些模組會呼叫外部程式（child_process）卻未登記 SPAWNERS：\n  ${unregSpawn.join('\n  ')}\n` +
+    'curl/wget 等同樣是外連通道（William 2026-08-01 裁決：需登記附 why）。');
+  const staleSpawn = [...SPAWNERS.keys()].filter((rel) => !spawners.includes(rel));
+  assert.deepEqual(staleSpawn, [], `SPAWNERS 空轉登記：\n  ${staleSpawn.join('\n  ')}`);
   // ① 正向：乾淨軌偵測到卻沒登記
   const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
@@ -512,6 +529,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['URL regex 不掩護同行 fetch（\\/\\/ 保護）', 'if (/^https:\\/\\//.test(u)) return fetch(u);'],
   ];
   for (const [name, snippet] of PROBES) assert.ok(cleanHit(snippet) !== null, `乾淨軌抓不到代表寫法：${name}`);
+  const SPAWN_PROBES = [
+    ['node: 前綴 child_process（r6）', "import { execFile } from 'node:child_process';"],
+    ['裸 child_process（r6）', "const cp = require('child_process');"],
+    ['動態 import child_process（r6）', "const cp = await import('child_process');"],
+  ];
+  for (const [name, snippet] of SPAWN_PROBES) assert.ok(SPAWN_RE.test(stripComments(snippet)), `SPAWN 偵測抓不到：${name}`);
   const MENTION_PROBES = [
     ['行首註解', '// 這裡提到 fetch 也不算外連，但生掃軌要看得到'],
     ['JSDoc 行', '/**\n * @param {typeof fetch} fetchImpl 注入點\n */'],
