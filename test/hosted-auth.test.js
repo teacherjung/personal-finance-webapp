@@ -326,9 +326,11 @@ test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一
 // 「從清單反查」只證得了「表上的每一道都掛上了」，證不了「該上表的都上了」。
 //
 // 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝我們會去打誰）跟它對帳。
-// 這一題守的不是某個 bug，是**「有人新增 fetch() 卻忘了限速」這個動作**。
+// 這一題守的不是某個 bug，是**「有人新增未登記的對外模組／能力卻忘了限速」這個動作**。
+// ⚠️ 誠實劃界（r7）：已登記模組（ALLOWED）**改打新主機本題不偵測**——主機級對帳（每模組
+// 主機清單×URL 掃描雙向對帳）＝另案（William 2026-08-01 裁決另開 PR）。
 
-test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增 fetch 卻忘了限速就會在這裡紅）', async () => {
+test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增未登記的對外能力卻忘了限速就會在這裡紅）', async () => {
   const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
   assert.ok(OUTBOUND_ENDPOINTS.length >= 6, '對外端點清單看起來被刪過');
 
@@ -347,33 +349,504 @@ test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新�
     '猛打它們＝拿我們的伺服器去打別人，可能害使用者被上游限流甚至停用。');
 });
 
-test('對帳（反向）：`fetch(` 只准出現在已登記的模組裡（新增對外連線一定要先登記）', async () => {
+test('對帳（反向）：對外連線能力只准出現在已登記的模組裡（雙軌偵測：剝離器 bug 永不靜默漏抓）', async () => {
   const { readFileSync, readdirSync, statSync } = await import('node:fs');
   const { join: pjoin, dirname: pdirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
   const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
-  // 已知會對外的模組——與 OUTBOUND_ENDPOINTS 一一對應。**新增請先想清楚要不要限速。**
-  const ALLOWED = new Set([
-    'lib/ib.js',                          // IBKR Flex
-    'lib/services/market-data.js',        // Yahoo 報價／multpl CAPE／FRED 實質利率
-    'lib/services/stock-fundamentals.js', // SEC
+  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：可注入 fetchImpl 正是
+  // AGENTS 要求的可測試慣例，字面掃描下全部隱形。r1–r5 對抗共實測十四種「日常寫法」繞法，全數入矩陣。
+  // 🏗️ **架構（r5 結構性收官）＝雙軌偵測**：手寫剝離器不可能完美（JS 詞法需要真 parser——巢狀模板、
+  //   regex vs 除法…每輪都能再挖出一種）。與其追求完美，改變失敗方向：
+  //   乾淨軌＝去註解後掃（正常判定）；**生掃軌＝原始碼直接掃（安全網）**。剝離器任何 bug 吃掉真程式碼
+  //   → 生掃軌仍命中 → 本題紅（fail-noisy）。「只有註解提到 fetch」的檔案列 COMMENT_MENTIONS（有 why、
+  //   雙向防空轉）。從此剝離器品質只影響「吵不吵」，不影響「漏不漏」。
+  // 📜 **外連寫法契約（本題即執法點）**：lib 模組要對外一律走 fetch／fetchImpl 慣例並在 ALLOWED 登記；
+  //   **禁止**直接用 node:http 家族與第三方 client——真有需要＝先來改這條偵測器並登記，讓改動可被審。
+  //   惡意混淆級（eval／字串拼接／getBuiltinModule）依威脅模型留給 code review（本絆索防「忘記登記」）。
+  //   呼叫外部程式（child_process 家族）＝**需登記 SPAWNERS**（William 2026-08-01 裁決）——curl/wget 等
+  //   同樣是外連通道；#350 的 PDF 行程隔離落地時在此登記。
+  const CORE_NET = 'https?|http2|net|tls|dgram|dns(?:\\/promises)?';
+  const CLIENTS = 'undici|axios|node-fetch|got|@supabase\\/(?:ssr|supabase-js)';   // r11：Supabase SDK 也是網路 client
+  const OUTBOUND_RE = new RegExp([
+    '(^|[^.\\w])fetch\\b',                     // 裸 fetch：呼叫、別名、預設參數
+    '(^|[^.\\w])WebSocket\\b',                 // Node 22+ 內建全域（r6：不需 import 就能對外）
+    '(?:\\.|\\?\\.)\\s*WebSocket\\b',            // globalThis.WebSocket 成員形（r19 繞法）
+    '[\'"`]WebSocket[\'"`]',                    // computed 存取
+    'fetchImpl',                                // AGENTS 慣例
+    '(?:\\.|\\?\\.)\\s*fetch\\b',               // 成員存取：globalThis.fetch／(globalThis).fetch／?.fetch／跨行（r4+r5）
+    '[\'"`]fetch[\'"`]',                       // computed 存取
+    `node:(?:${CORE_NET})\\b`,
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CORE_NET})['"\`]`,
+    `(?:from|import\\s*\\(|require\\s*\\()\\s*['"\`](?:${CLIENTS})['"\`]`,
+  ].join('|'));
+  /** 去註解掃描器（堆疊式；r5 補模板插值 \${}——巢狀反引號曾讓舊版把 URL 的 // 當註解吞掉 fetch）。
+   *  字串內容原樣保留；// 與 /* 前一字元是反斜線＝不當註解（regex literal 的 \/\/）。
+   *  已知殘餘（因雙軌架構已無漏抓風險，僅影響吵度）：regex vs 除法需真 parser。 @param {string} src */
+  const stripComments = (src) => {
+    let out = ''; let prev = '';
+    /** @type {string[]} */ const stack = ['code'];
+    /** @type {number[]} */ const interpDepth = [];
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i]; const n = src[i + 1];
+      const st = stack[stack.length - 1];
+      if (st === 'code' || st === 'interp') {
+        if (c === '/' && n === '/' && prev !== '\\') { stack.push('line'); prev = ''; i++; continue; }
+        if (c === '/' && n === '*' && prev !== '\\') { stack.push('block'); prev = ''; i++; continue; }
+        if (c === '\'') stack.push('s1');
+        else if (c === '"') stack.push('s2');
+        else if (c === '`') stack.push('tpl');
+        else if (st === 'interp') {
+          if (c === '{') interpDepth[interpDepth.length - 1]++;
+          else if (c === '}') {
+            if (interpDepth[interpDepth.length - 1] === 0) { stack.pop(); interpDepth.pop(); out += c; prev = c; continue; }
+            interpDepth[interpDepth.length - 1]--;
+          }
+        }
+        out += c; prev = c;
+      } else if (st === 'line') {
+        if (c === '\n') { stack.pop(); out += c; prev = ''; }
+      } else if (st === 'block') {
+        if (c === '*' && n === '/') { stack.pop(); i++; prev = ''; }
+        else if (c === '\n') out += c;
+      } else if (st === 'tpl') {
+        out += c;
+        if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+        if (c === '`') stack.pop();
+        else if (c === '$' && n === '{') { stack.push('interp'); interpDepth.push(0); out += n; i++; }
+        prev = c;
+      } else {   // s1 / s2
+        out += c;
+        if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+        if ((st === 's1' && c === '\'') || (st === 's2' && c === '"')) stack.pop();
+        else if (c === '\n') stack.pop();   // 一般字串不跨行＝未終結防呆
+        prev = c;
+      }
+    }
+    return out;
+  };
+  /** @param {string} text */
+  const hitOn = (text) => {
+    const m = OUTBOUND_RE.exec(text);
+    if (!m) return null;
+    return { index: m.index, snippet: m[0] };
+  };
+  /** 乾淨軌＋行號回報。 @param {string} src */
+  const cleanHit = (src) => {
+    const stripped = stripComments(src);
+    const m = hitOn(stripped);
+    if (!m) return null;
+    const lineNo = stripped.slice(0, m.index + 1).split('\n').length;
+    return `第 ${lineNo} 行：${(src.split('\n')[lineNo - 1] ?? m.snippet).trim()}`;
+  };
+  // 端點主＝與 OUTBOUND_ENDPOINTS 對應；傳導＝把 fetchImpl 往下遞。**新增請先想清楚要不要限速。**
+  // r12：角色結構化——端點主必須宣告 hosts 並與 server.js 的 OUTBOUND_ENDPOINTS 機械對帳
+  //（「只補 ALLOWED 不登記端點」從此必紅）；傳導不得有 hosts。
+  const ALLOWED = new Map([
+    ['lib/ib.js', { role: 'endpoint', hosts: ['ndcdyn.interactivebrokers.com'], paths: ['/api/ib/sync'], why: 'IBKR Flex（字面 fetch）' }],
+    ['lib/services/market-data.js', { role: 'endpoint', hosts: ['query1.finance.yahoo.com', 'www.multpl.com', 'fred.stlouisfed.org'], paths: ['/api/quotes', '/api/quotes/refresh-auto', '/api/cape', '/api/realyield'], why: 'Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）' }],
+    ['lib/services/stock-fundamentals.js', { role: 'endpoint', hosts: ['www.sec.gov', 'data.sec.gov'], paths: ['/api/stock-fundamentals/:symbol/refresh'], why: 'SEC（fetchImpl 慣例＋globalThis.fetch 預設）' }],
+    ['lib/services/insights.js', { role: 'conduit', paths: ['/api/insights'], why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
+    ['lib/services/ib-sync.js', { role: 'conduit', why: '注入 fetchFlex（lib/ib.js），自己不開新端點' }],
+    ['lib/services/auth.js', { role: 'endpoint', hosts: ['SUPABASE_URL（環境變數指定的 Supabase 主機）'], paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], why: 'Supabase Auth（@supabase/ssr；HOSTED 登入／驗證）' }],
   ]);
+  // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
+  // ⚠️ r8→r9 收緊到**片段級**：登記「精確命中字串集合」——r8 的數量級仍有「刪一個提及＋
+  //   加一個被誤吞的真外連＝count 持平」的替換路（自審發現、先修）；片段一換就紅。
+  const COMMENT_MENTIONS = new Map([
+    ['lib/parse-limits.js', { snippets: [' fetch'], why: 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求' }],
+    ['lib/repo.js', { snippets: ['（fetch'], why: '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連' }],
+  ]);
+  const OUTBOUND_RE_G = new RegExp(OUTBOUND_RE.source, 'g');
+  // 外部程式呼叫（child_process）＝獨立類別、需登記（William 2026-08-01 裁決）
+  // ⚠️ r8：spawn 也要雙軌——只掃乾淨軌的話，一個 /[//]/ 合法 regex 就能騙剝離器吞掉 import（實測）。
+  const SPAWN_RE = /node:(?:child_process|cluster)\b|(?:from|import\s*\(|require\s*\()\s*['"`](?:child_process|cluster|execa|zx|cross-spawn|shelljs)['"`]/;
+  const SPAWN_RE_G = new RegExp(SPAWN_RE.source, 'g');
+  // spawn 的「僅註解提及」豁免（片段級；目前 lib 無任何提及＝空）
+  /** @type {Map<string, {snippets: string[], why: string}>} */
+  const SPAWN_MENTIONS = new Map([]);
+  /** @type {Map<string, string>} */
+  const SPAWNERS = new Map([
+    // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
+  ]);
+  // r10→r11：Node 22.18+ 連 .ts/.mts/.cts 都能直接執行——「可執行」判準涵蓋全家族；
+  //   另立 fail-closed 禁令：本 repo 零建置、runtime 只准 .js，出現其他可執行副檔名＝直接紅。
+  /** @param {string} f */
+  const isRuntimeCapable = (f) => /\.(?:js|mjs|cjs|ts|mts|cts)$/.test(f);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
     const rel = `${dir}/${f}`;
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
-    return f.endsWith('.js') ? [rel] : [];
+    return isRuntimeCapable(f) ? [rel] : [];
   });
-  /** @type {string[]} */
-  const unexpected = [];
-  for (const rel of walk('lib')) {
-    const src = readFileSync(pjoin(ROOT, rel), 'utf8');
-    // 只看真的呼叫，不看註解與字串裡提到的字
-    const calls = src.split('\n').filter((l) => /(^|[^.\w])fetch\s*\(/.test(l) && !l.trim().startsWith('//'));
-    if (calls.length && !ALLOWED.has(rel)) unexpected.push(`${rel}: ${calls[0].trim()}`);
+  // r11→r12：後端 runtime 不只 lib——repo.js/derive.js/insights.js 會 import public/modules 的共用
+  //   模組（實測在 normalizePortfolioSymbol 藏 fetch 可穿透）。掃描範圍＝server.js＋lib 的 **import 閉包**：
+  //   逐檔抽相對 import／require／動態 import，解析存在就入掃、遞迴到不動點。
+  // r13：side-effect import（import './x.js';——沒有 from）也是標準 ESM，必須進閉包
+  const IMPORT_SPEC_RE = /(?:from|import\s*\(|require\s*\()\s*['"`](\.[^'"`]*)['"`]|(?:^|[^.\w])import\s+['"`](\.[^'"`]*)['"`]/gm;
+  /** @param {string} src @returns {string[]} */
+  const extractImportSpecs = (src) => [...src.matchAll(IMPORT_SPEC_RE)].map((m) => m[1] ?? m[2]);
+  /** @param {string[]} seeds @returns {string[]} */
+  const importClosure = (seeds) => {
+    const seen = new Set(seeds);
+    const queue = [...seeds];
+    while (queue.length) {
+      const rel = /** @type {string} */ (queue.shift());
+      const src = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+      if (src === null) continue;
+      for (const spec of extractImportSpecs(src)) {
+        let target = pjoin(pdirname(rel), spec.replace(/[?#].*$/, ''));   // r21：?query#fragment 是 URL 語意、不屬檔名
+        if (!/\.[a-z]+$/i.test(target)) target += '.js';
+        try { statSync(pjoin(ROOT, target)); } catch { continue; }
+        if (!isRuntimeCapable(target) || seen.has(target)) continue;
+        seen.add(target); queue.push(target);
+      }
+    }
+    return [...seen];
+  };
+  const scanTargets = importClosure([...walk('lib'), 'server.js']);
+  // 閉包機制探針：後端實際 import 的五支 public 共用模組必須在掃描範圍內（walker 壞掉就紅）
+  for (const must of ['public/modules/portfolio-symbol.js', 'public/modules/categories.js', 'public/modules/portfolio-risk.js', 'public/modules/subscriptions-model.js', 'public/modules/signal-tiers.js']) {
+    assert.ok(scanTargets.includes(must), `import 閉包漏了後端共用模組：${must}`);
   }
+  // import 語法四型探針（r13：side-effect 型曾漏）
+  assert.deepEqual(extractImportSpecs("import { a } from './x.js';"), ['./x.js'], 'from 型');
+  assert.deepEqual(extractImportSpecs("const m = await import('./y.js');"), ['./y.js'], '動態型');
+  assert.deepEqual(extractImportSpecs("const m = require('./z.js');"), ['./z.js'], 'CJS 型');
+  assert.deepEqual(extractImportSpecs("import './side-effect.js';"), ['./side-effect.js'], 'side-effect 型（r13 繞法）');
+  const nonJs = scanTargets.filter((rel) => !rel.endsWith('.js'));
+  assert.deepEqual(nonJs, [],
+    `掃描範圍出現非 .js 的可執行模組（本 repo 零建置、runtime 只准 .js）：\n  ${nonJs.join('\n  ')}\n` +
+    'Node 22.18+ 連 .mts/.cts 都能直接跑——要引進新副檔名＝先來改這條禁令，讓改動可被審。');
+  /** @type {Map<string, string>} */ const detected = new Map();
+  /** @type {Map<string, string[]>} */ const rawOnly = new Map();
+  /** @type {string[]} */ const spawners = [];
+  /** @type {Map<string, string[]>} */ const spawnRawOnly = new Map();
+  for (const rel of scanTargets) {
+    const src = readFileSync(pjoin(ROOT, rel), 'utf8');
+    const stripped = stripComments(src);
+    if (SPAWN_RE.test(stripped)) spawners.push(rel);
+    else {
+      const sm = [...src.matchAll(SPAWN_RE_G)].map((m) => m[0]);
+      if (sm.length > 0) spawnRawOnly.set(rel, sm);
+    }
+    const clean = cleanHit(src);
+    if (clean !== null) { detected.set(rel, clean); continue; }
+    const rawM = [...src.matchAll(OUTBOUND_RE_G)].map((m) => m[0]);
+    if (rawM.length) rawOnly.set(rel, rawM);
+  }
+  // ⓪ 外部程式呼叫：偵測到未登記＝紅；登記了偵測不到＝空轉、也紅
+  const unregSpawn = spawners.filter((rel) => !SPAWNERS.has(rel));
+  assert.deepEqual(unregSpawn, [],
+    `這些模組會呼叫外部程式（child_process）卻未登記 SPAWNERS：\n  ${unregSpawn.join('\n  ')}\n` +
+    'curl/wget 等同樣是外連通道（William 2026-08-01 裁決：需登記附 why）。');
+  const staleSpawn = [...SPAWNERS.keys()].filter((rel) => !spawners.includes(rel));
+  assert.deepEqual(staleSpawn, [], `SPAWNERS 空轉登記：\n  ${staleSpawn.join('\n  ')}`);
+  // 片段級豁免對帳器（純函式＝可用合成探針釘機制，即使真實清單是空的）：
+  //   正向＝raw-only 檔未登記或片段集合不符；反向＝登記了卻沒有對應 raw-only（過期）或其實是真命中（該搬家）
+  /** @param {Map<string, string[]>} actual @param {Map<string, {snippets: string[], why: string}>} registry @param {(rel: string) => boolean} isReal */
+  const reconcileMentions = (actual, registry, isReal) => {
+    const sortEq = (/** @type {string[]} */ a, /** @type {string[]} */ b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    const forward = [...actual].filter(([rel, sm]) => { const reg = registry.get(rel); return !reg || !sortEq(sm, reg.snippets); })
+      .map(([rel, sm]) => `${rel}（raw 命中 ${JSON.stringify(sm)}）`);
+    const backward = [...registry.keys()].filter((rel) => isReal(rel) || !actual.has(rel))
+      .map((rel) => `${rel}（登記無對應提及或其實是真命中）`);
+    return { forward, backward };
+  };
+  // ⓪b spawn 生掃安全網（r8）＋反向防空轉（r9）
+  const spawnRec = reconcileMentions(spawnRawOnly, SPAWN_MENTIONS, (rel) => spawners.includes(rel));
+  assert.deepEqual(spawnRec.forward, [],
+    `spawn 生掃軌看到、乾淨軌沒看到，且未在 SPAWN_MENTIONS 對上片段：\n  ${spawnRec.forward.join('\n  ')}\n` +
+    '若是註解提及＝登記片段；若是真程式碼＝剝離器被騙（如 regex 含 //），先修剝離器。');
+  assert.deepEqual(spawnRec.backward, [], `SPAWN_MENTIONS 名不符實：\n  ${spawnRec.backward.join('\n  ')}`);
+  // ① 正向：乾淨軌偵測到卻沒登記
+  const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
-    `這些模組出現了未登記的對外連線：\n  ${unexpected.join('\n  ')}\n` +
-    '請在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
+    `這些模組出現了未登記的對外連線能力：\n  ${unexpected.join('\n  ')}\n` +
+    '請在本題 ALLOWED 寫明角色（端點主／傳導），端點主另在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
+  // ①b 安全網：生掃有、乾淨軌沒有、又不在 COMMENT_MENTIONS ＝要嘛新的註解提及要登記、
+  //    要嘛**剝離器把真程式碼吃掉了**——兩種都要人來看（這就是「漏抓變誤報」的機制本體）
+  const outboundRec = reconcileMentions(rawOnly, COMMENT_MENTIONS, (rel) => detected.has(rel));
+  const suspicious = outboundRec.forward;
+  assert.deepEqual(suspicious, [],
+    `生掃軌看到 fetch 相關字樣、乾淨軌沒看到，且未列 COMMENT_MENTIONS：\n  ${suspicious.join('\n  ')}\n` +
+    '若只是註解提及＝加進 COMMENT_MENTIONS（附 why）；若是真程式碼＝剝離器有 bug 吃掉它，先修剝離器。');
+  // ② 反向：ALLOWED 空轉（絆索退化——#335 抓到三個登記有兩個隱形）
+  const stale = [...ALLOWED.keys()].filter((rel) => !detected.has(rel));
+  assert.deepEqual(stale, [],
+    `這些登記在偵測器下是隱形的（空轉登記）：\n  ${stale.join('\n  ')}\n` +
+    '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
+  // ②b COMMENT_MENTIONS 也防空轉：列了卻乾淨軌命中＝其實在對外（搬去 ALLOWED）；列了卻連生掃都沒有＝過期
+  const mentionWrong = outboundRec.backward;
+  assert.deepEqual(mentionWrong, [],
+    `COMMENT_MENTIONS 名不符實：\n  ${mentionWrong.join('\n  ')}\n` +
+    '乾淨軌命中＝真的在對外、搬去 ALLOWED；生掃也沒有＝提及已移除、刪掉這條。');
+  // ②c 角色對帳（r12）：端點主的 hosts ↔ server.js OUTBOUND_ENDPOINTS 雙向；傳導不得有 hosts
+  const { OUTBOUND_ENDPOINTS: OE } = await import('../server.js');
+  const atomicHosts = new Set(OE.flatMap((/** @type {any} */ o) => String(o.host).split(' + ')));
+  /** @type {string[]} */ const roleProblems = [];
+  /** @type {Set<string>} */ const claimed = new Set();
+  for (const [rel, reg] of ALLOWED) {
+    if (reg.role === 'endpoint') {
+      if (!reg.hosts || reg.hosts.length === 0) roleProblems.push(`${rel}：端點主必須宣告至少一個 host`);
+      for (const h of reg.hosts || []) {
+        if (!atomicHosts.has(h)) roleProblems.push(`${rel}：host「${h}」未登記在 OUTBOUND_ENDPOINTS`);
+        claimed.add(h);
+      }
+    } else if (/** @type {any} */ (reg).hosts) roleProblems.push(`${rel}：傳導不得宣告 hosts`);
+  }
+  for (const h of atomicHosts) if (!claimed.has(h)) roleProblems.push(`OUTBOUND_ENDPOINTS 的 host「${h}」沒有任何端點主認領`);
+  // r13：主機集合對帳不夠——重用既有主機開新未限速路由可繞（實測）。加**路徑級**雙向：
+  //   端點主必須宣告 paths 且每條 ∈ 端點表；端點表每條 path 也要有人認領（傳導可認領自己的曝露路由）。
+  const oePaths = new Set(OE.flatMap((/** @type {any} */ o) => o.paths));
+  /** @type {Set<string>} */ const claimedPaths = new Set();
+  for (const [rel, reg] of ALLOWED) {
+    if (reg.role === 'endpoint' && (!reg.paths || reg.paths.length === 0)) roleProblems.push(`${rel}：端點主必須宣告至少一條 path`);
+    for (const p of reg.paths || []) {
+      if (!oePaths.has(p)) roleProblems.push(`${rel}：path「${p}」未登記在 OUTBOUND_ENDPOINTS`);
+      claimedPaths.add(p);
+    }
+  }
+  for (const p of oePaths) if (!claimedPaths.has(p)) roleProblems.push(`OUTBOUND_ENDPOINTS 的 path「${p}」沒有任何模組認領`);
+  assert.deepEqual(roleProblems, [], `端點主↔端點表對帳失敗：\n  ${roleProblems.join('\n  ')}`);
+  // ②d 路由錨定（r14）：兩張登記表互相一致不夠——要錨到真實 route。規則：**具外連能力的
+  //   路由檔**（自身 import 閉包碰得到 ALLOWED 模組）的每條路徑，必須「登記 OUTBOUND_ENDPOINTS」
+  //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不是對外入口；未來改成會觸發外連就要搬進 OE）」。
+  //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
+  // r14→r19 統一路由參數解析器：動詞集合＝Node 官方 http.METHODS（小寫）＋all/use/route
+  //   （機械完備，trace/search 等不再靠手列）；點後允許空白（r19 繞法）。第一參數規則：
+  //   整顆靜態字串且以 / 開頭＝路徑（入錨定）；靜態字串非 / 開頭＝header/config getter、忽略；
+  //   use 的非字串＝middleware／router 掛載、跳過；其餘（串接、模板插值、變數）＝動態禁令。
+  const { METHODS: HTTP_METHODS } = await import('node:http');
+  const ROUTE_VERBS = new Set([...HTTP_METHODS.map((v) => v.toLowerCase()), 'all', 'use', 'route']);
+  /** @param {string} src2 @returns {{ statics: string[], dynamics: string[] }} */
+  const parseRouteArgs = (src2) => {
+    /** @type {string[]} */ const statics = [];
+    /** @type {string[]} */ const dynamics = [];
+    for (const m2 of src2.matchAll(/\.\s*([a-z]+)\s*\??\.?\s*\(\s*/g)) {   // r21：?.( optional call 也算
+      if (!ROUTE_VERBS.has(/** @type {string} */ (m2[1]))) continue;
+      const after = src2.slice((m2.index ?? 0) + m2[0].length, (m2.index ?? 0) + m2[0].length + 200);
+      const sm = after.match(/^(['"])([^'"\n]*)\1\s*([,)])/) || after.match(/^`([^`$\n]*)`\s*([,)])/);
+      if (sm) {
+        const p = /** @type {string} */ (sm.length === 4 ? sm[2] : sm[1]);
+        const delim = /** @type {string} */ (sm.length === 4 ? sm[3] : sm[2]);
+        if (delim === ')') continue;
+        if (p.startsWith('/')) statics.push(p);
+        else dynamics.push(`.${m2[1]}('${p}', …)＝非 / 開頭的註冊路徑（r20：'*' 萬用等 fail-closed）`);
+        continue;
+      }
+      if (m2[1] === 'use' && /^\[/.test(after)) {   // r21：use(['/a','/b'], h) 靜態陣列可解析
+        const arr = after.match(/^\[([^\]]*)\]\s*,/);
+        if (arr) {
+          const items = [...arr[1].matchAll(/(['"`])([^'"`]*)\1/g)].map((x) => x[2]);
+          const rest = arr[1].replace(/(['"`])[^'"`]*\1|[\s,]/g, '');
+          if (rest === '' && items.length) { for (const it of items) if (it.startsWith('/')) statics.push(it); else dynamics.push(`.use([… '${it}' …])＝非 / 開頭`); continue; }
+        }
+        dynamics.push(`.use(${after.slice(0, 30)}…＝無法解析的陣列路徑`);
+        continue;
+      }
+      if (m2[1] === 'use' && !/^['"`]/.test(after)) continue;
+      dynamics.push(`.${m2[1]}(${after.slice(0, 30)}…`);
+    }
+    return { statics, dynamics };
+  };
+  const ROUTE_EXEMPT = new Map([
+    // 口徑：key＝path（同 path 多 method 算一條）。why 的「不觸發業務上游」指不打需由
+    // OUTBOUND_ENDPOINTS 限速的上游（Supabase 驗身分／資料庫 RPC 是 HOSTED 基礎設施、另有 auth 牆）。
+    ['/health', '健康檢查、不觸發業務上游'],
+    ['/api/auth/logout', 'Supabase 輕量 session 操作（signOut）；不限速＝2026-07-28 既有裁決'],
+    ['/api/auth/me', 'Supabase 輕量 session 讀取（getUser）；不限速＝2026-07-28 既有裁決'],
+    ['/api/stock-fundamentals/:symbol', '唯讀快取、不觸發 SEC 抓取（refresh 才會）'],
+    ['/api/auth', 'body limit middleware 掛點（r17 起 use 帶字串入錨定）'],
+    ['/finance', '靜態站掛點'],
+    ['/vendor/chart.js', '靜態資源掛點'],
+    ['/api', 'API 404 收尾掛點'],
+  ]);
+  const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
+  /** @type {string[]} */ const routeProblems = [];
+  /** @type {string[]} */ const dynRoutes = [];
+  /** @type {Set<string>} */ const seenCapablePaths = new Set();
+  for (const rf of routeFiles) {
+    const cl = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m2) => cl.includes(m2))) continue;
+    const parsed = parseRouteArgs(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')));
+    for (const d of parsed.dynamics) dynRoutes.push(`${rf}: ${d}`);
+    for (const p of parsed.statics) {
+      seenCapablePaths.add(p);
+      if (!oePaths.has(p) && !ROUTE_EXEMPT.has(p)) routeProblems.push(`${rf}: ${p}`);
+    }
+  }
+  assert.deepEqual(dynRoutes, [],
+    `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
+    '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
+  // ②g bracket 記法禁令（r17）：routes['all'](…) 讓動詞偵測失效——具外連能力檔案禁止
+  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['"\`](?:${[...ROUTE_VERBS].join('|')})['"\`]\\s*\\]\\s*\\??\\.?\\s*\\(`);
+  /** @type {string[]} */ const bracketRoutes = [];
+  for (const rf of routeFiles) {
+    const cl3 = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m4) => cl3.includes(m4))) continue;
+    if (BRACKET_ROUTE_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(rf);
+  }
+  // r20：computed 動詞（routes[verb](…)）＝識別字 bracket 呼叫全面禁令（實測誤傷面＝零）
+  const COMPUTED_CALL_RE = /\[\s*[A-Za-z_$][\w$]*\s*\]\s*\??\.?\s*\(/;   // r21：?.( 一併禁
+  for (const rf of routeFiles) {
+    const cl4 = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m5) => cl4.includes(m5))) continue;
+    if (COMPUTED_CALL_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(`${rf}（computed 動詞）`);
+  }
+  assert.deepEqual(bracketRoutes, [], `具外連能力的路由檔使用 bracket 記法註冊（動詞偵測失效＝禁止）：\n  ${bracketRoutes.join('\n  ')}`);
+  assert.ok(COMPUTED_CALL_RE.test("marketRoutes[verb]('/api/x', h)"), 'computed 動詞探針（r20 繞法）');
+  assert.ok(BRACKET_ROUTE_RE.test("marketRoutes['all']('/x', h)"), 'bracket 偵測探針');
+  assert.ok(BRACKET_ROUTE_RE.test("app['get']('/x', h)"), 'bracket 偵測探針：任意 receiver（r18 繞法）');
+  assert.equal(parseRouteArgs("app.use ('/api/sp', h)").statics[0], '/api/sp', '動詞與括號間空白（r18 繞法）');
+  assert.equal(parseRouteArgs("marketRoutes. get('/api/ds', h)").statics[0], '/api/ds', '點後空白（r19 繞法）');
+  assert.equal(parseRouteArgs("r.trace('/api/tr', h)").statics[0], '/api/tr', 'METHODS 全集動詞（r19 繞法）');
+  assert.deepEqual(parseRouteArgs("res.get('Origin')").statics, [], '非 / 開頭字串＝getter、不入錨定');
+  assert.equal(parseRouteArgs("r.get('*', h)").dynamics.length, 1, "'*' 萬用路徑 fail-closed（r20 繞法）");
+  assert.equal(parseRouteArgs("r.all('*', h)").dynamics.length, 1, "all('*') 同上");
+  assert.equal(parseRouteArgs("r.get?.('/api/oc', h)").statics[0], '/api/oc', 'optional call 點記法（r21 繞法）');
+  assert.deepEqual(parseRouteArgs("r.use(['/api/a1','/api/a2'], h)").statics, ['/api/a1', '/api/a2'], 'use 靜態陣列（r21 繞法）');
+  assert.equal(parseRouteArgs("r.use([dyn, '/api/a3'], h)").dynamics.length, 1, 'use 陣列含變數＝fail-closed');
+  assert.ok(COMPUTED_CALL_RE.test("marketRoutes[verb]?.('/x', h)"), 'computed optional call（r21 繞法）');
+  assert.deepEqual(extractImportSpecs("import { a } from './x.js?review';").map((sp) => sp.replace(/[?#].*$/, '')), ['./x.js'], 'import query 剝除（r21 繞法）');
+  // ②h package-imports 別名禁令（r17）：#alias 同時繞過閉包與套件分類——後端 runtime 明文禁止
+  /** @type {string[]} */ const hashAliases = [];
+  for (const rel of scanTargets) {
+    const src4 = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+    if (src4 === null) continue;
+    if (/(?:from|import\s*\(|require\s*\()\s*['"`]#|(?:^|[^.\w])import\s+['"`]#/m.test(stripComments(src4))) hashAliases.push(rel);
+  }
+  assert.deepEqual(hashAliases, [], `後端 runtime 使用 package-imports 別名（#…；繞過閉包與套件分類＝禁止）：\n  ${hashAliases.join('\n  ')}`);
+  const pkgJson = JSON.parse(readFileSync(pjoin(ROOT, 'package.json'), 'utf8'));
+  assert.ok(!('imports' in pkgJson), 'package.json 出現 imports 欄位（#alias 地圖）——後端 runtime 禁用，要用＝先改本禁令');
+  const HASH_RE = /(?:from|import\s*\(|require\s*\()\s*['"`]#|(?:^|[^.\w])import\s+['"`]#/m;
+  assert.ok(HASH_RE.test("import x from '#r17-client';"), '#alias 偵測探針');
+  assert.ok(HASH_RE.test("import '#r18-client';"), '#alias side-effect 探針（r18 繞法）');
+  assert.deepEqual(routeProblems, [],
+    `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
+    '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
+  // 解析器探針（r16 繞法全數入陣）
+  assert.deepEqual(parseRouteArgs("r.get('/api/a', h); r.all('/api/b', h); r.head('/api/c', h);").statics, ['/api/a', '/api/b', '/api/c'], '動詞覆蓋');
+  assert.equal(parseRouteArgs('r.get("/api/x" + sfx, h);').dynamics.length, 1, '串接式必須歸動態（r16 繞法）');
+  assert.equal(parseRouteArgs('r.get(`/api/${x}`, h);').dynamics.length, 1, '模板插值歸動態');
+  assert.equal(parseRouteArgs('r.get(someVar, h);').dynamics.length, 1, '變數歸動態');
+  assert.deepEqual(parseRouteArgs('r.get(`/api/static-tpl`, h);').statics, ['/api/static-tpl'], '無插值反引號＝靜態');
+  // 豁免防空轉：豁免路徑必須真的存在於具外連能力檔案、且不可同時登記在 OE
+  const exemptStale = [...ROUTE_EXEMPT.keys()].filter((p) => !seenCapablePaths.has(p) || oePaths.has(p));
+  assert.deepEqual(exemptStale, [], `ROUTE_EXEMPT 名不符實（路徑不存在或已登記 OE）：\n  ${exemptStale.join('\n  ')}`);
+  // ②f bare 套件分類登記（r16）：第三方 client 靠枚舉熱門名稱永遠列不完（superagent/ws/
+  //   nodemailer 實測隱形）——改 fail-closed：掃描範圍內**每個 bare import 都必須分類**；
+  //   'outbound' 類的匯入模組必須在 ALLOWED；未分類套件＝紅。
+  const BARE_SPEC_RE = /(?:from|import\s*\(|require\s*\()\s*['"`]([A-Za-z@][^'"`]*)['"`]|(?:^|[^.\w])import\s+['"`]([A-Za-z@][^'"`]*)['"`]/gm;
+  /** @param {string} spec */
+  const pkgNameOf = (spec) => spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : /** @type {string} */ (spec.split('/')[0]);
+  /** @type {Map<string, {kind: 'outbound'|'safe', why: string}>} */
+  const PACKAGE_REGISTRY = new Map([
+    ['express', { kind: 'safe', why: 'HTTP 伺服器框架（入站）' }],
+    ['@supabase/ssr', { kind: 'outbound', why: 'Supabase client——匯入者必須是 ALLOWED 端點主' }],
+    ['fast-xml-parser', { kind: 'safe', why: 'XML 解析（IB Flex 回應）、零網路' }],
+    ['pdfjs-dist', { kind: 'safe', why: 'PDF 解析、零網路' }],
+    ['xlsx', { kind: 'safe', why: 'Excel 解析、零網路（資源上限另有考題）' }],
+  ]);
+  /** @type {string[]} */ const pkgProblems = [];
+  /** @type {Set<string>} */ const seenPkgs = new Set();
+  for (const rel of scanTargets) {
+    const src3 = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+    if (src3 === null) continue;
+    for (const m3 of stripComments(src3).matchAll(BARE_SPEC_RE)) {
+      const spec3 = m3[1] ?? m3[2];
+      if (spec3.startsWith('node:')) continue;   // 內建模組：網路類另有 OUTBOUND/SPAWN 專門偵測
+      const pkg = pkgNameOf(spec3);
+      seenPkgs.add(pkg);
+      const reg = PACKAGE_REGISTRY.get(pkg);
+      if (!reg) pkgProblems.push(`${rel}: 未分類套件「${pkg}」`);
+      else if (reg.kind === 'outbound' && !ALLOWED.has(rel)) pkgProblems.push(`${rel}: 匯入外連套件「${pkg}」但未登記 ALLOWED`);
+    }
+  }
+  assert.deepEqual(pkgProblems, [],
+    `bare 套件分類失敗（新套件必須先分類、外連套件的匯入者必須登記）：\n  ${pkgProblems.join('\n  ')}`);
+  for (const [p, reg] of PACKAGE_REGISTRY) assert.ok(reg.why.trim().length > 0, `PACKAGE_REGISTRY「${p}」缺 why`);
+  for (const [k, v] of ALLOWED) assert.ok(v.why.trim().length > 0, `ALLOWED「${k}」缺 why`);
+  for (const [k, v] of COMMENT_MENTIONS) assert.ok(v.why.trim().length > 0, `COMMENT_MENTIONS「${k}」缺 why`);
+  for (const [k, v] of SPAWN_MENTIONS) assert.ok(v.why.trim().length > 0, `SPAWN_MENTIONS「${k}」缺 why`);
+  for (const [k, v] of ROUTE_EXEMPT) assert.ok(v.trim().length > 0, `ROUTE_EXEMPT「${k}」缺 why`);
+  for (const [k, v] of SPAWNERS) assert.ok(String(v).trim().length > 0, `SPAWNERS「${k}」缺 why`);
+  const pkgStale = [...PACKAGE_REGISTRY.keys()].filter((p) => !seenPkgs.has(p));
+  assert.deepEqual(pkgStale, [], `PACKAGE_REGISTRY 空轉登記：\n  ${pkgStale.join('\n  ')}`);
+  // 分類器探針
+  assert.equal(pkgNameOf('@supabase/ssr'), '@supabase/ssr', 'scoped 套件名');
+  assert.equal(pkgNameOf('pdfjs-dist/legacy/build/pdf.mjs'), 'pdfjs-dist', '子路徑歸主套件');
+  assert.deepEqual([...'import s from \'superagent\';'.matchAll(BARE_SPEC_RE)].map((m3) => pkgNameOf(m3[1] ?? m3[2])), ['superagent'], 'bare 抽取（r16 繞法代表）');
+  // ③ probe matrix（r2 建議、r3–r5 擴充）：三組——必抓（乾淨軌）／註解提及（生掃攔）／完全隱形
+  const PROBES = [
+    ['字面 fetch 呼叫', 'return fetch(url);'],
+    ['別名預設參數（r1）', 'export async function p(url, transport = fetch) { return transport(url); }'],
+    ['fetchImpl 慣例', 'async function f(fetchImpl = globalThis.fetch) { return fetchImpl; }'],
+    ['globalThis 點形式', 'const f = globalThis.fetch;'],
+    ['global.fetch（r2）', 'export const transport = global.fetch;'],
+    ['optional chaining（r3）', 'export const transport = globalThis?.fetch;'],
+    ['跨行 globalThis.fetch（r4）', 'export const send = (url) => globalThis\n  .fetch(url);'],
+    ['括號成員存取（r5）', 'export const outboundTransport = (globalThis).fetch;'],
+    ['computed 存取（r1）', "const f = globalThis['fetch'];"],
+    ['node: 前綴 ESM（r1）', "import { request } from 'node:https';"],
+    ['裸核心模組 ESM（r2）', "import https from 'https';"],
+    ['動態 import（r2）', "const h = await import('https');"],
+    ['反引號動態 import（r3）', 'const h = await import(`https`);'],
+    ['跨行動態 import（r3）', "const h = await import(\n  'https'\n);"],
+    ['CJS require', "const https = require('https');"],
+    ['第三方 client', "import { Agent } from 'undici';"],
+    ['WebSocket 全域（r6）', 'const ws = new WebSocket(url);'],
+    ['DNS 解析（r6）', "import { resolve4 } from 'node:dns/promises';"],
+    ['裸 dns 模組（r6）', "const dns = require('dns/promises');"],
+    ['WebSocket 成員形（r19 繞法）', 'export const s = (u) => new globalThis.WebSocket(u);'],
+    ['WebSocket computed', "const W = globalThis['WebSocket'];"],
+    ['MIME 字串不掩護同行 fetch（r4）', "const accept = '*/*'; return fetch(url);"],
+    ['字串含 // 不掩護同行 fetch（r4）', "const label = ' // literal'; return fetch(url);"],
+    ['反引號含 /* 不掩護同行 fetch（r4）', 'const marker = `/*`; return fetch(url);'],
+    ['巢狀模板字串不掩護同行 fetch（r5）', 'return { source: `${secure ? `https://` : `http://`}example.test`, response: await fetch(url) };'],
+    ['URL 字串不掩護同行 fetch', "const u = 'https://example.com'; return fetch(u);"],
+    ['URL regex 不掩護同行 fetch（\\/\\/ 保護）', 'if (/^https:\\/\\//.test(u)) return fetch(u);'],
+  ];
+  for (const [name, snippet] of PROBES) assert.ok(cleanHit(snippet) !== null, `乾淨軌抓不到代表寫法：${name}`);
+  const SPAWN_PROBES = [
+    ['node: 前綴 child_process（r6）', "import { execFile } from 'node:child_process';"],
+    ['裸 child_process（r6）', "const cp = require('child_process');"],
+    ['動態 import child_process（r6）', "const cp = await import('child_process');"],
+    ['node:cluster fork（r7）', "import cluster from 'node:cluster';"],
+    ['execa 包裝器（r7）', "import { execa } from 'execa';"],
+    ['zx 包裝器（r7）', "import { $ } from 'zx';"],
+    ['cross-spawn（r7）', "const spawn = require('cross-spawn');"],
+    ['shelljs（r8 記錄補齊）', "const sh = require('shelljs');"],
+  ];
+  for (const [name, snippet] of SPAWN_PROBES) assert.ok(SPAWN_RE.test(stripComments(snippet)), `SPAWN 偵測抓不到：${name}`);
+  // 對帳器機制探針（r9）：真實清單可為空、機制不可真空——用合成輸入釘四種判定
+  const REC_SYN = () => new Map([['x.js', { snippets: [' fetch'], why: '' }]]);
+  assert.deepEqual(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => false), { forward: [], backward: [] }, '對帳器：片段吻合應放行');
+  assert.ok(reconcileMentions(new Map([['x.js', ['（fetch']]]), REC_SYN(), () => false).forward.length === 1, '對帳器：同數量不同片段必紅');
+  assert.ok(reconcileMentions(new Map(), REC_SYN(), () => false).backward.length === 1, '對帳器：假登記（無對應提及）必紅');
+  assert.ok(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => true).backward.length === 1, '對帳器：登記檔其實是真命中必紅（該搬家）');
+  // walker 副檔名探針（r10 機制洞）：.mjs/.cjs 是正常 runtime 模組、不可隱形
+  for (const ext of ['x.js', 'x.mjs', 'x.cjs', 'x.ts', 'x.mts', 'x.cts']) assert.ok(isRuntimeCapable(ext), `walker 判準漏掃 ${ext}`);
+  for (const ext of ['x.json', 'x.md']) assert.ok(!isRuntimeCapable(ext), `walker 判準誤掃 ${ext}`);
+  // spawn 安全網探針（r8 機制洞）：剝離器被 regex 騙走時，生掃軌必須還看得到
+  const SPAWN_NET_PROBE = 'const slashMatcher = /[//]/; const cluster2 = await import(\'node:cluster\');';
+  assert.equal(SPAWN_RE.test(stripComments(SPAWN_NET_PROBE)), false, '（前提確認）此探針就是會騙過乾淨軌的形狀');
+  assert.ok(SPAWN_RE.test(SPAWN_NET_PROBE), 'spawn 生掃安全網竟看不到被 regex 掩護的 import');
+  const MENTION_PROBES = [
+    ['行首註解', '// 這裡提到 fetch 也不算外連，但生掃軌要看得到'],
+    ['JSDoc 行', '/**\n * @param {typeof fetch} fetchImpl 注入點\n */'],
+    ['block comment 中段（r3）', '/*\nfetch(1);\n*/'],
+    ['行尾註解', 'const a = 1; // 舊版這裡用 fetch'],
+    ['無空白行尾註解（r4）', 'export const x = 1;// 舊版這裡用 fetch'],
+  ];
+  for (const [name, snippet] of MENTION_PROBES) {
+    assert.equal(cleanHit(snippet), null, `乾淨軌誤把註解當外連：${name}`);
+    assert.ok(hitOn(snippet) !== null, `生掃軌（安全網）竟看不到註解提及：${name}`);
+  }
+  const CLEAN = [
+    ['無關程式', 'export const sum = (a, b) => a + b;'],
+    ['無關字串與註解', "// 一般說明\nexport const label = 'https 之類的字省略';"],
+  ];
+  for (const [name, snippet] of CLEAN) assert.equal(hitOn(snippet), null, `連生掃軌都不該看到：${name}`);
 });

@@ -39,7 +39,8 @@ const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
  * 病根不是「漏了三條」，是**沒有人負責維護「哪些端點會對外」這件事**——
  * 註解不是清單，考題也只能從 `RATE_LIMITS` 反查（漏列的當然查不到）。
  * 所以改成：這張表列出**上游主機 → 端點**，考題拿它跟 `RATE_LIMITS` 對帳，
- * **少限一條就紅**。新增任何 `fetch()` 的人一定會被這一題攔下來。
+ * **少限一條就紅**。新增未登記的對外能力由 test/hosted-auth.test.js 的雙軌絆索攔
+ *（已記錄邊界：已登記模組改打新主機＝主機級對帳另案；蓄意混淆＝code review 職責）。
  *
  * ⚠️ 新增對外連線時：①在這裡登記 ②確認 `RATE_LIMITS` 涵蓋得到（前綴比對也算）。
  */
@@ -51,6 +52,9 @@ export const OUTBOUND_ENDPOINTS = [
   // 洞察引擎自己會呼叫 CAPE 與實質利率兩者，**而且會寫入資料庫**（更新書籤）。
   { host: 'www.multpl.com + fred.stlouisfed.org', why: '每日洞察（內部再呼叫上面兩者）', paths: ['/api/insights'] },
   { host: 'www.sec.gov + data.sec.gov', why: 'SEC 官方基本面（三份 JSON）', paths: ['/api/stock-fundamentals/:symbol/refresh'] },
+  // r12：Supabase 一直是實際上游（HOSTED auth），補登記。me／logout 刻意不在 paths：
+  // 輕量讀取不限速＝2026-07-28 既有裁決（見 AGENTS 速率限制列），只列有限速的三條登入類。
+  { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
 ];
 
 /**
@@ -210,7 +214,7 @@ app.use('/vendor/chart.js', express.static(join(__dirname, 'node_modules/chart.j
 
 app.use(coreRoutes);        // /db /summary /settings /snapshot /migrate /export /import
 app.use(crudRoutes);        // 各集合的通用 CRUD（含欄位白名單）
-app.use(marketRoutes);      // /quotes /cape /realyield
+app.use(marketRoutes);      // /quotes /cape /realyield /insights（r15 搬入）
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
 app.use(securitiesRoutes);  // /securities* 證券交易（S2：查詢/台新對帳單匯入/匯入紀錄）
