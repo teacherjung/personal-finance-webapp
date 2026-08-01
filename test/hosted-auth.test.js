@@ -330,7 +330,7 @@ test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一
 // ⚠️ 誠實劃界（r7）：已登記模組（ALLOWED）**改打新主機本題不偵測**——主機級對帳（每模組
 // 主機清單×URL 掃描雙向對帳）＝另案（William 2026-08-01 裁決另開 PR）。
 
-test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增 fetch 卻忘了限速就會在這裡紅）', async () => {
+test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增未登記的對外能力卻忘了限速就會在這裡紅）', async () => {
   const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
   assert.ok(OUTBOUND_ENDPOINTS.length >= 6, '對外端點清單看起來被刪過');
 
@@ -472,9 +472,9 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     return f.endsWith('.js') ? [rel] : [];
   });
   /** @type {Map<string, string>} */ const detected = new Map();
-  /** @type {Map<string, {count: number, snippet: string}>} */ const rawOnly = new Map();
+  /** @type {Map<string, string[]>} */ const rawOnly = new Map();
   /** @type {string[]} */ const spawners = [];
-  /** @type {Map<string, number>} */ const spawnRawOnly = new Map();
+  /** @type {Map<string, string[]>} */ const spawnRawOnly = new Map();
   for (const rel of walk('lib')) {
     const src = readFileSync(pjoin(ROOT, rel), 'utf8');
     const stripped = stripComments(src);
@@ -495,14 +495,23 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     'curl/wget 等同樣是外連通道（William 2026-08-01 裁決：需登記附 why）。');
   const staleSpawn = [...SPAWNERS.keys()].filter((rel) => !spawners.includes(rel));
   assert.deepEqual(staleSpawn, [], `SPAWNERS 空轉登記：\n  ${staleSpawn.join('\n  ')}`);
-  // ⓪b spawn 生掃安全網（r8）：生掃有、乾淨軌沒有＝剝離器被騙或註解提及——都要人來看
-  const spawnSuspicious = [...spawnRawOnly].filter(([rel, sm]) => {
-    const reg = SPAWN_MENTIONS.get(rel);
-    return !reg || JSON.stringify([...sm].sort()) !== JSON.stringify([...reg.snippets].sort());
-  }).map(([rel, sm]) => `${rel}（raw 命中 ${JSON.stringify(sm)}）`);
-  assert.deepEqual(spawnSuspicious, [],
-    `spawn 生掃軌看到、乾淨軌沒看到，且未在 SPAWN_MENTIONS 對上數量：\n  ${spawnSuspicious.join('\n  ')}\n` +
-    '若是註解提及＝登記數量；若是真程式碼＝剝離器被騙（如 regex 含 //），先修剝離器。');
+  // 片段級豁免對帳器（純函式＝可用合成探針釘機制，即使真實清單是空的）：
+  //   正向＝raw-only 檔未登記或片段集合不符；反向＝登記了卻沒有對應 raw-only（過期）或其實是真命中（該搬家）
+  /** @param {Map<string, string[]>} actual @param {Map<string, {snippets: string[], why: string}>} registry @param {(rel: string) => boolean} isReal */
+  const reconcileMentions = (actual, registry, isReal) => {
+    const sortEq = (/** @type {string[]} */ a, /** @type {string[]} */ b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    const forward = [...actual].filter(([rel, sm]) => { const reg = registry.get(rel); return !reg || !sortEq(sm, reg.snippets); })
+      .map(([rel, sm]) => `${rel}（raw 命中 ${JSON.stringify(sm)}）`);
+    const backward = [...registry.keys()].filter((rel) => isReal(rel) || !actual.has(rel))
+      .map((rel) => `${rel}（登記無對應提及或其實是真命中）`);
+    return { forward, backward };
+  };
+  // ⓪b spawn 生掃安全網（r8）＋反向防空轉（r9）
+  const spawnRec = reconcileMentions(spawnRawOnly, SPAWN_MENTIONS, (rel) => spawners.includes(rel));
+  assert.deepEqual(spawnRec.forward, [],
+    `spawn 生掃軌看到、乾淨軌沒看到，且未在 SPAWN_MENTIONS 對上片段：\n  ${spawnRec.forward.join('\n  ')}\n` +
+    '若是註解提及＝登記片段；若是真程式碼＝剝離器被騙（如 regex 含 //），先修剝離器。');
+  assert.deepEqual(spawnRec.backward, [], `SPAWN_MENTIONS 名不符實：\n  ${spawnRec.backward.join('\n  ')}`);
   // ① 正向：乾淨軌偵測到卻沒登記
   const unexpected = [...detected].filter(([rel]) => !ALLOWED.has(rel)).map(([rel, line]) => `${rel}: ${line}`);
   assert.deepEqual(unexpected, [],
@@ -510,10 +519,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     '請在本題 ALLOWED 寫明角色（端點主／傳導），端點主另在 server.js 的 OUTBOUND_ENDPOINTS 登記，並確認 RATE_LIMITS 涵蓋得到它的端點。');
   // ①b 安全網：生掃有、乾淨軌沒有、又不在 COMMENT_MENTIONS ＝要嘛新的註解提及要登記、
   //    要嘛**剝離器把真程式碼吃掉了**——兩種都要人來看（這就是「漏抓變誤報」的機制本體）
-  const suspicious = [...rawOnly].filter(([rel, rawM]) => {
-    const reg = COMMENT_MENTIONS.get(rel);
-    return !reg || JSON.stringify([...rawM].sort()) !== JSON.stringify([...reg.snippets].sort());
-  }).map(([rel, rawM]) => `${rel}: raw 命中 ${JSON.stringify(rawM)}`);
+  const outboundRec = reconcileMentions(rawOnly, COMMENT_MENTIONS, (rel) => detected.has(rel));
+  const suspicious = outboundRec.forward;
   assert.deepEqual(suspicious, [],
     `生掃軌看到 fetch 相關字樣、乾淨軌沒看到，且未列 COMMENT_MENTIONS：\n  ${suspicious.join('\n  ')}\n` +
     '若只是註解提及＝加進 COMMENT_MENTIONS（附 why）；若是真程式碼＝剝離器有 bug 吃掉它，先修剝離器。');
@@ -523,7 +530,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     `這些登記在偵測器下是隱形的（空轉登記）：\n  ${stale.join('\n  ')}\n` +
     '若模組已不再對外請移除登記；若仍對外但偵測不到＝偵測器有盲區，要先補偵測器。');
   // ②b COMMENT_MENTIONS 也防空轉：列了卻乾淨軌命中＝其實在對外（搬去 ALLOWED）；列了卻連生掃都沒有＝過期
-  const mentionWrong = [...COMMENT_MENTIONS.keys()].filter((rel) => detected.has(rel) || !rawOnly.has(rel));
+  const mentionWrong = outboundRec.backward;
   assert.deepEqual(mentionWrong, [],
     `COMMENT_MENTIONS 名不符實：\n  ${mentionWrong.join('\n  ')}\n` +
     '乾淨軌命中＝真的在對外、搬去 ALLOWED；生掃也沒有＝提及已移除、刪掉這條。');
@@ -567,6 +574,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['shelljs（r8 記錄補齊）', "const sh = require('shelljs');"],
   ];
   for (const [name, snippet] of SPAWN_PROBES) assert.ok(SPAWN_RE.test(stripComments(snippet)), `SPAWN 偵測抓不到：${name}`);
+  // 對帳器機制探針（r9）：真實清單可為空、機制不可真空——用合成輸入釘四種判定
+  const REC_SYN = () => new Map([['x.js', { snippets: [' fetch'], why: '' }]]);
+  assert.deepEqual(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => false), { forward: [], backward: [] }, '對帳器：片段吻合應放行');
+  assert.ok(reconcileMentions(new Map([['x.js', ['（fetch']]]), REC_SYN(), () => false).forward.length === 1, '對帳器：同數量不同片段必紅');
+  assert.ok(reconcileMentions(new Map(), REC_SYN(), () => false).backward.length === 1, '對帳器：假登記（無對應提及）必紅');
+  assert.ok(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => true).backward.length === 1, '對帳器：登記檔其實是真命中必紅（該搬家）');
   // spawn 安全網探針（r8 機制洞）：剝離器被 regex 騙走時，生掃軌必須還看得到
   const SPAWN_NET_PROBE = 'const slashMatcher = /[//]/; const cluster2 = await import(\'node:cluster\');';
   assert.equal(SPAWN_RE.test(stripComments(SPAWN_NET_PROBE)), false, '（前提確認）此探針就是會騙過乾淨軌的形狀');
