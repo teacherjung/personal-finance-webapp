@@ -442,12 +442,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   // r12：角色結構化——端點主必須宣告 hosts 並與 server.js 的 OUTBOUND_ENDPOINTS 機械對帳
   //（「只補 ALLOWED 不登記端點」從此必紅）；傳導不得有 hosts。
   const ALLOWED = new Map([
-    ['lib/ib.js', { role: 'endpoint', hosts: ['ndcdyn.interactivebrokers.com'], why: 'IBKR Flex（字面 fetch）' }],
-    ['lib/services/market-data.js', { role: 'endpoint', hosts: ['query1.finance.yahoo.com', 'www.multpl.com', 'fred.stlouisfed.org'], why: 'Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）' }],
-    ['lib/services/stock-fundamentals.js', { role: 'endpoint', hosts: ['www.sec.gov', 'data.sec.gov'], why: 'SEC（fetchImpl 慣例＋globalThis.fetch 預設）' }],
-    ['lib/services/insights.js', { role: 'conduit', why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
+    ['lib/ib.js', { role: 'endpoint', hosts: ['ndcdyn.interactivebrokers.com'], paths: ['/api/ib/sync'], why: 'IBKR Flex（字面 fetch）' }],
+    ['lib/services/market-data.js', { role: 'endpoint', hosts: ['query1.finance.yahoo.com', 'www.multpl.com', 'fred.stlouisfed.org'], paths: ['/api/quotes', '/api/quotes/refresh-auto', '/api/cape', '/api/realyield'], why: 'Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）' }],
+    ['lib/services/stock-fundamentals.js', { role: 'endpoint', hosts: ['www.sec.gov', 'data.sec.gov'], paths: ['/api/stock-fundamentals/:symbol/refresh'], why: 'SEC（fetchImpl 慣例＋globalThis.fetch 預設）' }],
+    ['lib/services/insights.js', { role: 'conduit', paths: ['/api/insights'], why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
     ['lib/services/ib-sync.js', { role: 'conduit', why: '注入 fetchFlex（lib/ib.js），自己不開新端點' }],
-    ['lib/services/auth.js', { role: 'endpoint', hosts: ['SUPABASE_URL（環境變數指定的 Supabase 主機）'], why: 'Supabase Auth（@supabase/ssr；HOSTED 登入／驗證）' }],
+    ['lib/services/auth.js', { role: 'endpoint', hosts: ['SUPABASE_URL（環境變數指定的 Supabase 主機）'], paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], why: 'Supabase Auth（@supabase/ssr；HOSTED 登入／驗證）' }],
   ]);
   // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
   // ⚠️ r8→r9 收緊到**片段級**：登記「精確命中字串集合」——r8 的數量級仍有「刪一個提及＋
@@ -481,7 +481,10 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   // r11→r12：後端 runtime 不只 lib——repo.js/derive.js/insights.js 會 import public/modules 的共用
   //   模組（實測在 normalizePortfolioSymbol 藏 fetch 可穿透）。掃描範圍＝server.js＋lib 的 **import 閉包**：
   //   逐檔抽相對 import／require／動態 import，解析存在就入掃、遞迴到不動點。
-  const IMPORT_SPEC_RE = /(?:from|import\s*\(|require\s*\()\s*['"`](\.[^'"`]*)['"`]/g;
+  // r13：side-effect import（import './x.js';——沒有 from）也是標準 ESM，必須進閉包
+  const IMPORT_SPEC_RE = /(?:from|import\s*\(|require\s*\()\s*['"`](\.[^'"`]*)['"`]|(?:^|[^.\w])import\s+['"`](\.[^'"`]*)['"`]/gm;
+  /** @param {string} src @returns {string[]} */
+  const extractImportSpecs = (src) => [...src.matchAll(IMPORT_SPEC_RE)].map((m) => m[1] ?? m[2]);
   /** @param {string[]} seeds @returns {string[]} */
   const importClosure = (seeds) => {
     const seen = new Set(seeds);
@@ -490,8 +493,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
       const rel = /** @type {string} */ (queue.shift());
       const src = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
       if (src === null) continue;
-      for (const m of src.matchAll(IMPORT_SPEC_RE)) {
-        let target = pjoin(pdirname(rel), m[1]);
+      for (const spec of extractImportSpecs(src)) {
+        let target = pjoin(pdirname(rel), spec);
         if (!/\.[a-z]+$/i.test(target)) target += '.js';
         try { statSync(pjoin(ROOT, target)); } catch { continue; }
         if (!isRuntimeCapable(target) || seen.has(target)) continue;
@@ -505,6 +508,11 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   for (const must of ['public/modules/portfolio-symbol.js', 'public/modules/categories.js', 'public/modules/portfolio-risk.js', 'public/modules/subscriptions-model.js', 'public/modules/signal-tiers.js']) {
     assert.ok(scanTargets.includes(must), `import 閉包漏了後端共用模組：${must}`);
   }
+  // import 語法四型探針（r13：side-effect 型曾漏）
+  assert.deepEqual(extractImportSpecs("import { a } from './x.js';"), ['./x.js'], 'from 型');
+  assert.deepEqual(extractImportSpecs("const m = await import('./y.js');"), ['./y.js'], '動態型');
+  assert.deepEqual(extractImportSpecs("const m = require('./z.js');"), ['./z.js'], 'CJS 型');
+  assert.deepEqual(extractImportSpecs("import './side-effect.js';"), ['./side-effect.js'], 'side-effect 型（r13 繞法）');
   const nonJs = scanTargets.filter((rel) => !rel.endsWith('.js'));
   assert.deepEqual(nonJs, [],
     `掃描範圍出現非 .js 的可執行模組（本 repo 零建置、runtime 只准 .js）：\n  ${nonJs.join('\n  ')}\n` +
@@ -587,6 +595,18 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     } else if (/** @type {any} */ (reg).hosts) roleProblems.push(`${rel}：傳導不得宣告 hosts`);
   }
   for (const h of atomicHosts) if (!claimed.has(h)) roleProblems.push(`OUTBOUND_ENDPOINTS 的 host「${h}」沒有任何端點主認領`);
+  // r13：主機集合對帳不夠——重用既有主機開新未限速路由可繞（實測）。加**路徑級**雙向：
+  //   端點主必須宣告 paths 且每條 ∈ 端點表；端點表每條 path 也要有人認領（傳導可認領自己的曝露路由）。
+  const oePaths = new Set(OE.flatMap((/** @type {any} */ o) => o.paths));
+  /** @type {Set<string>} */ const claimedPaths = new Set();
+  for (const [rel, reg] of ALLOWED) {
+    if (reg.role === 'endpoint' && (!reg.paths || reg.paths.length === 0)) roleProblems.push(`${rel}：端點主必須宣告至少一條 path`);
+    for (const p of reg.paths || []) {
+      if (!oePaths.has(p)) roleProblems.push(`${rel}：path「${p}」未登記在 OUTBOUND_ENDPOINTS`);
+      claimedPaths.add(p);
+    }
+  }
+  for (const p of oePaths) if (!claimedPaths.has(p)) roleProblems.push(`OUTBOUND_ENDPOINTS 的 path「${p}」沒有任何模組認領`);
   assert.deepEqual(roleProblems, [], `端點主↔端點表對帳失敗：\n  ${roleProblems.join('\n  ')}`);
   // ③ probe matrix（r2 建議、r3–r5 擴充）：三組——必抓（乾淨軌）／註解提及（生掃攔）／完全隱形
   const PROBES = [
