@@ -82,6 +82,20 @@ export function netWorthChangeAt(months, index) {
   return { amount, pct: base ? amount / base * 100 : null, reason: base ? 'comparable' : 'zero-base' };
 }
 
+/** @param {number} index @param {string} key @param {number} count @param {number} columns */
+export function moveGridSelection(index, key, count, columns) {
+  const last = Math.max(0, Math.trunc(count) - 1);
+  const current = Math.min(last, Math.max(0, Math.trunc(index)));
+  const rowStep = Math.max(1, Math.trunc(columns));
+  if (key === 'Home') return 0;
+  if (key === 'End') return last;
+  if (key === 'ArrowLeft') return Math.max(0, current - 1);
+  if (key === 'ArrowRight') return Math.min(last, current + 1);
+  if (key === 'ArrowUp') return Math.max(0, current - rowStep);
+  if (key === 'ArrowDown') return Math.min(last, current + rowStep);
+  return current;
+}
+
 export const DEFAULT_CARD_LAYOUT = Object.freeze([
   { id: 'summary', size: 'full' },
   { id: 'cashflow', size: 'wide' },

@@ -8,6 +8,7 @@ import {
   DEFAULT_CARD_LAYOUT,
   allowedSizesForCard,
   atmosphereForChange,
+  moveGridSelection,
   moveCard,
   netWorthChangeAt,
   normalizeCardLayout
@@ -172,7 +173,6 @@ function renderSelectedMonth() {
   setText('#monthPickerStatus', monthStatus);
   const monthPickerSummary = htmlElement('#monthPickerSummary');
   if (monthPickerSummary) {
-    monthPickerSummary.dataset.state = state;
     monthPickerSummary.setAttribute('aria-label', `選擇月份，目前為 ${month.yearLabel}，${monthStatus}`);
   }
   const scene = htmlElement('.forest-scene');
@@ -676,12 +676,11 @@ document.querySelector('#nextMonth')?.addEventListener('click', () => {
 });
 document.querySelector('#monthTrack')?.addEventListener('keydown', (event) => {
   const keyboardEvent = /** @type {KeyboardEvent} */ (event);
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(keyboardEvent.key)) return;
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(keyboardEvent.key)) return;
   keyboardEvent.preventDefault();
-  if (keyboardEvent.key === 'Home') selectedMonthIndex = 0;
-  if (keyboardEvent.key === 'End') selectedMonthIndex = MONTHLY_FOREST_DATA.length - 1;
-  if (keyboardEvent.key === 'ArrowLeft') selectedMonthIndex = Math.max(0, selectedMonthIndex - 1);
-  if (keyboardEvent.key === 'ArrowRight') selectedMonthIndex = Math.min(MONTHLY_FOREST_DATA.length - 1, selectedMonthIndex + 1);
+  const track = htmlElement('#monthTrack');
+  const columns = track ? getComputedStyle(track).gridTemplateColumns.split(' ').filter(Boolean).length : 1;
+  selectedMonthIndex = moveGridSelection(selectedMonthIndex, keyboardEvent.key, MONTHLY_FOREST_DATA.length, columns);
   renderSelectedMonth();
   /** @type {HTMLElement|null} */ (document.querySelector(`[data-month-index="${selectedMonthIndex}"]`))?.focus();
 });
@@ -689,9 +688,10 @@ document.querySelector('#monthPicker')?.addEventListener('toggle', () => {
   const picker = htmlElement('#monthPicker');
   document.querySelector('#monthPickerSummary')?.setAttribute('aria-expanded', String(picker?.hasAttribute('open')));
 });
-document.addEventListener('click', (event) => {
+document.addEventListener('pointerdown', (event) => {
   const picker = htmlElement('#monthPicker');
-  if (!picker?.hasAttribute('open') || !(event.target instanceof Element) || picker.contains(event.target)) return;
+  const trail = picker?.closest('.month-trail');
+  if (!picker?.hasAttribute('open') || !(event.target instanceof Element) || trail?.contains(event.target)) return;
   picker.removeAttribute('open');
 });
 

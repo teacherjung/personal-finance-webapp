@@ -724,7 +724,7 @@ body::before {
   top: calc(100% + 9px);
   left: 0;
   z-index: 65;
-  width: min(620px, calc(100vw - 290px));
+  width: min(620px, calc(100vw - 306px));
   padding: 14px;
   border: 3px solid var(--ink);
   border-radius: 8px;
@@ -924,7 +924,7 @@ body[data-ambience="static"] *, body[data-ambience="static"] *::before, body[dat
   .ambience-toggle button { flex: 1; }
   .topbar-actions { max-width: 390px; }
   .topbar-command, .layout-bar { display: none !important; }
-  .month-popover { width: min(560px, calc(100vw - 32px)); }
+  .month-popover { left: -36px; width: min(560px, calc(100vw - 32px)); }
   .custom-dashboard { display: block; }
   .layout-card { width: 100%; margin-bottom: 20px; }
   .layout-card-toolbar { display: none; }
@@ -937,7 +937,7 @@ body[data-ambience="static"] *, body[data-ambience="static"] *::before, body[dat
   .topbar-title { width: 100%; }
   .month-trail { margin-top: 9px; }
   .month-picker > summary { grid-template-columns: auto auto 12px; }
-  .month-popover { left: -36px; width: calc(100vw - 32px); }
+  .month-popover { width: calc(100vw - 32px); }
   .month-popover header { align-items: flex-start; flex-direction: column; gap: 2px; }
   .month-track { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .guide-dialog-summary { grid-template-columns: 76px 1fr; gap: 13px; }
