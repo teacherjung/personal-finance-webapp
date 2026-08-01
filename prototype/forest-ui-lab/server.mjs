@@ -14,6 +14,7 @@ const fixedFiles = new Map([
   ['/index.html', join(here, 'index.html')],
   ['/forest-ui.css', join(here, 'forest-ui.css')],
   ['/forest-ui.js', join(here, 'forest-ui.js')],
+  ['/forest-ui-model.js', join(here, 'forest-ui-model.js')],
   ['/modules/icons.js', join(repoRoot, 'public/modules/icons.js')],
   ['/vendor/chart.js', join(repoRoot, 'node_modules/chart.js/dist/chart.umd.js')]
 ]);

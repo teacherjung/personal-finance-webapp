@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>榮祥森・森林 UI 實驗室</title>
-  <link rel="stylesheet" href="forest-ui.css?v=weather-3" />
+  <link rel="stylesheet" href="forest-ui.css?v=forest-layout-1" />
   <script src="/vendor/chart.js" defer></script>
-  <script src="forest-ui.js?v=weather-3" type="module" defer></script>
+  <script src="forest-ui.js?v=forest-layout-1" type="module" defer></script>
 </head>
 <body>
   <aside class="forest-rail" aria-label="森林地圖">
@@ -32,20 +32,20 @@
   <main>
     <header class="topbar">
       <div>
-        <p class="eyebrow">2026 年 8 月 1 日・星期六</p>
+        <p class="eyebrow" id="selectedMonthLabel">2026 年 8 月・合成情境</p>
         <h1>森林總覽</h1>
       </div>
       <div class="topbar-actions">
-        <div class="return-scenario" role="group" aria-label="本月報酬情境">
-          <span>本月報酬情境</span>
-          <button type="button" data-month-return="-2.4">−2.4%</button>
-          <button type="button" data-month-return="0.1">+0.1%</button>
-          <button class="active" type="button" data-month-return="2.4">+2.4%</button>
+        <div class="ambience-toggle" role="group" aria-label="森林動態強度">
+          <button type="button" data-ambience="static">靜態</button>
+          <button class="active" type="button" data-ambience="gentle">柔和</button>
+          <button type="button" data-ambience="immersive">沉浸</button>
         </div>
         <div class="currency-toggle" aria-label="計價幣別">
           <button class="active" type="button" data-currency="TWD">NT</button>
           <button type="button" data-currency="USD">US</button>
         </div>
+        <button class="topbar-command" id="layoutToggle" type="button" aria-pressed="false"><span data-icon="settings"></span>調整版面</button>
         <button class="icon-button" type="button" title="匯出本月報告" aria-label="匯出本月報告"><span data-icon="download"></span></button>
         <button class="avatar-button" type="button" aria-label="開啟個人選單">
           <img src="assets/guide-return-neutral.webp" alt="小森森個人頭像" />
@@ -53,45 +53,66 @@
       </div>
     </header>
 
-    <section class="forest-scene" id="overview" aria-labelledby="scene-title" data-weather="positive">
+    <section class="month-trail" aria-label="月份時間軸">
+      <button class="month-step" id="previousMonth" type="button" aria-label="上一個月">‹</button>
+      <div class="month-track" id="monthTrack" role="listbox" aria-label="選擇月份"></div>
+      <button class="month-step" id="nextMonth" type="button" aria-label="下一個月">›</button>
+    </section>
+
+    <div class="layout-bar" id="layoutBar" hidden>
+      <strong>版面調整中</strong>
+      <div>
+        <button class="secondary-button" id="resetLayout" type="button"><span data-icon="refresh"></span>恢復預設</button>
+        <button class="primary-button" id="finishLayout" type="button"><span data-icon="check"></span>完成調整</button>
+      </div>
+    </div>
+
+    <section class="forest-scene" id="overview" aria-labelledby="scene-title" data-weather="vibrant">
       <img class="scene-art" id="sceneArt" src="assets/forest-return-positive.webp" alt="陽光照耀的森林小徑" />
+      <div class="scene-atmosphere" aria-hidden="true">
+        <span class="sun-wash"></span>
+        <span class="cloud-wash"></span>
+        <span class="rain-wash"></span>
+        <span class="leaf leaf-one"></span><span class="leaf leaf-two"></span><span class="leaf leaf-three"></span>
+      </div>
       <div class="scene-copy">
-        <p class="scene-kicker">本月投資概況</p>
-        <h2 id="scene-title">本月投資組合維持正報酬</h2>
-        <p id="sceneSummary">本月報酬率為正，資產配置與持股上限均維持在既定範圍內。</p>
+        <p class="scene-kicker" id="sceneKicker">本月淨資產變動</p>
+        <h2 id="scene-title">本月淨資產顯著增加</h2>
+        <p id="sceneSummary">較上月底增加 29 萬。這是整體淨資產變動，不等於投資報酬率。</p>
         <button class="primary-button" id="openReminder" type="button"><span data-icon="alert"></span>查看兩項提醒</button>
       </div>
-      <div class="scene-badge" aria-label="本月報酬率">
-        <span>本月報酬率</span>
-        <strong id="monthReturn">+2.4%</strong>
+      <div class="scene-badge" aria-label="本月淨資產變動">
+        <span>本月淨資產變動</span>
+        <strong id="monthChangeAmount">+29 萬</strong>
+        <small id="monthChangePct">+2.4%</small>
       </div>
     </section>
 
-    <section class="stat-strip" aria-label="本月摘要">
+    <div class="custom-dashboard" id="customDashboard">
+    <section class="stat-strip layout-card" data-card-id="summary" data-card-label="本月摘要" data-size="full" aria-label="本月摘要">
       <article>
         <span>淨資產</span>
-        <strong class="js-value" data-twd="1,248 萬" data-usd="383K">1,248 萬</strong>
-        <small class="positive">比上月多 29 萬</small>
+        <strong class="js-value" id="netWorthValue" data-twd="1,248 萬" data-usd="382.8K">1,248 萬</strong>
+        <small class="positive" id="netWorthDeltaText">比上月底增加 29 萬</small>
       </article>
       <article>
         <span>本月結餘</span>
-        <strong class="js-value" data-twd="+8.6 萬" data-usd="+2.6K">+8.6 萬</strong>
-        <small>收入 19.8 萬</small>
+        <strong class="js-value" id="cashflowNetValue" data-twd="+8.6 萬" data-usd="+2.6K">+8.6 萬</strong>
+        <small id="cashflowIncomeText">收入 19.8 萬</small>
       </article>
       <article>
         <span>緊急預備金</span>
-        <strong>8.2 個月</strong>
+        <strong id="emergencyFundValue">8.2 個月</strong>
         <small class="positive">高於 6 個月目標</small>
       </article>
       <article>
         <span>投資紀律</span>
-        <strong>4 / 5</strong>
-        <small class="warning">一項接近上限</small>
+        <strong id="disciplineValue">4 / 5</strong>
+        <small class="warning" id="disciplineText">一項接近上限</small>
       </article>
     </section>
 
-    <div class="dashboard-grid">
-      <section class="paper-panel cashflow-panel" id="cashflow" aria-labelledby="cashflow-title">
+      <section class="paper-panel cashflow-panel layout-card" id="cashflow" data-card-id="cashflow" data-card-label="每月收支" data-size="wide" aria-labelledby="cashflow-title">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">現金溪流</p>
@@ -104,7 +125,7 @@
         </div>
         <div class="chart-summary">
           <span>平均每月留下</span>
-          <strong class="js-value" data-twd="6.8 萬" data-usd="2.1K">6.8 萬</strong>
+          <strong class="js-value" id="cashflowAverageValue" data-twd="6.8 萬" data-usd="2.1K">6.8 萬</strong>
         </div>
         <div class="chart-frame"><canvas id="cashflowChart" aria-label="過去十二個月收入、支出與結餘折線圖"></canvas></div>
         <div class="chart-legend" aria-hidden="true">
@@ -114,22 +135,23 @@
         </div>
       </section>
 
-      <section class="paper-panel guide-panel" aria-labelledby="guide-title">
+      <section class="paper-panel guide-panel layout-card" data-card-id="guide" data-card-label="森森嚮導" data-size="standard" aria-labelledby="guide-title">
         <div class="guide-copy">
           <p class="eyebrow">投資組合觀察</p>
           <h2 id="guide-title">森森嚮導</h2>
           <ul>
-            <li><span class="status-mark good" id="returnStatusMark"></span><b id="returnStatusTitle">本月報酬率 +2.4%</b><small id="returnStatusDetail">投資組合維持正報酬，仍應依既定配置執行。</small></li>
+            <li><span class="status-mark good" id="returnStatusMark"></span><b id="returnStatusTitle">本月淨資產增加 29 萬</b><small id="returnStatusDetail">這是整體淨資產變動，不等於投資報酬率。</small></li>
             <li><span class="status-mark watch"></span><b>科技股曝險 31.6%</b><small>距離自訂上限尚有 3.4%</small></li>
             <li><span class="status-mark calm"></span><b>備份狀態正常</b><small>今天 21:30 已完成備份</small></li>
           </ul>
           <button class="secondary-button" type="button" id="openNotebook"><span data-icon="record"></span>記一則觀察</button>
         </div>
-        <img class="guide-portrait" id="guidePortrait" src="assets/guide-return-positive.webp" alt="微笑的森森嚮導" />
+        <button class="guide-portrait-button" id="openGuide" type="button" aria-label="查看小森森的本月解讀">
+          <img class="guide-portrait" id="guidePortrait" src="assets/guide-return-positive.webp" alt="微笑的森森嚮導" />
+        </button>
       </section>
-    </div>
 
-    <section class="holdings-section" id="holdings" aria-labelledby="holdings-title">
+    <section class="holdings-section layout-card" id="holdings" data-card-id="holdings" data-card-label="主要持股" data-size="full" aria-labelledby="holdings-title">
       <div class="section-heading">
         <div>
           <p class="eyebrow">資產丘陵</p>
@@ -162,7 +184,7 @@
       </div>
     </section>
 
-    <section class="valuation-section" id="research" aria-labelledby="research-title">
+    <section class="valuation-section layout-card" id="research" data-card-id="valuation" data-card-label="估值試算" data-size="full" aria-labelledby="research-title">
       <header class="valuation-heading">
         <div>
           <p class="eyebrow">研究樹屋・估值試算</p>
@@ -247,7 +269,10 @@
         </ol>
       </section>
     </section>
+    </div>
   </main>
+
+  <div class="focus-backdrop" id="focusBackdrop" hidden></div>
 
   <dialog id="reminderDialog" class="forest-dialog">
     <form method="dialog">
@@ -268,5 +293,18 @@
       <footer><button class="secondary-button" value="cancel">取消</button><button class="primary-button" value="default">保存筆記</button></footer>
     </form>
   </dialog>
+
+  <dialog id="guideDialog" class="forest-dialog guide-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow" id="guideDialogMonth">2026 年 8 月</p><h2>小森森的本月解讀</h2></div><button class="icon-button close-dialog" value="cancel" aria-label="關閉"><span data-icon="x"></span></button></header>
+      <div class="guide-dialog-summary">
+        <img id="guideDialogPortrait" src="assets/guide-return-positive.webp" alt="微笑的小森森" />
+        <div><strong id="guideDialogChange">淨資產增加 29 萬（+2.4%）</strong><p id="guideDialogText">這是整體淨資產變動，包含收支、投資市值、匯率與負債變化，不等於投資報酬率。</p></div>
+      </div>
+      <footer><button class="primary-button" value="default">知道了</button></footer>
+    </form>
+  </dialog>
+
+  <p class="sr-only" id="layoutStatus" aria-live="polite"></p>
 </body>
 </html>
