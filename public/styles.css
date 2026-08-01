@@ -636,7 +636,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .nav-rail { position: relative; display: flex; min-width: 0; }
   #nav {
     min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; padding: 6px 34px 8px 6px;
-    scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; overscroll-behavior-x: contain;
+    scroll-padding-inline-end: 34px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+    overscroll-behavior-x: contain;
   }
   #nav::-webkit-scrollbar { height: 5px; }
   #nav::-webkit-scrollbar-track { background: transparent; }
