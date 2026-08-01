@@ -52,6 +52,9 @@ export const OUTBOUND_ENDPOINTS = [
   // 洞察引擎自己會呼叫 CAPE 與實質利率兩者，**而且會寫入資料庫**（更新書籤）。
   { host: 'www.multpl.com + fred.stlouisfed.org', why: '每日洞察（內部再呼叫上面兩者）', paths: ['/api/insights'] },
   { host: 'www.sec.gov + data.sec.gov', why: 'SEC 官方基本面（三份 JSON）', paths: ['/api/stock-fundamentals/:symbol/refresh'] },
+  // r12：Supabase 一直是實際上游（HOSTED auth），補登記。me／logout 刻意不在 paths：
+  // 輕量讀取不限速＝2026-07-28 既有裁決（見 AGENTS 速率限制列），只列有限速的三條登入類。
+  { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
 ];
 
 /**
