@@ -614,17 +614,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
   const ROUTE_RE = /\.(?:get|post|put|delete|patch)\(\s*['"`]([^'"`$]+)['"`]/g;
   const ROUTE_EXEMPT = new Map([
-    ['/health', '健康檢查、零外連'],
-    ['/api/auth/logout', 'Supabase 輕量呼叫；不限速＝2026-07-28 既有裁決（輕量讀取不限）'],
-    ['/api/auth/me', 'Supabase 輕量 session 讀取；不限速＝2026-07-28 既有裁決'],
+    // 口徑：key＝path（同 path 多 method 算一條）。why 的「不觸發業務上游」指不打需由
+    // OUTBOUND_ENDPOINTS 限速的上游（Supabase 驗身分／資料庫 RPC 是 HOSTED 基礎設施、另有 auth 牆）。
+    ['/health', '健康檢查、不觸發業務上游'],
+    ['/api/auth/logout', 'Supabase 輕量 session 操作（signOut）；不限速＝2026-07-28 既有裁決'],
+    ['/api/auth/me', 'Supabase 輕量 session 讀取（getUser）；不限速＝2026-07-28 既有裁決'],
     ['/api/stock-fundamentals/:symbol', '唯讀快取、不觸發 SEC 抓取（refresh 才會）'],
-    ['/api/db', '讀取整包資料、零外連'], ['/api/summary', '彙總讀取、零外連'],
-    ['/api/monthly-review', '月度回顧讀取、零外連'], ['/api/refund-pairs', '退款配對讀取、零外連'],
-    ['/api/backup/daily', '本機備份、零外連'], ['/api/settings', '設定讀寫、零外連'],
-    ['/api/snapshot', '手動快照、零外連'], ['/api/snapshot/auto', '每日維護（快照＋訂閱推進）、零外連'],
-    ['/api/categories', '分類讀寫、零外連'], ['/api/income-categories', '收入分類讀寫、零外連'],
-    ['/api/transfer-subcategories', '內轉子分類讀寫、零外連'],
-    ['/api/export', '匯出、零外連'], ['/api/import', '匯入還原、零外連'],
   ]);
   const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
   /** @type {string[]} */ const routeProblems = [];
@@ -642,6 +637,22 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.deepEqual(routeProblems, [],
     `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
     '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
+  // ②e 動態路徑禁令（r15）：模板字串／變數路徑會穿透抽取（實測）——具外連能力檔案一律靜態字串路徑
+  const DYN_ROUTE_RE = /\.(?:get|post|put|delete|patch)\(\s*(?!['"])\S/;
+  /** @type {string[]} */ const dynRoutes = [];
+  for (const rf of routeFiles) {
+    const cl2 = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m3) => cl2.includes(m3))) continue;
+    const src2 = stripComments(readFileSync(pjoin(ROOT, rf), 'utf8'));
+    const dm = DYN_ROUTE_RE.exec(src2);
+    if (dm) dynRoutes.push(`${rf}: ${dm[0]}…`);
+  }
+  assert.deepEqual(dynRoutes, [],
+    `具外連能力的路由檔使用動態路徑註冊（錨定抽取不到＝禁止）：\n  ${dynRoutes.join('\n  ')}\n` +
+    '改用靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
+  assert.ok(DYN_ROUTE_RE.test('r.get(`/api/${x}`, h)'), '動態路徑偵測探針：模板字串');
+  assert.ok(DYN_ROUTE_RE.test('r.get(someVar, h)'), '動態路徑偵測探針：變數');
+  assert.ok(!DYN_ROUTE_RE.test("r.get('/api/x', h)"), '動態路徑偵測探針：靜態不誤報');
   // 豁免防空轉：豁免路徑必須真的存在於具外連能力檔案、且不可同時登記在 OE
   const exemptStale = [...ROUTE_EXEMPT.keys()].filter((p) => !seenCapablePaths.has(p) || oePaths.has(p));
   assert.deepEqual(exemptStale, [], `ROUTE_EXEMPT 名不符實（路徑不存在或已登記 OE）：\n  ${exemptStale.join('\n  ')}`);
