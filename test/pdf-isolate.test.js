@@ -192,6 +192,31 @@ test('畸形 PDF 的錯誤也要原味帶回來（另一條錯誤路徑）', asy
 // 三、契約：兩個檔案的種類清單必須一致
 // ============================================================================
 
+test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀得到）——Codex #350 r1 抓到的 PII 洩漏', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { join, dirname } = await import('node:path');
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const parent = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
+  const child = readFileSync(join(ROOT, 'lib/pdf-isolate-child.js'), 'utf8');
+
+  // ① 父端：spawn 的 argv 陣列裡不准出現 password
+  const m = parent.match(/spawn\(process\.execPath,\s*\n?\s*\[([^\]]*)\]/);
+  assert.ok(m, '找不到 spawn 的 argv 陣列（結構變了就要重寫本題）');
+  assert.ok(!/password/i.test(m[1]),
+    `spawn 的 argv 出現 password：${m[1].trim()}\n` +
+    'PDF 密碼＝身分證字號，argv 會出現在 `ps` 的行程清單裡、同機任何程式都讀得到。改走 stdin 首行標頭。');
+
+  // ② 父端：也不准用環境變數（/proc/<pid>/environ 一樣讀得到）
+  assert.ok(!/env\s*:\s*\{[^}]*password/i.test(parent), 'spawn 的 env 出現 password（environ 讀得到）');
+
+  // ③ 子端：密碼只能從 stdin 標頭來，不准讀 argv／env
+  assert.ok(!/process\.argv\[\d\]\s*\|\|?[^\n]*[Pp]assword/.test(child) && !/PASSWORD\s*=\s*process\.argv/.test(child),
+    '子行程從 argv 讀密碼');
+  assert.ok(!/process\.env\.[A-Z_]*PASSWORD/.test(child), '子行程從 env 讀密碼');
+  assert.match(child, /header\.password/, '子行程應從 stdin 首行標頭取密碼');
+});
+
 test('`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一個＝那條路悄悄不隔離）', () => {
   const child = readFileSync(join(ROOT, 'lib/pdf-isolate-child.js'), 'utf8');
   const inChild = [...child.matchAll(/^\s{2}(\w+):\s*async \(\)/gm)].map(m => m[1]);
