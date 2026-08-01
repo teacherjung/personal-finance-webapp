@@ -608,6 +608,45 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   }
   for (const p of oePaths) if (!claimedPaths.has(p)) roleProblems.push(`OUTBOUND_ENDPOINTS 的 path「${p}」沒有任何模組認領`);
   assert.deepEqual(roleProblems, [], `端點主↔端點表對帳失敗：\n  ${roleProblems.join('\n  ')}`);
+  // ②d 路由錨定（r14）：兩張登記表互相一致不夠——要錨到真實 route。規則：**具外連能力的
+  //   路由檔**（自身 import 閉包碰得到 ALLOWED 模組）的每條路徑，必須「登記 OUTBOUND_ENDPOINTS」
+  //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不是對外入口；未來改成會觸發外連就要搬進 OE）」。
+  //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
+  const ROUTE_RE = /\.(?:get|post|put|delete|patch)\(\s*['"`]([^'"`$]+)['"`]/g;
+  const ROUTE_EXEMPT = new Map([
+    ['/health', '健康檢查、零外連'],
+    ['/api/auth/logout', 'Supabase 輕量呼叫；不限速＝2026-07-28 既有裁決（輕量讀取不限）'],
+    ['/api/auth/me', 'Supabase 輕量 session 讀取；不限速＝2026-07-28 既有裁決'],
+    ['/api/stock-fundamentals/:symbol', '唯讀快取、不觸發 SEC 抓取（refresh 才會）'],
+    ['/api/db', '讀取整包資料、零外連'], ['/api/summary', '彙總讀取、零外連'],
+    ['/api/monthly-review', '月度回顧讀取、零外連'], ['/api/refund-pairs', '退款配對讀取、零外連'],
+    ['/api/backup/daily', '本機備份、零外連'], ['/api/settings', '設定讀寫、零外連'],
+    ['/api/snapshot', '手動快照、零外連'], ['/api/snapshot/auto', '每日維護（快照＋訂閱推進）、零外連'],
+    ['/api/categories', '分類讀寫、零外連'], ['/api/income-categories', '收入分類讀寫、零外連'],
+    ['/api/transfer-subcategories', '內轉子分類讀寫、零外連'],
+    ['/api/export', '匯出、零外連'], ['/api/import', '匯入還原、零外連'],
+  ]);
+  const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
+  /** @type {string[]} */ const routeProblems = [];
+  /** @type {Set<string>} */ const seenCapablePaths = new Set();
+  for (const rf of routeFiles) {
+    const cl = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m2) => cl.includes(m2))) continue;
+    const src = readFileSync(pjoin(ROOT, rf), 'utf8');
+    for (const m2 of src.matchAll(ROUTE_RE)) {
+      const p = m2[1];
+      seenCapablePaths.add(p);
+      if (!oePaths.has(p) && !ROUTE_EXEMPT.has(p)) routeProblems.push(`${rf}: ${p}`);
+    }
+  }
+  assert.deepEqual(routeProblems, [],
+    `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
+    '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
+  // 豁免防空轉：豁免路徑必須真的存在於具外連能力檔案、且不可同時登記在 OE
+  const exemptStale = [...ROUTE_EXEMPT.keys()].filter((p) => !seenCapablePaths.has(p) || oePaths.has(p));
+  assert.deepEqual(exemptStale, [], `ROUTE_EXEMPT 名不符實（路徑不存在或已登記 OE）：\n  ${exemptStale.join('\n  ')}`);
+  // 路由抽取探針
+  assert.deepEqual([..."router.get('/api/probe', h);".matchAll(ROUTE_RE)].map((m2) => m2[1]), ['/api/probe'], 'ROUTE_RE 抽取失效');
   // ③ probe matrix（r2 建議、r3–r5 擴充）：三組——必抓（乾淨軌）／註解提及（生掃攔）／完全隱形
   const PROBES = [
     ['字面 fetch 呼叫', 'return fetch(url);'],
