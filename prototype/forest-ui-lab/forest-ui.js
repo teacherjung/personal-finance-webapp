@@ -1,23 +1,14 @@
 // @ts-check
-/* global document, getComputedStyle, localStorage, Element, HTMLSelectElement */
+/* global document, getComputedStyle */
 // @ts-ignore Browser-root import is served by the prototype's static server.
 import { hydrateIcons } from '/modules/icons.js';
 import {
   MONTHLY_FOREST_DATA,
-  FOREST_ATMOSPHERES,
-  DEFAULT_CARD_LAYOUT,
-  allowedSizesForCard,
-  atmosphereForChange,
-  moveGridSelection,
-  moveCard,
   netWorthChangeAt,
-  normalizeCardLayout
+  netWorthTrendFor
 } from './forest-ui-model.js';
 
 const EXCHANGE_RATE = 32.6;
-const AMBIENCE_KEY = 'forest.ui.ambience.v1';
-const LAYOUT_KEY = 'forest.ui.layout.v1';
-const sizeLabels = /** @type {Record<string, string>} */ ({ compact: '精簡', standard: '標準', wide: '加寬', full: '滿版' });
 
 /** @param {string} selector */
 function htmlElement(selector) {
@@ -74,10 +65,10 @@ function setCurrencyValue(selector, value, signed = false) {
 }
 
 let selectedCurrency = 'TWD';
-let selectedPeriod = 12;
-let selectedMonthIndex = MONTHLY_FOREST_DATA.length - 1;
 /** @type {any} */
-let chart;
+let cashflowChart;
+/** @type {any} */
+let netWorthChart;
 
 function renderCurrencyValues() {
   document.querySelectorAll('[data-currency]').forEach((item) => {
@@ -92,106 +83,23 @@ function renderCurrencyValues() {
   });
 }
 
-/** @param {number} index */
-function monthStateAt(index) {
-  const change = netWorthChangeAt(MONTHLY_FOREST_DATA, index);
-  if (!change || change.pct === null) return 'neutral';
-  return atmosphereForChange(change.pct);
-}
-
-function buildMonthTrail() {
-  const track = htmlElement('#monthTrack');
-  if (!track) return;
-  track.replaceChildren();
-  MONTHLY_FOREST_DATA.forEach((month, index) => {
-    const change = netWorthChangeAt(MONTHLY_FOREST_DATA, index);
-    const state = monthStateAt(index);
-    const atmosphere = FOREST_ATMOSPHERES[state];
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'month-dot';
-    button.id = `forest-month-${month.key}`;
-    button.dataset.monthIndex = String(index);
-    button.dataset.state = state;
-    button.dataset.comparison = !change ? 'baseline' : change.pct === null ? 'zero-base' : 'comparable';
-    button.setAttribute('role', 'option');
-    button.setAttribute('aria-selected', String(index === selectedMonthIndex));
-    button.tabIndex = index === selectedMonthIndex ? 0 : -1;
-    button.setAttribute('aria-label', !change
-      ? `${month.yearLabel}，第一筆資料，尚無比較`
-      : change.pct === null
-        ? `${month.yearLabel}，上月底淨資產為零，無法計算變動比例`
-        : `${month.yearLabel}，${atmosphere.statusLabel}，${formatSignedPct(change.pct)}`);
-    button.textContent = month.label;
-    button.title = button.getAttribute('aria-label') || month.yearLabel;
-    button.addEventListener('click', () => {
-      selectedMonthIndex = index;
-      renderSelectedMonth();
-      document.querySelector('#monthPicker')?.removeAttribute('open');
-      /** @type {HTMLElement|null} */ (document.querySelector('#monthPickerSummary'))?.focus();
-    });
-    track.append(button);
-  });
-}
-
-function updateMonthTrailSelection() {
-  const pickerOpen = document.querySelector('#monthPicker')?.hasAttribute('open');
-  document.querySelectorAll('[data-month-index]').forEach((item) => {
-    const button = /** @type {HTMLButtonElement} */ (item);
-    const active = Number(button.dataset.monthIndex) === selectedMonthIndex;
-    button.setAttribute('aria-selected', String(active));
-    button.tabIndex = active ? 0 : -1;
-    if (active && pickerOpen) {
-      const reducedMotion = globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      button.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
-    }
-  });
-  const previous = /** @type {HTMLButtonElement|null} */ (document.querySelector('#previousMonth'));
-  const next = /** @type {HTMLButtonElement|null} */ (document.querySelector('#nextMonth'));
-  if (previous) previous.setAttribute('aria-disabled', String(selectedMonthIndex <= 0));
-  if (next) next.setAttribute('aria-disabled', String(selectedMonthIndex >= MONTHLY_FOREST_DATA.length - 1));
-}
-
-function renderSelectedMonth() {
+function renderCurrentMonth() {
+  const selectedMonthIndex = MONTHLY_FOREST_DATA.length - 1;
   const month = MONTHLY_FOREST_DATA[selectedMonthIndex];
   if (!month) return;
   const change = netWorthChangeAt(MONTHLY_FOREST_DATA, selectedMonthIndex);
   const amount = change?.amount ?? 0;
   const pct = change?.pct ?? null;
   const hasComparablePct = Boolean(change && pct !== null);
-  const state = hasComparablePct ? atmosphereForChange(/** @type {number} */ (pct)) : 'neutral';
-  const atmosphere = FOREST_ATMOSPHERES[state];
-  const monthStatus = !change ? '建立基準' : pct === null ? '無法比較' : atmosphere.statusLabel;
   const cashflowNet = month.income - month.expense;
-  const windowStart = Math.max(0, selectedMonthIndex - selectedPeriod + 1);
-  const periodMonths = MONTHLY_FOREST_DATA.slice(windowStart, selectedMonthIndex + 1);
+  const periodMonths = MONTHLY_FOREST_DATA.slice(-12);
   const averageCashflow = periodMonths.reduce((total, item) => total + item.income - item.expense, 0) / periodMonths.length;
+  const trend = netWorthTrendFor(periodMonths);
 
-  document.body.dataset.weather = state;
-  setText('#selectedMonthLabel', `${monthStatus}・合成情境`);
-  setText('#monthPickerLabel', month.yearLabel);
-  setText('#monthPickerStatus', monthStatus);
-  const monthPickerSummary = htmlElement('#monthPickerSummary');
-  if (monthPickerSummary) {
-    monthPickerSummary.setAttribute('aria-label', `選擇月份，目前為 ${month.yearLabel}，${monthStatus}`);
-  }
-  const scene = htmlElement('.forest-scene');
-  if (scene) scene.dataset.weather = state;
-  const sceneArt = imageElement('#sceneArt');
-  if (sceneArt) {
-    sceneArt.src = atmosphere.scene;
-    sceneArt.alt = atmosphere.sceneAlt;
-  }
-  [imageElement('#guidePortrait'), imageElement('#guideDialogPortrait')].forEach((guide) => {
-    if (!guide) return;
-    guide.src = atmosphere.guide;
-    guide.alt = atmosphere.guideAlt;
-  });
+  setText('#currentMonthLabel', month.yearLabel);
   setText('#scene-title', !change
     ? '從這個月開始記錄淨資產'
-    : hasComparablePct
-      ? atmosphere.heading
-      : '本月淨資產已有金額變動');
+    : `本月淨資產${changePhrase(amount)}`);
   setText('#sceneSummary', !change
     ? '這是時間軸中的第一筆資料，尚無上月底資料可比較。'
     : hasComparablePct
@@ -200,8 +108,20 @@ function renderSelectedMonth() {
   setText('#monthChangeAmount', change ? formatWan(amount, true) : '尚無比較');
   setText('#monthChangePct', !change ? '首筆資料' : formatSignedPct(pct));
   setCurrencyValue('#netWorthValue', month.netWorth);
+  setCurrencyValue('#netWorthTrendValue', month.netWorth);
   setCurrencyValue('#cashflowNetValue', cashflowNet, true);
   setCurrencyValue('#cashflowAverageValue', averageCashflow);
+  if (trend) {
+    const trendText = trend.pct === null
+      ? `12 個月${changePhrase(trend.amount)}`
+      : `12 個月${changePhrase(trend.amount)}（${formatSignedPct(trend.pct)}）`;
+    setText('#netWorthTrendChange', trendText);
+    const trendChange = htmlElement('#netWorthTrendChange');
+    if (trendChange) {
+      trendChange.classList.toggle('positive', trend.amount > 0);
+      trendChange.classList.toggle('negative', trend.amount < 0);
+    }
+  }
   setText('#netWorthDeltaText', change ? `比上月底${changePhrase(amount)}` : '尚無上月底資料');
   const deltaText = htmlElement('#netWorthDeltaText');
   if (deltaText) {
@@ -225,7 +145,7 @@ function renderSelectedMonth() {
     disciplineText.classList.add(month.discipline >= 5 ? 'positive' : month.discipline === 4 ? 'warning' : 'negative');
   }
   const statusMark = htmlElement('#returnStatusMark');
-  if (statusMark) statusMark.className = `status-mark ${atmosphere.statusClass}`;
+  if (statusMark) statusMark.className = `status-mark ${amount > 0 ? 'good' : amount < 0 ? 'watch' : 'calm'}`;
   setText('#returnStatusTitle', change ? `本月淨資產${changePhrase(amount)}` : '本月為第一筆淨資產資料');
   setText('#returnStatusDetail', !change
     ? '下個月起才能與上月底比較；目前先建立基準。'
@@ -242,8 +162,7 @@ function renderSelectedMonth() {
       ? '這是整體淨資產變動，包含收支、投資市值、匯率與負債變化，不等於投資報酬率。'
       : '這個月仍可顯示淨資產金額變動；但上月底淨資產為 0，無法計算有意義的變動比例。');
   renderCurrencyValues();
-  updateMonthTrailSelection();
-  drawChart();
+  drawCharts();
 }
 
 /** @type {Record<string, {name:string,sector:string,eps:number,price:number,growth:number,terminalPe:number}>} */
@@ -340,31 +259,34 @@ function renderValuation() {
   [growthInput, terminalPeInput, discountInput].forEach(updateRangeFill);
 }
 
-function drawChart() {
-  const canvas = /** @type {HTMLCanvasElement|null} */ (document.querySelector('#cashflowChart'));
+function drawCharts() {
+  const cashflowCanvas = /** @type {HTMLCanvasElement|null} */ (document.querySelector('#cashflowChart'));
+  const netWorthCanvas = /** @type {HTMLCanvasElement|null} */ (document.querySelector('#netWorthChart'));
   const ChartCtor = /** @type {any} */ (globalThis).Chart;
-  if (!canvas || !ChartCtor) return;
-  const start = Math.max(0, selectedMonthIndex - selectedPeriod + 1);
-  const series = MONTHLY_FOREST_DATA.slice(start, selectedMonthIndex + 1);
-  canvas.setAttribute('aria-label', `過去 ${series.length} 個月收入、支出與結餘折線圖`);
+  if (!cashflowCanvas || !netWorthCanvas || !ChartCtor) return;
+  const series = MONTHLY_FOREST_DATA.slice(-12);
   const style = getComputedStyle(document.documentElement);
   const leaf = style.getPropertyValue('--leaf').trim() || '#568a3d';
   const coral = style.getPropertyValue('--coral').trim() || '#a84f2d';
-  chart?.destroy();
-  chart = new ChartCtor(canvas, {
+  const sky = '#4e7089';
+  const animationDuration = globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180;
+
+  cashflowCanvas.setAttribute('aria-label', `過去 ${series.length} 個月收入、支出與結餘折線圖`);
+  cashflowChart?.destroy();
+  cashflowChart = new ChartCtor(cashflowCanvas, {
     type: 'line',
     data: {
       labels: series.map((month) => month.label),
       datasets: [
         { label: '收入', data: series.map((month) => month.income), borderColor: leaf, backgroundColor: leaf, borderWidth: 3, pointRadius: 2, tension: .28 },
         { label: '支出', data: series.map((month) => month.expense), borderColor: coral, backgroundColor: coral, borderWidth: 3, pointRadius: 2, tension: .28 },
-        { label: '結餘', data: series.map((month) => month.income - month.expense), borderColor: '#4e7089', backgroundColor: '#4e7089', borderWidth: 2, pointRadius: 2, borderDash: [5, 5], tension: .28 }
+        { label: '結餘', data: series.map((month) => month.income - month.expense), borderColor: sky, backgroundColor: sky, borderWidth: 2, pointRadius: 2, borderDash: [5, 5], tension: .28 }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: document.body.dataset.ambience === 'static' ? 0 : 180 },
+      animation: { duration: animationDuration },
       plugins: { legend: { display: false }, tooltip: { padding: 10, cornerRadius: 6, displayColors: false } },
       scales: {
         x: { grid: { display: false }, ticks: { color: '#746550', font: { size: 10, family: 'Arial Rounded MT Bold, PingFang TC, sans-serif' } }, border: { display: false } },
@@ -372,255 +294,48 @@ function drawChart() {
       }
     }
   });
-}
 
-/** @returns {string} */
-function readAmbience() {
-  try {
-    const stored = localStorage.getItem(AMBIENCE_KEY);
-    return stored && ['static', 'gentle', 'immersive'].includes(stored) ? stored : 'gentle';
-  } catch {
-    return 'gentle';
-  }
-}
-
-/** @param {string} value */
-function setAmbience(value) {
-  const ambience = ['static', 'gentle', 'immersive'].includes(value) ? value : 'gentle';
-  document.body.dataset.ambience = ambience;
-  document.querySelectorAll('[data-ambience]').forEach((item) => {
-    const button = /** @type {HTMLButtonElement} */ (item);
-    const active = button.dataset.ambience === ambience;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-  try {
-    localStorage.setItem(AMBIENCE_KEY, ambience);
-  } catch {
-    // The prototype remains usable when storage is unavailable.
-  }
-  drawChart();
-}
-
-/** @returns {{id:string,size:string}[]} */
-function readCardLayout() {
-  try {
-    const stored = localStorage.getItem(LAYOUT_KEY);
-    return normalizeCardLayout(stored ? JSON.parse(stored) : DEFAULT_CARD_LAYOUT);
-  } catch {
-    return normalizeCardLayout(DEFAULT_CARD_LAYOUT);
-  }
-}
-
-/** @param {{id:string,size:string}[]} layout */
-function saveCardLayout(layout) {
-  try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(normalizeCardLayout(layout)));
-  } catch {
-    // Persistence is optional; layout changes still apply to this session.
-  }
-}
-
-/** @param {string} message */
-function announceLayout(message) {
-  setText('#layoutStatus', message);
-}
-
-const dashboard = htmlElement('#customDashboard');
-let cardLayout = readCardLayout();
-let draggedCardId = '';
-let focusedCardId = '';
-
-/** @param {{id:string,action:string}=} focusTarget */
-function applyCardLayout(focusTarget) {
-  if (!dashboard) return;
-  cardLayout = normalizeCardLayout(cardLayout);
-  cardLayout.forEach((item, index) => {
-    const card = /** @type {HTMLElement|null} */ (dashboard.querySelector(`[data-card-id="${item.id}"]`));
-    if (!card) return;
-    card.dataset.size = item.size;
-    const select = /** @type {HTMLSelectElement|null} */ (card.querySelector('.card-size-select'));
-    if (select) select.value = item.size;
-    card.querySelector('[data-card-action="previous"]')?.setAttribute('aria-disabled', String(index === 0));
-    card.querySelector('[data-card-action="next"]')?.setAttribute('aria-disabled', String(index === cardLayout.length - 1));
-    dashboard.append(card);
-  });
-  if (focusTarget) {
-    const control = /** @type {HTMLElement|null} */ (dashboard.querySelector(`[data-card-id="${focusTarget.id}"] [data-card-action="${focusTarget.action}"]`));
-    control?.focus();
-  }
-}
-
-function buildCardToolbars() {
-  if (!dashboard) return;
-  dashboard.querySelectorAll('.layout-card').forEach((item) => {
-    const card = /** @type {HTMLElement} */ (item);
-    const id = card.dataset.cardId || '';
-    const label = card.dataset.cardLabel || '卡片';
-    const toolbar = document.createElement('div');
-    toolbar.className = 'layout-card-toolbar';
-    toolbar.setAttribute('aria-label', `${label}版面工具`);
-    toolbar.innerHTML = `
-      <button class="drag-handle" type="button" draggable="true" data-card-action="drag" title="拖曳移動" aria-label="拖曳移動${label}"><span data-icon="grip"></span></button>
-      <button type="button" data-card-action="previous" title="往前移" aria-label="將${label}往前移">←</button>
-      <button type="button" data-card-action="next" title="往後移" aria-label="將${label}往後移">→</button>
-      <select class="card-size-select" data-card-action="size" aria-label="${label}大小"></select>
-      <button class="card-focus" type="button" data-card-action="focus" title="聚焦卡片" aria-label="聚焦${label}" aria-pressed="false">□</button>`;
-    const select = /** @type {HTMLSelectElement|null} */ (toolbar.querySelector('select'));
-    if (select) {
-      allowedSizesForCard(id).forEach((size) => {
-        const option = document.createElement('option');
-        option.value = size;
-        option.textContent = sizeLabels[size] || size;
-        select.append(option);
-      });
+  const trend = netWorthTrendFor(series);
+  netWorthCanvas.setAttribute('aria-label', trend
+    ? `過去 ${series.length} 個月淨資產趨勢，從 ${formatWan(trend.first)} 到 ${formatWan(trend.last)}`
+    : '過去十二個月淨資產趨勢圖');
+  netWorthChart?.destroy();
+  netWorthChart = new ChartCtor(netWorthCanvas, {
+    type: 'line',
+    data: {
+      labels: series.map((month) => month.label),
+      datasets: [{
+        label: '淨資產',
+        data: series.map((month) => month.netWorth),
+        borderColor: leaf,
+        backgroundColor: 'rgba(86, 138, 61, .16)',
+        borderWidth: 3,
+        fill: true,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        tension: .24
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: animationDuration },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          padding: 10,
+          cornerRadius: 6,
+          displayColors: false,
+          callbacks: { label: (/** @type {{parsed:{y:number}}} */ context) => `淨資產 ${formatWan(context.parsed.y)}` }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#746550', font: { size: 10, family: 'Arial Rounded MT Bold, PingFang TC, sans-serif' } }, border: { display: false } },
+        y: { beginAtZero: false, grid: { color: '#e5dbc2', borderDash: [3, 3] }, ticks: { color: '#746550', callback: (/** @type {number|string} */ value) => `${value}萬`, font: { size: 9 } }, border: { display: false } }
+      }
     }
-    card.prepend(toolbar);
   });
-  hydrateIcons(dashboard);
 }
-
-/** @param {boolean} enabled */
-function setLayoutEditing(enabled) {
-  if (!globalThis.matchMedia('(min-width: 821px)').matches) enabled = false;
-  document.body.classList.toggle('layout-editing', enabled);
-  const bar = htmlElement('#layoutBar');
-  if (bar) bar.hidden = !enabled;
-  const toggle = /** @type {HTMLButtonElement|null} */ (document.querySelector('#layoutToggle'));
-  if (toggle) toggle.setAttribute('aria-pressed', String(enabled));
-  announceLayout(enabled ? '版面調整模式已開啟。可拖曳、用箭頭移動，或選擇卡片大小。' : '版面調整完成。');
-}
-
-/** @param {string} id */
-function setFocusedCard(id) {
-  const backdrop = htmlElement('#focusBackdrop');
-  const previousId = focusedCardId;
-  const card = /** @type {HTMLElement|null} */ (id ? dashboard?.querySelector(`[data-card-id="${id}"]`) || null : null);
-  if (id && !card) id = '';
-  if (id) setLayoutEditing(false);
-  dashboard?.querySelectorAll('.layout-card').forEach((item) => item.classList.remove('is-focused'));
-  focusedCardId = id;
-  document.body.classList.toggle('card-focused', Boolean(id));
-  if (backdrop) backdrop.hidden = !id;
-  dashboard?.querySelectorAll('.card-focus').forEach((item) => item.setAttribute('aria-pressed', 'false'));
-  document.querySelectorAll('.forest-rail, .topbar, .month-trail, .forest-scene, .layout-card').forEach((item) => {
-    const element = /** @type {HTMLElement} */ (item);
-    element.inert = Boolean(id) && element !== card;
-  });
-  if (!id) {
-    const restore = /** @type {HTMLElement|null} */ (previousId ? dashboard?.querySelector(`[data-card-id="${previousId}"] [data-card-action="focus"]`) || null : null);
-    const restoreCard = /** @type {HTMLElement|null} */ (previousId ? dashboard?.querySelector(`[data-card-id="${previousId}"]`) || null : null);
-    if (restore?.offsetParent) restore.focus();
-    else if (restoreCard) {
-      restoreCard.tabIndex = -1;
-      restoreCard.focus({ preventScroll: true });
-    }
-    chart?.resize();
-    return;
-  }
-  if (!card) return;
-  card.classList.add('is-focused');
-  const focusButton = /** @type {HTMLElement|null} */ (card.querySelector('.card-focus'));
-  focusButton?.setAttribute('aria-pressed', 'true');
-  focusButton?.focus();
-  card.scrollIntoView({ block: 'center', behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-  globalThis.setTimeout(() => chart?.resize(), 220);
-}
-
-buildCardToolbars();
-applyCardLayout();
-
-dashboard?.addEventListener('click', (event) => {
-  const target = /** @type {HTMLElement|null} */ (event.target instanceof Element ? event.target.closest('[data-card-action]') : null);
-  if (!target) return;
-  const card = /** @type {HTMLElement|null} */ (target.closest('[data-card-id]'));
-  const id = card?.dataset.cardId || '';
-  const action = target.dataset.cardAction;
-  if (!id || action === 'drag' || action === 'size') return;
-  if (action === 'previous' || action === 'next') {
-    if (target.getAttribute('aria-disabled') === 'true') {
-      announceLayout(`${card?.dataset.cardLabel || '卡片'}已在${action === 'previous' ? '最前方' : '最後方'}。`);
-      return;
-    }
-    cardLayout = moveCard(cardLayout, id, action === 'previous' ? -1 : 1);
-    saveCardLayout(cardLayout);
-    applyCardLayout({ id, action });
-    announceLayout(`${card?.dataset.cardLabel || '卡片'}已${action === 'previous' ? '往前' : '往後'}移動。`);
-  }
-  if (action === 'focus') setFocusedCard(focusedCardId === id ? '' : id);
-});
-
-dashboard?.addEventListener('change', (event) => {
-  const select = /** @type {HTMLSelectElement|null} */ (event.target instanceof HTMLSelectElement ? event.target : null);
-  if (!select || select.dataset.cardAction !== 'size') return;
-  const card = /** @type {HTMLElement|null} */ (select.closest('[data-card-id]'));
-  const id = card?.dataset.cardId || '';
-  cardLayout = cardLayout.map((item) => item.id === id ? { ...item, size: select.value } : item);
-  cardLayout = normalizeCardLayout(cardLayout);
-  saveCardLayout(cardLayout);
-  applyCardLayout({ id, action: 'size' });
-  announceLayout(`${card?.dataset.cardLabel || '卡片'}已改為${sizeLabels[select.value] || select.value}。`);
-});
-
-dashboard?.addEventListener('dragstart', (event) => {
-  const handle = /** @type {HTMLElement|null} */ (event.target instanceof Element ? event.target.closest('.drag-handle') : null);
-  const card = /** @type {HTMLElement|null} */ (handle?.closest('[data-card-id]') || null);
-  if (!handle || !card || !document.body.classList.contains('layout-editing')) {
-    event.preventDefault();
-    return;
-  }
-  draggedCardId = card.dataset.cardId || '';
-  card.classList.add('is-dragging');
-  event.dataTransfer?.setData('text/plain', draggedCardId);
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-});
-
-dashboard?.addEventListener('dragover', (event) => {
-  if (!draggedCardId || !document.body.classList.contains('layout-editing')) return;
-  const target = /** @type {HTMLElement|null} */ (event.target instanceof Element ? event.target.closest('.layout-card') : null);
-  if (!target || target.dataset.cardId === draggedCardId) return;
-  event.preventDefault();
-  dashboard.querySelectorAll('.drop-before').forEach((item) => item.classList.remove('drop-before'));
-  target.classList.add('drop-before');
-});
-
-dashboard?.addEventListener('drop', (event) => {
-  if (!draggedCardId) return;
-  const target = /** @type {HTMLElement|null} */ (event.target instanceof Element ? event.target.closest('.layout-card') : null);
-  if (!target || target.dataset.cardId === draggedCardId) return;
-  event.preventDefault();
-  const dragged = cardLayout.find((item) => item.id === draggedCardId);
-  const rest = cardLayout.filter((item) => item.id !== draggedCardId);
-  const targetIndex = rest.findIndex((item) => item.id === target.dataset.cardId);
-  if (dragged && targetIndex >= 0) rest.splice(targetIndex, 0, dragged);
-  cardLayout = normalizeCardLayout(rest);
-  saveCardLayout(cardLayout);
-  applyCardLayout({ id: draggedCardId, action: 'drag' });
-  announceLayout(`${target.dataset.cardLabel || '卡片'}前方已插入新位置。`);
-});
-
-dashboard?.addEventListener('dragend', () => {
-  draggedCardId = '';
-  dashboard.querySelectorAll('.is-dragging, .drop-before').forEach((item) => item.classList.remove('is-dragging', 'drop-before'));
-});
-
-document.querySelector('#layoutToggle')?.addEventListener('click', () => setLayoutEditing(!document.body.classList.contains('layout-editing')));
-document.querySelector('#finishLayout')?.addEventListener('click', () => setLayoutEditing(false));
-document.querySelector('#resetLayout')?.addEventListener('click', () => {
-  cardLayout = normalizeCardLayout(DEFAULT_CARD_LAYOUT);
-  saveCardLayout(cardLayout);
-  applyCardLayout();
-  announceLayout('已恢復預設版面。');
-});
-document.querySelector('#focusBackdrop')?.addEventListener('click', () => setFocusedCard(''));
-
-const desktopMedia = globalThis.matchMedia('(min-width: 821px)');
-desktopMedia.addEventListener('change', () => {
-  if (!desktopMedia.matches) {
-    setLayoutEditing(false);
-    setFocusedCard('');
-  }
-});
 
 document.querySelectorAll('[data-stock]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -646,53 +361,6 @@ document.querySelectorAll('[data-currency]').forEach((button) => {
     selectedCurrency = /** @type {HTMLElement} */ (button).dataset.currency === 'USD' ? 'USD' : 'TWD';
     renderCurrencyValues();
   });
-});
-
-document.querySelectorAll('[data-period]').forEach((button) => {
-  button.addEventListener('click', () => {
-    selectedPeriod = Number(/** @type {HTMLElement} */ (button).dataset.period) === 6 ? 6 : 12;
-    document.querySelectorAll('[data-period]').forEach((item) => {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
-    renderSelectedMonth();
-  });
-});
-
-document.querySelectorAll('[data-ambience]').forEach((button) => {
-  button.addEventListener('click', () => setAmbience(/** @type {HTMLElement} */ (button).dataset.ambience || 'gentle'));
-});
-
-document.querySelector('#previousMonth')?.addEventListener('click', () => {
-  if (document.querySelector('#previousMonth')?.getAttribute('aria-disabled') === 'true') return;
-  selectedMonthIndex = Math.max(0, selectedMonthIndex - 1);
-  renderSelectedMonth();
-});
-document.querySelector('#nextMonth')?.addEventListener('click', () => {
-  if (document.querySelector('#nextMonth')?.getAttribute('aria-disabled') === 'true') return;
-  selectedMonthIndex = Math.min(MONTHLY_FOREST_DATA.length - 1, selectedMonthIndex + 1);
-  renderSelectedMonth();
-});
-document.querySelector('#monthTrack')?.addEventListener('keydown', (event) => {
-  const keyboardEvent = /** @type {KeyboardEvent} */ (event);
-  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(keyboardEvent.key)) return;
-  keyboardEvent.preventDefault();
-  const track = htmlElement('#monthTrack');
-  const columns = track ? getComputedStyle(track).gridTemplateColumns.split(' ').filter(Boolean).length : 1;
-  selectedMonthIndex = moveGridSelection(selectedMonthIndex, keyboardEvent.key, MONTHLY_FOREST_DATA.length, columns);
-  renderSelectedMonth();
-  /** @type {HTMLElement|null} */ (document.querySelector(`[data-month-index="${selectedMonthIndex}"]`))?.focus();
-});
-document.querySelector('#monthPicker')?.addEventListener('toggle', () => {
-  const picker = htmlElement('#monthPicker');
-  document.querySelector('#monthPickerSummary')?.setAttribute('aria-expanded', String(picker?.hasAttribute('open')));
-});
-document.addEventListener('pointerdown', (event) => {
-  const picker = htmlElement('#monthPicker');
-  const trail = picker?.closest('.month-trail');
-  if (!picker?.hasAttribute('open') || !(event.target instanceof Element) || trail?.contains(event.target)) return;
-  picker.removeAttribute('open');
 });
 
 document.querySelectorAll('[data-filter]').forEach((button) => {
@@ -738,23 +406,11 @@ function syncTrailWithHash() {
 }
 
 globalThis.addEventListener('hashchange', syncTrailWithHash);
-globalThis.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
-  const monthPicker = htmlElement('#monthPicker');
-  if (monthPicker?.hasAttribute('open')) {
-    monthPicker.removeAttribute('open');
-    htmlElement('#monthPickerSummary')?.focus();
-    return;
-  }
-  if (focusedCardId) setFocusedCard('');
-});
 
 hydrateIcons();
-buildMonthTrail();
-document.querySelectorAll('[data-period], [data-filter], [data-stock]').forEach((item) => {
+document.querySelectorAll('[data-filter], [data-stock]').forEach((item) => {
   item.setAttribute('aria-pressed', String(item.classList.contains('active')));
 });
-setAmbience(readAmbience());
 renderValuation();
-renderSelectedMonth();
+renderCurrentMonth();
 syncTrailWithHash();
