@@ -488,8 +488,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     const queue = [...seeds];
     while (queue.length) {
       const rel = /** @type {string} */ (queue.shift());
-      let src = '';
-      try { src = readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { continue; }
+      const src = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+      if (src === null) continue;
       for (const m of src.matchAll(IMPORT_SPEC_RE)) {
         let target = pjoin(pdirname(rel), m[1]);
         if (!/\.[a-z]+$/i.test(target)) target += '.js';
