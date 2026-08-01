@@ -625,6 +625,15 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
       if (sm) statics.push(sm[2] ?? sm[1]);
       else dynamics.push(`${m2[0].trim()}${after.slice(0, 30)}…`);
     }
+    // r17：.use(path, handler) 是標準寫法——字串開頭必須整顆靜態；非字串（middleware／router
+    //   掛載、限速器迴圈的變數路徑）跳過。記錄殘餘：use＋變數路徑掛 handler 無法與基建區分。
+    for (const m2 of src2.matchAll(/\.use\(\s*/g)) {
+      const after = src2.slice(m2.index + m2[0].length, m2.index + m2[0].length + 200);
+      if (!/^['"`]/.test(after)) continue;
+      const sm = after.match(/^(['"])([^'"\n]*)\1\s*[,)]/) || after.match(/^`([^`$\n]*)`\s*[,)]/);
+      if (sm) statics.push(sm[2] ?? sm[1]);
+      else dynamics.push(`.use(${after.slice(0, 30)}…`);
+    }
     return { statics, dynamics };
   };
   const ROUTE_EXEMPT = new Map([
@@ -634,6 +643,10 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['/api/auth/logout', 'Supabase 輕量 session 操作（signOut）；不限速＝2026-07-28 既有裁決'],
     ['/api/auth/me', 'Supabase 輕量 session 讀取（getUser）；不限速＝2026-07-28 既有裁決'],
     ['/api/stock-fundamentals/:symbol', '唯讀快取、不觸發 SEC 抓取（refresh 才會）'],
+    ['/api/auth', 'body limit middleware 掛點（r17 起 use 帶字串入錨定）'],
+    ['/finance', '靜態站掛點'],
+    ['/vendor/chart.js', '靜態資源掛點'],
+    ['/api', 'API 404 收尾掛點'],
   ]);
   const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
   /** @type {string[]} */ const routeProblems = [];
@@ -652,6 +665,27 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.deepEqual(dynRoutes, [],
     `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
     '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
+  // ②g bracket 記法禁令（r17）：routes['all'](…) 讓動詞偵測失效——具外連能力檔案禁止
+  const BRACKET_ROUTE_RE = /(?:routes|router)\s*\[\s*['"`]/i;
+  /** @type {string[]} */ const bracketRoutes = [];
+  for (const rf of routeFiles) {
+    const cl3 = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m4) => cl3.includes(m4))) continue;
+    if (BRACKET_ROUTE_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(rf);
+  }
+  assert.deepEqual(bracketRoutes, [], `具外連能力的路由檔使用 bracket 記法註冊（動詞偵測失效＝禁止）：\n  ${bracketRoutes.join('\n  ')}`);
+  assert.ok(BRACKET_ROUTE_RE.test("marketRoutes['all']('/x', h)"), 'bracket 偵測探針');
+  // ②h package-imports 別名禁令（r17）：#alias 同時繞過閉包與套件分類——後端 runtime 明文禁止
+  /** @type {string[]} */ const hashAliases = [];
+  for (const rel of scanTargets) {
+    const src4 = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+    if (src4 === null) continue;
+    if (/(?:from|import\s*\(|require\s*\()\s*['"`]#/.test(stripComments(src4))) hashAliases.push(rel);
+  }
+  assert.deepEqual(hashAliases, [], `後端 runtime 使用 package-imports 別名（#…；繞過閉包與套件分類＝禁止）：\n  ${hashAliases.join('\n  ')}`);
+  const pkgJson = JSON.parse(readFileSync(pjoin(ROOT, 'package.json'), 'utf8'));
+  assert.ok(!('imports' in pkgJson), 'package.json 出現 imports 欄位（#alias 地圖）——後端 runtime 禁用，要用＝先改本禁令');
+  assert.ok(/(?:from|import\s*\(|require\s*\()\s*['"`]#/.test("import x from '#r17-client';"), '#alias 偵測探針');
   assert.deepEqual(routeProblems, [],
     `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
     '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
@@ -695,6 +729,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   }
   assert.deepEqual(pkgProblems, [],
     `bare 套件分類失敗（新套件必須先分類、外連套件的匯入者必須登記）：\n  ${pkgProblems.join('\n  ')}`);
+  for (const [p, reg] of PACKAGE_REGISTRY) assert.ok(reg.why.trim().length > 0, `PACKAGE_REGISTRY「${p}」缺 why`);
   const pkgStale = [...PACKAGE_REGISTRY.keys()].filter((p) => !seenPkgs.has(p));
   assert.deepEqual(pkgStale, [], `PACKAGE_REGISTRY 空轉登記：\n  ${pkgStale.join('\n  ')}`);
   // 分類器探針

@@ -214,7 +214,7 @@ app.use('/vendor/chart.js', express.static(join(__dirname, 'node_modules/chart.j
 
 app.use(coreRoutes);        // /db /summary /settings /snapshot /migrate /export /import
 app.use(crudRoutes);        // 各集合的通用 CRUD（含欄位白名單）
-app.use(marketRoutes);      // /quotes /cape /realyield
+app.use(marketRoutes);      // /quotes /cape /realyield /insights（r15 搬入）
 app.use(ibRoutes);          // /ib/sync
 app.use(statementRoutes);   // /statement/* /cards/:id/statement/* /learned*
 app.use(securitiesRoutes);  // /securities* 證券交易（S2：查詢/台新對帳單匯入/匯入紀錄）
