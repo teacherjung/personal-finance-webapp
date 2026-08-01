@@ -2,15 +2,20 @@
 // PDF 行程隔離（HOSTED 專用，2026-07-29）：**一份小檔不可以把共用主機打掛**。
 //
 // 病根（自審抓到的兩個 blocking，都已重現）：
-//     138 KB 的**一頁** PDF（約 200 萬個文字節點）→ 行程 OOM 死掉，峰值 612MB
-//     207 KB 的**一頁** PDF（內容串流解壓後 83MB）→ 行程 OOM 死掉，峰值 704MB
+//     138 KB 的**一頁** PDF（約 200 萬個文字節點）→ 行程死掉，峰值 612MB
+//     207 KB 的**一頁** PDF（內容串流解壓後 83MB）→ 行程死掉，峰值 704MB
 // 兩份都**結構完全合法**，既有的兩道牆（頁數、文字節點）都看到「正常」。
+//
+// ⚠️ **死法不只 OOM（2026-08-02 追出）**：更常見的是 pdfjs 卡死在解壓、promise 永不 settle
+//    ——子行程 1.4 秒 `code 0` 靜默退出、stdout/stderr 全空。舊敘述把兩種都寫成 OOM，
+//    害父行程把「沒有 stdout」當成「使用者的檔案太貴」。本檔的炸彈題現在驗的是 `pdf_timeout`。
 //
 // 為什麼是隔離而不是再蓋一道牆：蓋牆就得自己先掃一遍 PDF 判斷「這份貴不貴」，
 // 而那正是今晚在 XLSX 上被打穿**四次**的模式——牆與解析器對格式的理解只要差一點
 // （枚舉方式、欄位偏移、信不信宣告值），就從那個縫鑽過去。
 // PDF 的物件結構比 ZIP 難得多，自己寫掃描器幾乎一定會犯同一個錯。
-// **隔離不需要看懂格式**：給子行程硬性記憶體上限，死了就死了，父行程完好無損。
+// **隔離不需要看懂格式**：把成本關進子行程，怎麼死都不影響父行程（heap 上限管 OOM、
+// keep-alive＋父行程逾時管卡死）。
 //
 // ⚠️ **LOCAL 刻意不套**（William 2026-07-29 裁決）：這道防線保護的是「多人共用的那台機器」，
 //    本機只有自己在用、檔案都是自己從銀行下載的，不值得付每次 250ms 的代價。
@@ -304,14 +309,32 @@ test('邊收邊數｜超標當場 cancel、**不把超標那批收下**（這才
   assert.equal(page.state.cancelled, true, '超標要當場 cancel 上游，不能繼續讓它產生節點');
   assert.equal(page.state.delivered, half * 2 + 100,
     '只該讀到觸發超標的那個 chunk 就停——再多讀就不是「邊收邊數」了');
-  // ⚠️ Codex r2 Low：上面只看得到「上游送了多少」，看不到**內部有沒有先收下再檢查**。
-  //    用同一批資料量到剛好不超標，證明「檢查通過的才進 items」——把 push 移到檢查前就會紅。
+  // ⚠️ Codex r3 Low：上一版邊界題是**假綠**——把 `items.push` 移到檢查前它照樣通過，
+  //    因為它只看「剛好上限會回傳／多一個會 throw」，沒有觀察超標那批**有沒有被迭代收下**。
+  //    改用 Proxy 讓「元素被讀取」變成可觀測：`for (const it of chunk) items.push(it)` 會逐個讀，
+  //    所以超標批的 touched 必須是 0。
+  const touched = { n: 0 };
+  const spyChunk = (/** @type {number} */ size) => new Proxy(
+    Array.from({ length: size }, (_, k) => ({ str: `y${k}` })),
+    { get(t, k) { if (typeof k === 'string' && /^\d+$/.test(k)) touched.n += 1; return (/** @type {any} */ (t))[k]; } });
+  const spyPage = {
+    streamTextContent() {
+      const chunks = [Array.from({ length: MAX_PDF_TEXT_ITEMS }, (_, k) => ({ str: `x${k}` })), spyChunk(5)];
+      let i = 0;
+      return { getReader: () => ({
+        async read() { return i >= chunks.length ? { done: true, value: undefined } : { done: false, value: { items: chunks[i++] } }; },
+        async cancel() {},
+      }) };
+    },
+  };
+  const over = await errOf(readPageTextCapped(/** @type {any} */ (spyPage), 0, '測試檔'));
+  assert.equal(over.code, 'pdf_too_many_text_items', '多一個 chunk 就要 throw');
+  assert.equal(touched.n, 0,
+    `超標那批被讀了 ${touched.n} 個元素——代表「先收下再檢查」，那就不是邊收邊數（記憶體照樣爆）`);
+  // 邊界另一側：剛好等於上限要全部收下
   const okPage = fakePage([half, MAX_PDF_TEXT_ITEMS - half]);
   const okRes = await readPageTextCapped(/** @type {any} */ (okPage), 0, '測試檔');
   assert.equal(okRes.items.length, MAX_PDF_TEXT_ITEMS, '剛好等於上限要全部收下（邊界）');
-  const overPage = fakePage([MAX_PDF_TEXT_ITEMS, 7]);
-  const over = await errOf(readPageTextCapped(/** @type {any} */ (overPage), 0, '測試檔'));
-  assert.equal(over.code, 'pdf_too_many_text_items', '多一個 chunk 就要 throw');
 });
 
 test('邊收邊數｜**改回 getTextContent 就會紅**：本題直接打 readPageTextCapped，不經 PDF', async () => {
@@ -412,4 +435,27 @@ test('併發上限｜**production 的 extractPdfLines 真的走佇列**（繞過
     if (saved === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = saved;
     resetPdfQueueForTest();
   }
+});
+
+test('錯誤契約｜子行程「沒帶 status 的例外」＝我們的問題（500、對外不洩內情、detail 進日誌）', async () => {
+  // Codex r3 Low：這個契約原本零考題——把 child 的預設值改回 400，17 題照樣全綠。
+  // ⚠️ 要餵**真正沒帶 status 的例外**才測得到預設值：協定缺換行那條自己帶了 status 500，
+  //    改預設值它不會變（第一版就踩到）。用「有換行但標頭不是合法 JSON」→ SyntaxError。
+  const { spawn } = await import('node:child_process');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const CHILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib/pdf-isolate-child.js');
+  const out = await new Promise((resolve) => {
+    const c = spawn(process.execPath, [CHILD, 'statement'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let o = '';
+    c.stdout.on('data', (b) => { o += b; });
+    c.on('close', () => resolve(o));
+    c.stdin.end('這不是合法JSON\nQUJD');   // 有換行、但標頭 JSON.parse 會丟 SyntaxError（無 status）
+  });
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, 500, '沒帶 status 的內部例外預設必須是 500——400 會說成「使用者的檔案有問題」');
+  assert.match(String(parsed.message), /伺服器暫時無法解析/, '對外只給通用訊息，不洩內情');
+  assert.ok(!/JSON|SyntaxError|token/i.test(String(parsed.message)), '內部細節不可出現在對外訊息');
+  assert.ok(String(parsed.detail || '').length > 0, 'detail 要留真正原因（只進伺服器日誌）');
 });
