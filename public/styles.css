@@ -12,9 +12,6 @@
   --accent: #557f3c;
   --accent-hover: #456c32;
   --accent-soft: #e3edcf;
-  --coral: #c56643;
-  --mist: #dcebed;
-  --gold: #d7b65c;
   /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
   --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
   --neg: #B84A39;         /* 支出 / 虧損（六色盤紅 #D96352 加深）*/
@@ -105,7 +102,6 @@ main { flex: 1; min-width: 0; width: 100%; min-height: 100vh; padding: 32px 38px
 .backup-alert b { color: var(--warn); }
 .backup-alert.danger b { color: var(--danger); }
 .backup-alert .backup-alert-why { color: var(--text-dim); font-size: 12.5px; margin-top: 3px; word-break: break-word; }
-@media (max-width: 820px) { #backup-alert { padding: 0 24px 14px; } }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 26px; gap: 16px; flex-wrap: wrap; }
 .page-head h1 { font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: 0; }
 .page-head p { color: var(--text-dim); font-size: 13.5px; margin-top: 4px; }
@@ -636,10 +632,12 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .brand-title { font-size: 14px; }
   .brand-subtitle { display: none; }
   #nav {
-    min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; padding: 3px 4px 5px;
-    scrollbar-width: none; overscroll-behavior-x: contain;
+    min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; padding: 6px 6px 8px;
+    scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; overscroll-behavior-x: contain;
   }
-  #nav::-webkit-scrollbar { display: none; }
+  #nav::-webkit-scrollbar { height: 5px; }
+  #nav::-webkit-scrollbar-track { background: transparent; }
+  #nav::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 5px; }
   #nav a { flex: 0 0 auto; padding: 6px 9px; gap: 6px; white-space: nowrap; }
   #nav a .ic { width: 16px; height: 16px; }
   .sidebar-foot { margin: 0; display: block; }
@@ -647,7 +645,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
     width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
     font-size: 0;
   }
-  .sidebar-foot .btn-ghost .ic { margin-right: 0; }
+  .sidebar-foot .btn-ghost .ic { width: 20px; height: 20px; margin-right: 0; }
   .foot-note { display: none; }
   main { max-width: none; min-height: calc(100vh - 64px); padding: 24px 18px 42px; }
   #backup-alert { left: 0; padding: 0 18px 14px; }
