@@ -372,6 +372,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const OUTBOUND_RE = new RegExp([
     '(^|[^.\\w])fetch\\b',                     // 裸 fetch：呼叫、別名、預設參數
     '(^|[^.\\w])WebSocket\\b',                 // Node 22+ 內建全域（r6：不需 import 就能對外）
+    '(?:\\.|\\?\\.)\\s*WebSocket\\b',            // globalThis.WebSocket 成員形（r19 繞法）
+    '[\'"`]WebSocket[\'"`]',                    // computed 存取
     'fetchImpl',                                // AGENTS 慣例
     '(?:\\.|\\?\\.)\\s*fetch\\b',               // 成員存取：globalThis.fetch／(globalThis).fetch／?.fetch／跨行（r4+r5）
     '[\'"`]fetch[\'"`]',                       // computed 存取
@@ -612,27 +614,27 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   //   路由檔**（自身 import 閉包碰得到 ALLOWED 模組）的每條路徑，必須「登記 OUTBOUND_ENDPOINTS」
   //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不是對外入口；未來改成會觸發外連就要搬進 OE）」。
   //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
-  // r14→r16 統一路由參數解析器：動詞全覆蓋（含 all/head/options/route），第一參數必須是
-  //   **整顆**靜態字串（後面緊接 , 或 )）——「'/api/x' + suffix」這種串接自動歸動態（r16 繞法）。
-  const ROUTE_VERB_RE = /\.(?:get|post|put|delete|patch|all|head|options|route)\s*\(\s*/g;
+  // r14→r19 統一路由參數解析器：動詞集合＝Node 官方 http.METHODS（小寫）＋all/use/route
+  //   （機械完備，trace/search 等不再靠手列）；點後允許空白（r19 繞法）。第一參數規則：
+  //   整顆靜態字串且以 / 開頭＝路徑（入錨定）；靜態字串非 / 開頭＝header/config getter、忽略；
+  //   use 的非字串＝middleware／router 掛載、跳過；其餘（串接、模板插值、變數）＝動態禁令。
+  const { METHODS: HTTP_METHODS } = await import('node:http');
+  const ROUTE_VERBS = new Set([...HTTP_METHODS.map((v) => v.toLowerCase()), 'all', 'use', 'route']);
   /** @param {string} src2 @returns {{ statics: string[], dynamics: string[] }} */
   const parseRouteArgs = (src2) => {
     /** @type {string[]} */ const statics = [];
     /** @type {string[]} */ const dynamics = [];
-    for (const m2 of src2.matchAll(ROUTE_VERB_RE)) {
-      const after = src2.slice(m2.index + m2[0].length, m2.index + m2[0].length + 200);
+    for (const m2 of src2.matchAll(/\.\s*([a-z]+)\s*\(\s*/g)) {
+      if (!ROUTE_VERBS.has(/** @type {string} */ (m2[1]))) continue;
+      const after = src2.slice((m2.index ?? 0) + m2[0].length, (m2.index ?? 0) + m2[0].length + 200);
       const sm = after.match(/^(['"])([^'"\n]*)\1\s*[,)]/) || after.match(/^`([^`$\n]*)`\s*[,)]/);
-      if (sm) statics.push(sm[2] ?? sm[1]);
-      else dynamics.push(`${m2[0].trim()}${after.slice(0, 30)}…`);
-    }
-    // r17：.use(path, handler) 是標準寫法——字串開頭必須整顆靜態；非字串（middleware／router
-    //   掛載、限速器迴圈的變數路徑）跳過。記錄殘餘：use＋變數路徑掛 handler 無法與基建區分。
-    for (const m2 of src2.matchAll(/\.use\s*\(\s*/g)) {
-      const after = src2.slice(m2.index + m2[0].length, m2.index + m2[0].length + 200);
-      if (!/^['"`]/.test(after)) continue;
-      const sm = after.match(/^(['"])([^'"\n]*)\1\s*[,)]/) || after.match(/^`([^`$\n]*)`\s*[,)]/);
-      if (sm) statics.push(sm[2] ?? sm[1]);
-      else dynamics.push(`.use(${after.slice(0, 30)}…`);
+      if (sm) {
+        const p = /** @type {string} */ (sm[2] ?? sm[1]);
+        if (p.startsWith('/')) statics.push(p);
+        continue;
+      }
+      if (m2[1] === 'use' && !/^['"`]/.test(after)) continue;
+      dynamics.push(`.${m2[1]}(${after.slice(0, 30)}…`);
     }
     return { statics, dynamics };
   };
@@ -666,7 +668,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
     '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
   // ②g bracket 記法禁令（r17）：routes['all'](…) 讓動詞偵測失效——具外連能力檔案禁止
-  const BRACKET_ROUTE_RE = /\[\s*['"`](?:get|post|put|delete|patch|all|head|options|use|route)['"`]\s*\]\s*\(/;
+  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['\"\`](?:${[...ROUTE_VERBS].join('|')})['\"\`]\\s*\\]\\s*\\(`);
   /** @type {string[]} */ const bracketRoutes = [];
   for (const rf of routeFiles) {
     const cl3 = importClosure([rf]);
@@ -677,6 +679,9 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.ok(BRACKET_ROUTE_RE.test("marketRoutes['all']('/x', h)"), 'bracket 偵測探針');
   assert.ok(BRACKET_ROUTE_RE.test("app['get']('/x', h)"), 'bracket 偵測探針：任意 receiver（r18 繞法）');
   assert.equal(parseRouteArgs("app.use ('/api/sp', h)").statics[0], '/api/sp', '動詞與括號間空白（r18 繞法）');
+  assert.equal(parseRouteArgs("marketRoutes. get('/api/ds', h)").statics[0], '/api/ds', '點後空白（r19 繞法）');
+  assert.equal(parseRouteArgs("r.trace('/api/tr', h)").statics[0], '/api/tr', 'METHODS 全集動詞（r19 繞法）');
+  assert.deepEqual(parseRouteArgs("res.get('Origin')").statics, [], '非 / 開頭字串＝getter、不入錨定');
   // ②h package-imports 別名禁令（r17）：#alias 同時繞過閉包與套件分類——後端 runtime 明文禁止
   /** @type {string[]} */ const hashAliases = [];
   for (const rel of scanTargets) {
@@ -734,6 +739,11 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.deepEqual(pkgProblems, [],
     `bare 套件分類失敗（新套件必須先分類、外連套件的匯入者必須登記）：\n  ${pkgProblems.join('\n  ')}`);
   for (const [p, reg] of PACKAGE_REGISTRY) assert.ok(reg.why.trim().length > 0, `PACKAGE_REGISTRY「${p}」缺 why`);
+  for (const [k, v] of ALLOWED) assert.ok(v.why.trim().length > 0, `ALLOWED「${k}」缺 why`);
+  for (const [k, v] of COMMENT_MENTIONS) assert.ok(v.why.trim().length > 0, `COMMENT_MENTIONS「${k}」缺 why`);
+  for (const [k, v] of SPAWN_MENTIONS) assert.ok(v.why.trim().length > 0, `SPAWN_MENTIONS「${k}」缺 why`);
+  for (const [k, v] of ROUTE_EXEMPT) assert.ok(v.trim().length > 0, `ROUTE_EXEMPT「${k}」缺 why`);
+  for (const [k, v] of SPAWNERS) assert.ok(String(v).trim().length > 0, `SPAWNERS「${k}」缺 why`);
   const pkgStale = [...PACKAGE_REGISTRY.keys()].filter((p) => !seenPkgs.has(p));
   assert.deepEqual(pkgStale, [], `PACKAGE_REGISTRY 空轉登記：\n  ${pkgStale.join('\n  ')}`);
   // 分類器探針
@@ -761,6 +771,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['WebSocket 全域（r6）', 'const ws = new WebSocket(url);'],
     ['DNS 解析（r6）', "import { resolve4 } from 'node:dns/promises';"],
     ['裸 dns 模組（r6）', "const dns = require('dns/promises');"],
+    ['WebSocket 成員形（r19 繞法）', 'export const s = (u) => new globalThis.WebSocket(u);'],
+    ['WebSocket computed', "const W = globalThis['WebSocket'];"],
     ['MIME 字串不掩護同行 fetch（r4）', "const accept = '*/*'; return fetch(url);"],
     ['字串含 // 不掩護同行 fetch（r4）', "const label = ' // literal'; return fetch(url);"],
     ['反引號含 /* 不掩護同行 fetch（r4）', 'const marker = `/*`; return fetch(url);'],
