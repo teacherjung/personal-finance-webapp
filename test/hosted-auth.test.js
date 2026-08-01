@@ -668,7 +668,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
     '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
   // ②g bracket 記法禁令（r17）：routes['all'](…) 讓動詞偵測失效——具外連能力檔案禁止
-  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['\"\`](?:${[...ROUTE_VERBS].join('|')})['\"\`]\\s*\\]\\s*\\(`);
+  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['"\`](?:${[...ROUTE_VERBS].join('|')})['"\`]\\s*\\]\\s*\\(`);
   /** @type {string[]} */ const bracketRoutes = [];
   for (const rf of routeFiles) {
     const cl3 = importClosure([rf]);
