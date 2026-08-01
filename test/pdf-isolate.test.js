@@ -304,6 +304,14 @@ test('邊收邊數｜超標當場 cancel、**不把超標那批收下**（這才
   assert.equal(page.state.cancelled, true, '超標要當場 cancel 上游，不能繼續讓它產生節點');
   assert.equal(page.state.delivered, half * 2 + 100,
     '只該讀到觸發超標的那個 chunk 就停——再多讀就不是「邊收邊數」了');
+  // ⚠️ Codex r2 Low：上面只看得到「上游送了多少」，看不到**內部有沒有先收下再檢查**。
+  //    用同一批資料量到剛好不超標，證明「檢查通過的才進 items」——把 push 移到檢查前就會紅。
+  const okPage = fakePage([half, MAX_PDF_TEXT_ITEMS - half]);
+  const okRes = await readPageTextCapped(/** @type {any} */ (okPage), 0, '測試檔');
+  assert.equal(okRes.items.length, MAX_PDF_TEXT_ITEMS, '剛好等於上限要全部收下（邊界）');
+  const overPage = fakePage([MAX_PDF_TEXT_ITEMS, 7]);
+  const over = await errOf(readPageTextCapped(/** @type {any} */ (overPage), 0, '測試檔'));
+  assert.equal(over.code, 'pdf_too_many_text_items', '多一個 chunk 就要 throw');
 });
 
 test('邊收邊數｜**改回 getTextContent 就會紅**：本題直接打 readPageTextCapped，不經 PDF', async () => {
@@ -382,4 +390,26 @@ test('併發上限｜同時只有一顆在跑（序列化＝上限 1，兩顆 25
   await Promise.all([throughPdfQueueForTest(work), throughPdfQueueForTest(work), throughPdfQueueForTest(work)]);
   assert.equal(peak, 1, `同時跑了 ${peak} 顆——行程隔離只防得住一顆，兩顆就撐爆容器`);
   resetPdfQueueForTest();
+});
+
+test('併發上限｜**production 的 extractPdfLines 真的走佇列**（繞過去就白搭——Codex r2 Low）', async () => {
+  // 前兩題只驗 helper；若有人把 extractPdfLines 改成直接呼叫 runInChild，那兩題照樣綠。
+  // 這題從 production 入口進去，證明深度真的被算到。
+  const saved = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  resetPdfQueueForTest();
+  try {
+    let seenDepth = 0;
+    let release = () => {};
+    const blocked = new Promise((res) => { release = () => res([]); });
+    // 用一個永遠不會被呼叫的 inProcess：HOSTED 走子行程，我們只看深度有沒有被算到
+    const p = extractPdfLines('statement', async () => [], new Uint8Array([1, 2, 3]), undefined);
+    seenDepth = pdfQueueDepthForTest();
+    assert.equal(seenDepth, 1, 'production 入口沒有把請求算進佇列深度＝有人繞過了佇列');
+    release();
+    await Promise.allSettled([p, blocked]);
+  } finally {
+    if (saved === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = saved;
+    resetPdfQueueForTest();
+  }
 });
