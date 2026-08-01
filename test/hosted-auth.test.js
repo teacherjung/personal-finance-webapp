@@ -368,7 +368,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   //   呼叫外部程式（child_process 家族）＝**需登記 SPAWNERS**（William 2026-08-01 裁決）——curl/wget 等
   //   同樣是外連通道；#350 的 PDF 行程隔離落地時在此登記。
   const CORE_NET = 'https?|http2|net|tls|dgram|dns(?:\\/promises)?';
-  const CLIENTS = 'undici|axios|node-fetch|got';
+  const CLIENTS = 'undici|axios|node-fetch|got|@supabase\\/(?:ssr|supabase-js)';   // r11：Supabase SDK 也是網路 client
   const OUTBOUND_RE = new RegExp([
     '(^|[^.\\w])fetch\\b',                     // 裸 fetch：呼叫、別名、預設參數
     '(^|[^.\\w])WebSocket\\b',                 // Node 22+ 內建全域（r6：不需 import 就能對外）
@@ -445,6 +445,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/services/stock-fundamentals.js', '端點主：SEC（fetchImpl 慣例＋globalThis.fetch 預設）'],
     ['lib/services/insights.js', '傳導：把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點'],
     ['lib/services/ib-sync.js', '傳導：注入 fetchFlex（lib/ib.js），自己不開新端點'],
+    ['lib/services/auth.js', '端點主：Supabase Auth（@supabase/ssr client；HOSTED 登入／驗證，上游＝SUPABASE_URL）'],
   ]);
   // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
   // ⚠️ r8→r9 收緊到**片段級**：登記「精確命中字串集合」——r8 的數量級仍有「刪一個提及＋
@@ -465,20 +466,27 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const SPAWNERS = new Map([
     // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
   ]);
-  // r10：只掃 .js 的話，放個 .mjs/.cjs 就整個隱形（mjs 是正常 ESM 副檔名）——判準抽函式＋探針釘住
+  // r10→r11：Node 22.18+ 連 .ts/.mts/.cts 都能直接執行——「可執行」判準涵蓋全家族；
+  //   另立 fail-closed 禁令：本 repo 零建置、runtime 只准 .js，出現其他可執行副檔名＝直接紅。
   /** @param {string} f */
-  const isRuntimeModule = (f) => /\.(?:js|mjs|cjs)$/.test(f);
+  const isRuntimeCapable = (f) => /\.(?:js|mjs|cjs|ts|mts|cts)$/.test(f);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
     const rel = `${dir}/${f}`;
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
-    return isRuntimeModule(f) ? [rel] : [];
+    return isRuntimeCapable(f) ? [rel] : [];
   });
+  // r11：server.js 是正式進入點＋路由所在——inline fetch 不掃它就整個繞過（實測）
+  const scanTargets = [...walk('lib'), 'server.js'];
+  const nonJs = scanTargets.filter((rel) => !rel.endsWith('.js'));
+  assert.deepEqual(nonJs, [],
+    `掃描範圍出現非 .js 的可執行模組（本 repo 零建置、runtime 只准 .js）：\n  ${nonJs.join('\n  ')}\n` +
+    'Node 22.18+ 連 .mts/.cts 都能直接跑——要引進新副檔名＝先來改這條禁令，讓改動可被審。');
   /** @type {Map<string, string>} */ const detected = new Map();
   /** @type {Map<string, string[]>} */ const rawOnly = new Map();
   /** @type {string[]} */ const spawners = [];
   /** @type {Map<string, string[]>} */ const spawnRawOnly = new Map();
-  for (const rel of walk('lib')) {
+  for (const rel of scanTargets) {
     const src = readFileSync(pjoin(ROOT, rel), 'utf8');
     const stripped = stripComments(src);
     if (SPAWN_RE.test(stripped)) spawners.push(rel);
@@ -584,8 +592,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.ok(reconcileMentions(new Map(), REC_SYN(), () => false).backward.length === 1, '對帳器：假登記（無對應提及）必紅');
   assert.ok(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => true).backward.length === 1, '對帳器：登記檔其實是真命中必紅（該搬家）');
   // walker 副檔名探針（r10 機制洞）：.mjs/.cjs 是正常 runtime 模組、不可隱形
-  for (const ext of ['x.js', 'x.mjs', 'x.cjs']) assert.ok(isRuntimeModule(ext), `walker 判準漏掃 ${ext}`);
-  for (const ext of ['x.json', 'x.md', 'x.d.ts']) assert.ok(!isRuntimeModule(ext), `walker 判準誤掃 ${ext}`);
+  for (const ext of ['x.js', 'x.mjs', 'x.cjs', 'x.ts', 'x.mts', 'x.cts']) assert.ok(isRuntimeCapable(ext), `walker 判準漏掃 ${ext}`);
+  for (const ext of ['x.json', 'x.md']) assert.ok(!isRuntimeCapable(ext), `walker 判準誤掃 ${ext}`);
   // spawn 安全網探針（r8 機制洞）：剝離器被 regex 騙走時，生掃軌必須還看得到
   const SPAWN_NET_PROBE = 'const slashMatcher = /[//]/; const cluster2 = await import(\'node:cluster\');';
   assert.equal(SPAWN_RE.test(stripComments(SPAWN_NET_PROBE)), false, '（前提確認）此探針就是會騙過乾淨軌的形狀');
