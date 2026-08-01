@@ -627,10 +627,13 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     for (const m2 of src2.matchAll(/\.\s*([a-z]+)\s*\(\s*/g)) {
       if (!ROUTE_VERBS.has(/** @type {string} */ (m2[1]))) continue;
       const after = src2.slice((m2.index ?? 0) + m2[0].length, (m2.index ?? 0) + m2[0].length + 200);
-      const sm = after.match(/^(['"])([^'"\n]*)\1\s*[,)]/) || after.match(/^`([^`$\n]*)`\s*[,)]/);
+      const sm = after.match(/^(['"])([^'"\n]*)\1\s*([,)])/) || after.match(/^`([^`$\n]*)`\s*([,)])/);
       if (sm) {
-        const p = /** @type {string} */ (sm[2] ?? sm[1]);
+        const p = /** @type {string} */ (sm.length === 4 ? sm[2] : sm[1]);
+        const delim = /** @type {string} */ (sm.length === 4 ? sm[3] : sm[2]);
+        if (delim === ')') continue;
         if (p.startsWith('/')) statics.push(p);
+        else dynamics.push(`.${m2[1]}('${p}', …)＝非 / 開頭的註冊路徑（r20：'*' 萬用等 fail-closed）`);
         continue;
       }
       if (m2[1] === 'use' && !/^['"`]/.test(after)) continue;
@@ -675,13 +678,23 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     if (![...ALLOWED.keys()].some((m4) => cl3.includes(m4))) continue;
     if (BRACKET_ROUTE_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(rf);
   }
+  // r20：computed 動詞（routes[verb](…)）＝識別字 bracket 呼叫全面禁令（實測誤傷面＝零）
+  const COMPUTED_CALL_RE = /\[\s*[A-Za-z_$][\w$]*\s*\]\s*\(/;
+  for (const rf of routeFiles) {
+    const cl4 = importClosure([rf]);
+    if (![...ALLOWED.keys()].some((m5) => cl4.includes(m5))) continue;
+    if (COMPUTED_CALL_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(`${rf}（computed 動詞）`);
+  }
   assert.deepEqual(bracketRoutes, [], `具外連能力的路由檔使用 bracket 記法註冊（動詞偵測失效＝禁止）：\n  ${bracketRoutes.join('\n  ')}`);
+  assert.ok(COMPUTED_CALL_RE.test("marketRoutes[verb]('/api/x', h)"), 'computed 動詞探針（r20 繞法）');
   assert.ok(BRACKET_ROUTE_RE.test("marketRoutes['all']('/x', h)"), 'bracket 偵測探針');
   assert.ok(BRACKET_ROUTE_RE.test("app['get']('/x', h)"), 'bracket 偵測探針：任意 receiver（r18 繞法）');
   assert.equal(parseRouteArgs("app.use ('/api/sp', h)").statics[0], '/api/sp', '動詞與括號間空白（r18 繞法）');
   assert.equal(parseRouteArgs("marketRoutes. get('/api/ds', h)").statics[0], '/api/ds', '點後空白（r19 繞法）');
   assert.equal(parseRouteArgs("r.trace('/api/tr', h)").statics[0], '/api/tr', 'METHODS 全集動詞（r19 繞法）');
   assert.deepEqual(parseRouteArgs("res.get('Origin')").statics, [], '非 / 開頭字串＝getter、不入錨定');
+  assert.equal(parseRouteArgs("r.get('*', h)").dynamics.length, 1, "'*' 萬用路徑 fail-closed（r20 繞法）");
+  assert.equal(parseRouteArgs("r.all('*', h)").dynamics.length, 1, "all('*') 同上");
   // ②h package-imports 別名禁令（r17）：#alias 同時繞過閉包與套件分類——後端 runtime 明文禁止
   /** @type {string[]} */ const hashAliases = [];
   for (const rel of scanTargets) {
