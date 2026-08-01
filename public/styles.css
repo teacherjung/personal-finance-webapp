@@ -55,6 +55,8 @@ body {
 }
 .brand-title { font-family: var(--serif); font-weight: 800; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
 .brand-subtitle { color: var(--text-dim); font-size: 10.5px; font-weight: 700; margin-top: 2px; letter-spacing: 0; }
+.nav-rail { display: contents; }
+.nav-more { display: none; }
 #nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 #nav a {
   display: flex; align-items: center; gap: 11px;
@@ -631,13 +633,20 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .brand-mark { width: 38px; height: 38px; }
   .brand-title { font-size: 14px; }
   .brand-subtitle { display: none; }
+  .nav-rail { position: relative; display: flex; min-width: 0; }
   #nav {
-    min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; padding: 6px 6px 8px;
+    min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; padding: 6px 34px 8px 6px;
     scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; overscroll-behavior-x: contain;
   }
   #nav::-webkit-scrollbar { height: 5px; }
   #nav::-webkit-scrollbar-track { background: transparent; }
   #nav::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 5px; }
+  .nav-more {
+    position: absolute; z-index: 1; top: 6px; right: 0; bottom: 8px;
+    width: 28px; display: grid; place-items: center; pointer-events: none;
+    background: var(--bg-2); border-left: 2px solid var(--frame);
+    color: var(--accent-hover); font-size: 24px; font-weight: 700; line-height: 1;
+  }
   #nav a { flex: 0 0 auto; padding: 6px 9px; gap: 6px; white-space: nowrap; }
   #nav a .ic { width: 16px; height: 16px; }
   .sidebar-foot { margin: 0; display: block; }
