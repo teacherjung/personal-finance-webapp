@@ -7,6 +7,7 @@ import { formatPortfolioMoney } from './portfolio-format.js';
 import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 import { rowFees, rowNetSigned } from './securities-view.js';
 import { scorecardResult } from './stock-research-score.js';
+import { stockFundamentalsHtml } from './stock-research-fundamentals.js';
 import { ACCENT } from './theme.js';
 
 /** 就地白話解釋。P4 只負責把 data-stock-info 接到 openInfo。 */
@@ -156,7 +157,8 @@ export function valuationDistance(quotePrice, quoteCurrency, scenarioValue, scen
  *   quote?:unknown,
  *   viewCurrency?:unknown,
  *   usdRate?:unknown,
- *   activeTab?:unknown
+ *   activeTab?:unknown,
+ *   fundamentals?:unknown
  * }} input
  */
 export function buildStockResearchViewModel(input = {}) {
@@ -196,6 +198,7 @@ export function buildStockResearchViewModel(input = {}) {
     checkpoints,
     scoreHistory,
     trades: stockResearchTrades(model.symbol, input.trades),
+    fundamentals: input.fundamentals,
     activeTab: normalizeStockResearchTab(input.activeTab),
     // 美元檢視沒有有效匯率時退回台幣，絕不拿 1:1 捏造美元金額。
     viewCurrency: input.viewCurrency === 'USD' && usdRate != null && usdRate > 0 ? 'USD' : 'TWD',
@@ -346,40 +349,6 @@ function scoreHtml(view, h) {
       <div class="stock-help-links">${h.info('score', '總分怎麼看？')}${h.info('zero', '0 分和空白')}</div>
     </div>
     <div class="stock-score-list">${rows}</div>
-  </section>`;
-}
-
-/** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
-function metricsHtml(view, h) {
-  const metrics = view.watchMetrics;
-  const legacy = text(view.research?.metrics);
-  const rows = metrics.length
-    ? metrics.map(metric => {
-      const value = finiteOrNull(metric?.value);
-      const display = value == null
-        ? '<span class="muted">尚未取得</span>'
-        : `${plainNumber(value, 4)}${text(metric?.unit) ? ` ${h.e(metric.unit)}` : ''}`;
-      return `<tr>
-        <td><b>${h.e(text(metric?.label) || '未命名指標')}</b></td>
-        <td class="num">${display}</td>
-        <td>${h.e(text(metric?.period) || '—')}</td>
-        <td>${h.e(text(metric?.source) || '—')}</td>
-      </tr>`;
-    }).join('')
-    : '<tr><td colspan="4" class="empty">尚無自訂指標</td></tr>';
-
-  return `<section class="stock-section">
-    <div class="stock-section-heading">
-      <h2>關鍵指標</h2>
-      ${h.info('missing', '「尚未取得」是什麼？')}
-    </div>
-    ${legacy ? `<div class="stock-legacy-note"><span>既有觀察重點</span><p>${h.multiline(legacy)}</p></div>` : ''}
-    <div class="tbl-wrap stock-table-wrap">
-      <table class="stock-metrics-table">
-        <thead><tr><th>指標</th><th class="num">最新值</th><th>期間</th><th>來源</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
   </section>`;
 }
 
@@ -540,7 +509,13 @@ function activeTabHtml(view, h) {
     && ['score', 'valuation', 'thesis'].includes(view.activeTab);
   if (needsResearch) return missingResearchHtml(view, h);
 
-  if (view.activeTab === 'fundamentals') return metricsHtml(view, h);
+  if (view.activeTab === 'fundamentals') {
+    return stockFundamentalsHtml({
+      cache: view.fundamentals,
+      watchMetrics: view.watchMetrics,
+      legacyMetrics: view.research?.metrics
+    }, { esc: h.e });
+  }
   if (view.activeTab === 'score') return scoreHtml(view, h);
   if (view.activeTab === 'valuation') return valuationHtml(view, h);
   if (view.activeTab === 'thesis') {

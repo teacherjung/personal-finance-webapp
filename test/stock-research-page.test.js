@@ -66,7 +66,21 @@ function baseData(symbol = 'AAPL') {
       }]
     },
     summary: { netWorth: 2000000 },
-    settings: { usdTwd: 32, ibConcentrationPct: 5, quotesLastAt: '2026-07-25T08:00:00.000Z' }
+    settings: { usdTwd: 32, ibConcentrationPct: 5, quotesLastAt: '2026-07-25T08:00:00.000Z' },
+    fundamentals: {
+      symbol,
+      freshness: 'fresh',
+      fresh: true,
+      stale: false,
+      fetchedAt: '2026-07-28T00:00:00.000Z',
+      data: {
+        symbol,
+        market: 'US',
+        company: { cik: '0000000001', name: `${symbol} Official`, sic: '3571', fiscalYearEnd: '12-31' },
+        metrics: {},
+        warnings: []
+      }
+    }
   };
 }
 
@@ -78,13 +92,19 @@ function pageHarness(data = baseData(), nodes = {}) {
   const infos = [];
   const toasts = [];
   const root = fakeView(nodes);
-  const responseOf = path => ({
-    '/holdings': data.holdings,
-    '/research': data.research,
-    '/securities': data.securities,
-    '/summary': data.summary,
-    '/settings': data.settings
-  })[path];
+  const responseOf = path => {
+    if (/^\/stock-fundamentals\/[^/]+\/refresh$/.test(path)) {
+      return data.fundamentalsRefresh || data.fundamentals;
+    }
+    if (/^\/stock-fundamentals\/[^/]+$/.test(path)) return data.fundamentals;
+    return ({
+      '/holdings': data.holdings,
+      '/research': data.research,
+      '/securities': data.securities,
+      '/summary': data.summary,
+      '/settings': data.settings
+    })[path];
+  };
   const render = createStockResearchPage({
     api: async (path, options) => {
       calls.push({ path, options });
@@ -174,6 +194,82 @@ test('個股研究頁控制器｜平行讀五個唯讀來源，總覽與交易�
   assert.match(harness.root.innerHTML, /data-stock-tab="trades"/);
   assert.match(harness.root.innerHTML, /我的交易紀錄/);
   assert.doesNotMatch(harness.root.innerHTML, /長期現金流|6\.4 萬/);
+});
+
+test('個股研究頁基本面｜只在基本面頁籤讀快取；fresh 不自動重抓', async () => {
+  const harness = pageHarness();
+  harness.setHash('#stock?symbol=AAPL&tab=fundamentals');
+  await harness.render();
+
+  assert.deepEqual(harness.calls.filter(call => call.path.startsWith('/stock-fundamentals')), [{
+    path: '/stock-fundamentals/AAPL',
+    options: undefined
+  }]);
+  assert.match(harness.root.innerHTML, /AAPL Official/);
+  assert.match(harness.root.innerHTML, /SEC 官方資料已是最新快取/);
+  assert.match(harness.root.innerHTML, /研究這家公司要問的八組問題/);
+});
+
+test('個股研究頁基本面｜missing 先畫可用內容再背景更新，手動研究不被外部資料擋住', async () => {
+  const data = baseData();
+  data.fundamentals = {
+    symbol: 'AAPL',
+    freshness: 'missing',
+    fresh: false,
+    stale: false,
+    fetchedAt: null,
+    data: null
+  };
+  data.fundamentalsRefresh = baseData().fundamentals;
+  const refreshButton = button();
+  const infoButton = button({ stockInfo: 'missing' });
+  const mount = {
+    innerHTML: '',
+    querySelectorAll: selector => ({
+      '[data-stock-fundamentals-refresh]': [refreshButton],
+      '[data-stock-info]': [infoButton]
+    })[selector] || []
+  };
+  const harness = pageHarness(data, { '[data-stock-fundamentals-root]': mount });
+  harness.setHash('#stock?symbol=AAPL&tab=fundamentals');
+  await harness.render();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(harness.calls.filter(call => call.path.startsWith('/stock-fundamentals')).map(call => ({
+    path: call.path,
+    method: call.options?.method
+  })), [
+    { path: '/stock-fundamentals/AAPL', method: undefined },
+    { path: '/stock-fundamentals/AAPL/refresh', method: 'POST' }
+  ]);
+  assert.match(mount.innerHTML, /AAPL Official/);
+  assert.match(mount.innerHTML, /關鍵指標/);
+  assert.match(mount.innerHTML, /營收/);
+  infoButton.onclick();
+  assert.equal(harness.infos.at(-1).title, '「尚未取得」是 0 嗎？',
+    '背景替換基本面內容後，新說明按鈕仍要重新綁定');
+});
+
+test('個股研究頁基本面｜fresh 仍可手動更新，按鈕只走同一支 refresh API', async () => {
+  const refreshButton = button();
+  const mount = {
+    innerHTML: '',
+    querySelectorAll: selector => selector === '[data-stock-fundamentals-refresh]' ? [refreshButton] : []
+  };
+  const harness = pageHarness(baseData(), { '[data-stock-fundamentals-root]': mount });
+  harness.setHash('#stock?symbol=AAPL&tab=fundamentals');
+  await harness.render();
+
+  assert.equal(typeof refreshButton.onclick, 'function');
+  refreshButton.onclick();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const refreshCalls = harness.calls.filter(call => call.path.endsWith('/refresh'));
+  assert.deepEqual(refreshCalls, [{
+    path: '/stock-fundamentals/AAPL/refresh',
+    options: { method: 'POST' }
+  }]);
+  assert.deepEqual(harness.toasts.at(-1), { message: '官方基本面已更新', error: false });
 });
 
 test('個股研究頁控制器｜缺 symbol 直接顯示引導，不讀資料也不自動建立研究', async () => {
@@ -268,6 +364,58 @@ test('個股研究頁控制器｜同代號快速切頁籤時，舊頁晚回來�
   await oldRender;
   assert.match(root.innerHTML, /data-stock-tab="trades"/);
   assert.doesNotMatch(root.innerHTML, /data-stock-tab="overview"/);
+});
+
+test('個股研究頁基本面｜AAPL 背景更新慢回來，不得改寫已切到的 GOOGL 頁面', async () => {
+  let releaseRefresh;
+  const delayedRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+  let hash = '#stock?symbol=AAPL&tab=fundamentals';
+  const root = fakeView();
+  const mount = {
+    innerHTML: '',
+    querySelectorAll: () => []
+  };
+  root.querySelector = selector => selector === '[data-stock-fundamentals-root]' ? mount : null;
+  const aapl = baseData('AAPL');
+  const googl = baseData('GOOGL');
+  let current = aapl;
+  const render = createStockResearchPage({
+    api: async (path, options) => {
+      if (path === '/stock-fundamentals/AAPL') {
+        return { symbol: 'AAPL', freshness: 'missing', fresh: false, stale: false, data: null };
+      }
+      if (path === '/stock-fundamentals/AAPL/refresh' && options?.method === 'POST') return delayedRefresh;
+      return ({
+        '/holdings': current.holdings,
+        '/research': current.research,
+        '/securities': current.securities,
+        '/summary': current.summary,
+        '/settings': current.settings
+      })[path];
+    },
+    getView: () => root,
+    getHash: () => hash,
+    getRouteSeq: () => 1,
+    getViewCurrency: () => 'TWD',
+    esc,
+    openForm: () => {},
+    openInfo: () => {},
+    toast: () => {},
+    today: () => '2026-07-26'
+  });
+
+  await render();
+  const aaplMountBeforeNavigation = mount.innerHTML;
+  current = googl;
+  hash = '#stock?symbol=GOOGL&tab=overview';
+  await render();
+  assert.match(root.innerHTML, /GOOGL/);
+
+  releaseRefresh(aapl.fundamentals);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(root.innerHTML, /GOOGL/);
+  assert.doesNotMatch(root.innerHTML, /AAPL Official/);
+  assert.equal(mount.innerHTML, aaplMountBeforeNavigation, '離頁後舊背景回應連舊 mount 都不可再寫');
 });
 
 test('個股研究頁互動｜說明、編輯與檢查點都接正確入口，儲存後仍在原頁才重畫', async () => {
