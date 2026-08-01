@@ -13,7 +13,7 @@ export const MONTHLY_FOREST_DATA = Object.freeze([
   { key: '2026-06', label: '6 月', yearLabel: '2026 年 6 月', netWorth: 1238, income: 18.8, expense: 12.2, emergencyMonths: 8.0, discipline: 4 },
   { key: '2026-07', label: '7 月', yearLabel: '2026 年 7 月', netWorth: 1219, income: 19.8, expense: 11.2, emergencyMonths: 7.9, discipline: 3 },
   { key: '2026-08', label: '8 月', yearLabel: '2026 年 8 月', netWorth: 1248, income: 19.8, expense: 11.2, emergencyMonths: 8.2, discipline: 4 }
-]);
+].map(month => Object.freeze(month)));
 
 /** @param {readonly any[]} months @param {number} index */
 export function netWorthChangeAt(months, index) {

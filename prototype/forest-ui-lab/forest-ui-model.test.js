@@ -7,6 +7,13 @@ import {
   netWorthTrendFor
 } from './forest-ui-model.js';
 
+test('月份基準資料的陣列與每筆內容都不可被意外改寫', () => {
+  assert.equal(Object.isFrozen(MONTHLY_FOREST_DATA), true);
+  assert.equal(MONTHLY_FOREST_DATA.every(month => Object.isFrozen(month)), true);
+  assert.equal(Reflect.set(MONTHLY_FOREST_DATA[0], 'netWorth', 0), false);
+  assert.equal(MONTHLY_FOREST_DATA[0].netWorth, 1090);
+});
+
 test('本月淨資產變動以目前月減上月底，不冒充投資報酬', () => {
   const latest = netWorthChangeAt(MONTHLY_FOREST_DATA, MONTHLY_FOREST_DATA.length - 1);
   assert.deepEqual(latest && { amount: latest.amount, pct: Number(latest.pct?.toFixed(6)) }, {
