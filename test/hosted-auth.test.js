@@ -326,7 +326,9 @@ test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一
 // 「從清單反查」只證得了「表上的每一道都掛上了」，證不了「該上表的都上了」。
 //
 // 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝我們會去打誰）跟它對帳。
-// 這一題守的不是某個 bug，是**「有人新增 fetch() 卻忘了限速」這個動作**。
+// 這一題守的不是某個 bug，是**「有人新增未登記的對外模組／能力卻忘了限速」這個動作**。
+// ⚠️ 誠實劃界（r7）：已登記模組（ALLOWED）**改打新主機本題不偵測**——主機級對帳（每模組
+// 主機清單×URL 掃描雙向對帳）＝另案（William 2026-08-01 裁決另開 PR）。
 
 test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增 fetch 卻忘了限速就會在這裡紅）', async () => {
   const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
@@ -450,7 +452,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/repo.js', '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連'],
   ]);
   // 外部程式呼叫（child_process）＝獨立類別、需登記（William 2026-08-01 裁決）
-  const SPAWN_RE = /node:child_process\b|(?:from|import\s*\(|require\s*\()\s*['"`]child_process['"`]/;
+  const SPAWN_RE = /node:(?:child_process|cluster)\b|(?:from|import\s*\(|require\s*\()\s*['"`](?:child_process|cluster|execa|zx|cross-spawn|shelljs)['"`]/;
   /** @type {Map<string, string>} */
   const SPAWNERS = new Map([
     // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
@@ -533,6 +535,10 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['node: 前綴 child_process（r6）', "import { execFile } from 'node:child_process';"],
     ['裸 child_process（r6）', "const cp = require('child_process');"],
     ['動態 import child_process（r6）', "const cp = await import('child_process');"],
+    ['node:cluster fork（r7）', "import cluster from 'node:cluster';"],
+    ['execa 包裝器（r7）', "import { execa } from 'execa';"],
+    ['zx 包裝器（r7）', "import { $ } from 'zx';"],
+    ['cross-spawn（r7）', "const spawn = require('cross-spawn');"],
   ];
   for (const [name, snippet] of SPAWN_PROBES) assert.ok(SPAWN_RE.test(stripComments(snippet)), `SPAWN 偵測抓不到：${name}`);
   const MENTION_PROBES = [
