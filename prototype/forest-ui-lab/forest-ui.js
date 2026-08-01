@@ -126,18 +126,21 @@ function buildMonthTrail() {
     button.addEventListener('click', () => {
       selectedMonthIndex = index;
       renderSelectedMonth();
+      document.querySelector('#monthPicker')?.removeAttribute('open');
+      /** @type {HTMLElement|null} */ (document.querySelector('#monthPickerSummary'))?.focus();
     });
     track.append(button);
   });
 }
 
 function updateMonthTrailSelection() {
+  const pickerOpen = document.querySelector('#monthPicker')?.hasAttribute('open');
   document.querySelectorAll('[data-month-index]').forEach((item) => {
     const button = /** @type {HTMLButtonElement} */ (item);
     const active = Number(button.dataset.monthIndex) === selectedMonthIndex;
     button.setAttribute('aria-selected', String(active));
     button.tabIndex = active ? 0 : -1;
-    if (active) {
+    if (active && pickerOpen) {
       const reducedMotion = globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
       button.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
     }
@@ -157,13 +160,21 @@ function renderSelectedMonth() {
   const hasComparablePct = Boolean(change && pct !== null);
   const state = hasComparablePct ? atmosphereForChange(/** @type {number} */ (pct)) : 'neutral';
   const atmosphere = FOREST_ATMOSPHERES[state];
+  const monthStatus = !change ? '建立基準' : pct === null ? '無法比較' : atmosphere.statusLabel;
   const cashflowNet = month.income - month.expense;
   const windowStart = Math.max(0, selectedMonthIndex - selectedPeriod + 1);
   const periodMonths = MONTHLY_FOREST_DATA.slice(windowStart, selectedMonthIndex + 1);
   const averageCashflow = periodMonths.reduce((total, item) => total + item.income - item.expense, 0) / periodMonths.length;
 
   document.body.dataset.weather = state;
-  setText('#selectedMonthLabel', `${month.yearLabel}・合成情境`);
+  setText('#selectedMonthLabel', `${monthStatus}・合成情境`);
+  setText('#monthPickerLabel', month.yearLabel);
+  setText('#monthPickerStatus', monthStatus);
+  const monthPickerSummary = htmlElement('#monthPickerSummary');
+  if (monthPickerSummary) {
+    monthPickerSummary.dataset.state = state;
+    monthPickerSummary.setAttribute('aria-label', `選擇月份，目前為 ${month.yearLabel}，${monthStatus}`);
+  }
   const scene = htmlElement('.forest-scene');
   if (scene) scene.dataset.weather = state;
   const sceneArt = imageElement('#sceneArt');
@@ -674,6 +685,15 @@ document.querySelector('#monthTrack')?.addEventListener('keydown', (event) => {
   renderSelectedMonth();
   /** @type {HTMLElement|null} */ (document.querySelector(`[data-month-index="${selectedMonthIndex}"]`))?.focus();
 });
+document.querySelector('#monthPicker')?.addEventListener('toggle', () => {
+  const picker = htmlElement('#monthPicker');
+  document.querySelector('#monthPickerSummary')?.setAttribute('aria-expanded', String(picker?.hasAttribute('open')));
+});
+document.addEventListener('click', (event) => {
+  const picker = htmlElement('#monthPicker');
+  if (!picker?.hasAttribute('open') || !(event.target instanceof Element) || picker.contains(event.target)) return;
+  picker.removeAttribute('open');
+});
 
 document.querySelectorAll('[data-filter]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -719,7 +739,14 @@ function syncTrailWithHash() {
 
 globalThis.addEventListener('hashchange', syncTrailWithHash);
 globalThis.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && focusedCardId) setFocusedCard('');
+  if (event.key !== 'Escape') return;
+  const monthPicker = htmlElement('#monthPicker');
+  if (monthPicker?.hasAttribute('open')) {
+    monthPicker.removeAttribute('open');
+    htmlElement('#monthPickerSummary')?.focus();
+    return;
+  }
+  if (focusedCardId) setFocusedCard('');
 });
 
 hydrateIcons();

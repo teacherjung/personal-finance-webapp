@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>榮祥森・森林 UI 實驗室</title>
-  <link rel="stylesheet" href="forest-ui.css?v=forest-layout-1" />
+  <link rel="stylesheet" href="forest-ui.css?v=forest-month-picker-1" />
   <script src="/vendor/chart.js" defer></script>
-  <script src="forest-ui.js?v=forest-layout-1" type="module" defer></script>
+  <script src="forest-ui.js?v=forest-month-picker-1" type="module" defer></script>
 </head>
 <body>
   <aside class="forest-rail" aria-label="森林地圖">
@@ -31,9 +31,26 @@
 
   <main>
     <header class="topbar">
-      <div>
-        <p class="eyebrow" id="selectedMonthLabel">2026 年 8 月・合成情境</p>
+      <div class="topbar-title">
+        <p class="eyebrow" id="selectedMonthLabel">顯著增加・合成情境</p>
         <h1>森林總覽</h1>
+        <section class="month-trail" aria-label="月份導覽">
+          <button class="month-step" id="previousMonth" type="button" aria-label="上一個月">‹</button>
+          <details class="month-picker" id="monthPicker">
+            <summary id="monthPickerSummary" role="button" aria-expanded="false" aria-haspopup="listbox">
+              <span id="monthPickerLabel">2026 年 8 月</span>
+              <small id="monthPickerStatus">顯著增加</small>
+            </summary>
+            <div class="month-popover">
+              <header>
+                <strong>選擇月份</strong>
+                <span>顏色與符號代表淨資產變動狀態</span>
+              </header>
+              <div class="month-track" id="monthTrack" role="listbox" aria-label="選擇月份"></div>
+            </div>
+          </details>
+          <button class="month-step" id="nextMonth" type="button" aria-label="下一個月">›</button>
+        </section>
       </div>
       <div class="topbar-actions">
         <div class="ambience-toggle" role="group" aria-label="森林動態強度">
@@ -52,12 +69,6 @@
         </button>
       </div>
     </header>
-
-    <section class="month-trail" aria-label="月份時間軸">
-      <button class="month-step" id="previousMonth" type="button" aria-label="上一個月">‹</button>
-      <div class="month-track" id="monthTrack" role="listbox" aria-label="選擇月份"></div>
-      <button class="month-step" id="nextMonth" type="button" aria-label="下一個月">›</button>
-    </section>
 
     <div class="layout-bar" id="layoutBar" hidden>
       <strong>版面調整中</strong>
