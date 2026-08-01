@@ -31,6 +31,28 @@ const TMP = mkdtempSync(join(tmpdir(), 'finance-wiring-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 /**
+ * 拿一個**確定空著**的埠。
+ *
+ * ⚠️ 不可以用 `PORT=0` 讓 OS 配（我第一版就是這樣寫的，而且 CI 上一直是綠的）：
+ *    `server.js` 是 `Number(process.env.PORT) || 4321`——**`Number('0')` 是 0、falsy**，
+ *    於是退回 4321，撞上開發者本機正在跑的伺服器（`EADDRINUSE`）。
+ *    CI 上沒人佔 4321，所以這個 bug 只在**開發者自己的機器上**炸，
+ *    而那正是最容易被當成「環境怪怪的」而忽略的地方。
+ * @returns {Promise<number>}
+ */
+async function freePort() {
+  const { createServer } = await import('node:net');
+  return new Promise((resolve, reject) => {
+    const s = createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const p = /** @type {any} */ (s.address()).port;
+      s.close(() => resolve(p));
+    });
+  });
+}
+
+/**
  * 把 server 當**主程式**起來，讀到啟動訊息就收工。
  * 用 spawn 而不是 spawnSync：server 起來之後不會自己結束，spawnSync 只能等到逾時
  *（實測每題白等 8 秒）。這裡改成「看到 ✅ 或超過 12 秒就殺掉」。
@@ -143,7 +165,7 @@ test('HOSTED 啟動時真的把連線逾時套到 server 上（把 server.js 那
   //    所以 `server.js` 的接線刪掉也不會紅——那正是 Codex #8 指出來的假考題。
   const out = await startServer({
     NOTEASY_HOSTED: '1',
-    PORT: '0',                                   // 讓 OS 配一個空閒埠，不會撞到 4321
+    PORT: String(await freePort()),              // ⚠️ 不可以用 '0'：Number('0') 是 falsy，會退回 4321
     SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_ANON_KEY: 'test-anon-key',
     SITE_ORIGIN: 'https://example.com',
@@ -161,7 +183,7 @@ test('HOSTED 啟動時真的把連線逾時套到 server 上（把 server.js 那
 });
 
 test('LOCAL 啟動不套 HOSTED 逾時（零改動契約），啟動訊息也維持原樣', async () => {
-  const out = await startServer({ NOTEASY_HOSTED: '', PORT: '0', STORE_FILE: join(TMP, 'local.db') });
+  const out = await startServer({ NOTEASY_HOSTED: '', PORT: String(await freePort()), STORE_FILE: join(TMP, 'local.db') });
   assert.doesNotMatch(out, /連線逾時（HOSTED）/, 'LOCAL 不該套 HOSTED 的連線逾時');
   assert.match(out, /資料只存在本機/, 'LOCAL 的啟動訊息維持原樣（零改動契約）');
 });

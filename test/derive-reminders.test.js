@@ -1,20 +1,26 @@
 // 「錢的大腦」深度考題：每一條總覽提醒規則、槓桿/斷頭距離邊角、多幣別資產、投組權重。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSummary, computeAssets, computeIb, computeLeverage } from '../lib/derive.js';
+import { buildSummary, computeAssets, computeIb, computeLeverage, monthKey } from '../lib/derive.js';
+
+// 動態日期（2026-08-01 假紅事故）：「本月／近月」語意的 fixture 不可寫死年月——寫死 2026-07 的
+// 「本月」考題在跨月瞬間全 repo 假紅（pre-push 與 CI 全被擋）。本月＝monthKey()；
+// 「近月窗口」（avgMonthlyExpense＝不含本月的前 1–6 個月）用上個月＝永遠在窗內。
+const thisMonthDay = (dd) => `${monthKey()}-${dd}`;
+const prevMonthDay = (dd) => { const n = new Date(); return `${monthKey(new Date(n.getFullYear(), n.getMonth() - 1, 1))}-${dd}`; };
 
 const base = { settings: { usdTwd: 32, emergencyFundMonths: 6, allocationDriftPct: 5 }, accounts: [], holdings: [], transactions: [], subscriptions: [] };
 const remind = (over) => buildSummary({ ...base, ...over, settings: { ...base.settings, ...(over.settings || {}) } }).reminders;
 const hasTitle = (over, re) => remind(over).some(r => re.test(r.title));
 
 test('提醒｜本月現金流為負', () => {
-  assert.ok(hasTitle({ transactions: [{ date: '2026-07-05', type: 'expense', amount: 1000 }, { date: '2026-07-06', type: 'income', amount: 100 }] }, /現金流為負/));
+  assert.ok(hasTitle({ transactions: [{ date: thisMonthDay('05'), type: 'expense', amount: 1000 }, { date: thisMonthDay('06'), type: 'income', amount: 100 }] }, /現金流為負/));
 });
 
 test('提醒｜緊急預備金不足（現金撐不到目標月數）', () => {
   assert.ok(hasTitle({
     accounts: [{ id: 'c', type: 'cash', class: '現金', currency: 'TWD', balance: 1000 }],
-    transactions: [{ date: '2026-06-05', type: 'expense', amount: 2000 }],
+    transactions: [{ date: prevMonthDay('05'), type: 'expense', amount: 2000 }],
   }, /緊急預備金不足/));
 });
 
@@ -108,7 +114,7 @@ test('自審｜緊急預備金：現金分散在「現金」與「cash」兩種 
   const db = {
     settings: { usdTwd: 32 },
     accounts: [{ type: 'cash', class: '現金', currency: 'TWD', balance: 120000 }, { type: 'cash', currency: 'TWD', balance: 900000 }],
-    holdings: [], subscriptions: [], transactions: [{ date: '2026-06-05', type: 'expense', amount: 30000 }],
+    holdings: [], subscriptions: [], transactions: [{ date: prevMonthDay('05'), type: 'expense', amount: 30000 }],
   };
   assert.ok(!buildSummary(db).reminders.some((x) => /緊急預備金/.test(x.title)), '總現金 102 萬≈34 個月，不該誤報不足');
 });

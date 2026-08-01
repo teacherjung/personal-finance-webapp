@@ -279,15 +279,25 @@ test('CAS：saveDb 拿到過期版本＝丟 409（不會靜默把別人的寫入
   });
 });
 
-test('CAS：沒有版本戳的整包寫入預設拒絕；只有明寫 { overwrite: true } 才准（匯入專用）', async () => {
+test('CAS：整包寫入一定要有版本戳來源——`overwrite: true` 也不例外，還要交出 `from`（匯入專用）', async () => {
   await runWithTenant({ userId: A.id, supabase: fakeClientFor('tokA') }, async () => {
-    const fresh = { ...(await repo.getDb()) };
+    const fresh = await repo.getDb();
     const naked = JSON.parse(JSON.stringify(fresh));      // JSON 來回＝版本戳掉了
     /** @type {any} */
     let err = null;
     try { await repo.saveDb(naked); } catch (e) { err = e; }
     assert.equal(err?.code, 'kv_no_version', '沒有來源版本的整包覆蓋＝預設拒絕（防呆）');
-    await repo.saveDb(naked, { overwrite: true });         // 明寫才准
+
+    // ⚠️ 這一段是 2026-07-28 改掉的契約（Codex 收官審查 #2）。
+    //    舊行為：`{ overwrite: true }` 自己去資料庫重抓一次目前版本＝**自己蓋章給自己看**，
+    //    所以「呼叫端讀資料」到「寫入」之間別人寫的東西會被無聲蓋掉（下一題重現整條路）。
+    //    新契約：overwrite 一樣要交出版本戳，只是來源改成呼叫端明講的 `from`。
+    err = null;
+    try { await repo.saveDb(naked, { overwrite: true }); } catch (e) { err = e; }
+    assert.equal(err?.code, 'kv_no_version',
+      'overwrite 沒有交出 from＝一樣要拒絕（不准有「無來源版本的整包覆蓋」這條路）');
+
+    await repo.saveDb(naked, { overwrite: true, from: fresh });   // 交出讀資料時那一份才准
   });
 });
 

@@ -226,3 +226,88 @@ test('整條路｜正常份量的報表照常解析得出來（上限不可以�
     assert.equal(parsed.positions[0].symbol, 'CSPX');
   } finally { globalThis.fetch = real; }
 });
+
+// ============================================================================
+// 元素總數上限（Codex 收官審查 #1，2026-07-28）
+// ============================================================================
+//
+// 病根不是「白名單漏了幾個標籤」，是**兩件事**：
+//   ① `IB_ROW_TAGS` 是白名單，只數四種標籤——IB 官方還有 CorporateAction／Transfer／
+//      InterestAccrual 等十幾種區段完全不受約束（實測 50,001 筆 `<CorporateAction/>` 通過）。
+//   ② `MAX_IB_XML_CHARS = 40MB` 本身就是死亡線：實測 40MB 真實排版直接 OOM 打死行程，
+//      而那是一份**完全合法、完全被列數牆數到**的報表。把更多標籤加進白名單修不好這個。
+
+test('整條路｜白名單以外的區段也要擋（不然加幾個標籤名就被繞過）', async () => {
+  const { fetchFlex } = await import('../lib/ib.js');
+  const { MAX_IB_XML_ELEMENTS } = await import('../lib/parse-limits.js');
+  const real = globalThis.fetch;
+  // CorporateAction 不在 IB_ROW_TAGS 裡，但它是 IB 官方 Flex Query 真的會產生的區段
+  const rows = '<CorporateAction/>'.repeat(MAX_IB_XML_ELEMENTS + 10);
+  const xml = `<FlexQueryResponse><FlexStatements count="1"><FlexStatement><CorporateActions>${rows}</CorporateActions></FlexStatement></FlexStatements></FlexQueryResponse>`;
+  globalThis.fetch = /** @type {any} */ (fakeIbFetch(xml));
+  try {
+    const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
+    assert.ok(err, '白名單以外的區段暢行無阻——總量牆沒蓋在 parse 之前那條路上');
+    assert.equal(err.code, 'ib_too_many_elements');
+    assert.equal(err.status, 400);
+    assert.match(err.message, /縮短/, '訊息要告訴使用者「該做什麼」');
+  } finally { globalThis.fetch = real; }
+});
+
+test('整條路｜連「還沒出現過的未來區段」也要擋（防止有人把牆改回白名單）', async () => {
+  // ⚠️ 這一題**刻意不寫死任何真實標籤名**。寫死的話，下一個人把總量牆改回
+  //    「再加四個名字進 IB_ROW_TAGS」也照樣綠——那正是 Codex #1 的原病。
+  const { fetchFlex } = await import('../lib/ib.js');
+  const { MAX_IB_XML_ELEMENTS } = await import('../lib/parse-limits.js');
+  const real = globalThis.fetch;
+  try {
+    // ⚠️ 標籤名要**短**：`<FutureSectionWeHaventSeen/>` 是 28 bytes，50 萬個就是 14MB，
+    //    會先撞到位元組上限（那也是對的，只是不是這一題要考的東西）。
+    //    這裡要單獨考「元素數」這道牆，所以讓位元組數遠低於上限。
+    //    `Zq9` 是刻意虛構的名字——**這一題的重點就是「連沒見過的區段也要擋」**，
+    //    寫死真實標籤名的話，下一個人把牆改回白名單也照樣綠。
+    for (const tag of ['Transfer', 'IntAcc', 'Zq9', 'Xyz']) {
+      const xml = `<FlexQueryResponse><FlexStatements count="1"><FlexStatement>${`<${tag}/>`.repeat(MAX_IB_XML_ELEMENTS + 10)}</FlexStatement></FlexStatements></FlexQueryResponse>`;
+      globalThis.fetch = /** @type {any} */ (fakeIbFetch(xml));
+      const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
+      assert.equal(err?.code, 'ib_too_many_elements', `<${tag}> 沒被擋——牆退化成白名單了`);
+    }
+  } finally { globalThis.fetch = real; }
+});
+
+test('位元組上限是「從 512MB 這台機器推導出來」的，不是憑感覺——用子行程真的驗一次', async () => {
+  // ⚠️ 這一題是整組裡最重要的：它把「40MB 是怎麼來的」從註解變成**可重跑的事實**。
+  //    舊的 40MB 沒有任何量測背書，而實測它就是死亡線。這一題會在有人把上限調回去時直接紅。
+  const { spawnSync } = await import('node:child_process');
+  const { MAX_IB_XML_CHARS } = await import('../lib/parse-limits.js');
+  // 餵一份**剛好等於上限**、且用真實 IB 排版（50 個屬性）的 XML，子行程必須活著跑完
+  const script = `
+    const { XMLParser } = await import('fast-xml-parser');
+    const ATTRS = Array.from({length:50},(_,i)=>'a'+i+'="v'+i+'0000"').join(' ');
+    const one = '<Trade ' + ATTRS + '/>';
+    const n = Math.floor(${MAX_IB_XML_CHARS} / one.length);
+    const xml = '<FlexQueryResponse><FlexStatements count="1"><FlexStatement><Trades>'
+      + one.repeat(n) + '</Trades></FlexStatements></FlexStatement></FlexQueryResponse>';
+    new XMLParser({ignoreAttributes:false, attributeNamePrefix:''}).parse(xml);
+    console.log('ok');
+  `;
+  const r = spawnSync(process.execPath, ['--max-old-space-size=400', '--input-type=module', '-e', script],
+    { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(r.status, 0,
+    `一份剛好等於上限（${Math.round(MAX_IB_XML_CHARS / 1048576)}MB）的真實排版報表，` +
+    `在模擬 Render 的 400MB heap 下必須解析得完。實際 exit=${r.status} signal=${r.signal}。\n` +
+    '這一題紅了代表 MAX_IB_XML_CHARS 訂得太高——它必須從目標機器的記憶體推導，不是憑感覺。');
+});
+
+test('元素上限對真實報表要有兩個數量級以上的餘裕（別把牆訂到誤殺）', async () => {
+  const { MAX_IB_XML_ELEMENTS, MAX_IB_XML_CHARS, countXmlElements } = await import('../lib/parse-limits.js');
+  // 一份「塞滿到位元組上限」的真實排版報表有多少元素？
+  const ATTRS = Array.from({ length: 50 }, (_, i) => `a${i}="v${i}0000"`).join(' ');
+  const one = `<Trade ${ATTRS}/>`;
+  const realistic = Math.floor(MAX_IB_XML_CHARS / one.length);
+  assert.ok(MAX_IB_XML_ELEMENTS / realistic >= 20,
+    `元素上限對「塞滿的真實報表」（${realistic} 個元素）只有 ${(MAX_IB_XML_ELEMENTS / realistic).toFixed(1)} 倍餘裕，太緊`);
+  // 而且 countXmlElements 不可以把關標籤／宣告／註解算進去
+  assert.equal(countXmlElements('<a/><b></b><!-- x --><?xml v?>'), 2,
+    '只數開標籤：</close>、<!--註解-->、<?宣告?> 都不算');
+});
