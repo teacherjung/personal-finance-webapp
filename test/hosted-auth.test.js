@@ -612,7 +612,21 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   //   路由檔**（自身 import 閉包碰得到 ALLOWED 模組）的每條路徑，必須「登記 OUTBOUND_ENDPOINTS」
   //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不是對外入口；未來改成會觸發外連就要搬進 OE）」。
   //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
-  const ROUTE_RE = /\.(?:get|post|put|delete|patch)\(\s*['"`]([^'"`$]+)['"`]/g;
+  // r14→r16 統一路由參數解析器：動詞全覆蓋（含 all/head/options/route），第一參數必須是
+  //   **整顆**靜態字串（後面緊接 , 或 )）——「'/api/x' + suffix」這種串接自動歸動態（r16 繞法）。
+  const ROUTE_VERB_RE = /\.(?:get|post|put|delete|patch|all|head|options|route)\(\s*/g;
+  /** @param {string} src2 @returns {{ statics: string[], dynamics: string[] }} */
+  const parseRouteArgs = (src2) => {
+    /** @type {string[]} */ const statics = [];
+    /** @type {string[]} */ const dynamics = [];
+    for (const m2 of src2.matchAll(ROUTE_VERB_RE)) {
+      const after = src2.slice(m2.index + m2[0].length, m2.index + m2[0].length + 200);
+      const sm = after.match(/^(['"])([^'"\n]*)\1\s*[,)]/) || after.match(/^`([^`$\n]*)`\s*[,)]/);
+      if (sm) statics.push(sm[2] ?? sm[1]);
+      else dynamics.push(`${m2[0].trim()}${after.slice(0, 30)}…`);
+    }
+    return { statics, dynamics };
+  };
   const ROUTE_EXEMPT = new Map([
     // 口徑：key＝path（同 path 多 method 算一條）。why 的「不觸發業務上游」指不打需由
     // OUTBOUND_ENDPOINTS 限速的上游（Supabase 驗身分／資料庫 RPC 是 HOSTED 基礎設施、另有 auth 牆）。
@@ -623,41 +637,70 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   ]);
   const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
   /** @type {string[]} */ const routeProblems = [];
+  /** @type {string[]} */ const dynRoutes = [];
   /** @type {Set<string>} */ const seenCapablePaths = new Set();
   for (const rf of routeFiles) {
     const cl = importClosure([rf]);
     if (![...ALLOWED.keys()].some((m2) => cl.includes(m2))) continue;
-    const src = readFileSync(pjoin(ROOT, rf), 'utf8');
-    for (const m2 of src.matchAll(ROUTE_RE)) {
-      const p = m2[1];
+    const parsed = parseRouteArgs(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')));
+    for (const d of parsed.dynamics) dynRoutes.push(`${rf}: ${d}`);
+    for (const p of parsed.statics) {
       seenCapablePaths.add(p);
       if (!oePaths.has(p) && !ROUTE_EXEMPT.has(p)) routeProblems.push(`${rf}: ${p}`);
     }
   }
+  assert.deepEqual(dynRoutes, [],
+    `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
+    '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
   assert.deepEqual(routeProblems, [],
     `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
     '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
-  // ②e 動態路徑禁令（r15）：模板字串／變數路徑會穿透抽取（實測）——具外連能力檔案一律靜態字串路徑
-  const DYN_ROUTE_RE = /\.(?:get|post|put|delete|patch)\(\s*(?!['"])\S/;
-  /** @type {string[]} */ const dynRoutes = [];
-  for (const rf of routeFiles) {
-    const cl2 = importClosure([rf]);
-    if (![...ALLOWED.keys()].some((m3) => cl2.includes(m3))) continue;
-    const src2 = stripComments(readFileSync(pjoin(ROOT, rf), 'utf8'));
-    const dm = DYN_ROUTE_RE.exec(src2);
-    if (dm) dynRoutes.push(`${rf}: ${dm[0]}…`);
-  }
-  assert.deepEqual(dynRoutes, [],
-    `具外連能力的路由檔使用動態路徑註冊（錨定抽取不到＝禁止）：\n  ${dynRoutes.join('\n  ')}\n` +
-    '改用靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
-  assert.ok(DYN_ROUTE_RE.test('r.get(`/api/${x}`, h)'), '動態路徑偵測探針：模板字串');
-  assert.ok(DYN_ROUTE_RE.test('r.get(someVar, h)'), '動態路徑偵測探針：變數');
-  assert.ok(!DYN_ROUTE_RE.test("r.get('/api/x', h)"), '動態路徑偵測探針：靜態不誤報');
+  // 解析器探針（r16 繞法全數入陣）
+  assert.deepEqual(parseRouteArgs("r.get('/api/a', h); r.all('/api/b', h); r.head('/api/c', h);").statics, ['/api/a', '/api/b', '/api/c'], '動詞覆蓋');
+  assert.equal(parseRouteArgs('r.get("/api/x" + sfx, h);').dynamics.length, 1, '串接式必須歸動態（r16 繞法）');
+  assert.equal(parseRouteArgs('r.get(`/api/${x}`, h);').dynamics.length, 1, '模板插值歸動態');
+  assert.equal(parseRouteArgs('r.get(someVar, h);').dynamics.length, 1, '變數歸動態');
+  assert.deepEqual(parseRouteArgs('r.get(`/api/static-tpl`, h);').statics, ['/api/static-tpl'], '無插值反引號＝靜態');
   // 豁免防空轉：豁免路徑必須真的存在於具外連能力檔案、且不可同時登記在 OE
   const exemptStale = [...ROUTE_EXEMPT.keys()].filter((p) => !seenCapablePaths.has(p) || oePaths.has(p));
   assert.deepEqual(exemptStale, [], `ROUTE_EXEMPT 名不符實（路徑不存在或已登記 OE）：\n  ${exemptStale.join('\n  ')}`);
-  // 路由抽取探針
-  assert.deepEqual([..."router.get('/api/probe', h);".matchAll(ROUTE_RE)].map((m2) => m2[1]), ['/api/probe'], 'ROUTE_RE 抽取失效');
+  // ②f bare 套件分類登記（r16）：第三方 client 靠枚舉熱門名稱永遠列不完（superagent/ws/
+  //   nodemailer 實測隱形）——改 fail-closed：掃描範圍內**每個 bare import 都必須分類**；
+  //   'outbound' 類的匯入模組必須在 ALLOWED；未分類套件＝紅。
+  const BARE_SPEC_RE = /(?:from|import\s*\(|require\s*\()\s*['"`]([A-Za-z@][^'"`]*)['"`]|(?:^|[^.\w])import\s+['"`]([A-Za-z@][^'"`]*)['"`]/gm;
+  /** @param {string} spec */
+  const pkgNameOf = (spec) => spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : /** @type {string} */ (spec.split('/')[0]);
+  /** @type {Map<string, {kind: 'outbound'|'safe', why: string}>} */
+  const PACKAGE_REGISTRY = new Map([
+    ['express', { kind: 'safe', why: 'HTTP 伺服器框架（入站）' }],
+    ['@supabase/ssr', { kind: 'outbound', why: 'Supabase client——匯入者必須是 ALLOWED 端點主' }],
+    ['fast-xml-parser', { kind: 'safe', why: 'XML 解析（IB Flex 回應）、零網路' }],
+    ['pdfjs-dist', { kind: 'safe', why: 'PDF 解析、零網路' }],
+    ['xlsx', { kind: 'safe', why: 'Excel 解析、零網路（資源上限另有考題）' }],
+  ]);
+  /** @type {string[]} */ const pkgProblems = [];
+  /** @type {Set<string>} */ const seenPkgs = new Set();
+  for (const rel of scanTargets) {
+    const src3 = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
+    if (src3 === null) continue;
+    for (const m3 of stripComments(src3).matchAll(BARE_SPEC_RE)) {
+      const spec3 = m3[1] ?? m3[2];
+      if (spec3.startsWith('node:')) continue;   // 內建模組：網路類另有 OUTBOUND/SPAWN 專門偵測
+      const pkg = pkgNameOf(spec3);
+      seenPkgs.add(pkg);
+      const reg = PACKAGE_REGISTRY.get(pkg);
+      if (!reg) pkgProblems.push(`${rel}: 未分類套件「${pkg}」`);
+      else if (reg.kind === 'outbound' && !ALLOWED.has(rel)) pkgProblems.push(`${rel}: 匯入外連套件「${pkg}」但未登記 ALLOWED`);
+    }
+  }
+  assert.deepEqual(pkgProblems, [],
+    `bare 套件分類失敗（新套件必須先分類、外連套件的匯入者必須登記）：\n  ${pkgProblems.join('\n  ')}`);
+  const pkgStale = [...PACKAGE_REGISTRY.keys()].filter((p) => !seenPkgs.has(p));
+  assert.deepEqual(pkgStale, [], `PACKAGE_REGISTRY 空轉登記：\n  ${pkgStale.join('\n  ')}`);
+  // 分類器探針
+  assert.equal(pkgNameOf('@supabase/ssr'), '@supabase/ssr', 'scoped 套件名');
+  assert.equal(pkgNameOf('pdfjs-dist/legacy/build/pdf.mjs'), 'pdfjs-dist', '子路徑歸主套件');
+  assert.deepEqual([...'import s from \'superagent\';'.matchAll(BARE_SPEC_RE)].map((m3) => pkgNameOf(m3[1] ?? m3[2])), ['superagent'], 'bare 抽取（r16 繞法代表）');
   // ③ probe matrix（r2 建議、r3–r5 擴充）：三組——必抓（乾淨軌）／註解提及（生掃攔）／完全隱形
   const PROBES = [
     ['字面 fetch 呼叫', 'return fetch(url);'],
