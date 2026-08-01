@@ -465,11 +465,14 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const SPAWNERS = new Map([
     // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
   ]);
+  // r10：只掃 .js 的話，放個 .mjs/.cjs 就整個隱形（mjs 是正常 ESM 副檔名）——判準抽函式＋探針釘住
+  /** @param {string} f */
+  const isRuntimeModule = (f) => /\.(?:js|mjs|cjs)$/.test(f);
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) => readdirSync(pjoin(ROOT, dir)).flatMap((f) => {
     const rel = `${dir}/${f}`;
     if (statSync(pjoin(ROOT, rel)).isDirectory()) return walk(rel);
-    return f.endsWith('.js') ? [rel] : [];
+    return isRuntimeModule(f) ? [rel] : [];
   });
   /** @type {Map<string, string>} */ const detected = new Map();
   /** @type {Map<string, string[]>} */ const rawOnly = new Map();
@@ -580,6 +583,9 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.ok(reconcileMentions(new Map([['x.js', ['（fetch']]]), REC_SYN(), () => false).forward.length === 1, '對帳器：同數量不同片段必紅');
   assert.ok(reconcileMentions(new Map(), REC_SYN(), () => false).backward.length === 1, '對帳器：假登記（無對應提及）必紅');
   assert.ok(reconcileMentions(new Map([['x.js', [' fetch']]]), REC_SYN(), () => true).backward.length === 1, '對帳器：登記檔其實是真命中必紅（該搬家）');
+  // walker 副檔名探針（r10 機制洞）：.mjs/.cjs 是正常 runtime 模組、不可隱形
+  for (const ext of ['x.js', 'x.mjs', 'x.cjs']) assert.ok(isRuntimeModule(ext), `walker 判準漏掃 ${ext}`);
+  for (const ext of ['x.json', 'x.md', 'x.d.ts']) assert.ok(!isRuntimeModule(ext), `walker 判準誤掃 ${ext}`);
   // spawn 安全網探針（r8 機制洞）：剝離器被 regex 騙走時，生掃軌必須還看得到
   const SPAWN_NET_PROBE = 'const slashMatcher = /[//]/; const cluster2 = await import(\'node:cluster\');';
   assert.equal(SPAWN_RE.test(stripComments(SPAWN_NET_PROBE)), false, '（前提確認）此探針就是會騙過乾淨軌的形狀');
