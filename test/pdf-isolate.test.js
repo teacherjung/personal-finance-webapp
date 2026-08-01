@@ -33,7 +33,8 @@ process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 3).toString('base64');
 
 const { parseStatement } = await import('../lib/statement.js');
 const { parseBankStatement } = await import('../lib/bank-statement.js');
-const { PDF_ISOLATE_KINDS, PDF_CHILD_HEAP_MB } = await import('../lib/pdf-isolate.js');
+const { PDF_ISOLATE_KINDS, PDF_CHILD_HEAP_MB, PDF_QUEUE_MAX_DEPTH, setPdfTimeoutForTest,
+  resetPdfQueueForTest, pdfQueueDepthForTest, extractPdfLines, throughPdfQueueForTest } = await import('../lib/pdf-isolate.js');
 
 // ---------------------------------------------------------------------------
 // 手工造 PDF（同 test/pdf-limits-wiring.test.js 的手法：不進版控、造得出來就看得懂）
@@ -115,33 +116,47 @@ const errOf = (p) => p.then(() => null, (/** @type {any} */ e) => e);
 // 一、攻擊：子行程死掉，**父行程必須活著**
 // ============================================================================
 
-test('內容串流炸彈：一頁的小 PDF 讓子行程資源耗盡 → 400，而不是整個服務死掉', async () => {
-  const data = bombPdf(3_000_000);
-  assert.ok(data.length < 300 * 1024,
-    `攻擊檔要小得可笑才有說服力（實際 ${Math.round(data.length / 1024)}KB）——這就是「檔案大小預測不了成本」`);
-  const err = await errOf(parseStatement(data));
-  assert.ok(err, '攻擊檔竟然通過了');
-  assert.equal(err.code, 'pdf_resource_exhausted');
-  assert.equal(err.status, 400, '這是使用者層錯誤（他的檔案太貴），不是 500');
-  assert.match(String(err.message), /上限|正常的對帳單/, '訊息要讓使用者知道該做什麼');
+test('內容串流炸彈：一頁的小 PDF 讓子行程卡住 → 父行程逾時收回 400，而不是整個服務死掉', async () => {
+  // ⚠️ **這題的真相曾經被誤解**（2026-08-01 追出來）：炸彈**不是**讓子行程 OOM，而是讓
+  //    pdfjs 卡在解壓——那個 promise 永不 settle。舊版子行程的事件迴圈一空就 code 0 靜默結束、
+  //    什麼都不寫，父行程只看到「沒有 stdout」，於是把它當成「資源耗盡」。**綠燈是為了錯的理由**。
+  //    現在：子行程 keep-alive 不准安靜退出 → 父行程逾時 SIGKILL → 誠實的 pdf_timeout。
+  setPdfTimeoutForTest(3_000);
+  try {
+    const data = bombPdf(3_000_000);
+    assert.ok(data.length < 300 * 1024,
+      `攻擊檔要小得可笑才有說服力（實際 ${Math.round(data.length / 1024)}KB）——這就是「檔案大小預測不了成本」`);
+    const t0 = Date.now();
+    const err = await errOf(parseStatement(data));
+    assert.ok(err, '攻擊檔竟然通過了');
+    assert.equal(err.code, 'pdf_timeout', '要誠實說是「卡太久」，不可假裝知道是資源耗盡');
+    assert.equal(err.status, 400, '這是使用者層錯誤（他的檔案太貴），不是 500');
+    assert.match(String(err.message), /太久|上限|正常的對帳單/, '訊息要讓使用者知道該做什麼');
+    assert.ok(Date.now() - t0 >= 2_500, '必須是「等到逾時」才收回，不是子行程安靜死掉就當成攻擊');
+  } finally { setPdfTimeoutForTest(null); }
 });
 
 test('連打五次攻擊檔，父行程的記憶體不可以往上爬（沒有洩漏、也沒有累積）', async () => {
+  setPdfTimeoutForTest(1_500);
   const data = bombPdf(2_000_000);
   const before = process.memoryUsage().rss;
   for (let i = 0; i < 5; i++) {
     const err = await errOf(parseStatement(data));
-    assert.equal(err?.code, 'pdf_resource_exhausted', `第 ${i + 1} 次沒被擋下`);
+    assert.equal(err?.code, 'pdf_timeout', `第 ${i + 1} 次沒被擋下`);
   }
+  setPdfTimeoutForTest(null);
   const grew = (process.memoryUsage().rss - before) / 1048576;
   // 這一題守的是「隔離有沒有真的把成本擋在子行程裡」——父行程幾乎不該長。
   assert.ok(grew < 60, `父行程在五次攻擊後長了 ${grew.toFixed(0)}MB——成本沒有被擋在子行程裡`);
 });
 
 test('三個抽取器都走同一層隔離（不是只修了信用卡那條）', async () => {
-  const data = bombPdf(3_000_000);
-  const err = await errOf(parseBankStatement(data));
-  assert.equal(err?.code, 'pdf_resource_exhausted', '銀行對帳單那條沒接上隔離');
+  setPdfTimeoutForTest(1_500);
+  try {
+    const data = bombPdf(3_000_000);
+    const err = await errOf(parseBankStatement(data));
+    assert.equal(err?.code, 'pdf_timeout', '銀行對帳單那條沒接上隔離');
+  } finally { setPdfTimeoutForTest(null); }
 });
 
 // ============================================================================
@@ -231,4 +246,134 @@ test('三個抽取器都真的呼叫了 extractPdfLines（架構題：不准有�
     const src = readFileSync(join(ROOT, f), 'utf8');
     assert.match(src, /await extractPdfLines\(/, `${f} 沒有走隔離層`);
   }
+});
+
+// ============================================================================
+// 四、Codex #350 r1 點名的缺口（拿掉核心修法，舊考題 26 題全綠＝假綠）
+// ============================================================================
+
+const { readPageTextCapped, MAX_PDF_TEXT_ITEMS } = await import('../lib/parse-limits.js');
+
+/** 假的 pdfjs 頁面：用可控的 chunk 序列餵 streamTextContent，並記錄有沒有被 cancel。
+ * @param {number[]} chunkSizes 每個 chunk 幾個節點 */
+function fakePage(chunkSizes) {
+  const state = { cancelled: false, delivered: 0 };
+  return {
+    state,
+    streamTextContent() {
+      let i = 0;
+      return {
+        getReader() {
+          return {
+            async read() {
+              if (i >= chunkSizes.length) return { done: true, value: undefined };
+              const n = chunkSizes[i++];
+              state.delivered += n;
+              return { done: false, value: { items: Array.from({ length: n }, (_, k) => ({ str: `x${k}` })) } };
+            },
+            async cancel() { state.cancelled = true; },
+          };
+        },
+      };
+    },
+  };
+}
+
+test('邊收邊數｜多個 chunk 累加，正常讀完也要 cancel（不留 stream）', async () => {
+  const page = fakePage([10, 20, 30]);
+  const r = await readPageTextCapped(/** @type {any} */ (page), 0, '測試檔');
+  assert.equal(r.count, 60, '三個 chunk 要累加');
+  assert.equal(r.items.length, 60);
+  assert.equal(page.state.cancelled, true, '正常讀完也要 cancel，否則 pdfjs 那邊的 stream 留著');
+});
+
+test('邊收邊數｜跨頁累計：soFar 帶進來的數量算在同一個上限裡', async () => {
+  const page = fakePage([100]);
+  const r = await readPageTextCapped(/** @type {any} */ (page), 5_000, '測試檔');
+  assert.equal(r.count, 5_100, '要從 soFar 接著數，不是每頁各自從 0 開始');
+});
+
+test('邊收邊數｜超標當場 cancel、**不把超標那批收下**（這才是「邊收邊數」的本體）', async () => {
+  const half = Math.ceil(MAX_PDF_TEXT_ITEMS / 2);
+  // 第三個 chunk 會讓總數超過上限
+  const page = fakePage([half, half, 100]);
+  const err = await errOf(readPageTextCapped(/** @type {any} */ (page), 0, '測試檔'));
+  assert.ok(err, '超標竟然沒 throw');
+  assert.equal(err.code, 'pdf_too_many_text_items');
+  assert.equal(err.status, 400);
+  assert.equal(page.state.cancelled, true, '超標要當場 cancel 上游，不能繼續讓它產生節點');
+  assert.equal(page.state.delivered, half * 2 + 100,
+    '只該讀到觸發超標的那個 chunk 就停——再多讀就不是「邊收邊數」了');
+});
+
+test('邊收邊數｜**改回 getTextContent 就會紅**：本題直接打 readPageTextCapped，不經 PDF', async () => {
+  // 這一題存在的理由（Codex #350 r1）：舊考題只驗「子行程最後會死」，分不出用哪種讀法，
+  // 所以把 readPageTextCapped 改回 page.getTextContent() 仍然 26 題全綠。直測就擋得住。
+  const page = fakePage([1, 1]);
+  const r = await readPageTextCapped(/** @type {any} */ (page), 0, '測試檔');
+  assert.equal(r.count, 2);
+  assert.ok(typeof page.streamTextContent === 'function');
+  assert.equal(page.state.cancelled, true);
+});
+
+test('LOCAL 零改動契約｜不是 HOSTED 就**直接呼叫原函式、不 spawn**（Codex #350 r1：這條契約原本零考題）', async () => {
+  const { isHosted } = await import('../lib/hosted.js');
+  // 本檔預設 HOSTED（第 28 行）才測得了隔離；LOCAL 契約要在同一支檔案驗，就暫時切回去。
+  // isHosted() 是即時讀 env 的，所以切換立刻生效、不必重新 import。
+  const saved = process.env.NOTEASY_HOSTED;
+  delete process.env.NOTEASY_HOSTED;
+  try {
+    assert.equal(isHosted(), false, '前提：這一題要在 LOCAL 下跑');
+    let called = 0;
+    /** @type {any} */
+    let gotData = null;
+    const inProcess = async (/** @type {any} */ d, /** @type {any} */ p) => {
+      called += 1; gotData = { d, p }; return [{ y: 1, cells: [] }];
+    };
+    const before = pdfQueueDepthForTest();
+    const data = new Uint8Array([1, 2, 3]);
+    const out = await extractPdfLines('statement', inProcess, data, 'pw');
+    assert.equal(called, 1, 'LOCAL 必須直接呼叫傳進來的函式（不 spawn 子行程）');
+    assert.equal(gotData.d, data, '原封不動把 data 傳給原函式');
+    assert.equal(gotData.p, 'pw', '密碼也要原樣傳（LOCAL 不經行程邊界）');
+    assert.deepEqual(out, [{ y: 1, cells: [] }], '結果要原樣回傳');
+    assert.equal(pdfQueueDepthForTest(), before, 'LOCAL 不該碰到 HOSTED 的佇列（連 250ms 都不付）');
+  } finally {
+    if (saved === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = saved;
+  }
+});
+
+test('併發上限｜佇列深度滿了立刻 503（不讓等待者持續占住已收下的 body）', async () => {
+  resetPdfQueueForTest();
+  // ⚠️ 釋放要用「共用旗標」而不是收集 resolver：佇列是序列的，**只有第一個真的開始跑**，
+  //    其餘還沒呼叫 fn。收集 resolver 只會拿到第一個，放掉後第二個又卡住＝整個測試掛死。
+  let open = false;
+  const slow = () => new Promise((res) => {
+    const tick = setInterval(() => { if (open) { clearInterval(tick); res([]); } }, 5);
+  });
+  const runs = [];
+  try {
+    for (let i = 0; i < PDF_QUEUE_MAX_DEPTH; i++) runs.push(throughPdfQueueForTest(slow));
+    assert.equal(pdfQueueDepthForTest(), PDF_QUEUE_MAX_DEPTH, '深度要算「排隊中＋執行中」');
+    const err = await errOf(throughPdfQueueForTest(slow));
+    assert.ok(err, '滿了竟然還收');
+    assert.equal(err.status, 503);
+    assert.equal(err.code, 'pdf_busy');
+  } finally {
+    open = true;
+    await Promise.allSettled(runs);
+    resetPdfQueueForTest();
+  }
+});
+
+test('併發上限｜同時只有一顆在跑（序列化＝上限 1，兩顆 256MB 會撐爆 512MB）', async () => {
+  resetPdfQueueForTest();
+  let running = 0, peak = 0;
+  const work = () => new Promise((res) => {
+    running += 1; peak = Math.max(peak, running);
+    setTimeout(() => { running -= 1; res([]); }, 30);
+  });
+  await Promise.all([throughPdfQueueForTest(work), throughPdfQueueForTest(work), throughPdfQueueForTest(work)]);
+  assert.equal(peak, 1, `同時跑了 ${peak} 顆——行程隔離只防得住一顆，兩顆就撐爆容器`);
+  resetPdfQueueForTest();
 });
