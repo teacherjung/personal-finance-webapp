@@ -496,7 +496,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
       const src = (() => { try { return readFileSync(pjoin(ROOT, rel), 'utf8'); } catch { return null; } })();
       if (src === null) continue;
       for (const spec of extractImportSpecs(src)) {
-        let target = pjoin(pdirname(rel), spec);
+        let target = pjoin(pdirname(rel), spec.replace(/[?#].*$/, ''));   // r21：?query#fragment 是 URL 語意、不屬檔名
         if (!/\.[a-z]+$/i.test(target)) target += '.js';
         try { statSync(pjoin(ROOT, target)); } catch { continue; }
         if (!isRuntimeCapable(target) || seen.has(target)) continue;
@@ -624,7 +624,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const parseRouteArgs = (src2) => {
     /** @type {string[]} */ const statics = [];
     /** @type {string[]} */ const dynamics = [];
-    for (const m2 of src2.matchAll(/\.\s*([a-z]+)\s*\(\s*/g)) {
+    for (const m2 of src2.matchAll(/\.\s*([a-z]+)\s*\??\.?\s*\(\s*/g)) {   // r21：?.( optional call 也算
       if (!ROUTE_VERBS.has(/** @type {string} */ (m2[1]))) continue;
       const after = src2.slice((m2.index ?? 0) + m2[0].length, (m2.index ?? 0) + m2[0].length + 200);
       const sm = after.match(/^(['"])([^'"\n]*)\1\s*([,)])/) || after.match(/^`([^`$\n]*)`\s*([,)])/);
@@ -634,6 +634,16 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
         if (delim === ')') continue;
         if (p.startsWith('/')) statics.push(p);
         else dynamics.push(`.${m2[1]}('${p}', …)＝非 / 開頭的註冊路徑（r20：'*' 萬用等 fail-closed）`);
+        continue;
+      }
+      if (m2[1] === 'use' && /^\[/.test(after)) {   // r21：use(['/a','/b'], h) 靜態陣列可解析
+        const arr = after.match(/^\[([^\]]*)\]\s*,/);
+        if (arr) {
+          const items = [...arr[1].matchAll(/(['"`])([^'"`]*)\1/g)].map((x) => x[2]);
+          const rest = arr[1].replace(/(['"`])[^'"`]*\1|[\s,]/g, '');
+          if (rest === '' && items.length) { for (const it of items) if (it.startsWith('/')) statics.push(it); else dynamics.push(`.use([… '${it}' …])＝非 / 開頭`); continue; }
+        }
+        dynamics.push(`.use(${after.slice(0, 30)}…＝無法解析的陣列路徑`);
         continue;
       }
       if (m2[1] === 'use' && !/^['"`]/.test(after)) continue;
@@ -671,7 +681,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     `具外連能力的路由檔使用非整顆靜態字串的路徑註冊（錨定抽取不到＝禁止；串接／模板／變數都算）：\n  ${dynRoutes.join('\n  ')}\n` +
     '改用完整靜態字串路徑；真需要動態＝先來改這條禁令，讓改動可被審。');
   // ②g bracket 記法禁令（r17）：routes['all'](…) 讓動詞偵測失效——具外連能力檔案禁止
-  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['"\`](?:${[...ROUTE_VERBS].join('|')})['"\`]\\s*\\]\\s*\\(`);
+  const BRACKET_ROUTE_RE = new RegExp(`\\[\\s*['"\`](?:${[...ROUTE_VERBS].join('|')})['"\`]\\s*\\]\\s*\\??\\.?\\s*\\(`);
   /** @type {string[]} */ const bracketRoutes = [];
   for (const rf of routeFiles) {
     const cl3 = importClosure([rf]);
@@ -679,7 +689,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     if (BRACKET_ROUTE_RE.test(stripComments(readFileSync(pjoin(ROOT, rf), 'utf8')))) bracketRoutes.push(rf);
   }
   // r20：computed 動詞（routes[verb](…)）＝識別字 bracket 呼叫全面禁令（實測誤傷面＝零）
-  const COMPUTED_CALL_RE = /\[\s*[A-Za-z_$][\w$]*\s*\]\s*\(/;
+  const COMPUTED_CALL_RE = /\[\s*[A-Za-z_$][\w$]*\s*\]\s*\??\.?\s*\(/;   // r21：?.( 一併禁
   for (const rf of routeFiles) {
     const cl4 = importClosure([rf]);
     if (![...ALLOWED.keys()].some((m5) => cl4.includes(m5))) continue;
@@ -695,6 +705,11 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.deepEqual(parseRouteArgs("res.get('Origin')").statics, [], '非 / 開頭字串＝getter、不入錨定');
   assert.equal(parseRouteArgs("r.get('*', h)").dynamics.length, 1, "'*' 萬用路徑 fail-closed（r20 繞法）");
   assert.equal(parseRouteArgs("r.all('*', h)").dynamics.length, 1, "all('*') 同上");
+  assert.equal(parseRouteArgs("r.get?.('/api/oc', h)").statics[0], '/api/oc', 'optional call 點記法（r21 繞法）');
+  assert.deepEqual(parseRouteArgs("r.use(['/api/a1','/api/a2'], h)").statics, ['/api/a1', '/api/a2'], 'use 靜態陣列（r21 繞法）');
+  assert.equal(parseRouteArgs("r.use([dyn, '/api/a3'], h)").dynamics.length, 1, 'use 陣列含變數＝fail-closed');
+  assert.ok(COMPUTED_CALL_RE.test("marketRoutes[verb]?.('/x', h)"), 'computed optional call（r21 繞法）');
+  assert.deepEqual(extractImportSpecs("import { a } from './x.js?review';").map((sp) => sp.replace(/[?#].*$/, '')), ['./x.js'], 'import query 剝除（r21 繞法）');
   // ②h package-imports 別名禁令（r17）：#alias 同時繞過閉包與套件分類——後端 runtime 明文禁止
   /** @type {string[]} */ const hashAliases = [];
   for (const rel of scanTargets) {
