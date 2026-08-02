@@ -306,7 +306,10 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
     const cells = line.replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
     const summary = (cells[1] || '').split('——完整契約')[0];
     // 比例只在長規則上生效：短規則的摘要本來就接近規則本身。
-    const limit = s.body.length >= 300 ? Math.floor(s.body.length * MAX_SUMMARY_RATIO) : s.body.length - 1;
+    // ⚠️ **比例一律適用，沒有「短規則例外」**（Codex #384 r3 之後收斂）：
+    //    原本對短規則放寬成「只要比內文短一個字」，結果**整段 274 字的 body 貼回去
+    //    變成 273 字的摘要照樣過**——差一個字元的「短」不是拆分。
+    const limit = Math.floor(s.body.length * MAX_SUMMARY_RATIO);
     assert.ok(summary.length <= limit,
       '索引摘要沒有比契約內文短夠多 ⇒ 這條規則接近「兩份完整副本」，一定會各自漂。\n'
       + `摘要 ${summary.length} 字元、契約內文 ${s.body.length} 字元（上限 ${limit}）（${file}#${anchor}）\n`
