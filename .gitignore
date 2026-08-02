@@ -20,6 +20,8 @@ data/*backup*
 node_modules
 
 # 產生的檔案
+# 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 CODEX-REVIEW.md）
+.codex-reviews/
 tmp/
 output/
 *.log
