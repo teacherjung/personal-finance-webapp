@@ -468,7 +468,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const SPAWN_MENTIONS = new Map([]);
   /** @type {Map<string, string>} */
   const SPAWNERS = new Map([
-    // 目前 lib 無任何外部程式呼叫；#350（PDF 行程隔離）落地時在此登記 pdf-isolate*.js 並附 why。
+    ['lib/pdf-isolate.js', 'PDF 抽取的行程隔離（#350，HOSTED 專用）：spawn 自己的 node（process.execPath）跑 pdf-isolate-child，帶 --max-old-space-size 讓惡意 PDF 只打死子行程。**不是對外連線**——沒有網路、只跑本機 pdfjs；子行程收 stdin 的 PDF、回 stdout 的行資料。'],
   ]);
   // r10→r11：Node 22.18+ 連 .ts/.mts/.cts 都能直接執行——「可執行」判準涵蓋全家族；
   //   另立 fail-closed 禁令：本 repo 零建置、runtime 只准 .js，出現其他可執行副檔名＝直接紅。
