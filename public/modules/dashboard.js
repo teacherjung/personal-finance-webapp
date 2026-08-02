@@ -383,7 +383,7 @@ function wireGoalTrackingInfo() {
 function drawTrend(snaps) {
   const ctx = byId('trendChart');
   const hasData = snaps.some(row => typeof row.netWorth === 'number' && Number.isFinite(row.netWorth));
-  if (!ctx || !hasData) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，開啟 app 會自動記錄，累積後這裡會顯示走勢。</p>'; return; }
+  if (!ctx || !hasData) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">近 12 個月尚無淨資產快照；記錄後，這裡會顯示每月走勢。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',
     data: {

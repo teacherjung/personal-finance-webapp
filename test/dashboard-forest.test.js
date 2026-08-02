@@ -60,6 +60,7 @@ test('森林總覽月快照：null、空字串與數字字串都不是淨資產 
 
 test('森林總覽兩張趨勢圖共用同一個日曆月視窗，記帳前缺月不用 0 冒充', () => {
   const result = dashboardCashflowSeries([
+    { month: '2026-02', income: null, expense: 0, net: 0 },
     { month: '2026-03', income: 100, expense: 40, net: 60 },
     { month: '2026-04', income: 0, expense: 0, net: 0 },
     { month: '2026-05', income: 0, expense: 0, net: 0 },
@@ -135,4 +136,5 @@ test('森林總覽接線：月份以後端現金流月份為單一來源，文�
   assert.doesNotMatch(source, /src="\/assets\//, 'HOSTED 掛在 /finance/，森林素材不可指向網站根目錄');
   assert.match(source, /src="assets\/forest-return-positive\.webp"/);
   assert.match(source, /近 12 個月尚無銀行收支紀錄/);
+  assert.match(source, /近 12 個月尚無淨資產快照/);
 });

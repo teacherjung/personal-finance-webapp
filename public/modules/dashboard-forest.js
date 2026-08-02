@@ -84,9 +84,9 @@ export function dashboardSnapshotSeries(snapshots, currentMonth, limit = 12) {
 export function dashboardCashflowSeries(rows, currentMonth, limit = 12) {
   const byMonth = new Map((Array.isArray(rows) ? rows : [])
     .filter(row => isDashboardMonth(row?.month)
-      && Number.isFinite(Number(row?.income))
-      && Number.isFinite(Number(row?.expense))
-      && Number.isFinite(Number(row?.net)))
+      && typeof row?.income === 'number' && Number.isFinite(row.income)
+      && typeof row?.expense === 'number' && Number.isFinite(row.expense)
+      && typeof row?.net === 'number' && Number.isFinite(row.net))
     .map(row => [String(row.month), {
       month: String(row.month), income: Number(row.income), expense: Number(row.expense), net: Number(row.net),
     }]));
