@@ -16,7 +16,7 @@
 >   **審查一律用這組設定（William 2026-07-31 定，取代先前「高風險才用」的分級）**——理由：「這支是低風險」
 >   的判斷本身就會錯（本專案的規則文件就是安全系統本體；合併程序寫錯差點毀掉堆疊 PR、「工具小腳本」藏過
 >   靜默失效 bug），一旦誤判，省下的正好是最需要的那次審查。**AI 不可自行分類降級**；想省額度只能由
->   William 逐案明說，回報照舊註明用了哪一組。**機械性執行動作不是審查**（合併五步驟、跑三關、查狀態
+>   William 逐案明說，回報照舊註明用了哪一組。**機械性執行動作不是審查**（合併六步驟、跑三關、查狀態
 >   ＝照表操課），用一般設定即可。
 > - **一律在 `-codex` 這個獨立 worktree 跑**（先 `git fetch origin && git checkout --detach origin/main`），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
@@ -27,7 +27,7 @@
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 CODEX-REVIEW.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
-> **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這五個步驟）。**六**個步驟缺一不可：
+> **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這六個步驟）。**六**個步驟缺一不可：
 > 1. ⚠️ **協作欄位閘（機械執行）**：
 >    ```bash
 >    node scripts/check-pr-collab-fields.js <N>
@@ -136,7 +136,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 職責邊界與這個專案的刻意設計，務必遵守。
 
 **你有三種模式，邊界不同（完整表＝AGENTS.md 角色分工「Codex 的三模式邊界」；2026-07-30 定）**：
-①**常態審查**（本節，預設）＝絕對唯讀；②**代合併**（上方五步驟）＝只執行合併、不含修碼；
+①**常態審查**（本節，預設）＝絕對唯讀；②**代合併**（上方合併六步驟）＝只執行合併、不含修碼；
 ③**實作**（文末「實作模式」節）＝僅 William 明確指派才啟用。**模式間不會自動升級**——
 審查中發現「順手就能修」的問題＝回報 Claude，不是修；審查／代合併權限不得自行膨脹成實作權限。
 
@@ -163,7 +163,7 @@ npm run typecheck && npm run lint && npm test
 
 啟用條件＝協作框架 v4 的三條件：①有獨立施工計畫（先交 William 裁決再動工）②不碰別人 open PR 已宣告的共享檔案（查 `gh pr list` 與各 PR 說明的「預計修改的共享檔案」——預約制規則見 AGENTS.md「共享檔案預約」；人工預約表 2026-07-31 已退役）③一旦 Claude 的 PR 需要複審，**審查優先於你的實作**。前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
-- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方合併五步驟執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依同五步驟執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
+- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併六步驟**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依同五步驟執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（「Notion 白話規格・更新工法」小節，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 2）。
 - **完工後、轉 ready 送審前，自己對抗式自審一輪**（開工就開 Draft，所以自審關卡掛在「轉 ready」而不是「開 PR」）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。

@@ -19,7 +19,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { problemsOf, fieldValue, REQUIRED_FIELDS } from '../scripts/check-pr-collab-fields.js';
+import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
+  from '../scripts/check-pr-collab-fields.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -143,4 +144,75 @@ test('欄位抽取｜HTML 註解裡的同名字串不算數', () => {
   const body = '<!-- - **實作者**：Codex -->\n- **實作者**：Claude';
   assert.equal(fieldValue(body, '實作者'), 'Claude',
     '註解沒有被剝掉——註解裡的值會蓋過真正填的值');
+});
+
+// ── 角色解析不可 fail-open（Codex #379 r1 High①）─────────────────
+
+/** @param {string} impl @param {string} rev */
+const bodyWith = (impl, rev) => [
+  `- **實作者**：${impl}`,
+  `- **獨立審查者**：${rev}`,
+  '- **基準版本**：abc1234',
+  '- **預計修改的共享檔案**：無',
+  '- **這支若完全失敗，最糟失去什麼**：無',
+].join('\n');
+
+test('欄位閘｜**加註文字不可以讓同一人變成兩個人**（第一版就是這樣被繞過的）', () => {
+  // ⚠️ 第一版用原字串比對是否同一人，於是「Claude」與「Claude（已看過）」被當成不同人 → 通過。
+  //    這道閘最核心的那一條（沒有人可以放行自己的產出）當場失效。
+  for (const decorated of ['Claude（已看過）', 'Claude (reviewed)', '`Claude`', '**Claude**', ' Claude ']) {
+    const problems = problemsOf(bodyWith('Claude', decorated));
+    assert.ok(problems.some((x) => x.includes('沒有任何一份產出可以由寫它的人放行')),
+      `「Claude」對上「${decorated}」沒有被判成同一人——加註／格式就能繞過自審檢查。實得：${problems.join('；') || '（零條）'}`);
+  }
+});
+
+test('欄位閘｜含有角色名 ≠ 就是那個角色（NotClaude／多人並列都要擋）', () => {
+  for (const bogus of ['NotClaude', 'Claude and Codex', 'Claude/Codex', '不是 Claude', 'Claudia']) {
+    const problems = problemsOf(bodyWith(bogus, 'Codex'));
+    assert.ok(problems.some((x) => x.includes('必須剛好是')),
+      `「${bogus}」被當成合法角色放行了——用 includes 判斷等於把 fail-open 寫進閘裡。實得：${problems.join('；') || '（零條）'}`);
+  }
+});
+
+test('欄位閘｜合法的裝飾寫法不可以誤擋（粗體、反引號、前後空白）', () => {
+  for (const [impl, rev] of [['`Claude`', 'Codex'], ['**Claude**', '**Codex**'], [' Claude ', 'Codex ']]) {
+    assert.deepEqual(problemsOf(bodyWith(impl, rev)), [],
+      `合法寫法「${impl}／${rev}」被誤擋了——噪音型誤擋會讓人繞過這道閘`);
+  }
+});
+
+test('角色正規化｜看不出來就回 null，不猜', () => {
+  assert.equal(canonicalRole('Claude'), 'Claude');
+  assert.equal(canonicalRole('**Codex**'), 'Codex');
+  assert.equal(canonicalRole('William（產品）'), 'William');
+  for (const bad of ['', '某人', 'NotClaude', 'Claude and Codex', 'AI']) {
+    assert.equal(canonicalRole(bad), null, `「${bad}」不該被猜成某個角色`);
+  }
+});
+
+// ── 本檔不可以重述合併步驟（重述的摘要會落後）─────────────────
+
+test('AGENTS.md 的代合併段落要點名三道守門，且不重述步驟（Codex #379 r1 High②）', () => {
+  const agents = read('AGENTS.md');
+  const i = agents.indexOf('不論誰執行，一律走');
+  assert.ok(i > 0, 'AGENTS.md 找不到代合併的指標段落');
+  const block = agents.slice(i, i + 700);
+  for (const must of ['check-pr-collab-fields.js', 'check-pr-merge-gate.js', 'Reviewed-By', 'Merged-By']) {
+    assert.ok(block.includes(must),
+      `AGENTS.md 的代合併段落沒有點名「${must}」。\n`
+      + '這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——'
+      + '那正是這一節在修的病），但**三道守門的名字必須在**，否則指標等於沒有內容。');
+  }
+});
+
+test('「合併五步驟」這個舊說法不可以再出現（現在是六步驟；與五步驟審查循環不是同一件事）', () => {
+  for (const f of ['AGENTS.md', 'CODEX-REVIEW.md']) {
+    const txt = read(f);
+    for (const stale of ['合併五步驟', '同這五個步驟', '五個步驟缺一不可']) {
+      assert.ok(!txt.includes(stale),
+        `${f} 仍寫著「${stale}」。合併程序 2026-08-02 起是**六**步驟（多了協作欄位閘）；\n`
+        + '⚠️ 別跟「五步驟**審查循環**」搞混——那是另一件事，五步是對的。');
+    }
+  }
 });

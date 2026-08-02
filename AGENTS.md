@@ -225,13 +225,13 @@
   - **為什麼特別陰**：GitHub 顯示「Merged」、CI 全綠、沒有任何錯誤訊息。**只有去查「那個檔案到底在不在 main」才發現**。所以合併完一整疊之後，務必抽查最上層 PR 的代表性新檔是否真的出現在 main。
   - 舊有的「不要用 `--delete-branch`」仍然成立（刪基底會讓上層 PR 被直接關閉），但那只是這件事的一半。
 - **堆疊 PR（base 指向另一個 PR 分支）合併時，不要用 `--delete-branch`**——刪掉基底分支會讓上層 PR 被 GitHub 直接關閉而非自動轉指向（2026-07-10 實際發生，#3/#5 被誤關）。先由下而上全部合併完，再一次刪分支；或乾脆避免堆疊、等前一個合併後再開下一個。
-  - ⚠️ **「這支是不是堆疊」不可憑印象判斷**：合併前必跑**堆疊閘 `node scripts/check-pr-merge-gate.js <N>`**（`CODEX-REVIEW.md` 合併步驟 2；行為考題＝`test/merge-gate.test.js` 假 gh 五情境）。閘查**兩個方向**：①本支 base 必須是 `main`（防 2026-07-28「合進自己的 base」）②不得有 open PR 疊在本支上（防 2026-07-10「刪分支連帶關閉」）；gh 失敗或跨 fork＝fail-closed 當堆疊。**執行合併的人讀的是 `CODEX-REVIEW.md`，所以那份必須自帶這道閘**——本條只是規則來源。〔2026-07-30 修：CODEX-REVIEW 原本寫「一律 `--squash --delete-branch`」、完全沒提本例外，而它才是合併時真正被照著執行的檔案；r1 曾只查方向②、被 #346 示範放行，故改成雙向腳本。〕
+  - ⚠️ **「這支是不是堆疊」不可憑印象判斷**：合併前必跑**堆疊閘 `node scripts/check-pr-merge-gate.js <N>`**（`CODEX-REVIEW.md` 合併六步驟的第 3 步；行為考題＝`test/merge-gate.test.js` 假 gh 五情境）。閘查**兩個方向**：①本支 base 必須是 `main`（防 2026-07-28「合進自己的 base」）②不得有 open PR 疊在本支上（防 2026-07-10「刪分支連帶關閉」）；gh 失敗或跨 fork＝fail-closed 當堆疊。**執行合併的人讀的是 `CODEX-REVIEW.md`，所以那份必須自帶這道閘**——本條只是規則來源。〔2026-07-30 修：CODEX-REVIEW 原本寫「一律 `--squash --delete-branch`」、完全沒提本例外，而它才是合併時真正被照著執行的檔案；r1 曾只查方向②、被 #346 示範放行，故改成雙向腳本。〕
 - **Notion 白話規格**（使用者定 2026-07-20）：Notion 那區＝給使用者看的白話視圖（**本檔 AGENTS.md 仍是技術唯一真相**），**動架構時一併更新對應頁**。完整位置、回饋迴路、寫作風格、圖示規則、建頁工法見下方「**Notion 白話規格・更新工法**」小節——**Claude 與 Codex 都適用**（使用者 2026-07-22 起也會把 Notion 更新交給 Codex）。
 - **合併的決策與執行是兩件事，分開講**（2026-07-30 對齊；此前「使用者是最終合併者」「使用者合併」「PR 由 William 合併」三句散在三份文件、字面上都已與實務不符——本條是唯一規則來源）：
   - **決策（要不要合、何時合）＝永遠 William**（角色表「合併裁決」）。任何人不得自行決定合併——「審查通過」只是門檻之一，不是合併指令。
   - **執行（按下合併鍵）核心原則＝「實作者不按自己的合併鍵」**（William 2026-07-30 定，對稱授權）：**由審查者執行**——Claude 實作、Codex 審過 → **Codex 執行**（2026-07-27 常設授權）；Codex 實作、Claude 審過 → **Claude 執行**（2026-07-30 對稱常設授權）。這是「不可自審」在執行面的延伸：五步驟第 1 關「確認審查結論無阻擋」由實作者自己判讀＝利益衝突最容易滲進來的一關。
   - William 本人隨時可直接執行（GitHub「Squash and merge」）；個案明確指示（如「把 #338 合了」）可指定任何人執行該支。
-  - **不論誰執行，一律走 `CODEX-REVIEW.md` 的合併五步驟**（含堆疊閘）；任一關卡不成立＝停下來回報 William，不得便宜行事。
+  - **不論誰執行，一律走 `CODEX-REVIEW.md` 的「合併六步驟」**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**三道不可跳過的守門**：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-pr-merge-gate.js`（堆疊）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這三個名字都還在本段裡。
 - Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → **全部頁面** reload 無 console error（清單＝`app.js` 的 `ROUTES`，**不寫死頁數**——曾同檔並存 8 頁與 10 頁兩個數字、新頁面永遠追不上）；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。****資料存取單一櫃檯（B1）**：讀寫資料一律走 `lib/repo.js`（getDb/saveDb/getCollection/addItem/updateItem/deleteItem/getSettings/updateSettings；uid/emptyDb 也由它轉供）——**除了 repo.js 自己，任何檔案都不要直接 import `lib/store.js`**。附帶效果要與更新同一次寫檔時用 `updateItem` 的 `beforeSave`（例：帳單交易改分類→寫學習表）。未來換資料庫（B3 SQLite）只改 repo.js。**驗證入櫃檯（B3）**：`store.save()` 是唯一寫入口、每次寫入自動過 `schema.js sanitizeDbForWrite`——枚舉/布林非法值會直接 throw（＝寫入端程式有 bug，考試會抓到），任何新寫入路徑**結構上不可能**繞過驗證牆（七輪審查的病根根治）。新增欄位照舊補 `WRITABLE_FIELDS`/`FIELD_SCHEMA`。**日期／月份走「真實日曆」判準（`isRealMonth`／`isRealDate`，Codex r3#9）**：`date`/`datereq`/`month`/`monthreq` 四種型別**共用同一套**，不可各寫一份。以前只驗長相（`\d{4}-\d{2}`），`2026-13`／`2026-99-99`／`2026-02-31` 全都過得了關——後果不是崩潰而是**默默算錯**（月份排序把 `2026-13` 排到 `2026-02` 後面、提醒天數、費用攤提、日線的「找最接近的既有日」全偏掉，畫面上卻一切正常）。閏年用 `Date.UTC` 建構回比對（避開本地時區在月初月底的位移）。服務層的手動輸入（`setBatchMonth`、`importRows` 的 `statementMonth`）也一律改用同一個判準。⚠️ 這是**收緊**：萬一舊資料裡真的躺著一個假日期，下次寫入會在櫃檯 throw（訊息已指出集合/索引/值）——那是刻意的，發現了就把那筆改掉，不要為了它把驗證放寬回去。 **必填欄位機制（`REQUIRED_FIELDS`，目前＝history/portfolioSnapshots/snapshots 的 `month` 主鍵欄＋`dailyValues` 的 `date`＋`securityTrades` 的查帳合約 11 欄——身分/方向/數量/幣別/去重鍵＋三個核心金額 price/grossAmount/netSettlement，Codex S2r1#5＋S3r2#4）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；目前＝securityTrades 的 buy→out／sell→in）：三個強制點——CRUD 新增回乾淨 400、匯入逐筆列 errors→整份 400、櫃檯 throw 模式當場 throw。**strip 模式（舊 JSON 搬家專用）對必填欄位「缺席／空值／格式錯／數字型」一律整筆濾除，不可只刪欄位**（只刪欄位會留下缺主鍵的殘骸，讓讀取端 `.slice`/`.split` 崩，Codex#12）；PUT 部分更新天然安全（合併保留舊值）。新增「不可缺的主鍵欄」時補進 `REQUIRED_FIELDS`。**測試隔離慣例（B0）**：`lib/store.js` 的資料檔路徑可用 `STORE_FILE` 環境變數覆寫（測試一律指到 os 暫存目錄的 `.db` 檔、絕不碰真實 `data/`）；`server.js` `export const app`、只有直接執行才 `listen`（測試 import app 後在隨機埠自行監聽）——`test/server.test.js` 是階段 B 改建的行為安全網，改後端端點要保持它全過。第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。
 - **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/測試覆蓋率地圖.md`。
@@ -258,7 +258,7 @@
 | 模式 | 能做什麼 | 不能做什麼 | 誰啟動 |
 |---|---|---|---|
 | **①常態審查**（預設） | 讀、跑三關、提意見（附重現與 `檔案:行`） | **絕對唯讀：不改檔、不 commit、不 push**；不在 `-codex` 樹 checkout 別人的分支 | 常設（每批合併後）或 William 隨時 |
-| **②代合併** | 照 `CODEX-REVIEW.md` 五步驟執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
+| **②代合併** | 照 `CODEX-REVIEW.md` 的**合併六步驟**執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
 | **③實作** | 在**另開的可寫 worktree** 走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／Claude 的複審需求優先於實作） | 不得在 `-codex` 審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
 
 **⚠️ 協作的唯一不變量（William 2026-07-29 定；原本只寫在 `CODEX-REVIEW.md`，2026-08-02 搬進本檔）**：
@@ -273,6 +273,8 @@
 **規則在一份檔案、執行在另一份檔案 ⇒ 規則等於不存在**。這個病 `test/merge-procedure-docs.test.js`
 的檔頭已經診斷過一次（刪分支規則失效十九天、兩次事故），不要換一條規則重演。
 考題 `test/collab-invariant-docs.test.js` 盯著這段還在、且 `CODEX-REVIEW.md` 對它的指標沒死掉。
+
+⚠️ **兩個名字很像的東西，不要搞混**（2026-08-02 實測就是這樣漂移的）：**五步驟審查循環**＝下面這張表，講「誰找問題、誰提修法、誰審實作」；**合併六步驟**＝`CODEX-REVIEW.md` 的按合併鍵程序（協作欄位閘 → 審查結論與 CI → 堆疊閘 → 合併＋trailer → 確認刪分支 → 回報）。
 
 **五步驟審查循環**（展開版與操作細節見 `CODEX-REVIEW.md`）：
 

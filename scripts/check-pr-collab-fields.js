@@ -55,6 +55,26 @@ export function fieldValue(body, field) {
 }
 
 /**
+ * 把欄位值正規化成**剛好一個**角色；看不出來或不只一個就回 `null`。
+ *
+ * ⚠️ 這裡刻意**不用 `includes`**（Codex #379 r1 High①）：`NotClaude` 含有 `Claude`、
+ *    `Claude and Codex` 也含有 `Claude`——用 substring 判斷等於把 fail-open 寫進閘裡。
+ *    先剝掉 markdown 粗體、反引號、括號註記與空白，再要求**全等**於某一個角色。
+ *
+ * @param {string} raw @returns {string | null}
+ */
+export function canonicalRole(raw) {
+  const t = String(raw || '')
+    .replace(/[`*_~]/g, '')                     // markdown 裝飾
+    .replace(/[（(][^）)]*[）)]/g, '')            // 括號註記（「Claude（已看過）」）
+    .replace(/\s+/g, '')                        // 空白
+    .trim();
+  if (!t) return null;
+  const hit = ROLES.filter((r) => r.toLowerCase() === t.toLowerCase());
+  return hit.length === 1 ? hit[0] : null;      // 不只一個或零個 → 看不出來
+}
+
+/**
  * 檢查一份 PR 說明。回傳問題清單（空陣列＝通過）。
  * @param {string} body @returns {string[]}
  */
@@ -66,16 +86,27 @@ export function problemsOf(body) {
     got[f] = v;
     if (!v) problems.push(`缺「${f}」`);
   }
-  const impl = got['實作者'];
-  const rev = got['獨立審查者'];
-  // ⚠️ 核心那一條：實作者 ≠ 審查者。寫成同一個人＝違反唯一不變量，這道閘存在的全部理由。
-  if (impl && rev && impl.toLowerCase() === rev.toLowerCase()) {
-    problems.push(`實作者與獨立審查者都是「${impl}」——沒有任何一份產出可以由寫它的人放行`);
-  }
-  for (const [label, v] of [['實作者', impl], ['獨立審查者', rev]]) {
-    if (v && !ROLES.some((r) => v.toLowerCase().includes(r.toLowerCase()))) {
-      problems.push(`「${label}」寫成「${v}」，看不出是 ${ROLES.join('／')} 的哪一個`);
+  const implRaw = got['實作者'];
+  const revRaw = got['獨立審查者'];
+  const impl = canonicalRole(implRaw);
+  const rev = canonicalRole(revRaw);
+
+  // ⚠️ **角色必須正規化成剛好一個**（Codex #379 r1 High①）。
+  //    第一版用 `includes(role)` 判斷「看不看得出角色」、用原字串比對是否同一人，於是實測：
+  //      ・`實作者：Claude` ／ `獨立審查者：Claude（已看過）` → **通過**（字串不同）
+  //      ・`實作者：NotClaude`                                → **通過**（含有 Claude）
+  //      ・`實作者：Claude and Codex`                          → **通過**（含有 Claude）
+  //    也就是「同一人自審」與「模糊多人」都繞得過——這道閘最核心的那一條回到靠人肉判讀。
+  //    現在：剝掉格式與裝飾字之後**必須剛好命中一個角色**，然後比對正規化後的角色。
+  for (const [label, raw, role] of [['實作者', implRaw, impl], ['獨立審查者', revRaw, rev]]) {
+    if (raw && !role) {
+      problems.push(`「${label}」寫成「${raw}」，必須剛好是 ${ROLES.join('／')} 的其中一個`
+        + '（不接受加註、多人並列、或看不出是誰的寫法）');
     }
+  }
+  // 核心那一條：實作者 ≠ 審查者。寫成同一個人＝違反唯一不變量，這道閘存在的全部理由。
+  if (impl && rev && impl === rev) {
+    problems.push(`實作者與獨立審查者都是「${impl}」——沒有任何一份產出可以由寫它的人放行`);
   }
   return problems;
 }
