@@ -33,6 +33,16 @@ function assertNineColumnHeader(html) {
   }
 }
 
+function dataRowsWithCells(html) {
+  const tableBody = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] || '';
+  return [...tableBody.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(row => ({
+    cells: [...row[1].matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/g)].map(cell => ({
+      attrs: cell[1],
+      html: cell[2].trim()
+    }))
+  }));
+}
+
 function assertWorkspaceCss(css) {
   const block = css.slice(css.indexOf('/* ---------- 投資持股表森林工作面（UI3-3） ---------- */'), css.indexOf('/* ---------- 證券交易頁（S3）'));
   assert.ok(block.length > 0, '找不到持股表專屬樣式區塊');
@@ -55,10 +65,15 @@ function assertWorkspaceCss(css) {
 }
 
 test('投資持股表森林工作面：專業標頭、持股檔數與既有九欄完整保留', () => {
-  const html = holdingsTableHtml([
+  const rows = [
     holding(),
-    holding({ id: 'h2', symbol: 'BND', name: 'Bond', layer: 'bond', quoteSymbol: 'BND' })
-  ], 4110, { sortKey: 'value', sortDir: 'desc', formatters });
+    holding({
+      id: 'h2', symbol: 'BND', name: 'Bond', layer: 'bond', quoteSymbol: 'BND',
+      valueTwd: 1400, costTwd: 1680, pnlTwd: -280
+    })
+  ];
+  const total = rows.reduce((sum, row) => sum + row.valueTwd, 0);
+  const html = holdingsTableHtml(rows, total, { sortKey: 'value', sortDir: 'desc', formatters });
 
   assert.match(html, /<section class="portfolio-holdings-workspace" aria-labelledby="portfolio-holdings-title">/);
   assert.match(html, /<h2 id="portfolio-holdings-title">持股明細<\/h2>/);
@@ -67,6 +82,20 @@ test('投資持股表森林工作面：專業標頭、持股檔數與既有九�
   assert.match(html, /class="group-row portfolio-layer-row"/);
   assert.match(html, /class="portfolio-layer-label"/);
   assert.match(html, /class="subs-table portfolio-holdings-table"/);
+
+  const dataRows = dataRowsWithCells(html);
+  assert.equal(dataRows.length, rows.length);
+  for (const row of dataRows) assert.equal(row.cells.length, 9);
+
+  for (const source of rows) {
+    const rendered = dataRows.find(row => row.cells[0].html.includes(`>${source.symbol}<`));
+    assert.ok(rendered, `找不到 ${source.symbol} 的資料列`);
+    assert.equal(rendered.cells[4].html, formatters.formatMoney(source.valueTwd));
+    assert.equal(rendered.cells[5].html, `${source.pnlTwd > 0 ? '+' : ''}${formatters.formatMoney(source.pnlTwd)}`);
+    assert.equal(rendered.cells[6].html, formatters.formatPercent(source.pnlTwd / source.costTwd * 100));
+    assert.equal(rendered.cells[7].html, formatters.formatPercent(source.valueTwd / total * 100));
+    assert.match(rendered.cells[5].attrs, new RegExp(`\\b${source.pnlTwd >= 0 ? 'pos' : 'neg'}\\b`));
+  }
 });
 
 test('投資持股表森林工作面：排序、研究、編輯與刪除接線沒有被外觀改版切斷', () => {
