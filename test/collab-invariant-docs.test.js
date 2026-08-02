@@ -322,8 +322,13 @@ test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤�
 test('CI 有協作欄位閘這個 job，且跑的是與人工同一支腳本（不可另寫一份判斷）', () => {
   const ci = read('.github/workflows/ci.yml');
   assert.ok(ci.includes('collab-fields'), 'ci.yml 沒有 collab-fields job——協作欄位閘沒有進 CI，只剩「記得跑」');
-  assert.ok(ci.includes('scripts/check-pr-collab-fields.js'),
-    'CI 沒有呼叫 scripts/check-pr-collab-fields.js。\n'
+  // ⚠️ **只查「檔案裡有沒有這個字串」會假綠**（2026-08-02 突變實測）：
+  //    檔頭註解裡就寫著那個路徑，所以把實際的 `run:` 換成別的東西照樣通過。
+  //    要查的是**真的有一行 `run:` 在執行它**。
+  const runsScript = ci.split('\n').some((l) =>
+    /^\s*run:\s*.*node\s+scripts\/check-pr-collab-fields\.js/.test(l));
+  assert.ok(runsScript,
+    'CI 沒有任何一行 `run:` 真的執行 scripts/check-pr-collab-fields.js。\n'
     + '⚠️ 不可以在 CI 裡另寫一份判斷邏輯——兩份會漂移，而「規則兩份、各說各話」正是本專案的招牌病。');
   assert.ok(/if:\s*github\.event_name\s*==\s*'pull_request'/.test(ci),
     'collab-fields 沒有限定只在 PR 上跑——push 到 main 時沒有 PR 編號可查，會無謂地紅');
