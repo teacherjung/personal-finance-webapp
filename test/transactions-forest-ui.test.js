@@ -35,6 +35,8 @@ test('信用卡費接線：退款退路、月份、匯入、查帳與店家入�
   assert.match(source, /consumptionCategoryTotals\(rows, all, pairs, monthFilter, Boolean\(refundData\)\)/);
   assert.match(source, /const expense = Object\.values\(byCat\)\.reduce/);
   assert.match(source, /topSpendCategories\(byCat, 6\)/);
+  assert.match(source, /data-kind="count"[\s\S]*?<div class="stat sm">\$\{rows\.length\}<\/div>/,
+    '本月筆數必須直接使用含退款的 rows.length');
   assert.match(source, /退款歸屬暫時讀不到/);
   assert.match(source, /unmatchedRefundsForMonth/);
   for (const id of ['uploadStmt', 'stmtBatches', 'monthSel', 'lensInfo', 'unmatchedInfo']) {
@@ -50,11 +52,12 @@ test('信用卡費接線：退款退路、月份、匯入、查帳與店家入�
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
 });
 
-test('信用卡費樣式：桌機兩摘要加寬分類，手機改成兩列摘要', () => {
+test('信用卡費樣式：寬桌機加寬分類、窄桌機換列且長金額不裁切', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
   assert.match(css, /\.credit-workspace/);
   assert.match(css, /\.credit-overview-grid \{[\s\S]*grid-template-columns: minmax\(0, \.72fr\) minmax\(0, \.72fr\) minmax\(0, 2fr\)/);
-  assert.match(css, /@media \(max-width: 900px\) \{[\s\S]*\.credit-overview-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+  assert.match(css, /\.credit-stat \.stat \{ line-height: 1\.2; white-space: normal; overflow-wrap: anywhere; \}/);
+  assert.match(css, /@media \(max-width: 1120px\) \{[\s\S]*\.credit-overview-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
   assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*\.credit-overview-grid \{ grid-template-columns: 1fr; gap: 7px; \}/);
   assert.match(css, /\.credit-stat \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(css, /\.credit-empty-state img/);
