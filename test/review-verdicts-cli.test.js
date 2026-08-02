@@ -34,8 +34,10 @@ function withFakeGh(stdout, { exitCode = 0 } = {}) {
 /** @param {string} src @param {number} round @param {string} verdict */
 const header = (src, round, verdict, sha = HEAD.slice(0, 7)) =>
   `🤖 Claude｜來源：${src}｜審 ${sha}｜r${round}｜結論：${verdict}`;
-const payload = (/** @type {string[]} */ bodies) =>
-  JSON.stringify({ comments: bodies.map((b) => ({ body: b })), headRefOid: HEAD });
+/** PR 說明：宣告獨立審查者是 Claude（放行只認這個角色——見 r3 High①）。 */
+const PR_BODY = ['- **實作者**：Codex', '- **獨立審查者**：Claude'].join('\n');
+const payload = (/** @type {string[]} */ bodies, prBody = PR_BODY) =>
+  JSON.stringify({ comments: bodies.map((b) => ({ body: b })), headRefOid: HEAD, body: prBody });
 
 test('CLI｜有人對目前 head 說「通過」、沒有未撤銷的阻擋 → exit 0', () => {
   const r = withFakeGh(payload([header('桌面 A', 1, '通過')]));
@@ -54,7 +56,7 @@ test('⭐ CLI｜有未撤銷的阻擋 → exit **1**（r1 把 return 1 改成 0�
 test('CLI｜完全沒有正式結論 → exit 1（不是放行）', () => {
   const r = withFakeGh(payload(['這支等 #382 合併之後再 rebase']));
   assert.equal(r.status, 1, `「沒人審」被放行了——那比 main 原本的人工確認還退步。實得 ${r.status}`);
-  assert.match(r.stderr, /沒有任何一位審查者/);
+  assert.match(r.stderr, /下過「通過」的正式結論/);
 });
 
 test('CLI｜gh 失敗 → exit 2（fail-closed）', () => {
@@ -72,7 +74,7 @@ test('CLI｜gh 回傳不是 JSON → exit 2', () => {
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
 });
 
-test('CLI｜gh 回傳形狀不對（缺 headRefOid）→ exit 2', () => {
+test('CLI｜gh 回傳形狀不對（缺 headRefOid／缺 body）→ exit 2', () => {
   const r = withFakeGh(JSON.stringify({ comments: [] }));
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
 });
@@ -80,4 +82,11 @@ test('CLI｜gh 回傳形狀不對（缺 headRefOid）→ exit 2', () => {
 test('CLI｜沒給 PR 編號 → exit 2', () => {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' });
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
+});
+
+test('⭐ CLI｜實作者自己的「通過」→ exit 1（放行只認指定的獨立審查者）', () => {
+  const r = withFakeGh(payload([header('桌面 A', 1, '通過')],
+    ['- **實作者**：Claude', '- **獨立審查者**：Codex'].join('\n')));
+  assert.equal(r.status, 1, `實作者自己放行了自己的 PR。實得 ${r.status}\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /指定的獨立審查者/);
 });

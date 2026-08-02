@@ -33,6 +33,7 @@
 //   2＝查不清楚（fail-closed，比照協作欄位閘）
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
 
 /** 結論用詞 → 是不是阻擋。**只認這三種**，寫別的等於沒下結論（→ 查不清楚）。 */
 export const VERDICTS = {
@@ -99,11 +100,20 @@ export function looksLikeVerdict(body) {
   //    這些**明確的阻擋**全部認不出來，旁邊有一則合規「通過」就把它們解除了。
   //    **#383 的病原封不動回來，而且是我為了修另一個問題親手打開的。**
   const words = Object.keys(VERDICTS).join('|');
+  // ⚠️ 前綴**只認明確的幾個詞**，不是任意 `.*：`（Codex #385 r3 Medium③）：
+  //    任意前綴會把「範例：不可合併。」「退出碼說明：不可合併，回 1。」也判成正式結論。
+  const PREFIX = '(?:結論|複審結論|審查結論|複審完成|審查完成)\\s*[：:]?\\s*';
+  // ⚠️ 結論用詞後面**允許的標點要夠寬**（Codex #385 r3 High②）：
+  //    只認少數幾個標點的話，「需修改後再審（High 尚未修）」「結論：不可合併；請先修正」
+  //    「結論：不可合併——請先修正」都認不出來，#383 的 fail-open 換個標點就回來了。
+  const TAIL = '(?:[\\s，、。．.！!？?；;：:（）()\\[\\]「」—–-].*)?';
   //    判準：剝掉「…：」前綴後**以結論用詞開頭**，後面只能接標點或結束——
   //    這樣「結論：通過，可以合併。」抓得到，而「修完就可以合併嗎？」抓不到（它不是以用詞開頭）。
-  const line = new RegExp(`^(?:.*：)?\\s*(?:${words})(?:[，、。．.！!\\s].*)?$`, 'u');
+  const line = new RegExp(`^(?:${PREFIX})?(?:${words})${TAIL}$`, 'u');
   return text.split('\n')
-    .map((l) => l.replace(/[*_`#>\s-]/gu, (ch) => (ch === ' ' ? ' ' : '')).trim())
+    // ⚠️ **行內 code 不是結論**（Codex #385 r3 Medium③）：「`不可合併` 表示 exit 1。」是在講判準，不是在下判準。
+    .filter((l) => !new RegExp('`[^`]*(?:' + words + ')[^`]*`', 'u').test(l))
+    .map((l) => l.replace(/^[#>\s*_-]+/u, '').replace(/[*_]/gu, '').trim())
     .some((l) => line.test(l));
 }
 
@@ -114,10 +124,12 @@ export function looksLikeVerdict(body) {
  * A 說「需修改」之後，B 說「通過」**不會**解除 A 的阻擋——那正是 #383 的情境。
  * 同一個審查者身分＝`角色 + 來源`（不是只有角色：兩個 Claude session 是兩個審查者）。
  *
- * @param {{body: string}[]} comments @param {string} head
+ * @param {{body: string}[]} comments
+ * @param {string} head
+ * @param {string|null} [reviewerRole] PR 說明指定的獨立審查者角色；`null`＝讀不出來（退回「任何一位都算」）
  * @returns {{ problems: string[], reviewers: Record<string, any> }}
  */
-export function verdictProblems(comments, head) {
+export function verdictProblems(comments, head, reviewerRole = null) {
   /** @type {string[]} */ const problems = [];
   /** @type {Record<string, any>} */ const latest = {};
   for (const c of comments) {
@@ -146,11 +158,25 @@ export function verdictProblems(comments, head) {
   //    我原本讓它放行，理由是「沒有人下結論不等於有人說不行」——**那是退步**：
   //    `main` 原本的合併步驟 2 就要求「確認審查結論」，而協作欄位閘只證明
   //    **有人被寫成審查者**，證明不了**審查真的發生過**。
-  const passedAtHead = Object.values(latest).some((h) => !h.blocking && head.startsWith(h.sha));
-  if (!passedAtHead) {
-    problems.push(`沒有任何一位審查者對目前的 head（${head.slice(0, 7)}）下過「通過」的正式結論。\n`
-      + '    ⚠️ 協作欄位閘只證明「有人被寫成審查者」，證明不了「審查真的發生過」。\n'
-      + '    請獨立審查者用來歷標頭給出結論（格式見 AGENTS.md「一支 PR 上可能有好幾個審查者」節）。');
+  // ⚠️ **放行的那則「通過」必須來自 PR 指定的獨立審查者**（Codex #385 r3 High①）。
+  //    原本只要求「有人說通過」——於是：實作者 Claude／獨立審查者 Codex，
+  //    而留言是 **Claude 自己的「通過」**，兩道閘都零問題 ⇒ **實作者自己放行了自己的 PR**。
+  //    那是唯一不變量的正面違反，而這支腳本的存在理由就是守它。
+  //    阻擋仍然取**所有人**的聯集（誰都可以喊停），但**放行**只認指定的那一位。
+  const passers = Object.values(latest).filter((h) => !h.blocking && head.startsWith(h.sha));
+  const passedByReviewer = reviewerRole
+    ? passers.some((h) => h.role === reviewerRole)
+    : passers.length > 0;
+  if (!passedByReviewer) {
+    problems.push(passers.length && reviewerRole
+      ? `對目前 head 說「通過」的是 ${passers.map((h) => h.who).join('、')}，`
+        + `但 PR 說明指定的獨立審查者是「${reviewerRole}」。\n`
+        + '    ⚠️ **放行只認指定的那一位**——否則實作者自己說一句「通過」就放行了自己的 PR。\n'
+        + '    （阻擋不受此限：任何人都可以喊停，一律進聯集。）'
+      : `沒有${reviewerRole ? `「${reviewerRole}」` : '任何一位審查者'}對目前的 head（${head.slice(0, 7)}）`
+        + '下過「通過」的正式結論。\n'
+        + '    ⚠️ 協作欄位閘只證明「有人被寫成審查者」，證明不了「審查真的發生過」。\n'
+        + '    請獨立審查者用來歷標頭給出結論（格式見 AGENTS.md「一支 PR 上可能有好幾個審查者」節）。');
   }
   for (const h of Object.values(latest)) {
     if (!h.blocking) continue;
@@ -170,13 +196,14 @@ export function verdictProblems(comments, head) {
 
 /** @param {string} pr */
 function fetchPr(pr) {
-  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'comments,headRefOid'], { encoding: 'utf8' });
+  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'comments,headRefOid,body'], { encoding: 'utf8' });
   const p = JSON.parse(out);
   if (!Array.isArray(p?.comments)) throw new Error('gh 回傳的形狀不對（comments）');
   if (typeof p.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(p.headRefOid)) {
     throw new Error('gh 沒有回傳合法的 headRefOid');
   }
-  return { comments: p.comments, head: p.headRefOid };
+  if (typeof p.body !== 'string') throw new Error('gh 回傳的形狀不對（body）');
+  return { comments: p.comments, head: p.headRefOid, body: p.body };
 }
 
 /** @param {string[]} argv */
@@ -192,7 +219,10 @@ export function main(argv) {
     console.error(`複審聯集閘 PR #${pr}：查不清楚（${/** @type {any} */ (e)?.message}）——一律當成未通過。`);
     return 2;   // fail-closed
   }
-  const { problems, reviewers } = verdictProblems(data.comments, data.head);
+  // PR 說明指定的獨立審查者——讀不出來就是 null，那時退回「任何一位都算」並在訊息裡說明
+  //（協作欄位閘會另外擋「欄位不齊」，這裡不重複擋，但也不假裝知道）。
+  const reviewerRole = canonicalRole(fieldValue(data.body, '獨立審查者'));
+  const { problems, reviewers } = verdictProblems(data.comments, data.head, reviewerRole);
   const who = Object.values(reviewers).map((r) => `${r.who}=${r.verdict}`).join('、') || '（沒有任何帶標頭的結論）';
   if (problems.length === 0) {
     console.log(`複審聯集閘 PR #${pr}：沒有未回應的阻擋結論。現況：${who}`);

@@ -185,3 +185,42 @@ test('回歸｜標頭正規化的四個缺口（大寫 SHA／來源空白／原�
   assert.equal(H('- 🤖 Codex｜來源：CLI｜審 `aabbccd`｜r2｜結論：通過'), null, '列表形式的標頭被接受了');
   assert.ok(H('**🤖 Codex｜來源：CLI｜審 `aabbccd`｜r2｜結論：通過**'), '粗體包裝是合法寫法，不該被拒');
 });
+
+// ── 放行只認 PR 指定的獨立審查者（Codex #385 r3 High①）────────────
+
+test('⭐ 放行｜實作者自己說「通過」不算——放行只認 PR 指定的獨立審查者', () => {
+  // ⚠️ 這是唯一不變量的正面違反：PR 寫「實作者 Claude／獨立審查者 Codex」，
+  //    留言卻是 Claude 自己的「通過」，而兩道閘都零問題 ⇒ 實作者放行了自己的 PR。
+  const own = [c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 1, '通過'))];
+  assert.ok(verdictProblems(own, HEAD, 'Codex').problems.some((p) => /指定的獨立審查者/.test(p)),
+    '實作者自己的「通過」放行了自己的 PR');
+  // 指定的那一位說通過 → 放行
+  assert.deepEqual(
+    verdictProblems([c(head('Codex', 'CLI', HEAD.slice(0, 7), 1, '通過'))], HEAD, 'Codex').problems, []);
+});
+
+test('放行｜阻擋不受此限：**任何人**都可以喊停，一律進聯集', () => {
+  const { problems } = verdictProblems([
+    c(head('Codex', 'CLI', HEAD.slice(0, 7), 1, '通過')),
+    c(head('William', '產品驗收', HEAD.slice(0, 7), 1, '不可合併')),
+  ], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /William/.test(p)),
+    '非指定審查者的阻擋被忽略了——喊停不該有身分門檻');
+});
+
+test('結論行｜常見標點都要抓得到（r3 High②）', () => {
+  for (const body of [
+    '需修改後再審（High 尚未修）',
+    '結論：不可合併：High 尚未修',
+    '結論：不可合併；請先修正',
+    '結論：不可合併——請先修正',
+  ]) assert.equal(looksLikeVerdict(body), true, `漏掉：「${body}」`);
+});
+
+test('結論行｜任意前綴與行內 code 不可誤擋（r3 Medium③）', () => {
+  for (const body of [
+    '範例：不可合併。',
+    '退出碼說明：不可合併，回 1。',
+    '`不可合併` 表示 exit 1。',
+  ]) assert.equal(looksLikeVerdict(body), false, `誤擋：「${body}」`);
+});
