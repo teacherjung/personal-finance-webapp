@@ -5,6 +5,13 @@ import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
 import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml } from './monthly-review-card.js';
 import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
+import {
+  dashboardCashflowSeries,
+  dashboardGuideState,
+  dashboardMonthLabel,
+  dashboardNetWorthChange,
+  dashboardSnapshotSeries,
+} from './dashboard-forest.js';
 
 let chartRefs = [];
 let monthlyReviewChart = null;
@@ -22,24 +29,47 @@ function fetchInsightsOnce() {
   return insightsPromise;
 }
 
-// 淨資產走勢迷你線（hero 內，取自真實月快照）
-function sparklineSvg(snaps) {
-  const pts = (snaps || []).map(s => Number(s.netWorth) || 0);
-  if (pts.length < 2) return '<div class="dh-spark-empty">每月開啟 app 會自動記錄快照，累積幾個月後這裡會長出淨資產走勢。</div>';
-  const w = 240, h = 40, pad = 4;
-  const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
-  const step = w / (pts.length - 1);
-  const xy = pts.map((v, i) => [+(i * step).toFixed(1), +(h - pad - ((v - min) / range) * (h - 2 * pad)).toFixed(1)]);
-  const line = xy.map((p, i) => (i ? 'L' : 'M') + p[0] + ',' + p[1]).join(' ');
-  const area = `M${xy[0][0]},${h} ` + xy.map(p => 'L' + p[0] + ',' + p[1]).join(' ') + ` L${xy[xy.length - 1][0]},${h} Z`;
-  const last = xy[xy.length - 1];
-  return `<svg class="dh-spark-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none" aria-hidden="true">
-    <defs><linearGradient id="dhSpark" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${ACCENT}" stop-opacity=".2"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></linearGradient></defs>
-    <path d="${area}" fill="url(#dhSpark)"/>
-    <path d="${line}" fill="none" stroke="${ACCENT}" stroke-width="2"/>
-    <circle cx="${last[0]}" cy="${last[1]}" r="3" fill="${ACCENT}"/>
-  </svg>`;
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** @param {any} change */
+function netWorthChangeHtml(change) {
+  if (change.status === 'missing-current') {
+    return `<div class="forest-change waiting">尚待本月快照</div>
+      <p>本月有快照後，才會與上月最後一次快照比較。</p>`;
+  }
+  if (change.status === 'missing-previous') {
+    return `<div class="forest-change waiting">尚無上月基準</div>
+      <p>已記下 ${esc(snapshotLabel(change.current, change.currentMonth))}；上個月沒有可比快照。</p>`;
+  }
+  const amount = Number(change.amount || 0);
+  const direction = amount > 0 ? '增加' : amount < 0 ? '減少' : '持平';
+  const cls = amount > 0 ? 'pos' : amount < 0 ? 'neg' : 'flat';
+  const amountText = `${amount > 0 ? '+' : ''}${wan(amount)}`;
+  const pctText = change.pct == null ? '' : `（${change.pct > 0 ? '+' : ''}${pct(change.pct)}）`;
+  const previousLabel = snapshotLabel(change.previous, change.previousMonth);
+  const note = change.status === 'zero-base'
+    ? `${previousLabel}的淨資產為 0，百分比沒有可解讀的基準，因此只顯示金額。`
+    : amount === 0 ? `與 ${previousLabel}相同。` : `相較 ${previousLabel}${direction} ${wan(Math.abs(amount))}。`;
+  return `<div class="forest-change ${cls}">${amountText}<span>${pctText}</span></div><p>${esc(note)}</p>`;
+}
+
+/** @param {any} row @param {string} month */
+function snapshotLabel(row, month) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(row?.date || ''))
+    ? `${row.date} 快照`
+    : `${dashboardMonthLabel(month)}的快照`;
+}
+
+/** @param {any} change @param {string} month */
+function netWorthChangeBasisText(change, month) {
+  if (change.current && change.previous) {
+    return `比較區間 ${snapshotLabel(change.previous, change.previousMonth)} → ${snapshotLabel(change.current, change.currentMonth)}；不等同投資報酬。`;
+  }
+  if (change.current) return `${snapshotLabel(change.current, change.currentMonth)}；上個月尚無快照基準，不等同投資報酬。`;
+  return `${dashboardMonthLabel(month)}尚無快照；不等同投資報酬。`;
 }
 
 // 資產配置長條＋圖例（取代原本的甜甜圈；類別走 byClass，顏色固定對應）
@@ -232,6 +262,12 @@ export async function renderDashboard() {
   destroyCharts();
 
   const cf = s.cashflow;
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(cf?.month || '')) ? String(cf.month) : currentMonthKey();
+  const snapshots = dashboardSnapshotSeries(s.snapshots, month);
+  const cashflowRows = dashboardCashflowSeries(s.cashflowHistory, month);
+  const netWorthChange = dashboardNetWorthChange(s.snapshots, month);
+  const guide = dashboardGuideState(s.reminders);
+  const goalHtml = goalTrackingHtml(s.goalTrack, { wan, pct });
   const cfSub = (cf.income || cf.expense) ? `收入 ${wan(cf.income)}・支出 ${wan(cf.expense)}` : '本月尚未記帳';
   const pnl = s.ib.totalPnl;
   const warnCount = s.reminders.filter(r => r.level === 'warn' || r.level === 'danger').length;
@@ -250,25 +286,36 @@ export async function renderDashboard() {
   }
 
   view().innerHTML = `
-    <div class="page-head"><div><h1>總覽</h1><p>你的財務全貌與本月提醒</p></div></div>
+    <section class="forest-overview" aria-labelledby="forestDashboardTitle">
+      <div class="forest-scene">
+        <img src="assets/forest-return-positive.webp" alt="" aria-hidden="true">
+        <div class="forest-scene-title">
+          <span>Rongxiangsen Finance</span>
+          <h1 id="forestDashboardTitle">森林總覽</h1>
+          <p>看清資產全貌，再決定今天要處理什麼。</p>
+        </div>
+      </div>
+      <div class="forest-scene-summary">
+        <div class="forest-networth">
+          <span>淨資產</span>
+          <strong>${wan(s.netWorth)}</strong>
+          <div class="dh-deltas" id="dhDeltas"></div>
+        </div>
+        <div class="forest-month-change">
+          <span>本月淨資產變動</span>
+          ${netWorthChangeHtml(netWorthChange)}
+          <small>${esc(netWorthChangeBasisText(netWorthChange, month))}</small>
+        </div>
+        <div class="forest-balance-facts">
+          <span>資產 <b>${wan(s.assets)}</b></span>
+          <span>負債 <b>${wan(s.liabilities)}</b></span>
+          <span class="${warnCount ? 'needs-attention' : 'steady'}">${warnCount ? `${warnCount} 項紀律需注意` : '目前紀律正常'}</span>
+          <span id="dhLastSeen"></span>
+        </div>
+      </div>
+    </section>
 
-    <div class="dash-hero">
-      <div class="dh-main">
-        <div class="dh-lab">淨資產</div>
-        <div class="dh-net">${wan(s.netWorth)}</div>
-        <div class="dh-deltas" id="dhDeltas"></div>
-        <div class="dh-spark">${sparklineSvg(s.snapshots)}</div>
-      </div>
-      <div class="dh-chips">
-        <span class="dchip">資產 ${wan(s.assets)}</span>
-        <span class="dchip">負債 ${wan(s.liabilities)}</span>
-        ${warnCount
-          ? `<span class="dchip bad">⚠ ${warnCount} 項紀律需注意</span>`
-          : `<span class="dchip good">✓ 紀律正常</span>`}
-        <span id="dhLastSeen"></span>
-      </div>
-      ${goalTrackingHtml(s.goalTrack, { wan, pct })}
-    </div>
+    ${goalHtml ? `<section class="dash-block forest-goal">${goalHtml}</section>` : ''}
 
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-lab">本月現金流</div>
@@ -285,21 +332,36 @@ export async function renderDashboard() {
         <div class="kpi-d">${s.subscriptions.count} 項・年化 ${wan(s.subscriptions.yearly)}</div></div>
     </div>
 
-    <div class="dash-two">
-      <div class="dash-block" id="insightBlock">${insightSection(null, s.reminders)}</div>
-      <div class="dash-block">
+    <div class="forest-trends">
+      <section class="dash-block forest-chart-panel">
+        <div class="forest-panel-head"><div><span>資產軌跡</span><h2>近 12 月淨資產</h2></div><p>每月快照</p></div>
+        <div class="forest-chart-box"><canvas id="trendChart" role="img" aria-label="近 12 月淨資產趨勢圖">近 12 月淨資產趨勢</canvas></div>
+      </section>
+      <section class="dash-block forest-chart-panel">
+        <div class="forest-panel-head"><div><span>收支軌跡</span><h2>近 12 月收入、支出與淨現金流</h2></div><p>銀行收支帳本</p></div>
+        <div class="forest-chart-box"><canvas id="cashflowTrendChart" role="img" aria-label="近 12 月收入支出與淨現金流趨勢圖">近 12 月收入支出與淨現金流趨勢</canvas></div>
+      </section>
+    </div>
+
+    <div class="dash-two forest-insight-row">
+      <section class="dash-block forest-guide-panel">
+        <div class="forest-guide-intro">
+          <img src="assets/guide-return-${guide.mood}.webp" alt="小森森嚮導">
+          <div><span>小森森提醒</span><h2>${guide.title}</h2><p>${guide.detail}</p></div>
+        </div>
+        <div class="forest-insight-content" id="insightBlock">${insightSection(null, s.reminders)}</div>
+      </section>
+      <section class="dash-block forest-allocation-panel">
         <div class="dash-h">資產配置</div>
         <div class="dalloc-card">${allocSection(s.byClass)}</div>
-      </div>
+      </section>
     </div>
 
     <div id="monthlyReviewBlock">${monthlyReviewCardHtml(review, { esc, money, wan, pct })}</div>
-
-    <div class="section-title">淨資產走勢</div>
-    <div class="chart-card"><div class="chart-box"><canvas id="trendChart"></canvas></div></div>
   `;
 
-  drawTrend(s.snapshots);
+  drawTrend(snapshots);
+  drawCashflowTrend(cashflowRows);
   wireGoalTrackingInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
@@ -320,7 +382,8 @@ function wireGoalTrackingInfo() {
 
 function drawTrend(snaps) {
   const ctx = byId('trendChart');
-  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，開啟 app 會自動記錄，累積後這裡會顯示走勢。</p>'; return; }
+  const hasData = snaps.some(row => typeof row.netWorth === 'number' && Number.isFinite(row.netWorth));
+  if (!ctx || !hasData) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">近 12 個月尚無淨資產快照；記錄後，這裡會顯示每月走勢。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',
     data: {
@@ -328,17 +391,51 @@ function drawTrend(snaps) {
       datasets: [{
         label: '淨資產', data: snaps.map(s => s.netWorth),
         borderColor: ACCENT, backgroundColor: ACCENT_SOFT,
-        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: ACCENT
+        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: ACCENT, spanGaps: false
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false },
-        tooltip: { callbacks: { label: (c) => ' ' + (c.parsed.y / 10000).toFixed(0) + ' 萬' } } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label} ${wan(c.parsed.y)}` } } },
       scales: {
-        x: { ticks: { color: AXIS }, grid: { color: GRID } },
+        x: { ticks: { color: AXIS, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { display: false } },
         y: { ticks: { color: AXIS, callback: (v) => (v / 10000).toFixed(0) + '萬' }, grid: { color: GRID } }
-      }
+      },
+      animation: { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 280 }
+    }
+  }));
+}
+
+function drawCashflowTrend(rows) {
+  const ctx = byId('cashflowTrendChart');
+  const hasData = rows.some(row => typeof row.net === 'number' && Number.isFinite(row.net));
+  if (!ctx || !hasData) {
+    if (ctx) ctx.parentElement.innerHTML = '<p class="empty">近 12 個月尚無銀行收支紀錄；有資料後，這裡會顯示每月收入、支出與淨現金流。</p>';
+    return;
+  }
+  chartRefs.push(new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: rows.map(row => row.month),
+      datasets: [
+        { label: '收入', data: rows.map(row => row.income), borderColor: CHART.green, backgroundColor: CHART.green, tension: .28, pointRadius: 2, borderWidth: 2 },
+        { label: '支出', data: rows.map(row => row.expense), borderColor: CHART.red, backgroundColor: CHART.red, tension: .28, pointRadius: 2, borderWidth: 2 },
+        { label: '淨現金流', data: rows.map(row => row.net), borderColor: CHART.blue, backgroundColor: CHART.blue, tension: .28, pointRadius: 3, borderWidth: 2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { color: AXIS, boxWidth: 9, boxHeight: 9, usePointStyle: true } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label} ${money(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: AXIS, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { display: false } },
+        y: { ticks: { color: AXIS, callback: (v) => (Number(v) / 10000).toFixed(0) + '萬' }, grid: { color: GRID } },
+      },
+      animation: { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 280 }
     }
   }));
 }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { monthKey, computeAssets, computeIb, computeLeverage, buildSummary } from '../lib/derive.js';
+import { monthKey, computeAssets, computeCashflowHistory, computeIb, computeLeverage, buildSummary } from '../lib/derive.js';
 
 test('monthKey：日期字串取到正確月份（不受時區影響）', () => {
   assert.equal(monthKey('2026-07-15'), '2026-07');
@@ -24,6 +24,43 @@ test('computeAssets：淨資產＝資產−負債', () => {
   assert.equal(r.assets, 1000);
   assert.equal(r.liabilities, 300);
   assert.equal(r.netWorth, 700);
+});
+
+test('總覽 12 月現金流：沿用現金流帳本口徑，記帳前不補零、開始後的空月保留', () => {
+  const db = /** @type {any} */ ({ transactions: [
+    { date: '2025-06-01', type: 'income', amount: 999 },
+    { date: '2026-03-01', type: 'income', amount: 100 },
+    { date: '2026-03-02', type: 'expense', amount: 40 },
+    { date: '2026-04-01', type: 'expense', amount: 999, ledger: 'card' },
+    { date: '2026-05-01', type: 'transfer', amount: 500 },
+    { date: '2026-06-01', type: 'expense', amount: 30 },
+    { date: '2026-13-01', type: 'income', amount: 999 },
+  ] });
+  assert.deepEqual(computeCashflowHistory(db, '2026-06', 6), [
+    { month: '2026-03', income: 100, expense: 40, net: 60 },
+    { month: '2026-04', income: 0, expense: 0, net: 0 },
+    { month: '2026-05', income: 0, expense: 0, net: 0 },
+    { month: '2026-06', income: 0, expense: 30, net: -30 },
+  ]);
+});
+
+test('總覽 12 月現金流：視窗內沒有有效銀行收支時回空序列', () => {
+  const db = /** @type {any} */ ({ transactions: [
+    { date: '2026-06-01', type: 'expense', amount: 200, ledger: 'card' },
+    { date: '2026-06-02', type: 'transfer', amount: 300 },
+  ] });
+  assert.deepEqual(computeCashflowHistory(db, '2026-06'), []);
+});
+
+test('總覽 12 月現金流：最後一筆記帳後維持無資料，不用 0 冒充確定零收支', () => {
+  const db = /** @type {any} */ ({ transactions: [
+    { date: '2026-03-01', type: 'income', amount: 100 },
+    { date: '2026-04-01', type: 'expense', amount: 40 },
+  ] });
+  assert.deepEqual(computeCashflowHistory(db, '2026-06', 6), [
+    { month: '2026-03', income: 100, expense: 0, net: 100 },
+    { month: '2026-04', income: 0, expense: 40, net: -40 },
+  ]);
 });
 
 test('訂閱項數：已停用的不算（總覽與訂閱頁同口徑）', () => {
@@ -80,6 +117,7 @@ test('buildSummary：用 seed 範例資料能正常算出總覽（結構檢查�
   assert.equal(typeof s.subscriptions.count, 'number');
   assert.ok(Array.isArray(s.reminders));
   assert.ok(Array.isArray(s.snapshots));
+  assert.ok(Array.isArray(s.cashflowHistory));
 });
 
 test('自主體檢｜淨值歸零：summary 不輸出 Infinity（equityWiped 旗標）、提醒不印 Infinityx', async () => {
