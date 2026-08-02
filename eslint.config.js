@@ -30,23 +30,34 @@ export default [
     files: ['**/*.js', '**/*.mjs', '**/*.cjs'],
     ignores: ['lib/statement.js', 'test/**'],
     rules: {
-      // 靜態引入（含 `import 'xlsx'` 純副作用形、`export … from 'xlsx'`）
+      // 靜態引入（含 `import 'xlsx'` 純副作用形、`export … from 'xlsx'`）。
+      // ⚠️ **`patterns` 是必要的**：`paths` 只比對完全相同的模組名，
+      //    `import X from 'xlsx/xlsx.mjs'` 這種**子路徑**引入（SheetJS 自己也這樣發佈）會整個漏掉。
       'no-restricted-imports': ['error', {
         paths: [{
           name: 'xlsx',
           message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
         + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。',
         }],
+        patterns: [{
+          group: ['xlsx', 'xlsx/*'],
+          message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（子路徑引入一樣不行）。',
+        }],
       }],
       // 動態引入與 require——`no-restricted-imports` 不看這兩種，改用 AST 選擇器（一樣是 parser）
       'no-restricted-syntax': ['error',
-        { selector: "ImportExpression[source.value='xlsx']",
+        { selector: "ImportExpression[source.value=/^xlsx(\\/|$)/]",
           message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
         + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
-        { selector: "CallExpression[callee.name='require'][arguments.0.value='xlsx']",
+        { selector: "CallExpression[callee.name='require'][arguments.0.value=/^xlsx(\\/|$)/]",
           message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
         + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
-        // `createRequire` 是上面三條唯一繞得過的路（取個別名再呼叫，AST 上看不出是 require）。
+        // 非字面量的動態 import（`const s = 'xlsx'; await import(s)`）：靜態分析**判不出來**，
+        // 是上面幾條唯一還繞得過的路。production 全樹的動態 import 都是字面量，所以連同關掉。
+        { selector: "ImportExpression:not([source.type='Literal'])",
+          message: '動態 import 的模組名必須是字面量——非字面量會讓 xlsx 收斂點護欄（以及所有同類靜態檢查）失效。'
+        + '真的需要時請在 eslint.config.js 開例外並寫明理由。' },
+        // `createRequire` 是上面幾條唯一繞得過的路（取個別名再呼叫，AST 上看不出是 require）。
         // 本專案是純 ESM（package.json type: module），production／測試**全樹零使用**，
         // 所以直接關掉：成本是零，而洞就補上了。真的需要時再開，並在此處寫明理由。
         { selector: "CallExpression[callee.name='createRequire']",

@@ -252,19 +252,22 @@ async function productionFiles() {
  * 那這裡還做什麼？**盯著執法者還在不在**：有人把 eslint.config.js 那幾條規則刪掉、
  * 或把 `lib/statement.js` 以外的檔案加進 ignores，lint 就會安靜地全綠。下面兩題守這個。
  */
-async function eslintFindings(filePath) {
+async function eslintFindingsByFile(dir) {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const run = promisify(execFile);
-  try {
-    const { stdout } = await run('npx', ['eslint', '--format', 'json', filePath], { cwd: root });
-    return JSON.parse(stdout);
-  } catch (e) {
-    return JSON.parse(String(/** @type {any} */ (e).stdout || '[]'));   // eslint 有錯時 exit code 非 0
+  // ⚠️ **一次跑完所有樣本**：本來一個樣本 spawn 一次 eslint，15 個要 11 秒；
+  //    eslint 啟動成本佔了幾乎全部。一次掃一個目錄再依檔名分組，同樣的涵蓋、不到 1 秒。
+  const stdout = await run('npx', ['eslint', '--format', 'json', dir], { cwd: root, maxBuffer: 16 * 1024 * 1024 })
+    .then((r) => r.stdout, (e) => String(e?.stdout || '[]'));   // eslint 有錯時 exit code 非 0
+  const out = new Map();
+  for (const r of JSON.parse(stdout)) {
+    out.set(r.filePath, (r.messages || []).filter((m) => String(m.ruleId || '').startsWith('no-restricted-')));
   }
+  return out;
 }
 
 test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則被拿掉＝lint 從此安靜全綠）', async () => {
@@ -275,8 +278,10 @@ test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則
   for (const needle of [
     "'no-restricted-imports'",
     "'no-restricted-syntax'",
-    "ImportExpression[source.value='xlsx']",
-    "CallExpression[callee.name='require'][arguments.0.value='xlsx']",
+    'patterns:',
+    "ImportExpression[source.value=/^xlsx(\\\\/|$)/]",
+    "CallExpression[callee.name='require'][arguments.0.value=/^xlsx(\\\\/|$)/]",
+    "ImportExpression:not([source.type='Literal'])",
     "CallExpression[callee.name='createRequire']",
   ]) {
     assert.ok(cfg.includes(needle),
@@ -286,33 +291,47 @@ test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則
     'xlsx 護欄的 ignores 清單被改動了——允許名單只能有 lib/statement.js（test/** 是考題自己要合成 XLSX）。');
 });
 
-test('架構｜七種合法的引入寫法都要被 lint 擋下（regex 漏掉五種，所以改用 parser）', async () => {
-  const { writeFileSync, rmSync } = await import('node:fs');
+test('架構｜十五種合法的引入寫法都要被 lint 擋下（手寫 regex 漏掉一大半，所以改用 parser）', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const probe = join(root, 'lib', '_xlsx_guard_probe.js');
+  const probeDir = join(root, 'lib', '_xlsx_guard_probes');
   const long = 'x'.repeat(90);
   const FORMS = [
     ["靜態", "import XLSX from 'xlsx';\nconsole.log(XLSX);\n"],
     ["靜態＋註解", "import XLSX from /* c */ 'xlsx';\nconsole.log(XLSX);\n"],
     ["純副作用", "import 'xlsx';\n"],
+    ["改名", "import * as Y from 'xlsx';\nconsole.log(Y);\n"],
+    ["export-from", "export { read } from 'xlsx';\n"],
+    ["export *", "export * from 'xlsx';\n"],
+    ["子路徑（SheetJS 自己也這樣發佈）", "import X from 'xlsx/xlsx.mjs';\nconsole.log(X);\n"],
+    ["子路徑＋純副作用", "import 'xlsx/dist/xlsx.full.min.js';\n"],
     ["動態", "const X = await import('xlsx');\nconsole.log(X);\n"],
     ["動態＋註解在括號內", "const X = await import(/* c */ 'xlsx');\nconsole.log(X);\n"],
     ["動態＋註解在括號外", "const X = await import /* c */ ('xlsx');\nconsole.log(X);\n"],
     ["動態＋超長註解", `const X = await import(/* ${long} */ 'xlsx');\nconsole.log(X);\n`],
-    ["createRequire 別名", "import { createRequire } from 'node:module';\n"
+    ["動態＋子路徑", "const X = await import('xlsx/xlsx.mjs');\nconsole.log(X);\n"],
+    ["動態＋非字面量（靜態判不出模組名，所以連非字面量本身都禁）",
+      "const s = 'xlsx';\nconst X = await import(s);\nconsole.log(X);\n"],
+    ["createRequire 別名（AST 上看不出是 require，所以直接禁 createRequire）",
+      "import { createRequire } from 'node:module';\n"
       + "const r = createRequire(import.meta.url);\nconst X = r /* c */ ('xlsx');\nconsole.log(X);\n"],
   ];
   try {
-    for (const [name, src] of FORMS) {
-      writeFileSync(probe, src);
-      const out = await eslintFindings(probe);
-      const hits = (out[0]?.messages || []).filter((m) => String(m.ruleId || '').startsWith('no-restricted-'));
+    mkdirSync(probeDir, { recursive: true });
+    const paths = FORMS.map(([name, src], i) => {
+      const f = join(probeDir, `p${i}.js`);
+      writeFileSync(f, src);
+      return [name, f, src];
+    });
+    const byFile = await eslintFindingsByFile(probeDir);
+    for (const [name, f, src] of paths) {
+      const hits = byFile.get(f) || [];
       assert.ok(hits.length > 0,
         `「${name}」這種寫法沒有被擋下——它是合法 JS，會讓 xlsx 繞過子行程隔離。\n原始碼：\n${src}`);
     }
-  } finally { rmSync(probe, { force: true }); }
+  } finally { rmSync(probeDir, { recursive: true, force: true }); }
 });
 
 test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**自己造誘餌**，才不會只在某些機器上有效）', async () => {
