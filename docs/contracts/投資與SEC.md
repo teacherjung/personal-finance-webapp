@@ -75,12 +75,6 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
 **記得同步這裡**：`portfolio-exposure.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（前端 exposure 與後端 derive 兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%）
 
-## ib-sync DEFAULT_LAYER 新增代號
-
-**改這裡**：`lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號
-
-**記得同步這裡**：兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉）
-
 ## IB 槓桿與斷頭距離
 
 **改這裡**：IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback）
