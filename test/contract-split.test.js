@@ -106,17 +106,20 @@ function read(p) {
   // ⚠️ **AGENTS.md 的同步點路由表本身承重**（Codex #384 r23 High③）：
   //    它的標題 anchor 沒有消費者，但那張表就是索引本身。Codex 在表前後加了行「中」的
   //    `<details>`，GitHub 把整張表收進預設摺疊區——**人看不到、而考題照讀 raw 行，7/7 全綠**。
-  //    ⇒ 五個檔一律不准出現「長得像 HTML tag」的 `<`（`<` 後面接 ASCII 字母或 `/`）。
-  //    `<角色>`／`<哪個 session>` 這種 CJK 佔位符不受影響（GitHub 當文字渲染），
-  //    `<worktree>`／`<N>` 這些都在行內 code 裡 ⇒ **這道門零改寫**。
-  const CODE_SPAN = /(`+)(?:(?!\1`)[\s\S])*?\1(?!`)/gu;
-  const bare = raw.replace(CODE_SPAN, (m) => m.replace(/[^\n]/g, ' '));
-  const tagLike = bare.split('\n').findIndex((l) => /<\/?[A-Za-z]/u.test(l));
-  assert.equal(tagLike, -1,
-    `${p}:${tagLike + 1} 出現長得像 HTML tag 的 \`<\`（行內 code span 裡的不算）。\n`
-    + '⚠️ `<details>` 會把整段（包括同步點路由表）摺成預設收合——**人看不到，而考題照讀原始文字**。\n'
-    + '   要寫 tag 名稱請用行內反引號包起來，而且開關的反引號個數要一樣。'
-    + '\n   （`<角色>` 這種非 ASCII 佔位符不受限制——GitHub 把它當文字渲染。）');
+  //
+  //    ⚠️ **這裡刻意不剝 code span**（Codex #384 r25 的反例）：跳脫的反引號 `` \` ``
+  //    不構成 code span，但任何「先剝 code span 再判斷」的前處理都會被它騙過去——
+  //    r24 的版本就是這樣讓 `<details>` 溜進去的。所以判準直接看原始文字。
+  //
+  //    代價：AGENTS.md 只擋**會把內容藏起來**的那兩個元素，不是通用的 raw HTML 禁令。
+  //    理由是它合法地引用外部語法（`<Z/>` 是 XBRL、`<CorporateAction>` 是 IB Flex、
+  //    `<callout icon=` 是 Notion），把那些改掉是失真。**這條界線寫在這裡，不要以為它擋得更多。**
+  const hider = raw.split('\n').findIndex((l) => /<\/?(?:details|summary)\b/iu.test(l));
+  assert.equal(hider, -1,
+    `${p}:${hider + 1} 出現 \`<details>\` 或 \`<summary>\`。\n`
+    + '⚠️ 它們會把包住的內容（包括同步點路由表）摺成預設收合——**人看不到，而考題照讀原始文字**。\n'
+    + '   規則書不可以有「預設看不見」的區塊。要收合請改成連到另一份文件。\n'
+    + '   （這道檢查刻意不管反引號：跳脫的反引號不構成 code span，任何前處理都會被它騙過。）');
   assert.equal(html, -1,
     `${p}:${html + 1} 出現行首 raw HTML。\n`
     + '⚠️ `<pre>`／`<div>` 這類 block 會把包住的內容整段吞掉，而畫面上看不出來。要排版請用 Markdown。');
@@ -173,26 +176,25 @@ function assertHeadingForm(p, raw) {
   assert.equal(invisible, -1,
     `${p}:${invisible + 1} 出現零寬／不可見字元。\n`
     + '⚠️ 畫面上不存在、長度卻算得到——同樣可以灌大內文，而且沒有人看得出來。');
-  // ⚠️ **raw HTML 的判準**（Codex #384 r23 High②）。
-  //    r22 我用 `` (`+)[^`]*\1 `` 剝行內 code，那是錯的：
-  //    `` `<a id="x"></a>`` `` 開一個反引號、**關兩個**，GFM 要求開關長度相等 ⇒ 它不是 code span，
-  //    那個 `<a id>` 在 GitHub 上真的產生 anchor，而護欄 7/7 全綠。
+  // ⚠️ **契約檔一個 `<` 都不准**（Codex #384 r25 給了具體反例之後的收束）。
   //
-  //    Codex 建議乾脆全面禁止 `<`。我沒採用，理由是代價不對稱：
-  //    `sub-charge-<id>` 這種佔位符寫法在 `lib/derive.js`、`lib/types.js`、考題、其他文件裡
-  //    是**全 repo 一致的慣例**，只改契約檔會製造兩種寫法並存——正是本專案在打的漂移。
-  //    改用**正確的 GFM 判準**，並要求它的誤差方向是「寧可誤紅」：
-  //    開關長度不等、沒關、前後還有反引號 ⇒ **一律不當 code span**（⇒ 會被擋下）。
-  //    十個對抗案例（開1關2／開2關1／沒關／夾在兩個 span 中間／跨行）都驗過。
-  //    ⚠️ 要**整份一起剝**、不能逐行剝：CommonMark 的 code span 可以跨行。
-  const CODE_SPAN = /(`+)(?:(?!\1`)[\s\S])*?\1(?!`)/gu;
-  const bareLines = raw.replace(CODE_SPAN, (m) => m.replace(/[^\n]/g, ' ')).split('\n');
-  const midHtml = bareLines.findIndex((l) => l.includes('<'));
-  assert.equal(midHtml, -1,
-    `${p}:${midHtml + 1} 出現 raw HTML 的 \`<\`（**正確判定**的行內 code span 裡不算）。\n`
-    + '⚠️ `<a id>` 會多長一個 anchor、`<details>` 會把整段摺起來，而畫面上都看不出來。\n'
-    + '   要寫角括號請用行內反引號包起來，而且**開關的反引號個數要一樣**——\n'
-    + '   不一樣的話 GFM 不算 code span，那個 `<` 就是真的 HTML。');
+  //    r24 我用「正確的 GFM code span 判準」放行反引號裡的 `<`，並宣稱誤差方向是「寧可誤紅」。
+  //    **那個宣稱是錯的，Codex 用兩個反例證明了誤放**：
+  //      ①開三個反引號、關兩個 ⇒ 正規式會回溯，把前兩個當開頭、第三個當內容，整段 HTML 被剝掉
+  //      ②**跳脫的反引號** `` \` `` ⇒ GFM 根本不算 code span，GitHub 建立真的 `<details>`。
+  //        它把這個放在 AGENTS 同步點表前後，**整張表被摺起來，而護欄 7/7 全綠**。
+  //
+  //    我原本不想全面禁止，理由是 `sub-charge-<id>` 是全 repo 一致的慣例、只改契約檔會製造兩種寫法。
+  //    ⇒ 解法不是保留漏洞，是**把慣例一起換掉**：全 repo 的 `<xxx>` 佔位符統一成 `{xxx}`
+  //      （23 處，純註解／JSDoc／測試訊息／文件，逐字元驗過只有括號種類變動）。
+  //    **這是第九次得到同一個結論：不要自己實作 Markdown 文法的一部分。**
+  const anyLt = lines.findIndex((l) => l.includes('<'));
+  assert.equal(anyLt, -1,
+    `${p}:${anyLt + 1} 出現 \`<\`。\n`
+    + '⚠️ 契約檔**一個 `<` 都不准**（連行內反引號裡的也不行）——`<a id>` 會多長一個 anchor、\n'
+    + '   `<details>` 會把整段摺起來，而「這個 `<` 在不在 code span 裡」需要真正的 GFM parser 才判得準\n'
+    + '   （跳脫的反引號、開關長度不等，兩種都被實測繞過）。\n'
+    + '   佔位符請用 `{id}` 這種寫法（全 repo 慣例）；要角括號請寫成文字。');
   // ⚠️ **第 1 行必須是 H1，這要無條件斷言**（Codex #384 r16）：
   //    原本只寫「是標題就必須合規」，於是把第 1 行的 `# ` 刪掉會讓它變成普通文字
   //    ⇒ `atxish` 是 false ⇒ 整條判斷跳過 ⇒ **七題全綠**。
@@ -384,9 +386,12 @@ const MANIFEST = {
       'lib/stock-fundamentals.js',
       'public/modules/categories.js',
       'public/modules/portfolio-calculations.js',
+      'public/modules/portfolio-editors.js',
+      'public/modules/portfolio-forms.js',
       'public/modules/portfolio-exposure.js',
       'public/modules/portfolio-model.js',
       'public/modules/portfolio-risk.js',
+      'public/modules/portfolio-state.js',
       'public/modules/portfolio-symbol.js',
       'public/modules/portfolio-valuation-actions.js',
       'public/modules/portfolio-valuation.js',
@@ -394,6 +399,10 @@ const MANIFEST = {
       'public/modules/signal-tiers.js',
       'server.js',
       'test/codex-r11.test.js',
+      'test/portfolio-editors.test.js',
+      'test/portfolio-forms.test.js',
+      'test/portfolio-risk.test.js',
+      'test/portfolio-state.test.js',
       'test/heavy-admission.test.js',
       'test/stock-fundamentals-api.test.js',
     ],

@@ -312,13 +312,33 @@ p.write_text(s[:j]+" <details><summary>展開</summary>"+s[j:], encoding="utf-8"
 PY
 check 'AN. AGENTS 行「中」的 details 把同步點表摺起來' 紅
 
-mutate 'AO.（誤紅考題）正常的佔位符寫法不可擋' <<'PY'
+# ── r25：Codex 給的兩個 GFM 反例＋漏掉的責任檔 ──
+
+mutate 'AP. 開三個反引號關兩個（正規式會回溯）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
-p.write_text(s[:i]+"提醒鑰匙格式是 `evt-<id>`／`x-<kind>-<id>`，這是全 repo 慣例。\n\n"+s[i:], encoding="utf-8")
+p.write_text(s[:i]+'可見文字 ```<a id="月度回顧總覽卡"></a>`` 後面\n\n'+s[i:], encoding="utf-8")
 PY
-check 'AO.（誤紅考題）正常的佔位符寫法不可擋' 綠
+check 'AP. 開三個反引號關兩個（正規式會回溯）' 紅
+
+mutate 'AQ. 跳脫的反引號包住 details（AGENTS 同步點表被摺起來）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+j=s.rindex("\n", 0, i)
+p.write_text(s[:j]+"\n\n\\`<details><summary>隱藏同步點</summary>\\`\n"+s[j:], encoding="utf-8")
+PY
+check 'AQ. 跳脫的反引號包住 details（AGENTS 同步點表被摺起來）' 紅
+
+mutate 'AR. 弱化凍結標的判準（責任檔原本不在 manifest）' <<'PY'
+import pathlib
+p=pathlib.Path("test/contract-split.test.js"); s=p.read_text(encoding="utf-8")
+a="      'public/modules/portfolio-forms.js',\n"
+assert s.count(a)==1
+p.write_text(s.replace(a,""), encoding="utf-8")
+PY
+check 'AR. 弱化凍結標的判準（責任檔原本不在 manifest）' 紅
 
 # ── 索引與契約的雙向對應 ──
 
