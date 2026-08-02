@@ -61,42 +61,58 @@ export async function renderTransactions() {
   const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
 
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>信用卡費</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「銀行收支」）</p></div>
-      <div class="page-actions">
-        ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
-        <button class="btn btn-upload" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
-      </div>
-    </div>
-
-    <div class="cards">
-      <div class="card"><h3>本月消費</h3><div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>${refundData ? '<div class="muted" style="font-size:11.5px">退款不會算進本月消費裡</div>' : ''}</div>
-      <div class="card"><h3>本月筆數</h3><div class="stat sm">${rows.length}</div><div class="muted" style="font-size:11.5px">含退款筆數</div></div>
-    </div>
-
-    <div class="two-col" style="margin:18px 0">
-      <div>
-        <label>月份</label>
-        <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
-      </div>
-      <div class="chart-card" style="padding:14px 18px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px">
-          <h3 style="margin:0">本月消費分類</h3>
-          <button type="button" class="info-link" id="lensInfo">退款算在哪個月？</button>
+    <div class="credit-workspace">
+      <div class="page-head credit-head">
+        <div><h1>信用卡費</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「銀行收支」）</p></div>
+        <div class="page-actions">
+          ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
+          <button class="btn btn-upload" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
         </div>
-        ${topCats.length ? topCats.map(([c, v]) => `
-          <div style="margin-bottom:8px">
-            <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
-            <div class="pill-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
-          </div>`).join('') : '<p class="empty">本月尚無消費。</p>'}
-        ${!refundData ? '<p class="muted" style="font-size:12px;margin-top:10px">退款歸屬暫時讀不到，這裡先用帳面口徑（退款算在退款當月）。重新整理可再試一次。</p>' : ''}
-        ${unmatchedThisMonth.length ? `<p class="muted" style="font-size:12px;margin-top:10px">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo">為什麼？</button></p>` : ''}
       </div>
-    </div>
 
-    <div class="tbl-wrap">
-      <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(t => rowHtml(t, { purchaseDateOf, refundDateOf })).join('') || `<tr><td colspan="7" class="empty">尚無消費，點右上角「上傳信用卡帳單」匯入。</td></tr>`}</tbody></table>
+      <section class="credit-controls" aria-label="信用卡帳單月份">
+        <div class="credit-control">
+          <label for="monthSel">月份</label>
+          <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
+        </div>
+        <p>消費統計依消費發生月歸屬；下方明細保留帳單上的原始日期。</p>
+      </section>
+
+      <section class="credit-overview-grid" aria-label="本月信用卡摘要與分類">
+        <div class="card credit-stat" data-kind="spend">
+          <h3>本月消費</h3>
+          <div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>
+          <p>${refundData ? '已配對退款回到原消費月抵減' : '目前暫用帳面口徑'}</p>
+        </div>
+        <div class="card credit-stat" data-kind="count">
+          <h3>本月筆數</h3>
+          <div class="stat sm">${rows.length}</div>
+          <p>帳單原貌，包含退款</p>
+        </div>
+        <div class="chart-card credit-category-panel">
+          <div class="credit-category-head">
+            <div><h2>本月消費分類</h2><p>依淨額由高到低，最多六類</p></div>
+            <button type="button" class="info-link" id="lensInfo">退款算在哪個月？</button>
+          </div>
+          ${topCats.length ? topCats.map(([c, v]) => `
+            <div class="credit-category-row">
+              <div class="credit-category-label"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
+              <div class="pill-bar credit-category-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
+            </div>`).join('') : '<p class="empty credit-category-empty">本月尚無消費。</p>'}
+          ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款算在退款當月）。重新整理可再試一次。</p>' : ''}
+          ${unmatchedThisMonth.length ? `<p class="credit-category-note">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo">為什麼？</button></p>` : ''}
+        </div>
+      </section>
+
+      <section class="credit-ledger-section" aria-labelledby="credit-ledger-title">
+        <div class="credit-ledger-head">
+          <div><h2 id="credit-ledger-title">帳單明細</h2><p>目前顯示 ${rows.length} 筆，包含退款</p></div>
+        </div>
+        <div class="tbl-wrap credit-ledger">
+          <table><thead><tr>${th('date', '消費日')}${th('account', '信用卡')}${th('note', '消費說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+          <tbody>${rows.map(t => rowHtml(t, { purchaseDateOf, refundDateOf })).join('') || `<tr><td colspan="7" class="empty"><div class="credit-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>本月尚無信用卡消費</strong><span>可用右上角「上傳信用卡帳單」匯入本月明細。</span></div></div></td></tr>`}</tbody></table>
+        </div>
+      </section>
     </div>
   `;
 
