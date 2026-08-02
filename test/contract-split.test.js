@@ -1,33 +1,40 @@
 // @ts-check
-// 領域契約拆分的護欄考題（2026-08-02，D4c／2c 收官；r2 依 Codex #384 r1 重寫判準）。
+// 領域契約拆分的護欄考題（2026-08-02，D4c／2c 收官；r3 依 Codex #384 r2 改成 manifest 精確比對）。
 //
 // ## 為什麼需要它
 //
-// `docs/contracts/` 的拆分從 2026-07-31 就開始做，但**一直沒有任何機械檢查**。
-// 實測結果：拆分省下的篇幅，兩天之內被新內容吃回去一大半——
-// AGENTS.md 的「一行索引」會慢慢長胖，長到跟原本的整條規則一樣長，
-// 拆分就等於沒發生（而且更糟：同一條規則變成兩份，會各自漂）。
+// `docs/contracts/` 的拆分做過三次，**一直沒有任何機械檢查**。
+// 實測：拆分省下的篇幅兩天之內被吃回去大半——AGENTS.md 的「一行索引」會慢慢長胖，
+// 長到跟原本的整條規則一樣長，拆分就等於沒發生（更糟：同一條規則變成兩份，會各自漂）。
 //
-// ## r1 的五條假綠（Codex 實測，判準因此重寫）
+// ## r1／r2 連兩輪被打穿，根因是同一個
 //
-// 第一版每一條斷言都是「**從索引出發**」——於是只要讓某一列**不再是索引**，它就從受測集合裡消失：
-//   ①整列回復成 main 的「無連結原規則」⇒ `indexRows()` 收不到它 ⇒ 全綠
-//   ②段落從 `##` 降成 `###` ⇒ 長度那題 `continue` 掉 ⇒ 索引超過上限也全綠
-//   ③剝 `**記得同步這裡**：` 時位移算錯（用 9、實際 11）⇒ 契約內文被多算兩字 ⇒ 貼回整條規則仍全綠
-//   ④路由表只驗「契約檔名有沒有出現」，完全沒驗窮舉檔案清單 ⇒ 刪掉 `lib/repo.js` 全綠
-//   ⑤契約內文大幅截短，只要仍比摘要「稍長」就全綠
+// **我一直在「從文字推導清單」。** 推導永遠不完整，而且被推導的那份文字**自己可以改**：
+//   r1：所有斷言「從索引出發」⇒ 讓某列不再是索引，它就從受測集合消失
+//   r2：改成雙向，但「是不是一條規則」仍靠文字特徵（有沒有 `**記得同步這裡**：`）
+//       ⇒ **marker 與索引一起刪掉，正反兩邊同時消失，四題全綠**（Codex 實測）
+//       路由那題只認 `export function`，漏 `export const`／export list／API 路徑；
+//       比對還用 basename 子字串，`lib/store-rules.js` 可以冒充 `lib/services/store-rules.js`
 //
-// **共同的根：判準只看得到「還乖乖當索引的那些列」。** r2 因此加了**反向**斷言：
-// 從**契約檔的每一個段落**出發，要求 AGENTS 一定有一列指過來——
-// 這樣「把索引拆掉」不再是逃出考題，而是製造一個沒人指的孤兒段落 ⇒ 紅。
+// ## r3：改成**宣告**，不再推導
+//
+// 下面的 `MANIFEST` 是**手寫的真相**：每份契約有哪些規則、哪些責任檔。判準全部改成**精確集合相等**：
+//   ・契約檔裡的標題集合 **==** `rules ∪ exempt`（多一個少一個都紅——刪 marker 沒有用）
+//   ・`rules` 與 AGENTS 索引列 **雙向一一對應**（拆掉索引＝紅；索引指到不存在的規則＝紅）
+//   ・README 路由列的檔案集合 **==** `files`（精確路徑，不接受 basename 子字串）
+//   ・契約內文提到的 repo 路徑 **⊆** `files`（新提到一個檔就強迫更新 manifest）
+//
+// 代價說清楚：manifest 是一份要手動維護的副本。但它的**每一種走樣都會紅**，
+// 而且更新它是刻意的動作——這正是我們要的審批點。
+// 相對地，「從文字推導」看起來不用維護，實際上是**永遠不知道自己漏了什麼**。
 //
 // ## 誠實劃界
 //
-// 擋得住「索引長回原文」「拆掉索引」「連結指不到」「路由表漏檔（**檔名或函式名有出現的**）」。
-// 擋不住「索引摘要寫得爛」——摘要品質是人的事。
+// 擋得住「索引長回原文」「拆掉索引或 marker」「連結指不到」「路由表漏檔或冒充」。
+// 擋不住：①索引摘要寫得爛 ②`files` 該不該包含某個檔（那是人的判斷，manifest 只保證它被明講）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,9 +43,150 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
 const MAX_INDEX_LEN = 600;
-/** 摘要相對契約內文的上限比例（只在內文 ≥300 字元時生效）——「稍微短一點」不算拆分（r1 假綠⑤）。 */
+/** 摘要相對契約內文的上限比例（只在內文 ≥300 字元時生效）。 */
 const MAX_SUMMARY_RATIO = 0.6;
 const BODY_LABEL = '**記得同步這裡**：';
+
+/**
+ * **宣告的真相**（不是從文字推導的）。
+ * - `rules`：每一條規則的標題原文。**每一條都必須有一列 AGENTS 索引指過來。**
+ * - `exempt`：確定不是獨立規則的小節，必須逐一寫理由。
+ * - `files`：這個領域的責任檔**窮舉**清單（README 路由列必須剛好是這一組）。
+ */
+const MANIFEST = {
+  'docs/contracts/前端功能.md': {
+    rules: [
+      '月度回顧總覽卡',
+      '訂閱續費日自動推進',
+      '訂閱本月攤提',
+      '訂閱狀態',
+      'YYYY-MM-DD 日期解析',
+      'theme 色票',
+      '每日洞察引擎書籤 insightState',
+    ],
+    exempt: [],
+    files: [
+      'lib/derive.js',
+      'public/modules/monthly-review-card.js',
+      'lib/repo.js',
+      'lib/routes/core.js',
+      'lib/routes/crud.js',
+      'lib/routes/market.js',
+      'lib/schema.js',
+      'lib/services/insights.js',
+      'lib/services/market-data.js',
+      'lib/services/snapshot.js',
+      'lib/services/subscriptions.js',
+      'lib/store.js',
+      'lib/types.js',
+      'public/app.js',
+      'public/modules/subscriptions.js',
+      'test/server.test.js',
+      'test/subscriptions-model.test.js',
+    ],
+  },
+  'docs/contracts/收支記帳與匯入.md': {
+    rules: [
+      'PDF 逐列抽取器',
+      '信用卡負數交易的繳款與退款判斷',
+      '月度回顧的消費口徑與退款配對',
+      '信用卡費頁的兩種口徑',
+      '銀行收支真學習的方向與內轉子分類',
+      '同類同店一起改是單一原子指令',
+      '停車費顯示包裝的觸發',
+      '帳戶顯示名 denormalized 到交易',
+      '支出分類兩層與使用者自訂',
+      'CATEGORY_RULES 關鍵字順序',
+      '帳單多銀行與多格式解析',
+      '顯示標記 applyDisplayLabels',
+      '使用者自訂店名規則 storeRules',
+      '規則入櫃檯',
+      '規則指紋 storeRulesHash',
+      '店名規則的 API 與 UI',
+      '帳單上傳免選卡自動歸卡',
+      '帳單匯入批次與事後整批改卡片',
+      '帳單自動學習店名與分類',
+      '店家消費檔案',
+    ],
+    exempt: [],
+    files: [
+      'data/seed.json',
+      'lib/bank-statement.js',
+      'lib/derive.js',
+      'lib/pdf-isolate.js',
+      'lib/repo.js',
+      'lib/routes/core.js',
+      'lib/routes/crud.js',
+      'lib/routes/statement.js',
+      'lib/schema.js',
+      'lib/services/bank-import.js',
+      'lib/services/categories.js',
+      'lib/services/health-check.js',
+      'lib/services/learning.js',
+      'lib/services/statement-import.js',
+      'lib/services/store-rules.js',
+      'lib/statement.js',
+      'lib/store-rules.js',
+      'lib/store.js',
+      'lib/taishin-securities.js',
+      'public/app.js',
+      'public/modules/cashflow.js',
+      'public/modules/categories.js',
+      'public/modules/refund-attribution.js',
+      'public/modules/settings-store-rules.js',
+      'public/modules/settings.js',
+      'public/modules/transactions-import.js',
+      'public/modules/transactions.js',
+      'test/refund-attribution.test.js',
+      'test/refund-pairing-aggregate.test.js',
+      'test/statement-pipeline.test.js',
+      'test/store-rules.test.js',
+    ],
+  },
+  'docs/contracts/投資與SEC.md': {
+    rules: [
+      'SEC 官方指標挑值',
+      'SEC currentDebt 流動債務',
+      'SEC 全站佇列護欄',
+      '重型工作名額（heavy admission）與 SEC 的關係',
+      '新增 ETF 持股',
+      'ib-sync DEFAULT_LAYER 新增代號',
+      'IB 槓桿與斷頭距離',
+      '投資代號與原則上限',
+      '估值訊號門檻檔位',
+      'settings-signals',
+    ],
+    exempt: ['最新單季逐列期間'],
+    files: [
+      'lib/derive.js',
+      'lib/heavy-admission.js',
+      'lib/http-body.js',
+      'lib/pdf-isolate-child.js',
+      'lib/routes/auth.js',
+      'lib/routes/market.js',
+      'lib/schema.js',
+      'lib/services/ib-sync.js',
+      'lib/services/insights.js',
+      'lib/services/stock-fundamentals.js',
+      'lib/stock-fundamentals.js',
+      'public/modules/categories.js',
+      'public/modules/portfolio-exposure.js',
+      'public/modules/portfolio-valuation-actions.js',
+      'public/modules/portfolio-valuation.js',
+      'public/modules/signal-tiers.js',
+      'server.js',
+      'test/codex-r11.test.js',
+      'test/heavy-admission.test.js',
+      'test/stock-fundamentals-api.test.js',
+    ],
+  },
+};
+
+
+/** `exempt` 每一條的理由——寫在這裡，免得有人把不想維護的規則丟進去。 */
+const EXEMPT_REASON = {
+  最新單季逐列期間: 'SEC 官方指標挑值的子細節（AGENTS 對應的是表格下方那條 blockquote，不是獨立的同步點列）',
+};
 
 /** GitHub 的 anchor 規則：小寫、去標點、空白轉 `-`。 @param {string} h */
 function slug(h) {
@@ -60,16 +208,7 @@ function indexRows() {
     });
 }
 
-/** 契約檔清單（`docs/contracts/*.md`，README 除外）。 */
-const contractFiles = () => readdirSync(join(ROOT, 'docs/contracts'))
-  .filter((f) => f.endsWith('.md') && f !== 'README.md')
-  .map((f) => `docs/contracts/${f}`);
-
-/**
- * 契約檔裡的每一個規則段落。**`##` 與 `###` 都算**——
- * r1 的假綠②就是把段落降成 `###` 之後長度那題直接跳過。
- * @param {string} file
- */
+/** 契約檔裡的每一個標題段落（`##` 與 `###` 都算）。 @param {string} file */
 function sectionsOf(file) {
   const md = read(file);
   const heads = [...md.matchAll(/^#{2,3} .+$/gm)];
@@ -79,120 +218,106 @@ function sectionsOf(file) {
     const text = md.slice(start, end);
     const bs = text.indexOf(BODY_LABEL);
     return {
+      title: h[0].replace(/^#+\s*/, ''),
       anchor: slug(h[0].replace(/^#+\s*/, '')),
-      heading: h[0],
-      text,
-      // ⚠️ 位移用**字串長度**算，不要手寫數字（r1 假綠③：寫死 9、實際 11，
-      //    契約內文被多算兩個字，剛好讓「貼回整條規則」過關）。
+      // 位移用**字串長度**算，不要手寫數字（r1 就是寫死 9、實際 11）
       body: bs < 0 ? '' : text.slice(bs + BODY_LABEL.length),
-      hasBody: bs >= 0,
     };
   });
 }
 
-test('拆分護欄｜每個索引行都指得到真實的契約檔與段落', () => {
+const sorted = (/** @type {string[]} */ a) => [...a].sort();
+
+test('拆分護欄｜manifest 必須涵蓋每一份契約（新拆一個領域就要在這裡登記）', () => {
+  const onDisk = readdirSync(join(ROOT, 'docs/contracts'))
+    .filter((f) => f.endsWith('.md') && f !== 'README.md')
+    .map((f) => `docs/contracts/${f}`);
+  assert.deepEqual(sorted(onDisk), sorted(Object.keys(MANIFEST)),
+    'docs/contracts/ 底下的契約檔與 MANIFEST 的登記不一致。\n'
+    + '⚠️ manifest 是宣告的真相——新拆一份契約就要在這裡登記，刪掉也要一起刪。\n'
+    + '（r2 的假綠之一：契約檔整份刪掉，考題因為「從現有檔案反查」而完全不出聲。）');
+  for (const e of Object.values(MANIFEST).flatMap((m) => m.exempt)) {
+    assert.ok(EXEMPT_REASON[e], `exempt 的「${e}」沒有寫理由——豁免必須有名有姓，不然它就是後門`);
+  }
+});
+
+test('拆分護欄｜契約裡的標題集合＝manifest 的 rules＋exempt（刪 marker 沒有用）', () => {
+  // ⚠️ r2 的假綠：「是不是一條規則」原本靠「有沒有 `**記得同步這裡**：`」判斷，
+  //    把 marker 與索引**一起**刪掉，正反兩邊同時消失、四題全綠（Codex 實測）。
+  //    現在判準與文字特徵無關：**標題集合必須剛好等於宣告的清單**。
+  for (const [file, m] of Object.entries(MANIFEST)) {
+    const titles = sectionsOf(file).map((s) => s.title);
+    assert.deepEqual(sorted(titles), sorted([...m.rules, ...m.exempt]),
+      `${file} 的標題集合與 manifest 不符。\n`
+      + '⚠️ 新增一條規則就要登記進 rules；刪掉一條就要一起刪。\n'
+      + '   確定不是獨立規則的小節請放進 exempt **並在 EXEMPT_REASON 寫理由**。');
+  }
+});
+
+test('拆分護欄｜rules 與 AGENTS 索引列**雙向**一一對應', () => {
   const rows = indexRows();
-  assert.ok(rows.length >= 20, `AGENTS.md 只找到 ${rows.length} 個契約索引行，預期至少 20（拆分被回捲了？）`);
-  for (const { line, file, anchor } of rows) {
-    assert.ok(existsSync(join(ROOT, file)),
-      `索引行指向不存在的契約檔 ${file}。\n實得：${line.slice(0, 100)}`);
-    const anchors = sectionsOf(file).map((s) => s.anchor);
-    assert.ok(anchors.includes(anchor),
-      `${file} 裡沒有 anchor \`#${anchor}\` 對應的標題——連結會落在檔頭，讀者找不到那一條。\n`
-      + `該檔現有 anchor：${anchors.join('、')}`);
+  for (const [file, m] of Object.entries(MANIFEST)) {
+    const declared = m.rules.map((r) => slug(r));
+    const pointed = rows.filter((r) => r.file === file).map((r) => r.anchor);
+    assert.deepEqual(sorted(pointed), sorted(declared),
+      `${file} 的索引列與 manifest 的 rules 不是一一對應。\n`
+      + `  AGENTS 指過來的：${sorted(pointed).join('、') || '（無）'}\n`
+      + `  manifest 宣告的：${sorted(declared).join('、')}\n`
+      + '⚠️ 少一個＝那條規則變成孤兒（改到相關檔案的人不會被導過去）；\n'
+      + '   多一個＝索引指到不存在的段落（連結會落在檔頭）。');
   }
 });
 
-test('拆分護欄｜**反向**：契約裡的每個段落，AGENTS 都要有一列指過來（拆掉索引＝製造孤兒）', () => {
-  // ⚠️ r1 的假綠①：把某一列回復成 main 的「無連結原規則」，它就從受測集合裡消失、全綠。
-  //    根因是所有斷言都**從索引出發**。這一題從**契約**出發，把那條路堵死。
-  const pointed = new Set(indexRows().map((r) => `${r.file}#${r.anchor}`));
-  for (const file of contractFiles()) {
-    for (const s of sectionsOf(file)) {
-      if (!s.hasBody) continue;   // 沒有「記得同步這裡」的段落＝說明性小節，不是規則
-      assert.ok(pointed.has(`${file}#${s.anchor}`),
-        `${file} 的「${s.heading}」是一條規則，但 AGENTS.md 沒有任何一列指過來。\n`
-        + '⚠️ 沒有索引的契約段落＝**孤兒**：改到相關檔案的人不會被導到這條規則。\n'
-        + '（若這條規則被搬回 AGENTS，請把契約段落一起刪掉；兩邊各留一份一定會漂。）');
-    }
-  }
-});
-
-test('拆分護欄｜索引的摘要必須**明顯**比契約內文短（否則拆分等於沒發生）', () => {
+test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆分等於沒發生）', () => {
   for (const { line, file, anchor } of indexRows()) {
     const s = sectionsOf(file).find((x) => x.anchor === anchor);
-    // ⚠️ fail-closed：找不到就是紅，不可以 `continue`（r1 假綠②靠的就是那個 continue）。
     assert.ok(s, `${file} 找不到 anchor \`#${anchor}\` 的段落 ⇒ 上一題應該已經紅；這裡不放行`);
-    assert.ok(s.hasBody, `${file}#${anchor} 的段落沒有「${BODY_LABEL}」——契約被掏空了？`);
+    assert.ok(s.body, `${file}#${anchor} 的段落沒有「${BODY_LABEL}」——契約被掏空了？`);
 
-    // ⚠️ 比的是「摘要 vs 內文」不是「整行 vs 整段」——整行含約 90 字元的表格框與連結標記，
-    //    短規則會被那個固定成本判成「沒省到」。
+    // 比的是「摘要 vs 內文」不是「整行 vs 整段」——整行含約 90 字元的表格框與連結標記。
     const summary = (line.split(' | ')[1] || '').split('——完整契約')[0];
-    // 比例只在**長規則**上生效：短規則的「摘要」本來就接近規則本身，
-    // 硬套比例會逼人把索引寫成看不懂的縮寫（實測 67 字元的規則被要求摘要 ≤40）。
-    // 真正要防的是「把一大條規則整個貼回 AGENTS」，那一定是長規則。
+    // 比例只在長規則上生效：短規則的摘要本來就接近規則本身。
     const limit = s.body.length >= 300 ? Math.floor(s.body.length * MAX_SUMMARY_RATIO) : s.body.length - 1;
     assert.ok(summary.length <= limit,
-      `索引摘要沒有比契約內文短夠多 ⇒ 這條規則接近「兩份完整副本」，一定會各自漂。\n`
-      + `摘要 ${summary.length} 字元、契約內文 ${s.body.length} 字元（上限 ${limit}＝${MAX_SUMMARY_RATIO * 100}%）`
-      + `（${file}#${anchor}）\n實得摘要：${summary.slice(0, 120)}…`);
-
+      '索引摘要沒有比契約內文短夠多 ⇒ 這條規則接近「兩份完整副本」，一定會各自漂。\n'
+      + `摘要 ${summary.length} 字元、契約內文 ${s.body.length} 字元（上限 ${limit}）（${file}#${anchor}）\n`
+      + `實得摘要：${summary.slice(0, 120)}…`);
     assert.ok(line.length <= MAX_INDEX_LEN,
-      `索引行 ${line.length} 字元，超過上限 ${MAX_INDEX_LEN}。\n`
-      + '⚠️ 索引行會慢慢長胖，長到跟原文一樣長時拆分就白做了（實測兩天被吃回去大半）。\n'
-      + `要寫的細節請放進 ${file}，這裡只留「我改的東西碰不碰得到這條」。\n`
+      `索引行 ${line.length} 字元，超過上限 ${MAX_INDEX_LEN}。細節請放進 ${file}。\n`
       + `實得：${line.slice(0, 120)}…`);
   }
 });
 
-/** 掃 `lib/`＋`public/`，建「匯出名 → 定義檔」的對照表。 */
-function exportIndex() {
-  /** @type {Map<string, string[]>} */
-  const map = new Map();
-  /** @param {string} dir */
-  const walk = (dir) => {
-    for (const e of readdirSync(join(ROOT, dir))) {
-      const rel = `${dir}/${e}`;
-      if (statSync(join(ROOT, rel)).isDirectory()) { walk(rel); continue; }
-      if (!e.endsWith('.js')) continue;
-      for (const m of read(rel).matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) {
-        map.set(m[1], [...(map.get(m[1]) || []), rel]);
-      }
-    }
-  };
-  walk('lib'); walk('public');
-  return map;
-}
-
-test('拆分護欄｜路由表的檔案清單要窮舉（漏一個檔＝改那個檔的人不會被導到契約）', () => {
-  // ⚠️ r1 的假綠④：這一題原本只驗「契約檔名有沒有出現在 README」，
-  //    刪掉 `lib/repo.js` 照樣全綠——而 README 自己的硬規則①明寫清單是**窮舉判準**。
-  //    現在兩種都驗：契約裡**點名的檔案路徑**，以及**點名的函式所定義的檔案**
-  //   （Codex #384 r1 漏掉的四個檔全部是後者——契約用函式名點它們，不是用路徑）。
+test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精確路徑，不接受冒充）', () => {
+  // ⚠️ r2 的假綠：原本用 basename 子字串比對，`lib/store-rules.js` 可以替
+  //    缺掉的 `lib/services/store-rules.js` 冒充過關。現在只認**完整路徑**的精確集合相等。
   const readme = read('docs/contracts/README.md');
   const rows = readme.split('\n').filter((l) => l.startsWith('| ') && /\.md\)/.test(l));
-  const exports_ = exportIndex();
-
-  for (const file of contractFiles()) {
+  for (const [file, m] of Object.entries(MANIFEST)) {
     const base = /** @type {string} */ (file.split('/').pop());
     const row = rows.find((r) => r.includes(`(${base})`));
-    assert.ok(row, `${file} 沒有出現在 docs/contracts/README.md 的路由表。\n`
-      + '路由表是「我改的檔案該讀哪份契約」的唯一入口，漏一列＝那個領域的規則沒人會讀到。');
-
-    const md = read(file);
-    /** @type {Set<string>} */
-    const need = new Set();
-    for (const m of md.matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+)`/g)) need.add(m[1]);
-    for (const m of md.matchAll(/`([A-Za-z_$][\w$]{3,})`/g)) {
-      const defs = exports_.get(m[1]) || [];
-      // ⚠️ **只認唯一解**：同名 export 出現在多個檔案時，這條線索本來就指不出唯一責任檔，
-      //    硬要求全部列進路由表會變成噪音型誤紅。撞號的交給人，不要讓考題亂猜。
-      if (defs.length === 1) need.add(defs[0]);
-    }
-    const missing = [...need].filter((f) => !row.includes(`\`${f}\``) && !row.includes(f.split('/').pop() || ''));
-    assert.deepEqual(missing, [],
-      `${file} 點名了這些檔案，但 README 路由表的那一列沒有列出來：\n  ${missing.join('\n  ')}\n`
+    assert.ok(row, `${file} 沒有出現在 README 的路由表——那個領域的規則沒人會被導到`);
+    const listed = [...row.matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)]
+      .map((x) => x[1]);
+    assert.deepEqual(sorted([...new Set(listed)]), sorted(m.files),
+      `${base} 的路由列與 manifest 的 files 不一致。\n`
       + '⚠️ README 硬規則①：已拆領域的檔案清單＝**窮舉**，不是「典型檔案」。\n'
-      + '   漏一個＝改那個檔的人不會被導到契約，正是這條規則要避免的失敗。');
+      + `  路由列有、manifest 沒有：${listed.filter((f) => !m.files.includes(f)).join('、') || '（無）'}\n`
+      + `  manifest 有、路由列沒有：${m.files.filter((f) => !listed.includes(f)).join('、') || '（無）'}`);
+    for (const f of m.files) {
+      assert.ok(existsSync(join(ROOT, f)), `${base} 的 files 列了不存在的檔案 ${f}`);
+    }
+  }
+});
+
+test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（提到新檔就強迫更新 manifest）', () => {
+  for (const [file, m] of Object.entries(MANIFEST)) {
+    const mentioned = new Set([...read(file)
+      .matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)].map((x) => x[1]));
+    const missing = [...mentioned].filter((f) => !m.files.includes(f));
+    assert.deepEqual(missing, [],
+      `${file} 的內文點名了這些檔案，但 manifest 的 files 沒有：\n  ${missing.join('\n  ')}\n`
+      + '⚠️ 這是**下限**不是上限：契約用函式名或 API 路徑點到的檔案考題看不出來，\n'
+      + '   那些仍然要靠人加進 files（Codex #384 r1／r2 兩輪各抓到一批）。');
   }
 });
