@@ -1063,6 +1063,47 @@ test('重型名額｜SEC refresh 會取共用名額，而且是**排隊等**、�
   }
 });
 
+test('重型名額｜SEC 把**自己的佇列上限**傳給共用名額（否則 #361 的 SEC_QUEUE_MAX_DEPTH 變死碼）', async () => {
+  // ⚠️ Codex #371 r4 抓到的機制洞：名額在 throughSecQueue **外面**取，所以第二個代號
+  //    根本排不到 SEC 自己的深度檢查——它先卡在共用名額的隊伍裡，而那條隊伍沒有長度上限。
+  //    結果 #361 兩天前才上線的全站 back-pressure 在 HOSTED 變成打不到的死碼。
+  //    判準＝maxQueueDepth 設成 1 時，第二個代號要**很快**拿到 503，不是排隊等 30 秒。
+  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionWaitingForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  resetHeavyAdmissionForTest();
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger, maxQueueDepth: 1,
+    fetchImpl: async (url) => jsonResponse(fixturePayload(String(url)))
+  });
+  try {
+    const occupying = withHeavySlot(() => held);       // 名額被別的重型工作佔住
+    await new Promise((r) => setTimeout(r, 20));
+
+    const a = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });   // 排進隊伍（1 個）
+    for (let i = 0; i < 100 && heavyAdmissionWaitingForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionWaitingForTest(), 1, '前提：第一個代號要排進共用名額的隊伍');
+
+    const started = Date.now();
+    const b = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST' });
+    const elapsed = Date.now() - started;
+    assert.equal(b.status, 503,
+      `隊伍已達 SEC 自己的上限（maxQueueDepth=1），第二個代號應該立刻回絕，實得 ${b.status}`);
+    assert.ok(elapsed < 5_000,
+      `第二個代號等了 ${elapsed}ms 才被回絕——那代表它是排隊等到逾時，不是撞到上限 fail-fast，`
+      + 'SEC 自己的 back-pressure 仍然是死碼');
+
+    release(); await occupying; await a;
+  } finally {
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
+
 test('重型名額｜SEC 等超過上限仍要 503（有上限的等待，不是無限期卡住使用者）', async () => {
   const { withHeavySlot, resetHeavyAdmissionForTest, setHeavySlotWaitForTest }
     = await import('../lib/heavy-admission.js');

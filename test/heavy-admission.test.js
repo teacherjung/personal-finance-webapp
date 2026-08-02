@@ -17,8 +17,8 @@ process.env.SITE_ORIGIN = 'http://127.0.0.1';
 process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ROUTES_WITHOUT_BODY, HEAVY_ADMISSION_MAX_INFLIGHT, withHeavySlot,
-  heavyAdmissionInFlightForTest, heavyAdmissionWaitingForTest, resetHeavyAdmissionForTest }
-  = await import('../lib/heavy-admission.js');
+  heavyAdmissionInFlightForTest, heavyAdmissionWaitingForTest, resetHeavyAdmissionForTest,
+  HEAVY_SLOT_MAX_WAITERS } = await import('../lib/heavy-admission.js');
 
 /** 起一個只掛入場管制的假 app：handler 由測試決定何時回應。
  * ⚠️ 一定要等 listening 才拿得到 port（`address()` 在那之前是 null）。 */
@@ -400,4 +400,51 @@ test('行為題｜/api/import 與 /api/ib/sync 真的被管住（本 PR 的招�
     }
     release(); await (await first).text();
   } finally { await shutdown(server); resetHeavyAdmissionForTest(); }
+});
+
+test('服務層排隊｜隊伍有**長度上限**，滿了 fail-fast（沒上限＝把呼叫端自己的 back-pressure 架空）', async () => {
+  resetHeavyAdmissionForTest();
+  try {
+    /** @type {() => void} */ let releaseFirst = () => {};
+    const first = withHeavySlot(() => new Promise((r) => { releaseFirst = () => r('第一件'); }));
+    await new Promise((r) => setImmediate(r));
+
+    // ⚠️ 這題防的是 Codex #371 r4 抓到的機制洞：只有逾時、沒有長度上限的隊伍，會讓
+    //    呼叫端自己的上限（SEC 的 SEC_QUEUE_MAX_DEPTH＝#361 的全站 16 個）**排不到**，
+    //    在 HOSTED 變成打不到的死碼——而這條隊伍可以無限長。
+    const waiting = [];
+    for (let i = 0; i < 3; i++) waiting.push(withHeavySlot(async () => i, { maxWaiters: 3, waitMs: 5_000 }));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(heavyAdmissionWaitingForTest(), 3, '前提：三個都要排進去');
+
+    const overflow = await withHeavySlot(async () => 99, { maxWaiters: 3 }).then(() => null, (e) => e);
+    assert.equal(overflow?.status, 503, '隊伍滿了還讓人排進來＝呼叫端的上限被架空，隊伍可以無限長');
+    assert.equal(overflow?.code, 'heavy_queue_full',
+      `滿隊要用專屬 code 才分得出「忙」與「隊伍爆了」，實得 ${overflow?.code}`);
+    assert.equal(heavyAdmissionWaitingForTest(), 3, '被回絕的人不該留在隊伍裡');
+
+    releaseFirst(); await first;
+    assert.deepEqual(await Promise.all(waiting), [0, 1, 2], '排進去的三個最後都要跑完');
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '名額沒還');
+  } finally { resetHeavyAdmissionForTest(); }
+});
+
+test('服務層排隊｜預設也有上限（呼叫端忘了傳，仍不可以無限長）', async () => {
+  resetHeavyAdmissionForTest();
+  try {
+    assert.ok(Number.isFinite(HEAVY_SLOT_MAX_WAITERS) && HEAVY_SLOT_MAX_WAITERS > 0,
+      '預設上限不見了——沒傳 maxWaiters 的呼叫端會排出一條無限長的隊伍');
+    /** @type {() => void} */ let releaseFirst = () => {};
+    const first = withHeavySlot(() => new Promise((r) => { releaseFirst = () => r(1); }));
+    await new Promise((r) => setImmediate(r));
+    const queued = [];
+    for (let i = 0; i < HEAVY_SLOT_MAX_WAITERS; i++) queued.push(withHeavySlot(async () => i, { waitMs: 5_000 }));
+    await new Promise((r) => setImmediate(r));
+    const overflow = await withHeavySlot(async () => 'x').then(() => null, (e) => e);
+    assert.equal(overflow?.code, 'heavy_queue_full', '超過預設上限仍被放進隊伍');
+    releaseFirst(); await first; await Promise.all(queued);
+    for (let i = 0; i < 200 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '名額沒還');
+  } finally { resetHeavyAdmissionForTest(); }
 });
