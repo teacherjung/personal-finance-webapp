@@ -1010,3 +1010,142 @@ test('pacing sleep 把時間推過總時限之後，不得再發出下一個請�
   const view = await (await request('/api/stock-fundamentals/CAL')).json();
   assert.equal(view.lastError?.code, 'sec_timeout');
 });
+
+test('重型名額｜SEC refresh 會取共用名額，而且是**排隊等**、不是立刻 503', async () => {
+  // ⚠️ 這題防兩件事：
+  //    ①「服務層沒接上 withHeavySlot」——只測 withHeavySlot 本身的話，把
+  //      `shared = withHeavySlot(() => fetch…)` 改回 `shared = fetch…` 不會有任何題變紅
+  //     （2026-08-02 突變實測踩到）。
+  //    ②「照抄 HTTP 層的 fail-fast」——那是相對 main 的回歸：main 上不同代號的併發更新
+  //      會排隊後**全部成功**，fail-fast 會讓第二個起直接失敗，而 SEC 這條路
+  //      **等待不花記憶體**（等的時候手上沒有大緩衝區）。
+  //    判準＝名額被佔住時 SEC **還沒對外抓**（證明它真的在等），放掉之後才抓且回 200。
+  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionInFlightForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';   // 名額只在 HOSTED 生效（LOCAL 零改動契約）
+  resetHeavyAdmissionForTest();
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  let fetched = 0;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger,
+    fetchImpl: async (url) => { fetched += 1; return jsonResponse(fixturePayload(String(url))); }
+  });
+  try {
+    const occupying = withHeavySlot(() => held);          // 模擬「另一件重型工作正在跑」
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(heavyAdmissionInFlightForTest(), 1, '前提：名額要先被佔住');
+
+    const pending = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(fetched, 0,
+      'SEC 在名額被佔住時就已經對外抓了——服務層沒接上 withHeavySlot，'
+      + '那 25MiB 的抓取＋解析會和 PDF 上傳並行、越過容器上限');
+
+    release(); await occupying;
+    const res = await pending;
+    // ⚠️ 這裡刻意**不斷言 200**：本題管的是名額語意，不是儲存。這個測試沒有做
+    //    其他題會做的資料種子，所以最後那步寫入會回 500（#358 的內部寫入歸因，
+    //    與名額無關）。要釘的是「不是 503」＋「真的去抓了」——這兩點就足以分辨
+    //    fail-fast 與排隊，也擋得住「服務層沒接上 withHeavySlot」。
+    assert.notEqual(res.status, 503,
+      '名額放掉之後 SEC 仍然 503——照抄 HTTP 層的 fail-fast 是相對 main 的回歸：'
+      + 'main 上不同代號的併發更新會排隊後全部成功，而等待本身不花記憶體');
+    assert.ok(fetched > 0, '名額放掉之後仍然沒有對外抓＝那件工作被丟掉了，不是排隊');
+
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '名額沒還');
+  } finally {
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
+
+test('重型名額｜SEC 的上限要數「執行中＋排隊中」（只數排隊中＝第一個在跑時第二個仍排得進去）', async () => {
+  // ⚠️ Codex #371 r4→r5 連兩輪抓到的同一條，第二輪更精準：
+  //    r4：名額在 throughSecQueue 外面取 → 第二個代號排不到 SEC 自己的深度檢查。
+  //    r5：我把上限當成「排隊中的人數」，但**第一個 refresh 是執行中、不在隊伍裡**，
+  //        所以 maxQueueDepth=1 時第二個照樣排得進去、等到逾時才 503。
+  //        #361 的語意是 secQueueDepth＝「排隊中＋執行中」一起算，兩者不等價；
+  //        預設 16 更明顯：1 個執行中＋16 個排隊中＝17，比 #361 的上限多一個。
+  //    ⇒ 本題用 r4 的原始情境：**第一個 SEC refresh 自己佔住名額**（不是別的工作佔），
+  //      第二個不同代號必須立刻被回絕。
+  const { resetHeavyAdmissionForTest, heavyAdmissionGroupInUseForTest, setHeavySlotWaitForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  resetHeavyAdmissionForTest();
+  setHeavySlotWaitForTest(1_500);   // 沒守住時要 1.5 秒紅，不是預設的 30 秒
+  let releaseFirstFetch = () => {};
+  let markStarted = () => {};
+  const firstStarted = new Promise((r) => { markStarted = () => r(undefined); });
+  let firstCall = true;
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger, maxQueueDepth: 1,
+    fetchImpl: async (url) => {
+      // ⚠️ **只卡第一次**：一次 refresh 會抓三個資源，每次都卡的話第一個請求永遠跑不完
+      //    （實測整題掛 300 秒）。我們只需要它「開始跑而且還沒結束」。
+      if (firstCall) {
+        firstCall = false;
+        markStarted();
+        await new Promise((r) => { releaseFirstFetch = () => r(undefined); });
+      }
+      return jsonResponse(fixturePayload(String(url)));
+    }
+  });
+  try {
+    const a = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+    await Promise.race([firstStarted, new Promise((r) => setTimeout(r, 3_000))]);
+    assert.equal(heavyAdmissionGroupInUseForTest('sec-refresh'), 1,
+      '前提：第一個 refresh 要算進 sec-refresh 群組（它是**執行中**，不在等待隊伍裡）');
+
+    const t0 = Date.now();
+    const b = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST' });
+    const elapsed = Date.now() - t0;
+    assert.equal(b.status, 503,
+      `第一個 refresh 執行中、maxQueueDepth=1，第二個代號應該立刻被回絕，實得 ${b.status}`);
+    assert.ok(elapsed < 1_000,
+      `第二個代號等了 ${elapsed}ms 才失敗——那是排隊等到逾時，不是撞到上限 fail-fast；`
+      + '上限只數了「排隊中」，沒數「執行中」，#361 的全站上限仍未還原');
+
+    releaseFirstFetch(); await a;
+    for (let i = 0; i < 200 && heavyAdmissionGroupInUseForTest('sec-refresh') !== 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(heavyAdmissionGroupInUseForTest('sec-refresh'), 0, '群組計數沒有歸還');
+  } finally {
+    setHeavySlotWaitForTest(null);
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
+
+test('重型名額｜SEC 等超過上限仍要 503（有上限的等待，不是無限期卡住使用者）', async () => {
+  const { withHeavySlot, resetHeavyAdmissionForTest, setHeavySlotWaitForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  resetHeavyAdmissionForTest();
+  setHeavySlotWaitForTest(60);            // 不然要真的等 30 秒
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger,
+    fetchImpl: async () => { throw new Error('等逾時了不該還去抓'); }
+  });
+  try {
+    const occupying = withHeavySlot(() => held);
+    await new Promise((r) => setTimeout(r, 20));
+    const res = await request('/api/stock-fundamentals/cal/refresh', { method: 'POST' });
+    assert.equal(res.status, 503, `等太久要回 503（實得 ${res.status}），不可以無限期把使用者掛在那裡`);
+    release(); await occupying;
+  } finally {
+    setHeavySlotWaitForTest(null);
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
