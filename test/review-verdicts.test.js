@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { headerOf, verdictProblems, VERDICTS } from '../scripts/check-review-verdicts.js';
+import { headerOf, looksLikeVerdict, verdictProblems, VERDICTS } from '../scripts/check-review-verdicts.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -119,7 +119,13 @@ test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
 test('合併程序真的把聯集閘寫成一步（不是只在別處提到它）', () => {
   // ⚠️ 判準比照 test/merge-procedure-docs.test.js：**指令必須出現在剝掉 HTML 註解後的 fenced code**
   //    ——「文件某處提到這支腳本」不算數（#353 r1 的考題就是被「把指令搬進 HTML 註解」繞過的）。
-  const md = readFileSync(join(ROOT, 'CODEX-REVIEW.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  // ⚠️ **先截出「合併六步驟」那個 blockquote 區塊再看**（Codex #385 r2 Medium）：
+  //    掃整份文件的所有 fenced code 的話，把指令從步驟 2 刪掉、搬到檔頭的啟動範例，考題照樣過。
+  //    判準比照 test/merge-procedure-docs.test.js。
+  const whole = readFileSync(join(ROOT, 'CODEX-REVIEW.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const start = whole.indexOf('合併也由 Codex 代執行');
+  assert.ok(start > 0, 'CODEX-REVIEW.md 找不到「合併六步驟」那個區塊');
+  const md = whole.slice(start, whole.indexOf('\n---', start));
   const fenced = [...md.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]).join('\n');
   assert.match(fenced, /node scripts\/check-review-verdicts\.js/,
     'CODEX-REVIEW.md 的合併步驟沒有真的叫人跑聯集閘——規則會退回「靠記性」');
@@ -137,4 +143,45 @@ test('AGENTS.md 要寫下「取聯集，不取最後一則」與自報來歷的�
     'AGENTS.md 找不到聯集規則的原句——只寫在腳本裡＝讀 AGENTS 的人不會知道');
   assert.match(agents, /🤖 <角色>｜來源：/,
     'AGENTS.md 沒有寫出來歷標頭的逐字格式，寫的人只能猜');
+});
+
+// ── 回歸鎖：r1／r2 修過的每一條都要有考題盯著（Codex #385 r2 Medium）─────────
+
+test('⭐ 回歸｜**沒有標頭的明確阻擋**不可以被別人的「通過」蓋掉（r2 High）', () => {
+  // ⚠️ 這是 #383 的病本身。r1 我為了修誤擋把判準收太緊，親手把它放回來：
+  //    這三種明確的阻擋當時全部認不出來，旁邊有一則合規「通過」就解除了。
+  const pass = c(head('Codex', 'CLI', HEAD.slice(0, 7), 2, '通過'));
+  for (const blocking of ['## Claude 複審\n\n需修改後再審。', '## 結論\n\n不可合併', '複審完成：不可合併。']) {
+    const { problems } = verdictProblems([c(blocking), pass], HEAD);
+    assert.ok(problems.length > 0, `「${blocking.replace(/\n/g, ' ')}」被別人的通過解除了`);
+  }
+});
+
+test('回歸｜r1 列的五種誤擋，一種都不可以回來', () => {
+  for (const body of [
+    '這不是複審，只是提醒',
+    '修完就可以合併嗎？',
+    '> 結論：不可合併',
+    '腳本遇到「不可合併」要回 exit 1',
+    '```text\n結論：需修改後再審\n```',
+  ]) {
+    assert.equal(looksLikeVerdict(body), false, `誤擋回來了：「${body.replace(/\n/g, ' ')}」`);
+  }
+});
+
+test('回歸｜標頭正規化的四個缺口（大寫 SHA／來源空白／原型鍵／引用列表前綴）', () => {
+  const H = (/** @type {string} */ s) => headerOf(s);
+  assert.ok(H('🤖 Codex｜來源：CLI｜審 `AABBCCD`｜r2｜結論：通過'), '大寫 SHA 被拒了');
+  assert.equal(H('🤖 Codex｜來源：CLI｜審 `AABBCCD`｜r2｜結論：通過')?.sha, 'aabbccd', '大寫 SHA 沒轉小寫');
+  assert.equal(
+    H('🤖 Codex｜來源：Claude   起的\tCLI｜審 `aabbccd`｜r2｜結論：通過')?.source,
+    H('🤖 Codex｜來源：Claude 起的 CLI｜審 `aabbccd`｜r2｜結論：通過')?.source,
+    '來源的多餘空白讓同一個人變成兩個人——那會多出一條永遠撤不掉的阻擋');
+  for (const proto of ['toString', 'constructor', 'hasOwnProperty']) {
+    assert.equal(H(`🤖 Codex｜來源：CLI｜審 \`aabbccd\`｜r2｜結論：${proto}`), null,
+      `原型鍵「${proto}」被當成合法結論——本專案的原型鍵鐵則`);
+  }
+  assert.equal(H('> 🤖 Codex｜來源：CLI｜審 `aabbccd`｜r2｜結論：通過'), null, '引用別人的標頭被當成新結論');
+  assert.equal(H('- 🤖 Codex｜來源：CLI｜審 `aabbccd`｜r2｜結論：通過'), null, '列表形式的標頭被接受了');
+  assert.ok(H('**🤖 Codex｜來源：CLI｜審 `aabbccd`｜r2｜結論：通過**'), '粗體包裝是合法寫法，不該被拒');
 });
