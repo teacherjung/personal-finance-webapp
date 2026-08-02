@@ -528,9 +528,13 @@ function indexRows() {
     // ⚠️ 「有可見文字」要驗**渲染後**看得見的東西，不是原始碼非空（Codex #384 r31）：
     //    `[](https://x)` 渲染成空的 `<a></a>`、`&#x200B;` 渲染成只有零寬字元的 `<td>`——
     //    兩個原始碼都非空，畫面上都是空的。
-    assert.doesNotMatch(first, /!?\[[^\]]*\]\(/u,
-      `${where} 的索引列第一格含連結／圖片語法：${first}\n`
-      + '⚠️ 空連結 `[](x)` 與空 alt 的圖片在畫面上什麼都不顯示，而考題照樣讀得到原始文字。');
+    //    ⚠️ **直接禁止方括號**，不要只擋 `](`（Codex #384 r33）：
+    //    reference-style 的 `[][blank]` 一樣渲染成空的 `<a></a>`，但它沒有 `](` ⇒ 前一版全綠。
+    //    36 條索引的第一格現在**沒有任何方括號** ⇒ 這一刀零誤紅。
+    assert.doesNotMatch(first, /[[\]]/u,
+      `${where} 的索引列第一格含方括號（連結或圖片語法）：${first}\n`
+      + '⚠️ 空連結（inline `[](x)` 或 reference-style `[][ref]`）與空 alt 的圖片\n'
+      + '   在畫面上什麼都不顯示，而考題照樣讀得到原始文字。第一格請用純文字。');
     assert.doesNotMatch(first, /&[#a-zA-Z][0-9a-zA-Z]*;/u,
       `${where} 的索引列第一格含 HTML entity：${first}\n`
       + '⚠️ `&#x200B;` 這種 entity 渲染出來是隱形的，而原始碼看起來非空。');

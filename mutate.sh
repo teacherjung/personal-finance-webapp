@@ -426,6 +426,14 @@ p.write_text(s.replace(a,"| &#x200B; |",1), encoding="utf-8")
 PY
 check 'BA. 第一格用 HTML entity 的零寬字元' 紅
 
+mutate 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一版）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+a="| 月度回顧總覽卡 |"
+p.write_text(s.replace(a,"| [][blank] |",1)+"\n[blank]: https://example.com\n", encoding="utf-8")
+PY
+check 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一版）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
