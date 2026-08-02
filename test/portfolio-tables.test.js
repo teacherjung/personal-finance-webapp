@@ -27,7 +27,7 @@ test('投資主表｜依層分組、組內依市值排序，價格格式與手�
   assert.ok(html.indexOf('<b>BBB</b>') < html.indexOf('<b>AAA</b>'));
   assert.match(html, /<b>BBB<\/b> <span class="tag"[^>]*>手動<\/span>/);
   assert.match(html, />8\.4 USD<\/td>/);
-  assert.match(html, /data-hsort="value">市值 <span class="sort-tri active">▼<\/span>/);
+  assert.match(html, /data-hsort="value" aria-sort="descending">市值 <span class="sort-tri active">▼<\/span>/);
 });
 
 test('投資主表｜報酬率升冪正確；惡意 localStorage 排序鍵退回市值、不讀原型', () => {
@@ -45,7 +45,8 @@ test('投資主表｜報酬率升冪正確；惡意 localStorage 排序鍵退回
 
 test('投資主表｜空資料有提示；持股文字與資料 id 進 HTML 前都消毒', () => {
   const empty = holdingsTableHtml([], 0, { sortKey: 'value', sortDir: 'desc', formatters });
-  assert.match(empty, /尚無持股，點右上角新增/);
+  assert.match(empty, /<strong>尚無持股<\/strong>/);
+  assert.match(empty, /頁首「新增持股」/);
 
   const html = holdingsTableHtml([
     holding({ id: 'x" onmouseover="alert(1)', symbol: '<script>alert(1)</script>', name: '<img src=x onerror=alert(1)>' })
