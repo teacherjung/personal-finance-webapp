@@ -1063,43 +1063,58 @@ test('重型名額｜SEC refresh 會取共用名額，而且是**排隊等**、�
   }
 });
 
-test('重型名額｜SEC 把**自己的佇列上限**傳給共用名額（否則 #361 的 SEC_QUEUE_MAX_DEPTH 變死碼）', async () => {
-  // ⚠️ Codex #371 r4 抓到的機制洞：名額在 throughSecQueue **外面**取，所以第二個代號
-  //    根本排不到 SEC 自己的深度檢查——它先卡在共用名額的隊伍裡，而那條隊伍沒有長度上限。
-  //    結果 #361 兩天前才上線的全站 back-pressure 在 HOSTED 變成打不到的死碼。
-  //    判準＝maxQueueDepth 設成 1 時，第二個代號要**很快**拿到 503，不是排隊等 30 秒。
-  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionWaitingForTest, setHeavySlotWaitForTest }
+test('重型名額｜SEC 的上限要數「執行中＋排隊中」（只數排隊中＝第一個在跑時第二個仍排得進去）', async () => {
+  // ⚠️ Codex #371 r4→r5 連兩輪抓到的同一條，第二輪更精準：
+  //    r4：名額在 throughSecQueue 外面取 → 第二個代號排不到 SEC 自己的深度檢查。
+  //    r5：我把上限當成「排隊中的人數」，但**第一個 refresh 是執行中、不在隊伍裡**，
+  //        所以 maxQueueDepth=1 時第二個照樣排得進去、等到逾時才 503。
+  //        #361 的語意是 secQueueDepth＝「排隊中＋執行中」一起算，兩者不等價；
+  //        預設 16 更明顯：1 個執行中＋16 個排隊中＝17，比 #361 的上限多一個。
+  //    ⇒ 本題用 r4 的原始情境：**第一個 SEC refresh 自己佔住名額**（不是別的工作佔），
+  //      第二個不同代號必須立刻被回絕。
+  const { resetHeavyAdmissionForTest, heavyAdmissionGroupInUseForTest, setHeavySlotWaitForTest }
     = await import('../lib/heavy-admission.js');
   const savedHosted = process.env.NOTEASY_HOSTED;
   process.env.NOTEASY_HOSTED = '1';
   resetHeavyAdmissionForTest();
-  // ⚠️ 把等待上限收短：這題沒守住的時候，第二個代號會**排隊等到逾時**才失敗——
-  //    用預設的 30 秒，突變時整題要跑 30 秒才紅（實測）。CI 上那種紅很難看出是什麼壞了。
-  setHeavySlotWaitForTest(1_500);
-  let release = () => {};
-  const held = new Promise((res) => { release = () => res('done'); });
+  setHeavySlotWaitForTest(1_500);   // 沒守住時要 1.5 秒紅，不是預設的 30 秒
+  let releaseFirstFetch = () => {};
+  let markStarted = () => {};
+  const firstStarted = new Promise((r) => { markStarted = () => r(undefined); });
+  let firstCall = true;
   setStockFundamentalsOptionsForTest({
     userAgent: SEC_USER_AGENT, logger: silentLogger, maxQueueDepth: 1,
-    fetchImpl: async (url) => jsonResponse(fixturePayload(String(url)))
+    fetchImpl: async (url) => {
+      // ⚠️ **只卡第一次**：一次 refresh 會抓三個資源，每次都卡的話第一個請求永遠跑不完
+      //    （實測整題掛 300 秒）。我們只需要它「開始跑而且還沒結束」。
+      if (firstCall) {
+        firstCall = false;
+        markStarted();
+        await new Promise((r) => { releaseFirstFetch = () => r(undefined); });
+      }
+      return jsonResponse(fixturePayload(String(url)));
+    }
   });
   try {
-    const occupying = withHeavySlot(() => held);       // 名額被別的重型工作佔住
-    await new Promise((r) => setTimeout(r, 20));
+    const a = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+    await Promise.race([firstStarted, new Promise((r) => setTimeout(r, 3_000))]);
+    assert.equal(heavyAdmissionGroupInUseForTest('sec-refresh'), 1,
+      '前提：第一個 refresh 要算進 sec-refresh 群組（它是**執行中**，不在等待隊伍裡）');
 
-    const a = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });   // 排進隊伍（1 個）
-    for (let i = 0; i < 100 && heavyAdmissionWaitingForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
-    assert.equal(heavyAdmissionWaitingForTest(), 1, '前提：第一個代號要排進共用名額的隊伍');
-
-    const started = Date.now();
+    const t0 = Date.now();
     const b = await request('/api/stock-fundamentals/FRUIT/refresh', { method: 'POST' });
-    const elapsed = Date.now() - started;
+    const elapsed = Date.now() - t0;
     assert.equal(b.status, 503,
-      `隊伍已達 SEC 自己的上限（maxQueueDepth=1），第二個代號應該立刻回絕，實得 ${b.status}`);
+      `第一個 refresh 執行中、maxQueueDepth=1，第二個代號應該立刻被回絕，實得 ${b.status}`);
     assert.ok(elapsed < 1_000,
-      `第二個代號等了 ${elapsed}ms 才被回絕——那代表它是排隊等到逾時，不是撞到上限 fail-fast，`
-      + 'SEC 自己的 back-pressure 仍然是死碼');
+      `第二個代號等了 ${elapsed}ms 才失敗——那是排隊等到逾時，不是撞到上限 fail-fast；`
+      + '上限只數了「排隊中」，沒數「執行中」，#361 的全站上限仍未還原');
 
-    release(); await occupying; await a;
+    releaseFirstFetch(); await a;
+    for (let i = 0; i < 200 && heavyAdmissionGroupInUseForTest('sec-refresh') !== 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(heavyAdmissionGroupInUseForTest('sec-refresh'), 0, '群組計數沒有歸還');
   } finally {
     setHeavySlotWaitForTest(null);
     setStockFundamentalsOptionsForTest(null);
