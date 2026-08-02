@@ -46,13 +46,18 @@ test('五步驟循環的第⑤步不可以寫死「Codex」（模式③下會變
 test('角色表要寫明 Claude 也複審 Codex 的實作（2026-07-30 起的常態，原本表上沒有）', () => {
   const agents = read('AGENTS.md');
   const claudeRow = agents.split('\n').find((l) => l.startsWith('| Claude |')) || '';
-  assert.ok(claudeRow.includes('複審'),
-    '角色表的 Claude 那列沒有「複審」。這張表是新人與新 AI 第一眼看的權威表——'
+  // ⚠️ **只斷言「這一列有『複審』兩個字」會假綠**（2026-08-02 突變實測）：
+  //    同一列的「不負責」欄有「**不**複審自己實作的支」，否定句照樣命中。
+  //    要看的是**主要責任那一格**（第 2 欄），而且要求是完整的正面敘述。
+  const claudeDuty = claudeRow.split('|')[2] || '';
+  assert.ok(/複審\s*Codex\s*實作/.test(claudeDuty),
+    '角色表的 Claude「主要責任」欄沒有「複審 Codex 實作」。這張表是新人與新 AI 第一眼看的權威表——'
     + '照舊表理解，Claude 只會實作、Codex 只會審查，遇到 Codex 開的 PR 會不知道該做什麼，'
-    + `最省事的做法就是直接合併。實得：${claudeRow.slice(0, 120)}`);
+    + `最省事的做法就是直接合併。實得責任欄：${claudeDuty.slice(0, 140)}`);
   const codexRow = agents.split('\n').find((l) => l.startsWith('| Codex |')) || '';
-  assert.ok(/不複審[^|]*自己實作/.test(codexRow),
-    `角色表的 Codex 那列沒寫明「不複審自己實作的支」。實得：${codexRow.slice(0, 140)}`);
+  const codexNo = codexRow.split('|')[3] || '';   // 同理：要看「不負責」那一格，不是整列
+  assert.ok(/不複審[^|]*自己實作/.test(codexNo),
+    `角色表 Codex 的「不負責」欄沒寫明「不複審自己實作的支」。實得：${codexNo.slice(0, 160)}`);
 });
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {
