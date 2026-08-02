@@ -258,6 +258,10 @@ test('欄位閘｜括號裡藏第二個角色 → 看不出是誰（含全形與
     'Claude（Co\uFE0Fdex）',       // U+FE0F 變體選擇符（default-ignorable）
     'Claude（Co\u0301dex）',       // U+0301 組合重音（NFKD＋去 Mark 才折得掉）
     'Claude（\u0421odex）',        // 西里爾 С——螢幕上跟拉丁 C 一樣；混用文字系統整欄 fail-closed
+    // ⚠️ U+2065（未指派、保留給未來格式字元）＝**只有 Default_Ignorable 那層擋得住**：
+    //    不是 Mark、不是 Cf、也不是字母（所以 mixed-script 不觸發）。突變實測拿掉 DI 層時
+    //    上面四種全部照樣被 M 層擋住——沒有這個探針，DI 層是一層沒有考題盯著的防線。
+    'Claude（Co\u2065dex）',
   ]) {
     const problems = problemsOf(bodyWith(sneaky, 'William'));
     assert.ok(problems.length > 0,
