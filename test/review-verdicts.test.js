@@ -14,6 +14,9 @@ import { headerOf, looksLikeVerdict, verdictProblems, VERDICTS } from '../script
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+/** 真實語料：25 份審查報告原文（正例）＋3 則真實的非結論留言（負例）。 */
+const CORPUS = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/review-verdict-corpus.json'), 'utf8'));
+
 const HEAD = 'aabbccdd11223344556677889900aabbccddeeff';
 const c = (/** @type {string} */ body) => ({ body });
 /** @param {string} role @param {string} src @param {string} sha @param {number} r @param {string} v */
@@ -340,18 +343,27 @@ test('回歸｜前綴與行內 code 的兩個修正都真的鎖住了', () => {
 
 // ── r7：判準倒過來——偵測「下結論這個動作」，不是比對「結論寫成什麼字」────
 
-test('⭐ 結論行｜真實報告的各種措辭都要抓到（Codex 拿 25 份自己的報告打，只中 9 份）', () => {
-  // ⚠️ 漏掉的全是它前一天寫過的正常措辭。根因：我在比對**三個逐字用詞**，
-  //    而人講話有無限種說法——**那是列舉的第七次**。
-  //    倒過來之後判準是結構訊號：標題提到結論／可否合併、或「<標記>（…）：」引出結論。
-  for (const body of [
-    '結論（三選一）：需修正後再審',
-    '結論：有阻擋問題，修正後重審。',
-    '## 3. 可以合併嗎？\n\n**不可以。** 目前不建議合併',
-    '## 三題結論\n\n目前不可以合併。',
-    '審查結果：不可合併。',
-    '**結論：通過，可以合併。**',            // #383 那則的真實寫法（粗體包住）
-  ]) assert.equal(looksLikeVerdict(body), true, `漏抓：「${body.replace(/\n/g, ' ')}」`);
+test('⭐ 結論行｜25 份真實報告**原文**全部要抓到（不是代表例——那是 r8 的假綠）', () => {
+  // ⚠️ **r8 這一題自己說謊**（Codex #385 r8 抓的）：
+  //    題目寫「25 份真實報告」，實際只放了 6 個我手挑的代表例。
+  //    於是「25/25」是我宣稱的，不是驗過的——Codex 拿真的 25 份跑，只中 14 份。
+  //    **代表例是我從失敗案例裡挑出來的，當然會過；真正會漏的是我沒想到的那些。**
+  // ⇒ 語料改成 `test/fixtures/review-verdict-corpus.json`：
+  //    Codex 對 #381／#384／#385 的 25 份審查報告**原文**，加上 3 則真實的非結論留言。
+  //    這份語料同時是那 25 份報告唯一的 repo 內備份（原本只活在 scratchpad，關掉對話就沒了）。
+  const miss = CORPUS.positives.filter((p) => !looksLikeVerdict(p.body));
+  assert.deepEqual(miss.map((m) => m.source), [],
+    `這些真實審查報告沒有被判成「在下結論」——它們就會被當成一般留言而無視：\n`
+    + miss.map((m) => `  ・${m.source}`).join('\n'));
+  assert.equal(CORPUS.positives.length, 25,
+    '語料份數變了。要增刪請一起改這個數字——**不要讓題目說的和語料裡的不一樣**（r8 就是這樣假綠的）。');
+});
+
+test('⭐ 結論行｜真實的非結論留言一則都不准誤擋', () => {
+  // 誤擋會逼人改寫、刪留言，最後乾脆繞過整道閘——那比漏抓一次更糟。
+  const fp = CORPUS.negatives.filter((n) => looksLikeVerdict(n.body));
+  assert.deepEqual(fp.map((m) => m.source), [],
+    `這些不是結論，卻被要求補來歷標頭：\n${fp.map((m) => `  ・${m.source}`).join('\n')}`);
 });
 
 test('結論行｜倒過來之後，日常句型仍然不可以被誤擋', () => {
