@@ -17,6 +17,44 @@ export default [
       'prefer-const': 'error'
     }
   },
+  { // ⚠️ **xlsx 收斂點護欄**（Codex #374 r1 High：正規表示式解析不了 JS）
+    //
+    // 一份 468KB 的**合法** .xlsx 解壓後可以吃掉 856MB，所以讀 XLSX 一律要走
+    // `lib/pdf-isolate.js` 的子行程（#373）。收斂點只有 `lib/statement.js` 一個——
+    // 別的檔案自己 import xlsx，那條路就不經隔離，攻擊檔會直接打在主行程上。
+    //
+    // 這道護欄**刻意交給 ESLint 的 parser**，不是自己寫 regex 掃字串：註解在 JS 語法上
+    // 等同空白，`import XLSX from /* 註解 */ 'xlsx'`、`import 'xlsx'`、`require /* 註解 */ ('xlsx')`
+    // 全都是合法寫法，手寫 regex 一個一個補永遠補不完（實測七種寫法漏掉五種）。
+    // parser 看的是語法樹，這些寫法對它是同一件事。
+    files: ['**/*.js', '**/*.mjs', '**/*.cjs'],
+    ignores: ['lib/statement.js', 'test/**'],
+    rules: {
+      // 靜態引入（含 `import 'xlsx'` 純副作用形、`export … from 'xlsx'`）
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: 'xlsx',
+          message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
+        + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。',
+        }],
+      }],
+      // 動態引入與 require——`no-restricted-imports` 不看這兩種，改用 AST 選擇器（一樣是 parser）
+      'no-restricted-syntax': ['error',
+        { selector: "ImportExpression[source.value='xlsx']",
+          message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
+        + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
+        { selector: "CallExpression[callee.name='require'][arguments.0.value='xlsx']",
+          message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
+        + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
+        // `createRequire` 是上面三條唯一繞得過的路（取個別名再呼叫，AST 上看不出是 require）。
+        // 本專案是純 ESM（package.json type: module），production／測試**全樹零使用**，
+        // 所以直接關掉：成本是零，而洞就補上了。真的需要時再開，並在此處寫明理由。
+        { selector: "CallExpression[callee.name='createRequire']",
+          message: '本專案是純 ESM，不需要 createRequire；它也是繞過 xlsx 收斂點護欄的唯一已知路徑。'
+        + '確實需要時請在 eslint.config.js 開例外並寫明理由。' },
+      ],
+    }
+  },
   { // 後端／維護腳本／測試：Node 環境
     files: ['server.js', 'lib/**/*.js', 'scripts/**/*.js', 'test/**/*.js'],
     languageOptions: { globals: globals.node }
