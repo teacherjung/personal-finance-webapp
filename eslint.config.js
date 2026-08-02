@@ -49,14 +49,18 @@ export default [
           { name: 'xlsx',
             message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
           + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
-          // ⚠️ 堵住通往 require 機制的門。`importNames` 比對的是**被引入的名字**，
-          //    所以 `import { createRequire as cr }` 一樣擋得下來（取別名沒有用）；
-          //    namespace 引入（`import * as mod from 'node:module'`）也會被這條認出來。
-          { name: 'node:module', importNames: ['createRequire'],
-            message: '本專案是純 ESM，production 不引入 createRequire——它是繞過 xlsx 收斂點護欄的門。'
-          + '確實需要時請在 eslint.config.js 開例外並寫明理由。' },
-          { name: 'module', importNames: ['createRequire'],
-            message: '本專案是純 ESM，production 不引入 createRequire——它是繞過 xlsx 收斂點護欄的門。' },
+          // ⚠️ **整個模組都禁，不是只禁 createRequire 這個名字**（Codex #374 r3 High）：
+          //    只列 `importNames: ['createRequire']` 的話，`import mod from 'node:module'`
+          //    （default）與 `import { Module } from 'node:module'` 都拿得到 `createRequire`，
+          //    而且都是正常 ESM 寫法、不是刻意規避。**這是我第三次在同一件事上列舉而不是關門**：
+          //    先是列舉字串寫法、再是列舉語法形狀、這次是列舉名字。
+          //    本專案 production 對 node:module／module 是**零使用**，整個禁掉成本是零。
+          { name: 'node:module',
+            message: '本專案是純 ESM，production 不引入 node:module——它是繞過 xlsx 收斂點護欄的門'
+          + '（createRequire 可由 default／具名／namespace 三種方式取得）。'
+          + '確實需要時請在 eslint.config.js 開具名例外並寫明理由。' },
+          { name: 'module',
+            message: '本專案是純 ESM，production 不引入 module——它是繞過 xlsx 收斂點護欄的門。' },
         ],
         patterns: [{
           group: ['xlsx', 'xlsx/*'],

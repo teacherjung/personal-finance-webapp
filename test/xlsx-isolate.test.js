@@ -291,7 +291,7 @@ test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則
     'xlsx 護欄的 ignores 清單被改動了——允許名單只能有 lib/statement.js（test/** 是考題自己要合成 XLSX）。');
 });
 
-test('架構｜二十一種合法的引入寫法都要被 lint 擋下（regex 漏一半，AST 選擇器又漏六種）', async () => {
+test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉了三次都漏，最後改成整個模組禁掉）', async () => {
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
@@ -329,6 +329,17 @@ test('架構｜二十一種合法的引入寫法都要被 lint 擋下（regex �
     ["module.require", "const X = globalThis.module.require('xlsx');\nconsole.log(X);\n"],
     ["process.getBuiltinModule", "const m = process.getBuiltinModule('module');\n"
       + "const X = m.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    // ── Codex #374 r3 抓到的第七類：只禁 createRequire 這個「名字」，門其實還開著 ──
+    ["default 引入 node:module", "import mod from 'node:module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["default 引入 module", "import mod from 'module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["具名引入 Module 類別", "import { Module } from 'node:module';\n"
+      + "const X = Module.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    ["具名引入 Module 再取別名", "import { Module as M } from 'node:module';\n"
+      + "const X = M.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    ["default specifier 寫法", "import { default as mod } from 'node:module';\n"
+      + "const X = mod.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
   ];
   try {
     mkdirSync(probeDir, { recursive: true });
