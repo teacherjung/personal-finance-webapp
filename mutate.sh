@@ -173,6 +173,66 @@ p.write_text(s.split("\n",1)[1].lstrip("\n"), encoding="utf-8")
 PY
 check 'Z. 契約檔第一行的 H1 整行刪掉' 紅
 
+# ── 容器「續行」：靠縮排成立，逐行剝字首分辨不了（Codex #384 r18）──
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"- 外層\n    > #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AA. 清單續行裡的引用 ####（Codex r18 實證）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"- 外層\n\n    ```text\n    藏在清單續行裡\n    ```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AB. 清單續行裡的 fence' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"- 外層\n\t> #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AC. 用 Tab 縮排的巢狀容器' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+ls=p.read_text(encoding="utf-8").split("\n"); ls[0]=ls[0]+" #"
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check 'AD. H1 加收尾井字號（anchor 兩邊算不一樣）' 紅
+
+# ── 誤紅方向：這幾種 GitHub 只當普通段落，**不可以**被擋（期望綠）──
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"-## 這不是標題，是普通段落\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AE.（誤紅考題）-## 文字＝普通段落，不可擋' 綠
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"**## 粗體開頭的普通段落**\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AF.（誤紅考題）**## 粗體**＝普通段落，不可擋' 綠
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"1.## 也是普通段落\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' 綠
+
 # ── 索引與契約的雙向對應 ──
 
 python3 - <<'PY'
