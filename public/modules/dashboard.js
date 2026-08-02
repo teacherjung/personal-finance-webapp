@@ -6,6 +6,7 @@ import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳�
 import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml } from './monthly-review-card.js';
 import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
 import {
+  dashboardCashflowSeries,
   dashboardGuideState,
   dashboardMonthLabel,
   dashboardNetWorthChange,
@@ -37,21 +38,38 @@ function currentMonthKey() {
 function netWorthChangeHtml(change) {
   if (change.status === 'missing-current') {
     return `<div class="forest-change waiting">尚待本月快照</div>
-      <p>本月快照完成後，才會與上月底做可比差額。</p>`;
+      <p>本月有快照後，才會與上月最後一次快照比較。</p>`;
   }
   if (change.status === 'missing-previous') {
     return `<div class="forest-change waiting">尚無上月基準</div>
-      <p>已記下本月淨資產；累積到下個月後就能開始比較。</p>`;
+      <p>已記下 ${esc(snapshotLabel(change.current, change.currentMonth))}；上個月沒有可比快照。</p>`;
   }
   const amount = Number(change.amount || 0);
   const direction = amount > 0 ? '增加' : amount < 0 ? '減少' : '持平';
   const cls = amount > 0 ? 'pos' : amount < 0 ? 'neg' : 'flat';
   const amountText = `${amount > 0 ? '+' : ''}${wan(amount)}`;
   const pctText = change.pct == null ? '' : `（${change.pct > 0 ? '+' : ''}${pct(change.pct)}）`;
+  const previousLabel = snapshotLabel(change.previous, change.previousMonth);
   const note = change.status === 'zero-base'
-    ? '上月底淨資產為 0，百分比沒有可解讀的基準，因此只顯示金額。'
-    : `相較上月底${direction} ${wan(Math.abs(amount))}。`;
-  return `<div class="forest-change ${cls}">${amountText}<span>${pctText}</span></div><p>${note}</p>`;
+    ? `${previousLabel}的淨資產為 0，百分比沒有可解讀的基準，因此只顯示金額。`
+    : amount === 0 ? `與 ${previousLabel}相同。` : `相較 ${previousLabel}${direction} ${wan(Math.abs(amount))}。`;
+  return `<div class="forest-change ${cls}">${amountText}<span>${pctText}</span></div><p>${esc(note)}</p>`;
+}
+
+/** @param {any} row @param {string} month */
+function snapshotLabel(row, month) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(row?.date || ''))
+    ? `${row.date} 快照`
+    : `${dashboardMonthLabel(month)}的快照`;
+}
+
+/** @param {any} change @param {string} month */
+function netWorthChangeBasisText(change, month) {
+  if (change.current && change.previous) {
+    return `比較區間 ${snapshotLabel(change.previous, change.previousMonth)} → ${snapshotLabel(change.current, change.currentMonth)}；不等同投資報酬。`;
+  }
+  if (change.current) return `${snapshotLabel(change.current, change.currentMonth)}；上個月尚無快照基準，不等同投資報酬。`;
+  return `${dashboardMonthLabel(month)}尚無快照；不等同投資報酬。`;
 }
 
 // 資產配置長條＋圖例（取代原本的甜甜圈；類別走 byClass，顏色固定對應）
@@ -244,8 +262,9 @@ export async function renderDashboard() {
   destroyCharts();
 
   const cf = s.cashflow;
-  const snapshots = dashboardSnapshotSeries(s.snapshots);
-  const month = currentMonthKey();
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(cf?.month || '')) ? String(cf.month) : currentMonthKey();
+  const snapshots = dashboardSnapshotSeries(s.snapshots, month);
+  const cashflowRows = dashboardCashflowSeries(s.cashflowHistory, month);
   const netWorthChange = dashboardNetWorthChange(s.snapshots, month);
   const guide = dashboardGuideState(s.reminders);
   const goalHtml = goalTrackingHtml(s.goalTrack, { wan, pct });
@@ -285,7 +304,7 @@ export async function renderDashboard() {
         <div class="forest-month-change">
           <span>本月淨資產變動</span>
           ${netWorthChangeHtml(netWorthChange)}
-          <small>${dashboardMonthLabel(month)}，只比較月快照，不等同投資報酬。</small>
+          <small>${esc(netWorthChangeBasisText(netWorthChange, month))}</small>
         </div>
         <div class="forest-balance-facts">
           <span>資產 <b>${wan(s.assets)}</b></span>
@@ -342,7 +361,7 @@ export async function renderDashboard() {
   `;
 
   drawTrend(snapshots);
-  drawCashflowTrend(s.cashflowHistory || []);
+  drawCashflowTrend(cashflowRows);
   wireGoalTrackingInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
@@ -363,7 +382,8 @@ function wireGoalTrackingInfo() {
 
 function drawTrend(snaps) {
   const ctx = byId('trendChart');
-  if (!ctx || !snaps.length) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，開啟 app 會自動記錄，累積後這裡會顯示走勢。</p>'; return; }
+  const hasData = snaps.some(row => typeof row.netWorth === 'number' && Number.isFinite(row.netWorth));
+  if (!ctx || !hasData) { if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無歷史快照，開啟 app 會自動記錄，累積後這裡會顯示走勢。</p>'; return; }
   chartRefs.push(new Chart(ctx, {
     type: 'line',
     data: {
@@ -371,7 +391,7 @@ function drawTrend(snaps) {
       datasets: [{
         label: '淨資產', data: snaps.map(s => s.netWorth),
         borderColor: ACCENT, backgroundColor: ACCENT_SOFT,
-        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: ACCENT
+        fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: ACCENT, spanGaps: false
       }]
     },
     options: {
@@ -389,7 +409,8 @@ function drawTrend(snaps) {
 
 function drawCashflowTrend(rows) {
   const ctx = byId('cashflowTrendChart');
-  if (!ctx || !rows.length) {
+  const hasData = rows.some(row => typeof row.net === 'number' && Number.isFinite(row.net));
+  if (!ctx || !hasData) {
     if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無銀行收支紀錄，開始記帳後這裡會保留每月收入、支出與淨現金流。</p>';
     return;
   }

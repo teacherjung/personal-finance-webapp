@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
+  dashboardCashflowSeries,
   dashboardGuideState,
   dashboardMonthLabel,
   dashboardNetWorthChange,
@@ -23,11 +25,40 @@ test('森林總覽月快照：同月取最新日期、排除壞月份與非數�
     { month: '2026-13', date: '2026-12-31', netWorth: 1 },
     { month: '2026-01', date: '2026-01-31', netWorth: 'not-a-number' },
   );
-  const result = dashboardSnapshotSeries(rows);
+  const result = dashboardSnapshotSeries(rows, '2026-01');
   assert.equal(result.length, 12);
   assert.equal(result[0].month, '2025-02');
   assert.deepEqual(result.at(-2), { month: '2025-12', date: '2025-12-31', netWorth: 9999 });
   assert.equal(result.at(-1)?.month, '2026-01');
+});
+
+test('森林總覽月快照：固定使用指定本月結尾的 12 個日曆月，缺月保留 null 不接線', () => {
+  const result = dashboardSnapshotSeries([
+    { month: '2024-01', date: '2024-01-31', netWorth: 100 },
+    { month: '2025-12', date: '2025-12-20', netWorth: 200 },
+    { month: '2026-01', date: '2026-01-15', netWorth: 220 },
+  ], '2026-01');
+  assert.equal(result.length, 12);
+  assert.deepEqual(result[0], { month: '2025-02', date: '', netWorth: null });
+  assert.deepEqual(result.at(-2), { month: '2025-12', date: '2025-12-20', netWorth: 200 });
+  assert.deepEqual(result.at(-1), { month: '2026-01', date: '2026-01-15', netWorth: 220 });
+});
+
+test('森林總覽兩張趨勢圖共用同一個日曆月視窗，記帳前缺月不用 0 冒充', () => {
+  const result = dashboardCashflowSeries([
+    { month: '2026-03', income: 100, expense: 40, net: 60 },
+    { month: '2026-04', income: 0, expense: 0, net: 0 },
+    { month: '2026-05', income: 0, expense: 0, net: 0 },
+    { month: '2026-06', income: 0, expense: 30, net: -30 },
+  ], '2026-06', 6);
+  assert.deepEqual(result, [
+    { month: '2026-01', income: null, expense: null, net: null },
+    { month: '2026-02', income: null, expense: null, net: null },
+    { month: '2026-03', income: 100, expense: 40, net: 60 },
+    { month: '2026-04', income: 0, expense: 0, net: 0 },
+    { month: '2026-05', income: 0, expense: 0, net: 0 },
+    { month: '2026-06', income: 0, expense: 30, net: -30 },
+  ]);
 });
 
 test('森林總覽月差額：只比較指定本月與緊鄰上月', () => {
@@ -81,4 +112,10 @@ test('森林總覽文案與小森森狀態：月份白話、情緒只跟提醒�
   assert.equal(dashboardGuideState([]).mood, 'positive');
   assert.equal(dashboardGuideState([{ level: 'warn' }]).mood, 'neutral');
   assert.equal(dashboardGuideState([{ level: 'danger' }, { level: 'warn' }]).mood, 'negative');
+});
+
+test('森林總覽接線：月份以後端現金流月份為單一來源，文案不冒充上月底', () => {
+  const source = readFileSync(new URL('../public/modules/dashboard.js', import.meta.url), 'utf8');
+  assert.match(source, /String\(cf\.month\)/);
+  assert.doesNotMatch(source, /上月底/);
 });
