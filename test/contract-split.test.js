@@ -54,19 +54,23 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 function stripFences(md) {
   /** @type {{char: string, len: number} | null} */ let open = null;
   const out = [];
-  for (const line of md.replace(/\r\n?/g, '\n').split('\n')) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  for (const raw of md.replace(/\r\n?/g, '\n').split('\n')) {
+    // ⚠️ **容器前綴**（清單、引用）也可以裝 fence（CommonMark Example 318；Codex #384 r11）：
+    //    `- ```text` 是合法的。原本不吃容器記號 ⇒ 把後面的 closing fence 誤當成 opener ⇒ 誤紅。
+    const line = raw.replace(/^ {0,3}(?:> ?)*(?:[-*+]|\d+[.)])?[ \t]*/u, (p) => ' '.repeat(Math.min(p.length, 3)));
+    // ⚠️ info string 用 `[^\r\n]*` 而不是 `.*`（Codex #384 r11）：
+    //    JS 的 `.` **不匹配 U+2028／U+2029**，但 CommonMark 只把 LF／CR 當行結尾——
+    //    那兩個字元可以合法出現在 info string 裡。用 `.*` 的話整行認不出是 fence，
+    //    於是「``` 後面接一個 U+2028 再接文字、而且沒關」會被當成普通內容 ⇒ **阻擋級假綠**。
+    const m = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/u.exec(line);
     if (!open) {
-      // ⚠️ **反引號 fence 的 info string 裡不可以有反引號**（CommonMark；Codex #384 r10）——
-      //    所以行首的 ``` aa ``` 根本不是 fence，是行內 code。原本會把它當成開 fence ⇒ **誤紅**。
+      // 反引號 fence 的 info string 裡不可以有反引號（所以行首的 ``` aa ``` 是行內 code，不是 fence）
       if (m && !(m[1][0] === '`' && m[2].includes('`'))) { open = { char: m[1][0], len: m[1].length }; continue; }
-      out.push(line);
+      out.push(raw);
       continue;
     }
-    // 關 fence：同一種字元、**長度不得短於開的**、且後面**只能是空格或 tab**。
-    // ⚠️ 不可以用 `.trim()`（Codex #384 r10）：JS 的 trim() 連 **NBSP** 都吃掉，
-    //    於是「``` 後面貼到一個 NBSP」會被判成已關閉，實際上 CommonMark 認為它沒關——
-    //    後面整份契約被吞進 code block，而護欄全綠。複製貼上就會發生。
+    // 關 fence：同字元、**長度不得短於開的**、且後面**只能是空格或 tab**
+    //（不可用 `.trim()`——它連 NBSP 都吃掉，會把沒關的當成關了）
     if (m && m[1][0] === open.char && m[1].length >= open.len && /^[ \t]*$/.test(m[2])) open = null;
   }
   return { text: out.join('\n'), unclosed: open !== null };
@@ -82,10 +86,14 @@ function stripFences(md) {
  */
 function read(p) {
   const raw = readFileSync(join(ROOT, p), 'utf8');
-  const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
+  // ⚠️ **順序：先剝 fence，再查 HTML 註解**（Codex #384 r11）：
+  //    fence 裡的內容是**原文**，裡面的 `<!--` 只是範例、不會真的註解掉什麼。
+  //    反過來先查註解的話，一段合法的 fenced HTML 範例就會被判成「有沒閉合的註解」＝誤紅。
+  const { text: noFence, unclosed } = stripFences(raw);
+  const stripped = noFence.replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(!stripped.includes('<!--') && !stripped.includes('-->'),
     `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
-  const { text, unclosed } = stripFences(stripped);
+  const text = stripped;
   assert.ok(!unclosed,
     `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。\n`
     + '⚠️ 常見成因：fence 前有縮排、或用 ```` 開卻用 ``` 收（關的不能比開的短）。');

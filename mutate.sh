@@ -245,6 +245,33 @@ p.write_text(s[:i]+"``` aa ```\n\n"+s[i:], encoding="utf-8")
 PY
 check 'T. 行首的行內 code（不是 fence，誤紅檢查）' 綠
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# U+2028（行分隔符）可以合法出現在 info string；JS 的 `.` 不匹配它。這個 fence 沒關。
+p.write_text(s[:i]+"```text metadata\n範例\n\n"+s[i:], encoding="utf-8")
+PY
+check 'U. info string 含 U+2028 且沒關 fence' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# CommonMark Example 318：fence 可以放在清單裡，這是合法寫法
+p.write_text(s[:i]+"- 說明：\n  ```text\n  範例\n  ```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'V. 清單裡的 fence（合法容器，誤紅檢查）' 綠
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# fence 裡的 <!-- 是原文範例，不該被當成沒閉合的註解
+p.write_text(s[:i]+"```html\n<!-- 這是一段示範用的、故意不閉合的註解\n```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'W. fence 裡的 HTML 註解範例（誤紅檢查）' 綠
+
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)
 if [[ -n "$leftover" ]]; then
