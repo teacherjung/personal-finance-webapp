@@ -299,3 +299,41 @@ test('⭐ 結論行｜判準是「用詞之後句子就結束、或接的是標�
   assert.equal(looksLikeVerdict('通過率'), false);
   assert.equal(looksLikeVerdict('通過 1392 題'), false);
 });
+
+// ── r6 的回歸鎖：用**真實留言**驗，不是用我想像的句子（Codex #385 r6 High）────
+
+test('⭐ 結論行｜#383 的**真實阻擋留言**必須抓得到', () => {
+  // ⚠️ 這是造成 #383 那場事故的原始留言格式。用詞不在行首（前面有「Claude 複審 r1｜結論：」），
+  //    而 r5 的前綴是**逐字集合**，對不上就整則看不見 ⇒ 另一個 session 的「通過」直接放行
+  //    ⇒ **#383 原樣重現**。Codex 是直接 `gh pr view 383` 把原文抓出來打的。
+  const real = '## Claude 複審 r1｜結論：**需修改後再審**（不可直接合併）\n\n審到 commit：`6203ea0`';
+  assert.equal(looksLikeVerdict(real), true, '真實的阻擋留言被忽略了');
+  // 而且旁邊有別人的合規「通過」時，阻擋仍然要在
+  const { problems } = verdictProblems([
+    c(real),
+    c(head('Claude', '另一個 session', HEAD.slice(0, 7), 2, '通過')),
+  ], HEAD, 'Claude');
+  assert.ok(problems.length > 0, '真實阻擋被另一個 session 的通過解除了——那就是 #383 本身');
+});
+
+test('結論行｜「用詞當標籤、後面接說明」不是結論（報告的日常句型）', () => {
+  for (const body of [
+    '- 通過：1395/1395 題。',
+    '不可合併：兩個 reviewer state 必須分開保存。',
+  ]) assert.equal(looksLikeVerdict(body), false, `日常句型被誤擋：「${body}」`);
+});
+
+test('結論行｜關鍵詞只認「審查/複審結果」，不認泛用的「結果」', () => {
+  // 只寫「結果」的話，「測試結果：通過 1392 題」會全部中招（r5 的教訓）。
+  assert.equal(looksLikeVerdict('審查結果：不可合併。'), true);
+  assert.equal(looksLikeVerdict('測試結果：通過 1392 題、失敗 0 題。'), false);
+});
+
+test('回歸｜前綴與行內 code 的兩個修正都真的鎖住了', () => {
+  // ⚠️ Codex #385 r6 Medium：把逐字前綴退回寬鬆版、把任意長度反引號退回單反引號，
+  //    29 題都還是綠——**修好了卻沒有東西盯著它別退回去**。這兩條就是那兩把鎖。
+  assert.equal(looksLikeVerdict('突變測試結果：通過率仍是 100%。'), false,
+    '寬鬆前綴回來了：「突變測試結果：」被剝成結論');
+  assert.equal(looksLikeVerdict('``不可合併`` 是三種結論之一。'), false,
+    '只剝單反引號的版本回來了：雙反引號的 code span 沒被剝掉');
+});
