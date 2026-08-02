@@ -372,48 +372,58 @@ function parseYaml(text) {
   return doc;
 }
 
-/** 這道閘唯一合法的形狀。改它＝刻意的決定，不是順手。 */
-const EXPECTED_JOB = {
-  name: '協作欄位（實作者 ≠ 獨立審查者）',
-  'runs-on': 'ubuntu-latest',
-  permissions: { contents: 'read', 'pull-requests': 'read' },
-  steps: [
-    { uses: 'actions/checkout@v4' },
-    { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
-    {
-      name: '協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）',
-      env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
-      run: 'node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
+/**
+ * 這道閘唯一合法的**整份 workflow** 形狀。改它＝刻意的決定，不是順手。
+ *
+ * ⚠️ **為什麼是整份、不是只有那個 job**（r3 的教訓，同型錯誤第三次）：
+ * r2 我把門關在 `run:` 那一行 → job 的形狀還敞開；
+ * r3 我把門關在 job 上 → **workflow 根層還敞開**。Codex 實測在根層加：
+ *
+ *     defaults:
+ *       run:
+ *         shell: bash -c 'bash "$1" || true' -- {0}
+ *
+ * 內層 `exit 7` 被轉成 0、閘永遠放行，而考題 29/29 全綠——因為 job 物件確實一模一樣。
+ * **每次只關一層，外面那層就是下一個洞。** 所以改成整份 deepEqual：
+ * 根層多一個 `defaults`／`env`／`concurrency`，或 `on` 的形狀變了，全部紅。
+ *
+ * ⚠️ `types` 刻意比對**原始的 flow sequence 字串**：寫成 `types: opened, edited, …`
+ * （沒有方括號的純量）是合法 YAML 但語意不同，這樣比對就擋得住（r3 的 Low）。
+ */
+const EXPECTED_WORKFLOW = {
+  name: '協作欄位',
+  on: { pull_request: { types: '[opened, edited, reopened, synchronize]' } },
+  jobs: {
+    'collab-fields': {
+      name: '協作欄位（實作者 ≠ 獨立審查者）',
+      'runs-on': 'ubuntu-latest',
+      permissions: { contents: 'read', 'pull-requests': 'read' },
+      steps: [
+        { uses: 'actions/checkout@v4' },
+        { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
+        {
+          name: '協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）',
+          env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
+          run: 'node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
+        },
+      ],
     },
-  ],
+  },
 };
 
-test('協作欄位閘｜整個 job 的形狀只認一種（關門，不是列舉吞退出碼的寫法）', () => {
-  const wf = parseYaml(read(GATE_WF));
-  assert.ok(wf.jobs && wf.jobs['collab-fields'],
-    `${GATE_WF} 沒有 collab-fields job——協作欄位閘不在 CI 裡了，只剩「記得跑」`);
-  assert.deepEqual(wf.jobs['collab-fields'], EXPECTED_JOB,
-    `${GATE_WF} 的 collab-fields job 形狀變了。\n`
-    + '⚠️ 這道閘只認一種合法形狀，因為「讓它看起來有跑、實際沒跑」的寫法列舉不完：\n'
-    + '   `if: ${{ false }}`（被 skip 的 job 在 required check 上回報 Success）、\n'
-    + '   `needs:` 一個會失敗的前置 job、自訂 `shell` 在外層吞退出碼、\n'
-    + '   更早的 step 用 github-script 把腳本覆寫掉、`run:` 尾端接 `|| true`……\n'
-    + '要改這道閘，請連同 EXPECTED_JOB 一起改——那是刻意的動作。');
-  assert.deepEqual(Object.keys(wf.jobs), ['collab-fields'],
-    `${GATE_WF} 多了別的 job——這個檔案只放這道閘（它的觸發條件與程式碼 CI 不同）`);
+test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列舉繞法）', () => {
+  assert.deepEqual(parseYaml(read(GATE_WF)), EXPECTED_WORKFLOW,
+    `${GATE_WF} 的形狀變了。這道閘只認一種合法形狀，因為「讓它看起來有跑、實際沒跑」的寫法列舉不完：\n`
+    + '  ・job 或 step 加 `if: ${{ false }}`（被 skip 的 job 在 required check 上回報 **Success**）\n'
+    + '  ・`needs:` 一個會失敗的前置 job\n'
+    + '  ・step 自訂 `shell`、或**根層 `defaults.run.shell`** 在外層吞掉退出碼\n'
+    + '  ・更早的 step 用 `actions/github-script` 把腳本覆寫成 `process.exit(0)`\n'
+    + '  ・`run:` 尾端接 `|| true`\n'
+    + '⚠️ `types` 少了 `edited` 也會在這裡紅——`pull_request:` 預設事件**不含 edited**，\n'
+    + '   少了它就能「合法五欄拿綠燈 → 編輯說明撤掉欄位 → commit 沒變、綠燈還在」。\n'
+    + '要改這道閘，請連同 EXPECTED_WORKFLOW 一起改——那是刻意的動作。');
 });
 
-test('協作欄位閘｜必須訂閱 `edited`，否則綠燈之後可以偷偷撤掉欄位', () => {
-  // ⚠️ Codex #382 r1 的 High：`pull_request:` 預設事件是 opened/synchronize/reopened，**不含 edited**。
-  //    可重現：合法五欄開 PR 拿綠燈 → 編輯說明刪掉欄位／把實作者與審查者改成同一人
-  //    ⇒ commit SHA 沒變、workflow 不重跑、**綠燈還在** ⇒ 分支保護照樣放行。
-  const wf = parseYaml(read(GATE_WF));
-  assert.deepEqual(Object.keys(wf.on || {}), ['pull_request'],
-    `${GATE_WF} 的觸發事件不是只有 pull_request——push 沒有 PR 編號，腳本會 fail-closed 讓 main 掛紅`);
-  const types = String(wf.on.pull_request.types || '').replace(/[[\]]/g, '').split(',').map((/** @type {string} */ s) => s.trim());
-  assert.deepEqual(types.slice().sort(), ['edited', 'opened', 'reopened', 'synchronize'],
-    `${GATE_WF} 的 types 不對（實得：${types.join('、')}）——少了 edited，改說明就不會重跑`);
-});
 
 test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', () => {
   // ⚠️ 這題防兩個會「永遠卡住合併」的坑：
