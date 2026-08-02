@@ -1,24 +1,30 @@
 // @ts-check
-// 兩份「安全判斷輸入」文件的過期考題（2026-08-02，PR #381 r2 補）。
+// 兩份「安全判斷輸入」文件的過期考題（2026-08-02，PR #381 r2 起；r3 依 Codex r2 重寫判準）。
 //
 // 病因：這兩份文件不是說明書，是**做安全決策時會拿來當依據的東西**。它們一旦過期，
 // 讀的人會用錯誤的前提做判斷——而畫面上完全看不出來。本輪實際抓到的失真：
 //   ・XML 上限文件寫 40MB、程式是 12MB——**而 40MB 正是實測會 OOM 死掉的線**
-//   ・「異常輸入防線」標成已排程，其實 #297 早就上線
-//   ・「每日滾動備份」標成未開工，其實 #295 早就上線
+//   ・「異常輸入防線」「每日滾動備份」標成未開工，其實 #297／#295 早就上線
 //   ・環境變數文件叫 `HOSTED_MODE`、程式叫 `NOTEASY_HOSTED`
 //   ・裁決①已寫「升 Pro」，成本表還停在 Free US$0
+//   ・整節「留給多人化」停在只有 LOCAL 的世界，把已上線的帳號隔離寫成未來式
 //
 // 這支考題的分工：**只鎖「文件抄寫的數字／名字，與程式的單一真相相符」**。
-// 判準刻意是「從程式抽值、代進文件比對」，不是「文件裡有沒有出現某串字」——
-// 本專案的招牌假綠就是「斷言文字出現過」（#379 角色表被「**不**複審」滿足、
-// #382 CI 那題被檔頭註解裡的路徑滿足）。**斷言的對象要是行為**：
-// 改了程式常數而沒回頭改文件，這裡就要紅。
+// 判準刻意是「從程式抽值、代進文件比對」，不是「文件裡有沒有出現某串字」。
 //
-// fail-closed：找不到被錨定的那句話**也算紅**（訊息會說「文件改寫了，請一起更新考題」）。
-// 「查不到」不等於「沒問題」——那正是這兩份文件過期時的樣子。
+// ## r2 的兩個實測假綠（Codex 抓的，判準因此重寫）
 //
-// 誠實劃界：擋得住「數字漂移」與「已完成卻標未完成」，擋不住「文件整段沒寫」。
+// r2 版用 `lineWith()`：收集所有命中的行、**join 起來**再比對 ⇒ 語意變成「**任何一處對就算過**」。
+//   ①留著正確的 LEN 行，另外再加一行錯的（`LEN_SHORT=300`）⇒ 5/5 全綠
+//   ②正文改回 XML 40MB，把正確值藏進 **HTML 註解** ⇒ 5/5 全綠
+// 這正好放過本題最想防的「同一份文件一對一錯」。
+//
+// r3 的兩條修法（都是**關門**，不是補洞）：
+//   ①先剝掉 HTML 註解——註解不是給讀者看的現況
+//   ②**每一個**命中的行都必須成立（`linesWith` 回陣列、逐行斷言），不是任一行成立
+//
+// 誠實劃界：擋得住「數字漂移」與「已完成卻標未完成」，**擋不住「整節停在舊世界」**
+//（r2 的 Medium 1／2 就是那種——沒有數字可以對，只能靠人讀）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -30,24 +36,27 @@ import { LEN_SHORT, LEN_LONG } from '../lib/schema.js';
 import { KEEP_DAYS } from '../lib/services/backup.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
+
+/** 讀檔並**剝掉 HTML 註解**——註解裡的值不是現況，不該替文件擔保。 @param {string} p */
+const read = (p) => readFileSync(join(ROOT, p), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
 
 const PLAN = 'docs/多人上線-施工計畫.md';
 const MAP = 'docs/安全與健壯性-待辦地圖.md';
 
 /**
- * 抓出「含有某個錨點字串」的那一行。找不到就是紅——文件被改寫時要有人回來看。
- * @param {string} md
- * @param {string} anchor
- * @param {string} where
+ * 抓出**每一個**含錨點的行。找不到就是紅——文件被改寫時要有人回來看。
+ *
+ * ⚠️ 回陣列、由呼叫端逐行斷言。r2 版把命中的行 join 起來再比對，
+ * 語意就變成「任何一處對就算過」——留著正確的行、另外再加一行錯的，考題全綠。
+ * @param {string} md @param {string} anchor @param {string} where
  */
-function lineWith(md, anchor, where) {
+function linesWith(md, anchor, where) {
   const hits = md.split('\n').filter((l) => l.includes(anchor));
   assert.ok(
     hits.length > 0,
     `${where}：找不到錨點「${anchor}」。文件被改寫了 ⇒ 請一起更新這支考題，不要直接刪掉斷言。`,
   );
-  return hits.join('\n');
+  return hits;
 }
 
 /**
@@ -55,16 +64,14 @@ function lineWith(md, anchor, where) {
  *
  * ⚠️ 這裡踩過一次：原本寫「整行不得出現『未開工』」，但**誠實的校正註記本身就會寫
  * 『原標「未開工」，實際 #297 已上線』**——正確的文件反而被判紅。
- * 狀態是行首那一格，就只看那一格。
- * @param {string} line
- * @param {string} where
+ * ⚠️ 也接受 `- ✅ **已完成**` 這種等價排版（Codex r2 指出原版會誤紅）。
+ * @param {string} line @param {string} where
  */
 function assertDone(line, where) {
-  const m = /^\s*[-*]\s*\*\*(.+?)\*\*/.exec(line);
-  assert.ok(m, `${where}：這一條的開頭不再是「- **狀態**」的格式 ⇒ 請一起更新這支考題`);
-  assert.ok(
-    m[1].startsWith('✅'),
-    `${where}：這一項已經上線，狀態記號卻是「${m[1]}」而不是 ✅`,
+  assert.match(
+    line,
+    /^\s*[-*]\s*(?:\*\*\s*)?✅/u,
+    `${where}：這一項已經上線，條列開頭的狀態記號卻不是 ✅。\n實得：${line.slice(0, 80)}`,
   );
 }
 
@@ -73,60 +80,82 @@ test('XML 上限：文件抄的數字＝lib/parse-limits.js 的 MAX_IB_XML_CHARS
   assert.ok(Number.isInteger(mb), `MAX_IB_XML_CHARS 不再是整數 MB（${MAX_IB_XML_CHARS}），考題要改寫`);
   // 錨在文件自己宣告的單一真相那一列——不是全檔掃「XML \d+MB」
   //（同一列還寫著「不是 40MB」，全檔掃會把那個歷史對照也當成宣稱值）。
-  const row = lineWith(read(PLAN), 'MAX_IB_XML_CHARS', PLAN);
-  assert.match(
-    row,
-    new RegExp(`XML\\s*${mb}\\s*MB`),
-    `${PLAN} 的「解析器資源上限」那列沒有寫成 XML ${mb}MB（程式現在是 ${mb}MB）。`
-      + '⚠️ 這個數字不是裝飾——40MB 是實測會讓行程 OOM 死掉的線。',
-  );
+  for (const row of linesWith(read(PLAN), 'MAX_IB_XML_CHARS', PLAN)) {
+    assert.match(
+      row,
+      new RegExp(`XML\\s*${mb}\\s*MB`),
+      `${PLAN} 有一列點名了 MAX_IB_XML_CHARS 卻沒寫成 XML ${mb}MB（程式現在是 ${mb}MB）。\n`
+      + '⚠️ 這個數字不是裝飾——40MB 是實測會讓行程 OOM 死掉的線。\n'
+      + `實得：${row.slice(0, 120)}`,
+    );
+  }
 });
 
 test('異常輸入防線：文件抄的長度上限＝lib/schema.js 的常數', () => {
-  const md = read(MAP);
-  const row = lineWith(md, 'LEN_SHORT', MAP);
-  assert.match(row, new RegExp(`LEN_SHORT\\s*=\\s*${LEN_SHORT}\\b`), `${MAP} 的 LEN_SHORT 與程式不符（程式＝${LEN_SHORT}）`);
-  assert.match(row, new RegExp(`LEN_LONG\\s*=\\s*${LEN_LONG}\\b`), `${MAP} 的 LEN_LONG 與程式不符（程式＝${LEN_LONG}）`);
-  // 已完成的東西不可以還掛在「未開工」——這正是本輪抓到的失真型態。
-  assertDone(row, `${MAP}（異常輸入防線 #297）`);
+  for (const row of linesWith(read(MAP), 'LEN_SHORT', MAP)) {
+    assert.match(row, new RegExp(`LEN_SHORT\\s*=\\s*${LEN_SHORT}\\b`), `${MAP} 有一行的 LEN_SHORT 與程式不符（程式＝${LEN_SHORT}）：${row.slice(0, 100)}`);
+    assert.match(row, new RegExp(`LEN_LONG\\s*=\\s*${LEN_LONG}\\b`), `${MAP} 有一行的 LEN_LONG 與程式不符（程式＝${LEN_LONG}）：${row.slice(0, 100)}`);
+    assertDone(row, `${MAP}（異常輸入防線 #297）`);
+  }
 });
 
 test('每日滾動備份：文件抄的保留天數＝lib/services/backup.js 的 KEEP_DAYS', () => {
-  const md = read(MAP);
-  const row = lineWith(md, 'KEEP_DAYS', MAP);
-  assert.match(row, new RegExp(`KEEP_DAYS\\s*=\\s*${KEEP_DAYS}\\b`), `${MAP} 的 KEEP_DAYS 與程式不符（程式＝${KEEP_DAYS}）`);
-  assert.match(row, new RegExp(`保留\\s*${KEEP_DAYS}\\s*天`), `${MAP} 的白話說明沒跟著 KEEP_DAYS=${KEEP_DAYS} 一起改`);
-  assertDone(row, `${MAP}（每日滾動備份 #295）`);
+  for (const row of linesWith(read(MAP), 'KEEP_DAYS', MAP)) {
+    assert.match(row, new RegExp(`KEEP_DAYS\\s*=\\s*${KEEP_DAYS}\\b`), `${MAP} 有一行的 KEEP_DAYS 與程式不符（程式＝${KEEP_DAYS}）：${row.slice(0, 100)}`);
+    assert.match(row, new RegExp(`保留\\s*${KEEP_DAYS}\\s*天`), `${MAP} 的白話說明沒跟著 KEEP_DAYS=${KEEP_DAYS} 一起改：${row.slice(0, 100)}`);
+    assertDone(row, `${MAP}（每日滾動備份 #295）`);
+  }
 });
 
 test('雙模式開關：文件用的環境變數名＝lib/hosted.js 真正認的那個', () => {
   // 從程式抽名字，不是把名字寫死在考題裡——程式改名，這裡會跟著要求文件改名。
-  const src = read('lib/hosted.js');
+  const src = readFileSync(join(ROOT, 'lib/hosted.js'), 'utf8');
   const m = /process\.env\.([A-Z0-9_]+)\s*===/.exec(src);
   assert.ok(m, 'lib/hosted.js 的 isHosted() 判準改寫了 ⇒ 請一起更新這支考題');
   const envName = m[1];
 
+  // ⚠️ 判準是**整個 token**，不是子字串（Codex r2 實測：把文件裡的 NOTEASY_HOSTED
+  //    全改成 NOTEASY_HOSTED_WRONG，`includes()` 版照樣全綠——它是子字串命中）。
+  const tokensOf = (/** @type {string} */ s) =>
+    [...s.matchAll(/\b[A-Z][A-Z0-9_]{3,}\b/g)].map((x) => x[0]);
+
   for (const p of [PLAN, MAP]) {
-    const md = read(p);
-    assert.ok(
-      !md.includes('HOSTED_MODE') || envName === 'HOSTED_MODE',
-      `${p} 還在用舊名 HOSTED_MODE，程式認的是 ${envName}`,
-    );
+    const lines = read(p).split('\n');
+    for (const line of lines) {
+      // 只看**長得像環境變數**的 token（含底線）——「HOSTED」單獨出現時是模式的名字
+      //（「HOSTED 匯入」「兩種模式都套」），不是變數名，不該被當成寫錯。
+      const wrong = tokensOf(line).filter((t) => t.includes('HOSTED') && t.includes('_') && t !== envName);
+      if (!wrong.length) continue;
+      // 允許「舊名 X 已廢棄，現用 <envName>」這種誠實的沿革註記：同一行要點出現行名。
+      assert.ok(
+        tokensOf(line).includes(envName),
+        `${p} 出現不是 ${envName} 的模式開關名：${wrong.join('、')}\n`
+        + `（若是沿革註記，請在同一行寫出現行的 ${envName}）\n實得：${line.slice(0, 120)}`,
+      );
+    }
   }
-  assert.ok(read(PLAN).includes(envName), `${PLAN} 沒有提到程式真正認的環境變數 ${envName}`);
+  assert.ok(tokensOf(read(PLAN)).includes(envName), `${PLAN} 沒有提到程式真正認的環境變數 ${envName}`);
 });
 
 test('成本估算不得停在已被推翻的方案（裁決①已升 Supabase Pro）', () => {
   const md = read(PLAN);
   // 只有當裁決速查表真的寫著「已升 Pro」時才檢查——裁決若改回去，這題自動退場。
-  const verdict = lineWith(md, '| ① | Supabase 方案', PLAN);
-  if (!verdict.includes('已升 Pro')) return;
+  const verdict = linesWith(md, '| ① | Supabase 方案', PLAN);
+  assert.equal(verdict.length, 1, `${PLAN} 的裁決①不是唯一一列`);
+  if (!verdict[0].includes('已升 Pro')) return;
 
-  const costRow = lineWith(md, '| Supabase（Auth＋Postgres）', PLAN);
-  assert.ok(
-    !costRow.includes('Free'),
-    `${PLAN}：裁決①寫「已升 Pro」，成本估算表卻還把 Supabase 算成 Free。`
-      + '同一份文件同時說兩件相反的事＝讀的人一定會拿到錯的那個。',
-  );
-  assert.ok(costRow.includes('Pro'), `${PLAN}：成本估算表的 Supabase 那列沒寫出現行方案 Pro`);
+  const costRows = linesWith(md, '| Supabase（Auth＋Postgres）', PLAN);
+  for (const row of costRows) {
+    assert.ok(!row.includes('Free'),
+      `${PLAN}：裁決①寫「已升 Pro」，成本估算表卻還把 Supabase 算成 Free。\n`
+      + '同一份文件同時說兩件相反的事＝讀的人一定會拿到錯的那個。');
+    assert.ok(row.includes('Pro'), `${PLAN}：成本估算表的 Supabase 那列沒寫出現行方案 Pro`);
+    // ⚠️ Codex r2 實測：只查 Pro／Free 字樣的話，「Pro ／ US$0」照樣全綠。價格也要對得起方案。
+    assert.ok(!/US\$\s*0\b/.test(row),
+      `${PLAN}：Supabase 已升 Pro，那一列的費用卻還是 US$0。\n實得：${row.slice(0, 140)}`);
+  }
+  for (const total of linesWith(md, '| **合計**', PLAN)) {
+    assert.ok(!/US\$0[–-]7/.test(total),
+      `${PLAN}：合計還是升 Pro 之前的 US$0–7。\n實得：${total.slice(0, 140)}`);
+  }
 });
