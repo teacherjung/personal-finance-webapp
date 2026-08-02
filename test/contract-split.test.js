@@ -266,7 +266,13 @@ const BODY_LABEL = '**記得同步這裡**：';
  * **宣告的真相**（不是從文字推導的）。
  * - `rules`：每一條規則的標題原文。**每一條都必須有一列 AGENTS 索引指過來。**
  * - `exempt`：確定不是獨立規則的小節，必須逐一寫理由。
- * - `files`：這個領域的責任檔**窮舉**清單（README 路由列必須剛好是這一組）。
+ * - `files`：這個領域**宣告的**責任檔清單（README 路由列必須剛好是這一組）。
+ *   ⚠️ **它是下限，不是窮舉**（Codex #384 r29 逼出來的誠實劃界）：
+ *   這道護欄只能驗「已宣告的集合彼此一致」，**驗不出人漏宣告了哪些檔案**。
+ *   r27 我照 Codex 的清單補了 21 支、它 r29 又找到 64 支，而且明講「我撤回 r27 的判斷，那次抽查範圍不足」。
+ *   ⇒ 繼續補下去不會收斂，而**在文件上宣稱「窮舉」是一句它證明不了的話**——
+ *   那正是這支 PR 存在的理由（規則書寫了做不到的保證，讀者照著信）。
+ *   真正的窮舉要另拆 PR 用別的方法做（例如從 import 圖反查）。
  */
 const MANIFEST = {
   'docs/contracts/前端功能.md': {
@@ -449,26 +455,82 @@ function slug(h) {
 
 const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md)#([^)]+)\)/;
 
-/** AGENTS.md 裡所有「指向契約檔」的同步點列。 */
+/**
+ * AGENTS.md 裡所有「指向契約檔」的同步點列。
+ *
+ * ## ⚠️ 索引列是一份**封閉契約**，不是「看起來像表格列就算」（Codex #384 r29）
+ *
+ * r27 我只擋了 raw HTML（`<`）。Codex 立刻用三個**不含 `<`** 的突變全部繞過（7/7 綠）：
+ *   ①第一格規則名稱**清空** ⇒ 畫面上那一格是空的，考題照樣通過
+ *   ②連結寫成 `\[契約：前端功能](...)`（跳脫方括號）⇒ regex 仍命中，但 GitHub 只顯示字面文字、**點不了**
+ *   ③在索引列**前面插一個空行** ⇒ GitHub 把它移出表格、渲染成帶直線的普通段落，護欄仍通過
+ * 同根的變體還有：把連結包進 code span／圖片、四格縮排、零寬與方向控制字元。
+ *
+ * ⇒ **不逐個補洞**（那條路今晚證明過走不通）。改成驗一份封閉的形狀契約：
+ *   ・列必須在**連續的表格內**（前一行也是表格列或表頭分隔線），零縮排
+ *   ・第一格只准**純文字**或 `**純文字**`，而且要等於 manifest 宣告的規則名稱
+ *   ・第二格必須以**未跳脫、未包 code span／圖片**的契約連結結尾
+ *   ・不准零寬與方向控制字元，不准 `<`
+ * 這四條合起來就是「這一列在畫面上真的是一列可點的索引」——**列舉的是我要的形狀，不是別人的繞法。**
+ */
 function indexRows() {
-  // ⚠️ 列判準放寬到「trim 之後以 `|` 開頭」，連結目標**相對 repo 根解析**（Codex #384 r7）：
-  //    合法的無空格表格列＋`./docs/contracts/…` 都是等價寫法，字面比對認不出來，
-  //    於是「一條規則剛好一列」在 AGENTS 這一側形同虛設。
-  return read('AGENTS.md').split('\n')
-    .filter((l) => l.trim().startsWith('|') && LINK_RE.test(l))
-    .map((line) => {
-      const m = /** @type {RegExpExecArray} */ (LINK_RE.exec(line));
-      // ⚠️ **索引列本身一個 `<` 都不准**（Codex #384 r27）：
-      //    它實測 `| <video>規則</video> | <video>摘要＋契約連結</video> |`——
-      //    GitHub 把兩格內容**清空**，而考題照樣從原始文字讀到規則與連結而通過。
-      //    這道門刻意只裝在**索引列**上，不擴大到整份 AGENTS——
-      //    那樣會傷到它合法引用的外部語法（XBRL 的 `<Z/>`、IB Flex、Notion 的 `<callout`）。
-      assert.ok(!line.includes('<'),
-        `AGENTS.md 的同步點索引列出現 \`<\`：${line.trim().slice(0, 80)}…\n`
-        + '⚠️ raw HTML 可以讓這一格在畫面上變成空的，而考題照樣讀得到內容 ⇒ 索引形同虛設。\n'
-        + '   索引列請用純 Markdown。');
-      return { line, file: normalize(m[1]), anchor: m[2] };
-    });
+  const lines = read('AGENTS.md').split('\n');
+  const rows = [];
+  lines.forEach((line, i) => {
+    if (!LINK_RE.test(line)) return;
+    const where = `AGENTS.md:${i + 1}`;
+    const shown = line.trim().slice(0, 70);
+    assert.ok(line.startsWith('|'),
+      `${where} 的索引列沒有從行首的 \`|\` 開始：${shown}…\n`
+      + '⚠️ 縮排會讓 GitHub 把它移出表格（四格縮排更會變成程式碼區塊）。');
+    // ①前一行不可以是**空行**——空行會讓這一列掉出表格。
+    //    ⚠️ 判準是拿 GitHub 自己的 `/markdown` API 校準出來的，不是照文法推的：
+    //      ・前一行空白 ⇒ 渲染成 `<p>| 第二列 | y |</p>`（**掉出表格**，Codex r29 實證）
+    //      ・前一行縮排四格 ⇒ 變成程式碼區塊
+    //      ・前一行是**普通文字** ⇒ 表格照樣繼續（GFM 把那行渲染成單格列）
+    //    我第一版寫成「前一行必須是表格列」，那會誤紅 29 條真實索引——
+    //    **照文法推出來的判準，跟 GitHub 實際做的事不一樣。**
+    const prev = lines[i - 1] || '';
+    assert.notEqual(prev.trim(), '',
+      `${where} 的索引列前面是空行：${shown}…\n`
+      + '⚠️ GitHub 會把它移出表格，渲染成一段帶直線的普通文字——**畫面上不再是索引**，'
+      + '而考題照樣讀得到 ⇒ 索引形同虛設（Codex #384 r29 實證）。');
+    // ②不准 raw HTML 與隱形字元
+    assert.ok(!line.includes('<'),
+      `${where} 的索引列出現 \`<\`：${shown}…\n`
+      + '⚠️ raw HTML 可以讓整格在畫面上變成空的（`<video>` 實測過），而考題照樣讀得到。');
+    assert.doesNotMatch(line, /[\u200b-\u200f\u2028\u2029\ufeff\u00ad]/u,
+      `${where} 的索引列出現零寬／方向控制字元：${shown}…`);
+    const cells = line.split('|');
+    // ③第一格：純文字或 **純文字**（不准連結、圖片、code span、空白）
+    const first = (cells[1] || '').trim();
+    assert.ok(first, `${where} 的索引列第一格是空的：${shown}…\n`
+      + '⚠️ 畫面上那一格會是空的，而考題照樣通過（Codex #384 r29 實測）。');
+    // ⚠️ Codex 建議「第一格只准純文字」，但實際的索引列合法地含行內 code
+    //    （`SEC 官方指標候選 tag／\`selectMetric\`` 這種）——**規格要對得上現況才有用**。
+    //    真正會讓一格「看起來有東西、畫面上卻沒有」的是**圖片**（alt 空就整格消失）。
+    //    判準因此改成：剝掉純記號之後**必須還有可見文字**，而且不准圖片語法。
+    assert.doesNotMatch(first, /!\[/u,
+      `${where} 的索引列第一格含圖片語法：${first}\n`
+      + '⚠️ alt 空的圖片在畫面上什麼都不顯示，而考題照樣讀得到原始文字。');
+    assert.ok(first.replace(/[`*_~\s]/gu, ''),
+      `${where} 的索引列第一格只剩記號、沒有可見文字：${first}`);
+    // ④第二格結尾必須是**沒被跳脫、沒被包起來**的契約連結
+    const m2 = /** @type {RegExpExecArray} */ (LINK_RE.exec(line));
+    const at = line.indexOf(m2[0]);
+    assert.notEqual(line[at - 1], '\\',
+      `${where} 的契約連結被反斜線跳脫了：${shown}…\n`
+      + '⚠️ GitHub 只會顯示字面文字，**點不了** ⇒ 索引指不到契約（Codex #384 r29 實測）。');
+    // ⚠️ 判「連結在不在 code span 裡」＝**數連結前面的反引號個數是不是偶數**。
+    //    （第一版寫成 /`[^`]*$/，那在任何含 code span 的行都會命中——真實索引列全部誤紅。）
+    //    誠實劃界：這招對單反引號成立，多重反引號的 code span 不在守備範圍。
+    const backticks = (line.slice(0, at).match(/`/gu) || []).length;
+    assert.equal(backticks % 2, 0,
+      `${where} 的契約連結被包進 code span：${shown}…\n`
+      + '⚠️ code span 裡的連結不會渲染成連結——索引指不到契約。');
+    rows.push({ line, file: normalize(m2[1]), anchor: m2[2] });
+  });
+  return rows;
 }
 
 /** 契約檔裡的每一個標題段落（`##` 與 `###` 都算）。 @param {string} file */
@@ -621,7 +683,7 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
       .map((x) => x[1]);
     assert.deepEqual(sorted([...new Set(listed)]), sorted(m.files),
       `${base} 的路由列與 manifest 的 files 不一致。\n`
-      + '⚠️ README 硬規則①：已拆領域的檔案清單＝**窮舉**，不是「典型檔案」。\n'
+      + '⚠️ README 硬規則①：已拆領域的檔案清單＝**宣告的責任集合**（下限，不是窮舉）。\n'
       + `  路由列有、manifest 沒有：${listed.filter((f) => !m.files.includes(f)).join('、') || '（無）'}\n`
       + `  manifest 有、路由列沒有：${m.files.filter((f) => !listed.includes(f)).join('、') || '（無）'}`);
     for (const f of m.files) {

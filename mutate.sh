@@ -352,6 +352,41 @@ p.write_text(s[:i]+"|".join(cells)+s[j:], encoding="utf-8")
 PY
 check 'AS. 索引列用 video 把兩格清空（Codex r27 實測）' 紅
 
+# ── r29：索引列的封閉形狀契約（判準用 GitHub /markdown API 校準過）──
+
+mutate 'AT. 索引列前面插空行（GitHub 會把它移出表格）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"\n"+s[i:], encoding="utf-8")
+PY
+check 'AT. 索引列前面插空行（GitHub 會把它移出表格）' 紅
+
+mutate 'AU. 索引列縮排（GitHub 會渲染成程式碼區塊）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"    "+s[i:], encoding="utf-8")
+PY
+check 'AU. 索引列縮排（GitHub 會渲染成程式碼區塊）' 紅
+
+mutate 'AV. 契約連結被反斜線跳脫（畫面上點不了）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
+row=s[i:j].replace("[契約：", "\\[契約：", 1)
+p.write_text(s[:i]+row+s[j:], encoding="utf-8")
+PY
+check 'AV. 契約連結被反斜線跳脫（畫面上點不了）' 紅
+
+mutate 'AW. 索引列第一格清空（畫面上那格是空的）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"|  |"+s[i+len("| 月度回顧總覽卡 |"):], encoding="utf-8")
+PY
+check 'AW. 索引列第一格清空（畫面上那格是空的）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
