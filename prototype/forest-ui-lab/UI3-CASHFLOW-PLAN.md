@@ -17,6 +17,7 @@ UI3 的高密度頁面分三支處理：
 ## 預約範圍
 
 - `public/modules/cashflow.js`：只調整銀行收支主畫面的 HTML 結構與 class；保留資料取得、計算、排序、篩選、事件與所有對話框流程。
+- `public/modules/cashflow-model.js`：零 DOM／零 API 的本月收入、支出與結餘純函式，讓前端口徑能用固定輸入輸出考題直接驗證。
 - `public/styles.css`：新增以 `.cashflow-workspace` 為根的頁面專屬樣式，不改其他路由的版面。
 - `test/cashflow-forest-ui.test.js`：固定輸入輸出與接線契約。
 - `prototype/forest-ui-lab/UI3-CASHFLOW-PLAN.md`：本施工契約與驗收紀錄。
