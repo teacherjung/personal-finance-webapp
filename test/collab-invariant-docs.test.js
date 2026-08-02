@@ -246,16 +246,43 @@ test('角色正規化｜看不出來就回 null，不猜', () => {
 
 // ── 本檔不可以重述合併步驟（重述的摘要會落後）─────────────────
 
-test('AGENTS.md 的代合併段落要點名三道守門，且不重述步驟（Codex #379 r1 High②）', () => {
+/**
+ * 合併程序**實際用到的機械閘**，從 `CODEX-REVIEW.md` 的合併步驟區塊反查。
+ *
+ * ⚠️ **不要在這裡手寫名單**（Codex #385 r9 抓的）：原本寫死三個名字，
+ * 於是 #385 加了第四道閘（`check-review-verdicts.js`）之後，AGENTS.md 兩處
+ * 仍叫讀者「只記住三道守門」，而**考題把舊名單當契約，44 題全綠也看不見**。
+ * 這正是本節在修的那個病，我在修它的同一支 PR 裡又犯一次。
+ * ⇒ 真相只有一個地方：合併步驟本身。它提到幾道，AGENTS 的摘要就要點名幾道。
+ */
+function gatesInMergeSteps() {
+  const md = read('CODEX-REVIEW.md');
+  const start = md.indexOf('**六**個步驟缺一不可：');
+  assert.ok(start > 0,
+    'CODEX-REVIEW.md 找不到合併步驟區塊的起點（錨點是「**六**個步驟缺一不可：」）。\n'
+    + '⚠️ 步驟數改了就要一起改這裡——這題反查不到就等於沒有守。');
+  // 區塊到第一個非引用行為止（六步驟整段都在 blockquote 裡）
+  const lines = md.slice(start).split('\n');
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() !== '' && !l.startsWith('>'));
+  const block = lines.slice(0, end < 0 ? lines.length : end).join('\n');
+  return [...new Set(block.match(/scripts\/check-[a-z-]+\.js/g) || [])];
+}
+
+test('AGENTS.md 的代合併段落要點名**合併步驟裡的每一道**守門，且不重述步驟（Codex #379 r1 High②／#385 r9）', () => {
   const agents = read('AGENTS.md');
-  const i = agents.indexOf('不論誰執行，一律走');
-  assert.ok(i > 0, 'AGENTS.md 找不到代合併的指標段落');
-  const block = agents.slice(i, i + 700);
-  for (const must of ['check-pr-collab-fields.js', 'check-pr-merge-gate.js', 'Reviewed-By', 'Merged-By']) {
-    assert.ok(block.includes(must),
-      `AGENTS.md 的代合併段落沒有點名「${must}」。\n`
-      + '這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——'
-      + '那正是這一節在修的病），但**三道守門的名字必須在**，否則指標等於沒有內容。');
+  const gates = gatesInMergeSteps();
+  assert.ok(gates.length >= 3, `合併步驟裡只找到 ${gates.length} 道閘，反查壞了——先修這題本身`);
+  for (const anchor of ['不論誰執行，一律走', '但四道不可跳過的守門要在這裡點名得出來']) {
+    const i = agents.indexOf(anchor);
+    assert.ok(i > 0, `AGENTS.md 找不到指標段落：「${anchor}」`);
+    const block = agents.slice(i, i + 900);
+    for (const must of [...gates.map((g) => g.replace('scripts/', '')), 'Reviewed-By', 'Merged-By']) {
+      assert.ok(block.includes(must),
+        `AGENTS.md 的「${anchor}」段落沒有點名「${must}」。\n`
+        + '⚠️ 這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——\n'
+        + '   那正是這一節在修的病），但**每一道守門的名字必須在**，否則指標等於沒有內容。\n'
+        + `   目前合併步驟裡有這幾道：${gates.join('、')}`);
+    }
   }
 });
 

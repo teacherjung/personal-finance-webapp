@@ -90,7 +90,12 @@ const MARKER_RE = new RegExp(MARKER, 'u');
  * **對「合併」下許可判斷**。
  * 尾端的 `(?![：:])` 是關鍵：`不可合併：兩個 state 要分開存` 是在**替某個狀態命名**，不是結論。
  */
-const MERGE_RULING = /(?:可以|可否|能否|不能|不可以|不可|不宜|不建議|建議|暫不可|暫不|尚不可|還不能)\s*(?:直接\s*)?合併(?![：:\p{L}\p{N}])/u;
+const MODALITY = '(?:可以|可否|能否|不能|不可以|不可|不宜|不建議|建議|暫不可|暫不|尚不可|還不能|可)';
+// ⚠️ `(?!…)` 裡的 `\s*` 是 Codex #385 r9 補的：`不可合併 two reviewer states` 的受詞前有空格，
+//    原本只擋「緊接著」的受詞，隔一個空格就繞過去了——**又是同一種邊界漏洞**。
+const MERGE_RULING = new RegExp(`${MODALITY}\\s*(?:直接\\s*)?合併(?![：:]|\\s*[\\p{L}\\p{N}])`, 'u');
+/** 標題用寬鬆版：標題短又是宣告句，不需要「後面不可接受詞」那道分辨（`## 3. 可以合併嗎？`）。 */
+const MERGE_IN_HEADING = new RegExp(`${MODALITY}\\s*(?:直接\\s*)?合併`, 'u');
 /** 某一行**以結論用詞開頭**、之後句子就結束或接標點（冒號除外——那是標籤句型）。 */
 const STARTS_WITH_VERDICT = new RegExp(
   `^(?:${Object.keys(VERDICTS).join('|')})(?:\\s*$|\\s*[^\\p{L}\\p{N}\\s：:])`, 'u');
@@ -108,6 +113,11 @@ const STARTS_WITH_VERDICT = new RegExp(
  *
  * 這個函式要防的是另一件事：**有人以為自己喊了停，但因為沒帶標頭而被無視。**
  * 抓到就一起擋下來並指出格式；抓不到，判準那條仍然成立。
+ *
+ * ⚠️ 但「只是提示」這個說法要講精確（Codex #385 r9 的修正）——**它命中就會 exit 1**，
+ * 所以兩個方向的代價不對稱：
+ *   ・**漏抓**：不會讓無標頭的留言取得任何效力，只是少掉一句格式提醒。**不是安全問題。**
+ *   ・**誤擋**：會機械性擋住合併，是**可用性問題**——所以誤擋要當真的修（r9 抓到三個都修了）。
  *
  * ## 判準倒過來：偵測「下結論這個動作」，不是比對「結論寫成什麼字」
  *
@@ -152,17 +162,26 @@ export function looksLikeVerdict(body) {
     if (!line) continue;
     // 標題：**不要求冒號**（`## 三題結論` 是真實原文），問句也算
     //（`## 3. 可以合併嗎？` 後面接的就是答案——標題在問，等於這則要回答它）
-    if (/^#{1,6}\s/u.test(line) && (MARKER_RE.test(line) || /合併/u.test(line))) return true;
+    // ⚠️ 標題不可以只看「有沒有合併兩個字」（Codex #385 r9）：
+    //    `## 如何合併兩個 reviewer state` 是正常的技術標題，被擋掉會真的卡住合併。
+    if (/^#{1,6}\s/u.test(line) && (MARKER_RE.test(line) || MERGE_IN_HEADING.test(line))) return true;
     if (/[？?]\s*$/u.test(line)) continue;   // 內文的問句是在問人，不是在下結論
-    // ⚠️ 「」『』裡面是在**講那個詞**：「腳本遇到『不可合併』要回 exit 1」不是結論
-    const bare = line.replace(/[「『][^」』]*[」』]/gu, '');
+    // ⚠️ 引號裡的裁決**通常**是在講那個詞，但**不是絕對**（Codex #385 r9 兩個方向都給了例子）：
+    //    「腳本遇到『不可合併』要回 exit 1」是在講那個詞；
+    //    「結論是『通過，可合併』」則是真的在下結論。分界＝**同一行有沒有「結論」這個標記**。
+    if (MARKER_RE.test(line) && MERGE_RULING.test(line)) return true;
+    //    引號要連 ASCII 的一起剝——只排除中文引號，`"不可合併"` 就繞過去了。
+    const bare = line.replace(/[「『][^」』]*[」』]|"[^"]*"|“[^”]*”|'[^']*'/gu, '');
     if (LABEL.test(bare)) return true;
     // ⚠️ 被**別的標籤引出**的裁決是在舉例：「範例：不可合併。」「退出碼說明：不可合併，回 1。」
     //    判準是冒號在裁決**前面**，不是「這行有冒號」——
     //    「2. 暫不可合併。 仍有一條假綠：」的冒號在後面，那是正式結論（#384 r9 真實原文）。
     //    （`結論：…` 不受影響：上一行的 LABEL 已經先回 true。）
     const ruling = MERGE_RULING.exec(bare);
-    if (ruling && !/[：:]/u.test(bare.slice(0, ruling.index))) return true;
+    //    冒號要在**同一個子句**裡才算標籤引出（Codex #385 r9）：
+    //    `不通過：1 個 blocking。PR #358 暫不可合併。` 的冒號隔了一個句號，那是兩件事。
+    const labelIntro = ruling && /[：:][^。！？；!?;]*$/u.test(bare.slice(0, ruling.index));
+    if (ruling && !labelIntro) return true;
     // (5) 某一行**以結論用詞開頭**、後面句子就結束或接標點。
     //     排掉冒號：「通過：1395/1395 題」是標籤句型，不是結論。
     const stripped = bare.replace(/^[\s>#*+_-]*(?:\d+[.)]\s*)?/u, '').trim();
