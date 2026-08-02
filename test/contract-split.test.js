@@ -40,64 +40,41 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /**
- * 依 CommonMark 規則剝掉 fenced code block。
+ * 讀契約／規則檔。
  *
- * ⚠️ **這裡改用狀態機，不再疊正則**（Codex #384 r7／r8／r9 連三輪打穿同一處）：
- *   r7：只剝 ``` 不剝 ~~~
- *   r8：只認第 1 欄，忘了 fence 前可以有 1–3 個空格
- *   r9：用 ```` 開、``` 收——CommonMark 規定**關的不能比開的短**，
- *       正則卻把它當成已關閉，後面整份文件實際上被吞進 code block
- * 三次都是「正常維護的手滑」，而每次補一條正則就再漏一條。
- * **記住開 fence 的字元與長度**才是這件事的正確做法。
- * @param {string} md
- */
-function stripFences(md) {
-  /** @type {{char: string, len: number} | null} */ let open = null;
-  const out = [];
-  for (const raw of md.replace(/\r\n?/g, '\n').split('\n')) {
-    // ⚠️ **容器前綴**（清單、引用）也可以裝 fence（CommonMark Example 318；Codex #384 r11）：
-    //    `- ```text` 是合法的。原本不吃容器記號 ⇒ 把後面的 closing fence 誤當成 opener ⇒ 誤紅。
-    const line = raw.replace(/^ {0,3}(?:> ?)*(?:[-*+]|\d+[.)])?[ \t]*/u, (p) => ' '.repeat(Math.min(p.length, 3)));
-    // ⚠️ info string 用 `[^\r\n]*` 而不是 `.*`（Codex #384 r11）：
-    //    JS 的 `.` **不匹配 U+2028／U+2029**，但 CommonMark 只把 LF／CR 當行結尾——
-    //    那兩個字元可以合法出現在 info string 裡。用 `.*` 的話整行認不出是 fence，
-    //    於是「``` 後面接一個 U+2028 再接文字、而且沒關」會被當成普通內容 ⇒ **阻擋級假綠**。
-    const m = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/u.exec(line);
-    if (!open) {
-      // 反引號 fence 的 info string 裡不可以有反引號（所以行首的 ``` aa ``` 是行內 code，不是 fence）
-      if (m && !(m[1][0] === '`' && m[2].includes('`'))) { open = { char: m[1][0], len: m[1].length }; continue; }
-      out.push(raw);
-      continue;
-    }
-    // 關 fence：同字元、**長度不得短於開的**、且後面**只能是空格或 tab**
-    //（不可用 `.trim()`——它連 NBSP 都吃掉，會把沒關的當成關了）
-    if (m && m[1][0] === open.char && m[1].length >= open.len && /^[ \t]*$/.test(m[2])) open = null;
-  }
-  return { text: out.join('\n'), unclosed: open !== null };
-}
-
-/**
- * 讀檔並剝掉**畫面上看不到的東西**——HTML 註解與 fenced code block。
+ * ## ⚠️ 這裡**不剖析 Markdown**，改成「這些檔案不准出現會藏東西的語法」
  *
- * ⚠️ 判準一律是「剝完要乾淨」，不是「剝得掉的就好」：
- * 沒閉合的註解或 fence 會讓**後面整份文件**在畫面上消失或變成程式碼，
- * 標題與 anchor 全部不見，而考題如果只剝「成對的」就完全看不見這件事。
+ * 前五輪我一直在實作 CommonMark 的 fenced code block 文法：
+ * r7 只剝 ``` 不剝 ~~~ ／ r8 忘了 fence 前可以有 1–3 個空格 ／
+ * r9 四個記號開三個收 ／ r10 `trim()` 連 NBSP 都吃掉 ／ r11 U+2028 與容器 fence ／
+ * r12 四格縮排、巢狀容器、HTML block 與 fence 交錯……
+ * 而 Codex r12 的結論是**這條路要嘛寫一個真正的 Markdown parser，要嘛不要走**。
+ *
+ * 然後我去數了一下：**這五個檔案裡，code fence 是 0 行、HTML 註解是 0 個。**
+ * 我實作了五輪文法，守的是**這裡根本不存在的東西**。
+ *
+ * ⇒ **關門**：契約與規則檔**不准**出現 code fence 或 HTML 註解。
+ * 這一刀同時解決兩個方向——沒有 fence 就藏不了標題（假綠消失），
+ * 也沒有「合法的 fence 被誤判」（誤紅消失）。判準一行講得完，而且不可能實作錯。
+ *
+ * 代價寫清楚：這些檔案裡**放不了整段程式碼範例**。它們是規則文件，
+ * 現在用的是行內反引號（`像這樣`），完全不受影響；真要放範例，放進 `docs/` 其他檔案再連過來。
  * @param {string} p
  */
 function read(p) {
-  const raw = readFileSync(join(ROOT, p), 'utf8');
-  // ⚠️ **順序：先剝 fence，再查 HTML 註解**（Codex #384 r11）：
-  //    fence 裡的內容是**原文**，裡面的 `<!--` 只是範例、不會真的註解掉什麼。
-  //    反過來先查註解的話，一段合法的 fenced HTML 範例就會被判成「有沒閉合的註解」＝誤紅。
-  const { text: noFence, unclosed } = stripFences(raw);
-  const stripped = noFence.replace(/<!--[\s\S]*?-->/g, '');
-  assert.ok(!stripped.includes('<!--') && !stripped.includes('-->'),
-    `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
-  const text = stripped;
-  assert.ok(!unclosed,
-    `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。\n`
-    + '⚠️ 常見成因：fence 前有縮排、或用 ```` 開卻用 ``` 收（關的不能比開的短）。');
-  return text;
+  const raw = readFileSync(join(ROOT, p), 'utf8').replace(/\r\n?/g, '\n');
+  const fence = raw.split('\n').findIndex((l) => /^\s*(?:```|~~~)/.test(l));
+  assert.equal(fence, -1,
+    `${p}:${fence + 1} 出現 code fence。\n`
+    + '⚠️ 契約與規則檔**不准**用 code fence——沒關的 fence 會把後面整份文件吞成程式碼\n'
+    + '   （標題與 anchor 全部消失），而要正確判斷它有沒有關，等於要實作半個 Markdown 剖析器\n'
+    + '   （2026-08-03 實際走了五輪才認清）。行內的 `反引號` 不受限制；\n'
+    + '   整段程式碼範例請放到 docs/ 其他檔案再連過來。');
+  assert.ok(!raw.includes('<!--') && !raw.includes('-->'),
+    `${p} 出現 HTML 註解。\n`
+    + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
+    + '   要記東西就直接寫在文件裡——**看不見的註記本來就不該存在於規則書**。');
+  return raw;
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
