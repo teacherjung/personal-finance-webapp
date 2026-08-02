@@ -17,7 +17,8 @@ process.env.SITE_ORIGIN = 'http://127.0.0.1';
 process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ROUTES_WITHOUT_BODY, HEAVY_ADMISSION_MAX_INFLIGHT, withHeavySlot,
-  heavyAdmissionInFlightForTest, resetHeavyAdmissionForTest } = await import('../lib/heavy-admission.js');
+  heavyAdmissionInFlightForTest, heavyAdmissionWaitingForTest, resetHeavyAdmissionForTest }
+  = await import('../lib/heavy-admission.js');
 
 /** 起一個只掛入場管制的假 app：handler 由測試決定何時回應。
  * ⚠️ 一定要等 listening 才拿得到 port（`address()` 在那之前是 null）。 */
@@ -292,4 +293,107 @@ test('服務層名額｜失敗路徑也要還（throw 之後名額不可留著�
   assert.equal(String(err?.message), 'boom', '錯誤要原樣往上拋');
   assert.equal(heavyAdmissionInFlightForTest(), 0, '失敗路徑沒還名額＝重型功能會慢性死亡');
   resetHeavyAdmissionForTest();
+});
+
+// ── 獨立複核（2026-08-02）抓到的三條，Codex r1–r3 都沒抓到 ─────────────────────
+
+test('名額洩漏｜**進 admission 之前**就斷線的連線不可以佔走名額（全站重型功能會永久死掉）', async () => {
+  resetHeavyAdmissionForTest();
+  // ⚠️ 這一格是既有考題漏掉的：原本那題是等 handler 跑起來（await startedP）才 abort，
+  //    那時 listener 早就掛好了。真正的洞在**更早**——`authGate` 裡有一段真的網路往返
+  //    （supabase.auth.getUser()），客戶端在那段期間斷線的話，res 的 'close' 在
+  //    admission 執行之前就燒完了，之後掛的 listener 一輩子不會觸發。
+  //    這裡直接模擬那個狀態：交給 admission 一個**已經關掉**的 res。
+  const closedRes = /** @type {any} */ ({
+    closed: true, destroyed: true,
+    on() { throw new Error('不該再掛 listener——連線已經沒了'); },
+    set() { throw new Error('不該回應'); }, status() { throw new Error('不該回應'); },
+  });
+  const deadReq = /** @type {any} */ ({ destroyed: true });
+  let passedOn = false;
+  heavyAdmission(deadReq, closedRes, () => { passedOn = true; });
+  assert.equal(heavyAdmissionInFlightForTest(), 0,
+    '已經斷線的請求佔走了名額——它永遠不會歸還，全站重型功能會一起 503 直到重啟行程');
+  assert.ok(passedOn, '仍要往下走（維持既有行為，只是不佔名額）');
+  resetHeavyAdmissionForTest();
+});
+
+test('名額洩漏｜連打三次「按了又取消」之後，正常請求仍進得來', async () => {
+  resetHeavyAdmissionForTest();
+  for (let i = 0; i < 3; i++) {
+    const dead = /** @type {any} */ ({ closed: true, destroyed: false, on() {}, });
+    heavyAdmission(/** @type {any} */ ({ destroyed: false }), dead, () => {});
+  }
+  assert.equal(heavyAdmissionInFlightForTest(), 0,
+    `連續三次取消之後名額是 ${heavyAdmissionInFlightForTest()}——洩漏是累積的，一次就夠讓全站死掉`);
+  resetHeavyAdmissionForTest();
+});
+
+test('服務層排隊｜名額滿的時候**等**、不是立刻 503（等待不花記憶體，fail-fast 是相對 main 的回歸）', async () => {
+  resetHeavyAdmissionForTest();
+  try {
+    /** @type {() => void} */ let releaseFirst = () => {};
+    const first = withHeavySlot(() => new Promise((r) => { releaseFirst = () => r('第一件'); }));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(heavyAdmissionInFlightForTest(), 1, '第一件應該拿到名額');
+
+    const second = withHeavySlot(async () => '第二件');            // 名額滿 → 應該排隊，不是 throw
+    await new Promise((r) => setImmediate(r));
+    assert.equal(heavyAdmissionWaitingForTest(), 1,
+      '第二件沒有排隊——照抄 HTTP 層的 fail-fast 會讓「不同代號的併發更新」全部失敗（main 上是排隊後都成功）');
+
+    releaseFirst();
+    assert.equal(await first, '第一件');
+    assert.equal(await second, '第二件', '排隊的那件最後要真的跑完，不是被丟掉');
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '排隊路徑沒還名額');
+    assert.equal(heavyAdmissionWaitingForTest(), 0, '隊伍沒清空');
+  } finally { resetHeavyAdmissionForTest(); }
+});
+
+test('服務層排隊｜等太久仍要 503（有上限的等待，不是無限期卡住）', async () => {
+  resetHeavyAdmissionForTest();
+  try {
+    /** @type {() => void} */ let releaseFirst = () => {};
+    const first = withHeavySlot(() => new Promise((r) => { releaseFirst = () => r(1); }));
+    await new Promise((r) => setImmediate(r));
+    const err = await withHeavySlot(async () => 2, { waitMs: 30 }).then(() => null, (e) => e);
+    assert.equal(err?.status, 503, '等超過上限要回 503，不可以無限期卡著使用者');
+    assert.equal(err?.code, 'heavy_busy');
+    assert.equal(heavyAdmissionWaitingForTest(), 0,
+      '放棄的人沒有從隊伍移除——名額會被轉交給早已離開的人，等於憑空消失');
+    releaseFirst(); await first;
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '逾時路徑把名額弄丟了');
+  } finally { resetHeavyAdmissionForTest(); }
+});
+
+test('行為題｜/api/import 與 /api/ib/sync 真的被管住（本 PR 的招牌修正，原本只有清單題）', async () => {
+  resetHeavyAdmissionForTest();
+  // ⚠️ 原本只有「HEAVY_ROUTES 裡有沒有這兩條」的清單題——那是**跟著實作一起改**的斷言：
+  //    把路徑從 HEAVY_ROUTES 拿掉，清單題跟著紅，看起來有守住，其實從沒證明過
+  //    「掛上去之後真的擋得住」。這題從 HTTP 打進去。
+  /** @type {() => void} */ let release = () => {};
+  const held = new Promise((r) => { release = () => r(undefined); });
+  const app = express();
+  installHeavyAdmission(app);
+  for (const r of ['/api/import', '/api/ib/sync', '/api/statement/preview']) {
+    app.post(r, async (_req, res) => { await held; res.json({ ok: true }); });
+  }
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const first = fetch(`${urlOf(server)}/api/statement/preview`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 1, '前提：第一件要先佔住名額');
+    for (const route of ['/api/import', '/api/ib/sync']) {
+      const r = await fetch(`${urlOf(server)}${route}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await r.text();
+      assert.equal(r.status, 503, `${route} 沒有被入場管制擋住——它可以繞過名額直接開工`);
+      assert.equal(r.headers.get('retry-after'), '10', `${route} 的 503 沒帶 Retry-After，前端不知道多久後重試`);
+    }
+    release(); await (await first).text();
+  } finally { await shutdown(server); resetHeavyAdmissionForTest(); }
 });

@@ -1011,10 +1011,15 @@ test('pacing sleep 把時間推過總時限之後，不得再發出下一個請�
   assert.equal(view.lastError?.code, 'sec_timeout');
 });
 
-test('重型名額｜SEC refresh **真的會取共用名額**（名額被別的重型工作佔住時 fail-fast 503）', async () => {
-  // ⚠️ 這題防的是「服務層沒接上 withHeavySlot」——只測 withHeavySlot 本身的話，
-  //    把 `shared = withHeavySlot(() => fetch…)` 改回 `shared = fetch…` 不會有任何題變紅
-  //   （2026-08-02 突變實測踩到）。從 HTTP 端點進去，證明整條路真的會被名額擋住。
+test('重型名額｜SEC refresh 會取共用名額，而且是**排隊等**、不是立刻 503', async () => {
+  // ⚠️ 這題防兩件事：
+  //    ①「服務層沒接上 withHeavySlot」——只測 withHeavySlot 本身的話，把
+  //      `shared = withHeavySlot(() => fetch…)` 改回 `shared = fetch…` 不會有任何題變紅
+  //     （2026-08-02 突變實測踩到）。
+  //    ②「照抄 HTTP 層的 fail-fast」——那是相對 main 的回歸：main 上不同代號的併發更新
+  //      會排隊後**全部成功**，fail-fast 會讓第二個起直接失敗，而 SEC 這條路
+  //      **等待不花記憶體**（等的時候手上沒有大緩衝區）。
+  //    判準＝名額被佔住時 SEC **還沒對外抓**（證明它真的在等），放掉之後才抓且回 200。
   const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionInFlightForTest }
     = await import('../lib/heavy-admission.js');
   const savedHosted = process.env.NOTEASY_HOSTED;
@@ -1022,24 +1027,63 @@ test('重型名額｜SEC refresh **真的會取共用名額**（名額被別的�
   resetHeavyAdmissionForTest();
   let release = () => {};
   const held = new Promise((res) => { release = () => res('done'); });
+  let fetched = 0;
   setStockFundamentalsOptionsForTest({
     userAgent: SEC_USER_AGENT, logger: silentLogger,
-    fetchImpl: async () => { throw new Error('名額應該先擋下，不該走到對外抓取'); }
+    fetchImpl: async (url) => { fetched += 1; return jsonResponse(fixturePayload(String(url))); }
   });
   try {
     const occupying = withHeavySlot(() => held);          // 模擬「另一件重型工作正在跑」
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(heavyAdmissionInFlightForTest(), 1, '前提：名額要先被佔住');
 
-    const res = await request('/api/stock-fundamentals/cal/refresh', { method: 'POST' });
-    assert.equal(res.status, 503,
-      `SEC refresh 沒有取共用名額（實得 ${res.status}）——服務層可能沒接上 withHeavySlot，`
-      + '那 25MiB 的抓取＋解析就會和 PDF 上傳並行、越過容器上限');
+    const pending = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(fetched, 0,
+      'SEC 在名額被佔住時就已經對外抓了——服務層沒接上 withHeavySlot，'
+      + '那 25MiB 的抓取＋解析會和 PDF 上傳並行、越過容器上限');
 
     release(); await occupying;
+    const res = await pending;
+    // ⚠️ 這裡刻意**不斷言 200**：本題管的是名額語意，不是儲存。這個測試沒有做
+    //    其他題會做的資料種子，所以最後那步寫入會回 500（#358 的內部寫入歸因，
+    //    與名額無關）。要釘的是「不是 503」＋「真的去抓了」——這兩點就足以分辨
+    //    fail-fast 與排隊，也擋得住「服務層沒接上 withHeavySlot」。
+    assert.notEqual(res.status, 503,
+      '名額放掉之後 SEC 仍然 503——照抄 HTTP 層的 fail-fast 是相對 main 的回歸：'
+      + 'main 上不同代號的併發更新會排隊後全部成功，而等待本身不花記憶體');
+    assert.ok(fetched > 0, '名額放掉之後仍然沒有對外抓＝那件工作被丟掉了，不是排隊');
+
     for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
     assert.equal(heavyAdmissionInFlightForTest(), 0, '名額沒還');
   } finally {
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
+
+test('重型名額｜SEC 等超過上限仍要 503（有上限的等待，不是無限期卡住使用者）', async () => {
+  const { withHeavySlot, resetHeavyAdmissionForTest, setHeavySlotWaitForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';
+  resetHeavyAdmissionForTest();
+  setHeavySlotWaitForTest(60);            // 不然要真的等 30 秒
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger,
+    fetchImpl: async () => { throw new Error('等逾時了不該還去抓'); }
+  });
+  try {
+    const occupying = withHeavySlot(() => held);
+    await new Promise((r) => setTimeout(r, 20));
+    const res = await request('/api/stock-fundamentals/cal/refresh', { method: 'POST' });
+    assert.equal(res.status, 503, `等太久要回 503（實得 ${res.status}），不可以無限期把使用者掛在那裡`);
+    release(); await occupying;
+  } finally {
+    setHeavySlotWaitForTest(null);
     setStockFundamentalsOptionsForTest(null);
     resetHeavyAdmissionForTest();
     if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
