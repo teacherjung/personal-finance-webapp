@@ -328,8 +328,14 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
   const rows = readme.split('\n').filter((l) => l.startsWith('| ') && /\.md\)/.test(l));
   for (const [file, m] of Object.entries(MANIFEST)) {
     const base = /** @type {string} */ (file.split('/').pop());
-    const row = rows.find((r) => r.includes(`(${base})`));
-    assert.ok(row, `${file} 沒有出現在 README 的路由表——那個領域的規則沒人會被導到`);
+    // ⚠️ **剛好一列**（Codex #384 r5 High）：原本用 `rows.find()` 只驗第一列，
+    //    於是在正確列後面再加一條「同一份契約、沒有任何責任檔」的矛盾路由，六題照樣全綠。
+    //    路由表有兩列指向同一份契約時，讀的人會照到哪一列是碰運氣。
+    const matched = rows.filter((r) => r.includes(`(${base})`));
+    assert.equal(matched.length, 1,
+      `${file} 在 README 路由表對應到 ${matched.length} 列（必須剛好 1 列）。\n`
+      + '0 列＝那個領域的規則沒人會被導到；2 列以上＝讀的人照到哪一列是碰運氣。');
+    const row = matched[0];
     const listed = [...row.matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)]
       .map((x) => x[1]);
     assert.deepEqual(sorted([...new Set(listed)]), sorted(m.files),

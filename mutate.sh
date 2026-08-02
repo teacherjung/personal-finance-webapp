@@ -12,7 +12,10 @@ cd "$(dirname "$0")"
 fail=0
 
 # ── 拒跑條件：工作樹必須乾淨（本腳本自己允許是唯一例外，因為它可能正在被編輯）──
-dirty=$(git status --porcelain | grep -v ' mutate.sh$' || true)
+# ⚠️ **不豁免自己**（Codex #384 r5 Medium）：原本排除 mutate.sh 自身的髒檔，
+# 於是「只改這支腳本」時它不但不拒跑，還會跑完 exit 0 宣稱一切正常——
+# 等於 harness 用**未提交的版本自我放行**。要改它就先 commit。
+dirty=$(git status --porcelain || true)
 if [[ -n "$dirty" ]]; then
   echo "❌ 工作樹不乾淨，拒絕執行——這支會 git checkout 還原檔案，會洗掉你未 commit 的工作："
   echo "$dirty"
@@ -127,8 +130,17 @@ p.write_text(p.read_text(encoding="utf-8").replace("      '月度回顧總覽卡
 PY
 check "H. 從 manifest 偷偷拿掉一條規則" 紅
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 收支記帳與匯入")
+s=s[:i]+"| 前端功能（重複且錯誤） | （沒有任何責任檔） | [前端功能.md](前端功能.md) |\n"+s[i:]
+p.write_text(s, encoding="utf-8")
+PY
+check "I. 同一份契約多出一條矛盾路由列" 紅
+
 # ── 收尾：真的 assert，不是印出來就算 ──
-leftover=$(git status --porcelain | grep -v ' mutate.sh$' || true)
+leftover=$(git status --porcelain || true)
 if [[ -n "$leftover" ]]; then
   echo "❌ 收尾沒乾淨（突變沒還原）："
   echo "$leftover"
