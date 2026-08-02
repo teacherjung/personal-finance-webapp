@@ -37,8 +37,8 @@ function snapshotMap(snapshots) {
   const byMonth = new Map();
   for (const [order, row] of (Array.isArray(snapshots) ? snapshots : []).entries()) {
     const month = String(row?.month || '');
-    const netWorth = Number(row?.netWorth);
-    if (!isDashboardMonth(month) || !Number.isFinite(netWorth)) continue;
+    const netWorth = row?.netWorth;
+    if (!isDashboardMonth(month) || typeof netWorth !== 'number' || !Number.isFinite(netWorth)) continue;
     const date = isDashboardDate(row?.date) ? String(row.date) : '';
     const dateRank = date || `${month}-00`;
     const old = byMonth.get(month);

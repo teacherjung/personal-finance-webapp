@@ -52,6 +52,17 @@ test('總覽 12 月現金流：視窗內沒有有效銀行收支時回空序列'
   assert.deepEqual(computeCashflowHistory(db, '2026-06'), []);
 });
 
+test('總覽 12 月現金流：最後一筆記帳後維持無資料，不用 0 冒充確定零收支', () => {
+  const db = /** @type {any} */ ({ transactions: [
+    { date: '2026-03-01', type: 'income', amount: 100 },
+    { date: '2026-04-01', type: 'expense', amount: 40 },
+  ] });
+  assert.deepEqual(computeCashflowHistory(db, '2026-06', 6), [
+    { month: '2026-03', income: 100, expense: 0, net: 100 },
+    { month: '2026-04', income: 0, expense: 40, net: -40 },
+  ]);
+});
+
 test('訂閱項數：已停用的不算（總覽與訂閱頁同口徑）', () => {
   const db = {
     settings: { usdTwd: 32 },

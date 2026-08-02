@@ -44,6 +44,20 @@ test('森林總覽月快照：固定使用指定本月結尾的 12 個日曆月�
   assert.deepEqual(result.at(-1), { month: '2026-01', date: '2026-01-15', netWorth: 220 });
 });
 
+test('森林總覽月快照：null、空字串與數字字串都不是淨資產 0', () => {
+  const snapshots = [
+    { month: '2026-02', date: '2026-02-28', netWorth: 100 },
+    { month: '2026-03', date: '2026-03-01', netWorth: null },
+    { month: '2026-03', date: '2026-03-02', netWorth: '' },
+    { month: '2026-03', date: '2026-03-03', netWorth: '0' },
+  ];
+  assert.deepEqual(dashboardSnapshotSeries(snapshots, '2026-03', 2), [
+    { month: '2026-02', date: '2026-02-28', netWorth: 100 },
+    { month: '2026-03', date: '', netWorth: null },
+  ]);
+  assert.equal(dashboardNetWorthChange(snapshots, '2026-03').status, 'missing-current');
+});
+
 test('森林總覽兩張趨勢圖共用同一個日曆月視窗，記帳前缺月不用 0 冒充', () => {
   const result = dashboardCashflowSeries([
     { month: '2026-03', income: 100, expense: 40, net: 60 },
