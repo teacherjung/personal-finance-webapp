@@ -16,7 +16,7 @@ process.env.SUPABASE_ANON_KEY = 'k';
 process.env.SITE_ORIGIN = 'http://127.0.0.1';
 process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
-const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ROUTES_WITHOUT_BODY, HEAVY_ADMISSION_MAX_INFLIGHT,
+const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ROUTES_WITHOUT_BODY, HEAVY_ADMISSION_MAX_INFLIGHT, withHeavySlot,
   heavyAdmissionInFlightForTest, resetHeavyAdmissionForTest } = await import('../lib/heavy-admission.js');
 
 /** 起一個只掛入場管制的假 app：handler 由測試決定何時回應。
@@ -261,4 +261,35 @@ test('掛載位置｜前一題不可空轉：有 body 的重型路徑都必須�
   assert.deepEqual(withParser.sort(), expected.sort(),
     '「有 body 的重型路徑」與「實際找得到 parser 的」對不起來——parser 偵測可能壞了（前一題會空轉），'
     + '或有新的無 body 路徑沒登記進 HEAVY_ROUTES_WITHOUT_BODY');
+});
+
+test('服務層名額｜withHeavySlot 與 HTTP 入場管制**共用同一個計數**（不是各算各的）', async () => {
+  resetHeavyAdmissionForTest();
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  try {
+    const p = withHeavySlot(() => held);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(heavyAdmissionInFlightForTest(), 1, 'withHeavySlot 沒佔到共用名額＝兩層各算各的，預算就對不上');
+    // 名額被服務層佔住時，HTTP 層的上傳也要被擋（這才叫「共用」）
+    const server = await makeServer((req, res) => res.json({ ok: true }));
+    try {
+      const r = await fetch(`${urlOf(server)}/api/statement/preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"data":"x"}',
+      });
+      await r.text();
+      assert.equal(r.status, 503, 'HTTP 層沒看到服務層佔用的名額');
+    } finally { await shutdown(server); }
+    release(); await p;
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, 'withHeavySlot 沒還名額');
+  } finally { resetHeavyAdmissionForTest(); }
+});
+
+test('服務層名額｜失敗路徑也要還（throw 之後名額不可留著）', async () => {
+  resetHeavyAdmissionForTest();
+  const err = await withHeavySlot(async () => { throw new Error('boom'); }).then(() => null, (e) => e);
+  assert.equal(String(err?.message), 'boom', '錯誤要原樣往上拋');
+  assert.equal(heavyAdmissionInFlightForTest(), 0, '失敗路徑沒還名額＝重型功能會慢性死亡');
+  resetHeavyAdmissionForTest();
 });

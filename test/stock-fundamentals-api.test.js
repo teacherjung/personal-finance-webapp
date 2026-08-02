@@ -1010,3 +1010,38 @@ test('pacing sleep 把時間推過總時限之後，不得再發出下一個請�
   const view = await (await request('/api/stock-fundamentals/CAL')).json();
   assert.equal(view.lastError?.code, 'sec_timeout');
 });
+
+test('重型名額｜SEC refresh **真的會取共用名額**（名額被別的重型工作佔住時 fail-fast 503）', async () => {
+  // ⚠️ 這題防的是「服務層沒接上 withHeavySlot」——只測 withHeavySlot 本身的話，
+  //    把 `shared = withHeavySlot(() => fetch…)` 改回 `shared = fetch…` 不會有任何題變紅
+  //   （2026-08-02 突變實測踩到）。從 HTTP 端點進去，證明整條路真的會被名額擋住。
+  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionInFlightForTest }
+    = await import('../lib/heavy-admission.js');
+  const savedHosted = process.env.NOTEASY_HOSTED;
+  process.env.NOTEASY_HOSTED = '1';   // 名額只在 HOSTED 生效（LOCAL 零改動契約）
+  resetHeavyAdmissionForTest();
+  let release = () => {};
+  const held = new Promise((res) => { release = () => res('done'); });
+  setStockFundamentalsOptionsForTest({
+    userAgent: SEC_USER_AGENT, logger: silentLogger,
+    fetchImpl: async () => { throw new Error('名額應該先擋下，不該走到對外抓取'); }
+  });
+  try {
+    const occupying = withHeavySlot(() => held);          // 模擬「另一件重型工作正在跑」
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(heavyAdmissionInFlightForTest(), 1, '前提：名額要先被佔住');
+
+    const res = await request('/api/stock-fundamentals/cal/refresh', { method: 'POST' });
+    assert.equal(res.status, 503,
+      `SEC refresh 沒有取共用名額（實得 ${res.status}）——服務層可能沒接上 withHeavySlot，`
+      + '那 25MiB 的抓取＋解析就會和 PDF 上傳並行、越過容器上限');
+
+    release(); await occupying;
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '名額沒還');
+  } finally {
+    setStockFundamentalsOptionsForTest(null);
+    resetHeavyAdmissionForTest();
+    if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
+  }
+});
