@@ -1,7 +1,20 @@
 # CLAUDE.md
 
-**先讀 [AGENTS.md](AGENTS.md)** ——那是本專案的單一真相來源（架構、鐵則、投資語意、同步點、協作流程），Codex 與 Claude 共用，慣例衝突時以它為準。
+> 這份檔案**每個 session 都會自動載入**——是唯一保證被讀到的入口。所以它只放
+> 「開工前非做不可、而且只有 Claude 需要知道」的事，**刻意保持極短**。
+> 技術規則一律去 AGENTS.md，不要在這裡長出第二份規則書（那會製造漂移副本）。
 
-Claude 專屬補充：
-- 使用者的個人化脈絡（投資原則沿革、決策紀錄）在 Claude 的 memory；**專案慣例一律寫進 AGENTS.md**，不要只寫在 memory——Codex 看不到 memory。
-- 發現 Codex 的改動未 commit 時：先審查再 commit，訊息標明出處（Co-Authored-By: Codex）。
+**單一真相來源＝[AGENTS.md](AGENTS.md)**（架構、鐵則、投資語意、同步點、協作流程），Codex 與 Claude 共用，慣例衝突時以它為準。
+
+## 開工前
+
+1. **先查 [docs/contracts/README.md](docs/contracts/README.md) 的路由表**——你要動的檔案落在哪個領域，就去讀那份契約。AGENTS.md 有 190KB，「動手前先讀完」實際上做不到；路由表就是為此存在的。
+2. **接手一段時間沒碰的工作**：先看 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
+3. **要合併 PR**：照 [CODEX-REVIEW.md](CODEX-REVIEW.md) 的六步驟走，**兩道機械閘不可憑印象跳過**（`scripts/check-pr-collab-fields.js`、`scripts/check-pr-merge-gate.js`）。
+
+## 只有 Claude 需要知道的四條
+
+- **使用者的個人化脈絡**（投資原則沿革、決策紀錄）在 Claude 的 memory；**專案慣例一律寫進 AGENTS.md**，不要只寫在 memory——**Codex 看不到 memory**。
+- **Codex 現在也會實作**（William 明確指派時＝模式③）。他實作的支由**你複審、你按合併鍵**；反過來你實作的支不可以自己放行。唯一不變量：**沒有任何一份產出，由寫它的人做正式複審與放行**（完整說明在 AGENTS.md 三方協作框架節）。
+- **發現 Codex 的改動未 commit** 時：先審查再 commit，訊息標明出處（`Co-Authored-By: Codex`）。
+- **⚠️ 不要在 worktree 裡刪除或重裝 `node_modules`**：那個 symlink 指回主目錄，動到它會讓使用者的 app 起不來（2026-08-02 實際踩過）。唯讀分析根本不需要它。
