@@ -316,3 +316,39 @@ test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤�
   assert.deepEqual(problemsOf(bodyWith('Claude（已看過）', 'Codex')), [],
     '中文括號註記被誤擋——噪音型誤擋會讓人乾脆繞過這道閘');
 });
+
+// ── CI 的協作欄位閘（2026-08-02）─────────────────────────────
+
+test('CI 有協作欄位閘這個 job，且跑的是與人工同一支腳本（不可另寫一份判斷）', () => {
+  const ci = read('.github/workflows/ci.yml');
+  assert.ok(ci.includes('collab-fields'), 'ci.yml 沒有 collab-fields job——協作欄位閘沒有進 CI，只剩「記得跑」');
+  assert.ok(ci.includes('scripts/check-pr-collab-fields.js'),
+    'CI 沒有呼叫 scripts/check-pr-collab-fields.js。\n'
+    + '⚠️ 不可以在 CI 裡另寫一份判斷邏輯——兩份會漂移，而「規則兩份、各說各話」正是本專案的招牌病。');
+  assert.ok(/if:\s*github\.event_name\s*==\s*'pull_request'/.test(ci),
+    'collab-fields 沒有限定只在 PR 上跑——push 到 main 時沒有 PR 編號可查，會無謂地紅');
+});
+
+test('分支保護文件裡的 check 名稱，必須與 ci.yml 的 job 名稱**逐字相同**', () => {
+  // ⚠️ 這題防的是一個會「永遠卡住合併」的坑：分支保護的 required check 是**按名稱字串**比對的。
+  //    改了 ci.yml 的 name 而沒改分支保護，GitHub 會一直等一個永遠不會出現的 check。
+  //    文件是我們這邊唯一的紀錄（GitHub 設定本身不進版控），所以至少讓兩邊字串對得起來。
+  const ci = read('.github/workflows/ci.yml');
+  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  const names = [...ci.matchAll(/^\s{4}name:\s*(.+)$/gm)].map((m) => m[1].trim());
+  assert.ok(names.length >= 3, `ci.yml 只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
+  for (const n of names) {
+    assert.ok(doc.includes(n),
+      `分支保護文件裡找不到 CI 的 job 名稱「${n}」。\n`
+      + '兩邊名稱走散時，required check 會變成「等一個永遠不會出現的 check」＝永遠卡住合併。');
+  }
+});
+
+test('分支保護文件要記下「enforce_admins 必須開」與它的理由', () => {
+  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  assert.ok(doc.includes('enforce_admins'), '文件沒提 enforce_admins');
+  assert.ok(/逃生門.*強制力|強制力.*逃生門/.test(doc),
+    '文件沒記下那一課：**單一身分下，逃生門與強制力是同一個開關**。\n'
+    + '關掉 enforce_admins 不只 William 能繞過——三方共用同一個 token，'
+    + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
+});

@@ -11,6 +11,13 @@
 #    render.yaml 用 `autoDeployTrigger: checksPass`，任何 required check 紅了就不會自動部署——
 #    要是讓「下一個大版本 Node 出了新狀況」擋住部署，連**安全更新**都上不去，那是本末倒置。
 #    它紅了要看、要處理，但不該有權力封住上線的路。
+#
+# ⚠️ 第三個 job `collab-fields`（2026-08-02 加）＝**協作欄位閘**，只在 PR 上跑。
+#    它跑的是**與人工合併程序完全同一支腳本**（`scripts/check-pr-collab-fields.js`）——
+#    刻意不在 CI 裡另寫一份判斷邏輯：兩份會漂移，而「規則兩份、各說各話」正是本專案的招牌病
+#   （見 test/merge-procedure-docs.test.js 與 test/collab-invariant-docs.test.js 的檔頭）。
+#    ⚠️ **它要被設成 GitHub 分支保護的 required check 才有牙齒**——設定步驟見
+#    docs/GitHub分支保護-設定與驗證.md。沒設的話它只是 PR 頁面上一個紅勾，擋不住合併。
 name: CI
 
 on:
@@ -36,6 +43,22 @@ jobs:
         run: npm run lint
       - name: 考試（自動測試）
         run: npm test
+
+  collab-fields:
+    name: 協作欄位（實作者 ≠ 獨立審查者）
+    # 只在 PR 上跑：push 到 main 沒有 PR 編號可查
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: 協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）
+        env:
+          # gh CLI 在 runner 上已預裝；它讀 GH_TOKEN 才查得到 PR 說明
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}
 
   dev-machine:
     name: 開發機的 Node（最新版，前瞻｜不擋部署）
