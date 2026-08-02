@@ -206,13 +206,59 @@ test('AGENTS.md 的代合併段落要點名三道守門，且不重述步驟（C
   }
 });
 
-test('「合併五步驟」這個舊說法不可以再出現（現在是六步驟；與五步驟審查循環不是同一件事）', () => {
+test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣——只掃三個字串已經漏掉一處）', () => {
+  // ⚠️ 這題的第一版只掃三個固定字串，結果**漏掉 `五步驟＝確認審查結論…` 那種寫法**
+  //    （Codex #379 r2 High②，同一種漂移的第三次）。改成掃「五步驟」出現在合併語境裡的**任何**形式。
   for (const f of ['AGENTS.md', 'CODEX-REVIEW.md']) {
     const txt = read(f);
-    for (const stale of ['合併五步驟', '同這五個步驟', '五個步驟缺一不可']) {
-      assert.ok(!txt.includes(stale),
-        `${f} 仍寫著「${stale}」。合併程序 2026-08-02 起是**六**步驟（多了協作欄位閘）；\n`
+    for (const [i, line] of txt.split('\n').entries()) {
+      // 「五步驟審查循環」是另一件事，五步是對的——只放行明確講「審查循環」的那些
+      const mentionsFive = /五步驟|五個步驟/.test(line);
+      if (!mentionsFive) continue;
+      const isReviewCycle = /五步驟審查循環|五步驟表|審查循環/.test(line);
+      assert.ok(isReviewCycle,
+        `${f}:${i + 1} 在合併語境提到「五步驟」：\n  ${line.trim().slice(0, 160)}\n`
+        + '合併程序 2026-08-02 起是**六**步驟（多了協作欄位閘）。'
         + '⚠️ 別跟「五步驟**審查循環**」搞混——那是另一件事，五步是對的。');
     }
   }
+});
+
+test('AGENTS.md 不可以再有「重述合併步驟」的摘要（重述的摘要注定落後）', () => {
+  // Codex r1 High② 抓到一處、r2 High② 又抓到第二處——判準改成「有沒有把步驟串起來寫」，
+  // 而不是「有沒有出現某個字串」。
+  const agents = read('AGENTS.md');
+  const arrowChains = agents.split('\n').filter((l) =>
+    /gh pr merge/.test(l) && /→|->/.test(l));
+  assert.deepEqual(arrowChains.map((l) => l.trim().slice(0, 100)), [],
+    'AGENTS.md 又出現把合併步驟串起來的摘要。\n'
+    + '這一段刻意只留指標＋三道守門的名字：摘要會落後，名字不會。');
+});
+
+test('欄位閘｜**假欄位名不可以冒充真欄位**（`非實作者` 也曾被判成「實作者」）', () => {
+  // ⚠️ Codex #379 r2 High①：欄位抽取沒有錨定在行首，於是整份 PR 說明一個真欄位都沒有，
+  //    卻被判「五欄齊全」＝機械閘 fail-open。
+  const fake = REQUIRED_FIELDS.map((f) => `- **非${f}**：Claude`).join('\n');
+  const problems = problemsOf(fake);
+  assert.ok(problems.length >= REQUIRED_FIELDS.length,
+    `全部是假欄位名卻通過了（實得 ${problems.length} 條問題）——欄位抽取沒有錨定行首`);
+});
+
+test('欄位閘｜括號裡藏第二個角色 → 看不出是誰（不可以被剝成單一角色）', () => {
+  for (const sneaky of ['Claude（Codex）', 'Claude (Codex)', 'Codex（Claude 也看了）']) {
+    const problems = problemsOf(bodyWith(sneaky, 'Codex'));
+    assert.ok(problems.length > 0,
+      `「${sneaky}」被剝成單一角色而通過——括號註記剝除不可以把第二個角色一起剝掉`);
+  }
+});
+
+test('trailer 格式要涵蓋三個角色（模板允許 William 當審查者，格式卻不允許＝逼人寫假的）', () => {
+  const cr = read('CODEX-REVIEW.md');
+  const i = cr.indexOf('Reviewed-By:');
+  assert.ok(i > 0, 'CODEX-REVIEW.md 找不到 Reviewed-By trailer 的格式說明');
+  const line = cr.slice(i, cr.indexOf('\n', i));
+  assert.ok(line.includes('William'),
+    `Reviewed-By 的格式沒有列 William，但模板與 check-pr-collab-fields.js 都允許他當獨立審查者。\n`
+    + '格式與規則不一致會逼人在「照實寫」與「照格式寫」之間二選一，兩種選擇都讓稽核軌跡失真。\n'
+    + `實得：${line}`);
 });

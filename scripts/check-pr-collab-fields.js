@@ -49,7 +49,11 @@ export function fieldValue(body, field) {
   // ⚠️ 冒號後只准吃**水平空白**（`[^\\S\\n]`），不可用 `\\s`——`\\s` 會吃掉換行，
   //    於是「欄位留空」會抓到**下一行**的內容，空模板看起來像「每一欄都填了」。
   //    實測：本檔的考題抓到這個 bug——空模板只被判 2 條問題，而不是五欄皆缺。
-  const re = new RegExp(`\\*{0,2}${field}\\*{0,2}[^\\S\\n]*[:：][^\\S\\n]*(.*)`);
+  // ⚠️ **必須錨定在行首**（Codex #379 r2 High①）：不錨定的話 `- **非實作者**：Claude`
+  //    也會命中——整份 PR 說明可以一個真欄位都沒有，卻被判「五欄齊全」＝機械閘 fail-open。
+  //    允許的形狀：行首可有 `-`／`*` 項目符號與空白，欄名可被 `**`／`__` 包住，然後才是冒號。
+  const esc = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // 欄名含「，」等字元，仍統一跳脫
+  const re = new RegExp(`^[^\\S\\n]*(?:[-*+][^\\S\\n]*)?(?:\\*\\*|__)?${esc}(?:\\*\\*|__)?[^\\S\\n]*[:：][^\\S\\n]*(.*)$`, 'm');
   const m = clean.match(re);
   return m ? m[1].trim().replace(/^\*+|\*+$/g, '').trim() : '';
 }
@@ -64,8 +68,14 @@ export function fieldValue(body, field) {
  * @param {string} raw @returns {string | null}
  */
 export function canonicalRole(raw) {
-  const t = String(raw || '')
-    .replace(/[`*_~]/g, '')                     // markdown 裝飾
+  const bare = String(raw || '').replace(/[`*_~]/g, '');   // markdown 裝飾
+  // ⚠️ **括號裡若藏著第二個角色就不算單一角色**（Codex #379 r2 Medium①）：
+  //    「Claude（Codex）」剝掉括號會變成乾淨的 `Claude`，與「獨立審查者：Codex」搭配就整份通過——
+  //    但那個欄位實際上提到了兩個角色，語意上正是「看不出是誰」。
+  for (const inner of bare.match(/[（(][^）)]*[）)]/g) || []) {
+    if (ROLES.some((r) => new RegExp(r, 'i').test(inner))) return null;
+  }
+  const t = bare
     .replace(/[（(][^）)]*[）)]/g, '')            // 括號註記（「Claude（已看過）」）
     .replace(/\s+/g, '')                        // 空白
     .trim();
