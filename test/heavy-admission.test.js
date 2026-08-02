@@ -16,7 +16,7 @@ process.env.SUPABASE_ANON_KEY = 'k';
 process.env.SITE_ORIGIN = 'http://127.0.0.1';
 process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
-const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ADMISSION_MAX_INFLIGHT,
+const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ROUTES_WITHOUT_BODY, HEAVY_ADMISSION_MAX_INFLIGHT,
   heavyAdmissionInFlightForTest, resetHeavyAdmissionForTest } = await import('../lib/heavy-admission.js');
 
 /** 起一個只掛入場管制的假 app：handler 由測試決定何時回應。
@@ -59,8 +59,10 @@ test('滿了就**還沒收 body** 立刻 503（這一層存在的理由）', asy
   let release = () => {};
   const held = new Promise((res) => { release = () => res(undefined); });
   let bodyBytesSeen = 0;
+  let firstBodyDone = false;
   const server = await makeServer(async (req, res) => {
     req.on('data', (b) => { bodyBytesSeen += b.length; });
+    req.on('end', () => { firstBodyDone = true; });
     await held;
     res.json({ ok: true });
   });
@@ -70,8 +72,10 @@ test('滿了就**還沒收 body** 立刻 503（這一層存在的理由）', asy
     const first = fetch(`${base}/api/statement/preview`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: big }),
     });
-    // 等第一個真的佔到名額
-    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    // 等第一個**把 body 收完**才取快照——Codex #371 r2 Medium：原本在 body 還在傳的時候
+    // 就取，尾端幾 KB 隨後抵達就會讓斷言隨機失敗（CI 上 Node 26 實際紅過：200011 !== 195309）。
+    for (let i = 0; i < 400 && !firstBodyDone; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(firstBodyDone, '第一個請求的 body 遲遲沒收完（環境太慢或 handler 沒接 end）');
     assert.equal(heavyAdmissionInFlightForTest(), HEAVY_ADMISSION_MAX_INFLIGHT, '第一個沒佔到名額');
 
     const seenBefore = bodyBytesSeen;
@@ -207,43 +211,54 @@ test('LOCAL 零改動｜沒有 NOTEASY_HOSTED 就完全不管（連名額都不�
   }
 });
 
-test('掛載位置｜**讀真 app 的 middleware stack**：每條重型路徑上，入場管制都排在該路徑的 body parser 之前', async () => {
-  // ⚠️ 舊版用 indexOf 掃 server.js 的文字——Codex #371 r1 Medium 實測：把 admission 那行註解掉、
-  //    或在它前面插一個 parser，斷言照樣通過（**假綠**）。改成檢查**真的 app 物件**。
-  // ⚠️ 而且要**逐條路徑**比：全域第一個 parser 是 `/api/auth` 專用的（掛在 authRoutes 之前、
-  //    不碰重型路徑），拿它來比會誤判。真正的不變量是「同一條路徑上，管制在 parser 前面」。
+test('掛載位置｜真 app：每條重型路徑上，入場管制排在**所有會匹配它的 body parser**之前', async () => {
+  // ⚠️ 這題被改過三次，每次都是同一個病：**檢查面太窄**。
+  //    v1 掃 server.js 的文字 → 把那行註解掉照樣綠（Codex #371 r1）。
+  //    v2 只看 `layer.route.path === route` 的 route-specific parser → 在 admission 前面加一個
+  //       **全域** `app.use(express.json())` 照樣綠（Codex #371 r2 實測）。
+  //    v3（本版）：把所有**會匹配這條 URL** 的 parser 都找出來（含全域 app.use 掛的），
+  //       比對 admission 是否排在它們**全部**之前。
   const { app } = await import('../server.js');
   const stack = (/** @type {any} */ (app))._router?.stack;   // Express 4：app.router 是會拋錯的舊 getter
   assert.ok(Array.isArray(stack), '拿不到 app 的 router stack（Express 版本變了就要重寫本題）');
 
   /** @param {any} layer @returns {any[]} 這一層掛的處理函式 */
   const fnsOf = (layer) => (layer?.route ? (layer.route.stack || []).map((/** @type {any} */ h) => h.handle) : [layer?.handle]);
+  /** 這一層是不是 json body parser？ @param {any} layer */
+  const isParser = (layer) => fnsOf(layer).some((/** @type {any} */ f) => typeof f === 'function' && /json/i.test(f.name || ''));
+  /** 這一層會不會被這條 URL 命中？（route-specific 比 path；全域 app.use 比 regexp）
+   *  @param {any} layer @param {string} url */
+  const matches = (layer, url) => (layer?.route ? layer.route.path === url : !!layer?.regexp?.test?.(url));
 
   for (const route of HEAVY_ROUTES) {
+    // 用具體 URL 比對全域層（`:id` 要展開，否則 regexp 對不上）
+    const url = route.replace(/:[^/]+/g, 'abc123');
     const admIdx = stack.findIndex((/** @type {any} */ l) => l?.route?.path === route && fnsOf(l).includes(heavyAdmission));
     assert.ok(admIdx >= 0,
-      `重型路徑沒掛上入場管制：${route}（把 installHeavyAdmission 註解掉、或漏掉某條路徑，都會走到這裡）`);
-    // ⚠️ 不是每條重型路徑都有專屬 parser：`/api/ib/sync` 的重量來自**對外抓 12MB XML 並解析**
-    //    （峰值約 254MB），請求本體很小。有 parser 的才比順序；沒有的只要確認管制掛上了。
-    const parserIdx = stack.findIndex((/** @type {any} */ l, /** @type {number} */ i) => i !== admIdx
-      && l?.route?.path === route
-      && fnsOf(l).some((/** @type {any} */ f) => typeof f === 'function' && /json/i.test(f.name || '')));
-    if (parserIdx >= 0) {
-      assert.ok(admIdx < parserIdx,
-        `${route}：入場管制排在 body parser 之後（管制@${admIdx} > parser@${parserIdx}）＝body 已經被收下了，這一層等於白做`);
+      `重型路徑沒掛上入場管制：${route}（installHeavyAdmission 被註解掉、或漏掉某條路徑都會走到這裡）`);
+
+    const parserIdxs = stack.map((/** @type {any} */ l, /** @type {number} */ i) => ({ l, i }))
+      .filter(({ l, i }) => i !== admIdx && isParser(l) && matches(l, url))
+      .map(({ i }) => i);
+    for (const pIdx of parserIdxs) {
+      assert.ok(admIdx < pIdx,
+        `${route}：入場管制排在 body parser 之後（管制@${admIdx} > parser@${pIdx}）＝body 已經被收下了，這一層等於白做`);
     }
   }
 });
 
-test('掛載位置｜前一題不可空轉：至少要有 8 條重型路徑真的比對過 parser 順序', async () => {
-  // ⚠️ 上一題對「沒有 parser 的路徑」會跳過比對——若某天 parser 偵測壞掉（例如函式改名），
-  //    每條都變成「沒有 parser」而整題空轉全綠。這一題釘住實際比對到的條數。
+test('掛載位置｜前一題不可空轉：有 body 的重型路徑都必須真的比對到 parser', async () => {
+  // ⚠️ 前一題對「找不到 parser 的路徑」不會比順序——若 parser 偵測壞掉（例如函式改名），
+  //    每條都變成「沒有 parser」而整題空轉全綠。這一題釘住「該有 parser 的都找得到」。
+  //    ⚠️ 清單來自 production 的 HEAVY_ROUTES_WITHOUT_BODY，**不是測試自己猜**
+  //   （Codex #371 r2：原本寫死「只有 IB」，新增這類路徑時會靜默失準）。
   const { app } = await import('../server.js');
   const stack = (/** @type {any} */ (app))._router?.stack;
   const fnsOf = (/** @type {any} */ layer) => (layer?.route ? (layer.route.stack || []).map((/** @type {any} */ h) => h.handle) : [layer?.handle]);
   const withParser = HEAVY_ROUTES.filter((route) => stack.some((/** @type {any} */ l) => l?.route?.path === route
     && fnsOf(l).some((/** @type {any} */ f) => typeof f === 'function' && /json/i.test(f.name || ''))));
-  assert.equal(withParser.length, HEAVY_ROUTES.length - 1,
-    `只有 ${withParser.length} 條路徑找得到 body parser（預期＝全部 ${HEAVY_ROUTES.length} 條扣掉沒有 body 的 /api/ib/sync）——parser 偵測可能壞了，上一題會空轉`);
-  assert.ok(!withParser.includes('/api/ib/sync'), '/api/ib/sync 不該有專屬 body parser');
+  const expected = HEAVY_ROUTES.filter((r) => !HEAVY_ROUTES_WITHOUT_BODY.includes(r));
+  assert.deepEqual(withParser.sort(), expected.sort(),
+    '「有 body 的重型路徑」與「實際找得到 parser 的」對不起來——parser 偵測可能壞了（前一題會空轉），'
+    + '或有新的無 body 路徑沒登記進 HEAVY_ROUTES_WITHOUT_BODY');
 });
