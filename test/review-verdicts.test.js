@@ -95,9 +95,19 @@ test('聯集｜「通過」如果是對舊 commit 說的，不算數', () => {
   assert.ok(problems.some((p) => /是對 1234567 說的/.test(p)), problems.join('｜'));
 });
 
-test('聯集｜有結論卻沒有標頭 → 點名（防「照舊寫一段散文就當複審」）', () => {
-  const { problems } = verdictProblems([c('## Claude 複審\n\n結論：通過，可以合併。')], HEAD);
-  assert.ok(problems.some((p) => /沒有合規的來歷標頭/.test(p)), problems.join('｜'));
+test('聯集｜有結論卻沒有標頭 → **警告**（提醒它不被採計），但不影響閘的結果', () => {
+  const { problems, warnings } = verdictProblems([c('## Claude 複審\n\n結論：通過，可以合併。')], HEAD);
+  assert.ok(warnings.some((w) => /不會採計它/.test(w)), `沒有發出提醒：${warnings.join('｜')}`);
+  // 這一則仍然無法放行（沒有合規標頭的「通過」不算通過）——擋它的是判準，不是偵測器
+  assert.ok(problems.some((p) => /正式結論/.test(p)), problems.join('｜'));
+});
+
+test('⭐ 聯集｜🤖 記號在、標頭寫壞了 → **阻擋**（唯一還留在阻擋路徑上的文字判斷）', () => {
+  // 誤判面極小：正文出現 🤖 幾乎不可能不是在試這個格式。而標頭打錯一個字＝整則結論被無視，
+  // 那是真實會發生的事，必須當場說。
+  const typo = '🤖 Claude｜來源：桌面｜審 abc1234｜r1｜結論：通過了';   // 結論用詞不是三選一
+  const { problems } = verdictProblems([c(typo)], HEAD);
+  assert.ok(problems.some((p) => /🤖 記號、但標頭格式不合規/.test(p)), problems.join('｜'));
 });
 
 test('聯集｜一般聊天留言不會被誤當成複審', () => {
@@ -150,14 +160,34 @@ test('AGENTS.md 要寫下「取聯集，不取最後一則」與自報來歷的�
 
 // ── 回歸鎖：r1／r2 修過的每一條都要有考題盯著（Codex #385 r2 Medium）─────────
 
-test('⭐ 回歸｜**沒有標頭的明確阻擋**不可以被別人的「通過」蓋掉（r2 High）', () => {
-  // ⚠️ 這是 #383 的病本身。r1 我為了修誤擋把判準收太緊，親手把它放回來：
-  //    這三種明確的阻擋當時全部認不出來，旁邊有一則合規「通過」就解除了。
+test('⭐ 契約｜**沒有標頭的留言兩個方向都沒有效力**——不放行、也不阻擋（#385 r10 起）', () => {
+  // ⚠️ **這一題的期望在 r11 被刻意翻轉，理由要寫清楚：**
+  //    r10 以前，「疑似結論卻沒標頭」會直接阻擋。連續兩輪的實測是：
+  //    Codex 一輪就找到五個正常留言被誤擋（`## 如何合併兩個 reviewer state`、
+  //    `通過／失敗：25／0`…），而且其中三個是我上一輪「修誤擋」時新造出來的。
+  //    它的判定：**誤擋是阻擋級，且相對 `main` 是實質退步**——原本人工確認不會卡住這些留言。
+  //    同時它也確認：漏抓**不是安全問題**，因為擋住 #383 的是「放行只認合規標頭的通過」。
+  //    ⇒ 一個零安全價值、卻持續製造退步的阻擋條件，不該是阻擋條件。改成警告。
+  //
+  //    **殘餘風險寫明**：有人以自然語言喊停、又剛好有另一位指定審查者帶標頭放行時，
+  //    這道閘會通過（終端會印出提醒）。契約因此是「**要喊停就帶標頭重發**」。
   const pass = c(head('Codex', 'CLI', HEAD.slice(0, 7), 2, '通過'));
   for (const blocking of ['## Claude 複審\n\n需修改後再審。', '## 結論\n\n不可合併', '複審完成：不可合併。']) {
-    const { problems } = verdictProblems([c(blocking), pass], HEAD);
-    assert.ok(problems.length > 0, `「${blocking.replace(/\n/g, ' ')}」被別人的通過解除了`);
+    const { problems, warnings } = verdictProblems([c(blocking), pass], HEAD, 'Codex');
+    assert.deepEqual(problems, [], `「${blocking.replace(/\n/g, ' ')}」不該阻擋——沒有標頭就沒有效力`);
+    assert.ok(warnings.length > 0, `「${blocking.replace(/\n/g, ' ')}」至少要發出提醒`);
   }
+});
+
+test('⭐ 契約｜#383 的**真實場景**仍然被擋（那是判準擋的，不是偵測器）', () => {
+  // 真正的 #383：兩則相反的複審，**兩則都沒有標頭**。
+  // 就算偵測器一個字都沒抓到，也沒有任何合規標頭的「通過」⇒ 一律不放行。
+  const { problems } = verdictProblems([
+    c('## Claude 複審 r1｜結論：**需修改後再審**（不可直接合併）'),
+    c('## 最終複審結論：通過，可以合併'),
+  ], HEAD, 'Claude');
+  assert.ok(problems.some((p) => /正式結論/.test(p)),
+    `#383 的原始場景沒有被擋下——那是這支存在的全部理由。實得：${problems.join('｜') || '（零條）'}`);
 });
 
 test('回歸｜r1 列的五種誤擋，一種都不可以回來', () => {
@@ -311,12 +341,13 @@ test('⭐ 結論行｜#383 的**真實阻擋留言**必須抓得到', () => {
   //    ⇒ **#383 原樣重現**。Codex 是直接 `gh pr view 383` 把原文抓出來打的。
   const real = '## Claude 複審 r1｜結論：**需修改後再審**（不可直接合併）\n\n審到 commit：`6203ea0`';
   assert.equal(looksLikeVerdict(real), true, '真實的阻擋留言被忽略了');
-  // 而且旁邊有別人的合規「通過」時，阻擋仍然要在
-  const { problems } = verdictProblems([
+  // 旁邊有別人的合規「通過」時，它**只發提醒不阻擋**（見上面那題的理由與殘餘風險）
+  const { problems, warnings } = verdictProblems([
     c(real),
     c(head('Claude', '另一個 session', HEAD.slice(0, 7), 2, '通過')),
   ], HEAD, 'Claude');
-  assert.ok(problems.length > 0, '真實阻擋被另一個 session 的通過解除了——那就是 #383 本身');
+  assert.deepEqual(problems, [], '沒有標頭的留言不該有阻擋效力');
+  assert.ok(warnings.length > 0, '至少要提醒「這則沒被採計」');
 });
 
 test('結論行｜「用詞當標籤、後面接說明」不是結論（報告的日常句型）', () => {
@@ -372,6 +403,24 @@ test('⭐ 結論行｜r9 的六個語料外案例（漏抓三個、誤擋三個�
   ])) {
     assert.equal(looksLikeVerdict(body), want,
       `${want ? '漏抓' : '誤擋'}：「${body}」`);
+  }
+});
+
+test('⭐ 已知的過度觸發：偵測器會誤判這幾句，但它們**擋不住合併**（這就是改成警告的意義）', () => {
+  // ⚠️ 誠實劃界。以下三句 Codex #385 r10 實測會被判成「疑似結論」，而它們只是在討論這道閘：
+  //    要正確分辨得有中文詞界（`是否可以合併` 裡面就藏著 `可以合併`），而中文沒有詞界——
+  //    那正是這支 PR 從頭到尾在踩的坑。**與其再追一輪，不如證明它們不造成傷害。**
+  const noise = [
+    '## 如何判斷 PR 可否合併',
+    '這支函式只負責判斷 PR 是否可以合併。',
+    '腳本把「不可合併」誤判成結論。',
+  ];
+  const pass = c(head('Codex', 'CLI', HEAD.slice(0, 7), 1, '通過'));
+  for (const body of noise) {
+    const { problems, warnings } = verdictProblems([c(body), pass], HEAD, 'Codex');
+    assert.deepEqual(problems, [],
+      `「${body}」擋住了合併——誤擋相對 main 是實質退步，這正是 r11 把它移出阻擋路徑的理由`);
+    assert.ok(warnings.length > 0, `「${body}」連提醒都沒有，那偵測器等於不存在`);
   }
 });
 

@@ -36,6 +36,16 @@ import { pathToFileURL } from 'node:url';
 import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
 
 /** 結論用詞 → 是不是阻擋。**只認這三種**，寫別的等於沒下結論（→ 查不清楚）。 */
+/**
+ * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
+ * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
+ *
+ * ⚠️ 別把清單手寫在考題裡（Codex #385 r9／r10）：手寫的漂過一次（加了第四道閘、
+ * 文件仍寫三道，考題全綠看不見），改成從散文反查又被證明可繞（lazy continuation、
+ * 檔名含數字、乾脆不寫進步驟）。**真相放在閘自己身上**，加一支就一定被數到。
+ */
+export const MERGE_GATE = { name: '複審結論取聯集', why: '任一審查者的阻擋未被同一位撤銷前都有效' };
+
 export const VERDICTS = {
   通過: false,
   需修改後再審: true,
@@ -94,11 +104,11 @@ const MODALITY = '(?:可以|可否|能否|不能|不可以|不可|不宜|不建�
 // ⚠️ `(?!…)` 裡的 `\s*` 是 Codex #385 r9 補的：`不可合併 two reviewer states` 的受詞前有空格，
 //    原本只擋「緊接著」的受詞，隔一個空格就繞過去了——**又是同一種邊界漏洞**。
 const MERGE_RULING = new RegExp(`${MODALITY}\\s*(?:直接\\s*)?合併(?![：:]|\\s*[\\p{L}\\p{N}])`, 'u');
-/** 標題用寬鬆版：標題短又是宣告句，不需要「後面不可接受詞」那道分辨（`## 3. 可以合併嗎？`）。 */
-const MERGE_IN_HEADING = new RegExp(`${MODALITY}\\s*(?:直接\\s*)?合併`, 'u');
 /** 某一行**以結論用詞開頭**、之後句子就結束或接標點（冒號除外——那是標籤句型）。 */
 const STARTS_WITH_VERDICT = new RegExp(
-  `^(?:${Object.keys(VERDICTS).join('|')})(?:\\s*$|\\s*[^\\p{L}\\p{N}\\s：:])`, 'u');
+  // ⚠️ `／`、`、`、`/` 不算「句子結束的標點」（Codex #385 r10）：
+  //    `通過／失敗：25／0` 是每份測試報告都會寫的統計句，不是結論。
+  `^(?:${Object.keys(VERDICTS).join('|')})(?:\\s*$|\\s*[^\\p{L}\\p{N}\\s：:／、/])`, 'u');
 
 /**
  * 一則留言看起來是不是「有人在下結論」——用來抓「下了結論卻沒有合規標頭」的漏網。
@@ -143,6 +153,21 @@ const STARTS_WITH_VERDICT = new RegExp(
  * ——Codex 自己評估這個代價可以接受（#385 r8），改個字或補標頭即可。
  * @param {string} body
  */
+/**
+ * 這則留言**想用來歷標頭但寫壞了**——判準是出現 `🤖`（剝掉引用與 code 之後）。
+ *
+ * ⚠️ 這是**唯一還留在阻擋路徑上的文字判斷**，因為它的誤判面極小：
+ * 一則正文出現 `🤖` 的留言，幾乎不可能不是在試這個格式。
+ * 而它擋的是真實會發生的事——標頭打錯一個字，整則結論就被無視。
+ * @param {string} body
+ */
+export function hasBotMark(body) {
+  return stripFencesLoose(String(body || ''))
+    .replace(/^[^\S\n]*>.*$/gm, '')
+    .split('\n')
+    .some((l) => /🤖/u.test(l.replace(/(`+)[^`]*\1/gu, '')));
+}
+
 export function looksLikeVerdict(body) {
   const text = stripFencesLoose(String(body || ''))
     .replace(/^[^\S\n]*>.*$/gm, '');       // 引用別人的話不是自己的結論
@@ -154,8 +179,7 @@ export function looksLikeVerdict(body) {
   //    **那正是造成 #383 的兩份相反複審之一。**
   const lines = text.split('\n').map((l) => noCode(l).replace(/[*_]/gu, ''));
 
-  // 機器人記號要在剝掉行內 code 之後才判：「來歷標頭要從 `🤖` 開始。」是在講格式。
-  if (lines.some((l) => /🤖/u.test(l))) return true;
+  if (hasBotMark(body)) return true;
 
   for (const raw of lines) {
     const line = raw.trim();
@@ -164,7 +188,10 @@ export function looksLikeVerdict(body) {
     //（`## 3. 可以合併嗎？` 後面接的就是答案——標題在問，等於這則要回答它）
     // ⚠️ 標題不可以只看「有沒有合併兩個字」（Codex #385 r9）：
     //    `## 如何合併兩個 reviewer state` 是正常的技術標題，被擋掉會真的卡住合併。
-    if (/^#{1,6}\s/u.test(line) && (MARKER_RE.test(line) || MERGE_IN_HEADING.test(line))) return true;
+    //    標題也要吃「後面接受詞」那道分辨（Codex #385 r10）：
+    //    `## 為什麼不可合併兩個 reviewer state` 是技術標題，不是結論。
+    if (/^#{1,6}\s/u.test(line)
+      && (MARKER_RE.test(line) || MERGE_RULING.test(line) || /合併(?:嗎|與否)/u.test(line))) return true;
     if (/[？?]\s*$/u.test(line)) continue;   // 內文的問句是在問人，不是在下結論
     // ⚠️ 引號裡的裁決**通常**是在講那個詞，但**不是絕對**（Codex #385 r9 兩個方向都給了例子）：
     //    「腳本遇到『不可合併』要回 exit 1」是在講那個詞；
@@ -219,18 +246,23 @@ function stripFencesLoose(md) {
  * @param {{body: string}[]} comments
  * @param {string} head
  * @param {string|null} [reviewerRole] PR 說明指定的獨立審查者角色；`null`＝讀不出來（退回「任何一位都算」）
- * @returns {{ problems: string[], reviewers: Record<string, any> }}
+ * @returns {{ problems: string[], warnings: string[], reviewers: Record<string, any> }}
  */
 export function verdictProblems(comments, head, reviewerRole = null) {
   /** @type {string[]} */ const problems = [];
+  /** @type {string[]} */ const warnings = [];
   /** @type {Record<string, any>} */ const latest = {};
   for (const c of comments) {
     const h = headerOf(c.body);
     if (!h) {
-      if (looksLikeVerdict(c.body)) {
-        problems.push('有一則留言下了結論卻沒有合規的來歷標頭'
-          + `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）：`
-          + `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`);
+      const excerpt = `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`;
+      const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
+      if (hasBotMark(c.body)) {
+        // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
+        problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${shape}：${excerpt}`);
+      } else if (looksLikeVerdict(c.body)) {
+        // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
+        warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
       }
       continue;
     }
@@ -283,7 +315,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         + '分支被推過之後，那個結論不再適用。');
     }
   }
-  return { problems, reviewers: latest };
+  return { problems, warnings, reviewers: latest };
 }
 
 /** @param {string} pr */
@@ -314,8 +346,13 @@ export function main(argv) {
   // PR 說明指定的獨立審查者——讀不出來就是 null，那時退回「任何一位都算」並在訊息裡說明
   //（協作欄位閘會另外擋「欄位不齊」，這裡不重複擋，但也不假裝知道）。
   const reviewerRole = canonicalRole(fieldValue(data.body, '獨立審查者'));
-  const { problems, reviewers } = verdictProblems(data.comments, data.head, reviewerRole);
+  const { problems, warnings, reviewers } = verdictProblems(data.comments, data.head, reviewerRole);
   const who = Object.values(reviewers).map((r) => `${r.who}=${r.verdict}`).join('、') || '（沒有任何帶標頭的結論）';
+  // ⚠️ 警告**不影響退出碼**：它只是提醒「這則沒被採計」，不是判準（見 looksLikeVerdict 的說明）。
+  if (warnings.length) {
+    console.error(`複審聯集閘 PR #${pr}：${warnings.length} 則提醒（**不影響本閘結果**）\n`
+      + warnings.map((w) => `  ・${w}`).join('\n') + '\n');
+  }
   if (problems.length === 0) {
     console.log(`複審聯集閘 PR #${pr}：沒有未回應的阻擋結論。現況：${who}`);
     return 0;

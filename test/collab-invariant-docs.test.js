@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { problemsOf, fieldValue, canonicalRole, staleBaseProblems, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
@@ -255,33 +255,41 @@ test('角色正規化｜看不出來就回 null，不猜', () => {
  * 這正是本節在修的那個病，我在修它的同一支 PR 裡又犯一次。
  * ⇒ 真相只有一個地方：合併步驟本身。它提到幾道，AGENTS 的摘要就要點名幾道。
  */
-function gatesInMergeSteps() {
-  const md = read('CODEX-REVIEW.md');
-  const start = md.indexOf('**六**個步驟缺一不可：');
-  assert.ok(start > 0,
-    'CODEX-REVIEW.md 找不到合併步驟區塊的起點（錨點是「**六**個步驟缺一不可：」）。\n'
-    + '⚠️ 步驟數改了就要一起改這裡——這題反查不到就等於沒有守。');
-  // 區塊到第一個非引用行為止（六步驟整段都在 blockquote 裡）
-  const lines = md.slice(start).split('\n');
-  const end = lines.findIndex((l, i) => i > 0 && l.trim() !== '' && !l.startsWith('>'));
-  const block = lines.slice(0, end < 0 ? lines.length : end).join('\n');
-  return [...new Set(block.match(/scripts\/check-[a-z-]+\.js/g) || [])];
+async function gatesInMergeSteps() {
+  const files = readdirSync(join(ROOT, 'scripts'))
+    .filter((f) => f.startsWith('check-') && f.endsWith('.js'));
+  const gates = [];
+  for (const f of files) {
+    const mod = await import(pathToFileURL(join(ROOT, 'scripts', f)).href);
+    if (mod.MERGE_GATE) gates.push({ file: `scripts/${f}`, ...mod.MERGE_GATE });
+  }
+  return gates;
 }
 
-test('AGENTS.md 的代合併段落要點名**合併步驟裡的每一道**守門，且不重述步驟（Codex #379 r1 High②／#385 r9）', () => {
+test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS 的兩處摘要裡（#379 r1／#385 r9・r10）', async () => {
+  const gates = await gatesInMergeSteps();
+  assert.ok(gates.length >= 3,
+    `只掃到 ${gates.length} 道自報的閘。⚠️ 每一支合併閘腳本都要 \`export const MERGE_GATE\`——`
+    + '沒有這個標記就沒有人數得到它，文件漂了也不會紅。');
+  const names = gates.map((g) => g.file.replace('scripts/', ''));
+  const steps = read('CODEX-REVIEW.md');
+  // ⚠️ 先確認步驟裡真的跑得到它（只在文件裡被提到不算——那是散文，不是程序）
+  for (const g of gates) {
+    assert.ok(steps.includes(`node ${g.file} <N>`),
+      `${g.file} 自報是合併閘（${g.name}），但 CODEX-REVIEW.md 的合併步驟裡沒有實際跑它。\n`
+      + '⚠️ 閘要嘛進程序、要嘛不要自報——「有腳本但沒人跑」比沒有還糟，它會讓人以為守住了。');
+  }
   const agents = read('AGENTS.md');
-  const gates = gatesInMergeSteps();
-  assert.ok(gates.length >= 3, `合併步驟裡只找到 ${gates.length} 道閘，反查壞了——先修這題本身`);
   for (const anchor of ['不論誰執行，一律走', '但四道不可跳過的守門要在這裡點名得出來']) {
     const i = agents.indexOf(anchor);
     assert.ok(i > 0, `AGENTS.md 找不到指標段落：「${anchor}」`);
     const block = agents.slice(i, i + 900);
-    for (const must of [...gates.map((g) => g.replace('scripts/', '')), 'Reviewed-By', 'Merged-By']) {
+    for (const must of [...names, 'Reviewed-By', 'Merged-By']) {
       assert.ok(block.includes(must),
         `AGENTS.md 的「${anchor}」段落沒有點名「${must}」。\n`
         + '⚠️ 這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——\n'
         + '   那正是這一節在修的病），但**每一道守門的名字必須在**，否則指標等於沒有內容。\n'
-        + `   目前合併步驟裡有這幾道：${gates.join('、')}`);
+        + `   目前自報的閘：${names.join('、')}`);
     }
   }
 });

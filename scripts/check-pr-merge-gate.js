@@ -30,6 +30,16 @@ import { pathToFileURL } from 'node:url';
 // 所以解析完必過形狀驗證，不符一律退出碼 2（fail-closed）。
 
 /**
+ * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
+ * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
+ *
+ * ⚠️ 別把清單手寫在考題裡（Codex #385 r9／r10）：手寫的漂過一次（加了第四道閘、
+ * 文件仍寫三道，考題全綠看不見），改成從散文反查又被證明可繞（lazy continuation、
+ * 檔名含數字、乾脆不寫進步驟）。**真相放在閘自己身上**，加一支就一定被數到。
+ */
+export const MERGE_GATE = { name: '堆疊', why: 'base 必須是 main，且不得有 open PR 疊在本支上' };
+
+/**
  * @param {unknown} v
  * @returns {v is PrInfo}
  */
