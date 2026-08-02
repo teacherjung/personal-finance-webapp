@@ -124,6 +124,15 @@ Settings → Branches → 編輯 `main` 的規則：
 「實作者＝獨立審查者」，而且不需要第二個帳號。**但它擋的是 PR 說明寫了誰，
 不是實際上是誰按的**——那個差別只有分身分能補（見文末第二步）。
 
+## ⚠️ 這道閘的守備範圍（誠實劃界，Codex #382 r2 查證）
+
+- **fork 來的 PR 不在守備範圍內。** 這個 private repo 目前
+  `run_workflows_from_fork_pull_requests: false`，fork PR **根本不會跑 workflow**——
+  設成 required check 之後會等不到它（既有的 CI required check 也一樣，不是這次分檔引進的）。
+  未來若要接受 fork 的 PR，這道閘要重新設計成 base-controlled（因為 fork 可以連 workflow
+  與腳本本身一起改）。**現在三方都用同一個帳號、沒有 fork，所以不是問題。**
+- **它擋的是「PR 說明寫了誰」，不是「實際上是誰按的」。** 後者只有分身分能補（見下）。
+
 ## 之後的第二步：分身分（尚未做）
 
 給 Codex（或審查方）一個**獨立的非 admin GitHub 帳號**之後，才能開 `Require approvals`——
