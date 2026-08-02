@@ -39,7 +39,22 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
+/**
+ * 讀檔並**剝掉 HTML 註解**——註解裡的內容在畫面上根本不存在。
+ *
+ * ⚠️ Codex #384 r3 實測：把整段契約或整條路由列包進 `<!-- ... -->`，**六題全綠**。
+ *    這與 `test/safety-docs-freshness.test.js` 今天收斂到的是同一條判準
+ *    （我在那支修好了、卻沒有帶到這支來——同型錯誤要一次掃完所有現場）。
+ *    剝完之後也不准有殘留的 `<!--`／`-->`：一個未閉合的註解會讓後面整片內容消失。
+ * @param {string} p
+ */
+function read(p) {
+  const raw = readFileSync(join(ROOT, p), 'utf8');
+  const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(!stripped.includes('<!--') && !stripped.includes('-->'),
+    `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
+  return stripped;
+}
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
 const MAX_INDEX_LEN = 600;
@@ -151,6 +166,7 @@ const MANIFEST = {
     rules: [
       'SEC 官方指標挑值',
       'SEC currentDebt 流動債務',
+      '最新單季逐列期間',
       'SEC 全站佇列護欄',
       '重型工作名額（heavy admission）與 SEC 的關係',
       '新增 ETF 持股',
@@ -160,7 +176,7 @@ const MANIFEST = {
       '估值訊號門檻檔位',
       'settings-signals',
     ],
-    exempt: ['最新單季逐列期間'],
+    exempt: [],
     files: [
       'lib/derive.js',
       'lib/heavy-admission.js',
@@ -193,9 +209,12 @@ const MANIFEST = {
 
 
 /** `exempt` 每一條的理由——寫在這裡，免得有人把不想維護的規則丟進去。 */
-const EXEMPT_REASON = {
-  最新單季逐列期間: 'SEC 官方指標挑值的子細節（AGENTS 對應的是表格下方那條 blockquote，不是獨立的同步點列）',
-};
+// ⚠️ **現在是空的，這是刻意的**（Codex #384 r3 High）：
+//    我原本把「最新單季逐列期間」列進豁免，理由是「它在 AGENTS 對應的是 blockquote 不是表格列」。
+//    Codex 實測把那條 blockquote 整條刪掉——**六題全綠**。豁免＝那條規則沒有任何人守。
+//    正確的修法是把 AGENTS 那條 blockquote 改成正式的索引列，讓它跟其他規則走同一條路。
+//    ⇒ **豁免名單保持空的**。要加一條進來，就要先說服自己「這條規則不需要被守」。
+const EXEMPT_REASON = {};
 
 /** GitHub 的 anchor 規則：小寫、去標點、空白轉 `-`。 @param {string} h */
 function slug(h) {
@@ -284,7 +303,10 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
     assert.ok(s.body, `${file}#${anchor} 的段落沒有「${BODY_LABEL}」——契約被掏空了？`);
 
     // 比的是「摘要 vs 內文」不是「整行 vs 整段」——整行含約 90 字元的表格框與連結標記。
-    const summary = (line.split(' | ')[1] || '').split('——完整契約')[0];
+    // ⚠️ 用**真正的表格 cell** 解析，不可依賴「一定有空白」的 `' | '`
+    //    （Codex #384 r3 實測：把分隔符改成合法的無空白 `|`，摘要就讀到錯欄，貼回 275 字全文仍全綠）。
+    const cells = line.replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+    const summary = (cells[1] || '').split('——完整契約')[0];
     // 比例只在長規則上生效：短規則的摘要本來就接近規則本身。
     const limit = s.body.length >= 300 ? Math.floor(s.body.length * MAX_SUMMARY_RATIO) : s.body.length - 1;
     assert.ok(summary.length <= limit,

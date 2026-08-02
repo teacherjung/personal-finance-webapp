@@ -12,7 +12,9 @@
 
 ### 最新單季逐列期間
 
-各指標的最新合法單季本來就可能不同期。payload 必須以 `periods.latestQuarterBasis:'per-metric'` 明示逐列判讀；不同截止日並存時保留所有合法數值並發 `QUARTER_PERIOD_MISMATCH`，F5 每列直接顯示自己的完整期間，不把整欄假裝成同一季，也不可用全域期間把合法的 Q1 現金流列清空。
+**改這裡**：SEC 最新單季逐列期間（`periods.latestQuarterBasis:'per-metric'`）
+
+**記得同步這裡**：各指標的最新合法單季本來就可能不同期。payload 必須以 `periods.latestQuarterBasis:'per-metric'` 明示逐列判讀；不同截止日並存時保留所有合法數值並發 `QUARTER_PERIOD_MISMATCH`，F5 每列直接顯示自己的完整期間，不把整欄假裝成同一季，也不可用全域期間把合法的 Q1 現金流列清空。
 
 ## SEC currentDebt 流動債務
 
