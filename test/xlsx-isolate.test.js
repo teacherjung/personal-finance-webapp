@@ -219,27 +219,34 @@ test('LOCAL 零改動｜不是 HOSTED 就直接在行程內讀（連 spawn 的 2
 
 /**
  * 全 production tree 掃描：找出所有「引入 xlsx 套件」的檔案。
+ *
+ * ⚠️ **檔案清單一律走 `git ls-files`，不可自己走訪檔案樹**（2026-08-02 實測踩到）：
+ *    原本這裡自己 `readdirSync` 遞迴，結果在老師的機器上把 `.claude/worktrees/<副本>/lib/statement.js`
+ *    ——兩份 repo 副本——也掃了進來，考題**假紅**。CI 是乾淨 checkout 所以全綠，
+ *    只有真正在用的那台會紅：**最糟的一種紅**（擋住 push，而且看起來像程式壞了）。
+ *    `git ls-files --cached --others --exclude-standard lib server.js` 是 repo 既有的小工具寫法
+ *   （見 `test/hosted-store-pg.test.js` 的 `libFiles`）：**已追蹤＋還沒 git add 的新檔都算**
+ *   （只用 `--cached` 的話，違規的新檔在 commit 之前掃不到，護欄會在最需要它的那一刻失效），
+ *    而 pathspec 限定在正式程式碼，任何位置的 worktree 副本都不在範圍內。
+ *
  * **刻意不剝註解**（雙軌思路）：註解裡寫了 import 會變成噪音型誤報，改個措辭就好；
  * 反過來若為了乾淨而剝註解，剝除器一有 bug 就變成**靜默漏掉**——那是這個專案的招牌病。
  */
 async function xlsxImporters() {
-  const { readFileSync, readdirSync, statSync } = await import('node:fs');
-  const { join, dirname, relative } = await import('node:path');
+  const { readFileSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-  /** @type {string[]} */ const files = [];
-  const walk = (/** @type {string} */ dir) => {
-    for (const name of readdirSync(dir)) {
-      if (name === 'node_modules' || name === '.git' || name === 'test' || name === 'prototype') continue;
-      const full = join(dir, name);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (name.endsWith('.js') && !name.endsWith('.test.js')) files.push(full);
-    }
-  };
-  walk(root);
+  const listed = execFileSync('git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
+    { encoding: 'utf8', cwd: root }).trim();
+  const files = (listed ? listed.split('\n') : [])
+    .filter((f) => /\.(js|mjs|cjs)$/.test(f) && !f.endsWith('.test.js'));   // .mjs/.cjs 也算（Codex #373 r2 記錄項）
   // 涵蓋 ESM／CJS／動態三種寫法，別名與解構都逃不掉——因為**要用就得先引入**。
-  const IMPORT = /(?:from\s*['"]xlsx['"])|(?:require\s*\(\s*['"]xlsx['"]\s*\))|(?:import\s*\(\s*['"]xlsx['"]\s*\))/;
-  return files.filter((f) => IMPORT.test(readFileSync(f, 'utf8'))).map((f) => relative(root, f)).sort();
+  // `[\s\S]*?` 而不是 `\s*`：`import(/* 註解 */ 'xlsx')` 也要抓得到（Codex #373 r2 記錄項）。
+  const IMPORT = /(?:from\s*['"]xlsx['"])|(?:require\s*\([\s\S]{0,80}?['"]xlsx['"][\s\S]{0,20}?\))|(?:import\s*\([\s\S]{0,80}?['"]xlsx['"][\s\S]{0,20}?\))/;
+  return files.filter((f) => IMPORT.test(readFileSync(join(root, f), 'utf8'))).sort();
 }
 
 test('架構｜全樹只有一個檔案可以引入 xlsx（別的檔案引入＝那條路不經隔離）', async () => {
@@ -248,6 +255,13 @@ test('架構｜全樹只有一個檔案可以引入 xlsx（別的檔案引入＝
   assert.deepEqual(found, ALLOWLIST,
     `引入 xlsx 的檔案應該只有 ${ALLOWLIST.join('、')}，實得：${found.join('、') || '（零個——收斂點被搬走了？）'}\n`
     + '新增的話：那個檔案讀 XLSX 不會經過 lib/pdf-isolate.js 的子行程，攻擊檔會直接打在主行程上。');
+});
+
+test('護欄本身｜掃描清單不可把 worktree 副本或 node_modules 算進去（本題防的是假紅）', async () => {
+  const found = await xlsxImporters();
+  const strays = found.filter((f) => /(^|\/)(node_modules|\.claude|\.git)\//.test(f) || f.startsWith('..'));
+  assert.deepEqual(strays, [],
+    `掃到了不該掃的路徑：${strays.join('、')}——自己走訪檔案樹會掃到 repo 副本，請用 git ls-files。`);
 });
 
 test('架構｜收斂模組內只能有一個 XLSX.read（第二個就是繞過隔離的入口）', async () => {
