@@ -65,10 +65,14 @@ export function headerOf(body) {
   // ⚠️ `in` 會命中原型鍵（`toString`／`constructor` 都會被當成合法的第四種結論）——
   //    本專案的原型鍵鐵則，我在自己的新腳本裡又犯一次（Codex #385 r1 Medium⑤）。
   if (!Object.hasOwn(VERDICTS, verdict)) return null;
+  // ⚠️ **來源不可以是空白**（Codex #385 r4 High①）：兩個 session 都漏填來源時，
+  //    正規化後都變成 `Codex（）`＝同一位審查者 ⇒ 第二個 session 的「通過」
+  //    就撤銷了第一個的阻擋——**#383 的核心病原樣重現**。
+  if (!m[2].trim()) return null;
   return {
     role: m[1],
     // 來源做 collapse whitespace：多打一個空白不該變成「另一個審查者」（那會多出一條永遠撤不掉的阻擋）
-    source: m[2].trim().replace(/\s+/gu, ' '),
+    source: m[2].trim().replace(/\s+/gu, ' '),   // 非空由下方 headerOf 尾端把關
     sha: m[3].toLowerCase(),
     round: Number(m[4]),
     verdict,
@@ -90,31 +94,49 @@ export function headerOf(body) {
  * @param {string} body
  */
 export function looksLikeVerdict(body) {
-  const text = String(body || '')
-    .replace(/^```[\s\S]*?^```/gm, '')     // code fence 裡的範例不是結論
+  const text = stripFencesLoose(String(body || ''))
     .replace(/^[^\S\n]*>.*$/gm, '');       // 引用別人的話不是自己的結論
   if (/🤖/u.test(text)) return true;
-  // ⚠️ **判準是「獨立一行就是一個結論」**（Codex #385 r2 High）：
-  //    r1 我為了修誤擋，收緊成「同一行有『結論』又有三種用詞」——結果把
-  //    `## Claude 複審\n\n需修改後再審。`、`## 結論\n\n不可合併`、`複審完成：不可合併。`
-  //    這些**明確的阻擋**全部認不出來，旁邊有一則合規「通過」就把它們解除了。
-  //    **#383 的病原封不動回來，而且是我為了修另一個問題親手打開的。**
+
   const words = Object.keys(VERDICTS).join('|');
-  // ⚠️ 前綴**只認明確的幾個詞**，不是任意 `.*：`（Codex #385 r3 Medium③）：
-  //    任意前綴會把「範例：不可合併。」「退出碼說明：不可合併，回 1。」也判成正式結論。
-  const PREFIX = '(?:結論|複審結論|審查結論|複審完成|審查完成)\\s*[：:]?\\s*';
-  // ⚠️ 結論用詞後面**允許的標點要夠寬**（Codex #385 r3 High②）：
-  //    只認少數幾個標點的話，「需修改後再審（High 尚未修）」「結論：不可合併；請先修正」
-  //    「結論：不可合併——請先修正」都認不出來，#383 的 fail-open 換個標點就回來了。
-  const TAIL = '(?:[\\s，、。．.！!？?；;：:（）()\\[\\]「」—–-].*)?';
-  //    判準：剝掉「…：」前綴後**以結論用詞開頭**，後面只能接標點或結束——
-  //    這樣「結論：通過，可以合併。」抓得到，而「修完就可以合併嗎？」抓不到（它不是以用詞開頭）。
-  const line = new RegExp(`^(?:${PREFIX})?(?:${words})${TAIL}$`, 'u');
+  // ⚠️ **不再列舉「用詞後面可以接什麼標點」**（Codex #385 r3→r4 連兩輪打穿同一處）：
+  //    r3 我加了一組標點，r4 它就用 `……`／`／`／`+ ` 清單／`1. ` 有序清單再打穿一次。
+  //    **列舉標點跟列舉繞法是同一種錯。** 改成：剝掉裝飾之後**以結論用詞開頭**就算，
+  //    後面接什麼一概不管——「開頭是不是結論」才是語意，標點不是。
+  const verdictHead = new RegExp(`^(?:${words})`, 'u');
+  // 前綴仍是**小的**允許集，但收斂到「這個詞本身在講審查結論」，不是任意 `.*：`：
+  //   ✅ 結論：／複審結論：／審查結果：／複審完成：   ❌ 範例：／退出碼說明：
+  const PREFIX = /^[^：:]{0,12}(?:結論|複審|審查|結果)[^：:]{0,4}[：:]\s*/u;
+
   return text.split('\n')
-    // ⚠️ **行內 code 不是結論**（Codex #385 r3 Medium③）：「`不可合併` 表示 exit 1。」是在講判準，不是在下判準。
-    .filter((l) => !new RegExp('`[^`]*(?:' + words + ')[^`]*`', 'u').test(l))
-    .map((l) => l.replace(/^[#>\s*_-]+/u, '').replace(/[*_]/gu, '').trim())
-    .some((l) => line.test(l));
+    .map((l) => l
+      // ⚠️ **拿掉行內 code「這一段」，不是跳過「整行」**（Codex #385 r4 Medium③）：
+      //    跳過整行的話，「結論：不可合併；請修正 `不可合併` 偵測」整句就被放過了。
+      .replace(/`[^`]*`/gu, '')
+      .replace(/^[\s>#*+_-]*(?:\d+[.)]\s*)?/u, '')   // 標題、粗體、清單記號（含有序清單）
+      .replace(/[*_]/gu, '')
+      .trim())
+    .map((l) => l.replace(PREFIX, ''))
+    .some((l) => verdictHead.test(l));
+}
+
+/**
+ * 寬鬆版的 fence 剝除（縮排 0–3、``` 與 ~~~ 都認）。
+ *
+ * ⚠️ 這裡刻意**不做完整的 CommonMark 文法**（那份在 `test/contract-split.test.js`）：
+ * 這支要的是「別把範例裡的字當成結論」，寧可多剝一點也不要漏——
+ * 和契約護欄那支「寧可紅也不要放過」的方向相反，因為這裡誤擋的代價比較高。
+ * @param {string} md
+ */
+function stripFencesLoose(md) {
+  let open = null;
+  const out = [];
+  for (const line of md.replace(/\r\n?/g, '\n').split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (m) { open = open && open === m[1][0] ? null : (open || m[1][0]); continue; }
+    if (!open) out.push(line);
+  }
+  return out.join('\n');
 }
 
 /**
