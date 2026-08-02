@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 fail=0
 
-# ── 拒跑條件：工作樹必須乾淨（本腳本自己允許是唯一例外，因為它可能正在被編輯）──
+# ── 拒跑條件：工作樹必須乾淨（**沒有例外，本腳本自己也算**）──
 # ⚠️ **不豁免自己**（Codex #384 r5 Medium）：原本排除 mutate.sh 自身的髒檔，
 # 於是「只改這支腳本」時它不但不拒跑，還會跑完 exit 0 宣稱一切正常——
 # 等於 harness 用**未提交的版本自我放行**。要改它就先 commit。
@@ -138,6 +138,36 @@ s=s[:i]+"| 前端功能（重複且錯誤） | （沒有任何責任檔） | [�
 p.write_text(s, encoding="utf-8")
 PY
 check "I. 同一份契約多出一條矛盾路由列" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡"); j=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"~~~\n"+s[i:j]+"\n~~~\n"+s[j:], encoding="utf-8")
+PY
+check "J. 整段契約包進 ~~~ fence（另一種合法 fence）" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 收支記帳與匯入")
+s=s[:i]+"|前端功能（重複且錯誤）|（沒有任何責任檔）|[前端功能.md](./前端功能.md)|\n"+s[i:]
+p.write_text(s, encoding="utf-8")
+PY
+check "K. 無空格表格列＋相對路徑連結的重複路由" 紅
+
+python3 - <<'PY'
+import pathlib
+ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
+i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
+b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
+p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+for k,l in enumerate(ls):
+    if l.startswith("| 月度回顧總覽卡 |"):
+        ls[k]="| 月度回顧總覽卡 | 短摘要——完整契約（假的）"+b+"——完整契約"+l.split("——完整契約")[1]; break
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check "L. 先放假 marker 再貼回全文（切第一個會漏）" 紅
 
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)

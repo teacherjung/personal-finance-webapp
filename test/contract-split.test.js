@@ -55,7 +55,9 @@ function read(p) {
     `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
   // ⚠️ 也剝掉 fenced code block（Codex #384 r4）：`\u0060\u0060\u0060` 裡的 `## 標題` 不是標題，
   //    把整段契約包進 code fence，畫面上 anchor 就消失了，而考題原本看不見。
-  return stripped.replace(/^```[\s\S]*?^```/gm, '');
+  // ⚠️ CommonMark 的 fence 有**兩種**（Codex #384 r6）：``` 與 ~~~。
+  //    只剝一種＝用另一種包起來就能讓標題與 anchor 在畫面上消失，而考題還看得到。
+  return stripped.replace(/^```[\s\S]*?^```/gm, '').replace(/^~~~[\s\S]*?^~~~/gm, '');
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
@@ -305,7 +307,10 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
     // ⚠️ 用**未被跳脫**的 `|` 切欄（Codex #384 r4）：Markdown 的 cell 裡可以合法寫 `\|`，
     //    單純 `.split('|')` 會在那裡誤切，於是整段規則貼回摘要也讀不到 ⇒ 假綠。
     const cells = line.replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((y) => y.trim());
-    const summary = (cells[1] || '').split('——完整契約')[0];
+    // ⚠️ 砍掉**結尾**的「——完整契約 → [連結]」，不是切第一個 marker（Codex #384 r6 Medium）：
+    //    先放短摘要＋一個假 marker、再貼回完整內文、最後才放真 marker，
+    //    切第一個就只量到那段短摘要 ⇒ 索引還是長回完整副本。
+    const summary = (cells[1] || '').replace(/——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)\s*$/u, '');
     // 比例只在長規則上生效：短規則的摘要本來就接近規則本身。
     // ⚠️ **比例一律適用，沒有「短規則例外」**（Codex #384 r3 之後收斂）：
     //    原本對短規則放寬成「只要比內文短一個字」，結果**整段 274 字的 body 貼回去
@@ -325,13 +330,19 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
   // ⚠️ r2 的假綠：原本用 basename 子字串比對，`lib/store-rules.js` 可以替
   //    缺掉的 `lib/services/store-rules.js` 冒充過關。現在只認**完整路徑**的精確集合相等。
   const readme = read('docs/contracts/README.md');
-  const rows = readme.split('\n').filter((l) => l.startsWith('| ') && /\.md\)/.test(l));
+  // ⚠️ 判準用**解析後的連結目標**，不是原始字串（Codex #384 r6 High）：
+  //    `|前端功能…|`（合法的無空格表格列）與 `[前端功能.md](./前端功能.md)`（等價相對路徑）
+  //    都繞得過「以 `| ` 開頭」＋「含 `(檔名)`」這種字面比對，於是矛盾的重複列照樣過關。
+  const rows = readme.split('\n').filter((l) => l.trim().startsWith('|') && /\.md\)/.test(l));
+  /** 這一列指向哪些契約檔（連結目標正規化：去掉 `./`、只留檔名）。 @param {string} l */
+  const targetsOf = (l) => [...l.matchAll(/\]\(([^)]+\.md)\)/g)]
+    .map((m) => m[1].replace(/^\.\//, '').split('/').pop());
   for (const [file, m] of Object.entries(MANIFEST)) {
     const base = /** @type {string} */ (file.split('/').pop());
     // ⚠️ **剛好一列**（Codex #384 r5 High）：原本用 `rows.find()` 只驗第一列，
     //    於是在正確列後面再加一條「同一份契約、沒有任何責任檔」的矛盾路由，六題照樣全綠。
     //    路由表有兩列指向同一份契約時，讀的人會照到哪一列是碰運氣。
-    const matched = rows.filter((r) => r.includes(`(${base})`));
+    const matched = rows.filter((r) => targetsOf(r).includes(base));
     assert.equal(matched.length, 1,
       `${file} 在 README 路由表對應到 ${matched.length} 列（必須剛好 1 列）。\n`
       + '0 列＝那個領域的規則沒人會被導到；2 列以上＝讀的人照到哪一列是碰運氣。');
