@@ -291,7 +291,7 @@ test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則
     'xlsx 護欄的 ignores 清單被改動了——允許名單只能有 lib/statement.js（test/** 是考題自己要合成 XLSX）。');
 });
 
-test('架構｜十五種合法的引入寫法都要被 lint 擋下（手寫 regex 漏掉一大半，所以改用 parser）', async () => {
+test('架構｜二十一種合法的引入寫法都要被 lint 擋下（regex 漏一半，AST 選擇器又漏六種）', async () => {
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
@@ -314,9 +314,21 @@ test('架構｜十五種合法的引入寫法都要被 lint 擋下（手寫 rege
     ["動態＋子路徑", "const X = await import('xlsx/xlsx.mjs');\nconsole.log(X);\n"],
     ["動態＋非字面量（靜態判不出模組名，所以連非字面量本身都禁）",
       "const s = 'xlsx';\nconst X = await import(s);\nconsole.log(X);\n"],
-    ["createRequire 別名（AST 上看不出是 require，所以直接禁 createRequire）",
-      "import { createRequire } from 'node:module';\n"
+    ["createRequire 直呼", "import { createRequire } from 'node:module';\n"
       + "const r = createRequire(import.meta.url);\nconst X = r /* c */ ('xlsx');\nconsole.log(X);\n"],
+    // ── Codex #374 r2 抓到的六種：改用 AST 選擇器之後我又在打同一種地鼠 ──
+    ["createRequire 引入時取別名", "import { createRequire as cr } from 'node:module';\n"
+      + "const req = cr(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["namespace 引入 node:module", "import * as mod from 'node:module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["先存進變數再呼叫", "import { createRequire } from 'node:module';\n"
+      + "const makeRequire = createRequire;\nconst req = makeRequire(import.meta.url);\n"
+      + "const X = req('xlsx');\nconsole.log(X);\n"],
+    ["動態引入 node:module", "const mod = await import('node:module');\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["module.require", "const X = globalThis.module.require('xlsx');\nconsole.log(X);\n"],
+    ["process.getBuiltinModule", "const m = process.getBuiltinModule('module');\n"
+      + "const X = m.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
   ];
   try {
     mkdirSync(probeDir, { recursive: true });
@@ -332,6 +344,16 @@ test('架構｜十五種合法的引入寫法都要被 lint 擋下（手寫 rege
         `「${name}」這種寫法沒有被擋下——它是合法 JS，會讓 xlsx 繞過子行程隔離。\n原始碼：\n${src}`);
     }
   } finally { rmSync(probeDir, { recursive: true, force: true }); }
+});
+
+test('架構｜production 不可以有 .cjs（CJS 的 require 別名在語法上堵不住）', async () => {
+  const files = await productionFiles();
+  const cjs = files.filter((f) => f.endsWith('.cjs'));
+  assert.deepEqual(cjs, [],
+    `production 出現 .cjs：${cjs.join('、')}\n`
+    + '本專案是純 ESM。CJS 裡 `const r = require; r("xlsx")` 這種寫法**語法規則堵不住**'
+    + '（require 被當成值傳來傳去，AST 上看不出來），所以 xlsx 收斂點護欄在 .cjs 檔裡是破的。\n'
+    + '真的需要 CJS 時：先想清楚那個檔會不會碰到 xlsx，並在這裡開例外寫明理由。');
 });
 
 test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**自己造誘餌**，才不會只在某些機器上有效）', async () => {
