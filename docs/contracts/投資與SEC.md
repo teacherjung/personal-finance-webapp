@@ -67,18 +67,6 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
 考題：`test/heavy-admission.test.js`＋`test/stock-fundamentals-api.test.js` 的「重型名額」四題。
 
-## COMPOSITION 穿透表
-
-**改這裡**：`public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表
-
-**記得同步這裡**：`lib/derive.js` 的同名複本
-
-## fxExposure 台幣掛牌美債 ETF 清單
-
-**改這裡**：`portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B）
-
-**記得同步這裡**：新增同類 ETF 時要補進清單
-
 ## 新增 ETF 持股
 
 **改這裡**：新增 ETF 持股
