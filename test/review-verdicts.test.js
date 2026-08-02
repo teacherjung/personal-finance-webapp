@@ -1,0 +1,122 @@
+// @ts-check
+// 複審聯集閘的考題（2026-08-02）。
+//
+// 起因是一場**真實事故**：#383 上出現兩份都自稱「Claude 複審」、結論相反的留言
+// （一份「通過，可以合併」、一份「需修改後再審」），而 GitHub 上兩則都是 `teacherjung`。
+// 兩份其實都對，只是照的地方不同——一份查版面，一份查金額口徑與資料列格數。
+// 危險的不是有兩份，是**看起來一樣有效而結論相反**，於是「最後一則說通過」等於放行。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { headerOf, verdictProblems, VERDICTS } from '../scripts/check-review-verdicts.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+const HEAD = 'aabbccdd11223344556677889900aabbccddeeff';
+const c = (/** @type {string} */ body) => ({ body });
+/** @param {string} role @param {string} src @param {string} sha @param {number} r @param {string} v */
+const head = (role, src, sha, r, v) => `🤖 ${role}｜來源：${src}｜審 \`${sha}\`｜r${r}｜結論：${v}`;
+
+test('標頭｜合法的來歷標頭讀得出五個欄位', () => {
+  const h = headerOf(head('Claude', 'William 桌面 session', 'aabbccd', 3, '需修改後再審'));
+  assert.deepEqual(h, {
+    role: 'Claude', source: 'William 桌面 session', sha: 'aabbccd', round: 3,
+    verdict: '需修改後再審', blocking: true,
+  });
+});
+
+test('標頭｜結論只認三種寫法（寫別的＝沒下結論）', () => {
+  for (const v of Object.keys(VERDICTS)) {
+    assert.ok(headerOf(head('Codex', 'CLI', 'aabbccd', 1, v)), `「${v}」應該讀得出來`);
+  }
+  for (const v of ['大致OK', 'LGTM', '沒問題', '通過但有小問題']) {
+    assert.equal(headerOf(head('Codex', 'CLI', 'aabbccd', 1, v)), null, `「${v}」不該被當成合法結論`);
+  }
+});
+
+test('標頭｜只看**第一行**（把標頭藏在中間不算）', () => {
+  const body = `## Claude 複審\n\n${head('Claude', 'CLI', 'aabbccd', 1, '通過')}`;
+  assert.equal(headerOf(body), null, '標頭不在第一行卻被接受了——那就沒有「一眼看得出誰寫的」這件事');
+});
+
+test('⭐ 聯集｜別人說「通過」不會解除我的「需修改」（#383 的實況）', () => {
+  const problems = verdictProblems([
+    c(head('Claude', 'Codex 桌面起的 CLI', HEAD.slice(0, 7), 2, '通過')),
+    c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 1, '需修改後再審')),
+  ], HEAD).problems;
+  assert.equal(problems.length, 1, `預期剩一條阻擋，實得：${problems.join('｜')}`);
+  assert.match(problems[0], /William 桌面 session.*需修改後再審/s);
+});
+
+test('聯集｜同一位審查者用更新的輪次撤銷自己的阻擋 → 放行', () => {
+  const who = 'William 桌面 session';
+  const { problems } = verdictProblems([
+    c(head('Claude', who, HEAD.slice(0, 7), 1, '需修改後再審')),
+    c(head('Claude', who, HEAD.slice(0, 7), 2, '通過')),
+  ], HEAD);
+  assert.deepEqual(problems, []);
+});
+
+test('聯集｜留言順序不影響結果（不是「最後一則說了算」）', () => {
+  const who = 'William 桌面 session';
+  const a = c(head('Claude', who, HEAD.slice(0, 7), 1, '需修改後再審'));
+  const b = c(head('Claude', who, HEAD.slice(0, 7), 2, '通過'));
+  assert.deepEqual(verdictProblems([a, b], HEAD).problems, verdictProblems([b, a], HEAD).problems,
+    '換個順序就換結果——那不是判準，是巧合');
+});
+
+test('聯集｜「通過」如果是對舊 commit 說的，不算數', () => {
+  const { problems } = verdictProblems([
+    c(head('Codex', 'Claude 起的 CLI', '1234567', 1, '通過')),
+  ], HEAD);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /是對 1234567 說的/);
+});
+
+test('聯集｜有結論卻沒有標頭 → 點名（防「照舊寫一段散文就當複審」）', () => {
+  const { problems } = verdictProblems([c('## Claude 複審\n\n結論：通過，可以合併。')], HEAD);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /沒有合規的來歷標頭/);
+});
+
+test('聯集｜一般聊天留言不會被誤當成複審', () => {
+  const { problems } = verdictProblems([
+    c('我把 node_modules 重裝了，現在可以跑了'),
+    c('這支等 #382 合併之後再 rebase'),
+  ], HEAD);
+  assert.deepEqual(problems, [], `一般留言被誤擋：${problems.join('｜')}`);
+});
+
+test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
+  const { problems } = verdictProblems([
+    c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 1, '需修改後再審')),
+    c(head('Codex', 'Claude 起的 CLI', HEAD.slice(0, 7), 1, '不可合併')),
+    c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 2, '通過')),
+  ], HEAD);
+  assert.equal(problems.length, 1, `Codex 那條應該還在，實得：${problems.join('｜')}`);
+  assert.match(problems[0], /Codex/);
+});
+
+// ── 文件真的叫人跑這支腳本（不然規則又只活在腳本裡）─────────────
+
+test('合併程序真的把聯集閘寫成一步（不是只在別處提到它）', () => {
+  // ⚠️ 判準比照 test/merge-procedure-docs.test.js：**指令必須出現在剝掉 HTML 註解後的 fenced code**
+  //    ——「文件某處提到這支腳本」不算數（#353 r1 的考題就是被「把指令搬進 HTML 註解」繞過的）。
+  const md = readFileSync(join(ROOT, 'CODEX-REVIEW.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const fenced = [...md.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]).join('\n');
+  assert.match(fenced, /node scripts\/check-review-verdicts\.js/,
+    'CODEX-REVIEW.md 的合併步驟沒有真的叫人跑聯集閘——規則會退回「靠記性」');
+  // 順序也是契約：聯集閘要在 `gh pr merge` 之前
+  assert.ok(md.indexOf('check-review-verdicts.js') < md.indexOf('gh pr merge'),
+    '聯集閘出現在 `gh pr merge` 之後＝合併完才檢查，等於沒有');
+});
+
+test('AGENTS.md 要寫下「取聯集，不取最後一則」與自報來歷的格式', () => {
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  assert.ok(agents.includes('取聯集，不取最後一則'),
+    'AGENTS.md 找不到聯集規則的原句——只寫在腳本裡＝讀 AGENTS 的人不會知道');
+  assert.match(agents, /🤖 <角色>｜來源：/,
+    'AGENTS.md 沒有寫出來歷標頭的逐字格式，寫的人只能猜');
+});
