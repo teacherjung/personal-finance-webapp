@@ -379,32 +379,53 @@ const MANIFEST = {
       'lib/http-body.js',
       'lib/pdf-isolate-child.js',
       'lib/routes/auth.js',
+      'lib/routes/core.js',
       'lib/routes/market.js',
       'lib/schema.js',
       'lib/services/insights.js',
+      'lib/services/market-data.js',
       'lib/services/stock-fundamentals.js',
       'lib/stock-fundamentals.js',
       'public/modules/categories.js',
       'public/modules/portfolio-calculations.js',
       'public/modules/portfolio-editors.js',
-      'public/modules/portfolio-forms.js',
       'public/modules/portfolio-exposure.js',
+      'public/modules/portfolio-forms.js',
       'public/modules/portfolio-model.js',
+      'public/modules/portfolio-research.js',
       'public/modules/portfolio-risk.js',
       'public/modules/portfolio-state.js',
       'public/modules/portfolio-symbol.js',
       'public/modules/portfolio-valuation-actions.js',
       'public/modules/portfolio-valuation.js',
+      'public/modules/portfolio-visuals.js',
       'public/modules/portfolio.js',
       'public/modules/signal-tiers.js',
+      'public/modules/stock-research-fundamentals.js',
+      'public/modules/stock-research-method.js',
       'server.js',
       'test/codex-r11.test.js',
+      'test/derive-reminders.test.js',
+      'test/derive.test.js',
+      'test/heavy-admission.test.js',
+      'test/insights.test.js',
+      'test/portfolio-calculations.test.js',
       'test/portfolio-editors.test.js',
+      'test/portfolio-exposure.test.js',
       'test/portfolio-forms.test.js',
+      'test/portfolio-model.test.js',
+      'test/portfolio-research.test.js',
       'test/portfolio-risk.test.js',
       'test/portfolio-state.test.js',
-      'test/heavy-admission.test.js',
+      'test/portfolio-valuation-actions.test.js',
+      'test/portfolio-valuation.test.js',
+      'test/portfolio-visuals.test.js',
+      'test/server.test.js',
+      'test/signal-tiers.test.js',
       'test/stock-fundamentals-api.test.js',
+      'test/stock-fundamentals.test.js',
+      'test/stock-research-fundamentals.test.js',
+      'test/stock-research-method.test.js',
     ],
   },
 };
@@ -437,6 +458,15 @@ function indexRows() {
     .filter((l) => l.trim().startsWith('|') && LINK_RE.test(l))
     .map((line) => {
       const m = /** @type {RegExpExecArray} */ (LINK_RE.exec(line));
+      // ⚠️ **索引列本身一個 `<` 都不准**（Codex #384 r27）：
+      //    它實測 `| <video>規則</video> | <video>摘要＋契約連結</video> |`——
+      //    GitHub 把兩格內容**清空**，而考題照樣從原始文字讀到規則與連結而通過。
+      //    這道門刻意只裝在**索引列**上，不擴大到整份 AGENTS——
+      //    那樣會傷到它合法引用的外部語法（XBRL 的 `<Z/>`、IB Flex、Notion 的 `<callout`）。
+      assert.ok(!line.includes('<'),
+        `AGENTS.md 的同步點索引列出現 \`<\`：${line.trim().slice(0, 80)}…\n`
+        + '⚠️ raw HTML 可以讓這一格在畫面上變成空的，而考題照樣讀得到內容 ⇒ 索引形同虛設。\n'
+        + '   索引列請用純 Markdown。');
       return { line, file: normalize(m[1]), anchor: m[2] };
     });
 }

@@ -340,6 +340,18 @@ p.write_text(s.replace(a,""), encoding="utf-8")
 PY
 check 'AR. 弱化凍結標的判準（責任檔原本不在 manifest）' 紅
 
+mutate 'AS. 索引列用 video 把兩格清空（Codex r27 實測）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+j=s.index("\n", i)
+row=s[i:j]
+cells=row.split("|")
+cells[1]="<video>"+cells[1]+"</video>"
+p.write_text(s[:i]+"|".join(cells)+s[j:], encoding="utf-8")
+PY
+check 'AS. 索引列用 video 把兩格清空（Codex r27 實測）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
