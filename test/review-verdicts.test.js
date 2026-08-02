@@ -46,8 +46,8 @@ test('⭐ 聯集｜別人說「通過」不會解除我的「需修改」（#383
     c(head('Claude', 'Codex 桌面起的 CLI', HEAD.slice(0, 7), 2, '通過')),
     c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 1, '需修改後再審')),
   ], HEAD).problems;
-  assert.equal(problems.length, 1, `預期剩一條阻擋，實得：${problems.join('｜')}`);
-  assert.match(problems[0], /William 桌面 session.*需修改後再審/s);
+  assert.ok(problems.some((p) => /William 桌面 session.*需修改後再審/s.test(p)),
+    `別人的「通過」把阻擋解除了，實得：${problems.join('｜')}`);
 });
 
 test('聯集｜同一位審查者用更新的輪次撤銷自己的阻擋 → 放行', () => {
@@ -57,6 +57,24 @@ test('聯集｜同一位審查者用更新的輪次撤銷自己的阻擋 → 放
     c(head('Claude', who, HEAD.slice(0, 7), 2, '通過')),
   ], HEAD);
   assert.deepEqual(problems, []);
+});
+
+test('⭐ 聯集｜**同一輪**出現相反結論 → fail-closed（不是最後一則說了算）', () => {
+  // ⚠️ Codex #385 r1 High①：原本用 `>=`，同為 r2 時「需修改」後貼「通過」就放行、反過來就阻擋
+  //    ——**結果取決於留言順序**，正是這支要根治的病，我卻在自己的實作裡犯了。
+  const who = 'William 桌面 session';
+  const a = c(head('Claude', who, HEAD.slice(0, 7), 2, '需修改後再審'));
+  const b = c(head('Claude', who, HEAD.slice(0, 7), 2, '通過'));
+  for (const order of [[a, b], [b, a]]) {
+    const { problems } = verdictProblems(order, HEAD);
+    assert.ok(problems.some((p) => /同一輪/.test(p)), `同輪衝突被放行了（順序 ${order === a ? 'ab' : 'ba'}）`);
+  }
+});
+
+test('⭐ 聯集｜完全沒有正式結論 → 阻擋（協作欄位只證明「寫了誰」，不證明審查發生過）', () => {
+  const { problems } = verdictProblems([c('這支等 #382 合併之後再 rebase')], HEAD);
+  assert.ok(problems.some((p) => /沒有任何一位審查者/.test(p)),
+    '「沒人審」被放行了——那比 main 原本的人工確認還退步');
 });
 
 test('聯集｜留言順序不影響結果（不是「最後一則說了算」）', () => {
@@ -71,14 +89,12 @@ test('聯集｜「通過」如果是對舊 commit 說的，不算數', () => {
   const { problems } = verdictProblems([
     c(head('Codex', 'Claude 起的 CLI', '1234567', 1, '通過')),
   ], HEAD);
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /是對 1234567 說的/);
+  assert.ok(problems.some((p) => /是對 1234567 說的/.test(p)), problems.join('｜'));
 });
 
 test('聯集｜有結論卻沒有標頭 → 點名（防「照舊寫一段散文就當複審」）', () => {
   const { problems } = verdictProblems([c('## Claude 複審\n\n結論：通過，可以合併。')], HEAD);
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /沒有合規的來歷標頭/);
+  assert.ok(problems.some((p) => /沒有合規的來歷標頭/.test(p)), problems.join('｜'));
 });
 
 test('聯集｜一般聊天留言不會被誤當成複審', () => {
@@ -86,7 +102,7 @@ test('聯集｜一般聊天留言不會被誤當成複審', () => {
     c('我把 node_modules 重裝了，現在可以跑了'),
     c('這支等 #382 合併之後再 rebase'),
   ], HEAD);
-  assert.deepEqual(problems, [], `一般留言被誤擋：${problems.join('｜')}`);
+  assert.ok(!problems.some((p) => /沒有合規的來歷標頭/.test(p)), `一般留言被誤擋：${problems.join('｜')}`);
 });
 
 test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
@@ -95,8 +111,7 @@ test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
     c(head('Codex', 'Claude 起的 CLI', HEAD.slice(0, 7), 1, '不可合併')),
     c(head('Claude', 'William 桌面 session', HEAD.slice(0, 7), 2, '通過')),
   ], HEAD);
-  assert.equal(problems.length, 1, `Codex 那條應該還在，實得：${problems.join('｜')}`);
-  assert.match(problems[0], /Codex/);
+  assert.ok(problems.some((p) => /Codex/.test(p)), `Codex 那條應該還在，實得：${problems.join('｜')}`);
 });
 
 // ── 文件真的叫人跑這支腳本（不然規則又只活在腳本裡）─────────────
@@ -114,7 +129,10 @@ test('合併程序真的把聯集閘寫成一步（不是只在別處提到它�
 });
 
 test('AGENTS.md 要寫下「取聯集，不取最後一則」與自報來歷的格式', () => {
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  // ⚠️ **剝掉 HTML 註解再比對**（Codex #385 r1 Medium⑤）：
+  //    不剝的話，把整段規則包進 `<!-- -->` 就能讓「文件寫了」變成假的——
+  //    而這支 PR 自己新增的固定維度第 2 條講的就是這件事，我在自己的考題裡違反了它。
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(agents.includes('取聯集，不取最後一則'),
     'AGENTS.md 找不到聯集規則的原句——只寫在腳本裡＝讀 AGENTS 的人不會知道');
   assert.match(agents, /🤖 <角色>｜來源：/,

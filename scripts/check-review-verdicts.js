@@ -44,7 +44,9 @@ export const VERDICTS = {
  * 格式（逐字）：
  *   🤖 <角色>｜來源：<哪個 session>｜審 `<短 sha>`｜r<輪次>｜結論：<三選一>
  */
-const HEADER = /^\s*(?:[*_>\s]*)🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-f]{7,40})`?｜r(\d+)｜結論：(\S+?)\s*$/mu;
+// ⚠️ **不接受 `>` 引用與 `-` 列表前綴**（Codex #385 r1 Medium④）：
+//    引用別人的標頭不該被算成一則新結論。只容許粗體包裝與水平空白。
+const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜結論：(\S+?)\s*$/mu;
 
 /**
  * 從一則留言抽出來歷標頭。抓不到就回 null（呼叫端決定那算不算問題）。
@@ -55,10 +57,13 @@ export function headerOf(body) {
   const m = HEADER.exec(first);
   if (!m) return null;
   const verdict = m[5].replace(/[。．.]$/u, '');
-  if (!(verdict in VERDICTS)) return null;
+  // ⚠️ `in` 會命中原型鍵（`toString`／`constructor` 都會被當成合法的第四種結論）——
+  //    本專案的原型鍵鐵則，我在自己的新腳本裡又犯一次（Codex #385 r1 Medium⑤）。
+  if (!Object.hasOwn(VERDICTS, verdict)) return null;
   return {
     role: m[1],
-    source: m[2].trim(),
+    // 來源做 collapse whitespace：多打一個空白不該變成「另一個審查者」（那會多出一條永遠撤不掉的阻擋）
+    source: m[2].trim().replace(/\s+/gu, ' '),
     sha: m[3].toLowerCase(),
     round: Number(m[4]),
     verdict,
@@ -66,9 +71,27 @@ export function headerOf(body) {
   };
 }
 
-/** 一則留言看起來是不是「想下結論」——用來抓「有結論卻沒標頭」的漏網。 @param {string} body */
-export const looksLikeVerdict = (body) =>
-  /結論|複審|審查完成|可以合併|不可合併|需修改/u.test(String(body || ''));
+/**
+ * 一則留言看起來是不是「想下結論」——用來抓「有結論卻沒標頭」的漏網。
+ *
+ * ⚠️ **誤擋比漏抓更貴**（Codex #385 r1 Medium④ 實測，以下全被第一版誤擋）：
+ * 「這不是複審，只是提醒」／「修完就可以合併嗎？」／引用上一輪的結論／
+ * 說明「腳本遇到『不可合併』要回 exit 1」／fenced code 裡的格式範例。
+ * 誤擋會讓人乾脆繞過這道閘，那比它漏抓一次更糟。
+ *
+ * 所以判準收緊成兩條、而且**先剝掉引用與 code fence**：
+ *   ①出現機器人記號 `🤖`（想用這個格式卻寫錯）
+ *   ②出現「結論」後面緊跟著三種合法用詞之一（真的在下結論，不是在討論結論）
+ * @param {string} body
+ */
+export function looksLikeVerdict(body) {
+  const text = String(body || '')
+    .replace(/^```[\s\S]*?^```/gm, '')     // code fence 裡的範例不是結論
+    .replace(/^[^\S\n]*>.*$/gm, '');       // 引用別人的話不是自己的結論
+  if (/🤖/u.test(text)) return true;
+  const words = Object.keys(VERDICTS).join('|');
+  return new RegExp(`結論[^\\n]{0,8}(?:${words})`, 'u').test(text);
+}
 
 /**
  * 聯集判定。
@@ -94,8 +117,26 @@ export function verdictProblems(comments, head) {
       continue;
     }
     const who = `${h.role}（${h.source}）`;
-    // 同一個審查者：留最新一輪的結論
-    if (!latest[who] || h.round >= latest[who].round) latest[who] = { ...h, who };
+    const cur = latest[who];
+    if (!cur || h.round > cur.round) { latest[who] = { ...h, who }; continue; }
+    // ⚠️ **同輪次出現相反結論 → fail-closed**（Codex #385 r1 High①）：
+    //    原本用 `>=`，於是同為 r2 時「需修改」後貼「通過」就放行、反過來就阻擋
+    //    ——**結果取決於留言順序**，那正是這支要根治的病，我卻在自己的實作裡犯了。
+    //    契約寫的是「**更新的**輪次才能撤銷」，同輪次不算撤銷。
+    if (h.round === cur.round && h.blocking !== cur.blocking) {
+      latest[who] = { ...cur, conflict: true, blocking: true,
+        verdict: `同一輪（r${h.round}）出現相反結論：${cur.verdict} vs ${h.verdict}` };
+    }
+  }
+  // ⚠️ **沒有任何針對目前 head 的正式結論＝不可合併**（Codex #385 r1 High②）。
+  //    我原本讓它放行，理由是「沒有人下結論不等於有人說不行」——**那是退步**：
+  //    `main` 原本的合併步驟 2 就要求「確認審查結論」，而協作欄位閘只證明
+  //    **有人被寫成審查者**，證明不了**審查真的發生過**。
+  const passedAtHead = Object.values(latest).some((h) => !h.blocking && head.startsWith(h.sha));
+  if (!passedAtHead) {
+    problems.push(`沒有任何一位審查者對目前的 head（${head.slice(0, 7)}）下過「通過」的正式結論。\n`
+      + '    ⚠️ 協作欄位閘只證明「有人被寫成審查者」，證明不了「審查真的發生過」。\n'
+      + '    請獨立審查者用來歷標頭給出結論（格式見 AGENTS.md「一支 PR 上可能有好幾個審查者」節）。');
   }
   for (const h of Object.values(latest)) {
     if (!h.blocking) continue;
