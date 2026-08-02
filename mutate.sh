@@ -233,6 +233,42 @@ p.write_text(s[:i]+"1.## 也是普通段落\n\n"+s[i:], encoding="utf-8")
 PY
 check 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' 綠
 
+# ── 不需要行首縮排就能藏東西的三族（Codex #384 r20）──
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"> - 外層\n>     #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AH. 引用包住的續行 ####（原始行首是 >）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 訂閱續費日自動推進")
+# GitHub 一個字都不顯示，卻算進長度 ⇒ 灌大內文讓比例檢查失效
+pad="[guard-padding]: # (" + "隱形"*400 + ")\n\n"
+p.write_text(s[:i]+pad+s[i:], encoding="utf-8")
+PY
+check 'AI. 隱形 reference definition 灌大內文' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+'可見前綴 <a id="月度回顧總覽卡"></a><details><summary>展開</summary>藏起來</details>\n\n'+s[i:], encoding="utf-8")
+PY
+check 'AJ. 行「中」的 raw HTML（原本只擋行首）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"看不見的padding"+"​"*2000+"\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AK. 零寬字元灌大內文' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 python3 - <<'PY'

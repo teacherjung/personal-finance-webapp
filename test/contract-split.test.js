@@ -57,7 +57,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * 這一刀同時解決兩個方向——沒有 fence 就藏不了標題（假綠消失），
  * 也沒有「合法的 fence 被誤判」（誤紅消失）。判準一行講得完，而且不可能實作錯。
  *
- * 代價寫清楚：這些檔案裡**放不了 fenced code 與 raw HTML**（四格縮排的程式碼區塊仍然可用）。它們是規則文件，
+ * 代價寫清楚：這些檔案裡**放不了 fenced code 與 raw HTML**（**四格縮排的程式碼區塊也不行**——見下方 `assertHeadingForm()`：契約檔一律禁止縮排）。它們是規則文件，
  * 現在用的是行內反引號（`像這樣`），完全不受影響；真要放範例，放進 `docs/` 其他檔案再連過來。
  * @param {string} p
  */
@@ -97,11 +97,31 @@ function read(p) {
   //    `<![CDATA[` `<? ?>` …CommonMark 有六類入口，把一整節包起來，GitHub 就不產生那個標題。
   //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
   //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
-  const html = raw.split('\n').findIndex((l) => /^\s*</.test(stripContainers(l)));
+  //    ⚠️ 判的是**整行**、不是行首（r20 High②之二）：`可見文字 <a id="x"></a>` 會產生額外 anchor，
+  //    `<details>` 會把內容摺起來——兩個都在行中。行內反引號裡的 `<` 是字面值，不產生 HTML，放行。
+  const html = raw.split('\n').findIndex((l) => /</.test(l.replace(/(`+)[^`]*\1/gu, '')));
   assert.equal(html, -1,
-    `${p}:${html + 1} 出現行首 HTML。\n`
-    + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 這類 block 會把包住的標題整個吞掉，\n'
-    + '   而畫面上看不出來。要排版請用 Markdown 本身的語法。');
+    `${p}:${html + 1} 出現 raw HTML 的 \`<\`（行內反引號裡的不算）。\n`
+    + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 會把包住的標題整個吞掉、\n'
+    + '   `<a id>` 會多長一個 anchor、`<details>` 會把內容摺起來，而畫面上都看不出來。\n'
+    + '   要寫數學比較或角括號，請用行內反引號包起來（例如 `|Δ%|<0.3%`）。');
+  // ⚠️ **不需要縮排就能藏東西的三族**（Codex #384 r20 High②）：
+  //    ①link/footnote reference definition：`[x]: # (一大段隱形文字)`、`[^n]: 隱形文字`
+  //      GitHub 一個字都不顯示，但它們**算進 raw 長度** ⇒ 可以灌大契約內文、
+  //      讓「索引摘要必須比內文短」那道比例檢查失效，再把整條規則貼回索引。
+  //    ②行**中**的 raw HTML：`可見文字 <a id="假anchor"></a><details>藏起來</details>`
+  //      ——原本只擋行首 `<`。
+  //    ③零寬與方向控制字元：畫面上不存在，卻一樣算長度。
+  //    三族的共同點是「畫面看不見、長度算得到」⇒ 一律禁止。
+  const refDef = raw.split('\n').findIndex((l) => /^\[[^\]]+\]:/u.test(l));
+  assert.equal(refDef, -1,
+    `${p}:${refDef + 1} 出現 link／footnote reference definition。\n`
+    + '⚠️ 它在 GitHub 上完全不顯示，卻算進內文長度——可以用來灌大契約、讓比例檢查失效。\n'
+    + '   契約檔請直接寫行內連結。');
+  const invisible = raw.split('\n').findIndex((l) => /[\u200b-\u200f\u2028\u2029\ufeff\u00ad]/u.test(l));
+  assert.equal(invisible, -1,
+    `${p}:${invisible + 1} 出現零寬／不可見字元。\n`
+    + '⚠️ 畫面上不存在、長度卻算得到——同樣可以灌大內文，而且沒有人看得出來。');
   assert.ok(!raw.includes('<!--') && !raw.includes('-->'),
     `${p} 出現 HTML 註解。\n`
     + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
@@ -162,8 +182,10 @@ function assertHeadingForm(p, raw) {
     //
     //    代價寫清楚：契約檔**不能用巢狀清單、不能用四格縮排的程式碼區塊**。
     //    （AGENTS.md 不受此限——它的 anchor 零消費者，見上面的範圍說明。）
-    assert.doesNotMatch(rawLine, /^[ \t]+\S/u,
-      `${p}:${i + 1} 出現行首縮排：${JSON.stringify(rawLine)}\n`
+    // ⚠️ 要看**剝掉容器之後**的縮排，不是原始行首（Codex #384 r20 High①）：
+    //    `>     #### 標題` 的原始行首是 `>`，過得了「行首零縮排」，剝完才露出四格。
+    assert.doesNotMatch(stripContainers(rawLine), /^[ \t]+\S/u,
+      `${p}:${i + 1} 剝掉引用／清單記號之後仍有縮排：${JSON.stringify(rawLine)}\n`
       + '⚠️ 契約檔**不准縮排**。縮排會建立 container block 的續行，而續行裡的 `####`／`> ####`／\n'
       + '   fence／raw HTML 全都逃得過逐行檢查（要正確判斷得實作半個 Markdown 剖析器）。\n'
       + '   這三份檔案本來就是零縮排 ⇒ 一次關掉整個家族。巢狀清單請改寫成平的。');
