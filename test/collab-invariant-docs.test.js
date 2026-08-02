@@ -253,6 +253,11 @@ test('欄位閘｜括號裡藏第二個角色 → 看不出是誰（含全形與
     'Claude（Ｃｏｄｅｘ）',          // 全形
     'Claude（Co\u200bdex）',        // 零寬空白插在中間
     'Ｃｌａｕｄｅ（Ｃｏｄｅｘ）',    // 兩邊都全形
+    // ── Codex #379 r4 的四種：\p{Cf} 擋不住的那一群 ──
+    'Claude（Co\u034Fdex）',       // U+034F 組合接合符（Mn，不在 Cf 裡——r4 就是這樣繞過 r3）
+    'Claude（Co\uFE0Fdex）',       // U+FE0F 變體選擇符（default-ignorable）
+    'Claude（Co\u0301dex）',       // U+0301 組合重音（NFKD＋去 Mark 才折得掉）
+    'Claude（\u0421odex）',        // 西里爾 С——螢幕上跟拉丁 C 一樣；混用文字系統整欄 fail-closed
   ]) {
     const problems = problemsOf(bodyWith(sneaky, 'William'));
     assert.ok(problems.length > 0,
@@ -296,4 +301,14 @@ test('trailer 格式要涵蓋三個角色（模板允許 William 當審查者，
     `Reviewed-By 的格式沒有列 William，但模板與 check-pr-collab-fields.js 都允許他當獨立審查者。\n`
     + '格式與規則不一致會逼人在「照實寫」與「照格式寫」之間二選一，兩種選擇都讓稽核軌跡失真。\n'
     + `實得：${line}`);
+});
+
+test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤擋', () => {
+  // 西里爾 С 這類同形字**正規化折不掉**（它就是另一個字母）。不做 confusable 對照表
+  //（表列不完——r1 列字串、r2 列形狀、r3 列名字，同型病不犯第四次），改成劃界：
+  // 角色名全是拉丁字母，欄位裡「拉丁詞夾非拉丁、非漢字的字母」沒有正當理由 → 整欄看不出是誰。
+  const cyr = problemsOf(bodyWith('Сlaude', 'Codex'));   // 整個字用西里爾 С 開頭
+  assert.ok(cyr.length > 0, '西里爾同形字冒充角色名沒有被擋');
+  assert.deepEqual(problemsOf(bodyWith('Claude（已看過）', 'Codex')), [],
+    '中文括號註記被誤擋——噪音型誤擋會讓人乾脆繞過這道閘');
 });

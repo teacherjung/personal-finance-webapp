@@ -61,6 +61,26 @@ export function fieldValue(body, field) {
 }
 
 /**
+ * 角色偵測用的**唯一**正規化管線（Codex #379 r4：括號掃描與最終比對必須看同一種形式）。
+ *
+ * 疊四層，各擋一類藏法（r3→r4 連兩輪的教訓＝少一層就有對應的繞法）：
+ * ①NFKD——全形折半形、組合字拆開（`Ｃ`→`C`、`ó`→`o`＋重音）
+ * ②去 `\p{M}`——拆開後的組合記號（U+0301 重音藏在字母上）
+ * ③去 `\p{Default_Ignorable_Code_Point}`——U+034F、U+FE0F、U+2060 這類「預設不顯示」字元
+ *   （⚠️ 比 `\p{Cf}` 大：U+034F 是 Mn、不在 Cf 裡——r4 就是這樣繞過 r3 的）
+ * ④去 `\p{Cf}`——剩餘的格式控制字元
+ *
+ * @param {string} v @returns {string}
+ */
+export function probeNormalize(v) {
+  return String(v || '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
+    .replace(/\p{Cf}/gu, '');
+}
+
+/**
  * 把欄位值正規化成**剛好一個**角色；看不出來或不只一個就回 `null`。
  *
  * ⚠️ 這裡刻意**不用 `includes`**（Codex #379 r1 High①）：`NotClaude` 含有 `Claude`、
@@ -73,16 +93,23 @@ export function canonicalRole(raw) {
   // ⚠️ **正規化要做在最前面、只做一次**（Codex #379 r3 Medium）：
   //    r2 版只把外層正規化、括號內的檢查用原字串，於是 `Claude（Ｃｏｄｅｘ）`（全形）與
   //    `Claude（Co\u200bdex）`（零寬）都溜過去——括號被整段剝掉，剩下乾淨的 `Claude`。
-  //    根因是「同一個字串有兩種形式在流動」。NFKC 把全形折成半形（連全形括號與冒號一起），
-  //    `\p{Cf}` 掃掉零寬與其他格式控制字元；**之後所有判斷都只看正規化後的字串**。
-  const bare = String(raw || '')
-    .normalize('NFKC')
-    .replace(/\p{Cf}/gu, '')                   // 零寬空白／連字控制字元
+  //    根因是「同一個字串有兩種形式在流動」。**之後所有判斷都只看正規化後的字串**。
+  const bare = probeNormalize(String(raw || ''))
     .replace(/[`*_~]/g, '');                    // markdown 裝飾
+  // ⚠️ **混用文字系統＝看不出是誰，fail-closed**（Codex #379 r4 Medium）：
+  //    西里爾 `С`（U+0421）跟拉丁 `C` 在螢幕上長一樣，正規化折不掉——那是**不同的字母**。
+  //    角色名全是拉丁字母；欄位裡出現「拉丁以外的字母混在拉丁詞裡」沒有任何正當理由，
+  //    整欄直接判「看不出是誰」。不做 confusable 對照表（表列不完，同型病第四次）。
+  if (/\p{Script=Latin}/u.test(bare)) {
+    for (const ch of bare) {
+      if (/\p{L}/u.test(ch) && !/\p{Script=Latin}/u.test(ch) && !/\p{Script=Han}/u.test(ch)) return null;
+    }
+  }
   // **括號裡若藏著第二個角色就不算單一角色**（Codex #379 r2 Medium①）：
   //   「Claude（Codex）」剝掉括號會變成乾淨的 `Claude`，與「獨立審查者：Codex」搭配就整份通過——
   //   但那個欄位實際上提到了兩個角色，語意上正是「看不出是誰」。
   for (const inner of bare.match(/\([^)]*\)/g) || []) {
+    // bare 已經過 probeNormalize——括號內的藏字元在這之前就被折掉了（r4 的四個重現都在這裡歸位）
     if (ROLES.some((r) => new RegExp(r, 'i').test(inner))) return null;
   }
   const t = bare
