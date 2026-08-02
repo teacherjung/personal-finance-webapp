@@ -14,14 +14,20 @@ cd "$(dirname "$0")"
 fail=0
 
 restore() { git checkout -- AGENTS.md docs/contracts/ test/contract-split.test.js 2>/dev/null || true; }
-trap restore EXIT INT TERM
 
+# ⚠️ **髒檔檢查必須在掛 trap 之前**（2026-08-03 第四次事故，我親手踩的）：
+#    原本 `trap restore EXIT` 掛在前面，於是「工作樹不乾淨 → exit 2」這條保護分支
+#    **自己會觸發 EXIT trap**，restore 照樣 `git checkout` 把未 commit 的工作洗掉。
+#    ——**那正是這道檢查存在的理由，它卻在拒絕執行的同時做了它要防的事。**
+#    保護措施本身要先於它所保護的危險動作生效，順序不是風格問題。
 dirty=$(git status --porcelain || true)
 if [[ -n "$dirty" ]]; then
   echo "❌ 工作樹不乾淨，拒絕執行——這支會 git checkout 還原檔案，會洗掉你未 commit 的工作："
   echo "$dirty"
   exit 2
 fi
+
+trap restore EXIT INT TERM
 
 run() {
   if node --test --test-reporter=dot test/contract-split.test.js >/dev/null 2>&1; then
