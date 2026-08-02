@@ -66,10 +66,17 @@ function assertWorkspaceCss(css) {
 
 test('投資持股表森林工作面：專業標頭、持股檔數與既有九欄完整保留', () => {
   const rows = [
-    holding(),
+    holding({ expectedCurrentPrice: '206 USD' }),
     holding({
       id: 'h2', symbol: 'BND', name: 'Bond', layer: 'bond', quoteSymbol: 'BND',
-      valueTwd: 1400, costTwd: 1680, pnlTwd: -280
+      price: 7.45, valueTwd: 1400, costTwd: 1680, pnlTwd: -280,
+      expectedCurrentPrice: '7.5 USD'
+    }),
+    holding({
+      id: 'h3', symbol: 'GLD', name: 'Gold', layer: 'gold', quoteSymbol: 'GLD',
+      quantity: 10, avgCost: 50, cost: 500, price: 50,
+      valueTwd: 500, costTwd: 500, pnlTwd: 0,
+      expectedCurrentPrice: '50 USD'
     })
   ];
   const total = rows.reduce((sum, row) => sum + row.valueTwd, 0);
@@ -77,7 +84,7 @@ test('投資持股表森林工作面：專業標頭、持股檔數與既有九�
 
   assert.match(html, /<section class="portfolio-holdings-workspace" aria-labelledby="portfolio-holdings-title">/);
   assert.match(html, /<h2 id="portfolio-holdings-title">持股明細<\/h2>/);
-  assert.match(html, /目前持有 <strong>2<\/strong> 檔/);
+  assert.match(html, /目前持有 <strong>3<\/strong> 檔/);
   assertNineColumnHeader(html);
   assert.match(html, /class="group-row portfolio-layer-row"/);
   assert.match(html, /class="portfolio-layer-label"/);
@@ -90,11 +97,13 @@ test('投資持股表森林工作面：專業標頭、持股檔數與既有九�
   for (const source of rows) {
     const rendered = dataRows.find(row => row.cells[0].html.includes(`>${source.symbol}<`));
     assert.ok(rendered, `找不到 ${source.symbol} 的資料列`);
+    assert.equal(rendered.cells[3].html, source.expectedCurrentPrice);
     assert.equal(rendered.cells[4].html, formatters.formatMoney(source.valueTwd));
-    assert.equal(rendered.cells[5].html, `${source.pnlTwd > 0 ? '+' : ''}${formatters.formatMoney(source.pnlTwd)}`);
+    assert.equal(rendered.cells[5].html, `${source.pnlTwd >= 0 ? '+' : ''}${formatters.formatMoney(source.pnlTwd)}`);
     assert.equal(rendered.cells[6].html, formatters.formatPercent(source.pnlTwd / source.costTwd * 100));
     assert.equal(rendered.cells[7].html, formatters.formatPercent(source.valueTwd / total * 100));
     assert.match(rendered.cells[5].attrs, new RegExp(`\\b${source.pnlTwd >= 0 ? 'pos' : 'neg'}\\b`));
+    assert.match(rendered.cells[6].attrs, new RegExp(`\\b${source.pnlTwd >= 0 ? 'pos' : 'neg'}\\b`));
   }
 });
 
