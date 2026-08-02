@@ -491,6 +491,61 @@ p.write_text(s.replace("路由表「前端功能」列","路由表「投資與 S
 PY
 check 'BH. 契約頁首指到別人的 README 列' 紅
 
+# ── r37：表格狀態、括號網址、精確 domain、圖片連結、entity ──
+
+mutate 'BI. 先插清單、再接普通續文（前一行看起來無害）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"- 維護說明\n普通續文\n"+s[i:], encoding="utf-8")
+PY
+check 'BI. 先插清單、再接普通續文（前一行看起來無害）' 紅
+
+mutate 'BJ. 用帶空白的分隔線 _ _ _ 中斷表格' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"_ _ _\n"+s[i:], encoding="utf-8")
+PY
+check 'BJ. 用帶空白的分隔線 _ _ _ 中斷表格' 紅
+
+mutate 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' <<'PY'
+import pathlib,re
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
+sec=s[i:j]; body=sec.split("**記得同步這裡**：")[1]
+pad="（[來源](https://example.com/report(section)?utm_source="+"x"*900+")）"
+p.write_text(s[:i]+sec+pad+s[j:], encoding="utf-8")
+q=pathlib.Path("AGENTS.md"); t=q.read_text(encoding="utf-8")
+k=t.index("| 月度回顧總覽卡 |"); e=t.index("\n", k)
+m=re.search(r"——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)", t[k:e])
+q.write_text(t[:k]+"| 月度回顧總覽卡 | "+body.replace("\n"," ").strip()+" "+m.group(0)+" |"+t[e:], encoding="utf-8")
+PY
+check 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' 紅
+
+mutate 'BL. 契約頁首把領域名寫短（startsWith 會放過）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.replace("路由表「前端功能」列","路由表「前端」列",1), encoding="utf-8")
+PY
+check 'BL. 契約頁首把領域名寫短（startsWith 會放過）' 紅
+
+mutate 'BM. 契約連結改成圖片形式' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
+p.write_text(s[:i]+s[i:j].replace("[契約：","![契約：",1)+s[j:], encoding="utf-8")
+PY
+check 'BM. 契約連結改成圖片形式' 紅
+
+mutate 'BN. 契約 body 塞 HTML entity 撐大分母' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"&ZeroWidthSpace;"*60+"\n\n"+s[i:], encoding="utf-8")
+PY
+check 'BN. 契約 body 塞 HTML entity 撐大分母' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'

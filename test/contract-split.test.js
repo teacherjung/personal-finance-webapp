@@ -172,6 +172,12 @@ function assertHeadingForm(p, raw) {
     `${p}:${refDef + 1} 出現 link／footnote reference definition。\n`
     + '⚠️ 它在 GitHub 上完全不顯示，卻算進內文長度——可以用來灌大契約、讓比例檢查失效。\n'
     + '   契約檔請直接寫行內連結。');
+  // ⚠️ HTML entity 也算「畫面看不見、長度算得到」（Codex #384 r37）：
+  //    `&ZeroWidthSpace;` 在原始碼是 18 個字元、在畫面上是 0 個 ⇒ 一樣能撐大比例的分母。
+  const entity = raw.split('\n').findIndex((l) => /&(?:[a-zA-Z][0-9a-zA-Z]{1,30}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/u.test(l));
+  assert.equal(entity, -1,
+    `${p}:${entity + 1} 出現 HTML entity。\n`
+    + '⚠️ 它在原始碼佔位、在畫面上可能什麼都不是——同樣可以灌大內文長度。直接寫字元本身。');
   const invisible = raw.split('\n').findIndex((l) => /[\u200b-\u200f\u2028\u2029\ufeff\u00ad]/u.test(l));
   assert.equal(invisible, -1,
     `${p}:${invisible + 1} 出現零寬／不可見字元。\n`
@@ -268,14 +274,20 @@ const MAX_SUMMARY_RATIO = 0.6;
  * 於是「摘要要比內文短 40%」這道門就被撐開，索引可以貼回整段可見內文。
  * ⇒ 連結只算 label、圖片整個不算（alt 才顯示但不保證）、行內 code 只算內容、
  *   強調記號與表格框都不算。
- * ⚠️ 誠實劃界：這是**近似**，不是渲染器。它擋的是「用不可見的原始碼撐大分母」，
- * 不保證跟 GitHub 算出來的字數一致。
+ * ⚠️ **誠實劃界（Codex #384 r37 逐條打掉我上一版的宣稱）**：
+ *   ・**不是**「連結只算 label」——巢狀超過一層括號的目的地仍會有殘留被算成可見文字。
+ *   ・**不是**「擋得住所有用不可見原始碼撐分母的手法」——例如契約 body 裡的 HTML entity
+ *     （`&ZeroWidthSpace;`）在這裡算成 18 個字，在畫面上是 0 個。
+ *   ・**不是**「行內 code 只算內容」——`|_*~` 這些字元在 code 裡也會被一起刪掉。
+ * 它能說的只有：**已知的幾種撐分母手法算不進來**。要更準就得接真正的 Markdown 渲染器。
  * @param {string} md
  */
 function visibleLen(md) {
   return String(md)
-    .replace(/!\[[^\]]*\]\([^)]*\)/gu, '')          // 圖片：整個不算
-    .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')       // 連結：只算 label
+    // ⚠️ 目的地可以含**平衡括號**（`…/report(section)?utm=…` 是正常網址，Codex #384 r37）：
+    //    只吃到第一個 `)` 的話，後面的查詢參數會被當成可見文字，分母又被撐大。
+    .replace(/!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)/gu, '')       // 圖片：整個不算
+    .replace(/\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/gu, '$1')    // 連結：只算 label
     .replace(/\[([^\]]*)\]\[[^\]]*\]/gu, '$1')     // reference-style 同上
     .replace(/^\[[^\]]+\]:.*$/gmu, '')               // reference definition：不顯示
     .replace(/[`*_~|]/gu, '')                        // 記號與表格框
@@ -301,6 +313,8 @@ const BODY_LABEL = '**記得同步這裡**：';
  */
 const MANIFEST = {
   'docs/contracts/前端功能.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '前端功能',
     rules: [
       '月度回顧總覽卡',
       '訂閱續費日自動推進',
@@ -333,6 +347,8 @@ const MANIFEST = {
     ],
   },
   'docs/contracts/收支記帳與匯入.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '收支記帳與匯入',
     rules: [
       'PDF 逐列抽取器',
       '信用卡負數交易的繳款與退款判斷',
@@ -391,6 +407,8 @@ const MANIFEST = {
     ],
   },
   'docs/contracts/投資與SEC.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '投資與 SEC',
     rules: [
       'SEC 官方指標挑值',
       'SEC currentDebt 流動債務',
@@ -485,8 +503,10 @@ function slug(h) {
  * （r30 我照文法推，把「普通文字行」也當成會中斷，當場誤紅 29 條真實索引——
  * 實測結果是普通文字與兩格縮排的續行**不會**中斷，GFM 把它們渲染成單格列）。
  *
- * ⚠️ 誠實劃界：這是**列舉**，而列舉不會完備。它涵蓋 CommonMark 的容器／葉區塊起始，
- * 每一條都有實測與突變；但「所有能中斷表格的寫法」不是這份清單能保證的。
+ * ⚠️ **誠實劃界（Codex #384 r37 指出我上一版把界線寫得比能力寬）**：
+ * 這是一份**列舉**，而列舉不會完備。所以這道檢查能說的只有
+ * 「**沒有踩到這幾種已知的中斷寫法**」，**不是**「這一列一定渲染在 `<td>` 裡」。
+ * 每一條都有 GitHub `/markdown` 實測與突變；清單以外的寫法它看不到。
  */
 const TABLE_BREAKERS = [
   [/^\s*$/u, '空行'],
@@ -494,7 +514,8 @@ const TABLE_BREAKERS = [
   [/^ {0,3}[-*+][ \t]/u, '清單'],
   [/^ {0,3}\d{1,9}[.)][ \t]/u, '編號清單'],
   [/^ {0,3}>/u, '引用'],
-  [/^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/u, '分隔線'],
+  // ⚠️ 分隔線的記號之間可以有空白（`_ _ _` 是合法的——Codex #384 r37）
+  [/^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$/u, '分隔線'],
   [/^ {0,3}={2,}[ \t]*$/u, 'Setext 底線'],
   [/^(?: {4,}|\t)\S/u, '四格縮排（程式碼區塊）'],
 ];
@@ -520,13 +541,22 @@ const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md
  *     （包進 code span 就只渲染成 `<code>`，不是連結）
  *   ・第一格必須有**可見文字**：不准空連結 `[](x)`、不准圖片、不准 HTML entity、不准隱形字元
  *   ・整列不准 `<`
- * ⚠️ **它守的是形狀，不是「所有繞法」**：能證明的是「這一列在畫面上是一列可點的索引」，
- * 證明不了「摘要寫得對」。第一格刻意**不要求等於 manifest 的規則名**——
+ * ⚠️ **它守的是形狀，不是「所有繞法」**：能說的只有「**沒有踩到下列已知的失真寫法**」，
+ * **不是**「這一列在畫面上一定是可點的索引」（那要接渲染器才證得了），也證明不了「摘要寫得對」。第一格刻意**不要求等於 manifest 的規則名**——
  * 真實索引列合法地含行內 code（`SEC 官方指標候選 tag／\`selectMetric\``），
  * 規格要對得上現況才有用。
  */
 function indexRows() {
   const lines = read('AGENTS.md').split('\n');
+  // 從每一條表頭分隔線開始逐行追「表格還活著嗎」：breaker 讓它死，新的分隔線讓它復活。
+  const liveTableRows = new Set();
+  let live = false;
+  lines.forEach((l, n) => {
+    if (/^ {0,3}\|[ :|-]*-{3,}[ :|-]*\|?\s*$/u.test(l)) { live = true; return; }
+    if (!live) return;
+    if (TABLE_BREAKERS.some(([re2]) => re2.test(l))) { live = false; return; }
+    if (l.startsWith('|')) liveTableRows.add(n);
+  });
   const rows = [];
   lines.forEach((line, i) => {
     if (!LINK_RE.test(line)) return;
@@ -535,21 +565,16 @@ function indexRows() {
     assert.ok(line.startsWith('|'),
       `${where} 的索引列沒有從行首的 \`|\` 開始：${shown}…\n`
       + '⚠️ 縮排會讓 GitHub 把它移出表格（四格縮排更會變成程式碼區塊）。');
-    // ①前一行不可以**中斷表格**。
-    //    ⚠️ 判準是拿 GitHub 自己的 `/markdown` API 校準出來的，不是照文法推的：
-    //      ・前一行空白 ⇒ 渲染成 `<p>| 第二列 | y |</p>`（**掉出表格**，Codex r29 實證）
-    //      ・前一行縮排四格 ⇒ 變成程式碼區塊
-    //      ・前一行是**普通文字** ⇒ 表格照樣繼續（GFM 把那行渲染成單格列）
-    //    我第一版寫成「前一行必須是表格列」，那會誤紅 29 條真實索引——
-    //    **照文法推出來的判準，跟 GitHub 實際做的事不一樣。**
-    const prev = lines[i - 1] || '';
-    const breaker = TABLE_BREAKERS.find(([re2]) => re2.test(prev));
-    assert.ok(!breaker,
-      `${where} 的索引列前一行會**中斷表格**（${breaker && breaker[1]}）：${prev.trim().slice(0, 50)}…\n`
-      + `   受影響的索引列：${shown}…\n`
-      + '⚠️ 表格一斷，後面的索引列會變成 `<p>`／`<li>`／blockquote——**畫面上不再是索引**，\n'
-      + '   而考題照樣讀得到 ⇒ 索引形同虛設（Codex #384 r29／r35 實證：插一個 `###` 之後\n'
-      + '   36 個連結只剩 9 個還在 `<td>` 裡）。');
+    // ①這一列必須落在**還活著的表格**裡。
+    //    ⚠️ **表格狀態不是「前一行的狀態」**（Codex #384 r37）：先插一個清單、再接一行普通續文，
+    //    前一行看起來無害，但表格早在更前面就斷了——**普通續文不會讓它重新接回**。
+    //    ⇒ 從表頭分隔線開始逐行追狀態：遇到 breaker 就死，遇到新的分隔線才復活。
+    //    ⚠️ breaker 那張表是拿 GitHub `/markdown` 一種一種試出來的，不是照文法推的
+    //    （r30 我照文法推，把「普通文字行」也當成會中斷，當場誤紅 29 條真實索引）。
+    assert.ok(liveTableRows.has(i),
+      `${where} 的索引列**不在活著的表格裡**：${shown}…\n`
+      + '⚠️ 表格一斷，後面的索引列會變成 `<p>`／`<li>`／blockquote——畫面上不再是索引，\n'
+      + '   而考題照樣讀得到 ⇒ 索引形同虛設。表格中間要寫說明，請放到表格外面。');
     // ②不准 raw HTML 與隱形字元
     assert.ok(!line.includes('<'),
       `${where} 的索引列出現 \`<\`：${shown}…\n`
@@ -592,6 +617,9 @@ function indexRows() {
     // ④第二格結尾必須是**沒被跳脫、沒被包起來**的契約連結
     const m2 = /** @type {RegExpExecArray} */ (LINK_RE.exec(line));
     const at = line.indexOf(m2[0]);
+    assert.notEqual(line[at - 1], '!',
+      `${where} 的契約連結是**圖片**（前面有驚嘆號）：${shown}…\n`
+      + '⚠️ GitHub 會渲染成圖片，不是前往契約的連結。');
     assert.notEqual(line[at - 1], '\\',
       `${where} 的契約連結被反斜線跳脫了：${shown}…\n`
       + '⚠️ GitHub 只會顯示字面文字，**點不了** ⇒ 索引指不到契約（Codex #384 r29 實測）。');
@@ -809,10 +837,16 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路�
       + '⚠️ 沒有這句話，契約與路由表就只能靠人記得對應——那正是這支 PR 在修的病。');
     const row = rows.find((l) => l.includes(`](${base})`));
     assert.ok(row, `README 路由表沒有指向 ${base} 的那一列`);
+    // ⚠️ **精確相等，不是 startsWith**（Codex #384 r37）：把頁首「前端功能」改成「前端」
+    //    照樣過——**題目寫「精確」而實作是前綴比對**，那本身就是一句不誠實的話。
+    //    canonical 名稱宣告在 manifest，三邊都精確對它。
     const domain = (row.split('|')[1] || '').trim();
-    assert.ok(domain.startsWith(declared[1]),
-      `${file} 頁首宣告自己屬於「${declared[1]}」列，但 README 指向它的那一列叫「${domain.slice(0, 30)}」。\n`
-      + '⚠️ 契約指錯路由列 ⇒ 讀者照頁首去看的是別的領域的責任檔清單。');
+    assert.equal(declared[1], MANIFEST[file].domain,
+      `${file} 頁首宣告的領域名「${declared[1]}」不等於 manifest 宣告的「${MANIFEST[file].domain}」。`);
+    assert.ok(domain === MANIFEST[file].domain || domain.startsWith(`${MANIFEST[file].domain}（`),
+      `README 指向 ${base} 的那一列叫「${domain.slice(0, 30)}」，`
+      + `但 manifest 宣告的領域名是「${MANIFEST[file].domain}」。\n`
+      + '⚠️ 三邊要對同一個 canonical 名稱；README 第一格只准是它、或它後面接一個括號補充。');
   }
 });
 
