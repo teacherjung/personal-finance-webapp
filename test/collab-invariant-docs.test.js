@@ -244,12 +244,47 @@ test('欄位閘｜**假欄位名不可以冒充真欄位**（`非實作者` 也�
     `全部是假欄位名卻通過了（實得 ${problems.length} 條問題）——欄位抽取沒有錨定行首`);
 });
 
-test('欄位閘｜括號裡藏第二個角色 → 看不出是誰（不可以被剝成單一角色）', () => {
-  for (const sneaky of ['Claude（Codex）', 'Claude (Codex)', 'Codex（Claude 也看了）']) {
-    const problems = problemsOf(bodyWith(sneaky, 'Codex'));
+test('欄位閘｜括號裡藏第二個角色 → 看不出是誰（含全形與零寬藏法）', () => {
+  // ⚠️ r2 只擋得住半形寫法：括號內的檢查用**原字串**，於是全形 `（Ｃｏｄｅｘ）` 與
+  //    零寬 `（Co\u200bdex）` 都溜過去——括號被整段剝掉，剩下乾淨的 `Claude`（Codex #379 r3）。
+  //    根因是「同一個字串有兩種形式在流動」。現在 NFKC ＋ 去除 \p{Cf} 做在**最前面、只做一次**。
+  for (const sneaky of [
+    'Claude（Codex）', 'Claude (Codex)', 'Codex（Claude 也看了）',
+    'Claude（Ｃｏｄｅｘ）',          // 全形
+    'Claude（Co\u200bdex）',        // 零寬空白插在中間
+    'Ｃｌａｕｄｅ（Ｃｏｄｅｘ）',    // 兩邊都全形
+  ]) {
+    const problems = problemsOf(bodyWith(sneaky, 'William'));
     assert.ok(problems.length > 0,
-      `「${sneaky}」被剝成單一角色而通過——括號註記剝除不可以把第二個角色一起剝掉`);
+      `「${sneaky}」被剝成單一角色而通過——括號內的檢查必須看**正規化後**的字串`);
   }
+});
+
+test('欄位閘｜正規化之後，換個字形不能變成另一個人（自審檢查才是重點）', () => {
+  // 把 NFKC 提前的副作用：裸全形 `Ｃｌａｕｄｅ` 現在會被接受（r2 版是 fail-closed 擋掉）。
+  // **那是刻意的**——擋掉只是「看不懂所以擋」，接受並正規化才能認出「這兩欄其實是同一個人」。
+  for (const [impl, rev, label] of [
+    ['Ｃｌａｕｄｅ', 'Claude', '全形 vs 半形'],
+    ['Cla\u200bude', 'Claude', '零寬 vs 乾淨'],
+    ['ＣＬＡＵＤＥ', 'claude', '全形大寫 vs 半形小寫'],
+  ]) {
+    const problems = problemsOf(bodyWith(impl, rev));
+    assert.ok(problems.some((x) => x.includes('由寫它的人放行')),
+      `「${label}」沒有被判成同一人——換個字形就能自審放行`);
+  }
+  assert.deepEqual(problemsOf(bodyWith('Ｃｌａｕｄｅ', 'Codex')), [],
+    '全形寫法配上不同角色被誤擋了——噪音型誤擋會讓人乾脆繞過這道閘');
+});
+
+test('欄位閘｜有序清單是合法填法，引用範例不是', () => {
+  const rows = (bullet) => REQUIRED_FIELDS
+    .map((f, i) => `${bullet(i)} **${f}**：${f === '實作者' ? 'Claude' : f === '獨立審查者' ? 'Codex' : '無'}`)
+    .join('\n');
+  assert.deepEqual(problemsOf(rows((i) => `${i + 1}.`)), [],
+    '有序清單 `1. **實作者**：` 被誤擋了——用 1. 而不是 - 顯然不是想規避什麼，'
+    + '而噪音型誤擋會讓人乾脆繞過這道閘');
+  assert.ok(problemsOf(rows(() => '> -')).length >= REQUIRED_FIELDS.length,
+    '引用區塊（`> - **實作者**：`）被當成真的填寫了——那是引用範例，不該滿足這道閘');
 });
 
 test('trailer 格式要涵蓋三個角色（模板允許 William 當審查者，格式卻不允許＝逼人寫假的）', () => {

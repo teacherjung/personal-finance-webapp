@@ -53,7 +53,9 @@ export function fieldValue(body, field) {
   //    也會命中——整份 PR 說明可以一個真欄位都沒有，卻被判「五欄齊全」＝機械閘 fail-open。
   //    允許的形狀：行首可有 `-`／`*` 項目符號與空白，欄名可被 `**`／`__` 包住，然後才是冒號。
   const esc = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // 欄名含「，」等字元，仍統一跳脫
-  const re = new RegExp(`^[^\\S\\n]*(?:[-*+][^\\S\\n]*)?(?:\\*\\*|__)?${esc}(?:\\*\\*|__)?[^\\S\\n]*[:：][^\\S\\n]*(.*)$`, 'm');
+  //   ⚠️ 也接受有序清單 `1. **實作者**：`（Codex #379 r3 記錄項）——**噪音型誤擋會讓人乾脆繞過這道閘**，
+  //   而「用 1. 而不是 -」顯然不是想規避什麼。引言符號 `>` 刻意**不接受**：那是引用範例，不該滿足閘。
+  const re = new RegExp(`^[^\\S\\n]*(?:(?:[-*+]|\\d+[.)])[^\\S\\n]*)?(?:\\*\\*|__)?${esc}(?:\\*\\*|__)?[^\\S\\n]*[:：][^\\S\\n]*(.*)$`, 'm');
   const m = clean.match(re);
   return m ? m[1].trim().replace(/^\*+|\*+$/g, '').trim() : '';
 }
@@ -68,15 +70,23 @@ export function fieldValue(body, field) {
  * @param {string} raw @returns {string | null}
  */
 export function canonicalRole(raw) {
-  const bare = String(raw || '').replace(/[`*_~]/g, '');   // markdown 裝飾
-  // ⚠️ **括號裡若藏著第二個角色就不算單一角色**（Codex #379 r2 Medium①）：
-  //    「Claude（Codex）」剝掉括號會變成乾淨的 `Claude`，與「獨立審查者：Codex」搭配就整份通過——
-  //    但那個欄位實際上提到了兩個角色，語意上正是「看不出是誰」。
-  for (const inner of bare.match(/[（(][^）)]*[）)]/g) || []) {
+  // ⚠️ **正規化要做在最前面、只做一次**（Codex #379 r3 Medium）：
+  //    r2 版只把外層正規化、括號內的檢查用原字串，於是 `Claude（Ｃｏｄｅｘ）`（全形）與
+  //    `Claude（Co\u200bdex）`（零寬）都溜過去——括號被整段剝掉，剩下乾淨的 `Claude`。
+  //    根因是「同一個字串有兩種形式在流動」。NFKC 把全形折成半形（連全形括號與冒號一起），
+  //    `\p{Cf}` 掃掉零寬與其他格式控制字元；**之後所有判斷都只看正規化後的字串**。
+  const bare = String(raw || '')
+    .normalize('NFKC')
+    .replace(/\p{Cf}/gu, '')                   // 零寬空白／連字控制字元
+    .replace(/[`*_~]/g, '');                    // markdown 裝飾
+  // **括號裡若藏著第二個角色就不算單一角色**（Codex #379 r2 Medium①）：
+  //   「Claude（Codex）」剝掉括號會變成乾淨的 `Claude`，與「獨立審查者：Codex」搭配就整份通過——
+  //   但那個欄位實際上提到了兩個角色，語意上正是「看不出是誰」。
+  for (const inner of bare.match(/\([^)]*\)/g) || []) {
     if (ROLES.some((r) => new RegExp(r, 'i').test(inner))) return null;
   }
   const t = bare
-    .replace(/[（(][^）)]*[）)]/g, '')            // 括號註記（「Claude（已看過）」）
+    .replace(/\([^)]*\)/g, '')                 // 括號註記（「Claude（已看過）」；NFKC 後全形括號已折成半形）
     .replace(/\s+/g, '')                        // 空白
     .trim();
   if (!t) return null;
