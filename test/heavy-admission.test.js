@@ -388,8 +388,12 @@ test('行為題｜/api/import 與 /api/ib/sync 真的被管住（本 PR 的招�
     for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
     assert.equal(heavyAdmissionInFlightForTest(), 1, '前提：第一件要先佔住名額');
     for (const route of ['/api/import', '/api/ib/sync']) {
+      // ⚠️ 一定要帶 timeout：這題沒過的時候，請求會直接進 handler 然後卡在 `held` 上——
+      //    實測突變時整題掛了 300 秒才失敗。CI 上那是掛住的 job，不是紅燈。
       const r = await fetch(`${urlOf(server)}${route}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          signal: AbortSignal.timeout(3000) })
+        .catch((e) => { assert.fail(`${route} 沒有被入場管制擋住（請求直接進了 handler 並卡住：${e?.name}）`); });
       await r.text();
       assert.equal(r.status, 503, `${route} 沒有被入場管制擋住——它可以繞過名額直接開工`);
       assert.equal(r.headers.get('retry-after'), '10', `${route} 的 503 沒帶 Retry-After，前端不知道多久後重試`);
