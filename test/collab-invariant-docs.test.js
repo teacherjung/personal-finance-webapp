@@ -15,11 +15,11 @@
 // （`scripts/check-pr-collab-fields.js`），本檔也把那支腳本的判斷釘住。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
+import { problemsOf, fieldValue, canonicalRole, staleBaseProblems, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,6 +144,59 @@ test('欄位抽取｜HTML 註解裡的同名字串不算數', () => {
   const body = '<!-- - **實作者**：Codex -->\n- **實作者**：Claude';
   assert.equal(fieldValue(body, '實作者'), 'Claude',
     '註解沒有被剝掉——註解裡的值會蓋過真正填的值');
+});
+
+// ── 基準版本必須釘住目前 head（Codex #382 r4）──────────────────
+
+const HEAD = 'f76d12b20cc55f6f608ce043051e2fa4a969cffe';
+/** @param {string} sha */
+const bodyWithBase = (sha) => [
+  '- **實作者**：Claude',
+  '- **獨立審查者**：Codex',
+  `- **基準版本**：\`${sha}\``,
+  '- **預計修改的共享檔案**：無',
+  '- **這支若完全失敗，最糟失去什麼**：無',
+].join('\n');
+
+test('欄位閘｜基準版本對得上目前 head → 通過', () => {
+  assert.deepEqual(staleBaseProblems(bodyWithBase('f76d12b'), HEAD), []);
+  assert.deepEqual(staleBaseProblems(bodyWithBase(HEAD), HEAD), [], '寫完整 40 碼也要算對');
+});
+
+test('欄位閘｜**審完之後又推了新 commit** → 不通過（這個欄位存在的全部理由）', () => {
+  // ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫它是「審查要釘住的 commit，
+  //    分支被推過之後審查結論就失效了」，但閘只檢查非空。
+  //    最常見的路徑（審完 A、作者再推 B，完全不必是惡意）就讓「已審查」變成過期的宣稱。
+  const problems = staleBaseProblems(bodyWithBase('4cbef24'), HEAD);
+  assert.ok(problems.length > 0, '基準版本是舊 SHA 卻通過了——那這個欄位等於裝飾');
+  assert.match(problems[0], /目前的 head/);
+});
+
+test('欄位閘｜基準版本裡**每一個** SHA 都要是目前 head（順序不該影響結果）', () => {
+  // ⚠️ Codex #382 r5：第一版只抓第一段十六進位。
+  //    `d6c4fbd / f76d12b` 通過、反過來寫卻被拒 ⇒ 結果取決於排列順序，那不是判準。
+  for (const v of ['f76d12b / d6c4fbd', 'd6c4fbd / f76d12b']) {
+    assert.ok(staleBaseProblems(bodyWithBase(v).replace(/`/g, ''), HEAD).length > 0,
+      `「${v}」混了舊 SHA 卻通過了`);
+  }
+});
+
+test('欄位閘｜顯示值更新、連結還指著舊 commit → 不通過（很常見的手滑）', () => {
+  const link = '[d6c4fbd](https://github.com/x/y/commit/f76d12b20cc55f6f608ce043051e2fa4a969cffe)';
+  assert.ok(staleBaseProblems(bodyWithBase(link).replace(/`/g, ''), HEAD).length > 0,
+    '連結指著舊 commit 卻通過了——這正是這個欄位要防的東西');
+});
+
+test('欄位閘｜不是合法 SHA 的長十六進位串 → 不通過', () => {
+  assert.ok(staleBaseProblems(bodyWithBase(HEAD + 'a').replace(/`/g, ''), HEAD).length > 0,
+    '41 碼十六進位（不是合法 SHA）卻通過了');
+});
+
+test('欄位閘｜基準版本填了看不出 SHA 的東西 → 不通過（不猜）', () => {
+  for (const junk of ['（待補）', 'main', '最新版', '']) {
+    assert.ok(staleBaseProblems(bodyWithBase(junk).replace(/`/g, ''), HEAD).length > 0,
+      `基準版本填「${junk}」被放行了`);
+  }
 });
 
 // ── 角色解析不可 fail-open（Codex #379 r1 High①）─────────────────
@@ -315,4 +368,147 @@ test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤�
   assert.ok(cyr.length > 0, '西里爾同形字冒充角色名沒有被擋');
   assert.deepEqual(problemsOf(bodyWith('Claude（已看過）', 'Codex')), [],
     '中文括號註記被誤擋——噪音型誤擋會讓人乾脆繞過這道閘');
+});
+
+// ── CI 的協作欄位閘（2026-08-02）─────────────────────────────
+
+
+const GATE_WF = '.github/workflows/collab-fields.yml';
+const WF_DIR = '.github/workflows';
+
+/**
+ * 迷你 YAML 讀取器——**只夠讀我們自己寫的 workflow**（無 anchor、無多行純量、無引號逃逸）。
+ * 本專案零執行時相依，不裝 YAML 套件；而這裡需要的是「把形狀讀出來」，不是通用剖析。
+ *
+ * ⚠️ **為什麼非得讀出整個形狀**（r2 的教訓）：r2 版只鎖 `run:` 那一行與 `continue-on-error`，
+ * Codex 立刻示範了五種「閘根本沒跑、考題卻 30/30 全綠」的寫法——
+ * job 加 `if: ${{ false }}`／step 加 `if: ${{ false }}`／`needs:` 一個會失敗的前置 job／
+ * 自訂 `shell` 在外層吞退出碼／更早的 step 用 `actions/github-script` 把腳本覆寫成 `process.exit(0)`。
+ * （被 skip 的 job，GitHub 對 required check 回報的是 **Success**。）
+ *
+ * **列舉這些寫法補不完**——xlsx 護欄已經證明過列舉會連漏三輪。
+ * 所以改成**關門**：解析成物件，整個形狀 `deepEqual` 一份預期值。多一個 key、少一個 key、
+ * 多一個 step、step 換順序，全部紅。要改這道閘的形狀＝**必須刻意改考題**。
+ * @param {string} text
+ */
+function parseYaml(text) {
+  const lines = text.split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
+  let i = 0;
+  const indentOf = (/** @type {string} */ l) => (/^ */.exec(l) || [''])[0].length;
+
+  /** @param {number} indent @returns {any} */
+  function block(indent) {
+    if (/^\s*-\s/.test(lines[i])) {
+      const out = [];
+      while (i < lines.length && indentOf(lines[i]) === indent && /^\s*-\s/.test(lines[i])) {
+        const rest = (/^\s*-\s*(.*)$/.exec(lines[i]) || ['', ''])[1];
+        lines[i] = ' '.repeat(indent + 2) + rest;
+        out.push(block(indent + 2));
+      }
+      return out;
+    }
+    /** @type {Record<string, any>} */
+    const out = {};
+    while (i < lines.length && indentOf(lines[i]) === indent && !/^\s*-\s/.test(lines[i])) {
+      const m = /^\s*([^:]+):\s*(.*)$/.exec(lines[i]);
+      assert.ok(m, `workflow 有這支迷你讀取器看不懂的一行（請改回單純的 key: value）：${lines[i]}`);
+      const key = m[1].trim();
+      const val = m[2].trim();
+      i += 1;
+      if (val !== '') { out[key] = val; continue; }
+      out[key] = (i < lines.length && indentOf(lines[i]) > indent) ? block(indentOf(lines[i])) : null;
+    }
+    return out;
+  }
+  const doc = block(0);
+  assert.equal(i, lines.length, `workflow 沒被完整讀完（停在第 ${i + 1} 行）：${lines[i]}`);
+  return doc;
+}
+
+/**
+ * 這道閘唯一合法的**整份 workflow** 形狀。改它＝刻意的決定，不是順手。
+ *
+ * ⚠️ **為什麼是整份、不是只有那個 job**（r3 的教訓，同型錯誤第三次）：
+ * r2 我把門關在 `run:` 那一行 → job 的形狀還敞開；
+ * r3 我把門關在 job 上 → **workflow 根層還敞開**。Codex 實測在根層加：
+ *
+ *     defaults:
+ *       run:
+ *         shell: bash -c 'bash "$1" || true' -- {0}
+ *
+ * 內層 `exit 7` 被轉成 0、閘永遠放行，而考題 29/29 全綠——因為 job 物件確實一模一樣。
+ * **每次只關一層，外面那層就是下一個洞。** 所以改成整份 deepEqual：
+ * 根層多一個 `defaults`／`env`／`concurrency`，或 `on` 的形狀變了，全部紅。
+ *
+ * ⚠️ `types` 刻意比對**原始的 flow sequence 字串**：寫成 `types: opened, edited, …`
+ * （沒有方括號的純量）是合法 YAML 但語意不同，這樣比對就擋得住（r3 的 Low）。
+ */
+const EXPECTED_WORKFLOW = {
+  name: '協作欄位',
+  on: { pull_request: { types: '[opened, edited, reopened, synchronize]' } },
+  jobs: {
+    'collab-fields': {
+      name: '協作欄位（實作者 ≠ 獨立審查者）',
+      'runs-on': 'ubuntu-latest',
+      permissions: { contents: 'read', 'pull-requests': 'read' },
+      steps: [
+        { uses: 'actions/checkout@v4' },
+        { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
+        {
+          name: '協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）',
+          env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
+          run: 'node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
+        },
+      ],
+    },
+  },
+};
+
+test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列舉繞法）', () => {
+  assert.deepEqual(parseYaml(read(GATE_WF)), EXPECTED_WORKFLOW,
+    `${GATE_WF} 的形狀變了。這道閘只認一種合法形狀，因為「讓它看起來有跑、實際沒跑」的寫法列舉不完：\n`
+    + '  ・job 或 step 加 `if: ${{ false }}`（被 skip 的 job 在 required check 上回報 **Success**）\n'
+    + '  ・`needs:` 一個會失敗的前置 job\n'
+    + '  ・step 自訂 `shell`、或**根層 `defaults.run.shell`** 在外層吞掉退出碼\n'
+    + '  ・更早的 step 用 `actions/github-script` 把腳本覆寫成 `process.exit(0)`\n'
+    + '  ・`run:` 尾端接 `|| true`\n'
+    + '⚠️ `types` 少了 `edited` 也會在這裡紅——`pull_request:` 預設事件**不含 edited**，\n'
+    + '   少了它就能「合法五欄拿綠燈 → 編輯說明撤掉欄位 → commit 沒變、綠燈還在」。\n'
+    + '要改這道閘，請連同 EXPECTED_WORKFLOW 一起改——那是刻意的動作。');
+});
+
+
+test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', () => {
+  // ⚠️ 這題防兩個會「永遠卡住合併」的坑：
+  //    ①required check 按**名稱字串**比對——改了 name 沒改分支保護＝等一個永遠不會出現的 check。
+  //    ②GitHub 要求 required job name 在所有 workflow 之間唯一，否則有歧義（Codex #382 r2 Low）。
+  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  // ⚠️ **這裡刻意不用 parseYaml**（Codex #382 r4 Low）：那支迷你讀取器只夠讀我們自己寫的
+  //    `collab-fields.yml`（不支援 `run: |` 多行純量、anchor…）。拿它去掃**所有** workflow，
+  //    等於哪天有人在無關的 workflow 寫了一個 `run: |`，整套測試就紅——
+  //    考題不該對它管不著的檔案設下格式限制。名稱盤點只要「job 層的 name:」，用正則就夠。
+  /** @type {string[]} */
+  const names = [];
+  for (const f of readdirSync(join(ROOT, WF_DIR)).filter((f) => /\.ya?ml$/.test(f))) {
+    // 縮排不寫死四格（Codex #382 r5 Low）：合法 YAML 可以用別的縮排。
+    // `- name:`（step 的名字）因為 `name:` 前面有 `-` 而自然不會命中——只有 job 層的 key 會。
+    for (const m of read(`${WF_DIR}/${f}`).matchAll(/^[ \t]{2,8}name:\s*(.+)$/gm)) names.push(m[1].trim());
+  }
+  assert.ok(names.length >= 3, `只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
+  assert.deepEqual([...new Set(names)].sort(), [...names].sort(),
+    `有跨 workflow 撞名的 job：${names.join('｜')}\nGitHub 的 required check 按名稱比對，撞名會產生歧義並可能卡住合併。`);
+  for (const n of names) {
+    assert.ok(doc.includes(n),
+      `分支保護文件裡找不到 job 名稱「${n}」。\n`
+      + '兩邊名稱走散時，required check 會變成「等一個永遠不會出現的 check」＝永遠卡住合併。');
+  }
+});
+
+test('分支保護文件要記下「enforce_admins 必須開」與它的理由', () => {
+  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  assert.ok(doc.includes('enforce_admins'), '文件沒提 enforce_admins');
+  assert.ok(/逃生門.*強制力|強制力.*逃生門/.test(doc),
+    '文件沒記下那一課：**單一身分下，逃生門與強制力是同一個開關**。\n'
+    + '關掉 enforce_admins 不只 William 能繞過——三方共用同一個 token，'
+    + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });

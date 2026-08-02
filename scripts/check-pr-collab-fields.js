@@ -158,12 +158,49 @@ export function problemsOf(body) {
   return problems;
 }
 
-/** @param {string} pr @returns {string} */
-function fetchBody(pr) {
-  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body'], { encoding: 'utf8' });
+/** @param {string} pr @returns {{ body: string, head: string }} */
+function fetchPr(pr) {
+  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body,headRefOid'], { encoding: 'utf8' });
   const parsed = JSON.parse(out);
   if (!parsed || typeof parsed.body !== 'string') throw new Error('gh 回傳的形狀不對');
-  return parsed.body;
+  if (typeof parsed.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(parsed.headRefOid)) {
+    throw new Error('gh 沒有回傳合法的 headRefOid');
+  }
+  return { body: parsed.body, head: parsed.headRefOid };
+}
+
+/**
+ * 「基準版本」必須釘住**目前的 head**。
+ *
+ * ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫這個欄位是「審查要釘住的 commit，
+ * 分支被推過之後審查結論就失效了」，但閘只檢查它非空——於是最常見的路徑
+ * （**審完 A、作者再推 B**，完全不必是惡意）就讓「已審查」這件事變成過期的宣稱。
+ * 這正是這道閘存在的理由的核心：**規則靠記憶維持，就會斷**。
+ * @param {string} body @param {string} head @returns {string[]}
+ */
+export function staleBaseProblems(body, head) {
+  const raw = fieldValue(body, '基準版本').replace(/[`*_\s]/g, '');
+  // ⚠️ **抓「每一個」候選、而且要求全部都對**（Codex #382 r5 Medium）。
+  //    第一版只抓第一段十六進位，於是：
+  //      ・`d6c4fbd / f76d12b` 通過，反過來寫卻被拒——**結果取決於排列順序**
+  //      ・`[d6c4fbd](…/commit/f76d12b)` 通過——顯示值更新、連結還指著舊 commit，
+  //        這是**很常見的手滑**，正是這個欄位要防的東西
+  //      ・40 碼後面再多一個十六進位字元也通過（那根本不是合法 SHA）
+  //    判準改成：取**極大**的十六進位段（兩端都不是十六進位字元），長度 7–40 才算候選；
+  //    候選一個都沒有＝紅，任何一個不是目前 head 的前綴＝紅。
+  //    這與 #381 那支考題收斂到的判準是同一條：**「每一個都要對」，不是「有一個對」。**
+  const runs = (raw.match(/[0-9a-fA-F]+/g) || []).filter((r) => r.length >= 7);
+  const candidates = runs.filter((r) => r.length <= 40);
+  if (!runs.length) {
+    return [`「基準版本」讀不出 commit SHA（實得「${raw || '（空白）'}」）——至少要 7 碼十六進位`];
+  }
+  const bad = runs.filter((r) => r.length > 40 || !head.startsWith(r.toLowerCase()));
+  if (bad.length) {
+    return [`「基準版本」裡的 ${bad.map((b) => b.slice(0, 41)).join('、')} 不是這支 PR 目前的 head（${head.slice(0, 7)}）。\n`
+      + '    分支被推過之後，先前的審查結論就不再適用——請把欄位（**含連結網址**）改成目前的 head 再合併。'];
+  }
+  if (!candidates.length) return [`「基準版本」讀不出合法的 commit SHA（實得「${raw}」）`];
+  return [];
 }
 
 /** @param {string[]} argv */
@@ -173,16 +210,16 @@ export function main(argv) {
     console.error('用法：node scripts/check-pr-collab-fields.js <PR 編號>');
     return 2;
   }
-  /** @type {string} */ let body;
-  try { body = fetchBody(pr); }
+  /** @type {{ body: string, head: string }} */ let pull;
+  try { pull = fetchPr(pr); }
   catch (e) {
     // fail-closed：查不到不等於安全
     console.error(`協作欄位閘 PR #${pr}：查不清楚（${/** @type {any} */ (e)?.message}）——一律當成未通過。`);
     return 2;
   }
-  const problems = problemsOf(body);
+  const problems = [...problemsOf(pull.body), ...staleBaseProblems(pull.body, pull.head)];
   if (problems.length === 0) {
-    console.log(`協作欄位閘 PR #${pr}：五欄齊全、實作者 ≠ 獨立審查者。可繼續合併程序。`);
+    console.log(`協作欄位閘 PR #${pr}：五欄齊全、實作者 ≠ 獨立審查者、基準版本＝目前 head。可繼續合併程序。`);
     return 0;
   }
   console.error(`協作欄位閘 PR #${pr}：**未通過**\n` + problems.map((p) => `  ・${p}`).join('\n')

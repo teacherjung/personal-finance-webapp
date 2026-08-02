@@ -11,6 +11,11 @@
 #    render.yaml 用 `autoDeployTrigger: checksPass`，任何 required check 紅了就不會自動部署——
 #    要是讓「下一個大版本 Node 出了新狀況」擋住部署，連**安全更新**都上不去，那是本末倒置。
 #    它紅了要看、要處理，但不該有權力封住上線的路。
+#
+# ⚠️ **協作欄位閘在隔壁檔** `.github/workflows/collab-fields.yml`，不在這裡。
+#    原因是觸發條件不同：這裡的三關看**程式碼**（commit 一動才要重跑），
+#    那道閘看**PR 說明**，所以它必須額外訂閱 `edited` 事件。
+#    合在一起＝改幾個字的說明就重跑 1300+ 題兩輪（#382 r1 抓到的 High 的副作用）。
 name: CI
 
 on:
