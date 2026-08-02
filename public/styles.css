@@ -803,6 +803,82 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .cashflow-empty-state { max-width: 250px; }
 }
 
+/* ---------- 信用卡費森林工作面（UI3-2） ---------- */
+.credit-workspace { width: 100%; }
+.credit-head { margin-bottom: 20px; }
+.credit-controls {
+  display: flex; align-items: end; justify-content: space-between; gap: 22px;
+  margin: 0 0 18px; padding: 14px 16px;
+  background: rgba(255, 253, 246, .72); border-top: 2px solid var(--frame); border-bottom: 2px solid var(--frame);
+}
+.credit-control { flex: 0 0 220px; min-width: 0; }
+.credit-control label { font-size: 11.5px; font-weight: 700; }
+.credit-controls > p { color: var(--text-dim); font-size: 11.5px; line-height: 1.5; text-align: right; }
+.credit-overview-grid {
+  display: grid; grid-template-columns: minmax(0, .72fr) minmax(0, .72fr) minmax(0, 2fr);
+  gap: 14px; align-items: start; margin-bottom: 24px;
+}
+.credit-stat { position: relative; min-width: 0; overflow: hidden; padding: 17px 19px 16px; }
+.credit-stat::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 7px; background: var(--info);
+}
+.credit-stat[data-kind="spend"]::before { background: var(--neg); }
+.credit-stat h3, .credit-stat .stat, .credit-stat p { margin-left: 4px; }
+.credit-stat .stat { line-height: 1.2; white-space: nowrap; }
+.credit-stat p { color: var(--text-dim); font-size: 11.5px; line-height: 1.45; margin-top: 5px; }
+.credit-category-panel { min-width: 0; padding: 16px 18px; }
+.credit-category-head {
+  display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 12px;
+}
+.credit-category-head h2 { font-family: var(--serif); font-size: 17px; letter-spacing: 0; }
+.credit-category-head p { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+.credit-category-head .info-link { flex: 0 0 auto; color: var(--accent); font-size: 11.5px; }
+.credit-category-row { margin-bottom: 9px; }
+.credit-category-row:last-of-type { margin-bottom: 0; }
+.credit-category-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; }
+.credit-category-label > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.credit-category-label > span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.credit-category-bar { height: 8px; }
+.credit-category-empty { padding: 18px 0; }
+.credit-category-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.55; margin-top: 11px; }
+.credit-category-note .info-link { color: var(--accent); }
+.credit-ledger-section { margin-top: 0; }
+.credit-ledger-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.credit-ledger-head h2 { font-family: var(--serif); font-size: 19px; letter-spacing: 0; }
+.credit-ledger-head p { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+.credit-ledger th { white-space: nowrap; }
+.credit-empty-state { display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-align: left; }
+.credit-empty-state img {
+  width: 54px; height: 54px; border-radius: 50%; object-fit: cover; border: 2px solid var(--frame);
+}
+.credit-empty-state strong, .credit-empty-state span { display: block; }
+.credit-empty-state strong { color: var(--text); font-size: 13px; }
+.credit-empty-state span { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+
+@media (max-width: 900px) {
+  .credit-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .credit-category-panel { grid-column: 1 / -1; }
+}
+
+@media (max-width: 640px) {
+  .credit-controls { align-items: stretch; flex-direction: column; gap: 8px; padding-inline: 0; background: transparent; }
+  .credit-control { flex: none; width: 100%; }
+  .credit-controls > p { text-align: left; }
+  .credit-overview-grid { grid-template-columns: 1fr; gap: 7px; }
+  .credit-stat {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px;
+    min-height: 62px; padding: 11px 14px; box-shadow: 3px 3px 0 rgba(184, 148, 62, .3);
+  }
+  .credit-stat::before { width: 5px; }
+  .credit-stat h3, .credit-stat .stat, .credit-stat p { margin-left: 2px; }
+  .credit-stat .stat { margin-top: 0; }
+  .credit-stat .stat.sm { font-size: 20px; }
+  .credit-stat p { display: none; }
+  .credit-category-panel { grid-column: auto; margin-top: 7px; }
+  .credit-category-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .credit-empty-state { max-width: 260px; }
+}
+
 /* ---------- 證券交易頁（S3）：查詢工具列、分幣別合計卡內列、展開明細 ---------- */
 .sec-toolbar { display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
 .sec-toolbar > div { display: flex; flex-direction: column; gap: 6px; }
