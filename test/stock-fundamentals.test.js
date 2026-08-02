@@ -199,10 +199,43 @@ test('SEC 單季｜Q2 三個月值勝出，六個月 YTD 不冒充單季，也�
     periodStart: '2025-12-29',
     periodEnd: '2026-03-29'
   });
+  assert.equal(result.periods.latestQuarterBasis, 'per-metric');
   assert.ok(result.warnings.some(warning => (
     warning.code === 'YTD_EXCLUDED' && warning.metric === 'revenue'
   )));
   assert.notEqual(quarter.value, 1850 - 1100, 'Q4 不可用全年減 YTD 猜');
+});
+
+test('SEC 單季期間｜保留各列最新合法值，期間不齊時 payload 明示並警告', async () => {
+  const fixture = await loadFixture('fiscal-year-company.json');
+  fixture.companyFacts.facts['us-gaap'].NetIncomeLoss = {
+    units: {
+      USD: [{
+        start: '2026-03-30',
+        end: '2026-06-28',
+        val: 900,
+        accn: '0000900001-26-000003',
+        fy: 2026,
+        fp: 'Q3',
+        form: '10-Q',
+        filed: '2026-07-30'
+      }]
+    }
+  };
+  const result = parseSecCompanyFacts({
+    symbol: 'FRUIT',
+    submissions: fixture.submissions,
+    companyFacts: fixture.companyFacts
+  });
+
+  assert.equal(result.metrics.revenue.latestQuarter.periodEnd, '2026-03-29');
+  assert.equal(result.metrics.netIncome.latestQuarter.periodEnd, '2026-06-28');
+  assert.equal(result.periods.latestQuarterBasis, 'per-metric');
+  assert.ok(result.warnings.some(warning => (
+    warning.code === 'QUARTER_PERIOD_MISMATCH'
+      && /2026-03-29/.test(warning.message)
+      && /2026-06-28/.test(warning.message)
+  )));
 });
 
 test('SEC 候選 tag｜第一個不存在時使用下一個標準 tag，不讀公司 extension', async () => {
