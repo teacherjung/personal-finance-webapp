@@ -93,3 +93,30 @@ test('checksPass 的前提：CI 真的在 main 的每一個 commit 都跑（有�
   assert.doesNotMatch(ci, /^\s*paths(-ignore)?:/m,
     '有路徑過濾＝某些 commit 不會有 check，checksPass 會讓它們**靜默不部署**（比壞掉更難查）');
 });
+
+// ============================================================================
+// xlsx 的來源（William 2026-07-29 裁決）
+// ============================================================================
+
+test('xlsx 從原廠 CDN 裝，而且 lockfile 有 integrity 指紋（別「順手」改回 npm）', () => {
+  // 為什麼不用 npm 上的：npm 最新只到 0.18.5（SheetJS 三年多沒再發佈到 npm），
+  // 而那個版本有兩個 advisory——**上游早就修好了**（0.19.3／0.20.2），只是改由自家 CDN 發佈。
+  // `fixAvailable: false` 是「買不到」，不是「沒修好」。
+  //
+  // ⚠️ 這一題防的是「有人看到 package.json 裡是網址覺得怪，順手改回 ^0.18.5」。
+  //    改回去＝把兩個已修好的漏洞加回來。
+  const pkg = JSON.parse(read('package.json'));
+  assert.match(pkg.dependencies.xlsx, /^https:\/\/cdn\.sheetjs\.com\/xlsx-\d+\.\d+\.\d+\//,
+    'xlsx 必須指向 SheetJS 官方 CDN 的 tarball（見 docs/多人上線-施工計畫.md 裁決速查表③）');
+
+  const lock = JSON.parse(read('package-lock.json'));
+  const entry = Object.entries(lock.packages || {}).find(([k]) => k.endsWith('node_modules/xlsx'));
+  assert.ok(entry, 'lockfile 裡找不到 xlsx');
+  const [, v] = /** @type {any} */ (entry);
+  assert.match(String(v.resolved), /^https:\/\/cdn\.sheetjs\.com\//, 'lockfile 的 resolved 要是 CDN 網址');
+  // integrity 是這條路唯一的供應鏈保護：CDN 上的檔案被換掉 → 雜湊對不上 → npm ci 直接失敗。
+  assert.match(String(v.integrity), /^sha512-/,
+    'lockfile 一定要有 integrity 雜湊——沒有它，CDN 被換檔我們不會知道');
+  assert.ok(/^0\.(19\.[3-9]|19\.\d\d|[2-9]\d*\.)/.test(String(v.version)),
+    `xlsx 版本要 ≥ 0.19.3（兩個 advisory 的修正版），實際 ${v.version}`);
+});
