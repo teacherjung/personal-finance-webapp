@@ -255,30 +255,58 @@ test('角色正規化｜看不出來就回 null，不猜', () => {
  * 這正是本節在修的那個病，我在修它的同一支 PR 裡又犯一次。
  * ⇒ 真相只有一個地方：合併步驟本身。它提到幾道，AGENTS 的摘要就要點名幾道。
  */
-async function gatesInMergeSteps() {
+async function selfDeclaredGates() {
   const files = readdirSync(join(ROOT, 'scripts'))
     .filter((f) => f.startsWith('check-') && f.endsWith('.js'));
   const gates = [];
   for (const f of files) {
     const mod = await import(pathToFileURL(join(ROOT, 'scripts', f)).href);
-    if (mod.MERGE_GATE) gates.push({ file: `scripts/${f}`, ...mod.MERGE_GATE });
+    if (!mod.MERGE_GATE) continue;
+    const g = mod.MERGE_GATE;
+    // ⚠️ 形狀要驗（Codex #385 r11）：`MERGE_GATE = true` 原本也能通過，
+    //    那等於「自報」這件事本身沒有內容。
+    assert.equal(typeof g, 'object', `scripts/${f} 的 MERGE_GATE 不是物件（要 { name, why }）`);
+    for (const k of ['name', 'why']) {
+      assert.ok(typeof g[k] === 'string' && g[k].trim(),
+        `scripts/${f} 的 MERGE_GATE.${k} 要是非空字串——自報沒有內容就不算自報`);
+    }
+    gates.push({ file: `scripts/${f}`, ...g });
   }
   return gates;
 }
 
-test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS 的兩處摘要裡（#379 r1／#385 r9・r10）', async () => {
-  const gates = await gatesInMergeSteps();
-  assert.ok(gates.length >= 3,
-    `只掃到 ${gates.length} 道自報的閘。⚠️ 每一支合併閘腳本都要 \`export const MERGE_GATE\`——`
-    + '沒有這個標記就沒有人數得到它，文件漂了也不會紅。');
+/** 合併步驟區塊裡**實際被執行**的閘（`node scripts/xxx.js <N>`）。 */
+function gatesRunInMergeSteps() {
+  const whole = read('CODEX-REVIEW.md').replace(/<!--[\s\S]*?-->/g, '');
+  const start = whole.indexOf('合併也由 Codex 代執行');
+  assert.ok(start > 0, 'CODEX-REVIEW.md 找不到合併步驟區塊');
+  const stop = whole.indexOf('\n---', start);
+  const block = whole.slice(start, stop < 0 ? whole.length : stop);
+  return [...new Set([...block.matchAll(/node (scripts\/[\w-]+\.js) <N>/g)].map((m2) => m2[1]))];
+}
+
+// ## ⚠️ 誠實劃界：這份註冊表只管**盤點**，不管閘**有沒有用**
+//
+// 它保證的是「有幾道閘」這件事在腳本、合併步驟、AGENTS 摘要三邊一致。
+// 它**證明不了**某一道閘真的會擋——一支自報、文件同步、但實際永遠 `return 0` 的假閘照樣通過這題。
+// 閘的行為要靠各自的端到端考題（`merge-gate.test.js`／`review-verdicts-cli.test.js` 的假 `gh` 出口題）。
+// 這一點是 Codex #385 r11 要求寫明的，因為「有註冊表」很容易被誤讀成「閘都有效」。
+
+test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS 的兩處摘要裡（#379 r1／#385 r9・r10・r11）', async () => {
+  // ⚠️ **雙向集合相等**（Codex #385 r11）：只驗「自報者 → 步驟」的話，
+  //    複製一支真的閘、拿掉 `MERGE_GATE`、把指令加進步驟、文件完全不更新 ⇒ 34/34 全綠。
+  //    （原本還有一條 `gates.length >= 3` 的地板：加進第四支之後，
+  //      拿掉既有某支的標記照樣過——**會隨著新增而自己失效的下限，不是判準**。）
+  const gates = await selfDeclaredGates();
+  const declared = gates.map((g) => g.file).sort();
+  const run = gatesRunInMergeSteps().sort();
+  assert.deepEqual(declared, run,
+    '「自報是合併閘的腳本」與「合併步驟裡實際被執行的閘」對不起來。\n'
+    + `  自報：${declared.join('、') || '（無）'}\n`
+    + `  步驟裡實際跑：${run.join('、') || '（無）'}\n`
+    + '⚠️ 兩個方向都要擋：自報卻沒人跑＝「有腳本」會讓人以為守住了；\n'
+    + '   有人跑卻沒自報＝沒有人數得到它，文件漂了也不會紅。');
   const names = gates.map((g) => g.file.replace('scripts/', ''));
-  const steps = read('CODEX-REVIEW.md');
-  // ⚠️ 先確認步驟裡真的跑得到它（只在文件裡被提到不算——那是散文，不是程序）
-  for (const g of gates) {
-    assert.ok(steps.includes(`node ${g.file} <N>`),
-      `${g.file} 自報是合併閘（${g.name}），但 CODEX-REVIEW.md 的合併步驟裡沒有實際跑它。\n`
-      + '⚠️ 閘要嘛進程序、要嘛不要自報——「有腳本但沒人跑」比沒有還糟，它會讓人以為守住了。');
-  }
   const agents = read('AGENTS.md');
   for (const anchor of ['不論誰執行，一律走', '但四道不可跳過的守門要在這裡點名得出來']) {
     const i = agents.indexOf(anchor);

@@ -29,13 +29,13 @@
 // 退出碼：
 //   0＝複審結論通過（有人對目前 head 說「通過」，且沒有未撤銷的阻擋）
 //   1＝**複審結論未通過**——三種情形：①有未撤銷的阻擋 ②沒有任何針對目前 head 的正式通過
-//      ③有結論卻沒有合規的來歷標頭。（原本只寫「有未回應阻擋」，那是失真的——Codex #385 r2 Low）
+//      ③有留言用了 🤖 但標頭寫壞。（原本只寫「有未回應阻擋」，那是失真的——Codex #385 r2 Low）
+//      ⚠️ 「疑似結論卻沒帶標頭」**只印提醒、不影響退出碼**（r11 起，理由見 looksLikeVerdict）
 //   2＝查不清楚（fail-closed，比照協作欄位閘）
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
 
-/** 結論用詞 → 是不是阻擋。**只認這三種**，寫別的等於沒下結論（→ 查不清楚）。 */
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
  * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
@@ -46,6 +46,7 @@ import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
  */
 export const MERGE_GATE = { name: '複審結論取聯集', why: '任一審查者的阻擋未被同一位撤銷前都有效' };
 
+/** 結論用詞 → 是不是阻擋。**只認這三種**，寫別的等於沒下結論（→ 查不清楚）。 */
 export const VERDICTS = {
   通過: false,
   需修改後再審: true,
@@ -79,8 +80,14 @@ export function headerOf(body) {
   //    正規化後都變成 `Codex（）`＝同一位審查者 ⇒ 第二個 session 的「通過」
   //    就撤銷了第一個的阻擋——**#383 的核心病原樣重現**。
   if (!m[2].trim()) return null;
+  // ⚠️ **角色要走 `canonicalRole()`，不能收任意英文字**（Codex #385 r11）：
+  //    原本 `[A-Za-z]+` 照單全收，於是打錯字的 `Codeex` 會被當成**另一位正式審查者**——
+  //    它喊的停，正確的 `Codex` 說「通過」永遠撤銷不掉（同一位審查者才能撤銷），
+  //    變成一條**幽靈阻擋**；而且因為標頭「合法」，連 `hasBotMark()` 都不會點名它是壞標頭。
+  const role = canonicalRole(m[1]);
+  if (!role) return null;
   return {
-    role: m[1],
+    role,
     // 來源做 collapse whitespace：多打一個空白不該變成「另一個審查者」（那會多出一條永遠撤不掉的阻擋）
     source: m[2].trim().replace(/\s+/gu, ' '),   // 非空由下方 headerOf 尾端把關
     sha: m[3].toLowerCase(),
@@ -111,6 +118,21 @@ const STARTS_WITH_VERDICT = new RegExp(
   `^(?:${Object.keys(VERDICTS).join('|')})(?:\\s*$|\\s*[^\\p{L}\\p{N}\\s：:／、/])`, 'u');
 
 /**
+ * 這則留言**想用來歷標頭但寫壞了**——判準是出現 `🤖`（剝掉引用與 code 之後）。
+ *
+ * ⚠️ 這是**唯一還留在阻擋路徑上的文字判斷**，因為它的誤判面極小：
+ * 一則正文出現 `🤖` 的留言，幾乎不可能不是在試這個格式。
+ * 而它擋的是真實會發生的事——標頭打錯一個字，整則結論就被無視。
+ * @param {string} body
+ */
+export function hasBotMark(body) {
+  return stripFencesLoose(String(body || ''))
+    .replace(/^[^\S\n]*>.*$/gm, '')
+    .split('\n')
+    .some((l) => /🤖/u.test(l.replace(/(`+)[^`]*\1/gu, '')));
+}
+
+/**
  * 一則留言看起來是不是「有人在下結論」——用來抓「下了結論卻沒有合規標頭」的漏網。
  *
  * ## ⚠️ 先講清楚它在這道閘裡的位置：**它不是判準，是提示**
@@ -122,12 +144,13 @@ const STARTS_WITH_VERDICT = new RegExp(
  * ——擋它的是「沒有任何合規標頭的通過」，不是這個函式。
  *
  * 這個函式要防的是另一件事：**有人以為自己喊了停，但因為沒帶標頭而被無視。**
- * 抓到就一起擋下來並指出格式；抓不到，判準那條仍然成立。
- *
- * ⚠️ 但「只是提示」這個說法要講精確（Codex #385 r9 的修正）——**它命中就會 exit 1**，
- * 所以兩個方向的代價不對稱：
- *   ・**漏抓**：不會讓無標頭的留言取得任何效力，只是少掉一句格式提醒。**不是安全問題。**
- *   ・**誤擋**：會機械性擋住合併，是**可用性問題**——所以誤擋要當真的修（r9 抓到三個都修了）。
+ * 它命中時**只印一則提醒，不影響退出碼**——r11 起刻意如此，理由是兩個方向的代價完全不對稱：
+ *   ・**漏抓**：不會讓無標頭的留言取得任何效力，只是少掉一句提醒。**不是安全問題。**
+ *   ・**誤擋**：會機械性擋住合併，**相對 `main` 是實質退步**（原本人工確認不會卡住那些留言）。
+ * 而它連兩輪被 Codex 實測出誤擋正常留言（`## 如何合併兩個 reviewer state`、`通過／失敗：25／0`…），
+ * 其中三個還是我上一輪「修誤擋」時新造出來的。
+ * ⇒ **一個零安全價值、卻持續製造退步的阻擋條件，不該是阻擋條件。**
+ * 唯一還留在阻擋路徑上的文字判斷是 `hasBotMark()`（見上）。
  *
  * ## 判準倒過來：偵測「下結論這個動作」，不是比對「結論寫成什麼字」
  *
@@ -153,21 +176,6 @@ const STARTS_WITH_VERDICT = new RegExp(
  * ——Codex 自己評估這個代價可以接受（#385 r8），改個字或補標頭即可。
  * @param {string} body
  */
-/**
- * 這則留言**想用來歷標頭但寫壞了**——判準是出現 `🤖`（剝掉引用與 code 之後）。
- *
- * ⚠️ 這是**唯一還留在阻擋路徑上的文字判斷**，因為它的誤判面極小：
- * 一則正文出現 `🤖` 的留言，幾乎不可能不是在試這個格式。
- * 而它擋的是真實會發生的事——標頭打錯一個字，整則結論就被無視。
- * @param {string} body
- */
-export function hasBotMark(body) {
-  return stripFencesLoose(String(body || ''))
-    .replace(/^[^\S\n]*>.*$/gm, '')
-    .split('\n')
-    .some((l) => /🤖/u.test(l.replace(/(`+)[^`]*\1/gu, '')));
-}
-
 export function looksLikeVerdict(body) {
   const text = stripFencesLoose(String(body || ''))
     .replace(/^[^\S\n]*>.*$/gm, '');       // 引用別人的話不是自己的結論

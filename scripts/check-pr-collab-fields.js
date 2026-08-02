@@ -22,7 +22,6 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-/** 五個必填欄位。**這份清單是單一真相**——模板與 AGENTS.md 的文件分工表都照它。 */
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
  * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
@@ -33,6 +32,7 @@ import { pathToFileURL } from 'node:url';
  */
 export const MERGE_GATE = { name: '協作欄位', why: 'PR 說明五欄齊全且實作者 ≠ 獨立審查者' };
 
+/** 五個必填欄位。**這份清單是單一真相**——模板與 AGENTS.md 的文件分工表都照它。 */
 export const REQUIRED_FIELDS = [
   '實作者',
   '獨立審查者',

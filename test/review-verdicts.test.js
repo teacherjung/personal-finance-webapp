@@ -39,6 +39,20 @@ test('標頭｜結論只認三種寫法（寫別的＝沒下結論）', () => {
   }
 });
 
+test('⭐ 標頭｜角色打錯字 → 不算合法標頭（否則會生出撤不掉的幽靈阻擋）', () => {
+  // ⚠️ Codex #385 r11：原本角色是 `[A-Za-z]+` 照單全收。
+  //    `Codeex` 會被當成**另一位正式審查者**——它喊的停，正確的 `Codex` 說「通過」
+  //    永遠撤銷不掉（只有同一位審查者能撤銷），而且因為標頭「合法」，
+  //    連 `hasBotMark()` 都不會點名它是壞標頭 ⇒ **一條沒有人能解除的阻擋**。
+  for (const typo of ['Codeex', 'Cluade', 'Bot', 'Reviewer']) {
+    assert.equal(headerOf(head(typo, 'CLI', 'aabbccd', 1, '不可合併')), null,
+      `角色「${typo}」被當成合法審查者了`);
+  }
+  // 打錯字的標頭會落回「用了 🤖 但寫壞」那條阻擋，訊息看得懂
+  const { problems } = verdictProblems([c(head('Codeex', 'CLI', HEAD.slice(0, 7), 1, '不可合併'))], HEAD);
+  assert.ok(problems.some((p) => /🤖 記號、但標頭格式不合規/.test(p)), problems.join('｜'));
+});
+
 test('標頭｜只看**第一行**（把標頭藏在中間不算）', () => {
   const body = `## Claude 複審\n\n${head('Claude', 'CLI', 'aabbccd', 1, '通過')}`;
   assert.equal(headerOf(body), null, '標頭不在第一行卻被接受了——那就沒有「一眼看得出誰寫的」這件事');
