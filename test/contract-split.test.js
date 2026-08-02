@@ -35,7 +35,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -57,7 +57,13 @@ function read(p) {
   //    把整段契約包進 code fence，畫面上 anchor 就消失了，而考題原本看不見。
   // ⚠️ CommonMark 的 fence 有**兩種**（Codex #384 r6）：``` 與 ~~~。
   //    只剝一種＝用另一種包起來就能讓標題與 anchor 在畫面上消失，而考題還看得到。
-  return stripped.replace(/^```[\s\S]*?^```/gm, '').replace(/^~~~[\s\S]*?^~~~/gm, '');
+  const noFence = stripped.replace(/^```[\s\S]*?^```/gm, '').replace(/^~~~[\s\S]*?^~~~/gm, '');
+  // ⚠️ 剝完**不准有殘留的 fence 記號**（Codex #384 r7）：忘記關 fence 是正常維護手滑，
+  //    而 CommonMark 會把後面**整份文件**當成程式碼——標題與 anchor 全部消失，考題卻還看得到。
+  //    同 HTML 註解那條，判準是「剝完要乾淨」，不是「剝得掉的就好」。
+  assert.ok(!/^(?:```|~~~)/m.test(noFence),
+    `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。`);
+  return noFence;
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
@@ -223,15 +229,18 @@ function slug(h) {
     .replace(/ /g, '-');
 }
 
-const LINK_RE = /\[契約：[^\]]+\]\((docs\/contracts\/[^)#]+)#([^)]+)\)/;
+const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md)#([^)]+)\)/;
 
 /** AGENTS.md 裡所有「指向契約檔」的同步點列。 */
 function indexRows() {
+  // ⚠️ 列判準放寬到「trim 之後以 `|` 開頭」，連結目標**相對 repo 根解析**（Codex #384 r7）：
+  //    合法的無空格表格列＋`./docs/contracts/…` 都是等價寫法，字面比對認不出來，
+  //    於是「一條規則剛好一列」在 AGENTS 這一側形同虛設。
   return read('AGENTS.md').split('\n')
-    .filter((l) => l.startsWith('| ') && LINK_RE.test(l))
+    .filter((l) => l.trim().startsWith('|') && LINK_RE.test(l))
     .map((line) => {
       const m = /** @type {RegExpExecArray} */ (LINK_RE.exec(line));
-      return { line, file: m[1], anchor: m[2] };
+      return { line, file: normalize(m[1]), anchor: m[2] };
     });
 }
 
@@ -285,7 +294,10 @@ test('拆分護欄｜rules 與 AGENTS 索引列**雙向**一一對應', () => {
   const rows = indexRows();
   for (const [file, m] of Object.entries(MANIFEST)) {
     const declared = m.rules.map((r) => slug(r));
-    const pointed = rows.filter((r) => r.file === file).map((r) => r.anchor);
+    // ⚠️ 用**排序後的陣列**比對，不是 Set（Codex #384 r7）：
+    //    Set 會把「同一條規則出現兩列索引」吃掉，而重複列正是真實的維護手滑
+    //    （複製一列改一改忘了刪原本那列），讀的人照到哪一列是碰運氣。
+    const pointed = rows.filter((r) => r.file === normalize(file)).map((r) => r.anchor);
     assert.deepEqual(sorted(pointed), sorted(declared),
       `${file} 的索引列與 manifest 的 rules 不是一一對應。\n`
       + `  AGENTS 指過來的：${sorted(pointed).join('、') || '（無）'}\n`
@@ -334,15 +346,19 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
   //    `|前端功能…|`（合法的無空格表格列）與 `[前端功能.md](./前端功能.md)`（等價相對路徑）
   //    都繞得過「以 `| ` 開頭」＋「含 `(檔名)`」這種字面比對，於是矛盾的重複列照樣過關。
   const rows = readme.split('\n').filter((l) => l.trim().startsWith('|') && /\.md\)/.test(l));
-  /** 這一列指向哪些契約檔（連結目標正規化：去掉 `./`、只留檔名）。 @param {string} l */
-  const targetsOf = (l) => [...l.matchAll(/\]\(([^)]+\.md)\)/g)]
-    .map((m) => m[1].replace(/^\.\//, '').split('/').pop());
+  // ⚠️ 連結要**相對該檔所在目錄解析**，不能只比 basename（Codex #384 r7）：
+  //    把 README 的 `(前端功能.md)` 寫成 `(docs/contracts/前端功能.md)`
+  //    ——那是從 AGENTS 複製路徑到子目錄 README 的真實手滑——實際會連到
+  //    `docs/contracts/docs/contracts/…`（不存在），只比 basename 卻看不出來。
+  /** @param {string} l */
+  const targetsOf = (l) => [...l.matchAll(/\]\(([^)#]+\.md)(?:#[^)]*)?\)/g)]
+    .map((m) => normalize(join('docs/contracts', m[1])));
   for (const [file, m] of Object.entries(MANIFEST)) {
     const base = /** @type {string} */ (file.split('/').pop());
     // ⚠️ **剛好一列**（Codex #384 r5 High）：原本用 `rows.find()` 只驗第一列，
     //    於是在正確列後面再加一條「同一份契約、沒有任何責任檔」的矛盾路由，六題照樣全綠。
     //    路由表有兩列指向同一份契約時，讀的人會照到哪一列是碰運氣。
-    const matched = rows.filter((r) => targetsOf(r).includes(base));
+    const matched = rows.filter((r) => targetsOf(r).includes(normalize(file)));
     assert.equal(matched.length, 1,
       `${file} 在 README 路由表對應到 ${matched.length} 列（必須剛好 1 列）。\n`
       + '0 列＝那個領域的規則沒人會被導到；2 列以上＝讀的人照到哪一列是碰運氣。');

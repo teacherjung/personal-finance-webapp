@@ -169,6 +169,32 @@ p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check "L. 先放假 marker 再貼回全文（切第一個會漏）" 紅
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"~~~\n"+s[i:], encoding="utf-8")   # 只開不關
+PY
+check "M. 忘記關 fence（正常手滑，後面整份變程式碼）" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.replace("[前端功能.md](前端功能.md)","[前端功能.md](docs/contracts/前端功能.md)",1), encoding="utf-8")
+PY
+check "N. README 連結誤用 repo-root 路徑（連到不存在）" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+for k,l in enumerate(ls):
+    if l.startswith("| 月度回顧總覽卡 |"):
+        dup=l.replace(" | ","|").replace("(docs/contracts/","(./docs/contracts/")
+        ls.insert(k+1, dup); break
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check "O. AGENTS 多一條等價的重複索引列" 紅
+
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)
 if [[ -n "$leftover" ]]; then
