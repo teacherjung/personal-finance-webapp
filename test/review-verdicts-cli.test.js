@@ -90,3 +90,25 @@ test('⭐ CLI｜實作者自己的「通過」→ exit 1（放行只認指定的
   assert.equal(r.status, 1, `實作者自己放行了自己的 PR。實得 ${r.status}\n${r.stdout}${r.stderr}`);
   assert.match(r.stderr, /指定的獨立審查者/);
 });
+
+test('⭐ CLI｜疑似結論卻沒標頭 → **exit 0＋stderr 有提醒**（r11 的裁定要有出口題鎖住）', () => {
+  // ⚠️ Codex #385 r12 High②：在 warning 分支塞一個 `return 1`，83 題相關考題**全綠**——
+  //    也就是 r11 剛裁定的「warning 不阻擋」隨時可能被改回阻擋而沒有人發現。
+  //    **退出碼是這支對外的介面，純函式測不到它。**
+  const r = withFakeGh(payload([
+    header('桌面 A', 1, '通過'),                       // 指定審查者的合規通過
+    '## Claude 複審\n\n結論：通過，可以合併。',          // 疑似結論、沒有標頭 ⇒ 只該提醒
+  ]));
+  assert.equal(r.status, 0,
+    `疑似結論卻沒標頭把合併擋下來了——那是 r11 明確裁掉的行為。實得 ${r.status}\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /不影響本閘結果/, `沒有印出提醒：${r.stderr}`);
+});
+
+test('⭐ CLI｜🤖 記號在、標頭寫壞 → exit 1（唯一還阻擋的文字判斷）', () => {
+  const r = withFakeGh(payload([
+    header('桌面 A', 1, '通過'),
+    '🤖 Claude｜來源：桌面｜審 abc1234｜r1｜結論：通過了',   // 結論用詞不是三選一
+  ]));
+  assert.equal(r.status, 1, `標頭寫壞沒有被擋。實得 ${r.status}\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /🤖 記號、但標頭格式不合規/);
+});

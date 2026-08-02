@@ -275,14 +275,33 @@ async function selfDeclaredGates() {
   return gates;
 }
 
-/** 合併步驟區塊裡**實際被執行**的閘（`node scripts/xxx.js <N>`）。 */
+/**
+ * 合併步驟區塊裡**實際被執行**的閘。
+ *
+ * ⚠️ **只認 bash fence 裡逐字相符的指令行**（Codex #385 r12 High①）：
+ * 原本用子字串比對，於是 `# node scripts/check-x.js <N>`（整行註解掉）也算「有跑」——
+ * 突變後 75/75 仍全綠。`echo node …`、`false && node …` 同型。
+ * 反方向也漏：`node ./scripts/x.js <N>`、`env node …`、`<PR 編號>` 都是合法寫法卻抓不到，
+ * 新閘若採其中一種、又沒自報，雙向集合仍可能「相等」。
+ * ⇒ 判準改成：**只在區塊內的 bash fence 裡，逐行 trim 後全等 `node <path> <N>`**。
+ * 註解、前綴、非標準拼法一律不算——要進程序就寫成標準那一行。
+ */
 function gatesRunInMergeSteps() {
   const whole = read('CODEX-REVIEW.md').replace(/<!--[\s\S]*?-->/g, '');
   const start = whole.indexOf('合併也由 Codex 代執行');
   assert.ok(start > 0, 'CODEX-REVIEW.md 找不到合併步驟區塊');
   const stop = whole.indexOf('\n---', start);
-  const block = whole.slice(start, stop < 0 ? whole.length : stop);
-  return [...new Set([...block.matchAll(/node (scripts\/[\w-]+\.js) <N>/g)].map((m2) => m2[1]))];
+  // ⚠️ 找不到結束錨點就**直接失敗**，不要掃到檔尾（fail-closed，Codex r12）
+  assert.ok(stop > start, '合併步驟區塊找不到結束錨點 `\n---`——不要退而掃到檔尾，那不是 fail-closed');
+  // ⚠️ 整段六步驟寫在 blockquote 裡，fence 前面有 `> ` ⇒ 先剝引用前綴再抽 fence
+  const block = whole.slice(start, stop).split('\n').map((l) => l.replace(/^\s*>[ \t]?/, '')).join('\n');
+  const fenced = [...block.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((f) => f[1]).join('\n');
+  const gates = [];
+  for (const line of fenced.split('\n')) {
+    const m2 = /^node (scripts\/[\w-]+\.js) <N>$/.exec(line.trim());
+    if (m2) gates.push(m2[1]);
+  }
+  return [...new Set(gates)];
 }
 
 // ## ⚠️ 誠實劃界：這份註冊表只管**盤點**，不管閘**有沒有用**
@@ -308,7 +327,9 @@ test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS
     + '   有人跑卻沒自報＝沒有人數得到它，文件漂了也不會紅。');
   const names = gates.map((g) => g.file.replace('scripts/', ''));
   const agents = read('AGENTS.md');
-  for (const anchor of ['不論誰執行，一律走', '但四道不可跳過的守門要在這裡點名得出來']) {
+    // ⚠️ 錨點**不可以含數字**（Codex #385 r12 Medium）：原本寫死「但四道不可跳過的守門」，
+  //    於是新增第五道之後，文件仍寫「四道」照樣全綠——**數字本身就是會漂的東西**。
+  for (const anchor of ['不論誰執行，一律走', '不可跳過的守門要在這裡點名得出來']) {
     const i = agents.indexOf(anchor);
     assert.ok(i > 0, `AGENTS.md 找不到指標段落：「${anchor}」`);
     const block = agents.slice(i, i + 900);
