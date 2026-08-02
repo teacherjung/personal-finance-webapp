@@ -132,4 +132,7 @@ test('森林總覽接線：月份以後端現金流月份為單一來源，文�
   const source = readFileSync(new URL('../public/modules/dashboard.js', import.meta.url), 'utf8');
   assert.match(source, /String\(cf\.month\)/);
   assert.doesNotMatch(source, /上月底/);
+  assert.doesNotMatch(source, /src="\/assets\//, 'HOSTED 掛在 /finance/，森林素材不可指向網站根目錄');
+  assert.match(source, /src="assets\/forest-return-positive\.webp"/);
+  assert.match(source, /近 12 個月尚無銀行收支紀錄/);
 });

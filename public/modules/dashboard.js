@@ -288,7 +288,7 @@ export async function renderDashboard() {
   view().innerHTML = `
     <section class="forest-overview" aria-labelledby="forestDashboardTitle">
       <div class="forest-scene">
-        <img src="/assets/forest-return-positive.webp" alt="" aria-hidden="true">
+        <img src="assets/forest-return-positive.webp" alt="" aria-hidden="true">
         <div class="forest-scene-title">
           <span>Rongxiangsen Finance</span>
           <h1 id="forestDashboardTitle">森林總覽</h1>
@@ -346,7 +346,7 @@ export async function renderDashboard() {
     <div class="dash-two forest-insight-row">
       <section class="dash-block forest-guide-panel">
         <div class="forest-guide-intro">
-          <img src="/assets/guide-return-${guide.mood}.webp" alt="小森森嚮導">
+          <img src="assets/guide-return-${guide.mood}.webp" alt="小森森嚮導">
           <div><span>小森森提醒</span><h2>${guide.title}</h2><p>${guide.detail}</p></div>
         </div>
         <div class="forest-insight-content" id="insightBlock">${insightSection(null, s.reminders)}</div>
@@ -411,7 +411,7 @@ function drawCashflowTrend(rows) {
   const ctx = byId('cashflowTrendChart');
   const hasData = rows.some(row => typeof row.net === 'number' && Number.isFinite(row.net));
   if (!ctx || !hasData) {
-    if (ctx) ctx.parentElement.innerHTML = '<p class="empty">尚無銀行收支紀錄，開始記帳後這裡會保留每月收入、支出與淨現金流。</p>';
+    if (ctx) ctx.parentElement.innerHTML = '<p class="empty">近 12 個月尚無銀行收支紀錄；有資料後，這裡會顯示每月收入、支出與淨現金流。</p>';
     return;
   }
   chartRefs.push(new Chart(ctx, {
