@@ -546,6 +546,15 @@ p.write_text(s[:i]+"&ZeroWidthSpace;"*60+"\n\n"+s[i:], encoding="utf-8")
 PY
 check 'BN. 契約 body 塞 HTML entity 撐大分母' 紅
 
+mutate 'BO. README 第一格加括號後綴（前綴比對會放過）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
+a="| 前端功能 |"
+assert s.count(a)==1
+p.write_text(s.replace(a,"| 前端功能（完全不同的領域）|",1), encoding="utf-8")
+PY
+check 'BO. README 第一格加括號後綴（前綴比對會放過）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'

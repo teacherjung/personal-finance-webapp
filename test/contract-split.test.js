@@ -843,10 +843,15 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路�
     const domain = (row.split('|')[1] || '').trim();
     assert.equal(declared[1], MANIFEST[file].domain,
       `${file} 頁首宣告的領域名「${declared[1]}」不等於 manifest 宣告的「${MANIFEST[file].domain}」。`);
-    assert.ok(domain === MANIFEST[file].domain || domain.startsWith(`${MANIFEST[file].domain}（`),
-      `README 指向 ${base} 的那一列叫「${domain.slice(0, 30)}」，`
+    // ⚠️ **精確相等，連括號補充都不放行**（Codex #384 r39）：
+    //    上一版允許 `canonical（…）`，於是 `前端功能（完全不同的領域）` 照樣過——
+    //    **題名與註解寫「精確」，實作卻是受限制的前綴比對**，那又是一句不誠實的話。
+    //    ⇒ README 第一格只留 canonical 名稱，範圍說明搬到第二格開頭（本輪一起改）。
+    assert.equal(domain, MANIFEST[file].domain,
+      `README 指向 ${base} 的那一列第一格是「${domain.slice(0, 30)}」，`
       + `但 manifest 宣告的領域名是「${MANIFEST[file].domain}」。\n`
-      + '⚠️ 三邊要對同一個 canonical 名稱；README 第一格只准是它、或它後面接一個括號補充。');
+      + '⚠️ 三邊（manifest／README 第一格／契約頁首）要對**同一個字串**，不接受任何後綴。\n'
+      + '   範圍說明請寫在第二格。');
   }
 });
 
