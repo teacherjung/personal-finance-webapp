@@ -260,6 +260,31 @@ function assertHeadingForm(p, raw) {
 const MAX_INDEX_LEN = 600;
 /** 摘要相對契約內文的上限比例（只在內文 ≥300 字元時生效）。 */
 const MAX_SUMMARY_RATIO = 0.6;
+/**
+ * 一段 Markdown**畫面上看得到幾個字**。
+ *
+ * ⚠️ 存在的理由：拿原始碼長度當分母會被「正常維護」灌大（Codex #384 r35）——
+ * 契約裡加一個 `[來源](https://…很長…)`，畫面只多兩個字，原始碼卻多幾十個字元，
+ * 於是「摘要要比內文短 40%」這道門就被撐開，索引可以貼回整段可見內文。
+ * ⇒ 連結只算 label、圖片整個不算（alt 才顯示但不保證）、行內 code 只算內容、
+ *   強調記號與表格框都不算。
+ * ⚠️ 誠實劃界：這是**近似**，不是渲染器。它擋的是「用不可見的原始碼撐大分母」，
+ * 不保證跟 GitHub 算出來的字數一致。
+ * @param {string} md
+ */
+function visibleLen(md) {
+  return String(md)
+    .replace(/!\[[^\]]*\]\([^)]*\)/gu, '')          // 圖片：整個不算
+    .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')       // 連結：只算 label
+    .replace(/\[([^\]]*)\]\[[^\]]*\]/gu, '$1')     // reference-style 同上
+    .replace(/^\[[^\]]+\]:.*$/gmu, '')               // reference definition：不顯示
+    .replace(/[`*_~|]/gu, '')                        // 記號與表格框
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u00ad]/gu, '')
+    .replace(/\u034f/gu, '')   // CGJ 單獨處理：放進字元類別會踩到 no-misleading-character-class
+    .replace(/\s+/gu, ' ')
+    .trim().length;
+}
+
 const BODY_LABEL = '**記得同步這裡**：';
 
 /**
@@ -453,6 +478,27 @@ function slug(h) {
     .replace(/ /g, '-');
 }
 
+/**
+ * 會**中斷 GFM 表格**的區塊起始。
+ *
+ * ⚠️ 這張表是拿 GitHub 自己的 `/markdown` API **一種一種試出來的**，不是照文法推的
+ * （r30 我照文法推，把「普通文字行」也當成會中斷，當場誤紅 29 條真實索引——
+ * 實測結果是普通文字與兩格縮排的續行**不會**中斷，GFM 把它們渲染成單格列）。
+ *
+ * ⚠️ 誠實劃界：這是**列舉**，而列舉不會完備。它涵蓋 CommonMark 的容器／葉區塊起始，
+ * 每一條都有實測與突變；但「所有能中斷表格的寫法」不是這份清單能保證的。
+ */
+const TABLE_BREAKERS = [
+  [/^\s*$/u, '空行'],
+  [/^ {0,3}#{1,6}[ \t]/u, 'ATX 標題'],
+  [/^ {0,3}[-*+][ \t]/u, '清單'],
+  [/^ {0,3}\d{1,9}[.)][ \t]/u, '編號清單'],
+  [/^ {0,3}>/u, '引用'],
+  [/^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/u, '分隔線'],
+  [/^ {0,3}={2,}[ \t]*$/u, 'Setext 底線'],
+  [/^(?: {4,}|\t)\S/u, '四格縮排（程式碼區塊）'],
+];
+
 const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md)#([^)]+)\)/;
 
 /**
@@ -489,7 +535,7 @@ function indexRows() {
     assert.ok(line.startsWith('|'),
       `${where} 的索引列沒有從行首的 \`|\` 開始：${shown}…\n`
       + '⚠️ 縮排會讓 GitHub 把它移出表格（四格縮排更會變成程式碼區塊）。');
-    // ①前一行不可以是**空行**——空行會讓這一列掉出表格。
+    // ①前一行不可以**中斷表格**。
     //    ⚠️ 判準是拿 GitHub 自己的 `/markdown` API 校準出來的，不是照文法推的：
     //      ・前一行空白 ⇒ 渲染成 `<p>| 第二列 | y |</p>`（**掉出表格**，Codex r29 實證）
     //      ・前一行縮排四格 ⇒ 變成程式碼區塊
@@ -497,10 +543,13 @@ function indexRows() {
     //    我第一版寫成「前一行必須是表格列」，那會誤紅 29 條真實索引——
     //    **照文法推出來的判準，跟 GitHub 實際做的事不一樣。**
     const prev = lines[i - 1] || '';
-    assert.notEqual(prev.trim(), '',
-      `${where} 的索引列前面是空行：${shown}…\n`
-      + '⚠️ GitHub 會把它移出表格，渲染成一段帶直線的普通文字——**畫面上不再是索引**，'
-      + '而考題照樣讀得到 ⇒ 索引形同虛設（Codex #384 r29 實證）。');
+    const breaker = TABLE_BREAKERS.find(([re2]) => re2.test(prev));
+    assert.ok(!breaker,
+      `${where} 的索引列前一行會**中斷表格**（${breaker && breaker[1]}）：${prev.trim().slice(0, 50)}…\n`
+      + `   受影響的索引列：${shown}…\n`
+      + '⚠️ 表格一斷，後面的索引列會變成 `<p>`／`<li>`／blockquote——**畫面上不再是索引**，\n'
+      + '   而考題照樣讀得到 ⇒ 索引形同虛設（Codex #384 r29／r35 實證：插一個 `###` 之後\n'
+      + '   36 個連結只剩 9 個還在 `<td>` 裡）。');
     // ②不准 raw HTML 與隱形字元
     assert.ok(!line.includes('<'),
       `${where} 的索引列出現 \`<\`：${shown}…\n`
@@ -551,6 +600,14 @@ function indexRows() {
     //    （r30 的奇偶判準守不住多重反引號，Codex 用 `` `` 包連結就繞過去了）：
     //      ・包進 code span ⇒ 收尾的反引號會跑到連結後面 ⇒ 連結不是最後一個 ⇒ 紅
     //      ・藏到第三格 ⇒ 上面的「剛好兩格」已經先擋掉
+    // ⚠️ **連結 label 只准 `契約：<領域名>`**（Codex #384 r35）：
+    //    把整段契約原文塞進 label（`[契約：整段原文](…)`）畫面上完整顯示，
+    //    但摘要計算會把整個連結剝掉 ⇒ 索引長回原文而護欄全綠。
+    //    領域名限制成「不含標點的短字串」——現況三種：前端功能／投資與 SEC／收支記帳與匯入。
+    assert.match(m2[0], /^\[契約：[^\][()。，、；：！？\n]{1,12}\]\(/u,
+      `${where} 的契約連結 label 不是 \`契約：<領域名>\` 的短形式：${m2[0].slice(0, 60)}…\n`
+      + '⚠️ label 是畫面上唯一顯示的文字——把內文塞進去，索引就長回原文了，\n'
+      + '   而摘要計算會把整個連結剝掉、量不到它。');
     const cell2 = (cells[2] || '').replace(/\uE000/gu, '\\|').trimEnd();
     assert.ok(cell2.endsWith(m2[0]),
       `${where} 的契約連結不是第二格的最後一個東西：…${cell2.slice(-60)}\n`
@@ -613,6 +670,19 @@ test('拆分護欄｜契約標題必須是**純文字**、且 anchor 不可重�
         + '⚠️ GitHub 依**渲染後的文字**算 anchor，這裡依原始語法算——兩邊會不一樣，連結默默失效。\n'
         + '   契約標題請用純文字。');
     }
+    // ⚠️ **標題不可含組合符，而且必須是 NFC 正規化形式**（Codex #384 r35）：
+    //    自製的 `slug()` 只留 `\p{L}\p{N}`，會把 combining mark 丟掉；
+    //    GitHub 的 anchor **會保留**它 ⇒ 兩邊算出來不一樣，索引默默指到舊 anchor。
+    //    這不是刻意構造——複製貼上人名／外文（`á` 的分解式 `a`+U+0301）就會自然發生。
+    //    ⇒ 不追著 GitHub 的 anchor 演算法跑，改成**關掉這個字元類別**（現況零改寫）。
+    for (const t of titles) {
+      assert.doesNotMatch(t, /\p{M}/u,
+        `${file} 的標題「${t}」含 Unicode 組合符（分解式）。\n`
+        + '⚠️ GitHub 算 anchor 時保留它、這裡的 slug() 會丟掉 ⇒ 索引連結默默指到別的地方。\n'
+        + '   請改用預組合字元（NFC）。');
+      assert.equal(t, t.normalize('NFC'),
+        `${file} 的標題「${t}」不是 NFC 正規化形式——同上，兩邊 anchor 會算不一樣。`);
+    }
     const anchors = titles.map((t) => slug(t));
     const dup = anchors.filter((a, i) => anchors.indexOf(a) !== i);
     assert.deepEqual(dup, [],
@@ -671,10 +741,15 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
     // ⚠️ **比例一律適用，沒有「短規則例外」**（Codex #384 r3 之後收斂）：
     //    原本對短規則放寬成「只要比內文短一個字」，結果**整段 274 字的 body 貼回去
     //    變成 273 字的摘要照樣過**——差一個字元的「短」不是拆分。
-    const limit = Math.floor(s.body.length * MAX_SUMMARY_RATIO);
-    assert.ok(summary.length <= limit,
+    // ⚠️ **比的是畫面上看得到的字，不是 Markdown 原始碼長度**（Codex #384 r35）：
+    //    原本拿 raw 長度當分母，於是「契約裡加一個 `[來源](很長的網址)`」——
+    //    畫面只多兩個字、分母卻大增 ⇒ 之後把契約的可見內文整段貼回索引，照樣過。
+    //    那是**正常維護會做的事**（補一個參考連結），不是刻意構造。
+    const visLimit = Math.floor(visibleLen(s.body) * MAX_SUMMARY_RATIO);
+    assert.ok(visibleLen(summary) <= visLimit,
       '索引摘要沒有比契約內文短夠多 ⇒ 這條規則接近「兩份完整副本」，一定會各自漂。\n'
-      + `摘要 ${summary.length} 字元、契約內文 ${s.body.length} 字元（上限 ${limit}）（${file}#${anchor}）\n`
+      + `摘要可見 ${visibleLen(summary)} 字、契約內文可見 ${visibleLen(s.body)} 字`
+      + `（上限 ${visLimit}）（${file}#${anchor}）\n`
       + `實得摘要：${summary.slice(0, 120)}…`);
     assert.ok(line.length <= MAX_INDEX_LEN,
       `索引行 ${line.length} 字元，超過上限 ${MAX_INDEX_LEN}。細節請放進 ${file}。\n`
@@ -717,6 +792,27 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
     for (const f of m.files) {
       assert.ok(existsSync(join(ROOT, f)), `${base} 的 files 列了不存在的檔案 ${f}`);
     }
+  }
+});
+
+test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路由列（三邊的第三邊）', () => {
+  // ⚠️ Codex #384 r35 ④：manifest ↔ README 的集合相等一直有守，但**契約檔這第三邊沒人驗**。
+  //    它把「前端功能」契約的頁首改成「適用檔案清單＝README『投資與 SEC』列」，7/7 全綠——
+  //    也就是三份契約可以互相指錯，而三邊一致的承諾其實只成立兩邊。
+  const readme = read('docs/contracts/README.md');
+  const rows = readme.split('\n').filter((l) => l.startsWith('|'));
+  for (const file of Object.keys(MANIFEST)) {
+    const base = file.replace('docs/contracts/', '');
+    const declared = /路由表「([^」]+)」列/u.exec(read(file));
+    assert.ok(declared,
+      `${file} 的頁首沒有宣告它屬於 README 的哪一列（要寫成「路由表「<領域名>」列」）。\n`
+      + '⚠️ 沒有這句話，契約與路由表就只能靠人記得對應——那正是這支 PR 在修的病。');
+    const row = rows.find((l) => l.includes(`](${base})`));
+    assert.ok(row, `README 路由表沒有指向 ${base} 的那一列`);
+    const domain = (row.split('|')[1] || '').trim();
+    assert.ok(domain.startsWith(declared[1]),
+      `${file} 頁首宣告自己屬於「${declared[1]}」列，但 README 指向它的那一列叫「${domain.slice(0, 30)}」。\n`
+      + '⚠️ 契約指錯路由列 ⇒ 讀者照頁首去看的是別的領域的責任檔清單。');
   }
 });
 

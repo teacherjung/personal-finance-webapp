@@ -434,6 +434,63 @@ p.write_text(s.replace(a,"| [][blank] |",1)+"\n[blank]: https://example.com\n", 
 PY
 check 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一版）' 紅
 
+# ── r35：四條核心承諾的實質缺口（Codex 用 GitHub /markdown 逐條實證）──
+
+mutate 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"### 中途插一個標題\n"+s[i:], encoding="utf-8")
+PY
+check 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' 紅
+
+mutate 'BD. 表格中間插一個清單項' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+p.write_text(s[:i]+"- 中途插一個清單\n"+s[i:], encoding="utf-8")
+PY
+check 'BD. 表格中間插一個清單項' 紅
+
+mutate 'BE. 契約標題改成分解式組合符（slug 會丟掉、GitHub 會保留）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.replace("## 訂閱狀態","## 訂閱狀a\u0301態",1), encoding="utf-8")
+PY
+check 'BE. 契約標題改成分解式組合符（slug 會丟掉、GitHub 會保留）' 紅
+
+mutate 'BF. 契約加長網址、摘要貼回全部可見內文' <<'PY'
+import pathlib,re
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
+sec=s[i:j]
+body=sec.split("**記得同步這裡**：")[1]
+pad="（[來源](https://example.com/"+"x"*900+")）"
+s=s[:i]+sec+pad+s[j:]
+q=pathlib.Path("AGENTS.md"); t=q.read_text(encoding="utf-8")
+k=t.index("| 月度回顧總覽卡 |"); e=t.index("\n", k)
+row=t[k:e]; m=re.search(r"——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)", row)
+q.write_text(t[:k]+"| 月度回顧總覽卡 | "+body.replace("\n"," ").strip()+" "+m.group(0)+" |"+t[e:], encoding="utf-8")
+p.write_text(s, encoding="utf-8")
+PY
+check 'BF. 契約加長網址、摘要貼回全部可見內文' 紅
+
+mutate 'BG. 整段原文塞進契約連結的 label' <<'PY'
+import pathlib,re
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
+row=s[i:j]
+p.write_text(s[:i]+re.sub(r"\[契約：[^\]]*\]", "[契約：這裡塞一整段原文，畫面上會完整顯示，而摘要計算會把整個連結剝掉]", row)+s[j:], encoding="utf-8")
+PY
+check 'BG. 整段原文塞進契約連結的 label' 紅
+
+mutate 'BH. 契約頁首指到別人的 README 列' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.replace("路由表「前端功能」列","路由表「投資與 SEC」列",1), encoding="utf-8")
+PY
+check 'BH. 契約頁首指到別人的 README 列' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
