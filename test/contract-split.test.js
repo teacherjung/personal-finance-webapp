@@ -57,7 +57,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * 這一刀同時解決兩個方向——沒有 fence 就藏不了標題（假綠消失），
  * 也沒有「合法的 fence 被誤判」（誤紅消失）。判準一行講得完，而且不可能實作錯。
  *
- * 代價寫清楚：這些檔案裡**放不了整段程式碼範例**。它們是規則文件，
+ * 代價寫清楚：這些檔案裡**放不了 fenced code 與 raw HTML**（四格縮排的程式碼區塊仍然可用）。它們是規則文件，
  * 現在用的是行內反引號（`像這樣`），完全不受影響；真要放範例，放進 `docs/` 其他檔案再連過來。
  * @param {string} p
  */
@@ -70,6 +70,15 @@ function read(p) {
     + '   （標題與 anchor 全部消失），而要正確判斷它有沒有關，等於要實作半個 Markdown 剖析器\n'
     + '   （2026-08-03 實際走了五輪才認清）。行內的 `反引號` 不受限制；\n'
     + '   整段程式碼範例請放到 docs/ 其他檔案再連過來。');
+  // ⚠️ **raw HTML block 也會吞掉標題**（Codex #384 r13）：`<pre>` `<div>` `<script>` `<table>`
+  //    `<![CDATA[` `<? ?>` …CommonMark 有六類入口，把一整節包起來，GitHub 就不產生那個標題。
+  //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
+  //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
+  const html = raw.split('\n').findIndex((l) => /^\s*</.test(l));
+  assert.equal(html, -1,
+    `${p}:${html + 1} 出現行首 HTML。\n`
+    + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 這類 block 會把包住的標題整個吞掉，\n'
+    + '   而畫面上看不出來。要排版請用 Markdown 本身的語法。');
   assert.ok(!raw.includes('<!--') && !raw.includes('-->'),
     `${p} 出現 HTML 註解。\n`
     + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
@@ -285,6 +294,29 @@ test('拆分護欄｜manifest 必須涵蓋每一份契約（新拆一個領域�
     + '（r2 的假綠之一：契約檔整份刪掉，考題因為「從現有檔案反查」而完全不出聲。）');
   for (const e of Object.values(MANIFEST).flatMap((m) => m.exempt)) {
     assert.ok(EXEMPT_REASON[e], `exempt 的「${e}」沒有寫理由——豁免必須有名有姓，不然它就是後門`);
+  }
+});
+
+test('拆分護欄｜契約標題必須是**純文字**、且 anchor 不可重複', () => {
+  // ⚠️ 兩個 anchor 層的缺口（Codex #384 r13）：
+  //   ①**重複標題**：GitHub 會給第二個 anchor 加序號，而我的 slug() 兩個算出來一樣
+  //     ⇒ 兩列索引都導到第一節，第二條規則實際上沒有人指得到。
+  //   ②**標題含連結／圖片／HTML entity／raw HTML**：GitHub 按**渲染後的文字**算 anchor，
+  //     我的 slug() 按原始語法算 ⇒ 兩邊會不一樣，連結默默失效。
+  //   兩個都用「禁止」關掉，比追著 GitHub 的 anchor 演算法跑實在。
+  for (const file of Object.keys(MANIFEST)) {
+    const titles = sectionsOf(file).map((s) => s.title);
+    for (const t of titles) {
+      assert.ok(!/[[\]<>&]/.test(t),
+        `${file} 的標題「${t}」含有連結／HTML／entity 語法。\n`
+        + '⚠️ GitHub 依**渲染後的文字**算 anchor，這裡依原始語法算——兩邊會不一樣，連結默默失效。\n'
+        + '   契約標題請用純文字。');
+    }
+    const anchors = titles.map((t) => slug(t));
+    const dup = anchors.filter((a, i) => anchors.indexOf(a) !== i);
+    assert.deepEqual(dup, [],
+      `${file} 有重複的 anchor：${dup.join('、')}\n`
+      + '⚠️ GitHub 會給第二個加序號，而這裡兩個算出來一樣 ⇒ 兩列索引都導到第一節。');
   }
 });
 

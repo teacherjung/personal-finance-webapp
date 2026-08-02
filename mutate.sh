@@ -72,6 +72,29 @@ p.write_text(s[:i]+"~~~\n\n"+s[i:], encoding="utf-8")
 PY
 check 'C. AGENTS 出現 fence（另一種記號也一樣）' 紅
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡"); j=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"<pre>\n"+s[i:j]+"\n</pre>\n"+s[j:], encoding="utf-8")
+PY
+check 'D. 用 <pre> 把整節吞掉（raw HTML block）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"<div>\n\n"+s[i:], encoding="utf-8")
+PY
+check 'E. 行首出現 <div>（另一類 raw HTML）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.replace("## 月度回顧總覽卡","## 月度回顧[總覽卡](x.md)",1), encoding="utf-8")
+PY
+check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 python3 - <<'PY'
@@ -85,7 +108,7 @@ for k,l in enumerate(ls):
         ls[k]="| 月度回顧總覽卡|"+b+"——完整契約"+l.split("——完整契約")[1]; break
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
-check 'D. 無空白分隔符＋整段規則貼回索引' 紅
+check 'G. 無空白分隔符＋整段規則貼回索引' 紅
 
 python3 - <<'PY'
 import pathlib
@@ -98,7 +121,7 @@ for k,l in enumerate(ls):
         ls[k]="| 月度回顧總覽卡 | 前半\\|後半"+b+"——完整契約"+l.split("——完整契約")[1]; break
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
-check 'E. 用跳脫的直線藏在同一格＋貼回全文' 紅
+check 'H. 用跳脫的直線藏在同一格＋貼回全文' 紅
 
 python3 - <<'PY'
 import pathlib
@@ -111,14 +134,14 @@ for k,l in enumerate(ls):
         ls[k]="| 月度回顧總覽卡 | 短摘要——完整契約（假的）"+b+"——完整契約"+l.split("——完整契約")[1]; break
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
-check 'F. 先放假 marker 再貼回全文（切第一個會漏）' 紅
+check 'I. 先放假 marker 再貼回全文（切第一個會漏）' 紅
 
 python3 - <<'PY'
 import pathlib,re
 p=pathlib.Path("AGENTS.md")
 p.write_text(re.sub(r'^\| \*\*SEC 最新單季逐列期間\*\*.*\n','',p.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
 PY
-check 'G. 刪掉「最新單季」那條索引（原豁免項）' 紅
+check 'J. 刪掉「最新單季」那條索引（原豁免項）' 紅
 
 python3 - <<'PY'
 import pathlib,re
@@ -128,17 +151,17 @@ p.write_text(s[:i]+s[i:].replace("**記得同步這裡**：","**同步**："), e
 q=pathlib.Path("AGENTS.md")
 q.write_text(re.sub(r'^\| \*\*店家消費檔案\*\*.*\n','',q.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
 PY
-check 'H. marker 與索引一起刪（雙向斷言的核心）' 紅
+check 'K. marker 與索引一起刪（雙向斷言的核心）' 紅
 
 rm -f docs/contracts/前端功能.md
-check 'I. 整份契約檔刪掉' 紅
+check 'L. 整份契約檔刪掉' 紅
 
 python3 - <<'PY'
 import pathlib
 p=pathlib.Path("test/contract-split.test.js")
 p.write_text(p.read_text(encoding="utf-8").replace("      '月度回顧總覽卡',\n",""), encoding="utf-8")
 PY
-check 'J. 從 manifest 偷偷拿掉一條規則' 紅
+check 'M. 從 manifest 偷偷拿掉一條規則' 紅
 
 python3 - <<'PY'
 import pathlib
@@ -148,7 +171,7 @@ for k,l in enumerate(ls):
         ls.insert(k+1, l.replace(" | ","|").replace("(docs/contracts/","(./docs/contracts/")); break
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
-check 'K. AGENTS 多一條等價的重複索引列' 紅
+check 'N. AGENTS 多一條等價的重複索引列' 紅
 
 # ── 路由表 ──
 
@@ -159,7 +182,7 @@ i=s.index("| 收支記帳與匯入")
 s=s[:i]+"|前端功能（重複且錯誤）|（沒有任何責任檔）|[前端功能.md](./前端功能.md)|\n"+s[i:]
 p.write_text(s, encoding="utf-8")
 PY
-check 'L. 同一份契約多出一條矛盾路由列' 紅
+check 'O. 同一份契約多出一條矛盾路由列' 紅
 
 python3 - <<'PY'
 import pathlib
@@ -167,14 +190,14 @@ p=pathlib.Path("docs/contracts/README.md"); t=p.read_text(encoding="utf-8")
 assert t.count("`public/modules/portfolio-symbol.js`")==1
 p.write_text(t.replace("`public/modules/portfolio-symbol.js`","`portfolio-symbol.js`",1), encoding="utf-8")
 PY
-check 'M. 路由表用短檔名冒充完整路徑' 紅
+check 'P. 路由表用短檔名冒充完整路徑' 紅
 
 python3 - <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("[前端功能.md](前端功能.md)","[前端功能.md](docs/contracts/前端功能.md)",1), encoding="utf-8")
 PY
-check 'N. README 連結誤用 repo-root 路徑（連到不存在）' 紅
+check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)
