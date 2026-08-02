@@ -319,32 +319,108 @@ test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤�
 
 // ── CI 的協作欄位閘（2026-08-02）─────────────────────────────
 
-test('CI 有協作欄位閘這個 job，且跑的是與人工同一支腳本（不可另寫一份判斷）', () => {
-  const ci = read('.github/workflows/ci.yml');
-  assert.ok(ci.includes('collab-fields'), 'ci.yml 沒有 collab-fields job——協作欄位閘沒有進 CI，只剩「記得跑」');
-  // ⚠️ **只查「檔案裡有沒有這個字串」會假綠**（2026-08-02 突變實測）：
-  //    檔頭註解裡就寫著那個路徑，所以把實際的 `run:` 換成別的東西照樣通過。
-  //    要查的是**真的有一行 `run:` 在執行它**。
-  const runsScript = ci.split('\n').some((l) =>
-    /^\s*run:\s*.*node\s+scripts\/check-pr-collab-fields\.js/.test(l));
-  assert.ok(runsScript,
-    'CI 沒有任何一行 `run:` 真的執行 scripts/check-pr-collab-fields.js。\n'
-    + '⚠️ 不可以在 CI 裡另寫一份判斷邏輯——兩份會漂移，而「規則兩份、各說各話」正是本專案的招牌病。');
-  assert.ok(/if:\s*github\.event_name\s*==\s*'pull_request'/.test(ci),
-    'collab-fields 沒有限定只在 PR 上跑——push 到 main 時沒有 PR 編號可查，會無謂地紅');
+const GATE_WF = '.github/workflows/collab-fields.yml';
+
+/**
+ * 抽出某個 job 的**完整區塊**（用縮排判邊界；本專案零執行時相依，沒有 YAML 剖析器可用）。
+ *
+ * ⚠️ 為什麼非要限定在區塊內：r1 的兩個假綠都是**全檔搜尋**造成的——
+ * 檔頭註解裡出現的字串、別的 job 的設定，都會讓斷言誤以為閘還在。
+ * @param {string} yaml
+ * @param {string} jobId
+ */
+function jobBlock(yaml, jobId) {
+  const lines = yaml.split('\n');
+  const start = lines.findIndex((l) => l === `  ${jobId}:`);
+  assert.ok(start >= 0, `${GATE_WF} 找不到 job \`${jobId}\`——協作欄位閘不在 CI 裡了，只剩「記得跑」`);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break; }   // 下一個同層 key
+  }
+  return lines.slice(start, end);
+}
+
+/**
+ * 去掉整行註解——**斷言的對象是「真的在跑的設定」，不是「檔案裡出現過這個詞」**。
+ *
+ * ⚠️ 寫這支考題時當場又踩到同一個坑：yml 裡我寫了一句註解
+ * 「不可以在 job 上加 `continue-on-error`」，結果「禁止 continue-on-error」那題
+ * 被自己的註解判紅。同型病這是第四次（#379 角色表被「**不**複審」滿足、
+ * #382 r1 被檔頭註解裡的路徑滿足、xlsx allowlist 只掃單一檔案）。
+ * @param {string[]} lines
+ */
+const codeOnly = (lines) => lines.filter((l) => !/^\s*#/.test(l));
+
+test('協作欄位閘｜真的有一行在執行那支腳本，而且**不可以吞掉它的退出碼**', () => {
+  const block = codeOnly(jobBlock(read(GATE_WF), 'collab-fields'));
+
+  // ⚠️ 判準是「**整行必須長成這個樣子**」，不是「不可以出現 || true」。
+  //    r1 實測：加 `|| true` ⇒ 閘永遠放行、考題 28/28 全綠。
+  //    列舉吞退出碼的寫法（`|| true`／`|| :`／`; true`／`|| exit 0`／`set +e`…）補不完——
+  //    這個專案已經在 xlsx 護欄上證明過「列舉繞法」會連漏三輪。**改成關門**：
+  //    只認一種合法寫法，後面多接任何東西都紅。
+  const EXPECTED = 'run: node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}';
+  const runLines = block.filter((l) => l.trim().startsWith('run:'));
+  assert.deepEqual(
+    runLines.map((l) => l.trim()),
+    [EXPECTED],
+    `${GATE_WF} 的 collab-fields job 裡，\`run:\` 不是唯一且逐字等於：\n  ${EXPECTED}\n`
+    + '⚠️ 後面接 `|| true`／`; true` 之類會讓這道閘永遠放行，而 PR 頁面照樣是綠勾。\n'
+    + '⚠️ 也不可以在 CI 裡另寫一份判斷邏輯——兩份會漂移，「規則兩份、各說各話」正是本專案的招牌病。',
+  );
+
+  // continue-on-error 是另一條吞退出碼的路（dev-machine job 就是靠它變成「探照燈不是門」）。
+  assert.ok(
+    !block.some((l) => l.includes('continue-on-error')),
+    `${GATE_WF} 的 collab-fields job 出現 continue-on-error——那會讓它紅了也不擋合併，和沒有這道閘一樣`,
+  );
 });
 
-test('分支保護文件裡的 check 名稱，必須與 ci.yml 的 job 名稱**逐字相同**', () => {
+test('協作欄位閘｜權限與 token 齊全（少一個就會 fail-closed 把所有 PR 變紅）', () => {
+  const block = codeOnly(jobBlock(read(GATE_WF), 'collab-fields')).join('\n');
+
+  // r1 實測：拿掉 `pull-requests: read` ⇒ 每一支 PR 都紅，考題 28/28 全綠。
+  // fail-closed 本身是對的（查不到不等於安全），但「所有 PR 都合不了」是災難級的誤擋，
+  // 而且看起來像 GitHub 壞掉、不像我們設錯——所以要有考題盯著。
+  assert.match(block, /^\s+permissions:$/m, `${GATE_WF} 的 collab-fields job 沒有 permissions 區塊`);
+  for (const perm of ['contents: read', 'pull-requests: read']) {
+    assert.ok(block.includes(perm),
+      `${GATE_WF} 的 collab-fields job 少了 \`${perm}\`。\n`
+      + '預設的 GITHUB_TOKEN 讀不到 PR 內容 ⇒ `gh pr view` 回 Resource not accessible\n'
+      + '⇒ 腳本 fail-closed 退出碼 2 ⇒ **每一支 PR 都紅、整個 repo 合不了東西**。');
+  }
+  assert.ok(block.includes('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}'),
+    `${GATE_WF} 沒有把 GH_TOKEN 傳給那一步——gh CLI 沒有 token 就查不到 PR 說明，同樣會 fail-closed 全紅`);
+});
+
+test('協作欄位閘｜必須訂閱 `edited`，否則綠燈之後可以偷偷撤掉欄位', () => {
+  // ⚠️ Codex #382 r1 的 High：`pull_request:` 預設事件是 opened/synchronize/reopened，**不含 edited**。
+  //    可重現：合法五欄開 PR 拿綠燈 → 編輯說明刪掉欄位／把實作者與審查者改成同一人
+  //    ⇒ commit SHA 沒變、workflow 不重跑、**綠燈還在** ⇒ 分支保護照樣放行。
+  //    反方向一樣痛：紅燈後補好說明不會自動轉綠。
+  const wf = read(GATE_WF);
+  const m = /^on:\n\s+pull_request:\n\s+types:\s*\[([^\]]+)\]/m.exec(wf);
+  assert.ok(m, `${GATE_WF} 的 on: pull_request: 沒有明寫 types: [...]（預設不含 edited）`);
+  const types = m[1].split(',').map((s) => s.trim());
+  for (const t of ['opened', 'edited', 'reopened', 'synchronize']) {
+    assert.ok(types.includes(t), `${GATE_WF} 的 types 少了 \`${t}\`（現有：${types.join('、')}）`);
+  }
+  // 這個 workflow 只吃 PR 事件——push 沒有 PR 編號，腳本會 fail-closed 無謂地紅。
+  assert.ok(!/^\s+push:/m.test(wf),
+    `${GATE_WF} 多了 push 觸發——push 到 main 沒有 PR 編號可查，會讓 main 上永遠掛一個紅 check`);
+});
+
+test('分支保護文件裡的 check 名稱，必須與 workflow 的 job 名稱**逐字相同**', () => {
   // ⚠️ 這題防的是一個會「永遠卡住合併」的坑：分支保護的 required check 是**按名稱字串**比對的。
-  //    改了 ci.yml 的 name 而沒改分支保護，GitHub 會一直等一個永遠不會出現的 check。
+  //    改了 job 的 name 而沒改分支保護，GitHub 會一直等一個永遠不會出現的 check。
   //    文件是我們這邊唯一的紀錄（GitHub 設定本身不進版控），所以至少讓兩邊字串對得起來。
-  const ci = read('.github/workflows/ci.yml');
   const doc = read('docs/GitHub分支保護-設定與驗證.md');
-  const names = [...ci.matchAll(/^\s{4}name:\s*(.+)$/gm)].map((m) => m[1].trim());
-  assert.ok(names.length >= 3, `ci.yml 只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
+  const names = ['.github/workflows/ci.yml', GATE_WF]
+    .flatMap((p) => [...read(p).matchAll(/^\s{4}name:\s*(.+)$/gm)].map((m) => m[1].trim()));
+  assert.ok(names.length >= 3, `只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
   for (const n of names) {
     assert.ok(doc.includes(n),
-      `分支保護文件裡找不到 CI 的 job 名稱「${n}」。\n`
+      `分支保護文件裡找不到 job 名稱「${n}」。\n`
       + '兩邊名稱走散時，required check 會變成「等一個永遠不會出現的 check」＝永遠卡住合併。');
   }
 });

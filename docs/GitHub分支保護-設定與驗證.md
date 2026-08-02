@@ -11,17 +11,60 @@
   Free 方案下分支保護 API 直接回 403（`Upgrade to GitHub Pro or make this repository public`），
   **一條規則都設不了**。2026-08-02 已升級。
 
-## 現行設定（main 分支）
+## A. 目前 GitHub 上真正的設定（2026-08-02 用唯讀 API 實讀，不是憑印象）
 
-在 **Settings → Branches → Branch protection rules → `main`**：
+> ⚠️ **這一節記的是「現在是什麼」，不是「應該是什麼」。**
+> 兩者現在**不一致**——第一版的這份文件把「我建議的」寫成「現行的」，
+> Codex #382 r1 用 API 對照後當場戳破。要看「應該是什麼」請看 B 節。
+>
+> 重讀指令（任何時候都可以自己對一次）：
+> ```
+> gh api repos/teacherjung/personal-finance-webapp/branches/main/protection
+> ```
 
-| 規則 | 狀態 | 為什麼 |
+| 規則 | 目前狀態 | 和 B 節（該有的樣子）一致嗎 |
+|---|---|---|
+| Require a pull request before merging | ✅ 開 | ✅ |
+| └ **Require approvals**（`required_approving_review_count`） | **1** | ❌ **不一致，而且正在卡死所有 PR**——見下方 ⚠️ |
+| └ Dismiss stale reviews | ⬜ 關 | ✅ |
+| Require status checks to pass | ✅ 開 | ✅ |
+| └ 必過的 check | 只有 `上線用的 Node（.node-version）` | ⚠️ 差一個——`協作欄位（實作者 ≠ 獨立審查者）` 還沒加（本 PR 合併後才存在，步驟見 C 節） |
+| └ **Require branches to be up to date**（`strict`） | ✅ **開** | ❌ 不一致（原意是關）——見下方說明 |
+| Require linear history | ✅ 開 | ✅ |
+| Require conversation resolution | ✅ 開 | ✅ |
+| Allow force pushes | ⬜ 關 | ✅ |
+| Allow deletions | ⬜ 關 | ✅ |
+| **Do not allow bypassing**（`enforce_admins`） | ✅ **開** | ✅ 最關鍵的一格，理由見下一節 |
+
+### ⚠️ `Require approvals = 1` 目前讓 **repo 完全合不了任何東西**
+
+實測（2026-08-02）：#381／#382／#383 三支的 `mergeStateStatus` 全是 **`BLOCKED`**。
+
+原因不是 CI，是 **GitHub 天生不允許核准自己開的 PR**——
+而 Claude／Codex／William **共用同一個 GitHub 身分**，
+所以「需要 1 個核准」在單一身分下 ＝ **需要一個永遠不會出現的核准**。
+
+⇒ **William 要把 Require approvals 取消勾選**（Settings → Branches → 編輯 `main` 的規則）。
+這不是降低標準：實作者 ≠ 審查者這條，現在改由 `協作欄位` 這道 check 在**平台層**擋
+（C 節），而它不需要第二個帳號就能運作。
+**等分身分之後再把 Require approvals 開回來**（見文末「第二步」）——那時它才有意義。
+
+### `Require branches to be up to date` 開著的代價（可以先留著）
+
+它會要求每支 PR 合併前都 rebase 到最新 `main`。**堆疊 PR 時會很煩**
+（前一支合併後，後面每一支都要重推一次）。目前一次只有兩三支在飛，還忍得住，
+所以**先不動**；哪天堆疊變深、每次合併都要連環 rebase，再回來關掉它。
+（記在這裡是為了：以後遇到那個痛的時候，知道痛是這一格造成的。）
+
+## B. 這些規則「應該」長什麼樣（設計意圖）
+
+| 規則 | 該是 | 為什麼 |
 |---|---|---|
 | Require a pull request before merging | ✅ 開 | 不准直接推 main |
-| └ Require approvals | ⬜ **關** | ⚠️ 目前 Claude／Codex／William **共用同一個 GitHub 身分**，而 GitHub 不允許核准自己開的 PR ⇒ 開了會變成誰都合不了。**等分身分之後再開**（見文末） |
+| └ Require approvals | ⬜ **關**（暫時） | 單一身分下開了＝誰都合不了。分身分之後再開 |
 | Require status checks to pass before merging | ✅ 開 | CI 沒綠不准合併 |
 | └ 必過的 check | `上線用的 Node（.node-version）`<br>`協作欄位（實作者 ≠ 獨立審查者）` | ⚠️ **`開發機的 Node（最新版，前瞻｜不擋部署）` 刻意不列**——它是探照燈不是門（見 `.github/workflows/ci.yml` 檔頭）。列了它，下一個大版本 Node 出狀況時連安全更新都上不去 |
-| └ Require branches to be up to date | ⬜ 關 | 會強迫每支 PR 合併前 rebase，堆疊 PR 時很痛。之後需要再開 |
+| └ Require branches to be up to date | ⬜ 關 | 會強迫每支 PR 合併前 rebase，堆疊 PR 時很痛 |
 | Require linear history | ✅ 開 | 一律 squash（本專案慣例），禁 merge commit |
 | Require conversation resolution | ✅ 開 | 審查留言沒回完不准合併 |
 | Allow force pushes | ⬜ 關 | 禁改寫歷史 |
@@ -56,18 +99,30 @@ enforce_admins = false 時：
 
 ⚠️ **未來改動這些設定後，請重跑一次上面三項**——這個專案的招牌病就是「以為有守、其實沒守」。
 
-## 新增 `協作欄位` 這道 check（本 PR 之後要做的一步）
+## C. William 要做的兩步（都在 GitHub 網頁上，各 30 秒）
 
-`.github/workflows/ci.yml` 的 `collab-fields` job 上線後，它會出現在 PR 頁面，
+Settings → Branches → 編輯 `main` 的規則：
+
+### ① 取消勾選 `Require approvals`（**先做這個，不然什麼都合不了**）
+
+理由見 A 節：單一身分下它需要一個永遠不會出現的核准，三支 PR 現在全是 `BLOCKED`。
+
+### ② 把 `協作欄位` 加進必過的 check（**#382 合併之後才做得到**）
+
+`.github/workflows/collab-fields.yml` 的 `collab-fields` job 上線後會出現在 PR 頁面，
 但**預設不是必過的**。要讓它有牙齒：
 
-1. Settings → Branches → 編輯 `main` 的規則
-2. 在 **Require status checks** 的搜尋框輸入 `協作欄位`
-3. 選取 **`協作欄位（實作者 ≠ 獨立審查者）`**
-4. Save
+1. 在 **Require status checks** 的搜尋框輸入 `協作欄位`
+2. 選取 **`協作欄位（實作者 ≠ 獨立審查者）`**
+3. Save
 
-⚠️ **check 名稱必須跟 `ci.yml` 裡的 `name:` 完全一致**——改了 job 名稱，
+⚠️ **check 名稱必須跟 workflow 裡的 `name:` 完全一致**——改了 job 名稱，
 分支保護那邊會變成「等一個永遠不會出現的 check」而**永遠卡住合併**。改名時兩邊要一起改。
+（`test/collab-invariant-docs.test.js` 有考題盯著兩邊字串一致。）
+
+⚠️ 這個 check 之所以能取代 `Require approvals` 的**部分**功能，是因為它在**平台層**擋
+「實作者＝獨立審查者」，而且不需要第二個帳號。**但它擋的是 PR 說明寫了誰，
+不是實際上是誰按的**——那個差別只有分身分能補（見文末第二步）。
 
 ## 之後的第二步：分身分（尚未做）
 
@@ -80,7 +135,9 @@ enforce_admins = false 時：
 
 ## 相關檔案
 
-- `.github/workflows/ci.yml` — 三個 job 的定義（含為什麼 dev-machine 不當門）
+- `.github/workflows/ci.yml` — 兩個程式碼 job（含為什麼 dev-machine 不當門）
+- `.github/workflows/collab-fields.yml` — 協作欄位閘的 job（**刻意分開一個檔**：
+  它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
 - `scripts/check-pr-collab-fields.js` — 協作欄位閘（CI 與人工合併程序**跑同一支**）
 - `scripts/check-pr-merge-gate.js` — 堆疊閘（本機執行，未進 CI）
 - `CODEX-REVIEW.md` — 合併六步驟
