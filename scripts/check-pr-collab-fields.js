@@ -180,12 +180,26 @@ function fetchPr(pr) {
  */
 export function staleBaseProblems(body, head) {
   const raw = fieldValue(body, '基準版本').replace(/[`*_\s]/g, '');
-  const sha = (/[0-9a-fA-F]{7,40}/.exec(raw) || [''])[0].toLowerCase();
-  if (!sha) return [`「基準版本」讀不出 commit SHA（實得「${raw || '（空白）'}」）——至少要 7 碼十六進位`];
-  if (!head.startsWith(sha)) {
-    return [`「基準版本」是 ${sha}，但這支 PR 現在的 head 是 ${head.slice(0, 7)}。\n`
-      + '    分支被推過之後，先前的審查結論就不再適用——請把欄位改成目前的 head 再合併。'];
+  // ⚠️ **抓「每一個」候選、而且要求全部都對**（Codex #382 r5 Medium）。
+  //    第一版只抓第一段十六進位，於是：
+  //      ・`d6c4fbd / f76d12b` 通過，反過來寫卻被拒——**結果取決於排列順序**
+  //      ・`[d6c4fbd](…/commit/f76d12b)` 通過——顯示值更新、連結還指著舊 commit，
+  //        這是**很常見的手滑**，正是這個欄位要防的東西
+  //      ・40 碼後面再多一個十六進位字元也通過（那根本不是合法 SHA）
+  //    判準改成：取**極大**的十六進位段（兩端都不是十六進位字元），長度 7–40 才算候選；
+  //    候選一個都沒有＝紅，任何一個不是目前 head 的前綴＝紅。
+  //    這與 #381 那支考題收斂到的判準是同一條：**「每一個都要對」，不是「有一個對」。**
+  const runs = (raw.match(/[0-9a-fA-F]+/g) || []).filter((r) => r.length >= 7);
+  const candidates = runs.filter((r) => r.length <= 40);
+  if (!runs.length) {
+    return [`「基準版本」讀不出 commit SHA（實得「${raw || '（空白）'}」）——至少要 7 碼十六進位`];
   }
+  const bad = runs.filter((r) => r.length > 40 || !head.startsWith(r.toLowerCase()));
+  if (bad.length) {
+    return [`「基準版本」裡的 ${bad.map((b) => b.slice(0, 41)).join('、')} 不是這支 PR 目前的 head（${head.slice(0, 7)}）。\n`
+      + '    分支被推過之後，先前的審查結論就不再適用——請把欄位（**含連結網址**）改成目前的 head 再合併。'];
+  }
+  if (!candidates.length) return [`「基準版本」讀不出合法的 commit SHA（實得「${raw}」）`];
   return [];
 }
 

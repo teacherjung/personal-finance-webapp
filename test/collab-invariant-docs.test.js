@@ -169,7 +169,27 @@ test('欄位閘｜**審完之後又推了新 commit** → 不通過（這個欄�
   //    最常見的路徑（審完 A、作者再推 B，完全不必是惡意）就讓「已審查」變成過期的宣稱。
   const problems = staleBaseProblems(bodyWithBase('4cbef24'), HEAD);
   assert.ok(problems.length > 0, '基準版本是舊 SHA 卻通過了——那這個欄位等於裝飾');
-  assert.match(problems[0], /現在的 head/);
+  assert.match(problems[0], /目前的 head/);
+});
+
+test('欄位閘｜基準版本裡**每一個** SHA 都要是目前 head（順序不該影響結果）', () => {
+  // ⚠️ Codex #382 r5：第一版只抓第一段十六進位。
+  //    `d6c4fbd / f76d12b` 通過、反過來寫卻被拒 ⇒ 結果取決於排列順序，那不是判準。
+  for (const v of ['f76d12b / d6c4fbd', 'd6c4fbd / f76d12b']) {
+    assert.ok(staleBaseProblems(bodyWithBase(v).replace(/`/g, ''), HEAD).length > 0,
+      `「${v}」混了舊 SHA 卻通過了`);
+  }
+});
+
+test('欄位閘｜顯示值更新、連結還指著舊 commit → 不通過（很常見的手滑）', () => {
+  const link = '[d6c4fbd](https://github.com/x/y/commit/f76d12b20cc55f6f608ce043051e2fa4a969cffe)';
+  assert.ok(staleBaseProblems(bodyWithBase(link).replace(/`/g, ''), HEAD).length > 0,
+    '連結指著舊 commit 卻通過了——這正是這個欄位要防的東西');
+});
+
+test('欄位閘｜不是合法 SHA 的長十六進位串 → 不通過', () => {
+  assert.ok(staleBaseProblems(bodyWithBase(HEAD + 'a').replace(/`/g, ''), HEAD).length > 0,
+    '41 碼十六進位（不是合法 SHA）卻通過了');
 });
 
 test('欄位閘｜基準版本填了看不出 SHA 的東西 → 不通過（不猜）', () => {
@@ -470,7 +490,9 @@ test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', 
   /** @type {string[]} */
   const names = [];
   for (const f of readdirSync(join(ROOT, WF_DIR)).filter((f) => /\.ya?ml$/.test(f))) {
-    for (const m of read(`${WF_DIR}/${f}`).matchAll(/^\s{4}name:\s*(.+)$/gm)) names.push(m[1].trim());
+    // 縮排不寫死四格（Codex #382 r5 Low）：合法 YAML 可以用別的縮排。
+    // `- name:`（step 的名字）因為 `name:` 前面有 `-` 而自然不會命中——只有 job 層的 key 會。
+    for (const m of read(`${WF_DIR}/${f}`).matchAll(/^[ \t]{2,8}name:\s*(.+)$/gm)) names.push(m[1].trim());
   }
   assert.ok(names.length >= 3, `只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
   assert.deepEqual([...new Set(names)].sort(), [...names].sort(),
