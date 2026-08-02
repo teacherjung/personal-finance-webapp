@@ -295,7 +295,11 @@ function gatesRunInMergeSteps() {
   assert.ok(stop > start, '合併步驟區塊找不到結束錨點 `\n---`——不要退而掃到檔尾，那不是 fail-closed');
   // ⚠️ 整段六步驟寫在 blockquote 裡，fence 前面有 `> ` ⇒ 先剝引用前綴再抽 fence
   const block = whole.slice(start, stop).split('\n').map((l) => l.replace(/^\s*>[ \t]?/, '')).join('\n');
-  const fenced = [...block.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((f) => f[1]).join('\n');
+  // ⚠️ fence 要**錨定整行**、info string **只准 `bash`**（Codex #385 r13 High）：
+  //    原本的 /```[a-z]*\n…```/ 接受任何 info string，而且沒錨定行首——
+  //    正文裡寫一句「這不是 fence：```bash」就會被當成指令區塊採計，34/34 全綠。
+  const FENCE = /^ {0,3}```bash[ \t]*$\n([\s\S]*?)^ {0,3}```[ \t]*$/gm;
+  const fenced = [...block.matchAll(FENCE)].map((f) => f[1]).join('\n');
   const gates = [];
   for (const line of fenced.split('\n')) {
     const m2 = /^node (scripts\/[\w-]+\.js) <N>$/.exec(line.trim());

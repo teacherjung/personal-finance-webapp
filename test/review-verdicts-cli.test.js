@@ -112,3 +112,18 @@ test('⭐ CLI｜🤖 記號在、標頭寫壞 → exit 1（唯一還阻擋的文
   assert.equal(r.status, 1, `標頭寫壞沒有被擋。實得 ${r.status}\n${r.stdout}${r.stderr}`);
   assert.match(r.stderr, /🤖 記號、但標頭格式不合規/);
 });
+
+test('⭐ CLI｜**同時有 warning 與真正的阻擋** → 仍然 exit 1（warning 不可以壓掉阻擋）', () => {
+  // ⚠️ Codex #385 r13 Medium：在 warning 印完之後塞一個 `return 0`，CLI 10/10 仍全綠。
+  //    也就是「疑似結論但沒標頭」這件事，反而可能把**別人正式的阻擋**一起吃掉——
+  //    方向剛好跟 r11 的裁定相反，而且沒有任何一題看得到。
+  const r = withFakeGh(payload([
+    header('桌面 A', 1, '通過'),                        // 指定審查者：通過
+    header('桌面 B', 1, '不可合併'),                     // 另一位：正式阻擋（合規標頭）
+    '## Claude 複審\n\n結論：通過，可以合併。',           // 疑似結論、沒標頭 ⇒ 只該提醒
+  ]));
+  assert.equal(r.status, 1,
+    `warning 把正式阻擋壓掉了。實得 ${r.status}\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /不影響本閘結果/, '提醒不見了');
+  assert.match(r.stderr, /未通過/, '正式阻擋的訊息不見了');
+});
