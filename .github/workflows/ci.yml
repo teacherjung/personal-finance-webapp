@@ -49,6 +49,14 @@ jobs:
     # 只在 PR 上跑：push 到 main 沒有 PR 編號可查
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # ⚠️ **必須明寫 pull-requests: read**（2026-08-02 第一次上工就踩到）：
+    #    預設的 GITHUB_TOKEN 讀不到 PR 內容，`gh pr view` 會回
+    #    `Resource not accessible by integration (repository.pullRequest)`，
+    #    腳本 fail-closed 判「查不清楚」→ 退出碼 2 → 每一支 PR 都紅。
+    #    （fail-closed 本身是對的：查不到不等於安全。錯的是沒給權限。）
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
