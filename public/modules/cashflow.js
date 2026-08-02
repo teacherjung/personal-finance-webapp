@@ -11,6 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
+import { cashflowMonthSummary } from './cashflow-model.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -40,46 +41,51 @@ export async function renderCashflow() {
   monthFilter = fallbackMonth(monthFilter, months);
 
   const th = thBuilder(listSort);
-  const monthRows = all.filter(t => t.date?.slice(0, 7) === monthFilter);
   // 本月三張卡（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
-  const income = monthRows.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount || 0), 0);
-  const expense = monthRows.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount || 0), 0);
+  const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
   // 篩選金流後再排序
   const rows = sortRows(monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter)), listSort);
 
-  const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}">${label}</button>`;
+  const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
 
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
-      <div class="page-actions">
-        ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
-        <button class="btn btn-upload" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
-        <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
+    <div class="cashflow-workspace">
+      <div class="page-head cashflow-head">
+        <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
+        <div class="page-actions">
+          ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
+          <button class="btn btn-upload" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
+          <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
+        </div>
       </div>
-    </div>
 
-    <div class="cards">
-      <div class="card"><h3>本月收入</h3><div class="stat sm pos">${wan(income)}</div></div>
-      <div class="card"><h3>本月支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
-      <div class="card"><h3>本月結餘</h3><div class="stat sm ${income - expense >= 0 ? 'pos' : 'neg'}">${income - expense >= 0 ? '+' : ''}${wan(income - expense)}</div></div>
-    </div>
-
-    <div class="two-col" style="margin:18px 0;align-items:end">
-      <div>
-        <label>月份</label>
-        <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
+      <div class="cards cashflow-summary-grid" aria-label="本月銀行收支摘要">
+        <div class="card cashflow-stat" data-kind="income"><h3>本月收入</h3><div class="stat sm pos">${wan(income)}</div><p>匯入與手動記錄的收入</p></div>
+        <div class="card cashflow-stat" data-kind="expense"><h3>本月支出</h3><div class="stat sm neg">${wan(expense)}</div><p>不含帳戶內轉</p></div>
+        <div class="card cashflow-stat" data-kind="net"><h3>本月結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div><p>收入減支出</p></div>
       </div>
-      <div>
-        <label>金流</label>
-        <div class="chip-row">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
-      </div>
-    </div>
 
-    <div class="tbl-wrap">
-      <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-      <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty">本月尚無記錄，點右上角「記一筆」，或到「信用卡費」上傳信用卡帳單。</td></tr>`}</tbody></table>
+      <section class="cashflow-controls" aria-label="銀行收支篩選">
+        <div class="cashflow-control">
+          <label for="monthSel">月份</label>
+          <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
+        </div>
+        <div class="cashflow-control cashflow-flow-control">
+          <span class="cashflow-control-label">金流</span>
+          <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
+        </div>
+      </section>
+
+      <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
+        <div class="cashflow-ledger-head">
+          <div><h2 id="cashflow-ledger-title">收支明細</h2><p>目前顯示 ${rows.length} 筆</p></div>
+        </div>
+        <div class="tbl-wrap cashflow-ledger">
+          <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+          <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>本月尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
+        </div>
+      </section>
     </div>
   `;
 
