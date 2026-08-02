@@ -1,27 +1,46 @@
 #!/bin/zsh
-# 拆分護欄的突變表。**每一步都先驗基準**，因為今晚已經有兩次 harness 自己壞掉
-# （一次永遠紅、一次永遠綠）——一個永遠同色的突變表和沒有突變表一樣沒用。
-set -e
+# 拆分護欄的突變表。
+#
+# ⚠️ 這支腳本本身出過事（Codex #384 r4 抓的，而且我親身踩過）：
+#   ①它會 `git checkout --` 還原檔案 ⇒ **未 commit 的工作會被洗掉**（我洗掉過自己一輪的修改）
+#   ②期望不符時只印 ⚠️、退出碼仍是 0 ⇒ 掛進任何自動化都是**永遠通過的假閘**
+#   ③基準綠與收尾乾淨只是「印出來」，沒有真的斷言
+# 所以現在：**工作樹不乾淨就拒跑**、**任何一條不如期望就退出碼 1**、基準與收尾都 assert。
+set -u
 cd "$(dirname "$0")"
+
+fail=0
+
+# ── 拒跑條件：工作樹必須乾淨（本腳本自己允許是唯一例外，因為它可能正在被編輯）──
+dirty=$(git status --porcelain | grep -v ' mutate.sh$' || true)
+if [[ -n "$dirty" ]]; then
+  echo "❌ 工作樹不乾淨，拒絕執行——這支會 git checkout 還原檔案，會洗掉你未 commit 的工作："
+  echo "$dirty"
+  exit 2
+fi
 
 run() {
   if node --test --test-reporter=dot test/contract-split.test.js >/dev/null 2>&1; then
-    echo "🟢 綠"
+    echo "綠"
   else
-    echo "🔴 紅"
+    echo "紅"
   fi
 }
 
+base=$(run)
+printf "   %-46s → %s\n" "0. 未突變（基準）" "$base"
+if [[ "$base" != "綠" ]]; then
+  echo "❌ 基準就是紅的——突變結果全部無效（今晚實際發生過兩次）。先把基準修綠。"
+  exit 2
+fi
+
 check() {   # check <說明> <期望：紅|綠>
-  local got
+  local got mark
   got=$(run)
-  local mark="  "
-  [[ "$got" == *"$2"* ]] || mark="⚠️"
-  printf "%s %-44s → %s（期望 %s）\n" "$mark" "$1" "$got" "$2"
+  if [[ "$got" == "$2" ]]; then mark="  "; else mark="❌"; fail=1; fi
+  printf "%s %-46s → %s（期望 %s）\n" "$mark" "$1" "$got" "$2"
   git checkout -- AGENTS.md docs/contracts/ test/contract-split.test.js 2>/dev/null || true
 }
-
-printf "   %-44s → %s\n" "0. 未突變（基準）" "$(run)"
 
 python3 - <<'PY'
 import pathlib
@@ -45,6 +64,27 @@ PY
 check "B. 無空白分隔符＋整段規則貼回索引" 紅
 
 python3 - <<'PY'
+import pathlib
+ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
+i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
+b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
+p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+for k,l in enumerate(ls):
+    if l.startswith("| 月度回顧總覽卡 |"):
+        ls[k]="| 月度回顧總覽卡 | 前半\\|後半"+b+"——完整契約"+l.split("——完整契約")[1]; break
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check "B2. 用跳脫的 \\| 藏在同一格＋貼回全文" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡"); j=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"```\n"+s[i:j]+"\n```\n"+s[j:], encoding="utf-8")
+PY
+check "B3. 整段契約包進 code fence" 紅
+
+python3 - <<'PY'
 import pathlib,re
 p=pathlib.Path("AGENTS.md")
 p.write_text(re.sub(r'^\| \*\*SEC 最新單季逐列期間\*\*.*\n','',p.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
@@ -61,19 +101,18 @@ check "D. 整條路由列包進 HTML 註解" 紅
 
 python3 - <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/README.md")
-t=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/README.md"); t=p.read_text(encoding="utf-8")
 assert t.count("`public/modules/portfolio-symbol.js`")==1
 p.write_text(t.replace("`public/modules/portfolio-symbol.js`","`portfolio-symbol.js`",1), encoding="utf-8")
 PY
 check "E. 路由表用短檔名冒充完整路徑" 紅
 
 python3 - <<'PY'
-import pathlib
+import pathlib,re
 p=pathlib.Path("docs/contracts/收支記帳與匯入.md"); s=p.read_text(encoding="utf-8")
-i=s.index("## 店家消費檔案"); j=len(s)
-p.write_text(s[:i]+s[i:j].replace("**記得同步這裡**：","**同步**："), encoding="utf-8")
-q=pathlib.Path("AGENTS.md"); import re
+i=s.index("## 店家消費檔案")
+p.write_text(s[:i]+s[i:].replace("**記得同步這裡**：","**同步**："), encoding="utf-8")
+q=pathlib.Path("AGENTS.md")
 q.write_text(re.sub(r'^\| \*\*店家消費檔案\*\*.*\n','',q.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
 PY
 check "F. marker 與索引一起刪（r2 的假綠）" 紅
@@ -88,5 +127,17 @@ p.write_text(p.read_text(encoding="utf-8").replace("      '月度回顧總覽卡
 PY
 check "H. 從 manifest 偷偷拿掉一條規則" 紅
 
-echo "--- 工作樹（應為空）---"
-git status --short
+# ── 收尾：真的 assert，不是印出來就算 ──
+leftover=$(git status --porcelain | grep -v ' mutate.sh$' || true)
+if [[ -n "$leftover" ]]; then
+  echo "❌ 收尾沒乾淨（突變沒還原）："
+  echo "$leftover"
+  fail=1
+fi
+if [[ "$(run)" != "綠" ]]; then
+  echo "❌ 跑完之後基準變紅了——有突變沒還原乾淨。"
+  fail=1
+fi
+
+[[ $fail -eq 0 ]] && echo "✅ 全部符合期望，收尾乾淨" || echo "❌ 有不符合期望的項目（見上）"
+exit $fail

@@ -53,7 +53,9 @@ function read(p) {
   const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(!stripped.includes('<!--') && !stripped.includes('-->'),
     `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
-  return stripped;
+  // ⚠️ 也剝掉 fenced code block（Codex #384 r4）：`\u0060\u0060\u0060` 裡的 `## 標題` 不是標題，
+  //    把整段契約包進 code fence，畫面上 anchor 就消失了，而考題原本看不見。
+  return stripped.replace(/^```[\s\S]*?^```/gm, '');
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
@@ -97,8 +99,6 @@ const MANIFEST = {
       'public/modules/monthly-review-card.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
-      'public/modules/theme.js',
-      'public/styles.css',
       'test/server.test.js',
       'test/subscriptions-model.test.js',
     ],
@@ -183,7 +183,6 @@ const MANIFEST = {
       'lib/routes/auth.js',
       'lib/routes/market.js',
       'lib/schema.js',
-      'lib/services/ib-sync.js',
       'lib/services/insights.js',
       'lib/services/stock-fundamentals.js',
       'lib/stock-fundamentals.js',
@@ -303,7 +302,9 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
     // 比的是「摘要 vs 內文」不是「整行 vs 整段」——整行含約 90 字元的表格框與連結標記。
     // ⚠️ 用**真正的表格 cell** 解析，不可依賴「一定有空白」的 `' | '`
     //    （Codex #384 r3 實測：把分隔符改成合法的無空白 `|`，摘要就讀到錯欄，貼回 275 字全文仍全綠）。
-    const cells = line.replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+    // ⚠️ 用**未被跳脫**的 `|` 切欄（Codex #384 r4）：Markdown 的 cell 裡可以合法寫 `\|`，
+    //    單純 `.split('|')` 會在那裡誤切，於是整段規則貼回摘要也讀不到 ⇒ 假綠。
+    const cells = line.replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((y) => y.trim());
     const summary = (cells[1] || '').split('——完整契約')[0];
     // 比例只在長規則上生效：短規則的摘要本來就接近規則本身。
     // ⚠️ **比例一律適用，沒有「短規則例外」**（Codex #384 r3 之後收斂）：
