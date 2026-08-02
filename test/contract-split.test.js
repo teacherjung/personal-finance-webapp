@@ -57,11 +57,15 @@ function read(p) {
   //    把整段契約包進 code fence，畫面上 anchor 就消失了，而考題原本看不見。
   // ⚠️ CommonMark 的 fence 有**兩種**（Codex #384 r6）：``` 與 ~~~。
   //    只剝一種＝用另一種包起來就能讓標題與 anchor 在畫面上消失，而考題還看得到。
-  const noFence = stripped.replace(/^```[\s\S]*?^```/gm, '').replace(/^~~~[\s\S]*?^~~~/gm, '');
+  // ⚠️ CommonMark 允許 fence 前有 **1–3 個空格**（清單或縮排裡很常見）——
+  //    只認第 1 欄的話，「縮排的 fence ＋忘記關」這個很普通的手滑就繞過去了（Codex #384 r8）。
+  const noFence = stripped
+    .replace(/^ {0,3}```[\s\S]*?^ {0,3}```/gm, '')
+    .replace(/^ {0,3}~~~[\s\S]*?^ {0,3}~~~/gm, '');
   // ⚠️ 剝完**不准有殘留的 fence 記號**（Codex #384 r7）：忘記關 fence 是正常維護手滑，
   //    而 CommonMark 會把後面**整份文件**當成程式碼——標題與 anchor 全部消失，考題卻還看得到。
   //    同 HTML 註解那條，判準是「剝完要乾淨」，不是「剝得掉的就好」。
-  assert.ok(!/^(?:```|~~~)/m.test(noFence),
+  assert.ok(!/^ {0,3}(?:```|~~~)/m.test(noFence),
     `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。`);
   return noFence;
 }

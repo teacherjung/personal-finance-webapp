@@ -195,6 +195,14 @@ p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check "O. AGENTS 多一條等價的重複索引列" 紅
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"  ~~~\n"+s[i:], encoding="utf-8")   # CommonMark 允許 1–3 個前置空格，且只開不關
+PY
+check "P. 縮排的 fence＋忘記關（合法縮排的手滑）" 紅
+
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)
 if [[ -n "$leftover" ]]; then
