@@ -97,31 +97,15 @@ function read(p) {
   //    `<![CDATA[` `<? ?>` …CommonMark 有六類入口，把一整節包起來，GitHub 就不產生那個標題。
   //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
   //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
-  //    ⚠️ 判的是**整行**、不是行首（r20 High②之二）：`可見文字 <a id="x"></a>` 會產生額外 anchor，
-  //    `<details>` 會把內容摺起來——兩個都在行中。行內反引號裡的 `<` 是字面值，不產生 HTML，放行。
-  const html = raw.split('\n').findIndex((l) => /</.test(l.replace(/(`+)[^`]*\1/gu, '')));
+  //    ⚠️ 這裡判的是**行首**。契約檔另有更嚴的一刀（連行「中」的 `<` 都不准，見 assertHeadingForm）——
+  //    AGENTS.md 刻意不吃那一刀：它要寫 `🤖 <角色>｜來源：<哪個 session>` 這種格式範例，
+  //    而它的 anchor 零消費者、索引列又是考題直接讀原始文字，藏不掉東西。
+  //    （r21 我把嚴格版裝在這裡，當場擋掉 #385 那段範例——兩支各自全綠、試合併才紅。
+  //      跟 r15 同一個錯：**門裝到不承重的地方，就只剩下誤擋**。）
+  const html = raw.split('\n').findIndex((l) => /^\s*</.test(stripContainers(l)));
   assert.equal(html, -1,
-    `${p}:${html + 1} 出現 raw HTML 的 \`<\`（行內反引號裡的不算）。\n`
-    + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 會把包住的標題整個吞掉、\n'
-    + '   `<a id>` 會多長一個 anchor、`<details>` 會把內容摺起來，而畫面上都看不出來。\n'
-    + '   要寫數學比較或角括號，請用行內反引號包起來（例如 `|Δ%|<0.3%`）。');
-  // ⚠️ **不需要縮排就能藏東西的三族**（Codex #384 r20 High②）：
-  //    ①link/footnote reference definition：`[x]: # (一大段隱形文字)`、`[^n]: 隱形文字`
-  //      GitHub 一個字都不顯示，但它們**算進 raw 長度** ⇒ 可以灌大契約內文、
-  //      讓「索引摘要必須比內文短」那道比例檢查失效，再把整條規則貼回索引。
-  //    ②行**中**的 raw HTML：`可見文字 <a id="假anchor"></a><details>藏起來</details>`
-  //      ——原本只擋行首 `<`。
-  //    ③零寬與方向控制字元：畫面上不存在，卻一樣算長度。
-  //    三族的共同點是「畫面看不見、長度算得到」⇒ 一律禁止。
-  const refDef = raw.split('\n').findIndex((l) => /^\[[^\]]+\]:/u.test(l));
-  assert.equal(refDef, -1,
-    `${p}:${refDef + 1} 出現 link／footnote reference definition。\n`
-    + '⚠️ 它在 GitHub 上完全不顯示，卻算進內文長度——可以用來灌大契約、讓比例檢查失效。\n'
-    + '   契約檔請直接寫行內連結。');
-  const invisible = raw.split('\n').findIndex((l) => /[\u200b-\u200f\u2028\u2029\ufeff\u00ad]/u.test(l));
-  assert.equal(invisible, -1,
-    `${p}:${invisible + 1} 出現零寬／不可見字元。\n`
-    + '⚠️ 畫面上不存在、長度卻算得到——同樣可以灌大內文，而且沒有人看得出來。');
+    `${p}:${html + 1} 出現行首 raw HTML。\n`
+    + '⚠️ `<pre>`／`<div>` 這類 block 會把包住的內容整段吞掉，而畫面上看不出來。要排版請用 Markdown。');
   assert.ok(!raw.includes('<!--') && !raw.includes('-->'),
     `${p} 出現 HTML 註解。\n`
     + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
@@ -157,6 +141,31 @@ function read(p) {
  */
 function assertHeadingForm(p, raw) {
   const lines = raw.split('\n');
+  // ⚠️ **不需要縮排就能藏東西的三族**（Codex #384 r20 High②）：
+  //    ①link/footnote reference definition：`[x]: # (一大段隱形文字)`、`[^n]: 隱形文字`
+  //      GitHub 一個字都不顯示，但它們**算進 raw 長度** ⇒ 可以灌大契約內文、
+  //      讓「索引摘要必須比內文短」那道比例檢查失效，再把整條規則貼回索引。
+  //    ②行**中**的 raw HTML：`可見文字 <a id="假anchor"></a><details>藏起來</details>`
+  //      ——原本只擋行首 `<`。
+  //    ③零寬與方向控制字元：畫面上不存在，卻一樣算長度。
+  //    三族的共同點是「畫面看不見、長度算得到」⇒ 一律禁止。
+  const refDef = raw.split('\n').findIndex((l) => /^\[[^\]]+\]:/u.test(l));
+  assert.equal(refDef, -1,
+    `${p}:${refDef + 1} 出現 link／footnote reference definition。\n`
+    + '⚠️ 它在 GitHub 上完全不顯示，卻算進內文長度——可以用來灌大契約、讓比例檢查失效。\n'
+    + '   契約檔請直接寫行內連結。');
+  const invisible = raw.split('\n').findIndex((l) => /[\u200b-\u200f\u2028\u2029\ufeff\u00ad]/u.test(l));
+  assert.equal(invisible, -1,
+    `${p}:${invisible + 1} 出現零寬／不可見字元。\n`
+    + '⚠️ 畫面上不存在、長度卻算得到——同樣可以灌大內文，而且沒有人看得出來。');
+  //    ⚠️ 判的是**整行**、不是行首（r20 High②之二）：`可見文字 <a id="x"></a>` 會產生額外 anchor，
+  //    `<details>` 會把內容摺起來——兩個都在行中。行內反引號裡的 `<` 是字面值，不產生 HTML，放行。
+  const midHtml = lines.findIndex((l) => /</.test(l.replace(/(`+)[^`]*\1/gu, '')));
+  assert.equal(midHtml, -1,
+    `${p}:${midHtml + 1} 出現 raw HTML 的 \`<\`（行內反引號裡的不算）。\n`
+    + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 會把包住的標題整個吞掉、\n'
+    + '   `<a id>` 會多長一個 anchor、`<details>` 會把內容摺起來，而畫面上都看不出來。\n'
+    + '   要寫數學比較或角括號，請用行內反引號包起來（例如 `|Δ%|<0.3%`）。');
   // ⚠️ **第 1 行必須是 H1，這要無條件斷言**（Codex #384 r16）：
   //    原本只寫「是標題就必須合規」，於是把第 1 行的 `# ` 刪掉會讓它變成普通文字
   //    ⇒ `atxish` 是 false ⇒ 整條判斷跳過 ⇒ **七題全綠**。
