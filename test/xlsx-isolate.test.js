@@ -289,6 +289,11 @@ test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則
   }
   assert.ok(/ignores:\s*\['lib\/statement\.js',\s*'test\/\*\*'\]/.test(cfg),
     'xlsx 護欄的 ignores 清單被改動了——允許名單只能有 lib/statement.js（test/** 是考題自己要合成 XLSX）。');
+  // ⚠️ **範圍也要釘住**（Codex #374 r4 Low）：26 種探針全寫在 lib/ 底下，所以把 guard 的
+  //    files 縮成只掃 server.js／lib/** 之後，那 26 題**仍然全綠**——public 會靜默失守。
+  //    護欄存在 ≠ 護欄涵蓋到該涵蓋的地方，這正是本支 PR 一路在修的同一種病。
+  assert.ok(/files:\s*\['\*\*\/\*\.js',\s*'\*\*\/\*\.mjs',\s*'\*\*\/\*\.cjs'\]/.test(cfg),
+    'xlsx 護欄的 files 範圍被縮窄了——它必須掃全樹（public/ 也在內），否則有人在前端引入 xlsx 不會被擋。');
 });
 
 test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉了三次都漏，最後改成整個模組禁掉）', async () => {
@@ -297,6 +302,7 @@ test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉�
   const { fileURLToPath } = await import('node:url');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const probeDir = join(root, 'lib', '_xlsx_guard_probes');
+  const publicProbeDir = join(root, 'public', '_xlsx_guard_probes');
   const long = 'x'.repeat(90);
   const FORMS = [
     ["靜態", "import XLSX from 'xlsx';\nconsole.log(XLSX);\n"],
@@ -343,18 +349,29 @@ test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉�
   ];
   try {
     mkdirSync(probeDir, { recursive: true });
+    mkdirSync(publicProbeDir, { recursive: true });
     const paths = FORMS.map(([name, src], i) => {
       const f = join(probeDir, `p${i}.js`);
       writeFileSync(f, src);
       return [name, f, src];
     });
-    const byFile = await eslintFindingsByFile(probeDir);
+    // ⚠️ **前端也要有探針**（Codex #374 r4 Low）：全部寫在 lib/ 底下的話，
+    //    有人把 guard 的 files 縮成只掃 server.js／lib/** 時，這題仍然全綠、public 靜默失守。
+    const pubFile = join(publicProbeDir, 'probe.js');
+    writeFileSync(pubFile, "import XLSX from 'xlsx';\nconsole.log(XLSX);\n");
+    const byFile = new Map([...(await eslintFindingsByFile(probeDir)),
+      ...(await eslintFindingsByFile(publicProbeDir))]);
     for (const [name, f, src] of paths) {
       const hits = byFile.get(f) || [];
       assert.ok(hits.length > 0,
         `「${name}」這種寫法沒有被擋下——它是合法 JS，會讓 xlsx 繞過子行程隔離。\n原始碼：\n${src}`);
     }
-  } finally { rmSync(probeDir, { recursive: true, force: true }); }
+    assert.ok((byFile.get(pubFile) || []).length > 0,
+      'public/ 底下引入 xlsx 沒有被擋下——護欄的 files 範圍被縮窄了（26 種探針都在 lib/，看不出來）。');
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+    rmSync(publicProbeDir, { recursive: true, force: true });
+  }
 });
 
 test('架構｜production 不可以有 .cjs（CJS 的 require 別名在語法上堵不住）', async () => {
