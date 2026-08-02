@@ -218,36 +218,180 @@ test('LOCAL 零改動｜不是 HOSTED 就直接在行程內讀（連 spawn 的 2
 });
 
 /**
- * 全 production tree 掃描：找出所有「引入 xlsx 套件」的檔案。
- * **刻意不剝註解**（雙軌思路）：註解裡寫了 import 會變成噪音型誤報，改個措辭就好；
- * 反過來若為了乾淨而剝註解，剝除器一有 bug 就變成**靜默漏掉**——那是這個專案的招牌病。
+ * 正式程式碼的檔案清單（給架構考題掃）。
+ *
+ * ⚠️ **一律走 `git ls-files`，不可自己走訪檔案樹**（2026-08-02 實測踩到）：
+ *    原本自己 `readdirSync` 遞迴，結果在老師的機器上把 `.claude/worktrees/<副本>/lib/statement.js`
+ *    ——兩份 repo 副本——也掃了進來，考題**假紅**。CI 是乾淨 checkout 所以全綠，
+ *    只有真正在用的那台會紅：**最糟的一種紅**（擋住 push，而且看起來像程式壞了）。
+ *    `--others` 是刻意的：違規的**新檔在 `git add` 之前**就要被抓到，否則護欄會在最需要它的那一刻失效。
+ *    同一寫法見 `test/hosted-store-pg.test.js` 的 `libFiles`。
+ * @returns {string[]}
  */
-async function xlsxImporters() {
-  const { readFileSync, readdirSync, statSync } = await import('node:fs');
-  const { join, dirname, relative } = await import('node:path');
+async function productionFiles() {
+  const { execFileSync } = await import('node:child_process');
+  const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-  /** @type {string[]} */ const files = [];
-  const walk = (/** @type {string} */ dir) => {
-    for (const name of readdirSync(dir)) {
-      if (name === 'node_modules' || name === '.git' || name === 'test' || name === 'prototype') continue;
-      const full = join(dir, name);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (name.endsWith('.js') && !name.endsWith('.test.js')) files.push(full);
-    }
-  };
-  walk(root);
-  // 涵蓋 ESM／CJS／動態三種寫法，別名與解構都逃不掉——因為**要用就得先引入**。
-  const IMPORT = /(?:from\s*['"]xlsx['"])|(?:require\s*\(\s*['"]xlsx['"]\s*\))|(?:import\s*\(\s*['"]xlsx['"]\s*\))/;
-  return files.filter((f) => IMPORT.test(readFileSync(f, 'utf8'))).map((f) => relative(root, f)).sort();
+  const listed = execFileSync('git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
+    { encoding: 'utf8', cwd: root }).trim();
+  return (listed ? listed.split('\n') : []).filter((f) => /\.(js|mjs|cjs)$/.test(f) && !f.endsWith('.test.js'));
 }
 
-test('架構｜全樹只有一個檔案可以引入 xlsx（別的檔案引入＝那條路不經隔離）', async () => {
-  const ALLOWLIST = ['lib/statement.js'];
-  const found = await xlsxImporters();
-  assert.deepEqual(found, ALLOWLIST,
-    `引入 xlsx 的檔案應該只有 ${ALLOWLIST.join('、')}，實得：${found.join('、') || '（零個——收斂點被搬走了？）'}\n`
-    + '新增的話：那個檔案讀 XLSX 不會經過 lib/pdf-isolate.js 的子行程，攻擊檔會直接打在主行程上。');
+/**
+ * xlsx 收斂點護欄的**真正執法者是 ESLint**（`eslint.config.js` 的 `no-restricted-imports`
+ * ＋ `no-restricted-syntax`），不是這裡。
+ *
+ * ⚠️ **為什麼不自己掃字串**（Codex #374 r1 High）：註解在 JS 語法上等同空白，
+ *    「import XLSX from ⟨註解⟩ 'xlsx'」、「import 'xlsx'」、「await import ⟨註解⟩ ('xlsx')」
+ *   （⟨註解⟩＝真正的區塊註解，這裡不寫出結束符是因為它會把這段註解本身關掉）
+ *    全是合法寫法。我先前手寫的 regex 七種寫法**漏掉五種**——用正規表示式解析一門語言，
+ *    補到死也補不完。parser 看的是語法樹，這些寫法對它是同一件事。
+ *
+ * 那這裡還做什麼？**盯著執法者還在不在**：有人把 eslint.config.js 那幾條規則刪掉、
+ * 或把 `lib/statement.js` 以外的檔案加進 ignores，lint 就會安靜地全綠。下面兩題守這個。
+ */
+async function eslintFindingsByFile(dir) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const run = promisify(execFile);
+  // ⚠️ **一次跑完所有樣本**：本來一個樣本 spawn 一次 eslint，15 個要 11 秒；
+  //    eslint 啟動成本佔了幾乎全部。一次掃一個目錄再依檔名分組，同樣的涵蓋、不到 1 秒。
+  const stdout = await run('npx', ['eslint', '--format', 'json', dir], { cwd: root, maxBuffer: 16 * 1024 * 1024 })
+    .then((r) => r.stdout, (e) => String(e?.stdout || '[]'));   // eslint 有錯時 exit code 非 0
+  const out = new Map();
+  for (const r of JSON.parse(stdout)) {
+    out.set(r.filePath, (r.messages || []).filter((m) => String(m.ruleId || '').startsWith('no-restricted-')));
+  }
+  return out;
+}
+
+test('架構｜xlsx 收斂點護欄必須還掛在 eslint.config.js 上（規則被拿掉＝lint 從此安靜全綠）', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const cfg = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'eslint.config.js'), 'utf8');
+  for (const needle of [
+    "'no-restricted-imports'",
+    "'no-restricted-syntax'",
+    'patterns:',
+    "ImportExpression[source.value=/^xlsx(\\\\/|$)/]",
+    "CallExpression[callee.name='require'][arguments.0.value=/^xlsx(\\\\/|$)/]",
+    "ImportExpression:not([source.type='Literal'])",
+    "CallExpression[callee.name='createRequire']",
+  ]) {
+    assert.ok(cfg.includes(needle),
+      `eslint.config.js 少了 ${needle}——xlsx 收斂點護欄被拆掉了，別的檔案可以直接引入 xlsx 而不經子行程隔離。`);
+  }
+  assert.ok(/ignores:\s*\['lib\/statement\.js',\s*'test\/\*\*'\]/.test(cfg),
+    'xlsx 護欄的 ignores 清單被改動了——允許名單只能有 lib/statement.js（test/** 是考題自己要合成 XLSX）。');
+});
+
+test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉了三次都漏，最後改成整個模組禁掉）', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const probeDir = join(root, 'lib', '_xlsx_guard_probes');
+  const long = 'x'.repeat(90);
+  const FORMS = [
+    ["靜態", "import XLSX from 'xlsx';\nconsole.log(XLSX);\n"],
+    ["靜態＋註解", "import XLSX from /* c */ 'xlsx';\nconsole.log(XLSX);\n"],
+    ["純副作用", "import 'xlsx';\n"],
+    ["改名", "import * as Y from 'xlsx';\nconsole.log(Y);\n"],
+    ["export-from", "export { read } from 'xlsx';\n"],
+    ["export *", "export * from 'xlsx';\n"],
+    ["子路徑（SheetJS 自己也這樣發佈）", "import X from 'xlsx/xlsx.mjs';\nconsole.log(X);\n"],
+    ["子路徑＋純副作用", "import 'xlsx/dist/xlsx.full.min.js';\n"],
+    ["動態", "const X = await import('xlsx');\nconsole.log(X);\n"],
+    ["動態＋註解在括號內", "const X = await import(/* c */ 'xlsx');\nconsole.log(X);\n"],
+    ["動態＋註解在括號外", "const X = await import /* c */ ('xlsx');\nconsole.log(X);\n"],
+    ["動態＋超長註解", `const X = await import(/* ${long} */ 'xlsx');\nconsole.log(X);\n`],
+    ["動態＋子路徑", "const X = await import('xlsx/xlsx.mjs');\nconsole.log(X);\n"],
+    ["動態＋非字面量（靜態判不出模組名，所以連非字面量本身都禁）",
+      "const s = 'xlsx';\nconst X = await import(s);\nconsole.log(X);\n"],
+    ["createRequire 直呼", "import { createRequire } from 'node:module';\n"
+      + "const r = createRequire(import.meta.url);\nconst X = r /* c */ ('xlsx');\nconsole.log(X);\n"],
+    // ── Codex #374 r2 抓到的六種：改用 AST 選擇器之後我又在打同一種地鼠 ──
+    ["createRequire 引入時取別名", "import { createRequire as cr } from 'node:module';\n"
+      + "const req = cr(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["namespace 引入 node:module", "import * as mod from 'node:module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["先存進變數再呼叫", "import { createRequire } from 'node:module';\n"
+      + "const makeRequire = createRequire;\nconst req = makeRequire(import.meta.url);\n"
+      + "const X = req('xlsx');\nconsole.log(X);\n"],
+    ["動態引入 node:module", "const mod = await import('node:module');\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["module.require", "const X = globalThis.module.require('xlsx');\nconsole.log(X);\n"],
+    ["process.getBuiltinModule", "const m = process.getBuiltinModule('module');\n"
+      + "const X = m.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    // ── Codex #374 r3 抓到的第七類：只禁 createRequire 這個「名字」，門其實還開著 ──
+    ["default 引入 node:module", "import mod from 'node:module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["default 引入 module", "import mod from 'module';\n"
+      + "const req = mod.createRequire(import.meta.url);\nconst X = req('xlsx');\nconsole.log(X);\n"],
+    ["具名引入 Module 類別", "import { Module } from 'node:module';\n"
+      + "const X = Module.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    ["具名引入 Module 再取別名", "import { Module as M } from 'node:module';\n"
+      + "const X = M.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+    ["default specifier 寫法", "import { default as mod } from 'node:module';\n"
+      + "const X = mod.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
+  ];
+  try {
+    mkdirSync(probeDir, { recursive: true });
+    const paths = FORMS.map(([name, src], i) => {
+      const f = join(probeDir, `p${i}.js`);
+      writeFileSync(f, src);
+      return [name, f, src];
+    });
+    const byFile = await eslintFindingsByFile(probeDir);
+    for (const [name, f, src] of paths) {
+      const hits = byFile.get(f) || [];
+      assert.ok(hits.length > 0,
+        `「${name}」這種寫法沒有被擋下——它是合法 JS，會讓 xlsx 繞過子行程隔離。\n原始碼：\n${src}`);
+    }
+  } finally { rmSync(probeDir, { recursive: true, force: true }); }
+});
+
+test('架構｜production 不可以有 .cjs（CJS 的 require 別名在語法上堵不住）', async () => {
+  const files = await productionFiles();
+  const cjs = files.filter((f) => f.endsWith('.cjs'));
+  assert.deepEqual(cjs, [],
+    `production 出現 .cjs：${cjs.join('、')}\n`
+    + '本專案是純 ESM。CJS 裡 `const r = require; r("xlsx")` 這種寫法**語法規則堵不住**'
+    + '（require 被當成值傳來傳去，AST 上看不出來），所以 xlsx 收斂點護欄在 .cjs 檔裡是破的。\n'
+    + '真的需要 CJS 時：先想清楚那個檔會不會碰到 xlsx，並在這裡開例外寫明理由。');
+});
+
+test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**自己造誘餌**，才不會只在某些機器上有效）', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  // ⚠️ **誘餌是這題的重點**：假紅是在「repo 底下有 worktree 副本」的機器上發生的，
+  //    CI 是乾淨 checkout 所以本來就不會踩到。若只斷言「現在沒掃到副本」，
+  //    那有人把作法改回 readdirSync 時 CI 照樣全綠——**這題就只在出事的那台有效**，
+  //    等於沒有防線。所以這裡自己造一份副本結構出來，逼它現形（實測：改回走訪就會紅）。
+  const decoyDir = join(root, '.claude', 'worktrees', '_guard_probe', 'lib');
+  try {
+    mkdirSync(decoyDir, { recursive: true });
+    writeFileSync(join(decoyDir, 'statement.js'),
+      '// 這是考題造的誘餌：repo 副本，不該被正式程式碼的掃描清單撿走\n');
+    const files = await productionFiles();
+    const strays = files.filter((f) => /(^|\/)(node_modules|\.claude|\.git)\//.test(f) || f.startsWith('..'));
+    assert.deepEqual(strays, [],
+      `掃到了不該掃的路徑：${strays.join('、')}\n`
+      + '自己走訪檔案樹就會掃到 repo 副本（.claude/worktrees 底下那些），造成只有本機會紅的假紅。'
+      + '請用 git ls-files --cached --others --exclude-standard <production 路徑>。');
+    assert.ok(files.includes('lib/statement.js'), '清單裡連收斂點本身都沒有——pathspec 錯了，護欄等於沒掃');
+    assert.ok(files.length > 20, `只掃到 ${files.length} 個檔，正式程式碼不可能這麼少——pathspec 可能錯了`);
+  } finally {
+    rmSync(join(root, '.claude', 'worktrees', '_guard_probe'), { recursive: true, force: true });
+  }
 });
 
 test('架構｜收斂模組內只能有一個 XLSX.read（第二個就是繞過隔離的入口）', async () => {
