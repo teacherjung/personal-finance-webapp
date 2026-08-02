@@ -95,6 +95,42 @@ p.write_text(s.replace("## 月度回顧總覽卡","## 月度回顧[總覽卡](x.
 PY
 check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
 
+# ── 標題形式：會產生 anchor、卻不在原本掃描範圍裡的四種（Codex #384 r14）──
+# 共同的傷害：**搶走正式標題的裸 anchor**，正式那節被 GitHub 改成 `…-1`，
+# AGENTS 的索引連結就默默指到別的地方——而畫面上完全看不出來。
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"#### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'R. 同名 #### 搶走 anchor（Codex r14 實證）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"月度回顧總覽卡\n==============\n\n"+s[i:], encoding="utf-8")
+PY
+check 'S. 同名 Setext 標題搶走 anchor' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"  ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'T. 縮排兩格的同名 ##（CommonMark 仍算標題）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"# 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 python3 - <<'PY'

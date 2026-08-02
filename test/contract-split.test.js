@@ -83,7 +83,49 @@ function read(p) {
     `${p} 出現 HTML 註解。\n`
     + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
     + '   要記東西就直接寫在文件裡——**看不見的註記本來就不該存在於規則書**。');
+  assertHeadingForm(p, raw);
   return raw;
+}
+
+/**
+ * **標題只准一種寫法**（Codex #384 r14）。
+ *
+ * anchor 是 GitHub 依**每一個標題**產生的，而我原本只掃 `##` 與 `###`。
+ * Codex 在正式的 `## 月度回顧總覽卡` 前面加一個**同名 `####`**（另試 Setext 標題）：
+ * 七題全綠，但 GitHub 把裸 anchor 給了先出現的 `####`，正式那節變成 `…-1`
+ * ⇒ **AGENTS 的索引連結默默指到錯的一節**，畫面上完全看不出來。
+ *
+ * 這是同一個錯的第八次：我又在列舉（「標題就是 `##` 和 `###`」）。
+ * CommonMark 的標題其實只有兩種（ATX `#`×1–6、Setext 底線），列舉是封閉的——
+ * 但要正確對齊 GitHub 的 anchor 演算法，還得處理縮排、tab、收尾井字號、重複序號…
+ * ⇒ **關門**：第 1 行一個 `# `，其餘一律行首 `## ` 或 `### `，其他標題形式一概拒絕。
+ *
+ * 代價說清楚：這五個檔**只能用兩層標題**，而且不能用 Setext。
+ * 它們現在本來就是這樣（H1×1＋H2／H3，零縮排、零 Setext）⇒ **這道門零改寫**。
+ * 反方向的誤紅也一併認了：七個以上 `#` 開頭的行其實不是標題，這裡照樣拒絕——
+ * 沒有理由那樣寫，而「看起來像標題卻不是」正是最會騙過人眼的東西。
+ * @param {string} p @param {string} raw
+ */
+function assertHeadingForm(p, raw) {
+  const lines = raw.split('\n');
+  lines.forEach((line, i) => {
+    const atxish = /^ {0,3}#{1,6}(?:[ \t]|#*[ \t]*$)/.test(line);
+    const canonical = i === 0
+      ? /^# \S/.test(line)
+      : /^#{2,3} \S/.test(line) && !/[ \t]#+[ \t]*$/.test(line);
+    assert.ok(!atxish || canonical,
+      `${p}:${i + 1} 的標題不是允許的寫法：${JSON.stringify(line)}\n`
+      + '⚠️ 只准兩種：**第 1 行**一個 `# 標題`，其餘一律**行首**（不縮排）`## ` 或 `### `。\n'
+      + '   被擋掉的都是會產生 anchor、卻不在考題掃描範圍裡的形式——\n'
+      + '   `####`／縮排 1–3 格／`#` 後面接 tab／收尾井字號 `## 標題 ##`／第二個 `# `。\n'
+      + '   它們會**搶走**正式標題的 anchor（正式那節被改成 `…-1`），索引連結就指到別的地方。');
+    const prev = i > 0 ? lines[i - 1].trim() : '';
+    const setext = /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prev !== '';
+    assert.ok(!setext,
+      `${p}:${i + 1} 出現 Setext 標題底線：${JSON.stringify(line)}\n`
+      + `⚠️ 上一行「${prev.slice(0, 30)}」會因此變成標題並取得 anchor，\n`
+      + '   而畫面上它看起來只是一段文字加一條線。標題請一律寫成 `## `／`### `。');
+  });
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
@@ -305,7 +347,10 @@ test('拆分護欄｜契約標題必須是**純文字**、且 anchor 不可重�
   //     我的 slug() 按原始語法算 ⇒ 兩邊會不一樣，連結默默失效。
   //   兩個都用「禁止」關掉，比追著 GitHub 的 anchor 演算法跑實在。
   for (const file of Object.keys(MANIFEST)) {
-    const titles = sectionsOf(file).map((s) => s.title);
+    // ⚠️ **H1 也要算進來**（Codex #384 r14 的同一個範圍缺口）：檔名那一行也產生 anchor，
+    //    它要是跟某節同名，裸 anchor 會被它搶走、那一節變成 `…-1`。
+    const h1 = read(file).split('\n')[0].replace(/^#\s*/, '');
+    const titles = [h1, ...sectionsOf(file).map((s) => s.title)];
     for (const t of titles) {
       assert.ok(!/[[\]<>&]/.test(t),
         `${file} 的標題「${t}」含有連結／HTML／entity 語法。\n`
