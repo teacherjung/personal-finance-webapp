@@ -54,15 +54,20 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 function stripFences(md) {
   /** @type {{char: string, len: number} | null} */ let open = null;
   const out = [];
-  for (const line of md.split('\n')) {
+  for (const line of md.replace(/\r\n?/g, '\n').split('\n')) {
     const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (!open) {
-      if (m) { open = { char: m[1][0], len: m[1].length }; continue; }
+      // ⚠️ **反引號 fence 的 info string 裡不可以有反引號**（CommonMark；Codex #384 r10）——
+      //    所以行首的 ``` aa ``` 根本不是 fence，是行內 code。原本會把它當成開 fence ⇒ **誤紅**。
+      if (m && !(m[1][0] === '`' && m[2].includes('`'))) { open = { char: m[1][0], len: m[1].length }; continue; }
       out.push(line);
       continue;
     }
-    // 關 fence：同一種字元、**長度不得短於開的**、且後面不可有 info string
-    if (m && m[1][0] === open.char && m[1].length >= open.len && !m[2].trim()) open = null;
+    // 關 fence：同一種字元、**長度不得短於開的**、且後面**只能是空格或 tab**。
+    // ⚠️ 不可以用 `.trim()`（Codex #384 r10）：JS 的 trim() 連 **NBSP** 都吃掉，
+    //    於是「``` 後面貼到一個 NBSP」會被判成已關閉，實際上 CommonMark 認為它沒關——
+    //    後面整份契約被吞進 code block，而護欄全綠。複製貼上就會發生。
+    if (m && m[1][0] === open.char && m[1].length >= open.len && /^[ \t]*$/.test(m[2])) open = null;
   }
   return { text: out.join('\n'), unclosed: open !== null };
 }

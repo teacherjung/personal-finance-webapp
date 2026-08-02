@@ -227,6 +227,24 @@ p.write_text(s[:i]+"```text\n這是正常的程式碼範例\n```\n\n"+s[i:], enc
 PY
 check "R. 正常成對的 fence（誤紅檢查）" 綠
 
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# 關 fence 後面貼到一個 NBSP（U+00A0）——CommonMark 認為沒關到，JS 的 trim() 卻會吃掉它
+p.write_text(s[:i]+"```text\n範例\n``` \n\n"+s[i:], encoding="utf-8")
+PY
+check 'S. 關 fence 後面有 NBSP（複製貼上就會發生）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# 依 CommonMark，反引號 fence 的 info string 不可含反引號 → 這一行是行內 code，不是 fence
+p.write_text(s[:i]+"``` aa ```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'T. 行首的行內 code（不是 fence，誤紅檢查）' 綠
+
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)
 if [[ -n "$leftover" ]]; then
