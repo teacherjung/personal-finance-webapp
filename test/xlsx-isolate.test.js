@@ -261,3 +261,61 @@ test('架構｜收斂模組內只能有一個 XLSX.read（第二個就是繞過�
     `XLSX.read 出現 ${hits.length} 次——只能有一個收斂點（readXlsxForIsolation）：\n`
     + hits.map(([n, l]) => `  statement.js:${n}: ${String(l).trim()}`).join('\n'));
 });
+
+// ── 錯誤歸因：5xx 不可以被洗成「你的檔案有問題」（Codex #373 r1 Medium）──
+
+const { rethrowParseError } = await import('../lib/services/statement-import.js');
+
+/** @param {() => any} fn */
+const throwsWith = (fn) => { try { fn(); return null; } catch (e) { return /** @type {any} */ (e); } };
+
+test('錯誤歸因｜子行程的 500 原樣往上（含 code/cause），不得降成 400', () => {
+  const internal = Object.assign(new Error('伺服器暫時無法解析Excel檔，請稍後再試'),
+    { status: 500, code: 'pdf_child_internal_error', cause: new Error('spawn ENOENT') });
+  const out = throwsWith(() => rethrowParseError(internal));
+  assert.equal(out.status, 500, '500 被降成 400＝把「我們壞了」說成「你的檔案有問題」');
+  assert.equal(out.code, 'pdf_child_internal_error', 'code 掉了＝日誌與監控看不出真因');
+  assert.ok(out.cause, 'cause 掉了＝追不到原始堆疊');
+});
+
+test('錯誤歸因｜back-pressure 的 503 原樣往上（使用者要看到「請稍後再試」）', () => {
+  const busy = Object.assign(new Error('目前有多份檔案正在解析中，請稍後再試。'),
+    { status: 503, code: 'pdf_busy' });
+  const out = throwsWith(() => rethrowParseError(busy));
+  assert.equal(out.status, 503, '503 被降成 400＝叫使用者去改他的檔案，其實只是要他等一下');
+  assert.equal(out.code, 'pdf_busy');
+});
+
+test('錯誤歸因｜使用者層錯誤仍是 400，且訊息原味（密碼錯不可變成「伺服器錯誤」）', () => {
+  const pw = Object.assign(new Error('PDF 密碼錯誤'), { status: 400 });
+  assert.equal(throwsWith(() => rethrowParseError(pw)).status, 400);
+  assert.equal(throwsWith(() => rethrowParseError(pw)).message, 'PDF 密碼錯誤');
+  const bare = new Error('這份 XLSX 找不到消費明細');            // 沒帶 status 的解析器錯誤
+  assert.equal(throwsWith(() => rethrowParseError(bare)).status, 400, '解析器的一般錯誤預設仍是 400');
+  assert.equal(throwsWith(() => rethrowParseError(bare)).message, '這份 XLSX 找不到消費明細');
+});
+
+test('架構｜兩個預覽入口都不可以繞過 rethrowParseError 自己包 400', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..',
+    'lib/services/statement-import.js'), 'utf8');
+  // 解析失敗那兩處若又寫回 `apiError(400, …)`，5xx 就再一次被洗掉——這題盯著它。
+  const bypass = src.split('\n').map((l, i) => [i + 1, l])
+    .filter(([, l]) => /apiError\(\s*400\s*,[^)]*解析失敗/.test(String(l)));
+  assert.equal(bypass.length, 0,
+    `有人繞過 rethrowParseError 直接包 400：\n${bypass.map(([n, l]) => `  statement-import.js:${n}: ${String(l).trim()}`).join('\n')}`);
+});
+
+test('回歸｜損毀的 .xlsx 仍是 400 使用者層錯誤（隔離不可以把它變成「伺服器壞了」）', async () => {
+  // PK 開頭（會被判成 xlsx 走隔離），但後面是垃圾＝讀不開。
+  const junk = new Uint8Array(Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(200, 0x41)]));
+  const err = await errOf(parseStatement(junk));
+  assert.ok(err, '垃圾檔竟然解析成功');
+  assert.equal(err.status, 400,
+    `損毀檔是使用者層錯誤（叫他重載），不是 500（叫他等一下再試，其實試一百次都一樣）。`
+    + `實得 status=${err.status} code=${err.code} msg=${String(err.message).slice(0, 80)}`);
+  assert.match(String(err.message), /Excel|xlsx|明細/,
+    `訊息要講得出「這是 Excel 檔的問題」，實得：${String(err.message).slice(0, 120)}`);
+});
