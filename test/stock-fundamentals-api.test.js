@@ -1068,11 +1068,14 @@ test('重型名額｜SEC 把**自己的佇列上限**傳給共用名額（否則
   //    根本排不到 SEC 自己的深度檢查——它先卡在共用名額的隊伍裡，而那條隊伍沒有長度上限。
   //    結果 #361 兩天前才上線的全站 back-pressure 在 HOSTED 變成打不到的死碼。
   //    判準＝maxQueueDepth 設成 1 時，第二個代號要**很快**拿到 503，不是排隊等 30 秒。
-  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionWaitingForTest }
+  const { withHeavySlot, resetHeavyAdmissionForTest, heavyAdmissionWaitingForTest, setHeavySlotWaitForTest }
     = await import('../lib/heavy-admission.js');
   const savedHosted = process.env.NOTEASY_HOSTED;
   process.env.NOTEASY_HOSTED = '1';
   resetHeavyAdmissionForTest();
+  // ⚠️ 把等待上限收短：這題沒守住的時候，第二個代號會**排隊等到逾時**才失敗——
+  //    用預設的 30 秒，突變時整題要跑 30 秒才紅（實測）。CI 上那種紅很難看出是什麼壞了。
+  setHeavySlotWaitForTest(1_500);
   let release = () => {};
   const held = new Promise((res) => { release = () => res('done'); });
   setStockFundamentalsOptionsForTest({
@@ -1092,12 +1095,13 @@ test('重型名額｜SEC 把**自己的佇列上限**傳給共用名額（否則
     const elapsed = Date.now() - started;
     assert.equal(b.status, 503,
       `隊伍已達 SEC 自己的上限（maxQueueDepth=1），第二個代號應該立刻回絕，實得 ${b.status}`);
-    assert.ok(elapsed < 5_000,
+    assert.ok(elapsed < 1_000,
       `第二個代號等了 ${elapsed}ms 才被回絕——那代表它是排隊等到逾時，不是撞到上限 fail-fast，`
       + 'SEC 自己的 back-pressure 仍然是死碼');
 
     release(); await occupying; await a;
   } finally {
+    setHeavySlotWaitForTest(null);
     setStockFundamentalsOptionsForTest(null);
     resetHeavyAdmissionForTest();
     if (savedHosted === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = savedHosted;
