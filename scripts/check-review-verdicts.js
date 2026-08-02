@@ -96,28 +96,35 @@ export function headerOf(body) {
 export function looksLikeVerdict(body) {
   const text = stripFencesLoose(String(body || ''))
     .replace(/^[^\S\n]*>.*$/gm, '');       // 引用別人的話不是自己的結論
-  if (/🤖/u.test(text)) return true;
 
   const words = Object.keys(VERDICTS).join('|');
-  // ⚠️ **不再列舉「用詞後面可以接什麼標點」**（Codex #385 r3→r4 連兩輪打穿同一處）：
-  //    r3 我加了一組標點，r4 它就用 `……`／`／`／`+ ` 清單／`1. ` 有序清單再打穿一次。
-  //    **列舉標點跟列舉繞法是同一種錯。** 改成：剝掉裝飾之後**以結論用詞開頭**就算，
-  //    後面接什麼一概不管——「開頭是不是結論」才是語意，標點不是。
-  const verdictHead = new RegExp(`^(?:${words})`, 'u');
-  // 前綴仍是**小的**允許集，但收斂到「這個詞本身在講審查結論」，不是任意 `.*：`：
-  //   ✅ 結論：／複審結論：／審查結果：／複審完成：   ❌ 範例：／退出碼說明：
-  const PREFIX = /^[^：:]{0,12}(?:結論|複審|審查|結果)[^：:]{0,4}[：:]\s*/u;
+  // ⚠️ **前綴是「逐字的小集合」，不是「最多 12 字再接關鍵詞」**（Codex #385 r5 High）：
+  //    寬鬆版會把「測試結果：」「突變測試結果：」也剝掉，於是
+  //    「測試結果：通過 1392 題、失敗 0 題。」被當成一則正式的複審結論。
+  //    那是本專案**每天都在寫的句子**。
+  const PREFIX = /^(?:結論|結論如下|複審結論|審查結論|複審結果|審查結果|複審完成|審查完成)[：:]\s*/u;
+  // ⚠️ **結論用詞後面不可以接著「還是同一個詞」**（Codex #385 r5 High）：
+  //    r4 我把「後面允許哪些標點」整個拿掉，於是「通過三關後才可以更新 PR。」
+  //    「通過率仍是 100%」「不可合併兩個來源的 reviewer state」全部被當成結論。
+  //    判準不是列舉標點（那錯過一次了），而是**用詞之後必須句子就結束、或接的是標點**——
+  //    接著又是文字或數字，那它就只是句子的開頭，不是一個結論。
+  const verdict = new RegExp(`^(?:${words})(?:\\s*$|\\s*[^\\p{L}\\p{N}\\s])`, 'u');
 
-  return text.split('\n')
+  /** 去掉行內 code：**任意長度的反引號**都算（`` \`\`x\`\` `` 也是合法寫法）。 @param {string} l */
+  const noCode = (/** @type {string} */ l) => l.replace(/(`+)[^`]*\1/gu, '');
+
+  const lines = text.split('\n').map((l) => noCode(l));
+  // ⚠️ 機器人記號的判斷要在**剝掉行內 code 之後**（Codex #385 r5）：
+  //    「來歷標頭要從 `🤖` 開始。」是在講格式，不是在下結論。
+  if (lines.some((l) => /🤖/u.test(l))) return true;
+
+  return lines
     .map((l) => l
-      // ⚠️ **拿掉行內 code「這一段」，不是跳過「整行」**（Codex #385 r4 Medium③）：
-      //    跳過整行的話，「結論：不可合併；請修正 `不可合併` 偵測」整句就被放過了。
-      .replace(/`[^`]*`/gu, '')
       .replace(/^[\s>#*+_-]*(?:\d+[.)]\s*)?/u, '')   // 標題、粗體、清單記號（含有序清單）
       .replace(/[*_]/gu, '')
       .trim())
     .map((l) => l.replace(PREFIX, ''))
-    .some((l) => verdictHead.test(l));
+    .some((l) => verdict.test(l));
 }
 
 /**

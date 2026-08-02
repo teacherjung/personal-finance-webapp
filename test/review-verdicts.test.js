@@ -268,3 +268,34 @@ test('AGENTS｜委任那段不可以自相矛盾（同一條規則的兩半要�
   assert.ok(!/也\*\*不構成放行\*\*/.test(block),
     '委任那節又出現「也不構成放行」——與前文矛盾，讀者無法判斷哪句才是規則');
 });
+
+// ── r5 的誤擋回歸鎖：這些是**我們每天在寫的句子**（Codex #385 r5 High）────
+
+test('⭐ 結論行｜本專案日常的審查留言不可以被誤擋', () => {
+  // ⚠️ r4 我把「用詞後面允許哪些標點」整個拿掉，於是這些全部被當成正式結論。
+  //    這不是刻意構造——「通過三關」「測試結果：通過 N 題」正是我們每天寫的句子。
+  //    **誤擋會逼人改寫、刪留言，最後乾脆繞過整道閘。**
+  for (const body of [
+    '通過三關後才可以更新 PR。',
+    '測試結果：通過 1392 題、失敗 0 題。',
+    '突變測試結果：通過率仍是 100%，所以考題沒守住。',
+    '不可合併兩個來源的 reviewer state，否則會錯誤撤銷阻擋。',
+  ]) assert.equal(looksLikeVerdict(body), false, `日常留言被誤擋：「${body}」`);
+});
+
+test('結論行｜任意長度的行內 code 都要剝掉，且機器人記號要在剝完之後才判', () => {
+  assert.equal(looksLikeVerdict('``不可合併`` 是三種結論之一。'), false, '雙反引號的 code span 沒被剝掉');
+  assert.equal(looksLikeVerdict('來歷標頭要從 `🤖` 開始。'), false,
+    '機器人記號在行內 code 裡卻被當成有標頭——那是在講格式，不是在下結論');
+});
+
+test('⭐ 結論行｜判準是「用詞之後句子就結束、或接的是標點」', () => {
+  // 這條把「列舉標點」與「完全不管後面」兩個極端都排除掉：
+  //   ・接著又是文字或數字 → 那只是句子的開頭，不是結論
+  //   ・接標點或結束       → 那是一個結論
+  assert.equal(looksLikeVerdict('通過'), true);
+  assert.equal(looksLikeVerdict('通過。'), true);
+  assert.equal(looksLikeVerdict('通過（附但書）'), true);
+  assert.equal(looksLikeVerdict('通過率'), false);
+  assert.equal(looksLikeVerdict('通過 1392 題'), false);
+});
