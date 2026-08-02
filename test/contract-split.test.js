@@ -83,7 +83,6 @@ function read(p) {
     `${p} 出現 HTML 註解。\n`
     + '⚠️ 同上：註解會讓內容在畫面上消失而考題看不見，而「有沒有閉合」同樣要剖析器才能算準。\n'
     + '   要記東西就直接寫在文件裡——**看不見的註記本來就不該存在於規則書**。');
-  assertHeadingForm(p, raw);
   return raw;
 }
 
@@ -100,7 +99,14 @@ function read(p) {
  * 但要正確對齊 GitHub 的 anchor 演算法，還得處理縮排、tab、收尾井字號、重複序號…
  * ⇒ **關門**：第 1 行一個 `# `，其餘一律行首 `## ` 或 `### `，其他標題形式一概拒絕。
  *
- * 代價說清楚：這五個檔**只能用兩層標題**，而且不能用 Setext。
+ * ## 這道門只裝在**契約檔**上，不裝在 AGENTS.md
+ *
+ * 因為承重的只有契約檔的 anchor：AGENTS.md 有 36 條連結指進契約檔的某一節，
+ * 而**指進 AGENTS.md 某一節的連結是 0 條**——它的標題被誰搶走 anchor 都不會有人踩到。
+ * 我 r15 原本連 AGENTS.md 一起關，結果當場誤擋了 #385 裡一個完全正當的 `#### 兩條規則`
+ * （兩支 PR 各自全綠、合起來才紅）。**護欄裝在不承重的地方，就只剩下誤擋。**
+ *
+ * 代價說清楚：**契約檔**只能用兩層標題，而且不能用 Setext。
  * 它們現在本來就是這樣（H1×1＋H2／H3，零縮排、零 Setext）⇒ **這道門零改寫**。
  * 反方向的誤紅也一併認了：七個以上 `#` 開頭的行其實不是標題，這裡照樣拒絕——
  * 沒有理由那樣寫，而「看起來像標題卻不是」正是最會騙過人眼的東西。
@@ -309,6 +315,7 @@ function indexRows() {
 /** 契約檔裡的每一個標題段落（`##` 與 `###` 都算）。 @param {string} file */
 function sectionsOf(file) {
   const md = read(file);
+  assertHeadingForm(file, md);   // 只有契約檔的 anchor 承重 ⇒ 標題形式的門只裝在這裡
   const heads = [...md.matchAll(/^#{2,3} .+$/gm)];
   return heads.map((h, i) => {
     const start = /** @type {number} */ (h.index);
