@@ -158,12 +158,35 @@ export function problemsOf(body) {
   return problems;
 }
 
-/** @param {string} pr @returns {string} */
-function fetchBody(pr) {
-  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body'], { encoding: 'utf8' });
+/** @param {string} pr @returns {{ body: string, head: string }} */
+function fetchPr(pr) {
+  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body,headRefOid'], { encoding: 'utf8' });
   const parsed = JSON.parse(out);
   if (!parsed || typeof parsed.body !== 'string') throw new Error('gh 回傳的形狀不對');
-  return parsed.body;
+  if (typeof parsed.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(parsed.headRefOid)) {
+    throw new Error('gh 沒有回傳合法的 headRefOid');
+  }
+  return { body: parsed.body, head: parsed.headRefOid };
+}
+
+/**
+ * 「基準版本」必須釘住**目前的 head**。
+ *
+ * ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫這個欄位是「審查要釘住的 commit，
+ * 分支被推過之後審查結論就失效了」，但閘只檢查它非空——於是最常見的路徑
+ * （**審完 A、作者再推 B**，完全不必是惡意）就讓「已審查」這件事變成過期的宣稱。
+ * 這正是這道閘存在的理由的核心：**規則靠記憶維持，就會斷**。
+ * @param {string} body @param {string} head @returns {string[]}
+ */
+export function staleBaseProblems(body, head) {
+  const raw = fieldValue(body, '基準版本').replace(/[`*_\s]/g, '');
+  const sha = (/[0-9a-fA-F]{7,40}/.exec(raw) || [''])[0].toLowerCase();
+  if (!sha) return [`「基準版本」讀不出 commit SHA（實得「${raw || '（空白）'}」）——至少要 7 碼十六進位`];
+  if (!head.startsWith(sha)) {
+    return [`「基準版本」是 ${sha}，但這支 PR 現在的 head 是 ${head.slice(0, 7)}。\n`
+      + '    分支被推過之後，先前的審查結論就不再適用——請把欄位改成目前的 head 再合併。'];
+  }
+  return [];
 }
 
 /** @param {string[]} argv */
@@ -173,16 +196,16 @@ export function main(argv) {
     console.error('用法：node scripts/check-pr-collab-fields.js <PR 編號>');
     return 2;
   }
-  /** @type {string} */ let body;
-  try { body = fetchBody(pr); }
+  /** @type {{ body: string, head: string }} */ let pull;
+  try { pull = fetchPr(pr); }
   catch (e) {
     // fail-closed：查不到不等於安全
     console.error(`協作欄位閘 PR #${pr}：查不清楚（${/** @type {any} */ (e)?.message}）——一律當成未通過。`);
     return 2;
   }
-  const problems = problemsOf(body);
+  const problems = [...problemsOf(pull.body), ...staleBaseProblems(pull.body, pull.head)];
   if (problems.length === 0) {
-    console.log(`協作欄位閘 PR #${pr}：五欄齊全、實作者 ≠ 獨立審查者。可繼續合併程序。`);
+    console.log(`協作欄位閘 PR #${pr}：五欄齊全、實作者 ≠ 獨立審查者、基準版本＝目前 head。可繼續合併程序。`);
     return 0;
   }
   console.error(`協作欄位閘 PR #${pr}：**未通過**\n` + problems.map((p) => `  ・${p}`).join('\n')

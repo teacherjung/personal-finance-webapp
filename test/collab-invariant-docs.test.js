@@ -19,7 +19,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
+import { problemsOf, fieldValue, canonicalRole, staleBaseProblems, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,6 +144,39 @@ test('欄位抽取｜HTML 註解裡的同名字串不算數', () => {
   const body = '<!-- - **實作者**：Codex -->\n- **實作者**：Claude';
   assert.equal(fieldValue(body, '實作者'), 'Claude',
     '註解沒有被剝掉——註解裡的值會蓋過真正填的值');
+});
+
+// ── 基準版本必須釘住目前 head（Codex #382 r4）──────────────────
+
+const HEAD = 'f76d12b20cc55f6f608ce043051e2fa4a969cffe';
+/** @param {string} sha */
+const bodyWithBase = (sha) => [
+  '- **實作者**：Claude',
+  '- **獨立審查者**：Codex',
+  `- **基準版本**：\`${sha}\``,
+  '- **預計修改的共享檔案**：無',
+  '- **這支若完全失敗，最糟失去什麼**：無',
+].join('\n');
+
+test('欄位閘｜基準版本對得上目前 head → 通過', () => {
+  assert.deepEqual(staleBaseProblems(bodyWithBase('f76d12b'), HEAD), []);
+  assert.deepEqual(staleBaseProblems(bodyWithBase(HEAD), HEAD), [], '寫完整 40 碼也要算對');
+});
+
+test('欄位閘｜**審完之後又推了新 commit** → 不通過（這個欄位存在的全部理由）', () => {
+  // ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫它是「審查要釘住的 commit，
+  //    分支被推過之後審查結論就失效了」，但閘只檢查非空。
+  //    最常見的路徑（審完 A、作者再推 B，完全不必是惡意）就讓「已審查」變成過期的宣稱。
+  const problems = staleBaseProblems(bodyWithBase('4cbef24'), HEAD);
+  assert.ok(problems.length > 0, '基準版本是舊 SHA 卻通過了——那這個欄位等於裝飾');
+  assert.match(problems[0], /現在的 head/);
+});
+
+test('欄位閘｜基準版本填了看不出 SHA 的東西 → 不通過（不猜）', () => {
+  for (const junk of ['（待補）', 'main', '最新版', '']) {
+    assert.ok(staleBaseProblems(bodyWithBase(junk).replace(/`/g, ''), HEAD).length > 0,
+      `基準版本填「${junk}」被放行了`);
+  }
 });
 
 // ── 角色解析不可 fail-open（Codex #379 r1 High①）─────────────────
@@ -430,15 +463,14 @@ test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', 
   //    ①required check 按**名稱字串**比對——改了 name 沒改分支保護＝等一個永遠不會出現的 check。
   //    ②GitHub 要求 required job name 在所有 workflow 之間唯一，否則有歧義（Codex #382 r2 Low）。
   const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  // ⚠️ **這裡刻意不用 parseYaml**（Codex #382 r4 Low）：那支迷你讀取器只夠讀我們自己寫的
+  //    `collab-fields.yml`（不支援 `run: |` 多行純量、anchor…）。拿它去掃**所有** workflow，
+  //    等於哪天有人在無關的 workflow 寫了一個 `run: |`，整套測試就紅——
+  //    考題不該對它管不著的檔案設下格式限制。名稱盤點只要「job 層的 name:」，用正則就夠。
   /** @type {string[]} */
   const names = [];
   for (const f of readdirSync(join(ROOT, WF_DIR)).filter((f) => /\.ya?ml$/.test(f))) {
-    const wf = parseYaml(read(`${WF_DIR}/${f}`));
-    for (const job of Object.values(wf.jobs || {})) {
-      if (job && typeof job === 'object' && typeof (/** @type {any} */ (job).name) === 'string') {
-        names.push(/** @type {any} */ (job).name);
-      }
-    }
+    for (const m of read(`${WF_DIR}/${f}`).matchAll(/^\s{4}name:\s*(.+)$/gm)) names.push(m[1].trim());
   }
   assert.ok(names.length >= 3, `只解析到 ${names.length} 個 job 名稱，預期至少 3 個：${names.join('｜')}`);
   assert.deepEqual([...new Set(names)].sort(), [...names].sort(),
