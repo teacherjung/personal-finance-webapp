@@ -387,6 +387,45 @@ p.write_text(s[:i]+"|  |"+s[i+len("| 月度回顧總覽卡 |"):], encoding="utf-
 PY
 check 'AW. 索引列第一格清空（畫面上那格是空的）' 紅
 
+# ── r31：Codex 用 GitHub /markdown 實證的四種「連結還在、畫面上看不到」──
+
+mutate 'AX. 連結包進雙反引號（渲染成 code、不是連結）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
+row=s[i:j]
+k=row.index("[契約：")
+e=row.index(")", k)+1          # 連結結束的位置（不含列尾的 " |"）
+p.write_text(s[:i]+row[:k]+"``"+row[k:e]+"``"+row[e:]+s[j:], encoding="utf-8")
+PY
+check 'AX. 連結包進雙反引號（渲染成 code、不是連結）' 紅
+
+mutate 'AY. 連結藏到第三格（兩欄表格會直接丟掉）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
+row=s[i:j]
+k=row.index("[契約：")
+p.write_text(s[:i]+row[:k]+"| "+row[k:]+s[j:], encoding="utf-8")
+PY
+check 'AY. 連結藏到第三格（兩欄表格會直接丟掉）' 紅
+
+mutate 'AZ. 第一格用空連結（渲染成空的 a）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+a="| 月度回顧總覽卡 |"
+p.write_text(s.replace(a,"| [](https://example.com) |",1), encoding="utf-8")
+PY
+check 'AZ. 第一格用空連結（渲染成空的 a）' 紅
+
+mutate 'BA. 第一格用 HTML entity 的零寬字元' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+a="| 月度回顧總覽卡 |"
+p.write_text(s.replace(a,"| &#x200B; |",1), encoding="utf-8")
+PY
+check 'BA. 第一格用 HTML entity 的零寬字元' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'

@@ -151,7 +151,7 @@
 | 新增 ETF 持股 | COMPANY_WEIGHTS＋兩份 COMPOSITION 都要補；XUSE/EXUS 刻意只做區域穿透——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#新增-etf-持股) |
 | `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | 兩份 COMPOSITION 也要有該代號，否則穿透 fallback「其他」、國家上限提醒偏掉 |
 | IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端 computeLeverage ↔ 前端兩檔一致；mcDist：無借款＝100、有借款持股歸零＝0，兩情境不可混——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#ib-槓桿與斷頭距離) |
-| 投資代號與投資原則上限／凍結加碼 | 代號一律 normalizePortfolioSymbol＋同代號彙總；上限設 0＝零容忍不可 || 回預設；編輯持股把代號／身分**改成**已凍結標的（即使股數沒增加）也要警告——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#投資代號與原則上限) |
+| 投資代號與投資原則上限／凍結加碼 | 代號一律 normalizePortfolioSymbol＋同代號彙總；上限設 0＝零容忍不可 \|\| 回預設；編輯持股把代號／身分**改成**已凍結標的（即使股數沒增加）也要警告——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#投資代號與原則上限) |
 | **訂閱續費日自動推進**（使用者定 2026-07-26） | 開 app 自動推進過期續費日：判準／月底錨點／不推清單／只動日期不動金額／推後重繪——完整契約 → [契約：前端功能](docs/contracts/前端功能.md#訂閱續費日自動推進) |
 | 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | 前後端三處攤提口徑一致＋RECORD_START 單一真相＋勿改回 active 過濾加總——完整契約 → [契約：前端功能](docs/contracts/前端功能.md#訂閱本月攤提) |
 | 訂閱狀態（使用中/即將停用/已停用） | 前端 subStatus ↔ 後端 subActive 口徑一致（項數才不打架）——完整契約 → [契約：前端功能](docs/contracts/前端功能.md#訂閱狀態) |
