@@ -61,9 +61,29 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * 現在用的是行內反引號（`像這樣`），完全不受影響；真要放範例，放進 `docs/` 其他檔案再連過來。
  * @param {string} p
  */
+/**
+ * 剝掉 **container block 前綴**（引用 `>`、清單 `-`／`*`／`+`／`1.`），可以巢狀重複。
+ *
+ * ⚠️ **只看行首是同一條錯鏈的下一環**（Codex #384 r16）：
+ * `> #### 月度回顧總覽卡` 在 CommonMark 裡是**真的標題**，一樣會搶走裸 anchor；
+ * `> ```` 與 `> <div>` 同理繞過 fence／raw HTML 的禁令。
+ * 而三份契約檔現在第 3–5 行**本來就在用 blockquote**——這不是刻意構造。
+ * ⇒ 所有「這一行是不是危險語法」的判斷，一律先剝容器前綴再判。
+ * @param {string} line
+ */
+function stripContainers(line) {
+  let s = line;
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(/^ {0,3}(?:>|[-*+]|\d{1,9}[.)])[ \t]?/u, '');
+  } while (s !== prev);
+  return s;
+}
+
 function read(p) {
   const raw = readFileSync(join(ROOT, p), 'utf8').replace(/\r\n?/g, '\n');
-  const fence = raw.split('\n').findIndex((l) => /^\s*(?:```|~~~)/.test(l));
+  const fence = raw.split('\n').findIndex((l) => /^\s*(?:```|~~~)/.test(stripContainers(l)));
   assert.equal(fence, -1,
     `${p}:${fence + 1} 出現 code fence。\n`
     + '⚠️ 契約與規則檔**不准**用 code fence——沒關的 fence 會把後面整份文件吞成程式碼\n'
@@ -74,7 +94,7 @@ function read(p) {
   //    `<![CDATA[` `<? ?>` …CommonMark 有六類入口，把一整節包起來，GitHub 就不產生那個標題。
   //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
   //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
-  const html = raw.split('\n').findIndex((l) => /^\s*</.test(l));
+  const html = raw.split('\n').findIndex((l) => /^\s*</.test(stripContainers(l)));
   assert.equal(html, -1,
     `${p}:${html + 1} 出現行首 HTML。\n`
     + '⚠️ 規則檔不准用 raw HTML——`<pre>`／`<div>` 這類 block 會把包住的標題整個吞掉，\n'
@@ -114,21 +134,39 @@ function read(p) {
  */
 function assertHeadingForm(p, raw) {
   const lines = raw.split('\n');
-  lines.forEach((line, i) => {
-    const atxish = /^ {0,3}#{1,6}(?:[ \t]|#*[ \t]*$)/.test(line);
-    const canonical = i === 0
-      ? /^# \S/.test(line)
-      : /^#{2,3} \S/.test(line) && !/[ \t]#+[ \t]*$/.test(line);
+  // ⚠️ **第 1 行必須是 H1，這要無條件斷言**（Codex #384 r16）：
+  //    原本只寫「是標題就必須合規」，於是把第 1 行的 `# ` 刪掉會讓它變成普通文字
+  //    ⇒ `atxish` 是 false ⇒ 整條判斷跳過 ⇒ **七題全綠**。
+  //    「不合規」與「根本不存在」是兩件事，兩件都要擋。
+  assert.match(lines[0], /^# \S/u,
+    `${p}:1 不是 H1 標題：${JSON.stringify(lines[0])}\n`
+    + '⚠️ 契約檔的第 1 行必須是 `# 檔名標題`。它一消失，後面第一個 `##` 就會遞補成 GitHub outline 的頂層，\n'
+    + '   而考題若只檢查「有標題就要合規」，「標題被刪掉」反而完全不出聲。');
+  lines.forEach((rawLine, i) => {
+    // ⚠️ 容器裡的標題**也是標題**（`> #### X` 渲染成真的 h4、一樣搶 anchor），
+    //    但它**不是**合規寫法——所以偵測用剝過的、判合規用原始的。
+    //    只剝完之後就當合規會留下新洞：`- ## 月度回顧總覽卡` 剝完長得跟正式標題一模一樣。
+    const stripped = stripContainers(rawLine);
+    const inContainer = stripped !== rawLine;
+    const atxish = /^ {0,3}#{1,6}(?:[ \t]|#*[ \t]*$)/.test(stripped);
+    const canonical = !inContainer && (i === 0
+      ? /^# \S/.test(rawLine)
+      : /^#{2,3} \S/.test(rawLine) && !/[ \t]#+[ \t]*$/.test(rawLine));
     assert.ok(!atxish || canonical,
-      `${p}:${i + 1} 的標題不是允許的寫法：${JSON.stringify(line)}\n`
-      + '⚠️ 只准兩種：**第 1 行**一個 `# 標題`，其餘一律**行首**（不縮排）`## ` 或 `### `。\n'
+      `${p}:${i + 1} 的標題不是允許的寫法：${JSON.stringify(rawLine)}\n`
+      + '⚠️ 只准兩種：**第 1 行**一個 `# 標題`，其餘一律**行首**（不縮排、不在引用或清單裡）`## ` 或 `### `。\n'
       + '   被擋掉的都是會產生 anchor、卻不在考題掃描範圍裡的形式——\n'
-      + '   `####`／縮排 1–3 格／`#` 後面接 tab／收尾井字號 `## 標題 ##`／第二個 `# `。\n'
+      + '   `####`／縮排 1–3 格／`#` 後面接 tab／收尾井字號 `## 標題 ##`／第二個 `# `／\n'
+      + '   以及容器裡的標題（`> #### X`、`- ## X`）。\n'
       + '   它們會**搶走**正式標題的 anchor（正式那節被改成 `…-1`），索引連結就指到別的地方。');
-    const prev = i > 0 ? lines[i - 1].trim() : '';
-    const setext = /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prev !== '';
+    // ⚠️ Setext 只能剝**引用**，不能剝清單記號——`---` 本身就由 `-` 組成，
+    //    用剝清單的規則會把它整條吃光，這道檢查就永遠不會觸發（差點自己製造一個假綠）。
+    const quoted = (/** @type {string} */ l) => l.replace(/^(?: {0,3}>[ \t]?)+/u, '');
+    const under = quoted(rawLine);
+    const prev = i > 0 ? quoted(lines[i - 1]).trim() : '';
+    const setext = /^ {0,3}(?:=+|-+)[ \t]*$/.test(under) && prev !== '';
     assert.ok(!setext,
-      `${p}:${i + 1} 出現 Setext 標題底線：${JSON.stringify(line)}\n`
+      `${p}:${i + 1} 出現 Setext 標題底線：${JSON.stringify(rawLine)}\n`
       + `⚠️ 上一行「${prev.slice(0, 30)}」會因此變成標題並取得 anchor，\n`
       + '   而畫面上它看起來只是一段文字加一條線。標題請一律寫成 `## `／`### `。');
   });

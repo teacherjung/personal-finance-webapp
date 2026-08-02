@@ -131,6 +131,48 @@ p.write_text(s[:i]+"# 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
 check 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' 紅
 
+# ── 容器裡的標題／語法：只看行首會全部漏掉（Codex #384 r16）──
+# 三份契約現在第 3–5 行本來就在用 blockquote，所以這不是刻意構造。
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"> #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'V. 引用裡的同名 ####（Codex r16 實證）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"- ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
+PY
+check 'W. 清單裡的同名 ##（剝完長得跟正式的一樣）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"> ```text\n> 引用裡的 fence 一樣不准\n> ```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'X. 引用裡的 code fence（繞過 fence 禁令）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"> <div>\n\n"+s[i:], encoding="utf-8")
+PY
+check 'Y. 引用裡的 raw HTML（繞過 HTML 禁令）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p.write_text(s.split("\n",1)[1].lstrip("\n"), encoding="utf-8")
+PY
+check 'Z. 契約檔第一行的 H1 整行刪掉' 紅
+
 # ── 索引與契約的雙向對應 ──
 
 python3 - <<'PY'
