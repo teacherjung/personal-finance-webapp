@@ -22,6 +22,12 @@ if [[ -n "$dirty" ]]; then
   exit 2
 fi
 
+# ⚠️ **中止時也要還原**（2026-08-02 親身踩到）：Q 那條的標籤有語法錯誤，
+# 腳本在突變已經寫進檔案之後才中止，**沒有還原**——而我接著就 commit 了，
+# 於是突變被 commit 進 PR。腳本要能安全地被中斷。
+restore() { git checkout -- AGENTS.md docs/contracts/ test/contract-split.test.js 2>/dev/null || true; }
+trap restore EXIT INT TERM
+
 run() {
   if node --test --test-reporter=dot test/contract-split.test.js >/dev/null 2>&1; then
     echo "綠"
@@ -202,6 +208,24 @@ i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"  ~~~\n"+s[i:], encoding="utf-8")   # CommonMark 允許 1–3 個前置空格，且只開不關
 PY
 check "P. 縮排的 fence＋忘記關（合法縮排的手滑）" 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# 用四個 backtick 開、三個收——CommonMark 規定關的不能比開的短，所以其實沒關到
+p.write_text(s[:i]+"````markdown\n範例內容\n```\n\n"+s[i:], encoding="utf-8")
+PY
+check 'Q. 四個反引號開、三個收（關的比開的短＝沒關到）' 紅
+
+python3 - <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+# 合法的成對 fence：不該被誤擋
+p.write_text(s[:i]+"```text\n這是正常的程式碼範例\n```\n\n"+s[i:], encoding="utf-8")
+PY
+check "R. 正常成對的 fence（誤紅檢查）" 綠
 
 # ── 收尾：真的 assert，不是印出來就算 ──
 leftover=$(git status --porcelain || true)

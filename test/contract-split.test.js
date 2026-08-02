@@ -40,12 +40,39 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /**
- * 讀檔並**剝掉 HTML 註解**——註解裡的內容在畫面上根本不存在。
+ * 依 CommonMark 規則剝掉 fenced code block。
  *
- * ⚠️ Codex #384 r3 實測：把整段契約或整條路由列包進 `<!-- ... -->`，**六題全綠**。
- *    這與 `test/safety-docs-freshness.test.js` 今天收斂到的是同一條判準
- *    （我在那支修好了、卻沒有帶到這支來——同型錯誤要一次掃完所有現場）。
- *    剝完之後也不准有殘留的 `<!--`／`-->`：一個未閉合的註解會讓後面整片內容消失。
+ * ⚠️ **這裡改用狀態機，不再疊正則**（Codex #384 r7／r8／r9 連三輪打穿同一處）：
+ *   r7：只剝 ``` 不剝 ~~~
+ *   r8：只認第 1 欄，忘了 fence 前可以有 1–3 個空格
+ *   r9：用 ```` 開、``` 收——CommonMark 規定**關的不能比開的短**，
+ *       正則卻把它當成已關閉，後面整份文件實際上被吞進 code block
+ * 三次都是「正常維護的手滑」，而每次補一條正則就再漏一條。
+ * **記住開 fence 的字元與長度**才是這件事的正確做法。
+ * @param {string} md
+ */
+function stripFences(md) {
+  /** @type {{char: string, len: number} | null} */ let open = null;
+  const out = [];
+  for (const line of md.split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!open) {
+      if (m) { open = { char: m[1][0], len: m[1].length }; continue; }
+      out.push(line);
+      continue;
+    }
+    // 關 fence：同一種字元、**長度不得短於開的**、且後面不可有 info string
+    if (m && m[1][0] === open.char && m[1].length >= open.len && !m[2].trim()) open = null;
+  }
+  return { text: out.join('\n'), unclosed: open !== null };
+}
+
+/**
+ * 讀檔並剝掉**畫面上看不到的東西**——HTML 註解與 fenced code block。
+ *
+ * ⚠️ 判準一律是「剝完要乾淨」，不是「剝得掉的就好」：
+ * 沒閉合的註解或 fence 會讓**後面整份文件**在畫面上消失或變成程式碼，
+ * 標題與 anchor 全部不見，而考題如果只剝「成對的」就完全看不見這件事。
  * @param {string} p
  */
 function read(p) {
@@ -53,21 +80,11 @@ function read(p) {
   const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(!stripped.includes('<!--') && !stripped.includes('-->'),
     `${p} 有沒閉合（或巢狀走樣）的 HTML 註解——後面整片內容會在畫面上消失，而考題看不見。`);
-  // ⚠️ 也剝掉 fenced code block（Codex #384 r4）：`\u0060\u0060\u0060` 裡的 `## 標題` 不是標題，
-  //    把整段契約包進 code fence，畫面上 anchor 就消失了，而考題原本看不見。
-  // ⚠️ CommonMark 的 fence 有**兩種**（Codex #384 r6）：``` 與 ~~~。
-  //    只剝一種＝用另一種包起來就能讓標題與 anchor 在畫面上消失，而考題還看得到。
-  // ⚠️ CommonMark 允許 fence 前有 **1–3 個空格**（清單或縮排裡很常見）——
-  //    只認第 1 欄的話，「縮排的 fence ＋忘記關」這個很普通的手滑就繞過去了（Codex #384 r8）。
-  const noFence = stripped
-    .replace(/^ {0,3}```[\s\S]*?^ {0,3}```/gm, '')
-    .replace(/^ {0,3}~~~[\s\S]*?^ {0,3}~~~/gm, '');
-  // ⚠️ 剝完**不准有殘留的 fence 記號**（Codex #384 r7）：忘記關 fence 是正常維護手滑，
-  //    而 CommonMark 會把後面**整份文件**當成程式碼——標題與 anchor 全部消失，考題卻還看得到。
-  //    同 HTML 註解那條，判準是「剝完要乾淨」，不是「剝得掉的就好」。
-  assert.ok(!/^ {0,3}(?:```|~~~)/m.test(noFence),
-    `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。`);
-  return noFence;
+  const { text, unclosed } = stripFences(stripped);
+  assert.ok(!unclosed,
+    `${p} 有沒閉合的 code fence——後面整份內容在畫面上會變成程式碼區塊，標題與 anchor 全部消失。\n`
+    + '⚠️ 常見成因：fence 前有縮排、或用 ```` 開卻用 ``` 收（關的不能比開的短）。');
+  return text;
 }
 
 /** 索引行的硬上限。現行最長 474（SEC 官方指標挑值那條，規則本身就密）。 */
