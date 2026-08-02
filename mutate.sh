@@ -44,6 +44,16 @@ if [[ "$base" != "綠" ]]; then
   exit 2
 fi
 
+# ⚠️ **突變本身失敗就要當場中止**（Codex #384 r23 Low）：
+#    有一條的 Python 找不到目標而 raise，腳本卻繼續跑——**基準（未突變）被當成「期望綠」通過**，
+#    最後還 exit 0 印「全部符合期望」。**沒有跑到的突變，不能算它通過。**
+mutate() {   # mutate <說明>：後面接 heredoc；失敗立即 exit
+  if ! python3 -; then
+    echo "❌ 突變「$1」建置失敗——沒有跑到的突變不能算通過。"
+    exit 1
+  fi
+}
+
 check() {   # check <說明> <期望：紅|綠>
   local got mark
   got=$(run)
@@ -54,7 +64,7 @@ check() {   # check <說明> <期望：紅|綠>
 
 # ── 藏東西：契約與規則檔不准出現 fence 或 HTML 註解（r13 起改成「關門」）──
 
-python3 - <<'PY'
+mutate 'A. 契約檔出現 code fence（連合法成對的也不准）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -62,7 +72,7 @@ p.write_text(s[:i]+"```text\n連合法成對的也不准\n```\n\n"+s[i:], encodi
 PY
 check 'A. 契約檔出現 code fence（連合法成對的也不准）' 紅
 
-python3 - <<'PY'
+mutate 'B. 契約檔出現 HTML 註解（連閉合的也不准）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -70,7 +80,7 @@ p.write_text(s[:i]+"<!-- 連閉合的也不准 -->\n\n"+s[i:], encoding="utf-8")
 PY
 check 'B. 契約檔出現 HTML 註解（連閉合的也不准）' 紅
 
-python3 - <<'PY'
+mutate 'C. AGENTS 出現 fence（另一種記號也一樣）' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
@@ -78,7 +88,7 @@ p.write_text(s[:i]+"~~~\n\n"+s[i:], encoding="utf-8")
 PY
 check 'C. AGENTS 出現 fence（另一種記號也一樣）' 紅
 
-python3 - <<'PY'
+mutate 'D. 用 <pre> 把整節吞掉（raw HTML block）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡"); j=s.index("## 訂閱續費日自動推進")
@@ -86,7 +96,7 @@ p.write_text(s[:i]+"<pre>\n"+s[i:j]+"\n</pre>\n"+s[j:], encoding="utf-8")
 PY
 check 'D. 用 <pre> 把整節吞掉（raw HTML block）' 紅
 
-python3 - <<'PY'
+mutate 'E. 行首出現 <div>（另一類 raw HTML）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -94,7 +104,7 @@ p.write_text(s[:i]+"<div>\n\n"+s[i:], encoding="utf-8")
 PY
 check 'E. 行首出現 <div>（另一類 raw HTML）' 紅
 
-python3 - <<'PY'
+mutate 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("## 月度回顧總覽卡","## 月度回顧[總覽卡](x.md)",1), encoding="utf-8")
@@ -105,7 +115,7 @@ check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
 # 共同的傷害：**搶走正式標題的裸 anchor**，正式那節被 GitHub 改成 `…-1`，
 # AGENTS 的索引連結就默默指到別的地方——而畫面上完全看不出來。
 
-python3 - <<'PY'
+mutate 'R. 同名 #### 搶走 anchor（Codex r14 實證）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -113,7 +123,7 @@ p.write_text(s[:i]+"#### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
 check 'R. 同名 #### 搶走 anchor（Codex r14 實證）' 紅
 
-python3 - <<'PY'
+mutate 'S. 同名 Setext 標題搶走 anchor' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -121,7 +131,7 @@ p.write_text(s[:i]+"月度回顧總覽卡\n==============\n\n"+s[i:], encoding="
 PY
 check 'S. 同名 Setext 標題搶走 anchor' 紅
 
-python3 - <<'PY'
+mutate 'T. 縮排兩格的同名 ##（CommonMark 仍算標題）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -129,7 +139,7 @@ p.write_text(s[:i]+"  ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
 check 'T. 縮排兩格的同名 ##（CommonMark 仍算標題）' 紅
 
-python3 - <<'PY'
+mutate 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -140,7 +150,7 @@ check 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' 紅
 # ── 容器裡的標題／語法：只看行首會全部漏掉（Codex #384 r16）──
 # 三份契約現在第 3–5 行本來就在用 blockquote，所以這不是刻意構造。
 
-python3 - <<'PY'
+mutate 'V. 引用裡的同名 ####（Codex r16 實證）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -148,7 +158,7 @@ p.write_text(s[:i]+"> #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
 check 'V. 引用裡的同名 ####（Codex r16 實證）' 紅
 
-python3 - <<'PY'
+mutate 'W. 清單裡的同名 ##（剝完長得跟正式的一樣）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -156,7 +166,7 @@ p.write_text(s[:i]+"- ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
 check 'W. 清單裡的同名 ##（剝完長得跟正式的一樣）' 紅
 
-python3 - <<'PY'
+mutate 'X. 引用裡的 code fence（繞過 fence 禁令）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -164,7 +174,7 @@ p.write_text(s[:i]+"> ```text\n> 引用裡的 fence 一樣不准\n> ```\n\n"+s[i
 PY
 check 'X. 引用裡的 code fence（繞過 fence 禁令）' 紅
 
-python3 - <<'PY'
+mutate 'Y. 引用裡的 raw HTML（繞過 HTML 禁令）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -172,7 +182,7 @@ p.write_text(s[:i]+"> <div>\n\n"+s[i:], encoding="utf-8")
 PY
 check 'Y. 引用裡的 raw HTML（繞過 HTML 禁令）' 紅
 
-python3 - <<'PY'
+mutate 'Z. 契約檔第一行的 H1 整行刪掉' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.split("\n",1)[1].lstrip("\n"), encoding="utf-8")
@@ -181,7 +191,7 @@ check 'Z. 契約檔第一行的 H1 整行刪掉' 紅
 
 # ── 容器「續行」：靠縮排成立，逐行剝字首分辨不了（Codex #384 r18）──
 
-python3 - <<'PY'
+mutate 'AA. 清單續行裡的引用 ####（Codex r18 實證）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -189,7 +199,7 @@ p.write_text(s[:i]+"- 外層\n    > #### 月度回顧總覽卡\n\n"+s[i:], encod
 PY
 check 'AA. 清單續行裡的引用 ####（Codex r18 實證）' 紅
 
-python3 - <<'PY'
+mutate 'AB. 清單續行裡的 fence' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -197,7 +207,7 @@ p.write_text(s[:i]+"- 外層\n\n    ```text\n    藏在清單續行裡\n    ```\
 PY
 check 'AB. 清單續行裡的 fence' 紅
 
-python3 - <<'PY'
+mutate 'AC. 用 Tab 縮排的巢狀容器' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -205,7 +215,7 @@ p.write_text(s[:i]+"- 外層\n\t> #### 月度回顧總覽卡\n\n"+s[i:], encodin
 PY
 check 'AC. 用 Tab 縮排的巢狀容器' 紅
 
-python3 - <<'PY'
+mutate 'AD. H1 加收尾井字號（anchor 兩邊算不一樣）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 ls=p.read_text(encoding="utf-8").split("\n"); ls[0]=ls[0]+" #"
@@ -215,7 +225,7 @@ check 'AD. H1 加收尾井字號（anchor 兩邊算不一樣）' 紅
 
 # ── 誤紅方向：這幾種 GitHub 只當普通段落，**不可以**被擋（期望綠）──
 
-python3 - <<'PY'
+mutate 'AE.（誤紅考題）-## 文字＝普通段落，不可擋' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -223,7 +233,7 @@ p.write_text(s[:i]+"-## 這不是標題，是普通段落\n\n"+s[i:], encoding="
 PY
 check 'AE.（誤紅考題）-## 文字＝普通段落，不可擋' 綠
 
-python3 - <<'PY'
+mutate 'AF.（誤紅考題）**## 粗體**＝普通段落，不可擋' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -231,7 +241,7 @@ p.write_text(s[:i]+"**## 粗體開頭的普通段落**\n\n"+s[i:], encoding="utf
 PY
 check 'AF.（誤紅考題）**## 粗體**＝普通段落，不可擋' 綠
 
-python3 - <<'PY'
+mutate 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -241,7 +251,7 @@ check 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' 綠
 
 # ── 不需要行首縮排就能藏東西的三族（Codex #384 r20）──
 
-python3 - <<'PY'
+mutate 'AH. 引用包住的續行 ####（原始行首是 >）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -249,7 +259,7 @@ p.write_text(s[:i]+"> - 外層\n>     #### 月度回顧總覽卡\n\n"+s[i:], enc
 PY
 check 'AH. 引用包住的續行 ####（原始行首是 >）' 紅
 
-python3 - <<'PY'
+mutate 'AI. 隱形 reference definition 灌大內文' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
@@ -259,7 +269,7 @@ p.write_text(s[:i]+pad+s[i:], encoding="utf-8")
 PY
 check 'AI. 隱形 reference definition 灌大內文' 紅
 
-python3 - <<'PY'
+mutate 'AJ. 行「中」的 raw HTML（原本只擋行首）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
@@ -267,7 +277,7 @@ p.write_text(s[:i]+'可見前綴 <a id="月度回顧總覽卡"></a><details><sum
 PY
 check 'AJ. 行「中」的 raw HTML（原本只擋行首）' 紅
 
-python3 - <<'PY'
+mutate 'AK. 零寬字元灌大內文' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
@@ -275,9 +285,44 @@ p.write_text(s[:i]+"看不見的padding"+"​"*2000+"\n\n"+s[i:], encoding="utf-
 PY
 check 'AK. 零寬字元灌大內文' 紅
 
+# ── r23：容器裡的隱形 padding、不等長反引號、AGENTS 行中 <details> ──
+
+mutate 'AL. 引用裡的 reference definition（原本行首判斷看不到）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 訂閱續費日自動推進")
+p.write_text(s[:i]+"> [guard-padding]: # (" + "隱形"*400 + ")\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AL. 引用裡的 reference definition（原本行首判斷看不到）' 紅
+
+mutate 'AM. 開一個反引號關兩個（GFM 不算 code span）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+'可見文字 `<a id="月度回顧總覽卡"></a>`` 後面\n\n'+s[i:], encoding="utf-8")
+PY
+check 'AM. 開一個反引號關兩個（GFM 不算 code span）' 紅
+
+mutate 'AN. AGENTS 行「中」的 details 把同步點表摺起來' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+i=s.index("| 月度回顧總覽卡 |")
+j=s.rindex("\n", 0, i)
+p.write_text(s[:j]+" <details><summary>展開</summary>"+s[j:], encoding="utf-8")
+PY
+check 'AN. AGENTS 行「中」的 details 把同步點表摺起來' 紅
+
+mutate 'AO.（誤紅考題）正常的佔位符寫法不可擋' <<'PY'
+import pathlib
+p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+i=s.index("## 月度回顧總覽卡")
+p.write_text(s[:i]+"提醒鑰匙格式是 `evt-<id>`／`x-<kind>-<id>`，這是全 repo 慣例。\n\n"+s[i:], encoding="utf-8")
+PY
+check 'AO.（誤紅考題）正常的佔位符寫法不可擋' 綠
+
 # ── 索引與契約的雙向對應 ──
 
-python3 - <<'PY'
+mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
 import pathlib
 ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
@@ -290,7 +335,7 @@ p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check 'G. 無空白分隔符＋整段規則貼回索引' 紅
 
-python3 - <<'PY'
+mutate 'H. 用跳脫的直線藏在同一格＋貼回全文' <<'PY'
 import pathlib
 ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
@@ -303,7 +348,7 @@ p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check 'H. 用跳脫的直線藏在同一格＋貼回全文' 紅
 
-python3 - <<'PY'
+mutate 'I. 先放假 marker 再貼回全文（切第一個會漏）' <<'PY'
 import pathlib
 ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
@@ -316,14 +361,14 @@ p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check 'I. 先放假 marker 再貼回全文（切第一個會漏）' 紅
 
-python3 - <<'PY'
+mutate 'J. 刪掉「最新單季」那條索引（原豁免項）' <<'PY'
 import pathlib,re
 p=pathlib.Path("AGENTS.md")
 p.write_text(re.sub(r'^\| \*\*SEC 最新單季逐列期間\*\*.*\n','',p.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
 PY
 check 'J. 刪掉「最新單季」那條索引（原豁免項）' 紅
 
-python3 - <<'PY'
+mutate 'K. marker 與索引一起刪（雙向斷言的核心）' <<'PY'
 import pathlib,re
 p=pathlib.Path("docs/contracts/收支記帳與匯入.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 店家消費檔案")
@@ -336,14 +381,14 @@ check 'K. marker 與索引一起刪（雙向斷言的核心）' 紅
 rm -f docs/contracts/前端功能.md
 check 'L. 整份契約檔刪掉' 紅
 
-python3 - <<'PY'
+mutate 'M. 從 manifest 偷偷拿掉一條規則' <<'PY'
 import pathlib
 p=pathlib.Path("test/contract-split.test.js")
 p.write_text(p.read_text(encoding="utf-8").replace("      '月度回顧總覽卡',\n",""), encoding="utf-8")
 PY
 check 'M. 從 manifest 偷偷拿掉一條規則' 紅
 
-python3 - <<'PY'
+mutate 'N. AGENTS 多一條等價的重複索引列' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
 for k,l in enumerate(ls):
@@ -355,7 +400,7 @@ check 'N. AGENTS 多一條等價的重複索引列' 紅
 
 # ── 路由表 ──
 
-python3 - <<'PY'
+mutate 'O. 同一份契約多出一條矛盾路由列' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 收支記帳與匯入")
@@ -364,7 +409,7 @@ p.write_text(s, encoding="utf-8")
 PY
 check 'O. 同一份契約多出一條矛盾路由列' 紅
 
-python3 - <<'PY'
+mutate 'P. 路由表用短檔名冒充完整路徑' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); t=p.read_text(encoding="utf-8")
 assert t.count("`public/modules/portfolio-symbol.js`")==1
@@ -372,7 +417,7 @@ p.write_text(t.replace("`public/modules/portfolio-symbol.js`","`portfolio-symbol
 PY
 check 'P. 路由表用短檔名冒充完整路徑' 紅
 
-python3 - <<'PY'
+mutate 'Q. README 連結誤用 repo-root 路徑（連到不存在）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("[前端功能.md](前端功能.md)","[前端功能.md](docs/contracts/前端功能.md)",1), encoding="utf-8")
