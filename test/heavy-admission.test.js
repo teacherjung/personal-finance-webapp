@@ -16,18 +16,19 @@ process.env.SUPABASE_ANON_KEY = 'k';
 process.env.SITE_ORIGIN = 'http://127.0.0.1';
 process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
-const { pdfAdmission, isFileUploadPath, PDF_ADMISSION_MAX_INFLIGHT,
-  pdfAdmissionInFlightForTest, resetPdfAdmissionForTest } = await import('../lib/pdf-admission.js');
-const { STATEMENT_FILE_POST_ROUTES } = await import('../lib/http-body.js');
+const { heavyAdmission, installHeavyAdmission, HEAVY_ROUTES, HEAVY_ADMISSION_MAX_INFLIGHT,
+  heavyAdmissionInFlightForTest, resetHeavyAdmissionForTest } = await import('../lib/heavy-admission.js');
 
 /** 起一個只掛入場管制的假 app：handler 由測試決定何時回應。
  * ⚠️ 一定要等 listening 才拿得到 port（`address()` 在那之前是 null）。 */
 async function makeServer(handler) {
   const app = express();
-  app.use(pdfAdmission);
+  // ⚠️ 用 production 的同一支安裝函式：路徑比對交給 Express，考題不自造第二套語意
+  installHeavyAdmission(app);
   app.post('/api/statement/preview', handler);
   app.post('/api/cards/:id/statement/preview', handler);
-  app.post('/api/settings', (req, res) => res.json({ ok: true }));   // 非上傳路徑對照組
+  app.post('/api/import', handler);                                  // 重型：備份還原
+  app.post('/api/settings', (req, res) => res.json({ ok: true }));   // 非重型對照組
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return server;
@@ -44,19 +45,17 @@ async function shutdown(server) {
   await once(server, 'close');
 }
 
-test('路徑比對｜六條上傳端點都認得，`:id` 參數要展開；其他端點不受管', () => {
-  assert.equal(STATEMENT_FILE_POST_ROUTES.length, 6, '上傳端點清單變動了＝本題要重新確認');
-  for (const p of STATEMENT_FILE_POST_ROUTES) {
-    const concrete = p.replace(/:[^/]+/g, 'abc123');
-    assert.ok(isFileUploadPath(concrete), `沒認出上傳端點：${concrete}`);
+test('受管清單｜六條上傳＋列匯入＋備份還原＋IB 同步都在（範圍是「重型工作」不是「PDF」）', () => {
+  for (const must of ['/api/statement/preview', '/api/cards/:id/statement/preview',
+    '/api/bank-statement/preview', '/api/bank-statement/apply', '/api/securities/preview',
+    '/api/securities/import', '/api/cards/:id/statement/import', '/api/import', '/api/ib/sync']) {
+    assert.ok(HEAVY_ROUTES.includes(must), `重型端點沒被納管：${must}（#371 r1 High②：/api/import 曾可繞過）`);
   }
-  for (const p of ['/api/settings', '/api/db', '/api/statement/batches', '/api/statement', '/api/securities']) {
-    assert.ok(!isFileUploadPath(p), `誤把一般端點當上傳：${p}`);
-  }
+  assert.ok(!HEAVY_ROUTES.includes('/api/settings'), '一般端點不該納管');
 });
 
 test('滿了就**還沒收 body** 立刻 503（這一層存在的理由）', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   let release = () => {};
   const held = new Promise((res) => { release = () => res(undefined); });
   let bodyBytesSeen = 0;
@@ -72,8 +71,8 @@ test('滿了就**還沒收 body** 立刻 503（這一層存在的理由）', asy
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: big }),
     });
     // 等第一個真的佔到名額
-    for (let i = 0; i < 100 && pdfAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
-    assert.equal(pdfAdmissionInFlightForTest(), PDF_ADMISSION_MAX_INFLIGHT, '第一個沒佔到名額');
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), HEAVY_ADMISSION_MAX_INFLIGHT, '第一個沒佔到名額');
 
     const seenBefore = bodyBytesSeen;
     const second = await fetch(`${base}/api/statement/preview`, {
@@ -87,12 +86,12 @@ test('滿了就**還沒收 body** 立刻 503（這一層存在的理由）', asy
     release();
     await first;
   } finally {
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
 test('名額歸還｜正常回應之後要還（不還＝上傳功能慢性死亡）', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   const server = await makeServer((req, res) => res.json({ ok: true }));
   try {
     const base = urlOf(server);
@@ -103,14 +102,14 @@ test('名額歸還｜正常回應之後要還（不還＝上傳功能慢性死�
       assert.equal(r.status, 200, `第 ${i + 1} 次被擋下＝前一次的名額沒還`);
       await r.text();
     }
-    assert.equal(pdfAdmissionInFlightForTest(), 0, `連打五次之後還剩 ${pdfAdmissionInFlightForTest()} 個名額沒還`);
+    assert.equal(heavyAdmissionInFlightForTest(), 0, `連打五次之後還剩 ${heavyAdmissionInFlightForTest()} 個名額沒還`);
   } finally {
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
 test('名額歸還｜handler 丟例外（500）之後也要還', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   const server = await makeServer(() => { throw new Error('boom'); });
   try {
     const base = urlOf(server);
@@ -120,8 +119,8 @@ test('名額歸還｜handler 丟例外（500）之後也要還', async () => {
     await r.text();
     assert.equal(r.status, 500);
     // 事件是非同步的，給它一拍
-    for (let i = 0; i < 50 && pdfAdmissionInFlightForTest() !== 0; i++) await new Promise((res) => setTimeout(res, 5));
-    assert.equal(pdfAdmissionInFlightForTest(), 0, '錯誤路徑沒還名額');
+    for (let i = 0; i < 50 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((res) => setTimeout(res, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '錯誤路徑沒還名額');
     // 還得回來才收得下一個
     const again = await fetch(`${base}/api/statement/preview`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"data":"x"}',
@@ -129,12 +128,12 @@ test('名額歸還｜handler 丟例外（500）之後也要還', async () => {
     await again.text();
     assert.notEqual(again.status, 503, '錯誤一次之後就再也收不到上傳＝名額洩漏');
   } finally {
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
 test('名額歸還｜客戶端中途斷線（只有 close、沒有 finish）也要還', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   let started = () => {};
   const startedP = new Promise((res) => { started = () => res(undefined); });
   const server = await makeServer((req, res) => { started(); /* 故意不回應 */ void res; });
@@ -145,18 +144,18 @@ test('名額歸還｜客戶端中途斷線（只有 close、沒有 finish）也�
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"data":"x"}', signal: ac.signal,
     }).catch(() => null);
     await startedP;
-    assert.equal(pdfAdmissionInFlightForTest(), 1, '請求進行中應該佔著名額');
+    assert.equal(heavyAdmissionInFlightForTest(), 1, '請求進行中應該佔著名額');
     ac.abort();
     await p;
-    for (let i = 0; i < 100 && pdfAdmissionInFlightForTest() !== 0; i++) await new Promise((res) => setTimeout(res, 5));
-    assert.equal(pdfAdmissionInFlightForTest(), 0, '客戶端斷線沒還名額——這條路只有 close、沒有 finish');
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() !== 0; i++) await new Promise((res) => setTimeout(res, 5));
+    assert.equal(heavyAdmissionInFlightForTest(), 0, '客戶端斷線沒還名額——這條路只有 close、沒有 finish');
   } finally {
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
 test('非上傳端點不受管制（不該被入場管制誤傷）', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   let release = () => {};
   const held = new Promise((res) => { release = () => res(undefined); });
   const server = await makeServer(async (req, res) => { await held; res.json({ ok: true }); });
@@ -165,7 +164,7 @@ test('非上傳端點不受管制（不該被入場管制誤傷）', async () =>
     const first = fetch(`${base}/api/statement/preview`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"data":"x"}',
     });
-    for (let i = 0; i < 100 && pdfAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < 100 && heavyAdmissionInFlightForTest() === 0; i++) await new Promise((r) => setTimeout(r, 5));
     // 名額被佔滿時，一般端點仍要通
     const other = await fetch(`${base}/api/settings`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -174,12 +173,12 @@ test('非上傳端點不受管制（不該被入場管制誤傷）', async () =>
     await other.text();
     release(); await first;
   } finally {
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
 test('LOCAL 零改動｜沒有 NOTEASY_HOSTED 就完全不管（連名額都不算）', async () => {
-  resetPdfAdmissionForTest();
+  resetHeavyAdmissionForTest();
   const saved = process.env.NOTEASY_HOSTED;
   delete process.env.NOTEASY_HOSTED;
   let release = () => {};
@@ -197,26 +196,54 @@ test('LOCAL 零改動｜沒有 NOTEASY_HOSTED 就完全不管（連名額都不�
     });
     // 兩個都進得去＝LOCAL 沒有入場管制；名額也不該被算
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(pdfAdmissionInFlightForTest(), 0, 'LOCAL 連名額都不該算');
+    assert.equal(heavyAdmissionInFlightForTest(), 0, 'LOCAL 連名額都不該算');
     release();
     const [ra, rb] = await Promise.all([a, bP]);
     assert.notEqual(rb.status, 503, 'LOCAL 不該有入場管制（零改動契約）');
     await ra.text(); await rb.text();
   } finally {
     if (saved === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = saved;
-    await shutdown(server); resetPdfAdmissionForTest();
+    await shutdown(server); resetHeavyAdmissionForTest();
   }
 });
 
-test('掛載位置｜server.js 必須把它夾在「限速之後、body parser 之前」', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { join, dirname } = await import('node:path');
-  const { fileURLToPath } = await import('node:url');
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'server.js'), 'utf8');
-  const iRate = src.indexOf("mountRateLimit('post-gate')");
-  const iAdmit = src.indexOf('app.use(pdfAdmission)');
-  const iBody = src.indexOf('installJsonBodyParsers(app)');
-  assert.ok(iRate > 0 && iAdmit > 0 && iBody > 0, '三個掛載點都要找得到（結構變了就要重寫本題）');
-  assert.ok(iRate < iAdmit, '入場管制掛在限速之前＝沒登入的人也能佔名額');
-  assert.ok(iAdmit < iBody, '入場管制掛在 body parser 之後＝還是先把 body 收下來了，這一層等於白做');
+test('掛載位置｜**讀真 app 的 middleware stack**：每條重型路徑上，入場管制都排在該路徑的 body parser 之前', async () => {
+  // ⚠️ 舊版用 indexOf 掃 server.js 的文字——Codex #371 r1 Medium 實測：把 admission 那行註解掉、
+  //    或在它前面插一個 parser，斷言照樣通過（**假綠**）。改成檢查**真的 app 物件**。
+  // ⚠️ 而且要**逐條路徑**比：全域第一個 parser 是 `/api/auth` 專用的（掛在 authRoutes 之前、
+  //    不碰重型路徑），拿它來比會誤判。真正的不變量是「同一條路徑上，管制在 parser 前面」。
+  const { app } = await import('../server.js');
+  const stack = (/** @type {any} */ (app))._router?.stack;   // Express 4：app.router 是會拋錯的舊 getter
+  assert.ok(Array.isArray(stack), '拿不到 app 的 router stack（Express 版本變了就要重寫本題）');
+
+  /** @param {any} layer @returns {any[]} 這一層掛的處理函式 */
+  const fnsOf = (layer) => (layer?.route ? (layer.route.stack || []).map((/** @type {any} */ h) => h.handle) : [layer?.handle]);
+
+  for (const route of HEAVY_ROUTES) {
+    const admIdx = stack.findIndex((/** @type {any} */ l) => l?.route?.path === route && fnsOf(l).includes(heavyAdmission));
+    assert.ok(admIdx >= 0,
+      `重型路徑沒掛上入場管制：${route}（把 installHeavyAdmission 註解掉、或漏掉某條路徑，都會走到這裡）`);
+    // ⚠️ 不是每條重型路徑都有專屬 parser：`/api/ib/sync` 的重量來自**對外抓 12MB XML 並解析**
+    //    （峰值約 254MB），請求本體很小。有 parser 的才比順序；沒有的只要確認管制掛上了。
+    const parserIdx = stack.findIndex((/** @type {any} */ l, /** @type {number} */ i) => i !== admIdx
+      && l?.route?.path === route
+      && fnsOf(l).some((/** @type {any} */ f) => typeof f === 'function' && /json/i.test(f.name || '')));
+    if (parserIdx >= 0) {
+      assert.ok(admIdx < parserIdx,
+        `${route}：入場管制排在 body parser 之後（管制@${admIdx} > parser@${parserIdx}）＝body 已經被收下了，這一層等於白做`);
+    }
+  }
+});
+
+test('掛載位置｜前一題不可空轉：至少要有 8 條重型路徑真的比對過 parser 順序', async () => {
+  // ⚠️ 上一題對「沒有 parser 的路徑」會跳過比對——若某天 parser 偵測壞掉（例如函式改名），
+  //    每條都變成「沒有 parser」而整題空轉全綠。這一題釘住實際比對到的條數。
+  const { app } = await import('../server.js');
+  const stack = (/** @type {any} */ (app))._router?.stack;
+  const fnsOf = (/** @type {any} */ layer) => (layer?.route ? (layer.route.stack || []).map((/** @type {any} */ h) => h.handle) : [layer?.handle]);
+  const withParser = HEAVY_ROUTES.filter((route) => stack.some((/** @type {any} */ l) => l?.route?.path === route
+    && fnsOf(l).some((/** @type {any} */ f) => typeof f === 'function' && /json/i.test(f.name || ''))));
+  assert.equal(withParser.length, HEAVY_ROUTES.length - 1,
+    `只有 ${withParser.length} 條路徑找得到 body parser（預期＝全部 ${HEAVY_ROUTES.length} 條扣掉沒有 body 的 /api/ib/sync）——parser 偵測可能壞了，上一題會空轉`);
+  assert.ok(!withParser.includes('/api/ib/sync'), '/api/ib/sync 不該有專屬 body parser');
 });

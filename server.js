@@ -13,7 +13,7 @@ import { statementRoutes } from './lib/routes/statement.js';
 import { securitiesRoutes } from './lib/routes/securities.js';
 import { stockFundamentalsRoutes } from './lib/routes/stock-fundamentals.js';
 import { installJsonBodyParsers, AUTH_JSON_LIMIT, STATEMENT_JSON_POST_ROUTES } from './lib/http-body.js';
-import { pdfAdmission } from './lib/pdf-admission.js';
+import { installHeavyAdmission } from './lib/heavy-admission.js';
 import { rateLimit, ipKeyOf } from './lib/rate-limit.js';
 import { applyHostedTimeouts } from './lib/parse-limits.js';
 import { currentTenant } from './lib/tenant.js';
@@ -198,10 +198,12 @@ if (isHosted()) {
   //      （以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以）。
   //   ③④⑤ IB 同步、報價與 SEC：**會對外連線**，猛打它們等於拿我們的伺服器去打上游服務。
   mountRateLimit('post-gate');
-  // ⚠️ **檔案上傳的入場管制必須夾在這兩行中間**（2026-08-02，Codex #350 r2 High）：
+  // ⚠️ **重型工作的入場管制必須夾在這兩行中間**（2026-08-02，Codex #350 r2 High／#371 r1）：
   //    在限速／authGate 之後（沒登入的人不該佔名額），在 body parser 之前（**還沒收 body
   //    就回絕**才擋得住記憶體堆積——行程隔離的佇列是等 body 收完才拿名額的，太晚）。
-  app.use(pdfAdmission);
+  //    範圍＝所有吃大 body 或做重解析的端點（HEAVY_ROUTES），不只 PDF：實測 /api/import
+  //    的 50MB 還原可以在 PDF 名額占用中照樣通過。掛載順序有考題直接讀 app 的 router stack。
+  installHeavyAdmission(app);
   installJsonBodyParsers(app);
   // 公開站（C1 的 public-site/）＋extensionless rewrite（/login→login.html；C1 記錄在案的接手項）
   const site = join(__dirname, 'public-site');
