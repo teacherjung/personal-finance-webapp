@@ -242,7 +242,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `CODEX-REVIEW.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `CODEX-REVIEW.md` 的合併六步驟**，⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移這是第三次）。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
+**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `CODEX-REVIEW.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `CODEX-REVIEW.md` 的合併六步驟**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但三道不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-pr-merge-gate.js`（堆疊）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **角色分工（含「不負責」邊界）**：
 
