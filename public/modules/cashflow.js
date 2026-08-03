@@ -41,8 +41,9 @@ export async function renderCashflow() {
   monthFilter = fallbackMonth(monthFilter, months);
 
   const th = thBuilder(listSort);
-  // 本月三張卡（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
+  // 所選月份摘要（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
   const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
+  const periodLabel = monthFilter.replace(/^(\d{4})-(\d{2})$/, (_, year, month) => `${year} 年 ${Number(month)} 月`);
   // 篩選金流後再排序
   const rows = sortRows(monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter)), listSort);
@@ -60,30 +61,36 @@ export async function renderCashflow() {
         </div>
       </div>
 
-      <div class="cards cashflow-summary-grid" aria-label="本月銀行收支摘要">
-        <div class="card cashflow-stat" data-kind="income"><h3>本月收入</h3><div class="stat sm pos">${wan(income)}</div><p>匯入與手動記錄的收入</p></div>
-        <div class="card cashflow-stat" data-kind="expense"><h3>本月支出</h3><div class="stat sm neg">${wan(expense)}</div><p>不含帳戶內轉</p></div>
-        <div class="card cashflow-stat" data-kind="net"><h3>本月結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div><p>收入減支出</p></div>
-      </div>
-
       <section class="cashflow-controls" aria-label="銀行收支篩選">
         <div class="cashflow-control">
           <label for="monthSel">月份</label>
           <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
         </div>
         <div class="cashflow-control cashflow-flow-control">
-          <span class="cashflow-control-label">金流</span>
+          <span class="cashflow-control-label">明細金流</span>
           <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
+        </div>
+      </section>
+
+      <section class="cashflow-summary" aria-label="${esc(periodLabel)}銀行收支摘要">
+        <div class="cashflow-summary-head">
+          <div><span>收支期間</span><strong>${esc(periodLabel)}</strong></div>
+          <p>以銀行對帳單為準；內轉不列入收入與支出</p>
+        </div>
+        <div class="cashflow-summary-grid">
+          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div><p>匯入與手動記錄</p></div>
+          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div><p>不含帳戶內轉</p></div>
+          <div class="cashflow-stat" data-kind="net"><h3>結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div><p>收入減支出</p></div>
         </div>
       </section>
 
       <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
         <div class="cashflow-ledger-head">
-          <div><h2 id="cashflow-ledger-title">收支明細</h2><p>目前顯示 ${rows.length} 筆</p></div>
+          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span></div>
         </div>
         <div class="tbl-wrap cashflow-ledger">
           <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
-          <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>本月尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
+          <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>${esc(periodLabel)}尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
         </div>
       </section>
     </div>

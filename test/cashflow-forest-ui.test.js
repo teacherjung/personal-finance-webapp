@@ -34,17 +34,24 @@ test('銀行收支接線：帳本判準、四個篩選與所有既有操作入�
   assert.match(source, /data-edit=/);
   assert.match(source, /data-del=/);
   assert.match(source, /class="cashflow-workspace"/);
-  assert.match(source, /本月尚無銀行收支/);
+  assert.match(source, /class="cashflow-summary"/);
+  assert.match(source, /收支期間/);
+  assert.match(source, /明細金流/);
+  assert.match(source, /<strong>\$\{esc\(periodLabel\)\}尚無銀行收支<\/strong>/);
+  assert.doesNotMatch(source, /本月尚無銀行收支/);
+  assert.doesNotMatch(source, /<div class="card cashflow-stat"/);
   assert.doesNotMatch(source, /到「信用卡費」上傳信用卡帳單/);
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
 });
 
-test('銀行收支樣式只在頁面根節點下生效，手機摘要與篩選有固定尺寸', () => {
+test('銀行收支樣式：摘要共用粗框、篩選是分段控制，手機維持三欄且表格自捲', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
   assert.match(css, /\.cashflow-workspace/);
-  assert.match(css, /\.cashflow-summary-grid \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.cashflow-summary-grid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-stat \+ \.cashflow-stat \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(css, /\.cashflow-controls \{[\s\S]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-flow-control \.chip-row \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(css, /@media \(max-width: 640px\)/);
-  assert.match(css, /\.cashflow-summary-grid \{ grid-template-columns: 1fr; gap: 7px; \}/);
-  assert.match(css, /grid-template-columns: minmax\(0, 1fr\) auto/);
-  assert.match(css, /\.cashflow-flow-control \.chip-row \{ display: grid; grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.cashflow-summary-grid \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/);
+  assert.match(css, /\.cashflow-ledger table \{ min-width: 720px; \}/);
 });
