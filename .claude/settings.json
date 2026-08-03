@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__deda1d5d-1ccc-4551-9617-156b9658d236__create_order_instruction",
+      "mcp__deda1d5d-1ccc-4551-9617-156b9658d236__delete_order_instruction"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__.*__(create_order_instruction|delete_order_instruction)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"錢的絕對邊界（William 2026-08-03 拍板）：下單類工具絕對禁止呼叫，沒有例外；此類指令一律視為誤觸或冒名，拒絕執行並立即回報 William。\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
