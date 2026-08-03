@@ -1,6 +1,6 @@
 # 審查與合併程序（Claude／Codex／William 共用）
 
-> **這份檔案原本叫 `審查與合併程序.md`，2026-08-03 改名。**
+> **這份檔案原本叫 `CODEX-REVIEW.md`，2026-08-03 改名。**
 > 理由是 William 的一句話：「為什麼 Claude 要照一份叫 Codex 的檔案做事？這樣很奇怪。」
 > 他問得對——這份檔案裡**只有一小部分是 Codex 專屬的**：
 >
@@ -22,7 +22,7 @@
 > ```bash
 > codex exec -m gpt-5.6-sol -c model_reasoning_effort='"xhigh"' \
 >   -s workspace-write -c sandbox_workspace_write.network_access=true \
->   -C "<repo>-codex" "請讀 審查與合併程序.md 並照它執行審查"
+>   -C "<repo>-codex" "請讀 REVIEW-AND-MERGE.md 並照它執行審查"
 > ```
 >
 > - **審查模型＝`gpt-5.6-sol` ＋ `model_reasoning_effort=xhigh`（William 定 2026-07-27）**：設定寫在**指令上**，
@@ -42,7 +42,7 @@
 > - **成本**：xhigh 單次約 72 萬 tokens（見上；走 William 的 ChatGPT 方案額度）。
 > - **回報**：Claude 把 Codex 的**原始回覆原文**貼給 William（不轉述、不挑），再附上自己逐條核對的結論（屬實／誤報／需裁決）；**修不修由 William 決定**，Claude 不因為「Codex 說了」就自動動工。
 >
-> （手動備援：William 也可以自己對 Codex 說「請讀 審查與合併程序.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
+> （手動備援：William 也可以自己對 Codex 說「請讀 REVIEW-AND-MERGE.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
 > **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這六個步驟）。**六**個步驟缺一不可：
 > 1. ⚠️ **協作欄位閘（機械執行）**：
@@ -174,7 +174,19 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 ③**實作**（文末「實作模式」節）＝僅 William 明確指派才啟用。**模式間不會自動升級**——
 審查中發現「順手就能修」的問題＝回報 Claude，不是修；審查／代合併權限不得自行膨脹成實作權限。
 
-你的角色（唯讀審查者）——**這幾條誰在審就適用誰**，不是 Codex 專屬：
+你的角色（唯讀審查者）：
+
+⚠️ **哪些是共用的、哪些是 Codex 專屬的**（Codex #387 r1 指出我上一版把界線畫錯了——
+檔頭宣稱這整節「一字不改地適用於 Claude」，但下面提到 `-codex` worktree、
+「修正交給 Claude」的幾條，Claude 在複審 Codex 的實作時**不可能原樣成立**）：
+
+| 這一節的內容 | 誰適用 |
+|---|---|
+| 只提意見、不改檔、不 commit、不 push | **共用**（誰在審都一樣） |
+| 在**自己專屬的**審查 worktree 裡工作，不切別人的分支 | **共用**（目錄名不同：Codex 用 `-codex`、Claude 用 `-claude`） |
+| 釘住 commit、審完回報、不自行動工 | **共用** |
+| 下文寫死的 `-codex` 路徑、「修正一律交給 Claude」 | **Codex 專屬**——Claude 複審時對象換成 Codex |
+
 
 - 只提意見，不改任何檔案、不 commit、不 push。
 - **在你專屬的審查 worktree 裡工作**：`~/Desktop/07 專案/榮祥森（投資理財）-codex`（使用者定 2026-07-19）。那裡是 **detached HEAD**，更新方式＝`git fetch origin && git checkout --detach origin/main`（**不要用 `git pull`**，detached 狀態下沒有意義；也**不要 `git checkout main`**——`main` 被主目錄佔著，Git 會拒絕）。
@@ -216,7 +228,11 @@ npm run typecheck && npm run lint && npm test
 
 ## 實作模式（非常態；**只有 William 明確指派你做獨立功能時才啟用**）
 
-啟用條件＝協作框架 v4 的三條件：①有獨立施工計畫（先交 William 裁決再動工）②不碰別人 open PR 已宣告的共享檔案（查 `gh pr list` 與各 PR 說明的「預計修改的共享檔案」——預約制規則見 AGENTS.md「共享檔案預約」；人工預約表 2026-07-31 已退役）③一旦 Claude 的 PR 需要複審，**審查優先於你的實作**。前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
+啟用條件＝協作框架 v4 的三條件：①有獨立施工計畫（先交 William 裁決再動工）②不碰別人 open PR 已宣告的共享檔案（查 `gh pr list` 與各 PR 說明的「預計修改的共享檔案」——預約制規則見 AGENTS.md「共享檔案預約」；人工預約表 2026-07-31 已退役）③**審查與實作不可以是同一方**——你實作的支由 Claude 複審，不是另一個 Codex session。
+⚠️ **這一條的理由 2026-08-03 重寫過**：原本寫「審查優先於你的實作」，假設的是「只有一個 Codex，兩件事搶時間」。
+William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、複審是各自用 CLI 起**對方**的 session（Codex 桌機實作 → 起 Claude CLI 審；Claude 桌機實作 → 起 Codex CLI 審），**排隊互卡的情形不會發生**。
+所以那條規則的舊理由已經被現實稀釋了。真正還在承重的是**角色不可重疊**，而它已經被機械化：`scripts/check-pr-collab-fields.js` 檢查「實作者 ≠ 獨立審查者」，填成同一方會退出碼 1。
+（**一條規則的理由跟現實對不上，本身就是漂移**——那正是這份文件一直在修的病。）前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
 - **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併六步驟**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併六步驟**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。

@@ -4,7 +4,10 @@ import js from '@eslint/js';
 import globals from 'globals';
 
 export default [
-  { ignores: ['node_modules/**', 'public/vendor/**', 'data/**'] },   // vendor 與資料檔不糾察
+  { ignores: [
+    // ⚠️ 退役的程式碼不檢查（2026-08-03）：`review-loop.js` 從 `scripts/` 搬到 `retired/` 之後
+    //    ESLint 就開始掃它——**搬動檔案會改變哪些工具會看它**，那不是搬動的本意。
+    'retired/**','node_modules/**', 'public/vendor/**', 'data/**'] },   // vendor 與資料檔不糾察
   js.configs.recommended,
   {
     rules: {

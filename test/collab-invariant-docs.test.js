@@ -3,7 +3,7 @@
 // ## 這個檔案在防什麼
 //
 // 「沒有任何一份產出，由寫它的人做正式複審與放行」是三方協作的唯一不變量。
-// 但它原本**只寫在 `審查與合併程序.md`**，而 `CLAUDE.md` 給 Claude 的指示是「先讀 AGENTS.md」——
+// 但它原本**只寫在 `REVIEW-AND-MERGE.md`**，而 `CLAUDE.md` 給 Claude 的指示是「先讀 AGENTS.md」——
 // **規則在一份檔案、執行在另一份檔案 ⇒ 規則等於不存在**。
 //
 // 這個病 `test/merge-procedure-docs.test.js` 的檔頭已經診斷過一次（刪分支規則失效十九天、
@@ -27,11 +27,11 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
 const INVARIANT = '沒有任何一份產出，由寫它的人做「正式複審與放行」。';
 
-test('不變量必須寫在 AGENTS.md 裡（只寫在 審查與合併程序.md ＝ 只讀 AGENTS 的人看不到）', () => {
+test('不變量必須寫在 AGENTS.md 裡（只寫在 REVIEW-AND-MERGE.md ＝ 只讀 AGENTS 的人看不到）', () => {
   const agents = read('AGENTS.md');
   assert.ok(agents.includes(INVARIANT),
     'AGENTS.md 找不到唯一不變量的原句。\n'
-    + '它若只留在 審查與合併程序.md，一個照 CLAUDE.md 指示「先讀 AGENTS.md」的 Claude 完全不會知道'
+    + '它若只留在 REVIEW-AND-MERGE.md，一個照 CLAUDE.md 指示「先讀 AGENTS.md」的 Claude 完全不會知道'
     + '自己審自己的提案是違規的——這正是 merge-procedure-docs.test.js 診斷過的同一種病。');
   assert.ok(agents.includes('作者自查仍然必須做'),
     'AGENTS.md 少了「這不是禁止自審」的但書——沒有它，這條不變量會跟「轉 ready 前對抗式自審」互相否定');
@@ -63,9 +63,9 @@ test('角色表要寫明 Claude 也複審 Codex 的實作（2026-07-30 起的常
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {
   const agents = read('AGENTS.md');
-  const codexReview = read('審查與合併程序.md');
-  assert.ok(agents.includes('審查與合併程序.md'), 'AGENTS.md 沒有指向 審查與合併程序.md（展開版與操作細節在那裡）');
-  assert.ok(codexReview.includes('AGENTS.md'), '審查與合併程序.md 沒有指回 AGENTS.md');
+  const codexReview = read('REVIEW-AND-MERGE.md');
+  assert.ok(agents.includes('REVIEW-AND-MERGE.md'), 'AGENTS.md 沒有指向 REVIEW-AND-MERGE.md（展開版與操作細節在那裡）');
+  assert.ok(codexReview.includes('AGENTS.md'), 'REVIEW-AND-MERGE.md 沒有指回 AGENTS.md');
 });
 
 test('2026-07-10 那節過期的「審查分工」不可以再出現（它擺在最像結論的位置）', () => {
@@ -247,7 +247,7 @@ test('角色正規化｜看不出來就回 null，不猜', () => {
 // ── 本檔不可以重述合併步驟（重述的摘要會落後）─────────────────
 
 /**
- * 合併程序**實際用到的機械閘**，從 `審查與合併程序.md` 的合併步驟區塊反查。
+ * 合併程序**實際用到的機械閘**，從 `REVIEW-AND-MERGE.md` 的合併步驟區塊反查。
  *
  * ⚠️ **不要在這裡手寫名單**（Codex #385 r9 抓的）：原本寫死三個名字，
  * 於是 #385 加了第四道閘（`check-review-verdicts.js`）之後，AGENTS.md 兩處
@@ -287,9 +287,9 @@ async function selfDeclaredGates() {
  * 註解、前綴、非標準拼法一律不算——要進程序就寫成標準那一行。
  */
 function gatesRunInMergeSteps() {
-  const whole = read('審查與合併程序.md').replace(/<!--[\s\S]*?-->/g, '');
+  const whole = read('REVIEW-AND-MERGE.md').replace(/<!--[\s\S]*?-->/g, '');
   const start = whole.indexOf('合併也由 Codex 代執行');
-  assert.ok(start > 0, '審查與合併程序.md 找不到合併步驟區塊');
+  assert.ok(start > 0, 'REVIEW-AND-MERGE.md 找不到合併步驟區塊');
   const stop = whole.indexOf('\n---', start);
   // ⚠️ 找不到結束錨點就**直接失敗**，不要掃到檔尾（fail-closed，Codex r12）
   assert.ok(stop > start, '合併步驟區塊找不到結束錨點 `\n---`——不要退而掃到檔尾，那不是 fail-closed');
@@ -350,7 +350,7 @@ test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS
 test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣——只掃三個字串已經漏掉一處）', () => {
   // ⚠️ 這題的第一版只掃三個固定字串，結果**漏掉 `五步驟＝確認審查結論…` 那種寫法**
   //    （Codex #379 r2 High②，同一種漂移的第三次）。改成掃「五步驟」出現在合併語境裡的**任何**形式。
-  for (const f of ['AGENTS.md', '審查與合併程序.md']) {
+  for (const f of ['AGENTS.md', 'REVIEW-AND-MERGE.md']) {
     const txt = read(f);
     for (const [i, line] of txt.split('\n').entries()) {
       // 「五步驟審查循環」是另一件事，五步是對的——只放行明確講「審查循環」的那些
@@ -438,9 +438,9 @@ test('欄位閘｜有序清單是合法填法，引用範例不是', () => {
 });
 
 test('trailer 格式要涵蓋三個角色（模板允許 William 當審查者，格式卻不允許＝逼人寫假的）', () => {
-  const cr = read('審查與合併程序.md');
+  const cr = read('REVIEW-AND-MERGE.md');
   const i = cr.indexOf('Reviewed-By:');
-  assert.ok(i > 0, '審查與合併程序.md 找不到 Reviewed-By trailer 的格式說明');
+  assert.ok(i > 0, 'REVIEW-AND-MERGE.md 找不到 Reviewed-By trailer 的格式說明');
   const line = cr.slice(i, cr.indexOf('\n', i));
   assert.ok(line.includes('William'),
     `Reviewed-By 的格式沒有列 William，但模板與 check-pr-collab-fields.js 都允許他當獨立審查者。\n`
