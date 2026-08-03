@@ -1,6 +1,6 @@
 # AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書
 
-這是三方協作（使用者 + Claude Code + Codex）的**單一真相來源**。動手前先讀完；改動若牽涉本文件的規則，請一併更新本文件。
+這是三方協作（使用者 + Claude Code + Codex）的**單一真相來源**。動手前的**全域必讀**＝本檔「🛑 錢的絕對邊界」「鐵則（違反會壞事）」與「協作流程」的角色邊界三處——**不分任務一律適用、不經路由**；其餘先查 `docs/contracts/README.md` 路由表、讀命中的契約（全文太大，「整本先讀完」實際上做不到——CLAUDE.md 同款提醒）；改動若牽涉本文件的規則，請一併更新本文件。
 
 ## 專案概觀
 
@@ -10,8 +10,8 @@
 
 **終點＝多人註冊使用的服務**（幫他人保管理財資料＝重大安全責任，安全永遠第一優先）。分三階段、每階段讓下一階段變安全：
 
-- **階段 A 安全網（✅ 完工）**：自動考試（`npm test`）→ 型別校對全覆蓋（`npm run typecheck`）→ 自動守門（pre-push hook＋GitHub Actions CI）→ 格式糾察（`npm run lint`）。
-- **階段 B 骨架改建（✅ 完工）**：①B0 前置（STORE_FILE 隔離＋app 可測試載入＋端點測試）②B1 資料存取收斂到 `lib/repo.js` 單一櫃檯 ③B2 分層拆房間（routes/services）＋欄位白名單 ④B3 `store.json` → SQLite（含**驗證入櫃檯**）。**app 外觀與操作不變。**
+- **階段 A 安全網（✅ 完工）**：自動考試／型別校對／pre-push＋CI 守門／格式糾察（`npm test`・`typecheck`・`lint`）。
+- **階段 B 骨架改建（✅ 完工）**：資料存取收斂單一櫃檯、routes/services 分層、SQLite 落地（現況見下方「後端」段）；app 外觀與操作不變。
 - **階段 C 多人上線（進行中，C1–C5 ✅）**：雙模式開關（LOCAL／HOSTED）、帳號系統與 auth gate、租戶隔離（RLS＋CAS）、機密 envelope 加密與雲端匯出剝機密、速率限制與資源上限**都已上線**（細節見同步點清單）；剩 **C6**（合成資料的全面對抗審查收官）與 **C7**（真實資料上線＋DNS）。分階段裁決與威脅模型見 `docs/多人上線-施工計畫.md`。
 
 審查與建議請以此方向為前提（正確性 bug 照抓）。
@@ -34,9 +34,9 @@
 
 啟動：需要 Node.js ≥22.13.0（內建 SQLite 從此版起不再需要 experimental flag）；`npm start` → http://localhost:4321。給使用者雙擊的 `start.command` 會先檢查 Node/npm、版本與首次相依安裝，失敗時保留白話訊息。注意：使用者常自己開著一個伺服器佔 4321，`.claude/launch.json` 已設 `autoPort`。
 
-**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，dev-only、不影響 runtime/不需 build；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入全部前後端檔案**（lib/、routes/、services/、public/ 全數 `// @ts-check`；改動請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`store.js load()` 已標 `@returns {Db}`，`db.x` 全程型別化**（`Db`/`Settings`/`Card`/`Account`/`Holding`/`IbSettings`… 都在 `lib/types.js`；`settings` 與 `settings.ib` 視為一律存在）。**改 store 結構（emptyDb 加欄位）＝同步更新 `lib/types.js` 的對應 typedef**（否則 server.js 讀該欄會報「不存在」）。要再擴到其他核心檔（如前端 `app.js`）＝加 `// @ts-check`＋補型別到乾淨即可。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
+**型別檢查（可選、仍零建置）**：用 `jsconfig.json`（`checkJs:false`＝逐檔 opt-in）＋在檔案頂端加 `// @ts-check`＋JSDoc 型別。`npm run typecheck`＝本地 `tsc`（devDependencies：`typescript`＋`@types/node`＋`@types/express`，定位見「專案概觀」；第一次要 `npm install`）。共用資料形狀集中在 `lib/types.js`（純型別、`export {}`，用 `/** @typedef {import('./types.js').Db} Db */` 引入）。**不 build、不改副檔名、不影響 runtime**——編輯器(VS Code) 與 `npm run typecheck`（npx 跑 tsc、不加相依）會抓「欄位打錯／型別不符／忘了處理 undefined」這類 `node --check` 抓不到的錯。**已導入全部前後端檔案**（lib/、routes/、services/、public/ 全數 `// @ts-check`；改動請保持 `npm run typecheck` 乾淨；型別集中在 `lib/types.js`）；pdfjs/xlsx 型別自動解析（`getTextContent` items 是 `TextItem|TextMarkedContent` 聯集，用 `'str' in it` 收斂）。**`store.js load()` 已標 `@returns {Db}`，`db.x` 全程型別化**（`Db`/`Settings`/`Card`/`Account`/`Holding`/`IbSettings`… 都在 `lib/types.js`；`settings` 與 `settings.ib` 視為一律存在）。**改 store 結構（emptyDb 加欄位）＝同步更新 `lib/types.js` 的對應 typedef**（否則 server.js 讀該欄會報「不存在」）。這不是改用 React/Vite——只是零成本拿到 TS 的抓錯。
 
-## 收支三層架構（三層重構 stage 1，使用者定 2026-07-20）
+## 收支三層架構（使用者定 2026-07-20）
 
 交易表 `transactions` 靠 **`ledger` 欄位**分成兩本帳，語意完全不同：
 - **信用卡消費明細**（畫面名稱「信用卡費」；`ledger:'card'`，帳單匯入 `source:'stmt'` 自動蓋）：消費分析＋查帳用，**絕不進現金流加總**（那些消費的現金流出＝銀行帳本日後的「繳卡費」，兩邊都算就重複）。前端＝`public/modules/transactions.js`（頁面本體：列表/編輯/店家檔案）＋`public/modules/transactions-import.js`（帳單匯入工作流：上傳→預覽→匯入→批次管理；系統優化階段二①搬出，接縫＝transactions.js 的 renderTransactions/expenseParents/setMonthFilter）。
@@ -48,9 +48,9 @@
 
 ⚠️**緊急預備金公式（使用者定 2026-07-20）**＝**台幣現金（`type='cash'` 且 `currency='TWD'`，活存＋定存都算、排除外幣）÷ 過去六個月現金流平均支出**（`avgMonthlyExpense` 窗口 6、只算有現金流資料的月份——半記錄月不拉低平均，是安全網保險）。自癒依賴＝每月匯銀行帳單，繳卡費那筆補回「刷卡消費的現金基礎支出」。⚠️**過渡期安全網保險（stage1→3 空窗，對抗審查抓到）**：卡消費排除後、還沒匯銀行帳單時 cashflow 支出≈0→月數虛高→緊急預備金提醒會**無聲關閉**（生存優先大忌）。解法＝`avgMonthlyCardExpense` 偵測「信用卡帳本近月平均消費 > 現金流支出基礎」時，**主動出聲**「緊急預備金月數可能被高估」（`computeReminders` 規則 2 後）——安全網不無聲關閉、明說原因與補法；銀行對帳單匯入後 cashflow 支出追上，此提醒自動消失。
 
-⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**分階段：stage 1＝拆帳本＋總覽改吃現金流＋收入樹；stage 2＝帳戶完整帳號＋概要區→更新/建帳戶餘額；stage 3（已做）＝明細→分箱進收支。**
-⚠️**銀行對帳單解析器＝`lib/bank-statement.js`（與信用卡 `lib/statement.js` 完全分開）**：台新綜合對帳單餵的是現金流＋帳戶餘額，不是卡消費。**自己做保留 x 座標的抽取 `extractBankLines`**（銀行明細「支出金額/存入金額」是兩個獨立欄位、只填一個，靠 x 落在哪一欄判方向；statement.js 的 extractLines 丟了 x 不能用）。解析器/服務都吃「合成 x 座標列」測試、不需真 PDF（`test/bank-statement.test.js`；真 PDF 只做本機煙霧校準、絕不進版控）。⚠️**合成測試的帳號末碼一律用明顯假值**（前綴 900100/900200/900300、末碼 3301/3302/363/7788…），**絕不複製真實帳單的遮罩末碼**（stage 2/3 曾誤用真末碼＋前妻收款末碼、事後全數清理；真末碼＝PII，與 pdfPassword 同級）。stage 2＝`parseBankSummary`（概要區→帳戶末碼/餘額/幣別/現值參考日；外幣取**原幣**不是新臺幣、否則 derive 重複換匯；透支負餘額帳戶台新留空→略過）。**stage 3＝`parseBankDetail`（明細）＋`bank-import.js classifyBankTx`（分箱）**：⚠️extractBankLines 保留 **x＋y**——支出/存入靠 x 分欄（右對齊金額落該欄 header 與下欄 header 之間）、換行備註靠 y 歸到最近交易列。分箱規則（使用者定 2026-07-20，匯入是**預覽→確認**、自動分箱只是起點）：內轉（不計入收支）＝備註含自己帳號末碼（帳單自己的帳戶∪登記過 accountNo 的帳戶）**或摘要/備註含「劃撥」**（證券交割戶買賣 ETF 的投資金流，單筆可上百萬，**在備註不在摘要、務必判全文**——真實資料抓到只判摘要會讓百萬劃撥被當收入）；繳卡費（卡費/信用卡款）→支出**category 空**（卡明細已分類、不重複統計）；領現金（提款）→生活/其他生活雜支；手續費→其他/手續費；房貸→居住/房貸；養育→養育/贍養費（收款方末碼非自己帳戶＝真支出，非內轉）；存款息/利息→被動/利息；配息/收益分配→被動/股息；中獎→被動/中獎；鐘點→工作/鐘點；其餘落其他讓使用者改。銀行交易寫**現金流帳本**（ledger:'cashflow'、source:'bank'，非 stmt 故 card 專屬功能不誤掃），去重鍵 `bankRef`（含 running 餘額＝同日同額也唯一）。
-⚠️**帳戶 `accountNo`（完整帳號，PII）**：前端可填、`secret-fields.js projectAccount` **GET 剝除只回 `accountNoSet`＋`accountNoLast4`**（同 pdfPassword「機密不送瀏覽器」；完整帳號只在伺服器端做末碼比對）。`balanceAsOf`＝餘額現值參考日（服務層寫、非 CRUD）。銀行對帳單匯入＝`lib/services/bank-import.js`：**末碼＋幣別比對**既有帳戶（`accountNo` 純數字 endsWith 帳單末碼，完整與遮罩都適用）→ 有就更新（**現值參考日較新才覆蓋**）、沒有就自動建（`type:'cash'`/`class:'現金'`/**不設 ibCashCur** 免污染投組現金與槓桿；accountNo 存遮罩帳號供日後比對）。純邏輯 `applyBalancesToDb`/`previewBalancesForDb` 與解析分離、可直測。密碼＝身分證字號只在記憶體傳給 pdfjs、絕不落檔、絕不入 log。上傳 UI 在收支頁（`cashflow.js openBankUpload`→預覽→確認）。 排序 infra 共用 `public/modules/tx-sort.js`（絕對值排序 r9#2＋日期次鍵 r8#2 封在那）。
+⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**三階段（拆帳本／帳戶餘額匯入／明細分箱）已全數上線；施工沿革見 `docs/archive/PROJECT-完工紀錄.md`。**
+⚠️**銀行對帳單解析器＝`lib/bank-statement.js`（與信用卡 `lib/statement.js` 完全分開）**：台新綜合對帳單餵的是現金流＋帳戶餘額，不是卡消費。**自己做保留座標的抽取 `extractBankLines`**（x／y 判準摘要＝契約「PDF 逐列抽取器」節；**完整判準正文＝`lib/bank-statement.js` 管線兩段——`extractBankLines`（PDF→座標列）＋`parseBankDetail`（右緣分欄、支票欄排除、running 餘額優先）——加 `test/bank-statement.test.js` 合成座標列考題**；文件只載摘要、不假裝是正文）。解析器/服務都吃「合成 x 座標列」測試、不需真 PDF（`test/bank-statement.test.js`；真 PDF 只做本機煙霧校準、絕不進版控）。⚠️**合成測試的帳號末碼一律用明顯假值**（前綴 900100/900200/900300、末碼 3301/3302/363/7788…），**絕不複製真實帳單的遮罩末碼**（stage 2/3 曾誤用真末碼＋前妻收款末碼、事後全數清理；真末碼＝PII，與 pdfPassword 同級）。stage 2＝`parseBankSummary`（概要區→帳戶末碼/餘額/幣別/現值參考日；外幣取**原幣**不是新臺幣、否則 derive 重複換匯；透支負餘額帳戶台新留空→略過）。**stage 3＝`parseBankDetail`（明細）＋`bank-import.js classifyBankTx`（分箱）**：分箱規則（使用者定 2026-07-20，匯入是**預覽→確認**、自動分箱只是起點）：內轉（不計入收支）＝備註含自己帳號末碼（帳單自己的帳戶∪登記過 accountNo 的帳戶）**或摘要/備註含「劃撥」**（證券交割戶買賣 ETF 的投資金流，單筆可上百萬，**在備註不在摘要、務必判全文**——真實資料抓到只判摘要會讓百萬劃撥被當收入）；繳卡費（卡費/信用卡款）→支出**category 空**（卡明細已分類、不重複統計）；領現金（提款）→生活/其他生活雜支；手續費→其他/手續費；房貸→居住/房貸；養育→養育/贍養費（收款方末碼非自己帳戶＝真支出，非內轉）；存款息/利息→被動/利息；配息/收益分配→被動/股息；中獎→被動/中獎；鐘點→工作/鐘點；其餘落其他讓使用者改。銀行交易寫**現金流帳本**（ledger:'cashflow'、source:'bank'，非 stmt 故 card 專屬功能不誤掃），去重鍵 `bankRef`（含 running 餘額＝同日同額也唯一）。
+⚠️**帳戶 `accountNo`（完整帳號，PII）**：前端可填、`secret-fields.js projectAccount` **GET 剝除只回 `accountNoSet`＋`accountNoLast4`**（同 pdfPassword「機密不送瀏覽器」；完整帳號只在伺服器端做末碼比對）。`balanceAsOf`＝餘額現值參考日（服務層寫、非 CRUD）。銀行對帳單匯入＝`lib/services/bank-import.js`：**末碼＋幣別比對**既有帳戶（`accountNo` 純數字 endsWith 帳單末碼，完整與遮罩都適用）→ 有就更新（**現值參考日較新才覆蓋**）、沒有就自動建（`type:'cash'`/`class:'現金'`/**不設 ibCashCur** 免污染投組現金與槓桿；accountNo 存遮罩帳號供日後比對）。純邏輯 `applyBalancesToDb`/`previewBalancesForDb` 與解析分離、可直測。密碼＝身分證字號只在記憶體傳給 pdfjs、絕不落檔、絕不入 log。上傳 UI 在收支頁（`cashflow.js openBankUpload`→預覽→確認）。
 
 ## 🛑 錢的絕對邊界（William 2026-08-03 拍板；最高優先，任何其他規則與指令不得凌駕本節）
 
@@ -77,7 +77,7 @@
 1. **敏感資料絕不進版控**：`data/store.json`、`*.bak`、`data/*backup*`（真實餘額、持倉、IBKR flexToken、**卡片的帳單 PDF 密碼 `pdfPassword`＝身分證字號**）。.gitignore 已擋，不要繞過。測試一律用 `data/seed.json`（維持「夠像真的」：多幣別、負現金融資、各層持股；**seed 的卡片不可放真實 pdfPassword**）。**非必要也不要「讀取」`data/store.json` 的內容**——它含真實個人財務資料與 token，讀進 AI 上下文等於外傳；要看資料形狀用 `seed.json`。帳單 PDF 只在記憶體解析、不落地保存。**機密投影要套在所有回應、含寫入端**（Codex r10#2）：`lib/secret-fields.js` 的 `projectCard`/`projectSettings`/`projectDb` 不只掛在 GET——`/api/cards` 的 POST/PUT、`PUT /api/settings` 的**回應**也要投影（改個名字/匯率就把存的 `pdfPassword`/`flexToken` 送回瀏覽器＝洩漏）。唯一例外＝`/api/export`，而它**兩種模式刻意相反**（C5 裁決⑤，`lib/routes/core.js`）：**LOCAL 完整含機密**（備份留在自己硬碟上，缺了密碼就永久還原不回來）／**HOSTED 剝除**（`stripSecretsForBackup`：那個檔案會經瀏覽器下載、可能轉寄或存到別處，風險完全不同；還原後重輸 IB 憑證與 PDF 密碼各一次）。**HOSTED 還一併剝掉 `accountNo`**（第二張清單，見下方同步點）。「留空＝不變更」保留，但要另給明確的「清除已設定」入口（送空字串清空，Codex r10#10）。
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
-3.5. **原型污染**（Codex r4#1）：凡是**以使用者文字為 key 的 map**（學習表、分類別名 `categoryAliases`/`subAliases`、將來任何同型的表），寫入前一律過 `lib/safe-map.js`——`setOwn`（原型名回 false 拒收）、`getOwn`（只讀自有屬性）、`emptyMap`（null prototype）、`safeMap`（重建時丟掉原型名 key）。理由：`map['__proto__']={…}` 會污染全域 `Object.prototype`，**實測連 pdfjs 都當場崩潰**（`Object.defineProperty called on non-object`），不只是資料錯。學習表進出資料庫的必經之路＝`schema.sanitizeLearned`（已改 null-proto＋丟原型名）。⚠️ 光靠 `Object.create(null)` 不夠——`JSON.parse('{"__proto__":…}')` 造得出「自有的 __proto__ 鍵」，JSON 來回一趟就退化，所以讀寫兩端都要用 safe-map。**產品規則（Codex r5#1/#4 拍板統一）：寫入一律拒絕整個保留字家族（`isProtoKey`＝`__proto__`/`toString`/`constructor`…，服務入口明確 400、不靜默吞掉——靜默的後果＝「改名成保留字」變成刪除，儲存卻回報成功）；讀取容忍舊資料（只丟 `__proto__` 這個唯一的賦值陷阱鍵，toString 等安全自有鍵留著）。** 學習表的四條寫入路（`learnFromStmtEdit`/`learnFromImport`/`applyCategoryToStore`/`renameStoreDisplay`）＋刪除（`deleteLearned` 用 hasOwn、不可用會查原型鏈的 `in`）都已上防線並各有保留字考題（test/proto-pollution.test.js）。前端聚合（transactions.js byCat/totals/variants、subscriptions.js byCat/byCard×2、settings.js outTree）與後端聚合（derive.js byClass/targets、statement-import.js listBatches groups/normalizeBranches newLc）用 `Object.create(null)`／`emptyMap`——分類名/店鑰匙/備註/批次id/資產類別是使用者文字，普通物件的 `m[k] || 0` 撞到 toString 會撈到原型上的函式、加總變字串（Codex r5#5、r6#3 兩輪掃出九處）。⚠️ 三個最陰的變體（r6#3 實測）：①`m[k] ||= {…}`——k=`__proto__` 時讀到 Object.prototype 本尊（truthy 所以不重新賦值）→ **直接在全域原型上累加**；②前端把使用者鍵組進普通物件再 `JSON.stringify` 送後端——`__proto__` 在序列化前就消失，後端的保留字 400 防線根本收不到，畫面還回報成功（outTree 案例；null-proto 物件的 `__proto__` 是自有鍵、會正常序列化）；③查表 `({...})[name]`——name=toString 撈到原型函式（cardLabel 案例，用 `Object.hasOwn` 守）。**凡「使用者文字當 key」，聚合一律 null-proto、查表一律 hasOwn/getOwn，沒有例外**——r7#4 補收官四處：app.js router 的 `ROUTES[route]`（#toString 網址讓頁面卡「載入中」）、subscriptions `SUB_CAT_TO_EXPENSE[category]`（解構原型函式 TypeError）、market.js `/api/quotes` 聚合（symbols=__proto__ 吞鍵）、dashboard `CLASS_COLOR[k]` 查色。⚠️ 寫「保留字自有鍵」的考題要用 `JSON.parse`——物件**字面量**裡的 `'__proto__'` 是設原型的特殊語法、不會成為自有鍵，字面量寫的考題永遠測不到真實路徑。
+3.5. **原型污染**（Codex r4#1）：凡是**以使用者文字為 key 的 map**（學習表、分類別名、將來任何同型的表），寫入前一律過 `lib/safe-map.js`——`setOwn`（原型名拒收）、`getOwn`（只讀自有屬性）、`emptyMap`（null prototype）、`safeMap`（重建時丟掉原型名 key）；學習表進出資料庫的必經之路＝`schema.sanitizeLearned`。理由：`map['__proto__']={…}` 會污染全域 `Object.prototype`，**實測連 pdfjs 都當場崩潰**，不只是資料錯。⚠️ 光靠 `Object.create(null)` 不夠——`JSON.parse('{"__proto__":…}')` 造得出「自有的 __proto__ 鍵」，JSON 來回一趟就退化，所以讀寫兩端都要用 safe-map。**產品規則（Codex r5#1/#4 拍板統一）：寫入一律拒絕整個保留字家族（`isProtoKey`＝`__proto__`/`toString`/`constructor`…，服務入口明確 400、不靜默吞掉——靜默的後果＝「改名成保留字」變成刪除，儲存卻回報成功）；讀取容忍舊資料（只丟 `__proto__` 這個唯一的賦值陷阱鍵）。** **凡「使用者文字當 key」：聚合一律 null-proto、查表一律 hasOwn/getOwn，沒有例外。** ⚠️ 三個最陰的變體（r6#3 實測）：①`m[k] ||= {…}`——k=`__proto__` 時讀到原型本尊（truthy 所以不重新賦值）→ **直接在全域原型上累加**；②使用者鍵組進普通物件再 `JSON.stringify` 送後端——`__proto__` 在序列化前就消失，後端 400 防線根本收不到、畫面還回報成功；③查表 `({...})[name]`——name=toString 撈到原型函式（用 `Object.hasOwn` 守）。⚠️ 寫「保留字自有鍵」的考題要用 `JSON.parse`——物件**字面量**裡的 `'__proto__'` 是設原型的特殊語法、不會成為自有鍵，字面量寫的考題永遠測不到真實路徑。（r5–r7 三輪掃出的十三處逐檔落點與四條寫入路清點＝歷史紀錄，防線與保留字考題都已上線：`test/proto-pollution.test.js`；細節見 git 紀錄。）
 4. **色彩分工**：
    - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
    - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
@@ -86,7 +86,7 @@
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的 12 欄查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
 6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「全部頁面 reload 無錯」把關（頁數以 app.js ROUTES 為準，不寫死數字），型別檢查主力放資料邏輯）。`portfolio-valuation.js` 的 `fxGaugeHtml`＝**刻意休眠停放**（有固定輸入輸出考題、目前未插入頁面），非死碼、勿刪。
-7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
+7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
 8. **repo 櫃檯是 async 的（C4a，2026-07-27；C4b Postgres 的前置）**——四條規矩：
    ①**呼叫必 `await`**：`getDb`/`saveDb`/`getCollection`/`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`getSettings`/`updateSettings` 全回 Promise（轉供的 `uid`/`emptyDb`/`backupNow`/`normalizeLedger` 仍同步）。最陰的漏法＝`res.json(service())` 忘了 await——**不炸、默默回 `{}`**；tsc 只抓得到「讀屬性」的漏，寫入 fire-and-forget 要靠自查。
    ②**Express handler 一律包 `wrapRoute`（statement/ib 慣例：帶 status 錯回原味 JSON）或 `asyncRoute`（core/crud/securities 慣例：一切交全域錯誤中介）**——Express 4 不接 async handler 的 rejection，裸的 async handler 拋錯＝unhandled rejection、請求掛死。兩個包裝器語意不同，別混用（會改變既有錯誤口徑）。
@@ -116,18 +116,17 @@
    受測操作因此提供了「受保護狀態被覆寫或清除的機會」，斷言才有意義。
    （只檢查前一題留下的狀態＝那一題其實什麼都沒測。）
 
-   ⚠️ 突變腳本本身也會說謊：**一律先 `assert` 替換目標存在**再跑
-   （踩過：bash 把 `${VAR}` 展開成空字串，替換根本沒生效卻顯示「通過」）。
-   掃原始碼的形狀考題**要先去掉註解**（不然註解裡解釋病因的字會讓考題自己紅），
-   而且**不可以只認得一種寫法**（踩過：只比對 `key: 'transactions'` 字面，
-   換成 `const k = 'transactions'` 就漏）。
+   ⚠️ 突變腳本本身也會說謊：**一律先 `assert` 替換目標存在**再跑；掃原始碼的形狀考題
+   **要先去掉註解、不可只認得一種寫法**（踩過：`${VAR}` 展開成空字串仍顯示「通過」、
+   字面比對被 `const k = '…'` 繞過）。同族教訓的審查版＝REVIEW-AND-MERGE.md
+   「固定維度」表第 1／2／8 列（單向指標；那份是審查者實際照做的下限清單）。
 
 ## 投資領域語意（改相關程式前必讀）
 
 - **投資原則（使用者拍板）**：最高指導原則＝**生存優先**（在所有環境活著 > 多數環境賺更多），規則衝突時以此裁決。所有上限口徑＝**% 淨資產**（非投組市值）；區域曝險**穿透**計算（COMPOSITION 拆 ETF 成分）；**軟上限**＝超標僅「凍結加碼」提醒，**不強制賣**。上限存 settings：`ibConcentrationPct`(單一個股5)/`equityCapPct`(90)/`countryCapPct`(15)/`chinaCapPct`(15)/`levCapPct`(1.3)，設定頁「投資原則」卡可調。
 **IB 現金幣別歸零**（Codex r4#3）：`syncIb` 對「這次報表沒出現、但過去由 IB 同步建立的現金幣別帳戶」歸零——否則某幣別現金提光後、下次報表不再列它，帳上永久殘留舊餘額、淨資產無聲虛增（實測 USD 1000 提光後仍算 32000 TWD）。⚠️**只在 Cash Report「確實有各幣別明細列」時歸零**（Codex r5#2 收緊，原判準＝區塊存在）：兩種「沒資料」都不可當「現金為 0」——①整個區塊缺失（Flex 漏勾/查詢失敗）→ 保留舊值＋回報 `cashReportMissing`；②區塊在、只有 `BASE_SUMMARY` 彙總列——**這也是合法報表**（Codex r6#1：基準幣別總額本來就住在彙總列，一律當「沒資料」會讓這種設定的現金永遠不更新、首次同步連帳戶都建不出來）→ 基準幣別判定得了（`AccountInformation.currency`）且彙總金額有效＝以「基準幣別彙總現金」**原子取代**全部 IB 現金（其他幣別現金帳戶歸零防重複計算）＋回報 `cashFromSummary`；判定不了＝保留舊值＋回報 `cashDetailMissing`（請在 Flex 勾 Account Information）。⚠️**多 statement 報表整包 400 拒絕**（Codex r6#2；r7#3 訊息分流）：`statementCount>1` 時持倉可能混疊/重複列出、現金與官方淨值只剩最後一份的值——在寫入任何東西之前拒絕；訊息依**去重帳戶數 `accountCount`** 分流（>1＝「多帳戶，請一個 Query 一個帳戶」；=1＝「多份報表（Model-by-Model bundle 之類），請改單一整體報表」——節點數≠帳戶數，話說對使用者才修得對地方）。兩種都拒＝刻意 fail-closed（bundle 的持倉可能整體＋分模型重複列出）。⚠️**彙總入帳的回報語意**（Codex r7#2）：折疊歸零記 `cashCollapsed`（≠`cashZeroed` 的「提領/轉走」語意，前端說不同的話）；基準幣別判定得出但不支援（EUR…）＝`cashBaseUnsupported`；基準幣別齊全、彙總列卻沒有可用金額（Ending Cash 欄缺）＝`cashSummaryMissing`（Codex r8#1）——三者都≠「缺 Account Information」的 `cashDetailMissing`，**病因要各自說對，使用者才修得對地方**。`lib/ib.js parseStatement` 回 `hasCashReport`/`hasCashDetail`/`cashDetailIncomplete`/`baseCurrency`/`baseSummaryCash`/`statementCount`/`accountCount` 供判斷。⚠️**現金金額欄嚴格取值**（Codex r9#1，高）：只認期末欄（`endingCash`→`endingSettledCash`），空字串/null/非數字一律視為「沒有金額」（`Number('')` 是 0——把空白當零會直接清空真實現金）；**絕不拿 `startingCash`（期初）冒充目前現金**；金額讀不到的幣別列＝`cashDetailIncomplete`（讀得到的照更新、讀不到的沿用舊值），**歸零「沒出現的幣別」需要明細完整（`hasCashDetail && !cashDetailIncomplete`）才允許**（已 export 供考題直測——旗標語意屬「中間那棒」，兩端測了中間沒測會漏）。**前端 portfolio.js 同步完成後必須把 `cashReportMissing`/`cashDetailMissing`/`cashFromSummary`(+`cashCollapsed`)/`cashBaseUnsupported`/`cashSummaryMissing`/`cashDetailIncomplete`/`cashZeroed` 都 toast 出來**（Codex r5#7：後端只寫 server console、前端無條件報「同步完成」＝使用者不知道淨值裡的 IB 現金是過期的）；新增同型欄位時前端提示要一起接，別只加後端。
 - **融資槓桿只算 IB**：**優先用 IB 官方淨值摘要 `settings.ib.lastEquity`**（同步時更新、基準幣別 USD：stock ÷ (stock+cash)）；沒有同步資料才自算（`source:'ib'` 持倉 ÷ 淨值、融資＝`ibCashCur` 負餘額）。排除台新現金與台股，文案標「IB」前綴。`ibIdleCashAlert`＝IB 正現金閒置提醒門檻（USD）。
-- **槓桿上限任何時期 1.3x**（2026-07-10 修訂，取消訊號期 1.6x——1.6x 撐不過 2008 級回檔）：估值訊號期加碼**只用新資金與現金、不舉新債**。**斷頭距離**＝市場再跌 x% 觸及 IB 強平線，`x = 1 − 借款 ÷ ((1−維持率) × IB 持倉市值)`（假設全倉維持率一致的近似）；維持率存 `settings.ibMaintenancePct`(25)。公式在 `portfolio-calculations.js marginCallDistance()` 與 `lib/derive.js` 規則 7 各一份（同步點）。
+- **槓桿上限任何時期 1.3x**（2026-07-10 修訂，取消訊號期 1.6x——1.6x 撐不過 2008 級回檔）：估值訊號期加碼**只用新資金與現金、不舉新債**。**斷頭距離**＝市場再跌 x% 觸及 IB 強平線，`x = 1 − 借款 ÷ ((1−維持率) × IB 持倉市值)`（假設全倉維持率一致的近似）；維持率存 `settings.ibMaintenancePct`(25)。公式的同步規則與單一真相＝同步點清單「IB 槓桿」列（指向契約檔「IB 槓桿與斷頭距離」節）。
 - **多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。⚠️ **「缺幣別」與「缺匯率」是兩種病，處置不同（2026-07-28 全域政策，勿再退回）**：上面那條優先序講的是**缺匯率**；**缺幣別一律不猜**——`|| 'USD'` 這種寫法在本 repo 曾長出四份（`ib.js` 現金交易與成交紀錄、`ib-sync.js` 新持股、前端 `portfolio-calculations.js`），後果是 Flex Query 少勾一個 Currency 欄，GBP 100 的股息就被當成 USD 100 加總（少算 27%）且畫面零註記。正確處置＝**有 `fxRateToBase` 就照算（那條與幣別無關）；否則跳過＋分開計數回報**（`income.skippedNoCurrency`／`syncIb` 的 `skippedNoCurrency`），新持股缺幣別**不入庫**（猜錯幣別＝市值/淨資產/上限全錯）；既有持股保住原幣別、數量價格照常更新。**「幣別不支援」與「報表沒給幣別」的訊息必須分開講**，使用者才修得到對的地方。考題＝`test/ib-parser-money.test.js`＋`test/securities-sync.test.js`。**交易損益**（交易摘要＋XIRR）共用 `portfolio-calculations.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`lib/services/ib-sync.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
 - **XIRR（資金加權年化，台幣）**：現金流＝第一筆月快照市值（流出）＋各月快照投入增量（流出）＋IB 賣出已實現損益逐筆按成交日（`tradePnlBase`×usdTwd，流入，與交易摘要同口徑、含設定匯率估算）＋今日市值（流入）。**賣出只用 Δcost 會漏掉已實現損益，必須用 ibTrades 修正**；用估算時 header 標「含匯率估算」。不含股息利息；台股手動賣出未納入；快照未滿 60 天不顯示；|年化|>500% 視為資料異常。實作在 `portfolio-calculations.js portfolioXirr()/xirrRate()`（僅此一份）。快照資料曾含 seed 示範殘留（2026-07-10 已清），**判斷 XIRR 異常先懷疑快照資料**。
 - 台股（0050/006208/00719B/00720B）無 API、手動維護股數；報價 Yahoo（台債後綴 `.TWO`；GBp 便士 ÷100 轉 GBP）。
@@ -150,7 +149,7 @@
 | 信用卡費頁的兩種口徑（使用者定 2026-07-27） | 上半消費歸屬／下半帳面原貌**刻意並存**（加總不相等不是 bug）；配對一律向後端拿、兩端標記純呈現不寫回資料——完整契約 → [契約：收支記帳與匯入](docs/contracts/收支記帳與匯入.md#信用卡費頁的兩種口徑) |
 | 每日滾動備份（階段四 A，2026-07-27 上線） | 三種備份共用 `store.js snapshotTo(dest)`（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `<tag>.bak`＝backupNow／**每日 `data/backups/store-YYYY-MM-DD.db`＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。 |
 | 異常輸入防線（階段四 B，2026-07-27 上線） | 字串長度兩級制（`lib/schema.js`）：**短欄位 `LEN_SHORT`=200**（預設）／**長內容 `LEN_LONG`=20000**（`LONG_TEXT_FIELDS` 名單：note/stmtRef/autoNote/bankRef/benefits/coverage/thesis…＋研究巢狀寫作欄 reasons/text/note/assumptions 掛 `{long:true}`）。**長度 400 只擋新輸入**（`pickWritable`＝CRUD，錯誤點名欄位＋上限＋實際長度、絕不靜默截斷）；**備份還原路（`validateImportItem`）與櫃檯（兩種模式）一律放行只 warn**——裁決「合法舊資料不可因升級被刪」，超長舊備份必須還原得回來（#201 的 >1MB 考題釘這件事；throw 會把還原變 500＝Codex r2 收官#1 同款教訓）。研究巢狀用模組級 `lenEnforced` flag 切嚴格/寬容（全同步無 await、不跨請求汙染；`sanitizeResearchItemLenient`）。settings 字串欄位未納入本輪（欄位少且全短、路由剝除語意既有——記錄在案的範圍取捨，Codex 覆核同意不列 blocker、多人化前另盤點）。**服務層新輸入路也要牆**（Codex #297 複審抓到繞道）：`POST /api/cards/:id/statement/import` 吃 client 直給的 rows、不經 pickWritable → `importRows` 入口逐筆驗 desc（長級）/category/subcategory（短級）超過整批 400 點名；銀行與證券匯入吃 b64 PDF 伺服器端解析＝天然安全（desc 非 client 直給）。新增「client 可直給列資料」的匯入端點時必須比照加牆。考題 `test/input-guard.test.js`。 |
-| 雙模式與帳號系統（C2，2026-07-27 上線） | 開關＝`lib/hosted.js isHosted()`（**只認 `NOTEASY_HOSTED=1`**，不用 SUPABASE_URL 推斷）；HOSTED 缺環境變數＝啟動 fail-fast throw。**LOCAL 分支＝現狀零改動**（server.js 的 else 路徑；聽 127.0.0.1）；HOSTED＝聽 0.0.0.0（P1-6）＋公開站 public-site（extensionless rewrite）＋`/health` JSON（裁決④）＋`/finance`＝既有 SPA（C3 掛 gate）＋`/api/auth/*`。Auth＝`lib/services/auth.js`：**@supabase/ssr createServerClient、不自寫 token 邏輯（P1-4）**；cookie HttpOnly+SameSite=Lax+Path=/+**Secure 無條件、無開關**（Codex #301：測試開關在正式環境誤設＝session 降級，整個拿掉；Chromium 對 localhost 豁免 Secure＝本機測試不受影響）；登入失敗統一訊息不洩帳號存在性；user 只投影 id/email。CSRF＝`csrfOriginGuard`（變更類請求 Origin 白名單 `SITE_ORIGIN`；沒帶 Origin 放行＝SameSite 已擋跨站帶 cookie）。測試注入＝`setSupabaseFactoryForTest`（考題絕不打真 Supabase）；**secret 掃描考題**＝repo 追蹤檔的 JWT payload 解碼驗無 service_role。新依賴 @supabase/supabase-js+ssr（P1-4 官方流程必要）；⚠️ 既有 xlsx 依賴有無修可用的 advisory（本機單人低風險、記錄在案）。考題 `test/hosted-auth.test.js`。**C3 gate（同日）**：`authGate`（auth.js）＝HOSTED 下 `/finance`＋全部 `/api/*` 驗身分（白名單 `/api/auth/*`；`/health` 不在 /api 下天然不經牆）；API 未登入 401、頁面轉 /login；**currentUser 丟例外＝fail-closed 當未登入絕不放行**；**只宣稱 401、不宣稱 A/B 隔離**（單一全域庫，隔離歸 C4——P1-1 誠實劃界）。 |
+| 雙模式與帳號系統（C2，2026-07-27 上線） | 開關＝`lib/hosted.js isHosted()`（**只認 `NOTEASY_HOSTED=1`**，不用 SUPABASE_URL 推斷）；HOSTED 缺環境變數＝啟動 fail-fast throw。**LOCAL 分支＝現狀零改動**（server.js 的 else 路徑；聽 127.0.0.1）；HOSTED＝聽 0.0.0.0（P1-6）＋公開站 public-site（extensionless rewrite）＋`/health` JSON（裁決④）＋`/finance`＝既有 SPA（C3 掛 gate）＋`/api/auth/*`。Auth＝`lib/services/auth.js`：**@supabase/ssr createServerClient、不自寫 token 邏輯（P1-4）**；cookie HttpOnly+SameSite=Lax+Path=/+**Secure 無條件、無開關**（Codex #301：測試開關在正式環境誤設＝session 降級，整個拿掉；Chromium 對 localhost 豁免 Secure＝本機測試不受影響）；登入失敗統一訊息不洩帳號存在性；user 只投影 id/email。CSRF＝`csrfOriginGuard`（變更類請求 Origin 白名單 `SITE_ORIGIN`；沒帶 Origin 放行＝SameSite 已擋跨站帶 cookie）。測試注入＝`setSupabaseFactoryForTest`（考題絕不打真 Supabase）；**secret 掃描考題**＝repo 追蹤檔的 JWT payload 解碼驗無 service_role。新依賴 @supabase/supabase-js+ssr（P1-4 官方流程必要）。考題 `test/hosted-auth.test.js`。**C3 gate（同日）**：`authGate`（auth.js）＝HOSTED 下 `/finance`＋全部 `/api/*` 驗身分（白名單 `/api/auth/*`；`/health` 不在 /api 下天然不經牆）；API 未登入 401、頁面轉 /login；**currentUser 丟例外＝fail-closed 當未登入絕不放行**；**只宣稱 401、不宣稱 A/B 隔離**（單一全域庫，隔離歸 C4——P1-1 誠實劃界）。 |
 | **機密欄位**（新增一個「不可外流」的欄位時） | ⚠️ **先分辨這是哪一類**（2026-07-29 起有兩張清單，見下一列）：要**加密**的走 `mapSecrets`，**刻意不加密、只是不該跟著備份檔出門**的走 `mapBackupOnlyPii`。以下講的是前者——**只改 `lib/secret-fields.js` 的 `mapSecrets`**，它是 C5 的加密清單，加密（`lib/crypto-secrets.js`）、解密、雲端匯出剝除、匯入不採用**四條路全部從它出發**。以前「哪些欄位算機密」散在三個投影函式各寫一次，再抄第四份必定走散（漏一個＝那個機密以明文躺在雲端資料庫，而且沒有人會發現）。加完跑 `test/hosted-secrets.test.js`（逐欄位驗）。⚠️ 路徑會拿去當加密 AAD，**必須穩定且唯一**（卡片用 id、不可用陣列索引；⚠️ 目前 id 缺失時會塌成 `cards..pdfPassword`，撞號的欄位在 C6 寫回保護裡會被跳過）。投影（`projectCard`/`projectSettings`）仍要各自更新——**加密管 at-rest、投影管不送瀏覽器，兩道各管各的、缺一不可**。 |
 | **只剝不加密的 PII**（第二張清單，2026-07-29 建立） | `lib/secret-fields.js` 的 **`mapBackupOnlyPii`**（目前只有 `accounts[].accountNo`）。**它跟 `mapSecrets` 是兩件事**：`mapSecrets` 是加密走訪器，把欄位加進去＝**同時決定它要加密**，而「accountNo 要不要加密」是 C0 留給 William 的裁決（加密會連帶影響 `matchAccount` 的可見前綴比對與 `ownSuffixSet`）。這張清單只做一件事：**別讓完整帳號跟著備份檔離開伺服器**（`GET /api/export` 的檔案會下載到裝置、可能轉寄——與裁決⑤剝掉三個機密欄位是同一個理由）。**新增這一類欄位時，四處要一起接**：①`mapBackupOnlyPii` 本體 ②HOSTED 匯出剝除（`stripSecretsForBackup`）③**HOSTED 匯入端的對稱保存**（`lib/routes/core.js` 的 `isHosted()` 區塊）④瀏覽器投影（`accountNoSet`／`accountNoLast4` 這種）。**漏掉③＝「匯出→匯入回自己的帳號」會把值洗成空字串而且回 200**（2026-07-29 實際發生過）。⚠️ 回填只准在**三個條件同時成立**時做：①這一筆有穩定身分 ②目前資料那側沒有同路徑重複 ③匯入後那側也沒有。判準抽在 `lib/routes/core.js` 的 `keepableByPath`，**兩張清單共用**（`mapSecrets` 那張以前完全沒有這道防線，v6 才補上）。「穩定身分」＝`isStableId`：**只有非空字串算數**——缺 id 會塌成 `accounts..accountNo`／`cards..pdfPassword`，而 `id: 7` 與 `id: "7"` 經 `String()` 之後是同一條路徑，兩側各只有一筆時撞號根本數不出來。⚠️ **路徑本身照樣是字串、不是 `null`**（它是既有密文的 AAD，改了舊資料就解不開）；安全性靠走訪器回報的**第三個參數 `stable`**。⚠️ 兩個走訪器都**不可以要求「欄位已經存在」**（`'pdfPassword' in c` 這種寫法會讓省略欄位的舊備份整筆被跳過→現值沒機會填回、匯入回 200 後永久消失，而且還能繞過重複偵測）。三個條件是四次定向複審各抓一次才收斂出來的，**不要「簡化」掉任何一個**。考題＝`test/hosted-secrets.test.js` 的來回①③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭（⑪⑫鎖「缺欄位也要走訪」、⑬⑭鎖型別碰撞的**反方向**＝目標端身分不明）。 |
 | 機密加密（C5，2026-07-27 上線） | `NOTEASY_MASTER_KEY`（base64 32 bytes，`openssl rand -base64 32`）進 `hostedConfig()` 的 fail-fast 清單——**缺了不可以「還是開得起來」**，那會讓 IB token 與身分證字號以明文落庫且無人察覺。AES-256-GCM，**AAD＝`使用者id｜欄位路徑`**（密文搬到別人的列或別的欄位都解不開）。解不開＝**回空字串＋警告、不炸掉**（生存優先：app 要能開，使用者重輸一次即可）；警告只講欄位路徑、**絕不含值或密文**。**LOCAL 維持明文**（檔案不出門，加密只是把鑰匙跟鎖放同一個抽屜）。**匯出兩邊刻意相反**：LOCAL 完整（缺密碼＝永久還原不回來）／HOSTED 剝除（裁決⑤，檔案會經瀏覽器下載）。**HOSTED 匯入不採用檔案裡的機密**，改保留目前已存的值（沿用「留空＝不變更」）。考題 `test/hosted-secrets.test.js`。⚠️**解不開＝絕不可以把密文蓋掉**（C6 止血，2026-07-28）：`saveKv` 每次寫入都重寫全部 KV_KEYS，所以「解不開回空字串」會在使用者下一次**隨手記一筆帳**時把原密文永久毀掉——主金鑰設錯一次＝IB token 與身分證字號全滅，**換回正確金鑰也救不回來**（已實測）。修法＝`loadKv` 把解不開的欄位記進**租戶槽** `tenantUndecryptableSecrets()`（`lib/tenant.js`），`saveKv` 對「這一輪解不開**且**現在要寫空字串」的欄位寫回原密文。三條規矩：①**每次讀取先 `clear()`**（CAS 重試會重跑 loadKv，不清空會把別的分頁剛正當清空的欄位復活）②判準刻意收窄——使用者輸入新值一律照常加密覆蓋，不可被舊密文黏住 ③**路徑撞號的欄位不登記**（`/api/import` 可帶沒有 id 的卡片，兩張都算出 `cards..pdfPassword`；按路徑寫回會把甲的密碼變成乙的——寧可少救一個欄位，也不要寫錯）。已知取捨：對「已經解不開」的欄位送清除會變成 no-op，但三個清除入口都由 `…Set` 布林把關、UI 走不到。考題 `test/hosted-secret-writeback.test.js`。 |
@@ -178,7 +177,7 @@
 | YYYY-MM-DD 日期解析 | 一律本地時區拆日期；new Date(字串) 會當 UTC、以西時區差一天——完整契約 → [契約：前端功能](docs/contracts/前端功能.md#yyyy-mm-dd-日期解析) |
 | `theme.js` 的 CHART.green/red | styles.css .cb-ok/.cb-over 寫死同色 hex（CSS 無法 import JS）；改色要兩邊一起改 |
 | settings 新增欄位 | `lib/store.js emptyDb()` 預設值＋`data/seed.json`＋設定頁 UI＋`lib/types.js` 的 `Settings` typedef＋**`lib/schema.js` 的 settings 白名單**（前端可寫的頂層欄位進 `SETTINGS_WRITABLE_FIELDS`、signals 進 `SIGNALS_WRITABLE_FIELDS`、ib 進 `IB_WRITABLE_FIELDS`；漏加會在 `/api/settings` 被剝掉、console 有警告。IB 同步擁有的 lastEquity/income/lastSync 刻意不在白名單、只由 `lib/services/ib-sync.js` 寫）。**非前端寫、但由服務層存進 settings 的欄位（如 `expenseTree`/`incomeTree`/`categoryAliases`/`subAliases`/`incomeCategoryAliases`/`incomeSubAliases`、`storeRules`）＝匯入備份必須保留**：加進 `sanitizeSettings`（否則 export→import 會遺失、Codex#1）＋`sanitizeSettingsDeep`（櫃檯），兩者共用同一個驗證器（分類欄＝`sanitizeCategorySettings`；店名規則＝`pickStoreRules`→`lib/store-rules.js` 的 `sanitizeStoreRules`，形狀與編譯器住同一個檔才不會走鐘）。⚠️**收入別名（`incomeCategoryAliases`/`incomeSubAliases`，Codex r13#3）與支出同款**：銀行匯入會自動分類收入（classifyBankTx 出 被動/利息…），`saveIncomeTree` 改名時建別名、`resolveImportIncome` 匯入時套別名沿用新名，並連動 `learnedBank` type:'income' 規則——收入不再是「純手動、無別名」。手做的店名規則若因還原備份而消失＝白做，務必保留 |
-| 集合新增欄位（表單加新欄） | **`lib/schema.js` 的 `WRITABLE_FIELDS` 白名單**（B2 起後端只收白名單內欄位，漏加會被默默剝掉——伺服器 console 會警告）；**若是數值/布林/枚舉/陣列欄位，同時補進 `FIELD_SCHEMA`**（否則型別驗證管不到、壞值仍可能污染計算）＋`lib/types.js` 對應 typedef。⚠️**服務層「擁有」的衍生欄位絕不放進 CRUD 白名單**（Codex r11 收斂完成）：transactions 的 `stmtRef`/`storeKey`/`source`/`importBatch`/`importedAt`（＋既有的 `autoCat`/`autoSub`/`stmtMonth`/`stmtDue`/`refundOf`）只由帳單匯入服務層寫——放行過的年代，PUT 挾帶假 `storeKey` 可劫持 `learnFromStmtEdit` 的學習鑰匙（毒化學習表）、手動記帳可偽裝 `source:'stmt'`（實測重現）。前例＝holdings.source（Codex#6-2）、accounts.ibCashCur（Codex#6-3）。這些欄位仍要有 `FIELD_SCHEMA` 型別（服務層寫入與匯入備份都靠它驗）；**備份還原不受白名單影響**（`/api/import` 走 `validateImportItem`、櫃檯走 `sanitizeDbForWrite`，都只驗型別、不剝白名單外欄位——有考題鎖住）。測試要種帳單假資料＝以服務層身分走 repo 直寫（`server.test.js` 的 `seedTx`），不可為了種資料把白名單加回去 |
+| 集合新增欄位（表單加新欄） | checklist：使用者可寫→補 **`lib/schema.js` 的 `WRITABLE_FIELDS`**（漏加會被默默剝掉、console 有警告）；數值/布林/枚舉/陣列→同補 **`FIELD_SCHEMA`**＋`lib/types.js` typedef；**服務層擁有的衍生欄位絕不進 CRUD 白名單**。原則、三道寫入閘門、逐集合歸屬與「PUT 挾帶假值」病史＝下方「**欄位所有權**」節（單一真相）。測試種帳單假資料走 repo 直寫（`server.test.js seedTx`），不可為了種資料把白名單加回去 |
 | **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | `syncIb` **等待網路請求之前只讀「發請求需要的設定」（`getSettings`），整包資料庫等回應之後才 `getDb()`**。原本一開頭就拿整包、請求結束把那份過期快照整包寫回——Flex Query 要跑數秒到數十秒，期間任何寫入都被靜默吃掉（Codex 實測：同步中寫入的當日日線，同步完成後整個消失；交易與月快照同理且**不會自癒**）。⚠️ 任何「讀整包 → await → 寫整包」的流程都有這個病，新增類似流程時一律「await 之後重讀再合併」（另兩個前例＝`normalizeIfRulesChanged` 的 `const fresh = getDb()`；`lib/services/market-data.js refreshQuotesIfStale` await 前只讀新鮮度＋要抓哪些代號、await 後才 `getDb()` 合併匯率/股價再寫，Codex r13#1——原本 await 前拿整包、報價回來把舊快照整包寫回，會吞掉抓報價期間的記帳/店名整理）。 |
 | **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | 不可竄改的 `dir`、方向護欄與來源優先序、內轉子分類用角色重播（不可字面比對）——完整契約 → [契約：收支記帳與匯入](docs/contracts/收支記帳與匯入.md#銀行收支真學習的方向與內轉子分類) |
 | **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | 一次寫檔全有或全無；純函式 worker＋`PUT applyAll` 原子入口，標準端點只留相容薄殼——完整契約 → [契約：收支記帳與匯入](docs/contracts/收支記帳與匯入.md#同類同店一起改是單一原子指令) |
@@ -215,9 +214,10 @@
 | `watchlist` | symbol, name, targetPrice, currency, quoteSymbol, note | — | ⚠️`lastPrice`/`lastAt`＝**報價衍生**，目前**前端「更新報價」按鈕**寫（PUT）故**仍在白名單**。低風險（觀察清單不進淨值）。**待辦**：D-engine market-data 服務化後，把持股/觀察清單報價更新全移到後端（比照 D1），`lastPrice`/`lastAt`（＋或 `holdings.price`）退出白名單＝純服務擁有 |
 | `cards` | name, type, issuer, network, lastFour, level, memberId, statementDay, dueDay, annualFee, expiry, benefits, note, pdfPassword | — | pdfPassword＝PII（身分證字號；讀寫端 `projectCard` 剝，只卡片編輯窗需要） |
 | `subscriptions` / `insurance` / `research` / `history` | 全部欄位（見 `WRITABLE_FIELDS`） | — | — |
-| `settings` | 頂層／signals／ib 各有白名單（見同步點「settings 新增欄位」列） | quotesLastAt（報價更新）、storeRulesHash（規則整理）、healthDismissed（體檢略過）、ib.lastEquity/income/lastSync（IB 同步）、expenseTree/incomeTree/各別名/storeRules（分類・規則服務層）——皆**匯入備份要保留**（進 `sanitizeSettings`） | — |
+| `settings` | 頂層／signals／ib 各有白名單（見同步點「settings 新增欄位」列） | quotesLastAt（報價更新）、storeRulesHash（規則整理）、healthDismissed（體檢略過）；其餘服務欄與「**匯入備份要保留**」規則＝同步點「settings 新增欄位」列（單一真相，此處不重抄清單） | — |
 | `securityTrades` | —（READONLY，前端只 GET） | **IB 同步雙寫**（ib-sync：upsert by sourceRef、**永不刪**；與 ibTrades 鏡像同次 saveDb＝原子；一致性＝「同步窗內 ⊆」非相等）＋**台新對帳單匯入**（securities-import：預覽 fail-closed→確認；台新批次可整批刪、IB 批次不可）。sourceRef＝identifier-first 去重鍵（IB：**帳戶指紋＋**transactionID→tradeID→ibExecID→指紋（Codex S2r1#4：IB 未承諾 ID 跨帳戶唯一）；台新：多維指紋**不含對帳單年月**）；IB 缺幣別/核心金額**不猜不入庫**（分原因跳過＋前端指路 Flex 欄位）；`projectSecurityTrade` 剝 sourceAccountId/sourceRef（export 除外）；**指紋類跨批身分＝內容比對＋計數對帳 `reconcileFingerprintRows`（批內序不可當跨批身分——視窗位移覆寫/補印漏記，S2 自審雙 HIGH）**，指紋列入庫不可變、官方列更新＝整列取代；帳戶只存**指紋+遮罩 label**、絕不落原文；金額原幣、netSettlement 絕對值+cashDirection。幣別牆比照持倉/現金（不支援幣別跳過+回報），**手續費幣別 commissionCurrency 也過牆**（Codex S3r2#1，高：漏驗會走到櫃檯枚舉 throw、炸掉整次原子同步——持股/現金全失敗）；核心金額 **price/grossAmount/netSettlement 必填**＋跨欄不變式 **buy→out／sell→in**（`ROW_RULES`：櫃檯 throw/strip＋匯入逐筆 400，Codex S3r2#4——單欄各自合法、合起來會把買進顯示成收錢）。`settings.taishinSecPdfPassword`＝證券 PDF 密碼（使用者 2026-07-23 拍板存本機；機密投影剝除+Set 布林、備份保留） | — |
-| `portfolioSnapshots` / `ibTrades` / `dailyValues` / `snapshots` | —（`READONLY_COLLECTIONS`＋snapshots，前端只 GET） | portfolioSnapshots・ibTrades＝IB 同步；dailyValues＝`snapshot.js recordDailyValue`（D0）；snapshots＝`snapshot.js`（月快照） | 純服務寫、前端唯讀 |
+| `assetTargets` | class, targetPct | — | 資產配置目標（使用者自訂） |
+| `portfolioSnapshots` / `ibTrades` / `dailyValues` / `stockFundamentals` / `snapshots` | —（`READONLY_COLLECTIONS`＋snapshots，前端只 GET；securityTrades 同屬 READONLY、見上列） | portfolioSnapshots・ibTrades＝IB 同步；dailyValues＝`snapshot.js recordDailyValue`（D0）；stockFundamentals＝SEC 官方資料快取（stock-fundamentals 服務）；snapshots＝`snapshot.js`（月快照） | 純服務寫、前端唯讀 |
 
 **改欄位所有權時**：搬進/搬出白名單都要想「這個值可信嗎」——使用者能捏造的值不可決定財務判準（槓桿/方向/帳本/學習鑰匙）。新增服務欄位一律補 `FIELD_SCHEMA` 型別、**不要**加進 `WRITABLE_FIELDS`（測試種假資料走 repo 直寫＝`server.test.js seedTx`，不可為了種資料把白名單加回去）。
 
@@ -232,26 +232,23 @@
   | `榮祥森（投資理財）-claude` | Claude 實作 | 功能分支（`git checkout -B <branch> main`） |
   | `榮祥森（投資理財）-codex` | Codex 唯讀審查 | **detached** 於 `origin/main` |
 
-  - ⚠️ **Codex 的 worktree 必須 detached**：Git 不允許同一個分支被兩個 worktree 同時 checkout，而主目錄佔著 `main`。更新方式＝`git fetch origin && git checkout --detach origin/main`（`git pull` 在 detached 狀態下沒有意義）。
+  - ⚠️ **Codex 的 worktree 必須 detached**（同一分支不能被兩個 worktree 同時 checkout，主目錄佔著 `main`）。更新指令與「樹過期」的自我檢查＝REVIEW-AND-MERGE.md「你的角色」節（執行者實際照做的那份，此處不重抄）。
   - ⚠️⚠️ **`node_modules` 的 symlink：只准建、不准動**（2026-08-02 事故）。做法是 `ln -s "<主目錄>/node_modules" "<worktree>/node_modules"`（純 JS 相依，不必各裝一份），但**在任何 worktree 裡刪除、重裝、或 `rm -rf` 那個 symlink 的內容，動到的是主目錄本身**——使用者的 app 會立刻起不來（`Cannot find package 'express'`），而錯誤訊息完全指不到真因。實際踩過：清理暫存 worktree 時刪除動作順著 symlink 進去，主目錄的 `node_modules` 被清空。**移除 worktree 前先 `rm <worktree>/node_modules`（不帶斜線＝只刪 symlink 本身）**；更安全的做法是——**唯讀分析根本不需要 node_modules，不要建那個 symlink**。三道關與 pre-push hook 都照常運作（`core.hooksPath` 是 repo 層設定，worktree 自動繼承）。
-  - ⚠️⚠️ **`.gitignore` 必須寫 `node_modules`（不帶斜線）**——帶斜線的 `node_modules/` 只比對「目錄」，而 symlink 對 Git 來說**不是目錄**，會被 `git add -A` 當成一般檔案收進 commit（模式 `120000`），還把本機絕對路徑一起帶進版控。2026-07-19 實際踩到並修掉（symlink 一度進了 PR #136；CI 竟然還是綠的，所以**別指望三道關會攔這種東西**）。同理，日後在 worktree 裡建任何 symlink 都要先確認 `git check-ignore -v <path>` 擋得住。
+  - ⚠️⚠️ **`.gitignore` 必須寫 `node_modules`（不帶斜線）**——symlink 對 Git 不是目錄，帶斜線擋不住，`git add -A` 會把它連本機絕對路徑收進 commit（2026-07-19 實踩：symlink 進了 PR #136 且 CI 全綠——別指望三道關攔這種東西）。worktree 裡建任何 symlink 前先 `git check-ignore -v <path>` 確認擋得住。
   - ✅ **順帶補強鐵則 1**：`data/store.db`（真實餘額、IBKR flexToken、`pdfPassword`＝身分證字號）只存在主目錄，兩個 worktree 的 `data/` 只有 `seed.json`——「不要讀 store.db」從君子協定變成**結構上讀不到**。
   - 建立指令留檔：`git worktree add ../<repo>-claude -b wt-claude` ／ `git worktree add --detach ../<repo>-codex origin/main`；`git worktree list` 查看、`git worktree remove <path>` 移除。
 - **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。分了 worktree 之後兩邊可以同時工作，但**同一個 worktree 仍然只有一個 agent 動**。
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
 - **同時開多個 PR 時先講清楚相依性**（2026-07-19 踩到）：程式碼互不相依**不等於**可以任意順序合併——只要它們都改到 `AGENTS.md`（本檔是一張大表，人人都往裡面加字），合併第一個之後其餘全部會衝突。開 PR 時就要說明「合併第一個之後我要 rebase 其餘的」，別讓使用者以為隨便挑一個合併就好。
-- ⚠️⚠️ **堆疊 PR 的合併程序（2026-07-28 真的踩到，兩支已核准的 PR 差點蒸發）**：合併順序**由下而上**，而且**每合併一支，就要把下一支的 base 改成 `main` 並 rebase**，然後才合下一支。
-  - **踩到的實況**：`#309 C4b(base=main) → #311 C5(base=feat-c4b-postgres) → #312 C6前置(base=feat-c5-secrets)`。#309 先合進 main，接著在 GitHub 上連續按下 #311、#312 的合併鍵——它們各自合進了**自己的 base 分支**（中間分支），不是 main。結果：main 只拿到 C4b，C5 與 C6 前置的內容留在中間分支裡，而兩支 PR 都被關閉為 **MERGED、無法重開**。內容沒丟（在分支裡），但要另開一支 cherry-pick 才救得回來（#322）。
-  - **為什麼特別陰**：GitHub 顯示「Merged」、CI 全綠、沒有任何錯誤訊息。**只有去查「那個檔案到底在不在 main」才發現**。所以合併完一整疊之後，務必抽查最上層 PR 的代表性新檔是否真的出現在 main。
-  - 舊有的「不要用 `--delete-branch`」仍然成立（刪基底會讓上層 PR 被直接關閉），但那只是這件事的一半。
+- ⚠️⚠️ **堆疊 PR 的合併程序＝由下而上，且每合併一支就把下一支的 base 改回 `main` 並 rebase，才合下一支**（2026-07-28 #309/#311/#312 實踩：連按合併鍵會各自合進**自己的 base** 而非 main——GitHub 顯示 Merged、CI 全綠、零錯誤訊息，內容卻留在中間分支且 PR 無法重開，靠 #322 cherry-pick 救回）。合完一整疊務必抽查最上層 PR 的代表性新檔真的在 main；操作程序正文＝REVIEW-AND-MERGE.md 合併步驟的堆疊閘段。
 - **堆疊 PR（base 指向另一個 PR 分支）合併時，不要用 `--delete-branch`**——刪掉基底分支會讓上層 PR 被 GitHub 直接關閉而非自動轉指向（2026-07-10 實際發生，#3/#5 被誤關）。先由下而上全部合併完，再一次刪分支；或乾脆避免堆疊、等前一個合併後再開下一個。
-  - ⚠️ **「這支是不是堆疊」不可憑印象判斷**：合併前必跑**堆疊閘 `node scripts/check-pr-merge-gate.js <N>`**（`REVIEW-AND-MERGE.md` 合併六步驟的第 3 步；行為考題＝`test/merge-gate.test.js` 假 gh 五情境）。閘查**兩個方向**：①本支 base 必須是 `main`（防 2026-07-28「合進自己的 base」）②不得有 open PR 疊在本支上（防 2026-07-10「刪分支連帶關閉」）；gh 失敗或跨 fork＝fail-closed 當堆疊。**執行合併的人讀的是 `REVIEW-AND-MERGE.md`，所以那份必須自帶這道閘**——本條只是規則來源。〔2026-07-30 修：審查與合併程序 原本寫「一律 `--squash --delete-branch`」、完全沒提本例外，而它才是合併時真正被照著執行的檔案；r1 曾只查方向②、被 #346 示範放行，故改成雙向腳本。〕
-- **Notion 白話規格**（使用者定 2026-07-20）：Notion 那區＝給使用者看的白話視圖（**本檔 AGENTS.md 仍是技術唯一真相**），**動架構時一併更新對應頁**。完整位置、回饋迴路、寫作風格、圖示規則、建頁工法見下方「**Notion 白話規格・更新工法**」小節——**Claude 與 Codex 都適用**（使用者 2026-07-22 起也會把 Notion 更新交給 Codex）。
+  - ⚠️ **「這支是不是堆疊」不可憑印象判斷**：合併前必跑**堆疊閘 `node scripts/check-pr-merge-gate.js <N>`**（`REVIEW-AND-MERGE.md` 合併步驟的堆疊閘那一步——那裡刻意不寫死步數；行為考題＝`test/merge-gate.test.js` 假 gh 五情境）。閘查**兩個方向**：①本支 base 必須是 `main`（防 2026-07-28「合進自己的 base」）②不得有 open PR 疊在本支上（防 2026-07-10「刪分支連帶關閉」）；gh 失敗或跨 fork＝fail-closed 當堆疊。**執行合併的人讀的是 `REVIEW-AND-MERGE.md`，所以那份必須自帶這道閘**——本條只是規則來源。〔2026-07-30 修：審查與合併程序 原本寫「一律 `--squash --delete-branch`」、完全沒提本例外，而它才是合併時真正被照著執行的檔案；r1 曾只查方向②、被 #346 示範放行，故改成雙向腳本。〕
+- **Notion 白話規格**（使用者定 2026-07-20）：Notion 那區＝給使用者看的白話視圖（**本檔 AGENTS.md 仍是技術唯一真相**），**動架構時一併更新對應頁**。完整位置、回饋迴路、寫作風格、圖示規則、建頁工法見 `docs/notion-spec-playbook.md`（2026-08-04 自本檔逐字搬出；純操作手冊、動 Notion 才需要）——**Claude 與 Codex 都適用**（使用者 2026-07-22 起也會把 Notion 更新交給 Codex）。
 - **合併的決策與執行是兩件事，分開講**（2026-07-30 對齊；此前「使用者是最終合併者」「使用者合併」「PR 由 William 合併」三句散在三份文件、字面上都已與實務不符——本條是唯一規則來源）：
   - **決策（要不要合、何時合）＝永遠 William**（角色表「合併裁決」）。任何人不得自行決定合併——「審查通過」只是門檻之一，不是合併指令。
   - **執行（按下合併鍵）核心原則＝「實作者不按自己的合併鍵」**（William 2026-07-30 定，對稱授權）：**由審查者執行**——Claude 實作、Codex 審過 → **Codex 執行**（2026-07-27 常設授權）；Codex 實作、Claude 審過 → **Claude 執行**（2026-07-30 對稱常設授權）。這是「不可自審」在執行面的延伸：合併程序裡「確認審查結論無阻擋」那一關由實作者自己判讀＝利益衝突最容易滲進來的地方。⚠️ 這裡刻意**不寫第幾關**——步驟編號會變（2026-08-02 新增協作欄位閘之後就整個往後推一格），寫死編號的敘述注定過期。
   - William 本人隨時可直接執行（GitHub「Squash and merge」）；個案明確指示（如「把 #338 合了」）可指定任何人執行該支。
-  - **不論誰執行，一律走 `REVIEW-AND-MERGE.md` 的「合併六步驟」**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**下列不可跳過的守門**（數量會長，所以這裡不寫數字——寫死的數字自己會漂）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這幾個名字都還在本段裡——⚠️ **它是從合併步驟反查的，不是手寫名單**（#385 r9：手寫的那份漂了，加了第四道閘卻照樣全綠）。
+  - **不論誰執行，一律走 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**下列不可跳過的守門**（數量會長，所以這裡不寫數字——寫死的數字自己會漂）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這幾個名字都還在本段裡——⚠️ **它是從合併步驟反查的，不是手寫名單**（#385 r9：手寫的那份漂了，加了第四道閘卻照樣全綠）。
 - Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → **全部頁面** reload 無 console error（清單＝`app.js` 的 `ROUTES`，**不寫死頁數**——曾同檔並存 8 頁與 10 頁兩個數字、新頁面永遠追不上）；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。****資料存取單一櫃檯（B1）**：讀寫資料一律走 `lib/repo.js`（getDb/saveDb/getCollection/addItem/updateItem/deleteItem/getSettings/updateSettings；uid/emptyDb 也由它轉供）——**除了 repo.js 自己，任何檔案都不要直接 import `lib/store.js`**。附帶效果要與更新同一次寫檔時用 `updateItem` 的 `beforeSave`（例：帳單交易改分類→寫學習表）。未來換資料庫（B3 SQLite）只改 repo.js。**驗證入櫃檯（B3）**：`store.save()` 是唯一寫入口、每次寫入自動過 `schema.js sanitizeDbForWrite`——枚舉/布林非法值會直接 throw（＝寫入端程式有 bug，考試會抓到），任何新寫入路徑**結構上不可能**繞過驗證牆（七輪審查的病根根治）。新增欄位照舊補 `WRITABLE_FIELDS`/`FIELD_SCHEMA`。**日期／月份走「真實日曆」判準（`isRealMonth`／`isRealDate`，Codex r3#9）**：`date`/`datereq`/`month`/`monthreq` 四種型別**共用同一套**，不可各寫一份。以前只驗長相（`\d{4}-\d{2}`），`2026-13`／`2026-99-99`／`2026-02-31` 全都過得了關——後果不是崩潰而是**默默算錯**（月份排序把 `2026-13` 排到 `2026-02` 後面、提醒天數、費用攤提、日線的「找最接近的既有日」全偏掉，畫面上卻一切正常）。閏年用 `Date.UTC` 建構回比對（避開本地時區在月初月底的位移）。服務層的手動輸入（`setBatchMonth`、`importRows` 的 `statementMonth`）也一律改用同一個判準。⚠️ 這是**收緊**：萬一舊資料裡真的躺著一個假日期，下次寫入會在櫃檯 throw（訊息已指出集合/索引/值）——那是刻意的，發現了就把那筆改掉，不要為了它把驗證放寬回去。 **必填欄位機制（`REQUIRED_FIELDS`，目前＝history/portfolioSnapshots/snapshots 的 `month` 主鍵欄＋`dailyValues` 的 `date`＋`securityTrades` 的查帳合約 11 欄——身分/方向/數量/幣別/去重鍵＋三個核心金額 price/grossAmount/netSettlement，Codex S2r1#5＋S3r2#4）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；目前＝securityTrades 的 buy→out／sell→in）：三個強制點——CRUD 新增回乾淨 400、匯入逐筆列 errors→整份 400、櫃檯 throw 模式當場 throw。**strip 模式（舊 JSON 搬家專用）對必填欄位「缺席／空值／格式錯／數字型」一律整筆濾除，不可只刪欄位**（只刪欄位會留下缺主鍵的殘骸，讓讀取端 `.slice`/`.split` 崩，Codex#12）；PUT 部分更新天然安全（合併保留舊值）。新增「不可缺的主鍵欄」時補進 `REQUIRED_FIELDS`。**測試隔離慣例（B0）**：`lib/store.js` 的資料檔路徑可用 `STORE_FILE` 環境變數覆寫（測試一律指到 os 暫存目錄的 `.db` 檔、絕不碰真實 `data/`）；`server.js` `export const app`、只有直接執行才 `listen`（測試 import app 後在隨機埠自行監聽）——`test/server.test.js` 是階段 B 改建的行為安全網，改後端端點要保持它全過。第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。
 - **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/測試覆蓋率地圖.md`。
@@ -281,7 +278,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併六步驟**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
+**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **角色分工（含「不負責」邊界）**：
 
@@ -297,7 +294,7 @@
 | 模式 | 能做什麼 | 不能做什麼 | 誰啟動 |
 |---|---|---|---|
 | **①常態審查**（預設） | 讀、跑三關、提意見（附重現與 `檔案:行`） | **絕對唯讀：不改檔、不 commit、不 push**；不在 `-codex` 樹 checkout 別人的分支 | 常設（每批合併後）或 William 隨時 |
-| **②代合併** | 照 `REVIEW-AND-MERGE.md` 的**合併六步驟**執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
+| **②代合併** | 照 `REVIEW-AND-MERGE.md` 的**合併步驟**（步數以那份為準）執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
 | **③實作** | 在**另開的可寫 worktree** 走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／Claude 的複審需求優先於實作） | 不得在 `-codex` 審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
 
 **⚠️ 協作的唯一不變量（William 2026-07-29 定；原本只寫在 `REVIEW-AND-MERGE.md`，2026-08-02 搬進本檔）**：
@@ -340,14 +337,11 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 ⚠️ **沒有合規標頭的留言，對這道閘沒有任何效力——兩個方向都是**：
 它既不能構成放行，也不算一次阻擋、更不算撤銷。所以**要喊停就要帶標頭重發一次**，
 在留言裡寫「等等我發現問題」而沒有標頭，機器讀不到，等於沒說。
-（腳本裡另有一個 `looksLikeVerdict()` 會盡量認出「下了結論卻沒帶標頭」，
-但它**只印提醒、不影響閘的結果**。⚠️ 這是 2026-08-03 刻意的決定：
-它擋下來**沒有安全價值**（擋住 #383 的是「放行只認合規標頭的通過」），
-卻連兩輪被實測出誤擋正常留言（`## 如何合併兩個 reviewer state`、`通過／失敗：25／0`…），
-而**誤擋相對 `main` 是實質退步**——原本人工確認不會卡住這些留言。
-唯一還留在阻擋路徑上的文字判斷是「**出現 🤖 但標頭寫壞**」，因為那幾乎不可能誤判。
-**殘餘風險**：有人用自然語言喊停、而另一位指定審查者帶標頭放行時，這道閘會通過（終端會印提醒）。
-所以上面那句話是硬的——**要喊停就帶標頭重發，沒有例外**。）
+（腳本另有 `looksLikeVerdict()` 認「下了結論卻沒帶標頭」，但**只印提醒、不影響閘的結果**——
+2026-08-03 刻意決定：擋它沒有安全價值、卻實測連兩輪誤擋正常留言，誤擋相對 `main` 是實質退步；
+完整理由與誤擋實例＝`scripts/check-review-verdicts.js` 檔頭（單一真相，此處不重抄）。
+唯一留在阻擋路徑上的文字判斷＝「**出現 🤖 但標頭寫壞**」。**殘餘風險**：有人自然語言喊停、
+而指定審查者帶標頭放行＝閘會通過（終端印提醒）——所以**要喊停就帶標頭重發，沒有例外**。）
 
 #### 委任關係：只影響**獨立性強弱**，不影響**結論效力**
 
@@ -356,9 +350,8 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 但**能不能構成放行，仍然由 PR 說明指定的那位獨立審查者判定**——
 `scripts/check-review-verdicts.js` 只認指定角色的「通過」，其他人的通過不放行、阻擋則人人有效。
 
-但它**比較弱，弱在作者決定了審查者看什麼**。2026-08-02 #383 的實例兩面俱全：
-作者委任的那個 Claude 查了版面與結構、沒查金額口徑；另一個 Claude 查了金額、
-抓到**五條假綠**、沒查版面。**兩份加起來才完整。**
+但它**比較弱，弱在作者決定了審查者看什麼**（#383 實例見上節「一支 PR 上可能有好幾個審查者」：
+一份查版面、一份查金額，**兩份加起來才完整**）。
 
 ⚠️ **委任的弱點不只是「作者決定它看什麼」，還有兩個更難察覺的**（Codex #385 r3 補）：
 **作者挑哪一個 session**、以及**作者選擇性地公布結果**（不利的那份可以不貼出來）。
@@ -384,13 +377,12 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 
 ### ⚠️ 審查者的注意力是被作者塑造的——所以有一份「無論誰要求都要跑」的清單
 
-作者寫給審查者的提示詞會決定它**看不到什麼**。本專案實測：同一支 PR 的兩份複審，
-一份被要求看版面所以只看了版面，另一份被要求看數字所以抓到五條假綠。
+作者寫給審查者的提示詞會決定它**看不到什麼**（#383 實例見上方「一支 PR 上可能有好幾個審查者」節）。
 **那不是能力差別，是沒有人請它往那邊看。**
 
 ⇒ 複審**不論作者的重點清單寫了什麼**，這幾條一律要跑（清單在 `REVIEW-AND-MERGE.md`「固定維度」節）。
 
-⚠️ **兩個名字很像的東西，不要搞混**（2026-08-02 實測就是這樣漂移的）：**五步驟審查循環**＝下面這張表，講「誰找問題、誰提修法、誰審實作」；**合併六步驟**＝`REVIEW-AND-MERGE.md` 的按合併鍵程序（協作欄位閘 → 審查結論與 CI → 堆疊閘 → 合併＋trailer → 確認刪分支 → 回報）。
+⚠️ **兩個名字很像的東西，不要搞混**（2026-08-02 實測就是這樣漂移的）：**五步驟審查循環**＝下面這張表，講「誰找問題、誰提修法、誰審實作」；**合併步驟**＝`REVIEW-AND-MERGE.md` 的按合併鍵程序（幾道閘、幾個步驟**以那份為準、這裡刻意不枚舉**——#388 加第四道閘時，這裡的舊枚舉就漏過一次）。
 
 **五步驟審查循環**（展開版與操作細節見 `REVIEW-AND-MERGE.md`）：
 
@@ -456,16 +448,6 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 
 **一句話總綱**：Claude 負責建造，Codex 負責挑戰，William 負責決定與驗收；共享檔案一次只交給一人。高風險工作小步前進，每一步有考題、有證據、有退路。文件說明規則，契約連接模組，PR 隔離變更。
 
-### Notion 白話規格・更新工法（Claude 或 Codex 動架構時一起更新）
-
-使用者 2026-07-20 定；**2026-07-22 起 Notion 更新也交給 Codex**，故把細節從 Claude 的 memory 搬進本檔（Codex 看不到 memory）。
-
-- **位置＋現況**：Notion「不簡單 › 榮祥森（理財中心）› **動態藍圖區（架構・規則・原理）**」＝給使用者看的白話視圖（本檔仍是技術唯一真相）。目前＝**9 頁子系統**（1 消費說明→鑰匙→顯示／2 帳單匯入／3 分類與自動學習／4 資產・投資・IB／5 訂閱・提醒／6 資料安全／7 前端架構／8 協作機制／**9 每日洞察引擎**）＋一頁跨切面「**防撞護欄設計原理（G3–G5）**」。**動到某子系統的架構＝一併更新對應那頁**（一致性由動工方顧）。容器頁 id `3a39485922f58100aaedead0094987e0`；workspace＝teacherjung's Notion。
-- **回饋迴路**：Notion 上的設計由使用者決定。①**措辭／版面／比喻／圖示**＝使用者全權、直接改、不通知：**更新頁面前先 `fetch` 現況、只做最小 search-replace、絕不覆蓋使用者的編輯**；②**規則／數字／設計描述**＝使用者在該段留 comment 寫明「理由：…」→ 讀後動工（改程式＋更新本檔＋補考題，PR 照舊）或先在同串 comment 確認。**每次開工先 `get-comments`（`page_id`＋`include_all_blocks:true`）掃一輪留言**；自己的留言一律加作者前綴——**Claude 用「【Claude】」、Codex 用「【Codex】」**（Notion MCP 以使用者帳號發言，不加前綴會被當成使用者自己說的）。
-- **寫作風格**：白話＋表格＋標題為主體，生活比喻開場（收發室／稽核抽查／配電箱…）；**避免「程式碼」這類詞，說「文件夾」**；金額口徑照該子系統（訂閱用「元」、其餘「萬」）。callout 只用少數重點框、`color="gray_background"`，開場用 `book_gray`、設計哲學／心法用 `light-bulb_gray`。**⚠️ 圖示一律 Notion 內建灰色 icon、絕不用 emoji**：頁面 icon＝create/update 傳 `icons/<name>_gray`；callout＝`<callout icon="/icons/<name>_gray.svg">`。實測可用：book／light-bulb／checkmark／tag／wrench／document／chart／bell／lock／code／people／circle／circle-dot。目錄狀態欄用文字（「已完成」）不用 emoji。
-- **建頁／改頁工法（實測教訓）**：①`create-pages`／`update-page` 後**務必 fetch 回來逐頁校對**（會滑出錯字型字碼，攤→攞之類）；②`.md` 檔名用反引號包（否則被自動轉成 `http://AGENTS.md` 假連結）；③多頁批次照目錄順序建，底部子頁連結順序才對。
-- **維護承諾（頁內已建機制）**：「防撞護欄設計原理」頁文末有「**更新紀錄**」表——那三道原理（G3 原子化／G4 身分判準／G5 欄位所有權）日後有變，回該表**補一列日期＋改內文**；子系統頁（含每日洞察引擎）就地更新。
-
 ### 審查分工的沿革（2026-07-10 版已被取代）
 
 > 2026-07-10 拍板的「Codex 審、Claude 改」已由**三方協作框架 v4**（本檔上方）與
@@ -481,9 +463,3 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 最典型的例子：`COMPOSITION` 前後端兩份表看起來是重複，實際上是**刻意的同步點**
 （見同步點清單），把它「去重」會讓前端與後端的穿透結果走散。
 審查者提出的每一條，都要先拿本檔的投資語意與同步點清單把關再動手。
-
-## 已知待辦（背景脈絡）
-
-- ✅ 估值訊號儀表（五市場檔位 → 動態股債比）已實作（PR #7）。
-- ✅ XIRR 資金加權年化報酬已實作（PR #9，投組頁「投入 vs 市值」卡）。
-- ⏳ 個股基本面分析方法待建立（AAPL/GOOGL 等）——下一項，先設計「研究一檔個股要回答哪些問題、看哪些指標」的框架，再決定 app 內怎麼承接（已有個股研究卡的論點/風險/檢查點欄位可用）。
