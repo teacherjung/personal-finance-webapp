@@ -13,7 +13,9 @@
 > | 文末「實作模式」 | Codex（William 明確指派時） |
 >
 > ⚠️ **下文有些段落寫成「你」，那是對「正在審查的那一方」說的，不是專指 Codex。**
-> 例如「你的角色（唯讀審查者）」那幾條，Claude 複審 Codex 的實作時一字不改地適用。
+> 例如「你的角色（唯讀審查者）」那一節：**共用的紀律直接適用**（只提意見不改檔、在自己專屬的審查 worktree 裡工作、釘住 commit、審完回報）；
+> 而**寫死 `-codex` 路徑、「修正交給 Claude」那幾條是 Codex 專屬的**，Claude 複審時要替換成對應的對象——完整分辨見該節開頭的表。
+> ⚠️ 我上一版在這裡寫「一字不改地適用」，那跟下面那張表自相矛盾（Codex #387 r2 抓到）。
 > 考題 `test/doc-naming.test.js` 盯著「三方共用的文件，名字不可以只掛一方」。
 
 
@@ -231,7 +233,11 @@ npm run typecheck && npm run lint && npm test
 啟用條件＝協作框架 v4 的三條件：①有獨立施工計畫（先交 William 裁決再動工）②不碰別人 open PR 已宣告的共享檔案（查 `gh pr list` 與各 PR 說明的「預計修改的共享檔案」——預約制規則見 AGENTS.md「共享檔案預約」；人工預約表 2026-07-31 已退役）③**審查與實作不可以是同一方**——你實作的支由 Claude 複審，不是另一個 Codex session。
 ⚠️ **這一條的理由 2026-08-03 重寫過**：原本寫「審查優先於你的實作」，假設的是「只有一個 Codex，兩件事搶時間」。
 William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、複審是各自用 CLI 起**對方**的 session（Codex 桌機實作 → 起 Claude CLI 審；Claude 桌機實作 → 起 Codex CLI 審），**排隊互卡的情形不會發生**。
-所以那條規則的舊理由已經被現實稀釋了。真正還在承重的是**角色不可重疊**，而它已經被機械化：`scripts/check-pr-collab-fields.js` 檢查「實作者 ≠ 獨立審查者」，填成同一方會退出碼 1。
+所以那條規則的舊理由已經被現實稀釋了。真正還在承重的是**角色不可重疊**。
+⚠️ **但「已經被機械化」要說到剛好**（Codex #387 r2）：兩道閘各守一半——
+`scripts/check-pr-collab-fields.js` 驗的是 **PR 說明自報的**實作者 ≠ 獨立審查者；
+`scripts/check-review-verdicts.js` 驗的是**指定的那一位**真的留下合規標頭的「通過」。
+**session 的實際來源仍然是自報的，機器驗不了**——那要獨立 GitHub 帳號才擋得住（見 `docs/GitHub分支保護-設定與驗證.md`「第二步：分身分」）。
 （**一條規則的理由跟現實對不上，本身就是漂移**——那正是這份文件一直在修的病。）前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
 - **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的 worktree。流程：`git fetch origin && git checkout -b <分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併六步驟**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併六步驟**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
