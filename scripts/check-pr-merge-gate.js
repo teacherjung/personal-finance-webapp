@@ -20,7 +20,7 @@
 // 「抓一頁回來自己用 jq 濾」超過 30 支就會假陰性（r1 寫法），不要改回去。
 
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isMainModule } from '../lib/is-main.js';
 
 /** @typedef {{ baseRefName: string, headRefName: string, isCrossRepository: boolean }} PrInfo */
 
@@ -111,6 +111,6 @@ function main() {
 }
 
 // 只有直接執行才跑（考題 import evaluateGate 純函式；端到端考題用假 gh 跑整支）。
-// ⚠️ 要用 pathToFileURL 比對——本專案路徑含中文與空格，import.meta.url 是百分號編碼，
-// 裸字串 `file://${argv[1]}` 永遠比不相等 → main() 靜默不跑、退出碼 0＝「放行」。
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// ⚠️ 判斷「是不是被直接執行」一律走 lib/is-main.js——這裡原本自己寫一份，
+//    六個地方六種寫法，錯了不會叫（main() 靜默不跑、退出碼 0＝「放行」）。
+if (isMainModule(import.meta.url)) main();

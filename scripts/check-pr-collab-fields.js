@@ -20,7 +20,7 @@
 //            兩次堆疊事故畫面上都是 Merged＋CI 全綠、零錯誤訊息。
 
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isMainModule } from '../lib/is-main.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -237,6 +237,6 @@ export function main(argv) {
   return 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }
