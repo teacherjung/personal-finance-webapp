@@ -33,8 +33,8 @@
 //      ⚠️ 「疑似結論卻沒帶標頭」**只印提醒、不影響退出碼**（r11 起，理由見 looksLikeVerdict）
 //   2＝查不清楚（fail-closed，比照協作欄位閘）
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
+import { isMainModule } from '../lib/is-main.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -374,6 +374,6 @@ export function main(argv) {
   return 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }

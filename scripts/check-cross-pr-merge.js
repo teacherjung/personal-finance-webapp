@@ -43,10 +43,10 @@
 // 它也**不保證**合併之後 `main` 一定是綠的：它試的是「這兩支的 head」，
 // 而真正合併時 `main` 可能已經又前進了（那一段由 `strict` 與 CI 接手）。
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
-import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isMainModule } from '../lib/is-main.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -187,12 +187,9 @@ export function main(argv) {
 }
 
 // 只有直接執行才跑（考題 import 純函式；端到端考題用假 gh 跑整支）。
-//
-// ⚠️ **兩邊都要 realpath**（2026-08-03 實際踩到，而且是最糟的一種失敗）：
-// macOS 的 `/tmp` 是指向 `/private/tmp` 的 symlink，於是
-// `import.meta.url` 是 `file:///private/tmp/x.js`、`pathToFileURL(argv[1])` 是 `file:///tmp/x.js`
-// ⇒ 守衛不成立 ⇒ **`main()` 從來沒跑，而退出碼是 0**。
-// 一道閘「什麼都沒做卻回報通過」比它不存在更危險——不存在時人還知道要自己看。
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+// 判斷一律走 `lib/is-main.js`——symlink 與百分號編碼兩個坑寫在那裡，
+// 這裡不重述（重述的說明會漂）。它答錯的後果：`main()` 從來沒跑而退出碼是 0，
+// **一道閘「什麼都沒做卻回報通過」比它不存在更危險**。考題 `test/entry-guard.test.js` 盯著。
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }

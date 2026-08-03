@@ -19,6 +19,7 @@ import { applyHostedTimeouts } from './lib/parse-limits.js';
 import { currentTenant } from './lib/tenant.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
 import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
+import { isMainModule } from './lib/is-main.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
@@ -253,7 +254,7 @@ app.use((err, req, res, next) => {
 
 const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串；app.listen 要 number）
 // 只有「直接執行」（npm start / node server.js）才啟動監聽；被測試 import 時不開埠（B0）
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   // P1-6（C0 契約）：HOSTED 聽 0.0.0.0（Render 的健康檢查與流量才進得來）；LOCAL 維持 127.0.0.1 不對外。
   const server = app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {

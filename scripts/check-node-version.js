@@ -1,7 +1,6 @@
 // @ts-check
-import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { isMainModule } from '../lib/is-main.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const engineMatch = String(pkg.engines?.node || '').match(/^>=(\d+\.\d+\.\d+)$/);
@@ -25,8 +24,7 @@ export function isSupportedNodeVersion(value) {
   return true;
 }
 
-const isMain = process.argv[1]
-  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+const isMain = isMainModule(import.meta.url);
 
 if (isMain && !isSupportedNodeVersion(process.versions.node)) {
   console.error(
