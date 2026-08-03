@@ -8,9 +8,9 @@
 
 ## 開工前
 
-1. **先查 [docs/contracts/README.md](docs/contracts/README.md) 的路由表**——你要動的檔案落在哪個領域，就去讀那份契約。AGENTS.md 有 190KB，「動手前先讀完」實際上做不到；路由表就是為此存在的。
+1. **先查 [docs/contracts/README.md](docs/contracts/README.md) 的路由表**——你要動的檔案落在哪個領域，就去讀那份契約。AGENTS.md 很大（大小刻意不寫死——寫死的數字自己會漂），「動手前先讀完」實際上做不到；路由表就是為此存在的。
 2. **接手一段時間沒碰的工作**：先看 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
-3. **要合併 PR**：照 [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md) 的六步驟走，**每一道機械閘都不可憑印象跳過**（現有幾道以腳本自報的 `MERGE_GATE` 為準——⚠️ **這裡刻意不寫數字**：2026-08-03 新增第三道之後這句話漏了它，而寫死的數字自己會漂）。
+3. **要合併 PR**：照 [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md) 的合併步驟走（步數同樣不寫死），**每一道機械閘都不可憑印象跳過**（現有幾道以腳本自報的 `MERGE_GATE` 為準——⚠️ **這裡刻意不寫數字**：2026-08-03 新增第三道之後這句話漏了它，而寫死的數字自己會漂）。
 
 ## 只有 Claude 需要知道的四條
 
