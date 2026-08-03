@@ -10,7 +10,7 @@
 
 1. **先查 [docs/contracts/README.md](docs/contracts/README.md) 的路由表**——你要動的檔案落在哪個領域，就去讀那份契約。AGENTS.md 有 190KB，「動手前先讀完」實際上做不到；路由表就是為此存在的。
 2. **接手一段時間沒碰的工作**：先看 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
-3. **要合併 PR**：照 [CODEX-REVIEW.md](CODEX-REVIEW.md) 的六步驟走，**兩道機械閘不可憑印象跳過**（`scripts/check-pr-collab-fields.js`、`scripts/check-pr-merge-gate.js`）。
+3. **要合併 PR**：照 [審查與合併程序.md](審查與合併程序.md) 的六步驟走，**兩道機械閘不可憑印象跳過**（`scripts/check-pr-collab-fields.js`、`scripts/check-pr-merge-gate.js`）。
 
 ## 只有 Claude 需要知道的四條
 

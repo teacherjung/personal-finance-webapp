@@ -20,7 +20,7 @@ data/*backup*
 node_modules
 
 # 產生的檔案
-# 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 CODEX-REVIEW.md）
+# 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 審查與合併程序.md）
 .codex-reviews/
 tmp/
 output/
@@ -29,3 +29,17 @@ output/
 # 系統
 .DS_Store
 **/.DS_Store
+
+# ── 本機工具與紀錄：留著但不進版控（William 2026-08-03 裁決）──
+# ⚠️ 這些是**未追蹤**檔，Git 沒有備份 ⇒ 刪掉就真的沒了。所以是「忽略」不是「刪除」。
+#    目的不是把東西藏起來，是讓 `git status` 只剩下**真的有意義的改動**——
+#    永遠有五行 `??` 的話，哪天真的多出一個不該在的檔案，沒有人會注意到。
+_local/
+.agents/
+skills-lock.json
+# ⚠️ 這三個先在原地忽略；William 決定要不要搬進 _local/ 之後再調整。
+#    （2026-08-03 踩過：`git add -A` 會把未追蹤檔一起收進 commit，
+#      正好違反「工具不收」的裁決——是 push 守門的考題擋下來的。）
+scripts/review-loop.js
+meeting.sh
+meeting_0724_1414.md
