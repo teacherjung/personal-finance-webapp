@@ -2,6 +2,7 @@
   /* 榮祥森 UI1：暖紙、森林綠、霧藍與珊瑚訊號。 */
   --bg: #f7f2df;
   --bg-2: #eadb9c;
+  --sidebar-bg: #fff8e5;
   --card: #fffdf6;
   --card-2: #f1ead1;
   --line: #d8cdaa;
@@ -41,7 +42,7 @@ body {
 /* ---------- Sidebar ---------- */
 .sidebar {
   width: 232px; flex-shrink: 0;
-  background: var(--bg-2);
+  background: var(--sidebar-bg);
   border-right: 2px solid var(--frame);
   display: flex; flex-direction: column;
   padding: 20px 14px 16px;
@@ -702,7 +703,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .nav-more {
     position: absolute; z-index: 1; top: 6px; right: 0; bottom: 8px;
     width: 28px; display: grid; place-items: center; pointer-events: none;
-    background: var(--bg-2); border-left: 2px solid var(--frame);
+    background: var(--sidebar-bg); border-left: 2px solid var(--frame);
     color: var(--accent-hover); font-size: 24px; font-weight: 700; line-height: 1;
   }
   #nav a { flex: 0 0 auto; padding: 6px 9px; gap: 6px; white-space: nowrap; }
