@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,4 +144,19 @@ test('CLI｜gh 回傳形狀不對（缺 headRefOid）→ exit 2', () => {
 test('CLI｜沒給 PR 編號 → exit 2', () => {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', cwd: ROOT });
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
+});
+
+test('⭐ 入口｜**經過 symlink 的路徑也要真的跑**（否則會「什麼都沒做卻 exit 0」）', () => {
+  // ⚠️ 2026-08-03 實際踩到，而且是最糟的一種失敗：
+  //    macOS 的 `/tmp` 是指向 `/private/tmp` 的 symlink，於是主程式守衛的兩邊對不上，
+  //    `main()` **從來沒跑**，而退出碼是 **0**——閘什麼都沒做卻回報「通過」。
+  //    **那比閘不存在更危險**：不存在時人還知道要自己看。
+  const dir = mkdtempSync(join(tmpdir(), 'symlink-entry-'));   // /var/folders/… 本身就有 symlink
+  const copy = join(dir, 'gate.js');
+  writeFileSync(copy, readFileSync(join(ROOT, 'scripts/check-cross-pr-merge.js'), 'utf8'));
+  const r = spawnSync(process.execPath, [copy], { encoding: 'utf8', cwd: ROOT });
+  assert.equal(r.status, 2,
+    `經過 symlink 的路徑跑起來沒有進 main()（實得 ${r.status}，預期 2＝沒給 PR 編號）。\n`
+    + `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.match(r.stderr, /用法/, 'main() 沒有真的執行');
 });

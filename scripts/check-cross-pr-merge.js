@@ -44,7 +44,7 @@
 // 而真正合併時 `main` 可能已經又前進了（那一段由 `strict` 與 CI 接手）。
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -187,6 +187,12 @@ export function main(argv) {
 }
 
 // 只有直接執行才跑（考題 import 純函式；端到端考題用假 gh 跑整支）。
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// ⚠️ **兩邊都要 realpath**（2026-08-03 實際踩到，而且是最糟的一種失敗）：
+// macOS 的 `/tmp` 是指向 `/private/tmp` 的 symlink，於是
+// `import.meta.url` 是 `file:///private/tmp/x.js`、`pathToFileURL(argv[1])` 是 `file:///tmp/x.js`
+// ⇒ 守衛不成立 ⇒ **`main()` 從來沒跑，而退出碼是 0**。
+// 一道閘「什麼都沒做卻回報通過」比它不存在更危險——不存在時人還知道要自己看。
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   process.exit(main(process.argv.slice(2)));
 }
