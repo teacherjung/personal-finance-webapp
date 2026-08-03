@@ -149,3 +149,12 @@ test('理財中心總覽接線：月份以後端現金流月份為單一來源�
   assert.match(source, /近 12 個月尚無銀行收支紀錄/);
   assert.match(source, /近 12 個月尚無淨資產快照/);
 });
+
+test('理財中心第二張 KPI 卡片：外框跟卡片一致，四格分隔仍維持細線', () => {
+  const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const rule = styles.match(/\.kpi-row \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /gap: 1px;/);
+  assert.match(rule, /background: var\(--line\);/);
+  assert.match(rule, /border: 2px solid var\(--frame\);/);
+  assert.match(rule, /box-shadow: var\(--shadow\);/);
+});
