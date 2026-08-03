@@ -70,7 +70,7 @@
 > **機械層（落地註腳，不是規則本文；規則以上方 William 原文為準）**：
 > - Claude Code 權限層已封鎖（`.claude/settings.json`，進版控）：`permissions.deny` 精確點名兩支工具全名，加上 `PreToolUse` deny hook（正則 `^mcp__.*__(create_order_instruction|delete_order_instruction)$`——只認工具名、不認連接器 UUID，連接器重連換了 UUID 照樣擋；錨定結尾所以不誤傷 `get_order_instructions` 等唯讀工具）。William 機器的 user 層 `~/.claude/settings.json` 另有同款封鎖（不在 repo）。
 > - 考題＝`test/money-boundary.test.js`：斷言本節條文與 repo 設定存在、hook 正則行為精確（含換 UUID 情境）、兩層互相涵蓋。
-> - ⚠️ 誠實劃界：這些設定只約束 **Claude Code**；Codex CLI 不讀 `.claude/`，約束 Codex 靠本節條文（AGENTS.md 是 Codex 每次開工必讀）＋審查制度。考題證明的是「條文與設定沒被靜靜退掉」，證明不了任何 AI 執行期必然守規。
+> - ⚠️ 誠實劃界：這些設定只約束 **Claude Code**；Codex CLI 不讀 `.claude/`，約束 Codex 靠本節條文（AGENTS.md 是 Codex 每次開工必讀）＋審查制度。考題證明的是「條文與設定沒被靜靜退掉」，證明不了任何 AI 執行期必然守規。另外正則機械層**只涵蓋這兩個工具名**——`place_order`／`submit_order`／`transfer_funds` 之類未來同族錢類工具**不在正則內**（Codex #392 r1 實測七個同族假想名全不匹配）；那一段靠規則 1 的語意（「任何現在或未來…的工具」）＋規則 4 的通報義務接手（發現新錢類工具＝先停手通報，由 William 決定是否擴充機械層）。列舉未來工具名的清單永遠列不完，這是設計不是疏漏。
 
 ## 鐵則（違反會壞事）
 
