@@ -129,12 +129,20 @@ test('森林總覽文案與小森森狀態：月份白話、情緒只跟提醒�
   assert.equal(dashboardGuideState([{ level: 'danger' }, { level: 'warn' }]).mood, 'negative');
 });
 
-test('森林總覽接線：月份以後端現金流月份為單一來源，文案不冒充上月底', () => {
+test('理財中心總覽接線：月份以後端現金流月份為單一來源，文字舞台不被森林圖搶走', () => {
   const source = readFileSync(new URL('../public/modules/dashboard.js', import.meta.url), 'utf8');
+  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
   assert.match(source, /String\(cf\.month\)/);
   assert.doesNotMatch(source, /上月底/);
   assert.doesNotMatch(source, /src="\/assets\//, 'HOSTED 掛在 /finance/，森林素材不可指向網站根目錄');
-  assert.match(source, /src="assets\/forest-return-positive\.webp"/);
+  assert.doesNotMatch(source, /src="assets\/forest-return-positive\.webp"/);
+  assert.match(source, /id="forestDashboardMessage">看清資產全貌，再決定今天要處理什麼。/);
+  assert.match(source, /aria-live="polite"/);
+  assert.match(shell, /<div class="brand-title">理財中心<\/div>/);
+  assert.match(shell, /<div class="brand-subtitle">榮祥森<\/div>/);
+  assert.match(styles, /\.forest-scene-summary > div \+ div \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(styles, /font-size: 15\.5px; font-weight: 600;/);
   assert.match(source, /近 12 個月尚無銀行收支紀錄/);
   assert.match(source, /近 12 個月尚無淨資產快照/);
 });

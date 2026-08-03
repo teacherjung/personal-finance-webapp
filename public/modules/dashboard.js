@@ -287,13 +287,13 @@ export async function renderDashboard() {
 
   view().innerHTML = `
     <section class="forest-overview" aria-labelledby="forestDashboardTitle">
-      <div class="forest-scene">
-        <img src="assets/forest-return-positive.webp" alt="" aria-hidden="true">
-        <div class="forest-scene-title">
-          <span>Rongxiangsen Finance</span>
-          <h1 id="forestDashboardTitle">森林總覽</h1>
-          <p>看清資產全貌，再決定今天要處理什麼。</p>
-        </div>
+      <div class="forest-message-stage">
+        <span class="forest-message-kicker">理財中心</span>
+        <h1 id="forestDashboardTitle" aria-live="polite" aria-atomic="true">
+          <span class="forest-quote-mark" aria-hidden="true">“</span>
+          <span id="forestDashboardMessage">看清資產全貌，再決定今天要處理什麼。</span>
+          <span class="forest-quote-mark" aria-hidden="true">”</span>
+        </h1>
       </div>
       <div class="forest-scene-summary">
         <div class="forest-networth">
