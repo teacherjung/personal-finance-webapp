@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { problemsOf, fieldValue, canonicalRole, staleBaseProblems, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
@@ -246,16 +246,104 @@ test('角色正規化｜看不出來就回 null，不猜', () => {
 
 // ── 本檔不可以重述合併步驟（重述的摘要會落後）─────────────────
 
-test('AGENTS.md 的代合併段落要點名三道守門，且不重述步驟（Codex #379 r1 High②）', () => {
+/**
+ * 合併程序**實際用到的機械閘**，從 `CODEX-REVIEW.md` 的合併步驟區塊反查。
+ *
+ * ⚠️ **不要在這裡手寫名單**（Codex #385 r9 抓的）：原本寫死三個名字，
+ * 於是 #385 加了第四道閘（`check-review-verdicts.js`）之後，AGENTS.md 兩處
+ * 仍叫讀者「只記住三道守門」，而**考題把舊名單當契約，44 題全綠也看不見**。
+ * 這正是本節在修的那個病，我在修它的同一支 PR 裡又犯一次。
+ * ⇒ 真相只有一個地方：合併步驟本身。它提到幾道，AGENTS 的摘要就要點名幾道。
+ */
+async function selfDeclaredGates() {
+  const files = readdirSync(join(ROOT, 'scripts'))
+    .filter((f) => f.startsWith('check-') && f.endsWith('.js'));
+  const gates = [];
+  for (const f of files) {
+    const mod = await import(pathToFileURL(join(ROOT, 'scripts', f)).href);
+    if (!mod.MERGE_GATE) continue;
+    const g = mod.MERGE_GATE;
+    // ⚠️ 形狀要驗（Codex #385 r11）：`MERGE_GATE = true` 原本也能通過，
+    //    那等於「自報」這件事本身沒有內容。
+    assert.equal(typeof g, 'object', `scripts/${f} 的 MERGE_GATE 不是物件（要 { name, why }）`);
+    for (const k of ['name', 'why']) {
+      assert.ok(typeof g[k] === 'string' && g[k].trim(),
+        `scripts/${f} 的 MERGE_GATE.${k} 要是非空字串——自報沒有內容就不算自報`);
+    }
+    gates.push({ file: `scripts/${f}`, ...g });
+  }
+  return gates;
+}
+
+/**
+ * 合併步驟區塊裡**實際被執行**的閘。
+ *
+ * ⚠️ **只認 bash fence 裡逐字相符的指令行**（Codex #385 r12 High①）：
+ * 原本用子字串比對，於是 `# node scripts/check-x.js <N>`（整行註解掉）也算「有跑」——
+ * 突變後 75/75 仍全綠。`echo node …`、`false && node …` 同型。
+ * 反方向也漏：`node ./scripts/x.js <N>`、`env node …`、`<PR 編號>` 都是合法寫法卻抓不到，
+ * 新閘若採其中一種、又沒自報，雙向集合仍可能「相等」。
+ * ⇒ 判準改成：**只在區塊內的 bash fence 裡，逐行 trim 後全等 `node <path> <N>`**。
+ * 註解、前綴、非標準拼法一律不算——要進程序就寫成標準那一行。
+ */
+function gatesRunInMergeSteps() {
+  const whole = read('CODEX-REVIEW.md').replace(/<!--[\s\S]*?-->/g, '');
+  const start = whole.indexOf('合併也由 Codex 代執行');
+  assert.ok(start > 0, 'CODEX-REVIEW.md 找不到合併步驟區塊');
+  const stop = whole.indexOf('\n---', start);
+  // ⚠️ 找不到結束錨點就**直接失敗**，不要掃到檔尾（fail-closed，Codex r12）
+  assert.ok(stop > start, '合併步驟區塊找不到結束錨點 `\n---`——不要退而掃到檔尾，那不是 fail-closed');
+  // ⚠️ 整段六步驟寫在 blockquote 裡，fence 前面有 `> ` ⇒ 先剝引用前綴再抽 fence
+  const block = whole.slice(start, stop).split('\n').map((l) => l.replace(/^\s*>[ \t]?/, '')).join('\n');
+  // ⚠️ fence 要**錨定整行**、info string **只准 `bash`**（Codex #385 r13 High）：
+  //    原本的 /```[a-z]*\n…```/ 接受任何 info string，而且沒錨定行首——
+  //    正文裡寫一句「這不是 fence：```bash」就會被當成指令區塊採計，34/34 全綠。
+  const FENCE = /^ {0,3}```bash[ \t]*$\n([\s\S]*?)^ {0,3}```[ \t]*$/gm;
+  const fenced = [...block.matchAll(FENCE)].map((f) => f[1]).join('\n');
+  const gates = [];
+  for (const line of fenced.split('\n')) {
+    const m2 = /^node (scripts\/[\w-]+\.js) <N>$/.exec(line.trim());
+    if (m2) gates.push(m2[1]);
+  }
+  return [...new Set(gates)];
+}
+
+// ## ⚠️ 誠實劃界：這份註冊表只管**盤點**，不管閘**有沒有用**
+//
+// 它保證的是「有幾道閘」這件事在腳本、合併步驟、AGENTS 摘要三邊一致。
+// 它**證明不了**某一道閘真的會擋——一支自報、文件同步、但實際永遠 `return 0` 的假閘照樣通過這題。
+// 閘的行為要靠各自的端到端考題（`merge-gate.test.js`／`review-verdicts-cli.test.js` 的假 `gh` 出口題）。
+// 這一點是 Codex #385 r11 要求寫明的，因為「有註冊表」很容易被誤讀成「閘都有效」。
+
+test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS 的兩處摘要裡（#379 r1／#385 r9・r10・r11）', async () => {
+  // ⚠️ **雙向集合相等**（Codex #385 r11）：只驗「自報者 → 步驟」的話，
+  //    複製一支真的閘、拿掉 `MERGE_GATE`、把指令加進步驟、文件完全不更新 ⇒ 34/34 全綠。
+  //    （原本還有一條 `gates.length >= 3` 的地板：加進第四支之後，
+  //      拿掉既有某支的標記照樣過——**會隨著新增而自己失效的下限，不是判準**。）
+  const gates = await selfDeclaredGates();
+  const declared = gates.map((g) => g.file).sort();
+  const run = gatesRunInMergeSteps().sort();
+  assert.deepEqual(declared, run,
+    '「自報是合併閘的腳本」與「合併步驟裡實際被執行的閘」對不起來。\n'
+    + `  自報：${declared.join('、') || '（無）'}\n`
+    + `  步驟裡實際跑：${run.join('、') || '（無）'}\n`
+    + '⚠️ 兩個方向都要擋：自報卻沒人跑＝「有腳本」會讓人以為守住了；\n'
+    + '   有人跑卻沒自報＝沒有人數得到它，文件漂了也不會紅。');
+  const names = gates.map((g) => g.file.replace('scripts/', ''));
   const agents = read('AGENTS.md');
-  const i = agents.indexOf('不論誰執行，一律走');
-  assert.ok(i > 0, 'AGENTS.md 找不到代合併的指標段落');
-  const block = agents.slice(i, i + 700);
-  for (const must of ['check-pr-collab-fields.js', 'check-pr-merge-gate.js', 'Reviewed-By', 'Merged-By']) {
-    assert.ok(block.includes(must),
-      `AGENTS.md 的代合併段落沒有點名「${must}」。\n`
-      + '這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——'
-      + '那正是這一節在修的病），但**三道守門的名字必須在**，否則指標等於沒有內容。');
+    // ⚠️ 錨點**不可以含數字**（Codex #385 r12 Medium）：原本寫死「但四道不可跳過的守門」，
+  //    於是新增第五道之後，文件仍寫「四道」照樣全綠——**數字本身就是會漂的東西**。
+  for (const anchor of ['不論誰執行，一律走', '不可跳過的守門要在這裡點名得出來']) {
+    const i = agents.indexOf(anchor);
+    assert.ok(i > 0, `AGENTS.md 找不到指標段落：「${anchor}」`);
+    const block = agents.slice(i, i + 900);
+    for (const must of [...names, 'Reviewed-By', 'Merged-By']) {
+      assert.ok(block.includes(must),
+        `AGENTS.md 的「${anchor}」段落沒有點名「${must}」。\n`
+        + '⚠️ 這一段刻意不重述步驟（重述的摘要會落後，讀者照 AGENTS 執行就剛好跳過新加的關卡——\n'
+        + '   那正是這一節在修的病），但**每一道守門的名字必須在**，否則指標等於沒有內容。\n'
+        + `   目前自報的閘：${names.join('、')}`);
+    }
   }
 });
 
