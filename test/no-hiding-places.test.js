@@ -14,16 +14,24 @@
  * 改成把**准許的豁免逐條寫死在下面**，任何新增／改動一律轉紅，改的人被迫回答一次
  * 「這是工具／別人產生的東西，還是我自己寫的死程式碼？」——後者的答案永遠是刪掉。
  *
+ * ⚠️ **兩邊的讀法不一樣，因為兩邊的檔案性質不一樣**：
+ *   - `.gitignore` 是純文字 ⇒ 讀文字（去掉註解與空行）。
+ *   - `eslint.config.js` 是 **JavaScript** ⇒ **import 進來讀真正的值，不解析文字**。
+ *     這是 Codex #387 r5 逼出來的：上一版用正則抽 `'…'`／`"…"`，把樣式寫成
+ *     **反引號模板字串**就整個繞過去。看文字就得列舉寫法，看結果就不必。
+ *
  * ⚠️ **這道閘抓不到什麼（誠實劃界）**：
  *   - 它只看這兩個檔案。死程式碼**沒有**被忽略、大方躺在 `lib/` 裡，這道閘看不見
  *     （那是人的判斷，AGENTS.md 的規則管，本檔不假裝能機械判斷）。
  *   - 它不判斷豁免「合不合理」，只判斷**有沒有人偷偷改**。理由要人寫在下面的註解裡。
  *   - `.gitignore` 只比對 repo 根目錄這一份；子目錄若另有 `.gitignore`，本檔看不到。
+ *   - `.git/info/exclude`、`core.excludesFile` 這種**不在版控裡**的忽略機制看不到，
+ *     也不打算看——repo 的考題只能對 repo 裡的東西作保證（Codex #387 r5 同意這樣劃界）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,20 +63,23 @@ const ALLOWED_GITIGNORE = [
 ];
 
 /**
- * ESLint 的 `ignores` 有**兩種意思**，本考題按原始碼順序逐組宣告：
+ * ESLint 的 `ignores` 有**兩種意思**，本考題按設定檔順序逐組宣告：
  *   ①「整組只有 ignores」＝**全域**不糾察，那些檔案 ESLint 完全不看（最危險的藏身處）。
  *   ②「跟 files 同一組」＝只是**那一組規則**不適用，檔案本身照樣被糾察（危險度低，但仍是例外）。
+ * 兩者的差別是 ESLint 自己定的（「只有 ignores、沒有別的鍵」才是全域），所以 `全域` 這欄
+ * 也要宣告——把第二組偷偷改成全域，也是一種開藏身處。
+ *
  * ⚠️ 我第一版只讀第一組、還在訊息裡叫人「把豁免收攏成一組」——那是錯的建議：
  *    兩種意思不能合併，而漏讀第二組就是個看不見的洞（本考題第一次跑就抓到自己這個毛病）。
  */
 const ALLOWED_ESLINT_IGNORES = [
-  { 用途: '全域不糾察（ESLint 完全不看這些檔案）',
+  { 用途: '全域不糾察（ESLint 完全不看這些檔案）', 全域: true,
     patterns: [
       'node_modules/**',      // 別人的程式碼
       'public/vendor/**',     // 別人的程式碼
       'data/**',              // 資料檔，不是程式碼
     ] },
-  { 用途: 'xlsx 引入限制的例外（檔案照樣被糾察，只是這條規則不適用）',
+  { 用途: 'xlsx 引入限制的例外（檔案照樣被糾察，只是這條規則不適用）', 全域: false,
     patterns: [
       'lib/statement.js',     // 唯一准許讀 xlsx 的地方（隔離子行程入口）
       'test/**',              // 考題本來就要引入被限制的東西來驗證
@@ -94,24 +105,33 @@ test('.gitignore 的忽略樣式跟宣告清單一字不差', () => {
     + '   如果答案是前者，把新的一行加進 ALLOWED_GITIGNORE 並在後面註明理由。');
 });
 
-test('eslint.config.js 的每一組豁免都跟宣告清單一字不差', () => {
-  const src = readFileSync(join(ROOT, 'eslint.config.js'), 'utf8');
+test('eslint.config.js 的每一組豁免都跟宣告清單一字不差', async () => {
+  // ⚠️ **這裡刻意不解析原始碼文字**（Codex #387 r5 Medium）：
+  //    上一版用正則抽 `'…'` 與 `"…"` 兩種字串，於是把 `retired/**` 寫成
+  //    **反引號模板字串**就整個繞過去，考題照樣 2/2 全綠——
+  //    **又一次列舉：我列了兩種寫字串的方式，而 JS 有三種**（還不算變數、
+  //    字串相接、`...` 展開、`.concat()`…）。
+  //    正解是**不看文字、看結果**：把設定檔 import 進來，讀 ESLint 真正拿到的值。
+  //    那些寫法全部一次收工，因為它們最後都變成同一個陣列。
+  const config = (await import(pathToFileURL(join(ROOT, 'eslint.config.js')).href)).default;
 
-  // 讀**全部**的 `ignores: [...]`，按原始碼順序。少讀一組＝那一組變成看不見的洞。
-  const groups = [...src.matchAll(/\bignores\s*:\s*\[([\s\S]*?)\]/g)]
-    .map((m) => [...m[1].matchAll(/'([^']*)'|"([^"]*)"/g)].map((x) => x[1] ?? x[2]));
+  assert.ok(Array.isArray(config),
+    'eslint.config.js 的 default export 不是陣列——格式變了，這道閘會靜靜失效，先修考題。');
 
-  // 樣式字串裡若出現 `]`（例如字元類），上面的非貪婪比對會提早收尾 ⇒ 讀到半組。
-  // 這種情況要當場停下來修考題，不可以讓它靜靜通過。
-  assert.ok(!/\bignores\s*:\s*\[[^\]]*\[/.test(src),
-    'eslint.config.js 的 ignores 陣列裡出現巢狀 `[`——本考題的比對會讀到半組而靜靜失效，先修考題。');
+  // ESLint 的規矩：**整組只有 `ignores` 一個鍵**才是「全域忽略」；跟 `files` 等鍵放在一起
+  // 就只是那一組規則的例外。把第二組偷偷改成全域也是一種開藏身處，所以這欄一起比對。
+  const groups = config
+    .filter((c) => c && Array.isArray(c.ignores))
+    .map((c) => ({ 全域: Object.keys(c).length === 1, patterns: c.ignores }));
+
   assert.ok(groups.length > 0,
-    'eslint.config.js 找不到任何 `ignores: [...]`——格式變了，這道閘會靜靜失效，先修考題。');
+    'eslint.config.js 裡找不到任何 `ignores`——格式變了，這道閘會靜靜失效，先修考題。');
 
-  assert.deepEqual(groups, ALLOWED_ESLINT_IGNORES.map((g) => g.patterns),
-    'ESLint 的豁免清單跟本考題宣告的不一致（含組數與順序）。\n'
+  assert.deepEqual(groups, ALLOWED_ESLINT_IGNORES.map((g) => ({ 全域: g.全域, patterns: g.patterns })),
+    'ESLint 的豁免清單跟本考題宣告的不一致（含組數、順序、是不是全域）。\n'
     + '本考題宣告的是：\n'
-    + ALLOWED_ESLINT_IGNORES.map((g, i) => `  ${i + 1}. ${g.用途}：${g.patterns.join('、')}`).join('\n')
+    + ALLOWED_ESLINT_IGNORES.map((g, i) =>
+      `  ${i + 1}. ${g.用途}${g.全域 ? '【全域】' : '【只影響該組規則】'}：${g.patterns.join('、')}`).join('\n')
     + '\n⛔ **不可以對「退役／封存資料夾」開豁免**：糾察照不到那裡，\n'
     + '   「藏起來」在機制上就變得比「刪掉」容易（2026-08-03 加過 `retired/**`，Codex #387 r4 拆掉）。\n'
     + '   合法的新豁免（例如又一批第三方程式碼）請加進 ALLOWED_ESLINT_IGNORES 並註明理由與用途。');
