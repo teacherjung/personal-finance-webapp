@@ -55,9 +55,13 @@ function oldNameContexts() {
   for (const l of out) {
     const i1 = l.indexOf(':');
     const text = l.slice(l.indexOf(':', i1 + 1) + 1);
-    const at = text.indexOf(term);
-    const win = text.slice(Math.max(0, at - 30), at + 42).trim().split(term).join('⟨舊名⟩');
-    (found[l.slice(0, i1)] ||= []).push(win);
+    // ⚠️ **同一行的每一個命中都要算**（Codex #387 r3 Medium①）：`git grep` 每行只輸出一次，
+    //    而上一版只取 `indexOf` 的第一個 ⇒ 在合法歷史說明後面隔 60 字再加一條死連結，
+    //    兩次命中產生**完全相同的窗格** ⇒ 考題照樣綠。
+    for (let at = text.indexOf(term); at !== -1; at = text.indexOf(term, at + term.length)) {
+      const win = text.slice(Math.max(0, at - 30), at + 42).trim().split(term).join('⟨舊名⟩');
+      (found[l.slice(0, i1)] ||= []).push(win);
+    }
   }
   return found;
 }
@@ -166,11 +170,11 @@ test('⭐ 改名之後不可以有死連結（比對命中處的上下文，不�
 });
 
 /**
- * **既有的中文路徑**（2026-08-03 起凍結，只出不進）。
+ * **既有的非 ASCII 路徑**（2026-08-03 起凍結，只出不進）。
  * ⚠️ 逐一列出，不是「`docs/` 底下放行」——那樣新增 `docs/新規格.md` 也會過（Codex #387 r2 High②）。
  * 要動它們得連 AGENTS 的 36 條索引連結一起改，那是獨立的一支 PR。
  */
-const LEGACY_CJK_PATHS = [
+const LEGACY_NON_ASCII_PATHS = [
   'docs/C6-部署與對抗審查-操作手冊.md',
   'docs/GitHub分支保護-設定與驗證.md',
   'docs/archive/PROJECT-完工紀錄.md',
@@ -200,13 +204,17 @@ const LEGACY_CJK_PATHS = [
 test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有的 24 個凍結，只出不進', () => {
   // ⚠️ 上一版只掃根目錄與 `test/`，於是新增 `docs/新的規格.md`、`lib/中文.js`、
   //    `scripts/中文.sh` 全部照樣綠（Codex #387 r2 High②）。**掃全部 tracked path。**
-  const cjk = /[\u4e00-\u9fff]/u;
-  const now = trackedFiles().filter((f) => cjk.test(f)).sort();
-  assert.deepEqual(now, LEGACY_CJK_PATHS,
+  // ⚠️ **擋全部非 ASCII，不是只擋基本漢字**（Codex #387 r3 Medium②）：
+  //    上一版用 `[\u4e00-\u9fff]`，於是 `かな.md`、`한국어.js`、CJK 擴充字、emoji、
+  //    `résumé.md` 全部照樣過。契約是「檔名一律用英文」，判準就該是「只准 ASCII」——
+  //    **又一次列舉：我列了一種文字，而檔名可以用任何文字。**
+  const nonAscii = /[^\x20-\x7e]/u;
+  const now = trackedFiles().filter((f) => nonAscii.test(f)).sort();
+  assert.deepEqual(now, LEGACY_NON_ASCII_PATHS,
     '中文檔名的清單變了。\n'
     + '⚠️ **新增的檔名一律用英文**（中文檔名在 shell、git、URL 裡都要跳脫，\n'
     + '   `git status` 會印成 `\\346\\234\\210…` 那種八進位，出事時很難對照）。\n'
-    + '   如果是**刪掉**了既有的中文檔，請把它從 LEGACY_CJK_PATHS 一起移除。');
+    + '   如果是**刪掉**了既有的中文檔，請把它從 LEGACY_NON_ASCII_PATHS 一起移除。');
 });
 
 test('檔案真的存在（宣告的每一份都要在）', () => {
