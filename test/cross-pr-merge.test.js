@@ -71,6 +71,19 @@ test('⭐ 裁決｜任一支合起來會壞 → 1（這是它存在的全部理�
   assert.match(v.message, /各自的 CI 都是綠的/, '訊息沒有解釋「為什麼兩支 CI 綠還是會壞」——那正是最難懂的地方');
 });
 
+test('⭐ 裁決｜**兩種壞法要分開講**（第一次實跑就發現我原本混為一談了）', () => {
+  // 文字衝突：GitHub 自己就看得到（合併鍵會變灰）——這道閘的價值只是「提早告訴你」。
+  // 合起來測試紅：GitHub **不會**顯示——那才是它存在的理由。
+  // 把兩種都說成「GitHub 不會顯示衝突」是不準確的，而且會讓人不信任後面那句。
+  const textOnly = verdict([{ number: 387, ok: false, why: '文字衝突，git merge 就過不去' }]);
+  assert.match(textOnly.message, /GitHub 自己就看得到/);
+  assert.doesNotMatch(textOnly.message, /GitHub \*\*不會\*\* 顯示/u);
+
+  const testRed = verdict([{ number: 385, ok: false, why: '合起來之後「考試」紅了：契約標題不是允許的寫法' }]);
+  assert.match(testRed.message, /GitHub \*\*不會\*\*顯示/);
+  assert.match(testRed.message, /護欄擋掉了另一支的內容/);
+});
+
 test('自報｜這支要自報是合併閘，否則註冊表數不到它', () => {
   assert.equal(typeof MERGE_GATE, 'object');
   for (const k of ['name', 'why']) {
