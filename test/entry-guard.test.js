@@ -15,9 +15,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -94,31 +94,84 @@ for (const rel of GATES_WITH_USAGE) {
 }
 
 /**
- * 關門：**只有 `lib/is-main.js` 可以碰 `process.argv[1]`。**
- * 不列「哪些寫法是錯的」（`resolve()`／裸比對／`|| ''`／少一邊 realpath… 列不完），
- * 而是宣告誰有資格做這個判斷。
+ * 關門：**「這支是不是被直接執行」的判斷只准有一份。**
+ *
+ * ⚠️ 上一版用 `.includes('argv[1]')` 掃字串，Codex #388 r4 一行 `process.argv.at(1)`
+ *    就繞過去了（他實際建檔示範，考題照樣 7/7 全綠）。
+ *    **又一次列舉：我列了一種拼法，而同一件事有很多種寫法**
+ *    （`.at(1)`／`process["argv"][1]`／解構／`slice(1)[0]`／動態索引…）。
+ *
+ * 正解是**堵語法不是堵字串**，而且交給已經在跑的 ESLint（跟 xlsx 收斂點護欄同一個做法），
+ * 選擇器寫在 `eslint.config.js` 的 `ENTRY_GUARD_SELECTORS`。
+ * 其中**最後一條才是真正的門**：不管用什麼花招取到進入點路徑，
+ * 手寫的守衛終究得拿它去跟 `import.meta.url` 比對——那是單一、封閉的形狀。
+ *
+ * ⚠️ 下面這一題**實際跑 ESLint**，不是檢查「設定檔裡有沒有寫那幾行」。
+ *    差別是真的：我第一版把選擇器放成獨立一組，`npm run lint` 全綠，
+ *    `--print-config` 一看才發現 **flat config 的同名規則是「後面整組覆蓋前面」不是合併**，
+ *    我的選擇器被 xlsx 那組整個蓋掉、從來沒跑過。
+ *    **「設定有寫」不等於「規則有跑」——所以這題要看它真的開火。**
  */
-const ALLOWED_ARGV1 = [
-  'lib/is-main.js',            // 唯一實作
-  'test/entry-guard.test.js',  // 本考題（上面的說明文字提到它）
-  // ⚠️ 這支的 argv[1] 是**別的意思**：它組一段給子行程跑的 `node -e` 程式，
-  //    在 `-e` 模式下 argv[1] 是使用者傳的第一個參數，不是進入點路徑。
-  'test/xlsx-isolate.test.js',
+const BYPASSES = [
+  { 名稱: '直球 process.argv[1]',            code: 'const a = process.argv[1]; console.log(a);' },
+  { 名稱: '★ .at(1)（Codex r4 示範的繞法）',  code: 'const a = process.argv.at(1); console.log(a);' },
+  { 名稱: '算出來的 process["argv"]',        code: 'const a = process["argv"][1]; console.log(a);' },
+  { 名稱: '解構 const { argv } = process',    code: 'const { argv } = process; console.log(argv[1]);' },
+  { 名稱: 'slice(1)[0]',                      code: 'const a = process.argv.slice(1)[0]; console.log(a);' },
+  { 名稱: '動態索引 process.argv[i]',         code: 'const i = 1; console.log(process.argv[i]);' },
+  { 名稱: '★ 拿 import.meta 去比對（真正的門）',
+    code: 'import { pathToFileURL } from "node:url";\n'
+      + 'if (import.meta.url === pathToFileURL("x").href) console.log(1);' },
 ];
 
-test('只有 lib/is-main.js 可以做進入點判斷（不准任何人再寫第二份）', () => {
-  const git = (...args) => execFileSync('git', ['-c', 'core.quotepath=false', ...args],
-    { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
-  // ⚠️ **要含未追蹤但沒被忽略的檔案**：只跑 `ls-files` 的話，新寫的檔案自己捏一份守衛，
-  //    在 commit 之前這道門完全看不見它——**一道看不見新東西的門，等於沒關**。
-  const files = [...new Set([...git('ls-files', '*.js'),
-    ...git('ls-files', '--others', '--exclude-standard', '*.js')])];
-  const hits = files.filter((f) => readFileSync(join(ROOT, f), 'utf8').includes('argv[1]')).sort();
-  assert.deepEqual(hits, [...ALLOWED_ARGV1].sort(),
-    '有檔案自己碰了 `process.argv[1]`。\n'
-    + '⛔ 「這支是不是被直接執行」的判斷**只准有一份**（`lib/is-main.js`）——\n'
-    + '   本專案原本有六份、六種寫法，其中五份會被 symlink 騙，\n'
-    + '   而騙到的後果是 `main()` 靜靜不跑、退出碼 0＝**閘回報通過**。\n'
-    + '   請改成 `import { isMainModule } from ".../lib/is-main.js"`。\n'
-    + '   真的有別的用途（例如子行程的 `node -e` 參數），加進 ALLOWED_ARGV1 並註明理由。');
-});
+// 合法寫法：不可以被誤擋（誤擋比漏抓更貴——它會逼人把護欄關掉）
+const LEGIT = [
+  { 名稱: '使用者參數 process.argv.slice(2)', code: 'console.log(process.argv.slice(2));' },
+  { 名稱: '第一個使用者參數 process.argv[2]', code: 'console.log(process.argv[2]);' },
+  { 名稱: '算路徑用的 import.meta.url',
+    code: 'import { fileURLToPath } from "node:url";\nconsole.log(fileURLToPath(import.meta.url));' },
+  { 名稱: '正確用法 isMainModule(import.meta.url)',
+    code: 'import { isMainModule } from "../lib/is-main.js";\nif (isMainModule(import.meta.url)) console.log(1);' },
+];
+
+/**
+ * 用真正的 ESLint 跑一段程式碼，回傳**進入點護欄**報的錯。
+ * ⚠️ 「哪些錯算進入點護欄報的」是拿設定檔匯出的清單**逐字比對**，不是用關鍵字猜——
+ *    上一版用 `/進入點|process\.argv|import\.meta/` 猜，**猜漏了兩條**
+ *    （「不要用算出來的方式存取 process 的欄位」「不要把 process 解構」都不含那些字），
+ *    於是規則明明開火了，考題卻判它沒開火。**又一次列舉。**
+ */
+async function entryGuardErrors(code) {
+  const [{ ESLint }, cfg] = await Promise.all([
+    import('eslint'), import(pathToFileURL(join(ROOT, 'eslint.config.js')).href)]);
+  const ours = new Set(cfg.ENTRY_GUARD_SELECTORS.map((r) => r.message));
+  assert.ok(ours.size === cfg.ENTRY_GUARD_SELECTORS.length,
+    'ENTRY_GUARD_SELECTORS 有兩條訊息一字不差 ⇒ 比對會混在一起，請把訊息寫得可分辨。');
+  const results = await new ESLint({ cwd: ROOT }).lintText(code,
+    { filePath: join(ROOT, 'scripts', 'entry-guard-probe.js') });
+  return (results[0]?.messages || [])
+    .filter((m) => m.ruleId === 'no-restricted-syntax' && ours.has(m.message));
+}
+
+for (const { 名稱, code } of BYPASSES) {
+  test(`ESLint 擋得住：${名稱}`, async () => {
+    const errs = await entryGuardErrors(code);
+    assert.ok(errs.length > 0,
+      `這段程式碼沒有被進入點護欄擋下來：\n${code}\n\n`
+      + '⛔ 「這支是不是被直接執行」的判斷只准有一份（lib/is-main.js）——\n'
+      + '   本專案原本有六份、六種寫法，其中五份會被 symlink 騙，\n'
+      + '   而騙到的後果是 main() 靜靜不跑、退出碼 0＝**閘回報通過**。\n'
+      + '   選擇器在 eslint.config.js 的 ENTRY_GUARD_SELECTORS。\n'
+      + '   ⚠️ 如果你剛加了一組新的 no-restricted-syntax：flat config 是**後面整組覆蓋前面**，\n'
+      + '      不是合併——請接進同一個陣列，不要另開一組。');
+  });
+}
+
+for (const { 名稱, code } of LEGIT) {
+  test(`ESLint 不會誤擋：${名稱}`, async () => {
+    const errs = await entryGuardErrors(code);
+    assert.equal(errs.length, 0,
+      `合法寫法被誤擋了：\n${code}\n實得：${errs.map((e) => e.message).join(' / ')}\n`
+      + '⚠️ 誤擋比漏抓更貴——它會逼人把護欄整個關掉。');
+  });
+}
