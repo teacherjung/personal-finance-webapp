@@ -12,13 +12,15 @@
 
 ### 最新單季逐列期間
 
-各指標的最新合法單季本來就可能不同期。payload 必須以 `periods.latestQuarterBasis:'per-metric'` 明示逐列判讀；不同截止日並存時保留所有合法數值並發 `QUARTER_PERIOD_MISMATCH`，F5 每列直接顯示自己的完整期間，不把整欄假裝成同一季，也不可用全域期間把合法的 Q1 現金流列清空。
+**改這裡**：SEC 最新單季逐列期間（`periods.latestQuarterBasis:'per-metric'`）
+
+**記得同步這裡**：各指標的最新合法單季本來就可能不同期。payload 必須以 `periods.latestQuarterBasis:'per-metric'` 明示逐列判讀；不同截止日並存時保留所有合法數值並發 `QUARTER_PERIOD_MISMATCH`，F5 每列直接顯示自己的完整期間，不把整欄假裝成同一季，也不可用全域期間把合法的 Q1 現金流列清空。
 
 ## SEC currentDebt 流動債務
 
 **改這裡**：SEC `currentDebt`（`lib/stock-fundamentals.js`）
 
-**記得同步這裡**：**逐期間總額優先**：先採 `DebtCurrent`；缺總額才看 `ShortTermBorrowings`＋一年內長債。兩者同時存在時，先用該份申報的 XBRL filer terse／verbose label 判斷 `ShortTermBorrowings` 是「已含一年內長債」或「純短債」；label 抓不到時，只有同 accession／unit／期間／form／filed、金額非負，且 `ShortTermBorrowings < 一年內長債`（數值關係已排除父項包含子項）才可相加，否則保守不加並警告。**任一期間只命中一種債務時原 fact 原樣保留**，不可因另一組缺席而丟期數。候選 tag 的單一真相＝`SEC_METRIC_CANDIDATES.currentDebt.currentDebtSources`，parser／label accession 掃描都從它取，production 不得另抄群組；相加列要保留 row-level `taxonomy:'derived'`／`tag`／`formula`／`inputs`／申報來源，並通過 `sanitizeDbForWrite`。改動必跑 Dover（父子重疊）、Amazon（兩種分開）、Microsoft（單一來源）三型考題與真 SEC 申報回歸；`noncurrentDebt` 不在此同步點範圍。
+**記得同步這裡**：**逐期間總額優先**：先採 `DebtCurrent`；缺總額才看 `ShortTermBorrowings`＋一年內長債。兩者同時存在時，先用該份申報的 XBRL filer terse／verbose label 判斷 `ShortTermBorrowings` 是「已含一年內長債」或「純短債」；label 抓不到時，只有同 accession／unit／期間／form／filed、金額非負，且 `ShortTermBorrowings` 小於一年內長債（數值關係已排除父項包含子項）才可相加，否則保守不加並警告。**任一期間只命中一種債務時原 fact 原樣保留**，不可因另一組缺席而丟期數。候選 tag 的單一真相＝`SEC_METRIC_CANDIDATES.currentDebt.currentDebtSources`，parser／label accession 掃描都從它取，production 不得另抄群組；相加列要保留 row-level `taxonomy:'derived'`／`tag`／`formula`／`inputs`／申報來源，並通過 `sanitizeDbForWrite`。改動必跑 Dover（父子重疊）、Amazon（兩種分開）、Microsoft（單一來源）三型考題與真 SEC 申報回歸；`noncurrentDebt` 不在此同步點範圍。
 
 ## SEC 全站佇列護欄
 
@@ -67,29 +69,11 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
 考題：`test/heavy-admission.test.js`＋`test/stock-fundamentals-api.test.js` 的「重型名額」四題。
 
-## COMPOSITION 穿透表
-
-**改這裡**：`public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表
-
-**記得同步這裡**：`lib/derive.js` 的同名複本
-
-## fxExposure 台幣掛牌美債 ETF 清單
-
-**改這裡**：`portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B）
-
-**記得同步這裡**：新增同類 ETF 時要補進清單
-
 ## 新增 ETF 持股
 
 **改這裡**：新增 ETF 持股
 
 **記得同步這裡**：`portfolio-exposure.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（前端 exposure 與後端 derive 兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%）
-
-## ib-sync DEFAULT_LAYER 新增代號
-
-**改這裡**：`lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號
-
-**記得同步這裡**：兩份 `COMPOSITION` 也要有該代號（否則 IB 同步新增後區域穿透 fallback 成「其他」，國家上限提醒會偏掉）
 
 ## IB 槓桿與斷頭距離
 
