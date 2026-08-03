@@ -211,10 +211,13 @@ test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有的 24 �
   const nonAscii = /[^\x20-\x7e]/u;
   const now = trackedFiles().filter((f) => nonAscii.test(f)).sort();
   assert.deepEqual(now, LEGACY_NON_ASCII_PATHS,
-    '中文檔名的清單變了。\n'
-    + '⚠️ **新增的檔名一律用英文**（中文檔名在 shell、git、URL 裡都要跳脫，\n'
-    + '   `git status` 會印成 `\\346\\234\\210…` 那種八進位，出事時很難對照）。\n'
-    + '   如果是**刪掉**了既有的中文檔，請把它從 LEGACY_NON_ASCII_PATHS 一起移除。');
+    '非 ASCII 檔名的清單變了。\n'
+    + '⚠️ **新增的檔名一律用英文**——判準是「只准 ASCII」，中文、日文、韓文、\n'
+    + '   emoji、`résumé` 這種帶重音的拉丁字母，一律算違規（訊息以前只說「中文」，\n'
+    + '   跟實際判準不符，Codex #387 r4 抓到）。\n'
+    + '   理由：非 ASCII 檔名在 shell、git、URL 裡都要跳脫，\n'
+    + '   `git status` 會印成 `\\346\\234\\210…` 那種八進位，出事時很難對照。\n'
+    + '   如果是**刪掉**了既有的非 ASCII 檔，請把它從 LEGACY_NON_ASCII_PATHS 一起移除。');
 });
 
 test('檔案真的存在（宣告的每一份都要在）', () => {

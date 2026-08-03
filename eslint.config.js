@@ -5,9 +5,10 @@ import globals from 'globals';
 
 export default [
   { ignores: [
-    // ⚠️ 退役的程式碼不檢查（2026-08-03）：`review-loop.js` 從 `scripts/` 搬到 `retired/` 之後
-    //    ESLint 就開始掃它——**搬動檔案會改變哪些工具會看它**，那不是搬動的本意。
-    'retired/**','node_modules/**', 'public/vendor/**', 'data/**'] },   // vendor 與資料檔不糾察
+    // ⚠️ 這裡**不要**加「退役／封存資料夾」的豁免（2026-08-03 加過又拿掉）：
+    //    沒用到的程式碼的規則是**直接刪**（AGENTS.md），不是搬到一個工具都不看的角落。
+    //    豁免一加下去，糾察就照不到那裡，「藏起來」在機制上就變得比「刪掉」容易。
+    'node_modules/**', 'public/vendor/**', 'data/**'] },   // vendor 與資料檔不糾察
   js.configs.recommended,
   {
     rules: {
