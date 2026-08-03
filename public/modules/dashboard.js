@@ -286,7 +286,7 @@ export async function renderDashboard() {
   }
 
   view().innerHTML = `
-    <section class="forest-overview" aria-labelledby="forestDashboardTitle">
+    <section class="forest-overview" aria-label="理財中心總覽">
       <div class="forest-message-stage">
         <span class="forest-message-kicker">理財中心</span>
         <h1 id="forestDashboardTitle" aria-live="polite" aria-atomic="true">

@@ -138,11 +138,14 @@ test('理財中心總覽接線：月份以後端現金流月份為單一來源�
   assert.doesNotMatch(source, /src="\/assets\//, 'HOSTED 掛在 /finance/，森林素材不可指向網站根目錄');
   assert.doesNotMatch(source, /src="assets\/forest-return-positive\.webp"/);
   assert.match(source, /id="forestDashboardMessage">看清資產全貌，再決定今天要處理什麼。/);
-  assert.match(source, /aria-live="polite"/);
+  assert.match(source, /<section class="forest-overview" aria-label="理財中心總覽">/);
+  assert.match(source, /<h1 id="forestDashboardTitle" aria-live="polite" aria-atomic="true">/);
+  assert.match(shell, /<title>榮祥森｜個人理財中心<\/title>/);
   assert.match(shell, /<div class="brand-title">理財中心<\/div>/);
   assert.match(shell, /<div class="brand-subtitle">榮祥森<\/div>/);
   assert.match(styles, /\.forest-scene-summary > div \+ div \{ border-left: 2px solid var\(--frame\); \}/);
-  assert.match(styles, /font-size: 15\.5px; font-weight: 600;/);
+  assert.match(styles, /#nav a \{[^}]*font-size: 15\.5px; font-weight: 600;[^}]*\}/);
+  assert.match(styles, /@media \(max-width: 820px\) \{[\s\S]*?#nav a \{[^}]*font-size: 12px;[^}]*\}/);
   assert.match(source, /近 12 個月尚無銀行收支紀錄/);
   assert.match(source, /近 12 個月尚無淨資產快照/);
 });
