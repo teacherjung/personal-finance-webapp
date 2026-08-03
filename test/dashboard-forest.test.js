@@ -145,7 +145,7 @@ test('理財中心總覽接線：月份以後端現金流月份為單一來源�
   assert.match(shell, /<div class="brand-subtitle">榮祥森<\/div>/);
   assert.match(styles, /\.forest-scene-summary > div \+ div \{ border-left: 2px solid var\(--frame\); \}/);
   assert.match(styles, /#nav a \{[^}]*font-size: 15\.5px; font-weight: 600;[^}]*\}/);
-  assert.match(styles, /@media \(max-width: 820px\) \{[\s\S]*?#nav a \{[^}]*font-size: 12px;[^}]*\}/);
+  assert.match(styles, /@media \(max-width: 820px\) \{[^@]*?#nav a \{[^}]*font-size: 12px;[^}]*\}/);
   assert.match(source, /近 12 個月尚無銀行收支紀錄/);
   assert.match(source, /近 12 個月尚無淨資產快照/);
 });
