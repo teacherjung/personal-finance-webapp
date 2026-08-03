@@ -40,6 +40,28 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 const trackedFiles = () => execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files'],
   { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
 
+/**
+ * 全 repo（追蹤中的文字檔）提到舊檔名的每一處，取前後 30 字當窗格。
+ *
+ * ⚠️ **搜尋詞在執行時才拼出來，窗格裡的舊名換成 `⟨舊名⟩`**：
+ * 不這樣做的話，下面那份宣告自己就含有舊名字面 ⇒ `git grep` 又找到它們 ⇒
+ * 宣告與實際永遠對不起來（**自我指涉的爆炸**，2026-08-03 實際踩到）。
+ */
+function oldNameContexts() {
+  const term = ['CODEX', 'REVIEW'].join('-');
+  const out = execFileSync('git', ['grep', '-I', '-n', term],
+    { cwd: ROOT, encoding: 'utf8', maxBuffer: 1e8 }).split('\n').filter(Boolean);
+  /** @type {Record<string, string[]>} */ const found = {};
+  for (const l of out) {
+    const i1 = l.indexOf(':');
+    const text = l.slice(l.indexOf(':', i1 + 1) + 1);
+    const at = text.indexOf(term);
+    const win = text.slice(Math.max(0, at - 30), at + 42).trim().split(term).join('⟨舊名⟩');
+    (found[l.slice(0, i1)] ||= []).push(win);
+  }
+  return found;
+}
+
 const ROLE_NAMES = ['CODEX', 'CLAUDE', 'WILLIAM'];
 
 /**
@@ -112,63 +134,79 @@ test('DOCS 必須涵蓋每一份根目錄文件（新增一份就要在這裡宣
 });
 
 /**
- * **允許提到舊檔名的地方**——每一處都要有理由（比照 #384 的 exempt：豁免必須有名有姓）。
- * ⚠️ 這是宣告，不是推導：允許「解釋改名歷史」，不允許「還指著它當現行文件」。
+ * **允許提到舊檔名的地方：逐字列出命中處前後 30 字的窗格**。
+ *
+ * ⚠️ **次數不等於位置**（Codex #387 r2 Medium）：上一版只鎖「這個檔可以出現幾次」，
+ * 於是把合法的那一次刪掉、在別處加一條**真的死連結**，總數不變 ⇒ 照樣全綠。
+ * 現在比對的是**命中處的上下文**：換了地方就對不上，多一處也對不上。
+ * ⚠️ 用窗格不用整行，是因為語料 fixture 那一行是 5KB 的 JSON——整行比對不可讀也不可維護。
  */
-const HISTORICAL_MENTIONS = {
-  // 檔案 → { 允許出現幾次, 為什麼 }
-  //
-  // ⚠️ **是「次數」不是「整檔放行」**（Codex #387 r1 High②）：
-  //    上一版把整個檔案豁免掉，於是在這兩個檔裡**再加一條真的死連結也全綠**。
-  //    豁免要窄到「剛好夠用」——多一次就紅，逼人回來說明為什麼又多一處。
-  'REVIEW-AND-MERGE.md': { times: 1, why: '檔頭要說明自己原本叫什麼、為什麼改名' },
-  'test/doc-naming.test.js': { times: 5, why: '這支考題自己要提到舊名才講得清楚' },
-  'test/fixtures/review-verdict-corpus.json': {
-    times: 1,
-    why: '25 份審查報告的**原文**，寫於改名之前——那是歷史紀錄，改掉就不是原文了',
-  },
+const HISTORICAL_CONTEXTS = {
+  'REVIEW-AND-MERGE.md': [
+    '> **這份檔案原本叫 `⟨舊名⟩.md`，2026-08-03 改名。**',
+  ],
+  'test/doc-naming.test.js': [
+    '// 合併程序寫在一份叫 `⟨舊名⟩.md` 的檔案裡，而 `AGENTS.md` 有 13 處',
+    '+ \'⚠️ 起因：合併六步驟原本寫在 `⟨舊名⟩.md`，而 AGENTS.md 有 13 處叫**任何人*',
+    '\'提到舊檔名 ⟨舊名⟩.md 的**位置**與宣告的不一致。\\n\'',
+  ],
+  'test/fixtures/review-verdict-corpus.json': [
+    'eck-review-verdicts.js:29` 與 `⟨舊名⟩.md:44` 仍寫「1＝有未回應阻擋」，但現在零正式通過、',
+  ],
 };
 
-test('⭐ 改名之後不可以有死連結（只有宣告過的地方可以提到舊名）', () => {
-  // ⚠️ 改名最常見的失敗不是改錯，是**有地方沒跟著改**——那會變成一條指不到的連結。
-  // ⚠️ 只看**追蹤中的檔案**：未追蹤檔（本機工具、暫存）不是 repo 的一部分。
-  // ⚠️ **副檔名清單要含 `.json`**（Codex #387 r1）：語料 fixture 裡的舊名原本整個繞過掃描——
-  //    「靠副檔名決定要不要看」等於讓沒列到的格式自動免疫。
-  const scanned = trackedFiles().filter((f) => /\.(md|js|json|yml|yaml)$/.test(f));
-  const problems = [];
-  for (const f of scanned) {
-    const n = (read(f).match(/CODEX-REVIEW/g) || []).length;
-    const allowed = HISTORICAL_MENTIONS[f]?.times ?? 0;
-    if (n > allowed) {
-      problems.push(`${f}：出現 ${n} 次，只允許 ${allowed} 次`
-        + (allowed ? `（理由：${HISTORICAL_MENTIONS[f].why}）` : ''));
-    }
-  }
-  assert.deepEqual(problems, [],
-    `這些檔案提到已改名的 CODEX-REVIEW.md 的次數超過宣告：\n`
-    + `${problems.map((x) => `  ・${x}`).join('\n')}\n`
+test('⭐ 改名之後不可以有死連結（比對命中處的上下文，不靠副檔名白名單）', () => {
+  // ⚠️ **不要用副檔名白名單**（Codex #387 r2 Medium）：上一版只掃 `.md/.js/.json/.yml`，
+  //    `.txt`／`.html`／`.sh`／`.cjs` 全部自動免疫。補一個 `.json` 只補了這次撞到的洞。
+  //    改用 `git grep -I`——它自己判斷哪些是文字檔，**不需要我列清單**。
+  assert.deepEqual(oldNameContexts(), HISTORICAL_CONTEXTS,
+    '提到舊檔名 CODEX-REVIEW.md 的**位置**與宣告的不一致。\n'
     + '⚠️ 改名最常見的失敗不是改錯，是**有地方沒跟著改**。\n'
-    + '   如果那一處是刻意保留的歷史說明，請調整 HISTORICAL_MENTIONS 的次數並寫理由。');
-  // ⚠️ **沒用到的豁免要當場刪掉**：留著的話，下次真的多出一處死連結時它會靜靜吸收掉。
-  for (const [f, spec] of Object.entries(HISTORICAL_MENTIONS)) {
-    const n = scanned.includes(f) ? (read(f).match(/CODEX-REVIEW/g) || []).length : 0;
-    assert.equal(n, spec.times,
-      `HISTORICAL_MENTIONS 宣告「${f}」有 ${spec.times} 次舊名，實際 ${n} 次。\n`
-      + '⚠️ 豁免要剛好夠用——多的額度會在下次真的漏改時把它吸收掉，不會有人發現。');
-  }
+    + '   如果那一處是刻意保留的歷史說明，請把新的窗格加進 HISTORICAL_CONTEXTS。');
 });
 
-test('⭐ 新增的檔名一律用英文（William 2026-08-03 定）', () => {
-  // ⚠️ **只管根目錄與 `test/`**——`docs/` 底下還有 24 個既有中文檔名（含三份領域契約），
-  //    那是另一件事，要改的話得連 AGENTS 的 36 條索引連結一起動，應該獨立成一支 PR。
-  //    這一題先把**新增的**擋住，不讓中文檔名繼續長出來。
+/**
+ * **既有的中文路徑**（2026-08-03 起凍結，只出不進）。
+ * ⚠️ 逐一列出，不是「`docs/` 底下放行」——那樣新增 `docs/新規格.md` 也會過（Codex #387 r2 High②）。
+ * 要動它們得連 AGENTS 的 36 條索引連結一起改，那是獨立的一支 PR。
+ */
+const LEGACY_CJK_PATHS = [
+  'docs/C6-部署與對抗審查-操作手冊.md',
+  'docs/GitHub分支保護-設定與驗證.md',
+  'docs/archive/PROJECT-完工紀錄.md',
+  'docs/archive/個股研究頁-P1-交接.md',
+  'docs/archive/月度回顧-施工計畫.md',
+  'docs/archive/目標追蹤-施工計畫.md',
+  'docs/archive/證券交易-設計藍圖.md',
+  'docs/archive/階段B-骨架改建-施工計畫.md',
+  'docs/contracts/前端功能.md',
+  'docs/contracts/投資與SEC.md',
+  'docs/contracts/收支記帳與匯入.md',
+  'docs/個股基本面研究-施工計畫.md',
+  'docs/個股研究頁-施工計畫.md',
+  'docs/個股研究頁-裁決與審查回覆.md',
+  'docs/功能候選清單.md',
+  'docs/多人上線-施工計畫.md',
+  'docs/安全與健壯性-待辦地圖.md',
+  'docs/帳單匯入與分類-運作說明.md',
+  'docs/教學影片/EP01-生存優先-腳本.md',
+  'docs/教學影片/製作流程與分工.md',
+  'docs/文案審稿-雲端版的九句假話.md',
+  'docs/每日洞察引擎-施工計畫.md',
+  'docs/測試覆蓋率地圖.md',
+  'docs/系統優化-施工計畫.md',
+];
+
+test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有的 24 個凍結，只出不進', () => {
+  // ⚠️ 上一版只掃根目錄與 `test/`，於是新增 `docs/新的規格.md`、`lib/中文.js`、
+  //    `scripts/中文.sh` 全部照樣綠（Codex #387 r2 High②）。**掃全部 tracked path。**
   const cjk = /[\u4e00-\u9fff]/u;
-  const scope = trackedFiles().filter((f) => !f.includes('/') || f.startsWith('test/'));
-  const bad = scope.filter((f) => cjk.test(f));
-  assert.deepEqual(bad, [],
-    `這些檔名有中文：\n${bad.map((f) => `  ・${f}`).join('\n')}\n`
-    + '⚠️ 檔名一律用英文（William 2026-08-03 定）。中文檔名在 shell、git、URL 裡都要跳脫，\n'
-    + '   `git status` 會印成 `\\346\\234\\210…` 那種看不懂的八進位，出事時很難對照。');
+  const now = trackedFiles().filter((f) => cjk.test(f)).sort();
+  assert.deepEqual(now, LEGACY_CJK_PATHS,
+    '中文檔名的清單變了。\n'
+    + '⚠️ **新增的檔名一律用英文**（中文檔名在 shell、git、URL 裡都要跳脫，\n'
+    + '   `git status` 會印成 `\\346\\234\\210…` 那種八進位，出事時很難對照）。\n'
+    + '   如果是**刪掉**了既有的中文檔，請把它從 LEGACY_CJK_PATHS 一起移除。');
 });
 
 test('檔案真的存在（宣告的每一份都要在）', () => {
