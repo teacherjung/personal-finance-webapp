@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel } from './cashflow-model.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -43,7 +43,7 @@ export async function renderCashflow() {
   const th = thBuilder(listSort);
   // 所選月份摘要（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
   const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
-  const periodLabel = monthFilter.replace(/^(\d{4})-(\d{2})$/, (_, year, month) => `${year} 年 ${Number(month)} 月`);
+  const periodLabel = cashflowPeriodLabel(monthFilter);
   // 篩選金流後再排序
   const rows = sortRows(monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter)), listSort);

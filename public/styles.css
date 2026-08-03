@@ -799,6 +799,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .cashflow-flow-control .chip {
   min-width: 0; padding: 7px 9px; border: 1px solid transparent; border-radius: 5px; background: transparent;
 }
+.cashflow-flow-control .chip:hover { background: var(--card); }
 .cashflow-flow-control .chip.active { background: var(--card); border-color: var(--accent); box-shadow: 1px 1px 0 rgba(126, 101, 43, .18); }
 .cashflow-ledger-section { margin-top: 0; }
 .cashflow-ledger-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
