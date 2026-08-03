@@ -1,23 +1,26 @@
 /**
- * 「錢的絕對邊界」考題（2026-08-03，William 拍板當日落地；r1 修訂見下）
+ * 「錢的絕對邊界」考題（2026-08-03，William 拍板當日落地；r1／r2 修訂見下）
  *
  * 守什麼：AGENTS.md「🛑 錢的絕對邊界」節（William 原文）與 `.claude/settings.json`
  * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook 正則）
- * 不被靜靜退掉；hook 正則不因改寫而漏擋或誤傷。
+ * 不被靜靜退掉；hook 層不因改寫而漏擋或誤傷。
  *
  * 病因（為什麼要機械層）：IBKR 連接器的 create_order_instruction 能把整張委託
  * （買/賣、代號、數量、價格、效期）填好、存成待送出的委託指示——差一鍵送出就是真單。
  * 「規則只寫在文件」在本專案已實證撐不住（#374/#375/#376 連三支漏填協作欄位），
  * 錢的規則不能只靠記憶與自律。
  *
- * r1 修訂（Codex #392 r1，2026-08-03）：
- *   - important：舊版第 4 題「for (hook of entry.hooks)」在 hooks 被掏空成 [] 時
- *     內層迴圈零次執行＝整題假綠。判準改成「行為分類」：實跑 handler、
- *     輸出 permissionDecision=deny 的才算封鎖組，封鎖組至少要有一組。
- *   - minor②：誤傷斷言只掃封鎖組——日後別的功能加自己的 PreToolUse hook
- *     （例如純記錄、不 deny），不歸本考題管，不會被錯殺。
- *     順帶把「該擋的擋」的正面斷言也改成只認封鎖組：不然一個匹配很寬的良性
- *     logger 會讓正面斷言假綠（r1 沒點到、同型病一起關）。
+ * r1 修訂（Codex #392 r1）：hooks 掏空成 [] 時舊版內層迴圈零次執行＝假綠 → 改行為分類；
+ * 誤傷斷言只掃封鎖組，良性 PreToolUse hook（純記錄）不被錯殺。
+ *
+ * r2 修訂（Codex #392 r2）：
+ *   - important：r1 版的 denyProbe 固定拿 create 探測、把整個 entry 靜態定性一次——
+ *     「看輸入決定」的 handler（create→deny、delete→allow）可假綠，連接器換 UUID 後
+ *     delete 實際上是放行的。改成 **per-tool 配對驗證**：每一個必擋名都要有
+ *     「matcher 接得住 ∧ handler 對這個名字實跑回 deny」的組才算數；
+ *     誤傷判準同樣配對（matcher 命中 ∧ 對該名字回 deny 才算誤傷）。
+ *   - minor：execFileSync 預設 killSignal=SIGTERM 可被 handler 無視、拖過 timeout →
+ *     killSignal 改 **SIGKILL**（不可忽略）。
  *
  * ⚠️ 誠實劃界（這道閘擋不住什麼）：
  *   - 它驗「repo 裡的條文與設定存在且精確」，**證明不了任何 AI 執行期真的守規**——
@@ -29,13 +32,13 @@
  *     本考題看不到、也不假裝看得到。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
  *     會漏接——第二層 hook 正則只認工具名、不認 UUID，正是補這個洞；
- *     所以本考題對正則做**行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
+ *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
  *   - 正則只涵蓋這兩個工具名：**place_order／submit_order／transfer_funds 之類
  *     未來同族錢類工具不在正則內**（Codex #392 r1 實測七個同族假想名全不匹配）。
  *     那一段靠規則 1 的語意（「任何現在或未來…的工具」）＋規則 4 的通報義務接手；
  *     這是設計不是疏漏——列舉未來工具名的清單永遠列不完（列舉繞法補不完的同型病）。
- *   - denyProbe 的行為分類用**固定輸入**探測（echo 型 handler 本來就不讀輸入）；
- *     若未來 handler 改成「看輸入決定 deny 與否」，分類判準要跟著重看。
+ *   - SIGKILL 殺的是直接子行程（bash）；handler 若刻意生出「抓住 stdout 的孤兒孫行程」
+ *     理論上仍能拖延考題（repo 內的 handler 是受審的 echo 一行，這條寫著防未來）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,13 +54,14 @@ const FORBIDDEN_TOOLS = [
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__delete_order_instruction',
 ];
 
-// 換了連接器（UUID 變了）之後兩支工具的新全名——deny 清單接不到、hook 正則必須接到。
+// 換了連接器（UUID 變了）之後兩支工具的新全名——deny 清單接不到、hook 層必須接到。
 const FORBIDDEN_AFTER_RECONNECT = [
   'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__create_order_instruction',
   'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__delete_order_instruction',
 ];
 
-// 名字長得像、但依規則 2 明文可用的工具——封鎖組誤傷任何一支都算壞（誤擋跟漏擋一樣是病，#384 誤擋事故）。
+// 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
+// （誤擋跟漏擋一樣是病，#384 誤擋事故）。
 const ALLOWED_LOOKALIKES = [
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_order_instructions', // 唯讀：查已存在的委託指示
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_orders',     // 唯讀：查歷史委託
@@ -69,29 +73,45 @@ function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
 }
 
+const probeCache = new Map();
+
 /**
- * 行為分類：這個 handler 實跑之後，是不是一個合規的 deny 攔截器？
- * 跑不動、輸出不是 JSON、沒有 permissionDecision=deny——都不是（fail-closed：不計數）。
+ * 行為探測：這個 handler 收到「這個工具名」時，是不是回合規的 deny？
+ * 逐名探測（Codex #392 r2）：不可拿一個名字的結果代表整個 entry——
+ * 「看輸入決定」的 handler 可以對 create 說 deny、對 delete 說 allow。
  * @param {{ type?: string, command?: string }} hook
+ * @param {string} toolName
  */
-function denyProbe(hook) {
+function denyProbe(hook, toolName) {
   if (!hook || hook.type !== 'command' || !hook.command) return false;
+  const key = JSON.stringify([hook.command, toolName]);
+  const cached = probeCache.get(key);
+  if (cached !== undefined) return cached;
+  let ok = false;
   try {
     const out = execFileSync('bash', ['-c', hook.command], {
-      input: JSON.stringify({ tool_name: FORBIDDEN_TOOLS[0], tool_input: {} }),
+      input: JSON.stringify({ tool_name: toolName, tool_input: {} }),
       encoding: 'utf8',
       timeout: 5000,
+      killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
     });
     const d = JSON.parse(out).hookSpecificOutput;
-    return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+    ok = d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
   } catch {
-    return false;
+    // 跑不動、輸出不是 JSON——ok 維持 false（fail-closed：不計數）
   }
+  probeCache.set(key, ok);
+  return ok;
 }
 
-/** 封鎖組＝至少有一個 handler 行為上會回 deny 的 PreToolUse entry。 */
-function blockingEntries(settings) {
-  return (settings?.hooks?.PreToolUse ?? []).filter((e) => (e.hooks ?? []).some(denyProbe));
+/**
+ * 對「這個工具名」而言的封鎖組：matcher 接得住這個名字，且至少一個 handler
+ * 對**這個名字**實跑回 deny（matcher 與 handler 決策成對驗證，Codex #392 r2）。
+ * @param {any} settings @param {string} toolName
+ */
+function entriesBlocking(settings, toolName) {
+  return (settings?.hooks?.PreToolUse ?? []).filter((e) =>
+    new RegExp(e.matcher).test(toolName) && (e.hooks ?? []).some((h) => denyProbe(h, toolName)));
 }
 
 test('AGENTS.md 的「錢的絕對邊界」節存在，五條規則的承重句一句不缺', () => {
@@ -131,44 +151,41 @@ test('.claude/settings.json：deny 清單精確點名兩支下單工具、拆護
     'disableAllHooks:true 會把第二層 hook 整個關掉——那是拆護欄的開關，不准出現在專案設定。');
 });
 
-test('.claude/settings.json：封鎖組行為——該擋的擋（含換 UUID）、可用的不誤傷', () => {
+test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實跑回 deny 的組、可用名一律不誤傷', () => {
   const settings = loadSettings();
-  // ⚠️ 正反兩面都只認「封鎖組」（行為分類，不看文字）：
-  //    正面若數所有 matcher，一個匹配很寬的良性 logger 就能讓「該擋的擋」假綠；
-  //    反面若掃所有 matcher，良性 hook 會被錯殺（Codex #392 r1 minor②）。
-  const blockers = blockingEntries(settings);
-  assert.ok(blockers.length >= 1,
-    '找不到任何行為上會回 deny 的封鎖組——第二層封鎖被拆了（空殼／改輸出都算，Codex #392 r1）。');
-  const res = blockers.map((e) => new RegExp(e.matcher));
+  // ⚠️ 正反兩面都是「matcher ∧ handler 決策」成對驗證（Codex #392 r2 important）：
+  //    只驗 matcher 會被「看輸入決定」的 handler 假綠（create 擋、delete 放）；
+  //    只驗 handler 會漏掉 matcher 涵蓋不到的名字。兩者對同一個名字同時成立才算數。
   for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT]) {
-    assert.ok(res.some((re) => re.test(tool)),
-      `沒有任何封鎖組的 matcher 接得住 ${tool}（連接器換 UUID 也必須接得住）`);
+    assert.ok(entriesBlocking(settings, tool).length >= 1,
+      `沒有任何 hook 組對 ${tool} 是「matcher 接得住＋handler 實跑回 deny」——`
+      + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（連接器換 UUID 也必須擋得住）。');
   }
+  // 誤傷＝matcher 命中「且」對該名字實跑回 deny。純記錄的良性 hook（不 deny）不歸本考題管，
+  // 不會被錯殺（Codex #392 r1 minor②）。
   for (const tool of ALLOWED_LOOKALIKES) {
-    assert.ok(res.every((re) => !re.test(tool)),
-      `封鎖組的 matcher 誤傷了規則 2 明文可用的 ${tool}——誤擋跟漏擋一樣是壞。`);
+    assert.equal(entriesBlocking(settings, tool).length, 0,
+      `有 hook 組對規則 2 明文可用的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
   }
 });
 
-test('.claude/settings.json：匹配下單工具的 hook 組不是空殼，至少一個 handler 實跑回 deny', () => {
+test('.claude/settings.json：匹配下單工具的 hook 組不是空殼（r1 假綠路徑回歸考）', () => {
   const settings = loadSettings();
   const matching = (settings?.hooks?.PreToolUse ?? [])
     .filter((e) => new RegExp(e.matcher).test(FORBIDDEN_TOOLS[0]));
   assert.ok(matching.length > 0, '找不到 matcher 接得住 create_order_instruction 的 hook 組。');
-  // ⚠️ Codex #392 r1 important：舊版在這裡逐個 hook 斷言，hooks:[] 時迴圈零次執行＝假綠
-  //    （重現：settings 的 hooks 改 []，5/5 照綠）。改成計數判準：空殼、換型別、改輸出都轉紅。
-  const verified = matching.filter((e) => (e.hooks ?? []).some(denyProbe));
-  assert.ok(verified.length >= 1,
-    '匹配下單工具的 hook 組沒有任何一個 handler 實跑後回 deny——攔截層是空殼（Codex #392 r1）。');
+  // ⚠️ Codex #392 r1 important：舊版逐個 hook 斷言，hooks:[] 時迴圈零次執行＝假綠。
+  //    判準＝至少一組對 create 實跑回 deny（空殼、換型別、改輸出都轉紅）。
+  assert.ok(entriesBlocking(settings, FORBIDDEN_TOOLS[0]).length >= 1,
+    '匹配下單工具的 hook 組沒有任何 handler 實跑回 deny——攔截層是空殼（Codex #392 r1）。');
 });
 
-test('兩層互相涵蓋：deny 點名的每一支工具，封鎖組的正則也接得住', () => {
+test('兩層互相涵蓋：deny 點名的每一支工具，hook 層對它也是實跑回 deny', () => {
   const settings = loadSettings();
   const denyOrderTools = (settings?.permissions?.deny ?? []).filter((r) => /_order_instruction$/.test(r));
   assert.ok(denyOrderTools.length >= 2, 'deny 清單裡的下單工具少於兩支——精確點名層被拆了。');
-  const res = blockingEntries(settings).map((e) => new RegExp(e.matcher));
   for (const rule of denyOrderTools) {
-    assert.ok(res.some((re) => re.test(rule)),
-      `deny 點名了 ${rule}，但沒有任何封鎖組接得住它——兩層各自為政，改一層忘一層就會裂縫。`);
+    assert.ok(entriesBlocking(settings, rule).length >= 1,
+      `deny 點名了 ${rule}，但 hook 層對它不是實跑回 deny——兩層各自為政，改一層忘一層就會裂縫。`);
   }
 });
