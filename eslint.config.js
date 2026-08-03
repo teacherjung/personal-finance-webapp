@@ -65,7 +65,19 @@ export const ENTRY_GUARD_SELECTORS = [
         selector: 'VariableDeclarator[init.name="process"] > ObjectPattern',
         message: '不要把 process 解構——argv 一旦被解構出去，護欄就看不到它了。'
       },
-      { // ★ 真正的門：任何拿 import.meta 去比對的式子＝手寫的進入點守衛
+      { // 一層別名：`const here = import.meta.url`（Codex #388 r5 示範的繞法）
+    selector: 'VariableDeclarator[init.type="MemberExpression"][init.object.type="MetaProperty"]',
+    message: '不要把 import.meta 的欄位存進變數——那是繞過下面那條門的第一步。要判斷進入點請用 lib/is-main.js 的 isMainModule(import.meta.url)。'
+  },
+  { // 一層別名：`const p = process`
+    selector: 'VariableDeclarator[init.name="process"]',
+    message: '不要把 process 存進變數——argv 一旦透過別名取用，護欄就看不到它了。'
+  },
+  { // 一層別名：`const a = process.argv`
+    selector: 'VariableDeclarator[init.object.name="process"][init.property.name="argv"]',
+    message: '不要把 process.argv 存進變數——要判斷進入點請用 lib/is-main.js 的 isMainModule()。'
+  },
+  { // ★ 真正的門：任何拿 import.meta 去比對的式子＝手寫的進入點守衛
         selector: 'BinaryExpression:has(MetaProperty)',
         message: '把 import.meta 拿來比對＝自己寫了一份進入點守衛。一律改用 lib/is-main.js 的 isMainModule(import.meta.url)。'
       }

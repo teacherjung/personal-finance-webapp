@@ -9,13 +9,30 @@
  * 因為 macOS 的 `/tmp` 是 `/private/tmp` 的 symlink，Node 給的 `import.meta.url`
  * 是解析過的真實路徑，`process.argv[1]` 是你打進去的樣子，兩邊永遠比不相等。
  *
- * 修法不是「把六個地方各修一次」（那還會漂），是收成 `lib/is-main.js` 一支，
- * 再用下面第三題**關門**：不准任何檔案自己再寫一份。
+ * 修法不是「把六個地方各修一次」（那還會漂），是收成 `lib/is-main.js` 一支，再關門。
+ *
+ * ## 這份考題有兩層，而**只有第一層是門**
+ *
+ * ① **行為層（真正的門）**：每一支腳本，直接執行 vs 經過 symlink 執行，
+ *    輸出與退出碼必須一模一樣。**它不問你怎麼寫的，只問跑起來對不對**，
+ *    所以任何寫法的壞守衛都躲不掉，新增的腳本也自動被涵蓋（清單從磁碟列舉）。
+ *
+ * ② **語法層（早期警告，不是保證）**：`eslint.config.js` 的 `ENTRY_GUARD_SELECTORS`。
+ *    它的價值是**在你寫壞的當下就用一句話告訴你哪裡錯**，而不是等到考題紅。
+ *    ⚠️ **它追不上資料流**——Codex #388 r4／r5 連兩輪用 `process.argv.at(1)`、
+ *    `const here = import.meta.url` 繞過去（都是正常的重構寫法，不是刻意規避）。
+ *    我補了一層別名的選擇器，但**兩層、經過函式回傳、`globalThis.process` 一樣追不上**，
+ *    而且**已驗證**：突變 MB 寫了一支 ESLint 放行的兩層別名守衛，①照樣抓到。
+ *    **語法檢查在這件事上不可能收斂，所以它不是門。**
+ *
+ * ⚠️ **①抓不到什麼**：跑起來沒有可觀察輸出的腳本（見 `NO_OBSERVABLE_OUTPUT` 的宣告），
+ *    以及不是「腳本」的檔案（`lib/`、`public/` 底下的模組不會被直接執行）。
+ *    `server.js` 也不在①裡——跑它會真的開埠。它靠②盯著。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -66,30 +83,77 @@ test('lib/is-main.js：被別人 import 時不會誤認自己是進入點', () =
   });
 });
 
-// ⚠️ 這四支沒帶參數時會印「用法：…」——**那正是當初壞掉時完全沒有的東西**，
-//    拿它當「這支真的有跑起來」的證據。
-const GATES_WITH_USAGE = [
-  'scripts/check-pr-collab-fields.js',
-  'scripts/check-pr-merge-gate.js',
-  'scripts/check-review-verdicts.js',
-  'scripts/check-cross-pr-merge.js',
+/**
+ * ★ **真正的門：不問「你怎麼寫的」，問「它跑起來對不對」。**
+ *
+ * 下面那層 ESLint 選擇器**追不上資料流**——Codex #388 r5 用
+ * `const here = import.meta.url; const p = process;` 就繞過去了（那還是正常的重構寫法，
+ * 不是刻意規避）。我補了一層別名的選擇器，但**兩層、經過函式回傳、算出來的存取一樣追不上**。
+ * 語法檢查在這件事上不可能收斂，所以它只是**早期警告**，不是保證。
+ *
+ * 這一題不看語法：**每一支腳本，直接執行 vs 經過 symlink 執行，輸出與退出碼必須一模一樣。**
+ * 守衛不管用什麼花招寫，只要它會被 symlink 騙，這裡就會看到「直接跑有輸出、
+ * 經過 symlink 什麼都沒有」——那正是當初的病徵。
+ *
+ * ⚠️ **清單從磁碟列舉，不是手寫**：新增的腳本自動被涵蓋。手寫的名單會漂
+ *    （這個專案已經因此吃過虧——#385 r9 的守門名單漂了、加了第四道閘卻照樣全綠）。
+ */
+const SCRIPTS_DIR = 'scripts';
+
+/**
+ * 宣告：**跑起來沒有可觀察輸出**的腳本——本題證不了它們，所以要逐一列出理由。
+ * ⚠️ 這份宣告是**雙向**的：清單裡的腳本若哪天開始有輸出，下面也會轉紅，
+ *    逼人把它移出清單、納入真正的比對。**過期的豁免比沒有豁免更危險。**
+ */
+const NO_OBSERVABLE_OUTPUT = [
+  // 版本合格時完全不出聲（只有不合格才印），而考題造不出一顆不合格的 Node。
+  // 它的進入點守衛由「只准 lib/is-main.js 判斷」那層 ESLint 規則盯著。
+  'scripts/check-node-version.js',
 ];
 
-for (const rel of GATES_WITH_USAGE) {
-  test(`${rel}：透過 symlink 執行仍會真的跑起來（不是靜靜 exit 0）`, () => {
-    withSymlinkedTemp((dir) => {
-      const link = join(dir, 'gate.js');
-      symlinkSync(join(ROOT, rel), link);
-      // ⚠️ 用 spawnSync 不用 execFileSync：四支閘印用法的方式並不一致
-      //    （有的走 stdout＋退出碼 0，有的走 stderr＋退出碼 2），
-      //    execFileSync 會為了非零退出碼直接丟例外，那跟本題想驗的事無關。
-      //    本題只問一件事：**它到底有沒有跑起來**。
-      const r = spawnSync(process.execPath, [link], { encoding: 'utf8' });
-      assert.match(`${r.stdout}${r.stderr}`, /用法：/,
-        `${rel} 透過 symlink 執行時沒有任何輸出＝main() 沒跑。\n`
-        + '對合併程序來說那等於「這道閘通過了」——**靜靜回報通過比沒有閘更糟**。\n'
-        + '進入點判斷一律走 lib/is-main.js，不要自己寫一份。');
-    });
+/** 用受控的環境變數跑，避免 c6-adversarial 這種吃 env 的腳本在考題裡真的連線出去。 */
+function runTwice(rel) {
+  return withSymlinkedTemp((dir) => {
+    const link = join(dir, 'probe.js');
+    symlinkSync(join(ROOT, rel), link);
+    const env = { PATH: process.env.PATH || '', HOME: process.env.HOME || '' };
+    const opts = { encoding: 'utf8', env, cwd: ROOT };
+    const direct = spawnSync(process.execPath, [join(ROOT, rel)], opts);
+    const linked = spawnSync(process.execPath, [link], opts);
+    const shape = (r) => ({ status: r.status, out: `${r.stdout}${r.stderr}` });
+    return { direct: shape(direct), linked: shape(linked) };
+  });
+}
+
+const ALL_SCRIPTS = readdirSync(join(ROOT, SCRIPTS_DIR))
+  .filter((f) => f.endsWith('.js')).map((f) => `${SCRIPTS_DIR}/${f}`).sort();
+
+test('腳本清單不是空的（列舉壞掉的話下面全部會靜靜通過）', () => {
+  assert.ok(ALL_SCRIPTS.length >= 5, `scripts/ 只列到 ${ALL_SCRIPTS.length} 支，列舉大概壞了。`);
+});
+
+for (const rel of ALL_SCRIPTS.filter((f) => !NO_OBSERVABLE_OUTPUT.includes(f))) {
+  test(`⭐ ${rel}：經過 symlink 執行的結果要跟直接執行一模一樣`, () => {
+    const { direct, linked } = runTwice(rel);
+    assert.notEqual(direct.out.trim(), '',
+      `${rel} 直接執行沒有任何輸出 ⇒ **本題證不了它**（跑不跑起來看起來一樣）。\n`
+      + '請把它加進 NO_OBSERVABLE_OUTPUT 並寫明理由，不要讓它靜靜留在這裡。');
+    assert.deepEqual(linked, direct,
+      `${rel} 經過 symlink 執行的結果跟直接執行不同 ⇒ **進入點守衛被 symlink 騙了**。\n`
+      + `直接：exit=${direct.status} 輸出=${JSON.stringify(direct.out)}\n`
+      + `symlink：exit=${linked.status} 輸出=${JSON.stringify(linked.out)}\n`
+      + '⛔ main() 靜靜不跑、退出碼 0＝對合併程序來說就是「這道閘通過了」。\n'
+      + '   進入點判斷一律用 lib/is-main.js 的 isMainModule(import.meta.url)。');
+  });
+}
+
+for (const rel of NO_OBSERVABLE_OUTPUT) {
+  test(`${rel}：宣告「沒有可觀察輸出」還成立嗎`, () => {
+    assert.ok(ALL_SCRIPTS.includes(rel), `NO_OBSERVABLE_OUTPUT 列了「${rel}」但它不存在，請移除。`);
+    const { direct } = runTwice(rel);
+    assert.equal(direct.out.trim(), '',
+      `${rel} 現在有輸出了 ⇒ 它不該再留在 NO_OBSERVABLE_OUTPUT。\n`
+      + '請把它移出清單，讓上面那條真正的比對涵蓋它。');
   });
 }
 
@@ -119,7 +183,13 @@ const BYPASSES = [
   { 名稱: '解構 const { argv } = process',    code: 'const { argv } = process; console.log(argv[1]);' },
   { 名稱: 'slice(1)[0]',                      code: 'const a = process.argv.slice(1)[0]; console.log(a);' },
   { 名稱: '動態索引 process.argv[i]',         code: 'const i = 1; console.log(process.argv[i]);' },
-  { 名稱: '★ 拿 import.meta 去比對（真正的門）',
+  { 名稱: '★ 一層別名 const here = import.meta.url（Codex r5 示範）',
+    code: 'const here = import.meta.url; console.log(here);' },
+  { 名稱: '★ 一層別名 const p = process（Codex r5 示範）',
+    code: 'const p = process; console.log(p.argv[1]);' },
+  { 名稱: '一層別名 const a = process.argv',
+    code: 'const a = process.argv; console.log(a[1]);' },
+  { 名稱: '★ 拿 import.meta 去比對（語法層的門）',
     code: 'import { pathToFileURL } from "node:url";\n'
       + 'if (import.meta.url === pathToFileURL("x").href) console.log(1);' },
 ];
