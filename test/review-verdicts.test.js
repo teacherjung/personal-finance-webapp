@@ -149,13 +149,13 @@ test('合併程序真的把聯集閘寫成一步（不是只在別處提到它�
   // ⚠️ **先截出「合併六步驟」那個 blockquote 區塊再看**（Codex #385 r2 Medium）：
   //    掃整份文件的所有 fenced code 的話，把指令從步驟 2 刪掉、搬到檔頭的啟動範例，考題照樣過。
   //    判準比照 test/merge-procedure-docs.test.js。
-  const whole = readFileSync(join(ROOT, 'CODEX-REVIEW.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const whole = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
   const start = whole.indexOf('合併也由 Codex 代執行');
-  assert.ok(start > 0, 'CODEX-REVIEW.md 找不到「合併六步驟」那個區塊');
+  assert.ok(start > 0, 'REVIEW-AND-MERGE.md 找不到「合併六步驟」那個區塊');
   const md = whole.slice(start, whole.indexOf('\n---', start));
   const fenced = [...md.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]).join('\n');
   assert.match(fenced, /node scripts\/check-review-verdicts\.js/,
-    'CODEX-REVIEW.md 的合併步驟沒有真的叫人跑聯集閘——規則會退回「靠記性」');
+    'REVIEW-AND-MERGE.md 的合併步驟沒有真的叫人跑聯集閘——規則會退回「靠記性」');
   // 順序也是契約：聯集閘要在 `gh pr merge` 之前
   assert.ok(md.indexOf('check-review-verdicts.js') < md.indexOf('gh pr merge'),
     '聯集閘出現在 `gh pr merge` 之後＝合併完才檢查，等於沒有');

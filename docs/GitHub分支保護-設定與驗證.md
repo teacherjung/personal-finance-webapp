@@ -149,5 +149,5 @@ Settings → Branches → 編輯 `main` 的規則：
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
 - `scripts/check-pr-collab-fields.js` — 協作欄位閘（CI 與人工合併程序**跑同一支**）
 - `scripts/check-pr-merge-gate.js` — 堆疊閘（本機執行，未進 CI）
-- `CODEX-REVIEW.md` — 合併六步驟
+- `REVIEW-AND-MERGE.md` — 合併六步驟
 - `AGENTS.md`「三方協作框架」節 — 唯一不變量與角色分工

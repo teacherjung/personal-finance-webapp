@@ -2,7 +2,7 @@
 // 合併程序的文件一致性考題（2026-07-30；r2 依 Codex r1 重寫）。
 //
 // 病因：「堆疊 PR 不可用 `--delete-branch`」這條規則從 2026-07-10 就寫在 AGENTS.md，
-// 但**真正被照著執行的檔案是 `CODEX-REVIEW.md`**，而那裡寫的是無條件的「一律 --squash --delete-branch」。
+// 但**真正被照著執行的檔案是 `REVIEW-AND-MERGE.md`**，而那裡寫的是無條件的「一律 --squash --delete-branch」。
 // 規則在一個檔案、執行在另一個檔案 ⇒ 規則等於不存在。實害兩次，畫面上都是「Merged」＋CI 全綠：
 //   ・2026-07-10 #3/#5 被 `--delete-branch` 連帶關閉（方向②：有人疊在我上面）
 //   ・2026-07-28 #311/#312 各自合進自己的 base（方向①：我疊在別人上面）
@@ -26,21 +26,21 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
 /**
- * 抓出 CODEX-REVIEW.md 裡「合併由 Codex 代執行」那個 blockquote 區塊。
+ * 抓出 REVIEW-AND-MERGE.md 裡「合併由 Codex 代執行」那個 blockquote 區塊。
  * 只認以 `>` 開頭的連續行——避免把後面的正文一起吃進來當成「有寫到」。
  * @param {string} md
  */
 function mergeBlock(md) {
   const lines = md.split('\n');
   const start = lines.findIndex((l) => l.startsWith('>') && l.includes('合併') && l.includes('Codex 代執行'));
-  assert.notEqual(start, -1, 'CODEX-REVIEW.md 找不到「合併由 Codex 代執行」的區塊——合併程序被搬走或改寫了，這道考題要跟著更新');
+  assert.notEqual(start, -1, 'REVIEW-AND-MERGE.md 找不到「合併由 Codex 代執行」的區塊——合併程序被搬走或改寫了，這道考題要跟著更新');
   let end = start;
   while (end + 1 < lines.length && lines[end + 1].startsWith('>')) end++;
   return lines.slice(start, end + 1).join('\n');
 }
 
-test('合併程序：CODEX-REVIEW 的合併步驟必須「在 fenced code 裡」跑堆疊閘腳本，且在 merge 之前', () => {
-  const raw = mergeBlock(read('CODEX-REVIEW.md'));
+test('合併程序：審查與合併程序 的合併步驟必須「在 fenced code 裡」跑堆疊閘腳本，且在 merge 之前', () => {
+  const raw = mergeBlock(read('REVIEW-AND-MERGE.md'));
   // 剝 blockquote 前綴 → 剝 HTML 註解（Codex r1 用註解讓上一版考題假綠——註解裡的字不算數）
   const unquoted = raw.split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
   const visible = unquoted.replace(/<!--[\s\S]*?-->/g, '');
