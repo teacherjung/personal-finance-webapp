@@ -111,17 +111,31 @@ const NO_OBSERVABLE_OUTPUT = [
   'scripts/check-node-version.js',
 ];
 
-/** 用受控的環境變數跑，避免 c6-adversarial 這種吃 env 的腳本在考題裡真的連線出去。 */
-function runTwice(rel) {
+/**
+ * 跑三次：**直接兩次**＋經過 symlink 一次。
+ *
+ * ⚠️ **為什麼要直接跑兩次**：這題靠「兩次執行的輸出相同」判斷守衛有沒有壞，
+ *    但如果某支腳本的輸出本身不穩定（含時間戳、隨機值、讀外部狀態），
+ *    兩次本來就會不同 ⇒ 這題會變成**誤報**，而誤報會逼人把護欄整個關掉
+ *    （**誤擋比漏抓更貴**）。先用「直接跑兩次」量一下它穩不穩，
+ *    不穩的話就當場說清楚是「輸出不穩定」而不是「守衛壞了」——
+ *    **兩種病要分開講，混在一起的訊息會把人帶去修錯的地方。**
+ *
+ * ⚠️ 受控 env（只給 `PATH`／`HOME`）：避免 `c6-adversarial.js` 這種吃環境變數的腳本
+ *    在考題裡真的連線出去。
+ */
+function runThrice(rel) {
   return withSymlinkedTemp((dir) => {
     const link = join(dir, 'probe.js');
     symlinkSync(join(ROOT, rel), link);
     const env = { PATH: process.env.PATH || '', HOME: process.env.HOME || '' };
     const opts = { encoding: 'utf8', env, cwd: ROOT };
-    const direct = spawnSync(process.execPath, [join(ROOT, rel)], opts);
-    const linked = spawnSync(process.execPath, [link], opts);
     const shape = (r) => ({ status: r.status, out: `${r.stdout}${r.stderr}` });
-    return { direct: shape(direct), linked: shape(linked) };
+    return {
+      direct: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
+      again: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
+      linked: shape(spawnSync(process.execPath, [link], opts)),
+    };
   });
 }
 
@@ -134,7 +148,11 @@ test('腳本清單不是空的（列舉壞掉的話下面全部會靜靜通過�
 
 for (const rel of ALL_SCRIPTS.filter((f) => !NO_OBSERVABLE_OUTPUT.includes(f))) {
   test(`⭐ ${rel}：經過 symlink 執行的結果要跟直接執行一模一樣`, () => {
-    const { direct, linked } = runTwice(rel);
+    const { direct, again, linked } = runThrice(rel);
+    assert.deepEqual(again, direct,
+      `${rel} 直接執行兩次的結果就不一樣了 ⇒ **它的輸出不穩定**（時間戳？隨機值？讀外部狀態？）。\n`
+      + '⚠️ 這**不是**守衛壞掉——是本題沒辦法用「兩次比對」證明它。\n'
+      + '   請讓它的無參數輸出變穩定，或把它加進 NO_OBSERVABLE_OUTPUT 並寫明理由。');
     assert.notEqual(direct.out.trim(), '',
       `${rel} 直接執行沒有任何輸出 ⇒ **本題證不了它**（跑不跑起來看起來一樣）。\n`
       + '請把它加進 NO_OBSERVABLE_OUTPUT 並寫明理由，不要讓它靜靜留在這裡。');
@@ -150,7 +168,7 @@ for (const rel of ALL_SCRIPTS.filter((f) => !NO_OBSERVABLE_OUTPUT.includes(f))) 
 for (const rel of NO_OBSERVABLE_OUTPUT) {
   test(`${rel}：宣告「沒有可觀察輸出」還成立嗎`, () => {
     assert.ok(ALL_SCRIPTS.includes(rel), `NO_OBSERVABLE_OUTPUT 列了「${rel}」但它不存在，請移除。`);
-    const { direct } = runTwice(rel);
+    const { direct } = runThrice(rel);
     assert.equal(direct.out.trim(), '',
       `${rel} 現在有輸出了 ⇒ 它不該再留在 NO_OBSERVABLE_OUTPUT。\n`
       + '請把它移出清單，讓上面那條真正的比對涵蓋它。');
