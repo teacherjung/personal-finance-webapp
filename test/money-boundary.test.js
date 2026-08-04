@@ -38,9 +38,16 @@
  *     （transfer/withdraw/deposit…；唯讀動詞前綴 get_/list_/search_… 放行）＋換匯三動詞。
  *     即便如此**仍列舉不完所有未來名字**（起怪名的工具照樣漏網）——規則 1 的語意
  *     （「任何現在或未來…的工具」）＋規則 4 的通報義務仍是最後防線，這層不變。
- *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）：唯讀工具若取名帶出入金
- *     關鍵詞、且伺服器段沒有連字號，正則回溯有誤攔的已知邊角——誤攔的代價是不便，
- *     漏攔的代價是錢；真誤攔＝把名字報給 William 裁決放行方式。
+ *   - r2 改造（Codex #404 r1）：判斷主體從 matcher 正則移進 hook 指令（grep -iE 兩段式），
+ *     **大小寫與 _ / - / . 分隔符不敏感**（MCP 名字規格允許大寫、連字號、句點——小寫底線
+ *     只是慣例；Place_Order／placeOrder／place-order 全都攔）；動詞前可帶前綴詞
+ *     （broker_place_order 也攔）；補真實世界漏網動詞 exercise/liquidate/replace/redeem。
+ *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。真實誤攔面（照實劃界，r1 抓過
+ *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
+ *     名單外的讀取動詞（如 obtain_）帶錢詞會被誤攔，處置＝報 William 加名單；
+ *     ②跨域名詞撞名（delete_stock_photo 型）仍會誤攔（trademark／sharepoint 型已用
+ *     名詞邊界修掉）；③名字說謊的工具（叫 get_ 卻會動錢）任何正則都免疫不了——
+ *     那屬規則 1 語意＋規則 4 通報義務層。誤攔的代價是不便、漏攔的代價是錢。
  *   - SIGKILL 殺的是直接子行程（bash）；handler 若刻意生出「抓住 stdout 的孤兒孫行程」
  *     理論上仍能拖延考題（repo 內的 handler 是受審的 echo 一行，這條寫著防未來）。
  */
@@ -64,16 +71,30 @@ const FORBIDDEN_AFTER_RECONNECT = [
   'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__delete_order_instruction',
 ];
 
-// 家族攔截（William 2026-08-04 指示擴編）：同族錢類名字換掉 UUID 也必須被 hook 層攔下。
-// 三個分支各取代表名（動詞×名詞鎖／出入金關鍵詞／換匯三動詞）——不是窮舉，
-// 是「每個分支都有人站崗」；新分支加進正則時要同步在這裡補代表名。
+// 家族攔截（William 2026-08-04 指示擴編；r2 改為 per-branch 生成——Codex #404 r1 M②）：
+// 下面四張清單是 hook 指令裡家族正則的**承重字表複本**，考題用它們機械生成探針：
+// 指令裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
+// 少任何一個出入金詞→「initiate_{詞}」轉紅；唯讀豁免名單少任何一個→對應放行探針轉紅。
+// ⚠️ 這裡與 .claude/settings.json 的指令必須同步改（兩邊都改才綠＝雙人規則）。
+const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
+  'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
+  'sell', 'exercise', 'liquidate', 'replace', 'redeem'];
+const FAMILY_NOUNS = ['order', 'trade', 'position', 'instruction', 'stock', 'share', 'security',
+  'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin'];
+const FUND_KEYWORDS = ['transfer', 'withdraw', 'deposit', 'remit', 'payout', 'disburse', 'payment', 'wire'];
+const READ_VERBS = ['get', 'list', 'search', 'fetch', 'read', 'query', 'view', 'show', 'describe',
+  'has', 'check', 'retrieve', 'export', 'download'];
+const FAKE_UUID = 'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__';
 const FORBIDDEN_FAMILY = [
-  'place_order', 'submit_orders', 'cancel_order', 'execute_trade', 'close_position',
-  'buy_stock', 'sell_securities', 'preview_order_instruction', 'create_trade_ticket',
-  'transfer_funds', 'withdraw_cash', 'deposit_funds', 'wire_transfer', 'internal_transfer',
-  'make_payment', 'move_funds', 'send_money',
-  'convert_currency', 'exchange_currency', 'swap_crypto',
-].map((t) => `mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__${t}`);
+  ...FAMILY_VERBS.map((v) => `${v}_order`),
+  ...FAMILY_NOUNS.map((n) => `place_${n}`),
+  ...FUND_KEYWORDS.map((k) => `initiate_${k}`),
+  'move_funds', 'send_money',                                  // 片語型出入金
+  'convert_currency', 'exchange_currency', 'swap_crypto',      // 換匯三動詞分支
+  'exercise_options_position', 'liquidate_position',           // Codex #404 r1 的真實漏網名
+  'replace_order_by_id', 'broker_place_order',                 // （Alpaca 官方 MCP 現役工具）
+  'Place_Order', 'placeOrder', 'place-order',                  // 大小寫／駝峰／連字號變體（MCP 規格合法）
+].map((t) => `${FAKE_UUID}${t}`);
 
 // 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。涵蓋 IBKR 現役唯讀＋提醒/觀察清單全家，
@@ -98,7 +119,16 @@ const ALLOWED_LOOKALIKES = [
   'mcp__scheduled-tasks__update_scheduled_task',                        // 排程：動詞像、不涉錢
   'mcp__Claude_Browser__preview_start',                                 // preview 是家族動詞、名詞不像
   'mcp__ccd_session_mgmt__send_message',                                // send 是家族動詞、名詞不像
+  `${FAKE_UUID}create_trademark`,                                       // trade+mark 撞名（名詞邊界要接住，r1 M③）
+  `${FAKE_UUID}update_sharepoint_page`,                                 // share+point 撞名
+  `${FAKE_UUID}firmware_update`,                                        // firm+wire 撞名
+  // 唯讀豁免逐動詞探針：指令的豁免名單少掉任何一個，對應這支就會被誤攔＝本考題轉紅。
+  ...READ_VERBS.map((v) => `${FAKE_UUID}${v}_transfer_log`),
 ];
+
+// 數量釘（Codex #404 r1 M②的教訓現場：PR 說明宣稱 19 支、實際 18＝當支就發生宣稱漂移）。
+// 改清單＝連這裡一起改，兩邊對得上才綠。
+const EXPECTED_ALLOWED_COUNT = 21 + READ_VERBS.length;
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
@@ -194,6 +224,9 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   }
   // 誤傷＝matcher 命中「且」對該名字實跑回 deny。純記錄的良性 hook（不 deny）不歸本考題管，
   // 不會被錯殺（Codex #392 r1 minor②）。
+  assert.equal(ALLOWED_LOOKALIKES.length, EXPECTED_ALLOWED_COUNT,
+    `ALLOWED_LOOKALIKES 數量（${ALLOWED_LOOKALIKES.length}）與宣告（${EXPECTED_ALLOWED_COUNT}）不符——`
+    + '清單被增刪時兩邊要一起改（#404 r1：宣稱 19 實際 18 的現場教訓）。');
   for (const tool of ALLOWED_LOOKALIKES) {
     assert.equal(entriesBlocking(settings, tool).length, 0,
       `有 hook 組對規則 2 明文可用的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
