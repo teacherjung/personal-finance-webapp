@@ -33,10 +33,14 @@
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
  *     會漏接——第二層 hook 正則只認工具名、不認 UUID，正是補這個洞；
  *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
- *   - 正則只涵蓋這兩個工具名：**place_order／submit_order／transfer_funds 之類
- *     未來同族錢類工具不在正則內**（Codex #392 r1 實測七個同族假想名全不匹配）。
- *     那一段靠規則 1 的語意（「任何現在或未來…的工具」）＋規則 4 的通報義務接手；
- *     這是設計不是疏漏——列舉未來工具名的清單永遠列不完（列舉繞法補不完的同型病）。
+ *   - 正則自 2026-08-04 起擴編為**家族攔截**（William 指示「所有轉帳相關詞都進攔截器」）：
+ *     動詞×名詞鎖（place/submit/cancel…×order/trade/position…）＋出入金關鍵詞
+ *     （transfer/withdraw/deposit…；唯讀動詞前綴 get_/list_/search_… 放行）＋換匯三動詞。
+ *     即便如此**仍列舉不完所有未來名字**（起怪名的工具照樣漏網）——規則 1 的語意
+ *     （「任何現在或未來…的工具」）＋規則 4 的通報義務仍是最後防線，這層不變。
+ *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）：唯讀工具若取名帶出入金
+ *     關鍵詞、且伺服器段沒有連字號，正則回溯有誤攔的已知邊角——誤攔的代價是不便，
+ *     漏攔的代價是錢；真誤攔＝把名字報給 William 裁決放行方式。
  *   - SIGKILL 殺的是直接子行程（bash）；handler 若刻意生出「抓住 stdout 的孤兒孫行程」
  *     理論上仍能拖延考題（repo 內的 handler 是受審的 echo 一行，這條寫著防未來）。
  */
@@ -60,13 +64,40 @@ const FORBIDDEN_AFTER_RECONNECT = [
   'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__delete_order_instruction',
 ];
 
+// 家族攔截（William 2026-08-04 指示擴編）：同族錢類名字換掉 UUID 也必須被 hook 層攔下。
+// 三個分支各取代表名（動詞×名詞鎖／出入金關鍵詞／換匯三動詞）——不是窮舉，
+// 是「每個分支都有人站崗」；新分支加進正則時要同步在這裡補代表名。
+const FORBIDDEN_FAMILY = [
+  'place_order', 'submit_orders', 'cancel_order', 'execute_trade', 'close_position',
+  'buy_stock', 'sell_securities', 'preview_order_instruction', 'create_trade_ticket',
+  'transfer_funds', 'withdraw_cash', 'deposit_funds', 'wire_transfer', 'internal_transfer',
+  'make_payment', 'move_funds', 'send_money',
+  'convert_currency', 'exchange_currency', 'swap_crypto',
+].map((t) => `mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__${t}`);
+
 // 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
-// （誤擋跟漏擋一樣是病，#384 誤擋事故）。
+// （誤擋跟漏擋一樣是病，#384 誤擋事故）。涵蓋 IBKR 現役唯讀＋提醒/觀察清單全家，
+// 加上跨連接器的高危形狀（create_draft／preview_start／send_message——動詞像、名詞不像，
+// 家族網若寫壞最先誤殺的就是這幾型）。
 const ALLOWED_LOOKALIKES = [
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_order_instructions', // 唯讀：查已存在的委託指示
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_orders',     // 唯讀：查歷史委託
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_trades',     // 唯讀：名字帶 trade 也不准誤殺
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_positions',  // 唯讀：名字帶 position 也不准誤殺
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__create_alert',           // 到價提醒，不涉資金
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__update_alert',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__delete_alert',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__set_alert_status',
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__create_watchlist',       // 觀察清單，不涉資金
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__edit_watchlist',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__delete_watchlist',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__whats_new',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__provide_customer_feedback',
+  'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__search_contracts',
+  'mcp__a3d22476-476d-4ed9-bc5f-9b649571fcda__create_draft',            // Gmail 草稿：動詞像、不涉錢
+  'mcp__scheduled-tasks__update_scheduled_task',                        // 排程：動詞像、不涉錢
+  'mcp__Claude_Browser__preview_start',                                 // preview 是家族動詞、名詞不像
+  'mcp__ccd_session_mgmt__send_message',                                // send 是家族動詞、名詞不像
 ];
 
 function loadSettings() {
@@ -156,7 +187,7 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   // ⚠️ 正反兩面都是「matcher ∧ handler 決策」成對驗證（Codex #392 r2 important）：
   //    只驗 matcher 會被「看輸入決定」的 handler 假綠（create 擋、delete 放）；
   //    只驗 handler 會漏掉 matcher 涵蓋不到的名字。兩者對同一個名字同時成立才算數。
-  for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT]) {
+  for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
     assert.ok(entriesBlocking(settings, tool).length >= 1,
       `沒有任何 hook 組對 ${tool} 是「matcher 接得住＋handler 實跑回 deny」——`
       + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（連接器換 UUID 也必須擋得住）。');
