@@ -626,6 +626,11 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['REVIEW-AND-MERGE.md', 'git diff origin/main...HEAD', 2],
     ['REVIEW-AND-MERGE.md', '不帶斜線＝只刪 symlink', 1],
     ['REVIEW-AND-MERGE.md', '絕不動主目錄', 1],
+    ['AGENTS.md', '審查樹由發射者備與收、**審查者不得自建其他 worktree**', 1],
+    ['AGENTS.md', '**審查與實作不可以是同一方**', 1],
+    ['REVIEW-AND-MERGE.md', '**審查者不得自建其他 worktree**', 1],
+    ['REVIEW-AND-MERGE.md', '**要參考另一支 PR＝請發射者另備一棵釘選的審查樹**', 1],
+    ['REVIEW-AND-MERGE.md', '**缺＝備樹失敗，停下回報、不要自行 `npm install`**', 1],
   ];
   for (const [file, pin, expected] of PINS) {
     const got = count(docs[file], pin);

@@ -39,7 +39,7 @@
 >   ＝照表操課），用一般設定即可。
 > - **一律在該 PR 的拋棄式審查樹跑**（`/private/tmp/codex-review-pr<N>`；發射者先備好、審完收掉——備樹三步見下方「你的角色」節），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
-> - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
+> - **跑完檢查副作用**：`git status` 審查樹是否乾淨。**審查者不得自建其他 worktree**（新制：所有審查樹一律發射者備與收；發現多餘的樹＝回報、由發射者收，不要自己 `remove --force`）。
 > - **審尚未合併的 PR** 時，在提示詞裡指名受審 commit 與重點；審查樹已釘住該 commit，diff 一律 `git diff origin/main...HEAD`（**不要**拿會移動的 `origin/<branch>` 當對象——樹跑舊 HEAD、diff 看新 branch＝混合審查）。
 > - **成本**：xhigh 單次約 72 萬 tokens（見上；走 William 的 ChatGPT 方案額度）。
 > - **回報**：Claude 把 Codex 的**原始回覆原文**貼給 William（不轉述、不挑），再附上自己逐條核對的結論（屬實／誤報／需裁決）；**修不修由 William 決定**，Claude 不因為「Codex 說了」就自動動工。
@@ -177,7 +177,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 審查跑完檢查審查 worktree 乾不乾淨——**審查者留下改動就是違反角色**，要當成一個發現。
 
 > **常態分工＝三方協作框架 v4（AGENTS.md「三方協作框架」節，2026-07-24 裁決）**：Claude 實作、**Codex 唯讀審查**（獨立複審、對抗測試、同步點檢查、風險分析）、William 決定與驗收。**高風險 PR（金額公式/資料庫/搬家/匯入/機密/共用底層）＝Codex 複審後才合併**——William 指定審某支 PR 時，在該 PR 的拋棄式審查樹看內容（樹已釘住受審 commit，`git diff origin/main...HEAD`）。
-> 文末「實作模式」**只在 William 明確指派 Codex 做獨立功能時才啟用**（三條件：有獨立施工計畫／不碰 Claude 預約中的共享檔案／Claude 的 PR 需要複審時審查優先），不是常態。
+> 文末「實作模式」**只在 William 明確指派 Codex 做獨立功能時才啟用**（三條件：有獨立施工計畫／不碰 Claude 預約中的共享檔案／**審查與實作不可以是同一方**——權威版與理由見下方「實作模式」節），不是常態。
 
 ---
 
@@ -207,7 +207,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 - 只提意見，不改任何檔案、不 commit、不 push。
 - **在該 PR 的拋棄式審查樹裡工作**（William 2026-08-04 統一「實作常設、審查拋棄」；原常設 `-codex` 審查樹已轉職為 Codex 實作樹）：Codex 審＝`/private/tmp/codex-review-pr<N>`、Claude 審＝`/private/tmp/claude-review-pr<N>`。**發射者備樹三步（審查者只用、不建不收）**：①`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` ②先 `git check-ignore -v "<審查樹>/node_modules"` 確認 `.gitignore` 擋得住，再 `ln -s "<主目錄>/node_modules" "<審查樹>/node_modules"`（跑三關要用；symlink 紀律見 AGENTS 協作流程）③審完由發射者收：`rm "<審查樹>/node_modules"`（**不帶斜線＝只刪 symlink**）→ `git worktree remove <審查樹>`。拋棄式樹釘住受審 commit＝永遠新鮮。
   - 為什麼要分開：上一輪審查時 Claude 在同一個目錄裡 rebase 與切分支十幾次，你正在讀的樹在腳下移動、看到新舊混雜的程式碼。現在 Claude 在 `-claude` worktree 工作、主目錄永遠停在 `main`，三邊互不干擾。
-  - **不要在你的 worktree 裡切到別人的功能分支**（那會把它從主目錄／Claude 的 worktree 搶走）。要看某個 PR 的內容用 `git fetch origin && git log/diff origin/<branch>`，不必 checkout。
+  - **不要在審查樹 checkout 任何分支**；本支只看 `HEAD`（樹已釘住受審 commit）。**要參考另一支 PR＝請發射者另備一棵釘選的審查樹**，不要用會移動的 `origin/<branch>` 當對象（混合審查）。
   - 順帶一提：你的 worktree 裡**沒有** `data/store.db`（真實個資只在主目錄），所以下面那條「絕對不要讀取」現在是結構上做不到，不必再擔心誤觸。
   - ⚠️ **不要在你的 worktree 裡 commit 任何東西**（使用者定 2026-07-19）。你的產出是意見清單，實作與修正一律由 Claude 在 `-claude` worktree 走分支與 PR。
 - 絕對不要讀取 `data/store.db`（含 `.bak`/`-wal`/`-shm`）與 `data/store.json`（真實個資與 token；B3 起主資料庫為 SQLite `store.db`、舊 `store.json` 保留為備份）；要看資料形狀請看 `data/seed.json`，要實測請用 `STORE_FILE` 指向暫存 `.db` 檔。
@@ -218,7 +218,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 npm run typecheck && npm run lint && npm test
 ```
 
-（若 node_modules 不存在先 `npm install`。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
+（`node_modules` 應由發射者備樹時掛好；**缺＝備樹失敗，停下回報、不要自行 `npm install`**——那會寫入審查樹。這三關已涵蓋型別/格式/回歸，你的審查火力請放在它們抓不到的：邏輯錯誤、口徑不一致、同步點漏改、安全性。）
 
 ## 固定維度（**無論作者的重點清單寫了什麼，這幾條一律要跑**）
 

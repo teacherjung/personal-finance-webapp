@@ -285,7 +285,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在該 PR 的拋棄式審查樹跑（`/private/tmp/codex-review-pr<N>`，發射者備樹；碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
+**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在該 PR 的拋棄式審查樹跑（`/private/tmp/codex-review-pr<N>`，發射者備樹；碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、審查樹由發射者備與收、**審查者不得自建其他 worktree**、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **角色分工（含「不負責」邊界）**：
 
@@ -302,7 +302,7 @@
 |---|---|---|---|
 | **①常態審查**（預設） | 讀、跑三關、提意見（附重現與 `檔案:行`） | **絕對唯讀：不改檔、不 commit、不 push**；在該 PR 的拋棄式審查樹工作、不 checkout 任何分支 | 常設（每批合併後）或 William 隨時 |
 | **②代合併** | 照 `REVIEW-AND-MERGE.md` 的**合併步驟**（步數以那份為準）執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
-| **③實作** | 在**常設 `-codex` 實作樹**走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／Claude 的複審需求優先於實作） | 不得在審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
+| **③實作** | 在**常設 `-codex` 實作樹**走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／**審查與實作不可以是同一方**） | 不得在審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
 
 **⚠️ 協作的唯一不變量（William 2026-07-29 定；原本只寫在 `REVIEW-AND-MERGE.md`，2026-08-02 搬進本檔）**：
 
