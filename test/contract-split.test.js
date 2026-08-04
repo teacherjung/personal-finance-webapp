@@ -425,7 +425,7 @@ const MANIFEST = {
       'test/server.test.js',
     ],
   },
-  'docs/contracts/前端功能.md': {
+  'docs/contracts/frontend-features.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '前端功能',
     rules: [
@@ -459,7 +459,7 @@ const MANIFEST = {
       'test/subscriptions-model.test.js',
     ],
   },
-  'docs/contracts/收支記帳與匯入.md': {
+  'docs/contracts/income-expense.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '收支記帳與匯入',
     rules: [
@@ -519,7 +519,7 @@ const MANIFEST = {
       'test/store-rules.test.js',
     ],
   },
-  'docs/contracts/投資與SEC.md': {
+  'docs/contracts/investment-sec.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '投資與 SEC',
     rules: [
@@ -909,11 +909,11 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
   //    缺掉的 `lib/services/store-rules.js` 冒充過關。現在只認**完整路徑**的精確集合相等。
   const readme = read('docs/contracts/README.md');
   // ⚠️ 判準用**解析後的連結目標**，不是原始字串（Codex #384 r6 High）：
-  //    `|前端功能…|`（合法的無空格表格列）與 `[前端功能.md](./前端功能.md)`（等價相對路徑）
+  //    `|前端功能…|`（合法的無空格表格列）與 `[frontend-features.md](./frontend-features.md)`（等價相對路徑）
   //    都繞得過「以 `| ` 開頭」＋「含 `(檔名)`」這種字面比對，於是矛盾的重複列照樣過關。
   const rows = readme.split('\n').filter((l) => l.trim().startsWith('|') && /\.md\)/.test(l));
   // ⚠️ 連結要**相對該檔所在目錄解析**，不能只比 basename（Codex #384 r7）：
-  //    把 README 的 `(前端功能.md)` 寫成 `(docs/contracts/前端功能.md)`
+  //    把 README 的 `(frontend-features.md)` 寫成 `(docs/contracts/frontend-features.md)`
   //    ——那是從 AGENTS 複製路徑到子目錄 README 的真實手滑——實際會連到
   //    `docs/contracts/docs/contracts/…`（不存在），只比 basename 卻看不出來。
   /** @param {string} l */
