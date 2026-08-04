@@ -22,6 +22,12 @@
 
 **記得同步這裡**：**逐期間總額優先**：先採 `DebtCurrent`；缺總額才看 `ShortTermBorrowings`＋一年內長債。兩者同時存在時，先用該份申報的 XBRL filer terse／verbose label 判斷 `ShortTermBorrowings` 是「已含一年內長債」或「純短債」；label 抓不到時，只有同 accession／unit／期間／form／filed、金額非負，且 `ShortTermBorrowings` 小於一年內長債（數值關係已排除父項包含子項）才可相加，否則保守不加並警告。**任一期間只命中一種債務時原 fact 原樣保留**，不可因另一組缺席而丟期數。候選 tag 的單一真相＝`SEC_METRIC_CANDIDATES.currentDebt.currentDebtSources`，parser／label accession 掃描都從它取，production 不得另抄群組；相加列要保留 row-level `taxonomy:'derived'`／`tag`／`formula`／`inputs`／申報來源，並通過 `sanitizeDbForWrite`。改動必跑 Dover（父子重疊）、Amazon（兩種分開）、Microsoft（單一來源）三型考題與真 SEC 申報回歸；`noncurrentDebt` 不在此同步點範圍。
 
+## SEC 單一回應資源上限
+
+**改這裡**：`lib/parse-limits.js` 的 `MAX_SEC_RESPONSE_BYTES`
+
+**記得同步這裡**：SEC Company Facts 會完整收 body、解碼並 `JSON.parse`，所以位元組只是記憶體成本的起點。現行上限 25MiB；#371 的隔離量測約增加 118MiB RSS，且重型名額把同時執行限制為 1，因此保留到足以容納約 5–15MiB 的正常公司資料。`lib/services/stock-fundamentals.js` 只引用該常數，並以 `SEC_MAX_RESPONSE_BYTES` 相容轉供；不得另抄數字。調整上限前必須重新量測 Render 512MiB 容器的 app 底噪、完整解析峰值與重型名額。考題＝`test/parse-limits.test.js` 固定資源預算＋`test/stock-fundamentals-api.test.js` 正式接線與禁重複宣告。
+
 ## SEC 全站佇列護欄
 
 **改這裡**：**SEC 全站佇列護欄（2026-07-30，#335 複審 dos 條）**

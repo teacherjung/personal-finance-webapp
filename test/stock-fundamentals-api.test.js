@@ -18,10 +18,12 @@ const fixture = JSON.parse(await readFile(
 const { app } = await import('../server.js');
 const { emptyDb, saveDb } = await import('../lib/repo.js');
 const {
+  SEC_MAX_RESPONSE_BYTES,
   SEC_MIN_INTERVAL_MS,
   STOCK_FUNDAMENTALS_TTL_MS,
   setStockFundamentalsOptionsForTest
 } = await import('../lib/services/stock-fundamentals.js');
+const { MAX_SEC_RESPONSE_BYTES } = await import('../lib/parse-limits.js');
 const { validateImportItem } = await import('../lib/schema.js');
 
 const server = app.listen(0, '127.0.0.1');
@@ -30,6 +32,15 @@ const port = /** @type {any} */ (server.address()).port;
 const base = `http://127.0.0.1:${port}`;
 const SEC_USER_AGENT = 'NotEasy Test data@example.test';
 const silentLogger = { warn() {} };
+
+test('SEC 服務接線：既有名稱轉供 parse-limits 的同一個上限', async () => {
+  assert.equal(SEC_MAX_RESPONSE_BYTES, MAX_SEC_RESPONSE_BYTES);
+  const source = await readFile(new URL('../lib/services/stock-fundamentals.js', import.meta.url), 'utf8');
+  assert.match(source, /import \{ MAX_SEC_RESPONSE_BYTES \} from '\.\.\/parse-limits\.js';/);
+  assert.match(source, /maxResponseBytes: merged\.maxResponseBytes \?\? MAX_SEC_RESPONSE_BYTES/);
+  assert.doesNotMatch(source, /25\s*\*\s*1024\s*\*\s*1024/,
+    '服務層若再抄一份 25MiB，日後只改其中一邊就會走散');
+});
 
 /** @param {string} url */
 function fixturePayload(url) {

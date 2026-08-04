@@ -7,7 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_PDF_PAGES, MAX_PDF_TEXT_ITEMS, MAX_IB_ROWS, MAX_IB_XML_BYTES, MIN_UPLOAD_BYTES_PER_SEC,
+  MAX_PDF_PAGES, MAX_PDF_TEXT_ITEMS, MAX_IB_ROWS, MAX_IB_XML_BYTES, MAX_SEC_RESPONSE_BYTES,
+  MIN_UPLOAD_BYTES_PER_SEC,
   assertPageLimit, countTextItems, assertXmlSize, assertRowLimit,
   readCappedText, countXmlRows, assertXmlRowLimits,
   applyHostedTimeouts, HOSTED_HEADERS_TIMEOUT_MS, HOSTED_REQUEST_TIMEOUT_MS, HOSTED_KEEPALIVE_TIMEOUT_MS,
@@ -19,6 +20,13 @@ test('上限訂在「比真實帳單大一個數量級」——不可以訂到�
   assert.ok(MAX_PDF_PAGES >= 100, `頁數上限 ${MAX_PDF_PAGES} 太小，一次匯一整年就會被誤殺`);
   assert.ok(MAX_PDF_TEXT_ITEMS >= 100_000);
   assert.ok(MAX_IB_ROWS >= 10_000, 'IB 年度報表的成交紀錄可能上萬筆');
+});
+
+test('SEC 回應上限：25MiB 的資源預算只在 parse-limits 宣告', () => {
+  assert.equal(MAX_SEC_RESPONSE_BYTES, 25 * 1024 * 1024,
+    '這是正式行為；要調整必須帶新的記憶體量測，不可在服務層順手改掉');
+  assert.ok(MAX_SEC_RESPONSE_BYTES >= 15 * 1024 * 1024,
+    '正常 Company Facts 可達約 15MiB，上限太小會讓合法公司永遠無法更新');
 });
 
 test('頁數：正常份數放行，超標丟 400＋說得出原因', () => {
