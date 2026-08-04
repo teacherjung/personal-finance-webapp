@@ -14,7 +14,7 @@
 >
 > ⚠️ **下文有些段落寫成「你」，那是對「正在審查的那一方」說的，不是專指 Codex。**
 > 例如「你的角色（唯讀審查者）」那一節：**共用的紀律直接適用**（只提意見不改檔、在自己專屬的審查 worktree 裡工作、釘住 commit、審完回報）；
-> 而**寫死 `-codex` 路徑、「修正交給 Claude」那幾條是 Codex 專屬的**，Claude 複審時要替換成對應的對象——完整分辨見該節開頭的表。
+> 而**審查樹的角色命名（codex-review／claude-review）、「修正交給 Claude」那幾條是 Codex 專屬的**，Claude 複審時要替換成對應的對象——完整分辨見該節開頭的表。
 > ⚠️ 我上一版在這裡寫「一字不改地適用」，那跟下面那張表自相矛盾（Codex #387 r2 抓到）。
 > 考題 `test/doc-naming.test.js` 盯著「三方共用的文件，名字不可以只掛一方」。
 
@@ -24,7 +24,7 @@
 > ```bash
 > codex exec -m gpt-5.6-sol -c model_reasoning_effort='"xhigh"' \
 >   -s workspace-write -c sandbox_workspace_write.network_access=true \
->   -C "<repo>-codex" "請讀 REVIEW-AND-MERGE.md 並照它執行審查"
+>   -C "/private/tmp/codex-review-pr<N>" "請讀 REVIEW-AND-MERGE.md 並照它執行審查"
 > ```
 >
 > - **審查模型＝`gpt-5.6-sol` ＋ `model_reasoning_effort=xhigh`（William 定 2026-07-27）**：設定寫在**指令上**，
@@ -40,7 +40,7 @@
 > - **一律在該 PR 的拋棄式審查樹跑**（`/private/tmp/codex-review-pr<N>`；發射者先備好、審完收掉——備樹三步見下方「你的角色」節），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
 > - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
-> - **審尚未合併的 PR** 時，在提示詞裡指名 branch 與重點，並要求 `git diff origin/main...origin/<branch>`、不要 checkout。
+> - **審尚未合併的 PR** 時，在提示詞裡指名受審 commit 與重點；審查樹已釘住該 commit，diff 一律 `git diff origin/main...HEAD`（**不要**拿會移動的 `origin/<branch>` 當對象——樹跑舊 HEAD、diff 看新 branch＝混合審查）。
 > - **成本**：xhigh 單次約 72 萬 tokens（見上；走 William 的 ChatGPT 方案額度）。
 > - **回報**：Claude 把 Codex 的**原始回覆原文**貼給 William（不轉述、不挑），再附上自己逐條核對的結論（屬實／誤報／需裁決）；**修不修由 William 決定**，Claude 不因為「Codex 說了」就自動動工。
 >
@@ -176,7 +176,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 **防自審靠人**：提案要標作者；**提案是誰寫的，就不能叫誰來審**（反方向的 ③ 由另一方直接做）。
 審查跑完檢查審查 worktree 乾不乾淨——**審查者留下改動就是違反角色**，要當成一個發現。
 
-> **常態分工＝三方協作框架 v4（AGENTS.md「三方協作框架」節，2026-07-24 裁決）**：Claude 實作、**Codex 唯讀審查**（獨立複審、對抗測試、同步點檢查、風險分析）、William 決定與驗收。**高風險 PR（金額公式/資料庫/搬家/匯入/機密/共用底層）＝Codex 複審後才合併**——William 指定審某支 PR 時，用 `git fetch origin && git diff origin/main...origin/<branch>` 看內容、不 checkout。
+> **常態分工＝三方協作框架 v4（AGENTS.md「三方協作框架」節，2026-07-24 裁決）**：Claude 實作、**Codex 唯讀審查**（獨立複審、對抗測試、同步點檢查、風險分析）、William 決定與驗收。**高風險 PR（金額公式/資料庫/搬家/匯入/機密/共用底層）＝Codex 複審後才合併**——William 指定審某支 PR 時，在該 PR 的拋棄式審查樹看內容（樹已釘住受審 commit，`git diff origin/main...HEAD`）。
 > 文末「實作模式」**只在 William 明確指派 Codex 做獨立功能時才啟用**（三條件：有獨立施工計畫／不碰 Claude 預約中的共享檔案／Claude 的 PR 需要複審時審查優先），不是常態。
 
 ---
@@ -193,19 +193,19 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 你的角色（唯讀審查者）：
 
 ⚠️ **哪些是共用的、哪些是 Codex 專屬的**（Codex #387 r1 指出我上一版把界線畫錯了——
-檔頭宣稱這整節「一字不改地適用於 Claude」，但下面提到 `-codex` worktree、
+檔頭宣稱這整節「一字不改地適用於 Claude」，但下面提到 Codex 專屬的審查樹命名、
 「修正交給 Claude」的幾條，Claude 在複審 Codex 的實作時**不可能原樣成立**）：
 
 | 這一節的內容 | 誰適用 |
 |---|---|
 | 只提意見、不改檔、不 commit、不 push | **共用**（誰在審都一樣） |
-| 在**自己專屬的**審查 worktree 裡工作，不切別人的分支 | **共用**（目錄名不同：Codex 用 `-codex`、Claude 用 `-claude`） |
+| 在**自己專屬的**審查 worktree 裡工作，不切別人的分支 | **共用**（樹名不同：Codex 審＝`codex-review-pr<N>`、Claude 審＝`claude-review-pr<N>`） |
 | 釘住 commit、審完回報、不自行動工 | **共用** |
-| 下文寫死的 `-codex` 路徑、「修正一律交給 Claude」 | **Codex 專屬**——Claude 複審時對象換成 Codex |
+| 下文的 codex-review 樹命名、「修正一律交給 Claude」 | **Codex 專屬**——Claude 複審時對象換成 Codex |
 
 
 - 只提意見，不改任何檔案、不 commit、不 push。
-- **在該 PR 的拋棄式審查樹裡工作**（William 2026-08-04 統一「實作常設、審查拋棄」；原常設 `-codex` 審查樹已轉職為 Codex 實作樹）：Codex 審＝`/private/tmp/codex-review-pr<N>`、Claude 審＝`/private/tmp/claude-review-pr<N>`。**發射者備樹三步（審查者只用、不建不收）**：①`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` ②`ln -s "<主目錄>/node_modules" "<審查樹>/node_modules"`（跑三關要用；symlink 紀律見 AGENTS 協作流程）③審完由發射者收：`rm "<審查樹>/node_modules"`（**不帶斜線＝只刪 symlink**）→ `git worktree remove <審查樹>`。拋棄式樹釘住受審 commit＝永遠新鮮。
+- **在該 PR 的拋棄式審查樹裡工作**（William 2026-08-04 統一「實作常設、審查拋棄」；原常設 `-codex` 審查樹已轉職為 Codex 實作樹）：Codex 審＝`/private/tmp/codex-review-pr<N>`、Claude 審＝`/private/tmp/claude-review-pr<N>`。**發射者備樹三步（審查者只用、不建不收）**：①`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` ②先 `git check-ignore -v "<審查樹>/node_modules"` 確認 `.gitignore` 擋得住，再 `ln -s "<主目錄>/node_modules" "<審查樹>/node_modules"`（跑三關要用；symlink 紀律見 AGENTS 協作流程）③審完由發射者收：`rm "<審查樹>/node_modules"`（**不帶斜線＝只刪 symlink**）→ `git worktree remove <審查樹>`。拋棄式樹釘住受審 commit＝永遠新鮮。
   - 為什麼要分開：上一輪審查時 Claude 在同一個目錄裡 rebase 與切分支十幾次，你正在讀的樹在腳下移動、看到新舊混雜的程式碼。現在 Claude 在 `-claude` worktree 工作、主目錄永遠停在 `main`，三邊互不干擾。
   - **不要在你的 worktree 裡切到別人的功能分支**（那會把它從主目錄／Claude 的 worktree 搶走）。要看某個 PR 的內容用 `git fetch origin && git log/diff origin/<branch>`，不必 checkout。
   - 順帶一提：你的 worktree 裡**沒有** `data/store.db`（真實個資只在主目錄），所以下面那條「絕對不要讀取」現在是結構上做不到，不必再擔心誤觸。
@@ -253,13 +253,13 @@ William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、
 **session 的實際來源仍然是自報的，機器驗不了**——那要獨立 GitHub 帳號才擋得住（見 `docs/GitHub分支保護-設定與驗證.md`「第二步：分身分」）。
 （**一條規則的理由跟現實對不上，本身就是漂移**——那正是這份文件一直在修的病。）前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
-- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用你的**常設 `-codex` 樹**（2026-08-04 轉職為 Codex 實作樹、審查改走拋棄式樹——完整規則見 AGENTS.md 協作流程的目錄不變量；**絕不動主目錄**）。流程：在 `-codex` 裡 `git fetch origin && git checkout -B codex/<分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
+- **工作環境**：**不要在審查樹（拋棄式、唯讀複審）commit**。實作用你的**常設 `-codex` 樹**（2026-08-04 轉職為 Codex 實作樹、審查改走拋棄式樹——完整規則見 AGENTS.md 協作流程的目錄不變量；**絕不動主目錄**）。流程：在 `-codex` 裡 `git fetch origin && git checkout -B codex/<分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（工法＝`docs/notion-spec-playbook.md`，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 3）。
 - **完工後、轉 ready 送審前，自己對抗式自審一輪**（開工就開 Draft，所以自審關卡掛在「轉 ready」而不是「開 PR」）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
 - **PII**：絕不讀 `data/store.db`（含 `.bak/-wal/-shm`）與 `store.json`；測試一律 `STORE_FILE` 指暫存 `.db`；帳單 PDF 密碼＝身分證字號，只記憶體用、絕不落任何檔/log/commit。
 
 ### 自我檢查（開審前）
-- `git fetch origin && git checkout --detach origin/main`；`git rev-parse --short HEAD` 應等於 `origin/main`；三關全綠再開審。
-- **絕不在 codex worktree commit**；`?? node_modules`＝舊樹快照，先更新再看。
+- **審查樹自檢**：`git rev-parse HEAD` 必須等於**提示詞釘選的受審 SHA**（不是 origin/main——拋棄樹只保證不自己漂，保證不了發射者釘對、也保證不了 PR 之後又推了新 commit）；不等＝停下回報、不要開審。三關全綠再開審。
+- **絕不在審查樹 commit**。
 - 當期審查重點由使用者隨任務給（或審整個 main 現況）；歷史輪次的重點清單（r1–r14）見本檔 git 紀錄。

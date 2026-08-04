@@ -229,7 +229,7 @@
 ## 協作流程
 
 - **Claude 與 Codex 都在本機工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
-- **一個工作目錄只服務一個角色**（Codex 提議、使用者定 2026-07-19；2026-08-02 從「寫死三個目錄」改成「寫死角色與不變量」——實測當時共有 16 棵 worktree（Codex 的實作樹在 `/private/tmp/`、每支 PR 一棵審查樹），把數量寫死等於文件一開始就是錯的，同「不寫死頁數」的道理。下表是**三種角色各自的不變量**，**實作樹＝常設兩棵（下表）、審查樹＝拋棄式每 PR 一棵**（William 2026-08-04 拍板統一「實作常設、審查拋棄」），拋棄樹的數量與清單不寫死。起因：審查當下 Claude 在同一個目錄裡 rebase／切分支十幾次，Codex 正在讀的樹在腳下移動，看到新舊混雜的程式碼）：
+- **一個工作目錄只服務一個角色**（Codex 提議、使用者定 2026-07-19；2026-08-02 從「寫死三個目錄」改成「寫死角色與不變量」——實測當時共有 16 棵 worktree（Codex 的實作樹在 `/private/tmp/`、每支 PR 一棵審查樹），把數量寫死等於文件一開始就是錯的，同「不寫死頁數」的道理。下表是**各角色的不變量**（角色數會長，不寫死），**實作樹＝常設兩棵（下表）、審查樹＝拋棄式每 PR 一棵**（William 2026-08-04 拍板統一「實作常設、審查拋棄」），拋棄樹的數量與清單不寫死。起因：審查當下 Claude 在同一個目錄裡 rebase／切分支十幾次，Codex 正在讀的樹在腳下移動，看到新舊混雜的程式碼）：
 
   | 目錄 | 角色 | 分支狀態 |
   |---|---|---|
@@ -241,7 +241,7 @@
   - ⚠️ **審查樹必須 detached 釘住受審 commit**（同一分支不能被兩個 worktree 同時 checkout；拋棄式樹每 PR 新建＝永遠新鮮，舊的「樹過期自檢」儀式不再需要）。備樹與收樹三步＝REVIEW-AND-MERGE.md「你的角色」節（執行者實際照做的那份，此處不重抄）。
   - ⚠️⚠️ **`node_modules` 的 symlink：只准建、不准動**（2026-08-02 事故）。做法是 `ln -s "<主目錄>/node_modules" "<worktree>/node_modules"`（純 JS 相依，不必各裝一份），但**在任何 worktree 裡刪除、重裝、或 `rm -rf` 那個 symlink 的內容，動到的是主目錄本身**——使用者的 app 會立刻起不來（`Cannot find package 'express'`），而錯誤訊息完全指不到真因。實際踩過：清理暫存 worktree 時刪除動作順著 symlink 進去，主目錄的 `node_modules` 被清空。**移除 worktree 前先 `rm <worktree>/node_modules`（不帶斜線＝只刪 symlink 本身）**；更安全的做法是——**唯讀分析根本不需要 node_modules，不要建那個 symlink**。三道關與 pre-push hook 都照常運作（`core.hooksPath` 是 repo 層設定，worktree 自動繼承）。
   - ⚠️⚠️ **`.gitignore` 必須寫 `node_modules`（不帶斜線）**——symlink 對 Git 不是目錄，帶斜線擋不住，`git add -A` 會把它連本機絕對路徑收進 commit（2026-07-19 實踩：symlink 進了 PR #136 且 CI 全綠——別指望三道關攔這種東西）。worktree 裡建任何 symlink 前先 `git check-ignore -v <path>` 確認擋得住。
-  - ✅ **順帶補強鐵則 1**：`data/store.db`（真實餘額、IBKR flexToken、`pdfPassword`＝身分證字號）只存在主目錄，兩個 worktree 的 `data/` 只有 `seed.json`——「不要讀 store.db」從君子協定變成**結構上讀不到**。
+  - ✅ **順帶補強鐵則 1**：`data/store.db`（真實餘額、IBKR flexToken、`pdfPassword`＝身分證字號）只存在主目錄，實作與審查 worktree 的 `data/` 只有 `seed.json`——「不要讀 store.db」從君子協定變成**結構上讀不到**。
   - 建立指令留檔：常設實作樹＝`git worktree add ../<repo>-claude -b wt-claude`（`-codex` 同款）；拋棄式審查樹＝`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>`；`git worktree list` 查看、`git worktree remove <path>` 移除。
   - ⚠️⚠️ **實作＝常設樹、審查＝拋棄式樹、絕不動主目錄**（William 2026-08-04 拍板統一；起因＝同日兩次實測 Codex 桌機直接在主目錄開工——主目錄被切到功能分支、本機 `main` 一度被改名消失，使用者的 app 收不到後續合併、重啟捷徑的自動同步也靜靜跳過）。**Codex 實作＝在常設 `-codex` 樹**（與 Claude 在 `-claude` 對稱），開工第一步＝`git fetch origin && git checkout -B codex/<分支> origin/main`；首次實作前照上方紀律掛 node_modules symlink。**審查一律在拋棄式樹**（上表；發射者備樹）。全程不得在主目錄 checkout、commit 或改動任何分支。William 的指派詞也會帶提醒，但**規則以本檔為準、不依賴指派詞**。
 - **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。分了 worktree 之後兩邊可以同時工作，但**同一個 worktree 仍然只有一個 agent 動**。
@@ -285,7 +285,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在 `-codex` 獨立 worktree 跑（碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
+**Codex 審查的觸發方式（William 2026-07-27 常設授權）**：每批 PR 合併進 `main` 後，**Claude 直接用本機 `codex` CLI 自動跑一次審查**（完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭）。要點：只在該 PR 的拋棄式審查樹跑（`/private/tmp/codex-review-pr<N>`，發射者備樹；碰不到主資料夾與 `data/store.db`）、沙箱要開網路否則端點測試跑不了、跑完收掉 Codex 自建的臨時 worktree、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**、修不修仍由 William 決定。授權範圍僅限「跑審查」，不含依審查結果自動動工。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **角色分工（含「不負責」邊界）**：
 
@@ -300,9 +300,9 @@
 
 | 模式 | 能做什麼 | 不能做什麼 | 誰啟動 |
 |---|---|---|---|
-| **①常態審查**（預設） | 讀、跑三關、提意見（附重現與 `檔案:行`） | **絕對唯讀：不改檔、不 commit、不 push**；不在 `-codex` 樹 checkout 別人的分支 | 常設（每批合併後）或 William 隨時 |
+| **①常態審查**（預設） | 讀、跑三關、提意見（附重現與 `檔案:行`） | **絕對唯讀：不改檔、不 commit、不 push**；在該 PR 的拋棄式審查樹工作、不 checkout 任何分支 | 常設（每批合併後）或 William 隨時 |
 | **②代合併** | 照 `REVIEW-AND-MERGE.md` 的**合併步驟**（步數以那份為準）執行「**Claude 實作、你審過**」的合併（授權範圍就這麼窄——其他實作者的支不在內） | **不含修碼**——發現問題回報 Claude 修，不得順手改；不合自己實作的支（見「實作者不按自己的合併鍵」） | 常設授權（2026-07-27） |
-| **③實作** | 在**另開的可寫 worktree** 走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／Claude 的複審需求優先於實作） | 不得在 `-codex` 審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
+| **③實作** | 在**常設 `-codex` 實作樹**走分支與 PR（三條件：獨立施工計畫／不碰他人預約檔案／Claude 的複審需求優先於實作） | 不得在審查樹 commit；高風險 PR 未經 Claude 複審不得合併 | **僅 William 明確指派**——空檔≠自動啟動 |
 
 **⚠️ 協作的唯一不變量（William 2026-07-29 定；原本只寫在 `REVIEW-AND-MERGE.md`，2026-08-02 搬進本檔）**：
 

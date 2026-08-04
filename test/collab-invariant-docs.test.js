@@ -601,40 +601,36 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
 
-test('工作區方案（實作常設／審查拋棄）：封閉白名單——合法指令與承重句逐字釘死', () => {
-  // 這道題的三代進化史（每代都被 Codex 打穿一次）：
-  //   v1 關鍵字存在檢查 → 覆寫段落假綠＋等價順序誤擋（#398 r2）；
-  //   v2/v3 解析指令構成 → 位置顛倒／.. 逃逸／重複 -b／分號注入／續行覆寫（r3、r4）——
-  //   「解析式驗證追不上自然語言＋shell 語法的變體空間」＝列舉繞法補不完的劃界點。
-  // v4 照 r4 處方改**封閉白名單**：合法指令與承重句**逐字**釘死，一字不差才綠。
-  // ⇒ 特性不是缺陷：**改這些指令＝必須先來改本考題**（變更必經考題，同 no-hiding-places 的宣告制）。
-  // ⚠️ 誠實劃界：它證明「規範文字原封還在」，證明不了「文件別處沒有另立覆寫」——
-  //    蓄意覆寫段落屬審查制度職責（列舉不完，不假裝列得完）。
-  const agents = read('AGENTS.md');
-  const rm = read('REVIEW-AND-MERGE.md');
-  const CMD_IMPL = '`git fetch origin && git checkout -B codex/<分支> origin/main`';
-  const CMD_TREE = '`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>`';
-  const pins = [
-    ['AGENTS.md', agents, [
-      '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄',
-      CMD_IMPL,
-      '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`',
-      '功能分支（`git checkout -B codex/<分支> origin/main`）',   // 表格格那份也釘住——指令在 AGENTS 活兩處，只釘一處＝改另一處不會紅（v4 突變電池自抓）
-      '釘住受審 commit',
-    ]],
-    ['REVIEW-AND-MERGE.md', rm, [
-      CMD_IMPL,
-      CMD_TREE,
-      '/private/tmp/codex-review-pr<N>',
-      '/private/tmp/claude-review-pr<N>',
-      '不帶斜線＝只刪 symlink',
-      '絕不動主目錄',
-    ]],
+test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出現次數（改任何一份複本都會紅）', () => {
+  // 三代被打穿史：v1 關鍵字→覆寫假綠＋誤擋（r2）；v2/v3 解析式→位置顛倒／逃逸／重複-b／
+  // 分號注入／續行覆寫（r3/r4，劃界：解析追不上變體空間）；v4 白名單→r5 抓「只驗存在」：
+  // 同一句活兩處、改壞一處由另一處滿足 includes ⇒ v5 改**出現次數精確比對**。
+  // ⇒ 特性不是缺陷：改這些指令或承重句＝必先來改本考題（變更必經考題）。
+  // ⚠️ 誠實劃界：它證明「白名單句在兩份文件各出現規定次數」，證明不了「別處沒有另立
+  //    覆寫段落」（歸審查制度）、也證明不了「執行者真的照做」（歸事後稽核與指派詞）。
+  const docs = { 'AGENTS.md': read('AGENTS.md'), 'REVIEW-AND-MERGE.md': read('REVIEW-AND-MERGE.md') };
+  const count = (hay, needle) => hay.split(needle).length - 1;
+  const PINS = [
+    ['AGENTS.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
+    ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
+    ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
+    ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
+    ['AGENTS.md', '釘住受審 commit', 2],
+    ['AGENTS.md', '在該 PR 的拋棄式審查樹工作、不 checkout 任何分支', 1],
+    ['AGENTS.md', '在**常設 `-codex` 實作樹**走分支與 PR', 1],
+    ['REVIEW-AND-MERGE.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
+    ['REVIEW-AND-MERGE.md', '`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>`', 1],
+    ['REVIEW-AND-MERGE.md', '-C "/private/tmp/codex-review-pr<N>"', 1],
+    ['REVIEW-AND-MERGE.md', '先 `git check-ignore -v "<審查樹>/node_modules"` 確認', 1],
+    ['REVIEW-AND-MERGE.md', '必須等於**提示詞釘選的受審 SHA**', 1],
+    ['REVIEW-AND-MERGE.md', 'git diff origin/main...HEAD', 2],
+    ['REVIEW-AND-MERGE.md', '不帶斜線＝只刪 symlink', 1],
+    ['REVIEW-AND-MERGE.md', '絕不動主目錄', 1],
   ];
-  for (const [name, text, list] of pins) {
-    for (const pin of list) {
-      assert.ok(text.includes(pin),
-        `${name} 少了白名單釘句「${pin}」——要改這些指令或承重句，先來改本考題（變更必經考題）`);
-    }
+  for (const [file, pin, expected] of PINS) {
+    const got = count(docs[file], pin);
+    assert.equal(got, expected,
+      `${file} 的白名單句「${pin}」出現 ${got} 次（規定 ${expected}）——`
+      + '要改指令或承重句，先來改本考題的句庫與次數（變更必經考題）');
   }
 });
