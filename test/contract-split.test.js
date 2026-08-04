@@ -557,7 +557,7 @@ const MANIFEST = {
       'lib/pdf-isolate-child.js',
       'lib/routes/auth.js',
       'lib/routes/core.js',
-      'lib/routes/market.js', 'lib/services/ib-sync.js', 'lib/services/securities-import.js',
+      'lib/routes/market.js', 'lib/services/ib-sync.js', 'lib/services/securities-import.js', 'lib/secret-fields.js', 'lib/services/security-trades.js',
       'lib/schema.js',
       'lib/services/insights.js',
       'lib/services/market-data.js',
