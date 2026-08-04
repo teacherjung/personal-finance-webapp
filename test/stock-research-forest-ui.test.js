@@ -41,6 +41,12 @@ function contrastRatio(foreground, background) {
   return (values[0] + 0.05) / (values[1] + 0.05);
 }
 
+function mixHex(first, second) {
+  const channels = hex => hex.slice(1).match(/.{2}/g).map(value => Number.parseInt(value, 16));
+  const mixed = channels(first).map((value, index) => Math.round((value + channels(second)[index]) / 2));
+  return `#${mixed.map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function researchModel(overrides = {}) {
   const research = {
     symbol: 'AAPL',
@@ -179,15 +185,26 @@ test('個股研究森林工作面｜部位帶內距與負邊距成對避免整�
   assert.match(cssRule(css, '.stock-position', mobileAt), /padding:\s*16px 16px 3px/);
 });
 
-test('個股研究森林工作面｜部位帶小字在淺綠底維持一般文字對比', async () => {
+test('個股研究森林工作面｜部位帶全部文字在淺綠底維持一般文字對比', async () => {
   const [css, sharedCss] = await Promise.all([
     readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
     readFile(new URL('public/styles.css', ROOT), 'utf8')
   ]);
 
+  assert.match(
+    cssRule(css, '.stock-position'),
+    /background:\s*color-mix\(in srgb, var\(--accent-soft\) 50%, var\(--card\)\)/
+  );
   assert.match(cssRule(css, '.stock-position .stock-eyebrow'), /color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-position-item .info-link'), /color:\s*var\(--accent-hover\)/);
-  const foreground = cssHexToken(sharedCss, '--accent-hover');
-  const background = cssHexToken(sharedCss, '--accent-soft');
-  assert.ok(contrastRatio(foreground, background) >= 4.5);
+  const background = mixHex(
+    cssHexToken(sharedCss, '--accent-soft'),
+    cssHexToken(sharedCss, '--card')
+  );
+  for (const token of ['--accent-hover', '--text-dim', '--pos', '--neg']) {
+    assert.ok(
+      contrastRatio(cssHexToken(sharedCss, token), background) >= 4.5,
+      `${token} must keep 4.5:1 contrast on the position band`
+    );
+  }
 });

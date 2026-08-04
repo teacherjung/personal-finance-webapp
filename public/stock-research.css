@@ -158,7 +158,7 @@
   margin: 8px -28px 30px;
   padding: 20px 28px 0;
   border-bottom: 2px solid var(--frame);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 50%, var(--card));
 }
 
 .stock-position .stock-eyebrow {
