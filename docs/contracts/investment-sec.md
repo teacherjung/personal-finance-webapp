@@ -1,7 +1,7 @@
 # 契約：投資與 SEC（基本面／佇列護欄／曝險穿透／槓桿／代號原則／估值訊號）
 
 > 本檔是 AGENTS.md「同步點清單」拆出的**領域契約**（D4b，2026-08-01）。
-> **內文＝原同步點列逐字照搬**（唯一轉換＝表格列解框成「改這裡／記得同步這裡」兩段）；新增的只有標題與本頁首。
+> **內文＝AGENTS 原文逐字照搬**（表格列解框成「改這裡／記得同步這裡」兩段；2026-08-04 籃C 起，同步點表以外的段落與清單同樣逐字、掛在同兩個標籤下）；新增的只有標題、標籤與本頁首。
 > **適用檔案清單＝[README.md](README.md) 路由表「投資與 SEC」列（單一真相，本頁首不重複維護一份會走散的副本）**——命中就必讀本檔。
 
 ## SEC 官方指標挑值
@@ -104,3 +104,42 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 **改這裡**：`settings.signals`（美股自動、區域四市場每月手動）
 
 **記得同步這裡**：只在投組頁「更新區域數值」表單編輯；美股 ECY＝`/api/cape`＋`/api/realyield`（FRED DFII10）自動算，不手動
+
+## 投資頁前端模組分工
+
+**改這裡**：投資頁前端模組（`portfolio-*.js` 家族的座位表、工作流、停止線與格式單一真相）
+
+**記得同步這裡**：投資組合的**零 DOM／零 API 純模組層**分成 `modules/portfolio-calculations.js`（匯率表、持股成本、槓桿距離、交易損益換匯、XIRR 現金流組裝與求解）、`modules/portfolio-exposure.js`（資產型別、ETF 區域／公司穿透、幣別底層曝險）、`modules/portfolio-model.js`（把持股、帳戶與 IB 官方摘要組成頁面共用的台幣金額模型）、`modules/portfolio-state.js`（把金額模型整理成分層金額、QQQM 核心佔比、投資上限／凍結名單與 XIRR 頁面狀態）、`modules/portfolio-risk.js`（前後端共用的投資上限預設＋前端凍結加碼名單）、`modules/portfolio-report.js`（把已算好的投資資料整理成 A4 列印 HTML）、`modules/portfolio-details.js`（把已算好的成本、資產、交易資料排序成彈窗 HTML；格式器由頁面注入，維持 NT／US 雙計價）、`modules/portfolio-activity.js`（IB 現金流、交易摘要與匯率來源說明；只接資料＋目前計價，不碰頁面狀態）、`modules/portfolio-visuals.js`（紀律檢查、幣別／區域／公司曝險、分層配置與持股圓環；只接已算資料與格式器，不碰 DOM/API）、`modules/portfolio-valuation.js`（把 `signal-tiers.js` 算出的五市場檔位、CAPE 分位／規則帶與列印摘要排成 HTML；API、DOM、表單仍由頁面負責，門檻單一真相仍在 `signal-tiers.js`）、`modules/portfolio-tables.js`（把持股分層排序、價格／損益／佔比與願望清單狀態排成主表 HTML；排序狀態、localStorage 與事件仍由頁面負責）、`modules/portfolio-research.js`（把個股論點、指標、風險、最近檢查點與研究表單規格排成 HTML／資料；API 寫入與事件仍由頁面負責）、`modules/portfolio-overview.js`（把頁首、總覽卡、估值占位卡與 XIRR 摘要排成 HTML；金額格式、API、圖表與事件仍由頁面負責）、`modules/portfolio-chart.js`（把投入／市值月序列、NT／US 換算與 Chart.js 設定整理成純資料）、`modules/portfolio-quotes.js`（把 Yahoo 報價代號、匯率精度、幣別護欄與逐筆寫回計畫整理成純資料；API 與真正寫入仍由頁面負責）、`modules/portfolio-forms.js`（把持股／願望清單／估值表單規格、持股成本整理與凍結加碼原因整理成純資料；確認、API 與提示仍由頁面負責）與 `modules/portfolio-ib-sync.js`（把 IBKR 同步成功摘要與現金資料異常旗標翻成使用者回報；同步、寫入與已出清確認仍由頁面負責）。**個股研究頁（Codex P1–P5）另成一組**：`modules/stock-research-model.js`（持股／研究模型、空狀態四型、占比與上限組裝）、`modules/stock-research-score.js`（五構面評分：0 分是合法評分、五項未評完不算總分、同日歷史去重）、`modules/stock-research-view.js`（純呈現層＋四段就地解釋 `STOCK_RESEARCH_INFO`；交易一律**原幣呈現、不跨幣別加總**）、`modules/stock-research-page.js`（DOM／API／事件接線）。**入口只有兩個、且只給 `layer:'stock'`**（P5）：投資主表的代號（`portfolio-tables.js`）與研究摘要卡的「詳細研究」（`portfolio-research.js`），都用 `normalizePortfolioSymbol` 正規化＋`encodeURIComponent` 組 `#stock?symbol=`、`target=_blank`＋`rel=noopener`；ETF／債券／衛星與店名欄維持純文字。⚠️ 路由要吃得下 query（`router()` 的 `.split('?')[0]`）；⚠️ 新分頁會**獨立重跑一次開機序列**（報價／快照／店名整理／訂閱續費日推進）＝既定裁決，伺服器端都有時間閘或冪等保護（`docs/個股研究頁-施工計畫.md` §九）；改這些公式、成分表、頁面狀態、報表、明細、活動卡、視覺、估值、主表、研究卡、摘要、圖表、報價、表單或同步回報口徑要在對應檔補固定輸入輸出考題，不要把邏輯塞回 `portfolio.js` 的畫面流程。
+
+  - **投資代號身分＝`modules/portfolio-symbol.js`**：只做 trim＋大寫，屬零 DOM／零 API 純規則；持股寫入、ETF 穿透、QQQM／CSPX 佔比、研究卡與前後端個股上限直接共用，避免空白／大小寫讓同一標的被拆成不同身分。
+  - **投資編輯工作流＝`modules/portfolio-editors.js`**：持股／願望清單的表單開啟、凍結加碼確認、POST／PUT、成功提示與重畫集中在這裡；頁面注入 API、彈窗、確認與重畫工具，模組不直接 import `app.js`。改寫入順序或入口時要用假 API 補工作流考題，並維持凍結名單在「按下儲存」時才重讀。
+  - **投資遠端操作工作流＝`modules/portfolio-remote-actions.js`**：IBKR 同步、可能已出清持股確認、Yahoo 報價與匯率逐筆寫回、按鈕狀態、成功／失敗提示與切頁序號防護集中在這裡；頁面注入 API、日期、提示與重畫工具，模組不直接 import `app.js`。改遠端操作時要用假 API 鎖住寫入順序、拒絕刪除、錯誤復原，以及「切頁後不重畫舊頁」。
+  - **投資估值操作工作流＝`modules/portfolio-valuation-actions.js`**：CAPE／實質利率載入、五市場訊號與休眠匯率入口、三個設定表單、成功提示與重畫集中在這裡；頁面注入 API、DOM 查找、彈窗與格式工具，模組不直接 import `app.js`。改外部估值載入或設定寫回時要用假 API／假 DOM 鎖住雙來源讀取、失敗退路、表單 payload 與按鈕綁定。
+  - **投資說明互動＝`modules/portfolio-info-actions.js`**：總市值、成本、股票／債券／現金／黃金、IB 活動、XIRR 與紀律檢查的唯讀彈窗入口集中在這裡；頁面注入 DOM、彈窗與格式工具，模組不直接 import `app.js`。改彈窗標題、尺寸或內容入口時要用假 DOM 鎖住每個按鈕的對應關係。
+  - **投資研究互動＝`modules/portfolio-research-actions.js`**：研究新增／編輯、檢查點新增、POST／PUT、成功提示與重畫集中在這裡；頁面注入 API、DOM、表單、日期與提示工具，模組不直接 import `app.js`。改研究寫入時要用假 API 鎖住既有／新研究分流、payload、空白檢查點與失敗退路。
+  - **投資頁拆分停止線**：`portfolio.js` 刻意保留八組資料載入、頁面模型／狀態協調、主 HTML 組裝、計價與排序狀態、持股／願望清單刪除綁定、圖表生命週期、各控制器啟動與 A4 報表列印。這些是頁面協調者的合理責任；**不要只為縮短行數繼續拆分**。往後只有責任真正變複雜、能形成獨立契約與考題時才新增模組。
+  - **投資顯示格式單一真相＝`modules/portfolio-format.js`**：K／萬／百分比、NT／US 雙計價與 U+2212 負號都由這個零依賴純模組提供；`portfolio.js`、活動卡、A4 報表與折線圖共用。新增投資金額顯示時直接 import，不要另抄 `kNum`／`wanNum`／`fmtPct`；改格式時補固定數字考題並檢查四個使用端。總市值與紀律檢查的說明 HTML 存放在零依賴 `modules/portfolio-info.js`，頁面只接 `openInfo` 事件。休眠中的美元／台幣匯率儀表 HTML 存放在 `portfolio-valuation.js` 的 `fxGaugeHtml`，目前不插入頁面；要恢復時只在 `portfolio.js` 接 DOM 與表單事件，不把 HTML 搬回主流程。
+
+## IB 現金幣別歸零
+
+**改這裡**：**IB 現金幣別歸零**（Codex r4#3）
+
+**記得同步這裡**：**IB 現金幣別歸零**（Codex r4#3）：`syncIb` 對「這次報表沒出現、但過去由 IB 同步建立的現金幣別帳戶」歸零——否則某幣別現金提光後、下次報表不再列它，帳上永久殘留舊餘額、淨資產無聲虛增（實測 USD 1000 提光後仍算 32000 TWD）。⚠️**只在 Cash Report「確實有各幣別明細列」時歸零**（Codex r5#2 收緊，原判準＝區塊存在）：兩種「沒資料」都不可當「現金為 0」——①整個區塊缺失（Flex 漏勾/查詢失敗）→ 保留舊值＋回報 `cashReportMissing`；②區塊在、只有 `BASE_SUMMARY` 彙總列——**這也是合法報表**（Codex r6#1：基準幣別總額本來就住在彙總列，一律當「沒資料」會讓這種設定的現金永遠不更新、首次同步連帳戶都建不出來）→ 基準幣別判定得了（`AccountInformation.currency`）且彙總金額有效＝以「基準幣別彙總現金」**原子取代**全部 IB 現金（其他幣別現金帳戶歸零防重複計算）＋回報 `cashFromSummary`；判定不了＝保留舊值＋回報 `cashDetailMissing`（請在 Flex 勾 Account Information）。⚠️**多 statement 報表整包 400 拒絕**（Codex r6#2；r7#3 訊息分流）：`statementCount>1` 時持倉可能混疊/重複列出、現金與官方淨值只剩最後一份的值——在寫入任何東西之前拒絕；訊息依**去重帳戶數 `accountCount`** 分流（>1＝「多帳戶，請一個 Query 一個帳戶」；=1＝「多份報表（Model-by-Model bundle 之類），請改單一整體報表」——節點數≠帳戶數，話說對使用者才修得對地方）。兩種都拒＝刻意 fail-closed（bundle 的持倉可能整體＋分模型重複列出）。⚠️**彙總入帳的回報語意**（Codex r7#2）：折疊歸零記 `cashCollapsed`（≠`cashZeroed` 的「提領/轉走」語意，前端說不同的話）；基準幣別判定得出但不支援（EUR…）＝`cashBaseUnsupported`；基準幣別齊全、彙總列卻沒有可用金額（Ending Cash 欄缺）＝`cashSummaryMissing`（Codex r8#1）——三者都≠「缺 Account Information」的 `cashDetailMissing`，**病因要各自說對，使用者才修得對地方**。`lib/ib.js parseStatement` 回 `hasCashReport`/`hasCashDetail`/`cashDetailIncomplete`/`baseCurrency`/`baseSummaryCash`/`statementCount`/`accountCount` 供判斷。⚠️**現金金額欄嚴格取值**（Codex r9#1，高）：只認期末欄（`endingCash`→`endingSettledCash`），空字串/null/非數字一律視為「沒有金額」（`Number('')` 是 0——把空白當零會直接清空真實現金）；**絕不拿 `startingCash`（期初）冒充目前現金**；金額讀不到的幣別列＝`cashDetailIncomplete`（讀得到的照更新、讀不到的沿用舊值），**歸零「沒出現的幣別」需要明細完整（`hasCashDetail && !cashDetailIncomplete`）才允許**（已 export 供考題直測——旗標語意屬「中間那棒」，兩端測了中間沒測會漏）。**前端 portfolio.js 同步完成後必須把 `cashReportMissing`/`cashDetailMissing`/`cashFromSummary`(+`cashCollapsed`)/`cashBaseUnsupported`/`cashSummaryMissing`/`cashDetailIncomplete`/`cashZeroed` 都 toast 出來**（Codex r5#7：後端只寫 server console、前端無條件報「同步完成」＝使用者不知道淨值裡的 IB 現金是過期的）；新增同型欄位時前端提示要一起接，別只加後端。
+
+## 多幣別損益
+
+**改這裡**：**多幣別損益**（缺幣別與缺匯率是兩種病）
+
+**記得同步這裡**：**多幣別損益**：換算優先序＝IBKR `pnlBase` → `fxRateToBase` → USD 直通 → 設定匯率估算（需標註）→ 缺匯率不計入（需標註）。不可把非 USD 金額默默當 USD 加總。⚠️ **「缺幣別」與「缺匯率」是兩種病，處置不同（2026-07-28 全域政策，勿再退回）**：上面那條優先序講的是**缺匯率**；**缺幣別一律不猜**——`|| 'USD'` 這種寫法在本 repo 曾長出四份（`ib.js` 現金交易與成交紀錄、`ib-sync.js` 新持股、前端 `portfolio-calculations.js`），後果是 Flex Query 少勾一個 Currency 欄，GBP 100 的股息就被當成 USD 100 加總（少算 27%）且畫面零註記。正確處置＝**有 `fxRateToBase` 就照算（那條與幣別無關）；否則跳過＋分開計數回報**（`income.skippedNoCurrency`／`syncIb` 的 `skippedNoCurrency`），新持股缺幣別**不入庫**（猜錯幣別＝市值/淨資產/上限全錯）；既有持股保住原幣別、數量價格照常更新。**「幣別不支援」與「報表沒給幣別」的訊息必須分開講**，使用者才修得到對的地方。考題＝`test/ib-parser-money.test.js`＋`test/securities-sync.test.js`。**交易損益**（交易摘要＋XIRR）共用 `portfolio-calculations.js tradePnlBase()`，兩處口徑必須一致（否則 XIRR 漏估外幣賣出、年化偏低）。**現金流**（IB 股息/利息）在 `lib/ib.js parseStatement()` 解析時就套同一優先序（`lib/services/ib-sync.js` 依 settings 傳入估算器 `fxToBase`），估算/略過筆數存 `income.estimatedNoFx`/`skippedNoFx`＋幣別，前端與 PDF 都要註記。
+
+## XIRR 資金加權年化
+
+**改這裡**：**XIRR（資金加權年化，台幣）**
+
+**記得同步這裡**：**XIRR（資金加權年化，台幣）**：現金流＝第一筆月快照市值（流出）＋各月快照投入增量（流出）＋IB 賣出已實現損益逐筆按成交日（`tradePnlBase`×usdTwd，流入，與交易摘要同口徑、含設定匯率估算）＋今日市值（流入）。**賣出只用 Δcost 會漏掉已實現損益，必須用 ibTrades 修正**；用估算時 header 標「含匯率估算」。不含股息利息；台股手動賣出未納入；快照未滿 60 天不顯示；|年化|>500% 視為資料異常。實作在 `portfolio-calculations.js portfolioXirr()/xirrRate()`（僅此一份）。快照資料曾含 seed 示範殘留（2026-07-10 已清），**判斷 XIRR 異常先懷疑快照資料**。
+
+## securityTrades 欄位所有權與去重
+
+**改這裡**：`securityTrades`（READONLY，前端只 GET）
+
+**記得同步這裡**：**IB 同步雙寫**（ib-sync：upsert by sourceRef、**永不刪**；與 ibTrades 鏡像同次 saveDb＝原子；一致性＝「同步窗內 ⊆」非相等）＋**台新對帳單匯入**（securities-import：預覽 fail-closed→確認；台新批次可整批刪、IB 批次不可）。sourceRef＝identifier-first 去重鍵（IB：**帳戶指紋＋**transactionID→tradeID→ibExecID→指紋（Codex S2r1#4：IB 未承諾 ID 跨帳戶唯一）；台新：多維指紋**不含對帳單年月**）；IB 缺幣別/核心金額**不猜不入庫**（分原因跳過＋前端指路 Flex 欄位）；`projectSecurityTrade` 剝 sourceAccountId/sourceRef（export 除外）；**指紋類跨批身分＝內容比對＋計數對帳 `reconcileFingerprintRows`（批內序不可當跨批身分——視窗位移覆寫/補印漏記，S2 自審雙 HIGH）**，指紋列入庫不可變、官方列更新＝整列取代；帳戶只存**指紋+遮罩 label**、絕不落原文；金額原幣、netSettlement 絕對值+cashDirection。幣別牆比照持倉/現金（不支援幣別跳過+回報），**手續費幣別 commissionCurrency 也過牆**（Codex S3r2#1，高：漏驗會走到櫃檯枚舉 throw、炸掉整次原子同步——持股/現金全失敗）；核心金額 **price/grossAmount/netSettlement 必填**＋跨欄不變式 **buy→out／sell→in**（`ROW_RULES`：櫃檯 throw/strip＋匯入逐筆 400，Codex S3r2#4——單欄各自合法、合起來會把買進顯示成收錢）。`settings.taishinSecPdfPassword`＝證券 PDF 密碼（使用者 2026-07-23 拍板存本機；機密投影剝除+Set 布林、備份保留）
