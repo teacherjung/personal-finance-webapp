@@ -172,7 +172,8 @@ test('⭐ 改名之後不可以有死連結（比對命中處的上下文，不�
 /**
  * **既有的非 ASCII 路徑**（2026-08-03 起凍結，只出不進）。
  * ⚠️ 逐一列出，不是「`docs/` 底下放行」——那樣新增 `docs/新規格.md` 也會過（Codex #387 r2 High②）。
- * 要動它們得連 AGENTS 的 36 條索引連結一起改，那是獨立的一支 PR。
+ * 要改名得同步更新本名單與每一個實際引用處（引用自己 grep，別靠印象——凍結名單只有一部分
+ * 被 AGENTS 引用，mutate.sh 也不是每份契約都引用；誰有實際引用就同步誰，#399 三檔改名即一例）。
  */
 const LEGACY_NON_ASCII_PATHS = [
   'docs/C6-部署與對抗審查-操作手冊.md',
@@ -183,9 +184,6 @@ const LEGACY_NON_ASCII_PATHS = [
   'docs/archive/目標追蹤-施工計畫.md',
   'docs/archive/證券交易-設計藍圖.md',
   'docs/archive/階段B-骨架改建-施工計畫.md',
-  'docs/contracts/前端功能.md',
-  'docs/contracts/投資與SEC.md',
-  'docs/contracts/收支記帳與匯入.md',
   'docs/個股基本面研究-施工計畫.md',
   'docs/個股研究頁-施工計畫.md',
   'docs/個股研究頁-裁決與審查回覆.md',
@@ -201,7 +199,7 @@ const LEGACY_NON_ASCII_PATHS = [
   'docs/系統優化-施工計畫.md',
 ];
 
-test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有的 24 個凍結，只出不進', () => {
+test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有名單凍結，只出不進', () => {
   // ⚠️ 上一版只掃根目錄與 `test/`，於是新增 `docs/新的規格.md`、`lib/中文.js`、
   //    `scripts/中文.sh` 全部照樣綠（Codex #387 r2 High②）。**掃全部 tracked path。**
   // ⚠️ **擋全部非 ASCII，不是只擋基本漢字**（Codex #387 r3 Medium②）：
