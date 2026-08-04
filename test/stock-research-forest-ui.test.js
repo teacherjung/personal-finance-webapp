@@ -48,12 +48,6 @@ function contrastRatio(foreground, background) {
   return (values[0] + 0.05) / (values[1] + 0.05);
 }
 
-function mixHex(first, second) {
-  const channels = hex => hex.slice(1).match(/.{2}/g).map(value => Number.parseInt(value, 16));
-  const mixed = channels(first).map((value, index) => Math.round((value + channels(second)[index]) / 2));
-  return `#${mixed.map(value => value.toString(16).padStart(2, '0')).join('')}`;
-}
-
 function researchModel(overrides = {}) {
   const research = {
     symbol: 'AAPL',
@@ -138,6 +132,7 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
 
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
+  assert.equal((tabs.match(/aria-label="[^"]+" title="[^"]+"/g) || []).length, 6);
   for (const tab of STOCK_RESEARCH_TABS) {
     assert.doesNotMatch(icon(tab.icon), /aria-hidden="true"><\/svg>/, `${tab.key} icon must not be empty`);
   }
@@ -146,15 +141,20 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   assert.doesNotMatch(cssRule(css, '.stock-tabs'), /border-bottom/);
   assert.match(cssRule(css, '.stock-tabs'), /position:\s*relative/);
   assert.match(cssRule(css, '.stock-tabs'), /z-index:\s*2/);
-  assert.match(cssRule(css, '.stock-tab'), /background:\s*color-mix\(in srgb, var\(--card-2\) 72%, var\(--card\)\)/);
+  assert.match(cssRule(css, '.stock-tab'), /background:\s*var\(--card-2\)/);
   assert.match(cssRule(css, '.stock-tab'), /border:\s*2px solid var\(--frame\)/);
+  assert.match(cssRule(css, '.stock-tab'), /border-radius:\s*16px 16px 0 0/);
   assert.match(cssRule(css, '.stock-tab:focus-visible'), /outline:\s*3px solid var\(--accent\)/);
   assert.equal(cssPx(cssRule(css, '.stock-tab:focus-visible'), 'outline-offset'), -5);
   assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--frame\)/);
+  assert.match(cssRule(css, '.stock-tab.active'), /border-bottom:\s*2px solid var\(--frame\)/);
+  assert.match(cssRule(css, '.stock-tab.active'), /border-radius:\s*16px 16px 12px 12px/);
   assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*2px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*2px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /right:\s*12px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-3px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /left:\s*12px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*5px/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /background:\s*var\(--card\)/);
   assert.match(cssRule(css, '.stock-tab-panel'), /margin-top:\s*-2px/);
 
@@ -162,8 +162,8 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   const tabRule = cssRule(css, '.stock-tab');
   const panelRule = cssRule(css, '.stock-tab-panel');
   const panelBorder = cssPx(panelRule, 'border');
-  assert.equal(cssPx(bridgeRule, 'bottom'), panelBorder);
-  assert.equal(cssPx(bridgeRule, 'height'), panelBorder);
+  assert.ok(cssPx(bridgeRule, 'bottom') < 0);
+  assert.ok(cssPx(bridgeRule, 'height') > panelBorder);
   assert.equal(Math.abs(cssPx(tabRule, 'margin-right')), panelBorder);
   assert.equal(Math.abs(cssPx(tabRule, 'margin-bottom')), panelBorder);
   assert.equal(Math.abs(cssPx(panelRule, 'margin-top')), panelBorder);
@@ -230,6 +230,10 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   assert.match(cssRule(css, '.stock-empty-guide'), /height:\s*78px/);
   assert.notEqual(mobileAt, -1);
   assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
+  assert.match(cssRule(css, '.stock-tab', mobileAt), /flex:\s*0 0 52px/);
+  assert.match(cssRule(css, '.stock-tab.active', mobileAt), /flex-basis:\s*104px/);
+  assert.match(cssRule(css, '.stock-tab span', mobileAt), /display:\s*none/);
+  assert.match(cssRule(css, '.stock-tab.active span', mobileAt), /display:\s*inline/);
 });
 
 test('個股研究森林工作面｜部位帶內距與負邊距成對避免整頁橫向溢出', async () => {
@@ -245,22 +249,19 @@ test('個股研究森林工作面｜部位帶內距與負邊距成對避免整�
   assert.match(cssRule(css, '.stock-position', mobileAt), /padding:\s*16px 16px 3px/);
 });
 
-test('個股研究森林工作面｜部位帶全部文字在淺綠底維持一般文字對比', async () => {
+test('個股研究森林工作面｜工作面與部位帶只用米色紙張底', async () => {
   const [css, sharedCss] = await Promise.all([
     readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
     readFile(new URL('public/styles.css', ROOT), 'utf8')
   ]);
 
-  assert.match(
-    cssRule(css, '.stock-position'),
-    /background:\s*color-mix\(in srgb, var\(--accent-soft\) 50%, var\(--card\)\)/
-  );
+  assert.match(cssRule(css, 'body.stock-research-route'), /background-color:\s*var\(--bg\)/);
+  assert.match(cssRule(css, '.stock-position'), /background:\s*var\(--card\)/);
+  assert.match(cssRule(css, '.stock-valuation-row.base'), /background:\s*var\(--card-2\)/);
+  assert.doesNotMatch(css, /background:\s*(?:color-mix\([^;]*--accent-soft|var\(--accent-soft\))/);
   assert.match(cssRule(css, '.stock-position .stock-eyebrow'), /color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-position-item .info-link'), /color:\s*var\(--accent-hover\)/);
-  const background = mixHex(
-    cssHexToken(sharedCss, '--accent-soft'),
-    cssHexToken(sharedCss, '--card')
-  );
+  const background = cssHexToken(sharedCss, '--card');
   for (const token of ['--accent-hover', '--text-dim', '--pos', '--neg']) {
     assert.ok(
       contrastRatio(cssHexToken(sharedCss, token), background) >= 4.5,

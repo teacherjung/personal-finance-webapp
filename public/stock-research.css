@@ -5,6 +5,14 @@
   margin: 0 auto;
 }
 
+body.stock-research-route {
+  background-color: var(--bg);
+}
+
+body.stock-research-route > main {
+  background-color: var(--bg);
+}
+
 .stock-research-page,
 .stock-research-page * {
   min-width: 0;
@@ -93,7 +101,7 @@
 .stock-tabs-track {
   display: flex;
   align-items: flex-end;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
 }
 
@@ -103,20 +111,22 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-width: 112px;
+  flex: 1 1 0;
+  min-width: 92px;
+  max-width: 170px;
   min-height: 50px;
   padding: 11px 20px 12px;
   margin-right: -2px;
   margin-bottom: -2px;
   border: 2px solid var(--frame);
   border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  border-radius: 16px 16px 0 0;
   color: var(--text-dim);
   font-size: 13px;
   font-weight: 650;
   text-decoration: none;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--card-2) 72%, var(--card));
+  background: var(--card-2);
 }
 
 .stock-tab .ic {
@@ -126,7 +136,7 @@
 
 .stock-tab:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--card-2) 42%, var(--card));
+  background: var(--card);
 }
 
 .stock-tab:focus-visible {
@@ -138,6 +148,8 @@
 .stock-tab.active {
   z-index: 1;
   border-color: var(--frame);
+  border-bottom: 2px solid var(--frame);
+  border-radius: 16px 16px 12px 12px;
   color: var(--accent-hover);
   background: var(--card);
 }
@@ -156,10 +168,10 @@
 .stock-tab.active::after {
   content: "";
   position: absolute;
-  right: 0;
-  bottom: 2px;
-  left: 0;
-  height: 2px;
+  right: 12px;
+  bottom: -3px;
+  left: 12px;
+  height: 5px;
   background: var(--card);
 }
 
@@ -169,7 +181,7 @@
   margin-top: -2px;
   padding: 26px 28px 32px;
   border: 2px solid var(--frame);
-  border-radius: var(--radius);
+  border-radius: 12px;
   background: var(--card);
   box-shadow: var(--shadow-lg);
 }
@@ -188,7 +200,7 @@
   margin: 8px -28px 30px;
   padding: 20px 28px 0;
   border-bottom: 2px solid var(--frame);
-  background: color-mix(in srgb, var(--accent-soft) 50%, var(--card));
+  background: var(--card);
 }
 
 .stock-position .stock-eyebrow {
@@ -764,7 +776,7 @@
 .stock-valuation-row.base {
   padding-right: 12px;
   padding-left: 12px;
-  background: var(--accent-soft);
+  background: var(--card-2);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
@@ -965,20 +977,38 @@
 
   .stock-tabs {
     width: 100%;
-    padding: 0 8px;
+    padding: 0;
+    scrollbar-width: none;
   }
 
   .stock-tabs-track {
-    min-width: max-content;
-    padding-right: 8px;
+    width: 100%;
+    min-width: 354px;
+    padding-right: 0;
   }
 
   .stock-tab {
-    gap: 7px;
-    min-width: 104px;
+    flex: 0 0 52px;
+    gap: 0;
+    min-width: 52px;
     min-height: 48px;
-    padding-right: 14px;
-    padding-left: 14px;
+    padding-right: 9px;
+    padding-left: 9px;
+    border-radius: 14px 14px 0 0;
+  }
+
+  .stock-tab span {
+    display: none;
+  }
+
+  .stock-tab.active {
+    flex-basis: 104px;
+    gap: 6px;
+    border-radius: 14px 14px 10px 10px;
+  }
+
+  .stock-tab.active span {
+    display: inline;
   }
 
   .stock-tab .ic {
@@ -989,7 +1019,7 @@
   .stock-tab-panel {
     min-height: 360px;
     padding: 20px 16px 26px;
-    border-radius: var(--radius);
+    border-radius: 12px;
     box-shadow: 4px 4px 0 rgba(126, 101, 43, .22);
   }
 
