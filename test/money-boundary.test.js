@@ -48,6 +48,11 @@
  *     （唯讀豁免只看工具開頭；伺服器叫 payments 不牽連工具）；③駝峰正規化後才進家族
  *     網＝出入金／換匯分支也吃 transferFunds 型變體；④補現役名 create_locate（Alpaca
  *     借券 locate fee）／pay_order（PayPal）＝verb pay、noun locate/invoice/bill 入表。
+ *   - r3→v4（Codex #404 r3，3H）：①server 名可含 __（CLI 實測收 broker__get）＝切分
+ *     歧義——處置偏 deny：每個 __ 後綴都當候選工具查一次，任一候選命中＝攔（代價＝
+ *     server 名帶 __ 且工具帶錢詞的唯讀工具會被誤攔，照舊寧可誤殺）；②縮寫駝峰
+ *     TRANSFERFunds 型補 acronym→Word 邊界正規化；③考題的 matcher 判定改用 Claude
+ *     混合語意（純文字＝全等、含特殊字元才是正規式）＋ '^mcp__' 字面釘＋非 MCP 反向探針。
  *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。真實誤攔面（照實劃界，r1 抓過
  *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
  *     名單外的讀取動詞（如 obtain_）帶錢詞會被誤攔，處置＝報 William 加名單；
@@ -104,7 +109,12 @@ const FORBIDDEN_FAMILY = [
   'makePayment', 'convertCurrency', 'swapCrypto',               // （正規化後全分支都吃）
   'create_locate', 'pay_order',                                 // r2 H②：Alpaca／PayPal 現役名
   'place_order__get_status',                                    // r2 M③：唯讀豁免只看工具開頭
-].map((t) => `${FAKE_UUID}${t}`);
+  'TRANSFERFunds', 'SENDMoney', 'CONVERTCurrency',              // r3 H②：縮寫駝峰（acronym→Word 邊界）
+].map((t) => `${FAKE_UUID}${t}`).concat([
+  // r3 H①：CLI 實測可註冊叫 broker__get 的 server ⇒ 切分歧義；歧義處置偏 deny——
+  // 每個 __ 後綴都當候選工具查一次，任何候選命中家族網就攔。
+  'mcp__broker__get__place_order',
+]);
 
 // 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。涵蓋 IBKR 現役唯讀＋提醒/觀察清單全家，
@@ -182,9 +192,22 @@ function denyProbe(hook, toolName) {
  * 對**這個名字**實跑回 deny（matcher 與 handler 決策成對驗證，Codex #392 r2）。
  * @param {any} settings @param {string} toolName
  */
+/**
+ * Claude Code 的 matcher 混合語意（Codex #404 r3 H③——考題用錯語意會整層假綠）：
+ * 只含字母數字底線＝**全等比對**；含任何其他字元才當正規表示式。
+ * 突變證據：matcher 從 '^mcp__' 改 'mcp__' 時，new RegExp 照樣命中＝舊考題全綠，
+ * 但真實 Claude 只會匹配「名字恰好是 mcp__」的工具＝家族 hook 對所有真工具失效。
+ * @param {string} matcher @param {string} toolName
+ */
+function claudeMatcherHits(matcher, toolName) {
+  if (typeof matcher !== 'string' || matcher === '') return false;
+  if (/^[A-Za-z0-9_]+$/.test(matcher)) return matcher === toolName;
+  return new RegExp(matcher).test(toolName);
+}
+
 function entriesBlocking(settings, toolName) {
   return (settings?.hooks?.PreToolUse ?? []).filter((e) =>
-    new RegExp(e.matcher).test(toolName) && (e.hooks ?? []).some((h) => denyProbe(h, toolName)));
+    claudeMatcherHits(e.matcher, toolName) && (e.hooks ?? []).some((h) => denyProbe(h, toolName)));
 }
 
 test('AGENTS.md 的「錢的絕對邊界」節存在，五條規則的承重句一句不缺', () => {
@@ -251,12 +274,25 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
 test('.claude/settings.json：匹配下單工具的 hook 組不是空殼（r1 假綠路徑回歸考）', () => {
   const settings = loadSettings();
   const matching = (settings?.hooks?.PreToolUse ?? [])
-    .filter((e) => new RegExp(e.matcher).test(FORBIDDEN_TOOLS[0]));
+    .filter((e) => claudeMatcherHits(e.matcher, FORBIDDEN_TOOLS[0]));
   assert.ok(matching.length > 0, '找不到 matcher 接得住 create_order_instruction 的 hook 組。');
   // ⚠️ Codex #392 r1 important：舊版逐個 hook 斷言，hooks:[] 時迴圈零次執行＝假綠。
   //    判準＝至少一組對 create 實跑回 deny（空殼、換型別、改輸出都轉紅）。
   assert.ok(entriesBlocking(settings, FORBIDDEN_TOOLS[0]).length >= 1,
     '匹配下單工具的 hook 組沒有任何 handler 實跑回 deny——攔截層是空殼（Codex #392 r1）。');
+});
+
+test('matcher 是 ^mcp__ 正規式且不誤傷非 MCP 工具（Codex #404 r3 H③配套）', () => {
+  const settings = loadSettings();
+  const entries = settings?.hooks?.PreToolUse ?? [];
+  // 字面釘：家族 hook 的 matcher 必須是含特殊字元的 '^mcp__'（純文字 'mcp__' 在 Claude
+  // 語意下是「全等比對」＝對所有真實工具永不觸發＝整層靜靜失效）。
+  assert.ok(entries.some((e) => e.matcher === '^mcp__'),
+    "找不到 matcher 恰為 '^mcp__' 的 hook 組——改成純文字（如 'mcp__'）在 Claude 的混合語意下是全等比對，家族層會整層靜靜失效。");
+  for (const tool of ['Bash', 'Read', 'Write', 'Task', 'WebFetch']) {
+    assert.equal(entriesBlocking(settings, tool).length, 0,
+      `內建工具 ${tool} 被錢邊界 hook 攔下——matcher 涵蓋面寫壞了。`);
+  }
 });
 
 test('hook 指令：頂層欄位結構化解析——巢狀同名鍵不可覆蓋、壞輸入 fail-closed（Codex #404 r2 H①）', () => {
