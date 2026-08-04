@@ -9,6 +9,38 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[char]);
 
+function cssRule(css, selector, startAt = 0) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ruleStart = new RegExp(`^\\s*${escapedSelector}\\s*\\{`, 'gm');
+  ruleStart.lastIndex = startAt;
+  const match = ruleStart.exec(css);
+  assert.ok(match, `missing CSS selector: ${selector}`);
+  const openAt = css.indexOf('{', match.index);
+  const closeAt = css.indexOf('}', openAt);
+  assert.notEqual(openAt, -1, `missing CSS rule start: ${selector}`);
+  assert.notEqual(closeAt, -1, `missing CSS rule end: ${selector}`);
+  return css.slice(openAt + 1, closeAt);
+}
+
+function cssHexToken(css, name) {
+  const match = css.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'));
+  assert.ok(match, `missing CSS token: ${name}`);
+  return match[1];
+}
+
+function relativeLuminance(hex) {
+  const channels = hex.slice(1).match(/.{2}/g).map(value => Number.parseInt(value, 16) / 255);
+  const linear = channels.map(value => value <= 0.04045
+    ? value / 12.92
+    : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(foreground, background) {
+  const values = [relativeLuminance(foreground), relativeLuminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
 function researchModel(overrides = {}) {
   const research = {
     symbol: 'AAPL',
@@ -113,9 +145,49 @@ test('個股研究森林工作面｜小森森只在真正空狀態出現', async
 
 test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手機兩欄摘要', async () => {
   const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
+  const mobileAt = css.indexOf('@media (max-width: 680px)');
+  const panelRule = cssRule(css, '.stock-tab-panel');
+  const scoreRule = cssRule(css, '.stock-score-track');
 
-  assert.match(css, /\.stock-tab-panel\s*\{[\s\S]*?border:\s*2px solid var\(--frame\)/);
-  assert.match(css, /\.stock-score-track\s*\{[\s\S]*?height:\s*13px[\s\S]*?border:\s*2px solid var\(--frame\)/);
-  assert.match(css, /\.stock-empty-guide\s*\{[\s\S]*?width:\s*78px[\s\S]*?height:\s*78px/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*?\.stock-position-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,/);
+  assert.match(panelRule, /border:\s*2px solid var\(--frame\)/);
+  assert.match(scoreRule, /height:\s*13px/);
+  assert.match(scoreRule, /border:\s*2px solid var\(--frame\)/);
+  assert.doesNotMatch(
+    panelRule.replace(/border:\s*2px solid var\(--frame\);?/, ''),
+    /border:\s*2px solid var\(--frame\)/
+  );
+  assert.doesNotMatch(
+    scoreRule.replace(/border:\s*2px solid var\(--frame\);?/, ''),
+    /border:\s*2px solid var\(--frame\)/
+  );
+  assert.match(cssRule(css, '.stock-empty-guide'), /width:\s*78px/);
+  assert.match(cssRule(css, '.stock-empty-guide'), /height:\s*78px/);
+  assert.notEqual(mobileAt, -1);
+  assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
+});
+
+test('個股研究森林工作面｜部位帶內距與負邊距成對避免整頁橫向溢出', async () => {
+  const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
+  const mobileAt = css.indexOf('@media (max-width: 680px)');
+
+  assert.match(cssRule(css, '.stock-tab-panel'), /padding:\s*26px 28px 32px/);
+  assert.match(cssRule(css, '.stock-position'), /margin:\s*8px -28px 30px/);
+  assert.match(cssRule(css, '.stock-position'), /padding:\s*20px 28px 0/);
+  assert.match(cssRule(css, '.stock-tab-panel', mobileAt), /padding:\s*20px 16px 26px/);
+  assert.match(cssRule(css, '.stock-position', mobileAt), /margin-right:\s*-16px/);
+  assert.match(cssRule(css, '.stock-position', mobileAt), /margin-left:\s*-16px/);
+  assert.match(cssRule(css, '.stock-position', mobileAt), /padding:\s*16px 16px 3px/);
+});
+
+test('個股研究森林工作面｜部位帶小字在淺綠底維持一般文字對比', async () => {
+  const [css, sharedCss] = await Promise.all([
+    readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
+    readFile(new URL('public/styles.css', ROOT), 'utf8')
+  ]);
+
+  assert.match(cssRule(css, '.stock-position .stock-eyebrow'), /color:\s*var\(--accent-hover\)/);
+  assert.match(cssRule(css, '.stock-position-item .info-link'), /color:\s*var\(--accent-hover\)/);
+  const foreground = cssHexToken(sharedCss, '--accent-hover');
+  const background = cssHexToken(sharedCss, '--accent-soft');
+  assert.ok(contrastRatio(foreground, background) >= 4.5);
 });

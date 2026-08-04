@@ -161,6 +161,10 @@
   background: var(--accent-soft);
 }
 
+.stock-position .stock-eyebrow {
+  color: var(--accent-hover);
+}
+
 .stock-section-heading {
   display: flex;
   align-items: baseline;
@@ -220,7 +224,7 @@
 }
 
 .stock-position-item .info-link {
-  color: var(--accent);
+  color: var(--accent-hover);
   font-size: 10.5px;
 }
 
