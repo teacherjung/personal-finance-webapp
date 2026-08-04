@@ -436,13 +436,13 @@ check 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一
 
 # ── r35：四條核心承諾的實質缺口（Codex 用 GitHub /markdown 逐條實證）──
 
-mutate 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' <<'PY'
+mutate 'BC. 表格中間插一個 ###（後續索引列被移出表格）' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"### 中途插一個標題\n"+s[i:], encoding="utf-8")
 PY
-check 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' 紅
+check 'BC. 表格中間插一個 ###（後續索引列被移出表格）' 紅
 
 mutate 'BD. 表格中間插一個清單項' <<'PY'
 import pathlib
