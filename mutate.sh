@@ -1,33 +1,94 @@
 #!/bin/zsh
 # 拆分護欄的突變表。
 #
-# ⚠️ 這支腳本本身出過三次事（都是 Codex 抓的，而且我親身踩過）：
+# ⚠️ 這支腳本本身出過五次事（④在下方髒檔檢查的註解、⑤在下方備份與還原的註解，其餘如下）：
 #   ①它會 `git checkout --` 還原檔案 ⇒ **未 commit 的工作會被洗掉**（我洗掉過自己一輪的修改）
 #   ②期望不符時只印 ⚠️、退出碼仍是 0 ⇒ 掛進任何自動化都是**永遠通過的假閘**
 #   ③某條的標籤裡有反引號（zsh 會當成命令替換）⇒ 突變寫進檔案之後才中止、**沒有還原**，
 #     而我接著就 commit ⇒ **突變被 commit 進 PR**
 # 所以現在：工作樹不乾淨就拒跑（**沒有例外，本腳本自己也算**）、
-# 任一條不如期望 exit 1、基準與收尾都真的 assert、**中止時 trap 還原**。
+# 任一條不如期望 exit 1、基準與收尾都真的 assert、**中止時 trap 還原**、
+# 還原不走 git、還原失敗大聲失敗＋立即中止。
+# 退出碼：0＝全符合；1＝有不符；2＝環境不合拒跑（一個位元組都沒動）；3＝還原失敗（樹上可能有殘留）。
 set -u
 cd "$(dirname "$0")"
 
 fail=0
-
-restore() { git checkout -- AGENTS.md docs/contracts/ test/contract-split.test.js 2>/dev/null || true; }
 
 # ⚠️ **髒檔檢查必須在掛 trap 之前**（2026-08-03 第四次事故，我親手踩的）：
 #    原本 `trap restore EXIT` 掛在前面，於是「工作樹不乾淨 → exit 2」這條保護分支
 #    **自己會觸發 EXIT trap**，restore 照樣 `git checkout` 把未 commit 的工作洗掉。
 #    ——**那正是這道檢查存在的理由，它卻在拒絕執行的同時做了它要防的事。**
 #    保護措施本身要先於它所保護的危險動作生效，順序不是風格問題。
-dirty=$(git status --porcelain || true)
+#    （現在 restore＝拷回「開跑當下」的位元組，就算誤觸也只是拷回當下狀態；
+#      但乾淨樹仍是硬前提——「還原後 git status 必須全空」的斷言靠它才成立。）
+# git status 自己失敗也要拒跑——舊版 `|| true` 會把「驗不了」當成「乾淨」放行＝假綠。
+if ! dirty=$(git status --porcelain); then
+  echo "❌ git status 失敗——連「工作樹乾淨」都驗不了，拒絕執行。"
+  exit 2
+fi
 if [[ -n "$dirty" ]]; then
-  echo "❌ 工作樹不乾淨，拒絕執行——這支會 git checkout 還原檔案，會洗掉你未 commit 的工作："
+  echo "❌ 工作樹不乾淨，拒絕執行——本腳本會突變並還原守護檔，髒樹會讓收尾斷言失去意義："
   echo "$dirty"
   exit 2
 fi
 
-trap restore EXIT INT TERM
+# ── 備份與還原：不走 git（2026-08-04 第五次事故，Codex #401 r2 抓的）──
+# 舊版 restore 用 `git checkout --` 還原，錯誤用 `2>/dev/null || true` 整個吞掉。
+# 在釘選的審查 worktree（/private/tmp/codex-review-pr*）＋sandbox 裡，git 建不了
+# 共享 .git/worktrees/.../index.lock ⇒ 每一次還原都靜靜失敗、突變留在審查樹上，
+# 後續突變再疊上去（審查者人工精確還原才收拾掉）。所以現在：
+#   ①開跑先把守護檔做位元組備份（$backup_dir），還原＝拷回去——只寫工作樹檔案
+#     與 $TMPDIR，git 全程唯讀，sandbox 釘選審查樹裡也能跑；
+#   ②每次還原後用 git status 斷言「真的乾淨」，任何一步失敗＝大聲失敗、立即中止
+#     （還原失敗還繼續跑，後面每一條都疊在髒樹上＝結果全是垃圾）；
+#   ③備份目錄只在還原驗證通過後才刪——還原失敗時它就是人工救援的精確原始檔。
+GUARD_FILES=(AGENTS.md test/contract-split.test.js)   # 平面檔（備份取檔名，不可同名）
+GUARD_DIR=docs/contracts                              # 整個目錄
+
+if ! backup_dir=$(mktemp -d); then
+  echo "❌ 備份目錄建立失敗（\$TMPDIR 不可寫？）——一個位元組都還沒動，拒跑。"
+  exit 2
+fi
+backup_ok=1
+for f in "${GUARD_FILES[@]}"; do
+  cp -p "$f" "$backup_dir/${f:t}" || backup_ok=0
+done
+cp -Rp "$GUARD_DIR" "$backup_dir/contracts" || backup_ok=0
+if [[ $backup_ok -ne 1 ]]; then
+  echo "❌ 備份失敗——一個位元組都還沒動，拒跑。"
+  exit 2
+fi
+
+restore() {   # 拷回開跑時的位元組，再斷言 git 視角真的乾淨；失敗回非零（呼叫端負責大聲）
+  local f left
+  for f in "${GUARD_FILES[@]}"; do
+    cp -p "$backup_dir/${f:t}" "$f" || return 1
+  done
+  mkdir -p "$GUARD_DIR" || return 1
+  cp -Rp "$backup_dir/contracts/." "$GUARD_DIR/" || return 1
+  left=$(git status --porcelain -- "${GUARD_FILES[@]}" "$GUARD_DIR") || return 1
+  [[ -z "$left" ]]
+}
+
+die_unrestored() {   # 還原失敗＝大聲失敗：把這個錯誤吞掉正是第五次事故的根因
+  echo "❌ 還原失敗——工作樹很可能殘留突變，請立即 git status 檢查。"
+  echo "   開跑時的原始檔完整備份在：$backup_dir（拷回去＝精確還原，別刪）。"
+}
+
+restore_failed=0
+on_exit() {
+  if [[ $restore_failed -ne 0 ]]; then exit 3; fi   # check() 已經大聲報過，別再蓋退出碼
+  if restore; then
+    rm -rf "$backup_dir"
+  else
+    die_unrestored
+    exit 3
+  fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 run() {
   if node --test --test-reporter=dot test/contract-split.test.js >/dev/null 2>&1; then
@@ -59,7 +120,11 @@ check() {   # check <說明> <期望：紅|綠>
   got=$(run)
   if [[ "$got" == "$2" ]]; then mark="  "; else mark="❌"; fail=1; fi
   printf "%s %-46s → %s（期望 %s）\n" "$mark" "$1" "$got" "$2"
-  restore
+  if ! restore; then
+    restore_failed=1
+    die_unrestored
+    exit 3
+  fi
 }
 
 # ── 藏東西：契約與規則檔不准出現 fence 或 HTML 註解（r13 起改成「關門」）──
@@ -659,9 +724,11 @@ p.write_text(s.replace("[frontend-features.md](frontend-features.md)","[frontend
 PY
 check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
-# ── 收尾：真的 assert，不是印出來就算 ──
-leftover=$(git status --porcelain || true)
-if [[ -n "$leftover" ]]; then
+# ── 收尾：真的 assert，不是印出來就算（git status 失敗＝驗不了＝fail，不是放行）──
+if ! leftover=$(git status --porcelain); then
+  echo "❌ 收尾的 git status 失敗——無法斷言收尾乾淨。"
+  fail=1
+elif [[ -n "$leftover" ]]; then
   echo "❌ 收尾沒乾淨（突變沒還原）："
   echo "$leftover"
   fail=1
