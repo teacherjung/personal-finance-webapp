@@ -42,6 +42,12 @@
  *     **大小寫與 _ / - / . 分隔符不敏感**（MCP 名字規格允許大寫、連字號、句點——小寫底線
  *     只是慣例；Place_Order／placeOrder／place-order 全都攔）；動詞前可帶前綴詞
  *     （broker_place_order 也攔）；補真實世界漏網動詞 exercise/liquidate/replace/redeem。
+ *   - r2→v3 改造（Codex #404 r2，1H1H2M）：①hook 指令改 **python 結構化解析頂層
+ *     tool_name**——巢狀 tool_input.tool_name 不可覆蓋、壞輸入／缺欄位一律 fail-closed
+ *     deny（sed 貪婪抽取會被同名鍵繞過＝r2 H①實測）；②工具名先與伺服器名切離再判
+ *     （唯讀豁免只看工具開頭；伺服器叫 payments 不牽連工具）；③駝峰正規化後才進家族
+ *     網＝出入金／換匯分支也吃 transferFunds 型變體；④補現役名 create_locate（Alpaca
+ *     借券 locate fee）／pay_order（PayPal）＝verb pay、noun locate/invoice/bill 入表。
  *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。真實誤攔面（照實劃界，r1 抓過
  *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
  *     名單外的讀取動詞（如 obtain_）帶錢詞會被誤攔，處置＝報 William 加名單；
@@ -78,9 +84,9 @@ const FORBIDDEN_AFTER_RECONNECT = [
 // ⚠️ 這裡與 .claude/settings.json 的指令必須同步改（兩邊都改才綠＝雙人規則）。
 const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
-  'sell', 'exercise', 'liquidate', 'replace', 'redeem'];
+  'sell', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
 const FAMILY_NOUNS = ['order', 'trade', 'position', 'instruction', 'stock', 'share', 'security',
-  'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin'];
+  'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin', 'locate', 'invoice', 'bill'];
 const FUND_KEYWORDS = ['transfer', 'withdraw', 'deposit', 'remit', 'payout', 'disburse', 'payment', 'wire'];
 const READ_VERBS = ['get', 'list', 'search', 'fetch', 'read', 'query', 'view', 'show', 'describe',
   'has', 'check', 'retrieve', 'export', 'download'];
@@ -94,6 +100,10 @@ const FORBIDDEN_FAMILY = [
   'exercise_options_position', 'liquidate_position',           // Codex #404 r1 的真實漏網名
   'replace_order_by_id', 'broker_place_order',                 // （Alpaca 官方 MCP 現役工具）
   'Place_Order', 'placeOrder', 'place-order',                  // 大小寫／駝峰／連字號變體（MCP 規格合法）
+  'transferFunds', 'withdrawCash', 'depositFunds',              // r2 H②：出入金分支的駝峰變體
+  'makePayment', 'convertCurrency', 'swapCrypto',               // （正規化後全分支都吃）
+  'create_locate', 'pay_order',                                 // r2 H②：Alpaca／PayPal 現役名
+  'place_order__get_status',                                    // r2 M③：唯讀豁免只看工具開頭
 ].map((t) => `${FAKE_UUID}${t}`);
 
 // 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
@@ -122,13 +132,15 @@ const ALLOWED_LOOKALIKES = [
   `${FAKE_UUID}create_trademark`,                                       // trade+mark 撞名（名詞邊界要接住，r1 M③）
   `${FAKE_UUID}update_sharepoint_page`,                                 // share+point 撞名
   `${FAKE_UUID}firmware_update`,                                        // firm+wire 撞名
+  'mcp__payments__create_customer',                                     // 伺服器名帶 payment 不牽連工具（r2 M③）
   // 唯讀豁免逐動詞探針：指令的豁免名單少掉任何一個，對應這支就會被誤攔＝本考題轉紅。
   ...READ_VERBS.map((v) => `${FAKE_UUID}${v}_transfer_log`),
 ];
 
-// 數量釘（Codex #404 r1 M②的教訓現場：PR 說明宣稱 19 支、實際 18＝當支就發生宣稱漂移）。
-// 改清單＝連這裡一起改，兩邊對得上才綠。
-const EXPECTED_ALLOWED_COUNT = 21 + READ_VERBS.length;
+// 數量釘（r1 M②「宣稱 19 實際 18」＋r2 M④「加法式的釘會跟著清單一起縮」——兩面教訓）：
+// 兩個都是**字面數字**，改任何一張清單＝這裡要跟著手改，兩邊對得上才綠。
+const EXPECTED_READ_VERBS_COUNT = 14;
+const EXPECTED_ALLOWED_COUNT = 36;
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
@@ -224,6 +236,9 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   }
   // 誤傷＝matcher 命中「且」對該名字實跑回 deny。純記錄的良性 hook（不 deny）不歸本考題管，
   // 不會被錯殺（Codex #392 r1 minor②）。
+  assert.equal(READ_VERBS.length, EXPECTED_READ_VERBS_COUNT,
+    `READ_VERBS 數量（${READ_VERBS.length}）與字面釘（${EXPECTED_READ_VERBS_COUNT}）不符——`
+    + '唯讀豁免名單被增刪時兩邊一起改（#404 r2 M④：自我縮放的釘不是釘）。');
   assert.equal(ALLOWED_LOOKALIKES.length, EXPECTED_ALLOWED_COUNT,
     `ALLOWED_LOOKALIKES 數量（${ALLOWED_LOOKALIKES.length}）與宣告（${EXPECTED_ALLOWED_COUNT}）不符——`
     + '清單被增刪時兩邊要一起改（#404 r1：宣稱 19 實際 18 的現場教訓）。');
@@ -242,6 +257,30 @@ test('.claude/settings.json：匹配下單工具的 hook 組不是空殼（r1 �
   //    判準＝至少一組對 create 實跑回 deny（空殼、換型別、改輸出都轉紅）。
   assert.ok(entriesBlocking(settings, FORBIDDEN_TOOLS[0]).length >= 1,
     '匹配下單工具的 hook 組沒有任何 handler 實跑回 deny——攔截層是空殼（Codex #392 r1）。');
+});
+
+test('hook 指令：頂層欄位結構化解析——巢狀同名鍵不可覆蓋、壞輸入 fail-closed（Codex #404 r2 H①）', () => {
+  const settings = loadSettings();
+  const hooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []);
+  assert.ok(hooks.length > 0, '找不到任何 PreToolUse handler。');
+  const rawProbe = (hook, raw) => {
+    try {
+      const out = execFileSync('bash', ['-c', hook.command],
+        { input: raw, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
+      const d = JSON.parse(out).hookSpecificOutput;
+      return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+    } catch { return false; }
+  };
+  const cases = [
+    // r2 H① 原樣重放：tool_input 夾同名鍵，貪婪文字抽取會抓到 noop 而放行真下單名
+    [JSON.stringify({ tool_name: FORBIDDEN_FAMILY[0], tool_input: { tool_name: 'noop' } }),
+      '巢狀 tool_input.tool_name 覆蓋了頂層工具名——家族網被同名鍵繞過（#404 r2 H①）。'],
+    ['this is not json', '輸入不是 JSON 卻沒有 fail-closed deny——解析失敗必須擋下而不是放行。'],
+    [JSON.stringify({ tool_input: {} }), '缺頂層 tool_name 卻沒有 fail-closed deny。'],
+  ];
+  for (const [raw, msg] of cases) {
+    assert.ok(hooks.some((h) => rawProbe(h, raw)), msg);
+  }
 });
 
 test('兩層互相涵蓋：deny 點名的每一支工具，hook 層對它也是實跑回 deny', () => {
