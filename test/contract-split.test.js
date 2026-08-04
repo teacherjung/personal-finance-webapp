@@ -351,6 +351,7 @@ const MANIFEST = {
       'lib/schema.js',
       'lib/services/backup.js',
       'lib/services/snapshot.js',
+      'lib/services/statement-import.js',
       'lib/services/store-rules.js',
       'lib/store-pg.js',
       'lib/store-rules.js',
@@ -358,6 +359,7 @@ const MANIFEST = {
       'lib/types.js',
       'public/modules/backup-alert.js',
       'server.js',
+      'test-doubles/fake-supabase.js',
       'test/backup-alert.test.js',
       'test/daily-backup.test.js',
       'test/hosted-import-overwrite.test.js',
@@ -870,7 +872,7 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
       `${file} 在 README 路由表對應到 ${matched.length} 列（必須剛好 1 列）。\n`
       + '0 列＝那個領域的規則沒人會被導到；2 列以上＝讀的人照到哪一列是碰運氣。');
     const row = matched[0];
-    const listed = [...row.matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)]
+    const listed = [...row.matchAll(/`((?:lib|public|test-doubles|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)]
       .map((x) => x[1]);
     assert.deepEqual(sorted([...new Set(listed)]), sorted(m.files),
       `${base} 的路由列與 manifest 的 files 不一致。\n`
@@ -918,7 +920,7 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路�
 test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（提到新檔就強迫更新 manifest）', () => {
   for (const [file, m] of Object.entries(MANIFEST)) {
     const mentioned = new Set([...read(file)
-      .matchAll(/`((?:lib|public|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)].map((x) => x[1]));
+      .matchAll(/`((?:lib|public|test-doubles|test|data|db)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js)`/g)].map((x) => x[1]));
     const missing = [...mentioned].filter((f) => !m.files.includes(f));
     assert.deepEqual(missing, [],
       `${file} 的內文點名了這些檔案，但 manifest 的 files 沒有：\n  ${missing.join('\n  ')}\n`

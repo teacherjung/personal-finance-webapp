@@ -143,7 +143,7 @@
 | SEC `currentDebt`（`lib/stock-fundamentals.js`） | 逐期間總額優先（DebtCurrent）；相加要 label 或數值證明排除父子重疊、否則保守不加；單源期間原樣保留；tag 單一真相 currentDebtSources；Dover／Amazon／Microsoft 三型考題必跑——完整契約 → [契約：投資與 SEC](docs/contracts/投資與SEC.md#sec-currentdebt-流動債務) |
 | `lib/repo.js` 介面（加函式／改簽名） | 新函式一律 async、呼叫端全 await＋handler 包 wrapRoute/asyncRoute；寫入走 mutate()、讀取走 readDb()；repo-async 與 hosted-store-pg 考題仍綠——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#repo-介面的新增與修改) |
 | **kv 的鍵**（`lib/store.js` 的 `KV_KEYS`／`KV_MAP_KEYS`；`emptyDb()` 加頂層欄位時） | 三處一起：兩份常數＋types typedef，漏了永遠寫不進 db 且不報錯；store-pg 必須 import、不可自己抄一份——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#kv-的鍵) |
-| **HOSTED 資料層**（`lib/store-pg.js`／`db/supabase-schema.sql`／RLS 政策） | 兩顆引擎同一份語意兩種寫法：kv_save 的 CAS 改了、fake-supabase 的 saveAs 同步改；政策形狀有靜態考題；改完 SQL 去 Supabase Dashboard 重跑——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#hosted-資料層與測試替身) |
+| **HOSTED 資料層**（`lib/store-pg.js`／`db/supabase-schema.sql`／RLS 政策） | 正式 SQL 與測試替身＝同一份語意兩種寫法：kv_save 的 CAS 改了、fake-supabase 的 saveAs 同步改；政策形狀有靜態考題；改完 SQL 去 Supabase Dashboard 重跑——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#hosted-資料層與測試替身) |
 | HOSTED 並行安全 CAS | 櫃檯五支撞版本＝重讀重做重寫、呼叫端無感；getDb…saveDb 丟 409 不假裝重試；整包覆蓋只有 /api/import 一個入口且必帶同一次讀取的 from，缺＝throw kv_no_version；currentVersions 已移除勿加回——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#hosted-並行安全-cas) |
 | 本機檔案操作經櫃檯 | backupNow／snapshotTo／dataDir 一律經櫃檯；HOSTED 下 backupNow 回 false、另兩支 throw——否則憑空建出種了 seed 的假備份——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#本機檔案操作一律經櫃檯) |
 | 資料存取單一櫃檯 B1 | 讀寫一律走 lib/repo.js、除它自己誰都不 import lib/store.js；附帶效果用 updateItem 的 beforeSave 同次寫檔——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#資料存取單一櫃檯-b1) |
