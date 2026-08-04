@@ -242,6 +242,7 @@
   - ⚠️⚠️ **`.gitignore` 必須寫 `node_modules`（不帶斜線）**——symlink 對 Git 不是目錄，帶斜線擋不住，`git add -A` 會把它連本機絕對路徑收進 commit（2026-07-19 實踩：symlink 進了 PR #136 且 CI 全綠——別指望三道關攔這種東西）。worktree 裡建任何 symlink 前先 `git check-ignore -v <path>` 確認擋得住。
   - ✅ **順帶補強鐵則 1**：`data/store.db`（真實餘額、IBKR flexToken、`pdfPassword`＝身分證字號）只存在主目錄，兩個 worktree 的 `data/` 只有 `seed.json`——「不要讀 store.db」從君子協定變成**結構上讀不到**。
   - 建立指令留檔：`git worktree add ../<repo>-claude -b wt-claude` ／ `git worktree add --detach ../<repo>-codex origin/main`；`git worktree list` 查看、`git worktree remove <path>` 移除。
+  - ⚠️⚠️ **Codex 實作（模式③）開工一律在 `/private/tmp` 開專屬 worktree、絕不動主目錄**（William 2026-08-04 拍板；同日兩次實測 Codex 桌機直接在主目錄開工——主目錄被切到功能分支、本機 `main` 一度被改名消失，使用者的 app 收不到後續合併、重啟捷徑的自動同步也靜靜跳過）。開工第一步＝`git worktree add /private/tmp/<題名> -b codex/<分支> origin/main`，全程不得在主目錄 checkout、commit 或改動任何分支；主目錄的不變量見上表（永遠 `main`、永遠乾淨）。William 的指派詞也會帶這句提醒，但**規則以本檔為準、不依賴指派詞**。
 - **換手儀式**：換另一個 AI 動工之前，先把目前的改動 commit（可由完工方自行 commit，或交 Claude 審查後 commit 並以 Co-Authored-By 標明出處）。分了 worktree 之後兩邊可以同時工作，但**同一個 worktree 仍然只有一個 agent 動**。
 - `main` 永遠保持可用；**一任務＝一分支＝一 PR**，PR 描述寫清楚改了什麼/為什麼/怎麼驗證。
 - **同時開多個 PR 時先講清楚相依性**（2026-07-19 踩到）：程式碼互不相依**不等於**可以任意順序合併——只要它們都改到 `AGENTS.md`（本檔是一張大表，人人都往裡面加字），合併第一個之後其餘全部會衝突。開 PR 時就要說明「合併第一個之後我要 rebase 其餘的」，別讓使用者以為隨便挑一個合併就好。
