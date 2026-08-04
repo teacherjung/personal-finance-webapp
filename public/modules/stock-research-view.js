@@ -378,7 +378,7 @@ function valuationHtml(view, h) {
   ].map(([key, label]) => {
     const value = finiteOrNull(valuation[key]);
     const distance = valuationDistance(view.quote.price, view.quote.currency, value, currency);
-    return `<div class="stock-valuation-row">
+    return `<div class="stock-valuation-row ${key}">
       <b>${label}</b>
       <span class="num">${value == null ? '尚未填寫' : `${plainNumber(value, 4)} ${h.e(currency)}`}</span>
       <span class="muted">${distanceText(distance)}</span>
@@ -496,7 +496,7 @@ function tradesHtml(view, h) {
 /** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
 function missingResearchHtml(view, h) {
   return `<section class="stock-research-empty">
-    <span>${icon('bulb', 28)}</span>
+    <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
     <h2>${h.e(view.symbol)} 尚未撰寫研究</h2>
     <p>目前可以先查持股與交易紀錄；建立研究後，這裡會顯示投資論點、評分、估值與檢查點。</p>
     <button type="button" class="btn" data-stock-create>${icon('plus', 16)}建立研究</button>
@@ -542,7 +542,7 @@ export function stockResearchViewHtml(input, formatters) {
     return `<div class="stock-research-page">
       ${headerHtml(view, h)}
       <section class="stock-research-empty">
-        <span>${icon('trending', 28)}</span>
+        <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>請先選擇一檔個股</h2>
         <p>請從投資組合的個股代號進入研究頁。</p>
         <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
@@ -554,7 +554,7 @@ export function stockResearchViewHtml(input, formatters) {
     return `<div class="stock-research-page">
       ${headerHtml(view, h)}
       <section class="stock-research-empty">
-        <span>${icon('bulb', 28)}</span>
+        <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>${h.e(view.symbol)} 尚無持股或研究資料</h2>
         <p>這個網址不會自動建立空白研究；請先從投資組合的個股入口進入。</p>
         <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
@@ -564,9 +564,11 @@ export function stockResearchViewHtml(input, formatters) {
 
   return `<div class="stock-research-page" data-stock-symbol="${h.e(view.symbol)}">
     ${headerHtml(view, h)}
-    ${tabsHtml(view, h)}
-    <section class="stock-tab-panel" id="stock-panel-${h.e(view.activeTab)}" aria-labelledby="stock-tab-${h.e(view.activeTab)}" data-stock-tab="${h.e(view.activeTab)}">
-      ${activeTabHtml(view, h)}
-    </section>
+    <div class="stock-research-workspace">
+      ${tabsHtml(view, h)}
+      <section class="stock-tab-panel" id="stock-panel-${h.e(view.activeTab)}" aria-labelledby="stock-tab-${h.e(view.activeTab)}" data-stock-tab="${h.e(view.activeTab)}">
+        ${activeTabHtml(view, h)}
+      </section>
+    </div>
   </div>`;
 }

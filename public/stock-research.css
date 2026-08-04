@@ -1,4 +1,4 @@
-/* 個股研究頁（P3）：只作用在 .stock-research-page，避免影響既有頁面。 */
+/* 個股研究森林工作面（UI4）：只作用在研究頁，避免影響既有頁面。 */
 .stock-research-page {
   width: 100%;
   max-width: 1240px;
@@ -15,8 +15,10 @@
 }
 
 .stock-research-head {
-  align-items: flex-start;
-  padding-bottom: 16px;
+  align-items: flex-end;
+  margin-bottom: 18px;
+  padding: 3px 0 18px;
+  border-bottom: 2px solid var(--frame);
 }
 
 .stock-research-title h1 {
@@ -24,21 +26,22 @@
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 32px;
+  font-size: 34px;
+  line-height: 1.15;
 }
 
 .stock-research-title h1 span {
   font-family: var(--sans);
   color: var(--text-dim);
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .stock-kicker,
 .stock-eyebrow {
   color: var(--accent);
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 11.5px;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -49,7 +52,7 @@
   gap: 7px 15px;
   color: var(--text-dim);
   font-size: 12px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .stock-head-meta b {
@@ -65,12 +68,20 @@
   white-space: nowrap;
 }
 
+.stock-research-head .page-actions {
+  align-items: center;
+}
+
+.stock-research-workspace {
+  width: 100%;
+}
+
 .stock-tabs {
   width: 100%;
-  margin-top: 8px;
+  padding-left: 14px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 2px solid var(--frame);
   scrollbar-width: thin;
   overscroll-behavior-inline: contain;
 }
@@ -87,10 +98,10 @@
   align-items: center;
   justify-content: center;
   min-width: 94px;
-  min-height: 42px;
-  padding: 9px 16px;
-  margin-bottom: -1px;
-  border: 1px solid transparent;
+  min-height: 44px;
+  padding: 9px 17px;
+  margin-bottom: -2px;
+  border: 2px solid transparent;
   border-bottom: none;
   border-radius: 8px 8px 0 0;
   color: var(--text-dim);
@@ -102,39 +113,52 @@
 
 .stock-tab:hover {
   color: var(--text);
-  background: var(--card-2);
+  background: rgba(255, 253, 246, .62);
 }
 
 .stock-tab.active {
   position: relative;
   z-index: 1;
-  border-color: var(--line-2);
+  border-color: var(--frame);
   color: var(--text);
-  background: var(--bg);
+  background: var(--card);
 }
 
 .stock-tab.active::before {
   content: "";
   position: absolute;
-  top: -1px;
-  right: 8px;
-  left: 8px;
-  height: 2px;
+  top: 5px;
+  right: 13px;
+  left: 13px;
+  height: 3px;
   background: var(--accent);
 }
 
 .stock-tab-panel {
   min-height: 420px;
-  padding-top: 22px;
+  margin-top: -2px;
+  padding: 26px 28px 32px;
+  border: 2px solid var(--frame);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
 }
 
 .stock-tab-panel > .stock-position {
+  margin-top: -26px;
+}
+
+.stock-tab-panel > .stock-section:first-child {
   margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .stock-position {
-  margin: 8px 0 34px;
-  border-bottom: 1px solid var(--line);
+  margin: 8px -28px 30px;
+  padding: 20px 28px 0;
+  border-bottom: 2px solid var(--frame);
+  background: var(--accent-soft);
 }
 
 .stock-section-heading {
@@ -143,7 +167,7 @@
   justify-content: space-between;
   gap: 10px 20px;
   flex-wrap: wrap;
-  margin-bottom: 13px;
+  margin-bottom: 14px;
 }
 
 .stock-section-heading > div {
@@ -156,7 +180,7 @@
 .stock-section-heading h2 {
   font-family: var(--serif);
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .stock-section-heading > span,
@@ -171,26 +195,27 @@
 }
 
 .stock-position-item {
-  padding: 10px 16px 18px 0;
+  padding: 8px 16px 19px 0;
 }
 
 .stock-position-item + .stock-position-item {
-  border-left: 1px solid var(--line);
+  border-left: 2px solid rgba(52, 41, 30, .18);
   padding-left: 16px;
 }
 
 .stock-position-item > span {
   display: block;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 11px;
+  font-weight: 650;
   min-height: 22px;
 }
 
 .stock-position-item > strong {
   display: block;
   margin-top: 4px;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -202,25 +227,26 @@
 .stock-section {
   padding-top: 26px;
   margin-top: 28px;
-  border-top: 1px solid var(--line);
+  border-top: 2px solid var(--line);
 }
 
 .stock-two-column {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 26px;
+  gap: 22px;
 }
 
 .stock-panel {
-  padding-top: 12px;
-  border-top: 2px solid var(--line-2);
+  padding: 14px 16px 16px;
+  border-top: 3px solid var(--line-2);
+  background: var(--bg);
 }
 
 .stock-panel h3 {
   margin-bottom: 10px;
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 700;
 }
 
 .stock-prose {
@@ -279,7 +305,7 @@
 }
 
 .stock-score-list {
-  border-top: 1px solid var(--line);
+  border-top: 2px solid var(--line);
 }
 
 .stock-score-row {
@@ -288,7 +314,7 @@
   align-items: center;
   gap: 10px 18px;
   padding: 13px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 2px solid var(--line);
 }
 
 .stock-score-name {
@@ -312,10 +338,11 @@
 
 .stock-score-track {
   width: 100%;
-  height: 9px;
+  height: 13px;
   overflow: hidden;
-  border-radius: 9px;
-  background: var(--line);
+  border: 2px solid var(--frame);
+  border-radius: 999px;
+  background: var(--card-2);
 }
 
 .stock-score-track > span {
@@ -345,8 +372,9 @@
 }
 
 .stock-table-wrap {
+  border: 2px solid var(--frame);
   border-radius: 8px;
-  box-shadow: none;
+  box-shadow: 3px 3px 0 rgba(126, 101, 43, .18);
 }
 
 .stock-table-wrap th,
@@ -635,7 +663,7 @@
   width: 22px;
   height: 22px;
   border: 1px solid var(--line-2);
-  border-radius: 50%;
+  border-radius: 6px;
   color: var(--text-dim);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
@@ -697,6 +725,13 @@
   gap: 16px;
   padding: 14px 0;
   border-bottom: 1px solid var(--line);
+}
+
+.stock-valuation-row.base {
+  padding-right: 12px;
+  padding-left: 12px;
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .stock-valuation-row .num {
@@ -796,13 +831,29 @@
   justify-content: center;
   min-height: 260px;
   padding: 34px 20px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border: 2px solid var(--frame);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
   text-align: center;
 }
 
-.stock-research-empty > span {
-  color: var(--accent);
+.stock-empty-guide {
+  width: 78px;
+  height: 78px;
+  border: 2px solid var(--frame);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 3px 3px 0 rgba(126, 101, 43, .2);
+}
+
+.stock-tab-panel .stock-research-empty {
+  min-height: 300px;
+  padding-top: 20px;
+  padding-bottom: 20px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .stock-research-empty h2 {
@@ -861,6 +912,11 @@
     padding: 24px 18px 36px;
   }
 
+  .stock-research-head {
+    align-items: flex-start;
+    padding-bottom: 14px;
+  }
+
   .stock-research-title h1 {
     font-size: 28px;
   }
@@ -874,15 +930,13 @@
   }
 
   .stock-tabs {
-    margin-right: -18px;
-    margin-left: -18px;
-    width: calc(100% + 36px);
-    padding-left: 18px;
+    width: 100%;
+    padding-left: 8px;
   }
 
   .stock-tabs-track {
     min-width: max-content;
-    padding-right: 18px;
+    padding-right: 8px;
   }
 
   .stock-tab {
@@ -891,7 +945,28 @@
     padding-left: 14px;
   }
 
-  .stock-position-grid,
+  .stock-tab-panel {
+    min-height: 360px;
+    padding: 20px 16px 26px;
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: 4px 4px 0 rgba(126, 101, 43, .22);
+  }
+
+  .stock-tab-panel > .stock-position {
+    margin-top: -20px;
+  }
+
+  .stock-position {
+    margin-right: -16px;
+    margin-bottom: 24px;
+    margin-left: -16px;
+    padding: 16px 16px 3px;
+  }
+
+  .stock-position-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .stock-two-column,
   .stock-detail-columns {
     grid-template-columns: 1fr;
@@ -901,12 +976,18 @@
   .stock-position-item + .stock-position-item,
   .stock-position-item:nth-child(4) {
     border-left: none;
-    border-top: 1px solid var(--line);
-    padding: 12px 0;
+    border-top: none;
+    padding: 12px 12px 14px 0;
   }
 
-  .stock-position-item:first-child {
-    border-top: none;
+  .stock-position-item:nth-child(even) {
+    border-left: 2px solid rgba(52, 41, 30, .18);
+    padding-right: 0;
+    padding-left: 12px;
+  }
+
+  .stock-position-item:nth-child(n + 3) {
+    border-top: 1px solid rgba(52, 41, 30, .18);
   }
 
   .stock-position-item > span {

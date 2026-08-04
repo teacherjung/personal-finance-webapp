@@ -397,7 +397,7 @@ test('個股研究畫面｜估值距離只在現價與情境同幣且合理價�
   assert.equal(valuationDistance(220, 'USD', 0, 'USD'), null);
 });
 
-test('個股研究樣式｜桌面有彈性欄寬、手機改單欄、長字與表格不溢出外框', async () => {
+test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字與表格不溢出外框', async () => {
   const css = await readFile(new URL('../public/stock-research.css', import.meta.url), 'utf8');
 
   assert.match(css, /max-width:\s*1240px/);
@@ -405,9 +405,9 @@ test('個股研究樣式｜桌面有彈性欄寬、手機改單欄、長字與�
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
   assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*8px 8px 0 0/);
-  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--line-2\)/);
+  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--frame\)/);
   assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*92px/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid,[\s\S]*grid-template-columns:\s*1fr/);
+  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.doesNotMatch(css, /font-size:\s*[^;]*(vw|vh)/);
 });
