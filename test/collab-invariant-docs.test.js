@@ -601,39 +601,55 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
 
-test('模式③ worktree 鐵條：兩份文件的操作段落都要「解析出正確的開工指令」（看指令構成，不看關鍵字）', () => {
-  // 病因：2026-08-04 兩次 Codex 桌機在主目錄開工、本機 main 被弄丟 → 規則入 AGENTS＋R&M。
-  // 第一版考題只查關鍵字存在，被 Codex #398 r2 三重打實：反向套回會紅只是及格線；
-  // 文件後段加覆寫段落照樣綠（假綠）；等價的參數順序改寫反而紅（誤擋）。
-  // 本版改「解析指令構成」：限定各自的操作段落、剝 HTML 註解，指令必須同時滿足
-  // worktree add ∧ 路徑在 /private/tmp ∧ -b codex/… ∧ 基底 origin/main（順序無關），
-  // 且段落內不得出現 git checkout -b（舊起手式回魂）。
-  // ⚠️ 誠實劃界：「在文件別處另立覆寫段落」屬蓄意繞法，文字考題列舉不完——
-  // 歸審查制度管（同 no-hiding-places 的劃界模式）；本題守的是操作段落本身不被改壞。
+test('模式③ worktree 鐵條：兩份文件的操作項都要「解析出正確的開工指令」（位置與路徑都驗，不只驗成員）', () => {
+  // 病因：2026-08-04 兩次 Codex 桌機在主目錄開工、本機 main 被弄丟。考題三度進化：
+  // r2 抓「關鍵字版」覆寫假綠＋等價順序誤擋 → 改解析指令構成；
+  // r3 抓「成員版」三個假綠（位置參數顛倒／`..` 路徑逃逸／重複 -b）＋續行藏覆寫。
+  // 本版：擷取**完整清單項**（吃進續行）、指令 span 恰好一個、**恰好一組** -b 且值為 codex/…、
+  // 移除該對後必須**恰為 [worktree路徑, origin/main]**（位置嚴格＝git 語法）、
+  // 路徑**正規化**（解 ..）後必須在 /private/tmp/ 下、項內不得出現 git checkout -b。
+  // ⚠️ 誠實劃界：在文件**別處**另立覆寫段落＝蓄意繞法，文字考題列舉不完——歸審查制度
+  //（no-hiding-places 模式）；本題守的是操作項本身不被改壞。
   const strip = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
-  const grab = (text, startMark, name) => {
+  const grabItem = (text, startMark, name) => {
     const i = text.indexOf(startMark);
-    assert.notEqual(i, -1, `${name} 找不到模式③操作段落（起點標記：${startMark.slice(0, 20)}…）`);
-    const j = text.indexOf('\n', i);
-    return text.slice(i, j === -1 ? undefined : j);
+    assert.notEqual(i, -1, `${name} 找不到模式③操作項（起點：${startMark.slice(0, 20)}…）`);
+    const lines = text.slice(i).split('\n');
+    const item = [lines[0]];
+    for (let k = 1; k < lines.length; k++) {
+      const l = lines[k];
+      if (l.trim() === '' || /^\s*[-*] /.test(l) || /^#{1,6} /.test(l) || /^> /.test(l) || /^\| /.test(l)) break;
+      item.push(l);   // 續行也吃進來——「續行藏覆寫」逃不出本題視野
+    }
+    return item.join('\n');
   };
-  const sections = [
-    ['AGENTS.md', grab(strip(read('AGENTS.md')), '⚠️⚠️ **Codex 實作（模式③）開工一律', 'AGENTS.md')],
-    ['REVIEW-AND-MERGE.md', grab(strip(read('REVIEW-AND-MERGE.md')), '- **工作環境**：', 'REVIEW-AND-MERGE.md')],
+  const norm = (p) => {
+    const out = [];
+    for (const seg of p.split('/')) {
+      if (seg === '..') out.pop();
+      else if (seg !== '.' && seg !== '') out.push(seg);
+    }
+    return '/' + out.join('/');
+  };
+  const items = [
+    ['AGENTS.md', grabItem(strip(read('AGENTS.md')), '⚠️⚠️ **Codex 實作（模式③）開工一律', 'AGENTS.md')],
+    ['REVIEW-AND-MERGE.md', grabItem(strip(read('REVIEW-AND-MERGE.md')), '- **工作環境**：', 'REVIEW-AND-MERGE.md')],
   ];
-  for (const [name, sec] of sections) {
-    const m = sec.match(/git worktree add\s+([^`]+)/);
-    assert.ok(m, `${name} 的操作段落解析不出 git worktree add 指令`);
-    const toks = m[1].trim().split(/\s+/);
-    const bIdx = toks.indexOf('-b');
-    assert.ok(bIdx !== -1 && (toks[bIdx + 1] || '').startsWith('codex/'),
-      `${name} 的開工指令必須帶 -b codex/…（實得：${toks.join(' ')}）`);
-    const rest = toks.filter((_, i) => i !== bIdx && i !== bIdx + 1);
-    assert.ok(rest.some((x) => x.startsWith('/private/tmp/')),
-      `${name} 的開工路徑必須在 /private/tmp（實得：${toks.join(' ')}）`);
-    assert.ok(rest.includes('origin/main'), `${name} 的開工基底必須是 origin/main`);
-    assert.ok(!/git checkout -b/.test(sec),
-      `${name} 的操作段落出現 git checkout -b——舊起手式回魂＝主目錄被借走的病根`);
-    assert.ok(/絕不動主目錄|不要動主目錄/.test(sec), `${name} 段落少了「絕不動主目錄」承重句`);
+  for (const [name, item] of items) {
+    const spans = [...item.matchAll(/`([^`]*git worktree add[^`]*)`/g)].map((m) => m[1]);
+    assert.equal(spans.length, 1, `${name} 的操作項必須恰有一個 worktree add 指令（實得 ${spans.length}）`);
+    const tail = spans[0].slice(spans[0].indexOf('git worktree add') + 'git worktree add'.length).trim();
+    const toks = tail.split(/\s+/);
+    const bIdxs = toks.map((x, i) => (x === '-b' ? i : -1)).filter((i) => i !== -1);
+    assert.equal(bIdxs.length, 1, `${name} 的開工指令必須恰有一組 -b（實得 ${bIdxs.length}：${tail}）`);
+    assert.ok((toks[bIdxs[0] + 1] || '').startsWith('codex/'),
+      `${name} 的 -b 分支必須是 codex/…（實得：${toks[bIdxs[0] + 1]}）`);
+    const rest = toks.filter((_, i) => i !== bIdxs[0] && i !== bIdxs[0] + 1);
+    assert.equal(rest.length, 2, `${name} 的開工指令除 -b 對外必須恰為兩個位置參數（實得：${rest.join(' ')}）`);
+    assert.equal(rest[1], 'origin/main', `${name} 的第二個位置參數（基底）必須是 origin/main（實得：${rest[1]}）`);
+    assert.ok(norm(rest[0]).startsWith('/private/tmp/'),
+      `${name} 的 worktree 路徑正規化後必須在 /private/tmp/ 下（實得：${rest[0]} → ${norm(rest[0])}）`);
+    assert.ok(!/git checkout -b/.test(item), `${name} 的操作項出現 git checkout -b——舊起手式回魂`);
+    assert.ok(/絕不動主目錄|不要動主目錄/.test(item), `${name} 操作項少了「絕不動主目錄」承重句`);
   }
 });
