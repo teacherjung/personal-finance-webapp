@@ -608,7 +608,7 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   // ⇒ 特性不是缺陷：改這些指令或承重句＝必先來改本考題（變更必經考題）。
   // ⚠️ 誠實劃界：它證明「白名單句在兩份文件各出現規定次數」，證明不了「別處沒有另立
   //    覆寫段落」（歸審查制度）、也證明不了「執行者真的照做」（歸事後稽核與指派詞）。
-  const docs = { 'AGENTS.md': read('AGENTS.md'), 'REVIEW-AND-MERGE.md': read('REVIEW-AND-MERGE.md') };
+  const docs = { 'AGENTS.md': read('AGENTS.md'), 'REVIEW-AND-MERGE.md': read('REVIEW-AND-MERGE.md'), 'CLAUDE.md': read('CLAUDE.md') };
   const count = (hay, needle) => hay.split(needle).length - 1;
   const PINS = [
     ['AGENTS.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
@@ -631,6 +631,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['REVIEW-AND-MERGE.md', '**審查者不得自建其他 worktree**', 1],
     ['REVIEW-AND-MERGE.md', '**要參考另一支 PR＝請發射者另備一棵釘選的審查樹**', 1],
     ['REVIEW-AND-MERGE.md', '**缺＝備樹失敗，停下回報、不要自行 `npm install`**', 1],
+    ['AGENTS.md', '由發射者備樹時建、收尾時 unlink，審查者不得自行建立／安裝／移除', 1],
+    ['CLAUDE.md', '正式審查的 symlink 一律由發射者備樹時處理', 1],
   ];
   for (const [file, pin, expected] of PINS) {
     const got = count(docs[file], pin);
