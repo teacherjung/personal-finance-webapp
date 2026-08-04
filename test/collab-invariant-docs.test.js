@@ -601,55 +601,40 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
 
-test('模式③ worktree 鐵條：兩份文件的操作項都要「解析出正確的開工指令」（位置與路徑都驗，不只驗成員）', () => {
-  // 病因：2026-08-04 兩次 Codex 桌機在主目錄開工、本機 main 被弄丟。考題三度進化：
-  // r2 抓「關鍵字版」覆寫假綠＋等價順序誤擋 → 改解析指令構成；
-  // r3 抓「成員版」三個假綠（位置參數顛倒／`..` 路徑逃逸／重複 -b）＋續行藏覆寫。
-  // 本版：擷取**完整清單項**（吃進續行）、指令 span 恰好一個、**恰好一組** -b 且值為 codex/…、
-  // 移除該對後必須**恰為 [worktree路徑, origin/main]**（位置嚴格＝git 語法）、
-  // 路徑**正規化**（解 ..）後必須在 /private/tmp/ 下、項內不得出現 git checkout -b。
-  // ⚠️ 誠實劃界：在文件**別處**另立覆寫段落＝蓄意繞法，文字考題列舉不完——歸審查制度
-  //（no-hiding-places 模式）；本題守的是操作項本身不被改壞。
-  const strip = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
-  const grabItem = (text, startMark, name) => {
-    const i = text.indexOf(startMark);
-    assert.notEqual(i, -1, `${name} 找不到模式③操作項（起點：${startMark.slice(0, 20)}…）`);
-    const lines = text.slice(i).split('\n');
-    const item = [lines[0]];
-    for (let k = 1; k < lines.length; k++) {
-      const l = lines[k];
-      if (l.trim() === '' || /^\s*[-*] /.test(l) || /^#{1,6} /.test(l) || /^> /.test(l) || /^\| /.test(l)) break;
-      item.push(l);   // 續行也吃進來——「續行藏覆寫」逃不出本題視野
-    }
-    return item.join('\n');
-  };
-  const norm = (p) => {
-    const out = [];
-    for (const seg of p.split('/')) {
-      if (seg === '..') out.pop();
-      else if (seg !== '.' && seg !== '') out.push(seg);
-    }
-    return '/' + out.join('/');
-  };
-  const items = [
-    ['AGENTS.md', grabItem(strip(read('AGENTS.md')), '⚠️⚠️ **Codex 實作（模式③）開工一律', 'AGENTS.md')],
-    ['REVIEW-AND-MERGE.md', grabItem(strip(read('REVIEW-AND-MERGE.md')), '- **工作環境**：', 'REVIEW-AND-MERGE.md')],
+test('工作區方案（實作常設／審查拋棄）：封閉白名單——合法指令與承重句逐字釘死', () => {
+  // 這道題的三代進化史（每代都被 Codex 打穿一次）：
+  //   v1 關鍵字存在檢查 → 覆寫段落假綠＋等價順序誤擋（#398 r2）；
+  //   v2/v3 解析指令構成 → 位置顛倒／.. 逃逸／重複 -b／分號注入／續行覆寫（r3、r4）——
+  //   「解析式驗證追不上自然語言＋shell 語法的變體空間」＝列舉繞法補不完的劃界點。
+  // v4 照 r4 處方改**封閉白名單**：合法指令與承重句**逐字**釘死，一字不差才綠。
+  // ⇒ 特性不是缺陷：**改這些指令＝必須先來改本考題**（變更必經考題，同 no-hiding-places 的宣告制）。
+  // ⚠️ 誠實劃界：它證明「規範文字原封還在」，證明不了「文件別處沒有另立覆寫」——
+  //    蓄意覆寫段落屬審查制度職責（列舉不完，不假裝列得完）。
+  const agents = read('AGENTS.md');
+  const rm = read('REVIEW-AND-MERGE.md');
+  const CMD_IMPL = '`git fetch origin && git checkout -B codex/<分支> origin/main`';
+  const CMD_TREE = '`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>`';
+  const pins = [
+    ['AGENTS.md', agents, [
+      '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄',
+      CMD_IMPL,
+      '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`',
+      '功能分支（`git checkout -B codex/<分支> origin/main`）',   // 表格格那份也釘住——指令在 AGENTS 活兩處，只釘一處＝改另一處不會紅（v4 突變電池自抓）
+      '釘住受審 commit',
+    ]],
+    ['REVIEW-AND-MERGE.md', rm, [
+      CMD_IMPL,
+      CMD_TREE,
+      '/private/tmp/codex-review-pr<N>',
+      '/private/tmp/claude-review-pr<N>',
+      '不帶斜線＝只刪 symlink',
+      '絕不動主目錄',
+    ]],
   ];
-  for (const [name, item] of items) {
-    const spans = [...item.matchAll(/`([^`]*git worktree add[^`]*)`/g)].map((m) => m[1]);
-    assert.equal(spans.length, 1, `${name} 的操作項必須恰有一個 worktree add 指令（實得 ${spans.length}）`);
-    const tail = spans[0].slice(spans[0].indexOf('git worktree add') + 'git worktree add'.length).trim();
-    const toks = tail.split(/\s+/);
-    const bIdxs = toks.map((x, i) => (x === '-b' ? i : -1)).filter((i) => i !== -1);
-    assert.equal(bIdxs.length, 1, `${name} 的開工指令必須恰有一組 -b（實得 ${bIdxs.length}：${tail}）`);
-    assert.ok((toks[bIdxs[0] + 1] || '').startsWith('codex/'),
-      `${name} 的 -b 分支必須是 codex/…（實得：${toks[bIdxs[0] + 1]}）`);
-    const rest = toks.filter((_, i) => i !== bIdxs[0] && i !== bIdxs[0] + 1);
-    assert.equal(rest.length, 2, `${name} 的開工指令除 -b 對外必須恰為兩個位置參數（實得：${rest.join(' ')}）`);
-    assert.equal(rest[1], 'origin/main', `${name} 的第二個位置參數（基底）必須是 origin/main（實得：${rest[1]}）`);
-    assert.ok(norm(rest[0]).startsWith('/private/tmp/'),
-      `${name} 的 worktree 路徑正規化後必須在 /private/tmp/ 下（實得：${rest[0]} → ${norm(rest[0])}）`);
-    assert.ok(!/git checkout -b/.test(item), `${name} 的操作項出現 git checkout -b——舊起手式回魂`);
-    assert.ok(/絕不動主目錄|不要動主目錄/.test(item), `${name} 操作項少了「絕不動主目錄」承重句`);
+  for (const [name, text, list] of pins) {
+    for (const pin of list) {
+      assert.ok(text.includes(pin),
+        `${name} 少了白名單釘句「${pin}」——要改這些指令或承重句，先來改本考題（變更必經考題）`);
+    }
   }
 });

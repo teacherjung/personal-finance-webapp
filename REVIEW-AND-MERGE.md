@@ -37,7 +37,7 @@
 >   靜默失效 bug），一旦誤判，省下的正好是最需要的那次審查。**AI 不可自行分類降級**；想省額度只能由
 >   William 逐案明說，回報照舊註明用了哪一組。**機械性執行動作不是審查**（合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）、跑三關、查狀態
 >   ＝照表操課），用一般設定即可。
-> - **一律在 `-codex` 這個獨立 worktree 跑**（先 `git fetch origin && git checkout --detach origin/main`），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
+> - **一律在該 PR 的拋棄式審查樹跑**（`/private/tmp/codex-review-pr<N>`；發射者先備好、審完收掉——備樹三步見下方「你的角色」節），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
 > - **跑完檢查副作用**：`git status` 那棵樹是否乾淨；Codex 可能自建 `/private/tmp/codex-pr<N>` 臨時 worktree 跑 PR 版本測試（正確做法，但會留下 `package-lock.json` 之類的殘留）→ 用 `git worktree remove --force` 收掉。
 > - **審尚未合併的 PR** 時，在提示詞裡指名 branch 與重點，並要求 `git diff origin/main...origin/<branch>`、不要 checkout。
@@ -205,11 +205,10 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 
 
 - 只提意見，不改任何檔案、不 commit、不 push。
-- **在你專屬的審查 worktree 裡工作**：`~/Desktop/07 專案/榮祥森（投資理財）-codex`（使用者定 2026-07-19）。那裡是 **detached HEAD**，更新方式＝`git fetch origin && git checkout --detach origin/main`（**不要用 `git pull`**，detached 狀態下沒有意義；也**不要 `git checkout main`**——`main` 被主目錄佔著，Git 會拒絕）。
+- **在該 PR 的拋棄式審查樹裡工作**（William 2026-08-04 統一「實作常設、審查拋棄」；原常設 `-codex` 審查樹已轉職為 Codex 實作樹）：Codex 審＝`/private/tmp/codex-review-pr<N>`、Claude 審＝`/private/tmp/claude-review-pr<N>`。**發射者備樹三步（審查者只用、不建不收）**：①`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` ②`ln -s "<主目錄>/node_modules" "<審查樹>/node_modules"`（跑三關要用；symlink 紀律見 AGENTS 協作流程）③審完由發射者收：`rm "<審查樹>/node_modules"`（**不帶斜線＝只刪 symlink**）→ `git worktree remove <審查樹>`。拋棄式樹釘住受審 commit＝永遠新鮮。
   - 為什麼要分開：上一輪審查時 Claude 在同一個目錄裡 rebase 與切分支十幾次，你正在讀的樹在腳下移動、看到新舊混雜的程式碼。現在 Claude 在 `-claude` worktree 工作、主目錄永遠停在 `main`，三邊互不干擾。
   - **不要在你的 worktree 裡切到別人的功能分支**（那會把它從主目錄／Claude 的 worktree 搶走）。要看某個 PR 的內容用 `git fetch origin && git log/diff origin/<branch>`，不必 checkout。
   - 順帶一提：你的 worktree 裡**沒有** `data/store.db`（真實個資只在主目錄），所以下面那條「絕對不要讀取」現在是結構上做不到，不必再擔心誤觸。
-  - 🚩 **「我的樹是不是過期了」的自我檢查**：審查開始前先 `git rev-parse --short HEAD`，跟 `git rev-parse --short origin/main` 比對；不一樣就先更新。**最常見的過期徵兆＝`git status --short` 出現 `?? node_modules`**——那個 symlink 早已被 `.gitignore` 忽略（2026-07-19 起 `.gitignore` 用不帶斜線的 `node_modules`，帶斜線只比對目錄、擋不住 symlink），會冒出來只代表你停在那次修正之前的 commit。遇到就 `git fetch origin && git checkout --detach origin/main`，不要當成待修問題回報。
   - ⚠️ **不要在你的 worktree 裡 commit 任何東西**（使用者定 2026-07-19）。你的產出是意見清單，實作與修正一律由 Claude 在 `-claude` worktree 走分支與 PR。
 - 絕對不要讀取 `data/store.db`（含 `.bak`/`-wal`/`-shm`）與 `data/store.json`（真實個資與 token；B3 起主資料庫為 SQLite `store.db`、舊 `store.json` 保留為備份）；要看資料形狀請看 `data/seed.json`，要實測請用 `STORE_FILE` 指向暫存 `.db` 檔。
 
@@ -254,7 +253,7 @@ William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、
 **session 的實際來源仍然是自報的，機器驗不了**——那要獨立 GitHub 帳號才擋得住（見 `docs/GitHub分支保護-設定與驗證.md`「第二步：分身分」）。
 （**一條規則的理由跟現實對不上，本身就是漂移**——那正是這份文件一直在修的病。）前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
-- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用能 commit/push 的**專屬 worktree、開在 `/private/tmp`、絕不動主目錄**（William 2026-08-04 拍板——同日兩次實測在主目錄開工把本機 `main` 弄丟；完整規則見 AGENTS.md 協作流程的目錄不變量）。流程：`git fetch origin && git worktree add /private/tmp/<題名> -b codex/<分支> origin/main` → 進該 worktree 工作 → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
+- **工作環境**：**不要在 `-codex`（唯讀複審用）commit**。實作用你的**常設 `-codex` 樹**（2026-08-04 轉職為 Codex 實作樹、審查改走拋棄式樹——完整規則見 AGENTS.md 協作流程的目錄不變量；**絕不動主目錄**）。流程：在 `-codex` 裡 `git fetch origin && git checkout -B codex/<分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → 完工後 `gh pr ready` 轉正式送審。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（工法＝`docs/notion-spec-playbook.md`，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 3）。
 - **完工後、轉 ready 送審前，自己對抗式自審一輪**（開工就開 Draft，所以自審關卡掛在「轉 ready」而不是「開 PR」）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
