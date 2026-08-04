@@ -600,3 +600,22 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '關掉 enforce_admins 不只 William 能繞過——三方共用同一個 token，'
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
+
+test('模式③的 worktree 鐵條在兩份文件都活著（/private/tmp、絕不動主目錄——刪一邊就紅）', () => {
+  // 病因：2026-08-04 同日兩次，Codex 桌機直接在主目錄開工——主目錄被切到功能分支、
+  // 本機 main 一度被改名消失。規則寫進 AGENTS（規則來源）與 R&M（執行者實際照做的檔），
+  // Codex #398 r1 用「反向套回」證明沒有考題釘著：把兩處全刪、文件考題照樣全綠。
+  // 本題判準＝兩份文件各自帶著承重句與起手式；「規則與執行檔分家＝規則不存在」的老病防重演。
+  const agents = read('AGENTS.md');
+  const rm = read('REVIEW-AND-MERGE.md');
+  assert.ok(agents.includes('開專屬 worktree、絕不動主目錄'),
+    'AGENTS 的模式③ worktree 鐵條不見了（協作流程目錄不變量區）');
+  assert.ok(agents.includes('git worktree add /private/tmp/'),
+    'AGENTS 少了 /private/tmp 起手式——規則沒有可照抄的指令就會被「憑印象」取代');
+  assert.ok(rm.includes('git worktree add /private/tmp/'),
+    'R&M 實作模式的起手式不再是 worktree add——改回 checkout -b 就會重演主目錄被借走');
+  assert.ok(rm.includes('絕不動主目錄'), 'R&M 工作環境行少了「絕不動主目錄」');
+  // 前綴一致性：兩份文件的起手式都用 codex/<分支>，不留「要不要前綴」的歧義
+  assert.ok(agents.includes('-b codex/<分支> origin/main') && rm.includes('-b codex/<分支> origin/main'),
+    '兩份文件的分支前綴不一致（都應為 codex/<分支>）——歧義會讓其中一份慢慢走散');
+});
