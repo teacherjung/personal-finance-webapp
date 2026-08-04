@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { icon } from '../public/modules/icons.js';
 import {
   STOCK_RESEARCH_TABS,
   buildStockResearchViewModel,
@@ -330,6 +331,7 @@ test('個股研究畫面｜賣光但有研究仍可讀；完全空白與缺代�
   const emptyHtml = stockResearchViewHtml({ model: empty }, { esc });
   assert.match(emptyHtml, /NVDA 尚無持股或研究資料/);
   assert.doesNotMatch(emptyHtml, /data-stock-create/);
+  assert.ok(emptyHtml.includes(icon('arrow-left', 16)));
 
   const missingSymbol = stockResearchViewHtml({
     model: {
@@ -339,6 +341,7 @@ test('個股研究畫面｜賣光但有研究仍可讀；完全空白與缺代�
   }, { esc });
   assert.match(missingSymbol, /請先選擇一檔個股/);
   assert.match(missingSymbol, /href="#ib"/);
+  assert.ok(missingSymbol.includes(icon('arrow-left', 16)));
 });
 
 test('個股研究畫面｜舊研究只有文字與檢查點仍能顯示，不要求新欄位', () => {
@@ -407,7 +410,7 @@ test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字�
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
   assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*8px 8px 0 0/);
-  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--accent-hover\)/);
+  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--frame\)/);
   assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*104px/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);

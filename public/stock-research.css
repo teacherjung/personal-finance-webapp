@@ -64,6 +64,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
+  border-color: var(--frame);
+  border-radius: var(--radius);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -103,14 +106,14 @@
   min-width: 112px;
   min-height: 50px;
   padding: 11px 20px 12px;
-  margin-right: -1px;
+  margin-right: -2px;
   margin-bottom: -2px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--frame);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
   color: var(--text-dim);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   text-decoration: none;
   white-space: nowrap;
   background: color-mix(in srgb, var(--card-2) 72%, var(--card));
@@ -118,7 +121,7 @@
 
 .stock-tab .ic {
   flex: none;
-  opacity: .82;
+  opacity: .88;
 }
 
 .stock-tab:hover {
@@ -134,8 +137,7 @@
 
 .stock-tab.active {
   z-index: 1;
-  border-width: 2px;
-  border-color: var(--accent-hover);
+  border-color: var(--frame);
   color: var(--accent-hover);
   background: var(--card);
 }
@@ -146,7 +148,7 @@
   right: 24px;
   bottom: 6px;
   left: 24px;
-  height: 2px;
+  height: 3px;
   border-radius: 999px;
   background: var(--accent);
 }
@@ -163,6 +165,7 @@
 
 .stock-tab-panel {
   min-height: 420px;
+  overflow: hidden;
   margin-top: -2px;
   padding: 26px 28px 32px;
   border: 2px solid var(--frame);

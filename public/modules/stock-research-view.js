@@ -245,7 +245,7 @@ function headerHtml(view, h) {
       </div>
     </div>
     <div class="page-actions">
-      <a class="btn-ghost stock-back-link" href="#ib">${icon('trending', 16)}回投資組合</a>
+      <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       ${action}
     </div>
   </header>`;
@@ -545,7 +545,7 @@ export function stockResearchViewHtml(input, formatters) {
         <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>請先選擇一檔個股</h2>
         <p>請從投資組合的個股代號進入研究頁。</p>
-        <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
+        <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       </section>
     </div>`;
   }
@@ -557,7 +557,7 @@ export function stockResearchViewHtml(input, formatters) {
         <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>${h.e(view.symbol)} 尚無持股或研究資料</h2>
         <p>這個網址不會自動建立空白研究；請先從投資組合的個股入口進入。</p>
-        <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
+        <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       </section>
     </div>`;
   }
