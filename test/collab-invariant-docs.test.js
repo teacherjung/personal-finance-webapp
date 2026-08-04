@@ -293,7 +293,7 @@ function gatesRunInMergeSteps() {
   const stop = whole.indexOf('\n---', start);
   // ⚠️ 找不到結束錨點就**直接失敗**，不要掃到檔尾（fail-closed，Codex r12）
   assert.ok(stop > start, '合併步驟區塊找不到結束錨點 `\n---`——不要退而掃到檔尾，那不是 fail-closed');
-  // ⚠️ 整段六步驟寫在 blockquote 裡，fence 前面有 `> ` ⇒ 先剝引用前綴再抽 fence
+  // ⚠️ 整段合併步驟寫在 blockquote 裡，fence 前面有 `> ` ⇒ 先剝引用前綴再抽 fence
   const block = whole.slice(start, stop).split('\n').map((l) => l.replace(/^\s*>[ \t]?/, '')).join('\n');
   // ⚠️ fence 要**錨定整行**、info string **只准 `bash`**（Codex #385 r13 High）：
   //    原本的 /```[a-z]*\n…```/ 接受任何 info string，而且沒錨定行首——

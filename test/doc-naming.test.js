@@ -4,11 +4,11 @@
 // ## 起因
 //
 // 合併程序寫在一份叫 `CODEX-REVIEW.md` 的檔案裡，而 `AGENTS.md` 有 13 處叫**任何人**
-// （包括 Claude）「照它的合併六步驟走」。William 問：
+// （包括 Claude）「照它的合併步驟走」。William 問：
 //
 //   「為什麼 Claude 要照一份叫 Codex 的檔案做事？這樣很奇怪。」
 //
-// 他問得對。那份檔案裡只有一小段是 Codex 專屬的，其餘（合併六步驟、審查循環、
+// 他問得對。那份檔案裡只有一小段是 Codex 專屬的，其餘（合併步驟、審查循環、
 // 唯讀紀律／PII／對抗式自審）**誰在做就適用誰**。名字只描述了其中一小塊。
 //
 // ## 這支守什麼
@@ -109,7 +109,7 @@ test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是�
     for (const role of ROLE_NAMES) {
       assert.ok(!upper.includes(role),
         `「${file}」是三方共用的文件，檔名卻掛著「${role}」。\n`
-        + '⚠️ 起因：合併六步驟原本寫在 `CODEX-REVIEW.md`，而 AGENTS.md 有 13 處叫**任何人**照它做——\n'
+        + '⚠️ 起因：合併步驟原本寫在 `CODEX-REVIEW.md`，而 AGENTS.md 有 13 處叫**任何人**照它做——\n'
         + '   一個 Claude 照 CLAUDE.md 指示去讀 AGENTS.md，會被指到一份掛 Codex 名字的檔案。\n'
         + '   **名字會決定誰覺得「這關我的事」。**\n'
         + `   如果它其實是工具規定的固定檔名（像 CLAUDE.md），請在 DOCS 標 toolFixedName: true。`);
@@ -151,7 +151,7 @@ const HISTORICAL_CONTEXTS = {
   ],
   'test/doc-naming.test.js': [
     '// 合併程序寫在一份叫 `⟨舊名⟩.md` 的檔案裡，而 `AGENTS.md` 有 13 處',
-    '+ \'⚠️ 起因：合併六步驟原本寫在 `⟨舊名⟩.md`，而 AGENTS.md 有 13 處叫**任何人*',
+    '+ \'⚠️ 起因：合併步驟原本寫在 `⟨舊名⟩.md`，而 AGENTS.md 有 13 處叫**任何人*',
     '\'提到舊檔名 ⟨舊名⟩.md 的**位置**與宣告的不一致。\\n\'',
   ],
   'test/fixtures/review-verdict-corpus.json': [
