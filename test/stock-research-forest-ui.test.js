@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
+import { icon } from '../public/modules/icons.js';
 import { STOCK_RESEARCH_TABS, stockResearchViewHtml } from '../public/modules/stock-research-view.js';
 
 const ROOT = new URL('../', import.meta.url);
@@ -26,6 +27,12 @@ function cssHexToken(css, name) {
   const match = css.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'));
   assert.ok(match, `missing CSS token: ${name}`);
   return match[1];
+}
+
+function cssPx(rule, property) {
+  const match = rule.match(new RegExp(`${property}:\\s*(-?\\d+(?:\\.\\d+)?)px`));
+  assert.ok(match, `missing pixel declaration: ${property}`);
+  return Number(match[1]);
 }
 
 function relativeLuminance(hex) {
@@ -131,13 +138,38 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
 
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
+  for (const tab of STOCK_RESEARCH_TABS) {
+    assert.doesNotMatch(icon(tab.icon), /aria-hidden="true"><\/svg>/, `${tab.key} icon must not be empty`);
+  }
   assert.match(tabs, /id="stock-tab-thesis" class="stock-tab active"[\s\S]*aria-current="page"/);
+  assert.doesNotMatch(cssRule(css, '.stock-tabs'), /border-bottom/);
+  assert.match(cssRule(css, '.stock-tabs'), /position:\s*relative/);
+  assert.match(cssRule(css, '.stock-tabs'), /z-index:\s*2/);
   assert.match(cssRule(css, '.stock-tab'), /background:\s*color-mix\(in srgb, var\(--card-2\) 72%, var\(--card\)\)/);
+  assert.match(cssRule(css, '.stock-tab:focus-visible'), /outline:\s*3px solid var\(--accent\)/);
   assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-3px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*2px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*2px/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /background:\s*var\(--card\)/);
+  assert.match(cssRule(css, '.stock-tab-panel'), /margin-top:\s*-2px/);
+
+  const bridgeRule = cssRule(css, '.stock-tab.active::after');
+  const panelRule = cssRule(css, '.stock-tab-panel');
+  const panelBorder = cssPx(panelRule, 'border');
+  assert.equal(cssPx(bridgeRule, 'bottom'), panelBorder);
+  assert.equal(cssPx(bridgeRule, 'height'), panelBorder);
+  assert.equal(Math.abs(cssPx(panelRule, 'margin-top')), panelBorder);
+
+  const sharedCss = await readFile(new URL('public/styles.css', ROOT), 'utf8');
+  const accent = cssHexToken(sharedCss, '--accent');
+  for (const background of ['--card', '--card-2']) {
+    assert.ok(
+      contrastRatio(accent, cssHexToken(sharedCss, background)) >= 3,
+      `focus outline must keep 3:1 contrast against ${background}`
+    );
+  }
 });
 
 test('個股研究森林工作面｜估值保留三情境語意並可單獨辨識基準列', () => {

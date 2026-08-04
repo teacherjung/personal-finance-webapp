@@ -77,11 +77,12 @@
 }
 
 .stock-tabs {
+  position: relative;
+  z-index: 2;
   width: 100%;
   padding: 0 18px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 2px solid var(--frame);
   scrollbar-width: thin;
   overscroll-behavior-inline: contain;
 }
@@ -127,7 +128,7 @@
 
 .stock-tab:focus-visible {
   z-index: 2;
-  outline: 3px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  outline: 3px solid var(--accent);
   outline-offset: -5px;
 }
 
@@ -154,9 +155,9 @@
   content: "";
   position: absolute;
   right: 0;
-  bottom: -3px;
+  bottom: 2px;
   left: 0;
-  height: 4px;
+  height: 2px;
   background: var(--card);
 }
 
