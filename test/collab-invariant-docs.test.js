@@ -601,21 +601,39 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
 
-test('模式③的 worktree 鐵條在兩份文件都活著（/private/tmp、絕不動主目錄——刪一邊就紅）', () => {
-  // 病因：2026-08-04 同日兩次，Codex 桌機直接在主目錄開工——主目錄被切到功能分支、
-  // 本機 main 一度被改名消失。規則寫進 AGENTS（規則來源）與 R&M（執行者實際照做的檔），
-  // Codex #398 r1 用「反向套回」證明沒有考題釘著：把兩處全刪、文件考題照樣全綠。
-  // 本題判準＝兩份文件各自帶著承重句與起手式；「規則與執行檔分家＝規則不存在」的老病防重演。
-  const agents = read('AGENTS.md');
-  const rm = read('REVIEW-AND-MERGE.md');
-  assert.ok(agents.includes('開專屬 worktree、絕不動主目錄'),
-    'AGENTS 的模式③ worktree 鐵條不見了（協作流程目錄不變量區）');
-  assert.ok(agents.includes('git worktree add /private/tmp/'),
-    'AGENTS 少了 /private/tmp 起手式——規則沒有可照抄的指令就會被「憑印象」取代');
-  assert.ok(rm.includes('git worktree add /private/tmp/'),
-    'R&M 實作模式的起手式不再是 worktree add——改回 checkout -b 就會重演主目錄被借走');
-  assert.ok(rm.includes('絕不動主目錄'), 'R&M 工作環境行少了「絕不動主目錄」');
-  // 前綴一致性：兩份文件的起手式都用 codex/<分支>，不留「要不要前綴」的歧義
-  assert.ok(agents.includes('-b codex/<分支> origin/main') && rm.includes('-b codex/<分支> origin/main'),
-    '兩份文件的分支前綴不一致（都應為 codex/<分支>）——歧義會讓其中一份慢慢走散');
+test('模式③ worktree 鐵條：兩份文件的操作段落都要「解析出正確的開工指令」（看指令構成，不看關鍵字）', () => {
+  // 病因：2026-08-04 兩次 Codex 桌機在主目錄開工、本機 main 被弄丟 → 規則入 AGENTS＋R&M。
+  // 第一版考題只查關鍵字存在，被 Codex #398 r2 三重打實：反向套回會紅只是及格線；
+  // 文件後段加覆寫段落照樣綠（假綠）；等價的參數順序改寫反而紅（誤擋）。
+  // 本版改「解析指令構成」：限定各自的操作段落、剝 HTML 註解，指令必須同時滿足
+  // worktree add ∧ 路徑在 /private/tmp ∧ -b codex/… ∧ 基底 origin/main（順序無關），
+  // 且段落內不得出現 git checkout -b（舊起手式回魂）。
+  // ⚠️ 誠實劃界：「在文件別處另立覆寫段落」屬蓄意繞法，文字考題列舉不完——
+  // 歸審查制度管（同 no-hiding-places 的劃界模式）；本題守的是操作段落本身不被改壞。
+  const strip = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
+  const grab = (text, startMark, name) => {
+    const i = text.indexOf(startMark);
+    assert.notEqual(i, -1, `${name} 找不到模式③操作段落（起點標記：${startMark.slice(0, 20)}…）`);
+    const j = text.indexOf('\n', i);
+    return text.slice(i, j === -1 ? undefined : j);
+  };
+  const sections = [
+    ['AGENTS.md', grab(strip(read('AGENTS.md')), '⚠️⚠️ **Codex 實作（模式③）開工一律', 'AGENTS.md')],
+    ['REVIEW-AND-MERGE.md', grab(strip(read('REVIEW-AND-MERGE.md')), '- **工作環境**：', 'REVIEW-AND-MERGE.md')],
+  ];
+  for (const [name, sec] of sections) {
+    const m = sec.match(/git worktree add\s+([^`]+)/);
+    assert.ok(m, `${name} 的操作段落解析不出 git worktree add 指令`);
+    const toks = m[1].trim().split(/\s+/);
+    const bIdx = toks.indexOf('-b');
+    assert.ok(bIdx !== -1 && (toks[bIdx + 1] || '').startsWith('codex/'),
+      `${name} 的開工指令必須帶 -b codex/…（實得：${toks.join(' ')}）`);
+    const rest = toks.filter((_, i) => i !== bIdx && i !== bIdx + 1);
+    assert.ok(rest.some((x) => x.startsWith('/private/tmp/')),
+      `${name} 的開工路徑必須在 /private/tmp（實得：${toks.join(' ')}）`);
+    assert.ok(rest.includes('origin/main'), `${name} 的開工基底必須是 origin/main`);
+    assert.ok(!/git checkout -b/.test(sec),
+      `${name} 的操作段落出現 git checkout -b——舊起手式回魂＝主目錄被借走的病根`);
+    assert.ok(/絕不動主目錄|不要動主目錄/.test(sec), `${name} 段落少了「絕不動主目錄」承重句`);
+  }
 });
