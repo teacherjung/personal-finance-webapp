@@ -89,7 +89,7 @@ const FORBIDDEN_AFTER_RECONNECT = [
 // ⚠️ 這裡與 .claude/settings.json 的指令必須同步改（兩邊都改才綠＝雙人規則）。
 const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
-  'sell', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
+  'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
 const FAMILY_NOUNS = ['order', 'trade', 'position', 'instruction', 'stock', 'share', 'security',
   'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin', 'locate', 'invoice', 'bill'];
 const FUND_KEYWORDS = ['transfer', 'withdraw', 'deposit', 'remit', 'payout', 'disburse', 'payment', 'wire'];
@@ -110,6 +110,9 @@ const FORBIDDEN_FAMILY = [
   'create_locate', 'pay_order',                                 // r2 H②：Alpaca／PayPal 現役名
   'place_order__get_status',                                    // r2 M③：唯讀豁免只看工具開頭
   'TRANSFERFunds', 'SENDMoney', 'CONVERTCurrency',              // r3 H②：縮寫駝峰（acronym→Word 邊界）
+  'purchase_stock', 'request_withdrawal', 'cash_withdrawal',    // r4 H②：常見漏網名（withdrawal 詞尾、
+  'send_cash', 'move_assets', 'move_securities',                //  move/send×錢名詞、名詞_動詞倒裝）
+  'order_cancel', 'trade_execute',
 ].map((t) => `${FAKE_UUID}${t}`).concat([
   // r3 H①：CLI 實測可註冊叫 broker__get 的 server ⇒ 切分歧義；歧義處置偏 deny——
   // 每個 __ 後綴都當候選工具查一次，任何候選命中家族網就攔。
