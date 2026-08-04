@@ -66,15 +66,10 @@
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
 3.5. **原型污染**（Codex r4#1）：凡是**以使用者文字為 key 的 map**（學習表、分類別名、將來任何同型的表），寫入前一律過 `lib/safe-map.js`——`setOwn`（原型名拒收）、`getOwn`（只讀自有屬性）、`emptyMap`（null prototype）、`safeMap`（重建時丟掉原型名 key）；學習表進出資料庫的必經之路＝`schema.sanitizeLearned`。理由：`map['__proto__']={…}` 會污染全域 `Object.prototype`，**實測連 pdfjs 都當場崩潰**，不只是資料錯。⚠️ 光靠 `Object.create(null)` 不夠——`JSON.parse('{"__proto__":…}')` 造得出「自有的 __proto__ 鍵」，JSON 來回一趟就退化，所以讀寫兩端都要用 safe-map。**產品規則（Codex r5#1/#4 拍板統一）：寫入一律拒絕整個保留字家族（`isProtoKey`＝`__proto__`/`toString`/`constructor`…，服務入口明確 400、不靜默吞掉——靜默的後果＝「改名成保留字」變成刪除，儲存卻回報成功）；讀取容忍舊資料（只丟 `__proto__` 這個唯一的賦值陷阱鍵）。** **凡「使用者文字當 key」：聚合一律 null-proto、查表一律 hasOwn/getOwn，沒有例外。** ⚠️ 三個最陰的變體（r6#3 實測）：①`m[k] ||= {…}`——k=`__proto__` 時讀到原型本尊（truthy 所以不重新賦值）→ **直接在全域原型上累加**；②使用者鍵組進普通物件再 `JSON.stringify` 送後端——`__proto__` 在序列化前就消失，後端 400 防線根本收不到、畫面還回報成功；③查表 `({...})[name]`——name=toString 撈到原型函式（用 `Object.hasOwn` 守）。⚠️ 寫「保留字自有鍵」的考題要用 `JSON.parse`——物件**字面量**裡的 `'__proto__'` 是設原型的特殊語法、不會成為自有鍵，字面量寫的考題永遠測不到真實路徑。（r5–r7 三輪掃出的十三處逐檔落點與四條寫入路清點＝歷史紀錄，防線與保留字考題都已上線：`test/proto-pollution.test.js`；細節見 git 紀錄。）
-4. **色彩分工**：
-   - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
-   - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
-   - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
-5. **金額格式**（app.js 統一格式器，不要自己 toLocaleString）：
-   - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的 12 欄查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
-   - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
+4. **色彩分工**：【2026-08-04 兩級制，已改列下方「UI 現行慣例」節】內文逐字搬過去，此處保號防斷引用。
+5. **金額格式**：【2026-08-04 兩級制，已改列下方「UI 現行慣例」節】內文逐字搬過去，此處保號防斷引用。
 6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「全部頁面 reload 無錯」把關（頁數以 app.js ROUTES 為準，不寫死數字），型別檢查主力放資料邏輯）。`portfolio-valuation.js` 的 `fxGaugeHtml`＝**刻意休眠停放**（有固定輸入輸出考題、目前未插入頁面），非死碼、勿刪。
-7. **UI 慣例**：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
+7. **UI 慣例**：【2026-08-04 兩級制，已改列下方「UI 現行慣例」節】內文逐字搬過去，此處保號防斷引用。**例外、仍是鐵則**（William 定 2026-07-22，兩級制拍板時明確留下）：「懂了才不會把正常數字當算錯」的概念**必須在網頁上就地白話解釋**——用 `.info-link`＋`openInfo` 或未來任何等效機制（機制與樣式可實驗，**解釋本身不可省**）；文案 Claude 起草、William 審改。
 8. **repo 櫃檯是 async 的（C4a，2026-07-27；C4b Postgres 的前置）**——四條規矩：
    ①**呼叫必 `await`**：`getDb`/`saveDb`/`getCollection`/`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`getSettings`/`updateSettings` 全回 Promise（轉供的 `uid`/`emptyDb`/`backupNow`/`normalizeLedger` 仍同步）。最陰的漏法＝`res.json(service())` 忘了 await——**不炸、默默回 `{}`**；tsc 只抓得到「讀屬性」的漏，寫入 fire-and-forget 要靠自查。
    ②**Express handler 一律包 `wrapRoute`（statement/ib 慣例：帶 status 錯回原味 JSON）或 `asyncRoute`（core/crud/securities 慣例：一切交全域錯誤中介）**——Express 4 不接 async handler 的 rejection，裸的 async handler 拋錯＝unhandled rejection、請求掛死。兩個包裝器語意不同，別混用（會改變既有錯誤口徑）。
@@ -108,6 +103,25 @@
    **要先去掉註解、不可只認得一種寫法**（踩過：`${VAR}` 展開成空字串仍顯示「通過」、
    字面比對被 `const k = '…'` 繞過）。同族教訓的審查版＝REVIEW-AND-MERGE.md
    「固定維度」表第 1／2／8 列（單向指標；那份是審查者實際照做的下限清單）。
+
+
+## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）
+
+> **這一節不是鐵則，是「現行預設」。** 背景：William 指派 **Codex 桌面＝UI 主線負責人**，兩人正在迭代實驗、目標是極致的使用者體驗——視覺與格式規範因此從鐵則降為可演化的慣例。遊戲規則：
+> 1. **沒有特別理由就照預設走**（一致性仍有價值；本節是新頁面的起點，不是枷鎖）。
+> 2. **UI 主線的實驗分支可自由偏離本節，不必先申請。**
+> 3. **偏離要合進 main＝William 驗收過**（他點頭＝驗收）；**回寫本節＝同一支 UI PR 裡、合併前完成**（不是合併後另補——後補會忘、本節就開始說謊）；規則跟著定案走，本節永遠描述「現在的預設」。
+> 4. **頁面級視覺考題（`*-forest-ui`／`portfolio-tables` 這類）與本節同權**：UI PR 偏離慣例時，考題在**同一支 PR** 連動調整＝照章辦事、不算弱化違規。⚠️ **授權的粒度是「斷言」不是「檔案」**：只及於**視覺與格式斷言**（版面結構、class 名、格式字串這類）；**不及於同一支考題檔裡的任何安全、資料、計算或行為斷言**——`esc()`／XSS、原型污染保留字（`portfolio-tables.test.js` 就同檔混著守 `toString` 鍵）、數值正確性（畫面數字＝正確計算的值）、欄位錯位（資料列格數）、PII 投影**等，此清單是例示不是窮舉**；分不清楚一條斷言算哪類＝當它是鐵則面、先問。這些照舊受審查制度與「弱化考題先讀契約」約束。
+> 5. 就地白話解釋是鐵則 7 留下的例外，**不隨本節放寬**（見鐵則 7）。
+
+- **色彩分工**（原鐵則 4）：
+   - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
+   - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
+   - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
+- **金額格式**（原鐵則 5）（app.js 統一格式器，不要自己 toLocaleString）：
+   - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的 12 欄查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
+   - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
+- **UI 元件與列表慣例**（原鐵則 7）：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
 
 ## 投資領域語意（改相關程式前必讀）
 
