@@ -325,6 +325,47 @@ const BODY_LABEL = '**記得同步這裡**：';
  *   真正的窮舉要另拆 PR 用別的方法做（例如從 import 圖反查）。
  */
 const MANIFEST = {
+  'docs/contracts/data-storage.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '資料與儲存',
+    rules: [
+      '資料存取單一櫃檯 B1',
+      'repo 介面的新增與修改',
+      '驗證入櫃檯 B3',
+      '日期與月份的真實日曆判準',
+      '必填欄位機制與跨欄不變式',
+      'HOSTED 並行安全 CAS',
+      'HOSTED 資料層與測試替身',
+      'kv 的鍵',
+      '本機檔案操作一律經櫃檯',
+      '每日滾動備份',
+      '不可逆整批操作前的真備份 backupNow',
+      '測試隔離慣例 B0',
+    ],
+    exempt: [],
+    files: [
+      'data/seed.json',
+      'db/supabase-schema.sql',
+      'lib/repo.js',
+      'lib/routes/core.js',
+      'lib/schema.js',
+      'lib/services/backup.js',
+      'lib/services/snapshot.js',
+      'lib/services/store-rules.js',
+      'lib/store-pg.js',
+      'lib/store-rules.js',
+      'lib/store.js',
+      'lib/types.js',
+      'public/modules/backup-alert.js',
+      'server.js',
+      'test/backup-alert.test.js',
+      'test/daily-backup.test.js',
+      'test/hosted-import-overwrite.test.js',
+      'test/hosted-store-pg.test.js',
+      'test/repo-async.test.js',
+      'test/server.test.js',
+    ],
+  },
   'docs/contracts/前端功能.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '前端功能',
