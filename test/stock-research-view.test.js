@@ -145,6 +145,8 @@ test('個股研究頁籤｜六個固定連結只顯示一個 active panel，選�
   }, { esc });
 
   assert.equal((html.match(/<a id="stock-tab-/g) || []).length, 6);
+  const tabs = html.match(/<nav class="stock-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
+  assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
   assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation" aria-current="page"/);
   assert.match(html, /data-stock-tab="valuation"/);
@@ -405,9 +407,9 @@ test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字�
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
   assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*8px 8px 0 0/);
-  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--frame\)/);
+  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--accent-hover\)/);
   assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*92px/);
+  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*104px/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.doesNotMatch(css, /font-size:\s*[^;]*(vw|vh)/);
 });

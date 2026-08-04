@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-import { stockResearchViewHtml } from '../public/modules/stock-research-view.js';
+import { STOCK_RESEARCH_TABS, stockResearchViewHtml } from '../public/modules/stock-research-view.js';
 
 const ROOT = new URL('../', import.meta.url);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -117,6 +117,27 @@ test('個股研究森林工作面｜六個頁籤共用單一厚框工作面且�
   assert.match(html, /class="stock-research-workspace"/);
   assert.match(html, /data-stock-tab="overview"/);
   assert.match(html, /目前部位/);
+});
+
+test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容面板視覺相接', async () => {
+  assert.deepEqual(STOCK_RESEARCH_TABS.map(tab => tab.icon), [
+    'dashboard', 'file', 'star', 'pie', 'bulb', 'repeat'
+  ]);
+  const html = stockResearchViewHtml({
+    model: researchModel(),
+    activeTab: 'thesis'
+  }, { esc });
+  const tabs = html.match(/<nav class="stock-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
+  const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
+
+  assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
+  assert.match(tabs, /id="stock-tab-thesis" class="stock-tab active"[\s\S]*aria-current="page"/);
+  assert.match(cssRule(css, '.stock-tab'), /background:\s*color-mix\(in srgb, var\(--card-2\) 72%, var\(--card\)\)/);
+  assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--accent-hover\)/);
+  assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
+  assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-3px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /background:\s*var\(--card\)/);
 });
 
 test('個股研究森林工作面｜估值保留三情境語意並可單獨辨識基準列', () => {

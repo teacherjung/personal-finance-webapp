@@ -78,7 +78,7 @@
 
 .stock-tabs {
   width: 100%;
-  padding-left: 14px;
+  padding: 0 18px;
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 2px solid var(--frame);
@@ -94,14 +94,17 @@
 }
 
 .stock-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 94px;
-  min-height: 44px;
-  padding: 9px 17px;
+  gap: 8px;
+  min-width: 112px;
+  min-height: 50px;
+  padding: 11px 20px 12px;
+  margin-right: -1px;
   margin-bottom: -2px;
-  border: 2px solid transparent;
+  border: 1px solid var(--line);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
   color: var(--text-dim);
@@ -109,29 +112,52 @@
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
+  background: color-mix(in srgb, var(--card-2) 72%, var(--card));
+}
+
+.stock-tab .ic {
+  flex: none;
+  opacity: .82;
 }
 
 .stock-tab:hover {
   color: var(--text);
-  background: rgba(255, 253, 246, .62);
+  background: color-mix(in srgb, var(--card-2) 42%, var(--card));
+}
+
+.stock-tab:focus-visible {
+  z-index: 2;
+  outline: 3px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  outline-offset: -5px;
 }
 
 .stock-tab.active {
-  position: relative;
   z-index: 1;
-  border-color: var(--frame);
-  color: var(--text);
+  border-width: 2px;
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
   background: var(--card);
 }
 
 .stock-tab.active::before {
   content: "";
   position: absolute;
-  top: 5px;
-  right: 13px;
-  left: 13px;
-  height: 3px;
+  right: 24px;
+  bottom: 6px;
+  left: 24px;
+  height: 2px;
+  border-radius: 999px;
   background: var(--accent);
+}
+
+.stock-tab.active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -3px;
+  left: 0;
+  height: 4px;
+  background: var(--card);
 }
 
 .stock-tab-panel {
@@ -139,7 +165,7 @@
   margin-top: -2px;
   padding: 26px 28px 32px;
   border: 2px solid var(--frame);
-  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  border-radius: var(--radius);
   background: var(--card);
   box-shadow: var(--shadow-lg);
 }
@@ -935,7 +961,7 @@
 
   .stock-tabs {
     width: 100%;
-    padding-left: 8px;
+    padding: 0 8px;
   }
 
   .stock-tabs-track {
@@ -944,15 +970,22 @@
   }
 
   .stock-tab {
-    min-width: 92px;
+    gap: 7px;
+    min-width: 104px;
+    min-height: 48px;
     padding-right: 14px;
     padding-left: 14px;
+  }
+
+  .stock-tab .ic {
+    width: 17px;
+    height: 17px;
   }
 
   .stock-tab-panel {
     min-height: 360px;
     padding: 20px 16px 26px;
-    border-radius: 0 0 var(--radius) var(--radius);
+    border-radius: var(--radius);
     box-shadow: 4px 4px 0 rgba(126, 101, 43, .22);
   }
 

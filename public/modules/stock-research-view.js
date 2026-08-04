@@ -42,12 +42,12 @@ const BREAKER_STATUS = Object.freeze({
 });
 
 export const STOCK_RESEARCH_TABS = Object.freeze([
-  Object.freeze({ key: 'overview', label: '總覽' }),
-  Object.freeze({ key: 'fundamentals', label: '基本面' }),
-  Object.freeze({ key: 'score', label: '評分' }),
-  Object.freeze({ key: 'valuation', label: '估值' }),
-  Object.freeze({ key: 'thesis', label: '論點與追蹤' }),
-  Object.freeze({ key: 'trades', label: '交易' })
+  Object.freeze({ key: 'overview', label: '總覽', icon: 'dashboard' }),
+  Object.freeze({ key: 'fundamentals', label: '基本面', icon: 'file' }),
+  Object.freeze({ key: 'score', label: '評分', icon: 'star' }),
+  Object.freeze({ key: 'valuation', label: '估值', icon: 'pie' }),
+  Object.freeze({ key: 'thesis', label: '論點與追蹤', icon: 'bulb' }),
+  Object.freeze({ key: 'trades', label: '交易', icon: 'repeat' })
 ]);
 
 /** @param {unknown} value */
@@ -256,7 +256,7 @@ function tabsHtml(view, h) {
   const links = STOCK_RESEARCH_TABS.map(tab => {
     const active = tab.key === view.activeTab;
     const href = `#stock?symbol=${encodeURIComponent(view.symbol)}&tab=${encodeURIComponent(tab.key)}`;
-    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}"${active ? ' aria-current="page"' : ''}>${tab.label}</a>`;
+    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}"${active ? ' aria-current="page"' : ''}>${icon(tab.icon, 18)}<span>${h.e(tab.label)}</span></a>`;
   }).join('');
   return `<nav class="stock-tabs" aria-label="個股研究分頁">
     <div class="stock-tabs-track">${links}</div>
