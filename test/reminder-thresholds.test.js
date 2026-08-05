@@ -33,11 +33,21 @@
 //
 // ⚠️ 第四版的教訓（#413 r3 阻擋）：這兩條都不在刻度本身，而在「抽原始碼來測前端」那類考題**能證明什麼**——
 //    (a) 語法樹只證明得了語法與綁定，**證明不了資料流真的抵達畫面**：把可見的橘標籤搬進一個不呈現的
-//        探針變數，正式資產頁不再標偏離，全套考題照樣全綠。繞法逐字、以及要怎樣才真的關得掉，
-//        記在 loadFrontendDriftFlag 的誠實劃界第 1 條——**那個洞現在是開著的**，不要當它守住了。
+//        探針變數，正式資產頁不再標偏離，全套考題照樣全綠。（這個洞第五版關掉了，見下。）
 //    (b) 形狀斷言不可比正式行為還嚴：把 `export const f = (d) => …` 改寫成等價的
 //        `export function f(d) …`（本體逐字不變、行為完全相同）上一版會紅＝**假紅**。
 //        考題只該紅在行為變了的時候；為了會紅而紅的考題最後會被當成雜訊關掉（修法見 declSourceOf）。
+//
+// ⚠️ 第五版的教訓（#413 r4 阻擋，**五顆假紅擠在同一處**）：配置偏離那題的前端半邊，上一版是
+//    「在語法樹上找到橘標籤的三元式 → 取條件旗標 → 把旗標的初始值切下來現場跑」。複驗者實測的五顆
+//    突變全部是「正式行為一字未變卻轉紅」：多一張 `tag amber` 標籤（全站十處的慣用寫法）、
+//    map 回呼參數 `r` 改名、解構出來的 `db` 改名、門檻提到迴圈外、判準抽成 helper。
+//    病根不在其中任何一條，而在**「切一小段原始碼出來跑」這個手法本身**——它必須認得判準長什麼形狀、
+//    住在哪一層、叫什麼名字，於是每一種等價改寫都是一顆假紅。修法不是多認幾種形狀，是**不再切**：
+//    整支 assets.js 搬進 sandbox 跑 `renderAssets()`、斷言它真的印出來的 HTML（見 renderAssetsHtml）。
+//    順帶把 (a) 那個洞關上了——探針變數不會出現在畫面的 HTML 上。
+//    ⚠️ 這條的射程寫清楚，別擴寫成全檔口號：**「抽原始碼來測前端」還留在訂閱那題**
+//    （loadFrontendSubStatus，切的是純函式、跨檔綁定另有一套檢查撐著），它自己的劃界寫在該處。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -159,7 +169,7 @@ test('提醒｜保險繳費日：正視窗第 30／31 天、升級門檻第 8／
 // 二、門檻的比較邊界（配置偏離、緊急預備金高估）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；前端資產頁那份**判準式**也各測一次（射程只到判準式，不到畫面）', () => {
+test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；前端資產頁**真的印出來的 HTML** 也各測一次（橘標籤＋橘進度條）', async () => {
   // ⚠️ 三件事一起釘：
   //    (a) 邊界：恰好偏離 5.0%（＝設定值本身）時提醒消失＝典型的邊界無守衛（>= 改 > 全綠）；
   //        另一側用 4.9% 釘住「門檻不可被偷偷調小」。
@@ -169,11 +179,10 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   //        （資產頁「資產配置 vs 目標」那條要不要標「偏離」的橘標籤與橘進度條）。
   //        ⚠️ 這是訂閱那題（subActive／subStatus）被 #413 r1 退回重寫的同一個病型，就在隔壁原封不動：
   //        只改前端那行 `>=` → `> 門檻 * 3`，全部考題零失敗，實際後果是總覽提醒牆說偏離、
-  //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份的**判準式**也拉進來測（做法見 loadFrontendDriftFlag）。
-  //        ⚠️ **射程只到判準式，不到畫面**（#413 r3 阻擋）：下面四條前端斷言證明的是
-  //        「橘標籤那個三元式的條件旗標，算出來的值在四個邊界上都對」，
-  //        **證明不了那個標籤真的被印進資產頁的 HTML**——把標籤搬進不呈現的探針變數就能全綠。
-  //        繞法逐字、以及要真的關門得怎麼做，記在 loadFrontendDriftFlag 的誠實劃界第 1 條。
+  //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份也拉進來測。
+  //        ⚠️ 做法在 #413 r4 換過（見 renderAssetsHtml）：從「抽判準式出來算」改成
+  //        **整支 assets.js 進 sandbox 跑 renderAssets()、斷言它真的印出來的 HTML**——
+  //        射程因此從「判準式的值」推進到「橘標籤與橘進度條真的出現在畫面的 HTML 上」。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
   const alloc = (cashTarget, stockTarget) => ({
     settings: { allocationDriftPct: 5 },
@@ -199,93 +208,183 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.equal(nearMiss.length, 0,
     '偏離 4.9% ＜ 門檻 5%：兩個類別都不可出聲（門檻被偷偷調小、提醒牆被噪音塞滿時會紅）');
 
-  // 前端資產頁那份：吃的是同一份 db 與同一批 allocation.rows（正式環境就是這樣接的）
-  const frontOff = loadFrontendDriftFlag();
-  const rowOf = (/** @type {any} */ summary, /** @type {string} */ cls) =>
-    summary.allocation.rows.find((/** @type {any} */ r) => r.class === cls);
-  const cashRow = rowOf(boundary, '現金');
-  const stockRow = rowOf(boundary, '股票');
-  assert.ok(cashRow && stockRow, 'fixture 自我驗證：兩個類別都要在 allocation.rows 裡（否則下面幾條是空包彈）');
-  assert.equal(cashRow.diff.toFixed(1), '5.0', 'fixture 自我驗證：偏離量真的是 +5.0（否則測到的不是邊界）');
-  assert.equal(frontOff(cashRow, boundaryDb), true,
-    '前端判準式：恰好 +5.0% 要判成「偏離」（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標紅＝兩頁打架）');
-  assert.equal(frontOff(stockRow, boundaryDb), true,
-    '前端判準式：恰好 −5.0% 也要判成偏離（前端那份拿掉 Math.abs 時會紅）');
-  assert.equal(frontOff(rowOf(buildSummary(nearMissDb), '現金'), nearMissDb), false,
-    '前端判準式：偏離 4.9% 不可判成偏離（前端門檻被調小時會紅）');
-  assert.equal(frontOff(cashRow, { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } }), false,
-    '前端判準式讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
+  // 前端資產頁那份：吃的是同一份 db（`/summary` 就是 buildSummary 的輸出，正式環境就是這樣接的）
+  const boundaryHtml = await renderAssetsHtml(boundaryDb);
+  const cashSeg = allocRowHtml(boundaryHtml, '現金');
+  const stockSeg = allocRowHtml(boundaryHtml, '股票');
+  assert.match(cashSeg, /50\.0% \/ 目標 45%/,
+    'fixture 自我驗證：資產頁的現金那一條真的是「50.0% / 目標 45%」（否則下面幾條測到的不是邊界）');
+  assert.match(cashSeg, /class="tag amber">偏離 \+5\.0%/,
+    '前端：恰好 +5.0% 要在資產頁標出橘色「偏離」標籤（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標＝兩頁打架）');
+  assert.match(cashSeg, new RegExp(`background:${ORANGE}`),
+    '前端：偏離時那一條進度條要換成橘色（顏色若改成另外算一份判準、與標籤走散，這條會紅）');
+  assert.match(stockSeg, /class="tag amber">偏離 -5\.0%/,
+    '前端：恰好 −5.0% 也要標偏離（前端那份拿掉 Math.abs 時會紅）');
+  assert.match(stockSeg, new RegExp(`background:${ORANGE}`), '前端：負偏離那一條的進度條同樣要橘');
+
+  const nearMissCash = allocRowHtml(await renderAssetsHtml(nearMissDb), '現金');
+  assert.match(nearMissCash, /50\.0% \/ 目標 45\.1%/, 'fixture 自我驗證：這一組真的是 4.9% 的偏離');
+  assert.doesNotMatch(nearMissCash, /偏離/, '前端：偏離 4.9% 不可標偏離（前端門檻被偷偷調小時會紅）');
+  assert.match(nearMissCash, new RegExp(`background:${GREEN}`), '前端：沒偏離就維持綠色進度條');
+
+  const loosenedDb = { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } };
+  assert.doesNotMatch(allocRowHtml(await renderAssetsHtml(loosenedDb), '現金'), /偏離/,
+    '前端讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
 });
 
+/** 進度條顏色的哨兵：CHART.orange／green 由測試端注入這兩串，才驗得出偏離時換的是哪一個顏色。 */
+const ORANGE = '__CHART_ORANGE__';
+const GREEN = '__CHART_GREEN__';
+
 /**
- * 取出前端 public/modules/assets.js 裡「偏離」橘標籤那個三元式**當條件用的旗標**，把它的初始值
- * 切下來包成 `(row, db) => boolean` 現場執行。取法不是「找一行長得像判準的字串」，而是**從結果回推**：
- * 先在語法樹上找到資產頁那個「偏離」橘標籤的三元判斷，看它的條件是哪個變數，
- * 再用作用域分析問「這個名字依語言規則綁到哪一份宣告」，最後按該宣告的節點位置把初始值切出來。
- * 不在測試裡另抄一份；取不到就吵著紅（＝有人得回來更新本題），不是靜靜跳過。
- * ⚠️ 名詞要精確：切下來的是**判準式**。「資產頁真的標了偏離」是另一回事，本題證明不了（劃界第 1 條）。
+ * 把 public/modules/assets.js **整支模組**搬進 sandbox 跑 `renderAssets()`，回傳它寫進 `view()` 的 HTML。
+ * 做法：用語法樹的位置切掉 import 宣告與 export 關鍵字（**其餘一個字不動**），剩下整段丟進 `new Function`，
+ * 它要的外部名字（import 的本地名、node 沒有的瀏覽器全域如 `Chart`）由測試端注入替身。
+ * 於是資產頁那條「偏離」橘標籤與橘進度條是**正式碼自己算、自己印**的，不是測試裡另抄一份判準。
  *
- * ⚠️ 為什麼不是正則（#413 自審阻擋，值得原地記下來）：上一版用
- *    `src.matchAll(/^[ \t]*const off = .*;$/gm)` 抽這行，而**註解對正則不存在這回事**。
- *    自審者的繞法是一處改動：把原句原樣包進區塊註解當誘餌、真正的判準改寫成兩行並把門檻乘 3。
- *    正則於是只命中被註解掉的那行、`hits.length === 1` 照樣通過，sandbox 拿到的是乾淨判準，
- *    而正式環境的資產頁不再標橘、後端提醒牆照樣出聲＝兩頁打架——正是本節那條斷言自稱在守的東西。
- *    同一支 PR 的 loadFrontendSubStatus 早就因為同一個病被退回改用 parser，這是漏網的第四條；
- *    AGENTS.md 的硬規則講的就是這件事（掃原始碼的形狀考題要先去掉註解、不可只認得一種寫法），
- *    而正解不是「多認得幾種形狀」，是**不再靠認形狀**：註解不在語法樹上，
- *    多行／`let`／`var`／改名／搬進別的函式對作用域分析也都是同一件事。
+ * ⚠️ 為什麼從「抽判準式出來算」改成「跑整支模組」（#413 r4 阻擋，五顆假紅擠在同一處，值得原地記下來）：
+ *    上一版的做法是「在語法樹上找到橘標籤那個三元式 → 取它的條件旗標 → 把旗標的初始值切下來包成
+ *    `(r, db) => boolean` 現場跑」。它擋得住的東西是真的，但**對等價改寫過敏**——複驗者五顆突變
+ *    全部是「正式行為一字未變卻轉紅」：
+ *      (a) assets.js 只要出現第二個 `tag amber` 三元式（例：總負債卡加一張「負債大於資產」標籤）
+ *          就撞上「只能有一處」那條計數斷言。`tag amber` 是全站慣用寫法（public/ 下十處、八個模組），
+ *          日常功能開發就會踩到。
+ *      (b)(c) 把 map 回呼的參數 `r` 純改名成 `row`、把 `const [db, alloc] = …` 的 `db` 改名成 `store`
+ *          ——sandbox 硬寫 `new Function('r', 'db', …)`，於是 ReferenceError。參數名不是介面。
+ *      (d) 把門檻提到迴圈外（`const driftPct = …` ＋ `>= driftPct`）——切下來的初始值不再自成一體。
+ *      (e) 把判準抽成 helper（`const isDrift = (r, db) => …`）——同上。這顆最該記：
+ *          **上一版劃界第 1 條自己建議的關門方向就是「把偏離判準抽出去共用」**，
+ *          往那個方向走的第一步就會讓本題假紅。
+ *    共同病根是「切一小段原始碼出來跑」這個手法本身：它必須認得判準長什麼形狀、住在哪一層、叫什麼名字。
+ *    正解不是多認幾種形狀，是**不再切**——整支模組原封不動搬進去跑，改名／搬家／抽 helper／
+ *    多一張橘標籤全部與本題無關。
+ *    ⚠️ 這句話是量過的，不是講講而已：(a)–(e) 五顆逐字重放**全綠**，另外兩顆等價改寫
+ *    （`renderAssets` 改寫成 `export const` 箭頭函式、新增一個不相關的 import 並在版面裡用它）也全綠；
+ *    而真的動行為的六顆全部**轉紅**（前端 `>=` 改 `>`、拿掉 `Math.abs`、門檻乘 3、
+ *    改讀別的設定鍵、進度條顏色與標籤走散、下一段那顆探針繞法），後端那兩顆（`>=` 改 `>`、
+ *    拿掉 `Math.abs`）也照舊轉紅。
+ *
+ * ⚠️ 順帶把上一版明寫「開著」的那個洞關上了：上一版只證明得了「判準式算出來的值在四個邊界上都對」，
+ *    把可見標籤搬進一個不呈現的探針變數就能全綠（複驗者 #413 r3 的繞法）。現在斷言的是
+ *    `view().innerHTML` 裡真的有那個橘標籤與那條橘進度條，探針繞法會轉紅。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
- *   1. **語法樹只證明得了語法與綁定，證明不了資料流真的抵達畫面。**
- *      本題找的是「consequent 含 `tag amber` 的三元式」，那只說明原始碼裡有這樣一個運算式、
- *      它的條件綁到哪個旗標；旗標的值有沒有被印進資產頁的 HTML，不在射程內。
- *      ⚠️ 這個洞是**開著的**，複驗者的繞法逐字記下（#413 r3 阻擋）：把可見的「偏離」標籤整段移除，
- *      另放一個不會呈現的探針
- *
- *        const offLabelProbe = off ? '<span class="tag amber">偏離</span>' : '';
- *
- *      再只把 `offLabelProbe.length` 塞進 `data-*`。正式資產頁從此不顯示偏離標籤，
- *      而 typecheck、lint、本節七題與完整測試全綠。
- *      也**不要在這裡多認一種形狀**（例如加一條「三元式必須長在模板字串裡」）——把探針包一層模板
- *      字串就繞回去了，正是本檔一再記著的「列舉繞法補不完」。要真的關門，得**把偏離判準抽成
- *      零 DOM 純模組**（比照 #409 的 accounts-model.js／form-options.js），讓後端與資產頁共用同一份、
- *      考題直接 import 正式模組並驗它 render 出來的 HTML／DOM。那是動正式碼的產品範圍決定，
- *      不在本支（純考題 PR）內，也不該由考題自己決定。
- *   2. 只釘住「偏離」橘標籤那一個用途。同一頁的進度條顏色現在吃的是同一個變數，
- *      但哪天若改成另外算一份，本題不會發現——那要靠頁面層的考題。
- *   3. 條件必須是**一個具名變數、而且只被寫入一次**（就是它的初始值）。橘標籤若改成就地內嵌
- *      整串判斷式、改成「先給預設值再重新指派」、或改成解構出來的旗標，都會走到下面的 assert
- *      大聲失敗（不是靜靜跳過），但那也代表本題需要有人回來更新。
- *      變數改什麼名字、拆成幾行、用 const 還是 let，本題照樣抓得到＝不需要有人回來更新
- *      （三種都實測過：門檻同時被放寬時，紅的是上面那條「恰好 +5.0% 要判成偏離」的行為斷言）。
- *   4. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份
- *      共用判斷（前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
+ *   1. 這是「原始碼搬進 sandbox 跑」，**不是真瀏覽器**：import 進來的東西全是替身
+ *      （api／view／byId／esc／wan／CHART…）。所以驗到的是 assets.js 自己那段模板的產物——
+ *      `esc()` 消毒得對不對、`CHART.orange` 實際是什麼顏色、CSS 有沒有把標籤藏起來，都不在射程內
+ *      （前者有自己的考題：test/xss-id-escaping.test.js）。
+ *   2. 只跑 `renderAssets()` 這一條路徑、只讀它寫進 `view()` 的 HTML。事件綁好之後的 DOM 行為不在射程內；
+ *      資產頁哪天改由別的函式渲染，本題會吵著紅（抓不到那一段），不是靜靜綠。
+ *   3. **偏離判準搬進另一支模組的那天，本題要改寫**：sandbox 給不認得的 import 一個無害替身，
+ *      所以不相關的新相依不會把本題弄成假紅；但判準真的搬過去時，邊界斷言會轉紅（不是靜靜綠）——
+ *      這句也量過：把判準抽成 `./drift-criterion.js` 的 `isDrift` 再 import 回來，紅的是
+ *      「偏離 4.9% 不可標偏離」那條。那時該把本題改成直接 import 那支共用模組，
+ *      那也才是真正的關門（見 #409 的零 DOM 模組前例）。
+ *   4. 斷言吃的是**畫面上的字**（區塊標題、類別名稱、`偏離 +5.0%`、進度條顏色）。版面或文案改寫
+ *      會吵著紅要人回來更新——那是「斷言畫面」的必然代價，不是靜靜綠。
+ *   5. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份共用判斷
+ *      （前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
  */
-function loadFrontendDriftFlag() {
-  const assets = parseModule('public/modules/assets.js');
-  const flagged = [...walkAst(assets.ast)].filter((/** @type {any} */ n) => n.type === 'ConditionalExpression'
-    && assets.src.slice(n.consequent.range[0], n.consequent.range[1]).includes('tag amber'));
-  assert.equal(flagged.length, 1,
-    `assets.js 必須（且只能）有一處「偏離」橘標籤的三元判斷，實際 ${flagged.length} 處（標籤改寫時要一起更新本考題）`);
-  const cond = flagged[0].test;
-  assert.equal(cond.type, 'Identifier',
-    `橘標籤的條件必須是一個具名旗標變數（實際：${cond.type}——判斷式若就地內嵌，本題取不到，要有人回來更新）`);
+async function renderAssetsHtml(db) {
+  const mod = parseModule('public/modules/assets.js');
+  topLevelDef(mod, 'renderAssets');            // 改名／改成轉手匯出就吵著紅（下面 sandbox 直接要這個名字）
+  const { body, needs } = moduleAsScript(mod);
+  const el = () => {
+    const node = {
+      innerHTML: '', value: '', className: '', disabled: false, style: {}, dataset: {},
+      querySelector: () => el(), querySelectorAll: () => [], addEventListener() { },
+      parentElement: { innerHTML: '' },
+    };
+    return node;
+  };
+  const viewEl = el();
+  const esc = (/** @type {any} */ s) => String(s ?? '').replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
+  const num = (/** @type {any} */ n) => String(Number(n) || 0);
+  /** @type {Record<string, any>} */
+  const stubs = {
+    api: async (/** @type {string} */ path) => {
+      if (path === '/db') return db;
+      if (path === '/summary') return buildSummary(db);      // 正式環境的 /summary 就是這個函式的輸出
+      throw new Error(`本題只餵了 /db 與 /summary 的替身，資產頁多打了 ${path}（要有人回來更新本題）`);
+    },
+    view: () => viewEl,
+    byId: () => el(),
+    currentRouteSeq: () => 1,
+    esc, wan: num, money: num, moneyCur: num, pct: num,
+    icon: () => '',
+    CHART: { orange: ORANGE, green: GREEN },
+    PALETTE: ['#000'], AXIS: '#000',
+    Chart: class { destroy() { } },
+  };
+  const renderAssets = /** @type {() => Promise<void>} */ (
+    new Function(...needs, `${body}\nreturn renderAssets;`)(
+      ...needs.map((n) => (Object.hasOwn(stubs, n) ? stubs[n] : benignStub()))));
+  await renderAssets();
+  return viewEl.innerHTML;
+}
 
-  const variable = resolveIdentifier(assets, cond);
-  assert.ok(variable, `assets.js:${cond.loc.start.line} 的 ${cond.name} 解析不到任何宣告（全域漏網？）`);
-  assert.equal(variable.defs.length, 1,
-    `assets.js 的 ${cond.name} 有 ${variable.defs.length} 份宣告，抄哪一份會變成用猜的`);
-  const writes = variable.references.filter((/** @type {any} */ r) => r.writeExpr);
-  assert.deepEqual(writes.map((/** @type {any} */ w) => w.init), [true],
-    `assets.js 的 ${cond.name} 必須只在宣告處寫入一次（先給預設再重新指派時，本題抄到的不是最後生效的那個值）`);
-  const def = variable.defs[0];
-  assert.equal(def.type, 'Variable', `assets.js 的 ${cond.name} 不是就地宣告的變數（實際：${def.type}）`);
-  assert.equal(def.node.id.type, 'Identifier', `assets.js 的 ${cond.name} 是解構出來的，本題切不出可獨立執行的判準`);
-  assert.ok(def.node.init, `assets.js 的 ${cond.name} 沒有初始值`);
-  const source = `const ${cond.name} = ${assets.src.slice(def.node.init.range[0], def.node.init.range[1])};`;
-  return /** @type {(row: any, db: any) => boolean} */ (
-    new Function('r', 'db', `${source}\nreturn ${cond.name};`)
-  );
+/**
+ * 把一支瀏覽器模組整支轉成「`new Function` 裡跑得動的 script」：切掉 import 宣告與 export 關鍵字，
+ * 其餘一個字不改。回報它需要外部餵進來的名字＝import 的本地名 ＋ **這台 node 沒有的全域**
+ * （例如 `Chart`；`Math`／`Object` 這種真的有的就用真的）。
+ */
+function moduleAsScript(mod) {
+  /** @type {[number, number][]} */
+  const cuts = [];
+  /** @type {string[]} */
+  const needs = [];
+  for (const node of mod.scope.block.body) {
+    if (node.type === 'ImportDeclaration') {
+      cuts.push([node.range[0], node.range[1]]);
+      for (const sp of node.specifiers) needs.push(sp.local.name);
+    } else if (node.type === 'ExportNamedDeclaration' || node.type === 'ExportDefaultDeclaration') {
+      // 有 declaration＝只去掉 `export`／`export default` 關鍵字（宣告本體留著）；沒有＝整句是匯出表，整句切掉。
+      cuts.push(node.declaration ? [node.range[0], node.declaration.range[0]] : [node.range[0], node.range[1]]);
+    } else if (node.type === 'ExportAllDeclaration') {
+      cuts.push([node.range[0], node.range[1]]);
+    }
+  }
+  let body = mod.src;
+  for (const [from, to] of cuts.sort((a, b) => b[0] - a[0])) body = body.slice(0, from) + body.slice(to);
+  for (const ref of mod.scope.through) {          // 解析不到宣告的名字＝全域（import 已在上面收過）
+    const name = ref.identifier.name;
+    if (!needs.includes(name) && !(name in globalThis)) needs.push(name);
+  }
+  return { body, needs };
+}
+
+/**
+ * 本題不認得的 import／全域用它頂著：取任何屬性回自己、被呼叫或 new 回自己、塞進模板字串是空字串。
+ * 用意是「**不相關**的新相依不會把本題弄成假紅」；而它真的被偏離判準或那段版面吃到時，
+ * 邊界斷言會轉紅（該有的標籤沒有／不該有的有／整段抓不到），不是靜靜綠。
+ */
+function benignStub() {
+  /** @type {any} */
+  const proxy = new Proxy(function () { }, {
+    get: (_t, key) => (key === Symbol.toPrimitive ? () => '' : proxy),
+    apply: () => proxy,
+    construct: () => proxy,
+  });
+  return proxy;
+}
+
+/**
+ * 從資產頁的 HTML 裡切出「資產配置 vs 目標」區塊中某個類別那一條（含標籤與進度條）。
+ * 兩個類別分開切才不會互相冒充：正偏離那條的斷言不可以被負偏離那條混過去。
+ * 切不到就吵著紅（sandbox 沒渲染成功、或版面改寫了＝要有人回來更新本題），不是靜靜跳過。
+ */
+function allocRowHtml(html, cls, classes = ['現金', '股票']) {
+  const head = html.indexOf('資產配置 vs 目標');
+  const foot = html.indexOf('深色直線＝目標比例');
+  assert.ok(head >= 0 && foot > head,
+    '資產頁抓不到「資產配置 vs 目標」那一段（sandbox 沒渲染成功、或版面改寫了＝要有人回來更新本題）');
+  const section = html.slice(html.indexOf('</h3>', head) + 5, foot);   // 跳過區塊標題（標題文字自己也含「現金」）
+  const marks = classes.map((c) => ({ c, at: section.indexOf(c) })).filter((m) => m.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  const i = marks.findIndex((m) => m.c === cls);
+  assert.ok(i >= 0, `資產頁的「資產配置 vs 目標」裡找不到「${cls}」那一條（fixture 或版面變了？）`);
+  return section.slice(marks[i].at, i + 1 < marks.length ? marks[i + 1].at : section.length);
 }
 
 test('提醒｜緊急預備金高估：卡帳月均與現金流月均「恰好相等」不出聲、只多 1 元就出聲（比較式本身釘死）', () => {
@@ -480,25 +579,6 @@ function parseModule(relPath) {
   const scope = manager.scopes.find((/** @type {any} */ s) => s.type === 'module');
   assert.ok(scope, `${relPath} 解析不出模組作用域（它還是 ES module 嗎？）`);
   return { relPath, src, ast, manager, scope };
-}
-
-/** 走遍語法樹的每一個節點。用它取代「掃字串」——註解與被註解掉的程式碼**不在樹上**。 */
-function* walkAst(node) {
-  if (!node || typeof node.type !== 'string') return;
-  yield node;
-  for (const key of Object.keys(node)) {
-    const value = node[key];
-    if (Array.isArray(value)) { for (const child of value) yield* walkAst(child); }
-    else if (value && typeof value.type === 'string') yield* walkAst(value);
-  }
-}
-
-/** 問「語法樹上這一個 identifier，依語言的作用域規則綁到哪個變數」（找不到＝全域漏網，回 null）。 */
-function resolveIdentifier(mod, identNode) {
-  for (const scope of mod.manager.scopes) {
-    for (const ref of scope.references) if (ref.identifier === identNode) return ref.resolved;
-  }
-  return null;
 }
 
 /** 取模組頂層某個名字的宣告。找不到／不只一份都吵著紅——改名時要有人回來更新本題，而不是靜靜跳過。 */
