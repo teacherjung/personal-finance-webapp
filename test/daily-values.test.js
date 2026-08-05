@@ -43,19 +43,34 @@ test('日線：同一天重跑只留一行，且值更新成最新（同日覆�
   assert.equal(rows[0].netWorth, 1500, '存下來的也被更新成最新值（不是留著舊的）');
 });
 
-test('日線：跨日累積不覆蓋（與月快照的同月覆蓋相反）', async () => {
+test('日線：跨日累積不覆蓋（與月快照的同月覆蓋相反）', async (t) => {
+  // ⚠️ 舊 fixture 只塞一筆 '2020-01-01'（不同月份），於是這條題**在同一個月內驗不到**：
+  //    把同日去重（`d.date !== now.date`）改成同月去重（`d.date.slice(0,7) !== now.month`），
+  //    當月先前每一天的日線會被整批刪掉，這條題照樣全綠。被刪掉的正是差異引擎 D3
+  //    唯一的原料——「今天 vs 昨天」比的就是同一個月裡的昨天。
+  // ⚠️ 而且「昨天」要用釘死的時鐘算，不能用真實時鐘（同 snapshot-history-integrity 的理由）：
+  //    每個月 1 號那天本月不存在更早的日期，同日去重與同月去重行為完全相同——考題會在
+  //    30 天裡有 1 天安靜地失去鑑別力，而「今天剛好驗不到」最難被發現。
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(2026, 7, 15, 12, 0, 0) });
   seed(1000);
-  await recordDailyValue();
-  // 模擬「昨天也有一行」：直接塞一筆早於今天的日期，再跑今天
+  const first = await recordDailyValue();
+  assert.equal(first.date, '2026-08-15',
+    '前置條件：時鐘要真的被釘在 2026-08-15（沒釘住的話下面的字面日期就不是「昨天」與「很久以前」了）');
+  // 模擬「很久以前有一行」＋「同月的昨天也有一行」：跨月與同月兩種都必須活著
   const db = await getDb();
-  /** @type {any} */ (db.dailyValues).unshift({ date: '2020-01-01', netWorth: 1, assets: 1, liabilities: 0 });
+  /** @type {any} */ (db.dailyValues).unshift(
+    { date: '2020-01-01', netWorth: 1, assets: 1, liabilities: 0 },
+    { date: '2026-08-14', netWorth: 2, assets: 2, liabilities: 0 });
   await saveDb(db);
   await recordDailyValue();
 
   const rows = (await getDb()).dailyValues || [];
-  assert.equal(rows.length, 2, '舊日子的行必須留著（累積）');
-  assert.equal(rows[0].date, '2020-01-01', '而且照日期排序（差異引擎靠順序找最近的日子）');
+  assert.equal(rows.length, 3, '舊日子的行必須留著（累積）');
+  assert.deepEqual(rows.map((/** @type {any} */ r) => r.date), ['2020-01-01', '2026-08-14', '2026-08-15'],
+    '而且照日期排序（差異引擎靠順序找最近的日子）');
   assert.equal(rows[0].netWorth, 1, '舊行的值不被今天的值蓋掉');
+  assert.equal(rows[1].netWorth, 2,
+    '同月的昨天也一樣不可以被吃掉——同日覆寫的鍵是「日」不是「月」，這一筆就是差異引擎算「今天 vs 昨天」的對照');
 });
 
 test('日線：記錄了投組成本/市值與當日匯率（差異引擎與事後回推要用）', async () => {

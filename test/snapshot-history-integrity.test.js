@@ -39,8 +39,10 @@ const { recordDailyValue, takeSnapshot, takeSnapshotIfDue } = await import('../l
 const { computeAssets } = await import('../lib/derive.js');
 
 // 收尾清掉 `store.js` 會產生的衍生檔：漏一種就在 os 暫存目錄累積殘檔（初版漏了
-// `.pre-ledger-migration.bak`，每跑一次留一顆 28KB）。前六項與其他測試檔同一份清單，
-// `.pre-sec-contract.bak` 是同族的另一顆一次性搬家備份（本檔目前跑不到，先列著）。
+// `.pre-ledger-migration.bak`，每跑一次留一顆 28KB）。扣掉 `.pre-sec-contract.bak` 之後的**另外六項**
+// 與其他測試檔同一份清單（bank-learning／market-data／cashflow-ledger／codex-r11／bank-statement／
+// bank-import-batches／transfer-subcats 用的都是這六項）；`.pre-sec-contract.bak` 是同族的另一顆
+// 一次性搬家備份，只有本檔多列這一顆（本檔目前跑不到，先列著）。
 // ⚠️ 這是**列舉**，不是通則：`store.js` 日後多長一種後綴，這裡不會有人提醒——
 //    只有「暫存目錄開始累積殘檔」會顯示出來。
 after(() => {
@@ -140,18 +142,28 @@ test('同月只留一列｜既有的本月快照要被今天這一列換掉（�
   //    前後都是 0，把正式程式改成「同月已有列就保留舊值」照樣全綠——列數對了、投組那條線卻停在
   //    舊值。「同月覆蓋」要驗的是**整列換新**，只數列數驗不到那一半。
   //    幣別全用 TWD（匯率 1）＝期望值可以直接手算；本題要驗的是有沒有換新值，不是匯率換算。
+  // ⚠️ fixture 也一定要放**負債**（自審 r3）：月快照那一列有四個欄位（netWorth／assets／
+  //    liabilities／byClass），初版只驗 netWorth，於是「保留同月舊列的 assets/liabilities/byClass、
+  //    只更新 netWorth」照樣全綠——而 byClass 是歷史頁資產配置圖唯一的資料來源，停在舊值
+  //    就是配置圖靜靜說謊。有負債才會 assets ≠ netWorth，assets 那格才分得出是不是照抄 netWorth。
+  //    兩次呼叫連負債金額都換（4000→6000），四個欄位每一個都必須跟著換新。
   store.save({
     ...store.emptyDb(),
-    accounts: [{ id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 10000 }],
+    accounts: [
+      { id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 10000 },
+      { id: 'l1', name: '房貸', type: 'mortgage', currency: 'TWD', balance: 4000 },   // ← 負債：讓 assets ≠ netWorth
+    ],
     holdings: [{ id: 'h1', symbol: '0050', name: 'ETF', layer: 'core', currency: 'TWD', quantity: 10, price: 100, avgCost: 60 }],
-    snapshots: [snapRow('2026-08-01', 111)],                // ← 本月、較早日期的既有月快照
+    // ← 本月、較早日期的既有月快照；byClass 刻意塞一組**看得出是舊的**值（保留舊列時失敗訊息才讀得懂）
+    snapshots: [{ ...snapRow('2026-08-01', 111), byClass: { 現金: 111 } }],
     portfolioSnapshots: [{ month: MONTH, cost: 1, value: 2 }],
     dailyValues: [dayRow('2026-08-02', 111)],               // ← 日線是**跨日累積**：這一列必須活著（對照組）
   });
   await takeSnapshot();
-  // 第二次：現金、股價、成本三個數字全換一組 → 兩條快照線的內容都必須跟著換
+  // 第二次：現金、負債、股價、成本四個數字全換一組 → 兩條快照線的內容都必須跟著換
   const db1 = store.load();
   db1.accounts[0].balance = 20000;
+  db1.accounts[1].balance = 6000;
   db1.holdings[0].price = 300;
   db1.holdings[0].avgCost = 150;
   store.save(db1);
@@ -164,12 +176,17 @@ test('同月只留一列｜既有的本月快照要被今天這一列換掉（�
     '同一個月的月快照只能有一列（同月覆蓋）——fixture 裡已經有一列 2026-08-01，改用日期當去重鍵的話這裡會是 2 列');
   assert.equal(months[0].date, TODAY, '留下來的要是今天這一列（不是把既有的 08-01 留著、也不是兩列都留）');
   assert.equal(pfMonths.length, 1, '同一個月的投組快照也只能有一列——這一側前端沒有第二道門');
-  assert.equal(months[0].netWorth, 23000, '月快照留下的要是最新那一次的值（現金 20000＋持股 10×300）');
+  // 月快照那一列有四個欄位，**四個都要換新**（只驗 netWorth 的話，「保留舊列其他三格」會全綠）
+  assert.equal(months[0].netWorth, 17000, '月快照留下的要是最新那一次的值（現金 20000＋持股 10×300－房貸 6000）');
+  assert.equal(months[0].assets, 23000, '資產也要換新（20000＋3000）——這一格與 netWorth 不同數字，才驗得出不是照抄 netWorth');
+  assert.equal(months[0].liabilities, 6000, '負債也要換新（房貸 4000→6000）：留著舊列的話歷史頁的負債會停在上一次');
+  assert.deepEqual(months[0].byClass, { 現金: 20000, 股票: 3000 },
+    'byClass 也要換新——它是歷史頁資產配置圖唯一的資料來源，停在舊值等於配置圖靜靜說謊');
   assert.equal(pfMonths[0].value, 3000, '投組快照的市值也要換成最新那一次（10×300）——不是只有列數對');
   assert.equal(pfMonths[0].cost, 1500, '投入成本同理（10×150）：同月覆蓋是換掉整列，不是保留舊列的值');
   const days = (db.dailyValues || []).filter((/** @type {any} */ d) => d.date === TODAY);
   assert.equal(days.length, 1, '同一天的日線也只能一列（同日覆寫）');
-  assert.equal(days[0].netWorth, 23000, '日線也要是最新那一次的值');
+  assert.equal(days[0].netWorth, 17000, '日線也要是最新那一次的值');
   assert.equal(days[0].pfValue, 3000, '日線的投組市值同樣要跟上（它與投組快照是各自獨立的一段寫入）');
   const old = (db.dailyValues || []).find((/** @type {any} */ d) => d.date === '2026-08-02');
   assert.ok(old, '⚠️ 日線與月快照的覆蓋粒度不同：同月的舊日線**不可以**被吃掉（那是差異引擎唯一的原料）');
