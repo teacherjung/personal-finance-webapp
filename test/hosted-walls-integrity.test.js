@@ -44,6 +44,19 @@
 //     ⚠️ 仍做不到的：**cookie 的內容只有「有效的受害者 session」這一種**（harness 的假 client 只認
 //     `sb-test-auth-token=abc`）——真有人照 cookie 的其他特徵開特例（例如只放行某個 cookie 名），
 //     本檔抓不到；「有 cookie／沒 cookie」這個二分則兩邊都有題釘著。
+//   ⑧**來源這一維是「樣本」不是窮舉**（r6ⓕ 之後補寫）：`LOOKALIKE_ORIGINS` 只挑了六種已知的錯法
+//     （後綴接別網域／加 port／末尾斜線／換 scheme／大小寫／**同站子網域**）＋一個純跨站。
+//     沒被列進去的形狀本檔抓不到——已知還存在但**沒有題釘著**的：punycode 與 IDN 同形字
+//     （`https://xn--…`）、主機名尾端多一個點（`https://noteasy.com.tw.`）、多層子網域。
+//     判準是「完全相等」，理論上這些都會被拒；但「理論上」不是考題，這裡照實說沒驗。
+//   ⑨**「回應裡沒有完整帳號」這條斷言的射程有限**（r6ⓖ 之後補寫，措辭刻意不用「封閉」）：
+//     擋得住逐字外洩、換欄位名裝它、把值用空白或 `- _ . ·` 插開打散、以及切成**同一筆裡相鄰的兩欄**。
+//     **擋不住**：重新編碼（base64／hex／倒轉／字元碼陣列）、用**非分隔符**切開（`900100|****3301`）、
+//     以及把兩半放到**不相鄰**的欄位。要證「任何編碼都沒外洩」是字串比對做不到的事；
+//     真正承重的是**「四條使用者路徑都經過同一個 `projectAccount`」那一題**，字串比對只是在它上面加抽查。
+//     ⚠️ 哪一塊有突變撐著、哪一塊沒有，逐塊寫在 `assertNoAccountLeak`／`assertNoSplitLeak` 的註解裡
+//     ——**只有兩塊有專屬突變證據**（逐格正規化、相鄰兩欄）；另兩塊（逐字、整包正規化）是便宜的
+//     雙保險，不可拿它們當戰功。
 //
 // ⚠️ **r2 複審又打回來一次，病灶同樣值得寫下來**（2026-08-05 自審實測，兩個阻擋級 overclaim）：
 //   ⓐ CSRF 接線題**只打 POST**，題名卻宣稱釘住「變更類請求」。實測把 `csrfOriginGuard` 的豁免
@@ -101,6 +114,34 @@
 //        **回 403、交易卻真的被刪掉**。⇒ 接線題要一起斷言「資料沒被改到」，而且探針裡
 //        **必須有一條不吃 body 的寫入**（吃 body 的那種會因為 403 先送出、parser 讀不到 body
 //        而自然沒寫成，抓不到這顆突變）。
+//
+// ⚠️ **r6（＝獨立審查者對本支的第三輪）又打回來兩項——兩項都是「保證講得比考題強」**
+//    （Codex 2026-08-05 提出繞法，下面兩顆都在本地逐字重放確認過）：
+//   ⓕ **Origin「完全相等」的來源樣本漏了同站子網域**。繞法＝`originAllowed` 改成
+//      「白名單完全相等 **或** 主機名以 `.noteasy.com.tw` 結尾就放行」，全套 **1503/1503 綠、退出碼 0**。
+//      為什麼這一格特別要緊（不是隨便再加一個壞來源）：`https://evil.com` 那種**真跨站**，
+//      `SameSite=Lax` 本來就不會把 session cookie 附上去，Origin 牆在那裡是雙保險；
+//      而**同站子網域對瀏覽器是 same-site**（`com.tw` 是公共後綴 ⇒ 可註冊網域＝`noteasy.com.tw`，
+//      `evil.noteasy.com.tw` 是它的子網域），**Lax 照送 cookie** ⇒ 這時 Origin 牆是**唯一那道防線**。
+//      子網域失陷（子網域接管、佈在子網域的第三方服務被打穿）正是這條界線存在的理由。
+//      ⇒ sibling 子網域進 `LOOKALIKE_ORIGINS`（判準題、無 cookie 接線題、帶受害者 cookie 的矩陣
+//        三處同時吃到），而且「狀態未變」那顆刪除探針改成**每個跨站來源各配一顆哨兵交易**——
+//        原本只用 `https://evil.com` 一個來源，等於「只對某一種來源開特例」照樣不會被發現。
+//   ⓖ **所謂「釘值的封閉斷言」只擋逐字外洩**。繞法＝`projectAccount` 多回一個
+//      `accountNoDisplay: raw.split('').join(' ')`（把帳號逐字插空白）：完整帳號可以無損復原、
+//      照樣沿 POST／GET／PUT `/api/accounts` 與 GET `/api/db` 送到 UI，而全套 **1503/1503 綠、退出碼 0**。
+//      ⇒ 改成**走訪回應裡的每一個鍵名與每一個值**、各自拿掉空白與 `- _ . ·` 之後再比對帳號
+//        （`assertNoAccountLeak`）。
+//      ⇒ 併帶自審又找到**第三顆繞法**：把帳號切成 `accountNoHead`＋`accountNoTail` 兩個相鄰欄位，
+//        上面那三塊全綠（欄位之間的 `","` 不在正規化的移除清單裡，兩半永遠接不起來）。
+//        ⇒ 補第四塊 `assertNoSplitLeak`（把**那一筆**的值按鍵序接起來再比），實測轉紅。
+//      ⇒ 併帶**把「封閉」這個措辭收掉**：現在擋得住的是四種寫法（逐字／換鍵名／插分隔符打散／
+//        切成相鄰兩欄），**擋不住**重新編碼、非分隔符切開、以及切到不相鄰的欄位。
+//        誠實劃界 ⑨ 與兩支斷言的註解各記一次。
+//      📌 教訓可複用：「不列舉欄位名」只解決了**列舉的維度**，沒解決**比對的方式**——
+//        `includes(原字串)` 自己就是一種列舉（只列了「一模一樣」這一種寫法）。而換一種比對方式之後
+//        仍然列不完（我自己馬上又找到第三顆）：所以這一組斷言的定位是**抽查**，
+//        真正承重的是「四條使用者路徑都經過同一個 `projectAccount`」那一題（單一收口）。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -267,19 +308,33 @@ const mutating = (method, path, origin) => fetch(`${base}${path}`, {
   method, headers: origin ? { Origin: origin } : {},
 });
 
-/** 「像但不是」的來源清單：前綴比對、大小寫寬鬆比對各會放行其中一部分。 */
+/**
+ * 「像但不是」的來源清單：前綴比對、大小寫寬鬆比對、**同站子網域放行**各會放行其中一部分。
+ * ⚠️ 這是**樣本、不是窮舉**（誠實劃界 ⑧ 列了已知沒被釘住的形狀）。
+ */
 const LOOKALIKE_ORIGINS = [
   'https://noteasy.com.tw.evil.com',      // 後綴接別的網域（前綴比對會放行）
   'https://noteasy.com.tw:8443',          // 加 port＝不同來源
   'https://noteasy.com.tw/',              // 末尾斜線＝不同字串
   'http://noteasy.com.tw',                // 換 scheme
   'https://NOTEASY.com.tw',               // 大小寫變化（Origin 比對是逐字的）
+  // 同站子網域（r6ⓕ）：`*.noteasy.com.tw` 放行的判準會讓它通過，而它是這份清單裡**最危險的一個**——
+  // `com.tw` 是公共後綴 ⇒ 可註冊網域是 `noteasy.com.tw` ⇒ 這個來源對瀏覽器算 same-site，
+  // `SameSite=Lax` 不會擋它帶受害者 cookie ⇒ Origin 牆是唯一那道防線。
+  // ⚠️ 上面幾個的**性質不一樣，別一句「都是真跨站」帶過**（照實分類）：`https://evil.com` 才是真跨站
+  //    （Lax 會先擋一層）；換 port 的其實也算 same-site；換 scheme 依 schemeful same-site 算跨站；
+  //    末尾斜線與大寫主機名是**瀏覽器不會真的送出來的寫法**（Origin 不帶路徑、主機名一律小寫）——
+  //    它們釘的是「判準不可以自己幫來源做正規化」，不是真實的攻擊形狀。
+  'https://evil.noteasy.com.tw',
   'https://evil.com',
 ];
 
 test('Origin 白名單（判準）｜必須是「完全相等」——開頭像但不是的網址一律拒絕', () => {
   // ⚠️ 改成 `some(a => origin.startsWith(a))` 之後，`https://noteasy.com.tw.evil.com`
   //    會被當成合法來源 ⇒ 第二道 CSRF 防線失效。這是典型的「前綴比對」漏洞。
+  // ⚠️ 另一個實測過的鬆法（r6ⓕ）：補一句「主機名以 `.noteasy.com.tw` 結尾就放行」——
+  //    看起來像「自家網域當然可以」，實際上是把**每一個子網域**都升格成可信來源，
+  //    而子網域對瀏覽器算 same-site ⇒ `SameSite=Lax` 不會幫忙擋，這道牆就是唯一防線。
   // ⚠️ 這一題**只管 helper 的判準**；「路上那道牆有沒有用這個判準」是下一題的事（r1 High②）。
   const prev = process.env.SITE_ORIGIN;
   process.env.SITE_ORIGIN = 'https://noteasy.com.tw';
@@ -360,8 +415,15 @@ test('Origin 白名單（接線）｜帶著受害者 session cookie 的跨站變
   //      （同一顆突變對「帶 body 的寫入」抓不到：403 先送出去、request body 還沒被讀，
   //      parser 就收不到 body、handler 根本沒跑。所以①②之外還**必須有一條不吃 body 的寫入**
   //      當探針，也就是下面的 DELETE 哨兵交易——沒有它，②在任何已知突變下都不會單獨轉紅。）
+  // ⚠️ **②那顆刪除探針原本只打一個來源（`https://evil.com`），r6ⓕ 起改成逐來源各一顆哨兵**：
+  //    「只對某一種跨站來源開特例」的牆，在單一來源的探針下照樣全綠。最要緊的那一種就是
+  //    **同站子網域**（`https://evil.noteasy.com.tw`）——它是唯一連 `SameSite=Lax` 都攔不住的形狀。
+  //    突變證據（先實測再寫）＝guard 只對 `*.noteasy.com.tw` 走「先 `next()` 再補 `res.status(403)`」：
+  //      ・逐來源版（現在這版）：這顆哨兵斷言轉紅（「交易卻真的不見了」），全套 fail 1、退出碼 1。
+  //      ・只打 `evil.com` 的舊版：整檔 **11 題全綠**，唯一的紅是突變自己引發的
+  //        `ERR_HTTP_HEADERS_SENT` 檔案層 async 雜訊——失敗項是**檔名**、不是任何斷言，那不算抓到。
   // 📌 本題用到的 `/api/settings`、`/api/transactions` 都**不在 `RATE_LIMITS` 表上**（表只涵蓋登入類、
-  //    上傳解析類與會對外連線的那幾條），所以這 50 幾顆探針不需要 resetRateLimitsForTest()。
+  //    上傳解析類與會對外連線的那幾條），所以這 60 幾顆探針不需要 resetRateLimitsForTest()。
 
   // ── 準備哨兵：用**合法來源**把兩份可被 CSRF 改壞的東西各寫一份進去
   assert.equal((await authed('PUT', '/api/settings', { usdTwd: SENTINEL_FX })).status, 200,
@@ -378,11 +440,16 @@ test('Origin 白名單（接線）｜帶著受害者 session cookie 的跨站變
   /** @param {string} id */
   const txExists = async (id) => (await (await authed('GET', '/api/transactions')).json())
     .some((/** @type {any} */ t) => t.id === id);
-  const sentinelTx = await seedTx('CSRF 哨兵交易（跨站刪不掉才算對）');
+  // 每一個跨站來源各配一顆自己的哨兵交易（r6ⓕ）：共用一顆的話，第一個來源刪不掉就把後面全部蓋掉了。
+  /** @type {Array<[string, string]>} */
+  const sentinelTxs = [];
+  for (const bad of LOOKALIKE_ORIGINS) sentinelTxs.push([bad, await seedTx(`CSRF 哨兵交易（${bad} 刪不掉才算對）`)]);
   const controlTx = await seedTx('CSRF 反面對照交易（同源刪得掉才算這題不是空轉）');
-  assert.equal(await txExists(sentinelTx), true, '前置：哨兵交易要真的建起來');
+  for (const [bad, id] of sentinelTxs) {
+    assert.equal(await txExists(id), true, `前置：${bad} 那顆哨兵交易要真的建起來`);
+  }
 
-  // ── ① 全矩陣：四種變更方法 × 兩條路徑 × 六個「像但不是」的來源，**全部帶著受害者 cookie**
+  // ── ① 全矩陣：四種變更方法 × 兩條路徑 × 七個「像但不是」的來源，**全部帶著受害者 cookie**
   for (const method of MUTATING_METHODS) {
     for (const path of GUARDED_PATHS) {
       for (const bad of LOOKALIKE_ORIGINS) {
@@ -396,12 +463,14 @@ test('Origin 白名單（接線）｜帶著受害者 session cookie 的跨站變
     }
   }
 
-  // ── ② 危害面：跨站的「不吃 body 的寫入」（刪交易）——403 之外，東西必須還在
-  const del = await victimMutating('DELETE', `/api/transactions/${sentinelTx}`, 'https://evil.com');
-  assert.equal(del.status, 403, `跨站刪交易應被擋成 403，實得 ${del.status}`);
-  assert.equal(await txExists(sentinelTx), true,
-    '跨站的刪除請求雖然回了 403，交易卻真的不見了——牆是在「事情已經做完」之後才說話的'
-    + '（典型寫法：先 next() 再補 res.status(403)）。狀態碼那一顆抓不到這種，只有這一顆抓得到');
+  // ── ② 危害面：跨站的「不吃 body 的寫入」（刪交易）——403 之外，東西必須還在。**逐個跨站來源各打一次**
+  for (const [bad, id] of sentinelTxs) {
+    const del = await victimMutating('DELETE', `/api/transactions/${id}`, bad);
+    assert.equal(del.status, 403, `帶 Origin「${bad}」＋受害者 cookie 跨站刪交易應被擋成 403，實得 ${del.status}`);
+    assert.equal(await txExists(id), true,
+      `帶 Origin「${bad}」的跨站刪除請求雖然回了 403，交易卻真的不見了——牆是在「事情已經做完」之後才說話的`
+      + '（典型寫法：先 next() 再補 res.status(403)）。狀態碼那一顆抓不到這種，只有這一顆抓得到');
+  }
 
   // ── ③ 危害面：跨站的「吃 body 的寫入」（改匯率）——哨兵值必須原封不動
   const fxAfterAttack = await readFx();          // 只讀一次：訊息與斷言看的必須是同一個值
@@ -462,6 +531,88 @@ test('Origin 白名單（接線）｜白名單畸形時，路上那道牆也要�
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * 把一個值正規化成「拿掉所有空白與常見分隔符」的樣子。
+ * 由來（r6ⓖ）：外洩斷言原本只做 `includes(原字串)`，於是把帳號**逐字插空白**
+ * （`raw.split('').join(' ')`）送出去就完全比不到，而那串值是可以無損復原的。
+ * @param {unknown} v
+ */
+const squash = (v) => String(v).replace(/[\s\-_.·・]/g, '');
+
+/**
+ * 走訪 JSON 結構，收集**每一個鍵名**與**每一個原始值**（鍵名也可以被拿來裝值：`{"900100****3301": true}`）。
+ * @param {unknown} v @param {string[]} [out] @returns {string[]}
+ */
+const scalarsOf = (v, out = []) => {
+  if (Array.isArray(v)) { for (const x of v) scalarsOf(x, out); return out; }
+  if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) { out.push(k); scalarsOf(x, out); }
+    return out;
+  }
+  if (v !== null && v !== undefined) out.push(String(v));
+  return out;
+};
+
+/** 同上，但**只收值、不收鍵名**（按鍵序）——給「切成相鄰兩欄」那條斷言接起來用。
+ * @param {unknown} v @param {string[]} [out] @returns {string[]} */
+const valuesOf = (v, out = []) => {
+  if (Array.isArray(v)) { for (const x of v) valuesOf(x, out); return out; }
+  if (v && typeof v === 'object') { for (const x of Object.values(v)) valuesOf(x, out); return out; }
+  if (v !== null && v !== undefined) out.push(String(v));
+  return out;
+};
+
+/**
+ * 「這條路的回應裡不可以有完整帳號」。**射程要照實講，不可以說成「封閉」**（r6ⓖ 的整個病灶就是
+ * 措辭比考題強）——這條斷言由三塊組成，而**只有②有專屬的突變證據**，另兩塊照實標成雙保險：
+ *   ①**逐字**出現在整包原始回應字串的任何位置（含鍵名）。r5 那顆突變（`accountNoDisplay: raw`）會讓
+ *     它轉紅，但②同樣抓得到 ⇒ **這不算①的專屬證據**。①獨有的角落是「原始字串裡有、解析後取不到」
+ *     那種寫法（例如重複鍵只留下最後一個值）——**那個角落沒有突變釘著**。
+ *   ②`JSON.parse` 之後**逐格**（每個鍵名、每個值）拿掉空白與 `- _ . ·` 再比——擋「同一格的值被分隔符
+ *     打散」與「換一個欄位名裝它」。**專屬突變證據＝`accountNoDisplay: raw.split('').join(' ')`**
+ *     （r6ⓖ 那顆：①逐字比完全看不到它）。它看的是解析後的值，JSON 轉義寫法會被還原。
+ *   ③整包原始字串照②的方式正規化再比一次。**沒有專屬的突變證據**（它是①的正規化版）——留著只因為
+ *     一行很便宜。不要把它算成本輪修好的東西。
+ * ⚠️ **這三塊都抓不到「值被切成兩個 JSON 欄位」**（先實測才寫：`accountNoHead`／`accountNoTail` 那顆
+ *    突變在只有①②③時整檔 11/11 全綠）——欄位之間的 `","` 這類 JSON 標點不在正規化的移除清單裡，
+ *    兩半永遠接不起來。那一格改由 `assertNoSplitLeak` 負責（範圍限定在那一筆，理由見它的註解）。
+ * **這三塊擋不住的（不要讀成比它更強的東西）**：重新編碼（base64／hex／倒轉／字元碼陣列）、
+ * 以及用**非分隔符**切開（`900100|****3301`）。本檔沒做那種比對（誠實劃界 ⑨）。
+ * @param {string} via 這條路徑的名字（訊息用）
+ * @param {string} bodyText 這條路徑**整包**回應的原始字串
+ * @param {unknown} parsed 同一包回應 `JSON.parse` 之後的結構
+ * @param {string} accountNo 存進去的那串完整帳號
+ */
+const assertNoAccountLeak = (via, bodyText, parsed, accountNo) => {
+  const needle = squash(accountNo);
+  assert.equal(bodyText.includes(accountNo), false,
+    `${via}：整包回應的字串裡逐字找得到完整帳號 ${accountNo}——完整帳號不可沿這條路送到 UI`);
+  for (const s of scalarsOf(parsed)) {
+    assert.equal(squash(s).includes(needle), false,
+      `${via}：回應裡有一格（${JSON.stringify(s).slice(0, 60)}）把空白與 - _ . · 拿掉之後就含著完整帳號 `
+      + `${accountNo}——插分隔符打散不算沒外洩，那串值可以無損復原；換個欄位名裝它也一樣會紅`);
+  }
+  assert.equal(squash(bodyText).includes(needle), false,
+    `${via}：整包回應正規化（拿掉空白與 - _ . ·）之後含著完整帳號 ${accountNo}`);
+};
+
+/**
+ * 「不可以把帳號切成同一筆裡**相鄰的兩欄**送出去」（r6 自審實測補的第四塊）：
+ * 把**這一筆**的值按鍵序、不放任何分隔符接起來，再比對正規化後的帳號。
+ * 突變證據＝`{ ...rest, accountNoLast4, accountNoHead: raw.slice(0, 6), accountNoTail: raw.slice(6) }`
+ * 在只有 `assertNoAccountLeak` 那三塊時**整檔 11/11 全綠**，補了這一塊才轉紅。
+ * ⚠️ 射程（照實寫）：①只擋**相鄰**——刻意把兩半放到不相鄰的欄位，接起來就斷開了，抓不到。
+ *    ②範圍刻意限定在**那一筆帳戶物件**，不是整包回應：整包的值全接起來會變成一長串數字湯，
+ *      反而容易對著無關的數字誤紅（那種假紅比缺口更糟——它會教人把考題放寬）。
+ * @param {string} via @param {unknown} row 這條路徑回的**那一筆**帳戶物件 @param {string} accountNo
+ */
+const assertNoSplitLeak = (via, row, accountNo) => {
+  const joined = valuesOf(row).map(squash).join('');
+  assert.equal(joined.includes(squash(accountNo)), false,
+    `${via}：把這一筆的欄位值按鍵序接起來就含著完整帳號 ${accountNo}`
+    + '——切成相鄰兩欄不算沒外洩，前端拼一下就復原了');
+};
+
+/**
  * 帳號末碼的驗收樣本——**每一顆都挑成「helper 對、另寫一套就不同」的形狀**（r3 病灶ⓒ 的教訓：
  * `server.test.js` 那條既有 HTTP 題用無星號的 `9001001234567890`，遮罩分支根本走不到，
  * 於是「整串數字尾四碼」這顆繞法在它身上完全同值 ⇒ 走了真 HTTP 也白走）。
@@ -488,17 +639,20 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
   //    （唯一例外＝LOCAL 的 `GET /api/export` 備份下載回未投影的完整帳號，見 `lib/secret-fields.js` 檔頭；
   //     那是「下載成檔案」不是「畫面上看得到」，所以不會給使用者辨識帳戶的線索。）
   // ⚠️ 這一題**只管 helper 的判準**；「使用者真正走的那幾條路有沒有用這個判準」是下一題的事（r3ⓒ）。
+  // ⚠️ 兩層都要驗（r5 病灶）：`accountNo === undefined` 釘的是**欄位名**，改個鍵名就繞過去了；
+  //    另一條釘的是**值**——投影出來的東西裡不可以含那串完整帳號，鍵名叫什麼都一樣。
+  //    ⚠️ 而「釘值」那條 r6ⓖ 之前只做 `includes(原字串)` ＝只擋逐字，把帳號逐字插空白就穿過去了。
+  //       現在走 `assertNoAccountLeak`＋`assertNoSplitLeak`（四塊斷言、射程各自明寫），
+  //       而且**六顆 fixture 逐顆驗**、不只挑一顆。
   for (const f of LAST4_FIXTURES) {
-    assert.equal(projectAccount({ id: 'h', accountNo: f.accountNo }).accountNoLast4, f.last4,
-      `${f.accountNo} 的末碼應為 ${f.last4}：${f.why}`);
+    const p = projectAccount({ id: 'h', accountNo: f.accountNo });
+    assert.equal(p.accountNoLast4, f.last4, `${f.accountNo} 的末碼應為 ${f.last4}：${f.why}`);
+    assert.equal(/** @type {any} */ (p).accountNo, undefined, `${f.accountNo}：完整帳號不可留在投影結果裡`);
+    assert.equal(p.accountNoSet, true, `${f.accountNo}：要用布林告訴前端「有設過」`);
+    const via = `projectAccount(${f.accountNo}) 的回傳物件`;
+    assertNoAccountLeak(via, JSON.stringify(p), p, f.accountNo);
+    assertNoSplitLeak(via, p, f.accountNo);
   }
-  const p = projectAccount({ id: 'a4', accountNo: '900100****3301' });
-  // ⚠️ 兩層都要驗（r5 病灶）：`accountNo === undefined` 釘的是**欄位名**，改個鍵名就繞過去了。
-  //    封閉的那一條釘的是**值**：投影出來的物件序列化之後不可以含那串完整帳號，鍵名叫什麼都一樣。
-  assert.equal(/** @type {any} */ (p).accountNo, undefined, '完整帳號絕不可送到瀏覽器');
-  assert.equal(JSON.stringify(p).includes('900100****3301'), false,
-    '投影後的物件裡不可以有完整帳號的那串值（換個欄位名裝它也算外洩）');
-  assert.equal(p.accountNoSet, true, '要用布林告訴前端「有設過」');
 });
 
 test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/db` 四條使用者路徑都真的走 projectAccount', async () => {
@@ -511,17 +665,23 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
   //      沒有投影，未列）②`core.js:20` 的 `projectDb()`（資產頁真正讀的那條）。
   //    只驗其中一條＝另外幾條可以各自另寫一套。
   //
-  // ⚠️⚠️ **外洩斷言必須是封閉的，不可以列舉欄位名**（2026-08-05 自審實測的 r5 病灶）：
+  // ⚠️⚠️ **外洩斷言不可以列舉欄位名**（2026-08-05 自審實測的 r5 病灶）：
   //    這一題原本只斷言 `'accountNo' in got === false`——釘的是**欄位名**，不是**值**。
   //    實測繞法：`projectAccount` 回傳物件多補一個鍵
   //    （`return { ...rest, accountNoSet, accountNoLast4, accountNoDisplay: raw }`），
   //    完整帳號照樣沿著這四條路送到瀏覽器（獨立 HTTP 探針證實 POST／GET `/api/accounts`
   //    與 GET `/api/db` 三條回應都含 `"accountNoDisplay":"900100****3301"`），
   //    而全套 **1502/1502 綠、退出碼 0**。＝AGENTS.md「列舉繞法補不完就要關門」的同一個病型，
-  //    只是這次列舉的是欄位名。⇒ 改成斷言**這條路的整包回應字串裡不可出現存進去的那串帳號**：
-  //    那是封閉性質，不必也不該去猜對方會取什麼鍵名。
+  //    只是這次列舉的是欄位名。⇒ 改成斷言**這條路的回應裡不可出現存進去的那串帳號**，不看鍵名。
+  //    ⚠️⚠️ **但 r5 那一版把它寫成「封閉」是又一次 overclaim**（r6ⓖ，Codex 實測）：那條斷言只做
+  //    `includes(原字串)` ＝只擋**逐字**。繞法＝`accountNoDisplay: raw.split('').join(' ')`
+  //    （逐字插空白），值可以無損復原、照樣沿這四條路送到 UI，全套 **1503/1503 綠、退出碼 0**。
+  //    ⇒ 改用 `assertNoAccountLeak`（逐字＋逐格正規化＋整包正規化）＋`assertNoSplitLeak`
+  //      （相鄰兩欄接起來），**射程寫在兩支斷言各自的註解裡**：擋分隔符打散、換鍵名、切成相鄰兩欄；
+  //      **擋不住重新編碼、非分隔符切開、切到不相鄰的欄位**。所以本題的措辭一律不用「封閉」——
+  //      這一組是抽查，真正承重的是本題自己（四條路徑都經過同一個 `projectAccount`）。
   //    📌 連帶把帳戶名字從 `末碼接線 ${f.accountNo}` 改成流水號——名字本來就會被原樣回傳，
-  //       把受測字串塞進名字會讓封閉斷言對著自己造的假外洩亮紅燈（那不是投影的錯）。
+  //       把受測字串塞進名字會讓外洩斷言對著自己造的假外洩亮紅燈（那不是投影的錯）。
   for (const [i, f] of LAST4_FIXTURES.entries()) {
     const posted = await authed('POST', '/api/accounts',
       { name: `末碼接線 #${i + 1}`, type: 'cash', currency: 'TWD', balance: 0, accountNo: f.accountNo });
@@ -529,14 +689,14 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
     const postedText = await posted.text();
     const created = JSON.parse(postedText);
     /**
-     * 一條使用者路徑要同時滿足：①整包回應裡找不到完整帳號（封閉）②那一筆的欄位形狀對（末碼是真的）。
+     * 一條使用者路徑要同時滿足：①整包回應裡找不到完整帳號（`assertNoAccountLeak`，射程見它的註解）
+     * ②那一筆的欄位形狀對（末碼是真的）。
      * @param {string} via @param {any} got @param {string} bodyText 這條路徑**整包**回應的原始字串
      */
     const check = (via, got, bodyText) => {
-      assert.equal(bodyText.includes(f.accountNo), false,
-        `${via}：整包回應的字串裡找得到完整帳號 ${f.accountNo}——完整帳號不可沿這條路送到瀏覽器。`
-        + '（這條斷言不看鍵名，釘的是「那串值不可以出現」：換個欄位名裝它、或塞在回應的別處，照樣會紅）');
+      assertNoAccountLeak(via, bodyText, JSON.parse(bodyText), f.accountNo);
       assert.ok(got, `${via} 找不到剛建立的帳戶（id=${created.id}）——這條路徑根本沒回這筆資料，下面的斷言會變成空轉`);
+      assertNoSplitLeak(via, got, f.accountNo);
       assert.equal('accountNo' in got, false,
         `${via} 竟然把完整帳號送到瀏覽器了（${f.accountNo}）——投影在這條路上沒接上`);
       assert.equal(got.accountNoSet, true, `${via} 要用布林告訴前端「有設過」`);
