@@ -101,18 +101,21 @@ test('IB 現金流｜設定的估算匯率是 0 或負數 → 落 skippedNoFx，
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 假 IB 伺服器：依序回傳給定的 XML（第一份是 SendRequest 的回應）。
+ * `fetch.calls` 會記錄總共被打了幾次——**次數本身就是契約**（Codex #407 r1 H①：
+ * 只驗最終錯誤訊息的話，「偷偷重試一次、第二次才丟同一個錯」照樣綠）。
  * @param {string[]} xmls */
 function fakeIbSequence(xmls) {
-  let call = 0;
-  return async () => {
-    const body = xmls[Math.min(call++, xmls.length - 1)];
+  const fn = /** @type {any} */ (async () => {
+    const body = xmls[Math.min(fn.calls++, xmls.length - 1)];
     const bytes = new TextEncoder().encode(body);
     return {
       ok: true,
       headers: { get: (/** @type {string} */ k) => (k === 'content-length' ? String(bytes.byteLength) : null) },
       body: (async function* () { yield bytes; })(),
     };
-  };
+  });
+  fn.calls = 0;
+  return fn;
 }
 
 const SEND_OK = '<FlexStatementResponse><Status>Success</Status><ReferenceCode>1</ReferenceCode>'
@@ -142,15 +145,20 @@ test('IB 第二步｜非 1019 的錯誤碼立刻失敗（不可當成「還在�
   //    會重試 15 次共 45 秒，最後只吐「IB 報表準備逾時，請稍後再試」——
   //    把「可修的設定錯誤」講成「暫時性問題」，使用者會一直重試。
   const real = globalThis.fetch;
-  globalThis.fetch = /** @type {any} */ (fakeIbSequence([
+  const fake = fakeIbSequence([
     SEND_OK,
     '<FlexStatementResponse><ErrorCode>1020</ErrorCode><ErrorMessage>Invalid request or unable to validate request.</ErrorMessage></FlexStatementResponse>',
-  ]));
+  ]);
+  globalThis.fetch = /** @type {any} */ (fake);
   try {
     const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
     assert.ok(err, '非 1019 的錯誤碼必須當場失敗');
     assert.match(err.message, /unable to validate request/, '要把 IB 的錯誤訊息帶出來');
     assert.doesNotMatch(err.message, /逾時/, '不可退化成「逾時」——那會把可修的錯講成暫時性問題');
+    // ⚠️ **次數也是契約**（Codex #407 r1 H①）：只驗訊息的話，「偷偷重試一次、
+    //    第二次才丟同一個錯」會照樣綠——而那正是「把可修的設定錯當成暫時性問題」的行為。
+    assert.equal(fake.calls, 2,
+      `非 1019 的錯誤碼必須「立刻」失敗＝總共只有兩次請求（SendRequest 1＋GetStatement 1），實際 ${fake.calls} 次`);
   } finally { globalThis.fetch = real; }
 });
 
@@ -181,9 +189,13 @@ test('IB 第二步｜1019（還在產生中）真的會重試，下一輪成功�
 // 三、同步寫回資料庫：壞值不可覆寫好值（lib/services/ib-sync.js 三道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('IB 同步｜官方淨值的 cash/stock 是壞值 → lastEquity 丟棄走自算，不可讓「無融資」的假象藏起風險', async () => {
-  // ⚠️ 這是全檔最要緊的一條：壞值存進 lastEquity 之後，computeLeverage 會用它算槓桿與斷頭距離，
-  //    而失真方向剛好是最危險的那一邊——「看起來沒有融資」。AGENTS 鐵則：槓桿上限 1.3x。
+test('IB 同步｜官方淨值的 cash/stock 是壞值 → 丟棄它走自算，一個壞欄位不可炸掉整次同步', async () => {
+  // ⚠️ 誠實劃界（Codex #407 r1 M③ 更正了我原本的說法）：拿掉這道服務層驗證時，壞值**不會**
+  //    靜靜存進資料庫——最後的寫入櫃檯（lib/schema.js 的 settings 枚舉驗證）會把**整次同步**
+  //    整批拒絕（「settings 含非法值：ib.lastEquity」）。所以這道守衛真正的價值是：
+  //    **一個壞掉的 Flex 欄位不該讓整次同步失敗**——丟棄那個欄位、持倉與現金照樣存進去，
+  //    槓桿與斷頭距離改走 fallback 自算（`lastEquity` 為 null 時的既定行為）。
+  //    （原始的「壞值會存進去、把融資風險藏起來」是我寫錯了：櫃檯攔在後面。）
   for (const badEquity of [
     { stock: 5000, cash: Number.NaN },
     { stock: 5000, cash: '一千' },
@@ -191,11 +203,18 @@ test('IB 同步｜官方淨值的 cash/stock 是壞值 → lastEquity 丟棄走�
     { cash: 1000 },                      // 缺 stock 欄
   ]) {
     store.save({ ...store.emptyDb() });
-    await syncIb(/** @type {any} */ (fakeParsed({ equity: badEquity })));
-    const saved = store.load().settings?.ib?.lastEquity ?? null;
-    assert.equal(saved, null,
-      `equity=${JSON.stringify(badEquity)}：壞的官方淨值必須丟棄（回 null 走 fallback 自算），`
-      + '存進去會讓槓桿與斷頭距離靜默失真，而且方向是「看起來沒有融資」');
+    const r = await syncIb(/** @type {any} */ (fakeParsed({
+      equity: badEquity,
+      positions: [{ symbol: 'CSPX', currency: 'USD', quantity: 10, marketPrice: 500, avgCost: 480 }],
+    })));
+    const db = store.load();
+    assert.equal(db.settings?.ib?.lastEquity ?? null, null,
+      `equity=${JSON.stringify(badEquity)}：壞的官方淨值必須丟棄（回 null 走 fallback 自算）`);
+    assert.equal(r.created, 1,
+      `equity=${JSON.stringify(badEquity)}：其餘資料要照常同步——`
+      + '不丟棄的話整次同步會被寫入櫃檯整批拒絕，持倉與現金一筆都存不進去');
+    assert.ok((db.holdings ?? []).some((/** @type {any} */ h) => h.symbol === 'CSPX'),
+      '持倉必須真的存進資料庫（這才是「一個壞欄位不炸掉整次同步」的證明）');
   }
   // 反面：合法的官方淨值要照存（避免整段被關掉也綠）。
   store.save({ ...store.emptyDb() });
