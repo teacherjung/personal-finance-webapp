@@ -21,7 +21,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// #415 起 `esc` 的實作住在零依賴的 `public/modules/html-escape.js`（`app.js` 原樣 re-export），
+// #409 起 `esc` 的實作住在零依賴的 `public/modules/html-escape.js`（`app.js` 原樣 re-export），
 // 所以本檔可以**直接 import 正式環境跑的那一份**——不必再把原始碼抓出來現場 eval。
 import { esc } from '../public/modules/html-escape.js';
 
@@ -71,7 +71,7 @@ test('六個修過的頁面確實都用了 esc(x.id)（避免有人「修好又�
 
 test('esc() 真的擋得住這個 payload（驗的是正式環境跑的那一份實作）', () => {
   // 直接 import public/app.js 仍然會失敗（它是瀏覽器模組、模組頂層就碰 document／localStorage），
-  // 但 #415 之後 `esc` 的實作已經在零依賴的 modules/html-escape.js，可以直接 import。
+  // 但 #409 之後 `esc` 的實作已經在零依賴的 modules/html-escape.js，可以直接 import。
   // 「app.js 用的就是這一份、沒有自己再長一份」由 test/form-options.test.js 的
   // 「架構｜esc 只有一份實作」那題釘住——沒有那一題，本題可能驗到一份沒人用的實作。
 

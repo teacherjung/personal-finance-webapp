@@ -45,6 +45,16 @@
 //
 // **完全擋不住**：①索引摘要寫得爛 ②`files` 該不該包含某個檔（那是人的判斷，
 //   manifest 只保證它被明講；**它是下限，不是窮舉**——見 MANIFEST 上方）。
+//
+// ## #409 r6（2026-08-06）新增一道，只關掉「兩邊一起漏列」的其中一種
+//
+// 上面每一題比的都是「README 與 manifest **兩邊已宣告的集合**」，所以兩邊**同時**漏掉同一個檔案
+// 是完全靜的——本支 PR 就是這樣漏了 `public/modules/form-options.js` 與
+// `public/modules/html-escape.js`（八題全綠，Codex 該輪複審抓到）。
+// 補的那一題（本檔最後一題）改用**import 關係**當機械線索：已宣告的正式程式 import 進來的本地 `.js`，
+// 自己也必須被某份契約宣告，否則要明確登記進 `UNDECLARED_IMPORTED` 這份看得見的欠帳清單。
+// ⚠️ 它擋得住的只有「**從已宣告的檔案切出新模組、兩邊都沒登記**」（也就是本支的漏法）；
+// 沒有人 import 的新檔案（新考題、新文件）與「該歸哪個領域」仍然完全靠人。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
@@ -460,6 +470,8 @@ const MANIFEST = {
       'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
+      // #409 補宣告：彈窗下拉的通用保留機制（form-options 與收支多重命中）＋ esc 的實作本體
+      'public/modules/form-options.js', 'public/modules/html-escape.js',
       'test/server.test.js',
       'test/subscriptions-model.test.js',
     ],
@@ -521,6 +533,8 @@ const MANIFEST = {
       'public/modules/settings.js',
       'public/modules/transactions-import.js',
       'public/modules/transactions.js',
+      // #409 補宣告：收支的分類／子類下拉也走這一份（與前端多重命中）
+      'public/modules/form-options.js',
       'test/refund-attribution.test.js',
       'test/refund-pairing-aggregate.test.js',
       'test/statement-pipeline.test.js',
@@ -604,6 +618,9 @@ const MANIFEST = {
       'test/stock-fundamentals.test.js',
       'test/stock-research-fundamentals.test.js',
       'test/stock-research-method.test.js',
+      // #409 補宣告：fxExposure 讀 accounts-model 的 LIABILITY_TYPES（收支那一列早就寫「與投資多重命中」，
+      // 硬規則②要求被命中的每一個領域都要點名它）
+      'public/modules/accounts-model.js',
     ],
   },
 };
@@ -997,4 +1014,154 @@ test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（�
       + '⚠️ 這是**下限**不是上限：契約用函式名或 API 路徑點到的檔案考題看不出來，\n'
       + '   那些仍然要靠人加進 files（Codex #384 r1／r2 兩輪各抓到一批）。');
   }
+});
+
+/**
+ * 去註解掃描器（堆疊式；字串／樣板字串／樣板插值裡的 `//` 不算註解）。
+ *
+ * 演算法與 `test/hosted-auth.test.js`、`test/form-options.test.js` 那兩支同源——本 repo 的考題
+ * **不共用 helper 檔**（`test/` 底下任何 .js 都會被 `node --test` 當考題跑），所以這裡是刻意的區域副本。
+ * 為什麼下面那題需要它：AGENTS.md 的硬規則「掃原始碼的形狀考題**要先去掉註解**」，而本 repo 的註解
+ * 極常**逐字引用舊程式碼**（`// 原本寫 from './modules/xxx.js'`）——不去註解就會掃到不存在的 import。
+ * @param {string} src
+ */
+function stripComments(src) {
+  let out = ''; let prev = '';
+  /** @type {string[]} */ const stack = ['code'];
+  /** @type {number[]} */ const interp = [];
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]; const n = src[i + 1];
+    const st = stack[stack.length - 1];
+    if (st === 'code' || st === 'interp') {
+      if (c === '/' && n === '/' && prev !== '\\') { stack.push('line'); prev = ''; i++; continue; }
+      if (c === '/' && n === '*' && prev !== '\\') { stack.push('block'); prev = ''; i++; continue; }
+      if (c === '\'') stack.push('s1');
+      else if (c === '"') stack.push('s2');
+      else if (c === '`') stack.push('tpl');
+      else if (st === 'interp') {
+        if (c === '{') interp[interp.length - 1]++;
+        else if (c === '}') {
+          if (interp[interp.length - 1] === 0) { stack.pop(); interp.pop(); out += c; prev = c; continue; }
+          interp[interp.length - 1]--;
+        }
+      }
+      out += c; prev = c;
+    } else if (st === 'line') {
+      if (c === '\n') { stack.pop(); out += c; prev = ''; }
+    } else if (st === 'block') {
+      if (c === '*' && n === '/') { stack.pop(); i++; prev = ''; }
+      else if (c === '\n') out += c;
+    } else if (st === 'tpl') {
+      out += c;
+      if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+      if (c === '`') stack.pop();
+      else if (c === '$' && n === '{') { stack.push('interp'); interp.push(0); out += n; i++; }
+      prev = c;
+    } else {   // s1 / s2
+      out += c;
+      if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+      if ((st === 's1' && c === '\'') || (st === 's2' && c === '"')) stack.pop();
+      else if (c === '\n') stack.pop();   // 一般字串不跨行＝未終結防呆
+      prev = c;
+    }
+  }
+  return out;
+}
+
+/**
+ * **已經被某個宣告過的正式程式 import 進來，但自己還沒有進任何契約 `files` 的模組**——存量清單。
+ *
+ * 這不是豁免名單，是**今天的欠帳**：每一項都代表「某份契約的責任集合裡有一個檔案靠它幹活，
+ * 而讀那份契約的人不會被導到它」。清單裡的東西可以慢慢還（挑一個歸進某個領域，同時改 README 路由列
+ * 與 manifest，然後從這裡刪掉）；**不可以默默變長**——變長就是又發生一次「兩邊一起漏列」。
+ *
+ * ⚠️ 為什麼不是「一次全部歸戶」：這 15 個檔案該落在哪個領域是**人的判斷**（`icons.js` 與 `theme.js`
+ * 被十幾個頁面模組共用、`safe-map.js` 是後端共用底層），逐一決定要一支專門的 PR；
+ * #409 是「彈窗下拉不可靜靜改資料」那一支，把 15 個檔案的歸屬順手決定掉會讓真正的改動看不見。
+ */
+const UNDECLARED_IMPORTED = [
+  'lib/is-main.js',                          // ← server.js（「被直接執行還是被 import」判斷）
+  'lib/routes/ib.js',                        // ← server.js（IB 端點掛載；投資契約點名的是 services/ib-sync.js）
+  'lib/routes/route-helpers.js',             // ← 四支 routes（共用的回應／驗證輔助）
+  'lib/routes/stock-fundamentals.js',        // ← server.js（SEC 端點掛載）
+  'lib/safe-map.js',                         // ← 七個後端檔（原型污染安全的 Map 包裝＝安全承重件）
+  'public/modules/cashflow-model.js',        // ← cashflow.js
+  'public/modules/dashboard-forest.js',      // ← dashboard.js
+  'public/modules/file-util.js',             // ← cashflow.js／securities.js／transactions-import.js
+  'public/modules/icons.js',                 // ← app.js ＋十七個頁面模組（共用圖示）
+  'public/modules/month-select.js',          // ← cashflow.js／transactions.js
+  'public/modules/rebalance.js',             // ← assets.js
+  'public/modules/settings-store-table.js',  // ← settings.js
+  'public/modules/subscriptions-report.js',  // ← subscriptions.js
+  'public/modules/theme.js',                 // ← 十一個模組（圖表色單一真相，AGENTS 地雷 2 點名）
+  'public/modules/tx-sort.js',               // ← settings.js／cashflow.js／securities.js／transactions.js
+];
+
+test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自己也要被宣告（關掉「兩邊一起漏列」的盲區）', () => {
+  // ## 這一題補的是 #409 r6（2026-08-06）Codex 指出的盲區
+  //
+  // 上面那兩題（README 路由列 == manifest 的 files、契約內文提到的路徑 ⊆ files）比的都是
+  // **兩邊已經宣告的集合**。所以「README 與 manifest **一起**漏掉同一個檔案」是完全靜的——
+  // 而本支 PR 就是這樣漏的：`public/modules/form-options.js` 與 `public/modules/html-escape.js`
+  // 從 `public/app.js` 裡切出來、`app.js`／`settings.js`／`cashflow.js`／`transactions.js`
+  // 都改成 import 它們，而兩邊都沒有登記 ⇒ 八題全綠。
+  //
+  // ## 判準：**import 關係是機械可查的責任傳遞**
+  //
+  // 某個檔案已經被宣告成某個領域的責任檔，它 import 進來的本地模組就承載著同一份責任
+  //（把一段承重邏輯搬進新檔案＝最常見的走樣路徑，r6 的漏法就是它）。所以：
+  //   「被宣告過的正式程式 import 進來的 `.js`」 **⊆** 「被宣告過的檔案 ∪ 上面那份存量清單」
+  // 而且是**精確相等**（不是單向）：某一項被歸進契約、或那個 import 被拿掉時，
+  // 清單必須跟著縮——否則欠帳清單自己會爛掉（列著早就還完的債）。
+  //
+  // ## ⚠️ 誠實劃界：它關掉的是**這一種**漏法，不是「漏宣告」這件事本身
+  //
+  // 擋得住：**從已宣告的檔案長出一個新模組而兩邊都沒登記**（本支的漏法、也是最常見的一種）。
+  // 擋不住：
+  //   ・**完全新增、沒有人 import 的東西**——新的 route 檔（只由 `server.js` 掛載算 import，
+  //     但新的考題檔、新的文件、新的 seed 欄位不算）。
+  //   ・**該不該屬於某個領域**：那是人的判斷，這一題只保證「它至少被某份契約明講過」。
+  //   ・動態拼出來的路徑（`import('./modules/' + name + '.js')`）——判準看的是字面字串。
+  //   ・來源刻意只收**正式程式**（`lib/`／`public/`／`server.js`）：考題 import 的東西不一定是
+  //     那個領域的承重件（測試常為了組 fixture 去 import 共用的顏色表），把它們算進來只會製造噪音。
+  const declaredFiles = new Set(Object.values(MANIFEST).flatMap((m) => m.files));
+  const sources = [...declaredFiles]
+    .filter((f) => f.endsWith('.js') && !f.startsWith('test/') && !f.startsWith('test-doubles/'));
+  // 反面①：來源集合要真的有東西（manifest 若被掏空，下面整圈會「什麼都沒掃卻通過」）。
+  assert.ok(sources.length >= 40,
+    `受掃的正式程式只有 ${sources.length} 個（manifest 宣告的 .js），這個數字太小＝掃描範圍壞了`);
+  // 反面②：去註解器不可以把 import 段吃掉（吃掉就變成「什麼都沒掃卻通過」）。
+  //   ⚠️ 不可以逐檔斷言「至少有一個 import」——`lib/hosted.js` 這種純設定檔真的零 import（實測誤紅）。
+  //   改成拿一個**已知一定存在**的 import 當基準：`public/app.js` 從本支新增的純模組取選項產生器。
+  assert.match(stripComments(readFileSync(join(ROOT, 'public/app.js'), 'utf8')),
+    /from\s*'\.\/modules\/form-options\.js'/,
+    '去註解之後 public/app.js 的 form-options import 不見了——剝離器把正式程式吃掉了，本題會變成空包彈');
+  /** @type {Map<string, string[]>} 未宣告的模組 → 誰 import 它 */
+  const undeclared = new Map();
+  let edges = 0;
+  for (const f of sources) {
+    const src = stripComments(readFileSync(join(ROOT, f), 'utf8'));
+    for (const m of src.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*'(\.[^']+)'/g)) {
+      const target = normalize(join(dirname(f), m[1]));
+      if (!target.endsWith('.js') || !existsSync(join(ROOT, target))) continue;
+      edges++;
+      if (declaredFiles.has(target)) continue;
+      if (!undeclared.has(target)) undeclared.set(target, []);
+      /** @type {string[]} */ (undeclared.get(target)).push(f);
+    }
+  }
+  // 反面③：正規式要真的解析到 import（regex 寫壞時 edges 會是 0 而斷言照樣「通過」）。
+  assert.ok(edges >= 100, `只解析到 ${edges} 條本地 import——這個 repo 遠不止這麼少，正規式壞了`);
+  for (const f of UNDECLARED_IMPORTED) {
+    assert.ok(existsSync(join(ROOT, f)), `存量清單列了不存在的檔案 ${f}——檔案刪掉／改名了就從清單刪掉`);
+  }
+  const detail = [...undeclared].map(([f, who]) => `  ${f}  ← ${who.join('、')}`).join('\n');
+  assert.deepEqual(sorted([...undeclared.keys()]), sorted(UNDECLARED_IMPORTED),
+    '「已宣告的正式程式 import 進來、自己卻沒被任何契約宣告」的集合變了。\n'
+    + `實得：\n${detail || '  （空）'}\n`
+    + '⚠️ **變多**＝又發生一次「README 與 manifest 一起漏列」（那正是這一題存在的理由）：\n'
+    + '   請把新模組加進某份契約的 files **並同步 README 路由列**；真的還不決定歸屬，\n'
+    + '   就把它明確寫進 UNDECLARED_IMPORTED（那是刻意的、看得見的欠帳，不是沉默）。\n'
+    + '⚠️ **變少**＝有一筆欠帳還完了（或那個 import 被拿掉）：請把它從 UNDECLARED_IMPORTED 刪掉，\n'
+    + '   否則清單會開始說謊。');
 });

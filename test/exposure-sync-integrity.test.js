@@ -338,7 +338,7 @@ test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型�
     assert.ok(accountTypeOptions().some(o => o.value === PROBE),
       '往前端 LIABILITY_TYPES 加型別後，帳戶表單的型別下拉沒長出它 ⇒ 選項是另一份手抄清單。'
       + '後果：那種帳戶存得進資料庫卻選不到，只能靠改資料庫才設得上去'
-      + '（#415 之後現值至少不會再被靜靜改成 cash，但「選不到」這一半還在）');
+      + '（#409 之後現值至少不會再被靜靜改成 cash，但「選不到」這一半還在）');
     assert.equal(isLiabilityAccount({ type: PROBE, balance: 500000 }), true,
       '往前端 LIABILITY_TYPES 加型別後，資產頁的 isLiabilityAccount 不認得它 ⇒ 它讀的是另一份手抄清單，'
       + '那種帳戶會被畫成藍標籤、餘額不標紅（畫面與淨資產說法相反）');
@@ -403,7 +403,7 @@ test('負債白名單｜每個成員都要過得了寫入牆（lib/schema.js 的
 // 把 `isLiab` 改成 `['loan']`（連房貸都不算負債）全套 1501 題全綠，就是那個洞的樣子。
 //
 // ⚠️ **這五題守的範圍到哪裡為止（別讀成「這個病全站治好了」）**：
-//   ・**病根那一刀已經補上了**（#415；本段原本寫「本支沒有動那一刀」，那句話現在會誤導）：
+//   ・**病根那一刀已經補上了**（#409；本段原本寫「本支沒有動那一刀」，那句話現在會誤導）：
 //     `openForm` 產生選項的職責搬進零 DOM 的 `public/modules/form-options.js`——現在的值不在選項裡時
 //     **保留它並標 selected**，不再被瀏覽器靜靜換成第一項。行為級考題＝`test/form-options.test.js`。
 //   ・**但下面五題沒有因此變成多餘**，兩層守的是不同的事：保留只擋住「值被靜靜改掉」，
@@ -421,7 +421,7 @@ test('帳戶表單｜型別下拉的選項值必須與寫入牆枚舉（lib/sche
   //    當時 `public/app.js` 的下拉只在值完全相同時才加 `selected`、送出時讀 `select.value`——
   //    沒有 option 命中時瀏覽器選第一個（`cash`）⇒ 在資產頁打開這種帳戶、只改個名字按儲存，
   //    就靜靜 PUT `type:'cash'`：50 萬負債變成 50 萬資產，淨資產一次跳 100 萬。
-  //    ⚠️ 那個「靜靜換成第一項」的機制已於 #415 修掉（見上方劃界）；**本題守的是另一半**：
+  //    ⚠️ 那個「靜靜換成第一項」的機制已於 #409 修掉（見上方劃界）；**本題守的是另一半**：
   //    存得進資料庫的型別，使用者要在下拉裡選得到。
   // ⚠️ 為什麼是**精確相等**而不是「選項 ⊇ 枚舉」：兩個方向各有一種病。
   //    枚舉有、表單沒有＝那種型別選不到（只能改資料庫）；表單有、枚舉沒有＝使用者選得到卻存不進去
@@ -432,7 +432,7 @@ test('帳戶表單｜型別下拉的選項值必須與寫入牆枚舉（lib/sche
   assert.deepEqual(accountTypeOptions().map(o => o.value).sort(), [...enumValues].sort(),
     '帳戶表單的型別選項與 lib/schema.js 的寫入牆枚舉對不起來——'
     + '枚舉有而表單沒有的型別，使用者根本選不到（只能靠改資料庫設上去；'
-    + '#415 之後既有帳戶的現值會被保留、不再靜靜翻成資產，但下拉裡看到的是原始代碼不是中文標籤）；'
+    + '#409 之後既有帳戶的現值會被保留、不再靜靜翻成資產，但下拉裡看到的是原始代碼不是中文標籤）；'
     + '表單有而枚舉沒有的型別則是選得到卻存不進去');
 });
 
@@ -445,7 +445,7 @@ test('帳戶表單｜每個負債型別都要選得到，而且要有中文標�
     const opt = options.find(o => o.value === type);
     assert.ok(opt, `負債型別 '${type}' 在帳戶表單的型別下拉裡選不到——`
       + '它算得出負債、也存得進資料庫，卻只能靠改資料庫才設得上去；'
-      + '而既有的這種帳戶雖然值會被保留（#415），下拉裡也只看得到原始代碼、不是中文標籤');
+      + '而既有的這種帳戶雖然值會被保留（#409），下拉裡也只看得到原始代碼、不是中文標籤');
     assert.ok(/負債/.test(opt.label), `'${type}' 的選項標籤「${opt.label}」看不出是負債——`
       + '使用者要在下拉裡分得出「這一項填了會變成負的」');
   }
@@ -478,7 +478,7 @@ test('資產頁｜每個負債型別的正數餘額都要被畫成負債（isLia
 
 test('帳戶表單｜幣別下拉的選項必須與 lib/schema.js 的 CURRENCIES 精確相等', () => {
   // 同一族的第三個下拉（病因與型別下拉完全相同，只是走樣的是匯率不是方向）：
-  // 枚舉多一個幣別而表單沒有 ⇒ 使用者根本選不到那個幣別；#415 之前更糟——既有的那種帳戶
+  // 枚舉多一個幣別而表單沒有 ⇒ 使用者根本選不到那個幣別；#409 之前更糟——既有的那種帳戶
   // 一被打開儲存就靜靜變成第一個選項 TWD，之後每次換算都用錯匯率（100 USD 變 100 TWD）。
   // 現值靜靜被換掉那一半已由 `public/modules/form-options.js` 擋住，「選不到」這一半由本題守。
   // 反方向：表單多一個 ⇒ 選得到卻存不進去。
@@ -487,6 +487,56 @@ test('帳戶表單｜幣別下拉的選項必須與 lib/schema.js 的 CURRENCIES
     + '受害的是金額換算：那個幣別的帳戶只能靠改資料庫才設得上去');
 });
 
+/**
+ * 去註解掃描器（堆疊式；字串／樣板字串／樣板插值裡的 `//` 不算註解）。
+ *
+ * 演算法與 `test/hosted-auth.test.js`、`test/form-options.test.js` 那兩支同源——本 repo 的考題
+ * **不共用 helper 檔**（`test/` 底下任何 .js 都會被 `node --test` 當考題跑），所以這裡是刻意的區域副本。
+ * @param {string} src
+ */
+function stripComments(src) {
+  let out = ''; let prev = '';
+  /** @type {string[]} */ const stack = ['code'];
+  /** @type {number[]} */ const interp = [];
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]; const n = src[i + 1];
+    const st = stack[stack.length - 1];
+    if (st === 'code' || st === 'interp') {
+      if (c === '/' && n === '/' && prev !== '\\') { stack.push('line'); prev = ''; i++; continue; }
+      if (c === '/' && n === '*' && prev !== '\\') { stack.push('block'); prev = ''; i++; continue; }
+      if (c === '\'') stack.push('s1');
+      else if (c === '"') stack.push('s2');
+      else if (c === '`') stack.push('tpl');
+      else if (st === 'interp') {
+        if (c === '{') interp[interp.length - 1]++;
+        else if (c === '}') {
+          if (interp[interp.length - 1] === 0) { stack.pop(); interp.pop(); out += c; prev = c; continue; }
+          interp[interp.length - 1]--;
+        }
+      }
+      out += c; prev = c;
+    } else if (st === 'line') {
+      if (c === '\n') { stack.pop(); out += c; prev = ''; }
+    } else if (st === 'block') {
+      if (c === '*' && n === '/') { stack.pop(); i++; prev = ''; }
+      else if (c === '\n') out += c;
+    } else if (st === 'tpl') {
+      out += c;
+      if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+      if (c === '`') stack.pop();
+      else if (c === '$' && n === '{') { stack.push('interp'); interp.push(0); out += n; i++; }
+      prev = c;
+    } else {   // s1 / s2
+      out += c;
+      if (c === '\\') { out += n ?? ''; i++; prev = ''; continue; }
+      if ((st === 's1' && c === '\'') || (st === 's2' && c === '"')) stack.pop();
+      else if (c === '\n') stack.pop();   // 一般字串不跨行＝未終結防呆
+      prev = c;
+    }
+  }
+  return out;
+}
+
 test('負債白名單｜全站只准宣告過的檔案出現這些型別字串（第四份手抄複本會被抓到）', () => {
   // ⚠️ 這一題是「還有沒有下一份複本」的機械認定，不靠人記——r8 的教訓正是「數字自己會漂」：
   //    註解從「兩處」漂到「三處」，而前端當時還藏著第四份（assets.js 的 isLiab）與
@@ -494,10 +544,20 @@ test('負債白名單｜全站只准宣告過的檔案出現這些型別字串�
   // ⚠️ 判準是**宣告**不是推導（同 test/no-hiding-places.test.js 的作法）：下面逐條寫死
   //    「哪個檔案有資格持有這份清單、為什麼」。任何新增一律轉紅，逼改的人回答一次
   //    「這是刻意的同步點，還是又一份會漂的手抄複本？」
+  // ⚠️ **先去註解再掃**（#409 r6（2026-08-06）Codex 抓到的假紅；而 AGENTS.md「掃原始碼的形狀考題**要先去掉註解**」
+  //    這條硬規則早就寫著，是我沒照做）：上一版直接掃原始碼，於是在任何檔案寫一行**無害的說明註解**
+  //    （例如 `// 負債型別的字串住在 accounts-model.js（例：'loan'）`）就會轉紅。那種紅與正式行為
+  //    完全無關——假紅會逼下一個人「為了讓考題閉嘴而不敢寫註解」，而本 repo 的紀律正好相反
+  //    （解釋要寫在就地）。實測：注入那一行 → 本題紅 1；改成先去註解 → 綠，而真的抄一份仍然紅。
   // ⚠️ 誠實劃界——這一題**擋不住**什麼：
-  //    ・它看的是**文字**：`['mor' + 'tgage']`、先塞進變數、用 RegExp 拼字串，都掃不到。
-  //      本檔其他每一題都是「呼叫正式程式看結果」，只有這一題沒得選：
-  //      `public/modules/assets.js` 一 import 就會拉進 `public/app.js`，那是瀏覽器模組、
+  //    ・它看的是**去註解之後、文字裡的帶引號字串**，所以任何「湊出同樣的字」都掃不到。已知三類：
+  //      ①拼接 `['mor' + 'tgage']` ②先塞進變數／用 RegExp 組字串
+  //      ③**完全不用引號**：`Object.keys({ loan: 1, liability: 1, mortgage: 1, creditcard: 1 })`
+  //        ——這一條是 #409 r6（2026-08-06）Codex **實測全綠**、我逐字重放確認過的繞法：第四份手抄複本一字不差地重建出來，
+  //        而檔案裡沒有任何 `'loan'` 這種帶引號的字串。⇒ 文字掃描本來就擋不住混淆；
+  //        **這一題只擋「照正常寫法又抄一份」**，而那才是真實會發生的維護手滑（r8 抓到的兩份都是）。
+  //      為什麼只有這一題退到文字層：本檔其他每一題都是「呼叫正式程式看結果」，
+  //      但 `public/modules/assets.js` 一 import 就會拉進 `public/app.js`，那是瀏覽器模組、
   //      模組頂層就碰 document/localStorage，node 裡起不來（所以它才會零考題那麼久）。
   //    ・它只掃 `lib/` 與 `public/` 的 .js（正式程式）；考題、文件、seed 資料不掃。
   //    ・它不判斷「出現得合不合理」，只判斷「有沒有人偷偷長出下一份」。
@@ -516,11 +576,17 @@ test('負債白名單｜全站只准宣告過的檔案出現這些型別字串�
   assert.ok(files.length >= 50, `掃描器只看到 ${files.length} 個 .js，正式程式沒這麼少——掃描範圍壞了`);
   // 反面②：這一題存在的理由就是 assets.js，它一定要在受掃範圍內。
   assert.ok(files.includes('public/modules/assets.js'), '受掃清單裡沒有 public/modules/assets.js——這題就白做了');
+  // 反面③：**去註解器不可以把真程式碼吃掉**——它一旦吃過頭，這一題就變成「什麼都沒掃卻通過」。
+  //   拿兩個有資格持有清單的檔案當基準：它們的正式程式裡真的有 `'loan'` 這個帶引號字串。
+  for (const rel of ['lib/derive.js', 'public/modules/accounts-model.js']) {
+    assert.ok(stripComments(readFileSync(join(ROOT, rel), 'utf8')).includes('\'loan\''),
+      `去註解之後 ${rel} 裡連 'loan' 都不見了——剝離器把正式程式吃掉了，本題會變成空包彈`);
+  }
   /** @type {string[]} */
   const hits = [];
   for (const rel of files) {
     if (ALLOWED.has(rel)) continue;
-    const src = readFileSync(join(ROOT, rel), 'utf8');
+    const src = stripComments(readFileSync(join(ROOT, rel), 'utf8'));
     for (const type of LIABILITY_MEMBERS) {
       for (const quote of ['\'', '"', '`']) {
         if (src.includes(`${quote}${type}${quote}`)) hits.push(`${rel} ← ${quote}${type}${quote}`);

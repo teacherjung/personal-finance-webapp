@@ -1,7 +1,7 @@
 // @ts-check
 // HTML 跳脫的**單一真相**（零依賴純模組；鐵則 3 的實作本體）。
 //
-// 為什麼要從 `public/app.js` 搬出來（#415，2026-08-05）：
+// 為什麼要從 `public/app.js` 搬出來（#409，2026-08-05）：
 // `app.js` 模組頂層就會碰 document／localStorage，**node 裡 import 不進來**（實測；
 // `test/xss-id-escaping.test.js` 原本因此只能把那一行原始碼抓出來現場 eval）。
 // 於是任何「需要跟正式環境用同一份跳脫」的零 DOM 純模組（第一個是 `form-options.js`）都拿不到它，

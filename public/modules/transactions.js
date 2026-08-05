@@ -23,7 +23,7 @@ const allCategories = () => expenseParents();
 // 子類 <option>s（含「不分子類」空選項）。
 // ⚠️ 這個下拉是編輯彈窗的 onMount **事後重建**的，走不到 openForm 那條（form-options.js）——所以直接呼叫
 // 同一支產生器。原本這裡自己 map、而且**漏了「保留清單外的現值」**（settings.js 與 cashflow.js 的同族實作
-// 都有 unshift）⇒ 子類被刪掉或改名後，編輯任一筆就被靜靜清成空白、按儲存寫進去（#415 自審抓到，舊病）。
+// 都有 unshift）⇒ 子類被刪掉或改名後，編輯任一筆就被靜靜清成空白、按儲存寫進去（#409 自審抓到，舊病）。
 const subOptions = (parent, cur = '') =>
   // hasOwn（Codex r8#3）：分類叫 toString 且不在樹裡時會展開到原型函式而 TypeError
   subcategoryOptionsHtml(['', ...((Object.hasOwn(expTree, parent) && expTree[parent]) || [])], cur);

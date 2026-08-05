@@ -143,7 +143,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
     } else if (f.type === 'checkbox') {
       // ⚠️ 這個自製下拉**刻意不套用 form-options.js 的「保留現值」機制**，理由是它沒有那個病
-      //（#415 逐條查證，不是憑印象）：①它的值域只有是／否兩項，而送出時 `val = raw === 'true'`
+      //（#409 逐條查證，不是憑印象）：①它的值域只有是／否兩項，而送出時 `val = raw === 'true'`
       // 只會產生布林，所以**不存在「現在的值不在選項裡」的狀態**；②全部五個使用點
       //（transactions／cashflow／settings 的 applyAll、cards 的 clearPdfPassword、assets 的 clearAccountNo）
       // 都是**不落資料庫的一次性旗標**，`values` 從不帶值 ⇒ 這裡的 v 永遠是 ''（空值本來就不算「值」）。
