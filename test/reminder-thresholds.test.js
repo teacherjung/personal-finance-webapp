@@ -35,6 +35,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// 真正的 JS parser 與作用域分析（ESLint 自己用的那兩顆，隨 devDependency 的 eslint 一起裝）。
+// 為什麼不自己寫正則掃字串＝見 loadFrontendSubStatus 的「第二次教訓」。
+import { parse as parseJs } from 'espree';
+import { analyze as analyzeScopes } from 'eslint-scope';
 import { buildSummary, computeGoalTracking, monthKey, pairRefunds } from '../lib/derive.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -329,65 +333,122 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *    （Codex #413 r2 阻擋，值得原地記下來）：上一版只抓函式本體、再自己從 app.js 配一份乾淨的
  *    daysUntil，於是 subStatus 一個字都不用動就能繞過——把 import 改成 `daysUntil as rawDaysUntil`、
  *    緊接著 `const daysUntil = (d) => rawDaysUntil(d) + 1`，正式環境裡「停用日＝今天」的訂閱
- *    回 'ending'（＝仍算使用中）、總覽項數與訂閱頁分組走散，而全 1494 題靜靜全綠。
+ *    回 'ending'（＝仍算使用中）、總覽項數與訂閱頁分組走散，而全套考題靜靜全綠。
  *    **函式本體位元組相同 ≠ 行為相同：名字綁到誰也是口徑的一部分**，所以下面加了 assertDaysUntilBinding。
+ *
+ * ⚠️ **第二次教訓（Codex 複驗再度阻擋，審 `3c4414c`）：那一版的綁定檢查是自己寫的正則，
+ *    於是同一個家族又穿過去一次。** 複驗者的繞法是兩件事湊起來：
+ *    (a) 一行**註解掉的假 import**（`// import { daysUntil } from '../app.js';`）被正則當成
+ *        合法綁定收下；(b) 真正生效的是 `const { daysUntil } = { daysUntil: d => rawDaysUntil(d) + 1 }`
+ *        ——**解構**宣告，不符合正則只認得的 `const daysUntil` 那一種形狀。
+ *    正式前端因此把停用當天的 0 加成 1、`subStatus` 錯回 'ending'，全套考題再次靜靜全綠。
+ *    這正是 AGENTS.md 那條硬規則在說的事（掃原始碼的形狀考題**要先去掉註解、不可只認得一種寫法**），
+ *    也是 eslint.config.js 檔頭記了三次的同一個病：**列舉繞法補不完，要把判斷交給 parser。**
+ *    所以整段改成真正的語法樹＋作用域分析（espree 解析、eslint-scope 建作用域圖），
+ *    直接問「subStatus 裡的這個 daysUntil，依語言規則綁到誰」。註解對 parser 而言不存在；
+ *    解構、`var`／`let`／`function`／`class`、函式參數、內層遮蔽⋯⋯對作用域分析也是同一件事——
+ *    **不是多認得一種形狀，是不再靠認形狀。**
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明——這段話自己也要禁得起反例）：
  *    1. 只管 subStatus 這條路。訂閱頁若改成**不靠 subStatus 分組**（換另一套判斷）、
  *       或前端別處自己再算一次停用日，本題照樣綠——那要靠頁面層的考題，不在射程內。
- *    2. 綁定檢查只盯 `daysUntil` 這一個名字，而且是**讀原始碼文字**、不是真的解析模組：
- *       靜態具名 import 與同名宣告遮蔽這兩條路封住了，夠迂迴的手法（動態 import、
- *       中間模組轉一手再以 `daysUntil` 之名匯出）仍可能逃掉。
+ *    2. 綁定分析在 subscriptions.js **這一個檔案內**是完整的，但**不會跟著走進 app.js**：
+ *       它證明的是「`daysUntil` 這個名字綁到來自 `../app.js` 的同名具名 import」，
+ *       至於 app.js 那個匯出算得對不對，是 app.js 自己的考題。
+ *       （app.js 若改成轉手匯出 `export { x as daysUntil } from './y.js'`，本檔取不到就地宣告，
+ *       會**吵著紅**要人回來更新，不是靜靜綠。）
  *    3. subStatus 若改吃 daysUntil 以外的新相依，本題**不會靜靜綠**，但也不是好好轉紅：
  *       sandbox 裡會 ReferenceError（紅得很吵，代表有人得回來更新本題）。
+ *    4. 「抄原始碼出來現場跑」這個手法，本質上管不到**執行期才決定**的東西（動態 import、eval）。
+ *       要連這些都關掉，得把 subStatus 搬進零 DOM 模組、讓考題直接 import 正式模組。
+ *       那條路**刻意沒走**：subStatus 吃的 parseLocalDate／daysUntil 住在 app.js，而 app.js
+ *       模組頂層就直接綁 DOM（`document.querySelectorAll('#nav a')`、`window.addEventListener`、
+ *       `$('#snapshotBtn').addEventListener`——最後那個在 node 裡當場拋錯），import 不起來；
+ *       要搬 subStatus 就得連那兩支一起搬出 app.js 再回頭轉匯出，是動到前端共用核心的重構，
+ *       而 AGENTS.md 對「改前端」要求的驗證（**全部頁面 reload 無 console error**）在這支
+ *       純考題 PR 的環境裡做不到，沒驗過就改共用核心比留著這條劃界更危險。
  */
 function loadFrontendSubStatus() {
-  const appSrc = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
-  const parseLocal = /export const parseLocalDate = \([\s\S]*?\n\};/.exec(appSrc);
-  assert.ok(parseLocal, 'app.js 找不到 parseLocalDate 的定義（改名了？那要一起更新本考題）');
-  const daysUntilLine = appSrc.split('\n').find(l => l.includes('export const daysUntil'));
-  assert.ok(daysUntilLine, 'app.js 找不到 daysUntil 的定義（改名了？那要一起更新本考題）');
-  const subSrc = readFileSync(join(ROOT, 'public/modules/subscriptions.js'), 'utf8');
-  const statusFn = /export function subStatus\(s\) \{[\s\S]*?\n\}/.exec(subSrc);
-  assert.ok(statusFn, 'subscriptions.js 找不到 subStatus 的定義（改名了？那要一起更新本考題）');
-  assertDaysUntilBinding(subSrc);
-  const src = [parseLocal[0], daysUntilLine, statusFn[0]]
-    .join('\n').replace(/export const /g, 'const ').replace(/export function /g, 'function ');
+  const app = parseModule('public/app.js');
+  const subs = parseModule('public/modules/subscriptions.js');
+  const status = functionSourceOf(subs, 'subStatus');
+  assertDaysUntilBinding(subs, status.node);
+  const src = [constSourceOf(app, 'parseLocalDate'), constSourceOf(app, 'daysUntil'), status.source].join('\n');
   return /** @type {(s: any) => string} */ (new Function(`${src}\nreturn subStatus;`)());
 }
 
-/**
- * subStatus 吃到的 `daysUntil`，必須就是 app.js 匯出的那一個：
- * 模組裡沒有同名宣告把它遮掉，而且它是**沒改名**的具名 import、來源就是 `../app.js`。
- * （這條檢查存在的唯一理由＝上面那段 r2 繞法；沒有它，本檔宣稱守住的東西守不住。）
- *
- * 註：`daysUntil as rawDaysUntil` 這種改名 import **不必另外斷言**——改名之後本地就沒有
- * 叫 daysUntil 的 import 綁定了，要嘛被下面的「宣告遮蔽」抓（就地包一層），
- * 要嘛被「恰好一個綁定」抓（少了）。不寫沒有突變撐得起的多餘斷言。
- */
-function assertDaysUntilBinding(subSrc) {
-  // (a) 就地宣告同名＝遮蔽 import（r2 繞法本人）
-  const shadow = /^[ \t]*(?:const|let|var|function|class)\s+daysUntil\b/m.exec(subSrc);
-  assert.equal(shadow, null,
-    `subscriptions.js 不可自行宣告 daysUntil 遮蔽 import（實際看到：${shadow ? shadow[0].trim() : ''}）`);
+/** 用真正的 parser 把一支模組解析成語法樹＋作用域圖（不是自己寫正則掃字串——見上面第二次教訓）。
+ *  註：本函式與 assertDaysUntilBinding 各有一條 `assert.ok(scope/fnScope)`＝**函式庫回傳值的防呆**，
+ *  不是守正式碼的斷言（ES module 必有模組作用域、function 宣告必有作用域，正式碼怎麼改都碰不到它們）；
+ *  留著只為了 espree／eslint-scope 哪天換 API 時錯得看得懂。 */
+function parseModule(relPath) {
+  const src = readFileSync(join(ROOT, relPath), 'utf8');
+  const ast = parseJs(src, { ecmaVersion: 'latest', sourceType: 'module', range: true, loc: true });
+  const manager = analyzeScopes(ast, { ecmaVersion: 2026, sourceType: 'module' });
+  const scope = manager.scopes.find((/** @type {any} */ s) => s.type === 'module');
+  assert.ok(scope, `${relPath} 解析不出模組作用域（它還是 ES module 嗎？）`);
+  return { relPath, src, manager, scope };
+}
 
-  // (b) 掃出所有具名 import 的綁定：{ 遠端匯出名, 本地名, 來源 }
-  const bindings = [];
-  for (const stmt of subSrc.matchAll(/import\s*\{([^}]*)\}\s*from\s*'([^']+)'/g)) {
-    for (const raw of stmt[1].split(',')) {
-      const spec = raw.trim();
-      if (!spec) continue;
-      const alias = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(spec);
-      bindings.push({ imported: alias ? alias[1] : spec, local: alias ? alias[2] : spec, from: stmt[2] });
-    }
+/** 取模組頂層某個名字的宣告。找不到／不只一份都吵著紅——改名時要有人回來更新本題，而不是靜靜跳過。 */
+function topLevelDef(mod, name) {
+  const variable = mod.scope.variables.find((/** @type {any} */ v) => v.name === name);
+  assert.ok(variable, `${mod.relPath} 頂層找不到 ${name}（改名或改成轉手匯出了？那要一起更新本考題）`);
+  assert.equal(variable.defs.length, 1,
+    `${mod.relPath} 的 ${name} 有 ${variable.defs.length} 份宣告，抄哪一份會變成用猜的`);
+  return variable.defs[0];
+}
+
+/** 把 `export const NAME = …` 還原成 sandbox 跑得動的 `const NAME = …;`（用語法樹的位置切，不是正則）。 */
+function constSourceOf(mod, name) {
+  const def = topLevelDef(mod, name);
+  assert.equal(def.type, 'Variable', `${mod.relPath} 的 ${name} 不是就地宣告的常數（實際：${def.type}）`);
+  assert.ok(def.node.init, `${mod.relPath} 的 ${name} 沒有初始值`);
+  return `const ${name} = ${mod.src.slice(def.node.init.range[0], def.node.init.range[1])};`;
+}
+
+/** 取頂層 function 宣告的節點與原始碼（`export` 關鍵字不在節點範圍內，切出來就能直接跑）。 */
+function functionSourceOf(mod, name) {
+  const def = topLevelDef(mod, name);
+  assert.equal(def.type, 'FunctionName', `${mod.relPath} 的 ${name} 不是頂層 function 宣告（實際：${def.type}）`);
+  return { node: def.node, source: mod.src.slice(def.node.range[0], def.node.range[1]) };
+}
+
+/**
+ * subStatus 裡用到的**每一個** `daysUntil`，依語言的作用域規則都必須解析到
+ * 「模組層、來自 `../app.js`、沒改名的具名 import」——也就是本題配進 sandbox 的那一份。
+ * （這條檢查存在的唯一理由＝上面兩段繞法；沒有它，本檔宣稱守住的東西守不住。）
+ */
+function assertDaysUntilBinding(mod, fnNode) {
+  const fnScope = mod.manager.acquire(fnNode);
+  assert.ok(fnScope, `${mod.relPath} 取不到 subStatus 的作用域`);
+  const refs = [];
+  const collect = (/** @type {any} */ scope) => {
+    for (const ref of scope.references) if (ref.identifier.name === 'daysUntil') refs.push(ref);
+    scope.childScopes.forEach(collect);
+  };
+  collect(fnScope);
+  assert.ok(refs.length > 0,
+    'subStatus 裡一個 daysUntil 都沒用到＝這條綁定檢查變成空包彈（判準換人了？那要一起更新本考題）');
+
+  for (const ref of refs) {
+    const line = ref.identifier.loc.start.line;
+    const variable = ref.resolved;
+    assert.ok(variable, `${mod.relPath}:${line} 的 daysUntil 解析不到任何宣告（全域漏網？）`);
+    assert.equal(variable.scope.type, 'module',
+      `${mod.relPath}:${line} 的 daysUntil 必須綁到模組層的 import，不可被內層宣告或參數遮蔽（實際作用域：${variable.scope.type}）`);
+    assert.equal(variable.defs.length, 1,
+      `${mod.relPath} 的 daysUntil 有 ${variable.defs.length} 份宣告`);
+    const def = variable.defs[0];
+    assert.equal(def.type, 'ImportBinding',
+      `${mod.relPath}:${line} 的 daysUntil 必須來自 import，不可是模組裡就地宣告的（實際：${def.type}——解構／var／function／class 就地包一層全走這條）`);
+    assert.equal(def.node.type, 'ImportSpecifier',
+      'daysUntil 必須是具名 import（default／namespace 引入都算換了一把尺）');
+    assert.equal(def.node.imported.name, 'daysUntil',
+      'daysUntil 必須綁到 app.js 的同名匯出（`X as daysUntil`＝subStatus 換了一把尺，本題卻還配著舊尺）');
+    assert.equal(def.parent.source.value, '../app.js',
+      'daysUntil 必須來自 ../app.js（改從別的模組拿＝正式環境跑的不再是本題配進去的那一份）');
   }
-  const local = bindings.filter(b => b.local === 'daysUntil');
-  assert.equal(local.length, 1,
-    `subscriptions.js 必須（且只能）有一個本地名叫 daysUntil 的 import 綁定，實際 ${local.length} 個（改名 import／整條拿掉都會走到這裡）`);
-  assert.equal(local[0].imported, 'daysUntil',
-    'daysUntil 必須綁到 app.js 的同名匯出（`X as daysUntil`＝subStatus 換了一把尺，本題卻還配著舊尺）');
-  assert.equal(local[0].from, '../app.js',
-    'daysUntil 必須來自 ../app.js（改從別的模組拿＝正式環境跑的不再是本題配進去的那一份）');
 }
 
 test('退款配對｜同一天的消費與退款不配對（規則寫的是「日期較早」）', () => {
