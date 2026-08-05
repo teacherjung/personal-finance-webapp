@@ -133,6 +133,8 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
 
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((tabs.match(/aria-label="[^"]+" title="[^"]+"/g) || []).length, 6);
+  assert.equal((tabs.match(/class="stock-tab-ear stock-tab-ear-left" aria-hidden="true"/g) || []).length, 6);
+  assert.equal((tabs.match(/class="stock-tab-ear stock-tab-ear-right" aria-hidden="true"/g) || []).length, 6);
   for (const tab of STOCK_RESEARCH_TABS) {
     assert.doesNotMatch(icon(tab.icon), /aria-hidden="true"><\/svg>/, `${tab.key} icon must not be empty`);
   }
@@ -147,15 +149,21 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   assert.match(cssRule(css, '.stock-tab:focus-visible'), /outline:\s*3px solid var\(--accent\)/);
   assert.equal(cssPx(cssRule(css, '.stock-tab:focus-visible'), 'outline-offset'), -5);
   assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--frame\)/);
-  assert.match(cssRule(css, '.stock-tab.active'), /border-bottom:\s*2px solid var\(--frame\)/);
-  assert.match(cssRule(css, '.stock-tab.active'), /border-radius:\s*16px 16px 12px 12px/);
+  assert.match(cssRule(css, '.stock-tab.active'), /border-bottom:\s*none/);
+  assert.match(cssRule(css, '.stock-tab.active'), /border-radius:\s*16px 16px 0 0/);
   assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
   assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /right:\s*12px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-3px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /left:\s*12px/);
-  assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*5px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /right:\s*0/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-5px/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /left:\s*0/);
+  assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*7px/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /background:\s*var\(--card\)/);
+  assert.match(cssRule(css, '.stock-tab-ear'), /pointer-events:\s*none/);
+  assert.match(cssRule(css, '.stock-tab.active .stock-tab-ear'), /display:\s*block/);
+  assert.match(cssRule(css, '.stock-tab-ear-left'), /left:\s*-18px/);
+  assert.match(cssRule(css, '.stock-tab-ear-left'), /circle at 0 0/);
+  assert.match(cssRule(css, '.stock-tab-ear-right'), /right:\s*-18px/);
+  assert.match(cssRule(css, '.stock-tab-ear-right'), /circle at 100% 0/);
   assert.match(cssRule(css, '.stock-tab-panel'), /margin-top:\s*-2px/);
 
   const bridgeRule = cssRule(css, '.stock-tab.active::after');
@@ -232,8 +240,8 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
   assert.match(cssRule(css, '.stock-tab', mobileAt), /flex:\s*0 0 52px/);
   assert.match(cssRule(css, '.stock-tab.active', mobileAt), /flex-basis:\s*104px/);
-  assert.match(cssRule(css, '.stock-tab span', mobileAt), /display:\s*none/);
-  assert.match(cssRule(css, '.stock-tab.active span', mobileAt), /display:\s*inline/);
+  assert.match(cssRule(css, '.stock-tab-label', mobileAt), /display:\s*none/);
+  assert.match(cssRule(css, '.stock-tab.active .stock-tab-label', mobileAt), /display:\s*inline/);
 });
 
 test('個股研究森林工作面｜部位帶內距與負邊距成對避免整頁橫向溢出', async () => {

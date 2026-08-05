@@ -148,8 +148,8 @@ body.stock-research-route > main {
 .stock-tab.active {
   z-index: 1;
   border-color: var(--frame);
-  border-bottom: 2px solid var(--frame);
-  border-radius: 16px 16px 12px 12px;
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
   color: var(--accent-hover);
   background: var(--card);
 }
@@ -168,11 +168,42 @@ body.stock-research-route > main {
 .stock-tab.active::after {
   content: "";
   position: absolute;
-  right: 12px;
-  bottom: -3px;
-  left: 12px;
-  height: 5px;
+  z-index: 2;
+  right: 0;
+  bottom: -5px;
+  left: 0;
+  height: 7px;
   background: var(--card);
+}
+
+.stock-tab-ear {
+  display: none;
+  position: absolute;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.stock-tab.active .stock-tab-ear {
+  z-index: 3;
+  display: block;
+}
+
+.stock-tab-ear-left {
+  left: -18px;
+  background: radial-gradient(circle at 0 0,
+    transparent 0 14px,
+    var(--frame) 14px 16px,
+    var(--card) 16px);
+}
+
+.stock-tab-ear-right {
+  right: -18px;
+  background: radial-gradient(circle at 100% 0,
+    transparent 0 14px,
+    var(--frame) 14px 16px,
+    var(--card) 16px);
 }
 
 .stock-tab-panel {
@@ -997,17 +1028,17 @@ body.stock-research-route > main {
     border-radius: 14px 14px 0 0;
   }
 
-  .stock-tab span {
+  .stock-tab-label {
     display: none;
   }
 
   .stock-tab.active {
     flex-basis: 104px;
     gap: 6px;
-    border-radius: 14px 14px 10px 10px;
+    border-radius: 14px 14px 0 0;
   }
 
-  .stock-tab.active span {
+  .stock-tab.active .stock-tab-label {
     display: inline;
   }
 

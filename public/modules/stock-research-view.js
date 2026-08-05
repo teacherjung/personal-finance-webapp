@@ -256,7 +256,7 @@ function tabsHtml(view, h) {
   const links = STOCK_RESEARCH_TABS.map(tab => {
     const active = tab.key === view.activeTab;
     const href = `#stock?symbol=${encodeURIComponent(view.symbol)}&tab=${encodeURIComponent(tab.key)}`;
-    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}" aria-label="${h.e(tab.label)}" title="${h.e(tab.label)}"${active ? ' aria-current="page"' : ''}>${icon(tab.icon, 18)}<span>${h.e(tab.label)}</span></a>`;
+    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}" aria-label="${h.e(tab.label)}" title="${h.e(tab.label)}"${active ? ' aria-current="page"' : ''}><i class="stock-tab-ear stock-tab-ear-left" aria-hidden="true"></i>${icon(tab.icon, 18)}<span class="stock-tab-label">${h.e(tab.label)}</span><i class="stock-tab-ear stock-tab-ear-right" aria-hidden="true"></i></a>`;
   }).join('');
   return `<nav class="stock-tabs" aria-label="個股研究分頁">
     <div class="stock-tabs-track">${links}</div>
