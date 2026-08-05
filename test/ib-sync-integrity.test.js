@@ -128,14 +128,18 @@ test('IB 第一步｜Flex 拒絕請求（Status 不是 Success）→ 立刻丟�
   const real = globalThis.fetch;
   for (const status of ['Fail', 'Warn', undefined]) {
     const statusTag = status === undefined ? '' : `<Status>${status}</Status>`;
-    globalThis.fetch = /** @type {any} */ (fakeIbSequence([
+    const fake = fakeIbSequence([
       `<FlexStatementResponse>${statusTag}<ErrorMessage>Invalid token</ErrorMessage></FlexStatementResponse>`,
-    ]));
+    ]);
+    globalThis.fetch = /** @type {any} */ (fake);
     try {
       const err = await fetchFlex('tok', 'qid', () => 1).then(() => null, (/** @type {any} */ e) => e);
       assert.ok(err, `Status=${status}：IB 拒絕了請求，卻沒有擋下來`);
       assert.match(err.message, /Invalid token/,
         '要把 IB 給的原因原樣帶出來（不然使用者不知道是 Token 還是 Query ID 的問題）');
+      // ⚠️ 次數也是契約（Codex #407 r2 M③）：第一步就該停，不可偷偷往下打第二步。
+      assert.equal(fake.calls, 1,
+        `第一步被拒就該停＝只有一次請求，實際 ${fake.calls} 次（往下打＝帶著空的 ReferenceCode 走）`);
     } finally { globalThis.fetch = real; }
   }
 });
@@ -172,16 +176,20 @@ test('IB 第二步｜1019（還在產生中）真的會重試，下一輪成功�
   //    解析成數字 1019，原本的 `r.ErrorCode !== '1019'` 恆真 ⇒ 白名單失效、重試是死碼，
   //    IB 只要沒有立刻備妥報表就會失敗（訊息還寫著 in progress）。修法＝比較前先 String()。
   const real = globalThis.fetch;
-  globalThis.fetch = /** @type {any} */ (fakeIbSequence([
+  const fake = fakeIbSequence([
     SEND_OK,
     '<FlexStatementResponse><ErrorCode>1019</ErrorCode><ErrorMessage>Statement generation in progress.</ErrorMessage></FlexStatementResponse>',
     '<FlexQueryResponse><FlexStatements><FlexStatement accountId="U-RETRY">'
       + '<AccountInformation currency="USD"/></FlexStatement></FlexStatements></FlexQueryResponse>',
-  ]));
+  ]);
+  globalThis.fetch = /** @type {any} */ (fake);
   try {
     const parsed = await fetchFlex('tok', 'qid', () => 1);
     assert.equal(parsed.account, 'U-RETRY',
       '1019 之後的重試必須真的發生並拿到報表（拿不到＝白名單或重試上限壞了）');
+    // ⚠️ 次數也是契約（Codex #407 r2 M③）：成功之後不可再多抓一次。
+    assert.equal(fake.calls, 3,
+      `恰好三次請求（SendRequest→1019→成功），實際 ${fake.calls} 次`);
   } finally { globalThis.fetch = real; }
 });
 
@@ -189,38 +197,67 @@ test('IB 第二步｜1019（還在產生中）真的會重試，下一輪成功�
 // 三、同步寫回資料庫：壞值不可覆寫好值（lib/services/ib-sync.js 三道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('IB 同步｜官方淨值的 cash/stock 是壞值 → 丟棄它走自算，一個壞欄位不可炸掉整次同步', async () => {
-  // ⚠️ 誠實劃界（Codex #407 r1 M③ 更正了我原本的說法）：拿掉這道服務層驗證時，壞值**不會**
-  //    靜靜存進資料庫——最後的寫入櫃檯（lib/schema.js 的 settings 枚舉驗證）會把**整次同步**
-  //    整批拒絕（「settings 含非法值：ib.lastEquity」）。所以這道守衛真正的價值是：
-  //    **一個壞掉的 Flex 欄位不該讓整次同步失敗**——丟棄那個欄位、持倉與現金照樣存進去，
-  //    槓桿與斷頭距離改走 fallback 自算（`lastEquity` 為 null 時的既定行為）。
-  //    （原始的「壞值會存進去、把融資風險藏起來」是我寫錯了：櫃檯攔在後面。）
-  for (const badEquity of [
-    { stock: 5000, cash: Number.NaN },
-    { stock: 5000, cash: '一千' },
-    { stock: 5000 },                     // 缺 cash 欄
-    { cash: 1000 },                      // 缺 stock 欄
+test('IB 同步｜官方淨值壞掉時：清掉上一次的舊值、走 fallback，而且其餘資料照常存進去', async () => {
+  // ⚠️ 這一題被 Codex 打回兩次，兩次都對，值得完整記下來：
+  //    r1 我原本寫「壞值會靜靜存進去、把融資風險藏起來」——錯：寫入櫃檯會把整次同步整批拒絕。
+  //    r2 我改成「一個壞欄位不該炸掉整次同步」，但 fixture 是**直接注入** syncIb 的，
+  //       沒有走真 parser；而真 parser 當時用 `Number(e.cash || 0)`，缺欄／空白會先變成
+  //       **合法的 0** ⇒ 守衛放行 ⇒ 官方淨值被存成「現金 0」＝**看起來沒有融資**。
+  //       那是一個真 bug，已在同一支 PR 修掉（lib/ib.js 的 numOrNull 嚴格取值）。
+  //    所以這一題現在走**完整路徑**：raw Flex → parseStatement → syncIb。
+  //    另外先種一筆「上一次的舊官方淨值」——否則「壞值時保留舊值」的突變會全綠（r2 H②）。
+  const rawFlex = (/** @type {Record<string, any>} */ equityRow) => ({
+    FlexQueryResponse: {
+      FlexStatements: {
+        FlexStatement: {
+          accountId: 'U-TEST', AccountInformation: { currency: 'USD' },
+          EquitySummaryInBase: { EquitySummaryByReportDateInBase: [equityRow] },
+          OpenPositions: { OpenPosition: [{ symbol: 'CSPX', currency: 'USD', position: '10', markPrice: '500', costBasisPrice: '480' }] },
+        },
+      },
+    },
+  });
+  const OLD_EQUITY = { stock: 9999, cash: -8888 };   // 上一次同步存下來的官方淨值
+
+  for (const badRow of [
+    { reportDate: '20261231', stock: '5000' },              // 缺 cash 欄（Flex 沒勾）
+    { reportDate: '20261231', stock: '5000', cash: '' },    // cash 是空字串
+    { reportDate: '20261231', stock: '5000', cash: 'abc' }, // cash 不是數字
+    { reportDate: '20261231', cash: '1000' },               // 缺 stock 欄
   ]) {
-    store.save({ ...store.emptyDb() });
-    const r = await syncIb(/** @type {any} */ (fakeParsed({
-      equity: badEquity,
-      positions: [{ symbol: 'CSPX', currency: 'USD', quantity: 10, marketPrice: 500, avgCost: 480 }],
-    })));
+    const db0 = store.emptyDb();
+    db0.settings = { ...db0.settings, ib: { ...(db0.settings.ib || {}), lastEquity: OLD_EQUITY } };
+    store.save(db0);
+    const parsed = parseStatement(rawFlex(badRow), () => null);
+    const r = await syncIb(/** @type {any} */ (async () => parsed));
     const db = store.load();
     assert.equal(db.settings?.ib?.lastEquity ?? null, null,
-      `equity=${JSON.stringify(badEquity)}：壞的官方淨值必須丟棄（回 null 走 fallback 自算）`);
+      `${JSON.stringify(badRow)}：壞的官方淨值要清成 null（走 fallback 自算）——`
+      + '①存進去＝槓桿看起來沒有融資（最危險的方向）②保留上一次的舊值＝拿過期數字算風險');
     assert.equal(r.created, 1,
-      `equity=${JSON.stringify(badEquity)}：其餘資料要照常同步——`
-      + '不丟棄的話整次同步會被寫入櫃檯整批拒絕，持倉與現金一筆都存不進去');
+      `${JSON.stringify(badRow)}：其餘資料要照常同步（不丟棄的話整次同步會被寫入櫃檯整批拒絕）`);
     assert.ok((db.holdings ?? []).some((/** @type {any} */ h) => h.symbol === 'CSPX'),
-      '持倉必須真的存進資料庫（這才是「一個壞欄位不炸掉整次同步」的證明）');
+      '持倉必須真的存進資料庫');
   }
-  // 反面：合法的官方淨值要照存（避免整段被關掉也綠）。
-  store.save({ ...store.emptyDb() });
-  await syncIb(/** @type {any} */ (fakeParsed({ equity: { stock: 5000, cash: -1200 } })));
-  assert.deepEqual(store.load().settings?.ib?.lastEquity, { stock: 5000, cash: -1200 },
-    '合法官方淨值（含負現金＝融資）要照存，不可誤丟');
+
+  // 反面一：合法的官方淨值（含負現金＝融資）要照存。
+  {
+    const db0 = store.emptyDb();
+    store.save(db0);
+    const parsed = parseStatement(rawFlex({ reportDate: '20261231', stock: '5000', cash: '-1200' }), () => null);
+    await syncIb(/** @type {any} */ (async () => parsed));
+    const eq = store.load().settings?.ib?.lastEquity;
+    assert.equal(eq?.stock, 5000); assert.equal(eq?.cash, -1200);
+  }
+  // 反面二：**真正的 0** 現金是合法值，不可被當成「壞值」丟掉。
+  {
+    const db0 = store.emptyDb();
+    store.save(db0);
+    const parsed = parseStatement(rawFlex({ reportDate: '20261231', stock: '5000', cash: '0' }), () => null);
+    await syncIb(/** @type {any} */ (async () => parsed));
+    assert.equal(store.load().settings?.ib?.lastEquity?.cash, 0,
+      '現金確實是零＝合法，嚴格取值不可把它一起丟掉（那會變成誤殺）');
+  }
 });
 
 test('IB 同步｜手動持股的代號有大小寫或空白差異 → 認得是同一檔，不可重複建立', async () => {
