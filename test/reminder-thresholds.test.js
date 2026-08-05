@@ -184,6 +184,9 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
   //    前端那份 `> 0` 改成 `>= 0` 沒有任何一題會紅）。前端模組頂層就碰 document、在 node 裡 import 不起來，
   //    所以照 test/xss-id-escaping.test.js 的既有做法：把**正式環境真正在跑的那段原始碼**抓出來現場執行，
   //    不是在測試裡另抄一份。
+  // ⚠️ 光抄函式本體還不夠（Codex #413 r2 阻擋）：subStatus 一個字不動、只換掉它吃到的 daysUntil
+  //    （改名 import 再就地包一層）就能繞過。名字綁到誰也是口徑的一部分——見 loadFrontendSubStatus
+  //    的 assertDaysUntilBinding 與該處逐條寫明的「擋不住什麼」。
   const front = loadFrontendSubStatus();
   const subOn = (dateIso) => ({
     subscriptions: [{ id: 's1', name: '測試訂閱', amount: 300, cycle: 'monthly',
@@ -210,9 +213,21 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  * 它依賴 app.js 的 parseLocalDate／daysUntil，所以連那兩段一起抓過來（同樣是正式碼）。
  * 抓不到就直接讓考題失敗——函式改名時要有人來更新這題，而不是靜靜跳過。
  *
- * ⚠️ 誠實劃界：這只驗到 **subStatus 這個函式本身的天數口徑**。
- *    訂閱頁若改成不靠 subStatus 分組（換另一套判斷）、或前端別處自己再算一次停用日，
- *    本題照樣綠——那種走散要靠頁面層的考題，不在這一題的射程內。
+ * ⚠️ 這是「把原始碼抄出來現場跑」的手法，所以除了函式本體，**還必須驗它吃到的名字綁到誰**
+ *    （Codex #413 r2 阻擋，值得原地記下來）：上一版只抓函式本體、再自己從 app.js 配一份乾淨的
+ *    daysUntil，於是 subStatus 一個字都不用動就能繞過——把 import 改成 `daysUntil as rawDaysUntil`、
+ *    緊接著 `const daysUntil = (d) => rawDaysUntil(d) + 1`，正式環境裡「停用日＝今天」的訂閱
+ *    回 'ending'（＝仍算使用中）、總覽項數與訂閱頁分組走散，而全 1494 題靜靜全綠。
+ *    **函式本體位元組相同 ≠ 行為相同：名字綁到誰也是口徑的一部分**，所以下面加了 assertDaysUntilBinding。
+ *
+ * ⚠️ 誠實劃界（擋不住什麼，逐條寫明——這段話自己也要禁得起反例）：
+ *    1. 只管 subStatus 這條路。訂閱頁若改成**不靠 subStatus 分組**（換另一套判斷）、
+ *       或前端別處自己再算一次停用日，本題照樣綠——那要靠頁面層的考題，不在射程內。
+ *    2. 綁定檢查只盯 `daysUntil` 這一個名字，而且是**讀原始碼文字**、不是真的解析模組：
+ *       靜態具名 import 與同名宣告遮蔽這兩條路封住了，夠迂迴的手法（動態 import、
+ *       中間模組轉一手再以 `daysUntil` 之名匯出）仍可能逃掉。
+ *    3. subStatus 若改吃 daysUntil 以外的新相依，本題**不會靜靜綠**，但也不是好好轉紅：
+ *       sandbox 裡會 ReferenceError（紅得很吵，代表有人得回來更新本題）。
  */
 function loadFrontendSubStatus() {
   const appSrc = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
@@ -223,9 +238,44 @@ function loadFrontendSubStatus() {
   const subSrc = readFileSync(join(ROOT, 'public/modules/subscriptions.js'), 'utf8');
   const statusFn = /export function subStatus\(s\) \{[\s\S]*?\n\}/.exec(subSrc);
   assert.ok(statusFn, 'subscriptions.js 找不到 subStatus 的定義（改名了？那要一起更新本考題）');
+  assertDaysUntilBinding(subSrc);
   const src = [parseLocal[0], daysUntilLine, statusFn[0]]
     .join('\n').replace(/export const /g, 'const ').replace(/export function /g, 'function ');
   return /** @type {(s: any) => string} */ (new Function(`${src}\nreturn subStatus;`)());
+}
+
+/**
+ * subStatus 吃到的 `daysUntil`，必須就是 app.js 匯出的那一個：
+ * 模組裡沒有同名宣告把它遮掉，而且它是**沒改名**的具名 import、來源就是 `../app.js`。
+ * （這條檢查存在的唯一理由＝上面那段 r2 繞法；沒有它，本檔宣稱守住的東西守不住。）
+ *
+ * 註：`daysUntil as rawDaysUntil` 這種改名 import **不必另外斷言**——改名之後本地就沒有
+ * 叫 daysUntil 的 import 綁定了，要嘛被下面的「宣告遮蔽」抓（就地包一層），
+ * 要嘛被「恰好一個綁定」抓（少了）。不寫沒有突變撐得起的多餘斷言。
+ */
+function assertDaysUntilBinding(subSrc) {
+  // (a) 就地宣告同名＝遮蔽 import（r2 繞法本人）
+  const shadow = /^[ \t]*(?:const|let|var|function|class)\s+daysUntil\b/m.exec(subSrc);
+  assert.equal(shadow, null,
+    `subscriptions.js 不可自行宣告 daysUntil 遮蔽 import（實際看到：${shadow ? shadow[0].trim() : ''}）`);
+
+  // (b) 掃出所有具名 import 的綁定：{ 遠端匯出名, 本地名, 來源 }
+  const bindings = [];
+  for (const stmt of subSrc.matchAll(/import\s*\{([^}]*)\}\s*from\s*'([^']+)'/g)) {
+    for (const raw of stmt[1].split(',')) {
+      const spec = raw.trim();
+      if (!spec) continue;
+      const alias = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(spec);
+      bindings.push({ imported: alias ? alias[1] : spec, local: alias ? alias[2] : spec, from: stmt[2] });
+    }
+  }
+  const local = bindings.filter(b => b.local === 'daysUntil');
+  assert.equal(local.length, 1,
+    `subscriptions.js 必須（且只能）有一個本地名叫 daysUntil 的 import 綁定，實際 ${local.length} 個（改名 import／整條拿掉都會走到這裡）`);
+  assert.equal(local[0].imported, 'daysUntil',
+    'daysUntil 必須綁到 app.js 的同名匯出（`X as daysUntil`＝subStatus 換了一把尺，本題卻還配著舊尺）');
+  assert.equal(local[0].from, '../app.js',
+    'daysUntil 必須來自 ../app.js（改從別的模組拿＝正式環境跑的不再是本題配進去的那一份）');
 }
 
 test('退款配對｜同一天的消費與退款不配對（規則寫的是「日期較早」）', () => {
