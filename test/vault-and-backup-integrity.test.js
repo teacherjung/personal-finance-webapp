@@ -15,7 +15,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, rmSync, writeFileSync, readFileSync, mkdtempSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync, readFileSync, readdirSync, mkdtempSync, mkdirSync, copyFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,7 @@ process.env.STORE_FILE = TEST_STORE;
 const store = await import('../lib/store.js');
 const { sanitizeDbForWrite, ALL_COLLECTIONS } = await import('../lib/schema.js');
 const { saveStoreRules } = await import('../lib/services/store-rules.js');
+const { stripSecretsForBackup } = await import('../lib/secret-fields.js');
 
 /** 本檔製造出來的暫存檔（含各種 .bak）收工一起刪。 */
 const TRASH = [TEST_STORE];
@@ -128,8 +129,12 @@ test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留�
 //    （⚠️ 標題裡的「店名規則的」不是贅字：分類管理那兩處的同句承諾已於 2026-08-05 由 William 拍板
 //      改成文案修正，不走備份——見下方誠實劃界。本節的射程只有店名規則這一條路。）
 //
-// ⚠️ 誠實劃界（#410 r5 Low）——UI 上曾經有三處寫著「儲存前自動備份。」，本節只守得住第一處：
+// ⚠️ 誠實劃界（#410 r5 Low、r10 更新）——UI 上曾經有三處寫著「儲存前自動備份。」，本節只守得住第一處：
 //    ①店名規則（public/modules/settings-store-rules.js:100）→ store-rules.js:130 `backupNow('pre-rules')`：本節守著。
+//      ⚠️ r10 起那句文案**不再無條件承諾**：它已改成「別只靠系統的自動備份（app 跑在自己電腦上才有
+//      那一份，而且失敗了畫面不會講）」——因為 `public/` 兩種模式共用同一份 HTML，而
+//      `lib/repo.js:252` 的 `backupNow` 在雲端一律回 false（＝雲端版沒有那一份）。
+//      本節這一題守的正是它**本機版那一半**：「跑在自己電腦上才有那一份」必須是真的。
 //    ②支出分類管理與 ③收入分類管理：**正式程式根本沒有這個備份**——
 //      `grep -c backupNow lib/services/categories.js` ＝ 0，全 repo 只有 store-rules.js:130 與
 //      statement-import.js:467 兩個使用端（lib/repo.js:252 是轉供的 HOSTED wrapper、不是使用端）。
@@ -138,11 +143,11 @@ test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留�
 //      （理由是他評估「每次存分類多寫一份」的代價不值得）。**這是產品決定，不是缺口——
 //      不要再有人「順手把它補回來」**，要改請先問 William。
 //      因此本節不為 ②③ 立「備份有沒有做」的題（沒有承諾就沒有要守的東西）。
-//      ⚠️ 但**改後的文案自己又是一句承諾**，所以本節最後補了一題守它：r8 第一版寫「改動前先重啟一次
+//      ⚠️ 但**改後的文案自己又是一句承諾**，所以本節後面補了三題守它：r8 第一版寫「改動前先重啟一次
 //      後端，每次啟動都會另存 data/store.db.bak」——那句話在雲端版是假的（settings.js 兩種模式共用、
 //      沒有分流，而 `lib/repo.js:252` 的 `backupNow` 在雲端一律回 false ⇒ 那顆檔根本不存在），
 //      本機版也只是 best-effort（VACUUM 失敗只寫後端 console.warn，畫面完全不知道）。
-//      r9 定稿改成指向**兩種模式都有**的「匯出備份／匯入備份」按鈕（見本節最後一題）。
+//      r9 定稿改成指向**兩種模式都有**的「匯出備份／匯入備份」按鈕（見後三題）。
 // ⚠️ 同族的第二個缺口：store-rules.js:130 把 `backupNow` 的**回傳值丟掉**，而它的 docstring
 //    （lib/store.js:296、`@returns` 在 :299）明寫「回 false 讓呼叫端據實以告」
 //    （lib/repo.js:252 在 HOSTED 更是一律回 false＝不做也不假裝做）。
@@ -194,25 +199,36 @@ test('分類管理｜新文案指到的那兩顆自救按鈕，必須真的在�
   //    共用同一份、沒有模式分流，而**雲端版壓根不會產生那顆檔**（`lib/repo.js:252` 的 `backupNow`
   //    在雲端一律回 `false`）；就算在本機版，那顆啟動備份也是 best-effort（VACUUM 失敗只寫後端
   //    `console.warn`，前端完全不知道）。r9 定稿改成指向**兩種模式都有**的按鈕：
-  //    「到本頁最下面『資料與備份』按『匯出備份』存一份（真要救的時候，用旁邊的『匯入備份』整包還原）」。
+  //    「到本頁最下面『資料與備份』按『匯出備份』存一份（真要救的時候，用旁邊的『匯入備份』
+  //    把整包資料換回存檔那一刻——連那之後新記的帳也會一起回到當時）」。
   //    ⇒ 那是一句正面承諾，就必須有人守著它指到的東西還在（專案鐵則：保證要有考題撐著）。
   // ⚠️ 只釘「指標」不釘「文句」：本題斷言的是三個**名字**（資料與備份／匯出備份／匯入備份）
   //    與它們在檔案裡的實體，不是整段句子——William 審改措辭時不會被綁住。反過來，若有人把按鈕
-  //    改名／搬走／刪掉，或把文案改回指向只有本機才有的 `.bak`，本題轉紅、逼下一個人重新查證。
-  // ⚠️ 誠實劃界：本題只證明「那兩顆按鈕存在、在同一頁、在整頁最後一個區塊底下」。
-  //    「按下去匯得出完整資料、匯回去救得回來」是 `/api/export`／`/api/import` 自己的事，
-  //    由 test/hosted-secrets.test.js 的來回題等守著——本題不重複，也**不宣稱**守到那些。
+  //    改名／搬走／刪掉，或把文案改回指向只有本機才有的檔案，本題轉紅、逼下一個人重新查證。
+  // ⚠️ 誠實劃界：本題只證明「那兩顆按鈕存在、在同一頁、在整頁最後一個區塊底下，而且文案沒有
+  //    重新長出假承諾」。「按下去匯得出完整資料」由**下一題**守分類樹那一半（雲端版的投影）＋
+  //    test/server.test.js 的 export→import 來回（LOCAL）；機密／帳號那一半由
+  //    test/hosted-secrets.test.js 的來回題守著——本題不重複，也**不宣稱**守到那些。
   const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+  const stripTags = (/** @type {string} */ s) => s.replace(/<[^>]*>/g, '');
+  /** 抓按鈕上**看得見的那幾個字**：剝掉標籤，再丟掉 `${icon(...)}` 那截樣板插值。 @param {string} html */
+  const label = (html) => (stripTags(html).split('}').pop() || '').trim();
 
   // ① 自救出口與還原入口真的在檔案裡，而且字面就叫文案講的那個名字
   const exp = src.indexOf('href="/api/export"');
   assert.ok(exp > 0, '「匯出備份」那顆按鈕不見了——文案叫使用者動手前先按的東西必須真的存在');
-  assert.match(src.slice(exp, src.indexOf('</a>', exp)), /匯出備份/,
-    '那顆按鈕的字面必須就是「匯出備份」——名字對不上，使用者照文案在畫面上找不到它');
+  // ⚠️ 為什麼是「開頭」而不是「完全相等」（#410 r9 複驗 Low）：畫面上那顆的字面是「匯出備份 (JSON)」，
+  //    文案只引前半段「匯出備份」。照著找得到＝可接受，但**前綴關係是刻意的**，所以釘住它：
+  //    有人把按鈕改名成「下載備份」或「備份 (JSON)」時本題轉紅，逼他一起改文案。
+  const expLabel = label(src.slice(exp, src.indexOf('</a>', exp)));
+  assert.ok(expLabel.startsWith('匯出備份'),
+    `那顆按鈕的字面必須以「匯出備份」開頭（文案引的就是這四個字），實際讀到「${expLabel}」`
+    + '——名字對不上，使用者照文案在畫面上找不到它');
   const imp = src.indexOf('id="importBtn"');
   assert.ok(imp > 0, '「匯入備份」那顆按鈕不見了——文案說「真要救的時候用旁邊的匯入備份」，它必須在');
-  assert.match(src.slice(imp, src.indexOf('</button>', imp)), /匯入備份/,
-    '那顆按鈕的字面必須就是「匯入備份」');
+  const impLabel = label(src.slice(imp, src.indexOf('</button>', imp)));
+  assert.ok(impLabel.startsWith('匯入備份'),
+    `那顆按鈕的字面必須以「匯入備份」開頭，實際讀到「${impLabel}」`);
 
   // ② 兩顆都在「資料與備份」區塊底下，而那是整頁**最後**一個區塊（文案寫「本頁最下面」）
   const lastSection = src.lastIndexOf('class="section-title"');
@@ -221,7 +237,14 @@ test('分類管理｜新文案指到的那兩顆自救按鈕，必須真的在�
     + '多排一個區塊在它後面，這句指路就不準了');
   assert.ok(exp > lastSection && imp > lastSection, '那兩顆按鈕要在「資料與備份」區塊底下');
 
-  // ③ 兩段分類管理文案都要指到上面那三個名字，而且不可以再指向只有本機才有的 .bak
+  // ③ 兩段分類管理文案都要指到上面那三個名字，而且**不可以再承諾任何備份、也不可以指向本機專屬的東西**
+  //    ⚠️ r10 補強（#410 r9 複驗指出「守它的考題留了一個縫」，兩種繞法都實測過在 r9 版本下全綠）：
+  //      繞法A＝把「儲存前自動備份。」原句**加回去**（指路那句留著）⇒ r9 版 11/11 全綠，
+  //             而畫面上又出現一句本機／雲端都不成立的假承諾。
+  //      繞法B＝把指路改成「先重啟一次後端拿一份還原檔 data/store.db.pre-rules.bak，再按匯出備份」
+  //             ⇒ r9 版只黑名單了字面 `store.db.bak` 這一個字串，換一個檔名照樣全綠，
+  //             而那正是 r8 被否決的那句話（雲端版沒有那顆檔）。
+  //    ⇒ 判準從「黑名單一個字串」改成**關門**：這兩段文案的射程只准是「使用者在畫面上按得到的東西」。
   for (const btnId of ['manageCatsBtn', 'manageIncomeCatsBtn']) {
     const i = src.indexOf(`id="${btnId}"`);
     assert.ok(i > 0, `前置：找不到 ${btnId}——分類管理卡片被改掉了，本題的前提要重新確認`);
@@ -234,10 +257,138 @@ test('分類管理｜新文案指到的那兩顆自救按鈕，必須真的在�
         `${btnId} 的說明文案要指到「${name}」——不指路的話，「這個動作不會自動備份」就只剩嚇人，`
         + '使用者不知道該按哪裡自保');
     }
-    assert.ok(!copy.includes('store.db.bak'),
-      `${btnId} 的文案不可以再指向 data/store.db.bak——那顆檔在雲端版根本不存在`
-      + '（lib/repo.js 的 backupNow 在 HOSTED 一律回 false），而這份文案兩種模式共用');
+    // ③-a 承諾面：分類管理**兩種模式都沒有備份**，所以這裡出現的每一個「自動備份」都必須是被否定的。
+    //     （這一段刻意**不接受**「本機版有／雲端版沒有」那種分模式寫法——分模式在店名規則那裡才成立，
+    //       在分類管理是另一句假話：`lib/services/categories.js` 連一個 backupNow 都沒有。）
+    const plain = stripTags(copy);
+    for (const m of plain.matchAll(/自動備份/g)) {
+      // ⚠️ 窗口刻意只有 8 字、否定詞清單刻意**不含**「未」與「不是」：這段文案本身就有「其他／未分類」，
+      //    放寬任何一項都會讓「會自動備份」被隔壁那幾個字保下來（＝靜靜通過，比沒有考題更糟）。
+      const before = plain.slice(Math.max(0, (m.index ?? 0) - 8), m.index);
+      assert.match(before, /不會|不做|沒有|沒做|沒|不保證|別只靠|別依賴/,
+        `${btnId} 的文案裡「自動備份」四個字必須是被否定的（前 8 字要有「不會」這類否定詞），`
+        + '現在讀到的是：…' + before + '自動備份…'
+        + '——分類管理在本機版與雲端版都沒有這個備份（categories.js 零個 backupNow），'
+        + '任何正面承諾都是假話，而使用者是在按下不可逆的改名／刪除之前讀到它的');
+    }
+    // ③-b 指路面：不可以指向「只有一種模式才有」的東西——檔名、路徑、要人去操作後端，全部關門。
+    //     只列黑名單補不完（繞法B 就是換一個檔名），所以這裡禁的是**整類**：畫面按不到的東西。
+    for (const [re, why] of /** @type {[RegExp, string][]} */ ([
+      [/\.(bak|db|json|sqlite)\b/, '檔名／副檔名（那是本機檔案系統才有的東西）'],
+      [/data\//, '本機路徑'],
+      [/<code>/, '<code> 標記（等於在指一個檔案或指令）'],
+      [/重啟|重新啟動|終端機|指令/, '要使用者去操作後端（雲端版的使用者沒有後端可以操作）'],
+      [/本機版|雲端版|跑在自己電腦|跑在雲端/, '分模式的說法（分類管理兩種模式都沒有備份，分模式只會生出第二句假話）'],
+    ])) {
+      assert.doesNotMatch(copy, re,
+        `${btnId} 的文案不可以出現${why}——這份 HTML 兩種模式共用（grep hosted public/ 零命中），`
+        + '指到只有一邊才有的東西，就是在另一邊說謊（r8 那版被退回的正是這個病）');
+    }
   }
+});
+
+test('分類管理｜文案叫人按的自救路徑，在**雲端版**也必須真的救得回分類樹', () => {
+  // ⚠️ 這一題補的是上一題**明白劃在射程外、卻沒有別人接手**的那一塊（#410 r9 複驗：「守它的考題留了一個縫」）。
+  //    上一題只證明「那兩顆按鈕還在同一頁上」；而文案真正的承諾是**按下去救得回分類**。
+  //    實測那個縫是真的（在 r9 那棵樹上）：把 `stripSecretsForBackup`（雲端 /api/export 的投影）
+  //    加三行 `delete copy.settings.expenseTree/incomeTree/categoryAliases`
+  //    ⇒ `npm test` **1498 pass / 0 fail**、退出碼 0，無一題轉紅。
+  //    後果＝雲端使用者照文案按「匯出備份」存下來的檔案裡**沒有分類樹**，改壞分類之後
+  //    「匯入備份」整包還原回去，分類樹靜靜退回系統預設——而畫面全程說成功（本專案最嚴重的一族）。
+  // ⚠️ 為什麼守在這一層：LOCAL 的 export→import 來回已有 test/server.test.js
+  //    「匯入保留自訂分類樹與別名（Codex#1）」守著（那一題走 /api/db + /api/import 真的來回一趟）；
+  //    HOSTED 差別**只在**這支投影，所以這裡問「投影有沒有把分類樹一起剝掉」＋「雲端的匯出真的走這支」。
+  // ⚠️ 誠實劃界：本題**不**宣稱守到「雲端匯入端的合併邏輯」（那是 lib/routes/core.js 的 HOSTED 區塊，
+  //    由 test/hosted-secrets.test.js 的來回題守機密／帳號那一半）。本題只釘「匯出的檔案裡有分類樹」。
+  const trees = {
+    expenseTree: { 飲食: ['早餐', '晚餐'], 其他: ['未分類'] },
+    incomeTree: { 工作: ['薪水'], 其他: ['其他收入'] },
+    categoryAliases: { 娛樂: '休閒' },
+  };
+  const db = {
+    settings: { ...trees, taishinSecPdfPassword: 'A123456789', ib: { flexToken: 'TOKEN-要被剝掉', flexQueryId: '123456' } },
+    accounts: [{ id: 'a1', name: '台新', accountNo: '900100112233' }],
+    cards: [{ id: 'c1', name: '玫瑰卡', pdfPassword: 'PW-要被剝掉' }],
+  };
+  const out = stripSecretsForBackup(db);
+  for (const k of /** @type {('expenseTree'|'incomeTree'|'categoryAliases')[]} */ (Object.keys(trees))) {
+    assert.deepEqual(out.settings[k], trees[k],
+      `雲端版匯出的備份檔必須含 settings.${k}——少了它，使用者照文案「匯出備份→匯入備份」`
+      + '救回來的分類樹會靜靜退回系統預設，而畫面說還原成功');
+  }
+  // 對照組（同時證明本題測到的是**真的有在剝東西**的那支投影，不是一個什麼都沒做的函式）：
+  assert.equal(out.settings.ib.flexToken, '', '前置：機密該剝的還是要剝（否則本題等於在測一支空函式）');
+  assert.equal(out.settings.taishinSecPdfPassword, '', '前置：證券密碼該剝的還是要剝');
+  assert.equal(out.cards[0].pdfPassword, '', '前置：卡片密碼該剝的還是要剝');
+  assert.equal(out.accounts[0].accountNo, '', '前置：完整帳號該剝的還是要剝');
+  assert.equal(db.settings.ib.flexToken, 'TOKEN-要被剝掉', '前置：投影不可以就地改壞呼叫端手上的 db');
+  // 接線（「函式有考題、接線沒考題」是本檔一再踩到的病）：雲端的 /api/export 真的走這支投影。
+  const route = readFileSync(join(ROOT, 'lib/routes/core.js'), 'utf8');
+  const g = route.indexOf("get('/api/export'");
+  assert.ok(g > 0, '前置：找不到 /api/export——路由被搬家了，本題的前提要重新確認');
+  assert.match(route.slice(g, g + 900), /isHosted\(\)\s*\?\s*stripSecretsForBackup\(db\)\s*:\s*db/,
+    '雲端的 /api/export 必須走 stripSecretsForBackup（LOCAL 則是未投影的完整 db）——'
+    + '換成別的投影，這一題的保護就落在別人身上了，改的人要自己去確認分類樹還在');
+});
+
+test('畫面文案｜提到「自動備份／還原檔／.bak」的句子，必須自己交代哪一種模式才有（public/ 拿不到模式資訊）', () => {
+  // ⚠️ 這一題關的是整族的門（#410 r9 複驗：「同一頁還有一句沒改的同族假話」）。r9 只改了分類管理那兩處，
+  //    同一頁的店名規則卡片還寫著「（套用前會另存一份還原檔 data/store.db.pre-rules.bak）」、
+  //    店名規則面板還寫著「儲存前自動備份。」——兩句在**雲端版都是假的**（`lib/repo.js:252` 的
+  //    `backupNow` 在 HOSTED 一律回 false），而 `public/` 底下 grep `hosted` 零命中＝前端根本不知道
+  //    自己跑在哪一種模式，同一份 HTML 兩邊共用。r10 把兩句都改成「交代模式」的寫法。
+  // ⚠️ 為什麼是掃描題而不是逐處斷言：這一族已經被抓到三輪（r5 劃界、r8 文案自己又說謊、r9 漏了同頁兩處），
+  //    「列舉繞法補不完就要關門」（專案模式）。所以判準是：**畫面文案裡每一次提到自動備份／還原檔／.bak，
+  //    同一句話裡就要有模式交代（本機版／雲端版／跑在自己電腦上／跑在雲端），或者本身是否定句。**
+  //    下一個人新開一個頁面寫「儲存前自動備份」，這一題會在他手上轉紅。
+  // ⚠️ 否定詞清單刻意**不含**「未」「不是」這種太泛的字（畫面上到處都有「未分類」），
+  //    而且下面要求它**貼著**那個說法出現——否則隔壁半句的否定詞會替這一句作保。
+  const NEG = /不會|不做|沒有|沒做|沒|不保證|別只靠|別依賴/;                 // 否定句（＝沒有承諾）
+  const MODE = /本機版|雲端版|跑在自己電腦|跑在雲端|自己電腦上/;             // 交代了哪一種模式才有
+  const TRIGGER = /自動備份|還原檔|\.bak/g;
+  // 允許清單只有一個，而且附**可查證的**理由（見下方 assert 自己盯著它還成立）：
+  //   public/modules/backup-alert.js 講的是「每日備份**失敗**」的回報，不是「我會幫你備份」的承諾；
+  //   而且 HOSTED 一律回 failStreak:0（lib/services/backup.js 的 isHosted() 早退）⇒ 這條警告在雲端不會出現。
+  const ALLOW = new Set(['modules/backup-alert.js']);
+  const svc = readFileSync(join(ROOT, 'lib/services/backup.js'), 'utf8');
+  const h = svc.indexOf('if (isHosted())');
+  assert.ok(h > 0, '允許清單的理由不成立了：lib/services/backup.js 不再有 HOSTED 早退'
+    + '——那 backup-alert 的本機專用指引就會出現在雲端使用者的畫面上，這條允許清單要重新判斷');
+  assert.match(svc.slice(h, h + 400), /failStreak:\s*0/,
+    '允許清單的理由不成立了：HOSTED 早退不再把 failStreak 壓成 0（雲端會顯示「請檢查電腦硬碟空間」）');
+
+  /** public/ 底下所有畫面檔（.js/.html）的相對路徑。 @param {string} dir @returns {string[]} */
+  const walk = (dir) => readdirSync(join(ROOT, 'public', dir), { withFileTypes: true }).flatMap((e) => {
+    const rel = dir ? `${dir}/${e.name}` : e.name;
+    if (e.isDirectory()) return walk(rel);
+    return /\.(js|html)$/.test(e.name) && !e.name.endsWith('.d.ts') ? [rel] : [];
+  });
+  const files = walk('');
+  assert.ok(files.length >= 20, `前置：public/ 掃到的畫面檔只有 ${files.length} 個——掃描範圍縮小了，本題會變成空轉`);
+
+  let checked = 0;
+  for (const rel of files) {
+    if (ALLOW.has(rel)) continue;
+    const text = readFileSync(join(ROOT, 'public', rel), 'utf8').replace(/<[^>]*>/g, '');
+    for (const m of text.matchAll(TRIGGER)) {
+      const idx = m.index ?? 0;
+      // 這一句的範圍：上一個句號之後（最多回看 140 字）到下一個句號之前（最多往前 140 字）。
+      // 不用整段一起比對——那會讓「隔壁那句的否定詞」替這句作保（實測過：只看整段時，
+      // 把「不會自動備份」改成「會自動備份」照樣綠，因為同段後面有「也沒有『復原』可以按」）。
+      const start = Math.max(text.lastIndexOf('。', idx) + 1, idx - 140);
+      const dot = text.indexOf('。', idx);
+      const seg = text.slice(start, Math.min(dot === -1 ? text.length : dot, idx + 140));
+      const before = text.slice(Math.max(0, idx - 10), idx);   // 否定詞要**貼著**這個說法，才算否定它
+      checked++;
+      assert.ok(NEG.test(before) || MODE.test(seg),
+        `${rel} 有一句提到「${m[0]}」，卻沒交代那是哪一種模式才有的東西：\n    …${seg}…\n`
+        + '  ⇒ public/ 兩種模式共用同一份畫面（grep hosted public/ 零命中），而 lib/repo.js 的 backupNow\n'
+        + '    在 HOSTED 一律回 false＝雲端版沒有任何自動備份。請改成否定句（「不會自動備份」）\n'
+        + '    或講明模式（「app 跑在自己電腦上才有那一份」），不要在雲端使用者按下不可逆動作前騙他有安全網。');
+    }
+  }
+  assert.ok(checked >= 3, `前置：只檢查到 ${checked} 處「自動備份／還原檔／.bak」的說法——`
+    + '正常至少有分類管理兩處與店名規則兩處；掃不到就代表這一題在空轉（改壞了觸發字或掃描範圍）');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
