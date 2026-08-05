@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 const tabs = readFileSync(new URL('../public/workspace-tabs.css', import.meta.url), 'utf8');
+const stockResearch = readFileSync(new URL('../public/stock-research.css', import.meta.url), 'utf8');
+const subscriptions = readFileSync(new URL('../public/modules/subscriptions.js', import.meta.url), 'utf8');
 
 function ruleBody(css, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -72,4 +74,26 @@ test('UI5 暖米橘色票：橘色文字、橘色 focus 與綠色按鈕維持可
   assert.ok(contrast('#ffffff', token('action-hover')) >= 4.5, 'hovered primary button text contrast');
   assert.ok(contrast(token('accent'), token('bg')) >= 3, 'coin orange effect contrast on page');
   assert.ok(contrast(token('accent'), token('accent-soft')) >= 3, 'focus contrast on orange soft state');
+});
+
+test('UI5 暖米橘色票：個股研究與訂閱的小字使用可讀深橘，裝飾保留錢幣原色', () => {
+  for (const selector of [
+    '.stock-kicker,\n.stock-eyebrow',
+    '.stock-score-total',
+    '.stock-fact-source a,\n.stock-derived-inputs a',
+    '.stock-timeline-date span',
+    '.stock-source-list a:hover',
+  ]) {
+    assert.match(ruleBody(stockResearch, selector), /color:\s*var\(--accent-ink\)/,
+      `${selector} must use the readable coin-orange ink`);
+  }
+
+  assert.match(ruleBody(stockResearch, '.stock-fact-popover'), /border-left:\s*2px solid var\(--accent\)/);
+  assert.match(ruleBody(stockResearch, '.stock-valuation-row.base'), /box-shadow:\s*inset 3px 0 0 var\(--accent\)/);
+  assert.match(ruleBody(stockResearch, '.stock-timeline li::before'), /background:\s*var\(--accent\)/);
+  assert.doesNotMatch(stockResearch, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+    'small stock-research text must not fall back to the lower-contrast coin orange');
+  assert.match(subscriptions, /st === 'ending' \? 'color:var\(--accent-ink\)'/);
+  assert.doesNotMatch(subscriptions, /color:var\(--accent\)/,
+    'subscription inline text must use the readable coin-orange ink');
 });

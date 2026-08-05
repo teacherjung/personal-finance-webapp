@@ -429,7 +429,7 @@ function subRow(s, validSet) {
 
   // 續費 / 停用 欄：主表格只顯示日期，剩餘天數留給時間線與提醒區。
   const whenDateVal = isLifetimeSub(s) ? '終身訂閱' : ((st === 'active') ? (s.nextCharge || '') : (s.endsOn || ''));
-  const dateColor = st === 'ending' ? 'color:var(--accent)' : (st === 'ended' || isLifetimeSub(s)) ? 'color:var(--text-dim)' : '';
+  const dateColor = st === 'ending' ? 'color:var(--accent-ink)' : (st === 'ended' || isLifetimeSub(s)) ? 'color:var(--text-dim)' : '';
   const dateSuffix = isLifetimeSub(s) ? '' : st === 'active' ? '續' : (st === 'ending' || st === 'ended') ? '止' : '';
   const dateStr = `<span style="${dateColor}">${esc(whenDateVal || '—')}${whenDateVal && dateSuffix ? ` <span class="date-suffix ${st}">${dateSuffix}</span>` : ''}</span>`;
   const whenCell = `<div class="when-date">${dateStr}</div>`;

@@ -47,7 +47,7 @@ body.stock-research-route > main {
 
 .stock-kicker,
 .stock-eyebrow {
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0;
@@ -247,7 +247,7 @@ body.stock-research-route > main {
 }
 
 .stock-score-total {
-  color: var(--accent) !important;
+  color: var(--accent-ink) !important;
   font-weight: 600;
 }
 
@@ -543,7 +543,7 @@ body.stock-research-route > main {
 
 .stock-fact-source a,
 .stock-derived-inputs a {
-  color: var(--accent);
+  color: var(--accent-ink);
   text-decoration: none;
 }
 
@@ -745,7 +745,7 @@ body.stock-research-route > main {
 }
 
 .stock-timeline-date span {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .stock-source-list a {
@@ -755,7 +755,7 @@ body.stock-research-route > main {
 }
 
 .stock-source-list a:hover {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .stock-source-list a .ic {
