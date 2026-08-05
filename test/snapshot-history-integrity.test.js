@@ -7,18 +7,23 @@
 //    （所有倒退考題都塞 `dailyValues=[明天]`、`snapshots` 是空的）。本支補的是它漏掉的另外三件事：
 //    ①倒退護欄**兩條線都要看、取最新的那一條**（只看其中一條、另一條當後備，就會擋不住）
 //    ②同月只留一列，**而且留下的那一列內容要換成最新值**（月快照與投組快照兩條線都要）；
-//      **同時只准動本月那一列**——別的月份的歷史一個字都不可以變（Codex 審 8152c83）
+//      **同時只准動本月那一列**——別的月份的歷史一個字都不可以變（Codex 審 8152c83）。
+//      ⚠️ 這件事**兩條路各一題**（自審 r6）：設定頁那顆手動按鈕（`takeSnapshot`）多數人一輩子沒按過，
+//      使用者每天真正走的是開 app 的 `takeSnapshotIfDue`，而那條路上**多一道節流閘**——
+//      只驗按鈕那條的話，把節流從「今天記過才跳過」放寬成「本月記過就跳過」會讓月快照整個月凍住，
+//      而全庫照樣全綠。
 //    ③日線留底的匯率要與**同一列淨值**實際套用的（`lib/derive.js` 算的那個）是**同一個**
 //      （不然事後分不出淨值變動是資產動了還是匯率動了——那正是日線存三種匯率的理由）。
 //
-// ⚠️ 「**留底**」一律用 `store.load()` **重讀資料庫**來斷言（Codex r1）：這三條守的都是
+// ⚠️ 「**留底**」一律用 `store.load()` **重讀資料庫**來斷言（Codex r1）：這幾條守的都是
 //    「留在資料庫裡的歷史」，而「回傳正確、寫入錯誤」是真的會發生的壞法——初版第三條只驗
 //    回傳值，把寫入改成 `usdTwd: 1` 照樣全綠。
 //    回傳值仍會驗，但只在它**自己就是契約**的地方：自動流程要回報 `recorded/skipped`、
 //    手動按鈕要 throw 400、以及「回傳值必須與留底一致」這條本身。
 //
-// ⚠️ 三條題都把「今天」用 `t.mock.timers` 釘死（Codex r2）。**不是為了去 flake，是為了鑑別力**：
-//    - 第二條要一列「同月、但比今天早」的既有快照才分得出「以月為鍵去重」與「以日為鍵去重」。
+// ⚠️ 每一條題都把「今天」用 `t.mock.timers` 釘死（Codex r2）。**不是為了去 flake，是為了鑑別力**：
+//    - ②那兩條要一列「同月、但比今天早」的既有快照，才分得出「以月為鍵」與「以日為鍵」——
+//      月快照那一側是去重鍵、自動路那一側是節流鍵，兩處問的是同一個問題。
 //      跟著真實時鐘跑的話，每個月 1 號那天本月不存在更早的日期，兩種寫法行為完全相同——
 //      考題會在 30 天裡有 1 天安靜地失去鑑別力，而那種「今天剛好驗不到」最難被發現。
 //    - 第一條要那筆未來紀錄剛好落在**同一個月**，才能重現真正的後果：繞過護欄之後那一列
@@ -80,6 +85,62 @@ const dayRow = (date, netWorth) => ({ date, netWorth, assets: netWorth, liabilit
 
 beforeEach(() => { store.save({ ...store.emptyDb() }); });
 
+/**
+ * 「同月覆蓋」兩條題共用的 fixture：本月已經有一列**日期比今天早**的月快照（2026-08-01），
+ * 外加一組**前月**對照。兩條題的差別只在走哪一條路進來——設定頁按鈕（`takeSnapshot`）
+ * 與開 app 自動（`takeSnapshotIfDue`）——所以刻意共用同一份資料：**分得出「以月為鍵」與
+ * 「以日為鍵」的 fixture 只有這一種**，兩條路都需要它。
+ * fixture 每個成分為什麼非有不可：
+ * ⚠️ 要先塞一列**同月、但日期比今天早**的既有快照（Codex r2）：初版兩次呼叫都落在
+ *    同一天，於是「以月為鍵去重」與「以日為鍵去重」在那個 fixture 下行為完全相同——把鍵換成
+ *    `s.date` 照樣全綠，實際上同一個月會長出好幾列。
+ * ⚠️ 要放**持股**（Codex r1）：只放現金帳戶的話 portfolioSnapshots 的 cost/value
+ *    前後都是 0，把正式程式改成「同月已有列就保留舊值」照樣全綠——列數對了、投組那條線卻停在
+ *    舊值。「同月覆蓋」要驗的是**整列換新**，只數列數驗不到那一半。
+ *    幣別全用 TWD（匯率 1）＝期望值可以直接手算；要驗的是有沒有換新值，不是匯率換算。
+ * ⚠️ 要放**負債**（自審 r3）：月快照那一列有四個欄位（netWorth／assets／liabilities／byClass），
+ *    初版只驗 netWorth，於是「保留同月舊列的 assets/liabilities/byClass、只更新 netWorth」照樣全綠——
+ *    而 byClass 是歷史頁資產配置圖唯一的資料來源，停在舊值就是配置圖靜靜說謊。
+ *    有負債才會 assets ≠ netWorth，assets 那格才分得出是不是照抄 netWorth。
+ * ⚠️ 要放**前一個月**的兩列快照（Codex 審 8152c83）：初版只放本月資料、斷言也只篩本月，
+ *    於是「每次把 `snapshots`／`portfolioSnapshots` 直接換成只含本月的新陣列」——也就是把所有
+ *    舊月份刪光——照樣全綠（實測 9/9）。月快照是「一個月一個點」的長期趨勢線，
+ *    舊月份沒有任何地方能重算回來，正是本檔題名（歷史不可被舊資料蓋掉）要守的東西。
+ * @returns {{prevSnapBefore: string, prevPfBefore: string}} 前月兩列的「原封不動」比對基準
+ *          （從資料庫讀回**正規化後**的樣子，才不會被欄位順序/預設值干擾）
+ */
+function seedMonthOverwriteFixture() {
+  store.save({
+    ...store.emptyDb(),
+    accounts: [
+      { id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 10000 },
+      { id: 'l1', name: '房貸', type: 'mortgage', currency: 'TWD', balance: 4000 },   // ← 負債：讓 assets ≠ netWorth
+    ],
+    holdings: [{ id: 'h1', symbol: '0050', name: 'ETF', layer: 'core', currency: 'TWD', quantity: 10, price: 100, avgCost: 60 }],
+    snapshots: [
+      { ...snapRow('2026-07-31', 555), byClass: { 現金: 555 } },   // ← **前月**：同月覆蓋不可以動到它
+      // ← 本月、較早日期的既有月快照；byClass 刻意塞一組**看得出是舊的**值（保留舊列時失敗訊息才讀得懂）
+      { ...snapRow('2026-08-01', 111), byClass: { 現金: 111 } },
+    ],
+    portfolioSnapshots: [
+      { month: PREV_MONTH, cost: 7, value: 8 },              // ← **前月**：同上
+      { month: MONTH, cost: 1, value: 2 },
+    ],
+    dailyValues: [dayRow('2026-08-02', 111)],               // ← 日線是**跨日累積**：這一列必須活著（對照組）
+  });
+  // ⚠️ 先斷言前月兩列真的進得了資料庫：萬一 fixture 被安檢門擋掉，「原封不動」那條就變成拿 `[]` 比 `[]`＝靜靜通過。
+  const before = store.load();
+  const prevSnapBefore = JSON.stringify((before.snapshots || []).filter((/** @type {any} */ s) => s.month === PREV_MONTH));
+  const prevPfBefore = JSON.stringify((before.portfolioSnapshots || []).filter((/** @type {any} */ s) => s.month === PREV_MONTH));
+  assert.notEqual(prevSnapBefore, '[]', '前置條件：fixture 的前月月快照要真的存進資料庫（沒進去的話「原封不動」那條斷言等於沒比）');
+  assert.notEqual(prevPfBefore, '[]', '前置條件：fixture 的前月投組快照要真的存進資料庫（同上）');
+  // ⚠️ 本月那一列也要斷言真的進得去：它是「以月為鍵 vs 以日為鍵」唯一分得出差別的成分，
+  //    被擋掉的話兩條題會退化成「今天第一次記錄」，鑑別力靜靜消失。
+  const monthRow = (before.snapshots || []).find((/** @type {any} */ s) => s.month === MONTH);
+  assert.equal(monthRow?.date, '2026-08-01', '前置條件：本月那一列既有快照（08-01）要真的存進資料庫，而且日期比釘住的今天早');
+  return { prevSnapBefore, prevPfBefore };
+}
+
 test('時鐘倒退｜護欄要同時看 dailyValues 與 snapshots、取最新的那一條；哪一條較新都要擋', async (t) => {
   pinClock(t);
   // ⚠️ 既有考題（snapshot-safety 四條）全部是「dailyValues 有未來、snapshots 是空的」這一種形狀，
@@ -131,52 +192,16 @@ test('時鐘倒退｜護欄要同時看 dailyValues 與 snapshots、取最新的
   // 護欄本來就看不到它（它只跟著月快照一起寫），本題不涵蓋、也不宣稱涵蓋。
 });
 
-test('同月只留一列｜既有的本月快照要被今天這一列換掉（不是多長一列，也不是留著舊值）', async (t) => {
+test('同月只留一列（設定頁按鈕）｜既有的本月快照要被今天這一列換掉（不是多長一列，也不是留著舊值）', async (t) => {
   pinClock(t);
   // ⚠️ 檔頭第 3 行把「月快照＝同月覆蓋、一個月只留一個點」寫成本檔兩條線的分野。
   //    portfolioSnapshots 這一側前端沒有第二道門：investmentChartConfig 直接把每一列畫成一個點，
   //    重複月份會讓「投入 vs 市值」折線在同一個月來回抖，而且資料庫會無上限長大。
-  // ⚠️ fixture 一定要先塞一列**同月、但日期比今天早**的既有快照（Codex r2）：初版兩次呼叫都落在
-  //    同一天，於是「以月為鍵去重」與「以日為鍵去重」在那個 fixture 下行為完全相同——把鍵換成
-  //    `s.date` 照樣全綠，實際上同一個月會長出好幾列。
-  // ⚠️ fixture 也一定要放**持股**（Codex r1）：只放現金帳戶的話 portfolioSnapshots 的 cost/value
-  //    前後都是 0，把正式程式改成「同月已有列就保留舊值」照樣全綠——列數對了、投組那條線卻停在
-  //    舊值。「同月覆蓋」要驗的是**整列換新**，只數列數驗不到那一半。
-  //    幣別全用 TWD（匯率 1）＝期望值可以直接手算；本題要驗的是有沒有換新值，不是匯率換算。
-  // ⚠️ fixture 也一定要放**負債**（自審 r3）：月快照那一列有四個欄位（netWorth／assets／
-  //    liabilities／byClass），初版只驗 netWorth，於是「保留同月舊列的 assets/liabilities/byClass、
-  //    只更新 netWorth」照樣全綠——而 byClass 是歷史頁資產配置圖唯一的資料來源，停在舊值
-  //    就是配置圖靜靜說謊。有負債才會 assets ≠ netWorth，assets 那格才分得出是不是照抄 netWorth。
-  //    兩次呼叫連負債金額都換（4000→6000），四個欄位每一個都必須跟著換新。
-  // ⚠️ fixture 也一定要放**前一個月**的兩列快照（Codex 審 8152c83）：初版只放本月資料、斷言也只篩本月，
-  //    於是「每次把 `snapshots`／`portfolioSnapshots` 直接換成只含本月的新陣列」——也就是把所有
-  //    舊月份刪光——照樣全綠（實測 9/9）。月快照是「一個月一個點」的長期趨勢線，
-  //    舊月份沒有任何地方能重算回來，正是本檔題名（歷史不可被舊資料蓋掉）要守的東西。
-  store.save({
-    ...store.emptyDb(),
-    accounts: [
-      { id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 10000 },
-      { id: 'l1', name: '房貸', type: 'mortgage', currency: 'TWD', balance: 4000 },   // ← 負債：讓 assets ≠ netWorth
-    ],
-    holdings: [{ id: 'h1', symbol: '0050', name: 'ETF', layer: 'core', currency: 'TWD', quantity: 10, price: 100, avgCost: 60 }],
-    snapshots: [
-      { ...snapRow('2026-07-31', 555), byClass: { 現金: 555 } },   // ← **前月**：同月覆蓋不可以動到它
-      // ← 本月、較早日期的既有月快照；byClass 刻意塞一組**看得出是舊的**值（保留舊列時失敗訊息才讀得懂）
-      { ...snapRow('2026-08-01', 111), byClass: { 現金: 111 } },
-    ],
-    portfolioSnapshots: [
-      { month: PREV_MONTH, cost: 7, value: 8 },              // ← **前月**：同上
-      { month: MONTH, cost: 1, value: 2 },
-    ],
-    dailyValues: [dayRow('2026-08-02', 111)],               // ← 日線是**跨日累積**：這一列必須活著（對照組）
-  });
-  // 前月兩列的「原封不動」比對基準：從資料庫讀回**正規化後**的樣子（才不會被欄位順序/預設值干擾）。
-  // ⚠️ 先斷言它們真的進得了資料庫：萬一 fixture 被安檢門擋掉，下面就變成拿 `[]` 比 `[]`＝靜靜通過。
-  const before = store.load();
-  const prevSnapBefore = JSON.stringify((before.snapshots || []).filter((/** @type {any} */ s) => s.month === PREV_MONTH));
-  const prevPfBefore = JSON.stringify((before.portfolioSnapshots || []).filter((/** @type {any} */ s) => s.month === PREV_MONTH));
-  assert.notEqual(prevSnapBefore, '[]', '前置條件：fixture 的前月月快照要真的存進資料庫（沒進去的話「原封不動」那條斷言等於沒比）');
-  assert.notEqual(prevPfBefore, '[]', '前置條件：fixture 的前月投組快照要真的存進資料庫（同上）');
+  // ⚠️ 本題走的是**設定頁那顆手動按鈕**（`takeSnapshot`）。使用者每天真正走的自動路
+  //    （`takeSnapshotIfDue`）多一道節流閘，那是下一條題的事——兩條路都要有題，見下一題的開頭。
+  // fixture 的成分與理由集中在 `seedMonthOverwriteFixture()`（與下一條題共用同一份）。
+  // 本題另外把第二次呼叫的四個數字全換一組（含負債 4000→6000），驗「整列換新」而不只是列數對。
+  const { prevSnapBefore, prevPfBefore } = seedMonthOverwriteFixture();
   await takeSnapshot();
   // 第二次：現金、負債、股價、成本四個數字全換一組 → 兩條快照線的內容都必須跟著換
   const db1 = store.load();
@@ -214,6 +239,59 @@ test('同月只留一列｜既有的本月快照要被今天這一列換掉（�
     '前月的月快照必須原封不動——把 snapshots 整條線換成「只含本月的新陣列」會刪光所有舊月份，那是補不回來的歷史');
   assert.equal(JSON.stringify((db.portfolioSnapshots || []).filter((/** @type {any} */ s) => s.month === PREV_MONTH)), prevPfBefore,
     '前月的投組快照同理：同月覆蓋換掉的是本月那一列，不是整條線');
+});
+
+test('同月只留一列（開 app 自動路）｜本月那一列是前幾天記的就必須換新：節流的鍵是「日」不是「月」', async (t) => {
+  pinClock(t);
+  // ⚠️ 為什麼上一條題不夠：它兩次呼叫走的都是 `takeSnapshot()`＝**設定頁那顆手動按鈕**。
+  //    使用者每天真正走的是開 app 的 `POST /api/snapshot/auto` → `takeSnapshotIfDue()`，
+  //    而那條路上**多一道節流閘**（`lib/services/snapshot.js` 的「已是今天的日期就跳過」），
+  //    上一條題一次都沒走到它。
+  //    實測把那道閘從「今天記過才跳過」放寬成「本月記過就跳過」（`if (existing) return …`，改一行）→
+  //    全庫 1490 題全綠、本支自己的考題也全綠；但月快照會在該月第一次記錄之後**整個月凍住**，
+  //    儀表板「近 12 月淨資產」的當月點與「本月淨資產變動」整月停在舊值——正是上一條題名
+  //    宣稱要防的「留著舊值」，只是換一條路進來。
+  // ⚠️ 既有 `test/daily-values.test.js` 的「開 app 的 auto 流程」分不出這兩種節流語意：
+  //    它兩次呼叫都在**同一天內**，第一次 recorded=true、第二次 recorded=false，兩種寫法完全相同。
+  //    分得出來的 fixture 只有一種＝**本月已經有一列、而且日期比今天早**，也就是上一條題用的那一份
+  //    （所以兩題共用 `seedMonthOverwriteFixture()`）。
+  seedMonthOverwriteFixture();
+
+  // ①本月已有 08-01 那一列、釘住的今天是 08-15＝今天還沒記過 → 自動路必須記錄，而且整列換新
+  const r1 = await takeSnapshotIfDue();
+  assert.equal(r1.recorded, true,
+    '本月那一列是 08-01 記的、今天是 08-15＝今天還沒記過，自動路必須記錄——'
+    + '節流的鍵是「日」不是「月」；放寬成「本月記過就跳過」的話，月快照會從該月第一次記錄起整個月凍住');
+  const afterFirst = store.load();
+  const m1 = (afterFirst.snapshots || []).filter((/** @type {any} */ s) => s.month === MONTH);
+  assert.equal(m1.length, 1, '同月仍然只留一列（自動路寫入也是同月覆蓋）');
+  assert.equal(m1[0].date, TODAY, '而且留下的要是今天這一列，不是既有的 08-01');
+  // 舊列＝netWorth/assets 111、liabilities 0、byClass {現金:111}：四個欄位每一個都必須換掉
+  assert.equal(m1[0].netWorth, 7000, '淨值要換新（現金 10000＋持股 10×100－房貸 4000）');
+  assert.equal(m1[0].assets, 11000, '資產也要換新（10000＋1000）——這一格與 netWorth 不同數字，才驗得出不是照抄 netWorth');
+  assert.equal(m1[0].liabilities, 4000, '負債也要換新（舊列是 0）');
+  assert.deepEqual(m1[0].byClass, { 現金: 10000, 股票: 1000 },
+    'byClass 也要換新（舊列是 {現金:111}）——它是歷史頁資產配置圖唯一的資料來源');
+  const pf1 = (afterFirst.portfolioSnapshots || []).filter((/** @type {any} */ s) => s.month === MONTH);
+  assert.equal(pf1.length, 1, '投組快照同月也只留一列');
+  assert.deepEqual({ cost: pf1[0].cost, value: pf1[0].value }, { cost: 600, value: 1000 },
+    '投組那一列也要換新（成本 10×60、市值 10×100；舊列是 1／2）');
+
+  // ②同一天內再開一次 app：這時才該跳過——**節流本身仍然要在**。
+  //   少了這一半，把節流整道刪掉也會通過①；而那會讓每次開 app 都重寫月快照、前端每次都跳提示。
+  const db1 = store.load();
+  db1.accounts[0].balance = 20000;              // 白天改了一筆資產：日線要跟上、月快照這一天不再重記
+  store.save(db1);
+  const r2 = await takeSnapshotIfDue();
+  assert.equal(r2.recorded, false, '同一天第二次開 app 不重複記月快照');
+  const m2 = (store.load().snapshots || []).filter((/** @type {any} */ s) => s.month === MONTH);
+  assert.equal(m2.length, 1, '同月依然只有一列');
+  assert.equal(m2[0].netWorth, 7000,
+    '而且月快照停在今天第一次記的值——節流是真的擋住了寫入，不是只把回傳值報成 recorded=false');
+  assert.equal(r2.daily?.netWorth, 17000, '日線則必須跟上最新（20000＋1000－4000）：月快照跳過≠日線跳過');
+
+  // 誠實劃界：本題不重複驗「前月原封不動」——自動路與手動路寫入用的是同一個 `writeMonthlySnapshot`，
+  // 那一半由上一條題守住；本題守的是它前面那道節流閘。
 });
 
 test('日線匯率｜留底的匯率要與算淨值用的同一個：沒設定時走同一個預設、使用者設過就要用設定值', async (t) => {
