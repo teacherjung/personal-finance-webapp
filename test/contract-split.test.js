@@ -502,7 +502,7 @@ const MANIFEST = {
       'lib/routes/core.js',
       'lib/routes/crud.js',
       'lib/routes/statement.js',
-      'lib/schema.js', 'lib/secret-fields.js', 'public/modules/assets.js', 'lib/types.js', 'test/server.test.js', 'test/statement.test.js', 'test/codex-r10.test.js',
+      'lib/schema.js', 'lib/secret-fields.js', 'public/modules/assets.js', 'public/modules/accounts-model.js', 'lib/types.js', 'test/server.test.js', 'test/statement.test.js', 'test/codex-r10.test.js',
       'lib/services/bank-import.js',
       'lib/services/categories.js',
       'lib/services/health-check.js',

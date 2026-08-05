@@ -2,6 +2,7 @@
 // 投資組合的曝險資料與純計算：不碰 DOM、API 或頁面狀態。
 
 import { normalizePortfolioSymbol } from './portfolio-symbol.js';
+import { LIABILITY_TYPES } from './accounts-model.js';   // 負債型帳戶白名單的單一真相（見下方 fxExposure 上面那段）
 
 /** @typedef {{ type: 'equity'|'bond'|'gold', regions: Record<string, number> }} Composition */
 /** @typedef {{ symbol?: string, layer?: string, currency?: string, valueTwd: number }} ExposureRow */
@@ -10,7 +11,12 @@ import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 /** @typedef {{ stockTwd: number, bondTwd: number, goldTwd: number, cashTwd: number, netTwd: number }} CurrencyExposure */
 
 // ETF 成分穿透（近似權重；可隨基金年報更新）。
-// 與 lib/derive.js 的同名複本是刻意同步點，前後端無法直接共用 runtime 模組。
+// 與 lib/derive.js 的同名複本是刻意同步點。
+// ⚠️ 這裡原本寫「前後端無法直接共用 runtime 模組」——那句是錯的（#409 r8 改口）：
+//    後端**可以**單向 import 前端純模組，`lib/derive.js` 現在就 import 了 categories.js／
+//    portfolio-risk.js／portfolio-symbol.js 三支。真正的現況是「這兩份表還沒收斂」，
+//    收斂要動後端計算的資料流，不在本支範圍；本支只把**前端自己的複本**收成一份
+//    （負債白名單，見下方）。兩份表不可走散由 test/exposure-sync-integrity.test.js 守。
 /** @type {Record<string, Composition>} */
 export const COMPOSITION = {
   CSPX: { type: 'equity', regions: { 美國: 1 } },
@@ -84,13 +90,12 @@ export function regionExposure(rows) {
   return regions;
 }
 
-// ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本）。
-// ⚠️ 新增型別要改**三處**（原本這裡寫「改其一要改兩處」，漏掉第三處；#409 r5 Codex 抓到）：
-//    ①本檔 ②lib/derive.js ③lib/schema.js 的 FIELD_SCHEMA.accounts.type 枚舉——
-//    漏掉③＝算得出負債卻存不進資料庫（理由與後果詳見 lib/derive.js 同一段註解）。
-// 放在模組層並 export，是為了讓 test/exposure-sync-integrity.test.js 直接比對兩份成員
-// （原本是 fxExposure 的函式內區域常數，考題碰不到 ⇒ 只能各釘各的四個成員，單邊新增第五個型別兩邊都不會紅）。
-export const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
+// ⚠️ 負債型帳戶白名單**已不在本檔定義**（#409 r8 搬家到 `./accounts-model.js`）。
+//    搬家理由：本檔原本 export 的那份只是**前端的其中一份**——`public/modules/assets.js`
+//    另外手寫了一份三個型別的陣列（少了信用卡那一項，而且零考題看著它），
+//    帳戶表單的型別選項又是第三份手抄。現在表單選項與資產頁紅字判準都從 accounts-model 的
+//    那份 Set 長出來，本檔只是**讀**同一個物件（不是複本，沒有走散的餘地）。
+//    新增型別還要改哪些地方，逐一列名在 accounts-model.js 檔頭（刻意不寫「共幾處」）。
 
 /**
  * 幣別底層曝險：00719B/00720B 歸美元、黃金獨立一列、現金含負融資。

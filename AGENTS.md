@@ -178,6 +178,7 @@
 | **共用彈窗契約**（modal-shell.js） | 只共用尺寸、標題列、關閉按鈕、背景與基本關閉行為；送出、預覽、返回、非同步狀態與重畫由各功能自負——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#共用彈窗契約) |
 | 淨值目標與到達速度 | 後端單一真相＝`lib/derive.js computeGoalTracking`、前端不可重算；兩把尺只看最近六個已結束月、至少三個月份、取中位數；達標走 `goal-reached` 報喜——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值目標與到達速度) |
 | `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
+| `public/modules/accounts-model.js` 的 `LIABILITY_TYPES`（前端單一真相：`fxExposure`、帳戶表單的型別選項、資產頁的負債紅字都讀它） | 還要一起改的地方**逐一列名、刻意不寫「共幾處」**（這一族的數字漂過兩次：「兩處」→「三處」→其實還藏著第四第五份）：`lib/derive.js` 的同名複本、`lib/schema.js` 的 `accounts.type` 枚舉。⚠️**存得進去的一定要選得到**：枚舉有而表單沒有的型別，那種帳戶一被打開儲存就靜靜變 `cash`（負債翻成資產）。三者的相等由 `test/exposure-sync-integrity.test.js` 釘住，那支還有一題全站掃描擋「又長出一份手抄複本」 |
 | `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
 | 新增 ETF 持股 | COMPANY_WEIGHTS＋兩份 COMPOSITION 都要補；XUSE/EXUS 刻意只做區域穿透——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#新增-etf-持股) |
 | `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | 兩份 COMPOSITION 也要有該代號，否則穿透 fallback「其他」、國家上限提醒偏掉 |

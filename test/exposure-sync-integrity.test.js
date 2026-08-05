@@ -13,20 +13,37 @@
 // 涵蓋**兩個**同步點（都是正式程式自己標明「改其一要改兩處」的複本）：
 //   ① `COMPOSITION` 穿透表（`lib/derive.js` ↔ `public/modules/portfolio-exposure.js`）——
 //      逐鍵比對＋動態探針＋非正規形，能守到什麼／守不到什麼見下方 `SYMBOLS` 的 docblock。
-//   ② 負債型別白名單 `LIABILITY_TYPES`（同兩檔）——前端由 `fxExposure` 那題守、後端由
-//      `buildSummary` 那題守；那兩題各釘「自己那一邊的四個成員」，**單邊新增第五個型別**
-//      （後端多收 'carloan'、前端沒抄）由後面「成員必須一模一樣」＋「動態探針」兩題守（#409 r7）。
-//      ⚠️ ②其實是**三份**複本，不是兩份（#409 r5 Codex 指出）：`lib/schema.js` 的
-//      `FIELD_SCHEMA.accounts.type` 枚舉那行註解自己寫明「合法值＝表單 ACCOUNT_TYPES ∪ derive 的
-//      LIABILITY_TYPES」。上面那些題全在**計算層**，證明「算得出來」；「存不存得進去」要走
-//      `sanitizeDbForWrite`，由「每個成員都要過得了寫入牆」那題守（兩邊同步加 'carloan' 而漏改
-//      schema 時，前面 13 題全綠、只有它會紅）。
+//   ② 負債型別白名單 `LIABILITY_TYPES`（後端 `lib/derive.js` ↔ 前端 `public/modules/accounts-model.js`）——
+//      前端由 `fxExposure` 那題守、後端由 `buildSummary` 那題守；那兩題各釘「自己那一邊的四個成員」，
+//      **單邊新增第五個型別**（後端多收 'carloan'、前端沒抄）由「成員必須一模一樣」＋「動態探針」
+//      兩題守（#409 r7）。
+//      ⚠️ **這一族有幾份複本，本檔刻意不寫數字**——寫下來的每一個數字都漂過：
+//      原始註解寫「改其一要改兩處」，r5 補成「三處」（`lib/schema.js` 的 `FIELD_SCHEMA.accounts.type`
+//      枚舉＝寫入牆），r8 Codex 又用實測打穿：前端當時還藏著**第四份**
+//      （`public/modules/assets.js` 手寫的 `isLiab`，而且**已經漏掉 creditcard**——信用卡帳戶在
+//      淨資產與幣別曝險都算負債，資產頁卻畫成藍標籤、餘額不標紅）與**第五份**（帳戶表單的型別選項，
+//      漏掉 liability／creditcard ⇒ 使用者打開那種帳戶只改個名字按儲存，就靜靜 PUT `type:'cash'`，
+//      50 萬負債變 50 萬資產）。
+//      ⇒ r8 的處置分兩層，都不再依賴「記得改幾處」：
+//        ・**收斂**：前端三份收成一份（`public/modules/accounts-model.js`），表單選項與資產頁的
+//          負債判準都從那份 Set 長出來——不是抄，是讀同一個物件（動態探針題證明）。
+//        ・**機械認定**：最後一題全站掃描 `public/` 與 `lib/`，只准三個宣告過的檔案出現這些型別字串
+//          （擋不住什麼寫在那題自己的劃界裡）；另有「表單選項 == 寫入牆枚舉」與「幣別選項 == CURRENCIES」
+//          兩題守住「存得進去的一定選得到」——這是上面那個 `type:'cash'` 靜靜改值的病根。
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE, LIABILITY_TYPES as FE_LIABILITY } from '../public/modules/portfolio-exposure.js';
+import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE } from '../public/modules/portfolio-exposure.js';
+import { LIABILITY_TYPES as FE_LIABILITY, LIABILITY_TYPE_LABELS, accountTypeOptions, isLiabilityAccount, ACCOUNT_CURRENCIES } from '../public/modules/accounts-model.js';
 import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE, LIABILITY_TYPES as BE_LIABILITY } from '../lib/derive.js';
-import { sanitizeDbForWrite } from '../lib/schema.js';
+import { sanitizeDbForWrite, FIELD_SCHEMA, CURRENCIES } from '../lib/schema.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** 兩份白名單的聯集＝「這一族目前有哪些型別」的唯一來源（手抄清單就是空包彈，見上方 v1 的教訓）。 */
+const LIABILITY_MEMBERS = [...new Set([...BE_LIABILITY, ...FE_LIABILITY])].sort();
 
 /**
  * 代號清單＝**直接從 `compOf` 真正使用的那張表取鍵**（兩邊都 export 表本身）。
@@ -227,8 +244,9 @@ test('幣別曝險｜四種負債型別的正數餘額都要變成「負的現�
   // ⚠️ 註解自己寫明：「不兜住的話幣別曝險會把房貸當 +690 萬現金曝險，方向整個反掉（自主體檢實測）」。
   //    白名單有四個成員，既有考題只走到 loan 與 mortgage 兩個 ⇒ liability／creditcard 是白吃的：
   //    未來有人「清理」前端這份白名單，方向反掉但全綠。
-  // ⚠️ 這一題只碰**前端**那份白名單（#409 minor③ 的修正）：`portfolio-exposure.js` 自己標明
-  //    LIABILITY_TYPES 與 `lib/derive.js` 是同步點（「改其一要改兩處」），而本題整題只呼叫 `fxExposure`，
+  // ⚠️ 這一題只碰**前端**那份白名單（#409 minor③ 的修正）：前端的單一真相是
+  //    `public/modules/accounts-model.js` 的 LIABILITY_TYPES（`portfolio-exposure.js` 讀它、
+  //    帳戶表單與資產頁也讀它），與 `lib/derive.js` 是同步點；本題整題只呼叫 `fxExposure`，
   //    碰不到後端那份——後端那半由下一題（走 `buildSummary`）守，兩題合起來的劃界寫在下一題。
   for (const type of ['loan', 'liability', 'mortgage', 'creditcard']) {
     const ex = fxExposure([], [{ type, currency: 'TWD', balance: 6900000 }], {});
@@ -283,8 +301,9 @@ test('負債白名單｜兩份 LIABILITY_TYPES 的成員必須一模一樣（單
   //    界線：這裡只證明「兩份 export 的成員相同」，不證明它們就是正式程式讀的那兩個物件——
   //    物件身分由下一題的動態探針守。
   assert.deepEqual([...BE_LIABILITY].sort(), [...FE_LIABILITY].sort(),
-    '後端 lib/derive.js 與前端 public/modules/portfolio-exposure.js 的 LIABILITY_TYPES 走散了——'
-    + '這是正式程式自己標明「改其一要改兩處」的同步點，只改一邊會讓淨資產與幣別曝險表方向相反');
+    '後端 lib/derive.js 與前端 public/modules/accounts-model.js 的 LIABILITY_TYPES 走散了——'
+    + '這是正式程式自己標明的同步點（前端不能 import lib/，所以後端那份仍是刻意的複本），'
+    + '只改一邊會讓淨資產與幣別曝險表方向相反');
   // 反面：白名單不可以被整個清空也綠（空集合彼此相等）。
   assert.ok(BE_LIABILITY.size >= 4, '白名單被清空／縮編時上面那句相等就成了空話');
 });
@@ -292,8 +311,11 @@ test('負債白名單｜兩份 LIABILITY_TYPES 的成員必須一模一樣（單
 test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型別，正式程式必須立刻當成負債（物件身分）', () => {
   // ⚠️ 專治「export 一份複本、正式程式讀另一份」的繞法（COMPOSITION 那邊 #409 r4 已踩過一次）：
   //    成員比對題對複本照樣綠，探針題才會紅（探針型別只寫進 export 的 Set，讀私表的那邊不認得）。
-  //    界線：這證明的是「export 的 Set 在 fxExposure／computeAssets 的讀取路徑上」，
+  //    界線：這證明的是「export 的 Set 在 fxExposure／computeAssets／帳戶表單／資產頁四條讀取路徑上」，
   //    不證明「正式程式沒有在這兩個 Set 之外多認得別的型別」（另一份兜底判斷、正則比對等抓不到）。
+  // ⚠️ r8 加測前端另外兩條路徑（`accountTypeOptions()` 與 `isLiabilityAccount()`）：它們原本是
+  //    `public/modules/assets.js` 裡的兩份手抄複本，改回手抄之後這一題就會紅
+  //    （手抄的清單不會因為 Set 多一個成員而長出探針型別）。
   const PROBE = '__PROBE_NOT_A_REAL_ACCOUNT_TYPE__';
   const beBefore = [...BE_LIABILITY].sort();
   const feBefore = [...FE_LIABILITY].sort();
@@ -313,6 +335,12 @@ test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型�
       + '成員比對題會整個落空——export 的必須是正式程式真正讀的那個物件');
     assert.equal(feCashTwd(100), -100,
       '往前端 export 的 LIABILITY_TYPES 加型別後 fxExposure 沒翻成負的現金曝險 ⇒ 同上，它讀的是另一份 Set');
+    assert.ok(accountTypeOptions().some(o => o.value === PROBE),
+      '往前端 LIABILITY_TYPES 加型別後，帳戶表單的型別下拉沒長出它 ⇒ 選項是另一份手抄清單。'
+      + '後果：那種帳戶存得進資料庫卻選不到，使用者一打開儲存就被瀏覽器改成第一個選項（cash）');
+    assert.equal(isLiabilityAccount({ type: PROBE, balance: 500000 }), true,
+      '往前端 LIABILITY_TYPES 加型別後，資產頁的 isLiabilityAccount 不認得它 ⇒ 它讀的是另一份手抄清單，'
+      + '那種帳戶會被畫成藍標籤、餘額不標紅（畫面與淨資產說法相反）');
   } finally {
     BE_LIABILITY.delete(PROBE);
     FE_LIABILITY.delete(PROBE);
@@ -323,21 +351,26 @@ test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型�
   // 否則上面兩個 −100 可能只是「什麼型別都算負債」而不是白名單真的生效。
   assert.equal(beNetWorth(100), 100, '探針還原後，未知型別的正數餘額應該退回資產');
   assert.equal(feCashTwd(100), 100, '探針還原後，未知型別的正數餘額應該退回正的現金曝險');
+  assert.ok(!accountTypeOptions().some(o => o.value === PROBE), '探針還原後，型別下拉不該還留著它');
+  assert.equal(isLiabilityAccount({ type: PROBE, balance: 500000 }), false,
+    '探針還原後，未知型別的正數餘額在資產頁應該退回「不是負債」——'
+    + '否則上面那個 true 只是「什麼型別都算負債」，白名單根本沒生效');
 });
 
 test('負債白名單｜每個成員都要過得了寫入牆（lib/schema.js 的 accounts.type 枚舉）——算得出來還要存得進去', () => {
   // ⚠️ 這一題補的是 #409 r5 Codex 指出的洞：上面每一題都停在**計算層**（`buildSummary`／`fxExposure`），
   //    證明的是「算出來的方向對」。但使用者真正按下儲存時，帳戶得先過 `lib/schema.js` 的櫃檯
   //    `sanitizeDbForWrite`，而 `FIELD_SCHEMA.accounts.type` 是**枚舉**、那行註解自己寫明
-  //    「合法值＝表單 ACCOUNT_TYPES ∪ derive 的 LIABILITY_TYPES」——**這是同一件事的第三份複本**。
-  // ⚠️ 實測（本輪逐字重放 Codex 的繞法）：前後端兩份 Set **同步**加入 'carloan'（＝維護註解教的
-  //    「改其一要改兩處」正確做法），本檔上面每一題含成員比對與動態探針**全綠 13/13**；
+  //    「合法值＝表單的型別選項…」——**那是同一件事的另一份複本**（r5 當時寫「第三份」，
+  //    r8 發現不只，所以本檔已改成不數數，見檔頭）。
+  // ⚠️ 實測（r7 逐字重放 Codex 的繞法）：前後端兩份 Set **同步**加入 'carloan'（＝維護註解教的
+  //    正確做法），本檔上面每一題含成員比對與動態探針**全綠**；
   //    但同一個帳戶送進 `sanitizeDbForWrite` 就過不去：throw 模式（HOSTED 寫入，`lib/store-pg.js`）
   //    炸「accounts[0].type 值不合法」＝根本寫不進去；strip 模式（LOCAL 讀檔／還原，`lib/store.js`）
   //    **默默把 type 剝掉**，帳戶變成無型別 ⇒ 正數餘額落到 computeAssets 的 else 分支＝當成資產
   //    （實測：50 萬負債算成 netWorth +500000，方向整個翻過去）。
   //    「中間層一致、正式入口不一致」比兩邊走散更難發現，因為畫面上算得出來。
-  const MEMBERS = [...new Set([...BE_LIABILITY, ...FE_LIABILITY])].sort();
+  const MEMBERS = LIABILITY_MEMBERS;
   /** @param {string} type */
   const dbWith = (type) => /** @type {any} */ ({
     settings: { usdTwd: 1 },
@@ -359,6 +392,135 @@ test('負債白名單｜每個成員都要過得了寫入牆（lib/schema.js 的
     'accounts.type 不再是枚舉了——錯值（mortgagex）會讓負債被當資產，這是寫入牆存在的理由');
   // 反面②：白名單被清空時上面那圈會空轉（零次迴圈也「全過」）。
   assert.ok(MEMBERS.length >= 4, `LIABILITY_TYPES 至少該有 4 個成員（實際 ${MEMBERS.length}）——清空的話這題就變成空轉`);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 以下五題＝#409 r8 補的「前端那一半」。上面每一題都在證明「算得出負債」，
+// Codex r8 用兩條實測繞法指出還缺兩件事：**選得到**（存得進資料庫的型別要在表單裡選得到）
+// 與**畫得對**（資產頁的橘標籤與紅字要跟淨資產同一個口徑）。
+// 這兩件事原本各有一份手抄複本住在 `public/modules/assets.js`，零考題看著——
+// 把 `isLiab` 改成 `['loan']`（連房貸都不算負債）全套 1501 題全綠，就是那個洞的樣子。
+//
+// ⚠️ **這五題守的範圍到哪裡為止（別讀成「這個病全站治好了」）**：
+//   ・病根在 `public/app.js` 的 `openForm`——select 只在值完全相同時才加 `selected`、送出讀
+//     `select.value`，所以**任何**「值不在選項裡」的欄位都會被瀏覽器靜靜改成第一個選項。
+//     本支**沒有**動那一刀（那是通用行為改動，要能跑 DOM 的考題才驗得到；`public/app.js` 模組
+//     頂層就碰 document/localStorage，node 裡起不來），改採「選項必須涵蓋枚舉」這一側。
+//   ・因此本檔只保證**帳戶表單的型別與幣別兩個下拉**——`accounts-model.js` 是純模組、import 得進來。
+//     同一個病在別的表單仍可能發生而本檔看不到，例如 `public/modules/portfolio-forms.js` 的
+//     `PORTFOLIO_CURRENCIES`（目前與 `CURRENCIES` 同集合）、`subscriptions.js` 的 cycle／status
+//     選項——那些模組一 import 就會拉進 `app.js`，同上起不來。**它們現在沒有考題，這裡不假裝有。**
+// ──────────────────────────────────────────────────────────────────────────────
+
+test('帳戶表單｜型別下拉的選項值必須與寫入牆枚舉（lib/schema.js 的 accounts.type）精確相等', () => {
+  // ⚠️ 這一題治的是 Codex r8 抓到的**活著的病**：`liability` 與 `creditcard` 都是合法的
+  //    accounts.type（枚舉有、LIABILITY_TYPES 也有），卻不在帳戶表單的七個選項裡。
+  //    `public/app.js` 的下拉只在值完全相同時才加 `selected`、送出時讀 `select.value`——
+  //    沒有 option 命中時瀏覽器選第一個（`cash`）⇒ 在資產頁打開這種帳戶、只改個名字按儲存，
+  //    就靜靜 PUT `type:'cash'`：50 萬負債變成 50 萬資產，淨資產一次跳 100 萬。
+  // ⚠️ 為什麼是**精確相等**而不是「選項 ⊇ 枚舉」：兩個方向各有一種病。
+  //    枚舉有、表單沒有＝上面那個靜靜改值；表單有、枚舉沒有＝使用者選得到卻存不進去
+  //    （HOSTED throw 當場報錯、LOCAL strip 默默把 type 剝掉 ⇒ 又變成資產）。
+  const enumValues = /** @type {string[]} */ (FIELD_SCHEMA.accounts.type);
+  assert.ok(Array.isArray(enumValues),
+    'FIELD_SCHEMA.accounts.type 不再是枚舉了（改成自由字串）——那樣壞值也存得進去，這題與寫入牆那題都成了空話');
+  assert.deepEqual(accountTypeOptions().map(o => o.value).sort(), [...enumValues].sort(),
+    '帳戶表單的型別選項與 lib/schema.js 的寫入牆枚舉對不起來——'
+    + '枚舉有而表單沒有的型別，其帳戶一被打開儲存就會被瀏覽器改成第一個選項（cash），'
+    + '負債靜靜翻成資產；表單有而枚舉沒有的型別則是選得到卻存不進去');
+});
+
+test('帳戶表單｜每個負債型別都要選得到，而且要有中文標籤', () => {
+  // 上一題已釘死「選項 == 枚舉」，這一題釘的是另一半：**枚舉本身不可以漏掉負債型別**
+  //（兩題合起來＝每個 LIABILITY_TYPES 成員都選得到）。少了標籤不會讓人選不到，
+  // 但下拉會露出英文代碼（`carloan`），所以標籤只釘「有沒有人幫新型別寫中文」。
+  const options = accountTypeOptions();
+  for (const type of LIABILITY_MEMBERS) {
+    const opt = options.find(o => o.value === type);
+    assert.ok(opt, `負債型別 '${type}' 在帳戶表單的型別下拉裡選不到——`
+      + '它算得出負債、也存得進資料庫，卻只能靠改資料庫才設得上去；'
+      + '更糟的是既有的這種帳戶一被打開儲存就會被改成第一個選項（cash）');
+    assert.ok(/負債/.test(opt.label), `'${type}' 的選項標籤「${opt.label}」看不出是負債——`
+      + '使用者要在下拉裡分得出「這一項填了會變成負的」');
+  }
+  assert.deepEqual(Object.keys(LIABILITY_TYPE_LABELS).sort(), [...LIABILITY_MEMBERS].sort(),
+    'LIABILITY_TYPE_LABELS 的鍵與負債白名單走散了——'
+    + '多的是刪型別忘了刪標籤（死程式），少的是新型別沒人寫中文（下拉露出英文代碼）');
+  // 反面：資產型別不可以被吃掉（只剩負債選項時上面每一句都還是成立）。
+  for (const type of ['cash', 'investment']) {
+    assert.ok(options.some(o => o.value === type), `資產型別 '${type}' 從下拉消失了`);
+  }
+});
+
+test('資產頁｜每個負債型別的正數餘額都要被畫成負債（isLiabilityAccount 與淨資產同口徑）', () => {
+  // ⚠️ 這一題直接對著 Codex r8 的重放繞法：`public/modules/assets.js` 原本自己寫
+  //    `['mortgage','loan','liability'].includes(x.type) || Number(x.balance) < 0`——
+  //    **已經漏掉 creditcard**，把它再縮成只剩房貸以外的一項，全套 1501 題照樣全綠。
+  //    實害不是計算錯（淨資產走 derive、幣別曝險走 fxExposure，兩邊都對），而是**畫面說反話**：
+  //    信用卡／其他負債帳戶在資產頁掛藍標籤、餘額不標紅，看起來像資產。
+  //    現在判準已收斂到 accounts-model 的同一份 Set，這題是行為級的看門人。
+  for (const type of LIABILITY_MEMBERS) {
+    assert.equal(isLiabilityAccount({ type, balance: 500000 }), true,
+      `type='${type}'、餘額 +50 萬（負債帳戶填正數是允許的資料形狀）在資產頁沒被當成負債——`
+      + '同一筆在淨資產是 −50 萬、在幣別曝險是 −50 萬現金曝險，只有畫面說它是資產');
+  }
+  // 反面①：一般帳戶的正數餘額不是負債（否則上面整圈只是「什麼都算負債」）。
+  assert.equal(isLiabilityAccount({ type: 'cash', balance: 50000 }), false, '現金帳戶的正數餘額不是負債');
+  // 反面②：餘額為負一律算負債（與 derive 的 `白名單 || bal < 0` 同口徑；只留白名單那一半會漏掉透支帳戶）。
+  assert.equal(isLiabilityAccount({ type: 'cash', balance: -300 }), true, '餘額是負的就是負債，與型別無關');
+});
+
+test('帳戶表單｜幣別下拉的選項必須與 lib/schema.js 的 CURRENCIES 精確相等', () => {
+  // 同一族的第三個下拉（病因與型別下拉完全相同，只是走樣的是匯率不是方向）：
+  // 枚舉多一個幣別而表單沒有 ⇒ 那個幣別的帳戶一被打開儲存就靜靜變成第一個選項 TWD，
+  // 之後每次換算都用錯匯率（100 USD 變 100 TWD）；表單多一個 ⇒ 選得到卻存不進去。
+  assert.deepEqual([...ACCOUNT_CURRENCIES].sort(), [...CURRENCIES].sort(),
+    '帳戶表單的幣別選項與 lib/schema.js 的 CURRENCIES 走散了——同一族的「存得進去卻選不到」，'
+    + '受害的是金額換算：那個幣別的帳戶一被編輯儲存就靜靜變成 TWD');
+});
+
+test('負債白名單｜全站只准宣告過的檔案出現這些型別字串（第四份手抄複本會被抓到）', () => {
+  // ⚠️ 這一題是「還有沒有下一份複本」的機械認定，不靠人記——r8 的教訓正是「數字自己會漂」：
+  //    註解從「兩處」漂到「三處」，而前端當時還藏著第四份（assets.js 的 isLiab）與
+  //    第五份（表單的型別選項），兩份都零考題、兩份都已經與白名單走散。
+  // ⚠️ 判準是**宣告**不是推導（同 test/no-hiding-places.test.js 的作法）：下面逐條寫死
+  //    「哪個檔案有資格持有這份清單、為什麼」。任何新增一律轉紅，逼改的人回答一次
+  //    「這是刻意的同步點，還是又一份會漂的手抄複本？」
+  // ⚠️ 誠實劃界——這一題**擋不住**什麼：
+  //    ・它看的是**文字**：`['mor' + 'tgage']`、先塞進變數、用 RegExp 拼字串，都掃不到。
+  //      本檔其他每一題都是「呼叫正式程式看結果」，只有這一題沒得選：
+  //      `public/modules/assets.js` 一 import 就會拉進 `public/app.js`，那是瀏覽器模組、
+  //      模組頂層就碰 document/localStorage，node 裡起不來（所以它才會零考題那麼久）。
+  //    ・它只掃 `lib/` 與 `public/` 的 .js（正式程式）；考題、文件、seed 資料不掃。
+  //    ・它不判斷「出現得合不合理」，只判斷「有沒有人偷偷長出下一份」。
+  const ALLOWED = new Map([
+    ['lib/derive.js', '後端的白名單本尊（前端不能 import lib/，所以後端這份是刻意的複本）'],
+    ['lib/schema.js', '寫入牆枚舉：刻意手寫的棘輪，不從表單推導——刪掉一個表單選項不可以讓既有資料變非法'],
+    ['public/modules/accounts-model.js', '前端的單一真相：表單選項與資產頁的負債判準都從這份 Set 長出來'],
+  ]);
+  /** @param {string} dir @returns {string[]} */
+  const jsFiles = (dir) => readdirSync(dir).flatMap(name => {
+    const p = join(dir, name);
+    return statSync(p).isDirectory() ? jsFiles(p) : (name.endsWith('.js') ? [p] : []);
+  });
+  const files = [...jsFiles(join(ROOT, 'lib')), ...jsFiles(join(ROOT, 'public'))].map(f => relative(ROOT, f));
+  // 反面①：掃描器要真的走到檔案——路徑打錯或副檔名過濾寫壞時會靜靜掃 0 個檔案（空包彈）。
+  assert.ok(files.length >= 50, `掃描器只看到 ${files.length} 個 .js，正式程式沒這麼少——掃描範圍壞了`);
+  // 反面②：這一題存在的理由就是 assets.js，它一定要在受掃範圍內。
+  assert.ok(files.includes('public/modules/assets.js'), '受掃清單裡沒有 public/modules/assets.js——這題就白做了');
+  /** @type {string[]} */
+  const hits = [];
+  for (const rel of files) {
+    if (ALLOWED.has(rel)) continue;
+    const src = readFileSync(join(ROOT, rel), 'utf8');
+    for (const type of LIABILITY_MEMBERS) {
+      for (const quote of ['\'', '"', '`']) {
+        if (src.includes(`${quote}${type}${quote}`)) hits.push(`${rel} ← ${quote}${type}${quote}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, [], '這些檔案自己寫死了負債型別的字串＝又一份會漂的複本'
+    + `（有資格持有的只有：${[...ALLOWED.keys()].join('、')}）：\n${hits.join('\n')}`);
 });
 
 test('國家上限｜「其他」是殘差桶不是國家：不可冒出假的「其他超過國家上限」提醒', () => {
