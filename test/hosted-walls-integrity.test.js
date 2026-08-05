@@ -25,11 +25,32 @@
 //   ②`lib/store-pg.js` 的未知鍵過濾與 `?? emptyFor(k)`（使用者能往 db 塞特殊名稱的鍵）——歸
 //     `test/hosted-store-pg.test.js` 的租戶 harness，本檔沒做。
 //   ③`lib/repo.js` 的 CAS 只重試一次、以及「找不到的資料不可白推進版本」——同上，本檔沒做。
-//   ④body 上限的接線**只驗登入端點這一條**。帳單（15MB）與備份（50MB）兩個入口只在本檔被當
-//     「比較基準」用（證明登入入口嚴格更小），它們自己的接線沒有逐條 HTTP 驗收。
+//   ④body 上限的接線**只驗身分牆前那一道 parser**（`/api/auth` 前綴掛載的四條 POST 逐條驗）。
+//     帳單（15MB）與備份（50MB）兩個入口只在本檔被當「比較基準」用（證明登入入口嚴格更小），
+//     它們自己的接線沒有逐條 HTTP 驗收。
 //   ⑤`projectAccount` 的「星號後末碼」只支援**星號緊接數字**；`1234**** 56`（星號後有空白或減號）
 //     現行會回 `3456` ＝一個假末碼。本檔用考題把這個現況**記錄下來**，沒有修（見該題註解）。
 //   ⑥`extractLastFour` 本次只補了**第一條規則**的尾端邊界；第二、三條規則的邊界維持現狀。
+//   ⑦CSRF 牆的接線逐條驗 **POST／PUT／DELETE／PATCH**（本站真的有變更路由的四種方法）。
+//     guard 刻意豁免的 GET/HEAD/OPTIONS **不**在驗收範圍——那是設計（讀取請求不需要 CSRF 牆），
+//     不是漏洞；把 GET 加進豁免清單不會讓任何一題轉紅，因為它本來就在裡面。
+//     其餘方法（WebDAV 的 PROPFIND 之類）本站沒有任何路由，未逐條列。
+//     **路徑這一維只取兩條代表**（見 `GUARDED_PATHS`）：guard 是 `app.use(csrfOriginGuard)` 全站
+//     掛載、不看路徑，所以「照路徑開特例」是個很怪的改法；但要誠實講——真有人只對第三條路徑
+//     開特例（例如 `/api/cards`），本檔抓不到。
+//
+// ⚠️ **r2 複審又打回來一次，病灶同樣值得寫下來**（2026-08-05 自審實測，兩個阻擋級 overclaim）：
+//   ⓐ CSRF 接線題**只打 POST**，題名卻宣稱釘住「變更類請求」。實測把 `csrfOriginGuard` 的豁免
+//      清單擴成 `GET|HEAD|OPTIONS|PUT|DELETE|PATCH`，全套 1497 題照樣全綠——而受害路由是真的
+//      存在的（`lib/routes/crud.js` 的 PUT/DELETE `/api/{col}/:id`、`lib/routes/core.js` 的
+//      PUT `/api/settings`）。獨立 HTTP 探針證實：evil.com 的 PUT/DELETE/PATCH 全部從 403 掉成
+//      401 ＝**牆沒發言、請求已經穿過 CSRF 牆走到身分牆**。⇒ 接線題改成逐方法跑。
+//   ⓑ body 上限的接線題**只打 `/api/auth/login`**，但那道 32KB parser 是
+//      `app.use('/api/auth', …)` ＝**前綴掛載**，一次掛給整組 `/api/auth/*`，而 login／logout／
+//      confirm／set-password 四條 POST 全在身分牆之前（authRoutes 在 `server.js:191`、authGate 在
+//      192）＝未登入就打得到。實測讓 login 保持 32KB、其餘 `/api/auth` 放寬到 50mb，全套全綠——
+//      檔頭點名的病灶「未登入者可反覆丟大檔撐爆記憶體」只是換一條同族端點就原樣重現。
+//      ⇒ 413 探針改成對四條逐條跑。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -102,7 +123,18 @@ test('身分牆前的 body 上限（常數）｜登入入口必須遠小於一�
     '登入入口必須嚴格小於備份入口（那個是刻意大的）');
 });
 
-test('身分牆前的 body 上限（接線）｜登入端點超過上限＝413；小 body 仍到得了 handler；備份入口不受這道上限影響', async () => {
+/**
+ * 身分牆**之前**會被那道 32KB parser 蓋到的全部 POST 端點（`authRoutes` 只有這四條 POST，
+ * 另一條 `/api/auth/me` 是 GET、不吃 body，未列）。
+ * `server.js:190` 的 `app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }))` 是**前綴掛載**，
+ * 一次把這道上限掛給整組 `/api/auth/*`；而 authRoutes 掛在 `server.js:191`、authGate 在 192，
+ * 所以下面四條 POST **全部未登入可達**＝全部都是「牆前的未驗證流量」。
+ * ⚠️ 只驗其中一條等於另外三條沒有任何考題釘著（r2 病灶ⓑ：只留 login 嚴格、其餘放寬到 50mb ⇒ 全綠）。
+ * logout 也列進來：它自己不讀 body，但那道 parser 照樣會先把 body 吃下去。
+ */
+const PRE_GATE_POST_ROUTES = ['/api/auth/login', '/api/auth/logout', '/api/auth/confirm', '/api/auth/set-password'];
+
+test('身分牆前的 body 上限（接線）｜牆前四條 POST 逐條超過上限＝413；小 body 仍到得了 handler；備份入口不受這道上限影響', async () => {
   // ⚠️ **這一題才是承重的那一題**（r1 High①）：Codex 把 `server.js` 的
   //    `app.use('/api/auth', express.json({ limit: AUTH_JSON_LIMIT }))` 改成 `limit: '1mb'`、
   //    常數表原封不動 ⇒ 上一題與既有 24 題 HOSTED auth 全綠。所以要走**真的 HTTP**。
@@ -113,14 +145,19 @@ test('身分牆前的 body 上限（接線）｜登入端點超過上限＝413�
   assert.ok(probe < toBytes(STANDARD_JSON_LIMIT),
     `探針 ${probe} bytes 必須仍小於一般入口 ${STANDARD_JSON_LIMIT}——否則這題證不到「登入入口比較小」，只證到「有某個上限」`);
 
-  // ① 超過上限 → 413（body 沒有被吞下去；未登入流量到不了 handler）
-  const overSize = await fetch(`${base}/api/auth/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN },
-    body: JSON.stringify({ email: 'a@x.com', password: 'x'.repeat(probe) }),
-  });
-  assert.equal(overSize.status, 413,
-    `送 ${probe} bytes 給登入端點應該回 413，實得 ${overSize.status}`
-    + `——200/401 代表 parser 上掛的其實是別的（更大的）上限，常數表寫 ${AUTH_JSON_LIMIT} 只是裝飾`);
+  // ① 超過上限 → 413（body 沒有被吞下去；未登入流量到不了 handler）。
+  //    **四條牆前端點逐條驗**（r2 病灶ⓑ）：413 是 parser 擋下的；400／401／200 都代表 body 已經被
+  //    完整解析、只是被業務邏輯打回——那時記憶體早就吃下去了，正是這道牆要防的事。
+  for (const path of PRE_GATE_POST_ROUTES) {
+    const overSize = await fetch(`${base}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN },
+      body: JSON.stringify({ email: 'a@x.com', password: 'x'.repeat(probe) }),
+    });
+    assert.equal(overSize.status, 413,
+      `送 ${probe} bytes 給牆前端點 ${path} 應該回 413，實得 ${overSize.status}`
+      + `——200/400/401 代表這條路上掛的其實是別的（更大的）上限，常數表寫 ${AUTH_JSON_LIMIT} 只是裝飾`);
+    assert.match((await overSize.json()).error, /上傳內容太大/, '要回我們自己的白話訊息');
+  }
 
   // ② 小 body 仍然到得了 handler：回的是登入邏輯的 401（不是 parser 的 413、也不是 400）
   const small = await fetch(`${base}/api/auth/login`, {
@@ -151,6 +188,22 @@ const postLogout = (origin) => fetch(`${base}/api/auth/logout`, {
   method: 'POST', headers: origin ? { Origin: origin } : {},
 });
 
+/** `csrfOriginGuard` 只豁免 GET/HEAD/OPTIONS ⇒ 這四種就是「變更類請求」的全部。 */
+const MUTATING_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
+/**
+ * 牆**後**的變更類探針路徑（都要登入才做得了事）。
+ * 選這兩條是因為它們就是 r2 實測的受害者：`lib/routes/crud.js:54` 的 PUT `/api/{col}/:id`、
+ * `crud.js:110` 的 DELETE `/api/{col}/:id`、`lib/routes/core.js:46` 的 PUT `/api/settings`。
+ * ⚠️ **一律不帶 session cookie**，所以 CSRF 牆若沒發言，回的會是身分牆的 401——
+ *    「403 還是 401」就是分辨「牆擋下了」與「請求穿過牆了」的那顆訊號。也因為沒有 session，
+ *    這些探針在任何情況下都寫不進任何資料（authGate 之後才有 tenant context）。
+ */
+const GUARDED_PATHS = ['/api/transactions/probe-no-such-id', '/api/settings'];
+/** @param {string} method @param {string} path @param {string} [origin] */
+const mutating = (method, path, origin) => fetch(`${base}${path}`, {
+  method, headers: origin ? { Origin: origin } : {},
+});
+
 /** 「像但不是」的來源清單：前綴比對、大小寫寬鬆比對各會放行其中一部分。 */
 const LOOKALIKE_ORIGINS = [
   'https://noteasy.com.tw.evil.com',      // 後綴接別的網域（前綴比對會放行）
@@ -178,19 +231,36 @@ test('Origin 白名單（判準）｜必須是「完全相等」——開頭像�
   }
 });
 
-test('Origin 白名單（接線）｜HOSTED 的變更類請求真的走 csrfOriginGuard：像但不是的來源一律 403', async () => {
+test('Origin 白名單（接線）｜POST／PUT／DELETE／PATCH 四種變更請求都真的走 csrfOriginGuard：像但不是的來源一律 403（不是 401）', async () => {
   // ⚠️ **這一題才是承重的那一題**（r1 High②）：Codex 把 `csrfOriginGuard` 改成自己
-  //    `origin.startsWith(allow)`、`originAllowed` 原封不動 ⇒ 上一題與完整測試全綠。
+  //    `origin.startsWith(allow)`、`originAllowed` 原封不動 ⇒ 判準那題與完整測試全綠。
   //    ＝「中間層另寫一套判準」這個繞法，只有走真的 HTTP 才擋得住。
+  // ⚠️ **而且必須逐方法打**（r2 病灶ⓐ）：第一版只打 POST，於是「把豁免清單擴到 PUT/DELETE/PATCH」
+  //    這顆突變全套 1497 題照樣全綠——受害路由卻是真的存在的（見 GUARDED_PATHS 的註解）。
+  //    分辨訊號＝**403 還是 401**：403 是 CSRF 牆自己說的，401 是請求已經穿過 CSRF 牆、
+  //    由後面的身分牆說的。只斷言「不是 200」抓不到這個繞法。
   const ok = await postLogout(GOOD_ORIGIN);
   assert.equal(ok.status, 200, `白名單上的 Origin 必須放行，實得 ${ok.status}`);
-  for (const bad of LOOKALIKE_ORIGINS) {
-    const r = await postLogout(bad);
-    assert.equal(r.status, 403,
-      `Origin「${bad}」的變更類請求必須被牆擋成 403，實得 ${r.status}——中間層的判準比 helper 寬`);
-    assert.match((await r.json()).error, /請求來源不被允許/, '要回我們自己的白話訊息');
+  for (const method of MUTATING_METHODS) {
+    for (const path of GUARDED_PATHS) {
+      for (const bad of LOOKALIKE_ORIGINS) {
+        const r = await mutating(method, path, bad);
+        assert.equal(r.status, 403,
+          `${method} ${path} 帶 Origin「${bad}」必須被 CSRF 牆擋成 403，實得 ${r.status}`
+          + '——401 代表這道牆把它放行了、請求已經走到身分牆：可能是方法豁免清單被擴大（牆對這個'
+          + '方法根本沒發言），也可能是牆的判準比 helper 寬。兩種都只差一顆有效 cookie 就會真的改到資料');
+        assert.match((await r.json()).error, /請求來源不被允許/, '要回我們自己的白話訊息');
+      }
+      // 反面對照（避免「整道牆一律 403」也綠）：白名單來源與沒帶 Origin 的同一個請求要**穿過**
+      // 這道牆，由身分牆回 401。沒帶 Origin 照舊放行是刻意的（curl／非瀏覽器；SameSite=Lax
+      // cookie 已擋跨站帶 cookie，這道是雙保險）。
+      assert.equal((await mutating(method, path, GOOD_ORIGIN)).status, 401,
+        `${method} ${path} 帶白名單 Origin 必須穿過 CSRF 牆、由身分牆回 401（403＝牆把合法來源也擋了）`);
+      assert.equal((await mutating(method, path)).status, 401,
+        `${method} ${path} 沒帶 Origin 時照舊放行到身分牆（實得非 401＝這道牆的放行條件被改了）`);
+    }
   }
-  // 沒帶 Origin（curl／非瀏覽器）照舊放行：SameSite=Lax cookie 已擋跨站帶 cookie，這道是雙保險。
+  // 沒帶 Origin 的變更請求不只穿過牆、還真的跑得到 handler（logout 是牆後唯一無副作用又會做事的一條）。
   assert.equal((await postLogout()).status, 200, '沒帶 Origin 的請求照舊放行');
 });
 
