@@ -32,8 +32,8 @@
 //    各自守什麼寫在各自的題裡，不適用這句。
 //
 // ⚠️ 第四版的教訓（#413 r3 阻擋）：這兩條都不在刻度本身，而在「抽原始碼來測前端」那類考題**能證明什麼**——
-//    (a) 語法樹只證明得了語法與綁定，**證明不了資料流真的抵達畫面**：把可見的橘標籤搬進一個不呈現的
-//        探針變數，正式資產頁不再標偏離，全套考題照樣全綠。（這個洞第五版關掉了，見下。）
+//    (a) 語法樹只證明得了語法與綁定，**證明不了資料流真的抵達畫面**：把印在畫面上的橘標籤搬進一個
+//        不呈現的探針變數，正式資產頁不再標偏離，全套考題照樣全綠。（這個洞第五版關掉了，見下。）
 //    (b) 形狀斷言不可比正式行為還嚴：把 `export const f = (d) => …` 改寫成等價的
 //        `export function f(d) …`（本體逐字不變、行為完全相同）上一版會紅＝**假紅**。
 //        考題只該紅在行為變了的時候；為了會紅而紅的考題最後會被當成雜訊關掉（修法見 declSourceOf）。
@@ -48,10 +48,19 @@
 //    順帶把 (a) 那個洞關上了——探針變數不會出現在畫面的 HTML 上。
 //    ⚠️ 這條的射程寫清楚，別擴寫成全檔口號：**「抽原始碼來測前端」還留在訂閱那題**
 //    （loadFrontendSubStatus，切的是純函式、跨檔綁定另有一套檢查撐著），它自己的劃界寫在該處。
+//
+// ⚠️ 第六版的教訓（#413 r4 阻擋）：把正式碼搬進 sandbox 跑，證明的是「**這一支**函式印什麼」，
+//    不是「使用者按下那一頁時跑的是它」。上一版少了後半句，複驗者於是**留著原 renderer 一字不動**、
+//    另寫一支「先呼叫它、再把橘標籤從真正的 DOM 拔掉」的 wrapper，把 `ROUTES.assets` 改接過去：
+//    正式資產頁真的不再顯示偏離標籤，而 7 題全綠、完整套件全綠、typecheck／lint 全綠。
+//    修法＝把**正式路由的綁定**也變成斷言（assertAssetsRouteBinding：`ROUTES.assets` 綁的必須是
+//    從 assets.js 具名 import 進來的 `renderAssets`，依作用域規則解析、不是認字串）。
+//    這條的通則值得記住：**「我抄／跑的是正式碼」還缺一句「而正式環境跑的是我抄／跑的那一份」**
+//    ——同一個病在本檔已經出現三次（r2 的 daysUntil 綁定、自審的匯出端、這次的路由端）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // 真正的 JS parser 與作用域分析（ESLint 自己用的那兩顆，隨 devDependency 的 eslint 一起裝）。
 // 為什麼不自己寫正則掃字串＝見 loadFrontendSubStatus 的「第二次教訓」。
@@ -236,6 +245,135 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
 const ORANGE = '__CHART_ORANGE__';
 const GREEN = '__CHART_GREEN__';
 
+const APP_REL = 'public/app.js';
+const ASSETS_REL = 'public/modules/assets.js';
+
+/**
+ * 斷言「使用者按下『資產配置』時，跑的就是本題搬進 sandbox 的那一支 renderAssets」。
+ *
+ * ⚠️ 這條檢查存在的唯一理由＝#413 r4 的阻擋繞法（值得原地逐字記下來）：上一版只從 assets.js
+ *    取回一支同名函式來跑，**完全沒有核對正式路由接到誰**。複驗者於是保留 `renderAssets()` 一字不動、
+ *    在 app.js 另寫一支 `renderAssetsWithoutDrift()`（先呼叫舊 renderer，再從真正的 DOM 移除
+ *    `.tag.amber`），把 `ROUTES.assets` 改接新的那支——**正式資產頁真的不再顯示橘色偏離標籤**，
+ *    而新增 7 題全綠、完整套件全綠、typecheck／lint 全綠。當時那處劃界還寫著「改由別的函式渲染
+ *    會吵著紅」，那句話因此是**假的**（現在改成事實了，見 renderAssetsHtml 劃界第 2 條）。
+ *
+ * 認的是「綁到誰」而不是形狀（同 assertDaysUntilBinding 的做法：問語言的作用域規則，不是認字串）：
+ *   - `assets: renderAssets`（現況）、`assets: renderAssetsPage`（**改名 import**）都收——
+ *     配對看的是「來自哪支模組的哪個匯出」，不是本地叫什麼名字。
+ *   - `assets: () => renderAssets()`（**純轉手包一層**，router 是 `await fn()`＝行為等價）也收，
+ *     見 passThroughCallee；轉手包裝裡多做任何第二件事（複驗者那顆繞法的形狀）就不是純轉手＝紅。
+ *   - 註解不必特別處理：對 parser 而言註解不存在（AGENTS.md 那條硬規則）。
+ *
+ * ⚠️ 誠實劃界（認不了什麼／擋不住什麼）：
+ *   1. 射程止於 **app.js 的 `ROUTES` 這張表**。`router()` 哪天改查別張表、或資產頁改由別處
+ *      （例如 index.html 自己接）渲染，本題認不出來——這條檢查會照舊全綠。
+ *      「router 真的照 ROUTES 分派」不在本題射程內。
+ *   2. `ROUTES` 若不再是就地寫死的物件字面值（動態組表、`...spread`、事後 `ROUTES.assets = …` 賦值），
+ *      本題**吵著紅**要人回來更新，不是靜靜綠。三種情況都各有一條斷言點名（三顆突變逐一量過）。
+ *      ⚠️ 但「事後改表」只認得**賦值**這一種：`Object.assign(ROUTES, { assets: … })` 這類
+ *      **用函式改表**認不出來——**這句是量過的**：那顆繞法實測 7/7 靜靜全綠。之所以不補：本檔現行的
+ *      `Object.hasOwn(ROUTES, route) ? ROUTES[route] : …` 也是「把 ROUTES 整個交給某個函式」，
+ *      要分辨得回頭列舉哪些函式無害——那正是本檔記了三次的「列舉繞法補不完」。
+ *      真要關門得換方向（例如把路由表收成唯讀的單一真相），那是另一支 PR 的事。
+ *   3. 轉手包裝只跟著走「整個本體就是一句呼叫」的形狀。寫成別的等價形狀
+ *      （例如 `assets: async () => { const r = await renderAssets(); return r; }`）會吵著紅——
+ *      這是刻意的：包裝裡能不能多做事，必須有人看過才算。
+ *
+ * ⚠️ 這些話是量過的（本輪逐顆突變，正式碼真的改、grep 確認落地後才跑）：
+ *    **轉紅**（fail 1、pass 6，不是整支崩）：複驗者那顆 wrapper 逐字重放（具名函式）、
+ *    同一顆改寫成就地箭頭（兩件事的版本）、assets.js 同檔改名匯出
+ *    （`export { renderAssetsNoDrift as renderAssets }`，本體一字不動）、
+ *    路由改指分叉出來的 `assets-v2.js`（門檻鬆一格）、`Object.freeze({…})`、`...spread`、
+ *    `ROUTES.assets = …` 事後賦值。
+ *    **維持全綠**（等價改寫，不可假紅）：`renderAssets as renderAssetsPage` 改名 import、
+ *    `assets: () => renderAssets()` 純轉手；連 r4 那五顆假紅（多一張 `tag amber`、`r`／`db` 改名、
+ *    門檻提到迴圈外、判準抽成 helper）與 `export const` 箭頭函式改寫也一起重跑過，照舊全綠。
+ */
+function assertAssetsRouteBinding() {
+  const app = parseModule(APP_REL);
+  const def = topLevelDef(app, 'ROUTES');
+  assert.equal(def.type, 'Variable', `${APP_REL} 的 ROUTES 不是就地宣告的變數（實際：${def.type}）`);
+  const table = def.node.init;
+  assert.equal(table && table.type, 'ObjectExpression',
+    `${APP_REL} 的 ROUTES 不是就地寫死的物件字面值（改成動態組表了？本題認不出 assets 綁到誰，要有人回來更新）`);
+  assert.ok(!table.properties.some((/** @type {any} */ p) => p.type === 'SpreadElement'),
+    `${APP_REL} 的 ROUTES 裡有展開（...）：assets 可能被展開進來的那份蓋掉，本題認不出最後綁到誰`);
+  walkAst(app.ast, (/** @type {any} */ n) => {
+    assert.ok(!(n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression'
+      && n.left.object.type === 'Identifier' && n.left.object.name === 'ROUTES'),
+      `${APP_REL}:${n.loc.start.line} 事後對 ROUTES 的欄位賦值（ROUTES.x = …）：`
+      + '物件字面值不再是最後的答案，本題要有人回來更新');
+  });
+  const props = table.properties.filter((/** @type {any} */ p) => p.type === 'Property' && !p.computed
+    && (p.key.type === 'Identifier' ? p.key.name : p.key.value) === 'assets');
+  assert.equal(props.length, 1,
+    `${APP_REL} 的 ROUTES 裡叫 assets 的那一條有 ${props.length} 份`
+    + '（0＝路由改名或改用算出來的鍵；>1＝重複）——使用者按「資產配置」跑到誰會變成用猜的');
+
+  let node = props[0].value;
+  for (let hop = 0; hop < 3; hop++) {              // 純轉手包裝算等價寫法，跟著它走（不算假紅）
+    const callee = passThroughCallee(node);
+    if (!callee) break;
+    node = callee;
+  }
+  assert.equal(node.type, 'Identifier',
+    `${APP_REL} 的 ROUTES.assets 綁的不是一個名字（實際：${node.type}）——`
+    + '本題認不出資產頁跑的是哪一支，要有人回來更新（純轉手包一層是收的，見 passThroughCallee）');
+  const ref = app.manager.scopes.flatMap((/** @type {any} */ s) => s.references)
+    .find((/** @type {any} */ r) => r.identifier === node);
+  assert.ok(ref, `${APP_REL} 的 ROUTES.assets 綁的 ${node.name} 在作用域圖上找不到（本題要有人回來更新）`);
+  const variable = ref.resolved;
+  assert.ok(variable, `${APP_REL} 的 ROUTES.assets 綁的 ${node.name} 解析不到任何宣告（全域漏網？）`);
+  assert.equal(variable.scope.type, 'module',
+    `${APP_REL} 的 ROUTES.assets 綁到的 ${node.name} 不在模組層（實際：${variable.scope.type}）`);
+  assert.equal(variable.defs.length, 1, `${APP_REL} 的 ${node.name} 有 ${variable.defs.length} 份宣告`);
+  const bind = variable.defs[0];
+  assert.equal(bind.type, 'ImportBinding',
+    `${APP_REL} 的 ROUTES.assets 綁到的 ${node.name} 是本檔就地宣告的（實際：${bind.type}）——`
+    + `資產頁跑的不是 ${ASSETS_REL} 匯出的那一支，本題測到的 HTML 到不了畫面`
+    + '（#413 r4 的繞法：另寫一支 wrapper 先呼叫舊 renderer、再把橘標籤從 DOM 移掉）');
+  assert.equal(bind.node.type, 'ImportSpecifier',
+    'ROUTES.assets 必須綁到具名 import（default／namespace 引入＝本題認不出跑的是哪一支）');
+  assert.equal(bind.node.imported.name, 'renderAssets',
+    `ROUTES.assets 綁到的是 ${bind.node.imported.name}、不是 renderAssets——資產頁跑的是另一支`);
+  const source = String(bind.parent.source.value);
+  assert.ok(source.startsWith('.'), `ROUTES.assets 的 renderAssets 來自「${source}」，不是相對路徑`);
+  assert.equal(resolve(dirname(join(ROOT, APP_REL)), source), join(ROOT, ASSETS_REL),
+    `ROUTES.assets 的 renderAssets 來自「${source}」，不是本題搬進 sandbox 的 ${ASSETS_REL}`);
+}
+
+/**
+ * 「整個本體就是一句呼叫」的轉手包裝 ⇒ 回傳被呼叫的那個東西（`() => renderAssets()` ⇒ `renderAssets`）。
+ * 不是這種形狀就回 null（由呼叫端吵著紅）。刻意窄：包裝裡多做第二件事就認不得，
+ * 因為「先呼叫原 renderer、再把標籤拔掉」正是要擋的那顆繞法。
+ */
+function passThroughCallee(node) {
+  if (!node || (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression')) return null;
+  let body = node.body;
+  if (body.type === 'BlockStatement') {
+    if (body.body.length !== 1) return null;
+    const only = body.body[0];
+    if (only.type === 'ReturnStatement') body = only.argument;
+    else if (only.type === 'ExpressionStatement') body = only.expression;
+    else return null;
+  }
+  if (body && body.type === 'AwaitExpression') body = body.argument;
+  return body && body.type === 'CallExpression' ? body.callee : null;
+}
+
+/** 走過整棵語法樹。（espree 不掛 parent 指標，所以「某個節點的上一層是誰」得自己走下來看。） */
+function walkAst(node, visit) {
+  if (!node || typeof node.type !== 'string') return;
+  visit(node);
+  for (const key of Object.keys(node)) {
+    if (key === 'range' || key === 'loc' || key === 'parent') continue;
+    const child = node[key];
+    if (Array.isArray(child)) child.forEach((/** @type {any} */ c) => walkAst(c, visit));
+    else if (child && typeof child === 'object' && typeof child.type === 'string') walkAst(child, visit);
+  }
+}
+
 /**
  * 把 public/modules/assets.js **整支模組**搬進 sandbox 跑 `renderAssets()`，回傳它寫進 `view()` 的 HTML。
  * 做法：用語法樹的位置切掉 import 宣告與 export 關鍵字（**其餘一個字不動**），剩下整段丟進 `new Function`，
@@ -265,16 +403,28 @@ const GREEN = '__CHART_GREEN__';
  *    拿掉 `Math.abs`）也照舊轉紅。
  *
  * ⚠️ 順帶把上一版明寫「開著」的那個洞關上了：上一版只證明得了「判準式算出來的值在四個邊界上都對」，
- *    把可見標籤搬進一個不呈現的探針變數就能全綠（複驗者 #413 r3 的繞法）。現在斷言的是
+ *    把**印在畫面上**的標籤搬進一個不呈現的探針變數就能全綠（複驗者 #413 r3 的繞法）。現在斷言的是
  *    `view().innerHTML` 裡真的有那個橘標籤與那條橘進度條，探針繞法會轉紅。
+ *
+ * ⚠️ 但「跑得動」與「使用者按了資產配置真的跑到它」是兩件事——**#413 r4 的阻擋就在這道縫**：
+ *    上一版只從本檔取回一支同名函式，沒有核對正式路由，於是「原 renderer 留著、另接一支
+ *    先呼叫它再把橘標籤從 DOM 拔掉的 wrapper」全套考題靜靜全綠。那道縫由 assertAssetsRouteBinding
+ *    補上（`ROUTES.assets` 綁的必須就是本檔以 `renderAssets` 之名匯出的那一支）；
+ *    匯出這一端也走匯出表（exportedLocalName），同檔改名匯出不會讓 sandbox 抄到沒人在跑的乾淨那份。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
  *   1. 這是「原始碼搬進 sandbox 跑」，**不是真瀏覽器**：import 進來的東西全是替身
  *      （api／view／byId／esc／wan／CHART…）。所以驗到的是 assets.js 自己那段模板的產物——
  *      `esc()` 消毒得對不對、`CHART.orange` 實際是什麼顏色、CSS 有沒有把標籤藏起來，都不在射程內
  *      （前者有自己的考題：test/xss-id-escaping.test.js）。
- *   2. 只跑 `renderAssets()` 這一條路徑、只讀它寫進 `view()` 的 HTML。事件綁好之後的 DOM 行為不在射程內；
- *      資產頁哪天改由別的函式渲染，本題會吵著紅（抓不到那一段），不是靜靜綠。
+ *      ⚠️ 所以這裡的用詞是「**印進 HTML**」而不是「使用者看得見」：這句是量過的——
+ *      給橘標籤與橘進度條各加一個 `hidden`（正式碼真的改了、瀏覽器上就消失了），本題照舊 7/7 全綠。
+ *      「看得見」得靠真瀏覽器，本題證不了。
+ *   2. 只跑 `renderAssets()` 這一條路徑、只讀它寫進 `view()` 的 HTML。事件綁好之後的 DOM 行為不在射程內。
+ *      ⚠️ 「資產頁真的由這一支渲染」**不是憑本題跑得動就成立的**，它由 assertAssetsRouteBinding
+ *      另外斷言（`ROUTES.assets` 綁的就是本檔這支匯出）——上一版這裡寫「改由別的函式渲染會吵著紅」，
+ *      那句話當時**沒有任何東西撐著、而且是假的**：複驗者留著原 renderer、另接一支先呼叫它再從 DOM
+ *      拔掉橘標籤的 wrapper，正式資產頁真的不再標偏離，本題卻全綠。射程與認不得的寫法見該函式的劃界。
  *   3. **偏離判準搬進另一支模組的那天，本題要改寫**：sandbox 給不認得的 import 一個無害替身，
  *      所以不相關的新相依不會把本題弄成假紅；但判準真的搬過去時，邊界斷言會轉紅（不是靜靜綠）——
  *      這句也量過：把判準抽成 `./drift-criterion.js` 的 `isDrift` 再 import 回來，紅的是
@@ -286,8 +436,11 @@ const GREEN = '__CHART_GREEN__';
  *      （前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
  */
 async function renderAssetsHtml(db) {
-  const mod = parseModule('public/modules/assets.js');
-  topLevelDef(mod, 'renderAssets');            // 改名／改成轉手匯出就吵著紅（下面 sandbox 直接要這個名字）
+  const mod = parseModule(ASSETS_REL);
+  // 以 renderAssets 之名對外匯出的是哪一份（同檔改名匯出＝正式頁面跑的不是 sandbox 這一份，吵著紅）
+  const exported = exportedLocalName(mod, 'renderAssets');
+  topLevelDef(mod, exported);                  // 頂層唯一一份宣告（改名／轉手匯出都吵著紅）
+  assertAssetsRouteBinding();                  // 正式資產頁真的接到這一支（見該函式：#413 r4 的阻擋繞法）
   const { body, needs } = moduleAsScript(mod);
   const el = () => {
     const node = {
@@ -301,43 +454,64 @@ async function renderAssetsHtml(db) {
   const esc = (/** @type {any} */ s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
   const num = (/** @type {any} */ n) => String(Number(n) || 0);
-  /** @type {Record<string, any>} */
-  const stubs = {
-    api: async (/** @type {string} */ path) => {
-      if (path === '/db') return db;
-      if (path === '/summary') return buildSummary(db);      // 正式環境的 /summary 就是這個函式的輸出
-      throw new Error(`本題只餵了 /db 與 /summary 的替身，資產頁多打了 ${path}（要有人回來更新本題）`);
+  // 已知替身**依「來源模組＋匯出名」配對，不是依 import 進來的本地別名**
+  //（#413 r4 的誠實性修正：按本地名配的話，`api as fetchApi` 這種合法改名會配不到替身、
+  //  改吃無害替身＝考題莫名其妙壞掉，而正式行為一個字都沒變。改名不是介面。）
+  /** @type {Record<string, Record<string, any>>} */
+  const stubsBySource = {
+    '../app.js': {
+      api: async (/** @type {string} */ path) => {
+        if (path === '/db') return db;
+        if (path === '/summary') return buildSummary(db);    // 正式環境的 /summary 就是這個函式的輸出
+        throw new Error(`本題只餵了 /db 與 /summary 的替身，資產頁多打了 ${path}（要有人回來更新本題）`);
+      },
+      view: () => viewEl,
+      byId: () => el(),
+      currentRouteSeq: () => 1,
+      esc, wan: num, money: num, moneyCur: num, pct: num,
     },
-    view: () => viewEl,
-    byId: () => el(),
-    currentRouteSeq: () => 1,
-    esc, wan: num, money: num, moneyCur: num, pct: num,
-    icon: () => '',
-    CHART: { orange: ORANGE, green: GREEN },
-    PALETTE: ['#000'], AXIS: '#000',
-    Chart: class { destroy() { } },
+    './theme.js': { CHART: { orange: ORANGE, green: GREEN }, PALETTE: ['#000'], AXIS: '#000' },
+    './icons.js': { icon: () => '' },
+  };
+  /** 這台 node 沒有的瀏覽器全域（依名字配，全域本來就只有名字這一個身分）。 */
+  /** @type {Record<string, any>} */
+  const globalStubs = { Chart: class { destroy() { } } };
+  const stubFor = (/** @type {{ name: string, source: string | null, imported: string | null }} */ need) => {
+    const table = need.source === null ? globalStubs : (stubsBySource[need.source] || {});
+    const key = need.source === null ? need.name : String(need.imported);
+    return Object.hasOwn(table, key) ? table[key] : benignStub();
   };
   const renderAssets = /** @type {() => Promise<void>} */ (
-    new Function(...needs, `${body}\nreturn renderAssets;`)(
-      ...needs.map((n) => (Object.hasOwn(stubs, n) ? stubs[n] : benignStub()))));
+    new Function(...needs.map((n) => n.name), `${body}\nreturn ${exported};`)(...needs.map(stubFor)));
   await renderAssets();
   return viewEl.innerHTML;
 }
 
 /**
  * 把一支瀏覽器模組整支轉成「`new Function` 裡跑得動的 script」：切掉 import 宣告與 export 關鍵字，
- * 其餘一個字不改。回報它需要外部餵進來的名字＝import 的本地名 ＋ **這台 node 沒有的全域**
- * （例如 `Chart`；`Math`／`Object` 這種真的有的就用真的）。
+ * 其餘一個字不改。回報它需要外部餵進來的每一個名字，**連身分一起回報**：
+ * `{ name: 本地名, source: 來自哪支模組, imported: 那支模組的哪個匯出 }`
+ * （`source: null`＝這台 node 沒有的全域，例如 `Chart`；`Math`／`Object` 這種真的有的就用真的）。
+ * ⚠️ 身分要連來源＋匯出名一起帶，替身才配得對：只帶本地名的話，`api as fetchApi` 這種
+ *    純改名（正式行為完全相同）會配不到替身——那是假紅／莫名其妙的壞掉，不是守住東西。
  */
 function moduleAsScript(mod) {
   /** @type {[number, number][]} */
   const cuts = [];
-  /** @type {string[]} */
+  /** @type {{ name: string, source: string | null, imported: string | null }[]} */
   const needs = [];
   for (const node of mod.scope.block.body) {
     if (node.type === 'ImportDeclaration') {
       cuts.push([node.range[0], node.range[1]]);
-      for (const sp of node.specifiers) needs.push(sp.local.name);
+      for (const sp of node.specifiers) {
+        needs.push({
+          name: sp.local.name,
+          source: String(node.source.value),
+          // 具名 import 帶匯出名；default／namespace 用這兩個記號（本題沒有已知替身，會落到無害替身）
+          imported: sp.type === 'ImportSpecifier' ? sp.imported.name
+            : sp.type === 'ImportDefaultSpecifier' ? 'default' : '*',
+        });
+      }
     } else if (node.type === 'ExportNamedDeclaration' || node.type === 'ExportDefaultDeclaration') {
       // 有 declaration＝只去掉 `export`／`export default` 關鍵字（宣告本體留著）；沒有＝整句是匯出表，整句切掉。
       cuts.push(node.declaration ? [node.range[0], node.declaration.range[0]] : [node.range[0], node.range[1]]);
@@ -349,7 +523,9 @@ function moduleAsScript(mod) {
   for (const [from, to] of cuts.sort((a, b) => b[0] - a[0])) body = body.slice(0, from) + body.slice(to);
   for (const ref of mod.scope.through) {          // 解析不到宣告的名字＝全域（import 已在上面收過）
     const name = ref.identifier.name;
-    if (!needs.includes(name) && !(name in globalThis)) needs.push(name);
+    if (!needs.some((n) => n.name === name) && !(name in globalThis)) {
+      needs.push({ name, source: null, imported: null });
+    }
   }
   return { body, needs };
 }
@@ -358,11 +534,16 @@ function moduleAsScript(mod) {
  * 本題不認得的 import／全域用它頂著：取任何屬性回自己、被呼叫或 new 回自己、塞進模板字串是空字串。
  * 用意是「**不相關**的新相依不會把本題弄成假紅」；而它真的被偏離判準或那段版面吃到時，
  * 邊界斷言會轉紅（該有的標籤沒有／不該有的有／整段抓不到），不是靜靜綠。
+ *
+ * ⚠️ `then` 一定要回 `undefined`（#413 r4 抓到的誠實性缺口，值得原地記下來）：`then` 也回自己的話，
+ *    這顆替身在 `await` 眼裡就是一個「呼叫 then 只會拿到另一個 thenable」的無底洞——
+ *    資產頁只要多一個 `await 某個新 import()`，考題不是紅也不是綠，而是**整題逾時**
+ *    （node --test 報 `cancelled 1`）。回 undefined ＝ `await 替身` 直接得到替身本身。
  */
 function benignStub() {
   /** @type {any} */
   const proxy = new Proxy(function () { }, {
-    get: (_t, key) => (key === Symbol.toPrimitive ? () => '' : proxy),
+    get: (_t, key) => (key === Symbol.toPrimitive ? () => '' : key === 'then' ? undefined : proxy),
     apply: () => proxy,
     construct: () => proxy,
   });
