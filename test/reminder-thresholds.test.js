@@ -206,25 +206,57 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
 });
 
 /**
- * 取出前端 public/modules/assets.js 裡**正式環境真正在跑的那行偏離判準**（`const off = …`），
- * 包成 `(row, db) => boolean` 現場執行。手法與 loadFrontendSubStatus 同源：不在測試裡另抄一份，
- * 抓不到就直接讓考題失敗——那行改名或改寫時要有人來更新本題，而不是靜靜跳過。
+ * 取出前端 public/modules/assets.js 裡**正式環境真正在跑的那份偏離判準**，包成
+ * `(row, db) => boolean` 現場執行。取法不是「找一行長得像判準的字串」，而是**從結果回推**：
+ * 先在語法樹上找到資產頁那個「偏離」橘標籤的三元判斷，看它的條件是哪個變數，
+ * 再用作用域分析問「這個名字依語言規則綁到哪一份宣告」，最後按該宣告的節點位置把初始值切出來。
+ * 不在測試裡另抄一份；取不到就吵著紅（＝有人得回來更新本題），不是靜靜跳過。
+ *
+ * ⚠️ 為什麼不是正則（#413 自審阻擋，值得原地記下來）：上一版用
+ *    `src.matchAll(/^[ \t]*const off = .*;$/gm)` 抽這行，而**註解對正則不存在這回事**。
+ *    自審者的繞法是一處改動：把原句原樣包進區塊註解當誘餌、真正的判準改寫成兩行並把門檻乘 3。
+ *    正則於是只命中被註解掉的那行、`hits.length === 1` 照樣通過，sandbox 拿到的是乾淨判準，
+ *    而正式環境的資產頁不再標橘、後端提醒牆照樣出聲＝兩頁打架——正是本節那條斷言自稱在守的東西。
+ *    同一支 PR 的 loadFrontendSubStatus 早就因為同一個病被退回改用 parser，這是漏網的第四條；
+ *    AGENTS.md 的硬規則講的就是這件事（掃原始碼的形狀考題要先去掉註解、不可只認得一種寫法），
+ *    而正解不是「多認得幾種形狀」，是**不再靠認形狀**：註解不在語法樹上，
+ *    多行／`let`／`var`／改名／搬進別的函式對作用域分析也都是同一件事。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
- *   1. 只驗這一行**算出來的旗標**。它下游怎麼用（橘色 tag、進度條顏色）本題不看，
- *      頁面若改成在樣板裡另外內嵌一套判斷、或乾脆不用 off，本題照樣綠。
- *   2. 只認 `const off = …` 這個單行寫法。拆成多行、搬進別的函式、換個變數名，都會走到下面的
- *      assert 大聲失敗（不是靜靜跳過），但那也代表本題需要有人回來更新。
+ *   1. 只釘住「偏離」橘標籤那一個用途。同一頁的進度條顏色現在吃的是同一個變數，
+ *      但哪天若改成另外算一份，本題不會發現——那要靠頁面層的考題。
+ *   2. 條件必須是**一個具名變數、而且只被寫入一次**（就是它的初始值）。橘標籤若改成就地內嵌
+ *      整串判斷式、改成「先給預設值再重新指派」、或改成解構出來的旗標，都會走到下面的 assert
+ *      大聲失敗（不是靜靜跳過），但那也代表本題需要有人回來更新。
+ *      變數改什麼名字、拆成幾行、用 const 還是 let，本題照樣抓得到＝不需要有人回來更新
+ *      （三種都實測過：門檻同時被放寬時，紅的是上面那條「恰好 +5.0% 要標偏離」的行為斷言）。
  *   3. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份
  *      共用判斷（前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
  */
 function loadFrontendDriftFlag() {
-  const src = readFileSync(join(ROOT, 'public/modules/assets.js'), 'utf8');
-  const hits = [...src.matchAll(/^[ \t]*const off = .*;$/gm)];
-  assert.equal(hits.length, 1,
-    `assets.js 必須（且只能）有一行 \`const off = …\` 的偏離判準，實際 ${hits.length} 行（改名／搬家時要一起更新本考題）`);
+  const assets = parseModule('public/modules/assets.js');
+  const flagged = [...walkAst(assets.ast)].filter((/** @type {any} */ n) => n.type === 'ConditionalExpression'
+    && assets.src.slice(n.consequent.range[0], n.consequent.range[1]).includes('tag amber'));
+  assert.equal(flagged.length, 1,
+    `assets.js 必須（且只能）有一處「偏離」橘標籤的三元判斷，實際 ${flagged.length} 處（標籤改寫時要一起更新本考題）`);
+  const cond = flagged[0].test;
+  assert.equal(cond.type, 'Identifier',
+    `橘標籤的條件必須是一個具名旗標變數（實際：${cond.type}——判斷式若就地內嵌，本題取不到，要有人回來更新）`);
+
+  const variable = resolveIdentifier(assets, cond);
+  assert.ok(variable, `assets.js:${cond.loc.start.line} 的 ${cond.name} 解析不到任何宣告（全域漏網？）`);
+  assert.equal(variable.defs.length, 1,
+    `assets.js 的 ${cond.name} 有 ${variable.defs.length} 份宣告，抄哪一份會變成用猜的`);
+  const writes = variable.references.filter((/** @type {any} */ r) => r.writeExpr);
+  assert.deepEqual(writes.map((/** @type {any} */ w) => w.init), [true],
+    `assets.js 的 ${cond.name} 必須只在宣告處寫入一次（先給預設再重新指派時，本題抄到的不是最後生效的那個值）`);
+  const def = variable.defs[0];
+  assert.equal(def.type, 'Variable', `assets.js 的 ${cond.name} 不是就地宣告的變數（實際：${def.type}）`);
+  assert.equal(def.node.id.type, 'Identifier', `assets.js 的 ${cond.name} 是解構出來的，本題切不出可獨立執行的判準`);
+  assert.ok(def.node.init, `assets.js 的 ${cond.name} 沒有初始值`);
+  const source = `const ${cond.name} = ${assets.src.slice(def.node.init.range[0], def.node.init.range[1])};`;
   return /** @type {(row: any, db: any) => boolean} */ (
-    new Function('r', 'db', `${hits[0][0].trim()}\nreturn off;`)
+    new Function('r', 'db', `${source}\nreturn ${cond.name};`)
   );
 }
 
@@ -349,14 +381,24 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *    解構、`var`／`let`／`function`／`class`、函式參數、內層遮蔽⋯⋯對作用域分析也是同一件事——
  *    **不是多認得一種形狀，是不再靠認形狀。**
  *
+ * ⚠️ **第三次教訓（#413 自審阻擋）：綁定檢查只走到 import 這一端，匯出那一端還是空的。**
+ *    上一版的誠實劃界第 2 條寫「app.js 那個匯出算得對不對，是 app.js 自己的考題」——
+ *    全套考題裡並沒有那樣一題，所以那句話是**沒有東西撐著的口頭承諾**。自審者把 r2 的繞法
+ *    原樣搬到隔壁檔就穿過去了：app.js 留一份沒被匯出的乾淨 `daysUntil`、真正對外的改成
+ *    `export { daysUntilShifted as daysUntil }`（函式本體一個字都沒改）。subscriptions.js 的
+ *    import 一字未動＝下面四條斷言全過，而 `constSourceOf` 只用「頂層有沒有這個名字」去找，
+ *    抄走的正是那份沒人在跑的乾淨函式。修法＝constSourceOf 先走匯出表（見 exportedLocalName）：
+ *    切下來的必須就是**以該名字對外匯出**的那一份。
+ *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明——這段話自己也要禁得起反例）：
  *    1. 只管 subStatus 這條路。訂閱頁若改成**不靠 subStatus 分組**（換另一套判斷）、
  *       或前端別處自己再算一次停用日，本題照樣綠——那要靠頁面層的考題，不在射程內。
- *    2. 綁定分析在 subscriptions.js **這一個檔案內**是完整的，但**不會跟著走進 app.js**：
- *       它證明的是「`daysUntil` 這個名字綁到來自 `../app.js` 的同名具名 import」，
- *       至於 app.js 那個匯出算得對不對，是 app.js 自己的考題。
- *       （app.js 若改成轉手匯出 `export { x as daysUntil } from './y.js'`，本檔取不到就地宣告，
- *       會**吵著紅**要人回來更新，不是靜靜綠。）
+ *    2. 跨檔的口徑只釘到**模組介面**為止：subscriptions.js 那頭證明「`daysUntil` 綁到來自
+ *       `../app.js` 的同名具名 import」，app.js 這頭證明「以 `daysUntil` 之名匯出的就是本檔頂層
+ *       那份、被抄進 sandbox 的宣告」，兩頭接得起來。轉手匯出、同檔改名匯出、重複匯出、
+ *       改用星號匯出都會**吵著紅**要人回來更新，不是靜靜綠。
+ *       至於 app.js 內部：daysUntil 本體引用的 `parseLocalDate` 走同一套檢查（也是頂層唯一宣告
+ *       ＋以同名匯出），它若改引用別的名字，sandbox 會 ReferenceError＝紅得很吵。
  *    3. subStatus 若改吃 daysUntil 以外的新相依，本題**不會靜靜綠**，但也不是好好轉紅：
  *       sandbox 裡會 ReferenceError（紅得很吵，代表有人得回來更新本題）。
  *    4. 「抄原始碼出來現場跑」這個手法，本質上管不到**執行期才決定**的東西（動態 import、eval）。
@@ -387,7 +429,26 @@ function parseModule(relPath) {
   const manager = analyzeScopes(ast, { ecmaVersion: 2026, sourceType: 'module' });
   const scope = manager.scopes.find((/** @type {any} */ s) => s.type === 'module');
   assert.ok(scope, `${relPath} 解析不出模組作用域（它還是 ES module 嗎？）`);
-  return { relPath, src, manager, scope };
+  return { relPath, src, ast, manager, scope };
+}
+
+/** 走遍語法樹的每一個節點。用它取代「掃字串」——註解與被註解掉的程式碼**不在樹上**。 */
+function* walkAst(node) {
+  if (!node || typeof node.type !== 'string') return;
+  yield node;
+  for (const key of Object.keys(node)) {
+    const value = node[key];
+    if (Array.isArray(value)) { for (const child of value) yield* walkAst(child); }
+    else if (value && typeof value.type === 'string') yield* walkAst(value);
+  }
+}
+
+/** 問「語法樹上這一個 identifier，依語言的作用域規則綁到哪個變數」（找不到＝全域漏網，回 null）。 */
+function resolveIdentifier(mod, identNode) {
+  for (const scope of mod.manager.scopes) {
+    for (const ref of scope.references) if (ref.identifier === identNode) return ref.resolved;
+  }
+  return null;
 }
 
 /** 取模組頂層某個名字的宣告。找不到／不只一份都吵著紅——改名時要有人回來更新本題，而不是靜靜跳過。 */
@@ -399,10 +460,57 @@ function topLevelDef(mod, name) {
   return variable.defs[0];
 }
 
-/** 把 `export const NAME = …` 還原成 sandbox 跑得動的 `const NAME = …;`（用語法樹的位置切，不是正則）。 */
+/** 一段 `export` 的 declaration 宣告了哪些名字（function／class／var 家族與解構都算）。 */
+function declaredNames(decl) {
+  if (decl.type === 'VariableDeclaration') return decl.declarations.flatMap((/** @type {any} */ d) => patternNames(d.id));
+  return decl.id ? [decl.id.name] : [];
+}
+
+/** 綁定樣式（含解構、預設值、rest）宣告出來的名字。 */
+function patternNames(node, out = []) {
+  if (!node) return out;
+  if (node.type === 'Identifier') out.push(node.name);
+  else if (node.type === 'ObjectPattern') node.properties.forEach((/** @type {any} */ p) => patternNames(p.type === 'RestElement' ? p.argument : p.value, out));
+  else if (node.type === 'ArrayPattern') node.elements.forEach((/** @type {any} */ e) => patternNames(e, out));
+  else if (node.type === 'AssignmentPattern') patternNames(node.left, out);
+  else if (node.type === 'RestElement') patternNames(node.argument, out);
+  return out;
+}
+
+/**
+ * 找出模組**以 name 這個名字對外匯出**的是哪一份宣告——不是「模組裡剛好也叫 name」的那一份。
+ * （#413 自審阻擋：app.js 只要留一份**沒被匯出**的乾淨 `daysUntil`、真正對外的換成
+ * `const daysUntilShifted = (d) => daysUntil(d) + 1; export { daysUntilShifted as daysUntil };`，
+ * subscriptions.js 的 import 一個字都不用動＝綁定檢查四條全過，而 sandbox 抄走的是那份沒人在跑的
+ * 乾淨函式：正式環境「停用日＝今天」回 'ending'、總覽與訂閱頁走散，全套考題靜靜全綠。
+ * 名字綁到誰是口徑的一部分，這句話在**匯出這一端**同樣要有東西撐著。）
+ */
+function exportedLocalName(mod, name) {
+  const found = [];
+  for (const node of mod.scope.block.body) {
+    if (node.type !== 'ExportNamedDeclaration') continue;
+    if (node.declaration && declaredNames(node.declaration).includes(name)) found.push({ local: name, reExport: false });
+    for (const sp of node.specifiers || []) {
+      if (sp.exported.name === name) found.push({ local: sp.local.name, reExport: Boolean(node.source) });
+    }
+  }
+  assert.equal(found.length, 1,
+    `${mod.relPath} 以「${name}」的身分對外匯出的宣告有 ${found.length} 份（0＝沒匯出、或改走轉手／星號匯出；`
+    + '>1＝重複匯出）——別的模組 import 到的是哪一份會變成用猜的');
+  assert.equal(found[0].reExport, false,
+    `${mod.relPath} 的 ${name} 是轉手匯出（export … from），本檔沒有可抄的宣告`);
+  assert.equal(found[0].local, name,
+    `${mod.relPath} 對外匯出的 ${name} 其實是 ${found[0].local}（同檔改名匯出）——`
+    + `別的模組跑的是 ${found[0].local}，不是本檔頂層那個 ${name}，本題要有人回來更新`);
+  return found[0].local;
+}
+
+/** 把 `export const NAME = …` 還原成 sandbox 跑得動的 `const NAME = …;`（用語法樹的位置切，不是正則）。
+ *  先過 exportedLocalName＝確認切的就是**以這個名字被匯出**的那一份，不是同名的鄰居。 */
 function constSourceOf(mod, name) {
-  const def = topLevelDef(mod, name);
+  const def = topLevelDef(mod, exportedLocalName(mod, name));
   assert.equal(def.type, 'Variable', `${mod.relPath} 的 ${name} 不是就地宣告的常數（實際：${def.type}）`);
+  assert.equal(def.node.id.type, 'Identifier', `${mod.relPath} 的 ${name} 是解構出來的，本題切不出可獨立執行的宣告`);
   assert.ok(def.node.init, `${mod.relPath} 的 ${name} 沒有初始值`);
   return `const ${name} = ${mod.src.slice(def.node.init.range[0], def.node.init.range[1])};`;
 }
