@@ -39,6 +39,11 @@
 //     **路徑這一維只取兩條代表**（見 `GUARDED_PATHS`）：guard 是 `app.use(csrfOriginGuard)` 全站
 //     掛載、不看路徑，所以「照路徑開特例」是個很怪的改法；但要誠實講——真有人只對第三條路徑
 //     開特例（例如 `/api/cards`），本檔抓不到。
+//     **身分這一維（有沒有帶 session cookie）自 r4 起兩邊都驗**（病灶ⓔ）：不帶 cookie 那一題用
+//     403-vs-401 分辨牆有沒有發言，帶 cookie 那一題打的是真實 CSRF 的形狀、並且斷言資料沒被改到。
+//     ⚠️ 仍做不到的：**cookie 的內容只有「有效的受害者 session」這一種**（harness 的假 client 只認
+//     `sb-test-auth-token=abc`）——真有人照 cookie 的其他特徵開特例（例如只放行某個 cookie 名），
+//     本檔抓不到；「有 cookie／沒 cookie」這個二分則兩邊都有題釘著。
 //
 // ⚠️ **r2 複審又打回來一次，病灶同樣值得寫下來**（2026-08-05 自審實測，兩個阻擋級 overclaim）：
 //   ⓐ CSRF 接線題**只打 POST**，題名卻宣稱釘住「變更類請求」。實測把 `csrfOriginGuard` 的豁免
@@ -72,6 +77,25 @@
 //      （寫著「改判準等於改銀行配對行為」）。⇒ 本輪**直接修掉投影**（`lib/secret-fields.js` 的
 //      `/\*+[\s-]*(\d+)\s*$/`），考題改成釘正確值；危害改寫成事實：**顯示層的末碼與帳單對不起來，
 //      使用者失去辨識帳戶的唯一線索**（完整帳號依設計永遠不送到瀏覽器）。
+//
+// ⚠️ **r4 複審第四次打回來——這次的病型跟前三次不同，所以更值得記**（2026-08-05 自審實測）：
+//   ⓔ 前三輪都在補「牆有沒有蓋在路上」，r4 抓到的是**探針的形狀不對**：CSRF 接線題的每一顆探針
+//      都刻意**不帶 session cookie**（403-vs-401 那顆分辨訊號就是靠「沒有身分」才分得開），
+//      而**真實 CSRF 一定是帶著受害者 cookie 的跨站請求**——瀏覽器會自動附上。
+//      ⇒ 這道牆「對真正的攻擊形狀」從來沒被驗過。實測繞法：`csrfOriginGuard` 第一行插一句
+//        `if (String(req.headers.cookie || '').includes('sb-')) return next();`
+//        ＝對帶 cookie 的請求整道牆不發言，全套 **1502/1502 綠、退出碼 0**；
+//        獨立 HTTP 探針卻是 `PUT /api/settings` 帶 evil.com ＋受害者 cookie 從 403 變 200、
+//        `usdTwd` 真的從 32 被寫成 999。
+//      📌 教訓可複用：**「同一道牆、每顆探針都少同一個東西」是一種盲區**。少的那個東西
+//        （這裡是身分）如果剛好是攻擊必備的，整組題就等於沒驗過攻擊。誠實劃界節當時列了方法維度
+//        與路徑維度，唯獨沒把「每顆探針都沒有身分」這件事寫出來——**沒被寫進劃界的維度，
+//        就是沒有人在看的維度**。
+//      📌 併帶發現（先實測再寫）：只斷言狀態碼 403 **也不夠**。把 guard 改成先 `next()`
+//        再補 `res.status(403)`（很常見的中介層順序錯），跨站 `DELETE /api/transactions/:id`
+//        **回 403、交易卻真的被刪掉**。⇒ 接線題要一起斷言「資料沒被改到」，而且探針裡
+//        **必須有一條不吃 body 的寫入**（吃 body 的那種會因為 403 先送出、parser 讀不到 body
+//        而自然沒寫成，抓不到這顆突變）。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -120,6 +144,17 @@ const toBytes = (s) => {
   const m = /^(\d+)(kb|mb)$/i.exec(s);
   return Number(m?.[1] ?? 0) * (m?.[2].toLowerCase() === 'mb' ? 1024 * 1024 : 1024);
 };
+
+/**
+ * 登入後的變更／讀取請求（帶白名單 Origin 過 CSRF 牆、帶 session cookie 過身分牆）＝**正常使用者**。
+ * CSRF 那一組題拿它當反面對照（證明受測的寫入路徑真的會寫），機密投影那一組題拿它跑使用者路徑。
+ * @param {string} method @param {string} path @param {any} [body]
+ */
+const authed = (method, path, body) => fetch(`${base}${path}`, {
+  method,
+  headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: SESSION },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 一、身分牆之前的 body 上限（常數 lib/http-body.js ＋ 接線 server.js）
@@ -215,9 +250,11 @@ const MUTATING_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
  * 牆**後**的變更類探針路徑（都要登入才做得了事）。
  * 選這兩條是因為它們就是 r2 實測的受害者：`lib/routes/crud.js:54` 的 PUT `/api/{col}/:id`、
  * `crud.js:110` 的 DELETE `/api/{col}/:id`、`lib/routes/core.js:46` 的 PUT `/api/settings`。
- * ⚠️ **一律不帶 session cookie**，所以 CSRF 牆若沒發言，回的會是身分牆的 401——
+ * ⚠️ 下面那一題的探針**一律不帶 session cookie**，所以 CSRF 牆若沒發言，回的會是身分牆的 401——
  *    「403 還是 401」就是分辨「牆擋下了」與「請求穿過牆了」的那顆訊號。也因為沒有 session，
- *    這些探針在任何情況下都寫不進任何資料（authGate 之後才有 tenant context）。
+ *    那些探針在任何情況下都寫不進任何資料（authGate 之後才有 tenant context）。
+ *    ⚠️ **但「沒有身分」正是真實 CSRF 唯一不會有的形狀**——所以同一組路徑另有一題**帶著受害者
+ *    cookie** 再打一次（r4 病灶ⓔ，見下方「帶受害者 session cookie」那一題）。兩題共用這份清單。
  */
 const GUARDED_PATHS = ['/api/transactions/probe-no-such-id', '/api/settings'];
 /** @param {string} method @param {string} path @param {string} [origin] */
@@ -283,6 +320,97 @@ test('Origin 白名單（接線）｜POST／PUT／DELETE／PATCH 四種變更請
   }
   // 沒帶 Origin 的變更請求不只穿過牆、還真的跑得到 handler（logout 是牆後唯一無副作用又會做事的一條）。
   assert.equal((await postLogout()).status, 200, '沒帶 Origin 的請求照舊放行');
+});
+
+/**
+ * 帶著**受害者 session cookie** 的跨站探針＝真實 CSRF 的形狀。
+ * @param {string} method @param {string} path @param {string} origin @param {any} [body]
+ */
+const victimMutating = (method, path, origin, body) => fetch(`${base}${path}`, {
+  method,
+  headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: SESSION },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
+
+const SENTINEL_FX = 31.5;      // 哨兵匯率：由合法來源寫進去，跨站探針之後必須原封不動
+const ATTACK_FX = 999;         // 跨站探針想寫進去的值（真的寫成功＝跨站改到錢的數字）
+const CONTROL_FX = 30.5;       // 反面對照用：證明這條寫入路徑真的會寫（否則「沒被改到」是空轉）
+
+test('Origin 白名單（接線）｜帶著受害者 session cookie 的跨站變更請求（＝真實 CSRF 的形狀）一樣 403，而且資料真的沒被改到', async () => {
+  // ⚠️ **r4 病灶ⓔ：上一題的每一顆探針都刻意不帶 session cookie**——403-vs-401 那顆分辨訊號
+  //    就是靠「沒有身分」才分得開。可是**真實 CSRF 一定是帶著受害者 cookie 的跨站請求**
+  //    （瀏覽器會自動附上），所以那道牆從來沒有被真正的攻擊形狀驗過。
+  //    自審實測：在 `csrfOriginGuard` 第一行插一句
+  //      `if (String(req.headers.cookie || '').includes('sb-')) return next();`
+  //    ＝**對帶 cookie 的請求整道牆不發言**，全套 1502 題照樣全綠、退出碼 0；
+  //    獨立 HTTP 探針同時證實 `PUT /api/settings` 帶 evil.com ＋受害者 cookie 從 403 變 200，
+  //    而且真的把 `usdTwd` 從 32 寫成 999 ＝跨站寫入成功。
+  //    ⇒ 這一題把「有沒有身分」補成第三個維度（方法 × 路徑 × 身分）。
+  //
+  // ⚠️ **兩種斷言各自擋不同的繞法，缺一不可**（先實測再寫，不憑猜測）：
+  //    ①**狀態碼 403**：擋「牆對帶 cookie 的請求不發言」那一類（上面那顆突變）。
+  //    ②**資料沒被改到**：擋「403 照回，但事情已經做了」那一類。實測那顆突變＝把 guard 改成
+  //      先 `next()` 再補 `res.status(403)`（忘了先擋再放行的順序，很常見的中介層寫法）：
+  //      跨站 `DELETE /api/transactions/:id` **回 403、交易卻真的被刪掉了**——只看狀態碼全綠。
+  //      （同一顆突變對「帶 body 的寫入」抓不到：403 先送出去、request body 還沒被讀，
+  //      parser 就收不到 body、handler 根本沒跑。所以①②之外還**必須有一條不吃 body 的寫入**
+  //      當探針，也就是下面的 DELETE 哨兵交易——沒有它，②在任何已知突變下都不會單獨轉紅。）
+  // 📌 本題用到的 `/api/settings`、`/api/transactions` 都**不在 `RATE_LIMITS` 表上**（表只涵蓋登入類、
+  //    上傳解析類與會對外連線的那幾條），所以這 50 幾顆探針不需要 resetRateLimitsForTest()。
+
+  // ── 準備哨兵：用**合法來源**把兩份可被 CSRF 改壞的東西各寫一份進去
+  assert.equal((await authed('PUT', '/api/settings', { usdTwd: SENTINEL_FX })).status, 200,
+    '前置：合法來源要改得動匯率（改不動的話下面「沒被改到」全是空轉）');
+  const readFx = async () => (await (await authed('GET', '/api/settings')).json()).usdTwd;
+  assert.equal(await readFx(), SENTINEL_FX, '前置：哨兵匯率要真的寫進去');
+
+  /** @param {string} note */
+  const seedTx = async (note) => {
+    const r = await authed('POST', '/api/transactions', { date: '2026-08-05', amount: 123, type: 'expense', note });
+    assert.equal(r.status, 200, `前置：建立哨兵交易應回 200，實得 ${r.status}`);
+    return String((await r.json()).id);
+  };
+  /** @param {string} id */
+  const txExists = async (id) => (await (await authed('GET', '/api/transactions')).json())
+    .some((/** @type {any} */ t) => t.id === id);
+  const sentinelTx = await seedTx('CSRF 哨兵交易（跨站刪不掉才算對）');
+  const controlTx = await seedTx('CSRF 反面對照交易（同源刪得掉才算這題不是空轉）');
+  assert.equal(await txExists(sentinelTx), true, '前置：哨兵交易要真的建起來');
+
+  // ── ① 全矩陣：四種變更方法 × 兩條路徑 × 六個「像但不是」的來源，**全部帶著受害者 cookie**
+  for (const method of MUTATING_METHODS) {
+    for (const path of GUARDED_PATHS) {
+      for (const bad of LOOKALIKE_ORIGINS) {
+        const r = await victimMutating(method, path, bad, { usdTwd: ATTACK_FX });
+        assert.equal(r.status, 403,
+          `${method} ${path} 帶 Origin「${bad}」＋受害者 session cookie 必須被 CSRF 牆擋成 403，實得 ${r.status}`
+          + '——這是真實 CSRF 的形狀（瀏覽器會自動附上受害者 cookie）。不是 403 代表牆對「有身分的請求」'
+          + '沒發言，請求已經帶著受害者身分走到 handler：跨站網頁就能改到這個帳號的資料');
+        assert.match((await r.json()).error, /請求來源不被允許/, '要回我們自己的白話訊息');
+      }
+    }
+  }
+
+  // ── ② 危害面：跨站的「不吃 body 的寫入」（刪交易）——403 之外，東西必須還在
+  const del = await victimMutating('DELETE', `/api/transactions/${sentinelTx}`, 'https://evil.com');
+  assert.equal(del.status, 403, `跨站刪交易應被擋成 403，實得 ${del.status}`);
+  assert.equal(await txExists(sentinelTx), true,
+    '跨站的刪除請求雖然回了 403，交易卻真的不見了——牆是在「事情已經做完」之後才說話的'
+    + '（典型寫法：先 next() 再補 res.status(403)）。狀態碼那一顆抓不到這種，只有這一顆抓得到');
+
+  // ── ③ 危害面：跨站的「吃 body 的寫入」（改匯率）——哨兵值必須原封不動
+  const fxAfterAttack = await readFx();          // 只讀一次：訊息與斷言看的必須是同一個值
+  assert.equal(fxAfterAttack, SENTINEL_FX,
+    `跨站探針跑完之後匯率變成 ${fxAfterAttack}（應為 ${SENTINEL_FX}）——`
+    + '有一顆跨站請求真的寫進去了＝CSRF 牆沒擋住錢的數字');
+
+  // ── ④ 反面對照：同一組請求換成**合法來源**必須真的做得到事
+  //    （否則「跨站刪不掉／改不到」可能只是因為這兩條路徑本來就壞掉或根本不存在，整題空轉）
+  const okDel = await authed('DELETE', `/api/transactions/${controlTx}`);
+  assert.equal(okDel.status, 200, `合法來源刪交易應回 200，實得 ${okDel.status}`);
+  assert.equal(await txExists(controlTx), false, '合法來源的刪除要真的刪掉（證明上面那顆哨兵不是空轉）');
+  assert.equal((await authed('PUT', '/api/settings', { usdTwd: CONTROL_FX })).status, 200, '合法來源要改得動匯率');
+  assert.equal(await readFx(), CONTROL_FX, '合法來源的匯率修改要真的寫進去（證明上面那顆哨兵不是空轉）');
 });
 
 test('Origin 白名單（判準）｜白名單畸形或空白時一律拒絕', () => {
@@ -360,13 +488,6 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
   const p = projectAccount({ id: 'a4', accountNo: '900100****3301' });
   assert.equal(/** @type {any} */ (p).accountNo, undefined, '完整帳號絕不可送到瀏覽器');
   assert.equal(p.accountNoSet, true, '要用布林告訴前端「有設過」');
-});
-
-/** 登入後的變更／讀取請求（帶白名單 Origin 過 CSRF 牆、帶 session 過身分牆）。 @param {string} method @param {string} path @param {any} [body] */
-const authed = (method, path, body) => fetch(`${base}${path}`, {
-  method,
-  headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: SESSION },
-  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 
 test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/db` 四條使用者路徑都真的走 projectAccount', async () => {
