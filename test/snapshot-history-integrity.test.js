@@ -6,9 +6,15 @@
 // ⚠️ 與既有 `test/snapshot-safety.test.js` 的分工：那一支守的是「日線那一半」
 //    （所有倒退考題都塞 `dailyValues=[明天]`）。本支補的是它漏掉的另外三件事：
 //    ①倒退護欄的 **snapshots 那一半**（還原舊備份之後就是「只有月快照、日線是空的」這個形狀）
-//    ②同月只留一列（月快照與投組快照兩條線都要）
+//    ②同月只留一列，**而且留下的那一列內容要換成最新值**（月快照與投組快照兩條線都要）
 //    ③日線留底的匯率預設值要與 `lib/derive.js` 算淨值時用的**同一個**（不然事後分不出
 //      淨值變動是資產動了還是匯率動了——那正是日線存三種匯率的理由）。
+//
+// ⚠️ 「**留底**」一律用 `store.load()` **重讀資料庫**來斷言（Codex r1）：這三條守的都是
+//    「留在資料庫裡的歷史」，而「回傳正確、寫入錯誤」是真的會發生的壞法——初版第三條只驗
+//    回傳值，把寫入改成 `usdTwd: 1` 照樣全綠。
+//    回傳值仍會驗，但只在它**自己就是契約**的地方：自動流程要回報 `recorded/skipped`、
+//    手動按鈕要 throw 400、以及「回傳值必須與留底一致」這條本身。
 //
 // 隔離：`STORE_FILE` 指向 os 暫存檔，絕不碰真實 `data/`。
 import { test, after, beforeEach } from 'node:test';
@@ -24,8 +30,13 @@ const store = await import('../lib/store.js');
 const { recordDailyValue, takeSnapshot, takeSnapshotIfDue } = await import('../lib/services/snapshot.js');
 const { computeAssets } = await import('../lib/derive.js');
 
+// 收尾清掉 `store.js` 會產生的衍生檔：漏一種就在 os 暫存目錄累積殘檔（初版漏了
+// `.pre-ledger-migration.bak`，每跑一次留一顆 28KB）。前六項與其他測試檔同一份清單，
+// `.pre-sec-contract.bak` 是同族的另一顆一次性搬家備份（本檔目前跑不到，先列著）。
+// ⚠️ 這是**列舉**，不是通則：`store.js` 日後多長一種後綴，這裡不會有人提醒——
+//    只有「暫存目錄開始累積殘檔」會顯示出來。
 after(() => {
-  for (const suf of ['', '.bak', '-wal', '-shm', '.json']) {
+  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '.pre-sec-contract.bak', '-wal', '-shm', '.json']) {
     try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ }
   }
 });
@@ -71,18 +82,25 @@ test('時鐘倒退｜只有月快照、日線是空的時候，倒退護欄同�
   assert.equal((db.dailyValues || []).length, 0, '略過時連日線都不可寫（同一道護欄）');
 });
 
-test('同月只留一列｜月快照與投組快照連寫兩次都不可累加（重複月份會讓折線在原地來回抖）', async () => {
+test('同月只留一列｜月快照與投組快照連寫兩次不可累加，且留下的那一列要換成最新的值', async () => {
   // ⚠️ 檔頭第 3 行把「月快照＝同月覆蓋、一個月只留一個點」寫成本檔兩條線的分野。
   //    portfolioSnapshots 這一側前端沒有第二道門：investmentChartConfig 直接把每一列畫成一個點，
   //    重複月份會讓「投入 vs 市值」折線在同一個月來回抖，而且資料庫會無上限長大。
+  // ⚠️ fixture 一定要放**持股**（Codex r1）：初版只放現金帳戶，portfolioSnapshots 的 cost/value
+  //    前後都是 0，把正式程式改成「同月已有列就保留舊值」照樣全綠——列數對了、投組那條線卻停在
+  //    舊值。「同月覆蓋」要驗的是**整列換新**，只數列數驗不到那一半。
+  //    幣別全用 TWD（匯率 1）＝期望值可以直接手算；本題要驗的是有沒有換新值，不是匯率換算。
   store.save({
     ...store.emptyDb(),
     accounts: [{ id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 10000 }],
+    holdings: [{ id: 'h1', symbol: '0050', name: 'ETF', layer: 'core', currency: 'TWD', quantity: 10, price: 100, avgCost: 60 }],
   });
   await takeSnapshot();
-  // 第二次：改一下資產，確認「留下的是最新那一筆的值」而不是兩列並存
+  // 第二次：現金、股價、成本三個數字全換一組 → 兩條快照線的內容都必須跟著換
   const db1 = store.load();
   db1.accounts[0].balance = 20000;
+  db1.holdings[0].price = 300;
+  db1.holdings[0].avgCost = 150;
   store.save(db1);
   await takeSnapshot();
 
@@ -92,10 +110,13 @@ test('同月只留一列｜月快照與投組快照連寫兩次都不可累加�
   const pfMonths = (db.portfolioSnapshots || []).filter((/** @type {any} */ s) => s.month === mk);
   assert.equal(months.length, 1, '同一個月的月快照只能有一列（同月覆蓋）');
   assert.equal(pfMonths.length, 1, '同一個月的投組快照也只能有一列——這一側前端沒有第二道門');
-  assert.equal(months[0].netWorth, 20000, '留下的要是最新那一次的值');
+  assert.equal(months[0].netWorth, 23000, '月快照留下的要是最新那一次的值（現金 20000＋持股 10×300）');
+  assert.equal(pfMonths[0].value, 3000, '投組快照的市值也要換成最新那一次（10×300）——不是只有列數對');
+  assert.equal(pfMonths[0].cost, 1500, '投入成本同理（10×150）：同月覆蓋是換掉整列，不是保留舊列的值');
   const days = (db.dailyValues || []).filter((/** @type {any} */ d) => d.date === today());
   assert.equal(days.length, 1, '同一天的日線也只能一列（同日覆寫）');
-  assert.equal(days[0].netWorth, 20000, '日線也要是最新那一次的值');
+  assert.equal(days[0].netWorth, 23000, '日線也要是最新那一次的值');
+  assert.equal(days[0].pfValue, 3000, '日線的投組市值同樣要跟上（它與投組快照是各自獨立的一段寫入）');
 });
 
 test('日線匯率｜設定沒有 usdTwd 時，日線留底的匯率要與算淨值用的同一個（不可兩邊各寫一個字面量）', async () => {
@@ -105,6 +126,9 @@ test('日線匯率｜設定沒有 usdTwd 時，日線留底的匯率要與算淨
   //    兩邊預設不一致就直接摧毀那個用途。
   // 手法：不比對字面量 32（那樣兩邊各改成 33 也會綠），而是**用行為推算實際套用的匯率**——
   //       持有 1 股單價 100 美元 ⇒ 淨資產 ÷ 100 就是 derive 真正用的匯率。
+  // ⚠️ 而且要**重讀資料庫**、不看回傳值（Codex r1）：初版斷言 `row.usdTwd`，把正式路徑改成
+  //    「回傳正確的 row、卻把 usdTwd: 1 寫進去」時全庫考題仍然全綠。留底留的是資料庫那一份，
+  //    日後翻日線讀到的也是它——回傳值只是這一次呼叫端手上的副本。
   store.save({
     ...store.emptyDb(),
     settings: {},                                           // ← 完全沒有 usdTwd
@@ -112,9 +136,12 @@ test('日線匯率｜設定沒有 usdTwd 時，日線留底的匯率要與算淨
   });
   const db = store.load();
   const impliedRate = computeAssets(db).netWorth / 100;      // derive 實際套用的美元匯率
-  const row = await recordDailyValue();
   assert.ok(impliedRate > 0, '先確認這個推算法有效（淨資產應該是「100 × 匯率」）');
-  assert.equal(row.usdTwd, impliedRate,
-    `日線記的匯率（${row.usdTwd}）與算淨值時實際用的（${impliedRate}）必須是同一個數字——`
+  const row = await recordDailyValue();
+  const saved = (store.load().dailyValues || []).find((/** @type {any} */ d) => d.date === today());
+  assert.ok(saved, '今天這一列要真的落在資料庫裡（沒寫進去就沒有留底可言）');
+  assert.equal(saved.usdTwd, impliedRate,
+    `資料庫裡日線記的匯率（${saved.usdTwd}）與算淨值時實際用的（${impliedRate}）必須是同一個數字——`
     + '不一致的話，事後看到淨值變動就分不出是資產動了還是匯率動了');
+  assert.equal(row?.usdTwd, saved.usdTwd, '回傳值要與留底一致（呼叫端當下看到的與日後讀到的不可以是兩個數字）');
 });
