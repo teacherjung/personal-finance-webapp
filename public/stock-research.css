@@ -886,7 +886,6 @@ body.stock-research-route > main {
   .stock-tab-panel {
     min-height: 360px;
     padding: 20px 16px 26px;
-    border-radius: 12px;
     box-shadow: 4px 4px 0 rgba(126, 101, 43, .22);
   }
 

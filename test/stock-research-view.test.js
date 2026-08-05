@@ -150,6 +150,9 @@ test('個股研究頁籤｜六個固定連結只顯示一個 active panel，選�
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
   assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation"[^>]*aria-current="page"/);
+  const labelledBy = html.match(/<section class="workspace-tabs-panel stock-tab-panel"[^>]*aria-labelledby="([^"]+)"/)?.[1];
+  assert.equal(labelledBy, 'stock-tab-valuation');
+  assert.match(html, new RegExp(`id="${labelledBy}"`));
   assert.match(html, /data-stock-tab="valuation"/);
   assert.match(html, /估值情境/);
   assert.doesNotMatch(html, /五項評分|我的交易紀錄|關鍵指標/);

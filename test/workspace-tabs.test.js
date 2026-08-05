@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 import { workspaceTabsHtml } from '../public/modules/workspace-tabs.js';
 
 const ROOT = new URL('../', import.meta.url);
+const PUBLIC_DIR = fileURLToPath(new URL('public/', ROOT));
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[char]);
@@ -18,6 +21,16 @@ function cssRule(css, selector, startAt = 0) {
   const openAt = css.indexOf('{', match.index);
   const closeAt = css.indexOf('}', openAt);
   return css.slice(openAt + 1, closeAt);
+}
+
+async function allCssText(dir = PUBLIC_DIR) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const chunks = await Promise.all(entries.map(entry => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return allCssText(path);
+    return entry.isFile() && entry.name.endsWith('.css') ? readFile(path, 'utf8') : '';
+  }));
+  return chunks.join('\n');
 }
 
 const TABS = Object.freeze([
@@ -58,6 +71,15 @@ test('共用頁籤｜所有外部文字與網址都經過 esc', () => {
   assert.match(html, /aria-label="頁籤&quot;名稱"/);
   assert.match(html, /id="demo-&lt;bad&gt;"/);
   assert.match(html, /href="#x&amp;y=&quot;bad&quot;"/);
+
+  const inheritedIcon = workspaceTabsHtml({
+    tabs: [{ key: 'safe', label: '安全', icon: 'toString' }],
+    activeKey: 'safe',
+    ariaLabel: '原型鍵測試',
+    idPrefix: 'demo',
+    hrefFor: () => '#safe'
+  }, { esc });
+  assert.doesNotMatch(inheritedIcon, /native code|function toString/);
 });
 
 test('共用頁籤｜缺少必要格式器時明確失敗', () => {
@@ -73,31 +95,38 @@ test('共用頁籤｜缺少必要格式器時明確失敗', () => {
 });
 
 test('共用頁籤｜向量接角、共線邊界與手機收合都由單一樣式檔擁有', async () => {
-  const [css, stockCss, index] = await Promise.all([
+  const [css, stockCss, index, styles, everyCss] = await Promise.all([
     readFile(new URL('public/workspace-tabs.css', ROOT), 'utf8'),
     readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
-    readFile(new URL('public/index.html', ROOT), 'utf8')
+    readFile(new URL('public/index.html', ROOT), 'utf8'),
+    readFile(new URL('public/styles.css', ROOT), 'utf8'),
+    allCssText()
   ]);
   const mobileAt = css.indexOf('@media (max-width: 680px)');
 
-  assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-border:\s*2px/);
   assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-active-text:\s*var\(--accent-hover\)/);
-  assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/);
-  assert.match(cssRule(css, '.workspace-tab'), /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/);
+  assert.match(cssRule(css, '.workspace-tabs'), /scrollbar-width:\s*none/);
+  assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
+  assert.match(cssRule(css, '.workspace-tab'), /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
   assert.match(cssRule(css, '.workspace-tab'), /border-bottom:\s*0/);
   assert.match(cssRule(css, '.workspace-tab'), /border-radius:\s*16px 16px 0 0/);
+  assert.match(cssRule(css, '.workspace-tabs__track > .workspace-tab'), /min-width:\s*92px/);
   assert.match(cssRule(css, '.workspace-tab__join'), /bottom:\s*0/);
   assert.match(cssRule(css, '.workspace-tab__join'), /width:\s*22px/);
   assert.match(cssRule(css, '.workspace-tab__join-line'), /vector-effect:\s*non-scaling-stroke/);
-  assert.match(cssRule(css, '.workspace-tab__join-line'), /stroke-width:\s*var\(--workspace-tabs-border\)/);
+  assert.match(cssRule(css, '.workspace-tab__join-line'), /stroke-width:\s*2px/);
   assert.match(cssRule(css, '.workspace-tab.is-active .workspace-tab__join,\n.workspace-tab:first-child .workspace-tab__join--start,\n.workspace-tab:last-child .workspace-tab__join--end'), /display:\s*block/);
-  assert.match(cssRule(css, '.workspace-tabs-panel'), /margin-top:\s*calc\(-1 \* var\(--workspace-tabs-border\)\)/);
-  assert.match(cssRule(css, '.workspace-tabs-panel'), /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/);
+  assert.match(cssRule(css, '.workspace-tabs-panel'), /margin-top:\s*-2px/);
+  assert.match(cssRule(css, '.workspace-tabs-panel'), /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
   assert.doesNotMatch(css, /radial-gradient|clip-path|mask-image/);
-  assert.doesNotMatch(stockCss, /stock-tab-ear|\.stock-tab\s*\{|\.stock-tabs\s*\{/);
+  assert.doesNotMatch(everyCss, /\.stock-tabs(?:-track)?(?![\w-])|\.stock-tab(?:-ear)?(?![\w-])/);
+  assert.doesNotMatch(stockCss, /\.stock-tab-panel\s*\{[^}]*border-radius/s);
+  for (const token of ['frame', 'card', 'card-2', 'accent', 'accent-hover', 'text', 'text-dim', 'shadow-lg']) {
+    assert.match(styles, new RegExp(`--${token}:\\s*[^;]+;`), `missing shared token --${token}`);
+  }
   assert.notEqual(mobileAt, -1);
   assert.match(cssRule(css, '.workspace-tabs--compact-mobile .workspace-tab', mobileAt), /flex:\s*0 0 52px/);
-  assert.match(cssRule(css, '.workspace-tabs--compact-mobile .workspace-tab.is-active', mobileAt), /flex-basis:\s*108px/);
+  assert.match(cssRule(css, '.workspace-tabs--compact-mobile .workspace-tab.is-active', mobileAt), /flex-basis:\s*132px/);
   assert.match(cssRule(css, '.workspace-tabs--compact-mobile .workspace-tab__label', mobileAt), /display:\s*none/);
   assert.match(cssRule(css, '.workspace-tabs--compact-mobile .workspace-tab.is-active .workspace-tab__label', mobileAt), /display:\s*inline/);
   assert.ok(index.indexOf('workspace-tabs.css') < index.indexOf('stock-research.css'));

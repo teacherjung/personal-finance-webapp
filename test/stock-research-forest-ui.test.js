@@ -136,8 +136,8 @@ test('個股研究森林工作面｜頁籤使用共用元件且保留固定圖�
   assert.match(tabs, /id="stock-tab-thesis" class="workspace-tab is-active"[\s\S]*aria-current="page"/);
   assert.match(cssRule(css, '.workspace-tabs'), /position:\s*relative/);
   assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:/);
-  assert.match(cssRule(css, '.workspace-tab:focus-visible'), /outline:\s*3px solid var\(--workspace-tabs-accent\)/);
-  assert.match(cssRule(css, '.workspace-tab.is-active'), /color:\s*var\(--workspace-tabs-active-text\)/);
+  assert.match(cssRule(css, '.workspace-tab:focus-visible'), /outline:\s*3px solid var\(--workspace-tabs-accent, var\(--accent\)\)/);
+  assert.match(cssRule(css, '.workspace-tab.is-active'), /color:\s*var\(--workspace-tabs-active-text, var\(--accent-hover\)\)/);
 
   const sharedCss = await readFile(new URL('public/styles.css', ROOT), 'utf8');
   const accent = cssHexToken(sharedCss, '--accent');
@@ -189,13 +189,13 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   const panelRule = cssRule(tabsCss, '.workspace-tabs-panel');
   const scoreRule = cssRule(css, '.stock-score-track');
 
-  assert.match(panelRule, /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/);
+  assert.match(panelRule, /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
   assert.match(cssRule(css, '.stock-tab-panel'), /overflow:\s*hidden/);
   assert.match(scoreRule, /height:\s*13px/);
   assert.match(scoreRule, /border:\s*2px solid var\(--frame\)/);
   assert.doesNotMatch(
-    panelRule.replace(/border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\);?/, ''),
-    /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/
+    panelRule.replace(/border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\);?/, ''),
+    /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/
   );
   assert.doesNotMatch(
     scoreRule.replace(/border:\s*2px solid var\(--frame\);?/, ''),
@@ -206,7 +206,7 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   assert.notEqual(mobileAt, -1);
   assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
   assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab', tabsMobileAt), /flex:\s*0 0 52px/);
-  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab.is-active', tabsMobileAt), /flex-basis:\s*108px/);
+  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab.is-active', tabsMobileAt), /flex-basis:\s*132px/);
   assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab__label', tabsMobileAt), /display:\s*none/);
   assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab.is-active .workspace-tab__label', tabsMobileAt), /display:\s*inline/);
 });

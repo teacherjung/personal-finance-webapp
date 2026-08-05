@@ -21,8 +21,7 @@ const END_JOIN = `<svg class="workspace-tab__join workspace-tab__join--end" view
  *   activeKey: string,
  *   ariaLabel: string,
  *   idPrefix: string,
- *   hrefFor: (tab: WorkspaceTab) => string,
- *   compactOnMobile?: boolean
+ *   hrefFor: (tab: WorkspaceTab) => string
  * }} options
  * @param {{ esc: (value: unknown) => string }} helpers
  */
@@ -30,15 +29,12 @@ export function workspaceTabsHtml(options, helpers) {
   if (typeof helpers?.esc !== 'function') throw new TypeError('workspaceTabsHtml 需要 esc 格式器');
   if (typeof options?.hrefFor !== 'function') throw new TypeError('workspaceTabsHtml 需要 hrefFor');
 
-  const navClass = options.compactOnMobile === false
-    ? 'workspace-tabs'
-    : 'workspace-tabs workspace-tabs--compact-mobile';
   const links = options.tabs.map(tab => {
     const active = tab.key === options.activeKey;
     return `<a id="${helpers.esc(`${options.idPrefix}-${tab.key}`)}" class="workspace-tab${active ? ' is-active' : ''}" href="${helpers.esc(options.hrefFor(tab))}" aria-label="${helpers.esc(tab.label)}" title="${helpers.esc(tab.label)}"${active ? ' aria-current="page"' : ''}>${START_JOIN}${icon(tab.icon, 18)}<span class="workspace-tab__label">${helpers.esc(tab.label)}</span>${END_JOIN}</a>`;
   }).join('');
 
-  return `<nav class="${navClass}" aria-label="${helpers.esc(options.ariaLabel)}">
+  return `<nav class="workspace-tabs workspace-tabs--compact-mobile" aria-label="${helpers.esc(options.ariaLabel)}">
     <div class="workspace-tabs__track">${links}</div>
   </nav>`;
 }

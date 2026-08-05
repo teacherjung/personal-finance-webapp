@@ -43,7 +43,7 @@ const P = {
 
 /** @param {string} name @param {number=} size @param {boolean=} filled @returns {string} SVG 字串 */
 export function icon(name, size = 18, filled = false) {
-  const path = P[name] || '';
+  const path = Object.hasOwn(P, name) ? P[name] : '';
   const isSpark = name === 'spark';
   const doFill = isSpark || filled;        // filled=true：填滿色（仍保留描邊，如填滿旗幟）
   return `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" `

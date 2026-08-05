@@ -1,10 +1,9 @@
 /*
  * 可重用的頁籤工作面。
- * 幾何只在這裡定義：固定 SVG 接角負責曲線，CSS 負責尺寸、顏色與捲動。
+ * 幾何只在這裡定義：固定 22px SVG 接角與 2px 框線是一組不可分開調整的尺寸，
+ * CSS 變數只開放顏色。即使呼叫端漏包 shell，根層色票仍會提供安全退路。
  */
 .workspace-tabs-shell {
-  --workspace-tabs-border: 2px;
-  --workspace-tabs-join: 20px;
   --workspace-tabs-frame: var(--frame);
   --workspace-tabs-surface: var(--card);
   --workspace-tabs-muted-surface: var(--card-2);
@@ -16,11 +15,15 @@
   position: relative;
   z-index: 2;
   width: 100%;
-  padding-inline: var(--workspace-tabs-join);
+  padding-inline: 20px;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   overscroll-behavior-inline: contain;
+}
+
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .workspace-tabs__track {
@@ -28,23 +31,22 @@
   align-items: flex-end;
   width: max-content;
   min-width: 100%;
-  border-bottom: var(--workspace-tabs-border) solid var(--workspace-tabs-frame);
+  border-bottom: 2px solid var(--workspace-tabs-frame, var(--frame));
 }
 
 .workspace-tab {
-  --workspace-tab-fill: var(--workspace-tabs-muted-surface);
+  --workspace-tab-fill: var(--workspace-tabs-muted-surface, var(--card-2));
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   flex: 1 1 0;
-  min-width: 92px;
   max-width: 170px;
   min-height: 50px;
   padding: 11px 20px 12px;
-  margin-right: calc(-1 * var(--workspace-tabs-border));
-  border: var(--workspace-tabs-border) solid var(--workspace-tabs-frame);
+  margin-right: -2px;
+  border: 2px solid var(--workspace-tabs-frame, var(--frame));
   border-bottom: 0;
   border-radius: 16px 16px 0 0;
   color: var(--text-dim);
@@ -55,26 +57,30 @@
   background: var(--workspace-tab-fill);
 }
 
+.workspace-tabs__track > .workspace-tab {
+  min-width: 92px;
+}
+
 .workspace-tab .ic {
   flex: none;
   opacity: .88;
 }
 
 .workspace-tab:hover {
-  --workspace-tab-fill: var(--workspace-tabs-surface);
+  --workspace-tab-fill: var(--workspace-tabs-surface, var(--card));
   color: var(--text);
 }
 
 .workspace-tab:focus-visible {
   z-index: 5;
-  outline: 3px solid var(--workspace-tabs-accent);
+  outline: 3px solid var(--workspace-tabs-accent, var(--accent));
   outline-offset: -5px;
 }
 
 .workspace-tab.is-active {
-  --workspace-tab-fill: var(--workspace-tabs-surface);
+  --workspace-tab-fill: var(--workspace-tabs-surface, var(--card));
   z-index: 3;
-  color: var(--workspace-tabs-active-text);
+  color: var(--workspace-tabs-active-text, var(--accent-hover));
 }
 
 .workspace-tab.is-active::after {
@@ -85,7 +91,7 @@
   left: 24px;
   height: 3px;
   border-radius: 999px;
-  background: var(--workspace-tabs-accent);
+  background: var(--workspace-tabs-accent, var(--accent));
 }
 
 .workspace-tab__join {
@@ -104,18 +110,18 @@
 
 .workspace-tab__join-line {
   fill: none;
-  stroke: var(--workspace-tabs-frame);
-  stroke-width: var(--workspace-tabs-border);
+  stroke: var(--workspace-tabs-frame, var(--frame));
+  stroke-width: 2px;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
 .workspace-tab__join--start {
-  left: calc(-1 * var(--workspace-tabs-join));
+  left: -20px;
 }
 
 .workspace-tab__join--end {
-  right: calc(-1 * var(--workspace-tabs-join));
+  right: -20px;
 }
 
 .workspace-tab.is-active .workspace-tab__join,
@@ -126,17 +132,13 @@
 }
 
 .workspace-tabs-panel {
-  margin-top: calc(-1 * var(--workspace-tabs-border));
-  border: var(--workspace-tabs-border) solid var(--workspace-tabs-frame);
+  margin-top: -2px;
+  border: 2px solid var(--workspace-tabs-frame, var(--frame));
   border-radius: 12px;
-  background: var(--workspace-tabs-surface);
+  background: var(--workspace-tabs-surface, var(--card));
 }
 
 @media (max-width: 680px) {
-  .workspace-tabs--compact-mobile {
-    scrollbar-width: none;
-  }
-
   .workspace-tabs--compact-mobile .workspace-tab {
     flex: 0 0 52px;
     gap: 0;
@@ -152,7 +154,7 @@
   }
 
   .workspace-tabs--compact-mobile .workspace-tab.is-active {
-    flex-basis: 108px;
+    flex-basis: 132px;
     gap: 6px;
   }
 
