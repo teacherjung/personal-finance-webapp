@@ -151,7 +151,7 @@ test('個股研究頁路由｜tab 深連結可重載，非法值與原型名稱�
 test('個股研究頁路由｜render 後把目前頁籤捲進可視範圍，缺 DOM 時安全略過', () => {
   const calls = [];
   revealActiveStockTab({
-    querySelector: selector => selector === '.stock-tab.active'
+    querySelector: selector => selector === '.workspace-tab[aria-current="page"]'
       ? { scrollIntoView: options => calls.push(options) }
       : null
   });

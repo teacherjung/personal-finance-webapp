@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { icon } from '../public/modules/icons.js';
 import {
   STOCK_RESEARCH_TABS,
   buildStockResearchViewModel,
@@ -145,8 +146,13 @@ test('個股研究頁籤｜六個固定連結只顯示一個 active panel，選�
   }, { esc });
 
   assert.equal((html.match(/<a id="stock-tab-/g) || []).length, 6);
+  const tabs = html.match(/<nav class="workspace-tabs workspace-tabs--compact-mobile"[\s\S]*?<\/nav>/)?.[0] || '';
+  assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
-  assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation" aria-current="page"/);
+  assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation"[^>]*aria-current="page"/);
+  const labelledBy = html.match(/<section class="workspace-tabs-panel stock-tab-panel"[^>]*aria-labelledby="([^"]+)"/)?.[1];
+  assert.equal(labelledBy, 'stock-tab-valuation');
+  assert.match(html, new RegExp(`id="${labelledBy}"`));
   assert.match(html, /data-stock-tab="valuation"/);
   assert.match(html, /估值情境/);
   assert.doesNotMatch(html, /五項評分|我的交易紀錄|關鍵指標/);
@@ -328,6 +334,7 @@ test('個股研究畫面｜賣光但有研究仍可讀；完全空白與缺代�
   const emptyHtml = stockResearchViewHtml({ model: empty }, { esc });
   assert.match(emptyHtml, /NVDA 尚無持股或研究資料/);
   assert.doesNotMatch(emptyHtml, /data-stock-create/);
+  assert.ok(emptyHtml.includes(icon('arrow-left', 16)));
 
   const missingSymbol = stockResearchViewHtml({
     model: {
@@ -337,6 +344,7 @@ test('個股研究畫面｜賣光但有研究仍可讀；完全空白與缺代�
   }, { esc });
   assert.match(missingSymbol, /請先選擇一檔個股/);
   assert.match(missingSymbol, /href="#ib"/);
+  assert.ok(missingSymbol.includes(icon('arrow-left', 16)));
 });
 
 test('個股研究畫面｜舊研究只有文字與檢查點仍能顯示，不要求新欄位', () => {
@@ -397,17 +405,19 @@ test('個股研究畫面｜估值距離只在現價與情境同幣且合理價�
   assert.equal(valuationDistance(220, 'USD', 0, 'USD'), null);
 });
 
-test('個股研究樣式｜桌面有彈性欄寬、手機改單欄、長字與表格不溢出外框', async () => {
-  const css = await readFile(new URL('../public/stock-research.css', import.meta.url), 'utf8');
+test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字與表格不溢出外框', async () => {
+  const [css, tabsCss] = await Promise.all([
+    readFile(new URL('../public/stock-research.css', import.meta.url), 'utf8'),
+    readFile(new URL('../public/workspace-tabs.css', import.meta.url), 'utf8')
+  ]);
 
   assert.match(css, /max-width:\s*1240px/);
   assert.match(css, /grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
-  assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*8px 8px 0 0/);
-  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--line-2\)/);
-  assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*min-width:\s*92px/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid,[\s\S]*grid-template-columns:\s*1fr/);
+  assert.match(tabsCss, /\.workspace-tab[\s\S]*border-radius:\s*16px 16px 0 0/);
+  assert.match(tabsCss, /\.workspace-tabs[\s\S]*overflow-x:\s*auto/);
+  assert.match(tabsCss, /@media \(max-width:\s*680px\)[\s\S]*\.workspace-tabs--compact-mobile \.workspace-tab[\s\S]*flex:\s*0 0 52px/);
+  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.doesNotMatch(css, /font-size:\s*[^;]*(vw|vh)/);
 });
