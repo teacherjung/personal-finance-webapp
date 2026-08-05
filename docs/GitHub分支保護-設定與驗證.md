@@ -14,8 +14,9 @@
 ## A. 目前 GitHub 上真正的設定（2026-08-02 用唯讀 API 實讀，不是憑印象）
 
 > ⚠️ **這一節記的是「現在是什麼」，不是「應該是什麼」。**
-> 兩者現在**不一致**——第一版的這份文件把「我建議的」寫成「現行的」，
-> Codex #382 r1 用 API 對照後當場戳破。要看「應該是什麼」請看 B 節。
+> **2026-08-05 覆核：兩者現在完全一致**（`gh api …/branches/main/protection` 實讀）。
+> 📌 歷史：第一版的這份文件把「我建議的」寫成「現行的」，Codex #382 r1 用 API 對照後當場戳破；
+> 之後 William 於 2026-08-02 完成 C 節兩步、並關掉 `strict`，兩邊才對上。要看「應該是什麼」請看 B 節。
 >
 > 重讀指令（任何時候都可以自己對一次）：
 > ```
@@ -25,18 +26,18 @@
 | 規則 | 目前狀態 | 和 B 節（該有的樣子）一致嗎 |
 |---|---|---|
 | Require a pull request before merging | ✅ 開 | ✅ |
-| └ **Require approvals**（`required_approving_review_count`） | **1** | ❌ **不一致，而且正在卡死所有 PR**——見下方 ⚠️ |
+| └ **Require approvals**（`required_approving_review_count`） | **0** | ✅ 已取消（2026-08-02 William 執行；2026-08-05 API 覆核） |
 | └ Dismiss stale reviews | ⬜ 關 | ✅ |
 | Require status checks to pass | ✅ 開 | ✅ |
-| └ 必過的 check | 只有 `上線用的 Node（.node-version）` | ⚠️ 差一個——`協作欄位（實作者 ≠ 獨立審查者）` 還沒加（本 PR 合併後才存在，步驟見 C 節） |
-| └ **Require branches to be up to date**（`strict`） | ✅ **開** | ❌ 不一致（原意是關）——見下方說明 |
+| └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 獨立審查者）` | ✅ 兩個都在（2026-08-05 API 覆核） |
+| └ **Require branches to be up to date**（`strict`） | ⬜ **關** | ✅ 已與 B 節設計意圖一致（2026-08-05 API 覆核） |
 | Require linear history | ✅ 開 | ✅ |
 | Require conversation resolution | ✅ 開 | ✅ |
 | Allow force pushes | ⬜ 關 | ✅ |
 | Allow deletions | ⬜ 關 | ✅ |
 | **Do not allow bypassing**（`enforce_admins`） | ✅ **開** | ✅ 最關鍵的一格，理由見下一節 |
 
-### ⚠️ `Require approvals = 1` 目前讓 **repo 完全合不了任何東西**
+### 📌 歷史紀錄：`Require approvals = 1` 曾讓 **repo 完全合不了任何東西**（2026-08-02 當日已解）
 
 實測（2026-08-02）：#381／#382／#383 三支的 `mergeStateStatus` 全是 **`BLOCKED`**。
 
@@ -44,17 +45,17 @@
 而 Claude／Codex／William **共用同一個 GitHub 身分**，
 所以「需要 1 個核准」在單一身分下 ＝ **需要一個永遠不會出現的核准**。
 
-⇒ **William 要把 Require approvals 取消勾選**（Settings → Branches → 編輯 `main` 的規則）。
+⇒ **William 當日已把 Require approvals 取消勾選**（Settings → Branches → 編輯 `main` 的規則）。
 這不是降低標準：實作者 ≠ 審查者這條，現在改由 `協作欄位` 這道 check 在**平台層**擋
 （C 節），而它不需要第二個帳號就能運作。
 **等分身分之後再把 Require approvals 開回來**（見文末「第二步」）——那時它才有意義。
 
-### `Require branches to be up to date` 開著的代價（可以先留著）
+### 📌 歷史紀錄：`Require branches to be up to date` 曾經開著（已關）
 
 它會要求每支 PR 合併前都 rebase 到最新 `main`。**堆疊 PR 時會很煩**
-（前一支合併後，後面每一支都要重推一次）。目前一次只有兩三支在飛，還忍得住，
-所以**先不動**；哪天堆疊變深、每次合併都要連環 rebase，再回來關掉它。
-（記在這裡是為了：以後遇到那個痛的時候，知道痛是這一格造成的。）
+（前一支合併後，後面每一支都要重推一次）。當時判斷「一次只有兩三支在飛還忍得住、先不動」，
+後來已關掉（2026-08-05 API 覆核 `strict: false`），與 B 節設計意圖一致。
+（記在這裡是為了：以後若又看到「每支 PR 都被要求 rebase」，知道痛是這一格造成的。）
 
 ## B. 這些規則「應該」長什麼樣（設計意圖）
 
@@ -99,15 +100,20 @@ enforce_admins = false 時：
 
 ⚠️ **未來改動這些設定後，請重跑一次上面三項**——這個專案的招牌病就是「以為有守、其實沒守」。
 
-## C. William 要做的兩步（都在 GitHub 網頁上，各 30 秒）
+## C. ✅ 兩步都已完成（2026-08-02 William 執行；2026-08-05 API 覆核）
+
+> ⚠️ **這一節是完成紀錄，不是待辦清單**——照著再做一次等於去動一個已經設對的開關。
+> 覆核指令：`gh api repos/teacherjung/personal-finance-webapp/branches/main/protection`
+> 現況＝`required_approving_review_count: 0`、`strict: false`、contexts 兩個都在、`enforce_admins: true`。
+> 下面保留當時的操作步驟，供**日後分身分或重建 repo 時照做**。
 
 Settings → Branches → 編輯 `main` 的規則：
 
-### ① 取消勾選 `Require approvals`（**先做這個，不然什麼都合不了**）
+### ① ✅ 已取消勾選 `Require approvals`
 
-理由見 A 節：單一身分下它需要一個永遠不會出現的核准，三支 PR 現在全是 `BLOCKED`。
+理由見 A 節：單一身分下它需要一個永遠不會出現的核准（當時三支 PR 全是 `BLOCKED`）。
 
-### ② 把 `協作欄位` 加進必過的 check（**#382 合併之後才做得到**）
+### ② ✅ 已把 `協作欄位` 加進必過的 check（#382 合併後執行）
 
 `.github/workflows/collab-fields.yml` 的 `collab-fields` job 上線後會出現在 PR 頁面，
 但**預設不是必過的**。要讓它有牙齒：
