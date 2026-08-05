@@ -1047,7 +1047,16 @@ test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久�
   // D4 的兩個動作走 rename-store（既有端點）：保留現值 → 學起來 → 不再報
   await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', name: '星巴克', category: '娛樂', subcategory: '電影' });
   const h4 = await GET('/statement/health');
-  assert.ok(!h4.items.some(x => x.id === 'D4|STARBUCKSH9 TAIPEI'), '學過＝使用者故意的，不再報漂移');
+  // ⚠️ 這一行原本比對 `x.id === 'D4|STARBUCKSH9 TAIPEI'`＝**空包彈**（夜班稽核 2026-08-05 抓到）：
+  //    實際 id 是三段 `D4|<原文>|<指紋>`，兩段的字串永遠不可能相等 ⇒ 斷言恆真。
+  //    實務後果：你已經教過的分類仍會被帳務體檢反覆拿出來騷擾，而測試永遠綠——
+  //    這正好摧毀第二帖藥方「排隊給你按確認」的信任。改成比對前綴（id 的前兩段）。
+  assert.ok(!h4.items.some(x => String(x.id).startsWith('D4|STARBUCKSH9 TAIPEI|')),
+    '學過＝使用者故意的，不再報漂移（比對前綴：id 第三段是內容指紋，會隨筆數與分類變動）');
+  // ⚠️ 只對 D4 這個偵測器要求三段（各偵測器的 id 格式不同——我第一版寫成「所有項目」，
+  //    當場被自己的考題打回來，正好證明「斷言要照真實形狀寫」）。
+  assert.ok(h4.items.filter(x => String(x.id).startsWith('D4|')).every(x => String(x.id).split('|').length >= 3),
+    'D4 項目的 id 必須是三段（D4|原文|指紋）——少一段就會讓上面那種前綴比對再退化成恆真');
   await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', reset: true });
   for (const id of made) await DELETE_(`/transactions/${id}`);
   await POST('/statement/health/dismiss', { clearAll: true });
