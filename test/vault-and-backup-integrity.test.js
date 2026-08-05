@@ -7,7 +7,8 @@
 //   - 備份的原子替換與 .tmp 清理：硬碟滿的那一次會兩頭空，而還原指引指的正是那顆備份。
 //   - 資料庫損毀的 fail-closed：守衛拿掉之後損毀檔照常開起來讀寫，使用者只覺得「數字怪怪的」。
 //
-// 隔離：`STORE_FILE` 指向 os 暫存檔，絕不碰真實 `data/`；損毀那一題另開子行程（模組會快取 db 連線）。
+// 隔離：`STORE_FILE` 指向 os 暫存檔，絕不碰真實 `data/`；要讓 `open()` 真的失敗的兩題另開子行程
+//（`STORE_FILE` 在模組 import 時就定案、db 連線又被模組快取，同一個行程裡改不動）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -141,29 +142,64 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 三、備份的原子替換與殘骸清理（lib/store.js 兩道）
+// 三、備份的原子替換與殘骸清理（lib/store.js 的 snapshotTo，三道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('備份｜VACUUM 階段失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', () => {
+/**
+ * 探測**這個資料夾**能寫出來的最長單一檔名（回傳最大可寫長度；探不到回 0）。
+ * 為什麼要動態探：NAME_MAX 因檔案系統而異（APFS/ext4＝255、部分網路磁碟更短），
+ * 寫死 255 的題目換一台機器就會在別的地方失敗、或根本不失敗＝靜靜通過。
+ * 二分搜尋成立的前提：長度限制單調（能寫 n 就能寫 n-1）。
+ * 順帶好處：探測用的是同一個 dir，所以 PATH_MAX 若先卡住，探到的就是「這個 dir 的實際上限」。
+ * @param {string} dir @returns {number}
+ */
+function probeMaxNameLen(dir) {
+  const canWrite = (/** @type {number} */ n) => {
+    const p = join(dir, 'p'.repeat(n));
+    try { writeFileSync(p, ''); rmSync(p); return true; } catch { return false; }
+  };
+  if (!canWrite(1)) return 0;          // 連 1 字元都寫不出來＝這個 dir 有別的問題
+  let lo = 1, hi = 4096;
+  if (canWrite(hi)) return 0;          // 沒有實際上限（或高到本題造不出來）
+  while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (canWrite(mid)) lo = mid; else hi = mid; }
+  return lo;
+}
+
+test('備份｜VACUUM 階段失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', (t) => {
   // ⚠️ 註解寫明這是自審 r2 修過的病：「原寫法『先刪舊再做新』，若 VACUUM 失敗（例如硬碟滿）
   //    會兩頭空——而損毀還原指引指的正是這顆 .bak」。
-  // ⚠️ 考題設計（被抓三次，這是第四版）：
+  // ⚠️ 考題設計沿革（v1–v3 各被抓到一次「弄壞卻全綠」，v4 才真的守住，v5 修可攜性與註解失真）：
   //    v1 失敗目標用了**別的路徑** ⇒「先刪舊」刪的不是那顆。
   //    v2 只比**檔案長度** ⇒ 同長度垃圾覆寫照樣綠（#410 r1 H③）。
   //    v3 用資料夾占住 `.tmp` ⇒ 失敗發生在**前置 rmSync(tmp)**、還沒進到危險的 VACUUM 階段，
   //       所以「通過前置清理後才刪舊」的原病變體照樣綠（#410 r2 H①）。
-  //    v4（現在）：讓失敗**發生在 VACUUM 那一步**——`dest` 檔名 254 字元（合法），
-  //       但 `dest + '.tmp'` 是 258 字元、超過單一檔名上限 255 ⇒
-  //         前置清理：`existsSync(tmp)` 為 false，直接跳過（不會提早失敗）
-  //         VACUUM INTO tmp：ENAMETOOLONG 失敗 ⇒ 正確實作在此拋錯、dest 一個位元組沒動
-  //         「先刪舊再做新」：`rmSync(dest)` 會成功（目錄可寫、dest 名字合法）⇒ 好備份消失，
-  //          接著 VACUUM INTO dest 反而成功 ⇒ **不拋錯** ⇒ 本題轉紅。
+  //    v4：讓失敗**發生在 VACUUM 那一步**——`dest` 的檔名剛好等於單一檔名上限（合法），
+  //       但 `dest + '.tmp'` 超過上限 ⇒ 前置 `existsSync(tmp)` 為 false 直接跳過（不會提早失敗），
+  //       VACUUM INTO tmp 則 ENAMETOOLONG 失敗 ⇒ 正確實作在此拋錯、dest 一個位元組沒動。
+  //    v5（現在，#410 r3 Low）：長度改成**動態探測**（原本寫死 254/255＝綁死 NAME_MAX=255 的機器），
+  //       並把「突變怎麼紅的」改寫成實測結果——原註解說「VACUUM INTO dest 反而成功 ⇒ 不拋錯 ⇒ 轉紅」
+  //       是**錯的**，實測（macOS APFS、探到上限 255）是：
+  //         rmSync(dest) 成功刪掉好備份 → VACUUM INTO dest **先建出 0-byte 的 dest** →
+  //         SQLite 要開 `dest-journal`（上限+8 字元）失敗 → 拋 `unable to open database file`。
+  //       所以 assert.throws 與 existsSync 兩行都照樣通過，真正抓住突變的是**逐位元組比對**（0 位元組 ≠ 原備份）。
+  //       保護仍然成立：在本題的環境裡 `rmSync(dest)` 必定成功（dir 可寫、dest 檔名合法），
+  //       好備份一定先消失，之後兩條分支都有人接——VACUUM 若成功 ⇒ 不拋錯、assert.throws 紅；
+  //       VACUUM 若失敗 ⇒ dest 不是不存在（existsSync 紅）就是內容不同（逐位元組比對紅）。
   const dir = mkdtempSync(join(tmpdir(), 'finance-bak-'));
   TRASH.push(dir);
+  const maxName = probeMaxNameLen(dir);
+  if (maxName < 16 || maxName > 1000) {
+    // 靜靜通過比沒有考題更糟（專案鐵則）：造不出「dest 合法、dest+'.tmp' 超長」的長度時大聲跳過。
+    const why = `本題需要「檔名剛好合法、再加 4 字元 .tmp 就超長」的長度；`
+      + `此資料夾探測到的單一檔名上限＝${maxName || '探不到（1 字元寫不出，或 4096 字元仍可寫）'}，造不出這種長度`;
+    console.warn(`[skip] 備份｜VACUUM 階段失敗題：${why}`);
+    t.skip(why);
+    return;
+  }
   store.save({ ...store.emptyDb(), history: [{ id: 'm1', month: '2026-07', amount: 42 }] });
   const seed = join(dir, 'seed.bak');
-  store.snapshotTo(seed);                                     // 先用短路徑做一份合法備份
-  const dest = join(dir, `${'b'.repeat(250)}.bak`);            // 254 字元；+'.tmp' = 258 > 255
+  store.snapshotTo(seed);                                      // 先用短路徑做一份合法備份
+  const dest = join(dir, `${'b'.repeat(maxName - 4)}.bak`);     // 剛好等於上限；+'.tmp' 超過上限
   copyFileSync(seed, dest);                                    // 放到長檔名位置＝「上一次的好備份」
   const goodBytes = readFileSync(dest);
   assert.ok(goodBytes.byteLength > 0);
@@ -181,11 +217,18 @@ test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備�
   // ⚠️ docstring 明寫「失敗時一定清掉半成品 .tmp，不留下會被誤認成備份的殘骸」。
   //    每日備份會反覆呼叫這支，殘骸會在 backups/ 底下累積成一堆「看起來像備份、其實是半截檔」，
   //    而損毀還原的指引正是「把備份改名回 store.db」——改到半截檔會讓還原本身失敗。
-  // ⚠️ 誠實劃界（#410 r2 M③）：**這一題只涵蓋「VACUUM 成功、改名失敗」這條路**。
-  //    把清理搬進改名的 catch 之後本題照樣綠——因為在這支函式裡，`.tmp` 只可能由 VACUUM 建出來，
-  //    而 VACUUM 之後的下一行就是改名，**中間沒有其他可達的失敗點**：兩種寫法對所有可達路徑等價。
-  //    真正還沒被守到的是「VACUUM 寫到一半失敗、留下半截 .tmp」（硬碟滿）——那需要模擬寫入中斷，
-  //    這套 harness 做不到，列為已知缺口而不假裝有覆蓋。
+  // ⚠️ 誠實劃界（#410 r2 M③ 起草、r3 M 訂正）：**這一題只涵蓋「VACUUM 成功、改名失敗」這條路**。
+  //    r2 版註解宣稱「`.tmp` 只可能由 VACUUM 建出來，兩種寫法對所有可達路徑等價」——**那是錯的**。
+  //    snapshotTo 的 try 裡依序有四件事，外層 catch 的清理實際覆蓋這些路徑：
+  //      (a) VACUUM 成功、renameSync 失敗 ⇒ `.tmp` 是這一次的半成品（本題守著）
+  //      (b) `open()` 就失敗（主庫損毀）⇒ 連前置清理都還沒跑到，`.tmp` 是**前一次留下的殘骸**
+  //          ——把清理縮進改名的 catch 之後這條路就沒人清了（下一題守著）
+  //      (c) VACUUM 自己失敗、而且**已經建出檔案**（硬碟滿寫一半）⇒ 外層 catch 會清，但**本檔沒有考題**：
+  //          上一題（VACUUM 階段失敗）那種 ENAMETOOLONG 失敗連檔案都沒建出來，清不清理都一樣綠。
+  //          列為已知缺口——不寫「這套 harness 做不到」，因為長檔名 journal 那種失敗其實會留下 0-byte 檔，
+  //          是可構造的；只是本檔沒立這一題。
+  //      (d) 前置 `rmSync(tmp)` 自己失敗（`.tmp` 位置被資料夾佔住／權限）⇒ catch 裡再刪一次同樣失敗，
+  //          本來就沒有保護力。也沒有考題。
   // ⚠️ 考題設計（第一版是空包彈，突變驗證抓到）：要讓 `.tmp` **真的被寫出來**、失敗發生在
   //    後面的改名那一步，否則沒有殘骸可清，「不清理」的突變照樣綠。
   //    製造法＝把 dest 佔成一個資料夾：VACUUM 寫 .tmp 成功 → renameSync(檔案→資料夾) 失敗。
@@ -197,6 +240,40 @@ test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備�
   assert.throws(() => store.snapshotTo(dest), /.*/, '改名失敗要拋錯');
   assert.ok(!existsSync(dest + '.tmp'),
     '半成品 .tmp 必須被清掉——留著會被誤認成備份，而還原到半截檔會讓自救本身失敗');
+});
+
+test('備份｜連資料庫都開不起來時，前一次留下的 .tmp 殘骸一樣要清掉', () => {
+  // ⚠️ 這一題補的正是上一題劃界裡的路徑 (b)（#410 r3 M 指出的缺口）：`snapshotTo` 第一件事是 `open()`，
+  //    主庫損毀時它就丟錯，**連前置的 `if (existsSync(tmp)) rmSync(tmp)` 都跑不到**；
+  //    此時能清掉殘骸的只有**外層 catch**。把清理縮進 renameSync 的 catch ⇒ 殘骸永遠留著。
+  //    真實情境：主庫壞掉那幾天，每日備份服務每天照跑一次、每天照樣失敗，而 backups/ 底下那顆
+  //    上一次改名失敗留下的 `.tmp` 就一直躺著——使用者要自救時看到的正是那顆「看起來像備份的半截檔」。
+  // ⚠️ 隔離做法：`STORE_FILE` 在模組 import 時就決定、`db` 連線又被模組快取（本檔前面的題目早就開成功了），
+  //    所以必須另開子行程才能讓 open() 真的失敗——寫法比照本檔最後一題。
+  const dir = mkdtempSync(join(tmpdir(), 'finance-openfail-'));
+  TRASH.push(dir);
+  const dest = join(dir, 'daily-2026-08-05.bak');
+  const tmp = dest + '.tmp';
+  writeFileSync(tmp, 'half-written-residue');            // 前一次失敗留下的殘骸
+  assert.ok(existsSync(tmp), '前置：殘骸要先真的存在，否則本題會空轉');
+
+  const broken = join(dir, 'broken.db');                 // 垃圾位元組＝open() 在建連線/PRAGMA 就失敗
+  writeFileSync(broken, Buffer.from('this is not a sqlite database, just garbage.'.repeat(64)));
+
+  const script = "const s = await import('./lib/store.js');"
+    + " try { s.snapshotTo(process.env.T_DEST); console.log('NO_THROW'); }"
+    + " catch (e) { console.log('THREW:' + e.message); }";
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: broken, T_DEST: dest },
+  });
+  assert.doesNotMatch(out, /NO_THROW/, '主庫損毀時 snapshotTo 必須拋錯（呼叫端要據實回報備份失敗）');
+  assert.match(out, /store\.db\.bak/,
+    '拋出來的必須是 open() 的還原指引——確認失敗真的發生在**開庫**那一步，'
+    + '而不是後面的 VACUUM／改名（否則本題就退化成上一題的重複）');
+  assert.ok(!existsSync(tmp),
+    '開庫就失敗這條路上，前一次的 .tmp 殘骸也必須被清掉——'
+    + '清理只寫在 renameSync 的 catch 裡的話，這顆殘骸會永遠躺在 backups/ 冒充備份');
+  assert.ok(!existsSync(dest), '這一次根本沒做出備份，不該憑空出現 dest');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
