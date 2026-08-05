@@ -23,15 +23,21 @@ import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE } from '../li
  *    v2 改成兩邊各 export 一個 `COMPOSITION_SYMBOLS` **投影陣列** ⇒ 把那個 export 改成寫死的
  *       26 鍵陣列、再單邊往正式表新增 VT，兩邊 export 都聲稱沒有 VT ⇒ 又全綠（#409 r2 H①）。
  *    v3（現在）：**export 正式表本身**、考題自己 `Object.keys()`。要繞過就得動到 `compOf`
- *       真正讀的那個物件——而那就是我們要守的東西，沒有中間層可以說謊。
+ *       真正讀的那個物件——而那就是我們要守的東西。
+ * ⚠️ 這句話的**邊界**（#409 r3 建議收窄，之前寫成「沒有中間層可以說謊」是 overclaim）：
+ *    擋住的是「export 一份跟正式表走散的複本」。**擋不住**刻意的第三層繞法——例如另建一張私表
+ *    給 `compOf` 讀、export 留舊表，或用 Proxy 把某個鍵藏起來讓 `Object.keys()` 看不到；
+ *    下面那一題的 `deepEqual` 只證明「已列舉的鍵內容相等」，證明不了物件身分、也證明不了沒有隱藏鍵。
+ *    真要封死得把兩份表收斂成單一共用來源（＝改正式資料流，非本支範圍）。
  */
 const BE_SYMBOLS = Object.keys(BE_TABLE);
 const FE_SYMBOLS = Object.keys(FE_TABLE);
 const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
 
 test('區域表｜export 出來的表就是 compOf 真正讀的那一張（不可是另一份投影）', () => {
-  // ⚠️ 這一題專門防「中間層說謊」（#409 r2 H① 的病）：對表裡的每一個鍵，
+  // ⚠️ 這一題防的是「export 一份走散的複本」（#409 r2 H① 的病）：對表裡的每一個鍵，
   //    compOf 回傳的內容必須與表內容逐一相等——若 export 的是另一份寫死的複本，這裡就會紅。
+  //    邊界見檔頭：對「另建私表／Proxy 藏鍵」這類刻意繞法無效。
   for (const [table, compOf, side] of /** @type {const} */ ([
     [BE_TABLE, beCompOf, '後端'], [FE_TABLE, feCompOf, '前端'],
   ])) {
