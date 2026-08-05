@@ -10,12 +10,12 @@
   --frame: #34291e;
   --text: #34291e;
   --text-dim: #716348;
-  --accent: #ac4c28;
-  --accent-hover: #89381d;
-  --accent-soft: #f6dfd1;
+  --accent: #DC5818;       /* 與理財中心錢幣 brand.png 的主橘色一致 */
+  --accent-ink: #B2430C;   /* 同色相的可讀文字版 */
+  --accent-hover: #8F3106;
+  --accent-soft: #FCE7C5;
   --action: #557f3c;
   --action-hover: #456c32;
-  --action-soft: #e3edcf;
   /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
   --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
   --pos-soft: #e3edcf;
@@ -79,7 +79,7 @@ button .ic, a.btn .ic { vertical-align: -.16em; margin-right: 6px; }
 .section-title .ic, .hint .ic { vertical-align: -.18em; margin-right: 5px; }
 #nav a:hover { background: rgba(255, 253, 246, .62); color: var(--text); }
 #nav a.active {
-  background: var(--card); color: var(--accent-hover); border-color: var(--frame);
+  background: var(--card); color: var(--accent-ink); border-color: var(--frame);
   box-shadow: 3px 3px 0 rgba(126, 101, 43, .28); font-weight: 700;
 }
 .sidebar-foot { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
@@ -142,11 +142,11 @@ main { flex: 1; min-width: 0; width: 100%; min-height: 100vh; padding: 32px 38px
 /* 空狀態統一：置中、灰字、開頭「尚無…」 */
 .empty { color: var(--text-dim); text-align: center; padding: 30px; }
 /* 跨頁鑽取連結（如資產配置 → 投資組合明細） */
-.drill-link { font-size: 11px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.drill-link { font-size: 11px; color: var(--accent-ink); text-decoration: none; white-space: nowrap; }
 .drill-link:hover { text-decoration: underline; }
-/* 名詞說明連結：點擊跳出說明彈窗（無底線，hover 變珊瑚色） */
+/* 名詞說明連結：點擊跳出說明彈窗（無底線，hover 變錢幣橘色） */
 .info-link { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: none; }
-.info-link:hover { color: var(--accent); }
+.info-link:hover { color: var(--accent-ink); }
 .info-body { font-size: 13.5px; line-height: 1.7; color: var(--text); }
 .info-body p { margin-bottom: 10px; }
 .info-body p:last-child { margin-bottom: 0; }
@@ -154,7 +154,7 @@ main { flex: 1; min-width: 0; width: 100%; min-height: 100vh; padding: 32px 38px
 .info-body ul { margin: 0; padding-left: 20px; }
 .info-body li { margin-bottom: 8px; }
 .info-body li:last-child { margin-bottom: 0; }
-.info-body .hl { color: var(--accent); font-weight: 600; }
+.info-body .hl { color: var(--accent-ink); font-weight: 600; }
 .info-body .info-eg { margin: 6px 0 2px; color: var(--text-dim); }
 
 /* ---------- Reminders ---------- */
@@ -217,10 +217,10 @@ button:focus-visible, a:focus-visible, #nav a:focus-visible { outline: 3px solid
 .btn-eq { width: 132px; padding-left: 0; padding-right: 0; text-align: center; }   /* 收支頁三顆動作鈕等寬（使用者定 2026-07-21） */
 .btn-upload { width: 156px; padding-left: 0; padding-right: 0; text-align: center; }
 .batch-help li { margin-bottom: 2px; }
-.batch-help .hl { color: var(--accent); font-weight: 600; }   /* 匯入紀錄說明的重點詞（使用者定 2026-07-21 版式） */
+.batch-help .hl { color: var(--accent-ink); font-weight: 600; }   /* 匯入紀錄說明的重點詞（使用者定 2026-07-21 版式） */
 .btn-danger { background: transparent; color: var(--neg); border: 1px solid var(--line-2); }
 .btn-danger:hover { background: rgba(184,74,57,.08); }
-.btn-link { background: none; color: var(--accent); padding: 5px 8px; }
+.btn-link { background: none; color: var(--accent-ink); padding: 5px 8px; }
 .btn-link:hover { text-decoration: underline; }
 .icon-btn { width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 
@@ -330,7 +330,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   color: var(--frame); text-align: center;
 }
-.forest-message-kicker { color: var(--accent-hover); font-size: 11px; font-weight: 800; }
+.forest-message-kicker { color: var(--accent-ink); font-size: 11px; font-weight: 800; }
 .forest-message-stage h1 {
   max-width: 840px; margin: 8px 0 0;
   display: flex; align-items: flex-start; justify-content: center; gap: 12px;
@@ -365,7 +365,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .forest-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0 0 16px; }
 .forest-chart-panel { min-width: 0; padding: 18px 20px 14px; }
 .forest-panel-head { min-height: 50px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.forest-panel-head span { display: block; color: var(--accent-hover); font-size: 10.5px; font-weight: 750; }
+.forest-panel-head span { display: block; color: var(--accent-ink); font-size: 10.5px; font-weight: 750; }
 .forest-panel-head h2 { margin: 2px 0 0; font-family: var(--serif); font-size: 16px; line-height: 1.35; letter-spacing: 0; }
 .forest-panel-head > p { color: var(--text-dim); font-size: 10.5px; text-align: right; white-space: nowrap; }
 .forest-chart-box { position: relative; height: 238px; }
@@ -373,7 +373,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .forest-guide-panel { padding-top: 15px; }
 .forest-guide-intro { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 17px; align-items: center; padding: 0 0 15px; border-bottom: 1px solid var(--line); }
 .forest-guide-intro img { width: 92px; height: 92px; display: block; object-fit: cover; border: 2px solid var(--frame); border-radius: 50%; box-shadow: 3px 3px 0 rgba(126,101,43,.24); }
-.forest-guide-intro span { display: block; color: var(--accent-hover); font-size: 10.5px; font-weight: 750; }
+.forest-guide-intro span { display: block; color: var(--accent-ink); font-size: 10.5px; font-weight: 750; }
 .forest-guide-intro h2 { margin: 3px 0 4px; font-family: var(--serif); font-size: 17px; line-height: 1.35; letter-spacing: 0; }
 .forest-guide-intro p { color: var(--text-dim); font-size: 11.5px; line-height: 1.55; }
 .forest-insight-content { padding-top: 15px; }
@@ -445,7 +445,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .dins-body { flex: 1; min-width: 0; }
 .dins-t { font-weight: 600; font-size: 13px; }
 .dins-d { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.dins-info { font-size: 11.5px; margin-left: auto; align-self: center; flex-shrink: 0; color: var(--accent); }
+.dins-info { font-size: 11.5px; margin-left: auto; align-self: center; flex-shrink: 0; color: var(--accent-ink); }
 .dins-ongoing { margin-top: 10px; }
 .dins-ongoing > summary { font-size: 12px; color: var(--text-dim); cursor: pointer; padding: 4px 2px; font-weight: 700; letter-spacing: 0; list-style-position: inside; }
 .dins-ongoing > summary:hover { color: var(--text); }
@@ -498,7 +498,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mr-cf-values b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .mr-cf-values .mr-overdraft { background: #fff8f6; }
 .mr-refund-note { margin-top: 12px; color: var(--text-dim); font-size: 11.5px; line-height: 1.5; text-align: right; }
-.mr-refund-note .info-link { color: var(--accent); }
+.mr-refund-note .info-link { color: var(--accent-ink); }
 @media (max-width: 920px) {
   .mr-grid { grid-template-columns: 1fr; }
   .mr-chart-panel { padding-right: 0; }
@@ -586,18 +586,18 @@ th.sortable:hover { color: var(--text); }
 .when-date { line-height: 1.15; }
 .date-suffix { font-size: 11px; font-weight: 700; letter-spacing: 0; }
 .date-suffix.active { color: var(--text-dim); }
-.date-suffix.ending { color: var(--accent); }
+.date-suffix.ending { color: var(--accent-ink); }
 .date-suffix.ended { color: var(--text-dim); }
 th.sortable:hover .sort-tri { color: var(--text-dim); }
 .sort-tri.active { color: var(--accent); }
 .cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-.flag-action { color: var(--accent); }
+.flag-action { color: var(--accent-ink); }
 .flag-action:hover { text-decoration: none; background: var(--accent-soft); }
-.flag-on { background: transparent; color: var(--accent); }
+.flag-on { background: transparent; color: var(--accent-ink); }
 .service-name { color: var(--text); }
 /* 考慮停用：服務名稱後的紅色叉號（永遠預留空間，未標記時透明，避免欄寬變動）*/
 .cancel-dot { display: inline-flex; width: 14px; height: 14px; margin-left: 6px; align-items: center; justify-content: center; vertical-align: -.08em; }
-.cancel-dot.on::before { content: "✘"; color: var(--accent); font-size: 12px; font-weight: 700; line-height: 1; }
+.cancel-dot.on::before { content: "✘"; color: var(--accent-ink); font-size: 12px; font-weight: 700; line-height: 1; }
 /* 拖曳排序手把（獨立窄欄，服務標題對齊名稱）*/
 .subs-table .grip-col { width: 28px; padding-left: 14px; padding-right: 0; text-align: left; }
 .drag-handle { display: inline-block; cursor: grab; vertical-align: middle; opacity: .78; }
@@ -666,15 +666,15 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .pill-bar { height: 7px; background: var(--card-2); border-radius: 20px; overflow: hidden; margin-top: 6px; }
 .pill-bar > div { height: 100%; border-radius: 20px; }
 .hint { background: var(--accent-soft); border: 1px solid #ecd9cf; border-radius: 10px; padding: 14px 17px; font-size: 12.5px; color: #8a4a32; margin-bottom: 18px; line-height: 1.6; }
-.hint b { color: var(--accent); }
+.hint b { color: var(--accent-ink); }
 .ending-list,
 .ended-list { margin-top: 16px; }
 
 /* 店家消費檔案（收支列表點店名開啟，使用者定 2026-07-18；無底線——使用者定，hover 變色示意可點） */
 .store-open { cursor: pointer; }
-.store-open:hover { color: var(--accent); }
+.store-open:hover { color: var(--accent-ink); }
 .store-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
-.store-rank { font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.store-rank { font-size: 12px; color: var(--accent-ink); background: var(--accent-soft); padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
 .store-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
 .store-stats > div { background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .store-stats .muted { font-size: 12px; }
@@ -755,7 +755,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .chip { font-size: 12.5px; padding: 6px 13px; border-radius: 20px; background: var(--card); color: var(--text-dim);
   border: 1px solid var(--line-2); cursor: pointer; white-space: nowrap; }
 .chip:hover { background: var(--card-2); }
-.chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chip.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
 .flow-tag { font-size: 10.5px; padding: 1px 7px; border-radius: 20px; background: var(--card-2); color: var(--text-dim); }
 .flow-tag.pos { background: rgba(71,121,62,.12); color: var(--pos); }
 .flow-tag.neg { background: rgba(184,74,57,.12); color: var(--neg); }
@@ -873,7 +873,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 }
 .credit-category-head h2 { font-family: var(--serif); font-size: 17px; letter-spacing: 0; }
 .credit-category-head p { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
-.credit-category-head .info-link { flex: 0 0 auto; color: var(--accent); font-size: 11.5px; }
+.credit-category-head .info-link { flex: 0 0 auto; color: var(--accent-ink); font-size: 11.5px; }
 .credit-category-row { margin-bottom: 9px; }
 .credit-category-row:last-of-type { margin-bottom: 0; }
 .credit-category-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; }
@@ -882,7 +882,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .credit-category-bar { height: 8px; }
 .credit-category-empty { padding: 18px 0; }
 .credit-category-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.55; margin-top: 11px; }
-.credit-category-note .info-link { color: var(--accent); }
+.credit-category-note .info-link { color: var(--accent-ink); }
 .credit-ledger-section { margin-top: 0; }
 .credit-ledger-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .credit-ledger-head h2 { font-family: var(--serif); font-size: 19px; letter-spacing: 0; }
@@ -992,7 +992,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .sec-toolbar #secSearch { width: 180px; }
 .sec-info-row { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); margin: -4px 0 16px; }
 .sec-info-row .info-link { color: var(--text-dim); }
-.sec-info-row .info-link:hover { color: var(--accent); }
+.sec-info-row .info-link:hover { color: var(--accent-ink); }
 .sec-sum-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
 .sec-sum-rows .row { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
 .sec-sum-rows .row > span:first-child { white-space: nowrap; }   /* 手機窄卡：標籤不可直排折字（數字擠不下時整個換行右靠） */

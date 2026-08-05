@@ -8,7 +8,7 @@
   --workspace-tabs-surface: var(--card);
   --workspace-tabs-accent: var(--accent);
   --workspace-tabs-accent-soft: var(--accent-soft);
-  --workspace-tabs-active-text: var(--accent-hover);
+  --workspace-tabs-active-text: var(--accent-ink);
 }
 
 .workspace-tabs {

@@ -102,7 +102,7 @@ test('共用頁籤｜森林標籤、分離工作面與手機收合都由單一�
   ]);
   const mobileAt = css.indexOf('@media (max-width: 680px)');
 
-  assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-active-text:\s*var\(--accent-hover\)/);
+  assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-active-text:\s*var\(--accent-ink\)/);
   assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-accent-soft:\s*var\(--accent-soft\)/);
   assert.match(cssRule(css, '.workspace-tabs'), /scrollbar-width:\s*none/);
   assert.match(cssRule(css, '.workspace-tabs__track'), /gap:\s*4px/);
