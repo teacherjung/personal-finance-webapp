@@ -1130,19 +1130,37 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
   // 反面①：來源集合要真的有東西（manifest 若被掏空，下面整圈會「什麼都沒掃卻通過」）。
   assert.ok(sources.length >= 40,
     `受掃的正式程式只有 ${sources.length} 個（manifest 宣告的 .js），這個數字太小＝掃描範圍壞了`);
-  // 反面②：去註解器不可以把 import 段吃掉（吃掉就變成「什麼都沒掃卻通過」）。
-  //   ⚠️ 不可以逐檔斷言「至少有一個 import」——`lib/hosted.js` 這種純設定檔真的零 import（實測誤紅）。
-  //   改成拿一個**已知一定存在**的 import 當基準：`public/app.js` 從本支新增的純模組取選項產生器。
-  assert.match(stripComments(readFileSync(join(ROOT, 'public/app.js'), 'utf8')),
-    /from\s*'\.\/modules\/form-options\.js'/,
-    '去註解之後 public/app.js 的 form-options import 不見了——剝離器把正式程式吃掉了，本題會變成空包彈');
+  // 反面②：**去註解器與 import 正規式的自檢，餵考題自己控制的 fixture**（不押正式程式的寫法細節）。
+  //   ⚠️ 上一版（r6）把這道自檢釘在「`public/app.js` 必須逐字含 `from './modules/form-options.js'`」，
+  //      **連引號樣式一起釘死** ⇒ 只把那一行的單引號改成雙引號（純風格、行為零差異、本 repo 的 eslint
+  //      也沒有 quotes 規則）就轉紅，而訊息說「剝離器把正式程式吃掉了」＝**歸因完全錯**，
+  //      下一個人會跑去 debug stripComments。（#409 r7（2026-08-06）Codex 實測。）
+  //      fixture 是考題自己控制的字串，正式程式怎麼重構都不會製造假紅。
+  //   ⚠️ fixture 兩種引號都放，而且**與下面那圈共用同一份正規式**：AGENTS.md:102-104「掃原始碼的形狀
+  //      考題要先去掉註解、**不可只認得一種寫法**」——r6 這一題自己就只認得單引號（Codex 實測的繞法：
+  //      在已宣告的 `settings.js` 頂端用**雙引號** import 一個未宣告的新模組 → 九題全綠，
+  //      同一顆突變改成單引號才紅）。這道 fixture 就是那個盲區的看門狗：漏掉任一種寫法就轉紅。
+  //   ⚠️ 不可以改回「逐檔斷言至少有一個 import」——`lib/hosted.js` 這種純設定檔真的零 import（實測誤紅）。
+  const importRe = () => /(?:\bfrom|\bimport)\s*\(?\s*(['"])(\.[^'"]+)\1/g;
+  const probe = [
+    '// import { 假貨 } from \'./ghost-line.js\';',
+    '/* import { 假貨 } from "./ghost-block.js"; */',
+    'import { a } from \'./single-quoted.js\';',
+    'import { b } from "./double-quoted.js";',
+    'const lazyA = () => import(\'./dyn-single.js\');',
+    'const lazyB = () => import("./dyn-double.js");',
+  ].join('\n');
+  assert.deepEqual([...stripComments(probe).matchAll(importRe())].map((m) => m[2]),
+    ['./single-quoted.js', './double-quoted.js', './dyn-single.js', './dyn-double.js'],
+    '去註解器或 import 正規式壞了：註解裡的假 import 要被吃掉，而 import 的四種寫法'
+    + '（靜態／動態 × 單引號／雙引號）都要認得——漏掉哪一種，那一種就是本題的盲區（改個引號就靜靜放行）');
   /** @type {Map<string, string[]>} 未宣告的模組 → 誰 import 它 */
   const undeclared = new Map();
   let edges = 0;
   for (const f of sources) {
     const src = stripComments(readFileSync(join(ROOT, f), 'utf8'));
-    for (const m of src.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*'(\.[^']+)'/g)) {
-      const target = normalize(join(dirname(f), m[1]));
+    for (const m of src.matchAll(importRe())) {
+      const target = normalize(join(dirname(f), m[2]));
       if (!target.endsWith('.js') || !existsSync(join(ROOT, target))) continue;
       edges++;
       if (declaredFiles.has(target)) continue;

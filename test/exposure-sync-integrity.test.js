@@ -576,12 +576,28 @@ test('負債白名單｜全站只准宣告過的檔案出現這些型別字串�
   assert.ok(files.length >= 50, `掃描器只看到 ${files.length} 個 .js，正式程式沒這麼少——掃描範圍壞了`);
   // 反面②：這一題存在的理由就是 assets.js，它一定要在受掃範圍內。
   assert.ok(files.includes('public/modules/assets.js'), '受掃清單裡沒有 public/modules/assets.js——這題就白做了');
-  // 反面③：**去註解器不可以把真程式碼吃掉**——它一旦吃過頭，這一題就變成「什麼都沒掃卻通過」。
-  //   拿兩個有資格持有清單的檔案當基準：它們的正式程式裡真的有 `'loan'` 這個帶引號字串。
-  for (const rel of ['lib/derive.js', 'public/modules/accounts-model.js']) {
-    assert.ok(stripComments(readFileSync(join(ROOT, rel), 'utf8')).includes('\'loan\''),
-      `去註解之後 ${rel} 裡連 'loan' 都不見了——剝離器把正式程式吃掉了，本題會變成空包彈`);
-  }
+  // 反面③：**去註解器的自檢，餵考題自己控制的 fixture**——註解要消失、帶引號字串要留下。
+  //   一旦剝離器吃過頭（把真程式碼也吃掉），下面那圈就變成「什麼都沒掃卻通過」；
+  //   一旦吃不夠（註解沒清乾淨），一行無害的說明註解就會被當成第四份手抄複本（r6 修掉的那個假紅）。
+  //   ⚠️ 上一版（r6）把這道自檢押在**正式程式的字面字串**上（要求 `lib/derive.js` 與
+  //      `public/modules/accounts-model.js` 去註解後仍逐字含 `'loan'`）。那本身就是假紅來源，
+  //      而且紅的方向正好是**本題家族一直在追求的方向**：把手抄複本收成一份
+  //      （例如 `lib/schema.js` 出一份 `LIABILITY_TYPE_CODES`、`lib/derive.js` 改成
+  //      `new Set(LIABILITY_TYPE_CODES)` ⇒ **行為完全相同、只是少一份手抄**）會讓它轉紅，
+  //      訊息卻說「剝離器把正式程式吃掉了」＝**歸因完全錯**，下一個人會跑去 debug stripComments。
+  //      （#409 r7（2026-08-06）Codex 實測。）fixture 由考題自己控制，正式程式怎麼收斂都不會誤紅。
+  //   ⚠️ fixture 三種引號都放，與下面那圈的 `quote` 迴圈對齊：少認一種就是多一個盲區
+  //      （AGENTS.md:102-104「掃原始碼的形狀考題要先去掉註解、不可只認得一種寫法」）。
+  const probe = [
+    '// 行註解裡的 \'loan\' 不算複本',
+    '/* 區塊註解裡的 "loan" 也不算 */',
+    'const real = [\'loan\', "creditcard", `mortgage`];   // 尾註裡的 \'liability\' 不算',
+  ].join('\n');
+  const stripped = stripComments(probe);
+  assert.deepEqual(['\'loan\'', '"creditcard"', '`mortgage`'].filter((s) => !stripped.includes(s)), [],
+    '去註解器把正式程式的帶引號字串吃掉了（單／雙／反引號至少漏一種）——本題會變成「什麼都沒掃卻通過」');
+  assert.deepEqual(['\'liability\'', '不算'].filter((s) => stripped.includes(s)), [],
+    '去註解器沒把註解清掉——本題會把一行無害的說明註解（例：`// …（例：\'loan\'）`）當成第四份手抄複本');
   /** @type {string[]} */
   const hits = [];
   for (const rel of files) {
