@@ -9,6 +9,13 @@
 //
 // 這一檔用**行為級**比對（兩邊的 `compOf` 都真的呼叫），不是比對原始碼文字：
 // 文字比對追不上等價改寫，而「兩邊對同一個代號回同一件事」才是真正的承重契約。
+//
+// 涵蓋**兩個**同步點（都是正式程式自己標明「改其一要改兩處」的複本）：
+//   ① `COMPOSITION` 穿透表（`lib/derive.js` ↔ `public/modules/portfolio-exposure.js`）——
+//      逐鍵比對＋動態探針＋非正規形，能守到什麼／守不到什麼見下方 `SYMBOLS` 的 docblock。
+//   ② 負債型別白名單 `LIABILITY_TYPES`（同兩檔）——前端由 `fxExposure` 那題守、後端由
+//      `buildSummary` 那題守。⚠️ 劃界：兩題釘的都是「自己那一邊的那四個成員」，
+//      **單邊新增第五個型別兩邊都不會紅**（原因與封死辦法寫在後端那題的註解裡）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -156,22 +163,52 @@ test('區域表｜債與金的分類清單釘死（哪些代號算債、算金�
   assert.deepEqual(golds, ['GLD', 'IAU', 'SGLD'], '黃金清單改了＝資產配置分層會跟著變');
 });
 
-test('幣別曝險｜00719B 與 00720B 兩支台幣交易的美元債 ETF 都要歸到美元桶', () => {
-  // ⚠️ 契約 docs/contracts/investment-sec.md 逐字列出這兩支代號；既有考題只給 00719B，
-  //    少一支的後果是 00720B 的美元曝險被記到 TWD 桶，幣別曝險表（分散度判斷的依據）默默偏掉。
+test('區域表｜帶中國曝險的代號與權重釘死（中國軟上限的地基）', () => {
+  // ⚠️ 這一題補的是 #409 minor②：最後一題只**順便**釘住 KWEB（KWEB→美國 會紅），
+  //    ICHN 與 EIMI 的中國權重原本不在任何斷言裡。實測把 ICHN 的 { 中國: 1 } **前後端同步**改成
+  //    { 美國: 1 }（＝維護註解教的「兩處一起改」正確做法，所以上面每一條「兩邊相等」都照樣綠），
+  //    全套 1496 題全綠——而「美國」是國家上限的豁免區，中國曝險與中國軟上限
+  //    （投資原則 v1 預設 15%：超標＝提醒凍結加碼、不強制賣）就此無聲蒸發。EIMI 的 中國:0.25 改 0 同理。
+  //    分工同「債與金清單」那題：這裡走後端取值，前端由「兩份 COMPOSITION 逐一相等」那題連坐。
+  /** @type {Record<string, number>} */
+  const china = {};
+  for (const symbol of SYMBOLS) {
+    const weight = beCompOf({ symbol, layer: 'core' }).regions['中國'] || 0;
+    if (weight > 0) china[symbol] = weight;
+  }
+  assert.deepEqual(china, { EIMI: 0.25, ICHN: 1, KWEB: 1 },
+    '帶中國曝險的代號或權重改了＝中國軟上限跟著變（權重歸零或改到豁免區＝上限無聲失效），要一起改這條考題');
+});
+
+test('幣別曝險｜00719B 與 00720B 兩支台幣交易的美元債 ETF 都要歸到美元桶（含非正規形）', () => {
+  // ⚠️ 逐字列出這兩支代號的是 **AGENTS.md 的同步點清單**（「`portfolio-exposure.js` `fxExposure`
+  //    寫死的台幣掛牌美債 ETF 清單（00719B/00720B）」那一列，另見台股報價那條）——
+  //    本題原本寫成「契約 docs/contracts/investment-sec.md 逐字列出」，那是引錯檔案：
+  //    docs/ 底下 grep 不到 00719B／00720B 任何一次（#409 minor④）。
+  //    既有考題只給 00719B，少一支的後果是 00720B 的美元曝險被記到 TWD 桶，
+  //    幣別曝險表（分散度判斷的依據）默默偏掉。
+  // ⚠️ 代號同時走非正規形（#409 minor①）：`fxExposure` 的 `exposureCurrency` **自己也做一次**
+  //    `normalizePortfolioSymbol`，是這一族的第二個落點（第一個是 `compOf`）。只餵大寫代號時，
+  //    把那裡改成 `String(r.symbol || '')` 全套仍全綠——而使用者手打／匯入的 ' 00719b ' 就會退回
+  //    `r.currency`＝TWD 桶，正是上一段講的「幣別曝險表默默偏掉」。
   for (const symbol of ['00719B', '00720B']) {
-    const ex = fxExposure([{ symbol, layer: 'bond', currency: 'TWD', valueTwd: 100000 }], [], {});
-    assert.ok(ex.USD, `${symbol} 應該產生 USD 桶（台幣交易的美元債 ETF，曝險歸美元）`);
-    assert.equal(ex.USD.bondTwd, 100000, `${symbol} 的金額要進 USD 桶的債券欄`);
-    assert.ok(!ex.TWD || ex.TWD.bondTwd === 0,
-      `${symbol} 不可留在 TWD 桶——那會讓幣別曝險表低估美元集中度`);
+    for (const form of formsOf(symbol)) {
+      const ex = fxExposure([{ symbol: form, layer: 'bond', currency: 'TWD', valueTwd: 100000 }], [], {});
+      assert.ok(ex.USD, `${JSON.stringify(form)} 應該產生 USD 桶（台幣交易的美元債 ETF，曝險歸美元）`);
+      assert.equal(ex.USD.bondTwd, 100000, `${JSON.stringify(form)} 的金額要進 USD 桶的債券欄`);
+      assert.ok(!ex.TWD || ex.TWD.bondTwd === 0,
+        `${JSON.stringify(form)} 不可留在 TWD 桶——那會讓幣別曝險表低估美元集中度`);
+    }
   }
 });
 
 test('幣別曝險｜四種負債型別的正數餘額都要變成「負的現金曝險」（方向不可反）', () => {
   // ⚠️ 註解自己寫明：「不兜住的話幣別曝險會把房貸當 +690 萬現金曝險，方向整個反掉（自主體檢實測）」。
   //    白名單有四個成員，既有考題只走到 loan 與 mortgage 兩個 ⇒ liability／creditcard 是白吃的：
-  //    未來有人「清理」白名單或後端新增型別漏抄前端，方向反掉但全綠。
+  //    未來有人「清理」前端這份白名單，方向反掉但全綠。
+  // ⚠️ 這一題只碰**前端**那份白名單（#409 minor③ 的修正）：`portfolio-exposure.js` 自己標明
+  //    LIABILITY_TYPES 與 `lib/derive.js` 是同步點（「改其一要改兩處」），而本題整題只呼叫 `fxExposure`，
+  //    碰不到後端那份——後端那半由下一題（走 `buildSummary`）守，兩題合起來的劃界寫在下一題。
   for (const type of ['loan', 'liability', 'mortgage', 'creditcard']) {
     const ex = fxExposure([], [{ type, currency: 'TWD', balance: 6900000 }], {});
     assert.ok(ex.TWD, `type=${type} 應該產生 TWD 桶`);
@@ -182,6 +219,38 @@ test('幣別曝險｜四種負債型別的正數餘額都要變成「負的現�
   // 反面：真正的現金帳戶要照樣是正的（避免整段被關掉也綠）。
   const cash = fxExposure([], [{ type: 'cash', currency: 'TWD', balance: 50000 }], {});
   assert.equal(cash.TWD.cashTwd, 50000, '現金帳戶要照樣算成正的現金曝險');
+});
+
+test('淨資產｜四種負債型別的正數餘額在後端也要算成負債（LIABILITY_TYPES 同步點的另一半）', () => {
+  // ⚠️ 這一題補的是 #409 minor③：上一題的註解把「後端新增型別漏抄前端」列為它要治的病，
+  //    但整題只呼叫前端 `fxExposure`，碰不到 `lib/derive.js` 的那份 LIABILITY_TYPES。
+  //    實測後端那份被「清理」成 new Set(['loan','mortgage']) 之後：type='creditcard'、balance=+500000
+  //    的帳戶在後端算成 assets=500000／netWorth=+500000（負債 0），前端同一筆算 cashTwd=−500000
+  //    ——淨資產與幣別曝險表方向相反，而全套 1496 題照樣全綠。
+  // ⚠️ 餘額為什麼一定要填**正數**：後端的判斷是「型別在白名單 || 餘額<0」，負數餘額走的是後半段，
+  //    白名單被清空也照樣綠——`test/derive.test.js` 既有那題用的就是 balance:-300，走不到白名單。
+  // ⚠️ 劃界（這兩題合起來仍**擋不住**什麼）：兩題各自釘死的是「自己那一邊的這四個成員」，
+  //    所以「單邊**新增**第五個型別」（例如後端多收 'carloan'、前端沒抄）**兩邊都不會紅**。
+  //    列舉式清單補不完，真要封死得把兩份判準收斂成單一共用來源（與 COMPOSITION 同一個結構性問題，
+  //    ＝改正式資料流，非本支範圍）。
+  for (const type of ['loan', 'liability', 'mortgage', 'creditcard']) {
+    const db = /** @type {any} */ ({
+      settings: { usdTwd: 1 }, transactions: [], subscriptions: [], holdings: [],
+      accounts: [{ id: 'a1', name: '負債帳戶', type, currency: 'TWD', balance: 500000 }],
+    });
+    const s = buildSummary(db);
+    assert.equal(s.liabilities, 500000, `type=${type} 的正數餘額是「欠出去的錢」，後端必須算成負債`);
+    assert.equal(s.assets, 0, `type=${type} 不可被當成資產計入——那會讓淨資產憑空多出一整筆`);
+    assert.equal(s.netWorth, -500000,
+      `type=${type} 的方向算反時淨資產會從 −50 萬翻成 +50 萬`
+      + '（同一筆帳戶前端 fxExposure 算 −50 萬現金曝險，兩邊對不起來也沒有紅燈）');
+  }
+  // 反面：真正的現金帳戶要照樣算成資產（避免整段白名單被關掉也綠）。
+  const cash = /** @type {any} */ ({
+    settings: { usdTwd: 1 }, transactions: [], subscriptions: [], holdings: [],
+    accounts: [{ id: 'a2', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 50000 }],
+  });
+  assert.equal(buildSummary(cash).netWorth, 50000, '現金帳戶要照樣算成正的資產');
 });
 
 test('國家上限｜「其他」是殘差桶不是國家：不可冒出假的「其他超過國家上限」提醒', () => {
