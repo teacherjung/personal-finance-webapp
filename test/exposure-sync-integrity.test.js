@@ -24,33 +24,60 @@ import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE } from '../li
  *       26 鍵陣列、再單邊往正式表新增 VT，兩邊 export 都聲稱沒有 VT ⇒ 又全綠（#409 r2 H①）。
  *    v3 改成**export 正式表本身**、考題自己 `Object.keys()` ⇒ 但比對的只是「已列舉鍵的內容」，
  *       `compOf` 改讀一份私表、export 留舊表，既有鍵答案相同就又全綠（#409 r4）。
- *    v4（現在）：補一題**動態探針**——往 export 表塞一個新代號，要求 `compOf` 立刻回傳**同一個物件**。
+ *    v4：補一題**動態探針**——往 export 表塞一個新代號，要求 `compOf` 立刻回傳**同一個物件**。
  *       物件身分到這一步才真的被守住（v3 那招在探針題會紅）。
- * ⚠️ 這句話的**邊界**（#409 r3 收窄過一次，r4 再收窄一次；之前寫成「沒有中間層可以說謊」是 overclaim）：
- *    下面兩題各守一半，合起來能守到什麼、守不到什麼要講清楚——
- *    ①「逐鍵比對」題只證明：**對 export 表目前可列舉的每一個鍵**，`compOf` 的答案不與 export 值走散。
+ *    v5（現在）：鍵拿對了、物件身分守住了，**餵進去的代號形狀**仍然全是正規形（`Object.keys` 出來的
+ *       都是 trim 過的大寫），所以把 `compOf` 的 `normalizePortfolioSymbol` 拿掉照樣全綠（#409 r5）。
+ *       ⇒ 每一處餵代號的地方都改成同時餵 `sym` / `sym.toLowerCase()` / ` sym `（見下方 `formsOf`）。
+ * ⚠️ 這句話的**邊界**（#409 r3 收窄過一次，r4、r5 各再收窄一次；之前寫成「沒有中間層可以說謊」是 overclaim）：
+ *    下面三題各守一段，合起來能守到什麼、守不到什麼要講清楚——
+ *    ①「逐鍵比對」題只證明：**對 export 表目前可列舉的每一個鍵**（且含其非正規形），
+ *       `compOf` 的答案不與 export 值走散。
  *       它**證明不了物件身分**——`compOf` 若改讀一份私表、export 留舊表，既有鍵答案相同就照樣全綠（r4 指出的洞）。
  *    ②「動態探針」題補上物件身分：往 export 表塞一個原本不存在的代號，`compOf` 必須立刻回傳**同一個物件**。
  *       私表＋舊 export 這招在這裡會紅（探針鍵只寫進 export 表，讀私表的 `compOf` 找不到）。
- *    兩題合起來仍**擋不住**的是「`compOf` 在 export 表之外**多認得**的代號」：
+ *    ③「非正規形」（`formsOf`）補上代號身分：同一支標的的大小寫／前後空白必須回同一件事，
+ *       兩邊都要。少了正規化的那一邊會退回 fallback ⇒ 逐鍵題、be/fe 對照題、最後一題的 reminder 都會紅。
+ *    三題合起來仍**擋不住**的是「`compOf` 在 export 表之外**多認得**的代號」：
  *    私表兜底（`PRIVATE[s] || COMPOSITION[s]`，探針鍵仍能從 export 表命中所以照樣綠）、
  *    `enumerable: false` 定義的鍵、Proxy 的 `ownKeys` 藏鍵——這些 `Object.keys()` 走不到，逐鍵比對就走不到。
+ *    另外要講清楚**誰守誰**（實測，不是推測）：正規化被拿掉時，紅的是①逐鍵題與最後一題（走 buildSummary），
+ *    「be/fe 對照題」只在**單邊**被拿掉時會紅；`normalizePortfolioSymbol` 本身被閹掉（拿掉 `.trim()`
+ *    或 `.toUpperCase()`）時兩邊一起退回 fallback、對照題照樣綠——所以對照題不是這顆突變的守門人，①才是。
  *    真要封死得把兩份表收斂成單一共用來源（＝改正式資料流，非本支範圍）。
  */
 const BE_SYMBOLS = Object.keys(BE_TABLE);
 const FE_SYMBOLS = Object.keys(FE_TABLE);
 const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
 
-test('區域表｜export 表可列舉的每個鍵，compOf 的答案都不可與 export 值走散', () => {
+/**
+ * 同一個代號的「非正規形」：小寫、前後帶空白。
+ * ⚠️ 這不是假想輸入——`public/modules/portfolio-symbol.js` 開宗明義寫「前後空白不屬於代號、
+ *    大小寫也不應拆成不同標的」，`test/derive-reminders.test.js` 也已釘死 `' tsla '` 這種真實資料形狀。
+ * ⚠️ 為什麼非有不可（#409 r5 的實測）：本檔原本只餵正規形（SYMBOLS 全來自 `Object.keys`），
+ *    於是把 `lib/derive.js` 的 `COMPOSITION[normalizePortfolioSymbol(h.symbol)]` 改成 `COMPOSITION[h.symbol]`，
+ *    本檔 9 題與全套 1496 題**靜靜全綠**；而同一份 db 走 `buildSummary`、holding 的 symbol 是 `' kweb '` 時，
+ *    後端回 `{其他:1}`、前端回 `{中國:1}`，`conc-country-中國` 整條消失——
+ *    正是本檔開頭宣稱要治的那個病（兩邊對同一個代號答不一樣、中國軟上限無聲失效）。
+ * @param {string} sym
+ */
+const formsOf = (sym) => [...new Set([sym, sym.toLowerCase(), ` ${sym} `])];
+
+test('區域表｜export 表可列舉的每個鍵（含大小寫／前後空白的非正規形），compOf 的答案都不可與 export 值走散', () => {
   // ⚠️ 這一題防的是「export 一份內容已經走散的複本」（#409 r2 H① 的病）：對表裡的每一個鍵，
   //    compOf 回傳的內容必須與表內容逐一相等。
   //    界線（r4）：這裡**只**證明「已列舉鍵的內容相等」，不證明物件身分——物件身分由下一題的探針守。
+  //    r5 補上代號形狀：正規形與非正規形都要回同一件事，任一邊少了 normalizePortfolioSymbol 就會紅
+  //    （非正規形查不到 ⇒ 退回 fallback ⇒ 與 export 值不相等）。
   for (const [table, compOf, side] of /** @type {const} */ ([
     [BE_TABLE, beCompOf, '後端'], [FE_TABLE, feCompOf, '前端'],
   ])) {
     for (const sym of Object.keys(table)) {
-      assert.deepEqual(compOf({ symbol: sym, layer: 'core' }), /** @type {any} */ (table)[sym],
-        `${side}：export 的表與 compOf 對 ${sym} 的答案不一致——export 的一定要是 compOf 讀的那張表`);
+      for (const form of formsOf(sym)) {
+        assert.deepEqual(compOf({ symbol: form, layer: 'core' }), /** @type {any} */ (table)[sym],
+          `${side}：export 的表與 compOf 對 ${JSON.stringify(form)} 的答案不一致——`
+          + 'export 的一定要是 compOf 讀的那張表，而且代號要先正規化（前後空白與大小寫不是不同標的）');
+      }
     }
   }
 });
@@ -95,15 +122,19 @@ test('區域表｜兩份 COMPOSITION 的「鍵集合」必須完全相等（單�
 test('區域表｜前後端兩份 COMPOSITION 對每一個代號回傳完全相同的 type 與區域權重', () => {
   // ⚠️ 這一題是「中國 15% 上限」等所有穿透規則的地基：兩份走散＝後端擋不到的東西前端照樣顯示，
   //    或反過來。夜班實測 27 個代號裡只有約 8 個被既有考題走到，其餘改型別或改權重全綠。
+  // r5：連非正規形一起對照——單邊拿掉 normalizePortfolioSymbol 時，
+  //     ' kweb ' 在後端變「其他」、前端仍是「中國」，正是「兩邊對同一個代號答不一樣」的原形。
   for (const symbol of SYMBOLS) {
-    const fe = feCompOf({ symbol, layer: 'core' });
-    const be = beCompOf({ symbol, layer: 'core' });
-    assert.equal(be.type, fe.type,
-      `${symbol} 的資產型別兩邊不一致（後端 ${be.type}／前端 ${fe.type}）——`
-      + '股債比與上限判斷會與畫面對不起來');
-    assert.deepEqual(be.regions, fe.regions,
-      `${symbol} 的區域權重兩邊不一致（後端 ${JSON.stringify(be.regions)}／`
-      + `前端 ${JSON.stringify(fe.regions)}）——國家上限會無聲失效`);
+    for (const form of formsOf(symbol)) {
+      const fe = feCompOf({ symbol: form, layer: 'core' });
+      const be = beCompOf({ symbol: form, layer: 'core' });
+      assert.equal(be.type, fe.type,
+        `${JSON.stringify(form)} 的資產型別兩邊不一致（後端 ${be.type}／前端 ${fe.type}）——`
+        + '股債比與上限判斷會與畫面對不起來');
+      assert.deepEqual(be.regions, fe.regions,
+        `${JSON.stringify(form)} 的區域權重兩邊不一致（後端 ${JSON.stringify(be.regions)}／`
+        + `前端 ${JSON.stringify(fe.regions)}）——國家上限會無聲失效`);
+    }
   }
 });
 
@@ -169,11 +200,18 @@ test('國家上限｜「其他」是殘差桶不是國家：不可冒出假的�
     '「其他」是殘差桶、不設上限——冒出這條提醒＝把不存在的違規講給使用者聽');
 
   // 反面（避免整段豁免被關掉也綠）：真正的國家超標仍然要出現。
-  const cn = {
-    ...db,
-    holdings: [{ id: 'h2', symbol: 'KWEB', layer: 'satellite', currency: 'TWD', quantity: 1, price: 1000000, source: 'ib' }],
-  };
-  const cnKeys = buildSummary(cn).reminders.map((/** @type {any} */ r) => r.key);
-  assert.ok(cnKeys.includes('conc-country-中國'),
-    'KWEB 全額中國、佔淨資產 100% ⇒ 中國上限提醒必須出現（這也順便釘住後端 KWEB 的區域是中國）');
+  // ⚠️ 代號同時走正規形與非正規形（#409 r5）：使用者手打／匯入的資料真的長 ' kweb ' 這樣，
+  //    後端 compOf 少了 normalizePortfolioSymbol 時它會退回「其他」＝殘差桶豁免，
+  //    整條 conc-country-中國 消失（實測 reminders 只剩 conc-equity-total）——中國軟上限無聲失效。
+  //    這一題是本檔唯一走完整 buildSummary 的行為級證據，所以形狀必須在這裡也釘住。
+  for (const symbol of ['KWEB', ' kweb ']) {
+    const cn = {
+      ...db,
+      holdings: [{ id: 'h2', symbol, layer: 'satellite', currency: 'TWD', quantity: 1, price: 1000000, source: 'ib' }],
+    };
+    const cnKeys = buildSummary(cn).reminders.map((/** @type {any} */ r) => r.key);
+    assert.ok(cnKeys.includes('conc-country-中國'),
+      `${JSON.stringify(symbol)} 全額中國、佔淨資產 100% ⇒ 中國上限提醒必須出現`
+      + '（這也順便釘住後端 KWEB 的區域是中國，以及代號要先正規化）');
+  }
 });
