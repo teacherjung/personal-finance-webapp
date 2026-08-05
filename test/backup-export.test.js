@@ -78,9 +78,14 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   // ⚠️⚠️ **不可宣稱已完成**（r1 審查者抓到，2026-08-06 補）：這條路只做到 `a.click()`——使用者按取消、
   //    瀏覽器把下載擋掉、下載中途失敗，`<a>` 這條路**一個訊號都不會回來**。原本寫「已存下備份：…」
   //    就是在沒有證據時宣告成功，而那正是這一整支要消滅的病（我自己犯的同一種）。
-  //    這一格要求的是**口徑**：只講我們真的知道的（下載開始了、這份東西幾筆），結果交給他去確認。
-  assert.doesNotMatch(toasts[0].msg, /已存下|已存好|備份完成|已完成/,
-    '不可以宣稱「已存下／已完成」——下載交給瀏覽器之後，成功與否這裡收不到任何回音');
+  //    這一格要求的是**口徑**：只講我們真的知道的（連結交出去了、這份東西幾筆），結果交給他去確認。
+  // ⚠️ `已開始下載` 也在黑名單裡（r2 審查者抓到，2026-08-06 補）：程式只做到「把連結交出去」，
+  //    瀏覽器把下載擋掉、或使用者在存檔對話框按取消時，「開始」**並沒有發生**。這一檔的 JSDoc
+  //    早就寫著「沒丟錯只代表交出去了」，文案卻多講一步＝口徑沒收乾淨。只准講交出去了。
+  assert.doesNotMatch(toasts[0].msg, /已存下|已存好|備份完成|已完成|已開始下載|下載完成/,
+    '不可以宣稱「已存下／已完成／已開始下載」——把連結交給瀏覽器之後，成功與否這裡收不到任何回音');
+  assert.match(toasts[0].msg, /交給瀏覽器|交出去/,
+    '要講出我們唯一有證據的那件事：備份已經**交給瀏覽器**下載（做到哪裡就講到哪裡）');
   assert.match(toasts[0].msg, /下載夾|確認/,
     '既然結果不知道，就要把「去下載夾確認檔案在不在」這個下一步交給他');
   assert.match(toasts[0].msg, /4\s*筆/, '提示要講「幾筆」（3 筆交易 ＋ 1 個帳戶 ＝ 4），使用者才有辦法察覺備份是空的');
@@ -287,11 +292,12 @@ test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口
   assert.equal(saved.length, 0);
   assert.equal(toasts.length, 1, '只能出現一句：不可以先報成功再報失敗（他會不知道要相信哪一句）');
   assert.equal(toasts[0].isErr, true, '落檔失敗就是失敗，要用錯誤的樣子出聲');
-  // ⚠️ 這一格改成拿**成功那句話本身**來比（2026-08-06）：原本只釘字面「已存下」，而成功文案已經改口成
-  //    「已開始下載…」——只釘舊字面的話，這條路重新吐出成功句也不會紅（假綠）。
+  // ⚠️ 這一格改成拿**成功那句話本身**來比（2026-08-06）：原本只釘字面「已存下」，而成功文案已經改口
+  //    兩次（「已開始下載…」→「已經把備份交給瀏覽器下載…」）——只釘舊字面的話，這條路重新吐出
+  //    成功句也不會紅（假綠）。下面那條字面黑名單是第二層，跟著現行文案走。
   assert.notEqual(toasts[0].msg, okMsg(4, 'finance-backup-2026-08.json'),
     '不可以吐出成功那句話（不管那句話怎麼寫）：畫面報好消息、實際一個檔都沒有');
-  assert.doesNotMatch(toasts[0].msg, /已存下|開始下載|筆紀錄/,
+  assert.doesNotMatch(toasts[0].msg, /已存下|交給瀏覽器|筆紀錄/,
     '這是最傷人的一種騙：畫面說「檔案下載了」，硬碟上一個檔都沒有');
   assert.match(toasts[0].msg, /磁碟空間不足/, '原因要傳出去，他才知道是硬碟滿了不是程式壞了');
 });
@@ -463,8 +469,11 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   // ── ③注入的相依必須是真的東西，不是啞巴 ────────────────────────────────────────
   //    這是本支存在的唯一理由（說了已存下就是真的存下），卻是最容易被「換成啞巴」悄悄拆掉的地方。
   const fetchProp = sliceProp(args, 'fetchFn');
-  assert.match(fetchProp, /\bfetch\s*\(/,
-    'fetchFn 必須是真的 fetch——餵它假回應等於整支模組在驗一份不存在的備份');
+  // ⚠️ `fetch.bind(globalThis)` 也算（r2 審查者實測到的**假紅**）：它跟 `(url) => fetch(url)` 語意等價、
+  //    甚至更通用（連第二個 init 參數一起轉發），只是字面上沒有 `fetch(`。這與同一輪已經放寬過的
+  //    `dispatchEvent`／`addEventListener` 是同一類漏放寬——等價改寫不可以讓考題紅。
+  assert.match(fetchProp, /\bfetch\s*\(|fetch\s*\.\s*bind/,
+    'fetchFn 必須是真的 fetch（直接呼叫或 fetch.bind(...) 都算）——餵它假回應等於整支模組在驗一份不存在的備份');
 
   const toastProp = sliceProp(args, 'toast');
   assert.notEqual(toastProp, '', 'runExport 必須拿到 toast，否則成功失敗都不出聲');
@@ -481,7 +490,8 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   assert.notEqual(saveProp, '', 'runExport 必須拿到 saveFile');
   assert.match(saveProp, /createObjectURL|showSaveFilePicker|msSaveBlob|data:application\/json/,
     'saveFile 必須真的把檔案交給瀏覽器下載（Blob 網址／檔案系統 API／data: 網址都算）——'
-    + '實測改成 `saveFile: () => {}` 也全綠，而畫面會說「已開始下載：…3,214 筆紀錄」而下載根本沒發生，'
+    + '實測改成 `saveFile: () => {}` 也全綠，而畫面會說「已經把備份交給瀏覽器下載：…3,214 筆紀錄」'
+    + '而下載根本沒發生，'
     + '那比舊版更糟（舊版至少沒騙他）');
   // ⚠️ 這一格原本把「有設定 `.download`」也當成「觸發了下載」＝誤判（r1 審查者實測：只刪掉
   //    `a.click()` 這一行，這一題照樣全綠，而按下匯出什麼都不會下載）。設定屬性不是動作，
@@ -490,4 +500,31 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   //       不列進來會讓那種改寫假紅）。
   assert.match(saveProp, /\bclick\s*\(|dispatchEvent|\bwrite\b|showSaveFilePicker|msSaveBlob/,
     'saveFile 光把網址與檔名準備好不算下載（設定 a.download 只是屬性），要真的觸發下載／寫檔');
+});
+
+test('文案｜「資料備份」卡的說明不可以宣稱「整包／全部／完整」——雲端版匯出刻意剝掉機密欄位', () => {
+  // ⚠️ 為什麼有這一題（r2 審查者抓到）：這張卡的說明改過兩次，兩次都**在雲端版是假的**。
+  //    第一版說「所有資料只存在本機 `data/store.db`」——錯在「資料放哪」（雲端資料在 Supabase）。
+  //    第二版改成中性版，卻寫「把你的資料**整包**匯出成一個檔案」——錯在「檔案裡有什麼」：
+  //    HOSTED 的 `/api/export` 走 `stripSecretsForBackup(db)`（`lib/routes/core.js` 的 export 路由
+  //    ＋ `lib/secret-fields.js`），**刻意**剝掉 IB flexToken／信用卡帳單 PDF 密碼／證券對帳單密碼／
+  //    完整帳號（C5 裁決⑤）。使用者讀到「整包」會以為「我有備份」，而那幾樣還原之後全都不在。
+  // ⚠️ 誠實劃界：這是**字面黑名單**，守的是「下一個人（或我自己）把那個詞寫回去」，
+  //    **不是**「這句話在兩種模式都成立」——語意沒有辦法用考題證明（settings.js 的 DOM 路徑在
+  //    node 裡跑不起來）。列舉補不完的東西不假裝是保證。
+  // 📌 那句該補的「雲端版匯出不含 IB 憑證與帳單密碼」仍待 William 裁決雲端語氣（需要模式分流）。
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
+  const at = src.indexOf('BACKUP_CARD_NOTE');
+  assert.ok(at >= 0, '找不到 BACKUP_CARD_NOTE（改名了？那要一起更新本考題）');
+  const note = src.slice(at, src.indexOf(';', at));
+  for (const banned of ['整包', '全部', '所有資料', '完整', '一字不漏']) {
+    assert.ok(!note.includes(banned),
+      `備份卡的說明不可以出現「${banned}」——雲端版的備份檔刻意不含 IB 憑證／帳單密碼／完整帳號，`
+      + '宣稱內容完整會讓他以為「我有備份」，那幾樣其實還原不回來');
+  }
+  // 卡片必須真的用這個常數渲染——否則把那句話直接寫回樣板裡就繞過上面的黑名單了。
+  const cardAt = src.indexOf('資料備份');
+  assert.ok(cardAt >= 0, '找不到「資料備份」那張卡（改字了？那要一起更新本考題）');
+  assert.ok(src.slice(cardAt, cardAt + 400).includes('${BACKUP_CARD_NOTE}'),
+    '「資料備份」卡的說明必須用 BACKUP_CARD_NOTE 這個常數（樣板裡自己寫一句就繞過黑名單了）');
 });

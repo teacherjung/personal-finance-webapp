@@ -540,7 +540,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* ---------- Toast ---------- */
 #toast-root { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
-.toast { background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow-lg); animation: slidein .2s; font-weight: 500; }
+/* 長訊息要讀得完：限寬（否則一句近百字的提示會拉成橫跨整個視窗的一條，眼睛跟不上換行）＋放寬行距。
+   短提示（全 app 大多數只有幾個字）外觀完全不變。停留多久見 modules/toast-timing.js。 */
+.toast { background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow-lg); animation: slidein .2s; font-weight: 500; max-width: min(420px, calc(100vw - 44px)); line-height: 1.6; }
 .toast.err { background: var(--neg); color: #fff; }
 @keyframes slidein { from { transform: translateY(8px); opacity: 0; } }
 

@@ -1,0 +1,115 @@
+// @ts-check
+// 提示停留時間的考題：**訊息讀得完，出聲才算數**。
+//
+// 這一族守的是 r2 審查者抓到的洞：整支 #417 的保證是「按下匯出會說話」，而那些話全靠右下角的
+// toast 投遞——`public/app.js` 的 `toast()` 原本固定 3.2 秒就把訊息移除，而匯出的文案是 40–100 字，
+// 3.2 秒內要讀完得每秒十幾到快三十個字。更糟的是其中兩句叫他「把這句話整句告訴我」，
+// 而那句話幾秒後就不存在、也不能複製。**文案寫得再白話，他讀不到就等於沒說。**
+//
+// ⚠️ 這裡的標準（每個字至少 `MIN_MS_PER_CHAR` 毫秒）是**考題自己定的**、比正式程式給的還寬鬆
+//    （`TOAST_MS_PER_CHAR` 目前更慢），刻意留餘裕：這樣「把時間改回固定值」與「文案長到讀不完」
+//    兩種壞法都會紅，而正式程式微調每字時間不會假紅。
+// ⚠️ 誠實劃界：能用行為驗的只有「時間怎麼算」（純函式）。滑鼠停在上面暫停、點一下收掉、可以選字複製
+//    這幾件事在 node 裡沒有 DOM 可跑，只能用**原始碼文字**盯著（最後一題），那是提醒等級、不是保證。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { toastMs, TOAST_MIN_MS, TOAST_MAX_MS, TOAST_MS_PER_CHAR } from '../public/modules/toast-timing.js';
+import { okMsg, networkFailMsg, authFailMsg, serverFailMsg, notBackupMsg, saveFailMsg }
+  from '../public/modules/backup-export.js';
+
+const ROOT = new URL('..', import.meta.url).pathname;
+
+/** 考題自己的「讀得完」標準：每個字至少這麼多毫秒（約每秒五個字，對不習慣讀螢幕的人偏寬鬆）。 */
+const MIN_MS_PER_CHAR = 200;
+
+test('提示時間｜短句的時間沒有變（全 app 大多數提示只有幾個字，那些不該被改到）', () => {
+  // ⚠️ 這一格是「別把別人弄壞」的保險：這次改的是**長訊息**讀不完的問題，
+  //    短提示（「已刪除」「已記錄本月淨資產快照 📸」…）原本 3.2 秒就夠，不可以順手一起加長。
+  assert.equal(toastMs('已刪除'), TOAST_MIN_MS, '三個字的提示照舊是下限時間');
+  assert.equal(toastMs(''), TOAST_MIN_MS, '空字串也要有下限時間（不可以 0 秒＝閃一下就沒了）');
+  assert.equal(toastMs(/** @type {any} */ (undefined)), TOAST_MIN_MS,
+    '沒給訊息也不可以丟錯——提示是「出聲」的最後一段路，這裡丟錯等於整條路又變回靜靜失敗');
+  assert.equal(toastMs(/** @type {any} */ (null)), TOAST_MIN_MS);
+});
+
+test('提示時間｜長訊息照長度給時間（這才是這一族存在的理由）', () => {
+  const short = '存好了';
+  const long = '匯出失敗，沒有存下任何檔案：伺服器回 500 Internal Server Error'
+    + '（這是伺服器那一端的問題，不是你做錯什麼：等一下再試一次，還是不行就把這句話整句告訴我。）';
+  assert.ok(toastMs(long) > toastMs(short), '長訊息必須比短訊息停久——同一個時間讀不同長度是說不通的');
+  assert.ok(toastMs(long) >= long.length * MIN_MS_PER_CHAR,
+    `${long.length} 字的訊息至少要停 ${long.length * MIN_MS_PER_CHAR} 毫秒才讀得完，`
+    + `現在只給 ${toastMs(long)}——把時間改回固定值（例如 3200）就是這一格會紅的那個壞法`);
+  // 每字時間本身也要有下限：正式程式可以調快一點，但不可以調到「其實等於固定值」。
+  assert.ok(TOAST_MS_PER_CHAR >= MIN_MS_PER_CHAR,
+    '每個字給的時間不可以低於考題的讀得完標準（要調就要連這條標準一起討論，不可以偷偷調快）');
+});
+
+test('提示時間｜有上限：一則提示不可以無限期佔住畫面角落', () => {
+  const monster = '啊'.repeat(5000);
+  assert.equal(toastMs(monster), TOAST_MAX_MS, '再長也停在上限');
+  assert.ok(TOAST_MAX_MS > TOAST_MIN_MS);
+});
+
+test('提示時間｜匯出那幾句話，每一句都讀得完（文案與投遞機制要對得起來）', () => {
+  // ⚠️ 這一格把**文案**與**投遞機制**綁在一起：以後有人把訊息寫更長，這裡就會紅——
+  //    那時該做的是「短提示 ＋ openInfo(...) 放完整說明」（repo 已有 openInfo 與 .info-link，
+  //    也符合使用者「必須懂的就地解釋」鐵則），不是把上限往上調。
+  const msgs = [
+    ['成功', okMsg(3214, 'finance-backup-2026-08.json')],
+    ['連線斷掉', networkFailMsg('Failed to fetch')],
+    ['401 要登入', authFailMsg('請先登入［401］')],
+    ['伺服器掛了', serverFailMsg('伺服器回 500 Internal Server Error')],
+    ['回的不是備份', notBackupMsg('伺服器回的不是備份內容')],
+    ['落檔出錯', saveFailMsg('瀏覽器沒能把檔案存下來')],
+  ];
+  for (const [what, msg] of msgs) {
+    const need = msg.length * MIN_MS_PER_CHAR;
+    assert.ok(toastMs(msg) >= need,
+      `「${what}」那句話有 ${msg.length} 字，需要至少 ${need} 毫秒才讀得完，現在只給 ${toastMs(msg)}——`
+      + '這句話裡有他的下一步（其中兩句還叫他「把這句話整句告訴我」），讀不到就等於沒說');
+  }
+  // ⚠️ 順手釘住那兩句「整句告訴我」：那個指令要做得到，訊息就必須留得住（時間夠、而且能選字複製）。
+  assert.ok(msgs.some(([, m]) => m.includes('整句告訴我')),
+    '失敗文案裡本來就有「把這句話整句告訴我」——這條斷言在提醒：那個指令是上一格那些時間在撐著，'
+    + '哪天改成別的講法，這裡跟著改');
+});
+
+/** 從 `from` 起抓出配對到的那一段，含頭尾括號（純字元計數，不懂字串裡的括號——抓不到會紅、不會假綠）。
+ * @param {string} src @param {number} from @param {string} open @param {string} close */
+function matchedSpan(src, from, open, close) {
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    if (src[i] === open) depth++;
+    else if (src[i] === close && --depth === 0) return src.slice(from, i + 1);
+  }
+  return '';
+}
+
+test('接線｜app.js 的 toast() 真的照長度給時間，而且滑鼠停在上面不會被抽走', () => {
+  // ⚠️ 為什麼是原始碼文字題：`public/app.js` 在 node 裡 import 不進來（模組頂層就碰 document／
+  //    localStorage），所以「正式環境那一行到底怎麼寫」只驗得到文字。本專案已有同型前例
+  //    （`test/xss-id-escaping.test.js` 抓出 esc 那一行來跑）。
+  // ⚠️ 誠實劃界：這一題擋的是「下一個人把時間改回固定值、或把暫停拿掉」，不是「跑起來真的會暫停」。
+  const src = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
+  assert.match(src, /import\s*\{[^}]*\btoastMs\b[^}]*\}\s*from\s*['"]\.\/modules\/toast-timing\.js['"]/,
+    'app.js 必須從 modules/toast-timing.js import toastMs——時間算法抄一份在 app.js 裡就沒有考題撐得住');
+
+  const at = src.indexOf('export function toast(');
+  assert.ok(at >= 0, '找不到 toast() 的定義（改名了？那要一起更新本考題）');
+  const body = matchedSpan(src, src.indexOf('{', at), '{', '}');
+  assert.ok(body.length > 2, 'toast() 的函式主體沒抓到（寫法太特殊——原始碼文字題的限制）');
+
+  assert.match(body, /\btoastMs\s*\(/,
+    'toast() 必須用 toastMs(訊息) 算停留時間——固定秒數會讓長訊息讀不完（這一支所有文案都靠它投遞）');
+  const hardcoded = body.match(/setTimeout\s*\([\s\S]*?,\s*(\d+)\s*\)/);
+  assert.equal(hardcoded, null,
+    `toast() 裡的 setTimeout 不可以用寫死的毫秒數（抓到「${hardcoded?.[1] ?? ''}」）——`
+    + '那正是 r2 審查者抓到的洞：固定 3.2 秒，而匯出失敗那幾句要讀二十幾秒');
+  assert.match(body, /mouseenter|pointerenter|mouseover/,
+    '滑鼠停在提示上面時要暫停（不然他讀到一半、或正要選字複製，訊息就被抽走）');
+  assert.match(body, /clearTimeout/,
+    '暫停要真的把計時器停掉——只綁事件不停計時器等於沒暫停');
+});

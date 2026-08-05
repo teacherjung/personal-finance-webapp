@@ -13,6 +13,7 @@ import { renderSettings } from './modules/settings.js';
 import { createStockResearchPage } from './modules/stock-research-page.js';
 import { hydrateIcons, icon } from './modules/icons.js';
 import { backupAlertView } from './modules/backup-alert.js';
+import { toastMs } from './modules/toast-timing.js';   // 提示停留時間＝照長度給（零依賴純模組，考題撐得住）
 
 // ---------- 共用工具 ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -81,13 +82,33 @@ export function stmtOrig(stmtRef) {
 // 圖表色（CHART/PALETTE/AXIS/GRID）定義在零依賴的 modules/theme.js，各模組直接 import——
 // 不從 app.js 轉手：模組在檔案頂層就取用色票，經由 app.js 會踩循環 import 的 TDZ。
 
-/** 右下角提示訊息。 @param {string} msg @param {boolean=} isErr 紅色錯誤樣式 */
+/**
+ * 右下角提示訊息。
+ *
+ * ⚠️⚠️ **停留時間照訊息長度給**（r1 審查者實測抓到，2026-08-06 改）：原本固定 3.2 秒，
+ *    而長訊息（匯出失敗那幾句是 40–100 字上下）在 3.2 秒內根本讀不完——「會出聲」那個保證
+ *    整個押在使用者讀得到，卻被投遞機制否決。短句的時間**沒有變**（下限仍是 3.2 秒），
+ *    算法在零依賴的 `modules/toast-timing.js`（考題撐得住的地方；app.js 在 node 裡 import 不進來）。
+ * ⚠️ 滑鼠停在上面就**不會消失**：長訊息要讓他讀完，而且要能選字複製——匯出失敗的文案叫他
+ *    「把這句話整句告訴我」，那個指令得做得到才算數。
+ * ⚠️ 誠實劃界：訊息消失之後**沒有任何地方可以回看**（這個 app 沒有提示紀錄本）。
+ *    要事後查得到的東西，不可以只靠 toast 講。
+ * @param {string} msg @param {boolean=} isErr 紅色錯誤樣式
+ */
 export function toast(msg, isErr = false) {
   const t = document.createElement('div');
   t.className = 'toast' + (isErr ? ' err' : '');
   t.textContent = msg;
   $('#toast-root').appendChild(t);
-  setTimeout(() => t.remove(), 3200);
+  const ms = toastMs(msg);
+  let timer = setTimeout(() => t.remove(), ms);
+  t.addEventListener('mouseenter', () => clearTimeout(timer));            // 讀到一半不要被抽走
+  t.addEventListener('mouseleave', () => { timer = setTimeout(() => t.remove(), ms); });
+  // 讀完了想立刻收掉就點一下。⚠️ **正在選字時不收**：他為了複製而按下滑鼠，訊息就消失＝白做。
+  t.addEventListener('click', () => {
+    if ((window.getSelection()?.toString() || '') !== '') return;
+    clearTimeout(timer); t.remove();
+  });
 }
 
 const MODAL_SIZES = new Set(['sm', 'md', 'lg', 'xl']);
