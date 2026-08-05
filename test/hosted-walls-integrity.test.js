@@ -54,6 +54,9 @@
 //     **擋不住**：重新編碼（base64／hex／倒轉／字元碼陣列）、用**非分隔符**切開（`900100|****3301`）、
 //     以及把兩半放到**不相鄰**的欄位。要證「任何編碼都沒外洩」是字串比對做不到的事；
 //     真正承重的是**「四條使用者路徑都經過同一個 `projectAccount`」那一題**，字串比對只是在它上面加抽查。
+//     ⚠️ **而且範圍只有「那一筆帳戶／accounts 集合」，不是整包回應**（r7 收窄）：把帳號掛到
+//     accounts 以外的地方（例如 `projectDb` 另加一個 `db.accountNumbers`）本檔抓不到。
+//     收窄的理由是整包比對會對著 `transactions[].bankRef` 誤紅（實測，見「外洩斷言的射程」那一題）。
 //     ⚠️ 哪一塊有突變撐著、哪一塊沒有，逐塊寫在 `assertNoAccountLeak`／`assertNoSplitLeak` 的註解裡
 //     ——**只有兩塊有專屬突變證據**（逐格正規化、相鄰兩欄）；另兩塊（逐字、整包正規化）是便宜的
 //     雙保險，不可拿它們當戰功。
@@ -142,6 +145,23 @@
 //        `includes(原字串)` 自己就是一種列舉（只列了「一模一樣」這一種寫法）。而換一種比對方式之後
 //        仍然列不完（我自己馬上又找到第三顆）：所以這一組斷言的定位是**抽查**，
 //        真正承重的是「四條使用者路徑都經過同一個 `projectAccount`」那一題（單一收口）。
+//
+// ⚠️ **r7 複審再打回來兩處，都是「考題自己在說謊」**（2026-08-05 實測）：
+//   ⓗ **外洩斷言的整包比對是一顆假紅產生器**。`assertNoAccountLeak` 的①③原本比對整包回應字串，
+//      而 HOSTED 的 `GET /api/db`／`GET /api/transactions` 本來就逐字帶著同一串帳號——
+//      `transactions[].bankRef`（去重鍵）第 2 段＝帳單上那串遮罩帳號，而**銀行匯入自動建立的帳戶
+//      就是拿同一串存進 `accountNo`**（`lib/services/bank-import.js`）。實測：帳戶列投影正確，
+//      整包卻含著 `900100****3301` ⇒ 現在只因為本檔暫存 DB 沒有銀行匯入資料才綠，日後有人加一筆
+//      銀行 fixture 就會紅在**對的程式**上。⇒ 射程收進「那一筆帳戶／accounts 集合」，
+//      並補「外洩斷言的射程」一題用真 HTTP 播種那個形狀、刻意留在暫存 DB 裡
+//      （實測：把接線題的射程放回整包 `dbText` ⇒ `tests 12 / pass 11 / fail 1`）。
+//      ⇒ 併帶：這條路也是「UI 的任何頁面都拿不到完整帳號」的**第二個反例**（前一版只補了 LOCAL
+//        備份下載那一個），三處措辭一起改口（本檔、`lib/secret-fields.js`、`docs/contracts/income-expense.md`）。
+//   ⓘ **body 上限的常數題把「表示法」當成「性質」在釘**。實測把 `AUTH_JSON_LIMIT` 從 `'32kb'` 改成
+//      `32 * 1024`（raw-body 的 limit 本來就吃數字 bytes ＝**行為完全等價**）→ 常數題與接線題兩顆
+//      一起轉紅，而接線題的訊息還印出「送 0 bytes 應該回 413，實得 200——常數表只是裝飾」
+//      ＝倒過來指控一道其實限得好好的 parser（`toBytes` 比不到就回 0 → `'x'.repeat(NaN)` ＝空 body）。
+//      ⇒ `toBytes` 接受數字與 b／kb／mb／gb，認不出來就**大聲丟**；常數題一律比 bytes、不比長相。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -185,10 +205,30 @@ after(() => {
   rmSync(DIR, { recursive: true, force: true });
 });
 
-/** '32kb' → 32768。@param {string} s */
-const toBytes = (s) => {
-  const m = /^(\d+)(kb|mb)$/i.exec(s);
-  return Number(m?.[1] ?? 0) * (m?.[2].toLowerCase() === 'mb' ? 1024 * 1024 : 1024);
+/**
+ * 上限寫法 → bytes。**接受 `express.json({ limit })` 真的吃得下的所有寫法**：
+ * 數字（raw-body 直接當 bytes 用）、或 `數字[.小數][空白]單位`（b／kb／mb／gb，省略單位＝bytes）。
+ *
+ * ⚠️ **為什麼一定要接受數字**（r7 實測到的假紅）：把 `AUTH_JSON_LIMIT` 從 `'32kb'` 改成
+ *    `32 * 1024` ＝**行為完全等價**（raw-body 對 `typeof limit === 'number'` 直接採用），
+ *    但舊版只認 `/^(\d+)(kb|mb)$/`、比不到就**回 0**，於是接線題的探針
+ *    `'x'.repeat(limit * 2)` 退化成 `'x'.repeat(NaN)` ＝空 body，訊息還印出
+ *    「送 0 bytes 給牆前端點 /api/auth/login 應該回 413，實得 200——常數表寫 32768 只是裝飾」
+ *    ＝**倒過來指控正式程式**（那道 parser 其實限得好好的）。假紅會把人送去改對的東西。
+ * ⚠️ 認不出來就**大聲丟**、絕不回 0：回 0 正是上面那種「探針悄悄失效、訊息卻很有自信」的來源
+ *    （記憶：靜靜通過／靜靜退化比沒有護欄更糟）。
+ * @param {string|number} v @returns {number} */
+const toBytes = (v) => {
+  if (typeof v === 'number') {
+    assert.ok(Number.isFinite(v) && v > 0, `body 上限寫成數字時必須是正的有限 bytes，實際是 ${v}`);
+    return v;
+  }
+  const m = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/i.exec(String(v).trim());
+  assert.ok(m, `toBytes 不認得這個 body 上限寫法：${JSON.stringify(v)}`
+    + '——這是**考題 helper 的缺口**，不是正式程式的錯：先把這裡補到認得它，再看考題結果'
+    + '（回 0 會讓探針退化成空 body、卻去指控那道 parser 沒限住）');
+  const unit = (m[2] || 'b').toLowerCase();
+  return Number(m[1]) * { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[unit];
 };
 
 /**
@@ -210,18 +250,23 @@ test('身分牆前的 body 上限（常數）｜登入入口必須遠小於一�
   // ⚠️ 這個常數是「HOSTED 身分牆之前唯一准許解析的 body」——牆前的每一個位元組都是未驗證流量。
   //    改成 50mb 之後，未登入的人可以反覆丟大檔把伺服器記憶體撐爆（實測 10 個未登入請求 ×45MB → OOM）。
   //    考題不寫死「32kb」這個數字（數字可以合理調整），而是釘住**它的性質**：
-  //    ①單位是 kb ②數值 ≤ 64 ③嚴格小於一般 API 入口 ④嚴格小於備份入口。
+  //    ①換算成 bytes 之後 ≤ 64KB ②嚴格小於一般 API 入口 ③嚴格小於備份入口。
+  // ⚠️ **釘的是 bytes、不是表示法**（r7 實測到的假紅）：舊版先跑 `/^(\d+)(kb|mb)$/` 再斷言
+  //    「單位是 kb」「數值 ≤ 64」——那把**寫法**釘住了。實測把常數改成 `32 * 1024`
+  //    （行為完全等價，raw-body 的 limit 本來就吃數字 bytes）→ 這題與接線題兩顆一起轉紅。
+  //    宣稱「不寫死 32kb 這個數字」卻擋掉等價寫法＝考題太嚴，而假紅的標準反應就是把考題放寬。
+  //    ⇒ 一律經 `toBytes()` 比 bytes；上限的寫法（`'32kb'`／`32768`／`'0.03mb'`）不歸考題管。
   // ⚠️ 這一題**只管常數表**；「常數有沒有真的接到 parser 上」是下一題的事（r1 High①：
   //    只改接線、不動常數，這一題全綠）。
-  const m = /^(\d+)(kb|mb)$/i.exec(AUTH_JSON_LIMIT);
-  assert.ok(m, `AUTH_JSON_LIMIT 應該是「數字＋kb/mb」的字串，實際是 ${AUTH_JSON_LIMIT}`);
-  assert.equal(m[2].toLowerCase(), 'kb',
-    `登入入口必須是 KB 級（實際 ${AUTH_JSON_LIMIT}）——身分牆前的流量全部未驗證，MB 級等於開門讓人塞`);
-  assert.ok(Number(m[1]) <= 64,
-    `登入入口不該超過 64KB（實際 ${AUTH_JSON_LIMIT}）：body 裡只有信箱與密碼`);
-  assert.ok(toBytes(AUTH_JSON_LIMIT) < toBytes(STANDARD_JSON_LIMIT),
+  // 📌 刻意**不設下限**：太小（例如 10 bytes）會讓正常登入也 413，但那由下一題的
+  //    「小 body 仍到得了 handler → 401」抓，這裡另訂一個下限只會多一個假紅來源。
+  const authBytes = toBytes(AUTH_JSON_LIMIT);   // 認不出寫法就在這裡大聲丟，不會退化成 0
+  assert.ok(authBytes <= 64 * 1024,
+    `登入入口不該超過 64KB（實際 ${authBytes} bytes ＝ ${AUTH_JSON_LIMIT}）：body 裡只有信箱與密碼，`
+    + 'MB 級等於在身分牆前開門讓未驗證流量進來');
+  assert.ok(authBytes < toBytes(STANDARD_JSON_LIMIT),
     '登入入口必須嚴格小於一般 API 入口');
-  assert.ok(toBytes(AUTH_JSON_LIMIT) < toBytes(BACKUP_JSON_LIMIT),
+  assert.ok(authBytes < toBytes(BACKUP_JSON_LIMIT),
     '登入入口必須嚴格小於備份入口（那個是刻意大的）');
 });
 
@@ -370,8 +415,10 @@ test('Origin 白名單（接線）｜POST／PUT／DELETE／PATCH 四種變更請
         assert.match((await r.json()).error, /請求來源不被允許/, '要回我們自己的白話訊息');
       }
       // 反面對照（避免「整道牆一律 403」也綠）：白名單來源與沒帶 Origin 的同一個請求要**穿過**
-      // 這道牆，由身分牆回 401。沒帶 Origin 照舊放行是刻意的（curl／非瀏覽器；SameSite=Lax
-      // cookie 已擋跨站帶 cookie，這道是雙保險）。
+      // 這道牆，由身分牆回 401。沒帶 Origin 照舊放行是刻意的（curl／非瀏覽器發不出 CSRF）。
+      // ⚠️ 那**不是**「Lax 已擋跨站、這道只是雙保險」（那個說法契約已明文禁止）：本組樣本裡的
+      //    **同站子網域**（`evil.noteasy.com.tw`）對瀏覽器算 same-site、cookie 照樣會帶上，
+      //    那一顆探針底下這道牆是唯一防線。理由見 `lib/hosted.js` 的 `originAllowed`。
       assert.equal((await mutating(method, path, GOOD_ORIGIN)).status, 401,
         `${method} ${path} 帶白名單 Origin 必須穿過 CSRF 牆、由身分牆回 401（403＝牆把合法來源也擋了）`);
       assert.equal((await mutating(method, path)).status, 401,
@@ -562,37 +609,54 @@ const valuesOf = (v, out = []) => {
 };
 
 /**
- * 「這條路的回應裡不可以有完整帳號」。**射程要照實講，不可以說成「封閉」**（r6ⓖ 的整個病灶就是
- * 措辭比考題強）——這條斷言由三塊組成，而**只有②有專屬的突變證據**，另兩塊照實標成雙保險：
- *   ①**逐字**出現在整包原始回應字串的任何位置（含鍵名）。r5 那顆突變（`accountNoDisplay: raw`）會讓
+ * 「這條路回的**帳戶資料**裡不可以有完整帳號」。**射程要照實講，不可以說成「封閉」**（r6ⓖ 的整個
+ * 病灶就是措辭比考題強）——這條斷言由三塊組成，而**只有②有專屬的突變證據**，另兩塊照實標成雙保險：
+ *   ①**逐字**出現在受測範圍的原始字串的任何位置（含鍵名）。r5 那顆突變（`accountNoDisplay: raw`）會讓
  *     它轉紅，但②同樣抓得到 ⇒ **這不算①的專屬證據**。①獨有的角落是「原始字串裡有、解析後取不到」
  *     那種寫法（例如重複鍵只留下最後一個值）——**那個角落沒有突變釘著**。
  *   ②`JSON.parse` 之後**逐格**（每個鍵名、每個值）拿掉空白與 `- _ . ·` 再比——擋「同一格的值被分隔符
  *     打散」與「換一個欄位名裝它」。**專屬突變證據＝`accountNoDisplay: raw.split('').join(' ')`**
  *     （r6ⓖ 那顆：①逐字比完全看不到它）。它看的是解析後的值，JSON 轉義寫法會被還原。
- *   ③整包原始字串照②的方式正規化再比一次。**沒有專屬的突變證據**（它是①的正規化版）——留著只因為
- *     一行很便宜。不要把它算成本輪修好的東西。
+ *   ③受測範圍的原始字串照②的方式正規化再比一次。**沒有專屬的突變證據**（它是①的正規化版）——留著
+ *     只因為一行很便宜。不要把它算成本輪修好的東西。
+ *
+ * ⚠️⚠️ **`scopeText`／`scope` 是「那一筆帳戶物件／accounts 集合」，不是整包回應**（r7 實測改的）。
+ *    原本①③比對的是**整包 bodyText**，而 HOSTED 的 `GET /api/db`／`GET /api/transactions`
+ *    本來就會逐字帶著同一串帳號：`transactions[].bankRef`（銀行交易去重鍵）第 2 段就是帳單上那串
+ *    遮罩帳號（`lib/services/bank-import.js` 的 `bankRefBase`），而**銀行匯入自動建立的帳戶
+ *    就是拿同一串存進 `accountNo`**（同檔 `accountNo: pa.masked`）。實測（隔離暫存 STORE_FILE、
+ *    未碰 `data/store.json`）：塞一個 `accountNo:'900100****3301'` 的帳戶＋一筆
+ *    `bankRef:'bank|900100****3301|…'` 的銀行交易 → `GET /api/accounts` 投影正確（只回
+ *    `accountNoSet`／`accountNoLast4`），但 `GET /api/db` 與 `GET /api/transactions` 的整包回應
+ *    **逐字含有那串帳號**。⇒ 整包比對是一顆**假紅產生器**：現在只因為本檔的暫存 DB 沒有銀行匯入
+ *    資料才綠，日後任何人在本檔加一筆銀行匯入 fixture，投影完全正確也會紅——而假紅的標準反應
+ *    就是把考題放寬。射程收進 accounts 之後，那個形狀由「外洩斷言的射程」那一題用真 HTTP 播種
+ *    並留在暫存 DB 裡，讓「把接線題的射程改回整包」這個改法立刻紅。
+ *    📌 **收射程放掉了什麼，照實寫**：把帳號**掛到回應裡 accounts 以外的地方**（例如
+ *      `projectDb` 另加一個 `db.accountNumbers`）本檔不再抓得到。它與「投影沒接上」是不同形狀，
+ *      而承重的一直是下一題（四條使用者路徑都經過同一個 `projectAccount`）。
+ *
  * ⚠️ **這三塊都抓不到「值被切成兩個 JSON 欄位」**（先實測才寫：`accountNoHead`／`accountNoTail` 那顆
  *    突變在只有①②③時整檔 11/11 全綠）——欄位之間的 `","` 這類 JSON 標點不在正規化的移除清單裡，
  *    兩半永遠接不起來。那一格改由 `assertNoSplitLeak` 負責（範圍限定在那一筆，理由見它的註解）。
  * **這三塊擋不住的（不要讀成比它更強的東西）**：重新編碼（base64／hex／倒轉／字元碼陣列）、
  * 以及用**非分隔符**切開（`900100|****3301`）。本檔沒做那種比對（誠實劃界 ⑨）。
  * @param {string} via 這條路徑的名字（訊息用）
- * @param {string} bodyText 這條路徑**整包**回應的原始字串
- * @param {unknown} parsed 同一包回應 `JSON.parse` 之後的結構
+ * @param {string} scopeText 受測範圍（那一筆帳戶／accounts 集合）的原始字串
+ * @param {unknown} scope 同一範圍 `JSON.parse` 之後的結構
  * @param {string} accountNo 存進去的那串完整帳號
  */
-const assertNoAccountLeak = (via, bodyText, parsed, accountNo) => {
+const assertNoAccountLeak = (via, scopeText, scope, accountNo) => {
   const needle = squash(accountNo);
-  assert.equal(bodyText.includes(accountNo), false,
-    `${via}：整包回應的字串裡逐字找得到完整帳號 ${accountNo}——完整帳號不可沿這條路送到 UI`);
-  for (const s of scalarsOf(parsed)) {
+  assert.equal(scopeText.includes(accountNo), false,
+    `${via}：回應的帳戶資料裡逐字找得到完整帳號 ${accountNo}——完整帳號不可沿這條路送到 UI`);
+  for (const s of scalarsOf(scope)) {
     assert.equal(squash(s).includes(needle), false,
       `${via}：回應裡有一格（${JSON.stringify(s).slice(0, 60)}）把空白與 - _ . · 拿掉之後就含著完整帳號 `
       + `${accountNo}——插分隔符打散不算沒外洩，那串值可以無損復原；換個欄位名裝它也一樣會紅`);
   }
-  assert.equal(squash(bodyText).includes(needle), false,
-    `${via}：整包回應正規化（拿掉空白與 - _ . ·）之後含著完整帳號 ${accountNo}`);
+  assert.equal(squash(scopeText).includes(needle), false,
+    `${via}：回應的帳戶資料正規化（拿掉空白與 - _ . ·）之後含著完整帳號 ${accountNo}`);
 };
 
 /**
@@ -633,11 +697,16 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
   //    `lib/services/bank-import.js` 的 `matchAccount` 與 `ownSuffixSet` 讀的都是伺服器端的完整
   //    `accountNo`，卡片末碼是 `lib/statement.js` 的 `extractLastFour` 從帳單文字另抽的一份資料。
   //    `accountNoLast4` 全 repo 只有 `public/modules/assets.js` 兩處在用（帳戶表末碼欄、編輯窗的
-  //    「已設定（末四碼 ⋯）」提示）。真正的傷害是**顯示層說謊**：UI 的任何頁面都拿不到完整帳號，
-  //    末碼就是使用者辨識「這是哪個帳戶」的唯一線索，它與帳單對不起來＝人只能靠猜，
+  //    「已設定（末四碼 ⋯）」提示）。真正的傷害是**顯示層說謊**：末碼與帳單對不起來＝人只能靠猜，
   //    而人照著假末碼去「訂正」帳號，才會真的動到伺服器端那個會配對的欄位。
-  //    （唯一例外＝LOCAL 的 `GET /api/export` 備份下載回未投影的完整帳號，見 `lib/secret-fields.js` 檔頭；
-  //     那是「下載成檔案」不是「畫面上看得到」，所以不會給使用者辨識帳戶的線索。）
+  //    ⚠️ **不可以再寫成「UI 的任何頁面都拿不到完整帳號、末碼是唯一線索」**（r7 實測到的第二個反例，
+  //       前一版只補了 LOCAL 備份下載那一個）：①LOCAL 的 `GET /api/export`（備份下載）回未投影的
+  //       完整 `accountNo`；②**HOSTED 也有一條**——`transactions[].bankRef` 的第 2 段就是帳單上
+  //       那串帳號，`GET /api/db`／`GET /api/transactions` 原樣送出（`projectDb` 只投影
+  //       cards/accounts/securityTrades/settings）。而**銀行匯入自動建立的帳戶就是拿同一串存進
+  //       `accountNo`**（`lib/services/bank-import.js` 的 `accountNo: pa.masked`）⇒ 對那些帳戶，
+  //       畫面上的末碼**不是**唯一線索。這一段話的準確版本與實測記在
+  //       `lib/secret-fields.js` 的 `projectAccount` 註解與 `assertNoAccountLeak` 的射程註解。
   // ⚠️ 這一題**只管 helper 的判準**；「使用者真正走的那幾條路有沒有用這個判準」是下一題的事（r3ⓒ）。
   // ⚠️ 兩層都要驗（r5 病灶）：`accountNo === undefined` 釘的是**欄位名**，改個鍵名就繞過去了；
   //    另一條釘的是**值**——投影出來的東西裡不可以含那串完整帳號，鍵名叫什麼都一樣。
@@ -653,6 +722,61 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
     assertNoAccountLeak(via, JSON.stringify(p), p, f.accountNo);
     assertNoSplitLeak(via, p, f.accountNo);
   }
+});
+
+test('外洩斷言的射程｜銀行匯入的 bankRef 帶著同一串帳號，帳戶投影正確就不可以紅（整包比對＝假紅產生器）', async () => {
+  // ⚠️ **r7 洞①的活體 fixture，而且它刻意跑在下一題之前**。
+  //    `assertNoAccountLeak` 的①③原本比對**整包回應字串**，但 HOSTED 的 `GET /api/db`／
+  //    `GET /api/transactions` 本來就逐字帶著同一串帳號：`transactions[].bankRef`（銀行交易去重鍵）
+  //    第 2 段＝帳單上那串帳號（`lib/services/bank-import.js` 的 `bankRefBase`），而**銀行對帳單匯入
+  //    自動建立的帳戶就是拿同一串存進 `accountNo`**（同檔 `accountNo: pa.masked`）；`projectDb` 只投影
+  //    cards／accounts／securityTrades／settings，**transactions 原樣送出**。
+  //    ⇒ 整包比對是一顆**假紅產生器**：改射程之前，它只因為本檔的暫存 DB 沒有銀行匯入資料才綠，
+  //      日後任何人加一筆銀行 fixture 就會紅在**投影完全正確**的程式上——而假紅的標準反應是放寬考題。
+  // 📌 **這一筆播種刻意留在暫存 DB 裡**（不清掉）：下一題（四條使用者路徑）每一次 `GET /api/db`
+  //    從此都帶著 bankRef 裡的同一串帳號 ⇒ 有人把下一題 `check()` 的 `scopeText` 改回整包 `dbText`，
+  //    **下一題會立刻紅**（實測：`tests 12 / pass 11 / fail 1`，紅的是「帳號投影（接線）」）。
+  //    這是本題存在的主要理由——單靠註解攔不住那種「改回去」。
+  //    ⚠️ 照實說射程：**紅的是下一題、不是本題**（本題只餵 accounts 那一段給斷言，所以它自己不會紅）。
+  //    本題自己負責的是另外兩件事：①證明「整包含著那串帳號」是**事實**而不是宣稱
+  //    ②證明投影對**銀行匯入建立的帳戶**一樣有效（那是唯一會踩到這個形狀的來源）。
+  // 📌 用 `/api/import` 播種而不是 `POST /api/transactions`：`bankRef` 是服務層擁有的欄位、
+  //    不在 CRUD 白名單，走櫃檯會被丟掉。`/api/import` 會**取代**整包資料，所以它必須跑在
+  //    「Origin 哨兵匯率」那些題之後（本檔的宣告順序＝執行順序）。
+  const ACCT = LAST4_FIXTURES[0].accountNo;                 // '900100****3301'
+  const seeded = await authed('POST', '/api/import', {
+    settings: {},
+    accounts: [{ id: 'bank-seed', name: '台新 3301', type: 'cash', class: '現金', currency: 'TWD', balance: 10, accountNo: ACCT }],
+    transactions: [{
+      id: 'bank-seed-tx', date: '2026-06-01', type: 'income', amount: 10, account: '台新 3301',
+      source: 'bank', ledger: 'cashflow', dir: 'in', bankRef: `bank|${ACCT}|2026-06-01|in|10||存款息|`,
+    }],
+  });
+  assert.equal(seeded.status, 200, `播種銀行匯入資料應回 200，實得 ${seeded.status}`);
+
+  // ① **先確認前提是事實、不是宣稱**：整包回應真的逐字含著那串帳號。
+  const dbText = await (await authed('GET', '/api/db')).text();
+  const db = JSON.parse(dbText);
+  assert.ok(String((db.transactions || []).find((/** @type {any} */ t) => t.id === 'bank-seed-tx')?.bankRef || '').includes(ACCT),
+    '播種的 bankRef 沒進到 DB＝這題空轉（`/api/import` 對服務層欄位的行為變了），回頭重寫這題');
+  assert.ok(dbText.includes(ACCT),
+    'GET /api/db 的整包回應應該逐字含著那串帳號（transactions[].bankRef 原樣送出）。'
+    + '**不含反而要停下來**：那代表 bankRef 這條路被收斂了（是好事），但本題與 `assertNoAccountLeak` '
+    + '的射程註解、`lib/secret-fields.js` 的 `projectAccount` 註解、`docs/contracts/income-expense.md` '
+    + '三處措辭的前提都沒了——四處要一起重新評估，不要只把這行刪掉');
+
+  // ② 帳戶那一側必須乾淨：投影對銀行匯入建立的帳戶一樣有效，所以「射程收在 accounts」是綠的。
+  const acctText = await (await authed('GET', '/api/accounts')).text();
+  const list = JSON.parse(acctText);
+  const row = list.find((/** @type {any} */ a) => a.id === 'bank-seed');
+  assert.ok(row, '播種的帳戶要回得來，否則下面的斷言在空轉');
+  assertNoAccountLeak('GET /api/accounts（含銀行匯入建立的帳戶）', acctText, list, ACCT);
+  assertNoAccountLeak('GET /api/db 的 accounts（含銀行匯入建立的帳戶）', JSON.stringify(db.accounts ?? null), db.accounts, ACCT);
+  assertNoSplitLeak('GET /api/accounts 的那一筆（銀行匯入建立）', row, ACCT);
+  assert.equal('accountNo' in row, false,
+    `銀行匯入建立的帳戶一樣要剝掉完整帳號（${ACCT}）——這一格是投影真正該負責的範圍`);
+  assert.equal(row.accountNoLast4, LAST4_FIXTURES[0].last4,
+    `銀行匯入建立的帳戶末碼應為 ${LAST4_FIXTURES[0].last4}，實得 ${row.accountNoLast4}`);
 });
 
 test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/db` 四條使用者路徑都真的走 projectAccount', async () => {
@@ -689,12 +813,16 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
     const postedText = await posted.text();
     const created = JSON.parse(postedText);
     /**
-     * 一條使用者路徑要同時滿足：①整包回應裡找不到完整帳號（`assertNoAccountLeak`，射程見它的註解）
-     * ②那一筆的欄位形狀對（末碼是真的）。
-     * @param {string} via @param {any} got @param {string} bodyText 這條路徑**整包**回應的原始字串
+     * 一條使用者路徑要同時滿足：①回應的**帳戶資料**裡找不到完整帳號（`assertNoAccountLeak`，
+     * 射程見它的註解）②那一筆的欄位形狀對（末碼是真的）。
+     * @param {string} via @param {any} got
+     * @param {string} scopeText 這條路徑回應中**帳戶那一段**的原始字串。三條 `/api/accounts` 路徑
+     *   的整包回應本來就只有帳戶（一筆或一個陣列）＝連線上的原始字串；`GET /api/db` 要先切出
+     *   `db.accounts` 再序列化（整包會逐字帶著 `transactions[].bankRef` 裡的同一串遮罩帳號＝假紅，
+     *   理由與實測見 `assertNoAccountLeak` 的註解）。
      */
-    const check = (via, got, bodyText) => {
-      assertNoAccountLeak(via, bodyText, JSON.parse(bodyText), f.accountNo);
+    const check = (via, got, scopeText) => {
+      assertNoAccountLeak(via, scopeText, JSON.parse(scopeText), f.accountNo);
       assert.ok(got, `${via} 找不到剛建立的帳戶（id=${created.id}）——這條路徑根本沒回這筆資料，下面的斷言會變成空轉`);
       assertNoSplitLeak(via, got, f.accountNo);
       assert.equal('accountNo' in got, false,
@@ -712,7 +840,8 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
     check('GET /api/accounts', list.find((/** @type {any} */ a) => a.id === created.id), listText);
     const dbText = await (await authed('GET', '/api/db')).text();
     const db = JSON.parse(dbText);
-    check('GET /api/db（資產頁走的那條）', (db.accounts || []).find((/** @type {any} */ a) => a.id === created.id), dbText);
+    check('GET /api/db（資產頁走的那條）的 accounts', (db.accounts || []).find((/** @type {any} */ a) => a.id === created.id),
+      JSON.stringify(db.accounts ?? null));
     // PUT 只改名字、不送 accountNo（＝「留空＝不變更」的真實用法）：存著的帳號不可以被吐回來，
     // 末碼也要照樣是真的（`crud.js` 的 PUT 分支自己呼叫一次 `project()`）。
     const put = await authed('PUT', `/api/accounts/${created.id}`, { name: '改個名字' });
