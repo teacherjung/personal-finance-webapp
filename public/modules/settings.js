@@ -12,6 +12,21 @@ import { runExport } from './backup-export.js';   // 匯出備份「按下去會
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
 
+/**
+ * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
+ *
+ * ⚠️⚠️ **這一句兩種模式都必須成立**（r1 審查者抓到，2026-08-06 改）。原本寫的是
+ *    「所有資料只存在本機 `data/store.db`（SQLite）」——在雲端版那是**明確錯誤的資料存放／隱私說明**
+ *    （雲端資料在 Supabase），而使用者正是在「要不要相信這個 app」的時刻讀到它。
+ *    前端拿不到模式資訊（`public/` 全樹沒有模式旗標，也不該為此新增一個），所以**不分流**：
+ *    改成只講「這裡能做什麼」，不替任何一種模式宣稱資料放在哪。
+ * 📌 完整的雲端語氣裁決仍待 William（含「雲端匯出不含 IB 憑證與帳單密碼」那句要不要寫、
+ *    要不要配 `.info-link` 詳解）——記在 `docs/文案審稿-雲端版的九句假話.md` 第 4 句那一段。
+ * ⚠️ 誠實劃界：這句文案**沒有考題撐著**（settings.js 的 DOM 路徑在 node 裡跑不起來）。
+ */
+const BACKUP_CARD_NOTE = '可以把你的資料整包匯出成一個檔案（JSON 檔）存起來。'
+  + '建議定期匯一份、放到你自己找得到的地方——要還原的時候用「匯入備份」讀回來。';
+
 export async function renderSettings() {
   const seq = currentRouteSeq();
   const [s, txs, expTree, health, rulesRes, orphans] = await Promise.all([
@@ -207,7 +222,7 @@ export async function renderSettings() {
 
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.db</code>（SQLite）。建議定期匯出備份（匯出格式為 JSON）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">${BACKUP_CARD_NOTE}</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <a class="btn" id="exportBtn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
         <button class="btn-ghost" id="importBtn">${icon('upload', 16)}匯入備份</button>
