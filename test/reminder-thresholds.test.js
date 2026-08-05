@@ -13,6 +13,11 @@
 //    「兩側」不等於「相鄰兩格」：離得遠的兩側只擋得住把刻度改到天邊的突變，
 //    刻度往旁邊挪一格（7→5、3→2、−60→−30、`> avgExp` → `> avgExp * 2`）照樣全綠。
 //    現在每一題都釘在**相鄰的兩格**上：該出現的最後一格必須出現、外面第一格必須不出現。
+//
+// ⚠️ 第二版的教訓（#413 自審，同樣原地記下來）：上一版只釘了視窗的**尾端**，近端整段沒守——
+//    `d <= 3 ? 'warn'` 加個 `d >= 1`（繳款當天悄悄從 warn 降成 info）、`d < 0 && d >= -60` 收成
+//    `d < -1`（保險逾期第 1 天整張 danger 提醒消失），兩顆突變都只改正式碼、全部考題零失敗。
+//    **近端才是最急的那一格**（今天要繳、剛漏繳），所以現在兩端都釘。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -32,7 +37,8 @@ const BASE = {
   settings: { usdTwd: 32, emergencyFundMonths: 6, allocationDriftPct: 5 },
   accounts: [], holdings: [], transactions: [], subscriptions: [], cards: [], insurance: [],
 };
-const summaryOf = (over) => buildSummary({ ...BASE, ...over, settings: { ...BASE.settings, ...(over.settings || {}) } });
+const fullDb = (over) => ({ ...BASE, ...over, settings: { ...BASE.settings, ...(over.settings || {}) } });
+const summaryOf = (over) => buildSummary(fullDb(over));
 const keysOf = (over) => summaryOf(over).reminders.map((/** @type {any} */ r) => r.key);
 const findR = (over, key) => summaryOf(over).reminders.find((/** @type {any} */ r) => r.key === key);
 
@@ -40,10 +46,13 @@ const findR = (over, key) => summaryOf(over).reminders.find((/** @type {any} */ 
 // 一、視窗兩端都要釘死（信用卡繳款、保險漏繳）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('提醒｜信用卡繳款：第 7 天要出現、第 8 天不可出現；第 4 天仍 info、第 3 天升 warn（四格相鄰邊界）', () => {
+test('提醒｜信用卡繳款：第 7 天要出現、第 8 天不可出現；第 4 天仍 info、第 3 天升 warn；繳款當天仍是 warn（尾端＋升級門檻＋近端）', () => {
   // ⚠️ 規則標題自己寫「7 天內」。視窗縮小的副作用更嚴重：level 是 `d <= 3 ? 'warn' : 'info'`，
   //    視窗收到 3 之後 info 級整個變成打不到的死碼＝這張提醒再也不會有「提早幾天的溫和提示」階段。
   //    這裡把視窗尾端（7／8）與升級門檻（4／3）四格全部釘住，刻度往任一方向挪一格都會紅。
+  // ⚠️ 近端（第 0 天）是後補的（#413 自審）：升級判斷只有上界，`d <= 3` 加個下界 `d >= 1` 之後，
+  //    標題寫著「今天繳款」的那一格會悄悄從 warn 降成 info——最急的一格反而變成溫和提示，
+  //    而既有的「兩張卡的繳款提醒 key」那題只看 key、不看 level，擋不住。
   const cardWithDueIn = (days) => {
     const d = new Date(Date.now() + days * 86400000);
     return { cards: [{ id: 'c1', name: '測試卡', type: 'credit', dueDay: d.getDate() }] };
@@ -61,12 +70,21 @@ test('提醒｜信用卡繳款：第 7 天要出現、第 8 天不可出現；�
   const urgent = findR(cardWithDueIn(3), 'card-due-c1');
   assert.ok(urgent, '第 3 天當然要出現');
   assert.equal(urgent.level, 'warn', '第 3 天＝升級成 warn 的第一格（升級門檻收到 2 就會紅）');
+
+  const dueToday = findR(cardWithDueIn(0), 'card-due-c1');
+  assert.ok(dueToday, '繳款當天必須出現（視窗近端＝最急的那一格）');
+  assert.match(dueToday.title, /今天繳款/, '當天的標題寫「今天繳款」，不是「0 天後」');
+  assert.equal(dueToday.level, 'warn',
+    '繳款當天仍是 warn（升級判斷補上下界、例如 `d <= 3` 改 `d <= 3 && d >= 1`，今天就會被悄悄降成 info）');
 });
 
-test('提醒｜保險繳費日已過：第 60 天仍是 danger、第 61 天不再提醒（視窗尾端的相鄰兩格）', () => {
+test('提醒｜保險繳費日：逾期第 60 天仍 danger、第 61 天不再提醒；繳費當天與逾期第 1 天的接縫也要接上', () => {
   // ⚠️ 這個 60 是 2026-07-22 使用者定的自主體檢決議：nextPayment 是手動欄位、不會自動推進，
   //    繳費日一過提醒就無聲消失＝**最需要提醒的漏繳反而零訊號**。
   //    視窗縮小＝那一段逾期的漏繳全部靜音，而且那是 danger 級。
+  // ⚠️ 接縫是後補的（#413 自審）：正視窗（`d >= 0 && d <= 30`，warn）與負視窗（`d < 0 && d >= -60`，danger）
+  //    是相鄰兩格，中間沒有第三條路——任一邊的近端往內縮一格（`d >= 1`／`d < -1`），那一格就掉進兩個
+  //    分支的縫裡、整張提醒憑空消失。上一版只釘尾端（60／61），這兩顆突變全部考題零失敗。
   const policy = (dateIso) => ({
     insurance: [{ id: 'p1', policyName: '測試保單', insured: '我', premium: 12000,
       premiumCycle: 'yearly', nextPayment: dateIso }],
@@ -77,18 +95,34 @@ test('提醒｜保險繳費日已過：第 60 天仍是 danger、第 61 天不�
   assert.match(lastDay.title, /已過 60 天/, '要說清楚過了幾天');
   assert.ok(!keysOf(policy(daysFromNow(-61))).includes('ins-pay-p1'),
     '逾期第 61 天＝視窗外第一格，不再提醒（視窗放大＝提醒牆會被陳年舊帳塞滿）');
+
+  // 接縫的相鄰兩格：繳費當天（正視窗近端）與逾期第 1 天（負視窗近端）
+  const dueToday = findR(policy(daysFromNow(0)), 'ins-pay-p1');
+  assert.ok(dueToday, '繳費當天必須提醒（正視窗近端收成 `d >= 1`，今天要繳的保費會整張消失）');
+  assert.match(dueToday.title, /今天繳費/, '當天的標題寫「今天繳費」，不是「0 天後」');
+  assert.equal(dueToday.level, 'warn', '繳費當天是 warn（還沒過期，不是 danger）');
+
+  const firstOverdue = findR(policy(daysFromNow(-1)), 'ins-pay-p1');
+  assert.ok(firstOverdue, '逾期第 1 天必須提醒（負視窗近端收成 `d < -1`，剛漏繳的那一刻反而零訊號）');
+  assert.match(firstOverdue.title, /已過 1 天/, '要說清楚過了幾天');
+  assert.equal(firstOverdue.level, 'danger', '逾期第一天就是 danger（不可等幾天才變紅）');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 二、門檻的比較邊界（配置偏離、緊急預備金高估）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，且正負偏離各自都要出聲', () => {
-  // ⚠️ 兩件事一起釘：
+test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；後端提醒與前端資產頁**兩份實作各測一次**', () => {
+  // ⚠️ 三件事一起釘：
   //    (a) 邊界：恰好偏離 5.0%（＝設定值本身）時提醒消失＝典型的邊界無守衛（>= 改 > 全綠）；
   //        另一側用 4.9% 釘住「門檻不可被偷偷調小」。
   //    (b) 方向：判準是 `Math.abs(row.diff) >= 門檻`。⚠️ 只斷言「有任何一張 alloc-drift 出現」
   //        的話，拿掉 Math.abs 照樣全綠（正偏離那張還在）——所以**正負兩張分別點名**。
+  //    (c) 兩份實作：同一個門檻在前端 public/modules/assets.js 有第二份獨立的判斷
+  //        （資產頁「資產配置 vs 目標」那條要不要標「偏離」的橘標籤與橘進度條）。
+  //        ⚠️ 這是訂閱那題（subActive／subStatus）被 #413 r1 退回重寫的同一個病型，就在隔壁原封不動：
+  //        只改前端那行 `>=` → `> 門檻 * 3`，全部考題零失敗，實際後果是總覽提醒牆說偏離、
+  //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份也拉進來測（做法見 loadFrontendDriftFlag）。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
   const alloc = (cashTarget, stockTarget) => ({
     settings: { allocationDriftPct: 5 },
@@ -97,7 +131,9 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
     assetTargets: [{ class: '現金', targetPct: cashTarget }, { class: '股票', targetPct: stockTarget }],
   });
 
-  const onBoundary = summaryOf(alloc(45, 55)).reminders
+  const boundaryDb = fullDb(alloc(45, 55));
+  const boundary = buildSummary(boundaryDb);
+  const onBoundary = boundary.reminders
     .filter((/** @type {any} */ r) => String(r.key).startsWith('alloc-drift-'));
   const over = onBoundary.find((/** @type {any} */ r) => r.key === 'alloc-drift-現金');
   const under = onBoundary.find((/** @type {any} */ r) => r.key === 'alloc-drift-股票');
@@ -106,11 +142,52 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.ok(under, '負偏離恰好 −5.0% 也必須提醒——判準拿掉 Math.abs（只看正偏離）時，就是這一條轉紅');
   assert.match(under.title, /-5\.0%/, '標題要顯示 -5.0% 的偏離量（負號要在）');
 
-  const nearMiss = summaryOf(alloc(45.1, 54.9)).reminders
+  const nearMissDb = fullDb(alloc(45.1, 54.9));
+  const nearMiss = buildSummary(nearMissDb).reminders
     .filter((/** @type {any} */ r) => String(r.key).startsWith('alloc-drift-'));
   assert.equal(nearMiss.length, 0,
     '偏離 4.9% ＜ 門檻 5%：兩個類別都不可出聲（門檻被偷偷調小、提醒牆被噪音塞滿時會紅）');
+
+  // 前端資產頁那份：吃的是同一份 db 與同一批 allocation.rows（正式環境就是這樣接的）
+  const frontOff = loadFrontendDriftFlag();
+  const rowOf = (/** @type {any} */ summary, /** @type {string} */ cls) =>
+    summary.allocation.rows.find((/** @type {any} */ r) => r.class === cls);
+  const cashRow = rowOf(boundary, '現金');
+  const stockRow = rowOf(boundary, '股票');
+  assert.ok(cashRow && stockRow, 'fixture 自我驗證：兩個類別都要在 allocation.rows 裡（否則下面幾條是空包彈）');
+  assert.equal(cashRow.diff.toFixed(1), '5.0', 'fixture 自我驗證：偏離量真的是 +5.0（否則測到的不是邊界）');
+  assert.equal(frontOff(cashRow, boundaryDb), true,
+    '前端：恰好 +5.0% 要標「偏離」（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標紅＝兩頁打架）');
+  assert.equal(frontOff(stockRow, boundaryDb), true,
+    '前端：恰好 −5.0% 也要標（前端那份拿掉 Math.abs 時會紅）');
+  assert.equal(frontOff(rowOf(buildSummary(nearMissDb), '現金'), nearMissDb), false,
+    '前端：偏離 4.9% 不可標（前端門檻被調小時會紅）');
+  assert.equal(frontOff(cashRow, { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } }), false,
+    '前端讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
 });
+
+/**
+ * 取出前端 public/modules/assets.js 裡**正式環境真正在跑的那行偏離判準**（`const off = …`），
+ * 包成 `(row, db) => boolean` 現場執行。手法與 loadFrontendSubStatus 同源：不在測試裡另抄一份，
+ * 抓不到就直接讓考題失敗——那行改名或改寫時要有人來更新本題，而不是靜靜跳過。
+ *
+ * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
+ *   1. 只驗這一行**算出來的旗標**。它下游怎麼用（橘色 tag、進度條顏色）本題不看，
+ *      頁面若改成在樣板裡另外內嵌一套判斷、或乾脆不用 off，本題照樣綠。
+ *   2. 只認 `const off = …` 這個單行寫法。拆成多行、搬進別的函式、換個變數名，都會走到下面的
+ *      assert 大聲失敗（不是靜靜跳過），但那也代表本題需要有人回來更新。
+ *   3. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份
+ *      共用判斷（前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
+ */
+function loadFrontendDriftFlag() {
+  const src = readFileSync(join(ROOT, 'public/modules/assets.js'), 'utf8');
+  const hits = [...src.matchAll(/^[ \t]*const off = .*;$/gm)];
+  assert.equal(hits.length, 1,
+    `assets.js 必須（且只能）有一行 \`const off = …\` 的偏離判準，實際 ${hits.length} 行（改名／搬家時要一起更新本考題）`);
+  return /** @type {(row: any, db: any) => boolean} */ (
+    new Function('r', 'db', `${hits[0][0].trim()}\nreturn off;`)
+  );
+}
 
 test('提醒｜緊急預備金高估：卡帳月均與現金流月均「恰好相等」不出聲、只多 1 元就出聲（比較式本身釘死）', () => {
   // ⚠️ 這是「安全網不可無聲」的過渡期保險。唯一守它的既有考題讓 avgExp 恰好是 0，
