@@ -13,9 +13,11 @@
 //      使用者每天真正走的是開 app 的 `takeSnapshotIfDue`，而那條路上**多一道節流閘**——
 //      只驗按鈕那條的話，把節流從「今天記過才跳過」放寬成「本月記過就跳過」會讓月快照整個月凍住，
 //      而全庫照樣全綠。
-//    ③日線留底的匯率要與**同一列每一個金額欄**實際套用的（`lib/derive.js` 算的那個）是**同一個**——
-//      淨值（`computeAssets`）與投組市值／成本（`computeIb`）是兩段各自取匯率的計算，兩段都要對上
+//    ③日線留底的匯率要與**同一列那五個金額欄**（netWorth／assets／liabilities／pfValue／pfCost）
+//      實際套用的（`lib/derive.js` 算的那個）是**同一個**——前三格走 `computeAssets`、後兩格走 `computeIb`，
+//      是兩段各自取匯率的計算，而同一段裡的每一格又是各自獨立的賦值，所以**五格逐格都要對上**
 //      （不然事後分不出那格的變動是資產動了還是匯率動了——那正是日線存三種匯率的理由）。
+//      ⚠️ 「五格」是**列舉**當下的欄位，不是通則：日線日後多一個金額欄，這裡不會有人提醒。
 //
 // ⚠️ 「**留底**」一律用 `store.load()` **重讀資料庫**來斷言（Codex r1）：這幾條守的都是
 //    「留在資料庫裡的歷史」，而「回傳正確、寫入錯誤」是真的會發生的壞法——初版第三條只驗
@@ -65,7 +67,9 @@ const MONTH = '2026-08';
 const PREV_MONTH = '2026-07';   // 「同月覆蓋不可以動到別的月份」用的對照月（見第二條題）
 
 /**
- * 「本月以外」的歷史要**比任何合理的保留上限還長**（自審 r7）：初版本月以外只放**一列**（前月），
+ * 「本月以外」的歷史要**長到涵蓋 30 個月以內的裁切**（自審 r7；原本寫「比任何合理的保留上限還長」
+ * 是誇大——實際只保證 N≤30，Codex r3 加上 `slice(-36)` 這一題照樣退出 0、`ℹ fail 0`）：
+ * 初版本月以外只放**一列**（前月），
  * 於是「只保留最近 N 個月」式的裁切一個字都驗不到——N≥2 的上限都會同時留下 2026-07 與 2026-08。
  * 實測在 `writeMonthlySnapshot` 的 `saveDb` 之前加兩行
  * `db.snapshots = db.snapshots.slice(-12); db.portfolioSnapshots = db.portfolioSnapshots.slice(-12);`
@@ -342,22 +346,33 @@ test('同月只留一列（開 app 自動路）｜本月那一列是前幾天記
   // 那一半由上一條題守住；本題守的是它前面那道節流閘。
 });
 
-test('日線匯率｜留底的匯率要與同一列每個金額欄實際用的同一個：沒設定時走同一個預設、使用者設過就要用設定值', async (t) => {
+test('日線匯率｜留底的匯率要與同一列五個金額欄實際用的同一個：沒設定時走同一個預設、使用者設過就要用設定值', async (t) => {
   pinClock(t);
   // ⚠️ 這一行旁邊就註明「與 derive.js fxRates 同口徑（缺值用同一個預設）」——這是真的同步點：
   //    淨值是用某個匯率算出來的，日線卻可能把當天的匯率記成別的數字。
   //    日線存三種匯率的理由（Codex r3#10）正是「日後看到淨值變動要分得出是資產漲了還是匯率動了」，
   //    兩邊不一致就直接摧毀那個用途。
-  // 手法：**用行為回推實際套用的匯率**——持有 1 股、單價 100 美元、成本 60 美元，沒有其他資產負債，
-  //       所以「這一列存的淨值 ÷ 100」就是寫它的當下真正套用的匯率。兩條斷言分工：
+  // 手法：**用行為回推實際套用的匯率**——fixture 裡的資產、負債、持股全部是美元，
+  //       所以「這一列存的某個金額欄 ÷ 該欄的美元面額」就是寫它的當下真正套用的匯率。**兩種**斷言分工
+  //       （ⓐ一條、ⓑ五條——每個金額欄一條）：
   //       ⓐ回推值＝這個 fixture 應該套用的匯率（沒有這條的話，兩端一起寫死 32 會過關）
   //       ⓑ回推值＝同一列的 `usdTwd`（這條完全不碰字面量，只問兩邊是不是同一個數字）
-  // ⚠️ 同一列的**三個金額欄各自回推一次**（自審 r7）：`netWorth` 走 `computeAssets`、
-  //    `pfValue`/`pfCost` 走 `computeIb`，是**兩段各自取匯率的計算**。只釘淨值那一格的話，
-  //    「同一天的淨值用 33.5、投組市值用 32」照樣全綠（實測把 `recordDailyValue` 裡的
-  //    `const ib = computeIb(db);` 改成 `computeIb({ ...db, settings: { ...db.settings, usdTwd: 32 } })`
-  //    → 全庫全綠）——那是同一種病換一組欄位：日後回推「是資產動了還是匯率動了」，投組那條線一樣失效。
-  //    成本刻意用 60（與市值 100 不同數字），cost/value 兩格才分得出不是互相照抄。
+  // ⚠️ 同一列的**五個金額欄逐格各自回推一次**（Codex r3）：`netWorth`／`assets`／`liabilities` 走
+  //    `computeAssets`、`pfValue`／`pfCost` 走 `computeIb`，是**兩段各自取匯率的計算**；
+  //    而同一段裡的每一格又是各自獨立的一個 `Math.round(...)` 賦值，所以**同段之內也擋不住彼此**。
+  //    實測兩顆繞法（都是「一格用另一個匯率、其餘照設定」，後果同型）：
+  //    ‧把 `const ib = computeIb(db);` 改成 `computeIb({ ...db, settings: { ...db.settings, usdTwd: 32 } })`
+  //      → 只釘淨值那一格時全庫全綠（投組那條線失效）
+  //    ‧把 `assets:` 那一格改成用固定 32 算出來的值、其餘照設定 33.5 → 只釘淨值＋投組兩格時
+  //      全庫 1491 題全綠、退出 0（Codex r3 實際打進來的那一顆：assets 與 netWorth 是分開的兩個賦值）
+  //    後果都一樣：日後回推「是資產動了還是匯率動了」，被漏掉那一欄就分不出來。
+  // ⚠️ 五格的美元面額刻意**兩兩不同**（assets 150／liabilities 20／netWorth 130／pfValue 100／pfCost 60）：
+  //    面額相同的兩格互相照抄時，回推出來的匯率一模一樣、驗不出來；兩兩不同才連「欄位抄錯欄位」
+  //    也一起擋住（實測把 `assets:` 那一格改成 `Math.round(a.netWorth)` → 本檔轉紅，
+  //    資產回推 27.73、應該是 32）。
+  // ⚠️ 而**美元負債**是這份 fixture 非有不可的成分：沒有它 `liabilities` 恆為 0，那一格用哪個匯率
+  //    換算出來都還是 0＝匯率錯了也沒有任何可觀察的差別，負債那條斷言等於沒驗；
+  //    有了它，`computeAssets` 那三格的面額才互不相同（150／20／130）、三格各自有鑑別力。
   // ⚠️ 這兩個數字**都要從資料庫的同一列讀**（Codex 審 8152c83）：初版是呼叫前先跑一次外部
   //    `computeAssets(db)` 推匯率、事後只比 `saved.usdTwd`——那驗的是「helper 在呼叫前算什麼」，
   //    不是「這一列的淨值是用什麼匯率算出來的」。實測把 `recordDailyValue()` 算淨值那一端的美元
@@ -372,6 +387,12 @@ test('日線匯率｜留底的匯率要與同一列每個金額欄實際用的�
   //    照樣全綠，而使用者一旦設過匯率（報價更新就會寫 `settings.usdTwd`，那是常態）留底就會錯。
   //    有了第二個 case，「兩邊各寫一個字面量」一定會有一邊轉紅。
   /**
+   * 這個 fixture 下每個金額欄的**美元面額**＝回推匯率用的除數（兩兩不同，理由見上方）：
+   * 美元現金 50 ＋ 持股 1×100 ＝ assets 150；美元貸款 20 ＝ liabilities；相減 ＝ netWorth 130；
+   * 持股市值 100、成本 1×60 ＝ 投組那兩格。
+   */
+  const USD_FACE = { netWorth: 130, assets: 150, liabilities: 20, pfValue: 100, pfCost: 60 };
+  /**
    * @param {any} settings @param {number} expectRate 這個 fixture 下 derive 應該套用的匯率
    * @param {string} label
    */
@@ -379,33 +400,46 @@ test('日線匯率｜留底的匯率要與同一列每個金額欄實際用的�
     store.save({
       ...store.emptyDb(),
       settings,
+      accounts: [
+        { id: 'c1', name: '美元現金', type: 'cash', class: '現金', currency: 'USD', balance: 50 },
+        // ← 美元**負債**（Codex r3）：理由見上方（沒有它 liabilities 恆為 0、assets 又會等於 netWorth）
+        { id: 'l1', name: '美元貸款', type: 'mortgage', currency: 'USD', balance: 20 },
+      ],
       holdings: [{ id: 'h1', symbol: 'CSPX', name: 'ETF', layer: 'core', currency: 'USD', quantity: 1, price: 100, avgCost: 60 }],
     });
     const row = await recordDailyValue();
     const saved = (store.load().dailyValues || []).find((/** @type {any} */ d) => d.date === TODAY);
     assert.ok(saved, `${label}：今天這一列要真的落在資料庫裡（沒寫進去就沒有留底可言）`);
-    const appliedRate = saved.netWorth / 100;                // 這一列的淨值回推出「寫它的時候實際套用的美元匯率」
+    const appliedRate = saved.netWorth / USD_FACE.netWorth;   // 這一列的淨值回推出「寫它的時候實際套用的美元匯率」
     assert.equal(appliedRate, expectRate,
       `${label}：這一列存的淨值（${saved.netWorth}）回推出實際套用的匯率是 ${appliedRate}，但這個 fixture 應該套用 ${expectRate}`
       + '——算淨值那一端沒有照設定值走（少了這條，兩端一起寫死 32 也會通過）');
     assert.equal(saved.usdTwd, appliedRate,
       `${label}：資料庫裡日線記的匯率（${saved.usdTwd}）與**同一列**淨值實際用的（${appliedRate}）必須是同一個數字——`
       + '不一致的話，事後看到淨值變動就分不出是資產動了還是匯率動了');
-    // 同一列的投組兩格：`computeIb` 是另一段各自取匯率的計算，同樣要與這一列的 `usdTwd` 對得上
-    assert.equal(saved.pfValue / 100, saved.usdTwd,
-      `${label}：這一列的投組市值（${saved.pfValue}）回推出的匯率是 ${saved.pfValue / 100}，與同一列記的 ${saved.usdTwd} 不同——`
+    // 同一列剩下的四格逐格回推：`computeAssets` 那一段的 assets／liabilities 與 netWorth 是三個
+    // 分開的賦值，`computeIb` 那一段又是另一次取匯率——四格全部要與這一列的 `usdTwd` 對得上
+    assert.equal(saved.assets / USD_FACE.assets, saved.usdTwd,
+      `${label}：這一列的資產（${saved.assets}）回推出的匯率是 ${saved.assets / USD_FACE.assets}，與同一列記的 ${saved.usdTwd} 不同——`
+      + '資產是與淨值分開寫進去的另一個賦值（Codex r3 打中的就是這一格）：只釘淨值時「資產用 32、其餘用 33.5」全庫全綠');
+    assert.equal(saved.liabilities / USD_FACE.liabilities, saved.usdTwd,
+      `${label}：這一列的負債（${saved.liabilities}）回推出的匯率是 ${saved.liabilities / USD_FACE.liabilities}，`
+      + `與同一列記的 ${saved.usdTwd} 不同——負債也是各自一個賦值，換算用錯匯率會讓事後看到的「負債變動」是假的`);
+    assert.equal(saved.pfValue / USD_FACE.pfValue, saved.usdTwd,
+      `${label}：這一列的投組市值（${saved.pfValue}）回推出的匯率是 ${saved.pfValue / USD_FACE.pfValue}，與同一列記的 ${saved.usdTwd} 不同——`
       + '同一天的淨值用一個匯率、投組市值用另一個，日後就分不出投組的變動是資產動了還是匯率動了');
-    assert.equal(saved.pfCost / 60, saved.usdTwd,
-      `${label}：投入成本（${saved.pfCost}）回推出的匯率是 ${saved.pfCost / 60}，與同一列記的 ${saved.usdTwd} 不同（同上）`);
+    assert.equal(saved.pfCost / USD_FACE.pfCost, saved.usdTwd,
+      `${label}：投入成本（${saved.pfCost}）回推出的匯率是 ${saved.pfCost / USD_FACE.pfCost}，與同一列記的 ${saved.usdTwd} 不同（同上）`);
     assert.equal(row?.usdTwd, saved.usdTwd, `${label}：回傳值要與留底一致（呼叫端當下看到的與日後讀到的不可以是兩個數字）`);
   };
 
   // ①完全沒有 usdTwd：走「預設值」那條路，兩邊必須是同一個預設
   await check({}, 32, '設定裡沒有 usdTwd');
   // ②使用者設過（報價更新就會寫進 settings.usdTwd）：留底必須跟著設定值走，不可以是任何字面量
-  //   33.5 是刻意挑的：二進位可精確表示，`netWorth / 100` 回推不會多出浮點尾數。
+  //   33.5 是刻意挑的：二進位可精確表示，五格的面額（150／20／130／100／60）乘上去都還是整數，
+  //   回推不會多出浮點尾數。
   await check({ usdTwd: 33.5 }, 33.5, '使用者設過匯率（33.5）');
 
-  // 誠實劃界：這條題只驗**美元**那一格。`gbpTwd`/`jpyTwd` 目前缺值寫 0、derive 缺值用 40.8／0.215，
+  // 誠實劃界：這條題只驗**美元**那一格匯率。`gbpTwd`/`jpyTwd` 目前缺值寫 0、derive 缺值用 40.8／0.215，
   // 兩邊本來就不同口徑（已知落差，不是本 PR 要改的東西）——本題擋不住那兩格，也不宣稱擋得住。
 });
