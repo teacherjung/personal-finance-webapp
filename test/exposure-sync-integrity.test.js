@@ -4,7 +4,7 @@
 // 與前端 `public/modules/portfolio-exposure.js` 各有一份**（前端不能 import lib/，所以是
 // 刻意的複本、註解也寫明「改其一要改兩處」），但**零考題比對兩份**。
 // 實測把後端的 KWEB 從「中國」改成「美國」，1487 題全綠——
-// William 在投資原則 v1 拍板的**中國 15% 硬上限（生存優先層級）就此無聲失效**，
+// William 在投資原則 v1 拍板的**中國軟上限（預設 15%，超標＝提醒凍結加碼、不強制賣）就此無聲失效**，
 // 而投組頁還照樣顯示中國曝險，兩邊數字對不起來也不會有紅燈。
 //
 // 這一檔用**行為級**比對（兩邊的 `compOf` 都真的呼叫），不是比對原始碼文字：
@@ -12,14 +12,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compOf as feCompOf, fxExposure } from '../public/modules/portfolio-exposure.js';
-import { compOf as beCompOf, buildSummary } from '../lib/derive.js';
+import { compOf as feCompOf, fxExposure, COMPOSITION_SYMBOLS as FE_SYMBOLS } from '../public/modules/portfolio-exposure.js';
+import { compOf as beCompOf, buildSummary, COMPOSITION_SYMBOLS as BE_SYMBOLS } from '../lib/derive.js';
 
-/** 兩份表都收錄的代號（union；任一邊少一個鍵就會在下面第一題轉紅）。 */
-const SYMBOLS = [
-  'CSPX', 'QQQM', 'VUAA', 'SPY', 'VOO', 'EIMI', 'XUSE', 'EXUS', 'ICHN', 'KWEB', 'CSKR',
-  'SJPA', 'SMH', 'IAU', 'SGLD', 'GLD', '0050', '006208', '00719B', '00720B', 'AAPL', 'MSFT',
-];
+/**
+ * 代號清單＝**兩份正式表的真 union**（不手抄）。
+ * ⚠️ 第一版我手抄了 22 個代號＝空包彈（Codex #409 r1 H① 抓到）：實際漏了 GOOGL／GOOG／TSLA／
+ *    SPACEX／SPCX，還多寫一個兩邊都沒有的 MSFT ⇒ 單邊把 GOOGL 的區域改成中國、或單邊新增
+ *    一個代號，六題照樣全綠——直接打穿「任一邊少一個鍵就轉紅」這個主承諾。
+ *    改成兩邊各自 export 真實 key、這裡取聯集，**未來新增代號自動納入**。
+ */
+const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
+
+test('區域表｜兩份 COMPOSITION 的「鍵集合」必須完全相等（單邊新增/刪除代號就紅）', () => {
+  // 這一題與下一題分工：這裡守**集合**（有沒有多一個/少一個），下一題守**內容**（type 與權重）。
+  assert.deepEqual([...BE_SYMBOLS].sort(), [...FE_SYMBOLS].sort(),
+    '後端與前端的 COMPOSITION 收錄代號不一致——單邊新增一支 ETF 就會讓穿透計算兩邊打架');
+  assert.ok(SYMBOLS.length >= 20, `union 至少該有 20 個代號（實際 ${SYMBOLS.length}）——清單被清空的話下面每一題都會變成空轉`);
+});
 
 test('區域表｜前後端兩份 COMPOSITION 對每一個代號回傳完全相同的 type 與區域權重', () => {
   // ⚠️ 這一題是「中國 15% 上限」等所有穿透規則的地基：兩份走散＝後端擋不到的東西前端照樣顯示，
