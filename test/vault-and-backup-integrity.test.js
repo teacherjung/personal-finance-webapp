@@ -28,13 +28,15 @@ process.env.STORE_FILE = TEST_STORE;
 const store = await import('../lib/store.js');
 const { sanitizeDbForWrite, ALL_COLLECTIONS } = await import('../lib/schema.js');
 const { saveStoreRules } = await import('../lib/services/store-rules.js');
+const { saveTree, saveIncomeTree } = await import('../lib/services/categories.js');
 
 /** 本檔製造出來的暫存檔（含各種 .bak）收工一起刪。 */
 const TRASH = [TEST_STORE];
 after(() => {
   for (const f of TRASH) {
     for (const suf of ['', '.bak', '.tmp', '-wal', '-shm', '.json',
-      '.pre-rules.bak', '.pre-normalize.bak', '.pre-ledger-migration.bak', '.pre-sec-contract.bak']) {
+      '.pre-rules.bak', '.pre-normalize.bak', '.pre-ledger-migration.bak', '.pre-sec-contract.bak',
+      '.pre-categories.bak', '.pre-income-categories.bak']) {
       try { rmSync(f + suf, { recursive: true }); } catch { /* 可能不存在 */ }
     }
   }
@@ -124,23 +126,72 @@ test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 二、**店名規則的**「儲存前自動備份」不是空頭支票（lib/services/store-rules.js）
+// 二、「儲存前自動備份」的**三處承諾**都不是空頭支票
+//     （lib/services/store-rules.js 一處＋lib/services/categories.js 兩處）
 //
-// ⚠️ 誠實劃界（#410 r5 Low）——UI 上寫著「儲存前自動備份。」的地方有三處，本節只守得住第一處：
-//    ①店名規則（public/modules/settings-store-rules.js:100）→ store-rules.js:130 `backupNow('pre-rules')`：本節守著。
-//    ②支出分類管理（public/modules/settings.js:69）與 ③收入分類管理（public/modules/settings.js:75）：
-//      **正式程式根本沒有這個備份**——`grep -c backupNow lib/services/categories.js` ＝ 0，
-//      全 repo 只有 store-rules.js:130 與 statement-import.js:467 兩個使用端（lib/repo.js:252 是轉供的
-//      HOSTED wrapper、不是使用端）。而 saveTree（categories.js:268）／
-//      saveIncomeTree（categories.js:73）的改名會改寫全庫交易的分類、刪除會把那些交易改歸「其他／未分類」，
-//      正是最需要「動手前先存一份」的不可逆操作。
-//      這裡**不補考題**：能補的只有一條「categories 也要呼叫 backupNow」——那是紅的，得先改正式程式，
-//      屬產品修正、不屬於本支「補考題」的 PR。記在這裡讓下一個人查得到：修的時候順手把 ②③ 拉進本節。
-// ⚠️ 同族的第二個缺口：store-rules.js:130 把 `backupNow` 的**回傳值丟掉**，而它的 docstring
-//    （lib/store.js:296、`@returns` 在 :299）明寫「回 false 讓呼叫端據實以告」
-//    （lib/repo.js:252 在 HOSTED 更是一律回 false＝不做也不假裝做）。
-//    ⇒ 備份失敗、或雲端版壓根沒備份時，使用者畫面上仍然只看到「儲存成功」。同樣是產線既有問題、本節沒有考題。
+// ⚠️ 本節的來歷（#410 r5 Low → r6 修）：UI 上寫著「儲存前自動備份。」的地方有三處，r5 版本只守得住
+//    第一處，另兩處當時是誠實劃界、沒有考題。複驗實測證實那個缺口是真的：
+//    `grep -c backupNow lib/services/categories.js` ＝ 0，而把 store-rules.js 那一行拿掉只有一題轉紅。
+//    r6 的處理是**改正式程式**（不是再劃一次界）——三處承諾如今各有一個呼叫點，本節逐一守著：
+//      ①店名規則（public/modules/settings-store-rules.js:100）→ store-rules.js `backupNow('pre-rules')`。
+//      ②支出分類管理（public/modules/settings.js:69）→ categories.js saveTree `backupNow('pre-categories')`。
+//      ③收入分類管理（public/modules/settings.js:75）→ categories.js saveIncomeTree
+//        `backupNow('pre-income-categories')`。
+//    ②③ 為什麼非有不可：改名會改寫**全庫**交易的分類、刪除會把那些交易改歸「其他／未分類」（收入是
+//    「其他／其他收入」），兩者都還原不回來——正是 data-storage.md 那句「新增其他不可逆的整批操作時，
+//    一併加一個 tag」指的情形。
+// ⚠️ 仍然沒有考題的兩個同族缺口（誠實劃界，都是產線既有狀況、本支不處理）：
+//    (a) 三個呼叫點都把 `backupNow` 的**回傳值丟掉**，而它的 docstring（lib/store.js `@returns`）明寫
+//        「回 false 讓呼叫端據實以告」（lib/repo.js 的 HOSTED 轉供更是一律回 false＝不做也不假裝做）。
+//        ⇒ 備份失敗、或雲端版壓根沒備份時，使用者畫面上仍然只看到「儲存成功」。要修得先決定 UI 怎麼講。
+//    (b) 內轉子分類 `saveTransferSubs`（categories.js）改名同樣連動全庫內轉交易，**也沒有備份**；
+//        差別是它的 UI 文案（settings.js「內轉分類管理」）從來沒承諾過備份，所以不是空頭支票、
+//        是「保護本來就沒有」。要不要一併加 tag 是產品決定，不在本節的判準裡。
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 讀出某顆備份檔裡 `kv.settings` 的指定鍵（JSON 字串；沒有回 `'null'`）。
+ * 為什麼要真的把備份**打開來讀**：只檢查「檔案存在＋大小 > 0」是本節第一版被抓到的空包彈——
+ * 備份到操作**後**的狀態、或永遠停在第一次的舊狀態，兩種失效都照樣讓那種題目全綠。
+ * @param {string} bak @param {string} key @returns {string}
+ */
+function readBackupSettingsKey(bak, key) {
+  const d = new DatabaseSync(bak);
+  try {
+    const row = /** @type {any} */ (d.prepare('SELECT data FROM kv WHERE key=?').get('settings'));
+    const st = row ? JSON.parse(row.data) : {};
+    return JSON.stringify(st[key] ?? null);
+  } finally { d.close(); }
+}
+
+/**
+ * 「儲存前自動備份」的共同判準，逐次比對備份內容是「本次之前、上一次之後」的狀態。
+ * 三處承諾（店名規則／支出樹／收入樹）走同一套，才不會有一處偷偷退化成「檔案存在就算數」。
+ * 兩個必檢的失效樣態：**備份時機在寫入之後**（抓得到本次的新值）、**永遠停在第一次**（第二次沒更新）。
+ * @param {{who:string, bak:string, key:string, save:(label:string)=>Promise<any>}} spec
+ */
+async function assertPreOpBackup({ who, bak, key, save }) {
+  const read = () => readBackupSettingsKey(bak, key);
+  // 第 0 次：先讓資料庫裡有一份「舊的」（走正式入口，形狀才對——手塞的鍵會被寫入櫃檯剝掉）
+  store.save({ ...store.emptyDb() });
+  await save('第0版');
+  try { rmSync(bak); } catch { /* 上一步已產生一顆，刪掉以免混淆 */ }
+
+  // 第 1 次儲存：備份裡應該是「第0版」（操作前）
+  await save('第1版');
+  assert.ok(existsSync(bak),
+    `${who}：儲存之前必須留下備份——沒有它，UI 上那句「儲存前自動備份。」是謊話`);
+  assert.match(read(), /第0版/,
+    `${who}：備份到的必須是**這次操作之前**的狀態（抓到第1版＝備份時機在寫入之後，等於備份了已經被改掉的狀態）`);
+  assert.doesNotMatch(read(), /第1版/, `${who}：備份不可含本次寫入的新內容`);
+
+  // 第 2 次儲存：備份要**更新**成「第1版」（不是永遠停在第0版）
+  await save('第2版');
+  assert.match(read(), /第1版/,
+    `${who}：同一個行程內第二次儲存，備份要換成「上一次之後、這次之前」的狀態`
+    + '——永遠停在第一次＝一天內改好幾次時，只還原得回最早那一版');
+  assert.doesNotMatch(read(), /第2版/, `${who}：備份不可含本次寫入的新內容`);
+}
 
 test('店名規則｜備份必須是「這次操作之前」的狀態（不是操作後、也不是永遠停在第一次）', async () => {
   // ⚠️ UI 上寫著「儲存前自動備份」。啟動備份 .bak 每個行程只寫一次，對「一天內改好幾次規則」
@@ -148,36 +199,61 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
   // ⚠️ 考題設計（第一版是空包彈，Codex #410 r1 H① 抓到）：第一版只檢查「檔案存在＋大小 > 0」
   //    ⇒ 把 backupNow 移到寫入之後（備份到的是**修改後**狀態）、或改成「同名備份已存在就直接
   //    回成功」（永遠停在第一次的舊狀態）——兩種失效都照樣綠。
-  //    這一版**直接讀備份裡的 kv.settings**，逐次斷言它是「本次之前、上一次之後」的狀態。
-  const bak = `${TEST_STORE}.pre-rules.bak`;
-  const readBackupRules = () => {
-    const d = new DatabaseSync(bak);
-    try {
-      const row = /** @type {any} */ (d.prepare('SELECT data FROM kv WHERE key=?').get('settings'));
-      const st = row ? JSON.parse(row.data) : {};
-      return JSON.stringify(st.storeRules ?? null);
-    } finally { d.close(); }
-  };
+  //    這一版**直接讀備份裡的 kv.settings**，逐次斷言它是「本次之前、上一次之後」的狀態
+  //    （r6 起這套流程抽成 `assertPreOpBackup`，與分類樹兩題共用同一把尺）。
+  // ⚠️ 第 0 次一定要走正式入口 `saveStoreRules`，形狀才對——storeRules 的真實形狀是
+  //    {rename, canon, brand, chains, parkExempt}，手塞別的鍵會被寫入櫃檯剝掉。
+  await assertPreOpBackup({
+    who: '店名規則',
+    bak: `${TEST_STORE}.pre-rules.bak`,
+    key: 'storeRules',
+    save: (label) => saveStoreRules({ chains: [label] }),
+  });
+});
 
-  // 第 0 次：先讓資料庫裡有一份「舊規則」（走正式入口，形狀才對——storeRules 的真實形狀是
-  //          {rename, canon, brand, chains, parkExempt}，手塞別的鍵會被櫃檯剝掉）
+test('支出分類管理｜UI 那句「儲存前自動備份。」要有真的備份，而且是「這次操作之前」的樹', async () => {
+  // ⚠️ 這一題補的是 #410 r5 的已知缺口：當時 `grep -c backupNow lib/services/categories.js` ＝ 0，
+  //    UI（public/modules/settings.js「支出分類管理」）卻寫著「儲存前自動備份。」＝空頭支票。
+  //    r6 在 saveTree 補上 `backupNow('pre-categories')`，這一題讓那句話從此有人守。
+  // ⚠️ 為什麼是「最需要備份」的操作：改名會改寫**全庫**交易的 category/subcategory，刪除會把那些交易
+  //    改歸「其他／未分類」——存完才發現改錯，靠 app 自己救不回來（改名別名只往前對映、刪掉的分類不留別名）。
+  // ⚠️ 判準與店名規則那題共用 `assertPreOpBackup`：三種失效（沒備份／備份到操作後／永遠停在第一次）
+  //    任何一種都會轉紅。
+  await assertPreOpBackup({
+    who: '支出分類樹',
+    bak: `${TEST_STORE}.pre-categories.bak`,
+    key: 'expenseTree',
+    save: (label) => saveTree({ tree: { [label]: ['子類'], '其他': ['未分類'] } }),
+  });
+});
+
+test('收入分類管理｜同一句承諾，收入樹也要有自己的備份（不可與支出樹共用一顆）', async () => {
+  // ⚠️ 前半同上一題（saveIncomeTree 的 `backupNow('pre-income-categories')`）：收入分類改名連動全庫
+  //    income 交易、刪除改歸「其他／其他收入」，UI（settings.js「收入分類管理」）同樣寫著那句話。
+  await assertPreOpBackup({
+    who: '收入分類樹',
+    bak: `${TEST_STORE}.pre-income-categories.bak`,
+    key: 'incomeTree',
+    save: (label) => saveIncomeTree({ tree: { [label]: ['子類'], '其他': ['其他收入'] } }),
+  });
+
+  // ⚠️ 後半是**兩棵樹不可共用同一個 tag**：同 tag 一顆、重複執行就覆蓋（lib/store.js backupNow 的設計），
+  //    所以「先改支出、再改收入」時，第二次備份會把第一顆救命檔洗成「支出已經改完」的狀態——
+  //    使用者要救的正是支出那次改壞，卻只還原得到改壞之後。這種失效不會讓上面任何一條斷言變紅
+  //    （各自的流程都還是對的），所以另外立一段。
+  const expBak = `${TEST_STORE}.pre-categories.bak`;
+  const incBak = `${TEST_STORE}.pre-income-categories.bak`;
   store.save({ ...store.emptyDb() });
-  await saveStoreRules({ chains: ['第0版'] });
-  try { rmSync(bak); } catch { /* 上一步已產生一顆，刪掉以免混淆 */ }
-
-  // 第 1 次儲存：備份裡應該是「第0版」（操作前）
-  await saveStoreRules({ chains: ['第1版'] });
-  assert.ok(existsSync(bak), '存規則之前必須留下 pre-rules 備份——沒有它，畫面上那句承諾是謊話');
-  assert.match(readBackupRules(), /第0版/,
-    '備份到的必須是**這次操作之前**的規則（抓到第1版＝備份時機在寫入之後，等於備份了已經被改掉的狀態）');
-  assert.doesNotMatch(readBackupRules(), /第1版/, '備份不可含本次寫入的新規則');
-
-  // 第 2 次儲存：備份要**更新**成「第1版」（不是永遠停在第0版）
-  await saveStoreRules({ chains: ['第2版'] });
-  assert.match(readBackupRules(), /第1版/,
-    '同一個行程內第二次儲存，備份要換成「上一次之後、這次之前」的狀態'
-    + '——永遠停在第一次＝一天內改好幾次規則時，只還原得回最早那一版');
-  assert.doesNotMatch(readBackupRules(), /第2版/, '備份不可含本次寫入的新規則');
+  await saveTree({ tree: { '支出A': ['子類'], '其他': ['未分類'] } });
+  await saveTree({ tree: { '支出B': ['子類'], '其他': ['未分類'] } });   // 這一次的備份＝支出A
+  assert.match(readBackupSettingsKey(expBak, 'expenseTree'), /支出A/,
+    '前置：改支出前那顆備份要先真的抓到「支出A」，否則後面的覆蓋斷言會空轉');
+  await saveIncomeTree({ tree: { '收入A': ['子類'], '其他': ['其他收入'] } });
+  assert.ok(existsSync(incBak), '收入樹必須有自己的一顆備份檔');
+  assert.match(readBackupSettingsKey(expBak, 'expenseTree'), /支出A/,
+    '改收入分類不可覆蓋掉「改支出之前」的那顆——兩棵樹共用同一個 tag 的話，這裡會變成改完後的狀態');
+  assert.doesNotMatch(readBackupSettingsKey(expBak, 'expenseTree'), /支出B/,
+    '支出的救命檔被洗成「支出已改完」＝使用者要還原的那一步再也回不去了');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

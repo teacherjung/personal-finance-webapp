@@ -21,7 +21,7 @@ const { sanitizeLearned } = await import('../lib/schema.js');
 const { isProtoKey, safeMap, getOwn, setOwn } = await import('../lib/safe-map.js');
 
 after(() => {
-  for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
+  for (const suf of ['', '.bak', '.pre-categories.bak', '.pre-income-categories.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 // 每題後清掉可能殘留的污染，避免一題污染影響下一題的判斷（也順便證明「污染會外溢」）
 afterEach(() => { for (const k of ['x', 'category', 'codexPolluted', 'polluted']) delete (/** @type {any} */ (Object.prototype))[k]; });

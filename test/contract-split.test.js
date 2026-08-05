@@ -423,6 +423,7 @@ const MANIFEST = {
       'test/hosted-store-pg.test.js',
       'test/repo-async.test.js',
       'test/server.test.js',
+      'test/vault-and-backup-integrity.test.js',
     ],
   },
   'docs/contracts/frontend-features.md': {
