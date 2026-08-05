@@ -134,11 +134,15 @@ test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留�
 //      `grep -c backupNow lib/services/categories.js` ＝ 0，全 repo 只有 store-rules.js:130 與
 //      statement-import.js:467 兩個使用端（lib/repo.js:252 是轉供的 HOSTED wrapper、不是使用端）。
 //      而 saveTree／saveIncomeTree 的改名會改寫全庫交易的分類、刪除會把那些交易改歸「其他／未分類」。
-//      🧑‍⚖️ **William 2026-08-05 拍板：不為分類管理補備份，改把 UI 文案改成事實**（本支 r8 已改
-//      public/modules/settings.js 的兩處文案；理由是他評估「每次存分類多寫一份」的代價不值得，
-//      而他自己知道要在大改動前先重啟一次拿到新的啟動備份）。**這是產品決定，不是缺口——
+//      🧑‍⚖️ **William 2026-08-05 拍板：不為分類管理補備份，改把 UI 文案改成事實**
+//      （理由是他評估「每次存分類多寫一份」的代價不值得）。**這是產品決定，不是缺口——
 //      不要再有人「順手把它補回來」**，要改請先問 William。
-//      因此本節維持只守 ①，②③ 沒有考題是正確狀態（沒有承諾就沒有要守的東西）。
+//      因此本節不為 ②③ 立「備份有沒有做」的題（沒有承諾就沒有要守的東西）。
+//      ⚠️ 但**改後的文案自己又是一句承諾**，所以本節最後補了一題守它：r8 第一版寫「改動前先重啟一次
+//      後端，每次啟動都會另存 data/store.db.bak」——那句話在雲端版是假的（settings.js 兩種模式共用、
+//      沒有分流，而 `lib/repo.js:252` 的 `backupNow` 在雲端一律回 false ⇒ 那顆檔根本不存在），
+//      本機版也只是 best-effort（VACUUM 失敗只寫後端 console.warn，畫面完全不知道）。
+//      r9 定稿改成指向**兩種模式都有**的「匯出備份／匯入備份」按鈕（見本節最後一題）。
 // ⚠️ 同族的第二個缺口：store-rules.js:130 把 `backupNow` 的**回傳值丟掉**，而它的 docstring
 //    （lib/store.js:296、`@returns` 在 :299）明寫「回 false 讓呼叫端據實以告」
 //    （lib/repo.js:252 在 HOSTED 更是一律回 false＝不做也不假裝做）。
@@ -183,8 +187,61 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
   assert.doesNotMatch(readBackupRules(), /第2版/, '備份不可含本次寫入的新規則');
 });
 
+test('分類管理｜新文案指到的那兩顆自救按鈕，必須真的在同一頁上（否則改完的文案又是一句假話）', () => {
+  // ⚠️ 為什麼這一題存在：William 拍板「分類管理不補備份、只改文案」之後，r8 第一版文案寫的是
+  //    「改動前先重啟一次後端，每次啟動都會另存一份當下的還原檔 data/store.db.bak」——
+  //    **那句話本身又是假承諾**（#410 r8 複驗抓到）：`public/modules/settings.js` 在 LOCAL／HOSTED
+  //    共用同一份、沒有模式分流，而**雲端版壓根不會產生那顆檔**（`lib/repo.js:252` 的 `backupNow`
+  //    在雲端一律回 `false`）；就算在本機版，那顆啟動備份也是 best-effort（VACUUM 失敗只寫後端
+  //    `console.warn`，前端完全不知道）。r9 定稿改成指向**兩種模式都有**的按鈕：
+  //    「到本頁最下面『資料與備份』按『匯出備份』存一份（真要救的時候，用旁邊的『匯入備份』整包還原）」。
+  //    ⇒ 那是一句正面承諾，就必須有人守著它指到的東西還在（專案鐵則：保證要有考題撐著）。
+  // ⚠️ 只釘「指標」不釘「文句」：本題斷言的是三個**名字**（資料與備份／匯出備份／匯入備份）
+  //    與它們在檔案裡的實體，不是整段句子——William 審改措辭時不會被綁住。反過來，若有人把按鈕
+  //    改名／搬走／刪掉，或把文案改回指向只有本機才有的 `.bak`，本題轉紅、逼下一個人重新查證。
+  // ⚠️ 誠實劃界：本題只證明「那兩顆按鈕存在、在同一頁、在整頁最後一個區塊底下」。
+  //    「按下去匯得出完整資料、匯回去救得回來」是 `/api/export`／`/api/import` 自己的事，
+  //    由 test/hosted-secrets.test.js 的來回題等守著——本題不重複，也**不宣稱**守到那些。
+  const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+
+  // ① 自救出口與還原入口真的在檔案裡，而且字面就叫文案講的那個名字
+  const exp = src.indexOf('href="/api/export"');
+  assert.ok(exp > 0, '「匯出備份」那顆按鈕不見了——文案叫使用者動手前先按的東西必須真的存在');
+  assert.match(src.slice(exp, src.indexOf('</a>', exp)), /匯出備份/,
+    '那顆按鈕的字面必須就是「匯出備份」——名字對不上，使用者照文案在畫面上找不到它');
+  const imp = src.indexOf('id="importBtn"');
+  assert.ok(imp > 0, '「匯入備份」那顆按鈕不見了——文案說「真要救的時候用旁邊的匯入備份」，它必須在');
+  assert.match(src.slice(imp, src.indexOf('</button>', imp)), /匯入備份/,
+    '那顆按鈕的字面必須就是「匯入備份」');
+
+  // ② 兩顆都在「資料與備份」區塊底下，而那是整頁**最後**一個區塊（文案寫「本頁最下面」）
+  const lastSection = src.lastIndexOf('class="section-title"');
+  assert.match(src.slice(lastSection, lastSection + 120), /資料與備份/,
+    '「資料與備份」必須是整頁最後一個區塊——文案寫「到本頁最下面」，'
+    + '多排一個區塊在它後面，這句指路就不準了');
+  assert.ok(exp > lastSection && imp > lastSection, '那兩顆按鈕要在「資料與備份」區塊底下');
+
+  // ③ 兩段分類管理文案都要指到上面那三個名字，而且不可以再指向只有本機才有的 .bak
+  for (const btnId of ['manageCatsBtn', 'manageIncomeCatsBtn']) {
+    const i = src.indexOf(`id="${btnId}"`);
+    assert.ok(i > 0, `前置：找不到 ${btnId}——分類管理卡片被改掉了，本題的前提要重新確認`);
+    const head = src.slice(0, i);
+    const p = head.lastIndexOf('<p class="muted"');
+    assert.ok(p > 0, `前置：${btnId} 前面找不到說明文案`);
+    const copy = head.slice(p);
+    for (const name of ['資料與備份', '匯出備份', '匯入備份']) {
+      assert.ok(copy.includes(`「${name}」`),
+        `${btnId} 的說明文案要指到「${name}」——不指路的話，「這個動作不會自動備份」就只剩嚇人，`
+        + '使用者不知道該按哪裡自保');
+    }
+    assert.ok(!copy.includes('store.db.bak'),
+      `${btnId} 的文案不可以再指向 data/store.db.bak——那顆檔在雲端版根本不存在`
+      + '（lib/repo.js 的 backupNow 在 HOSTED 一律回 false），而這份文案兩種模式共用');
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
-// 三、備份的原子替換與殘骸清理（lib/store.js：snapshotTo 三道＋啟動備份 backupOnce 一道）
+// 三、備份的原子替換與殘骸清理（lib/store.js：snapshotTo 三道＋啟動備份 backupOnce 兩道）
 //
 // ⚠️ 誠實劃界（#410 r5 Low）——「共用同一份實作」不是事實：`snapshotTo` 的 docstring（lib/store.js:315）
 //    寫著「三種備份（啟動 .bak／操作前 <tag>.bak／每日滾動）共用這一份實作＝寫法只有一種、不會走散」，
@@ -192,7 +249,10 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
 //      ① `snapshotTo`（lib/store.js:321）：操作前 `<tag>.bak`（經 backupNow）與每日滾動備份走這裡
 //         ——本節除了「啟動 .bak」以外的三題守著。
 //      ② `backupOnce`（lib/store.js:275-289）：啟動 `.bak`，**還原指引點名要改名回去的就是這一顆**
-//         ——本節「啟動 .bak」那一題守著。
+//         ——本節「啟動 .bak」**兩題**守著：失敗路徑（舊備份不可被動到）＋成功路徑（那顆檔裡要有當下的資料）。
+//         ⚠️ 成功路徑那一題是 r9 補的（#410 r8 複驗抓到）：在它之前，把 `d.exec(VACUUM…)` 改成
+//         **從一顆全新的空白資料庫**產生 `.bak`（檔案照樣建出、原子替換與 .tmp 清理都正常）
+//         ⇒ 本檔 9/9、整套 1496/1496 全綠、退出碼 0——使用者照指引改名回去只會拿到一顆空殼。
 //      ③ `migrateLedgerIfNeeded`（lib/store.js:164-172）：`pre-ledger-migration.bak`
 //         ——本節最後一題守著（happy path）。
 //      ④ `migrateSecTradesContractIfNeeded`（lib/store.js:219-227）：`pre-sec-contract.bak`
@@ -360,6 +420,56 @@ test('備份｜啟動 .bak（還原指引點名的那一顆）同樣不可「先
   assert.deepEqual(readFileSync(bak), goodBytes,
     '啟動 .bak 必須**逐位元組**完好——「先刪舊再做新」會留下 0-byte 的同名檔，'
     + '檔案「還在」但內容全沒了，使用者照指引改名回去只會得到一顆空資料庫');
+});
+
+test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機時的真資料」（不是一顆合法的空殼）', () => {
+  // ⚠️ 這一題補的正是複驗者（#410 r8）示範的繞法：上一題只守「失敗時舊備份不可被動到」，
+  //    完全沒問過「成功時那顆備份裡到底裝了什麼」。把 `backupOnce` 的 `d.exec(VACUUM INTO tmp)`
+  //    換成**從一顆全新的空白資料庫** VACUUM 出來——檔案照樣建出來、原子替換與 .tmp 清理全都正常
+  //    ⇒ 本檔 9/9、整套 1496/1496 全綠、退出碼 0。使用者照還原指引把它改名回 `store.db`，
+  //    拿到的是一顆連 `kv` 表都沒有的空庫，而且**畫面不會有任何異狀**（＝本專案最嚴重的那一族）。
+  //    ⇒ 判準必須是**打開 .bak 讀裡面的資料**，「檔案在不在／有多大」都擋不住這種繞法。
+  // ⚠️ 兩層斷言缺一不可（兩種突變各殺一層，都實測過）：
+  //    MUT-A＝空白庫（連 kv 表都沒有）⇒ 表格清單那行紅。
+  //    MUT-B＝空白庫但先 `CREATE TABLE kv` 再 VACUUM（形狀對、資料空）⇒ 表格清單**照樣通過**，
+  //           紅的是下面「本題種下去那一筆」的內容比對。
+  // ⚠️ 隔離：`backupOnce` 未 export、只在 `open()` 裡跑、每個行程只跑一次（`backedUp` 旗標），
+  //    本檔前面的題目早已把它跑掉 ⇒ 必須另開子行程（寫法比照本節其他題）。
+  const dir = mkdtempSync(join(tmpdir(), 'finance-startok-'));
+  TRASH.push(dir);
+  const target = join(dir, 'startup-ok.db');
+  const bak = target + '.bak';
+  const boot = (/** @type {string} */ tail) => execFileSync(
+    process.execPath, ['--input-type=module', '-e', "const s = await import('./lib/store.js');" + tail],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: target } });
+
+  // ① 第一次開機：建庫，並種下**本題專屬**的值（值要獨一無二，否則抓到的可能是別處留下的東西）
+  const probe = { id: 'PROBE-startbak-r9', month: '2026-08', amount: 8675309 };
+  boot(` s.save({ ...s.emptyDb(), history: [${JSON.stringify(probe)}] }); console.log('SEEDED');`);
+  rmSync(bak);   // ①自己也會產一顆（開機備份在 save 之前就跑完＝種之前的狀態）；刪掉，②那顆才分得出來
+  assert.ok(!existsSync(bak), '前置：①留下的舊備份要先真的清掉，否則本題分不出讀到的是哪一次');
+
+  // ② 第二次開機：backupOnce 應該把「現在這一刻的資料」照下來
+  assert.match(boot(" s.load(); console.log('OPENED');"), /OPENED/,
+    '前置：第二次開機要成功（開不起來的話 backupOnce 壓根沒跑到、本題會空轉）');
+  assert.ok(existsSync(bak), '每次啟動都要留下一顆 .bak（損毀還原指引叫使用者改名回去的就是它）');
+
+  const d = new DatabaseSync(bak);
+  try {
+    const tables = /** @type {any[]} */ (d.prepare("SELECT name FROM sqlite_master WHERE type='table'").all())
+      .map(r => String(r.name));
+    assert.ok(tables.includes('kv'),
+      '備份裡連 kv 表都沒有＝它不是這顆資料庫的快照——空白資料庫也 VACUUM 得出一個合法的 .bak 檔');
+    const readKv = (/** @type {string} */ k) => {
+      const row = /** @type {any} */ (d.prepare('SELECT data FROM kv WHERE key=?').get(k));
+      return row ? JSON.parse(row.data) : null;
+    };
+    assert.deepEqual(readKv('history'), [probe],
+      '備份裡必須是**這次開機時的真資料**——抓不到本題種下去那一筆，代表 .bak 的內容來源不是這顆庫');
+    const st = readKv('settings');
+    assert.ok(st && typeof st === 'object' && st.currency,
+      '備份裡的 settings 也要在——缺了它，改名回去只是一顆沒有任何設定的殼');
+  } finally { d.close(); }
 });
 
 test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備份、還原到它會失敗）', () => {
