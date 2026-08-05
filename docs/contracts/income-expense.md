@@ -8,7 +8,7 @@
 
 **改這裡**：PDF 逐列抽取器（pdfjs → 帶座標的列）
 
-**記得同步這裡**：**三份刻意分工、勿合併**（系統優化盤點確認，2026-07-24 入冊）：`lib/statement.js extractLines`（信用卡帳單，**丟座標**、只要文字流）／`lib/bank-statement.js extractBankLines`（銀行對帳單，**保留 x＋y**——支出/存入靠 x 分欄、換行備註靠 y 歸列）／`lib/taishin-securities.js extractSecuritiesLines`（證券對帳單，x/y＋跨頁 y 單調遞減）。三者錯誤文案與容錯策略各自對應其帳單型態；改 pdfjs 版本或抽取邏輯時**三份都要過各自的合成座標考題**
+**記得同步這裡**：**三份刻意分工、勿合併**（系統優化盤點確認，2026-07-24 入冊）：`lib/statement.js extractLines`（信用卡帳單，**丟座標**、只要文字流）／`lib/bank-statement.js extractBankLines`（銀行對帳單，**保留 x＋y**——支出/存入靠 x 分欄、換行備註靠 y 歸列；⚠️ 備註那條是**兩半條件**：先靠「左緣落在備註欄」決定這一列**算不算**備註，再靠 y 決定它歸哪一筆，缺任一半明細區的小計列與頁尾文字都會變成備註黏上鄰近交易，而備註是內轉／劃撥分箱的判準）／`lib/taishin-securities.js extractSecuritiesLines`（證券對帳單，x/y＋跨頁 y 單調遞減）。三者錯誤文案與容錯策略各自對應其帳單型態；改 pdfjs 版本或抽取邏輯時**三份都要過各自的合成座標考題**
 
 ## 信用卡負數交易的繳款與退款判斷
 
