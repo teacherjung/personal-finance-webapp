@@ -58,68 +58,110 @@ test('寫入櫃檯｜集合不是陣列＝寫入端有 bug，必須當場炸出�
   assert.deepEqual(ok.transactions, [], '合法的空陣列要照常通過');
 });
 
-test('寫入櫃檯｜insightState 的正規化真的掛在寫入口上（不是只有函式自己是對的）', () => {
+test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留、壞欄位要剝掉', () => {
   // ⚠️ 又是「函式有考題、接線沒考題」：sanitizeInsightState 本身逐項有考題，
   //    但沒有一條驗它掛在唯一寫入口。接線拆掉＝「還原壞備份／手改 store 不會讓差異引擎崩」
   //    這個防護實際上不存在，而單元考題還是全綠、看起來守著。
-  const bad = sanitizeDbForWrite({ settings: {}, insightState: 'oops' }, { mode: 'throw' });
-  assert.notEqual(bad.insightState, 'oops',
-    '非物件的 insightState 必須在寫入口被正規化（沒接線＝壞形狀會存進資料庫）');
-  assert.equal(typeof bad.insightState, 'object', '正規化後要是物件');
+  // ⚠️ 考題設計（第一版是空包彈，Codex #410 r1 H② 抓到）：第一版只送 'oops' 並檢查「結果是某個
+  //    object」⇒ 把接線改成 `out.insightState = {}`（每次寫入都清空書籤）照樣綠。
+  //    這一版**混入合法與非法欄位**，斷言合法值逐一保留、壞值剝除——清空型的突變會被抓到。
+  const bad = sanitizeDbForWrite({
+    settings: {},
+    insightState: {
+      lastSeenAt: '2026-08-05T00:00:00.000Z',      // 合法：字串
+      netWorth: 1234567,                            // 合法：有限數字
+      usdTwd: 'not-a-number',                       // 壞：該剝掉
+      reminders: [
+        { key: 'goal-reached', title: '達標', module: '總覽', level: 'info' },   // 合法
+        { title: '沒有 key 的要被丟掉' },                                        // 壞：沒有 key
+        'not-an-object',                                                        // 壞
+      ],
+      junkField: 'should be dropped',                // 壞：不在白名單
+    },
+  }, { mode: 'throw' });
+  const st = /** @type {any} */ (bad.insightState);
+  assert.equal(st.lastSeenAt, '2026-08-05T00:00:00.000Z', '合法的字串欄位必須保留（清空型突變會在這裡紅）');
+  assert.equal(st.netWorth, 1234567, '合法的數字欄位必須保留');
+  assert.equal(st.usdTwd, undefined, '型別不對的欄位要剝掉');
+  assert.equal(st.junkField, undefined, '白名單外的欄位要剝掉');
+  assert.equal(st.reminders?.length, 1, '沒有 key 的與非物件的提醒都要丟掉，只留合法那一筆');
+  assert.equal(st.reminders?.[0]?.key, 'goal-reached');
+  // 非物件整包 → 空物件（原本那一半的行為，保留）
+  const notObj = sanitizeDbForWrite({ settings: {}, insightState: 'oops' }, { mode: 'throw' });
+  assert.deepEqual(notObj.insightState, {}, '整包不是物件時正規化成空物件');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 二、「儲存前自動備份」不是空頭支票（lib/services/store-rules.js）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('店名規則｜按下儲存時，磁碟上真的要出現可還原的 pre-rules 備份', async () => {
+test('店名規則｜備份必須是「這次操作之前」的狀態（不是操作後、也不是永遠停在第一次）', async () => {
   // ⚠️ UI 上寫著「儲存前自動備份」。啟動備份 .bak 每個行程只寫一次，對「一天內改好幾次規則」
   //    毫無保護力＝空頭支票；這顆獨立的 pre-rules 備份才讓那句承諾是真的。
-  //    規則會改掉學過的分類與自訂店名，其中一部分刪掉規則也還原不回來。
-  //    備份呼叫拆掉之後 1487 題一聲不響（夜班實測）。
+  // ⚠️ 考題設計（第一版是空包彈，Codex #410 r1 H① 抓到）：第一版只檢查「檔案存在＋大小 > 0」
+  //    ⇒ 把 backupNow 移到寫入之後（備份到的是**修改後**狀態）、或改成「同名備份已存在就直接
+  //    回成功」（永遠停在第一次的舊狀態）——兩種失效都照樣綠。
+  //    這一版**直接讀備份裡的 kv.settings**，逐次斷言它是「本次之前、上一次之後」的狀態。
   const bak = `${TEST_STORE}.pre-rules.bak`;
-  store.save({ ...store.emptyDb() });
-  try { rmSync(bak); } catch { /* 尚未存在 */ }
-  await saveStoreRules({ storeCanon: [{ from: '測試店', to: '測試商店' }] });
-  assert.ok(existsSync(bak),
-    '存規則之前必須留下 store.db.pre-rules.bak——沒有它，畫面上那句「儲存前自動備份」是謊話');
-  const size = readFileSync(bak).byteLength;
-  assert.ok(size > 0, '備份檔不可以是空的（空檔還原不回來，比沒有備份更糟）');
+  const readBackupRules = () => {
+    const d = new DatabaseSync(bak);
+    try {
+      const row = /** @type {any} */ (d.prepare('SELECT data FROM kv WHERE key=?').get('settings'));
+      const st = row ? JSON.parse(row.data) : {};
+      return JSON.stringify(st.storeRules ?? null);
+    } finally { d.close(); }
+  };
 
-  // 同一個行程內再存一次，也要各自留下可還原的一份（這正是啟動備份做不到的事）。
-  const before = readFileSync(bak).byteLength;
-  await saveStoreRules({ storeCanon: [{ from: '測試店', to: '第二次改名' }] });
-  assert.ok(existsSync(bak), '第二次儲存同樣要有備份');
-  assert.ok(readFileSync(bak).byteLength >= before * 0.5,
-    '第二次的備份要是一份完整的資料庫快照（不是被截斷的殘骸）');
+  // 第 0 次：先讓資料庫裡有一份「舊規則」（走正式入口，形狀才對——storeRules 的真實形狀是
+  //          {rename, canon, brand, chains, parkExempt}，手塞別的鍵會被櫃檯剝掉）
+  store.save({ ...store.emptyDb() });
+  await saveStoreRules({ chains: ['第0版'] });
+  try { rmSync(bak); } catch { /* 上一步已產生一顆，刪掉以免混淆 */ }
+
+  // 第 1 次儲存：備份裡應該是「第0版」（操作前）
+  await saveStoreRules({ chains: ['第1版'] });
+  assert.ok(existsSync(bak), '存規則之前必須留下 pre-rules 備份——沒有它，畫面上那句承諾是謊話');
+  assert.match(readBackupRules(), /第0版/,
+    '備份到的必須是**這次操作之前**的規則（抓到第1版＝備份時機在寫入之後，等於備份了已經被改掉的狀態）');
+  assert.doesNotMatch(readBackupRules(), /第1版/, '備份不可含本次寫入的新規則');
+
+  // 第 2 次儲存：備份要**更新**成「第1版」（不是永遠停在第0版）
+  await saveStoreRules({ chains: ['第2版'] });
+  assert.match(readBackupRules(), /第1版/,
+    '同一個行程內第二次儲存，備份要換成「上一次之後、這次之前」的狀態'
+    + '——永遠停在第一次＝一天內改好幾次規則時，只還原得回最早那一版');
+  assert.doesNotMatch(readBackupRules(), /第2版/, '備份不可含本次寫入的新規則');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 三、備份的原子替換與殘骸清理（lib/store.js 兩道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('備份｜做同一顆備份失敗時，舊的那一份必須完好無損（不可先刪舊再做新）', () => {
+test('備份｜做同一顆備份失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', () => {
   // ⚠️ 註解寫明這是自審 r2 修過的病：「原寫法『先刪舊再做新』，若 VACUUM 失敗（例如硬碟滿）
-  //    會兩頭空——而損毀還原指引指的正是這顆 .bak」。硬碟滿的那一次會同時失去新舊備份，
-  //    而畫面只有一行 console.warn 說「保留上一顆舊備份」——那句話會變成謊話。
-  // ⚠️ 考題設計（這一題我自己第一版是空包彈，突變驗證抓到）：失敗的目標必須是**同一個路徑**，
-  //    否則「先刪舊再做新」刪的是別的檔、舊備份當然還在，突變照樣綠。
-  //    製造失敗的方法＝先把 `<dest>.tmp` 佔成一個**資料夾**：
-  //      正確實作 → 第一步 rmSync(tmp) 對資料夾丟錯 ⇒ 拋錯、dest 一個位元組沒動；
-  //      「先刪舊再做新」→ 先把 dest 刪了，然後 VACUUM 成功 ⇒ 不拋錯（本題轉紅）。
+  //    會兩頭空——而損毀還原指引指的正是這顆 .bak」。
+  // ⚠️ 考題設計（前兩版都被抓，這是第三版）：
+  //    v1（Codex r1 前）失敗目標用了**別的路徑** ⇒「先刪舊」刪的不是那顆、舊備份當然還在。
+  //    v2（Codex #410 r1 H③）只比**檔案長度**、而且兩次快照之間沒有改動 live DB
+  //       ⇒ 把舊備份改寫成同長度的垃圾照樣綠。
+  //    這一版：①保存原始 Buffer 做 deepEqual（逐位元組）②兩次之間**改動 live DB**，
+  //       這樣「失敗時被新內容覆寫」也會被抓到。
   const dir = mkdtempSync(join(tmpdir(), 'finance-bak-'));
   TRASH.push(dir);
   const dest = join(dir, 'good.bak');
   store.save({ ...store.emptyDb(), history: [{ id: 'm1', month: '2026-07', amount: 42 }] });
-  store.snapshotTo(dest);                       // 先做出一顆「上一次的好備份」
-  const goodBytes = readFileSync(dest).byteLength;
-  assert.ok(goodBytes > 0);
+  store.snapshotTo(dest);                       // 上一次的好備份（內容＝42 那筆）
+  const goodBytes = readFileSync(dest);
+  assert.ok(goodBytes.byteLength > 0);
 
+  // live DB 換成明顯不同的狀態——若失敗路徑「先刪舊再做新」，新內容就會蓋掉舊備份
+  store.save({ ...store.emptyDb(), history: [{ id: 'm2', month: '2026-08', amount: 999999 }] });
   mkdirSync(dest + '.tmp');                     // 讓下一次備份在「寫 .tmp」這一步就失敗
   assert.throws(() => store.snapshotTo(dest), /.*/,
     '寫不進去時要拋錯——不拋錯代表它繞過了 .tmp、直接動了正式的備份檔');
   assert.ok(existsSync(dest), '這一次失敗，上一顆好備份必須還在（還原指引指的就是它）');
-  assert.equal(readFileSync(dest).byteLength, goodBytes, '舊備份的內容一個位元組都不可變');
+  assert.deepEqual(readFileSync(dest), goodBytes,
+    '舊備份必須**逐位元組**完好——只比長度的話，被同長度的垃圾或新狀態覆寫都抓不到');
 });
 
 test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備份、還原到它會失敗）', () => {
