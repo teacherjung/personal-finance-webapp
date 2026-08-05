@@ -404,11 +404,23 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *    4. 「抄原始碼出來現場跑」這個手法，本質上管不到**執行期才決定**的東西（動態 import、eval）。
  *       要連這些都關掉，得把 subStatus 搬進零 DOM 模組、讓考題直接 import 正式模組。
  *       那條路**刻意沒走**：subStatus 吃的 parseLocalDate／daysUntil 住在 app.js，而 app.js
- *       模組頂層就直接綁 DOM（`document.querySelectorAll('#nav a')`、`window.addEventListener`、
- *       `$('#snapshotBtn').addEventListener`——最後那個在 node 裡當場拋錯），import 不起來；
- *       要搬 subStatus 就得連那兩支一起搬出 app.js 再回頭轉匯出，是動到前端共用核心的重構，
- *       而 AGENTS.md 對「改前端」要求的驗證（**全部頁面 reload 無 console error**）在這支
- *       純考題 PR 的環境裡做不到，沒驗過就改共用核心比留著這條劃界更危險。
+ *       在 node 裡 import 不起來（本支實測 `import('./public/app.js')`＝當場 TypeError）。
+ *       ⚠️ 絆倒點比「app.js 自己綁 DOM」**更早也更深，別寫錯**（本支自審實跑堆疊才發現）：
+ *       第一個爆的是它 import 進來的 `public/modules/portfolio.js:37`——模組頂層一句
+ *       `let viewCur = localStorage.getItem('pf_viewCur') || 'TWD'`，node 裡 `localStorage`
+ *       是 undefined，**app.js 自己的本體連跑都還沒跑到**。app.js 頂層那三處 DOM 綁定
+ *       （`document.querySelectorAll('#nav a')`、`window.addEventListener`、
+ *       `$('#snapshotBtn').addEventListener`）一樣擋著，只是排在後面。
+ *       所以要搬 subStatus，不只是把 parseLocalDate／daysUntil 搬出 app.js 再回頭轉匯出——
+ *       整串 import 的瀏覽器相依都要一起處理，是動到前端共用核心的重構，
+ *       **成本高、且不在本支（純考題 PR）的範圍內**。
+ *       ⚠️ 理由到此為止——**不要寫成「驗不了」**（上一版就是這麼寫的，本支自審打掉）：AGENTS.md 對
+ *       「改前端」要求的驗證（**全部頁面 reload 無 console error**，頁面清單＝app.js 的 `ROUTES`）
+ *       這棵樹上做得到。repo 自己備著手段——`.claude/launch.json` 的 `finance-test`（`STORE_FILE`
+ *       指暫存 .db ＋獨立 PORT，不碰 `data/`）；同樣手法在本樹實測過，server 起得來、
+ *       `/`＋`/api/summary`＋`/app.js` 皆 200（200 不等於零 console error，**逐頁 reload 那段是工、
+ *       不是關著的門**），`docs/每日洞察引擎-施工計畫.md` 也記著曾用它跑完整輪零 console error。
+ *       所以這裡劃的是**範圍界、不是能力界**：真要搬，補足那輪驗證再動共用核心即可。
  */
 function loadFrontendSubStatus() {
   const app = parseModule('public/app.js');
