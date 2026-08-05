@@ -26,4 +26,5 @@ test('側邊導覽選取標籤維持原有卡片樣式', () => {
   assert.match(active[0], /color:\s*var\(--accent-hover\)/);
   assert.match(active[0], /border-color:\s*var\(--frame\)/);
   assert.match(active[0], /box-shadow:\s*3px 3px 0 rgba\(126, 101, 43, \.28\)/);
+  assert.doesNotMatch(active[0], /var\(--action(?:-hover)?\)/, '側欄選取是品牌橘色，不是主要按鈕綠');
 });

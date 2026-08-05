@@ -1,20 +1,24 @@
 :root {
-  /* 榮祥森 UI1：暖紙、森林綠、霧藍與珊瑚訊號。 */
-  --bg: #f7f2df;
+  /* UI5：暖米橘是頁面主色；綠色只留主要動作與正向財務語意。 */
+  --bg: #fbf2dc;
   --bg-2: #eadb9c;
   --sidebar-bg: #fff8e5;
   --card: #fffdf6;
-  --card-2: #f1ead1;
+  --card-2: #f5ead1;
   --line: #d8cdaa;
   --line-2: #b8a476;
   --frame: #34291e;
   --text: #34291e;
   --text-dim: #716348;
-  --accent: #557f3c;
-  --accent-hover: #456c32;
-  --accent-soft: #e3edcf;
+  --accent: #ac4c28;
+  --accent-hover: #89381d;
+  --accent-soft: #f6dfd1;
+  --action: #557f3c;
+  --action-hover: #456c32;
+  --action-soft: #e3edcf;
   /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
   --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
+  --pos-soft: #e3edcf;
   --neg: #B84A39;         /* 支出 / 虧損（六色盤紅 #D96352 加深）*/
   --warn: #A8681F;        /* 提醒（六色盤橘 #E8944A 加深）*/
   --danger: #B84A39;
@@ -204,9 +208,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ---------- Buttons / forms ---------- */
 .page-actions { display: flex; align-items: center; gap: 8px; }
 button { font-family: inherit; cursor: pointer; border: none; border-radius: 7px; font-weight: 700; font-size: 13px; transition: .12s; }
-button:focus-visible, a:focus-visible, #nav a:focus-visible { outline: 3px solid var(--info); outline-offset: 2px; }
-.btn { background: var(--accent); color: #fff; padding: 8px 16px; border: 2px solid var(--frame); box-shadow: 3px 3px 0 rgba(126, 101, 43, .3); }
-.btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+button:focus-visible, a:focus-visible, #nav a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn { background: var(--action); color: #fff; padding: 8px 16px; border: 2px solid var(--frame); box-shadow: 3px 3px 0 rgba(126, 101, 43, .3); }
+.btn:hover { background: var(--action-hover); transform: translateY(-1px); }
 .btn-ghost { background: var(--card); color: var(--text); padding: 8px 14px; border: 2px solid var(--frame); box-shadow: 2px 2px 0 rgba(126, 101, 43, .24); }
 .btn-ghost:hover { background: var(--accent-soft); transform: translateY(-1px); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
@@ -376,7 +380,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .forest-allocation-panel { min-height: 100%; }
 .dchip { font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 8px; background: var(--card-2); color: var(--text-dim); white-space: nowrap; }
 .dchip.bad { background: #f6ead6; color: var(--warn); }
-.dchip.good { background: var(--accent-soft); color: var(--pos); }
+.dchip.good { background: var(--pos-soft); color: var(--pos); }
 .goal-track { flex: 1 0 100%; width: 100%; border-top: 1px solid var(--line); padding-top: 17px; margin-top: 1px; }
 .gt-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .gt-kicker { font-size: 10.5px; color: var(--text-dim); font-weight: 700; letter-spacing: 0; }
