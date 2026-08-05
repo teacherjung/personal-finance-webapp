@@ -318,6 +318,13 @@ test('帳號投影｜「星號緊接數字」的遮罩帳號要取星號後那�
     '星號後只有兩碼時就只回兩碼——回 3456 是把前綴的數字拿來湊，那是一個不存在的末碼');
   assert.equal(projectAccount({ id: 'a3', accountNo: '12345678901234' }).accountNoLast4, '1234',
     '完整帳號（無星號）才取純數字尾四碼');
+  // ⚠️ 這顆是**判準的「取尾」性質**專用的（自審 minor①）：上面兩顆的可見尾段剛好是 4 碼與 2 碼，
+  //    `slice(-4)` 與 `slice(0,4)` 在它們身上**完全同值**——實測把正式碼改成 `maskedTail[1].slice(0, 4)`
+  //    全套 1497 題照樣全綠，而受害行為是真的（可見段超過四碼時會回**前**四碼＝又一個假末碼）。
+  //    全 repo 另外三處 projectAccount 考題（`test/server.test.js`、`test/hosted-secrets.test.js` ×2）
+  //    用的都是無星號的完整帳號，連這條遮罩分支都走不到。⇒ 補一顆可見尾段 6 碼的把兩者分開。
+  assert.equal(projectAccount({ id: 'c1', accountNo: '9001****123456' }).accountNoLast4, '3456',
+    '星號後可見六碼時要回**最後**四碼 3456；回 1234（可見段的前四碼）＝換一個維度的假末碼');
   const p = projectAccount({ id: 'a4', accountNo: '900100****3301' });
   assert.equal(/** @type {any} */ (p).accountNo, undefined, '完整帳號絕不可送到瀏覽器');
   assert.equal(p.accountNoSet, true, '要用布林告訴前端「有設過」');
