@@ -7,6 +7,7 @@ import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } 
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
+import { runExport } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
@@ -208,7 +209,7 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">資料備份</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.db</code>（SQLite）。建議定期匯出備份（匯出格式為 JSON）。</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <a class="btn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
+        <a class="btn" id="exportBtn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
         <button class="btn-ghost" id="importBtn">${icon('upload', 16)}匯入備份</button>
         <input type="file" id="importFile" accept="application/json" style="display:none" />
       </div>
@@ -353,6 +354,38 @@ export async function renderSettings() {
   byId('healthBtn').onclick = () => openHealthCheck();
   byId('storeRulesBtn').onclick = () => openStoreRulesEditor(myRules);
   if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
+  // 匯出備份：**攔下瀏覽器的直接下載**，改成 fetch → 驗狀態／驗內容 → 才落檔並出聲。
+  // 舊版是純 <a download>，成功失敗都不出聲；雲端版 session 過期時瀏覽器會安靜存下一個
+  // 內容是錯誤訊息（或登入頁 HTML）的 .json，而使用者以為自己有備份了。
+  //
+  // ⚠️ 那顆 <a> 的 `href="/api/export"` 與 `download` **刻意留著**（沒有改成 <button>）：
+  //    ①它是「右鍵另存連結」的退路 ②有別的考題以這個字面定位這顆鈕。
+  //    代價寫明白：右鍵另存那條路**繞過下面這三道關卡**，會退回舊的靜靜失敗——
+  //    這一支只保證「左鍵按下去會說話」，那是使用者實際會走的那條路。
+  byId('exportBtn').onclick = async (ev) => {
+    ev.preventDefault();
+    const btn = ev.currentTarget;
+    if (btn.dataset.busy === '1') return;        // 連點兩下不要抓兩份
+    btn.dataset.busy = '1';
+    try {
+      await runExport({
+        fetchFn: (url) => fetch(url),
+        saveFile: (filename, body) => {
+          // Blob + 暫時連結：不重新序列化，落下去的是伺服器回的原始文字。
+          const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+          const a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          // ⚠️ revoke 要**延後**：緊接著 click 就 revoke，在某些瀏覽器（Safari 有回報過）會讓下載被取消
+          //    ——那正好是這一支最想避免的「說了已存下、其實沒有」。等一拍再回收那個暫時網址。
+          //    誠實劃界：這一行沒有考題撐著（settings.js 的 DOM 路徑在 node 裡跑不起來），
+          //    是照已知的瀏覽器行為做的保險，不是實測過每一種瀏覽器。
+          setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        },
+        toast,
+      });
+    } finally { btn.dataset.busy = ''; }
+  };
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
     const input = e.target;
