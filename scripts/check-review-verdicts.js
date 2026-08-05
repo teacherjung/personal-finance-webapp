@@ -69,6 +69,37 @@ export const VERDICTS = {
 const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜結論：(\S+?)(?:\*\*|__)?\s*$/mu;
 
 /**
+ * **重述行**（2026-08-06，William 裁決 B）：清除「標頭寫壞」那種永久阻擋的唯一合規途徑。
+ *
+ * ## 它在解什麼
+ * 標頭寫壞（結論寫成「要求修改」「通過（無阻擋）」之類）會觸發 `hasBotMark` 的阻擋，而那個阻擋
+ * **沒有任何辦法清除**——補一則新的合規留言也沒用，因為壞的那則永遠在留言區裡。2026-08-06 實測
+ * 五支 PR 全部卡死在這裡（起因＝發射提示沒把三個合規字串列出來，是發射者的錯，但一個錯字能把
+ * 一支 PR 永久鎖死，這個脆弱性本身要修）。
+ *
+ * ## 格式（逐字；寫在**帶合規標頭**的留言內文裡，一行一則）
+ *   重述 r<輪次>｜審 `<短 sha>`｜結論：<三選一>｜原第一行：「<壞掉那則的第一行，逐字引用>」
+ *
+ * ## 四條保守規則（**重述唯一的新權力是「把讀不懂的翻譯成讀得懂的」，判定規則一格都沒放寬**）
+ * ①「原第一行」必須**逐字**對上某一則壞標頭留言的第一行（空白摺疊後比對）——引不中就不清除。
+ * ②壞掉那行裡讀得出的角色與來源，必須**等於重述者自己**（同一位審查者才能重述自己的壞留言；
+ *   讀不出角色來源的壞留言**不可重述**，維持阻擋——fail-closed）。
+ * ③重述出來的結論**照樣進聯集**：重述一則阻擋，它還是阻擋。重述清不掉任何真的阻擋。
+ * ④重述的輪次必須**小於**這則留言自己標頭的輪次——不然可以用重述行造出一個比自己現在結論
+ *   更高輪的「通過」。
+ * 放行判準完全不變：仍然要指定審查者對**目前 head** 有一則真的「通過」。
+ *
+ * ## 誠實劃界
+ * 與整道閘相同：它讀的是自我宣告，不是身分證明（三方共用同一個 GitHub 帳號，惡意者本來就能
+ * 直接偽造整個合規標頭）。重述防的是**打錯字把 PR 鎖死**，不是防惡意。
+ */
+const RESTATE = /^[^\S\n]*重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論：([^｜\n]+?)｜原第一行：「(.+)」[^\S\n]*$/u;
+/** 從壞掉的第一行盡量讀出「誰寫的」（規則②用）。讀不出＝回 null＝那則不可重述。 */
+const QUOTED_IDENTITY = /🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜/u;
+/** 空白摺疊：引用比對不該因為多打一個空白而失敗（與 source 正規化同一個理由）。 */
+const collapse = (/** @type {string} */ t) => String(t || '').trim().replace(/\s+/gu, ' ');
+
+/**
  * 從一則留言抽出來歷標頭。抓不到就回 null（呼叫端決定那算不算問題）。
  * @param {string} body
  */
@@ -264,23 +295,11 @@ export function verdictProblems(comments, head, reviewerRole = null) {
   /** @type {string[]} */ const problems = [];
   /** @type {string[]} */ const warnings = [];
   /** @type {Record<string, any>} */ const latest = {};
-  for (const c of comments) {
-    const h = headerOf(c.body);
-    if (!h) {
-      const excerpt = `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`;
-      const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
-      if (hasBotMark(c.body)) {
-        // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
-        problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${shape}：${excerpt}`);
-      } else if (looksLikeVerdict(c.body)) {
-        // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
-        warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
-      }
-      continue;
-    }
+  /** 聯集更新（原本內聯在迴圈裡；重述行也要走**同一條路**，所以抽出來共用）。 @param {any} h */
+  const applyEntry = (h) => {
     const who = `${h.role}（${h.source}）`;
     const cur = latest[who];
-    if (!cur || h.round > cur.round) { latest[who] = { ...h, who }; continue; }
+    if (!cur || h.round > cur.round) { latest[who] = { ...h, who }; return; }
     // ⚠️ **同輪次出現相反結論 → fail-closed**（Codex #385 r1 High①）：
     //    原本用 `>=`，於是同為 r2 時「需修改」後貼「通過」就放行、反過來就阻擋
     //    ——**結果取決於留言順序**，那正是這支要根治的病，我卻在自己的實作裡犯了。
@@ -288,6 +307,67 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     if (h.round === cur.round && h.blocking !== cur.blocking) {
       latest[who] = { ...cur, conflict: true, blocking: true,
         verdict: `同一輪（r${h.round}）出現相反結論：${cur.verdict} vs ${h.verdict}` };
+    }
+  };
+  /** 已被合規重述接管的壞留言第一行（摺疊後）→ 重述者。 @type {Map<string, string>} */
+  const restated = new Map();
+  /** 壞標頭留言：先收集、**掃完全部留言再判**（重述通常出現在壞留言之後）。 */
+  const malformed = /** @type {{key: string, excerpt: string}[]} */ ([]);
+  for (const c of comments) {
+    const h = headerOf(c.body);
+    if (!h) {
+      const excerpt = `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`;
+      const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
+      if (hasBotMark(c.body)) {
+        const first = String(c.body).split('\n').find((l) => l.trim()) || '';
+        malformed.push({ key: collapse(first), excerpt: `${shape}：${excerpt}` });
+      } else if (looksLikeVerdict(c.body)) {
+        // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
+        warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
+      }
+      continue;
+    }
+    // 重述行：只在**帶合規標頭**的留言裡找（fence 與引用一樣要剝——範例不是重述）。
+    const text = stripFencesLoose(String(c.body || '')).replace(/^[^\S\n]*>.*$/gm, '');
+    for (const line of text.split('\n')) {
+      if (!/^[^\S\n]*重述\s*r\d+｜/u.test(line)) continue;   // 不像重述行的行完全不管
+      const m = RESTATE.exec(line);
+      const bad = (/** @type {string} */ why) => { warnings.push(`一行重述**無效、不生效**（${why}）：「${collapse(line).slice(0, 80)}…」`); };
+      if (!m) { bad('格式不合規——要長成「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「…」」'); continue; }
+      const verdict = m[3].trim().replace(/[。．.]$/u, '');
+      if (!Object.hasOwn(VERDICTS, verdict)) { bad(`結論「${verdict}」不是三選一`); continue; }
+      const round = Number(m[1]);
+      // 規則④：重述輪次必須小於自己標頭的輪次——否則可以用重述行造出更高輪的「通過」。
+      if (round >= h.round) { bad(`重述的輪次 r${round} 不小於這則留言自己的 r${h.round}`); continue; }
+      // 規則②：壞掉那行裡讀得出的角色與來源必須等於重述者自己；讀不出＝不可重述（fail-closed）。
+      const q = QUOTED_IDENTITY.exec(m[4]);
+      if (!q) { bad('引用的第一行讀不出「誰寫的」——讀不出角色與來源的壞留言不可重述，維持阻擋'); continue; }
+      if (canonicalRole(q[1]) !== h.role || collapse(q[2]) !== h.source) {
+        bad(`只能重述**自己**的壞留言：引用裡是 ${q[1]}（${collapse(q[2])}），重述者是 ${h.role}（${h.source}）`);
+        continue;
+      }
+      // 規則①的鑰匙＝逐字引用（摺疊比對）；規則③＝重述的結論照樣進聯集（下一行）。
+      restated.set(collapse(m[4]), `${h.role}（${h.source}）`);
+      applyEntry({ role: h.role, source: h.source, sha: m[2].toLowerCase(), round, verdict,
+        blocking: VERDICTS[/** @type {keyof typeof VERDICTS} */ (verdict)] });
+    }
+    applyEntry(h);
+  }
+  // 壞標頭：被合規重述接管的降為警告（歷史留在原地、GitHub 可稽核）；其餘照舊**阻擋**。
+  for (const m of malformed) {
+    if (restated.has(m.key)) {
+      warnings.push(`一則壞標頭留言已被 ${restated.get(m.key)} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
+    } else {
+      // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
+      problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${m.excerpt}\n`
+        + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
+        + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節）。');
+    }
+  }
+  // 重述行引用的第一行若對不上任何壞留言＝空轉，要出聲（不然打錯引文會以為清掉了）。
+  for (const [key, who] of restated) {
+    if (!malformed.some((m) => m.key === key)) {
+      warnings.push(`${who} 的一行重述引用的第一行**對不上任何壞標頭留言**（引文要逐字）：「${key.slice(0, 60)}…」`);
     }
   }
   // ⚠️ **沒有任何針對目前 head 的正式結論＝不可合併**（Codex #385 r1 High②）。

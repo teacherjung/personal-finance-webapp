@@ -456,3 +456,86 @@ test('結論行｜倒過來之後，日常句型仍然不可以被誤擋', () =>
     '修完就可以合併嗎？',
   ]) assert.equal(looksLikeVerdict(body), false, `誤擋：「${body.replace(/\n/g, ' ')}」`);
 });
+
+// ── 重述（2026-08-06，William 裁決 B：壞標頭的唯一救濟）──────────────────────
+// 起因＝真實事故：發射提示沒列出三個合規字串，五支 PR 的歷史留言裡都有「要求修改」「通過（無阻擋）」
+// 這類壞標頭 ⇒ 永久阻擋、補新留言也清不掉。機制的設計原則：**重述唯一的新權力是「把讀不懂的
+// 翻譯成讀得懂的」，判定規則一格都沒放寬**——下面每一條都在釘這句話的一個角。
+
+const MAL_FIRST = '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改';
+const MAL = `${MAL_FIRST}\n\n細節略。`;
+/** 合規重述：Codex 自己在 r7 的通過留言裡，把壞掉的 r6 翻譯成三選一。 */
+const RESTATE_OK = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+  + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+
+test('⭐ 重述｜同一位審查者逐字重述自己的壞標頭 → 不再阻擋，照常放行', () => {
+  const { problems, warnings } = verdictProblems([c(MAL), c(RESTATE_OK)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], problems.join('｜'));
+  assert.ok(warnings.some((w) => /重述行接管/.test(w)), '要留一句可稽核的警告，說明壞留言被誰接管');
+});
+
+test('⭐ 重述｜別人不能替我重述（引文裡的角色來源 ≠ 重述者 → 無效）', () => {
+  // 危險情境：實作者替審查者「重述」，把審查者一則打壞的阻擋靜靜洗掉。
+  const byClaude = `${head('Claude', '桌面', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：通過｜原第一行：「${MAL_FIRST}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(byClaude)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `壞標頭必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /只能重述\*\*自己\*\*/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜引文對不上＝不清除（而且要出聲說引文空轉）', () => {
+  const wrongQuote = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修正」';
+  const { problems, warnings } = verdictProblems([c(MAL), c(wrongQuote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `引文差一個字就不可以清：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /對不上任何壞標頭留言/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜輪次不小於自己 → 無效（防止用重述行造出更高輪的「通過」）', () => {
+  const selfPromote = `${head('Codex', 'CLI（xhigh）', 'abc1234', 7, '需修改後再審')}\n`
+    + `重述 r8｜審 \`${HEAD}\`｜結論：通過｜原第一行：「${MAL_FIRST}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(selfPromote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), '無效重述不可清除壞標頭');
+  assert.ok(warnings.some((w) => /不小於這則留言自己的/.test(w)), warnings.join('｜'));
+  // 而且那個假造的 r8「通過」**不可以**變成放行票
+  assert.ok(problems.some((p) => /沒有「Codex」對目前的 head|還沒有被同一位審查者撤銷/.test(p)),
+    `重述行不可以生出放行票：${problems.join('｜')}`);
+});
+
+test('⭐ 重述｜改變不了閘的判定結果（有沒有重述行，problems 一字不差）', () => {
+  // 這一條釘的是機制的核心保證：重述唯一的效力＝把壞標頭降為警告。
+  // 對「判定」的影響必須是零——放行還是只認指定審查者對目前 head 的真「通過」。
+  const restateBlocking = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：不可合併｜原第一行：「${MAL_FIRST}」`;
+  const withLine = verdictProblems([c(MAL), c(restateBlocking)], HEAD, 'Codex');
+  const noLine = verdictProblems([c(head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'))], HEAD, 'Codex');
+  assert.deepEqual(withLine.problems, noLine.problems,
+    '重述（即使重述的是「不可合併」）不可以改變判定——它只是翻譯，不是新的裁決權');
+  assert.deepEqual(withLine.problems, [], withLine.problems.join('｜'));
+});
+
+test('重述｜結論不是三選一／讀不出引文身分 → 各自無效並出聲', () => {
+  const badVerdict = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：大致通過｜原第一行：「${MAL_FIRST}」`;
+  const r1 = verdictProblems([c(MAL), c(badVerdict)], HEAD, 'Codex');
+  assert.ok(r1.problems.some((p) => /標頭格式不合規/.test(p)));
+  assert.ok(r1.warnings.some((w) => /不是三選一/.test(w)), r1.warnings.join('｜'));
+  const noIdentity = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「結論：要求修改（沒有標頭的那種）」';
+  const r2 = verdictProblems([c('🤖 這則壞掉了而且讀不出身分'), c(noIdentity)], HEAD, 'Codex');
+  assert.ok(r2.problems.some((p) => /標頭格式不合規/.test(p)), '讀不出身分的壞留言不可重述＝維持阻擋（fail-closed）');
+  assert.ok(r2.warnings.some((w) => /讀不出「誰寫的」/.test(w)), r2.warnings.join('｜'));
+});
+
+test('重述｜寫在 code fence 或引用裡的重述行不算（範例不是重述）', () => {
+  const fenced = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '```\n重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「' + MAL_FIRST + '」\n```';
+  const { problems } = verdictProblems([c(MAL), c(fenced)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), 'fence 裡的範例不可以真的清除壞標頭');
+});
+
+test('AGENTS.md 要寫下重述行的逐字格式（機制只活在腳本裡＝寫壞標頭的人不知道怎麼自救）', () => {
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(agents.includes('重述 r<輪次>｜審'), 'AGENTS.md 找不到重述行的逐字格式');
+  assert.ok(agents.includes('重述改變不了閘的判定結果'), 'AGENTS.md 要寫明重述沒有裁決權——不然會被當成第二條放行通道');
+});
