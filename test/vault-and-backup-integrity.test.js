@@ -4,7 +4,9 @@
 // 弄壞卻全綠」的規則。這一片的共同特徵最危險：**壞掉的時候畫面會說成功**。
 //   - 唯一寫入口的「集合必須是陣列」煞車：改成默默清空 ⇒ 整個集合被抹掉並回 200。
 //   - 「儲存前自動備份」：UI 上寫著這句話，備份呼叫拆掉之後那句話變成謊話。
-//   - 備份的原子替換與 .tmp 清理：硬碟滿的那一次會兩頭空，而還原指引指的正是那顆備份。
+//   - 備份的原子替換與 .tmp 清理：硬碟滿的那一次會兩頭空。⚠️ 損毀時的還原指引（lib/store.js:49）
+//     叫使用者改名回去的 `store.db.bak` 是**啟動備份 `backupOnce` 產的**，不是第三節另外三題受測的
+//     `snapshotTo`——這兩支是各自獨立的 VACUUM→rename 實作，所以第三節兩邊各立了題（劃界見該節）。
 //   - 資料庫損毀的 fail-closed：守衛拿掉之後損毀檔照常開起來讀寫，使用者只覺得「數字怪怪的」。
 //
 // 隔離：`STORE_FILE` 指向 os 暫存檔，絕不碰真實 `data/`；要讓 `open()` 真的失敗的兩題另開子行程
@@ -122,7 +124,22 @@ test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 二、「儲存前自動備份」不是空頭支票（lib/services/store-rules.js）
+// 二、**店名規則的**「儲存前自動備份」不是空頭支票（lib/services/store-rules.js）
+//
+// ⚠️ 誠實劃界（#410 r5 Low）——UI 上寫著「儲存前自動備份。」的地方有三處，本節只守得住第一處：
+//    ①店名規則（public/modules/settings-store-rules.js:100）→ store-rules.js:130 `backupNow('pre-rules')`：本節守著。
+//    ②支出分類管理（public/modules/settings.js:69）與 ③收入分類管理（public/modules/settings.js:75）：
+//      **正式程式根本沒有這個備份**——`grep -c backupNow lib/services/categories.js` ＝ 0，
+//      全 repo 只有 store-rules.js:130 與 statement-import.js:467 兩個使用端（lib/repo.js:252 是轉供的
+//      HOSTED wrapper、不是使用端）。而 saveTree（categories.js:268）／
+//      saveIncomeTree（categories.js:73）的改名會改寫全庫交易的分類、刪除會把那些交易改歸「其他／未分類」，
+//      正是最需要「動手前先存一份」的不可逆操作。
+//      這裡**不補考題**：能補的只有一條「categories 也要呼叫 backupNow」——那是紅的，得先改正式程式，
+//      屬產品修正、不屬於本支「補考題」的 PR。記在這裡讓下一個人查得到：修的時候順手把 ②③ 拉進本節。
+// ⚠️ 同族的第二個缺口：store-rules.js:130 把 `backupNow` 的**回傳值丟掉**，而它的 docstring
+//    （lib/store.js:296、`@returns` 在 :299）明寫「回 false 讓呼叫端據實以告」
+//    （lib/repo.js:252 在 HOSTED 更是一律回 false＝不做也不假裝做）。
+//    ⇒ 備份失敗、或雲端版壓根沒備份時，使用者畫面上仍然只看到「儲存成功」。同樣是產線既有問題、本節沒有考題。
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('店名規則｜備份必須是「這次操作之前」的狀態（不是操作後、也不是永遠停在第一次）', async () => {
@@ -164,7 +181,22 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 三、備份的原子替換與殘骸清理（lib/store.js 的 snapshotTo，三道）
+// 三、備份的原子替換與殘骸清理（lib/store.js：snapshotTo 三道＋啟動備份 backupOnce 一道）
+//
+// ⚠️ 誠實劃界（#410 r5 Low）——「共用同一份實作」不是事實：`snapshotTo` 的 docstring（lib/store.js:315）
+//    寫著「三種備份（啟動 .bak／操作前 <tag>.bak／每日滾動）共用這一份實作＝寫法只有一種、不會走散」，
+//    但 repo 裡實際有**四份**各自獨立的 VACUUM→rename：
+//      ① `snapshotTo`（lib/store.js:321）：操作前 `<tag>.bak`（經 backupNow）與每日滾動備份走這裡
+//         ——本節除了「啟動 .bak」以外的三題守著。
+//      ② `backupOnce`（lib/store.js:275-289）：啟動 `.bak`，**還原指引點名要改名回去的就是這一顆**
+//         ——本節「啟動 .bak」那一題守著。
+//      ③ `migrateLedgerIfNeeded`（lib/store.js:164-172）：`pre-ledger-migration.bak`。
+//      ④ `migrateSecTradesContractIfNeeded`（lib/store.js:219-227）：`pre-sec-contract.bak`。
+//    ③④ 的**失敗路徑沒有考題**（happy path 有：test/securities-migration.test.js:56 驗過備份真的產出來）：
+//    要重現得先造出「還沒搬過家、且剛好 VACUUM 失敗」的庫，而兩支都有 meta 鍵守著只跑一次；
+//    判斷投入產出不划算，列為**已知缺口**——不寫「做不到」，因為第四題那種長檔名手法同樣適用。
+//    ⚠️ 這四份重複與那句 docstring 都是產線既有狀況（非本 PR 造成，本支不改正式程式）；
+//    記在這裡是為了讓下一個人合併它們時，知道①②有安全網、③④沒有。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -185,6 +217,36 @@ function probeMaxNameLen(dir) {
   if (canWrite(hi)) return 0;          // 沒有實際上限（或高到本題造不出來）
   while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (canWrite(mid)) lo = mid; else hi = mid; }
   return lo;
+}
+
+/**
+ * 探測**這個資料夾**能讓 SQLite `VACUUM INTO` 成功寫出來的最長單一檔名（探不到回 0）。
+ * 為什麼不直接沿用 `probeMaxNameLen`：SQLite 開一顆 db 時會先替 `-journal`（8 字元）留位，
+ * 所以「fs 寫得出來的檔名」比「SQLite 開得起來的檔名」寬——實測 macOS APFS 上是 255 vs 247。
+ * 那個差幾字元是 SQLite 的實作細節，寫進考題就是另一個會漂的數字；直接**功能性地問 VACUUM 本人**。
+ * 二分搜尋的前提同上：長度限制單調（寫得出 n 就寫得出 n-1）。
+ * @param {string} dir @returns {number}
+ */
+function probeMaxVacuumNameLen(dir) {
+  const src = join(dir, 'probe-src.db');
+  const d = new DatabaseSync(src);
+  try {
+    d.exec('CREATE TABLE t(x)');
+    const canVacuum = (/** @type {number} */ n) => {
+      const p = join(dir, 'v'.repeat(n));
+      try { d.exec(`VACUUM INTO '${p}'`); return true; }
+      catch { return false; }
+      finally { try { rmSync(p); } catch { /* 失敗時可能根本沒建出來 */ } }
+    };
+    if (!canVacuum(1)) return 0;          // 連 1 字元都寫不出來＝這個 dir 有別的問題
+    let lo = 1, hi = 4096;
+    if (canVacuum(hi)) return 0;          // 沒有實際上限（或高到本題造不出來）
+    while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (canVacuum(mid)) lo = mid; else hi = mid; }
+    return lo;
+  } finally {
+    d.close();
+    for (const suf of ['', '-journal', '-wal', '-shm']) { try { rmSync(src + suf); } catch { /* 可能不存在 */ } }
+  }
 }
 
 test('備份｜VACUUM 階段失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', (t) => {
@@ -233,6 +295,63 @@ test('備份｜VACUUM 階段失敗時，舊的那一份必須逐位元組完好�
   assert.ok(existsSync(dest), '這一次失敗，上一顆好備份必須還在（還原指引指的就是它）');
   assert.deepEqual(readFileSync(dest), goodBytes,
     '舊備份必須**逐位元組**完好——只比長度的話，被同長度垃圾或新狀態覆寫都抓不到');
+});
+
+test('備份｜啟動 .bak（還原指引點名的那一顆）同樣不可「先刪舊再做新」', (t) => {
+  // ⚠️ 上一題受測的是 `snapshotTo`，但**還原指引（lib/store.js:49）叫使用者改名回去的 `store.db.bak`
+  //    不是它產的**——那是 `backupOnce`（lib/store.js:275-289）自己一份 VACUUM→rename。
+  //    實測（把 backupOnce 逐字改回「先刪舊再做新」：`const bak = FILE + '.bak';
+  //    if (existsSync(bak)) rmSync(bak); d.exec(VACUUM INTO bak);`＝拿掉 .tmp、原子替換與失敗清理）：
+  //    **本檔七題全綠、`npm test` 1494 題全綠**——在這一題之前，使用者唯一的自救檔案沒有任何考題守著。
+  // ⚠️ 情境造法（承上一題，但長度上限改用 `probeMaxVacuumNameLen` 功能性探測）：
+  //    `STORE_FILE` 的檔名長度剛好等於「VACUUM 寫得出來的上限 V」⇒ 主庫本身開得起來
+  //   （WAL 只多 `-wal`/`-shm` 4 字元），但 `.bak`（V+4）與 `.bak.tmp`（V+8）都超過 V ⇒ VACUUM 必定失敗。
+  //    正確實作：失敗發生在寫 `.tmp` 這一步，舊 `.bak` 一個位元組都沒動。
+  //    「先刪舊再做新」：舊 `.bak` 先被 `rmSync` 刪掉 → `VACUUM INTO bak` **先建出 0-byte 的 bak** 再失敗
+  //    ⇒ 使用者到 data/ 看到 `store.db.bak` **還在**（existsSync 為 true！），改名回去卻是一顆空檔。
+  //    所以判準必須是**逐位元組比對**，光看「檔案還在不在」正好是這個病最會騙人的地方。
+  // ⚠️ 隔離：`backupOnce` 未 export、只在 `open()` 裡跑、每個行程只跑一次（`backedUp` 旗標），
+  //    本檔前面的題目早就把它跑掉了 ⇒ 必須另開子行程（同本檔其他兩題）。
+  const dir = mkdtempSync(join(tmpdir(), 'finance-startbak-'));
+  TRASH.push(dir);
+  const V = probeMaxVacuumNameLen(dir);
+  if (V < 32 || V > 1000) {
+    // 靜靜通過比沒有考題更糟（專案鐵則）：造不出這種長度時大聲跳過。
+    const why = `本題需要「主庫檔名合法、再加 .bak 就 VACUUM 不出去」的長度；`
+      + `此資料夾探測到的 VACUUM 檔名上限＝${V || '探不到（1 字元寫不出，或 4096 字元仍可寫）'}，造不出這種長度`;
+    console.warn(`[skip] 備份｜啟動 .bak 原子替換題：${why}`);
+    t.skip(why);
+    return;
+  }
+  const target = join(dir, 'b'.repeat(V));     // 子行程的 STORE_FILE
+  const bak = target + '.bak';                 // V+4：fs 放得下（copyFileSync 沒有那 8 字元的保留），但 VACUUM 開不了
+  store.save({ ...store.emptyDb(), history: [{ id: 'm1', month: '2026-07', amount: 42 }] });
+  const seed = join(dir, 'seed.bak');
+  store.snapshotTo(seed);                      // 先用短路徑做一份合法備份
+  copyFileSync(seed, bak);                     // 放到長檔名位置＝「上一次的好備份」
+  const goodBytes = readFileSync(bak);
+  assert.ok(goodBytes.byteLength > 0, '前置：好備份要真的有內容，否則本題會空轉');
+
+  // 子行程自己攔 console.warn：要證明 backupOnce **真的跑了而且真的失敗**，
+  // 否則哪天它改成寫別的路徑（＝還原指引失效），本題會因為「舊 .bak 沒被動到」而靜靜通過。
+  const script = "const warns = [];"
+    + " const ow = console.warn; console.warn = (...a) => warns.push(a.map(String).join(' '));"
+    + " const s = await import('./lib/store.js');"
+    + " s.load();"                              // load → open → backupOnce
+    + " console.warn = ow;"
+    + " console.log('OPENED');"
+    + " console.log('WARN:' + JSON.stringify(warns.join('|')));";
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: target },
+  });
+  assert.match(out, /OPENED/,
+    '前置：主庫本身必須開得起來（開不起來就代表長度算錯，backupOnce 壓根沒跑到、本題會空轉）');
+  assert.match(out, /WARN:.*啟動備份/,
+    '前置：backupOnce 必須真的跑到並失敗（沒有這行＝它寫去了別的路徑，那還原指引本身就失效了）');
+  assert.ok(existsSync(bak), '這一次備份失敗，上一顆好備份必須還在（還原指引叫使用者改名回去的就是它）');
+  assert.deepEqual(readFileSync(bak), goodBytes,
+    '啟動 .bak 必須**逐位元組**完好——「先刪舊再做新」會留下 0-byte 的同名檔，'
+    + '檔案「還在」但內容全沒了，使用者照指引改名回去只會得到一顆空資料庫');
 });
 
 test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備份、還原到它會失敗）', () => {
@@ -308,10 +427,18 @@ test('開啟資料庫｜檔案損毀時**每一次**呼叫都要給「還原指�
   // ⚠️ 考題設計沿革（每一版都被實際繞法抓到一次「弄壞卻全綠」）：
   //    v1 是空包彈：關鍵判準**不是「有沒有丟錯」而是「有沒有還原指引」**。第一版用「SQLite 檔頭＋垃圾」，
   //       那種檔連 CREATE TABLE 都失敗 ⇒ 守衛拿掉後照樣從 open() 的 catch 丟出帶指引的訊息，突變全綠。
-  //       這一版刻意造「**開得起來、schema 也在、只有中段資料頁壞掉**」的檔：
-  //         有守衛 → quick_check 當場擋下、給指引；
-  //         沒守衛 → open() 順利返回，等到 load() 真的讀資料才炸，訊息是
-  //                  「database disk image is malformed」＝使用者完全不知道該怎麼自救（本題轉紅）。
+  //       這一版刻意造「**開得起來、schema 也在、只有中段資料頁壞掉**」的檔。實測兩邊（拿掉 lib/store.js:42-43
+  //       的 `PRAGMA quick_check` 兩行當突變）：
+  //         有守衛 → quick_check 在 open() 當場擋下，丟出 `quick_check: *** in database main *** / Tree 2 page 5:
+  //                  btreeInitPage() returns error code 11…` 後面接還原指引。
+  //         沒守衛 → **load() 根本不炸**：三行輸出全是 `NO_THROW`。更糟的是 migrateIfNeeded 看不到 settings 鍵，
+  //                  把 data/seed.json 的示範資料**寫進那顆損毀的庫**（子行程印出「三層重構搬家完成：11 筆交易…」），
+  //                  之後 save() 也照樣寫得進去——使用者拿到一本混了 demo 帳的損毀庫，畫面一切正常。
+  //         ⇒ 本題轉紅的是**第一條 `doesNotMatch(NO_THROW)`**。
+  //    ⚠️ r5 訂正（#410 Low）：原註解寫「沒守衛 → open() 順利返回，等到 load() 真的讀資料才炸，訊息是
+  //       database disk image is malformed」是**沒實測、想當然爾**——malformed 只出現在啟動備份與
+  //       pre-ledger 備份的 console.warn 裡（VACUUM 要掃全庫才踩到壞頁），load() 那幾條 kv 查詢沒踩到。
+  //       題目照樣轉紅，但轉紅機制與註解說的不是同一回事，屬本 PR r3/r4 已修過兩次的同一種失真。
   //    v2 只呼叫**一次**入口（Codex #410 r4 抓到）：拿掉 lib/store.js catch 裡的 `db = null` 重置
   //       ⇒ 第一次照樣被擋，**第二次起** open() 看到 `db` 非空直接放行、load() 回**空資料庫**、
   //       接著 save() 還寫得進那顆損毀檔——正是 store.js 註解自己點名的「設計明文禁止的結局」，
