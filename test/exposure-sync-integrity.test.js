@@ -14,13 +14,13 @@
 //   ① `COMPOSITION` 穿透表（`lib/derive.js` ↔ `public/modules/portfolio-exposure.js`）——
 //      逐鍵比對＋動態探針＋非正規形，能守到什麼／守不到什麼見下方 `SYMBOLS` 的 docblock。
 //   ② 負債型別白名單 `LIABILITY_TYPES`（同兩檔）——前端由 `fxExposure` 那題守、後端由
-//      `buildSummary` 那題守。⚠️ 劃界：兩題釘的都是「自己那一邊的那四個成員」，
-//      **單邊新增第五個型別兩邊都不會紅**（原因與封死辦法寫在後端那題的註解裡）。
+//      `buildSummary` 那題守；那兩題各釘「自己那一邊的四個成員」，**單邊新增第五個型別**
+//      （後端多收 'carloan'、前端沒抄）由後面「成員必須一模一樣」＋「動態探針」兩題守（#409 r7）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE } from '../public/modules/portfolio-exposure.js';
-import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE } from '../lib/derive.js';
+import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE, LIABILITY_TYPES as FE_LIABILITY } from '../public/modules/portfolio-exposure.js';
+import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE, LIABILITY_TYPES as BE_LIABILITY } from '../lib/derive.js';
 
 /**
  * 代號清單＝**直接從 `compOf` 真正使用的那張表取鍵**（兩邊都 export 表本身）。
@@ -229,10 +229,10 @@ test('淨資產｜四種負債型別的正數餘額在後端也要算成負債�
   //    ——淨資產與幣別曝險表方向相反，而全套 1496 題照樣全綠。
   // ⚠️ 餘額為什麼一定要填**正數**：後端的判斷是「型別在白名單 || 餘額<0」，負數餘額走的是後半段，
   //    白名單被清空也照樣綠——`test/derive.test.js` 既有那題用的就是 balance:-300，走不到白名單。
-  // ⚠️ 劃界（這兩題合起來仍**擋不住**什麼）：兩題各自釘死的是「自己那一邊的這四個成員」，
-  //    所以「單邊**新增**第五個型別」（例如後端多收 'carloan'、前端沒抄）**兩邊都不會紅**。
-  //    列舉式清單補不完，真要封死得把兩份判準收斂成單一共用來源（與 COMPOSITION 同一個結構性問題，
-  //    ＝改正式資料流，非本支範圍）。
+  // ⚠️ 劃界（這兩題各自的界線）：這兩題釘死的都只是「自己那一邊的這四個成員」，
+  //    所以「單邊**新增**第五個型別」（例如後端多收 'carloan'、前端沒抄）在**這兩題**不會紅——
+  //    那顆突變由下面「兩份白名單成員必須一模一樣」與「動態探針」兩題守（作法與 COMPOSITION 同一招：
+  //    兩邊 export 正式判準本身＋比對集合＋動態探針，#409 r7 補上）。
   for (const type of ['loan', 'liability', 'mortgage', 'creditcard']) {
     const db = /** @type {any} */ ({
       settings: { usdTwd: 1 }, transactions: [], subscriptions: [], holdings: [],
@@ -251,6 +251,57 @@ test('淨資產｜四種負債型別的正數餘額在後端也要算成負債�
     accounts: [{ id: 'a2', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 50000 }],
   });
   assert.equal(buildSummary(cash).netWorth, 50000, '現金帳戶要照樣算成正的資產');
+});
+
+test('負債白名單｜兩份 LIABILITY_TYPES 的成員必須一模一樣（單邊新增第五個型別要紅）', () => {
+  // ⚠️ 這一題補的是 #409 r6 留下的洞：上面兩題各釘各的四個成員，
+  //    「單邊**新增**」（後端多收 'carloan'、前端沒抄）兩邊都不會紅，全套 1498 題靜靜全綠（實測）。
+  //    那顆突變的實害：房貸型的新型別在後端算負債（淨資產 −），前端 fxExposure 不認得 ⇒ 算成 + 現金曝險，
+  //    兩張表方向相反而沒有紅燈——與 COMPOSITION 走散是同一個病。
+  //    作法也與 COMPOSITION 同一招：兩邊 export 正式判準本身（不是投影陣列），考題比對集合。
+  //    界線：這裡只證明「兩份 export 的成員相同」，不證明它們就是正式程式讀的那兩個物件——
+  //    物件身分由下一題的動態探針守。
+  assert.deepEqual([...BE_LIABILITY].sort(), [...FE_LIABILITY].sort(),
+    '後端 lib/derive.js 與前端 public/modules/portfolio-exposure.js 的 LIABILITY_TYPES 走散了——'
+    + '這是正式程式自己標明「改其一要改兩處」的同步點，只改一邊會讓淨資產與幣別曝險表方向相反');
+  // 反面：白名單不可以被整個清空也綠（空集合彼此相等）。
+  assert.ok(BE_LIABILITY.size >= 4, '白名單被清空／縮編時上面那句相等就成了空話');
+});
+
+test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型別，正式程式必須立刻當成負債（物件身分）', () => {
+  // ⚠️ 專治「export 一份複本、正式程式讀另一份」的繞法（COMPOSITION 那邊 #409 r4 已踩過一次）：
+  //    成員比對題對複本照樣綠，探針題才會紅（探針型別只寫進 export 的 Set，讀私表的那邊不認得）。
+  //    界線：這證明的是「export 的 Set 在 fxExposure／computeAssets 的讀取路徑上」，
+  //    不證明「正式程式沒有在這兩個 Set 之外多認得別的型別」（另一份兜底判斷、正則比對等抓不到）。
+  const PROBE = '__PROBE_NOT_A_REAL_ACCOUNT_TYPE__';
+  const beBefore = [...BE_LIABILITY].sort();
+  const feBefore = [...FE_LIABILITY].sort();
+  assert.ok(!BE_LIABILITY.has(PROBE) && !FE_LIABILITY.has(PROBE), '探針型別不該事先存在（測試自己髒了）');
+  /** @param {number} balance */
+  const beNetWorth = (balance) => buildSummary(/** @type {any} */ ({
+    settings: { usdTwd: 1 }, transactions: [], subscriptions: [], holdings: [],
+    accounts: [{ id: 'p1', name: '探針帳戶', type: PROBE, currency: 'TWD', balance }],
+  })).netWorth;
+  /** @param {number} balance */
+  const feCashTwd = (balance) => fxExposure([], [{ type: PROBE, currency: 'TWD', balance }], {}).TWD.cashTwd;
+  try {
+    BE_LIABILITY.add(PROBE);
+    FE_LIABILITY.add(PROBE);
+    assert.equal(beNetWorth(100), -100,
+      '往後端 export 的 LIABILITY_TYPES 加型別後 computeAssets 沒當成負債 ⇒ 它讀的是另一份 Set（複本），'
+      + '成員比對題會整個落空——export 的必須是正式程式真正讀的那個物件');
+    assert.equal(feCashTwd(100), -100,
+      '往前端 export 的 LIABILITY_TYPES 加型別後 fxExposure 沒翻成負的現金曝險 ⇒ 同上，它讀的是另一份 Set');
+  } finally {
+    BE_LIABILITY.delete(PROBE);
+    FE_LIABILITY.delete(PROBE);
+  }
+  assert.deepEqual([...BE_LIABILITY].sort(), beBefore, '後端探針沒還原乾淨——後面的考題會被污染');
+  assert.deepEqual([...FE_LIABILITY].sort(), feBefore, '前端探針沒還原乾淨——後面的考題會被污染');
+  // 反面：還原之後探針型別要退回「普通帳戶」（正數餘額＝資產／正的現金曝險），
+  // 否則上面兩個 −100 可能只是「什麼型別都算負債」而不是白名單真的生效。
+  assert.equal(beNetWorth(100), 100, '探針還原後，未知型別的正數餘額應該退回資產');
+  assert.equal(feCashTwd(100), 100, '探針還原後，未知型別的正數餘額應該退回正的現金曝險');
 });
 
 test('國家上限｜「其他」是殘差桶不是國家：不可冒出假的「其他超過國家上限」提醒', () => {

@@ -84,6 +84,11 @@ export function regionExposure(rows) {
   return regions;
 }
 
+// ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）。
+// 放在模組層並 export，是為了讓 test/exposure-sync-integrity.test.js 直接比對兩份成員
+// （原本是 fxExposure 的函式內區域常數，考題碰不到 ⇒ 只能各釘各的四個成員，單邊新增第五個型別兩邊都不會紅）。
+export const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
+
 /**
  * 幣別底層曝險：00719B/00720B 歸美元、黃金獨立一列、現金含負融資。
  * @param {ExposureRow[]} rows
@@ -108,8 +113,6 @@ export function fxExposure(rows, accounts, fx) {
     else if (type === 'gold') c.goldTwd += r.valueTwd;
     else c.stockTwd += r.valueTwd;
   }
-  // ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）
-  const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);
   for (const a of accounts || []) {
     let bal = Number(a.balance || 0);
     if (!bal) continue;
