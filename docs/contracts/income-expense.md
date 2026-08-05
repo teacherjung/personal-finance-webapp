@@ -134,7 +134,7 @@
 
 **改這裡**：**帳戶 `accountNo`（完整帳號，PII）與餘額匯入**
 
-**記得同步這裡**：⚠️**帳戶 `accountNo`（完整帳號，PII）**：前端可填、`secret-fields.js projectAccount` **GET 剝除只回 `accountNoSet`＋`accountNoLast4`**（同 pdfPassword「機密不送瀏覽器」；完整帳號只在伺服器端做末碼比對）。`balanceAsOf`＝餘額現值參考日（服務層寫、非 CRUD）。銀行對帳單匯入＝`lib/services/bank-import.js`：**末碼＋幣別比對**既有帳戶（`accountNo` 純數字 endsWith 帳單末碼，完整與遮罩都適用）→ 有就更新（**現值參考日較新才覆蓋**）、沒有就自動建（`type:'cash'`/`class:'現金'`/**不設 ibCashCur** 免污染投組現金與槓桿；accountNo 存遮罩帳號供日後比對）。純邏輯 `applyBalancesToDb`/`previewBalancesForDb` 與解析分離、可直測。密碼＝身分證字號只在記憶體傳給 pdfjs、絕不落檔、絕不入 log。上傳 UI 在收支頁（`cashflow.js openBankUpload`→預覽→確認）。
+**記得同步這裡**：⚠️**帳戶 `accountNo`（完整帳號，PII）**：前端可填、`secret-fields.js projectAccount` **GET 剝除只回 `accountNoSet`＋`accountNoLast4`**（同 pdfPassword「機密不送瀏覽器」；完整帳號只在伺服器端做末碼比對）。⚠️ **`accountNoLast4` 的消費者只有顯示層**（`public/modules/assets.js` 的末碼欄與編輯窗提示，全 repo 就這兩處）——下面的 `matchAccount` 與 `ownSuffixSet` 讀的都是**伺服器端的完整 `accountNo`**，信用卡帳單末碼更是 `lib/statement.js` 的 `extractLastFour` 另抽的一份資料。**別把這一格算錯說成「會配錯帳戶／掛到別張卡」**（2026-08-05 複審抓到的失真）：它的傷害是畫面上的末碼與帳單對不起來，而完整帳號依設計永遠不送到瀏覽器＝末碼是使用者辨識帳戶的唯一線索。取法＝遮罩帳號取「星號後的可見末碼」（**容忍星號與數字之間的空白／減號**）、可見段超過四碼取**最後**四碼；無星號才取整串數字尾四碼。**考題檔名寫在 `lib/secret-fields.js` 的 `projectAccount` 註解裡**（helper 判準一顆＋POST／GET／PUT `/api/accounts` 與 GET `/api/db` 四條接線一顆；不在這裡點名是因為拆分護欄要求契約內文提到的檔案都要進 manifest，那份清單不歸本支動）。`balanceAsOf`＝餘額現值參考日（服務層寫、非 CRUD）。銀行對帳單匯入＝`lib/services/bank-import.js`：**末碼＋幣別比對**既有帳戶（`accountNo` 純數字 endsWith 帳單末碼，完整與遮罩都適用）→ 有就更新（**現值參考日較新才覆蓋**）、沒有就自動建（`type:'cash'`/`class:'現金'`/**不設 ibCashCur** 免污染投組現金與槓桿；accountNo 存遮罩帳號供日後比對）。純邏輯 `applyBalancesToDb`/`previewBalancesForDb` 與解析分離、可直測。密碼＝身分證字號只在記憶體傳給 pdfjs、絕不落檔、絕不入 log。上傳 UI 在收支頁（`cashflow.js openBankUpload`→預覽→確認）。
 
 ## 帳單原文取法 origFromStmtRef
 

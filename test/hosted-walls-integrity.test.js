@@ -28,8 +28,9 @@
 //   ④body 上限的接線**只驗身分牆前那一道 parser**（`/api/auth` 前綴掛載的四條 POST 逐條驗）。
 //     帳單（15MB）與備份（50MB）兩個入口只在本檔被當「比較基準」用（證明登入入口嚴格更小），
 //     它們自己的接線沒有逐條 HTTP 驗收。
-//   ⑤`projectAccount` 的「星號後末碼」只支援**星號緊接數字**；`1234**** 56`（星號後有空白或減號）
-//     現行會回 `3456` ＝一個假末碼。本檔用考題把這個現況**記錄下來**，沒有修（見該題註解）。
+//   ⑤`projectAccount` 的「星號後末碼」在可見末碼**後面還接非數字尾綴**時（`900100****3301-01`）
+//     判準仍不成立、退回整串數字尾 4（回 `0101`）。真實資料沒出現過這種寫法，本檔沒補、也沒有考題釘。
+//     （星號後有空白或減號那兩種——`1234**** 56`／`1234****-56`——**已於 r3 修掉**，見下方 ⓓ。）
 //   ⑥`extractLastFour` 本次只補了**第一條規則**的尾端邊界；第二、三條規則的邊界維持現狀。
 //   ⑦CSRF 牆的接線逐條驗 **POST／PUT／DELETE／PATCH**（本站真的有變更路由的四種方法）。
 //     guard 刻意豁免的 GET/HEAD/OPTIONS **不**在驗收範圍——那是設計（讀取請求不需要 CSRF 牆），
@@ -51,6 +52,26 @@
 //      192）＝未登入就打得到。實測讓 login 保持 32KB、其餘 `/api/auth` 放寬到 50mb，全套全綠——
 //      檔頭點名的病灶「未登入者可反覆丟大檔撐爆記憶體」只是換一條同族端點就原樣重現。
 //      ⇒ 413 探針改成對四條逐條跑。
+//
+// ⚠️ **r3 複審再打回來一次——第三次同一個病型，所以要寫得更難忘**（Codex 2026-08-05 實測）：
+//   ⓒ 帳號末碼題**還是只驗 helper**（直接呼叫 `projectAccount`），沒有走使用者真正走的那條路。
+//      Codex 在隔離副本**保留 helper 原封不動**，只讓 `lib/routes/crud.js` 的投影另寫一句
+//      「整串數字尾四碼」：本檔 10/10 綠、`server.test.js` 134/134 綠、`hosted-secrets.test.js`
+//      全綠，而真 HTTP 打 `/api/accounts` 送 `1234****56` 回的是 `accountNoLast4:"3456"`。
+//      ＝**跟 r1 的兩個 High 同一個繞法**（中間層正確、使用者路徑另寫一套），只是換到第三格。
+//      ⇒ 帳號投影也改用真 HTTP 驗收，而且**三條投影接線逐條打**：
+//        `crud.js` 的 POST／GET／PUT `/api/accounts` ＋ `core.js` 的 GET `/api/db`。
+//      📌 為什麼既有考題擋不住：`server.test.js` 那條 HTTP 題用的是**無星號的完整帳號**
+//        （`9001001234567890` → `7890`），連遮罩分支都走不到，「整串數字尾四碼」在它身上同值。
+//        ⇒ **接線題的 fixture 必須挑「helper 對、另寫一套就不同」的值**，否則走了真 HTTP 也白走。
+//   ⓓ 帳號末碼的**危害說明是編的**：原本寫「猜錯末碼會讓銀行匯入配錯帳戶、甚至掛到別張卡」。
+//      查證後不成立——`lib/services/bank-import.js` 的 `matchAccount` 與 `ownSuffixSet` 讀的是
+//      **伺服器端的完整 `accountNo`**，`lib/statement.js` 的 `extractLastFour`（卡片末碼）更是
+//      另一份資料；`accountNoLast4` 全 repo 只有 `public/modules/assets.js` 兩處顯示在用。
+//      連帶地，「分隔符那題」把錯誤現況（`1234**** 56` → `3456`）鎖成紅燈的理由也是假的
+//      （寫著「改判準等於改銀行配對行為」）。⇒ 本輪**直接修掉投影**（`lib/secret-fields.js` 的
+//      `/\*+[\s-]*(\d+)\s*$/`），考題改成釘正確值；危害改寫成事實：**顯示層的末碼與帳單對不起來，
+//      使用者失去辨識帳戶的唯一線索**（完整帳號依設計永遠不送到瀏覽器）。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -307,40 +328,84 @@ test('Origin 白名單（接線）｜白名單畸形時，路上那道牆也要�
 // 三、機密投影：末四碼不可猜錯（lib/secret-fields.js／lib/statement.js）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('帳號投影｜「星號緊接數字」的遮罩帳號要取星號後那一段，不可拿整串數字的尾四碼', () => {
-  // ⚠️ 註解寫明：「取星號後的可見末碼，不是整串數字尾 4（那會變 5162 之類的假末碼）」。
-  //    猜錯末碼的後果＝銀行對帳單匯入時比對到錯的帳戶，或把帳單掛到別張卡。
-  // ⚠️ **題名限定「星號緊接數字」是誠實劃界**（r1 Low④）：正式碼的判準是 `/\*+(\d+)\s*$/`，
-  //    星號與數字之間**一有分隔符就整條不成立**，見下一題記錄的現況。
-  assert.equal(projectAccount({ id: 'a1', accountNo: '900100****3301' }).accountNoLast4, '3301',
-    '遮罩帳號要取星號後那一段（不可把前綴的數字也算進來）');
-  assert.equal(projectAccount({ id: 'a2', accountNo: '1234****56' }).accountNoLast4, '56',
-    '星號後只有兩碼時就只回兩碼——回 3456 是把前綴的數字拿來湊，那是一個不存在的末碼');
-  assert.equal(projectAccount({ id: 'a3', accountNo: '12345678901234' }).accountNoLast4, '1234',
-    '完整帳號（無星號）才取純數字尾四碼');
-  // ⚠️ 這顆是**判準的「取尾」性質**專用的（自審 minor①）：上面兩顆的可見尾段剛好是 4 碼與 2 碼，
-  //    `slice(-4)` 與 `slice(0,4)` 在它們身上**完全同值**——實測把正式碼改成 `maskedTail[1].slice(0, 4)`
-  //    全套 1497 題照樣全綠，而受害行為是真的（可見段超過四碼時會回**前**四碼＝又一個假末碼）。
-  //    全 repo 另外三處 projectAccount 考題（`test/server.test.js`、`test/hosted-secrets.test.js` ×2）
-  //    用的都是無星號的完整帳號，連這條遮罩分支都走不到。⇒ 補一顆可見尾段 6 碼的把兩者分開。
-  assert.equal(projectAccount({ id: 'c1', accountNo: '9001****123456' }).accountNoLast4, '3456',
-    '星號後可見六碼時要回**最後**四碼 3456；回 1234（可見段的前四碼）＝換一個維度的假末碼');
+/**
+ * 帳號末碼的驗收樣本——**每一顆都挑成「helper 對、另寫一套就不同」的形狀**（r3 病灶ⓒ 的教訓：
+ * `server.test.js` 那條既有 HTTP 題用無星號的 `9001001234567890`，遮罩分支根本走不到，
+ * 於是「整串數字尾四碼」這顆繞法在它身上完全同值 ⇒ 走了真 HTTP 也白走）。
+ * `wholeDigitsTail4` ＝把正式碼換成「整串數字尾四碼」時會回的值；`visibleHead4` ＝換成
+ * `slice(0, 4)` 時會回的值。兩欄只是給訊息用的對照，斷言一律比 `last4`。
+ */
+const LAST4_FIXTURES = [
+  { accountNo: '900100****3301', last4: '3301', wholeDigitsTail4: '3301', visibleHead4: '3301', why: '遮罩帳號要取星號後那一段（不可把前綴的數字也算進來）' },
+  { accountNo: '1234****56', last4: '56', wholeDigitsTail4: '3456', visibleHead4: '56', why: '星號後只有兩碼時就只回兩碼——回 3456 是拿遮罩掉的前綴湊出來的假末碼' },
+  { accountNo: '9001****123456', last4: '3456', wholeDigitsTail4: '3456', visibleHead4: '1234', why: '可見段超過四碼時要回**最後**四碼；回 1234（可見段前四碼）＝換一個維度的假末碼' },
+  { accountNo: '1234**** 56', last4: '56', wholeDigitsTail4: '3456', visibleHead4: '56', why: '星號與可見末碼之間有空白（r3 修好的那一格）' },
+  { accountNo: '1234****-56', last4: '56', wholeDigitsTail4: '3456', visibleHead4: '56', why: '星號與可見末碼之間有減號，同理' },
+  { accountNo: '12345678901234', last4: '1234', wholeDigitsTail4: '1234', visibleHead4: '1234', why: '完整帳號（無星號）才取純數字尾四碼' },
+];
+
+test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、而且是**最後**四碼，不可拿整串數字的尾四碼', () => {
+  // ⚠️ **危害要照事實寫**（r3 病灶ⓓ）：末碼算錯**不會**造成銀行匯入配錯帳戶、也不會掛到別張卡——
+  //    `lib/services/bank-import.js` 的 `matchAccount` 與 `ownSuffixSet` 讀的都是伺服器端的完整
+  //    `accountNo`，卡片末碼是 `lib/statement.js` 的 `extractLastFour` 從帳單文字另抽的一份資料。
+  //    `accountNoLast4` 全 repo 只有 `public/modules/assets.js` 兩處在用（帳戶表末碼欄、編輯窗的
+  //    「已設定（末四碼 ⋯）」提示）。真正的傷害是**顯示層說謊**：完整帳號依設計永遠不送到瀏覽器，
+  //    末碼就是使用者辨識「這是哪個帳戶」的唯一線索，它與帳單對不起來＝人只能靠猜，
+  //    而人照著假末碼去「訂正」帳號，才會真的動到伺服器端那個會配對的欄位。
+  // ⚠️ 這一題**只管 helper 的判準**；「使用者真正走的那幾條路有沒有用這個判準」是下一題的事（r3ⓒ）。
+  for (const f of LAST4_FIXTURES) {
+    assert.equal(projectAccount({ id: 'h', accountNo: f.accountNo }).accountNoLast4, f.last4,
+      `${f.accountNo} 的末碼應為 ${f.last4}：${f.why}`);
+  }
   const p = projectAccount({ id: 'a4', accountNo: '900100****3301' });
   assert.equal(/** @type {any} */ (p).accountNo, undefined, '完整帳號絕不可送到瀏覽器');
   assert.equal(p.accountNoSet, true, '要用布林告訴前端「有設過」');
 });
 
-test('帳號投影｜**已知缺口**：星號與數字之間有分隔符時會退回「整串數字尾四碼」＝一個假末碼', () => {
-  // 這一題不是在宣稱正確，是把**現況記錄下來**（r1 Low④ 指出上一題的宣稱比實作大）。
-  // 正式碼 `lib/secret-fields.js` 的 `/\*+(\d+)\s*$/` 要求數字**緊接**星號；
-  // `1234**** 56`（空白）與 `1234****-56`（減號）都不成立，於是落到 `raw.replace(/\D/g,'').slice(-4)`。
-  // ⇒ 回的是 `3456`：前綴 `1234` 的後兩碼＋可見的 `56`，**一個銀行對帳單上不存在的末碼**。
-  // 為什麼先記錄不修：真實資料裡的遮罩格式還沒盤點過（改判準等於改銀行對帳單的配對行為），
-  // 而這一格只影響顯示與配對提示、不影響金額。**要修的時候，這一題就是那顆會轉紅的燈。**
-  assert.equal(projectAccount({ id: 'b1', accountNo: '1234**** 56' }).accountNoLast4, '3456',
-    '現況：星號後有空白＝判準不成立，退回整串數字尾四碼（假末碼）');
-  assert.equal(projectAccount({ id: 'b2', accountNo: '1234****-56' }).accountNoLast4, '3456',
-    '現況：星號後有減號同理');
+/** 登入後的變更／讀取請求（帶白名單 Origin 過 CSRF 牆、帶 session 過身分牆）。 @param {string} method @param {string} path @param {any} [body] */
+const authed = (method, path, body) => fetch(`${base}${path}`, {
+  method,
+  headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: SESSION },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
+
+test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/db` 四條使用者路徑都真的走 projectAccount', async () => {
+  // ⚠️ **這一題才是承重的那一題**（r3 病灶ⓒ）：Codex 保留 `lib/secret-fields.js` 原封不動，
+  //    只讓 `lib/routes/crud.js` 的投影另寫一句「整串數字尾四碼」⇒ 上一題與既有三處 projectAccount
+  //    考題全綠，真 HTTP 打 `/api/accounts` 卻回 `accountNoLast4:"3456"`。
+  //    ＝r1 兩個 High 的同一個繞法（中間層正確、使用者路徑另寫一套）換到第三格。
+  // ⚠️ 投影的接線點有**四個**，逐條打：
+  //    ①`crud.js:38` 的 `project()` 被 POST／GET／PUT `/api/{col}` 三處呼叫（DELETE 只回 `{ok:true}`，
+  //      沒有投影，未列）②`core.js:20` 的 `projectDb()`（資產頁真正讀的那條）。
+  //    只驗其中一條＝另外幾條可以各自另寫一套。
+  for (const f of LAST4_FIXTURES) {
+    const posted = await authed('POST', '/api/accounts',
+      { name: `末碼接線 ${f.accountNo}`, type: 'cash', currency: 'TWD', balance: 0, accountNo: f.accountNo });
+    assert.equal(posted.status, 200, `建立帳戶應回 200，實得 ${posted.status}`);
+    const created = await posted.json();
+    /** 一條使用者路徑回來的帳戶物件要同時滿足：不外洩完整帳號＋末碼是真的。 @param {string} via @param {any} got */
+    const check = (via, got) => {
+      assert.ok(got, `${via} 找不到剛建立的帳戶（id=${created.id}）——這條路徑根本沒回這筆資料，下面的斷言會變成空轉`);
+      assert.equal('accountNo' in got, false,
+        `${via} 竟然把完整帳號送到瀏覽器了（${f.accountNo}）——投影在這條路上沒接上`);
+      assert.equal(got.accountNoSet, true, `${via} 要用布林告訴前端「有設過」`);
+      assert.equal(got.accountNoLast4, f.last4,
+        `${via} 對 ${f.accountNo} 回了 ${got.accountNoLast4}，應為 ${f.last4}`
+        + `（${f.wholeDigitsTail4 !== f.last4 ? `回 ${f.wholeDigitsTail4} ＝這條路自己寫了「整串數字尾四碼」；` : ''}`
+        + `${f.visibleHead4 !== f.last4 ? `回 ${f.visibleHead4} ＝自己寫了「可見段前四碼」；` : ''}`
+        + '兩種都是使用者路徑繞過 lib/secret-fields.js 另寫一套判準)');
+    };
+    check('POST /api/accounts 的回應', created);
+    const list = await (await authed('GET', '/api/accounts')).json();
+    check('GET /api/accounts', list.find((/** @type {any} */ a) => a.id === created.id));
+    const db = await (await authed('GET', '/api/db')).json();
+    check('GET /api/db（資產頁走的那條）', (db.accounts || []).find((/** @type {any} */ a) => a.id === created.id));
+    // PUT 只改名字、不送 accountNo（＝「留空＝不變更」的真實用法）：存著的帳號不可以被吐回來，
+    // 末碼也要照樣是真的（`crud.js` 的 PUT 分支自己呼叫一次 `project()`）。
+    const put = await authed('PUT', `/api/accounts/${created.id}`, { name: '改個名字' });
+    assert.equal(put.status, 200, `更新帳戶應回 200，實得 ${put.status}`);
+    check('PUT /api/accounts/:id 的回應', await put.json());
+  }
 });
 
 test('帳單末四碼｜遮罩後接超過四碼時不可回「前」四碼（那是一個猜出來的假末碼）', () => {
