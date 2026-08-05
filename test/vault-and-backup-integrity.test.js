@@ -266,11 +266,16 @@ test('收入分類管理｜同一句承諾，收入樹也要有自己的備份�
 //         ——本節除了「啟動 .bak」以外的三題守著。
 //      ② `backupOnce`（lib/store.js:275-289）：啟動 `.bak`，**還原指引點名要改名回去的就是這一顆**
 //         ——本節「啟動 .bak」那一題守著。
-//      ③ `migrateLedgerIfNeeded`（lib/store.js:164-172）：`pre-ledger-migration.bak`。
-//      ④ `migrateSecTradesContractIfNeeded`（lib/store.js:219-227）：`pre-sec-contract.bak`。
-//    ③④ 的**失敗路徑沒有考題**（happy path 有：test/securities-migration.test.js:56 驗過備份真的產出來）：
-//    要重現得先造出「還沒搬過家、且剛好 VACUUM 失敗」的庫，而兩支都有 meta 鍵守著只跑一次；
-//    判斷投入產出不划算，列為**已知缺口**——不寫「做不到」，因為第四題那種長檔名手法同樣適用。
+//      ③ `migrateLedgerIfNeeded`（lib/store.js:164-172）：`pre-ledger-migration.bak`
+//         ——本節最後一題守著（happy path）。
+//      ④ `migrateSecTradesContractIfNeeded`（lib/store.js:219-227）：`pre-sec-contract.bak`
+//         ——test/securities-migration.test.js:56 守著（happy path）。
+//    ⚠️ 這句話 r5 起草時是**誇大的**（#410 r7 複驗抓到）：括號寫成「③④ happy path 都有考題」，
+//       但當時只有④有；③連一條斷言都沒有（把 lib/store.js 那整段備份刪掉，全批 1495 題無一轉紅）。
+//       r7 補上本節最後那一題，這句話才變成事實。
+//    ③④ 的**失敗路徑仍然沒有考題**：要重現得先造出「還沒搬過家、且剛好 VACUUM 失敗」的庫，
+//    而兩支都有 meta 鍵守著只跑一次；判斷投入產出不划算，列為**已知缺口**——
+//    不寫「做不到」，因為第四題那種長檔名手法同樣適用。
 //    ⚠️ 這四份重複與那句 docstring 都是產線既有狀況（非本 PR 造成，本支不改正式程式）；
 //    記在這裡是為了讓下一個人合併它們時，知道①②有安全網、③④沒有。
 // ─────────────────────────────────────────────────────────────────────────────
@@ -491,6 +496,67 @@ test('備份｜連資料庫都開不起來時，前一次留下的 .tmp 殘骸�
     '開庫就失敗這條路上，前一次的 .tmp 殘骸也必須被清掉——'
     + '清理只寫在 renameSync 的 catch 裡的話，這顆殘骸會永遠躺在 backups/ 冒充備份');
   assert.ok(!existsSync(dest), '這一次根本沒做出備份，不該憑空出現 dest');
+});
+
+test('備份｜ledger 搬家動手前那顆 pre-ledger-migration.bak 要真的產出來，而且是「搬家之前」的狀態', () => {
+  // ⚠️ 這一題補的是本節劃界裡③自己的缺口（#410 r7）：`migrateLedgerIfNeeded`（lib/store.js:164-172）
+  //    是**第三份**獨立的 VACUUM→rename，而在這一題之前它連 happy path 都沒有任何斷言——
+  //    全 repo grep `pre-ledger-migration` 的命中，除了 lib/store.js 自己與 AGENTS.md，
+  //    其餘全是各測試檔 after() 的 rmSync 清理迴圈。複驗者實測（在 r6 之前那棵樹上，把
+  //    lib/store.js:161-172 那整段備份程式碼**整個刪掉**）：`npm test` **1495 pass / 0 fail**，無一題轉紅。
+  // ⚠️ 為什麼這顆值得一題：搬家是**一次性且不可逆**的整批改寫（補 ledger＋舊平面收入分類改歸新樹），
+  //    meta 鍵 `__ledgerMigratedAt` 一蓋下去就不會再跑第二次。判準若哪天寫歪（例如未來有人動
+  //    normalizeLedger 的對應表），使用者要回到搬家前唯一的憑據就是這顆檔——而它是 best-effort、
+  //    失敗只 console.warn，所以「有沒有真的產出來」正是最容易靜靜壞掉的地方。
+  // ⚠️ 判準必須包含**內容**：只斷言 existsSync 的話，把備份挪到 COMMIT 之後（檔案照樣產得出來，
+  //    但存的是搬家**後**的狀態＝什麼都救不回）就抓不到。所以直接開這顆 .bak 讀 kv，要求裡面那列
+  //    **還沒有 ledger**。兩種突變都實測過（本題轉紅）：
+  //      MUT1＝複驗者那招，整段備份刪掉 ⇒ existsSync 那行紅。
+  //      MUT2＝備份原封不動搬到 COMMIT 之後 ⇒ existsSync **照樣通過**，紅的是下面的內容比對。
+  // ⚠️ 隔離：`migrateLedgerIfNeeded` 未 export、只在 `open()` 裡跑、又被 meta 鍵守成一次性，
+  //    本檔前面的題目早已把它跑掉 ⇒ 必須另開子行程（寫法比照本節前兩題）。
+  const dir = mkdtempSync(join(tmpdir(), 'finance-ledgerbak-'));
+  TRASH.push(dir);
+  const target = join(dir, 'ledger.db');
+  const bak = target + '.pre-ledger-migration.bak';
+  const boot = (/** @type {string} */ tail) => execFileSync(
+    process.execPath, ['--input-type=module', '-e', "const s = await import('./lib/store.js');" + tail],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: target } });
+
+  // ① 「上一版」開機一次：把庫建起來並蓋上 __ledgerMigratedAt。
+  //    ⚠️ 這一次**本來就會產一顆** pre-ledger-migration.bak——`SEED`（lib/store.js:19）永遠指向 repo 的
+  //    `data/seed.json`（不隨 STORE_FILE 走），而那份種子的 11 筆交易都沒有 ledger ⇒ 首開就會搬一次家。
+  //    所以這裡把它刪掉：③ 斷言的那顆才能確定是③自己產的，不是首開留下來的（否則本題會空轉）。
+  boot(" s.load(); console.log('BOOTED');");
+  try { rmSync(bak); } catch { /* 種子哪天全帶 ledger 的話首開就不會產，沒有也無妨 */ }
+  assert.ok(!existsSync(bak), '前置：舊備份要先真的清掉，否則③ 那顆分不出是哪一次留下的');
+
+  // ② 直接改庫模擬真實升級路徑「庫裡躺著還沒搬過家的舊列」：塞一列沒有 ledger 的舊交易＋清掉一次性旗標
+  {
+    const d = new DatabaseSync(target);
+    d.prepare('INSERT INTO kv(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
+      .run('transactions', JSON.stringify([{ id: 'old1', date: '2026-06-01', amount: 100,
+        category: '飲食', subcategory: '餐廳', type: 'expense', source: 'stmt' }]));   // 無 ledger＝搬家前形狀
+    d.prepare("DELETE FROM kv WHERE key='__ledgerMigratedAt'").run();
+    d.close();
+  }
+
+  // ③ 「新版開機」：migrateLedgerIfNeeded 應先備份、再補 ledger
+  const out = boot(" console.log(JSON.stringify(s.load().transactions.map(t => t.ledger)));");
+  assert.deepEqual(JSON.parse(out.trim().split('\n').pop() || '[]'), ['card'],
+    '前置：搬家必須真的跑了（source:stmt→card）——沒跑的話後面「有沒有備份」問了也是白問');
+  assert.ok(existsSync(bak),
+    '不可逆的整批搬家動手前，那顆 pre-ledger-migration.bak 必須真的產出來（lib/store.js:164-172）');
+
+  const d = new DatabaseSync(bak);
+  try {
+    const row = /** @type {any} */ (d.prepare("SELECT data FROM kv WHERE key='transactions'").get());
+    assert.ok(row, '備份裡要有 transactions（VACUUM 出來的是完整快照，不是空殼）');
+    const rows = JSON.parse(row.data);
+    assert.equal(rows.length, 1, '備份要含那一列舊交易');
+    assert.equal(rows[0].ledger, undefined,
+      '備份必須是**搬家之前**的狀態（那列還沒有 ledger）——存到搬家後的狀態等於什麼都沒救到');
+  } finally { d.close(); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
