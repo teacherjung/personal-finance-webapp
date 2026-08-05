@@ -154,6 +154,14 @@ body.stock-research-route > main {
   background: var(--card);
 }
 
+.stock-tab:first-child:not(.active) {
+  border-bottom-left-radius: 16px;
+}
+
+.stock-tab:last-child:not(.active) {
+  border-bottom-right-radius: 16px;
+}
+
 .stock-tab.active::before {
   content: "";
   position: absolute;
@@ -179,7 +187,7 @@ body.stock-research-route > main {
 .stock-tab-ear {
   display: none;
   position: absolute;
-  bottom: -2px;
+  bottom: 4px;
   width: 18px;
   height: 18px;
   pointer-events: none;
@@ -193,17 +201,17 @@ body.stock-research-route > main {
 .stock-tab-ear-left {
   left: -18px;
   background: radial-gradient(circle at 0 0,
-    transparent 0 14px,
-    var(--frame) 14px 16px,
-    var(--card) 16px);
+    transparent 0 16px,
+    var(--frame) 16px 18px,
+    var(--card) 18px);
 }
 
 .stock-tab-ear-right {
   right: -18px;
   background: radial-gradient(circle at 100% 0,
-    transparent 0 14px,
-    var(--frame) 14px 16px,
-    var(--card) 16px);
+    transparent 0 16px,
+    var(--frame) 16px 18px,
+    var(--card) 18px);
 }
 
 .stock-tab-panel {
