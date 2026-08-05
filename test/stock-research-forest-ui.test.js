@@ -141,7 +141,7 @@ test('個股研究森林工作面｜頁籤使用共用元件且保留固定圖�
 
   const sharedCss = await readFile(new URL('public/styles.css', ROOT), 'utf8');
   const accent = cssHexToken(sharedCss, '--accent');
-  for (const background of ['--card', '--card-2']) {
+  for (const background of ['--bg', '--card', '--accent-soft']) {
     assert.ok(
       contrastRatio(accent, cssHexToken(sharedCss, background)) >= 3,
       `focus outline must keep 3:1 contrast against ${background}`

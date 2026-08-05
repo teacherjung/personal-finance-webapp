@@ -415,7 +415,7 @@ test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字�
   assert.match(css, /grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
-  assert.match(tabsCss, /\.workspace-tab[\s\S]*border-radius:\s*8px/);
+  assert.match(tabsCss, /\.workspace-tab\s*\{[^}]*border-radius:\s*8px/);
   assert.match(tabsCss, /\.workspace-tabs[\s\S]*overflow-x:\s*auto/);
   assert.match(tabsCss, /@media \(max-width:\s*680px\)[\s\S]*\.workspace-tabs--compact-mobile \.workspace-tab[\s\S]*flex:\s*0 0 52px/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);

@@ -6,7 +6,6 @@
 .workspace-tabs-shell {
   --workspace-tabs-frame: var(--frame);
   --workspace-tabs-surface: var(--card);
-  --workspace-tabs-muted-surface: var(--card-2);
   --workspace-tabs-accent: var(--accent);
   --workspace-tabs-accent-soft: var(--accent-soft);
   --workspace-tabs-active-text: var(--accent-hover);
