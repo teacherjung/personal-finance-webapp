@@ -86,6 +86,8 @@ export const isLiabilityAccount = (x) => LIABILITY_TYPES.has(x?.type || '') || N
  * 帳戶表單的幣別下拉選項。**必須與 `lib/schema.js` 的 `CURRENCIES` 精確相等**（考題釘住）：
  * 枚舉有、這裡沒有的幣別根本選不到（只能靠改資料庫設上去）。
  *（#415 之前更糟：那種帳戶一被打開儲存就靜靜變成第一個選項 `TWD`、之後每次換算都用錯匯率
- *  ——機制同檔頭②，那一半現在由 `form-options.js` 擋住了。）
+ *  ——機制同檔頭②，那一半現在由 `form-options.js` 擋住了。⚠️ 幣別清單是**純字串陣列**，
+ *  撐住這句話的是 `test/form-options.test.js` 的「純字串選項也要保留現值」那題：#415 自審實測過，
+ *  只讓字串選項那一型退回舊行為，其餘考題照樣全綠——所以那一題不是裝飾，是這句話的唯一保證。）
  */
 export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];

@@ -10,21 +10,25 @@
 // 帳戶表單當時只列七個 ⇒ `liability`／`creditcard` 的帳戶打開改個名字按儲存就 PUT `type:'cash'`，
 // 50 萬負債變 50 萬資產、淨資產一次跳 100 萬。
 // 那兩個型別本身已由 `public/modules/accounts-model.js` 收成單一真相；**本檔守的是機制**——
-// 幣別、分類、卡片、週期…每一個下拉都踩同一個坑。
+// 幣別、卡別、訂閱週期…每一個「由 `openForm` 的 `options` 餵出來」的下拉都踩同一個坑。
+// ⚠️ **分類／子類下拉不在那句話裡面**：它們是 `openForm` 之後由 `onMount` 整段覆寫 innerHTML 的，
+// 走不到那條路（#415 自審抓到，當時檔頭把分類算成已修好）。那一族由本檔最後三題守，
+// 誠實劃界寫在 `public/modules/form-options.js` 檔頭。
 //
 // ## 為什麼考題打的是 `public/modules/form-options.js` 而不是 `openForm`
 //
 // `public/app.js` 模組頂層會碰 document／localStorage，node 裡 import 不進來（實測；
 // `test/xss-id-escaping.test.js` 也是因此才只能抓原始碼現場 eval）。所以「產生選項 HTML」被抽成
 // 零 DOM 純模組，考題直接 import 跑**行為級**斷言——不必用「讀原始碼文字」那種脆弱手法。
-// 唯一還得看原始碼的是最後一題（`app.js` 有沒有真的用它），它自己寫了擋得住什麼。
+// 還得看原始碼的是三題「架構｜…」（`app.js` 與三個頁面模組有沒有真的用它、餵進去的是不是現在的值），
+// 每一題自己寫了擋得住／擋不住什麼。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { selectOptionsHtml, UNLISTED_VALUE_NOTE } from '../public/modules/form-options.js';
+import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml, UNLISTED_VALUE_NOTE } from '../public/modules/form-options.js';
 import { esc } from '../public/modules/html-escape.js';
 
 // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
@@ -62,7 +66,28 @@ test('現值不在選項裡 ⇒ 必須保留它（擺最前面、帶看得懂的
   assert.equal(optionValues(html)[0], 'liability', '保留下來的現值要擺在最前面，使用者一打開就看得到');
   assert.equal(optionValues(html).length, ACCOUNT_TYPE_OPTS.length + 1, '只補一項，不可重複或吃掉原本的選項');
   assert.match(html, new RegExp(`>liability（${UNLISTED_VALUE_NOTE}）<`),
-    '保留下來的那一項要有白話提示，讓使用者知道「這是你現在的設定、它不在標準選項裡」');
+    '保留下來的那一項要有白話提示，讓使用者知道「這是你現在的設定、清單裡沒有這一項」');
+});
+
+test('**純字串選項**也要保留現值——實務上多數下拉是這一型（幣別／卡別／分類…）', () => {
+  // #415 自審實測的繞法：只讓「清單全是字串」那一型退回舊行為
+  //（`if (hit || cur === '' || list.every(o => typeof o === 'string')) return html;`）
+  // ⇒ 當時全套 1518 題 pass / 0 fail、本檔 12 題一顆都沒紅。因為原本 12 題裡的字串案例
+  // 只有「命中」那一種（`['TWD','USD','GBP','JPY']` + `'USD'`），沒有任何「字串選項＋值不在裡面」。
+  // 而純字串正是實務上的多數：`accounts-model.js` 的 `ACCOUNT_CURRENCIES`、投資頁的
+  // `PORTFOLIO_CURRENCIES`、`cards.js` 的 `NETWORKS`、訂閱的分類與 email 選項、
+  // 信用卡明細的 `allCategories()`、設定頁店家編輯的 `catOpts` 全是字串陣列。
+  const fx = selectOptionsHtml(['TWD', 'USD', 'GBP', 'JPY'], 'EUR');
+
+  assert.equal(optionValues(fx)[0], 'EUR',
+    '幣別下拉就是純字串選項：這一類漏掉＝「帳戶幣別被靜靜換成 TWD、之後每次換算都用錯匯率」那條路根本沒被守到');
+  assert.deepEqual(selectedValues(fx), ['EUR'],
+    '保留了卻沒標 selected＝瀏覽器仍選第一項（TWD），錢照樣用錯匯率換算');
+  assert.match(fx, new RegExp(`>EUR（${UNLISTED_VALUE_NOTE}）<`), '字串選項那一型也要有白話提示');
+
+  // 同一型的第二個實例：支出大類（`allCategories()` 回傳字串陣列），現值是被刪掉的舊分類
+  const cat = selectOptionsHtml(['飲食', '交通', '居住'], '已刪掉的舊分類');
+  assert.deepEqual(selectedValues(cat), ['已刪掉的舊分類'], '被刪掉的舊分類要留著，不可被靜靜歸到「飲食」');
 });
 
 test('保留下來的現值必須是**被選取**的那一個（渲染出來卻沒選＝按儲存照樣被改掉）', () => {
@@ -189,10 +214,10 @@ function stripComments(src) {
   return out;
 }
 
-test('架構｜openForm 的下拉真的是這支純模組產的，不是 app.js 自己又抄一份', () => {
-  // ⚠️ 這是**唯一**一題靠讀原始碼（`app.js` import 不進 node，前面所有行為級斷言到不了它）。
-  // 誠實劃界：它擋得住「把舊的產生器複製回 app.js」與「悄悄拔掉 import」這兩種真實走樣；
-  // 擋不住刻意混淆（字串拼接組出標籤名），也不宣稱「瀏覽器實際跑的就是這條路」。
+test('架構｜openForm 的下拉真的是這支純模組產的，而且餵進去的是「這一欄現在的值」', () => {
+  // ⚠️ 這一題靠讀原始碼（`app.js` import 不進 node，前面所有行為級斷言到不了它）。
+  // 誠實劃界：它擋得住「把舊的產生器複製回 app.js」「悄悄拔掉 import」「把第二個參數餵成別的東西」
+  // 這三種真實走樣；擋不住刻意混淆（字串拼接組出標籤名），也不宣稱「瀏覽器實際跑的就是這條路」。
   const raw = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
   const src = stripComments(raw);
 
@@ -202,7 +227,15 @@ test('架構｜openForm 的下拉真的是這支純模組產的，不是 app.js 
 
   assert.match(src, /import\s*\{[^}]*\bselectOptionsHtml\b[^}]*\}\s*from\s*['"]\.\/modules\/form-options\.js['"]/,
     'app.js 必須從 modules/form-options.js 取 selectOptionsHtml（換寫法就來改本題，讓改動被看見）');
-  assert.match(src, /selectOptionsHtml\s*\(/, 'import 了卻沒呼叫＝下拉還是舊的產生器在做');
+
+  // ⚠️ 只釘「有呼叫」是不夠的（#415 自審實測）：把呼叫改成 `selectOptionsHtml(f.options, '')`
+  //（import 與呼叫都原樣留著）⇒ 每個下拉又回到「選第一項」、整支修法對使用者的效果完全消失，
+  // 而全套 1518 題 pass / 0 fail、本檔的行為級考題一顆都沒紅。所以要釘住**呼叫的形狀**。
+  assert.match(src, /selectOptionsHtml\s*\(\s*f\.options\s*,\s*v\s*\)/,
+    '第二個參數必須是「這一欄現在的值」（openForm 的 v）：餵空字串或任何常數，等於這支 PR 沒做——'
+    + '每個下拉都回到「值不在選項裡就選第一項」，而所有行為級考題照樣全綠');
+  assert.match(src, /const\s+v\s*=\s*values\[\s*f\.key\s*\]\s*\?\?/,
+    'v 必須從這筆資料現在的值算起（values[f.key] ?? …）——否則上一條只是釘住一個名字叫 v 的常數');
 
   // 除了 checkbox 那個自製的是／否下拉，app.js 不准再自己拼選項標籤（那就是把病根抄回來）
   const offenders = src.split('\n')
@@ -220,4 +253,104 @@ test('架構｜esc 只有一份實作：app.js 原樣 re-export，純模組與�
     'app.js 必須從 modules/html-escape.js 取 esc——它自己再長一份，跳脫就會與純模組走散');
   assert.match(src, /export\s*\{\s*esc\s*(?:,[^}]*)?\}/,
     'app.js 必須把 esc 原樣 re-export（全站二十幾個模組都從 app.js 取）');
+});
+
+// ---------------------------------------------------------------------------
+// 以下四題守「onMount 事後重建的下拉」（#415 自審抓到的第三個洞）
+//
+// openForm 產完之後，收支／信用卡明細／設定頁會在 onMount 裡把分類、子類那個 <select> 的
+// innerHTML **整段覆寫**——那些下拉走不到 openForm 那條路，上面的保留機制對它們零效果。
+// 當時檔頭卻把「分類」寫成已經修好的下拉，而其中兩處仍是同一個病（舊病，不是 #415 弄壞的）：
+//   ・cashflow.js 的父分類：`parents.includes(curCat) ? curCat : (parents[0] || '')`
+//     ⇒ 分類事後被刪過、或匯入資料帶著舊分類時，一打開表單就被靜靜換成第一個父分類、按儲存寫進去。
+//   ・transactions.js 的子類：沒把清單外的現值補回去 ⇒ 子類被刪掉後編輯任一筆就被靜靜清成空白。
+// ---------------------------------------------------------------------------
+
+test('連動用的「使用者不動就會送出的值」與保留機制同一套判準', () => {
+  // 呼叫端拼完 HTML 還得知道「現在選中的是誰」才能連動下一層（分類→子類）。
+  // 兩份判準走散就會長出「HTML 保留了現值、連動卻拿第一項去算」這種半修好的狀態。
+  assert.equal(effectiveSelectValue(['飲食', '交通'], '已刪掉的舊分類'), '已刪掉的舊分類',
+    '現值不在清單裡時，選中的是被保留的那一項（不是第一項）——這裡答錯，子類會依「飲食」去填');
+  assert.equal(effectiveSelectValue(['飲食', '交通'], '交通'), '交通', '現值命中時就是它');
+  assert.equal(effectiveSelectValue(['飲食', '交通'], ''), '飲食', '空值＝還沒選 ⇒ 瀏覽器選第一項（與 selectOptionsHtml 同口徑）');
+  assert.equal(effectiveSelectValue([], ''), '', '沒有任何選項也不可回 undefined／爆掉');
+  assert.equal(effectiveSelectValue([{ value: 'a', label: 'A' }], ''), 'a', '物件選項取 value');
+  assert.equal(effectiveSelectValue(null, 'liability'), 'liability', '忘給 options 時更不能把值弄丟');
+  assert.equal(effectiveSelectValue(['x'], 2), '2', '沿用 String() 口徑（數字現值）');
+});
+
+test('子類下拉：清單外的現值必須保留（子類被刪掉後，編輯任一筆不可被靜靜清成空白）', () => {
+  const subs = ['', '早餐', '午餐'];
+
+  // 現值還在樹裡＝完全照舊
+  assert.equal(subcategoryOptionsHtml(subs, '午餐'),
+    `<option value="" >（不分子類）</option><option value="早餐" >早餐</option><option value="午餐" selected>午餐</option>`,
+    '命中時的輸出（含「（不分子類）」標籤與 `"` 與 `>` 之間那個空格）必須與收斂前三份抄本逐字相同');
+
+  // 現值被刪掉／改名了＝孤兒，要補在最前面並選中
+  const orphan = subcategoryOptionsHtml(subs, '宵夜');
+  assert.equal(optionValues(orphan)[0], '宵夜', '清單外的現值要補在最前面');
+  assert.deepEqual(selectedValues(orphan), ['宵夜'],
+    '沒保留＝<select> 選第一項（空字串），使用者只改個金額按儲存，子類就被靜靜清成空白');
+  assert.equal(optionValues(orphan).length, subs.length + 1, '只補一項');
+
+  // 空的現值＝還沒選，不可多補一項空白
+  assert.deepEqual(selectedValues(subcategoryOptionsHtml(subs, '')), [''], '空現值選中的是「（不分子類）」那一項');
+  assert.equal(optionValues(subcategoryOptionsHtml(subs, '')).length, subs.length, '空現值不可多長一項');
+
+  // 內轉刻意不放空選項的情形（cashflow.js subOptionsFor 的 allowBlank=false）
+  const noBlank = subcategoryOptionsHtml(['內轉出', '內轉入'], '交割');
+  assert.deepEqual(selectedValues(noBlank), ['交割'], '沒有空選項時，孤兒現值一樣要保留');
+
+  // 鐵則 3：惡意子類名要跳脫
+  const evil = subcategoryOptionsHtml(['', 'a'], '<img src=x onerror="1">');
+  assert.equal(evil.includes('<img'), false, '子類名沒過 esc（innerHTML 插入 <img onerror> 會立刻執行）');
+  assert.match(evil, /&lt;img/, '角括號要被轉成實體');
+});
+
+test('架構｜onMount 事後重建的分類／子類下拉都改走本模組（分類這條路原本完全沒被守到）', () => {
+  // ⚠️ 讀原始碼題（這三個檔都 import app.js，node 裡 import 不進來）。誠實劃界：它擋得住
+  // 「把舊的寫法貼回去」與「拔掉 import」；擋不住刻意混淆，也不宣稱瀏覽器實際跑的就是這條路。
+  const read = (/** @type {string} */ rel) => {
+    const src = stripComments(readFileSync(join(ROOT, rel), 'utf8'));
+    assert.ok(src.includes('openForm({'), `${rel} 去註解後找不到 openForm 呼叫——剝離器把程式碼吃掉了，本題失去意義`);
+    return src;
+  };
+
+  const cash = read('public/modules/cashflow.js');
+  assert.match(cash, /import\s*\{[^}]*\bselectOptionsHtml\b[^}]*\}\s*from\s*['"]\.\/form-options\.js['"]/,
+    'cashflow.js 的父分類下拉必須從 form-options.js 取產生器');
+  assert.match(cash, /catSel\.innerHTML\s*=\s*selectOptionsHtml\(\s*parents\s*,\s*curCat\s*\)/,
+    '父分類下拉要用「這筆交易現在的分類」去產選項：貼回 `parents.map(...)` 那份舊寫法，'
+    + '分類被刪過的交易一打開就被靜靜換成第一個父分類');
+  assert.match(cash, /effectiveSelectValue\(\s*parents\s*,\s*curCat\s*\)/,
+    '連動子類要用 effectiveSelectValue（舊寫法 `parents.includes(curCat) ? curCat : parents[0]` 會把孤兒分類算成第一項）');
+  assert.doesNotMatch(cash, /parents\.includes\(\s*curCat\s*\)/,
+    'cashflow.js 又出現「現值不在清單裡就換第一項」那個判準了（舊病的形狀）');
+
+  const tx = read('public/modules/transactions.js');
+  assert.match(tx, /import\s*\{[^}]*\bsubcategoryOptionsHtml\b[^}]*\}\s*from\s*['"]\.\/form-options\.js['"]/,
+    'transactions.js 的子類下拉必須從 form-options.js 取產生器');
+  assert.match(tx, /const subOptions = \([^)]*\)\s*=>\s*\n?\s*(?:\/\/[^\n]*\n\s*)?subcategoryOptionsHtml\(/,
+    'transactions.js 的 subOptions 必須整支交給 subcategoryOptionsHtml——自己 map 那份漏了保留現值，'
+    + '子類被刪掉後編輯任一筆就被靜靜清成空白');
+
+  const st = read('public/modules/settings.js');
+  assert.match(st, /import\s*\{[^}]*\bsubcategoryOptionsHtml\b[^}]*\}\s*from\s*['"]\.\/form-options\.js['"]/,
+    'settings.js 店家編輯的子類下拉必須從 form-options.js 取產生器');
+  assert.match(st, /subSel\.innerHTML\s*=\s*subcategoryOptionsHtml\(\s*subs\s*,\s*curSub\s*\)/,
+    'settings.js 的 fill 必須交給 subcategoryOptionsHtml（它本來就有保留現值，收成一份是為了不再有第二份會漏）');
+
+  // 「保留現值」不可以再有第二份抄本：帶 selected 的子類選項只能由純模組拼。
+  // 帳務體檢那兩處下拉不帶 selected（替**未分類**項目挑新分類、沒有現值可保留），所以不在本網內——
+  // 這是刻意劃界，寫在 form-options.js 檔頭。
+  for (const rel of ['public/modules/cashflow.js', 'public/modules/transactions.js', 'public/modules/settings.js']) {
+    const src = stripComments(readFileSync(join(ROOT, rel), 'utf8'));
+    const offenders = src.split('\n')
+      .map((line, i) => ({ no: i + 1, line }))
+      .filter(({ line }) => line.includes('（不分子類）') && line.includes('selected'));
+    assert.deepEqual(offenders.map(o => o.no), [],
+      `${rel} 這幾行又自己拼一份「保留現值」的子類選項了（應該交給 form-options.js）：\n`
+      + offenders.map(o => `${o.no}: ${o.line.trim()}`).join('\n'));
+  }
 });
