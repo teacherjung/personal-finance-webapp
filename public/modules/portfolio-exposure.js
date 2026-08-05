@@ -84,7 +84,10 @@ export function regionExposure(rows) {
   return regions;
 }
 
-// ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本；改其一要改兩處）。
+// ⚠️ 同步點：LIABILITY_TYPES 與 lib/derive.js 同一份判準（前端不能 import lib/，故複本）。
+// ⚠️ 新增型別要改**三處**（原本這裡寫「改其一要改兩處」，漏掉第三處；#409 r5 Codex 抓到）：
+//    ①本檔 ②lib/derive.js ③lib/schema.js 的 FIELD_SCHEMA.accounts.type 枚舉——
+//    漏掉③＝算得出負債卻存不進資料庫（理由與後果詳見 lib/derive.js 同一段註解）。
 // 放在模組層並 export，是為了讓 test/exposure-sync-integrity.test.js 直接比對兩份成員
 // （原本是 fxExposure 的函式內區域常數，考題碰不到 ⇒ 只能各釘各的四個成員，單邊新增第五個型別兩邊都不會紅）。
 export const LIABILITY_TYPES = new Set(['loan', 'liability', 'mortgage', 'creditcard']);

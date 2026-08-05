@@ -16,11 +16,17 @@
 //   ② 負債型別白名單 `LIABILITY_TYPES`（同兩檔）——前端由 `fxExposure` 那題守、後端由
 //      `buildSummary` 那題守；那兩題各釘「自己那一邊的四個成員」，**單邊新增第五個型別**
 //      （後端多收 'carloan'、前端沒抄）由後面「成員必須一模一樣」＋「動態探針」兩題守（#409 r7）。
+//      ⚠️ ②其實是**三份**複本，不是兩份（#409 r5 Codex 指出）：`lib/schema.js` 的
+//      `FIELD_SCHEMA.accounts.type` 枚舉那行註解自己寫明「合法值＝表單 ACCOUNT_TYPES ∪ derive 的
+//      LIABILITY_TYPES」。上面那些題全在**計算層**，證明「算得出來」；「存不存得進去」要走
+//      `sanitizeDbForWrite`，由「每個成員都要過得了寫入牆」那題守（兩邊同步加 'carloan' 而漏改
+//      schema 時，前面 13 題全綠、只有它會紅）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE, LIABILITY_TYPES as FE_LIABILITY } from '../public/modules/portfolio-exposure.js';
 import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE, LIABILITY_TYPES as BE_LIABILITY } from '../lib/derive.js';
+import { sanitizeDbForWrite } from '../lib/schema.js';
 
 /**
  * 代號清單＝**直接從 `compOf` 真正使用的那張表取鍵**（兩邊都 export 表本身）。
@@ -31,8 +37,8 @@ import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE, LIABILITY_TY
  *       26 鍵陣列、再單邊往正式表新增 VT，兩邊 export 都聲稱沒有 VT ⇒ 又全綠（#409 r2 H①）。
  *    v3 改成**export 正式表本身**、考題自己 `Object.keys()` ⇒ 但比對的只是「已列舉鍵的內容」，
  *       `compOf` 改讀一份私表、export 留舊表，既有鍵答案相同就又全綠（#409 r4）。
- *    v4：補一題**動態探針**——往 export 表塞一個新代號，要求 `compOf` 立刻回傳**同一個物件**。
- *       物件身分到這一步才真的被守住（v3 那招在探針題會紅）。
+ *    v4：補一題**動態探針**——往 export 表塞一個新代號，要求 `compOf` 立刻答得出它的內容。
+ *       「export 的是不是 compOf 真正讀的那張表」（表身分）到這一步才真的被守住（v3 那招在探針題會紅）。
  *    v5（現在）：鍵拿對了、物件身分守住了，**餵進去的代號形狀**仍然全是正規形（`Object.keys` 出來的
  *       都是 trim 過的大寫），所以把 `compOf` 的 `normalizePortfolioSymbol` 拿掉照樣全綠（#409 r5）。
  *       ⇒ 每一處餵代號的地方都改成同時餵 `sym` / `sym.toLowerCase()` / ` sym `（見下方 `formsOf`）。
@@ -40,9 +46,11 @@ import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE, LIABILITY_TY
  *    下面三題各守一段，合起來能守到什麼、守不到什麼要講清楚——
  *    ①「逐鍵比對」題只證明：**對 export 表目前可列舉的每一個鍵**（且含其非正規形），
  *       `compOf` 的答案不與 export 值走散。
- *       它**證明不了物件身分**——`compOf` 若改讀一份私表、export 留舊表，既有鍵答案相同就照樣全綠（r4 指出的洞）。
- *    ②「動態探針」題補上物件身分：往 export 表塞一個原本不存在的代號，`compOf` 必須立刻回傳**同一個物件**。
+ *       它**證明不了表身分**——`compOf` 若改讀一份私表、export 留舊表，既有鍵答案相同就照樣全綠（r4 指出的洞）。
+ *    ②「動態探針」題補上表身分：往 export 表塞一個原本不存在的代號，`compOf` 必須立刻答得出它的內容。
  *       私表＋舊 export 這招在這裡會紅（探針鍵只寫進 export 表，讀私表的 `compOf` 找不到）。
+ *       ⚠️ 探針比的是**內容**（deepEqual）不是**參考**（strictEqual）：要守的是「讀的是這張表」，
+ *          不是「不准複製回傳值」；理由與重放證據寫在該題內文（#409 r5）。
  *    ③「非正規形」（`formsOf`）補上代號身分：同一支標的的大小寫／前後空白必須回同一件事，
  *       兩邊都要。少了正規化的那一邊會退回 fallback ⇒ 逐鍵題、be/fe 對照題、最後一題的 reminder 都會紅。
  *    三題合起來仍**擋不住**的是「`compOf` 在 export 表之外**多認得**的代號」：
@@ -58,7 +66,7 @@ const FE_SYMBOLS = Object.keys(FE_TABLE);
 const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
 
 /**
- * 同一個代號的「非正規形」：小寫、前後帶空白。
+ * 同一個代號的「非正規形」：小寫、前後帶空白、**以及兩者的組合**。
  * ⚠️ 這不是假想輸入——`public/modules/portfolio-symbol.js` 開宗明義寫「前後空白不屬於代號、
  *    大小寫也不應拆成不同標的」，`test/derive-reminders.test.js` 也已釘死 `' tsla '` 這種真實資料形狀。
  * ⚠️ 為什麼非有不可（#409 r5 的實測）：本檔原本只餵正規形（SYMBOLS 全來自 `Object.keys`），
@@ -66,9 +74,14 @@ const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
  *    本檔 9 題與全套 1496 題**靜靜全綠**；而同一份 db 走 `buildSummary`、holding 的 symbol 是 `' kweb '` 時，
  *    後端回 `{其他:1}`、前端回 `{中國:1}`，`conc-country-中國` 整條消失——
  *    正是本檔開頭宣稱要治的那個病（兩邊對同一個代號答不一樣、中國軟上限無聲失效）。
+ * ⚠️ **「小寫＋空白」那一種非有不可**（#409 r5 Codex 實測，r6 補上）：只有「小寫」與「大寫加空白」兩種時，
+ *    把 `fxExposure` 的 `exposureCurrency` 改成「沒有空白才 `.toUpperCase()`、有空白只 `.trim()`」，
+ *    三種形狀全部照樣正確 ⇒ 本檔與全套仍全綠，但 `' 00719b '`（使用者手打／匯入真的長這樣，
+ *    小寫又前後帶空白）會落進 TWD 桶、美元曝險被低估。
+ *    正規化是 trim 與大寫**兩件事**，只餵「各缺一半」的形狀就測不到「兩件事都要做」。
  * @param {string} sym
  */
-const formsOf = (sym) => [...new Set([sym, sym.toLowerCase(), ` ${sym} `])];
+const formsOf = (sym) => [...new Set([sym, sym.toLowerCase(), ` ${sym} `, ` ${sym.toLowerCase()} `])];
 
 test('區域表｜export 表可列舉的每個鍵（含大小寫／前後空白的非正規形），compOf 的答案都不可與 export 值走散', () => {
   // ⚠️ 這一題防的是「export 一份內容已經走散的複本」（#409 r2 H① 的病）：對表裡的每一個鍵，
@@ -89,11 +102,11 @@ test('區域表｜export 表可列舉的每個鍵（含大小寫／前後空白�
   }
 });
 
-test('區域表｜動態探針：往 export 表新增一個代號，compOf 必須立刻讀到同一個物件（物件身分）', () => {
+test('區域表｜動態探針：往 export 表新增一個代號，compOf 必須立刻讀到它（表身分）', () => {
   // ⚠️ 這一題專治 #409 r4 點名的繞法：「compOf 改讀一份模組內私表、export 留舊表」——
   //    既有鍵的答案一模一樣，所以上一題的逐鍵比對抓不到。
   //    探針做法：把一個**正式資料裡不會出現**的代號寫進 export 表，再問 compOf。
-  //    export 表若不是 compOf 真正讀的那個物件，compOf 找不到這個鍵 ⇒ 走 fallback ⇒ 這裡紅。
+  //    export 表若不是 compOf 真正讀的那張表，compOf 找不到這個鍵 ⇒ 走 fallback ⇒ 這裡紅。
   //    界線：這證明的是「export 表在 compOf 的讀取路徑上，且探針鍵沒被別處遮蔽」；
   //    不證明「compOf 沒有在 export 表之外多認得別的代號」（私表兜底／不可列舉鍵／Proxy 藏鍵，見檔頭）。
   const PROBE = '__PROBE_NOT_A_REAL_SYMBOL__';   // normalizePortfolioSymbol 只做 trim+大寫，這串原樣通過
@@ -103,11 +116,19 @@ test('區域表｜動態探針：往 export 表新增一個代號，compOf 必�
     const t = /** @type {Record<string, any>} */ (table);
     const before = Object.keys(t).sort();
     assert.ok(!(PROBE in t), `${side}：探針代號不該事先存在（測試自己髒了）`);
-    // 唯一的探針物件；用 strictEqual 比「同一個參考」——deepEqual 會被「深拷貝一份表」蒙混過去。
+    // 探針的內容刻意與 fallback（equity／{其他:1}）完全不同，compOf 沒讀到它就一定對不上。
+    // ⚠️ 用 deepEqual 不用 strictEqual（#409 r5 Codex 指出，本輪改）：這一題要守的是
+    //    「compOf 讀的是**這張** export 表」，不是「compOf 不准複製回傳值」。
+    //    ①deepEqual 仍守得住 r4 那顆繞法——私表是模組載入時就複製好的，**測試執行期**才塞進去的
+    //      探針鍵不會出現在裡面，compOf 退回 fallback ⇒ 照樣紅（本輪重放確認）。
+    //    ②strictEqual 額外要求「回傳同一個參考」，那是實作細節不是使用者行為契約：
+    //      所有正式呼叫端（regionExposure／fxExposure／companyExposure／derive 的 computeAssets）
+    //      都只讀 type/regions。將來 compOf 若改成回傳防禦性副本（避免呼叫端誤改共用表），
+    //      行為完全沒變卻會被這題擋下＝假紅。假紅會讓下一個人「為了讓考題過」而放棄正確的寫法。
     const probe = { type: 'bond', regions: { 探針國: 1 } };
     try {
       t[PROBE] = probe;
-      assert.strictEqual(compOf({ symbol: PROBE, layer: 'core' }), probe,
+      assert.deepEqual(compOf({ symbol: PROBE, layer: 'core' }), probe,
         `${side}：往 export 的 COMPOSITION 新增代號後 compOf 看不到 ⇒ compOf 讀的是另一份表（私表／複本），`
         + '兩份表的比對會全部落空——export 的必須是 compOf 真正讀的那個物件');
     } finally {
@@ -302,6 +323,42 @@ test('負債白名單｜動態探針：往兩份 export 的 Set 各塞一個型�
   // 否則上面兩個 −100 可能只是「什麼型別都算負債」而不是白名單真的生效。
   assert.equal(beNetWorth(100), 100, '探針還原後，未知型別的正數餘額應該退回資產');
   assert.equal(feCashTwd(100), 100, '探針還原後，未知型別的正數餘額應該退回正的現金曝險');
+});
+
+test('負債白名單｜每個成員都要過得了寫入牆（lib/schema.js 的 accounts.type 枚舉）——算得出來還要存得進去', () => {
+  // ⚠️ 這一題補的是 #409 r5 Codex 指出的洞：上面每一題都停在**計算層**（`buildSummary`／`fxExposure`），
+  //    證明的是「算出來的方向對」。但使用者真正按下儲存時，帳戶得先過 `lib/schema.js` 的櫃檯
+  //    `sanitizeDbForWrite`，而 `FIELD_SCHEMA.accounts.type` 是**枚舉**、那行註解自己寫明
+  //    「合法值＝表單 ACCOUNT_TYPES ∪ derive 的 LIABILITY_TYPES」——**這是同一件事的第三份複本**。
+  // ⚠️ 實測（本輪逐字重放 Codex 的繞法）：前後端兩份 Set **同步**加入 'carloan'（＝維護註解教的
+  //    「改其一要改兩處」正確做法），本檔上面每一題含成員比對與動態探針**全綠 13/13**；
+  //    但同一個帳戶送進 `sanitizeDbForWrite` 就過不去：throw 模式（HOSTED 寫入，`lib/store-pg.js`）
+  //    炸「accounts[0].type 值不合法」＝根本寫不進去；strip 模式（LOCAL 讀檔／還原，`lib/store.js`）
+  //    **默默把 type 剝掉**，帳戶變成無型別 ⇒ 正數餘額落到 computeAssets 的 else 分支＝當成資產
+  //    （實測：50 萬負債算成 netWorth +500000，方向整個翻過去）。
+  //    「中間層一致、正式入口不一致」比兩邊走散更難發現，因為畫面上算得出來。
+  const MEMBERS = [...new Set([...BE_LIABILITY, ...FE_LIABILITY])].sort();
+  /** @param {string} type */
+  const dbWith = (type) => /** @type {any} */ ({
+    settings: { usdTwd: 1 },
+    accounts: [{ id: 'w1', name: '負債帳戶', type, currency: 'TWD', balance: 500000 }],
+  });
+  for (const type of MEMBERS) {
+    assert.doesNotThrow(() => sanitizeDbForWrite(dbWith(type), { mode: 'throw' }),
+      `type='${type}' 是 LIABILITY_TYPES 的成員，卻過不了 lib/schema.js 的寫入牆——`
+      + 'FIELD_SCHEMA.accounts.type 的枚舉沒跟著加，這個型別算得出負債卻存不進資料庫');
+    for (const mode of /** @type {const} */ (['throw', 'strip'])) {
+      const out = sanitizeDbForWrite(dbWith(type), { mode });
+      assert.equal(out.accounts[0].type, type,
+        `type='${type}' 在櫃檯 ${mode} 模式被剝掉了——`
+        + '無型別的帳戶在 derive 會退回「不是負債」，正數餘額當場翻成資產（淨資產方向相反）');
+    }
+  }
+  // 反面①：枚舉若被整個拿掉（或改成自由字串），上面那圈就成了空話——壞值必須照樣被擋。
+  assert.throws(() => sanitizeDbForWrite(dbWith('mortgagex'), { mode: 'throw' }), /accounts\[0\]\.type/,
+    'accounts.type 不再是枚舉了——錯值（mortgagex）會讓負債被當資產，這是寫入牆存在的理由');
+  // 反面②：白名單被清空時上面那圈會空轉（零次迴圈也「全過」）。
+  assert.ok(MEMBERS.length >= 4, `LIABILITY_TYPES 至少該有 4 個成員（實際 ${MEMBERS.length}）——清空的話這題就變成空轉`);
 });
 
 test('國家上限｜「其他」是殘差桶不是國家：不可冒出假的「其他超過國家上限」提醒', () => {
