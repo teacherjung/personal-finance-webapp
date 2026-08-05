@@ -16,7 +16,7 @@ const { importRows } = await import('../lib/services/statement-import.js');
 const { effectiveIncomeTree, saveIncomeTree, conformIncome, resolveImportIncome } = await import('../lib/services/categories.js');
 
 after(() => {
-  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '.pre-categories.bak', '.pre-income-categories.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
+  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
 });
 
 // ---- importRows 蓋 ledger:'card'（stage 1 核心行為；手動記帳缺 ledger 靠排除法歸 cashflow）----

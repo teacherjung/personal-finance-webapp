@@ -68,7 +68,7 @@
 
 **改這裡**：**不可逆整批操作前的真備份 `backupNow(tag)`**（Codex r3#7）
 
-**記得同步這裡**：`lib/store.js` 的 `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，經 repo 轉供）。**與啟動備份 `.bak` 是不同的檔**：啟動備份每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力——而 UI 原本就寫著「套用前自動備份」，是空頭支票。目前四個呼叫點：`saveStoreRules`（`pre-rules`）、`normalizeBranches` 實際套用時（`pre-normalize`）、`saveTree`（`pre-categories`）與 `saveIncomeTree`（`pre-income-categories`）——後兩個是 2026-08-05 補的：分類改名會改寫全庫交易的分類、刪除會把交易改歸「其他／未分類」，而設定頁那兩張卡早就寫著「儲存前自動備份。」，在那之前是空頭支票（#410）。**兩棵分類樹刻意不共用 tag**：同 tag 一顆、重複執行覆蓋，共用的話「先改支出、再改收入」會把「改支出之前」那顆救命檔洗成改完後的狀態。每個 tag 一顆、重複執行覆蓋（檔案數有上限）。best-effort（同啟動備份的設計決策），失敗只警告不擋操作——⚠️ 四個呼叫點都**丟掉回傳值**，所以備份失敗（或 HOSTED 一律回 `false`）時畫面仍然只說「儲存成功」，是已知缺口。內轉子分類 `saveTransferSubs` 改名同樣連動全庫內轉交易但**沒有備份**（其 UI 也沒承諾備份，要不要補是產品決定）。`*.bak` 已被 .gitignore 全域排除。**新增其他不可逆的整批操作時，一併加一個 tag。**考題：`test/vault-and-backup-integrity.test.js` 第二節（三個承諾點各一題）。
+**記得同步這裡**：`lib/store.js` 的 `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，經 repo 轉供）。**與啟動備份 `.bak` 是不同的檔**：啟動備份每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力——而 UI 原本就寫著「套用前自動備份」，是空頭支票。目前兩個呼叫點：`saveStoreRules`（`pre-rules`）與 `normalizeBranches` 實際套用時（`pre-normalize`）。每個 tag 一顆、重複執行覆蓋（檔案數有上限）。best-effort（同啟動備份的設計決策），失敗只警告不擋操作。`*.bak` 已被 .gitignore 全域排除。**新增其他不可逆的整批操作時，一併加一個 tag。**
 
 ## 測試隔離慣例 B0
 

@@ -17,7 +17,7 @@ const { applyCategoryToStoreDb } = await import('../lib/services/statement-impor
 const { applyDisplayLabels, storeKeyOf } = await import('../lib/statement.js');
 const { EXPENSE_TREE } = await import('../public/modules/categories.js');
 
-after(() => { for (const suf of ['', '.bak', '.pre-categories.bak', '.pre-income-categories.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
+after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 /** 設定生效樹（直接寫 settings，模擬某個 rename/delete 後的狀態）。 */
 async function setTree(tree, subAliases = {}) {

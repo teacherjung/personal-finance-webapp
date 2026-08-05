@@ -12,9 +12,7 @@ process.env.STORE_FILE = TEST_STORE;
 const repo = await import('../lib/repo.js');
 const { effectiveTree, sanitizeTree, conform, saveTree, resolveImportCategory } = await import('../lib/services/categories.js');
 
-// `.pre-categories.bak`／`.pre-income-categories.bak`＝saveTree／saveIncomeTree 的「儲存前自動備份」
-// （#410 補上），這裡也要收，否則每跑一次測試就在 os 暫存區留一顆孤兒備份。
-after(() => { for (const suf of ['', '.bak', '.pre-categories.bak', '.pre-income-categories.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
+after(() => { for (const suf of ['', '.bak', '-wal', '-shm']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 // 每個測試前重置：一組已知交易＋學習表
 async function seed() {

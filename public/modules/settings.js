@@ -66,13 +66,13 @@ export async function renderSettings() {
     </div>
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">支出分類管理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>支出</b>分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。儲存前自動備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>支出</b>分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。⚠️ 這個動作<b>不會</b>自動備份——要保險的話，改動前先重啟一次後端（每次啟動都會另存一份當下的還原檔 <code>data/store.db.bak</code>，還原方式：改名成 <code>store.db</code> 後重啟）。</p>
       <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理支出分類</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">收入分類管理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供銀行收支的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。儲存前自動備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供銀行收支的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。⚠️ 這個動作<b>不會</b>自動備份——要保險的話，改動前先重啟一次後端（每次啟動都會另存一份當下的還原檔 <code>data/store.db.bak</code>，還原方式：改名成 <code>store.db</code> 後重啟）。</p>
       <div><button class="btn-ghost" id="manageIncomeCatsBtn">${icon('refresh', 16) || ''}管理收入分類</button></div>
     </div>
 

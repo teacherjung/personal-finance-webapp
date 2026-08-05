@@ -15,7 +15,7 @@ const { saveIncomeTree } = await import('../lib/services/categories.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 
 after(() => {
-  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '.pre-categories.bak', '.pre-income-categories.bak', '-wal', '-shm', '.json']) {
+  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) {
     try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ }
   }
 });
