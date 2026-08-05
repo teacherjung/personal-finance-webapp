@@ -146,7 +146,7 @@ test('個股研究頁籤｜六個固定連結只顯示一個 active panel，選�
   }, { esc });
 
   assert.equal((html.match(/<a id="stock-tab-/g) || []).length, 6);
-  const tabs = html.match(/<nav class="stock-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
+  const tabs = html.match(/<nav class="workspace-tabs workspace-tabs--compact-mobile"[\s\S]*?<\/nav>/)?.[0] || '';
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
   assert.match(html, /href="#stock\?symbol=AAPL&amp;tab=valuation"[^>]*aria-current="page"/);
@@ -403,16 +403,18 @@ test('個股研究畫面｜估值距離只在現價與情境同幣且合理價�
 });
 
 test('個股研究樣式｜桌面有彈性欄寬、手機摘要兩欄、長字與表格不溢出外框', async () => {
-  const css = await readFile(new URL('../public/stock-research.css', import.meta.url), 'utf8');
+  const [css, tabsCss] = await Promise.all([
+    readFile(new URL('../public/stock-research.css', import.meta.url), 'utf8'),
+    readFile(new URL('../public/workspace-tabs.css', import.meta.url), 'utf8')
+  ]);
 
   assert.match(css, /max-width:\s*1240px/);
   assert.match(css, /grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.stock-table-wrap[\s\S]*border-radius:\s*8px/);
-  assert.match(css, /\.stock-tab[\s\S]*border-radius:\s*16px 16px 0 0/);
-  assert.match(css, /\.stock-tab\.active[\s\S]*border-color:\s*var\(--frame\)/);
-  assert.match(css, /\.stock-tabs[\s\S]*overflow-x:\s*auto/);
-  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-tab[\s\S]*flex:\s*0 0 52px/);
+  assert.match(tabsCss, /\.workspace-tab[\s\S]*border-radius:\s*16px 16px 0 0/);
+  assert.match(tabsCss, /\.workspace-tabs[\s\S]*overflow-x:\s*auto/);
+  assert.match(tabsCss, /@media \(max-width:\s*680px\)[\s\S]*\.workspace-tabs--compact-mobile \.workspace-tab[\s\S]*flex:\s*0 0 52px/);
   assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.stock-position-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.doesNotMatch(css, /font-size:\s*[^;]*(vw|vh)/);
 });

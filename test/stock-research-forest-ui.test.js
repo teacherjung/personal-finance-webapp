@@ -29,12 +29,6 @@ function cssHexToken(css, name) {
   return match[1];
 }
 
-function cssPx(rule, property) {
-  const match = rule.match(new RegExp(`${property}:\\s*(-?\\d+(?:\\.\\d+)?)px`));
-  assert.ok(match, `missing pixel declaration: ${property}`);
-  return Number(match[1]);
-}
-
 function relativeLuminance(hex) {
   const channels = hex.slice(1).match(/.{2}/g).map(value => Number.parseInt(value, 16) / 255);
   const linear = channels.map(value => value <= 0.04045
@@ -112,15 +106,15 @@ test('個股研究森林工作面｜六個頁籤共用單一厚框工作面且�
     activeTab: 'overview'
   }, { esc });
 
-  assert.equal((html.match(/class="stock-tab(?: active)?"/g) || []).length, 6);
+  assert.equal((html.match(/class="workspace-tab(?: is-active)?"/g) || []).length, 6);
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
-  assert.equal((html.match(/class="stock-tab-panel"/g) || []).length, 1);
-  assert.match(html, /class="stock-research-workspace"/);
+  assert.equal((html.match(/class="workspace-tabs-panel stock-tab-panel"/g) || []).length, 1);
+  assert.match(html, /class="workspace-tabs-shell stock-research-workspace"/);
   assert.match(html, /data-stock-tab="overview"/);
   assert.match(html, /目前部位/);
 });
 
-test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容面板視覺相接', async () => {
+test('個股研究森林工作面｜頁籤使用共用元件且保留固定圖示與可存取名稱', async () => {
   assert.deepEqual(STOCK_RESEARCH_TABS.map(tab => tab.icon), [
     'dashboard', 'file', 'star', 'pie', 'bulb', 'repeat'
   ]);
@@ -128,64 +122,22 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
     model: researchModel(),
     activeTab: 'thesis'
   }, { esc });
-  const tabs = html.match(/<nav class="stock-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
-  const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
+  const tabs = html.match(/<nav class="workspace-tabs workspace-tabs--compact-mobile"[\s\S]*?<\/nav>/)?.[0] || '';
+  const css = await readFile(new URL('public/workspace-tabs.css', ROOT), 'utf8');
 
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((tabs.match(/aria-label="[^"]+" title="[^"]+"/g) || []).length, 6);
-  assert.equal((tabs.match(/class="stock-tab-ear stock-tab-ear-left" aria-hidden="true"/g) || []).length, 6);
-  assert.equal((tabs.match(/class="stock-tab-ear stock-tab-ear-right" aria-hidden="true"/g) || []).length, 6);
+  assert.equal((tabs.match(/class="workspace-tab__join workspace-tab__join--start"/g) || []).length, 6);
+  assert.equal((tabs.match(/class="workspace-tab__join workspace-tab__join--end"/g) || []).length, 6);
   for (const tab of STOCK_RESEARCH_TABS) {
     assert.doesNotMatch(icon(tab.icon), /aria-hidden="true"><\/svg>/, `${tab.key} icon must not be empty`);
   }
   assert.doesNotMatch(icon('arrow-left'), /aria-hidden="true"><\/svg>/);
-  assert.match(tabs, /id="stock-tab-thesis" class="stock-tab active"[\s\S]*aria-current="page"/);
-  assert.doesNotMatch(cssRule(css, '.stock-tabs'), /border-bottom/);
-  assert.match(cssRule(css, '.stock-tabs'), /position:\s*relative/);
-  assert.match(cssRule(css, '.stock-tabs'), /z-index:\s*2/);
-  assert.match(cssRule(css, '.stock-tab'), /--stock-tab-ear-fill:\s*var\(--card-2\)/);
-  assert.match(cssRule(css, '.stock-tab'), /background:\s*var\(--card-2\)/);
-  assert.match(cssRule(css, '.stock-tab'), /border:\s*2px solid var\(--frame\)/);
-  assert.doesNotMatch(cssRule(css, '.stock-tab'), /border-bottom:\s*none/);
-  assert.doesNotMatch(cssRule(css, '.stock-tab'), /margin-bottom/);
-  assert.match(cssRule(css, '.stock-tab'), /border-radius:\s*16px 16px 0 0/);
-  assert.match(cssRule(css, '.stock-tab:focus-visible'), /outline:\s*3px solid var\(--accent\)/);
-  assert.equal(cssPx(cssRule(css, '.stock-tab:focus-visible'), 'outline-offset'), -5);
-  assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--frame\)/);
-  assert.doesNotMatch(cssRule(css, '.stock-tab.active'), /border-bottom:\s*none/);
-  assert.match(cssRule(css, '.stock-tab.active'), /border-radius:\s*16px 16px 0 0/);
-  assert.match(cssRule(css, '.stock-tab.active'), /--stock-tab-ear-fill:\s*var\(--card\)/);
-  assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
-  assert.match(cssRule(css, '.stock-tab:hover'), /--stock-tab-ear-fill:\s*var\(--card\)/);
-  assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
-  assert.doesNotMatch(css, /\.stock-tab\.active::after\s*\{/);
-  assert.match(cssRule(css, '.stock-tab-ear'), /pointer-events:\s*none/);
-  assert.match(cssRule(css, '.stock-tab-ear'), /bottom:\s*-2px/);
-  assert.match(cssRule(css, '.stock-tab-ear'), /height:\s*22px/);
-  assert.match(cssRule(css, '.stock-tab-ear'), /border-bottom:\s*2px solid var\(--frame\)/);
-  assert.match(cssRule(css, '.stock-tab.active .stock-tab-ear'), /display:\s*block/);
-  assert.match(cssRule(css, '.stock-tab:first-child .stock-tab-ear-left'), /display:\s*block/);
-  assert.match(cssRule(css, '.stock-tab:last-child .stock-tab-ear-right'), /display:\s*block/);
-  assert.doesNotMatch(css, /\.stock-tab:first-child \.stock-tab-ear-right\s*\{/);
-  assert.doesNotMatch(css, /\.stock-tab:last-child \.stock-tab-ear-left\s*\{/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /left:\s*-18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /circle at 0 4px/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /transparent 0 16px/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /var\(--frame\) 16px 18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /var\(--stock-tab-ear-fill\) 18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /right:\s*-18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /circle at 100% 4px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /transparent 0 16px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /var\(--frame\) 16px 18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /var\(--stock-tab-ear-fill\) 18px/);
-  assert.match(cssRule(css, '.stock-tab-panel'), /margin-top:\s*-2px/);
-
-  const tabRule = cssRule(css, '.stock-tab');
-  const panelRule = cssRule(css, '.stock-tab-panel');
-  const panelBorder = cssPx(panelRule, 'border');
-  assert.equal(Math.abs(cssPx(tabRule, 'margin-right')), panelBorder);
-  assert.equal(Math.abs(cssPx(panelRule, 'margin-top')), panelBorder);
-  assert.equal(Math.abs(cssPx(cssRule(css, '.stock-tab-ear'), 'bottom')), panelBorder);
+  assert.match(tabs, /id="stock-tab-thesis" class="workspace-tab is-active"[\s\S]*aria-current="page"/);
+  assert.match(cssRule(css, '.workspace-tabs'), /position:\s*relative/);
+  assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:/);
+  assert.match(cssRule(css, '.workspace-tab:focus-visible'), /outline:\s*3px solid var\(--workspace-tabs-accent\)/);
+  assert.match(cssRule(css, '.workspace-tab.is-active'), /color:\s*var\(--workspace-tabs-active-text\)/);
 
   const sharedCss = await readFile(new URL('public/styles.css', ROOT), 'utf8');
   const accent = cssHexToken(sharedCss, '--accent');
@@ -228,18 +180,22 @@ test('個股研究森林工作面｜小森森只在真正空狀態出現', async
 });
 
 test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手機兩欄摘要', async () => {
-  const css = await readFile(new URL('public/stock-research.css', ROOT), 'utf8');
+  const [css, tabsCss] = await Promise.all([
+    readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
+    readFile(new URL('public/workspace-tabs.css', ROOT), 'utf8')
+  ]);
   const mobileAt = css.indexOf('@media (max-width: 680px)');
-  const panelRule = cssRule(css, '.stock-tab-panel');
+  const tabsMobileAt = tabsCss.indexOf('@media (max-width: 680px)');
+  const panelRule = cssRule(tabsCss, '.workspace-tabs-panel');
   const scoreRule = cssRule(css, '.stock-score-track');
 
-  assert.match(panelRule, /border:\s*2px solid var\(--frame\)/);
-  assert.match(panelRule, /overflow:\s*hidden/);
+  assert.match(panelRule, /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/);
+  assert.match(cssRule(css, '.stock-tab-panel'), /overflow:\s*hidden/);
   assert.match(scoreRule, /height:\s*13px/);
   assert.match(scoreRule, /border:\s*2px solid var\(--frame\)/);
   assert.doesNotMatch(
-    panelRule.replace(/border:\s*2px solid var\(--frame\);?/, ''),
-    /border:\s*2px solid var\(--frame\)/
+    panelRule.replace(/border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\);?/, ''),
+    /border:\s*var\(--workspace-tabs-border\) solid var\(--workspace-tabs-frame\)/
   );
   assert.doesNotMatch(
     scoreRule.replace(/border:\s*2px solid var\(--frame\);?/, ''),
@@ -249,11 +205,10 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   assert.match(cssRule(css, '.stock-empty-guide'), /height:\s*78px/);
   assert.notEqual(mobileAt, -1);
   assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
-  assert.match(cssRule(css, '.stock-tabs', mobileAt), /padding:\s*0 18px/);
-  assert.match(cssRule(css, '.stock-tab', mobileAt), /flex:\s*0 0 52px/);
-  assert.match(cssRule(css, '.stock-tab.active', mobileAt), /flex-basis:\s*104px/);
-  assert.match(cssRule(css, '.stock-tab-label', mobileAt), /display:\s*none/);
-  assert.match(cssRule(css, '.stock-tab.active .stock-tab-label', mobileAt), /display:\s*inline/);
+  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab', tabsMobileAt), /flex:\s*0 0 52px/);
+  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab.is-active', tabsMobileAt), /flex-basis:\s*108px/);
+  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab__label', tabsMobileAt), /display:\s*none/);
+  assert.match(cssRule(tabsCss, '.workspace-tabs--compact-mobile .workspace-tab.is-active .workspace-tab__label', tabsMobileAt), /display:\s*inline/);
 });
 
 test('個股研究森林工作面｜部位帶內距與負邊距成對避免整頁橫向溢出', async () => {

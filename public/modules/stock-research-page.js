@@ -62,7 +62,7 @@ export function stockTabFromHash(hash) {
 
 /** @param {any} root */
 export function revealActiveStockTab(root) {
-  const active = root?.querySelector?.('.stock-tab.active');
+  const active = root?.querySelector?.('.workspace-tab[aria-current="page"]');
   active?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
 }
 
