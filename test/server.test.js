@@ -1053,10 +1053,9 @@ test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久�
   //    這正好摧毀第二帖藥方「排隊給你按確認」的信任。改成比對前綴（id 的前兩段）。
   assert.ok(!h4.items.some(x => String(x.id).startsWith('D4|STARBUCKSH9 TAIPEI|')),
     '學過＝使用者故意的，不再報漂移（比對前綴：id 第三段是內容指紋，會隨筆數與分類變動）');
-  // ⚠️ 只對 D4 這個偵測器要求三段（各偵測器的 id 格式不同——我第一版寫成「所有項目」，
-  //    當場被自己的考題打回來，正好證明「斷言要照真實形狀寫」）。
-  assert.ok(h4.items.filter(x => String(x.id).startsWith('D4|')).every(x => String(x.id).split('|').length >= 3),
-    'D4 項目的 id 必須是三段（D4|原文|指紋）——少一段就會讓上面那種前綴比對再退化成恆真');
+  // ⚠️ 這裡原本還加了一條「D4 項目的 id 至少三段」——**又是一顆空包彈**（Codex #414 r1 抓到）：
+  //    學起來之後 D4 已經沒有項目了，`[].every(...)` 恆真。而且三段格式上面（學習之前那一段）
+  //    的 `startsWith('D4|STARBUCKSH9 TAIPEI|')` 與 D2/D3/D4/D7 指紋迴圈早就驗過了，直接刪掉。
   await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', reset: true });
   for (const id of made) await DELETE_(`/transactions/${id}`);
   await POST('/statement/health/dismiss', { clearAll: true });

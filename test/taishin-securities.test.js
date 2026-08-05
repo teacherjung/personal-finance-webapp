@@ -181,8 +181,7 @@ test('自審回歸｜交易表跨頁：第 1 頁頁尾法規小字不砍第 2 �
 });
 
 test('自審回歸｜表頭被逐字拆 → 解析器回 headerFound=false、trades 空'
-  + '（⚠️ 本題只驗解析器這一半；「主入口拿它 throw 400」那條接線目前無考題——需要中文 PDF，'
-  + '見 test/pdf-extract-integrity.test.js 的誠實劃界）', () => {
+  + '（本題只驗解析器這一半；「主入口拿它 throw 400」那條接線的考題在 test/pdf-extract-integrity.test.js）', () => {
   const r = parseTaishinSecurities([
     L(900, [[40, '台新綜合證券'], [300, '115年1月']]),
     L(860, [[40, '成交明細']]),
@@ -234,8 +233,7 @@ test('自審回歸｜MM/DD 前向跨年：12 月帳單裡的隔年 1 月交割�
 });
 
 test('S2 拍板｜非月結單（年度/季度跨度）→ isMultiMonthHeader 命中'
-  + '（⚠️ 本題只驗偵測器這一半；「主入口拿它 throw 400、防去重鍵毒化」那條接線目前無考題'
-  + '——需要中文 PDF，見 test/pdf-extract-integrity.test.js 的誠實劃界）', async () => {
+  + '（本題只驗偵測器這一半；「主入口拿它 throw 400、防去重鍵毒化」那條接線的考題在 test/pdf-extract-integrity.test.js）', async () => {
   const { isMultiMonthHeader } = await import('../lib/taishin-securities.js');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月~12月 對帳單']])]), true);
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月至3月']])]), true);
