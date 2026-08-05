@@ -57,6 +57,26 @@
 //    從 assets.js 具名 import 進來的 `renderAssets`，依作用域規則解析、不是認字串）。
 //    這條的通則值得記住：**「我抄／跑的是正式碼」還缺一句「而正式環境跑的是我抄／跑的那一份」**
 //    ——同一個病在本檔已經出現三次（r2 的 daysUntil 綁定、自審的匯出端、這次的路由端）。
+//
+// ⚠️ 第七版的教訓（#413 r5 阻擋）：四條全在「配置偏離」那題的前端半邊，**兩條是洞、兩條是假紅**。
+//    (a) **假 DOM 太窮，等於把「印完再改掉」整族藏起來**：上一版的 view 替身把 innerHTML 當純字串存、
+//        `querySelectorAll` 一律回 `[]`，於是 r4 那顆 wrapper 只要**搬進 renderAssets 自己的尾巴**
+//        （`view().querySelectorAll('.tag.amber').forEach((el) => el.remove())`）就照樣靜靜全綠：
+//        路由綁定沒變、匯出沒變、模組沒變，而正式資產頁的橘色偏離標籤全部消失。
+//        延後一拍再改寫 innerHTML（`setTimeout(…, 0)`）是同一顆的第二種形狀。
+//        ⚠️ 上一版劃界寫的是「事件綁好之後的 DOM 行為不在射程內」——那句指的是 click handler，
+//        **讀不出「renderAssets 可以自己把剛印好的標籤拔掉」**，而斷言訊息「本題測到的 HTML 到不了畫面」
+//        反過來暗示綁對了就到得了畫面。現在這族收進射程（見 guardedNode／flushLater），劃界也改口。
+//    (b) **偏離判準只被「有錢的類別」壓著**：fixture 兩個類別的 value 都 > 0，於是判準多一個
+//        `r.value > 0` 的合取子完全無感——而後端對 value=0 的類別照舊發提醒，
+//        正是本題自己寫的「總覽說偏離、資產頁不標＝兩頁打架」。「目標 20% 卻一張都沒買」是偏離最大、
+//        也最該提醒的一格，現在 fixture 就有這第三個類別。
+//    (c)(d) 兩顆**假紅**都在 ROUTES 的形狀斷言上：`Object.freeze({…})`（零行為差異的純強化，
+//        而且**正是本檔劃界自己建議的關門方向**——往自己推薦的方向走第一步就假紅，與 declSourceOf 記的
+//        r3 教訓、renderAssetsHtml 記的 r4 教訓 (e) 是同一個模式）、以及「前幾條路由分組成常數再展開、
+//        assets 仍就地寫死在展開**之後**」（依語言規則後寫的具名屬性一定贏，行為完全相同）。
+//        修法是往下拆一層與看位置，不是多認一種形狀（見 frozenObjectArg 與 lateSpread 那條斷言）。
+//        ⚠️ 這兩顆上一版被列進「轉紅」表當成守住東西的證據——**假紅記成戰功比缺口更糟**，本輪一起改口。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -193,23 +213,32 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   //        **整支 assets.js 進 sandbox 跑 renderAssets()、斷言它真的印出來的 HTML**——
   //        射程因此從「判準式的值」推進到「橘標籤與橘進度條真的出現在畫面的 HTML 上」。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
-  const alloc = (cashTarget, stockTarget) => ({
+  const alloc = (cashTarget, stockTarget, extraTargets = []) => ({
     settings: { allocationDriftPct: 5 },
     accounts: [{ id: 'a1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 50000 }],
     holdings: [{ id: 'h1', symbol: 'CSPX', name: 'ETF', layer: 'core', currency: 'TWD', quantity: 1, price: 50000 }],
-    assetTargets: [{ class: '現金', targetPct: cashTarget }, { class: '股票', targetPct: stockTarget }],
+    assetTargets: [{ class: '現金', targetPct: cashTarget }, { class: '股票', targetPct: stockTarget }, ...extraTargets],
   });
 
-  const boundaryDb = fullDb(alloc(45, 55));
+  // ⚠️ 第三個類別是後補的（#413 r5 阻擋）：目標 20%、**一張都沒買**（value = 0）。
+  //    上一版兩個類別的 value 都 > 0，於是前端判準多一個 `r.value > 0` 的合取子完全無感——
+  //    複驗者實測 7/7 全綠，而後端對 value=0 的類別照舊發提醒，
+  //    正是本題自己寫的「總覽說偏離、資產頁不標＝兩頁打架」。
+  //    「目標 20% 卻一張都沒買」是偏離最大的一格，剛好也是最該提醒的一格，所以兩邊都點名。
+  const CLASSES3 = ['現金', '股票', '債券'];
+  const boundaryDb = fullDb(alloc(45, 55, [{ class: '債券', targetPct: 20 }]));
   const boundary = buildSummary(boundaryDb);
   const onBoundary = boundary.reminders
     .filter((/** @type {any} */ r) => String(r.key).startsWith('alloc-drift-'));
   const over = onBoundary.find((/** @type {any} */ r) => r.key === 'alloc-drift-現金');
   const under = onBoundary.find((/** @type {any} */ r) => r.key === 'alloc-drift-股票');
+  const zeroValue = onBoundary.find((/** @type {any} */ r) => r.key === 'alloc-drift-債券');
   assert.ok(over, '正偏離恰好 +5.0%（等於門檻）必須提醒——>= 改成 > 就會在邊界上靜靜消失');
   assert.match(over.title, /\+5\.0%/, '標題要顯示 +5.0% 的偏離量');
   assert.ok(under, '負偏離恰好 −5.0% 也必須提醒——判準拿掉 Math.abs（只看正偏離）時，就是這一條轉紅');
   assert.match(under.title, /-5\.0%/, '標題要顯示 -5.0% 的偏離量（負號要在）');
+  assert.ok(zeroValue, '後端：目標 20% 卻一張都沒買（value=0）也要提醒——這是偏離最大的一格');
+  assert.match(zeroValue.title, /-20\.0%/, '標題要顯示 -20.0%（一張都沒買＝整段目標都缺）');
 
   const nearMissDb = fullDb(alloc(45.1, 54.9));
   const nearMiss = buildSummary(nearMissDb).reminders
@@ -219,8 +248,9 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
 
   // 前端資產頁那份：吃的是同一份 db（`/summary` 就是 buildSummary 的輸出，正式環境就是這樣接的）
   const boundaryHtml = await renderAssetsHtml(boundaryDb);
-  const cashSeg = allocRowHtml(boundaryHtml, '現金');
-  const stockSeg = allocRowHtml(boundaryHtml, '股票');
+  const cashSeg = allocRowHtml(boundaryHtml, '現金', CLASSES3);
+  const stockSeg = allocRowHtml(boundaryHtml, '股票', CLASSES3);
+  const bondSeg = allocRowHtml(boundaryHtml, '債券', CLASSES3);
   assert.match(cashSeg, /50\.0% \/ 目標 45%/,
     'fixture 自我驗證：資產頁的現金那一條真的是「50.0% / 目標 45%」（否則下面幾條測到的不是邊界）');
   assert.match(cashSeg, /class="tag amber">偏離 \+5\.0%/,
@@ -230,6 +260,11 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.match(stockSeg, /class="tag amber">偏離 -5\.0%/,
     '前端：恰好 −5.0% 也要標偏離（前端那份拿掉 Math.abs 時會紅）');
   assert.match(stockSeg, new RegExp(`background:${ORANGE}`), '前端：負偏離那一條的進度條同樣要橘');
+  assert.match(bondSeg, /0\.0% \/ 目標 20%/,
+    'fixture 自我驗證：債券那一條真的是「0.0% / 目標 20%」（value=0 的那一格）');
+  assert.match(bondSeg, /class="tag amber">偏離 -20\.0%/,
+    '前端：目標 20% 卻一張都沒買也要標偏離（判準多一個 `r.value > 0` 的合取子時只有這裡會紅——後端提醒、資產頁不標＝兩頁打架）');
+  assert.match(bondSeg, new RegExp(`background:${ORANGE}`), '前端：這一格的進度條同樣要橘（0% 也是偏離）');
 
   const nearMissCash = allocRowHtml(await renderAssetsHtml(nearMissDb), '現金');
   assert.match(nearMissCash, /50\.0% \/ 目標 45\.1%/, 'fixture 自我驗證：這一組真的是 4.9% 的偏離');
@@ -237,7 +272,7 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.match(nearMissCash, new RegExp(`background:${GREEN}`), '前端：沒偏離就維持綠色進度條');
 
   const loosenedDb = { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } };
-  assert.doesNotMatch(allocRowHtml(await renderAssetsHtml(loosenedDb), '現金'), /偏離/,
+  assert.doesNotMatch(allocRowHtml(await renderAssetsHtml(loosenedDb), '現金', CLASSES3), /偏離/,
     '前端讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
 });
 
@@ -269,36 +304,41 @@ const ASSETS_REL = 'public/modules/assets.js';
  *   1. 射程止於 **app.js 的 `ROUTES` 這張表**。`router()` 哪天改查別張表、或資產頁改由別處
  *      （例如 index.html 自己接）渲染，本題認不出來——這條檢查會照舊全綠。
  *      「router 真的照 ROUTES 分派」不在本題射程內。
- *   2. `ROUTES` 若不再是就地寫死的物件字面值（動態組表、`...spread`、事後 `ROUTES.assets = …` 賦值），
- *      本題**吵著紅**要人回來更新，不是靜靜綠。三種情況都各有一條斷言點名（三顆突變逐一量過）。
- *      ⚠️ 但「事後改表」只認得**賦值**這一種：`Object.assign(ROUTES, { assets: … })` 這類
+ *   2. `ROUTES` 必須是「看得出 assets 綁到誰」的就地物件字面值。認不出來的三種寫法各有一條斷言點名、
+ *      **吵著紅**要人回來更新，不是靜靜綠：真的動態組表（例 `Object.freeze(Object.assign({}, …))`）、
+ *      展開（`...`）排在 assets 那一條**之後**（後寫的會蓋掉它）、事後 `ROUTES.assets = …` 賦值。
+ *      ⚠️ 反過來，這幾種**不算**（零行為差異，不可假紅——#413 r5 的兩顆假紅就在這裡）：
+ *      `Object.freeze({…})`／`Object.seal({…})` 純強化（拆開參數再往下驗，見 frozenObjectArg；
+ *      而它**正是本條末尾自己建議的那個關門方向的第一步**）、展開排在 assets **之前**、
+ *      assets 改名 import。
+ *      ⚠️ 「事後改表」只認得**賦值**這一種：`Object.assign(ROUTES, { assets: … })` 這類
  *      **用函式改表**認不出來——**這句是量過的**：那顆繞法實測 7/7 靜靜全綠。之所以不補：本檔現行的
  *      `Object.hasOwn(ROUTES, route) ? ROUTES[route] : …` 也是「把 ROUTES 整個交給某個函式」，
  *      要分辨得回頭列舉哪些函式無害——那正是本檔記了三次的「列舉繞法補不完」。
- *      真要關門得換方向（例如把路由表收成唯讀的單一真相），那是另一支 PR 的事。
+ *      真要關門得換方向（把路由表連分派一起收成一支唯讀的單一真相），那是另一支 PR 的事。
  *   3. 轉手包裝只跟著走「整個本體就是一句呼叫」的形狀。寫成別的等價形狀
  *      （例如 `assets: async () => { const r = await renderAssets(); return r; }`）會吵著紅——
  *      這是刻意的：包裝裡能不能多做事，必須有人看過才算。
  *
- * ⚠️ 這些話是量過的（本輪逐顆突變，正式碼真的改、grep 確認落地後才跑）：
- *    **轉紅**（fail 1、pass 6，不是整支崩）：複驗者那顆 wrapper 逐字重放（具名函式）、
- *    同一顆改寫成就地箭頭（兩件事的版本）、assets.js 同檔改名匯出
+ * ⚠️ 這些話是量過的（#413 r5 這一輪逐顆重跑，正式碼真的改、grep 確認落地後才跑）：
+ *    **轉紅**（fail 1、pass 6，不是整支崩）：r4 那顆 wrapper 逐字重放（具名函式）、
+ *    同一顆改寫成就地箭頭（做兩件事的版本）、assets.js 同檔改名匯出
  *    （`export { renderAssetsNoDrift as renderAssets }`，本體一字不動）、
- *    路由改指分叉出來的 `assets-v2.js`（門檻鬆一格）、`Object.freeze({…})`、`...spread`、
- *    `ROUTES.assets = …` 事後賦值。
+ *    路由改指分叉出來的 `assets-v2.js`（門檻鬆一格）、真的動態組表
+ *    （`Object.freeze(Object.assign({}, BASE_ROUTES))`）、展開排在 assets **之後**
+ *    （`...LATE_ROUTES` 把 assets 蓋成銀行帳戶頁）、`ROUTES.assets = …` 事後賦值。
  *    **維持全綠**（等價改寫，不可假紅）：`renderAssets as renderAssetsPage` 改名 import、
- *    `assets: () => renderAssets()` 純轉手；連 r4 那五顆假紅（多一張 `tag amber`、`r`／`db` 改名、
- *    門檻提到迴圈外、判準抽成 helper）與 `export const` 箭頭函式改寫也一起重跑過，照舊全綠。
+ *    `assets: () => renderAssets()` 純轉手、`Object.freeze({…})`、`Object.seal({…})`、
+ *    前三條路由分組成常數再展開（assets 仍就地寫死在展開之後；再加 freeze 的版本也一起量過）。
  */
 function assertAssetsRouteBinding() {
   const app = parseModule(APP_REL);
   const def = topLevelDef(app, 'ROUTES');
   assert.equal(def.type, 'Variable', `${APP_REL} 的 ROUTES 不是就地宣告的變數（實際：${def.type}）`);
-  const table = def.node.init;
+  let table = def.node.init;
+  for (let inner = frozenObjectArg(app, table); inner; inner = frozenObjectArg(app, table)) table = inner;
   assert.equal(table && table.type, 'ObjectExpression',
     `${APP_REL} 的 ROUTES 不是就地寫死的物件字面值（改成動態組表了？本題認不出 assets 綁到誰，要有人回來更新）`);
-  assert.ok(!table.properties.some((/** @type {any} */ p) => p.type === 'SpreadElement'),
-    `${APP_REL} 的 ROUTES 裡有展開（...）：assets 可能被展開進來的那份蓋掉，本題認不出最後綁到誰`);
   walkAst(app.ast, (/** @type {any} */ n) => {
     assert.ok(!(n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression'
       && n.left.object.type === 'Identifier' && n.left.object.name === 'ROUTES'),
@@ -309,7 +349,17 @@ function assertAssetsRouteBinding() {
     && (p.key.type === 'Identifier' ? p.key.name : p.key.value) === 'assets');
   assert.equal(props.length, 1,
     `${APP_REL} 的 ROUTES 裡叫 assets 的那一條有 ${props.length} 份`
-    + '（0＝路由改名或改用算出來的鍵；>1＝重複）——使用者按「資產配置」跑到誰會變成用猜的');
+    + '（0＝路由改名、改用算出來的鍵，或整條被搬進展開進來的那一份；>1＝重複）'
+    + '——使用者按「資產配置」跑到誰會變成用猜的');
+  // 展開（...）只在**排在 assets 之後**時才成問題：依語言規則，後寫的才會蓋掉先寫的。
+  // 排在 assets 之前的展開（例：把前幾條路由分組成 MONEY_ROUTES 再展開、assets 仍就地寫死在後面）
+  // 行為完全相同，不可假紅（#413 r5 阻擋）。
+  const assetsAt = table.properties.indexOf(props[0]);
+  const lateSpread = table.properties.find((/** @type {any} */ p, /** @type {number} */ i) =>
+    p.type === 'SpreadElement' && i > assetsAt);
+  assert.ok(!lateSpread,
+    `${APP_REL}:${lateSpread && lateSpread.loc.start.line} 的展開（...）排在 assets 那一條之後：`
+    + '後寫的會蓋掉 assets，本題認不出最後綁到誰，要有人回來更新');
 
   let node = props[0].value;
   for (let hop = 0; hop < 3; hop++) {              // 純轉手包裝算等價寫法，跟著它走（不算假紅）
@@ -341,6 +391,30 @@ function assertAssetsRouteBinding() {
   assert.ok(source.startsWith('.'), `ROUTES.assets 的 renderAssets 來自「${source}」，不是相對路徑`);
   assert.equal(resolve(dirname(join(ROOT, APP_REL)), source), join(ROOT, ASSETS_REL),
     `ROUTES.assets 的 renderAssets 來自「${source}」，不是本題搬進 sandbox 的 ${ASSETS_REL}`);
+}
+
+/**
+ * `Object.freeze({…})`／`Object.seal({…})` 只包著一個物件字面值時 ⇒ 回傳裡面那個字面值（否則 null）。
+ *
+ * ⚠️ 為什麼要拆（#413 r5 阻擋的假紅，值得原地記下來）：`const ROUTES = Object.freeze({…})` 是
+ *    **零行為差異的純強化**，而且正是本處劃界第 2 條自己建議的關門方向（「把路由表收成唯讀的單一真相」）——
+ *    上一版卻在那一步就以形狀斷言轉紅，訊息還把它誤判成「改成動態組表了」。
+ *    要認出 assets 綁到誰完全不需要新資訊：`Object.freeze` 的參數就是原封不動的那個物件字面值。
+ *    這與 declSourceOf 記的 r3 教訓是同一個模式：**形狀斷言不可比正式行為還嚴**。
+ * `Object` 本身被就地宣告或 import 遮蔽掉時**不拆**（那不是語言的 Object，包出來的東西無從得知）——
+ * 那種寫法會落到上面那條 ObjectExpression 斷言、吵著紅要人回來看。
+ */
+function frozenObjectArg(mod, node) {
+  if (!node || node.type !== 'CallExpression' || node.arguments.length !== 1) return null;
+  const callee = node.callee;
+  if (callee.type !== 'MemberExpression' || callee.computed) return null;
+  if (callee.object.type !== 'Identifier' || callee.object.name !== 'Object') return null;
+  if (callee.property.type !== 'Identifier' || !['freeze', 'seal'].includes(callee.property.name)) return null;
+  const ref = mod.manager.scopes.flatMap((/** @type {any} */ s) => s.references)
+    .find((/** @type {any} */ r) => r.identifier === callee.object);
+  if (ref && ref.resolved) return null;             // 被本檔的宣告／import 遮蔽掉＝不是語言的 Object
+  const arg = node.arguments[0];
+  return arg.type === 'ObjectExpression' ? arg : null;
 }
 
 /**
@@ -396,11 +470,13 @@ function walkAst(node, visit) {
  *    共同病根是「切一小段原始碼出來跑」這個手法本身：它必須認得判準長什麼形狀、住在哪一層、叫什麼名字。
  *    正解不是多認幾種形狀，是**不再切**——整支模組原封不動搬進去跑，改名／搬家／抽 helper／
  *    多一張橘標籤全部與本題無關。
- *    ⚠️ 這句話是量過的，不是講講而已：(a)–(e) 五顆逐字重放**全綠**，另外兩顆等價改寫
- *    （`renderAssets` 改寫成 `export const` 箭頭函式、新增一個不相關的 import 並在版面裡用它）也全綠；
- *    而真的動行為的六顆全部**轉紅**（前端 `>=` 改 `>`、拿掉 `Math.abs`、門檻乘 3、
- *    改讀別的設定鍵、進度條顏色與標籤走散、下一段那顆探針繞法），後端那兩顆（`>=` 改 `>`、
- *    拿掉 `Math.abs`）也照舊轉紅。
+ *    ⚠️ 這句話是量過的，不是講講而已：(a)–(e) 五顆逐字重放**全綠**（#413 r5 這一輪逐顆重跑），
+ *    另外兩顆等價改寫也全綠：`renderAssets` 改寫成 `export const` 箭頭函式、
+ *    兩處 `b.onclick = …` 改成 `b.addEventListener('click', …)`；
+ *    r4 那一輪另外量過「新增一個不相關的 import 並在版面裡用它」，也是全綠。
+ *    而真的動行為的全部**轉紅**：本輪重跑的是前端 `>=` 改 `>`、拿掉 `Math.abs`、
+ *    判準多一個 `r.value > 0` 的合取子、後端 `>=` 改 `>`；
+ *    r4 那一輪另外量過門檻乘 3、改讀別的設定鍵、進度條顏色與標籤走散、探針繞法。
  *
  * ⚠️ 順帶把上一版明寫「開著」的那個洞關上了：上一版只證明得了「判準式算出來的值在四個邊界上都對」，
  *    把**印在畫面上**的標籤搬進一個不呈現的探針變數就能全綠（複驗者 #413 r3 的繞法）。現在斷言的是
@@ -418,9 +494,22 @@ function walkAst(node, visit) {
  *      `esc()` 消毒得對不對、`CHART.orange` 實際是什麼顏色、CSS 有沒有把標籤藏起來，都不在射程內
  *      （前者有自己的考題：test/xss-id-escaping.test.js）。
  *      ⚠️ 所以這裡的用詞是「**印進 HTML**」而不是「使用者看得見」：這句是量過的——
- *      給橘標籤與橘進度條各加一個 `hidden`（正式碼真的改了、瀏覽器上就消失了），本題照舊 7/7 全綠。
- *      「看得見」得靠真瀏覽器，本題證不了。
- *   2. 只跑 `renderAssets()` 這一條路徑、只讀它寫進 `view()` 的 HTML。事件綁好之後的 DOM 行為不在射程內。
+ *      在版面上就給橘標籤與橘進度條各印一個 `hidden`（正式碼真的改了、瀏覽器上就消失了），
+ *      本題照舊 7/7 全綠。「看得見」得靠真瀏覽器，本題證不了。
+ *      （**印完再用節點去藏**是另一件事，那族由下一條的守衛收。）
+ *   2. 只跑 `renderAssets()` 這一條路徑，讀的是它**最後留在** `view()` 的 HTML：跑完先把 sandbox 排的
+ *      計時器全部放行、再讓真的 macrotask 走一拍、然後才讀（見 flushLater）。所以
+ *      **「印完再把剛印好的標籤拔掉」算在射程內**——同一拍做的
+ *      （`view().querySelectorAll('.tag.amber').forEach((el) => el.remove())`）與延後幾毫秒做的
+ *      （`setTimeout` 裡改寫 innerHTML）都逐字重放過，都轉紅（#413 r5 的兩顆繞法）。
+ *      ⚠️ 上一版這裡寫的是「事件綁好之後的 DOM 行為不在射程內」：那句指的是 click handler，
+ *      卻**讀起來像連這族也放掉了**，而它當時真的是開著的洞。現在改口如上。
+ *      守衛只發在**本題交出去的那幾個節點**上：`view()` 自己、`view().parentElement`、
+ *      從 `view()` 或 `document` 撈回來的節點（見 guardedNode）。**使用者按下按鈕之後**
+ *      handler 裡做什麼仍不在射程內（本題不點按鈕）。
+ *      ⚠️ 假 DOM 沒有子樹，所以走 `children`／`firstElementChild` 那類寫法在 sandbox 裡會 TypeError
+ *      ＝吵著紅、不是靜靜綠；但「真瀏覽器裡還有哪些路徑碰得到畫面」本題窮舉不了——
+ *      這是替身 DOM 的界，不是「全部關上了」的保證。
  *      ⚠️ 「資產頁真的由這一支渲染」**不是憑本題跑得動就成立的**，它由 assertAssetsRouteBinding
  *      另外斷言（`ROUTES.assets` 綁的就是本檔這支匯出）——上一版這裡寫「改由別的函式渲染會吵著紅」，
  *      那句話當時**沒有任何東西撐著、而且是假的**：複驗者留著原 renderer、另接一支先呼叫它再從 DOM
@@ -450,7 +539,29 @@ async function renderAssetsHtml(db) {
     };
     return node;
   };
-  const viewEl = el();
+  // 「印完之後又去改畫面」的記帳簿（見 guardedNode／劃界第 2 條）：非空＝本題斷言的 HTML 到不了畫面。
+  /** @type {string[]} */
+  const domEdits = [];
+  const viewEl = guardedNode('view()', domEdits, ['innerHTML'], {
+    querySelector: (/** @type {any} */ s) => guardedNode(`view().querySelector('${s}') 撈到的節點`, domEdits, []),
+    querySelectorAll: (/** @type {any} */ s) => [guardedNode(`view().querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
+    parentElement: guardedNode('view().parentElement', domEdits, []),
+  });
+  // sandbox 自己的計時器：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**（見 flushLater）。
+  /** @type {(() => any)[]} */
+  const scheduled = [];
+  const later = (/** @type {any} */ fn, /** @type {any} */ _ms, /** @type {any[]} */ ...args) => {
+    if (typeof fn === 'function') scheduled.push(() => fn(...args));
+    return 0;
+  };
+  const flushLater = async () => {
+    // 放行時排的新工作也要跑（上限只為了防呆：正式碼在渲染路徑上排無窮迴圈計時器是別的問題）
+    for (let round = 0; round < 20 && scheduled.length; round++) {
+      for (const job of scheduled.splice(0, scheduled.length)) await job();
+    }
+  };
+  // ⚠️ `clearTimeout` 刻意沒接手：正式碼哪天在渲染路徑上「排了又取消」，本題會照跑那份工作
+  //    ＝有可能假紅，那時要有人回來看（現行 assets.js 一顆計時器都沒排）。
   const esc = (/** @type {any} */ s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
   const num = (/** @type {any} */ n) => String(Number(n) || 0);
@@ -475,7 +586,22 @@ async function renderAssetsHtml(db) {
   };
   /** 這台 node 沒有的瀏覽器全域（依名字配，全域本來就只有名字這一個身分）。 */
   /** @type {Record<string, any>} */
-  const globalStubs = { Chart: class { destroy() { } } };
+  const globalStubs = {
+    Chart: class { destroy() { } },
+    // `document` 也發守衛節點：從 document 那頭撈 `.tag.amber` 再 remove()，是 view() 那顆繞法換個入口。
+    document: {
+      querySelector: (/** @type {any} */ s) => guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []),
+      querySelectorAll: (/** @type {any} */ s) => [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
+      getElementById: () => el(),
+      createElement: () => el(),
+    },
+  };
+  // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
+  // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
+  for (const name of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask']) {
+    globalStubs[name] = later;
+    if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
+  }
   const stubFor = (/** @type {{ name: string, source: string | null, imported: string | null }} */ need) => {
     const table = need.source === null ? globalStubs : (stubsBySource[need.source] || {});
     const key = need.source === null ? need.name : String(need.imported);
@@ -484,7 +610,59 @@ async function renderAssetsHtml(db) {
   const renderAssets = /** @type {() => Promise<void>} */ (
     new Function(...needs.map((n) => n.name), `${body}\nreturn ${exported};`)(...needs.map(stubFor)));
   await renderAssets();
+  await flushLater();                                    // 排給「稍後」的工作先跑完
+  await new Promise((r) => setTimeout(r, 0));             // 再讓真的 macrotask 走一拍（沒經過計時器替身的 fire-and-forget）
+  await flushLater();
+  assert.deepEqual(domEdits, [],
+    'renderAssets 印完 HTML 之後又去改動畫面上的節點：'
+    + `${domEdits.join('；')}——本題斷言的 HTML 因此到不了畫面（#413 r5 的繞法：`
+    + '把剛印好的 `.tag.amber` 從 DOM 拔掉）。正式碼那兩處 [data-edit]／[data-del] 只掛 onclick，'
+    + '不做結構性改動；真要在渲染路徑上動節點，得有人回來看過本題才算');
   return viewEl.innerHTML;
+}
+
+/**
+ * 一顆「寫進去會被記帳」的 DOM 節點替身：`allowWrite` 列的鍵與 `on…` 事件屬性放行，
+ * 其餘的屬性寫入（innerHTML／hidden／className／style.…）與結構性方法（remove／replaceWith／
+ * setAttribute／classList.add…）都往 `edits` 記一筆，由呼叫端在最後一起吵著紅。
+ *
+ * ⚠️ 這顆存在的唯一理由＝#413 r5 的阻擋繞法（值得原地逐字記下來）：上一版的假 view 元素把 innerHTML
+ *    當純字串存、`querySelectorAll` 一律回 `[]`，於是正式碼「**寫完再讀回 DOM 改掉**」這一手本題完全
+ *    看不見。複驗者把 r4 那顆 wrapper 的內容搬進 renderAssets 自己的尾巴（`view()
+ *    .querySelectorAll('.tag.amber').forEach((el) => el.remove())`）——路由綁定沒變、匯出沒變、
+ *    模組沒變，正式資產頁的橘色偏離標籤全部消失，而 7 題全綠、完整套件全綠、typecheck／lint 全綠。
+ *
+ * 放行清單是**白名單**（不是列舉繞法）：正式碼在渲染路徑上對撈回來的節點只做兩件事——
+ * 讀（`b.dataset.edit`）與掛事件（`b.onclick = …`）——所以只放行這兩類，其餘一律記帳。
+ * 沒被預期的方法呼叫（`b.children[0]`、`b.closest(…)` 這種）在這顆替身上直接 TypeError＝吵著紅，
+ * 也不會靜靜通過。代價是**日常改動真的要動節點時本題會紅**，要有人回來看過——那是刻意的。
+ */
+function guardedNode(label, edits, allowWrite = [], seed = {}) {
+  const note = (/** @type {string} */ what) => { edits.push(`${label} ${what}`); };
+  /** @type {any} */
+  const node = {
+    innerHTML: '', value: '', className: '', hidden: false, disabled: false, dataset: {}, tagName: 'DIV',
+    getAttribute: () => null, hasAttribute: () => false, matches: () => false,
+    addEventListener() { }, removeEventListener() { },
+    parentElement: { innerHTML: '' },
+    classList: { contains: () => false },
+    style: new Proxy({}, {
+      set: (t, k, v) => { note(`style.${String(k)} 被改寫`); return Reflect.set(t, k, v); },
+    }),
+    ...seed,
+  };
+  for (const m of ['add', 'remove', 'toggle', 'replace']) node.classList[m] = () => note(`classList.${m}() 被呼叫`);
+  for (const m of ['remove', 'replaceWith', 'replaceChildren', 'insertAdjacentHTML', 'insertAdjacentElement',
+    'setAttribute', 'removeAttribute', 'append', 'prepend', 'appendChild', 'removeChild', 'insertBefore']) {
+    node[m] = () => note(`${m}() 被呼叫`);
+  }
+  return new Proxy(node, {
+    set: (t, k, v) => {
+      const key = String(k);
+      if (!allowWrite.includes(key) && !/^on[a-z]+$/.test(key)) note(`的 ${key} 被改寫`);
+      return Reflect.set(t, k, v);
+    },
+  });
 }
 
 /**
