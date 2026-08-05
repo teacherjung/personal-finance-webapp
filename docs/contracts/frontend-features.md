@@ -1,7 +1,7 @@
 # 契約：前端功能（訂閱／月度回顧卡／洞察書籤／日期解析）
 
 > 本檔是 AGENTS.md「同步點清單」拆出的**領域契約**（D4a 試點，2026-07-31）。
-> **內文＝原同步點列逐字照搬**（唯一轉換＝表格列解框成「改這裡／記得同步這裡」兩段）；新增的只有標題與本頁首。
+> **內文＝AGENTS 原文逐字照搬**（表格列解框成「改這裡／記得同步這裡」兩段；2026-08-04 籃C 起，同步點表以外的段落與清單同樣逐字、掛在同兩個標籤下）；新增的只有標題、標籤與本頁首。
 > **適用檔案清單＝[README.md](README.md) 路由表「前端功能」列（單一真相，本頁首不重複維護一份會走散的副本）**——命中就必讀本檔。
 
 ## 月度回顧總覽卡
@@ -39,3 +39,33 @@
 **改這裡**：**每日洞察引擎書籤 `insightState`＋差異引擎**（D3，2026-07-22）
 
 **記得同步這裡**：`lib/services/insights.js getInsights()` 是唯一寫入口，`GET /api/insights` 呼叫它——**讀取＝視為「看過了」→ 當下更新書籤**（有寫檔副作用，故只有總覽呼叫）。差異＝現在 vs 書籤：🆕新出現/✓已解除（留 title 供顯示）/持續中、跳檔（估值檔位 0/1/2，**null↔值不算跳**）、自上次 Δ、固定窗 Δ（今天/本週，從 `dailyValues` 找最接近既有日、不足不顯示）、平靜判定（無🆕/✓/跳檔且今日Δ% 的絕對值小於 0.3%）。**首次執行（空書籤）全當持續中、不標🆕**——「有效書籤」需**同時有 `lastSeenAt`(字串)＋`reminders`(陣列)**（缺任一＝退回首次，免殘缺書籤把當下每條都謊報🆕，D3 自審#2/#5）。⚠️**新增/改提醒（`derive.js`）鐵律**：**同一顧慮的升級必須共用同一把 key**（如訂閱/保險「將至」→「已過」都用 `sub-charge-{id}`／`ins-pay-{id}`，不可拆 `-overdue-`；差異引擎純比 key，拆 key 會在升級當下把仍在惡化的顧慮謊報成「✓已解除 👍」＋🆕，保險漏繳是 danger＝生存級，D3 自審#1）——比照 `card-due-{id}` info→warn 同 key。固定窗 Δ% 用 **abs(基期)**（淨值為負時方向才不反轉，D3 自審#4）；基期 0 但有變動＝不平靜（D3 自審#3）。⚠️**read-await-write**：先 await 報價（`getCape`/`getRealYield` 算 ECY，失敗靜默 null）、**await 之後才 `getDb`→算→`saveDb`**（同 D1/syncIb r3#1）。`insightState` 是**頂層 map 型鍵**：`lib/store.js` 的 **`KV_KEYS` 與 `KV_MAP_KEYS` 都要有它**（漏了 save 不寫、靜默丟失，實測踩到）＋`schema.js sanitizeInsightState`（接進 sanitizeDbForWrite，防壞形狀）＋`emptyDb`＋`types.js InsightState`。服務層專寫、非 CRUD 白名單。
+
+## async render 與路由序號 guard
+
+**改這裡**：**async render 寫 `#view` 前要 guard 序號**（Codex r10#6）
+
+**記得同步這裡**：⚠️ **async render 寫 `#view` 前要 guard 序號**（Codex r10#6）：render 一進場 `const seq = currentRouteSeq()`，`await` 完、**動任何 DOM/圖表（含 `destroyCharts`）之前**先 `if (seq !== currentRouteSeq()) return;`——不然快速切頁時慢頁 resolve 會蓋掉新頁（router 的事後檢查太晚，寫入發生在 render 內部）。有遞迴重載（如 `renderSubscriptions` 的 autoExpire）也要在遞迴分支前 guard。**表單儲存後的重畫也必須先確認仍在原路由**，不可把裸的 `renderXxx` 傳給 async action；同一頁可同時啟動多代 render 時，再加頁面 generation，外部資料晚回來只能寫入目前 generation 的容器。
+
+## 淨值目標與到達速度
+
+**改這裡**：淨值目標與到達速度
+
+**記得同步這裡**：後端單一真相＝`lib/derive.js computeGoalTracking(db, now)`，由 `buildSummary.goalTrack` 供前端顯示，**前端不可重算**。目標 `settings.netWorthTarget` 以台幣元保存（設定頁 P2 用萬元輸入），只收正數或 `null`。兩把尺都只看最近六個**已結束月**、至少三個月份、取中位數：①現金結餘只收 cashflow 帳本的 income−expense（card／transfer 排除）；②整體淨值變化用 snapshots，相鄰缺月要除以實際相隔月數，且文案須說含市場、匯率與帳戶更新。速度≤0 不算負月數／Infinity；資料不足仍顯示進度。達標除了在目標區顯示，也由 `computeReminders` 產生穩定 key `goal-reached`、`level:'info'` 的報喜事件：新聞牆第一次標 🆕、之後收進持續中，不另改 `insightState`。
+
+## 時鐘倒退保護
+
+**改這裡**：**時鐘倒退保護**（Codex r3#8，中）
+
+**記得同步這裡**：`lib/services/snapshot.js` 的 `clockWentBackwards`：現在的日期比「資料庫裡最新的一天」（`dailyValues` ∪ `snapshots`）還早 → **不寫**。因為「同日覆寫／同月覆蓋」會拿舊資料蓋掉更新的歷史，而歷史補不回來（電腦時間被手動改、時區設錯、VM 還原都會踩到）。分流：**自動流程（開 app）安靜略過**＋console 警告、回 `skipped`；**手動按鈕明確 throw 400 並說明**（使用者主動按的動作要看得見，他才有機會去修系統時間）。另：`nowLocal()` **整個流程只擷取一次時間**，避免跨午夜時「判斷該不該寫」與「實際寫哪一天」對不上。
+
+## 淨值日線 dailyValues
+
+**改這裡**：**淨值日線 `dailyValues`**（D0，每日洞察引擎的地基；使用者定 2026-07-19）
+
+**記得同步這裡**：`lib/services/snapshot.js recordDailyValue()` 是**唯一寫入口**（開 app 的 `POST /api/snapshot/auto` 每次都呼叫）。與月快照的關鍵差別＝**同日覆寫、跨日累積**（月快照是同月覆蓋，手上永遠只有每月一個點，連「今天 vs 昨天」都算不出來）；**月快照跳過不代表日線跳過**——同日資產有變動時日線要跟得上，所以 `takeSnapshotIfDue` 先寫日線再判月快照。欄位＝`date`(YYYY-MM-DD 主鍵，**必填**)/`netWorth`/`assets`/`liabilities`/`pfCost`/`pfValue`/**`usdTwd`＋`gbpTwd`＋`jpyTwd`**（三種匯率都留底才分得出「淨值變動」是資產本身動了還是匯率動了——系統支援 USD/GBP/JPY 三種外幣，只留美元等於解讀不了另外兩種；Codex r3#10）。`date` 用新的 **`datereq`** 型別（`monthreq` 的日級雙胞胎：空值/壞格式都當壞資料拒絕）＋進 `REQUIRED_FIELDS`——壞 date 會讓差異引擎的排序與「找最接近的既有日」錯亂，比沒資料更糟。集合列在 `READONLY_COLLECTIONS`（前端唯讀、`GET /api/dailyValues` 自動生效，無 CRUD 寫入）。一天一行永久保留（一年 365 行，SQLite 無壓力）。改欄位時同步 `lib/types.js` 的 `DailyValue`＋`lib/store.js emptyDb()`＋`data/seed.json`＋`test/daily-values.test.js`
+
+## 共用彈窗契約
+
+**改這裡**：**共用彈窗契約**（modal-shell.js 的邊界）
+
+**記得同步這裡**：**共用彈窗契約**（modal-shell.js 的邊界）：只共用**尺寸、標題列、關閉按鈕、背景與基本關閉行為**；送出、預覽、返回、非同步狀態與重畫流程**由各功能自行負責**。

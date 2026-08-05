@@ -146,12 +146,12 @@ test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
 test('合併程序真的把聯集閘寫成一步（不是只在別處提到它）', () => {
   // ⚠️ 判準比照 test/merge-procedure-docs.test.js：**指令必須出現在剝掉 HTML 註解後的 fenced code**
   //    ——「文件某處提到這支腳本」不算數（#353 r1 的考題就是被「把指令搬進 HTML 註解」繞過的）。
-  // ⚠️ **先截出「合併六步驟」那個 blockquote 區塊再看**（Codex #385 r2 Medium）：
+  // ⚠️ **先截出「合併步驟」那個 blockquote 區塊再看**（Codex #385 r2 Medium；步數不寫死——加了閘就會變）：
   //    掃整份文件的所有 fenced code 的話，把指令從步驟 2 刪掉、搬到檔頭的啟動範例，考題照樣過。
   //    判準比照 test/merge-procedure-docs.test.js。
   const whole = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
   const start = whole.indexOf('合併也由 Codex 代執行');
-  assert.ok(start > 0, 'REVIEW-AND-MERGE.md 找不到「合併六步驟」那個區塊');
+  assert.ok(start > 0, 'REVIEW-AND-MERGE.md 找不到「合併步驟」那個區塊');
   const md = whole.slice(start, whole.indexOf('\n---', start));
   const fenced = [...md.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]).join('\n');
   assert.match(fenced, /node scripts\/check-review-verdicts\.js/,

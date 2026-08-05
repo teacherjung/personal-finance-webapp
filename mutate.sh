@@ -1,33 +1,95 @@
 #!/bin/zsh
 # 拆分護欄的突變表。
 #
-# ⚠️ 這支腳本本身出過三次事（都是 Codex 抓的，而且我親身踩過）：
+# ⚠️ 這支腳本本身出過五次事（④在下方髒檔檢查的註解、⑤在下方備份與還原的註解，其餘如下）：
 #   ①它會 `git checkout --` 還原檔案 ⇒ **未 commit 的工作會被洗掉**（我洗掉過自己一輪的修改）
 #   ②期望不符時只印 ⚠️、退出碼仍是 0 ⇒ 掛進任何自動化都是**永遠通過的假閘**
 #   ③某條的標籤裡有反引號（zsh 會當成命令替換）⇒ 突變寫進檔案之後才中止、**沒有還原**，
 #     而我接著就 commit ⇒ **突變被 commit 進 PR**
 # 所以現在：工作樹不乾淨就拒跑（**沒有例外，本腳本自己也算**）、
-# 任一條不如期望 exit 1、基準與收尾都真的 assert、**中止時 trap 還原**。
+# 任一條不如期望 exit 1、基準與收尾都真的 assert、**中止時 trap 還原**、
+# 還原不走 git、還原失敗大聲失敗＋立即中止。
+# 退出碼：0＝全符合；1＝有不符；2＝環境不合拒跑（一個位元組都沒動）；3＝還原失敗（樹上可能有殘留）；
+#         INT／TERM 中止＝130／143（一樣經 EXIT trap 還原，Codex #403 r1 指出檔頭漏列）。
 set -u
 cd "$(dirname "$0")"
 
 fail=0
-
-restore() { git checkout -- AGENTS.md docs/contracts/ test/contract-split.test.js 2>/dev/null || true; }
 
 # ⚠️ **髒檔檢查必須在掛 trap 之前**（2026-08-03 第四次事故，我親手踩的）：
 #    原本 `trap restore EXIT` 掛在前面，於是「工作樹不乾淨 → exit 2」這條保護分支
 #    **自己會觸發 EXIT trap**，restore 照樣 `git checkout` 把未 commit 的工作洗掉。
 #    ——**那正是這道檢查存在的理由，它卻在拒絕執行的同時做了它要防的事。**
 #    保護措施本身要先於它所保護的危險動作生效，順序不是風格問題。
-dirty=$(git status --porcelain || true)
+#    （現在 restore＝拷回「開跑當下」的位元組，就算誤觸也只是拷回當下狀態；
+#      但乾淨樹仍是硬前提——「還原後 git status 必須全空」的斷言靠它才成立。）
+# git status 自己失敗也要拒跑——舊版 `|| true` 會把「驗不了」當成「乾淨」放行＝假綠。
+if ! dirty=$(git status --porcelain); then
+  echo "❌ git status 失敗——連「工作樹乾淨」都驗不了，拒絕執行。"
+  exit 2
+fi
 if [[ -n "$dirty" ]]; then
-  echo "❌ 工作樹不乾淨，拒絕執行——這支會 git checkout 還原檔案，會洗掉你未 commit 的工作："
+  echo "❌ 工作樹不乾淨，拒絕執行——本腳本會突變並還原守護檔，髒樹會讓收尾斷言失去意義："
   echo "$dirty"
   exit 2
 fi
 
-trap restore EXIT INT TERM
+# ── 備份與還原：不走 git（2026-08-04 第五次事故，Codex #401 r2 抓的）──
+# 舊版 restore 用 `git checkout --` 還原，錯誤用 `2>/dev/null || true` 整個吞掉。
+# 在釘選的審查 worktree（/private/tmp/codex-review-pr*）＋sandbox 裡，git 建不了
+# 共享 .git/worktrees/.../index.lock ⇒ 每一次還原都靜靜失敗、突變留在審查樹上，
+# 後續突變再疊上去（審查者人工精確還原才收拾掉）。所以現在：
+#   ①開跑先把守護檔做位元組備份（$backup_dir），還原＝拷回去——只寫工作樹檔案
+#     與 $TMPDIR，git 全程唯讀，sandbox 釘選審查樹裡也能跑；
+#   ②每次還原後用 git status 斷言「真的乾淨」，任何一步失敗＝大聲失敗、立即中止
+#     （還原失敗還繼續跑，後面每一條都疊在髒樹上＝結果全是垃圾）；
+#   ③備份目錄只在還原驗證通過後才刪——還原失敗時它就是人工救援的精確原始檔。
+GUARD_FILES=(AGENTS.md test/contract-split.test.js)   # 平面檔（備份取檔名，不可同名）
+GUARD_DIR=docs/contracts                              # 整個目錄
+
+if ! backup_dir=$(mktemp -d); then
+  echo "❌ 備份目錄建立失敗（\$TMPDIR 不可寫？）——一個位元組都還沒動，拒跑。"
+  exit 2
+fi
+backup_ok=1
+for f in "${GUARD_FILES[@]}"; do
+  cp -p "$f" "$backup_dir/${f:t}" || backup_ok=0
+done
+cp -Rp "$GUARD_DIR" "$backup_dir/contracts" || backup_ok=0
+if [[ $backup_ok -ne 1 ]]; then
+  echo "❌ 備份失敗——一個位元組都還沒動，拒跑。"
+  exit 2
+fi
+
+restore() {   # 拷回開跑時的位元組，再斷言 git 視角真的乾淨；失敗回非零（呼叫端負責大聲）
+  local f left
+  for f in "${GUARD_FILES[@]}"; do
+    cp -p "$backup_dir/${f:t}" "$f" || return 1
+  done
+  mkdir -p "$GUARD_DIR" || return 1
+  cp -Rp "$backup_dir/contracts/." "$GUARD_DIR/" || return 1
+  left=$(git status --porcelain -- "${GUARD_FILES[@]}" "$GUARD_DIR") || return 1
+  [[ -z "$left" ]]
+}
+
+die_unrestored() {   # 還原失敗＝大聲失敗：把這個錯誤吞掉正是第五次事故的根因
+  echo "❌ 還原失敗——工作樹很可能殘留突變，請立即 git status 檢查。"
+  echo "   開跑時的原始檔完整備份在：$backup_dir（拷回去＝精確還原，別刪）。"
+}
+
+restore_failed=0
+on_exit() {
+  if [[ $restore_failed -ne 0 ]]; then exit 3; fi   # check() 已經大聲報過，別再蓋退出碼
+  if restore; then
+    rm -rf "$backup_dir"
+  else
+    die_unrestored
+    exit 3
+  fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 run() {
   if node --test --test-reporter=dot test/contract-split.test.js >/dev/null 2>&1; then
@@ -59,14 +121,18 @@ check() {   # check <說明> <期望：紅|綠>
   got=$(run)
   if [[ "$got" == "$2" ]]; then mark="  "; else mark="❌"; fail=1; fi
   printf "%s %-46s → %s（期望 %s）\n" "$mark" "$1" "$got" "$2"
-  restore
+  if ! restore; then
+    restore_failed=1
+    die_unrestored
+    exit 3
+  fi
 }
 
 # ── 藏東西：契約與規則檔不准出現 fence 或 HTML 註解（r13 起改成「關門」）──
 
 mutate 'A. 契約檔出現 code fence（連合法成對的也不准）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"```text\n連合法成對的也不准\n```\n\n"+s[i:], encoding="utf-8")
 PY
@@ -74,7 +140,7 @@ check 'A. 契約檔出現 code fence（連合法成對的也不准）' 紅
 
 mutate 'B. 契約檔出現 HTML 註解（連閉合的也不准）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"<!-- 連閉合的也不准 -->\n\n"+s[i:], encoding="utf-8")
 PY
@@ -90,7 +156,7 @@ check 'C. AGENTS 出現 fence（另一種記號也一樣）' 紅
 
 mutate 'D. 用 <pre> 把整節吞掉（raw HTML block）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡"); j=s.index("## 訂閱續費日自動推進")
 p.write_text(s[:i]+"<pre>\n"+s[i:j]+"\n</pre>\n"+s[j:], encoding="utf-8")
 PY
@@ -98,7 +164,7 @@ check 'D. 用 <pre> 把整節吞掉（raw HTML block）' 紅
 
 mutate 'E. 行首出現 <div>（另一類 raw HTML）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"<div>\n\n"+s[i:], encoding="utf-8")
 PY
@@ -106,7 +172,7 @@ check 'E. 行首出現 <div>（另一類 raw HTML）' 紅
 
 mutate 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("## 月度回顧總覽卡","## 月度回顧[總覽卡](x.md)",1), encoding="utf-8")
 PY
 check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
@@ -117,7 +183,7 @@ check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
 
 mutate 'R. 同名 #### 搶走 anchor（Codex r14 實證）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"#### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -125,7 +191,7 @@ check 'R. 同名 #### 搶走 anchor（Codex r14 實證）' 紅
 
 mutate 'S. 同名 Setext 標題搶走 anchor' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"月度回顧總覽卡\n==============\n\n"+s[i:], encoding="utf-8")
 PY
@@ -133,7 +199,7 @@ check 'S. 同名 Setext 標題搶走 anchor' 紅
 
 mutate 'T. 縮排兩格的同名 ##（CommonMark 仍算標題）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"  ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -141,7 +207,7 @@ check 'T. 縮排兩格的同名 ##（CommonMark 仍算標題）' 紅
 
 mutate 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"# 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -152,7 +218,7 @@ check 'U. 第二個 H1 同名（H1 原本不在掃描範圍）' 紅
 
 mutate 'V. 引用裡的同名 ####（Codex r16 實證）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"> #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -160,7 +226,7 @@ check 'V. 引用裡的同名 ####（Codex r16 實證）' 紅
 
 mutate 'W. 清單裡的同名 ##（剝完長得跟正式的一樣）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"- ## 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -168,7 +234,7 @@ check 'W. 清單裡的同名 ##（剝完長得跟正式的一樣）' 紅
 
 mutate 'X. 引用裡的 code fence（繞過 fence 禁令）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"> ```text\n> 引用裡的 fence 一樣不准\n> ```\n\n"+s[i:], encoding="utf-8")
 PY
@@ -176,7 +242,7 @@ check 'X. 引用裡的 code fence（繞過 fence 禁令）' 紅
 
 mutate 'Y. 引用裡的 raw HTML（繞過 HTML 禁令）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"> <div>\n\n"+s[i:], encoding="utf-8")
 PY
@@ -184,7 +250,7 @@ check 'Y. 引用裡的 raw HTML（繞過 HTML 禁令）' 紅
 
 mutate 'Z. 契約檔第一行的 H1 整行刪掉' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.split("\n",1)[1].lstrip("\n"), encoding="utf-8")
 PY
 check 'Z. 契約檔第一行的 H1 整行刪掉' 紅
@@ -193,7 +259,7 @@ check 'Z. 契約檔第一行的 H1 整行刪掉' 紅
 
 mutate 'AA. 清單續行裡的引用 ####（Codex r18 實證）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"- 外層\n    > #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -201,7 +267,7 @@ check 'AA. 清單續行裡的引用 ####（Codex r18 實證）' 紅
 
 mutate 'AB. 清單續行裡的 fence' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"- 外層\n\n    ```text\n    藏在清單續行裡\n    ```\n\n"+s[i:], encoding="utf-8")
 PY
@@ -209,7 +275,7 @@ check 'AB. 清單續行裡的 fence' 紅
 
 mutate 'AC. 用 Tab 縮排的巢狀容器' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"- 外層\n\t> #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -217,7 +283,7 @@ check 'AC. 用 Tab 縮排的巢狀容器' 紅
 
 mutate 'AD. H1 加收尾井字號（anchor 兩邊算不一樣）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 ls=p.read_text(encoding="utf-8").split("\n"); ls[0]=ls[0]+" #"
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
@@ -227,7 +293,7 @@ check 'AD. H1 加收尾井字號（anchor 兩邊算不一樣）' 紅
 
 mutate 'AE.（誤紅考題）-## 文字＝普通段落，不可擋' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"-## 這不是標題，是普通段落\n\n"+s[i:], encoding="utf-8")
 PY
@@ -235,7 +301,7 @@ check 'AE.（誤紅考題）-## 文字＝普通段落，不可擋' 綠
 
 mutate 'AF.（誤紅考題）**## 粗體**＝普通段落，不可擋' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"**## 粗體開頭的普通段落**\n\n"+s[i:], encoding="utf-8")
 PY
@@ -243,7 +309,7 @@ check 'AF.（誤紅考題）**## 粗體**＝普通段落，不可擋' 綠
 
 mutate 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"1.## 也是普通段落\n\n"+s[i:], encoding="utf-8")
 PY
@@ -253,7 +319,7 @@ check 'AG.（誤紅考題）1.## 文字＝普通段落，不可擋' 綠
 
 mutate 'AH. 引用包住的續行 ####（原始行首是 >）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+"> - 外層\n>     #### 月度回顧總覽卡\n\n"+s[i:], encoding="utf-8")
 PY
@@ -261,7 +327,7 @@ check 'AH. 引用包住的續行 ####（原始行首是 >）' 紅
 
 mutate 'AI. 隱形 reference definition 灌大內文' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
 # GitHub 一個字都不顯示，卻算進長度 ⇒ 灌大內文讓比例檢查失效
 pad="[guard-padding]: # (" + "隱形"*400 + ")\n\n"
@@ -271,7 +337,7 @@ check 'AI. 隱形 reference definition 灌大內文' 紅
 
 mutate 'AJ. 行「中」的 raw HTML（原本只擋行首）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+'可見前綴 <a id="月度回顧總覽卡"></a><details><summary>展開</summary>藏起來</details>\n\n'+s[i:], encoding="utf-8")
 PY
@@ -279,7 +345,7 @@ check 'AJ. 行「中」的 raw HTML（原本只擋行首）' 紅
 
 mutate 'AK. 零寬字元灌大內文' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
 p.write_text(s[:i]+"看不見的padding"+"​"*2000+"\n\n"+s[i:], encoding="utf-8")
 PY
@@ -289,7 +355,7 @@ check 'AK. 零寬字元灌大內文' 紅
 
 mutate 'AL. 引用裡的 reference definition（原本行首判斷看不到）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
 p.write_text(s[:i]+"> [guard-padding]: # (" + "隱形"*400 + ")\n\n"+s[i:], encoding="utf-8")
 PY
@@ -297,7 +363,7 @@ check 'AL. 引用裡的 reference definition（原本行首判斷看不到）' �
 
 mutate 'AM. 開一個反引號關兩個（GFM 不算 code span）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+'可見文字 `<a id="月度回顧總覽卡"></a>`` 後面\n\n'+s[i:], encoding="utf-8")
 PY
@@ -316,7 +382,7 @@ check 'AN. AGENTS 行「中」的 details 把同步點表摺起來' 紅
 
 mutate 'AP. 開三個反引號關兩個（正規式會回溯）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡")
 p.write_text(s[:i]+'可見文字 ```<a id="月度回顧總覽卡"></a>`` 後面\n\n'+s[i:], encoding="utf-8")
 PY
@@ -436,13 +502,13 @@ check 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一
 
 # ── r35：四條核心承諾的實質缺口（Codex 用 GitHub /markdown 逐條實證）──
 
-mutate 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' <<'PY'
+mutate 'BC. 表格中間插一個 ###（後續索引列被移出表格）' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"### 中途插一個標題\n"+s[i:], encoding="utf-8")
 PY
-check 'BC. 表格中間插一個 ###（36 個連結只剩 9 個在 td）' 紅
+check 'BC. 表格中間插一個 ###（後續索引列被移出表格）' 紅
 
 mutate 'BD. 表格中間插一個清單項' <<'PY'
 import pathlib
@@ -454,14 +520,14 @@ check 'BD. 表格中間插一個清單項' 紅
 
 mutate 'BE. 契約標題改成分解式組合符（slug 會丟掉、GitHub 會保留）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("## 訂閱狀態","## 訂閱狀a\u0301態",1), encoding="utf-8")
 PY
 check 'BE. 契約標題改成分解式組合符（slug 會丟掉、GitHub 會保留）' 紅
 
 mutate 'BF. 契約加長網址、摘要貼回全部可見內文' <<'PY'
 import pathlib,re
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
 sec=s[i:j]
 body=sec.split("**記得同步這裡**：")[1]
@@ -486,7 +552,7 @@ check 'BG. 整段原文塞進契約連結的 label' 紅
 
 mutate 'BH. 契約頁首指到別人的 README 列' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("路由表「前端功能」列","路由表「投資與 SEC」列",1), encoding="utf-8")
 PY
 check 'BH. 契約頁首指到別人的 README 列' 紅
@@ -511,7 +577,7 @@ check 'BJ. 用帶空白的分隔線 _ _ _ 中斷表格' 紅
 
 mutate 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' <<'PY'
 import pathlib,re
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
 sec=s[i:j]; body=sec.split("**記得同步這裡**：")[1]
 pad="（[來源](https://example.com/report(section)?utm_source="+"x"*900+")）"
@@ -525,7 +591,7 @@ check 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' 紅
 
 mutate 'BL. 契約頁首把領域名寫短（startsWith 會放過）' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 p.write_text(s.replace("路由表「前端功能」列","路由表「前端」列",1), encoding="utf-8")
 PY
 check 'BL. 契約頁首把領域名寫短（startsWith 會放過）' 紅
@@ -540,7 +606,7 @@ check 'BM. 契約連結改成圖片形式' 紅
 
 mutate 'BN. 契約 body 塞 HTML entity 撐大分母' <<'PY'
 import pathlib
-p=pathlib.Path("docs/contracts/前端功能.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
 p.write_text(s[:i]+"&ZeroWidthSpace;"*60+"\n\n"+s[i:], encoding="utf-8")
 PY
@@ -559,7 +625,7 @@ check 'BO. README 第一格加括號後綴（前綴比對會放過）' 紅
 
 mutate 'G. 無空白分隔符＋整段規則貼回索引' <<'PY'
 import pathlib
-ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
+ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
 p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
@@ -572,7 +638,7 @@ check 'G. 無空白分隔符＋整段規則貼回索引' 紅
 
 mutate 'H. 用跳脫的直線藏在同一格＋貼回全文' <<'PY'
 import pathlib
-ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
+ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
 p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
@@ -585,7 +651,7 @@ check 'H. 用跳脫的直線藏在同一格＋貼回全文' 紅
 
 mutate 'I. 先放假 marker 再貼回全文（切第一個會漏）' <<'PY'
 import pathlib
-ct=pathlib.Path("docs/contracts/前端功能.md").read_text(encoding="utf-8")
+ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
 p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
@@ -605,7 +671,7 @@ check 'J. 刪掉「最新單季」那條索引（原豁免項）' 紅
 
 mutate 'K. marker 與索引一起刪（雙向斷言的核心）' <<'PY'
 import pathlib,re
-p=pathlib.Path("docs/contracts/收支記帳與匯入.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/contracts/income-expense.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 店家消費檔案")
 p.write_text(s[:i]+s[i:].replace("**記得同步這裡**：","**同步**："), encoding="utf-8")
 q=pathlib.Path("AGENTS.md")
@@ -613,7 +679,7 @@ q.write_text(re.sub(r'^\| \*\*店家消費檔案\*\*.*\n','',q.read_text(encodin
 PY
 check 'K. marker 與索引一起刪（雙向斷言的核心）' 紅
 
-rm -f docs/contracts/前端功能.md
+rm -f docs/contracts/frontend-features.md
 check 'L. 整份契約檔刪掉' 紅
 
 mutate 'M. 從 manifest 偷偷拿掉一條規則' <<'PY'
@@ -639,7 +705,7 @@ mutate 'O. 同一份契約多出一條矛盾路由列' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 收支記帳與匯入")
-s=s[:i]+"|前端功能（重複且錯誤）|（沒有任何責任檔）|[前端功能.md](./前端功能.md)|\n"+s[i:]
+s=s[:i]+"|前端功能（重複且錯誤）|（沒有任何責任檔）|[frontend-features.md](./frontend-features.md)|\n"+s[i:]
 p.write_text(s, encoding="utf-8")
 PY
 check 'O. 同一份契約多出一條矛盾路由列' 紅
@@ -655,13 +721,15 @@ check 'P. 路由表用短檔名冒充完整路徑' 紅
 mutate 'Q. README 連結誤用 repo-root 路徑（連到不存在）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/README.md"); s=p.read_text(encoding="utf-8")
-p.write_text(s.replace("[前端功能.md](前端功能.md)","[前端功能.md](docs/contracts/前端功能.md)",1), encoding="utf-8")
+p.write_text(s.replace("[frontend-features.md](frontend-features.md)","[frontend-features.md](docs/contracts/frontend-features.md)",1), encoding="utf-8")
 PY
 check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
-# ── 收尾：真的 assert，不是印出來就算 ──
-leftover=$(git status --porcelain || true)
-if [[ -n "$leftover" ]]; then
+# ── 收尾：真的 assert，不是印出來就算（git status 失敗＝驗不了＝fail，不是放行）──
+if ! leftover=$(git status --porcelain); then
+  echo "❌ 收尾的 git status 失敗——無法斷言收尾乾淨。"
+  fail=1
+elif [[ -n "$leftover" ]]; then
   echo "❌ 收尾沒乾淨（突變沒還原）："
   echo "$leftover"
   fail=1

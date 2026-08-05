@@ -158,7 +158,7 @@ function read(p) {
  *
  * ## 這道門只裝在**契約檔**上，不裝在 AGENTS.md
  *
- * 因為承重的只有契約檔的 anchor：AGENTS.md 有 36 條連結指進契約檔的某一節，
+ * 因為承重的只有契約檔的 anchor：AGENTS.md 的每一條契約索引都連進契約檔的某一節，
  * 而**指進 AGENTS.md 某一節的連結是 0 條**——它的標題被誰搶走 anchor 都不會有人踩到。
  * 我 r15 原本連 AGENTS.md 一起關，結果當場誤擋了 #385 裡一個完全正當的 `#### 兩條規則`
  * （兩支 PR 各自全綠、合起來才紅）。**護欄裝在不承重的地方，就只剩下誤擋。**
@@ -425,7 +425,7 @@ const MANIFEST = {
       'test/server.test.js',
     ],
   },
-  'docs/contracts/前端功能.md': {
+  'docs/contracts/frontend-features.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '前端功能',
     rules: [
@@ -435,10 +435,15 @@ const MANIFEST = {
       '訂閱狀態',
       'YYYY-MM-DD 日期解析',
       '每日洞察引擎書籤 insightState',
+      'async render 與路由序號 guard',
+      '淨值目標與到達速度',
+      '時鐘倒退保護',
+      '淨值日線 dailyValues',
+      '共用彈窗契約',
     ],
     exempt: [],
     files: [
-      'lib/derive.js',
+      'lib/derive.js', 'data/seed.json',
       'lib/repo.js',
       'lib/routes/core.js',
       'lib/routes/crud.js',
@@ -449,17 +454,17 @@ const MANIFEST = {
       'lib/services/snapshot.js',
       'lib/services/subscriptions.js',
       'lib/store.js',
-      'lib/types.js',
+      'lib/types.js', 'test/daily-values.test.js',
       'public/app.js',
       'public/modules/dashboard.js',
-      'public/modules/monthly-review-card.js',
+      'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
       'test/server.test.js',
       'test/subscriptions-model.test.js',
     ],
   },
-  'docs/contracts/收支記帳與匯入.md': {
+  'docs/contracts/income-expense.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '收支記帳與匯入',
     rules: [
@@ -483,18 +488,21 @@ const MANIFEST = {
       '帳單匯入批次與事後整批改卡片',
       '帳單自動學習店名與分類',
       '店家消費檔案',
+      '銀行對帳單解析與分箱',
+      '帳戶完整帳號與餘額匯入',
+      '帳單原文取法 origFromStmtRef',
     ],
     exempt: [],
     files: [
       'data/seed.json',
-      'lib/bank-statement.js',
+      'lib/bank-statement.js', 'test/bank-statement.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
       'lib/routes/core.js',
       'lib/routes/crud.js',
       'lib/routes/statement.js',
-      'lib/schema.js',
+      'lib/schema.js', 'lib/secret-fields.js', 'public/modules/assets.js', 'lib/types.js', 'test/server.test.js', 'test/statement.test.js', 'test/codex-r10.test.js',
       'lib/services/bank-import.js',
       'lib/services/categories.js',
       'lib/services/health-check.js',
@@ -519,7 +527,7 @@ const MANIFEST = {
       'test/store-rules.test.js',
     ],
   },
-  'docs/contracts/投資與SEC.md': {
+  'docs/contracts/investment-sec.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '投資與 SEC',
     rules: [
@@ -534,23 +542,28 @@ const MANIFEST = {
       '投資代號與原則上限',
       '估值訊號門檻檔位',
       'settings-signals',
+      '投資頁前端模組分工',
+      'IB 現金幣別歸零',
+      '多幣別損益',
+      'XIRR 資金加權年化',
+      'securityTrades 欄位所有權與去重',
     ],
     exempt: [],
     files: [
       'lib/derive.js',
       'lib/heavy-admission.js',
-      'lib/http-body.js',
+      'lib/http-body.js', 'lib/ib.js',
       'lib/parse-limits.js',
       'lib/pdf-isolate-child.js',
       'lib/routes/auth.js',
       'lib/routes/core.js',
-      'lib/routes/market.js',
+      'lib/routes/market.js', 'lib/services/ib-sync.js', 'lib/services/securities-import.js', 'lib/secret-fields.js', 'lib/services/security-trades.js', 'lib/routes/securities.js', 'public/modules/securities.js', 'public/modules/securities-view.js', 'lib/types.js', 'lib/store.js', 'lib/taishin-securities.js', 'test/security-trades.test.js', 'test/securities-contract.test.js', 'test/securities-import.test.js', 'test/securities-migration.test.js', 'test/securities-preview-projection.test.js', 'test/securities-ui.test.js', 'test/taishin-securities.test.js', 'test/portfolio-activity.test.js', 'test/portfolio-chart.test.js', 'test/portfolio-details.test.js', 'test/portfolio-format.test.js', 'test/portfolio-ib-sync.test.js', 'test/portfolio-info-actions.test.js', 'test/portfolio-info.test.js', 'test/portfolio-overview.test.js', 'test/portfolio-quotes.test.js', 'test/portfolio-remote-actions.test.js', 'test/portfolio-report.test.js', 'test/portfolio-research-actions.test.js', 'test/portfolio-tables.test.js', 'test/stock-research-model.test.js', 'test/stock-research-page.test.js', 'test/stock-research-score.test.js', 'test/stock-research-view.test.js',
       'lib/schema.js',
       'lib/services/insights.js',
       'lib/services/market-data.js',
       'lib/services/stock-fundamentals.js',
       'lib/stock-fundamentals.js',
-      'public/modules/categories.js',
+      'public/app.js', 'public/modules/categories.js', 'public/modules/portfolio-activity.js', 'public/modules/portfolio-chart.js', 'public/modules/portfolio-details.js', 'public/modules/portfolio-format.js', 'public/modules/portfolio-ib-sync.js', 'public/modules/portfolio-info-actions.js', 'public/modules/portfolio-info.js', 'public/modules/portfolio-overview.js', 'public/modules/portfolio-quotes.js', 'public/modules/portfolio-remote-actions.js', 'public/modules/portfolio-report.js', 'public/modules/portfolio-research-actions.js', 'public/modules/portfolio-tables.js', 'public/modules/stock-research-model.js', 'public/modules/stock-research-page.js', 'public/modules/stock-research-score.js', 'public/modules/stock-research-view.js',
       'public/modules/portfolio-calculations.js',
       'public/modules/portfolio-editors.js',
       'public/modules/portfolio-exposure.js',
@@ -571,8 +584,8 @@ const MANIFEST = {
       'test/codex-r11.test.js',
       'test/derive-reminders.test.js',
       'test/derive.test.js',
-      'test/heavy-admission.test.js',
-      'test/insights.test.js',
+      'test/heavy-admission.test.js', 'test/ib-parser-money.test.js', 'test/ib-sync-integrity.test.js',
+      'test/insights.test.js', 'test/securities-sync.test.js',
       'test/portfolio-calculations.test.js',
       'test/portfolio-editors.test.js',
       'test/portfolio-exposure.test.js',
@@ -724,7 +737,7 @@ function indexRows() {
     //    兩個原始碼都非空，畫面上都是空的。
     //    ⚠️ **直接禁止方括號**，不要只擋 `](`（Codex #384 r33）：
     //    reference-style 的 `[][blank]` 一樣渲染成空的 `<a></a>`，但它沒有 `](` ⇒ 前一版全綠。
-    //    36 條索引的第一格現在**沒有任何方括號** ⇒ 這一刀零誤紅。
+    //    索引列的第一格現在**沒有任何方括號** ⇒ 這一刀零誤紅。
     assert.doesNotMatch(first, /[[\]]/u,
       `${where} 的索引列第一格含方括號（連結或圖片語法）：${first}\n`
       + '⚠️ 空連結（inline `[](x)` 或 reference-style `[][ref]`）與空 alt 的圖片\n'
@@ -909,11 +922,11 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
   //    缺掉的 `lib/services/store-rules.js` 冒充過關。現在只認**完整路徑**的精確集合相等。
   const readme = read('docs/contracts/README.md');
   // ⚠️ 判準用**解析後的連結目標**，不是原始字串（Codex #384 r6 High）：
-  //    `|前端功能…|`（合法的無空格表格列）與 `[前端功能.md](./前端功能.md)`（等價相對路徑）
+  //    `|前端功能…|`（合法的無空格表格列）與 `[frontend-features.md](./frontend-features.md)`（等價相對路徑）
   //    都繞得過「以 `| ` 開頭」＋「含 `(檔名)`」這種字面比對，於是矛盾的重複列照樣過關。
   const rows = readme.split('\n').filter((l) => l.trim().startsWith('|') && /\.md\)/.test(l));
   // ⚠️ 連結要**相對該檔所在目錄解析**，不能只比 basename（Codex #384 r7）：
-  //    把 README 的 `(前端功能.md)` 寫成 `(docs/contracts/前端功能.md)`
+  //    把 README 的 `(frontend-features.md)` 寫成 `(docs/contracts/frontend-features.md)`
   //    ——那是從 AGENTS 複製路徑到子目錄 README 的真實手滑——實際會連到
   //    `docs/contracts/docs/contracts/…`（不存在），只比 basename 卻看不出來。
   /** @param {string} l */
