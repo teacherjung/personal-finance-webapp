@@ -106,6 +106,7 @@ body.stock-research-route > main {
 }
 
 .stock-tab {
+  --stock-tab-ear-fill: var(--card-2);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -135,6 +136,7 @@ body.stock-research-route > main {
 }
 
 .stock-tab:hover {
+  --stock-tab-ear-fill: var(--card);
   color: var(--text);
   background: var(--card);
 }
@@ -146,20 +148,13 @@ body.stock-research-route > main {
 }
 
 .stock-tab.active {
+  --stock-tab-ear-fill: var(--card);
   z-index: 1;
   border-color: var(--frame);
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   color: var(--accent-hover);
   background: var(--card);
-}
-
-.stock-tab:first-child:not(.active) {
-  border-bottom-left-radius: 16px;
-}
-
-.stock-tab:last-child:not(.active) {
-  border-bottom-right-radius: 16px;
 }
 
 .stock-tab.active::before {
@@ -187,13 +182,23 @@ body.stock-research-route > main {
 .stock-tab-ear {
   display: none;
   position: absolute;
-  bottom: 4px;
+  bottom: 0;
   width: 18px;
-  height: 18px;
+  height: 22px;
   pointer-events: none;
 }
 
 .stock-tab.active .stock-tab-ear {
+  z-index: 3;
+  display: block;
+}
+
+.stock-tab:first-child .stock-tab-ear-left {
+  z-index: 3;
+  display: block;
+}
+
+.stock-tab:last-child .stock-tab-ear-right {
   z-index: 3;
   display: block;
 }
@@ -203,7 +208,7 @@ body.stock-research-route > main {
   background: radial-gradient(circle at 0 0,
     transparent 0 16px,
     var(--frame) 16px 18px,
-    var(--card) 18px);
+    var(--stock-tab-ear-fill) 18px);
 }
 
 .stock-tab-ear-right {
@@ -211,7 +216,7 @@ body.stock-research-route > main {
   background: radial-gradient(circle at 100% 0,
     transparent 0 16px,
     var(--frame) 16px 18px,
-    var(--card) 18px);
+    var(--stock-tab-ear-fill) 18px);
 }
 
 .stock-tab-panel {

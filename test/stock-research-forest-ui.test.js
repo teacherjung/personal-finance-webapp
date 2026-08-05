@@ -143,6 +143,7 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   assert.doesNotMatch(cssRule(css, '.stock-tabs'), /border-bottom/);
   assert.match(cssRule(css, '.stock-tabs'), /position:\s*relative/);
   assert.match(cssRule(css, '.stock-tabs'), /z-index:\s*2/);
+  assert.match(cssRule(css, '.stock-tab'), /--stock-tab-ear-fill:\s*var\(--card-2\)/);
   assert.match(cssRule(css, '.stock-tab'), /background:\s*var\(--card-2\)/);
   assert.match(cssRule(css, '.stock-tab'), /border:\s*2px solid var\(--frame\)/);
   assert.match(cssRule(css, '.stock-tab'), /border-radius:\s*16px 16px 0 0/);
@@ -151,11 +152,9 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   assert.match(cssRule(css, '.stock-tab.active'), /border-color:\s*var\(--frame\)/);
   assert.match(cssRule(css, '.stock-tab.active'), /border-bottom:\s*none/);
   assert.match(cssRule(css, '.stock-tab.active'), /border-radius:\s*16px 16px 0 0/);
+  assert.match(cssRule(css, '.stock-tab.active'), /--stock-tab-ear-fill:\s*var\(--card\)/);
   assert.match(cssRule(css, '.stock-tab.active'), /color:\s*var\(--accent-hover\)/);
-  assert.match(cssRule(css, '.stock-tab:first-child:not(.active)'), /border-bottom-left-radius:\s*16px/);
-  assert.doesNotMatch(cssRule(css, '.stock-tab:first-child:not(.active)'), /border-bottom-right-radius/);
-  assert.match(cssRule(css, '.stock-tab:last-child:not(.active)'), /border-bottom-right-radius:\s*16px/);
-  assert.doesNotMatch(cssRule(css, '.stock-tab:last-child:not(.active)'), /border-bottom-left-radius/);
+  assert.match(cssRule(css, '.stock-tab:hover'), /--stock-tab-ear-fill:\s*var\(--card\)/);
   assert.match(cssRule(css, '.stock-tab.active::before'), /bottom:\s*6px/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /right:\s*0/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /bottom:\s*-5px/);
@@ -163,18 +162,23 @@ test('個股研究森林工作面｜頁籤有固定圖示且選中頁與內容�
   assert.match(cssRule(css, '.stock-tab.active::after'), /height:\s*7px/);
   assert.match(cssRule(css, '.stock-tab.active::after'), /background:\s*var\(--card\)/);
   assert.match(cssRule(css, '.stock-tab-ear'), /pointer-events:\s*none/);
-  assert.match(cssRule(css, '.stock-tab-ear'), /bottom:\s*4px/);
+  assert.match(cssRule(css, '.stock-tab-ear'), /bottom:\s*0/);
+  assert.match(cssRule(css, '.stock-tab-ear'), /height:\s*22px/);
   assert.match(cssRule(css, '.stock-tab.active .stock-tab-ear'), /display:\s*block/);
+  assert.match(cssRule(css, '.stock-tab:first-child .stock-tab-ear-left'), /display:\s*block/);
+  assert.match(cssRule(css, '.stock-tab:last-child .stock-tab-ear-right'), /display:\s*block/);
+  assert.doesNotMatch(css, /\.stock-tab:first-child \.stock-tab-ear-right\s*\{/);
+  assert.doesNotMatch(css, /\.stock-tab:last-child \.stock-tab-ear-left\s*\{/);
   assert.match(cssRule(css, '.stock-tab-ear-left'), /left:\s*-18px/);
   assert.match(cssRule(css, '.stock-tab-ear-left'), /circle at 0 0/);
   assert.match(cssRule(css, '.stock-tab-ear-left'), /transparent 0 16px/);
   assert.match(cssRule(css, '.stock-tab-ear-left'), /var\(--frame\) 16px 18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-left'), /var\(--card\) 18px/);
+  assert.match(cssRule(css, '.stock-tab-ear-left'), /var\(--stock-tab-ear-fill\) 18px/);
   assert.match(cssRule(css, '.stock-tab-ear-right'), /right:\s*-18px/);
   assert.match(cssRule(css, '.stock-tab-ear-right'), /circle at 100% 0/);
   assert.match(cssRule(css, '.stock-tab-ear-right'), /transparent 0 16px/);
   assert.match(cssRule(css, '.stock-tab-ear-right'), /var\(--frame\) 16px 18px/);
-  assert.match(cssRule(css, '.stock-tab-ear-right'), /var\(--card\) 18px/);
+  assert.match(cssRule(css, '.stock-tab-ear-right'), /var\(--stock-tab-ear-fill\) 18px/);
   assert.match(cssRule(css, '.stock-tab-panel'), /margin-top:\s*-2px/);
 
   const bridgeRule = cssRule(css, '.stock-tab.active::after');
