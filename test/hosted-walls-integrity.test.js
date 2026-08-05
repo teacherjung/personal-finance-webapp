@@ -76,7 +76,12 @@
 //      連帶地，「分隔符那題」把錯誤現況（`1234**** 56` → `3456`）鎖成紅燈的理由也是假的
 //      （寫著「改判準等於改銀行配對行為」）。⇒ 本輪**直接修掉投影**（`lib/secret-fields.js` 的
 //      `/\*+[\s-]*(\d+)\s*$/`），考題改成釘正確值；危害改寫成事實：**顯示層的末碼與帳單對不起來，
-//      使用者失去辨識帳戶的唯一線索**（完整帳號依設計永遠不送到瀏覽器）。
+//      使用者失去辨識帳戶的唯一線索**（UI 的任何頁面都拿不到完整帳號）。
+//      📌 r5 補正：這句改寫當時寫成「完整帳號依設計**永遠**不送到瀏覽器」，那句話本身是錯的——
+//        **LOCAL 的 `GET /api/export` 刻意回未投影的完整 `accountNo`**（備份漏了就永久遺失），
+//        而前端是 `public/modules/settings.js` 的 `<a href="/api/export" download>`＝真的經瀏覽器下載，
+//        `test/server.test.js` 有考題斷言那個完整值。HOSTED 才走 `stripSecretsForBackup` 剝除。
+//        ⇒ 正確的界線是「**UI 頁面**拿不到」，不是「永遠不送到瀏覽器」。
 //
 // ⚠️ **r4 複審第四次打回來——這次的病型跟前三次不同，所以更值得記**（2026-08-05 自審實測）：
 //   ⓔ 前三輪都在補「牆有沒有蓋在路上」，r4 抓到的是**探針的形狀不對**：CSRF 接線題的每一顆探針
@@ -477,16 +482,22 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
   //    `lib/services/bank-import.js` 的 `matchAccount` 與 `ownSuffixSet` 讀的都是伺服器端的完整
   //    `accountNo`，卡片末碼是 `lib/statement.js` 的 `extractLastFour` 從帳單文字另抽的一份資料。
   //    `accountNoLast4` 全 repo 只有 `public/modules/assets.js` 兩處在用（帳戶表末碼欄、編輯窗的
-  //    「已設定（末四碼 ⋯）」提示）。真正的傷害是**顯示層說謊**：完整帳號依設計永遠不送到瀏覽器，
+  //    「已設定（末四碼 ⋯）」提示）。真正的傷害是**顯示層說謊**：UI 的任何頁面都拿不到完整帳號，
   //    末碼就是使用者辨識「這是哪個帳戶」的唯一線索，它與帳單對不起來＝人只能靠猜，
   //    而人照著假末碼去「訂正」帳號，才會真的動到伺服器端那個會配對的欄位。
+  //    （唯一例外＝LOCAL 的 `GET /api/export` 備份下載回未投影的完整帳號，見 `lib/secret-fields.js` 檔頭；
+  //     那是「下載成檔案」不是「畫面上看得到」，所以不會給使用者辨識帳戶的線索。）
   // ⚠️ 這一題**只管 helper 的判準**；「使用者真正走的那幾條路有沒有用這個判準」是下一題的事（r3ⓒ）。
   for (const f of LAST4_FIXTURES) {
     assert.equal(projectAccount({ id: 'h', accountNo: f.accountNo }).accountNoLast4, f.last4,
       `${f.accountNo} 的末碼應為 ${f.last4}：${f.why}`);
   }
   const p = projectAccount({ id: 'a4', accountNo: '900100****3301' });
+  // ⚠️ 兩層都要驗（r5 病灶）：`accountNo === undefined` 釘的是**欄位名**，改個鍵名就繞過去了。
+  //    封閉的那一條釘的是**值**：投影出來的物件序列化之後不可以含那串完整帳號，鍵名叫什麼都一樣。
   assert.equal(/** @type {any} */ (p).accountNo, undefined, '完整帳號絕不可送到瀏覽器');
+  assert.equal(JSON.stringify(p).includes('900100****3301'), false,
+    '投影後的物件裡不可以有完整帳號的那串值（換個欄位名裝它也算外洩）');
   assert.equal(p.accountNoSet, true, '要用布林告訴前端「有設過」');
 });
 
@@ -499,13 +510,32 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
   //    ①`crud.js:38` 的 `project()` 被 POST／GET／PUT `/api/{col}` 三處呼叫（DELETE 只回 `{ok:true}`，
   //      沒有投影，未列）②`core.js:20` 的 `projectDb()`（資產頁真正讀的那條）。
   //    只驗其中一條＝另外幾條可以各自另寫一套。
-  for (const f of LAST4_FIXTURES) {
+  //
+  // ⚠️⚠️ **外洩斷言必須是封閉的，不可以列舉欄位名**（2026-08-05 自審實測的 r5 病灶）：
+  //    這一題原本只斷言 `'accountNo' in got === false`——釘的是**欄位名**，不是**值**。
+  //    實測繞法：`projectAccount` 回傳物件多補一個鍵
+  //    （`return { ...rest, accountNoSet, accountNoLast4, accountNoDisplay: raw }`），
+  //    完整帳號照樣沿著這四條路送到瀏覽器（獨立 HTTP 探針證實 POST／GET `/api/accounts`
+  //    與 GET `/api/db` 三條回應都含 `"accountNoDisplay":"900100****3301"`），
+  //    而全套 **1502/1502 綠、退出碼 0**。＝AGENTS.md「列舉繞法補不完就要關門」的同一個病型，
+  //    只是這次列舉的是欄位名。⇒ 改成斷言**這條路的整包回應字串裡不可出現存進去的那串帳號**：
+  //    那是封閉性質，不必也不該去猜對方會取什麼鍵名。
+  //    📌 連帶把帳戶名字從 `末碼接線 ${f.accountNo}` 改成流水號——名字本來就會被原樣回傳，
+  //       把受測字串塞進名字會讓封閉斷言對著自己造的假外洩亮紅燈（那不是投影的錯）。
+  for (const [i, f] of LAST4_FIXTURES.entries()) {
     const posted = await authed('POST', '/api/accounts',
-      { name: `末碼接線 ${f.accountNo}`, type: 'cash', currency: 'TWD', balance: 0, accountNo: f.accountNo });
+      { name: `末碼接線 #${i + 1}`, type: 'cash', currency: 'TWD', balance: 0, accountNo: f.accountNo });
     assert.equal(posted.status, 200, `建立帳戶應回 200，實得 ${posted.status}`);
-    const created = await posted.json();
-    /** 一條使用者路徑回來的帳戶物件要同時滿足：不外洩完整帳號＋末碼是真的。 @param {string} via @param {any} got */
-    const check = (via, got) => {
+    const postedText = await posted.text();
+    const created = JSON.parse(postedText);
+    /**
+     * 一條使用者路徑要同時滿足：①整包回應裡找不到完整帳號（封閉）②那一筆的欄位形狀對（末碼是真的）。
+     * @param {string} via @param {any} got @param {string} bodyText 這條路徑**整包**回應的原始字串
+     */
+    const check = (via, got, bodyText) => {
+      assert.equal(bodyText.includes(f.accountNo), false,
+        `${via}：整包回應的字串裡找得到完整帳號 ${f.accountNo}——完整帳號不可沿這條路送到瀏覽器。`
+        + '（這條斷言不看鍵名，釘的是「那串值不可以出現」：換個欄位名裝它、或塞在回應的別處，照樣會紅）');
       assert.ok(got, `${via} 找不到剛建立的帳戶（id=${created.id}）——這條路徑根本沒回這筆資料，下面的斷言會變成空轉`);
       assert.equal('accountNo' in got, false,
         `${via} 竟然把完整帳號送到瀏覽器了（${f.accountNo}）——投影在這條路上沒接上`);
@@ -516,16 +546,19 @@ test('帳號投影（接線）｜POST／GET／PUT `/api/accounts` 與 GET `/api/
         + `${f.visibleHead4 !== f.last4 ? `回 ${f.visibleHead4} ＝自己寫了「可見段前四碼」；` : ''}`
         + '兩種都是使用者路徑繞過 lib/secret-fields.js 另寫一套判準)');
     };
-    check('POST /api/accounts 的回應', created);
-    const list = await (await authed('GET', '/api/accounts')).json();
-    check('GET /api/accounts', list.find((/** @type {any} */ a) => a.id === created.id));
-    const db = await (await authed('GET', '/api/db')).json();
-    check('GET /api/db（資產頁走的那條）', (db.accounts || []).find((/** @type {any} */ a) => a.id === created.id));
+    check('POST /api/accounts 的回應', created, postedText);
+    const listText = await (await authed('GET', '/api/accounts')).text();
+    const list = JSON.parse(listText);
+    check('GET /api/accounts', list.find((/** @type {any} */ a) => a.id === created.id), listText);
+    const dbText = await (await authed('GET', '/api/db')).text();
+    const db = JSON.parse(dbText);
+    check('GET /api/db（資產頁走的那條）', (db.accounts || []).find((/** @type {any} */ a) => a.id === created.id), dbText);
     // PUT 只改名字、不送 accountNo（＝「留空＝不變更」的真實用法）：存著的帳號不可以被吐回來，
     // 末碼也要照樣是真的（`crud.js` 的 PUT 分支自己呼叫一次 `project()`）。
     const put = await authed('PUT', `/api/accounts/${created.id}`, { name: '改個名字' });
     assert.equal(put.status, 200, `更新帳戶應回 200，實得 ${put.status}`);
-    check('PUT /api/accounts/:id 的回應', await put.json());
+    const putText = await put.text();
+    check('PUT /api/accounts/:id 的回應', JSON.parse(putText), putText);
   }
 });
 
