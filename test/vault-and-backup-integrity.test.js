@@ -12,7 +12,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, rmSync, writeFileSync, readFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync, readFileSync, mkdtempSync, mkdirSync, copyFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ const TEST_STORE = join(tmpdir(), `finance-vault-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { sanitizeDbForWrite } = await import('../lib/schema.js');
+const { sanitizeDbForWrite, ALL_COLLECTIONS } = await import('../lib/schema.js');
 const { saveStoreRules } = await import('../lib/services/store-rules.js');
 
 /** 本檔製造出來的暫存檔（含各種 .bak）收工一起刪。 */
@@ -41,21 +41,28 @@ after(() => {
 // 一、唯一寫入口的 fail-loud（lib/schema.js 兩道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('寫入櫃檯｜集合不是陣列＝寫入端有 bug，必須當場炸出來（絕不默默清空並回報成功）', () => {
+test('寫入櫃檯｜**每一個**集合都要 fail-loud（不是只有 transactions）', () => {
   // ⚠️ 這是全批最嚴重的一條：改成 `out[col] = []` 之後，任何一條寫入路徑
   //    （例如 replaceCollection 收到非陣列 body）會把**整個集合的資料抹掉並回 200**——
   //    無聲毀資料＋畫面說成功，本專案自己列為最嚴重的一族。
-  //    全 repo 原本沒有任何考題提到「必須是陣列」（grep 零命中）。
-  for (const mode of ['throw', 'strip']) {
-    assert.throws(
-      () => sanitizeDbForWrite({ settings: {}, transactions: {} }, { mode }),
-      /陣列/,
-      `mode=${mode}：集合是物件時必須丟錯（不論寬鬆或嚴格模式都不可默默清空）`,
-    );
+  // ⚠️ 考題設計（第一版只送 transactions＝空包彈，Codex #410 r2 H② 抓到）：
+  //    保留 transactions 的 throw、把其餘 15 個集合靜默清成 []，1493 題照樣全綠。
+  //    這一版**遍歷 ALL_COLLECTIONS**，兩種 mode 各驗一次——任何一個集合被放行都會紅。
+  assert.ok(ALL_COLLECTIONS.length >= 10, `集合清單至少該有 10 個（實際 ${ALL_COLLECTIONS.length}）——清單被縮小的話本題會變成空轉`);
+  for (const col of ALL_COLLECTIONS) {
+    for (const mode of ['throw', 'strip']) {
+      assert.throws(
+        () => sanitizeDbForWrite({ settings: {}, [col]: {} }, { mode }),
+        /陣列/,
+        `集合「${col}」在 mode=${mode} 下不是陣列時必須丟錯（不論寬鬆或嚴格模式都不可默默清空）`,
+      );
+    }
   }
   // 反面：合法的空集合要照常通過（避免整段守衛被改成「一律 throw」也綠）。
-  const ok = sanitizeDbForWrite({ settings: {}, transactions: [] }, { mode: 'throw' });
-  assert.deepEqual(ok.transactions, [], '合法的空陣列要照常通過');
+  for (const col of ALL_COLLECTIONS) {
+    const ok = sanitizeDbForWrite({ settings: {}, [col]: [] }, { mode: 'throw' });
+    assert.deepEqual(/** @type {any} */ (ok)[col], [], `合法的空陣列（${col}）要照常通過`);
+  }
 });
 
 test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留、壞欄位要剝掉', () => {
@@ -137,37 +144,48 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
 // 三、備份的原子替換與殘骸清理（lib/store.js 兩道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('備份｜做同一顆備份失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', () => {
+test('備份｜VACUUM 階段失敗時，舊的那一份必須逐位元組完好（不可先刪舊再做新）', () => {
   // ⚠️ 註解寫明這是自審 r2 修過的病：「原寫法『先刪舊再做新』，若 VACUUM 失敗（例如硬碟滿）
   //    會兩頭空——而損毀還原指引指的正是這顆 .bak」。
-  // ⚠️ 考題設計（前兩版都被抓，這是第三版）：
-  //    v1（Codex r1 前）失敗目標用了**別的路徑** ⇒「先刪舊」刪的不是那顆、舊備份當然還在。
-  //    v2（Codex #410 r1 H③）只比**檔案長度**、而且兩次快照之間沒有改動 live DB
-  //       ⇒ 把舊備份改寫成同長度的垃圾照樣綠。
-  //    這一版：①保存原始 Buffer 做 deepEqual（逐位元組）②兩次之間**改動 live DB**，
-  //       這樣「失敗時被新內容覆寫」也會被抓到。
+  // ⚠️ 考題設計（被抓三次，這是第四版）：
+  //    v1 失敗目標用了**別的路徑** ⇒「先刪舊」刪的不是那顆。
+  //    v2 只比**檔案長度** ⇒ 同長度垃圾覆寫照樣綠（#410 r1 H③）。
+  //    v3 用資料夾占住 `.tmp` ⇒ 失敗發生在**前置 rmSync(tmp)**、還沒進到危險的 VACUUM 階段，
+  //       所以「通過前置清理後才刪舊」的原病變體照樣綠（#410 r2 H①）。
+  //    v4（現在）：讓失敗**發生在 VACUUM 那一步**——`dest` 檔名 254 字元（合法），
+  //       但 `dest + '.tmp'` 是 258 字元、超過單一檔名上限 255 ⇒
+  //         前置清理：`existsSync(tmp)` 為 false，直接跳過（不會提早失敗）
+  //         VACUUM INTO tmp：ENAMETOOLONG 失敗 ⇒ 正確實作在此拋錯、dest 一個位元組沒動
+  //         「先刪舊再做新」：`rmSync(dest)` 會成功（目錄可寫、dest 名字合法）⇒ 好備份消失，
+  //          接著 VACUUM INTO dest 反而成功 ⇒ **不拋錯** ⇒ 本題轉紅。
   const dir = mkdtempSync(join(tmpdir(), 'finance-bak-'));
   TRASH.push(dir);
-  const dest = join(dir, 'good.bak');
   store.save({ ...store.emptyDb(), history: [{ id: 'm1', month: '2026-07', amount: 42 }] });
-  store.snapshotTo(dest);                       // 上一次的好備份（內容＝42 那筆）
+  const seed = join(dir, 'seed.bak');
+  store.snapshotTo(seed);                                     // 先用短路徑做一份合法備份
+  const dest = join(dir, `${'b'.repeat(250)}.bak`);            // 254 字元；+'.tmp' = 258 > 255
+  copyFileSync(seed, dest);                                    // 放到長檔名位置＝「上一次的好備份」
   const goodBytes = readFileSync(dest);
   assert.ok(goodBytes.byteLength > 0);
 
   // live DB 換成明顯不同的狀態——若失敗路徑「先刪舊再做新」，新內容就會蓋掉舊備份
   store.save({ ...store.emptyDb(), history: [{ id: 'm2', month: '2026-08', amount: 999999 }] });
-  mkdirSync(dest + '.tmp');                     // 讓下一次備份在「寫 .tmp」這一步就失敗
   assert.throws(() => store.snapshotTo(dest), /.*/,
-    '寫不進去時要拋錯——不拋錯代表它繞過了 .tmp、直接動了正式的備份檔');
+    'VACUUM 寫不出去時必須拋錯——不拋錯代表它繞過了 .tmp、直接動了正式的備份檔');
   assert.ok(existsSync(dest), '這一次失敗，上一顆好備份必須還在（還原指引指的就是它）');
   assert.deepEqual(readFileSync(dest), goodBytes,
-    '舊備份必須**逐位元組**完好——只比長度的話，被同長度的垃圾或新狀態覆寫都抓不到');
+    '舊備份必須**逐位元組**完好——只比長度的話，被同長度垃圾或新狀態覆寫都抓不到');
 });
 
 test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備份、還原到它會失敗）', () => {
   // ⚠️ docstring 明寫「失敗時一定清掉半成品 .tmp，不留下會被誤認成備份的殘骸」。
   //    每日備份會反覆呼叫這支，殘骸會在 backups/ 底下累積成一堆「看起來像備份、其實是半截檔」，
   //    而損毀還原的指引正是「把備份改名回 store.db」——改到半截檔會讓還原本身失敗。
+  // ⚠️ 誠實劃界（#410 r2 M③）：**這一題只涵蓋「VACUUM 成功、改名失敗」這條路**。
+  //    把清理搬進改名的 catch 之後本題照樣綠——因為在這支函式裡，`.tmp` 只可能由 VACUUM 建出來，
+  //    而 VACUUM 之後的下一行就是改名，**中間沒有其他可達的失敗點**：兩種寫法對所有可達路徑等價。
+  //    真正還沒被守到的是「VACUUM 寫到一半失敗、留下半截 .tmp」（硬碟滿）——那需要模擬寫入中斷，
+  //    這套 harness 做不到，列為已知缺口而不假裝有覆蓋。
   // ⚠️ 考題設計（第一版是空包彈，突變驗證抓到）：要讓 `.tmp` **真的被寫出來**、失敗發生在
   //    後面的改名那一步，否則沒有殘骸可清，「不清理」的突變照樣綠。
   //    製造法＝把 dest 佔成一個資料夾：VACUUM 寫 .tmp 成功 → renameSync(檔案→資料夾) 失敗。
