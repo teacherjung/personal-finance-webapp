@@ -42,21 +42,36 @@ after(() => {
 // 一、唯一寫入口的 fail-loud（lib/schema.js 兩道）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('寫入櫃檯｜**每一個**集合都要 fail-loud（不是只有 transactions）', () => {
+test('寫入櫃檯｜**每一個**集合、**每一種**非陣列形狀都要 fail-loud（不是只有 transactions、也不是只有 {}）', () => {
   // ⚠️ 這是全批最嚴重的一條：改成 `out[col] = []` 之後，任何一條寫入路徑
   //    （例如 replaceCollection 收到非陣列 body）會把**整個集合的資料抹掉並回 200**——
   //    無聲毀資料＋畫面說成功，本專案自己列為最嚴重的一族。
-  // ⚠️ 考題設計（第一版只送 transactions＝空包彈，Codex #410 r2 H② 抓到）：
-  //    保留 transactions 的 throw、把其餘 15 個集合靜默清成 []，1493 題照樣全綠。
-  //    這一版**遍歷 ALL_COLLECTIONS**，兩種 mode 各驗一次——任何一個集合被放行都會紅。
+  // ⚠️ 考題設計沿革（每一版都被實際繞法抓到一次「弄壞卻全綠」）：
+  //    v1 只送 transactions＝空包彈（Codex #410 r2 H②）：保留 transactions 的 throw、
+  //       其餘 15 個集合靜默清成 []，全批照樣全綠。
+  //    v2 遍歷 ALL_COLLECTIONS 但**只送一種形狀 `{}`**（Codex #410 r4 抓到）：在守衛前插一行
+  //       `if (out[col] == null) out[col] = [];`（null/undefined 默默清空）⇒ 本檔七題與全 1494 題全綠。
+  //       而 null/undefined 正是 JS 裡最可能誤傳的非陣列：服務層早退回傳 undefined、JSON body 送 null，
+  //       `replaceCollection`（lib/repo.js:222）文件明寫「本函式不再驗證」＝這道守衛是唯一的攔截點。
+  //    v3（現在）：**形狀 × 集合 × mode** 三重遍歷——任何一個組合被放行都會紅。
+  const NON_ARRAYS = /** @type {[string, any][]} */ ([
+    ['物件 {}', {}],
+    ['null（JSON body 送 null／欄位被清掉）', null],
+    ['undefined（服務層早退、忘了回傳）', undefined],
+    ['字串', 'x'],
+    ['數字', 42],
+    ['布林', true],
+  ]);
   assert.ok(ALL_COLLECTIONS.length >= 10, `集合清單至少該有 10 個（實際 ${ALL_COLLECTIONS.length}）——清單被縮小的話本題會變成空轉`);
   for (const col of ALL_COLLECTIONS) {
     for (const mode of ['throw', 'strip']) {
-      assert.throws(
-        () => sanitizeDbForWrite({ settings: {}, [col]: {} }, { mode }),
-        /陣列/,
-        `集合「${col}」在 mode=${mode} 下不是陣列時必須丟錯（不論寬鬆或嚴格模式都不可默默清空）`,
-      );
+      for (const [label, shape] of NON_ARRAYS) {
+        assert.throws(
+          () => sanitizeDbForWrite({ settings: {}, [col]: shape }, { mode }),
+          /陣列/,
+          `集合「${col}」在 mode=${mode} 下收到「${label}」時必須丟錯（不論寬鬆或嚴格模式都不可默默清空）`,
+        );
+      }
     }
   }
   // 反面：合法的空集合要照常通過（避免整段守衛被改成「一律 throw」也綠）。
@@ -64,6 +79,13 @@ test('寫入櫃檯｜**每一個**集合都要 fail-loud（不是只有 transact
     const ok = sanitizeDbForWrite({ settings: {}, [col]: [] }, { mode: 'throw' });
     assert.deepEqual(/** @type {any} */ (ok)[col], [], `合法的空陣列（${col}）要照常通過`);
   }
+  // 行為面（不只函式面）：走真正的唯一寫入口 store.save()，確認被擋下的那一次**沒有動到已存的資料**。
+  //  ——「默默清成 []」的災情不是「函式回錯值」，是**磁碟上那一集合真的沒了、而畫面回成功**。
+  store.save({ ...store.emptyDb(), history: [{ id: 'm1', month: '2026-07', amount: 42 }] });
+  assert.throws(() => store.save(/** @type {any} */ ({ ...store.load(), history: null })), /陣列/,
+    '唯一寫入口收到 null 集合時必須當場炸開（回 200 等於騙使用者「存好了」）');
+  assert.equal(/** @type {any} */ (store.load()).history.length, 1,
+    '被擋下的那次寫入不可動到磁碟上既有的資料——默默清空＝整個集合無聲消失');
 });
 
 test('寫入櫃檯｜insightState 正規化真的接上：合法書籤要保留、壞欄位要剝掉', () => {
@@ -280,16 +302,21 @@ test('備份｜連資料庫都開不起來時，前一次留下的 .tmp 殘骸�
 // 四、資料庫損毀＝fail-closed（lib/store.js）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('開啟資料庫｜檔案損毀時要給「還原指引」，不可只丟一句看不懂的原始錯誤', () => {
+test('開啟資料庫｜檔案損毀時**每一次**呼叫都要給「還原指引」（不是只擋第一次）', () => {
   // ⚠️ 註解明寫「fail closed：資料庫損毀時絕不回空資料庫」，而丟出去的訊息就是使用者
   //    唯一拿得到的還原指引（刪 -wal/-shm、把 .bak 改名回 store.db）。斷電／硬碟壞是真實情境。
-  // ⚠️ 考題設計（第一版是空包彈，突變驗證抓到）：關鍵判準**不是「有沒有丟錯」而是「有沒有還原指引」**。
-  //    我第一版用「SQLite 檔頭＋垃圾」，那種檔連 CREATE TABLE 都失敗 ⇒ 守衛拿掉後照樣從
-  //    open() 的 catch 丟出帶指引的訊息，突變全綠。
-  //    這一版刻意造「**開得起來、schema 也在、只有中段資料頁壞掉**」的檔：
-  //      有守衛 → quick_check 當場擋下、給指引；
-  //      沒守衛 → open() 順利返回，等到 load() 真的讀資料才炸，訊息是
-  //               「database disk image is malformed」＝使用者完全不知道該怎麼自救（本題轉紅）。
+  // ⚠️ 考題設計沿革（每一版都被實際繞法抓到一次「弄壞卻全綠」）：
+  //    v1 是空包彈：關鍵判準**不是「有沒有丟錯」而是「有沒有還原指引」**。第一版用「SQLite 檔頭＋垃圾」，
+  //       那種檔連 CREATE TABLE 都失敗 ⇒ 守衛拿掉後照樣從 open() 的 catch 丟出帶指引的訊息，突變全綠。
+  //       這一版刻意造「**開得起來、schema 也在、只有中段資料頁壞掉**」的檔：
+  //         有守衛 → quick_check 當場擋下、給指引；
+  //         沒守衛 → open() 順利返回，等到 load() 真的讀資料才炸，訊息是
+  //                  「database disk image is malformed」＝使用者完全不知道該怎麼自救（本題轉紅）。
+  //    v2 只呼叫**一次**入口（Codex #410 r4 抓到）：拿掉 lib/store.js catch 裡的 `db = null` 重置
+  //       ⇒ 第一次照樣被擋，**第二次起** open() 看到 `db` 非空直接放行、load() 回**空資料庫**、
+  //       接著 save() 還寫得進那顆損毀檔——正是 store.js 註解自己點名的「設計明文禁止的結局」，
+  //       而全 1494 題無一轉紅（伺服器是長跑行程，真實情境就是同一個行程裡被呼叫很多次）。
+  //    v3（現在）：同一個子行程裡**連呼兩輪 load()＋一次 save()**，三次都必須丟出帶還原指引的錯。
   const corrupt = join(tmpdir(), `finance-corrupt-${process.pid}.db`);
   TRASH.push(corrupt);
   {
@@ -303,14 +330,32 @@ test('開啟資料庫｜檔案損毀時要給「還原指引」，不可只丟�
     buf.fill(0x5a, 4096 * 3, 4096 * 5);          // 破壞中段資料頁（第 1 頁的 schema 保持完好）
     writeFileSync(corrupt, buf);
   }
-  const script = "const s = await import('./lib/store.js'); try { s.load(); console.log('NO_THROW'); }"
-    + " catch (e) { console.log('THREW:' + e.message); }";
+  // 三次呼叫各印一行（R1/R2＝連續兩輪 load()、SAVE＝之後再試寫一次）。逐行斷言，才抓得到
+  // 「只有第一次被擋」——整包 out 一起比對的話，第一輪那句指引會替第二輪擋掉 assert.match。
+  // 訊息用 JSON.stringify 包成單行：quick_check 的錯誤本身是**多行**（每個壞頁一行），
+  // 直接印會讓「一次呼叫＝一行」的前提破功（實測第一版就這樣誤紅）。
+  const script = "const s = await import('./lib/store.js');"
+    + " for (const tag of ['R1', 'R2']) {"
+    + "   try { s.load(); console.log(tag + ':NO_THROW'); }"
+    + "   catch (e) { console.log(tag + ':THREW:' + JSON.stringify(e.message)); } }"
+    + " try { s.save({ ...s.emptyDb() }); console.log('SAVE:NO_THROW'); }"
+    + " catch (e) { console.log('SAVE:THREW:' + JSON.stringify(e.message)); }";
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
     cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: corrupt },
   });
-  assert.doesNotMatch(out, /NO_THROW/, '損毀的資料庫不可被照常開起來讀寫');
-  assert.match(out, /store\.db\.bak/,
-    '錯誤訊息必須點名 store.db.bak（使用者唯一拿得到的自救說明）——'
-    + '只丟一句 database disk image is malformed 等於把人丟在原地');
-  assert.match(out, /刪掉|改名/, '要說清楚步驟（先刪 -wal/-shm、再把備份改名回去）');
+  const lines = out.split('\n');
+  for (const [tag, what] of [
+    ['R1', '第一次讀取'],
+    ['R2', '同一個行程裡的第二次讀取（伺服器是長跑行程，這才是常態）'],
+    ['SAVE', '被擋下之後的寫入'],
+  ]) {
+    const line = lines.find((l) => l.startsWith(tag + ':'));
+    assert.ok(line, `前置：子行程必須印出 ${tag} 那一行（沒印＝腳本自己爆了，本題會空轉）`);
+    assert.doesNotMatch(line, /NO_THROW/,
+      `${what}也不可被放行——db 連線沒在失敗時重置的話，第二次起會拿到「空資料庫」還照樣接受寫入`);
+    assert.match(line, /store\.db\.bak/,
+      `${what}丟出的訊息必須點名 store.db.bak（使用者唯一拿得到的自救說明）——`
+      + '只丟一句 database disk image is malformed 等於把人丟在原地');
+    assert.match(line, /刪掉|改名/, `${what}要說清楚步驟（先刪 -wal/-shm、再把備份改名回去）`);
+  }
 });
