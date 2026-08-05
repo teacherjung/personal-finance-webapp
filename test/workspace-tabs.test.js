@@ -53,9 +53,7 @@ test('共用頁籤｜產生可直達連結、唯一目前頁與完整可存取�
   assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
   assert.match(html, /id="demo-tab-detail" class="workspace-tab is-active"[^>]*href="#demo\?tab=detail"[^>]*aria-current="page"/);
   assert.equal((html.match(/aria-label="[^"]+" title="[^"]+"/g) || []).length, 3);
-  assert.equal((html.match(/class="workspace-tab__join workspace-tab__join--start"/g) || []).length, 3);
-  assert.equal((html.match(/class="workspace-tab__join workspace-tab__join--end"/g) || []).length, 3);
-  assert.equal((html.match(/preserveAspectRatio="none" aria-hidden="true" focusable="false"/g) || []).length, 6);
+  assert.doesNotMatch(html, /workspace-tab__join|preserveAspectRatio/);
 });
 
 test('共用頁籤｜所有外部文字與網址都經過 esc', () => {
@@ -94,7 +92,7 @@ test('共用頁籤｜缺少必要格式器時明確失敗', () => {
   assert.throws(() => workspaceTabsHtml({ ...options, hrefFor: /** @type {any} */ (null) }, { esc }), /hrefFor/);
 });
 
-test('共用頁籤｜向量接角、共線邊界與手機收合都由單一樣式檔擁有', async () => {
+test('共用頁籤｜森林標籤、分離工作面與手機收合都由單一樣式檔擁有', async () => {
   const [css, stockCss, index, styles, everyCss] = await Promise.all([
     readFile(new URL('public/workspace-tabs.css', ROOT), 'utf8'),
     readFile(new URL('public/stock-research.css', ROOT), 'utf8'),
@@ -105,23 +103,24 @@ test('共用頁籤｜向量接角、共線邊界與手機收合都由單一樣�
   const mobileAt = css.indexOf('@media (max-width: 680px)');
 
   assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-active-text:\s*var\(--accent-hover\)/);
+  assert.match(cssRule(css, '.workspace-tabs-shell'), /--workspace-tabs-accent-soft:\s*var\(--accent-soft\)/);
   assert.match(cssRule(css, '.workspace-tabs'), /scrollbar-width:\s*none/);
+  assert.match(cssRule(css, '.workspace-tabs__track'), /gap:\s*4px/);
+  assert.match(cssRule(css, '.workspace-tabs__track'), /padding:\s*0 10px 9px/);
   assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
-  assert.match(cssRule(css, '.workspace-tab'), /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
-  assert.match(cssRule(css, '.workspace-tab'), /border-bottom:\s*0/);
-  assert.match(cssRule(css, '.workspace-tab'), /border-radius:\s*16px 16px 0 0/);
-  assert.match(cssRule(css, '.workspace-tabs__track > .workspace-tab'), /min-width:\s*92px/);
-  assert.match(cssRule(css, '.workspace-tab__join'), /bottom:\s*0/);
-  assert.match(cssRule(css, '.workspace-tab__join'), /width:\s*22px/);
-  assert.match(cssRule(css, '.workspace-tab__join-line'), /vector-effect:\s*non-scaling-stroke/);
-  assert.match(cssRule(css, '.workspace-tab__join-line'), /stroke-width:\s*2px/);
-  assert.match(cssRule(css, '.workspace-tab.is-active .workspace-tab__join,\n.workspace-tab:first-child .workspace-tab__join--start,\n.workspace-tab:last-child .workspace-tab__join--end'), /display:\s*block/);
-  assert.match(cssRule(css, '.workspace-tabs-panel'), /margin-top:\s*-2px/);
+  assert.match(cssRule(css, '.workspace-tab'), /border:\s*1px solid transparent/);
+  assert.match(cssRule(css, '.workspace-tab'), /border-radius:\s*8px/);
+  assert.match(cssRule(css, '.workspace-tabs__track > .workspace-tab'), /min-width:\s*104px/);
+  assert.match(cssRule(css, '.workspace-tab:hover'), /border-color:\s*var\(--line-2\)/);
+  assert.match(cssRule(css, '.workspace-tab.is-active'), /border-color:\s*var\(--workspace-tabs-accent, var\(--accent\)\)/);
+  assert.match(cssRule(css, '.workspace-tab.is-active'), /background:\s*var\(--workspace-tabs-accent-soft, var\(--accent-soft\)\)/);
+  assert.match(cssRule(css, '.workspace-tabs-panel'), /margin-top:\s*10px/);
   assert.match(cssRule(css, '.workspace-tabs-panel'), /border:\s*2px solid var\(--workspace-tabs-frame, var\(--frame\)\)/);
-  assert.doesNotMatch(css, /radial-gradient|clip-path|mask-image/);
+  assert.match(cssRule(css, '.workspace-tabs-panel'), /border-radius:\s*8px/);
+  assert.doesNotMatch(css, /workspace-tab__join|clip-path|mask-image/);
   assert.doesNotMatch(everyCss, /\.stock-tabs(?:-track)?(?![\w-])|\.stock-tab(?:-ear)?(?![\w-])/);
   assert.doesNotMatch(stockCss, /\.stock-tab-panel\s*\{[^}]*border-radius/s);
-  for (const token of ['frame', 'card', 'card-2', 'accent', 'accent-hover', 'text', 'text-dim', 'shadow-lg']) {
+  for (const token of ['frame', 'card', 'line-2', 'accent', 'accent-soft', 'accent-hover', 'text', 'text-dim', 'shadow-lg']) {
     assert.match(styles, new RegExp(`--${token}:\\s*[^;]+;`), `missing shared token --${token}`);
   }
   assert.notEqual(mobileAt, -1);

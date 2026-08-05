@@ -5,16 +5,6 @@ import { icon } from './icons.js';
 
 /** @typedef {{ key: string, label: string, icon: string }} WorkspaceTab */
 
-const START_JOIN = `<svg class="workspace-tab__join workspace-tab__join--start" viewBox="0 0 22 22" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-  <path class="workspace-tab__join-fill" d="M20 0H22V22H0C11.046 22 20 13.046 20 2Z"></path>
-  <path class="workspace-tab__join-line" d="M20 0V2C20 13.046 11.046 22 0 22"></path>
-</svg>`;
-
-const END_JOIN = `<svg class="workspace-tab__join workspace-tab__join--end" viewBox="0 0 22 22" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-  <path class="workspace-tab__join-fill" d="M0 0H2V2C2 13.046 10.954 22 22 22H0Z"></path>
-  <path class="workspace-tab__join-line" d="M2 0V2C2 13.046 10.954 22 22 22"></path>
-</svg>`;
-
 /**
  * @param {{
  *   tabs: readonly WorkspaceTab[],
@@ -31,7 +21,7 @@ export function workspaceTabsHtml(options, helpers) {
 
   const links = options.tabs.map(tab => {
     const active = tab.key === options.activeKey;
-    return `<a id="${helpers.esc(`${options.idPrefix}-${tab.key}`)}" class="workspace-tab${active ? ' is-active' : ''}" href="${helpers.esc(options.hrefFor(tab))}" aria-label="${helpers.esc(tab.label)}" title="${helpers.esc(tab.label)}"${active ? ' aria-current="page"' : ''}>${START_JOIN}${icon(tab.icon, 18)}<span class="workspace-tab__label">${helpers.esc(tab.label)}</span>${END_JOIN}</a>`;
+    return `<a id="${helpers.esc(`${options.idPrefix}-${tab.key}`)}" class="workspace-tab${active ? ' is-active' : ''}" href="${helpers.esc(options.hrefFor(tab))}" aria-label="${helpers.esc(tab.label)}" title="${helpers.esc(tab.label)}"${active ? ' aria-current="page"' : ''}>${icon(tab.icon, 18)}<span class="workspace-tab__label">${helpers.esc(tab.label)}</span></a>`;
   }).join('');
 
   return `<nav class="workspace-tabs workspace-tabs--compact-mobile" aria-label="${helpers.esc(options.ariaLabel)}">

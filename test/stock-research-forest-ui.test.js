@@ -100,7 +100,7 @@ function researchModel(overrides = {}) {
   };
 }
 
-test('個股研究森林工作面｜六個頁籤共用單一厚框工作面且只顯示目前頁', () => {
+test('個股研究森林工作面｜六個森林標籤共用單一工作面且只顯示目前頁', () => {
   const html = stockResearchViewHtml({
     model: researchModel(),
     activeTab: 'overview'
@@ -127,8 +127,7 @@ test('個股研究森林工作面｜頁籤使用共用元件且保留固定圖�
 
   assert.equal((tabs.match(/<svg class="ic"/g) || []).length, 6);
   assert.equal((tabs.match(/aria-label="[^"]+" title="[^"]+"/g) || []).length, 6);
-  assert.equal((tabs.match(/class="workspace-tab__join workspace-tab__join--start"/g) || []).length, 6);
-  assert.equal((tabs.match(/class="workspace-tab__join workspace-tab__join--end"/g) || []).length, 6);
+  assert.doesNotMatch(tabs, /workspace-tab__join/);
   for (const tab of STOCK_RESEARCH_TABS) {
     assert.doesNotMatch(icon(tab.icon), /aria-hidden="true"><\/svg>/, `${tab.key} icon must not be empty`);
   }
@@ -138,10 +137,11 @@ test('個股研究森林工作面｜頁籤使用共用元件且保留固定圖�
   assert.match(cssRule(css, '.workspace-tabs__track'), /border-bottom:/);
   assert.match(cssRule(css, '.workspace-tab:focus-visible'), /outline:\s*3px solid var\(--workspace-tabs-accent, var\(--accent\)\)/);
   assert.match(cssRule(css, '.workspace-tab.is-active'), /color:\s*var\(--workspace-tabs-active-text, var\(--accent-hover\)\)/);
+  assert.match(cssRule(css, '.workspace-tab.is-active'), /background:\s*var\(--workspace-tabs-accent-soft, var\(--accent-soft\)\)/);
 
   const sharedCss = await readFile(new URL('public/styles.css', ROOT), 'utf8');
   const accent = cssHexToken(sharedCss, '--accent');
-  for (const background of ['--card', '--card-2']) {
+  for (const background of ['--bg', '--card', '--accent-soft']) {
     assert.ok(
       contrastRatio(accent, cssHexToken(sharedCss, background)) >= 3,
       `focus outline must keep 3:1 contrast against ${background}`
