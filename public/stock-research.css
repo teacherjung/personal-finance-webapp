@@ -1008,7 +1008,7 @@ body.stock-research-route > main {
 
   .stock-tabs {
     width: 100%;
-    padding: 0;
+    padding: 0 18px;
     scrollbar-width: none;
   }
 

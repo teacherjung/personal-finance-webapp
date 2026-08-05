@@ -238,6 +238,7 @@ test('個股研究森林工作面｜專用樣式鎖住厚框、評分條與手�
   assert.match(cssRule(css, '.stock-empty-guide'), /height:\s*78px/);
   assert.notEqual(mobileAt, -1);
   assert.match(cssRule(css, '.stock-position-grid', mobileAt), /grid-template-columns:\s*repeat\(2,/);
+  assert.match(cssRule(css, '.stock-tabs', mobileAt), /padding:\s*0 18px/);
   assert.match(cssRule(css, '.stock-tab', mobileAt), /flex:\s*0 0 52px/);
   assert.match(cssRule(css, '.stock-tab.active', mobileAt), /flex-basis:\s*104px/);
   assert.match(cssRule(css, '.stock-tab-label', mobileAt), /display:\s*none/);
