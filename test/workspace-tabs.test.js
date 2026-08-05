@@ -120,7 +120,7 @@ test('共用頁籤｜森林標籤、分離工作面與手機收合都由單一�
   assert.doesNotMatch(css, /workspace-tab__join|clip-path|mask-image/);
   assert.doesNotMatch(everyCss, /\.stock-tabs(?:-track)?(?![\w-])|\.stock-tab(?:-ear)?(?![\w-])/);
   assert.doesNotMatch(stockCss, /\.stock-tab-panel\s*\{[^}]*border-radius/s);
-  for (const token of ['frame', 'card', 'card-2', 'accent', 'accent-hover', 'text', 'text-dim', 'shadow-lg']) {
+  for (const token of ['frame', 'card', 'line-2', 'accent', 'accent-soft', 'accent-hover', 'text', 'text-dim', 'shadow-lg']) {
     assert.match(styles, new RegExp(`--${token}:\\s*[^;]+;`), `missing shared token --${token}`);
   }
   assert.notEqual(mobileAt, -1);
