@@ -42,4 +42,3 @@ export function workspaceTabsHtml(options, helpers) {
     <div class="workspace-tabs__track">${links}</div>
   </nav>`;
 }
-
