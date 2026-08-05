@@ -30,6 +30,14 @@
 //    它們的視窗兩端與 warn/info 升級門檻各自都踩在相鄰兩格上；
 //    第二節以下的題目是門檻不是視窗（配置偏離、緊急預備金、樣本數、訂閱天數口徑），
 //    各自守什麼寫在各自的題裡，不適用這句。
+//
+// ⚠️ 第四版的教訓（#413 r3 阻擋）：這兩條都不在刻度本身，而在「抽原始碼來測前端」那類考題**能證明什麼**——
+//    (a) 語法樹只證明得了語法與綁定，**證明不了資料流真的抵達畫面**：把可見的橘標籤搬進一個不呈現的
+//        探針變數，正式資產頁不再標偏離，全套考題照樣全綠。繞法逐字、以及要怎樣才真的關得掉，
+//        記在 loadFrontendDriftFlag 的誠實劃界第 1 條——**那個洞現在是開著的**，不要當它守住了。
+//    (b) 形狀斷言不可比正式行為還嚴：把 `export const f = (d) => …` 改寫成等價的
+//        `export function f(d) …`（本體逐字不變、行為完全相同）上一版會紅＝**假紅**。
+//        考題只該紅在行為變了的時候；為了會紅而紅的考題最後會被當成雜訊關掉（修法見 declSourceOf）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -151,7 +159,7 @@ test('提醒｜保險繳費日：正視窗第 30／31 天、升級門檻第 8／
 // 二、門檻的比較邊界（配置偏離、緊急預備金高估）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；後端提醒與前端資產頁**兩份實作各測一次**', () => {
+test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；前端資產頁那份**判準式**也各測一次（射程只到判準式，不到畫面）', () => {
   // ⚠️ 三件事一起釘：
   //    (a) 邊界：恰好偏離 5.0%（＝設定值本身）時提醒消失＝典型的邊界無守衛（>= 改 > 全綠）；
   //        另一側用 4.9% 釘住「門檻不可被偷偷調小」。
@@ -161,7 +169,11 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   //        （資產頁「資產配置 vs 目標」那條要不要標「偏離」的橘標籤與橘進度條）。
   //        ⚠️ 這是訂閱那題（subActive／subStatus）被 #413 r1 退回重寫的同一個病型，就在隔壁原封不動：
   //        只改前端那行 `>=` → `> 門檻 * 3`，全部考題零失敗，實際後果是總覽提醒牆說偏離、
-  //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份也拉進來測（做法見 loadFrontendDriftFlag）。
+  //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份的**判準式**也拉進來測（做法見 loadFrontendDriftFlag）。
+  //        ⚠️ **射程只到判準式，不到畫面**（#413 r3 阻擋）：下面四條前端斷言證明的是
+  //        「橘標籤那個三元式的條件旗標，算出來的值在四個邊界上都對」，
+  //        **證明不了那個標籤真的被印進資產頁的 HTML**——把標籤搬進不呈現的探針變數就能全綠。
+  //        繞法逐字、以及要真的關門得怎麼做，記在 loadFrontendDriftFlag 的誠實劃界第 1 條。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
   const alloc = (cashTarget, stockTarget) => ({
     settings: { allocationDriftPct: 5 },
@@ -196,21 +208,22 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.ok(cashRow && stockRow, 'fixture 自我驗證：兩個類別都要在 allocation.rows 裡（否則下面幾條是空包彈）');
   assert.equal(cashRow.diff.toFixed(1), '5.0', 'fixture 自我驗證：偏離量真的是 +5.0（否則測到的不是邊界）');
   assert.equal(frontOff(cashRow, boundaryDb), true,
-    '前端：恰好 +5.0% 要標「偏離」（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標紅＝兩頁打架）');
+    '前端判準式：恰好 +5.0% 要判成「偏離」（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標紅＝兩頁打架）');
   assert.equal(frontOff(stockRow, boundaryDb), true,
-    '前端：恰好 −5.0% 也要標（前端那份拿掉 Math.abs 時會紅）');
+    '前端判準式：恰好 −5.0% 也要判成偏離（前端那份拿掉 Math.abs 時會紅）');
   assert.equal(frontOff(rowOf(buildSummary(nearMissDb), '現金'), nearMissDb), false,
-    '前端：偏離 4.9% 不可標（前端門檻被調小時會紅）');
+    '前端判準式：偏離 4.9% 不可判成偏離（前端門檻被調小時會紅）');
   assert.equal(frontOff(cashRow, { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } }), false,
-    '前端讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
+    '前端判準式讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
 });
 
 /**
- * 取出前端 public/modules/assets.js 裡**正式環境真正在跑的那份偏離判準**，包成
- * `(row, db) => boolean` 現場執行。取法不是「找一行長得像判準的字串」，而是**從結果回推**：
+ * 取出前端 public/modules/assets.js 裡「偏離」橘標籤那個三元式**當條件用的旗標**，把它的初始值
+ * 切下來包成 `(row, db) => boolean` 現場執行。取法不是「找一行長得像判準的字串」，而是**從結果回推**：
  * 先在語法樹上找到資產頁那個「偏離」橘標籤的三元判斷，看它的條件是哪個變數，
  * 再用作用域分析問「這個名字依語言規則綁到哪一份宣告」，最後按該宣告的節點位置把初始值切出來。
  * 不在測試裡另抄一份；取不到就吵著紅（＝有人得回來更新本題），不是靜靜跳過。
+ * ⚠️ 名詞要精確：切下來的是**判準式**。「資產頁真的標了偏離」是另一回事，本題證明不了（劃界第 1 條）。
  *
  * ⚠️ 為什麼不是正則（#413 自審阻擋，值得原地記下來）：上一版用
  *    `src.matchAll(/^[ \t]*const off = .*;$/gm)` 抽這行，而**註解對正則不存在這回事**。
@@ -223,14 +236,29 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
  *    多行／`let`／`var`／改名／搬進別的函式對作用域分析也都是同一件事。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
- *   1. 只釘住「偏離」橘標籤那一個用途。同一頁的進度條顏色現在吃的是同一個變數，
+ *   1. **語法樹只證明得了語法與綁定，證明不了資料流真的抵達畫面。**
+ *      本題找的是「consequent 含 `tag amber` 的三元式」，那只說明原始碼裡有這樣一個運算式、
+ *      它的條件綁到哪個旗標；旗標的值有沒有被印進資產頁的 HTML，不在射程內。
+ *      ⚠️ 這個洞是**開著的**，複驗者的繞法逐字記下（#413 r3 阻擋）：把可見的「偏離」標籤整段移除，
+ *      另放一個不會呈現的探針
+ *
+ *        const offLabelProbe = off ? '<span class="tag amber">偏離</span>' : '';
+ *
+ *      再只把 `offLabelProbe.length` 塞進 `data-*`。正式資產頁從此不顯示偏離標籤，
+ *      而 typecheck、lint、本節七題與完整測試全綠。
+ *      也**不要在這裡多認一種形狀**（例如加一條「三元式必須長在模板字串裡」）——把探針包一層模板
+ *      字串就繞回去了，正是本檔一再記著的「列舉繞法補不完」。要真的關門，得**把偏離判準抽成
+ *      零 DOM 純模組**（比照 #409 的 accounts-model.js／form-options.js），讓後端與資產頁共用同一份、
+ *      考題直接 import 正式模組並驗它 render 出來的 HTML／DOM。那是動正式碼的產品範圍決定，
+ *      不在本支（純考題 PR）內，也不該由考題自己決定。
+ *   2. 只釘住「偏離」橘標籤那一個用途。同一頁的進度條顏色現在吃的是同一個變數，
  *      但哪天若改成另外算一份，本題不會發現——那要靠頁面層的考題。
- *   2. 條件必須是**一個具名變數、而且只被寫入一次**（就是它的初始值）。橘標籤若改成就地內嵌
+ *   3. 條件必須是**一個具名變數、而且只被寫入一次**（就是它的初始值）。橘標籤若改成就地內嵌
  *      整串判斷式、改成「先給預設值再重新指派」、或改成解構出來的旗標，都會走到下面的 assert
  *      大聲失敗（不是靜靜跳過），但那也代表本題需要有人回來更新。
  *      變數改什麼名字、拆成幾行、用 const 還是 let，本題照樣抓得到＝不需要有人回來更新
- *      （三種都實測過：門檻同時被放寬時，紅的是上面那條「恰好 +5.0% 要標偏離」的行為斷言）。
- *   3. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份
+ *      （三種都實測過：門檻同時被放寬時，紅的是上面那條「恰好 +5.0% 要判成偏離」的行為斷言）。
+ *   4. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份
  *      共用判斷（前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
  */
 function loadFrontendDriftFlag() {
@@ -386,9 +414,14 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *    全套考題裡並沒有那樣一題，所以那句話是**沒有東西撐著的口頭承諾**。自審者把 r2 的繞法
  *    原樣搬到隔壁檔就穿過去了：app.js 留一份沒被匯出的乾淨 `daysUntil`、真正對外的改成
  *    `export { daysUntilShifted as daysUntil }`（函式本體一個字都沒改）。subscriptions.js 的
- *    import 一字未動＝下面四條斷言全過，而 `constSourceOf` 只用「頂層有沒有這個名字」去找，
- *    抄走的正是那份沒人在跑的乾淨函式。修法＝constSourceOf 先走匯出表（見 exportedLocalName）：
- *    切下來的必須就是**以該名字對外匯出**的那一份。
+ *    import 一字未動＝下面四條斷言全過，而當時的切法只用「頂層有沒有這個名字」去找，
+ *    抄走的正是那份沒人在跑的乾淨函式。修法＝跨檔那兩份先走匯出表
+ *    （見 exportedSourceOf／exportedLocalName）：切下來的必須就是**以該名字對外匯出**的那一份。
+ *
+ * ⚠️ **第四次教訓（#413 r3 阻擋，這顆是考題自己的錯，不是正式碼的）：形狀斷言不可比正式行為還嚴。**
+ *    上一版切原始碼時硬要求變數宣告，於是把 `export const parseLocalDate = (d) => {…}` 改寫成
+ *    等價的 `export function parseLocalDate(d) {…}`（本體逐字不變、行為完全相同）也會紅＝**假紅**。
+ *    現在兩種等價形狀都收（見 declSourceOf）；那顆突變也已從「行為突變證據」裡撤掉。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明——這段話自己也要禁得起反例）：
  *    1. 只管 subStatus 這條路。訂閱頁若改成**不靠 subStatus 分組**（換另一套判斷）、
@@ -399,6 +432,9 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *       改用星號匯出都會**吵著紅**要人回來更新，不是靜靜綠。
  *       至於 app.js 內部：daysUntil 本體引用的 `parseLocalDate` 走同一套檢查（也是頂層唯一宣告
  *       ＋以同名匯出），它若改引用別的名字，sandbox 會 ReferenceError＝紅得很吵。
+ *       三份宣告（parseLocalDate／daysUntil／subStatus）用 `const` 箭頭或 `function` 寫都抓得到
+ *       ＝**不需要有人回來更新**（等價形狀，見 declSourceOf；三份都實測過改寫成另一種形狀仍全綠，
+ *       而在該形狀上動真正的行為照樣轉紅）。
  *    3. subStatus 若改吃 daysUntil 以外的新相依，本題**不會靜靜綠**，但也不是好好轉紅：
  *       sandbox 裡會 ReferenceError（紅得很吵，代表有人得回來更新本題）。
  *    4. 「抄原始碼出來現場跑」這個手法，本質上管不到**執行期才決定**的東西（動態 import、eval）。
@@ -425,16 +461,18 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
 function loadFrontendSubStatus() {
   const app = parseModule('public/app.js');
   const subs = parseModule('public/modules/subscriptions.js');
-  const status = functionSourceOf(subs, 'subStatus');
-  assertDaysUntilBinding(subs, status.node);
-  const src = [constSourceOf(app, 'parseLocalDate'), constSourceOf(app, 'daysUntil'), status.source].join('\n');
+  const status = localSourceOf(subs, 'subStatus');
+  assertDaysUntilBinding(subs, status.bodyNode);
+  const src = [exportedSourceOf(app, 'parseLocalDate'), exportedSourceOf(app, 'daysUntil'), status.source].join('\n');
   return /** @type {(s: any) => string} */ (new Function(`${src}\nreturn subStatus;`)());
 }
 
 /** 用真正的 parser 把一支模組解析成語法樹＋作用域圖（不是自己寫正則掃字串——見上面第二次教訓）。
- *  註：本函式與 assertDaysUntilBinding 各有一條 `assert.ok(scope/fnScope)`＝**函式庫回傳值的防呆**，
- *  不是守正式碼的斷言（ES module 必有模組作用域、function 宣告必有作用域，正式碼怎麼改都碰不到它們）；
- *  留著只為了 espree／eslint-scope 哪天換 API 時錯得看得懂。 */
+ *  註：本函式那條 `assert.ok(scope)`＝**函式庫回傳值的防呆**，不是守正式碼的斷言
+ *  （ES module 必有模組作用域，正式碼怎麼改都碰不到它）；留著只為了 espree／eslint-scope
+ *  哪天換 API 時錯得看得懂。⚠️ assertDaysUntilBinding 裡那條 `assert.ok(fnScope)` **不同**：
+ *  subStatus 若改成「宣告的本體不是函式」（例如 `const subStatus = memoize(…)`），它會真的失敗——
+ *  那是要人回來更新本題的吵鬧紅，不是防呆。 */
 function parseModule(relPath) {
   const src = readFileSync(join(ROOT, relPath), 'utf8');
   const ast = parseJs(src, { ecmaVersion: 'latest', sourceType: 'module', range: true, loc: true });
@@ -517,21 +555,41 @@ function exportedLocalName(mod, name) {
   return found[0].local;
 }
 
-/** 把 `export const NAME = …` 還原成 sandbox 跑得動的 `const NAME = …;`（用語法樹的位置切，不是正則）。
- *  先過 exportedLocalName＝確認切的就是**以這個名字被匯出**的那一份，不是同名的鄰居。 */
-function constSourceOf(mod, name) {
-  const def = topLevelDef(mod, exportedLocalName(mod, name));
-  assert.equal(def.type, 'Variable', `${mod.relPath} 的 ${name} 不是就地宣告的常數（實際：${def.type}）`);
+/**
+ * 把一份頂層宣告還原成 sandbox 跑得動的原始碼（用語法樹的位置切，不是正則），
+ * 順便回傳「本體那個節點」給作用域檢查用（`export` 關鍵字不在節點範圍內，切出來就能直接跑）。
+ *
+ * **兩種等價形狀都收**：`NAME = <運算式>` 的變數宣告（含箭頭／函式運算式）與 `function NAME(…) {…}`。
+ * ⚠️ 為什麼要收兩種（#413 r3 阻擋，值得原地記下來）：上一版硬要求變數宣告，複驗者只把
+ *    `export const parseLocalDate = (d) => {…}` 改寫成 `export function parseLocalDate(d) {…}`
+ *    ——函式本體逐字不變、正式行為完全相同、typecheck 與 lint 全綠——本題就以形狀斷言轉紅。
+ *    那是**假紅**：本題要守的是「sandbox 跑的是正式環境那一份」，不是「作者得用哪個關鍵字宣告」。
+ *    為了會紅而紅的考題最後會被當成雜訊關掉，比缺口更糟。
+ */
+function declSourceOf(mod, name, def) {
+  if (def.type === 'FunctionName') {
+    assert.equal(def.node.type, 'FunctionDeclaration',
+      `${mod.relPath} 的 ${name} 是 ${def.node.type}（不是頂層 function 宣告，切不出可獨立執行的原始碼）`);
+    return { source: mod.src.slice(def.node.range[0], def.node.range[1]), bodyNode: def.node };
+  }
+  assert.equal(def.type, 'Variable',
+    `${mod.relPath} 的 ${name} 既不是就地宣告的變數、也不是 function 宣告（實際：${def.type}）`);
   assert.equal(def.node.id.type, 'Identifier', `${mod.relPath} 的 ${name} 是解構出來的，本題切不出可獨立執行的宣告`);
   assert.ok(def.node.init, `${mod.relPath} 的 ${name} 沒有初始值`);
-  return `const ${name} = ${mod.src.slice(def.node.init.range[0], def.node.init.range[1])};`;
+  return {
+    source: `const ${name} = ${mod.src.slice(def.node.init.range[0], def.node.init.range[1])};`,
+    bodyNode: def.node.init,
+  };
 }
 
-/** 取頂層 function 宣告的節點與原始碼（`export` 關鍵字不在節點範圍內，切出來就能直接跑）。 */
-function functionSourceOf(mod, name) {
-  const def = topLevelDef(mod, name);
-  assert.equal(def.type, 'FunctionName', `${mod.relPath} 的 ${name} 不是頂層 function 宣告（實際：${def.type}）`);
-  return { node: def.node, source: mod.src.slice(def.node.range[0], def.node.range[1]) };
+/** 跨檔相依：切下**以 name 之名對外匯出**的那一份（先過 exportedLocalName，不是同名的鄰居）。 */
+function exportedSourceOf(mod, name) {
+  return declSourceOf(mod, name, topLevelDef(mod, exportedLocalName(mod, name))).source;
+}
+
+/** 同檔內呼叫的路徑：切本檔頂層那一份（頁面就是直接叫它的，所以刻意不經匯出表）。 */
+function localSourceOf(mod, name) {
+  return declSourceOf(mod, name, topLevelDef(mod, name));
 }
 
 /**
@@ -539,9 +597,10 @@ function functionSourceOf(mod, name) {
  * 「模組層、來自 `../app.js`、沒改名的具名 import」——也就是本題配進 sandbox 的那一份。
  * （這條檢查存在的唯一理由＝上面兩段繞法；沒有它，本檔宣稱守住的東西守不住。）
  */
-function assertDaysUntilBinding(mod, fnNode) {
-  const fnScope = mod.manager.acquire(fnNode);
-  assert.ok(fnScope, `${mod.relPath} 取不到 subStatus 的作用域`);
+function assertDaysUntilBinding(mod, bodyNode) {
+  const fnScope = mod.manager.acquire(bodyNode);
+  assert.ok(fnScope, `${mod.relPath} 取不到 subStatus 的作用域`
+    + `（宣告的本體是 ${bodyNode.type}、不是函式？例如改成 memoize(…) 包一層——那本題要有人回來更新）`);
   const refs = [];
   const collect = (/** @type {any} */ scope) => {
     for (const ref of scope.references) if (ref.identifier.name === 'daysUntil') refs.push(ref);
