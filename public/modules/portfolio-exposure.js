@@ -12,7 +12,7 @@ import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 // ETF 成分穿透（近似權重；可隨基金年報更新）。
 // 與 lib/derive.js 的同名複本是刻意同步點，前後端無法直接共用 runtime 模組。
 /** @type {Record<string, Composition>} */
-const COMPOSITION = {
+export const COMPOSITION = {
   CSPX: { type: 'equity', regions: { 美國: 1 } },
   QQQM: { type: 'equity', regions: { 美國: 1 } },
   VUAA: { type: 'equity', regions: { 美國: 1 } },
@@ -40,12 +40,6 @@ const COMPOSITION = {
   '00719B': { type: 'bond', regions: {} },
   '00720B': { type: 'bond', regions: {} }
 };
-
-/** COMPOSITION 收錄的代號清單（**export 供考題取真 union**，2026-08-05 Codex #409 r1 H①）：
- * 這份表與另一邊（後端 lib/derive.js）是刻意的複本、必須逐鍵相等。
- * 考題手抄清單會漏（實測漏了 GOOGL/GOOG/TSLA/SPACEX/SPCX、還多寫一個兩邊都沒有的），
- * 所以改成兩邊各自吐出真實 key、由考題取聯集後逐鍵比對——新增代號自動納入。 */
-export const COMPOSITION_SYMBOLS = Object.freeze(Object.keys(COMPOSITION));
 
 /** ETF/持股 → 成分（型別、區域穿透）；未知代號依 layer 退回。 @param {{symbol?: string, layer?: string}} h @returns {Composition} */
 export const compOf = (h) => COMPOSITION[normalizePortfolioSymbol(h.symbol)]

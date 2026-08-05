@@ -12,17 +12,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compOf as feCompOf, fxExposure, COMPOSITION_SYMBOLS as FE_SYMBOLS } from '../public/modules/portfolio-exposure.js';
-import { compOf as beCompOf, buildSummary, COMPOSITION_SYMBOLS as BE_SYMBOLS } from '../lib/derive.js';
+import { compOf as feCompOf, fxExposure, COMPOSITION as FE_TABLE } from '../public/modules/portfolio-exposure.js';
+import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE } from '../lib/derive.js';
 
 /**
- * 代號清單＝**兩份正式表的真 union**（不手抄）。
- * ⚠️ 第一版我手抄了 22 個代號＝空包彈（Codex #409 r1 H① 抓到）：實際漏了 GOOGL／GOOG／TSLA／
- *    SPACEX／SPCX，還多寫一個兩邊都沒有的 MSFT ⇒ 單邊把 GOOGL 的區域改成中國、或單邊新增
- *    一個代號，六題照樣全綠——直接打穿「任一邊少一個鍵就轉紅」這個主承諾。
- *    改成兩邊各自 export 真實 key、這裡取聯集，**未來新增代號自動納入**。
+ * 代號清單＝**直接從 `compOf` 真正使用的那張表取鍵**（兩邊都 export 表本身）。
+ * ⚠️ 這裡被 Codex 抓過兩次，兩次都是「中間層可以被繞過」：
+ *    v1 我**手抄** 22 個代號 ⇒ 漏了 GOOGL／GOOG／TSLA／SPACEX／SPCX、還多寫一個兩邊都沒有的 MSFT
+ *       ⇒ 單邊改 GOOGL 的區域照樣全綠（#409 r1 H①）。
+ *    v2 改成兩邊各 export 一個 `COMPOSITION_SYMBOLS` **投影陣列** ⇒ 把那個 export 改成寫死的
+ *       26 鍵陣列、再單邊往正式表新增 VT，兩邊 export 都聲稱沒有 VT ⇒ 又全綠（#409 r2 H①）。
+ *    v3（現在）：**export 正式表本身**、考題自己 `Object.keys()`。要繞過就得動到 `compOf`
+ *       真正讀的那個物件——而那就是我們要守的東西，沒有中間層可以說謊。
  */
+const BE_SYMBOLS = Object.keys(BE_TABLE);
+const FE_SYMBOLS = Object.keys(FE_TABLE);
 const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
+
+test('區域表｜export 出來的表就是 compOf 真正讀的那一張（不可是另一份投影）', () => {
+  // ⚠️ 這一題專門防「中間層說謊」（#409 r2 H① 的病）：對表裡的每一個鍵，
+  //    compOf 回傳的內容必須與表內容逐一相等——若 export 的是另一份寫死的複本，這裡就會紅。
+  for (const [table, compOf, side] of /** @type {const} */ ([
+    [BE_TABLE, beCompOf, '後端'], [FE_TABLE, feCompOf, '前端'],
+  ])) {
+    for (const sym of Object.keys(table)) {
+      assert.deepEqual(compOf({ symbol: sym, layer: 'core' }), /** @type {any} */ (table)[sym],
+        `${side}：export 的表與 compOf 對 ${sym} 的答案不一致——export 的一定要是 compOf 讀的那張表`);
+    }
+  }
+});
 
 test('區域表｜兩份 COMPOSITION 的「鍵集合」必須完全相等（單邊新增/刪除代號就紅）', () => {
   // 這一題與下一題分工：這裡守**集合**（有沒有多一個/少一個），下一題守**內容**（type 與權重）。
