@@ -16,8 +16,18 @@ const store = await import('../lib/store.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { recordDailyValue, takeSnapshotIfDue, takeSnapshot } = await import('../lib/services/snapshot.js');
 
+// 收尾清掉 `store.js` 會產生的衍生檔（同 snapshot-history-integrity 那份六項清單）：
+// 漏一種就在 os 暫存目錄累積殘檔。⚠️ 初版這裡漏了 `.pre-ledger-migration.bak`，每跑一次
+// 留一顆 28KB——2026-08-05 實測 `$TMPDIR` 已經堆了 1114 顆、約 30MB，全部是這一種。
+// 已經堆起來的殘檔**不在測試裡刪**（那是別人的暫存目錄，測試只該收自己的檔）；
+// 要清的人自己在 shell 跑：`rm -f "$TMPDIR"/finance-daily-*.db.pre-ledger-migration.bak`
+// （先 `ls "$TMPDIR"/finance-daily-*.db.pre-ledger-migration.bak | wc -l` 看有幾顆）。
+// ⚠️ 這是**列舉**，不是通則：`store.js` 日後多長一種後綴，這裡不會有人提醒——
+//    只有「暫存目錄開始累積殘檔」會顯示出來（而那要有人去數才看得見）。
 after(() => {
-  for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
+  for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) {
+    try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ }
+  }
 });
 
 /** 重置成乾淨的資料庫，只放一個現金帳戶（淨資產＝該餘額）。 @param {number} balance */
@@ -57,10 +67,15 @@ test('日線：跨日累積不覆蓋（與月快照的同月覆蓋相反）', as
   assert.equal(first.date, '2026-08-15',
     '前置條件：時鐘要真的被釘在 2026-08-15（沒釘住的話下面的字面日期就不是「昨天」與「很久以前」了）');
   // 模擬「很久以前有一行」＋「同月的昨天也有一行」：跨月與同月兩種都必須活著
+  // ⚠️ 這兩筆**故意倒著塞**（08-14 在前、2020-01-01 在後），不是筆誤，請不要「順手排好」：
+  //    照日期順序塞的話，寫入今天之後本來就是排好的，`snapshot.js` 的
+  //    `db.dailyValues.sort(...)` 在這個 fixture 下是 no-op——整行刪掉全庫照樣 1490 題全綠
+  //    （實測過）。倒著塞，少了那行 sort 就會拿到 ['2026-08-14','2020-01-01','2026-08-15']，
+  //    下面的 deepEqual 才真的擋得住「排序沒了」。
   const db = await getDb();
   /** @type {any} */ (db.dailyValues).unshift(
-    { date: '2020-01-01', netWorth: 1, assets: 1, liabilities: 0 },
-    { date: '2026-08-14', netWorth: 2, assets: 2, liabilities: 0 });
+    { date: '2026-08-14', netWorth: 2, assets: 2, liabilities: 0 },
+    { date: '2020-01-01', netWorth: 1, assets: 1, liabilities: 0 });
   await saveDb(db);
   await recordDailyValue();
 
