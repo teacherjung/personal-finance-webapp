@@ -22,22 +22,29 @@ import { compOf as beCompOf, buildSummary, COMPOSITION as BE_TABLE } from '../li
  *       ⇒ 單邊改 GOOGL 的區域照樣全綠（#409 r1 H①）。
  *    v2 改成兩邊各 export 一個 `COMPOSITION_SYMBOLS` **投影陣列** ⇒ 把那個 export 改成寫死的
  *       26 鍵陣列、再單邊往正式表新增 VT，兩邊 export 都聲稱沒有 VT ⇒ 又全綠（#409 r2 H①）。
- *    v3（現在）：**export 正式表本身**、考題自己 `Object.keys()`。要繞過就得動到 `compOf`
- *       真正讀的那個物件——而那就是我們要守的東西。
- * ⚠️ 這句話的**邊界**（#409 r3 建議收窄，之前寫成「沒有中間層可以說謊」是 overclaim）：
- *    擋住的是「export 一份跟正式表走散的複本」。**擋不住**刻意的第三層繞法——例如另建一張私表
- *    給 `compOf` 讀、export 留舊表，或用 Proxy 把某個鍵藏起來讓 `Object.keys()` 看不到；
- *    下面那一題的 `deepEqual` 只證明「已列舉的鍵內容相等」，證明不了物件身分、也證明不了沒有隱藏鍵。
+ *    v3 改成**export 正式表本身**、考題自己 `Object.keys()` ⇒ 但比對的只是「已列舉鍵的內容」，
+ *       `compOf` 改讀一份私表、export 留舊表，既有鍵答案相同就又全綠（#409 r4）。
+ *    v4（現在）：補一題**動態探針**——往 export 表塞一個新代號，要求 `compOf` 立刻回傳**同一個物件**。
+ *       物件身分到這一步才真的被守住（v3 那招在探針題會紅）。
+ * ⚠️ 這句話的**邊界**（#409 r3 收窄過一次，r4 再收窄一次；之前寫成「沒有中間層可以說謊」是 overclaim）：
+ *    下面兩題各守一半，合起來能守到什麼、守不到什麼要講清楚——
+ *    ①「逐鍵比對」題只證明：**對 export 表目前可列舉的每一個鍵**，`compOf` 的答案不與 export 值走散。
+ *       它**證明不了物件身分**——`compOf` 若改讀一份私表、export 留舊表，既有鍵答案相同就照樣全綠（r4 指出的洞）。
+ *    ②「動態探針」題補上物件身分：往 export 表塞一個原本不存在的代號，`compOf` 必須立刻回傳**同一個物件**。
+ *       私表＋舊 export 這招在這裡會紅（探針鍵只寫進 export 表，讀私表的 `compOf` 找不到）。
+ *    兩題合起來仍**擋不住**的是「`compOf` 在 export 表之外**多認得**的代號」：
+ *    私表兜底（`PRIVATE[s] || COMPOSITION[s]`，探針鍵仍能從 export 表命中所以照樣綠）、
+ *    `enumerable: false` 定義的鍵、Proxy 的 `ownKeys` 藏鍵——這些 `Object.keys()` 走不到，逐鍵比對就走不到。
  *    真要封死得把兩份表收斂成單一共用來源（＝改正式資料流，非本支範圍）。
  */
 const BE_SYMBOLS = Object.keys(BE_TABLE);
 const FE_SYMBOLS = Object.keys(FE_TABLE);
 const SYMBOLS = [...new Set([...BE_SYMBOLS, ...FE_SYMBOLS])].sort();
 
-test('區域表｜export 出來的表就是 compOf 真正讀的那一張（不可是另一份投影）', () => {
-  // ⚠️ 這一題防的是「export 一份走散的複本」（#409 r2 H① 的病）：對表裡的每一個鍵，
-  //    compOf 回傳的內容必須與表內容逐一相等——若 export 的是另一份寫死的複本，這裡就會紅。
-  //    邊界見檔頭：對「另建私表／Proxy 藏鍵」這類刻意繞法無效。
+test('區域表｜export 表可列舉的每個鍵，compOf 的答案都不可與 export 值走散', () => {
+  // ⚠️ 這一題防的是「export 一份內容已經走散的複本」（#409 r2 H① 的病）：對表裡的每一個鍵，
+  //    compOf 回傳的內容必須與表內容逐一相等。
+  //    界線（r4）：這裡**只**證明「已列舉鍵的內容相等」，不證明物件身分——物件身分由下一題的探針守。
   for (const [table, compOf, side] of /** @type {const} */ ([
     [BE_TABLE, beCompOf, '後端'], [FE_TABLE, feCompOf, '前端'],
   ])) {
@@ -45,6 +52,36 @@ test('區域表｜export 出來的表就是 compOf 真正讀的那一張（不�
       assert.deepEqual(compOf({ symbol: sym, layer: 'core' }), /** @type {any} */ (table)[sym],
         `${side}：export 的表與 compOf 對 ${sym} 的答案不一致——export 的一定要是 compOf 讀的那張表`);
     }
+  }
+});
+
+test('區域表｜動態探針：往 export 表新增一個代號，compOf 必須立刻讀到同一個物件（物件身分）', () => {
+  // ⚠️ 這一題專治 #409 r4 點名的繞法：「compOf 改讀一份模組內私表、export 留舊表」——
+  //    既有鍵的答案一模一樣，所以上一題的逐鍵比對抓不到。
+  //    探針做法：把一個**正式資料裡不會出現**的代號寫進 export 表，再問 compOf。
+  //    export 表若不是 compOf 真正讀的那個物件，compOf 找不到這個鍵 ⇒ 走 fallback ⇒ 這裡紅。
+  //    界線：這證明的是「export 表在 compOf 的讀取路徑上，且探針鍵沒被別處遮蔽」；
+  //    不證明「compOf 沒有在 export 表之外多認得別的代號」（私表兜底／不可列舉鍵／Proxy 藏鍵，見檔頭）。
+  const PROBE = '__PROBE_NOT_A_REAL_SYMBOL__';   // normalizePortfolioSymbol 只做 trim+大寫，這串原樣通過
+  for (const [table, compOf, side] of /** @type {const} */ ([
+    [BE_TABLE, beCompOf, '後端'], [FE_TABLE, feCompOf, '前端'],
+  ])) {
+    const t = /** @type {Record<string, any>} */ (table);
+    const before = Object.keys(t).sort();
+    assert.ok(!(PROBE in t), `${side}：探針代號不該事先存在（測試自己髒了）`);
+    // 唯一的探針物件；用 strictEqual 比「同一個參考」——deepEqual 會被「深拷貝一份表」蒙混過去。
+    const probe = { type: 'bond', regions: { 探針國: 1 } };
+    try {
+      t[PROBE] = probe;
+      assert.strictEqual(compOf({ symbol: PROBE, layer: 'core' }), probe,
+        `${side}：往 export 的 COMPOSITION 新增代號後 compOf 看不到 ⇒ compOf 讀的是另一份表（私表／複本），`
+        + '兩份表的比對會全部落空——export 的必須是 compOf 真正讀的那個物件');
+    } finally {
+      delete t[PROBE];   // 不可污染同檔其他考題（SYMBOLS 在模組載入時就算好了，但表本身是共用的）
+    }
+    assert.deepEqual(Object.keys(t).sort(), before, `${side}：探針沒還原乾淨——後面的考題會被污染`);
+    assert.deepEqual(compOf({ symbol: PROBE, layer: 'core' }), { type: 'equity', regions: { 其他: 1 } },
+      `${side}：探針還原後應該退回未知代號的 fallback`);
   }
 });
 
