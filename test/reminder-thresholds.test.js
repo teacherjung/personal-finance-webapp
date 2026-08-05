@@ -284,7 +284,11 @@ const APP_REL = 'public/app.js';
 const ASSETS_REL = 'public/modules/assets.js';
 
 /**
- * 斷言「使用者按下『資產配置』時，跑的就是本題搬進 sandbox 的那一支 renderAssets」。
+ * 斷言「**`ROUTES.assets` 綁到的**就是本題搬進 sandbox 的那一支 renderAssets」。
+ *
+ * ⚠️ 措辭刻意不寫成「使用者按下時跑的就是它」（#413 r5 非阻擋指出前後不一致）：下面的劃界第 1 條
+ *    自己承認**不驗 `router()` 有沒有在用 `ROUTES` 這張表、也不驗查表之前有沒有特例分支**——
+ *    那句話比這條檢查做得到的事大。承諾要跟射程對齊。
  *
  * ⚠️ 這條檢查存在的唯一理由＝#413 r4 的阻擋繞法（值得原地逐字記下來）：上一版只從 assets.js
  *    取回一支同名函式來跑，**完全沒有核對正式路由接到誰**。複驗者於是保留 `renderAssets()` 一字不動、
@@ -414,7 +418,11 @@ function frozenObjectArg(mod, node) {
     .find((/** @type {any} */ r) => r.identifier === callee.object);
   if (ref && ref.resolved) return null;             // 被本檔的宣告／import 遮蔽掉＝不是語言的 Object
   const arg = node.arguments[0];
-  return arg.type === 'ObjectExpression' ? arg : null;
+  if (arg.type === 'ObjectExpression') return arg;
+  // ⚠️ 巢狀包裝也要拆（#413 r5 非阻擋）：`Object.freeze(Object.seal({…}))` 與單層完全等價，
+  //    上一版只接直接包住物件字面值 ⇒ 那種寫法會假紅在「不是物件字面值」。假紅的標準反應是
+  //    把考題放寬掉，所以寧可現在遞迴。
+  return frozenObjectArg(mod, arg);
 }
 
 /**
@@ -577,7 +585,13 @@ async function renderAssetsHtml(db) {
         throw new Error(`本題只餵了 /db 與 /summary 的替身，資產頁多打了 ${path}（要有人回來更新本題）`);
       },
       view: () => viewEl,
-      byId: () => el(),
+      // ⚠️ `byId('view')` 與 `document.getElementById('view')` 必須回**同一顆守衛節點**（#413 r5 阻擋）：
+      //    上一版這兩個入口都回沒有守衛的 el()，於是「印完再把 .tag.amber 拔掉」只要換用
+      //    `document.getElementById('view').querySelectorAll(...)` 就靜靜全綠（複驗者實測 7/7 綠）。
+      //    ⚠️ 誠實劃界：**其他 id 仍回沒有守衛的替身**。理由＝在真瀏覽器裡，要拔掉本題驗的那段 HTML，
+      //    拿到的節點必須是 `#view` 或它的祖先；祖先那些入口（document.body／documentElement／
+      //    parentElement 往上）本題沒有餵替身 ⇒ 一碰就 TypeError＝吵著紅，不是靜靜綠。
+      byId: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
       currentRouteSeq: () => 1,
       esc, wan: num, money: num, moneyCur: num, pct: num,
     },
@@ -592,7 +606,7 @@ async function renderAssetsHtml(db) {
     document: {
       querySelector: (/** @type {any} */ s) => guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []),
       querySelectorAll: (/** @type {any} */ s) => [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
-      getElementById: () => el(),
+      getElementById: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
       createElement: () => el(),
     },
   };
