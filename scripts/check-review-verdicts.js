@@ -108,6 +108,8 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  * ・引文的字元走**白名單**（文字／數字／空白／🤖／全形標點／反引號；`<`、`[`、`!` 等能開隱形容器的
  *   一律不在名單上），反引號要配對、sha 長相的字只准一個——出界的壞留言**不可重述**，
  *   寧可留著阻擋，請改用關掉重開 PR 或問 William。名單放寬要連著這裡與考題一起改。
+ * ・整行含 Unicode「預設不顯示」碼位＝不可重述（藏指紋的原料）；sha 歧義在 NFKC 正規化副本上數
+ *   （全形 hex 現形），逐字比對仍用原字串。
  * 放行判準完全不變：仍然要指定審查者對**目前 head** 有一則真的「通過」。
  *
  * ## 誠實劃界
@@ -140,6 +142,13 @@ const QUOTED_SHA_LIKE = /[0-9a-fA-F]{7,40}/g;
  * 「需修正（1 Medium；r2 兩個 High 已關閉）」）全部在名單內。
  */
 const QUOTE_ALLOWED = /^[\p{L}\p{N}\p{Zs}\t🤖｜：:（）()、，,；;。．.…—－\-_'’‘"”“`／/]*$/u;   // ⚠️✅❌ 這類組合字元刻意不收（lint no-misleading-character-class；含它們的壞留言走 fail-closed）
+/**
+ * **隱形字元一律拒收**（#418 r6 High）：Unicode 有一族「預設不顯示」的碼位
+ * （Default_Ignorable_Code_Point，例：U+115F 韓文填充字元）——它們同時歸類為字母（\p{L}），
+ * 所以擠得進白名單，卻能把第二個 sha 切碎藏起來（每六碼插一個，畫面看是同一串指紋、
+ * 計數器數不到）。性質收口：整行含任何一個這族字元＝不可重述。
+ */
+const HIDDEN_CP = /\p{Default_Ignorable_Code_Point}/u;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -399,6 +408,11 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       //    出界＝那一則壞留言不可重述（fail-closed 劃界），同樣收件截止。
       const quoteM = RESTATE.exec(raw);
       const quoteTxt = quoteM ? quoteM[4] : '';
+      if (HIDDEN_CP.test(raw)) {
+        warnings.push('一行重述含**隱形字元**（Unicode 預設不顯示的碼位）——那是把指紋或內容藏出'
+          + `畫面的原料，不可重述且收件截止：「${collapse(raw).slice(0, 80)}…」`);
+        break;
+      }
       if (!QUOTE_ALLOWED.test(quoteTxt) || (raw.split('`').length - 1) % 2 !== 0) {
         warnings.push('一行重述的引文含白名單外的字元（例如 <、[、! 這類能開啟隱形容器的）'
           + `或未配對的反引號——不可重述且收件截止：「${collapse(raw).slice(0, 80)}…」`);
@@ -422,7 +436,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       if (!q) { bad('引用的第一行讀不出「誰寫的、審哪個 sha、第幾輪」（四欄要在行首連著）——讀不出就不可重述，維持阻擋'); continue; }
       // 引文裡若出現**第二個 sha 長相的字**＝讀不準它到底在講哪個版本（壞行可在中段再塞一組
       // metadata、少打一個分隔符也算——#418 r5 High①）⇒ 一律不可重述。
-      if ((m[4].match(QUOTED_SHA_LIKE) || []).length > 1) {
+      // ⚠️ 在 **NFKC 正規化副本**上數（#418 r6 High）：全形的 hex 字（ｄｅａｄｂｅｅ）在 \p{L}/\p{N}
+      //    白名單內、原字串數不到，但畫面上就是一串指紋——正規化後現形。逐字比對仍用原字串。
+      if (((m[4].normalize('NFKC')).match(QUOTED_SHA_LIKE) || []).length > 1) {
         bad('引用的第一行出現第二個 sha 長相的字——讀不準它在講哪個版本，不可重述，維持阻擋');
         continue;
       }
