@@ -84,7 +84,9 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  * ①「原第一行」必須**逐字**對上某一則壞標頭留言的第一行（空白摺疊後比對）——引不中就不清除。
  * ②壞掉那行裡讀得出的角色與來源，必須**等於重述者自己**（同一位審查者才能重述自己的壞留言；
  *   讀不出角色來源的壞留言**不可重述**，維持阻擋——fail-closed）。
- * ③重述出來的結論**照樣進聯集**：重述一則阻擋，它還是阻擋。重述清不掉任何真的阻擋。
+ * ③重述出來的結論照樣進聯集**留檔**，但因規則④它永遠不會是該審查者的最新結論——
+ *   重述**唯一**能改變的判定＝把壞標頭的阻擋降為可稽核的警告（那正是它存在的目的）；
+ *   它**造不出放行票**、也**清不掉任何合規結論的阻擋**（合規的阻擋只能靠同一位審查者的更新輪次撤銷）。
  * ④重述的輪次必須**小於**這則留言自己標頭的輪次——不然可以用重述行造出一個比自己現在結論
  *   更高輪的「通過」。
  * 放行判準完全不變：仍然要指定審查者對**目前 head** 有一則真的「通過」。
@@ -93,10 +95,14 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  * 與整道閘相同：它讀的是自我宣告，不是身分證明（三方共用同一個 GitHub 帳號，惡意者本來就能
  * 直接偽造整個合規標頭）。重述防的是**打錯字把 PR 鎖死**，不是防惡意。
  */
-const RESTATE = /^[^\S\n]*重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論：([^｜\n]+?)｜原第一行：「(.+)」[^\S\n]*$/u;
+const RESTATE = /^ {0,3}重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論：([^｜\n]+?)｜原第一行：「(.+)」[^\S\n]*$/u;
 /** 從壞掉的第一行盡量讀出「誰寫的」（規則②用）。讀不出＝回 null＝那則不可重述。 */
-const QUOTED_IDENTITY = /🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜/u;
-/** 空白摺疊：引用比對不該因為多打一個空白而失敗（與 source 正規化同一個理由）。 */
+// ⚠️ **錨定行首**（#418 r1 阻擋②）：不錨的話，壞行可以寫成「🤖 Claude - …後段嵌 🤖 Codex｜來源：…」，
+//    Codex 逐字引用整行就能清掉**別人**的壞留言。前綴容許粗體，與 HEADER 同一套。
+const QUOTED_IDENTITY = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜/u;
+/** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
+ *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
+ *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
 const collapse = (/** @type {string} */ t) => String(t || '').trim().replace(/\s+/gu, ' ');
 
 /**
@@ -261,6 +267,41 @@ export function looksLikeVerdict(body) {
 }
 
 /**
+ * 重述行的**保守**掃描（#418 r1 阻擋①）。與 `stripFencesLoose` 方向相反：那支給提示路徑用、
+ * 「寧可多剝也不要漏」；這裡是**清除阻擋**的路徑，判準要反過來——**寧可少認，範例絕不能生效**。
+ *
+ * 跳過的四類（各有考題釘住）：
+ *  ・fence 內（開柵欄記字元與長度，關柵欄要同字元且**不短於**開柵欄——CommonMark 式；
+ *    寬鬆版用「第一個字元相同」就算關，四反引號開、三反引號關會被它提早關掉）
+ *  ・縮排 ≥4 空白或 tab 的 code 行
+ *  ・`>` 引用行
+ *  ・引用段落的 **lazy continuation**（前一個非空行是引用、中間沒有空行——那一行在畫面上
+ *    仍屬引用段落，引用別人的重述不是自己的重述）
+ * @param {string} body
+ * @returns {string[]} 可能是重述行的原始行（前綴已驗；完整格式由呼叫端的 RESTATE 驗）
+ */
+function restateLines(body) {
+  const out = [];
+  /** @type {{ch: string, len: number} | null} */ let fence = null;
+  let inQuotePara = false;
+  for (const raw of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[^\S\n]*$/.exec(raw);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
+      continue;   // fence 內（含關柵欄那行）一律不是重述
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(raw);
+    if (open) { fence = { ch: open[1][0], len: open[1].length }; inQuotePara = false; continue; }
+    if (!raw.trim()) { inQuotePara = false; continue; }        // 空行結束引用段落
+    if (/^ {0,3}>/.test(raw)) { inQuotePara = true; continue; }
+    if (inQuotePara) continue;                                  // lazy continuation＝仍在引用段落
+    if (/^(?: {4,}|\t)/.test(raw)) continue;                    // 縮排 code
+    if (/^ {0,3}重述\s*r\d+｜/u.test(raw)) out.push(raw);
+  }
+  return out;
+}
+
+/**
  * 寬鬆版的 fence 剝除（縮排 0–3、``` 與 ~~~ 都認）。
  *
  * ⚠️ 這裡刻意**不做完整的 CommonMark 文法**（那份在 `test/contract-split.test.js`）：
@@ -320,17 +361,17 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
       if (hasBotMark(c.body)) {
         const first = String(c.body).split('\n').find((l) => l.trim()) || '';
-        malformed.push({ key: collapse(first), excerpt: `${shape}：${excerpt}` });
+        malformed.push({ key: first.trim(), excerpt: `${shape}：${excerpt}` });
       } else if (looksLikeVerdict(c.body)) {
         // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
         warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
       }
       continue;
     }
-    // 重述行：只在**帶合規標頭**的留言裡找（fence 與引用一樣要剝——範例不是重述）。
-    const text = stripFencesLoose(String(c.body || '')).replace(/^[^\S\n]*>.*$/gm, '');
-    for (const line of text.split('\n')) {
-      if (!/^[^\S\n]*重述\s*r\d+｜/u.test(line)) continue;   // 不像重述行的行完全不管
+    // 重述行：只在**帶合規標頭**的留言裡找，而且用**保守掃描器**（#418 r1 阻擋①）：
+    // stripFencesLoose 的方向是「寧可多剝」（給提示路徑用）；清除阻擋這條路要**反過來**——
+    // 寧可少認，範例絕不能生效。四反引號 fence、縮排 code、引用的 lazy continuation 都要跳過。
+    for (const line of restateLines(c.body)) {
       const m = RESTATE.exec(line);
       const bad = (/** @type {string} */ why) => { warnings.push(`一行重述**無效、不生效**（${why}）：「${collapse(line).slice(0, 80)}…」`); };
       if (!m) { bad('格式不合規——要長成「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「…」」'); continue; }
@@ -347,7 +388,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         continue;
       }
       // 規則①的鑰匙＝逐字引用（摺疊比對）；規則③＝重述的結論照樣進聯集（下一行）。
-      restated.set(collapse(m[4]), `${h.role}（${h.source}）`);
+      restated.set(m[4].trim(), `${h.role}（${h.source}）`);
       applyEntry({ role: h.role, source: h.source, sha: m[2].toLowerCase(), round, verdict,
         blocking: VERDICTS[/** @type {keyof typeof VERDICTS} */ (verdict)] });
     }
