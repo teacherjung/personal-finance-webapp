@@ -413,7 +413,9 @@ function frozenObjectArg(mod, node) {
   const callee = node.callee;
   if (callee.type !== 'MemberExpression' || callee.computed) return null;
   if (callee.object.type !== 'Identifier' || callee.object.name !== 'Object') return null;
-  if (callee.property.type !== 'Identifier' || !['freeze', 'seal'].includes(callee.property.name)) return null;
+  // preventExtensions 也是行為等價的包裝（#413 r6 非阻擋：複驗實測它會假紅在「不是物件字面值」）
+  if (callee.property.type !== 'Identifier'
+    || !['freeze', 'seal', 'preventExtensions'].includes(callee.property.name)) return null;
   const ref = mod.manager.scopes.flatMap((/** @type {any} */ s) => s.references)
     .find((/** @type {any} */ r) => r.identifier === callee.object);
   if (ref && ref.resolved) return null;             // 被本檔的宣告／import 遮蔽掉＝不是語言的 Object
@@ -431,6 +433,13 @@ function frozenObjectArg(mod, node) {
  * 因為「先呼叫原 renderer、再把標籤拔掉」正是要擋的那顆繞法。
  */
 function passThroughCallee(node) {
+  // `renderAssets.bind(null)`／`.bind(this 值)` 也是純轉手（#413 r6 非阻擋：複驗實測它會假紅在
+  // 「綁的不是一個名字」）。只收 **零或一個引數**：`.bind(null, x)` 會預填參數＝行為改了，紅是對的。
+  if (node && node.type === 'CallExpression' && node.arguments.length <= 1
+    && node.callee.type === 'MemberExpression' && !node.callee.computed
+    && node.callee.property.type === 'Identifier' && node.callee.property.name === 'bind') {
+    return node.callee.object;
+  }
   if (!node || (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression')) return null;
   let body = node.body;
   if (body.type === 'BlockStatement') {
@@ -553,7 +562,7 @@ async function renderAssetsHtml(db) {
   const viewEl = guardedNode('view()', domEdits, ['innerHTML'], {
     querySelector: (/** @type {any} */ s) => guardedNode(`view().querySelector('${s}') 撈到的節點`, domEdits, []),
     querySelectorAll: (/** @type {any} */ s) => [guardedNode(`view().querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
-    parentElement: guardedNode('view().parentElement', domEdits, []),
+    // parentElement 不再另發：guardedNode 預設就是惰性遞迴守衛（#413 r6）——只有一份機制，沒有第二種祖先。
   });
   // sandbox 自己的計時器：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**（見 flushLater）。
   /** @type {(() => any)[]} */
@@ -589,8 +598,9 @@ async function renderAssetsHtml(db) {
       //    上一版這兩個入口都回沒有守衛的 el()，於是「印完再把 .tag.amber 拔掉」只要換用
       //    `document.getElementById('view').querySelectorAll(...)` 就靜靜全綠（複驗者實測 7/7 綠）。
       //    ⚠️ 誠實劃界：**其他 id 仍回沒有守衛的替身**。理由＝在真瀏覽器裡，要拔掉本題驗的那段 HTML，
-      //    拿到的節點必須是 `#view` 或它的祖先；祖先那些入口（document.body／documentElement／
-      //    parentElement 往上）本題沒有餵替身 ⇒ 一碰就 TypeError＝吵著紅，不是靜靜綠。
+      //    拿到的節點必須是 `#view` 或它的祖先。祖先的兩條路：`parentElement` 往上＝守衛節點的
+      //    惰性遞迴鏈，爬多高都記帳（#413 r6 修正：上一版第二層起是普通物件、寫入不記帳，
+      //    這句劃界當時是假的）；`document.body`／`documentElement`＝沒餵替身 ⇒ TypeError 吵著紅。
       byId: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
       currentRouteSeq: () => 1,
       esc, wan: num, money: num, moneyCur: num, pct: num,
@@ -654,11 +664,19 @@ async function renderAssetsHtml(db) {
 function guardedNode(label, edits, allowWrite = [], seed = {}) {
   const note = (/** @type {string} */ what) => { edits.push(`${label} ${what}`); };
   /** @type {any} */
+  // 祖先鏈**惰性遞迴守衛**（#413 r6 阻擋：上一版這裡是顆普通物件 `{ innerHTML: '' }`，
+  // 於是 `view().parentElement.parentElement.innerHTML = ''`——真瀏覽器裡等於清空整頁——
+  // 完全不記帳、7 題照綠；而下面 byId 那段註解還宣稱「祖先一碰就 TypeError」＝假劃界。
+  // 改法：存取才生下一層守衛節點，爬多高都記帳，永遠不會爬到一顆沒人看守的物件。）
+  let lazyParent = null;
   const node = {
     innerHTML: '', value: '', className: '', hidden: false, disabled: false, dataset: {}, tagName: 'DIV',
     getAttribute: () => null, hasAttribute: () => false, matches: () => false,
     addEventListener() { }, removeEventListener() { },
-    parentElement: { innerHTML: '' },
+    get parentElement() {
+      if (!lazyParent) lazyParent = guardedNode(`${label}.parentElement`, edits, []);
+      return lazyParent;
+    },
     classList: { contains: () => false },
     style: new Proxy({}, {
       set: (t, k, v) => { note(`style.${String(k)} 被改寫`); return Reflect.set(t, k, v); },
