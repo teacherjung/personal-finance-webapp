@@ -282,14 +282,18 @@ test('位元組上限是「從 512MB 這台機器推導出來」的，不是憑�
   const { MAX_IB_XML_CHARS } = await import('../lib/parse-limits.js');
   // 餵一份**剛好等於上限**、且用真實 IB 排版（50 個屬性、合法巢狀）的 XML，子行程必須活著跑完。
   // 列樣板與筆數在父行程算好注入，子行程回報實際解析列數——「活著」與「解析完整」是兩件事。
+  const { XMLValidator } = await import('fast-xml-parser');
   const ATTRS = Array.from({ length: 50 }, (_, i) => `a${i}="v${i}0000"`).join(' ');
   const one = `<Trade ${ATTRS}/>`;
   const n = Math.floor(MAX_IB_XML_CHARS / one.length);
+  const HEAD = '<FlexQueryResponse><FlexStatements count="1"><FlexStatement><Trades>';
+  const TAIL = '</Trades></FlexStatement></FlexStatements></FlexQueryResponse>';
+  assert.equal(XMLValidator.validate(HEAD + one.repeat(3) + TAIL), true,
+    '考題的排版必須是合法巢狀——閉合順序寫錯過一次，解析器不驗證照樣過，但那就不是真實 IB 排版了');
   const script = `
     const { XMLParser } = await import('fast-xml-parser');
     const one = ${JSON.stringify(one)};
-    const xml = '<FlexQueryResponse><FlexStatements count="1"><FlexStatement><Trades>'
-      + one.repeat(${n}) + '</Trades></FlexStatement></FlexStatements></FlexQueryResponse>';
+    const xml = ${JSON.stringify(HEAD)} + one.repeat(${n}) + ${JSON.stringify(TAIL)};
     const doc = new XMLParser({ignoreAttributes:false, attributeNamePrefix:''}).parse(xml);
     const trades = doc?.FlexQueryResponse?.FlexStatements?.FlexStatement?.Trades?.Trade;
     console.log('rows=' + (Array.isArray(trades) ? trades.length : (trades ? 1 : 0)));
