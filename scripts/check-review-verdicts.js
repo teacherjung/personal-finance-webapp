@@ -80,7 +80,12 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  * ## 格式（逐字；寫在**帶合規標頭**的留言內文裡，一行一則）
  *   重述 r<輪次>｜審 `<短 sha>`｜結論：<三選一>｜原第一行：「<壞掉那則的第一行，逐字引用>」
  *
- * ## 四條保守規則（**重述唯一的新權力是「把讀不懂的翻譯成讀得懂的」，判定規則一格都沒放寬**）
+ * ## 七條保守規則（**重述唯一的新權力是「把讀不懂的翻譯成讀得懂的」，判定規則一格都沒放寬**）
+ * ⓪**位置**（#418 r3 收斂，審查者建議的方向）：重述行必須**緊跟在合規標頭後面**（中間只准空行），
+ *   碰到第一行別的內容就停止收件。這一條讓「範例會不會生效」整族問題消失——fence、清單、HTML 註解、
+ *   引用、lazy continuation……**任何容器都在標頭與重述行之間放不進去**，所以不需要 Markdown 解析器
+ *   （v2／v3 各被打穿一輪之後的教訓：解析器做不完，位置規則做得完）。
+ *   出現在其他位置的「重述 r…」樣子的行＝**不生效但要出聲**（用寬鬆剝除後掃描，只給警告）。
  * ①「原第一行」必須**逐字**對上某一則壞標頭留言的第一行（只容許頭尾空白差異，trim 比對）——引不中就不清除。
  * ②壞掉那行裡讀得出的角色與來源，必須**等於重述者自己**（同一位審查者才能重述自己的壞留言；
  *   讀不出角色來源的壞留言**不可重述**，維持阻擋——fail-closed）。
@@ -89,6 +94,12 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  *   它**造不出放行票**、也**清不掉任何合規結論的阻擋**（合規的阻擋只能靠同一位審查者的更新輪次撤銷）。
  * ④重述的輪次必須**小於**這則留言自己標頭的輪次——不然可以用重述行造出一個比自己現在結論
  *   更高輪的「通過」。
+ * ⑤**sha 與輪次要綁引文**（#418 r3 High①）：重述行自報的 `審 sha｜r<n>` 必須**等於**引文裡讀得出的
+ *   那組——不綁的話，壞留言是「r8 對目前 head 的阻擋」，重述卻填 r1＋舊 sha，規則④攔不到
+ *   （1 < 7），低輪重述就把高輪阻擋洗掉了。引文裡讀不出 sha 或輪次＝不可重述（fail-closed）。
+ * ⑥**只能接管更早的壞留言**（#418 r3 High①後半）：重述那則留言必須出現在壞留言**之後**——
+ *   不然可以「預先授權」一則還沒出現的壞留言。
+ * ⑦重述行只在帶合規標頭的留言裡有效（標頭本身就是重述者的身分與當前結論）。
  * 放行判準完全不變：仍然要指定審查者對**目前 head** 有一則真的「通過」。
  *
  * ## 誠實劃界
@@ -100,6 +111,8 @@ const RESTATE = /^ {0,3}重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論
 // ⚠️ **錨定行首**（#418 r1 阻擋②）：不錨的話，壞行可以寫成「🤖 Claude - …後段嵌 🤖 Codex｜來源：…」，
 //    Codex 逐字引用整行就能清掉**別人**的壞留言。前綴容許粗體，與 HEADER 同一套。
 const QUOTED_IDENTITY = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜/u;
+/** 從壞掉的第一行讀出它自報的 sha 與輪次（規則⑤用）。讀不出＝回 null＝那則不可重述。 */
+const QUOTED_META = /審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜/u;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -266,54 +279,6 @@ export function looksLikeVerdict(body) {
   return false;
 }
 
-/**
- * 重述行的**保守**掃描（#418 r1 阻擋①）。與 `stripFencesLoose` 方向相反：那支給提示路徑用、
- * 「寧可多剝也不要漏」；這裡是**清除阻擋**的路徑，判準要反過來——**寧可少認，範例絕不能生效**。
- *
- * 跳過的六類（各有考題釘住）：
- *  ・fence 內（開柵欄記字元與長度，關柵欄要同字元且**不短於**開柵欄——CommonMark 式；
- *    寬鬆版用「第一個字元相同」就算關，四反引號開、三反引號關會被它提早關掉）
- *  ・**清單裡的柵欄**（`- \`\`\`\`text`——剝掉清單記號再認柵欄；#418 r2 High）
- *  ・**HTML 註解**（`<!-- -->` 畫面上看不見，先整段滅掉；#418 r2 High）
- *  ・縮排 ≥4 空白或 tab 的 code 行
- *  ・`>` 引用行與清單行本身（剝掉容器前綴才判斷）
- *  ・容器段落的 **lazy continuation**（前一個非空行是引用或清單、中間沒有空行——那一行在
- *    畫面上仍屬那個段落，引用別人的重述不是自己的重述）
- * @param {string} body
- * @returns {string[]} 可能是重述行的原始行（前綴已驗；完整格式由呼叫端的 RESTATE 驗）
- */
-function restateLines(body) {
-  const out = [];
-  // ⚠️ HTML 註解先滅（#418 r2 High）：<!-- --> 在畫面上看不見，裡面的「重述」當然不是重述。
-  //    換成換行而不是空字串＝保留行結構，順便把跨行註解前後的段落切開（多切＝安全方向）。
-  const text = String(body || '').replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '\n');
-  /** @type {{ch: string, len: number} | null} */ let fence = null;
-  let inContainerPara = false;
-  for (const raw of text.split('\n')) {
-    // 剝容器前綴（引用 `>`、清單 `-`/`*`/`+`/`1.`/`1)`，可巢狀）——#418 r2 High：
-    // `- \`\`\`\`text` 這種**清單裡的柵欄**用行首正則看不到，範例就漏出來了。
-    let line = raw, peeled = false;
-    for (;;) {
-      const m = /^ {0,3}(?:>|[-*+][ \t]+|\d{1,9}[.)][ \t]+)/.exec(line);
-      if (!m) break;
-      line = line.slice(m[0].length); peeled = true;
-    }
-    if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})[^\S\n]*$/.exec(line);
-      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
-      continue;   // fence 內（含關柵欄那行）一律不是重述
-    }
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (open) { fence = { ch: open[1][0], len: open[1].length }; inContainerPara = false; continue; }
-    if (!raw.trim()) { inContainerPara = false; continue; }        // 空行結束容器段落
-    // 引用行與清單行本身＝容器；其後**沒有空行**的普通行是它的 lazy continuation（畫面上仍屬той段落）。
-    if (peeled) { inContainerPara = true; continue; }
-    if (inContainerPara) continue;
-    if (/^(?: {4,}|\t)/.test(raw)) continue;                       // 縮排 code
-    if (/^ {0,3}重述\s*r\d+｜/u.test(raw)) out.push(raw);
-  }
-  return out;
-}
 
 /**
  * 寬鬆版的 fence 剝除（縮排 0–3、``` 與 ~~~ 都認）。
@@ -364,28 +329,39 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         verdict: `同一輪（r${h.round}）出現相反結論：${cur.verdict} vs ${h.verdict}` };
     }
   };
-  /** 已被合規重述接管的壞留言第一行（摺疊後）→ 重述者。 @type {Map<string, string>} */
-  const restated = new Map();
+  /** 合規重述（鑰匙＝逐字引文；idx＝重述那則留言的位置，規則⑥用）。 @type {{key: string, who: string, idx: number}[]} */
+  const restated = [];
   /** 壞標頭留言：先收集、**掃完全部留言再判**（重述通常出現在壞留言之後）。 */
-  const malformed = /** @type {{key: string, excerpt: string}[]} */ ([]);
+  const malformed = /** @type {{key: string, excerpt: string, idx: number}[]} */ ([]);
+  let idx = -1;
   for (const c of comments) {
+    idx++;
     const h = headerOf(c.body);
     if (!h) {
       const excerpt = `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`;
       const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
       if (hasBotMark(c.body)) {
         const first = String(c.body).split('\n').find((l) => l.trim()) || '';
-        malformed.push({ key: first.trim(), excerpt: `${shape}：${excerpt}` });
+        malformed.push({ key: first.trim(), excerpt: `${shape}：${excerpt}`, idx });
       } else if (looksLikeVerdict(c.body)) {
         // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
         warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
       }
       continue;
     }
-    // 重述行：只在**帶合規標頭**的留言裡找，而且用**保守掃描器**（#418 r1 阻擋①）：
-    // stripFencesLoose 的方向是「寧可多剝」（給提示路徑用）；清除阻擋這條路要**反過來**——
-    // 寧可少認，範例絕不能生效。四反引號 fence、縮排 code、引用的 lazy continuation 都要跳過。
-    for (const line of restateLines(c.body)) {
+    // 重述行（#418 r3 位置規則）：**緊跟在標頭後面**（中間只准空行），碰到第一行別的內容就停收。
+    // 這讓 fence／清單／HTML 註解／引用……任何容器都插不進「標頭與重述行之間」——不需要解析器。
+    const lines = String(c.body || '').replace(/\r\n?/g, '\n').split('\n');
+    const headerIdx = lines.findIndex((l) => l.trim());
+    let cursor = headerIdx + 1;
+    const restateIdxs = [];
+    for (; cursor < lines.length; cursor++) {
+      if (!lines[cursor].trim()) continue;                          // 空行可以隔開
+      if (/^ {0,3}重述\s*r\d+｜/u.test(lines[cursor])) { restateIdxs.push(cursor); continue; }
+      break;                                                        // 第一行別的內容＝收件截止
+    }
+    for (const li of restateIdxs) {
+      const line = lines[li];
       const m = RESTATE.exec(line);
       const bad = (/** @type {string} */ why) => { warnings.push(`一行重述**無效、不生效**（${why}）：「${collapse(line).slice(0, 80)}…」`); };
       if (!m) { bad('格式不合規——要長成「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「…」」'); continue; }
@@ -401,28 +377,48 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         bad(`只能重述**自己**的壞留言：引用裡是 ${q[1]}（${collapse(q[2])}），重述者是 ${h.role}（${h.source}）`);
         continue;
       }
-      // 規則①的鑰匙＝逐字引用（trim-only，#418 r2 起連註解也不准寫「摺疊」）；規則③＝照樣進聯集（下一行）。
-      restated.set(m[4].trim(), `${h.role}（${h.source}）`);
+      // 規則⑤：重述自報的 sha／輪次必須等於引文裡那組——不綁的話低輪重述能洗掉高輪阻擋（#418 r3 High①）。
+      const qm = QUOTED_META.exec(m[4]);
+      if (!qm) { bad('引用的第一行讀不出「審哪個 sha、第幾輪」——讀不出就不可重述，維持阻擋'); continue; }
+      if (qm[1].toLowerCase() !== m[2].toLowerCase() || Number(qm[2]) !== round) {
+        bad(`重述自報的（審 ${m[2].slice(0, 7)}｜r${round}）與引文裡的（審 ${qm[1].slice(0, 7)}｜r${qm[2]}）不一致`);
+        continue;
+      }
+      // 規則①的鑰匙＝逐字引用（trim-only）；規則⑥的順序綁定在收尾那一段做（要知道壞留言的位置）。
+      restated.push({ key: m[4].trim(), who: `${h.role}（${h.source}）`, idx });
       applyEntry({ role: h.role, source: h.source, sha: m[2].toLowerCase(), round, verdict,
         blocking: VERDICTS[/** @type {keyof typeof VERDICTS} */ (verdict)] });
+    }
+    // 位置不對的「重述 r…」樣子的行＝不生效，但要出聲（#418 r3 Medium：不然真心想重述的人
+    // 把行放錯位置，會以為清掉了）。這裡只給警告，所以用寬鬆剝除（fence／引用裡的範例不吵）。
+    const loose = stripFencesLoose(String(c.body || '')).replace(/^[^\S\n]*>.*$/gm, '').split('\n');
+    for (let i2 = 0; i2 < loose.length; i2++) {
+      if (!/^ {0,3}重述\s*r\d+｜/u.test(loose[i2])) continue;
+      if (restateIdxs.some((ri) => lines[ri] === loose[i2])) continue;   // 已生效的那幾行不吵
+      warnings.push('有一行長得像重述、但**不在生效位置**（重述行必須緊跟在標頭後面，中間只准空行）'
+        + `⇒ 不生效：「${collapse(loose[i2]).slice(0, 80)}…」`);
     }
     applyEntry(h);
   }
   // 壞標頭：被合規重述接管的降為警告（歷史留在原地、GitHub 可稽核）；其餘照舊**阻擋**。
+  // 規則⑥：重述那則留言必須出現在壞留言**之後**——不然可以「預先授權」一則還沒出現的壞留言。
   for (const m of malformed) {
-    if (restated.has(m.key)) {
-      warnings.push(`一則壞標頭留言已被 ${restated.get(m.key)} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
+    const taker = restated.find((r) => r.key === m.key && r.idx > m.idx);
+    const early = !taker && restated.find((r) => r.key === m.key);
+    if (taker) {
+      warnings.push(`一則壞標頭留言已被 ${taker.who} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
     } else {
       // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
       problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${m.excerpt}\n`
+        + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
         + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節）。');
     }
   }
   // 重述行引用的第一行若對不上任何壞留言＝空轉，要出聲（不然打錯引文會以為清掉了）。
-  for (const [key, who] of restated) {
-    if (!malformed.some((m) => m.key === key)) {
-      warnings.push(`${who} 的一行重述引用的第一行**對不上任何壞標頭留言**（引文要逐字）：「${key.slice(0, 60)}…」`);
+  for (const r of restated) {
+    if (!malformed.some((m) => m.key === r.key)) {
+      warnings.push(`${r.who} 的一行重述引用的第一行**對不上任何壞標頭留言**（引文要逐字）：「${r.key.slice(0, 60)}…」`);
     }
   }
   // ⚠️ **沒有任何針對目前 head 的正式結論＝不可合併**（Codex #385 r1 High②）。
