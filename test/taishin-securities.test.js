@@ -180,7 +180,8 @@ test('自審回歸｜交易表跨頁：第 1 頁頁尾法規小字不砍第 2 �
   assert.equal(r.trades[1].symbol, '2330');
 });
 
-test('自審回歸｜表頭被逐字拆 → headerFound=false、trades 空（主入口據此 throw 400，不靜默回 0 筆）', () => {
+test('自審回歸｜表頭被逐字拆 → 解析器回 headerFound=false、trades 空'
+  + '（本題只驗解析器這一半；「主入口拿它 throw 400」那條接線的考題在 test/pdf-extract-integrity.test.js）', () => {
   const r = parseTaishinSecurities([
     L(900, [[40, '台新綜合證券'], [300, '115年1月']]),
     L(860, [[40, '成交明細']]),
@@ -231,12 +232,22 @@ test('自審回歸｜MM/DD 前向跨年：12 月帳單裡的隔年 1 月交割�
   assert.equal(resolveSecDate('12/28', '2026-12'), '2026-12-28', '同月不受影響');
 });
 
-test('S2 拍板｜非月結單（年度/季度跨度）→ isMultiMonthHeader 命中（主入口 400 阻擋，防去重鍵毒化）', async () => {
+// ⚠️ `isMultiMonthHeader` 是**兩條正則的擇一**，各守不同版式：
+//    ①`\d{1,2}月…連接號…\d{1,2}月`（連接號右邊只印月）②`年\d{1,2}月…連接號`（不看右邊印什麼）。
+//    這一題原本的四個「要命中」fixture **全部被第①條涵蓋**，所以把第②條整條刪掉，
+//    全套照樣 fail 0（自審實測）。第②條唯一守得住的是「兩邊都印年」的跨年單：
+//    「115年1月~116年3月」在連接號右邊接的是「116年」而不是「N月」，第①條接不住。
+//    它被靜靜刪掉的話這種年度單會過守衛 → 整段跨度的交易掛上第一個年月 → sourceRef 去重鍵毒化。
+test('S2 拍板｜非月結單（年度/季度跨度）→ isMultiMonthHeader 命中；**兩條正則各有一個只有它接得住的 fixture**'
+  + '（本題只驗偵測器這一半；「主入口拿它 throw 400、防去重鍵毒化」那條接線的考題在 test/pdf-extract-integrity.test.js）', async () => {
   const { isMultiMonthHeader } = await import('../lib/taishin-securities.js');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月~12月 對帳單']])]), true);
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月至3月']])]), true);
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月－3月']])]), true, '全形連接號（自審 #5）');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月〜12月']])]), true, '波浪號（自審 #5）');
+  assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月~116年3月']])]), true,
+    '跨年單（兩邊都印年）：連接號右邊是「116年」不是「N月」，第①條接不住——'
+    + '**只有第②條 `年\\d{1,2}月[連接號]` 守得住**，它一被刪掉整年的交易就會全掛上第一個年月');
   assert.equal(isMultiMonthHeader([L(900, [[40, '115年1月 對帳單']])]), false, '單月不誤擋');
   assert.equal(isMultiMonthHeader([L(900, [[40, '2026年1月']])]), false);
 });
