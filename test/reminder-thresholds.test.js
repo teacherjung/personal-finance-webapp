@@ -596,12 +596,43 @@ async function renderAssetsHtml(db) {
     './icons.js': { icon: () => '' },
   };
   // 這台 node 沒有的瀏覽器全域＝一律給真 DOM 的那一份；window 的標準別名（r7 那一族）同一顆。
+  // window／globalThis 等入口的**屬性讀取**也要 fail-loud（#413 r12 阻擋）：
+  // 上一版把真 window 直接交出去，於是「功能偵測」成了第三類旁門——
+  // `if (window.<某個排程 API>)` 在 jsdom 是 undefined ⇒ 靜靜跳過分支、真瀏覽器才執行、本題全綠。
+  // 病根還是「未知的東西被當成無害」，所以用**性質收口**而非列舉 API 名字：
+  // 白名單只有渲染路徑真正用得到的幾個名字（document、可排空的計時器與對應 clear、
+  // 以及指回自己的 window 別名），**白名單外的任何屬性讀取一律丟錯**——
+  // 未來新出的瀏覽器 API 不必回來補名單，它們天生就在白名單外。
+  const WIN_ALLOWED = new Set(['document', 'clearTimeout', 'clearInterval',
+    'cancelAnimationFrame', 'cancelIdleCallback',
+    'setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask', 'requestIdleCallback',
+    'window', 'self', 'top', 'parent', 'frames', 'globalThis']);
+  const SELF_KEYS = new Set(['window', 'self', 'top', 'parent', 'frames', 'globalThis']);
+  /** @type {any} */
+  const guardedWin = new Proxy(win, {
+    get: (target, key) => {
+      const name = String(key);
+      if (SELF_KEYS.has(name)) return guardedWin;                    // 別名一律指回這顆守衛
+      if (name === 'document') return doc;
+      if (WIN_ALLOWED.has(name)) return (/** @type {any} */ (target))[name];
+      if (typeof key === 'symbol') return (/** @type {any} */ (target))[key];  // Symbol.toPrimitive 之類的語言協定
+      throw new Error(`渲染路徑讀了 window.${name}——本題白名單外的瀏覽器屬性一律吵著紅`
+        + '（功能偵測式的延後旁門會在 jsdom 上靜靜跳過、只在真瀏覽器發作，見 #413 r12）'
+        + '。要有人回來看過本題');
+    },
+  });
   /** @type {Record<string, any>} */
   const globalStubs = {
     Chart: class { destroy() { } },
     document: doc,
-    window: win, self: win, top: win, parent: win, frames: win,
+    window: guardedWin, self: guardedWin, top: guardedWin, parent: guardedWin, frames: guardedWin,
+    globalThis: guardedWin,
   };
+  // `globalThis` 這個名字 node 也有 ⇒ moduleAsScript 不會列進 needs ⇒ 會解析到 realm 真 window
+  //（那正是 r12 阻擋的另一半）。比照計時器的手法**強制列入參數**，讓它被守衛遮蔽。
+  for (const name of ['globalThis', 'window', 'self', 'top', 'parent', 'frames']) {
+    if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
+  }
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
   // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
   // 裸呼叫（參數注入）與 window.xxx（掛在 window 上叫）兩種形式都要接進同一顆排程器
