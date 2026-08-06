@@ -559,9 +559,21 @@ async function renderAssetsHtml(db) {
   // 「印完之後又去改畫面」的記帳簿（見 guardedNode／劃界第 2 條）：非空＝本題斷言的 HTML 到不了畫面。
   /** @type {string[]} */
   const domEdits = [];
+  // 撈節點的**選擇器白名單**（#413 r8 阻擋的教訓）：正式渲染路徑只用這兩個選擇器、
+  // 對撈回的節點只做「讀 dataset＋掛 onclick」。假 DOM 不可能逼真（matches()、集合筆數
+  // 都答不準——r8 就是用「先 matches 篩選再移除」與「只動第二顆節點」兩個變體穿過去的），
+  // 所以不追逼真、改收行為：**白名單外的選擇器一呼叫就記帳**，之後它拿節點做什麼都不重要了。
+  // 代價照舊＝正式碼日後新增合法選擇器時本題會紅、要有人回來看過（guardedNode 檔頭同款取捨）。
+  const LEGIT_SELECTORS = ['[data-edit]', '[data-del]'];
+  const pickNode = (/** @type {string} */ entrance, /** @type {any} */ s) => {
+    if (!LEGIT_SELECTORS.includes(String(s))) {
+      domEdits.push(`${entrance}('${s}') 用了白名單外的選擇器（合法渲染只撈 ${LEGIT_SELECTORS.join('、')}）`);
+    }
+    return guardedNode(`${entrance}('${s}') 撈到的節點`, domEdits, []);
+  };
   const viewEl = guardedNode('view()', domEdits, ['innerHTML'], {
-    querySelector: (/** @type {any} */ s) => guardedNode(`view().querySelector('${s}') 撈到的節點`, domEdits, []),
-    querySelectorAll: (/** @type {any} */ s) => [guardedNode(`view().querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
+    querySelector: (/** @type {any} */ s) => pickNode('view().querySelector', s),
+    querySelectorAll: (/** @type {any} */ s) => [pickNode('view().querySelectorAll', s)],
     // parentElement 不再另發：guardedNode 預設就是惰性遞迴守衛（#413 r6）——只有一份機制，沒有第二種祖先。
   });
   // sandbox 自己的計時器：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**（見 flushLater）。
@@ -600,7 +612,8 @@ async function renderAssetsHtml(db) {
       //    ⚠️ 誠實劃界：**其他 id 仍回沒有守衛的替身**。理由＝在真瀏覽器裡，要拔掉本題驗的那段 HTML，
       //    拿到的節點必須是 `#view` 或它的祖先。祖先的兩條路：`parentElement` 往上＝守衛節點的
       //    惰性遞迴鏈，爬多高都記帳（#413 r6 修正：上一版第二層起是普通物件、寫入不記帳，
-      //    這句劃界當時是假的）；`document.body`／`documentElement`＝沒餵替身 ⇒ TypeError 吵著紅。
+      //    這句劃界當時是假的）；`document.body`／`documentElement`＝守衛節點（#413 r8 起，
+      //    含經由 window／self／top／parent／frames 別名進來的路），寫入一律記帳。
       byId: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
       currentRouteSeq: () => 1,
       esc, wan: num, money: num, moneyCur: num, pct: num,
@@ -613,8 +626,15 @@ async function renderAssetsHtml(db) {
   // `body`／`documentElement` 同樣上守衛（#413 r7 阻擋的教訓：這兩顆是 #view 的祖先，寫它們＝清整頁）。
   /** @type {Record<string, any>} */
   const docStub = {
-    querySelector: (/** @type {any} */ s) => guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []),
-    querySelectorAll: (/** @type {any} */ s) => [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
+    // document 端**沒有任何合法的 query**（正式渲染一律走 view()），所以一呼叫就記帳（#413 r8）。
+    querySelector: (/** @type {any} */ s) => {
+      domEdits.push(`document.querySelector('${s}') 被呼叫（渲染路徑沒有合法的 document 查詢）`);
+      return guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []);
+    },
+    querySelectorAll: (/** @type {any} */ s) => {
+      domEdits.push(`document.querySelectorAll('${s}') 被呼叫（渲染路徑沒有合法的 document 查詢）`);
+      return [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])];
+    },
     getElementById: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
     createElement: () => el(),
     body: guardedNode('document.body', domEdits, []),
@@ -688,13 +708,18 @@ function guardedNode(label, edits, allowWrite = [], seed = {}) {
   let lazyParent = null;
   const node = {
     innerHTML: '', value: '', className: '', hidden: false, disabled: false, dataset: {}, tagName: 'DIV',
-    getAttribute: () => null, hasAttribute: () => false, matches: () => false,
+    // 讀 DOM 的判斷式也記帳（#413 r8 阻擋）：假 DOM 答不準 matches()／getAttribute()，
+    // 與其回一個「聽起來合理但錯」的固定值讓條件式靜靜走岔（r8 的變體正是「先篩選再移除」），
+    // 不如一呼叫就記帳——渲染路徑對撈回節點的合法行為只有「讀 dataset、掛 onclick」兩種。
+    getAttribute: (/** @type {any} */ k) => { note(`getAttribute('${k}') 被呼叫`); return null; },
+    hasAttribute: (/** @type {any} */ k) => { note(`hasAttribute('${k}') 被呼叫`); return false; },
+    matches: (/** @type {any} */ s) => { note(`matches('${s}') 被呼叫`); return false; },
     addEventListener() { }, removeEventListener() { },
     get parentElement() {
       if (!lazyParent) lazyParent = guardedNode(`${label}.parentElement`, edits, []);
       return lazyParent;
     },
-    classList: { contains: () => false },
+    classList: { contains: (/** @type {any} */ c) => { note(`classList.contains('${c}') 被呼叫`); return false; } },
     style: new Proxy({}, {
       set: (t, k, v) => { note(`style.${String(k)} 被改寫`); return Reflect.set(t, k, v); },
     }),
