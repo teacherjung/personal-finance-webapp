@@ -534,6 +534,12 @@ function walkAst(node, visit) {
  *      會吵著紅要人回來更新——那是「斷言畫面」的必然代價，不是靜靜綠。
  *   5. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份共用判斷
  *      （前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
+ *   6. **渲染路徑不可以「列舉或序列化 DOM 物件」，也不可以探可選鉤子的存在性**（`toJSON` 那一類）：
+ *      這兩個動作在測試環境與真瀏覽器會得到不同答案（jsdom 與 Chrome 的名單、可選鉤子不同），
+ *      而程式只是在「列名單」時，**判不出它是合法序列化還是在偵測環境**——後者就是一顆
+ *      只在使用者那邊發作的開關（#413 r12–r16 反覆出現的那一族）。無法判別時本題選**吵著紅**、
+ *      不選靜靜綠：所以正式碼哪天真的需要序列化一顆 DOM 物件，本題會紅、要有人回來看過本題
+ *      （現行 assets.js 的渲染路徑一次都沒有這種用法——這是誠實的代價，不是關上了的保證）。
  */
 async function renderAssetsHtml(db) {
   const mod = parseModule(ASSETS_REL);
@@ -612,9 +618,12 @@ async function renderAssetsHtml(db) {
   //   ・jsdom 有的（規格 DOM）＝原樣如實回答，正式碼照跑、不會假紅。
   //   ・jsdom 沒有的（Chrome 專屬、未來新 API、拼錯的名字）＝吵著紅，功能偵測分支再也無法靜靜跳過。
   // 存在性查詢（`in`／`Reflect.has`）走 has 陷阱，同一條規則。
-  // 語言／工具會探的可選鉤子，不算瀏覽器 API 面（#413 r15 阻擋②：JSON.stringify 會先探 toJSON，
-  // 探不到就丟錯＝合法序列化被誤殺）。這些名字兩邊引擎都一樣，拿來做功能偵測分不出環境。
-  const GUARD_SKIP = new Set(['then', 'inspect', 'constructor', 'toJSON', 'valueOf', 'toString']);
+  // 語言／工具會探的名字，不算瀏覽器 API 面。**只收「兩邊引擎一定都有」的**：
+  // `valueOf`／`toString` 住 Object.prototype、任何物件都有 ⇒ 存在性測不出環境；
+  // `then`／`inspect`／`constructor` 同理（await 與 console 會探）。
+  // ⚠️ `toJSON` 曾在此清單、#413 r16 拿掉：Chrome 的 DOMRect 有它、jsdom 沒有
+  //    ⇒ `if (rect.toJSON)` 又是一顆只在真瀏覽器發作的開關。代價寫進誠實劃界（見檔頭第 6 條）。
+  const GUARD_SKIP = new Set(['then', 'inspect', 'constructor', 'valueOf', 'toString']);
   /** 這顆物件在 sandbox 裡「有」這個名字嗎（原型鏈一起看——DOM 方法都住原型上）。 */
   const hasName = (/** @type {any} */ t, /** @type {any} */ k) => k in /** @type {any} */ (t);
   const absent = (/** @type {string} */ label, /** @type {any} */ key, /** @type {string} */ how) => new Error(
@@ -690,15 +699,14 @@ async function renderAssetsHtml(db) {
         return d;
       },
       ownKeys: (target) => {
-        // **原型面**列名單＝功能偵測的另一張臉（名單裡有沒有某個 Chrome API，兩邊答案不同）⇒ 吵著紅。
-        // **實例面**放行（#413 r15 阻擋②）：瀏覽器 API 一律住原型，實例自有鍵兩邊一致、偵測不出環境；
-        // 而 JSON.stringify 這類合法序列化需要它——上一版一律丟錯，把合法寫法誤殺了。
-        if (protoTargets.has(target)) {
-          throw new Error(`渲染路徑列舉了 ${label} 的屬性名單（Object.keys／getOwnPropertyNames 之類）`
-            + '——原型面的名單在測試環境與真瀏覽器不同，那是功能偵測的另一張臉；'
-            + '渲染路徑沒有列舉 DOM 原型屬性的合法理由。要有人回來看過本題（#413 r14 阻擋③）');
-        }
-        return Reflect.ownKeys(target);
+        // 列屬性名單一律吵著紅——**原型面與實例面都算**（#413 r16 阻擋②）。
+        // 上一版只擋原型面，理由是「瀏覽器 API 一律住原型」：那個假設**是錯的**，
+        // 複驗者證明 Chrome 的 window 實例自有鍵就含瀏覽器專屬項、jsdom 沒有 ⇒ 名單可測環境。
+        // 「合法序列化」與「環境偵測」在這個操作上**判不出來**（兩者都只是列名單），
+        // 所以照專案哲學選吵著紅而非靜靜綠；代價寫進誠實劃界（見檔頭第 6 條）。
+        throw new Error(`渲染路徑列舉了 ${label} 的屬性名單（Object.keys／getOwnPropertyNames／`
+          + 'JSON 序列化之類）——兩邊引擎的名單不同，這個操作分不出「合法用途」與「環境偵測」，'
+          + `所以一律吵著紅。要有人回來看過本題（#413 r14/r16 阻擋）｜（自有鍵 ${Reflect.ownKeys(target).length} 個）`);
       },
       set: (target, key, v) => Reflect.set(target, key, v, target),
     });
