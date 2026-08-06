@@ -3,12 +3,11 @@ import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelet
 import { PALETTE, CHART, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
-const ACCOUNT_TYPES = [
-  { value: 'cash', label: '現金 / 存款' }, { value: 'investment', label: '投資（股票/ETF/IB）' },
-  { value: 'property', label: '房地產' }, { value: 'insurance-cv', label: '保單現金價值' },
-  { value: 'other', label: '其他資產' }, { value: 'mortgage', label: '房貸（負債）' },
-  { value: 'loan', label: '其他貸款（負債）' }
-];
+// 型別選項、幣別選項與「算不算負債」一律走 accounts-model（#409 r8）：本檔原本各自手抄一份，
+// 型別選項漏了 liability／creditcard（合法值選不到 ⇒ 打開那種帳戶按儲存就靜靜變 cash，
+// 50 萬負債變 50 萬資產），負債判準漏了 creditcard（信用卡帳戶被畫成藍標籤、餘額不標紅）。
+// 這些手抄清單零考題看著；理由、後果與「新增型別還要改哪裡」全寫在 accounts-model.js 檔頭。
+import { accountTypeOptions, isLiabilityAccount, ACCOUNT_CURRENCIES } from './accounts-model.js';
 let chart;
 
 export async function renderAssets() {
@@ -72,10 +71,8 @@ export async function renderAssets() {
   });
 }
 
-const isLiab = (x) => ['mortgage', 'loan', 'liability'].includes(x.type) || Number(x.balance) < 0;
-
 function accRow(x) {
-  const liab = isLiab(x);
+  const liab = isLiabilityAccount(x);
   const cur = x.currency || 'TWD';
   return `<tr>
     <td>${esc(x.name)}</td>
@@ -85,7 +82,7 @@ function accRow(x) {
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
-function typeLabel(t) { return (ACCOUNT_TYPES.find(a => a.value === t) || {}).label || t; }
+function typeLabel(t) { return (accountTypeOptions().find(a => a.value === t) || {}).label || t; }
 
 function drawPie(byClass) {
   const ctx = byId('pie');
@@ -107,8 +104,8 @@ function openAccForm(acc, opts = {}) {
     title: acc ? '編輯帳戶' : '新增帳戶',
     fields: [
       { key: 'name', label: '帳戶名稱', type: 'text', required: true, placeholder: '例：台新銀行 活存' },
-      { key: 'type', label: '帳戶類型', type: 'select', options: ACCOUNT_TYPES },
-      { key: 'currency', label: '幣別', type: 'select', options: ['TWD', 'USD', 'GBP', 'JPY'] },
+      { key: 'type', label: '帳戶類型', type: 'select', options: accountTypeOptions() },
+      { key: 'currency', label: '幣別', type: 'select', options: ACCOUNT_CURRENCIES },
       { key: 'class', label: '資產類別（用於配置圓餅圖）', type: 'text', placeholder: '例：現金、黃金', full: true },
       { key: 'balance', label: '目前餘額（原幣，負債請填負數）', type: 'number', required: true },
       // 完整帳號（三層重構 stage 2）：只存這台電腦、GET 剝除只回末四碼；供銀行對帳單匯入時用末碼比對到這個帳戶。

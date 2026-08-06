@@ -14,6 +14,8 @@ import { createStockResearchPage } from './modules/stock-research-page.js';
 import { hydrateIcons, icon } from './modules/icons.js';
 import { backupAlertView } from './modules/backup-alert.js';
 import { toastMs } from './modules/toast-timing.js';   // 提示停留時間＝照長度給（零依賴純模組，考題撐得住）
+import { esc } from './modules/html-escape.js';
+import { selectOptionsHtml } from './modules/form-options.js';
 
 // ---------- 共用工具 ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -53,9 +55,10 @@ export const moneyCur = (n, cur) => (!cur || cur === 'TWD') ? money(n)
 export const wan = (n) => withSign(n, v => { const w = v / 10000; return (w >= 10 ? Math.round(w).toLocaleString('en-US') : w.toFixed(1)) + ' 萬'; });
 /** @param {number|string|null|undefined} n */
 export const pct = (n) => (Number(n || 0)).toFixed(1) + '%';
-/** 插入 innerHTML 前必過（XSS 鐵則）。 @param {unknown} s @returns {string} */
-// 連單引號一起跳脫（&#39;）：目前全站屬性都用雙引號、尚未被利用，但補上後單/雙引號屬性都安全（多人化前的預防）
-export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
+// 插入 innerHTML 前必過（XSS 鐵則）。實作搬到零依賴的 `modules/html-escape.js`——
+// 純模組（form-options.js…）也要用同一份，而它們 import 不進 app.js（本檔頂層碰 document／localStorage）。
+// 這裡原樣 re-export：全站 `import { esc } from '../app.js'` 一行都不用改。
+export { esc };
 
 // ---------- 日期工具（全站共用）----------
 // 解析 YYYY-MM-DD 為「本地時區」的 Date：new Date('YYYY-MM-DD') 會被當 UTC，在 UTC 以西時區差一天。
@@ -153,14 +156,18 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     const id = 'f_' + f.key;
     let input;
     if (f.type === 'select') {
-      input = `<select id="${id}">${(f.options || []).map(o => {   // 忘給 options 時顯示空下拉、不整頁掛掉
-        const ov = typeof o === 'string' ? o : o.value;
-        const ol = typeof o === 'string' ? o : o.label;
-        return `<option value="${esc(ov)}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`;
-      }).join('')}</select>`;
+      // 選項一律由 modules/form-options.js 產（**不要在這裡再抄一份**）：它負責「忘給 options 時顯示空下拉、
+      // 不整頁掛掉」，也負責「現在的值不在選項裡時保留它」——沒有那道保留，瀏覽器會自動選第一項，
+      // 使用者只改別的欄位按儲存就會把這欄靜靜改掉（帳戶型別踩過：50 萬負債變 50 萬資產）。
+      input = `<select id="${id}">${selectOptionsHtml(f.options, v)}</select>`;
     } else if (f.type === 'textarea') {
       input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
     } else if (f.type === 'checkbox') {
+      // ⚠️ 這個自製下拉**刻意不套用 form-options.js 的「保留現值」機制**，理由是它沒有那個病
+      //（#409 逐條查證，不是憑印象）：①它的值域只有是／否兩項，而送出時 `val = raw === 'true'`
+      // 只會產生布林，所以**不存在「現在的值不在選項裡」的狀態**；②全部五個使用點
+      //（transactions／cashflow／settings 的 applyAll、cards 的 clearPdfPassword、assets 的 clearAccountNo）
+      // 都是**不落資料庫的一次性旗標**，`values` 從不帶值 ⇒ 這裡的 v 永遠是 ''（空值本來就不算「值」）。
       // 預設「否」（自主體檢，高）：只有明確 v===true 才選「是」——否則新表單的 applyAll（同時套用整店分類）
       // 會預設勾選，編輯單筆就默默整店改分類＋種品牌學習。opt-in 型旗標寧可預設關。
       input = `<select id="${id}"><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
