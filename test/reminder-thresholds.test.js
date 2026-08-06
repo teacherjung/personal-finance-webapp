@@ -513,11 +513,18 @@ function walkAst(node, visit) {
  *      仍不在射程內（jsdom 不做排版與視覺；esc 有自己的考題：test/xss-id-escaping.test.js）。
  *      ⚠️ 所以這裡的用詞是「**印進頁面**」而不是「使用者看得見」：給橘標籤印一個 `hidden`
  *      屬性（瀏覽器上就消失了）本題照舊全綠。「看得見」得靠真瀏覽器＋排版引擎，本題證不了。
- *   2. 只跑 `renderAssets()` 這一條路徑，斷言讀的是跑完（含放行計時器，見 flushLater）之後
- *      **活頁面**上的 #view。**「印完再動 DOM」整族算在射程內、而且是如實反映**——拔標籤
- *      （innerHTML 少字）、清 body／砍祖先（#view 直接從頁面消失、吵著紅）、換入口
- *      （view()／byId／document／window 別名指的都是同一顆真 document）、先篩選或數筆數再動手
- *      （真 DOM 的 matches 與筆數就是正式語意）。這一條是 r5–r9 五輪假 DOM 攻防的收官：
+ *   2. 只跑 `renderAssets()` 這一條路徑，斷言讀的是跑完（含放行計時器與事件圈走過十幾拍、
+ *      並**取樣兩次**比對，見 settle／firstSample）之後**活頁面**上的 #view。
+ *      **抓得住的是這幾種**（逐顆驗過紅，不是「整族」——那句話 #413 r19 判定為誇大並已改口）：
+ *      同一拍就拔標籤、清 body／砍祖先（#view 從頁面消失）、換入口
+ *      （view()／byId／document／window 別名都是同一顆真 document）、先篩選或數筆數再動手
+ *      （真 DOM 的 matches 與筆數就是正式語意）、明列的延後排程（setTimeout／setInterval／
+ *      requestAnimationFrame／queueMicrotask／requestIdleCallback 的裸呼叫與 window.xxx 兩形式，
+ *      連同對應的取消器）、訊息通道類（MessageChannel／BroadcastChannel／postMessage＝吵著紅替身）、
+ *      子頁面（iframe 類＝渲染後零容忍）、以及**多輪非同步後才動手**（靠兩次取樣比對，
+ *      不靠攔截）。⚠️ **抓不住的**：本題沒有明列、也不經事件圈的延後來源（例如把工作交給
+ *      本題沒接管的宿主機制），以及「第二次取樣之後」才發生的變更——射程是有限的十幾拍，
+ *      不是無限等待。這一條是 r5–r9 五輪假 DOM 攻防的收官：
  *      假 DOM 每答不準一個問題就是一顆靜默繞法（入口→別名→全域→判斷式→筆數），
  *      真 DOM 讓那一整族沒有第二種答案。
  *      **使用者按下按鈕之後** handler 裡做什麼仍不在射程內（本題不點按鈕）。
@@ -671,9 +678,21 @@ async function renderAssetsHtml(db) {
     `(function (${needs.map((n) => n.name).join(', ')}) { ${body}\nreturn ${exported}; })`));
   const renderAssets = /** @type {() => Promise<void>} */ (factory(...needs.map(stubFor)));
   await renderAssets();
-  await flushLater();                                    // 排給「稍後」的工作先跑完
-  await new Promise((r) => setTimeout(r, 0));             // 再讓真的 macrotask 走一拍（沒經過計時器替身的 fire-and-forget）
-  await flushLater();
+  // 排空＋讓真的事件圈走幾拍。⚠️ 走「幾拍」而不是一拍（#413 r19 阻擋）：複驗者用一條**不經計時器**
+  // 的多輪非同步工作（每輪讓一拍、跑完幾輪才拔標籤）逃過單拍取樣——沒有環境偵測、真瀏覽器也會拔掉。
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) {
+      await flushLater();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    await flushLater();
+  };
+  await settle();
+  // **取樣兩次**：先記一份，再走同樣多拍，第二份必須一樣——「取樣之後才動手」那條路因此也吵著紅。
+  // 這一步刻意不靠任何 Proxy 守衛（r12–r18 那條路已證明護欄自己會變成缺陷來源），
+  // 只靠「多等一會兒、再看一次」——便宜、沒有假紅面、而且正式渲染跑完就不再動畫面。
+  const firstSample = (doc.getElementById('view') || { innerHTML: '\u0000#view 已不在頁面上' }).innerHTML;
+  await settle();
   // 斷言讀「**活的**頁面」：從 document 根重新查，不抓舊參照——
   // 清空 body／砍祖先 ⇒ #view 從頁面上消失（下一行吵著紅）；
   // 拔標籤／改內容 ⇒ innerHTML 如實少字（各題的內容斷言紅）。這正是假 DOM 五輪都做不到的一句話。
@@ -684,6 +703,10 @@ async function renderAssetsHtml(db) {
   const live = doc.getElementById('view');
   assert.ok(live, '渲染跑完後 #view 已不在頁面上（渲染路徑動到 #view 以外的節點——真瀏覽器裡等於整頁被清）');
   const html = live.innerHTML;
+  assert.equal(html, firstSample,
+    '渲染跑完、事件圈走了十幾拍之後，#view 的內容又變了'
+    + '——渲染路徑有一條「等一等再動畫面」的非同步工作（#413 r19 阻擋：多輪非同步拔標籤）。'
+    + '正式碼的渲染路徑跑完就不該再改畫面；真要這樣做，要有人回來看過本題');
   win.close();
   return html;
 }
