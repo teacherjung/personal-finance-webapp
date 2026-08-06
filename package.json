@@ -18,7 +18,7 @@
     "@supabase/supabase-js": "^2.110.8",
     "chart.js": "^4.5.1",
     "express": "^4.19.2",
-    "fast-xml-parser": "^4.4.1",
+    "fast-xml-parser": "^5.10.1",
     "pdfjs-dist": "^6.1.200",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
