@@ -549,7 +549,11 @@ async function renderAssetsHtml(db) {
   // 「有沒有東西」被拿來當開關）。每一個答不準的地方都是一顆靜默繞法，追逼真是重造半個
   // 瀏覽器的無底洞。根治＝不再假裝：這裡就是一顆規格級 DOM（jsdom，僅測試用相依），
   // 查詢、篩選、筆數、祖先、別名全部如實反映渲染結果，說謊面整族消失。
-  const dom = new JSDOM('<!doctype html><html><body><main id="view"></main></body></html>');
+  // runScripts:'outside-only' ＝ 開啟 win.eval：模組將**在 jsdom 的 window realm 裡執行**
+  // （#413 r10 阻擋：DOM 真了但程式還在 Node realm，`globalThis.document` 在 Node 這頭不存在、
+  //  變體靜默略過；realm 遷移後 globalThis === window，老派逃逸 Function('return this')() 也拿到 window）。
+  const dom = new JSDOM('<!doctype html><html><body><main id="view"></main></body></html>',
+    { runScripts: 'outside-only' });
   const win = dom.window;
   const doc = win.document;
   // sandbox 自己的計時器（照舊）：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**。
@@ -603,14 +607,22 @@ async function renderAssetsHtml(db) {
   for (const name of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask']) {
     globalStubs[name] = later;
     if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
+    // window.setTimeout(...) 這種**掛在 window 上叫**的形式不經過參數注入（#413 r10 阻擋）：
+    // jsdom 的原生計時器會在 harness 關窗之後才響＝突變靜默通過。一併換成同一顆排程器，
+    // 「延後再動 DOM」不論從哪個名字進來都會在斷言前被放行、如實反映。
+    try { win[name] = later; } catch { /* jsdom 某屬性不可寫時：吵著紅比靜靜綠好，不吞 */ }
   }
+  try { win.requestIdleCallback = later; } catch { /* 同上 */ }
   const stubFor = (/** @type {{ name: string, source: string | null, imported: string | null }} */ need) => {
     const table = need.source === null ? globalStubs : (stubsBySource[need.source] || {});
     const key = need.source === null ? need.name : String(need.imported);
     return Object.hasOwn(table, key) ? table[key] : benignStub();
   };
-  const renderAssets = /** @type {() => Promise<void>} */ (
-    new Function(...needs.map((n) => n.name), `${body}\nreturn ${exported};`)(...needs.map(stubFor)));
+  // 在 window realm 裡建函式（取代 Node realm 的 new Function）：realm 內 globalThis === window、
+  // 未被參數遮蔽的瀏覽器全域一律解析到同一顆 window——Node 這頭的 global 不再是可逃逸的第二真相。
+  const factory = /** @type {any} */ (win.eval(
+    `(function (${needs.map((n) => n.name).join(', ')}) { ${body}\nreturn ${exported}; })`));
+  const renderAssets = /** @type {() => Promise<void>} */ (factory(...needs.map(stubFor)));
   await renderAssets();
   await flushLater();                                    // 排給「稍後」的工作先跑完
   await new Promise((r) => setTimeout(r, 0));             // 再讓真的 macrotask 走一拍（沒經過計時器替身的 fire-and-forget）
