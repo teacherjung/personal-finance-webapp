@@ -576,8 +576,8 @@ async function renderAssetsHtml(db) {
       for (const [, job] of batch) await job();
     }
   };
-  // ⚠️ `clearTimeout` 刻意沒接手：正式碼哪天在渲染路徑上「排了又取消」，本題會照跑那份工作
-  //    ＝有可能假紅，那時要有人回來看（現行 assets.js 一顆計時器都沒排）。
+  // ⚠️ 取消器（clearTimeout 家族）自 #413 r14 起真的接手了：排了又取消＝不執行回呼，
+  //    與真瀏覽器一致（現行 assets.js 一顆計時器都沒排）。
   const esc = (/** @type {any} */ s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
   const num = (/** @type {any} */ n) => String(Number(n) || 0);
@@ -615,10 +615,25 @@ async function renderAssetsHtml(db) {
   const GUARD_SKIP = new Set(['then', 'inspect', 'constructor']);   // 語言／工具會探的名字，不算瀏覽器 API 面
   /** 這顆物件在 sandbox 裡「有」這個名字嗎（原型鏈一起看——DOM 方法都住原型上）。 */
   const hasName = (/** @type {any} */ t, /** @type {any} */ k) => k in /** @type {any} */ (t);
+  const absent = (/** @type {string} */ label, /** @type {any} */ key, /** @type {string} */ how) => new Error(
+    `渲染路徑用「${how}」探 ${label}.${String(key)}，而測試環境沒有這個名字`
+    + '——本題一律吵著紅（不回 undefined／false），因為「測試環境沒有、真瀏覽器有」的功能偵測'
+    + '會讓突變只在使用者那邊發作、考題卻全綠（#413 r12–r14）。要有人回來看過本題');
+  // 一顆物件只發**同一顆**守衛（#413 r14 阻擋②）：上一版每次呼叫都新建 Proxy，於是同一個 #view
+  // 由兩個 helper 重取時在本題不相等、在真瀏覽器相等——守衛自己改掉了規格 DOM 的身分語意，
+  // 而「身分判斷」可以被拿來當只在真瀏覽器成立的開關。用 WeakMap 記住，語意還原。
+  /** @type {WeakMap<object, any>} */
+  const guardCache = new WeakMap();
+  /** 讓 callback 收到的參數也是守衛版（#413 r14 阻擋①：forEach 把原始 Element 交出去就漏了）。 */
+  const guardArg = (/** @type {any} */ a, /** @type {string} */ label) => (typeof a === 'function'
+    ? (/** @type {any[]} */ ...cbArgs) => a(...cbArgs.map((x) => guard(x, `${label} 的回呼參數`)))
+    : a);
   /** @type {(t:any, label:string)=>any} */
   const guard = (t, label) => {
     if (t === null || (typeof t !== 'object' && typeof t !== 'function')) return t;
-    return new Proxy(t, {
+    const cached = guardCache.get(t);
+    if (cached) return cached;
+    const proxy = new Proxy(t, {
       get: (target, key) => {
         if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.get(target, key, target);
         // window 家族的自我參照一律指回守衛版（r6/r7/r13：別名不可以是第二個真相）
@@ -627,28 +642,44 @@ async function renderAssetsHtml(db) {
         }
         if (String(key) === 'defaultView' || String(key) === 'parentWindow') return guardedWin;   // r13 阻擋①
         if (String(key) === 'ownerDocument' || String(key) === 'document') return guardedDoc;
-        if (!hasName(target, key)) {
-          throw new Error(`渲染路徑讀了 ${label}.${String(key)}，而測試環境沒有這個名字`
-            + '——本題一律吵著紅（不回 undefined），因為「測試環境沒有、真瀏覽器有」的功能偵測'
-            + '會讓突變只在使用者那邊發作、考題卻全綠（#413 r12/r13）。要有人回來看過本題');
-        }
+        if (!hasName(target, key)) throw absent(label, key, '讀屬性');
         const v = Reflect.get(target, key, target);
         if (typeof v === 'function') {
-          // 方法：以真物件為 this 呼叫（jsdom 的 brand check 過得去），回傳值再包一層守衛
-          return (/** @type {any[]} */ ...args) => guard(v.apply(target, args), `${label}.${String(key)}()`);
+          // 方法：以真物件為 this 呼叫（jsdom 的 brand check 過得去）；**傳進去的回呼**與**回傳值**都包守衛
+          return (/** @type {any[]} */ ...args) => guard(
+            v.apply(target, args.map((a) => guardArg(a, `${label}.${String(key)}()`))),
+            `${label}.${String(key)}()`);
         }
         return guard(v, `${label}.${String(key)}`);
       },
       has: (target, key) => {
         if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.has(target, key);
-        if (!Reflect.has(target, key)) {
-          throw new Error(`渲染路徑用 in／Reflect.has 探 ${label}.${String(key)} 的存在性，`
-            + '而測試環境沒有這個名字——同上，一律吵著紅（#413 r13 阻擋①）');
-        }
+        if (!Reflect.has(target, key)) throw absent(label, key, 'in／Reflect.has');
         return true;
+      },
+      // ---- 反射面（#413 r14 阻擋③）----
+      // 語言探「有沒有這個名字」的操作是**有限的**（不像瀏覽器 API 名字無窮）：
+      // 讀屬性、in、走原型鏈、問 descriptor、列名單。前兩個在上面，剩下三個在這裡一次收完。
+      getPrototypeOf: (target) => {
+        const proto = Reflect.getPrototypeOf(target);
+        return proto === null ? null : guard(proto, `${label} 的原型`);   // 沿鏈往上仍是守衛
+      },
+      getOwnPropertyDescriptor: (target, key) => {
+        if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.getOwnPropertyDescriptor(target, key);
+        const d = Reflect.getOwnPropertyDescriptor(target, key);
+        if (!d && !Reflect.has(target, key)) throw absent(label, key, 'hasOwn／getOwnPropertyDescriptor');
+        return d;
+      },
+      ownKeys: (target) => {
+        throw new Error(`渲染路徑列舉了 ${label} 的屬性名單（Object.keys／getOwnPropertyNames 之類）`
+          + '——那是功能偵測的另一張臉（名單裡有沒有某個 Chrome API，兩邊答案不同），'
+          + '而渲染路徑沒有列舉 DOM 物件屬性的合法理由。要有人回來看過本題（#413 r14 阻擋③）'
+          + `｜（target 有 ${Reflect.ownKeys(target).length} 個自有鍵，此訊息只為可讀性）`);
       },
       set: (target, key, v) => Reflect.set(target, key, v, target),
     });
+    guardCache.set(t, proxy);
+    return proxy;
   };
   const guardedDoc = guard(doc, 'document');
   const guardedWin = guard(win, 'window');
