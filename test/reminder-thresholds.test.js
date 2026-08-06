@@ -557,16 +557,23 @@ async function renderAssetsHtml(db) {
   const win = dom.window;
   const doc = win.document;
   // sandbox 自己的計時器（照舊）：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**。
-  /** @type {(() => any)[]} */
-  const scheduled = [];
+  // 取消語意是真的（#413 r13 假紅專查）：上一版的 clear／cancel 只掛在白名單上、其實不取消，
+  // 於是「排了又合法取消」（真瀏覽器不會動到 DOM）在本題照樣執行回呼＝假紅。現在配對 id 真的移除。
+  let nextTimerId = 1;
+  /** @type {Map<number, () => any>} */
+  const jobs = new Map();
   const later = (/** @type {any} */ fn, /** @type {any} */ _ms, /** @type {any[]} */ ...args) => {
-    if (typeof fn === 'function') scheduled.push(() => fn(...args));
-    return 0;
+    const id = nextTimerId++;
+    if (typeof fn === 'function') jobs.set(id, () => fn(...args));
+    return id;
   };
+  const cancelLater = (/** @type {any} */ id) => { jobs.delete(Number(id)); };
   const flushLater = async () => {
     // 放行時排的新工作也要跑（上限只為了防呆：正式碼在渲染路徑上排無窮迴圈計時器是別的問題）
-    for (let round = 0; round < 20 && scheduled.length; round++) {
-      for (const job of scheduled.splice(0, scheduled.length)) await job();
+    for (let round = 0; round < 20 && jobs.size; round++) {
+      const batch = [...jobs.entries()];
+      jobs.clear();
+      for (const [, job] of batch) await job();
     }
   };
   // ⚠️ `clearTimeout` 刻意沒接手：正式碼哪天在渲染路徑上「排了又取消」，本題會照跑那份工作
@@ -587,8 +594,8 @@ async function renderAssetsHtml(db) {
       },
       // view／byId 都指到**同一顆真 document**：r5/r6 的「換個入口撈節點」不再有第二種答案，
       // 渲染印出來的 id（pie／addAcc…）也由真 DOM 自然解析——replace 假 el() 的整套需求消失。
-      view: () => doc.getElementById('view'),
-      byId: (/** @type {any} */ id) => doc.getElementById(String(id)),
+      view: () => guardedDoc.getElementById('view'),
+      byId: (/** @type {any} */ id) => guardedDoc.getElementById(String(id)),
       currentRouteSeq: () => 1,
       esc, wan: num, money: num, moneyCur: num, pct: num,
     },
@@ -596,45 +603,69 @@ async function renderAssetsHtml(db) {
     './icons.js': { icon: () => '' },
   };
   // 這台 node 沒有的瀏覽器全域＝一律給真 DOM 的那一份；window 的標準別名（r7 那一族）同一顆。
-  // window／globalThis 等入口的**屬性讀取**也要 fail-loud（#413 r12 阻擋）：
-  // 上一版把真 window 直接交出去，於是「功能偵測」成了第三類旁門——
-  // `if (window.<某個排程 API>)` 在 jsdom 是 undefined ⇒ 靜靜跳過分支、真瀏覽器才執行、本題全綠。
-  // 病根還是「未知的東西被當成無害」，所以用**性質收口**而非列舉 API 名字：
-  // 白名單只有渲染路徑真正用得到的幾個名字（document、可排空的計時器與對應 clear、
-  // 以及指回自己的 window 別名），**白名單外的任何屬性讀取一律丟錯**——
-  // 未來新出的瀏覽器 API 不必回來補名單，它們天生就在白名單外。
-  const WIN_ALLOWED = new Set(['document', 'clearTimeout', 'clearInterval',
-    'cancelAnimationFrame', 'cancelIdleCallback',
-    'setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask', 'requestIdleCallback',
-    'window', 'self', 'top', 'parent', 'frames', 'globalThis']);
-  const SELF_KEYS = new Set(['window', 'self', 'top', 'parent', 'frames', 'globalThis']);
-  /** @type {any} */
-  const guardedWin = new Proxy(win, {
-    get: (target, key) => {
-      const name = String(key);
-      if (SELF_KEYS.has(name)) return guardedWin;                    // 別名一律指回這顆守衛
-      if (name === 'document') return doc;
-      if (WIN_ALLOWED.has(name)) return (/** @type {any} */ (target))[name];
-      if (typeof key === 'symbol') return (/** @type {any} */ (target))[key];  // Symbol.toPrimitive 之類的語言協定
-      throw new Error(`渲染路徑讀了 window.${name}——本題白名單外的瀏覽器屬性一律吵著紅`
-        + '（功能偵測式的延後旁門會在 jsdom 上靜靜跳過、只在真瀏覽器發作，見 #413 r12）'
-        + '。要有人回來看過本題');
-    },
-  });
+  // ---------- 「不存在就吵著紅」：功能偵測整族的性質收口（#413 r12→r13） ----------
+  // r12 找到的第三類是「功能偵測」：`if (window.<某瀏覽器 API>)` 在 jsdom 是 undefined ⇒ 靜靜跳過，
+  // 只在真瀏覽器發作。r13 又證明白名單治不了它——`in`／`Reflect.has`／`document.defaultView`
+  // 各是一個新入口，而且 Document／Element 也各有一整面 jsdom 沒實作的瀏覽器 API。
+  // 列舉入口與列舉 API 都是軍備賽，所以改成**一條性質**：本題交出去的每個物件（window、document、
+  // 撈回來的節點與節點集合），**讀一個它身上不存在的名字＝丟錯**，而不是回 undefined。
+  //   ・jsdom 有的（規格 DOM）＝原樣如實回答，正式碼照跑、不會假紅。
+  //   ・jsdom 沒有的（Chrome 專屬、未來新 API、拼錯的名字）＝吵著紅，功能偵測分支再也無法靜靜跳過。
+  // 存在性查詢（`in`／`Reflect.has`）走 has 陷阱，同一條規則。
+  const GUARD_SKIP = new Set(['then', 'inspect', 'constructor']);   // 語言／工具會探的名字，不算瀏覽器 API 面
+  /** 這顆物件在 sandbox 裡「有」這個名字嗎（原型鏈一起看——DOM 方法都住原型上）。 */
+  const hasName = (/** @type {any} */ t, /** @type {any} */ k) => k in /** @type {any} */ (t);
+  /** @type {(t:any, label:string)=>any} */
+  const guard = (t, label) => {
+    if (t === null || (typeof t !== 'object' && typeof t !== 'function')) return t;
+    return new Proxy(t, {
+      get: (target, key) => {
+        if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.get(target, key, target);
+        // window 家族的自我參照一律指回守衛版（r6/r7/r13：別名不可以是第二個真相）
+        if (t === win && ['window', 'self', 'top', 'parent', 'frames', 'globalThis'].includes(String(key))) {
+          return guardedWin;
+        }
+        if (String(key) === 'defaultView' || String(key) === 'parentWindow') return guardedWin;   // r13 阻擋①
+        if (String(key) === 'ownerDocument' || String(key) === 'document') return guardedDoc;
+        if (!hasName(target, key)) {
+          throw new Error(`渲染路徑讀了 ${label}.${String(key)}，而測試環境沒有這個名字`
+            + '——本題一律吵著紅（不回 undefined），因為「測試環境沒有、真瀏覽器有」的功能偵測'
+            + '會讓突變只在使用者那邊發作、考題卻全綠（#413 r12/r13）。要有人回來看過本題');
+        }
+        const v = Reflect.get(target, key, target);
+        if (typeof v === 'function') {
+          // 方法：以真物件為 this 呼叫（jsdom 的 brand check 過得去），回傳值再包一層守衛
+          return (/** @type {any[]} */ ...args) => guard(v.apply(target, args), `${label}.${String(key)}()`);
+        }
+        return guard(v, `${label}.${String(key)}`);
+      },
+      has: (target, key) => {
+        if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.has(target, key);
+        if (!Reflect.has(target, key)) {
+          throw new Error(`渲染路徑用 in／Reflect.has 探 ${label}.${String(key)} 的存在性，`
+            + '而測試環境沒有這個名字——同上，一律吵著紅（#413 r13 阻擋①）');
+        }
+        return true;
+      },
+      set: (target, key, v) => Reflect.set(target, key, v, target),
+    });
+  };
+  const guardedDoc = guard(doc, 'document');
+  const guardedWin = guard(win, 'window');
   /** @type {Record<string, any>} */
   const globalStubs = {
     Chart: class { destroy() { } },
-    document: doc,
+    document: guardedDoc,
     window: guardedWin, self: guardedWin, top: guardedWin, parent: guardedWin, frames: guardedWin,
     globalThis: guardedWin,
   };
   // `globalThis` 這個名字 node 也有 ⇒ moduleAsScript 不會列進 needs ⇒ 會解析到 realm 真 window
-  //（那正是 r12 阻擋的另一半）。比照計時器的手法**強制列入參數**，讓它被守衛遮蔽。
+  //（r12 阻擋的另一半）。比照計時器的手法**強制列入參數**，讓守衛遮蔽它。
   for (const name of ['globalThis', 'window', 'self', 'top', 'parent', 'frames']) {
     if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
   }
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
-  // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
+  // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進排程器（jobs）、跑完一起放行。
   // 裸呼叫（參數注入）與 window.xxx（掛在 window 上叫）兩種形式都要接進同一顆排程器
   //（#413 r10 阻擋＝window 形式漏接；r11 阻擋＝裸 requestIdleCallback 漏列）。
   // 改寫後**驗證真的生效**——r11 抓到上一版空 catch 會吞掉寫入失敗，跟註解宣稱的「不吞」相反：
@@ -644,6 +675,12 @@ async function renderAssetsHtml(db) {
     if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
     win[name] = later;
     if (win[name] !== later) throw new Error(`win.${name} 換排程器沒生效（jsdom 版本行為變了？要有人回來看）`);
+  }
+  for (const name of ['clearTimeout', 'clearInterval', 'cancelAnimationFrame', 'cancelIdleCallback']) {
+    globalStubs[name] = cancelLater;
+    if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
+    win[name] = cancelLater;
+    if (win[name] !== cancelLater) throw new Error(`win.${name} 換取消器沒生效（要有人回來看）`);
   }
   // 訊息通道類的延後入口（MessageChannel／BroadcastChannel／window.postMessage）：渲染路徑沒有
   // 任何合法用途，而它們的投遞時序本題排不空——一律換成吵著紅的替身（fail-loud，不吞）。
