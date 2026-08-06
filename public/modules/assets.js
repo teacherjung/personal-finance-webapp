@@ -1,6 +1,6 @@
 // @ts-check
 import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq } from '../app.js';
-import { PALETTE, CHART, AXIS } from './theme.js';
+import { PALETTE, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
 // 型別選項、幣別選項與「算不算負債」一律走 accounts-model（#409 r8）：本檔原本各自手抄一份，
@@ -20,43 +20,57 @@ export async function renderAssets() {
   if (chart) { chart.destroy(); chart = null; }
 
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>資產配置</h1><p>各帳戶餘額、實際 vs 目標配置，偏離時提醒再平衡</p></div>
-      <div class="page-actions"><button class="btn-ghost" id="rebalBtn">${icon('repeat', 16)}再平衡計算</button><button class="btn-ghost" id="editTargets">${icon('settings', 16)}設定目標配置</button><button class="btn" id="addAcc">${icon('plus', 16)}新增帳戶</button></div>
-    </div>
+    <div class="assets-page">
+      <div class="page-head assets-head">
+        <div><h1>資產配置</h1><p>看清資產放在哪裡，再判斷是否需要調整</p></div>
+        <div class="page-actions"><button class="btn-ghost" id="rebalBtn">${icon('repeat', 16)}再平衡計算</button><button class="btn-ghost" id="editTargets">${icon('settings', 16)}設定目標配置</button><button class="btn" id="addAcc">${icon('plus', 16)}新增帳戶</button></div>
+      </div>
 
-    <div class="hint">股票／債券的金額由「投資組合」的持股<b>自動換算併入</b>（含外幣→台幣）；<b>銀行／現金帳戶</b>請到「<a href="#bank">銀行帳戶</a>」頁管理；這裡記黃金、房地產、保單現金價值、其他資產與負債。（配置圓餅圖與淨資產仍含現金。）</div>
+      <aside class="assets-scope-note" aria-label="資產配置資料口徑">
+        <strong>資料口徑</strong>
+        <p>股票與債券由「投資組合」的持股自動換算併入；銀行與現金請到「<a href="#bank">銀行帳戶</a>」管理。黃金、房地產、保單現金價值、其他資產與負債則在本頁維護。</p>
+      </aside>
 
-    <div class="cards">
-      <div class="card"><h3>總資產</h3><div class="stat sm pos">${wan(alloc.assets)}</div></div>
-      <div class="card"><h3>總負債</h3><div class="stat sm neg">${wan(alloc.liabilities)}</div></div>
-      <div class="card"><h3>淨資產</h3><div class="stat sm">${wan(alloc.netWorth)}</div></div>
-    </div>
+      <section class="asset-kpi-frame" aria-label="資產摘要">
+        <div class="asset-kpi"><span>總資產</span><strong class="pos">${wan(alloc.assets)}</strong></div>
+        <div class="asset-kpi"><span>總負債</span><strong class="neg">${wan(alloc.liabilities)}</strong></div>
+        <div class="asset-kpi asset-kpi-primary"><span>淨資產</span><strong>${wan(alloc.netWorth)}</strong></div>
+      </section>
 
-    <div class="two-col">
-      <div class="chart-card"><h3>資產配置圓餅圖</h3><div class="chart-box"><canvas id="pie"></canvas></div></div>
-      <div class="chart-card"><h3>資產配置 vs 目標 <span class="stat-sub" style="font-weight:400;margin:0">（現金・股・債・金・房地產等資產類別）</span></h3>
-        ${a.rows.filter(r => r.value > 0 || r.targetPct > 0).map(r => {
+      <section class="assets-layout">
+        <article class="asset-panel asset-chart-panel">
+          <div class="assets-panel-head"><div><span class="assets-eyebrow">配置概況</span><h2>資產分布</h2></div><span class="assets-panel-note">含現金</span></div>
+          <div class="chart-box asset-chart-box"><canvas id="pie"></canvas></div>
+        </article>
+        <article class="asset-panel asset-target-panel">
+          <div class="assets-panel-head"><div><span class="assets-eyebrow">配置檢查</span><h2>實際配置 vs 目標</h2></div><span class="assets-panel-note">偏離門檻 ${db.settings.allocationDriftPct || 5}%</span></div>
+          <div class="asset-allocation-list">
+            ${a.rows.filter(r => r.value > 0 || r.targetPct > 0).map(r => {
           const off = Math.abs(r.diff) >= (db.settings.allocationDriftPct || 5);
           const fromPf = ['股票', '債券'].includes(r.class);
-          return `<div style="margin-bottom:13px">
-            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-              <span>${esc(r.class)}${fromPf ? ` <a href="#ib" class="drill-link" title="此數字由投資組合的持股自動換算，點此看明細">投資組合 →</a>` : ''} ${off ? `<span class="tag amber">偏離 ${r.diff > 0 ? '+' : ''}${r.diff.toFixed(1)}%</span>` : ''}</span>
-              <span class="muted">${r.actualPct.toFixed(1)}% / 目標 ${r.targetPct}%</span>
+          return `<div class="asset-allocation-row${off ? ' is-off' : ''}">
+            <div class="asset-allocation-head">
+              <div class="asset-allocation-name"><strong>${esc(r.class)}</strong>${fromPf ? `<a href="#ib" class="drill-link" title="此數字由投資組合的持股自動換算，點此看明細">投資組合 →</a>` : ''}</div>
+              <div class="asset-allocation-values"><strong>${r.actualPct.toFixed(1)}%</strong><span>目標 ${r.targetPct}%</span>${off ? `<span class="tag amber">偏離 ${r.diff > 0 ? '+' : ''}${r.diff.toFixed(1)}%</span>` : ''}</div>
             </div>
-            <div class="pill-bar" style="height:9px;position:relative">
-              <div style="width:${Math.min(r.actualPct, 100)}%;background:${off ? CHART.orange : CHART.green}"></div>
-              <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(r.targetPct, 100)}%;width:2px;background:var(--text)" title="目標"></div>
-            </div></div>`;
+            <div class="asset-allocation-track">
+              <span class="asset-allocation-fill" style="--allocation-width:${Math.min(r.actualPct, 100)}%"></span>
+              <span class="asset-allocation-target" style="--allocation-target:${Math.min(r.targetPct, 100)}%" title="目標比例"></span>
+            </div>
+          </div>`;
         }).join('') || '<p class="empty">尚未設定目標配置。</p>'}
-        <p class="muted" style="font-size:11px;margin-top:6px">深色直線＝目標比例</p>
-      </div>
-    </div>
+          </div>
+          <p class="asset-target-legend"><span></span>深色直線表示目標比例</p>
+        </article>
+      </section>
 
-    <div class="section-title">帳戶明細 <span class="stat-sub" style="font-weight:400">（投資／房地產／負債等；銀行帳戶見「<a href="#bank">銀行帳戶</a>」）</span></div>
-    <div class="tbl-wrap">
-      <table><thead><tr><th>帳戶</th><th>類別</th><th>資產類別</th><th class="num">餘額</th><th></th></tr></thead>
-      <tbody>${nonCash.map(accRow).join('') || `<tr><td colspan="5" class="empty">尚無非現金帳戶。銀行/現金帳戶請到「銀行帳戶」頁。</td></tr>`}</tbody></table>
+      <section class="assets-details">
+        <div class="assets-details-head"><div><span class="assets-eyebrow">帳戶明細</span><h2>其他資產與負債</h2></div><p>投資、房地產與負債等；銀行帳戶見「<a href="#bank">銀行帳戶</a>」</p></div>
+        <div class="tbl-wrap">
+          <table class="assets-account-table"><thead><tr><th>帳戶</th><th>類別</th><th>資產類別</th><th class="num">餘額</th><th></th></tr></thead>
+          <tbody>${nonCash.map(accRow).join('') || `<tr><td colspan="5" class="empty">尚無非現金帳戶。銀行/現金帳戶請到「銀行帳戶」頁。</td></tr>`}</tbody></table>
+        </div>
+      </section>
     </div>
   `;
 
@@ -76,7 +90,7 @@ function accRow(x) {
   const cur = x.currency || 'TWD';
   return `<tr>
     <td>${esc(x.name)}</td>
-    <td><span class="tag ${liab ? 'amber' : 'blue'}">${esc(typeLabel(x.type))}</span></td>
+    <td><span class="tag asset-account-type${liab ? ' liability' : ''}">${esc(typeLabel(x.type))}</span></td>
     <td class="muted">${esc(x.class || '—')}</td>
     <td class="num ${liab ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
@@ -91,8 +105,8 @@ function drawPie(byClass) {
   chart = new Chart(ctx, {
     type: 'doughnut',
     data: { labels, datasets: [{ data: labels.map(l => byClass[l]), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }] },
-    options: { responsive: true, maintainAspectRatio: false, cutout: '58%',
-      plugins: { legend: { position: 'right', labels: { color: AXIS, boxWidth: 12, padding: 10 } },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: { legend: { position: window.matchMedia('(max-width: 700px)').matches ? 'bottom' : 'right', labels: { color: AXIS, boxWidth: 12, padding: 12 } },
         tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)} (${pct(c.parsed / c.dataset.data.reduce((x, y) => x + y, 0) * 100)})` } } } }
   });
 }
