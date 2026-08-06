@@ -116,12 +116,13 @@
 
 - **色彩分工**（原鐵則 4）：
    - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
+   - 全站介面主色＝暖米色背景＋理財中心錢幣橘：`--accent:#DC5818` 只負責邊線、底線、排序、focus 等視覺效果；小字與選取文字用同色相、對比合格的 `--accent-ink:#B2430C`。綠色 `--action` 只給主要動作按鈕，`--pos`/`--pos-soft` 只給收入、獲利等正向財務語意；不可因此把一般背景或互動狀態染成綠色系。
    - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
    - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
 - **金額格式**（原鐵則 5）（app.js 統一格式器，不要自己 toLocaleString）：
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的 12 欄查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
-- **UI 元件與列表慣例**（原鐵則 7）：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
+- **UI 元件與列表慣例**（原鐵則 7）：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 用 `--accent-ink` 深橘）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
 
 ## 投資領域語意（改相關程式前必讀）
 
