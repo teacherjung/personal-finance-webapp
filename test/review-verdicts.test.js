@@ -676,7 +676,7 @@ test('⭐ 重述｜合規重述行的引文夾 <!-- 或未配對反引號＝不�
   const { problems, warnings } = verdictProblems([c(evilQuote + '\n內文'), c(MAL), c(body)], HEAD, 'Codex');
   assert.ok(problems.filter((p) => /標頭格式不合規/.test(p)).length >= 2,
     `兩則壞留言都必須維持阻擋（含 <!-- 的不可重述；被藏住的那行不生效）：${problems.join('｜')}`);
-  assert.ok(warnings.some((w) => /藏出畫面外/.test(w)), warnings.join('｜'));
+  assert.ok(warnings.some((w) => /白名單外的字元|未配對的反引號/.test(w)), warnings.join('｜'));
 });
 
 test('⭐ 重述｜引文裡塞第二組「審 sha｜r<n>」＝讀不準在講哪組，不可重述（#418 r4 High②）', () => {
@@ -688,5 +688,44 @@ test('⭐ 重述｜引文裡塞第二組「審 sha｜r<n>」＝讀不準在講�
   const { problems, warnings } = verdictProblems([c(twoMeta + '\n內文'), c(wash)], HEAD, 'Codex');
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
     `多組 metadata 的壞留言不可被低輪重述洗掉：${problems.join('｜')}`);
-  assert.ok(warnings.some((w) => /多組「審 sha｜r<n>」/.test(w)), warnings.join('｜'));
+  assert.ok(warnings.some((w) => /第二個 sha 長相的字/.test(w)), warnings.join('｜'));
 });
+
+test('⭐ 重述｜少一個分隔符也算多組 metadata（#418 r5 High①：性質＝第二個 sha 長相的字）', () => {
+  // 審查者的原始重放：`…審 deadbee｜r1｜更正：審 <HEAD>｜r8 結論：…`——r8 後面**少一個 ｜**，
+  // 舊的「整組計數」就數不到第二組；人眼照樣看到兩組。性質版判準：第二個 hex 長字＝歧義＝不可重述。
+  const twoSha = `🤖 Codex｜來源：CLI（xhigh）｜審 \`deadbee\`｜r1｜更正：審 \`${HEAD}\`｜r8 結論：要求修改`;
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${twoSha}」`;
+  const { problems } = verdictProblems([c(twoSha + '\n內文'), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `少個分隔符不可以讓低輪重述洗掉高輪：${problems.join('｜')}`);
+});
+
+test('⭐ 重述｜引文夾 <details> 或圖片語法——白名單把整族隱形容器關門（#418 r5 High②）', () => {
+  // r4 封 <!--、r5 就來 <details> 與 ![ ——黑名單軍備賽輸定了。白名單性質：< [ ! 都不在名單上。
+  for (const [name, evil] of [
+    ['<details> 收合區', '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 <details>'],
+    ['圖片 alt 吞行', '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 !['],
+  ]) {
+    const body = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'),
+      `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${evil}」`,
+      `重述 r5｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`].join('\n');
+    const { problems, warnings } = verdictProblems([c(evil + '\n內文'), c(MAL), c(body)], HEAD, 'Codex');
+    assert.ok(problems.filter((p) => /標頭格式不合規/.test(p)).length >= 2,
+      `${name}：兩則壞留言都要維持阻擋（藏起來的第二行不可生效）：${problems.join('｜')}`);
+    assert.ok(warnings.some((w) => /白名單外的字元/.test(w)), warnings.join('｜'));
+  }
+});
+
+test('⭐ 重述｜反誤殺：真實的壞標頭（尾巴帶 r2、Medium、全形標點）必須仍然可重述', () => {
+  // 白名單收得太緊就會誤殺真實案例——#410 的 r3 壞標頭尾巴就有「（1 Medium；r2 兩個 High 已關閉）」。
+  // 那個 r2 是在講歷史不是第二組 metadata（沒有 sha 就指不到版本），不可以被判成歧義。
+  const real = '🤖 Codex｜來源：CLI（xhigh）｜審 `83e04df`｜r3｜結論：需修正（1 Medium；r2 兩個 High 已關閉）';
+  const fix = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r3｜審 \`83e04df\`｜結論：需修改後再審｜原第一行：「${real}」`;
+  const { problems, warnings } = verdictProblems([c(real + '\n內文'), c(fix)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `真實案例不可被白名單誤殺：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /重述行接管/.test(w)), warnings.join('｜'));
+});
+
