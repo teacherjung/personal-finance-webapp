@@ -604,19 +604,32 @@ async function renderAssetsHtml(db) {
   };
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
   // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
-  for (const name of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask']) {
+  // 裸呼叫（參數注入）與 window.xxx（掛在 window 上叫）兩種形式都要接進同一顆排程器
+  //（#413 r10 阻擋＝window 形式漏接；r11 阻擋＝裸 requestIdleCallback 漏列）。
+  // 改寫後**驗證真的生效**——r11 抓到上一版空 catch 會吞掉寫入失敗，跟註解宣稱的「不吞」相反：
+  // 現在不包 try（寫入丟錯＝直接紅），寫完再讀回比對，不相等也直接丟錯。
+  for (const name of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask', 'requestIdleCallback']) {
     globalStubs[name] = later;
     if (!needs.some((/** @type {any} */ n) => n.name === name)) needs.push({ name, source: null, imported: null });
-    // window.setTimeout(...) 這種**掛在 window 上叫**的形式不經過參數注入（#413 r10 阻擋）：
-    // jsdom 的原生計時器會在 harness 關窗之後才響＝突變靜默通過。一併換成同一顆排程器，
-    // 「延後再動 DOM」不論從哪個名字進來都會在斷言前被放行、如實反映。
-    try { win[name] = later; } catch { /* jsdom 某屬性不可寫時：吵著紅比靜靜綠好，不吞 */ }
+    win[name] = later;
+    if (win[name] !== later) throw new Error(`win.${name} 換排程器沒生效（jsdom 版本行為變了？要有人回來看）`);
   }
-  try { win.requestIdleCallback = later; } catch { /* 同上 */ }
+  // 訊息通道類的延後入口（MessageChannel／BroadcastChannel／window.postMessage）：渲染路徑沒有
+  // 任何合法用途，而它們的投遞時序本題排不空——一律換成吵著紅的替身（fail-loud，不吞）。
+  win.MessageChannel = class { constructor() { throw new Error('渲染路徑用了 MessageChannel（延後排程的旁門）——要有人回來看過本題'); } };
+  win.BroadcastChannel = class { constructor() { throw new Error('渲染路徑用了 BroadcastChannel——要有人回來看過本題'); } };
+  win.postMessage = () => { throw new Error('渲染路徑用了 window.postMessage——要有人回來看過本題'); };
   const stubFor = (/** @type {{ name: string, source: string | null, imported: string | null }} */ need) => {
     const table = need.source === null ? globalStubs : (stubsBySource[need.source] || {});
     const key = need.source === null ? need.name : String(need.imported);
-    return Object.hasOwn(table, key) ? table[key] : benignStub();
+    if (Object.hasOwn(table, key)) return table[key];
+    // 未知的**瀏覽器全域**（node 沒有、本題也沒餵的名字，例：scheduler／Worker）＝吵著紅
+    //（#413 r11 阻擋：背景排程器落到無害替身會把「延後動 DOM」整包吞掉）。
+    // 未知的**跨模組 import** 照舊給無害替身——不相關的新相依不可以弄假紅（劃界第 3 條）。
+    if (need.source === null) {
+      throw new Error(`assets.js 用到本題沒餵過的瀏覽器全域「${need.name}」——要有人回來看過本題（無害替身會吞掉排程類旁門，所以這裡刻意吵著紅）`);
+    }
+    return benignStub();
   };
   // 在 window realm 裡建函式（取代 Node realm 的 new Function）：realm 內 globalThis === window、
   // 未被參數遮蔽的瀏覽器全域一律解析到同一顆 window——Node 這頭的 global 不再是可逃逸的第二真相。
@@ -630,6 +643,10 @@ async function renderAssetsHtml(db) {
   // 斷言讀「**活的**頁面」：從 document 根重新查，不抓舊參照——
   // 清空 body／砍祖先 ⇒ #view 從頁面上消失（下一行吵著紅）；
   // 拔標籤／改內容 ⇒ innerHTML 如實少字（各題的內容斷言紅）。這正是假 DOM 五輪都做不到的一句話。
+  // 子 browsing context（iframe 類）自帶另一個 realm 的原生計時器，本題排不空（#413 r11 阻擋）
+  // ——渲染路徑沒有任何合法理由建子頁面，所以直接零容忍：出現就吵著紅。
+  assert.equal(doc.querySelectorAll('iframe, frame, object, embed').length, 0,
+    '渲染路徑建立了子頁面（iframe 類）——子 realm 的計時器本題排不空，要有人回來看過本題');
   const live = doc.getElementById('view');
   assert.ok(live, '渲染跑完後 #view 已不在頁面上（渲染路徑動到 #view 以外的節點——真瀏覽器裡等於整頁被清）');
   const html = live.innerHTML;
