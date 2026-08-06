@@ -209,9 +209,12 @@ const negatesClaim = (beforeClaim) => {
 //
 // ⚠️ 誠實劃界（#410 r5 Low、r10／r6 更新）——UI 上曾經有三處寫著「儲存前自動備份。」，本節只守得住第一處：
 //    ①店名規則（public/modules/settings-store-rules.js:100）→ store-rules.js:130 `backupNow('pre-rules')`：本節守著。
-//      ⚠️ r10 起那句文案**不再無條件承諾**：它現在寫「別只靠系統的自動備份（只有<b>本機版</b>才有
-//      那一份，而且失敗了畫面不會講）」——因為 `public/` 兩種模式共用同一份 HTML，而
-//      `lib/repo.js:252` 的 `backupNow` 在雲端一律回 false（＝雲端版沒有那一份）。
+//      ⚠️ r10 起那句文案**不再無條件承諾**：它寫「別只靠系統的自動備份（只有<b>本機版</b>才有那一份…）」
+//      ——因為 `public/` 兩種模式共用同一份 HTML，而 `lib/repo.js` 的 `backupNow` 在雲端一律回 false
+//      （＝雲端版沒有那一份）。
+//      ⚠️ 2026-08-06 起那句話的後半段改了：原本是「而且失敗了畫面不會講」，而現在**畫面會講**
+//      （備份做不成會擋下來並問使用者），所以改成「存不成的話會先問過你再決定要不要繼續」。
+//      舊句子留在這裡只是沿革，**不要照它回頭改文案**。
 //      （用詞是 William 2026-08-05 裁決的「本機版／雲端版」，不是 r10 起草的「app 跑在自己電腦上」。）
 //      本節這一題守的正是它**本機版那一半**：「只有本機版才有那一份」必須是真的。
 //    ②支出分類管理與 ③收入分類管理：**正式程式根本沒有這個備份**——
@@ -234,10 +237,20 @@ const negatesClaim = (beforeClaim) => {
 //            （既有匯出檔可以整包匯回去恢復 ⇒「無法復原」是講太滿的世界斷言，只有「沒有復原鈕」成立）。
 //      ⇒ 分類管理那兩段現在唯一的承重內容是那句警告，本節第二題守它；
 //        指路的句子只剩店名規則兩處（卡片＋面板），同一題的 ④ 以「哪些文案真的指路」為準去守。
-// ⚠️ 同族的第二個缺口：store-rules.js:130 把 `backupNow` 的**回傳值丟掉**，而它的 docstring
-//    （lib/store.js:296、`@returns` 在 :299）明寫「回 false 讓呼叫端據實以告」
-//    （lib/repo.js:252 在 HOSTED 更是一律回 false＝不做也不假裝做）。
-//    ⇒ 備份失敗、或雲端版壓根沒備份時，使用者畫面上仍然只看到「儲存成功」。同樣是產線既有問題、本節沒有考題。
+// ✅ 同族的第二個缺口（**已於 2026-08-06 修掉，本節五題守著**——原文保留當病歷）：
+//    兩個呼叫點都把 `backupNow` 的**回傳值丟掉**，而它的 docstring 明寫「回 false 讓呼叫端據實以告」
+//    ⇒ 備份失敗時使用者畫面上仍然只看到「儲存成功」，而他正是因為那句承諾才敢按下不可逆的整批改名。
+//    🧑‍⚖️ William 2026-08-06 裁決＝**擋下＋可確認繼續**（不是照存後才說、也不是硬擋死）。做法：
+//      ・`lib/repo.js backupSupported()` 把「本機版真的失敗」與「雲端版本來就沒有這一份」分開
+//        （不分開的話，HOSTED 的 `backupNow` 一律回 false ⇒ 雲端每次存規則都被擋、還過不去）。
+//      ・唯一的閘門實作＝`lib/services/backup.js backupBeforeIrreversible(tag)`，兩個呼叫點共用。
+//      ・`saveStoreRules` 回 `{ok:false, needsConfirmation:'backup_failed'}`（200＋旗標，沿用本家族既有形狀）；
+//        `normalizeBranches` throw `code:'backup_failed'`，由 `normalizeIfRulesChanged` 翻成同一個形狀、
+//        **不記指紋**＝維持待決，下次開 app 再問一次。
+//      ・`proceedWithoutBackup` 與既有的 `force` **刻意分成兩個旗標**：合成一個的話，
+//        使用者按掉其中一個問題就等於連另一個也一起答應了。
+//    ⚠️ 走 200＋旗標的代價：前端沒接住**不會炸**，會一路走到「規則已儲存」的 toast——
+//      比原本的病更糟。所以本節多立了一題盯著兩個前端呼叫端的接線（見該題的誠實劃界）。
 // ⚠️ 同族的第三塊（**已於本支 #417 關閉**，以下留作沿革）：店名規則那兩段文案叫使用者
 //    「動手前先按〈匯出備份〉存一份」，而那顆鈕**當時**是純 `<a href="/api/export" download>`、
 //    沒有成功／失敗回饋（雲端版 session 過期時瀏覽器會安靜存下一個內容是錯誤訊息的檔案），
@@ -287,6 +300,158 @@ test('店名規則｜備份必須是「這次操作之前」的狀態（不是�
     '同一個行程內第二次儲存，備份要換成「上一次之後、這次之前」的狀態'
     + '——永遠停在第一次＝一天內改好幾次規則時，只還原得回最早那一版');
   assert.doesNotMatch(readBackupRules(), /第2版/, '備份不可含本次寫入的新規則');
+});
+
+/**
+ * 讓「操作前備份」真的失敗的陷阱：在 `<TEST_STORE>.<tag>.bak` 位置放一個**非空目錄**。
+ *
+ * 為什麼是這個做法而不是別的（每一種都試過，只有這種擋得住實作細節的變動）：
+ *   ・`snapshotTo` 的最後一步是 `renameSync(tmp, dest)`，而 **rename 到一個非空目錄上一定失敗**
+ *     （POSIX ENOTEMPTY）——這是作業系統的保證，不會因為 store.js 內部改寫法就失效。
+ *   ・拿目錄去占**`.tmp`** 那個位置也能讓它失敗，但失敗會發生在前置的 `rmSync(tmp)`；
+ *     哪天有人把它改成 `rmSync(tmp, {recursive:true})`，陷阱就靜靜失效、考題變空包彈
+ *     （第三節 v3 正是踩到這個，見該節註解）。
+ *   ・拿超長檔名讓 VACUUM 失敗也可以，但 `backupNow` 的路徑由 `STORE_FILE` 決定、
+ *     而那個變數在模組 import 時就定案，同一個行程裡改不動。
+ * ⚠️ 就算陷阱哪天還是失效了，用它的兩題**也不會靜靜變綠**：它們的判準是「資料有沒有被改掉」，
+ *    陷阱沒生效＝備份成功＝資料真的被改掉＝當場轉紅。這是刻意的（本專案「靜靜通過最危險」）。
+ * @param {string} tag @returns {() => void} 拆除陷阱
+ */
+function trapBackup(tag) {
+  const bak = `${TEST_STORE}.${tag}.bak`;
+  try { rmSync(bak, { recursive: true }); } catch { /* 可能不存在 */ }
+  mkdirSync(bak);
+  writeFileSync(join(bak, 'occupied'), 'rename 到非空目錄一定失敗');   // 非空才擋得住 rename
+  return () => { try { rmSync(bak, { recursive: true }); } catch { /* 已被清掉 */ } };
+}
+
+/** 目前資料庫裡存著的店名規則（JSON 字串，供逐字比對）。 */
+const savedRules = async () => JSON.stringify((await (await import('../lib/repo.js')).getDb()).settings?.storeRules ?? null);
+
+test('店名規則｜備份做不成時**一個字都不准寫進去**（不是照存、更不是回報成功）', async () => {
+  // ⚠️ 這一題補的是 #410 第二節劃界裡的「同族第二個缺口」：`backupNow` 的 docstring 明寫
+  //    「回 false 讓呼叫端據實以告」，但呼叫點把回傳值丟掉 ⇒ 備份失敗時使用者畫面上
+  //    仍然只看到「規則已儲存」——而他正是因為「儲存前自動備份」那句話才敢按下不可逆的整批改名。
+  // 🧑‍⚖️ William 2026-08-06 裁決：**擋下來**，並給「仍要繼續」的確認（不是照存後才說、也不是硬擋死）。
+  // ⚠️ 判準刻意選「資料有沒有被改掉」而不是「回傳值長什麼樣」：回傳值可以被改成任何形狀，
+  //    但「規則有沒有被寫進去」是使用者真正在乎的那件事，而且陷阱失效時它會自己轉紅（見 trapBackup）。
+  store.save({ ...store.emptyDb() });
+  await saveStoreRules({ chains: ['備份正常時存進去的版本'] });
+  const before = await savedRules();
+  assert.match(before, /備份正常時存進去的版本/, '前置：正常情況下規則要存得進去（否則本題證明不了任何事）');
+
+  const untrap = trapBackup('pre-rules');
+  try {
+    const r = await saveStoreRules({ chains: ['備份失敗時不該存進去的版本'] });
+    assert.equal(r.ok, false, '備份做不成時不可以回報成功');
+    assert.equal(r.needsConfirmation, 'backup_failed',
+      '要明確講出「停下來的原因是備份沒做成」，前端才問得出對的那一句話');
+    assert.equal(await savedRules(), before,
+      '備份做不成時規則必須**原封不動**——存進去了代表閘門沒接上（或 backupNow 的回傳值又被丟掉），'
+      + '而使用者會在沒有還原檔的情況下，看著「已儲存」把全庫店名改掉');
+  } finally { untrap(); }
+});
+
+test('店名規則｜使用者確認「沒有還原檔也要繼續」之後，就要真的存得進去（不可擋死）', async () => {
+  // ⚠️ 這一題是上一題的反面守衛：只有上一題的話，把閘門改成「備份失敗就永遠拒絕」也全綠——
+  //    那會讓硬碟滿的人完全沒有出路，而 William 的裁決明說是「擋下＋可確認繼續」，不是硬擋死。
+  store.save({ ...store.emptyDb() });
+  await saveStoreRules({ chains: ['確認之前的版本'] });
+  const untrap = trapBackup('pre-rules');
+  try {
+    const r = await saveStoreRules({ chains: ['確認之後的版本'] }, { proceedWithoutBackup: true });
+    assert.equal(r.ok, true, '使用者已經明確選擇繼續，就不可以再擋');
+    assert.match(await savedRules(), /確認之後的版本/, '確認之後要真的寫進去');
+  } finally { untrap(); }
+});
+
+test('開 app 自動整理｜備份做不成時同樣擋下，而且**不記指紋**（下次開 app 會再問一次）', async () => {
+  // ⚠️ 為什麼這一題非有不可：兩個呼叫點是分開的，只守 `pre-rules` 的話，
+  //    `pre-normalize`（statement-import.js）那顆照樣可以把回傳值丟掉——而那條路是**開 app 自動跑**的，
+  //    使用者連按都沒按，資料就被改掉了。
+  // ⚠️ 判準同上：看「交易的說明有沒有被改掉」，不是看回傳值形狀。
+  //    另外一定要驗**指紋沒被記下**——記了的話這一版規則從此再也不會被整理，
+  //    畫面永遠不會再問第二次，等於「問題被靜靜關掉」。
+  const { normalizeIfRulesChanged } = await import('../lib/services/statement-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+
+  // ⚠️ 規則一律用**正式入口**寫進去（同上一題的前例）：手工塞 storeRules 會被寫入櫃檯擋下來
+  //    （`rename` 少了 `mode` 就是非法值），那是刻意的——形狀只有 `sanitizeStoreRules` 說了算。
+  store.save({ ...store.emptyDb() });
+  // 合成店名（絕不用真實資料）。⚠️ 新舊名**不可有共同字**：`to` 含 `match` 會被冪等檢查擋下
+  //（「每整理一次就多疊一層」），那是既有的正確行為、不是本題要繞的東西。
+  await saveStoreRules({ rename: [{ match: '甲甲', to: '乙乙商行' }] });
+  // 造一筆「整理會動到」的交易，並抹掉指紋＝重現「開 app 第一次看到這版規則」的狀態。
+  const seeded = await getDb();
+  delete seeded.settings.storeRulesHash;
+  seeded.transactions = [{ id: 't1', date: '2026-08-01', type: 'expense', amount: 100, ledger: 'card',
+    source: 'stmt', note: '甲甲', storeKey: '甲甲', category: '其他', subcategory: '未分類' }];
+  await saveDb(seeded);
+  const noteOf = async () => (await getDb()).transactions[0].note;
+  const before = await noteOf();
+  assert.equal(before, '甲甲', '前置：交易要處在「還沒被整理」的狀態');
+
+  const untrap = trapBackup('pre-normalize');
+  try {
+    const r = await normalizeIfRulesChanged(true);   // force＝略過「學習表衝突」那道閘，本題要驗的是備份那道
+    assert.equal(r.ran, false, '備份做不成時不可以宣稱整理跑過了');
+    assert.equal(r.needsConfirmation, 'backup_failed', '要講出停下來的原因');
+    assert.equal(await noteOf(), before,
+      '備份做不成時交易必須原封不動——被改掉代表 pre-normalize 那顆的回傳值又被丟掉了');
+    assert.equal((await getDb()).settings?.storeRulesHash, undefined,
+      '不可以記下指紋：記了的話這一版規則從此不再觸發整理，使用者再也不會被問第二次'
+      + '（＝把一個沒解決的問題靜靜關掉，比不做還糟）');
+  } finally { untrap(); }
+
+  // 反面：使用者確認之後要真的整理得動（同上一題的理由，避免「永遠擋死」也全綠）
+  const r2 = await normalizeIfRulesChanged(true, { proceedWithoutBackup: true });
+  assert.equal(r2.ran, true, '確認之後要真的跑');
+  assert.notEqual(await noteOf(), before, '確認之後整理要真的套用到交易上');
+});
+
+test('雲端版｜「本來就沒有這一份」不可以被當成「備份失敗」（否則雲端使用者永遠存不了規則）', async () => {
+  // ⚠️ 這一題守的是 lib/repo.js `backupSupported()` 存在的**唯一理由**：
+  //    HOSTED 的 `backupNow` 一律回 false（設計上不做也不假裝做），把它當成失敗的話，
+  //    雲端版每一次存規則都會跳「這次沒存成還原檔」然後被擋下來——而且怎麼按都過不去。
+  //    雲端那一半靠文案誠實交代（同一節的掃描題守著），不靠這道閘門。
+  const { backupBeforeIrreversible } = await import('../lib/services/backup.js');
+  const untrap = trapBackup('pre-rules');   // 連本機都做不成的最壞情況，用來證明 HOSTED 根本沒去做
+  const saved = process.env.NOTEASY_HOSTED;
+  try {
+    process.env.NOTEASY_HOSTED = '1';
+    assert.equal(backupBeforeIrreversible('pre-rules'), true,
+      'HOSTED 必須直接放行——回 false 會讓雲端版的不可逆操作全部卡死，而且使用者無從解決');
+    delete process.env.NOTEASY_HOSTED;
+    assert.equal(backupBeforeIrreversible('pre-rules'), false,
+      '本機版備份真的失敗時就要回 false——兩種模式回一樣的值＝這支函式沒有存在的意義');
+  } finally {
+    if (saved === undefined) delete process.env.NOTEASY_HOSTED; else process.env.NOTEASY_HOSTED = saved;
+    untrap();
+  }
+});
+
+test('前端｜兩個呼叫端都要接住「備份沒做成」，否則畫面會說成儲存成功', () => {
+  // ⚠️ 為什麼這一題存在：後端刻意走 **200＋needsConfirmation**（沿用既有形狀，前端不必解析錯誤字串）。
+  //    代價是「沒接住」不會炸——`api()` 不會 throw，前端會一路走到 `toast('規則已儲存')`，
+  //    畫面顯示成功、資料一個字都沒存。那**比本題要修的原始 bug 更糟**，所以要有一道網盯著接線還在。
+  // ⚠️ 誠實劃界：這是**原始碼掃描**，證明的是「兩個檔案裡都還有那條分支」，
+  //    不是「按下去的行為正確」（那需要真的跑瀏覽器）。分支被改壞但字樣還在，本題看不出來。
+  // ⚠️ 每個名字都要**釘字尾邊界**（`\b`）——第一版沒釘，突變驗證當場抓到它是空包彈：
+  //    把 `proceedWithoutBackup` 改名成 `proceedWithoutBackup_typo`（＝前端從此送不出那個旗標、
+  //    使用者按了「仍要繼續」也永遠過不去）時，裸的子字串比對照樣命中 ⇒ 全綠。
+  //    `\b` 認得「後面接底線＝還在同一個識別字裡」，那種改名會轉紅。
+  for (const [rel, why] of /** @type {[string, string][]} */ ([
+    ['app.js', '開 app 自動整理（沒接住＝資料沒整理，畫面卻什麼都不說）'],
+    ['modules/settings-store-rules.js', '儲存並套用（沒接住＝畫面說「規則已儲存」但其實沒存）'],
+  ])) {
+    const src = readFileSync(join(ROOT, 'public', rel), 'utf8');
+    assert.match(src, /\bbackup_failed\b/,
+      `public/${rel} 沒有認得 needsConfirmation:'backup_failed'——${why}`);
+    assert.match(src, /\bproceedWithoutBackup\b/,
+      `public/${rel} 沒有把「使用者已確認繼續」送回後端——問了卻沒把答案帶上，等於怎麼按都過不去`);
+    assert.match(src, /\bNO_BACKUP_CONFIRM\b/,
+      `public/${rel} 沒有用共用的確認文案——各寫一句的話，William 審改措辭時只會改到其中一邊`);
+  }
 });
 
 // ⚠️ 題名沿革（r11 改過一次、r6 再改一次）：r10 叫「新文案指到的那兩顆自救按鈕，必須真的在同一頁上」

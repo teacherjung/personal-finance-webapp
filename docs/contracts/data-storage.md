@@ -68,7 +68,9 @@
 
 **改這裡**：**不可逆整批操作前的真備份 `backupNow(tag)`**（Codex r3#7）
 
-**記得同步這裡**：`lib/store.js` 的 `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，經 repo 轉供）。**與啟動備份 `.bak` 是不同的檔**：啟動備份每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力——而 UI 原本就寫著「套用前自動備份」，是空頭支票。目前兩個呼叫點：`saveStoreRules`（`pre-rules`）與 `normalizeBranches` 實際套用時（`pre-normalize`）。每個 tag 一顆、重複執行覆蓋（檔案數有上限）。best-effort（同啟動備份的設計決策），失敗只警告不擋操作。`*.bak` 已被 .gitignore 全域排除。**新增其他不可逆的整批操作時，一併加一個 tag。**
+**記得同步這裡**：`lib/store.js` 的 `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，經 repo 轉供）。**與啟動備份 `.bak` 是不同的檔**：啟動備份每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力——而 UI 原本就寫著「套用前自動備份」，是空頭支票。目前兩個呼叫點：`saveStoreRules`（`pre-rules`）與 `normalizeBranches` 實際套用時（`pre-normalize`）。每個 tag 一顆、重複執行覆蓋（檔案數有上限）。`*.bak` 已被 .gitignore 全域排除。**新增其他不可逆的整批操作時，一併加一個 tag。**
+
+⚠️ **`backupNow` 本身是 best-effort（失敗只 `console.warn` 並回 `false`），但呼叫端不可以把那個 `false` 丟掉**（William 2026-08-06 裁決，改前是丟掉的＝備份失敗時畫面仍只顯示「儲存成功」，而使用者正是因為「儲存前自動備份」那句話才敢按下不可逆的整批改名）。閘門的**唯一實作**＝`lib/services/backup.js` 的 `backupBeforeIrreversible(tag)`，兩個呼叫點共用，語意是**擋下＋可確認繼續**（不是照存後才說，也不是硬擋死——硬擋死會讓硬碟滿的人完全沒有出路）。三件配套：①`lib/repo.js backupSupported()` 把「本機版真的失敗」與「HOSTED 本來就沒有這一份」分開——不分開的話雲端版每次不可逆操作都會被當成備份失敗擋住而且過不去，雲端那一半靠**文案**誠實交代、不靠這道閘門；②`saveStoreRules` 回 `{ok:false, needsConfirmation:'backup_failed'}`（200＋旗標，沿用 `normalizeIfRulesChanged` 既有形狀），`normalizeBranches` throw `code:'backup_failed'` 再由 `normalizeIfRulesChanged` 翻成同一形狀且**不記 `storeRulesHash`**＝維持待決、下次開 app 再問；③使用者的確認走 `proceedWithoutBackup`，**與既有的 `force`（學習表衝突）刻意分成兩個旗標**——合成一個的話，按掉其中一個問題等於連另一個也一起放行。⚠️ 走 200＋旗標的代價：**前端沒接住不會炸**，會一路顯示「規則已儲存」但其實什麼都沒存（比原本的病更糟）——所以 `test/vault-and-backup-integrity.test.js` 第二節除了行為題，另有一題盯著前端兩個呼叫端的接線。維護後門 `POST /api/statement/normalize-branches` **不接** `proceedWithoutBackup`（那條路沒有使用者可以問，回 409）。
 
 ## 測試隔離慣例 B0
 
