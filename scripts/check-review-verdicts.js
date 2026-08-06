@@ -100,6 +100,13 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  * ⑥**只能接管更早的壞留言**（#418 r3 High①後半）：重述那則留言必須出現在壞留言**之後**——
  *   不然可以「預先授權」一則還沒出現的壞留言。
  * ⑦重述行只在帶合規標頭的留言裡有效（標頭本身就是重述者的身分與當前結論）。
+ *
+ * ## 誠實劃界（#418 r4 起明寫）
+ * ・一則合規重述會接管**所有**第一行完全相同、且出現在它之前的壞留言（同一句話蓋歪兩次＝同一次事故）。
+ * ・「空行」用 trim() 判定＝**全形空白（U+3000）等 Unicode 空白也算空行**——藏在「空行」裡的全形空白
+ *   不會讓收件截止。它藏不了內容（一行全空白什麼都寫不了），列在這裡是講清楚，不是漏洞。
+ * ・引文含 `<!--` 或未配對反引號的壞留言**不可重述**（那是隱形容器的原料）——寧可留著阻擋，
+ *   請改用關掉重開 PR 或問 William。
  * 放行判準完全不變：仍然要指定審查者對**目前 head** 有一則真的「通過」。
  *
  * ## 誠實劃界
@@ -108,11 +115,13 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  */
 const RESTATE = /^ {0,3}重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論：([^｜\n]+?)｜原第一行：「(.+)」[^\S\n]*$/u;
 /** 從壞掉的第一行盡量讀出「誰寫的」（規則②用）。讀不出＝回 null＝那則不可重述。 */
-// ⚠️ **錨定行首**（#418 r1 阻擋②）：不錨的話，壞行可以寫成「🤖 Claude - …後段嵌 🤖 Codex｜來源：…」，
-//    Codex 逐字引用整行就能清掉**別人**的壞留言。前綴容許粗體，與 HEADER 同一套。
-const QUOTED_IDENTITY = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜/u;
-/** 從壞掉的第一行讀出它自報的 sha 與輪次（規則⑤用）。讀不出＝回 null＝那則不可重述。 */
-const QUOTED_META = /審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜/u;
+// ⚠️ **錨定行首、身分與 metadata 一次綁定**（#418 r1 阻擋②＋r4 High②）：分開抓的話，
+//    壞行可以在中段再塞一組「審 sha｜r<n>」，重述綁到第一組＝低輪又能洗掉高輪。
+//    所以角色、來源、sha、輪次用**同一支**錨定行首的正則一次讀出——引文的前四欄長什麼樣，
+//    重述就必須照著講。前綴容許粗體，與 HEADER 同一套。
+const QUOTED_HEAD = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜/u;
+/** 引文裡「審 sha｜r<n>｜」出現幾組（多於一組＝讀不準它在講哪一組 ⇒ fail-closed 不可重述）。 */
+const QUOTED_META_ALL = /審\s*`?[0-9a-fA-F]{7,40}`?｜r\d+｜/gu;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -356,9 +365,26 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     let cursor = headerIdx + 1;
     const restateIdxs = [];
     for (; cursor < lines.length; cursor++) {
-      if (!lines[cursor].trim()) continue;                          // 空行可以隔開
-      if (/^ {0,3}重述\s*r\d+｜/u.test(lines[cursor])) { restateIdxs.push(cursor); continue; }
-      break;                                                        // 第一行別的內容＝收件截止
+      const raw = lines[cursor];
+      if (!raw.trim()) continue;                                    // 空行可以隔開（含全形空白，見劃界）
+      if (!/^ {0,3}重述\s*r\d+｜/u.test(raw)) break;               // 第一行別的內容＝收件截止
+      // ⚠️ **整行合規才延續收件**（#418 r4 High①）：前綴像重述、整行不合規的行（例：`重述 r0｜<!--`）
+      //    以前會被跳過而讓收件區繼續往下——它夾帶的 `<!--` 把下一行真生效的重述藏進 HTML 註解，
+      //    機器算數、人看不見＝可稽核性破功。現在這種行＝出聲＋收件截止。
+      if (!RESTATE.test(raw)) {
+        warnings.push('一行重述**格式不合規、且讓收件當場截止**（它之後的重述行一律不生效）：'
+          + `「${collapse(raw).slice(0, 80)}…」`);
+        break;
+      }
+      // ⚠️ 合規的重述行也可能在**引文裡**夾隱形容器：`<!--`（HTML 註解開頭）或未配對的反引號
+      //    （行內 code 跨行）都能把下一行藏起來。含這兩種＝那一則壞留言不可重述（fail-closed 劃界），
+      //    同樣收件截止。
+      if (/<!--/.test(raw) || (raw.split('`').length - 1) % 2 !== 0) {
+        warnings.push('一行重述含 `<!--` 或未配對的反引號——會把後面的行藏出畫面外，'
+          + `不可重述且收件截止：「${collapse(raw).slice(0, 80)}…」`);
+        break;
+      }
+      restateIdxs.push(cursor);
     }
     for (const li of restateIdxs) {
       const line = lines[li];
@@ -370,18 +396,22 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       const round = Number(m[1]);
       // 規則④：重述輪次必須小於自己標頭的輪次——否則可以用重述行造出更高輪的「通過」。
       if (round >= h.round) { bad(`重述的輪次 r${round} 不小於這則留言自己的 r${h.round}`); continue; }
-      // 規則②：壞掉那行裡讀得出的角色與來源必須等於重述者自己；讀不出＝不可重述（fail-closed）。
-      const q = QUOTED_IDENTITY.exec(m[4]);
-      if (!q) { bad('引用的第一行讀不出「誰寫的」——讀不出角色與來源的壞留言不可重述，維持阻擋'); continue; }
+      // 規則②＋⑤（#418 r4 High②：**一支錨定解析器一次綁定**）：角色、來源、sha、輪次都從引文
+      // **行首**讀出；讀不出任何一欄＝不可重述（fail-closed）。
+      const q = QUOTED_HEAD.exec(m[4]);
+      if (!q) { bad('引用的第一行讀不出「誰寫的、審哪個 sha、第幾輪」（四欄要在行首連著）——讀不出就不可重述，維持阻擋'); continue; }
+      // 引文裡若出現**多組**「審 sha｜r<n>」＝讀不準它到底在講哪一組（壞行可在中段再塞一組，
+      // 讓低輪重述洗掉高輪阻擋）⇒ 一律不可重述。
+      if ((m[4].match(QUOTED_META_ALL) || []).length > 1) {
+        bad('引用的第一行出現多組「審 sha｜r<n>」——讀不準它在講哪一組，不可重述，維持阻擋');
+        continue;
+      }
       if (canonicalRole(q[1]) !== h.role || collapse(q[2]) !== h.source) {
         bad(`只能重述**自己**的壞留言：引用裡是 ${q[1]}（${collapse(q[2])}），重述者是 ${h.role}（${h.source}）`);
         continue;
       }
-      // 規則⑤：重述自報的 sha／輪次必須等於引文裡那組——不綁的話低輪重述能洗掉高輪阻擋（#418 r3 High①）。
-      const qm = QUOTED_META.exec(m[4]);
-      if (!qm) { bad('引用的第一行讀不出「審哪個 sha、第幾輪」——讀不出就不可重述，維持阻擋'); continue; }
-      if (qm[1].toLowerCase() !== m[2].toLowerCase() || Number(qm[2]) !== round) {
-        bad(`重述自報的（審 ${m[2].slice(0, 7)}｜r${round}）與引文裡的（審 ${qm[1].slice(0, 7)}｜r${qm[2]}）不一致`);
+      if (q[3].toLowerCase() !== m[2].toLowerCase() || Number(q[4]) !== round) {
+        bad(`重述自報的（審 ${m[2].slice(0, 7)}｜r${round}）與引文裡的（審 ${q[3].slice(0, 7)}｜r${q[4]}）不一致`);
         continue;
       }
       // 規則①的鑰匙＝逐字引用（trim-only）；規則⑥的順序綁定在收尾那一段做（要知道壞留言的位置）。
