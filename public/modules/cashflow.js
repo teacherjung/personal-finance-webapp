@@ -12,6 +12,7 @@ import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel } from './cashflow-model.js';
+import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -148,9 +149,9 @@ function subOptionsFor(flow, parent, cur = '') {
   // 內轉一般要選子分類；但「刪掉某內轉子分類後既有交易會變空白」是合法狀態（對抗審查 2026-07-21）——
   // 現值是空白或不在清單內時要放行空白，否則編輯這種交易會被 <select> 默默選成第一項而改錯。
   const allowBlank = flow !== 'transfer' || cur === '' || !subs.includes(cur);
-  const opts = [...(allowBlank ? [''] : []), ...subs];
-  if (cur && !opts.includes(cur)) opts.unshift(cur);   // 現值是清單外的孤兒（改名/刪除後的舊值）→ 保留可選，不被改成第一項
-  return opts.map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${s === '' ? '（不分子類）' : esc(s)}</option>`).join('');
+  // 「保留清單外的現值」與拼 <option> 都交給 form-options.js（#409 自審：原本三個檔各抄一份，
+  // transactions.js 那份漏了保留 ⇒ 收成一份，漏掉只可能發生在有考題的那一處）。
+  return subcategoryOptionsHtml([...(allowBlank ? [''] : []), ...subs], cur);
 }
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
@@ -304,8 +305,12 @@ function openCashflowForm(tx, accounts = [], all = []) {
       const subSel = root.querySelector('#f_subcategory');
       const fillCats = (flow, curCat, curSub) => {
         const parents = parentsForFlow(flow);
-        catSel.innerHTML = parents.map(p => `<option value="${esc(p)}" ${p === curCat ? 'selected' : ''}>${esc(p)}</option>`).join('');
-        const chosen = parents.includes(curCat) ? curCat : (parents[0] || '');
+        // ⚠️ 這個下拉是 onMount **事後重建**的，走不到 openForm 那條（form-options.js）——所以直接呼叫
+        // 同一支產生器，「現值不在清單裡就保留它」才在這裡也成立。舊寫法是
+        // `parents.includes(curCat) ? curCat : (parents[0] || '')`：使用者事後刪過分類、或匯入資料帶著
+        // 舊分類時，一打開表單就被靜靜換成第一個父分類，按儲存就寫進去（#409 自審抓到，舊病）。
+        catSel.innerHTML = selectOptionsHtml(parents, curCat);
+        const chosen = effectiveSelectValue(parents, curCat);   // 連動子類要用「真正選中的那個值」，判準與上一行同源
         catSel.value = chosen;
         subSel.innerHTML = subOptionsFor(flow, chosen, curSub);
       };

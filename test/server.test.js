@@ -1047,7 +1047,15 @@ test('第二帖｜帳務體檢：七個偵測器各抓各的、略過可持久�
   // D4 的兩個動作走 rename-store（既有端點）：保留現值 → 學起來 → 不再報
   await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', name: '星巴克', category: '娛樂', subcategory: '電影' });
   const h4 = await GET('/statement/health');
-  assert.ok(!h4.items.some(x => x.id === 'D4|STARBUCKSH9 TAIPEI'), '學過＝使用者故意的，不再報漂移');
+  // ⚠️ 這一行原本比對 `x.id === 'D4|STARBUCKSH9 TAIPEI'`＝**空包彈**（夜班稽核 2026-08-05 抓到）：
+  //    實際 id 是三段 `D4|<原文>|<指紋>`，兩段的字串永遠不可能相等 ⇒ 斷言恆真。
+  //    實務後果：你已經教過的分類仍會被帳務體檢反覆拿出來騷擾，而測試永遠綠——
+  //    這正好摧毀第二帖藥方「排隊給你按確認」的信任。改成比對前綴（id 的前兩段）。
+  assert.ok(!h4.items.some(x => String(x.id).startsWith('D4|STARBUCKSH9 TAIPEI|')),
+    '學過＝使用者故意的，不再報漂移（比對前綴：id 第三段是內容指紋，會隨筆數與分類變動）');
+  // ⚠️ 這裡原本還加了一條「D4 項目的 id 至少三段」——**又是一顆空包彈**（Codex #414 r1 抓到）：
+  //    學起來之後 D4 已經沒有項目了，`[].every(...)` 恆真。而且三段格式上面（學習之前那一段）
+  //    的 `startsWith('D4|STARBUCKSH9 TAIPEI|')` 與 D2/D3/D4/D7 指紋迴圈早就驗過了，直接刪掉。
   await POST('/statement/rename-store', { orig: 'STARBUCKSH9 TAIPEI', reset: true });
   for (const id of made) await DELETE_(`/transactions/${id}`);
   await POST('/statement/health/dismiss', { clearAll: true });

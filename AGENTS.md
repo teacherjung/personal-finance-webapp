@@ -116,12 +116,13 @@
 
 - **色彩分工**（原鐵則 4）：
    - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——六色盤已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
+   - 全站介面主色＝暖米色背景＋理財中心錢幣橘：`--accent:#DC5818` 只負責邊線、底線、排序、focus 等視覺效果；小字與選取文字用同色相、對比合格的 `--accent-ink:#B2430C`。綠色 `--action` 只給主要動作按鈕，`--pos`/`--pos-soft` 只給收入、獲利等正向財務語意；不可因此把一般背景或互動狀態染成綠色系。
    - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
    - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
 - **金額格式**（原鐵則 5）（app.js 統一格式器，不要自己 toLocaleString）：
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的 12 欄查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
    - 負號一律 U+2212「−」；投資組合頁走 `MONEY()` 雙計價（localStorage `pf_viewCur`，NT=萬 / US=K USD）
-- **UI 元件與列表慣例**（原鐵則 7）：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 珊瑚色）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
+- **UI 元件與列表慣例**（原鐵則 7）：卡片數字 `.stat sm`、表格數字欄 `.num`（右對齊 tabular）、空狀態 `.empty` 文案「尚無…」、頁首動作 `.page-actions`、卡片牆 `.grid.card-grid`＋`.detail-grid`、彈窗用 `openForm`/`openInfo`＋`modal-sm/md/lg/xl`、名詞說明用 `.info-link`（無底線，hover 用 `--accent-ink` 深橘）＋`openInfo`。**列表排序（tx-sort 慣例，自建排序也必須遵守）：金額欄一律按絕對值排序（r9#2——退款／貸項是負數，按原值排會沉底、找大筆找不到）；降冪只反轉主鍵，第二鍵固定日期新→舊、不跟著反轉**（Codex r8#2：整個比較器乘 −1 會讓降冪時同值資料變舊→新）。
 
 ## 投資領域語意（改相關程式前必讀）
 
@@ -178,6 +179,7 @@
 | **共用彈窗契約**（modal-shell.js） | 只共用尺寸、標題列、關閉按鈕、背景與基本關閉行為；送出、預覽、返回、非同步狀態與重畫由各功能自負——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#共用彈窗契約) |
 | 淨值目標與到達速度 | 後端單一真相＝`lib/derive.js computeGoalTracking`、前端不可重算；兩把尺只看最近六個已結束月、至少三個月份、取中位數；達標走 `goal-reached` 報喜——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值目標與到達速度) |
 | `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | `lib/derive.js` 的同名複本 |
+| `public/modules/accounts-model.js` 的 `LIABILITY_TYPES`（前端單一真相：`fxExposure`、帳戶表單的型別選項、資產頁的負債紅字都讀它） | 還要一起改的地方**逐一列名、刻意不寫「共幾處」**（這一族的數字漂過兩次：「兩處」→「三處」→其實還藏著第四第五份）：`lib/derive.js` 的同名複本、`lib/schema.js` 的 `accounts.type` 枚舉。⚠️**存得進去的一定要選得到**：枚舉有而表單沒有的型別，使用者在下拉裡**選不到**（只能改資料庫才設得上去）；那種既有帳戶的現值本身已由 `public/modules/form-options.js` 的通用保留機制守住（**不再**一打開儲存就靜靜變 `cash`），但下拉裡顯示的是資料裡的原始代碼、不是中文標籤。三者的相等由 `test/exposure-sync-integrity.test.js` 釘住，那支還有一題全站掃描擋「又長出一份手抄複本」 |
 | `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
 | 新增 ETF 持股 | COMPANY_WEIGHTS＋兩份 COMPOSITION 都要補；XUSE/EXUS 刻意只做區域穿透——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#新增-etf-持股) |
 | `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | 兩份 COMPOSITION 也要有該代號，否則穿透 fallback「其他」、國家上限提醒偏掉 |
@@ -273,6 +275,7 @@
 - **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/測試覆蓋率地圖.md`。
 - **JSON 請求大小分流（2026-07-22）**：單一真相在 `lib/http-body.js`，一般 API＝1 MB、信用卡／銀行帳單六個吃檔案的大型 POST（另有一個只吃列的端點，僅 HOSTED 收到 1MB）＝15 MB、完整備份還原 `/api/import`＝50 MB。**安裝順序是安全不變量**：大型端點的 route-specific parser 必須先掛，最後才掛一般 parser；倒過來會讓大件入口先被 1 MB 擋掉。新增會接收大型內容的端點時，要加入集中清單並補 `test/request-limits.test.js`；尤其 `/api/import` 是資料救援入口，絕不可繼承一般 1 MB 上限。
 - **自動守門（兩道，2026-07-13 起）**：①**本機門**＝versioned pre-push hook（`scripts/git-hooks/pre-push`，啟用：`git config core.hooksPath scripts/git-hooks`，本 clone 已設好）——push 前自動跑 typecheck＋lint＋test，不過就擋下（緊急跳過 `--no-verify`，不建議）；②**雲端門**＝GitHub Actions（`.github/workflows/ci.yml`）——每個 PR 自動跑同三關並在 PR 頁顯示 ✅/❌，**執行合併的人（不論哪條路徑）合併前先確認綠勾**。新 clone 記得重新 `git config core.hooksPath scripts/git-hooks`。⚠️ **手動跑三關時直接看 npm 的 exit code**——`npm run lint 2>&1 | tail -1; echo $?` 回的是 tail 的退出碼，曾因此漏掉 4 條 lint 錯誤、靠 pre-push 才攔下（zsh 管線要查 `pipestatus`）。
+- **綠燈證據要看對訊號——`grep '^not ok'` 是死訊號**（2026-08-05 實測，Node v26；#412 前兩輪的 commit 訊息把它當綠燈證據引用過三次）：`npm test` 的 reporter 已在 `package.json` **明寫 `--test-reporter=spec`**（不明寫的話，預設值會隨 Node 版本與 stdout 是不是 TTY 而變——CI 有兩顆不同的 Node，那樣教人 grep 什麼都註定有一邊是錯的）。**spec 不吐 TAP**，所以 `grep '^not ok'` 綠是 0、**紅也是 0**：實測把 `lib/secret-fields.js` 的 `slice(-4)` 改成 `slice(0, 4)`，退出碼 1、`ℹ fail 1`、`✖ failing` 1 筆，而 `grep -c '^not ok'` 仍然回 0。**真訊號＝①退出碼**（唯一與 reporter 無關的，`mutate.sh` 判紅綠只看它）**②`grep -c '^✖ failing'`**（綠 0／紅 1）**③摘要行 `^ℹ fail N` 的 N**（⚠️ 不是 `grep -c 'ℹ fail'`——那一行綠紅都在、都回 1，同樣分不出來）。⚠️ ②③**一定要錨在行首**：失敗區塊標題與摘要行都印在第 0 欄，而**題名**（成功時照樣會印）可能含同一串字——不錨的 `grep -c '✖ failing'` 實測在**全綠**那一輪回過 3 筆（命中的是 `test/test-signals.test.js` 自己的題名，已改掉；寫考題時題名也別直接抄這些標記）。要 TAP 就得明寫 `--test-reporter=tap`，那時**整組反過來**：`^not ok` 才會出現、`✖ failing` 變 0 筆、摘要行改叫 `# fail N`。⚠️ **換任何判斷方式之前，先自己弄紅一題確認它真的會轉**——「什麼都沒做卻回報通過」比沒有護欄更糟。考題＝`test/test-signals.test.js`（逐格釘住這張對照表，含 `npm test` 有沒有明寫 reporter）。
 
 ### 三方協作框架（William 2026-07-24 裁決定稿；Codex 起草＋Claude 三處修訂＝流程分級適用／預約表內容校正／低風險仍過三關。本節已**整併**同日稍早的裁決補則，為唯一版本）
 
@@ -339,7 +342,7 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 一份查版面與結構，一份查金額口徑與資料列格數（後者實測出五條假綠，前者沒測到）。
 危險的不是有兩份，是**看起來一樣有效而結論相反**，於是「最後一則說通過」等於放行。
 
-#### 兩條規則（`scripts/check-review-verdicts.js` 機械執行）
+#### 三條規則（`scripts/check-review-verdicts.js` 機械執行）
 
 **①自報來歷**：每一則帶結論的複審留言，**第一行**必須是這個格式（可見的一行，**不是 HTML 註解**——
 註解在畫面上看不見，而本專案已經有三次「藏在註解裡就繞過去」的實例）：
@@ -359,6 +362,22 @@ Claude 桌面／Claude CLI／Codex 桌面／Codex CLI，至少四個。GitHub �
 （腳本另有 `looksLikeVerdict()` 認「下了結論卻沒帶標頭」，但**只印提醒、不影響閘的結果**——
 2026-08-03 刻意決定：擋它沒有安全價值、卻實測連兩輪誤擋正常留言，誤擋相對 `main` 是實質退步；
 完整理由與誤擋實例＝`scripts/check-review-verdicts.js` 檔頭（單一真相，此處不重抄）。
+
+**③重述＝壞標頭的唯一救濟**（2026-08-06 William 裁決；起因＝發射提示沒列出三個合規結論字串，
+五支 PR 的歷史留言裡都有「要求修改」「通過（無阻擋）」這類壞標頭 ⇒ 永久阻擋、補新留言也清不掉）。
+同一位審查者可在新留言（帶合規標頭）的內文加一行（四格縮排理由同上）：
+
+    重述 r<輪次>｜審 `<短 sha>`｜結論：通過／需修改後再審／不可合併｜原第一行：「<壞掉那則的第一行，逐字引用>」
+
+規則：重述行必須**緊跟在標頭後面**（中間只准空行——碰到第一行別的內容就停止收件，所以任何
+fence／清單／引用／HTML 註解裡的「範例」都放不進生效位置；放錯位置不生效但閘會出聲提醒）；
+只能重述**自己**的壞留言（引文裡讀得出的角色與來源必須等於重述者；讀不出＝不可重述，維持阻擋）；
+引文要**逐字**（只容許頭尾空白差異，中間每一個空白都要一樣）；重述輪次要**小於**這則留言自己的輪次；
+重述自報的 sha 與輪次要**等於引文裡那組**（不綁的話低輪重述能洗掉高輪阻擋）；重述那則留言要出現在
+壞留言**之後**（不可預先授權）。
+重述**唯一**能改變的判定＝把那則壞留言從阻擋降為可稽核的警告（那正是它存在的目的）；它**造不出放行票**、
+也**清不掉任何合規結論的阻擋**（合規的阻擋只能靠同一位審查者的更新輪次撤銷）；放行仍然只認指定審查者
+對目前 head 的「通過」（機械執法與完整規則＝`scripts/check-review-verdicts.js` 的 RESTATE 一節，單一真相）。
 唯一留在阻擋路徑上的文字判斷＝「**出現 🤖 但標頭寫壞**」。**殘餘風險**：有人自然語言喊停、
 而指定審查者帶標頭放行＝閘會通過（終端印提醒）——所以**要喊停就帶標頭重發，沒有例外**。）
 

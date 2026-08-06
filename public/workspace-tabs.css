@@ -1,0 +1,132 @@
+/*
+ * 可重用的頁籤工作面。
+ * 森林標籤只用小面積品牌色標示目前頁，內容面板保持獨立的厚框工作區。
+ * 即使呼叫端漏包 shell，根層色票仍會提供安全退路。
+ */
+.workspace-tabs-shell {
+  --workspace-tabs-frame: var(--frame);
+  --workspace-tabs-surface: var(--card);
+  --workspace-tabs-accent: var(--accent);
+  --workspace-tabs-accent-soft: var(--accent-soft);
+  --workspace-tabs-active-text: var(--accent-ink);
+}
+
+.workspace-tabs {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-inline: contain;
+}
+
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-tabs__track {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: max-content;
+  min-width: 100%;
+  padding: 0 10px 9px;
+  border-bottom: 2px solid var(--workspace-tabs-frame, var(--frame));
+}
+
+.workspace-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 1 0;
+  max-width: 170px;
+  min-height: 50px;
+  padding: 11px 20px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  background: transparent;
+}
+
+.workspace-tabs__track > .workspace-tab {
+  min-width: 104px;
+}
+
+.workspace-tab .ic {
+  flex: none;
+  opacity: .88;
+}
+
+.workspace-tab:hover {
+  border-color: var(--line-2);
+  color: var(--text);
+  background: var(--workspace-tabs-surface, var(--card));
+}
+
+.workspace-tab:focus-visible {
+  z-index: 5;
+  outline: 3px solid var(--workspace-tabs-accent, var(--accent));
+  outline-offset: -5px;
+}
+
+.workspace-tab.is-active {
+  z-index: 3;
+  border-color: var(--workspace-tabs-accent, var(--accent));
+  color: var(--workspace-tabs-active-text, var(--accent-hover));
+  background: var(--workspace-tabs-accent-soft, var(--accent-soft));
+}
+
+.workspace-tab.is-active::after {
+  content: "";
+  position: absolute;
+  right: 24px;
+  bottom: 6px;
+  left: 24px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--workspace-tabs-accent, var(--accent));
+}
+
+.workspace-tabs-panel {
+  margin-top: 10px;
+  border: 2px solid var(--workspace-tabs-frame, var(--frame));
+  border-radius: 8px;
+  background: var(--workspace-tabs-surface, var(--card));
+}
+
+@media (max-width: 680px) {
+  .workspace-tabs--compact-mobile .workspace-tab {
+    flex: 0 0 52px;
+    gap: 0;
+    min-width: 52px;
+    min-height: 48px;
+    padding-right: 9px;
+    padding-left: 9px;
+    border-radius: 8px;
+  }
+
+  .workspace-tabs--compact-mobile .workspace-tab__label {
+    display: none;
+  }
+
+  .workspace-tabs--compact-mobile .workspace-tab.is-active {
+    flex-basis: 132px;
+    gap: 6px;
+  }
+
+  .workspace-tabs--compact-mobile .workspace-tab.is-active .workspace-tab__label {
+    display: inline;
+  }
+
+  .workspace-tabs--compact-mobile .workspace-tab .ic {
+    width: 17px;
+    height: 17px;
+  }
+}

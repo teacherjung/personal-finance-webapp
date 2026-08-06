@@ -7,6 +7,7 @@ import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } 
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
+import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
@@ -66,13 +67,13 @@ export async function renderSettings() {
     </div>
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">支出分類管理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>支出</b>分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。儲存前自動備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>支出</b>分類（大類與子類）。<b>改名</b>會自動套用到所有舊交易與學習表；<b>刪除</b>有交易的分類會把那些交易改歸「其他／未分類」。「其他／未分類」是系統退路，不能刪。⚠️ <b>儲存後沒有「復原」可以按</b>。</p>
       <div><button class="btn-ghost" id="manageCatsBtn">${icon('refresh', 16) || ''}管理支出分類</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">收入分類管理</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供銀行收支的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。儲存前自動備份。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">新增、改名、刪除、排序你的<b>收入</b>分類（大類與子類），供銀行收支的收入使用。<b>改名</b>會自動套用到所有舊的收入交易；<b>刪除</b>有交易的分類會把那些交易改歸「其他／其他收入」。「其他／其他收入」是系統退路，不能刪。⚠️ <b>儲存後沒有「復原」可以按</b>。</p>
       <div><button class="btn-ghost" id="manageIncomeCatsBtn">${icon('refresh', 16) || ''}管理收入分類</button></div>
     </div>
 
@@ -91,7 +92,7 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄（套用前會另存一份還原檔 <code>data/store.db.pre-rules.bak</code>）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄。⚠️ 存下去沒有「復原」可以按——動手前請先到本頁最下面「資料與備份」按「匯出備份」存一份（<b>本機版</b>另外會自己存一份還原檔 <code>data/store.db.pre-rules.bak</code>，但那是盡力而為、失敗了畫面不會講；<b>雲端版</b>沒有這一份，別只靠它）。</p>
       <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
     </div>
 
@@ -306,8 +307,9 @@ export async function renderSettings() {
         const subSel = root.querySelector('#f_subcategory');
         const fill = (/** @type {string} */ parent, /** @type {string} */ curSub) => {
           const subs = ['', ...((Object.hasOwn(expTree || {}, parent) && (expTree || {})[parent]) || [])];   // hasOwn（Codex r8#3）：同 transactions.js subOptions
-          if (curSub && !subs.includes(curSub)) subs.unshift(curSub);
-          subSel.innerHTML = subs.map(x => `<option value="${esc(x)}" ${x === curSub ? 'selected' : ''}>${x === '' ? '（不分子類）' : esc(x)}</option>`).join('');
+          // 「保留清單外的現值」＋拼 <option> 都交給 form-options.js（#409 自審把三份抄本收成一份；
+          // 這一處本來就有保留、行為不變——但抄本只要留著，下一個人就可能再漏一次）。
+          subSel.innerHTML = subcategoryOptionsHtml(subs, curSub);
         };
         fill(catSel.value, sub0);
         catSel.onchange = () => fill(catSel.value, '');
