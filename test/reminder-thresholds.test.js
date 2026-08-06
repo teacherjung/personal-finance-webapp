@@ -612,7 +612,9 @@ async function renderAssetsHtml(db) {
   //   ・jsdom 有的（規格 DOM）＝原樣如實回答，正式碼照跑、不會假紅。
   //   ・jsdom 沒有的（Chrome 專屬、未來新 API、拼錯的名字）＝吵著紅，功能偵測分支再也無法靜靜跳過。
   // 存在性查詢（`in`／`Reflect.has`）走 has 陷阱，同一條規則。
-  const GUARD_SKIP = new Set(['then', 'inspect', 'constructor']);   // 語言／工具會探的名字，不算瀏覽器 API 面
+  // 語言／工具會探的可選鉤子，不算瀏覽器 API 面（#413 r15 阻擋②：JSON.stringify 會先探 toJSON，
+  // 探不到就丟錯＝合法序列化被誤殺）。這些名字兩邊引擎都一樣，拿來做功能偵測分不出環境。
+  const GUARD_SKIP = new Set(['then', 'inspect', 'constructor', 'toJSON', 'valueOf', 'toString']);
   /** 這顆物件在 sandbox 裡「有」這個名字嗎（原型鏈一起看——DOM 方法都住原型上）。 */
   const hasName = (/** @type {any} */ t, /** @type {any} */ k) => k in /** @type {any} */ (t);
   const absent = (/** @type {string} */ label, /** @type {any} */ key, /** @type {string} */ how) => new Error(
@@ -624,6 +626,14 @@ async function renderAssetsHtml(db) {
   // 而「身分判斷」可以被拿來當只在真瀏覽器成立的開關。用 WeakMap 記住，語意還原。
   /** @type {WeakMap<object, any>} */
   const guardCache = new WeakMap();
+  // 方法也要保身分（#413 r15 阻擋①）：上一版每次讀方法都新建包裝函式，於是
+  // `a.querySelectorAll === a.querySelectorAll` 在本題是 false、真瀏覽器是 true——
+  // 又是一顆「守衛自己改掉規格語意」的假綠開關。同一顆物件的同一個方法只包一次。
+  /** @type {WeakMap<object, Map<string, any>>} */
+  const methodCache = new WeakMap();
+  /** 這顆守衛包的是「原型物件」嗎——只有原型面才禁止列舉屬性名單（見 ownKeys）。 */
+  /** @type {WeakSet<object>} */
+  const protoTargets = new WeakSet();
   /** 讓 callback 收到的參數也是守衛版（#413 r14 阻擋①：forEach 把原始 Element 交出去就漏了）。 */
   const guardArg = (/** @type {any} */ a, /** @type {string} */ label) => (typeof a === 'function'
     ? (/** @type {any[]} */ ...cbArgs) => a(...cbArgs.map((x) => guard(x, `${label} 的回呼參數`)))
@@ -645,10 +655,17 @@ async function renderAssetsHtml(db) {
         if (!hasName(target, key)) throw absent(label, key, '讀屬性');
         const v = Reflect.get(target, key, target);
         if (typeof v === 'function') {
-          // 方法：以真物件為 this 呼叫（jsdom 的 brand check 過得去）；**傳進去的回呼**與**回傳值**都包守衛
-          return (/** @type {any[]} */ ...args) => guard(
+          // 方法：以真物件為 this 呼叫（jsdom 的 brand check 過得去）；**傳進去的回呼**與**回傳值**都包守衛。
+          // 包裝函式**快取**，同一顆物件的同一個方法永遠是同一顆（身分語意，見 methodCache）。
+          let byKey = methodCache.get(target);
+          if (!byKey) { byKey = new Map(); methodCache.set(target, byKey); }
+          const cachedFn = byKey.get(String(key));
+          if (cachedFn) return cachedFn;
+          const wrapped = (/** @type {any[]} */ ...args) => guard(
             v.apply(target, args.map((a) => guardArg(a, `${label}.${String(key)}()`))),
             `${label}.${String(key)}()`);
+          byKey.set(String(key), wrapped);
+          return wrapped;
         }
         return guard(v, `${label}.${String(key)}`);
       },
@@ -662,7 +679,9 @@ async function renderAssetsHtml(db) {
       // 讀屬性、in、走原型鏈、問 descriptor、列名單。前兩個在上面，剩下三個在這裡一次收完。
       getPrototypeOf: (target) => {
         const proto = Reflect.getPrototypeOf(target);
-        return proto === null ? null : guard(proto, `${label} 的原型`);   // 沿鏈往上仍是守衛
+        if (proto === null) return null;
+        protoTargets.add(proto);                       // 標記：這是原型面（ownKeys 只在這一面吵）
+        return guard(proto, `${label} 的原型`);          // 沿鏈往上仍是守衛
       },
       getOwnPropertyDescriptor: (target, key) => {
         if (typeof key === 'symbol' || GUARD_SKIP.has(String(key))) return Reflect.getOwnPropertyDescriptor(target, key);
@@ -671,10 +690,15 @@ async function renderAssetsHtml(db) {
         return d;
       },
       ownKeys: (target) => {
-        throw new Error(`渲染路徑列舉了 ${label} 的屬性名單（Object.keys／getOwnPropertyNames 之類）`
-          + '——那是功能偵測的另一張臉（名單裡有沒有某個 Chrome API，兩邊答案不同），'
-          + '而渲染路徑沒有列舉 DOM 物件屬性的合法理由。要有人回來看過本題（#413 r14 阻擋③）'
-          + `｜（target 有 ${Reflect.ownKeys(target).length} 個自有鍵，此訊息只為可讀性）`);
+        // **原型面**列名單＝功能偵測的另一張臉（名單裡有沒有某個 Chrome API，兩邊答案不同）⇒ 吵著紅。
+        // **實例面**放行（#413 r15 阻擋②）：瀏覽器 API 一律住原型，實例自有鍵兩邊一致、偵測不出環境；
+        // 而 JSON.stringify 這類合法序列化需要它——上一版一律丟錯，把合法寫法誤殺了。
+        if (protoTargets.has(target)) {
+          throw new Error(`渲染路徑列舉了 ${label} 的屬性名單（Object.keys／getOwnPropertyNames 之類）`
+            + '——原型面的名單在測試環境與真瀏覽器不同，那是功能偵測的另一張臉；'
+            + '渲染路徑沒有列舉 DOM 原型屬性的合法理由。要有人回來看過本題（#413 r14 阻擋③）');
+        }
+        return Reflect.ownKeys(target);
       },
       set: (target, key, v) => Reflect.set(target, key, v, target),
     });
