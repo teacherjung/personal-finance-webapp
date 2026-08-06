@@ -66,7 +66,7 @@
 //        延後一拍再改寫 innerHTML（`setTimeout(…, 0)`）是同一顆的第二種形狀。
 //        ⚠️ 上一版劃界寫的是「事件綁好之後的 DOM 行為不在射程內」——那句指的是 click handler，
 //        **讀不出「renderAssets 可以自己把剛印好的標籤拔掉」**，而斷言訊息「本題測到的 HTML 到不了畫面」
-//        反過來暗示綁對了就到得了畫面。現在這族收進射程（見 guardedNode／flushLater），劃界也改口。
+//        反過來暗示綁對了就到得了畫面。現在這族收進射程（真 DOM harness＋flushLater），劃界也改口。
 //    (b) **偏離判準只被「有錢的類別」壓著**：fixture 兩個類別的 value 都 > 0，於是判準多一個
 //        `r.value > 0` 的合取子完全無感——而後端對 value=0 的類別照舊發提醒，
 //        正是本題自己寫的「總覽說偏離、資產頁不標＝兩頁打架」。「目標 20% 卻一張都沒買」是偏離最大、
@@ -84,6 +84,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // 真正的 JS parser 與作用域分析（ESLint 自己用的那兩顆，隨 devDependency 的 eslint 一起裝）。
 // 為什麼不自己寫正則掃字串＝見 loadFrontendSubStatus 的「第二次教訓」。
+import { JSDOM } from 'jsdom';
 import { parse as parseJs } from 'espree';
 import { analyze as analyzeScopes } from 'eslint-scope';
 import { buildSummary, computeGoalTracking, monthKey, pairRefunds } from '../lib/derive.js';
@@ -506,27 +507,20 @@ function walkAst(node, visit) {
  *    匯出這一端也走匯出表（exportedLocalName），同檔改名匯出不會讓 sandbox 抄到沒人在跑的乾淨那份。
  *
  * ⚠️ 誠實劃界（擋不住什麼，逐條寫明）：
- *   1. 這是「原始碼搬進 sandbox 跑」，**不是真瀏覽器**：import 進來的東西全是替身
- *      （api／view／byId／esc／wan／CHART…）。所以驗到的是 assets.js 自己那段模板的產物——
- *      `esc()` 消毒得對不對、`CHART.orange` 實際是什麼顏色、CSS 有沒有把標籤藏起來，都不在射程內
- *      （前者有自己的考題：test/xss-id-escaping.test.js）。
- *      ⚠️ 所以這裡的用詞是「**印進 HTML**」而不是「使用者看得見」：這句是量過的——
- *      在版面上就給橘標籤與橘進度條各印一個 `hidden`（正式碼真的改了、瀏覽器上就消失了），
- *      本題照舊 7/7 全綠。「看得見」得靠真瀏覽器，本題證不了。
- *      （**印完再用節點去藏**是另一件事，那族由下一條的守衛收。）
- *   2. 只跑 `renderAssets()` 這一條路徑，讀的是它**最後留在** `view()` 的 HTML：跑完先把 sandbox 排的
- *      計時器全部放行、再讓真的 macrotask 走一拍、然後才讀（見 flushLater）。所以
- *      **「印完再把剛印好的標籤拔掉」算在射程內**——同一拍做的
- *      （`view().querySelectorAll('.tag.amber').forEach((el) => el.remove())`）與延後幾毫秒做的
- *      （`setTimeout` 裡改寫 innerHTML）都逐字重放過，都轉紅（#413 r5 的兩顆繞法）。
- *      ⚠️ 上一版這裡寫的是「事件綁好之後的 DOM 行為不在射程內」：那句指的是 click handler，
- *      卻**讀起來像連這族也放掉了**，而它當時真的是開著的洞。現在改口如上。
- *      守衛只發在**本題交出去的那幾個節點**上：`view()` 自己、`view().parentElement`、
- *      從 `view()` 或 `document` 撈回來的節點（見 guardedNode）。**使用者按下按鈕之後**
- *      handler 裡做什麼仍不在射程內（本題不點按鈕）。
- *      ⚠️ 假 DOM 沒有子樹，所以走 `children`／`firstElementChild` 那類寫法在 sandbox 裡會 TypeError
- *      ＝吵著紅、不是靜靜綠；但「真瀏覽器裡還有哪些路徑碰得到畫面」本題窮舉不了——
- *      這是替身 DOM 的界，不是「全部關上了」的保證。
+ *   1. 這是「原始碼搬進 sandbox＋jsdom 跑」，**不是真瀏覽器視窗**：import 進來的函式仍是替身
+ *      （api／esc／wan／CHART…），DOM 則是真的（jsdom）。驗到的是 assets.js 模板印進**活頁面**
+ *      的產物——`esc()` 消毒得對不對、`CHART.orange` 實際是什麼顏色、CSS 有沒有把標籤藏起來，
+ *      仍不在射程內（jsdom 不做排版與視覺；esc 有自己的考題：test/xss-id-escaping.test.js）。
+ *      ⚠️ 所以這裡的用詞是「**印進頁面**」而不是「使用者看得見」：給橘標籤印一個 `hidden`
+ *      屬性（瀏覽器上就消失了）本題照舊全綠。「看得見」得靠真瀏覽器＋排版引擎，本題證不了。
+ *   2. 只跑 `renderAssets()` 這一條路徑，斷言讀的是跑完（含放行計時器，見 flushLater）之後
+ *      **活頁面**上的 #view。**「印完再動 DOM」整族算在射程內、而且是如實反映**——拔標籤
+ *      （innerHTML 少字）、清 body／砍祖先（#view 直接從頁面消失、吵著紅）、換入口
+ *      （view()／byId／document／window 別名指的都是同一顆真 document）、先篩選或數筆數再動手
+ *      （真 DOM 的 matches 與筆數就是正式語意）。這一條是 r5–r9 五輪假 DOM 攻防的收官：
+ *      假 DOM 每答不準一個問題就是一顆靜默繞法（入口→別名→全域→判斷式→筆數），
+ *      真 DOM 讓那一整族沒有第二種答案。
+ *      **使用者按下按鈕之後** handler 裡做什麼仍不在射程內（本題不點按鈕）。
  *      ⚠️ 「資產頁真的由這一支渲染」**不是憑本題跑得動就成立的**，它由 assertAssetsRouteBinding
  *      另外斷言（`ROUTES.assets` 綁的就是本檔這支匯出）——上一版這裡寫「改由別的函式渲染會吵著紅」，
  *      那句話當時**沒有任何東西撐著、而且是假的**：複驗者留著原 renderer、另接一支先呼叫它再從 DOM
@@ -548,35 +542,17 @@ async function renderAssetsHtml(db) {
   topLevelDef(mod, exported);                  // 頂層唯一一份宣告（改名／轉手匯出都吵著紅）
   assertAssetsRouteBinding();                  // 正式資產頁真的接到這一支（見該函式：#413 r4 的阻擋繞法）
   const { body, needs } = moduleAsScript(mod);
-  const el = () => {
-    const node = {
-      innerHTML: '', value: '', className: '', disabled: false, style: {}, dataset: {},
-      querySelector: () => el(), querySelectorAll: () => [], addEventListener() { },
-      parentElement: { innerHTML: '' },
-    };
-    return node;
-  };
-  // 「印完之後又去改畫面」的記帳簿（見 guardedNode／劃界第 2 條）：非空＝本題斷言的 HTML 到不了畫面。
-  /** @type {string[]} */
-  const domEdits = [];
-  // 撈節點的**選擇器白名單**（#413 r8 阻擋的教訓）：正式渲染路徑只用這兩個選擇器、
-  // 對撈回的節點只做「讀 dataset＋掛 onclick」。假 DOM 不可能逼真（matches()、集合筆數
-  // 都答不準——r8 就是用「先 matches 篩選再移除」與「只動第二顆節點」兩個變體穿過去的），
-  // 所以不追逼真、改收行為：**白名單外的選擇器一呼叫就記帳**，之後它拿節點做什麼都不重要了。
-  // 代價照舊＝正式碼日後新增合法選擇器時本題會紅、要有人回來看過（guardedNode 檔頭同款取捨）。
-  const LEGIT_SELECTORS = ['[data-edit]', '[data-del]'];
-  const pickNode = (/** @type {string} */ entrance, /** @type {any} */ s) => {
-    if (!LEGIT_SELECTORS.includes(String(s))) {
-      domEdits.push(`${entrance}('${s}') 用了白名單外的選擇器（合法渲染只撈 ${LEGIT_SELECTORS.join('、')}）`);
-    }
-    return guardedNode(`${entrance}('${s}') 撈到的節點`, domEdits, []);
-  };
-  const viewEl = guardedNode('view()', domEdits, ['innerHTML'], {
-    querySelector: (/** @type {any} */ s) => pickNode('view().querySelector', s),
-    querySelectorAll: (/** @type {any} */ s) => [pickNode('view().querySelectorAll', s)],
-    // parentElement 不再另發：guardedNode 預設就是惰性遞迴守衛（#413 r6）——只有一份機制，沒有第二種祖先。
-  });
-  // sandbox 自己的計時器：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**（見 flushLater）。
+  // ---------- 真 DOM（#413 r10：jsdom，William 2026-08-06 拍板） ----------
+  // r5–r9 五輪攻防的結論：用「假 DOM」守「畫面不被渲染路徑事後改動」，假 DOM 就得誠實回答
+  // **所有**問題——r5 入口（view()）、r6 入口別名與祖先鏈、r7 window 系全域別名、r8 判斷式
+  // 說謊（matches() 恆 false）、r9 集合筆數說謊（白名單內查詢恆回 1 顆，真實頁面是 0 顆，
+  // 「有沒有東西」被拿來當開關）。每一個答不準的地方都是一顆靜默繞法，追逼真是重造半個
+  // 瀏覽器的無底洞。根治＝不再假裝：這裡就是一顆規格級 DOM（jsdom，僅測試用相依），
+  // 查詢、篩選、筆數、祖先、別名全部如實反映渲染結果，說謊面整族消失。
+  const dom = new JSDOM('<!doctype html><html><body><main id="view"></main></body></html>');
+  const win = dom.window;
+  const doc = win.document;
+  // sandbox 自己的計時器（照舊）：排給「稍後」的工作，跑完 renderAssets 之後**全部放行**。
   /** @type {(() => any)[]} */
   const scheduled = [];
   const later = (/** @type {any} */ fn, /** @type {any} */ _ms, /** @type {any[]} */ ...args) => {
@@ -605,57 +581,22 @@ async function renderAssetsHtml(db) {
         if (path === '/summary') return buildSummary(db);    // 正式環境的 /summary 就是這個函式的輸出
         throw new Error(`本題只餵了 /db 與 /summary 的替身，資產頁多打了 ${path}（要有人回來更新本題）`);
       },
-      view: () => viewEl,
-      // ⚠️ `byId('view')` 與 `document.getElementById('view')` 必須回**同一顆守衛節點**（#413 r5 阻擋）：
-      //    上一版這兩個入口都回沒有守衛的 el()，於是「印完再把 .tag.amber 拔掉」只要換用
-      //    `document.getElementById('view').querySelectorAll(...)` 就靜靜全綠（複驗者實測 7/7 綠）。
-      //    ⚠️ 誠實劃界：**其他 id 仍回沒有守衛的替身**。理由＝在真瀏覽器裡，要拔掉本題驗的那段 HTML，
-      //    拿到的節點必須是 `#view` 或它的祖先。祖先的兩條路：`parentElement` 往上＝守衛節點的
-      //    惰性遞迴鏈，爬多高都記帳（#413 r6 修正：上一版第二層起是普通物件、寫入不記帳，
-      //    這句劃界當時是假的）；`document.body`／`documentElement`＝守衛節點（#413 r8 起，
-      //    含經由 window／self／top／parent／frames 別名進來的路），寫入一律記帳。
-      byId: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
+      // view／byId 都指到**同一顆真 document**：r5/r6 的「換個入口撈節點」不再有第二種答案，
+      // 渲染印出來的 id（pie／addAcc…）也由真 DOM 自然解析——replace 假 el() 的整套需求消失。
+      view: () => doc.getElementById('view'),
+      byId: (/** @type {any} */ id) => doc.getElementById(String(id)),
       currentRouteSeq: () => 1,
       esc, wan: num, money: num, moneyCur: num, pct: num,
     },
     './theme.js': { CHART: { orange: ORANGE, green: GREEN }, PALETTE: ['#000'], AXIS: '#000' },
     './icons.js': { icon: () => '' },
   };
-  // 這台 node 沒有的瀏覽器全域（依名字配，全域本來就只有名字這一個身分）。
-  // `document` 也發守衛節點：從 document 那頭撈 `.tag.amber` 再 remove()，是 view() 那顆繞法換個入口。
-  // `body`／`documentElement` 同樣上守衛（#413 r7 阻擋的教訓：這兩顆是 #view 的祖先，寫它們＝清整頁）。
-  /** @type {Record<string, any>} */
-  const docStub = {
-    // document 端**沒有任何合法的 query**（正式渲染一律走 view()），所以一呼叫就記帳（#413 r8）。
-    querySelector: (/** @type {any} */ s) => {
-      domEdits.push(`document.querySelector('${s}') 被呼叫（渲染路徑沒有合法的 document 查詢）`);
-      return guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []);
-    },
-    querySelectorAll: (/** @type {any} */ s) => {
-      domEdits.push(`document.querySelectorAll('${s}') 被呼叫（渲染路徑沒有合法的 document 查詢）`);
-      return [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])];
-    },
-    getElementById: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
-    createElement: () => el(),
-    body: guardedNode('document.body', domEdits, []),
-    documentElement: guardedNode('document.documentElement', domEdits, []),
-    /** @type {any} */ defaultView: null,        // 指回 winStub（見下），關掉 document.defaultView.document 的環狀入口
-  };
-  // 同一扇門的所有標準別名共用同一顆替身（#413 r7 阻擋：`window.document.body.innerHTML = ''`
-  // 在真瀏覽器清空整頁，而 sandbox 的 `window` 這個名字落到無害替身＝靜靜吞掉、7 題照綠。
-  // 病是「列舉入口補不完」那型，所以不逐名補洞、改**收斂成一顆**：window／self／top／parent／frames
-  // 互相自指、document 全指同一顆守衛版——從哪個別名爬進來，落點都一樣會記帳。
-  // node 沒有這五個全域，所以正式碼不碰它們時 needs 根本不會列＝零影響；`globalThis.document`
-  // 在 node 是 undefined ⇒ 一碰就 TypeError 吵著紅，不需要替身。）
-  /** @type {any} */
-  const winStub = { document: docStub };
-  for (const alias of ['window', 'self', 'top', 'parent', 'frames']) winStub[alias] = winStub;
-  docStub.defaultView = winStub;
+  // 這台 node 沒有的瀏覽器全域＝一律給真 DOM 的那一份；window 的標準別名（r7 那一族）同一顆。
   /** @type {Record<string, any>} */
   const globalStubs = {
     Chart: class { destroy() { } },
-    document: docStub,
-    window: winStub, self: winStub, top: winStub, parent: winStub, frames: winStub,
+    document: doc,
+    window: win, self: win, top: win, parent: win, frames: win,
   };
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
   // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
@@ -674,70 +615,16 @@ async function renderAssetsHtml(db) {
   await flushLater();                                    // 排給「稍後」的工作先跑完
   await new Promise((r) => setTimeout(r, 0));             // 再讓真的 macrotask 走一拍（沒經過計時器替身的 fire-and-forget）
   await flushLater();
-  assert.deepEqual(domEdits, [],
-    'renderAssets 印完 HTML 之後又去改動畫面上的節點：'
-    + `${domEdits.join('；')}——本題斷言的 HTML 因此到不了畫面（#413 r5 的繞法：`
-    + '把剛印好的 `.tag.amber` 從 DOM 拔掉）。正式碼那兩處 [data-edit]／[data-del] 只掛 onclick，'
-    + '不做結構性改動；真要在渲染路徑上動節點，得有人回來看過本題才算');
-  return viewEl.innerHTML;
+  // 斷言讀「**活的**頁面」：從 document 根重新查，不抓舊參照——
+  // 清空 body／砍祖先 ⇒ #view 從頁面上消失（下一行吵著紅）；
+  // 拔標籤／改內容 ⇒ innerHTML 如實少字（各題的內容斷言紅）。這正是假 DOM 五輪都做不到的一句話。
+  const live = doc.getElementById('view');
+  assert.ok(live, '渲染跑完後 #view 已不在頁面上（渲染路徑動到 #view 以外的節點——真瀏覽器裡等於整頁被清）');
+  const html = live.innerHTML;
+  win.close();
+  return html;
 }
 
-/**
- * 一顆「寫進去會被記帳」的 DOM 節點替身：`allowWrite` 列的鍵與 `on…` 事件屬性放行，
- * 其餘的屬性寫入（innerHTML／hidden／className／style.…）與結構性方法（remove／replaceWith／
- * setAttribute／classList.add…）都往 `edits` 記一筆，由呼叫端在最後一起吵著紅。
- *
- * ⚠️ 這顆存在的唯一理由＝#413 r5 的阻擋繞法（值得原地逐字記下來）：上一版的假 view 元素把 innerHTML
- *    當純字串存、`querySelectorAll` 一律回 `[]`，於是正式碼「**寫完再讀回 DOM 改掉**」這一手本題完全
- *    看不見。複驗者把 r4 那顆 wrapper 的內容搬進 renderAssets 自己的尾巴（`view()
- *    .querySelectorAll('.tag.amber').forEach((el) => el.remove())`）——路由綁定沒變、匯出沒變、
- *    模組沒變，正式資產頁的橘色偏離標籤全部消失，而 7 題全綠、完整套件全綠、typecheck／lint 全綠。
- *
- * 放行清單是**白名單**（不是列舉繞法）：正式碼在渲染路徑上對撈回來的節點只做兩件事——
- * 讀（`b.dataset.edit`）與掛事件（`b.onclick = …`）——所以只放行這兩類，其餘一律記帳。
- * 沒被預期的方法呼叫（`b.children[0]`、`b.closest(…)` 這種）在這顆替身上直接 TypeError＝吵著紅，
- * 也不會靜靜通過。代價是**日常改動真的要動節點時本題會紅**，要有人回來看過——那是刻意的。
- */
-function guardedNode(label, edits, allowWrite = [], seed = {}) {
-  const note = (/** @type {string} */ what) => { edits.push(`${label} ${what}`); };
-  /** @type {any} */
-  // 祖先鏈**惰性遞迴守衛**（#413 r6 阻擋：上一版這裡是顆普通物件 `{ innerHTML: '' }`，
-  // 於是 `view().parentElement.parentElement.innerHTML = ''`——真瀏覽器裡等於清空整頁——
-  // 完全不記帳、7 題照綠；而下面 byId 那段註解還宣稱「祖先一碰就 TypeError」＝假劃界。
-  // 改法：存取才生下一層守衛節點，爬多高都記帳，永遠不會爬到一顆沒人看守的物件。）
-  let lazyParent = null;
-  const node = {
-    innerHTML: '', value: '', className: '', hidden: false, disabled: false, dataset: {}, tagName: 'DIV',
-    // 讀 DOM 的判斷式也記帳（#413 r8 阻擋）：假 DOM 答不準 matches()／getAttribute()，
-    // 與其回一個「聽起來合理但錯」的固定值讓條件式靜靜走岔（r8 的變體正是「先篩選再移除」），
-    // 不如一呼叫就記帳——渲染路徑對撈回節點的合法行為只有「讀 dataset、掛 onclick」兩種。
-    getAttribute: (/** @type {any} */ k) => { note(`getAttribute('${k}') 被呼叫`); return null; },
-    hasAttribute: (/** @type {any} */ k) => { note(`hasAttribute('${k}') 被呼叫`); return false; },
-    matches: (/** @type {any} */ s) => { note(`matches('${s}') 被呼叫`); return false; },
-    addEventListener() { }, removeEventListener() { },
-    get parentElement() {
-      if (!lazyParent) lazyParent = guardedNode(`${label}.parentElement`, edits, []);
-      return lazyParent;
-    },
-    classList: { contains: (/** @type {any} */ c) => { note(`classList.contains('${c}') 被呼叫`); return false; } },
-    style: new Proxy({}, {
-      set: (t, k, v) => { note(`style.${String(k)} 被改寫`); return Reflect.set(t, k, v); },
-    }),
-    ...seed,
-  };
-  for (const m of ['add', 'remove', 'toggle', 'replace']) node.classList[m] = () => note(`classList.${m}() 被呼叫`);
-  for (const m of ['remove', 'replaceWith', 'replaceChildren', 'insertAdjacentHTML', 'insertAdjacentElement',
-    'setAttribute', 'removeAttribute', 'append', 'prepend', 'appendChild', 'removeChild', 'insertBefore']) {
-    node[m] = () => note(`${m}() 被呼叫`);
-  }
-  return new Proxy(node, {
-    set: (t, k, v) => {
-      const key = String(k);
-      if (!allowWrite.includes(key) && !/^on[a-z]+$/.test(key)) note(`的 ${key} 被改寫`);
-      return Reflect.set(t, k, v);
-    },
-  });
-}
 
 /**
  * 把一支瀏覽器模組整支轉成「`new Function` 裡跑得動的 script」：切掉 import 宣告與 export 關鍵字，
