@@ -9,6 +9,7 @@ import { rowFees, rowNetSigned } from './securities-view.js';
 import { scorecardResult } from './stock-research-score.js';
 import { stockFundamentalsHtml } from './stock-research-fundamentals.js';
 import { ACCENT } from './theme.js';
+import { workspaceTabsHtml } from './workspace-tabs.js';
 
 /** 就地白話解釋。P4 只負責把 data-stock-info 接到 openInfo。 */
 export const STOCK_RESEARCH_INFO = Object.freeze({
@@ -42,12 +43,12 @@ const BREAKER_STATUS = Object.freeze({
 });
 
 export const STOCK_RESEARCH_TABS = Object.freeze([
-  Object.freeze({ key: 'overview', label: '總覽' }),
-  Object.freeze({ key: 'fundamentals', label: '基本面' }),
-  Object.freeze({ key: 'score', label: '評分' }),
-  Object.freeze({ key: 'valuation', label: '估值' }),
-  Object.freeze({ key: 'thesis', label: '論點與追蹤' }),
-  Object.freeze({ key: 'trades', label: '交易' })
+  Object.freeze({ key: 'overview', label: '總覽', icon: 'dashboard' }),
+  Object.freeze({ key: 'fundamentals', label: '基本面', icon: 'file' }),
+  Object.freeze({ key: 'score', label: '評分', icon: 'star' }),
+  Object.freeze({ key: 'valuation', label: '估值', icon: 'pie' }),
+  Object.freeze({ key: 'thesis', label: '論點與追蹤', icon: 'bulb' }),
+  Object.freeze({ key: 'trades', label: '交易', icon: 'repeat' })
 ]);
 
 /** @param {unknown} value */
@@ -245,7 +246,7 @@ function headerHtml(view, h) {
       </div>
     </div>
     <div class="page-actions">
-      <a class="btn-ghost stock-back-link" href="#ib">${icon('trending', 16)}回投資組合</a>
+      <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       ${action}
     </div>
   </header>`;
@@ -253,14 +254,13 @@ function headerHtml(view, h) {
 
 /** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
 function tabsHtml(view, h) {
-  const links = STOCK_RESEARCH_TABS.map(tab => {
-    const active = tab.key === view.activeTab;
-    const href = `#stock?symbol=${encodeURIComponent(view.symbol)}&tab=${encodeURIComponent(tab.key)}`;
-    return `<a id="stock-tab-${tab.key}" class="stock-tab${active ? ' active' : ''}" href="${h.e(href)}"${active ? ' aria-current="page"' : ''}>${tab.label}</a>`;
-  }).join('');
-  return `<nav class="stock-tabs" aria-label="個股研究分頁">
-    <div class="stock-tabs-track">${links}</div>
-  </nav>`;
+  return workspaceTabsHtml({
+    tabs: STOCK_RESEARCH_TABS,
+    activeKey: view.activeTab,
+    ariaLabel: '個股研究分頁',
+    idPrefix: 'stock-tab',
+    hrefFor: tab => `#stock?symbol=${encodeURIComponent(view.symbol)}&tab=${encodeURIComponent(tab.key)}`
+  }, { esc: h.e });
 }
 
 /** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
@@ -378,7 +378,7 @@ function valuationHtml(view, h) {
   ].map(([key, label]) => {
     const value = finiteOrNull(valuation[key]);
     const distance = valuationDistance(view.quote.price, view.quote.currency, value, currency);
-    return `<div class="stock-valuation-row">
+    return `<div class="stock-valuation-row ${key}">
       <b>${label}</b>
       <span class="num">${value == null ? '尚未填寫' : `${plainNumber(value, 4)} ${h.e(currency)}`}</span>
       <span class="muted">${distanceText(distance)}</span>
@@ -496,7 +496,7 @@ function tradesHtml(view, h) {
 /** @param {ReturnType<typeof buildStockResearchViewModel>} view @param {ReturnType<typeof createHtmlHelpers>} h */
 function missingResearchHtml(view, h) {
   return `<section class="stock-research-empty">
-    <span>${icon('bulb', 28)}</span>
+    <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
     <h2>${h.e(view.symbol)} 尚未撰寫研究</h2>
     <p>目前可以先查持股與交易紀錄；建立研究後，這裡會顯示投資論點、評分、估值與檢查點。</p>
     <button type="button" class="btn" data-stock-create>${icon('plus', 16)}建立研究</button>
@@ -542,10 +542,10 @@ export function stockResearchViewHtml(input, formatters) {
     return `<div class="stock-research-page">
       ${headerHtml(view, h)}
       <section class="stock-research-empty">
-        <span>${icon('trending', 28)}</span>
+        <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>請先選擇一檔個股</h2>
         <p>請從投資組合的個股代號進入研究頁。</p>
-        <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
+        <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       </section>
     </div>`;
   }
@@ -554,19 +554,21 @@ export function stockResearchViewHtml(input, formatters) {
     return `<div class="stock-research-page">
       ${headerHtml(view, h)}
       <section class="stock-research-empty">
-        <span>${icon('bulb', 28)}</span>
+        <img class="stock-empty-guide" src="assets/guide-return-neutral.webp" alt="" />
         <h2>${h.e(view.symbol)} 尚無持股或研究資料</h2>
         <p>這個網址不會自動建立空白研究；請先從投資組合的個股入口進入。</p>
-        <a class="btn-ghost stock-back-link" href="#ib">回投資組合</a>
+        <a class="btn-ghost stock-back-link" href="#ib">${icon('arrow-left', 16)}回投資組合</a>
       </section>
     </div>`;
   }
 
   return `<div class="stock-research-page" data-stock-symbol="${h.e(view.symbol)}">
     ${headerHtml(view, h)}
-    ${tabsHtml(view, h)}
-    <section class="stock-tab-panel" id="stock-panel-${h.e(view.activeTab)}" aria-labelledby="stock-tab-${h.e(view.activeTab)}" data-stock-tab="${h.e(view.activeTab)}">
-      ${activeTabHtml(view, h)}
-    </section>
+    <div class="workspace-tabs-shell stock-research-workspace">
+      ${tabsHtml(view, h)}
+      <section class="workspace-tabs-panel stock-tab-panel" id="stock-panel-${h.e(view.activeTab)}" aria-labelledby="stock-tab-${h.e(view.activeTab)}" data-stock-tab="${h.e(view.activeTab)}">
+        ${activeTabHtml(view, h)}
+      </section>
+    </div>
   </div>`;
 }

@@ -598,7 +598,7 @@ const MANIFEST = {
       'test/codex-r11.test.js',
       'test/derive-reminders.test.js',
       'test/derive.test.js',
-      'test/heavy-admission.test.js', 'test/ib-parser-money.test.js',
+      'test/heavy-admission.test.js', 'test/ib-parser-money.test.js', 'test/ib-sync-integrity.test.js',
       'test/insights.test.js', 'test/securities-sync.test.js',
       'test/portfolio-calculations.test.js',
       'test/portfolio-editors.test.js',
@@ -1075,9 +1075,9 @@ function stripComments(src) {
  * 而讀那份契約的人不會被導到它」。清單裡的東西可以慢慢還（挑一個歸進某個領域，同時改 README 路由列
  * 與 manifest，然後從這裡刪掉）；**不可以默默變長**——變長就是又發生一次「兩邊一起漏列」。
  *
- * ⚠️ 為什麼不是「一次全部歸戶」：這 15 個檔案該落在哪個領域是**人的判斷**（`icons.js` 與 `theme.js`
+ * ⚠️ 為什麼不是「一次全部歸戶」：這批檔案該落在哪個領域是**人的判斷**（`icons.js` 與 `theme.js`
  * 被十幾個頁面模組共用、`safe-map.js` 是後端共用底層），逐一決定要一支專門的 PR；
- * #409 是「彈窗下拉不可靜靜改資料」那一支，把 15 個檔案的歸屬順手決定掉會讓真正的改動看不見。
+ * #409 是「彈窗下拉不可靜靜改資料」那一支，把整批檔案的歸屬順手決定掉會讓真正的改動看不見。
  */
 const UNDECLARED_IMPORTED = [
   'lib/is-main.js',                          // ← server.js（「被直接執行還是被 import」判斷）
@@ -1095,6 +1095,7 @@ const UNDECLARED_IMPORTED = [
   'public/modules/subscriptions-report.js',  // ← subscriptions.js
   'public/modules/theme.js',                 // ← 十一個模組（圖表色單一真相，AGENTS 地雷 2 點名）
   'public/modules/tx-sort.js',               // ← settings.js／cashflow.js／securities.js／transactions.js
+  'public/modules/workspace-tabs.js',        // ← stock-research-view.js（#415 森林頁籤引入；歸屬待定，合併 main 時入帳 2026-08-06）
 ];
 
 test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自己也要被宣告（關掉「兩邊一起漏列」的盲區）', () => {
