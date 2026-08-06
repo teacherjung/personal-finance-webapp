@@ -374,7 +374,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .assets-account-table th:last-child { width: 88px; }
 .asset-account-type { background: var(--accent-soft); color: var(--accent-ink); }
 
-@media (max-width: 1000px) {
+@media (max-width: 1120px) {
   .assets-layout { grid-template-columns: 1fr; }
   .asset-chart-box { height: 280px; }
 }

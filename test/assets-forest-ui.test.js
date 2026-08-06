@@ -93,7 +93,7 @@ function assertAssetsCss(css) {
   assert.match(block, /\.assets-layout \{[^}]*grid-template-columns: minmax\(300px, \.82fr\) minmax\(460px, 1\.18fr\);/);
   assert.match(block, /\.asset-allocation-track \{[^}]*border: 1px solid var\(--frame\);/);
   assert.match(block, /\.asset-allocation-fill \{[^}]*background: var\(--accent\);/);
-  assert.match(block, /@media \(max-width: 1000px\) \{[\s\S]*\.assets-layout \{ grid-template-columns: 1fr; \}/);
+  assert.match(block, /@media \(max-width: 1120px\) \{[\s\S]*\.assets-layout \{ grid-template-columns: 1fr; \}/);
   assert.match(block, /@media \(max-width: 700px\) \{[\s\S]*\.asset-kpi-frame \{ grid-template-columns: 1fr; \}/);
   assert.match(block, /\.assets-account-table \{ min-width: 660px; \}/);
 
@@ -126,6 +126,13 @@ test('資產配置 UI：拿掉根節點、手機堆疊或改回綠色容器時�
   assert.throws(() => assertAssetsCss(mutateAssetsCss(css,
     'background: var(--card);\n  border: 1px solid var(--line);',
     'background: var(--pos-soft);\n  border: 1px solid var(--line);')));
+});
+
+test('資產配置 UI：側欄仍在的中間寬度必須先切成單欄，避免整頁水平溢出', () => {
+  const css = read('public/styles.css');
+  assert.throws(() => assertAssetsCss(mutateAssetsCss(css,
+    '@media (max-width: 1120px)',
+    '@media (max-width: 1000px)')));
 });
 
 test('資產配置 UI：把 route guard 或輸出消毒改成註解時考題會紅', () => {
