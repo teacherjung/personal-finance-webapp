@@ -7,6 +7,7 @@ import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } 
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
+import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
@@ -306,8 +307,9 @@ export async function renderSettings() {
         const subSel = root.querySelector('#f_subcategory');
         const fill = (/** @type {string} */ parent, /** @type {string} */ curSub) => {
           const subs = ['', ...((Object.hasOwn(expTree || {}, parent) && (expTree || {})[parent]) || [])];   // hasOwn（Codex r8#3）：同 transactions.js subOptions
-          if (curSub && !subs.includes(curSub)) subs.unshift(curSub);
-          subSel.innerHTML = subs.map(x => `<option value="${esc(x)}" ${x === curSub ? 'selected' : ''}>${x === '' ? '（不分子類）' : esc(x)}</option>`).join('');
+          // 「保留清單外的現值」＋拼 <option> 都交給 form-options.js（#409 自審把三份抄本收成一份；
+          // 這一處本來就有保留、行為不變——但抄本只要留著，下一個人就可能再漏一次）。
+          subSel.innerHTML = subcategoryOptionsHtml(subs, curSub);
         };
         fill(catSel.value, sub0);
         catSel.onchange = () => fill(catSel.value, '');
