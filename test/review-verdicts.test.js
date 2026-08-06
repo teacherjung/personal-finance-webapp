@@ -456,3 +456,300 @@ test('結論行｜倒過來之後，日常句型仍然不可以被誤擋', () =>
     '修完就可以合併嗎？',
   ]) assert.equal(looksLikeVerdict(body), false, `誤擋：「${body.replace(/\n/g, ' ')}」`);
 });
+
+// ── 重述（2026-08-06，William 裁決 B：壞標頭的唯一救濟）──────────────────────
+// 起因＝真實事故：發射提示沒列出三個合規字串，五支 PR 的歷史留言裡都有「要求修改」「通過（無阻擋）」
+// 這類壞標頭 ⇒ 永久阻擋、補新留言也清不掉。機制的設計原則：**重述唯一的新權力是「把讀不懂的
+// 翻譯成讀得懂的」，判定規則一格都沒放寬**——下面每一條都在釘這句話的一個角。
+
+const MAL_FIRST = '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改';
+const MAL = `${MAL_FIRST}\n\n細節略。`;
+/** 合規重述：Codex 自己在 r7 的通過留言裡，把壞掉的 r6 翻譯成三選一。 */
+const RESTATE_OK = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+  + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+
+test('⭐ 重述｜同一位審查者逐字重述自己的壞標頭 → 不再阻擋，照常放行', () => {
+  const { problems, warnings } = verdictProblems([c(MAL), c(RESTATE_OK)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], problems.join('｜'));
+  assert.ok(warnings.some((w) => /重述行接管/.test(w)), '要留一句可稽核的警告，說明壞留言被誰接管');
+});
+
+test('⭐ 重述｜別人不能替我重述（引文裡的角色來源 ≠ 重述者 → 無效）', () => {
+  // 危險情境：實作者替審查者「重述」，把審查者一則打壞的阻擋靜靜洗掉。
+  const byClaude = `${head('Claude', '桌面', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：通過｜原第一行：「${MAL_FIRST}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(byClaude)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `壞標頭必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /只能重述\*\*自己\*\*/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜引文對不上＝不清除（而且要出聲說引文空轉）', () => {
+  const wrongQuote = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修正」';
+  const { problems, warnings } = verdictProblems([c(MAL), c(wrongQuote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `引文差一個字就不可以清：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /對不上任何壞標頭留言/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜輪次不小於自己 → 無效（防止用重述行造出更高輪的「通過」）', () => {
+  const selfPromote = `${head('Codex', 'CLI（xhigh）', 'abc1234', 7, '需修改後再審')}\n`
+    + `重述 r8｜審 \`${HEAD}\`｜結論：通過｜原第一行：「${MAL_FIRST}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(selfPromote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), '無效重述不可清除壞標頭');
+  assert.ok(warnings.some((w) => /不小於這則留言自己的/.test(w)), warnings.join('｜'));
+  // 而且那個假造的 r8「通過」**不可以**變成放行票
+  assert.ok(problems.some((p) => /沒有「Codex」對目前的 head|還沒有被同一位審查者撤銷/.test(p)),
+    `重述行不可以生出放行票：${problems.join('｜')}`);
+});
+
+test('⭐ 重述｜對聯集裁決零影響：空轉的重述行（含阻擋結論）不改變任何判定', () => {
+  // ⚠️ 這一題的第一版是**假比較**（#418 r1 阻擋④）：withLine 有壞留言、noLine 連壞留言一起刪掉，
+  //    兩邊本來就都是 []＝比了個寂寞。真相是：重述**會**改變「壞標頭那條阻擋」（那正是它的目的），
+  //    所以「改變不了判定」是 overclaim。誠實的說法＝重述唯一能改變的是壞標頭那條；
+  //    **對聯集的裁決（誰通過、誰阻擋、放行票）零影響**——這一題釘的是後半句：
+  //    同一批留言，唯一差別是一行「不可合併」的重述（引文空轉、對不上任何壞留言），判定必須一字不差。
+  const base = [c(head('Codex', 'CLI（xhigh）', 'abc1234', 6, '需修改後再審')),
+    c(head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'))];
+  const withLine = [base[0], c(`${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '重述 r5｜審 `abc1234`｜結論：不可合併｜原第一行：「🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r5｜結論：亂寫」')];
+  const a = verdictProblems(withLine, HEAD, 'Codex');
+  const b = verdictProblems(base, HEAD, 'Codex');
+  assert.deepEqual(a.problems, b.problems, '重述行（即使寫著不可合併）不可以改變聯集的判定');
+  assert.deepEqual(a.problems, [], a.problems.join('｜'));
+  assert.ok(a.warnings.some((w) => /對不上任何壞標頭留言/.test(w)), '空轉要出聲');
+});
+
+test('⭐ 重述｜清不掉**合規**結論的阻擋（引用合規阻擋的第一行＝空轉，阻擋照舊）', () => {
+  // 重述只對「壞標頭」有效；合規的阻擋只能靠同一位審查者的更新輪次撤銷。
+  const blockLine = head('Codex', 'CLI（xhigh）', HEAD, 8, '需修改後再審');
+  const tryToClear = `${head('Codex', 'CLI（xhigh）', 'abc1234', 9, '通過')}\n`   // r9 通過但審的是舊 sha
+    + `重述 r8｜審 \`${HEAD}\`｜結論：通過｜原第一行：「${blockLine}」`;
+  const { problems } = verdictProblems([c(blockLine), c(tryToClear)], HEAD, 'Codex');
+  assert.ok(problems.length > 0, `合規阻擋不可以被重述洗掉：${problems.join('｜')}`);
+});
+
+test('重述｜結論不是三選一／讀不出引文身分 → 各自無效並出聲', () => {
+  const badVerdict = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：大致通過｜原第一行：「${MAL_FIRST}」`;
+  const r1 = verdictProblems([c(MAL), c(badVerdict)], HEAD, 'Codex');
+  assert.ok(r1.problems.some((p) => /標頭格式不合規/.test(p)));
+  assert.ok(r1.warnings.some((w) => /不是三選一/.test(w)), r1.warnings.join('｜'));
+  const noIdentity = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「結論：要求修改（沒有標頭的那種）」';
+  const r2 = verdictProblems([c('🤖 這則壞掉了而且讀不出身分'), c(noIdentity)], HEAD, 'Codex');
+  assert.ok(r2.problems.some((p) => /標頭格式不合規/.test(p)), '讀不出身分的壞留言不可重述＝維持阻擋（fail-closed）');
+  assert.ok(r2.warnings.some((w) => /讀不出「誰寫的/.test(w)), r2.warnings.join('｜'));
+});
+
+test('重述｜寫在 code fence 或引用裡的重述行不算（範例不是重述）', () => {
+  const fenced = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '```\n重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「' + MAL_FIRST + '」\n```';
+  const { problems } = verdictProblems([c(MAL), c(fenced)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), 'fence 裡的範例不可以真的清除壞標頭');
+});
+
+test('AGENTS.md 要寫下重述行的逐字格式（機制只活在腳本裡＝寫壞標頭的人不知道怎麼自救）', () => {
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(agents.includes('重述 r<輪次>｜審'), 'AGENTS.md 找不到重述行的逐字格式');
+  assert.ok(agents.includes('造不出放行票'), 'AGENTS.md 要寫明重述沒有裁決權（造不出放行票、清不掉合規阻擋）——不然會被當成第二條放行通道');
+});
+
+test('⭐ 重述｜四反引號 fence、縮排 code、引用的 lazy continuation——範例都不可以生效（#418 r1①）', () => {
+  const line = `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+  // 寬鬆剝除器用「第一個字元相同」就算關柵欄：四反引號開、三反引號關會被提早關掉，內容漏出來
+  const fence4 = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'),
+    '````', '```', line, '````'].join('\n');   // 四反引號開、三反引號在內容裡、四反引號關
+  const indent = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n\n    ${line}`;
+  const lazy = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n> 範例如下（別人的重述長這樣）：\n${line}`;
+  for (const [name, body] of [['四反引號 fence', fence4], ['縮排 code', indent], ['lazy continuation', lazy]]) {
+    const { problems } = verdictProblems([c(MAL), c(body)], HEAD, 'Codex');
+    assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+      `${name} 裡的重述範例不可以真的清除壞標頭：${problems.join('｜')}`);
+  }
+});
+
+test('⭐ 重述｜壞行中段嵌入別人的身分——身分只認**行首**（#418 r1②）', () => {
+  // 壞行以 Claude 開頭、中段嵌一段假的 Codex 身分；Codex 逐字引用整行也不可以清掉它。
+  const evil = '🤖 Claude - 補充說明 🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改';
+  const restate = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${evil}」`;
+  const { problems } = verdictProblems([c(evil + '\n內文')], HEAD, 'Codex');
+  const r = verdictProblems([c(evil + '\n內文'), c(restate)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), '前置：這則壞留言要先是阻擋');
+  assert.ok(r.problems.some((p) => /標頭格式不合規/.test(p)),
+    `行首是 Claude 的壞留言，Codex 不可以靠中段嵌的假身分清掉：${r.problems.join('｜')}`);
+  assert.ok(r.warnings.some((w) => /讀不出「誰寫的/.test(w)), r.warnings.join('｜'));
+});
+
+test('⭐ 重述｜引文是逐字比對——中間多一個空白就不算引中（#418 r1③）', () => {
+  const spaced = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST.replace('🤖 Codex', '🤖  Codex')}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(spaced)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `引文多一個空白＝沒有引中，不可以清：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /對不上任何壞標頭留言/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜HTML 註解、清單裡的柵欄、清單裡引用的 lazy continuation——容器裡的範例也不可以生效（#418 r2）', () => {
+  const line = '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「' + MAL_FIRST + '」';
+  const hdr = head('Codex', 'CLI（xhigh）', HEAD, 7, '通過');
+  const cases = [
+    ['HTML 註解', [hdr, '<!--', line, '-->'].join('\n')],
+    ['清單裡的四反引號柵欄', [hdr, '- ````text', line, '````'].join('\n')],
+    ['編號清單裡的波浪柵欄', [hdr, '1. ~~~~text', line, '~~~~'].join('\n')],
+    ['清單裡引用的 lazy continuation', [hdr, '- > 範例如下：', line].join('\n')],
+  ];
+  for (const [name, body] of cases) {
+    const { problems } = verdictProblems([c(MAL), c(body)], HEAD, 'Codex');
+    assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+      `${name} 裡的重述範例不可以真的清除壞標頭：${problems.join('｜')}`);
+  }
+});
+
+test('⭐ 重述｜sha 與輪次要綁引文——低輪重述不可以洗掉高輪阻擋（#418 r3 High①）', () => {
+  // 攻擊劇本（審查者實測過 v3 會中）：壞留言是「r8 對目前 head 的阻擋」，重述者標頭 r7 通過、
+  // 重述卻自報 r1＋別的 sha——規則④（1 < 7）攔不到，於是高輪阻擋被低輪重述洗掉。
+  const badR8 = `🤖 Codex｜來源：CLI（xhigh）｜審 \`${HEAD}\`｜r8｜結論：要求修改`;
+  const sneaky = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${badR8}」`;
+  const r = verdictProblems([c(badR8 + '\n內文'), c(sneaky)], HEAD, 'Codex');
+  assert.ok(r.problems.some((p) => /標頭格式不合規/.test(p)),
+    `自報的 sha／輪次與引文不一致＝不可清除：${r.problems.join('｜')}`);
+  assert.ok(r.warnings.some((w) => /不一致/.test(w)), r.warnings.join('｜'));
+  // 正路：標頭 r9（> 壞掉的 r8）＋重述 r8＋同一個 head ⇒ 清得掉、照常放行
+  const legit = `${head('Codex', 'CLI（xhigh）', HEAD, 9, '通過')}\n`
+    + `重述 r8｜審 \`${HEAD}\`｜結論：需修改後再審｜原第一行：「${badR8}」`;
+  const ok = verdictProblems([c(badR8 + '\n內文'), c(legit)], HEAD, 'Codex');
+  assert.deepEqual(ok.problems, [], ok.problems.join('｜'));
+});
+
+test('⭐ 重述｜不可以預先授權：重述出現在壞留言**之前**＝不清除（#418 r3 High①後半）', () => {
+  const preAuth = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+  const { problems } = verdictProblems([c(preAuth), c(MAL)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `後到的壞留言不可以被先前的重述接管：${problems.join('｜')}`);
+  assert.ok(problems.some((p) => /預先授權/.test(p)), problems.join('｜'));
+});
+
+test('⭐ 重述｜位置規則：不緊跟在標頭後面＝不生效，但要**出聲**（#418 r3 Medium）', () => {
+  // GitHub 會把「> 標題」後的普通行渲染成頂層段落，但本閘的規則是**位置**（緊跟標頭、只准空行），
+  // 不是渲染結果——規則要簡單到不需要 Markdown 解析器。放錯位置的人要收到警告，不是靜靜沒效。
+  const outOfPlace = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n> ## 修正摘要\n\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+  const { problems, warnings } = verdictProblems([c(MAL), c(outOfPlace)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `位置不對＝不清除：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /不在生效位置/.test(w)),
+    `要告訴他放錯位置了：${warnings.join('｜')}`);
+});
+
+test('重述｜fence 裡的 fence（#418 r3 High② 的重現形狀）也放不進生效位置', () => {
+  // v3 剝容器前綴時把 fence 裡的「- \`\`\`」誤認成關柵欄；位置規則下這整族直接消失——
+  // 標頭與重述行之間放了任何一行別的內容（包括柵欄），收件就截止。
+  const body = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'), '````', '- ```',
+    `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`, '````'].join('\n');
+  const { problems } = verdictProblems([c(MAL), c(body)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), problems.join('｜'));
+});
+
+test('⭐ 重述｜寫壞的重述行不可以幫後面的行開隱形容器（#418 r4 High①）', () => {
+  // 審查者的原始重放：`重述 r0｜<!--` 前綴像重述、整行不合規——舊收件迴圈跳過它繼續收，
+  // 於是它夾帶的 <!-- 把下一行**真生效**的重述藏進 HTML 註解：機器算數、人看不見。
+  const smuggle = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'),
+    '重述 r0｜<!--',
+    `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`,
+    '-->'].join('\n');
+  const { problems, warnings } = verdictProblems([c(MAL), c(smuggle)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `藏在 HTML 註解裡的重述不可以生效：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /收件當場截止/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜合規重述行的引文夾 <!-- 或未配對反引號＝不可重述＋收件截止（#418 r4 High① 變體）', () => {
+  // 引文內容是自由文字——塞一個 <!-- 一樣能把下一行藏出畫面外。這種壞留言一律不可重述（劃界）。
+  const evilQuote = '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 <!--';
+  const body = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'),
+    `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${evilQuote}」`,
+    `重述 r5｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`,
+    '-->'].join('\n');
+  const { problems, warnings } = verdictProblems([c(evilQuote + '\n內文'), c(MAL), c(body)], HEAD, 'Codex');
+  assert.ok(problems.filter((p) => /標頭格式不合規/.test(p)).length >= 2,
+    `兩則壞留言都必須維持阻擋（含 <!-- 的不可重述；被藏住的那行不生效）：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /白名單外的字元|未配對的反引號/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜引文裡塞第二組「審 sha｜r<n>」＝讀不準在講哪組，不可重述（#418 r4 High②）', () => {
+  // 審查者的原始重放：壞行寫「…審 deadbee｜r1｜更正：審 <head>｜r8｜結論：要求修改」，
+  // 舊解析只取第一組 ⇒ 低輪重述（r1）洗掉高輪（r8）對目前 head 的阻擋——r3 那招換殼回來。
+  const twoMeta = `🤖 Codex｜來源：CLI（xhigh）｜審 \`deadbee\`｜r1｜更正：審 \`${HEAD}\`｜r8｜結論：要求修改`;
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${twoMeta}」`;
+  const { problems, warnings } = verdictProblems([c(twoMeta + '\n內文'), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `多組 metadata 的壞留言不可被低輪重述洗掉：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /第二個 sha 長相的字/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜少一個分隔符也算多組 metadata（#418 r5 High①：性質＝第二個 sha 長相的字）', () => {
+  // 審查者的原始重放：`…審 deadbee｜r1｜更正：審 <HEAD>｜r8 結論：…`——r8 後面**少一個 ｜**，
+  // 舊的「整組計數」就數不到第二組；人眼照樣看到兩組。性質版判準：第二個 hex 長字＝歧義＝不可重述。
+  const twoSha = `🤖 Codex｜來源：CLI（xhigh）｜審 \`deadbee\`｜r1｜更正：審 \`${HEAD}\`｜r8 結論：要求修改`;
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${twoSha}」`;
+  const { problems } = verdictProblems([c(twoSha + '\n內文'), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `少個分隔符不可以讓低輪重述洗掉高輪：${problems.join('｜')}`);
+});
+
+test('⭐ 重述｜引文夾 <details> 或圖片語法——白名單把整族隱形容器關門（#418 r5 High②）', () => {
+  // r4 封 <!--、r5 就來 <details> 與 ![ ——黑名單軍備賽輸定了。白名單性質：< [ ! 都不在名單上。
+  for (const [name, evil] of [
+    ['<details> 收合區', '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 <details>'],
+    ['圖片 alt 吞行', '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 !['],
+  ]) {
+    const body = [head('Codex', 'CLI（xhigh）', HEAD, 7, '通過'),
+      `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${evil}」`,
+      `重述 r5｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`].join('\n');
+    const { problems, warnings } = verdictProblems([c(evil + '\n內文'), c(MAL), c(body)], HEAD, 'Codex');
+    assert.ok(problems.filter((p) => /標頭格式不合規/.test(p)).length >= 2,
+      `${name}：兩則壞留言都要維持阻擋（藏起來的第二行不可生效）：${problems.join('｜')}`);
+    assert.ok(warnings.some((w) => /白名單外的字元/.test(w)), warnings.join('｜'));
+  }
+});
+
+test('⭐ 重述｜反誤殺：真實的壞標頭（尾巴帶 r2、Medium、全形標點）必須仍然可重述', () => {
+  // 白名單收得太緊就會誤殺真實案例——#410 的 r3 壞標頭尾巴就有「（1 Medium；r2 兩個 High 已關閉）」。
+  // 那個 r2 是在講歷史不是第二組 metadata（沒有 sha 就指不到版本），不可以被判成歧義。
+  const real = '🤖 Codex｜來源：CLI（xhigh）｜審 `83e04df`｜r3｜結論：需修正（1 Medium；r2 兩個 High 已關閉）';
+  const fix = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r3｜審 \`83e04df\`｜結論：需修改後再審｜原第一行：「${real}」`;
+  const { problems, warnings } = verdictProblems([c(real + '\n內文'), c(fix)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `真實案例不可被白名單誤殺：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /重述行接管/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜隱形字元切碎第二個 sha——整行含預設不顯示碼位＝不可重述（#418 r6 High）', () => {
+  // U+115F（韓文填充字元）歸類為字母、擠得進白名單，畫面上卻不顯示——把第二個 HEAD 指紋
+  // 每六碼插一個，肉眼看是同一串指紋、計數器數不到。性質收口：含這族字元一律拒收。
+  const chopped = HEAD.match(/.{1,6}/g).join('\u115F');
+  const evil = `🤖 Codex｜來源：CLI（xhigh）｜審 \`deadbee\`｜r1｜更正 ${chopped} r8 結論：要求修改`;
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${evil}」`;
+  const { problems, warnings } = verdictProblems([c(evil + '\n內文'), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `隱形字元切碎的第二指紋不可以被洗掉：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /隱形字元/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 重述｜全形 hex 的第二個 sha——NFKC 正規化後要數得到（#418 r6 High）', () => {
+  // ｄｅａｄｂｅｅｆ… 全在 \p{L}/\p{N} 白名單內、原字串數不到，但畫面上就是一串指紋。
+  const fw = [...HEAD].map((ch) => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)).join('');
+  const evil = `🤖 Codex｜來源：CLI（xhigh）｜審 \`deadbee\`｜r1｜更正 ${fw} r8 結論：要求修改`;
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r1｜審 \`deadbee\`｜結論：需修改後再審｜原第一行：「${evil}」`;
+  const { problems, warnings } = verdictProblems([c(evil + '\n內文'), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `全形指紋不可以逃過歧義計數：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /第二個 sha 長相的字/.test(w)), warnings.join('｜'));
+});
