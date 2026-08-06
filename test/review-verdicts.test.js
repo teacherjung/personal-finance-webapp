@@ -589,3 +589,20 @@ test('⭐ 重述｜引文是逐字比對——中間多一個空白就不算引�
     `引文多一個空白＝沒有引中，不可以清：${problems.join('｜')}`);
   assert.ok(warnings.some((w) => /對不上任何壞標頭留言/.test(w)), warnings.join('｜'));
 });
+
+test('⭐ 重述｜HTML 註解、清單裡的柵欄、清單裡引用的 lazy continuation——容器裡的範例也不可以生效（#418 r2）', () => {
+  const line = '重述 r6｜審 `abc1234`｜結論：需修改後再審｜原第一行：「' + MAL_FIRST + '」';
+  const hdr = head('Codex', 'CLI（xhigh）', HEAD, 7, '通過');
+  const cases = [
+    ['HTML 註解', [hdr, '<!--', line, '-->'].join('\n')],
+    ['清單裡的四反引號柵欄', [hdr, '- ````text', line, '````'].join('\n')],
+    ['編號清單裡的波浪柵欄', [hdr, '1. ~~~~text', line, '~~~~'].join('\n')],
+    ['清單裡引用的 lazy continuation', [hdr, '- > 範例如下：', line].join('\n')],
+  ];
+  for (const [name, body] of cases) {
+    const { problems } = verdictProblems([c(MAL), c(body)], HEAD, 'Codex');
+    assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+      `${name} 裡的重述範例不可以真的清除壞標頭：${problems.join('｜')}`);
+  }
+});
+

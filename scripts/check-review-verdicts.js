@@ -13,7 +13,7 @@
 // 一份查金額口徑與資料列格數。危險的不是有兩份，是**看起來一樣有效而結論相反**，
 // 於是「最後一則說通過」就變成事實上的放行。
 //
-// ## 兩條規則（本支實作的就是這兩條）
+// ## 三條規則（自報來歷／取聯集／重述——重述是 2026-08-06 補的救濟，見 RESTATE 一節）
 //
 // ①**自報來歷**：每一則帶結論的複審留言，第一行必須是機器讀得懂的來歷標頭。
 // ②**取聯集**：任何審查者的阻擋結論，在**同一個審查者**用更新的 commit 撤銷之前都有效。
@@ -81,7 +81,7 @@ const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^�
  *   重述 r<輪次>｜審 `<短 sha>`｜結論：<三選一>｜原第一行：「<壞掉那則的第一行，逐字引用>」
  *
  * ## 四條保守規則（**重述唯一的新權力是「把讀不懂的翻譯成讀得懂的」，判定規則一格都沒放寬**）
- * ①「原第一行」必須**逐字**對上某一則壞標頭留言的第一行（空白摺疊後比對）——引不中就不清除。
+ * ①「原第一行」必須**逐字**對上某一則壞標頭留言的第一行（只容許頭尾空白差異，trim 比對）——引不中就不清除。
  * ②壞掉那行裡讀得出的角色與來源，必須**等於重述者自己**（同一位審查者才能重述自己的壞留言；
  *   讀不出角色來源的壞留言**不可重述**，維持阻擋——fail-closed）。
  * ③重述出來的結論照樣進聯集**留檔**，但因規則④它永遠不會是該審查者的最新結論——
@@ -270,32 +270,46 @@ export function looksLikeVerdict(body) {
  * 重述行的**保守**掃描（#418 r1 阻擋①）。與 `stripFencesLoose` 方向相反：那支給提示路徑用、
  * 「寧可多剝也不要漏」；這裡是**清除阻擋**的路徑，判準要反過來——**寧可少認，範例絕不能生效**。
  *
- * 跳過的四類（各有考題釘住）：
+ * 跳過的六類（各有考題釘住）：
  *  ・fence 內（開柵欄記字元與長度，關柵欄要同字元且**不短於**開柵欄——CommonMark 式；
  *    寬鬆版用「第一個字元相同」就算關，四反引號開、三反引號關會被它提早關掉）
+ *  ・**清單裡的柵欄**（`- \`\`\`\`text`——剝掉清單記號再認柵欄；#418 r2 High）
+ *  ・**HTML 註解**（`<!-- -->` 畫面上看不見，先整段滅掉；#418 r2 High）
  *  ・縮排 ≥4 空白或 tab 的 code 行
- *  ・`>` 引用行
- *  ・引用段落的 **lazy continuation**（前一個非空行是引用、中間沒有空行——那一行在畫面上
- *    仍屬引用段落，引用別人的重述不是自己的重述）
+ *  ・`>` 引用行與清單行本身（剝掉容器前綴才判斷）
+ *  ・容器段落的 **lazy continuation**（前一個非空行是引用或清單、中間沒有空行——那一行在
+ *    畫面上仍屬那個段落，引用別人的重述不是自己的重述）
  * @param {string} body
  * @returns {string[]} 可能是重述行的原始行（前綴已驗；完整格式由呼叫端的 RESTATE 驗）
  */
 function restateLines(body) {
   const out = [];
+  // ⚠️ HTML 註解先滅（#418 r2 High）：<!-- --> 在畫面上看不見，裡面的「重述」當然不是重述。
+  //    換成換行而不是空字串＝保留行結構，順便把跨行註解前後的段落切開（多切＝安全方向）。
+  const text = String(body || '').replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '\n');
   /** @type {{ch: string, len: number} | null} */ let fence = null;
-  let inQuotePara = false;
-  for (const raw of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
+  let inContainerPara = false;
+  for (const raw of text.split('\n')) {
+    // 剝容器前綴（引用 `>`、清單 `-`/`*`/`+`/`1.`/`1)`，可巢狀）——#418 r2 High：
+    // `- \`\`\`\`text` 這種**清單裡的柵欄**用行首正則看不到，範例就漏出來了。
+    let line = raw, peeled = false;
+    for (;;) {
+      const m = /^ {0,3}(?:>|[-*+][ \t]+|\d{1,9}[.)][ \t]+)/.exec(line);
+      if (!m) break;
+      line = line.slice(m[0].length); peeled = true;
+    }
     if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})[^\S\n]*$/.exec(raw);
+      const close = /^ {0,3}(`{3,}|~{3,})[^\S\n]*$/.exec(line);
       if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
       continue;   // fence 內（含關柵欄那行）一律不是重述
     }
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(raw);
-    if (open) { fence = { ch: open[1][0], len: open[1].length }; inQuotePara = false; continue; }
-    if (!raw.trim()) { inQuotePara = false; continue; }        // 空行結束引用段落
-    if (/^ {0,3}>/.test(raw)) { inQuotePara = true; continue; }
-    if (inQuotePara) continue;                                  // lazy continuation＝仍在引用段落
-    if (/^(?: {4,}|\t)/.test(raw)) continue;                    // 縮排 code
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (open) { fence = { ch: open[1][0], len: open[1].length }; inContainerPara = false; continue; }
+    if (!raw.trim()) { inContainerPara = false; continue; }        // 空行結束容器段落
+    // 引用行與清單行本身＝容器；其後**沒有空行**的普通行是它的 lazy continuation（畫面上仍屬той段落）。
+    if (peeled) { inContainerPara = true; continue; }
+    if (inContainerPara) continue;
+    if (/^(?: {4,}|\t)/.test(raw)) continue;                       // 縮排 code
     if (/^ {0,3}重述\s*r\d+｜/u.test(raw)) out.push(raw);
   }
   return out;
@@ -387,7 +401,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         bad(`只能重述**自己**的壞留言：引用裡是 ${q[1]}（${collapse(q[2])}），重述者是 ${h.role}（${h.source}）`);
         continue;
       }
-      // 規則①的鑰匙＝逐字引用（摺疊比對）；規則③＝重述的結論照樣進聯集（下一行）。
+      // 規則①的鑰匙＝逐字引用（trim-only，#418 r2 起連註解也不准寫「摺疊」）；規則③＝照樣進聯集（下一行）。
       restated.set(m[4].trim(), `${h.role}（${h.source}）`);
       applyEntry({ role: h.role, source: h.source, sha: m[2].toLowerCase(), round, verdict,
         blocking: VERDICTS[/** @type {keyof typeof VERDICTS} */ (verdict)] });
