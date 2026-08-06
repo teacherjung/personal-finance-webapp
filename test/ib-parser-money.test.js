@@ -280,16 +280,23 @@ test('位元組上限是「從 512MB 這台機器推導出來」的，不是憑�
   //    舊的 40MB 沒有任何量測背書，而實測它就是死亡線。這一題會在有人把上限調回去時直接紅。
   const { spawnSync } = await import('node:child_process');
   const { MAX_IB_XML_CHARS } = await import('../lib/parse-limits.js');
-  // 餵一份**剛好等於上限**、且用真實 IB 排版（50 個屬性）的 XML，子行程必須活著跑完
+  // 餵一份**剛好等於上限**、且用真實 IB 排版（50 個屬性、合法巢狀）的 XML，子行程必須活著跑完。
+  // 列樣板與筆數在父行程算好注入，子行程回報實際解析列數——「活著」與「解析完整」是兩件事。
+  const { XMLValidator } = await import('fast-xml-parser');
+  const ATTRS = Array.from({ length: 50 }, (_, i) => `a${i}="v${i}0000"`).join(' ');
+  const one = `<Trade ${ATTRS}/>`;
+  const n = Math.floor(MAX_IB_XML_CHARS / one.length);
+  const HEAD = '<FlexQueryResponse><FlexStatements count="1"><FlexStatement><Trades>';
+  const TAIL = '</Trades></FlexStatement></FlexStatements></FlexQueryResponse>';
+  assert.equal(XMLValidator.validate(HEAD + one.repeat(3) + TAIL), true,
+    '考題的排版必須是合法巢狀——閉合順序寫錯過一次，解析器不驗證照樣過，但那就不是真實 IB 排版了');
   const script = `
     const { XMLParser } = await import('fast-xml-parser');
-    const ATTRS = Array.from({length:50},(_,i)=>'a'+i+'="v'+i+'0000"').join(' ');
-    const one = '<Trade ' + ATTRS + '/>';
-    const n = Math.floor(${MAX_IB_XML_CHARS} / one.length);
-    const xml = '<FlexQueryResponse><FlexStatements count="1"><FlexStatement><Trades>'
-      + one.repeat(n) + '</Trades></FlexStatements></FlexStatement></FlexQueryResponse>';
-    new XMLParser({ignoreAttributes:false, attributeNamePrefix:''}).parse(xml);
-    console.log('ok');
+    const one = ${JSON.stringify(one)};
+    const xml = ${JSON.stringify(HEAD)} + one.repeat(${n}) + ${JSON.stringify(TAIL)};
+    const doc = new XMLParser({ignoreAttributes:false, attributeNamePrefix:''}).parse(xml);
+    const trades = doc?.FlexQueryResponse?.FlexStatements?.FlexStatement?.Trades?.Trade;
+    console.log('rows=' + (Array.isArray(trades) ? trades.length : (trades ? 1 : 0)));
   `;
   const r = spawnSync(process.execPath, ['--max-old-space-size=400', '--input-type=module', '-e', script],
     { encoding: 'utf8', timeout: 120_000 });
@@ -297,6 +304,8 @@ test('位元組上限是「從 512MB 這台機器推導出來」的，不是憑�
     `一份剛好等於上限（${Math.round(MAX_IB_XML_CHARS / 1048576)}MB）的真實排版報表，` +
     `在模擬 Render 的 400MB heap 下必須解析得完。實際 exit=${r.status} signal=${r.signal}。\n` +
     '這一題紅了代表 MAX_IB_XML_CHARS 訂得太高——它必須從目標機器的記憶體推導，不是憑感覺。');
+  assert.equal(r.stdout.trim(), `rows=${n}`,
+    '子行程活著 ≠ 解析完整：解析出的 Trade 列數必須等於餵進去的筆數，解析器靜默丟列也要紅');
 });
 
 test('元素上限對真實報表要有兩個數量級以上的餘裕（別把牆訂到誤殺）', async () => {
