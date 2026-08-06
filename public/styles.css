@@ -322,7 +322,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 @media (max-width: 520px) { .cat-donut-layout { grid-template-columns: 1fr; } .cat-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---------- 資產配置（UI5） ---------- */
-.assets-page { max-width: 1240px; margin: 0 auto; }
 .assets-head { margin-bottom: 18px; }
 .assets-scope-note {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start;
@@ -340,6 +339,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 }
 .asset-kpi { min-width: 0; padding: 18px 22px; background: var(--card); }
 .asset-kpi span { display: block; color: var(--text-dim); font-size: 11.5px; font-weight: 700; }
+.asset-kpi small { font-size: 10px; font-weight: 500; }
 .asset-kpi strong {
   display: block; margin-top: 7px; color: var(--text); font-family: var(--serif);
   font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums;
@@ -373,7 +373,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .assets-account-table th:first-child { width: 31%; }
 .assets-account-table th:last-child { width: 88px; }
 .asset-account-type { background: var(--accent-soft); color: var(--accent-ink); }
-.asset-account-type.liability { background: rgba(168,104,31,.13); color: var(--warn); }
 
 @media (max-width: 1000px) {
   .assets-layout { grid-template-columns: 1fr; }

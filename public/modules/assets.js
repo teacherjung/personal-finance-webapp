@@ -34,7 +34,7 @@ export async function renderAssets() {
       <section class="asset-kpi-frame" aria-label="資產摘要">
         <div class="asset-kpi"><span>總資產</span><strong class="pos">${wan(alloc.assets)}</strong></div>
         <div class="asset-kpi"><span>總負債</span><strong class="neg">${wan(alloc.liabilities)}</strong></div>
-        <div class="asset-kpi asset-kpi-primary"><span>淨資產</span><strong>${wan(alloc.netWorth)}</strong></div>
+        <div class="asset-kpi asset-kpi-primary"><span>淨資產 <small>（含現金）</small></span><strong>${wan(alloc.netWorth)}</strong></div>
       </section>
 
       <section class="assets-layout">
@@ -48,7 +48,7 @@ export async function renderAssets() {
             ${a.rows.filter(r => r.value > 0 || r.targetPct > 0).map(r => {
           const off = Math.abs(r.diff) >= (db.settings.allocationDriftPct || 5);
           const fromPf = ['股票', '債券'].includes(r.class);
-          return `<div class="asset-allocation-row${off ? ' is-off' : ''}">
+          return `<div class="asset-allocation-row">
             <div class="asset-allocation-head">
               <div class="asset-allocation-name"><strong>${esc(r.class)}</strong>${fromPf ? `<a href="#ib" class="drill-link" title="此數字由投資組合的持股自動換算，點此看明細">投資組合 →</a>` : ''}</div>
               <div class="asset-allocation-values"><strong>${r.actualPct.toFixed(1)}%</strong><span>目標 ${r.targetPct}%</span>${off ? `<span class="tag amber">偏離 ${r.diff > 0 ? '+' : ''}${r.diff.toFixed(1)}%</span>` : ''}</div>
@@ -90,7 +90,7 @@ function accRow(x) {
   const cur = x.currency || 'TWD';
   return `<tr>
     <td>${esc(x.name)}</td>
-    <td><span class="tag asset-account-type${liab ? ' liability' : ''}">${esc(typeLabel(x.type))}</span></td>
+    <td><span class="tag asset-account-type${liab ? ' amber' : ''}">${esc(typeLabel(x.type))}</span></td>
     <td class="muted">${esc(x.class || '—')}</td>
     <td class="num ${liab ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
     <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
