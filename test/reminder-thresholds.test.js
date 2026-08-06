@@ -635,6 +635,20 @@ async function renderAssetsHtml(db) {
   // 而「身分判斷」可以被拿來當只在真瀏覽器成立的開關。用 WeakMap 記住，語意還原。
   /** @type {WeakMap<object, any>} */
   const guardCache = new WeakMap();
+  // 反向表（#413 r18 自審）：守衛過的物件**傳回 jsdom 時要拆回真身**。
+  // 出去包、進去拆＝對稱設計；少了「拆」這一半，jsdom 內部拿到 Proxy 會認不得（brand check）
+  // 或去探它沒有的名字而觸發我們自己的丟錯——那是守衛造成的假紅，不是守住東西。
+  /** @type {WeakMap<object, any>} */
+  const realOf = new WeakMap();
+  // 守衛在**事件處理器裡**丟的錯，jsdom 會當成「頁面上的未捕捉錯誤」自己吞掉——
+  // 吵了但沒人聽見＝等於沒吵（#413 r18 自審：M-AO 的環境偵測因此靜靜全綠）。
+  // 所以每一顆包過的 callback 都把錯誤記進這本帳，最後一起吵（見斷言前的 harnessErrors 檢查）。
+  /** @type {string[]} */
+  const harnessErrors = [];
+  const noteThrow = (/** @type {any} */ e) => {
+    harnessErrors.push(e instanceof Error ? e.message : String(e));
+    throw e;                                   // 照樣往外丟（行為與真瀏覽器一致），但已留下紀錄
+  };
   // 方法也要保身分（#413 r15 阻擋①）：上一版每次讀方法都新建包裝函式，於是
   // `a.querySelectorAll === a.querySelectorAll` 在本題是 false、真瀏覽器是 true——
   // 又是一顆「守衛自己改掉規格語意」的假綠開關。同一顆物件的同一個方法只包一次。
@@ -643,10 +657,41 @@ async function renderAssetsHtml(db) {
   /** 這顆守衛包的是「原型物件」嗎——只有原型面才禁止列舉屬性名單（見 ownKeys）。 */
   /** @type {WeakSet<object>} */
   const protoTargets = new WeakSet();
-  /** 讓 callback 收到的參數也是守衛版（#413 r14 阻擋①：forEach 把原始 Element 交出去就漏了）。 */
-  const guardArg = (/** @type {any} */ a, /** @type {string} */ label) => (typeof a === 'function'
-    ? (/** @type {any[]} */ ...cbArgs) => a(...cbArgs.map((x) => guard(x, `${label} 的回呼參數`)))
-    : a);
+  // 讓 callback 收到的參數也是守衛版（#413 r14 阻擋①：forEach 把原始 Element 交出去就漏了）。
+  // r17 阻擋②：標準的 `{ handleEvent() {} }` listener **物件**也要包（不只函式）。
+  // r17 阻擋③：包裝要**快取**——同一顆 callback 先 add 再 remove 時，瀏覽器收到同一個東西、
+  //   移得掉；上一版每次新建包裝 ⇒ 移不掉、殘留 handler＝合法配對被誤殺（阻擋級假紅）。
+  /** @type {WeakMap<object, any>} */
+  const argCache = new WeakMap();
+  const guardArg = (/** @type {any} */ a, /** @type {string} */ label) => {
+    // 先拆：這顆是我們發出去的守衛嗎？是就換回真身（jsdom 只認真身）
+    if (a !== null && (typeof a === 'object' || typeof a === 'function') && realOf.has(a)) {
+      return realOf.get(a);
+    }
+    if (typeof a === 'function') {
+      const hit = argCache.get(a);
+      if (hit) return hit;
+      const wrapped = (/** @type {any[]} */ ...cbArgs) => {
+        try { return a(...cbArgs.map((x) => guard(x, `${label} 的回呼參數`))); } catch (e) { return noteThrow(e); }
+      };
+      argCache.set(a, wrapped);
+      return wrapped;
+    }
+    if (a !== null && typeof a === 'object' && typeof (/** @type {any} */ (a).handleEvent) === 'function') {
+      const hit = argCache.get(a);
+      if (hit) return hit;
+      const wrapped = {
+        handleEvent: (/** @type {any[]} */ ...cbArgs) => {
+          try {
+            return (/** @type {any} */ (a)).handleEvent(...cbArgs.map((x) => guard(x, `${label} 的 handleEvent 參數`)));
+          } catch (e) { return noteThrow(e); }
+        },
+      };
+      argCache.set(a, wrapped);
+      return wrapped;
+    }
+    return a;
+  };
   /** @type {(t:any, label:string)=>any} */
   const guard = (t, label) => {
     if (t === null || (typeof t !== 'object' && typeof t !== 'function')) return t;
@@ -670,9 +715,19 @@ async function renderAssetsHtml(db) {
           if (!byKey) { byKey = new Map(); methodCache.set(target, byKey); }
           const cachedFn = byKey.get(String(key));
           if (cachedFn) return cachedFn;
-          const wrapped = (/** @type {any[]} */ ...args) => guard(
-            v.apply(target, args.map((a) => guardArg(a, `${label}.${String(key)}()`))),
-            `${label}.${String(key)}()`);
+          // 用 Proxy 包（不是箭頭函式）：**apply 與 construct 兩條路都要活**——
+          // 上一版包成箭頭函式，於是 `new window.Event('x')` 直接 TypeError＝合法寫法被誤殺
+          // （#413 r18 自審抓到；apply／construct 就是 Proxy 十三個攔截點的最後兩個）。
+          const mapArgs = (/** @type {any[]} */ args) => args.map(
+            (a) => guardArg(a, `${label}.${String(key)}()`));
+          const wrapped = new Proxy(v, {
+            apply: (fn, thisArg, args) => guard(
+              fn.apply(thisArg === wrapped || thisArg === proxy ? target : thisArg, mapArgs(args)),
+              `${label}.${String(key)}()`),
+            construct: (fn, args) => guard(
+              Reflect.construct(/** @type {any} */ (fn), mapArgs(args)),
+              `new ${label}.${String(key)}()`),
+          });
           byKey.set(String(key), wrapped);
           return wrapped;
         }
@@ -708,9 +763,40 @@ async function renderAssetsHtml(db) {
           + 'JSON 序列化之類）——兩邊引擎的名單不同，這個操作分不出「合法用途」與「環境偵測」，'
           + `所以一律吵著紅。要有人回來看過本題（#413 r14/r16 阻擋）｜（自有鍵 ${Reflect.ownKeys(target).length} 個）`);
       },
-      set: (target, key, v) => Reflect.set(target, key, v, target),
+      // ---- 以下把「語言能觀察到差異」的攔截點**列完**（#413 r17 阻擋①） ----
+      // 上一版說「五個操作」是**錯的**：`[[Set]]` 就是第六個——複驗者用「寫一個 Chrome 有、
+      // jsdom 沒有的唯讀欄位」分流（Chrome 回 false、jsdom 回 true）。
+      // Proxy 的攔截點總共十三個，逐一定案（有限、可列完，這是與「無窮的 API 名字」的關鍵差別）：
+      //   get／has／getPrototypeOf／getOwnPropertyDescriptor／ownKeys＝上面已收；
+      //   set＝同一條「不存在就丟錯」；
+      //   defineProperty／deleteProperty／setPrototypeOf／preventExtensions＝渲染路徑沒有合法用途
+      //     且成敗會因引擎而異 ⇒ 一律吵著紅；
+      //   isExtensible＝兩邊 DOM 物件都是 true、測不出環境 ⇒ 原樣放行；
+      //   apply／construct＝方法／建構子那一層自己有 Proxy（見上面的 wrapped）：呼叫與 new 都活著、
+      //     參數過 guardArg、回傳值再包守衛。**十三個攔截點至此全部定案**——這一面有限且已列完，
+      //     與「瀏覽器 API 名字無窮」的關鍵差別就在這裡。
+      set: (target, key, v) => {
+        if (typeof key !== 'symbol' && !GUARD_SKIP.has(String(key)) && !hasName(target, key)) {
+          throw absent(label, key, '寫屬性');
+        }
+        return Reflect.set(target, key, v, target);
+      },
+      defineProperty: (target, key) => {
+        throw absent(label, key, 'defineProperty（渲染路徑沒有合法用途，成敗還會因引擎而異）');
+      },
+      deleteProperty: (target, key) => {
+        throw absent(label, key, 'delete（同上）');
+      },
+      setPrototypeOf: () => {
+        throw new Error(`渲染路徑改了 ${label} 的原型——渲染路徑沒有合法用途，`
+          + '成敗還會因引擎而異，一律吵著紅（#413 r17）');
+      },
+      preventExtensions: () => {
+        throw new Error(`渲染路徑對 ${label} 做 preventExtensions／freeze／seal——同上，一律吵著紅（#413 r17）`);
+      },
     });
     guardCache.set(t, proxy);
+    realOf.set(proxy, t);
     return proxy;
   };
   const guardedDoc = guard(doc, 'document');
@@ -776,6 +862,9 @@ async function renderAssetsHtml(db) {
   // 拔標籤／改內容 ⇒ innerHTML 如實少字（各題的內容斷言紅）。這正是假 DOM 五輪都做不到的一句話。
   // 子 browsing context（iframe 類）自帶另一個 realm 的原生計時器，本題排不空（#413 r11 阻擋）
   // ——渲染路徑沒有任何合法理由建子頁面，所以直接零容忍：出現就吵著紅。
+  assert.deepEqual(harnessErrors, [],
+    '守衛在回呼／事件處理器裡吵過，但那個錯誤被 jsdom 當成頁面未捕捉錯誤吞掉了'
+    + `——原始訊息：${harnessErrors.join('；')}`);
   assert.equal(doc.querySelectorAll('iframe, frame, object, embed').length, 0,
     '渲染路徑建立了子頁面（iframe 類）——子 realm 的計時器本題排不空，要有人回來看過本題');
   const live = doc.getElementById('view');
