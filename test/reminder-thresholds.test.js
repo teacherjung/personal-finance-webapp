@@ -608,17 +608,34 @@ async function renderAssetsHtml(db) {
     './theme.js': { CHART: { orange: ORANGE, green: GREEN }, PALETTE: ['#000'], AXIS: '#000' },
     './icons.js': { icon: () => '' },
   };
-  /** 這台 node 沒有的瀏覽器全域（依名字配，全域本來就只有名字這一個身分）。 */
+  // 這台 node 沒有的瀏覽器全域（依名字配，全域本來就只有名字這一個身分）。
+  // `document` 也發守衛節點：從 document 那頭撈 `.tag.amber` 再 remove()，是 view() 那顆繞法換個入口。
+  // `body`／`documentElement` 同樣上守衛（#413 r7 阻擋的教訓：這兩顆是 #view 的祖先，寫它們＝清整頁）。
+  /** @type {Record<string, any>} */
+  const docStub = {
+    querySelector: (/** @type {any} */ s) => guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []),
+    querySelectorAll: (/** @type {any} */ s) => [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
+    getElementById: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
+    createElement: () => el(),
+    body: guardedNode('document.body', domEdits, []),
+    documentElement: guardedNode('document.documentElement', domEdits, []),
+    /** @type {any} */ defaultView: null,        // 指回 winStub（見下），關掉 document.defaultView.document 的環狀入口
+  };
+  // 同一扇門的所有標準別名共用同一顆替身（#413 r7 阻擋：`window.document.body.innerHTML = ''`
+  // 在真瀏覽器清空整頁，而 sandbox 的 `window` 這個名字落到無害替身＝靜靜吞掉、7 題照綠。
+  // 病是「列舉入口補不完」那型，所以不逐名補洞、改**收斂成一顆**：window／self／top／parent／frames
+  // 互相自指、document 全指同一顆守衛版——從哪個別名爬進來，落點都一樣會記帳。
+  // node 沒有這五個全域，所以正式碼不碰它們時 needs 根本不會列＝零影響；`globalThis.document`
+  // 在 node 是 undefined ⇒ 一碰就 TypeError 吵著紅，不需要替身。）
+  /** @type {any} */
+  const winStub = { document: docStub };
+  for (const alias of ['window', 'self', 'top', 'parent', 'frames']) winStub[alias] = winStub;
+  docStub.defaultView = winStub;
   /** @type {Record<string, any>} */
   const globalStubs = {
     Chart: class { destroy() { } },
-    // `document` 也發守衛節點：從 document 那頭撈 `.tag.amber` 再 remove()，是 view() 那顆繞法換個入口。
-    document: {
-      querySelector: (/** @type {any} */ s) => guardedNode(`document.querySelector('${s}') 撈到的節點`, domEdits, []),
-      querySelectorAll: (/** @type {any} */ s) => [guardedNode(`document.querySelectorAll('${s}') 撈到的節點`, domEdits, [])],
-      getElementById: (/** @type {any} */ id) => (String(id) === 'view' ? viewEl : el()),
-      createElement: () => el(),
-    },
+    document: docStub,
+    window: winStub, self: winStub, top: winStub, parent: winStub, frames: winStub,
   };
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：
   // 「印完再延後拔掉」不是逃生門（延後 0 毫秒或 50 毫秒都一樣），所以全部收進 scheduled、跑完一起放行。
