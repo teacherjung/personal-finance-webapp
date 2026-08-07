@@ -198,6 +198,8 @@ function rerenderBankAccountsAfterSave(seq, message) {
 
 export async function renderBankAccounts() {
   const seq = currentRouteSeq();
+  const notice = bankAccountNotice;
+  bankAccountNotice = '';
   let db;
   try {
     db = await api('/db');
@@ -210,8 +212,6 @@ export async function renderBankAccounts() {
   if (seq !== currentRouteSeq()) return;
   const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
   const summary = bankAccountSummary(accounts);
-  const notice = bankAccountNotice;
-  bankAccountNotice = '';
   view().innerHTML = `
     <div class="bank-accounts-page">
       <div class="page-head bank-accounts-head">

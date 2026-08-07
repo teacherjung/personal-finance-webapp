@@ -3,7 +3,8 @@
 .bank-accounts-head { margin-bottom: 18px; }
 .bank-accounts-page .page-actions > a,
 .bank-accounts-page .page-actions > button,
-.bank-account-empty > button {
+.bank-empty-actions > a,
+.bank-empty-actions > button {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   text-decoration: none;
 }
@@ -127,7 +128,7 @@
 .bank-account-error summary { width: max-content; cursor: pointer; }
 .bank-account-error code {
   display: block; max-width: 100%; margin-top: 8px; padding: 9px 11px; overflow-wrap: anywhere;
-  color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px;
 }
 
 @media (max-width: 700px) {

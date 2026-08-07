@@ -46,6 +46,8 @@ function assertStateBehavior(source) {
 }
 
 function assertStateWiring(source) {
+  assert.match(source, /const seq = currentRouteSeq\(\);\s*const notice = bankAccountNotice;\s*bankAccountNotice = '';\s*let db;\s*try \{/,
+    '成功訊息必須在非同步重讀前取出並清空，切頁時不可殘留到下一輪');
   assert.match(source, /try \{\s*db = await api\('\/db'\);\s*\} catch \(error\) \{/);
   assert.match(source, /if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = bankAccountLoadErrorHtml/);
   assert.match(source, /byId\('retryBankAccounts'\)\.onclick = \(\) => renderBankAccounts\(\);/);
@@ -64,6 +66,7 @@ function assertStateCss(css) {
   assert.match(css, /\.bank-empty-actions \{[^}]*flex-wrap: wrap;/);
   assert.match(css, /@media \(max-width: 520px\) \{[\s\S]*\.bank-empty-actions \{[^}]*flex-direction: column;/);
   assert.doesNotMatch(css, /background:\s*var\(--(?:action|pos|pos-soft)\)/, '狀態容器不可把頁面染成綠色');
+  assert.doesNotMatch(css, /var\(--panel\)/, '銀行帳戶專屬樣式不可引用未定義的色票');
 }
 
 test('銀行帳戶狀態：成功與錯誤訊息可辨識，外部錯誤文字一律消毒', () => {
@@ -84,7 +87,13 @@ test('銀行帳戶狀態：拿掉消毒、重試接線或手機操作排列時�
   assert.throws(() => assertStateBehavior(source.replace("esc(message || '無法連線')", "message || '無法連線'")));
   assert.throws(() => assertStateWiring(source.replace("byId('retryBankAccounts').onclick = () => renderBankAccounts();", '// retry removed')));
   assert.throws(() => assertStateWiring(source.replaceAll('href="#cashflow"', 'href="#dashboard"')));
+  const earlyNoticeCapture = "const notice = bankAccountNotice;\n  bankAccountNotice = '';\n  let db;";
+  assert.ok(source.includes(earlyNoticeCapture), '成功訊息時序突變目標必須存在');
+  assert.throws(() => assertStateWiring(source.replace(earlyNoticeCapture, 'let db;')));
   const mobileStack = 'width: 100%; align-items: stretch; flex-direction: column;';
   assert.ok(css.includes(mobileStack), '手機操作排列突變目標必須存在');
   assert.throws(() => assertStateCss(css.replace(mobileStack, mobileStack.replace('column', 'row'))));
+  const errorCodeSurface = 'background: var(--card-2); border: 1px solid var(--line);';
+  assert.ok(css.includes(errorCodeSurface), '錯誤詳情色票突變目標必須存在');
+  assert.throws(() => assertStateCss(css.replace(errorCodeSurface, errorCodeSurface.replace('--card-2', '--panel'))));
 });
