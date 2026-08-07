@@ -155,13 +155,20 @@ function openAccForm(acc, opts = {}) {
 
 // ---- 銀行帳戶頁（獨立自資產配置，使用者定 2026-07-21）：只列現金/銀行帳戶（type:'cash'），管理餘額＋對帳單末碼。----
 // 配置圓餅圖與淨資產仍含現金（在資產配置頁）；這裡只是把「銀行帳戶的管理」搬出來獨立一頁。
+function bankAccountSummary(accounts) {
+  return {
+    accountCount: accounts.length,
+    suffixCount: accounts.filter(x => x.accountNoSet || x.accountNoLast4).length,
+    currencies: [...new Set(accounts.map(x => x.currency || 'TWD'))],
+  };
+}
+
 export async function renderBankAccounts() {
   const seq = currentRouteSeq();
   const db = await api('/db');
   if (seq !== currentRouteSeq()) return;
   const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
-  const currencies = [...new Set(accounts.map(x => x.currency || 'TWD'))];
-  const suffixCount = accounts.filter(x => x.accountNoSet || x.accountNoLast4).length;
+  const summary = bankAccountSummary(accounts);
   view().innerHTML = `
     <div class="bank-accounts-page">
       <div class="page-head bank-accounts-head">
@@ -173,9 +180,9 @@ export async function renderBankAccounts() {
       </div>
 
       <section class="bank-account-summary" aria-label="銀行帳戶摘要">
-        <div class="bank-account-kpi"><span>帳戶數</span><strong>${accounts.length} 個</strong></div>
-        <div class="bank-account-kpi"><span>已設定帳號末碼</span><strong>${suffixCount} 個</strong></div>
-        <div class="bank-account-kpi"><span>使用幣別</span><strong>${currencies.length ? currencies.map(esc).join('、') : '尚無'}</strong></div>
+        <div class="bank-account-kpi"><span>帳戶數</span><strong>${summary.accountCount} 個</strong></div>
+        <div class="bank-account-kpi"><span>已設定帳號末碼</span><strong>${summary.suffixCount} 個</strong></div>
+        <div class="bank-account-kpi"><span>使用幣別</span><strong>${summary.currencies.length ? summary.currencies.map(esc).join('、') : '尚無'}</strong></div>
       </section>
 
       <aside class="bank-privacy-note" aria-label="帳號隱私說明">

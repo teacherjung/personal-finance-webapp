@@ -104,7 +104,8 @@
   .bank-account-table tr { padding: 0 16px; border-bottom: 1px solid var(--line); }
   .bank-account-table tr:last-child { border-bottom: 0; }
   .bank-account-table td {
-    width: auto !important; min-height: 48px; padding: 10px 0; border-bottom: 1px solid var(--line);
+    display: block; width: auto !important; min-height: 48px; padding: 10px 0;
+    border-bottom: 1px solid var(--line);
   }
   .bank-account-table td:not(.bank-account-name-cell):not(.bank-account-actions) {
     display: grid; grid-template-columns: minmax(100px, .8fr) minmax(0, 1.2fr);
