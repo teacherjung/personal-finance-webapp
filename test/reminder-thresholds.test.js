@@ -513,6 +513,8 @@ function walkAst(node, visit) {
  *      仍不在射程內（jsdom 不做排版與視覺；esc 有自己的考題：test/xss-id-escaping.test.js）。
  *      ⚠️ 所以這裡的用詞是「**印進頁面**」而不是「使用者看得見」：給橘標籤印一個 `hidden`
  *      屬性（瀏覽器上就消失了）本題照舊全綠。「看得見」得靠真瀏覽器＋排版引擎，本題證不了。
+ *      ⚠️ 同理，`matchMedia`（jsdom 未實作，本題給了規格形狀的替身）固定回「不符合」：
+ *      正式碼若依螢幕寬度或主題分兩種版面，**本題只走「不符合」那一條**（桌面寬度、淺色）。
  *   2. 只跑 `renderAssets()` 這一條路徑，斷言讀的是跑完（含放行計時器與事件圈走過十幾拍、
  *      並**取樣兩次**比對，見 settle／firstSample）之後**活頁面**上的 #view。
  *      **抓得住的是這幾種**（逐顆驗過紅，不是「整族」——那句話 #413 r19 判定為誇大並已改口）：
@@ -660,6 +662,16 @@ async function renderAssetsHtml(db) {
     win[name] = cancelLater;
     if (win[name] !== cancelLater) throw new Error(`win.${name} 換取消器沒生效（要有人回來看）`);
   }
+  // jsdom 沒有實作 `matchMedia`（它是規格 API、只是 jsdom 的已知缺件）——不補的話，正式碼合法用它
+  // 判斷版面（例：小螢幕把圖例移到下方）就會 TypeError＝**合法寫法被誤殺**（#413 跨 PR 閘在
+  // 與 #421 的組合裡實測到）。給一顆規格形狀的替身，固定回「不符合」＝桌面寬度、淺色。
+  // ⚠️ 誠實劃界（併入第 1 條的視覺面）：**版面／主題分支只走「不符合」那一條**，
+  //    另一條分支印出來什麼，本題證不了——那要真瀏覽器＋排版引擎。
+  win.matchMedia = (/** @type {any} */ q) => ({
+    media: String(q), matches: false, onchange: null,
+    addEventListener() { }, removeEventListener() { },
+    addListener() { }, removeListener() { }, dispatchEvent: () => false,
+  });
   // 訊息通道類的延後入口（MessageChannel／BroadcastChannel／window.postMessage）：渲染路徑沒有
   // 任何合法用途，而它們的投遞時序本題排不空——一律換成吵著紅的替身（fail-loud，不吞）。
   win.MessageChannel = class { constructor() { throw new Error('渲染路徑用了 MessageChannel（延後排程的旁門）——要有人回來看過本題'); } };
