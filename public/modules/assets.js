@@ -135,8 +135,8 @@ function openAccForm(acc, opts = {}) {
       { key: 'currency', label: '幣別', type: 'select', options: ACCOUNT_CURRENCIES },
       { key: 'class', label: '資產類別（用於配置圓餅圖）', type: 'text', placeholder: '例：現金、黃金', full: true },
       { key: 'balance', label: '目前餘額（原幣，負債請填負數）', type: 'number', required: true },
-      // 完整帳號（三層重構 stage 2）：只存這台電腦、GET 剝除只回末四碼；供銀行對帳單匯入時用末碼比對到這個帳戶。
-      { key: 'accountNo', label: '完整帳號（選填，只存這台電腦）', type: 'text', full: true,
+      // 完整帳號不投影到瀏覽器，GET 只回是否已設定與末四碼；供銀行對帳單匯入辨識帳戶。
+      { key: 'accountNo', label: '完整帳號（選填，用於辨識對帳單）', type: 'text', full: true,
         placeholder: acc?.accountNoSet ? `已設定（末四碼 ${acc.accountNoLast4 || '****'}），留空＝不變更` : '例：9001001234 53301（銀行對帳單匯入時用來對到這個帳戶）' },
       ...(acc?.accountNoSet ? [{ key: 'clearAccountNo', label: '清除已存的帳號（改回未設定）', type: 'checkbox', full: true }] : []),
     ],
@@ -155,22 +155,60 @@ function openAccForm(acc, opts = {}) {
 
 // ---- 銀行帳戶頁（獨立自資產配置，使用者定 2026-07-21）：只列現金/銀行帳戶（type:'cash'），管理餘額＋對帳單末碼。----
 // 配置圓餅圖與淨資產仍含現金（在資產配置頁）；這裡只是把「銀行帳戶的管理」搬出來獨立一頁。
+function bankAccountSummary(accounts) {
+  return {
+    accountCount: accounts.length,
+    suffixCount: accounts.filter(x => x.accountNoSet || x.accountNoLast4).length,
+    currencies: [...new Set(accounts.map(x => x.currency || 'TWD'))],
+  };
+}
+
 export async function renderBankAccounts() {
   const seq = currentRouteSeq();
   const db = await api('/db');
   if (seq !== currentRouteSeq()) return;
   const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
+  const summary = bankAccountSummary(accounts);
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>銀行帳戶</h1><p>各銀行帳戶的餘額（上傳銀行對帳單時會自動更新）</p></div>
-      <div class="page-actions"><button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button></div>
-    </div>
-    <div class="tbl-wrap">
-      <table class="bank-acc-tbl"><thead><tr><th>銀行帳戶</th><th>帳戶末4碼</th><th>幣別</th><th class="num">餘額</th><th></th></tr></thead>
-      <tbody>${accounts.map(bankAccRow).join('') || `<tr><td colspan="5" class="empty">尚無銀行帳戶。點右上「新增銀行帳戶」，或到「銀行收支」上傳銀行對帳單自動建立。</td></tr>`}</tbody></table>
+    <div class="bank-accounts-page">
+      <div class="page-head bank-accounts-head">
+        <div><h1>銀行帳戶</h1><p>管理現金帳戶、原幣餘額與對帳單辨識資訊</p></div>
+        <div class="page-actions">
+          <a class="btn-ghost" href="#cashflow">${icon('upload', 16)}匯入對帳單</a>
+          <button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button>
+        </div>
+      </div>
+
+      <section class="bank-account-summary" aria-label="銀行帳戶摘要">
+        <div class="bank-account-kpi"><span>帳戶數</span><strong>${summary.accountCount} 個</strong></div>
+        <div class="bank-account-kpi"><span>已設定帳號末碼</span><strong>${summary.suffixCount} 個</strong></div>
+        <div class="bank-account-kpi"><span>使用幣別</span><strong>${summary.currencies.length ? summary.currencies.map(esc).join('、') : '尚無'}</strong></div>
+      </section>
+
+      <aside class="bank-privacy-note" aria-label="帳號隱私說明">
+        <span class="bank-privacy-icon">${icon('shield', 18)}</span>
+        <div><strong>帳號只顯示末四碼</strong><p>完整帳號只用於辨識銀行對帳單；編輯帳戶時留空，原本設定不會被清除。</p></div>
+      </aside>
+
+      <section class="bank-account-details">
+        <div class="bank-account-section-head">
+          <div><span>帳戶明細</span><h2>現金與銀行存款</h2></div>
+          <p>餘額依各帳戶原幣顯示，不跨幣別加總</p>
+        </div>
+        ${accounts.length ? `<div class="tbl-wrap bank-account-table-wrap">
+          <table class="bank-acc-tbl bank-account-table"><thead><tr><th>銀行帳戶</th><th>帳戶末四碼</th><th>幣別</th><th class="num">餘額</th><th aria-label="動作"></th></tr></thead>
+          <tbody>${accounts.map(bankAccRow).join('')}</tbody></table>
+        </div>` : `<div class="bank-account-empty">
+          <span class="bank-empty-icon">${icon('bank', 28)}</span>
+          <div><strong>尚無銀行帳戶</strong><p>新增帳戶，或從銀行收支匯入對帳單自動建立。</p></div>
+          <button class="btn-ghost" id="addBankAccEmpty">${icon('plus', 16)}新增第一個帳戶</button>
+        </div>`}
+      </section>
     </div>
   `;
   byId('addBankAcc').onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });
+  const emptyAdd = byId('addBankAccEmpty');
+  if (emptyAdd) emptyAdd.onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAccForm(accounts.find(x => x.id === b.dataset.edit), { onDone: renderBankAccounts }));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const x = accounts.find(y => y.id === b.dataset.del);
@@ -180,12 +218,13 @@ export async function renderBankAccounts() {
 function bankAccRow(x) {
   const cur = x.currency || 'TWD';
   const neg = Number(x.balance) < 0;
+  const suffix = x.accountNoLast4 ? `•••• ${esc(x.accountNoLast4)}` : '<span class="bank-account-unset">尚未設定</span>';
   return `<tr>
-    <td>${esc(x.name)}${x.class && x.class !== '現金' ? ` <span class="muted">・${esc(x.class)}</span>` : ''}</td>
-    <td class="muted">${x.accountNoLast4 ? esc(x.accountNoLast4) : '—'}</td>
-    <td class="muted">${esc(cur)}</td>
-    <td class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
-    <td><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除">${icon('trash', 15)}</button></div></td>
+    <td class="bank-account-name-cell"><div class="bank-account-name"><span class="bank-account-mark">${icon('bank', 17)}</span><span><strong>${esc(x.name)}</strong>${x.class && x.class !== '現金' ? `<small>${esc(x.class)}</small>` : ''}</span></div></td>
+    <td data-label="帳戶末四碼"><span class="bank-account-suffix">${suffix}</span></td>
+    <td data-label="幣別"><span class="bank-currency-tag">${esc(cur)}</span></td>
+    <td data-label="餘額" class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
+    <td class="bank-account-actions"><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯" aria-label="編輯 ${esc(x.name)}">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除" aria-label="刪除 ${esc(x.name)}">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }
 
