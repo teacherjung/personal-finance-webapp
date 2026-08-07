@@ -1,6 +1,10 @@
 /* 保險追蹤（UI5）：頁面級樣式，避免與同時進行的共用樣式工作互撞。 */
 .insurance-page { width: 100%; }
 .insurance-page-head { margin-bottom: 18px; }
+.insurance-page-head .page-eyebrow {
+  display: block; margin: 0 0 4px; color: var(--accent-ink);
+  font-size: 11px; font-weight: 700;
+}
 .insurance-page button,
 .insurance-page .btn,
 .insurance-page .btn-link,

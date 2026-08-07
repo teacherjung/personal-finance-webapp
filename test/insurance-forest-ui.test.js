@@ -107,6 +107,7 @@ function assertInsuranceCss(css, index) {
   const mobile = cssBlock(css, '@media (max-width: 700px)');
   assert.match(index, /<link rel="stylesheet" href="insurance\.css" \/>/);
   assert.match(css, /\.insurance-page button,[\s\S]*\.insurance-page \.btn-danger \{ border-radius: 8px; \}/);
+  assert.match(css, /\.insurance-page-head \.page-eyebrow \{[^}]*color: var\(--accent-ink\);[^}]*font-weight: 700;/);
   assert.match(css, /\.insurance-summary \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\);/);
   assert.match(css, /\.insurance-policy-grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(css, /\.insurance-policy \{[\s\S]*border: 2px solid var\(--frame\);/);
@@ -161,6 +162,9 @@ test('保險追蹤 UI：破壞安全輸出、路由守衛、圓角或窄畫面�
   const css = read('public/insurance.css');
   const index = read('public/index.html');
   assert.throws(() => assertInsuranceCss(css.replace('border-radius: 8px;', 'border-radius: 0;'), index));
+  const eyebrowInk = 'color: var(--accent-ink);';
+  assert.ok(css.includes(eyebrowInk), '突變目標必須存在：頁首眉標深橘文字');
+  assert.throws(() => assertInsuranceCss(css.replace(eyebrowInk, 'color: var(--text-dim);'), index));
   assert.throws(() => assertInsuranceCss(css.replace('.insurance-policy-grid { grid-template-columns: 1fr; }', '.insurance-policy-grid { grid-template-columns: repeat(2, 1fr); }'), index));
   assert.throws(() => assertInsuranceCss(css.replace('.insurance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }', '.insurance-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }'), index));
   assert.throws(() => assertInsuranceCss(css, index.replace('<link rel="stylesheet" href="insurance.css" />', '')));
