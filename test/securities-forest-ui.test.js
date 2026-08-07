@@ -32,14 +32,14 @@ test('分幣別摘要與查帳表有專屬結構，不改既有數字與欄位�
 });
 
 test('視覺層維持米橘主色、綠色只留主要動作與正向財務語意', () => {
-  assert.match(css, /\.securities-filter-section \.chip\.active[\s\S]*background: var\(--accent-soft\)/);
+  assert.match(css, /\.securities-filter-section \.chip\.active \{[^}]*background: var\(--accent-soft\)/);
   assert.match(css, /box-shadow: inset 0 -3px 0 var\(--accent\)/);
   assert.doesNotMatch(css, /background:\s*var\(--pos(?:-soft)?\)/);
   assert.doesNotMatch(css, /background:\s*var\(--action\)/);
 });
 
 test('按鈕採 8px 圓角，12 欄查帳表只在表格內水平捲動', () => {
-  assert.match(css, /\.securities-page-head \.page-actions \.btn,[\s\S]*border-radius: 8px/);
+  assert.match(css, /\.securities-page-head \.page-actions \.btn,\s*\.securities-page-head \.page-actions \.btn-ghost \{[^}]*border-radius: 8px/);
   assert.match(css, /\.securities-filter-section \.chip[\s\S]*border-radius: 8px/);
   assert.match(css, /\.securities-ledger-table table\s*\{\s*min-width: 1180px;/);
   assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.securities-ledger-table table\s*\{\s*min-width: 1120px;/);

@@ -9,7 +9,9 @@ const bankAccounts = readFileSync(new URL('../public/bank-accounts.css', import.
 const cards = readFileSync(new URL('../public/cards.css', import.meta.url), 'utf8');
 const insurance = readFileSync(new URL('../public/insurance.css', import.meta.url), 'utf8');
 const subscriptionsCss = readFileSync(new URL('../public/subscriptions.css', import.meta.url), 'utf8');
+const securitiesCss = readFileSync(new URL('../public/securities.css', import.meta.url), 'utf8');
 const subscriptions = readFileSync(new URL('../public/modules/subscriptions.js', import.meta.url), 'utf8');
+const lowContrastAccentText = /(?:^|[;{])\s*color:\s*var\(--accent\)(?:\s*!important)?\s*;/m;
 
 function ruleBody(css, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -77,6 +79,12 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus �
   assert.doesNotMatch(subscriptionsCss.replace(subscriptionPositiveText, ''),
     /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
     'subscription containers and selection effects must stay in the warm beige-orange palette');
+  const securitiesPositiveText = /color:\s*var\(--pos\)\s*;/g;
+  assert.equal((securitiesCss.match(securitiesPositiveText) || []).length, 1,
+    'securities CSS only uses green once, for positive financial text');
+  assert.doesNotMatch(securitiesCss.replace(securitiesPositiveText, ''),
+    /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
+    'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
 test('UI5 暖米橘色票：橘色文字、橘色 focus 與綠色按鈕維持可讀對比', () => {
@@ -107,16 +115,18 @@ test('UI5 暖米橘色票：個股研究與訂閱的小字使用可讀深橘，�
   assert.match(ruleBody(stockResearch, '.stock-fact-popover'), /border-left:\s*2px solid var\(--accent\)/);
   assert.match(ruleBody(stockResearch, '.stock-valuation-row.base'), /box-shadow:\s*inset 3px 0 0 var\(--accent\)/);
   assert.match(ruleBody(stockResearch, '.stock-timeline li::before'), /background:\s*var\(--accent\)/);
-  assert.doesNotMatch(stockResearch, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+  assert.doesNotMatch(stockResearch, lowContrastAccentText,
     'small stock-research text must not fall back to the lower-contrast coin orange');
-  assert.doesNotMatch(bankAccounts, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+  assert.doesNotMatch(bankAccounts, lowContrastAccentText,
     'small bank-account text must use the readable coin-orange ink');
-  assert.doesNotMatch(cards, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+  assert.doesNotMatch(cards, lowContrastAccentText,
     'small card-tracking text must use the readable coin-orange ink');
-  assert.doesNotMatch(insurance, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+  assert.doesNotMatch(insurance, lowContrastAccentText,
     'small insurance text must use the readable coin-orange ink');
-  assert.doesNotMatch(subscriptionsCss, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+  assert.doesNotMatch(subscriptionsCss, lowContrastAccentText,
     'small subscription text must use the readable coin-orange ink');
+  assert.doesNotMatch(securitiesCss, lowContrastAccentText,
+    'small securities text must use the readable coin-orange ink');
   assert.match(subscriptions, /st === 'ending' \? 'color:var\(--accent-ink\)'/);
   assert.doesNotMatch(subscriptions, /color:var\(--accent\)/,
     'subscription inline text must use the readable coin-orange ink');
