@@ -190,34 +190,43 @@ export async function renderSubscriptions() {
   const endingCount = subs.filter(s => subStatus(s) === 'ending').length;
 
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>訂閱追蹤</h1><p>訂閱不可怕，可怕的是忘了自己有訂閱。</p></div>
+    <div class="subscriptions-page">
+    <div class="page-head subscriptions-page-head">
+      <div><span class="page-eyebrow">固定支出管理</span><h1>訂閱追蹤</h1><p>掌握每月固定支出、下一次扣款與準備停用的服務。</p></div>
       <div class="page-actions">
         <button class="btn-ghost icon-btn" id="printSubs" title="列印 / 匯出 PDF" aria-label="列印 / 匯出 PDF">${icon('print', 16)}</button>
         <button class="btn" id="addSub">${icon('plus', 16)}新增訂閱</button>
       </div>
     </div>
 
-    ${staleSubs.length ? `<div class="reminders" style="margin-bottom:18px"><div class="reminder danger">
-      <span class="r-tag">卡片</span>
-      <div><div class="r-title">續費卡已失效</div><div class="r-detail">有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</div></div>
-    </div></div>` : ''}
+    ${staleSubs.length ? `<div class="subscriptions-attention danger">
+      <span class="subscriptions-attention-mark">卡片</span>
+      <div><strong>續費卡已失效</strong><p>有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</p></div>
+    </div>` : ''}
 
-    <div class="cards">
-      <div class="card cost-summary-card"><h3>本月費用（${curMk}）</h3><div class="stat sm">${fmtFee(thisMonth)}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${curMk}">計算方式</button></div>
-      <div class="card cost-summary-card"><h3>下月費用（${nextMk}）</h3><div class="stat sm">${fmtFee(nextMonth)}</div><div class="stat-sub ${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}</div><button class="btn-ghost btn-sm cost-method-btn" data-cost-detail="${nextMk}">計算方式</button></div>
-      <div class="card"><h3>每年總額</h3><div class="stat sm">${fmtFee(thisMonth * 12)}</div></div>
-      <div class="card"><h3>即將停用</h3><div class="stat sm">${endingCount} 項</div></div>
+    <div class="subscriptions-summary">
+      <div class="subscriptions-summary-item"><span>本月費用</span><strong>${fmtFee(thisMonth)}</strong><small>${curMk}</small><button class="cost-method-btn" data-cost-detail="${curMk}">查看計算方式</button></div>
+      <div class="subscriptions-summary-item"><span>下月費用</span><strong>${fmtFee(nextMonth)}</strong><small class="${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}</small><button class="cost-method-btn" data-cost-detail="${nextMk}">查看 ${nextMk}</button></div>
+      <div class="subscriptions-summary-item"><span>年化固定支出</span><strong>${fmtFee(thisMonth * 12)}</strong><small>以本月費用換算</small></div>
+      <div class="subscriptions-summary-item"><span>即將停用</span><strong>${endingCount} 項</strong><small>${endingCount ? '已排入停用流程' : '目前沒有待停用服務'}</small></div>
     </div>
 
+    <section class="subscriptions-section subscriptions-workspace">
+      <div class="subscriptions-section-head"><div><span>使用中</span><h2>訂閱與近期扣款</h2></div><p>排序、記帳與停用標記都在這裡處理</p></div>
     <div class="active-subscription-group">
       ${subscriptionsTableHtml(mainSubs, validSet, { listKey: 'active', whenHeader: '續費日', emptyText: '尚無使用中的訂閱' })}
       ${chargeTimelineHtml(subs)}
     </div>
+    </section>
+
+    <section class="subscriptions-section subscriptions-lifecycle">
+      <div class="subscriptions-section-head"><div><span>異動管理</span><h2>停用中的服務</h2></div><p>分開查看即將停用與已停止扣款的項目</p></div>
     ${subscriptionsTableHtml(endingSubs, validSet, { listKey: 'ending', serviceHeader: '即將停用', whenHeader: '停用日', emptyText: '尚無即將停用的服務', extraClass: 'ending-list' })}
     ${subscriptionsTableHtml(endedSubs, validSet, { listKey: 'ended', serviceHeader: '已停用', whenHeader: '停用日', emptyText: '尚無已停用的服務', extraClass: 'ended-list' })}
+    </section>
 
-    <div class="section-title">訂閱分析</div>
+    <section class="subscriptions-section subscriptions-analysis">
+    <div class="subscriptions-section-head"><div><span>支出結構</span><h2>訂閱分析</h2></div><p>同時比較類別占比、金額與扣款卡片</p></div>
     <div class="two-col">
       <div class="chart-card"><h3>依類別佔比（本月）</h3>
         <div class="cat-donut-layout">
@@ -230,8 +239,10 @@ export async function renderSubscriptions() {
       <div class="chart-card"><h3>依類別金額（本月）</h3><div class="chart-box cat-bar-chart-box"><canvas id="catBarChart"></canvas></div></div>
     </div>
     <div class="chart-card card-total-card"><h3>本月各信用卡訂閱總額</h3><div id="cardTotalsTable"></div></div>
+    </section>
 
     <div id="historySection"></div>
+    </div>
   `;
 
   byId('addSub').onclick = () => openSubForm(null, creditCards);
