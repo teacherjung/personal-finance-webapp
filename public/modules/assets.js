@@ -9,6 +9,19 @@ import { rebalancePlan } from './rebalance.js';
 // 這些手抄清單零考題看著；理由、後果與「新增型別還要改哪裡」全寫在 accounts-model.js 檔頭。
 import { accountTypeOptions, isLiabilityAccount, ACCOUNT_CURRENCIES } from './accounts-model.js';
 let chart;
+const ASSET_CLASS_DISPLAY_ORDER = Object.freeze(['股票', '債券', '現金', '黃金']);
+
+/** @param {any[]} rows */
+function orderAllocationRows(rows) {
+  const rank = name => {
+    const index = ASSET_CLASS_DISPLAY_ORDER.indexOf(name);
+    return index === -1 ? ASSET_CLASS_DISPLAY_ORDER.length : index;
+  };
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => rank(a.row.class) - rank(b.row.class) || a.index - b.index)
+    .map(({ row }) => row);
+}
 
 export async function renderAssets() {
   const seq = currentRouteSeq();
@@ -34,7 +47,7 @@ export async function renderAssets() {
       <section class="asset-kpi-frame" aria-label="資產摘要">
         <div class="asset-kpi"><span>總資產</span><strong class="pos">${wan(alloc.assets)}</strong></div>
         <div class="asset-kpi"><span>總負債</span><strong class="neg">${wan(alloc.liabilities)}</strong></div>
-        <div class="asset-kpi asset-kpi-primary"><span>淨資產 <small>（含現金）</small></span><strong>${wan(alloc.netWorth)}</strong></div>
+        <div class="asset-kpi"><span>淨資產 <small>（含現金）</small></span><strong>${wan(alloc.netWorth)}</strong></div>
       </section>
 
       <section class="assets-layout">
@@ -45,7 +58,7 @@ export async function renderAssets() {
         <article class="asset-panel asset-target-panel">
           <div class="assets-panel-head"><div><span class="assets-eyebrow">配置檢查</span><h2>實際配置 vs 目標</h2></div><span class="assets-panel-note">偏離門檻 ${db.settings.allocationDriftPct || 5}%</span></div>
           <div class="asset-allocation-list">
-            ${a.rows.filter(r => r.value > 0 || r.targetPct > 0).map(r => {
+            ${orderAllocationRows(a.rows).filter(r => r.value > 0 || r.targetPct > 0).map(r => {
           const off = Math.abs(r.diff) >= (db.settings.allocationDriftPct || 5);
           const fromPf = ['股票', '債券'].includes(r.class);
           return `<div class="asset-allocation-row">

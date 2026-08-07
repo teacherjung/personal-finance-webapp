@@ -71,6 +71,8 @@ function assertAssetsStructure(rawSource) {
   assert.match(source, /<section class="assets-layout">/);
   assert.match(source, /class="asset-allocation-list"/);
   assert.match(source, /class="assets-account-table"/);
+  assert.match(source, /orderAllocationRows\(a\.rows\)\.filter/);
+  assert.doesNotMatch(source, /asset-kpi-primary/, '淨資產前只保留與其他欄一致的中性細分隔線');
 
   for (const id of ['rebalBtn', 'editTargets', 'addAcc', 'pie']) {
     assert.match(source, new RegExp(`id="${id}"`), `${id} 接線不可因整理版面消失`);
@@ -83,13 +85,23 @@ function assertAssetsStructure(rawSource) {
   assert.doesNotMatch(source, /class="tag \$\{liab \? 'amber' : 'blue'\}"/);
 }
 
+function allocationClassOrder(rawSource, rows) {
+  const source = stripComments(rawSource);
+  const start = source.indexOf('const ASSET_CLASS_DISPLAY_ORDER');
+  const end = source.indexOf('export async function renderAssets()', start);
+  assert.ok(start >= 0 && end > start, '找不到資產類別展示排序函式');
+  const helperBlock = source.slice(start, end);
+  const orderRows = Function(`${helperBlock}; return orderAllocationRows;`)();
+  return orderRows(rows).map(row => row.class);
+}
+
 function assertAssetsCss(css) {
   const start = css.indexOf('/* ---------- 資產配置（UI5） ---------- */');
   const end = css.indexOf('/* ---------- 理財中心總覽（UI2） ---------- */');
   assert.ok(start >= 0 && end > start, '找不到資產配置專屬樣式區塊');
   const block = css.slice(start, end);
 
-  assert.match(block, /\.asset-kpi-frame \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\);/);
+  assert.match(block, /\.asset-kpi-frame \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); gap: 1px;[\s\S]*background: var\(--line\);[\s\S]*border: 2px solid var\(--frame\);/);
   assert.match(block, /\.assets-layout \{[^}]*grid-template-columns: minmax\(300px, \.82fr\) minmax\(460px, 1\.18fr\);/);
   assert.match(block, /\.asset-allocation-track \{[^}]*border: 1px solid var\(--frame\);/);
   assert.match(block, /\.asset-allocation-fill \{[^}]*background: var\(--accent\);/);
@@ -98,6 +110,7 @@ function assertAssetsCss(css) {
   assert.match(block, /\.assets-account-table \{ min-width: 660px; \}/);
 
   assert.doesNotMatch(block, /background:\s*var\(--(?:action|pos|pos-soft)\)/, '綠色不可成為資產配置頁容器底色');
+  assert.doesNotMatch(block, /\.asset-kpi-primary|box-shadow:\s*inset[^;]*var\(--accent\)/, '摘要欄位不可用橘色粗線分隔');
 }
 
 function mutateAssetsCss(css, from, to) {
@@ -117,12 +130,29 @@ test('資產配置 UI：只使用專屬暖色版面，桌機雙欄與手機單�
   assertAssetsCss(read('public/styles.css'));
 });
 
+test('資產配置 UI：配置檢查固定依股票、債券、現金、黃金排序，自訂類別接在後面', () => {
+  const source = read('public/modules/assets.js');
+  const rows = ['現金', '其他', '黃金', '股票', '債券', '另類'].map(className => ({ class: className }));
+  assert.deepEqual(allocationClassOrder(source, rows), ['股票', '債券', '現金', '黃金', '其他', '另類']);
+
+  const target = "['股票', '債券', '現金', '黃金']";
+  assert.ok(source.includes(target), '找不到排序突變目標');
+  assert.notDeepEqual(
+    allocationClassOrder(source.replace(target, "['股票', '現金', '債券', '黃金']"), rows),
+    ['股票', '債券', '現金', '黃金', '其他', '另類'],
+    '現金與債券對調時考題必須轉紅',
+  );
+});
+
 test('資產配置 UI：拿掉根節點、手機堆疊或改回綠色容器時考題會紅', () => {
   const source = read('public/modules/assets.js');
   assert.throws(() => assertAssetsStructure(source.replace('<div class="assets-page">', '<div>')));
 
   const css = read('public/styles.css');
   assert.throws(() => assertAssetsCss(css.replace('.asset-kpi-frame { grid-template-columns: 1fr; }', '.asset-kpi-frame { display: block; }')));
+  assert.throws(() => assertAssetsCss(mutateAssetsCss(css,
+    'grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;\n  background: var(--line);',
+    'grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;\n  background: var(--accent);')));
   assert.throws(() => assertAssetsCss(mutateAssetsCss(css,
     'background: var(--card);\n  border: 1px solid var(--line);',
     'background: var(--pos-soft);\n  border: 1px solid var(--line);')));
