@@ -18,7 +18,7 @@
 }
 .subscriptions-attention.danger { border-left-color: var(--neg); }
 .subscriptions-attention-mark {
-  flex: 0 0 auto; padding: 4px 9px; color: var(--neg); background: var(--neg-soft);
+  flex: 0 0 auto; padding: 4px 9px; color: var(--neg); background: rgba(184, 74, 57, .12);
   border: 1px solid currentColor; border-radius: 20px; font-size: 10px; font-weight: 700;
 }
 .subscriptions-attention strong { color: var(--text); font-size: 12px; }
@@ -44,6 +44,8 @@
 .subscriptions-summary-item > small {
   display: block; min-height: 17px; margin-top: 3px; color: var(--text-dim); font-size: 10.5px;
 }
+.subscriptions-summary-item > small.pos { color: var(--pos); }
+.subscriptions-summary-item > small.neg { color: var(--neg); }
 .subscriptions-summary-item .cost-method-btn {
   margin-top: auto; padding: 0; color: var(--accent-ink); background: transparent; border: 0;
   box-shadow: none; font-size: 10.5px; font-weight: 700; cursor: pointer;

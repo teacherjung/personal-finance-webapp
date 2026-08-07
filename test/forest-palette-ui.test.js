@@ -71,7 +71,11 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus �
     'card tracking containers and selection effects must stay in the warm beige-orange palette');
   assert.doesNotMatch(insurance, /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
     'insurance containers and status effects must stay in the warm beige-orange palette');
-  assert.doesNotMatch(subscriptionsCss, /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
+  const subscriptionPositiveText = /color:\s*var\(--pos\)\s*;/g;
+  assert.equal((subscriptionsCss.match(subscriptionPositiveText) || []).length, 1,
+    'subscription CSS only uses green once, for the cheaper-next-month text');
+  assert.doesNotMatch(subscriptionsCss.replace(subscriptionPositiveText, ''),
+    /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
     'subscription containers and selection effects must stay in the warm beige-orange palette');
 });
 

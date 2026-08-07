@@ -56,6 +56,13 @@ function assertSubscriptionsCss(css, index) {
   assert.match(css, /\.subscriptions-page button,[\s\S]*\.subscriptions-page \.btn-danger \{ border-radius: 8px; \}/);
   assert.match(css, /\.subscriptions-page-head \.page-eyebrow \{[^}]*color: var\(--accent-ink\);[^}]*font-weight: 700;/);
   assert.match(css, /\.subscriptions-summary \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\);/);
+  assert.match(css, /\.subscriptions-summary-item > small\.pos \{ color: var\(--pos\); \}/,
+    '下月費用變便宜時必須保留正向財務語意色');
+  assert.match(css, /\.subscriptions-summary-item > small\.neg \{ color: var\(--neg\); \}/,
+    '下月費用變貴時必須保留負向財務語意色');
+  assert.match(css, /\.subscriptions-attention-mark \{[^}]*background: rgba\(184, 74, 57, \.12\);/,
+    '失效卡片提示要有可見的淡紅底色');
+  assert.doesNotMatch(css, /var\(--neg-soft\)/, '不可引用未定義的色彩 token');
   assert.match(css, /\.subscriptions-page \.active-subscription-group \{[\s\S]*border: 2px solid var\(--frame\);/);
   assert.match(tablet, /\.subscriptions-summary \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
   assert.match(mobile, /\.subscriptions-section-head \{ align-items: flex-start; flex-direction: column;/);
@@ -83,6 +90,10 @@ test('訂閱追蹤 UI：破壞路由守衛、年化口徑、圓角或窄畫面�
 
   const css = read('public/subscriptions.css');
   const index = read('public/index.html');
+  const positiveDelta = '.subscriptions-summary-item > small.pos { color: var(--pos); }';
+  assert.ok(css.includes(positiveDelta), '突變目標必須存在：下月費用正向語意色');
+  assert.throws(() => assertSubscriptionsCss(css.replace(positiveDelta,
+    '.subscriptions-summary-item > small.pos { color: var(--text-dim); }'), index));
   assert.throws(() => assertSubscriptionsCss(css.replace('border-radius: 8px;', 'border-radius: 0;'), index));
   assert.throws(() => assertSubscriptionsCss(css.replace('.subscriptions-summary { grid-template-columns: 1fr; }', '.subscriptions-summary { grid-template-columns: repeat(2, 1fr); }'), index));
   assert.throws(() => assertSubscriptionsCss(css, index.replace('<link rel="stylesheet" href="subscriptions.css" />', '')));
