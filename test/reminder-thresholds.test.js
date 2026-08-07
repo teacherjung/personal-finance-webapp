@@ -77,6 +77,19 @@
 //        assets 仍就地寫死在展開**之後**」（依語言規則後寫的具名屬性一定贏，行為完全相同）。
 //        修法是往下拆一層與看位置，不是多認一種形狀（見 frozenObjectArg 與 lateSpread 那條斷言）。
 //        ⚠️ 這兩顆上一版被列進「轉紅」表當成守住東西的證據——**假紅記成戰功比缺口更糟**，本輪一起改口。
+//
+// ⚠️ 第八版的教訓（#413 r26 阻擋）：三顆全在 r25 那個「數欄位之前先扣掉名牌」的動作上——
+//    **修法自己是新的攻擊面**。r25 為了治「類別叫『收益 20%』」的假紅而開始扣名牌，扣的手法帶進三個病：
+//    (a) 扣完之後用**換行**把剩下的文字節點接起來，於是名牌以外一個被標籤切開的百分比
+//        （`30<strong>%</strong>`）被切成 `30\n%` ⇒ 第三欄漏算 ⇒ **該吵著紅的負例靜靜放行**（是洞）；
+//    (b) 扣的是「這一塊裡**所有**跟類別同字的文字節點」而不是**已確認的那一處**，
+//        於是同一塊裡在真名牌之外再印一次同一個類別名稱時，第二處被自己的計數吃掉 ⇒ **誤放行**；
+//    (c) 名牌比對只正規化畫面那一側、拿沒收過空白的類別名去比，於是 ` 收益 20% `／`收益  20%`
+//        這兩種**合法輸入**（表單原值送出、後端只驗非空字串）一處名牌都認不出來 ⇒ **假紅**。
+//    通則值得記住：**「扣掉一段再判斷」必須把三件事一起講清楚——扣的是哪一個節點（身分，不是內容）、
+//    扣完之後剩下的東西怎麼接（相鄰語意，不是換行）、比對前兩側是不是同一套正規化。**
+//    修法見 visibleTextOutside／fieldPctCount／classLabelNodes，四種形狀都已釘成常設案例
+//    （split-node 第三欄與同塊重複名牌是負例，前後空白與連續空白是正例）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -213,11 +226,13 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   //        ⚠️ 做法在 #413 r4 換過（見 renderAssetsHtml）：從「抽判準式出來算」改成
   //        **整支 assets.js 進 sandbox 跑 renderAssets()、斷言它真的印出來的 HTML**——
   //        射程因此從「判準式的值」推進到「橘標籤真的出現在畫面的 HTML 上」。
-  //        ⚠️ **定位**又在 #413 r22／r24／r25 換過三次（見 allocRow）：從「用區塊標題與圖例文案切字串」
+  //        ⚠️ **定位**又在 #413 r22／r24／r25／r26 換過四次（見 allocRow）：從「用區塊標題與圖例文案切字串」
   //        改成「照結構找」，再把結構指紋裡殘留的「目標」二字與 `includes` 的子字串比對一起換掉，
-  //        最後把欄位計數改成「先扣掉名牌內容再數」——現在只認「類別名牌（精確）＋同層**名牌以外**
-  //        成對的百分比欄位」。四次起因都是假紅：Codex UI PR #421 純重排版面，以及
-  //        「目標→規劃」等價改寫、「現金／現金等價物」、「收益 20%」三個合法配置。
+  //        接著把欄位計數改成「先扣掉名牌內容再數」，最後把那個「扣」字收乾淨（只扣指名的那一處、
+  //        剩下的照相鄰語意接、兩側同一套正規化）——現在只認「類別名牌（正規化後精確）＋同層
+  //        **名牌以外**成對的百分比欄位」。起因多數是假紅：Codex UI PR #421 純重排版面，以及
+  //        「目標→規劃」等價改寫、「現金／現金等價物」、「收益 20%」、類別名稱多打空白這些合法配置；
+  //        r26 另有兩顆是**洞**（名牌以外被切開的第三欄漏算、同塊第二處名牌被自己的計數吃掉）。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
   const alloc = (cashTarget, stockTarget, extraTargets = []) => ({
     settings: { allocationDriftPct: 5 },
@@ -370,6 +385,29 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   assert.equal(driftTag(allocRow(pctNameHtml, '現金')), '偏離 +5.0%',
     '等價案例：頁面上多一個名字帶百分比的類別時，「現金」那一條照舊定位得到、標籤照舊讀得到');
 
+  // 使用者在類別名稱**前後多打了空白**、或名字中間按了**連續兩個空白**：兩種都是合法資料
+  //（`public/modules/assets.js` 的 collect 把表單原值原樣送出、`lib/routes/crud.js` 只驗非空字串），
+  // 版面也原樣印出來。名牌比對只正規化畫面那一側時，這兩種一處都認不出來 ⇒ 假紅（#413 r26 Finding）。
+  for (const [raw, kind] of /** @type {[string, string][]} */ ([
+    [' 收益 20% ', '前後空白'], ['收益  20%', '連續空白'],
+  ])) {
+    const rawHtml = await renderAssetsHtml(
+      fullDb(alloc(45, 55, [{ class: '債券', targetPct: 20 }, { class: raw, targetPct: 10 }])));
+    // fixture 自我驗證：那些空白真的原封不動印到版面上了（被誰收掉的話，這顆案例什麼都沒測到）
+    assert.ok(rawHtml.includes(raw),
+      `等價案例（${kind}）：版面已不是原樣印出類別名稱（空白被收掉了？）——這顆案例要有人回來換一種寫法`);
+    const rawRow = allocRow(rawHtml, raw);
+    assert.match(rawRow.text, standalonePct('0.0'),
+      `等價案例（${kind}）：類別名稱帶多餘空白時，那一條的實際比例（0.0%）照樣定位得到`);
+    assert.match(rawRow.text, standalonePct('10'),
+      `等價案例（${kind}）：抓到的目標是這一條自己的 10%，不是名字裡那個 20%`);
+    assert.equal(driftTag(rawRow), '偏離 -10.0%',
+      `等價案例（${kind}）：類別名稱帶多餘空白時偏離標籤照樣讀得到——`
+      + '上一版只正規化畫面那一側、拿沒收過空白的類別名去比，一處名牌都認不出來 ⇒ 假紅（#413 r26 Finding）');
+    assert.equal(driftTag(allocRow(rawHtml, '現金')), '偏離 +5.0%',
+      `等價案例（${kind}）：同一頁上原本那幾條不可以被這個名字帶壞`);
+  }
+
   // ── 對照組：證明上面幾條真的咬在「結構＋那顆橘標籤」上，不是碰巧在某段字串裡看到「偏離」兩個字 ──
   // （沒有這一段，定位改寫之後「還會不會紅」就只是嘴上說說；本檔記過的空包彈都是這樣長出來的）
   assert.throws(() => allocRow(boundaryHtml, '黃金'), /要 1 條/,
@@ -401,6 +439,18 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
     + '<div class="bar"></div></div>', '現金'), /要 1 條/,
     '對照組：那一層在名牌以外多出第三個不帶號的百分比欄位時必須吵著紅——'
     + '不然「這一條的實際／目標是哪兩個數字」就沒人守了（#413 r25 修法的劃界）');
+  // 同一顆的第二種形狀：第三個欄位被標籤**切成兩節**（`30<strong>%</strong>`）——瀏覽器眼裡一樣是 30%
+  assert.throws(() => allocRow(
+    '<div><div><span>現金</span><span>50.0% / 目標 45%</span><span>30<strong>%</strong></span></div>'
+    + '<div class="bar"></div></div>', '現金'), /要 1 條/,
+    '對照組：名牌以外的第三個百分比被標籤切成兩節時同樣要吵著紅——'
+    + '上一版把剩下的文字節點用換行接起來，這一格變成 `30\\n%` ⇒ 漏算 ⇒ 該紅的負例靜靜放行（#413 r26 Finding）');
+  // 同一塊裡在真正的名牌之外**再印一次**同一個類別名稱：讀法不只一種，必須吵著紅
+  assert.throws(() => allocRow(
+    '<div><div><span>現金</span><span>50.0% / 目標 45%</span></div>'
+    + '<small>現金</small><div class="bar"></div></div>', '現金'), /要 1 處/,
+    '對照組：同一塊裡出現第二處同名名牌時必須吵著紅——'
+    + '上一版把「所有跟類別同字的文字節點」一律扣掉，第二處被自己的計數吃掉 ⇒ 誤放行（#413 r26 Finding）');
 });
 
 /** 進度條顏色的哨兵：CHART.orange／green 由測試端注入這兩串，才驗得出偏離時換的是哪一個顏色。 */
@@ -672,14 +722,16 @@ function walkAst(node, visit) {
  *      「偏離 4.9% 不可標偏離」那條。那時該把本題改成直接 import 那支共用模組，
  *      那也才是真正的關門（見 #409 的零 DOM 模組前例）。
  *   4. 斷言吃的是**畫面上真的印出來的東西**，但**定位不吃顯示文案、也不吃類別名稱的內容**
- *      （#413 r22 起，r24／r25 收乾淨，見 allocRow）：一條列靠「印著類別名稱的**名牌**
- *      （整個文字節點精確等於類別名）＋同一層**名牌以外成對的兩個百分比欄位**
+ *      （#413 r22 起，r24／r25／r26 收乾淨，見 allocRow）：一條列靠「印著類別名稱的**名牌**
+ *      （那一節可見文字正規化後精確等於類別名）＋同一層**名牌以外成對的兩個百分比欄位**
  *      （實際／目標；帶號的偏離量不算）」認出來，區塊標題、圖例、標題層級（h2／h3）、
  *      列的排序、CSS class 名稱、**欄位旁邊的字**（「目標 45%」→「規劃 45%」）改寫一律不影響；
- *      使用者把類別取成「現金等價物」或「收益 20%」這種合法名字也一律不影響
- *      ——後三顆是 r24／r25 抓到的假紅，已各自釘成常設等價案例。
+ *      使用者把類別取成「現金等價物」「收益 20%」，或名字前後／中間多打了空白
+ *      （` 收益 20% `／`收益  20%`）這些合法輸入也一律不影響
+ *      ——後幾顆是 r24／r25／r26 抓到的假紅，已各自釘成常設等價案例。
  *      剩下**仍會吵著紅**的是：類別名稱不再單獨印成名牌、兩個欄位不再與名牌同層、
- *      那一層在名牌以外多出第三個不帶號的百分比欄位、進度條搬離那一條的父層、兩條列併成一塊、
+ *      那一層在名牌以外多出第三個不帶號的百分比欄位（連被標籤切成兩節的 `30<strong>%</strong>` 也算）、
+ *      同一塊裡同一個類別被印成不只一處名牌、進度條搬離那一條的父層、兩條列併成一塊、
  *      或橘標籤不再是 `.tag.amber`——那些都動到了「使用者看不看得出哪一類偏離」，
  *      要人回來看過才算，不是靜靜綠。
  *      ⚠️ 進度條顏色只在**版面還用 CHART 上色時**比對（#421 起改用 CSS token 著色＝沒有第二個
@@ -949,55 +1001,92 @@ function normText(s) { return String(s ?? '').replace(/\s+/g, ' ').trim(); }
 const FIELD_PCT = /(?<![-+\d.])\d+(\.\d+)?%/g;
 
 /**
- * 這一層裡有幾個**欄位**百分比——數之前先把「印著 `cls` 的名牌」那幾個文字節點整段拿掉。
+ * 名牌被扣掉之後留在原處的**隔板**：不是數字、不是 `%`、也不是正負號，
+ * 所以「扣掉名牌讓前後兩節黏成一個新數字」（`…20` ＋ `%`）不會發生。
+ * 用一個字元而不是換行，是為了保留其餘文字的**相鄰**語意（見 visibleTextOutside）。
+ */
+const LABEL_GAP = ' ';
+
+/**
+ * 這一層裡**名牌以外**的可見文字：已確認的名牌節點（文字節點或整棵子樹）換成一片隔板，
+ * 其餘一律照瀏覽器 `textContent` 的語意**相鄰接起來**。
+ *
+ * ⚠️ 「相鄰」這三個字是 #413 r26 Finding 的修法，值得原地記下來：上一版把剩下的每個文字節點
+ *    用**換行**接起來，於是名牌以外一個被標籤切開的百分比（`30<strong>%</strong>`）
+ *    在計數時變成 `30\n%` ⇒ 第三個欄位漏算 ⇒ 該吵著紅的負例靜靜放行。
+ *    瀏覽器眼裡那就是連著的「30%」，計數也必須照同一套語意。
+ */
+function visibleTextOutside(el, labelNodes) {
+  let out = '';
+  const visit = (/** @type {any} */ node) => {
+    for (const child of node.childNodes) {
+      if (labelNodes.has(child)) { out += LABEL_GAP; continue; }   // 名牌整個（含子樹）不計
+      if (child.nodeType === 3) out += String(child.nodeValue ?? '');
+      else if (child.nodeType === 1) visit(child);
+    }
+  };
+  if (el && !labelNodes.has(el)) visit(el);
+  return out;
+}
+
+/**
+ * 這一層裡有幾個**欄位**百分比——數之前先把**傳進來的那幾個已確認名牌**整個扣掉。
  *
  * ⚠️ 這是 #413 r25 Finding 1 的修法：上一版對整個 `textContent` 計數，於是使用者開一個
  *    合法的類別叫「收益 20%」時，**名字裡的 `20%`** 加上實際、目標兩欄合計 3 個，
  *    被「必須恰好 2 個」拒絕 ⇒ 那一條定位不到 ⇒ 假紅。`assetTargets.class` 是自由字串
  *    （`lib/schema.js` 的白名單原樣收下），合法資料不可以改變定位結果——這跟 r24 的
  *    「現金／現金等價物」是同一個病型：**指紋不可以把資料本身的內容當成版面結構**。
- *    名牌是先被 `classLabels` 精確認出來的**類別名稱本身**，不是欄位，所以不計數；
+ *    名牌是先被 `classLabelNodes` 精確認出來的**類別名稱本身**，不是欄位，所以不計數；
  *    其餘每一個不帶號的百分比照舊算欄位（**旁邊寫什麼字一律不影響**）。
- *    ⚠️ 拿掉的只有「整個文字節點恰好等於類別名稱」的那幾節；名牌以外的地方多出第三個
- *    不帶號的百分比，照舊吵著紅。
+ * ⚠️ 扣掉的是**呼叫端指名的那幾個節點**，不是「這一層裡所有跟類別同字的文字節點」
+ *    （#413 r26 Finding）：上一版是後者，於是同一塊裡在真正的名牌之外**再印一次**同一個
+ *    類別名稱時，第二個也被一併扣掉 ⇒ 「一個類別在一塊裡只該有一處名牌」沒人守 ⇒ 誤放行。
+ *    名牌以外的地方多出第三個不帶號的百分比，照舊吵著紅（連被標籤切成兩節的也算）。
  */
-function fieldPctCount(el, cls) {
-  /** @type {string[]} */
-  const parts = [];
-  const visit = (/** @type {any} */ node) => {
-    for (const child of node.childNodes) {
-      if (child.nodeType === 3) {
-        if (normText(child.nodeValue) !== cls) parts.push(String(child.nodeValue ?? ''));
-      } else if (child.nodeType === 1) visit(child);
-    }
-  };
-  if (el) visit(el);
-  // 用換行接起來：拿掉名牌之後不可以讓前後兩節黏成一個新數字（`…20` ＋ `%`）
-  return (parts.join('\n').match(FIELD_PCT) || []).length;
+function fieldPctCount(el, labelNodes) {
+  return (visibleTextOutside(el, labelNodes).match(FIELD_PCT) || []).length;
 }
 
 /**
- * 頁面上把 `cls` **單獨印成一個名牌**的每一處（回傳那個文字節點的父元素）。
+ * 頁面上把 `cls` **單獨印成一個名牌**的每一處，回傳那個**名牌節點本身**——
+ * 通常是文字節點；名牌被標籤切開時（`<span>收益 <em>20%</em></span>`）則是剛好包住整段的那個元素。
+ * 一個名牌只認**最內層**的一個節點：外面再包幾層都不會變成第二處。
  *
- * ⚠️ 比對的是「整個文字節點去掉前後空白後**恰好等於**類別名稱」，不是子字串（#413 r24 Finding 2）：
+ * ⚠️ 比對的是「那一節的可見文字**正規化後恰好等於**正規化後的類別名稱」，不是子字串（#413 r24 Finding 2）：
  *    上一版用 `text.includes(cls)`，於是使用者多開一個合法的「現金等價物」類別時，
  *    那一條也算進「現金」名下 ⇒ 兩條各自正確的列被判成「重複列」⇒ 假紅。
  *    類別名稱在版面上本來就是自己一格（`<span>現金 …`／`<strong>現金</strong>`），
- *    用整個文字節點比對既精確、又不吃它外面包的是什麼標籤。
+ *    用整節文字比對既精確、又不吃它外面包的是什麼標籤。
+ * ⚠️ **兩邊都要正規化**（#413 r26 Finding）：上一版只把畫面那一側收空白、拿沒收過的 `cls` 去比，
+ *    於是使用者把類別打成 ` 收益 20% `（前後空白）或 `收益  20%`（連續空白）時一處都認不出來 ⇒ 假紅。
+ *    那兩種都是合法資料——表單原值直接送出（`public/modules/assets.js` 的 collect），
+ *    後端只驗非空字串（`lib/routes/crud.js`），版面也原樣印出來。
  */
-function classLabels(root, cls) {
+function classLabelNodes(root, cls) {
+  const want = normText(cls);
   /** @type {any[]} */
   const out = [];
+  if (!want) return out;      // 空白類別名沒有可比的名牌；定位會在上層吵著紅，不是靜靜抓到別塊
+  /** @returns {boolean} 這棵子樹裡認出名牌了沒 */
   const visit = (/** @type {any} */ node) => {
-    for (const child of node.childNodes) {
-      if (child.nodeType === 3) {
-        if (normText(child.nodeValue) === cls && child.parentElement) out.push(child.parentElement);
-      } else if (child.nodeType === 1) visit(child);
+    if (node.nodeType === 3) {
+      if (node.parentElement && normText(node.nodeValue) === want) { out.push(node); return true; }
+      return false;
     }
+    if (node.nodeType !== 1) return false;
+    let inner = false;
+    for (const child of node.childNodes) if (visit(child)) inner = true;
+    if (inner) return true;                       // 內層已經認出來了＝這一層只是外包裝，不算第二處
+    if (normText(node.textContent) === want) { out.push(node); return true; }
+    return false;
   };
-  visit(root);
+  for (const child of root.childNodes) visit(child);
   return out;
 }
+
+/** 名牌**所在的那個元素**（往上找列的起點）：文字節點取父元素，整棵子樹的名牌就是它自己。 */
+function labelHost(node) { return node.nodeType === 3 ? node.parentElement : node; }
 
 /** 某個百分比**單獨**出現（前面不接數字／小數點／負號）：`0.0%` 不可以被 `-20.0%` 的尾巴冒充。 */
 function standalonePct(n) { return new RegExp(`(?<![-\\d.])${String(n).replace('.', '\\.')}%`); }
@@ -1028,11 +1117,13 @@ function snapshot(html) {
  *   · 一條列的**頭部** ＝ 從「印著這個類別名稱的名牌」往上走，遇到的第一層**恰好帶著兩個
  *     百分比欄位**（實際、目標；帶正負號的偏離量不算）的祖先——標籤與兩個數字都在這一層；
  *   · 一條列的**整塊** ＝ 那個頭部的父層（進度條就在同一層，兩版皆然）。
- * 名牌＝**整個文字節點恰好等於類別名稱**（見 classLabels），欄位＝**名牌以外**的成對百分比數字
- * （見 fieldPctCount）。於是「目標 45%」改寫成「規劃 45%」、區塊標題與圖例改寫、標題層級改寫、
- * 列的排序改寫、CSS class 改名，一律不影響定位；類別名稱裡自己帶了百分比（「收益 20%」）也一樣。
+ * 名牌＝**那一節的可見文字正規化後恰好等於類別名稱**（見 classLabelNodes），
+ * 欄位＝**那一處名牌以外**、照 `textContent` 相鄰語意數出來的成對百分比數字（見 fieldPctCount）。
+ * 於是「目標 45%」改寫成「規劃 45%」、區塊標題與圖例改寫、標題層級改寫、
+ * 列的排序改寫、CSS class 改名，一律不影響定位；類別名稱裡自己帶了百分比（「收益 20%」）、
+ * 或前後／中間多打了空白（` 收益 20% `／`收益  20%`）也一樣。
  *
- * ⚠️ 為什麼一路換到這裡（四輪，值得原地記下來）：
+ * ⚠️ 為什麼一路換到這裡（五輪，值得原地記下來）：
  *    · r22 之前：拿三個**顯示文案**當座標（區塊標題「資產配置 vs 目標」、圖例「深色直線＝目標比例」、
  *      「跳過 `</h3>`」這個標題層級）。Codex UI PR #421 只重排版面、判準與標籤一字未動，本題假紅。
  *    · r22：改成「同時含類別名稱與唯一一個『目標 N%』的最小元素」——結構是進步了，
@@ -1043,28 +1134,40 @@ function snapshot(html) {
  *    · r24 還剩的第三個病（r25 Finding 1）：欄位是對**整層的文字**數百分比，
  *      於是類別叫「收益 20%」時，名字裡的那個 `20%` 被當成第三個欄位 ⇒ 定位不到 ⇒ 假紅。
  *      改法見 fieldPctCount：**先扣掉已經精確認出來的名牌內容再數**。
- *    現在指紋只剩兩樣**資料本身**：類別名牌（精確比對）與名牌以外成對的百分比欄位
- *    （不含帶號的偏離量）。三次都是同一個教訓：合法資料不可以改變定位結果。
+ *    · r25 的修法自己帶進三個病（r26 Finding，一次三顆，全在「扣掉名牌」這個動作上）：
+ *      ①扣完之後用**換行**把剩下的文字節點接起來 ⇒ 名牌以外被標籤切開的第三個欄位
+ *      （`30<strong>%</strong>`）漏算 ⇒ **該紅的負例靜靜放行**（是洞，不是假紅）；
+ *      ②扣的是「這一塊裡所有跟類別同字的文字節點」而不是**已確認的那一處** ⇒ 同一塊裡
+ *      在真名牌之外再印一次同一個類別名稱時，第二處被一併扣掉 ⇒ **誤放行**；
+ *      ③名牌比對只正規化畫面那一側、沒正規化 `cls` ⇒ 使用者把類別打成 ` 收益 20% `
+ *      或 `收益  20%`（都是合法資料）時一處都認不出來 ⇒ 假紅。
+ *      改法見 visibleTextOutside／fieldPctCount／classLabelNodes：**相鄰語意、只扣指名的那一處、兩邊都正規化**。
+ *    現在指紋只剩兩樣**資料本身**：類別名牌（正規化後精確比對）與名牌以外成對的百分比欄位
+ *    （不含帶號的偏離量）。四次都是同一個教訓：合法資料不可以改變定位結果。
  *
  * ⚠️ 仍然吵著紅的（這不是「什麼都不認」）：類別名稱不再單獨印成一個名牌、實際／目標兩個欄位
- *    不再與名牌同層、那一層在**名牌以外**多出第三個**不帶號**的百分比欄位、進度條搬離那一條的
- *    父層、或兩條列被併成同一塊——這些都動到了「使用者看不看得出哪一類偏離」，要人回來看過才算。
+ *    不再與名牌同層、那一層在**名牌以外**多出第三個**不帶號**的百分比欄位（連被標籤切成兩節的也算）、
+ *    同一塊裡同一個類別被印成不只一處名牌、進度條搬離那一條的父層、或兩條列被併成同一塊
+ *    ——這些都動到了「使用者看不看得出哪一類偏離」，要人回來看過才算。
  */
 function allocRow(html, cls) {
   const root = snapshot(html);
-  const labels = classLabels(root, cls);
+  const labels = classLabelNodes(root, cls);
   /** @type {any[]} */
   const heads = [];
   for (const label of labels) {
-    let head = label;
-    while (head && head !== root && fieldPctCount(head, cls) < 2) head = head.parentElement;
+    // 扣掉的只有**這一處**已確認的名牌：頁面別處（或同一塊裡）再印一次同一個類別名稱時，
+    // 那一處照樣算在可見文字裡，才輪得到下面兩句把它擋下來（#413 r26 Finding）。
+    const only = new Set([label]);
+    let head = labelHost(label);
+    while (head && head !== root && fieldPctCount(head, only) < 2) head = head.parentElement;
     // 撐不起一條列的名牌就跳過——頁面別處也會把同一個類別名稱印成一格
     //（例：帳戶明細表的「資產類別」欄），那一格往上沒有成對的百分比欄位，
     // 一路走到整頁時欄位是好幾條列加起來的（不成對）。真的該是一條列卻認不出來時，
     // heads 會少一條 ⇒ 下面那句 assert 吵著紅，不會靜靜略過。
     if (!head || head === root) continue;
-    if (fieldPctCount(head, cls) !== 2) continue;
-    if (classLabels(head, cls).length !== 1) continue;
+    if (fieldPctCount(head, only) !== 2) continue;
+    if (classLabelNodes(head, cls).length !== 1) continue;
     if (!heads.includes(head)) heads.push(head);
   }
   assert.equal(heads.length, 1,
@@ -1076,7 +1179,12 @@ function allocRow(html, cls) {
   const block = head.parentElement;
   assert.ok(block && block !== root,
     `資產頁的「${cls}」那一條沒有外層（進度條與標籤不再同屬一塊＝要有人回來更新本題）`);
-  assert.equal(fieldPctCount(block, cls), 2,
+  const blockLabels = classLabelNodes(block, cls);
+  assert.equal(blockLabels.length, 1,
+    `資產頁的「${cls}」那一塊裡把類別名稱單獨印成名牌的有 ${blockLabels.length} 處（要 1 處）——`
+    + '同一塊裡除了那一條的名牌之外還印了一次同一個類別名稱，「這一條是哪一條」就不只一種讀法'
+    + '（要有人回來更新本題）');
+  assert.equal(fieldPctCount(block, new Set(blockLabels)), 2,
     `資產頁的「${cls}」那一塊裡有不只一組「實際／目標」百分比欄位——兩條列被併在同一塊，`
     + '本題的「這一條」會被隔壁那條混過去（要有人回來更新本題）');
   return { cls, head, block, text: normText(head.textContent), html: block.innerHTML };
