@@ -8,6 +8,7 @@ const stockResearch = readFileSync(new URL('../public/stock-research.css', impor
 const bankAccounts = readFileSync(new URL('../public/bank-accounts.css', import.meta.url), 'utf8');
 const cards = readFileSync(new URL('../public/cards.css', import.meta.url), 'utf8');
 const insurance = readFileSync(new URL('../public/insurance.css', import.meta.url), 'utf8');
+const subscriptionsCss = readFileSync(new URL('../public/subscriptions.css', import.meta.url), 'utf8');
 const subscriptions = readFileSync(new URL('../public/modules/subscriptions.js', import.meta.url), 'utf8');
 
 function ruleBody(css, selector) {
@@ -70,6 +71,8 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus �
     'card tracking containers and selection effects must stay in the warm beige-orange palette');
   assert.doesNotMatch(insurance, /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
     'insurance containers and status effects must stay in the warm beige-orange palette');
+  assert.doesNotMatch(subscriptionsCss, /var\(--(?:action|action-hover|action-soft|pos|pos-soft)\)/,
+    'subscription containers and selection effects must stay in the warm beige-orange palette');
 });
 
 test('UI5 暖米橘色票：橘色文字、橘色 focus 與綠色按鈕維持可讀對比', () => {
@@ -108,6 +111,8 @@ test('UI5 暖米橘色票：個股研究與訂閱的小字使用可讀深橘，�
     'small card-tracking text must use the readable coin-orange ink');
   assert.doesNotMatch(insurance, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
     'small insurance text must use the readable coin-orange ink');
+  assert.doesNotMatch(subscriptionsCss, /color:\s*var\(--accent\)(?:\s*!important)?\s*;/,
+    'small subscription text must use the readable coin-orange ink');
   assert.match(subscriptions, /st === 'ending' \? 'color:var\(--accent-ink\)'/);
   assert.doesNotMatch(subscriptions, /color:var\(--accent\)/,
     'subscription inline text must use the readable coin-orange ink');
