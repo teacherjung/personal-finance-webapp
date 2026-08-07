@@ -118,7 +118,14 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄。⚠️ 存下去沒有「復原」可以按——動手前請先到本頁最下面「資料與備份」按「匯出備份」存一份（<b>本機版</b>另外會自己存一份還原檔 <code>data/store.db.pre-rules.bak</code>，存不成的話會先問過你再決定要不要繼續；<b>雲端版</b>沒有這一份，別只靠它）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:6px">「編輯店名規則」可以做四件事：</p>
+      <ol class="muted" style="font-size:12px;margin:0 0 8px;padding-left:20px">
+        <li>把帳單同一店名的「不同寫法」合併</li>
+        <li>把帳單「店名截斷的部分」併回來</li>
+        <li>單純更改成喜歡的店名</li>
+        <li>告訴系統某個連鎖店怎麼切出店名</li>
+      </ol>
+      <p style="font-size:12px;margin-bottom:14px;color:var(--neg)"><b>儲存後無法復原</b></p>
       <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
     </div>
 

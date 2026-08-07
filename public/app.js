@@ -18,21 +18,6 @@ import { esc } from './modules/html-escape.js';
 import { selectOptionsHtml } from './modules/form-options.js';
 
 // ---------- 共用工具 ----------
-/**
- * 「這次沒存成還原檔」的確認文案（**草稿，待 William 審改**——就地解釋的文案一律 Claude 起草、老師定稿）。
- *
- * 什麼時候會看到它：不可逆的整批操作（存店名規則、開 app 自動整理）動手前會先存一份還原檔，
- * 那一步失敗時後端**什麼都不寫**、回頭問這一句（William 2026-08-06 裁決：擋下來、讓使用者自己決定）。
- * ⚠️ 兩個呼叫端（本檔的自動整理、`modules/settings-store-rules.js` 的儲存並套用）**共用這一份**——
- * 各寫一句的話，William 審改措辭時只會改到其中一邊。
- * ⚠️ 措辭有一條硬限制：句子裡提到「還原檔／備份」時，**否定詞要貼著它**（「沒存成還原檔」）
- * 或講明是哪一種模式——`public/` 兩種模式共用同一份畫面，正面承諾在雲端版是假話。
- * 考題 test/vault-and-backup-integrity.test.js 的文案掃描題會盯著。
- */
-export const NO_BACKUP_CONFIRM = '⚠️ 這次沒存成還原檔（可能是磁碟空間不足）。\n\n'
-  + '接下來要改的是全部舊記錄的店名與分類，改下去沒有「復原」可以按。\n\n'
-  + '還是要繼續嗎？';
-
 const $ = (sel, root = document) => root.querySelector(sel);
 export const view = () => $('#view');
 // 取 id 元素（頁面自己渲染的、一定存在）。回傳 any：這個 codebase 以 innerHTML 樣板為主，
@@ -401,18 +386,15 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
   try {
     // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用（Codex r4#2）：平時無感自動跑，
     // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
-    // ⚠️ 「停下來問」現在有**兩種原因**，共用 needsConfirmation 一個欄位（後端刻意如此，
-    // 見 normalizeIfRulesChanged 的 docstring），而且**可能同時發生**（硬碟滿＋規則動到學習表）。
-    // 所以這裡用迴圈逐一問、把答案累積進同一個 body——寫成兩個並列的 if 會有一條路是
-    // 「答完第一個問題後拿到第二個問題，卻沒人接」＝畫面什麼都不說、每次開 app 重來一遍。
-    /** @type {{force?: boolean, proceedWithoutBackup?: boolean}} */
+    // ⚠️ 迴圈而不是單次 if：「停下來問」目前只有一種原因（學習表會被蓋掉），但欄位形狀刻意保留
+    // 「truthy 就要問」的通則——將來多一種原因時，不認得的那一種會走到下面的 else 出聲，
+    // 不會靜靜掉進「沒事發生」。（2026-08-06 曾有第二種原因＝操作前備份沒存成，
+    // William 2026-08-08 裁決整層拿掉那個機制，連旗標一起移除；別順手補回來。）
+    /** @type {{force?: boolean}} */
     const answers = {};
     let r = await api('/statement/normalize-auto', { method: 'POST' });
     for (let asked = 0; r?.needsConfirmation && asked < 3; asked++) {
-      if (r.needsConfirmation === 'backup_failed') {
-        if (!confirm(NO_BACKUP_CONFIRM)) return;
-        answers.proceedWithoutBackup = true;
-      } else if (r.needsConfirmation === true) {
+      if (r.needsConfirmation === true) {
         const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
         // 真實總數（r4#5 同款）：明細截 50，計數要用 Total——#141 與 #142 平行開發，這裡是會合點
         const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
@@ -436,6 +418,6 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
     // ⚠️ 問過使用者就**一定要回話**（原本那條路的既有保證，別在重構時弄丟）：
     // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
     if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
-    else if (answers.force || answers.proceedWithoutBackup) { toast('店名規則已更新並套用 ✨'); router(); }
+    else if (answers.force) { toast('店名規則已更新並套用 ✨'); router(); }
   } catch { /* 自動整理失敗靜默略過；設定頁的手動「整理店名格式」仍可用 */ }
 })();
