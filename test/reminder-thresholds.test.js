@@ -199,20 +199,23 @@ test('提醒｜保險繳費日：正視窗第 30／31 天、升級門檻第 8／
 // 二、門檻的比較邊界（配置偏離、緊急預備金高估）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；前端資產頁**真的印出來的 HTML** 也各測一次（橘標籤＋橘進度條）', async () => {
+test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不出現，正負各自出聲；前端資產頁**真的印出來的 HTML** 也各測一次（橘標籤；進度條顏色與標籤不可走散）', async (t) => {
   // ⚠️ 三件事一起釘：
   //    (a) 邊界：恰好偏離 5.0%（＝設定值本身）時提醒消失＝典型的邊界無守衛（>= 改 > 全綠）；
   //        另一側用 4.9% 釘住「門檻不可被偷偷調小」。
   //    (b) 方向：判準是 `Math.abs(row.diff) >= 門檻`。⚠️ 只斷言「有任何一張 alloc-drift 出現」
   //        的話，拿掉 Math.abs 照樣全綠（正偏離那張還在）——所以**正負兩張分別點名**。
   //    (c) 兩份實作：同一個門檻在前端 public/modules/assets.js 有第二份獨立的判斷
-  //        （資產頁「資產配置 vs 目標」那條要不要標「偏離」的橘標籤與橘進度條）。
+  //        （資產頁那條「實際 vs 目標」要不要標「偏離」的橘標籤）。
   //        ⚠️ 這是訂閱那題（subActive／subStatus）被 #413 r1 退回重寫的同一個病型，就在隔壁原封不動：
   //        只改前端那行 `>=` → `> 門檻 * 3`，全部考題零失敗，實際後果是總覽提醒牆說偏離、
   //        資產頁那條卻不標紅，兩頁互相打架。所以前端那份也拉進來測。
   //        ⚠️ 做法在 #413 r4 換過（見 renderAssetsHtml）：從「抽判準式出來算」改成
   //        **整支 assets.js 進 sandbox 跑 renderAssets()、斷言它真的印出來的 HTML**——
-  //        射程因此從「判準式的值」推進到「橘標籤與橘進度條真的出現在畫面的 HTML 上」。
+  //        射程因此從「判準式的值」推進到「橘標籤真的出現在畫面的 HTML 上」。
+  //        ⚠️ **定位**又在 #413 r22 換過（見 allocRow）：從「用區塊標題與圖例文案切字串」改成
+  //        **照結構找**（同時含類別名稱與唯一一個「目標 N%」的最小元素）。
+  //        起因是跨 PR 合併閘：Codex UI PR #421 純重排版面、判準與標籤一字未動，上一版卻假紅。
   //  造法：現金 5 萬、股票 5 萬 ⇒ 各 50%；目標 45/55 ⇒ 偏離恰好 +5.0%／−5.0%
   const alloc = (cashTarget, stockTarget, extraTargets = []) => ({
     settings: { allocationDriftPct: 5 },
@@ -226,7 +229,6 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
   //    複驗者實測 7/7 全綠，而後端對 value=0 的類別照舊發提醒，
   //    正是本題自己寫的「總覽說偏離、資產頁不標＝兩頁打架」。
   //    「目標 20% 卻一張都沒買」是偏離最大的一格，剛好也是最該提醒的一格，所以兩邊都點名。
-  const CLASSES3 = ['現金', '股票', '債券'];
   const boundaryDb = fullDb(alloc(45, 55, [{ class: '債券', targetPct: 20 }]));
   const boundary = buildSummary(boundaryDb);
   const onBoundary = boundary.reminders
@@ -249,32 +251,68 @@ test('提醒｜資產配置偏離：恰好等於門檻要出現、差 0.1% 不�
 
   // 前端資產頁那份：吃的是同一份 db（`/summary` 就是 buildSummary 的輸出，正式環境就是這樣接的）
   const boundaryHtml = await renderAssetsHtml(boundaryDb);
-  const cashSeg = allocRowHtml(boundaryHtml, '現金', CLASSES3);
-  const stockSeg = allocRowHtml(boundaryHtml, '股票', CLASSES3);
-  const bondSeg = allocRowHtml(boundaryHtml, '債券', CLASSES3);
-  assert.match(cashSeg, /50\.0% \/ 目標 45%/,
-    'fixture 自我驗證：資產頁的現金那一條真的是「50.0% / 目標 45%」（否則下面幾條測到的不是邊界）');
-  assert.match(cashSeg, /class="tag amber">偏離 \+5\.0%/,
+  const cash = allocRow(boundaryHtml, '現金');
+  const stock = allocRow(boundaryHtml, '股票');
+  const bond = allocRow(boundaryHtml, '債券');
+  // 三條互不冒充：切成一大塊時，「正偏離那條」的斷言會被負偏離那條混過去（結構定位的第一個自我驗證）
+  for (const [row, others] of /** @type {[any, string[]][]} */ ([
+    [cash, ['股票', '債券']], [stock, ['現金', '債券']], [bond, ['現金', '股票']],
+  ])) {
+    for (const other of others) {
+      assert.ok(!row.text.includes(other),
+        `資產頁的「${row.cls}」那一條裡混進了「${other}」——切太大塊，下面幾條會互相冒充`);
+    }
+  }
+  assert.match(cash.text, standalonePct('50.0'),
+    'fixture 自我驗證：資產頁的現金那一條真的是 50.0%（否則下面幾條測到的不是邊界）');
+  assert.match(cash.text, /目標\s*45%/, 'fixture 自我驗證：現金那一條的目標真的是 45%（偏離恰好 +5.0%）');
+  assert.equal(driftTag(cash), '偏離 +5.0%',
     '前端：恰好 +5.0% 要在資產頁標出橘色「偏離」標籤（前端 `>=` 鬆掉時只有這裡會紅——總覽說偏離、資產頁不標＝兩頁打架）');
-  assert.match(cashSeg, new RegExp(`background:${ORANGE}`),
+  const painted = assertBarPaint(cash, boundaryHtml, true,
     '前端：偏離時那一條進度條要換成橘色（顏色若改成另外算一份判準、與標籤走散，這條會紅）');
-  assert.match(stockSeg, /class="tag amber">偏離 -5\.0%/,
+  assert.match(stock.text, standalonePct('50.0'), 'fixture 自我驗證：股票那一條真的是 50.0%');
+  assert.match(stock.text, /目標\s*55%/, 'fixture 自我驗證：股票那一條的目標真的是 55%（偏離恰好 −5.0%）');
+  assert.equal(driftTag(stock), '偏離 -5.0%',
     '前端：恰好 −5.0% 也要標偏離（前端那份拿掉 Math.abs 時會紅）');
-  assert.match(stockSeg, new RegExp(`background:${ORANGE}`), '前端：負偏離那一條的進度條同樣要橘');
-  assert.match(bondSeg, /0\.0% \/ 目標 20%/,
-    'fixture 自我驗證：債券那一條真的是「0.0% / 目標 20%」（value=0 的那一格）');
-  assert.match(bondSeg, /class="tag amber">偏離 -20\.0%/,
+  assert.equal(assertBarPaint(stock, boundaryHtml, true, '前端：負偏離那一條的進度條同樣要橘'), painted,
+    '同一頁上有的條有 CHART 顏色、有的沒有（要有人回來看）');
+  assert.match(bond.text, standalonePct('0.0'),
+    'fixture 自我驗證：債券那一條真的是 0.0%（value=0 的那一格；`-20.0%` 的尾巴不算數）');
+  assert.match(bond.text, /目標\s*20%/, 'fixture 自我驗證：債券那一條的目標真的是 20%');
+  assert.equal(driftTag(bond), '偏離 -20.0%',
     '前端：目標 20% 卻一張都沒買也要標偏離（判準多一個 `r.value > 0` 的合取子時只有這裡會紅——後端提醒、資產頁不標＝兩頁打架）');
-  assert.match(bondSeg, new RegExp(`background:${ORANGE}`), '前端：這一格的進度條同樣要橘（0% 也是偏離）');
+  assert.equal(assertBarPaint(bond, boundaryHtml, true, '前端：這一格的進度條同樣要橘（0% 也是偏離）'), painted,
+    '同一頁上有的條有 CHART 顏色、有的沒有（要有人回來看）');
+  if (!painted) {
+    // 不靜靜跳過：把「這一輪少驗了什麼」講出來（見 assertBarPaint 的劃界——標籤那一路仍全額釘著）
+    t.diagnostic('資產頁的進度條不再用 CHART 的顏色上色（改由 CSS token 著色）'
+      + '＝「顏色與標籤走散」這條這一輪沒有東西可比；偏離只剩橘標籤一個出口，上面各條照舊全額釘著。');
+  }
 
-  const nearMissCash = allocRowHtml(await renderAssetsHtml(nearMissDb), '現金');
-  assert.match(nearMissCash, /50\.0% \/ 目標 45\.1%/, 'fixture 自我驗證：這一組真的是 4.9% 的偏離');
-  assert.doesNotMatch(nearMissCash, /偏離/, '前端：偏離 4.9% 不可標偏離（前端門檻被偷偷調小時會紅）');
-  assert.match(nearMissCash, new RegExp(`background:${GREEN}`), '前端：沒偏離就維持綠色進度條');
+  const nearMissHtml = await renderAssetsHtml(nearMissDb);
+  const nearMissCash = allocRow(nearMissHtml, '現金');
+  assert.match(nearMissCash.text, standalonePct('50.0'), 'fixture 自我驗證：這一組的實際比例真的是 50.0%');
+  assert.match(nearMissCash.text, /目標\s*45\.1%/, 'fixture 自我驗證：這一組真的是 4.9% 的偏離');
+  assert.equal(driftTag(nearMissCash), null,
+    '前端：偏離 4.9% 不可標偏離（前端門檻被偷偷調小時會紅）');
+  assertBarPaint(nearMissCash, nearMissHtml, false, '前端：沒偏離就維持綠色進度條');
 
   const loosenedDb = { ...boundaryDb, settings: { ...boundaryDb.settings, allocationDriftPct: 6 } };
-  assert.doesNotMatch(allocRowHtml(await renderAssetsHtml(loosenedDb), '現金', CLASSES3), /偏離/,
+  assert.equal(driftTag(allocRow(await renderAssetsHtml(loosenedDb), '現金')), null,
     '前端讀的必須是 settings.allocationDriftPct 這把設定（改讀別的鍵時會退回預設 5、把 5.0% 判成偏離，這裡就紅）');
+
+  // ── 對照組：證明上面幾條真的咬在「結構＋那顆橘標籤」上，不是碰巧在某段字串裡看到「偏離」兩個字 ──
+  // （沒有這一段，定位改寫之後「還會不會紅」就只是嘴上說說；本檔記過的空包彈都是這樣長出來的）
+  assert.throws(() => allocRow(boundaryHtml, '黃金'), /最小元素/,
+    '對照組：抓一個頁面上沒有的類別必須吵著紅，不可以靜靜回一段空字串（那會讓下面每一條都變空包彈）');
+  const noTag = boundaryHtml.replace(/class="tag amber"/g, 'class="tag"');
+  assert.notEqual(noTag, boundaryHtml,
+    '對照組沒改到東西——版面已不用 `tag amber` 標偏離，上面那幾條 driftTag 斷言要有人回來更新');
+  assert.equal(driftTag(allocRow(noTag, '現金')), null,
+    '對照組：橘標籤一被拔掉，driftTag 必須看得出來（看得出來，上面「要標偏離」那幾條才守得住東西）');
+  const noPct = boundaryHtml.replace(/目標/g, '目標值');
+  assert.throws(() => allocRow(noPct, '現金'), /最小元素/,
+    '對照組：那一條不再印「目標 N%」時定位必須吵著紅（結構指紋失效要有人回來更新，不是靜靜抓到別塊）');
 });
 
 /** 進度條顏色的哨兵：CHART.orange／green 由測試端注入這兩串，才驗得出偏離時換的是哪一個顏色。 */
@@ -495,10 +533,12 @@ function walkAst(node, visit) {
  *    而真的動行為的全部**轉紅**：本輪重跑的是前端 `>=` 改 `>`、拿掉 `Math.abs`、
  *    判準多一個 `r.value > 0` 的合取子、後端 `>=` 改 `>`；
  *    r4 那一輪另外量過門檻乘 3、改讀別的設定鍵、進度條顏色與標籤走散、探針繞法。
+ *    ⚠️ r22 補量的是**跨 PR 那一側**：上面這四顆在「合入 #421 head cc653ba」的樹上逐顆重放同樣轉紅，
+ *    而 #421 本身（純重排版面：標題／圖例改寫、列改排序、進度條改用 CSS token）**全綠**。
  *
  * ⚠️ 順帶把上一版明寫「開著」的那個洞關上了：上一版只證明得了「判準式算出來的值在四個邊界上都對」，
  *    把**印在畫面上**的標籤搬進一個不呈現的探針變數就能全綠（複驗者 #413 r3 的繞法）。現在斷言的是
- *    `view().innerHTML` 裡真的有那個橘標籤與那條橘進度條，探針繞法會轉紅。
+ *    `view().innerHTML` 裡那一條上真的有 `.tag.amber` 這顆標籤，探針繞法會轉紅。
  *
  * ⚠️ 但「跑得動」與「使用者按了資產配置真的跑到它」是兩件事——**#413 r4 的阻擋就在這道縫**：
  *    上一版只從本檔取回一支同名函式，沒有核對正式路由，於是「原 renderer 留著、另接一支
@@ -539,8 +579,14 @@ function walkAst(node, visit) {
  *      這句也量過：把判準抽成 `./drift-criterion.js` 的 `isDrift` 再 import 回來，紅的是
  *      「偏離 4.9% 不可標偏離」那條。那時該把本題改成直接 import 那支共用模組，
  *      那也才是真正的關門（見 #409 的零 DOM 模組前例）。
- *   4. 斷言吃的是**畫面上的字**（區塊標題、類別名稱、`偏離 +5.0%`、進度條顏色）。版面或文案改寫
- *      會吵著紅要人回來更新——那是「斷言畫面」的必然代價，不是靜靜綠。
+ *   4. 斷言吃的是**畫面上真的印出來的東西**，但**定位不吃顯示文案**（#413 r22 改，見 allocRow）：
+ *      一條列靠「同時含類別名稱與唯一一個『目標 N%』的最小元素」認出來，區塊標題、圖例、
+ *      標題層級（h2／h3）、列的排序、CSS class 名稱改寫一律不影響。
+ *      剩下**仍會吵著紅**的是：類別名稱不再印在那一條上、「目標 N%」不再與類別同層、
+ *      進度條搬離那一條的父層、兩條列併成一塊、或橘標籤不再是 `.tag.amber`——
+ *      那些都動到了「使用者看不看得出哪一類偏離」，要人回來看過才算，不是靜靜綠。
+ *      ⚠️ 進度條顏色只在**版面還用 CHART 上色時**比對（#421 起改用 CSS token 著色＝沒有第二個
+ *      出口可比，這時發診斷訊息講明少驗了什麼，見 assertBarPaint 的劃界）。
  *   5. 這是「同一口徑兩份實作，兩邊各測一次」的守法，不是消除重複。要根治得把門檻收成一份共用判斷
  *      （前端得能拿到），那是另一支 PR 的事，本支不動正式碼。
  *   6. **「同一段程式在測試環境與真瀏覽器走不同分支」不在射程內**（#413 r12–r19 的完整結論，
@@ -792,22 +838,108 @@ function benignStub() {
   return proxy;
 }
 
+/** 把一段文字裡的空白收成單一空格（版面換行縮排不同不該影響比對）。 */
+function normText(s) { return String(s ?? '').replace(/\s+/g, ' ').trim(); }
+
+/** 「目標 N%」——配置列的結構指紋：這一段版面在講「實際 vs 目標」，靠的是這個資料而不是某句標題文案。 */
+const TARGET_PCT = /目標\s*\d+(\.\d+)?\s*%/;
+
+/** 某個百分比**單獨**出現（前面不接數字／小數點／負號）：`0.0%` 不可以被 `-20.0%` 的尾巴冒充。 */
+function standalonePct(n) { return new RegExp(`(?<![-\\d.])${String(n).replace('.', '\\.')}%`); }
+
+/** @type {Map<string, any>} */
+const snapshots = new Map();
+
 /**
- * 從資產頁的 HTML 裡切出「資產配置 vs 目標」區塊中某個類別那一條（含標籤與進度條）。
- * 兩個類別分開切才不會互相冒充：正偏離那條的斷言不可以被負偏離那條混過去。
- * 切不到就吵著紅（sandbox 沒渲染成功、或版面改寫了＝要有人回來更新本題），不是靜靜跳過。
+ * 把 renderAssetsHtml 交回來的那份**定版快照**重新解析成查得動的 DOM。
+ * 刻意解析字串而不是留著活頁面的節點：斷言讀到的必須就是「取樣兩次都一樣」的那一份
+ *（見 renderAssetsHtml 的 settle／firstSample），不是取樣之後又被誰動過的活 DOM。
  */
-function allocRowHtml(html, cls, classes = ['現金', '股票']) {
-  const head = html.indexOf('資產配置 vs 目標');
-  const foot = html.indexOf('深色直線＝目標比例');
-  assert.ok(head >= 0 && foot > head,
-    '資產頁抓不到「資產配置 vs 目標」那一段（sandbox 沒渲染成功、或版面改寫了＝要有人回來更新本題）');
-  const section = html.slice(html.indexOf('</h3>', head) + 5, foot);   // 跳過區塊標題（標題文字自己也含「現金」）
-  const marks = classes.map((c) => ({ c, at: section.indexOf(c) })).filter((m) => m.at >= 0)
-    .sort((a, b) => a.at - b.at);
-  const i = marks.findIndex((m) => m.c === cls);
-  assert.ok(i >= 0, `資產頁的「資產配置 vs 目標」裡找不到「${cls}」那一條（fixture 或版面變了？）`);
-  return section.slice(marks[i].at, i + 1 < marks.length ? marks[i + 1].at : section.length);
+function snapshot(html) {
+  let root = snapshots.get(html);
+  if (!root) {
+    root = new JSDOM(`<!doctype html><html><body><div id="rendered">${html}</div></body></html>`)
+      .window.document.getElementById('rendered');
+    snapshots.set(html, root);
+  }
+  return root;
+}
+
+/**
+ * 從資產頁印出來的 HTML 裡取出某個資產類別那一條（標籤區＋進度條），**照結構找、不照顯示文案找**。
+ *
+ * ⚠️ 為什麼換掉上一版（#413 跨 PR 合併閘在與 Codex UI PR #421 的組合裡實測到，值得原地記下來）：
+ *    上一版拿三個**顯示文案**當座標——區塊標題「資產配置 vs 目標」、圖例「深色直線＝目標比例」、
+ *    以及「跳過 `</h3>`」這個標題層級的字面。#421 只重排版面（標題改寫成 `<h2>實際配置 vs 目標`、
+ *    圖例改成「深色直線表示目標比例」），**偏離門檻、判準與橘標籤一個字都沒動**，
+ *    本題卻在第一行就抓不到那一段。純改版面就轉紅＝**假紅**，而假紅的標準反應是把考題關掉。
+ *    座標因此換成兩種版面都成立的結構：
+ *      · 一條列的**頭部** ＝ 同時含有「類別名稱」與「目標 N%」的**最小**元素
+ *        （再往下切就會把兩者拆散；標籤與數字都在這一層，兩版皆然）；
+ *      · 一條列的**整塊** ＝ 那個頭部的父層（進度條就在同一層，兩版皆然）。
+ *    找不到、找到不只一份、或一塊裡混進第二條列的資料都**吵著紅**要人回來更新，
+ *    不是靜靜回一段空字串讓下面的斷言變成空包彈。
+ *
+ * ⚠️ 仍然吵著紅的（這不是「什麼都不認」）：類別名稱不再印在那一條上、「目標 N%」不再與類別同層、
+ *    進度條搬離那一條的父層、或兩條列被併成同一塊——這些都動到了「使用者看不看得出哪一類偏離」。
+ */
+function allocRow(html, cls) {
+  const root = snapshot(html);
+  // 合格＝含這個類別名稱、而且**只含一個**「目標 N%」。
+  // ⚠️ 「只含一個」不是裝飾（#413 r22 自審）：#421 把整頁包進一顆 `.assets-page`，
+  //    而頁面別處的說明文案也會提到類別名稱（例：「這裡記黃金、房地產…」「銀行與現金請到…」）。
+  //    只要「含類別名稱＋含目標」就合格的話，配置區塊裡沒有那一類時，**整頁**會變成最小合格元素
+  //    ⇒ 抓回一大塊、下面每一條斷言都能被別條的資料混過去。一條列只講一個目標，這才是它的指紋。
+  const hits = [...root.querySelectorAll('*')].filter((el) => {
+    const text = el.textContent || '';
+    return text.includes(cls) && (text.match(new RegExp(TARGET_PCT, 'g')) || []).length === 1;
+  });
+  // 最小的那一份＝沒有任何一個同樣合格的後代（外層容器把三條列全含進去，不算）
+  const heads = hits.filter((el) => !hits.some((other) => other !== el && el.contains(other)));
+  assert.equal(heads.length, 1,
+    `資產頁的配置區塊裡「同時含有「${cls}」與「目標 N%」的最小元素」有 ${heads.length} 份（要 1 份）`
+    + '——0＝sandbox 沒渲染成功、類別名稱沒印出來、或那一條不再與目標數字同層；'
+    + '>1＝版面把同一類別拆成好幾條。兩種都要有人回來更新本題');
+  const head = heads[0];
+  const block = head.parentElement;
+  assert.ok(block && block !== root,
+    `資產頁的「${cls}」那一條沒有外層（進度條與標籤不再同屬一塊＝要有人回來更新本題）`);
+  assert.equal((String(block.textContent).match(new RegExp(TARGET_PCT, 'g')) || []).length, 1,
+    `資產頁的「${cls}」那一塊裡有不只一個「目標 N%」——兩條列被併在同一塊，`
+    + '本題的「這一條」會被隔壁那條混過去（要有人回來更新本題）');
+  return { cls, head, text: normText(head.textContent), html: block.innerHTML };
+}
+
+/**
+ * 那一條上**真的印出來的**橘色偏離標籤（`.tag.amber`）的文字；沒標就回 null。
+ * 認的是標籤這個結構本身，不是「這段字裡有沒有『偏離』兩個字」——
+ * 頁面別處的說明文案（例：#421 的面板附註「偏離門檻 5%」）不可以冒充成「這一條被標了偏離」。
+ */
+function driftTag(row) {
+  const tags = [...row.head.querySelectorAll('.tag.amber')];
+  assert.ok(tags.length <= 1,
+    `資產頁的「${row.cls}」那一條上有 ${tags.length} 個橘標籤（要有人回來更新本題）`);
+  return tags.length ? normText(tags[0].textContent) : null;
+}
+
+/**
+ * 進度條顏色是同一個旗標（`off`）的**第二個出口**：與標籤走散＝標籤說偏離、進度條卻還是綠的。
+ * 有比對到就回 true，**版面根本不用 CHART 的顏色上色時回 false**（沒有第二個出口可比）。
+ *
+ * ⚠️ 這個 false 是誠實的缺口，不是暗門，請照這樣讀（#413 跨 PR 閘的實測結論）：
+ *    判斷依據是「**整頁**還有沒有 CHART 的顏色哨兵」，不是「這一條有沒有」。
+ *    · 想把偏離那條的橘色偷偷拿掉、其餘照舊上色 ⇒ 整頁仍有哨兵 ⇒ 走下面的比對 ⇒ **紅**。
+ *    · 要讓這裡回 false，得把整頁的 CHART 上色全部撤掉——那是整段版面改寫
+ *      （#421 就是：進度條改用 CSS 變數與設計 token 著色，`CHART` 連 import 都不再需要），
+ *      不是「悄悄調鬆一格」。那之後偏離只剩標籤這一個出口，而標籤那一路本題照舊全額釘著。
+ *    真要連「CSS 決定的顏色」也一起守，得靠真瀏覽器＋排版引擎（見 renderAssetsHtml 劃界第 1 條）。
+ */
+function assertBarPaint(row, html, drifting, why) {
+  if (!html.includes(ORANGE) && !html.includes(GREEN)) return false;
+  assert.match(row.html, new RegExp(drifting ? ORANGE : GREEN), why);
+  assert.doesNotMatch(row.html, new RegExp(drifting ? GREEN : ORANGE),
+    `資產頁的「${row.cls}」那一條同時吃到兩種顏色（顏色與標籤走散了？要有人回來看）`);
+  return true;
 }
 
 test('提醒｜緊急預備金高估：卡帳月均與現金流月均「恰好相等」不出聲、只多 1 元就出聲（比較式本身釘死）', () => {
