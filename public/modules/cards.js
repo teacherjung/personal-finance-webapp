@@ -11,35 +11,56 @@ const expiryEnd = (e) => /^\d{4}-\d{2}$/.test(e || '')
   ? `${e}-${String(new Date(Number(e.slice(0, 4)), Number(e.slice(5, 7)), 0).getDate()).padStart(2, '0')}`
   : e;
 
+function cardSummary(list) {
+  const credit = list.filter(c => (c.type || 'credit') === 'credit');
+  const member = list.filter(c => c.type === 'membership');
+  return {
+    credit,
+    member,
+    annualFees: credit.reduce((sum, c) => sum + Number(c.annualFee || 0), 0),
+    expiringSoon: list.filter(c => {
+      const days = daysUntil(expiryEnd(c.expiry));
+      return days >= 0 && days <= 30;
+    }).length,
+  };
+}
+
+function expiryMeta(expiry) {
+  const month = (expiry || '').slice(0, 7);
+  if (!month) return { text: '未設定效期', tone: 'neutral' };
+  const days = daysUntil(expiryEnd(expiry));
+  if (days < 0) return { text: '已到期', tone: 'danger' };
+  if (days <= 60) return { text: `${days} 天後到期`, tone: 'warning' };
+  return { text: `有效至 ${month}`, tone: 'neutral' };
+}
+
 export async function renderCards() {
   const seq = currentRouteSeq();
   const list = await api('/cards');
   if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6 idiom；r11#2 補上漏掉的兩頁）——寫 DOM 前必守，router 的事後檢查救不了 renderer 內部的寫入
-  const credit = list.filter(c => (c.type || 'credit') === 'credit');
-  const member = list.filter(c => c.type === 'membership');
-  const annualFees = credit.reduce((s, c) => s + Number(c.annualFee || 0), 0);
+  const summary = cardSummary(list);
 
   view().innerHTML = `
-    <div class="page-head">
-      <div><h1>卡片追蹤</h1><p>信用卡與會員卡的卡片類別、末四碼、結帳/繳款日、年費、權益、停用</p></div>
-      <button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button>
-    </div>
+    <div class="cards-page">
+      <div class="page-head cards-page-head">
+        <div><h1>卡片追蹤</h1><p>集中管理信用卡、會員卡、結帳繳款日、年費與到期狀態。</p></div>
+        <div class="page-actions"><button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button></div>
+      </div>
 
-    <div class="cards">
-      <div class="card"><h3>信用卡</h3><div class="stat sm">${credit.length} 張</div></div>
-      <div class="card"><h3>會員卡</h3><div class="stat sm">${member.length} 張</div></div>
-      <div class="card"><h3>信用卡年費合計</h3><div class="stat sm">${wan(annualFees)}</div></div>
-      <div class="card"><h3>30 天內停用</h3><div class="stat sm">${list.filter(c => { const d = daysUntil(expiryEnd(c.expiry)); return d >= 0 && d <= 30; }).length} 張</div></div>
-    </div>
+      <section class="card-tracker-summary" aria-label="卡片摘要">
+        <div class="card-summary-item"><span>全部卡片</span><strong>${list.length} 張</strong></div>
+        <div class="card-summary-item"><span>信用卡</span><strong>${summary.credit.length} 張</strong></div>
+        <div class="card-summary-item"><span>信用卡年費合計</span><strong>${wan(summary.annualFees)}</strong></div>
+        <div class="card-summary-item"><span>30 天內到期</span><strong>${summary.expiringSoon} 張</strong></div>
+      </section>
 
-    <div class="section-title">信用卡</div>
-    <div class="grid card-grid">
-      ${credit.map(card).join('') || '<div class="empty">尚無信用卡，點右上角新增。</div>'}
-    </div>
+      <div class="card-privacy-note">
+        <span class="card-privacy-icon">${icon('shield', 17)}</span>
+        <div><strong>卡號只顯示末四碼</strong><p>帳單密碼不會回填到頁面；需要更新時再於編輯表單輸入。</p></div>
+      </div>
 
-    <div class="section-title">會員卡</div>
-    <div class="grid card-grid">
-      ${member.map(card).join('') || '<div class="empty">尚無會員卡。</div>'}
+      ${cardSection('信用卡', '帳務與繳款', summary.credit, '尚無信用卡，點右上角新增。')}
+      ${cardSection('會員卡', '會籍與權益', summary.member, '尚無會員卡。')}
     </div>
   `;
 
@@ -51,41 +72,66 @@ export async function renderCards() {
   });
 }
 
-function card(c) {
+function cardSection(title, eyebrow, list, emptyText) {
+  return `<section class="card-tracker-section">
+    <div class="card-tracker-section-head">
+      <div><span>${eyebrow}</span><h2>${title}</h2></div>
+      <p>${list.length} 張</p>
+    </div>
+    ${list.length
+      ? `<div class="card-tracker-grid">${list.map(cardPanel).join('')}</div>`
+      : `<div class="card-tracker-empty"><span>${icon('card', 22)}</span><strong>${emptyText}</strong></div>`}
+  </section>`;
+}
+
+function cardPanel(c) {
   const credit = (c.type || 'credit') === 'credit';
-  const d = daysUntil(expiryEnd(c.expiry));
-  const expSoon = d >= 0 && d <= 60;
-  const rows = credit ? [
-    ['發卡銀行', c.issuer], ['卡片類別', c.network], ['末四碼', c.lastFour ? '•••• ' + c.lastFour : ''],
-    ['結帳日', c.statementDay ? `每月 ${c.statementDay} 日` : ''],
-    // 繳款日比結帳日小＝跨到下個月（如富邦：24 日結帳、次月 9 日繳款）
-    ['繳款日', c.dueDay ? `${Number(c.statementDay) && Number(c.dueDay) < Number(c.statementDay) ? '次月' : '每月'} ${c.dueDay} 日` : ''],
-    ['年費', Number(c.annualFee) > 0 ? money(c.annualFee) : ''],   // 0 元或未填都不顯示
-    ['有效期限', (c.expiry || '').slice(0, 7)]
+  const expiry = expiryMeta(c.expiry);
+  const dueLabel = c.dueDay
+    ? `${Number(c.statementDay) && Number(c.dueDay) < Number(c.statementDay) ? '次月' : '每月'} ${c.dueDay} 日`
+    : '未設定';
+  const facts = credit ? [
+    ['末四碼', c.lastFour ? `•••• ${c.lastFour}` : '未設定'],
+    ['卡片組織', c.network || '未設定'],
+    ['年費', c.annualFee === '' || c.annualFee == null ? '未設定' : money(c.annualFee)],
   ] : [
-    ['發卡機構', c.issuer], ['會員編號', c.memberId], ['等級', c.level], ['有效期限', (c.expiry || '').slice(0, 7)]
+    ['會員編號', c.memberId || '未設定'],
+    ['會員等級', c.level || '未設定'],
+    ['發卡機構', c.issuer || '未設定'],
   ];
-  return `<div class="card">
-    <div class="card-head">
-      <div style="display:flex;align-items:center;gap:9px">
-        <span style="color:var(--accent)">${icon('card', 18)}</span>
-        <div class="item-title">${esc(c.name)}</div>
+  return `<article class="card-tracker-item">
+    <div class="card-tracker-item-head">
+      <div class="card-tracker-identity">
+        <span class="card-tracker-mark">${icon('card', 18)}</span>
+        <div><h3>${esc(c.name)}</h3><p>${esc(c.issuer || (credit ? '發卡銀行未設定' : '發卡機構未設定'))}</p></div>
       </div>
-      <span class="tag ${credit ? 'blue' : 'green'}">${TYPE_LABEL[c.type] || '信用卡'}</span>
+      <span class="card-type-tag ${credit ? 'credit' : 'membership'}">${TYPE_LABEL[c.type || 'credit'] || '信用卡'}</span>
     </div>
-    <div class="detail-grid">
-      ${rows.filter(r => r[1]).map(r => `<span class="muted">${r[0]}</span><span>${esc(r[1])}${r[0] === '有效期限' && expSoon ? `　<span class="tag amber">${d} 天後停用</span>` : ''}</span>`).join('')}
+
+    ${credit ? `<div class="card-schedule" aria-label="結帳與繳款日">
+      <div><span>結帳日</span><strong>${c.statementDay ? `每月 ${esc(c.statementDay)} 日` : '未設定'}</strong></div>
+      <div><span>繳款日</span><strong>${esc(dueLabel)}</strong></div>
+    </div>` : ''}
+
+    <div class="card-facts">
+      ${facts.map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}
     </div>
-    ${c.benefits ? `<div class="note-block"><b>權益：</b>${esc(c.benefits)}</div>` : ''}
-    ${c.note ? `<div class="muted" style="font-size:12px;margin-top:8px">${esc(c.note)}</div>` : ''}
-    <div class="row-actions" style="margin-top:12px">
-      <button class="btn-link btn-sm" data-edit="${esc(c.id)}" title="編輯">${icon('edit', 15)}</button>
-      <button class="btn-danger btn-sm" data-del="${esc(c.id)}" title="刪除">${icon('trash', 15)}</button>
+
+    <div class="card-expiry-row">
+      <span class="card-expiry-tag ${expiry.tone}">${icon('history', 14)}${esc(expiry.text)}</span>
     </div>
-  </div>`;
+
+    ${c.benefits ? `<div class="card-benefits"><span>主要權益</span><p>${esc(c.benefits)}</p></div>` : ''}
+    ${c.note ? `<p class="card-note">${esc(c.note)}</p>` : ''}
+    <div class="card-tracker-actions">
+      <button class="btn-link btn-sm" data-edit="${esc(c.id)}" title="編輯" aria-label="編輯 ${esc(c.name)}">${icon('edit', 15)}</button>
+      <button class="btn-danger btn-sm" data-del="${esc(c.id)}" title="刪除" aria-label="刪除 ${esc(c.name)}">${icon('trash', 15)}</button>
+    </div>
+  </article>`;
 }
 
 function openCardForm(c) {
+  const seq = currentRouteSeq();
   openForm({
     title: c ? '編輯卡片' : '新增卡片',
     fields: [
@@ -115,7 +161,8 @@ function openCardForm(c) {
       else if (c && (data.pdfPassword == null || data.pdfPassword === '')) delete data.pdfPassword;
       if (c) await api('/cards/' + c.id, { method: 'PUT', body: data });
       else await api('/cards', { method: 'POST', body: data });
-      toast('已儲存'); renderCards();
+      toast('已儲存');
+      if (seq === currentRouteSeq()) renderCards();
     }
   });
 }
