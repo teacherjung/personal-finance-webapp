@@ -44,40 +44,53 @@ export async function renderSecurities() {
     : (datePresetRange(filters.preset, todayStr()) || { from: '', to: '' });
   const rows = sortSecTrades(filterSecTrades(all, { ...filters, from: range.from, to: range.to }), listSort);
   const th = thBuilder(listSort);
+  const summary = secSummaryHtml(secSummarize(rows), FMT);
   const chip = (/** @type {string} */ v, /** @type {string} */ label) => `<button class="chip${filters.preset === v ? ' active' : ''}" data-sec-preset="${v}">${label}</button>`;
   const sel = (/** @type {string} */ id, /** @type {string[][]} */ opts, /** @type {string} */ cur) =>
     `<select id="${id}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 
-  view().innerHTML = `
-    <div class="page-head">
-      <div><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，方便搜尋與對帳（成交紀錄只用於查帳，不計入收支）</p></div>
+  view().innerHTML = `<div class="securities-page">
+    <div class="page-head securities-page-head">
+      <div><span class="securities-eyebrow">投資交易查帳</span><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，逐筆核對成交、費稅與應收付。</p></div>
       <div class="page-actions">
         <button class="btn-ghost" id="secBatches">${icon('history', 16)}匯入紀錄</button>
         <button class="btn-ghost" id="secIbSync" title="與投資組合頁同一套完整同步：會一併更新持股與各幣別現金">${icon('download', 16)}同步 IBKR 與投資組合</button>
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
-    ${secSummaryHtml(secSummarize(rows), FMT)}
-    <div class="sec-info-row">
-      <button type="button" class="info-link" data-sec-info="currency">ⓘ 為什麼金額分幣別？</button>
-      <button type="button" class="info-link" data-sec-info="net">ⓘ 淨應收付的 ＋／−</button>
-      <button type="button" class="info-link" data-sec-info="fees">ⓘ 費稅包含什麼？</button>
-      <button type="button" class="info-link" data-sec-info="dedup">ⓘ 重複匯入會怎樣？</button>
-      <button type="button" class="info-link" data-sec-info="boundary">ⓘ 會影響投資組合嗎？</button>
+    <div class="securities-boundary">
+      <span class="securities-boundary-icon">${icon('file', 18)}</span>
+      <div><strong>這裡是成交紀錄的查帳頁</strong><p>不在這裡修改持股，也不把成交金額重複算進銀行收支；同步 IBKR 時才會依同一套流程更新投資組合。</p></div>
     </div>
-    <div class="sec-toolbar">
-      <div><label>期間</label><div class="chip-row">${chip('all', '全部')}${chip('month', '本月')}${chip('3m', '近三月')}${chip('year', '今年')}${chip('custom', '自訂')}</div></div>
-      ${filters.preset === 'custom' ? `<div><label>從</label><input type="date" id="secFrom" value="${esc(filters.from)}" /></div>
-      <div><label>到</label><input type="date" id="secTo" value="${esc(filters.to)}" /></div>` : ''}
-      <div><label>來源</label>${sel('secSource', [['all', '全部'], ['ibkr', 'IBKR'], ['taishin', '台新證券']], filters.source)}</div>
-      <div><label>帳戶</label>${sel('secAccount', [['all', '全部'], ...accounts.map(a => [a, a])], filters.account)}</div>
-      <div><label>買賣</label>${sel('secSide', [['all', '全部'], ['buy', '買進'], ['sell', '賣出']], filters.side)}</div>
-      <div><label>幣別</label>${sel('secCurrency', [['all', '全部'], ...curs.map(c => [c, c])], filters.currency)}</div>
-      <div><label>搜尋</label><input id="secSearch" value="${esc(filters.q)}" placeholder="代號或名稱，按 Enter" /></div>
-    </div>
-    ${secTableHtml(rows, th, FMT)}
-    ${rows.length ? `<p class="muted" style="font-size:12px;margin-top:10px">共 ${rows.length} 筆（點任一列可展開費稅與批次明細）</p>` : ''}
-  `;
+    ${summary ? `<section class="securities-section securities-summary-section">
+      <div class="securities-section-head"><div><span>分幣別對帳摘要</span><h2>先確認每種原幣的進出</h2></div><p>摘要會跟著下方篩選條件更新，不偷偷混用匯率。</p></div>
+      ${summary}
+    </section>` : ''}
+    <section class="securities-section securities-filter-section">
+      <div class="securities-section-head"><div><span>篩選成交紀錄</span><h2>縮小要核對的範圍</h2></div><p>日期、來源與幣別可交叉使用。</p></div>
+      <div class="sec-toolbar">
+        <div class="sec-period-filter"><label>期間</label><div class="chip-row">${chip('all', '全部')}${chip('month', '本月')}${chip('3m', '近三月')}${chip('year', '今年')}${chip('custom', '自訂')}</div></div>
+        ${filters.preset === 'custom' ? `<div><label for="secFrom">從</label><input type="date" id="secFrom" value="${esc(filters.from)}" /></div>
+        <div><label for="secTo">到</label><input type="date" id="secTo" value="${esc(filters.to)}" /></div>` : ''}
+        <div><label for="secSource">來源</label>${sel('secSource', [['all', '全部'], ['ibkr', 'IBKR'], ['taishin', '台新證券']], filters.source)}</div>
+        <div><label for="secAccount">帳戶</label>${sel('secAccount', [['all', '全部'], ...accounts.map(a => [a, a])], filters.account)}</div>
+        <div><label for="secSide">買賣</label>${sel('secSide', [['all', '全部'], ['buy', '買進'], ['sell', '賣出']], filters.side)}</div>
+        <div><label for="secCurrency">幣別</label>${sel('secCurrency', [['all', '全部'], ...curs.map(c => [c, c])], filters.currency)}</div>
+        <div class="sec-search-filter"><label for="secSearch">搜尋</label><input id="secSearch" value="${esc(filters.q)}" placeholder="代號或名稱，按 Enter" /></div>
+      </div>
+      <div class="sec-info-row">
+        <button type="button" class="info-link" data-sec-info="currency">ⓘ 為什麼金額分幣別？</button>
+        <button type="button" class="info-link" data-sec-info="net">ⓘ 淨應收付的 ＋／−</button>
+        <button type="button" class="info-link" data-sec-info="fees">ⓘ 費稅包含什麼？</button>
+        <button type="button" class="info-link" data-sec-info="dedup">ⓘ 重複匯入會怎樣？</button>
+        <button type="button" class="info-link" data-sec-info="boundary">ⓘ 會影響投資組合嗎？</button>
+      </div>
+    </section>
+    <section class="securities-section securities-ledger-section">
+      <div class="securities-section-head securities-ledger-head"><div><span>成交明細</span><h2>${rows.length ? `目前顯示 ${rows.length} 筆` : '逐筆核對券商紀錄'}</h2></div><p>${rows.length ? '點任一列可展開費稅與匯入批次。' : '同步或上傳後，成交紀錄會依日期排列。'}</p></div>
+      ${secTableHtml(rows, th, FMT)}
+    </section>
+  </div>`;
 
   // ---- 接線 ----
   view().querySelectorAll('[data-sec-preset]').forEach((/** @type {any} */ b) => b.onclick = () => {
