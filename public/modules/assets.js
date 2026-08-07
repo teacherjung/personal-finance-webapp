@@ -163,12 +163,55 @@ function bankAccountSummary(accounts) {
   };
 }
 
+function bankAccountNoticeHtml(message) {
+  if (!message) return '';
+  return `<div class="bank-account-notice" role="status" aria-live="polite">
+    <span>${icon('check', 17)}</span><strong>${esc(message)}</strong>
+  </div>`;
+}
+
+function bankAccountLoadErrorHtml(message) {
+  return `<div class="bank-accounts-page">
+    <div class="page-head bank-accounts-head">
+      <div><h1>銀行帳戶</h1><p>管理現金帳戶、原幣餘額與對帳單辨識資訊</p></div>
+    </div>
+    <section class="bank-account-error" role="alert" aria-labelledby="bankAccountErrorTitle">
+      <span class="bank-error-icon">${icon('alert', 28)}</span>
+      <div class="bank-error-copy">
+        <span>載入未完成</span>
+        <h2 id="bankAccountErrorTitle">銀行帳戶暫時載入失敗</h2>
+        <p>這次只讀取失敗，沒有修改任何帳戶資料。可以直接重新載入。</p>
+      </div>
+      <button class="btn-ghost" id="retryBankAccounts">${icon('refresh', 16)}重新載入</button>
+      <details><summary>查看錯誤訊息</summary><code>${esc(message || '無法連線')}</code></details>
+    </section>
+  </div>`;
+}
+
+let bankAccountNotice = '';
+
+function rerenderBankAccountsAfterSave(seq, message) {
+  if (seq !== currentRouteSeq()) return;
+  bankAccountNotice = message;
+  return renderBankAccounts();
+}
+
 export async function renderBankAccounts() {
   const seq = currentRouteSeq();
-  const db = await api('/db');
+  let db;
+  try {
+    db = await api('/db');
+  } catch (error) {
+    if (seq !== currentRouteSeq()) return;
+    view().innerHTML = bankAccountLoadErrorHtml(error instanceof Error ? error.message : '無法連線');
+    byId('retryBankAccounts').onclick = () => renderBankAccounts();
+    return;
+  }
   if (seq !== currentRouteSeq()) return;
   const accounts = (db.accounts || []).filter(x => (x.type || 'cash') === 'cash');
   const summary = bankAccountSummary(accounts);
+  const notice = bankAccountNotice;
+  bankAccountNotice = '';
   view().innerHTML = `
     <div class="bank-accounts-page">
       <div class="page-head bank-accounts-head">
@@ -178,6 +221,8 @@ export async function renderBankAccounts() {
           <button class="btn" id="addBankAcc">${icon('plus', 16)}新增銀行帳戶</button>
         </div>
       </div>
+
+      ${bankAccountNoticeHtml(notice)}
 
       <section class="bank-account-summary" aria-label="銀行帳戶摘要">
         <div class="bank-account-kpi"><span>帳戶數</span><strong>${summary.accountCount} 個</strong></div>
@@ -200,16 +245,25 @@ export async function renderBankAccounts() {
           <tbody>${accounts.map(bankAccRow).join('')}</tbody></table>
         </div>` : `<div class="bank-account-empty">
           <span class="bank-empty-icon">${icon('bank', 28)}</span>
-          <div><strong>尚無銀行帳戶</strong><p>新增帳戶，或從銀行收支匯入對帳單自動建立。</p></div>
-          <button class="btn-ghost" id="addBankAccEmpty">${icon('plus', 16)}新增第一個帳戶</button>
+          <div><strong>尚無銀行帳戶</strong><p>先新增一個銀行帳戶，或由銀行收支匯入對帳單建立。</p></div>
+          <div class="bank-empty-actions">
+            <button class="btn" id="addBankAccEmpty">${icon('plus', 16)}新增第一個帳戶</button>
+            <a class="btn-ghost" href="#cashflow">${icon('upload', 16)}匯入對帳單</a>
+          </div>
         </div>`}
       </section>
     </div>
   `;
-  byId('addBankAcc').onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });
+  byId('addBankAcc').onclick = () => openAccForm(null, {
+    defaultType: 'cash', onDone: () => rerenderBankAccountsAfterSave(seq, '銀行帳戶已新增')
+  });
   const emptyAdd = byId('addBankAccEmpty');
-  if (emptyAdd) emptyAdd.onclick = () => openAccForm(null, { defaultType: 'cash', onDone: renderBankAccounts });
-  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAccForm(accounts.find(x => x.id === b.dataset.edit), { onDone: renderBankAccounts }));
+  if (emptyAdd) emptyAdd.onclick = () => openAccForm(null, {
+    defaultType: 'cash', onDone: () => rerenderBankAccountsAfterSave(seq, '銀行帳戶已新增')
+  });
+  view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAccForm(accounts.find(x => x.id === b.dataset.edit), {
+    onDone: () => rerenderBankAccountsAfterSave(seq, '銀行帳戶資料已更新')
+  }));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const x = accounts.find(y => y.id === b.dataset.del);
     confirmDelete(x.name, () => api('/accounts/' + x.id, { method: 'DELETE' }));   // confirmDelete 內建 router() 重繪目前頁（銀行帳戶）

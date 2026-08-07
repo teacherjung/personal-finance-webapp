@@ -73,7 +73,10 @@ function assertBankStructure(source) {
     'id="addBankAcc"',
     'href="#cashflow"',
   ]) assert.match(render, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;/);
+  assert.match(render, /catch \(error\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = bankAccountLoadErrorHtml/,
+    '載入失敗晚到時不可蓋掉新頁面');
+  assert.match(render, /\}\s*if \(seq !== currentRouteSeq\(\)\) return;\s*const accounts/,
+    '載入成功晚到時不可蓋掉新頁面');
   assert.match(render, /defaultType: 'cash'/);
   assert.match(row, /esc\(x\.name\)/);
   assert.match(row, /esc\(x\.id\)/);
@@ -122,9 +125,12 @@ test('銀行帳戶列：只顯示投影末四碼，名稱與 id 仍經過輸出�
 
 test('銀行帳戶 UI：拿掉路由守衛、隱私說明或手機列表時考題會紅', () => {
   const source = read('public/modules/assets.js');
-  const guardedEntry = "export async function renderBankAccounts() {\n  const seq = currentRouteSeq();\n  const db = await api('/db');\n  if (seq !== currentRouteSeq()) return;";
-  assert.ok(source.includes(guardedEntry), '突變目標必須存在');
-  assert.throws(() => assertBankStructure(source.replace(guardedEntry, guardedEntry.replace('if (seq !== currentRouteSeq()) return;', '// route guard removed'))));
+  const errorGuard = "catch (error) {\n    if (seq !== currentRouteSeq()) return;\n    view().innerHTML = bankAccountLoadErrorHtml";
+  const successGuard = "}\n  if (seq !== currentRouteSeq()) return;\n  const accounts";
+  assert.ok(source.includes(errorGuard), '失敗路徑守衛突變目標必須存在');
+  assert.ok(source.includes(successGuard), '成功路徑守衛突變目標必須存在');
+  assert.throws(() => assertBankStructure(source.replace(errorGuard, errorGuard.replace('if (seq !== currentRouteSeq()) return;', '// route guard removed'))));
+  assert.throws(() => assertBankStructure(source.replace(successGuard, successGuard.replace('if (seq !== currentRouteSeq()) return;', '// route guard removed'))));
   assert.throws(() => assertBankStructure(source.replace('class="bank-privacy-note"', 'class="plain-note"')));
   assert.ok(source.includes(' data-label="幣別"'), '手機欄位標籤突變目標必須存在');
   assert.throws(() => assertBankRowBehavior(source.replace(' data-label="幣別"', '')));

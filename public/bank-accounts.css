@@ -11,6 +11,14 @@
 .bank-accounts-page .btn,
 .bank-accounts-page .btn-ghost { border-radius: 8px; }
 
+.bank-account-notice {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 16px; padding: 11px 14px;
+  color: var(--accent-ink); background: var(--accent-soft);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+}
+.bank-account-notice > span { width: 24px; height: 24px; display: grid; place-items: center; }
+.bank-account-notice strong { font-size: 12px; }
+
 .bank-account-summary {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;
   overflow: hidden; margin-bottom: 16px; background: var(--line);
@@ -91,6 +99,36 @@
 }
 .bank-account-empty strong { color: var(--text); font-family: var(--serif); font-size: 18px; }
 .bank-account-empty p { margin-top: 3px; color: var(--text-dim); font-size: 12px; }
+.bank-empty-actions { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.bank-empty-actions > a,
+.bank-empty-actions > button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 40px; text-decoration: none;
+}
+
+.bank-account-error {
+  min-height: 330px; padding: 44px 28px; display: grid;
+  grid-template-columns: 64px minmax(0, 520px); justify-content: center; align-content: center;
+  column-gap: 18px; row-gap: 18px; background: var(--card);
+  border: 2px solid var(--frame); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.bank-error-icon {
+  grid-row: 1 / span 2; width: 64px; height: 64px; display: grid; place-items: center;
+  color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+.bank-error-copy > span {
+  display: block; margin-bottom: 4px; color: var(--accent-ink); font-size: 11px; font-weight: 700;
+}
+.bank-error-copy h2 { font-family: var(--serif); font-size: 22px; }
+.bank-error-copy p { margin-top: 6px; color: var(--text-dim); font-size: 12px; line-height: 1.65; }
+.bank-account-error > button { grid-column: 2; justify-self: start; }
+.bank-account-error details { grid-column: 2; color: var(--text-dim); font-size: 11px; }
+.bank-account-error summary { width: max-content; cursor: pointer; }
+.bank-account-error code {
+  display: block; max-width: 100%; margin-top: 8px; padding: 9px 11px; overflow-wrap: anywhere;
+  color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+}
 
 @media (max-width: 700px) {
   .bank-account-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -125,4 +163,13 @@
 @media (max-width: 520px) {
   .bank-privacy-note { padding: 12px 14px; }
   .bank-account-empty { min-height: 170px; padding: 24px 18px; }
+  .bank-empty-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .bank-empty-actions > a,
+  .bank-empty-actions > button { width: 100%; }
+  .bank-account-error {
+    min-height: 360px; padding: 32px 20px; display: flex; align-items: center;
+    flex-direction: column; text-align: center;
+  }
+  .bank-account-error > button { align-self: stretch; }
+  .bank-account-error details { width: 100%; text-align: left; }
 }
