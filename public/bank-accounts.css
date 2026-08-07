@@ -7,6 +7,9 @@
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   text-decoration: none;
 }
+.bank-accounts-page button,
+.bank-accounts-page .btn,
+.bank-accounts-page .btn-ghost { border-radius: 8px; }
 
 .bank-account-summary {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;

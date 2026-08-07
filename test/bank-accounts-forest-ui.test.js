@@ -84,6 +84,7 @@ function assertBankStructure(source) {
 function assertBankCss(css, index) {
   const mobile = cssBlock(css, '@media (max-width: 700px)');
   assert.match(index, /<link rel="stylesheet" href="bank-accounts\.css" \/>/);
+  assert.match(css, /\.bank-accounts-page button,[\s\S]*\.bank-accounts-page \.btn-ghost \{ border-radius: 8px; \}/);
   assert.match(css, /\.bank-account-summary \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\);/);
   assert.match(css, /\.bank-privacy-note \{[\s\S]*border-left: 5px solid var\(--accent\);/);
   assert.match(mobile, /\.bank-account-table thead \{ display: none; \}/);
@@ -132,5 +133,6 @@ test('銀行帳戶 UI：拿掉路由守衛、隱私說明或手機列表時考�
   const index = read('public/index.html');
   assert.throws(() => assertBankCss(css.replace('.bank-account-table thead { display: none; }', '.bank-account-table thead { display: table-header-group; }'), index));
   assert.throws(() => assertBankCss(css.replace('display: block; width: auto !important;', 'display: table-cell; width: auto !important;'), index));
+  assert.throws(() => assertBankCss(css.replace('border-radius: 8px;', 'border-radius: 0;'), index));
   assert.throws(() => assertBankCss(css, index.replace('<link rel="stylesheet" href="bank-accounts.css" />', '')));
 });
