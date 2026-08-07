@@ -176,7 +176,7 @@ export function secSummarize(rows) {
 }
 
 /**
- * 分幣別合計卡列（.cards 慣例）。只有費用、沒有成交的幣別（外幣手續費）標「只有費用」。
+ * 分幣別合計卡列。只有費用、沒有成交的幣別（外幣手續費）標「只有費用」。
  * @param {ReturnType<typeof secSummarize>} sum @param {{esc:(s:any)=>string, amt:(n:any)=>string}} fmt
  */
 export function secSummaryHtml(sum, fmt) {
@@ -185,15 +185,15 @@ export function secSummaryHtml(sum, fmt) {
   const card = (/** @type {string} */ cur) => {
     const g = sum[cur];
     const netCls = g.net >= 0 ? 'pos' : 'neg';
-    return `<div class="card"><h3>${fmt.esc(cur)}${g.count ? ` 合計 · ${g.count} 筆` : ' · 只有費用'}</h3>
+    return `<article class="securities-summary-card"><h3>${fmt.esc(cur)}${g.count ? ` 合計 · ${g.count} 筆` : ' · 只有費用'}</h3>
       <div class="sec-sum-rows">
         <div class="row"><span>買進總額</span><b class="num">${fmt.amt(g.buy)}</b></div>
         <div class="row"><span>賣出總額</span><b class="num">${fmt.amt(g.sell)}</b></div>
         <div class="row"><span>費稅合計</span><b class="num">${fmt.amt(g.fees)}</b></div>
         <div class="row"><span>淨應收付</span><b class="num ${netCls}">${g.net >= 0 ? '+' : '−'}${fmt.amt(Math.abs(g.net))}</b></div>
-      </div></div>`;
+      </div></article>`;
   };
-  return `<div class="cards">${curs.map(card).join('')}</div>`;
+  return `<div class="securities-summary-grid">${curs.map(card).join('')}</div>`;
 }
 
 /** 展開明細（每列第二個 tr）：折讓、費用細項、批次——主表安靜、細節要看才展開（藍圖 §二）。 @param {any} t @param {any} fmt */
@@ -242,7 +242,7 @@ export function secTableHtml(rows, th, fmt) {
   const head = `<tr>${th('tradeDate', '成交日')}${th('settlementDate', '交割日')}${th('source', '來源')}${th('account', '帳戶')}${th('symbol', '證券')}${th('side', '買賣')}${th('quantity', '數量', 'num')}${th('price', '成交價', 'num')}${th('grossAmount', '成交金額', 'num')}${th('fees', '費稅', 'num')}${th('net', '淨應收付', 'num')}${th('currency', '幣別')}</tr>`;
   const body = (rows || []).map((t, i) => secRowHtml(t, i, fmt)).join('')
     || '<tr><td colspan="12" class="empty">尚無證券交易。可同步 IBKR，或上傳台新證券對帳單。</td></tr>';
-  return `<div class="tbl-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="tbl-wrap securities-ledger-table"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 /** 預覽可否確認匯入：無 blocker 且有可新增的筆數（fail-closed，藍圖 §七）。 @param {any} p */

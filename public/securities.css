@@ -1,0 +1,125 @@
+/* UI5：證券交易頁。橘色負責導覽與篩選，綠色只保留主要動作與正向金額。 */
+.securities-page { width: 100%; }
+
+.securities-page-head { align-items: flex-end; margin-bottom: 18px; }
+.securities-page-head > div:first-child { max-width: 620px; }
+.securities-eyebrow {
+  display: block; margin-bottom: 3px; color: var(--accent-ink);
+  font-size: 11px; font-weight: 800;
+}
+.securities-page-head .page-actions .btn,
+.securities-page-head .page-actions .btn-ghost { min-height: 40px; border-radius: 8px; }
+
+.securities-boundary {
+  display: flex; align-items: flex-start; gap: 12px; padding: 13px 16px;
+  background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--accent);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.securities-boundary-icon {
+  width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center;
+  color: var(--accent-ink); background: var(--accent-soft); border-radius: 50%;
+}
+.securities-boundary strong { color: var(--text); font-size: 12px; }
+.securities-boundary p { margin-top: 2px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+
+.securities-section { margin-top: 28px; }
+.securities-section-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 12px;
+}
+.securities-section-head span {
+  display: block; margin-bottom: 3px; color: var(--accent-ink); font-size: 11px; font-weight: 800;
+}
+.securities-section-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+.securities-section-head p { max-width: 410px; color: var(--text-dim); font-size: 11.5px; text-align: right; }
+
+.securities-summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  overflow: hidden; background: var(--line); border: 2px solid var(--frame);
+  border-radius: var(--radius); box-shadow: var(--shadow); gap: 1px;
+}
+.securities-summary-card { min-width: 0; padding: 17px 20px 18px; background: var(--card); }
+.securities-summary-card h3 {
+  padding-bottom: 10px; color: var(--text); border-bottom: 1px solid var(--line);
+  font-family: var(--serif); font-size: 14px; font-weight: 700;
+}
+.securities-summary-card .sec-sum-rows { margin-top: 10px; gap: 6px; font-size: 12px; }
+.securities-summary-card .sec-sum-rows .row > span { color: var(--text-dim); }
+.securities-summary-card .sec-sum-rows b { color: var(--text); font-weight: 700; }
+.securities-summary-card .sec-sum-rows b.pos { color: var(--pos); }
+.securities-summary-card .sec-sum-rows b.neg { color: var(--neg); }
+
+.securities-filter-section {
+  padding: 20px 22px 0; background: var(--card); border: 2px solid var(--frame);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.securities-filter-section .securities-section-head { margin-bottom: 17px; }
+.securities-filter-section .sec-toolbar {
+  display: flex; align-items: flex-end; gap: 13px 10px; margin-bottom: 18px;
+}
+.securities-filter-section .sec-toolbar > div { gap: 5px; }
+.securities-filter-section .sec-toolbar label { margin-bottom: 0; font-size: 11px; font-weight: 700; }
+.securities-filter-section .sec-toolbar select,
+.securities-filter-section .sec-toolbar input { height: 38px; border-color: var(--line-2); border-radius: 8px; }
+.securities-filter-section .sec-period-filter { min-width: 268px; }
+.securities-filter-section .sec-search-filter { margin-left: auto; }
+.securities-filter-section .sec-toolbar #secSearch { width: 170px; }
+.securities-filter-section .chip-row { gap: 5px; flex-wrap: nowrap; }
+.securities-filter-section .chip {
+  min-height: 38px; padding: 6px 10px; color: var(--text-dim); background: var(--bg);
+  border: 1px solid var(--line-2); border-radius: 8px; box-shadow: none;
+}
+.securities-filter-section .chip:hover { color: var(--text); background: var(--accent-soft); }
+.securities-filter-section .chip.active {
+  color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+.securities-filter-section .sec-info-row {
+  gap: 4px 18px; margin: 0 -22px; padding: 12px 22px;
+  background: var(--bg); border-top: 1px solid var(--line); border-radius: 0 0 6px 6px;
+}
+.securities-filter-section .sec-info-row .info-link { font-size: 11.5px; }
+
+.securities-ledger-section { margin-top: 30px; }
+.securities-ledger-head { margin-inline: 2px; }
+.securities-ledger-table { position: relative; }
+.securities-ledger-table table { min-width: 1180px; }
+.securities-ledger-table th { padding-block: 11px; white-space: nowrap; }
+.securities-ledger-table td { padding-block: 12px; }
+.securities-ledger-table tbody tr.sec-row:hover { background: var(--accent-soft); }
+.securities-ledger-table tr.sec-detail > td { background: var(--bg); }
+.securities-ledger-table .empty { height: 132px; white-space: normal; }
+
+@media (max-width: 1080px) {
+  .securities-filter-section .sec-search-filter { margin-left: 0; }
+  .securities-filter-section .sec-period-filter { flex: 1 1 100%; }
+}
+
+@media (max-width: 700px) {
+  .securities-page-head .page-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .securities-page-head .page-actions .btn { grid-column: 1 / -1; grid-row: 1; }
+  .securities-page-head .page-actions .btn,
+  .securities-page-head .page-actions .btn-ghost { width: 100%; padding-inline: 10px; }
+  .securities-boundary { padding: 12px 14px; }
+  .securities-section-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .securities-section-head p { max-width: none; text-align: left; }
+  .securities-summary-grid { grid-template-columns: 1fr; }
+  .securities-summary-card { padding: 15px 16px 16px; }
+  .securities-filter-section { padding: 17px 16px 0; }
+  .securities-filter-section .sec-toolbar { gap: 12px; }
+  .securities-filter-section .sec-toolbar > div,
+  .securities-filter-section .sec-toolbar select,
+  .securities-filter-section .sec-toolbar input,
+  .securities-filter-section .sec-toolbar #secSearch { width: 100%; }
+  .securities-filter-section .sec-period-filter { min-width: 0; }
+  .securities-filter-section .chip-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .securities-filter-section .chip { min-width: 0; padding-inline: 5px; }
+  .securities-filter-section .sec-info-row { margin-inline: -16px; padding: 12px 16px; }
+  .securities-ledger-table table { min-width: 1120px; }
+  .securities-ledger-table .empty { position: sticky; left: 0; width: calc(100vw - 64px); }
+}
+
+@media (max-width: 430px) {
+  .securities-page-head .page-actions { grid-template-columns: 1fr; }
+  .securities-page-head .page-actions .btn-ghost { grid-column: 1; }
+  .securities-filter-section .chip-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
