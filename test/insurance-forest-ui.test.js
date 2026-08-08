@@ -90,16 +90,18 @@ function assertInsuranceStructure(source) {
     'class="insurance-attention',
     'class="insurance-policy-section"',
     'class="insurance-policy-grid"',
-    'class="insurance-empty"',
     'id="addIns"',
   ]) assert.match(render, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;/);
+  assert.match(render, /insuranceEmptyHtml\(\)/);
+  assert.match(source, /function insuranceEmptyHtml\(\) \{[\s\S]*class="insurance-empty"/);
+  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*\/\/ fetch 期間切走了頁/);
   assert.match(render, /const annual = annualPremiumOf\(list\);/);
   assert.match(render, /return d >= 0 && d <= 30;/);
   assert.match(render, /wan\(annual\)/);
   assert.match(card, /esc\(p\.policyName\)/);
   assert.match(card, /esc\(p\.coverage \|\| '尚未填寫保障內容'\)/);
-  assert.match(form, /if \(seq === currentRouteSeq\(\)\) renderInsurance\(\);/);
+  assert.match(form, /rerenderInsuranceAfterSave\(seq, message\);/);
+  assert.match(source, /function rerenderInsuranceAfterSave\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;/);
 }
 
 function assertInsuranceCss(css, index) {
@@ -144,13 +146,13 @@ test('保險追蹤 UI：獨立暖色樣式支援雙欄桌機、單欄窄畫面�
 
 test('保險追蹤 UI：破壞安全輸出、路由守衛、圓角或窄畫面配置時考題會紅', () => {
   const source = read('public/modules/insurance.js');
-  const routeGuard = 'if (seq !== currentRouteSeq()) return;';
+  const routeGuard = "if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁";
   assert.ok(source.includes(routeGuard), '突變目標必須存在：讀取後路由守衛');
   assert.throws(() => assertInsuranceStructure(source.replace(routeGuard, '// route guard removed')));
 
-  const saveGuard = 'if (seq === currentRouteSeq()) renderInsurance();';
+  const saveGuard = 'if (seq !== currentRouteSeq()) return;\n  insuranceNotice = message;';
   assert.ok(source.includes(saveGuard), '突變目標必須存在：儲存後路由守衛');
-  assert.throws(() => assertInsuranceStructure(source.replace(saveGuard, 'renderInsurance();')));
+  assert.throws(() => assertInsuranceStructure(source.replace(saveGuard, 'insuranceNotice = message;')));
 
   const safeName = '${esc(p.policyName)}';
   assert.ok(source.includes(safeName), '突變目標必須存在：保單名稱輸出消毒');

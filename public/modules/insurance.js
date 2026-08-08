@@ -35,9 +35,73 @@ function coverageMeta(endDate) {
   return { tone: 'normal', label: '保障中' };
 }
 
+function insuranceNoticeHtml(message) {
+  if (!message) return '';
+  return `<div class="insurance-notice" role="status" aria-live="polite">
+    <span>${icon('check', 17)}</span><strong>${esc(message)}</strong>
+  </div>`;
+}
+
+function insuranceLoadingHtml() {
+  return `<section class="insurance-page">
+    <div class="page-head insurance-page-head">
+      <div><p class="page-eyebrow">保障管理</p><h1>保險追蹤</h1><p>把繳費時程、保障內容與保單關係放在同一個工作面。</p></div>
+    </div>
+    <section class="insurance-state insurance-loading" role="status" aria-live="polite" aria-busy="true">
+      <span class="insurance-state-icon">${icon('shield', 28)}</span>
+      <div><span>正在整理</span><h2>正在讀取保單資料</h2><p>只會讀取保單清單，不會新增、刪除或修改任何資料。</p></div>
+    </section>
+  </section>`;
+}
+
+function insuranceLoadErrorHtml(message) {
+  return `<section class="insurance-page">
+    <div class="page-head insurance-page-head">
+      <div><p class="page-eyebrow">保障管理</p><h1>保險追蹤</h1><p>把繳費時程、保障內容與保單關係放在同一個工作面。</p></div>
+    </div>
+    <section class="insurance-state insurance-error" role="alert" aria-labelledby="insuranceErrorTitle">
+      <span class="insurance-state-icon">${icon('alert', 28)}</span>
+      <div class="insurance-state-copy">
+        <span>載入未完成</span>
+        <h2 id="insuranceErrorTitle">保單資料暫時載入失敗</h2>
+        <p>這次只讀取失敗，沒有新增、刪除或修改任何保單。可以直接重新載入。</p>
+      </div>
+      <button class="btn-ghost" id="retryInsurance">${icon('refresh', 16)}重新載入</button>
+      <details><summary>查看錯誤訊息</summary><code>${esc(message || '無法連線')}</code></details>
+    </section>
+  </section>`;
+}
+
+function insuranceEmptyHtml() {
+  return `<div class="insurance-empty">
+    <span>${icon('shield', 24)}</span>
+    <div><strong>尚無保單</strong><p>先新增仍在繳費或需要續期的保單，之後就能集中查看繳費時程與保障關係。</p></div>
+    <button class="btn" id="emptyAddIns">${icon('plus', 16)}新增第一張保單</button>
+  </div>`;
+}
+
+let insuranceNotice = '';
+
+function rerenderInsuranceAfterSave(seq, message) {
+  if (seq !== currentRouteSeq()) return;
+  insuranceNotice = message;
+  return renderInsurance();
+}
+
 export async function renderInsurance() {
   const seq = currentRouteSeq();
-  const list = (await api('/insurance')).slice().sort((a, b) => daysUntil(a.nextPayment) - daysUntil(b.nextPayment));
+  const notice = insuranceNotice;
+  insuranceNotice = '';
+  view().innerHTML = insuranceLoadingHtml();
+  let list;
+  try {
+    list = (await api('/insurance')).slice().sort((a, b) => daysUntil(a.nextPayment) - daysUntil(b.nextPayment));
+  } catch (error) {
+    if (seq !== currentRouteSeq()) return;
+    view().innerHTML = insuranceLoadErrorHtml(error instanceof Error ? error.message : '無法連線');
+    byId('retryInsurance').onclick = () => renderInsurance();
+    return;
+  }
   if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6 idiom；r11#2 補上漏掉的兩頁）——寫 DOM 前必守，router 的事後檢查救不了 renderer 內部的寫入
 
   const annual = annualPremiumOf(list);
@@ -67,6 +131,8 @@ export async function renderInsurance() {
       <div class="page-actions"><button class="btn" id="addIns">${icon('plus', 16)}新增保單</button></div>
     </div>
 
+    ${insuranceNoticeHtml(notice)}
+
     <div class="insurance-summary" aria-label="保險摘要">
       <div class="insurance-summary-item"><span>保單數</span><strong>${list.length} 張</strong></div>
       <div class="insurance-summary-item"><span>年化保費</span><strong>${wan(annual)}</strong></div>
@@ -86,10 +152,7 @@ export async function renderInsurance() {
         <p>依下次繳費日排序，逾期與近期項目會先出現。</p>
       </div>
       <div class="insurance-policy-grid">
-        ${list.map(policyCard).join('') || `<div class="insurance-empty">
-          <span>${icon('shield', 24)}</span><div><strong>尚無保單</strong><p>新增第一張保單，集中追蹤繳費、保障期限與人物關係。</p></div>
-          <button class="btn" id="emptyAddIns">${icon('plus', 16)}新增保單</button>
-        </div>`}
+        ${list.map(policyCard).join('') || insuranceEmptyHtml()}
       </div>
     </section>
     </section>
@@ -101,7 +164,10 @@ export async function renderInsurance() {
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openInsForm(list.find(p => p.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const p = list.find(x => x.id === b.dataset.del);
-    confirmDelete(p.policyName, () => api('/insurance/' + p.id, { method: 'DELETE' }));
+    confirmDelete(p.policyName, async () => {
+      await api('/insurance/' + p.id, { method: 'DELETE' });
+      if (seq === currentRouteSeq()) insuranceNotice = '保單已刪除';
+    });
   });
 }
 
@@ -163,8 +229,9 @@ function openInsForm(p) {
     onSubmit: async (data) => {
       if (p) await api('/insurance/' + p.id, { method: 'PUT', body: data });
       else await api('/insurance', { method: 'POST', body: data });
-      toast('已儲存');
-      if (seq === currentRouteSeq()) renderInsurance();
+      const message = p ? '保單資料已更新' : '保單已新增';
+      toast(message);
+      rerenderInsuranceAfterSave(seq, message);
     }
   });
 }
