@@ -22,14 +22,15 @@ import { ROOT } from './helpers/repo-root.js';
  * ⚠️⚠️ **本檔是「早期警告」，不是門**（2026-08-08 四路攻擊之後改口）：
  * 真正的門是 `test/helpers/repo-root.js`——會驗身分的共用 ROOT ＋載入時斷言
  * （不看寫法、只看結果：算錯、或指到另一棵 checkout，都當場吵）。
- * 本檔只掃「有沒有人自己算而且算錯」，**射程與射程外都寫在下面的誠實劃界那一題**。
+ * 本檔只掃「有沒有人自己算而且算錯」。**射程**＝下方 mustCatch 那一題；
+ * **射程外**＝誠實劃界那一題（那份清單也不完整——它只列已知的，不是窮舉）。
  * 照 `test/entry-guard.test.js` 已下過的同一個結論：語法檢查在這件事上不可能收斂，所以它不是門。
  *
- * ⚠️ **判斷用 AST，不用正則、不自己寫 lexer**（r2 阻擋①）：
+ * ⚠️ **判斷用 AST／真正的解析器，不用正則、不自己寫 lexer**（r2 阻擋①、r5 阻擋①各踩一次）：
  * 前一版手寫的「剝註解」狀態機被複驗者用四種合法 JS 打穿——
  * `return /[//]/` 的字元類別被當成行註解（後面的真違規整段變空白＝靜靜放過）、
  * 巢狀樣板 `${`//…`}` 沒處理、純字串裡提到會被誤抓、`new URL(String('..'), …)` 的巢狀括號抓不到。
- * ⇒ 手寫 lexer 是錯的工具。改用 acorn 解析出真正的
+ * ⇒ 手寫 lexer 是錯的工具。改用真正的 JS 解析器（`espree`）解析出
  * `NewExpression(URL) → MemberExpression(.pathname)`，語法邊界交給 parser。
  */
 
@@ -50,43 +51,89 @@ function walk(node, visit) {
 }
 
 /**
- * `new URL(input, base)` 算出來的**能不能證明**是 file URL（＝取 `.pathname` 就會拿到未解碼路徑）。
- *
- * ⚠️ **只有「證明得出來」才 taint**（r4 阻擋①）：前一版的判準是「input 或 base 任一是 file URL」，
- * 但 `base` 是 file URL **不代表結果是** ——input 若是絕對 URL，base 整個被忽略。
- * 於是五種安全寫法被誤判（複驗者實測：HTTPS 字串放進 const／`String('https://…')`／
- * 無內插樣板／靜態字串串接／HTTPS 的 URL 物件），而這是會讓 `npm test` 失敗的硬閘。
- *
- * ⇒ 判準改成兩條，其餘一律放過（**寧可漏抓、不可誤抓**）：
- *   ⓐ input 本身就是 file URL（`import.meta.url`、或被指派過它的 binding）⇒ 是
- *   ⓑ input 是**字串字面**（含無內插樣板）：帶 scheme 就看是不是 `file:`；
- *      沒有 scheme（＝相對參照）才去看 base 是不是 file URL
- * input 是變數／串接／函式回傳值時**證明不了** ⇒ 放過。
+ * 字串字面（含無內插樣板）。⚠️ 也接**以字面開頭的串接**：`'../fixtures/' + name` 的最左邊那截
+ * 就足以決定它是相對參照還是絕對 URL（r5 阻擋④：這種寫法很常見、必然是相對、而且真的會 ENOENT）。
  */
-function literalString(node) {
+function literalParts(node) {
   if (!node) return null;
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  if (node.type === 'Literal' && typeof node.value === 'string') return { text: node.value, complete: true };
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return { text: node.quasis[0].value.cooked, complete: true };
+  }
+  if (node.type === 'TemplateLiteral' && node.quasis.length) {
+    return { text: node.quasis[0].value.cooked, complete: false };   // `../x/${name}` ⇒ 只知道開頭
+  }
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    const left = literalParts(node.left);
+    return left === null ? null : { text: left.text, complete: false };
+  }
   return null;
 }
 
-function isFileUrlNew(node, tainted) {
+/**
+ * 這一截字面是不是「帶非 file scheme 的絕對 URL」（⇒ base 會被忽略 ⇒ 結果不是 file URL）。
+ *
+ * ⚠️ **用真正的 `URL` 解析器判，不自己寫正則**（r5 阻擋①，第三次學到同一課）：
+ * WHATWG 會先剝掉開頭的空白與控制字元才看 scheme，所以 `' HTTPS://example.com/a'` 的結果是 `https:`，
+ * 而我上一版的 `/^([a-z][a-z0-9+.-]*):/i` 看到開頭是空白就當成相對參照 ⇒ 假紅（前置 tab 同理）。
+ * 交給 `new URL()` 自己回答，順便連大小寫、`c:`、protocol-relative 的規則都一致。
+ */
+function absoluteNonFileScheme(lit) {
+  try {
+    const u = new URL(lit);            // 能單獨解析成功＝它自己就是絕對 URL
+    return u.protocol !== 'file:';
+  } catch {
+    return false;                      // 解不出來＝相對參照（或壞字串）
+  }
+}
+
+/**
+ * `new URL(input, base)` 算出來的**能不能證明**是 file URL（＝取 `.pathname` 會拿到未解碼路徑）。
+ *
+ * ⚠️ 只有「證明得出來」才 taint（**寧可漏抓、不可誤抓**——這是會讓 `npm test` 失敗的硬閘）：
+ *   ⓐ input 本身就是 `import.meta.url`（或被指派過它的 binding）⇒ 是
+ *   ⓑ input 的**最左字面**存在：能單獨解析成絕對 URL 且不是 `file:` ⇒ 不是；否則（＝相對參照）看 base
+ * input 完全沒有字面可依據（純變數、函式回傳值）⇒ 證明不了 ⇒ 放過。
+ */
+function isFileUrlNew(node, tainted, isGlobalURL) {
   if (!node || node.type !== 'NewExpression') return false;
   if (!(node.callee.type === 'Identifier' && node.callee.name === 'URL')) return false;
+  // ⚠️ 必須確認 `URL` 是全域那顆（r5 阻擋②）：函式參數或區域類別剛好叫 URL 也會被誤抓。
+  if (!isGlobalURL(node.callee)) return false;
   const [input, base] = node.arguments;
-  if (isFileUrlExpr(input, tainted)) return true;               // ⓐ
-  const lit = literalString(input);
-  if (lit === null) return false;                              // 證明不了 ⇒ 放過
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(lit);           // ⓑ
-  if (scheme) return scheme[1].toLowerCase() === 'file';
+  if (isFileUrlExpr(input, tainted)) return true;                       // ⓐ
+  const parts = literalParts(input) || literalOfBinding(input, tainted);   // ⓑ
+  if (!parts) return false;
+  if (parts.complete) {
+    // 完整字面 ⇒ 交給真正的 URL 解析器（它會照 WHATWG 先剝開頭空白／控制字元）
+    if (absoluteNonFileScheme(parts.text)) return false;
+  } else if (!/^[./]/.test(parts.text)) {
+    // ⚠️ 只知道開頭時**不可以**拿它去解析（r5 實測：`'https:' + '//x'` 的 `'https:'` 單獨解不出來，
+    //    會被誤判成相對參照 ⇒ 假紅）。⇒ 唯有「以 `.` 或 `/` 開頭」才證明得出是相對參照，其餘放過。
+    return false;
+  }
   return isFileUrlExpr(base, tainted);
+}
+
+/** 單一賦值且值是字串字面的變數，可以把它的值當成已知（r5 阻擋④：`const rel = '..'` 很常見）。 */
+function literalOfBinding(node, tainted) {
+  if (!node || node.type !== 'Identifier') return null;
+  return tainted.litVar.get(node) || null;
 }
 
 /** 這個運算式是不是一個 file URL（`import.meta.url`、或被指派過它的變數）。 */
 function isFileUrlExpr(node, tainted) {
   if (!node) return false;
-  if (node.type === 'MetaProperty') return node.meta && node.meta.name === 'import';
-  if (node.type === 'MemberExpression') return isFileUrlExpr(node.object, tainted);
+  // ⚠️ **只認 `import.meta.url` 這一個屬性**（r5 阻擋②）：舊版把任何掛在 `import.meta` 上的成員
+  //    都當 file URL，於是 `new URL(import.meta.dirname, 'https://example.com').pathname`
+  //    （結果是 HTTPS）被判違規。`import.meta.dirname`／`.filename` 是普通路徑字串，不是 URL。
+  if (node.type === 'MemberExpression') {
+    if (node.object && node.object.type === 'MetaProperty') {
+      return node.object.meta && node.object.meta.name === 'import'
+        && !node.computed && node.property.type === 'Identifier' && node.property.name === 'url';
+    }
+    return false;
+  }
   if (node.type === 'Identifier') return tainted.fileUrl.has(node);
   return false;
 }
@@ -117,7 +164,6 @@ export function findBadPathnameUses(src, rel = '<inline>') {
 
   const scopeManager = analyze(ast, { ecmaVersion: 2024, sourceType: 'module', ignoreEval: true });
 
-  // identifier 節點 → 它解析到的那個 binding（同名不同 scope 就是不同 binding）
   const bindingOf = new Map();
   const allVars = [];
   const visitScope = (scope) => {
@@ -127,21 +173,37 @@ export function findBadPathnameUses(src, rel = '<inline>') {
   };
   visitScope(scopeManager.globalScope);
 
-  // 兩趟：先解出「被指派 import.meta.url 的 binding」，再解出「被指派 file-url 的 new URL 的 binding」
-  const tainted = { fileUrl: new Set(), urlObj: new Set() };
+  // ⚠️ `URL` 必須是全域那顆（r5 阻擋②）：解析得到 binding ⇒ 是使用者自己宣告的同名東西 ⇒ 放過。
+  const isGlobalURL = (node) => !bindingOf.has(node);
+
+  // 作用域感知的 taint（鍵是 identifier 節點，經由 binding 對齊——同名不同 scope 是不同 binding）
+  const tainted = { fileUrl: new Set(), urlObj: new Set(), litVar: new Map() };
+  const writeValues = (v) => v.defs.map((d) => d.node && (d.node.init || d.node.right))
+    .concat(v.references.filter((r) => r.isWrite() && r.writeExpr).map((r) => r.writeExpr))
+    .filter(Boolean);
   const markBinding = (v, bucket, isMatch) => {
-    const writes = v.defs.map((d) => d.node).concat(
-      v.references.filter((r) => r.isWrite() && r.writeExpr).map((r) => ({ init: r.writeExpr })),
-    );
-    const values = writes.map((n) => (n && (n.init || n.right || null))).filter(Boolean);
+    const values = writeValues(v);
     // ⚠️ kill：一個寫入不符合就整個放過（寧可漏抓、不可誤抓）
     if (!values.length || !values.every((val) => isMatch(val))) return;
     for (const id of v.identifiers) bucket.add(id);
     for (const r of v.references) bucket.add(r.identifier);
   };
+  // 單一賦值且值是字串字面的變數 ⇒ 值可知（r5 阻擋④：`const rel = '..'` 很常見）
+  for (const v of allVars) {
+    // ⚠️ **不可以要求「恰好一次寫入」**：`const rel = '..'` 的宣告在 eslint-scope 裡會同時出現在
+    //    `defs`（declarator）與 `references`（init 的 write）＝兩筆，於是條件永遠不成立（實測踩到）。
+    //    改成「每一次寫入都是同一個字串字面」——重新賦值成別的東西就自動不算。
+    const values = writeValues(v);
+    const parts = values.map((val) => literalParts(val));
+    if (!parts.length || parts.some((x) => x === null || !x.complete)) continue;
+    if (new Set(parts.map((x) => x.text)).size !== 1) continue;
+    const lit = parts[0];
+    for (const id of v.identifiers) tainted.litVar.set(id, lit);
+    for (const r of v.references) tainted.litVar.set(r.identifier, lit);
+  }
   for (let pass = 0; pass < 2; pass++) {
     for (const v of allVars) markBinding(v, tainted.fileUrl, (val) => isFileUrlExpr(val, tainted));
-    for (const v of allVars) markBinding(v, tainted.urlObj, (val) => isFileUrlNew(val, tainted));
+    for (const v of allVars) markBinding(v, tainted.urlObj, (val) => isFileUrlNew(val, tainted, isGlobalURL));
   }
   const isTaintedUrlObj = (node) => node && node.type === 'Identifier'
     && (tainted.urlObj.has(node) || (bindingOf.has(node)
@@ -160,12 +222,12 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     // (a) `<file url 的 URL>.pathname`／`["pathname"]`——直接寫或經由中間變數
     if (n.type === 'MemberExpression') {
       if (propName(n.property, n.computed) !== 'pathname') return;
-      if (isFileUrlNew(n.object, tainted) || isTaintedUrlObj(n.object)) flag(n);
+      if (isFileUrlNew(n.object, tainted, isGlobalURL) || isTaintedUrlObj(n.object)) flag(n);
       return;
     }
     // (b) 解構：`const { pathname } = <file url 的 URL>`（含改名）——連 MemberExpression 都沒有
     if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') {
-      if (!(isFileUrlNew(n.init, tainted) || isTaintedUrlObj(n.init))) return;
+      if (!(isFileUrlNew(n.init, tainted, isGlobalURL) || isTaintedUrlObj(n.init))) return;
       for (const prop of n.id.properties) {
         if (prop.type !== 'Property') continue;
         if (propName(prop.key, prop.computed) === 'pathname') flag(n);
@@ -220,6 +282,12 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['解構＋改名', `const { pathname: R } = ${U}("..", ${IMU});`],
     ['存成中間變數再取', `const u = ${U}("..", ${IMU}); const R = u${PN};`],
     ['base 抽成常數', `const base = ${IMU}; const R = ${U}("..", base)${PN};`],
+    // ↓ r5 複驗者指名「很常見、值得成為 mustCatch」的，以及這輪一併收斂的形狀
+    ['以相對字面開頭的串接', `const R = ${U}("../fixtures/" + name, ${IMU})${PN};`],
+    ['樣板有內插但開頭是相對', 'const R = ' + U + '(`../x/${name}`, ' + IMU + ')' + PN + ';'],
+    ['值可由單一賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    ['file: 大小寫混寫', `const R = ${U}("FiLe:///x", ${IMU})${PN};`],
+    ['protocol-relative（會繼承 file base）', `const R = ${U}("//example.com/x", ${IMU})${PN};`],
     ['單參數就是 file URL', `const R = ${U}(${IMU})${PN};`],
     ['無內插樣板的相對路徑', 'const R = ' + U + '(`..`, ' + IMU + ')' + PN + ';'],
     ['宣告順序顛倒（先用後宣告的 base）', `function g(){ return ${U}("..", base)${PN}; } const base = ${IMU};`],
@@ -237,12 +305,23 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['參數裡用 new.target 的 HTTP URL（不是 file URL）',
       `class R { constructor(u){ this.p = ${U}(u, new.target === R ? 'http://a' : 'http://b')${PN}; } }`],
     ['正確寫法本身', "import { ROOT } from './helpers/repo-root.js';"],
+    // ⚠️ 這一種**永遠**不該被抓（r5 阻擋③）：它原本混在誠實劃界裡，而那一題寫著
+    //    「將來抓到就是好事」——對這一項是錯的，它是合法用法，repo 現有兩支這樣寫。
+    ['URL 物件當 base、不取 pathname（合法，repo 現有兩支這樣用）',
+      `const ROOT = ${U}("../", ${IMU}); readFileSync(new URL("a.js", ROOT), "utf8");`],
     // ↓ r4 複驗者實測的五種假紅：input 是絕對 HTTPS ⇒ base 被忽略 ⇒ 結果不是 file URL
     ['HTTPS 字串放進 const', `const u = 'https://example.com/a'; const p = ${U}(u, ${IMU})${PN};`],
     ['String() 包起來的 HTTPS', `const p = ${U}(String('https://example.com/a'), ${IMU})${PN};`],
     ['無內插樣板的 HTTPS', 'const p = ' + U + '(`https://example.com/a`, ' + IMU + ')' + PN + ';'],
     ['靜態字串串接的 HTTPS', `const p = ${U}('https:' + '//example.com/a', ${IMU})${PN};`],
     ['HTTPS 的 URL 物件當 input', `const b = ${U}('https://example.com/'); const p = ${U}(b, ${IMU})${PN};`],
+    // ↓ r5 複驗者實測的假紅：WHATWG 會先剝掉開頭空白／控制字元才看 scheme
+    ['開頭有空白的 HTTPS', `const p = ${U}(' HTTPS://example.com/a', ${IMU})${PN};`],
+    ['開頭有 tab 的 HTTPS', `const p = ${U}('\\tHTTPS://example.com/a', ${IMU})${PN};`],
+    ['import.meta.dirname 不是 URL（是路徑字串）', `const p = ${U}(import.meta.dirname, 'https://example.com')${PN};`],
+    ['區域宣告的 URL 不是全域那顆', `class URL { constructor(){} } const p = ${U}('..', ${IMU})${PN};`],
+    ['函式參數剛好叫 URL', `function g(URL){ return ${U}('..', ${IMU})${PN}; }`],
+    ['變數後來被改成 HTTPS（kill）', `let rel='..'; rel='https://x'; const R = ${U}(rel, ${IMU})${PN};`],
     ['URL 物件本身沒取 pathname（合法：直接交給 fs，Node 自己會解碼）',
       `const ROOT = ${U}("../", ${IMU}); readFileSync(new URL("a.js", ROOT), "utf8");`],
   ];
@@ -275,13 +354,9 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
     //    這是「寧可漏抓、不可誤抓」的代價，不是漏掉的——r2 曾把它列為 mustCatch，
     //    r4 收緊判準（只有證明得出來才 taint）之後它必然落到射程外。
     ['input 是函式回傳值（非字面）', `const R = ${U}(String(".."), ${IMU})${PN};`],
-    ['input 是變數（非字面）', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
     // ↓ kill semantics 的代價（r4 複驗者實測並確認「掃描器仍有價值、不該刪，但要列進劃界」）：
     //    一個 binding 只要有一次寫入判不出是 file URL，就整個放過——自我賦值就足以脫身。
     ['自我賦值（kill 讓它脫身）', `let u = ${U}("..", ${IMU}); if (x) u = u; const R = u${PN};`],
-    // ↓ 這一種是**刻意**放過的合法用法（r3 複驗者確認）：URL 物件直接交給 fs，Node 自己會解碼
-    ['URL 物件當 base、不取 pathname（合法，repo 現有兩支這樣用）',
-      `const ROOT = ${U}("../", ${IMU}); readFileSync(new URL("a.js", ROOT), "utf8");`],
   ];
   for (const [why, src] of outOfRange) {
     assert.deepEqual(findBadPathnameUses(src), [],
