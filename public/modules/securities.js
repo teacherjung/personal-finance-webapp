@@ -27,9 +27,87 @@ const FMT = { esc: (/** @type {any} */ s) => esc(s), amt: fmtAmt, qty: fmtQty, p
 const filters = { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' };
 const listSort = { key: 'tradeDate', dir: 'desc' };
 
-export async function renderSecurities() {
+function securitiesNoticeHtml(message) {
+  if (!message) return '';
+  return `<div class="securities-notice" role="status" aria-live="polite">
+    <span>${icon('check', 17)}</span><strong>${esc(message)}</strong>
+  </div>`;
+}
+
+function securitiesLoadingHtml() {
+  return `<div class="securities-page">
+    <div class="page-head securities-page-head">
+      <div><span class="securities-eyebrow">投資交易查帳</span><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，逐筆核對成交、費稅與應收付。</p></div>
+    </div>
+    <section class="securities-state securities-loading" role="status" aria-live="polite" aria-busy="true">
+      <span class="securities-state-icon">${icon('history', 28)}</span>
+      <div><span>正在整理</span><h2>正在讀取證券交易</h2><p>只會讀取成交紀錄與設定，不會同步、匯入、刪除或修改任何資料。</p></div>
+    </section>
+  </div>`;
+}
+
+function securitiesLoadErrorHtml(message) {
+  return `<div class="securities-page">
+    <div class="page-head securities-page-head">
+      <div><span class="securities-eyebrow">投資交易查帳</span><h1>證券交易</h1><p>集中查閱 IBKR 與台新證券的買賣紀錄，逐筆核對成交、費稅與應收付。</p></div>
+    </div>
+    <section class="securities-state securities-error" role="alert" aria-labelledby="securitiesErrorTitle">
+      <span class="securities-state-icon">${icon('alert', 28)}</span>
+      <div class="securities-state-copy">
+        <span>載入未完成</span>
+        <h2 id="securitiesErrorTitle">證券交易暫時載入失敗</h2>
+        <p>若你剛完成同步、匯入或刪除，該操作可能已經成功；請先重新載入確認，避免重複操作。</p>
+      </div>
+      <button class="btn-ghost" id="retrySecurities">${icon('refresh', 16)}重新載入</button>
+      <details><summary>查看錯誤訊息</summary><code>${esc(message || '無法連線')}</code></details>
+    </section>
+  </div>`;
+}
+
+function securitiesEmptyHtml() {
+  return `<section class="securities-state securities-empty" aria-labelledby="securitiesEmptyTitle">
+    <span class="securities-state-icon">${icon('history', 28)}</span>
+    <div class="securities-state-copy">
+      <span>尚未建立交易紀錄</span>
+      <h2 id="securitiesEmptyTitle">先選擇你的證券資料來源</h2>
+      <p>使用 IBKR 可直接同步；台新證券則上傳電子對帳單。兩種來源會分開保留原幣與帳戶，不會混進銀行收支。</p>
+    </div>
+    <div class="securities-empty-actions">
+      <button class="btn-ghost" id="emptySecIbSync" title="與投資組合頁同一套完整同步：會一併更新持股與各幣別現金">${icon('download', 16)}同步 IBKR 與投資組合</button>
+      <button class="btn" id="emptySecUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
+    </div>
+  </section>`;
+}
+
+function securitiesFilteredEmptyHtml() {
+  return `<div class="securities-filter-empty" role="status">
+    <span>${icon('file', 24)}</span>
+    <div><strong>目前條件找不到成交紀錄</strong><p>原始交易仍然保留，只是沒有符合這組日期、來源、帳戶、買賣、幣別或搜尋文字。</p></div>
+    <button class="btn-ghost" id="resetSecFilters">${icon('refresh', 16)}清除全部條件</button>
+  </div>`;
+}
+
+let securitiesNotice = '';
+
+function resetSecuritiesFilters() {
+  Object.assign(filters, { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' });
+  return renderSecurities({ showLoading: false });
+}
+
+export async function renderSecurities({ showLoading = true } = {}) {
   const seq = currentRouteSeq();
-  const [secRes, settings] = await Promise.all([api('/securities'), api('/settings')]);
+  const notice = securitiesNotice;
+  securitiesNotice = '';
+  if (showLoading) view().innerHTML = securitiesLoadingHtml();
+  let secRes, settings;
+  try {
+    [secRes, settings] = await Promise.all([api('/securities'), api('/settings')]);
+  } catch (error) {
+    if (seq !== currentRouteSeq()) return;
+    view().innerHTML = securitiesLoadErrorHtml(error instanceof Error ? error.message : '無法連線');
+    byId('retrySecurities').onclick = () => renderSecurities();
+    return;
+  }
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面
   const all = secRes.trades || [];
   const pwSet = !!settings.taishinSecPdfPasswordSet;
@@ -58,11 +136,12 @@ export async function renderSecurities() {
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
+    ${securitiesNoticeHtml(notice)}
     <div class="securities-boundary">
       <span class="securities-boundary-icon">${icon('file', 18)}</span>
       <div><strong>這裡是成交紀錄的查帳頁</strong><p>不在這裡修改持股，也不把成交金額重複算進銀行收支；同步 IBKR 時才會依同一套流程更新投資組合。</p></div>
     </div>
-    ${summary ? `<section class="securities-section securities-summary-section">
+    ${!all.length ? securitiesEmptyHtml() : `${summary ? `<section class="securities-section securities-summary-section">
       <div class="securities-section-head"><div><span>分幣別對帳摘要</span><h2>先確認每種原幣的進出</h2></div><p>摘要會跟著下方篩選條件更新，不偷偷混用匯率。</p></div>
       ${summary}
     </section>` : ''}
@@ -88,34 +167,42 @@ export async function renderSecurities() {
     </section>
     <section class="securities-section securities-ledger-section">
       <div class="securities-section-head securities-ledger-head"><div><span>成交明細</span><h2>${rows.length ? `目前顯示 ${rows.length} 筆` : '逐筆核對券商紀錄'}</h2></div><p>${rows.length ? '點任一列可展開費稅與匯入批次。' : '同步或上傳後，成交紀錄會依日期排列。'}</p></div>
-      ${secTableHtml(rows, th, FMT)}
-    </section>
+      ${rows.length ? secTableHtml(rows, th, FMT) : securitiesFilteredEmptyHtml()}
+    </section>`}
   </div>`;
 
   // ---- 接線 ----
+  byId('secUpload').onclick = () => openSecUpload(pwSet);
+  byId('secBatches').onclick = () => openSecBatches();
+  byId('secIbSync').onclick = (/** @type {any} */ e) => syncIbFromSecurities(e.currentTarget);
+  if (!all.length) {
+    byId('emptySecUpload').onclick = () => openSecUpload(pwSet);
+    byId('emptySecIbSync').onclick = (/** @type {any} */ e) => syncIbFromSecurities(e.currentTarget);
+    return;
+  }
   view().querySelectorAll('[data-sec-preset]').forEach((/** @type {any} */ b) => b.onclick = () => {
     filters.preset = b.dataset.secPreset || 'all';
-    renderSecurities();
+    renderSecurities({ showLoading: false });
   });
   const bindSel = (/** @type {string} */ id, /** @type {'source'|'account'|'side'|'currency'} */ key) => {
     const el = byId(id);
-    if (el) el.onchange = () => { filters[key] = el.value; renderSecurities(); };
+    if (el) el.onchange = () => { filters[key] = el.value; renderSecurities({ showLoading: false }); };
   };
   bindSel('secSource', 'source'); bindSel('secAccount', 'account'); bindSel('secSide', 'side'); bindSel('secCurrency', 'currency');
   const from = byId('secFrom'), to = byId('secTo');
-  if (from) from.onchange = () => { filters.from = from.value; renderSecurities(); };
-  if (to) to.onchange = () => { filters.to = to.value; renderSecurities(); };
+  if (from) from.onchange = () => { filters.from = from.value; renderSecurities({ showLoading: false }); };
+  if (to) to.onchange = () => { filters.to = to.value; renderSecurities({ showLoading: false }); };
   // 失焦（change）或按 Enter（keydown）套用搜尋——不用 oninput：整頁重繪會吃掉輸入焦點。
   // ⚠️ Enter 要自己接：#secSearch 不在 <form> 裡，純 input 按 Enter 瀏覽器不會發 change（自審 r1#1）
   const search = byId('secSearch');
-  search.onchange = (/** @type {any} */ e) => { filters.q = e.target.value; renderSecurities(); };
-  search.onkeydown = (/** @type {any} */ e) => { if (e.key === 'Enter') { filters.q = e.target.value; renderSecurities(); } };
+  search.onchange = (/** @type {any} */ e) => { filters.q = e.target.value; renderSecurities({ showLoading: false }); };
+  search.onkeydown = (/** @type {any} */ e) => { if (e.key === 'Enter') { filters.q = e.target.value; renderSecurities({ showLoading: false }); } };
   // 表頭排序：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪（鍵集合與 tx-sort 不同，故本地綁）
   view().querySelectorAll('th.sortable').forEach((/** @type {any} */ el) => el.onclick = () => {
     const key = el.dataset.sort || 'tradeDate';
     if (listSort.key === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
     else { listSort.key = key; listSort.dir = SEC_NUMERIC_SORT_KEYS.has(key) ? 'desc' : 'asc'; }
-    renderSecurities();
+    renderSecurities({ showLoading: false });
   });
   // 點列展開明細（點到列內按鈕/連結不觸發）
   view().querySelectorAll('tr.sec-row').forEach((/** @type {any} */ r) => r.onclick = (/** @type {any} */ e) => {
@@ -123,9 +210,8 @@ export async function renderSecurities() {
     r.nextElementSibling?.classList.toggle('open');
   });
   wireSecInfo();
-  byId('secUpload').onclick = () => openSecUpload(pwSet);
-  byId('secBatches').onclick = () => openSecBatches();
-  byId('secIbSync').onclick = (/** @type {any} */ e) => syncIbFromSecurities(e.currentTarget);
+  const reset = byId('resetSecFilters');
+  if (reset) reset.onclick = () => resetSecuritiesFilters();
 }
 
 /** 就地解釋接線（data-sec-info → openInfo；同 goal-tracking 的 data-goal-info 前例）。 */
@@ -149,7 +235,10 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
     for (const f of ibSyncFeedback(result, moneyCur)) toast(f.message, f.error);
     const notice = missingHoldingsNotice(result.missing);
     if (notice) toast(notice, true);
-    if (seqAtStart === currentRouteSeq()) renderSecurities();
+    if (seqAtStart === currentRouteSeq()) {
+      securitiesNotice = 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
+      renderSecurities();
+    }
   } catch (err) {
     toast('IBKR 同步失敗：' + /** @type {any} */ (err).message, true);
     btn.disabled = false;
@@ -203,8 +292,12 @@ function openSecPreview(/** @type {any} */ p, /** @type {string} */ b64, /** @ty
     try {
       const out = await api('/securities/import', { method: 'POST', body: password ? { file: b64, password } : { file: b64 } });
       close();
-      toast(`已匯入 ${out.imported} 筆證券交易${out.skippedDup ? `（略過已存在 ${out.skippedDup} 筆）` : ''}`);
-      if (seqAtStart === currentRouteSeq()) renderSecurities();
+      const message = `已匯入 ${out.imported} 筆證券交易${out.skippedDup ? `（略過已存在 ${out.skippedDup} 筆）` : ''}`;
+      toast(message);
+      if (seqAtStart === currentRouteSeq()) {
+        securitiesNotice = message;
+        renderSecurities();
+      }
     } catch (err) { btn.disabled = false; toast('匯入失敗：' + /** @type {any} */ (err).message, true); }
   };
 }
@@ -244,8 +337,10 @@ async function openSecBatches() {
     const seqAtStart = currentRouteSeq();   // 守門（自審 r1#2）：同確認匯入——切走頁後不可蓋畫面、也不可把關掉的窗彈回來
     try {
       const out = await api('/securities/batch/delete', { method: 'POST', body: { batchId: id } });
-      toast(`已刪除 ${out.deleted} 筆`);
+      const message = `已刪除 ${out.deleted} 筆證券交易`;
+      toast(message);
       if (seqAtStart === currentRouteSeq()) {
+        securitiesNotice = message;
         openSecBatches();      // 重畫紀錄窗（重抓最新）
         renderSecurities();    // 背後頁面同步更新
       }
