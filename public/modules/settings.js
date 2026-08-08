@@ -1,16 +1,42 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq, bindBackdropClose } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
+import { runExport, exportNotice, defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
+
+/**
+ * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
+ *
+ * ⚠️⚠️ **這一句兩種模式都必須成立**（r1 審查者抓到，2026-08-06 改）。原本寫的是
+ *    「所有資料只存在本機 `data/store.db`（SQLite）」——在雲端版那是**明確錯誤的資料存放／隱私說明**
+ *    （雲端資料在 Supabase），而使用者正是在「要不要相信這個 app」的時刻讀到它。
+ *    這張**卡片的說明**刻意不分流：改成只講「這裡能做什麼」，不替任何一種模式宣稱資料放在哪。
+ *    ⚠️ 但**匯出前的告知窗**自 2026-08-08 起**依模式講真話**（William 裁決；`GET /api/mode` 的
+ *    最小分流，見 docs/contracts/cloud-security.md「匯出前告知的模式分流」）——因為
+ *    `/api/export` 兩種模式含不含機密**刻意相反**，一句話講不準兩邊，而講錯方向會害本機
+ *    使用者把含 IB 憑證的檔案轉寄出去。授權範圍僅止於那個布林，別擴張。
+ * ⚠️⚠️ **「整包」兩個字已經刪掉**（r2 審查者抓到，2026-08-06 再改）：上一版寫「把你的資料**整包**
+ *    匯出成一個檔案」——在雲端版那是假的。HOSTED 的 `/api/export` 走 `stripSecretsForBackup(db)`
+ *    （`lib/routes/core.js` 的 export 路由 ＋ `lib/secret-fields.js`），**刻意**剝掉 IB flexToken／
+ *    信用卡帳單 PDF 密碼／證券對帳單密碼／完整帳號（C5 裁決⑤）。舊句錯在「資料放哪」、
+ *    上一版錯在「檔案裡有什麼」——換一個病灶不算治好。所以連「整包／全部／完整」這類**宣稱檔案內容
+ *    完整**的字都不寫：不加任何模式資訊，兩種模式就都成立。
+ * ✅ **雲端語氣的那一句已裁決並實作**（William 2026-08-08）：匯出前的告知窗依模式講真話
+ *    （`EXPORT_NOTICE_LOCAL`／`EXPORT_NOTICE_HOSTED`＋`GET /api/mode`，完整規則見
+ *    docs/contracts/cloud-security.md「匯出前告知的模式分流」）。**這張卡片的說明本身仍不分流**
+ *    ——它講的是「這裡能做什麼」，兩種模式都成立，不需要模式資訊。
+ */
+const BACKUP_CARD_NOTE = '可以把你的資料匯出成一個檔案（JSON 檔）存起來。'
+  + '建議定期匯一份、放到你自己找得到的地方——要還原的時候用「匯入備份」讀回來。';
 
 export async function renderSettings() {
   const seq = currentRouteSeq();
@@ -207,9 +233,9 @@ export async function renderSettings() {
 
     <div class="card">
       <h3 style="margin-bottom:6px">資料備份</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">所有資料只存在本機 <code>data/store.db</code>（SQLite）。建議定期匯出備份（匯出格式為 JSON）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">${BACKUP_CARD_NOTE}</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <a class="btn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
+        <a class="btn" id="exportBtn" href="/api/export" download>${icon('download', 16)}匯出備份 (JSON)</a>
         <button class="btn-ghost" id="importBtn">${icon('upload', 16)}匯入備份</button>
         <input type="file" id="importFile" accept="application/json" style="display:none" />
       </div>
@@ -355,6 +381,82 @@ export async function renderSettings() {
   byId('healthBtn').onclick = () => openHealthCheck();
   byId('storeRulesBtn').onclick = () => openStoreRulesEditor(myRules);
   if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
+  // 匯出備份：**攔下瀏覽器的直接下載**，改成 fetch → 驗狀態／驗內容 → 才落檔並出聲。
+  // 舊版是純 <a download>，成功失敗都不出聲；雲端版 session 過期時瀏覽器會安靜存下一個
+  // 內容是錯誤訊息（或登入頁 HTML）的 .json，而使用者以為自己有備份了。
+  //
+  // ⚠️ 那顆 <a> 的 `href="/api/export"` 與 `download` **刻意留著**（沒有改成 <button>）：
+  //    ①它是「右鍵另存連結」的退路 ②有別的考題以這個字面定位這顆鈕。
+  //    代價寫明白：右鍵另存那條路**繞過下面這三道關卡**，會退回舊的靜靜失敗——
+  //    這一支只保證「左鍵按下去會說話」，那是使用者實際會走的那條路。
+  /**
+   * 匯出前的告知窗（William 2026-08-08 定案）：**告知、不是警告**——不擋、不需要理由，
+   * 按〈確認匯出〉就走。回 false＝使用者取消（呼叫端必須什麼都不做）。
+   * ⚠️ 關窗（× 或點背景）**視為取消**：沒有明確按下確認就不動作，比較保守的那一邊。
+   * @returns {Promise<boolean>}
+   */
+  const confirmExport = async () => {
+    // 先問模式再決定講哪一句（William 2026-08-08「要講準」）。問不到就走保守那句（含機密）。
+    // ⚠️ **這次問答也要有上限**（r5 阻擋①）：`/api/mode` 若連上了卻永不回應，`catch` 不會發生
+    //    ——畫面連確認窗都不會出現，等於把「按下去沒聲音」搬到匯出前一步。逾時＝當作問不到。
+    let mode = null;
+    try { mode = await defaultWithTimeout(api('/mode'), MODE_TIMEOUT_MS); }
+    catch { /* 問不到／逾時＝保守：exportNotice(null) 回「含機密」 */ }
+    const notice = exportNotice(mode);
+    return new Promise((resolve) => {
+    let decided = false;
+    const done = (/** @type {boolean} */ ok) => { if (!decided) { decided = true; resolve(ok); } };
+    // ⚠️ `backdrop: false`（r4 阻擋③）：openModalShell 內建的點背景關窗只會呼叫 `close`，
+    //    **不會**把這顆 Promise 收掉——上一版於是每點一次背景就留下一顆永遠不 settle 的 Promise
+    //    （複驗者用真 DOM 抓到：窗關了、API 0 次、落檔 0 次，但呼叫端 50ms 後仍 pending）。
+    //    所以三條退出路（取消鈕／×／點背景）**一律走同一個 cancel()**，沒有第二種關窗方式。
+    const { root, close } = openModalShell({
+      title: '匯出備份', size: 'sm', backdrop: false,
+      bodyHtml: `<p style="font-size:13px;margin:0 0 16px">${esc(notice)}</p>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" data-cancel>取消</button>
+          <button type="button" class="btn" id="exportConfirmBtn">確認匯出</button>
+        </div>`,
+    });
+    const cancel = () => { close(); done(false); };
+    root.querySelector('[data-cancel]').onclick = cancel;
+    root.querySelector('.x-close').onclick = cancel;
+    bindBackdropClose(root, cancel);
+    root.querySelector('#exportConfirmBtn').onclick = () => { close(); done(true); };
+    });
+  };
+
+  byId('exportBtn').onclick = async (ev) => {
+    ev.preventDefault();
+    const btn = ev.currentTarget;
+    // ⚠️ busy 從**整段流程的最前面**就設（r5 阻擋①的後半）：上一版設在確認之後，
+    //    於是「問模式／等他回答」這段時間連點會同時開好幾條確認流程（每條各自一顆 Promise）。
+    if (btn.dataset.busy === '1') return;        // 連點兩下不要抓兩份
+    btn.dataset.busy = '1';
+    try {
+      // 🧑‍⚖️ William 2026-08-08：按下去**先跳窗告知**（本機版／雲端版講的話不同，見 exportNotice），
+      //    按〈確認匯出〉才開始下載；按〈取消〉什麼都不做（不打 API、不落檔）。
+      //    ⚠️ 用 app 自己的彈窗而不是瀏覽器 confirm()：他要的按鈕字是「確認匯出／取消」，
+      //    原生 confirm 只給得出「確定／取消」。
+      if (!await confirmExport()) return;
+      await runExport({
+        fetchFn: (url) => fetch(url),
+        saveFile: (filename, body) => {
+          // Blob + 暫時連結：不重新序列化，落下去的是伺服器回的原始文字。
+          const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+          const a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          // ⚠️ revoke 要**延後**：緊接著 click 就 revoke，在某些瀏覽器（Safari 有回報過）會讓下載被取消
+          //    ——那正好是這一支最想避免的「說了已存下、其實沒有」。等一拍再回收那個暫時網址。
+          //    誠實劃界：這一行沒有考題撐著（settings.js 的 DOM 路徑在 node 裡跑不起來），
+          //    是照已知的瀏覽器行為做的保險，不是實測過每一種瀏覽器。
+          setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        },
+        toast,
+      });
+    } finally { btn.dataset.busy = ''; }
+  };
   byId('importBtn').onclick = () => byId('importFile').click();
   byId('importFile').onchange = async (e) => {
     const input = e.target;

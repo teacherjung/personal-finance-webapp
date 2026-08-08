@@ -1340,3 +1340,21 @@ test('LOCAL 零改動｜速率限制不在本機生效（一個人用自己的�
     }
   }
 });
+
+// ⭐ #417 r5 阻擋③要求的 HTTP 級考題：匯出前告知靠這支端點分流，它自己得先講對話。
+// ⚠️ 這裡是 LOCAL（本檔全域就是 LOCAL 模式）。HOSTED 兩格都在 test/hosted-auth.test.js：
+//    未登入 401＝逐 router 抽樣清單；已登入 200 `{hosted:true}`＝專屬那一題。
+//    ⚠️ 這段話 2026-08-08 訂正過：上一版寫「已登入那格在 hosted-secrets 那支」——**那是假的**
+//    （那支根本沒有這題）。#417 r6 審查抓到，補題並改口。註解說謊比缺口更糟。
+test('⭐ 模式端點｜LOCAL 回 {hosted:false}，而且**只有這一個鍵**（不可順手多回環境資訊）', async () => {
+  const res = await fetch(base + '/mode');   // base 已含 /api
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body, { hosted: false },
+    'LOCAL 要明確回 false（不是省略、不是 null——前端只有明確的 true 才會講「不含機密」，'
+    + '但「回一包看不懂的東西」也不該發生）');
+  assert.deepEqual(Object.keys(body), ['hosted'],
+    '⚠️ 只准一個鍵：契約寫明「不可以養成什麼都能問的雜物間」（docs/contracts/cloud-security.md'
+    + '「匯出前告知的模式分流」）。多回版本／設定／路徑就是把環境細節送給瀏覽器');
+  assert.equal(typeof body.hosted, 'boolean', '必須是布林——字串 "false" 在前端會被當成「不是 true」而走保守文案，但那是巧合不是設計');
+});

@@ -104,6 +104,20 @@
    字面比對被 `const k = '…'` 繞過）。同族教訓的審查版＝REVIEW-AND-MERGE.md
    「固定維度」表第 1／2／8 列（單向指標；那份是審查者實際照做的下限清單）。
 
+10. **註解寫「為什麼」，不寫「現在是」**（William 2026-08-08 拍板，#417 燒掉七輪換來的）——
+    註解與 assert 訊息裡，**每一句「現在的狀況是…」都是負債**：它會過期、會誇大、會被下一個人
+    當事實引用。三種一律不寫（要寫就進 PR 內文或 commit 訊息，那兩處本來就帶日期與 SHA）：
+    - ❌ **別處的現況**（「某支已經拿掉了」「畫面上現在只留一句」）——你所在的那棵樹上未必為真
+    - ❌ **時態相對的敘述**（「原本／已改成／不再」單獨出現、沒有落點）——樹永遠停在「改之前」
+    - ❌ **沒有考題撐著的保證**（「逐字釘住」「一律」「兩邊都」「唯一」「全是」）
+      ⇒ 動筆前先問「哪條考題會因此轉紅」，答不出來就改口。誇大比缺口更糟。
+    ✅ 可以寫的：這行**為什麼**非這樣寫不可、踩過什麼坑、刻意接受什麼代價（附 `file:line` 落點），
+    以及**誠實劃界**（「本題不守 X，X 由 `某檔` 守」——唯一鼓勵寫長的一類）。
+    ⚠️ 引用畫面文字一律去那棵樹上**貼逐字原文**，不可憑記憶（同族＝識別字一律從工具讀、不准手打）。
+    ⚠️ 不可替 William 背書：沒有可查證的落點（他的留言／他手寫的字）就不准寫「William 拍板」。
+    ⚠️ 不寫死會漂的數字與序數（「兩題」「下一題」「共 N 處」）——點名 `file:line` 或題名關鍵字。
+    ⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。
+
 
 ## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）
 
@@ -164,6 +178,7 @@
 | 每日滾動備份（階段四 A，2026-07-27 上線） | 三種備份共用 snapshotTo；每日一顆保留 30 天；失敗不擋 app、只累積警告（連 3 次升 danger、絕不誤報）；清理只認日期樣式檔名；狀態欄位服務層擁有——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#每日滾動備份) |
 | 異常輸入防線（階段四 B，2026-07-27 上線） | 字串長度兩級制（`lib/schema.js`）：**短欄位 `LEN_SHORT`=200**（預設）／**長內容 `LEN_LONG`=20000**（`LONG_TEXT_FIELDS` 名單：note/stmtRef/autoNote/bankRef/benefits/coverage/thesis…＋研究巢狀寫作欄 reasons/text/note/assumptions 掛 `{long:true}`）。**長度 400 只擋新輸入**（`pickWritable`＝CRUD，錯誤點名欄位＋上限＋實際長度、絕不靜默截斷）；**備份還原路（`validateImportItem`）與櫃檯（兩種模式）一律放行只 warn**——裁決「合法舊資料不可因升級被刪」，超長舊備份必須還原得回來（#201 的 >1MB 考題釘這件事；throw 會把還原變 500＝Codex r2 收官#1 同款教訓）。研究巢狀用模組級 `lenEnforced` flag 切嚴格/寬容（全同步無 await、不跨請求汙染；`sanitizeResearchItemLenient`）。settings 字串欄位未納入本輪（欄位少且全短、路由剝除語意既有——記錄在案的範圍取捨，Codex 覆核同意不列 blocker、多人化前另盤點）。**服務層新輸入路也要牆**（Codex #297 複審抓到繞道）：`POST /api/cards/:id/statement/import` 吃 client 直給的 rows、不經 pickWritable → `importRows` 入口逐筆驗 desc（長級）/category/subcategory（短級）超過整批 400 點名；銀行與證券匯入吃 b64 PDF 伺服器端解析＝天然安全（desc 非 client 直給）。新增「client 可直給列資料」的匯入端點時必須比照加牆。考題 `test/input-guard.test.js`。 |
 | **機密投影與匯出的兩種模式**（鐵則 1 後半拆出） | 投影要套在所有回應、含 POST/PUT 寫入端；唯一例外 /api/export 兩種模式刻意相反（LOCAL 完整含機密／HOSTED 剝除、含 accountNo）；「留空＝不變更」保留、另給明確清除入口——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#機密投影與匯出的兩種模式) |
+| **匯出前告知的模式分流**（William 2026-08-08 授權的最小例外） | 匯出檔含不含機密兩種模式相反，一句話講不準兩邊 ⇒ `GET /api/mode` 只回 `{hosted:boolean}`、留在 auth gate 後、不得擴張成其他環境資訊；前端問不到／形狀不合法一律用「含機密」那句（往安全的方向錯），問模式也要有等待上限——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#匯出前告知的模式分流) |
 | 雙模式與帳號系統（C2，2026-07-27 上線） | 開關只認 NOTEASY_HOSTED=1、缺環境變數啟動即 throw；LOCAL 分支零改動；Auth 用 @supabase/ssr 不自寫 token、cookie Secure 無條件；CSRF＝Origin 白名單；authGate 驗 /finance＋全部 /api/*、fail-closed 當未登入；只宣稱 401、不宣稱租戶隔離——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#雙模式與帳號系統) |
 | **機密欄位**（新增一個「不可外流」的欄位時） | 先分辨兩張清單：要加密的走 mapSecrets（加密/解密/匯出剝除/匯入不採用四條路全從它出發），刻意不加密的走 mapBackupOnlyPii；路徑當加密 AAD 必須穩定唯一；投影仍要各自更新——加密管 at-rest、投影管不送瀏覽器——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#機密欄位與-mapsecrets) |
 | **只剝不加密的 PII**（第二張清單，2026-07-29 建立） | 目前只有 accounts 的 accountNo；新增時四處一起接（清單本體/匯出剝除/匯入對稱保存/瀏覽器投影），漏了匯入保存＝匯出再匯入把值洗成空字串還回 200；回填只准三條件同時成立——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#只剝不加密的-pii-mapbackuponlypii) |
