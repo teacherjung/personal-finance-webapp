@@ -7,6 +7,53 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(ROOT, path), 'utf8');
 
+function stripComments(source) {
+  let output = '';
+  let previous = '';
+  const stack = ['code'];
+  const interpolationDepth = [];
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    const state = stack[stack.length - 1];
+    if (state === 'code' || state === 'interpolation') {
+      if (char === '/' && next === '/' && previous !== '\\') { stack.push('line'); previous = ''; i++; continue; }
+      if (char === '/' && next === '*' && previous !== '\\') { stack.push('block'); previous = ''; i++; continue; }
+      if (char === "'") stack.push('single');
+      else if (char === '"') stack.push('double');
+      else if (char === '`') stack.push('template');
+      else if (state === 'interpolation') {
+        if (char === '{') interpolationDepth[interpolationDepth.length - 1]++;
+        else if (char === '}') {
+          if (interpolationDepth[interpolationDepth.length - 1] === 0) {
+            stack.pop(); interpolationDepth.pop(); output += char; previous = char; continue;
+          }
+          interpolationDepth[interpolationDepth.length - 1]--;
+        }
+      }
+      output += char; previous = char;
+    } else if (state === 'line') {
+      if (char === '\n') { stack.pop(); output += char; previous = ''; }
+    } else if (state === 'block') {
+      if (char === '*' && next === '/') { stack.pop(); i++; previous = ''; }
+      else if (char === '\n') output += char;
+    } else if (state === 'template') {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if (char === '`') stack.pop();
+      else if (char === '$' && next === '{') { stack.push('interpolation'); interpolationDepth.push(0); output += next; i++; }
+      previous = char;
+    } else {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) stack.pop();
+      else if (char === '\n') stack.pop();
+      previous = char;
+    }
+  }
+  return output;
+}
+
 function namedFunction(source, name) {
   const start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0, `找不到 ${name}`);
@@ -48,7 +95,8 @@ function assertStateBehavior(source) {
   const errorHtml = error('<script>alert(1)</script>');
   assert.match(errorHtml, /role="alert"/);
   assert.match(errorHtml, /id="retryInsurance"/);
-  assert.match(errorHtml, /沒有新增、刪除或修改任何保單/);
+  assert.match(errorHtml, /操作可能已經成功/);
+  assert.match(errorHtml, /避免重複操作/);
   assert.match(errorHtml, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(errorHtml, /<script>alert/);
 
@@ -60,10 +108,12 @@ function assertStateBehavior(source) {
 }
 
 function assertStateWiring(source) {
+  source = stripComments(source);
   assert.match(source, /const seq = currentRouteSeq\(\);\s*const notice = insuranceNotice;\s*insuranceNotice = '';\s*view\(\)\.innerHTML = insuranceLoadingHtml\(\);/);
   assert.match(source, /try \{\s*list = \(await api\('\/insurance'\)\)\.slice\(\)\.sort/);
   assert.match(source, /\} catch \(error\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = insuranceLoadErrorHtml/);
   assert.match(source, /byId\('retryInsurance'\)\.onclick = \(\) => renderInsurance\(\);/);
+  assert.match(source, /if \(emptyAdd\) emptyAdd\.onclick = \(\) => openInsForm\(\);/);
   assert.match(source, /insuranceNoticeHtml\(notice\)/);
   assert.match(source, /function rerenderInsuranceAfterSave\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*insuranceNotice = message;\s*return renderInsurance\(\);/);
   assert.match(source, /await api\('\/insurance\/' \+ p\.id, \{ method: 'DELETE' \}\);\s*if \(seq === currentRouteSeq\(\)\) insuranceNotice = '保單已刪除';/);
@@ -101,7 +151,18 @@ test('保險追蹤狀態：破壞消毒、重試、路由守衛或手機排列�
 
   const retry = "byId('retryInsurance').onclick = () => renderInsurance();";
   assert.ok(source.includes(retry), '突變目標必須存在：錯誤重試接線');
-  assert.throws(() => assertStateWiring(source.replace(retry, '// retry removed')));
+  const inertRetry = `byId('retryInsurance').onclick = () => {}; // ${retry}`;
+  assert.throws(() => assertStateWiring(source.replace(retry, inertRetry)));
+
+  const emptyCta = "if (emptyAdd) emptyAdd.onclick = () => openInsForm();";
+  assert.ok(source.includes(emptyCta), '突變目標必須存在：空白引導接線');
+  const inertEmptyCta = `if (emptyAdd) emptyAdd.onclick = () => {}; // ${emptyCta}`;
+  assert.throws(() => assertStateWiring(source.replace(emptyCta, inertEmptyCta)));
+
+  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    view().innerHTML = insuranceLoadErrorHtml';
+  assert.ok(source.includes(catchGuard), '突變目標必須存在：失敗狀態路由守衛');
+  const commentedCatchGuard = `/* ${catchGuard} */\n    view().innerHTML = insuranceLoadErrorHtml`;
+  assert.throws(() => assertStateWiring(source.replace(catchGuard, commentedCatchGuard)));
 
   const saveGuard = 'if (seq !== currentRouteSeq()) return;\n  insuranceNotice = message;';
   assert.ok(source.includes(saveGuard), '突變目標必須存在：成功狀態路由守衛');

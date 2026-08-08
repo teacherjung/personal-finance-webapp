@@ -64,7 +64,7 @@ function insuranceLoadErrorHtml(message) {
       <div class="insurance-state-copy">
         <span>載入未完成</span>
         <h2 id="insuranceErrorTitle">保單資料暫時載入失敗</h2>
-        <p>這次只讀取失敗，沒有新增、刪除或修改任何保單。可以直接重新載入。</p>
+        <p>這次無法重新讀取目前清單。若你剛完成新增、修改或刪除，該操作可能已經成功；請先重新載入確認，避免重複操作。</p>
       </div>
       <button class="btn-ghost" id="retryInsurance">${icon('refresh', 16)}重新載入</button>
       <details><summary>查看錯誤訊息</summary><code>${esc(message || '無法連線')}</code></details>

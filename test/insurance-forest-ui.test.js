@@ -7,6 +7,53 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(ROOT, path), 'utf8');
 
+function stripComments(source) {
+  let output = '';
+  let previous = '';
+  const stack = ['code'];
+  const interpolationDepth = [];
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    const state = stack[stack.length - 1];
+    if (state === 'code' || state === 'interpolation') {
+      if (char === '/' && next === '/' && previous !== '\\') { stack.push('line'); previous = ''; i++; continue; }
+      if (char === '/' && next === '*' && previous !== '\\') { stack.push('block'); previous = ''; i++; continue; }
+      if (char === "'") stack.push('single');
+      else if (char === '"') stack.push('double');
+      else if (char === '`') stack.push('template');
+      else if (state === 'interpolation') {
+        if (char === '{') interpolationDepth[interpolationDepth.length - 1]++;
+        else if (char === '}') {
+          if (interpolationDepth[interpolationDepth.length - 1] === 0) {
+            stack.pop(); interpolationDepth.pop(); output += char; previous = char; continue;
+          }
+          interpolationDepth[interpolationDepth.length - 1]--;
+        }
+      }
+      output += char; previous = char;
+    } else if (state === 'line') {
+      if (char === '\n') { stack.pop(); output += char; previous = ''; }
+    } else if (state === 'block') {
+      if (char === '*' && next === '/') { stack.pop(); i++; previous = ''; }
+      else if (char === '\n') output += char;
+    } else if (state === 'template') {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if (char === '`') stack.pop();
+      else if (char === '$' && next === '{') { stack.push('interpolation'); interpolationDepth.push(0); output += next; i++; }
+      previous = char;
+    } else {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) stack.pop();
+      else if (char === '\n') stack.pop();
+      previous = char;
+    }
+  }
+  return output;
+}
+
 function functionBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
@@ -81,6 +128,7 @@ function assertPolicyCardBehavior(source) {
 }
 
 function assertInsuranceStructure(source) {
+  source = stripComments(source);
   const render = functionBlock(source, 'export async function renderInsurance()', '\nfunction policyCard(');
   const card = functionBlock(source, 'function policyCard(', '\n\nfunction openInsForm(');
   const form = source.slice(source.indexOf('function openInsForm('));
@@ -94,7 +142,7 @@ function assertInsuranceStructure(source) {
   ]) assert.match(render, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(render, /insuranceEmptyHtml\(\)/);
   assert.match(source, /function insuranceEmptyHtml\(\) \{[\s\S]*class="insurance-empty"/);
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*\/\/ fetch 期間切走了頁/);
+  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*const annual = annualPremiumOf\(list\);/);
   assert.match(render, /const annual = annualPremiumOf\(list\);/);
   assert.match(render, /return d >= 0 && d <= 30;/);
   assert.match(render, /wan\(annual\)/);
