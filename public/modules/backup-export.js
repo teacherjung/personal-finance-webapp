@@ -196,66 +196,65 @@ export function summarizeBackup(data) {
  *    然後以為程式算錯了。把「全部加起來」講明白，這個數字才只被當成它真正能當的東西：量級。
  * @param {number} total @param {string} filename
  */
-export const okMsg = (total, filename) =>
-  `已經把備份交給瀏覽器下載：${filename}，共 ${total.toLocaleString('zh-TW')} 筆紀錄（交易、帳戶、快照…全部加起來）。`
-  + '請到下載夾確認檔案在不在——有沒有真的存下來，程式這邊看不到。';
-/** ⏳ 文案（待審）：失敗——重點是**明講「沒有存下任何檔案」**，否則使用者會以為存了一半。 @param {string} why */
-export const failMsg = (why) => `匯出失敗，沒有存下任何檔案：${why}`;
+export const okMsg = (total, filename) => `匯出成功 - 請至下載確認檔案（${filename}，共 ${total.toLocaleString('zh-TW')} 筆）`;
 /**
- * ⏳ 文案（待審）：**網路層斷掉**（fetch reject／讀回應途中斷線）——伺服器連話都沒說完。
+ * ⏳ 文案（William 2026-08-08 定案的句型）：`匯出失敗 - <一句下一步>`。
  *
- * ⚠️ 這是本機版**最常見**的一條（後端沒開、或改完程式忘了重啟），而 `err.message` 給的是
- *    「Failed to fetch」之類的字（各家瀏覽器措辭還不一樣），對他毫無意義。所以下一步必須自己講出來。
- * @param {string} why
+ * 🧑‍⚖️ **為什麼全部縮短**：舊稿每一句都把「為什麼」與「怎麼辦」寫足（三到四行），
+ * William 讀完後裁決「太長」，改成**一行、只留下一步**。所以這裡的規矩是：
+ *   ・成功＝`匯出成功 - 請至下載確認檔案`（＋檔名與筆數放括號，量級資訊不佔句子）
+ *   ・失敗＝`匯出失敗 - ` 接**一件事**（要他做什麼／哪裡壞了），不解釋原理。
+ * ⚠️ 縮短**不可以動到口徑**（那是文案，不是保證）：①成功仍**不敢說「已存好」**——落檔結果
+ * 瀏覽器不回音，只能叫他去下載夾確認②**只有 401 才叫他重新登入**（其餘不猜；猜錯他會反覆登入）。
+ * ⚠️ 伺服器原話與狀態碼**不進畫面**了，但仍留在 `runExport` 的回傳 `reason` 裡（排查時看得到）。
+ * @param {string} next
  */
-export const networkFailMsg = (why) =>
-  `${failMsg(why)}（連線斷在半路：本機版先確認後端有沒有在跑、改完程式有沒有重啟；雲端版檢查一下網路。）`;
+export const failMsg = (next) => `匯出失敗 - ${next}`;
+/** ⏳ 網路層斷掉（fetch reject／讀回應途中斷線）。 */
+export const networkFailMsg = () => failMsg('請檢查網路連線');
+/** ⏳ **401 專用**（伺服器自己說「請先登入」）；403／404／5xx 一律不走這條。 */
+export const authFailMsg = () => failMsg('請重新登入再按匯出');
 /**
- * ⏳ 文案（待審）：**401 專用**——這一條是真的登入問題（HOSTED 未登入時 `/api/export` 回 401
- * `{error:'請先登入'}`，見 `lib/routes/auth.js`），所以可以理直氣壯叫他去登入。
- *
- * ⚠️ **403 不走這一條**：本專案唯一會回 403 的地方是 `csrfOriginGuard`，而它 `GET/HEAD/OPTIONS` 直接放行
- *    ——`/api/export` 是 GET，所以我們自己的程式**不可能**因為登入狀態回 403（真回 403 是前面的
- *    代理／CDN 擋掉）。叫他「重新登入」是假的下一步：他會反覆登入、以為是自己的問題。
- * @param {string} why
+ * ⏳ 伺服器那一端的狀況（5xx／403／404…）。
+ * ⚠️ **與 {@link timeoutFailMsg} 逐字相同是刻意的**（William 2026-08-08 第二輪縮短）：
+ * 「伺服器出錯」與「伺服器不回話」對使用者而言下一步一樣（等一下再試），畫面不必分。
+ * 兩者的差別留在 `runExport` 回傳的 `reason`（排查時看得到）。**不要因為看起來重複就去分化它們。**
  */
-export const authFailMsg = (why) => `${failMsg(why)}（這是登入的問題：重新登入一次再按匯出。）`;
+export const serverFailMsg = () => failMsg('請稍後再試');
+/** ⏳ 狀態 200 但內容不像備份（登入頁 HTML／錯誤信封／包一層的怪格式）。 */
+export const notBackupMsg = () => failMsg('請重新整理後再試');
+/** ⏳ 驗都過了、落檔那一步自己丟錯——刻意不斷言「沒存下」（可能存了一半）。 */
+export const saveFailMsg = () => failMsg('存檔未完成，請再試一次');
+
 /**
- * ⏳ 文案（待審）：**伺服器那一端的狀況**（5xx／403／404…都走這條）。
+ * ⏳ 文案（William 2026-08-08 定案，**逐字**）：按下〈匯出備份〉先跳窗告知這件事，
+ * 按「確認匯出」才真的開始下載。
  *
- * ⚠️ 為什麼一定要有下一步：舊稿在 500 只講「伺服器回 500 Internal Server Error」就停住——
- *    他不知道 500 是什麼、也不知道要幹嘛。狀態碼要留（那是他來問我時唯一有用的線索），
- *    但光有線索不叫下一步。「把這句話整句告訴我」永遠成立，不管伺服器有沒有給文字原因。
- * @param {string} why
+ * 🧑‍⚖️ 為什麼要有這一窗：雲端版匯出**刻意剝掉** IB 憑證與帳單密碼（`lib/secret-fields.js`
+ * 的 `stripSecretsForBackup`），所以拿這份備份還原之後那兩樣要重新輸入。以前這件事畫面上
+ * 一個字都沒有——使用者會在真的需要還原時才發現，那時已經來不及了。
+ * ⚠️ 這是**告知**、不是警告：不擋、不需要理由，按下確認就走。
  */
-export const serverFailMsg = (why) =>
-  `${failMsg(why)}（這是伺服器那一端的問題，不是你做錯什麼：等一下再試一次，還是不行就把這句話整句告訴我。）`;
+export const EXPORT_NOTICE = '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。';
+/** ⏳ 文案：按下確認之後、還沒拿到資料時的即時回饋（#417 r3 阻擋：卡住時畫面一句話都沒有）。 */
+export const BUSY_MSG = '匯出中…';
+/** 等多久算「伺服器不回話」（毫秒）。⚠️ 這個數字是**上限不是預期**：正常匯出零點幾秒就回來。 */
+export const EXPORT_TIMEOUT_MS = 30_000;
+/** ⏳ 文案：等超過上限。 */
+export const timeoutFailMsg = () => failMsg('請稍後再試');
+
 /**
- * ⏳ 文案（待審）：狀態 200、但內容不像備份（登入頁 HTML／錯誤信封／包一層的怪格式）。
- *
- * ⚠️⚠️ **這一條不可以叫他去登入**（r1 審查者抓到，2026-08-06 改）：舊稿對**所有** 200-不像備份的情形
- *    都寫「雲端版：可能是登入過期了，重新登入再試一次」，包含 `200 {"error":"權限不足"}` 這種明明
- *    跟登入無關的。口徑定死：**只有 401 走登入文案**（{@link authFailMsg}）——那一條是伺服器自己
- *    講「你沒登入」，其餘一律不猜。猜錯的代價是他反覆登入、以為是自己的問題。
- * ⚠️ 那要給什麼下一步？走到這裡表示後端**有回應**（不然是 fetch reject），所以問題在「回的東西不對」：
- *    先重新整理再按一次（暫時性的怪回應會消失），還是一樣就把整句話拿來問我。本機版另外加一句
- *    「後端改完有沒有重啟」——那是本機最常見的原因，而且它對雲端使用者只是一句用不到的話，不會誤導。
- * @param {string} why
+ * 「等太久就放棄」的預設實作：把工作與一顆計時器賽跑，計時器先到就丟一個 `name:'ExportTimeout'` 的錯。
+ * ⚠️ 做成**可注入**（`runExport` 的 `withTimeout`）而不是寫死：考題要能不等 30 秒就驗到這條路。
+ * ⚠️ 只放棄「等待」，不假裝取消伺服器那一端——我們無法保證對方沒有在做事，所以文案只說「沒有回應」。
+ * @template T @param {Promise<T>} work @param {number} ms @returns {Promise<T>}
  */
-export const notBackupMsg = (why) =>
-  `${failMsg(why)}（重新整理頁面再按一次；還是一樣就把這句話整句告訴我。本機版順便看一下後端改完有沒有重啟。）`;
-/**
- * ⏳ 文案（待審）：**驗都過了、落檔那一步自己丟錯**。
- *
- * ⚠️ 這一條是補洞補上的：原本 `saveFile` 丟錯會讓整個 `runExport` reject，**一句話都不會出現**
- *    ——那正是這一支要消滅的病（靜靜失敗），卻發生在最後一步。
- * ⚠️ 措辭刻意**不敢斷言「沒有存下」**：走到這裡資料已經抓到、落檔動作已經開始
- *    （Blob 建好了、`a.click()` 可能已經送出），檔案到底有沒有落下去我們不知道。
- *    誠實講「可能沒有、去看一下」比替他猜任何一邊都好。
- * @param {string} why
- */
-export const saveFailMsg = (why) =>
-  `匯出失敗，存檔那一步出錯：${why}（下載夾裡可能沒有那個檔，去看一下，然後再按一次匯出。）`;
+export function defaultWithTimeout(work, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(Object.assign(new Error('等超過上限'), { name: 'ExportTimeout' })), ms);
+    work.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
 
 /**
  * 匯出流程本體。**先驗再存**：三道關卡都過了才把下載交出去，任何一關失敗都不會產生檔案、而且一定出聲。
@@ -266,21 +265,31 @@ export const saveFailMsg = (why) =>
  * @param {(filename: string, body: string) => void} deps.saveFile 把下載交給瀏覽器（正式環境＝Blob ＋暫時
  *        連結）。⚠️ 它**丟錯才叫失敗**；沒丟錯只代表「交出去了」，檔案有沒有真的落地收不到回音。
  * @param {(msg: string, isErr?: boolean) => void} deps.toast
+ * @param {(work: Promise<any>, ms: number) => Promise<any>} [deps.withTimeout]
+ *        「等太久就放棄」的實作（預設 {@link defaultWithTimeout}；
+ *        考題注入自己的版本才不必真的等 30 秒）。
  * @returns {Promise<{ ok: boolean, saved: boolean, reason: string, total: number, filename: string }>}
  *          ⚠️ `saved: true` ＝**下載已經交給瀏覽器**，不是「檔案確定在硬碟上」（見 {@link okMsg} 的說明）。
  */
-export async function runExport({ fetchFn, saveFile, toast }) {
-  /** @param {string} why @param {(w: string) => string} fmt */
-  const fail = (why, fmt = failMsg) => {
-    toast(fmt(why), true);
+export async function runExport({ fetchFn, saveFile, toast, withTimeout = defaultWithTimeout }) {
+  // ⚠️ `why`（伺服器原話／狀態碼）**只進回傳值不進畫面**（William 2026-08-08「太長」的裁決）：
+  //    畫面一行給下一步，排查要細節時看 `reason`。
+  /** @param {string} why @param {() => string} fmt */
+  const fail = (why, fmt = () => failMsg('請再試一次')) => {
+    toast(fmt(), true);
     return { ok: false, saved: false, reason: why, total: 0, filename: '' };
   };
 
+  // ⚠️ 按下去**立刻**出聲（#417 r3 阻擋）：舊版在這裡才開始等，伺服器不回話時畫面一句話都沒有，
+  //    使用者會以為鈕壞了、反覆按。這一句是「我收到了」，不是保證會成功。
+  toast(BUSY_MSG);
   let res;
   try {
-    res = await fetchFn('/api/export');
+    res = await withTimeout(fetchFn('/api/export'), EXPORT_TIMEOUT_MS);
   } catch (err) {
     // 連不上（離線、伺服器沒開）——`fetch` 只有網路層失敗才 reject，HTTP 4xx/5xx 不會。
+    // 等超過上限＝另一條路（伺服器活著但不回話），下一步跟「網路斷」不同。
+    if (/** @type {any} */ (err)?.name === 'ExportTimeout') return fail('等超過上限，伺服器沒有回應', timeoutFailMsg);
     return fail(/** @type {any} */ (err)?.message || '連不上伺服器', networkFailMsg);
   }
 
@@ -304,8 +313,10 @@ export async function runExport({ fetchFn, saveFile, toast }) {
 
   let text;
   try {
-    text = await res.text();
+    // 讀回應也要有上限：卡在這裡跟卡在 fetch 一樣是「畫面沒反應」（r3 阻擋點名的第二條路）。
+    text = await withTimeout(res.text(), EXPORT_TIMEOUT_MS);
   } catch (err) {
+    if (/** @type {any} */ (err)?.name === 'ExportTimeout') return fail('讀回應等超過上限', timeoutFailMsg);
     // 也是網路層斷掉（body 讀到一半連線掉了）——跟 fetch reject 同一種下一步。
     return fail(/** @type {any} */ (err)?.message || '讀不到伺服器的回應', networkFailMsg);
   }

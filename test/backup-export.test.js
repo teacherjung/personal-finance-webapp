@@ -13,7 +13,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runExport, summarizeBackup, filenameFromDisposition, okMsg, FALLBACK_FILENAME } from '../public/modules/backup-export.js';
+import { runExport, summarizeBackup, filenameFromDisposition, okMsg, FALLBACK_FILENAME,
+  BUSY_MSG, EXPORT_NOTICE, EXPORT_TIMEOUT_MS, timeoutFailMsg, defaultWithTimeout,
+  authFailMsg, networkFailMsg, serverFailMsg, notBackupMsg, saveFailMsg,
+} from '../public/modules/backup-export.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 
@@ -51,7 +54,9 @@ async function run(response, opt = {}) {
     },
     toast: (msg, isErr = false) => toasts.push({ msg, isErr }),
   });
-  return { out, saved, toasts };
+  // ⚠️ #417 r4 起**每次都會先有一句「匯出中…」**（William 要的即時回饋／審查者 r3 阻擋的那一項）。
+  //    所以各題要看的是**結果那一句**＝最後一句；`busy` 另外拉出來給專門那一題驗。
+  return { out, saved, toasts, busy: toasts[0], result: toasts[toasts.length - 1] };
 }
 
 const GOOD_BODY = JSON.stringify({
@@ -63,7 +68,7 @@ const GOOD_BODY = JSON.stringify({
 const GOOD_HEADERS = { 'Content-Disposition': 'attachment; filename="finance-backup-2026-08.json"' };
 
 test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', async () => {
-  const { out, saved, toasts } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }));
+  const { out, saved, toasts, result } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }));
   assert.equal(out.ok, true);
   assert.equal(out.saved, true);
   assert.equal(saved.length, 1, '成功時必須真的落一個檔');
@@ -73,8 +78,8 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   //    但這一格**擋不住重新序列化**——`GOOD_BODY` 是緊湊 canonical 的 JSON，
   //    `JSON.stringify(JSON.parse(x)) === x` 對它剛好成立。真正守那件事的是下一題（排版過的 JSON）。
   assert.equal(saved[0].body, GOOD_BODY, '落檔內容必須與伺服器回的那串文字完全相同');
-  assert.equal(toasts.length, 1, '成功也要出聲——「靜靜成功」下一次就分不出它到底有沒有做事');
-  assert.equal(toasts[0].isErr, false);
+  assert.equal(toasts.length, 2, '應有兩句：先「匯出中…」再結果——成功也要出聲，「靜靜成功」下一次就分不出它到底有沒有做事');
+  assert.equal(result.isErr, false);
   // ⚠️⚠️ **不可宣稱已完成**（r1 審查者抓到，2026-08-06 補）：這條路只做到 `a.click()`——使用者按取消、
   //    瀏覽器把下載擋掉、下載中途失敗，`<a>` 這條路**一個訊號都不會回來**。原本寫「已存下備份：…」
   //    就是在沒有證據時宣告成功，而那正是這一整支要消滅的病（我自己犯的同一種）。
@@ -82,21 +87,23 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   // ⚠️ `已開始下載` 也在黑名單裡（r2 審查者抓到，2026-08-06 補）：程式只做到「把連結交出去」，
   //    瀏覽器把下載擋掉、或使用者在存檔對話框按取消時，「開始」**並沒有發生**。這一檔的 JSDoc
   //    早就寫著「沒丟錯只代表交出去了」，文案卻多講一步＝口徑沒收乾淨。只准講交出去了。
-  assert.doesNotMatch(toasts[0].msg, /已存下|已存好|備份完成|已完成|已開始下載|下載完成/,
+  assert.doesNotMatch(result.msg, /已存下|已存好|備份完成|已完成|已開始下載|下載完成/,
     '不可以宣稱「已存下／已完成／已開始下載」——把連結交給瀏覽器之後，成功與否這裡收不到任何回音');
-  assert.match(toasts[0].msg, /交給瀏覽器|交出去/,
+  assert.match(result.msg, /匯出成功/,
     '要講出我們唯一有證據的那件事：備份已經**交給瀏覽器**下載（做到哪裡就講到哪裡）');
-  assert.match(toasts[0].msg, /下載夾|確認/,
+  assert.match(result.msg, /下載|確認/,
     '既然結果不知道，就要把「去下載夾確認檔案在不在」這個下一步交給他');
-  assert.match(toasts[0].msg, /4\s*筆/, '提示要講「幾筆」（3 筆交易 ＋ 1 個帳戶 ＝ 4），使用者才有辦法察覺備份是空的');
-  assert.match(toasts[0].msg, /finance-backup-2026-08\.json/, '提示要講存成什麼檔名，他才找得到那個檔');
+  assert.match(result.msg, /4\s*筆/, '提示要講「幾筆」（3 筆交易 ＋ 1 個帳戶 ＝ 4），使用者才有辦法察覺備份是空的');
+  assert.match(result.msg, /finance-backup-2026-08\.json/, '提示要講存成什麼檔名，他才找得到那個檔');
   // 真實的備份是幾千筆，四位數以上要分節才讀得出量級（他就是靠這個數字判斷備份不是空的）
   assert.match(okMsg(3214, 'x.json'), /3,214/, '筆數要有千分位');
   // ⚠️ 這個數字是**所有頂層陣列的元素數總和**（實測 17 個集合：帳戶／交易／持股／每日淨值／快照／歷史…），
-  //    跟他在收支頁看得到的筆數差很多（dailyValues、snapshots、history 通常遠大於交易數）。
-  //    只寫「N 筆資料」他會拿去對收支頁、然後以為程式算錯了——所以提示必須自己收攏這個數字的意思。
-  assert.match(okMsg(3214, 'x.json'), /全部加起來|全部相加|全算/,
-    '筆數要講明是「所有集合加起來」——只寫「N 筆資料」他會拿去對收支頁的筆數，以為算錯了');
+  //    跟他在收支頁看得到的筆數差很多。舊版提示會加一句「全部加起來」把這件事講明，
+  //    **William 2026-08-08 裁決「太長」**之後那句話拿掉了——現在筆數與檔名一起放在括號裡當
+  //    「量級參考」，句子主體只講下一步（請至下載確認檔案）。
+  //    ⚠️ 所以這一題的斷言也跟著收窄：只釘「有筆數、有千分位、有檔名」，不再釘那句解釋。
+  //    代價誠實記著：他若拿這個數字去對收支頁的筆數，畫面上沒有東西提醒他兩者不同。
+  assert.match(result.msg, /（.*4\s*筆/, '筆數與檔名放在括號裡（量級參考），句子主體留給下一步');
 });
 
 test('匯出｜伺服器怎麼排版就照樣落檔（不重新序列化；換成排版過的 JSON 也原封不動）', async () => {
@@ -119,18 +126,18 @@ test('匯出｜伺服器怎麼排版就照樣落檔（不重新序列化；換�
 
 test('匯出｜HTTP 狀態不 ok（雲端版 session 過期）：不可落檔，而且要明講沒存下任何東西', async () => {
   // ⚠️ 這是舊版最致命的那條路：舊版 <a download> 根本沒看狀態，401 的內容照樣被存成「備份」。
-  const { out, saved, toasts } = await run(res({ status: 401, statusText: 'Unauthorized',
+  const { out, saved, toasts, result } = await run(res({ status: 401, statusText: 'Unauthorized',
     body: JSON.stringify({ error: '請先登入' }), headers: GOOD_HEADERS }));
   assert.equal(out.ok, false);
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0, '失敗時一個檔都不可以落下去——落了就是「他以為自己有備份」');
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /請先登入/, '伺服器講的原因要傳達給使用者，不要只說「失敗」');
-  assert.match(toasts[0].msg, /沒有存下/, '必須明講「沒有存下任何檔案」，否則他會以為存了一半');
+  assert.equal(toasts.length, 2);   // 「匯出中…」＋結果
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /請先登入/, '伺服器講的原因要留在回傳 reason 裡（排查用；畫面只給下一步——William 2026-08-08「太長」的裁決）');
+  assert.match(result.msg, /匯出失敗/, '必須明講失敗，否則他會以為存好了');
   // ⚠️ 這一格是補洞補上的：原本伺服器一給文字原因就把狀態碼**換掉**，而我們自己的 HOSTED 5xx
   //    一定帶 JSON 原因（`lib/routes/auth.js` 的 wrap catch）＝最需要狀態碼的那條路剛好丟掉它。
-  assert.match(toasts[0].msg, /401/, '有文字原因時狀態碼也要留：那是他來問我時唯一能定位的線索');
+  assert.match(out.reason, /401/, '狀態碼要留在 reason 裡：那是他來問我時唯一能定位的線索（畫面上不放）');
 });
 
 test('匯出｜狀態不 ok、而錯誤內容剛好有頂層陣列 ⇒ 只有關卡①攔得住（上一題攔不住這種）', async () => {
@@ -140,32 +147,32 @@ test('匯出｜狀態不 ok、而錯誤內容剛好有頂層陣列 ⇒ 只有關
   //    `{"errors":[{"message":"JWT expired"}]}` 這一型（Supabase／各家 gateway 很常見）
   //    會直接通過②③——**只剩狀態碼攔得住它**。少了關卡①，使用者就會拿到一個
   //    寫著「已存下備份：1 筆資料」的 JWT 過期訊息，而他以為自己有備份了。
-  const { out, saved, toasts } = await run(res({ status: 401, statusText: 'Unauthorized',
+  const { out, saved, result } = await run(res({ status: 401, statusText: 'Unauthorized',
     body: JSON.stringify({ errors: [{ message: 'JWT expired' }] }), headers: GOOD_HEADERS }));
   assert.equal(out.saved, false, '狀態 401 就是失敗，內容長得再像備份都不可以落檔');
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /401/, '伺服器沒給文字原因時，至少要把狀態碼講出來（他才有東西可以問）');
-  assert.match(toasts[0].msg, /沒有存下/);
-  assert.match(toasts[0].msg, /登入/, '401 就是認證問題，要給他「重新登入再試一次」這個下一步');
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /401/, '伺服器沒給文字原因時，狀態碼至少要留在 reason 裡');
+  assert.match(result.msg, /匯出失敗/);
+  assert.match(result.msg, /重新登入/, '401 就是認證問題，要給他「重新登入再按匯出」這個下一步');
 });
 
 test('匯出｜伺服器自己掛了（500）：照樣不落檔，但**不可以**叫他重新登入', async () => {
   // ⚠️ 這一題守的是「別把他推往錯的方向」：500／502／503 掛的是伺服器那一端，
   //    跟他的登入狀態無關。若這裡也附上「可能是登入過期了——重新登入再試一次」，
   //    他會反覆登入、以為是自己的問題，而真正該做的是等一下再試／來問我。
-  const { out, saved, toasts } = await run(res({ status: 500, statusText: 'Internal Server Error',
+  const { out, saved, result } = await run(res({ status: 500, statusText: 'Internal Server Error',
     body: '<html>oops</html>', headers: GOOD_HEADERS }));
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /500/, '狀態碼要講出來——那是他來問我時唯一有用的線索');
-  assert.match(toasts[0].msg, /沒有存下/);
-  assert.doesNotMatch(toasts[0].msg, /登入/,
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /500/, '狀態碼要留在 reason 裡——那是他來問我時唯一有用的線索');
+  assert.match(result.msg, /匯出失敗/);
+  assert.doesNotMatch(result.msg, /登入/,
     '500 不可以叫他重新登入：那是伺服器那一端掛了，叫他登入只會讓他在錯的地方繞');
   // ⚠️ 這一格是補洞補上的：舊稿在 500 只講「伺服器回 500 Internal Server Error」就停住——
   //    他不懂 500 是什麼、也不知道要幹嘛。有線索不等於有下一步。
-  assert.match(toasts[0].msg, /再試|告訴我/,
+  assert.match(result.msg, /再試|告訴我/,
     '光把狀態碼丟給他不算幫到他：500 要給下一步（等一下再試／把這句話告訴我）');
 });
 
@@ -174,42 +181,42 @@ test('匯出｜403：不落檔，而且**不可以**叫他重新登入（GET 不
   //    那是**假的下一步**。本專案唯一會回 403 的地方是 `csrfOriginGuard`（lib/routes/auth.js），
   //    而它 `GET/HEAD/OPTIONS` 直接放行——`/api/export` 是 GET，所以我們自己的程式不可能因為
   //    登入狀態回 403（真回 403 是前面的代理／CDN 擋掉）。叫他登入他會反覆登入、以為是自己的問題。
-  const { saved, toasts } = await run(res({ status: 403, statusText: 'Forbidden',
+  const { out, saved, result } = await run(res({ status: 403, statusText: 'Forbidden',
     body: JSON.stringify({ error: '請求來源不被允許' }), headers: GOOD_HEADERS }));
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /請求來源不被允許/, '伺服器講的原因要傳達給使用者');
-  assert.match(toasts[0].msg, /沒有存下/);
-  assert.doesNotMatch(toasts[0].msg, /登入/,
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /請求來源不被允許/, '伺服器講的原因要留在 reason 裡（畫面只給下一步）');
+  assert.match(result.msg, /匯出失敗/);
+  assert.doesNotMatch(result.msg, /登入/,
     '403 不是登入問題（GET 不經 CSRF 牆）——給「重新登入」是假的下一步');
 });
 
 test('匯出｜狀態 ok 但回的是登入頁 HTML：parse 不出 JSON ⇒ 不可落檔', async () => {
   // ⚠️ 這條比 401 更陰：有些部署會把未登入的請求 302 導去登入頁，fetch 跟著轉址後拿到的是
   //    **狀態 200 的 HTML**。舊版會存下一個副檔名是 .json、內容是網頁的檔案。
-  const { out, saved, toasts } = await run(res({ body: '<!doctype html><html><body>請登入</body></html>', headers: GOOD_HEADERS }));
+  const { out, saved, result } = await run(res({ body: '<!doctype html><html><body>請登入</body></html>', headers: GOOD_HEADERS }));
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /不是備份內容/);
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /不是備份內容/);   // 原因留在 reason，畫面只給下一步
   // ⚠️⚠️ **口徑改了**（r1 審查者抓到，2026-08-06）：舊版對**所有**「狀態 200 但內容不像備份」的情形
   //    都說「可能是登入過期，重新登入」，連 `200 {"error":"權限不足"}` 也一樣。指定口徑是
   //    **只有 401 走登入文案**（那一條是伺服器自己講「你沒登入」）——其餘不猜，猜錯他會反覆登入、
   //    以為是自己的問題。而且本機版根本沒有登入這件事（`authRoutes` 只在 isHosted 掛載）。
-  assert.doesNotMatch(toasts[0].msg, /登入/,
+  assert.doesNotMatch(result.msg, /登入/,
     '狀態 200 就不是認證問題（沒有人講「你沒登入」）——只有 401 那條路可以叫他重新登入');
-  assert.match(toasts[0].msg, /再按一次|告訴我|重啟/,
-    '不猜原因也要給下一步（重新整理再按一次／把整句話告訴我／本機版看後端有沒有重啟）');
+  assert.match(result.msg, /重新整理|再試/,
+    '不猜原因也要給下一步（William 2026-08-08 定案的字：「伺服器回的不是備份檔，請重新整理再試」）');
 });
 
 test('匯出｜狀態 ok、是 JSON，但是錯誤信封（沒有任何集合）⇒ 不可落檔', async () => {
-  const { out, saved, toasts } = await run(res({ body: JSON.stringify({ error: '權限不足' }), headers: GOOD_HEADERS }));
+  const { out, saved, result } = await run(res({ body: JSON.stringify({ error: '權限不足' }), headers: GOOD_HEADERS }));
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.match(toasts[0].msg, /權限不足/);
+  assert.match(out.reason, /權限不足/);   // 同上
   // ⚠️ 這一格是 r1 補的：這一條就是審查者點名的例子——「權限不足」跟登入沒關係，卻被舊版
   //    一句「可能是登入過期，重新登入」推去錯的方向。
-  assert.doesNotMatch(toasts[0].msg, /登入/, '伺服器講的是權限不足，不是沒登入——不可以叫他去登入');
+  assert.doesNotMatch(result.msg, /登入/, '伺服器講的是權限不足，不是沒登入——不可以叫他去登入');
 });
 
 test('匯出｜200 ＋ 錯誤信封 `{"errors":[…]}`（JWT 過期那一型）⇒ 不可落檔、要出聲', async () => {
@@ -218,30 +225,30 @@ test('匯出｜200 ＋ 錯誤信封 `{"errors":[…]}`（JWT 過期那一型）�
   //    硬碟上那個 .json 其實寫著「JWT expired」。各家閘道（Supabase／GraphQL 風格中間層）
   //    很常這樣回，而且它回的是 200，關卡①攔不到。
   //    修法**不需要**列舉集合：①帶 error／errors 鍵的一律不收 ②頂層必須有 settings 物件。
-  const { out, saved, toasts } = await run(res({
+  const { out, saved, toasts, result } = await run(res({
     body: JSON.stringify({ errors: [{ message: 'JWT expired' }] }), headers: GOOD_HEADERS }));
   assert.equal(out.ok, false);
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0, '一個檔都不可以落下去——落了就是「他以為自己有備份」');
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /JWT expired/, '閘道講的原因要傳出去（他來問我時就靠這行字）');
-  assert.match(toasts[0].msg, /沒有存下/, '必須明講「沒有存下任何檔案」');
-  assert.doesNotMatch(toasts[0].msg, /筆紀錄/, '不可以順口報一個筆數——那正是舊版騙人的那句');
-  assert.doesNotMatch(toasts[0].msg, /登入/, '狀態 200 不走登入文案（只有 401 走）');
+  assert.equal(toasts.length, 2);   // 「匯出中…」＋結果
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /JWT expired/, '閘道講的原因要留在 reason（他來問我時就靠這行字）');
+  assert.match(result.msg, /匯出失敗/, '必須明講失敗');
+  assert.doesNotMatch(result.msg, /筆紀錄/, '不可以順口報一個筆數——那正是舊版騙人的那句');
+  assert.doesNotMatch(result.msg, /登入/, '狀態 200 不走登入文案（只有 401 走）');
 });
 
 test('匯出｜200 ＋ 表面完好但自帶 `errors` 的「部分成功」⇒ 不可落檔（只有錯誤信封那條擋得住）', async () => {
   // ⚠️ 這一題釘的是**兩條防線裡的第①條**：這一包有頂層 `settings`、有頂層陣列，形狀完全合格——
   //    只有「自帶 error／errors 鍵就不是備份」這條擋得住它。GraphQL 風格的中間層真的會這樣回
   //    （部分資料 ＋ 一則錯誤），而**部分成功比整包失敗更毒**：檔案看起來完好，還原回去卻少東西。
-  const { saved, toasts } = await run(res({
+  const { out, saved, result } = await run(res({
     body: JSON.stringify({ settings: { currency: 'TWD' }, transactions: [{ id: 't1' }],
       errors: [{ message: '資料只回了一半' }] }), headers: GOOD_HEADERS }));
   assert.equal(saved.length, 0, '自己宣告有錯的東西不可以被當成完整備份存下來');
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /資料只回了一半/);
-  assert.match(toasts[0].msg, /沒有存下/);
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /資料只回了一半/);   // 同上
+  assert.match(result.msg, /匯出失敗/);
 });
 
 test('匯出｜200 ＋ 有陣列但沒有頂層 settings（別的東西回的一包 JSON）⇒ 不可落檔', async () => {
@@ -249,57 +256,61 @@ test('匯出｜200 ＋ 有陣列但沒有頂層 settings（別的東西回的一
   //    判準不是抄一份集合名單，而是後端契約的另一端：`lib/schema.js` 的 `sanitizeDbForWrite`
   //    開頭就是「缺 settings 直接丟錯」——所以沒有頂層 settings 的東西，本來就還原不回去。
   //    實測 `emptyDb()` 與 `stripSecretsForBackup(emptyDb())`（HOSTED 匯出走的那條）都有頂層 settings。
-  const { saved, toasts } = await run(res({
+  const { out, saved, result } = await run(res({
     body: JSON.stringify({ items: [{ id: 1 }, { id: 2 }], page: 1 }), headers: GOOD_HEADERS }));
   assert.equal(saved.length, 0, '還原不回去的東西不可以被叫做備份');
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /不是一份備份檔/, '要講「格式不對」，不可以講成「裡面沒有資料」');
-  assert.doesNotMatch(toasts[0].msg, /筆紀錄/, '不可以報筆數（它有 2 個元素，但那不是備份）');
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /不是一份備份檔/, 'reason 要講「格式不對」，不可以講成「裡面沒有資料」');
+  assert.equal(result.msg, notBackupMsg(),
+    '走的是「不像備份」那條路（畫面只給下一步：請重新整理後再試——William 2026-08-08 第二輪縮短；'
+    + '「是哪一種失敗」留在 reason，畫面上不再講）');
+  assert.doesNotMatch(result.msg, /筆紀錄/, '不可以報筆數（它有 2 個元素，但那不是備份）');
 });
 
 test('匯出｜連不上伺服器（fetch reject）⇒ 出聲、不落檔、不炸掉頁面', async () => {
   // ⚠️ 這條在本機版是**最常見**的一條：後端沒開著（或改完程式忘了重啟）。
-  const { out, saved, toasts } = await run(res({}), { fetchThrows: '連線中斷' });
+  const { out, saved, result } = await run(res({}), { fetchThrows: '連線中斷' });
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /連線中斷/);
+  assert.equal(result.isErr, true);
+  assert.match(out.reason, /連線中斷/);   // 同上
   // ⚠️ 這一格是補洞補上的：原本只有 401 那兩題釘「沒有存下」，而它們走的是 notBackupMsg——
   //    實測把 failMsg 的「沒有存下任何檔案」刪掉，整份考題照樣全綠（＝這條路沒人守）。
-  assert.match(toasts[0].msg, /沒有存下/, '連不上也要明講「沒有存下任何檔案」，否則他不知道要不要重做一次');
+  assert.match(result.msg, /匯出失敗/, '連不上也要明講失敗，否則他不知道要不要重做一次');
+  assert.match(result.msg, /網路/, '這一條的下一步是「檢查網路連線」（William 2026-08-08 定案的字）');
   // ⚠️ 這一格是補洞補上的：這條路的 `err.message` 在真瀏覽器裡是「Failed to fetch」，對他毫無意義，
   //    而這**正是本機版最常見的失敗**（後端沒開／改完程式忘了重啟）。原因看不懂又沒有下一步＝等於沒說。
-  assert.match(toasts[0].msg, /後端|網路/,
+  assert.match(result.msg, /後端|網路/,
     '連不上要給下一步：本機版八成是後端沒在跑（「連線中斷」四個字他看不出要去做什麼）');
 });
 
 test('匯出｜讀回應途中斷線（text() 丟錯）⇒ 出聲、不落檔', async () => {
-  const { out, saved, toasts } = await run(res({ textThrows: true, headers: GOOD_HEADERS }));
+  const { out, saved, result } = await run(res({ textThrows: true, headers: GOOD_HEADERS }));
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.equal(toasts[0].isErr, true);
-  assert.match(toasts[0].msg, /沒有存下/, '半路斷線最需要明講沒存下——「存了一半」是這裡最傷人的誤解');
-  assert.match(toasts[0].msg, /後端|網路/, '這也是網路層斷掉，下一步跟「連不上」同一種');
+  assert.equal(result.isErr, true);
+  assert.match(result.msg, /匯出失敗/, '半路斷線最需要明講失敗——「存了一半」是這裡最傷人的誤解');
+  assert.match(result.msg, /後端|網路/, '這也是網路層斷掉，下一步跟「連不上」同一種');
 });
 
 test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口出聲，絕不可以說「已存下」', async () => {
   // ⚠️ 這一題是補洞補上的：原本 `saveFile` 丟錯會讓整個 `runExport` reject，**一句話都不會出現**
   //    ——靜靜失敗發生在最後一步，正是這一支存在的理由。而且畫面上若先說了「已存下備份」、
   //    硬碟上卻一個檔都沒有，那比舊版更糟（舊版至少沒騙他）。
-  const { out, saved, toasts } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }), { saveThrows: '磁碟空間不足' });
+  const { out, saved, toasts, result } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }), { saveThrows: '磁碟空間不足' });
   assert.equal(out.ok, false);
   assert.equal(out.saved, false);
   assert.equal(saved.length, 0);
-  assert.equal(toasts.length, 1, '只能出現一句：不可以先報成功再報失敗（他會不知道要相信哪一句）');
-  assert.equal(toasts[0].isErr, true, '落檔失敗就是失敗，要用錯誤的樣子出聲');
+  assert.equal(toasts.length, 2, '只能有「匯出中…」＋一句結果：不可以先報成功再報失敗（他會不知道要相信哪一句）');
+  assert.equal(result.isErr, true, '落檔失敗就是失敗，要用錯誤的樣子出聲');
   // ⚠️ 這一格改成拿**成功那句話本身**來比（2026-08-06）：原本只釘字面「已存下」，而成功文案已經改口
   //    兩次（「已開始下載…」→「已經把備份交給瀏覽器下載…」）——只釘舊字面的話，這條路重新吐出
   //    成功句也不會紅（假綠）。下面那條字面黑名單是第二層，跟著現行文案走。
-  assert.notEqual(toasts[0].msg, okMsg(4, 'finance-backup-2026-08.json'),
+  assert.notEqual(result.msg, okMsg(4, 'finance-backup-2026-08.json'),
     '不可以吐出成功那句話（不管那句話怎麼寫）：畫面報好消息、實際一個檔都沒有');
-  assert.doesNotMatch(toasts[0].msg, /已存下|交給瀏覽器|筆紀錄/,
+  assert.doesNotMatch(result.msg, /已存下|交給瀏覽器|筆紀錄/,
     '這是最傷人的一種騙：畫面說「檔案下載了」，硬碟上一個檔都沒有');
-  assert.match(toasts[0].msg, /磁碟空間不足/, '原因要傳出去，他才知道是硬碟滿了不是程式壞了');
+  assert.match(out.reason, /磁碟空間不足/, '原因要留在 reason，他來問我時看得到是硬碟滿了不是程式壞了');
 });
 
 test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣列 ＋ 沒有錯誤鍵），不是寫死的集合名單', () => {
@@ -527,4 +538,117 @@ test('文案｜「資料備份」卡的說明不可以宣稱「整包／全部�
   assert.ok(cardAt >= 0, '找不到「資料備份」那張卡（改字了？那要一起更新本考題）');
   assert.ok(src.slice(cardAt, cardAt + 400).includes('${BACKUP_CARD_NOTE}'),
     '「資料備份」卡的說明必須用 BACKUP_CARD_NOTE 這個常數（樣板裡自己寫一句就繞過黑名單了）');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #417 r4：William 2026-08-08 的兩件事（文案縮短／匯出前先跳窗）＋審查者 r3 阻擋（卡住要出聲）
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('⭐ 匯出｜按下去**立刻**出聲「匯出中…」，不必等伺服器（r3 阻擋：卡住時畫面一句話都沒有）', async () => {
+  // ⚠️ 這一題盯的是**順序**，不是有沒有那句話：舊版是「等到有結果才說第一句」，
+  //    所以伺服器不回話時使用者面對的是完全靜止的畫面（他會以為鈕壞了、反覆按）。
+  /** @type {{msg:string, isErr:boolean}[]} */
+  const toasts = [];
+  let resolveFetch = /** @type {(v:any)=>void} */ (() => {});
+  const pending = new Promise((r) => { resolveFetch = r; });
+  const p = runExport({
+    fetchFn: () => pending,
+    saveFile: () => {},
+    toast: (msg, isErr = false) => toasts.push({ msg, isErr }),
+    withTimeout: (work) => work,          // 這一題不驗上限，只驗「先出聲」
+  });
+  await Promise.resolve();                 // 讓 runExport 跑到 fetch 之前那一句
+  assert.equal(toasts.length, 1, '按下去就要有一句（伺服器還沒回話時畫面不可以是靜止的）');
+  assert.equal(toasts[0].msg, BUSY_MSG);
+  assert.equal(toasts[0].isErr, false, '「匯出中…」不是錯誤');
+  resolveFetch(res({ body: GOOD_BODY, headers: GOOD_HEADERS }));
+  await p;
+});
+
+test('⭐ 匯出｜伺服器一直不回話 ⇒ 等超過上限就放棄、出聲、不落檔（r3 阻擋的第一條路）', async () => {
+  /** @type {{msg:string, isErr:boolean}[]} */
+  const toasts = [];
+  const saved = /** @type {any[]} */ ([]);
+  const out = await runExport({
+    fetchFn: () => new Promise(() => {}),           // 永遠不 settle
+    saveFile: (f, b) => saved.push({ f, b }),
+    toast: (msg, isErr = false) => toasts.push({ msg, isErr }),
+    // 立刻判定超時（考題不必真的等 30 秒）——形狀與正式那顆一致
+    withTimeout: () => Promise.reject(Object.assign(new Error('等超過上限'), { name: 'ExportTimeout' })),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(saved.length, 0, '沒拿到資料就不可以落檔');
+  assert.equal(toasts.length, 2, '「匯出中…」＋一句超時');
+  assert.equal(toasts[toasts.length - 1].msg, timeoutFailMsg());
+  assert.notEqual(toasts[toasts.length - 1].msg, networkFailMsg(),
+    '超時**不可以**講成網路斷線（那兩件事的下一步不同：一個等、一個去看網路）');
+  assert.match(out.reason, /上限|沒有回應/,
+    '畫面那句與「伺服器出錯」逐字相同（William 第二輪縮短的決定），所以「這是超時」只靠 reason 分辨');
+  assert.equal(toasts[toasts.length - 1].isErr, true);
+});
+
+test('⭐ 匯出｜讀回應讀到卡住 ⇒ 同樣放棄並出聲（r3 阻擋的第二條路）', async () => {
+  /** @type {{msg:string, isErr:boolean}[]} */
+  const toasts = [];
+  const saved = /** @type {any[]} */ ([]);
+  let call = 0;
+  const out = await runExport({
+    fetchFn: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: () => new Promise(() => {}) }),
+    saveFile: (f, b) => saved.push({ f, b }),
+    toast: (msg, isErr = false) => toasts.push({ msg, isErr }),
+    // 第一次（fetch）照過，第二次（text）判超時——證明**兩條路都有上限**
+    withTimeout: (work) => (++call === 1 ? work
+      : Promise.reject(Object.assign(new Error('等超過上限'), { name: 'ExportTimeout' }))),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(saved.length, 0);
+  assert.equal(toasts[toasts.length - 1].msg, timeoutFailMsg());
+  assert.equal(call, 2, '兩處都要走過 withTimeout（少包一處就是留一條卡住的路）');
+});
+
+test('⭐ 匯出｜等待上限的預設實作：工作先完成就照常回值、逾時才丟 ExportTimeout', async () => {
+  assert.equal(await defaultWithTimeout(Promise.resolve('ok'), 50), 'ok');
+  await assert.rejects(defaultWithTimeout(new Promise(() => {}), 5), (/** @type {any} */ e) => e.name === 'ExportTimeout');
+  // 原本的錯誤要原樣傳出去（不可以被包成超時，那會給錯的下一步）
+  await assert.rejects(defaultWithTimeout(Promise.reject(new Error('連線中斷')), 50), /連線中斷/);
+  assert.ok(EXPORT_TIMEOUT_MS >= 10_000, '上限太短會讓大備份或慢網路誤判成「沒有回應」');
+});
+
+test('⭐ 文案｜六句都收成「一行、只給下一步」（William 2026-08-08：太長），而且口徑沒被改壞', () => {
+  // 🧑‍⚖️ 他逐字定案三句：成功／401／連線；其餘三句照同一句型縮短。
+  assert.match(okMsg(4, 'x.json'), /^匯出成功 - 請至下載確認檔案/, '成功那句的開頭是他定的字');
+  assert.equal(authFailMsg(), '匯出失敗 - 請重新登入再按匯出');
+  assert.equal(networkFailMsg(), '匯出失敗 - 請檢查網路連線');
+  // ⚠️ 縮短不可以動到口徑（那是保證，不是文案）：
+  assert.doesNotMatch(okMsg(4, 'x.json'), /已存下|已存好|已完成|下載完成/,
+    '成功仍**不可以**宣稱「已存好」——落檔結果瀏覽器不回音（這一條是保證，縮短也不能鬆）');
+  assert.match(okMsg(4, 'x.json'), /下載|確認/, '仍要叫他去下載夾確認');
+  for (const [name, msg] of [['serverFailMsg', serverFailMsg()], ['notBackupMsg', notBackupMsg()],
+    ['saveFailMsg', saveFailMsg()], ['timeoutFailMsg', timeoutFailMsg()]]) {
+    assert.match(msg, /^匯出失敗 - /, `${name} 要照同一個句型`);
+    assert.doesNotMatch(msg, /登入/, `${name} 不可以叫他重新登入——只有 401 那條路可以`);
+    assert.ok(msg.length <= 20, `${name} 一行為限（實際 ${msg.length} 字）：長訊息就是被裁掉的那個病`);
+  }
+  // 🧑‍⚖️ **兩句逐字相同是刻意的**（William 2026-08-08 第二輪縮短）：「伺服器出錯」與「伺服器不回話」
+  //    對使用者的下一步一樣（等一下再試），畫面不必分；差別留在 reason。
+  //    這一條釘住它，免得下一個人看到重複就「順手分化」——那會多出一句他不需要的字。
+  assert.equal(serverFailMsg(), timeoutFailMsg(),
+    '這兩句刻意相同（見 backup-export.js serverFailMsg 上方的裁決註解）；真要分化先問 William');
+});
+
+test('⭐ 匯出前告知｜文案逐字釘住，而且設定頁真的先問過才匯出（William 2026-08-08 新需求）', () => {
+  assert.equal(EXPORT_NOTICE, '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。',
+    '這句是他逐字定的（雲端版匯出刻意剝掉那兩樣，不講的話他會在需要還原時才發現）');
+  const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+  // 接線三件事：用共用文案（不自己抄一句）、先問再匯出、取消就什麼都不做
+  assert.match(src, /EXPORT_NOTICE/, '設定頁要用共用的那一份文案，各寫一句的話 William 審改只會改到一邊');
+  const at = src.indexOf("byId('exportBtn').onclick");
+  assert.ok(at > 0, '找不到匯出鈕的接線＝本題空轉');
+  const handler = src.slice(at, at + 900);
+  assert.match(handler, /confirmExport\(\)/, '按下去要先問過（跳窗），不可以直接開始匯出');
+  assert.ok(handler.indexOf('confirmExport()') < handler.indexOf('runExport'),
+    '順序不可對調：要先問、再匯出（反過來就是「先做了才問」）');
+  assert.match(handler, /if \(!await confirmExport\(\)\) return;/,
+    '取消就要**什麼都不做**（不打 API、不落檔）');
+  assert.match(src, /確認匯出/, '確認鈕的字是他指定的「確認匯出」');
 });

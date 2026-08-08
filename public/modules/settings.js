@@ -7,7 +7,7 @@ import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } 
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
-import { runExport } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
+import { runExport, EXPORT_NOTICE } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
@@ -390,10 +390,39 @@ export async function renderSettings() {
   //    ①它是「右鍵另存連結」的退路 ②有別的考題以這個字面定位這顆鈕。
   //    代價寫明白：右鍵另存那條路**繞過下面這三道關卡**，會退回舊的靜靜失敗——
   //    這一支只保證「左鍵按下去會說話」，那是使用者實際會走的那條路。
+  /**
+   * 匯出前的告知窗（William 2026-08-08 定案）：**告知、不是警告**——不擋、不需要理由，
+   * 按〈確認匯出〉就走。回 false＝使用者取消（呼叫端必須什麼都不做）。
+   * ⚠️ 關窗（× 或點背景）**視為取消**：沒有明確按下確認就不動作，比較保守的那一邊。
+   * @returns {Promise<boolean>}
+   */
+  const confirmExport = () => new Promise((resolve) => {
+    let decided = false;
+    const done = (/** @type {boolean} */ ok) => { if (!decided) { decided = true; resolve(ok); } };
+    const { root, close } = openModalShell({
+      title: '匯出備份', size: 'sm',
+      bodyHtml: `<p style="font-size:13px;margin:0 0 16px">${esc(EXPORT_NOTICE)}</p>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" data-cancel>取消</button>
+          <button type="button" class="btn" id="exportConfirmBtn">確認匯出</button>
+        </div>`,
+    });
+    root.querySelector('[data-cancel]').onclick = () => { close(); done(false); };
+    root.querySelector('#exportConfirmBtn').onclick = () => { close(); done(true); };
+    // × 與點背景由 openModalShell 綁在 close 上；那條路沒有經過上面兩顆鈕，所以在這裡補記帳。
+    const origClose = close;
+    root.querySelector('.x-close').onclick = () => { origClose(); done(false); };
+  });
+
   byId('exportBtn').onclick = async (ev) => {
     ev.preventDefault();
     const btn = ev.currentTarget;
     if (btn.dataset.busy === '1') return;        // 連點兩下不要抓兩份
+    // 🧑‍⚖️ William 2026-08-08：按下去**先跳窗告知**「匯出檔案不含 IB 憑證與帳單密碼」，
+    //    按〈確認匯出〉才開始下載；按〈取消〉什麼都不做（不打 API、不落檔）。
+    //    ⚠️ 用 app 自己的彈窗而不是瀏覽器 confirm()：他要的按鈕字是「確認匯出／取消」，
+    //    原生 confirm 只給得出「確定／取消」。
+    if (!await confirmExport()) return;
     btn.dataset.busy = '1';
     try {
       await runExport({
