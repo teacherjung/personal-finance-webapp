@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -90,8 +90,15 @@ function isFileUrlNewExpr(node) {
   if (!(node.callee.type === 'Identifier' && node.callee.name === 'URL')) return false;
   const lit = completeLiteral(node.arguments[0]);
   if (lit === null) return false;
-  if (isAbsoluteFileLiteral(lit)) return true;                    // `file:…` ⇒ base 被忽略（r9 阻擋②）
-  return isRelativeLiteral(lit) && isImportMetaUrl(node.arguments[1]);
+  const base = node.arguments[1];
+  // ⚠️ **base 不是「被忽略」，它仍會先被驗證**（r11 阻擋①）：
+  //    `new URL('file:///x', 'http://[::1')` 執行時會丟 `ERR_INVALID_URL`，根本產不出任何 URL。
+  //    ⇒ 有字面 base 時就**真的建一次**看結果；base 不是字面就證明不了、放過。
+  if (base === undefined) return isAbsoluteFileLiteral(lit);
+  if (isImportMetaUrl(base)) return isAbsoluteFileLiteral(lit) || isRelativeLiteral(lit);
+  const baseLit = completeLiteral(base);
+  if (baseLit === null) return false;
+  try { return new URL(lit, baseLit).protocol === 'file:'; } catch { return false; }
 }
 
 /** 這個屬性名是不是 `pathname`（含 `["pathname"]` 與無內插樣板鍵）。 */
@@ -159,7 +166,9 @@ function declaresOwnURL(ast) {
  * （taint、固定點迭代、kill、作用域分析），而他每一輪都能用很小的自然反例同時打出假綠與假紅
  * （最後一輪：`u.href = 'https://…'` 之後那個物件已經不是 file URL，而 kill 只看 binding 寫入、
  * 看不到物件內部變更）。⇒ 結論是本專案早就寫過的那條：**列舉繞法補不完要關門**。
- * 所以整層變數追蹤刪除，只留「直接寫」這兩種——**把假紅壓到只剩「檔案自己宣告了 URL 就整檔跳過」這一種保守取捨**，
+ * 所以整層變數追蹤刪除，只留「直接寫」這兩種。⚠️ 假紅**不只剩一種**（r11 阻擋①推翻過一次）：本層排除瀏覽器目錄、
+ * 有字面 base 時真的建一次 URL、檔案自宣告 `URL` 就整檔跳過——三種取捨各有代價，逐一記在誠實劃界。
+ * 
  * ⚠️ 漏抓**沒有人補**：`test/helpers/repo-root.js` 只保護**採用它的檔案**（見它自己的誠實劃界），
  * 未 import 它的檔案寫出射程外的形狀時，本層與那道門都不會出聲。射程外的形狀明列在誠實劃界
  * 那一題並列為待辦，**不再逐案補洞**（依複驗者 r9 判斷「乙」）。
@@ -204,13 +213,30 @@ export function findBadPathnameUses(src, rel = '<inline>') {
  * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成 `\344\270...` 八進位轉義而開不了檔
  *    ——那正是本 PR 在修的同一族病（本專案另有「掃描器跳過中文檔名」的前例）。
  */
-export function trackedJsFiles() {
-  // ⚠️ **不限目錄**（r9 阻擋①）：舊版只掃 test／scripts／lib／public，卻宣稱「本專案禁止」——
-  //    複驗者把最直接的違規放進根層 `server.js`，掃描器照樣 11/11 全綠。
-  //    根層還有 `eslint.config.js` 等受版控的 .js，全都在射程外而且沒有交代。
+export const BROWSER_DIRS = ['public/', 'prototype/'];
+
+/**
+ * 掃描清單＝**Node 側**受版控的 .js。
+ *
+ * ⚠️ **不限目錄，但要排除瀏覽器程式**——兩件事各有代價，兩邊都踩過：
+ *   ・r9 阻擋①：舊版只掃 test／scripts／lib／public，卻宣稱「本專案禁止」，
+ *     複驗者把違規放進根層 `server.js` 就全綠（根層還有 `eslint.config.js` 等受版控 .js）。
+ *   ・r11 阻擋①：**`public/` 是瀏覽器模組**，那裡的 `import.meta.url` 是 HTTP(S) URL，
+ *     `new URL('../api/export', import.meta.url).pathname` 是**完全合法**的取法，
+ *     而錯誤訊息建議的 `fileURLToPath()` 在瀏覽器根本不能用 ⇒ 硬 CI 閘假紅。
+ * ⇒ 這道閘只管 Node 側；瀏覽器目錄明確排除（清單有斷言釘住，見下方那一題）。
+ *
+ * ⚠️ `--others --exclude-standard`：**還沒 commit 的新檔也要掃到**——只用 `--cached` 的話，
+ *    違規的新檔在 commit 之前完全掃不到，護欄會在最需要它的那一刻失效（有 fixture 行為題釘住）。
+ * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成八進位轉義而開不了檔
+ *    ——那正是本 PR 在修的同一族病。
+ */
+export function trackedJsFiles(cwd = ROOT) {
   const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
-    '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' });
-  return out.split('\n').filter((f) => f.endsWith('.js'));
+    '--cached', '--others', '--exclude-standard'], { cwd, encoding: 'utf8' });
+  return out.split('\n')
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => !BROWSER_DIRS.some((d) => f.startsWith(d)));
 }
 
 test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——理由見錯誤訊息）', () => {
@@ -220,9 +246,15 @@ test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——
   // ⚠️ **範圍要用精確比對釘住**（r10 阻擋②）：結構性斷言（根層＋各目錄各一支）**擋不住**——
   //    複驗者把清單改成「全部 test/ ＋每區留一支代表檔」，仍滿足全部結構斷言，卻漏掃 128 支，
   //    而該檔 10/10、全套 1739/1739 都還是綠的。⇒ 改成與**獨立算出來的完整清單**逐項比對。
-  const expected = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
+  const allJs = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
     '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' })
     .split('\n').filter((f) => f.endsWith('.js'));
+  const expected = allJs.filter((f) => !BROWSER_DIRS.some((d) => f.startsWith(d)));
+  // ⚠️ 瀏覽器目錄必須**不在**清單裡（r11 阻擋①：那裡取 .pathname 合法），
+  //    而且必須真的有東西被排除，否則這條排除等於沒生效。
+  assert.ok(allJs.length > expected.length, '沒有任何瀏覽器檔案被排除＝BROWSER_DIRS 沒生效');
+  assert.equal(files.filter((f) => BROWSER_DIRS.some((d) => f.startsWith(d))).length, 0,
+    '掃描清單含瀏覽器目錄的檔案——那裡的 import.meta.url 是 HTTP URL，取 .pathname 合法（假紅）');
   assert.deepEqual([...files].sort(), [...expected].sort(),
     `掃描清單與 git 列出的受版控 .js 不一致（掃 ${files.length} 支、應為 ${expected.length} 支）。`
     + '\n漏掃的檔案等於在射程外，而錯誤訊息卻宣稱「本專案禁止」。');
@@ -279,6 +311,10 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['namespace import 叫 URL', `import * as URL from './custom-url.js'; const p = ${U}("..", ${IMU})${PN};`],
     ['catch 參數叫 URL', `try { f(); } catch (URL) { const p = ${U}("..", ${IMU})${PN}; }`],
     ['有預設值的參數叫 URL', `function g(URL = X) { return ${U}("..", ${IMU})${PN}; }`],
+    // ↓ r11 阻擋③：這兩個宣告位置原本沒有探針，拿掉處理仍全綠
+    ['函式運算式的參數叫 URL', `const g = function (URL) { return ${U}("..", ${IMU})${PN}; };`],
+    ['rest 參數叫 URL', `function g(...URL) { return ${U}("..", ${IMU})${PN}; }`],
+    ['解構裡的 rest 叫 URL', `function g({ ...URL }) { return ${U}("..", ${IMU})${PN}; }`],
     // ⚠️ 這一種**永遠**不該被抓（r5 阻擋③）：它原本混在誠實劃界裡，而那一題寫著
     //    「將來抓到就是好事」——對這一項是錯的，它是合法用法，repo 現有兩支這樣寫。
     ['URL 物件當 base、不取 pathname（合法，repo 現有兩支這樣用）',
@@ -445,6 +481,81 @@ test('⭐ 合法但會讓走訪爆掉的形狀（r7 阻擋③：parent 掛成屬
   for (const src of ['class C { static {} }', 'class C { static { let r = ".."; r += ".."; } }',
     'class C { static #x = 1; static { C.#x++; } }']) {
     assert.deepEqual(findBadPathnameUses(src), [], `合法程式讓掃描器爆掉或誤抓：${src}`);
+  }
+});
+
+test('⭐⭐ 核心｜共用 ROOT 在「含空白與中文的路徑」下必須算對（r11 阻擋②：本 PR 修的就是這件事）', () => {
+  // ⚠️⚠️ **這是這支 PR 的核心行為題，也是它整個存在的理由。**
+  //    複驗者 r11 把 helper 改壞成一種**射程外的自然寫法**：
+  //        const selfUrl = new URL(import.meta.url);
+  //        export const ROOT = join(dirname(selfUrl.pathname), '..', '..');
+  //    ASCII 副本裡 42/42、全套 1739/1739 **全綠**；同一個突變放到中文＋空白路徑就全部在載入時炸掉。
+  //    ⇒ 也就是說「這支 PR 修好的事」只有在審查者**手動換路徑**時才驗得到 ⇒ 假綠。
+  //    ⇒ 本題自己把 helper 複製到含空白與中文的暫存目錄、真的 import 它、驗算出來的 ROOT。
+  //    不論錯誤寫成哪一種 AST 形狀（`.pathname`、`fileURLToPath` 拿掉、層數算錯…）都會紅。
+  const base = mkdtempSync(join(tmpdir(), 'core-'));
+  try {
+    // 目錄名同時含**空白**、**中文**與**全角括號**——與使用者真實的「07 專案/榮祥森（投資理財）」同型
+    const repo = join(base, '07 專案', '榮祥森（投資理財）');
+    mkdirSync(join(repo, 'test', 'helpers'), { recursive: true });
+    writeFileSync(join(repo, 'package.json'), '{"name":"fixture"}');
+    const helperSrc = readFileSync(join(ROOT, 'test', 'helpers', 'repo-root.js'), 'utf8');
+    writeFileSync(join(repo, 'test', 'helpers', 'repo-root.js'), helperSrc);
+
+    const probe = join(repo, 'probe.mjs');
+    writeFileSync(probe,
+      `import { ROOT } from ${JSON.stringify(pathToFileURL(join(repo, 'test', 'helpers', 'repo-root.js')).href)};\n`
+      + 'process.stdout.write(ROOT);\n');
+    const r = spawnSync(process.execPath, [probe], { encoding: 'utf8' });
+
+    assert.equal(r.status, 0,
+      '共用 ROOT 在含空白／中文的路徑下載入失敗——這正是本 PR 要修的病。\n'
+      + `stderr：${String(r.stderr).slice(0, 600)}`);
+    // ⚠️ 預期值要過 `realpathSync`：macOS 的 `/var` 是 `/private/var` 的 symlink，
+    //    而 Node 載入模組時會解析成真實路徑（實測踩到——這不是編碼問題，別誤判成本 PR 的病）。
+    const expectedRoot = realpathSync(repo);
+    assert.equal(r.stdout, expectedRoot,
+      `共用 ROOT 算出來的路徑不等於真實目錄。\n  算出＝${r.stdout}\n  應為＝${expectedRoot}\n`
+      + '（若出現 %20 或 %E5%… 就是沒有解 URL 編碼——那正是本 PR 修的那一顆。）');
+    assert.doesNotMatch(r.stdout, /%[0-9A-Fa-f]{2}/, 'ROOT 裡仍含百分號編碼');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 掃描清單｜未 commit 的新檔、被 ignore 的檔、中文檔名（r11 阻擋④：fixture 實測）', () => {
+  // ⚠️ 上一版只在真 repo 上比對兩份清單——**乾淨工作樹裡兩邊天然相同**，
+  //    複驗者把 `--others` 拿掉，全套仍 1739/1739 全綠 ⇒ 那個承諾沒有考題撐著。
+  //    ⇒ 本題自己建一個暫存 git repo，放進四種檔案再問 `trackedJsFiles(cwd)`。
+  const repo = mkdtempSync(join(tmpdir(), 'ls-files-'));
+  try {
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+    git('init', '-q');
+    git('config', 'user.email', 'f@example.com');
+    git('config', 'user.name', 'fixture');
+    writeFileSync(join(repo, '.gitignore'), 'ignored.js\nnode_modules/\n');
+    writeFileSync(join(repo, 'tracked.js'), '// tracked\n');
+    git('add', 'tracked.js', '.gitignore');
+    git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'untracked.js'), '// 還沒 commit 的新檔\n');
+    writeFileSync(join(repo, 'ignored.js'), '// 被 ignore\n');
+    writeFileSync(join(repo, '中文 檔名.js'), '// 含空白與中文的檔名\n');
+    mkdirSync(join(repo, 'public'), { recursive: true });
+    writeFileSync(join(repo, 'public', 'browser.js'), '// 瀏覽器模組\n');
+    writeFileSync(join(repo, 'notjs.txt'), 'x\n');
+
+    const got = trackedJsFiles(repo).sort();
+    assert.deepEqual(got, ['tracked.js', 'untracked.js', '中文 檔名.js'].sort(),
+      '掃描清單不對。四件事各自的意義：\n'
+      + '  ・tracked.js 進來＝基本盤\n'
+      + '  ・untracked.js 進來＝`--others` 有效（少了它，違規的新檔在 commit 前完全掃不到，'
+      + '護欄會在最需要它的那一刻失效）\n'
+      + '  ・`中文 檔名.js` 進來＝`core.quotepath=false` 有效（少了它，git 會回八進位轉義而開不了檔）\n'
+      + '  ・ignored.js 不進來＝`--exclude-standard` 有效\n'
+      + '  ・public/browser.js 不進來＝瀏覽器目錄排除有效（那裡取 .pathname 合法）\n'
+      + `  實際拿到：${JSON.stringify(got)}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
