@@ -670,8 +670,11 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   assert.match(src, /exportNotice\(/, '設定頁要用共用的挑選函式（各寫一句的話 William 審改只會改到一邊、而且模式判斷會走散）');
   // ⚠️ 引號形式不綁死（r6 阻擋①：只換等價引號就誤紅＝合法寫法被誤殺）
   assert.match(src, /api\(\s*['"`]\/mode['"`]\s*\)/, '要真的去問模式（不問就只能猜，而猜錯方向會害他外洩）');
-  const at = src.indexOf("byId('exportBtn').onclick");
-  assert.ok(at > 0, '找不到匯出鈕的接線＝本題空轉');
+  // ⚠️ 引號無關（r7 阻擋①）：上一版用字面 indexOf("byId('exportBtn')…")，只要換成雙引號就切不到、
+  //    整題誤紅——而那是行為完全相同的等價寫法。
+  const btnAt = src.match(/byId\(\s*['"`]exportBtn['"`]\s*\)\s*\.onclick/);
+  assert.ok(btnAt && btnAt.index !== undefined, '找不到匯出鈕的接線＝本題空轉');
+  const at = /** @type {number} */ (btnAt.index);
   const handler = src.slice(at, at + 900);
   assert.match(handler, /confirmExport\(\)/, '按下去要先問過（跳窗），不可以直接開始匯出');
   assert.ok(handler.indexOf('confirmExport()') < handler.indexOf('runExport'),
@@ -682,19 +685,20 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   // ⚠️ **三條退出路都要接到同一個 cancel**（r4 阻擋③的另一半）：真 DOM 那題證明「這種接法會 settle」，
   //    但沒有人保證 settings.js 真的用了那種接法——M9 突變（拿掉 bindBackdropClose 那一行）
   //    在補這條之前**全綠**，正是「掃得到寫法 ≠ 行為正確」的反面：這裡連寫法都沒掃。
-  const cf = src.slice(src.indexOf('const confirmExport'), src.indexOf("byId('exportBtn')"));
+  const cf = src.slice(src.indexOf('const confirmExport'), at);
   assert.ok(cf.length > 200, '找不到 confirmExport 的本體＝本題空轉');
   assert.match(cf, /backdrop:\s*false/,
     'openModalShell 內建的點背景關窗只呼叫 close、**不會**收掉那顆 Promise ⇒ 必須關掉它、自己接');
   // ⚠️ **三條退出路各自的那一句裡要出現取消的處理**——判準刻意寬（r6 阻擋①）：
   //    `= cancel`、`= () => cancel()`、包一層別名都算；換引號、換空白、包裝轉交都不該誤紅。
   //    這一題只證明「三條路都有接到取消」；**行為（真的 settle）由上面那題真 DOM 守**。
+  // ⚠️ 片段抓到「**下一個分號**」、而且允許跨行（r7 阻擋①）：這個判準演化過三次，每次都是被
+  //    等價寫法誤殺才發現——①`[^)]*` 遇到 `() =>` 的第一個 `)` 就停②`[^;\n]*` 把換行誤當敘述結束
+  //    （合法的多行寫法因此誤紅）。現在只認語言真正的敘述結尾。
   for (const [what, re] of [
-    // ⚠️ 抓到「這一句結束」而不是第一個 )：包一層 () => cancel() 時第一個 ) 就在箭頭函式的參數列上
-    //    ——上一版用 [^)]* 於是抓到 'bindBackdropClose((' 就停，等價寫法被誤殺（自審 M17 抓到）。
-    ['點背景', /bindBackdropClose\([^;\n]*/],
-    ['×', /['"`]\.x-close['"`]\s*\)[^;\n]*/],
-    ['取消鈕', /\[data-cancel\][^;\n]*/],
+    ['點背景', /bindBackdropClose\([\s\S]*?;/],
+    ['×', /['"`]\.x-close['"`]\s*\)[\s\S]*?;/],
+    ['取消鈕', /\[data-cancel\][\s\S]*?;/],
   ]) {
     const m = cf.match(/** @type {RegExp} */ (re));
     assert.ok(m, `找不到「${what}」那條退出路的接線＝本題對它空轉`);
