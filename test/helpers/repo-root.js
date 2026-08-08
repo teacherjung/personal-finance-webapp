@@ -29,19 +29,39 @@ import { join, dirname } from 'node:path';
 //    ⇒ 必須驗**身分**：`realpathSync` 把兩邊都解成 canonical 路徑字串再比
 //    （⚠️ 比的是**路徑字串**，不是 inode——同一顆 inode 的硬連結會有不同 canonical 路徑）。
 const SELF_REL = join('test', 'helpers', 'repo-root.js');
-const selfHere = fileURLToPath(import.meta.url);
-if (!existsSync(join(ROOT, 'package.json'))) {
-  throw new Error(
-    `test/helpers/repo-root.js 算出的 ROOT 不是 repo 根：${ROOT}\n`
-    + '（找不到 package.json。常見原因：路徑含空白／中文卻沒有解 URL 編碼——那正是本檔存在的理由。）',
-  );
+
+/**
+ * 驗「這個 root 是不是載入本檔的那一棵 checkout」。⚠️ **抽成可匯出的純函式**是為了讓考題能真的
+ * 餵一個假 root 進來、斷言它被拒絕（r6 阻擋④：上一版的考題只掃原始碼字樣，複驗者把比較改成
+ * 「拿自己比自己」之後防線全失效、考題卻 7/7 全綠——本專案認過的病型：**考題要斷言行為，不是文字**）。
+ *
+ * @param {string} root 要驗的 repo 根
+ * @param {string} selfPath 正在執行的本檔絕對路徑
+ * @throws 當 root 不是 repo 根、或指到另一棵 checkout
+ */
+export function assertSameCheckout(root, selfPath) {
+  if (!existsSync(join(root, 'package.json'))) {
+    throw new Error(
+      `算出的 repo 根找不到 package.json：${root}\n`
+      + '（常見原因：路徑含空白／中文卻沒有解 URL 編碼——那正是本檔存在的理由。）',
+    );
+  }
+  const there = realpathSync(join(root, SELF_REL));
+  const here = realpathSync(selfPath);
+  if (there !== here) {
+    throw new Error(
+      '算出的 repo 根指到**另一棵 checkout**：\n'
+      + `  root          = ${root}\n`
+      + `  root 下的本檔  = ${there}\n`
+      + `  正在執行的本檔  = ${here}\n`
+      + '⇒ 掃描器會靜靜掃別棵樹而回報「零違規」。',
+    );
+  }
 }
-if (realpathSync(join(ROOT, SELF_REL)) !== realpathSync(selfHere)) {
-  throw new Error(
-    'test/helpers/repo-root.js 算出的 ROOT 指到**另一棵 checkout**：\n'
-    + `  ROOT            = ${ROOT}\n`
-    + `  ROOT 下的本檔    = ${realpathSync(join(ROOT, SELF_REL))}\n`
-    + `  正在執行的本檔    = ${realpathSync(selfHere)}\n`
-    + '⇒ 掃描器會靜靜掃別棵樹而回報「零違規」（r3 阻擋①，複驗者實際重現過）。',
-  );
-}
+
+// ⚠️ 載入時就吵：這是這一族**不看寫法、只看結果**的檢查。
+//    ⚠️ 只驗「有 package.json」不夠：root 指到同一支 repo 的另一棵工作樹時（那棵當然也有
+//    package.json）斷言照樣通過，掃描器就靜靜掃了別棵樹（複驗者實際重現過）。
+//    ⚠️ 比的是 `realpathSync` 解出的 canonical **路徑字串**，不是 inode
+//    （同一顆 inode 的硬連結會有不同 canonical 路徑）。
+assertSameCheckout(ROOT, fileURLToPath(import.meta.url));

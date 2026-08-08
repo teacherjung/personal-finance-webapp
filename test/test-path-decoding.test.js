@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import * as espree from 'espree';
 import { analyze } from 'eslint-scope';
 // ⚠️ **本檔不自己算 ROOT**：共用那一份會驗身分（不只驗「這裡有 package.json」），
 //    自己再算一次就是又多一個會算錯的地方。
-import { ROOT } from './helpers/repo-root.js';
+import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
 
 /**
  * ⚠️ 為什麼要有這一題（2026-08-08 實際事故）：
@@ -22,7 +23,10 @@ import { ROOT } from './helpers/repo-root.js';
  * ⚠️⚠️ **本檔是「早期警告」，不是門**（2026-08-08 四路攻擊之後改口）：
  * 真正的門是 `test/helpers/repo-root.js`——會驗身分的共用 ROOT ＋載入時斷言
  * （不看寫法、只看結果：算錯、或指到另一棵 checkout，都當場吵）。
- * 本檔只掃「有沒有人自己算而且算錯」。**射程**＝下方 mustCatch 那一題；
+ * 本檔掃的是「有沒有人取了 file URL 的 `.pathname`」——⚠️ **不論那個值後來有沒有真的當檔案路徑用**
+ * （r6 阻擋③：追 sink 要跨函式資料流、做不可靠；不追就不可以斷言它被當路徑用）。
+ * ⇒ 所以口徑是**整條禁掉**：要路徑用 `fileURLToPath()`，要觀察編碼不要留在程式裡。
+ * **射程**＝下方 mustCatch 那一題；
  * **射程外**＝誠實劃界那一題（那份清單也不完整——它只列已知的，不是窮舉）。
  * 照 `test/entry-guard.test.js` 已下過的同一個結論：語法檢查在這件事上不可能收斂，所以它不是門。
  *
@@ -71,19 +75,19 @@ function literalParts(node) {
 }
 
 /**
- * 這一截字面是不是「帶非 file scheme 的絕對 URL」（⇒ base 會被忽略 ⇒ 結果不是 file URL）。
+ * 這一截**完整**字面，在 base 是 file URL 的情況下，能不能證明結果是 file URL。
  *
- * ⚠️ **用真正的 `URL` 解析器判，不自己寫正則**（r5 阻擋①，第三次學到同一課）：
- * WHATWG 會先剝掉開頭的空白與控制字元才看 scheme，所以 `' HTTPS://example.com/a'` 的結果是 `https:`，
- * 而我上一版的 `/^([a-z][a-z0-9+.-]*):/i` 看到開頭是空白就當成相對參照 ⇒ 假紅（前置 tab 同理）。
- * 交給 `new URL()` 自己回答，順便連大小寫、`c:`、protocol-relative 的規則都一致。
+ * ⚠️ **解析失敗不可以當成「相對參照」**（r6 阻擋②）：`'http://[::1'` 這種壞字串會讓 `new URL` 丟錯、
+ * 根本不會產生 file URL，但上一版把「解不出來」等同「相對」⇒ 假紅。
+ * ⚠️ 也**不可以自己寫 scheme 正則**（r5 阻擋①，我踩過三次）：WHATWG 會先剝掉開頭空白／控制字元。
+ * ⇒ 直接拿一個 sentinel file base 去解析，看結果的 protocol。解不出來＝證明不了 ⇒ 放過。
  */
-function absoluteNonFileScheme(lit) {
+const SENTINEL_FILE_BASE = 'file:///sentinel-base/x.js';
+function resolvesToFileUrl(lit) {
   try {
-    const u = new URL(lit);            // 能單獨解析成功＝它自己就是絕對 URL
-    return u.protocol !== 'file:';
+    return new URL(lit, SENTINEL_FILE_BASE).protocol === 'file:';
   } catch {
-    return false;                      // 解不出來＝相對參照（或壞字串）
+    return false;   // 壞字串／解不出來 ⇒ 證明不了 ⇒ 放過
   }
 }
 
@@ -105,17 +109,19 @@ function isFileUrlNew(node, tainted, isGlobalURL) {
   const parts = literalParts(input) || literalOfBinding(input, tainted);   // ⓑ
   if (!parts) return false;
   if (parts.complete) {
-    // 完整字面 ⇒ 交給真正的 URL 解析器（它會照 WHATWG 先剝開頭空白／控制字元）
-    if (absoluteNonFileScheme(parts.text)) return false;
-  } else if (!/^[./]/.test(parts.text)) {
-    // ⚠️ 只知道開頭時**不可以**拿它去解析（r5 實測：`'https:' + '//x'` 的 `'https:'` 單獨解不出來，
-    //    會被誤判成相對參照 ⇒ 假紅）。⇒ 唯有「以 `.` 或 `/` 開頭」才證明得出是相對參照，其餘放過。
+    // 完整字面 ⇒ 用 sentinel file base 解析（照 WHATWG，含剝開頭空白／控制字元）
+    if (!resolvesToFileUrl(parts.text)) return false;
+  } else if (!/^[./\\?#]/.test(parts.text)) {
+    // ⚠️ 只知道開頭時**不可以**拿它去解析（r5 實測：`'https:' + '//x'` 的 `'https:'` 解不出來，
+    //    會被誤判成相對參照 ⇒ 假紅）。
+    // ⇒ **目前只收斂**「以 `.` `/` `\\` `?` `#` 開頭」這幾種——它們必然是相對參照。
+    //    其餘（例如 `'' + name`、變數開頭）證明不了，放過。⚠️ 這不是窮舉，是目前收斂到的範圍。
     return false;
   }
   return isFileUrlExpr(base, tainted);
 }
 
-/** 單一賦值且值是字串字面的變數，可以把它的值當成已知（r5 阻擋④：`const rel = '..'` 很常見）。 */
+/** 每次寫入都是同一個字串字面的變數，值可知（r5 阻擋④：`const rel = '..'` 很常見）。 */
 function literalOfBinding(node, tainted) {
   if (!node || node.type !== 'Identifier') return null;
   return tainted.litVar.get(node) || null;
@@ -162,6 +168,14 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     ast = parse('script');
   }
 
+  // ⚠️ 需要 parent 才判得出 `+=`／`++`（espree 不建 parent，自己補一趟）
+  walk(ast, (n) => { for (const k of Object.keys(n)) {
+    if (k === 'parent') continue;
+    const v = n[k];
+    if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') c.parent = n; }
+    else if (v && typeof v.type === 'string') v.parent = n;
+  } });
+
   const scopeManager = analyze(ast, { ecmaVersion: 2024, sourceType: 'module', ignoreEval: true });
 
   const bindingOf = new Map();
@@ -178,22 +192,44 @@ export function findBadPathnameUses(src, rel = '<inline>') {
 
   // 作用域感知的 taint（鍵是 identifier 節點，經由 binding 對齊——同名不同 scope 是不同 binding）
   const tainted = { fileUrl: new Set(), urlObj: new Set(), litVar: new Map() };
-  const writeValues = (v) => v.defs.map((d) => d.node && (d.node.init || d.node.right))
-    .concat(v.references.filter((r) => r.isWrite() && r.writeExpr).map((r) => r.writeExpr))
-    .filter(Boolean);
+  // ⚠️ **只接受 initializer 與單純 `=`**（r6 阻擋①）：`rel += 'https:'` 的 RHS 是 `'https:'`，
+  //    但實際值是 `'https:https:'`（protocol 仍是 https）⇒ 上一版把 RHS 當成「實際寫入值」而假紅。
+  //    `+=`／logical assignment／`++`／`for…of` 的綁定一律回報 null＝這個 binding 不可知（kill）。
+  const writeValues = (v) => {
+    const out = [];
+    for (const d of v.defs) {
+      const n = d.node;
+      if (!n) return null;
+      if (n.type === 'VariableDeclarator') { if (n.init) out.push(n.init); else return null; }
+      else return null;   // 函式參數／for…of／import 等：值不可知
+    }
+    for (const r of v.references) {
+      if (!r.isWrite()) continue;
+      const w = r.writeExpr;
+      const parent = r.identifier.parent;
+      if (!w) return null;
+      // 只有單純 `=`（以及宣告的 init，已在上面處理）算得出值
+      if (parent && parent.type === 'AssignmentExpression' && parent.operator !== '=') return null;
+      if (parent && parent.type === 'UpdateExpression') return null;
+      out.push(w);
+    }
+    return out;
+  };
   const markBinding = (v, bucket, isMatch) => {
     const values = writeValues(v);
-    // ⚠️ kill：一個寫入不符合就整個放過（寧可漏抓、不可誤抓）
-    if (!values.length || !values.every((val) => isMatch(val))) return;
+    // ⚠️ kill：值不可知（null）或任一寫入不符合 ⇒ 整個放過（寧可漏抓、不可誤抓）
+    if (values === null || !values.length || !values.every((val) => isMatch(val))) return;
     for (const id of v.identifiers) bucket.add(id);
     for (const r of v.references) bucket.add(r.identifier);
   };
-  // 單一賦值且值是字串字面的變數 ⇒ 值可知（r5 阻擋④：`const rel = '..'` 很常見）
+  // 每次寫入都是同一個字串字面的變數 ⇒ 值可知（r5 阻擋④：`const rel = '..'` 很常見）
   for (const v of allVars) {
     // ⚠️ **不可以要求「恰好一次寫入」**：`const rel = '..'` 的宣告在 eslint-scope 裡會同時出現在
     //    `defs`（declarator）與 `references`（init 的 write）＝兩筆，於是條件永遠不成立（實測踩到）。
-    //    改成「每一次寫入都是同一個字串字面」——重新賦值成別的東西就自動不算。
+    //    改成「每一次寫入都是同一個字串字面」——重新賦值成別的東西、或用 `+=` 之類算不出值的
+//    寫法，就自動不算（r6 阻擋①）。⚠️ 所以檔內別處不可寫成「只寫入一次」。
     const values = writeValues(v);
+    if (values === null) continue;
     const parts = values.map((val) => literalParts(val));
     if (!parts.length || parts.some((x) => x === null || !x.complete)) continue;
     if (new Set(parts.map((x) => x.text)).size !== 1) continue;
@@ -251,15 +287,18 @@ function jsFilesUnderGit(dirs) {
   return out.split('\n').filter((f) => f.endsWith('.js'));
 }
 
-test('早期警告｜沒有人自己算 repo 根而把 file URL 的 .pathname 當路徑（含空白／中文會 ENOENT）', () => {
+test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——理由見錯誤訊息）', () => {
   const files = jsFilesUnderGit(['test', 'scripts', 'lib', 'public']);
   // ⚠️ 反面自我驗證：先確認真的掃到東西。掃到 0 個檔案時「沒有違規者」當然成立＝最典型的假綠。
   assert.ok(files.length > 100, `git ls-files 只列出 ${files.length} 支 .js，掃描範圍不對＝這一題在空轉`);
   const offenders = files.flatMap((rel) => findBadPathnameUses(readFileSync(join(ROOT, rel), 'utf8'), rel));
   assert.deepEqual(offenders, [],
-    '這些地方把 file URL 的 `.pathname` 當檔案路徑：\n  ' + offenders.join('\n  ')
-    + '\n\n它留著 URL 編碼，遇到含空白或中文的專案路徑（本專案就是）會 ENOENT。'
-    + "\n改用：const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');"
+    '這些地方取了 file URL 的 `.pathname`：\n  ' + offenders.join('\n  ')
+    + '\n\n⚠️ **本專案禁止這個取法，不論你打算拿它做什麼。**'
+    + '\n它留著 URL 編碼（`07 專案` → `07%20%E5%B0%88%E6%A1%88`），一旦被當檔案路徑就 ENOENT。'
+    + '\n本題**不追蹤**那個值後來有沒有真的流進 `fs`（那要跨函式的資料流，做不可靠），'
+    + '\n所以改成整條禁掉——要路徑請用 `fileURLToPath()`，要看編碼請在 REPL 看、不要留在程式裡。'
+    + "\n改用：import { ROOT } from './helpers/repo-root.js';  // 或 fileURLToPath(...)"
     + '\n⚠️ 這種錯在純 ASCII 的實作樹裡完全看不出來——#417 十四輪審查全綠，合併後在主目錄才紅。');
 });
 
@@ -285,7 +324,7 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     // ↓ r5 複驗者指名「很常見、值得成為 mustCatch」的，以及這輪一併收斂的形狀
     ['以相對字面開頭的串接', `const R = ${U}("../fixtures/" + name, ${IMU})${PN};`],
     ['樣板有內插但開頭是相對', 'const R = ' + U + '(`../x/${name}`, ' + IMU + ')' + PN + ';'],
-    ['值可由單一賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    ['值可由字面賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
     ['file: 大小寫混寫', `const R = ${U}("FiLe:///x", ${IMU})${PN};`],
     ['protocol-relative（會繼承 file base）', `const R = ${U}("//example.com/x", ${IMU})${PN};`],
     ['單參數就是 file URL', `const R = ${U}(${IMU})${PN};`],
@@ -357,6 +396,9 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
     // ↓ kill semantics 的代價（r4 複驗者實測並確認「掃描器仍有價值、不該刪，但要列進劃界」）：
     //    一個 binding 只要有一次寫入判不出是 file URL，就整個放過——自我賦值就足以脫身。
     ['自我賦值（kill 讓它脫身）', `let u = ${U}("..", ${IMU}); if (x) u = u; const R = u${PN};`],
+    // ↓ r6 複驗者指出的其餘缺口，照實記（未收斂）
+    ['for…of 綁定的值（不可知 ⇒ kill）', `for (const rel of ["..", ".."]) { const R = ${U}(rel, ${IMU})${PN}; }`],
+    ['只知前綴且開頭是空字串（判不出 name 是否絕對）', `const R = ${U}("" + name, ${IMU})${PN};`],
   ];
   for (const [why, src] of outOfRange) {
     assert.deepEqual(findBadPathnameUses(src), [],
@@ -385,33 +427,39 @@ test('⭐ 不可誤抓｜r3 實測的五種安全寫法（硬 CI 閘上的假紅
   }
 });
 
-test('⭐ 真的門｜共用 ROOT 指到「另一棵有效 checkout」時必須吵（r3 阻擋①）', () => {
-  // ⚠️ 這一題守的是 r3 複驗者**實際重現過**的假綠：helper 原本只驗「ROOT 底下有 package.json」，
-  //    於是 ROOT 指到同一支 repo 的另一棵工作樹時（那棵當然也有 package.json）斷言照樣通過，
-  //    掃描器就靜靜掃了別棵樹、回報「零違規」。他實測三檔 37/37、npm test 1734/1734 全綠。
-  //    ⇒ 門必須驗**身分**：ROOT 底下的 helper 檔案要跟正在執行的這一支是同一個檔。
-  const helper = readFileSync(join(ROOT, 'test', 'helpers', 'repo-root.js'), 'utf8');
+test('⭐ 真的門｜餵一個「另一棵 checkout」的 root 進去必須被拒絕（r6 阻擋④＝行為題，不是掃字樣）', () => {
+  // ⚠️ 上一版這一題只掃原始碼有沒有 `realpathSync` 字樣。複驗者把比較改成「拿自己比自己」
+  //    （`realpathSync(join(ROOT, SELF_REL)) !== realpathSync(join(ROOT, SELF_REL))`）之後
+  //    身分防線完全失效，而該檔 7/7、全套 1736/1736 仍綠。
+  //    ⇒ 本專案的鐵則：**考題要斷言行為，不是文字**。改成真的餵 root 進去。
 
-  // ⓐ 身分檢查存在（用 realpath 比對，而不是只看 package.json 在不在）
-  assert.match(helper, /realpathSync/,
-    'test/helpers/repo-root.js 不再用 realpath 比對身分——只驗 package.json 存在的話，'
-    + 'ROOT 指到另一棵 checkout 會靜靜通過（r3 複驗者已重現）');
-  assert.match(helper, /另一棵/,
-    'helper 少了「指到另一棵 checkout」那條錯誤訊息——訊息本身就是下一個人的診斷依據');
+  // ⓐ 正確的 root（就是這一棵）要通過
+  assert.doesNotThrow(() => assertSameCheckout(ROOT, join(ROOT, 'test', 'helpers', 'repo-root.js')),
+    '這一棵樹自己的 root 被拒絕了＝門壞了，全部考題都會紅');
 
-  // ⓑ 反面自我驗證：把身分檢查拿掉之後，那個情境確實不會被擋
-  //    （不改檔案，只在字串上模擬——證明這道檢查是承重的，不是裝飾）
-  const withoutIdentity = helper.replace(/if \(realpathSync[\s\S]*?\n\}\n/, '');
-  assert.notEqual(withoutIdentity, helper, '模擬拆除失敗＝這個斷言在空轉');
-  assert.doesNotMatch(withoutIdentity, /realpathSync\(join\(ROOT/,
-    '拆掉之後還留著身分比對＝上面那條 match 不足以證明它承重');
+  // ⓑ **另一棵有效 checkout**（有 package.json、也有同名 helper）必須被拒絕
+  const other = mkdtempSync(join(tmpdir(), 'other-checkout-'));
+  try {
+    writeFileSync(join(other, 'package.json'), '{"name":"fake"}');
+    mkdirSync(join(other, 'test', 'helpers'), { recursive: true });
+    writeFileSync(join(other, 'test', 'helpers', 'repo-root.js'), '// 假的\n');
+    assert.throws(
+      () => assertSameCheckout(other, join(ROOT, 'test', 'helpers', 'repo-root.js')),
+      /另一棵 checkout/,
+      '指到另一棵有效 checkout 卻沒被拒絕＝掃描器會靜靜掃別棵樹、回報「零違規」',
+    );
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
 
-  // ⓒ 這棵樹上的門本身是通的（ROOT 就是載入 helper 的這一棵）
-  assert.ok(existsSync(join(ROOT, 'package.json')), 'ROOT 不是 repo 根');
-  assert.equal(
-    readFileSync(join(ROOT, 'test', 'helpers', 'repo-root.js'), 'utf8').length, helper.length,
-    'ROOT 底下的 helper 與剛剛讀到的不是同一份＝ROOT 指向可疑',
-  );
+  // ⓒ 根本不是 repo 根（沒有 package.json）也要被拒絕，而且訊息要不一樣（診斷得出是哪一種）
+  const empty = mkdtempSync(join(tmpdir(), 'not-a-repo-'));
+  try {
+    assert.throws(() => assertSameCheckout(empty, join(ROOT, 'test', 'helpers', 'repo-root.js')),
+      /找不到 package.json/, '不是 repo 根卻通過了');
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
 });
 
 test('解析不了的檔案要吵著紅，不可以靜靜跳過', () => {
