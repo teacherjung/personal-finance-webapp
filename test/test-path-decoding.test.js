@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import * as espree from 'espree';
-import { analyze } from 'eslint-scope';
 // ⚠️ **本檔不自己算 ROOT**：共用那一份會驗身分（不只驗「這裡有 package.json」），
 //    自己再算一次就是又多一個會算錯的地方。
 import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
@@ -51,117 +50,92 @@ function walk(node, visit) {
   }
 }
 
-/**
- * 字串字面（含無內插樣板）。⚠️ 也接**以字面開頭的串接**：`'../fixtures/' + name` 的最左邊那截
- * 就足以決定它是相對參照還是絕對 URL（r5 阻擋④：這種寫法很常見、必然是相對、而且真的會 ENOENT）。
- */
-function literalParts(node) {
+/** 字串字面（含無內插樣板）。⚠️ 只認**完整**字面：串接／有內插的樣板一律不認（見射程外那一題）。 */
+function completeLiteral(node) {
   if (!node) return null;
-  if (node.type === 'Literal' && typeof node.value === 'string') return { text: node.value, complete: true };
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
-    return { text: node.quasis[0].value.cooked, complete: true };
-  }
-  if (node.type === 'TemplateLiteral' && node.quasis.length) {
-    return { text: node.quasis[0].value.cooked, complete: false };   // `../x/${name}` ⇒ 只知道開頭
-  }
-  if (node.type === 'BinaryExpression' && node.operator === '+') {
-    const left = literalParts(node.left);
-    return left === null ? null : { text: left.text, complete: false };
-  }
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
   return null;
 }
 
 /**
- * 這一截**完整**字面，在 base 是 file URL 的情況下，能不能證明結果是 file URL。
- *
- * ⚠️ **解析失敗不可以當成「相對參照」**（r6 阻擋②）：`'http://[::1'` 這種壞字串會讓 `new URL` 丟錯、
- * 根本不會產生 file URL，但上一版把「解不出來」等同「相對」⇒ 假紅。
- * ⚠️ 也**不可以自己寫 scheme 正則**（r5 阻擋①，我踩過三次）：WHATWG 會先剝掉開頭空白／控制字元。
- * ⇒ 直接拿一個 sentinel file base 去解析，看結果的 protocol。解不出來＝證明不了 ⇒ 放過。
+ * 這一截完整字面單獨解析出來是不是 `file:`（⇒ base 會被忽略，結果就是 file URL）。
+ * ⚠️ 用真正的 `URL` 解析器，不自己寫 scheme 正則（r5 阻擋①：WHATWG 會先剝開頭空白／控制字元）。
  */
-const SENTINEL_FILE_BASE = 'file:///sentinel-base/x.js';
-function resolvesToFileUrl(lit) {
-  try {
-    return new URL(lit, SENTINEL_FILE_BASE).protocol === 'file:';
-  } catch {
-    return false;   // 壞字串／解不出來 ⇒ 證明不了 ⇒ 放過
-  }
+function isAbsoluteFileLiteral(lit) {
+  try { return new URL(lit).protocol === 'file:'; } catch { return false; }
 }
 
 /**
- * `new URL(input, base)` 算出來的**能不能證明**是 file URL（＝取 `.pathname` 會拿到未解碼路徑）。
- *
- * ⚠️ 只有「證明得出來」才 taint（**寧可漏抓、不可誤抓**——這是會讓 `npm test` 失敗的硬閘）：
- *   ⓐ input 本身就是 `import.meta.url`（或被指派過它的 binding）⇒ 是
- *   ⓑ input 的**最左字面**存在：能單獨解析成絕對 URL 且不是 `file:` ⇒ 不是；否則（＝相對參照）看 base
- * input 完全沒有字面可依據（純變數、函式回傳值）⇒ 證明不了 ⇒ 放過。
+ * 這一截完整字面是不是**相對參照**（⇒ 結果由 base 決定）。
+ * ⚠️ 解析失敗不可以當成相對（r6 阻擋②：`'http://[::1'` 會丟錯、根本產不出 file URL）。
  */
-function isFileUrlNew(node, tainted, isGlobalURL) {
+const SENTINEL_FILE_BASE = 'file:///sentinel-base/x.js';
+function isRelativeLiteral(lit) {
+  if (isAbsoluteFileLiteral(lit)) return false;
+  try { return new URL(lit, SENTINEL_FILE_BASE).protocol === 'file:'; } catch { return false; }
+}
+
+/** 這個節點是不是**字面上的** `import.meta.url`。 */
+function isImportMetaUrl(node) {
+  return !!node && node.type === 'MemberExpression' && !node.computed
+    && node.object && node.object.type === 'MetaProperty'
+    && node.object.meta && node.object.meta.name === 'import'
+    && node.property.type === 'Identifier' && node.property.name === 'url';
+}
+
+/** `new URL(…)` 這顆的結果**證明得出來**是 file URL 嗎（只看這一個運算式，不追變數）。 */
+function isFileUrlNewExpr(node) {
   if (!node || node.type !== 'NewExpression') return false;
   if (!(node.callee.type === 'Identifier' && node.callee.name === 'URL')) return false;
-  // ⚠️ 必須確認 `URL` 是全域那顆（r5 阻擋②）：函式參數或區域類別剛好叫 URL 也會被誤抓。
-  if (!isGlobalURL(node.callee)) return false;
-  const [input, base] = node.arguments;
-  if (isFileUrlExpr(input, tainted)) return true;                       // ⓐ
-  const parts = literalParts(input) || literalOfBinding(input, tainted);   // ⓑ
-  if (!parts) return false;
-  if (parts.complete) {
-    // 完整字面 ⇒ 用 sentinel file base 解析（照 WHATWG，含剝開頭空白／控制字元）
-    if (!resolvesToFileUrl(parts.text)) return false;
-  } else if (!/^[./\\?#]/.test(parts.text)) {
-    // ⚠️ 只知道開頭時**不可以**拿它去解析（r5 實測：`'https:' + '//x'` 的 `'https:'` 解不出來，
-    //    會被誤判成相對參照 ⇒ 假紅）。
-    // ⇒ **目前只收斂**「以 `.` `/` `\\` `?` `#` 開頭」這幾種——它們必然是相對參照。
-    //    其餘（例如 `'' + name`、變數開頭）證明不了，放過。⚠️ 這不是窮舉，是目前收斂到的範圍。
-    return false;
-  }
-  return isFileUrlExpr(base, tainted);
+  const lit = completeLiteral(node.arguments[0]);
+  if (lit === null) return false;
+  if (isAbsoluteFileLiteral(lit)) return true;                    // `file:…` ⇒ base 被忽略（r9 阻擋②）
+  return isRelativeLiteral(lit) && isImportMetaUrl(node.arguments[1]);
 }
 
-/** 每次寫入（限 initializer 與單純 `=`）都是同一個字串字面的變數，值可知（r5 阻擋④）。 */
-function literalOfBinding(node, tainted) {
-  if (!node || node.type !== 'Identifier') return null;
-  return tainted.litVar.get(node) || null;
-}
-
-/** 這個運算式是不是一個 file URL（`import.meta.url`、或被指派過它的變數）。 */
-function isFileUrlExpr(node, tainted) {
-  if (!node) return false;
-  // ⚠️ **只認 `import.meta.url` 這一個屬性**（r5 阻擋②）：舊版把任何掛在 `import.meta` 上的成員
-  //    都當 file URL，於是 `new URL(import.meta.dirname, 'https://example.com').pathname`
-  //    （結果是 HTTPS）被判違規。`import.meta.dirname`／`.filename` 是普通路徑字串，不是 URL。
-  if (node.type === 'MemberExpression') {
-    if (node.object && node.object.type === 'MetaProperty') {
-      return node.object.meta && node.object.meta.name === 'import'
-        && !node.computed && node.property.type === 'Identifier' && node.property.name === 'url';
-    }
-    return false;
+/** 這個屬性名是不是 `pathname`（含 `["pathname"]` 與無內插樣板鍵）。 */
+function isPathnameKey(prop, computed) {
+  if (!computed) return prop.type === 'Identifier' && prop.name === 'pathname';
+  if (prop.type === 'Literal') return prop.value === 'pathname';
+  if (prop.type === 'TemplateLiteral' && prop.expressions.length === 0) {
+    return prop.quasis[0].value.cooked === 'pathname';
   }
-  if (node.type === 'Identifier') return tainted.fileUrl.has(node);
   return false;
 }
 
 /**
- * 找出「取 file URL 的 `.pathname`」的地方。
- * ⚠️ **不判斷那個值後來有沒有真的當檔案路徑用**（r6／r7 阻擋：追 sink 要跨函式資料流、做不可靠）
- * ⇒ 本專案的口徑是整條禁掉，理由與替代寫法都寫在上面那一題的錯誤訊息裡。
- * ⚠️ 刻意**不**攔 `new URL(req.url, 'http://x').pathname`——那是 HTTP URL 的路徑段，本來就該這樣取
- * （複驗者 r1 指出的合法用法）。分界線＝**能不能證明結果是 file URL**，不是「參數裡有沒有 `import.meta`」：
- * input 若是絕對 URL（含 HTTPS），base 整個被忽略，那一行是合法的。
+ * 這個檔案裡有沒有自己宣告／匯入名叫 `URL` 的東西 ⇒ 整個檔案跳過。
+ * ⚠️ 為什麼（r5 阻擋②）：函式參數或區域類別剛好叫 `URL` 時，本層會誤抓。
+ * ⚠️ 這是**保守的整檔跳過**，不做作用域分析——本層 r9 起刻意不再走那條路（理由見下面那段）。
+ */
+function declaresOwnURL(ast) {
+  let found = false;
+  const named = (x) => !!x && x.type === 'Identifier' && x.name === 'URL';
+  walk(ast, (n) => {
+    if (found) return;
+    if ((n.type === 'VariableDeclarator' && named(n.id))
+      || ((n.type === 'ClassDeclaration' || n.type === 'FunctionDeclaration') && named(n.id))
+      || (n.type === 'ImportSpecifier' && named(n.local))
+      || (n.type === 'ImportDefaultSpecifier' && named(n.local))
+      || ((n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression'
+        || n.type === 'ArrowFunctionExpression') && (n.params || []).some(named))) found = true;
+  });
+  return found;
+}
+
+/**
+ * 找出「取 file URL 的 `.pathname`」的地方——**只認直接寫出來的兩種形狀**。
  *
- * ⚠️ **作用域交給 eslint-scope，不自己維護變數名集合**（r3 阻擋②）：
- * 前一版用「檔案內所有同名變數」當 taint 鍵，複驗者實測出四種確定的**假紅**——
- * 不同 block 的同名變數／不同 function 的同名變數／變數重新指向 HTTP URL 之後才取／
- * 以及上面那個「input 是絕對 HTTP URL」。假紅在硬 CI 閘上不能只靠改名消化，會擋掉沒有錯的改動。
- *
- * 取捨方向＝**寧可漏抓、不可誤抓**（與錢邊界攔截器刻意相反）：
- * 這一層只是早期警告，真正的門是 `test/helpers/repo-root.js`；
- * 而假紅會讓人為了消紅去改壞正確程式。所以任何變數只要**有一次**被指派成別的東西，就整個放過（kill）。
+ * ⚠️ **這是 r9 依複驗者判斷（乙：大幅簡化）重寫的版本。** r2–r9 八輪都在擴充變數追蹤
+ * （taint、固定點迭代、kill、作用域分析），而他每一輪都能用很小的自然反例同時打出假綠與假紅
+ * （最後一輪：`u.href = 'https://…'` 之後那個物件已經不是 file URL，而 kill 只看 binding 寫入、
+ * 看不到物件內部變更）。⇒ 結論是本專案早就寫過的那條：**列舉繞法補不完要關門**。
+ * 所以整層變數追蹤刪除，只留「直接寫」這兩種——**假紅風險歸零**，
+ * 漏抓由真正的門（共用 ROOT ＋身分斷言）補。射程外的形狀明列在誠實劃界那一題，**不再逐案補洞**。
  */
 export function findBadPathnameUses(src, rel = '<inline>') {
-  const parse = (sourceType) => espree.parse(src, {
-    ecmaVersion: 'latest', sourceType, loc: true, range: true,
-  });
+  const parse = (sourceType) => espree.parse(src, { ecmaVersion: 'latest', sourceType, loc: true });
   let ast;
   try { ast = parse('module'); } catch { /* 可能是 CommonJS 腳本，往下再試一次 */ }
   if (!ast) {
@@ -169,111 +143,23 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     //    就是本專案認過最糟的那種護欄（什麼都沒做卻回報通過）。
     ast = parse('script');
   }
-
-  // ⚠️ 需要 parent 才判得出 `+=`／`++`（espree 不建 parent）。
-  //    ⚠️ **一定要用 WeakMap，不可掛成節點上的 enumerable 屬性**（r7 阻擋③實測）：
-  //    掛成屬性之後 `eslint-scope`／`esrecurse` 走到 `StaticBlock` 會沿 parent 循環無限遞迴，
-  //    `class C { static {} }`（完全沒有 pathname 的合法程式）直接 RangeError ⇒ 硬 CI 閘紅燈。
-  const parentOf = new WeakMap();
-  walk(ast, (n) => {
-    for (const k of Object.keys(n)) {
-      const v = n[k];
-      if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') parentOf.set(c, n); }
-      else if (v && typeof v.type === 'string') parentOf.set(v, n);
-    }
-  });
-
-  const scopeManager = analyze(ast, { ecmaVersion: 2024, sourceType: 'module', ignoreEval: true });
-
-  const bindingOf = new Map();
-  const allVars = [];
-  const visitScope = (scope) => {
-    for (const v of scope.variables) allVars.push(v);
-    for (const r of scope.references) if (r.resolved) bindingOf.set(r.identifier, r.resolved);
-    for (const c of scope.childScopes) visitScope(c);
-  };
-  visitScope(scopeManager.globalScope);
-
-  // ⚠️ `URL` 必須是全域那顆（r5 阻擋②）：解析得到 binding ⇒ 是使用者自己宣告的同名東西 ⇒ 放過。
-  const isGlobalURL = (node) => !bindingOf.has(node);
-
-  // 作用域感知的 taint（鍵是 identifier 節點，經由 binding 對齊——同名不同 scope 是不同 binding）
-  const tainted = { fileUrl: new Set(), urlObj: new Set(), litVar: new Map() };
-  // ⚠️ **只接受 initializer 與單純 `=`**（r6 阻擋①）：`rel += 'https:'` 的 RHS 是 `'https:'`，
-  //    但實際值是 `'https:https:'`（protocol 仍是 https）⇒ 上一版把 RHS 當成「實際寫入值」而假紅。
-  //    `+=`／logical assignment／`++`／`for…of` 的綁定一律回報 null＝這個 binding 不可知（kill）。
-  const writeValues = (v) => {
-    const out = [];
-    for (const d of v.defs) {
-      const n = d.node;
-      if (!n) return null;
-      if (n.type === 'VariableDeclarator') { if (n.init) out.push(n.init); else return null; }
-      else return null;   // 函式參數／for…of／import 等：值不可知
-    }
-    for (const r of v.references) {
-      if (!r.isWrite()) continue;
-      const w = r.writeExpr;
-      if (!w) return null;
-      const parent = parentOf.get(r.identifier);
-      // 只有單純 `=`（以及宣告的 init，已在上面處理）算得出賦值完成後的值
-      if (parent && parent.type === 'AssignmentExpression' && parent.operator !== '=') return null;
-      if (parent && parent.type === 'UpdateExpression') return null;
-      out.push(w);
-    }
-    return out;
-  };
-  const markBinding = (v, bucket, isMatch) => {
-    const values = writeValues(v);
-    // ⚠️ kill：值不可知（null）或任一寫入不符合 ⇒ 整個放過（寧可漏抓、不可誤抓）
-    if (values === null || !values.length || !values.every((val) => isMatch(val))) return;
-    for (const id of v.identifiers) bucket.add(id);
-    for (const r of v.references) bucket.add(r.identifier);
-  };
-  // 每次寫入（限 initializer 與單純 `=`）都是同一個字串字面 ⇒ 值可知（r5 阻擋④）
-  for (const v of allVars) {
-    // ⚠️ **不可以要求「恰好一次寫入」**：`const rel = '..'` 的宣告在 eslint-scope 裡會同時出現在
-    //    `defs`（declarator）與 `references`（init 的 write）＝兩筆，於是條件永遠不成立（實測踩到）。
-    //    改成「每一次寫入都是同一個字串字面」——重新賦值成別的東西、或用 `+=` 之類算不出值的
-//    寫法，就自動不算（r6 阻擋①）。⚠️ 所以檔內別處不可寫成「只寫入一次」。
-    const values = writeValues(v);
-    if (values === null) continue;
-    const parts = values.map((val) => literalParts(val));
-    if (!parts.length || parts.some((x) => x === null || !x.complete)) continue;
-    if (new Set(parts.map((x) => x.text)).size !== 1) continue;
-    const lit = parts[0];
-    for (const id of v.identifiers) tainted.litVar.set(id, lit);
-    for (const r of v.references) tainted.litVar.set(r.identifier, lit);
-  }
-  for (let pass = 0; pass < 2; pass++) {
-    for (const v of allVars) markBinding(v, tainted.fileUrl, (val) => isFileUrlExpr(val, tainted));
-    for (const v of allVars) markBinding(v, tainted.urlObj, (val) => isFileUrlNew(val, tainted, isGlobalURL));
-  }
-  const isTaintedUrlObj = (node) => node && node.type === 'Identifier'
-    && (tainted.urlObj.has(node) || (bindingOf.has(node)
-      && bindingOf.get(node).identifiers.some((id) => tainted.urlObj.has(id))));
+  if (declaresOwnURL(ast)) return [];
 
   const hits = [];
-  const flag = (node) => hits.push(`${rel}:${node.loc.start.line}`);
-  const propName = (prop, computed) => {
-    if (!computed) return prop.type === 'Identifier' ? prop.name : null;
-    if (prop.type === 'Literal') return prop.value;
-    if (prop.type === 'TemplateLiteral' && prop.expressions.length === 0) return prop.quasis[0].value.cooked;
-    return null;
-  };
-
   walk(ast, (n) => {
-    // (a) `<file url 的 URL>.pathname`／`["pathname"]`——直接寫或經由中間變數
+    // (a) `new URL(…).pathname`／`["pathname"]`
     if (n.type === 'MemberExpression') {
-      if (propName(n.property, n.computed) !== 'pathname') return;
-      if (isFileUrlNew(n.object, tainted, isGlobalURL) || isTaintedUrlObj(n.object)) flag(n);
+      if (isPathnameKey(n.property, n.computed) && isFileUrlNewExpr(n.object)) {
+        hits.push(`${rel}:${n.loc.start.line}`);
+      }
       return;
     }
-    // (b) 解構：`const { pathname } = <file url 的 URL>`（含改名）——連 MemberExpression 都沒有
-    if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') {
-      if (!(isFileUrlNew(n.init, tainted, isGlobalURL) || isTaintedUrlObj(n.init))) return;
+    // (b) `const { pathname } = new URL(…)`（含改名）——連 MemberExpression 都沒有
+    if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern' && isFileUrlNewExpr(n.init)) {
       for (const prop of n.id.properties) {
-        if (prop.type !== 'Property') continue;
-        if (propName(prop.key, prop.computed) === 'pathname') flag(n);
+        if (prop.type === 'Property' && isPathnameKey(prop.key, prop.computed)) {
+          hits.push(`${rel}:${n.loc.start.line}`);
+        }
       }
     }
   });
@@ -288,16 +174,26 @@ export function findBadPathnameUses(src, rel = '<inline>') {
  * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成 `\344\270...` 八進位轉義而開不了檔
  *    ——那正是本 PR 在修的同一族病（本專案另有「掃描器跳過中文檔名」的前例）。
  */
-function jsFilesUnderGit(dirs) {
+function trackedJsFiles() {
+  // ⚠️ **不限目錄**（r9 阻擋①）：舊版只掃 test／scripts／lib／public，卻宣稱「本專案禁止」——
+  //    複驗者把最直接的違規放進根層 `server.js`，掃描器照樣 11/11 全綠。
+  //    根層還有 `eslint.config.js` 等受版控的 .js，全都在射程外而且沒有交代。
   const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
-    '--cached', '--others', '--exclude-standard', ...dirs], { cwd: ROOT, encoding: 'utf8' });
+    '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' });
   return out.split('\n').filter((f) => f.endsWith('.js'));
 }
 
 test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——理由見錯誤訊息）', () => {
-  const files = jsFilesUnderGit(['test', 'scripts', 'lib', 'public']);
+  const files = trackedJsFiles();
   // ⚠️ 反面自我驗證：先確認真的掃到東西。掃到 0 個檔案時「沒有違規者」當然成立＝最典型的假綠。
   assert.ok(files.length > 100, `git ls-files 只列出 ${files.length} 支 .js，掃描範圍不對＝這一題在空轉`);
+  // ⚠️ **範圍也要釘住**（r9 阻擋①的根）：舊版只掃 test／scripts／lib／public，複驗者把違規放進根層
+  //    `server.js` 就全綠。光靠上面的計數擋不住——縮回只掃 `test/` 仍然 >100 支（實測突變⑦不會紅）。
+  //    ⇒ 用結構性斷言：**根層**與各主要目錄都必須在清單裡。
+  assert.ok(files.some((f) => !f.includes('/')), '清單裡沒有任何根層 .js（例如 server.js）＝根層在射程外');
+  for (const dir of ['lib/', 'public/', 'test/', 'scripts/']) {
+    assert.ok(files.some((f) => f.startsWith(dir)), `清單裡沒有 ${dir} 底下的 .js＝掃描範圍不完整`);
+  }
   const offenders = files.flatMap((rel) => findBadPathnameUses(readFileSync(join(ROOT, rel), 'utf8'), rel));
   assert.deepEqual(offenders, [],
     '這些地方取了 file URL 的 `.pathname`：\n  ' + offenders.join('\n  ')
@@ -316,27 +212,21 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
   const PN = '.' + 'pathname';
 
   const mustCatch = [
-    // ↓ r2 複驗者打穿手寫 lexer 的形狀（改用 AST 之後應全數抓到）
+    // ↓ r2 複驗者打穿手寫 lexer 的形狀（改用真正的解析器之後全數抓到）
     ['正規式字元類別 [//] 之後接真違規', `function f(){ return /[//]/; } const R = ${U}("..", ${IMU})${PN};`],
     ['巢狀樣板內插裡的真違規', 'const s = `${`//${' + U + '("..", ' + IMU + ')' + PN + '}`}`;'],
     ['同一行前半是區塊註解', `/* 說明 */ const R = ${U}("..", ${IMU})${PN};`],
     ['跨行寫法', `const R = ${U}("..",\n  ${IMU})${PN};`],
     ['計算屬性（字串字面）', `const R = ${U}("..", ${IMU})["pathname"];`],
     ['計算屬性（無內插樣板）', 'const R = ' + U + '("..", ' + IMU + ')[`pathname`];'],
-    // ↓ 2026-08-08 四路攻擊實測「純語法共現」全部漏掉、而且每一種都真的 ENOENT 的三種自然重構
-    ['解構取值（連 MemberExpression 都沒有）', `const { pathname } = ${U}("..", ${IMU});`],
-    ['解構＋改名', `const { pathname: R } = ${U}("..", ${IMU});`],
-    ['存成中間變數再取', `const u = ${U}("..", ${IMU}); const R = u${PN};`],
-    ['base 抽成常數', `const base = ${IMU}; const R = ${U}("..", base)${PN};`],
-    // ↓ r5 複驗者指名「很常見、值得成為 mustCatch」的，以及這輪一併收斂的形狀
-    ['以相對字面開頭的串接', `const R = ${U}("../fixtures/" + name, ${IMU})${PN};`],
-    ['樣板有內插但開頭是相對', 'const R = ' + U + '(`../x/${name}`, ' + IMU + ')' + PN + ';'],
-    ['值可由字面賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    ['直接解構（連 MemberExpression 都沒有）', `const { pathname } = ${U}("..", ${IMU});`],
+    ['直接解構＋改名', `const { pathname: R } = ${U}("..", ${IMU});`],
+    ['無內插樣板的相對路徑', 'const R = ' + U + '(`..`, ' + IMU + ')' + PN + ';'],
     ['file: 大小寫混寫', `const R = ${U}("FiLe:///x", ${IMU})${PN};`],
     ['protocol-relative（會繼承 file base）', `const R = ${U}("//example.com/x", ${IMU})${PN};`],
-    ['單參數就是 file URL', `const R = ${U}(${IMU})${PN};`],
-    ['無內插樣板的相對路徑', 'const R = ' + U + '(`..`, ' + IMU + ')' + PN + ';'],
-    ['宣告順序顛倒（先用後宣告的 base）', `function g(){ return ${U}("..", base)${PN}; } const base = ${IMU};`],
+    // ↓ r9 阻擋②：input 已證明是絕對 file URL 時 base 被忽略，不可以還要求 base 也是 file URL
+    ['絕對 file URL（單參數）', `const R = ${U}("file:///tmp/x")${PN};`],
+    ['絕對 file URL＋https base（base 被忽略）', `const R = ${U}("file:///tmp/x", "https://example.com/")${PN};`],
   ];
   for (const [why, src] of mustCatch) {
     assert.notDeepEqual(findBadPathnameUses(src), [], `這種形狀必須抓到卻漏了：${why}`);
@@ -386,36 +276,28 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
   const IMU = 'import' + '.meta.url';
   const PN = '.' + 'pathname';
   const outOfRange = [
-    ['跨函式傳遞（作用域分析不做跨函式的值追蹤）',
-      `function f(u){ return u${PN}; } const R = f(${U}("..", ${IMU}));`],
-    ['跨檔（URL 物件從別的模組 import 進來）',
-      `import { ROOT } from './other.js'; const R = ROOT${PN};`],
+    // ⚠️ r9 起本層**只認直接寫出來的兩種形狀**（依複驗者判斷「乙：大幅簡化」）。
+    //    以下全部是「經過變數／容器／函式」的形狀——每一種都真的會 ENOENT，但本層刻意不追。
+    //    ⇒ 漏抓由真正的門（`test/helpers/repo-root.js` 的共用 ROOT ＋身分斷言）補。
+    ['存成中間變數再取', `const u = ${U}("..", ${IMU}); const R = u${PN};`],
+    ['base 抽成常數', `const base = ${IMU}; const R = ${U}("..", base)${PN};`],
+    ['值可由字面賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    ['以相對字面開頭的串接', `const R = ${U}("../fixtures/" + name, ${IMU})${PN};`],
+    ['樣板有內插但開頭是相對', 'const R = ' + U + '(`../x/${name}`, ' + IMU + ')' + PN + ';'],
+    ['跨函式傳遞', `function f(u){ return u${PN}; } const R = f(${U}("..", ${IMU}));`],
+    ['跨檔（URL 物件從別的模組 import 進來）', `import { ROOT } from './other.js'; const R = ROOT${PN};`],
     ['先進容器再取出', `const box = { u: ${U}("..", ${IMU}) }; const R = box.u${PN};`],
-    // ↓ 以下四種是 r3 複驗者實測出來的假綠，照實記在射程外（未實作收斂）
     ['解構後再賦值（不是宣告式解構）', `let pathname; ({ pathname } = ${U}("..", ${IMU}));`],
     ['計算鍵的解構', `const key = "pathname"; const { [key]: R } = ${U}("..", ${IMU});`],
     ['URL 建構子本身被別名', `const V = URL; const R = new V("..", ${IMU})${PN};`],
-    ['URL 物件再別名一層', `const a = ${U}("..", ${IMU}); const b = a; const R = b${PN};`],
-    // ↓ r4 之後**刻意**放過：input 不是字串字面 ⇒ 證明不了結果是 file URL。
-    //    這是「寧可漏抓、不可誤抓」的代價，不是漏掉的——r2 曾把它列為 mustCatch，
-    //    r4 收緊判準（只有證明得出來才 taint）之後它必然落到射程外。
-    ['input 是函式回傳值（非字面）', `const R = ${U}(String(".."), ${IMU})${PN};`],
-    // ↓ kill semantics 的代價（r4 複驗者實測並確認「掃描器仍有價值、不該刪，但要列進劃界」）：
-    //    一個 binding 只要有一次寫入判不出是 file URL，就整個放過——自我賦值就足以脫身。
-    ['自我賦值（kill 讓它脫身）', `let u = ${U}("..", ${IMU}); if (x) u = u; const R = u${PN};`],
-    // ↓ r6 複驗者指出的其餘缺口，照實記（未收斂）
-    ['for…of 綁定的值（不可知 ⇒ kill）', `for (const rel of ["..", ".."]) { const R = ${U}(rel, ${IMU})${PN}; }`],
-    ['只知前綴且開頭是空字串（判不出 name 是否絕對）', `const R = ${U}("" + name, ${IMU})${PN};`],
-    // ↓ 複合賦值一律 kill 的代價（r8 校正後接受）：真值仍是相對參照，但算不出賦值完成後的值。
-    //    ⚠️ 這一條**不可以**為了收斂而拿掉 kill——那會讓 URL 物件被 `+=` 字串化的情形變成假紅（r8 反例）。
-    ['+= 兩次都是相對字面（真值仍相對，但 kill 讓它落在射程外）',
-      `let rel = ".."; rel += ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    ['整個檔案自己宣告了 URL ⇒ 保守跳過', `class URL {} const R = new URL("..", ${IMU})${PN};`],
   ];
   for (const [why, src] of outOfRange) {
     assert.deepEqual(findBadPathnameUses(src), [],
       `這一種本來在射程外、現在卻抓到了：${why}\n`
-      + '——若是真的收斂了，請把它從「誠實劃界」搬到 mustCatch 並更新檔頭的射程敘述；'
-      + '若是誤抓，請修（本層寧可漏抓、不可誤抓）。');
+      + '——r9 起本層刻意只認「直接寫」兩種形狀（複驗者判斷：列舉繞法補不完要關門）。'
+      + '若你是**刻意**擴充射程，請連同檔頭與 mustCatch 一起更新；'
+      + '若這是意外的誤抓，請修（本層寧可漏抓、不可誤抓）。');
   }
 });
 
@@ -517,35 +399,6 @@ test('⭐ 壞掉的 URL 字面不可以被當成「證明是 file URL」（r7 �
   // 反面：解得出來而且是 file URL 的，仍要抓到（否則上面那三條可能是「整個判準壞了」而非正確放過）
   assert.notDeepEqual(findBadPathnameUses(`const p = new URL("..", ${IMU2})${PN2};`), [],
     '正常的相對路徑也放過了＝判準整個壞掉，上面三條的綠是假的');
-});
-
-test('⭐ 複合賦值一律 kill：他 r6／r8 兩顆反例都要放過（r8 校正）', () => {
-  // ⚠️ 沿革（我 r7 刪掉這條 kill、r8 被反例推翻，兩顆探針一起釘住免得有人再刪）：
-  //    `eslint-scope` 的 `writeExpr` 是**複合賦值的 RHS**，不是賦值完成後的值。
-  const IMU2 = 'import' + '.meta.url';
-  const PN2 = '.' + 'pathname';
-  const mustRelease = [
-    ['r6 反例：+= 之後其實是 https', `let rel = 'https:'; rel += 'https:'; const p = new URL(rel, ${IMU2})${PN2};`],
-    // ↓ r8 反例：兩次寫入都是 file URL 的 new URL，但 `+=` 已把 u 字串化 ⇒ u.pathname 是 undefined
-    ['r8 反例：URL 物件被 += 字串化（RHS 也是 file URL）',
-      `let u = new URL('..', ${IMU2}); u += new URL('..', ${IMU2}); const p = u${PN2};`],
-    ['URL 物件被 += 空字串', `let u = new URL('..', ${IMU2}); u += ''; const p = u${PN2};`],
-    ['+= 的另一邊值不可知', `let rel = '..'; rel += x; const p = new URL(rel, ${IMU2})${PN2};`],
-    ['logical assignment', `let rel = '..'; rel ||= x; const p = new URL(rel, ${IMU2})${PN2};`],
-    // ⚠️ 這一條原本寫成 `let n = 0; n++; const p = new URL('..', …)` ——**探針自己寫錯了**：
-    //    那個 `n` 跟 URL 無關，那行是真違規、本來就該抓。改成 `++` 真的作用在 taint 目標上。
-    ['URL 物件被 ++（變成 NaN，不再是 URL）', `let u = new URL('..', ${IMU2}); u++; const p = u${PN2};`],
-    ['字串變數被 ++（變成 NaN）', `let rel = '..'; rel++; const p = new URL(rel, ${IMU2})${PN2};`],
-    ['寫入的字面不一致 ⇒ kill', `let rel = '..'; rel = 'https://a'; const p = new URL(rel, ${IMU2})${PN2};`],
-    ['static block 裡的複合賦值',
-      `class C { static { let r = '..'; r += x; const p = new URL(r, ${IMU2})${PN2}; } }`],
-  ];
-  for (const [why, src] of mustRelease) {
-    assert.deepEqual(findBadPathnameUses(src), [], `複合賦值之後的值算不出來，不可判違規（假紅）：${why}`);
-  }
-  // ⚠️ 反面：單純 `=` 的相對字面仍要抓到，否則上面全綠可能只是「判準整個壞了」
-  assert.notDeepEqual(findBadPathnameUses(`let rel = '..'; const p = new URL(rel, ${IMU2})${PN2};`), [],
-    '單純賦值的相對字面也放過了＝判準壞掉，上面那些綠是假的');
 });
 
 test('⭐ 合法但會讓走訪爆掉的形狀（r7 阻擋③：parent 掛成屬性會無限遞迴）', () => {
