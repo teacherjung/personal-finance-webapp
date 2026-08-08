@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import * as espree from 'espree';
@@ -38,12 +40,7 @@ import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
  * `NewExpression(URL) → MemberExpression(.pathname)`，語法邊界交給 parser。
  */
 
-/**
- * 找出「把 file URL 的 `.pathname` 當檔案路徑用」的地方。
- * ⚠️ 刻意**不**攔 `new URL(req.url, 'http://x').pathname`——那是 HTTP URL 的路徑段，本來就該這樣取
- * （複驗者 r1 指出的合法用法）。分界線＝參數裡有沒有 `import.meta`。
- */
-/** 走遍所有子節點（只需要「全部看過」，不裝 acorn-walk）。 */
+/** 走遍所有子節點（只需要「全部看過」，不為此裝額外的走訪套件）。 */
 function walk(node, visit) {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) { for (const n of node) walk(n, visit); return; }
@@ -145,7 +142,12 @@ function isFileUrlExpr(node, tainted) {
 }
 
 /**
- * 找出「把 file URL 的 `.pathname` 當檔案路徑用」的地方。
+ * 找出「取 file URL 的 `.pathname`」的地方。
+ * ⚠️ **不判斷那個值後來有沒有真的當檔案路徑用**（r6／r7 阻擋：追 sink 要跨函式資料流、做不可靠）
+ * ⇒ 本專案的口徑是整條禁掉，理由與替代寫法都寫在上面那一題的錯誤訊息裡。
+ * ⚠️ 刻意**不**攔 `new URL(req.url, 'http://x').pathname`——那是 HTTP URL 的路徑段，本來就該這樣取
+ * （複驗者 r1 指出的合法用法）。分界線＝**能不能證明結果是 file URL**，不是「參數裡有沒有 `import.meta`」：
+ * input 若是絕對 URL（含 HTTPS），base 整個被忽略，那一行是合法的。
  *
  * ⚠️ **作用域交給 eslint-scope，不自己維護變數名集合**（r3 阻擋②）：
  * 前一版用「檔案內所有同名變數」當 taint 鍵，複驗者實測出四種確定的**假紅**——
@@ -167,14 +169,6 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     //    就是本專案認過最糟的那種護欄（什麼都沒做卻回報通過）。
     ast = parse('script');
   }
-
-  // ⚠️ 需要 parent 才判得出 `+=`／`++`（espree 不建 parent，自己補一趟）
-  walk(ast, (n) => { for (const k of Object.keys(n)) {
-    if (k === 'parent') continue;
-    const v = n[k];
-    if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') c.parent = n; }
-    else if (v && typeof v.type === 'string') v.parent = n;
-  } });
 
   const scopeManager = analyze(ast, { ecmaVersion: 2024, sourceType: 'module', ignoreEval: true });
 
@@ -206,11 +200,7 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     for (const r of v.references) {
       if (!r.isWrite()) continue;
       const w = r.writeExpr;
-      const parent = r.identifier.parent;
       if (!w) return null;
-      // 只有單純 `=`（以及宣告的 init，已在上面處理）算得出值
-      if (parent && parent.type === 'AssignmentExpression' && parent.operator !== '=') return null;
-      if (parent && parent.type === 'UpdateExpression') return null;
       out.push(w);
     }
     return out;
@@ -459,6 +449,85 @@ test('⭐ 真的門｜餵一個「另一棵 checkout」的 root 進去必須被�
       /找不到 package.json/, '不是 repo 根卻通過了');
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 真的門的**接線**｜載入時必須傳「正在執行的這一支」，不是 join(ROOT, …)（r7 阻擋①）', () => {
+  // ⚠️ 上一題只驗匯出函式在「測試傳入可信 selfPath」時的行為。複驗者把正式呼叫改成
+  //    `assertSameCheckout(ROOT, join(ROOT, SELF_REL))` ⇒ 又變成自己比自己，而考題仍 7/7 全綠。
+  //    ⇒ 這一題驗**接線**：把 helper 複製到別的地方、只把它的 ROOT 改成指向真的 repo，
+  //       然後在子行程 import 它。
+  //       ・接線正確（傳執行中檔案）⇒ here=複本、there=真 repo 的那支 ⇒ 不相等 ⇒ **載入失敗**
+  //       ・接線壞掉（傳 join(ROOT, SELF_REL)）⇒ 兩邊都是真 repo 的那支 ⇒ 相等 ⇒ 載入成功（假綠）
+  const fake = mkdtempSync(join(tmpdir(), 'wiring-'));
+  try {
+    mkdirSync(join(fake, 'test', 'helpers'), { recursive: true });
+    writeFileSync(join(fake, 'package.json'), '{"name":"fake"}');
+    const src = readFileSync(join(ROOT, 'test', 'helpers', 'repo-root.js'), 'utf8');
+    const patched = src.replace(
+      /export const ROOT = .*/,
+      `export const ROOT = ${JSON.stringify(ROOT)};`,
+    );
+    assert.notEqual(patched, src, '沒改到 ROOT 那一行＝這一題在空轉');
+    const copy = join(fake, 'test', 'helpers', 'repo-root.js');
+    writeFileSync(copy, patched);
+
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import(${JSON.stringify(pathToFileURL(copy).href)}).then(() => process.exit(0), () => process.exit(3));`],
+    { encoding: 'utf8' });
+    assert.equal(r.status, 3,
+      '把 helper 搬到別的樹、ROOT 卻指向真 repo，載入居然成功了——'
+      + '⇒ 載入時傳的不是「正在執行的這一支」（很可能寫成 join(ROOT, SELF_REL) ＝自己比自己），'
+      + '身分防線等於不存在，而掃描器會靜靜掃別棵樹。');
+  } finally {
+    rmSync(fake, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 壞掉的 URL 字面不可以被當成「證明是 file URL」（r7 阻擋②）', () => {
+  // ⚠️ 複驗者把 resolvesToFileUrl 的 catch 從 return false 改成 return true，整檔仍 7/7 全綠
+  //    ＝那條修法沒有任何考題撐著。這一題就是那顆探針。
+  const IMU2 = 'import' + '.meta.url';
+  const PN2 = '.' + 'pathname';
+  for (const bad of ['http://[::1', 'https://%', 'http://a b c']) {
+    assert.deepEqual(findBadPathnameUses(`const p = new URL(${JSON.stringify(bad)}, ${IMU2})${PN2};`), [],
+      `壞字串 ${JSON.stringify(bad)} 會讓 new URL 丟錯、根本產不出 file URL，不可以判違規（假紅）`);
+  }
+  // 反面：解得出來而且是 file URL 的，仍要抓到（否則上面那三條可能是「整個判準壞了」而非正確放過）
+  assert.notDeepEqual(findBadPathnameUses(`const p = new URL("..", ${IMU2})${PN2};`), [],
+    '正常的相對路徑也放過了＝判準整個壞掉，上面三條的綠是假的');
+});
+
+test('⭐ 複合賦值：他報的假紅要放過，但真的是相對路徑的不可以漏抓（r7 實測校正）', () => {
+  // ⚠️ 這一題的預期是**實測校正過**的：複驗者 r6 建議「`+=` 一律 kill」，但實測顯示
+  //    ①他報的那個假紅是「壞字串被當相對」造成的，sentinel base 修好之後自己就放過
+  //    ②kill 反而讓「真值仍是相對路徑」的情形漏抓。⇒ 不做 operator kill（理由寫在 writeValues 上）。
+  const IMU2 = 'import' + '.meta.url';
+  const PN2 = '.' + 'pathname';
+  const cases = [
+    // [說明, 程式, 應不應該抓到]
+    ['他報的案例：+= 之後其實是 https', `let rel = 'https:'; rel += 'https:'; const p = new URL(rel, ${IMU2})${PN2};`, false],
+    ['+= 的另一邊值不可知', `let rel = '..'; rel += x; const p = new URL(rel, ${IMU2})${PN2};`, false],
+    ['URL 物件被 += 之後已不是原物件', `let u = new URL('..', ${IMU2}); u += ''; const p = u${PN2};`, false],
+    ['logical assignment 之後值不可知', `let rel = '..'; rel ||= x; const p = new URL(rel, ${IMU2})${PN2};`, false],
+    ['寫入的字面不一致 ⇒ kill', `let rel = '..'; rel = 'https://a'; const p = new URL(rel, ${IMU2})${PN2};`, false],
+    // ↓ 這一條是刪掉 operator kill 換回來的：真值 '....' 仍是相對參照、仍會 ENOENT
+    ['+= 兩次都是相對字面（真值仍相對）', `let rel = '..'; rel += '..'; const p = new URL(rel, ${IMU2})${PN2};`, true],
+    ['static block 裡的複合賦值（值不可知）',
+      `class C { static { let r = '..'; r += x; const p = new URL(r, ${IMU2})${PN2}; } }`, false],
+  ];
+  for (const [why, src, shouldCatch] of cases) {
+    const hit = findBadPathnameUses(src).length > 0;
+    assert.equal(hit, shouldCatch,
+      shouldCatch ? `這是真的會 ENOENT 卻漏抓了：${why}` : `這是安全寫法卻被判違規（假紅）：${why}`);
+  }
+});
+
+test('⭐ 合法但會讓走訪爆掉的形狀（r7 阻擋③：parent 掛成屬性會無限遞迴）', () => {
+  // 這幾段完全沒有 pathname，但曾讓 eslint-scope 沿 parent 循環無限遞迴 ⇒ 硬 CI 閘紅燈。
+  for (const src of ['class C { static {} }', 'class C { static { let r = ".."; r += ".."; } }',
+    'class C { static #x = 1; static { C.#x++; } }']) {
+    assert.deepEqual(findBadPathnameUses(src), [], `合法程式讓掃描器爆掉或誤抓：${src}`);
   }
 });
 
