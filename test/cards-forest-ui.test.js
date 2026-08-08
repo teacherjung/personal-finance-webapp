@@ -39,7 +39,10 @@ function assertCardsStructure(source) {
     "cardSection('會員卡'",
     'id="addCard"',
   ]) assert.match(render, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;/);
+  assert.match(render, /catch \(error\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = cardsLoadErrorHtml/,
+    '載入失敗晚到時不可蓋掉新頁面');
+  assert.match(render, /\}\s*if \(seq !== currentRouteSeq\(\)\) return;[^\n]*\n\s*const summary/,
+    '載入成功晚到時不可蓋掉新頁面');
   assert.match(render, /wan\(summary\.annualFees\)/);
   assert.match(panel, /esc\(c\.name\)/);
   assert.match(panel, /c\.lastFour/);
@@ -48,7 +51,7 @@ function assertCardsStructure(source) {
   assert.match(form, /\.\.\.\(c\?\.pdfPasswordSet \?/);
   assert.match(form, /if \(c && clearPw\) data\.pdfPassword = '';/);
   assert.match(form, /else if \(c && \(data\.pdfPassword == null \|\| data\.pdfPassword === ''\)\) delete data\.pdfPassword;/);
-  assert.match(form, /if \(seq === currentRouteSeq\(\)\) renderCards\(\);/);
+  assert.match(form, /if \(seq === currentRouteSeq\(\)\) \{[\s\S]*rerenderCardsAfterSave\(seq, message\);/);
 }
 
 function assertCardsCss(css, index) {
@@ -86,9 +89,12 @@ test('卡片追蹤 UI：到期摘要沿用月底判準，年費仍走共用萬�
 
 test('卡片追蹤 UI：拿掉路由守衛、機密保護、圓角或手機配置時考題會紅', () => {
   const source = read('public/modules/cards.js');
-  const guard = 'if (seq !== currentRouteSeq()) return;';
-  assert.ok(source.includes(guard), '突變目標必須存在：路由守衛');
-  assert.throws(() => assertCardsStructure(source.replace(guard, '// route guard removed')));
+  const errorGuard = "catch (error) {\n    if (seq !== currentRouteSeq()) return;\n    view().innerHTML = cardsLoadErrorHtml";
+  const successGuard = "}\n  if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁";
+  assert.ok(source.includes(errorGuard), '失敗路徑守衛突變目標必須存在');
+  assert.ok(source.includes(successGuard), '成功路徑守衛突變目標必須存在');
+  assert.throws(() => assertCardsStructure(source.replace(errorGuard, errorGuard.replace('if (seq !== currentRouteSeq()) return;', '// route guard removed'))));
+  assert.throws(() => assertCardsStructure(source.replace(successGuard, successGuard.replace('if (seq !== currentRouteSeq()) return;', '// route guard removed'))));
   assert.ok(source.includes('c.lastFour'), '突變目標必須存在：末四碼');
   assert.throws(() => assertCardsStructure(source.replace('c.lastFour', 'c.pdfPassword')));
   assert.throws(() => assertCardsStructure(source.replace('esc(expiry.text)', 'expiry.text')));

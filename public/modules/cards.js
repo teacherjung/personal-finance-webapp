@@ -34,9 +34,65 @@ function expiryMeta(expiry) {
   return { text: `有效至 ${month}`, tone: 'neutral' };
 }
 
+function cardNoticeHtml(message) {
+  if (!message) return '';
+  return `<div class="card-tracker-notice" role="status" aria-live="polite">
+    <span>${icon('check', 17)}</span><strong>${esc(message)}</strong>
+  </div>`;
+}
+
+function cardsLoadingHtml() {
+  return `<div class="cards-page">
+    <div class="page-head cards-page-head">
+      <div><h1>卡片追蹤</h1><p>集中管理信用卡、會員卡、結帳繳款日、年費與到期狀態。</p></div>
+    </div>
+    <section class="card-tracker-state card-tracker-loading" role="status" aria-live="polite" aria-busy="true">
+      <span class="card-state-icon">${icon('card', 27)}</span>
+      <div><span>正在整理</span><h2>正在讀取卡片資料</h2><p>只會讀取卡片清單，不會修改任何資料。</p></div>
+    </section>
+  </div>`;
+}
+
+function cardsLoadErrorHtml(message) {
+  return `<div class="cards-page">
+    <div class="page-head cards-page-head">
+      <div><h1>卡片追蹤</h1><p>集中管理信用卡、會員卡、結帳繳款日、年費與到期狀態。</p></div>
+    </div>
+    <section class="card-tracker-state card-tracker-error" role="alert" aria-labelledby="cardsErrorTitle">
+      <span class="card-state-icon">${icon('alert', 28)}</span>
+      <div class="card-state-copy">
+        <span>載入未完成</span>
+        <h2 id="cardsErrorTitle">卡片資料暫時載入失敗</h2>
+        <p>這次只讀取失敗，沒有新增、刪除或修改任何卡片。可以直接重新載入。</p>
+      </div>
+      <button class="btn-ghost" id="retryCards">${icon('refresh', 16)}重新載入</button>
+      <details><summary>查看錯誤訊息</summary><code>${esc(message || '無法連線')}</code></details>
+    </section>
+  </div>`;
+}
+
+let cardNotice = '';
+
+function rerenderCardsAfterSave(seq, message) {
+  if (seq !== currentRouteSeq()) return;
+  cardNotice = message;
+  return renderCards();
+}
+
 export async function renderCards() {
   const seq = currentRouteSeq();
-  const list = await api('/cards');
+  const notice = cardNotice;
+  cardNotice = '';
+  view().innerHTML = cardsLoadingHtml();
+  let list;
+  try {
+    list = await api('/cards');
+  } catch (error) {
+    if (seq !== currentRouteSeq()) return;
+    view().innerHTML = cardsLoadErrorHtml(error instanceof Error ? error.message : '無法連線');
+    byId('retryCards').onclick = () => renderCards();
+    return;
+  }
   if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6 idiom；r11#2 補上漏掉的兩頁）——寫 DOM 前必守，router 的事後檢查救不了 renderer 內部的寫入
   const summary = cardSummary(list);
 
@@ -46,6 +102,8 @@ export async function renderCards() {
         <div><h1>卡片追蹤</h1><p>集中管理信用卡、會員卡、結帳繳款日、年費與到期狀態。</p></div>
         <div class="page-actions"><button class="btn" id="addCard">${icon('plus', 16)}新增卡片</button></div>
       </div>
+
+      ${cardNoticeHtml(notice)}
 
       <section class="card-tracker-summary" aria-label="卡片摘要">
         <div class="card-summary-item"><span>全部卡片</span><strong>${list.length} 張</strong></div>
@@ -59,20 +117,28 @@ export async function renderCards() {
         <div><strong>卡號只顯示末四碼</strong><p>帳單密碼不會回填到頁面；需要更新時再於編輯表單輸入。</p></div>
       </div>
 
-      ${cardSection('信用卡', '帳務與繳款', summary.credit, '尚無信用卡，點右上角新增。')}
-      ${cardSection('會員卡', '會籍與權益', summary.member, '尚無會員卡。')}
+      ${cardSection('信用卡', '帳務與繳款', summary.credit, 'credit')}
+      ${cardSection('會員卡', '會籍與權益', summary.member, 'membership')}
     </div>
   `;
 
   byId('addCard').onclick = () => openCardForm();
+  view().querySelectorAll('[data-add-type]').forEach(b => b.onclick = () => openCardForm(null, { defaultType: b.dataset.addType }));
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openCardForm(list.find(c => c.id === b.dataset.edit)));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const c = list.find(x => x.id === b.dataset.del);
-    confirmDelete(c.name, () => api('/cards/' + c.id, { method: 'DELETE' }));
+    confirmDelete(c.name, async () => {
+      await api('/cards/' + c.id, { method: 'DELETE' });
+      cardNotice = '卡片已刪除';
+    });
   });
 }
 
-function cardSection(title, eyebrow, list, emptyText) {
+function cardSection(title, eyebrow, list, type) {
+  const emptyText = type === 'credit' ? '尚無信用卡' : '尚無會員卡';
+  const emptyGuide = type === 'credit'
+    ? '新增後可一起查看結帳日、繳款日、年費與效期。'
+    : '新增後可記錄會員編號、等級、權益與效期。';
   return `<section class="card-tracker-section">
     <div class="card-tracker-section-head">
       <div><span>${eyebrow}</span><h2>${title}</h2></div>
@@ -80,7 +146,11 @@ function cardSection(title, eyebrow, list, emptyText) {
     </div>
     ${list.length
       ? `<div class="card-tracker-grid">${list.map(cardPanel).join('')}</div>`
-      : `<div class="card-tracker-empty"><span>${icon('card', 22)}</span><strong>${emptyText}</strong></div>`}
+      : `<div class="card-tracker-empty">
+        <span>${icon('card', 22)}</span>
+        <div><strong>${emptyText}</strong><p>${emptyGuide}</p></div>
+        <button class="btn" data-add-type="${type}">${icon('plus', 16)}新增${emptyText.slice(2)}</button>
+      </div>`}
   </section>`;
 }
 
@@ -130,7 +200,7 @@ function cardPanel(c) {
   </article>`;
 }
 
-function openCardForm(c) {
+function openCardForm(c, { defaultType = 'credit' } = {}) {
   const seq = currentRouteSeq();
   openForm({
     title: c ? '編輯卡片' : '新增卡片',
@@ -153,7 +223,7 @@ function openCardForm(c) {
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
     // 機密不預填（自主體檢）：GET /api/cards 已剝掉 pdfPassword，編輯時本來就沒有值可填
-    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : {},
+    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : { type: defaultType },
     onSubmit: async (data) => {
       const clearPw = data.clearPdfPassword; delete data.clearPdfPassword;   // 非 schema 欄位，送出前移除
       // 勾「清除」→ 明確送空字串清空（後端接受 '' ＝清除）；否則留空＝不變更（PUT 部分合併保留舊密碼）
@@ -162,7 +232,10 @@ function openCardForm(c) {
       if (c) await api('/cards/' + c.id, { method: 'PUT', body: data });
       else await api('/cards', { method: 'POST', body: data });
       toast('已儲存');
-      if (seq === currentRouteSeq()) renderCards();
+      if (seq === currentRouteSeq()) {
+        const message = c ? '卡片資料已更新' : `${TYPE_LABEL[data.type] || '卡片'}已新增`;
+        rerenderCardsAfterSave(seq, message);
+      }
     }
   });
 }
