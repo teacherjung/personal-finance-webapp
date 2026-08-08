@@ -6,7 +6,8 @@
 // 內容是錯誤訊息（或登入頁 HTML）的 `.json`，而使用者以為自己有備份了——
 // 而 PR #410 剛把他的自保完全押在這顆鈕上（分類管理與店名規則的文案都叫人先按它）。
 //    ⚠️ 2026-08-08 訂正：**分類管理已經不指向匯出**（只留「⚠️ 儲存後沒有「復原」可以按。」一句警告——本樹逐字版本，2026-08-06 收窄，
-//    William 2026-08-06 拍板）；店名規則那兩處的指路**在本支的樹上仍然存在**——拿掉它們是 #422 的事，而 #422 是另一支、
+//    ⚠️ 這句措辭是 2026-08-06 依 #410 r6 複驗意見**由 Claude 收窄**的；William 2026-08-06 拍板的是收窄前的
+//    「⚠️ 儲存後無法復原。」，樹上**沒有**他核可這句新措辭的紀錄——不要在註解裡替他背書）；店名規則那兩處的指路**在本支的樹上仍然存在**——拿掉它們是 #422 的事，而 #422 是另一支、
 //    尚未合併（⚠️ 引用別支的改動當成這棵樹的事實＝r9 抓到的錯，別再犯）。
 //
 // ⚠️ 每一條都要問「弄壞它，我這條會紅嗎」。三道關卡各自有專屬的紅：
@@ -116,7 +117,8 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   //    跟他在收支頁看得到的筆數差很多。舊版提示會加一句「全部加起來」把這件事講明，
   //    **William 2026-08-08 裁決「太長」**之後那句話拿掉了——現在筆數與檔名一起放在括號裡當
   //    「量級參考」，句子主體只講下一步（請至下載確認檔案）。
-  //    ⚠️ 所以這一題的斷言也跟著收窄：只釘「有筆數、有千分位、有檔名」，不再釘那句解釋。
+  //    ⚠️ 所以收窄的只有**這個數字**那幾格：釘「有筆數、有千分位、有檔名、放在括號裡」，不再釘那句解釋；
+  //    成功句本身的口徑（黑名單／「匯出成功」／「下載｜確認」）照舊釘在上面幾格。
   //    代價誠實記著：他若拿這個數字去對收支頁的筆數，畫面上沒有東西提醒他兩者不同。
   assert.match(result.msg, /（.*4\s*筆/, '筆數與檔名放在括號裡（量級參考），句子主體留給下一步');
 });
@@ -150,18 +152,19 @@ test('匯出｜HTTP 狀態不 ok（雲端版 session 過期）：不可落檔，
   assert.equal(result.isErr, true);
   assert.match(out.reason, /請先登入/, '伺服器講的原因要留在回傳 reason 裡（排查用；畫面只給下一步——William 2026-08-08「太長」的裁決）');
   assert.match(result.msg, /匯出失敗/, '必須明講失敗，否則他會以為存好了');
-  // ⚠️ 這一格是補洞補上的：原本伺服器一給文字原因就把狀態碼**換掉**，而我們自己的 HOSTED 5xx
-  //    一定帶 JSON 原因（`lib/routes/auth.js` 的 wrap catch）＝最需要狀態碼的那條路剛好丟掉它。
+  // ⚠️ 這一格是補洞補上的：原本伺服器一給文字原因就把狀態碼**換掉**，而我們自己的 5xx
+  //    一定帶 JSON 原因（`/api/export` 走 `lib/routes/core.js` 的 `asyncRoute` → `server.js` 的
+  //    全域錯誤中介 `res.status(500).json({ error })`）＝最需要狀態碼的那條路剛好丟掉它。
   assert.match(out.reason, /401/, '狀態碼要留在 reason 裡：那是他來問我時唯一能定位的線索（畫面上不放）');
 });
 
-test('匯出｜狀態不 ok、而錯誤內容剛好有頂層陣列 ⇒ 只有關卡①攔得住（上一題攔不住這種）', async () => {
-  // ⚠️ 這一題是補洞補上去的：上一題（401 + `{ error: '請先登入' }`）**證不到關卡①是必要的**——
-  //    實測把 `if (!res.ok)` 整段拿掉，上一題照樣全綠，因為那個錯誤信封會被關卡③接住。
-  //    但關卡③的判準刻意寬鬆（「有頂層陣列就算像備份」），所以閘道回的
-  //    `{"errors":[{"message":"JWT expired"}]}` 這一型（Supabase／各家 gateway 很常見）
-  //    會直接通過②③——**只剩狀態碼攔得住它**。少了關卡①，使用者就會拿到一個
-  //    寫著「已存下備份：1 筆資料」的 JWT 過期訊息，而他以為自己有備份了。
+test('匯出｜401 ＋ 閘道式錯誤信封 `{"errors":[…]}` ⇒ 不落檔，而且要給「重新登入」這個下一步', async () => {
+  // ⚠️ 這一包是各家閘道（Supabase／GraphQL 風格中間層）很常見的形狀：狀態 401、內容自帶 `errors` 鍵。
+  //    關卡①（狀態）與關卡③（自帶 error／errors 鍵，見 backup-export.js 的 errorEnvelopeReason）
+  //    **都接得住它**，所以這一題證的不是「只有①攔得住」，而是**401 這條路的口徑**：
+  //    實測把 `if (!res.ok)` 整段拿掉，下面轉紅的是 `out.reason` 的 /401/ 與 `result.msg` 的 /重新登入/
+  //    ——③接手之後畫面變成 notBackupMsg()「匯出失敗 - 請重新整理後再試」，他會被推去重新整理，
+  //    而真正該做的是重新登入（`saved.length === 0` 那兩格拿掉①仍會綠，別把它們當成這一題的紅）。
   const { out, saved, result } = await run(res({ status: 401, statusText: 'Unauthorized',
     body: JSON.stringify({ errors: [{ message: 'JWT expired' }] }), headers: GOOD_HEADERS }));
   assert.equal(out.saved, false, '狀態 401 就是失敗，內容長得再像備份都不可以落檔');
@@ -221,7 +224,7 @@ test('匯出｜狀態 ok 但回的是登入頁 HTML：parse 不出 JSON ⇒ 不�
   assert.doesNotMatch(result.msg, /登入/,
     '狀態 200 就不是認證問題（沒有人講「你沒登入」）——只有 401 那條路可以叫他重新登入');
   assert.match(result.msg, /重新整理|再試/,
-    '不猜原因也要給下一步（William 2026-08-08 定案的字：「伺服器回的不是備份檔，請重新整理再試」）');
+    '不猜原因也要給下一步（現行字面＝notBackupMsg()「匯出失敗 - 請重新整理後再試」）');
 });
 
 test('匯出｜狀態 ok、是 JSON，但是錯誤信封（沒有任何集合）⇒ 不可落檔', async () => {
@@ -289,8 +292,6 @@ test('匯出｜連不上伺服器（fetch reject）⇒ 出聲、不落檔、不�
   assert.equal(saved.length, 0);
   assert.equal(result.isErr, true);
   assert.match(out.reason, /連線中斷/);   // 同上
-  // ⚠️ 這一格是補洞補上的：原本只有 401 那兩題釘「沒有存下」，而它們走的是 notBackupMsg——
-  //    實測把 failMsg 的「沒有存下任何檔案」刪掉，整份考題照樣全綠（＝這條路沒人守）。
   assert.match(result.msg, /匯出失敗/, '連不上也要明講失敗，否則他不知道要不要重做一次');
   assert.match(result.msg, /網路/, '這一條的下一步是「檢查網路連線」（William 2026-08-08 定案的字）');
   // ⚠️ 這一格是補洞補上的：這條路的 `err.message` 在真瀏覽器裡是「Failed to fetch」，對他毫無意義，
@@ -318,9 +319,9 @@ test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口
   assert.equal(saved.length, 0);
   assert.equal(toasts.length, 2, '只能有「匯出中…」＋一句結果：不可以先報成功再報失敗（他會不知道要相信哪一句）');
   assert.equal(result.isErr, true, '落檔失敗就是失敗，要用錯誤的樣子出聲');
-  // ⚠️ 這一格改成拿**成功那句話本身**來比（2026-08-06）：原本只釘字面「已存下」，而成功文案已經改口
-  //    兩次（「已開始下載…」→「已經把備份交給瀏覽器下載…」）——只釘舊字面的話，這條路重新吐出
-  //    成功句也不會紅（假綠）。下面那條字面黑名單是第二層，跟著現行文案走。
+  // ⚠️ 這一格改成拿**成功那句話本身**（`okMsg(...)`）來比：只釘舊字面的話，成功文案一改口、
+  //    這條路重新吐出成功句也不會紅（假綠）。下面那條字面黑名單守的是**舊句子的回歸**——
+  //    「已存下」「交給瀏覽器」「筆紀錄」都不在現行 okMsg 裡（現行字面見 backup-export.js 的 okMsg）。
   assert.notEqual(result.msg, okMsg(4, 'finance-backup-2026-08.json'),
     '不可以吐出成功那句話（不管那句話怎麼寫）：畫面報好消息、實際一個檔都沒有');
   assert.doesNotMatch(result.msg, /已存下|交給瀏覽器|筆紀錄/,
@@ -352,7 +353,7 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.equal(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).ok, false,
     '自帶 errors 欄位就不收（判準是鍵名，不是內容）——撈不出人話也一樣不收');
   assert.match(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).reason, /錯誤/,
-    '講不出原因也要說「這是一則錯誤訊息」，不可以回空原因（畫面會變成「匯出失敗，沒有存下任何檔案：」後面沒字）');
+    '講不出原因也要說「這是一則錯誤訊息」，不可以回空原因——畫面只給下一步，空 reason 等於排查線索整條消失');
   assert.equal(summarizeBackup({ transactions: [{ id: 't1' }] }).ok, false,
     '沒有頂層 settings 就還原不回去（lib/schema.js 的 sanitizeDbForWrite 缺 settings 直接丟錯）');
   assert.match(summarizeBackup({ transactions: [{ id: 't1' }] }).reason, /不是一份備份檔/,
@@ -366,7 +367,8 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.equal(summarizeBackup('unauthorized').ok, false, '純字串不是備份');
   // ⚠️ 這三格釘的是**原因文字**，不只是 ok=false：不然「不是一份備份檔」那道型別守衛就沒人撐著
   //    （實測拿掉 `Array.isArray(data)` 之後只看 ok 的話全綠——因為兩條路都回 false）。
-  //    而原因會原封不動出現在使用者眼前，「格式不對」與「裡面沒有資料」是兩種不同的下一步。
+  //    而原因**不進畫面**（兩條路的畫面逐字都是 notBackupMsg()「匯出失敗 - 請重新整理後再試」），
+  //    只留在回傳 `reason` 裡——「格式不對」與「裡面沒有資料」能不能分辨，全靠這幾格釘住的原因文字。
   // ⚠️ 措辭：不用「一包資料」——那是我們自己腦內的說法，使用者讀不出那是什麼意思。
   for (const notAPack of [[], 'unauthorized', 42]) {
     assert.match(summarizeBackup(notAPack).reason, /不是一份備份檔/,
@@ -496,8 +498,9 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   //    這是本支存在的唯一理由（說了已存下就是真的存下），卻是最容易被「換成啞巴」悄悄拆掉的地方。
   const fetchProp = sliceProp(args, 'fetchFn');
   // ⚠️ `fetch.bind(globalThis)` 也算（r2 審查者實測到的**假紅**）：它跟 `(url) => fetch(url)` 語意等價、
-  //    甚至更通用（連第二個 init 參數一起轉發），只是字面上沒有 `fetch(`。這與同一輪已經放寬過的
-  //    `dispatchEvent`／`addEventListener` 是同一類漏放寬——等價改寫不可以讓考題紅。
+  //    甚至更通用（連第二個 init 參數一起轉發），只是字面上沒有 `fetch(`——等價改寫不可以讓考題紅。
+  //    ⚠️ 但本檔**還沒**全面接受 addEventListener：下面「⭐ 匯出前告知」那題的 `btnAt` 仍只認 `.onclick`，
+  //       把這顆鈕改成 addEventListener 會讓它紅在「找不到匯出鈕的接線＝本題空轉」（待修）。
   assert.match(fetchProp, /\bfetch\s*\(|fetch\s*\.\s*bind/,
     'fetchFn 必須是真的 fetch（直接呼叫或 fetch.bind(...) 都算）——餵它假回應等於整支模組在驗一份不存在的備份');
 
@@ -631,8 +634,9 @@ test('⭐ 匯出｜等待上限的預設實作：工作先完成就照常回值�
   assert.ok(EXPORT_TIMEOUT_MS >= 10_000, '上限太短會讓大備份或慢網路誤判成「沒有回應」');
 });
 
-test('⭐ 文案｜六句都收成「一行、只給下一步」（William 2026-08-08：太長），而且口徑沒被改壞', () => {
-  // 🧑‍⚖️ 他逐字定案三句：成功／401／連線；其餘三句照同一句型縮短。
+test('⭐ 文案｜每一句都收成「一行、只給下一步」（William 2026-08-08：太長），而且口徑沒被改壞', () => {
+  // 🧑‍⚖️ 兩輪都是他定的（commit 86644de 的裁決清單）：第一輪逐字定成功／401／連線，第二輪他自己再縮
+  //    伺服器出錯／不回話／不是備份／存檔沒完成（前兩句刻意同字，見下方）。要改哪一句的字面都先問他。
   assert.match(okMsg(4, 'x.json'), /^匯出成功 - 請至下載確認檔案/, '成功那句的開頭是他定的字');
   assert.equal(authFailMsg(), '匯出失敗 - 請重新登入再按匯出');
   assert.equal(networkFailMsg(), '匯出失敗 - 請檢查網路連線');
@@ -688,13 +692,18 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   // ⚠️ **三條退出路都要接到同一個 cancel**（r4 阻擋③的另一半）：真 DOM 那題證明「這種接法會 settle」，
   //    但沒有人保證 settings.js 真的用了那種接法——M9 突變（拿掉 bindBackdropClose 那一行）
   //    在補這條之前**全綠**，正是「掃得到寫法 ≠ 行為正確」的反面：這裡連寫法都沒掃。
+  //    ⚠️ 誠實劃界：下面三格裡**只有「×」與「點背景」真的證到接線目標**。「取消鈕」那一格的片段
+  //       從 `[data-cancel]` 起算，選擇器字面自己就含 `cancel`＝那個 `assert.match(…, /cancel/i)`
+  //       恆真（接成 `onclick = close` 也照樣綠）——那條路的接線目標**尚無考題**（待修）。
   const cf = src.slice(src.indexOf('const confirmExport'), at);
   assert.ok(cf.length > 200, '找不到 confirmExport 的本體＝本題空轉');
   assert.match(cf, /backdrop:\s*false/,
     'openModalShell 內建的點背景關窗只呼叫 close、**不會**收掉那顆 Promise ⇒ 必須關掉它、自己接');
   // ⚠️ **三條退出路各自的那一句裡要出現取消的處理**——判準刻意寬（r6 阻擋①）：
   //    `= cancel`、`= () => cancel()`、包一層別名都算；換引號、換空白、包裝轉交都不該誤紅。
-  //    這一題只證明「三條路都有接到取消」；**行為（真的 settle）由上面那題真 DOM 守**。
+  //    這一題只證明「×與點背景兩條路有寫到取消」（取消鈕那條連寫法都沒證到，見上面的誠實劃界）；
+  //    **行為（真的 settle）由本檔的真 DOM 那題
+  //    （'⭐ 確認窗｜取消鈕／×／**點背景** 三條路都要真的收掉那顆 Promise'）守**。
   // ⚠️ 片段抓到「**下一個分號**」、而且允許跨行（r7 阻擋①）：這個判準演化過三次，每次都是被
   //    等價寫法誤殺才發現——①`[^)]*` 遇到 `() =>` 的第一個 `)` 就停②`[^;\n]*` 把換行誤當敘述結束
   //    （合法的多行寫法因此誤紅）。現在只認語言真正的敘述結尾。
@@ -743,7 +752,8 @@ test('⭐ 匯出｜**非 2xx** 的錯誤 body 讀到卡住也不可以沒聲音�
 // ⚠️ 這裡重建的是**確認窗那一段邏輯的骨架**（openModalShell 的三顆退出路＋bindBackdropClose 的
 //    mousedown/mouseup/click 三段判斷），不是 settings.js 原檔——settings.js 整支在 node 裡跑不起來
 //    （它 import 了十幾支頁面模組）。誠實劃界：本題證明「這個接法會 settle」，
-//    而「settings.js 真的用這個接法」由上面那條原始碼題（confirmExport()／bindBackdropClose）守。
+//    而「settings.js 真的這樣寫」由本檔的原始碼題（'⭐ 匯出前告知｜兩句逐字釘住' 那題，掃
+//    confirmExport()／bindBackdropClose）守——⚠️ 但取消鈕那條在那裡是恆真的，見該題的誠實劃界。
 test('⭐ 確認窗｜取消鈕／×／**點背景** 三條路都要真的收掉那顆 Promise（r4 阻擋③，真 DOM）', async () => {
   const { JSDOM } = await import('jsdom');
   for (const exitPath of ['取消鈕', '×', '點背景']) {

@@ -14,8 +14,9 @@
 // ⚠️ 這裡的標準（每個字至少 `MIN_MS_PER_CHAR` 毫秒）是**考題自己定的**、比正式程式給的還寬鬆
 //    （`TOAST_MS_PER_CHAR` 目前更慢），刻意留餘裕：這樣「把時間改回固定值」與「文案長到讀不完」
 //    兩種壞法都會紅，而正式程式微調每字時間不會假紅。
-// ⚠️ 誠實劃界：能用行為驗的只有「時間怎麼算」（純函式）。滑鼠停在上面暫停、點一下收掉、可以選字複製
-//    這幾件事在 node 裡沒有 DOM 可跑，只能用**原始碼文字**盯著（最後一題），那是提醒等級、不是保證。
+// ⚠️ 誠實劃界：行為驗得到的是「時間怎麼算」（純函式）與匯出文案本身（長度、有沒有下一步）。
+//    畫面互動在 node 裡沒有 DOM 可跑：只有「滑鼠停在上面暫停」有原始碼文字題（提醒等級、不是保證），
+//    toast() 末段的「點一下收掉／選字時不收」（click ＋ getSelection）**零考題**——刪了本檔照樣全綠。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -73,8 +74,8 @@ test('提示時間｜匯出那幾句話，每一句都讀得完（文案與投�
   // ⚠️ 這一格把**文案**與**投遞機制**綁在一起：以後有人把訊息寫更長，這裡就會紅——
   //    那時該做的是「短提示 ＋ openInfo(...) 放完整說明」（repo 已有 openInfo 與 .info-link，
   //    也符合使用者「必須懂的就地解釋」鐵則），不是把上限往上調。
-  // ⚠️ 2026-08-08 起這些函式**不收參數**了（William 兩輪縮短：畫面一行、只給下一步，
-  //    伺服器原話與狀態碼留在 runExport 的回傳 reason）。
+  // ⚠️ 失敗那五句**不收參數**（畫面一行只給下一步，伺服器原話與狀態碼留在 runExport 的回傳 reason）；
+  //    成功那句例外：okMsg(筆數, 檔名) 仍收兩個參數，量級資訊掛句尾括號、不佔句子本體。
   const msgs = [
     ['成功', okMsg(3214, 'finance-backup-2026-08.json')],
     ['連線斷掉', networkFailMsg()],
@@ -115,8 +116,8 @@ function matchedSpan(src, from, open, close) {
 
 test('接線｜app.js 的 toast() 真的照長度給時間，而且滑鼠停在上面不會被抽走', () => {
   // ⚠️ 為什麼是原始碼文字題：`public/app.js` 在 node 裡 import 不進來（模組頂層就碰 document／
-  //    localStorage），所以「正式環境那一行到底怎麼寫」只驗得到文字。本專案已有同型前例
-  //    （`test/xss-id-escaping.test.js` 抓出 esc 那一行來跑）。
+  //    localStorage），所以「正式環境那一行到底怎麼寫」只驗得到文字（比字，不執行）。
+  //    別拿 `test/xss-id-escaping.test.js` 當前例：#409 後它改成直接 import 正式的 esc 跑行為。
   // ⚠️ 誠實劃界：這一題擋的是「下一個人把時間改回固定值、或把暫停拿掉」，不是「跑起來真的會暫停」。
   const src = stripJsComments(readFileSync(join(ROOT, 'public/app.js'), 'utf8'));
   assert.match(src, /import\s*\{[^}]*\btoastMs\b[^}]*\}\s*from\s*['"]\.\/modules\/toast-timing\.js['"]/,

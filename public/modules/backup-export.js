@@ -55,18 +55,24 @@
 //    一個沒人呼叫的閉包（`const dead = () => runExport({...})`），文字上樣樣齊全、實際上一次也沒跑。
 //    列舉繞法補不完（這是本專案認過的病型），所以這裡關門：**這一題只是提醒，不是保證**；
 //    真正保證「按下去會說話」的只有 `runExport` 自己那一族行為題。
-// 5. **`toast` 自己丟錯就沒人接得住**。落檔那一步已經包了 try（丟錯會改口說「存檔那一步出錯」），
+// 5. **`toast` 自己丟錯就沒人接得住**。落檔那一步已經包了 try（丟錯會改口走 {@link saveFailMsg}），
 //    但如果連 `toast` 都丟錯，那條路上沒有第二個出聲的管道可用——不假裝守得住。
 // 6. **不保證「檔案真的落到硬碟」**。這一支只到「把下載交給瀏覽器」為止：使用者按取消、瀏覽器把下載
 //    擋掉、下載中途失敗，`<a>` 這條路**都不會回報**（能等待完成的 `showSaveFilePicker` 超出本支範圍）。
-//    所以成功那句話**刻意不宣稱結果**：連「已開始下載」都不說（下載被擋掉時「開始」並沒有發生），
-//    只說「已經把備份交給瀏覽器下載」並叫他去下載夾確認——本支存在的理由就是
-//    「沒有證據時不要宣告成功」，那條規矩對我自己也一樣適用。
+//    所以成功那句話**不宣稱檔案落地**：連「已存好／下載完成」都不說（黑名單在
+//    test/backup-export.test.js 那題的 `已存下|已存好` 黑名單），只把「去下載夾確認檔案在不在」這個下一步交給他
+//    （現行字面＝{@link okMsg} 那一行）。
+//    ⚠️ 誠實記著：句首那個「匯出成功」講的是**我們這一端做完了**，不是檔案已經在硬碟上——下載被
+//    瀏覽器擋掉或使用者按取消時，畫面仍是同一句話。
 // 7. **內容被截斷、但形狀完全正確的備份擋不住**：有頂層 `settings`、有頂層陣列、沒有 `error` 鍵的東西，
 //    這三道關卡都會放行（它們認的是形狀，不是完整性）。使用者唯一的線索是提示裡那個筆數。
 // ⚠️ **2026-08-08 訂正**：第 8 點描述的字數（40–100 字）與「兩句叫他把整句話告訴我」是**縮短之前**
-//    的狀態——William 兩輪縮短後每句一行、12–18 字，那個指令也拿掉了。以下留作沿革。
-// 8. **提示終究會消失，而且事後查不到**（r2 審查者抓到，2026-08-06 補）。下面六句話全靠右下角的
+//    的狀態——縮短後**失敗那幾句**一行 12–18 字（考題釘的界是 `msg.length <= 20`，
+//    test/backup-export.test.js 那題的 `msg.length <= 20`），那個指令也拿掉了。
+//    ⚠️ 但**成功那句沒有長度上限**：尾巴掛著檔名與筆數，帶上真檔名就偏長（實測
+//    `okMsg(3214, 'finance-backup-2026-08.json')`＝54 字），仍落在第 8 點在乎的那個量
+//    ——所以「停留時間照字數給」那一支的價值不變。以下留作沿革。
+// 8. **提示終究會消失，而且事後查不到**（r2 審查者抓到，2026-08-06 補）。下面那幾句失敗提示全靠右下角的
 //    toast 投遞，而 toast 原本固定 3.2 秒——這幾句 40–100 字上下，等於「會出聲」這個保證整個押在
 //    使用者讀得到，卻被投遞機制否決（其中兩句還叫他「把這句話整句告訴我」，那句話卻不能複製也不能回看）。
 //    已經改的：停留時間照長度給、滑鼠停在上面暫停、可以選字複製（`public/modules/toast-timing.js`
@@ -128,8 +134,8 @@ function sanitizeFilename(name) {
 function errorEnvelopeReason(obj) {
   const hasError = Object.hasOwn(obj, 'error'), hasErrors = Object.hasOwn(obj, 'errors');
   if (!hasError && !hasErrors) return '';
-  // ⚠️ 用「」包住伺服器的原話、不用第二個冒號：失敗文案本身已經有一個冒號
-  //    （「沒有存下任何檔案：伺服器說：…」兩個冒號讀起來會斷句斷錯）。
+  // ⚠️ 用「」包住伺服器的原話：這一句**只進 `runExport` 的回傳 `reason`、不進畫面**（見 {@link failMsg}
+  //    的說明）。原話自己常帶標點，用引號才看得出「哪一段是對方說的」。
   for (const raw of [obj.error, ...(Array.isArray(obj.errors) ? obj.errors : [obj.errors])]) {
     // `{error:'請先登入'}`、`{errors:['請先登入']}`、`{errors:[{message:'JWT expired'}]}` 三種形狀都撈
     const msg = typeof raw === 'string' ? raw
@@ -184,7 +190,11 @@ export function summarizeBackup(data) {
 }
 
 /**
- * ✅ 文案（**William 2026-08-08 定案**，兩輪縮短後逐字釘在 test/backup-export.test.js）：三道關卡都過了、下載已經交給
+ * ✅ 三道關卡都過了、下載交給瀏覽器之後說的那一句；**現行字面＝這段說明底下的 `okMsg` 那一行**
+ *    （句首「匯出成功 - 請至下載確認檔案」是 William 2026-08-08 定的字，見 test/backup-export.test.js 的〈文案｜每一句都收成「一行、只給下一步」〉一題）。
+ * ⚠️ 考題釘的**不是逐字**：:636 只釘句首、:640/:642 釘口徑（不得出現「已存下／已存好／已完成／
+ *    下載完成」、要有「下載」或「確認」）、:112 要有檔名、:114 要有千分位、:121 要求筆數在括號裡。
+ *    括號裡的措辭、順序與整句長度**沒有考題守**；`assert.equal` 逐字釘住的只有 401（:637）與網路（:638）。
  *
  * ⚠️⚠️ **刻意不說「已存下」**（r1 審查者抓到，2026-08-06 改）：這條路只做到 `a.click()`，
  *    使用者按取消、瀏覽器擋下載、下載中途失敗，`<a>` 這條路**一個訊號都不會回來**。
@@ -194,15 +204,16 @@ export function summarizeBackup(data) {
  * ⚠️⚠️ **連「已開始下載」也不說**（r2 審查者抓到，2026-08-06 再改）：上一版寫「已開始下載：…」，
  *    但程式只做到把連結交出去——瀏覽器把下載擋掉、或使用者在存檔對話框按取消時，「開始」**並沒有發生**。
  *    這一檔自己的 JSDoc 早就寫著「沒丟錯只代表交出去了」，文案卻多講了一步＝口徑沒收乾淨。
- *    現在說的是我們唯一有證據的那件事：**已經把備份交給瀏覽器下載**。
+ *    於是 r2 當時改成只講到「交給瀏覽器」為止（r2 的逐字是「已經把備份交給瀏覽器下載」，已被後續縮短取代）。
  *
  * 筆數加千分位：這個數字是他**唯一**用來判斷「這份備份是不是空的」的線索，四位數以上不分節很難讀
  * （`3214` 與 `321` 掃過去差不多）。這一檔零 import，所以用內建的 `toLocaleString`、不借 app.js 的工具。
  *
- * ⚠️ 為什麼寫「筆紀錄（…全部加起來）」而不是「筆資料」：這個數字是**所有頂層陣列的元素數總和**
- *    （實測 17 個集合：帳戶／交易／持股／每日淨值／快照／歷史…），跟他在收支頁看到的筆數差很多
- *    （dailyValues、snapshots、history 通常遠大於交易數）。寫「N 筆資料」他會拿去對收支頁、
- *    然後以為程式算錯了。把「全部加起來」講明白，這個數字才只被當成它真正能當的東西：量級。
+ * ⚠️ 這個數字是**所有頂層陣列的元素數總和**（實測 `emptyDb()` 有 17 個頂層陣列：帳戶／交易／持股／
+ *    每日淨值／快照／歷史…），跟他在收支頁看到的筆數差很多（dailyValues、snapshots、history
+ *    通常遠大於交易數）。舊稿曾在句尾寫「N 筆紀錄（全部加起來）」把這件事講明，2026-08-08 縮短時拿掉了。
+ * ⚠️ 殘留代價，誠實記著：現在畫面上**沒有**任何字提醒他這個數字與收支頁不同，他若拿去對帳可能以為
+ *    程式算錯。要補的是畫面提示，不是改這段註解（test/backup-export.test.js 的筆數那格註解記著同一筆代價）。
  * @param {number} total @param {string} filename
  */
 export const okMsg = (total, filename) => `匯出成功 - 請至下載確認檔案（${filename}，共 ${total.toLocaleString('zh-TW')} 筆）`;
@@ -215,7 +226,10 @@ export const okMsg = (total, filename) => `匯出成功 - 請至下載確認檔�
  *   ・失敗＝`匯出失敗 - ` 接**一件事**（要他做什麼／哪裡壞了），不解釋原理。
  * ⚠️ 縮短**不可以動到口徑**（那是文案，不是保證）：①成功仍**不敢說「已存好」**——落檔結果
  * 瀏覽器不回音，只能叫他去下載夾確認②**只有 401 才叫他重新登入**（其餘不猜；猜錯他會反覆登入）。
- * ⚠️ 伺服器原話與狀態碼**不進畫面**了，但仍留在 `runExport` 的回傳 `reason` 裡（排查時看得到）。
+ * ⚠️ 伺服器原話與狀態碼**不進畫面**了，只留在 `runExport` 的回傳 `reason` 裡。
+ * ⚠️ 誠實劃界：正式路徑（`public/modules/settings.js` 的 `await runExport({…})`）**沒有接住這個回傳值**，
+ *    也沒有 log、沒有提示紀錄本（見 `public/app.js` 的 `toast()` 註解）——今天只有考題與 devtools
+ *    斷點看得到 `reason`，**事後排查看不到**。要真的排查得到，得先讓呼叫端接住它（那是行為改動）。
  * @param {string} next
  */
 export const failMsg = (next) => `匯出失敗 - ${next}`;
@@ -227,7 +241,8 @@ export const authFailMsg = () => failMsg('請重新登入再按匯出');
  * ⏳ 伺服器那一端的狀況（5xx／403／404…）。
  * ⚠️ **與 {@link timeoutFailMsg} 逐字相同是刻意的**（William 2026-08-08 第二輪縮短）：
  * 「伺服器出錯」與「伺服器不回話」對使用者而言下一步一樣（等一下再試），畫面不必分。
- * 兩者的差別留在 `runExport` 回傳的 `reason`（排查時看得到）。**不要因為看起來重複就去分化它們。**
+ * 兩者的差別只留在 `runExport` 回傳的 `reason`（劃界見 {@link failMsg}：正式呼叫端沒接住它）。
+ * **不要因為看起來重複就去分化它們。**
  */
 export const serverFailMsg = () => failMsg('請稍後再試');
 /** ⏳ 狀態 200 但內容不像備份（登入頁 HTML／錯誤信封／包一層的怪格式）。 */
@@ -277,7 +292,8 @@ export const timeoutFailMsg = () => failMsg('請稍後再試');
 /**
  * 「等太久就放棄」的預設實作：把工作與一顆計時器賽跑，計時器先到就丟一個 `name:'ExportTimeout'` 的錯。
  * ⚠️ 做成**可注入**（`runExport` 的 `withTimeout`）而不是寫死：考題要能不等 30 秒就驗到這條路。
- * ⚠️ 只放棄「等待」，不假裝取消伺服器那一端——我們無法保證對方沒有在做事，所以文案只說「沒有回應」。
+ * ⚠️ 只放棄「等待」，不假裝取消伺服器那一端——我們無法保證對方沒有在做事，所以只有**回傳的 `reason`**
+ *    說「等超過上限，伺服器沒有回應」；畫面那句是 {@link timeoutFailMsg}，與 {@link serverFailMsg} 逐字相同。
  * @template T @param {Promise<T>} work @param {number} ms @returns {Promise<T>}
  */
 export function defaultWithTimeout(work, ms) {
@@ -304,15 +320,17 @@ export function defaultWithTimeout(work, ms) {
  */
 export async function runExport({ fetchFn, saveFile, toast, withTimeout = defaultWithTimeout }) {
   // ⚠️ `why`（伺服器原話／狀態碼）**只進回傳值不進畫面**（William 2026-08-08「太長」的裁決）：
-  //    畫面一行給下一步，排查要細節時看 `reason`。
+  //    畫面一行給下一步，細節只留在回傳的 `reason`（劃界見 {@link failMsg}）。
   /** @param {string} why @param {() => string} fmt */
   const fail = (why, fmt = () => failMsg('請再試一次')) => {
     toast(fmt(), true);
     return { ok: false, saved: false, reason: why, total: 0, filename: '' };
   };
 
-  // ⚠️ 按下去**立刻**出聲（#417 r3 阻擋）：舊版在這裡才開始等，伺服器不回話時畫面一句話都沒有，
-  //    使用者會以為鈕壞了、反覆按。這一句是「我收到了」，不是保證會成功。
+  // ⚠️ 進到這裡就**立刻**出聲（#417 r3 阻擋）：舊版是等到有結果才說第一句，伺服器不回話時畫面一句話
+  //    都沒有，使用者會以為鈕壞了、反覆按。這一句是「我收到了」，不是保證會成功。
+  // ⚠️ 界線講清楚：使用者按〈匯出備份〉那一下**還沒到這裡**——先問 `/api/mode`（上限 MODE_TIMEOUT_MS
+  //    ＝5 秒，這段沒有 toast）再跳告知窗，按〈確認匯出〉才進來（見 settings.js 的 confirmExport）。
   toast(BUSY_MSG);
   let res;
   try {
@@ -332,9 +350,15 @@ export async function runExport({ fetchFn, saveFile, toast, withTimeout = defaul
       //    ——與成功路徑同一個病，只是走在錯誤分支上（複驗者用合成探針證明過）。
       const parsed = JSON.parse(await withTimeout(res.text(), EXPORT_TIMEOUT_MS));
       // ⚠️ 伺服器給了文字原因也**要把狀態碼留著**（`［401］`）：狀態碼是他來問我時唯一能定位的線索，
-      //    而我們自己的 HOSTED 500 一定帶 JSON 原因（`lib/routes/auth.js` 的 wrap catch）——
-      //    只留「伺服器發生錯誤」等於把那個線索丟掉。用全形方括號而不是第二個冒號／第二組括號：
-      //    失敗文案本身已經有一個冒號、後面還要接一組括號的下一步，再疊會斷句斷錯。
+      //    而 `/api/export` 這條路的 500 走 `server.js` 的全域錯誤中介（`app.use((err, …))`）＝帶 JSON `error`
+      //    （⚠️ 不是全站保證：`lib/routes/route-helpers.js` 的 `sendRouteError` 對帶 `status` 的錯自己
+      //    回應、不進中介；中介自己在 `res.headersSent` 時也會交還 Express 預設 handler＝HTML。
+      //    本模組只管 `/api/export` 這一條路。）
+      //    ——只留「伺服器發生錯誤」等於把那個線索丟掉。
+      //    ⚠️ 帶 `status:500` 的內部錯（如 `lib/store-pg.js` 的 kv_backend）在那道中介會被換成
+      //    「請求格式不正確」，所以 `error` 未必講出真正的原因，狀態碼才是唯一穩定的線索。
+      //    （`lib/routes/auth.js` 的 wrap catch 只管 `/api/auth/*`；`/api/export` 走 `asyncRoute`＝不經它。）
+      //    ⚠️ 這一串**只進 `reason` 不進畫面**（見 {@link failMsg} 的劃界）。
       if (parsed && typeof parsed.error === 'string' && parsed.error.trim() !== '') why = `${parsed.error}［${res.status}］`;
     } catch { /* 回的不是 JSON（登入頁 HTML）**或讀 body 超時**＝維持狀態碼的說法：狀態碼本身已經
                  足夠給下一步（401 去登入／其餘等一下再試），不必為了讀不到原話而讓畫面卡住 */ }
