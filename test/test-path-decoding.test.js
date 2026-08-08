@@ -118,7 +118,7 @@ function isFileUrlNew(node, tainted, isGlobalURL) {
   return isFileUrlExpr(base, tainted);
 }
 
-/** 每次寫入都是同一個字串字面的變數，值可知（r5 阻擋④：`const rel = '..'` 很常見）。 */
+/** 每次寫入（限 initializer 與單純 `=`）都是同一個字串字面的變數，值可知（r5 阻擋④）。 */
 function literalOfBinding(node, tainted) {
   if (!node || node.type !== 'Identifier') return null;
   return tainted.litVar.get(node) || null;
@@ -170,6 +170,19 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     ast = parse('script');
   }
 
+  // ⚠️ 需要 parent 才判得出 `+=`／`++`（espree 不建 parent）。
+  //    ⚠️ **一定要用 WeakMap，不可掛成節點上的 enumerable 屬性**（r7 阻擋③實測）：
+  //    掛成屬性之後 `eslint-scope`／`esrecurse` 走到 `StaticBlock` 會沿 parent 循環無限遞迴，
+  //    `class C { static {} }`（完全沒有 pathname 的合法程式）直接 RangeError ⇒ 硬 CI 閘紅燈。
+  const parentOf = new WeakMap();
+  walk(ast, (n) => {
+    for (const k of Object.keys(n)) {
+      const v = n[k];
+      if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') parentOf.set(c, n); }
+      else if (v && typeof v.type === 'string') parentOf.set(v, n);
+    }
+  });
+
   const scopeManager = analyze(ast, { ecmaVersion: 2024, sourceType: 'module', ignoreEval: true });
 
   const bindingOf = new Map();
@@ -201,6 +214,10 @@ export function findBadPathnameUses(src, rel = '<inline>') {
       if (!r.isWrite()) continue;
       const w = r.writeExpr;
       if (!w) return null;
+      const parent = parentOf.get(r.identifier);
+      // 只有單純 `=`（以及宣告的 init，已在上面處理）算得出賦值完成後的值
+      if (parent && parent.type === 'AssignmentExpression' && parent.operator !== '=') return null;
+      if (parent && parent.type === 'UpdateExpression') return null;
       out.push(w);
     }
     return out;
@@ -212,7 +229,7 @@ export function findBadPathnameUses(src, rel = '<inline>') {
     for (const id of v.identifiers) bucket.add(id);
     for (const r of v.references) bucket.add(r.identifier);
   };
-  // 每次寫入都是同一個字串字面的變數 ⇒ 值可知（r5 阻擋④：`const rel = '..'` 很常見）
+  // 每次寫入（限 initializer 與單純 `=`）都是同一個字串字面 ⇒ 值可知（r5 阻擋④）
   for (const v of allVars) {
     // ⚠️ **不可以要求「恰好一次寫入」**：`const rel = '..'` 的宣告在 eslint-scope 裡會同時出現在
     //    `defs`（declarator）與 `references`（init 的 write）＝兩筆，於是條件永遠不成立（實測踩到）。
@@ -389,6 +406,10 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
     // ↓ r6 複驗者指出的其餘缺口，照實記（未收斂）
     ['for…of 綁定的值（不可知 ⇒ kill）', `for (const rel of ["..", ".."]) { const R = ${U}(rel, ${IMU})${PN}; }`],
     ['只知前綴且開頭是空字串（判不出 name 是否絕對）', `const R = ${U}("" + name, ${IMU})${PN};`],
+    // ↓ 複合賦值一律 kill 的代價（r8 校正後接受）：真值仍是相對參照，但算不出賦值完成後的值。
+    //    ⚠️ 這一條**不可以**為了收斂而拿掉 kill——那會讓 URL 物件被 `+=` 字串化的情形變成假紅（r8 反例）。
+    ['+= 兩次都是相對字面（真值仍相對，但 kill 讓它落在射程外）',
+      `let rel = ".."; rel += ".."; const R = ${U}(rel, ${IMU})${PN};`],
   ];
   for (const [why, src] of outOfRange) {
     assert.deepEqual(findBadPathnameUses(src), [],
@@ -498,29 +519,33 @@ test('⭐ 壞掉的 URL 字面不可以被當成「證明是 file URL」（r7 �
     '正常的相對路徑也放過了＝判準整個壞掉，上面三條的綠是假的');
 });
 
-test('⭐ 複合賦值：他報的假紅要放過，但真的是相對路徑的不可以漏抓（r7 實測校正）', () => {
-  // ⚠️ 這一題的預期是**實測校正過**的：複驗者 r6 建議「`+=` 一律 kill」，但實測顯示
-  //    ①他報的那個假紅是「壞字串被當相對」造成的，sentinel base 修好之後自己就放過
-  //    ②kill 反而讓「真值仍是相對路徑」的情形漏抓。⇒ 不做 operator kill（理由寫在 writeValues 上）。
+test('⭐ 複合賦值一律 kill：他 r6／r8 兩顆反例都要放過（r8 校正）', () => {
+  // ⚠️ 沿革（我 r7 刪掉這條 kill、r8 被反例推翻，兩顆探針一起釘住免得有人再刪）：
+  //    `eslint-scope` 的 `writeExpr` 是**複合賦值的 RHS**，不是賦值完成後的值。
   const IMU2 = 'import' + '.meta.url';
   const PN2 = '.' + 'pathname';
-  const cases = [
-    // [說明, 程式, 應不應該抓到]
-    ['他報的案例：+= 之後其實是 https', `let rel = 'https:'; rel += 'https:'; const p = new URL(rel, ${IMU2})${PN2};`, false],
-    ['+= 的另一邊值不可知', `let rel = '..'; rel += x; const p = new URL(rel, ${IMU2})${PN2};`, false],
-    ['URL 物件被 += 之後已不是原物件', `let u = new URL('..', ${IMU2}); u += ''; const p = u${PN2};`, false],
-    ['logical assignment 之後值不可知', `let rel = '..'; rel ||= x; const p = new URL(rel, ${IMU2})${PN2};`, false],
-    ['寫入的字面不一致 ⇒ kill', `let rel = '..'; rel = 'https://a'; const p = new URL(rel, ${IMU2})${PN2};`, false],
-    // ↓ 這一條是刪掉 operator kill 換回來的：真值 '....' 仍是相對參照、仍會 ENOENT
-    ['+= 兩次都是相對字面（真值仍相對）', `let rel = '..'; rel += '..'; const p = new URL(rel, ${IMU2})${PN2};`, true],
-    ['static block 裡的複合賦值（值不可知）',
-      `class C { static { let r = '..'; r += x; const p = new URL(r, ${IMU2})${PN2}; } }`, false],
+  const mustRelease = [
+    ['r6 反例：+= 之後其實是 https', `let rel = 'https:'; rel += 'https:'; const p = new URL(rel, ${IMU2})${PN2};`],
+    // ↓ r8 反例：兩次寫入都是 file URL 的 new URL，但 `+=` 已把 u 字串化 ⇒ u.pathname 是 undefined
+    ['r8 反例：URL 物件被 += 字串化（RHS 也是 file URL）',
+      `let u = new URL('..', ${IMU2}); u += new URL('..', ${IMU2}); const p = u${PN2};`],
+    ['URL 物件被 += 空字串', `let u = new URL('..', ${IMU2}); u += ''; const p = u${PN2};`],
+    ['+= 的另一邊值不可知', `let rel = '..'; rel += x; const p = new URL(rel, ${IMU2})${PN2};`],
+    ['logical assignment', `let rel = '..'; rel ||= x; const p = new URL(rel, ${IMU2})${PN2};`],
+    // ⚠️ 這一條原本寫成 `let n = 0; n++; const p = new URL('..', …)` ——**探針自己寫錯了**：
+    //    那個 `n` 跟 URL 無關，那行是真違規、本來就該抓。改成 `++` 真的作用在 taint 目標上。
+    ['URL 物件被 ++（變成 NaN，不再是 URL）', `let u = new URL('..', ${IMU2}); u++; const p = u${PN2};`],
+    ['字串變數被 ++（變成 NaN）', `let rel = '..'; rel++; const p = new URL(rel, ${IMU2})${PN2};`],
+    ['寫入的字面不一致 ⇒ kill', `let rel = '..'; rel = 'https://a'; const p = new URL(rel, ${IMU2})${PN2};`],
+    ['static block 裡的複合賦值',
+      `class C { static { let r = '..'; r += x; const p = new URL(r, ${IMU2})${PN2}; } }`],
   ];
-  for (const [why, src, shouldCatch] of cases) {
-    const hit = findBadPathnameUses(src).length > 0;
-    assert.equal(hit, shouldCatch,
-      shouldCatch ? `這是真的會 ENOENT 卻漏抓了：${why}` : `這是安全寫法卻被判違規（假紅）：${why}`);
+  for (const [why, src] of mustRelease) {
+    assert.deepEqual(findBadPathnameUses(src), [], `複合賦值之後的值算不出來，不可判違規（假紅）：${why}`);
   }
+  // ⚠️ 反面：單純 `=` 的相對字面仍要抓到，否則上面全綠可能只是「判準整個壞了」
+  assert.notDeepEqual(findBadPathnameUses(`let rel = '..'; const p = new URL(rel, ${IMU2})${PN2};`), [],
+    '單純賦值的相對字面也放過了＝判準壞掉，上面那些綠是假的');
 });
 
 test('⭐ 合法但會讓走訪爆掉的形狀（r7 阻擋③：parent 掛成屬性會無限遞迴）', () => {
