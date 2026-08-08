@@ -535,7 +535,9 @@ test('文案｜「資料備份」卡的說明不可以宣稱「整包／全部�
   // ⚠️ 誠實劃界：這是**字面黑名單**，守的是「下一個人（或我自己）把那個詞寫回去」，
   //    **不是**「這句話在兩種模式都成立」——語意沒有辦法用考題證明（settings.js 的 DOM 路徑在
   //    node 裡跑不起來）。列舉補不完的東西不假裝是保證。
-  // 📌 那句該補的「雲端版匯出不含 IB 憑證與帳單密碼」仍待 William 裁決雲端語氣（需要模式分流）。
+  // ✅ 那句「雲端版匯出不含 IB 憑證與帳單密碼」**已經實作**（William 2026-08-08 裁決「要講準」）：
+  //    匯出前的告知窗依模式分流，見 EXPORT_NOTICE_HOSTED／EXPORT_NOTICE_LOCAL 與
+  //    docs/contracts/cloud-security.md「匯出前告知的模式分流」節。這裡不再是欠帳。
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
   const at = src.indexOf('BACKUP_CARD_NOTE');
   assert.ok(at >= 0, '找不到 BACKUP_CARD_NOTE（改名了？那要一起更新本考題）');
@@ -666,7 +668,8 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   const src = stripJsComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
   // 接線三件事：用共用文案（不自己抄一句）、先問再匯出、取消就什麼都不做
   assert.match(src, /exportNotice\(/, '設定頁要用共用的挑選函式（各寫一句的話 William 審改只會改到一邊、而且模式判斷會走散）');
-  assert.match(src, /api\('\/mode'\)/, '要真的去問模式（不問就只能猜，而猜錯方向會害他外洩）');
+  // ⚠️ 引號形式不綁死（r6 阻擋①：只換等價引號就誤紅＝合法寫法被誤殺）
+  assert.match(src, /api\(\s*['"`]\/mode['"`]\s*\)/, '要真的去問模式（不問就只能猜，而猜錯方向會害他外洩）');
   const at = src.indexOf("byId('exportBtn').onclick");
   assert.ok(at > 0, '找不到匯出鈕的接線＝本題空轉');
   const handler = src.slice(at, at + 900);
@@ -683,10 +686,21 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   assert.ok(cf.length > 200, '找不到 confirmExport 的本體＝本題空轉');
   assert.match(cf, /backdrop:\s*false/,
     'openModalShell 內建的點背景關窗只呼叫 close、**不會**收掉那顆 Promise ⇒ 必須關掉它、自己接');
-  assert.match(cf, /bindBackdropClose\(root,\s*cancel\)/,
-    '點背景要接到同一個 cancel（不接＝窗關了但呼叫端永遠在等，每點一次漏一顆）');
-  assert.match(cf, /\.x-close'\)\.onclick = cancel/, '× 也要接同一個 cancel');
-  assert.match(cf, /\[data-cancel\]'\)\.onclick = cancel/, '取消鈕同上');
+  // ⚠️ **三條退出路各自的那一句裡要出現取消的處理**——判準刻意寬（r6 阻擋①）：
+  //    `= cancel`、`= () => cancel()`、包一層別名都算；換引號、換空白、包裝轉交都不該誤紅。
+  //    這一題只證明「三條路都有接到取消」；**行為（真的 settle）由上面那題真 DOM 守**。
+  for (const [what, re] of [
+    // ⚠️ 抓到「這一句結束」而不是第一個 )：包一層 () => cancel() 時第一個 ) 就在箭頭函式的參數列上
+    //    ——上一版用 [^)]* 於是抓到 'bindBackdropClose((' 就停，等價寫法被誤殺（自審 M17 抓到）。
+    ['點背景', /bindBackdropClose\([^;\n]*/],
+    ['×', /['"`]\.x-close['"`]\s*\)[^;\n]*/],
+    ['取消鈕', /\[data-cancel\][^;\n]*/],
+  ]) {
+    const m = cf.match(/** @type {RegExp} */ (re));
+    assert.ok(m, `找不到「${what}」那條退出路的接線＝本題對它空轉`);
+    assert.match(m[0], /cancel/i,
+      `「${what}」那一句沒有接到取消——窗關了但呼叫端會永遠在等（每走一次漏一顆 Promise）`);
+  }
 });
 
 test('⭐ 匯出｜**非 2xx** 的錯誤 body 讀到卡住也不可以沒聲音（r4 阻擋②：第三條 pending 路徑）', async () => {

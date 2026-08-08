@@ -148,6 +148,23 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
 });
 
 // ---- C3 auth gate（P1-1：只宣稱 401／轉登入，不宣稱隔離——隔離歸 C4）----
+test('⭐ 模式端點｜HOSTED **已登入**回 {hosted:true}，而且只有這一個鍵（#417：匯出前告知靠它分流）', async () => {
+  // ⚠️ 為什麼這一格非有不可（#417 r6 阻擋②）：契約（docs/contracts/cloud-security.md
+  //    「匯出前告知的模式分流」）明列三格＝LOCAL 200／HOSTED 未登入 401／HOSTED 已登入 200。
+  //    前兩格分別由 test/server.test.js 與上一題守；這一格原本**沒有考題**，而我在 server.test.js
+  //    的註解裡誤稱「hosted-secrets 那支有守」——註解說謊比缺口更糟，所以補這題並改掉那句。
+  // ⚠️ 這格是承重點：端點若在 HOSTED 回成 false，前端會講「匯出檔案含機密」——方向錯得**保守**、
+  //    不致外洩，但雲端使用者會以為還原後不必重輸憑證。反過來 LOCAL 若回 true 才是真的危險
+  //    （那一格由 server.test.js 守）。兩邊都要釘。
+  const r = await fetch(`${base}/api/mode`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
+  assert.equal(r.status, 200, 'HOSTED 已登入要放行（它在 auth gate 後面，登入了就該回答）');
+  const body = await r.json();
+  assert.deepEqual(body, { hosted: true }, 'HOSTED 要回 true（回 false 會讓雲端使用者以為備份含憑證）');
+  assert.deepEqual(Object.keys(body), ['hosted'],
+    '只准一個鍵：契約寫明不得擴張成其他環境資訊（版本／路徑／設定都不行）');
+  assert.equal(typeof body.hosted, 'boolean', '必須是布林');
+});
+
 test('C3 gate：未登入打理財 API＝401（逐 router 抽樣、含寫入方法）；白名單與公開站不受影響', async () => {
   // 各 router 抽樣（core/crud/market/ib/statement/securities/stock-fundamentals 都要在牆內）
   for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/stock-fundamentals/CAL', '/api/export', '/api/refund-pairs', '/api/backup/daily', '/api/mode']) {

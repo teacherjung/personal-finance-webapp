@@ -1342,9 +1342,10 @@ test('LOCAL 零改動｜速率限制不在本機生效（一個人用自己的�
 });
 
 // ⭐ #417 r5 阻擋③要求的 HTTP 級考題：匯出前告知靠這支端點分流，它自己得先講對話。
-// ⚠️ 這裡是 LOCAL（本檔全域就是 LOCAL 模式）。HOSTED 那兩種情形分開守：
-//    未登入 401＝test/hosted-auth.test.js 的逐 router 抽樣清單；已登入 200 {hosted:true}
-//    ＝test/hosted-secrets.test.js（那支有登入 helper）。
+// ⚠️ 這裡是 LOCAL（本檔全域就是 LOCAL 模式）。HOSTED 兩格都在 test/hosted-auth.test.js：
+//    未登入 401＝逐 router 抽樣清單；已登入 200 `{hosted:true}`＝專屬那一題。
+//    ⚠️ 這段話 2026-08-08 訂正過：上一版寫「已登入那格在 hosted-secrets 那支」——**那是假的**
+//    （那支根本沒有這題）。#417 r6 審查抓到，補題並改口。註解說謊比缺口更糟。
 test('⭐ 模式端點｜LOCAL 回 {hosted:false}，而且**只有這一個鍵**（不可順手多回環境資訊）', async () => {
   const res = await fetch(base + '/mode');   // base 已含 /api
   assert.equal(res.status, 200);
