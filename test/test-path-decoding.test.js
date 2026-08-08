@@ -105,23 +105,51 @@ function isPathnameKey(prop, computed) {
 }
 
 /**
+ * 從**綁定模式**收集所有被綁定的名字（`{a}`／`[a]`／`a = 1`／`...rest` 都要遞迴進去）。
+ * ⚠️ 只認 Identifier 會漏掉合法寫法（r10 阻擋①，複驗者三顆探針）：
+ *    `function g({ URL })`／`const [URL] = xs`／`import * as URL from …`。
+ */
+function boundNames(node, out) {
+  if (!node) return out;
+  switch (node.type) {
+    case 'Identifier': out.add(node.name); break;
+    case 'ObjectPattern': for (const pr of node.properties) {
+      boundNames(pr.type === 'RestElement' ? pr.argument : pr.value, out);
+    } break;
+    case 'ArrayPattern': for (const el of node.elements) boundNames(el, out); break;
+    case 'AssignmentPattern': boundNames(node.left, out); break;
+    case 'RestElement': boundNames(node.argument, out); break;
+    default: break;
+  }
+  return out;
+}
+
+/**
  * 這個檔案裡有沒有自己宣告／匯入名叫 `URL` 的東西 ⇒ 整個檔案跳過。
- * ⚠️ 為什麼（r5 阻擋②）：函式參數或區域類別剛好叫 `URL` 時，本層會誤抓。
+ * ⚠️ 為什麼（r5 阻擋②）：函式參數或區域類別剛好叫 `URL` 時，本層會把它當成全域 WHATWG `URL` 而誤抓。
  * ⚠️ 這是**保守的整檔跳過**，不做作用域分析——本層 r9 起刻意不再走那條路（理由見下面那段）。
+ *    代價：檔案裡只要有任何一個叫 `URL` 的綁定，真違規也一起放過（記在誠實劃界那一題）。
  */
 function declaresOwnURL(ast) {
-  let found = false;
-  const named = (x) => !!x && x.type === 'Identifier' && x.name === 'URL';
+  const names = new Set();
   walk(ast, (n) => {
-    if (found) return;
-    if ((n.type === 'VariableDeclarator' && named(n.id))
-      || ((n.type === 'ClassDeclaration' || n.type === 'FunctionDeclaration') && named(n.id))
-      || (n.type === 'ImportSpecifier' && named(n.local))
-      || (n.type === 'ImportDefaultSpecifier' && named(n.local))
-      || ((n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression'
-        || n.type === 'ArrowFunctionExpression') && (n.params || []).some(named))) found = true;
+    switch (n.type) {
+      case 'VariableDeclarator': boundNames(n.id, names); break;
+      case 'ClassDeclaration': case 'ClassExpression':
+      case 'FunctionDeclaration': case 'FunctionExpression':
+        boundNames(n.id, names);
+        for (const pm of n.params || []) boundNames(pm, names);
+        break;
+      case 'ArrowFunctionExpression':
+        for (const pm of n.params || []) boundNames(pm, names);
+        break;
+      case 'CatchClause': boundNames(n.param, names); break;
+      case 'ImportSpecifier': case 'ImportDefaultSpecifier': case 'ImportNamespaceSpecifier':
+        boundNames(n.local, names); break;
+      default: break;
+    }
   });
-  return found;
+  return names.has('URL');
 }
 
 /**
@@ -131,8 +159,10 @@ function declaresOwnURL(ast) {
  * （taint、固定點迭代、kill、作用域分析），而他每一輪都能用很小的自然反例同時打出假綠與假紅
  * （最後一輪：`u.href = 'https://…'` 之後那個物件已經不是 file URL，而 kill 只看 binding 寫入、
  * 看不到物件內部變更）。⇒ 結論是本專案早就寫過的那條：**列舉繞法補不完要關門**。
- * 所以整層變數追蹤刪除，只留「直接寫」這兩種——**假紅風險歸零**，
- * 漏抓由真正的門（共用 ROOT ＋身分斷言）補。射程外的形狀明列在誠實劃界那一題，**不再逐案補洞**。
+ * 所以整層變數追蹤刪除，只留「直接寫」這兩種——**把假紅壓到只剩「檔案自己宣告了 URL 就整檔跳過」這一種保守取捨**，
+ * ⚠️ 漏抓**沒有人補**：`test/helpers/repo-root.js` 只保護**採用它的檔案**（見它自己的誠實劃界），
+ * 未 import 它的檔案寫出射程外的形狀時，本層與那道門都不會出聲。射程外的形狀明列在誠實劃界
+ * 那一題並列為待辦，**不再逐案補洞**（依複驗者 r9 判斷「乙」）。
  */
 export function findBadPathnameUses(src, rel = '<inline>') {
   const parse = (sourceType) => espree.parse(src, { ecmaVersion: 'latest', sourceType, loc: true });
@@ -174,7 +204,7 @@ export function findBadPathnameUses(src, rel = '<inline>') {
  * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成 `\344\270...` 八進位轉義而開不了檔
  *    ——那正是本 PR 在修的同一族病（本專案另有「掃描器跳過中文檔名」的前例）。
  */
-function trackedJsFiles() {
+export function trackedJsFiles() {
   // ⚠️ **不限目錄**（r9 阻擋①）：舊版只掃 test／scripts／lib／public，卻宣稱「本專案禁止」——
   //    複驗者把最直接的違規放進根層 `server.js`，掃描器照樣 11/11 全綠。
   //    根層還有 `eslint.config.js` 等受版控的 .js，全都在射程外而且沒有交代。
@@ -187,13 +217,15 @@ test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——
   const files = trackedJsFiles();
   // ⚠️ 反面自我驗證：先確認真的掃到東西。掃到 0 個檔案時「沒有違規者」當然成立＝最典型的假綠。
   assert.ok(files.length > 100, `git ls-files 只列出 ${files.length} 支 .js，掃描範圍不對＝這一題在空轉`);
-  // ⚠️ **範圍也要釘住**（r9 阻擋①的根）：舊版只掃 test／scripts／lib／public，複驗者把違規放進根層
-  //    `server.js` 就全綠。光靠上面的計數擋不住——縮回只掃 `test/` 仍然 >100 支（實測突變⑦不會紅）。
-  //    ⇒ 用結構性斷言：**根層**與各主要目錄都必須在清單裡。
-  assert.ok(files.some((f) => !f.includes('/')), '清單裡沒有任何根層 .js（例如 server.js）＝根層在射程外');
-  for (const dir of ['lib/', 'public/', 'test/', 'scripts/']) {
-    assert.ok(files.some((f) => f.startsWith(dir)), `清單裡沒有 ${dir} 底下的 .js＝掃描範圍不完整`);
-  }
+  // ⚠️ **範圍要用精確比對釘住**（r10 阻擋②）：結構性斷言（根層＋各目錄各一支）**擋不住**——
+  //    複驗者把清單改成「全部 test/ ＋每區留一支代表檔」，仍滿足全部結構斷言，卻漏掃 128 支，
+  //    而該檔 10/10、全套 1739/1739 都還是綠的。⇒ 改成與**獨立算出來的完整清單**逐項比對。
+  const expected = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
+    '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' })
+    .split('\n').filter((f) => f.endsWith('.js'));
+  assert.deepEqual([...files].sort(), [...expected].sort(),
+    `掃描清單與 git 列出的受版控 .js 不一致（掃 ${files.length} 支、應為 ${expected.length} 支）。`
+    + '\n漏掃的檔案等於在射程外，而錯誤訊息卻宣稱「本專案禁止」。');
   const offenders = files.flatMap((rel) => findBadPathnameUses(readFileSync(join(ROOT, rel), 'utf8'), rel));
   assert.deepEqual(offenders, [],
     '這些地方取了 file URL 的 `.pathname`：\n  ' + offenders.join('\n  ')
@@ -241,6 +273,12 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['參數裡用 new.target 的 HTTP URL（不是 file URL）',
       `class R { constructor(u){ this.p = ${U}(u, new.target === R ? 'http://a' : 'http://b')${PN}; } }`],
     ['正確寫法本身', "import { ROOT } from './helpers/repo-root.js';"],
+    // ↓ r10 阻擋①：檔案自己宣告／匯入的 `URL` 不是全域那顆，這三種都是合法程式
+    ['解構參數裡的 URL', `function g({ URL }) { return ${U}("..", ${IMU})${PN}; }`],
+    ['陣列解構的 URL', `const [URL] = constructors; const p = ${U}("..", ${IMU})${PN};`],
+    ['namespace import 叫 URL', `import * as URL from './custom-url.js'; const p = ${U}("..", ${IMU})${PN};`],
+    ['catch 參數叫 URL', `try { f(); } catch (URL) { const p = ${U}("..", ${IMU})${PN}; }`],
+    ['有預設值的參數叫 URL', `function g(URL = X) { return ${U}("..", ${IMU})${PN}; }`],
     // ⚠️ 這一種**永遠**不該被抓（r5 阻擋③）：它原本混在誠實劃界裡，而那一題寫著
     //    「將來抓到就是好事」——對這一項是錯的，它是合法用法，repo 現有兩支這樣寫。
     ['URL 物件當 base、不取 pathname（合法，repo 現有兩支這樣用）',
@@ -278,7 +316,8 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
   const outOfRange = [
     // ⚠️ r9 起本層**只認直接寫出來的兩種形狀**（依複驗者判斷「乙：大幅簡化」）。
     //    以下全部是「經過變數／容器／函式」的形狀——每一種都真的會 ENOENT，但本層刻意不追。
-    //    ⇒ 漏抓由真正的門（`test/helpers/repo-root.js` 的共用 ROOT ＋身分斷言）補。
+    //    ⚠️ **這些漏抓沒有人補**：共用 ROOT 那道門只保護採用它的檔案（見 helper 自己的誠實劃界），
+    //    未 import 它的檔案寫出這些形狀時，兩層都不會出聲。⇒ 這是**已知待辦**，不是已解決。
     ['存成中間變數再取', `const u = ${U}("..", ${IMU}); const R = u${PN};`],
     ['base 抽成常數', `const base = ${IMU}; const R = ${U}("..", base)${PN};`],
     ['值可由字面賦值證明的變數', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
