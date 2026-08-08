@@ -5,8 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import * as espree from 'espree';
 import { analyze } from 'eslint-scope';
-// ⚠️ **本檔不自己算 ROOT**（r3 阻擋①）：自己算就等於又多一份算法，
-//    而「唯一一份」是這一族真正的門。共用那一份自己會驗身分（不只驗有 package.json）。
+// ⚠️ **本檔不自己算 ROOT**：共用那一份會驗身分（不只驗「這裡有 package.json」），
+//    自己再算一次就是又多一個會算錯的地方。
 import { ROOT } from './helpers/repo-root.js';
 
 /**
@@ -20,9 +20,9 @@ import { ROOT } from './helpers/repo-root.js';
  * ⇒ 「考題在開發者機器上綠」不代表「在使用者機器上綠」，路徑是這條分界線上最常見的那顆雷。
  *
  * ⚠️⚠️ **本檔是「早期警告」，不是門**（2026-08-08 四路攻擊之後改口）：
- * 真正的門是 `test/helpers/repo-root.js`——**會驗身分**的共用 ROOT ＋載入時斷言
- * （不看寫法、只看結果：算錯、或指到另一棵 checkout，都當場吵）。本檔只掃「有沒有人自己算而且算錯」。
- * ⚠️ 那一份**不是** repo 唯一在算 repo 根的地方（詳見它的檔頭劃界）——別把它讀成「已經全部統一」。
+ * 真正的門是 `test/helpers/repo-root.js`——會驗身分的共用 ROOT ＋載入時斷言
+ * （不看寫法、只看結果：算錯、或指到另一棵 checkout，都當場吵）。
+ * 本檔只掃「有沒有人自己算而且算錯」，**射程與射程外都寫在下面的誠實劃界那一題**。
  * 照 `test/entry-guard.test.js` 已下過的同一個結論：語法檢查在這件事上不可能收斂，所以它不是門。
  *
  * ⚠️ **判斷用 AST，不用正則、不自己寫 lexer**（r2 阻擋①）：
@@ -50,22 +50,36 @@ function walk(node, visit) {
 }
 
 /**
- * `new URL(input, base)` 算出來的會不會是 **file URL**（＝取 `.pathname` 就會拿到未解碼路徑）。
+ * `new URL(input, base)` 算出來的**能不能證明**是 file URL（＝取 `.pathname` 就會拿到未解碼路徑）。
  *
- * ⚠️ **要分 input 與 base，不可以「任一參數含 file URL 就算」**（r3 阻擋②，複驗者實測的假紅）：
- * `new URL('https://example.com/a', import.meta.url).pathname` 的結果明確是 HTTP URL——
- * input 是絕對 URL 時 base 整個被忽略，那一行完全沒問題。
+ * ⚠️ **只有「證明得出來」才 taint**（r4 阻擋①）：前一版的判準是「input 或 base 任一是 file URL」，
+ * 但 `base` 是 file URL **不代表結果是** ——input 若是絕對 URL，base 整個被忽略。
+ * 於是五種安全寫法被誤判（複驗者實測：HTTPS 字串放進 const／`String('https://…')`／
+ * 無內插樣板／靜態字串串接／HTTPS 的 URL 物件），而這是會讓 `npm test` 失敗的硬閘。
+ *
+ * ⇒ 判準改成兩條，其餘一律放過（**寧可漏抓、不可誤抓**）：
+ *   ⓐ input 本身就是 file URL（`import.meta.url`、或被指派過它的 binding）⇒ 是
+ *   ⓑ input 是**字串字面**（含無內插樣板）：帶 scheme 就看是不是 `file:`；
+ *      沒有 scheme（＝相對參照）才去看 base 是不是 file URL
+ * input 是變數／串接／函式回傳值時**證明不了** ⇒ 放過。
  */
+function literalString(node) {
+  if (!node) return null;
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  return null;
+}
+
 function isFileUrlNew(node, tainted) {
   if (!node || node.type !== 'NewExpression') return false;
   if (!(node.callee.type === 'Identifier' && node.callee.name === 'URL')) return false;
   const [input, base] = node.arguments;
-  // input 是「帶非 file scheme 的絕對 URL 字面」⇒ base 被忽略 ⇒ 不是 file URL
-  if (input && input.type === 'Literal' && typeof input.value === 'string') {
-    const m = /^([a-z][a-z0-9+.-]*):/i.exec(input.value);
-    if (m && m[1].toLowerCase() !== 'file') return false;
-  }
-  return isFileUrlExpr(input, tainted) || isFileUrlExpr(base, tainted);
+  if (isFileUrlExpr(input, tainted)) return true;               // ⓐ
+  const lit = literalString(input);
+  if (lit === null) return false;                              // 證明不了 ⇒ 放過
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(lit);           // ⓑ
+  if (scheme) return scheme[1].toLowerCase() === 'file';
+  return isFileUrlExpr(base, tainted);
 }
 
 /** 這個運算式是不是一個 file URL（`import.meta.url`、或被指派過它的變數）。 */
@@ -197,7 +211,6 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     // ↓ r2 複驗者打穿手寫 lexer 的形狀（改用 AST 之後應全數抓到）
     ['正規式字元類別 [//] 之後接真違規', `function f(){ return /[//]/; } const R = ${U}("..", ${IMU})${PN};`],
     ['巢狀樣板內插裡的真違規', 'const s = `${`//${' + U + '("..", ' + IMU + ')' + PN + '}`}`;'],
-    ['巢狀括號的參數', `const R = ${U}(String(".."), ${IMU})${PN};`],
     ['同一行前半是區塊註解', `/* 說明 */ const R = ${U}("..", ${IMU})${PN};`],
     ['跨行寫法', `const R = ${U}("..",\n  ${IMU})${PN};`],
     ['計算屬性（字串字面）', `const R = ${U}("..", ${IMU})["pathname"];`],
@@ -207,6 +220,8 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['解構＋改名', `const { pathname: R } = ${U}("..", ${IMU});`],
     ['存成中間變數再取', `const u = ${U}("..", ${IMU}); const R = u${PN};`],
     ['base 抽成常數', `const base = ${IMU}; const R = ${U}("..", base)${PN};`],
+    ['單參數就是 file URL', `const R = ${U}(${IMU})${PN};`],
+    ['無內插樣板的相對路徑', 'const R = ' + U + '(`..`, ' + IMU + ')' + PN + ';'],
     ['宣告順序顛倒（先用後宣告的 base）', `function g(){ return ${U}("..", base)${PN}; } const base = ${IMU};`],
   ];
   for (const [why, src] of mustCatch) {
@@ -222,6 +237,12 @@ test('⭐ 掃描器自己的探針：複驗者與四路攻擊打出來的形狀�
     ['參數裡用 new.target 的 HTTP URL（不是 file URL）',
       `class R { constructor(u){ this.p = ${U}(u, new.target === R ? 'http://a' : 'http://b')${PN}; } }`],
     ['正確寫法本身', "import { ROOT } from './helpers/repo-root.js';"],
+    // ↓ r4 複驗者實測的五種假紅：input 是絕對 HTTPS ⇒ base 被忽略 ⇒ 結果不是 file URL
+    ['HTTPS 字串放進 const', `const u = 'https://example.com/a'; const p = ${U}(u, ${IMU})${PN};`],
+    ['String() 包起來的 HTTPS', `const p = ${U}(String('https://example.com/a'), ${IMU})${PN};`],
+    ['無內插樣板的 HTTPS', 'const p = ' + U + '(`https://example.com/a`, ' + IMU + ')' + PN + ';'],
+    ['靜態字串串接的 HTTPS', `const p = ${U}('https:' + '//example.com/a', ${IMU})${PN};`],
+    ['HTTPS 的 URL 物件當 input', `const b = ${U}('https://example.com/'); const p = ${U}(b, ${IMU})${PN};`],
     ['URL 物件本身沒取 pathname（合法：直接交給 fs，Node 自己會解碼）',
       `const ROOT = ${U}("../", ${IMU}); readFileSync(new URL("a.js", ROOT), "utf8");`],
   ];
@@ -250,6 +271,14 @@ test('⚠️ 誠實劃界｜這幾種本題**抓不到**（所以它是早期警
     ['計算鍵的解構', `const key = "pathname"; const { [key]: R } = ${U}("..", ${IMU});`],
     ['URL 建構子本身被別名', `const V = URL; const R = new V("..", ${IMU})${PN};`],
     ['URL 物件再別名一層', `const a = ${U}("..", ${IMU}); const b = a; const R = b${PN};`],
+    // ↓ r4 之後**刻意**放過：input 不是字串字面 ⇒ 證明不了結果是 file URL。
+    //    這是「寧可漏抓、不可誤抓」的代價，不是漏掉的——r2 曾把它列為 mustCatch，
+    //    r4 收緊判準（只有證明得出來才 taint）之後它必然落到射程外。
+    ['input 是函式回傳值（非字面）', `const R = ${U}(String(".."), ${IMU})${PN};`],
+    ['input 是變數（非字面）', `const rel = ".."; const R = ${U}(rel, ${IMU})${PN};`],
+    // ↓ kill semantics 的代價（r4 複驗者實測並確認「掃描器仍有價值、不該刪，但要列進劃界」）：
+    //    一個 binding 只要有一次寫入判不出是 file URL，就整個放過——自我賦值就足以脫身。
+    ['自我賦值（kill 讓它脫身）', `let u = ${U}("..", ${IMU}); if (x) u = u; const R = u${PN};`],
     // ↓ 這一種是**刻意**放過的合法用法（r3 複驗者確認）：URL 物件直接交給 fs，Node 自己會解碼
     ['URL 物件當 base、不取 pathname（合法，repo 現有兩支這樣用）',
       `const ROOT = ${U}("../", ${IMU}); readFileSync(new URL("a.js", ROOT), "utf8");`],
