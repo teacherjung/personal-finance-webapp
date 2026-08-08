@@ -37,14 +37,16 @@ function assertSubscriptionsStructure(source) {
     'class="subscriptions-section subscriptions-analysis"',
     'class="active-subscription-group"',
     'id="historySection"',
-    'id="addSub"',
-    'id="printSubs"',
   ]) assert.ok(render.includes(marker), `缺少訂閱工作面結構：${marker}`);
+  const head = functionBlock(source, 'function subscriptionsPageHeadHtml(', '\nfunction subscriptionNoticeHtml(');
+  for (const marker of ['id="addSub"', 'id="printSubs"']) {
+    assert.ok(head.includes(marker), `缺少訂閱頁首操作：${marker}`);
+  }
   assert.match(render, /const thisMonth = sumMonth\(curMk\);/);
   assert.match(render, /const nextMonth = sumMonth\(nextMk\);/);
   assert.match(render, /fmtFee\(thisMonth \* 12\)/);
-  assert.equal((render.match(/if \(seq !== currentRouteSeq\(\)\) return;/g) || []).length, 2,
-    '讀取與自動更新後的兩道路由守衛都必須保留');
+  assert.equal((render.match(/if \(seq !== currentRouteSeq\(\)\) return;/g) || []).length, 3,
+    '讀取、自動更新與錯誤狀態的三道路由守衛都必須保留');
   assert.match(render, /renderHistorySection\(byId\('historySection'\)\);/);
 }
 
@@ -81,9 +83,10 @@ test('訂閱追蹤 UI：獨立暖色樣式支援桌機、平板與手機摘要�
 
 test('訂閱追蹤 UI：破壞路由守衛、年化口徑、圓角或窄畫面配置時考題會紅', () => {
   const source = read('public/modules/subscriptions.js');
-  const guard = 'if (seq !== currentRouteSeq()) return;';
+  const guard = "[raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);\n    if (seq !== currentRouteSeq()) return;";
   assert.ok(source.includes(guard), '突變目標必須存在：讀取後路由守衛');
-  assert.throws(() => assertSubscriptionsStructure(source.replace(guard, '// route guard removed')));
+  assert.throws(() => assertSubscriptionsStructure(source.replace(guard,
+    "[raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);\n    // route guard removed")));
   const annual = 'fmtFee(thisMonth * 12)';
   assert.ok(source.includes(annual), '突變目標必須存在：年化固定支出口徑');
   assert.throws(() => assertSubscriptionsStructure(source.replace(annual, 'fmtFee(nextMonth * 12)')));
