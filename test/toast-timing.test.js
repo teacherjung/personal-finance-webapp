@@ -20,12 +20,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { toastMs, TOAST_MIN_MS, TOAST_MAX_MS, TOAST_MS_PER_CHAR } from '../public/modules/toast-timing.js';
 import { okMsg, networkFailMsg, authFailMsg, serverFailMsg, notBackupMsg, saveFailMsg }
   from '../public/modules/backup-export.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// ⚠️ 路徑一律用 `fileURLToPath` 解碼，**不可以用 `new URL(...).pathname`**：後者留著 URL 編碼，
+//    專案實際落在「07 專案/榮祥森（投資理財）」這種含空白與中文的路徑下時會變成 `07%20%E5%B0%88...`
+//    ⇒ 掃描器 `readFileSync` 直接 ENOENT，四題接線在 William 的機器上等於從來沒跑過（2026-08-08 實際踩到：
+//    #417 在 ASCII 的實作樹裡全綠、合併進 main 後在主目錄四題紅）。repo 其餘 UI 考題本來就用這個寫法。
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 去掉 JS 註解——**被註解掉的接線等於不存在**（r5 阻擋②：複驗者把接線改成註解，本檔的形狀題全綠）。
