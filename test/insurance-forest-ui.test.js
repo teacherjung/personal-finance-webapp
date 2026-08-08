@@ -7,6 +7,53 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(ROOT, path), 'utf8');
 
+function stripComments(source) {
+  let output = '';
+  let previous = '';
+  const stack = ['code'];
+  const interpolationDepth = [];
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    const state = stack[stack.length - 1];
+    if (state === 'code' || state === 'interpolation') {
+      if (char === '/' && next === '/' && previous !== '\\') { stack.push('line'); previous = ''; i++; continue; }
+      if (char === '/' && next === '*' && previous !== '\\') { stack.push('block'); previous = ''; i++; continue; }
+      if (char === "'") stack.push('single');
+      else if (char === '"') stack.push('double');
+      else if (char === '`') stack.push('template');
+      else if (state === 'interpolation') {
+        if (char === '{') interpolationDepth[interpolationDepth.length - 1]++;
+        else if (char === '}') {
+          if (interpolationDepth[interpolationDepth.length - 1] === 0) {
+            stack.pop(); interpolationDepth.pop(); output += char; previous = char; continue;
+          }
+          interpolationDepth[interpolationDepth.length - 1]--;
+        }
+      }
+      output += char; previous = char;
+    } else if (state === 'line') {
+      if (char === '\n') { stack.pop(); output += char; previous = ''; }
+    } else if (state === 'block') {
+      if (char === '*' && next === '/') { stack.pop(); i++; previous = ''; }
+      else if (char === '\n') output += char;
+    } else if (state === 'template') {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if (char === '`') stack.pop();
+      else if (char === '$' && next === '{') { stack.push('interpolation'); interpolationDepth.push(0); output += next; i++; }
+      previous = char;
+    } else {
+      output += char;
+      if (char === '\\') { output += next ?? ''; i++; previous = ''; continue; }
+      if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) stack.pop();
+      else if (char === '\n') stack.pop();
+      previous = char;
+    }
+  }
+  return output;
+}
+
 function functionBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
@@ -81,6 +128,7 @@ function assertPolicyCardBehavior(source) {
 }
 
 function assertInsuranceStructure(source) {
+  source = stripComments(source);
   const render = functionBlock(source, 'export async function renderInsurance()', '\nfunction policyCard(');
   const card = functionBlock(source, 'function policyCard(', '\n\nfunction openInsForm(');
   const form = source.slice(source.indexOf('function openInsForm('));
@@ -90,16 +138,18 @@ function assertInsuranceStructure(source) {
     'class="insurance-attention',
     'class="insurance-policy-section"',
     'class="insurance-policy-grid"',
-    'class="insurance-empty"',
     'id="addIns"',
   ]) assert.match(render, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;/);
+  assert.match(render, /insuranceEmptyHtml\(\)/);
+  assert.match(source, /function insuranceEmptyHtml\(\) \{[\s\S]*class="insurance-empty"/);
+  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*const annual = annualPremiumOf\(list\);/);
   assert.match(render, /const annual = annualPremiumOf\(list\);/);
   assert.match(render, /return d >= 0 && d <= 30;/);
   assert.match(render, /wan\(annual\)/);
   assert.match(card, /esc\(p\.policyName\)/);
   assert.match(card, /esc\(p\.coverage \|\| '尚未填寫保障內容'\)/);
-  assert.match(form, /if \(seq === currentRouteSeq\(\)\) renderInsurance\(\);/);
+  assert.match(form, /rerenderInsuranceAfterSave\(seq, message\);/);
+  assert.match(source, /function rerenderInsuranceAfterSave\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;/);
 }
 
 function assertInsuranceCss(css, index) {
@@ -144,13 +194,13 @@ test('保險追蹤 UI：獨立暖色樣式支援雙欄桌機、單欄窄畫面�
 
 test('保險追蹤 UI：破壞安全輸出、路由守衛、圓角或窄畫面配置時考題會紅', () => {
   const source = read('public/modules/insurance.js');
-  const routeGuard = 'if (seq !== currentRouteSeq()) return;';
+  const routeGuard = "if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁";
   assert.ok(source.includes(routeGuard), '突變目標必須存在：讀取後路由守衛');
   assert.throws(() => assertInsuranceStructure(source.replace(routeGuard, '// route guard removed')));
 
-  const saveGuard = 'if (seq === currentRouteSeq()) renderInsurance();';
+  const saveGuard = 'if (seq !== currentRouteSeq()) return;\n  insuranceNotice = message;';
   assert.ok(source.includes(saveGuard), '突變目標必須存在：儲存後路由守衛');
-  assert.throws(() => assertInsuranceStructure(source.replace(saveGuard, 'renderInsurance();')));
+  assert.throws(() => assertInsuranceStructure(source.replace(saveGuard, 'insuranceNotice = message;')));
 
   const safeName = '${esc(p.policyName)}';
   assert.ok(source.includes(safeName), '突變目標必須存在：保單名稱輸出消毒');
