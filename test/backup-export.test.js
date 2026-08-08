@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 // ⚠️ 路徑一律用 `fileURLToPath` 解碼，**不可以用 `new URL(...).pathname`**：後者留著 URL 編碼，
 //    專案實際落在「07 專案/榮祥森（投資理財）」這種含空白與中文的路徑下時會變成 `07%20%E5%B0%88...`
 //    ⇒ 掃描器 `readFileSync` 直接 ENOENT，四題接線在 William 的機器上等於從來沒跑過（2026-08-08 實際踩到：
-//    #417 在 ASCII 的實作樹裡全綠、合併進 main 後在主目錄四題紅）。repo 其餘 UI 考題本來就用這個寫法。
+//    #417 在 ASCII 的實作樹裡全綠、合併進 main 後在主目錄四題紅）。
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
