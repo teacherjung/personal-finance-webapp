@@ -63,10 +63,12 @@ function namedFunction(source, name) {
     subscriptionsLoadingHtml: 'subscriptionsLoadErrorHtml',
     subscriptionsLoadErrorHtml: 'subscriptionsEmptyHtml',
     subscriptionsEmptyHtml: 'rerenderSubscriptionsAfterAction',
+    toggleCancel: 'drawBreakdown',
+    openSubForm: null,
   };
   const nextName = nextByName[name];
-  assert.ok(nextName, `未登記 ${name} 的下一個函式`);
-  const end = source.indexOf(`\nfunction ${nextName}(`, start);
+  assert.ok(Object.hasOwn(nextByName, name), `未登記 ${name} 的函式邊界`);
+  const end = nextName ? source.indexOf(`\nfunction ${nextName}(`, start) : source.length;
   assert.ok(end > start, `${name} 缺少結束邊界`);
   return source.slice(start, end);
 }
@@ -136,6 +138,8 @@ function assertStateBehavior(source) {
 function assertStateWiring(source) {
   source = stripComments(source);
   const render = renderFunction(source);
+  const toggle = namedFunction(source, 'toggleCancel');
+  const form = namedFunction(source, 'openSubForm');
   const emptyStart = render.indexOf('if (!raw.length) {');
   const emptyEnd = render.indexOf('const subs = raw.slice();', emptyStart);
   assert.ok(emptyStart >= 0 && emptyEnd > emptyStart, '找不到空白狀態分支邊界');
@@ -152,10 +156,16 @@ function assertStateWiring(source) {
     '一般成功頁必須呈現一次性通知，不可被空白 helper 裡的同名呼叫假滿足');
   assert.match(render, /if \(expired\) \{\s*subscriptionNotice = notice;\s*return renderSubscriptions\(\{ showLoading: false \}\);/,
     '自動校正後重載必須把尚未顯示的通知接回下一輪');
+  assert.match(render, /view\(\)\.querySelectorAll\('th\.sortable'\)[\s\S]*?renderSubscriptions\(\{ showLoading: false \}\);\s*\}\);/,
+    '表頭排序只能原地更新，不可把整頁清成載入狀態');
   assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*subscriptionNotice = message;\s*renderSubscriptions\(\{ showLoading: false \}\);/);
   assert.match(source, /async function deleteSubscription\(s\) \{\s*if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;\s*const seq = currentRouteSeq\(\);\s*try \{\s*await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*rerenderSubscriptionsAfterAction\(seq, '訂閱已刪除'\);/);
-  assert.match(source, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
-  assert.match(source, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.match(source, /async function applyOrder\(ids, listKey\) \{\s*const seq = currentRouteSeq\(\);\s*await Promise\.all[\s\S]*?if \(seq !== currentRouteSeq\(\)\) return;\s*setListSort\(listKey, 'manual', 'asc'\);\s*renderSubscriptions\(\{ showLoading: false \}\);\s*\}/,
+    '拖曳排序後只能在原路由原地更新');
+  assert.match(toggle, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.doesNotMatch(toggle, /toast\(message\)/, '標記成功不可同時顯示 toast 與頁內通知');
+  assert.match(form, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.doesNotMatch(form, /toast\(message\)/, '儲存成功不可同時顯示 toast 與頁內通知');
 }
 
 function assertStateCss(css) {
@@ -229,6 +239,31 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(deleteRefresh), '突變目標必須存在：刪除成功原地確認');
   assert.throws(() => assertStateWiring(source.replace(deleteRefresh,
     'renderSubscriptions({ showLoading: false });')));
+
+  const sortRefresh = 'renderSubscriptions({ showLoading: false });\n  });\n  view().querySelectorAll(\'[data-edit]\')';
+  assert.ok(source.includes(sortRefresh), '突變目標必須存在：表頭排序原地更新');
+  assert.throws(() => assertStateWiring(source.replace(sortRefresh,
+    "renderSubscriptions();\n  });\n  view().querySelectorAll('[data-edit]')")));
+
+  const orderRefresh = "setListSort(listKey, 'manual', 'asc');\n  renderSubscriptions({ showLoading: false });";
+  assert.ok(source.includes(orderRefresh), '突變目標必須存在：拖曳排序原地更新');
+  assert.throws(() => assertStateWiring(source.replace(orderRefresh,
+    "setListSort(listKey, 'manual', 'asc');\n  renderSubscriptions();")));
+
+  const orderGuard = 'if (seq !== currentRouteSeq()) return;\n  setListSort(listKey, \'manual\', \'asc\');';
+  assert.ok(source.includes(orderGuard), '突變目標必須存在：拖曳排序路由守衛');
+  assert.throws(() => assertStateWiring(source.replace(orderGuard,
+    "setListSort(listKey, 'manual', 'asc');")));
+
+  const toggleNoticeOnly = 'const message = s.considerCancel ? \'已取消「考慮停用」標記\' : \'已標記為考慮停用\';\n    rerenderSubscriptionsAfterAction(seq, message);';
+  assert.ok(source.includes(toggleNoticeOnly), '突變目標必須存在：標記成功單一通知');
+  assert.throws(() => assertStateWiring(source.replace(toggleNoticeOnly,
+    toggleNoticeOnly.replace('rerenderSubscriptionsAfterAction', 'toast(message);\n    rerenderSubscriptionsAfterAction'))));
+
+  const saveNoticeOnly = "const message = sub ? '訂閱資料已更新' : '訂閱已新增';\n      rerenderSubscriptionsAfterAction(seq, message);";
+  assert.ok(source.includes(saveNoticeOnly), '突變目標必須存在：儲存成功單一通知');
+  assert.throws(() => assertStateWiring(source.replace(saveNoticeOnly,
+    saveNoticeOnly.replace('rerenderSubscriptionsAfterAction', 'toast(message);\n      rerenderSubscriptionsAfterAction'))));
 
   const mobileStack = 'grid-template-columns: 1fr; gap: 18px; min-height: 390px;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

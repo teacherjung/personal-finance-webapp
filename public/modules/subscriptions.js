@@ -401,7 +401,9 @@ function subscriptionsTableHtml(rows, validSet, opts = {}) {
 // 拖曳排序：放開後依新順序寫回每筆的 order，並切換成手動排序
 let draggedId = null;
 async function applyOrder(ids, listKey) {
+  const seq = currentRouteSeq();
   await Promise.all(ids.map((id, i) => api('/subscriptions/' + id, { method: 'PUT', body: { order: i } })));
+  if (seq !== currentRouteSeq()) return;
   setListSort(listKey, 'manual', 'asc');
   renderSubscriptions({ showLoading: false });
 }
