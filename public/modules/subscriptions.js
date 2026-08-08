@@ -2,7 +2,7 @@
 // 訂閱追蹤頁（頁面協調層）：攤提數學已歸戶 subscriptions-model.js（系統優化階段二②，零依賴純函式＋
 // 前後端對照考題）；A4 列印報表已歸戶 subscriptions-report.js（階段二③）。本檔留 DOM/圖表/表單。
 // subStatus 留此（吃 daysUntil＝依「今天」而變）；帶 export 的常數/函式＝報表模組的接縫（呼叫時取用、TDZ 安全）。
-import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -105,6 +105,67 @@ function setListSort(listKey, k, d) {
 let charts = [];
 function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
 /** @type {any} */ let syncColsTimer = 0;   // setTimeout 的代號（瀏覽器是數字、Node 型別是物件，標 any 兩邊都通）
+let subscriptionNotice = '';
+
+function subscriptionsPageHeadHtml({ showPrint = true, showAdd = true } = {}) {
+  return `<div class="page-head subscriptions-page-head">
+    <div><span class="page-eyebrow">固定支出管理</span><h1>訂閱追蹤</h1><p>掌握每月固定支出、下一次扣款與準備停用的服務。</p></div>
+    <div class="page-actions">
+      ${showPrint ? `<button class="btn-ghost icon-btn" id="printSubs" title="列印 / 匯出 PDF" aria-label="列印 / 匯出 PDF">${icon('print', 16)}</button>` : ''}
+      ${showAdd ? `<button class="btn" id="addSub">${icon('plus', 16)}新增訂閱</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function subscriptionNoticeHtml(message) {
+  if (!message) return '';
+  return `<div class="subscriptions-notice" role="status" aria-live="polite">${icon('check', 17)}<span>${esc(message)}</span></div>`;
+}
+
+function subscriptionsLoadingHtml() {
+  return `<div class="subscriptions-page">
+    ${subscriptionsPageHeadHtml({ showPrint: false, showAdd: false })}
+    <section class="subscriptions-state subscriptions-loading-state" aria-live="polite" aria-busy="true">
+      <span class="subscriptions-state-icon subscriptions-loading-icon">${icon('refresh', 30)}</span>
+      <div><h2>正在整理訂閱狀態</h2><p>讀取清單後，系統會依停用日期校正狀態，完成後再顯示固定支出與近期扣款。</p></div>
+    </section>
+  </div>`;
+}
+
+function subscriptionsLoadErrorHtml(message) {
+  const detail = message ? `<details><summary>查看技術資訊</summary><code>${esc(String(message))}</code></details>` : '';
+  return `<div class="subscriptions-page">
+    ${subscriptionsPageHeadHtml({ showPrint: false, showAdd: false })}
+    <section class="subscriptions-state subscriptions-error-state" role="alert">
+      <img src="assets/guide-return-neutral.webp" alt="" />
+      <div><span class="subscriptions-state-kicker">這次沒有完成</span><h2>訂閱狀態暫時無法載入</h2>
+        <p>若你剛完成新增、修改、刪除，或系統正在更新停用狀態，部分操作可能已經成功。請先重新載入確認，避免重複操作。</p>
+        <button class="btn" id="retrySubscriptions">${icon('refresh', 16)}重新載入</button>${detail}
+      </div>
+    </section>
+  </div>`;
+}
+
+function subscriptionsEmptyHtml(notice) {
+  return `<div class="subscriptions-page">
+    ${subscriptionsPageHeadHtml({ showPrint: false })}
+    ${subscriptionNoticeHtml(notice)}
+    <section class="subscriptions-state subscriptions-empty-state">
+      <img src="assets/guide-return-neutral.webp" alt="" />
+      <div><span class="subscriptions-state-kicker">從第一筆固定支出開始</span><h2>尚無訂閱紀錄</h2>
+        <p>加入經常使用的服務後，這裡會整理每月攤提、下一次扣款、續費卡片與停用進度。</p>
+        <button class="btn" id="emptyAddSub">${icon('plus', 16)}新增第一筆訂閱</button>
+      </div>
+    </section>
+    <div id="historySection"></div>
+  </div>`;
+}
+
+function rerenderSubscriptionsAfterAction(seq, message) {
+  if (seq !== currentRouteSeq()) return;
+  subscriptionNotice = message;
+  renderSubscriptions({ showLoading: false });
+}
 
 // 排序用的「續費/停用」生效日期
 const effDate = (s) => isLifetimeSub(s) ? '9999-12-31' : (subStatus(s) === 'active' ? s.nextCharge : s.endsOn) || s.nextCharge || '';
@@ -163,23 +224,47 @@ async function autoExpire(subs) {
   return true;
 }
 
-export async function renderSubscriptions() {
+export async function renderSubscriptions({ showLoading = true } = {}) {
   const seq = currentRouteSeq();
-  const [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
-  if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
-  const expired = await autoExpire(raw);
-  if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
-  if (expired) return renderSubscriptions();   // 停用日背景作業有更新→重新載入（此時 seq 確認仍是當前，遞迴安全）
+  const notice = subscriptionNotice;
+  subscriptionNotice = '';
+  destroyCharts();
+  if (showLoading) view().innerHTML = subscriptionsLoadingHtml();
+
+  let raw;
+  let cards;
+  try {
+    [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
+    if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
+    const expired = await autoExpire(raw);
+    if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
+    if (expired) {
+      subscriptionNotice = notice;
+      return renderSubscriptions({ showLoading: false });   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
+    }
+  } catch (e) {
+    if (seq !== currentRouteSeq()) return;
+    view().innerHTML = subscriptionsLoadErrorHtml(e?.message);
+    const retry = byId('retrySubscriptions');
+    if (retry) retry.onclick = () => renderSubscriptions();
+    return;
+  }
+
   const creditCards = cards.filter(c => (c.type || 'credit') === 'credit').map(c => c.name);
   const validSet = new Set(creditCards);
   freezeCompletedMonths(raw).catch(() => {});   // 月份結束後自動凍結到歷史紀錄
+  if (!raw.length) {
+    view().innerHTML = subscriptionsEmptyHtml(notice);
+    byId('addSub').onclick = () => openSubForm(null, creditCards);
+    byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);
+    renderHistorySection(byId('historySection'));
+    return;
+  }
   const subs = raw.slice();
   const mainSubs = sortTableRows(subs.filter(s => subStatus(s) === 'active'), 'active');
   const endingSubs = sortTableRows(subs.filter(s => subStatus(s) === 'ending'), 'ending');
   const endedSubs = sortTableRows(subs.filter(s => subStatus(s) === 'ended'), 'ended');
   const staleSubs = subs.filter(s => s.card && !validSet.has(s.card));
-  destroyCharts();
-
   const curMk = monthKey();
   const nextMk = addMonths(curMk, 1);
   const sumMonth = (mk) => amortizedForMonth(subs, mk);
@@ -191,13 +276,8 @@ export async function renderSubscriptions() {
 
   view().innerHTML = `
     <div class="subscriptions-page">
-    <div class="page-head subscriptions-page-head">
-      <div><span class="page-eyebrow">固定支出管理</span><h1>訂閱追蹤</h1><p>掌握每月固定支出、下一次扣款與準備停用的服務。</p></div>
-      <div class="page-actions">
-        <button class="btn-ghost icon-btn" id="printSubs" title="列印 / 匯出 PDF" aria-label="列印 / 匯出 PDF">${icon('print', 16)}</button>
-        <button class="btn" id="addSub">${icon('plus', 16)}新增訂閱</button>
-      </div>
-    </div>
+    ${subscriptionsPageHeadHtml()}
+    ${subscriptionNoticeHtml(notice)}
 
     ${staleSubs.length ? `<div class="subscriptions-attention danger">
       <span class="subscriptions-attention-mark">卡片</span>
@@ -255,12 +335,12 @@ export async function renderSubscriptions() {
     if (!k) return;
     if (s.key === k) setListSort(listKey, k, s.dir === 'asc' ? 'desc' : 'asc');
     else setListSort(listKey, k, 'asc');
-    renderSubscriptions();
+    renderSubscriptions({ showLoading: false });
   });
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openSubForm(subs.find(s => s.id === b.dataset.edit), creditCards));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const s = subs.find(x => x.id === b.dataset.del);
-    confirmDelete(s.name, () => api('/subscriptions/' + s.id, { method: 'DELETE' }));
+    deleteSubscription(s);
   });
   view().querySelectorAll('[data-record]').forEach(b => b.onclick = () => recordToAccounting(subs.find(s => s.id === b.dataset.record)));
   view().querySelectorAll('[data-flag]').forEach(b => b.onclick = () => toggleCancel(subs.find(s => s.id === b.dataset.flag)));
@@ -269,6 +349,15 @@ export async function renderSubscriptions() {
 
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
+}
+
+async function deleteSubscription(s) {
+  if (!window.confirm(`確定要刪除「${s.name}」嗎？此動作無法復原。`)) return;
+  const seq = currentRouteSeq();
+  try {
+    await api('/subscriptions/' + s.id, { method: 'DELETE' });
+    rerenderSubscriptionsAfterAction(seq, '訂閱已刪除');
+  } catch (e) { toast(e.message, true); }
 }
 
 function syncSubscriptionColumnWidths() {
@@ -312,9 +401,11 @@ function subscriptionsTableHtml(rows, validSet, opts = {}) {
 // 拖曳排序：放開後依新順序寫回每筆的 order，並切換成手動排序
 let draggedId = null;
 async function applyOrder(ids, listKey) {
+  const seq = currentRouteSeq();
   await Promise.all(ids.map((id, i) => api('/subscriptions/' + id, { method: 'PUT', body: { order: i } })));
   setListSort(listKey, 'manual', 'asc');
-  renderSubscriptions();
+  if (seq !== currentRouteSeq()) return;
+  renderSubscriptions({ showLoading: false });
 }
 function onDrop(dragId, targetRow, placeAfter = false) {
   const targetId = targetRow?.dataset.id;
@@ -486,10 +577,11 @@ async function recordToAccounting(s) {
 }
 
 async function toggleCancel(s) {
+  const seq = currentRouteSeq();
   try {
     await api('/subscriptions/' + s.id, { method: 'PUT', body: { considerCancel: !s.considerCancel } });
-    toast(s.considerCancel ? '已取消「考慮停用」標記' : '已標記為考慮停用');
-    renderSubscriptions();
+    const message = s.considerCancel ? '已取消「考慮停用」標記' : '已標記為考慮停用';
+    rerenderSubscriptionsAfterAction(seq, message);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -618,6 +710,7 @@ function drawBreakdown(activeThis, curMk) {
 }
 
 function openSubForm(sub, creditCards = []) {
+  const seq = currentRouteSeq();
   const cardOptions = creditCards.map(n => ({ value: n, label: cardLabel(n) }));
   if (sub && sub.card && !creditCards.includes(sub.card)) cardOptions.unshift({ value: sub.card, label: cardLabel(sub.card) + '（已失效，請更新）' });
   if (!cardOptions.length) cardOptions.push({ value: '', label: '（請先到「卡片追蹤」新增信用卡）' });
@@ -681,7 +774,8 @@ function openSubForm(sub, creditCards = []) {
       if (!data.since) data.since = (sub && sub.since) || monthKey();   // 新訂閱從「當月」起算，避免回填先前月份歷史
       if (sub) await api('/subscriptions/' + sub.id, { method: 'PUT', body: data });
       else await api('/subscriptions', { method: 'POST', body: data });
-      toast('已儲存'); renderSubscriptions();
+      const message = sub ? '訂閱資料已更新' : '訂閱已新增';
+      rerenderSubscriptionsAfterAction(seq, message);
     }
   });
 }
