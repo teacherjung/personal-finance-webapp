@@ -71,6 +71,14 @@ function namedFunction(source, name) {
   return source.slice(start, end);
 }
 
+function renderFunction(source) {
+  const start = source.indexOf('export async function renderSubscriptions(');
+  assert.ok(start >= 0, '找不到 renderSubscriptions');
+  const end = source.indexOf('\nfunction syncSubscriptionColumnWidths(', start);
+  assert.ok(end > start, 'renderSubscriptions 缺少結束邊界');
+  return source.slice(start, end);
+}
+
 function stateHelpers(source) {
   const esc = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   const icon = name => `<svg data-icon="${name}"></svg>`;
@@ -127,16 +135,27 @@ function assertStateBehavior(source) {
 
 function assertStateWiring(source) {
   source = stripComments(source);
-  assert.match(source, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*destroyCharts\(\);\s*view\(\)\.innerHTML = subscriptionsLoadingHtml\(\);/);
+  const render = renderFunction(source);
+  const emptyStart = render.indexOf('if (!raw.length) {');
+  const emptyEnd = render.indexOf('const subs = raw.slice();', emptyStart);
+  assert.ok(emptyStart >= 0 && emptyEnd > emptyStart, '找不到空白狀態分支邊界');
+  const emptyBranch = render.slice(emptyStart, emptyEnd);
+
+  assert.match(render, /export async function renderSubscriptions\(\{ showLoading = true \} = \{\}\)/);
+  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*destroyCharts\(\);\s*if \(showLoading\) view\(\)\.innerHTML = subscriptionsLoadingHtml\(\);/);
   assert.match(source, /try \{\s*\[raw, cards\] = await Promise\.all\(\[api\('\/subscriptions'\), api\('\/cards'\)\]\);/);
   assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
   assert.match(source, /if \(retry\) retry\.onclick = \(\) => renderSubscriptions\(\);/);
-  assert.match(source, /if \(!raw\.length\) \{[\s\S]*byId\('emptyAddSub'\)\.onclick = \(\) => openSubForm\(null, creditCards\);[\s\S]*renderHistorySection\(byId\('historySection'\)\);/);
-  assert.match(source, /subscriptionNoticeHtml\(notice\)/);
-  assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*subscriptionNotice = message;\s*renderSubscriptions\(\);/);
-  assert.match(source, /await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*if \(actionSeq === currentRouteSeq\(\)\) subscriptionNotice = '訂閱已刪除';/);
-  assert.match(source, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*toast\(message\);\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
-  assert.match(source, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*toast\(message\);\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.match(emptyBranch, /byId\('emptyAddSub'\)\.onclick = \(\) => openSubForm\(null, creditCards\);/);
+  assert.match(emptyBranch, /renderHistorySection\(byId\('historySection'\)\);/);
+  assert.match(render, /\$\{subscriptionsPageHeadHtml\(\)\}\s*\$\{subscriptionNoticeHtml\(notice\)\}/,
+    '一般成功頁必須呈現一次性通知，不可被空白 helper 裡的同名呼叫假滿足');
+  assert.match(render, /if \(expired\) \{\s*subscriptionNotice = notice;\s*return renderSubscriptions\(\{ showLoading: false \}\);/,
+    '自動校正後重載必須把尚未顯示的通知接回下一輪');
+  assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*subscriptionNotice = message;\s*renderSubscriptions\(\{ showLoading: false \}\);/);
+  assert.match(source, /async function deleteSubscription\(s\) \{\s*if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;\s*const seq = currentRouteSeq\(\);\s*try \{\s*await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*rerenderSubscriptionsAfterAction\(seq, '訂閱已刪除'\);/);
+  assert.match(source, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.match(source, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
 }
 
 function assertStateCss(css) {
@@ -186,6 +205,30 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   const saveGuard = 'if (seq !== currentRouteSeq()) return;\n  subscriptionNotice = message;';
   assert.ok(source.includes(saveGuard), '突變目標必須存在：成功狀態路由守衛');
   assert.throws(() => assertStateWiring(source.replace(saveGuard, 'subscriptionNotice = message;')));
+
+  const emptyHistory = "byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);\n    renderHistorySection(byId('historySection'));";
+  assert.ok(source.includes(emptyHistory), '突變目標必須存在：空白狀態歷史接線');
+  assert.throws(() => assertStateWiring(source.replace(emptyHistory,
+    "byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);")));
+
+  const successNotice = '${subscriptionsPageHeadHtml()}\n    ${subscriptionNoticeHtml(notice)}';
+  assert.ok(source.includes(successNotice), '突變目標必須存在：一般成功頁通知');
+  assert.throws(() => assertStateWiring(source.replace(successNotice, '${subscriptionsPageHeadHtml()}')));
+
+  const expireNotice = 'subscriptionNotice = notice;\n      return renderSubscriptions({ showLoading: false });';
+  assert.ok(source.includes(expireNotice), '突變目標必須存在：自動校正通知接力');
+  assert.throws(() => assertStateWiring(source.replace(expireNotice,
+    'return renderSubscriptions({ showLoading: false });')));
+
+  const conditionalLoading = 'if (showLoading) view().innerHTML = subscriptionsLoadingHtml();';
+  assert.ok(source.includes(conditionalLoading), '突變目標必須存在：只有首次進頁才清成載入狀態');
+  assert.throws(() => assertStateWiring(source.replace(conditionalLoading,
+    'view().innerHTML = subscriptionsLoadingHtml();')));
+
+  const deleteRefresh = "rerenderSubscriptionsAfterAction(seq, '訂閱已刪除');";
+  assert.ok(source.includes(deleteRefresh), '突變目標必須存在：刪除成功原地確認');
+  assert.throws(() => assertStateWiring(source.replace(deleteRefresh,
+    'renderSubscriptions({ showLoading: false });')));
 
   const mobileStack = 'grid-template-columns: 1fr; gap: 18px; min-height: 390px;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

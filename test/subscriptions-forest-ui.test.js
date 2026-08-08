@@ -28,7 +28,7 @@ function cssBlock(source, marker) {
 }
 
 function assertSubscriptionsStructure(source) {
-  const render = functionBlock(source, 'export async function renderSubscriptions()', '\nfunction syncSubscriptionColumnWidths()');
+  const render = functionBlock(source, 'export async function renderSubscriptions(', '\nfunction syncSubscriptionColumnWidths()');
   for (const marker of [
     'class="subscriptions-page"',
     'class="subscriptions-summary"',

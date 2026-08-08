@@ -2,7 +2,7 @@
 // 訂閱追蹤頁（頁面協調層）：攤提數學已歸戶 subscriptions-model.js（系統優化階段二②，零依賴純函式＋
 // 前後端對照考題）；A4 列印報表已歸戶 subscriptions-report.js（階段二③）。本檔留 DOM/圖表/表單。
 // subStatus 留此（吃 daysUntil＝依「今天」而變）；帶 export 的常數/函式＝報表模組的接縫（呼叫時取用、TDZ 安全）。
-import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, toast, currentRouteSeq } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -164,7 +164,7 @@ function subscriptionsEmptyHtml(notice) {
 function rerenderSubscriptionsAfterAction(seq, message) {
   if (seq !== currentRouteSeq()) return;
   subscriptionNotice = message;
-  renderSubscriptions();
+  renderSubscriptions({ showLoading: false });
 }
 
 // 排序用的「續費/停用」生效日期
@@ -224,12 +224,12 @@ async function autoExpire(subs) {
   return true;
 }
 
-export async function renderSubscriptions() {
+export async function renderSubscriptions({ showLoading = true } = {}) {
   const seq = currentRouteSeq();
   const notice = subscriptionNotice;
   subscriptionNotice = '';
   destroyCharts();
-  view().innerHTML = subscriptionsLoadingHtml();
+  if (showLoading) view().innerHTML = subscriptionsLoadingHtml();
 
   let raw;
   let cards;
@@ -240,7 +240,7 @@ export async function renderSubscriptions() {
     if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
     if (expired) {
       subscriptionNotice = notice;
-      return renderSubscriptions();   // 停用日背景作業有更新→重新載入（此時 seq 確認仍是當前，遞迴安全）
+      return renderSubscriptions({ showLoading: false });   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
     }
   } catch (e) {
     if (seq !== currentRouteSeq()) return;
@@ -335,16 +335,12 @@ export async function renderSubscriptions() {
     if (!k) return;
     if (s.key === k) setListSort(listKey, k, s.dir === 'asc' ? 'desc' : 'asc');
     else setListSort(listKey, k, 'asc');
-    renderSubscriptions();
+    renderSubscriptions({ showLoading: false });
   });
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openSubForm(subs.find(s => s.id === b.dataset.edit), creditCards));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const s = subs.find(x => x.id === b.dataset.del);
-    const actionSeq = currentRouteSeq();
-    confirmDelete(s.name, async () => {
-      await api('/subscriptions/' + s.id, { method: 'DELETE' });
-      if (actionSeq === currentRouteSeq()) subscriptionNotice = '訂閱已刪除';
-    });
+    deleteSubscription(s);
   });
   view().querySelectorAll('[data-record]').forEach(b => b.onclick = () => recordToAccounting(subs.find(s => s.id === b.dataset.record)));
   view().querySelectorAll('[data-flag]').forEach(b => b.onclick = () => toggleCancel(subs.find(s => s.id === b.dataset.flag)));
@@ -353,6 +349,15 @@ export async function renderSubscriptions() {
 
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
+}
+
+async function deleteSubscription(s) {
+  if (!window.confirm(`確定要刪除「${s.name}」嗎？此動作無法復原。`)) return;
+  const seq = currentRouteSeq();
+  try {
+    await api('/subscriptions/' + s.id, { method: 'DELETE' });
+    rerenderSubscriptionsAfterAction(seq, '訂閱已刪除');
+  } catch (e) { toast(e.message, true); }
 }
 
 function syncSubscriptionColumnWidths() {
@@ -398,7 +403,7 @@ let draggedId = null;
 async function applyOrder(ids, listKey) {
   await Promise.all(ids.map((id, i) => api('/subscriptions/' + id, { method: 'PUT', body: { order: i } })));
   setListSort(listKey, 'manual', 'asc');
-  renderSubscriptions();
+  renderSubscriptions({ showLoading: false });
 }
 function onDrop(dragId, targetRow, placeAfter = false) {
   const targetId = targetRow?.dataset.id;
@@ -574,7 +579,6 @@ async function toggleCancel(s) {
   try {
     await api('/subscriptions/' + s.id, { method: 'PUT', body: { considerCancel: !s.considerCancel } });
     const message = s.considerCancel ? '已取消「考慮停用」標記' : '已標記為考慮停用';
-    toast(message);
     rerenderSubscriptionsAfterAction(seq, message);
   } catch (e) { toast(e.message, true); }
 }
@@ -769,7 +773,6 @@ function openSubForm(sub, creditCards = []) {
       if (sub) await api('/subscriptions/' + sub.id, { method: 'PUT', body: data });
       else await api('/subscriptions', { method: 'POST', body: data });
       const message = sub ? '訂閱資料已更新' : '訂閱已新增';
-      toast(message);
       rerenderSubscriptionsAfterAction(seq, message);
     }
   });
