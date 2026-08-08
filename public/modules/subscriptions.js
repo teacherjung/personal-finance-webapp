@@ -403,8 +403,8 @@ let draggedId = null;
 async function applyOrder(ids, listKey) {
   const seq = currentRouteSeq();
   await Promise.all(ids.map((id, i) => api('/subscriptions/' + id, { method: 'PUT', body: { order: i } })));
-  if (seq !== currentRouteSeq()) return;
   setListSort(listKey, 'manual', 'asc');
+  if (seq !== currentRouteSeq()) return;
   renderSubscriptions({ showLoading: false });
 }
 function onDrop(dragId, targetRow, placeAfter = false) {

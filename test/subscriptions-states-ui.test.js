@@ -160,8 +160,8 @@ function assertStateWiring(source) {
     '表頭排序只能原地更新，不可把整頁清成載入狀態');
   assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*subscriptionNotice = message;\s*renderSubscriptions\(\{ showLoading: false \}\);/);
   assert.match(source, /async function deleteSubscription\(s\) \{\s*if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;\s*const seq = currentRouteSeq\(\);\s*try \{\s*await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*rerenderSubscriptionsAfterAction\(seq, '訂閱已刪除'\);/);
-  assert.match(source, /async function applyOrder\(ids, listKey\) \{\s*const seq = currentRouteSeq\(\);\s*await Promise\.all[\s\S]*?if \(seq !== currentRouteSeq\(\)\) return;\s*setListSort\(listKey, 'manual', 'asc'\);\s*renderSubscriptions\(\{ showLoading: false \}\);\s*\}/,
-    '拖曳排序後只能在原路由原地更新');
+  assert.match(source, /async function applyOrder\(ids, listKey\) \{\s*const seq = currentRouteSeq\(\);\s*await Promise\.all[\s\S]*?setListSort\(listKey, 'manual', 'asc'\);\s*if \(seq !== currentRouteSeq\(\)\) return;\s*renderSubscriptions\(\{ showLoading: false \}\);\s*\}/,
+    '拖曳排序必須保留手動排序偏好，並且只在原路由原地更新');
   assert.match(toggle, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
   assert.doesNotMatch(toggle, /toast\(message\)/, '標記成功不可同時顯示 toast 與頁內通知');
   assert.match(form, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
@@ -245,12 +245,12 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.throws(() => assertStateWiring(source.replace(sortRefresh,
     "renderSubscriptions();\n  });\n  view().querySelectorAll('[data-edit]')")));
 
-  const orderRefresh = "setListSort(listKey, 'manual', 'asc');\n  renderSubscriptions({ showLoading: false });";
+  const orderRefresh = 'if (seq !== currentRouteSeq()) return;\n  renderSubscriptions({ showLoading: false });\n}';
   assert.ok(source.includes(orderRefresh), '突變目標必須存在：拖曳排序原地更新');
   assert.throws(() => assertStateWiring(source.replace(orderRefresh,
-    "setListSort(listKey, 'manual', 'asc');\n  renderSubscriptions();")));
+    'if (seq !== currentRouteSeq()) return;\n  renderSubscriptions();\n}')));
 
-  const orderGuard = 'if (seq !== currentRouteSeq()) return;\n  setListSort(listKey, \'manual\', \'asc\');';
+  const orderGuard = "setListSort(listKey, 'manual', 'asc');\n  if (seq !== currentRouteSeq()) return;";
   assert.ok(source.includes(orderGuard), '突變目標必須存在：拖曳排序路由守衛');
   assert.throws(() => assertStateWiring(source.replace(orderGuard,
     "setListSort(listKey, 'manual', 'asc');")));
