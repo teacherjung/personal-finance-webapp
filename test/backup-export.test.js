@@ -21,6 +21,18 @@ import { runExport, summarizeBackup, filenameFromDisposition, okMsg, FALLBACK_FI
 const ROOT = new URL('..', import.meta.url).pathname;
 
 /**
+ * 去掉 JS 註解——**被註解掉的接線等於不存在**（r5 阻擋②：複驗者把接線改成註解，本檔的形狀題全綠）。
+ * ⚠️ 行註解只在 `//` 前面不是 `:`／引號／反斜線／文字時才剝：否則 `https://`、`split('//')`、
+ *    正規式 `/\/\//` 會被誤剝半行（那會讓真程式憑空消失＝另一種假綠）。
+ * ⚠️ 與 test/vault-and-backup-integrity.test.js 的同名函式**同一份寫法**（那支是先例）。
+ * @param {string} s @returns {string}
+ */
+const stripJsComments = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:'"`\w\\])\/\/[^\n]*/g, '$1');
+
+
+/**
  * 造一個假回應。
  *
  * ⚠️ `headers.get` **一律小寫比對**——真實 `fetch` 的 `Headers` 依 WHATWG 規格把名稱 byte-lowercase
@@ -650,7 +662,8 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   assert.equal(exportNotice({ hosted: 'true' }), EXPORT_NOTICE_LOCAL, '字串 "true" 不算 true（型別鬆掉就會講反）');
   assert.equal(exportNotice({ hosted: false }), EXPORT_NOTICE_LOCAL, 'LOCAL 明確回 false ⇒ 含機密那句');
   assert.equal(exportNotice({ hosted: true }), EXPORT_NOTICE_HOSTED, '只有明確 true 才講「不含」');
-  const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+  // ⚠️ **先去註解**（r5 阻擋②）：把接線改成註解就等於沒接，掃原始字面會給假綠。
+  const src = stripJsComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
   // 接線三件事：用共用文案（不自己抄一句）、先問再匯出、取消就什麼都不做
   assert.match(src, /exportNotice\(/, '設定頁要用共用的挑選函式（各寫一句的話 William 審改只會改到一邊、而且模式判斷會走散）');
   assert.match(src, /api\('\/mode'\)/, '要真的去問模式（不問就只能猜，而猜錯方向會害他外洩）');

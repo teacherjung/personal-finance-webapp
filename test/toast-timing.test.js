@@ -21,6 +21,17 @@ import { okMsg, networkFailMsg, authFailMsg, serverFailMsg, notBackupMsg, saveFa
 
 const ROOT = new URL('..', import.meta.url).pathname;
 
+/**
+ * 去掉 JS 註解——**被註解掉的接線等於不存在**（r5 阻擋②：複驗者把接線改成註解，本檔的形狀題全綠）。
+ * ⚠️ 行註解只在 `//` 前面不是 `:`／引號／反斜線／文字時才剝：否則 `https://`、`split('//')`、
+ *    正規式 `/\/\//` 會被誤剝半行（那會讓真程式憑空消失＝另一種假綠）。
+ * ⚠️ 與 test/vault-and-backup-integrity.test.js 的同名函式**同一份寫法**（那支是先例）。
+ * @param {string} s @returns {string}
+ */
+const stripJsComments = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:'"`\w\\])\/\/[^\n]*/g, '$1');
+
 /** 考題自己的「讀得完」標準：每個字至少這麼多毫秒（約每秒五個字，對不習慣讀螢幕的人偏寬鬆）。 */
 const MIN_MS_PER_CHAR = 200;
 
@@ -102,7 +113,7 @@ test('接線｜app.js 的 toast() 真的照長度給時間，而且滑鼠停在�
   //    localStorage），所以「正式環境那一行到底怎麼寫」只驗得到文字。本專案已有同型前例
   //    （`test/xss-id-escaping.test.js` 抓出 esc 那一行來跑）。
   // ⚠️ 誠實劃界：這一題擋的是「下一個人把時間改回固定值、或把暫停拿掉」，不是「跑起來真的會暫停」。
-  const src = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
+  const src = stripJsComments(readFileSync(join(ROOT, 'public/app.js'), 'utf8'));
   assert.match(src, /import\s*\{[^}]*\btoastMs\b[^}]*\}\s*from\s*['"]\.\/modules\/toast-timing\.js['"]/,
     'app.js 必須從 modules/toast-timing.js import toastMs——時間算法抄一份在 app.js 裡就沒有考題撐得住');
 

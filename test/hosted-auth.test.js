@@ -150,7 +150,7 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
 // ---- C3 auth gate（P1-1：只宣稱 401／轉登入，不宣稱隔離——隔離歸 C4）----
 test('C3 gate：未登入打理財 API＝401（逐 router 抽樣、含寫入方法）；白名單與公開站不受影響', async () => {
   // 各 router 抽樣（core/crud/market/ib/statement/securities/stock-fundamentals 都要在牆內）
-  for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/stock-fundamentals/CAL', '/api/export', '/api/refund-pairs', '/api/backup/daily']) {
+  for (const p of ['/api/db', '/api/summary', '/api/transactions', '/api/cards', '/api/quotes/refresh-auto', '/api/ib/sync', '/api/statement/preview', '/api/securities', '/api/stock-fundamentals/CAL', '/api/export', '/api/refund-pairs', '/api/backup/daily', '/api/mode']) {
     const r = await fetch(`${base}${p}`);
     assert.equal(r.status, 401, `GET ${p} 未登入必 401`);
     assert.deepEqual(await r.json(), { error: '請先登入' });

@@ -340,6 +340,7 @@ const MANIFEST = {
     domain: '雲端與安全',
     rules: [
       '機密投影與匯出的兩種模式',
+      '匯出前告知的模式分流',
       '雙模式與帳號系統',
       '機密欄位與 mapSecrets',
       '只剝不加密的 PII mapBackupOnlyPii',
@@ -377,8 +378,10 @@ const MANIFEST = {
       'public/modules/backup-export.js',
       'public/modules/cards.js',
       'public/modules/settings.js',
+      'public/modules/toast-timing.js',
       'server.js',
       'test-doubles/fake-supabase.js',
+      'test/backup-export.test.js',
       'test/deploy-config.test.js',
       'test/hosted-auth.test.js',
       'test/hosted-secret-writeback.test.js',

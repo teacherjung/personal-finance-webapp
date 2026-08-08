@@ -7,7 +7,7 @@ import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } 
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
-import { runExport, exportNotice } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
+import { runExport, exportNotice, defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
@@ -398,8 +398,11 @@ export async function renderSettings() {
    */
   const confirmExport = async () => {
     // 先問模式再決定講哪一句（William 2026-08-08「要講準」）。問不到就走保守那句（含機密）。
+    // ⚠️ **這次問答也要有上限**（r5 阻擋①）：`/api/mode` 若連上了卻永不回應，`catch` 不會發生
+    //    ——畫面連確認窗都不會出現，等於把「按下去沒聲音」搬到匯出前一步。逾時＝當作問不到。
     let mode = null;
-    try { mode = await api('/mode'); } catch { /* 問不到＝保守：exportNotice(null) 回「含機密」 */ }
+    try { mode = await defaultWithTimeout(api('/mode'), MODE_TIMEOUT_MS); }
+    catch { /* 問不到／逾時＝保守：exportNotice(null) 回「含機密」 */ }
     const notice = exportNotice(mode);
     return new Promise((resolve) => {
     let decided = false;
@@ -427,14 +430,16 @@ export async function renderSettings() {
   byId('exportBtn').onclick = async (ev) => {
     ev.preventDefault();
     const btn = ev.currentTarget;
+    // ⚠️ busy 從**整段流程的最前面**就設（r5 阻擋①的後半）：上一版設在確認之後，
+    //    於是「問模式／等他回答」這段時間連點會同時開好幾條確認流程（每條各自一顆 Promise）。
     if (btn.dataset.busy === '1') return;        // 連點兩下不要抓兩份
-    // 🧑‍⚖️ William 2026-08-08：按下去**先跳窗告知**「匯出檔案不含 IB 憑證與帳單密碼」，
-    //    按〈確認匯出〉才開始下載；按〈取消〉什麼都不做（不打 API、不落檔）。
-    //    ⚠️ 用 app 自己的彈窗而不是瀏覽器 confirm()：他要的按鈕字是「確認匯出／取消」，
-    //    原生 confirm 只給得出「確定／取消」。
-    if (!await confirmExport()) return;
     btn.dataset.busy = '1';
     try {
+      // 🧑‍⚖️ William 2026-08-08：按下去**先跳窗告知**（本機版／雲端版講的話不同，見 exportNotice），
+      //    按〈確認匯出〉才開始下載；按〈取消〉什麼都不做（不打 API、不落檔）。
+      //    ⚠️ 用 app 自己的彈窗而不是瀏覽器 confirm()：他要的按鈕字是「確認匯出／取消」，
+      //    原生 confirm 只給得出「確定／取消」。
+      if (!await confirmExport()) return;
       await runExport({
         fetchFn: (url) => fetch(url),
         saveFile: (filename, body) => {
