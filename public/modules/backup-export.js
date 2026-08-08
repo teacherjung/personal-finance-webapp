@@ -235,7 +235,23 @@ export const saveFailMsg = () => failMsg('存檔未完成，請再試一次');
  * 一個字都沒有——使用者會在真的需要還原時才發現，那時已經來不及了。
  * ⚠️ 這是**告知**、不是警告：不擋、不需要理由，按下確認就走。
  */
-export const EXPORT_NOTICE = '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。';
+export const EXPORT_NOTICE_HOSTED = '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。';
+/**
+ * ⏳ 文案（William 2026-08-08 第二輪：「要講準，跟著模式分流」）：**本機版相反**——
+ * `/api/export` 在 LOCAL **完整含機密**（缺了密碼就永久還原不回來，見 lib/routes/core.js 與
+ * docs/contracts/cloud-security.md「兩種模式刻意相反」）。
+ *
+ * ⚠️⚠️ 這一句是 r4 審查者抓到的**反方向誤導**：上一版兩種模式都寫「不含機密」，本機版使用者
+ * 會以為檔案不敏感而隨手轉寄／丟雲端硬碟——**裡面其實有他的 IB 憑證與帳單密碼**。
+ * 原本畫面什麼都不講反而沒有這個風險，所以「講錯方向」比「不講」更糟。
+ */
+export const EXPORT_NOTICE_LOCAL = '匯出檔案含 IB 憑證與帳單密碼，請當成機密檔案保管。';
+/**
+ * 依模式挑那一句。⚠️ **問不到模式時一律回「含機密」那一句**（往安全的方向錯）：
+ * 猜錯的方向若是「以為不含」，代價是機密外洩；反過來只是多一句提醒。
+ * @param {{hosted?: unknown} | null | undefined} mode `GET /api/mode` 的回應（拿不到就傳 null）
+ */
+export const exportNotice = (mode) => (mode && mode.hosted === true ? EXPORT_NOTICE_HOSTED : EXPORT_NOTICE_LOCAL);
 /** ⏳ 文案：按下確認之後、還沒拿到資料時的即時回饋（#417 r3 阻擋：卡住時畫面一句話都沒有）。 */
 export const BUSY_MSG = '匯出中…';
 /** 等多久算「伺服器不回話」（毫秒）。⚠️ 這個數字是**上限不是預期**：正常匯出零點幾秒就回來。 */
@@ -297,13 +313,16 @@ export async function runExport({ fetchFn, saveFile, toast, withTimeout = defaul
     // 關卡①：HTTP 狀態。這是舊版最致命的漏洞——舊版根本沒看，401 的內容照樣被存成「備份」。
     let why = `伺服器回 ${res.status}${res.statusText ? ' ' + res.statusText : ''}`;
     try {
-      const parsed = JSON.parse(await res.text());
+      // ⚠️ 這裡也要有上限（r4 阻擋②）：500 的 body 若永不 settle，整條路就卡在「匯出中…」不動了
+      //    ——與成功路徑同一個病，只是走在錯誤分支上（複驗者用合成探針證明過）。
+      const parsed = JSON.parse(await withTimeout(res.text(), EXPORT_TIMEOUT_MS));
       // ⚠️ 伺服器給了文字原因也**要把狀態碼留著**（`［401］`）：狀態碼是他來問我時唯一能定位的線索，
       //    而我們自己的 HOSTED 500 一定帶 JSON 原因（`lib/routes/auth.js` 的 wrap catch）——
       //    只留「伺服器發生錯誤」等於把那個線索丟掉。用全形方括號而不是第二個冒號／第二組括號：
       //    失敗文案本身已經有一個冒號、後面還要接一組括號的下一步，再疊會斷句斷錯。
       if (parsed && typeof parsed.error === 'string' && parsed.error.trim() !== '') why = `${parsed.error}［${res.status}］`;
-    } catch { /* 回的不是 JSON（例如登入頁 HTML）＝維持狀態碼的說法 */ }
+    } catch { /* 回的不是 JSON（登入頁 HTML）**或讀 body 超時**＝維持狀態碼的說法：狀態碼本身已經
+                 足夠給下一步（401 去登入／其餘等一下再試），不必為了讀不到原話而讓畫面卡住 */ }
     // ⚠️ **只有 401 才叫他去登入**：500／502／503 掛的是伺服器那一端，403／404 也不是登入問題
     //    （本專案唯一的 403 來自 csrfOriginGuard，而它放行 GET＝`/api/export` 不可能因登入回 403），
     //    叫他重新登入是把他推往錯的方向（他會反覆登入、以為是自己的問題）。

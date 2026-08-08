@@ -374,6 +374,7 @@ const MANIFEST = {
       'lib/tenant.js',
       'package-lock.json',
       'public/modules/assets.js',
+      'public/modules/backup-export.js',
       'public/modules/cards.js',
       'public/modules/settings.js',
       'server.js',
@@ -466,10 +467,12 @@ const MANIFEST = {
       'lib/store.js',
       'lib/types.js', 'test/daily-values.test.js',
       'public/app.js',
+      'public/modules/backup-export.js',
       'public/modules/dashboard.js',
       'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
+      'public/modules/toast-timing.js',
       // #409 補宣告：彈窗下拉的通用保留機制（form-options 與收支多重命中）＋ esc 的實作本體
       'public/modules/form-options.js', 'public/modules/html-escape.js',
       'test/server.test.js',
@@ -1085,7 +1088,6 @@ const UNDECLARED_IMPORTED = [
   'lib/routes/route-helpers.js',             // ← 四支 routes（共用的回應／驗證輔助）
   'lib/routes/stock-fundamentals.js',        // ← server.js（SEC 端點掛載）
   'lib/safe-map.js',                         // ← 七個後端檔（原型污染安全的 Map 包裝＝安全承重件）
-  'public/modules/backup-export.js',         // ← settings.js（#417 匯出回饋施工中；r4 歸戶進契約時從此刪除）
   'public/modules/cashflow-model.js',        // ← cashflow.js
   'public/modules/dashboard-forest.js',      // ← dashboard.js
   'public/modules/file-util.js',             // ← cashflow.js／securities.js／transactions-import.js
@@ -1095,7 +1097,6 @@ const UNDECLARED_IMPORTED = [
   'public/modules/settings-store-table.js',  // ← settings.js
   'public/modules/subscriptions-report.js',  // ← subscriptions.js
   'public/modules/theme.js',                 // ← 十一個模組（圖表色單一真相，AGENTS 地雷 2 點名）
-  'public/modules/toast-timing.js',          // ← app.js（#417 施工中；r4 歸戶進契約時從此刪除）
   'public/modules/tx-sort.js',               // ← settings.js／cashflow.js／securities.js／transactions.js
   'public/modules/workspace-tabs.js',        // ← stock-research-view.js（#415 森林頁籤引入；歸屬待定，合併 main 時入帳 2026-08-06）
 ];

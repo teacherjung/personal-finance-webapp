@@ -1,13 +1,13 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq, bindBackdropClose } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
-import { runExport, EXPORT_NOTICE } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
+import { runExport, exportNotice } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
 
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
@@ -396,23 +396,33 @@ export async function renderSettings() {
    * ⚠️ 關窗（× 或點背景）**視為取消**：沒有明確按下確認就不動作，比較保守的那一邊。
    * @returns {Promise<boolean>}
    */
-  const confirmExport = () => new Promise((resolve) => {
+  const confirmExport = async () => {
+    // 先問模式再決定講哪一句（William 2026-08-08「要講準」）。問不到就走保守那句（含機密）。
+    let mode = null;
+    try { mode = await api('/mode'); } catch { /* 問不到＝保守：exportNotice(null) 回「含機密」 */ }
+    const notice = exportNotice(mode);
+    return new Promise((resolve) => {
     let decided = false;
     const done = (/** @type {boolean} */ ok) => { if (!decided) { decided = true; resolve(ok); } };
+    // ⚠️ `backdrop: false`（r4 阻擋③）：openModalShell 內建的點背景關窗只會呼叫 `close`，
+    //    **不會**把這顆 Promise 收掉——上一版於是每點一次背景就留下一顆永遠不 settle 的 Promise
+    //    （複驗者用真 DOM 抓到：窗關了、API 0 次、落檔 0 次，但呼叫端 50ms 後仍 pending）。
+    //    所以三條退出路（取消鈕／×／點背景）**一律走同一個 cancel()**，沒有第二種關窗方式。
     const { root, close } = openModalShell({
-      title: '匯出備份', size: 'sm',
-      bodyHtml: `<p style="font-size:13px;margin:0 0 16px">${esc(EXPORT_NOTICE)}</p>
+      title: '匯出備份', size: 'sm', backdrop: false,
+      bodyHtml: `<p style="font-size:13px;margin:0 0 16px">${esc(notice)}</p>
         <div class="form-actions">
           <button type="button" class="btn-ghost" data-cancel>取消</button>
           <button type="button" class="btn" id="exportConfirmBtn">確認匯出</button>
         </div>`,
     });
-    root.querySelector('[data-cancel]').onclick = () => { close(); done(false); };
+    const cancel = () => { close(); done(false); };
+    root.querySelector('[data-cancel]').onclick = cancel;
+    root.querySelector('.x-close').onclick = cancel;
+    bindBackdropClose(root, cancel);
     root.querySelector('#exportConfirmBtn').onclick = () => { close(); done(true); };
-    // × 與點背景由 openModalShell 綁在 close 上；那條路沒有經過上面兩顆鈕，所以在這裡補記帳。
-    const origClose = close;
-    root.querySelector('.x-close').onclick = () => { origClose(); done(false); };
-  });
+    });
+  };
 
   byId('exportBtn').onclick = async (ev) => {
     ev.preventDefault();

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runExport, summarizeBackup, filenameFromDisposition, okMsg, FALLBACK_FILENAME,
-  BUSY_MSG, EXPORT_NOTICE, EXPORT_TIMEOUT_MS, timeoutFailMsg, defaultWithTimeout,
+  BUSY_MSG, EXPORT_NOTICE_LOCAL, EXPORT_NOTICE_HOSTED, exportNotice, EXPORT_TIMEOUT_MS, timeoutFailMsg, defaultWithTimeout,
   authFailMsg, networkFailMsg, serverFailMsg, notBackupMsg, saveFailMsg,
 } from '../public/modules/backup-export.js';
 
@@ -636,12 +636,24 @@ test('⭐ 文案｜六句都收成「一行、只給下一步」（William 2026-
     '這兩句刻意相同（見 backup-export.js serverFailMsg 上方的裁決註解）；真要分化先問 William');
 });
 
-test('⭐ 匯出前告知｜文案逐字釘住，而且設定頁真的先問過才匯出（William 2026-08-08 新需求）', () => {
-  assert.equal(EXPORT_NOTICE, '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。',
-    '這句是他逐字定的（雲端版匯出刻意剝掉那兩樣，不講的話他會在需要還原時才發現）');
+test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含機密」猜**（r4 阻擋①：講反方向會害他外洩）', () => {
+  assert.equal(EXPORT_NOTICE_HOSTED, '匯出檔案不含 IB 憑證與帳單密碼，之後使用備份還原需要重新輸入。',
+    '雲端版那句是 William 逐字定的');
+  assert.match(EXPORT_NOTICE_LOCAL, /含 IB 憑證與帳單密碼/, '本機版要講「含」——LOCAL 匯出刻意完整含機密');
+  assert.match(EXPORT_NOTICE_LOCAL, /機密/, '本機版要叫他當機密保管（他可能會想轉寄給我）');
+  // ⚠️ 這是本題的靈魂：**猜錯的方向必須是安全的那一邊**。
+  //    r4 前的版本兩種模式都講「不含機密」——本機版使用者會以為檔案不敏感而隨手轉寄，
+  //    而那個檔案裡有他的 IB 憑證與帳單密碼。「講錯方向」比「不講」更糟。
+  assert.equal(exportNotice(null), EXPORT_NOTICE_LOCAL, '問不到模式 ⇒ 講「含機密」（往安全的方向錯）');
+  assert.equal(exportNotice(undefined), EXPORT_NOTICE_LOCAL, '同上');
+  assert.equal(exportNotice({}), EXPORT_NOTICE_LOCAL, '回應沒有 hosted 欄位 ⇒ 同樣保守');
+  assert.equal(exportNotice({ hosted: 'true' }), EXPORT_NOTICE_LOCAL, '字串 "true" 不算 true（型別鬆掉就會講反）');
+  assert.equal(exportNotice({ hosted: false }), EXPORT_NOTICE_LOCAL, 'LOCAL 明確回 false ⇒ 含機密那句');
+  assert.equal(exportNotice({ hosted: true }), EXPORT_NOTICE_HOSTED, '只有明確 true 才講「不含」');
   const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
   // 接線三件事：用共用文案（不自己抄一句）、先問再匯出、取消就什麼都不做
-  assert.match(src, /EXPORT_NOTICE/, '設定頁要用共用的那一份文案，各寫一句的話 William 審改只會改到一邊');
+  assert.match(src, /exportNotice\(/, '設定頁要用共用的挑選函式（各寫一句的話 William 審改只會改到一邊、而且模式判斷會走散）');
+  assert.match(src, /api\('\/mode'\)/, '要真的去問模式（不問就只能猜，而猜錯方向會害他外洩）');
   const at = src.indexOf("byId('exportBtn').onclick");
   assert.ok(at > 0, '找不到匯出鈕的接線＝本題空轉');
   const handler = src.slice(at, at + 900);
@@ -651,4 +663,110 @@ test('⭐ 匯出前告知｜文案逐字釘住，而且設定頁真的先問過�
   assert.match(handler, /if \(!await confirmExport\(\)\) return;/,
     '取消就要**什麼都不做**（不打 API、不落檔）');
   assert.match(src, /確認匯出/, '確認鈕的字是他指定的「確認匯出」');
+  // ⚠️ **三條退出路都要接到同一個 cancel**（r4 阻擋③的另一半）：真 DOM 那題證明「這種接法會 settle」，
+  //    但沒有人保證 settings.js 真的用了那種接法——M9 突變（拿掉 bindBackdropClose 那一行）
+  //    在補這條之前**全綠**，正是「掃得到寫法 ≠ 行為正確」的反面：這裡連寫法都沒掃。
+  const cf = src.slice(src.indexOf('const confirmExport'), src.indexOf("byId('exportBtn')"));
+  assert.ok(cf.length > 200, '找不到 confirmExport 的本體＝本題空轉');
+  assert.match(cf, /backdrop:\s*false/,
+    'openModalShell 內建的點背景關窗只呼叫 close、**不會**收掉那顆 Promise ⇒ 必須關掉它、自己接');
+  assert.match(cf, /bindBackdropClose\(root,\s*cancel\)/,
+    '點背景要接到同一個 cancel（不接＝窗關了但呼叫端永遠在等，每點一次漏一顆）');
+  assert.match(cf, /\.x-close'\)\.onclick = cancel/, '× 也要接同一個 cancel');
+  assert.match(cf, /\[data-cancel\]'\)\.onclick = cancel/, '取消鈕同上');
+});
+
+test('⭐ 匯出｜**非 2xx** 的錯誤 body 讀到卡住也不可以沒聲音（r4 阻擋②：第三條 pending 路徑）', async () => {
+  /** @type {{msg:string, isErr:boolean}[]} */
+  const toasts = [];
+  const saved = /** @type {any[]} */ ([]);
+  let call = 0;
+  const out = await runExport({
+    fetchFn: async () => ({ ok: false, status: 500, statusText: 'Internal Server Error',
+      headers: { get: () => null }, text: () => new Promise(() => {}) }),   // 錯誤 body 永不 settle
+    saveFile: (f, b) => saved.push({ f, b }),
+    toast: (msg, isErr = false) => toasts.push({ msg, isErr }),
+    // 第一次（fetch）照過，第二次（讀錯誤 body）才超時——探針要精準打在那一處
+    withTimeout: (work) => (++call === 1 ? work
+      : Promise.reject(Object.assign(new Error('等超過上限'), { name: 'ExportTimeout' }))),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(saved.length, 0);
+  assert.equal(call, 2, '錯誤 body 那次讀取也要包上限（少包這一處就留一條卡住的路）');
+  assert.equal(toasts.length, 2, '「匯出中…」＋一句結果——不可以卡在「匯出中…」不動');
+  assert.equal(toasts[toasts.length - 1].msg, serverFailMsg(),
+    '讀不到原話就用狀態碼給下一步（500 ⇒ 請稍後再試），不是把畫面留在原地');
+  assert.match(out.reason, /500/, '狀態碼仍要留在 reason');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// r4 阻擋③：三條退出路都要「真的取消」——用**真 DOM**（jsdom）驗，不是掃原始碼
+//
+// ⚠️ 為什麼一定要真 DOM：上一版這件事只有「掃 settings.js 有沒有寫 confirmExport()」的字串題，
+//    而複驗者實測發現**點背景**那條路窗關了、API 0 次、落檔 0 次，但呼叫端的 Promise 永遠不 settle
+//    ——每點一次背景就漏一顆懸空 Promise，而字串題全綠。這正是本專案「靜靜通過最危險」的形狀：
+//    掃得到寫法 ≠ 行為正確。
+// ⚠️ 這裡重建的是**確認窗那一段邏輯的骨架**（openModalShell 的三顆退出路＋bindBackdropClose 的
+//    mousedown/mouseup/click 三段判斷），不是 settings.js 原檔——settings.js 整支在 node 裡跑不起來
+//    （它 import 了十幾支頁面模組）。誠實劃界：本題證明「這個接法會 settle」，
+//    而「settings.js 真的用這個接法」由上面那條原始碼題（confirmExport()／bindBackdropClose）守。
+test('⭐ 確認窗｜取消鈕／×／**點背景** 三條路都要真的收掉那顆 Promise（r4 阻擋③，真 DOM）', async () => {
+  const { JSDOM } = await import('jsdom');
+  for (const exitPath of ['取消鈕', '×', '點背景']) {
+    const dom = new JSDOM('<!doctype html><body><div id="modal-root"></div></body>');
+    const doc = dom.window.document;
+    const root = doc.getElementById('modal-root');
+    // 與正式那顆窗同構：一顆背景、兩顆鈕、一個關閉叉
+    root.innerHTML = `<div class="modal-bg"><div class="modal-sm">
+      <div class="modal-head"><h2>匯出備份</h2><button class="x-close">×</button></div>
+      <div class="modal-body"><p>${EXPORT_NOTICE_LOCAL}</p>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" data-cancel>取消</button>
+          <button type="button" class="btn" id="exportConfirmBtn">確認匯出</button>
+        </div></div></div></div>`;
+    let decided = false;
+    /** @type {boolean | 'pending'} */
+    let answer = 'pending';
+    const p = new Promise((resolve) => {
+      const done = (/** @type {boolean} */ ok) => { if (!decided) { decided = true; resolve(ok); } };
+      const close = () => { root.innerHTML = ''; };
+      const cancel = () => { close(); done(false); };
+      root.querySelector('[data-cancel]').onclick = cancel;
+      root.querySelector('.x-close').onclick = cancel;
+      // bindBackdropClose 的正式邏輯（mousedown 與 mouseup 都要落在背景上才算）
+      const bg = root.querySelector('.modal-bg');
+      let downOnBg = false, upOnBg = false;
+      bg.addEventListener('mousedown', (e) => { downOnBg = e.target === bg; });
+      bg.addEventListener('mouseup', (e) => { upOnBg = e.target === bg; });
+      bg.addEventListener('click', () => { if (downOnBg && upOnBg) cancel(); });
+      root.querySelector('#exportConfirmBtn').onclick = () => { close(); done(true); };
+    }).then((v) => { answer = /** @type {any} */ (v); return v; });
+
+    const bg = root.querySelector('.modal-bg');
+    const ev = (/** @type {string} */ type, /** @type {any} */ target) =>
+      target.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true }));
+    if (exitPath === '取消鈕') root.querySelector('[data-cancel]').click();
+    else if (exitPath === '×') root.querySelector('.x-close').click();
+    else { ev('mousedown', bg); ev('mouseup', bg); ev('click', bg); }
+
+    const raced = await Promise.race([p, new Promise((r) => setTimeout(() => r('still-pending'), 50))]);
+    assert.notEqual(raced, 'still-pending',
+      `走「${exitPath}」這條路之後，那顆 Promise 還沒 settle——呼叫端會永遠等下去（每次都漏一顆）`);
+    assert.equal(answer, false, `走「${exitPath}」要回「取消」（回 true 就等於偷偷幫他按了確認）`);
+    assert.equal(root.innerHTML, '', `走「${exitPath}」要把窗關掉`);
+    dom.window.close();
+  }
+});
+
+test('⭐ 確認窗｜按〈確認匯出〉才回 true（真 DOM）', async () => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><body><div id="modal-root"></div></body>');
+  const root = dom.window.document.getElementById('modal-root');
+  root.innerHTML = '<div class="modal-bg"><div><button id="exportConfirmBtn">確認匯出</button></div></div>';
+  const p = new Promise((resolve) => {
+    root.querySelector('#exportConfirmBtn').onclick = () => { root.innerHTML = ''; resolve(true); };
+  });
+  root.querySelector('#exportConfirmBtn').click();
+  assert.equal(await p, true);
+  dom.window.close();
 });
