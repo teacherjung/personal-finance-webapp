@@ -1,9 +1,29 @@
 #!/bin/sh
-# 自動守門（本機門）：git push 之前自動跑「校對＋考試」，任一不過就擋下 push。
+# 自動守門（本機門）：git push 之前自動跑「體檢→校對→糾察→考試→複檢」，任一不過就擋下 push。
 # 啟用方式（每個 clone 一次）：git config core.hooksPath scripts/git-hooks
 # 緊急跳過（不建議）：git push --no-verify
-echo "🚧 自動守門：校對→糾察→考試，全過才放行 push…"
+#
+# ⚠️ 第一件事不是 echo 而是 unset，理由是 2026-08-09 的事故（機制詳見
+#    scripts/check-worktree-integrity.js 的檔頭）：
+#    從**連結工作樹** push 時，git 會把 GIT_DIR=<主目錄>/.git/worktrees/<名> 塞進 hook 的環境
+#    （從主目錄 push 則不會——所以這件事只在 worktree 上發生，平常完全看不出來）。它有兩個後果：
+#    ① 在這個環境下只要有人跑 `git init`（就算 cwd 明明指在 /var/folders 的暫存目錄也一樣，
+#       因為有 GIT_DIR 時 git 根本不看 cwd），git 會判定「這是 bare repo」並把 `bare = true`
+#       寫進**共用**的 .git/config ⇒ 主目錄與所有連結工作樹同時失去工作樹身分。
+#    ② 它會蓋掉 `git -C <路徑>` 與 `execFileSync(..., { cwd })` ⇒ 宣稱「掃這棵樹」的考題
+#       其實掃的是 GIT_DIR 那棵。
+#    考題跑在這個環境下沒有任何好處，所以在這裡一次清乾淨。
+#    ⚠️ 這串名字的**單一真相**是 scripts/check-worktree-integrity.js 的 GIT_DISCOVERY_ENV，
+#       test/worktree-integrity.test.js 會實際跑這支 hook、驗每一個都真的被清掉。
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+
+echo "🚧 自動守門：工作樹體檢→校對→糾察→考試→工作樹複檢，全過才放行 push…"
+node scripts/check-worktree-integrity.js || { echo "❌ 工作樹體檢沒過（push 之前就已經壞了）。照上面的訊息還原再推。"; exit 1; }
 npm run typecheck || { echo "❌ 校對（typecheck）沒過，push 已擋下。修好再推。"; exit 1; }
 npm run lint || { echo "❌ 糾察（lint）沒過，push 已擋下。修好再推。"; exit 1; }
 npm test || { echo "❌ 考試（test）沒過，push 已擋下。修好再推。"; exit 1; }
+# ⚠️ 考試**之後**再驗一次，這一行才是真正的釘子：考題檔案各跑各的子行程、`node --test` 的檔案
+#    順序也不保證，所以「某支考題把整個 repo 弄成 bare」這件事，體檢自己那一支**不保證**會在
+#    同一次執行裡抓到。放在這裡就跑得掉——考試前是好的、跑完不是了，push 就出不去。
+node scripts/check-worktree-integrity.js || { echo "❌ 考試把工作樹弄壞了（考試前是好的、跑完就不是了）。照訊息還原，並查是哪一支考題做的。"; exit 1; }
 echo "✅ 守門通過，放行 push。"
