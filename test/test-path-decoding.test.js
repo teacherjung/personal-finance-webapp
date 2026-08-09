@@ -250,14 +250,41 @@ export function isBrowserSideFile(f) {
 export const LS_FILES_ARGV = ['ls-files', '--cached', '-z'];
 
 /**
- * 切 `git ls-files -z` 的輸出。
+ * 切 `git ls-files -z` 的輸出（**吃 Buffer，不吃字串**）。
  * ⚠️ **必須用 `-z`＋NUL 切割**（r16 阻擋①，複驗者實測）：不加 `-z` 時 git 會把含特殊字元的路徑
  * 加引號並轉義（`"test/換行\n檔名.js"`），`split('\n')` 直接把它切成兩半、整條命中變成空陣列
  * ——那是**已進 index 的檔案**，直接打穿本檔宣告的射程。
  * ⚠️ `-z` 也讓 `-c core.quotepath=false` 變成多餘（`-z` 一律輸出原始位元、不引號不轉義），已移除。
  */
-export function parseLsFilesZ(stdout) {
-  return stdout.split('\0').filter((f) => f !== '');
+export function parseLsFilesZ(buf) {
+  // ⚠️ **必須拿 Buffer 進來、逐段用 fatal UTF-8 解**（r17 阻擋①，複驗者實測）：
+  //    用 `encoding:'utf8'` 讓 execFileSync 先轉字串時，非法位元組會變成 U+FFFD ⇒
+  //    index 裡兩個**不同**的路徑（`bad_<FF>.js` 與 `bad_\uFFFD.js`）解碼成**同一個字串**，
+  //    於是安全的那支被讀兩次、違規的 blob 完全沒被掃到，而清單看起來正常。
+  //    ⇒ 解不出來就**吵著紅**（fail-closed），不可以靜靜換成替代字元。
+  const dec = new TextDecoder('utf-8', { fatal: true });
+  const out = [];
+  let start = 0;
+  const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf), 'utf8');
+  for (let k = 0; k <= bytes.length; k++) {
+    if (k !== bytes.length && bytes[k] !== 0) continue;
+    if (k > start) {
+      const seg = bytes.subarray(start, k);
+      try {
+        out.push(dec.decode(seg));
+      } catch {
+        throw new Error(
+          'git ls-files 列出一個**不是合法 UTF-8** 的路徑（十六進位）：'
+          + `${seg.toString('hex')}\n`
+          + '⇒ 這一族不可以靜靜換成替代字元：兩個不同的 index 路徑會解成同一個字串，'
+          + '安全的那支被讀兩次、違規的 blob 完全掃不到，而清單看起來正常（r17 阻擋①）。'
+          + '\n請把那個檔名改成合法 UTF-8，或在本檔明確加一條誠實劃界說明為什麼可以放過它。',
+        );
+      }
+    }
+    start = k + 1;
+  }
+  return out;
 }
 
 /**
@@ -291,8 +318,11 @@ export function gitEnv() {
  * ignore 規則的解析吃太多外部輸入，複驗者四種繞法都讓違規的**未追蹤**檔靜靜消失、考題全綠——
  * `.git/config` 的 `include.path`、`~/.gitconfig` 的 include、local `core.worktree`、
  * 以及 `.git/info/exclude`（那是固定路徑，連 `-c` 都蓋不掉）。
- * ⇒ 不再硬撐那個承諾。**誠實劃界**：射程＝**已進 index 的檔案**（已 commit 或已 `git add`）。
- *   never-added 的新檔不在射程內——而它也推不上遠端，所以真正會流出去的東西仍然被蓋住。
+ * ⇒ 不再硬撐那個承諾。**誠實劃界**：射程＝**已進 index 且工作樹上讀得到的檔案**
+ *   （已 commit 或已 `git add`）。never-added 的新檔不在射程內——它也推不上遠端。
+ * ⚠️ 更精確地說：本題掃的是**工作樹內容**，不是 index 裡的 blob（r17 阻擋①）。兩者會不一致的情形
+ *   （非法 UTF-8 檔名、大小寫碰撞、staged 但工作樹已改）**一律 fail-closed 吵著紅**，
+ *   不靜靜放過；要真的守 index 內容就得改成讀 blob——**未做**，列為已知殘餘。
  *
  * ⚠️ 另外把「解出來的 repo 就是我要掃的那一棵」綁死再相信清單：`core.worktree`／`GIT_DIR`
  * 之類的東西一旦生效，`ls-files` 會去列**別棵樹**的內容而看起來完全正常。
@@ -303,12 +333,56 @@ export function lsFiles(cwd) {
   assert.equal(realpathSync(top), realpathSync(cwd),
     `git 解出來的 repo 根不是我要掃的那一棵：\n  git 說＝${top}\n  我要的＝${cwd}\n`
     + '⇒ 清單會是別棵樹的內容（`core.worktree`／`GIT_DIR` 之類生效時就會這樣），而看起來完全正常。');
-  return parseLsFilesZ(execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env }))
+  // ⚠️ 不給 `encoding`＝拿 Buffer（見 `parseLsFilesZ` 的理由）
+  return parseLsFilesZ(execFileSync('git', LS_FILES_ARGV, { cwd, env, maxBuffer: 64 * 1024 * 1024 }))
     .filter((f) => f.endsWith('.js'));
 }
 
-export function trackedJsFiles(cwd = ROOT) {
-  return lsFiles(cwd).filter((f) => !isBrowserSideFile(f));
+/**
+ * 找「兩個不同的 index 路徑指到同一支工作樹檔案」。
+ *
+ * ⚠️ 為什麼要有這條（r17 阻擋①，複驗者在大小寫不敏感的檔案系統實測）：index 同時有
+ * `Case.js`（違規 blob）與 `case.js`（安全 blob）時，兩個名稱都會列出，但讀檔都讀到同一支
+ * ⇒ 違規的那份完全沒被掃到、結果是零違規。兩者都是 ASCII，檔名那道 fail-closed 擋不到。
+ * ⚠️ **抽成可注入 `resolve` 的純函式**是為了讓考題測得到——在真 repo 上造不出這種碰撞，
+ * 而「造不出來就不寫考題」正是本檔已經犯過好幾次的假綠（新加一條檢查要立刻問「拿掉它會紅嗎」）。
+ *
+ * @param {string[]} files @param {(rel: string) => string|null} resolve
+ * @returns {{a: string, b: string, real: string}|null}
+ */
+export function findRealpathCollision(files, resolve) {
+  const seen = new Map();
+  for (const rel of files) {
+    const real = resolve(rel);
+    if (real === null || real === undefined) continue;
+    if (seen.has(real)) return { a: seen.get(real), b: rel, real };
+    seen.set(real, rel);
+  }
+  return null;
+}
+
+/** 碰撞的診斷訊息（考題與掃描題共用同一份文字）。 */
+export function collisionMessage(c) {
+  return `index 裡有兩個不同的路徑指到同一支工作樹檔案：\n  ${c.a}\n  ${c.b}\n  → ${c.real}\n`
+    + '⇒ 其中一份的內容完全不會被掃到（本題讀的是工作樹內容），而結果看起來是零違規。'
+    + '這在大小寫不敏感的檔案系統上是真實情形（r17 阻擋①）。';
+}
+
+export function defaultResolve(cwd) {
+  return (rel) => {
+    const abs = join(cwd, rel);
+    return existsSync(abs) ? realpathSync(abs) : null;   // index 有、工作樹沒有（staged deletion）＝跳過
+  };
+}
+
+export function trackedJsFiles(cwd = ROOT, resolve = defaultResolve(cwd)) {
+  const files = lsFiles(cwd).filter((f) => !isBrowserSideFile(f));
+  // ⚠️ 碰撞檢查放在**這裡**（真正的路徑上），不是放在某一題裡：
+  //    放在題裡的話，拿掉那一行仍會全綠（實測過——接線沒有人守就是又一顆假綠）。
+  //    `resolve` 可注入是為了讓考題能強迫一次碰撞，證明這條接線真的在。
+  const collision = findRealpathCollision(files, resolve);
+  if (collision) throw new Error(collisionMessage(collision));
+  return files;
 }
 
 test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——理由見錯誤訊息）', () => {
@@ -347,6 +421,8 @@ test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——
   assert.deepEqual([...files].sort(), [...expected].sort(),
     `掃描清單與 git 列出的受版控 .js 不一致（掃 ${files.length} 支、應為 ${expected.length} 支）。`
     + '\n漏掃的檔案等於在射程外，而錯誤訊息卻宣稱「本專案禁止」。');
+  // ⚠️ 「兩個 index 路徑指到同一支工作樹檔」的 fail-closed 在 `trackedJsFiles()` 裡（真正的路徑上）。
+  //    本題掃的是**工作樹內容**、不是 index blob——誠實劃界：要守 index 內容就得改成讀 blob，**未做**。
   const offenders = files.flatMap((rel) => findBadPathnameUses(readFileSync(join(ROOT, rel), 'utf8'), rel));
   assert.deepEqual(offenders, [],
     '這些地方取了 file URL 的 `.pathname`：\n  ' + offenders.join('\n  ')
@@ -686,6 +762,44 @@ test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：�
   }
 });
 
+test('⭐ 兩個 index 路徑指到同一支檔案時必須吵著紅（r17 阻擋①：大小寫不敏感的檔案系統）', () => {
+  // ⚠️ 這條檢查原本沒有考題撐著（拿掉它仍全綠——我自己又製造一顆假綠）。
+  //    真 repo 上造不出這種碰撞，所以把它抽成可注入 `resolve` 的純函式才測得到。
+  const fake = { 'a/Case.js': '/real/case.js', 'a/case.js': '/real/case.js', 'b/other.js': '/real/other.js' };
+  const hit = findRealpathCollision(Object.keys(fake), (rel) => fake[rel]);
+  assert.notEqual(hit, null, '兩個路徑指到同一支檔案卻沒被抓到＝其中一份的違規內容永遠掃不到');
+  assert.equal(hit.real, '/real/case.js');
+  assert.match(collisionMessage(hit), /同一支工作樹檔案/, '診斷訊息不見了＝下一個人看不出發生什麼事');
+
+  // 反面：沒有碰撞時不可以誤報；工作樹上不存在的（回 null）要跳過而不是當成碰撞
+  assert.equal(findRealpathCollision(['x.js', 'y.js'], (r) => `/real/${r}`), null, '沒有碰撞卻誤報');
+  assert.equal(findRealpathCollision(['x.js', 'y.js'], () => null), null,
+    'index 有、工作樹沒有（例如 staged deletion）應該跳過，不是當成碰撞');
+});
+
+test('⭐ 碰撞 fail-closed 真的接在列檔路徑上（不是只有純函式有考題）', () => {
+  // ⚠️ 這一題守的是**接線**：把檢查放在某一題裡的話，拿掉那一行仍會全綠（實測過）。
+  //    ⇒ 檢查移進 `trackedJsFiles()`，並讓 `resolve` 可注入，這樣就能強迫一次碰撞。
+  assert.throws(() => trackedJsFiles(ROOT, () => '/same/file'), /同一支工作樹檔案/,
+    '注入一個「所有路徑都指到同一支」的解析器，列檔卻沒有吵——那表示碰撞 fail-closed 沒有接上');
+  // 反面：真實解析器下不可以誤報（否則整批紅）
+  assert.doesNotThrow(() => trackedJsFiles(), '真實的樹被誤判成有碰撞＝這條檢查過嚴');
+});
+
+test('⭐ 非法 UTF-8 的檔名必須吵著紅，不可以靜靜換成替代字元（r17 阻擋①）', () => {
+  // ⚠️ 這是 fail-closed 的探針。用 `encoding:'utf8'` 先轉字串時，非法位元組會變成 U+FFFD ⇒
+  //    index 裡兩個**不同**的路徑會解成**同一個字串**，安全的那支被讀兩次、違規的 blob 完全掃不到。
+  const bad = Buffer.concat([Buffer.from('bad_'), Buffer.from([0xFF]), Buffer.from('.js\0')]);
+  assert.throws(() => parseLsFilesZ(bad), /不是合法 UTF-8/,
+    '非法 UTF-8 的路徑被靜靜接受了——那表示兩個不同的 index 路徑會被折成同一個，'
+    + '其中一份的內容永遠不會被掃到而結果看起來是零違規');
+  // 反面：合法的怪檔名（換行／tab／`#`／`%`／中文）必須原樣取回，不可以被這條 fail-closed 誤殺
+  const okNames = ['x/a\nb.js', 'y/t\tab.js', 'z/a b#c%d.js', 'w/中文 檔名.js'];
+  assert.deepEqual(parseLsFilesZ(Buffer.from(okNames.join('\0') + '\0')), okNames,
+    '合法的怪檔名被這條 fail-closed 誤殺了＝它太嚴，會讓正常的樹整批紅');
+  assert.deepEqual(parseLsFilesZ(Buffer.from('')), [], '空輸出應該回空陣列');
+});
+
 test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻擋①②：舊探針是假綠）', () => {
   // ⚠️ 舊版這一題拿**已追蹤**的 `server.js` 當 excludes 探針——而 `--exclude-standard` 只作用在
   //    `--others`（未追蹤檔）上，`--cached` 的 tracked 檔永遠都會列出 ⇒ 那顆探針**不可能失敗**。
@@ -712,13 +826,13 @@ test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻
     //    收成 `--cached` 之後，config 型的 ignore 通道（`core.excludesFile`、`~/.gitconfig`）
     //    **本來就影響不到清單**——那不是我隔離的功勞，是射程收窄的結果。
     //    把它們留在這裡當「逐通道行為證明」是假探針（複驗者實測：不清理也與基準完全相同）。
-    //    ⇒ 那幾條移到下面的負向邊界，只留真的有影響力的三條（實測都會把清單變空）。
+    //    ⇒ 那幾條移到下面的負向邊界。以下三條是實測**真的會改變行為**的
+    //      （各自的樣子不同：報錯／top-level 變了／index 變空——所以這裡只斷言「清單必須與基準相同」，
+    //      不宣稱它們都會變空）。
     const channels = [
       ['GIT_DIR 指到不存在的路徑', { GIT_DIR: join(dir, 'nope.git') }],
       ['GIT_WORK_TREE 指到別的目錄', { GIT_WORK_TREE: join(dir, 'empty') }],
       ['GIT_INDEX_FILE 指到不存在的 index', { GIT_INDEX_FILE: join(dir, 'nope.index') }],
-      ['GIT_CONFIG_* 注入 core.worktree',
-        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: join(dir, 'empty') }],
     ];
     for (const [why, vars] of channels) {
       for (const [k, v] of Object.entries(vars)) process.env[k] = v;
@@ -744,6 +858,11 @@ test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻
       ['GIT_CONFIG_GLOBAL 指到自備的 config', { GIT_CONFIG_GLOBAL: join(dir, 'gitconfig') }],
       ['GIT_CONFIG_* 注入 core.excludesFile',
         { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: ex }],
+      // ↓ r17 阻擋②：這條原本被我列成「有獨立貢獻的通道」，但複驗者在暫存 repo 與 linked worktree
+      //   都實測：不清理它時 `rev-parse --show-toplevel` 與 `--cached` 清單**完全不變** ⇒ 它是縱深防禦，
+      //   不是活的通道。（`core.worktree` 對 `--cached` 沒有影響力。）
+      ['GIT_CONFIG_* 注入 core.worktree',
+        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: join(dir, 'empty') }],
     ]) {
       for (const [k, v] of Object.entries(vars)) process.env[k] = v;
       try {
