@@ -42,6 +42,10 @@ function assertStateBehavior(source) {
   assert.match(noticeHtml, /aria-live="polite"/);
   assert.match(noticeHtml, /已匯入 &lt;交易&gt;/);
   assert.doesNotMatch(noticeHtml, /已匯入 <交易>/);
+  const warningHtml = notice('同步部分完成', true);
+  assert.match(warningHtml, /class="securities-notice warning"/);
+  assert.match(warningHtml, /data-icon="alert"/);
+  assert.match(warningHtml, /同步部分完成/);
 
   const loadingHtml = loading();
   assert.match(loadingHtml, /aria-busy="true"/);
@@ -70,11 +74,11 @@ function assertStateBehavior(source) {
 
 function assertStateWiring(source) {
   const render = namedFunction(source, 'renderSecurities');
-  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = securitiesNotice;\s*securitiesNotice = '';\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
+  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = securitiesNotice;\s*const noticeWarning = securitiesNoticeWarning;\s*securitiesNotice = '';\s*securitiesNoticeWarning = false;\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
   assert.match(render, /try \{\s*\[secRes, settings\] = await Promise\.all\(\[api\('\/securities'\), api\('\/settings'\)\]\);\s*\} catch \(error\) \{/);
   assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = securitiesLoadErrorHtml/);
   assert.match(render, /byId\('retrySecurities'\)\.onclick = \(\) => renderSecurities\(\);/);
-  assert.match(render, /securitiesNoticeHtml\(notice\)/);
+  assert.match(render, /securitiesNoticeHtml\(notice, noticeWarning\)/);
   assert.match(render, /!all\.length \? securitiesEmptyHtml\(\)/);
   assert.match(render, /rows\.length \? secTableHtml\(rows, th, FMT\) : securitiesFilteredEmptyHtml\(\)/);
   assert.match(render, /byId\('emptySecUpload'\)\.onclick = \(\) => openSecUpload\(pwSet\);/);
@@ -87,13 +91,18 @@ function assertStateWiring(source) {
     assert.match(reset, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
-  assert.match(namedFunction(source, 'syncIbFromSecurities'), /securitiesNotice = 'IBKR 同步完成/);
+  const sync = namedFunction(source, 'syncIbFromSecurities');
+  assert.match(sync, /const feedback = ibSyncFeedback\(result, moneyCur\);/);
+  assert.match(sync, /const hasSyncWarning = feedback\.some\(\(f\) => f\.error\) \|\| !!notice;/);
+  assert.match(sync, /securitiesNotice = hasSyncWarning[\s\S]*IBKR 同步部分完成[\s\S]*IBKR 同步完成/);
+  assert.match(sync, /securitiesNoticeWarning = hasSyncWarning;/);
   assert.match(namedFunction(source, 'openSecPreview'), /securitiesNotice = message;\s*renderSecurities\(\);/);
   assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
 }
 
 function assertStateCss(css) {
   assert.match(css, /\.securities-notice \{[^}]*background: var\(--accent-soft\);[^}]*border: 1px solid var\(--accent\);/);
+  assert.match(css, /\.securities-notice\.warning \{[^}]*color: var\(--warn\);[^}]*border-color: var\(--warn\);/);
   assert.match(css, /\.securities-state \{[^}]*min-height: 330px;[^}]*border: 2px solid var\(--frame\);/);
   assert.match(css, /\.securities-error code \{[^}]*background: var\(--card-2\);[^}]*border: 1px solid var\(--line\);/);
   assert.match(css, /\.securities-filter-empty \{[^}]*min-height: 180px;[^}]*border: 2px solid var\(--frame\);/);
@@ -134,6 +143,10 @@ test('證券交易狀態：破壞消毒、重試、空白入口、清除條件�
   const reset = "if (reset) reset.onclick = () => resetSecuritiesFilters();";
   assert.ok(source.includes(reset), '突變目標必須存在：篩選空白清除條件');
   assert.throws(() => assertStateWiring(source.replace(reset, 'if (reset) reset.onclick = () => {};')));
+
+  const syncWarning = 'const hasSyncWarning = feedback.some((f) => f.error) || !!notice;';
+  assert.ok(source.includes(syncWarning), '突變目標必須存在：同步部分失敗的持久警示');
+  assert.throws(() => assertStateWiring(source.replace(syncWarning, 'const hasSyncWarning = false;')));
 
   const mobileStack = 'display: flex; align-items: center;\n    flex-direction: column; text-align: center;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

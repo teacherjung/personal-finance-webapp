@@ -17,6 +17,7 @@
 }
 .securities-notice > span { width: 24px; height: 24px; display: grid; place-items: center; }
 .securities-notice strong { font-size: 12px; }
+.securities-notice.warning { color: var(--warn); border-color: var(--warn); }
 
 .securities-state {
   min-height: 330px; padding: 44px 28px; display: grid;

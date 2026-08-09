@@ -27,10 +27,10 @@ const FMT = { esc: (/** @type {any} */ s) => esc(s), amt: fmtAmt, qty: fmtQty, p
 const filters = { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' };
 const listSort = { key: 'tradeDate', dir: 'desc' };
 
-function securitiesNoticeHtml(message) {
+function securitiesNoticeHtml(message, warning = false) {
   if (!message) return '';
-  return `<div class="securities-notice" role="status" aria-live="polite">
-    <span>${icon('check', 17)}</span><strong>${esc(message)}</strong>
+  return `<div class="securities-notice${warning ? ' warning' : ''}" role="status" aria-live="polite">
+    <span>${icon(warning ? 'alert' : 'check', 17)}</span><strong>${esc(message)}</strong>
   </div>`;
 }
 
@@ -88,6 +88,7 @@ function securitiesFilteredEmptyHtml() {
 }
 
 let securitiesNotice = '';
+let securitiesNoticeWarning = false;
 
 function resetSecuritiesFilters() {
   Object.assign(filters, { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' });
@@ -97,7 +98,9 @@ function resetSecuritiesFilters() {
 export async function renderSecurities({ showLoading = true } = {}) {
   const seq = currentRouteSeq();
   const notice = securitiesNotice;
+  const noticeWarning = securitiesNoticeWarning;
   securitiesNotice = '';
+  securitiesNoticeWarning = false;
   if (showLoading) view().innerHTML = securitiesLoadingHtml();
   let secRes, settings;
   try {
@@ -136,7 +139,7 @@ export async function renderSecurities({ showLoading = true } = {}) {
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
-    ${securitiesNoticeHtml(notice)}
+    ${securitiesNoticeHtml(notice, noticeWarning)}
     <div class="securities-boundary">
       <span class="securities-boundary-icon">${icon('file', 18)}</span>
       <div><strong>這裡是成交紀錄的查帳頁</strong><p>不在這裡修改持股，也不把成交金額重複算進銀行收支；同步 IBKR 時才會依同一套流程更新投資組合。</p></div>
@@ -232,11 +235,16 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
   btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
   try {
     const result = await api('/ib/sync', { method: 'POST' });
-    for (const f of ibSyncFeedback(result, moneyCur)) toast(f.message, f.error);
+    const feedback = ibSyncFeedback(result, moneyCur);
+    for (const f of feedback) toast(f.message, f.error);
     const notice = missingHoldingsNotice(result.missing);
     if (notice) toast(notice, true);
+    const hasSyncWarning = feedback.some((f) => f.error) || !!notice;
     if (seqAtStart === currentRouteSeq()) {
-      securitiesNotice = 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
+      securitiesNotice = hasSyncWarning
+        ? 'IBKR 同步部分完成：部分資料沿用舊值或被略過，請先處理上方提醒再確認投資組合'
+        : 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
+      securitiesNoticeWarning = hasSyncWarning;
       renderSecurities();
     }
   } catch (err) {
