@@ -39,6 +39,17 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * 產生子行程原始碼要用的 **ESM specifier**。
+ *
+ * ⚠️ **不可以把絕對路徑原樣塞進 `import … from`**（Codex #433 r2 阻擋②，在實體
+ * 「07 專案#a/榮祥森（投資理財）100%」路徑上實測）：`import` 的字串是 **URL**，路徑裡的 `#`
+ * 會被當成 fragment 起點 ⇒ Node 只拿 `#` 前面那一截去找檔案，報 `ERR_MODULE_NOT_FOUND`。
+ * 本檔兩題在使用者自己的目錄下就是這樣紅的，而純 ASCII 的實作樹完全看不出來。
+ * ⇒ 一律走 `pathToFileURL()`：它會把 `#`／`%`／空白／中文都編成安全的 file URL。
+ */
+const moduleUrl = (/** @type {string} */ rel) => pathToFileURL(join(ROOT, rel)).href;
+
 /** 在 macOS 的 /tmp（本身就是 symlink）底下開一個暫存資料夾。 */
 function withSymlinkedTemp(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'entry-guard-'));
@@ -49,7 +60,7 @@ test('lib/is-main.js：透過 symlink 執行時仍認得出自己是進入點', 
   withSymlinkedTemp((dir) => {
     const real = join(dir, 'real.mjs');
     writeFileSync(real,
-      `import { isMainModule } from ${JSON.stringify(join(ROOT, 'lib/is-main.js'))};\n`
+      `import { isMainModule } from ${JSON.stringify(moduleUrl('lib/is-main.js'))};\n`
       + `console.log(isMainModule(import.meta.url) ? 'MAIN' : 'NOT-MAIN');\n`);
     const link = join(dir, 'link.mjs');
     symlinkSync(real, link);
@@ -74,7 +85,7 @@ test('lib/is-main.js：被別人 import 時不會誤認自己是進入點', () =
   withSymlinkedTemp((dir) => {
     const lib = join(dir, 'lib.mjs');
     writeFileSync(lib,
-      `import { isMainModule } from ${JSON.stringify(join(ROOT, 'lib/is-main.js'))};\n`
+      `import { isMainModule } from ${JSON.stringify(moduleUrl('lib/is-main.js'))};\n`
       + `export const answer = isMainModule(import.meta.url);\n`);
     const entry = join(dir, 'entry.mjs');
     writeFileSync(entry, `import { answer } from './lib.mjs';\nconsole.log(answer ? 'MAIN' : 'NOT-MAIN');\n`);

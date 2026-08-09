@@ -8,12 +8,22 @@ import { join } from 'node:path';
 import { rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname } from 'node:path';
 
 const TEST_STORE = join(tmpdir(), `finance-robust-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * 子行程原始碼要用的 **ESM specifier**。
+ *
+ * ⚠️ **不可以退回「絕對路徑塞進單引號」**（Codex #433 r2 阻擋②，在實體
+ * 「07 專案#a/榮祥森（投資理財）100%」路徑上實測）：`import` 的字串是 **URL**——
+ * 路徑裡的 `#` 會被當成 fragment 起點（Node 只拿 `#` 前面那一截去找檔案，
+ * `ERR_MODULE_NOT_FOUND`），而舊寫法那個 `.replace(/'/g, …)` 也只逃逸了單引號一種字元。
+ * ⇒ 一律 `pathToFileURL()`＋`JSON.stringify()`：前者處理 `#`／`%`／空白／中文，後者處理引號。
+ */
+const STORE_URL = pathToFileURL(join(ROOT, 'lib/store.js')).href;
 
 const store = await import('../lib/store.js');
 const { app } = await import('../server.js');
@@ -65,7 +75,7 @@ test('舊資料自動搬家（B3）：store.json → SQLite，資料完整、原
   writeFileSync(jsonPath, JSON.stringify(legacy));
   try {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
-      import { load } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';
+      import { load } from ${JSON.stringify(STORE_URL)};
       const db = load();
       console.log(JSON.stringify({ amount: db.history?.[0]?.amount, count: db.history?.length }));
     `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
@@ -82,7 +92,7 @@ test('搬家重搬規則（Codex#8-1）：db 沒寫過→安全重搬；兩邊�
   const jsonPath = dbPath.slice(0, -3) + '.json';
   const runChild = (/** @type {string} */ code) => execFileSync(process.execPath, ['--input-type=module', '-e', code],
     { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
-  const IMPORT = `import { load, save, emptyDb } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';`;
+  const IMPORT = `import { load, save, emptyDb } from ${JSON.stringify(STORE_URL)};`;
   try {
     // 步驟1：首次搬家（json 標記 A）
     writeFileSync(jsonPath, JSON.stringify({ ...store.emptyDb(), history: [{ id: 'A', month: '2026-01', amount: 1 }] }));
@@ -111,7 +121,7 @@ test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝�
   writeFileSync(jsonPath, JSON.stringify(legacy));
   try {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
-      import { load } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';
+      import { load } from ${JSON.stringify(STORE_URL)};
       console.log(JSON.stringify({ usdTwd: load().settings.usdTwd }));
     `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
@@ -127,7 +137,7 @@ test('fail-closed 每次都擋（自審r2-H1）：搬家失敗後重試不可拿
   writeFileSync(jsonPath, '{ 這不是合法 JSON');   // 舊檔損毀＋新庫不存在 → 首次搬家必失敗
   try {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
-      import { load } from '${ROOT.replace(/'/g, "\\'")}/lib/store.js';
+      import { load } from ${JSON.stringify(STORE_URL)};
       let first = null, second = null;
       try { load(); } catch (e) { first = e.message; }
       try { load(); } catch (e) { second = e.message; }

@@ -25,7 +25,10 @@ import { toastMs, TOAST_MIN_MS, TOAST_MAX_MS, TOAST_MS_PER_CHAR } from '../publi
 import { okMsg, networkFailMsg, authFailMsg, serverFailMsg, notBackupMsg, saveFailMsg }
   from '../public/modules/backup-export.js';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// ⚠️ repo 根一律用共用的那一份（test/helpers/repo-root.js），不要在這裡自己算：
+//    自己算過的兩支就是 2026-08-08 那場事故的來源（`.pathname` 留著 URL 編碼 ⇒ 含空白／中文的
+//    專案路徑會 ENOENT，而純 ASCII 的實作樹與審查樹完全看不出來）。理由與攻擊實測寫在那一份裡。
+import { ROOT } from './helpers/repo-root.js';
 
 /**
  * 去掉 JS 註解——**被註解掉的接線等於不存在**（r5 阻擋②：複驗者把接線改成註解，本檔的形狀題全綠）。

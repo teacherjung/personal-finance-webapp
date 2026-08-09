@@ -8,10 +8,18 @@ import { execFileSync } from 'node:child_process';
 import { rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * 子行程原始碼要用的 **ESM specifier**。
+ * ⚠️ 絕對路徑不可以原樣塞進 `import … from`（Codex #433 r2 阻擋②，實體
+ * 「07 專案#a/榮祥森（投資理財）100%」路徑上實測）：`import` 的字串是 **URL**，路徑裡的 `#`
+ * 被當成 fragment 起點 ⇒ Node 只拿 `#` 前面那一截去找檔案，`ERR_MODULE_NOT_FOUND`。
+ * ⇒ 一律 `pathToFileURL()`（`#`／`%`／空白／中文都會被編成安全的 file URL）。
+ */
+const REPO_URL = pathToFileURL(join(ROOT, 'lib/repo.js')).href;
 const STORE = join(tmpdir(), `finance-sec-migrate-${process.pid}.db`);
 const BAK = STORE + '.pre-sec-contract.bak';
 const run = (/** @type {string} */ code) => execFileSync(process.execPath, ['--input-type=module', '-e', code],
@@ -21,7 +29,7 @@ test('升級清掃：違約舊列開機時濾除＋備份，合法列存活，ap
   try {
     // ① 「上一版」：正常寫入一筆合法列（過現行櫃檯）
     run(`
-      import { getDb, saveDb } from ${JSON.stringify(join(ROOT, 'lib/repo.js'))};
+      import { getDb, saveDb } from ${JSON.stringify(REPO_URL)};
       const db = await getDb();
       db.securityTrades = [{ id: 'good', source: 'taishin', sourceRef: 'ts|f|ok|#1', tradeDate: '2026-01-13',
         side: 'buy', cashDirection: 'out', quantity: 10, currency: 'TWD', symbol: '0050',
@@ -46,7 +54,7 @@ test('升級清掃：違約舊列開機時濾除＋備份，合法列存活，ap
     }
     // ③ 「新版開機」：載入清掃應濾除違約列，且之後的 saveDb（含無關寫入）完全正常
     const out = run(`
-      import { getDb, saveDb } from ${JSON.stringify(join(ROOT, 'lib/repo.js'))};
+      import { getDb, saveDb } from ${JSON.stringify(REPO_URL)};
       const db = await getDb();
       db.transactions.push({ id: 't1', date: '2026-06-01', amount: 100, category: '其他', type: 'expense', ledger: 'cashflow' });
       await saveDb(db);   // 沒清掃的話：這裡就在櫃檯炸掉（磚掉重現）
