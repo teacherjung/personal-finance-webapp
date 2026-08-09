@@ -248,44 +248,52 @@ export function isBrowserSideFile(f) {
  * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成八進位轉義而開不了檔
  *    ——那正是本 PR 在修的同一族病。
  */
-export const LS_FILES_ARGV = ['-c', 'core.quotepath=false', 'ls-files',
-  '--cached', '--others', '--exclude-standard'];
+export const LS_FILES_ARGV = ['-c', 'core.quotepath=false', 'ls-files', '--cached'];
 
 /**
- * 跑 git 時**一律清掉所有 repo-local 的 Git 環境變數**。
+ * 跑 git 時**一律清掉所有 `GIT_*` 前綴，以及 `HOME`**。
  *
- * ⚠️⚠️ 這不是防禦性寫法，是 2026-08-09 真實事故的修法（r13 阻擋①，複驗者精確重現）：
- * `scripts/git-hooks/pre-push` 會執行 `npm test`，而 hook 執行時環境裡帶著 `GIT_DIR`。
- * 只給 `cwd` **隔離不了**它——git 會照 `GIT_DIR` 去操作**真的那個 repo**，`cwd` 形同無效。
- * 後果：本檔原本在暫存目錄跑的 `git init` fixture，實際上重新初始化了主 repo、把
- * `core.bare` 設成 `true`（主目錄與全部 worktree 同時失去工作樹身分），還把 fixture 的檔案
- * 塞進主 repo 的 index——而那顆考題當時顯示 1/1 通過。
- * ⇒ 兩個修法一起做：①**不再有任何 `git init`**（見下方清單題）②所有 git 呼叫都走這裡。
- * ⚠️ `trackedJsFiles()` 自己也吃這個坑：GIT_DIR 被繼承時它會去列**別的 repo** 的檔案
- * ——那會讓這道閘在 pre-push 期間掃錯對象而靜靜全綠。
+ * ⚠️⚠️ 這是 2026-08-09 事故與後續三輪繞法的修法，逐條都是實測出來的：
+ *  ・`GIT_DIR`（r13）：`scripts/git-hooks/pre-push` 會執行 `npm test`，hook 帶著 `GIT_DIR` 進來，
+ *    **`cwd` 隔離不了它** ⇒ 當時一個在暫存目錄跑 `git init` 的 fixture 實際重新初始化了主 repo、
+ *    把 `core.bare` 設成 `true`、還污染 index，而那顆考題顯示通過。
+ *  ・`GIT_CONFIG_COUNT`／`GIT_CONFIG_KEY_*`（r14）：可注入 `core.excludesFile` 讓違規新檔靜靜消失。
+ *    ⇒ 教訓是**列舉補不完要關門**，所以改成清整個前綴（同族還有 `GIT_CONFIG_PARAMETERS`、
+ *    `GIT_IMPLICIT_WORK_TREE`、`GIT_GRAFT_FILE`、`GIT_SHALLOW_FILE`…且會隨 git 版本增加）。
+ *  ・`HOME`（r15）：保留它就留著 `~/.gitconfig` 這條通道——複驗者用 global `include.path` 引入
+ *    `core.excludesFile` 讓探針消失、14/14 全綠。
+ *    ⚠️ 我上一版寫「清掉 `HOME` 會讓 git 找不到設定目錄、整批紅」——**實測是錯的**：
+ *    不傳 `HOME` 時 `git ls-files` 照樣正常，只有我那條自我斷言會紅。理由已校正。
+ * ⚠️ `PATH` 必須保留（git 執行檔要找得到），有反面斷言。
  */
 export function gitEnv() {
-  // ⚠️ **清掉所有 `GIT_*`，不列舉**（r14 阻擋：列舉第二次補不完）。
-  //    上一版只清了十來個精確名稱，複驗者用 `GIT_CONFIG_COUNT`／`GIT_CONFIG_KEY_0=core.excludesFile`
-  //    注入一個 excludes 檔，讓 `--exclude-standard` **靜靜隱藏違規新檔**：正常環境 12/13（抓到），
-  //    注入之後 13/13（全綠）。同族還有 `GIT_CONFIG_PARAMETERS`、`GIT_IMPLICIT_WORK_TREE`、
-  //    `GIT_GRAFT_FILE`、`GIT_SHALLOW_FILE`…（`git rev-parse --local-env-vars` 會列一整批，且會隨版本增加）。
-  //    ⇒ 依本專案教義（列舉繞法補不完要關門）：**前綴一律清掉**。
-  //    ⚠️ 這不碰 `PATH`／`HOME`，所以 git 仍找得到執行檔與使用者設定目錄（有反面斷言）。
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (!k.startsWith('GIT_')) env[k] = v;
+    if (!k.startsWith('GIT_') && k !== 'HOME') env[k] = v;
   }
   return env;
 }
 
 /**
  * 唯一一個跑 `git ls-files` 的入口。
- * ⚠️ 收成一個入口是為了**沒有第二處會忘記傳 `env`**（r14 複驗者的建議）——
- * 上一版有兩處各自呼叫，其中一處日後漏傳就是一個靜靜的假綠。
+ *
+ * ⚠️ **只用 `--cached`，不用 `--others --exclude-standard`**（r15 阻擋②）：
+ * ignore 規則的解析吃太多外部輸入，複驗者四種繞法都讓違規的**未追蹤**檔靜靜消失、考題全綠——
+ * `.git/config` 的 `include.path`、`~/.gitconfig` 的 include、local `core.worktree`、
+ * 以及 `.git/info/exclude`（那是固定路徑，連 `-c` 都蓋不掉）。
+ * ⇒ 不再硬撐那個承諾。**誠實劃界**：射程＝**已進 index 的檔案**（已 commit 或已 `git add`）。
+ *   never-added 的新檔不在射程內——而它也推不上遠端，所以真正會流出去的東西仍然被蓋住。
+ *
+ * ⚠️ 另外把「解出來的 repo 就是我要掃的那一棵」綁死再相信清單：`core.worktree`／`GIT_DIR`
+ * 之類的東西一旦生效，`ls-files` 會去列**別棵樹**的內容而看起來完全正常。
  */
-function lsFiles(cwd) {
-  return execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env: gitEnv() })
+export function lsFiles(cwd) {
+  const env = gitEnv();
+  const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', env }).trim();
+  assert.equal(realpathSync(top), realpathSync(cwd),
+    `git 解出來的 repo 根不是我要掃的那一棵：\n  git 說＝${top}\n  我要的＝${cwd}\n`
+    + '⇒ 清單會是別棵樹的內容（`core.worktree`／`GIT_DIR` 之類生效時就會這樣），而看起來完全正常。');
+  return execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env })
     .split('\n').filter((f) => f.endsWith('.js'));
 }
 
@@ -608,15 +616,18 @@ test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：�
   //    （主目錄與全部 worktree 同時失去工作樹身分），還把 fixture 的檔案塞進主 repo 的 index，
   //    而那顆考題當時顯示 1/1 通過。
   //    ⇒ 修法：**這一題不再建立任何 repo**。改成分兩半驗——參數（宣告）與過濾（純邏輯）。
-  //    ⚠️ 誠實劃界：這樣就**沒有**「未 commit 的新檔真的會被列出」的端到端證明了。
-  //    那個承諾現在只由下面的參數斷言撐著（宣告層），不是行為層。列為已知殘餘、不再自己建 repo 去證。
+  //    ⚠️ 誠實劃界：射程＝**已進 index 的檔案**（已 commit 或已 `git add`）。never-added 的新檔不在射程內
+  //    ——那是 r15 之後刻意收的（理由見 `lsFiles`），而它也推不上遠端，所以會流出去的東西仍被蓋住。
 
-  // ⓐ 參數：三個承諾各自對應一個旗標，少一個就等於少一個承諾
-  assert.ok(LS_FILES_ARGV.includes('--others'),
-    '少了 --others：還沒 commit 的新檔就掃不到，護欄會在最需要它的那一刻失效');
-  assert.ok(LS_FILES_ARGV.includes('--exclude-standard'),
-    '少了 --exclude-standard：被 .gitignore 的工具產物會被算進來（假紅）');
-  assert.ok(LS_FILES_ARGV.includes('--cached'), '少了 --cached：已追蹤的檔案掃不到');
+  // ⓐ 參數：每一個都對應一個承諾，少一個就等於少一個承諾
+  assert.ok(LS_FILES_ARGV.includes('--cached'), '少了 --cached：已進 index 的檔案掃不到＝這道閘沒有射程');
+  // ⚠️ **刻意不用** `--others --exclude-standard`（r15 阻擋②）：ignore 規則吃太多外部輸入，
+  //    四種繞法都能讓未追蹤的違規檔靜靜消失。射程收成「已進 index」＝已 commit 或已 git add。
+  assert.equal(LS_FILES_ARGV.includes('--others'), false,
+    '不可以加回 --others：它會把射程擴到未追蹤檔，而那一塊的 ignore 解析守不住'
+    + '（.git/config 的 include、~/.gitconfig、core.worktree、.git/info/exclude 各自都能讓它靜靜消失）');
+  assert.equal(LS_FILES_ARGV.includes('--exclude-standard'), false,
+    '不可以加回 --exclude-standard：同上，它是那條攻擊面的入口');
   const quoteIdx = LS_FILES_ARGV.indexOf('core.quotepath=false');
   assert.ok(quoteIdx > 0 && LS_FILES_ARGV[quoteIdx - 1] === '-c',
     '少了 -c core.quotepath=false：含中文的檔名會被 git 轉成八進位轉義而開不了檔'
@@ -648,36 +659,72 @@ test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：�
       + 'pre-push hook 會帶著這些進來：GIT_DIR 讓 git 去操作別的 repo（cwd 形同無效，'
       + '2026-08-09 就是這樣把主 repo 設成 bare 的）；GIT_CONFIG_* 可以注入 core.excludesFile，'
       + '讓 --exclude-standard 靜靜隱藏違規新檔。');
-    // 反面自我驗證：非 Git 的環境變數要留著（清太多會讓 git 找不到 PATH／HOME 而整批紅）
+    assert.equal('HOME' in scrubbed, false,
+      'gitEnv() 沒清掉 HOME——留著它就留著 ~/.gitconfig 這條通道（r15 實測：global include.path '
+      + '引入 core.excludesFile 可讓探針消失而全綠）。⚠️ 實測清掉 HOME 不會讓 git ls-files 失敗。');
+    // 反面自我驗證：`PATH` 必須留著（清掉會讓 git 執行檔找不到而整批紅）
     assert.equal(scrubbed.PATH, injected.PATH, 'gitEnv() 把 PATH 也清掉了');
-    assert.equal(scrubbed.HOME, injected.HOME, 'gitEnv() 把 HOME 也清掉了');
   } finally {
     process.env = realEnv;
   }
 });
 
-test('⭐ 注入 GIT_CONFIG_* 的 excludesFile 不可以讓檔案從清單裡消失（r14 阻擋：行為題）', () => {
-  // ⚠️ 複驗者的重現：`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0=<檔>`
-  //    會讓 `--exclude-standard` 隱藏那個檔案 ⇒ 違規新檔靜靜消失、護欄回報通過。
-  //    這一題把 `server.js` 寫進一個 excludes 檔並注入，斷言它**仍在**清單裡。
-  const dir = mkdtempSync(join(tmpdir(), 'excludes-'));
-  const before = { ...process.env };
+test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻擋①②：舊探針是假綠）', () => {
+  // ⚠️ 舊版這一題拿**已追蹤**的 `server.js` 當 excludes 探針——而 `--exclude-standard` 只作用在
+  //    `--others`（未追蹤檔）上，`--cached` 的 tracked 檔永遠都會列出 ⇒ 那顆探針**不可能失敗**。
+  //    複驗者實證：讓 `lsFiles()` 故意放過全部 `GIT_CONFIG_*`，仍 14/14 全綠。
+  //    ⇒ 換成驗**現在真正的防線**：①清單必須來自 ROOT 那一棵②注入各種通道都不改變結果。
+  const baseline = trackedJsFiles();
+  assert.ok(baseline.length > 100, `基準清單只有 ${baseline.length} 支＝這一題在空轉`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'inject-'));
+  const saved = { ...process.env };
   try {
+    // 一個會排除 server.js 的 excludes 檔（若 ignore 解析仍被外部左右，就會看得出來）
     const ex = join(dir, 'exclude-list');
-    writeFileSync(ex, 'server.js\n');
-    process.env.GIT_CONFIG_COUNT = '1';
-    process.env.GIT_CONFIG_KEY_0 = 'core.excludesFile';
-    process.env.GIT_CONFIG_VALUE_0 = ex;
-    const files = trackedJsFiles();
-    assert.ok(files.includes('server.js'),
-      '注入 core.excludesFile 之後 server.js 就從清單裡消失了＝gitEnv() 沒隔離 GIT_CONFIG_*，'
-      + '任何違規新檔都能被這樣藏起來而護欄照樣全綠');
-  } finally {
-    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) {
-      if (before[k] === undefined) delete process.env[k]; else process.env[k] = before[k];
+    writeFileSync(ex, 'server.js\n*.js\n');
+    // 一個假的 worktree（`core.worktree` 生效時會讓 git 去看別的地方）
+    mkdirSync(join(dir, 'empty'), { recursive: true });
+
+    const channels = [
+      ['GIT_CONFIG_* 注入 core.excludesFile',
+        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: ex }],
+      ['GIT_CONFIG_* 注入 core.worktree',
+        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: join(dir, 'empty') }],
+      ['GIT_CONFIG_GLOBAL 指到自備的設定檔', { GIT_CONFIG_GLOBAL: ex }],
+      ['HOME 指到自備的家目錄（~/.gitconfig 通道）', { HOME: dir }],
+      ['GIT_DIR 指到不存在的路徑', { GIT_DIR: join(dir, 'nope.git') }],
+      ['GIT_WORK_TREE 指到空目錄', { GIT_WORK_TREE: join(dir, 'empty') }],
+      ['GIT_INDEX_FILE 指到不存在的 index', { GIT_INDEX_FILE: join(dir, 'nope.index') }],
+    ];
+    for (const [why, vars] of channels) {
+      for (const [k, v] of Object.entries(vars)) process.env[k] = v;
+      try {
+        const got = trackedJsFiles();
+        assert.deepEqual(got.sort(), [...baseline].sort(),
+          `注入「${why}」之後清單就變了＝那條通道沒被隔離。\n`
+          + '這一族的後果都一樣：掃到別棵樹或掃少了檔案，而護欄照樣回報通過'
+          + '（2026-08-09 的 bare=true 事故就是這一族的極端版）。');
+      } finally {
+        for (const k of Object.keys(vars)) {
+          if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+        }
+      }
     }
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('⭐ 列檔入口必須先確認「解出來的 repo 就是我要掃的那一棵」（r15 阻擋②的綁定）', () => {
+  // ⚠️ 這條斷言原本沒有考題撐著（我補上綁定之後，把它拿掉仍 14/14 全綠——自己又製造一顆假綠）。
+  //    ⇒ 用一個**子目錄**當 cwd：git 解出來的 toplevel 會是 repo 根、不等於 cwd ⇒ 必須丟錯。
+  //    這正是 `core.worktree`／`GIT_DIR` 生效時的形狀：ls-files 會列**別棵樹**而看起來完全正常。
+  assert.throws(() => lsFiles(join(ROOT, 'test')), /不是我要掃的那一棵/,
+    'cwd 是子目錄時 git 解出來的 repo 根不等於 cwd，列檔入口卻沒有吵——'
+    + '那表示「清單來自我指定的那一棵樹」這件事沒有人在守');
+  // 反面：正確的 cwd 不可以被誤擋
+  assert.doesNotThrow(() => lsFiles(ROOT), 'ROOT 自己被擋下來了＝這條綁定過嚴，整批會紅');
 });
 
 test('⭐ 全樹掃描本身不可以被繼承的 GIT_DIR 帶去別的 repo（r13 阻擋①的另一半）', () => {
