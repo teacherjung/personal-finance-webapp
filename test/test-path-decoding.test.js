@@ -265,24 +265,32 @@ export const LS_FILES_ARGV = ['-c', 'core.quotepath=false', 'ls-files',
  * ——那會讓這道閘在 pre-push 期間掃錯對象而靜靜全綠。
  */
 export function gitEnv() {
-  const env = { ...process.env };
-  for (const k of Object.keys(env)) {
-    if (k === 'GIT_DIR' || k === 'GIT_WORK_TREE' || k === 'GIT_INDEX_FILE'
-      || k === 'GIT_COMMON_DIR' || k === 'GIT_OBJECT_DIRECTORY'
-      || k === 'GIT_ALTERNATE_OBJECT_DIRECTORIES' || k === 'GIT_CONFIG'
-      || k === 'GIT_CONFIG_GLOBAL' || k === 'GIT_CONFIG_SYSTEM'
-      || k === 'GIT_PREFIX' || k === 'GIT_NAMESPACE' || k === 'GIT_CEILING_DIRECTORIES') {
-      delete env[k];
-    }
+  // ⚠️ **清掉所有 `GIT_*`，不列舉**（r14 阻擋：列舉第二次補不完）。
+  //    上一版只清了十來個精確名稱，複驗者用 `GIT_CONFIG_COUNT`／`GIT_CONFIG_KEY_0=core.excludesFile`
+  //    注入一個 excludes 檔，讓 `--exclude-standard` **靜靜隱藏違規新檔**：正常環境 12/13（抓到），
+  //    注入之後 13/13（全綠）。同族還有 `GIT_CONFIG_PARAMETERS`、`GIT_IMPLICIT_WORK_TREE`、
+  //    `GIT_GRAFT_FILE`、`GIT_SHALLOW_FILE`…（`git rev-parse --local-env-vars` 會列一整批，且會隨版本增加）。
+  //    ⇒ 依本專案教義（列舉繞法補不完要關門）：**前綴一律清掉**。
+  //    ⚠️ 這不碰 `PATH`／`HOME`，所以 git 仍找得到執行檔與使用者設定目錄（有反面斷言）。
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith('GIT_')) env[k] = v;
   }
   return env;
 }
 
+/**
+ * 唯一一個跑 `git ls-files` 的入口。
+ * ⚠️ 收成一個入口是為了**沒有第二處會忘記傳 `env`**（r14 複驗者的建議）——
+ * 上一版有兩處各自呼叫，其中一處日後漏傳就是一個靜靜的假綠。
+ */
+function lsFiles(cwd) {
+  return execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env: gitEnv() })
+    .split('\n').filter((f) => f.endsWith('.js'));
+}
+
 export function trackedJsFiles(cwd = ROOT) {
-  const out = execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env: gitEnv() });
-  return out.split('\n')
-    .filter((f) => f.endsWith('.js'))
-    .filter((f) => !isBrowserSideFile(f));
+  return lsFiles(cwd).filter((f) => !isBrowserSideFile(f));
 }
 
 test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——理由見錯誤訊息）', () => {
@@ -292,8 +300,7 @@ test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——
   // ⚠️ **範圍要用精確比對釘住**（r10 阻擋②）：結構性斷言（根層＋各目錄各一支）**擋不住**——
   //    複驗者把清單改成「全部 test/ ＋每區留一支代表檔」，仍滿足全部結構斷言，卻漏掃 128 支，
   //    而該檔 10/10、全套 1739/1739 都還是綠的。⇒ 改成與**獨立算出來的完整清單**逐項比對。
-  const allJs = execFileSync('git', LS_FILES_ARGV, { cwd: ROOT, encoding: 'utf8', env: gitEnv() })
-    .split('\n').filter((f) => f.endsWith('.js'));
+  const allJs = lsFiles(ROOT);
   const expected = allJs.filter((f) => !isBrowserSideFile(f));
   // ⚠️ 瀏覽器目錄必須**不在**清單裡（r11 阻擋①：那裡取 .pathname 合法），
   //    而且必須真的有東西被排除，否則這條排除等於沒生效。
@@ -627,14 +634,50 @@ test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：�
   );
 
   // ⓒ 清環境這件事本身要有斷言（它是事故的修法，不可以被靜靜拿掉）
-  const scrubbed = gitEnv();
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CONFIG_GLOBAL']) {
-    assert.equal(k in scrubbed, false,
-      `gitEnv() 沒有清掉 ${k}——pre-push hook 會帶著它進來，git 會照它去操作**別的 repo**，`
-      + 'cwd 形同無效（2026-08-09 事故就是這樣把主 repo 設成 bare 的）');
+  // ⚠️ 斷言「**沒有任何 GIT_ 開頭**」，不是抽查幾個名稱（r14 阻擋：抽查五個名稱擋不住
+  //    `GIT_CONFIG_COUNT`／`GIT_CONFIG_KEY_*` 那一族，而它們能讓違規新檔靜靜消失）。
+  const injected = { ...process.env, GIT_DIR: '/x', GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: '/x', GIT_SHALLOW_FILE: '/x' };
+  const realEnv = process.env;
+  try {
+    process.env = injected;
+    const scrubbed = gitEnv();
+    const leftover = Object.keys(scrubbed).filter((k) => k.startsWith('GIT_'));
+    assert.deepEqual(leftover, [],
+      `gitEnv() 沒清乾淨，還留著：${leftover.join(', ')}\n`
+      + 'pre-push hook 會帶著這些進來：GIT_DIR 讓 git 去操作別的 repo（cwd 形同無效，'
+      + '2026-08-09 就是這樣把主 repo 設成 bare 的）；GIT_CONFIG_* 可以注入 core.excludesFile，'
+      + '讓 --exclude-standard 靜靜隱藏違規新檔。');
+    // 反面自我驗證：非 Git 的環境變數要留著（清太多會讓 git 找不到 PATH／HOME 而整批紅）
+    assert.equal(scrubbed.PATH, injected.PATH, 'gitEnv() 把 PATH 也清掉了');
+    assert.equal(scrubbed.HOME, injected.HOME, 'gitEnv() 把 HOME 也清掉了');
+  } finally {
+    process.env = realEnv;
   }
-  // 反面自我驗證：非 Git 的環境變數要留著（清太多會讓 git 找不到 PATH／HOME 而整批紅）
-  assert.equal(scrubbed.PATH, process.env.PATH, 'gitEnv() 把 PATH 也清掉了');
+});
+
+test('⭐ 注入 GIT_CONFIG_* 的 excludesFile 不可以讓檔案從清單裡消失（r14 阻擋：行為題）', () => {
+  // ⚠️ 複驗者的重現：`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0=<檔>`
+  //    會讓 `--exclude-standard` 隱藏那個檔案 ⇒ 違規新檔靜靜消失、護欄回報通過。
+  //    這一題把 `server.js` 寫進一個 excludes 檔並注入，斷言它**仍在**清單裡。
+  const dir = mkdtempSync(join(tmpdir(), 'excludes-'));
+  const before = { ...process.env };
+  try {
+    const ex = join(dir, 'exclude-list');
+    writeFileSync(ex, 'server.js\n');
+    process.env.GIT_CONFIG_COUNT = '1';
+    process.env.GIT_CONFIG_KEY_0 = 'core.excludesFile';
+    process.env.GIT_CONFIG_VALUE_0 = ex;
+    const files = trackedJsFiles();
+    assert.ok(files.includes('server.js'),
+      '注入 core.excludesFile 之後 server.js 就從清單裡消失了＝gitEnv() 沒隔離 GIT_CONFIG_*，'
+      + '任何違規新檔都能被這樣藏起來而護欄照樣全綠');
+  } finally {
+    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) {
+      if (before[k] === undefined) delete process.env[k]; else process.env[k] = before[k];
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('⭐ 全樹掃描本身不可以被繼承的 GIT_DIR 帶去別的 repo（r13 阻擋①的另一半）', () => {
