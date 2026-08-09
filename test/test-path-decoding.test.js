@@ -221,22 +221,30 @@ const TOUCHPOINTS = [
  * @returns {string} 含該宣告在內的前綴
  */
 function prefixThroughDeclaration(src, name, where) {
-  const head = new RegExp(String.raw`^(?:export\s+)?(?:const|let|var|function)\s+${name}\b`, 'm');
+  const head = new RegExp(String.raw`^(?:export\s+)?(const|let|var|function)\s+${name}\b`, 'm');
   const m = head.exec(src);
   assert.ok(m, `${where} 找不到行首的頂層宣告 \`${name}\`——`
     + '本題靠它把正式接點搬進探針，找不到就等於沒在綁任何東西（所以這裡直接紅）。\n'
     + '若接點真的改名或改結構了，請同步更新本檔的 TOUCHPOINTS。');
+  // ⚠️ **結尾依宣告種類決定**（那位審查者 r4 的阻擋，兩顆突變實測）：
+  //    舊版在深度回到 0 時遇到任何 `}` 就當結尾——但 `const x = {…}.href` 的物件 initializer
+  //    之後**還可以合法接屬性或運算式**，切在 `}` 會拿到半句：
+  //    ・假紅：`{ href: … }.href`（值安全）被切成 `[object Object]` ⇒ 探針錯紅
+  //    ・假綠：`{ toString(){…} }.href ?? <原始絕對路徑>`（值已退回不安全）⇒ 切出的半句反而安全 ⇒ 全綠
+  //    ⇒ `const/let/var` 只能在**頂層分號**結束；只有 `function` 才能在本體的配對 `}` 結束。
+  const kind = m[1];
   let depth = 0;
   for (let i = m.index; i < src.length; i++) {
     const ch = src[i];
     if (ch === '(' || ch === '[' || ch === '{') depth += 1;
     else if (ch === ')' || ch === ']' || ch === '}') {
       depth -= 1;
-      assert.ok(depth >= 0, `${where} 的 \`${name}\` 宣告括號配對不起來 ⇒ 切點不可信，本題不敢當綠。`);
-      if (depth === 0 && ch === '}') return src.slice(0, i + 1);
+      assert.ok(depth >= 0, `${where} 的 \`${name}\` 宣告括號配對不起來 ⇒ 切點不可信，本題不敢當它是真的（fail-closed）`);
+      if (depth === 0 && ch === '}' && kind === 'function') return src.slice(0, i + 1);
     } else if (ch === ';' && depth === 0) return src.slice(0, i + 1);
   }
-  return assert.fail(`${where} 的 \`${name}\` 宣告找不到結尾（沒有分號、也沒有配對的大括號）。`);
+  return assert.fail(`${where} 的 \`${name}\` 宣告找不到結尾（沒有頂層分號、function 也沒有配對的大括號）。`
+    + '切點不可信 ⇒ fail-closed。');
 }
 
 /** 造一棵路徑含**空白／中文／全角括號／`#`／`%`** 的假 repo（與使用者真實目錄同型）。 */
@@ -314,6 +322,28 @@ for (const { file, name, expr, rel } of TOUCHPOINTS) {
     }
   });
 }
+
+test('⭐ 切宣告的兩型陷阱（那位審查者 r4 的兩顆突變，釘成回歸題）', () => {
+  // 兩型都是「物件 initializer 的 `}` 之後還有東西」：舊切法在 `}` 就停 ⇒ 拿到半句。
+  const mk = (init) => `import { pathToFileURL } from 'node:url';\nimport { join } from 'node:path';\nconst ROOT = '/tmp';\nconst STORE_URL = ${init};\n`;
+
+  // 假紅型：值安全（最後取 .href），但切在 `}` 會拿到 [object Object]
+  const safe = mk("{ href: pathToFileURL(join(ROOT, 'lib/store.js')).href }.href");
+  const p1 = prefixThroughDeclaration(safe, 'STORE_URL', '<inline>');
+  assert.ok(p1.trimEnd().endsWith('.href;'),
+    '切點停在物件的 `}`、沒吃到後面的 `.href` ⇒ 值安全的宣告會被探針錯紅（假紅型回歸）');
+
+  // 假綠型：值已退回不安全的絕對路徑（?? 右邊），切在 `}` 反而拿到「安全」的半句
+  const bad = mk("{ toString() { return pathToFileURL(join(ROOT, 'lib/store.js')).href; } }.href ?? join(ROOT, 'lib/store.js')");
+  const p2 = prefixThroughDeclaration(bad, 'STORE_URL', '<inline>');
+  assert.ok(p2.includes('??'),
+    '切點停在物件的 `}`、沒吃到 `?? <絕對路徑>` ⇒ 真值不安全、探針卻量到安全的半句（假綠型回歸）');
+
+  // 反面：function 宣告仍要能在本體 `}` 結束（收緊不可以把 function 型切壞）
+  const fn = "function moduleUrl(rel) { return 'x'; }\nconst other = 1;\n";
+  assert.equal(prefixThroughDeclaration(fn, 'moduleUrl', '<inline>').trimEnd().slice(-1), '}',
+    'function 宣告該在本體的配對 `}` 結束，收緊過頭了');
+});
 
 /**
  * ⚠️ **誠實劃界（上面這組題抓不到什麼）**：
