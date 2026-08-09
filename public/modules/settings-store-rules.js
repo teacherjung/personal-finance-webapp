@@ -97,7 +97,7 @@ export function openStoreRulesEditor(rules) {
     title: '店名規則', size: 'lg',
     bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">你自己加的規則<b>優先於系統內建規則</b>。填的都是<b>普通文字</b>（不是程式碼），系統會照字面比對。
-      規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。<b style="color:var(--neg)">儲存後無法復原</b>。</p>
+      規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。<b style="color:var(--neg)">儲存後沒有「復原」可以按</b>。</p>
       <div id="ruleEditorBody" style="max-height:50vh;overflow:auto"></div>
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-cancel>取消</button>

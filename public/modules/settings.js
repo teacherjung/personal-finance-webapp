@@ -125,7 +125,7 @@ export async function renderSettings() {
         <li>單純更改成喜歡的店名</li>
         <li>告訴系統某個連鎖店怎麼切出店名</li>
       </ol>
-      <p style="font-size:12px;margin-bottom:14px;color:var(--neg)"><b>儲存後無法復原</b></p>
+      <p style="font-size:12px;margin-bottom:14px;color:var(--neg)"><b>儲存後沒有「復原」可以按</b></p>
       <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
     </div>
 
