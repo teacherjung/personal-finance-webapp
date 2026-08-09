@@ -74,11 +74,16 @@ function assertStateBehavior(source) {
 
 function assertStateWiring(source) {
   const render = namedFunction(source, 'renderSecurities');
-  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = securitiesNotice;\s*const noticeWarning = securitiesNoticeWarning;\s*securitiesNotice = '';\s*securitiesNoticeWarning = false;\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
+  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = securitiesNotice;\s*const syncWarning = securitiesSyncWarning;\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
   assert.match(render, /try \{\s*\[secRes, settings\] = await Promise\.all\(\[api\('\/securities'\), api\('\/settings'\)\]\);\s*\} catch \(error\) \{/);
   assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = securitiesLoadErrorHtml/);
   assert.match(render, /byId\('retrySecurities'\)\.onclick = \(\) => renderSecurities\(\);/);
-  assert.match(render, /securitiesNoticeHtml\(notice, noticeWarning\)/);
+  const fetchAt = render.indexOf('await Promise.all');
+  const consumeNoticeAt = render.indexOf("securitiesNotice = '';");
+  assert.ok(fetchAt >= 0 && consumeNoticeAt > fetchAt, '成功訊息只能在資料重載成功後消費');
+  assert.doesNotMatch(render, /securitiesSyncWarning\s*=/, '頁內重畫不可清除 IBKR 部分同步警告');
+  assert.match(render, /securitiesNoticeHtml\(syncWarning, true\)/);
+  assert.match(render, /securitiesNoticeHtml\(notice\)/);
   assert.match(render, /!all\.length \? securitiesEmptyHtml\(\)/);
   assert.match(render, /rows\.length \? secTableHtml\(rows, th, FMT\) : securitiesFilteredEmptyHtml\(\)/);
   assert.match(render, /byId\('emptySecUpload'\)\.onclick = \(\) => openSecUpload\(pwSet\);/);
@@ -94,8 +99,8 @@ function assertStateWiring(source) {
   const sync = namedFunction(source, 'syncIbFromSecurities');
   assert.match(sync, /const feedback = ibSyncFeedback\(result, moneyCur\);/);
   assert.match(sync, /const hasSyncWarning = feedback\.some\(\(f\) => f\.error\) \|\| !!notice;/);
-  assert.match(sync, /securitiesNotice = hasSyncWarning[\s\S]*IBKR 同步部分完成[\s\S]*IBKR 同步完成/);
-  assert.match(sync, /securitiesNoticeWarning = hasSyncWarning;/);
+  assert.match(sync, /securitiesSyncWarning = hasSyncWarning[\s\S]*IBKR 同步部分完成[\s\S]*: '';/);
+  assert.match(sync, /securitiesNotice = hasSyncWarning \? '' : 'IBKR 同步完成/);
   assert.match(namedFunction(source, 'openSecPreview'), /securitiesNotice = message;\s*renderSecurities\(\);/);
   assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
 }
@@ -124,7 +129,7 @@ test('證券交易狀態：暖米橘容器與手機單欄操作由專屬樣式�
   assertStateCss(read('public/securities.css'));
 });
 
-test('證券交易狀態：破壞消毒、重試、空白入口、清除條件或手機排列時考題會紅', () => {
+test('證券交易狀態：破壞消毒、重試、空白入口、清除條件、警告保存或手機排列時考題會紅', () => {
   const source = read('public/modules/securities.js');
   const css = read('public/securities.css');
 
@@ -147,6 +152,11 @@ test('證券交易狀態：破壞消毒、重試、空白入口、清除條件�
   const syncWarning = 'const hasSyncWarning = feedback.some((f) => f.error) || !!notice;';
   assert.ok(source.includes(syncWarning), '突變目標必須存在：同步部分失敗的持久警示');
   assert.throws(() => assertStateWiring(source.replace(syncWarning, 'const hasSyncWarning = false;')));
+
+  const consumeNotice = "securitiesNotice = '';\n  const all = secRes.trades || [];";
+  assert.equal(source.split(consumeNotice).length - 1, 1, '突變目標必須唯一：成功載入後的訊息消費點');
+  assert.throws(() => assertStateWiring(source.replace(consumeNotice,
+    "securitiesNotice = '';\n  securitiesSyncWarning = '';\n  const all = secRes.trades || [];")));
 
   const mobileStack = 'display: flex; align-items: center;\n    flex-direction: column; text-align: center;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

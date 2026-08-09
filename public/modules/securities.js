@@ -88,7 +88,9 @@ function securitiesFilteredEmptyHtml() {
 }
 
 let securitiesNotice = '';
-let securitiesNoticeWarning = false;
+// IBKR 部分同步代表帳上仍可能沿用舊值；篩選／排序等頁內重畫不可把警告吃掉。
+// 只有下一次 IBKR 完整同步成功時才清除。
+let securitiesSyncWarning = '';
 
 function resetSecuritiesFilters() {
   Object.assign(filters, { preset: 'all', from: '', to: '', source: 'all', account: 'all', side: 'all', currency: 'all', q: '' });
@@ -98,9 +100,7 @@ function resetSecuritiesFilters() {
 export async function renderSecurities({ showLoading = true } = {}) {
   const seq = currentRouteSeq();
   const notice = securitiesNotice;
-  const noticeWarning = securitiesNoticeWarning;
-  securitiesNotice = '';
-  securitiesNoticeWarning = false;
+  const syncWarning = securitiesSyncWarning;
   if (showLoading) view().innerHTML = securitiesLoadingHtml();
   let secRes, settings;
   try {
@@ -112,6 +112,8 @@ export async function renderSecurities({ showLoading = true } = {}) {
     return;
   }
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面
+  // 一次性的操作成功訊息要等資料真的重載成功才消費；失敗後重試仍看得到。
+  securitiesNotice = '';
   const all = secRes.trades || [];
   const pwSet = !!settings.taishinSecPdfPasswordSet;
 
@@ -139,7 +141,8 @@ export async function renderSecurities({ showLoading = true } = {}) {
         <button class="btn" id="secUpload">${icon('upload', 16)}上傳台新證券對帳單</button>
       </div>
     </div>
-    ${securitiesNoticeHtml(notice, noticeWarning)}
+    ${securitiesNoticeHtml(syncWarning, true)}
+    ${securitiesNoticeHtml(notice)}
     <div class="securities-boundary">
       <span class="securities-boundary-icon">${icon('file', 18)}</span>
       <div><strong>這裡是成交紀錄的查帳頁</strong><p>不在這裡修改持股，也不把成交金額重複算進銀行收支；同步 IBKR 時才會依同一套流程更新投資組合。</p></div>
@@ -241,10 +244,10 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
     if (notice) toast(notice, true);
     const hasSyncWarning = feedback.some((f) => f.error) || !!notice;
     if (seqAtStart === currentRouteSeq()) {
-      securitiesNotice = hasSyncWarning
-        ? 'IBKR 同步部分完成：部分資料沿用舊值或被略過，請先處理上方提醒再確認投資組合'
-        : 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
-      securitiesNoticeWarning = hasSyncWarning;
+      securitiesSyncWarning = hasSyncWarning
+        ? 'IBKR 同步部分完成：部分資料沿用舊值或被略過，請先處理同步提醒再確認投資組合'
+        : '';
+      securitiesNotice = hasSyncWarning ? '' : 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
       renderSecurities();
     }
   } catch (err) {
