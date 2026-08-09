@@ -206,12 +206,13 @@ export function findBadPathnameUses(src, rel = '<inline>') {
 }
 
 /**
- * ⚠️ **一律走 `git ls-files`，不可自己走訪檔案樹**（r2 阻擋②，與 test/xlsx-isolate.test.js 同一條契約）：
- * 走實體目錄會把 ignored 的工具產物、備份副本一起算進來（假紅），也會漏掉 git 才知道的東西。
- * `--others --exclude-standard` 讓**還沒 commit 的新檔**也掃到——只用 `--cached` 的話，
- * 違規的新檔在 commit 之前完全掃不到，護欄會在最需要它的那一刻失效。
- * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成 `\344\270...` 八進位轉義而開不了檔
- *    ——那正是本 PR 在修的同一族病（本專案另有「掃描器跳過中文檔名」的前例）。
+ * ⚠️ **一律走 `git ls-files`，不可自己走訪檔案樹**（r2 阻擋②）：走實體目錄會把 ignored 的
+ * 工具產物、備份副本一起算進來（假紅），也會漏掉 git 才知道的東西。
+ * ⚠️ 旗標的選擇與理由寫在 `LS_FILES_ARGV`／`lsFiles` 上——**本檔刻意只用 `--cached`**，
+ * 與 `docs/contracts/cloud-security.md` 那條「架構掃描走 `--others --exclude-standard`」**不同**
+ * （r16 阻擋③：我原本寫成「同一條契約」，那會誘導下一個人做出被本檔考題禁止的修改）。
+ * 兩者為什麼可以不同，見 `lsFiles` 的誠實劃界：那條契約管的是**產線目錄的架構掃描**，
+ * 本檔管的是「有沒有人取 file URL 的 `.pathname`」，而後者只需要「會流到遠端的檔案」就夠。
  */
 export const BROWSER_ONLY_DIRS = ['public/'];
 
@@ -243,12 +244,21 @@ export function isBrowserSideFile(f) {
  *     而錯誤訊息建議的 `fileURLToPath()` 在瀏覽器根本不能用 ⇒ 硬 CI 閘假紅。
  * ⇒ 這道閘只管 Node 側；瀏覽器目錄明確排除（清單有斷言釘住，見下方那一題）。
  *
- * ⚠️ `--others --exclude-standard`：**還沒 commit 的新檔也要掃到**——只用 `--cached` 的話，
- *    違規的新檔在 commit 之前完全掃不到，護欄會在最需要它的那一刻失效（有 fixture 行為題釘住）。
- * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成八進位轉義而開不了檔
- *    ——那正是本 PR 在修的同一族病。
+ * ⚠️ 旗標只有 `--cached` 與 `-z`，理由（以及為什麼**不可以**加回 `--others --exclude-standard`）
+ *    寫在 `lsFiles` 上，並由兩條反向斷言釘住。
  */
-export const LS_FILES_ARGV = ['-c', 'core.quotepath=false', 'ls-files', '--cached'];
+export const LS_FILES_ARGV = ['ls-files', '--cached', '-z'];
+
+/**
+ * 切 `git ls-files -z` 的輸出。
+ * ⚠️ **必須用 `-z`＋NUL 切割**（r16 阻擋①，複驗者實測）：不加 `-z` 時 git 會把含特殊字元的路徑
+ * 加引號並轉義（`"test/換行\n檔名.js"`），`split('\n')` 直接把它切成兩半、整條命中變成空陣列
+ * ——那是**已進 index 的檔案**，直接打穿本檔宣告的射程。
+ * ⚠️ `-z` 也讓 `-c core.quotepath=false` 變成多餘（`-z` 一律輸出原始位元、不引號不轉義），已移除。
+ */
+export function parseLsFilesZ(stdout) {
+  return stdout.split('\0').filter((f) => f !== '');
+}
 
 /**
  * 跑 git 時**一律清掉所有 `GIT_*` 前綴，以及 `HOME`**。
@@ -293,8 +303,8 @@ export function lsFiles(cwd) {
   assert.equal(realpathSync(top), realpathSync(cwd),
     `git 解出來的 repo 根不是我要掃的那一棵：\n  git 說＝${top}\n  我要的＝${cwd}\n`
     + '⇒ 清單會是別棵樹的內容（`core.worktree`／`GIT_DIR` 之類生效時就會這樣），而看起來完全正常。');
-  return execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env })
-    .split('\n').filter((f) => f.endsWith('.js'));
+  return parseLsFilesZ(execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env }))
+    .filter((f) => f.endsWith('.js'));
 }
 
 export function trackedJsFiles(cwd = ROOT) {
@@ -628,12 +638,19 @@ test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：�
     + '（.git/config 的 include、~/.gitconfig、core.worktree、.git/info/exclude 各自都能讓它靜靜消失）');
   assert.equal(LS_FILES_ARGV.includes('--exclude-standard'), false,
     '不可以加回 --exclude-standard：同上，它是那條攻擊面的入口');
-  const quoteIdx = LS_FILES_ARGV.indexOf('core.quotepath=false');
-  assert.ok(quoteIdx > 0 && LS_FILES_ARGV[quoteIdx - 1] === '-c',
-    '少了 -c core.quotepath=false：含中文的檔名會被 git 轉成八進位轉義而開不了檔'
-    + '——那正是本 PR 在修的同一族病');
+  assert.ok(LS_FILES_ARGV.includes('-z'),
+    '少了 -z：git 會把含換行／tab 的路徑加引號並轉義，NUL 切割才拿得到原始路徑。'
+    + '⚠️ 少了它，含換行的檔名會把整條命中切成兩半（r16 實測：整批變空陣列）'
+    + '——那是已進 index 的檔案，直接打穿本檔宣告的射程。');
 
-  // ⓑ 過濾：只留 .js、排除瀏覽器側。用合成的 stdout，不碰任何 repo
+  // ⓑ 解析：`-z` 的輸出用 NUL 切。⚠️ 含換行／tab 的檔名是這裡的重點（r16 阻擋①）
+  const weird = ['test/換行\n檔名.js', 'lib/tab\t名.js', 'a b#c%d.js'];
+  assert.deepEqual(parseLsFilesZ(['server.js', ...weird, ''].join('\0')),
+    ['server.js', ...weird],
+    '含換行／tab 的路徑被切壞了——它們是已進 index 的檔案，切壞就等於整條命中消失');
+  assert.deepEqual(parseLsFilesZ(''), [], '空輸出應該回空陣列，不是 [\'\']');
+
+  // ⓒ 過濾：只留 .js、排除瀏覽器側。用合成的清單，不碰任何 repo
   const filter = (lines) => lines.filter((f) => f.endsWith('.js')).filter((f) => !isBrowserSideFile(f));
   assert.deepEqual(
     filter(['server.js', 'lib/store.js', 'test/x.test.js', '中文 檔名.js',
@@ -685,17 +702,23 @@ test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻
     writeFileSync(ex, 'server.js\n*.js\n');
     // 一個假的 worktree（`core.worktree` 生效時會讓 git 去看別的地方）
     mkdirSync(join(dir, 'empty'), { recursive: true });
+    // ⚠️ 負向邊界要**真的餵合法的 config**才算餵過（r16 阻擋②：舊版 HOME 指到空目錄、
+    //    `GIT_CONFIG_GLOBAL` 指到 ignore pattern 檔＝根本沒建立所稱的通道）
+    const cfg = `[core]\n\texcludesFile = ${ex}\n`;
+    writeFileSync(join(dir, '.gitconfig'), cfg);
+    writeFileSync(join(dir, 'gitconfig'), cfg);
 
+    // ⚠️ **只列在 `--cached` 下真的會改變結果的通道**（r16 阻擋②）：
+    //    收成 `--cached` 之後，config 型的 ignore 通道（`core.excludesFile`、`~/.gitconfig`）
+    //    **本來就影響不到清單**——那不是我隔離的功勞，是射程收窄的結果。
+    //    把它們留在這裡當「逐通道行為證明」是假探針（複驗者實測：不清理也與基準完全相同）。
+    //    ⇒ 那幾條移到下面的負向邊界，只留真的有影響力的三條（實測都會把清單變空）。
     const channels = [
-      ['GIT_CONFIG_* 注入 core.excludesFile',
-        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: ex }],
+      ['GIT_DIR 指到不存在的路徑', { GIT_DIR: join(dir, 'nope.git') }],
+      ['GIT_WORK_TREE 指到別的目錄', { GIT_WORK_TREE: join(dir, 'empty') }],
+      ['GIT_INDEX_FILE 指到不存在的 index', { GIT_INDEX_FILE: join(dir, 'nope.index') }],
       ['GIT_CONFIG_* 注入 core.worktree',
         { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: join(dir, 'empty') }],
-      ['GIT_CONFIG_GLOBAL 指到自備的設定檔', { GIT_CONFIG_GLOBAL: ex }],
-      ['HOME 指到自備的家目錄（~/.gitconfig 通道）', { HOME: dir }],
-      ['GIT_DIR 指到不存在的路徑', { GIT_DIR: join(dir, 'nope.git') }],
-      ['GIT_WORK_TREE 指到空目錄', { GIT_WORK_TREE: join(dir, 'empty') }],
-      ['GIT_INDEX_FILE 指到不存在的 index', { GIT_INDEX_FILE: join(dir, 'nope.index') }],
     ];
     for (const [why, vars] of channels) {
       for (const [k, v] of Object.entries(vars)) process.env[k] = v;
@@ -705,6 +728,28 @@ test('⭐ 外部注入不可以把清單換成別棵樹或改變內容（r15 阻
           `注入「${why}」之後清單就變了＝那條通道沒被隔離。\n`
           + '這一族的後果都一樣：掃到別棵樹或掃少了檔案，而護欄照樣回報通過'
           + '（2026-08-09 的 bare=true 事故就是這一族的極端版）。');
+      } finally {
+        for (const k of Object.keys(vars)) {
+          if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+        }
+      }
+    }
+
+    // ⚠️ **負向邊界（誠實記著，不假裝驗過）**：以下通道在 `--cached` 下**影響不到清單**，
+    //    所以這裡沒有、也不可能有它們的行為證明——`gitEnv()` 仍然清掉它們，屬**縱深防禦**，
+    //    理由是射程哪天若擴回未追蹤檔（例如有人加回 `--others`），它們立刻又變成活的通道。
+    //    這一族由上面那條靜態斷言（輸出裡沒有任何 `GIT_` 開頭、且 `HOME` 也清掉）守著。
+    for (const [why, vars] of [
+      ['HOME 指到自備的家目錄（~/.gitconfig 的 core.excludesFile）', { HOME: dir }],
+      ['GIT_CONFIG_GLOBAL 指到自備的 config', { GIT_CONFIG_GLOBAL: join(dir, 'gitconfig') }],
+      ['GIT_CONFIG_* 注入 core.excludesFile',
+        { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: ex }],
+    ]) {
+      for (const [k, v] of Object.entries(vars)) process.env[k] = v;
+      try {
+        assert.deepEqual(trackedJsFiles().sort(), [...baseline].sort(),
+          `注入「${why}」竟然改變了清單——那表示射程其實碰得到 ignore 規則，`
+          + '上面的負向邊界敘述就不成立了，請把這一條移回上面的 channels 並補理由。');
       } finally {
         for (const k of Object.keys(vars)) {
           if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
