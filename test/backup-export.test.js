@@ -1,15 +1,12 @@
 // @ts-check
 // 匯出備份「按下去會說話」的考題（William 2026-08-05 裁決另開一支修）。
 //
-// 這一族守的是一個**靜靜失敗**：舊版那顆鈕是純 `<a href="/api/export" download>`，
+// 這一族守的是一個**靜靜失敗**：一顆純 `<a href="/api/export" download>` 的鈕，
 // 瀏覽器把回應直接存成檔案，成功失敗都不出聲。雲端版 session 過期時，存下來的是一個
-// 內容是錯誤訊息（或登入頁 HTML）的 `.json`，而使用者以為自己有備份了——
-// 而 PR #410 剛把他的自保完全押在這顆鈕上（分類管理與店名規則的文案都叫人先按它）。
-//    ⚠️ 本樹（#422）現況：**分類管理與店名規則兩處都已經不指向匯出**——分類管理自 #410 r11 起只留一句警告，
-//    店名規則那兩段指路隨 William 2026-08-08 拿掉「操作前自動備份」整層一起移除。
-//    四處不可逆警告逐字統一成「儲存後沒有「復原」可以按」（William 2026-08-09 指派四處統一；
-//    釘在 test/vault-and-backup-integrity.test.js 的 ⭐ 裁決題末尾）。
-//    ⇒ 這一族考題守的東西**不因此變弱**：使用者按得出來的備份只有這顆鈕，靜靜失敗照樣是靜靜失敗。
+// 內容是錯誤訊息（或登入頁 HTML）的 `.json`，而使用者以為自己有備份了。
+//    ⚠️ 這一族的價值**不取決於畫面上有沒有文案叫人先按它**：不可逆操作前的自動備份是本專案
+//    刻意不做的（設計註解在 lib/services/backup.js），所以使用者按得出來的備份就只有這顆鈕，
+//    它靜靜失敗照樣是靜靜失敗。指路文案增減都不改變這一點，不要拿它當放寬本族的理由。
 //
 // ⚠️ 每一條都要問「弄壞它，我這條會紅嗎」。三道關卡各自有專屬的紅：
 //    ①HTTP 狀態沒看 ②內容 parse 不出 JSON 沒看 ③parse 出來但不是備份（錯誤信封）沒看。
@@ -101,8 +98,8 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   assert.equal(toasts.length, 2, '應有兩句：先「匯出中…」再結果——成功也要出聲，「靜靜成功」下一次就分不出它到底有沒有做事');
   assert.equal(result.isErr, false);
   // ⚠️⚠️ **不可宣稱已完成**（r1 審查者抓到，2026-08-06 補）：這條路只做到 `a.click()`——使用者按取消、
-  //    瀏覽器把下載擋掉、下載中途失敗，`<a>` 這條路**一個訊號都不會回來**。原本寫「已存下備份：…」
-  //    就是在沒有證據時宣告成功，而那正是這一整支要消滅的病（我自己犯的同一種）。
+  //    瀏覽器把下載擋掉、下載中途失敗，`<a>` 這條路**一個訊號都不會回來**。寫「已存下備份：…」
+  //    就是在沒有證據時宣告成功，而那正是 `runExport` 要消滅的病（我自己犯的同一種）。
   //    這一格要求的是**口徑**：只講我們真的知道的（連結交出去了、這份東西幾筆），結果交給他去確認。
   // ⚠️ `已開始下載` 也在黑名單裡（r2 審查者抓到，2026-08-06 補）：程式只做到「把連結交出去」，
   //    瀏覽器把下載擋掉、或使用者在存檔對話框按取消時，「開始」**並沒有發生**。這一檔的 JSDoc
@@ -118,11 +115,11 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   // 真實的備份是幾千筆，四位數以上要分節才讀得出量級（他就是靠這個數字判斷備份不是空的）
   assert.match(okMsg(3214, 'x.json'), /3,214/, '筆數要有千分位');
   // ⚠️ 這個數字是**所有頂層陣列的元素數總和**（實測 17 個集合：帳戶／交易／持股／每日淨值／快照／歷史…），
-  //    跟他在收支頁看得到的筆數差很多。舊版提示會加一句「全部加起來」把這件事講明，
-  //    **William 2026-08-08 裁決「太長」**之後那句話拿掉了——現在筆數與檔名一起放在括號裡當
-  //    「量級參考」，句子主體只講下一步（請至下載確認檔案）。
-  //    ⚠️ 所以收窄的只有**這個數字**那幾格：釘「有筆數、有千分位、有檔名、放在括號裡」，不再釘那句解釋；
-  //    成功句本身的口徑（黑名單／「匯出成功」／「下載｜確認」）照舊釘在上面幾格。
+  //    跟他在收支頁看得到的筆數差很多。把這件事講明的那句「全部加起來」被 **William 2026-08-08
+  //    裁決「太長」**拿掉：筆數與檔名一起放在括號裡當「量級參考」，句子主體只講下一步
+  //    （請至下載確認檔案）。
+  //    ⚠️ 所以**這個數字**那幾格只釘「有筆數、有千分位、有檔名、放在括號裡」，不釘那句解釋；
+  //    成功句本身的口徑（黑名單／「匯出成功」／「下載｜確認」）由上面幾格釘。
   //    代價誠實記著：他若拿這個數字去對收支頁的筆數，畫面上沒有東西提醒他兩者不同。
   assert.match(result.msg, /（.*4\s*筆/, '筆數與檔名放在括號裡（量級參考），句子主體留給下一步');
 });
@@ -141,8 +138,9 @@ test('匯出｜伺服器怎麼排版就照樣落檔（不重新序列化；換�
   assert.equal(saved[0].body, pretty,
     '落下去的必須是伺服器回的那串文字本身，不可以 JSON.stringify(parse(...)) 重新排版');
   // ⚠️ 這一題守的是「文字層一模一樣」，**不是位元組層**：`res.text()` 已經把位元組解碼過
-  //    （依規格會吃掉開頭的 UTF-8 BOM），再由 Blob 重新編碼。檔頭原本寫「原始位元組」是誇大，
-  //    2026-08-06 改成事實。現行 `/api/export`（Express `res.json()`）不帶 BOM，所以咬不到人。
+  //    （依規格會吃掉開頭的 UTF-8 BOM），再由 Blob 重新編碼。所以檔頭那條保證只講得到文字層——
+  //    寫「原始位元組」就是誇大。`/api/export` 的輸出契約（`lib/routes/core.js` 走 Express `res.json()`）
+  //    不帶 BOM，所以咬不到人。
 });
 
 test('匯出｜HTTP 狀態不 ok（雲端版 session 過期）：不可落檔，而且要明講沒存下任何東西', async () => {
@@ -156,7 +154,7 @@ test('匯出｜HTTP 狀態不 ok（雲端版 session 過期）：不可落檔，
   assert.equal(result.isErr, true);
   assert.match(out.reason, /請先登入/, '伺服器講的原因要留在回傳 reason 裡（排查用；畫面只給下一步——William 2026-08-08「太長」的裁決）');
   assert.match(result.msg, /匯出失敗/, '必須明講失敗，否則他會以為存好了');
-  // ⚠️ 這一格是補洞補上的：原本伺服器一給文字原因就把狀態碼**換掉**，而我們自己的 5xx
+  // ⚠️ 這一格是補洞補上的：讓伺服器的文字原因**取代**狀態碼的寫法會有這個破口——我們自己的 5xx
   //    一定帶 JSON 原因（`/api/export` 走 `lib/routes/core.js` 的 `asyncRoute` → `server.js` 的
   //    全域錯誤中介 `res.status(500).json({ error })`）＝最需要狀態碼的那條路剛好丟掉它。
   assert.match(out.reason, /401/, '狀態碼要留在 reason 裡：那是他來問我時唯一能定位的線索（畫面上不放）');
@@ -314,8 +312,8 @@ test('匯出｜讀回應途中斷線（text() 丟錯）⇒ 出聲、不落檔', 
 });
 
 test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口出聲，絕不可以說「已存下」', async () => {
-  // ⚠️ 這一題是補洞補上的：原本 `saveFile` 丟錯會讓整個 `runExport` reject，**一句話都不會出現**
-  //    ——靜靜失敗發生在最後一步，正是這一支存在的理由。而且畫面上若先說了「已存下備份」、
+  // ⚠️ 這一題是補洞補上的：`saveFile` 丟錯若沒被接住，會讓整個 `runExport` reject，**一句話都不會出現**
+  //    ——靜靜失敗發生在最後一步，正是 `runExport` 存在的理由。而且畫面上若先說了「已存下備份」、
   //    硬碟上卻一個檔都沒有，那比舊版更糟（舊版至少沒騙他）。
   const { out, saved, toasts, result } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }), { saveThrows: '磁碟空間不足' });
   assert.equal(out.ok, false);
@@ -325,7 +323,7 @@ test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口
   assert.equal(result.isErr, true, '落檔失敗就是失敗，要用錯誤的樣子出聲');
   // ⚠️ 這一格改成拿**成功那句話本身**（`okMsg(...)`）來比：只釘舊字面的話，成功文案一改口、
   //    這條路重新吐出成功句也不會紅（假綠）。下面那條字面黑名單守的是**舊句子的回歸**——
-  //    「已存下」「交給瀏覽器」「筆紀錄」都不在現行 okMsg 裡（現行字面見 backup-export.js 的 okMsg）。
+  //    「已存下」「交給瀏覽器」「筆紀錄」都不在 `okMsg` 裡（字面的單一真相＝backup-export.js 的 `okMsg`）。
   assert.notEqual(result.msg, okMsg(4, 'finance-backup-2026-08.json'),
     '不可以吐出成功那句話（不管那句話怎麼寫）：畫面報好消息、實際一個檔都沒有');
   assert.doesNotMatch(result.msg, /已存下|交給瀏覽器|筆紀錄/,
@@ -341,7 +339,7 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.equal(summarizeBackup({ settings: {}, transactions: [] }).ok, true, '空集合是合法備份（新使用者）');
   assert.equal(summarizeBackup({ error: '請先登入' }).ok, false, '錯誤信封沒有任何集合 ⇒ 不是備份');
   assert.equal(summarizeBackup({}).ok, false);
-  // ── r1 的 High：狀態 200 的錯誤信封（原本只要求「有頂層陣列」，`errors` 自己就是陣列 ⇒ 過關落檔）──
+  // ── r1 的 High：狀態 200 的錯誤信封（只要求「有頂層陣列」擋不住它，`errors` 自己就是陣列 ⇒ 過關落檔）──
   //    兩條防線都不必列舉集合：①自帶 error／errors 鍵 ②頂層必須有 settings 物件。
   assert.equal(summarizeBackup({ errors: [{ message: 'JWT expired' }] }).ok, false,
     '`{"errors":[…]}` 有頂層陣列，但它是錯誤信封、不是備份（舊版會落檔並報「1 筆紀錄」）');
@@ -350,10 +348,10 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.match(summarizeBackup({ errors: ['請先登入'] }).reason, /請先登入/, '字串陣列的形狀也要撈');
   assert.equal(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [{ message: '一半' }] }).ok, false,
     '形狀再完好，只要自己宣告有錯就不可以當成完整備份（部分成功比整包失敗更毒）');
-  // ⚠️ 這兩格改過（突變 M4 抓到我自己寫了一格**證不倒的斷言**）：原本寫 `{errors:[]}` 並允許原因
-  //    落在「不是一份備份檔」上——那句話是**下一關**（缺 settings）給的，所以把撈不出人話時的出聲
-  //    整段刪掉，考題照樣全綠。改成「形狀完好、只差自帶一個空的 errors 欄位」：這時只有錯誤信封
-  //    那條防線在，證得倒。
+  // ⚠️ 這兩格改過（突變 M4 抓到我自己寫了一格**證不倒的斷言**）：光寫 `{errors:[]}` 並允許原因
+  //    落在「不是一份備份檔」上不行——那句話是**下一關**（缺 settings）給的，所以把撈不出人話時的
+  //    出聲整段刪掉，考題照樣全綠。要寫成「形狀完好、只差自帶一個空的 errors 欄位」：這時只有
+  //    錯誤信封那條防線在，證得倒。
   assert.equal(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).ok, false,
     '自帶 errors 欄位就不收（判準是鍵名，不是內容）——撈不出人話也一樣不收');
   assert.match(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).reason, /錯誤/,
@@ -391,8 +389,8 @@ test('判準｜檔名從 Content-Disposition 取，取不到才退回預設；�
   assert.equal(filenameFromDisposition(null), FALLBACK_FILENAME, '伺服器沒給就用預設，不要落一個沒有名字的檔');
   assert.equal(filenameFromDisposition('attachment; filename=""'), FALLBACK_FILENAME);
   // ⚠️ 這一格是安全面：檔名會落到使用者的硬碟，路徑分隔符與上層參照不可以照抄。
-  //    這裡**只釘性質、不釘某一版的字面輸出**：原本釘 `assert.equal(evil, '_.._etc_passwd')`，
-  //    結果消毒改**更嚴**（例如連中間殘留的 `..` 也剝）就會紅——下一個想加強消毒的人會先以為
+  //    這裡**只釘性質、不釘某一版的字面輸出**：釘死某一版字面（例如 `assert.equal(evil, '_.._etc_passwd')`），
+  //    消毒改**更嚴**（例如連中間殘留的 `..` 也剝）就會紅——下一個想加強消毒的人會先以為
   //    自己弄壞了東西。消毒變嚴是好事，不該被考題擋，所以這裡問的是「危險的部分沒了、檔名還在」。
   const evil = filenameFromDisposition('attachment; filename="../../etc/passwd"');
   assert.doesNotMatch(evil, /[\\/]/, '路徑分隔符不可留在下載檔名裡（否則等於讓伺服器決定檔案落到哪個目錄）');
@@ -449,7 +447,7 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   //    `preventDefault()`），沒有一條把它們綁在同一條路徑上。實測繞法：留著 import、在別處放一個
   //    沒人按的 `const deadExport = () => runExport({...})`，然後讓 `exportBtn` 的 onclick 自己
   //    `fetch` ＋ Blob 落檔 ＋ 出聲——**全樹一根寒毛都不動**，三道關卡完全被繞過。
-  //    所以現在改成：先把 `exportBtn` 的 handler 區塊切出來，在**那一段裡面**問。
+  //    所以改成：先把 `exportBtn` 的 handler 區塊切出來，在**那一段裡面**問。
   // ⚠️ 讀的是原始碼文字，擋不住刻意混淆（把名字拼接起來之類）——寫在檔頭的誠實劃界裡。
   // ⚠️⚠️ **這一題是提醒、不是保證**（r1 之後關門，2026-08-06）：審查者一輪就找到四條文字形狀的繞法，
   //    這一輪修掉三條（只刪 `a.click()`／`toast: () => toast`／另外用 `location.assign('/api/export')`
@@ -499,7 +497,7 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   }
 
   // ── ③注入的相依必須是真的東西，不是啞巴 ────────────────────────────────────────
-  //    這是本支存在的唯一理由（說了已存下就是真的存下），卻是最容易被「換成啞巴」悄悄拆掉的地方。
+  //    這是這一族存在的唯一理由（說了會出聲就是真的出聲），卻是最容易被「換成啞巴」悄悄拆掉的地方。
   const fetchProp = sliceProp(args, 'fetchFn');
   // ⚠️ `fetch.bind(globalThis)` 也算（r2 審查者實測到的**假紅**）：它跟 `(url) => fetch(url)` 語意等價、
   //    甚至更通用（連第二個 init 參數一起轉發），只是字面上沒有 `fetch(`——等價改寫不可以讓考題紅。
@@ -517,7 +515,7 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   assert.ok(toastVal === '' || toastVal === 'toast' || /\btoast\s*\(/.test(toastVal),
     '傳進去的必須是**真的那個 toast**（簡寫 `toast,`、`toast: toast`、或包一層但真的呼叫 `toast(...)`）——'
     + '實測 `toast: () => {}` 與 `toast: () => toast` 三道關卡照樣跑、全樹照樣全綠，但使用者按下匯出後'
-    + '成功失敗都聽不到一聲＝這一支要修的病灶原封不動回來');
+    + '成功失敗都聽不到一聲＝〈匯出按下去會說話〉這一族考題要修的病灶原封不動回來');
 
   const saveProp = sliceProp(args, 'saveFile');
   assert.notEqual(saveProp, '', 'runExport 必須拿到 saveFile');
@@ -526,9 +524,9 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
     + '實測改成 `saveFile: () => {}` 也全綠，而畫面會說「已經把備份交給瀏覽器下載：…3,214 筆紀錄」'
     + '而下載根本沒發生，'
     + '那比舊版更糟（舊版至少沒騙他）');
-  // ⚠️ 這一格原本把「有設定 `.download`」也當成「觸發了下載」＝誤判（r1 審查者實測：只刪掉
+  // ⚠️ 這一格收緊過：把「有設定 `.download`」也當成「觸發了下載」＝誤判（r1 審查者實測：只刪掉
   //    `a.click()` 這一行，這一題照樣全綠，而按下匯出什麼都不會下載）。設定屬性不是動作，
-  //    所以現在只認**真的會動作的東西**：`click()`／`write`／`showSaveFilePicker`／`msSaveBlob`。
+  //    所以只認**真的會動作的東西**：`click()`／`write`／`showSaveFilePicker`／`msSaveBlob`。
   //    ⚠️ `dispatchEvent` 也算（`a.dispatchEvent(new MouseEvent('click'))` 是等價寫法，
   //       不列進來會讓那種改寫假紅）。
   assert.match(saveProp, /\bclick\s*\(|dispatchEvent|\bwrite\b|showSaveFilePicker|msSaveBlob/,
@@ -547,7 +545,7 @@ test('文案｜「資料備份」卡的說明不可以宣稱「整包／全部�
   //    node 裡跑不起來）。列舉補不完的東西不假裝是保證。
   // ✅ 那句「雲端版匯出不含 IB 憑證與帳單密碼」**已經實作**（William 2026-08-08 裁決「要講準」）：
   //    匯出前的告知窗依模式分流，見 EXPORT_NOTICE_HOSTED／EXPORT_NOTICE_LOCAL 與
-  //    docs/contracts/cloud-security.md「匯出前告知的模式分流」節。這裡不再是欠帳。
+  //    docs/contracts/cloud-security.md「匯出前告知的模式分流」節。
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
   const at = src.indexOf('BACKUP_CARD_NOTE');
   assert.ok(at >= 0, '找不到 BACKUP_CARD_NOTE（改名了？那要一起更新本考題）');
@@ -633,7 +631,7 @@ test('⭐ 匯出｜讀回應讀到卡住 ⇒ 同樣放棄並出聲（r3 阻擋�
 test('⭐ 匯出｜等待上限的預設實作：工作先完成就照常回值、逾時才丟 ExportTimeout', async () => {
   assert.equal(await defaultWithTimeout(Promise.resolve('ok'), 50), 'ok');
   await assert.rejects(defaultWithTimeout(new Promise(() => {}), 5), (/** @type {any} */ e) => e.name === 'ExportTimeout');
-  // 原本的錯誤要原樣傳出去（不可以被包成超時，那會給錯的下一步）
+  // 工作自己丟的錯要原樣傳出去（不可以被包成超時，那會給錯的下一步）
   await assert.rejects(defaultWithTimeout(Promise.reject(new Error('連線中斷')), 50), /連線中斷/);
   assert.ok(EXPORT_TIMEOUT_MS >= 10_000, '上限太短會讓大備份或慢網路誤判成「沒有回應」');
 });
@@ -710,7 +708,7 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   //    （'⭐ 確認窗｜取消鈕／×／**點背景** 三條路都要真的收掉那顆 Promise'）守**。
   // ⚠️ 片段抓到「**下一個分號**」、而且允許跨行（r7 阻擋①）：這個判準演化過三次，每次都是被
   //    等價寫法誤殺才發現——①`[^)]*` 遇到 `() =>` 的第一個 `)` 就停②`[^;\n]*` 把換行誤當敘述結束
-  //    （合法的多行寫法因此誤紅）。現在只認語言真正的敘述結尾。
+  //    （合法的多行寫法因此誤紅）。所以判準只認語言真正的敘述結尾（下一個分號）。
   for (const [what, re] of [
     ['點背景', /bindBackdropClose\([\s\S]*?;/],
     ['×', /['"`]\.x-close['"`]\s*\)[\s\S]*?;/],
