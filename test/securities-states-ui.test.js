@@ -10,13 +10,14 @@ const read = path => readFileSync(join(ROOT, path), 'utf8');
 function namedFunction(source, name) {
   const start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0, `找不到 ${name}`);
+  const declarationStart = source.slice(Math.max(0, start - 6), start) === 'async ' ? start - 6 : start;
   const bodyMarker = source.indexOf(') {', start);
   assert.ok(bodyMarker >= 0, `${name} 找不到函式本體`);
   const open = bodyMarker + 2;
   let depth = 1;
   for (let i = open + 1; i < source.length; i++) {
     if (source[i] === '{') depth++;
-    if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+    if (source[i] === '}' && --depth === 0) return source.slice(declarationStart, i + 1);
   }
   assert.fail(`${name} 缺少右大括號`);
 }
@@ -87,7 +88,7 @@ function assertStateWiring(source) {
   assert.match(render, /!all\.length \? securitiesEmptyHtml\(\)/);
   assert.match(render, /rows\.length \? secTableHtml\(rows, th, FMT\) : securitiesFilteredEmptyHtml\(\)/);
   assert.match(render, /byId\('emptySecUpload'\)\.onclick = \(\) => openSecUpload\(pwSet\);/);
-  assert.match(render, /byId\('emptySecIbSync'\)\.onclick = .*syncIbFromSecurities/);
+  assert.match(render, /byId\('emptySecIbSync'\)\.onclick = \(\) => syncIbFromSecurities\(\)/);
   assert.match(render, /if \(reset\) reset\.onclick = \(\) => resetSecuritiesFilters\(\);/);
   assert.match(render, /renderSecurities\(\{ showLoading: false \}\)/);
 
@@ -97,12 +98,80 @@ function assertStateWiring(source) {
   }
 
   const sync = namedFunction(source, 'syncIbFromSecurities');
+  assert.match(sync, /setSecuritiesSyncButtonsBusy\(true\);/);
   assert.match(sync, /const feedback = ibSyncFeedback\(result, moneyCur\);/);
   assert.match(sync, /const hasSyncWarning = feedback\.some\(\(f\) => f\.error\) \|\| !!notice;/);
   assert.match(sync, /securitiesSyncWarning = hasSyncWarning[\s\S]*IBKR 同步部分完成[\s\S]*: '';/);
   assert.match(sync, /securitiesNotice = hasSyncWarning \? '' : 'IBKR 同步完成/);
+  assert.match(sync, /securitiesNotice = hasSyncWarning[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) renderSecurities\(\);/);
+  assert.match(sync, /catch \(err\)[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) setSecuritiesSyncButtonsBusy\(false\);/);
   assert.match(namedFunction(source, 'openSecPreview'), /securitiesNotice = message;\s*renderSecurities\(\);/);
   assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
+}
+
+async function assertSyncBehavior(source) {
+  const helper = namedFunction(source, 'setSecuritiesSyncButtonsBusy');
+  const sync = namedFunction(source, 'syncIbFromSecurities');
+  const createHarness = ({ routeSeq, feedback, missing = [], reject = null, initialWarning = '' }) => {
+    const buttons = [{ disabled: false, textContent: '', innerHTML: '' }, { disabled: false, textContent: '', innerHTML: '' }];
+    let resolveApi;
+    let rejectApi;
+    let renders = 0;
+    const api = () => new Promise((resolve, rejectPromise) => { resolveApi = resolve; rejectApi = rejectPromise; });
+    const currentRouteSeq = () => routeSeq();
+    const document = { querySelectorAll: selector => selector.includes('emptySecIbSync') ? buttons : [buttons[0]] };
+    const ibSyncFeedback = () => feedback;
+    const missingHoldingsNotice = () => missing.length ? '可能已出清' : '';
+    const moneyCur = () => '';
+    const toast = () => {};
+    const icon = () => '<svg></svg>';
+    const renderSecurities = () => { renders++; };
+    const factory = Function('api', 'currentRouteSeq', 'document', 'ibSyncFeedback', 'missingHoldingsNotice',
+      'moneyCur', 'toast', 'icon', 'renderSecurities', 'initialWarning', `
+        let securitiesSyncWarning = initialWarning;
+        let securitiesNotice = '';
+        ${helper}
+        ${sync}
+        return {
+          run: syncIbFromSecurities,
+          state: () => ({ securitiesSyncWarning, securitiesNotice }),
+        };
+      `);
+    const instance = factory(api, currentRouteSeq, document, ibSyncFeedback, missingHoldingsNotice,
+      moneyCur, toast, icon, renderSecurities, initialWarning);
+    return {
+      buttons,
+      instance,
+      complete: () => reject ? rejectApi(reject) : resolveApi({ missing }),
+      renders: () => renders,
+    };
+  };
+
+  let routeCalls = 0;
+  const switched = createHarness({
+    routeSeq: () => (++routeCalls === 1 ? 10 : 11),
+    feedback: [{ message: '部分失敗', error: true }],
+  });
+  const switchedRun = switched.instance.run();
+  assert.deepEqual(switched.buttons.map(btn => btn.disabled), [true, true], '同步開始要同時鎖住兩個入口');
+  switched.complete();
+  await switchedRun;
+  assert.match(switched.instance.state().securitiesSyncWarning, /同步部分完成/);
+  assert.equal(switched.renders(), 0, '切頁後不可重畫舊頁，但仍要保存同步結果');
+
+  const complete = createHarness({ routeSeq: () => 20, feedback: [], initialWarning: '舊警告' });
+  const completeRun = complete.instance.run();
+  complete.complete();
+  await completeRun;
+  assert.equal(complete.instance.state().securitiesSyncWarning, '', '下一次完整成功同步要清除舊警告');
+  assert.match(complete.instance.state().securitiesNotice, /同步完成/);
+  assert.equal(complete.renders(), 1);
+
+  const failed = createHarness({ routeSeq: () => 30, feedback: [], reject: new Error('同步失敗') });
+  const failedRun = failed.instance.run();
+  failed.complete();
+  await failedRun;
+  assert.deepEqual(failed.buttons.map(btn => btn.disabled), [false, false], '同步失敗要恢復兩個入口');
 }
 
 function assertStateCss(css) {
@@ -121,15 +190,19 @@ test('證券交易狀態：載入、成功、錯誤、首次空白與篩選空�
   assertStateBehavior(read('public/modules/securities.js'));
 });
 
-test('證券交易狀態：失敗可重試，兩種空白狀態與三種成功操作都有接線', () => {
-  assertStateWiring(read('public/modules/securities.js'));
+test('證券交易狀態：失敗可重試，兩種空白狀態與三種成功操作都有接線', async () => {
+  const source = read('public/modules/securities.js');
+  assertStateWiring(source);
+  await assertSyncBehavior(source);
 });
 
 test('證券交易狀態：暖米橘容器與手機單欄操作由專屬樣式擁有', () => {
   assertStateCss(read('public/securities.css'));
+  assert.match(read('public/modules/icons.js'), /\bcheck:\s*'<path/);
+  assert.match(read('public/styles.css'), /--warn:\s*#[0-9A-Fa-f]{6}/);
 });
 
-test('證券交易狀態：破壞消毒、重試、空白入口、清除條件、警告保存或手機排列時考題會紅', () => {
+test('證券交易狀態：破壞消毒、重試、空白入口、清除條件、警告保存或手機排列時考題會紅', async () => {
   const source = read('public/modules/securities.js');
   const css = read('public/securities.css');
 
@@ -157,6 +230,16 @@ test('證券交易狀態：破壞消毒、重試、空白入口、清除條件�
   assert.equal(source.split(consumeNotice).length - 1, 1, '突變目標必須唯一：成功載入後的訊息消費點');
   assert.throws(() => assertStateWiring(source.replace(consumeNotice,
     "securitiesNotice = '';\n  securitiesSyncWarning = '';\n  const all = secRes.trades || [];")));
+
+  const syncButtons = "document.querySelectorAll('#secIbSync, #emptySecIbSync')";
+  assert.ok(source.includes(syncButtons), '突變目標必須存在：同步時鎖住兩個入口');
+  await assert.rejects(() => assertSyncBehavior(source.replace(syncButtons,
+    "document.querySelectorAll('#secIbSync')")));
+
+  const warningAssignment = 'securitiesSyncWarning = hasSyncWarning';
+  assert.equal(source.split(warningAssignment).length - 1, 1, '突變目標必須唯一：切頁後仍保存同步結果');
+  await assert.rejects(() => assertSyncBehavior(source.replace(warningAssignment,
+    'if (seqAtStart === currentRouteSeq()) securitiesSyncWarning = hasSyncWarning')));
 
   const mobileStack = 'display: flex; align-items: center;\n    flex-direction: column; text-align: center;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

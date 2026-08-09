@@ -180,10 +180,10 @@ export async function renderSecurities({ showLoading = true } = {}) {
   // ---- 接線 ----
   byId('secUpload').onclick = () => openSecUpload(pwSet);
   byId('secBatches').onclick = () => openSecBatches();
-  byId('secIbSync').onclick = (/** @type {any} */ e) => syncIbFromSecurities(e.currentTarget);
+  byId('secIbSync').onclick = () => syncIbFromSecurities();
   if (!all.length) {
     byId('emptySecUpload').onclick = () => openSecUpload(pwSet);
-    byId('emptySecIbSync').onclick = (/** @type {any} */ e) => syncIbFromSecurities(e.currentTarget);
+    byId('emptySecIbSync').onclick = () => syncIbFromSecurities();
     return;
   }
   view().querySelectorAll('[data-sec-preset]').forEach((/** @type {any} */ b) => b.onclick = () => {
@@ -232,10 +232,17 @@ function wireSecInfo() {
 // 「同一套同步」（藍圖 §二＋A′ 裁決 2026-07-24）：呼叫與投資組合頁**相同的** POST /api/ib/sync＋共用
 // 回報翻譯 ibSyncFeedback（按鈕文案已講明會一併更新持股與現金）。「可能已出清」只提醒＋指路投組頁
 //（Codex S3r2#3）——刪持股的動作留在投資組合頁，查帳頁不做（A′：不自打「頁面上沒有編輯持股功能」）。
-async function syncIbFromSecurities(/** @type {any} */ btn) {
+function setSecuritiesSyncButtonsBusy(busy) {
+  document.querySelectorAll('#secIbSync, #emptySecIbSync').forEach((/** @type {any} */ btn) => {
+    btn.disabled = busy;
+    if (busy) btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
+    else btn.innerHTML = icon('download', 16) + '同步 IBKR 與投資組合';
+  });
+}
+
+async function syncIbFromSecurities() {
   const seqAtStart = currentRouteSeq();
-  btn.disabled = true;
-  btn.textContent = 'IBKR 同步中…（最多約 15 秒）';
+  setSecuritiesSyncButtonsBusy(true);
   try {
     const result = await api('/ib/sync', { method: 'POST' });
     const feedback = ibSyncFeedback(result, moneyCur);
@@ -243,17 +250,14 @@ async function syncIbFromSecurities(/** @type {any} */ btn) {
     const notice = missingHoldingsNotice(result.missing);
     if (notice) toast(notice, true);
     const hasSyncWarning = feedback.some((f) => f.error) || !!notice;
-    if (seqAtStart === currentRouteSeq()) {
-      securitiesSyncWarning = hasSyncWarning
-        ? 'IBKR 同步部分完成：部分資料沿用舊值或被略過，請先處理同步提醒再確認投資組合'
-        : '';
-      securitiesNotice = hasSyncWarning ? '' : 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
-      renderSecurities();
-    }
+    securitiesSyncWarning = hasSyncWarning
+      ? 'IBKR 同步部分完成：部分資料沿用舊值或被略過，請先處理同步提醒再確認投資組合'
+      : '';
+    securitiesNotice = hasSyncWarning ? '' : 'IBKR 同步完成，成交紀錄與投資組合已重新讀取';
+    if (seqAtStart === currentRouteSeq()) renderSecurities();
   } catch (err) {
     toast('IBKR 同步失敗：' + /** @type {any} */ (err).message, true);
-    btn.disabled = false;
-    btn.innerHTML = icon('download', 16) + '同步 IBKR 與投資組合';   // 可見文字含影響範圍（Codex r2 收官#2：手機沒有 hover 看不到 title）
+    if (seqAtStart === currentRouteSeq()) setSecuritiesSyncButtonsBusy(false);
   }
 }
 
