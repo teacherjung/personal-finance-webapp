@@ -27,6 +27,11 @@ import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
  *   ③碰撞規則會**誤殺合法的受版控 symlink alias**
  *   ④「staged 但工作樹已改」實測不會 fail-closed（射程是工作樹內容，不是 index blob）
  * ⇒ 現在的門就是 `test/helpers/repo-root.js`：**唯一一份會驗身分的 ROOT ＋載入時斷言**。
+ *
+ * ⚠️ **本檔守的是「路徑不是 URL」這個病根的兩種形狀**，兩種都是行為題：
+ *   ①**URL → 路徑少解一次**：`.pathname` 留著 `%20`／`%E5%…` ⇒ `readFileSync` ENOENT（下面的⭐⭐核心）。
+ *   ②**路徑 → URL 少編一次**：絕對路徑原樣塞進 `import … from` ⇒ `#` 之後整段被當 fragment 丟掉
+ *     （下面的⭐⭐核心之二）。②是複驗者 r2 阻擋②在**實體**特殊路徑上量出來的，同一支 PR 一起修。
  */
 
 test('⭐ 真的門｜餵一個「另一棵 checkout」的 root 進去必須被拒絕（r6 阻擋④＝行為題，不是掃字樣）', () => {
@@ -137,6 +142,55 @@ test('⭐⭐ 核心｜共用 ROOT 在「含空白與中文的路徑」下必須�
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('⭐⭐ 核心之二｜絕對路徑不可以直接當 ESM specifier（`#` 會被當成 fragment）', () => {
+  // ⚠️⚠️ 同一個病根的第二種形狀：**路徑不是 URL**。上面那題是「URL → 路徑」少解一次，
+  //    這一題是「路徑 → URL」少編一次——`import … from '<字串>'` 的字串是 **URL**，
+  //    所以路徑裡的 `#` 是 fragment 起點，Node 只拿 `#` 前面那一截去找檔案。
+  //    複驗者（r2 阻擋②）用 `git archive` 建**實體**副本、路徑 `07 專案#a/榮祥森（投資理財）100%`
+  //    跑全套：`entry-guard`／`robustness`／`securities-migration` 共 8 處把絕對路徑原樣塞進
+  //    子行程原始碼的 `import`，結果 **7 題 `ERR_MODULE_NOT_FOUND`**（我實測同一份：1740 pass／7 fail）。
+  //    ⚠️ 形狀與 #417 那四題一模一樣：**純 ASCII 的實作樹與審查樹完全看不出來**。
+  //    ⇒ 本題兩邊都驗：原樣塞**必須失敗**（否則這一題在空轉、綠得沒有意義），
+  //      `pathToFileURL(path).href` **必須成功**（那就是那 8 處改用的方法）。
+  const base = mkdtempSync(join(tmpdir(), 'spec-'));
+  try {
+    const repo = join(base, '07 專案#a', '榮祥森（投資理財）100%');
+    mkdirSync(join(repo, 'lib'), { recursive: true });
+    const dep = join(repo, 'lib', 'dep.mjs');
+    writeFileSync(dep, 'export const mark = "MARK-OK";\n');
+    const run = (/** @type {string} */ spec) => spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { mark } from ${JSON.stringify(spec)};\nprocess.stdout.write(mark);\n`], { encoding: 'utf8' });
+
+    // ⓐ 反面（證明這一題不是在空轉）：原樣塞絕對路徑一定失敗，而且是**被 `#` 切掉**那一種
+    const raw = run(dep);
+    assert.notEqual(raw.status, 0,
+      '把絕對路徑原樣當 specifier 竟然載得進來——那表示這一題在這台機器上證不了東西，'
+      + '下面那半的綠就沒有意義（先確認暫存目錄名真的含 `#`）。');
+    assert.match(String(raw.stderr), /ERR_MODULE_NOT_FOUND/,
+      `失敗原因不是「找不到模組」＝這一題量到的是別的東西。\nstderr：${String(raw.stderr).slice(0, 400)}`);
+    assert.match(String(raw.stderr), /07 專案'/,
+      'Node 應該只拿 `#` 前面那一截去找檔案（那正是病徵）——錯誤訊息裡沒看到被切斷的路徑，'
+      + `表示這一題抓到的不是同一個病。\nstderr：${String(raw.stderr).slice(0, 400)}`);
+
+    // ⓑ 正面：同一支模組，換成 file URL 就必須載得進來
+    const viaUrl = run(pathToFileURL(dep).href);
+    assert.equal(viaUrl.status, 0,
+      '過了 pathToFileURL(...).href 仍載不進來——本 PR 那 8 處用的就是這個方法，'
+      + `它壞掉的話那 8 處也是壞的。\nstderr：${String(viaUrl.stderr).slice(0, 600)}`);
+    assert.equal(viaUrl.stdout, 'MARK-OK', '載進來了但拿到的不是那支模組的值');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠️ **誠實劃界（核心之二抓不到什麼）**：本題證明的是**方法**（原樣塞會壞、`pathToFileURL` 會對），
+ * **不是**「repo 裡沒有人再那樣寫」。原本要接那一層的是被 c32906f 移出本支的全樹掃描，
+ * 所以現在**沒有任何靜態層在守這 8 處會不會被改回去**——真正的驗收是
+ * **在含 `#`／`%`／空白／中文的實體路徑上跑全套**（本支 PR 說明裡有數字）。
+ * 這條缺口與掃描層一起記在接手那支的待辦，不假裝已經覆蓋。
+ */
 
 test('ROOT 這一顆真的指到 repo 根（否則上面幾題就是在空掃）', () => {
   assert.ok(existsSync(join(ROOT, 'package.json')), 'ROOT 沒指到 repo 根，上面那題等於什麼都沒掃');
