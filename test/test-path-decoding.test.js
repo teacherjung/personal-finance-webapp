@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
 
 /**
@@ -17,7 +17,7 @@ import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
  * ＝四題全綠、十四輪審查也全綠；**合併進 main、在使用者自己的目錄跑才紅。**
  * ⇒ 「考題在開發者機器上綠」不代表「在使用者機器上綠」，路徑是這條分界線上最常見的那顆雷。
  *
- * ⚠️⚠️ **本檔只守「共用 ROOT 這道門」**（複驗者 r18 判斷「乙」，2026-08-09）：
+ * ⚠️⚠️ **本檔不含任何全樹靜態掃描**（複驗者 r18 判斷「乙」，2026-08-09）：
  * 原本另有一層「掃全樹、禁止任何人取 file URL 的 `.pathname`」的早期警告，
  * r2–r18 十七輪都在修它本身（AST 判斷、作用域、git 列檔、環境隔離、UTF-8／BOM、大小寫碰撞…），
  * 每一輪都找得到新的假紅或假綠 ⇒ 判定維護成本已高於它在本支的收益，**整層移出另開一支**。
@@ -26,12 +26,15 @@ import { ROOT, assertSameCheckout } from './helpers/repo-root.js';
  *   ②兩條 fail-closed 各有 **adapter 層假綠**（`encoding:'utf8'` 加回去／resolver 不走 realpath 都仍全綠）
  *   ③碰撞規則會**誤殺合法的受版控 symlink alias**
  *   ④「staged 但工作樹已改」實測不會 fail-closed（射程是工作樹內容，不是 index blob）
- * ⇒ 現在的門就是 `test/helpers/repo-root.js`：**唯一一份會驗身分的 ROOT ＋載入時斷言**。
+ * ⇒ 身分那道門改由 `test/helpers/repo-root.js` 一份實作＋它自己的載入時斷言承擔。
  *
- * ⚠️ **本檔守的是「路徑不是 URL」這個病根的兩種形狀**，兩種都是行為題：
+ * ⚠️ **本檔守的是「路徑不是 URL」這個病根的兩種形狀，外加②的接線**，全部是行為題（沒有掃字樣的題）：
  *   ①**URL → 路徑少解一次**：`.pathname` 留著 `%20`／`%E5%…` ⇒ `readFileSync` ENOENT（下面的⭐⭐核心）。
  *   ②**路徑 → URL 少編一次**：絕對路徑原樣塞進 `import … from` ⇒ `#` 之後整段被當 fragment 丟掉
  *     （下面的⭐⭐核心之二）。②是複驗者 r2 阻擋②在**實體**特殊路徑上量出來的，同一支 PR 一起修。
+ *   ③②的**接線**：核心之二證明的只是「方法」，所以另有一組題把 repo 裡**正式**在算 ESM specifier
+ *     的三顆（`TOUCHPOINTS`）搬到含 `#` 的實體路徑上真的跑一次——少了它，把那三顆改回原樣塞絕對路徑
+ *     時本檔仍會全綠（複驗者 r3 實測：正式接點全改壞 ⇒ 正式考題 7 題紅、本檔 5/5 綠）。
  */
 
 test('⭐ 真的門｜餵一個「另一棵 checkout」的 root 進去必須被拒絕（r6 阻擋④＝行為題，不是掃字樣）', () => {
@@ -53,7 +56,8 @@ test('⭐ 真的門｜餵一個「另一棵 checkout」的 root 進去必須被�
     assert.throws(
       () => assertSameCheckout(other, join(ROOT, 'test', 'helpers', 'repo-root.js')),
       /另一棵 checkout/,
-      '指到另一棵有效 checkout 卻沒被拒絕＝掃描器會靜靜掃別棵樹、回報「零違規」',
+      '指到另一棵有效 checkout 卻沒被拒絕＝凡是 import 本 helper `ROOT` 的考題，'
+      + '都會靜靜讀到**別棵樹**的檔案，量到的是那棵樹的狀態',
     );
   } finally {
     rmSync(other, { recursive: true, force: true });
@@ -95,7 +99,7 @@ test('⭐ 真的門的**接線**｜載入時必須傳「正在執行的這一支
     assert.equal(r.status, 3,
       '把 helper 搬到別的樹、ROOT 卻指向真 repo，載入居然成功了——'
       + '⇒ 載入時傳的不是「正在執行的這一支」（很可能寫成 join(ROOT, SELF_REL) ＝自己比自己），'
-      + '身分防線等於不存在，而掃描器會靜靜掃別棵樹。');
+      + '身分防線等於不存在，import 本 helper `ROOT` 的考題會靜靜讀到別棵樹的檔案。');
   } finally {
     rmSync(fake, { recursive: true, force: true });
   }
@@ -185,13 +189,142 @@ test('⭐⭐ 核心之二｜絕對路徑不可以直接當 ESM specifier（`#` �
 });
 
 /**
- * ⚠️ **誠實劃界（核心之二抓不到什麼）**：本題證明的是**方法**（原樣塞會壞、`pathToFileURL` 會對），
- * **不是**「repo 裡沒有人再那樣寫」。原本要接那一層的是被 c32906f 移出本支的全樹掃描，
- * 所以現在**沒有任何靜態層在守這 8 處會不會被改回去**——真正的驗收是
- * **在含 `#`／`%`／空白／中文的實體路徑上跑全套**（本支 PR 說明裡有數字）。
- * 這條缺口與掃描層一起記在接手那支的待辦，不假裝已經覆蓋。
+ * ⚠️ **核心之二只證明「方法」，不證明「正式的那幾處真的用了它」**——下面這一組題接的就是這一段。
+ *
+ * 複驗者 r3 的實測（阻擋①）：把三支正式考題算 specifier 的那一顆全部改回原樣塞絕對路徑，
+ * 在實體特殊路徑下**正式考題紅 7 題、本檔仍 5/5 全綠** ⇒ 核心之二綁的是它自己造的 `dep.mjs`。
+ *
+ * `TOUCHPOINTS` 就是那三顆。repo 裡把絕對路徑塞進子行程原始碼 `import` 的 8 個位置，
+ * 全部從這三顆取字串（`entry-guard`×2 走 `moduleUrl`、`robustness`×4 走 `STORE_URL`、
+ * `securities-migration`×2 走 `REPO_URL`），所以綁住這三顆＝那 8 處一起被綁住。
+ */
+const TOUCHPOINTS = [
+  { file: 'test/entry-guard.test.js', name: 'moduleUrl', expr: "moduleUrl('lib/is-main.js')", rel: 'lib/is-main.js' },
+  { file: 'test/robustness.test.js', name: 'STORE_URL', expr: 'STORE_URL', rel: 'lib/store.js' },
+  { file: 'test/securities-migration.test.js', name: 'REPO_URL', expr: 'REPO_URL', rel: 'lib/repo.js' },
+];
+
+/**
+ * 切出「從檔頭到 `name` 這一句宣告結束」的前綴，好把**正式接點自己那一行**原樣搬進探針執行。
+ *
+ * ⚠️ 為什麼是切前綴、不是複製整份：三支正式考題的宣告之後就是會起伺服器、開資料庫、列舉
+ * `scripts/` 的正題；整份搬過去要連 `lib/`、`node_modules` 一起搬。切在宣告結束處，前面只剩
+ * `import`（全是 node 內建）＋`ROOT`＝乾淨、沒有副作用。
+ *
+ * ⚠️ **誠實劃界**：切點是靠「行首的宣告關鍵字」＋括號配對找的，**認不出來就 fail-closed 轉紅**
+ * （寧可誤紅也不要靜靜綠——本專案認過的病型）。它不保證認得所有寫法，但**任何認不得的寫法都會紅**，
+ * 不會出現「宣告被改壞、這題還綠」的組合。
+ *
+ * @param {string} src 正式考題的原始碼
+ * @param {string} name 接點的識別字
+ * @param {string} where 出錯訊息要指出的檔案
+ * @returns {string} 含該宣告在內的前綴
+ */
+function prefixThroughDeclaration(src, name, where) {
+  const head = new RegExp(String.raw`^(?:export\s+)?(?:const|let|var|function)\s+${name}\b`, 'm');
+  const m = head.exec(src);
+  assert.ok(m, `${where} 找不到行首的頂層宣告 \`${name}\`——`
+    + '本題靠它把正式接點搬進探針，找不到就等於沒在綁任何東西（所以這裡直接紅）。\n'
+    + '若接點真的改名或改結構了，請同步更新本檔的 TOUCHPOINTS。');
+  let depth = 0;
+  for (let i = m.index; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+      assert.ok(depth >= 0, `${where} 的 \`${name}\` 宣告括號配對不起來 ⇒ 切點不可信，本題不敢當綠。`);
+      if (depth === 0 && ch === '}') return src.slice(0, i + 1);
+    } else if (ch === ';' && depth === 0) return src.slice(0, i + 1);
+  }
+  return assert.fail(`${where} 的 \`${name}\` 宣告找不到結尾（沒有分號、也沒有配對的大括號）。`);
+}
+
+/** 造一棵路徑含**空白／中文／全角括號／`#`／`%`** 的假 repo（與使用者真實目錄同型）。 */
+function makeSpecialPathRepo() {
+  const base = mkdtempSync(join(tmpdir(), 'touchpoint-'));
+  const repo = join(base, '07 專案#a', '榮祥森（投資理財）100%');
+  mkdirSync(join(repo, 'test'), { recursive: true });
+  // `.js` 要被當 ESM 讀，靠的是這個 type:module（正式考題也是靠 repo 根的 package.json）
+  writeFileSync(join(repo, 'package.json'), '{"name":"fixture","type":"module"}');
+  return { base, repo };
+}
+
+/**
+ * 拿一個 specifier 真的去 `import`，回傳子行程結果。
+ * ⚠️ 形狀與⭐⭐核心之二那題**刻意一致**（`--input-type=module` ＋ 靜態 `import … from`）：
+ *    那是複驗者 r2 在實體特殊路徑上量過的同一條路，本組題只是把 specifier 的**來源**
+ *    從「本檔自己造的」換成「正式接點算的」。
+ */
+function importViaSpecifier(/** @type {string} */ spec) {
+  return spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { mark } from ${JSON.stringify(spec)};\nprocess.stdout.write(mark);\n`], { encoding: 'utf8' });
+}
+
+for (const { file, name, expr, rel } of TOUCHPOINTS) {
+  test(`⭐⭐ 正式接線｜${file} 的 \`${name}\` 算出來的 specifier，在含 \`#\` 的實體路徑下必須真的載得進來`, () => {
+    // 拿的是**正式考題自己那一行**，不是本檔重寫一份等價的（重寫一份就又變成「只測自己的 helper」）
+    const src = readFileSync(join(ROOT, file), 'utf8');
+    const prefix = prefixThroughDeclaration(src, name, file);
+    assert.ok(prefix.length < src.length,
+      `${file}：切出來的前綴等於整份檔案 ⇒ 切點沒找對，探針會連正題一起跑。`);
+
+    const { base, repo } = makeSpecialPathRepo();
+    try {
+      // 接點指向的那支模組換成**只回一個標記**的替身：載得進來、而且證明載到的是這棵樹的那一支
+      const MARK = `MARK:${rel}`;
+      mkdirSync(dirname(join(repo, rel)), { recursive: true });
+      writeFileSync(join(repo, rel), `export const mark = ${JSON.stringify(MARK)};\n`);
+
+      // 第一步：把前綴放進 `<repo>/test/` 執行，印出**正式接點自己算出來的 specifier**。
+      // ⚠️ 放這個位置，是為了讓前綴裡那句 `ROOT = join(dirname(…import.meta.url…), '..')`
+      //    自己就算出 `<repo>`——本題因此不必去 replace 它（少一個會漂的替換）。
+      const probeFile = join(repo, 'test', basename(file));
+      writeFileSync(probeFile, `${prefix}\nprocess.stdout.write(String(${expr}));\n`);
+      const emitted = spawnSync(process.execPath, [probeFile], { encoding: 'utf8' });
+      assert.equal(emitted.status, 0,
+        `把 ${file} 到 \`${name}\` 為止的前綴搬到 ${repo} 執行就失敗了 ⇒ 本題證不了東西。\n`
+        + `stderr：${String(emitted.stderr).slice(0, 600)}`);
+      const spec = emitted.stdout;
+      assert.ok(spec.length > 0, `${file} 的 \`${name}\` 算出空字串。`);
+
+      // ⓐ 反面（證明這一題不是在空轉）：原樣塞絕對路徑**必須**因為 `#` 被切斷而找不到模組。
+      //    ⚠️ 只斷言「退出碼非 0」不夠——任何意外都會非 0，那會讓本題靜靜變成假綠；所以連失敗**原因**
+      //       與**被 `#` 切斷的那一截**一起釘住（與核心之二 ⓐ 同一組斷言）。
+      const raw = importViaSpecifier(join(repo, rel));
+      assert.notEqual(raw.status, 0,
+        `在 ${repo} 底下原樣塞絕對路徑竟然載得進來 ⇒ 這台機器重現不出這個病，`
+        + '下面那半的綠就沒有意義（先確認暫存目錄名真的含 `#`）。');
+      assert.match(String(raw.stderr), /ERR_MODULE_NOT_FOUND/,
+        `失敗原因不是「找不到模組」＝本題量到的是別的東西。\nstderr：${String(raw.stderr).slice(0, 400)}`);
+      assert.match(String(raw.stderr), /07 專案'/,
+        `錯誤訊息裡沒看到被 \`#\` 切斷的路徑＝抓到的不是同一個病。\nstderr：${String(raw.stderr).slice(0, 400)}`);
+
+      // ⓑ 正面：**正式接點自己**算出來的那個字串必須載得進來，而且載到的是同一支模組
+      const real = importViaSpecifier(spec);
+      assert.equal(real.status, 0,
+        `${file} 的 \`${name}\` 算出來的字串在含 \`#\` 的實體路徑下載不進來。\n`
+        + `  它算出的＝${spec}\n`
+        + '⇒ 那一顆多半退回了「絕對路徑原樣當 ESM specifier」——`import` 的字串是 **URL**，'
+        + '`#` 之後會被當 fragment 丟掉，而**純 ASCII 的實作樹與審查樹完全看不出來**。\n'
+        + `修法＝pathToFileURL(絕對路徑).href。\nstderr：${String(real.stderr).slice(0, 600)}`);
+      assert.equal(real.stdout, MARK,
+        `載進來了，但拿到的不是 ${rel} 那一支（算出的＝${spec}）⇒ 接點算出來的位置本身就不對。`);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+}
+
+/**
+ * ⚠️ **誠實劃界（上面這組題抓不到什麼）**：
+ *   - 它綁的是**三顆接點的宣告**。三支正式考題目前把 8 個 `import` 位置全部收斂到這三顆，
+ *     但**它不會發現「有人繞過接點、在某個使用點直接寫絕對路徑」**——那種寫法在 ASCII 路徑下照樣全綠。
+ *   - 它也不涵蓋本 repo 以外的檔案：`c32906f` 移出本支的全樹掃描原本要接的就是那一層，
+ *     所以「別的考題將來新寫一處」仍然沒有自動護欄。
+ *   ⇒ 真正的驗收照舊是**在含 `#`／`%`／空白／中文的實體路徑上跑全套**（本支 PR 說明裡有數字）。
  */
 
-test('ROOT 這一顆真的指到 repo 根（否則上面幾題就是在空掃）', () => {
-  assert.ok(existsSync(join(ROOT, 'package.json')), 'ROOT 沒指到 repo 根，上面那題等於什麼都沒掃');
+test('ROOT 這一顆真的指到 repo 根（否則上面那幾題讀到的原始碼就不是這棵樹的）', () => {
+  assert.ok(existsSync(join(ROOT, 'package.json')),
+    'ROOT 沒指到 repo 根 ⇒ 上面那幾題 readFileSync 讀到的正式考題原始碼不是這棵樹的');
 });

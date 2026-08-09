@@ -17,7 +17,7 @@ import { join, dirname } from 'node:path';
  * 而純 ASCII 的實作樹與審查樹完全看不出來——**在使用者自己的目錄跑才紅**。
  *
  * ⚠️ 為什麼「語法檢查」不能當這件事的門（與 `test/entry-guard.test.js` 同一個結論）：
- * 掃描器只認得寫法，而同一個錯有無數種自然寫法（解構、存成中間變數、把 base 抽成常數……
+ * 語法掃描只認得寫法，而同一個錯有無數種自然寫法（解構、存成中間變數、把 base 抽成常數……
  * 每一種都是合法 JS、都真的 ENOENT）。⇒ 門是**這一份實作＋下面那顆載入時的斷言**。
  * （曾有一層「掃全樹禁止取 `.pathname`」的語法掃描，r18 依複驗者判斷「乙」整層移出本支——
  * 十七輪都在修掃描器本身，維護成本已高於收益。要接手那層的人：未釐清事項見
@@ -25,12 +25,8 @@ import { join, dirname } from 'node:path';
  */
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// ⚠️ 載入時就吵：這是這一族**不看寫法、只看結果**的檢查。
-//    ⚠️ **只驗「有 package.json」不夠**（r3 阻擋①，複驗者實際重現）：ROOT 若指到**另一棵 checkout**
-//    （同一支 repo 的別棵工作樹，它當然也有 package.json），斷言照樣通過，掃描器就靜靜掃了別棵樹
-//    ——他實測：工作樹在中文路徑、helper 卻回 `/private/tmp/codex-review-pr433`，三檔 37/37 全綠。
-//    ⇒ 必須驗**身分**：`realpathSync` 把兩邊都解成 canonical 路徑字串再比
-//    （⚠️ 比的是**路徑字串**，不是 inode——同一顆 inode 的硬連結會有不同 canonical 路徑）。
+// 本檔在 repo 裡的位置：`assertSameCheckout` 拿它去 root 底下取「同一個位置的那支檔案」，
+// 再跟「正在執行的這一支」比對。改檔名或搬家＝這一行要跟著動，否則身分比對永遠不相等。
 const SELF_REL = join('test', 'helpers', 'repo-root.js');
 
 /**
@@ -57,14 +53,15 @@ export function assertSameCheckout(root, selfPath) {
       + `  root          = ${root}\n`
       + `  root 下的本檔  = ${there}\n`
       + `  正在執行的本檔  = ${here}\n`
-      + '⇒ 掃描器會靜靜掃別棵樹而回報「零違規」。',
+      + '⇒ 凡是 import 本檔 ROOT 的考題，都會靜靜讀到那棵樹的檔案、回報那棵樹的狀態。',
     );
   }
 }
 
 // ⚠️ 載入時就吵：這是這一族**不看寫法、只看結果**的檢查。
-//    ⚠️ 只驗「有 package.json」不夠：root 指到同一支 repo 的另一棵工作樹時（那棵當然也有
-//    package.json）斷言照樣通過，掃描器就靜靜掃了別棵樹（複驗者實際重現過）。
+//    ⚠️ 只驗「有 package.json」不夠（r3 阻擋①）：root 指到同一支 repo 的**另一棵工作樹**時
+//    （那棵當然也有 package.json）斷言照樣通過——複驗者實測工作樹在中文路徑、helper 卻回
+//    `/private/tmp/codex-review-pr433`，那一輪三個檔案 37/37 全綠，而它們讀的全是別棵樹。
 //    ⚠️ 比的是 `realpathSync` 解出的 canonical **路徑字串**，不是 inode
 //    （同一顆 inode 的硬連結會有不同 canonical 路徑）。
 assertSameCheckout(ROOT, fileURLToPath(import.meta.url));
