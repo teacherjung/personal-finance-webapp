@@ -248,9 +248,38 @@ export function isBrowserSideFile(f) {
  * ⚠️ `core.quotepath=false`：不加的話含中文的檔名會被 git 轉成八進位轉義而開不了檔
  *    ——那正是本 PR 在修的同一族病。
  */
+export const LS_FILES_ARGV = ['-c', 'core.quotepath=false', 'ls-files',
+  '--cached', '--others', '--exclude-standard'];
+
+/**
+ * 跑 git 時**一律清掉所有 repo-local 的 Git 環境變數**。
+ *
+ * ⚠️⚠️ 這不是防禦性寫法，是 2026-08-09 真實事故的修法（r13 阻擋①，複驗者精確重現）：
+ * `scripts/git-hooks/pre-push` 會執行 `npm test`，而 hook 執行時環境裡帶著 `GIT_DIR`。
+ * 只給 `cwd` **隔離不了**它——git 會照 `GIT_DIR` 去操作**真的那個 repo**，`cwd` 形同無效。
+ * 後果：本檔原本在暫存目錄跑的 `git init` fixture，實際上重新初始化了主 repo、把
+ * `core.bare` 設成 `true`（主目錄與全部 worktree 同時失去工作樹身分），還把 fixture 的檔案
+ * 塞進主 repo 的 index——而那顆考題當時顯示 1/1 通過。
+ * ⇒ 兩個修法一起做：①**不再有任何 `git init`**（見下方清單題）②所有 git 呼叫都走這裡。
+ * ⚠️ `trackedJsFiles()` 自己也吃這個坑：GIT_DIR 被繼承時它會去列**別的 repo** 的檔案
+ * ——那會讓這道閘在 pre-push 期間掃錯對象而靜靜全綠。
+ */
+export function gitEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k === 'GIT_DIR' || k === 'GIT_WORK_TREE' || k === 'GIT_INDEX_FILE'
+      || k === 'GIT_COMMON_DIR' || k === 'GIT_OBJECT_DIRECTORY'
+      || k === 'GIT_ALTERNATE_OBJECT_DIRECTORIES' || k === 'GIT_CONFIG'
+      || k === 'GIT_CONFIG_GLOBAL' || k === 'GIT_CONFIG_SYSTEM'
+      || k === 'GIT_PREFIX' || k === 'GIT_NAMESPACE' || k === 'GIT_CEILING_DIRECTORIES') {
+      delete env[k];
+    }
+  }
+  return env;
+}
+
 export function trackedJsFiles(cwd = ROOT) {
-  const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
-    '--cached', '--others', '--exclude-standard'], { cwd, encoding: 'utf8' });
+  const out = execFileSync('git', LS_FILES_ARGV, { cwd, encoding: 'utf8', env: gitEnv() });
   return out.split('\n')
     .filter((f) => f.endsWith('.js'))
     .filter((f) => !isBrowserSideFile(f));
@@ -263,12 +292,23 @@ test('早期警告｜本專案不取 file URL 的 .pathname（不論用途——
   // ⚠️ **範圍要用精確比對釘住**（r10 阻擋②）：結構性斷言（根層＋各目錄各一支）**擋不住**——
   //    複驗者把清單改成「全部 test/ ＋每區留一支代表檔」，仍滿足全部結構斷言，卻漏掃 128 支，
   //    而該檔 10/10、全套 1739/1739 都還是綠的。⇒ 改成與**獨立算出來的完整清單**逐項比對。
-  const allJs = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files',
-    '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' })
+  const allJs = execFileSync('git', LS_FILES_ARGV, { cwd: ROOT, encoding: 'utf8', env: gitEnv() })
     .split('\n').filter((f) => f.endsWith('.js'));
   const expected = allJs.filter((f) => !isBrowserSideFile(f));
   // ⚠️ 瀏覽器目錄必須**不在**清單裡（r11 阻擋①：那裡取 .pathname 合法），
   //    而且必須真的有東西被排除，否則這條排除等於沒生效。
+  // ⚠️ **排除清單要用獨立斷言釘住**（r13 阻擋②）：`files` 與 `expected` 都呼叫同一個
+  //    `isBrowserSideFile`，所以那個 deepEqual **對排除範圍完全沒有判準**——
+  //    複驗者把 `BROWSER_ONLY_DIRS` 突變成 `['public/', 'lib/']`，整支仍 12/12 全綠，
+  //    也就是全部 `lib/` 的 Node 檔都可以被靜靜排除。
+  assert.deepEqual(BROWSER_ONLY_DIRS, ['public/'],
+    '整個目錄被排除的只准是 public/。要新增就必須同時交代「那個目錄裡沒有 Node 程式」'
+    + '（prototype/ 的教訓：它混住兩種，整個排除會讓 Node 考題落在射程外）');
+  // ⚠️ 反向：Node 側目錄與根層檔案**不得**被排除
+  for (const f of ['lib/store.js', 'scripts/check-review-verdicts.js', 'test/server.test.js', 'server.js']) {
+    assert.equal(isBrowserSideFile(f), false, `${f} 是 Node 程式，不可以被判成瀏覽器側`);
+    assert.ok(files.includes(f), `${f} 不在掃描清單裡＝它落在射程外`);
+  }
   assert.ok(allJs.length > expected.length, '沒有任何瀏覽器檔案被排除＝isBrowserSideFile 沒生效');
   assert.equal(files.filter(isBrowserSideFile).length, 0,
     '掃描清單含瀏覽器側檔案——那裡的 import.meta.url 是 HTTP URL，取 .pathname 合法（假紅）');
@@ -554,45 +594,63 @@ test('⭐⭐ 核心｜共用 ROOT 在「含空白與中文的路徑」下必須�
   }
 });
 
-test('⭐ 掃描清單｜未 commit 的新檔、被 ignore 的檔、中文檔名（r11 阻擋④：fixture 實測）', () => {
-  // ⚠️ 上一版只在真 repo 上比對兩份清單——**乾淨工作樹裡兩邊天然相同**，
-  //    複驗者把 `--others` 拿掉，全套仍 1739/1739 全綠 ⇒ 那個承諾沒有考題撐著。
-  //    ⇒ 本題自己建一個暫存 git repo，放進四種檔案再問 `trackedJsFiles(cwd)`。
-  const repo = mkdtempSync(join(tmpdir(), 'ls-files-'));
-  try {
-    // ⚠️ **不 commit**（r12 阻擋③）：只要 `git add` 檔案就會出現在 `ls-files --cached`。
-    //    真的 commit 會被使用者的全域設定弄紅——複驗者實測：全域 fail-fast `pre-commit` hook 會紅、
-    //    `commit.gpgSign=true` 但簽章失敗也會紅。fixture 不該依賴那些。
-    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
-    git('init', '-q');
-    writeFileSync(join(repo, '.gitignore'), 'ignored.js\nnode_modules/\n');
-    writeFileSync(join(repo, 'tracked.js'), '// tracked（已 git add ⇒ 進 --cached）\n');
-    git('add', 'tracked.js', '.gitignore');
-    writeFileSync(join(repo, 'untracked.js'), '// 還沒 commit 的新檔\n');
-    writeFileSync(join(repo, 'ignored.js'), '// 被 ignore\n');
-    writeFileSync(join(repo, '中文 檔名.js'), '// 含空白與中文的檔名\n');
-    mkdirSync(join(repo, 'public'), { recursive: true });
-    writeFileSync(join(repo, 'public', 'browser.js'), '// 瀏覽器模組\n');
-    // ⚠️ r12 阻擋①：prototype/ 混住兩種，Node 考題必須留下、瀏覽器模組必須排除
-    mkdirSync(join(repo, 'prototype', 'lab'), { recursive: true });
-    writeFileSync(join(repo, 'prototype', 'lab', 'x.test.js'), '// Node 考題\n');
-    writeFileSync(join(repo, 'prototype', 'lab', 'ui.js'), '// 瀏覽器模組\n');
-    writeFileSync(join(repo, 'notjs.txt'), 'x\n');
+test('⭐ 掃描清單的參數與過濾｜不建任何 repo（r13 阻擋①：舊 fixture 弄壞了主 repo）', () => {
+  // ⚠️⚠️ **這一題原本會 `git init` 一個暫存 repo，而那顆 fixture 真的弄壞了主 repo。**
+  //    複驗者精確重現：`scripts/git-hooks/pre-push` 會執行 `npm test`，hook 執行時環境帶著 `GIT_DIR`，
+  //    只給 `cwd` 隔離不了它 ⇒ 那個 `git init` 實際上重新初始化了主 repo、把 `core.bare` 設成 `true`
+  //    （主目錄與全部 worktree 同時失去工作樹身分），還把 fixture 的檔案塞進主 repo 的 index，
+  //    而那顆考題當時顯示 1/1 通過。
+  //    ⇒ 修法：**這一題不再建立任何 repo**。改成分兩半驗——參數（宣告）與過濾（純邏輯）。
+  //    ⚠️ 誠實劃界：這樣就**沒有**「未 commit 的新檔真的會被列出」的端到端證明了。
+  //    那個承諾現在只由下面的參數斷言撐著（宣告層），不是行為層。列為已知殘餘、不再自己建 repo 去證。
 
-    const got = trackedJsFiles(repo).sort();
-    assert.deepEqual(got, ['tracked.js', 'untracked.js', '中文 檔名.js',
-      'prototype/lab/x.test.js'].sort(),
-      '掃描清單不對。四件事各自的意義：\n'
-      + '  ・tracked.js 進來＝基本盤\n'
-      + '  ・untracked.js 進來＝`--others` 有效（少了它，違規的新檔在 commit 前完全掃不到，'
-      + '護欄會在最需要它的那一刻失效）\n'
-      + '  ・`中文 檔名.js` 進來＝`core.quotepath=false` 有效（少了它，git 會回八進位轉義而開不了檔）\n'
-      + '  ・ignored.js 不進來＝`--exclude-standard` 有效\n'
-      + '  ・public/browser.js 與 prototype/lab/ui.js 不進來＝瀏覽器側排除有效（那裡取 .pathname 合法）\n'
-      + '  ・prototype/lab/x.test.js **進來**＝prototype 不是整個排除（那裡的 *.test.js 是 Node 程式）\n'
-      + `  實際拿到：${JSON.stringify(got)}`);
+  // ⓐ 參數：三個承諾各自對應一個旗標，少一個就等於少一個承諾
+  assert.ok(LS_FILES_ARGV.includes('--others'),
+    '少了 --others：還沒 commit 的新檔就掃不到，護欄會在最需要它的那一刻失效');
+  assert.ok(LS_FILES_ARGV.includes('--exclude-standard'),
+    '少了 --exclude-standard：被 .gitignore 的工具產物會被算進來（假紅）');
+  assert.ok(LS_FILES_ARGV.includes('--cached'), '少了 --cached：已追蹤的檔案掃不到');
+  const quoteIdx = LS_FILES_ARGV.indexOf('core.quotepath=false');
+  assert.ok(quoteIdx > 0 && LS_FILES_ARGV[quoteIdx - 1] === '-c',
+    '少了 -c core.quotepath=false：含中文的檔名會被 git 轉成八進位轉義而開不了檔'
+    + '——那正是本 PR 在修的同一族病');
+
+  // ⓑ 過濾：只留 .js、排除瀏覽器側。用合成的 stdout，不碰任何 repo
+  const filter = (lines) => lines.filter((f) => f.endsWith('.js')).filter((f) => !isBrowserSideFile(f));
+  assert.deepEqual(
+    filter(['server.js', 'lib/store.js', 'test/x.test.js', '中文 檔名.js',
+      'public/app.js', 'prototype/lab/ui.js', 'prototype/lab/x.test.js', 'notjs.txt', 'a.mjs']),
+    ['server.js', 'lib/store.js', 'test/x.test.js', '中文 檔名.js', 'prototype/lab/x.test.js'],
+    '過濾結果不對。各項的意義：根層與 lib／test 留下；含空白中文的檔名留下；'
+    + 'public/ 與 prototype 的瀏覽器模組排除；prototype 的 *.test.js **留下**（那是 Node 程式）；'
+    + '非 .js 排除',
+  );
+
+  // ⓒ 清環境這件事本身要有斷言（它是事故的修法，不可以被靜靜拿掉）
+  const scrubbed = gitEnv();
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CONFIG_GLOBAL']) {
+    assert.equal(k in scrubbed, false,
+      `gitEnv() 沒有清掉 ${k}——pre-push hook 會帶著它進來，git 會照它去操作**別的 repo**，`
+      + 'cwd 形同無效（2026-08-09 事故就是這樣把主 repo 設成 bare 的）');
+  }
+  // 反面自我驗證：非 Git 的環境變數要留著（清太多會讓 git 找不到 PATH／HOME 而整批紅）
+  assert.equal(scrubbed.PATH, process.env.PATH, 'gitEnv() 把 PATH 也清掉了');
+});
+
+test('⭐ 全樹掃描本身不可以被繼承的 GIT_DIR 帶去別的 repo（r13 阻擋①的另一半）', () => {
+  // ⚠️ `trackedJsFiles()` 自己也吃這個坑：GIT_DIR 被繼承時它會去列**別的 repo** 的檔案，
+  //    那會讓這道閘在 pre-push 期間掃錯對象而靜靜全綠。
+  //    ⇒ 這一題把 GIT_DIR 指到一個**不存在**的路徑，然後確認清單照舊正確
+  //      （若沒有清環境，git 會失敗或列出別的東西）。
+  const before = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  try {
+    const files = trackedJsFiles();
+    assert.ok(files.includes('server.js'),
+      '設了假的 GIT_DIR 之後清單就不對了＝gitEnv() 沒有真的隔離（cwd 隔離不了 GIT_DIR）');
+    assert.ok(files.length > 100, `設了假的 GIT_DIR 之後只列出 ${files.length} 支＝隔離失效`);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
   }
 });
 
