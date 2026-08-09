@@ -194,9 +194,9 @@ test('⭐⭐ 核心之二｜絕對路徑不可以直接當 ESM specifier（`#` �
  * 複驗者 r3 的實測（阻擋①）：把三支正式考題算 specifier 的那一顆全部改回原樣塞絕對路徑，
  * 在實體特殊路徑下**正式考題紅 7 題、本檔仍 5/5 全綠** ⇒ 核心之二綁的是它自己造的 `dep.mjs`。
  *
- * `TOUCHPOINTS` 就是那三顆。repo 裡把絕對路徑塞進子行程原始碼 `import` 的 8 個位置，
- * 全部從這三顆取字串（`entry-guard`×2 走 `moduleUrl`、`robustness`×4 走 `STORE_URL`、
- * `securities-migration`×2 走 `REPO_URL`），所以綁住這三顆＝那 8 處一起被綁住。
+ * `TOUCHPOINTS` 就是那三顆。`dceae9a` 把「絕對路徑塞進子行程原始碼 `import`」的 8 個位置改掉時，
+ * 是讓三支考題各自收斂到一顆共用的 specifier 來源（`moduleUrl`／`STORE_URL`／`REPO_URL`）——
+ * 綁住這三顆，那一批使用點就都在同一條線上。⚠️ 使用點會不會**繞過**這三顆，見下面的誠實劃界。
  */
 const TOUCHPOINTS = [
   { file: 'test/entry-guard.test.js', name: 'moduleUrl', expr: "moduleUrl('lib/is-main.js')", rel: 'lib/is-main.js' },
@@ -317,10 +317,10 @@ for (const { file, name, expr, rel } of TOUCHPOINTS) {
 
 /**
  * ⚠️ **誠實劃界（上面這組題抓不到什麼）**：
- *   - 它綁的是**三顆接點的宣告**。三支正式考題目前把 8 個 `import` 位置全部收斂到這三顆，
- *     但**它不會發現「有人繞過接點、在某個使用點直接寫絕對路徑」**——那種寫法在 ASCII 路徑下照樣全綠。
- *   - 它也不涵蓋本 repo 以外的檔案：`c32906f` 移出本支的全樹掃描原本要接的就是那一層，
- *     所以「別的考題將來新寫一處」仍然沒有自動護欄。
+ *   - 它驗的是 `TOUCHPOINTS` 點名的那三顆**宣告**算出什麼。**使用點有沒有真的走這三顆，本題不驗**——
+ *     有人在某個 `import` 使用點直接寫絕對路徑、繞過接點，這裡照樣全綠（ASCII 路徑下也看不出來）。
+ *   - `TOUCHPOINTS` 是**手寫清單**，不會自己長出新成員：別的考題將來新寫一處，本題不知道。
+ *     `c32906f` 移出本支的全樹掃描原本要接的就是這一層，接手那支之前這個缺口是開著的。
  *   ⇒ 真正的驗收照舊是**在含 `#`／`%`／空白／中文的實體路徑上跑全套**（本支 PR 說明裡有數字）。
  */
 
