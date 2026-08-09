@@ -18,9 +18,12 @@ import { join, dirname } from 'node:path';
  *
  * ⚠️ 為什麼「語法檢查」不能當這件事的門（與 `test/entry-guard.test.js` 同一個結論）：
  * 掃描器只認得寫法，而同一個錯有無數種自然寫法（解構、存成中間變數、把 base 抽成常數……
- * 每一種都是合法 JS、都真的 ENOENT）。⇒ 門是**這一份實作＋下面那顆載入時的斷言**；
- * `test/test-path-decoding.test.js` 的語法掃描是**早期警告**，射程寫在它自己的誠實劃界那一題裡。
- */export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+ * 每一種都是合法 JS、都真的 ENOENT）。⇒ 門是**這一份實作＋下面那顆載入時的斷言**。
+ * （曾有一層「掃全樹禁止取 `.pathname`」的語法掃描，r18 依複驗者判斷「乙」整層移出本支——
+ * 十七輪都在修掃描器本身，維護成本已高於收益。要接手那層的人：未釐清事項見
+ * `test/test-path-decoding.test.js` 檔頭。）
+ */
+export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // ⚠️ 載入時就吵：這是這一族**不看寫法、只看結果**的檢查。
 //    ⚠️ **只驗「有 package.json」不夠**（r3 阻擋①，複驗者實際重現）：ROOT 若指到**另一棵 checkout**
