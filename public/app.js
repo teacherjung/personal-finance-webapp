@@ -384,26 +384,42 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
 // 少一步就沒生效（使用者實際踩過）。改成開 app 自動比對規則指紋，同一版只跑一次；有動到才出聲。
 (async () => {
   try {
-    const r = await api('/statement/normalize-auto', { method: 'POST' });
-    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用（Codex r4#2）：平時無感自動跑，
+    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用：平時無感自動跑，
     // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
-    if (r?.needsConfirmation) {
-      const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
-      // 真實總數（r4#5 同款）：明細截 50，計數要用 Total——#141 與 #142 平行開發，這裡是會合點
-      const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
-      const lines = [
-        ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
-        ...nc.slice(0, 4).map((/** @type {any} */ c) => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)];
-      const ok = confirm('店名規則有更新，套用後會蓋掉以下你教過／取過的東西（刪掉規則也救不回來）：\n\n'
-        + lines.join('\n') + `\n\n共 ${total} 項。要現在套用嗎？（選取消可稍後到設定頁處理）`);
-      if (!ok) return;
-      const r2 = await api('/statement/normalize-auto', { method: 'POST', body: { force: true } });
-      if (r2?.ran) { toast('店名規則已更新並套用 ✨'); router(); }
-      return;
+    // ⚠️ 迴圈而不是單次 if：後端的 needsConfirmation 是**單一個 truthy 旗標**（形狀與理由見
+    // lib/services/statement-import.js 的 normalizeIfRulesChanged），這裡照著它的通則接——
+    // 認得的原因問完再送一次，不認得的走下面的 else 出聲，不會靜靜掉進「沒事發生」。
+    // ⚠️ 不要在這裡接「備份沒存成也要繼續」那一類確認：不可逆操作前的自動備份是本專案刻意不做的
+    // （理由見 lib/services/backup.js 的設計註解），test/vault-and-backup-integrity.test.js
+    // 的〈裁決〉那一題釘著這條路不得認那種旗標。
+    /** @type {{force?: boolean}} */
+    const answers = {};
+    let r = await api('/statement/normalize-auto', { method: 'POST' });
+    for (let asked = 0; r?.needsConfirmation && asked < 3; asked++) {
+      if (r.needsConfirmation === true) {
+        const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
+        // 真實總數：明細只截 50 筆，計數必須用 Total——否則會把截斷後的筆數冒充成完整總數
+        const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
+        const lines = [
+          ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
+          ...nc.slice(0, 4).map((/** @type {any} */ c) => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)];
+        const ok = confirm('店名規則有更新，套用後會蓋掉以下你教過／取過的東西（刪掉規則也救不回來）：\n\n'
+          + lines.join('\n') + `\n\n共 ${total} 項。要現在套用嗎？（選取消可稍後到設定頁處理）`);
+        if (!ok) return;
+        answers.force = true;
+      } else {
+        // 不認得的原因＝前後端版本走散。**不替使用者猜、也不安靜跳過**：什麼都沒做要說出來。
+        return toast('店名規則這次沒有套用（伺服器回了一個目前看不懂的狀況），資料沒有變動', true);
+      }
+      r = await api('/statement/normalize-auto', { method: 'POST', body: answers });
     }
+    if (r?.needsConfirmation) return toast('店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動', true);
     if (!r?.ran) return;
     const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
       r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
+    // ⚠️ 問過使用者就**一定要回話**（他剛按下的是不可逆的那一步）：
+    // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
     if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
+    else if (answers.force) { toast('店名規則已更新並套用 ✨'); router(); }
   } catch { /* 自動整理失敗靜默略過；設定頁的手動「整理店名格式」仍可用 */ }
 })();

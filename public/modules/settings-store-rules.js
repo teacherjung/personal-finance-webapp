@@ -97,7 +97,7 @@ export function openStoreRulesEditor(rules) {
     title: '店名規則', size: 'lg',
     bodyHtml: `
       <p class="muted" style="font-size:12px;margin-bottom:10px">你自己加的規則<b>優先於系統內建規則</b>。填的都是<b>普通文字</b>（不是程式碼），系統會照字面比對。
-      規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。⚠️ 存下去沒有「復原」可以按，<b>別只靠系統的自動備份</b>（只有<b>本機版</b>才有那一份，而且失敗了畫面不會講）——動手前請先到設定頁最下面「資料與備份」按「匯出備份」存一份。</p>
+      規則對<b>全部</b>記錄生效，所以請先按「預覽影響」看看會改到哪些，確認沒問題再儲存。<b style="color:var(--neg)">儲存後沒有「復原」可以按</b>。</p>
       <div id="ruleEditorBody" style="max-height:50vh;overflow:auto"></div>
       <div class="form-actions">
         <button type="button" class="btn-ghost" data-cancel>取消</button>
@@ -160,6 +160,12 @@ export function openStoreRulesEditor(rules) {
           + lines.join('\n') + (extra > 0 ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
       }
       const r = await api('/statement/rules', { method: 'POST', body: { rules } });
+      // ⚠️ needsConfirmation 是後端共用的「停下來問」旗標（形狀與理由見
+      // lib/services/statement-import.js 的 normalizeIfRulesChanged）：只要回了它就代表
+      // **什麼都沒存**，所以這條路一律接住。不接的話畫面會顯示「規則已儲存」而其實一個字都沒寫
+      // ——比不吭聲更糟。
+      // 這裡刻意**不 close()**：編輯到一半的規則要留在窗裡。
+      if (r?.needsConfirmation) return toast('這次沒有儲存，規則維持原樣（伺服器要求先確認一件事）', true);
       close();
       const bits = [r.changed && `${r.changed} 筆顯示名`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
         r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);

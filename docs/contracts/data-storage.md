@@ -62,13 +62,15 @@
 
 **改這裡**：每日滾動備份（階段四 A，2026-07-27 上線）
 
-**記得同步這裡**：三種備份共用 `store.js snapshotTo(dest)`（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `{tag}.bak`＝backupNow／**每日 `data/backups/` 底下的 store-YYYY-MM-DD.db＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。
+**記得同步這裡**：三種備份共用 `store.js snapshotTo(dest)`（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `{tag}.bak`＝backupNow（**函式還在、正式操作路徑零呼叫**，見下一節的裁決）／**每日 `data/backups/` 底下的 store-YYYY-MM-DD.db＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。
 
-## 不可逆整批操作前的真備份 backupNow
+## 不可逆整批操作刻意沒有操作前備份
 
-**改這裡**：**不可逆整批操作前的真備份 `backupNow(tag)`**（Codex r3#7）
+**改這裡**：**不可逆整批操作「刻意沒有」操作前備份**（William 2026-08-08 裁決）
 
-**記得同步這裡**：`lib/store.js` 的 `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，經 repo 轉供）。**與啟動備份 `.bak` 是不同的檔**：啟動備份每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力——而 UI 原本就寫著「套用前自動備份」，是空頭支票。目前兩個呼叫點：`saveStoreRules`（`pre-rules`）與 `normalizeBranches` 實際套用時（`pre-normalize`）。每個 tag 一顆、重複執行覆蓋（檔案數有上限）。best-effort（同啟動備份的設計決策），失敗只警告不擋操作。`*.bak` 已被 .gitignore 全域排除。**新增其他不可逆的整批操作時，一併加一個 tag。**
+**記得同步這裡**：**現況＝使用者觸發的不可逆整批操作前，沒有這一層備份**。`saveStoreRules`（店名規則儲存）與 `normalizeBranches`（開 app 自動整理）**直接動手**：不產生 `pre-rules`／`pre-normalize` 備份、不擋、不問；畫面只寫「儲存後沒有「復原」可以按」，不承諾任何自動還原檔。低階的 `lib/store.js` `backupNow(tag)` → `data/store.db.{tag}.bak`（VACUUM INTO＋原子替換，`lib/repo.js` 照櫃檯慣例轉供）**函式本身保留**，但**正式操作路徑零呼叫**——它沒有錯，只是沒有使用端；要接新用途之前先讀本節與 `lib/services/backup.js` 檔中的裁決註解。⚠️ **誠實劃界：這條裁決管的是「使用者按下去的整批操作」，不含開庫時的一次性 schema 搬家**——`migrateLedgerIfNeeded`（`pre-ledger-migration.bak`）與證券合約收緊（`pre-sec-contract.bak`）仍各自在動手前寫一顆（兩者都在 `lib/store.js`、各跑一次、不是使用者觸發的），別把本節讀成「repo 裡再也沒有任何 pre-* 備份」。**使用者的救援手段**（都還在）：①每日滾動備份 30 天②自己按的「匯出備份」③啟動 `.bak`。**代價（拍板接受）**：救援粒度從「按下去的前一秒」退成「今天第一次開 app」。⚠️ **想補回來之前先問 William**——`test/vault-and-backup-integrity.test.js` 有一題（⭐ 裁決｜…不得再長出「操作前自動備份」）會擋住任何順手加回的呼叫、旗標與文案承諾。**新增其他使用者觸發的不可逆整批操作時，照這條裁決辦：不要順手配一顆備份。**
+
+〔**沿革（歷史，不是現況）**——留著是為了讓後來的人知道「那是拿掉的，不是漏掉的」：這一層原名「不可逆整批操作前的真備份 `backupNow(tag)`」（Codex r3#7），曾有兩個呼叫點＝`saveStoreRules` 的 `pre-rules` 與 `normalizeBranches` 實際套用時的 `pre-normalize`，理由是啟動備份 `.bak` 每個行程只寫一次（`backedUp` 旗標），對「一天內做了好幾次整批操作」毫無保護力。2026-08-06 之前備份失敗只 `console.warn`、照樣往下做＝畫面仍顯示「儲存成功」；2026-08-06 改成擋下＋確認（`backupBeforeIrreversible`＋`needsConfirmation:'backup_failed'`＋`proceedWithoutBackup` 旗標＋三處文案）；2026-08-08 William 讀完完整拆解後裁決**整層移除**——理由是「那層網會自己失敗，而為了誠實交代它，一個單純的操作長出兩個確認框與三處說明」。08-06 另為它做過一支 `backupSupported()`（分開「本機真失敗」與「HOSTED 本來就沒有」兩種 `false`）——那個判斷本身沒有錯，但唯一使用端隨閘門一起消失，2026-08-09 依「沒用到的程式直接刪」刪掉（Codex #422 r1 指出它是零呼叫的遺留 API）；那條判準的**理由**留在這段沿革裡，真要再做同型能力時連同使用端、契約、考題一起加回來。`*.bak` 已被 .gitignore 全域排除。〕
 
 ## 測試隔離慣例 B0
 

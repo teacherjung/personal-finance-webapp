@@ -410,7 +410,7 @@ const MANIFEST = {
       'kv 的鍵',
       '本機檔案操作一律經櫃檯',
       '每日滾動備份',
-      '不可逆整批操作前的真備份 backupNow',
+      '不可逆整批操作刻意沒有操作前備份',
       '測試隔離慣例 B0',
     ],
     exempt: [],
@@ -437,6 +437,7 @@ const MANIFEST = {
       'test/hosted-store-pg.test.js',
       'test/repo-async.test.js',
       'test/server.test.js',
+      'test/vault-and-backup-integrity.test.js',
     ],
   },
   'docs/contracts/frontend-features.md': {

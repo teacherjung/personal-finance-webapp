@@ -230,7 +230,7 @@
 | **「規則入櫃檯」**（第三帖）：`lib/repo.js` 每次讀取都把 `settings.storeRules` 餵給 `store-rules.js` 的模組級單例 | `repo.js` 每次讀取都經 `loadSynced()` 餵規則進純函式模組；預覽要講兩種不可逆變更；預覽失敗不可繼續儲存——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則入櫃檯) |
 | 規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據） | 內建規則雜湊＋使用者規則**每次重算**；`normalizeIfRulesChanged` 必須**先 `getDb()` 再算指紋**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則指紋-storeruleshash) |
 | 店名規則的 API 與 UI | 四個端點（讀／全庫影響預覽／存檔即套用／孤兒學習條目）＋設定頁編輯器；預覽返回不可用 innerHTML 還原——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#店名規則的-api-與-ui) |
-| **不可逆整批操作前的真備份 `backupNow(tag)`**（Codex r3#7） | 與啟動備份不同檔：每 tag 一顆、重複執行覆蓋；best-effort 失敗只警告不擋操作；新增不可逆整批操作時一併加 tag——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#不可逆整批操作前的真備份-backupnow) |
+| **不可逆整批操作「刻意沒有」操作前備份**（William 2026-08-08 裁決） | 店名規則與開 app 自動整理**不做** `pre-rules`／`pre-normalize` 備份、不擋、不問；畫面只寫「儲存後沒有『復原』可以按」，不承諾自動還原檔。救援＝每日滾動備份 30 天＋使用者自己按的「匯出備份」。⚠️ **看到「不可逆卻沒備份」想補的人先讀裁決**（`lib/services/backup.js` 檔中註解）——那是拿掉的、不是漏掉的，`test/vault-and-backup-integrity.test.js` 有一題釘著——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#不可逆整批操作刻意沒有操作前備份) |
 | 帳單上傳「免選卡」自動歸卡（`POST /api/statement/preview`） | 逐卡試密碼→判銀行末四碼→對卡決策樹三段；認不出一律退回請使用者選；pdfjs detach ArrayBuffer 的坑——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單上傳免選卡自動歸卡) |
 | 帳單匯入批次／事後整批改卡片 | `importBatch` 批次代號；整批改卡＝重寫 `stmtRef` 卡片前綴；**`stmtRef` 一律由伺服器端重算**（偽造會繞過去重）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單匯入批次與事後整批改卡片) |
 | 帳單「自動學習」店名＋分類（`db.learnedCategories`＝{ `storeKey`(cleanStore後原名) → {category?,subcategory?,name?} }） | key＝`storeKey`（品牌層）；**分類記品牌層、顯示名記原文級**；品牌層永不留 `name`，且「不留」的手段是搬家不是刪除——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單自動學習店名與分類) |

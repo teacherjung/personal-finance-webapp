@@ -16,24 +16,20 @@ const storeSort = { ...STORE_SORT_DEFAULT };
 /**
  * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
  *
- * ⚠️⚠️ **這一句兩種模式都必須成立**（r1 審查者抓到，2026-08-06 改）。原本寫的是
- *    「所有資料只存在本機 `data/store.db`（SQLite）」——在雲端版那是**明確錯誤的資料存放／隱私說明**
- *    （雲端資料在 Supabase），而使用者正是在「要不要相信這個 app」的時刻讀到它。
- *    這張**卡片的說明**刻意不分流：改成只講「這裡能做什麼」，不替任何一種模式宣稱資料放在哪。
- *    ⚠️ 但**匯出前的告知窗**自 2026-08-08 起**依模式講真話**（William 裁決；`GET /api/mode` 的
- *    最小分流，見 docs/contracts/cloud-security.md「匯出前告知的模式分流」）——因為
- *    `/api/export` 兩種模式含不含機密**刻意相反**，一句話講不準兩邊，而講錯方向會害本機
- *    使用者把含 IB 憑證的檔案轉寄出去。授權範圍僅止於那個布林，別擴張。
- * ⚠️⚠️ **「整包」兩個字已經刪掉**（r2 審查者抓到，2026-08-06 再改）：上一版寫「把你的資料**整包**
- *    匯出成一個檔案」——在雲端版那是假的。HOSTED 的 `/api/export` 走 `stripSecretsForBackup(db)`
- *    （`lib/routes/core.js` 的 export 路由 ＋ `lib/secret-fields.js`），**刻意**剝掉 IB flexToken／
- *    信用卡帳單 PDF 密碼／證券對帳單密碼／完整帳號（C5 裁決⑤）。舊句錯在「資料放哪」、
- *    上一版錯在「檔案裡有什麼」——換一個病灶不算治好。所以連「整包／全部／完整」這類**宣稱檔案內容
- *    完整**的字都不寫：不加任何模式資訊，兩種模式就都成立。
- * ✅ **雲端語氣的那一句已裁決並實作**（William 2026-08-08）：匯出前的告知窗依模式講真話
- *    （`EXPORT_NOTICE_LOCAL`／`EXPORT_NOTICE_HOSTED`＋`GET /api/mode`，完整規則見
- *    docs/contracts/cloud-security.md「匯出前告知的模式分流」）。**這張卡片的說明本身仍不分流**
- *    ——它講的是「這裡能做什麼」，兩種模式都成立，不需要模式資訊。
+ * ⚠️⚠️ **這張卡片的說明拿不到模式資訊，所以每一句都必須兩種模式同時成立**——它刻意只講
+ *    「這裡能做什麼」，不替任何一種模式宣稱資料放在哪、也不宣稱檔案裡有什麼。
+ *    以下寫法無法在兩種模式同時成立：
+ *    ①寫「所有資料只存在本機 `data/store.db`（SQLite）」＝雲端版的資料在 Supabase，那是明確錯誤的
+ *      資料存放／隱私說明，而使用者正是在「要不要相信這個 app」的時刻讀到它；
+ *    ②寫「把你的資料**整包**匯出成一個檔案」＝HOSTED 的 `/api/export` 走 `stripSecretsForBackup(db)`
+ *      （`lib/routes/core.js` 的 export 路由＋`lib/secret-fields.js`），**刻意**剝掉 IB flexToken／
+ *      信用卡帳單 PDF 密碼／證券對帳單密碼／完整帳號（C5 裁決⑤），所以那句在雲端版是假的。
+ *    ⇒ 「整包／全部／完整」這類**宣稱檔案內容完整**的字一律不寫：換一個病灶不算治好。
+ * ⚠️ **要分流的那一句不在這裡**：`/api/export` 兩種模式含不含機密**刻意相反**，一句話講不準兩邊，
+ *    講錯方向會害本機使用者把含 IB 憑證的檔案轉寄出去，所以匯出前的告知窗才依模式講真話
+ *    （`EXPORT_NOTICE_LOCAL`／`EXPORT_NOTICE_HOSTED`＋`GET /api/mode`）。授權範圍僅止於那個布林，
+ *    別擴張成「前端什麼環境資訊都能問」——完整規則見 docs/contracts/cloud-security.md
+ *    「匯出前告知的模式分流」節。
  */
 const BACKUP_CARD_NOTE = '可以把你的資料匯出成一個檔案（JSON 檔）存起來。'
   + '建議定期匯一份、放到你自己找得到的地方——要還原的時候用「匯入備份」讀回來。';
@@ -118,7 +114,14 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">店名規則（自己加規則）${ruleCount ? `<span class="store-rank">${ruleCount} 條</span>` : ''}</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">以前發現店名要改，得等我改程式；現在你可以<b>自己加規則</b>。可以做四件事：把同一家店的不同寫法<b>合併</b>、把銀行截斷的名字<b>併回品牌名</b>（分店保留）、單純<b>改個名字</b>、告訴系統某個<b>連鎖</b>怎麼切分店。填的都是普通文字、不是程式碼。改完先<b>預覽影響</b>再儲存，儲存後立刻套用到所有舊記錄。⚠️ 存下去沒有「復原」可以按——動手前請先到本頁最下面「資料與備份」按「匯出備份」存一份（<b>本機版</b>另外會自己存一份還原檔 <code>data/store.db.pre-rules.bak</code>，但那是盡力而為、失敗了畫面不會講；<b>雲端版</b>沒有這一份，別只靠它）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:6px">「編輯店名規則」可以做四件事：</p>
+      <ol class="muted" style="font-size:12px;margin:0 0 8px;padding-left:20px">
+        <li>把帳單同一店名的「不同寫法」合併</li>
+        <li>把帳單「店名截斷的部分」併回來</li>
+        <li>單純更改成喜歡的店名</li>
+        <li>告訴系統某個連鎖店怎麼切出店名</li>
+      </ol>
+      <p style="font-size:12px;margin-bottom:14px;color:var(--neg)"><b>儲存後沒有「復原」可以按</b></p>
       <div><button class="btn-ghost" id="storeRulesBtn">${icon('edit', 16) || ''}編輯店名規則</button></div>
     </div>
 
