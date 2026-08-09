@@ -384,19 +384,21 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
 // 少一步就沒生效（使用者實際踩過）。改成開 app 自動比對規則指紋，同一版只跑一次；有動到才出聲。
 (async () => {
   try {
-    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用（Codex r4#2）：平時無感自動跑，
+    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用：平時無感自動跑，
     // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
-    // ⚠️ 迴圈而不是單次 if：「停下來問」目前只有一種原因（學習表會被蓋掉），但欄位形狀刻意保留
-    // 「truthy 就要問」的通則——將來多一種原因時，不認得的那一種會走到下面的 else 出聲，
-    // 不會靜靜掉進「沒事發生」。（2026-08-06 曾有第二種原因＝操作前備份沒存成，
-    // William 2026-08-08 裁決整層拿掉那個機制，連旗標一起移除；別順手補回來。）
+    // ⚠️ 迴圈而不是單次 if：後端的 needsConfirmation 是**單一個 truthy 旗標**（形狀與理由見
+    // lib/services/statement-import.js 的 normalizeIfRulesChanged），這裡照著它的通則接——
+    // 認得的原因問完再送一次，不認得的走下面的 else 出聲，不會靜靜掉進「沒事發生」。
+    // ⚠️ 不要在這裡接「備份沒存成也要繼續」那一類確認：不可逆操作前的自動備份是本專案刻意不做的
+    // （理由見 lib/services/backup.js 的設計註解），test/vault-and-backup-integrity.test.js
+    // 的〈裁決〉那一題釘著這條路不得認那種旗標。
     /** @type {{force?: boolean}} */
     const answers = {};
     let r = await api('/statement/normalize-auto', { method: 'POST' });
     for (let asked = 0; r?.needsConfirmation && asked < 3; asked++) {
       if (r.needsConfirmation === true) {
         const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
-        // 真實總數（r4#5 同款）：明細截 50，計數要用 Total——#141 與 #142 平行開發，這裡是會合點
+        // 真實總數：明細只截 50 筆，計數必須用 Total——否則會把截斷後的筆數冒充成完整總數
         const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
         const lines = [
           ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
@@ -415,7 +417,7 @@ export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
     if (!r?.ran) return;
     const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
       r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
-    // ⚠️ 問過使用者就**一定要回話**（原本那條路的既有保證，別在重構時弄丟）：
+    // ⚠️ 問過使用者就**一定要回話**（他剛按下的是不可逆的那一步）：
     // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
     if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
     else if (answers.force) { toast('店名規則已更新並套用 ✨'); router(); }

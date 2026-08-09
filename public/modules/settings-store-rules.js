@@ -160,8 +160,10 @@ export function openStoreRulesEditor(rules) {
           + lines.join('\n') + (extra > 0 ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
       }
       const r = await api('/statement/rules', { method: 'POST', body: { rules } });
-      // ⚠️ 後端若回 needsConfirmation（目前這條路不會，但欄位形狀是共用的），代表**什麼都沒存**。
-      // 不接住的話畫面會顯示「規則已儲存」而其實一個字都沒寫——比不吭聲更糟。
+      // ⚠️ needsConfirmation 是後端共用的「停下來問」旗標（形狀與理由見
+      // lib/services/statement-import.js 的 normalizeIfRulesChanged）：只要回了它就代表
+      // **什麼都沒存**，所以這條路一律接住。不接的話畫面會顯示「規則已儲存」而其實一個字都沒寫
+      // ——比不吭聲更糟。
       // 這裡刻意**不 close()**：編輯到一半的規則要留在窗裡。
       if (r?.needsConfirmation) return toast('這次沒有儲存，規則維持原樣（伺服器要求先確認一件事）', true);
       close();

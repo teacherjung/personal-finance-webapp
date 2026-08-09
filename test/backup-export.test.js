@@ -4,9 +4,9 @@
 // 這一族守的是一個**靜靜失敗**：一顆純 `<a href="/api/export" download>` 的鈕，
 // 瀏覽器把回應直接存成檔案，成功失敗都不出聲。雲端版 session 過期時，存下來的是一個
 // 內容是錯誤訊息（或登入頁 HTML）的 `.json`，而使用者以為自己有備份了。
-//    ⚠️ 這一族的價值**不取決於畫面上有沒有文案叫人先按它**：不可逆操作前的自動備份是本專案
-//    刻意不做的（設計註解在 lib/services/backup.js），所以使用者按得出來的備份就只有這顆鈕，
-//    它靜靜失敗照樣是靜靜失敗。指路文案增減都不改變這一點，不要拿它當放寬本族的理由。
+//    ⚠️ 這一族的價值**不取決於畫面上有沒有文案叫人先按它**：沒有人叫他按，他自己按了照樣會
+//    拿到一個內容是錯誤訊息的 .json、照樣以為自己有備份。指路文案增減都不改變這一點，
+//    不要拿它當放寬本族的理由。
 //
 // ⚠️ 每一條都要問「弄壞它，我這條會紅嗎」。三道關卡各自有專屬的紅：
 //    ①HTTP 狀態沒看 ②內容 parse 不出 JSON 沒看 ③parse 出來但不是備份（錯誤信封）沒看。
@@ -115,9 +115,8 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
   // 真實的備份是幾千筆，四位數以上要分節才讀得出量級（他就是靠這個數字判斷備份不是空的）
   assert.match(okMsg(3214, 'x.json'), /3,214/, '筆數要有千分位');
   // ⚠️ 這個數字是**所有頂層陣列的元素數總和**（實測 17 個集合：帳戶／交易／持股／每日淨值／快照／歷史…），
-  //    跟他在收支頁看得到的筆數差很多。把這件事講明的那句「全部加起來」被 **William 2026-08-08
-  //    裁決「太長」**拿掉：筆數與檔名一起放在括號裡當「量級參考」，句子主體只講下一步
-  //    （請至下載確認檔案）。
+  //    跟他在收支頁看得到的筆數差很多，而句子裡刻意不解釋這個差別：成功句只留一行、主體給下一步
+  //    （請至下載確認檔案），筆數與檔名一起放在括號裡當「量級參考」。
   //    ⚠️ 所以**這個數字**那幾格只釘「有筆數、有千分位、有檔名、放在括號裡」，不釘那句解釋；
   //    成功句本身的口徑（黑名單／「匯出成功」／「下載｜確認」）由上面幾格釘。
   //    代價誠實記著：他若拿這個數字去對收支頁的筆數，畫面上沒有東西提醒他兩者不同。
@@ -125,11 +124,11 @@ test('匯出｜成功：檔案落下去、而且真的出聲說存了幾筆', as
 });
 
 test('匯出｜伺服器怎麼排版就照樣落檔（不重新序列化；換成排版過的 JSON 也原封不動）', async () => {
-  // ⚠️ 這一題是補洞補上的：上面那題用的 `GOOD_BODY` 是緊湊、鍵序 canonical 的 JSON，而
-  //    `JSON.stringify(JSON.parse(x)) === x` 對那種字串**剛好成立**——實測把落檔改成
-  //    `saveFile(filename, JSON.stringify(parsed))`，整份考題照樣全綠＝檔頭那條「不重新序列化」
-  //    的保證根本沒有考題撐著。
-  //    今天的 `/api/export` 走 `res.json()` 確實是緊湊的（repo 沒有設 `json spaces`），
+  // ⚠️ 為什麼上面那題撐不住這件事：它用的 `GOOD_BODY` 是緊湊、鍵序 canonical 的 JSON，而
+  //    `JSON.stringify(JSON.parse(x)) === x` 對那種字串**剛好成立**——把落檔換成
+  //    `saveFile(filename, JSON.stringify(parsed))`，只有這一題會紅；沒有它，檔頭那條
+  //    「不重新序列化」的保證就沒有考題撐著。
+  //    `/api/export`（`lib/routes/core.js`）走 Express `res.json()`＝緊湊輸出（repo 沒有設 `json spaces`），
   //    但只要有人 `app.set('json spaces', 2)`、或前面擺一個會重排的代理，重新序列化就會**靜靜改掉**
   //    備份檔的內容——而這個檔案的用途正是「原封不動還原」。
   const pretty = JSON.stringify({ settings: { currency: 'TWD' }, transactions: [{ id: 't1' }] }, null, 2);
@@ -152,9 +151,9 @@ test('匯出｜HTTP 狀態不 ok（雲端版 session 過期）：不可落檔，
   assert.equal(saved.length, 0, '失敗時一個檔都不可以落下去——落了就是「他以為自己有備份」');
   assert.equal(toasts.length, 2);   // 「匯出中…」＋結果
   assert.equal(result.isErr, true);
-  assert.match(out.reason, /請先登入/, '伺服器講的原因要留在回傳 reason 裡（排查用；畫面只給下一步——William 2026-08-08「太長」的裁決）');
+  assert.match(out.reason, /請先登入/, '伺服器講的原因要留在回傳 reason 裡（排查用；畫面只留一行下一步，不放原話）');
   assert.match(result.msg, /匯出失敗/, '必須明講失敗，否則他會以為存好了');
-  // ⚠️ 這一格是補洞補上的：讓伺服器的文字原因**取代**狀態碼的寫法會有這個破口——我們自己的 5xx
+  // ⚠️ 狀態碼為什麼要另外釘一格：讓伺服器的文字原因**取代**狀態碼的寫法會有這個破口——我們自己的 5xx
   //    一定帶 JSON 原因（`/api/export` 走 `lib/routes/core.js` 的 `asyncRoute` → `server.js` 的
   //    全域錯誤中介 `res.status(500).json({ error })`）＝最需要狀態碼的那條路剛好丟掉它。
   assert.match(out.reason, /401/, '狀態碼要留在 reason 裡：那是他來問我時唯一能定位的線索（畫面上不放）');
@@ -190,14 +189,14 @@ test('匯出｜伺服器自己掛了（500）：照樣不落檔，但**不可以
   assert.match(result.msg, /匯出失敗/);
   assert.doesNotMatch(result.msg, /登入/,
     '500 不可以叫他重新登入：那是伺服器那一端掛了，叫他登入只會讓他在錯的地方繞');
-  // ⚠️ 這一格是補洞補上的：舊稿在 500 只講「伺服器回 500 Internal Server Error」就停住——
+  // ⚠️ 為什麼「有線索」還不夠：只講「伺服器回 500 Internal Server Error」就停住的話，
   //    他不懂 500 是什麼、也不知道要幹嘛。有線索不等於有下一步。
   assert.match(result.msg, /再試|告訴我/,
     '光把狀態碼丟給他不算幫到他：500 要給下一步（等一下再試／把這句話告訴我）');
 });
 
 test('匯出｜403：不落檔，而且**不可以**叫他重新登入（GET 不可能因登入被擋）', async () => {
-  // ⚠️ 這一題是補洞補上的：舊版把 403 跟 401 綁在一起給「可能是登入過期了——重新登入再試一次」，
+  // ⚠️ 403 為什麼要跟 401 分開立題：把兩者綁在一起給「可能是登入過期了——重新登入再試一次」，
   //    那是**假的下一步**。本專案唯一會回 403 的地方是 `csrfOriginGuard`（lib/routes/auth.js），
   //    而它 `GET/HEAD/OPTIONS` 直接放行——`/api/export` 是 GET，所以我們自己的程式不可能因為
   //    登入狀態回 403（真回 403 是前面的代理／CDN 擋掉）。叫他登入他會反覆登入、以為是自己的問題。
@@ -240,8 +239,8 @@ test('匯出｜狀態 ok、是 JSON，但是錯誤信封（沒有任何集合）
 });
 
 test('匯出｜200 ＋ 錯誤信封 `{"errors":[…]}`（JWT 過期那一型）⇒ 不可落檔、要出聲', async () => {
-  // ⚠️⚠️ 這是 r1 的 High：舊版關卡③只要求「頂層有任一陣列」，而 `errors` 自己就是陣列——
-  //    於是這一包會**落檔**並顯示「已存下備份：共 1 筆紀錄」，使用者以為自己有備份了，
+  // ⚠️⚠️ 這一包是最毒的一型：關卡③若只要求「頂層有任一陣列」，`errors` 自己就是陣列——
+  //    於是它會**落檔**並顯示「已存下備份：共 1 筆紀錄」，使用者以為自己有備份了，
   //    硬碟上那個 .json 其實寫著「JWT expired」。各家閘道（Supabase／GraphQL 風格中間層）
   //    很常這樣回，而且它回的是 200，關卡①攔不到。
   //    修法**不需要**列舉集合：①帶 error／errors 鍵的一律不收 ②頂層必須有 settings 物件。
@@ -296,7 +295,7 @@ test('匯出｜連不上伺服器（fetch reject）⇒ 出聲、不落檔、不�
   assert.match(out.reason, /連線中斷/);   // 同上
   assert.match(result.msg, /匯出失敗/, '連不上也要明講失敗，否則他不知道要不要重做一次');
   assert.match(result.msg, /網路/, '這一條的下一步是「檢查網路連線」（William 2026-08-08 定案的字）');
-  // ⚠️ 這一格是補洞補上的：這條路的 `err.message` 在真瀏覽器裡是「Failed to fetch」，對他毫無意義，
+  // ⚠️ 為什麼還要多釘這一格：這條路的 `err.message` 在真瀏覽器裡是「Failed to fetch」，對他毫無意義，
   //    而這**正是本機版最常見的失敗**（後端沒開／改完程式忘了重啟）。原因看不懂又沒有下一步＝等於沒說。
   assert.match(result.msg, /後端|網路/,
     '連不上要給下一步：本機版八成是後端沒在跑（「連線中斷」四個字他看不出要去做什麼）');
@@ -312,7 +311,7 @@ test('匯出｜讀回應途中斷線（text() 丟錯）⇒ 出聲、不落檔', 
 });
 
 test('匯出｜三關全過、但落檔那一步自己丟錯 ⇒ 一定要改口出聲，絕不可以說「已存下」', async () => {
-  // ⚠️ 這一題是補洞補上的：`saveFile` 丟錯若沒被接住，會讓整個 `runExport` reject，**一句話都不會出現**
+  // ⚠️ 為什麼最後一步也要立一題：`saveFile` 丟錯若沒被接住，會讓整個 `runExport` reject，**一句話都不會出現**
   //    ——靜靜失敗發生在最後一步，正是 `runExport` 存在的理由。而且畫面上若先說了「已存下備份」、
   //    硬碟上卻一個檔都沒有，那比舊版更糟（舊版至少沒騙他）。
   const { out, saved, toasts, result } = await run(res({ body: GOOD_BODY, headers: GOOD_HEADERS }), { saveThrows: '磁碟空間不足' });
@@ -339,7 +338,7 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.equal(summarizeBackup({ settings: {}, transactions: [] }).ok, true, '空集合是合法備份（新使用者）');
   assert.equal(summarizeBackup({ error: '請先登入' }).ok, false, '錯誤信封沒有任何集合 ⇒ 不是備份');
   assert.equal(summarizeBackup({}).ok, false);
-  // ── r1 的 High：狀態 200 的錯誤信封（只要求「有頂層陣列」擋不住它，`errors` 自己就是陣列 ⇒ 過關落檔）──
+  // ── 狀態 200 的錯誤信封：只要求「有頂層陣列」擋不住它（`errors` 自己就是陣列 ⇒ 過關落檔）──
   //    兩條防線都不必列舉集合：①自帶 error／errors 鍵 ②頂層必須有 settings 物件。
   assert.equal(summarizeBackup({ errors: [{ message: 'JWT expired' }] }).ok, false,
     '`{"errors":[…]}` 有頂層陣列，但它是錯誤信封、不是備份（舊版會落檔並報「1 筆紀錄」）');
@@ -348,10 +347,10 @@ test('判準｜「長得像備份」認的是性質（頂層 settings ＋ 有陣
   assert.match(summarizeBackup({ errors: ['請先登入'] }).reason, /請先登入/, '字串陣列的形狀也要撈');
   assert.equal(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [{ message: '一半' }] }).ok, false,
     '形狀再完好，只要自己宣告有錯就不可以當成完整備份（部分成功比整包失敗更毒）');
-  // ⚠️ 這兩格改過（突變 M4 抓到我自己寫了一格**證不倒的斷言**）：光寫 `{errors:[]}` 並允許原因
-  //    落在「不是一份備份檔」上不行——那句話是**下一關**（缺 settings）給的，所以把撈不出人話時的
-  //    出聲整段刪掉，考題照樣全綠。要寫成「形狀完好、只差自帶一個空的 errors 欄位」：這時只有
-  //    錯誤信封那條防線在，證得倒。
+  // ⚠️ 這兩格為什麼要餵「形狀完好、只差自帶一個空的 errors 欄位」：光寫 `{errors:[]}` 並允許原因
+  //    落在「不是一份備份檔」上是**證不倒的斷言**——那句話是**下一關**（缺 settings）給的，
+  //    把撈不出人話時的出聲整段刪掉，考題照樣全綠。補上 settings 與一筆交易之後，
+  //    擋住它的只剩錯誤信封那條防線，這兩格才證得倒。
   assert.equal(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).ok, false,
     '自帶 errors 欄位就不收（判準是鍵名，不是內容）——撈不出人話也一樣不收');
   assert.match(summarizeBackup({ settings: {}, transactions: [{ id: 't1' }], errors: [] }).reason, /錯誤/,
@@ -509,9 +508,9 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
   const toastProp = sliceProp(args, 'toast');
   assert.notEqual(toastProp, '', 'runExport 必須拿到 toast，否則成功失敗都不出聲');
   const toastVal = toastProp.replace(/^toast\s*:?/, '').trim();
-  // ⚠️ 收緊過（r1 審查者實測，2026-08-06）：舊版只問「這一段裡有沒有出現 toast 這個字」，於是
-  //    `toast: () => toast` 就過關了——它把 toast 當回傳值、**一次也沒呼叫**，使用者依舊聽不到一聲。
-  //    所以改成問「是不是原封傳進去（`toast,`／`toast: toast`）或**真的呼叫**了 toast(…)」。
+  // ⚠️ 判準為什麼不是「這一段裡有沒有出現 toast 這個字」：那樣 `toast: () => toast` 就過關了
+  //    ——它把 toast 當回傳值、**一次也沒呼叫**，使用者依舊聽不到一聲。
+  //    所以問的是「是不是原封傳進去（`toast,`／`toast: toast`）或**真的呼叫**了 toast(…)」。
   assert.ok(toastVal === '' || toastVal === 'toast' || /\btoast\s*\(/.test(toastVal),
     '傳進去的必須是**真的那個 toast**（簡寫 `toast,`、`toast: toast`、或包一層但真的呼叫 `toast(...)`）——'
     + '實測 `toast: () => {}` 與 `toast: () => toast` 三道關卡照樣跑、全樹照樣全綠，但使用者按下匯出後'
@@ -524,8 +523,8 @@ test('接線｜設定頁那顆匯出鈕真的走這支模組，而且注入的�
     + '實測改成 `saveFile: () => {}` 也全綠，而畫面會說「已經把備份交給瀏覽器下載：…3,214 筆紀錄」'
     + '而下載根本沒發生，'
     + '那比舊版更糟（舊版至少沒騙他）');
-  // ⚠️ 這一格收緊過：把「有設定 `.download`」也當成「觸發了下載」＝誤判（r1 審查者實測：只刪掉
-  //    `a.click()` 這一行，這一題照樣全綠，而按下匯出什麼都不會下載）。設定屬性不是動作，
+  // ⚠️ 只設定 `.download` 不代表觸發下載：把設定屬性也算成「觸發了下載」的話，只要刪掉
+  //    `a.click()` 這一行，這一題照樣全綠，而按下匯出什麼都不會下載。設定屬性不是動作，
   //    所以只認**真的會動作的東西**：`click()`／`write`／`showSaveFilePicker`／`msSaveBlob`。
   //    ⚠️ `dispatchEvent` 也算（`a.dispatchEvent(new MouseEvent('click'))` 是等價寫法，
   //       不列進來會讓那種改寫假紅）。
