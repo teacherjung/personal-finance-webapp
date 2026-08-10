@@ -13,9 +13,12 @@
 #    ② 它會蓋掉 `git -C <路徑>` 與 `execFileSync(..., { cwd })` ⇒ 宣稱「掃這棵樹」的考題
 #       其實掃的是 GIT_DIR 那棵。
 #    考題跑在這個環境下沒有任何好處，所以在這裡一次清乾淨。
-#    ⚠️ 這串名字的**單一真相**是 scripts/check-worktree-integrity.js 的 GIT_DISCOVERY_ENV，
-#       test/worktree-integrity.test.js 會實際跑這支 hook、驗每一個都真的被清掉。
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+#    ⚠️ **按 `GIT_` 前綴整族清、不列名**（#435 r1 High②；同教訓＝#433 r14：精確列名補不完——
+#       GIT_CONFIG_PARAMETERS 與 GIT_CONFIG_COUNT/KEY_n/VALUE_n 是 `git -c` 會生出來、會長的一族，
+#       另有 GIT_EXEC_PATH 等）。體檢腳本的 cleanGitEnv 同語意；GITHUB_* 不是 GIT_ 前綴、不受影響。
+#       test/worktree-integrity.test.js 會實際跑這支 hook、驗注入的（含未列名的）GIT_* 全被清掉。
+for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
+unset _gitvar
 
 echo "🚧 自動守門：工作樹體檢→校對→糾察→考試→工作樹複檢，全過才放行 push…"
 node scripts/check-worktree-integrity.js || { echo "❌ 工作樹體檢沒過（push 之前就已經壞了）。照上面的訊息還原再推。"; exit 1; }

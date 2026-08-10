@@ -30,19 +30,26 @@
 // 整套考題都是在那個環境下跑的**。同一個 `GIT_DIR` 還有第二個副作用：它會蓋掉
 // `git -C <路徑>` 與 `execFileSync(..., { cwd })`，讓「掃這棵樹」的考題其實掃到別棵。
 //
-// ⚠️ **誠實劃界①：肇因沒有查明，上面是「重現得出來的機制」，不是「那天就是這樣發生的」。**
-//    2026-08-09 查過全樹與 PR #433 的 11 個 commit，**沒有任何一處 `git init`**；當時同時有
-//    多方在跑（考題、Codex 審查行程、可能的並行 session），現場沒留下足以指認的痕跡。
-//    所以這支只做兩件做得到的事：**把壞掉的狀態驗出來**，以及讓 `pre-push` 把 `GIT_DIR`
-//    清掉、不再把那個前提條件交給考題。
+// ⚠️ **誠實劃界①（2026-08-10 更正）：肇因已有高度吻合的證據鏈，但沒有當場的行程目擊。**
+//    本檔第一版這裡寫「查過 PR #433 的 11 個 commit，沒有任何一處 `git init`、已排除」——那是
+//    **誤判**：程式裡寫的是 `git('init', '-q')` 輔助函式呼叫，拿字面「git init」去掃掃不到
+//    （掃描器說謊的老病型）。#435 r1 提出、並經獨立重現的直接證據：
+//      ・`4ab8e0b` 與 `0c0b176`（#433 過程 commit）的 test/test-path-decoding.test.js 各有一處
+//        `git('init', '-q')`；兩顆 commit 時間 01:28:33／10:34:07，與兩次事故（01:28／10:34:27）
+//        分秒貼合；#433 的收案訊息也自載那顆 fixture 弄壞過主 repo，最終版已把 git init 移除。
+//    所以「上面的機制」不只是重現得出來——它就是證據指向的肇因鏈（fixture 的 git init ×
+//    hook 環境的 GIT_DIR）。本檔職責不變：把壞掉的狀態驗出來，並讓 `pre-push` 把 `GIT_*`
+//    整族清掉、不再把那個前提條件交給考題。
 //
 // ⚠️ **誠實劃界②：這是絆線，不是預防。** 考題檔案彼此獨立、`node --test` 的檔案順序不保證，
 //    所以「某支考題把 repo 弄壞」這件事，本檔**不保證在同一次執行裡當場抓到**——真正釘住它的是
 //    `scripts/git-hooks/pre-push`：那裡在 `npm test` **之後**再跑一次本檔，考試把樹弄壞就推不出去。
 //
-// ⚠️ **誠實劃界③：本檔只驗「你指給它的那一棵樹」。** 不逐一走訪 43 棵——因為壞掉的
-//    `core.bare` 住在共用 config，從任何一棵樹看都是同一個值，驗一棵就夠。
-//    反過來說，**單一 worktree 自己的 `config.worktree` 被寫壞**，只有在那棵樹裡跑才驗得到。
+// ⚠️ **誠實劃界③：本檔驗「你指給它的那一棵樹」＋共用 config 的原始值。**
+//    共用層（`core.bare`）**直接讀共用 config 檔**、不吃 effective 值——不然某棵樹自己的
+//    `config.worktree` 覆寫會把共用層的壞掩住（#435 r1 Medium③實測）。所以共用層的壞，
+//    驗一棵就看得到；但「**別棵**樹自己的 `config.worktree` 被寫壞」仍只有在那棵樹裡跑
+//    才驗得到——本檔不逐棵走訪。
 //
 // 用法：node scripts/check-worktree-integrity.js
 // 退出碼：0＝這棵樹的工作樹身分正常；1＝有問題（訊息裡附還原指令）
@@ -50,28 +57,18 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 
 /**
- * 會讓 git「不看你給的路徑、改看環境變數」的變數名。
+ * 把 git 的環境變數從一份環境裡拿掉——**按 `GIT_` 前綴整族清，不列名**。
  *
- * ⚠️ 具名匯出是給考題與 hook 用的**單一真相**：`test/worktree-integrity.test.js` 拿這份清單
- *    逐字檢查 `pre-push` 有沒有把它們全部 `unset`。手寫兩份的話，哪天多一個變數只會漏在其中一邊。
- */
-export const GIT_DISCOVERY_ENV = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_COMMON_DIR',
-  'GIT_PREFIX',
-];
-
-/**
- * 把上面那些變數從一份環境裡拿掉。
+ * ⚠️ 為什麼不列名（#435 r1 High②；同教訓＝#433 r14）：精確列名補不完。
+ *    `git rev-parse --local-env-vars` 之外還有 `GIT_CONFIG_PARAMETERS`、
+ *    `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` 這種**會長的一族**（`git -c` 就會生出來），
+ *    以及 `GIT_EXEC_PATH` 等；漏掉任何一個，「清乾淨了」就是假的。前綴是唯一關得起來的門。
+ *    （`GITHUB_*` 不是 `GIT_` 前綴——第四個字元是 H 不是底線——不受影響；考題有釘。）
  *
  * ⚠️ 這不是潔癖：**體檢本身若在 `GIT_DIR` 之下跑，量到的就不是你指的那棵樹**
  *    （從 worktree push 時 hook 的環境正是如此），那會變成「靜靜量了別棵樹、回報一切正常」。
@@ -81,8 +78,10 @@ export const GIT_DISCOVERY_ENV = [
  */
 export function cleanGitEnv(env) {
   /** @type {NodeJS.ProcessEnv} */
-  const out = { ...env };
-  for (const key of GIT_DISCOVERY_ENV) delete out[key];
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith('GIT_')) out[key] = value;
+  }
   return out;
 }
 
@@ -130,21 +129,31 @@ function runGit(args, cwd) {
 }
 
 /**
- * 找出這棵樹的**共用** config 檔（`.git` 可能是目錄，也可能是連結工作樹的那一行指標檔）。
+ * 這棵樹的 gitdir（主目錄＝`<repo>/.git`；連結工作樹＝`.git` 指標檔裡的那個路徑）。
+ * 純檔案操作，不經過 git ⇒ repo 已經壞掉時照樣讀得到。
+ * `core.worktree` 的相對路徑就是以這裡為基準解的（git 文件：relative to $GIT_DIR）。
+ *
+ * @param {string} repoDir
+ * @returns {string | null}
+ */
+function gitDirPath(repoDir) {
+  const dotGit = join(repoDir, '.git');
+  if (!existsSync(dotGit)) return null;
+  if (!statSync(dotGit).isFile()) return dotGit;
+  const m = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m);
+  return m ? resolve(repoDir, m[1]) : null;
+}
+
+/**
+ * 找出這棵樹的**共用** config 檔（走 gitdir → commondir）。
  * 純檔案操作，不經過 git ⇒ repo 已經壞掉時照樣讀得到。
  *
  * @param {string} repoDir
  * @returns {string | null} 讀不出來就回 null（讓呼叫端維持「查不到就不宣稱」）
  */
 function sharedConfigPath(repoDir) {
-  const dotGit = join(repoDir, '.git');
-  if (!existsSync(dotGit)) return null;
-  let gitDir = dotGit;
-  if (statSync(dotGit).isFile()) {
-    const m = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m);
-    if (!m) return null;
-    gitDir = resolve(repoDir, m[1]);
-  }
+  const gitDir = gitDirPath(repoDir);
+  if (!gitDir) return null;
   const commondirFile = join(gitDir, 'commondir');
   const commonDir = existsSync(commondirFile)
     ? resolve(gitDir, readFileSync(commondirFile, 'utf8').trim())
@@ -197,22 +206,52 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
         'core.bare = true。這個值住在共用的 .git/config，主目錄與所有連結工作樹讀的是同一份'
         + '（除非那棵樹的 config.worktree 自己覆寫了，2026-08-09 當下沒有任何一棵有）。\n'
         + `  還原：git -C ${JSON.stringify(repoDir)} config core.bare false\n`
-        + '  ⚠️ 還原之前先看一眼是誰寫的：檔頭記著唯一重現得出來的機制'
+        + '  ⚠️ 還原之前先看一眼是誰寫的：檔頭記著有直接證據的機制'
         + '（GIT_DIR 指向 .git/worktrees/<名> 時跑 git init）。',
     });
   }
 
+  // ①b 共用 config 的**原始值**也要看（#435 r1 Medium③）：extensions.worktreeConfig 開著時，
+  //    某棵樹自己的 config.worktree 一旦覆寫 core.bare，上面那條 effective 讀法會被掩住——
+  //    這棵樹自己好好的，**其他沒覆寫的樹（含主目錄）卻全部一起中**。
+  const sharedCfg = sharedConfigPath(repoDir);
+  if (sharedCfg && !problems.some((p) => p.id === 'core-bare')) {
+    const rawBare = gitOutsideRepo(['config', '--file', sharedCfg, '--get', 'core.bare']);
+    if (rawBare.status === 0 && rawBare.out === 'true') {
+      problems.push({
+        id: 'core-bare-shared',
+        message:
+          '共用 .git/config 的 core.bare = true（這棵樹自己的 config.worktree 蓋住了它，'
+          + '所以 effective 值看不到）。\n'
+          + '  ⇒ 其他**沒有**覆寫的樹（含主目錄）全部一起中。\n'
+          + `  還原：git config --file ${JSON.stringify(sharedCfg)} core.bare false`,
+      });
+    }
+  }
+
   // ② 同族的靜靜壞法：core.worktree 指到不存在的地方 ⇒ 每個 git 指令都變成
   //    `fatal: Invalid path '<那個路徑>'`（實測：主目錄與連結工作樹一起中）。
+  //    ⚠️ 相對路徑是**合法設定**——git 以 $GIT_DIR 為基準解它；existsSync 直接吃原字串
+  //    等於拿「本行程的 cwd」當基準＝把好設定判成壞（#435 r1 Medium④）。先解到 gitdir 上。
   const cw = configValue(repoDir, 'core.worktree');
-  if (cw.status === 0 && cw.out && !existsSync(cw.out)) {
-    problems.push({
-      id: 'core-worktree-missing',
-      message:
-        `core.worktree 指到不存在的路徑：${cw.out}\n`
-        + '  ⇒ 這棵樹（以及所有讀同一份 config 的樹）每個 git 指令都會回 fatal: Invalid path。\n'
-        + `  還原：git -C ${JSON.stringify(repoDir)} config --unset core.worktree`,
-    });
+  if (cw.status === 0 && cw.out) {
+    const cwBase = gitDirPath(repoDir);
+    const cwTarget = isAbsolute(cw.out) ? cw.out : cwBase ? resolve(cwBase, cw.out) : cw.out;
+    if (!existsSync(cwTarget)) {
+      // ⚠️ 還原指令不能寫 `git -C <repo> ...`：這個狀態下 repo 裡的每個 git 指令（含 config）
+      //    自己就會 fatal——上面 gitOutsideRepo 的存在理由。要站在 repo 外用 --file 指著檔案改。
+      const cwFixCfg = sharedConfigPath(repoDir);
+      problems.push({
+        id: 'core-worktree-missing',
+        message:
+          `core.worktree 指到不存在的路徑：${cw.out}`
+          + `${cwTarget === cw.out ? '' : `（以 gitdir 為基準解到 ${cwTarget}）`}\n`
+          + '  ⇒ 這棵樹（以及所有讀同一份 config 的樹）每個 git 指令都會回 fatal: Invalid path，\n'
+          + '     所以「git -C 這棵樹」形式的指令（含 config）救不了自己。站在 repo 外面改檔案：\n'
+          + `  還原：git config --file ${JSON.stringify(cwFixCfg ?? join(repoDir, '.git', 'config'))} --unset core.worktree\n`
+          + '  （若這個值住在該樹自己的 config.worktree，--file 改指 <gitdir>/config.worktree。）',
+      });
+    }
   }
 
   // ③ 工作樹身分還在嗎。

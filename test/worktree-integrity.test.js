@@ -7,8 +7,9 @@
 //
 // ⚠️ 這裡的每一題都是**行為題**：造一棵真的壞掉的 repo 餵進去，斷言它被抓出來。
 //    本專案認過的病型是「考題只掃原始碼有沒有某個字樣，實作被換掉了考題還全綠」
-//    （#433 r6 實際被複驗者示範過一次）。所以下面沒有任何一題在掃字串
-//    ——唯一的例外是「hook 的 unset 清單」那一題，它自己會說清楚射程到哪裡。
+//    （#433 r6 實際被複驗者示範過一次）。所以下面沒有任何一題在掃字串——
+//    連 GIT_* 清理也是用「實跑 hook＋注入**沒列過名**的變數」驗的，不再比對名單
+//    （名單比對＝拿實作自己的清單驗實作＝循環自證，#435 r1 High② 抓到的洞）。
 //
 // ⚠️ **沙盒的安全宣告**：下面有兩處真的會跑 `git init`（那正是事故的兇器）。它們一律：
 //    ① 只在 `mkdtempSync` 的暫存目錄裡跑；
@@ -23,7 +24,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { worktreeIntegrityProblems, cleanGitEnv, GIT_DISCOVERY_ENV }
+import { worktreeIntegrityProblems, cleanGitEnv }
   from '../scripts/check-worktree-integrity.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -121,6 +122,19 @@ test('⭐ 連結工作樹也一起中：共用 config 一 bare，worktree 那一
   });
 });
 
+test('⭐ 掩蔽騙不過：樹自己覆寫 core.bare=false 時，共用 config 的 bare=true 還是要被抓', () => {
+  withSandbox(({ repo, wt }) => {
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'false']);
+    sgit(['-C', repo, 'config', 'core.bare', 'true']);
+    // 這棵樹自己因為覆寫而一切正常（git 在這裡照常運作）——只看 effective 值會回報零問題，
+    // 但共用 config 已經壞了：其他沒覆寫的樹（含主目錄）此刻全部中鏢（#435 r1 Medium③）。
+    const seen = ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS }));
+    assert.ok(seen.includes('core-bare-shared'),
+      `共用 config 的 bare=true 被這棵樹的 worktree 覆寫蓋住，體檢卻回報 ${JSON.stringify(seen)}`
+      + '——「驗一棵就夠」只有在直接讀共用原始值時才成立。');
+  });
+});
+
 test('⭐ 同族壞法①：core.worktree 指到不存在的路徑', () => {
   withSandbox(({ repo }) => {
     sgit(['-C', repo, 'config', 'core.worktree', '/nowhere/does/not/exist']);
@@ -132,6 +146,51 @@ test('⭐ 同族壞法①：core.worktree 指到不存在的路徑', () => {
     //    **成因必須排在後果前面**，不然看訊息的人只會看到「這裡不是 repo」而去查錯方向。
     assert.equal(seen[0], 'core-worktree-missing',
       `第一項是 ${seen[0]}，成因被後果蓋掉了（完整回報：${JSON.stringify(seen)}）。`);
+  });
+});
+
+test('合法的相對 core.worktree（以 gitdir 為基準）不可以被誤判成壞掉', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wt-relcw-'));
+  try {
+    const work = join(dir, 'work');
+    mkdirSync(work);
+    sgit(['init', '-q', '-b', 'main', '--separate-git-dir', join(dir, 'gitbox'), work]);
+    sgit(['-C', work, 'config', 'user.email', 'f@example.com']);
+    sgit(['-C', work, 'config', 'user.name', 'fixture']);
+    writeFileSync(join(work, 'anchor.txt'), 'x\n');
+    sgit(['-C', work, 'add', 'anchor.txt']);
+    sgit(['-C', work, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
+    // 相對路徑以 $GIT_DIR（<dir>/gitbox）為基準 ⇒ ../work＝<dir>/work，真實存在＝合法設定。
+    sgit(['-C', work, 'config', 'core.worktree', '../work']);
+    assert.equal(sgit(['-C', work, 'rev-parse', '--is-inside-work-tree']).out, 'true',
+      '前提壞了：git 自己都不認這個設定，本題要重寫');
+    const seen = ids(worktreeIntegrityProblems(work, { requiredTracked: SANDBOX_ANCHORS }));
+    assert.ok(!seen.includes('core-worktree-missing'),
+      `git 自己說這是好好的工作樹，體檢卻把合法的相對 core.worktree 判成壞掉`
+      + `（回報：${JSON.stringify(seen)}）——誤擋跟漏抓一樣是病（#435 r1 Medium④）。`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 還原指令自己要跑得動：照體檢印的指令執行，repo 要活回來', () => {
+  withSandbox(({ repo }) => {
+    sgit(['-C', repo, 'config', 'core.worktree', '/nowhere/does/not/exist']);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-worktree-missing');
+    assert.ok(p, `沒抓到 core-worktree-missing（回報：${JSON.stringify(ids(probs))}）`);
+    // 把訊息裡「還原：git config --file ... --unset core.worktree」抽出來**照跑**——
+    // 站在 repo 外面（訊息教的姿勢）。r1 抓到的病：舊訊息教 `git -C <repo> config ...`，
+    // 在這個壞法下那個指令自己就 fatal（#435 r1 Medium④）。
+    const m = p.message.match(/還原：git config --file ("(?:[^"\\]|\\.)*") --unset core\.worktree/);
+    assert.ok(m, `訊息裡找不到照抄可跑的還原指令：\n${p.message}`);
+    const cfgPath = JSON.parse(m[1]);
+    const r = sgit(['config', '--file', cfgPath, '--unset', 'core.worktree'],
+      { cwd: tmpdir(), allowFail: true });
+    assert.equal(r.status, 0,
+      `照訊息跑還原指令失敗（${r.status}）：${r.err}\n——訊息在教一條走不通的路。`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原指令跑成功了，repo 卻還是壞的——指令跟病灶對不上。');
   });
 });
 
@@ -187,44 +246,86 @@ test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是看它�
   });
 });
 
-test('cleanGitEnv 把清單上的每一個都拿掉，其餘原封不動', () => {
-  /** @type {Record<string,string>} */
-  const dirty = { PATH: '/usr/bin', LANG: 'zh_TW.UTF-8' };
-  for (const key of GIT_DISCOVERY_ENV) dirty[key] = '/fake';
-  const cleaned = cleanGitEnv(dirty);
-  for (const key of GIT_DISCOVERY_ENV) {
-    assert.equal(cleaned[key], undefined, `${key} 沒被清掉`);
+test('cleanGitEnv 按 GIT_ 前綴整族清：沒列過名的也要走，非 GIT_ 前綴不受傷', () => {
+  const cleaned = cleanGitEnv({
+    PATH: '/usr/bin', LANG: 'zh_TW.UTF-8', GITHUB_TOKEN: 'keep-me',
+    GIT_DIR: '/fake', GIT_WORK_TREE: '/fake', GIT_PREFIX: 'x',
+    // 這一族是 #435 r1 High② 的洞：`git -c` 會生出來、名單永遠追不上。
+    GIT_CONFIG_PARAMETERS: "'a.b=c'", GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a.b',
+    GIT_BOGUS_FUTURE_THING: 'unlisted',   // 未來才會出現的名字＝前綴關門存在的理由
+  });
+  for (const key of Object.keys(cleaned)) {
+    assert.ok(!key.startsWith('GIT_'), `${key} 沒被清掉——前綴這扇門有縫`);
   }
   assert.equal(cleaned.PATH, '/usr/bin');
   assert.equal(cleaned.LANG, 'zh_TW.UTF-8', 'cleanGitEnv 不該動到無關的變數');
+  assert.equal(cleaned.GITHUB_TOKEN, 'keep-me',
+    'GITHUB_* 不是 GIT_ 前綴（第四個字元是 H 不是底線），不可以被誤殺——CI 環境靠它');
 });
 
-test('⭐ 真的跑一次 pre-push：GIT_* 必須清光，而且考試前後各驗一次工作樹', () => {
+/**
+ * 造一組假的 node／npm 放進 PATH 給 pre-push 用：每次被叫到都把
+ * 「名字＋參數＋當下還看得到哪些 GIT_*」記進 log，然後成功退出。
+ * `checkFailsAt`（1-based）：node 跑到體檢腳本的第 N 次呼叫**起**改成失敗——
+ * 給 fail-closed 兩題用；不給＝永遠成功。
+ *
+ * @param {string} dir
+ * @param {{ checkFailsAt?: number }} [opts]
+ * @returns {{ bin: string, log: string }}
+ */
+function makeHookStubs(dir, opts = {}) {
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  const log = join(dir, 'calls.log');
+  const count = join(dir, 'check-count');
+  const failsAt = opts.checkFailsAt ?? 0;
+  for (const name of ['node', 'npm']) {
+    const stub = join(bin, name);
+    writeFileSync(stub,
+      '#!/bin/sh\n'
+      + `{ printf '%s %s :: ' "${name}" "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; echo; } >> ${JSON.stringify(log)}\n`
+      + (name === 'node'
+        ? 'case "$*" in *check-worktree-integrity*)\n'
+          + `  n=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > ${JSON.stringify(count)}\n`
+          + `  if [ ${failsAt} -gt 0 ] && [ "$n" -ge ${failsAt} ]; then echo "體檢炸了（stub 第 $n 次）" >&2; exit 1; fi\n`
+          + 'esac\n'
+        : '')
+      + 'exit 0\n');
+    chmodSync(stub, 0o755);
+  }
+  return { bin, log };
+}
+
+/** 跑正式的 pre-push（用 stub 的 PATH），把注入的髒 GIT_* 一起帶進去。 @param {string} bin */
+function runPrePush(bin) {
+  /** @type {Record<string,string>} */
+  const polluted = { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' };
+  // 注入「列過名的＋沒列過名的」兩種。後者是 #435 r1 High② 的洞：
+  // GIT_CONFIG_* 一族是 `git -c` 生出來、會長的；只清名單它們就漏網。
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_PREFIX']) {
+    polluted[key] = '/fake/path/.git/worktrees/x';
+  }
+  polluted.GIT_CONFIG_PARAMETERS = "'user.name=fixture'";
+  polluted.GIT_CONFIG_COUNT = '1';
+  polluted.GIT_CONFIG_KEY_0 = 'user.name';
+  polluted.GIT_CONFIG_VALUE_0 = 'fixture';
+  polluted.GIT_BOGUS_FUTURE_THING = 'unlisted';
+  return spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')],
+    { encoding: 'utf8', cwd: ROOT, env: polluted });
+}
+
+/** @param {string} log */
+const callNames = (log) => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean)
+  .map((line) => line.split('::')[0].trim());
+
+test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光，考試前後各驗一次工作樹', () => {
   const dir = mkdtempSync(join(tmpdir(), 'prepush-'));
   try {
-    const bin = join(dir, 'bin');
-    mkdirSync(bin);
-    const log = join(dir, 'calls.log');
-    // 假的 node／npm：只記下「被誰用什麼參數叫到」以及「當下還看得到哪些 GIT_*」，然後成功退出。
-    for (const name of ['node', 'npm']) {
-      const stub = join(bin, name);
-      writeFileSync(stub,
-        '#!/bin/sh\n'
-        + `{ printf '%s %s :: ' "${name}" "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; echo; } >> ${JSON.stringify(log)}\n`
-        + 'exit 0\n');
-      chmodSync(stub, 0o755);
-    }
-
-    /** @type {Record<string,string>} */
-    const polluted = { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' };
-    for (const key of GIT_DISCOVERY_ENV) polluted[key] = `/fake/path/.git/worktrees/x`;
-
-    const r = spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')],
-      { encoding: 'utf8', cwd: ROOT, env: polluted });
+    const { bin, log } = makeHookStubs(dir);
+    const r = runPrePush(bin);
     assert.equal(r.status, 0, `pre-push 在全部關卡都成功的情況下退出碼是 ${r.status}：\n${r.stdout}${r.stderr}`);
 
-    const calls = readFileSync(log, 'utf8').trim().split('\n');
-    assert.deepEqual(calls.map((line) => line.split('::')[0].trim()), [
+    assert.deepEqual(callNames(log), [
       'node scripts/check-worktree-integrity.js',
       'npm run typecheck',
       'npm run lint',
@@ -233,26 +334,50 @@ test('⭐ 真的跑一次 pre-push：GIT_* 必須清光，而且考試前後各�
     ], 'pre-push 的關卡順序不對。⚠️ **考試之後那一次體檢是關鍵**：'
       + '考題各跑各的子行程，「哪一支考題把 repo 弄壞」只有在跑完之後量才看得到。');
 
-    for (const line of calls) {
+    for (const line of readFileSync(log, 'utf8').trim().split('\n')) {
       const leaked = (line.split('::')[1] ?? '').trim();
       assert.equal(leaked, '',
         `pre-push 的子行程還看得到 GIT_* 環境變數：${leaked}\n`
         + '⇒ 從連結工作樹 push 時，整套考題會在「有 GIT_DIR」的環境下跑。那個環境裡\n'
         + '   ① 任何一句 git init 都會把共用 .git/config 寫成 bare=true（2026-08-09 事故的機制），\n'
-        + '   ② git -C／execFileSync 的 cwd 會被蓋掉，宣稱掃這棵樹的考題其實掃別棵。');
+        + '   ② git -C／execFileSync 的 cwd 會被蓋掉，宣稱掃這棵樹的考題其實掃別棵。\n'
+        + '（有列名沒列名都不可以漏——名單清不完，這扇門是前綴制。）');
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('pre-push 清掉的名單，跟 GIT_DISCOVERY_ENV 是同一份（防兩邊各改各的）', () => {
-  // ⚠️ **誠實劃界**：這一題是字面比對，射程只到「兩份清單有沒有漂開」。
-  //    「unset 真的有生效」是上面那一題用跑的驗的——這裡不重複宣稱。
-  const hook = readFileSync(join(ROOT, 'scripts', 'git-hooks', 'pre-push'), 'utf8');
-  const line = hook.split('\n').find((l) => l.startsWith('unset '));
-  assert.ok(line, 'pre-push 裡找不到 unset 那一行');
-  assert.deepEqual(line.slice('unset '.length).trim().split(/\s+/).sort(), [...GIT_DISCOVERY_ENV].sort(),
-    'pre-push 的 unset 清單與 scripts/check-worktree-integrity.js 的 GIT_DISCOVERY_ENV 不一致。'
-    + '單一真相是後者，請改 hook 那一行。');
+test('⭐ fail-closed①：考試「之後」那次體檢失敗，push 必須被擋（那一行不是裝飾）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'prepush-post-'));
+  try {
+    // 第一次體檢過、三關全過、**第二次體檢炸**——正是「考試把樹弄壞了」的劇本。
+    const { bin, log } = makeHookStubs(dir, { checkFailsAt: 2 });
+    const r = runPrePush(bin);
+    assert.notEqual(r.status, 0,
+      '第二次體檢已經失敗，pre-push 卻放行了 push——fail-closed 一行退化成裝飾，'
+      + '考題還全綠，正是 #435 r1 Medium⑤ 用突變示範的洞。');
+    assert.deepEqual(callNames(log), [
+      'node scripts/check-worktree-integrity.js',
+      'npm run typecheck',
+      'npm run lint',
+      'npm test',
+      'node scripts/check-worktree-integrity.js',
+    ], '擋下的位置不對：應該是五關都跑了、倒在最後那一次體檢。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ fail-closed②：考試「之前」那次體檢失敗＝立刻擋下，三關一關都不准跑', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'prepush-pre-'));
+  try {
+    const { bin, log } = makeHookStubs(dir, { checkFailsAt: 1 });
+    const r = runPrePush(bin);
+    assert.notEqual(r.status, 0, 'push 之前就已經壞了還放行——這道門白裝了。');
+    assert.deepEqual(callNames(log), ['node scripts/check-worktree-integrity.js'],
+      '體檢已經報壞，後面的關卡卻還在跑——壞掉的樹上跑出來的三關結果本身不可信。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
