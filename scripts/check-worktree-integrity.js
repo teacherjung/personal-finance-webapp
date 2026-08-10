@@ -36,7 +36,7 @@
 //    （掃描器說謊的老病型）。#435 r1 提出、並經獨立重現的直接證據：
 //      ・`4ab8e0b` 與 `0c0b176`（#433 過程 commit）的 test/test-path-decoding.test.js 各有一處
 //        `git('init', '-q')`；兩顆 commit 時間 01:28:33／10:34:07，與兩次事故（01:28／10:34:27）
-//        分秒貼合；#433 的收案訊息也自載那顆 fixture 弄壞過主 repo，最終版已把 git init 移除。
+//        分秒貼合；#433 的 squash 訊息（`7c573f2`）亦記載那顆 fixture 曾污染主 repo。
 //    所以「上面的機制」不只是重現得出來——它就是證據指向的肇因鏈（fixture 的 git init ×
 //    hook 環境的 GIT_DIR）。本檔職責不變：把壞掉的狀態驗出來，並讓 `pre-push` 把 `GIT_*`
 //    整族清掉、不再把那個前提條件交給考題。
@@ -163,22 +163,46 @@ function sharedConfigPath(repoDir) {
 }
 
 /**
- * 讀一個 config 值。先照正規路子問 git；**問不出來時退一步直接讀 config 檔**。
+ * 直讀 config **檔案**找一個 key，照 git 的優先序：這棵樹自己的 `config.worktree` 先、
+ * 共用 config 後。回傳值帶著「住在哪個檔」。
  *
- * ⚠️ 為什麼要有這條退路：`git config --get` 讀不到有兩種完全不同的意思——**沒設定**（正常），
- *    或者 **config 已經壞到 git 連這個 repo 都打不開**（`core.worktree` 亂指就是這樣；實測連
- *    `git config --file` 都會一起 fatal，只要 cwd 還在 repo 裡面）。後者正是要診斷的那一種，
- *    而光看退出碼兩者長得一模一樣 ⇒ 成因會被自己的後果蓋掉。
+ * ⚠️ 為什麼要直讀檔案（而不是只問 git）：
+ *    ① config 可能已經壞到 git 連 repo 都打不開（`core.worktree` 亂指就是這樣）——要診斷
+ *       成因就得繞過 git 的 repo 探索、站在外面讀檔（#435 r1 Medium④）。
+ *    ② **還原指令要指向真正承載那個 key 的檔案**——值住在 `config.worktree` 時教人改共用
+ *       config＝照做會回報成功、病灶原封不動（#435 r2 Medium②）。
  *
  * @param {string} repoDir
  * @param {string} key
- * @returns {{ status: number, out: string, err: string }}
+ * @param {{ bool?: boolean }} [opts] `bool`：走 `--bool` 讓 git 解 yes/on/1 同義值（#435 r2 Medium①）
+ * @returns {{ out: string, file: string, source: 'worktree' | 'shared' } | null}
  */
-function configValue(repoDir, key) {
-  const direct = git(repoDir, ['config', '--get', key]);
-  if (direct.status === 0) return direct;
-  const cfg = sharedConfigPath(repoDir);
-  return cfg ? gitOutsideRepo(['config', '--file', cfg, '--get', key]) : direct;
+function rawConfigLookup(repoDir, key, opts = {}) {
+  const gd = gitDirPath(repoDir);
+  const shared = sharedConfigPath(repoDir);
+  /** @type {{ file: string, source: 'worktree' | 'shared' }[]} */
+  const candidates = [];
+  if (gd) candidates.push({ file: join(gd, 'config.worktree'), source: 'worktree' });
+  if (shared) candidates.push({ file: shared, source: 'shared' });
+  for (const c of candidates) {
+    if (!existsSync(c.file)) continue;
+    const r = gitOutsideRepo(['config', '--file', c.file, ...(opts.bool ? ['--bool'] : []), '--get', key]);
+    if (r.status === 0) return { out: r.out, ...c };
+  }
+  return null;
+}
+
+/**
+ * POSIX shell 單引號安全字串：單引號裡 `$`、反引號、`\` 一律不展開；
+ * 路徑本身含單引號用 `'\''` 接法。體檢印的還原指令是給人**複製貼上進 shell** 的，
+ * 用雙引號包路徑會讓字面上的 `$HOME`、`$()` 被展開（#435 r2 Medium③——考題會拿
+ * 含 `$`／反引號的路徑照字面丟給 `sh -c` 驗證）。
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function shq(s) {
+  return `'${String(s).replaceAll("'", "'\\''")}'`;
 }
 
 /**
@@ -197,34 +221,45 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
   //    在 config 被寫壞時會整個 fatal。順序反過來的話，「core.worktree 亂指」只會得到一句
   //    「這裡不是 repo」——**成因被自己的後果蓋掉**，看訊息的人會去查錯的方向。
   //
-  // ① 事故本體。它住在**共用** config ⇒ 一中就是所有的樹一起中。
-  const bare = configValue(repoDir, 'core.bare');
+  // ① 事故本體。⚠️ 一律走 `--bool`：yes／on／1 都是 git 合法的 true，比字面 'true' 會被
+  //    同義值騙過（#435 r2 Medium①——shared 寫 yes、掩蔽樹照樣回空的實測）。
+  //    值可能住共用 config、也可能住這棵樹自己的 config.worktree——**還原要改對檔**（r2 Medium②）。
+  const bare = git(repoDir, ['config', '--bool', '--get', 'core.bare']);
+  const bareRaw = rawConfigLookup(repoDir, 'core.bare', { bool: true });
   if (bare.status === 0 && bare.out === 'true') {
+    const where = bareRaw && bareRaw.out === 'true' ? bareRaw : null;
     problems.push({
       id: 'core-bare',
       message:
-        'core.bare = true。這個值住在共用的 .git/config，主目錄與所有連結工作樹讀的是同一份'
-        + '（除非那棵樹的 config.worktree 自己覆寫了，2026-08-09 當下沒有任何一棵有）。\n'
-        + `  還原：git -C ${JSON.stringify(repoDir)} config core.bare false\n`
+        'core.bare = true'
+        + (where
+          ? `（值住在${where.source === 'worktree'
+            ? '這棵樹自己的 config.worktree——只有這棵樹中'
+            : '共用的 .git/config——主目錄與所有連結工作樹一起中'}）`
+          : '')
+        + '。\n'
+        + `  還原：git config --file ${shq(where ? where.file : join(repoDir, '.git', 'config'))} core.bare false\n`
         + '  ⚠️ 還原之前先看一眼是誰寫的：檔頭記著有直接證據的機制'
         + '（GIT_DIR 指向 .git/worktrees/<名> 時跑 git init）。',
     });
   }
 
-  // ①b 共用 config 的**原始值**也要看（#435 r1 Medium③）：extensions.worktreeConfig 開著時，
-  //    某棵樹自己的 config.worktree 一旦覆寫 core.bare，上面那條 effective 讀法會被掩住——
-  //    這棵樹自己好好的，**其他沒覆寫的樹（含主目錄）卻全部一起中**。
-  const sharedCfg = sharedConfigPath(repoDir);
-  if (sharedCfg && !problems.some((p) => p.id === 'core-bare')) {
-    const rawBare = gitOutsideRepo(['config', '--file', sharedCfg, '--get', 'core.bare']);
-    if (rawBare.status === 0 && rawBare.out === 'true') {
+  // ①b **共用檔要指名直讀**（#435 r1 Medium③＋r2 Medium①）：extensions.worktreeConfig 開著時，
+  //    某棵樹自己的 config.worktree 一旦覆寫 core.bare，effective 讀法會被掩住——這棵樹自己
+  //    好好的，**其他沒覆寫的樹（含主目錄）卻全部一起中**。
+  //    ⚠️ 這裡不能用 rawConfigLookup（它照優先序 worktree 先、讀到覆寫值就停）——
+  //    那會把同一個掩蔽 bug 往下搬一層（r2 rework 第一版真的犯過，考題當場抓回來）。
+  const bareSharedCfg = sharedConfigPath(repoDir);
+  if (!(bare.status === 0 && bare.out === 'true') && bareSharedCfg) {
+    const rawShared = gitOutsideRepo(['config', '--file', bareSharedCfg, '--bool', '--get', 'core.bare']);
+    if (rawShared.status === 0 && rawShared.out === 'true') {
       problems.push({
         id: 'core-bare-shared',
         message:
           '共用 .git/config 的 core.bare = true（這棵樹自己的 config.worktree 蓋住了它，'
           + '所以 effective 值看不到）。\n'
           + '  ⇒ 其他**沒有**覆寫的樹（含主目錄）全部一起中。\n'
-          + `  還原：git config --file ${JSON.stringify(sharedCfg)} core.bare false`,
+          + `  還原：git config --file ${shq(bareSharedCfg)} core.bare false`,
       });
     }
   }
@@ -233,23 +268,29 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
   //    `fatal: Invalid path '<那個路徑>'`（實測：主目錄與連結工作樹一起中）。
   //    ⚠️ 相對路徑是**合法設定**——git 以 $GIT_DIR 為基準解它；existsSync 直接吃原字串
   //    等於拿「本行程的 cwd」當基準＝把好設定判成壞（#435 r1 Medium④）。先解到 gitdir 上。
-  const cw = configValue(repoDir, 'core.worktree');
-  if (cw.status === 0 && cw.out) {
+  //    ⚠️ effective 讀法在這個壞法下自己就 fatal——所以還要直讀檔案，含這棵樹自己的
+  //    config.worktree（只讀共用檔會把 worktree-local 的病灶整個看漏；#435 r2 Medium②）。
+  const cwEff = git(repoDir, ['config', '--get', 'core.worktree']);
+  const cwRaw = rawConfigLookup(repoDir, 'core.worktree');
+  const cwOut = cwEff.status === 0 ? cwEff.out : cwRaw ? cwRaw.out : '';
+  if (cwOut) {
     const cwBase = gitDirPath(repoDir);
-    const cwTarget = isAbsolute(cw.out) ? cw.out : cwBase ? resolve(cwBase, cw.out) : cw.out;
+    const cwTarget = isAbsolute(cwOut) ? cwOut : cwBase ? resolve(cwBase, cwOut) : cwOut;
     if (!existsSync(cwTarget)) {
       // ⚠️ 還原指令不能寫 `git -C <repo> ...`：這個狀態下 repo 裡的每個 git 指令（含 config）
-      //    自己就會 fatal——上面 gitOutsideRepo 的存在理由。要站在 repo 外用 --file 指著檔案改。
-      const cwFixCfg = sharedConfigPath(repoDir);
+      //    自己就會 fatal——上面 gitOutsideRepo 的存在理由。要站在 repo 外用 --file 指著
+      //    **真正承載這個 key 的檔**改（改錯檔＝回報成功、病灶原封不動）。
       problems.push({
         id: 'core-worktree-missing',
         message:
-          `core.worktree 指到不存在的路徑：${cw.out}`
-          + `${cwTarget === cw.out ? '' : `（以 gitdir 為基準解到 ${cwTarget}）`}\n`
-          + '  ⇒ 這棵樹（以及所有讀同一份 config 的樹）每個 git 指令都會回 fatal: Invalid path，\n'
+          `core.worktree 指到不存在的路徑：${cwOut}`
+          + `${cwTarget === cwOut ? '' : `（以 gitdir 為基準解到 ${cwTarget}）`}\n`
+          + '  ⇒ 讀到這份 config 的樹，每個 git 指令都會回 fatal: Invalid path，\n'
           + '     所以「git -C 這棵樹」形式的指令（含 config）救不了自己。站在 repo 外面改檔案：\n'
-          + `  還原：git config --file ${JSON.stringify(cwFixCfg ?? join(repoDir, '.git', 'config'))} --unset core.worktree\n`
-          + '  （若這個值住在該樹自己的 config.worktree，--file 改指 <gitdir>/config.worktree。）',
+          + `  還原：git config --file ${shq(cwRaw ? cwRaw.file : join(repoDir, '.git', 'config'))} --unset core.worktree\n`
+          + `  （這個值住在${cwRaw
+            ? cwRaw.source === 'worktree' ? '這棵樹自己的 config.worktree' : '共用 config'
+            : '哪個檔無法判定——上面的指令假設共用 config'}。）`,
       });
     }
   }
@@ -305,7 +346,7 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
           `git ls-files 找不到一定在版控裡的 ${anchor}（${listed.err || '沒有錯誤訊息'}）。\n`
           + '  ⇒ 索引（.git/index）多半沒了或壞了。這一種不會噴錯：以 git ls-files 掃全樹的考題'
           + '會掃到零個檔案，然後回報「零違規」。\n'
-          + `  還原：git -C ${JSON.stringify(repoDir)} read-tree HEAD（或 git reset 重建索引）`,
+          + `  還原：git -C ${shq(repoDir)} read-tree HEAD（或 git reset 重建索引）`,
       });
       break;   // 同一個成因，列一次就夠
     }

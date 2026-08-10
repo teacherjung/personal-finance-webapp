@@ -5,11 +5,13 @@
 // 病因分析與實測結果寫在 `scripts/check-worktree-integrity.js` 的檔頭，這裡不重抄一份
 // （抄兩份就會漂）。本檔只負責一件事：**證明那支體檢真的會轉紅**。
 //
-// ⚠️ 這裡的每一題都是**行為題**：造一棵真的壞掉的 repo 餵進去，斷言它被抓出來。
-//    本專案認過的病型是「考題只掃原始碼有沒有某個字樣，實作被換掉了考題還全綠」
-//    （#433 r6 實際被複驗者示範過一次）。所以下面沒有任何一題在掃字串——
-//    連 GIT_* 清理也是用「實跑 hook＋注入**沒列過名**的變數」驗的，不再比對名單
-//    （名單比對＝拿實作自己的清單驗實作＝循環自證，#435 r1 High② 抓到的洞）。
+// ⚠️ 本檔的寫法＝**行為題**：造一棵真的壞掉的 repo 餵進去、實跑 hook、照訊息把還原指令
+//    丟給真的 shell——因為「考題只掃原始碼字樣，實作換掉了照樣全綠」是本專案認過的病型
+//    （#433 r6 被複驗者示範過）。兩個從審查學來的具體姿勢：
+//    ・GIT_* 清理用「實跑 hook＋注入**沒列過名**的變數」驗，不比對名單
+//      （名單比對＝拿實作自己的清單驗實作＝循環自證；#435 r1 High②）。
+//    ・還原指令用 `sh -c` 照字面跑（使用者就是複製貼上進 shell 的），
+//      不用 argv 假代 shell（#435 r2 Medium③）。
 //
 // ⚠️ **沙盒的安全宣告**：下面有兩處真的會跑 `git init`（那正是事故的兇器）。它們一律：
 //    ① 只在 `mkdtempSync` 的暫存目錄裡跑；
@@ -73,6 +75,20 @@ function withSandbox(fn) {
 const SANDBOX_ANCHORS = ['anchor.txt'];
 /** @param {{ id: string, message: string }[]} problems */
 const ids = (problems) => problems.map((p) => p.id);
+
+/**
+ * 從體檢訊息抽出「還原：git …」那一行，**照字面交給真的 shell** 跑——使用者就是這樣
+ * 複製貼上的。用 argv 假代 shell 會跳過引號與 `$` 展開，量不到訊息真正的可用性
+ * （#435 r2 Medium③：雙引號包路徑時，路徑裡字面的 $HOME 會被展開、指令壞掉）。
+ * @param {string} message
+ * @returns {{ status: number, err: string, cmd: string }}
+ */
+function runRepairFromMessage(message) {
+  const m = message.match(/^\s*還原：(git .+)$/m);
+  assert.ok(m, `訊息裡找不到「還原：git …」指令：\n${message}`);
+  const r = spawnSync('sh', ['-c', m[1]], { encoding: 'utf8', cwd: tmpdir(), env: { ...SANDBOX_ENV } });
+  return { status: r.status ?? -1, err: String(r.stderr ?? '').trim(), cmd: m[1] };
+}
 
 test('⭐ 這一棵 checkout 現在是健康的工作樹（這就是那道閘本身）', () => {
   const problems = worktreeIntegrityProblems(ROOT);
@@ -173,25 +189,94 @@ test('合法的相對 core.worktree（以 gitdir 為基準）不可以被誤判�
   }
 });
 
-test('⭐ 還原指令自己要跑得動：照體檢印的指令執行，repo 要活回來', () => {
+test('⭐ 還原指令自己要跑得動：照體檢印的指令用真 shell 執行，repo 要活回來', () => {
   withSandbox(({ repo }) => {
     sgit(['-C', repo, 'config', 'core.worktree', '/nowhere/does/not/exist']);
     const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
     const p = probs.find((x) => x.id === 'core-worktree-missing');
     assert.ok(p, `沒抓到 core-worktree-missing（回報：${JSON.stringify(ids(probs))}）`);
-    // 把訊息裡「還原：git config --file ... --unset core.worktree」抽出來**照跑**——
-    // 站在 repo 外面（訊息教的姿勢）。r1 抓到的病：舊訊息教 `git -C <repo> config ...`，
-    // 在這個壞法下那個指令自己就 fatal（#435 r1 Medium④）。
-    const m = p.message.match(/還原：git config --file ("(?:[^"\\]|\\.)*") --unset core\.worktree/);
-    assert.ok(m, `訊息裡找不到照抄可跑的還原指令：\n${p.message}`);
-    const cfgPath = JSON.parse(m[1]);
-    const r = sgit(['config', '--file', cfgPath, '--unset', 'core.worktree'],
-      { cwd: tmpdir(), allowFail: true });
+    // r1 抓到的病：舊訊息教 `git -C <repo> config ...`，這個壞法下那個指令自己就 fatal。
+    const r = runRepairFromMessage(p.message);
     assert.equal(r.status, 0,
-      `照訊息跑還原指令失敗（${r.status}）：${r.err}\n——訊息在教一條走不通的路。`);
+      `照訊息跑還原指令失敗（${r.status}）：${r.err}\n指令＝${r.cmd}\n——訊息在教一條走不通的路。`);
     assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
       '還原指令跑成功了，repo 卻還是壞的——指令跟病灶對不上。');
   });
+});
+
+test('⭐ git 的同義 true（yes／on／1）騙不過：字面比對＝假綠（r2 Medium①）', () => {
+  withSandbox(({ repo, wt }) => {
+    // 掩蔽版：這棵樹覆寫 false、共用檔寫的是 `yes`——git 認它是 true，體檢也必須認。
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'false']);
+    sgit(['-C', repo, 'config', 'core.bare', 'yes']);
+    const seen = ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS }));
+    assert.ok(seen.includes('core-bare-shared'),
+      `共用 config 的 core.bare=yes（git 語意＝true）沒被抓（回報：${JSON.stringify(seen)}）`
+      + '——比字面 "true" 會被合法同義值繞過，主目錄此刻已經壞了。');
+  });
+  withSandbox(({ repo }) => {
+    sgit(['-C', repo, 'config', 'core.bare', 'on']);
+    const seen = ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS }));
+    assert.ok(seen.includes('core-bare'),
+      `core.bare=on（git 語意＝true）沒被抓（回報：${JSON.stringify(seen)}）。`);
+  });
+});
+
+test('⭐ 病灶住在 worktree-local config 時：歸因要對、還原指令要改到對的檔（r2 Medium②）', () => {
+  // 反例一：worktree-local 的 core.bare=true——這棵樹壞了，但值不在共用檔。
+  withSandbox(({ wt }) => {
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'true']);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare');
+    assert.ok(p, `沒抓到 core-bare（回報：${JSON.stringify(ids(probs))}）`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原指令回報成功、這棵樹卻還是壞的——指令改到了別的檔（歸因錯誤，照做等於白做）。');
+  });
+  // 反例二：worktree-local 的 core.worktree 亂指——effective 讀法自己 fatal，
+  // 只讀共用檔的退路會整個看漏這個病灶（舊版只回 not-a-repo、沒有還原指令）。
+  withSandbox(({ wt }) => {
+    sgit(['-C', wt, 'config', '--worktree', 'core.worktree', '/nowhere/r2-missing']);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-worktree-missing');
+    assert.ok(p,
+      `worktree-local 的 core.worktree 亂指沒被辨識成病灶（回報：${JSON.stringify(ids(probs))}）`
+      + '——只回 not-a-repo 的話，看訊息的人連還原指令都拿不到。');
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    const after = ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS }));
+    assert.ok(!after.includes('core-worktree-missing') && !after.includes('not-a-repo'),
+      `還原後這棵樹還是壞的（${JSON.stringify(after)}）——指令跟病灶對不上。`);
+  });
+});
+
+test('⭐ 路徑含 $／反引號／單引號時，還原指令照貼 shell 也不可以走樣（r2 Medium③）', () => {
+  const base = mkdtempSync(join(tmpdir(), 'wt-evil-'));
+  try {
+    // 字面上的 $HOME 與 `id`：引號錯了就會被 shell 展開／執行，指令改到不存在的路徑。
+    const evil = join(base, "repo-$HOME-`id`-'q'");
+    mkdirSync(evil);
+    const repo = join(evil, 'repo');
+    sgit(['init', '-q', '-b', 'main', repo]);
+    sgit(['-C', repo, 'config', 'user.email', 'f@example.com']);
+    sgit(['-C', repo, 'config', 'user.name', 'fixture']);
+    writeFileSync(join(repo, 'anchor.txt'), 'x\n');
+    sgit(['-C', repo, 'add', 'anchor.txt']);
+    sgit(['-C', repo, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
+    sgit(['-C', repo, 'config', 'core.worktree', '/nowhere/does/not/exist']);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-worktree-missing');
+    assert.ok(p, `沒抓到 core-worktree-missing（回報：${JSON.stringify(ids(probs))}）`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0,
+      `在含 $HOME／反引號／單引號的合法路徑下，照貼還原指令失敗（${r.status}）：${r.err}\n`
+      + `指令＝${r.cmd}\n——引號沒關緊，shell 把路徑裡的字面符號展開了。`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原指令跑成功了，repo 卻還是壞的。');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test('⭐ 同族壞法②（最陰的一種）：索引不見了，git ls-files 安安靜靜回空清單', () => {
@@ -283,7 +368,7 @@ function makeHookStubs(dir, opts = {}) {
     const stub = join(bin, name);
     writeFileSync(stub,
       '#!/bin/sh\n'
-      + `{ printf '%s %s :: ' "${name}" "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; echo; } >> ${JSON.stringify(log)}\n`
+      + `{ printf '%s %s :: ' "${name}" "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; printf ':: gh=%s' "\${GITHUB_TOKEN:-MISSING}"; echo; } >> ${JSON.stringify(log)}\n`
       + (name === 'node'
         ? 'case "$*" in *check-worktree-integrity*)\n'
           + `  n=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > ${JSON.stringify(count)}\n`
@@ -310,6 +395,10 @@ function runPrePush(bin) {
   polluted.GIT_CONFIG_KEY_0 = 'user.name';
   polluted.GIT_CONFIG_VALUE_0 = 'fixture';
   polluted.GIT_BOGUS_FUTURE_THING = 'unlisted';
+  // 哨兵：非 GIT_ 前綴（第四字元是 H），**必須活著穿過正式 hook**——前綴規則寫鬆
+  // （GIT 而非 GIT_）就會殺掉它，CI 的 GITHUB_* 會遭殃（r2 Low④：unit test 的
+  // cleanGitEnv 是另一份實作，守不到 hook 這一份）。
+  polluted.GITHUB_TOKEN = 'keep-me';
   return spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')],
     { encoding: 'utf8', cwd: ROOT, env: polluted });
 }
@@ -335,13 +424,17 @@ test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光�
       + '考題各跑各的子行程，「哪一支考題把 repo 弄壞」只有在跑完之後量才看得到。');
 
     for (const line of readFileSync(log, 'utf8').trim().split('\n')) {
-      const leaked = (line.split('::')[1] ?? '').trim();
+      const parts = line.split('::');
+      const leaked = (parts[1] ?? '').trim();
       assert.equal(leaked, '',
         `pre-push 的子行程還看得到 GIT_* 環境變數：${leaked}\n`
         + '⇒ 從連結工作樹 push 時，整套考題會在「有 GIT_DIR」的環境下跑。那個環境裡\n'
         + '   ① 任何一句 git init 都會把共用 .git/config 寫成 bare=true（2026-08-09 事故的機制），\n'
         + '   ② git -C／execFileSync 的 cwd 會被蓋掉，宣稱掃這棵樹的考題其實掃別棵。\n'
         + '（有列名沒列名都不可以漏——名單清不完，這扇門是前綴制。）');
+      assert.equal((parts[2] ?? '').trim(), 'gh=keep-me',
+        `GITHUB_TOKEN 哨兵沒有活著到達子行程（${line}）\n`
+        + '⇒ 正式 hook 的前綴規則殺過頭了——CI 的 GITHUB_* 會被誤殺（r2 Low④）。');
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
