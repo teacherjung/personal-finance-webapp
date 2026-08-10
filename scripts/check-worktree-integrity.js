@@ -55,8 +55,13 @@
 //    ・repo 壞到 git 打不開時的退路只讀「這棵樹的 config.worktree＋共用 config」兩檔
 //      （各帶 --includes）；global／system 層在退路讀不到——那兩層能弄壞的是整台機器
 //      的每個 repo，不在本檔射程。
-//    ・還原指令的射程＝單行路徑：路徑本身含換行（或 U+2028）時，訊息與考題的逐行抽取
-//      都對不上（r3 Low④）——那種路徑請自行以 --show-origin 自查。
+//    ・origin 解析走 `-z`（NUL 邊界）——tab／雙引號等會被 git C-quote 的路徑因此**在射程內**
+//      （r4 Low）；還剩「路徑本身含換行（或 U+2028）」不在考題射程（逐行抽取的限制，r3 Low④），
+//      那種路徑請自行以 `-z --show-origin` 自查。
+//    ・多值 key（同檔重複、跨 scope 各一筆）：還原指令一律用 `--replace-all`／`--unset-all`
+//      （r4 Medium）；同 key 散在**多個檔**時，修完一檔要重跑體檢、照新訊息修下一檔。
+//    ・需要 git ≥ 2.8（`--show-origin`，2016 年）：更舊的 git 上這些查詢會失敗，體檢退化成
+//      泛用診斷（not-a-repo 級，照樣非零擋下）——不會假綠，但拿不到承載檔與還原指令。
 //
 // 用法：node scripts/check-worktree-integrity.js
 // 退出碼：0＝這棵樹的工作樹身分正常；1＝有問題（訊息裡附還原指令）
@@ -175,20 +180,47 @@ function sharedConfigPath(repoDir) {
  *   | { status: 'absent' }} ConfigOrigin
  */
 
-/** `--show-origin` 輸出＝`<origin>\t<value>`；origin 形如 `file:<路徑>`。
- *  ⚠️ 那個路徑可能是**相對的**（git 以自己的 cwd 為基準印，例如在 repo 裡回 `.git/config`）
- *  ——一定要用 `base` 解成絕對路徑，不然還原指令帶著相對路徑、站在別處照貼就找不到檔
- *  （事故重現考題實際踩到）。非 `file:` 來源（blob、command line…）＝定位不到承載檔，
- *  回 null——**定位不到就不印還原指令**（印一條猜的，比不印更糟）。
- *  @param {{ out: string }} r @param {string} base
- *  @returns {{ status: 'value', out: string, file: string | null }} */
-function parseShowOrigin(r, base) {
-  const tab = r.out.indexOf('\t');
-  if (tab < 0) return { status: 'value', out: r.out, file: null };
-  const origin = r.out.slice(0, tab);
-  if (!origin.startsWith('file:')) return { status: 'value', out: r.out.slice(tab + 1), file: null };
-  const p = origin.slice(5);
-  return { status: 'value', out: r.out.slice(tab + 1), file: isAbsolute(p) ? p : resolve(base, p) };
+/**
+ * 列出一個 key 的**全部條目**（origin＋raw 值），用 `-z --show-origin --get-all`。
+ *
+ * ⚠️ 為什麼是 `-z`（#435 r4 Low）：不帶 `-z` 時 git 會把含 tab／雙引號等特殊字元的
+ *    origin 路徑做 C-quote，自己解引號＝重新發明 git 的跳脫規則（一定漂）。
+ *    `-z` 的邊界是 NUL：`file:<路徑>\0<值>\0` 重複，路徑照原樣，整族問題消失。
+ * ⚠️ 為什麼是 `--get-all`（#435 r4 Medium）：同一個 key 可以有**很多筆**（同檔重複、
+ *    跨 scope 各一筆）；`--get` 只回最後贏家，壞值若在別筆，承載檔就指錯。
+ * ⚠️ origin 路徑可能是**相對的**（git 以自己的 cwd 為基準印）——以 `base` 解成絕對，
+ *    不然還原指令站在別處照貼就找不到檔（r3 事故重現考題實際踩到）。
+ *    非 `file:` 來源（blob、command line…）＝file 記 null，**不會拿去印還原指令**。
+ *
+ * @param {{ status: number, out: string }} r 跑完的 git 結果
+ * @param {string} base
+ * @returns {{ file: string | null, value: string }[] | null} null＝這條查詢自己跑不動
+ */
+function parseEntriesZ(r, base) {
+  if (r.status !== 0) return null;
+  const parts = r.out.split('\0');
+  if (parts[parts.length - 1] === '') parts.pop();
+  /** @type {{ file: string | null, value: string }[]} */
+  const entries = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const origin = parts[i];
+    const value = parts[i + 1];
+    if (!origin.startsWith('file:')) { entries.push({ file: null, value }); continue; }
+    const p = origin.slice(5);
+    entries.push({ file: isAbsolute(p) ? p : resolve(base, p), value });
+  }
+  return entries;
+}
+
+/**
+ * 「這個字串是不是 git 認的合法布林、值是多少」——**問 git 自己**，不自己實作布林語意
+ * （yes/on/1/無值…的規則抄一份就會漂）。站在 repo 外跑，不吃任何 repo 的 config。
+ * @param {string} value
+ * @returns {{ ok: true, out: string } | { ok: false }}
+ */
+function gitBoolOracle(value) {
+  const r = gitOutsideRepo(['-c', `probe.v=${value}`, 'config', '--bool', '--get', 'probe.v']);
+  return r.status === 0 ? { ok: true, out: r.out } : { ok: false };
 }
 
 /**
@@ -205,8 +237,10 @@ function parseShowOrigin(r, base) {
  *      global／system 在退路讀不到——但那兩層若能把 repo 弄壞，壞的是整台機器每個 repo，
  *      不在本檔射程（檔頭誠實劃界有記）。
  *
- * `--bool` 解析失敗（core.bare=banana 這型）＝回 `invalid`（key 在、值壞），
- * 承載檔用不帶 `--bool` 的同款查詢定位（#435 r3 Medium③）。
+ * 布林語意逐筆問 `gitBoolOracle`（#435 r3 Medium③＋r4 Medium）：`--bool --get` 只要**任何
+ * 一筆**壞就整條 fatal、而且指不出是哪筆——這裡改成 raw 列舉全部條目、逐筆請 git 判、
+ * 壞的那一筆的 origin 才是要修的檔。贏家（最後一筆）合法時也要掃其餘各筆：低順位的
+ * 壞值照樣會讓 git 開 repo 時炸掉。
  *
  * @param {string} repoDir
  * @param {string} key
@@ -214,39 +248,40 @@ function parseShowOrigin(r, base) {
  * @returns {ConfigOrigin}
  */
 function configOrigin(repoDir, key, opts = {}) {
-  const boolArgs = opts.bool ? ['--bool'] : [];
-  /** @param {{ status: number, out: string, err: string }} r
-   *  @param {() => { status: number, out: string, err: string }} rawRetry
-   *  @param {string} base 相對 origin 路徑的解析基準
-   *  @returns {ConfigOrigin | null} */
-  const interpret = (r, rawRetry, base) => {
-    if (r.status === 0) return parseShowOrigin(r, base);
-    if (opts.bool && /bad (?:boolean|numeric) config value/.test(r.err)) {
-      const raw = rawRetry();
-      return { status: 'invalid', err: r.err, file: raw.status === 0 ? parseShowOrigin(raw, base).file : null };
-    }
-    return null;
-  };
-  const eff = interpret(
-    git(repoDir, ['config', '--show-origin', ...boolArgs, '--get', key]),
-    () => git(repoDir, ['config', '--show-origin', '--get', key]),
+  // 逐筆列舉（不帶 --bool——多筆裡混一筆壞的就會整條 fatal，壞值定位交給 oracle）。
+  // effective 讀法涵蓋 system／global／include；repo 壞到打不開時退路直讀兩個 repo 檔
+  //（順序＝共用檔先、config.worktree 後＝git 的優先序，**最後一筆＝贏家**）。
+  let entries = parseEntriesZ(
+    git(repoDir, ['config', '-z', '--show-origin', '--get-all', key]),
     repoDir,
   );
-  // effective 拿到「值＋檔」或「壞值＋檔」就收工；「壞值但定位不到檔」（git 連 repo 都打不開時
-  // 的 rawRetry 也會炸）＝續走檔案退路找承載檔，找不到才照實回報定位不到。
-  if (eff && !(eff.status === 'invalid' && eff.file === null)) return eff;
-  const gd = gitDirPath(repoDir);
-  const shared = sharedConfigPath(repoDir);
-  for (const file of [gd ? join(gd, 'config.worktree') : null, shared]) {
-    if (!file || !existsSync(file)) continue;
-    const got = interpret(
-      gitOutsideRepo(['config', '--file', file, '--includes', '--show-origin', ...boolArgs, '--get', key]),
-      () => gitOutsideRepo(['config', '--file', file, '--includes', '--show-origin', '--get', key]),
-      dirname(file),
-    );
-    if (got) return got;
+  if (entries === null) {
+    const gd = gitDirPath(repoDir);
+    const shared = sharedConfigPath(repoDir);
+    /** @type {{ file: string | null, value: string }[]} */
+    const collected = [];
+    let anyReadable = false;
+    for (const file of [shared, gd ? join(gd, 'config.worktree') : null]) {
+      if (!file || !existsSync(file)) continue;
+      const got = parseEntriesZ(
+        gitOutsideRepo(['config', '--file', file, '--includes', '-z', '--show-origin', '--get-all', key]),
+        dirname(file),
+      );
+      if (got !== null) { anyReadable = true; collected.push(...got); }
+    }
+    if (!anyReadable) return { status: 'absent' };
+    entries = collected;
   }
-  return eff ?? { status: 'absent' };
+  if (entries.length === 0) return { status: 'absent' };
+  const winner = entries[entries.length - 1];
+  if (!opts.bool) return { status: 'value', out: winner.value, file: winner.file };
+  // 布林語意：贏家先問 oracle；贏家合法時**還要掃其餘各筆**——git 開 repo 時會把
+  // 每一筆都吃下去，低順位一筆 banana 照樣讓整個 repo 打不開（#435 r4 Medium 的實測）。
+  const winnerBool = gitBoolOracle(winner.value);
+  if (!winnerBool.ok) return { status: 'invalid', err: `'${winner.value}' 不是合法布林`, file: winner.file };
+  const bad = entries.find((e) => !gitBoolOracle(e.value).ok);
+  if (bad) return { status: 'invalid', err: `'${bad.value}' 不是合法布林（非贏家那一筆，但 git 開 repo 時照樣會炸）`, file: bad.file };
+  return { status: 'value', out: winnerBool.out, file: winner.file };
 }
 
 /** 把承載檔講成人話：這棵樹自己的、共用的、還是 include／全域進來的。
@@ -302,7 +337,7 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
       message:
         `core.bare = true${bare.file ? `（值住在${describeConfigFile(repoDir, bare.file)}）` : ''}。\n`
         + (bare.file
-          ? `  還原：git config --file ${shq(bare.file)} core.bare false\n`
+          ? `  還原：git config --file ${shq(bare.file)} --replace-all core.bare false\n`
           : '  ⚠️ 定位不到承載檔（值可能來自環境或 blob）——不給猜的還原指令，'
             + `先自查：git -C ${shq(repoDir)} config --show-origin --get core.bare\n`)
         + '  ⚠️ 還原之前先看一眼是誰寫的：檔頭記著有直接證據的機制'
@@ -319,7 +354,7 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
         `core.bare 的值不是合法布林（git：${bare.err.split('\n')[0]}）`
         + `${bare.file ? `，值住在${describeConfigFile(repoDir, bare.file)}` : ''}。\n`
         + (bare.file
-          ? `  還原：git config --file ${shq(bare.file)} core.bare false\n`
+          ? `  還原：git config --file ${shq(bare.file)} --replace-all core.bare false\n`
           : `  ⚠️ 定位不到承載檔——先自查：git -C ${shq(repoDir)} config --show-origin --get core.bare\n`),
     });
   }
@@ -331,34 +366,35 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
   //    （r2 rework 第一版真的犯過，考題當場抓紅）。帶 --includes：include 進來的照樣算（r3 Medium①）。
   const bareSharedCfg = sharedConfigPath(repoDir);
   if (!(bare.status === 'value' && bare.out === 'true') && bare.status !== 'invalid' && bareSharedCfg) {
-    const rawShared = gitOutsideRepo(
-      ['config', '--file', bareSharedCfg, '--includes', '--show-origin', '--bool', '--get', 'core.bare'],
+    const sharedEntries = parseEntriesZ(
+      gitOutsideRepo(['config', '--file', bareSharedCfg, '--includes', '-z', '--show-origin', '--get-all', 'core.bare']),
+      dirname(bareSharedCfg),
     );
-    if (rawShared.status === 0) {
-      const parsed = parseShowOrigin(rawShared, dirname(bareSharedCfg));
-      if (parsed.out === 'true') {
+    if (sharedEntries && sharedEntries.length > 0) {
+      const sw = sharedEntries[sharedEntries.length - 1];
+      const swBool = gitBoolOracle(sw.value);
+      const badShared = sharedEntries.find((e) => !gitBoolOracle(e.value).ok);
+      if (badShared) {
+        problems.push({
+          id: 'core-bare-invalid',
+          message:
+            `共用 config 這一層的 core.bare 有一筆值不是合法布林（'${badShared.value}'）。\n`
+            + (badShared.file
+              ? `  還原：git config --file ${shq(badShared.file)} --replace-all core.bare false\n`
+              : `  ⚠️ 定位不到承載檔——先自查：git config --file ${shq(bareSharedCfg)} --includes -z --show-origin --get-all core.bare\n`),
+        });
+      } else if (swBool.ok && swBool.out === 'true') {
         problems.push({
           id: 'core-bare-shared',
           message:
             '共用 config 這一層的 core.bare = true（這棵樹自己的 config.worktree 蓋住了它，'
             + '所以 effective 值看不到）。\n'
             + '  ⇒ 其他**沒有**覆寫的樹（含主目錄）全部一起中。\n'
-            + (parsed.file
-              ? `  還原：git config --file ${shq(parsed.file)} core.bare false`
-              : `  ⚠️ 定位不到承載檔——先自查：git config --file ${shq(bareSharedCfg)} --includes --show-origin --get core.bare`),
+            + (sw.file
+              ? `  還原：git config --file ${shq(sw.file)} --replace-all core.bare false`
+              : `  ⚠️ 定位不到承載檔——先自查：git config --file ${shq(bareSharedCfg)} --includes -z --show-origin --get-all core.bare`),
         });
       }
-    } else if (/bad (?:boolean|numeric) config value/.test(rawShared.err)) {
-      const rawWhere = gitOutsideRepo(
-        ['config', '--file', bareSharedCfg, '--includes', '--show-origin', '--get', 'core.bare'],
-      );
-      const whereFile = rawWhere.status === 0 ? parseShowOrigin(rawWhere, dirname(bareSharedCfg)).file : bareSharedCfg;
-      problems.push({
-        id: 'core-bare-invalid',
-        message:
-          `共用 config 這一層的 core.bare 值不是合法布林（git：${rawShared.err.split('\n')[0]}）。\n`
-          + `  還原：git config --file ${shq(whereFile ?? bareSharedCfg)} core.bare false\n`,
-      });
     }
   }
 
@@ -384,7 +420,7 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
           + '  ⇒ 讀到這份 config 的樹，每個 git 指令都會回 fatal: Invalid path，\n'
           + '     所以「git -C 這棵樹」形式的指令（含 config）救不了自己。站在 repo 外面改檔案：\n'
           + (cw.file
-            ? `  還原：git config --file ${shq(cw.file)} --unset core.worktree\n`
+            ? `  還原：git config --file ${shq(cw.file)} --unset-all core.worktree\n`
               + `  （這個值住在${describeConfigFile(repoDir, cw.file)}。）`
             : '  ⚠️ 定位不到承載檔（值可能來自環境或 blob）——不給猜的還原指令，'
               + `先自查：git config --file ${shq(join(repoDir, '.git', 'config'))} --includes --show-origin --get core.worktree`),

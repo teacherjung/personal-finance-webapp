@@ -371,6 +371,87 @@ test('⭐ 全域設定（~/.gitconfig）的病灶：抓得到、還原指令指�
   });
 });
 
+test('⭐ 多值 key：同檔兩筆 core.worktree，一道指令要能整組修掉（r4 Medium）', () => {
+  withSandbox(({ repo, sharedConfig }) => {
+    // 合法路徑一筆＋亂指一筆：贏家（最後一筆）壞掉，--unset 會因多值 exit 5。
+    sgit(['config', '--file', sharedConfig, 'core.worktree', tmpdir()]);
+    sgit(['config', '--file', sharedConfig, '--add', 'core.worktree', '/nowhere/second']);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-worktree-missing');
+    assert.ok(p, `沒抓到多值 core.worktree 的壞贏家（回報：${JSON.stringify(ids(probs))}）`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0,
+      `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}\n`
+      + '——單值形式的 --unset 對多值 key 會 exit 5（r4 Medium 的實測），要用 --unset-all。');
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後 repo 還是壞的——多值沒有整組清掉。');
+  });
+});
+
+test('⭐ 多值 key：同檔 banana＋false 兩筆 core.bare，一道指令要能修好（r4 Medium）', () => {
+  withSandbox(({ repo, sharedConfig }) => {
+    sgit(['config', '--file', sharedConfig, 'core.bare', 'banana']);
+    sgit(['config', '--file', sharedConfig, '--add', 'core.bare', 'false']);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare-invalid');
+    assert.ok(p, `同檔多值裡的 banana 沒被指名（回報：${JSON.stringify(ids(probs))}）`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0,
+      `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}\n`
+      + '——單值形式的 set 對多值 key 會 exit 5（r4 Medium 的實測），要用 --replace-all。');
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後 repo 還是壞的——多值沒有整組收斂。');
+  });
+});
+
+test('⭐ 壞布林住在低順位（全域檔），高順位是合法值：承載檔要指到真兇（r4 Medium）', () => {
+  withSandbox(({ dir, repo, sharedConfig }) => {
+    const fakeHome = join(dir, 'home2');
+    mkdirSync(fakeHome);
+    writeFileSync(join(fakeHome, '.gitconfig'), '[core]\n\tbare = banana\n');
+    sgit(['config', '--file', sharedConfig, 'core.bare', 'false']);   // 高順位合法值
+    const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = fakeHome;
+    process.env.XDG_CONFIG_HOME = join(fakeHome, 'xdg');
+    try {
+      const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+      const p = probs.find((x) => x.id === 'core-bare-invalid');
+      assert.ok(p,
+        `全域檔的 banana 沒被指名（回報：${JSON.stringify(ids(probs))}）`
+        + '——贏家合法不代表沒事：git 開 repo 時每一筆都會吃。');
+      assert.ok(p.message.includes(fakeHome),
+        `承載檔指錯了（訊息：\n${p.message}）——壞值在全域檔，改 repo 的檔白改（r4 Medium 的原始重現）。`);
+      const r = runRepairFromMessage(p.message);
+      assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+      assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+        '還原後 repo 還是壞的。');
+    } finally {
+      if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
+      if (saved.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved.XDG_CONFIG_HOME;
+    }
+  });
+});
+
+test('⭐ 承載檔路徑含 tab：-z 解析不吃 C-quote，還原照樣可跑（r4 Low）', () => {
+  withSandbox(({ dir, wt, sharedConfig }) => {
+    const inc = join(dir, 'with\ttab.cfg');
+    writeFileSync(inc, '[core]\n\tbare = true\n');
+    // 用 git 自己寫 include.path（它會照規矩把 tab 引號化）——手寫原字 git 會讀不到。
+    sgit(['config', '--file', sharedConfig, 'include.path', inc]);
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'false']);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare-shared');
+    assert.ok(p, `tab 路徑的 include 病灶沒被抓（回報：${JSON.stringify(ids(probs))}）`);
+    assert.ok(!p.message.includes('\\t') && !p.message.includes('"'),
+      `訊息裡的路徑帶著 C-quote 殘渣（訊息：\n${p.message}）——沒走 -z 解析、把引號當路徑。`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後病灶仍在。');
+  });
+});
+
 test('⭐ 壞布林值（core.bare=banana）：要指名病灶與承載檔，不可以只退成 not-a-repo（r3 Medium③）', () => {
   // 直接寫壞：repo 自己就打不開了，但成因要說得出來、還原要跑得動。
   withSandbox(({ repo }) => {
