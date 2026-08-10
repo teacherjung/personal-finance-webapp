@@ -112,11 +112,19 @@ test('⭐ 事故的原地重現：GIT_DIR 指向連結工作樹時跑 git init�
         '共用 .git/config 沒有變成 bare=true ⇒ 這一題已經不是在重現 2026-08-09 的事故了。\n'
         + '（git 版本換了？先確認機制還在，再決定要不要改題目——不要直接刪。）');
 
-      const after = ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS }));
+      const afterProbs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+      const after = ids(afterProbs);
       assert.ok(after.includes('core-bare'),
         `體檢沒有抓到 core.bare=true（只回報了 ${JSON.stringify(after)}）⇒ 那道閘是空的。`);
       assert.ok(after.includes('not-a-work-tree'),
         `體檢沒有抓到「已經不是工作樹」（只回報了 ${JSON.stringify(after)}）。`);
+      // 每一種會印「還原：」的病灶，指令都要照貼可跑（#435 r3 Medium②）——這裡跑 core-bare 的。
+      const bareP = afterProbs.find((p) => p.id === 'core-bare');
+      assert.ok(bareP);
+      const fix = runRepairFromMessage(bareP.message);
+      assert.equal(fix.status, 0, `core-bare 的還原指令跑不動（${fix.status}）：${fix.err}\n指令＝${fix.cmd}`);
+      assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+        '照 core-bare 的還原指令跑完，沙盒 repo 卻沒活回來。');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -288,10 +296,125 @@ test('⭐ 同族壞法②（最陰的一種）：索引不見了，git ls-files 
     assert.equal(listed.status, 0, 'git ls-files 這時居然是非零退出？那它就不是「靜靜失敗」了，本題的前提要重寫');
     assert.equal(listed.out, '', 'git ls-files 沒有回空清單 ⇒ 這一題描述的靜靜失敗已經不存在了');
 
-    const seen = ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS }));
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const seen = ids(probs);
     assert.ok(seen.includes('index-unusable'),
       `體檢沒抓到索引不見（回報：${JSON.stringify(seen)}）——那所有靠 git ls-files 掃全樹的考題`
       + '都會在這個狀態下靜靜回報「零違規」。');
+    // 還原指令照貼可跑（#435 r3 Medium②：舊版把中文備註黏在指令尾巴，照貼必炸）。
+    const p = probs.find((x) => x.id === 'index-unusable');
+    assert.ok(p);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `index-unusable 的還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '照還原指令重建索引後，沙盒 repo 卻還是壞的。');
+  });
+});
+
+test('⭐ include 進來的病灶也要抓到、也要修得回（r3 Medium①）', () => {
+  // 反例一：共用 config 只放 include.path，bare=true 藏在被 include 的檔裡＋這棵樹覆寫掩蔽。
+  withSandbox(({ dir, wt, sharedConfig }) => {
+    const inc = join(dir, 'included.cfg');
+    writeFileSync(inc, '[core]\n\tbare = true\n');
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'false']);
+    sgit(['config', '--file', sharedConfig, 'include.path', inc]);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare-shared');
+    assert.ok(p,
+      `bare=true 藏在 include 檔＋本樹掩蔽，體檢回報 ${JSON.stringify(ids(probs))}`
+      + '——不帶 --includes 的直讀會整個看漏（主目錄此刻已經壞了）。');
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原指令回報成功、病灶卻還在——指令改到了 include 的殼、不是承載值的檔。');
+  });
+  // 反例二：core.worktree 亂指藏在被 include 的檔裡——還原指令要指到 include 的那個檔。
+  withSandbox(({ dir, repo, sharedConfig }) => {
+    const inc = join(dir, 'included2.cfg');
+    writeFileSync(inc, '[core]\n\tworktree = /nowhere/include-missing\n');
+    sgit(['config', '--file', sharedConfig, 'include.path', inc]);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-worktree-missing');
+    assert.ok(p, `沒抓到 include 進來的 core.worktree 病灶（回報：${JSON.stringify(ids(probs))}）`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0,
+      `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}\n`
+      + '——r3 Medium① 的原始重現：指令指向共用檔、值卻在 include 檔，照做退出碼 5。');
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後 repo 還是壞的。');
+  });
+});
+
+test('⭐ 全域設定（~/.gitconfig）的病灶：抓得到、還原指令指向全域檔（r3 Medium①）', () => {
+  withSandbox(({ dir, repo }) => {
+    const fakeHome = join(dir, 'home');
+    mkdirSync(fakeHome);
+    writeFileSync(join(fakeHome, '.gitconfig'), '[core]\n\tworktree = /nowhere/global-missing\n');
+    const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = fakeHome;
+    process.env.XDG_CONFIG_HOME = join(fakeHome, 'xdg');   // 隔離，別讀到真使用者的
+    try {
+      const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+      const p = probs.find((x) => x.id === 'core-worktree-missing');
+      assert.ok(p, `全域 core.worktree 亂指沒被抓（回報：${JSON.stringify(ids(probs))}）`);
+      assert.ok(p.message.includes(fakeHome),
+        `還原指令沒有指向全域檔（訊息：\n${p.message}）——改 repo 的 .git/config 修不到全域值。`);
+      const r = runRepairFromMessage(p.message);
+      assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+      assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+        '還原後 repo 還是壞的。');
+    } finally {
+      if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
+      if (saved.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved.XDG_CONFIG_HOME;
+    }
+  });
+});
+
+test('⭐ 壞布林值（core.bare=banana）：要指名病灶與承載檔，不可以只退成 not-a-repo（r3 Medium③）', () => {
+  // 直接寫壞：repo 自己就打不開了，但成因要說得出來、還原要跑得動。
+  withSandbox(({ repo }) => {
+    sgit(['config', '--file', join(repo, '.git', 'config'), 'core.bare', 'banana']);
+    const probs = worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS });
+    const seen = ids(probs);
+    assert.ok(seen.includes('core-bare-invalid'),
+      `core.bare=banana 只回報了 ${JSON.stringify(seen)}——成因被泛用錯誤蓋掉，`
+      + '看訊息的人拿不到病灶與還原法（r3 Medium③）。');
+    const p = probs.find((x) => x.id === 'core-bare-invalid');
+    assert.ok(p);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(repo, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後 repo 還是壞的。');
+  });
+  // 掩蔽版：這棵樹覆寫 false（自己好好的），共用檔的值是 banana——照樣要指名。
+  withSandbox(({ wt, sharedConfig }) => {
+    sgit(['-C', wt, 'config', '--worktree', 'core.bare', 'false']);
+    sgit(['config', '--file', sharedConfig, 'core.bare', 'banana']);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare-invalid');
+    assert.ok(p,
+      `共用檔 core.bare=banana 被本樹覆寫掩住，體檢回報 ${JSON.stringify(ids(probs))}`
+      + '——其他沒覆寫的樹此刻已經打不開了。');
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後這棵樹視角仍有問題。');
+  });
+  // 病灶住在樹自己的 config.worktree（①b 只看共用層、蓋不到這裡）：還原要指到 config.worktree。
+  withSandbox(({ wt, wtGitDir }) => {
+    sgit(['config', '--file', join(wtGitDir, 'config.worktree'), 'core.bare', 'banana']);
+    const probs = worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS });
+    const p = probs.find((x) => x.id === 'core-bare-invalid');
+    assert.ok(p,
+      `config.worktree 裡的 core.bare=banana 沒被指名（回報：${JSON.stringify(ids(probs))}）`
+      + '——這棵樹打不開，成因卻被泛用錯誤蓋掉。');
+    assert.ok(p.message.includes('config.worktree'),
+      `訊息沒指出值住在 config.worktree（訊息：\n${p.message}）——改共用檔修不到它。`);
+    const r = runRepairFromMessage(p.message);
+    assert.equal(r.status, 0, `還原指令跑不動（${r.status}）：${r.err}\n指令＝${r.cmd}`);
+    assert.deepEqual(ids(worktreeIntegrityProblems(wt, { requiredTracked: SANDBOX_ANCHORS })), [],
+      '還原後這棵樹還是壞的。');
   });
 });
 
