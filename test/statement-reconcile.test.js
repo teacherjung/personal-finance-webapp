@@ -22,9 +22,10 @@ const TEST_STORE = join(tmpdir(), `finance-reconcile-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
+const { getDb } = await import('../lib/repo.js');
 const { reconcileBankStatement, reconcileCardStatement, gateFailureMessage } = await import('../lib/statement-reconcile.js');
 const { extractStatementTotals, extractStatementDue } = await import('../lib/statement.js');
-const { assertBankReconciled } = await import('../lib/services/bank-import.js');
+const { assertBankReconciled, previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
 const { previewAuto, previewForCard, assertCardReconciled } = await import('../lib/services/statement-import.js');
 
 after(() => {
@@ -262,7 +263,7 @@ test('中閘｜影子檢查同一把容差尺：差 1＝pass、差 2＝mismatch'
   assert.equal(off(2).ok, true, 'mismatch 仍不擋（影子）');
 });
 
-test('中閘｜讀不到任何總額（台新官網 XLSX 沒印）＝weak 全 skip、照舊放行', () => {
+test('中閘｜什麼總額都讀不到的格式＝weak 全 skip、照舊放行（通用題，不綁特定版式——r3#2）', () => {
   const v = reconcileCardStatement({ statementTotals: { due: null, prevDue: null, paidAndRefund: null, newCharges: null },
     transactions: [{ amount: 300 }] });
   assert.equal(v.ok, true);
@@ -408,6 +409,52 @@ test('端到端｜免選卡那條路（previewAuto）同樣擋 C1、同樣帶 re
   assert.equal(r.reconcile.level, 'medium');
   assert.deepEqual(r.statementTotals, { due: 8450, prevDue: 10449, paidAndRefund: 2449, newCharges: 450 },
     '免選卡那條路也要逐欄帶四格（r2#2：只驗 previewForCard 的話這邊拔掉照樣全綠）');
+});
+
+// ---------- ③ 端到端：銀行兩個正式入口（注入假解析器＝r3#1 的測試接縫） ----------
+// 銀行入口吃真 PDF、考題合成不了；r3 實測「把兩處 assert 拔掉、31 題全綠」＝接線是空包彈。
+// 這三題經**正式入口本人**（previewBankStatement/applyBankStatement 的第三參數注入解析結果）驗：
+// 不平衡＝兩入口都 400、apply 一筆都不寫；平衡＝預覽帶裁決、套用真的落地（接縫不是只會擋）。
+
+/** 完整的銀行解析產物（good path 供 apply 落地用；mutate 可把它弄壞）。 @param {(f:any)=>void} [mutate] */
+function bankParsedFull(mutate) {
+  const full = {
+    bank: '台新', referenceDate: '2026-07-31',
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 10300, currency: 'TWD', label: '新臺幣活儲', note: '' }],
+    accountCurrency: { '900100****3301': 'TWD', '900200****3302': 'TWD' },
+    transactions: cleanBankParsed().transactions,
+  };
+  if (mutate) mutate(full);
+  return full;
+}
+
+test('端到端｜銀行預覽入口：不平衡＝previewBankStatement 就地 400（接線本人受測，r3#1）', async () => {
+  const parse = async () => bankParsedFull((f) => { f.transactions[4].amount = 250; });
+  await assert.rejects(previewBankStatement('QUJD', '', parse), (/** @type {any} */ e) => {
+    assert.equal(e.status, 400);
+    assert.match(e.message, /對帳沒過，這份銀行對帳單先不匯入/);
+    return true;
+  });
+});
+
+test('端到端｜銀行套用入口：不平衡＝400 且資料庫一筆都不寫（寫入路徑 fail-closed）', async () => {
+  const parse = async () => bankParsedFull((f) => { f.transactions[4].amount = 250; });
+  await assert.rejects(applyBankStatement('QUJD', '', parse), (/** @type {any} */ e) => e.status === 400);
+  const db = await getDb();
+  assert.equal((db.transactions || []).length, 0, '閘要在任何寫入之前擋下——半套用比不套用更糟');
+  assert.equal((db.accounts || []).length, 0, '也不可建出任何帳戶');
+});
+
+test('端到端｜銀行兩入口平衡通過：預覽帶 reconcile=strong、套用真的落地（接縫不是只會擋）', async () => {
+  const r = await previewBankStatement('QUJD', '', async () => bankParsedFull());
+  assert.equal(r.reconcile.level, 'strong');
+  assert.equal(r.reconcile.ok, true);
+  assert.equal(r.transactions.rows.length, 5);
+  const a = await applyBankStatement('QUJD', '', async () => bankParsedFull());
+  assert.equal(a.ok, true);
+  assert.equal(a.transactions.imported, 5);
+  const db = await getDb();
+  assert.equal((db.transactions || []).filter((/** @type {any} */ t) => t.source === 'bank').length, 5);
 });
 
 test('端到端｜今日的官網 XLSX（只有「本期帳單金額」、無交叉欄）＝weak 照舊放行，行為不變', async () => {
