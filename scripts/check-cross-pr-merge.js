@@ -110,19 +110,28 @@ export const CANT_RUN_CAUSES = [
  *
  * ⚠️ 型別的分工（#446 r6）：**產出端**（tryMerge）用 discriminated union 鎖
  * 「失敗必帶 kind」——從失敗出口拔掉 kind，校對當場紅。**本函式**是 exported 純函式，
- * 執行期什麼都可能被餵進來（型別擋不了 runtime），所以「kind 缺席」走保守分支：
- * 不冒充衝突、不冒充測試紅，照樣擋下並標明未標記（r6 實測：缺 kind 的條目在混輪
- * 曾被冒名成「跑得起來的測試紅」）。
+ * 執行期什麼都可能被餵進來（型別擋不了 runtime），所以「kind 缺席／不認得」有專屬的
+ * 前置防線：**不論跟誰混輪、或單獨出現，一律整輪退 2**——不冒充衝突、不冒充測試紅，
+ * 也不讓「合起來會壞」（1）替它背書（#446 r7：舊版的保守分支只在混到 cantRun 時生效，
+ * 單獨缺席仍以 1 收場、還被測試紅的 footer 籠罩）。
  * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}[]} results
  */
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
+  const unlabeled = bad.filter((r) => r.kind !== 'conflict' && r.kind !== 'red' && r.kind !== 'cantRun');
+  if (unlabeled.length) {
+    return {
+      code: 2,
+      message: '跨 PR 試合併：**查不清楚——有結果沒有標記死法（kind），這一輪的分類不可信**\n'
+        + bad.map((r) => `  ・#${r.number}：${unlabeled.includes(r) ? '【死法未標記】' : ''}${r.why}`).join('\n')
+        + '\n\n⚠️ 正式路徑（tryMerge）的每一筆失敗都帶 kind（型別鎖著）——出現未標記＝'
+        + '有別的東西在餵結果、或程式被改壞。不推定它是衝突、測試紅還是執行不起來，'
+        + 'fail-closed 擋下，先查結果是哪來的。',
+    };
+  }
   if (bad.some((r) => r.kind === 'cantRun')) {
     const confirmed = bad.filter((r) => r.kind !== 'cantRun');
-    const kinds = [...new Set(confirmed.map((r) => (
-      r.kind === 'conflict' ? '文字衝突'
-        : r.kind === 'red' ? '跑得起來的測試紅'
-          : '死法未標記（不推定種類，保守列入）')))];
+    const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
     return {
       code: 2,
       message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
@@ -178,13 +187,20 @@ function gh(args) {
  * @param {{stdout?: string, stderr?: string, message?: string} | null | undefined} err
  */
 export function redDetail(err) {
-  // 太長時**頭尾都留、截中段**：死因可能在頭（sh 的「command not found」是 stderr
-  // 第一行），也可能在尾（npm 的錯誤碼、最後一行斷言）。只留開頭的寫法曾把最後一行
-  // 的真正死因整段裁掉（#446 r1 Codex 用行為題示範）。
+  // 太長時**頭尾都留、截中段**——行的層級與字元的層級各做一次：死因可能在頭
+  // （sh 的「command not found」是 stderr 第一行），也可能在尾（npm 的錯誤碼、最後
+  // 一行斷言）。只留開頭的寫法裁掉過末行死因（#446 r1）；只取末 N 行的寫法在輸出
+  // 超過 N 行時把首行整行丟掉（#446 r7）——所以行數超窗時**首行永遠保留**。
+  // 窗寬（3／8）是調校值不是承重點；承重的是「首行與末行都活著」。
   const clip = (/** @type {string} */ s) =>
     s.length <= 300 ? s : `${s.slice(0, 150)} …（截掉中段）… ${s.slice(-150)}`;
-  const tail = (/** @type {string | undefined} */ s, /** @type {number} */ n) =>
-    clip(String(s || '').split('\n').filter(Boolean).slice(-n).join(' / '));
+  const tail = (/** @type {string | undefined} */ s, /** @type {number} */ n) => {
+    const lines = String(s || '').split('\n').filter(Boolean);
+    const kept = lines.length <= n
+      ? lines
+      : [lines[0], `…（略 ${lines.length - n} 行）…`, ...lines.slice(-(n - 1))];
+    return clip(kept.join(' / '));
+  };
   const out = tail(err?.stdout, 3);
   const errOut = tail(err?.stderr, 8);
   return [out, errOut && `stderr：${errOut}`].filter(Boolean).join('｜')

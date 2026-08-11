@@ -451,19 +451,27 @@ test('裁決｜footer 也看 kind、不嗅 why：why 提到「文字衝突」的
     '「文字衝突」的說明被 why 的散文內容觸發——footer 的判準退回嗅字串（#446 r6 存活過的突變）');
 });
 
-test('裁決｜kind 缺席的 bad 條目：混輪時保守列入、不冒充「測試紅」也不冒充「衝突」（#446 r6）', () => {
-  // 產出端（tryMerge）由 @returns 的 discriminated union 鎖「失敗必帶 kind」＝拔掉就校對紅；
-  // verdict 是 exported 純函式、執行期擋不了亂餵，所以這裡鎖 runtime 的保守分支——
-  // r6 實測：缺 kind 的條目在混輪被冒名成「跑得起來的測試紅」。
-  const v = verdict([
-    { number: 385, ok: false, why: '不明死法' },
-    { number: 390, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' },
-  ]);
-  assert.equal(v.code, 2);
-  assert.match(v.message, /未標記/, 'kind 缺席的條目消失了——要保守點名，不可以靜靜滑走');
-  assert.ok(!v.message.includes('（跑得起來的測試紅'),
-    'kind 缺席被冒充成「測試紅」——沒有證據就不可以掛那個名字');
-  assert.ok(!v.message.includes('（文字衝突'), 'kind 缺席被冒充成「文字衝突」');
+test('裁決｜kind 缺席＝整輪查不清楚（2）：單獨、混 red、混 conflict、混 cantRun 四種都一樣（#446 r6／r7）', () => {
+  // 產出端（tryMerge）由 discriminated union 鎖「失敗必帶 kind」＝拔掉就校對紅；
+  // verdict 是 exported 純函式、執行期擋不了亂餵，runtime 的防線是：出現未標記
+  // ＝這一輪的分類不可信，一律 2。#446 r7 實測舊版只在混到 cantRun 時保守——
+  // 單獨缺席仍回 1 掛「合起來會壞」、混 red 時被測試紅的 footer 籠罩背書。
+  const unlabeled = { number: 385, ok: false, why: '不明死法' };
+  /** @type {Parameters<typeof verdict>[0][]} */
+  const combos = [
+    [unlabeled],
+    [unlabeled, { number: 390, ok: false, kind: 'red', why: '合起來之後「考試」紅了：斷言炸了' }],
+    [unlabeled, { number: 391, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' }],
+    [unlabeled, { number: 392, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' }],
+  ];
+  for (const results of combos) {
+    const v = verdict(results);
+    const label = results.map((r) => r.kind ?? '（無）').join('＋');
+    assert.equal(v.code, 2,
+      `${label}：預期 2，實得 ${v.code}——有一筆死法不可信，「合起來會壞／都是綠的」都下不了手`);
+    assert.match(v.message, /未標記/, `${label}：未標記的條目要被點名，不可以靜靜滑走或被別的分類背書`);
+    assert.doesNotMatch(v.message, /合起來會壞/, `${label}：分類不可信時不可以宣稱相容性結論`);
+  }
 });
 
 test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {
@@ -517,6 +525,16 @@ test('redDetail｜太長時頭尾都留：最後一行的真正死因不可以�
   assert.match(d, /FINAL-CAUSE-CODE-127/,
     '末行死因被「只留開頭」的截斷裁掉——看的人拿到的全是前置噪音（r1 版 slice(0,300) 的實際行為）');
   assert.match(d, /x{20}/, '開頭也要留著（sh 的「command not found」常常就在第一行）');
+});
+
+test('redDetail｜stderr 超過行窗時首行也要活著：sh 的死因常在第一行（#446 r7——「只取末 N 行」會整行丟掉它）', () => {
+  // 噪音行刻意各不相同：#446 r7 實測過「七行相同的 x」連行窗 8→7 的弱化都測不出。
+  // 行窗本身是調校值不是承重點；承重的是「首行與末行都活著」。
+  const noise = Array.from({ length: 20 }, (_, i) => `noise-line-${i}-${'y'.repeat(20)}`);
+  const d = redDetail({ stderr: ['HEAD-CAUSE-COMMAND-NOT-FOUND', ...noise, 'TAIL-CAUSE-EXIT-127'].join('\n') });
+  assert.match(d, /HEAD-CAUSE-COMMAND-NOT-FOUND/,
+    '首行被「只取末 N 行」整行丟掉（#446 r7 實測）——sh 的「command not found」就住在那一行');
+  assert.match(d, /TAIL-CAUSE-EXIT-127/, '末行也要活著（#446 r1 的教訓）');
 });
 
 test('三關紅的死因要帶 stderr（127 的「command not found」不在 stdout——#441 當時只看得到 npm 橫幅）', () => {
