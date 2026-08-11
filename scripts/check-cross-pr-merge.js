@@ -97,22 +97,23 @@ export const CANT_RUN_CAUSES = [
 /**
  * 把每一支的試合併結果彙整成退出碼與訊息。
  *
- * ⚠️ `cantRun: true` 的失敗（三關「執行不起來」）＝**拿不到可信的測試判決**，一律轉成
- * 退出碼 2「查不清楚」，不可以混進「合起來會壞」（1）——但也**不宣稱一定是環境**：
- * 126／127 兩支各自全綠的 PR 也造得出來（見 `cantRunSignal` 檔頭）。只要有一筆
- * cantRun，整輪就以 2 收場（三關共用同一份發起樹的 node_modules，它若真的壞了，
- * 同輪其他結果的可信度也存疑）；同輪若另有「跑得起來的紅」，訊息要列出來並說明
- * 那些不因此失效——下不了定論的是 cantRun 那幾筆，不是整輪的事實。
- * @param {{number: number, ok: boolean, why: string, cantRun?: boolean}[]} results
+ * ⚠️ 分類一律看**結構化的 `kind`**（tryMerge 在知道死法的當下標的），不嗅 `why` 的散文
+ * ——`why` 裡包著測試自己的輸出，內容剛好出現「文字衝突」「紅了」字樣不代表它是那種
+ * 死法（#446 r5 實測：真測試紅的錯誤文字提到「文字衝突」，嗅字串的版本把它分類成衝突）。
+ *
+ * `kind: 'cantRun'`（三關「執行不起來」）＝**拿不到可信的測試判決**，一律轉成退出碼 2
+ * 「查不清楚」，不可以混進「合起來會壞」（1）——但也**不宣稱一定是環境**：126／127
+ * 兩支各自全綠的 PR 也造得出來（見 `cantRunSignal` 檔頭）。只要有一筆 cantRun，
+ * 整輪就以 2 收場（三關共用同一份發起樹的 node_modules，它若真的壞了，同輪其他結果
+ * 的可信度也存疑）；同輪若另有已確定的阻擋（衝突／測試紅），訊息要照 kind 點名保留
+ * ——下不了定論的是 cantRun 那幾筆，不是整輪的事實。
+ * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}[]} results
  */
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
-  if (bad.some((r) => r.cantRun)) {
-    const confirmed = bad.filter((r) => !r.cantRun);
-    // 已確定阻擋的種類**照 why 的內容算出來**，不用寫死的散文（同檔 tryMerge 只產這
-    // 兩種開頭，判準與下方 code 1 分支的兩段 footer 同一套）：文字衝突不是測試紅，
-    // 混著講會讓人去翻不存在的測試輸出（#446 r3 用文字衝突＋EACCES 混輪實測過這個誤導）。
-    const kinds = [...new Set(confirmed.map((r) => (r.why.includes('文字衝突') ? '文字衝突' : '跑得起來的測試紅')))];
+  if (bad.some((r) => r.kind === 'cantRun')) {
+    const confirmed = bad.filter((r) => r.kind !== 'cantRun');
+    const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
     return {
       code: 2,
       message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
@@ -140,11 +141,12 @@ export function verdict(results) {
       + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
       // ⚠️ 兩種壞法要分開講，不可以混為一談（實跑第一次就發現我原本的訊息不準）：
       //    文字衝突 GitHub **會**顯示；測試紅 GitHub **不會**——後者才是這道閘存在的理由。
-      + (bad.some((r) => r.why.includes('文字衝突'))
+      //    判準看 kind，不嗅 why（理由見本函式檔頭——測試輸出裡可能剛好有這些字樣）。
+      + (bad.some((r) => r.kind === 'conflict')
         ? '\n\n⚠️ **文字衝突**：這種 GitHub 自己就看得到（合併鍵會變灰）。'
           + '這道閘的價值在於**現在**就告訴你，而不是等到要合併的那一刻。'
         : '')
-      + (bad.some((r) => r.why.includes('紅了'))
+      + (bad.some((r) => r.kind === 'red')
         ? '\n\n⚠️ **合起來測試紅**：這種 GitHub **不會**顯示——兩支各自的 CI 都是綠的、'
           + '也沒有檔案衝突，**合併第二支的當下 `main` 就紅了**。\n'
           + '   通常是其中一支的護欄擋掉了另一支的內容。先讓兩支相容再合併。'
@@ -218,6 +220,7 @@ export function cantRunSignal(err) {
  * 指回主目錄，動到它會讓 William 的 app 起不來。所以拆的時候用 `unlinkSync`：
  * 它只刪得掉連結本身，如果哪天那裡變成真的目錄，它會直接失敗而不是遞迴刪除。
  * @param {string} repoRoot @param {string} baseSha @param {string} otherSha @param {number} otherNumber
+ * @returns {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}}
  */
 function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
   const wt = mkdtempSync(join(tmpdir(), `cross-pr-${otherNumber}-`));
@@ -230,7 +233,7 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
     try {
       run(['git', 'merge', '--no-edit', '-q', otherSha], wt);
     } catch {
-      return { number: otherNumber, ok: false, why: '文字衝突，git merge 就過不去' };
+      return { number: otherNumber, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' };
     }
     for (const [label, script] of [['校對', 'typecheck'], ['糾察', 'lint'], ['考試', 'test']]) {
       try {
@@ -242,11 +245,11 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
         const sig = cantRunSignal(err);
         if (sig !== null) {
           return {
-            number: otherNumber, ok: false, cantRun: true,
+            number: otherNumber, ok: false, kind: 'cantRun',
             why: `「${label}」執行不起來（症狀：${sig}）：${redDetail(err)}`,
           };
         }
-        return { number: otherNumber, ok: false, why: `合起來之後「${label}」紅了：${redDetail(err)}` };
+        return { number: otherNumber, ok: false, kind: 'red', why: `合起來之後「${label}」紅了：${redDetail(err)}` };
       }
     }
     return { number: otherNumber, ok: true, why: '' };

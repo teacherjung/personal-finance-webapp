@@ -64,7 +64,7 @@ test('裁決｜全部合得起來 → 0', () => {
 test('⭐ 裁決｜任一支合起來會壞 → 1（這是它存在的全部理由）', () => {
   const v = verdict([
     { number: 384, ok: true, why: '' },
-    { number: 385, ok: false, why: '合起來之後「考試」紅了：契約標題不是允許的寫法' },
+    { number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：契約標題不是允許的寫法' },
   ]);
   assert.equal(v.code, 1);
   assert.match(v.message, /#385/);
@@ -75,11 +75,11 @@ test('⭐ 裁決｜**兩種壞法要分開講**（第一次實跑就發現我原
   // 文字衝突：GitHub 自己就看得到（合併鍵會變灰）——這道閘的價值只是「提早告訴你」。
   // 合起來測試紅：GitHub **不會**顯示——那才是它存在的理由。
   // 把兩種都說成「GitHub 不會顯示衝突」是不準確的，而且會讓人不信任後面那句。
-  const textOnly = verdict([{ number: 387, ok: false, why: '文字衝突，git merge 就過不去' }]);
+  const textOnly = verdict([{ number: 387, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' }]);
   assert.match(textOnly.message, /GitHub 自己就看得到/);
   assert.doesNotMatch(textOnly.message, /GitHub \*\*不會\*\* 顯示/u);
 
-  const testRed = verdict([{ number: 385, ok: false, why: '合起來之後「考試」紅了：契約標題不是允許的寫法' }]);
+  const testRed = verdict([{ number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：契約標題不是允許的寫法' }]);
   assert.match(testRed.message, /GitHub \*\*不會\*\*顯示/);
   assert.match(testRed.message, /護欄擋掉了另一支的內容/);
 });
@@ -320,7 +320,7 @@ test('⭐ CLI｜三關跑得起來、真的紅（退出碼 1）→ exit 1，死�
 test('裁決｜任何一筆「執行不起來」（cantRun）→ 整輪 2，標題不可以說「合起來會壞」', () => {
   const v = verdict([
     { number: 384, ok: true, why: '' },
-    { number: 385, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：退出碼 127）：…' },
+    { number: 385, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：退出碼 127）：…' },
   ]);
   assert.equal(v.code, 2, '「執行不起來」＝拿不到可信的測試判決，只值得「查不清楚」');
   assert.doesNotMatch(v.message, /合起來會壞/);
@@ -341,16 +341,18 @@ test('裁決｜成因可能是資料不是散文：環境與非環境必須同�
   assert.ok(kinds.has('cross-pr'),
     '非環境的「兩支合出來的破壞」成因不在列（#446 r2 反例）——只剩環境歸因，看的人會以為修環境就好');
   assert.ok(kinds.has('self-exit'), '「受測內容自己退 126／127」的成因不在列（#446 r3 反例）');
-  const v = verdict([{ number: 385, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：退出碼 127）：…' }]);
+  const v = verdict([{ number: 385, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：退出碼 127）：…' }]);
   for (const c of CANT_RUN_CAUSES) {
+    assert.ok(typeof c.text === 'string' && c.text.trim().length > 0,
+      `成因「${c.kind}」的 text 是空的——includes('') 恆真，「每條都進訊息」的斷言會假綠（#446 r5）`);
     assert.ok(v.message.includes(c.text), `成因「${c.kind}」沒有進到訊息裡——資料與訊息斷線`);
   }
 });
 
 test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」→ 整輪 2，但真紅要列出、不可被標題否定（#446 r2）', () => {
   const v = verdict([
-    { number: 385, ok: false, why: '合起來之後「考試」紅了：斷言炸了' },
-    { number: 390, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：EACCES）：…' },
+    { number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：斷言炸了' },
+    { number: 390, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' },
   ]);
   assert.equal(v.code, 2, '有一筆量不準，整輪就下不了「安全」的定論——fail-closed');
   assert.match(v.message, /#385/);
@@ -367,8 +369,8 @@ test('裁決｜「文字衝突」＋「執行不起來」混輪 → 2，衝突�
   // r3 版把所有非 cantRun 統稱「跑得起來的紅（真的測試紅）」——文字衝突是確定阻擋、
   // 但它根本沒跑到測試，這樣叫會讓看的人去翻不存在的測試輸出（Codex r3 實測重現）。
   const v = verdict([
-    { number: 387, ok: false, why: '文字衝突，git merge 就過不去' },
-    { number: 390, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：EACCES）：…' },
+    { number: 387, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' },
+    { number: 390, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' },
   ]);
   assert.equal(v.code, 2);
   assert.match(v.message, /文字衝突/, '衝突那筆的死因不見了');
@@ -378,6 +380,21 @@ test('裁決｜「文字衝突」＋「執行不起來」混輪 → 2，衝突�
   // 語意斷言（輸入沒有測試紅⇒訊息不得說測試紅）才守得住。
   assert.doesNotMatch(v.message, /測試紅/,
     '文字衝突被歸進「測試紅」——它根本沒跑到測試，看的人會去翻不存在的測試輸出');
+});
+
+test('裁決｜分類看 kind、不嗅 why：測試輸出裡剛好有「文字衝突」字樣的真測試紅，不可以被分類成衝突（#446 r5）', () => {
+  // 嗅 why.includes('文字衝突') 的版本在這個輸入下把真測試紅分類成「文字衝突」，
+  // 「跑得起來的測試紅」從分類句消失（#446 r5 Codex 實測）——why 包著測試自己的輸出，
+  // 內容出現什麼字樣都有可能；分類的依據必須是 tryMerge 在知道死法當下標的結構化 kind。
+  const v = verdict([
+    { number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：「文字衝突偵測」這道考題炸了 / stderr：assert 不成立' },
+    { number: 390, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' },
+  ]);
+  assert.equal(v.code, 2);
+  assert.ok(v.message.includes('已確定的阻擋**（跑得起來的測試紅）'),
+    `分類句沒把這筆算成測試紅——它的 why 只是「內容提到」文字衝突，死法是 kind='red'。訊息：\n${v.message}`);
+  assert.ok(!v.message.includes('已確定的阻擋**（文字衝突'),
+    '分類句被 why 的散文內容帶偏成「文字衝突」——嗅字串的病（#446 r5 反例）');
 });
 
 test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {
