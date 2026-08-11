@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload,
+  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -197,11 +197,14 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
     '舊文案逐字回歸＝雲端版把「不會上傳」講給正在上傳的人聽');
   assert.doesNotMatch(src, /對帳單密碼（/,
     'cashflow.js 裡不准再出現手寫的密碼欄告知句——兩句與挑句判準只住 cashflow-model.js 一處');
-  // r3#2：preview／remember 等待期間切頁＝不開後續窗。開窗當下存 seq0、每個後續窗開啟前核對 onPage()。
-  // ⚠️ 這條是 DOM-deferred（setTimeout＋openForm、node 載不動整頁），與其他接線同款用去註解形狀掃描鎖住
-  //   守門的存在——拿掉 seq0 或 onPage 檢查＝這裡轉紅（行為本身需真瀏覽器，屬既有劃界）。
+  // r4：切頁作廢改用 openWhenOnPage（排程＋執行兩次核對，行為由下面的單元題直測）——
+  //   這裡鎖「每個 deferred 開窗點都經 openWhenOnPage、且不再有裸 setTimeout(()=>showBankPreview)」。
   assert.match(src, /const seq0 = currentRouteSeq\(\);/, '銀行上傳窗要在開窗當下存下路由序號');
-  assert.match(src, /if \(!onPage\(\)\) return;/, '每個後續窗開啟前要核對 onPage（preview 等待期間切頁＝不開）');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, pw\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, ''\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => showBankPreview/, '不准有裸 setTimeout 開預覽窗（繞過切頁作廢）');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => openPasswordWindow/, '不准有裸 setTimeout 開密碼窗');
 });
 
 test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序號／真開窗接進 runCardUpload（P0.5 r1#5）', () => {
@@ -221,9 +224,33 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
     '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
   assert.match(src, /if \(g\.stale \|\| !onPage\(\)\) return;/, '問 /mode（或更早的 preview）期間切頁＝不開密碼窗');
-  // r3#2：卡片線同款——開窗當下存 seq0、後續窗開啟前核對 onPage()
+  // r4：卡片線每個 deferred 開窗點（含選卡/改卡）都經 openWhenOnPage、無裸 setTimeout 開窗
   assert.match(src, /const seq0 = currentRouteSeq\(\);/, '卡片上傳窗要在開窗當下存下路由序號');
-  assert.match(src, /if \(!onPage\(\)\) return;/, 'preview／remember 等待期間切頁＝不開後續窗');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => handlePreviewResult\(/, 'preview 後開後續窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => openStatementPreview\(/, '選卡重解析後開預覽窗要走 openWhenOnPage');
+  // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）
+  assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,120}?if \(!onPage\(\)\) return;/,
+    '改卡重解析 await 後、draw 前要核對切頁');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => (handlePreviewResult|openPasswordWindow|openStatementPreview)/, '不准有裸 setTimeout 開後續窗');
+});
+
+test('切頁作廢排程｜openWhenOnPage：同頁才開、排程前切頁不排、排完到執行前切頁不開', () => {
+  // 這是 r4 把散寫 if(!onPage()) 收成的可測 helper——兩處核對（排程當下＋callback 執行當下）。
+  let opened = 0;
+  // ① 同頁：排程且執行都開
+  {
+    /** @type {(() => void)[]} */ const q = [];
+    openWhenOnPage(() => true, () => { opened++; }, (fn) => q.push(fn));
+    assert.equal(q.length, 1, '同頁＝有排程'); q[0](); assert.equal(opened, 1, '執行時仍同頁＝開');
+  }
+  // ② 排程前已切頁：根本不排、不開
+  { let n = 0; /** @type {(() => void)[]} */ const q = []; openWhenOnPage(() => false, () => { n++; }, (fn) => q.push(fn));
+    assert.deepEqual([q.length, n], [0, 0], '排程前切頁＝不排也不開'); }
+  // ③ 排程時同頁、執行前切頁：排了但不開（callback 內第二次核對）
+  { let onp = true; let n = 0; /** @type {(() => void)[]} */ const q = [];
+    openWhenOnPage(() => onp, () => { n++; }, (fn) => q.push(fn));
+    assert.equal(q.length, 1); onp = false; q[0](); assert.equal(n, 0, '執行時已切頁＝不開'); }
 });
 
 // ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------

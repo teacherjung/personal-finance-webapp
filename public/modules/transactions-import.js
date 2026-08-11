@@ -14,7 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
-import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate } from './cashflow-model.js';
+import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 // 卡片上傳的連點鎖＝模組層級（不掛按鈕元素，同銀行 #438 r3 教訓：重繪換掉按鈕鎖會蒸發）
@@ -39,7 +39,7 @@ function openCardUploadForm(cards) {
   // ⚠️ preview／remember 都有 await，回來時可能已切頁（r3#2）——存開窗當下的路由序號，
   //   每個後續窗（選卡/預覽/密碼窗）開啟前都核對；序號變了＝一個都不開。
   const seq0 = currentRouteSeq();
-  const onPage = () => seq0 === currentRouteSeq();
+  const onPage = () => seq0 === currentRouteSeq();   // 整條卡片匯入流程共用（含選卡/改卡重解析）——r4 逐條路都要守
   // 第二窗（P0.5）：已存密碼池（各卡＋記住的）全敗＝後端回 code:'pdf_password' 才開。
   // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
   // typedPw＝使用者這次輸入的密碼，往後選卡/改卡重解析要沿用（r1#3：沒勾記住時正確密碼不在任何池裡）。
@@ -61,8 +61,7 @@ function openCardUploadForm(cards) {
           try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
           catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
         }
-        if (!onPage()) return;   // r3#2：preview/remember 等待期間切頁＝不開後續窗
-        setTimeout(() => handlePreviewResult(r, b64, cards, pw), 0);
+        openWhenOnPage(onPage, () => handlePreviewResult(r, b64, cards, pw, onPage));   // 切頁作廢（排程＋執行兩次核對）
       },
     });
   };
@@ -80,13 +79,11 @@ function openCardUploadForm(cards) {
       const b64 = await fileToBase64(file);
       try {
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
-        if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不開後續窗
-        // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫
-        setTimeout(() => handlePreviewResult(r, b64, cards, ''), 0);
+        // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫（切頁作廢）
+        openWhenOnPage(onPage, () => handlePreviewResult(r, b64, cards, '', onPage));
       } catch (e) {
         if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-        if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不跳密碼窗
-        setTimeout(() => openPasswordWindow(b64), 0);   // 池全敗＝跳密碼窗（等 modal-root 清空）
+        openWhenOnPage(onPage, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁作廢）
       }
     }
   });
@@ -94,13 +91,14 @@ function openCardUploadForm(cards) {
 
 // 自動預覽結果：判得出卡片就直接預覽；認不出就請使用者從候選（或全部卡）選一張。
 // typedPw＝使用者這次在密碼窗輸入的密碼（免選卡失敗才有值）；選卡/改卡重解析要沿用（r1#3）。
-function handlePreviewResult(r, b64, cards, typedPw = '') {
-  if (r.resolvedCard) return openStatementPreview(r.resolvedCard.id, r, b64, cards, typedPw);
-  openCardChoice(r, b64, cards, typedPw);
+// onPage＝整條流程共用的切頁作廢判準（r4：選卡/改卡那條 await 也要守，不只前段）；未傳＝恆 true（相容）。
+function handlePreviewResult(r, b64, cards, typedPw = '', onPage = () => true) {
+  if (r.resolvedCard) return openStatementPreview(r.resolvedCard.id, r, b64, cards, typedPw, onPage);
+  openCardChoice(r, b64, cards, typedPw, onPage);
 }
 
 // 認不出卡片時請使用者選（候選優先，無候選則列全部信用卡），選後用該卡重新解析預覽。
-function openCardChoice(r, b64, cards, typedPw = '') {
+function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
   const pick = (r.candidates && r.candidates.length) ? r.candidates : cards;
   const detail = `${r.bank ? r.bank + '帳單' : '這份帳單'}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}`;
   openForm({
@@ -113,14 +111,14 @@ function openCardChoice(r, b64, cards, typedPw = '') {
     onSubmit: async (data) => {
       // 沿用使用者輸入的密碼（r1#3）：後端 previewForCard 會把它排在池最前；不帶＝沒勾記住時又失敗
       const pr = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
-      setTimeout(() => openStatementPreview(data.cardId, pr, b64, cards, typedPw), 0);
+      openWhenOnPage(onPage, () => openStatementPreview(data.cardId, pr, b64, cards, typedPw, onPage));   // r4：選卡重解析 await 期間切頁＝不開
     }
   });
 }
 
 // 預覽確認：頂部可改「記到哪張卡」（改了就用該卡重新解析＝重算重複標記）；只選「分類」（子類自動判斷用）；
 // 可勾選；重複預設不勾、真正繳款不可匯入、退款可匯入。b64=原始檔（改卡重新解析用）、cards=所有信用卡。
-function openStatementPreview(cardId, r, b64, cards, typedPw = '') {
+function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () => true) {
   const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
   const detected = `${curR.bank ? curR.bank : '未知'}${curR.lastFour ? ` · 末四碼 ${curR.lastFour}` : ''}`;   // 原文即可——標題由外殼負責 esc（防雙重跳脫）
@@ -224,6 +222,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '') {
       try {
         // 沿用使用者輸入的密碼（r1#3）：改卡重解析時 typedPw 排在池最前，沒勾記住也開得了
         const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
+        if (!onPage()) return;   // r4：改卡重解析 await 期間切頁＝不重建舊預覽窗
         curCard = newId; curR = pr; previewSort = 'none'; draw();   // 換卡＝重算重複標記、排序回原始
       } catch (err) { toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }
     };

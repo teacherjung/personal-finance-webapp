@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
@@ -175,9 +175,9 @@ function openBankUpload() {
     }),
     openUploadForm: (label) => {
       let file = null;
-      // ⚠️ preview／remember 都有 await，回來時使用者可能已切頁（r3#2：把關只顧了「問 /mode」那一段，
-      //   preview 那段沒顧到）。存下開窗當下的路由序號，**每個後續窗（預覽窗／密碼窗）開啟前都核對**——
-      //   序號變了＝這些窗不屬於眼前畫面，一個都不開。
+      // ⚠️ preview／remember 都有 await，回來時使用者可能已切頁（r3#2/r4：把關只顧了「問 /mode」那段）。
+      //   存下開窗當下的路由序號，**每個後續窗（預覽窗／密碼窗）都經 openWhenOnPage 排程**——排程當下與
+      //   callback 執行當下都核對序號，序號變了＝這些窗不屬於眼前畫面，一個都不開。
       const seq0 = currentRouteSeq();
       const onPage = () => seq0 === currentRouteSeq();
       // 第二窗（P0.5）：已存密碼池全敗（後端回 code:'pdf_password'）才開——密碼欄＋「記住」勾選
@@ -196,8 +196,7 @@ function openBankUpload() {
             try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
             catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
           }
-          if (!onPage()) return;   // r3#2：preview/remember 等待期間切頁＝不開預覽窗
-          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+          openWhenOnPage(onPage, () => showBankPreview(r, b64, pw));   // 待 openForm 清空 modal-root 後再開；切頁作廢
         },
       });
       openForm({
@@ -215,12 +214,10 @@ function openBankUpload() {
           try {
             // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
             const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64 } });
-            if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不開預覽窗
-            setTimeout(() => showBankPreview(r, b64, ''), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+            openWhenOnPage(onPage, () => showBankPreview(r, b64, ''));   // 待 modal-root 清空後再開；切頁作廢
           } catch (e) {
             if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-            if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不跳密碼窗
-            setTimeout(() => openPasswordWindow(b64), 0);   // 池全敗＝跳密碼窗（等 modal-root 清空）
+            openWhenOnPage(onPage, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁作廢）
           }
         }
       });

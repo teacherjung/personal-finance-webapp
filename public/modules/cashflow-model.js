@@ -109,6 +109,18 @@ export async function runBankUpload({ busy, gate, openUploadForm }) {
 }
 
 /**
+ * 「等 modal-root 清空後開下一窗」的**切頁作廢版排程**（P0.5 r4：把散寫的 `if (!onPage())` 收成
+ * 一個可注入、可測的 helper——散寫的守門①蓋不全每條路②形狀考題證明不了每條路都守）。
+ * **兩處都核對路由序號**：排程當下（切頁後不排）＋ callback 執行當下（排完到執行前切頁也不開）。
+ * `onPage()` 回 true＝還在同一頁；`schedule` 預設 setTimeout(…,0)（等 openForm 清空 modal-root），測試可注入。
+ * @param {() => boolean} onPage @param {() => void} open @param {(fn: () => void) => void} [schedule]
+ */
+export function openWhenOnPage(onPage, open, schedule = (fn) => setTimeout(fn, 0)) {
+  if (!onPage()) return;                       // 排程前先看：已切頁＝根本不排
+  schedule(() => { if (onPage()) open(); });   // callback 執行時再看：排完到執行前切頁＝不開
+}
+
+/**
  * 信用卡上傳的開窗編排（P0.5 r1#5）：與銀行同款「連點鎖＋切頁作廢＋finally 解鎖」——審查者不接受
  * 「卡片線沒有 jsdom 題」當劃界，因為時序缺陷已可重現（載入 `/cards` 的 await 窗內連點＝兩條流程）。
  * 卡片線開窗前沒有模式把關（密碼窗才 lazy 問模式），所以這裡只顧「載卡片名單」那段 await 的時序。
