@@ -43,11 +43,12 @@
 // **擋不住**：兩支合起來語意上矛盾、但測試沒有覆蓋到的地方——那還是要人看。
 // 它也**不保證**合併之後 `main` 一定是綠的：它試的是「這兩支的 head」，
 // 而真正合併時 `main` 可能已經又前進了（那一段由 `strict` 與 CI 接手）。
-// 「執行不起來」（spawn 失敗／被訊號終止／126／127）**判定不了是誰的錯**：它通常是環境
-// （node_modules 殘缺——#441），但兩支各自全綠的 PR 也造得出來（一支開始呼叫追蹤指令、
-// 另一支刪掉它或拔掉執行位——#446 r2 Codex 實測）。所以這一族一律退 2「查不清楚」，
-// 不判定成因、只擋下來要人查；node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，
-// 三關仍會以紅（1）收場——那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
+// 「執行不起來」（spawn 失敗／被訊號終止／126／127）＝**沒有取得可直接判讀的正常測試
+// 結果**，成因這裡不推定——實際出現過的至少有三種：環境（node_modules 殘缺——#441）、
+// 兩支合壞了 scripts 呼叫的追蹤檔案（#446 r2 Codex 造出來）、測試自己以 127 收場
+// （#446 r3 Codex 造出來）。所以這一族一律退 2「查不清楚」，只擋下來要人查；
+// node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，三關仍會以紅（1）收場——
+// 那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -91,19 +92,19 @@ export function othersToTry(list, self) {
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
   if (bad.some((r) => r.cantRun)) {
-    const realRed = bad.filter((r) => !r.cantRun);
+    const confirmed = bad.filter((r) => !r.cantRun);
     return {
       code: 2,
       message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
         + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
-        + '\n\n⚠️ 「執行不起來」（spawn 失敗如 ENOENT／EACCES、被訊號終止、或 126／127）'
-        + '代表指令根本沒跑完，拿不到可信的測試判決。兩種可能都存在：\n'
-        + '   ・最常見：發起樹的 node_modules 殘缺（空的、.bin 斷了）或 npm 不在 PATH（#441 的形狀）\n'
-        + '     → 先從主目錄跑這道閘，或把發起樹的 node_modules symlink 修好再跑一次。\n'
-        + '   ・也可能：兩支合起來弄壞了 scripts 會呼叫的**追蹤檔案**（一支開始呼叫、另一支刪檔或拔執行位）\n'
-        + '     → 主目錄重跑還是一樣的話，那就不是環境——照上面的死因逐條查。'
-        + (realRed.length
-          ? '\n   ⚠️ 上列另有「跑得起來的紅」（真的測試紅）——那些不因本輪下不了定論而失效。'
+        + '\n\n⚠️ 「執行不起來」（spawn 失敗如 ENOENT／EACCES、被訊號終止、或退出碼 126／127）'
+        + '＝**沒有取得可直接判讀的正常測試結果**，這裡不推定成因。實際出現過的可能至少有三種：\n'
+        + '   ・發起樹的 node_modules 殘缺（空的、.bin 斷了）或 npm 不可用（#441 實際發生的形狀）\n'
+        + '   ・兩支合起來弄壞了 scripts 會呼叫的**追蹤檔案**（一支開始呼叫、另一支刪檔或拔執行位——#446 r2 的反例）\n'
+        + '   ・測試或指令自己以 126／127 收場（#446 r3 的反例）\n'
+        + '   排查起點：從主目錄重跑一次這道閘作對照，再照上面的死因欄逐條查。'
+        + (confirmed.length
+          ? '\n   ⚠️ 上列另有**本輪已確定的阻擋**（文字衝突、或跑得起來的測試紅）——那些不因本輪下不了定論而失效。'
           : ''),
     };
   }
@@ -171,9 +172,10 @@ export function redDetail(err) {
  * 126（不可執行）／127（找不到指令）。⚠️ 列舉 errno 名單在這裡是錯的寫法——
  * #446 r2 Codex 實測 EACCES（npm 存在但不可執行）就漏在 r2 的 ENOENT 名單外。
  *
- * ⚠️ 這一族**判定不了成因**：通常是環境（node_modules 殘缺），但兩支各自全綠的 PR
- * 也造得出 126／127（一支開始呼叫追蹤指令、另一支刪檔／拔執行位——#446 r2 Codex
- * 實測）。所以誠實語意是「無法判定」，由 verdict 整輪退 2，不宣稱是誰的錯。
+ * ⚠️ 這一族**判定不了成因**，也不推定：環境（node_modules 殘缺）、兩支合壞了追蹤檔案
+ * （#446 r2 Codex 造出 126／127 的兩支全綠反例）、甚至測試自己印完輸出再以 127 收場
+ * （#446 r3 Codex 實測 status 一樣是 127）——三種都真實存在。誠實語意只有「沒有取得
+ * 可直接判讀的正常結果」，由 verdict 整輪退 2，不宣稱是誰的錯。
  * 跑得起來的紅（含 eslint 的退出碼 2＝可能是合出來的壞設定）刻意不歸這裡。
  * @param {{status?: number | null, code?: string, signal?: string | null} | null | undefined} err
  * @returns {string | null}

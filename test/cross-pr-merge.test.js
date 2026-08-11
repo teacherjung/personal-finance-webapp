@@ -276,7 +276,8 @@ test('⭐ CLI｜node_modules 目錄在、但三關「執行不起來」（127）
     );
     assert.equal(r.status, 2,
       `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
-      + '——「指令找不到」只可能是環境（merge 動不了 node_modules），不可以報成「合起來會壞」。');
+      + '——127 拿不到可直接判讀的正常結果（成因不只一種，#446 r3 連「測試自己退 127」都造出來過），'
+      + '不可以報成「合起來會壞」。');
     assert.match(r.stderr, /執行不起來/, '訊息沒把「執行不起來」跟「跑完是紅的」分開講');
     assert.match(r.stderr, /127/, '環境訊號（退出碼 127）沒有印出來，看的人少一條線索');
     assert.doesNotMatch(r.stderr, /合起來會壞/, '環境問題又冒充相容性結論了');
@@ -325,6 +326,12 @@ test('裁決｜任何一筆「執行不起來」（cantRun）→ 整輪 2，標�
   assert.doesNotMatch(v.message, /合起來會壞/);
   assert.match(v.message, /下不了定論/,
     'r2 版標題寫「這是環境問題，不是兩支相斥」——但 126／127 兩支各自全綠也造得出來（Codex 反例），只能說「下不了定論」');
+  // 訊息的「不推定成因」不是裝飾，是本輪的核心修正——r3 版被 Codex 實測「把第二種可能
+  // 改寫成另一種環境歸因，26 題照綠」＝訊息內容沒人守。這裡把兩個承重點釘住：
+  assert.match(v.message, /不推定成因/,
+    '訊息又開始替 126／127 斷定成因了——127 連「測試自己印完輸出再退 127」都做得到（r3 反例）');
+  assert.match(v.message, /追蹤檔案/,
+    '「兩支合壞了 scripts 呼叫的追蹤檔案」這種非環境可能被拿掉了——看的人會以為只要修環境');
 });
 
 test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」→ 整輪 2，但真紅要列出、不可被標題否定（#446 r2）', () => {
@@ -335,8 +342,22 @@ test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」�
   assert.equal(v.code, 2, '有一筆量不準，整輪就下不了「安全」的定論——fail-closed');
   assert.match(v.message, /#385/);
   assert.match(v.message, /#390/);
-  assert.match(v.message, /跑得起來的紅/,
-    'r2 版標題「不是兩支相斥」會把同輪已經量到的真紅一句話否定掉——真紅必須被點名保留');
+  assert.match(v.message, /已確定的阻擋/,
+    'r2 版標題「不是兩支相斥」會把同輪已經量到的真阻擋一句話否定掉——它們必須被點名保留');
+});
+
+test('裁決｜「文字衝突」＋「執行不起來」混輪 → 2，衝突要被點名保留、且不可以被叫成「測試紅」（#446 r3）', () => {
+  // r3 版把所有非 cantRun 統稱「跑得起來的紅（真的測試紅）」——文字衝突是確定阻擋、
+  // 但它根本沒跑到測試，這樣叫會讓看的人去翻不存在的測試輸出（Codex r3 實測重現）。
+  const v = verdict([
+    { number: 387, ok: false, why: '文字衝突，git merge 就過不去' },
+    { number: 390, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：EACCES）：…' },
+  ]);
+  assert.equal(v.code, 2);
+  assert.match(v.message, /文字衝突/, '衝突那筆的死因不見了');
+  assert.match(v.message, /已確定的阻擋/, '文字衝突是本輪已確定的阻擋，不因下不了定論而失效——要點名保留');
+  assert.doesNotMatch(v.message, /真的測試紅/,
+    '文字衝突被斷言成「真的測試紅」——它根本沒跑到測試，看的人會去翻不存在的測試輸出（r3 版的病）');
 });
 
 test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {
