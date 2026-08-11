@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -158,12 +158,18 @@ test('CLI｜沒給 PR 編號 → exit 2', () => {
 const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' };
 
 /**
- * 造一棵「發起樹」：暫存目錄裡的極小 git repo，**刻意沒有 node_modules**。
- * 帶一顆真 commit（package.json 的三關指令必炸）——這樣萬一先驗被拿掉，
- * 腳本會一路走到真的 worktree＋npm，**原樣重演 #441 的誤報（退出碼 1）**，
- * 考題就用「預期 2 實得 1」把事故直接端到眼前，而不是只靠訊息比對間接推理。
+ * 造一棵「發起樹」：暫存目錄裡的極小 git repo。
+ * 帶一顆真 commit（package.json 的三關指令預設必炸＝127）——這樣萬一先驗被拿掉，
+ * 腳本會一路走到真的 worktree＋npm，**原樣重演 #441 的誤報**，
+ * 考題就把事故直接端到眼前，而不是只靠訊息比對間接推理。
+ *
+ * `nodeModules`：'none'（預設，#441 的形狀）／'dir'（空目錄——先驗放行，換三關的
+ * 「執行不起來」分類接手）／'file'（普通檔案——existsSync 會說 true 的那個洞，#446 r1）。
+ * `scripts`：換掉三關指令（例如換成「跑得起來、退出碼 1」來演真的紅）。
+ * @param {{ nodeModules?: 'none'|'dir'|'file', scripts?: Record<string,string> }} [opts]
  */
-function makeInitiatorRepo() {
+function makeInitiatorRepo(opts = {}) {
+  const { nodeModules = 'none', scripts } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-initiator-'));
   const g = (/** @type {string[]} */ args) => {
     const r = spawnSync('git', args, { encoding: 'utf8', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -173,10 +179,12 @@ function makeInitiatorRepo() {
   g(['init', '-q', '-b', 'main', dir]);
   writeFileSync(join(dir, 'package.json'), JSON.stringify({
     name: 'cross-pr-fixture', version: '0.0.0',
-    scripts: { typecheck: 'cross-pr-fixture-no-such-cmd', lint: 'cross-pr-fixture-no-such-cmd', test: 'cross-pr-fixture-no-such-cmd' },
+    scripts: scripts ?? { typecheck: 'cross-pr-fixture-no-such-cmd', lint: 'cross-pr-fixture-no-such-cmd', test: 'cross-pr-fixture-no-such-cmd' },
   }));
   g(['add', 'package.json']);
   g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
+  if (nodeModules === 'dir') mkdirSync(join(dir, 'node_modules'));
+  if (nodeModules === 'file') writeFileSync(join(dir, 'node_modules'), '這不是目錄\n');
   return { dir, sha: g(['rev-parse', 'HEAD']) };
 }
 
@@ -197,7 +205,8 @@ test('⭐ CLI｜發起樹沒有 node_modules ＋ 有其他 open PR → exit 2，
     assert.match(r.stderr, /node_modules/, '訊息沒點名 node_modules，看的人不知道要修的是環境');
     assert.match(r.stderr, /主目錄|symlink/, '訊息沒指路（從主目錄跑／把 symlink 掛進發起樹）');
     assert.doesNotMatch(r.stderr, /合起來會壞|紅了/,
-      '環境問題被包裝成相容性結論——這道閘的信用就是靠「1 永遠代表真的相斥」撐的');
+      '環境問題被包裝成相容性結論——「1」要盡可能只代表真的相斥：'
+      + '執行不起來的環境問題一律走 2（r1 版這句曾寫成「1 永遠代表真的相斥」，那是撐不住的保證）');
     assert.doesNotMatch(r.stderr, /建不出臨時工作區/,
       '先驗沒接住、倒在下游的泛用訊息——歸因要在源頭，看的人才知道下一步是修環境');
   } finally {
@@ -220,6 +229,102 @@ test('CLI｜發起樹沒有 node_modules 但零其他 open PR → 0（結論不�
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── #446 r1 的三條發現（High＋兩個 Medium），r2 補的行為題 ──────────
+
+test('⭐ CLI｜node_modules 是普通檔案（existsSync 會說 true）→ 先驗照樣要擋，exit 2（#446 r1 High 之一）', () => {
+  const { dir, sha } = makeInitiatorRepo({ nodeModules: 'file' });
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: sha, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 2,
+      `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——「存在」不等於「可用」：普通檔案會讓臨時工作區的 symlink 指到檔案，三關照樣 127。');
+    assert.match(r.stderr, /不是目錄|可用的 node_modules/, '訊息沒說出「存在但不是目錄」這種壞法');
+    assert.doesNotMatch(r.stderr, /合起來會壞/, '環境問題又冒充相容性結論了');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜node_modules 目錄在、但三關「執行不起來」（127）→ exit 2，不是 1（#446 r1 High 之二：先驗管不到的殘缺）', () => {
+  // 空目錄過得了先驗（它驗不了「內容齊不齊」，誠實劃界寫在腳本檔頭）——
+  // 所以 127 這族要在三關的 catch 裡分類成環境，整輪轉 2。
+  const { dir, sha } = makeInitiatorRepo({ nodeModules: 'dir' });
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: sha, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 2,
+      `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——「指令找不到」只可能是環境（merge 動不了 node_modules），不可以報成「合起來會壞」。');
+    assert.match(r.stderr, /執行不起來/, '訊息沒把「執行不起來」跟「跑完是紅的」分開講');
+    assert.match(r.stderr, /127/, '環境訊號（退出碼 127）沒有印出來，看的人少一條線索');
+    assert.doesNotMatch(r.stderr, /合起來會壞/, '環境問題又冒充相容性結論了');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜三關跑得起來、真的紅（退出碼 1）→ exit 1，死因帶兩路輸出（redDetail 的正式接線；#446 r1 Medium）', () => {
+  // 這一題同時鎖兩件事：①「跑得起來的紅」仍然走 1（環境分類沒有殺過頭）；
+  // ②tryMerge → redDetail 的接線真的把 stdout／stderr 都帶進死因——
+  //   r1 版把這條呼叫突變成固定字串時 18/18 照樣全綠（Codex 的突變實測），本題就是補這個洞。
+  const RED_GATE = 'node -e "console.log(\'GATE-STDOUT-MARK\');console.error(\'GATE-STDERR-MARK\');process.exit(1)"';
+  const { dir, sha } = makeInitiatorRepo({
+    nodeModules: 'dir',
+    scripts: { typecheck: RED_GATE, lint: RED_GATE, test: RED_GATE },
+  });
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: sha, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 1,
+      `預期 1，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——跑得起來的紅是這道閘存在的全部理由，環境分類不可以把它也吃掉。');
+    assert.match(r.stderr, /合起來會壞/);
+    assert.match(r.stderr, /「校對」紅了/);
+    assert.match(r.stderr, /GATE-STDERR-MARK/,
+      '死因裡沒有 stderr 的內容——redDetail 的接線斷了（或被換成固定字串），#441 那種環境線索會再度被吞');
+    assert.match(r.stderr, /GATE-STDOUT-MARK/, '死因裡沒有 stdout 的內容——倒在哪一關的哪個指令看不到了');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('裁決｜任何一筆「執行不起來」（env）→ 整輪 2，訊息不可以說「合起來會壞」', () => {
+  const v = verdict([
+    { number: 384, ok: true, why: '' },
+    { number: 385, ok: false, env: true, why: '「校對」執行不起來（環境訊號：退出碼 127）：…' },
+  ]);
+  assert.equal(v.code, 2, '環境問題只值得「查不清楚」——三關共用同一份 node_modules，它壞了整輪都不可信');
+  assert.doesNotMatch(v.message, /合起來會壞/);
+  assert.match(v.message, /環境問題/);
+});
+
+test('redDetail｜太長時頭尾都留：最後一行的真正死因不可以被裁掉（#446 r1 Medium 的行為示範）', () => {
+  const noise = Array.from({ length: 7 }, (_, i) => `${'x'.repeat(80)}-${i}`);
+  const d = redDetail({ stderr: [...noise, 'FINAL-CAUSE-CODE-127'].join('\n') });
+  assert.match(d, /FINAL-CAUSE-CODE-127/,
+    '末行死因被「只留開頭」的截斷裁掉——看的人拿到的全是前置噪音（r1 版 slice(0,300) 的實際行為）');
+  assert.match(d, /x{20}/, '開頭也要留著（sh 的「command not found」常常就在第一行）');
 });
 
 test('三關紅的死因要帶 stderr（127 的「command not found」不在 stdout——#441 當時只看得到 npm 橫幅）', () => {
