@@ -108,10 +108,10 @@ test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換�
   process.env.NOTEASY_MASTER_KEY = KEY_WRONG;
   try {
     // 使用者不知道出事了（畫面上只是那幾個欄位變成「未設定」），照常記一筆帳
-    // ⚠️ 這裡會噴三行 `[crypto] 機密欄位解密失敗…` 的 console.warn，是**預期行為**（生存優先）
+    // ⚠️ 這裡會噴數行 `[crypto] 機密欄位解密失敗…` 的 console.warn（每個機密欄位一行），是**預期行為**（生存優先）
     assert.equal((await jotDownOneExpense('tokA', '金鑰壞掉期間的無辜記帳')).status, 200);
 
-    // 核心斷言：資料庫裡那三串密文必須**原封不動**
+    // 核心斷言：資料庫裡**每一串**密文都必須原封不動（刻意不寫死幾串——鐵則 10，加第四個機密時就漏改過）
     assert.equal(rowOf(A.id, 'settings')?.ib?.flexToken, cipherFlex,
       'IB token 的密文被空字串蓋掉了——金鑰設錯一次就永久毀資料');
     assert.equal(rowOf(A.id, 'settings')?.taishinSecPdfPassword, cipherTaishin,
@@ -128,7 +128,7 @@ test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換�
     process.env.NOTEASY_MASTER_KEY = KEY_GOOD;
   }
 
-  // --- 救援：金鑰換回來，三個機密都要回得來
+  // --- 救援：金鑰換回來，**每一個**機密都要回得來
   const s = await (await as('tokA', '/api/settings')).json();
   assert.equal(s.ib.flexTokenSet, true, '換回正確金鑰之後 IB token 應該救得回來');
   assert.equal(s.taishinSecPdfPasswordSet, true, '換回正確金鑰之後台新證券密碼應該救得回來');

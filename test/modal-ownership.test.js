@@ -164,13 +164,19 @@ function blankNonCode(src, keepStrings = false) {
   let out = '', i = 0;
   const n = src.length;
   // 正則字面值的判定：`/` 前面最近的一個有意義字元決定它是除號還是正則開頭（標準啟發式）
+  const RX_KEYWORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'do', 'else', 'yield', 'await', 'new', 'delete', 'void', 'throw']);
   const regexOk = () => {
-    for (let k = out.length - 1; k >= 0; k--) {
-      const c = out[k];
-      if (c === ' ' || c === '\n' || c === '\t') continue;
-      return '(,=:[!&|?{};+-*%~^'.includes(c);
+    let k = out.length - 1;
+    while (k >= 0 && (out[k] === ' ' || out[k] === '\n' || out[k] === '\t')) k--;
+    if (k < 0) return true;   // 檔案開頭
+    if ('(,=:[!&|?{};+-*%~^'.includes(out[k])) return true;
+    // 關鍵字後面的 `/` 也是正則開頭：`return /[}]/.test(x)` 只看前一個字元會被當成除號（r14 抓到）
+    if (/[A-Za-z0-9_$]/.test(out[k])) {
+      let w = '';
+      while (k >= 0 && /[A-Za-z0-9_$]/.test(out[k])) { w = out[k] + w; k--; }
+      return RX_KEYWORDS.has(w);
     }
-    return true;   // 檔案開頭
+    return false;
   };
   while (i < n) {
     const c = src[i], c2 = src[i + 1];
@@ -292,17 +298,59 @@ function listJs(dir) {
   return out;
 }
 
-test('⭐ 接線｜全站掃描：任何新增的開窗點也要「先 claim 再寫入」，且要進點名表（防未來漏網）', () => {
+// 開窗寫入點的**總數**（`class="modal-bg"` 出現在正式碼的次數）。釘死它是這道關門題**最硬的一半**：
+// 不管新開窗點寫成什麼形狀（頂層函式／箭頭／物件方法／class 方法／巢狀函式），只要多一個，
+// 這個數字就對不上、直接轉紅，逼人來這裡登記並補 claim。
+const EXPECTED_OPEN_WRITES = 6;
+
+test('⭐ 接線｜全站開窗寫入點的**總數**被釘住（任何形狀的新開窗點都會讓它轉紅）', () => {
+  let total = 0;
+  /** @type {string[]} */ const where = [];
+  for (const f of listJs(join(ROOT, 'public'))) {
+    const rel = relative(ROOT, f).split('\\').join('/');
+    blankNonCode(readFileSync(f, 'utf8'), true).split('\n').forEach((line, i) => {
+      if (/class="modal-bg"/.test(line)) { total++; where.push(`${rel}:${i + 1}`); }
+    });
+  }
+  assert.equal(total, EXPECTED_OPEN_WRITES,
+    `開窗寫入點的數量變了（現在是 ${total}）：${where.join('、')}\n` +
+    '新增開窗點請①在該處 claimModalRoot() ②加進 OPENERS 點名表 ③更新 EXPECTED_OPEN_WRITES。');
+});
+
+test('⭐ 接線｜全站掃描：掃得到的開窗段落都要「先 claim 再寫入」，且要在點名表裡', () => {
   const roster = new Set(OPENERS.map(([rel, fn]) => `${rel}:${fn}`));
-  let scanned = 0;
   for (const f of listJs(join(ROOT, 'public'))) {
     const rel = relative(ROOT, f).split('\\').join('/');
     for (const o of scanOpeners(readFileSync(f, 'utf8'))) {
-      scanned++;
       assert.ok(o.ok, `${rel}:${o.name}（第 ${o.line} 行）在寫入 #modal-root 之前沒有 claimModalRoot()——手刻彈窗一律要先宣告接管`);
       assert.ok(roster.has(`${rel}:${o.name}`),
         `${rel}:${o.name} 是新的開窗點，請加進 OPENERS 點名表（逐一驗證那題才守得到它）`);
     }
   }
-  assert.equal(scanned, OPENERS.length, `掃到的開窗點數應與點名表一致（實得 ${scanned}）`);
+});
+
+// ⚠️⚠️ **這道關門題的誠實劃界（r14，別再誇大它）**：
+//   **守得住的**：①開窗寫入點的總數（上面那題，任何形狀都逃不掉）②點名表上這六個開窗點的
+//     「claim 在寫入之前」（名字錨定，改名或拿掉 claim 都會紅）③頂層函式／頂層箭頭函式的新開窗點。
+//   **守不住的（已知盲點，Codex r14 實測）**：段落切法只看**頂層**大括號深度，所以
+//     **物件字面值／class 裡的兩個方法**、或**同一個外層函式裡的兩個巢狀函式**會共用同一段——
+//     前一個的 claim 會替後一個未 claim 的開窗背書（attribution 錯，但**總數那題仍會先轉紅**）。
+//   真正的解法是 AST（依函式節點掃）或把 #modal-root 收斂成唯一寫入 API＝候選 8-16；
+//   在那之前**不要**在契約或題名上宣稱「逐函式切段」這種撐不住的保證（誇大比缺口更糟）。
+test('關門題的已知盲點（characterization）：同一段裡的第二個未 claim 開窗會被前一個背書', () => {
+  const twoMethods = [
+    'const windows = {',
+    '  openA() {',
+    '    claimModalRoot();',
+    '    byId(\'modal-root\').innerHTML = `<div class="modal-bg">A</div>`;',
+    '  },',
+    '  openB() {',
+    '    byId(\'modal-root\').innerHTML = `<div class="modal-bg">B 沒 claim</div>`;',
+    '  },',
+    '};',
+  ].join('\n');
+  const scanned = scanOpeners(twoMethods);
+  assert.deepEqual(scanned.map(o => o.ok), [true],
+    '⚠️ 已知盲點：物件方法共用一段，第二個未 claim 的開窗掃不出來。' +
+    '改成 AST／唯一寫入 API（候選 8-16）之後，這一題會轉紅——那時請把它改寫成 ok:false 的正向斷言。');
 });
