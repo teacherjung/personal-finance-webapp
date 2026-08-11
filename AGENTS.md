@@ -172,6 +172,7 @@
 | **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
 | **帳戶完整帳號與餘額匯入**（`accountNo`＝PII） | GET 只回 `accountNoSet`＋`accountNoLast4`；末碼＋幣別比對、現值參考日較新才覆蓋、自動建帳戶不設 ibCashCur；密碼只在記憶體——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
 | **帳單原文取法**（`origFromStmtRef`／`stmtOrig`） | 一律走這兩個取用器（會剝去重序號）；不要各頁手寫 split 取原文——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文取法-origfromstmtref) |
+| **匯入對帳閘**（`lib/statement-reconcile.js`，P0 2026-08-11） | 強＝銀行餘額鏈＋末筆對概要、中＝卡帳摘要等式＋明細對總額、弱＝沒數字可對；不一致＝整份 400 擋下、缺數字＝降級放行標示級別；卡閘只在預覽（importRows 不重解析）；★6：AI 路線（P1）弱閘不准匯入——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入對帳閘) |
 | 信用卡負數交易的繳款／退款判斷 | 單一真相 `isCardPayment`；後端必須重判、不信前端；退款候選保留負號與 `refundOf`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#信用卡負數交易的繳款與退款判斷) |
 | 月度回顧的消費口徑與退款配對 | 配對本體＝`derive.js pairRefunds`（唯一實作，兩頁共用）；抵減順序、消費視角口徑、**配對身分不是 storeKey**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#月度回顧的消費口徑與退款配對) |
 | 信用卡費頁的兩種口徑（使用者定 2026-07-27） | 上半消費歸屬／下半帳面原貌**刻意並存**（加總不相等不是 bug）；配對一律向後端拿、兩端標記純呈現不寫回資料——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#信用卡費頁的兩種口徑) |
