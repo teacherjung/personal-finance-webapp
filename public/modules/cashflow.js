@@ -13,6 +13,7 @@ import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js
 import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
+import { gateSummaryHtml } from './reconcile-summary.js';
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -210,6 +211,7 @@ function showBankPreview(r, b64, pw) {
   const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).slice(0, 12);
   const body = `
     <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
     <tbody>${rows.map((/** @type {any} */ x) => `<tr>

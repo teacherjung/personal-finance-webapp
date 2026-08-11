@@ -521,6 +521,8 @@ const MANIFEST = {
       'lib/bank-statement.js', 'test/bank-statement.test.js',
       // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
+      // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
+      'public/modules/reconcile-summary.js', 'test/reconcile-summary.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
