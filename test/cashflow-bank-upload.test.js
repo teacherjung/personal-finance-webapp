@@ -8,11 +8,12 @@
 // 保守預設方向相反（問不到＝當雲端講；理由見 cashflow-model.js bankPasswordLabel 註解）。
 //
 // 分工（誰守什麼）：
-//   ・挑句判準（bankPasswordLabel）、問模式與作廢回報（bankUploadGate）、開窗編排的時序
-//     （runBankUpload：連點鎖→把關→作廢不開窗→開窗→解鎖）都住 cashflow-model.js 的
-//     可注入純函式＝本檔的**行為題直接執行**，不靠字面。
-//   ・cashflow.js 只剩「接真的按鈕／真的 API／真的 openForm」＝接線題掃去註解後的
-//     原始碼**形狀**（cashflow.js 頂層 import app.js，node 載不動整頁）。
+//   ・挑句判準（bankPasswordLabel）、問模式與作廢回報（bankUploadGate）、**開窗前的時序**
+//     （runBankUpload：連點鎖→把關→作廢不開窗→開窗→解鎖）都住 cashflow-model.js——
+//     零 app／DOM import、相依注入的編排函式（有副作用、不是純函式）＝本檔的**行為題
+//     直接執行**，不靠字面。
+//   ・cashflow.js 負責接真的鎖／API／openForm，並擁有表單內容與上傳流程＝接線題掃
+//     去註解後的原始碼**形狀**（cashflow.js 頂層 import app.js，node 載不動整頁）。
 //
 // ⚠️ 誠實劃界：
 //   ・「/api/mode 回應只有 hosted、HOSTED 掛在 authGate 後面」由 test/server.test.js 那組守；
@@ -88,15 +89,19 @@ test('把關｜問一次模式、逾時走保守、等待期間切頁＝回報�
   assert.equal(r.stale, true, '等待期間切頁要回報作廢');
 });
 
-test('編排｜連點只開一窗、作廢不開窗、把關丟錯也解鎖——時序用執行驗、不靠字面', async () => {
-  const mkBtn = () => ({ dataset: /** @type {Record<string, string>} */ ({}) });
+test('編排｜連點只開一窗且鎖權在第一條流程、作廢不開窗、把關丟錯也解鎖——時序用執行驗、不靠字面', async () => {
+  // 鎖＝注入的讀寫對（呼叫端掛在模組層級，不掛按鈕元素——同頁重繪換掉元素時鎖才不會蒸發）。
+  const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };
   const mkForm = () => { const opened = /** @type {string[]} */ ([]); return { opened, open: (/** @type {string} */ label) => opened.push(label) }; };
 
-  // 連點：第一條流程還在等把關，第二下必須立刻被 busy 擋掉——只開一窗、只問一次模式。
-  // ⚠️ 兩次 await 都帶一秒競速：上鎖若失效，第二下會走進「等自己的把關」而永遠不回——
+  // 連點＋第三下：第一條流程還在等把關，第二、三下都必須立刻被 busy 擋掉——只開一窗、只問一次模式。
+  // ⚠️ 被擋下的那幾下**不可以動到鎖**（鎖的所有權屬於第一條流程）：把 busy 檢查搬進 try/finally
+  //    這種寫法，第二下會在自己的 finally 順手解鎖、第三下就闖進來——所以第二下之後要先斷言
+  //    「鎖還在」，再送第三下驗證照樣被擋。
+  // ⚠️ 每次 await 都帶一秒競速：上鎖若失效，後面那幾下會走進「等自己的把關」而永遠不回——
   //    這題要一秒內確定紅，不可以跟著吊死（同把關那題的競速理由）。
   {
-    const btn = mkBtn(); const form = mkForm();
+    const busy = mkBusy(); const form = mkForm();
     /** @type {(v: {label: string, stale: boolean}) => void} */ let release = () => {};
     let gateCalls = 0;
     const gate = () => { gateCalls++; return new Promise((/** @type {any} */ res) => { release = res; }); };
@@ -104,43 +109,47 @@ test('編排｜連點只開一窗、作廢不開窗、把關丟錯也解鎖—�
     const capped = (/** @type {Promise<any>} */ p, /** @type {string} */ why) =>
       Promise.race([p, new Promise((res) => { timers.push(setTimeout(() => res(why), 1000)); })]);
     try {
-      const first = runBankUpload({ button: () => btn, gate, openUploadForm: form.open });
-      const second = await capped(runBankUpload({ button: () => btn, gate, openUploadForm: form.open }),
+      const first = runBankUpload({ busy, gate, openUploadForm: form.open });
+      const second = await capped(runBankUpload({ busy, gate, openUploadForm: form.open }),
         '（一秒沒回＝第二下沒被鎖住、卡在等自己的把關）');
       assert.equal(second, 'busy', '第二下要在 await 之前就被鎖住');
+      assert.equal(busy.value(), true, '被擋下的第二下不可以動到鎖——鎖還得是第一條流程的');
+      const third = await capped(runBankUpload({ busy, gate, openUploadForm: form.open }),
+        '（一秒沒回＝第三下沒被鎖住）');
+      assert.equal(third, 'busy', '第三下照樣要被擋（第二下若順手解鎖，這裡會闖進來）');
       release({ label: BANK_PW_NOTICE_HOSTED, stale: false });
       assert.equal(await capped(first, '（一秒沒回＝第一條流程沒收尾）'), 'opened');
-      assert.deepEqual([form.opened.length, gateCalls, btn.dataset.busy], [1, 1, ''],
-        '連點只准開一窗、只問一次模式，收尾要解鎖——上鎖那行被刪掉時這裡會抓到');
+      assert.deepEqual([form.opened.length, gateCalls, busy.value()], [1, 1, false],
+        '三連點只准開一窗、只問一次模式，收尾要解鎖——上鎖那行被刪掉時這裡會抓到');
     } finally { for (const t of timers) clearTimeout(t); }
   }
   // 作廢：把關回報 stale ⇒ 一個窗都不准開（作廢檢查若搬到開窗之後，這裡會數到 1）。
   {
-    const btn = mkBtn(); const form = mkForm();
+    const busy = mkBusy(); const form = mkForm();
     const r = await runBankUpload({
-      button: () => btn,
+      busy,
       gate: async () => ({ label: BANK_PW_NOTICE_LOCAL, stale: true }),
       openUploadForm: form.open,
     });
-    assert.deepEqual([r, form.opened.length, btn.dataset.busy], ['stale', 0, ''], '作廢＝不開窗＋解鎖');
+    assert.deepEqual([r, form.opened.length, busy.value()], ['stale', 0, false], '作廢＝不開窗＋解鎖');
   }
   // 把關丟錯：錯誤往上傳（接線端看得見），但 finally 一定解鎖——不解鎖＝按鈕永久啞掉。
   {
-    const btn = mkBtn(); const form = mkForm();
+    const busy = mkBusy(); const form = mkForm();
     await assert.rejects(
-      () => runBankUpload({ button: () => btn, gate: () => Promise.reject(new Error('把關壞了')), openUploadForm: form.open }),
+      () => runBankUpload({ busy, gate: () => Promise.reject(new Error('把關壞了')), openUploadForm: form.open }),
       /把關壞了/);
-    assert.deepEqual([form.opened.length, btn.dataset.busy], [0, ''], '丟錯不開窗、照樣解鎖');
+    assert.deepEqual([form.opened.length, busy.value()], [0, false], '丟錯不開窗、照樣解鎖');
   }
-  // 開窗拿到的就是把關挑出的那句；按鈕找不到（頁面已換掉）也不炸、照常開窗。
+  // 開窗拿到的就是把關挑出的那句。
   {
-    const form = mkForm();
+    const busy = mkBusy(); const form = mkForm();
     const r = await runBankUpload({
-      button: () => null,
+      busy,
       gate: async () => ({ label: BANK_PW_NOTICE_LOCAL, stale: false }),
       openUploadForm: form.open,
     });
-    assert.deepEqual([r, form.opened], ['opened', [BANK_PW_NOTICE_LOCAL]], '沒按鈕可鎖＝照常開窗，label 逐字交給開窗端');
+    assert.deepEqual([r, form.opened], ['opened', [BANK_PW_NOTICE_LOCAL]], 'label 逐字交給開窗端');
   }
 });
 
@@ -163,12 +172,16 @@ function stripComments(raw) {
     .split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1')).join('\n');
 }
 
-test('接線｜cashflow.js 把真按鈕／真把關／真開窗接進 runBankUpload，舊謊話絕跡', () => {
+test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 runBankUpload，舊謊話絕跡', () => {
   // ⚠️ 先去註解：把接線改成註解就等於沒接，掃原始字面會給假綠（backup-export.test.js r5 阻擋②同款）。
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   assert.match(src, /return runBankUpload\(\{/,
     '開窗要走共用編排——時序散寫回 cashflow.js 的話，行為題就打不到正式那一份');
-  assert.match(src, /button:\s*\(\)\s*=>\s*byId\('uploadBank'\)/, '連點鎖要鎖真的上傳鈕');
+  // 鎖必須是模組層級變數、不掛按鈕元素：同路由重繪（改月份／金流篩選）會換掉 #uploadBank，
+  // 掛在元素上的鎖跟著蒸發＝新舊按鈕各開一窗。
+  assert.match(src, /^let bankUploadBusy = false;/m, '連點鎖要住在模組層級（重繪換掉按鈕也不蒸發）');
+  assert.match(src, /busy:\s*\{ get:\s*\(\)\s*=>\s*bankUploadBusy, set:\s*\(v\)\s*=>\s*\{ bankUploadBusy = v; \} \}/,
+    '編排的鎖要接那顆模組層級變數——接成別的（例如恆 false）＝連點鎖形同虛設');
   assert.match(src, /fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/, '把關要真的問 /api/mode');
   assert.match(src, /withTimeout:\s*defaultWithTimeout/, '等待上限要接匯出模組那顆共用計時器');
   assert.match(src, /timeoutMs:\s*MODE_TIMEOUT_MS/, '上限用共用常數，不可另抄一個數字');

@@ -74,28 +74,32 @@ export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeS
 }
 
 /**
- * 開上傳窗的**編排本體**（可注入、可執行——審查 r2 抓到：busy／stale 只靠字面掃描＝
- * 「刪掉上鎖那行」「把作廢檢查搬到開窗後」都抓不到，所以連同時序一起收進純函式，
- * 行為題直接執行；cashflow.js 只負責接真的按鈕、真的把關、真的開窗）。
+ * 開上傳窗的**編排函式**（零 app／DOM import、相依全部注入，所以行為題可以直接執行它；
+ * 它本身有副作用——動鎖、開視窗——不是純函式。審查 r2 抓到：busy／stale 只靠字面掃描＝
+ * 「刪掉上鎖那行」「把作廢檢查搬到開窗後」都抓不到，所以連同時序一起收進來直接測。
+ * 本函式只管**開窗前的時序**；表單內容與上傳流程仍歸 cashflow.js）。
  *
  * 順序是承重的，不可對調：
- * 1. busy 在 await **之前**上鎖（審查 r1 抓到：不鎖的話 await 窗口內連點開出兩條流程，
- *    晚回的那條重開視窗、把使用者已選的檔案洗掉）；已上鎖＝整段不做。
+ * 1. busy 在 await **之前**檢查並上鎖（審查 r1 抓到：不鎖的話 await 窗口內連點開出兩條
+ *    流程，晚回的那條重開視窗、把使用者已選的檔案洗掉）；已上鎖＝整段不做、**不碰鎖**
+ *    （被擋下的那一下若順手解鎖，第三下就闖進來了——鎖的所有權屬於第一條流程）。
+ *    ⚠️ 鎖是注入的讀寫對，**不掛在按鈕元素上**（審查 r3 抓到：月份／金流篩選會同路由
+ *    重繪整頁、換掉按鈕元素，掛在元素上的鎖跟著蒸發，兩顆新舊按鈕可以同時各開一窗）。
  * 2. 把關（問模式）回來後**先看 stale 再開窗**——等待期間切了頁，這一窗不屬於眼前的
  *    畫面，一個窗都不准開。
  * 3. finally 解鎖——把關丟錯也要解，否則按鈕永久啞掉。
- * @param {{ button: () => any, gate: () => Promise<{ label: string, stale: boolean }>,
+ * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
+ *           gate: () => Promise<{ label: string, stale: boolean }>,
  *           openUploadForm: (label: string) => void }} deps
  * @returns {Promise<'busy' | 'stale' | 'opened'>} 走到哪一步（考題斷言用；呼叫端不需要）
  */
-export async function runBankUpload({ button, gate, openUploadForm }) {
-  const btn = button();
-  if (btn?.dataset?.busy === '1') return 'busy';
-  if (btn) btn.dataset.busy = '1';
+export async function runBankUpload({ busy, gate, openUploadForm }) {
+  if (busy.get()) return 'busy';
+  busy.set(true);
   try {
     const g = await gate();
     if (g.stale) return 'stale';
     openUploadForm(g.label);
     return 'opened';
-  } finally { if (btn) btn.dataset.busy = ''; }
+  } finally { busy.set(false); }
 }

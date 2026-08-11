@@ -158,12 +158,16 @@ function subOptionsFor(flow, parent, cur = '') {
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
 // fileToBase64 已歸戶 file-util.js（系統優化 U1）
+// 上傳窗的連點鎖＝模組層級（不掛在按鈕元素上：月份／金流篩選會同路由重繪整頁、
+// 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
+let bankUploadBusy = false;
+
 function openBankUpload() {
   // 為什麼開窗前要先問模式、為什麼有連點鎖與切頁作廢＝runBankUpload／bankUploadGate 的註解
-  // （cashflow-model.js）。這裡只把真的按鈕、真的把關、真的開窗接進那個編排本體——
-  // 時序與判準的考題都打得到 model 那一份，這裡的形狀由接線題掃。
+  // （cashflow-model.js）。這裡只把真的鎖、真的把關、真的開窗接進那個編排函式——
+  // 開窗前時序的考題都打得到 model 那一份，這裡的形狀由接線題掃；表單內容仍歸本檔。
   return runBankUpload({
-    button: () => byId('uploadBank'),
+    busy: { get: () => bankUploadBusy, set: (v) => { bankUploadBusy = v; } },
     gate: () => bankUploadGate({
       fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
       timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq,
