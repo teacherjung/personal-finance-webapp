@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq, claimModalRoot, releaseModalRoot } from '../app.js';
 import { PALETTE, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -286,6 +286,7 @@ function bankAccRow(x) {
 function openRebalance(allocRows) {
   const root = byId('modal-root');
   let buyOnly = true;
+  claimModalRoot();   // r7：接管 modal-root＝蓋新章，任何在途的 openForm(async) 就失去擁有權、不會回來清掉這個窗
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
     <div class="modal-head"><h2>再平衡計算器</h2><button class="x-close">×</button></div>
     <div class="modal-body">
@@ -300,7 +301,7 @@ function openRebalance(allocRows) {
       <div id="rebOut"></div>
       <p class="muted" style="font-size:11px;margin-top:10px">「只買不賣」＝新資金優先補低配類別（符合「加碼只用新資金、不舉新債」原則）；「允許買賣」＝恢復目標配置的完整買賣清單。此為試算，<b>不會改動任何資料</b>；目標％依比例自動正規化。</p>
     </div></div></div>`;
-  const close = () => root.innerHTML = '';
+  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權
   root.querySelector('.x-close').onclick = close;
   bindBackdropClose(root, close);
   const render = () => {
@@ -339,6 +340,7 @@ function openRebalance(allocRows) {
 
 function openTargets(targets) {
   const root = byId('modal-root');
+  claimModalRoot();   // r7：同 openRebalance，接管 modal-root＝作廢在途的 openForm(async)
   const rows = () => targets.map((t, i) => `<div class="form-grid" style="margin-bottom:8px" data-i="${i}">
     <input data-k="class" value="${esc(t.class || '')}" placeholder="類別 (例：股票)" />
     <div style="display:flex;gap:8px"><input data-k="targetPct" type="number" value="${esc(t.targetPct ?? '')}" placeholder="目標 %" />
@@ -350,7 +352,7 @@ function openTargets(targets) {
       <button type="button" class="btn-ghost btn-sm" id="addRow">${icon('plus', 15)}新增類別</button>
       <div class="form-actions"><button class="btn-ghost" data-cancel>取消</button><button class="btn" id="saveT">儲存</button></div>
     </div></div></div>`;
-  const close = () => root.innerHTML = '';
+  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權
   const collect = () => [...root.querySelectorAll('#tRows [data-i]')].map(r => ({
     class: r.querySelector('[data-k="class"]').value,
     targetPct: Number(r.querySelector('[data-k="targetPct"]').value || 0)

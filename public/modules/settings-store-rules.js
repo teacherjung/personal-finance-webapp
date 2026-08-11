@@ -5,7 +5,7 @@
 // settings.js 只留設定頁本體；儲存成功後經 renderSettings 接縫回頭重繪設定頁。
 // 循環 import 安全：本檔 ↔ settings.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記；本檔頂層只有常數字面量與函式宣告）。
-import { api, byId, esc, toast, modalSizeClass } from '../app.js';
+import { api, byId, esc, toast, modalSizeClass, claimModalRoot } from '../app.js';
 import { openModalShell } from './modal-shell.js';
 import { renderSettings } from './settings.js';
 
@@ -211,6 +211,7 @@ function openRulePreview(r, onBack) {
       <ul>${nameChanges.map(c => `<li>「${esc(c.key)}」：<b>${esc(c.before)}</b> → <span class="rule-drop">${esc(blank(c.after))}</span></li>`).join('')}${ncTotal > nameChanges.length ? `<li class="muted">…另外 ${ncTotal - nameChanges.length} 項（清單僅顯示前 ${nameChanges.length} 筆）</li>` : ''}</ul>
       <p>想留住原本的名字，就先回去把規則改得窄一點，別命中這幾家。</p>
     </div>` : '';
+  claimModalRoot();   // r7：接管 modal-root＝作廢在途的 openForm(async)，它回來時不會清掉這個預覽窗
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
     <div class="modal-head"><h2>規則影響預覽</h2><button class="x-close">×</button></div>
     <div class="modal-body">

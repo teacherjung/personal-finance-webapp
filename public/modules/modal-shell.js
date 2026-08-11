@@ -5,7 +5,7 @@
 // 呼叫端拿回 { root, close } 自行接線——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
 // 實測 關閉/背景點擊/送出/返回 都正常再決定是否擴大到其餘 11 處）。
 // 循環 import 安全：對 app.js 的綁定只在函式內取用（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）。
-import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot } from '../app.js';
+import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot, releaseModalRoot } from '../app.js';
 
 /**
  * 開一個彈窗外殼：title 經 esc、bodyHtml 為呼叫端組好的內容（含各自的 form-actions 按鈕）。
@@ -22,7 +22,7 @@ export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body">${bodyHtml}</div>
   </div></div>`;
-  const close = () => { root.innerHTML = ''; };
+  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權（與 openForm 一致）
   root.querySelector('.x-close').onclick = close;
   if (backdrop) bindBackdropClose(root, close);
   return { root, close };

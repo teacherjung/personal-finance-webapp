@@ -152,15 +152,20 @@ export function bindBackdropClose(root, close) {
   bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
 }
 
-// #modal-root 是全站表單/彈窗共用的一格（r6）。表單 onSubmit 有 await，回來時可能已切頁或開了新彈窗——
+// #modal-root 是全站表單/彈窗共用的一格（r6→r7）。表單 onSubmit 有 await，回來時可能已切頁或開了新彈窗——
 // 舊的成功 continuation 若無條件 close() 會清掉**後開的**彈窗、毀掉未存輸入；舊的失敗會報過期錯誤。
-// 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset。
+// 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset 與路由序號。
+// readRoute 用箭頭包一層（不是直接傳 currentRouteSeq）＝避開 TDZ：currentRouteSeq 在本行之後才宣告，
+// 直接引用會在載入時就求值而炸；包一層的話識別名只在 owns() 執行（runtime）時才解析。
 const _claimModalRoot = makeModalOwnership({
   readGen: () => Number($('#modal-root')?.dataset.modalGen || 0),
   writeGen: (g) => { const r = $('#modal-root'); if (r) r.dataset.modalGen = String(g); },
+  readRoute: () => currentRouteSeq(),
 });
-/** 宣告接管 #modal-root（蓋新世代章），回傳 `owns()`＝這一份是否仍擁有它。三個彈窗開啟點都要 claim。 */
+/** 宣告接管 #modal-root（蓋新世代章＋記住當下路由），回傳 `owns()`＝這一份是否仍擁有它。所有直接開窗點都要 claim。 */
 export function claimModalRoot() { return _claimModalRoot(); }
+/** 撤銷 #modal-root 擁有權（蓋新章讓現任持有者的 owns() 立刻變 false）。關窗時呼叫＝關窗後舊 async 不再誤 close/toast。 */
+export function releaseModalRoot() { _claimModalRoot.release(); }
 
 // 通用彈窗表單。
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
@@ -200,7 +205,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       <button type="submit" class="btn">儲存</button></div></form></div>
   </div></div>`;
 
-  const close = () => { root.innerHTML = ''; };
+  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權，關窗後舊 async 不再誤 close/toast
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
   bindBackdropClose(root, close);
@@ -237,7 +242,7 @@ export function openInfo(title, bodyHtml, opts = {}) {
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
       <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>
   </div></div>`;
-  const close = () => { root.innerHTML = ''; };
+  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：同 openForm，關窗即撤銷擁有權
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-close]').onclick = close;
   bindBackdropClose(root, close);
