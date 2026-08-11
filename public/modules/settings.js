@@ -1,6 +1,6 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
@@ -303,12 +303,15 @@ export async function renderSettings() {
   { // 記住的帳單密碼：只有「全部清除」一個動作（新增走匯入時的「記住」勾選；內容絕不回瀏覽器、只有數量）
     const btn = byId('clearStmtPws');
     if (btn) btn.onclick = async () => {
-      const seq = currentRouteSeq();   // r3#1：清除請求期間切頁＝別拿設定頁重畫覆蓋新頁面（同本檔 render 的 seq 判準）
+      // r3#1：清除請求期間切頁＝別拿設定頁重畫覆蓋新頁面。r10 訂正：這裡問的是「使用者還在設定頁嗎」＝
+      //   **換頁**序號；接成重繪序號時，開機背景重繪就會讓清除成功卻不提示也不重讀（畫面還顯示舊組數）。
+      //   重畫本身的防覆蓋由 renderSettings 自己的 routeSeq 判準負責，不靠這裡。
+      const seq = currentNavSeq();
       try {
         await api('/statement/password/clear', { method: 'POST', body: {} });
-        if (seq !== currentRouteSeq()) return;
+        if (seq !== currentNavSeq()) return;
         toast('已清除記住的帳單密碼'); await renderSettings();   // await：重畫失敗不變成 unhandled rejection
-      } catch (err) { if (seq !== currentRouteSeq()) return; toast('清除失敗：' + /** @type {any} */ (err).message, true); }   // r5#2：切頁後不報過期錯誤
+      } catch (err) { if (seq !== currentNavSeq()) return; toast('清除失敗：' + /** @type {any} */ (err).message, true); }   // r5#2：換頁後不報過期錯誤
     };
   }
   byId('manageCatsBtn').onclick = async () => {

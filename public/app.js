@@ -307,7 +307,7 @@ export async function confirmDelete(name, fn) {
 let routeSeq = 0;
 export const currentRouteSeq = () => routeSeq;   // 重繪世代：長流程（ibSync/refreshQuotes）寫 DOM 前的自主體檢
 let navSeq = 0;
-let lastRoute = /** @type {string|null} */ (null);
+let lastNavKey = /** @type {string|null} */ (null);
 export const currentNavSeq = () => navSeq;   // 換頁世代：只有真的換頁才前進（彈窗擁有權／匯入 onPage 用這個）
 const renderStockResearch = createStockResearchPage({
   api,
@@ -343,9 +343,12 @@ const ROUTES = {
 export async function router() {
   const seq = ++routeSeq;   // 序號防護：快速切頁時，舊頁的 async fn 完成後不可覆蓋新頁面（同頁重繪也算）
   const route = location.hash.replace(/^#/, '').split('?')[0] || 'dashboard';
-  // 換頁世代只在 route 真的變了才前進（比的是 router() 自己用來分派的那個字串，query 不算換頁——
-  // 同一頁換 query 時彈窗仍在畫面上、仍該屬於它的主人）。同頁重繪一律不動它。
-  if (route !== lastRoute) { lastRoute = route; navSeq++; }
+  // 換頁世代只在**使用者眼前的網址變了**才前進：鑰匙用完整 hash，不是去掉 query 的 route。
+  //   r10 訂正：個股研究頁的身分本來就含 query（`#stock?symbol=AAPL&tab=…`），只比 route 的話，
+  //   從 AAPL 上一頁跳到 GOOGL 不算換頁，AAPL 表單的舊 continuation 會在 GOOGL 畫面上關窗／報錯。
+  //   用完整 hash 反而更單純：背景重繪不會動到網址，所以同頁重繪照樣不前進（原本要防的事沒破）。
+  const navKey = location.hash;
+  if (navKey !== lastNavKey) { lastNavKey = navKey; navSeq++; }
   document.body.classList.toggle('stock-research-route', route === 'stock');
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」

@@ -95,11 +95,13 @@ test('接線｜openForm 的 async onSubmit 只在 owns() 時 close/toast；關�
 });
 
 // ⭐ r9：換頁序號本身的定義題——只有 route 真的變了才前進，否則就退化成重繪序號、bug 原地復活。
-test('⭐ 接線｜navSeq 只在 route 真的改變時才前進（同頁重繪不動它）', () => {
+test('⭐ 接線｜navSeq 只在使用者眼前的網址改變時才前進（同頁重繪不動它）', () => {
   const app = strip(readFileSync(join(ROOT, 'public/app.js'), 'utf8'));
   assert.match(app, /export const currentNavSeq = \(\) => navSeq;/, 'currentNavSeq 存在且回傳換頁序號');
-  assert.match(app, /if \(route !== lastRoute\) \{ lastRoute = route; navSeq\+\+; \}/,
-    'router() 必須先算出 route、只有跟上次不同才前進 navSeq（同頁重繪不可動它）');
+  assert.match(app, /const navKey = location\.hash;/,
+    '換頁鑰匙要用**完整 hash**（r10：個股頁的身分含 ?symbol=&tab=，只比 route 會漏掉換股票）');
+  assert.match(app, /if \(navKey !== lastNavKey\) \{ lastNavKey = navKey; navSeq\+\+; \}/,
+    'navSeq 只在使用者眼前的網址變了才前進（背景重繪不動網址＝照樣不前進）');
   // routeSeq 仍要每次前進——它管的是「別覆蓋新頁面的畫面」，同頁重繪也該作廢舊寫入。
   assert.match(app, /const seq = \+\+routeSeq;/, 'routeSeq 維持每次 router() 都前進（重繪世代，勿一起改掉）');
 });
@@ -125,33 +127,82 @@ function listJs(dir) {
   return out;
 }
 
-// ⭐ 關門題（Codex r7 要求盤點、r8 指出只比總數不夠）：任何**直接**把 modal-bg 外殼寫進 #modal-root 的
-// 開窗點，都必須在**那次寫入之前**先 claimModalRoot()——否則在途的 openForm(async) 回來時會誤判仍擁有、
-// 清掉這個後開的窗。改成「逐個開窗點驗 claim 在寫入之前」，而不是比整檔總數：
-// 總數比法會被「A 少一個 claim、B 多一個 claim」對消掉（r8 點名的漏洞）。
-// 作法：先找出 #modal-root 的別名宣告（const root = byId('modal-root')），以宣告點切段，
-// 要求每個寫入點與它所屬宣告之間，文字上出現過一次 claimModalRoot()。
-test('⭐ 接線｜每個手刻開窗點都要「先 claim 再寫入」#modal-root（关门·防未來漏網）', () => {
-  const CENTRAL = new Set(['public/app.js', 'public/modules/modal-shell.js']);   // 中央外殼＝claim 的實作本體
-  let checked = 0;
+// ⭐ r10（Codex Medium①）：本 PR 新增的「全部清除帳單密碼」也是「使用者還在這一頁嗎」的問題。
+// 接成重繪序號時：開機背景重繪一發生，清除**會成功**但提前 return——沒有成功提示、也不重讀，
+// 畫面還顯示舊組數與清除鈕（看起來像沒清掉）。這一題鎖住它。
+test('⭐ 接線｜「清除記住的帳單密碼」吃 currentNavSeq（同頁重繪不可吃掉成功提示與重讀）', () => {
+  const src = strip(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
+  const m = /const btn = byId\('clearStmtPws'\);[\s\S]*?\n {4}\};/.exec(src);
+  assert.ok(m, '找不到「清除記住的帳單密碼」的接線區塊（改寫時要同步這一題）');
+  const block = m[0];
+  assert.doesNotMatch(block, /currentRouteSeq\(\)/,
+    '清除流程不可用重繪序號判「還在不在設定頁」——背景重繪會讓成功提示與重讀被吃掉');
+  assert.equal((block.match(/currentNavSeq\(\)/g) || []).length, 3,
+    '基準一處＋成功分支一處＋失敗分支一處，三處都要用換頁序號');
+});
+
+// ⭐ 關門題（Codex r7 要求盤點／r8 指出只比總數不夠／r10 指出中央三窗沒逐一驗）：
+// 任何**開窗點**（把 modal-bg 外殼寫進 #modal-root）都必須在**那次寫入之前**先 claimModalRoot()——
+// 否則在途的 openForm(async) 回來時會誤判仍擁有、清掉這個後開的窗。
+// 三次修訂換來的掃法：①逐**函式**切段（不是比整檔總數，也不是以別名宣告切段——別名重宣告會誤紅）
+// ②開窗記號認 `class="modal-bg"` 這個字串本身（不綁 `innerHTML =` 同一行，換行樣板也掃得到）
+// ③中央三窗與手刻三窗**逐一點名**驗證（r10：把 openInfo 的 claim 拿掉時，舊寫法會被 openForm 代打而假綠）。
+const OPENERS = [
+  ['public/app.js', 'openForm'],
+  ['public/app.js', 'openInfo'],
+  ['public/modules/modal-shell.js', 'openModalShell'],
+  ['public/modules/assets.js', 'openRebalance'],
+  ['public/modules/assets.js', 'openTargets'],
+  ['public/modules/settings-store-rules.js', 'openRulePreview'],
+];
+
+/** 把原始碼切成「頂層函式」段：回傳 [{name, from, to}]（行號 0-based，to 不含）。 @param {string[]} lines */
+function topLevelFns(lines) {
+  /** @type {{name:string, from:number, to:number}[]} */ const fns = [];
+  lines.forEach((line, i) => {
+    const m = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/.exec(line);
+    if (m) fns.push({ name: m[1], from: i, to: lines.length });
+  });
+  fns.forEach((f, i) => { if (fns[i + 1]) f.to = fns[i + 1].from; });
+  return fns;
+}
+
+/** 這個函式段裡，每個開窗寫入之前是否都已 claim。 @param {string[]} lines @param {{from:number,to:number}} fn */
+function claimBeforeEveryWrite(lines, fn) {
+  let claimed = false, writes = 0, ok = true;
+  for (let i = fn.from; i < fn.to; i++) {
+    if (/claimModalRoot\(\)/.test(lines[i])) claimed = true;
+    if (/class="modal-bg"/.test(lines[i])) { writes++; if (!claimed) ok = false; }
+  }
+  return { ok, writes };
+}
+
+test('⭐ 接線｜六個開窗點**逐一**驗「先 claim 再寫入」（中央三窗不可被彼此代打）', () => {
+  for (const [rel, fnName] of OPENERS) {
+    const lines = strip(readFileSync(join(ROOT, rel), 'utf8')).split('\n');
+    const fn = topLevelFns(lines).find(f => f.name === fnName);
+    assert.ok(fn, `${rel}：找不到開窗函式 ${fnName}（改名要同步這張點名表）`);
+    const { ok, writes } = claimBeforeEveryWrite(lines, fn);
+    assert.ok(writes >= 1, `${rel}:${fnName} 掃不到開窗寫入（modal-bg）——掃法或函式已變，考題會假綠`);
+    assert.ok(ok, `${rel}:${fnName} 在寫入 #modal-root 之前沒有 claimModalRoot()`);
+  }
+});
+
+test('⭐ 接線｜全站掃描：任何新增的開窗點也要「先 claim 再寫入」（防未來漏網）', () => {
+  const known = new Set(OPENERS.map(([rel, fn]) => `${rel}:${fn}`));
+  let scanned = 0;
   for (const f of listJs(join(ROOT, 'public'))) {
     const rel = relative(ROOT, f).split('\\').join('/');
-    if (CENTRAL.has(rel)) continue;
-    const src = strip(readFileSync(f, 'utf8'));
-    const lines = src.split('\n');
-    // 每個 modal-root 別名宣告開一個新段；段內出現 claim 就記下，遇到開窗寫入時必須已經記過。
-    let claimedInSection = false;
-    lines.forEach((line, i) => {
-      if (/=\s*(byId\('modal-root'\)|\$\('#modal-root'\)|document\.getElementById\('modal-root'\))/.test(line)) {
-        claimedInSection = false;   // 新的一段（通常＝新的一個開窗函式）
-      }
-      if (/claimModalRoot\(\)/.test(line)) claimedInSection = true;
-      if (/innerHTML\s*=\s*`<div class="modal-bg"/.test(line)) {
-        assert.ok(claimedInSection,
-          `${rel}:${i + 1} 在寫入 #modal-root 之前沒有 claimModalRoot()——手刻彈窗一律要先宣告接管`);
-        checked++;
-      }
-    });
+    const lines = strip(readFileSync(f, 'utf8')).split('\n');
+    if (!lines.some(l => /class="modal-bg"/.test(l))) continue;
+    for (const fn of topLevelFns(lines)) {
+      const { ok, writes } = claimBeforeEveryWrite(lines, fn);
+      if (!writes) continue;
+      scanned++;
+      assert.ok(ok, `${rel}:${fn.name} 在寫入 #modal-root 之前沒有 claimModalRoot()——手刻彈窗一律要先宣告接管`);
+      assert.ok(known.has(`${rel}:${fn.name}`),
+        `${rel}:${fn.name} 是新的開窗點，請加進 OPENERS 點名表（逐一驗證那題才守得到它）`);
+    }
   }
-  assert.ok(checked >= 3, `應至少盤到 assets(×2)＋settings-store-rules(×1)＝3 個手刻開窗點，實得 ${checked}`);
+  assert.equal(scanned, OPENERS.length, `掃到的開窗函式數應與點名表一致（實得 ${scanned}）`);
 });
