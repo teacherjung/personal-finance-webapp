@@ -89,7 +89,9 @@ test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換�
   assert.equal((await as('tokA', '/api/cards', {
     method: 'POST', body: JSON.stringify({ name: '測試卡', pdfPassword: CARDPW }),
   })).status, 200);
-  // 密碼池刻意不吃泛用 PUT /api/settings（schema 白名單擋著），只能走專屬端點
+  // 密碼池走專屬端點＝正式的「記住」入口（匯入流程勾了「記住」走這條）。
+  // ⚠️ 不是「泛用 PUT 進不來」：`sanitizeSettings` 同時服務泛用 PUT 與匯入還原，兩邊都會收下密碼池，
+  //    只是要通過形狀與上限驗證（`pickRememberedStatementPasswords`）——r12 訂正原本寫反的註解。
   assert.equal((await as('tokA', '/api/statement/password/remember', {
     method: 'POST', body: JSON.stringify({ password: STMTPW }),
   })).status, 200);

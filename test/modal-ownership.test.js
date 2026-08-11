@@ -94,7 +94,9 @@ test('接線｜openForm 的 async onSubmit 只在 owns() 時 close/toast；關�
   assert.match(shell, /owns\.release\(\)/, 'openModalShell 的 close 也要 owns.release()');
 });
 
-// ⭐ r9：換頁序號本身的定義題——只有 route 真的變了才前進，否則就退化成重繪序號、bug 原地復活。
+// ⭐ r9→r10：換頁序號本身的定義題——只有**使用者眼前的完整 hash** 變了才前進。
+//   接成「每次 router() 都前進」＝退化成重繪序號、bug 原地復活；接成「只比去掉 query 的 route」
+//   ＝個股頁換股票不算換頁，舊表單的 continuation 會跑到新股票的畫面上（r10）。
 test('⭐ 接線｜navSeq 只在使用者眼前的網址改變時才前進（同頁重繪不動它）', () => {
   const app = strip(readFileSync(join(ROOT, 'public/app.js'), 'utf8'));
   assert.match(app, /export const currentNavSeq = \(\) => navSeq;/, 'currentNavSeq 存在且回傳換頁序號');
@@ -116,17 +118,6 @@ test('⭐ 接線｜匯入流程的 onPage 吃 currentNavSeq（接成 routeSeq �
   }
 });
 
-/** 遞迴列出 public/ 底下所有 .js。 @param {string} dir @returns {string[]} */
-function listJs(dir) {
-  /** @type {string[]} */ const out = [];
-  for (const ent of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, ent.name);
-    if (ent.isDirectory()) out.push(...listJs(p));
-    else if (ent.name.endsWith('.js')) out.push(p);
-  }
-  return out;
-}
-
 // ⭐ r10（Codex Medium①）：本 PR 新增的「全部清除帳單密碼」也是「使用者還在這一頁嗎」的問題。
 // 接成重繪序號時：開機背景重繪一發生，清除**會成功**但提前 return——沒有成功提示、也不重讀，
 // 畫面還顯示舊組數與清除鈕（看起來像沒清掉）。這一題鎖住它。
@@ -141,12 +132,14 @@ test('⭐ 接線｜「清除記住的帳單密碼」吃 currentNavSeq（同頁�
     '基準一處＋成功分支一處＋失敗分支一處，三處都要用換頁序號');
 });
 
-// ⭐ 關門題（Codex r7 要求盤點／r8 指出只比總數不夠／r10 指出中央三窗沒逐一驗）：
-// 任何**開窗點**（把 modal-bg 外殼寫進 #modal-root）都必須在**那次寫入之前**先 claimModalRoot()——
-// 否則在途的 openForm(async) 回來時會誤判仍擁有、清掉這個後開的窗。
-// 三次修訂換來的掃法：①逐**函式**切段（不是比整檔總數，也不是以別名宣告切段——別名重宣告會誤紅）
-// ②開窗記號認 `class="modal-bg"` 這個字串本身（不綁 `innerHTML =` 同一行，換行樣板也掃得到）
-// ③中央三窗與手刻三窗**逐一點名**驗證（r10：把 openInfo 的 claim 拿掉時，舊寫法會被 openForm 代打而假綠）。
+// ⭐ 關門題（r7 要求盤點／r8 只比總數不夠／r10 中央三窗沒逐一驗／r12 箭頭函式假綠）：
+// 任何**開窗點**（把 modal-bg 外殼寫進 #modal-root）都必須在**那次寫入之前**先 claimModalRoot()。
+// 四次修訂換來的掃法，三個要點都不可退回：
+//   ①以**頂層大括號深度**切段——**刻意不辨識任何函式寫法**。r12 抓到：只認 `function` 宣告時，
+//     在兩個開窗函式之間插一個沒 claim 的**箭頭函式**開窗，它會被算進上一個已 claim 的段落而假綠。
+//     照深度切則 arrow／function／method 各自成段，claim 跨不過段界。
+//   ②開窗記號認 `class="modal-bg"` 字串本身，不綁 `innerHTML =` 同一行（換行樣板也掃得到）。
+//   ③六個開窗點**逐一點名**，新增開窗點沒進點名表就轉紅（r10：否則 openInfo 的 claim 被 openForm 代打）。
 const OPENERS = [
   ['public/app.js', 'openForm'],
   ['public/app.js', 'openInfo'],
@@ -156,53 +149,160 @@ const OPENERS = [
   ['public/modules/settings-store-rules.js', 'openRulePreview'],
 ];
 
-/** 把原始碼切成「頂層函式」段：回傳 [{name, from, to}]（行號 0-based，to 不含）。 @param {string[]} lines */
-function topLevelFns(lines) {
-  /** @type {{name:string, from:number, to:number}[]} */ const fns = [];
-  lines.forEach((line, i) => {
-    const m = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/.exec(line);
-    if (m) fns.push({ name: m[1], from: i, to: lines.length });
-  });
-  fns.forEach((f, i) => { if (fns[i + 1]) f.to = fns[i + 1].from; });
-  return fns;
+/**
+ * 把**註解／字串／樣板／正則字面值**的內容換成空白，**保留換行**（行號不跑掉）。
+ * 只為了兩件事可信：①數大括號時不被字面值裡的括號騙 ②`class="modal-bg"`／`claimModalRoot()`
+ * 的比對不會命中註解裡的字。
+ * ⚠️ 不共用檔案上方的 `strip()`：那一份會把區塊註解連換行一起吃掉（行號會漂），也不處理正則。
+ * @param {string} src
+ * @param {boolean} [keepStrings] true＝保留字串/樣板**內容**（找 `class="modal-bg"` 這種寫在樣板裡的記號用），
+ *   註解與正則照樣清掉；false（預設）＝連字串內容一起清（數大括號與找 `claimModalRoot()` 用）。
+ * @returns {string}
+ */
+function blankNonCode(src, keepStrings = false) {
+  const keepNl = (/** @type {string} */ ch) => (ch === '\n' ? '\n' : ' ');
+  let out = '', i = 0;
+  const n = src.length;
+  // 正則字面值的判定：`/` 前面最近的一個有意義字元決定它是除號還是正則開頭（標準啟發式）
+  const regexOk = () => {
+    for (let k = out.length - 1; k >= 0; k--) {
+      const c = out[k];
+      if (c === ' ' || c === '\n' || c === '\t') continue;
+      return '(,=:[!&|?{};+-*%~^'.includes(c);
+    }
+    return true;   // 檔案開頭
+  };
+  while (i < n) {
+    const c = src[i], c2 = src[i + 1];
+    if (c === '/' && c2 === '/') { while (i < n && src[i] !== '\n') { out += ' '; i++; } continue; }
+    if (c === '/' && c2 === '*') { out += '  '; i += 2; while (i < n && !(src[i] === '*' && src[i + 1] === '/')) { out += keepNl(src[i]); i++; } out += '  '; i += 2; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      out += c; i++;
+      while (i < n && src[i] !== c) {
+        if (src[i] === '\\') { out += keepStrings ? src.slice(i, i + 2) : '  '; i += 2; continue; }
+        out += keepStrings ? src[i] : keepNl(src[i]); i++;
+      }
+      if (i < n) { out += c; i++; }
+      continue;
+    }
+    if (c === '/' && regexOk()) {
+      out += '/'; i++;
+      let inClass = false;
+      while (i < n && src[i] !== '\n') {
+        if (src[i] === '\\') { out += '  '; i += 2; continue; }
+        if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) break;
+        out += ' '; i++;
+      }
+      if (i < n && src[i] === '/') { out += '/'; i++; }
+      continue;
+    }
+    out += c; i++;
+  }
+  return out;
 }
 
-/** 這個函式段裡，每個開窗寫入之前是否都已 claim。 @param {string[]} lines @param {{from:number,to:number}} fn */
-function claimBeforeEveryWrite(lines, fn) {
-  let claimed = false, writes = 0, ok = true;
-  for (let i = fn.from; i < fn.to; i++) {
-    if (/claimModalRoot\(\)/.test(lines[i])) claimed = true;
-    if (/class="modal-bg"/.test(lines[i])) { writes++; if (!claimed) ok = false; }
-  }
-  return { ok, writes };
+/**
+ * 依**頂層大括號深度**切段：深度回到 0 之後的下一個有內容的行＝下一段開始。
+ * **刻意不辨識任何函式寫法**——arrow／function／method 都各自成段，claim 跨不過段界（r12 那一刀的解法）。
+ * @param {string} src @returns {{name:string, from:number, to:number}[]}
+ */
+function topLevelSegments(src) {
+  const raw = src.split('\n');
+  const flat = blankNonCode(src).split('\n');
+  /** @type {{name:string, from:number, to:number}[]} */ const segs = [];
+  let depth = 0;
+  flat.forEach((line, i) => {
+    if (depth === 0 && line.trim() !== '') {
+      const head = raw[i];
+      const m = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/.exec(head)
+        || /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_$]+)/.exec(head);
+      segs.push({ name: m ? m[1] : `line${i + 1}`, from: i, to: raw.length });
+    }
+    for (const ch of line) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+  });
+  // 大括號沒收平＝掃法被字面值/註解騙了：**大聲失敗**，不可以靜靜當成掃過了（靜靜通過最危險）
+  assert.equal(depth, 0, '大括號深度沒有回到 0——blankNonCode 漏處理了某種字面值/註解，這道關門題已不可信');
+  segs.forEach((sg, i) => { if (segs[i + 1]) sg.to = segs[i + 1].from; });
+  return segs;
 }
+
+/**
+ * 掃出每個「含開窗寫入」的段落，並判斷該段是否**在每次寫入之前**都已 claim。
+ * @param {string} src @returns {{name:string, line:number, ok:boolean}[]}
+ */
+function scanOpeners(src) {
+  const code = blankNonCode(src).split('\n');            // 清掉字串＝`claimModalRoot()` 不會命中註解/字串裡的字
+  const marked = blankNonCode(src, true).split('\n');    // 留字串＝樣板裡的 `class="modal-bg"` 才看得到
+  /** @type {{name:string, line:number, ok:boolean}[]} */ const found = [];
+  for (const sg of topLevelSegments(src)) {
+    let claimed = false, ok = true, writes = 0, firstWrite = -1;
+    for (let i = sg.from; i < sg.to; i++) {
+      if (/claimModalRoot\(\)/.test(code[i])) claimed = true;
+      if (/class="modal-bg"/.test(marked[i])) {
+        writes++; if (firstWrite < 0) firstWrite = i;
+        if (!claimed) ok = false;
+      }
+    }
+    if (writes) found.push({ name: sg.name, line: firstWrite + 1, ok });
+  }
+  return found;
+}
+
+// ⭐ r12：先驗**掃描器本身**擋不擋得住 Codex 那一刀（沒 claim 的頂層箭頭函式開窗）。
+// 掃描器自己就是保證的承重點——它假綠的話，下面兩題再漂亮也守不到東西。
+test('⭐ 關門題的掃描器自身：沒 claim 的箭頭函式開窗必須被抓出來（r12 那一刀）', () => {
+  const claimedFn = `function openA() {\n  const root = byId('modal-root');\n  claimModalRoot();\n  root.innerHTML = \`<div class="modal-bg">A</div>\`;\n}\n`;
+  const sneakyArrow = `const openSneaky = () => {\n  const root = byId('modal-root');\n  root.innerHTML = \`<div class="modal-bg">偷開的</div>\`;\n};\n`;
+  const claimedArrow = `const openB = () => {\n  claimModalRoot();\n  byId('modal-root').innerHTML = \`<div class="modal-bg">B</div>\`;\n};\n`;
+
+  const good = scanOpeners(claimedFn);
+  assert.deepEqual(good.map(o => [o.name, o.ok]), [['openA', true]], '有 claim 的 function 開窗＝通過');
+
+  // 這就是 r12 的突變：把箭頭函式塞在已 claim 的 function **後面**
+  const mutated = scanOpeners(claimedFn + sneakyArrow);
+  assert.equal(mutated.length, 2, '箭頭函式開窗要被當成獨立的開窗點（不可被前一段吸收）');
+  assert.deepEqual(mutated.map(o => [o.name, o.ok]), [['openA', true], ['openSneaky', false]],
+    '前一個函式的 claim 不可以跨段替箭頭函式背書');
+
+  assert.deepEqual(scanOpeners(claimedArrow).map(o => o.ok), [true], '箭頭函式自己有 claim＝通過（不可假紅）');
+  // 合法但順序刁鑽：先 claim 再宣告別名再寫入（r8 以別名切段的舊寫法會誤判成紅）
+  const aliasAfterClaim = `function openC() {\n  claimModalRoot();\n  const root = byId('modal-root');\n  root.innerHTML = \`<div class="modal-bg">C</div>\`;\n}\n`;
+  assert.deepEqual(scanOpeners(aliasAfterClaim).map(o => o.ok), [true], '先 claim 再宣告別名＝合法，不可假紅');
+});
 
 test('⭐ 接線｜六個開窗點**逐一**驗「先 claim 再寫入」（中央三窗不可被彼此代打）', () => {
   for (const [rel, fnName] of OPENERS) {
-    const lines = strip(readFileSync(join(ROOT, rel), 'utf8')).split('\n');
-    const fn = topLevelFns(lines).find(f => f.name === fnName);
-    assert.ok(fn, `${rel}：找不到開窗函式 ${fnName}（改名要同步這張點名表）`);
-    const { ok, writes } = claimBeforeEveryWrite(lines, fn);
-    assert.ok(writes >= 1, `${rel}:${fnName} 掃不到開窗寫入（modal-bg）——掃法或函式已變，考題會假綠`);
-    assert.ok(ok, `${rel}:${fnName} 在寫入 #modal-root 之前沒有 claimModalRoot()`);
+    const found = scanOpeners(readFileSync(join(ROOT, rel), 'utf8'));   // 傳原始碼：scanOpeners 自己有 blankNonCode（用 strip 會二次處理、行號還會漂）
+    const hit = found.find(o => o.name === fnName);
+    assert.ok(hit, `${rel}：掃不到開窗點 ${fnName}（改名或改寫法要同步點名表，否則這題會假綠）`);
+    assert.ok(hit.ok, `${rel}:${fnName}（第 ${hit.line} 行）在寫入 #modal-root 之前沒有 claimModalRoot()`);
   }
 });
 
-test('⭐ 接線｜全站掃描：任何新增的開窗點也要「先 claim 再寫入」（防未來漏網）', () => {
-  const known = new Set(OPENERS.map(([rel, fn]) => `${rel}:${fn}`));
+/** 遞迴列出 public/ 底下所有 .js。 @param {string} dir @returns {string[]} */
+function listJs(dir) {
+  /** @type {string[]} */ const out = [];
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...listJs(p));
+    else if (ent.name.endsWith('.js')) out.push(p);
+  }
+  return out;
+}
+
+test('⭐ 接線｜全站掃描：任何新增的開窗點也要「先 claim 再寫入」，且要進點名表（防未來漏網）', () => {
+  const roster = new Set(OPENERS.map(([rel, fn]) => `${rel}:${fn}`));
   let scanned = 0;
   for (const f of listJs(join(ROOT, 'public'))) {
     const rel = relative(ROOT, f).split('\\').join('/');
-    const lines = strip(readFileSync(f, 'utf8')).split('\n');
-    if (!lines.some(l => /class="modal-bg"/.test(l))) continue;
-    for (const fn of topLevelFns(lines)) {
-      const { ok, writes } = claimBeforeEveryWrite(lines, fn);
-      if (!writes) continue;
+    for (const o of scanOpeners(readFileSync(f, 'utf8'))) {
       scanned++;
-      assert.ok(ok, `${rel}:${fn.name} 在寫入 #modal-root 之前沒有 claimModalRoot()——手刻彈窗一律要先宣告接管`);
-      assert.ok(known.has(`${rel}:${fn.name}`),
-        `${rel}:${fn.name} 是新的開窗點，請加進 OPENERS 點名表（逐一驗證那題才守得到它）`);
+      assert.ok(o.ok, `${rel}:${o.name}（第 ${o.line} 行）在寫入 #modal-root 之前沒有 claimModalRoot()——手刻彈窗一律要先宣告接管`);
+      assert.ok(roster.has(`${rel}:${o.name}`),
+        `${rel}:${o.name} 是新的開窗點，請加進 OPENERS 點名表（逐一驗證那題才守得到它）`);
     }
   }
-  assert.equal(scanned, OPENERS.length, `掃到的開窗函式數應與點名表一致（實得 ${scanned}）`);
+  assert.equal(scanned, OPENERS.length, `掃到的開窗點數應與點名表一致（實得 ${scanned}）`);
 });
