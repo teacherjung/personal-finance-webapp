@@ -25,7 +25,7 @@ const store = await import('../lib/store.js');
 const { getDb } = await import('../lib/repo.js');
 const { reconcileBankStatement, reconcileCardStatement, gateFailureMessage } = await import('../lib/statement-reconcile.js');
 const { extractStatementTotals, extractStatementDue } = await import('../lib/statement.js');
-const { assertBankReconciled, previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { assertBankReconciled, previewBankStatement, applyBankStatement, importBankTxToDb } = await import('../lib/services/bank-import.js');
 const { previewAuto, previewForCard, assertCardReconciled } = await import('../lib/services/statement-import.js');
 
 after(() => {
@@ -144,13 +144,37 @@ test('強閘｜單筆餘額讀不到＝只跳過相鄰兩對、其餘照驗（�
   assert.equal(v.stats.pairsSkipped, 2);
 });
 
-test('強閘｜外幣兩位小數：0.005 內的修圓縫放行、超過就擋', () => {
+test('強閘｜小數餘額：0.005 內的修圓縫放行、超過就擋（帳單查無幣別＝比照台幣驗，P0.1 後仍受驗）', () => {
   const rows = (/** @type {number} */ endBal) => ({ accounts: [], transactions: [
     btx({ acctMasked: '900300****363', acctSuffix: '363', balance: 100.25 }),
     btx({ acctMasked: '900300****363', acctSuffix: '363', date: '2026-07-02', direction: 'in', amount: 10.10, balance: endBal }),
   ] });
   assert.equal(reconcileBankStatement(rows(110.35)).ok, true);
-  assert.equal(reconcileBankStatement(rows(110.36)).ok, false, '差 0.01＞0.005＝真的對不上');
+  assert.equal(reconcileBankStatement(rows(110.36)).ok, false, '差 0.01＞0.005＝真的對不上（fallback＝會被當台幣匯入＝要驗）');
+});
+
+test('強閘｜外幣綜合帳戶（同帳號多幣別）＝整組 skip 不誤擋（P0.1，真帳單煙霧測 2026-08-11）', () => {
+  // 真帳單實測的**形狀**（數字與末碼全為合成假值——真末碼＝PII 鐵則，r1#1）：同一個遮罩帳號
+  // 概要區出現兩列（兩種幣別各自的餘額），明細各幣別交易共用帳號欄且列上無幣別——按帳號驗鏈
+  // 必把兩條幣別攪在一起（外幣利息列撞上別幣別的餘額、同一末筆被拿去對兩個概要餘額）。
+  // 外幣明細本來就不匯入現金流＝**閘的射程對齊匯入的射程**：外幣整組 skip 並誠實計數、台幣照驗。
+  const p = cleanBankParsed();
+  p.accountCurrency = { '900100****3301': 'TWD', '900200****3302': 'TWD', '900400****905': 'USD' };
+  p.accounts.push(
+    { masked: '900400****905', balance: 77.31, currency: 'USD' },
+    { masked: '900400****905', balance: 0, currency: 'JPY' },
+  );
+  p.transactions.push(
+    btx({ acctMasked: '900400****905', acctSuffix: '905', date: '2026-02-01', summary: '外幣利息', direction: 'in', amount: 0, balance: 0.05 }),
+    btx({ acctMasked: '900400****905', acctSuffix: '905', date: '2026-02-01', summary: '利息', direction: 'in', amount: 3, balance: 77.31 }),
+  );
+  const v = reconcileBankStatement(p);
+  assert.equal(v.ok, true, '外幣鏈亂不可擋整份——那些列本來就不會進帳本');
+  assert.equal(v.level, 'strong', '台幣帳戶照驗、級別不因外幣 skip 而虛降');
+  assert.equal(v.stats.pairsChecked, 3, '台幣的三對照驗');
+  assert.equal(v.stats.foreignRowsSkipped, 2);
+  assert.equal(v.stats.foreignAccountsSkipped, 2, '同帳號兩個幣別的概要列都要 skip');
+  assert.equal(v.stats.firstRowsUnverified, 2, '首筆計數只數受驗的台幣帳戶');
 });
 
 test('強閘｜同末碼不同前綴＝不同帳戶，分開驗鏈（混算會誤擋）', () => {
@@ -162,6 +186,34 @@ test('強閘｜同末碼不同前綴＝不同帳戶，分開驗鏈（混算會�
   ] });
   assert.equal(v.ok, true, '按完整遮罩帳號分組：兩條鏈各自都接得上');
   assert.equal(v.stats.pairsChecked, 2);
+});
+
+test('強閘×匯入｜幣別判準四種來源同向：map 命中／accounts 補位／db 補位／全 miss（r1#2 的縫關掉）', () => {
+  // r1#2 實測的縫：map 缺鍵、accounts 判 USD——匯入端把列當 foreign 跳過、舊閘卻當台幣驗＝
+  // 為不入帳的列擋整份。判準抽成單一份（statementCurrencyLookup＋db 補位＝txCurrency 同一條鏈）
+  // 之後，四種幣別來源下「閘擋不擋」必須永遠等於「匯入收不收」。
+  const M = '900500****888';
+  const brokenChain = () => [
+    btx({ acctMasked: M, acctSuffix: '888', balance: 100 }),
+    btx({ acctMasked: M, acctSuffix: '888', date: '2026-07-02', direction: 'in', amount: 5, balance: 999 }),   // 亂鏈
+  ];
+  const base = () => ({ bank: '台新', referenceDate: '2026-07-31',
+    accounts: /** @type {any[]} */ ([]), accountCurrency: /** @type {Record<string,string>} */ ({}), transactions: brokenChain() });
+  // a. map 命中 USD → 閘 skip、不擋
+  const pa1 = base(); pa1.accountCurrency = { [M]: 'USD' };
+  assert.equal(assertBankReconciled(pa1).ok, true, 'map 判外幣＝skip');
+  // b. map 缺鍵、accounts 補位判 USD → 同樣 skip（r1#2 當初就是這一格出縫）；且與匯入端同向
+  const pa2 = base(); pa2.accounts = [{ suffix: '888', masked: M, balance: 999, currency: 'USD', label: '', note: '' }];
+  assert.equal(assertBankReconciled(pa2).ok, true, 'accounts 補位判外幣＝閘也要跳過，不可當台幣驗');
+  const db2 = store.emptyDb();
+  const imp = importBankTxToDb(db2, /** @type {any} */ (pa2));
+  assert.equal(imp.foreign, 2, '匯入端把同兩列當外幣跳過＝兩邊同向');
+  assert.equal(imp.imported, 0);
+  // c. 帳單查無、db 現金帳戶說 USD → 服務層帶 db 補位＝skip
+  const db3 = { accounts: [{ type: 'cash', currency: 'USD', accountNo: '900500888', name: '外幣戶' }] };
+  assert.equal(assertBankReconciled(base(), db3).ok, true, 'db 補位判外幣＝閘也要跳過');
+  // d. 全 miss → fallback TWD＝會被當台幣匯入＝亂鏈必須照擋
+  assert.throws(() => assertBankReconciled(base()), (/** @type {any} */ e) => e.status === 400);
 });
 
 // ---------- ① 中閘（信用卡）純函式 ----------
