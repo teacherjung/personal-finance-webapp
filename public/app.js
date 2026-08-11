@@ -177,7 +177,7 @@ export function claimModalRoot() { return _claimModalRoot(); }
 export function watchModalRoot() { return _claimModalRoot.watch(); }
 
 // 通用彈窗表單。
-/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
+/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
@@ -235,7 +235,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     if (submitBtn) submitBtn.disabled = true;
     // r6：onSubmit 有 await，回來時只在**仍擁有 modal-root** 時才動 UI——切頁或期間開了新彈窗＝
     //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
-    try { await onSubmit(out); if (owns()) close(); }
+    // 第二個參數＝這張表單自己的擁有權把手：onSubmit 若要「送出後再開下一窗」，用 ctx.owns.handoff()
+    // 判斷那一格有沒有被別人接管（r18）。既有呼叫端只收一個參數，不受影響。
+    try { await onSubmit(out, { owns }); if (owns()) close(); }
     catch (err) { if (owns()) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); } }   // 失敗才解鎖重試；成功已 close
   };
   if (onMount) onMount(root);

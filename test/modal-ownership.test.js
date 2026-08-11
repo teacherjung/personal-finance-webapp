@@ -70,6 +70,43 @@ test('⭐ 擁有權｜同一頁的背景重繪不可撤銷擁有權；使用者�
   assert.equal(owns(), false, '換頁後舊 async 的 close/toast 才作廢');
 });
 
+// ⭐ r18（Codex 抓到的第二顆真實產線 bug）：密碼窗**送出後**等 preview，再開下一窗（預覽窗）。
+// 難點：正常交接本來就會蓋兩次章（自己 close 時 release、下一窗 claim），所以不能用 owns()／watch() 判
+// ——那會把正常流程整個誤擋。handoff() 要分辨的是「動這一格的是不是我自己」。
+test('⭐ 擁有權｜handoff()：自己關掉不算被接管（正常交接要放行），別人接管才擋', () => {
+  // 正常路徑：密碼窗送出 → 自己 close（release）→ 排程的預覽窗要開得成
+  let cell = 0;
+  const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
+  const owns = claim();
+  assert.equal(owns.handoff(), true, '還沒關窗＝當然可以排下一窗');
+  owns.release();                       // openForm 的 close()
+  assert.equal(owns(), false, '關了就不再擁有');
+  assert.equal(owns.handoff(), true, '⚠️ 自己 close 造成的章變動不算被接管——正常交接必須放行');
+
+  // 壞路徑①：使用者關掉密碼窗、又開了別的窗 → 舊 preview 不可以蓋掉它
+  const later = claim();
+  assert.equal(owns.handoff(), false, '別人接管了＝舊 preview 不可以開');
+  assert.equal(later(), true, '新窗自己仍是主人');
+
+  // 壞路徑②：等待期間就被搶走（我的 close 因為 owns() 已 false 而整個沒跑）
+  let cell2 = 0;
+  const claim2 = makeModalOwnership({ readGen: () => cell2, writeGen: (g) => { cell2 = g; } });
+  const mine = claim2();
+  claim2();                             // 別人接管
+  mine.release();                       // 有主才撤＝這次是空操作
+  assert.equal(mine.handoff(), false, '被搶走之後 release 是空操作，不可以因此誤判成「我自己關的」');
+});
+
+test('⭐ 擁有權｜handoff() 也看換頁：自己關掉但使用者已換頁＝不開', () => {
+  let cell = 0, nav = 1;
+  const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; }, readNav: () => nav });
+  const owns = claim();
+  owns.release();
+  assert.equal(owns.handoff(), true, '同一頁、自己關的＝可以開下一窗');
+  nav = 2;
+  assert.equal(owns.handoff(), false, '換頁後下一窗不屬於眼前畫面');
+});
+
 // ⭐ r16（Codex 抓到的真實產線 bug）：開窗**之前**還有 await 的地方（先問 /api/mode 再開密碼窗），
 // 等待期間使用者可能關掉眼前的窗、改開別的窗——晚回來的那一窗不可以蓋上去。
 // watch() 是**唯讀**版：只回報「從我看的那一刻起沒人動過這一格」，不蓋章、不搶擁有權。
@@ -116,7 +153,8 @@ test('接線｜openForm 的 async onSubmit 只在 owns() 時 close/toast；關�
   assert.match(app, /readNav: \(\) => currentNavSeq\(\)/, 'ownership 要吃**換頁**序號 currentNavSeq；且包一層箭頭避 TDZ');
   assert.doesNotMatch(app, /readNav: \(\) => currentRouteSeq\(\)/, '不可接回重繪序號 routeSeq（r7 的 bug 來源）');
   assert.match(app, /const owns = claimModalRoot\(\);/, 'openForm 要在開窗當下 claim 並留 owns');
-  assert.match(app, /await onSubmit\(out\); if \(owns\(\)\) close\(\);/, 'onSubmit 後只在仍擁有時才 close');
+  assert.match(app, /await onSubmit\(out, \{ owns \}\); if \(owns\(\)\) close\(\);/,
+    'onSubmit 後只在仍擁有時才 close；並把自己的擁有權把手交給 onSubmit（r18：後續開窗要據它判斷有沒有被接管）');
   assert.match(app, /catch \(err\) \{ if \(owns\(\)\)/, '失敗也只在仍擁有時才 toast（不報過期錯誤）');
   assert.ok((app.match(/owns\.release\(\);/g) || []).length >= 2, 'openForm/openInfo 的 close 都要 owns.release()（有主才撤）');
   const shell = strip(readFileSync(join(ROOT, 'public/modules/modal-shell.js'), 'utf8'));
@@ -165,7 +203,8 @@ test('⭐ 接線｜「清除記住的帳單密碼」吃 currentNavSeq（同頁�
 // ⭐ 關門題（r7 要求盤點／r8 只比總數不夠／r10 中央三窗沒逐一驗／r12 箭頭函式假綠）：
 // 任何**開窗點**（把 modal-bg 外殼寫進 #modal-root）都必須在**那次寫入之前**先 claimModalRoot()。
 // 五次修訂換來的掃法。⚠️ **先講清楚它守得住什麼**（本檔末有完整的誠實劃界，別再宣稱「逐函式切段」）：
-//   ①**最硬的一半＝釘住開窗寫入點的總數**：偵測面內多一個就轉紅，不管寫成哪種形狀。
+//   ①**最硬的一半＝釘住開窗寫入點的總數**：**偵測面內**多一個就轉紅，不管寫成哪種形狀
+//     （偵測面＝原始碼直接看得到 `class=…modal-bg`；動態組字／變數 class／className／public 外都在面外）。
 //   ②六個開窗點**逐一點名**驗「claim 在寫入之前」（r10：否則 openInfo 的 claim 會被 openForm 代打）。
 //   ③段落以**頂層大括號深度**切、**刻意不辨識任何函式寫法**（r12：只認 `function` 宣告時，塞在兩個
 //     開窗函式之間的**箭頭函式**開窗會被前一段吸收而假綠）。但**頂層以下切不開**——物件／class 的兩個
@@ -336,12 +375,14 @@ function listJs(dir) {
   return out;
 }
 
-// 開窗寫入點的**總數**（`modal-bg` 字樣出現在正式碼的次數）。釘死它是這道關門題**最硬的一半**：
-// 不管新開窗點寫成什麼形狀（頂層函式／箭頭／物件方法／class 方法／巢狀函式），只要多一個，
-// 這個數字就對不上、直接轉紅，逼人來這裡登記並補 claim。
+// 開窗寫入點的**總數**（`class=…modal-bg` 出現在正式碼的次數）。釘死它是這道關門題**最硬的一半**：
+// **偵測面內**不管新開窗點寫成什麼形狀（頂層函式／箭頭／物件方法／class 方法／巢狀函式、單雙引號、
+// innerHTML 或 insertAdjacentHTML），只要多一個，這個數字就對不上、直接轉紅，逼人來這裡登記並補 claim。
+// ⚠️ **偵測面＝原始碼裡直接看得到 `class=…modal-bg`**；動態組字串、變數帶 class 名、`className` 指派、
+//   或 `public/` 以外開的窗都在偵測面外（r16/r18 誠實劃界，別再寫成「任何形狀」）。
 const EXPECTED_OPEN_WRITES = 6;
 
-test('⭐ 接線｜全站開窗寫入點的**總數**被釘住（任何形狀的新開窗點都會讓它轉紅）', () => {
+test('⭐ 接線｜全站開窗寫入點的**總數**被釘住（**偵測面內**任何形狀的新開窗點都會讓它轉紅）', () => {
   let total = 0;
   /** @type {string[]} */ const where = [];
   for (const f of listJs(join(ROOT, 'public'))) {
@@ -368,7 +409,7 @@ test('⭐ 接線｜全站掃描：掃得到的開窗段落都要「先 claim 再
 });
 
 // ⚠️⚠️ **這道關門題的誠實劃界（r14，別再誇大它）**：
-//   **守得住的**：①開窗寫入點的總數（上面那題，任何形狀都逃不掉）②點名表上這六個開窗點的
+//   **守得住的**：①開窗寫入點的總數（上面那題，**偵測面內**任何形狀都逃不掉）②點名表上這六個開窗點的
 //     「claim 在寫入之前」（名字錨定，改名或拿掉 claim 都會紅）③頂層函式／頂層箭頭函式的新開窗點。
 //   **守不住的（已知盲點，Codex r14 實測）**：段落切法只看**頂層**大括號深度，所以
 //     **物件字面值／class 裡的兩個方法**、或**同一個外層函式裡的兩個巢狀函式**會共用同一段——

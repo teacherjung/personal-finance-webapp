@@ -58,14 +58,16 @@ function openCardUploadForm(cards) {
         { key: 'password', label: g.label, type: 'password', full: true, placeholder: '通常是身分證字號' },
         { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
       ],
-      onSubmit: async (/** @type {any} */ data) => {
+      onSubmit: async (/** @type {any} */ data, /** @type {any} */ ctx) => {
+        // r18：排下一窗的判準＝還在同一頁**且**這一格沒被別人接管（自己 close 不算）
+        const canOpenNext = () => onPage() && ctx.owns.handoff();
         const pw = data.password || '';
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
         if (data.remember && pw) {
           try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
           catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
         }
-        openWhenOnPage(onPage, () => handlePreviewResult(r, b64, cards, pw, onPage));   // 切頁作廢（排程＋執行兩次核對）
+        openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, pw, onPage));   // 切頁／被接管都作廢（排程＋執行兩次核對）
       },
     });
   };
@@ -78,16 +80,17 @@ function openCardUploadForm(cards) {
       const inp = root.querySelector('#f_file');
       if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
-    onSubmit: async () => {
+    onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
       if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
+      const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
       const b64 = await fileToBase64(file);
       try {
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
         // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫（切頁作廢）
-        openWhenOnPage(onPage, () => handlePreviewResult(r, b64, cards, '', onPage));
+        openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, '', onPage));
       } catch (e) {
         if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-        openWhenOnPage(onPage, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁作廢）
+        openWhenOnPage(canOpenNext, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
       }
     }
   });
@@ -112,10 +115,11 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
       { key: 'cardId', label: `${detail}，系統無法確定是哪張卡，請選：`, type: 'select',
         options: pick.map(c => ({ value: c.id, label: c.name + (c.lastFour ? `（${c.lastFour}）` : '') })) }
     ],
-    onSubmit: async (data) => {
+    onSubmit: async (data, /** @type {any} */ ctx) => {
       // 沿用使用者輸入的密碼（r1#3）：後端 previewForCard 會把它排在池最前；不帶＝沒勾記住時又失敗
+      const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
       const pr = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
-      openWhenOnPage(onPage, () => openStatementPreview(data.cardId, pr, b64, cards, typedPw, onPage));   // r4：選卡重解析 await 期間切頁＝不開
+      openWhenOnPage(canOpenNext, () => openStatementPreview(data.cardId, pr, b64, cards, typedPw, onPage));   // r4：重解析期間切頁／被接管＝不開
     }
   });
 }

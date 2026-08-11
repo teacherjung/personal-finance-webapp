@@ -192,7 +192,9 @@ function openBankUpload() {
           { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
           { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
         ],
-        onSubmit: async (/** @type {any} */ data) => {
+        onSubmit: async (/** @type {any} */ data, /** @type {any} */ ctx) => {
+          // r18：排下一窗的判準＝還在同一頁**且**這一格沒被別人接管（自己 close 不算）
+          const canOpenNext = () => onPage() && ctx.owns.handoff();
           const pw = data.password || '';
           const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -200,7 +202,7 @@ function openBankUpload() {
             try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
             catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
           }
-          openWhenOnPage(onPage, () => showBankPreview(r, b64, pw, onPage));   // 待 openForm 清空 modal-root 後再開；切頁作廢
+          openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));   // 待 openForm 清空 modal-root 後再開；切頁／被接管都作廢
         },
       });
       openForm({
@@ -212,16 +214,17 @@ function openBankUpload() {
           const inp = root.querySelector('#f_file');
           if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
         },
-        onSubmit: async () => {
+        onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           if (!file) throw new Error('請先選擇對帳單 PDF');
+          const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
           const b64 = await fileToBase64(file);
           try {
             // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
             const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64 } });
-            openWhenOnPage(onPage, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁作廢
+            openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
             if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-            openWhenOnPage(onPage, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁作廢）
+            openWhenOnPage(canOpenNext, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
           }
         }
       });
