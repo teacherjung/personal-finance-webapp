@@ -200,7 +200,8 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
   // r4：切頁作廢改用 openWhenOnPage（排程＋執行兩次核對，行為由下面的單元題直測）——
   //   這裡鎖「每個 deferred 開窗點都經 openWhenOnPage、且不再有裸 setTimeout(()=>showBankPreview)」。
   assert.match(src, /const seq0 = currentNavSeq\(\);/, '銀行上傳窗要在開窗當下存下**換頁**序號（r9：接成重繪序號時密碼窗會靜靜不開）');
-  // r18：判準從 onPage 升級成 canOpenNext＝**還在同一頁 且 這一格沒被別人接管**（自己 close 不算）
+  // r18/r21：判準從 onPage 升級成 canOpenNext＝**還在同一頁 且（還沒關窗／或這次是送出成功的交棒）**
+  //   ——使用者按取消也是「自己關的」，但那是撤銷、不放行。
   assert.match(src, /const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/,
     '排下一窗的判準要同時看換頁與彈窗格擁有權（r18 產線競態：等 preview 時關窗改開別的窗，舊 preview 會蓋掉它）');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage＋canOpenNext');

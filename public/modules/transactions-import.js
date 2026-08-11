@@ -59,7 +59,8 @@ function openCardUploadForm(cards) {
         { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
       ],
       onSubmit: async (/** @type {any} */ data, /** @type {any} */ ctx) => {
-        // r18：排下一窗的判準＝還在同一頁**且**這一格沒被別人接管（自己 close 不算）
+        // r18/r21：排下一窗的判準＝還在同一頁**且**（還沒關窗／或這次是送出成功的交棒）——
+        //   使用者按取消也是「自己關的」，但那是撤銷、不放行。
         const canOpenNext = () => onPage() && ctx.owns.handoff();
         const pw = data.password || '';
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });

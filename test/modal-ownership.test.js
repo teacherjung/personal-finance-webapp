@@ -71,17 +71,18 @@ test('⭐ 擁有權｜同一頁的背景重繪不可撤銷擁有權；使用者�
 });
 
 // ⭐ r18（Codex 抓到的第二顆真實產線 bug）：密碼窗**送出後**等 preview，再開下一窗（預覽窗）。
-// 難點：正常交接本來就會蓋兩次章（自己 close 時 release、下一窗 claim），所以不能用 owns()／watch() 判
-// ——那會把正常流程整個誤擋。handoff() 要分辨的是「動這一格的是不是我自己」。
+// 難點：正常交接本來就會蓋兩次章（自己關窗時 release、下一窗 claim），所以不能用 owns()／watch() 判
+// ——那會把正常流程整個誤擋。⚠️ handoff() 分辨的**不是**「動這一格的是不是我自己」（取消也是自己關的）
+// ——而是**這次關窗有沒有帶交接授權**：只放行①還沒關窗 ②以 handoff:true 成功交棒之後。
 test('⭐ 擁有權｜handoff()：**送出成功**的自動關窗要放行；別人接管要擋', () => {
-  // 正常路徑：密碼窗送出 → 自己 close（release({handoff:true})）→ 排程的預覽窗要開得成
+  // 正常路徑：密碼窗送出 → 送出成功的自動關窗（release({handoff:true})）→ 排程的預覽窗要開得成
   let cell = 0;
   const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
   const owns = claim();
   assert.equal(owns.handoff(), true, '還沒關窗＝當然可以排下一窗（onSubmit 裡排程的當下）');
   owns.release({ handoff: true });       // openForm 的 closeAfterSubmit()
   assert.equal(owns(), false, '關了就不再擁有');
-  assert.equal(owns.handoff(), true, '⚠️ 送出成功的自動關窗不算被接管——正常交接必須放行');
+  assert.equal(owns.handoff(), true, '⚠️ 帶了交接授權的關窗＝正常交接，必須放行（取消版的關窗則不行，見下一題）');
 
   // 壞路徑①：使用者關掉密碼窗、又開了別的窗 → 舊 preview 不可以蓋掉它
   const later = claim();
