@@ -97,6 +97,30 @@ test('強閘｜末筆餘額與概要區對不上＝擋下（期末漏讀交易�
   assert.match(v.problems[0].message, /差 500/);
 });
 
+test('強閘｜真正的末筆餘額讀不到＝endBalance skip——不可拿較早的餘額冒充末筆（r1#2）', () => {
+  // 較早餘額（10,500）之後還有一筆支出沒印餘額：帳戶真實期末≠10,500。
+  // 舊寫法會拿 10,500 去對概要的 10,300 → 把「缺數字」誤報成「不一致」擋下合法帳單。
+  const p = cleanBankParsed();
+  p.transactions[4].balance = null;   // A 帳戶最後一筆（支出 200）的餘額欄讀不到
+  p.accounts[0].balance = 10300;      // 概要印的是真期末
+  const v = reconcileBankStatement(p);
+  assert.equal(v.ok, true, '缺數字＝skip，不是不一致');
+  assert.equal(v.checks.endBalance, 'skip');
+  assert.equal(v.stats.endChecked, 0);
+});
+
+test('強閘｜已知界線（r1#3，誠實揭露）：每帳戶第一筆的金額/方向驗不到，stats 要照實計數', () => {
+  // 期初餘額目前沒有抽取＝「期初＋Σ進出＝期末」尚未實作：首筆金額被讀壞、它自己印的餘額
+  // 沒壞時，鏈從首筆餘額起錨照樣全綠。這一題**釘住這條界線**（模組檔頭①、契約與計畫同步揭露）；
+  // 日後補上期初抽取時，本題改寫成「首筆也要轉紅」。
+  const p = cleanBankParsed();
+  p.transactions[0].amount = 999999;   // 首筆金額天差地遠，但 balance 10,000 沒動
+  const v = reconcileBankStatement(p);
+  assert.equal(v.ok, true, '首筆不在鏈上＝目前驗不到（已知界線，非保證）');
+  assert.equal(v.level, 'strong');
+  assert.equal(v.stats.firstRowsUnverified, 2, '兩個帳戶＝兩筆「驗不到的首筆」要誠實計數');
+});
+
 test('強閘｜整份讀不到餘額＝誠實降級 weak、照舊放行（沒數字可對≠對不上）', () => {
   const p = cleanBankParsed();
   p.accounts = [];
@@ -148,11 +172,12 @@ const cardOk = () => ({
   transactions: [{ amount: 300 }, { amount: 150 }, { amount: -2449 }],
 });
 
-test('中閘｜四格平衡＋明細對得上＝medium 三檢查全過', () => {
+test('中閘｜四格平衡＋明細對得上＝medium 三檢查全過、零 advisories', () => {
   const v = reconcileCardStatement(cardOk());
   assert.equal(v.ok, true);
   assert.equal(v.level, 'medium');
   assert.deepEqual(v.checks, { equation: 'pass', newVsRows: 'pass', paidVsRows: 'pass' });
+  assert.deepEqual(v.advisories, []);
   assert.equal(v.stats.sumPos, 450);
   assert.equal(v.stats.sumNegAbs, 2449);
 });
@@ -167,34 +192,61 @@ test('中閘｜摘要等式不平＝擋下（四格至少一格讀錯；銀行�
   assert.match(v.problems[0].message, /差 6,450/);
 });
 
-test('中閘｜明細少一筆＝正項加總對不上「本期新增款項」、擋下（閘的主要獵物）', () => {
+test('中閘｜明細少一筆＝影子檢查記 advisories、不擋（r1#1：分不出「漏讀」還是「版面只列摘要」）', () => {
   const p = cardOk();
-  p.transactions = [{ amount: 300 }, { amount: -2449 }];   // 150 那筆被漏讀
+  p.transactions = [{ amount: 300 }, { amount: -2449 }];   // 150 那筆不在明細
   const v = reconcileCardStatement(p);
-  assert.equal(v.ok, false);
-  assert.equal(v.checks.newVsRows, 'fail');
-  assert.match(v.problems[0].message, /本期新增款項/);
-  assert.match(v.problems[0].message, /差 150/);
+  assert.equal(v.ok, true, '影子檢查不擋——硬擋會誤傷分期/年費只列摘要的合法帳單');
+  assert.equal(v.checks.newVsRows, 'mismatch');
+  assert.equal(v.advisories.length, 1);
+  assert.match(v.advisories[0].message, /本期新增款項/);
+  assert.match(v.advisories[0].message, /差 150/);
+  assert.match(v.advisories[0].message, /也可能/, '訊息要把兩種可能都講、不可誣賴解析器');
+  assert.deepEqual(v.problems, [], 'mismatch 絕不可漏進 problems（那會變回硬擋）');
 });
 
-test('中閘｜繳款/退款列漏讀＝負項加總對不上、擋下', () => {
+test('中閘｜繳款/退款列不在明細＝同樣只記 advisories 不擋', () => {
   const p = cardOk();
-  p.transactions = [{ amount: 300 }, { amount: 150 }];   // 繳款 −2,449 被漏讀
+  p.transactions = [{ amount: 300 }, { amount: 150 }];   // 繳款 −2,449 不在明細
   const v = reconcileCardStatement(p);
-  assert.equal(v.ok, false);
-  assert.equal(v.checks.paidVsRows, 'fail');
-  assert.match(v.problems.map((x) => x.message).join(''), /已繳款＋退款/);
+  assert.equal(v.ok, true);
+  assert.equal(v.checks.paidVsRows, 'mismatch');
+  assert.match(v.advisories.map((x) => x.message).join(''), /已繳款＋退款/);
 });
 
-test('中閘｜整數帳單容 ±1 進位差；差 2 就擋（容差不可寬到吞掉真錯）', () => {
+test('中閘｜合法摘要調整型（r1#1 的反例場景）：等式自平、明細比摘要少＝放行＋兩則 advisories', () => {
+  // 分期/年費只列摘要：10,000−10,000+1,300＝1,300 等式平；明細只有 1,000 消費、無繳款列。
+  // 修法前這種合法帳單會被 C2（差 300）＋C3（差 10,000）整份 400。
+  const v = reconcileCardStatement({
+    statementTotals: { due: 1300, prevDue: 10000, paidAndRefund: 10000, newCharges: 1300 },
+    transactions: [{ amount: 1000 }],
+  });
+  assert.equal(v.ok, true, '合法帳單不可被影子檢查擋下');
+  assert.equal(v.level, 'medium', 'C1 有跑＝medium');
+  assert.deepEqual(v.checks, { equation: 'pass', newVsRows: 'mismatch', paidVsRows: 'mismatch' });
+  assert.equal(v.advisories.length, 2);
+});
+
+test('中閘｜擋下型（C1）容 ±1 進位差；差 2 就擋（容差不可寬到吞掉真錯）', () => {
+  const off = (/** @type {number} */ d) => {
+    const p = cardOk();
+    p.statementTotals.due = 8450 + d;   // 只動等式：|算出 8,450 − 讀到 due| ＝ d
+    return reconcileCardStatement(p);
+  };
+  assert.equal(off(1).ok, true, '±1＝帳單進位，放行');
+  assert.equal(off(2).ok, false, '±2＝真的對不上，擋');
+});
+
+test('中閘｜影子檢查同一把容差尺：差 1＝pass、差 2＝mismatch', () => {
   const off = (/** @type {number} */ d) => {
     const p = cardOk();
     p.statementTotals.newCharges = 450 + d;
     p.statementTotals.prevDue = 10449 - d;   // 等式維持平衡，只讓「明細 vs 新增款項」差 d
     return reconcileCardStatement(p);
   };
-  assert.equal(off(1).ok, true, '±1＝帳單進位，放行');
-  assert.equal(off(2).ok, false, '±2＝真的對不上');
+  assert.equal(off(1).checks.newVsRows, 'pass');
+  assert.equal(off(2).checks.newVsRows, 'mismatch');
+  assert.equal(off(2).ok, true, 'mismatch 仍不擋（影子）');
 });
 
 test('中閘｜讀不到任何總額（台新官網 XLSX 沒印）＝weak 全 skip、照舊放行', () => {
@@ -266,7 +318,7 @@ test('接縫｜assertCardReconciled：同款；訊息最多列 3 處、其餘計
     assert.match(e.message, /信用卡帳單/);
     return true;
   });
-  const many = { ok: false, level: /** @type {const} */ ('strong'), checks: {},
+  const many = { ok: false, level: /** @type {const} */ ('strong'), checks: {}, advisories: [],
     problems: [1, 2, 3, 4, 5].map((i) => ({ code: 'x', message: `第${i}處` })), stats: {} };
   assert.match(gateFailureMessage(many, '銀行對帳單'), /還有 2 處對不上/);
 });
@@ -302,30 +354,41 @@ beforeEach(() => {
     cards: [{ id: 'c1', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '5678' }] });
 });
 
-test('端到端｜一致的帳單：預覽照常，回應帶 reconcile（medium、明細對總額 pass）', async () => {
+test('端到端｜一致的帳單：預覽照常，回應帶 reconcile 與 statementTotals（r1#4）', async () => {
   const r = await previewForCard('c1', xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '8,450' }, TX_OK));
   assert.equal(r.reconcile.level, 'medium');
   assert.equal(r.reconcile.ok, true);
   assert.equal(r.reconcile.checks.newVsRows, 'pass');
   assert.equal(r.statementDue, 8450, 'statementDue 照舊要交出來（改走 totals.due 不可弄丟它）');
+  assert.deepEqual(r.statementTotals, { due: 8450, prevDue: 10449, paidAndRefund: 2449, newCharges: 450 },
+    '四格要一路帶到預覽回應（契約說到就要做到，r1#4）');
   assert.equal(r.statementMonth, '2026-07');
   assert.ok(r.transactions.length >= 2);
 });
 
-test('端到端｜明細與「本期新增款項」對不上：previewForCard 就地 400 擋下（閘真的接在入口上）', async () => {
-  // 等式自平（10,449−2,449+550＝8,550）、但明細只有 450 ⇒ 只有 newVsRows 炸＝精準驗到那一道
-  const b64 = xlsxB64({ prev: '10,449', paid: '2,449', add: '550', due: '8,550' }, TX_OK);
+test('端到端｜摘要等式不平（C1）：previewForCard 就地 400 擋下（閘真的接在入口上）', async () => {
+  // 10,449−2,449+450＝8,450，帳單卻印 9,999 ⇒ 四格至少一格被讀錯＝唯一的擋下型檢查轉紅
+  const b64 = xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '9,999' }, TX_OK);
   await assert.rejects(previewForCard('c1', b64), (/** @type {any} */ e) => {
     assert.equal(e.status, 400);
     assert.match(e.message, /對帳沒過/);
-    assert.match(e.message, /本期新增款項/);
-    assert.match(e.message, /差 100/);
+    assert.match(e.message, /等式不平/);
+    assert.match(e.message, /差 1,549/);
     return true;
   });
 });
 
-test('端到端｜免選卡那條路（previewAuto）同樣要擋、同樣要帶 reconcile', async () => {
-  await assert.rejects(previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '550', due: '8,550' }, TX_OK)),
+test('端到端｜明細與摘要對不上（影子）：放行、advisories 進回應（r1#1 合法摘要調整型不再誤擋）', async () => {
+  // 等式自平（10,449−2,449+550＝8,550）、明細只有 450 ⇒ 修法前這裡會 400，現在＝advisory
+  const r = await previewForCard('c1', xlsxB64({ prev: '10,449', paid: '2,449', add: '550', due: '8,550' }, TX_OK));
+  assert.equal(r.reconcile.ok, true);
+  assert.equal(r.reconcile.checks.newVsRows, 'mismatch');
+  assert.equal(r.reconcile.advisories.length, 1);
+  assert.match(r.reconcile.advisories[0].message, /差 100/);
+});
+
+test('端到端｜免選卡那條路（previewAuto）同樣擋 C1、同樣帶 reconcile', async () => {
+  await assert.rejects(previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '9,999' }, TX_OK)),
     (/** @type {any} */ e) => { assert.equal(e.status, 400); assert.match(e.message, /對帳沒過/); return true; });
   const r = await previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '8,450' }, TX_OK));
   assert.ok(r.resolvedCard, '末四碼 5678 唯一命中→自動歸卡');
