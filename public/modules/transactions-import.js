@@ -7,7 +7,7 @@
 // 循環 import 安全：本檔 ↔ transactions.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）；transactions.js 的三個接縫
 //（renderTransactions／expenseParents／setMonthFilter）皆為呼叫時取用。
-import { api, byId, money, esc, monthKey, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, byId, money, esc, monthKey, openForm, confirmDelete, toast, currentNavSeq } from '../app.js';
 import { icon } from './icons.js';
 import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
@@ -26,7 +26,7 @@ export async function openStatementUpload() {
   // 開窗前時序（連點鎖／載卡片時切頁作廢／finally 解鎖）收進 runCardUpload（cashflow-model.js，行為題可直測）
   const result = await runCardUpload({
     busy: { get: () => cardUploadBusy, set: (v) => { cardUploadBusy = v; } },
-    routeSeq: currentRouteSeq,
+    navSeq: currentNavSeq,
     loadCards: async () => (await api('/cards')).filter((/** @type {any} */ c) => (c.type || 'credit') === 'credit'),
     openUploadForm: (cards) => openCardUploadForm(cards),
   });
@@ -38,15 +38,15 @@ function openCardUploadForm(cards) {
   let file = null;
   // ⚠️ preview／remember 都有 await，回來時可能已切頁（r3#2）——存開窗當下的路由序號，
   //   每個後續窗（選卡/預覽/密碼窗）開啟前都核對；序號變了＝一個都不開。
-  const seq0 = currentRouteSeq();
-  const onPage = () => seq0 === currentRouteSeq();   // 整條卡片匯入流程共用（含選卡/改卡重解析）——r4 逐條路都要守
+  const seq0 = currentNavSeq();
+  const onPage = () => seq0 === currentNavSeq();   // 整條卡片匯入流程共用（含選卡/改卡重解析）——r4 逐條路都要守
   // 第二窗（P0.5）：已存密碼池（各卡＋記住的）全敗＝後端回 code:'pdf_password' 才開。
   // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
   // typedPw＝使用者這次輸入的密碼，往後選卡/改卡重解析要沿用（r1#3：沒勾記住時正確密碼不在任何池裡）。
   const openPasswordWindow = async (/** @type {string} */ b64) => {
     // 挑句＋切頁作廢都走 bankUploadGate（r2#2：問 /mode 期間切頁＝不開密碼窗，補上這條非同步縫；
     // 挑句判準與保守方向沿用同一份，不另抄）。
-    const g = await bankUploadGate({ fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout, timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq });
+    const g = await bankUploadGate({ fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout, timeoutMs: MODE_TIMEOUT_MS, navSeq: currentNavSeq });
     if (g.stale || !onPage()) return;   // 等 /mode（或更早的 preview）時切了頁＝這一窗不屬於眼前畫面
     openForm({
       title: '這份帳單需要密碼',

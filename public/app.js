@@ -152,20 +152,23 @@ export function bindBackdropClose(root, close) {
   bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
 }
 
-// #modal-root 是全站表單/彈窗共用的一格（r6→r7）。表單 onSubmit 有 await，回來時可能已切頁或開了新彈窗——
+// #modal-root 是全站表單/彈窗共用的一格（r6→r9）。表單 onSubmit 有 await，回來時可能已換頁或開了新彈窗——
 // 舊的成功 continuation 若無條件 close() 會清掉**後開的**彈窗、毀掉未存輸入；舊的失敗會報過期錯誤。
-// 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset 與路由序號。
-// readRoute 用箭頭包一層（不是直接傳 currentRouteSeq）＝避開 TDZ：currentRouteSeq 在本行之後才宣告，
+// 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset 與換頁序號。
+// ⚠️ 吃的是 currentNavSeq（**換頁**世代）不是 currentRouteSeq（重繪世代）——r7 接錯那個，開機報價更新
+//    這種同頁背景重繪就把擁有權撤掉，害存檔成功卻不關窗、儲存鈕永遠灰。兩個序號的分工見下面路由段。
+// readNav 用箭頭包一層（不是直接傳 currentNavSeq）＝避開 TDZ：currentNavSeq 在本行之後才宣告，
 // 直接引用會在載入時就求值而炸；包一層的話識別名只在 owns() 執行（runtime）時才解析。
 const _claimModalRoot = makeModalOwnership({
   readGen: () => Number($('#modal-root')?.dataset.modalGen || 0),
   writeGen: (g) => { const r = $('#modal-root'); if (r) r.dataset.modalGen = String(g); },
-  readRoute: () => currentRouteSeq(),
+  readNav: () => currentNavSeq(),
 });
-/** 宣告接管 #modal-root（蓋新世代章＋記住當下路由），回傳 `owns()`＝這一份是否仍擁有它。所有直接開窗點都要 claim。 */
+/**
+ * 宣告接管 #modal-root（蓋新世代章＋記住當下換頁世代）。**所有直接開窗點都要 claim**。
+ * 回傳 `owns()`＝這一份是否仍擁有它；`owns.release()`＝關窗時撤銷（有主才撤，不會洗掉後開那個窗的章）。
+ */
 export function claimModalRoot() { return _claimModalRoot(); }
-/** 撤銷 #modal-root 擁有權（蓋新章讓現任持有者的 owns() 立刻變 false）。關窗時呼叫＝關窗後舊 async 不再誤 close/toast。 */
-export function releaseModalRoot() { _claimModalRoot.release(); }
 
 // 通用彈窗表單。
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
@@ -205,7 +208,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       <button type="submit" class="btn">儲存</button></div></form></div>
   </div></div>`;
 
-  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權，關窗後舊 async 不再誤 close/toast
+  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤）——關窗後舊 async 不再誤 close/toast
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
   bindBackdropClose(root, close);
@@ -236,13 +239,13 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
 /** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
-  claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
+  const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
       <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>
   </div></div>`;
-  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：同 openForm，關窗即撤銷擁有權
+  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：同 openForm，關窗即撤銷擁有權（有主才撤）
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-close]').onclick = close;
   bindBackdropClose(root, close);
@@ -291,8 +294,21 @@ export async function confirmDelete(name, fn) {
 }
 
 // ---------- 路由 ----------
+// ⚠️ 這裡有**兩個**序號，回答的是兩個不同問題——混用會出事（r9 用兩個真實 bug 換來的教訓）：
+//   routeSeq＝**重繪世代**：router() 每跑一次就前進（含同一頁的重繪）。用途是「我這次算完的東西
+//     還該不該寫進 #view」——同頁重繪也讓舊的寫入作廢，所以**每次都前進才是對的**。
+//   navSeq ＝**換頁世代**：只有 route 真的變了才前進。用途是「使用者還在同一頁嗎」——
+//     彈窗擁有權、匯入流程的 onPage 都問這個。
+// 為什麼要分家：router() 有九個呼叫點，只有 hashchange 是真的換頁；開機報價更新、自動快照、
+// 帳戶改名對齊、店名規則整理、刪除後重繪都會在**同一頁**呼叫 router()。拿 routeSeq 當「換頁」用，
+// 這些背景重繪就會被誤判成切頁，而 router() 根本不碰 #modal-root（彈窗還在畫面上）：
+//   ①彈窗擁有權被誤撤 → 存檔成功卻不關窗、儲存鈕永遠卡在灰色（r7 我自己種的）。
+//   ②匯入流程 onPage 變 false → 密碼窗**靜靜不開**，使用者上傳完什麼都沒發生（P0.5 自己的頭號功能）。
 let routeSeq = 0;
-export const currentRouteSeq = () => routeSeq;   // 供長流程（ibSync/refreshQuotes）完成後判斷「還在同一頁嗎」（自主體檢）
+export const currentRouteSeq = () => routeSeq;   // 重繪世代：長流程（ibSync/refreshQuotes）寫 DOM 前的自主體檢
+let navSeq = 0;
+let lastRoute = /** @type {string|null} */ (null);
+export const currentNavSeq = () => navSeq;   // 換頁世代：只有真的換頁才前進（彈窗擁有權／匯入 onPage 用這個）
 const renderStockResearch = createStockResearchPage({
   api,
   getView: view,
@@ -325,8 +341,11 @@ const ROUTES = {
 };
 
 export async function router() {
-  const seq = ++routeSeq;   // 序號防護：快速切頁時，舊頁的 async fn 完成後不可覆蓋新頁面
+  const seq = ++routeSeq;   // 序號防護：快速切頁時，舊頁的 async fn 完成後不可覆蓋新頁面（同頁重繪也算）
   const route = location.hash.replace(/^#/, '').split('?')[0] || 'dashboard';
+  // 換頁世代只在 route 真的變了才前進（比的是 router() 自己用來分派的那個字串，query 不算換頁——
+  // 同一頁換 query 時彈窗仍在畫面上、仍該屬於它的主人）。同頁重繪一律不動它。
+  if (route !== lastRoute) { lastRoute = route; navSeq++; }
   document.body.classList.toggle('stock-research-route', route === 'stock');
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」

@@ -66,15 +66,15 @@ export const bankPasswordLabel = (mode) =>
  * 上傳流程歸 cashflow.js，這裡都不管。
  * @param {{ fetchMode: () => Promise<any>,
  *           withTimeout: (work: Promise<any>, ms: number) => Promise<any>,
- *           timeoutMs: number, routeSeq: () => number }} deps
+ *           timeoutMs: number, navSeq: () => number }} deps
  * @returns {Promise<{ label: string, stale: boolean }>}
  */
-export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeSeq }) {
-  const seq = routeSeq();
+export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, navSeq }) {
+  const seq = navSeq();
   let mode = null;
   try { mode = await withTimeout(fetchMode(), timeoutMs); }
   catch { /* 問不到／逾時＝保守：bankPasswordLabel(null) 回雲端那句 */ }
-  return { label: bankPasswordLabel(mode), stale: routeSeq() !== seq };
+  return { label: bankPasswordLabel(mode), stale: navSeq() !== seq };
 }
 
 /**
@@ -127,18 +127,18 @@ export function openWhenOnPage(onPage, open, schedule = (fn) => setTimeout(fn, 0
  * 順序同 runBankUpload：①busy 在 await 前上鎖、被擋下不碰鎖 ②載完卡片先看 stale 再開窗
  *（等待期間切頁＝一個窗都不開）③finally 解鎖。鎖是注入的讀寫對、不掛按鈕元素（同 #438 r3 教訓）。
  * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
- *           routeSeq: () => number,
+ *           navSeq: () => number,
  *           loadCards: () => Promise<any[]>,
  *           openUploadForm: (cards: any[]) => void }} deps
  * @returns {Promise<'busy' | 'stale' | 'nocards' | 'opened'>}
  */
-export async function runCardUpload({ busy, routeSeq, loadCards, openUploadForm }) {
+export async function runCardUpload({ busy, navSeq, loadCards, openUploadForm }) {
   if (busy.get()) return 'busy';
   busy.set(true);
-  const seq = routeSeq();
+  const seq = navSeq();
   try {
     const cards = await loadCards();
-    if (routeSeq() !== seq) return 'stale';   // 載入卡片名單時切了頁＝這一窗不屬於眼前畫面
+    if (navSeq() !== seq) return 'stale';   // 載入卡片名單時切了頁＝這一窗不屬於眼前畫面
     if (!cards.length) return 'nocards';       // 沒有信用卡＝呼叫端提示去新增（不開窗）
     openUploadForm(cards);
     return 'opened';

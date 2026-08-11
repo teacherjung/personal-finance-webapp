@@ -5,7 +5,7 @@
 // 呼叫端拿回 { root, close } 自行接線——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
 // 實測 關閉/背景點擊/送出/返回 都正常再決定是否擴大到其餘 11 處）。
 // 循環 import 安全：對 app.js 的綁定只在函式內取用（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）。
-import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot, releaseModalRoot } from '../app.js';
+import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot } from '../app.js';
 
 /**
  * 開一個彈窗外殼：title 經 esc、bodyHtml 為呼叫端組好的內容（含各自的 form-actions 按鈕）。
@@ -17,12 +17,12 @@ import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot, releaseMo
  */
 export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }) {
   const root = byId('modal-root');
-  claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，舊表單的 async close 作廢（不會清掉這個窗）
+  const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，舊表單的 async close 作廢（不會清掉這個窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body">${bodyHtml}</div>
   </div></div>`;
-  const close = () => { root.innerHTML = ''; releaseModalRoot(); };   // r7：關窗即撤銷擁有權（與 openForm 一致）
+  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤，與 openForm 一致）
   root.querySelector('.x-close').onclick = close;
   if (backdrop) bindBackdropClose(root, close);
   return { root, close };

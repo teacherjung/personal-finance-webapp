@@ -4,7 +4,7 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -171,15 +171,18 @@ function openBankUpload() {
     busy: { get: () => bankUploadBusy, set: (v) => { bankUploadBusy = v; } },
     gate: () => bankUploadGate({
       fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
-      timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq,
+      timeoutMs: MODE_TIMEOUT_MS, navSeq: currentNavSeq,
     }),
     openUploadForm: (label) => {
       let file = null;
-      // ⚠️ preview／remember 都有 await，回來時使用者可能已切頁（r3#2/r4：把關只顧了「問 /mode」那段）。
-      //   存下開窗當下的路由序號，**每個後續窗（預覽窗／密碼窗）都經 openWhenOnPage 排程**——排程當下與
+      // ⚠️ preview／remember 都有 await，回來時使用者可能已換頁（r3#2/r4：把關只顧了「問 /mode」那段）。
+      //   存下開窗當下的**換頁**序號，**每個後續窗（預覽窗／密碼窗）都經 openWhenOnPage 排程**——排程當下與
       //   callback 執行當下都核對序號，序號變了＝這些窗不屬於眼前畫面，一個都不開。
-      const seq0 = currentRouteSeq();
-      const onPage = () => seq0 === currentRouteSeq();
+      // ⚠️⚠️ 這裡必須是 currentNavSeq（換頁）**不是** currentRouteSeq（重繪）——r9 抓到的真實 bug：
+      //   開機的報價更新／自動快照／帳戶對齊會在**同一頁**呼叫 router()，routeSeq 就前進了。
+      //   接成 routeSeq 時 onPage() 變 false，密碼窗**靜靜不開**：使用者上傳完加密帳單，畫面什麼都沒發生。
+      const seq0 = currentNavSeq();
+      const onPage = () => seq0 === currentNavSeq();
       // 第二窗（P0.5）：已存密碼池全敗（後端回 code:'pdf_password'）才開——密碼欄＋「記住」勾選
       //（預設不勾＝使用者拍板）。label＝把關挑出的模式分流告知句（單一住所 cashflow-model.js）。
       const openPasswordWindow = (/** @type {string} */ b64) => openForm({
