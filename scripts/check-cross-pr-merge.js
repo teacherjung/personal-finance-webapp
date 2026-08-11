@@ -35,7 +35,7 @@
 // 退出碼：0＝沒有其他 open PR，或每一支試合併之後三關都綠
 //         1＝有一支合起來會壞（文字衝突／測試紅）→ 停下來，先處理相容性
 //         2＝查不清楚（gh 失敗／不是 git repo／發起樹沒有可用的 node_modules／
-//             三關「執行不起來」（spawn ENOENT／126／127）／建不出臨時工作區）→ fail-closed
+//             三關「執行不起來」（spawn 失敗／被訊號終止／126／127）／建不出臨時工作區）→ fail-closed
 //
 // ## 誠實劃界
 //
@@ -43,8 +43,10 @@
 // **擋不住**：兩支合起來語意上矛盾、但測試沒有覆蓋到的地方——那還是要人看。
 // 它也**不保證**合併之後 `main` 一定是綠的：它試的是「這兩支的 head」，
 // 而真正合併時 `main` 可能已經又前進了（那一段由 `strict` 與 CI 接手）。
-// 環境與相容性的分界也只畫到「執行不起來」（spawn ENOENT／126／127）＋「發起樹的
-// node_modules 是目錄」為止：node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，
+// 「執行不起來」（spawn 失敗／被訊號終止／126／127）**判定不了是誰的錯**：它通常是環境
+// （node_modules 殘缺——#441），但兩支各自全綠的 PR 也造得出來（一支開始呼叫追蹤指令、
+// 另一支刪掉它或拔掉執行位——#446 r2 Codex 實測）。所以這一族一律退 2「查不清楚」，
+// 不判定成因、只擋下來要人查；node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，
 // 三關仍會以紅（1）收場——那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync } from 'node:fs';
@@ -78,22 +80,31 @@ export function othersToTry(list, self) {
 /**
  * 把每一支的試合併結果彙整成退出碼與訊息。
  *
- * ⚠️ `env: true` 的失敗（三關「執行不起來」）＝環境問題，一律轉成退出碼 2「查不清楚」，
- * **不可以**混進「合起來會壞」（1）——而且只要有一筆是環境問題，整輪的其他結果也不可信
- * （三關共用同一份發起樹的 node_modules，它壞了誰都量不準），所以整輪都以 2 收場。
- * @param {{number: number, ok: boolean, why: string, env?: boolean}[]} results
+ * ⚠️ `cantRun: true` 的失敗（三關「執行不起來」）＝**拿不到可信的測試判決**，一律轉成
+ * 退出碼 2「查不清楚」，不可以混進「合起來會壞」（1）——但也**不宣稱一定是環境**：
+ * 126／127 兩支各自全綠的 PR 也造得出來（見 `cantRunSignal` 檔頭）。只要有一筆
+ * cantRun，整輪就以 2 收場（三關共用同一份發起樹的 node_modules，它若真的壞了，
+ * 同輪其他結果的可信度也存疑）；同輪若另有「跑得起來的紅」，訊息要列出來並說明
+ * 那些不因此失效——下不了定論的是 cantRun 那幾筆，不是整輪的事實。
+ * @param {{number: number, ok: boolean, why: string, cantRun?: boolean}[]} results
  */
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
-  if (bad.some((r) => r.env)) {
+  if (bad.some((r) => r.cantRun)) {
+    const realRed = bad.filter((r) => !r.cantRun);
     return {
       code: 2,
-      message: '跨 PR 試合併：**查不清楚——三關執行不起來，這是環境問題，不是兩支相斥**\n'
+      message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
         + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
-        + '\n\n⚠️ 「執行不起來」（spawn ENOENT／126／127）代表指令根本沒跑成——'
-        + '多半是發起樹的 node_modules 殘缺（存在但是空的、.bin 斷了）或 npm 不在 PATH 上。\n'
-        + '   請從主目錄跑這道閘，或把發起樹的 node_modules 修好再跑一次；\n'
-        + '   把這種情況報成兩支相斥（退出碼 1），正是 2026-08-11 #441 的誤報。',
+        + '\n\n⚠️ 「執行不起來」（spawn 失敗如 ENOENT／EACCES、被訊號終止、或 126／127）'
+        + '代表指令根本沒跑完，拿不到可信的測試判決。兩種可能都存在：\n'
+        + '   ・最常見：發起樹的 node_modules 殘缺（空的、.bin 斷了）或 npm 不在 PATH（#441 的形狀）\n'
+        + '     → 先從主目錄跑這道閘，或把發起樹的 node_modules symlink 修好再跑一次。\n'
+        + '   ・也可能：兩支合起來弄壞了 scripts 會呼叫的**追蹤檔案**（一支開始呼叫、另一支刪檔或拔執行位）\n'
+        + '     → 主目錄重跑還是一樣的話，那就不是環境——照上面的死因逐條查。'
+        + (realRed.length
+          ? '\n   ⚠️ 上列另有「跑得起來的紅」（真的測試紅）——那些不因本輪下不了定論而失效。'
+          : ''),
     };
   }
   if (!bad.length) {
@@ -151,6 +162,30 @@ export function redDetail(err) {
 }
 
 /**
+ * 三關的失敗屬不屬於「執行不起來」（＝拿不到可信的測試判決）。是＝回症狀字串（給死因欄），
+ * 不是＝回 null（那是「跑得起來的紅」，照舊算紅）。
+ *
+ * 錯誤形狀（execFileSync，2026-08-11 實測）：正常非零退出＝`status` 是數字；
+ * spawn 失敗（ENOENT／EACCES…）＝`status: null`＋`code` 是 errno 字串；
+ * 被訊號終止＝`status: null`＋`signal`。所以判準是「**拿不到數字退出碼**」＋ shell 的
+ * 126（不可執行）／127（找不到指令）。⚠️ 列舉 errno 名單在這裡是錯的寫法——
+ * #446 r2 Codex 實測 EACCES（npm 存在但不可執行）就漏在 r2 的 ENOENT 名單外。
+ *
+ * ⚠️ 這一族**判定不了成因**：通常是環境（node_modules 殘缺），但兩支各自全綠的 PR
+ * 也造得出 126／127（一支開始呼叫追蹤指令、另一支刪檔／拔執行位——#446 r2 Codex
+ * 實測）。所以誠實語意是「無法判定」，由 verdict 整輪退 2，不宣稱是誰的錯。
+ * 跑得起來的紅（含 eslint 的退出碼 2＝可能是合出來的壞設定）刻意不歸這裡。
+ * @param {{status?: number | null, code?: string, signal?: string | null} | null | undefined} err
+ * @returns {string | null}
+ */
+export function cantRunSignal(err) {
+  if (!err || typeof err.status !== 'number') {
+    return String(err?.code ?? (err?.signal ? `被 ${err.signal} 終止` : '沒有退出碼'));
+  }
+  return (err.status === 126 || err.status === 127) ? `退出碼 ${err.status}` : null;
+}
+
+/**
  * 在拋棄式的工作區裡把 `base` 與 `other` 合起來，跑三關。
  *
  * ⚠️ **`node_modules` 用 symlink 指回發起樹，而且只用 `unlink` 拆掉**（不是 `rm -rf`）：
@@ -182,16 +217,13 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
         run(['npm', 'run', script === 'test' ? 'test' : script], wt);
       } catch (e) {
         const err = /** @type {any} */ (e);
-        // ⚠️ 「執行不起來」≠「跑完是紅的」：spawn ENOENT（npm 不在）與 126／127
-        //    （不可執行／指令找不到）只可能來自環境——merge 動不了 node_modules
-        //    （它不在版控裡）。這一族標成 env，由 verdict 整輪轉成退出碼 2；
-        //    其餘照舊算紅（例如 eslint 的退出碼 2 可能是合出來的壞設定＝真的相容性問題，
-        //    刻意不歸環境）。#446 r1 Codex 實測：node_modules 是普通檔案時，
-        //    舊版在這裡以 127 冒充「合起來會壞」。
-        if (err?.code === 'ENOENT' || err?.status === 126 || err?.status === 127) {
+        // ⚠️ 「執行不起來」≠「跑完是紅的」——分界與「為什麼不判定成因」寫在
+        //    cantRunSignal 檔頭（#441 誤報＋#446 r1／r2 Codex 的兩輪反例都在那裡）。
+        const sig = cantRunSignal(err);
+        if (sig !== null) {
           return {
-            number: otherNumber, ok: false, env: true,
-            why: `「${label}」執行不起來（環境訊號：${err?.code ?? `退出碼 ${err?.status}`}）：${redDetail(err)}`,
+            number: otherNumber, ok: false, cantRun: true,
+            why: `「${label}」執行不起來（症狀：${sig}）：${redDetail(err)}`,
           };
         }
         return { number: otherNumber, ok: false, why: `合起來之後「${label}」紅了：${redDetail(err)}` };

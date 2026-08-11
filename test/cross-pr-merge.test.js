@@ -18,11 +18,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE, redDetail } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal } from '../scripts/check-cross-pr-merge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -189,6 +189,9 @@ function makeInitiatorRepo(opts = {}) {
 }
 
 test('⭐ CLI｜發起樹沒有 node_modules ＋ 有其他 open PR → exit 2，訊息點名環境（#441 的誤報不可再犯）', () => {
+  // ⚠️ 突變的真相（#446 r2 Codex 糾正過我的誇大）：只拔先驗＝第二層「執行不起來」
+  //    仍以 2 接住（本題照樣綠、「普通檔案」題靠訊息斷言轉紅）；**兩層都拔**才會
+  //    回到 #441 的退出碼 1——那個劇本由本題的 status 斷言接住（r3 實測）。
   const { dir, sha } = makeInitiatorRepo();
   try {
     const r = withFakeGh(
@@ -234,6 +237,9 @@ test('CLI｜發起樹沒有 node_modules 但零其他 open PR → 0（結論不�
 // ── #446 r1 的三條發現（High＋兩個 Medium），r2 補的行為題 ──────────
 
 test('⭐ CLI｜node_modules 是普通檔案（existsSync 會說 true）→ 先驗照樣要擋，exit 2（#446 r1 High 之一）', () => {
+  // 這一題守的是**歸因精準**：先驗在動手前就說出「不是目錄」這個確切病因。
+  // 單拔先驗不會回到退出碼 1——第二層「執行不起來」會以 2 接住（fail-closed 不破），
+  // 但訊息會退化成泛用的「無法判定」；本題下面的訊息斷言就是為此轉紅（#446 r2 實測）。
   const { dir, sha } = makeInitiatorRepo({ nodeModules: 'file' });
   try {
     const r = withFakeGh(
@@ -256,7 +262,8 @@ test('⭐ CLI｜node_modules 是普通檔案（existsSync 會說 true）→ 先�
 
 test('⭐ CLI｜node_modules 目錄在、但三關「執行不起來」（127）→ exit 2，不是 1（#446 r1 High 之二：先驗管不到的殘缺）', () => {
   // 空目錄過得了先驗（它驗不了「內容齊不齊」，誠實劃界寫在腳本檔頭）——
-  // 所以 127 這族要在三關的 catch 裡分類成環境，整輪轉 2。
+  // 所以 127 這族要在三關的 catch 裡分類成「執行不起來＝無法判定」，整輪轉 2
+  // （不宣稱一定是環境：#446 r2 Codex 造出過兩支各自全綠、合併後 127 的反例）。
   const { dir, sha } = makeInitiatorRepo({ nodeModules: 'dir' });
   try {
     const r = withFakeGh(
@@ -309,14 +316,72 @@ test('⭐ CLI｜三關跑得起來、真的紅（退出碼 1）→ exit 1，死�
   }
 });
 
-test('裁決｜任何一筆「執行不起來」（env）→ 整輪 2，訊息不可以說「合起來會壞」', () => {
+test('裁決｜任何一筆「執行不起來」（cantRun）→ 整輪 2，標題不可以說「合起來會壞」', () => {
   const v = verdict([
     { number: 384, ok: true, why: '' },
-    { number: 385, ok: false, env: true, why: '「校對」執行不起來（環境訊號：退出碼 127）：…' },
+    { number: 385, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：退出碼 127）：…' },
   ]);
-  assert.equal(v.code, 2, '環境問題只值得「查不清楚」——三關共用同一份 node_modules，它壞了整輪都不可信');
+  assert.equal(v.code, 2, '「執行不起來」＝拿不到可信的測試判決，只值得「查不清楚」');
   assert.doesNotMatch(v.message, /合起來會壞/);
-  assert.match(v.message, /環境問題/);
+  assert.match(v.message, /下不了定論/,
+    'r2 版標題寫「這是環境問題，不是兩支相斥」——但 126／127 兩支各自全綠也造得出來（Codex 反例），只能說「下不了定論」');
+});
+
+test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」→ 整輪 2，但真紅要列出、不可被標題否定（#446 r2）', () => {
+  const v = verdict([
+    { number: 385, ok: false, why: '合起來之後「考試」紅了：斷言炸了' },
+    { number: 390, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：EACCES）：…' },
+  ]);
+  assert.equal(v.code, 2, '有一筆量不準，整輪就下不了「安全」的定論——fail-closed');
+  assert.match(v.message, /#385/);
+  assert.match(v.message, /#390/);
+  assert.match(v.message, /跑得起來的紅/,
+    'r2 版標題「不是兩支相斥」會把同輪已經量到的真紅一句話否定掉——真紅必須被點名保留');
+});
+
+test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {
+  assert.equal(cantRunSignal({ status: null, code: 'EACCES', signal: null }), 'EACCES',
+    'r2 版列舉 ENOENT／126／127，EACCES（npm 在 PATH 上但沒執行位）就漏成退出碼 1');
+  assert.equal(cantRunSignal({ status: null, code: 'ENOENT', signal: null }), 'ENOENT');
+  assert.equal(cantRunSignal({ status: null, signal: 'SIGTERM' }), '被 SIGTERM 終止');
+  assert.equal(cantRunSignal({ status: 127 }), '退出碼 127');
+  assert.equal(cantRunSignal({ status: 126 }), '退出碼 126');
+  assert.equal(cantRunSignal({ status: 1 }), null, '跑得起來的紅是這道閘存在的全部理由，不可以被吃掉');
+  assert.equal(cantRunSignal({ status: 2 }), null,
+    'eslint 的退出碼 2 可能是合出來的壞設定＝真的相容性問題，刻意不歸「執行不起來」');
+});
+
+test('⭐ CLI｜npm 存在但不可執行（spawn EACCES）→ exit 2（#446 r2 High：errno 名單外的「執行不起來」）', () => {
+  // PATH 只放三樣：不可執行的 npm＋symlink 的真 git 與 cat（假 gh 的 heredoc 要用 cat；
+  // 少了它假 gh 自己先崩，走到「gh 失敗」的 2——理由對不上，本題就白考了）。
+  // libuv 的 PATH 搜尋在只找得到不可執行檔時回 EACCES（status null、code 'EACCES'）
+  // ——實測見 r3 commit 訊息。
+  const { dir, sha } = makeInitiatorRepo({ nodeModules: 'dir' });
+  const bin = mkdtempSync(join(tmpdir(), 'npm-noexec-'));
+  try {
+    writeFileSync(join(bin, 'npm'), '#!/bin/sh\nexit 0\n');   // 刻意不 chmod ＝不可執行
+    for (const tool of ['git', 'cat']) {
+      const real = spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8', env: { ...SANDBOX_ENV } }).stdout.trim();
+      symlinkSync(real, join(bin, tool));
+    }
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: sha, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { PATH: bin, HOME: SANDBOX_ENV.HOME } },
+    );
+    assert.equal(r.status, 2,
+      `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——spawn 層的失敗拿不到任何測試判決，報成 1 就是 #441 的誤報換個 errno 重演（r2 實得 1）。');
+    assert.match(r.stderr, /執行不起來/);
+    assert.match(r.stderr, /EACCES/, '症狀（errno 字串）沒進死因欄，看的人少一條關鍵線索');
+    assert.doesNotMatch(r.stderr, /合起來會壞/);
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('redDetail｜太長時頭尾都留：最後一行的真正死因不可以被裁掉（#446 r1 Medium 的行為示範）', () => {
