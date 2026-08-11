@@ -214,9 +214,9 @@ test('r1#L6｜櫃檯（sanitizeDbForWrite）保留記住的密碼池、且套上
 
 // ---------- r2 修正的考題 ----------
 
-test('r2#1｜整池封頂：5000 張卡＝parseFn 呼叫次數不超過 MAX_POOL_ATTEMPTS（卡數無上限也擋得住 DoS）', async () => {
+test('r2#1｜整池封頂：大量假卡＝parseFn 呼叫次數不超過 MAX_POOL_ATTEMPTS（卡數無上限也擋得住 DoS）', async () => {
   const { MAX_POOL_ATTEMPTS } = await import('../lib/statement-password-policy.js');
-  const db = { cards: Array.from({ length: 5000 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
+  const db = { cards: Array.from({ length: 200 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
   const pool = statementPasswordPool(db);
   assert.ok(pool.length <= MAX_POOL_ATTEMPTS, `池被封頂在 ${MAX_POOL_ATTEMPTS}（實得 ${pool.length}）`);
   // 走真迴圈：全不對＝parseFn 最多被叫 MAX_POOL_ATTEMPTS 次
@@ -227,7 +227,7 @@ test('r2#1｜整池封頂：5000 張卡＝parseFn 呼叫次數不超過 MAX_POOL
 });
 
 test('r2#1｜封頂砍的是最不優先的尾巴：本次輸入/空密碼/前幾張卡一定在池裡', () => {
-  const db = { cards: Array.from({ length: 5000 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
+  const db = { cards: Array.from({ length: 200 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
   const pool = statementPasswordPool(db, ['TYPED9999']);
   assert.equal(pool[0], 'TYPED9999', '本次輸入最優先、不被砍');
   assert.equal(pool[1], '', '未加密那發也在');

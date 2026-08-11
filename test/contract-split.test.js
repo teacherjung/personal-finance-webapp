@@ -379,6 +379,7 @@ const MANIFEST = {
       'public/modules/cards.js',
       'public/modules/cashflow-model.js',
       'public/modules/cashflow.js',
+      'public/modules/transactions-import.js',   // P0.5：信用卡上傳密碼窗＝/api/mode 第三個消費者
       'public/modules/settings.js',
       'public/modules/toast-timing.js',
       'server.js',

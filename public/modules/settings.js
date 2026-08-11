@@ -303,8 +303,12 @@ export async function renderSettings() {
   { // 記住的帳單密碼：只有「全部清除」一個動作（新增走匯入時的「記住」勾選；內容絕不回瀏覽器、只有數量）
     const btn = byId('clearStmtPws');
     if (btn) btn.onclick = async () => {
-      try { await api('/statement/password/clear', { method: 'POST', body: {} }); toast('已清除記住的帳單密碼'); renderSettings(); }
-      catch (err) { toast('清除失敗：' + /** @type {any} */ (err).message, true); }
+      const seq = currentRouteSeq();   // r3#1：清除請求期間切頁＝別拿設定頁重畫覆蓋新頁面（同本檔 render 的 seq 判準）
+      try {
+        await api('/statement/password/clear', { method: 'POST', body: {} });
+        if (seq !== currentRouteSeq()) return;
+        toast('已清除記住的帳單密碼'); await renderSettings();   // await：重畫失敗不變成 unhandled rejection
+      } catch (err) { toast('清除失敗：' + /** @type {any} */ (err).message, true); }
     };
   }
   byId('manageCatsBtn').onclick = async () => {

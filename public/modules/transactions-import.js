@@ -36,6 +36,10 @@ export async function openStatementUpload() {
 /** 卡片上傳的表單本體（onSubmit 流程與密碼窗都住這裡；時序防線在 runCardUpload）。 @param {any[]} cards */
 function openCardUploadForm(cards) {
   let file = null;
+  // ⚠️ preview／remember 都有 await，回來時可能已切頁（r3#2）——存開窗當下的路由序號，
+  //   每個後續窗（選卡/預覽/密碼窗）開啟前都核對；序號變了＝一個都不開。
+  const seq0 = currentRouteSeq();
+  const onPage = () => seq0 === currentRouteSeq();
   // 第二窗（P0.5）：已存密碼池（各卡＋記住的）全敗＝後端回 code:'pdf_password' 才開。
   // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
   // typedPw＝使用者這次輸入的密碼，往後選卡/改卡重解析要沿用（r1#3：沒勾記住時正確密碼不在任何池裡）。
@@ -43,7 +47,7 @@ function openCardUploadForm(cards) {
     // 挑句＋切頁作廢都走 bankUploadGate（r2#2：問 /mode 期間切頁＝不開密碼窗，補上這條非同步縫；
     // 挑句判準與保守方向沿用同一份，不另抄）。
     const g = await bankUploadGate({ fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout, timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq });
-    if (g.stale) return;   // 等 /mode 時切了頁＝這一窗不屬於眼前畫面
+    if (g.stale || !onPage()) return;   // 等 /mode（或更早的 preview）時切了頁＝這一窗不屬於眼前畫面
     openForm({
       title: '這份帳單需要密碼',
       fields: [
@@ -57,6 +61,7 @@ function openCardUploadForm(cards) {
           try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
           catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
         }
+        if (!onPage()) return;   // r3#2：preview/remember 等待期間切頁＝不開後續窗
         setTimeout(() => handlePreviewResult(r, b64, cards, pw), 0);
       },
     });
@@ -75,10 +80,12 @@ function openCardUploadForm(cards) {
       const b64 = await fileToBase64(file);
       try {
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
+        if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不開後續窗
         // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫
         setTimeout(() => handlePreviewResult(r, b64, cards, ''), 0);
       } catch (e) {
         if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
+        if (!onPage()) return;   // r3#2：preview 等待期間切頁＝不跳密碼窗
         setTimeout(() => openPasswordWindow(b64), 0);   // 池全敗＝跳密碼窗（等 modal-root 清空）
       }
     }

@@ -17,7 +17,7 @@
 //
 // ⚠️ 誠實劃界：
 //   ・「/api/mode 回應只有 hosted、HOSTED 掛在 authGate 後面」由 test/server.test.js 那組守；
-//   ・「密碼在伺服器端只進記憶體、不落檔」是收支契約「帳戶完整帳號與餘額匯入」節寫明的
+//   ・「密碼解析時只進記憶體；預設用完即丟，勾記住才依 LOCAL/HOSTED 機密規則儲存（P0.5）」是收支契約寫明的
 //     lib 層規矩，本檔不驗後端；
 //   ・接線題只驗「真的把正式相依接進 runBankUpload」這個形狀：在接線層另外蓋掉結果
 //     （例如把 openUploadForm 換成無視 label 參數的實作）這一類，形狀掃描擋不住＝
@@ -197,6 +197,11 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
     '舊文案逐字回歸＝雲端版把「不會上傳」講給正在上傳的人聽');
   assert.doesNotMatch(src, /對帳單密碼（/,
     'cashflow.js 裡不准再出現手寫的密碼欄告知句——兩句與挑句判準只住 cashflow-model.js 一處');
+  // r3#2：preview／remember 等待期間切頁＝不開後續窗。開窗當下存 seq0、每個後續窗開啟前核對 onPage()。
+  // ⚠️ 這條是 DOM-deferred（setTimeout＋openForm、node 載不動整頁），與其他接線同款用去註解形狀掃描鎖住
+  //   守門的存在——拿掉 seq0 或 onPage 檢查＝這裡轉紅（行為本身需真瀏覽器，屬既有劃界）。
+  assert.match(src, /const seq0 = currentRouteSeq\(\);/, '銀行上傳窗要在開窗當下存下路由序號');
+  assert.match(src, /if \(!onPage\(\)\) return;/, '每個後續窗開啟前要核對 onPage（preview 等待期間切頁＝不開）');
 });
 
 test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序號／真開窗接進 runCardUpload（P0.5 r1#5）', () => {
@@ -215,7 +220,10 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   // r2#2：密碼窗問 /mode 期間切頁要作廢——挑句＋作廢走 bankUploadGate（不另抄一份 /mode 挑句）。
   assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
     '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
-  assert.match(src, /if \(g\.stale\) return;/, '問 /mode 期間切頁＝不開密碼窗');
+  assert.match(src, /if \(g\.stale \|\| !onPage\(\)\) return;/, '問 /mode（或更早的 preview）期間切頁＝不開密碼窗');
+  // r3#2：卡片線同款——開窗當下存 seq0、後續窗開啟前核對 onPage()
+  assert.match(src, /const seq0 = currentRouteSeq\(\);/, '卡片上傳窗要在開窗當下存下路由序號');
+  assert.match(src, /if \(!onPage\(\)\) return;/, 'preview／remember 等待期間切頁＝不開後續窗');
 });
 
 // ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------
