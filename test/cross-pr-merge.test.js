@@ -166,10 +166,13 @@ const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''
  * `nodeModules`：'none'（預設，#441 的形狀）／'dir'（空目錄——先驗放行，換三關的
  * 「執行不起來」分類接手）／'file'（普通檔案——existsSync 會說 true 的那個洞，#446 r1）。
  * `scripts`：換掉三關指令（例如換成「跑得起來、退出碼 1」來演真的紅）。
- * @param {{ nodeModules?: 'none'|'dir'|'file', scripts?: Record<string,string> }} [opts]
+ * `conflictPair`：再造一對「同一個檔案從共同 base 改成不同內容」的 head（sha／shaB），
+ * 真的合不起來——給文字衝突的端到端接線題用（#446 r6）。
+ * @param {{ nodeModules?: 'none'|'dir'|'file', scripts?: Record<string,string>, conflictPair?: boolean }} [opts]
+ * @returns {{ dir: string, sha: string, shaB?: string }}
  */
 function makeInitiatorRepo(opts = {}) {
-  const { nodeModules = 'none', scripts } = opts;
+  const { nodeModules = 'none', scripts, conflictPair = false } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-initiator-'));
   const g = (/** @type {string[]} */ args) => {
     const r = spawnSync('git', args, { encoding: 'utf8', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -185,6 +188,23 @@ function makeInitiatorRepo(opts = {}) {
   g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
   if (nodeModules === 'dir') mkdirSync(join(dir, 'node_modules'));
   if (nodeModules === 'file') writeFileSync(join(dir, 'node_modules'), '這不是目錄\n');
+  if (conflictPair) {
+    const commit = (/** @type {string} */ msg) =>
+      g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', msg]);
+    g(['checkout', '-q', '-b', 'pair-a']);
+    writeFileSync(join(dir, 'clash.txt'), 'A 版本\n');
+    g(['add', 'clash.txt']);
+    commit('A');
+    const sha = g(['rev-parse', 'HEAD']);
+    g(['checkout', '-q', 'main']);
+    g(['checkout', '-q', '-b', 'pair-b']);
+    writeFileSync(join(dir, 'clash.txt'), 'B 版本\n');
+    g(['add', 'clash.txt']);
+    commit('B');
+    const shaB = g(['rev-parse', 'HEAD']);
+    g(['checkout', '-q', 'main']);
+    return { dir, sha, shaB };
+  }
   return { dir, sha: g(['rev-parse', 'HEAD']) };
 }
 
@@ -312,6 +332,30 @@ test('⭐ CLI｜三關跑得起來、真的紅（退出碼 1）→ exit 1，死�
     assert.match(r.stderr, /GATE-STDERR-MARK/,
       '死因裡沒有 stderr 的內容——redDetail 的接線斷了（或被換成固定字串），#441 那種環境線索會再度被吞');
     assert.match(r.stderr, /GATE-STDOUT-MARK/, '死因裡沒有 stdout 的內容——倒在哪一關的哪個指令看不到了');
+    // footer 的分類也要從正式接線驗（#446 r6：只在純函式層餵正確 kind＝沒驗到
+    // tryMerge 真的有標）：真測試紅 ⇒ 測試紅的說明要在、衝突的說明不可以在。
+    assert.match(r.stderr, /合起來測試紅/, 'red kind 沒從 tryMerge 流到 verdict 的 footer——正式接線斷了');
+    assert.doesNotMatch(r.stderr, /GitHub 自己就看得到/, '真測試紅長出了「文字衝突」的說明——分類接線錯');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜兩支真的文字衝突 → exit 1，衝突的說明照 kind 長出來（tryMerge→verdict 正式接線；#446 r6）', () => {
+  const { dir, sha, shaB } = makeInitiatorRepo({ nodeModules: 'dir', conflictPair: true });
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: shaB, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 1, `預期 1（文字衝突＝已確定的阻擋），實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /文字衝突，git merge 就過不去/);
+    assert.match(r.stderr, /GitHub 自己就看得到/, 'conflict kind 沒從 tryMerge 流到 verdict 的 footer——正式接線斷了');
+    assert.doesNotMatch(r.stderr, /合起來測試紅/, '衝突長出了「測試紅」的說明——分類接線錯');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -395,6 +439,31 @@ test('裁決｜分類看 kind、不嗅 why：測試輸出裡剛好有「文字�
     `分類句沒把這筆算成測試紅——它的 why 只是「內容提到」文字衝突，死法是 kind='red'。訊息：\n${v.message}`);
   assert.ok(!v.message.includes('已確定的阻擋**（文字衝突'),
     '分類句被 why 的散文內容帶偏成「文字衝突」——嗅字串的病（#446 r5 反例）');
+});
+
+test('裁決｜footer 也看 kind、不嗅 why：why 提到「文字衝突」的真測試紅，不可以長出衝突的說明（#446 r6）', () => {
+  const v = verdict([
+    { number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：「文字衝突偵測」這道考題炸了' },
+  ]);
+  assert.equal(v.code, 1);
+  assert.match(v.message, /合起來測試紅/, '測試紅的說明不見了');
+  assert.doesNotMatch(v.message, /GitHub 自己就看得到/,
+    '「文字衝突」的說明被 why 的散文內容觸發——footer 的判準退回嗅字串（#446 r6 存活過的突變）');
+});
+
+test('裁決｜kind 缺席的 bad 條目：混輪時保守列入、不冒充「測試紅」也不冒充「衝突」（#446 r6）', () => {
+  // 產出端（tryMerge）由 @returns 的 discriminated union 鎖「失敗必帶 kind」＝拔掉就校對紅；
+  // verdict 是 exported 純函式、執行期擋不了亂餵，所以這裡鎖 runtime 的保守分支——
+  // r6 實測：缺 kind 的條目在混輪被冒名成「跑得起來的測試紅」。
+  const v = verdict([
+    { number: 385, ok: false, why: '不明死法' },
+    { number: 390, ok: false, kind: 'cantRun', why: '「校對」執行不起來（症狀：EACCES）：…' },
+  ]);
+  assert.equal(v.code, 2);
+  assert.match(v.message, /未標記/, 'kind 缺席的條目消失了——要保守點名，不可以靜靜滑走');
+  assert.ok(!v.message.includes('（跑得起來的測試紅'),
+    'kind 缺席被冒充成「測試紅」——沒有證據就不可以掛那個名字');
+  assert.ok(!v.message.includes('（文字衝突'), 'kind 缺席被冒充成「文字衝突」');
 });
 
 test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {

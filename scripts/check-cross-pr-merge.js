@@ -107,13 +107,22 @@ export const CANT_RUN_CAUSES = [
  * 整輪就以 2 收場（三關共用同一份發起樹的 node_modules，它若真的壞了，同輪其他結果
  * 的可信度也存疑）；同輪若另有已確定的阻擋（衝突／測試紅），訊息要照 kind 點名保留
  * ——下不了定論的是 cantRun 那幾筆，不是整輪的事實。
+ *
+ * ⚠️ 型別的分工（#446 r6）：**產出端**（tryMerge）用 discriminated union 鎖
+ * 「失敗必帶 kind」——從失敗出口拔掉 kind，校對當場紅。**本函式**是 exported 純函式，
+ * 執行期什麼都可能被餵進來（型別擋不了 runtime），所以「kind 缺席」走保守分支：
+ * 不冒充衝突、不冒充測試紅，照樣擋下並標明未標記（r6 實測：缺 kind 的條目在混輪
+ * 曾被冒名成「跑得起來的測試紅」）。
  * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}[]} results
  */
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
   if (bad.some((r) => r.kind === 'cantRun')) {
     const confirmed = bad.filter((r) => r.kind !== 'cantRun');
-    const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
+    const kinds = [...new Set(confirmed.map((r) => (
+      r.kind === 'conflict' ? '文字衝突'
+        : r.kind === 'red' ? '跑得起來的測試紅'
+          : '死法未標記（不推定種類，保守列入）')))];
     return {
       code: 2,
       message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
@@ -208,6 +217,14 @@ export function cantRunSignal(err) {
 }
 
 /**
+ * 一筆試合併的結果。⚠️ **失敗必帶 kind**（discriminated union，#446 r6 的鎖）：
+ * 分類全靠它，從失敗出口拔掉或漏標＝校對（typecheck）當場紅，
+ * 不會靜靜滑進 verdict 的「未標記」保守分支。
+ * @typedef {{number: number, ok: true, why: string}
+ *   | {number: number, ok: false, why: string, kind: 'conflict' | 'red' | 'cantRun'}} MergeTry
+ */
+
+/**
  * 在拋棄式的工作區裡把 `base` 與 `other` 合起來，跑三關。
  *
  * ⚠️ **`node_modules` 用 symlink 指回發起樹，而且只用 `unlink` 拆掉**（不是 `rm -rf`）：
@@ -220,7 +237,7 @@ export function cantRunSignal(err) {
  * 指回主目錄，動到它會讓 William 的 app 起不來。所以拆的時候用 `unlinkSync`：
  * 它只刪得掉連結本身，如果哪天那裡變成真的目錄，它會直接失敗而不是遞迴刪除。
  * @param {string} repoRoot @param {string} baseSha @param {string} otherSha @param {number} otherNumber
- * @returns {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}}
+ * @returns {MergeTry}
  */
 function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
   const wt = mkdtempSync(join(tmpdir(), `cross-pr-${otherNumber}-`));
