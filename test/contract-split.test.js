@@ -510,11 +510,14 @@ const MANIFEST = {
       '銀行對帳單解析與分箱',
       '帳戶完整帳號與餘額匯入',
       '帳單原文取法 origFromStmtRef',
+      '匯入對帳閘',
     ],
     exempt: [],
     files: [
       'data/seed.json',
       'lib/bank-statement.js', 'test/bank-statement.test.js',
+      // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
+      'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
