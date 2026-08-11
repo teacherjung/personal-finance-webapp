@@ -237,6 +237,19 @@ test('中閘｜擋下型（C1）容 ±1 進位差；差 2 就擋（容差不可�
   assert.equal(off(2).ok, false, '±2＝真的對不上，擋');
 });
 
+test('中閘｜C1 沒開（缺交叉欄）、只剩影子 mismatch＝level 必須是 weak（影子不得撐級別，r2#1）', () => {
+  // r2 實測的假綠：把 level 改成「任何非 skip 都算 medium」原本 30 題全綠——影子 mismatch 撐出
+  // medium 會讓使用者以為「這份有中閘保護」，實際擋下型檢查一道都沒跑。
+  const v = reconcileCardStatement({
+    statementTotals: { due: null, prevDue: null, paidAndRefund: null, newCharges: 550 },
+    transactions: [{ amount: 450 }],
+  });
+  assert.equal(v.checks.equation, 'skip');
+  assert.equal(v.checks.newVsRows, 'mismatch');
+  assert.equal(v.level, 'weak', '只剩影子＝沒有任何擋下型驗證＝weak');
+  assert.equal(v.ok, true);
+});
+
 test('中閘｜影子檢查同一把容差尺：差 1＝pass、差 2＝mismatch', () => {
   const off = (/** @type {number} */ d) => {
     const p = cardOk();
@@ -393,17 +406,24 @@ test('端到端｜免選卡那條路（previewAuto）同樣擋 C1、同樣帶 re
   const r = await previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '8,450' }, TX_OK));
   assert.ok(r.resolvedCard, '末四碼 5678 唯一命中→自動歸卡');
   assert.equal(r.reconcile.level, 'medium');
+  assert.deepEqual(r.statementTotals, { due: 8450, prevDue: 10449, paidAndRefund: 2449, newCharges: 450 },
+    '免選卡那條路也要逐欄帶四格（r2#2：只驗 previewForCard 的話這邊拔掉照樣全綠）');
 });
 
-test('端到端｜沒印總額的帳單（今日的官網 XLSX）＝weak 照舊放行，模板解析器行為不變', async () => {
+test('端到端｜今日的官網 XLSX（只有「本期帳單金額」、無交叉欄）＝weak 照舊放行，行為不變', async () => {
+  // r2#4 更正：官網 XLSX 不是「四格全 null」——它有「本期帳單金額」（DUE_KEYS 末位）＝due 讀得到；
+  // 缺的是 prev/paid/new 三個交叉欄 ⇒ C1 skip、三檢查全開不了 ⇒ weak。fixture 要照實含這個欄位。
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-    ['台新銀行 信用卡明細'], ['帳單結帳日：115/07/04'], ['卡號末四碼 5678'],
+    ['台新銀行 信用卡明細'], ['帳單結帳日：115/07/04'], ['本期帳單金額', '', 'NT$450'], ['卡號末四碼 5678'],
     ['消費日', '入帳日', '說明', '', '金額', '', '', '外幣'],
     ...TX_OK,
   ]), 'Sheet1');
   const b64 = Buffer.from(new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))).toString('base64');
   const r = await previewForCard('c1', b64);
+  assert.equal(r.statementDue, 450, 'due 讀自「本期帳單金額」（既有行為）');
+  assert.deepEqual(r.statementTotals, { due: 450, prevDue: null, paidAndRefund: null, newCharges: null });
+  assert.equal(r.reconcile.checks.equation, 'skip', '缺交叉欄＝C1 開不了');
   assert.equal(r.reconcile.level, 'weak');
   assert.equal(r.reconcile.ok, true);
 });
