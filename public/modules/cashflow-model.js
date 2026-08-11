@@ -35,12 +35,11 @@ export function cashflowPeriodLabel(month) {
 // POST 給 app 伺服器（cashflow.js openBankUpload）。LOCAL 那台伺服器就是使用者這台電腦，
 // 「只在這台電腦」成立；HOSTED 卻是營運方的遠端伺服器——舊文案「不會上傳」在那裡是
 // **反方向誤導**（與 backup-export.js 的匯出告知同族病：講錯方向比不講更糟）。
-// 伺服器端兩種模式相同的部分：密碼只在記憶體用來解 PDF、不落檔（收支契約
-//「帳戶完整帳號與餘額匯入」節），銀行對帳單密碼目前單次使用、不儲存。
-// ⚠️ 日後若把銀行對帳單密碼改成可選儲存（docs/parser-generalization-plan.md §五 P0.5，
-// 已拍板入計畫、尚未實作），「不會儲存」要跟著那支 PR 一起改——別讓這兩句變成下一個舊文案。
-export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；用完即丟、不會儲存）';
-export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；用完即丟、不會儲存）';
+// 伺服器端對密碼的規矩（記憶體內解、不落檔）＝收支契約「帳戶完整帳號與餘額匯入」節；
+// 「要不要開放儲存銀行密碼」的裁決落點＝#437 計畫的 P0.5——那支若把它改成可選儲存，
+// 這兩句的「不會儲存」要跟著同一支 PR 改（test/cashflow-bank-upload.test.js 的絆線會逼著改）。
+export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；只用於這次預覽與匯入，不會儲存）';
+export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；只用於這次預覽與匯入，不會儲存）';
 
 /**
  * 依 `GET /api/mode` 的回應挑句子。
@@ -49,7 +48,27 @@ export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳�
  * （cloud-security 契約「匯出前告知的模式分流」規則 3：問不到就往安全的方向錯）：
  * 那邊猜錯若是「以為不含機密」＝檔案被轉寄；這邊猜錯若是「以為沒上傳」＝使用者被
  * 這句話騙著把密碼送上雲——正是本次要修的病。反方向猜錯只是把本機使用者多嚇一跳。
- * 所以只有伺服器明確回 `hosted: false` 才講「這台電腦」，其他一律當雲端講。
+ * 所以只有回應的**自有**欄位明確是 `hosted: false` 才講「這台電腦」，其他一律當雲端講
+ * （`Object.hasOwn`＝鐵則 3.5：`Object.create({hosted:false})` 這種掛在原型鏈上的值
+ * 不可以放行本機句——r1 阻擋②實測繼承屬性會騙出本機句）。
  * @param {{hosted?: unknown} | null | undefined} mode `GET /api/mode` 的回應（拿不到就傳 null）
  */
-export const bankPasswordLabel = (mode) => (mode && mode.hosted === false ? BANK_PW_NOTICE_LOCAL : BANK_PW_NOTICE_HOSTED);
+export const bankPasswordLabel = (mode) =>
+  (mode && Object.hasOwn(mode, 'hosted') && mode.hosted === false ? BANK_PW_NOTICE_LOCAL : BANK_PW_NOTICE_HOSTED);
+
+/**
+ * 開上傳窗前的把關（可注入、可執行——r1 阻擋③：挑句流程要是行為題打得到的純函式，
+ * cashflow.js 只剩接線）：問一次模式（帶等待上限、問不到＝保守），並回報「等待期間
+ * 路由變了沒」——晚回的視窗不可以開在別的頁面上（r1 阻擋①的切頁那一半）。
+ * @param {{ fetchMode: () => Promise<any>,
+ *           withTimeout: (work: Promise<any>, ms: number) => Promise<any>,
+ *           timeoutMs: number, routeSeq: () => number }} deps
+ * @returns {Promise<{ label: string, stale: boolean }>}
+ */
+export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeSeq }) {
+  const seq = routeSeq();
+  let mode = null;
+  try { mode = await withTimeout(fetchMode(), timeoutMs); }
+  catch { /* 問不到／逾時＝保守：bankPasswordLabel(null) 回雲端那句 */ }
+  return { label: bankPasswordLabel(mode), stale: routeSeq() !== seq };
+}
