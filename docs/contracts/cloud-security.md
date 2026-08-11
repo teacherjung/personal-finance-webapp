@@ -12,17 +12,19 @@
 
 ### 匯出前告知的模式分流
 
-**改這裡**：畫面要講「匯出檔案含不含機密」時（端點＝`GET /api/mode`）。
+**改這裡**：畫面要照模式講機密流向時——匯出告知「檔案含不含機密」、銀行對帳單上傳的密碼欄講「密碼會不會離開這台電腦」（端點＝`GET /api/mode`）。
 
 ⚖️ **William 2026-08-08 授權的最小例外**：`public/` 原本刻意不知道自己是哪一種模式（兩種模式共用同一份畫面），但 `/api/export` **兩種模式刻意相反**（見上一節），一句話講不準兩邊——2026-08-08 的 r4 審查抓到「兩邊都寫不含機密」會讓**本機**使用者以為檔案不敏感而轉寄出去（裡面有 IB 憑證與帳單密碼）。**講錯方向比不講更糟**，所以開一支最小端點讓畫面問。
 
 **規則（四條，缺一條就不是這個設計）**：
 1. **回應只有一個布林**：`{hosted: boolean}`。不回版本、不回設定、不回任何環境細節或機密——「我是不是雲端版」看網址就知道，本身不是秘密；但授權僅止於此，**不可以把它養成「前端什麼都能問」的雜物間**。
 2. **留在 auth gate 後面**：HOSTED 未登入回 401（與其他 `/api/*` 一致，不為它開例外）。
-3. **前端問不到就往安全的方向錯**：逾時／連不上／回應形狀不合法（缺 `hosted`、字串 `'true'`…）一律用**「含機密」**那句文案（`EXPORT_NOTICE_LOCAL`）。猜錯若是「以為不含機密」＝機密外洩；反過來只是多一句提醒。
-4. **問模式也要有等待上限**（`MODE_TIMEOUT_MS`，比匯出短）：它卡住的代價是連確認窗都不會出現——「按下去沒聲音」那個病會被搬到匯出前一步（r5 阻擋①）。
+3. **前端問不到就往安全的方向錯**：逾時／連不上／回應形狀不合法（缺 `hosted`、字串 `'true'`…）都算問不到。⚠️ **「安全的方向」依畫面而定、不是固定某一句**——匯出告知一律用**「含機密」**那句（`EXPORT_NOTICE_LOCAL`：猜錯若是「以為不含機密」＝機密外洩；反過來只是多一句提醒）；銀行對帳單上傳的密碼欄一律用**「會上傳」**那句（`BANK_PW_NOTICE_HOSTED`：猜錯若是「以為沒上傳」＝使用者被這句話騙著把密碼送上雲；反過來只是把本機使用者多嚇一跳）。共同判準＝**只有伺服器明確回答，才可以講讓使用者放心的那一句**（匯出＝明確 `hosted: true` 才講「不含」；密碼欄＝明確 `hosted: false` 才講「這台電腦」——兩個挑句函式的嚴格布林判斷方向因此相反，不是誰抄錯）。
+4. **問模式也要有等待上限**（`MODE_TIMEOUT_MS`，比匯出短）：它卡住的代價是連確認窗都不會出現——「按下去沒聲音」那個病會被搬到匯出前一步（r5 阻擋①）。銀行上傳那一窗同款（開窗前的問答共用同一個上限常數）。
 
-**記得同步這裡**：`public/modules/backup-export.js`（兩句文案與 `exportNotice` 的保守預設）、`public/modules/settings.js`（問模式、上限、三條退出路）、`lib/routes/core.js`（端點本體）、`test/backup-export.test.js`（保守預設六種輸入＋接線題，**先去註解再掃**）、`test/server.test.js` 與 HOSTED 那組（HTTP 級：LOCAL 200／HOSTED 未登入 401／HOSTED 已登入 200、回應只有 `hosted`）。
+⚠️ **第二個消費者（2026-08-11）＝銀行對帳單上傳的密碼欄**：`public/modules/cashflow.js` 的 `openBankUpload` 開窗前先問模式（同設定頁匯出鈕的「先問再開窗」），兩句文案與挑句判準只住 `public/modules/cashflow-model.js`（`bankPasswordLabel`）。起因＝#437 r2 審查者抓到 main 既有的反方向誤導：舊文案寫「只在這台電腦解密、不會上傳」，但預覽／套用都是把 PDF 與密碼 POST 給 app 伺服器——HOSTED 下那是營運方的遠端伺服器。授權邊界不變：仍只讀那一個布林，不因多一個消費者而擴張端點。
+
+**記得同步這裡**：`public/modules/backup-export.js`（兩句文案與 `exportNotice` 的保守預設；`MODE_TIMEOUT_MS`／`defaultWithTimeout` 也住這裡）、`public/modules/settings.js`（問模式、上限、三條退出路）、`public/modules/cashflow.js`（銀行上傳密碼欄：先問模式再開窗）、`public/modules/cashflow-model.js`（密碼欄兩句文案與 `bankPasswordLabel` 的保守預設——方向與 `exportNotice` 相反）、`lib/routes/core.js`（端點本體）、`test/backup-export.test.js`（保守預設六種輸入＋接線題，**先去註解再掃**）、`test/cashflow-bank-upload.test.js`（密碼欄挑句判準＋文案誠實骨架＋接線題，同樣先去註解再掃）、`test/server.test.js` 與 HOSTED 那組（HTTP 級：LOCAL 200／HOSTED 未登入 401／HOSTED 已登入 200、回應只有 `hosted`）。
 
 ## 雙模式與帳號系統
 

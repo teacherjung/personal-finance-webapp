@@ -11,8 +11,10 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankPasswordLabel } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
+// 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
+import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -157,12 +159,18 @@ function subOptionsFor(flow, parent, cur = '') {
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
 // fileToBase64 已歸戶 file-util.js（系統優化 U1）
 async function openBankUpload() {
+  // 先問模式再決定密碼欄講哪一句（同 settings.js 匯出告知的先問再開窗；為什麼要分兩句＝
+  // bankPasswordLabel 的註解）。問答有上限（MODE_TIMEOUT_MS），問不到／逾時＝保守當雲端講
+  // ——這段最長讓開窗晚 MODE_TIMEOUT_MS，換來的是密碼欄那句話不會在雲端版講反方向。
+  let mode = null;
+  try { mode = await defaultWithTimeout(api('/mode'), MODE_TIMEOUT_MS); }
+  catch { /* 問不到／逾時＝保守：bankPasswordLabel(null) 回雲端那句 */ }
   let file = null;
   openForm({
     title: '上傳銀行對帳單',
     fields: [
       { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
-      { key: 'password', label: '對帳單密碼（只在這台電腦解密、不會上傳、不會儲存）', type: 'password', full: true, placeholder: '通常是身分證字號' },
+      { key: 'password', label: bankPasswordLabel(mode), type: 'password', full: true, placeholder: '通常是身分證字號' },
     ],
     onMount: (/** @type {any} */ root) => {
       const inp = root.querySelector('#f_file');

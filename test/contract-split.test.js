@@ -377,11 +377,14 @@ const MANIFEST = {
       'public/modules/assets.js',
       'public/modules/backup-export.js',
       'public/modules/cards.js',
+      'public/modules/cashflow-model.js',
+      'public/modules/cashflow.js',
       'public/modules/settings.js',
       'public/modules/toast-timing.js',
       'server.js',
       'test-doubles/fake-supabase.js',
       'test/backup-export.test.js',
+      'test/cashflow-bank-upload.test.js',
       'test/deploy-config.test.js',
       'test/hosted-auth.test.js',
       'test/hosted-secret-writeback.test.js',
@@ -1092,7 +1095,6 @@ const UNDECLARED_IMPORTED = [
   'lib/routes/route-helpers.js',             // ← 四支 routes（共用的回應／驗證輔助）
   'lib/routes/stock-fundamentals.js',        // ← server.js（SEC 端點掛載）
   'lib/safe-map.js',                         // ← 七個後端檔（原型污染安全的 Map 包裝＝安全承重件）
-  'public/modules/cashflow-model.js',        // ← cashflow.js
   'public/modules/dashboard-forest.js',      // ← dashboard.js
   'public/modules/file-util.js',             // ← cashflow.js／securities.js／transactions-import.js
   'public/modules/icons.js',                 // ← app.js ＋十七個頁面模組（共用圖示）
