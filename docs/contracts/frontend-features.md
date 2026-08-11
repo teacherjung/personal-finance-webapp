@@ -68,4 +68,4 @@
 
 **改這裡**：**共用彈窗契約**（modal-shell.js 的邊界）
 
-**記得同步這裡**：**共用彈窗契約**（modal-shell.js 的邊界）：只共用**尺寸、標題列、關閉按鈕、背景與基本關閉行為**；送出、預覽、返回、非同步狀態與重畫流程**由各功能自行負責**。
+**記得同步這裡**：**共用彈窗契約**（modal-shell.js 的邊界）：只共用**尺寸、標題列、關閉按鈕、背景與基本關閉行為**；送出、預覽、返回、非同步狀態與重畫流程**由各功能自行負責**。**#modal-root 世代擁有權（r6）**：全站表單/彈窗共用同一格 `#modal-root`——表單 `onSubmit` 有 await，回來時可能已切頁或期間開了新彈窗，舊的成功 continuation 若無條件 `close()` 會清掉**後開的**彈窗、毀掉未存輸入。三個開啟點（`app.js` 的 `openForm`／`openInfo`、`modal-shell.js` 的 `openModalShell`）都要 `claimModalRoot()`（蓋世代章）；`openForm` 的 async `onSubmit` 只在 `owns()` 為真時才 `close()`／`toast`。純邏輯在 `public/modules/modal-ownership.js`（`makeModalOwnership`，零依賴可測），考題＝`test/modal-ownership.test.js`（世代行為題＋接線形狀題）。

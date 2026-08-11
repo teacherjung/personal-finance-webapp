@@ -477,7 +477,7 @@ const MANIFEST = {
       'public/app.js',
       'public/modules/backup-export.js',
       'public/modules/dashboard.js',
-      'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
+      'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/modal-ownership.js', 'test/modal-ownership.test.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
       'public/modules/toast-timing.js',

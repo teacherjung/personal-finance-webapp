@@ -15,6 +15,7 @@ import { hydrateIcons, icon } from './modules/icons.js';
 import { backupAlertView } from './modules/backup-alert.js';
 import { toastMs } from './modules/toast-timing.js';   // 提示停留時間＝照長度給（零依賴純模組，考題撐得住）
 import { esc } from './modules/html-escape.js';
+import { makeModalOwnership } from './modules/modal-ownership.js';   // #modal-root 世代擁有權（純邏輯，r6）
 import { selectOptionsHtml } from './modules/form-options.js';
 
 // ---------- 共用工具 ----------
@@ -151,10 +152,21 @@ export function bindBackdropClose(root, close) {
   bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
 }
 
+// #modal-root 是全站表單/彈窗共用的一格（r6）。表單 onSubmit 有 await，回來時可能已切頁或開了新彈窗——
+// 舊的成功 continuation 若無條件 close() 會清掉**後開的**彈窗、毀掉未存輸入；舊的失敗會報過期錯誤。
+// 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset。
+const _claimModalRoot = makeModalOwnership({
+  readGen: () => Number($('#modal-root')?.dataset.modalGen || 0),
+  writeGen: (g) => { const r = $('#modal-root'); if (r) r.dataset.modalGen = String(g); },
+});
+/** 宣告接管 #modal-root（蓋新世代章），回傳 `owns()`＝這一份是否仍擁有它。三個彈窗開啟點都要 claim。 */
+export function claimModalRoot() { return _claimModalRoot(); }
+
 // 通用彈窗表單。
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md' }) {
   const root = $('#modal-root');
+  const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
   const fieldHtml = fields.map(f => {
     const v = values[f.key] ?? f.default ?? '';
     const id = 'f_' + f.key;
@@ -207,8 +219,10 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       out[f.key] = val;
     }
     if (submitBtn) submitBtn.disabled = true;
-    try { await onSubmit(out); close(); }
-    catch (err) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); }   // 失敗才解鎖重試；成功已 close
+    // r6：onSubmit 有 await，回來時只在**仍擁有 modal-root** 時才動 UI——切頁或期間開了新彈窗＝
+    //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
+    try { await onSubmit(out); if (owns()) close(); }
+    catch (err) { if (owns()) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); } }   // 失敗才解鎖重試；成功已 close
   };
   if (onMount) onMount(root);
 }
@@ -217,6 +231,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
 /** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
+  claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
