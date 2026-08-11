@@ -214,7 +214,10 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       <button type="submit" class="btn">儲存</button></div></form></div>
   </div></div>`;
 
-  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤）——關窗後舊 async 不再誤 close/toast
+  // 兩種關窗要分開（r20）：使用者按 ×／取消／背景＝**撤銷**（之後不准再彈下一窗，他剛把它關掉的）；
+  // 送出成功後的自動關窗＝**交棒**（onSubmit 排的下一窗仍該開）。兩者都撤銷擁有權，差別只在交接授權。
+  const close = () => { root.innerHTML = ''; owns.release(); };                       // 使用者撤銷
+  const closeAfterSubmit = () => { root.innerHTML = ''; owns.release({ handoff: true }); };   // 送出成功＝交棒
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
   bindBackdropClose(root, close);
@@ -237,7 +240,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
     // 第二個參數＝這張表單自己的擁有權把手：onSubmit 若要「送出後再開下一窗」，用 ctx.owns.handoff()
     // 判斷那一格有沒有被別人接管（r18）。既有呼叫端只收一個參數，不受影響。
-    try { await onSubmit(out, { owns }); if (owns()) close(); }
+    try { await onSubmit(out, { owns }); if (owns()) closeAfterSubmit(); }
     catch (err) { if (owns()) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); } }   // 失敗才解鎖重試；成功已 close
   };
   if (onMount) onMount(root);

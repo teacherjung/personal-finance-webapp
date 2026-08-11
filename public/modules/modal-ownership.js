@@ -18,11 +18,13 @@
  * @param {{ readGen: () => number, writeGen: (g: number) => void, readNav?: () => number }} io
  *   readGen＝讀現在蓋在共用格上的章；writeGen＝蓋章；readNav＝讀現在的**換頁**世代（省略＝不看換頁）。
  *   三者由呼叫端接到實際載體（DOM dataset／currentNavSeq／測試假物件）。
- * @returns {(() => (() => boolean) & { release: () => void }) & { watch: () => () => boolean }}
+ * @returns {(() => (() => boolean) & { release: (opts?: { handoff?: boolean }) => void, handoff: () => boolean }) & { watch: () => () => boolean }}
  *   claim()：接管（蓋新章＋記住當下換頁世代），回傳 owns()＝章沒被蓋掉**且**還在同一頁。
- *   owns.release()：關窗時撤銷擁有權；**只有還是主人時才作用**（不是主人＝什麼都不做）。
- *   owns.handoff()：「我送出後排的下一窗現在還能不能開」——自己 close 造成的章變動**不算**別人接管
- *     （正常交接會蓋兩次章，用 owns()／watch() 判會把正常流程誤擋掉）。
+ *   owns.release({handoff})：關窗時撤銷擁有權；**只有還是主人時才作用**（不是主人＝什麼都不做）。
+ *     `handoff:true` 專給「送出成功後的自動關窗」＝要交棒給下一窗；**預設 false**＝使用者撤銷（不准再開）。
+ *   owns.handoff()：「我送出後排的下一窗現在還能不能開」——**送出成功那次**自己 close 造成的章變動
+ *     不算別人接管（正常交接會蓋兩次章，用 owns()／watch() 判會把正常流程誤擋掉）；
+ *     但使用者按 ×／取消／背景關窗是**撤銷**，一律不放行。
  *   claim.watch()：**唯讀**版（不蓋章、不搶擁有權），回傳「從我看的那一刻起，這一格沒被別人接管／
  *     撤銷，使用者也沒換頁」。用在**開窗之前還有 await 的地方**（例如先問 /api/mode 再開密碼窗）：
  *     那段等待期間使用者可能關掉眼前的窗、改開別的窗，晚回來的窗不可以蓋掉它（r16 抓到的真實 bug）。
@@ -37,14 +39,27 @@ export function makeModalOwnership({ readGen, writeGen, readNav }) {
     // 有人在我之後 claim/release（蓋了更新的章）＝我不再擁有；或使用者換頁了＝也不再擁有。
     const owns = () => readGen() === mine && (readNav == null || readNav() === nav);
     let releasedAt = /** @type {number|null} */ (null);
-    owns.release = () => { if (owns()) releasedAt = bump(); };   // 有主才撤：不是主人就別動別人的章（並記下交出去時的章）
+    let handoffAllowed = false;   // 只有「送出成功後的自動關窗」才留下交接授權；使用者取消**不留**
+    /**
+     * 關窗＝撤銷擁有權（有主才撤：不是主人就別動別人的章）。
+     * @param {{ handoff?: boolean }} [opts] handoff:true＝這次關窗是「送出成功、要交棒給下一窗」。
+     *   **預設 false（保守）**：任何沒指名的關窗都當成使用者撤銷，之後不准再開下一窗——
+     *   新呼叫端忘了指名時，寧可少開一個窗，也不要在使用者按了取消之後還彈東西出來。
+     */
+    owns.release = ({ handoff = false } = {}) => {
+      if (!owns()) return;
+      releasedAt = bump();
+      handoffAllowed = handoff;
+    };
     // 「我送出後排的下一窗，現在還能不能開？」——r18 的產線競態：密碼窗送出→等 preview→開預覽窗，
     // 這中間**正常流程本來就會蓋兩次章**（自己 close 時 release 一次、下一窗 claim 一次），所以不能用
-    // watch()／owns() 判（正常關窗就會被誤擋）。真正要分辨的是：**動這一格的是不是我自己**——
-    //   ✅ 還是我的（還沒關）｜✅ 就是我自己 release 之後那個章（我關掉、之後沒別人接手）→ 可以開；
-    //   ❌ 章比那還新＝**別人接管了**（使用者關掉我、改開了別的窗）→ 舊 preview 不可以蓋掉它。
+    // watch()／owns() 判（正常關窗就會被誤擋）。放行的只有兩種狀態：
+    //   ✅ 還是我的（還沒關，例如剛在 onSubmit 裡排程）；
+    //   ✅ 就是我自己**送出成功那次**關窗之後的章（我關掉、之後沒別人接手）。
+    //   ❌ 使用者按了 ×／取消／背景關窗＝**撤銷**，不是交接（r20：那時再彈預覽窗＝把他剛關掉的東西又推回來）。
+    //   ❌ 章比那還新＝別人接管了（使用者關掉我、改開了別的窗）→ 舊 preview 不可以蓋掉它。
     //   ❌ 我根本沒 release 成功（owns 早就 false＝被搶走）→ 也不可以開。
-    owns.handoff = () => (readGen() === mine || (releasedAt !== null && readGen() === releasedAt))
+    owns.handoff = () => (readGen() === mine || (handoffAllowed && releasedAt !== null && readGen() === releasedAt))
       && (readNav == null || readNav() === nav);
     return owns;
   };

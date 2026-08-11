@@ -73,15 +73,15 @@ test('⭐ 擁有權｜同一頁的背景重繪不可撤銷擁有權；使用者�
 // ⭐ r18（Codex 抓到的第二顆真實產線 bug）：密碼窗**送出後**等 preview，再開下一窗（預覽窗）。
 // 難點：正常交接本來就會蓋兩次章（自己 close 時 release、下一窗 claim），所以不能用 owns()／watch() 判
 // ——那會把正常流程整個誤擋。handoff() 要分辨的是「動這一格的是不是我自己」。
-test('⭐ 擁有權｜handoff()：自己關掉不算被接管（正常交接要放行），別人接管才擋', () => {
-  // 正常路徑：密碼窗送出 → 自己 close（release）→ 排程的預覽窗要開得成
+test('⭐ 擁有權｜handoff()：**送出成功**的自動關窗要放行；別人接管要擋', () => {
+  // 正常路徑：密碼窗送出 → 自己 close（release({handoff:true})）→ 排程的預覽窗要開得成
   let cell = 0;
   const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
   const owns = claim();
-  assert.equal(owns.handoff(), true, '還沒關窗＝當然可以排下一窗');
-  owns.release();                       // openForm 的 close()
+  assert.equal(owns.handoff(), true, '還沒關窗＝當然可以排下一窗（onSubmit 裡排程的當下）');
+  owns.release({ handoff: true });       // openForm 的 closeAfterSubmit()
   assert.equal(owns(), false, '關了就不再擁有');
-  assert.equal(owns.handoff(), true, '⚠️ 自己 close 造成的章變動不算被接管——正常交接必須放行');
+  assert.equal(owns.handoff(), true, '⚠️ 送出成功的自動關窗不算被接管——正常交接必須放行');
 
   // 壞路徑①：使用者關掉密碼窗、又開了別的窗 → 舊 preview 不可以蓋掉它
   const later = claim();
@@ -92,17 +92,35 @@ test('⭐ 擁有權｜handoff()：自己關掉不算被接管（正常交接要�
   let cell2 = 0;
   const claim2 = makeModalOwnership({ readGen: () => cell2, writeGen: (g) => { cell2 = g; } });
   const mine = claim2();
-  claim2();                             // 別人接管
-  mine.release();                       // 有主才撤＝這次是空操作
-  assert.equal(mine.handoff(), false, '被搶走之後 release 是空操作，不可以因此誤判成「我自己關的」');
+  claim2();                              // 別人接管
+  mine.release({ handoff: true });       // 有主才撤＝這次是空操作
+  assert.equal(mine.handoff(), false, '被搶走之後 release 是空操作，不可以因此誤判成「我自己交棒」');
 });
 
-test('⭐ 擁有權｜handoff() 也看換頁：自己關掉但使用者已換頁＝不開', () => {
+// ⭐ r20（Codex 抓到的第三顆）：使用者按 ×／取消／背景關窗**不是交接、是撤銷**。
+// 他都把窗關掉了，在途的 preview 回來還把下一窗彈出來＝把他剛丟掉的東西又推回他面前。
+test('⭐ 擁有權｜使用者取消（release 不帶 handoff）＝撤銷，之後不准再開下一窗', () => {
+  let cell = 0;
+  const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
+  const owns = claim();
+  owns.release();                        // ×／取消／背景關窗走的是這一條（預設不帶交接授權）
+  assert.equal(owns(), false);
+  assert.equal(owns.handoff(), false, '使用者取消之後，晚回來的 preview 不可以再彈下一窗');
+
+  // 預設值就是保守的：新呼叫端忘了指名 handoff 時，寧可少開一個窗
+  let cell2 = 0;
+  const claim2 = makeModalOwnership({ readGen: () => cell2, writeGen: (g) => { cell2 = g; } });
+  const o2 = claim2();
+  o2.release({});                        // 給了物件但沒指名
+  assert.equal(o2.handoff(), false, 'handoff 預設 false＝沒指名就當撤銷（保守預設）');
+});
+
+test('⭐ 擁有權｜handoff() 也看換頁：送出成功關窗但使用者已換頁＝不開', () => {
   let cell = 0, nav = 1;
   const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; }, readNav: () => nav });
   const owns = claim();
-  owns.release();
-  assert.equal(owns.handoff(), true, '同一頁、自己關的＝可以開下一窗');
+  owns.release({ handoff: true });
+  assert.equal(owns.handoff(), true, '同一頁、送出成功關的＝可以開下一窗');
   nav = 2;
   assert.equal(owns.handoff(), false, '換頁後下一窗不屬於眼前畫面');
 });
@@ -153,8 +171,14 @@ test('接線｜openForm 的 async onSubmit 只在 owns() 時 close/toast；關�
   assert.match(app, /readNav: \(\) => currentNavSeq\(\)/, 'ownership 要吃**換頁**序號 currentNavSeq；且包一層箭頭避 TDZ');
   assert.doesNotMatch(app, /readNav: \(\) => currentRouteSeq\(\)/, '不可接回重繪序號 routeSeq（r7 的 bug 來源）');
   assert.match(app, /const owns = claimModalRoot\(\);/, 'openForm 要在開窗當下 claim 並留 owns');
-  assert.match(app, /await onSubmit\(out, \{ owns \}\); if \(owns\(\)\) close\(\);/,
-    'onSubmit 後只在仍擁有時才 close；並把自己的擁有權把手交給 onSubmit（r18：後續開窗要據它判斷有沒有被接管）');
+  assert.match(app, /await onSubmit\(out, \{ owns \}\); if \(owns\(\)\) closeAfterSubmit\(\);/,
+    'onSubmit 後只在仍擁有時才關窗；並把自己的擁有權把手交給 onSubmit（r18：後續開窗要據它判斷有沒有被接管）');
+  // r20：兩種關窗必須分開——使用者按 ×／取消／背景＝撤銷（不留交接授權），送出成功才交棒
+  assert.match(app, /const close = \(\) => \{ root\.innerHTML = ''; owns\.release\(\); \};/,
+    '使用者關窗走 owns.release()（不帶交接授權）');
+  assert.match(app, /const closeAfterSubmit = \(\) => \{ root\.innerHTML = ''; owns\.release\(\{ handoff: true \}\); \};/,
+    '送出成功的自動關窗才帶 handoff:true');
+  assert.match(app, /\[data-cancel\]'\)\.onclick = close;/, '取消鈕要接**撤銷**版的 close（不可接成交棒版）');
   assert.match(app, /catch \(err\) \{ if \(owns\(\)\)/, '失敗也只在仍擁有時才 toast（不報過期錯誤）');
   assert.ok((app.match(/owns\.release\(\);/g) || []).length >= 2, 'openForm/openInfo 的 close 都要 owns.release()（有主才撤）');
   const shell = strip(readFileSync(join(ROOT, 'public/modules/modal-shell.js'), 'utf8'));
