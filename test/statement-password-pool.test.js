@@ -211,3 +211,40 @@ test('r1#L6｜櫃檯（sanitizeDbForWrite）保留記住的密碼池、且套上
   const big = sanitizeDbForWrite({ settings: { rememberedStatementPasswords: JSON.stringify(Array(50).fill('p123456789')) } });
   assert.equal(JSON.parse(big.settings.rememberedStatementPasswords).length, 8, '櫃檯寫入也套上限');
 });
+
+// ---------- r2 修正的考題 ----------
+
+test('r2#1｜整池封頂：5000 張卡＝parseFn 呼叫次數不超過 MAX_POOL_ATTEMPTS（卡數無上限也擋得住 DoS）', async () => {
+  const { MAX_POOL_ATTEMPTS } = await import('../lib/statement-password-policy.js');
+  const db = { cards: Array.from({ length: 5000 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
+  const pool = statementPasswordPool(db);
+  assert.ok(pool.length <= MAX_POOL_ATTEMPTS, `池被封頂在 ${MAX_POOL_ATTEMPTS}（實得 ${pool.length}）`);
+  // 走真迴圈：全不對＝parseFn 最多被叫 MAX_POOL_ATTEMPTS 次
+  let calls = 0;
+  const parse = async () => { calls++; throw Object.assign(new Error('密碼錯'), { status: 400, code: 'pdf_password' }); };
+  await assert.rejects(parseWithPool(parse, new Uint8Array([1]), pool));
+  assert.ok(calls <= MAX_POOL_ATTEMPTS, `解析嘗試被封頂（實得 ${calls} 次）`);
+});
+
+test('r2#1｜封頂砍的是最不優先的尾巴：本次輸入/空密碼/前幾張卡一定在池裡', () => {
+  const db = { cards: Array.from({ length: 5000 }, (_, i) => ({ type: 'credit', pdfPassword: `CARD${i}`.padEnd(9, '0') })), settings: {} };
+  const pool = statementPasswordPool(db, ['TYPED9999']);
+  assert.equal(pool[0], 'TYPED9999', '本次輸入最優先、不被砍');
+  assert.equal(pool[1], '', '未加密那發也在');
+  assert.ok(pool.includes('CARD0'.padEnd(9, '0')), '前幾張卡在池裡');
+});
+
+test('r2#3｜previewForCard 走正式路徑：卡密錯、typed password 對＝typed 先試且預覽成功', async () => {
+  store.save({ ...store.emptyDb(), cards: [{ id: 'c1', name: '台新卡', type: 'credit', issuer: '台新銀行', pdfPassword: 'WRONGCARD' }] });
+  const { previewForCard } = await import('../lib/services/statement-import.js');
+  /** @type {string[]} */ const tried = [];
+  // 假解析器：只認 'TYPED-OK'；回一份最小可過中閘（弱閘）的產物
+  const parse = async (/** @type {Uint8Array} */ _b, /** @type {string} */ pw) => {
+    tried.push(pw);
+    if (pw !== 'TYPED-OK') throw Object.assign(new Error('PDF 密碼錯誤'), { status: 400, code: 'pdf_password' });
+    return /** @type {any} */ ({ bank: '台新', lastFour: null, transactions: [], statementMonth: '', statementDue: null, statementTotals: null });
+  };
+  const r = await previewForCard('c1', 'QUJD', 'TYPED-OK', parse);
+  assert.equal(tried[0], 'TYPED-OK', '使用者輸入的密碼排在池最前、第一發就試');
+  assert.ok(r.card && r.card.id === 'c1', '預覽成功、歸到指定卡');
+});

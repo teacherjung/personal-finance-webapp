@@ -524,8 +524,8 @@ const MANIFEST = {
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
       'public/modules/reconcile-summary.js', 'test/reconcile-summary.test.js',
-      // P0.5 匯入密碼池：LOCAL 考題＋錯誤 code 通道＋密碼窗文案住所（與雲端領域多重命中）
-      'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js',
+      // P0.5 匯入密碼池：LOCAL 考題＋錯誤 code 通道＋密碼窗文案住所＋池上限常數（與雲端領域多重命中）
+      'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js', 'lib/statement-password-policy.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',

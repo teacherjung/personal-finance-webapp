@@ -14,7 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
-import { bankPasswordLabel, REMEMBER_PW_LABEL, runCardUpload } from './cashflow-model.js';
+import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate } from './cashflow-model.js';
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 // 卡片上傳的連點鎖＝模組層級（不掛按鈕元素，同銀行 #438 r3 教訓：重繪換掉按鈕鎖會蒸發）
@@ -40,12 +40,14 @@ function openCardUploadForm(cards) {
   // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
   // typedPw＝使用者這次輸入的密碼，往後選卡/改卡重解析要沿用（r1#3：沒勾記住時正確密碼不在任何池裡）。
   const openPasswordWindow = async (/** @type {string} */ b64) => {
-    let label = bankPasswordLabel(null);
-    try { label = bankPasswordLabel(await defaultWithTimeout(api('/mode'), MODE_TIMEOUT_MS)); } catch { /* 保守句照用 */ }
+    // 挑句＋切頁作廢都走 bankUploadGate（r2#2：問 /mode 期間切頁＝不開密碼窗，補上這條非同步縫；
+    // 挑句判準與保守方向沿用同一份，不另抄）。
+    const g = await bankUploadGate({ fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout, timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq });
+    if (g.stale) return;   // 等 /mode 時切了頁＝這一窗不屬於眼前畫面
     openForm({
       title: '這份帳單需要密碼',
       fields: [
-        { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+        { key: 'password', label: g.label, type: 'password', full: true, placeholder: '通常是身分證字號' },
         { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
       ],
       onSubmit: async (/** @type {any} */ data) => {

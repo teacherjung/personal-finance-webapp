@@ -206,6 +206,16 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   assert.match(src, /busy:\s*\{ get:\s*\(\)\s*=>\s*cardUploadBusy, set:\s*\(v\)\s*=>\s*\{ cardUploadBusy = v; \} \}/,
     '編排的鎖要接那顆模組層級變數（接成恆 false＝鎖形同虛設）');
   assert.match(src, /routeSeq:\s*currentRouteSeq/, '作廢判準要接真的路由序號');
+  // r2#4：不只驗「有呼叫 runCardUpload」——loadCards 要真的載 /cards、openUploadForm 要真的開窗，
+  //   否則把 openUploadForm 接成空函式＝正式 UI 一個窗都不開、形狀題卻全綠。
+  assert.match(src, /loadCards:\s*async\s*\(\)\s*=>\s*\(await api\('\/cards'\)\)\.filter/,
+    'loadCards 要真的打 /cards 再篩信用卡');
+  assert.match(src, /openUploadForm:\s*\(cards\)\s*=>\s*openCardUploadForm\(cards\)/,
+    'openUploadForm 要真的接開窗函式（接成空函式＝不開窗）');
+  // r2#2：密碼窗問 /mode 期間切頁要作廢——挑句＋作廢走 bankUploadGate（不另抄一份 /mode 挑句）。
+  assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
+    '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
+  assert.match(src, /if \(g\.stale\) return;/, '問 /mode 期間切頁＝不開密碼窗');
 });
 
 // ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------
