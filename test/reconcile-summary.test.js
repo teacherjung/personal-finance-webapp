@@ -70,10 +70,25 @@ test('銀行｜沒驗到期末/沒有外幣＝那兩句不出現（不可硬湊�
   assert.doesNotMatch(h, /外幣/);
 });
 
-test('銀行｜弱＝老實說沒有可驗算的數字、建議自行核對', () => {
+test('銀行｜弱＝講「沒讀到」不講「帳單沒有」（r1#1：弱級可能是解析降級，鍋不可甩給帳單）', () => {
   const h = gateSummaryHtml({ level: 'weak', advisories: [], stats: {} }, 'bank');
-  assert.match(h, /△ 這份帳單沒有可驗算的餘額數字/);
-  assert.match(h, /自行核對/);
+  assert.match(h, /△ 沒讀到足夠的餘額數字可驗算/);
+  assert.match(h, /只會匯入上面列出的明細/);
+  assert.match(h, /核對筆數與金額/);
+  assert.doesNotMatch(h, /帳單沒有/, '不可把降級講成帳單的鍋');
+});
+
+test('銀行｜只驗到期末（餘額鏈 0 對）＝不可出現「逐筆餘額 0 關全部接上」（r1#2）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 0, endChecked: 2 } }, 'bank');
+  assert.match(h, /✓ 帳單數學驗算通過/);
+  assert.match(h, /2 個帳戶期末與帳單概要吻合/);
+  assert.doesNotMatch(h, /0 關/, '驗到哪關講哪關，不可湊句');
+});
+
+test('不認得的 level＝形狀不對＝空字串（r1#3：level:bogus 不可誤套弱級句）', () => {
+  assert.equal(gateSummaryHtml(/** @type {any} */ ({ level: 'bogus', advisories: [], stats: {} }), 'bank'), '');
+  assert.equal(gateSummaryHtml(/** @type {any} */ ({ level: 'strong', advisories: [], stats: {} }), 'card'), '',
+    'strong 不是卡片畫面的合法級別——後端形狀變動時寧可不顯示');
 });
 
 test('信用卡｜摘要驗算通過＝講等式本人；零提醒＝不長清單', () => {
@@ -91,11 +106,12 @@ test('信用卡｜影子提醒原文列出、不擋匯入；訊息內容一律�
   assert.doesNotMatch(h, /<img/, '不可有未跳脫的原始標籤');
 });
 
-test('信用卡｜弱＝點名 XLSX 這種沒印總額的格式、說明照樣逐筆匯入', () => {
+test('信用卡｜弱＝講「沒讀到」、XLSX 只當例子；匯入承諾限縮在「讀到且勾選」（r1#1）', () => {
   const h = gateSummaryHtml({ level: 'weak', advisories: [], stats: {} }, 'card');
-  assert.match(h, /沒印可交叉驗算的總額/);
-  assert.match(h, /XLSX/);
-  assert.match(h, /照帳單逐筆匯入/);
+  assert.match(h, /△ 沒讀到可交叉驗算的總額/);
+  assert.match(h, /例如官網下載的 XLSX/, '不可斷言這份就是 XLSX——裁決裡看不出檔案格式');
+  assert.match(h, /只會匯入下面讀到且勾選的明細/);
+  assert.match(h, /核對筆數與金額/);
 });
 
 test('裁決缺席/形狀不對＝回空字串（舊回應/降級時畫面不多長東西、不炸）', () => {
@@ -106,12 +122,14 @@ test('裁決缺席/形狀不對＝回空字串（舊回應/降級時畫面不多
 });
 
 test('接線｜兩個預覽窗都真的呼叫 gateSummaryHtml（去註解原始碼形狀——cashflow.js 頂層 import app.js、node 載不動整頁，形狀掃描＝家規核可的接線驗法；顯示型接線被拔＝功能靜靜消失）', () => {
+  // 鎖**插值形狀** `${gateSummaryHtml(…)}` 而非只鎖呼叫（r1#4）：`${(gateSummaryHtml(…), '')}` 這種
+  // 逗號運算子寫法「有呼叫、沒插進畫面」——只鎖名稱的正規式會放它過、功能靜靜消失。
   const cashflow = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   assert.match(cashflow, /from '\.\/reconcile-summary\.js'/, '銀行頁要 import 本模組');
-  assert.match(cashflow, /gateSummaryHtml\(r\.reconcile, 'bank'\)/, '銀行預覽窗要把裁決交給翻譯函式');
+  assert.match(cashflow, /\$\{gateSummaryHtml\(r\.reconcile, 'bank'\)\}/, '銀行預覽窗要把翻譯結果插進畫面');
   const txImport = stripComments(readFileSync(join(ROOT, 'public/modules/transactions-import.js'), 'utf8'));
   assert.match(txImport, /from '\.\/reconcile-summary\.js'/, '卡片頁要 import 本模組');
-  assert.match(txImport, /gateSummaryHtml\(curR\.reconcile, 'card'\)/, '卡片預覽窗（draw 內＝換卡重算也會刷新）要交裁決');
+  assert.match(txImport, /\$\{gateSummaryHtml\(curR\.reconcile, 'card'\)\}/, '卡片預覽窗（draw 內＝換卡重算也會刷新）要插進畫面');
 });
 
 test('advisories 不是陣列＝當空處理、stats 缺席＝計數當 0（防禦：後端形狀變動不炸畫面）', () => {
@@ -119,5 +137,7 @@ test('advisories 不是陣列＝當空處理、stats 缺席＝計數當 0（防�
   assert.match(h, /✓ 帳單摘要驗算通過/);
   assert.doesNotMatch(h, /<ul/);
   const b = gateSummaryHtml(/** @type {any} */ ({ level: 'strong' }), 'bank');
-  assert.match(b, /逐筆餘額 0 關/);
+  assert.match(b, /✓ 帳單數學驗算通過/, 'stats 缺席仍給結論');
+  assert.doesNotMatch(b, /0 關/, '不可湊出「0 關」（r1#2）');
+  assert.doesNotMatch(b, /：。/, '不可留空冒號句');
 });
