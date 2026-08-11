@@ -219,10 +219,11 @@ test('強閘×匯入｜幣別判準四種來源同向：map 命中／accounts �
 // ---------- ① 中閘（信用卡）純函式 ----------
 
 /** 中閘的標準情境：摘要四格平衡（10,449−2,449+450＝8,450）、明細加總對得上。
- * 四格刻意互不相同——成對相等（繳清型帳單）會遮住「等式的項被接錯/對調」型的壞法。 */
+ * 四格刻意互不相同——成對相等（繳清型帳單）會遮住「等式的項被接錯/對調」型的壞法。
+ * 繳款列帶 isPayment 旗標（同 finalize 產物；P0.2 公式吃旗標分繳款/退款）。 */
 const cardOk = () => ({
   statementTotals: { due: 8450, prevDue: 10449, paidAndRefund: 2449, newCharges: 450 },
-  transactions: [{ amount: 300 }, { amount: 150 }, { amount: -2449 }],
+  transactions: [{ amount: 300 }, { amount: 150 }, { amount: -2449, isPayment: true }],
 });
 
 test('中閘｜四格平衡＋明細對得上＝medium 三檢查全過、零 advisories', () => {
@@ -232,7 +233,57 @@ test('中閘｜四格平衡＋明細對得上＝medium 三檢查全過、零 adv
   assert.deepEqual(v.checks, { equation: 'pass', newVsRows: 'pass', paidVsRows: 'pass' });
   assert.deepEqual(v.advisories, []);
   assert.equal(v.stats.sumPos, 450);
-  assert.equal(v.stats.sumNegAbs, 2449);
+  assert.equal(v.stats.payAbs, 2449);
+  assert.equal(v.stats.refundAbs, 0);
+});
+
+test('中閘｜校準語意（P0.2，四份真郵寄版實測的版面）：新增款項＝淨額、已繳款桶只有繳款列', () => {
+  // 真版面：消費 4,500、退款 500、繳款 9,000；帳單印 新增款項 4,000（＝4,500−500 淨額）、
+  // 已繳款桶 9,000（不含退款）；等式 10,000−9,000+4,000＝5,000＝應繳。
+  // P0.2 之前的公式（正項全額 vs 新增款項；退款算進已繳款桶）在這種版面兩道都會誤鳴。
+  const v = reconcileCardStatement({
+    statementTotals: { due: 5000, prevDue: 10000, paidAndRefund: 9000, newCharges: 4000 },
+    transactions: [{ amount: 4500 }, { amount: -500, isRefund: true }, { amount: -9000, isPayment: true }],
+  });
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.checks, { equation: 'pass', newVsRows: 'pass', paidVsRows: 'pass' });
+  assert.deepEqual(v.advisories, [], '合法真版面＝零誤鳴（校準的意義）');
+  assert.equal(v.stats.refundAbs, 500);
+  assert.equal(v.stats.payAbs, 9000);
+});
+
+test('中閘｜負數列缺旗標＝用 desc 過 isCardPayment 重判（單一真相共用，r1#2）', () => {
+  // r1#2 的反例：缺旗標一律猜退款 → 真繳款（−9,000）會被灌進退款桶，C2′/C3′ 兩道一起誤鳴。
+  const v = reconcileCardStatement({
+    statementTotals: { due: 5000, prevDue: 10000, paidAndRefund: 9000, newCharges: 4000 },
+    transactions: [{ amount: 4500 }, { amount: -500, desc: '蝦皮退貨' }, { amount: -9000, desc: '信用卡自動扣繳' }],
+  });
+  assert.deepEqual(v.checks, { equation: 'pass', newVsRows: 'pass', paidVsRows: 'pass' });
+  assert.equal(v.stats.payAbs, 9000, '「信用卡自動扣繳」缺旗標仍認得是繳款（isCardPayment 重判）');
+  assert.equal(v.stats.refundAbs, 500);
+});
+
+test('中閘｜負數列連 desc 都沒有＝分不出繳款/退款＝②③兩道誠實 skip、不猜（r1#2）', () => {
+  const v = reconcileCardStatement({
+    statementTotals: { due: 5000, prevDue: 10000, paidAndRefund: 9000, newCharges: 4000 },
+    transactions: [{ amount: 4500 }, { amount: -9000 }],
+  });
+  assert.equal(v.checks.equation, 'pass', 'C1 不受影響（吃的是摘要四格）');
+  assert.equal(v.checks.newVsRows, 'skip', 'sums 不完整＝比了只會亂鳴');
+  assert.equal(v.checks.paidVsRows, 'skip');
+  assert.deepEqual(v.advisories, []);
+  assert.equal(v.stats.unjudgeableNeg, 1);
+});
+
+test('中閘｜部分負數列 desc 是空字串/純空白＝同缺席、照樣 skip（r2#2：空字串過 isCardPayment 必回 false＝會被猜成退款）', () => {
+  const v = reconcileCardStatement({
+    statementTotals: { due: 5000, prevDue: 10000, paidAndRefund: 9000, newCharges: 4000 },
+    transactions: [{ amount: 4500 }, { amount: -500, desc: '蝦皮退貨' }, { amount: -9000, desc: '  ' }],
+  });
+  assert.equal(v.checks.newVsRows, 'skip', '有一筆無從判＝整組 sums 不可信');
+  assert.equal(v.checks.paidVsRows, 'skip');
+  assert.equal(v.stats.unjudgeableNeg, 1);
+  assert.equal(v.stats.refundAbs, 500, '判得出的照算（供 stats 呈現），只是不拿去比');
 });
 
 test('中閘｜摘要等式不平＝擋下（四格至少一格讀錯；銀行印的那行天生是平的）', () => {
@@ -247,7 +298,7 @@ test('中閘｜摘要等式不平＝擋下（四格至少一格讀錯；銀行�
 
 test('中閘｜明細少一筆＝影子檢查記 advisories、不擋（r1#1：分不出「漏讀」還是「版面只列摘要」）', () => {
   const p = cardOk();
-  p.transactions = [{ amount: 300 }, { amount: -2449 }];   // 150 那筆不在明細
+  p.transactions = [{ amount: 300 }, { amount: -2449, isPayment: true }];   // 150 那筆不在明細
   const v = reconcileCardStatement(p);
   assert.equal(v.ok, true, '影子檢查不擋——硬擋會誤傷分期/年費只列摘要的合法帳單');
   assert.equal(v.checks.newVsRows, 'mismatch');
