@@ -94,15 +94,18 @@ export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, navSeq
  * 3. finally 解鎖——把關丟錯也要解，否則按鈕永久啞掉。
  * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
  *           gate: () => Promise<{ label: string, stale: boolean }>,
- *           openUploadForm: (label: string) => void }} deps
+ *           openUploadForm: (label: string) => void,
+ *           watchModal?: () => () => boolean }} deps
  * @returns {Promise<'busy' | 'stale' | 'opened'>} 走到哪一步（考題斷言用；呼叫端不需要）
  */
-export async function runBankUpload({ busy, gate, openUploadForm }) {
+export async function runBankUpload({ busy, gate, openUploadForm, watchModal }) {
   if (busy.get()) return 'busy';
   busy.set(true);
+  const modalOk = watchModal ? watchModal() : () => true;   // 問 /mode 之前先看一眼共用彈窗格（唯讀）
   try {
     const g = await gate();
-    if (g.stale) return 'stale';
+    // 等待期間別人接管了 #modal-root（使用者關掉這個窗、改開別的窗）＝這一窗不可以蓋上去（r16）
+    if (g.stale || !modalOk()) return 'stale';
     openUploadForm(g.label);
     return 'opened';
   } finally { busy.set(false); }
@@ -129,16 +132,19 @@ export function openWhenOnPage(onPage, open, schedule = (fn) => setTimeout(fn, 0
  * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
  *           navSeq: () => number,
  *           loadCards: () => Promise<any[]>,
- *           openUploadForm: (cards: any[]) => void }} deps
+ *           openUploadForm: (cards: any[]) => void,
+ *           watchModal?: () => () => boolean }} deps
  * @returns {Promise<'busy' | 'stale' | 'nocards' | 'opened'>}
  */
-export async function runCardUpload({ busy, navSeq, loadCards, openUploadForm }) {
+export async function runCardUpload({ busy, navSeq, loadCards, openUploadForm, watchModal }) {
   if (busy.get()) return 'busy';
   busy.set(true);
   const seq = navSeq();
+  const modalOk = watchModal ? watchModal() : () => true;   // 載卡片之前先看一眼共用彈窗格（唯讀）
   try {
     const cards = await loadCards();
     if (navSeq() !== seq) return 'stale';   // 載入卡片名單時切了頁＝這一窗不屬於眼前畫面
+    if (!modalOk()) return 'stale';         // 等待期間別人接管了 #modal-root＝不可以蓋上去（r16）
     if (!cards.length) return 'nocards';       // 沒有信用卡＝呼叫端提示去新增（不開窗）
     openUploadForm(cards);
     return 'opened';

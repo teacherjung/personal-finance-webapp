@@ -4,7 +4,7 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -169,6 +169,7 @@ function openBankUpload() {
   // 開窗前時序的考題都打得到 model 那一份，這裡的形狀由接線題掃；表單內容仍歸本檔。
   return runBankUpload({
     busy: { get: () => bankUploadBusy, set: (v) => { bankUploadBusy = v; } },
+    watchModal: watchModalRoot,   // r16：問 /mode 期間使用者關掉這窗、改開別的窗＝晚回來的上傳窗不可蓋掉它
     gate: () => bankUploadGate({
       fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
       timeoutMs: MODE_TIMEOUT_MS, navSeq: currentNavSeq,

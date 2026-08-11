@@ -70,6 +70,36 @@ test('⭐ 擁有權｜同一頁的背景重繪不可撤銷擁有權；使用者�
   assert.equal(owns(), false, '換頁後舊 async 的 close/toast 才作廢');
 });
 
+// ⭐ r16（Codex 抓到的真實產線 bug）：開窗**之前**還有 await 的地方（先問 /api/mode 再開密碼窗），
+// 等待期間使用者可能關掉眼前的窗、改開別的窗——晚回來的那一窗不可以蓋上去。
+// watch() 是**唯讀**版：只回報「從我看的那一刻起沒人動過這一格」，不蓋章、不搶擁有權。
+test('⭐ 擁有權｜watch() 唯讀觀察：期間有人接管或撤銷就變 false，且**不可**搶走現任的擁有權', () => {
+  let cell = 0;
+  const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
+  const ownsOpen = claim();                 // 眼前開著一個窗（例如上傳帳單窗）
+  const unchanged = claim.watch();          // 問 /mode 之前看一眼
+  assert.equal(unchanged(), true, '沒人動過＝可以開下一窗');
+  assert.equal(ownsOpen(), true, '⚠️ watch 不可以蓋章：現在那個窗必須還是自己的（否則它連自己都關不掉）');
+
+  ownsOpen.release();                       // 使用者按了 × 關掉上傳窗
+  assert.equal(unchanged(), false, '眼前那個窗被關掉＝晚回來的密碼窗不可以再開');
+
+  let cell2 = 0;
+  const claim2 = makeModalOwnership({ readGen: () => cell2, writeGen: (g) => { cell2 = g; } });
+  const watch2 = claim2.watch();
+  claim2();                                 // 期間別人開了新窗
+  assert.equal(watch2(), false, '別人接管了這一格＝晚回來的窗不可以蓋掉它');
+});
+
+test('⭐ 擁有權｜watch() 也看換頁：等待期間使用者換頁＝不開', () => {
+  let cell = 0, nav = 1;
+  const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; }, readNav: () => nav });
+  const unchanged = claim.watch();
+  assert.equal(unchanged(), true);
+  nav = 2;
+  assert.equal(unchanged(), false, '換頁後晚回來的窗不屬於眼前畫面');
+});
+
 test('擁有權｜沒給 readNav 時退化成純世代章判準（相容不看換頁的呼叫端）', () => {
   let cell = 0;
   const claim = makeModalOwnership({ readGen: () => cell, writeGen: (g) => { cell = g; } });
@@ -134,12 +164,13 @@ test('⭐ 接線｜「清除記住的帳單密碼」吃 currentNavSeq（同頁�
 
 // ⭐ 關門題（r7 要求盤點／r8 只比總數不夠／r10 中央三窗沒逐一驗／r12 箭頭函式假綠）：
 // 任何**開窗點**（把 modal-bg 外殼寫進 #modal-root）都必須在**那次寫入之前**先 claimModalRoot()。
-// 四次修訂換來的掃法，三個要點都不可退回：
-//   ①以**頂層大括號深度**切段——**刻意不辨識任何函式寫法**。r12 抓到：只認 `function` 宣告時，
-//     在兩個開窗函式之間插一個沒 claim 的**箭頭函式**開窗，它會被算進上一個已 claim 的段落而假綠。
-//     照深度切則 arrow／function／method 各自成段，claim 跨不過段界。
-//   ②開窗記號認 `class="modal-bg"` 字串本身，不綁 `innerHTML =` 同一行（換行樣板也掃得到）。
-//   ③六個開窗點**逐一點名**，新增開窗點沒進點名表就轉紅（r10：否則 openInfo 的 claim 被 openForm 代打）。
+// 五次修訂換來的掃法。⚠️ **先講清楚它守得住什麼**（本檔末有完整的誠實劃界，別再宣稱「逐函式切段」）：
+//   ①**最硬的一半＝釘住開窗寫入點的總數**：偵測面內多一個就轉紅，不管寫成哪種形狀。
+//   ②六個開窗點**逐一點名**驗「claim 在寫入之前」（r10：否則 openInfo 的 claim 會被 openForm 代打）。
+//   ③段落以**頂層大括號深度**切、**刻意不辨識任何函式寫法**（r12：只認 `function` 宣告時，塞在兩個
+//     開窗函式之間的**箭頭函式**開窗會被前一段吸收而假綠）。但**頂層以下切不開**——物件／class 的兩個
+//     方法、同一外層函式裡的兩個巢狀函式仍共用一段（r14 實測），attribution 會錯；那時靠①先轉紅。
+//   ④開窗記號認 `class=…modal-bg`（任何引號、不綁 `innerHTML =` 同一行；r16：單引號版曾整個繞過）。
 const OPENERS = [
   ['public/app.js', 'openForm'],
   ['public/app.js', 'openInfo'],
@@ -148,6 +179,13 @@ const OPENERS = [
   ['public/modules/assets.js', 'openTargets'],
   ['public/modules/settings-store-rules.js', 'openRulePreview'],
 ];
+
+// 開窗記號：把 `modal-bg` 當 class **寫進標記**就算一個開窗寫入點——**不綁引號種類、不綁 innerHTML**
+// （r16：單引號的 `class='modal-bg'` 配 insertAdjacentHTML 曾整個繞過雙引號版的比對）。
+// 刻意只認 `class=…modal-bg`，不認 `querySelector('.modal-bg')` 那種**讀取**（bindBackdropClose 會用到）。
+// ⚠️ 偵測面＝原始碼裡直接看得到這個字樣；動態組字串（`'modal-' + 'bg'`）、用變數帶 class 名、
+//   `className` 指派、或 public/ 以外的開窗仍在偵測面外——見本檔末的誠實劃界。
+const MODAL_BG = /class\s*=\s*["'`]?[^"'`>]*modal-bg/;
 
 /**
  * 把**註解／字串／樣板／正則字面值**的內容換成空白，**保留換行**（行號不跑掉）。
@@ -240,13 +278,13 @@ function topLevelSegments(src) {
  */
 function scanOpeners(src) {
   const code = blankNonCode(src).split('\n');            // 清掉字串＝`claimModalRoot()` 不會命中註解/字串裡的字
-  const marked = blankNonCode(src, true).split('\n');    // 留字串＝樣板裡的 `class="modal-bg"` 才看得到
+  const marked = blankNonCode(src, true).split('\n');    // 留字串＝樣板裡的 modal-bg 記號才看得到
   /** @type {{name:string, line:number, ok:boolean}[]} */ const found = [];
   for (const sg of topLevelSegments(src)) {
     let claimed = false, ok = true, writes = 0, firstWrite = -1;
     for (let i = sg.from; i < sg.to; i++) {
       if (/claimModalRoot\(\)/.test(code[i])) claimed = true;
-      if (/class="modal-bg"/.test(marked[i])) {
+      if (MODAL_BG.test(marked[i])) {
         writes++; if (firstWrite < 0) firstWrite = i;
         if (!claimed) ok = false;
       }
@@ -298,7 +336,7 @@ function listJs(dir) {
   return out;
 }
 
-// 開窗寫入點的**總數**（`class="modal-bg"` 出現在正式碼的次數）。釘死它是這道關門題**最硬的一半**：
+// 開窗寫入點的**總數**（`modal-bg` 字樣出現在正式碼的次數）。釘死它是這道關門題**最硬的一半**：
 // 不管新開窗點寫成什麼形狀（頂層函式／箭頭／物件方法／class 方法／巢狀函式），只要多一個，
 // 這個數字就對不上、直接轉紅，逼人來這裡登記並補 claim。
 const EXPECTED_OPEN_WRITES = 6;
@@ -309,7 +347,7 @@ test('⭐ 接線｜全站開窗寫入點的**總數**被釘住（任何形狀的
   for (const f of listJs(join(ROOT, 'public'))) {
     const rel = relative(ROOT, f).split('\\').join('/');
     blankNonCode(readFileSync(f, 'utf8'), true).split('\n').forEach((line, i) => {
-      if (/class="modal-bg"/.test(line)) { total++; where.push(`${rel}:${i + 1}`); }
+      if (MODAL_BG.test(line)) { total++; where.push(`${rel}:${i + 1}`); }
     });
   }
   assert.equal(total, EXPECTED_OPEN_WRITES,

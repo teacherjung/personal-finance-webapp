@@ -223,7 +223,10 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   // r2#2：密碼窗問 /mode 期間切頁要作廢——挑句＋作廢走 bankUploadGate（不另抄一份 /mode 挑句）。
   assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
     '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
-  assert.match(src, /if \(g\.stale \|\| !onPage\(\)\) return;/, '問 /mode（或更早的 preview）期間切頁＝不開密碼窗');
+  assert.match(src, /const modalOk = watchModalRoot\(\);/,
+    '問 /mode 之前要先唯讀觀察 #modal-root（r16：不可用 claim——那會搶走現在那個窗的擁有權）');
+  assert.match(src, /if \(g\.stale \|\| !onPage\(\) \|\| !modalOk\(\)\) return;/,
+    '問 /mode 期間切頁**或別人接管了彈窗格**（使用者關掉上傳窗改開別的窗）＝都不開密碼窗（r16 產線 bug）');
   // r4/r5#3：卡片線每個 deferred 開窗點（含選卡/改卡）都經 openWhenOnPage、無裸 setTimeout 開窗——
   //   **兩條 handlePreviewResult 各自斷言**（免密碼的空字串路徑＋密碼窗成功的 pw 路徑），泛化 regex
   //   只鎖一條時、移除另一條守門會假綠（r5#3 實測）。
@@ -257,6 +260,55 @@ test('切頁作廢排程｜openWhenOnPage：同頁才開、排程前切頁不排
 });
 
 // ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------
+
+// ⭐ r16（Codex 抓到的真實產線 bug）：開窗前的 await 期間，使用者可能關掉眼前的窗、改開別的窗——
+// 晚回來的上傳／密碼窗不可以蓋上去。行為直測兩個編排函式（形狀題證明不了「真的沒開」）。
+test('⭐ 編排｜等待期間別人接管了彈窗格＝一個窗都不開（銀行與卡片兩條線都要）', async () => {
+  const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };
+
+  // 銀行線：問 /mode 期間彈窗格被接管
+  {
+    const busy = mkBusy(); let opened = 0, taken = false;
+    const r = await runBankUpload({
+      busy,
+      watchModal: () => () => !taken,                       // 觀察時還沒被接管；回來時已被接管
+      gate: async () => { taken = true; return { label: 'L', stale: false }; },
+      openUploadForm: () => { opened++; },
+    });
+    assert.equal(r, 'stale', '彈窗格被接管＝回報 stale');
+    assert.equal(opened, 0, '不可以開窗蓋掉後開的那個窗');
+    assert.equal(busy.value(), false, 'finally 仍要解鎖');
+  }
+  // 銀行線：沒被接管＝照常開
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runBankUpload({
+      busy, watchModal: () => () => true,
+      gate: async () => ({ label: 'L', stale: false }),
+      openUploadForm: () => { opened++; },
+    });
+    assert.deepEqual([r, opened], ['opened', 1], '沒人動過＝照常開窗（不可假性擋掉正常流程）');
+  }
+  // 卡片線：載卡片期間彈窗格被接管
+  {
+    const busy = mkBusy(); let opened = 0, taken = false;
+    const r = await runCardUpload({
+      busy, navSeq: () => 1,
+      watchModal: () => () => !taken,
+      loadCards: async () => { taken = true; return [{ id: 'c1' }]; },
+      openUploadForm: () => { opened++; },
+    });
+    assert.equal(r, 'stale', '卡片線同理：彈窗格被接管＝stale');
+    assert.equal(opened, 0, '不可以開窗蓋掉後開的那個窗');
+    assert.equal(busy.value(), false, 'finally 仍要解鎖');
+  }
+  // 兩條線都要相容「沒注入 watchModal」（預設不擋，維持既有呼叫端不壞）
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, navSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.deepEqual([r, opened], ['opened', 1], '沒給 watchModal＝維持原行為');
+  }
+});
 
 test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片時切頁作廢不開窗、finally 解鎖——執行驗不靠字面', async () => {
   const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };

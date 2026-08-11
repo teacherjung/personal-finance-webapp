@@ -18,14 +18,18 @@
  * @param {{ readGen: () => number, writeGen: (g: number) => void, readNav?: () => number }} io
  *   readGen＝讀現在蓋在共用格上的章；writeGen＝蓋章；readNav＝讀現在的**換頁**世代（省略＝不看換頁）。
  *   三者由呼叫端接到實際載體（DOM dataset／currentNavSeq／測試假物件）。
- * @returns {() => (() => boolean) & { release: () => void }}
+ * @returns {(() => (() => boolean) & { release: () => void }) & { watch: () => () => boolean }}
  *   claim()：接管（蓋新章＋記住當下換頁世代），回傳 owns()＝章沒被蓋掉**且**還在同一頁。
  *   owns.release()：關窗時撤銷擁有權；**只有還是主人時才作用**（不是主人＝什麼都不做）。
+ *   claim.watch()：**唯讀**版（不蓋章、不搶擁有權），回傳「從我看的那一刻起，這一格沒被別人接管／
+ *     撤銷，使用者也沒換頁」。用在**開窗之前還有 await 的地方**（例如先問 /api/mode 再開密碼窗）：
+ *     那段等待期間使用者可能關掉眼前的窗、改開別的窗，晚回來的窗不可以蓋掉它（r16 抓到的真實 bug）。
+ *     ⚠️ 這裡**不能**用 claim()——claim 會蓋章，把當下那個窗的擁有權搶走（它之後就關不掉自己了）。
  */
 export function makeModalOwnership({ readGen, writeGen, readNav }) {
   let gen = 0;
   const bump = () => { writeGen(++gen); return gen; };
-  return () => {
+  const claim = () => {
     const mine = bump();
     const nav = readNav ? readNav() : 0;
     // 有人在我之後 claim/release（蓋了更新的章）＝我不再擁有；或使用者換頁了＝也不再擁有。
@@ -33,4 +37,10 @@ export function makeModalOwnership({ readGen, writeGen, readNav }) {
     owns.release = () => { if (owns()) bump(); };   // 有主才撤：不是主人就別動別人的章
     return owns;
   };
+  claim.watch = () => {
+    const at = readGen();
+    const nav = readNav ? readNav() : 0;
+    return () => readGen() === at && (readNav == null || readNav() === nav);
+  };
+  return claim;
 }

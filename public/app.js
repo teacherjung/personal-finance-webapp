@@ -169,6 +169,12 @@ const _claimModalRoot = makeModalOwnership({
  * 回傳 `owns()`＝這一份是否仍擁有它；`owns.release()`＝關窗時撤銷（有主才撤，不會洗掉後開那個窗的章）。
  */
 export function claimModalRoot() { return _claimModalRoot(); }
+/**
+ * **唯讀**觀察 #modal-root（不蓋章、不搶擁有權）：回傳「從現在起沒有別人接管/撤銷這一格，也沒換頁」。
+ * 開窗**之前**還有 await 的地方要用它（先問 /api/mode 再開密碼窗）——等待期間使用者可能關掉眼前的窗、
+ * 改開別的窗，晚回來的那一窗不可以蓋掉它。⚠️ 不可改用 claimModalRoot()：那會把當下那個窗的擁有權搶走。
+ */
+export function watchModalRoot() { return _claimModalRoot.watch(); }
 
 // 通用彈窗表單。
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>)=>any, onMount?:(root:HTMLElement)=>void, size?:string}} cfg */

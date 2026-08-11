@@ -7,7 +7,7 @@
 // 循環 import 安全：本檔 ↔ transactions.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）；transactions.js 的三個接縫
 //（renderTransactions／expenseParents／setMonthFilter）皆為呼叫時取用。
-import { api, byId, money, esc, monthKey, openForm, confirmDelete, toast, currentNavSeq } from '../app.js';
+import { api, byId, money, esc, monthKey, openForm, confirmDelete, toast, currentNavSeq, watchModalRoot } from '../app.js';
 import { icon } from './icons.js';
 import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
@@ -27,6 +27,7 @@ export async function openStatementUpload() {
   const result = await runCardUpload({
     busy: { get: () => cardUploadBusy, set: (v) => { cardUploadBusy = v; } },
     navSeq: currentNavSeq,
+    watchModal: watchModalRoot,   // r16：載卡片期間使用者開了別的窗＝這一窗不可蓋掉它
     loadCards: async () => (await api('/cards')).filter((/** @type {any} */ c) => (c.type || 'credit') === 'credit'),
     openUploadForm: (cards) => openCardUploadForm(cards),
   });
@@ -46,8 +47,11 @@ function openCardUploadForm(cards) {
   const openPasswordWindow = async (/** @type {string} */ b64) => {
     // 挑句＋切頁作廢都走 bankUploadGate（r2#2：問 /mode 期間切頁＝不開密碼窗，補上這條非同步縫；
     // 挑句判準與保守方向沿用同一份，不另抄）。
+    const modalOk = watchModalRoot();   // r16：問 /mode 之前先看一眼共用彈窗格（唯讀，不可用 claim——那會搶走現在那個窗的擁有權）
     const g = await bankUploadGate({ fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout, timeoutMs: MODE_TIMEOUT_MS, navSeq: currentNavSeq });
-    if (g.stale || !onPage()) return;   // 等 /mode（或更早的 preview）時切了頁＝這一窗不屬於眼前畫面
+    // 等 /mode（或更早的 preview）時切了頁、或**別人接管了 #modal-root**（使用者關掉上傳窗、改開別的窗）
+    // ＝這一窗不屬於眼前畫面，開下去會蓋掉後開的窗並毀掉未存輸入（r16）
+    if (g.stale || !onPage() || !modalOk()) return;
     openForm({
       title: '這份帳單需要密碼',
       fields: [
