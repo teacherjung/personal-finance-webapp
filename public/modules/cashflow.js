@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
@@ -158,40 +158,38 @@ function subOptionsFor(flow, parent, cur = '') {
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
 // fileToBase64 已歸戶 file-util.js（系統優化 U1）
-async function openBankUpload() {
-  // 先問模式再決定密碼欄講哪一句（同 settings.js 匯出告知的先問再開窗；為什麼要分兩句＝
-  // bankPasswordLabel 的註解）。這段最長讓開窗晚 MODE_TIMEOUT_MS，換來的是那句話不講反方向。
-  // ⚠️ busy 在 await 之前就上鎖、finally 解鎖（設定頁匯出鈕同款；r1 阻擋①）：不鎖的話
-  // await 窗口內連點會開出兩條流程，晚回的那條重開視窗、把使用者已選的檔案洗掉。
-  const btn = byId('uploadBank');
-  if (btn?.dataset.busy === '1') return;
-  if (btn) btn.dataset.busy = '1';
-  try {
-    const gate = await bankUploadGate({
+function openBankUpload() {
+  // 為什麼開窗前要先問模式、為什麼有連點鎖與切頁作廢＝runBankUpload／bankUploadGate 的註解
+  // （cashflow-model.js）。這裡只把真的按鈕、真的把關、真的開窗接進那個編排本體——
+  // 時序與判準的考題都打得到 model 那一份，這裡的形狀由接線題掃。
+  return runBankUpload({
+    button: () => byId('uploadBank'),
+    gate: () => bankUploadGate({
       fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
       timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq,
-    });
-    if (gate.stale) return;   // 等待期間切了頁＝這一窗不屬於眼前的畫面，不開（r1 阻擋①）
-    let file = null;
-    openForm({
-      title: '上傳銀行對帳單',
-      fields: [
-        { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
-        { key: 'password', label: gate.label, type: 'password', full: true, placeholder: '通常是身分證字號' },
-      ],
-      onMount: (/** @type {any} */ root) => {
-        const inp = root.querySelector('#f_file');
-        if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
-      },
-      onSubmit: async (/** @type {any} */ data) => {
-        if (!file) throw new Error('請先選擇對帳單 PDF');
-        const b64 = await fileToBase64(file);
-        const pw = data.password || '';
-        const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
-        setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
-      }
-    });
-  } finally { if (btn) btn.dataset.busy = ''; }
+    }),
+    openUploadForm: (label) => {
+      let file = null;
+      openForm({
+        title: '上傳銀行對帳單',
+        fields: [
+          { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
+          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+        ],
+        onMount: (/** @type {any} */ root) => {
+          const inp = root.querySelector('#f_file');
+          if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
+        },
+        onSubmit: async (/** @type {any} */ data) => {
+          if (!file) throw new Error('請先選擇對帳單 PDF');
+          const b64 = await fileToBase64(file);
+          const pw = data.password || '';
+          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+        }
+      });
+    },
+  });
 }
 
 const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）' };

@@ -72,3 +72,30 @@ export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeS
   catch { /* 問不到／逾時＝保守：bankPasswordLabel(null) 回雲端那句 */ }
   return { label: bankPasswordLabel(mode), stale: routeSeq() !== seq };
 }
+
+/**
+ * 開上傳窗的**編排本體**（可注入、可執行——審查 r2 抓到：busy／stale 只靠字面掃描＝
+ * 「刪掉上鎖那行」「把作廢檢查搬到開窗後」都抓不到，所以連同時序一起收進純函式，
+ * 行為題直接執行；cashflow.js 只負責接真的按鈕、真的把關、真的開窗）。
+ *
+ * 順序是承重的，不可對調：
+ * 1. busy 在 await **之前**上鎖（審查 r1 抓到：不鎖的話 await 窗口內連點開出兩條流程，
+ *    晚回的那條重開視窗、把使用者已選的檔案洗掉）；已上鎖＝整段不做。
+ * 2. 把關（問模式）回來後**先看 stale 再開窗**——等待期間切了頁，這一窗不屬於眼前的
+ *    畫面，一個窗都不准開。
+ * 3. finally 解鎖——把關丟錯也要解，否則按鈕永久啞掉。
+ * @param {{ button: () => any, gate: () => Promise<{ label: string, stale: boolean }>,
+ *           openUploadForm: (label: string) => void }} deps
+ * @returns {Promise<'busy' | 'stale' | 'opened'>} 走到哪一步（考題斷言用；呼叫端不需要）
+ */
+export async function runBankUpload({ button, gate, openUploadForm }) {
+  const btn = button();
+  if (btn?.dataset?.busy === '1') return 'busy';
+  if (btn) btn.dataset.busy = '1';
+  try {
+    const g = await gate();
+    if (g.stale) return 'stale';
+    openUploadForm(g.label);
+    return 'opened';
+  } finally { if (btn) btn.dataset.busy = ''; }
+}
