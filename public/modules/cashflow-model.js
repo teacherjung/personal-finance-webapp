@@ -107,3 +107,28 @@ export async function runBankUpload({ busy, gate, openUploadForm }) {
     return 'opened';
   } finally { busy.set(false); }
 }
+
+/**
+ * 信用卡上傳的開窗編排（P0.5 r1#5）：與銀行同款「連點鎖＋切頁作廢＋finally 解鎖」——審查者不接受
+ * 「卡片線沒有 jsdom 題」當劃界，因為時序缺陷已可重現（載入 `/cards` 的 await 窗內連點＝兩條流程）。
+ * 卡片線開窗前沒有模式把關（密碼窗才 lazy 問模式），所以這裡只顧「載卡片名單」那段 await 的時序。
+ * 順序同 runBankUpload：①busy 在 await 前上鎖、被擋下不碰鎖 ②載完卡片先看 stale 再開窗
+ *（等待期間切頁＝一個窗都不開）③finally 解鎖。鎖是注入的讀寫對、不掛按鈕元素（同 #438 r3 教訓）。
+ * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
+ *           routeSeq: () => number,
+ *           loadCards: () => Promise<any[]>,
+ *           openUploadForm: (cards: any[]) => void }} deps
+ * @returns {Promise<'busy' | 'stale' | 'nocards' | 'opened'>}
+ */
+export async function runCardUpload({ busy, routeSeq, loadCards, openUploadForm }) {
+  if (busy.get()) return 'busy';
+  busy.set(true);
+  const seq = routeSeq();
+  try {
+    const cards = await loadCards();
+    if (routeSeq() !== seq) return 'stale';   // 載入卡片名單時切了頁＝這一窗不屬於眼前畫面
+    if (!cards.length) return 'nocards';       // 沒有信用卡＝呼叫端提示去新增（不開窗）
+    openUploadForm(cards);
+    return 'opened';
+  } finally { busy.set(false); }
+}

@@ -32,7 +32,9 @@
     "fxTwd": {
       "GBP": 40.8,
       "JPY": 0.215
-    }
+    },
+    "taishinSecPdfPassword": "",
+    "rememberedStatementPasswords": ""
   },
   "accounts": [
     {

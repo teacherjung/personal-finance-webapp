@@ -152,3 +152,62 @@ test('錯誤 code 通道｜sendRouteError 把 e.code 帶進回應（前端跳密
   sendRouteError(res, () => {}, Object.assign(new Error('別的 400'), { status: 400 }));
   assert.deepEqual(sent.b, { error: '別的 400' }, '沒 code 就不多欄（舊呼叫端形狀不變）');
 });
+
+// ---------- r1 修正的考題 ----------
+
+test('r1#1｜rethrowParseError 保留 pdf_password code（前端跳窗的機器判準；別的 code 不放行）', async () => {
+  const { rethrowParseError } = await import('../lib/services/statement-import.js');
+  assert.throws(() => rethrowParseError(Object.assign(new Error('密碼錯'), { status: 400, code: 'pdf_password' })),
+    (/** @type {any} */ e) => { assert.equal(e.status, 400); assert.equal(e.code, 'pdf_password'); return true; });
+  assert.throws(() => rethrowParseError(Object.assign(new Error('別的'), { status: 400, code: 'something_else' })),
+    (/** @type {any} */ e) => { assert.equal(e.code, undefined, '只放行白名單 code'); return true; });
+});
+
+test('r1#2｜讀取端 fail-safe 上限：raw 有 20 組/超長字串，pool 只吃 ≤8 組×≤100 字', () => {
+  const many = Array.from({ length: 20 }, (_, i) => `P${i}`.padEnd(10, '0'));
+  many.push('x'.repeat(200));   // 超長：要被濾掉
+  const db = { settings: { rememberedStatementPasswords: JSON.stringify(many) } };
+  const list = rememberedPasswords(db);
+  assert.equal(list.length, 8, '硬限 8 組（池大小＝每次上傳的解析次數）');
+  assert.ok(!list.some((/** @type {string} */ p) => p.length > 100), '超長被濾掉');
+});
+
+test('r1#2｜寫入端上限：pickRememberedStatementPasswords 把超大/壞值收斂（通用 PUT 進不了大池）', async () => {
+  const { pickRememberedStatementPasswords, sanitizeSettings } = await import('../lib/schema.js');
+  const huge = JSON.stringify(Array.from({ length: 5000 }, (_, i) => `p${i}`.padEnd(50, '0')));
+  const picked = pickRememberedStatementPasswords({ rememberedStatementPasswords: huge });
+  assert.equal(JSON.parse(picked.rememberedStatementPasswords).length, 8, '寫入端就砍到 8 組');
+  assert.deepEqual(pickRememberedStatementPasswords({ rememberedStatementPasswords: 'not-json' }), {}, '非 JSON＝不寫（缺席語意）');
+  // 通用 settings 匯入路徑（sanitizeSettings）也走同一道：塞巨量字串→存進去的是 ≤8 組
+  const s = sanitizeSettings({ rememberedStatementPasswords: huge, currency: 'TWD' });
+  assert.equal(JSON.parse(s.rememberedStatementPasswords).length, 8);
+  assert.equal(s.currency, 'TWD', '其餘設定照常');
+});
+
+test('r1#3｜previewForCard 的密碼排在池最前（沒勾記住時、選卡/改卡重解析沿用使用者輸入）', () => {
+  // previewForCard(cardId, b64, typedPw) 組池＝[typedPw, cardPw, '', 各卡, 記住的]；typedPw 第一發
+  const db = { cards: [{ type: 'credit', pdfPassword: 'CARD00000' }], settings: {} };
+  assert.deepEqual(statementPasswordPool(db, ['TYPED9999', 'CARD00000']),
+    ['TYPED9999', 'CARD00000', '', 'CARD00000'].filter((v, i, a) => a.indexOf(v) === i),
+    'typedPw 最優先、與卡密去重');
+  assert.equal(statementPasswordPool(db, ['TYPED9999', 'CARD00000'])[0], 'TYPED9999');
+});
+
+test('r1#4｜parseWithPool：帶非密碼 code 但訊息含「密碼」字樣＝當場停，不撞完整池', async () => {
+  /** @type {string[]} */ const tried = [];
+  const parse = async (/** @type {Uint8Array} */ _b, /** @type {string} */ pw) => {
+    tried.push(pw);
+    throw Object.assign(new Error('子行程內部錯誤：密碼解析失敗'), { status: 500, code: 'pdf_child_internal' });
+  };
+  await assert.rejects(parseWithPool(parse, new Uint8Array([1]), ['', 'A', 'B']),
+    (/** @type {any} */ e) => e.code === 'pdf_child_internal');
+  assert.deepEqual(tried, [''], 'code 優先＝非密碼 code 就停，不因訊息含「密碼」續撞');
+});
+
+test('r1#L6｜櫃檯（sanitizeDbForWrite）保留記住的密碼池、且套上限（LOCAL 備份可還原）', async () => {
+  const { sanitizeDbForWrite } = await import('../lib/schema.js');
+  const out = sanitizeDbForWrite({ settings: { rememberedStatementPasswords: JSON.stringify(['KEEP12345']) } });
+  assert.deepEqual(JSON.parse(out.settings.rememberedStatementPasswords), ['KEEP12345'], '櫃檯不剝這欄＝LOCAL 存/還原保留');
+  const big = sanitizeDbForWrite({ settings: { rememberedStatementPasswords: JSON.stringify(Array(50).fill('p123456789')) } });
+  assert.equal(JSON.parse(big.settings.rememberedStatementPasswords).length, 8, '櫃檯寫入也套上限');
+});

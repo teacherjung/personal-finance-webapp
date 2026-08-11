@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload,
+  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -197,4 +197,54 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
     '舊文案逐字回歸＝雲端版把「不會上傳」講給正在上傳的人聽');
   assert.doesNotMatch(src, /對帳單密碼（/,
     'cashflow.js 裡不准再出現手寫的密碼欄告知句——兩句與挑句判準只住 cashflow-model.js 一處');
+});
+
+test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序號／真開窗接進 runCardUpload（P0.5 r1#5）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/transactions-import.js'), 'utf8'));
+  assert.match(src, /runCardUpload\(\{/, '卡片開窗要走共用編排（時序防線在 cashflow-model.js，行為題直測）');
+  assert.match(src, /^let cardUploadBusy = false;/m, '卡片連點鎖要住模組層級（重繪換鈕不蒸發）');
+  assert.match(src, /busy:\s*\{ get:\s*\(\)\s*=>\s*cardUploadBusy, set:\s*\(v\)\s*=>\s*\{ cardUploadBusy = v; \} \}/,
+    '編排的鎖要接那顆模組層級變數（接成恆 false＝鎖形同虛設）');
+  assert.match(src, /routeSeq:\s*currentRouteSeq/, '作廢判準要接真的路由序號');
+});
+
+// ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------
+
+test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片時切頁作廢不開窗、finally 解鎖——執行驗不靠字面', async () => {
+  const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };
+
+  // ① 正常：opened、開一次、事後鎖已解
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, routeSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.equal(r, 'opened'); assert.equal(opened, 1); assert.equal(busy.value(), false, 'finally 要解鎖');
+  }
+  // ② 連點：第一條還在載卡片時，第二下立刻被 busy 擋、且不碰鎖、不開窗
+  {
+    const busy = mkBusy(); let opened = 0;
+    let release; const gate = new Promise((res) => { release = res; });
+    const first = runCardUpload({ busy, routeSeq: () => 1, loadCards: () => gate.then(() => [{ id: 'c1' }]), openUploadForm: () => { opened++; } });
+    const second = await runCardUpload({ busy, routeSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.equal(second, 'busy', '第二下被鎖擋'); release();
+    assert.equal(await first, 'opened'); assert.equal(opened, 1, '只開一窗');
+    assert.equal(busy.value(), false);
+  }
+  // ③ 載卡片期間切頁（routeSeq 變）＝stale、不開窗
+  {
+    const busy = mkBusy(); let opened = 0; let seq = 1;
+    const r = await runCardUpload({ busy, routeSeq: () => seq, loadCards: async () => { seq = 2; return [{ id: 'c1' }]; }, openUploadForm: () => { opened++; } });
+    assert.equal(r, 'stale'); assert.equal(opened, 0, '切頁後一個窗都不准開'); assert.equal(busy.value(), false);
+  }
+  // ④ 沒有信用卡＝nocards（呼叫端提示去新增）、不開窗、鎖已解
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, routeSeq: () => 1, loadCards: async () => [], openUploadForm: () => { opened++; } });
+    assert.equal(r, 'nocards'); assert.equal(opened, 0); assert.equal(busy.value(), false);
+  }
+  // ⑤ 載卡片丟錯也要解鎖（否則上傳鈕永久啞掉）
+  {
+    const busy = mkBusy();
+    await assert.rejects(runCardUpload({ busy, routeSeq: () => 1, loadCards: async () => { throw new Error('網路炸'); }, openUploadForm: () => {} }));
+    assert.equal(busy.value(), false, 'finally 在丟錯時也要解鎖');
+  }
 });
