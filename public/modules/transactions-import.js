@@ -13,6 +13,9 @@ import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
+// 密碼窗文案借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子）
+import { bankPasswordLabel, REMEMBER_PW_LABEL } from './cashflow-model.js';
+import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 // ---- 信用卡帳單匯入（上傳 PDF → 後端解密解析分類 → 預覽確認 → 寫入記帳）----
 // fileToBase64 已歸戶 file-util.js（系統優化 U1）
@@ -20,6 +23,28 @@ export async function openStatementUpload() {
   const cards = (await api('/cards')).filter(c => (c.type || 'credit') === 'credit');
   if (!cards.length) return toast('請先到「卡片追蹤」新增一張信用卡', true);
   let file = null;
+  // 第二窗（P0.5）：已存密碼池（各卡＋記住的）全敗＝後端回 code:'pdf_password' 才開。
+  // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
+  const openPasswordWindow = async (/** @type {string} */ b64) => {
+    let label = bankPasswordLabel(null);
+    try { label = bankPasswordLabel(await defaultWithTimeout(api('/mode'), MODE_TIMEOUT_MS)); } catch { /* 保守句照用 */ }
+    openForm({
+      title: '這份帳單需要密碼',
+      fields: [
+        { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+        { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
+      ],
+      onSubmit: async (/** @type {any} */ data) => {
+        const pw = data.password || '';
+        const r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+        if (data.remember && pw) {
+          try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
+          catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
+        }
+        setTimeout(() => handlePreviewResult(r, b64, cards), 0);
+      },
+    });
+  };
   openForm({
     title: '上傳信用卡帳單',
     fields: [
@@ -32,9 +57,14 @@ export async function openStatementUpload() {
     onSubmit: async () => {
       if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
       const b64 = await fileToBase64(file);
-      const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
-      // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫
-      setTimeout(() => handlePreviewResult(r, b64, cards), 0);
+      try {
+        const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
+        // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫
+        setTimeout(() => handlePreviewResult(r, b64, cards), 0);
+      } catch (e) {
+        if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
+        setTimeout(() => openPasswordWindow(b64), 0);   // 池全敗＝跳密碼窗（等 modal-root 清空）
+      }
     }
   });
 }

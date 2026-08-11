@@ -159,10 +159,15 @@ test('文案｜雲端那句要坦白「會上傳」，而且不可殘留本機�
   assert.match(BANK_PW_NOTICE_HOSTED, /伺服器/, '雲端那句必須講去了伺服器');
   assert.doesNotMatch(BANK_PW_NOTICE_HOSTED, /只在這台電腦|不會上傳|不會傳上網路/, '雲端那句殘留任何本機宣稱＝舊病復發');
   assert.match(BANK_PW_NOTICE_LOCAL, /這台電腦/, '本機那句才可以講這台電腦');
-  // 「不會儲存」兩句都講＝照收支契約寫明的伺服器端規矩下的文案（後端本身不歸本檔驗，劃界見檔頭）。
-  // 這兩條同時是絆線：#437 計畫 P0.5 若開放儲存銀行密碼，文案必須跟那支 PR 一起改、這裡會先紅。
-  assert.match(BANK_PW_NOTICE_LOCAL, /不會儲存/);
-  assert.match(BANK_PW_NOTICE_HOSTED, /不會儲存/);
+  // P0.5 兌現 #438 埋的絆線（2026-08-11 使用者拍板銀行密碼改「可選儲存」）：舊承諾「不會儲存」
+  // 從此是假話——句子改講「勾『記住』才會儲存」。鎖語意骨架：①兩句都要把儲存跟「記住」的
+  // 勾選綁在一起（不勾＝不存）②無條件的「不會儲存」不得復活（那會反過來騙選了記住的人）
+  // ③HOSTED 的儲存要講「加密」（機密待遇比照卡密＝拍板內容）。
+  assert.match(BANK_PW_NOTICE_LOCAL, /記住/, '本機句要把儲存綁在「記住」勾選上');
+  assert.match(BANK_PW_NOTICE_HOSTED, /記住/, '雲端句要把儲存綁在「記住」勾選上');
+  assert.doesNotMatch(BANK_PW_NOTICE_LOCAL, /不會儲存/, '無條件「不會儲存」＝對勾了記住的人說謊');
+  assert.doesNotMatch(BANK_PW_NOTICE_HOSTED, /不會儲存/);
+  assert.match(BANK_PW_NOTICE_HOSTED, /加密/, '雲端儲存必須講加密（機密待遇＝拍板內容）');
   assert.notEqual(BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, '兩句相同＝分流白做');
 });
 

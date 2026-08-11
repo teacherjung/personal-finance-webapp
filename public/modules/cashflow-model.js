@@ -35,11 +35,13 @@ export function cashflowPeriodLabel(month) {
 // POST 給 app 伺服器（cashflow.js openBankUpload）。LOCAL 那台伺服器就是使用者這台電腦，
 // 「只在這台電腦」成立；HOSTED 卻是營運方的遠端伺服器——舊文案「不會上傳」在那裡是
 // **反方向誤導**（與 backup-export.js 的匯出告知同族病：講錯方向比不講更糟）。
-// 伺服器端對密碼的規矩（記憶體內解、不落檔）＝收支契約「帳戶完整帳號與餘額匯入」節；
-// 「要不要開放儲存銀行密碼」的裁決落點＝#437 計畫的 P0.5——那支若把它改成可選儲存，
-// 這兩句的「不會儲存」要跟著同一支 PR 改（test/cashflow-bank-upload.test.js 的絆線會逼著改）。
-export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；只用於這次預覽與匯入，不會儲存）';
-export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；只用於這次預覽與匯入，不會儲存）';
+// 伺服器端對密碼的規矩（記憶體內解、不落檔）＝收支契約「帳戶完整帳號與餘額匯入」節。
+// P0.5（使用者 2026-08-11 拍板）＝銀行密碼改「可選儲存」：#438 埋的「不會儲存」絆線在此兌現——
+// 句子改講真話：勾「記住」才儲存（LOCAL 存這台電腦／HOSTED 加密存雲端）、不勾＝只用這一次。
+export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；勾選「記住」才會儲存在這台電腦，下次自動嘗試）';
+export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；勾選「記住」會加密儲存在雲端，下次自動嘗試）';
+/** 「記住這組密碼」勾選的標籤（**預設不勾**＝使用者拍板；密碼窗文案單一住所＝本檔）。 */
+export const REMEMBER_PW_LABEL = '記住這組密碼（下次匯入自動嘗試；可到設定頁清除）';
 
 /**
  * 依 `GET /api/mode` 的回應挑句子。

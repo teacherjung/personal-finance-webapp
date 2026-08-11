@@ -33,9 +33,10 @@ export async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
   if (!res.ok) {
-    let msg = res.statusText;
-    try { msg = (await res.json()).error || msg; } catch {}
-    throw new Error(msg);
+    let msg = res.statusText, code;
+    try { const b = await res.json(); msg = b.error || msg; code = b.code; } catch {}
+    // code＝後端的機器判準（P0.5 起，如 'pdf_password'）：呼叫端據它決定行為，不 regex 訊息字面
+    throw Object.assign(new Error(msg), code ? { code: String(code) } : {});
   }
   return res.status === 204 ? null : res.json();
 }

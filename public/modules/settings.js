@@ -217,6 +217,13 @@ export async function renderSettings() {
       <div class="form-actions"><button class="btn" id="saveTaishinSecPw">儲存</button></div>
     </div>
 
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">記住的帳單密碼</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">上傳銀行對帳單或信用卡帳單、系統打不開請你輸入密碼時，勾「記住這組密碼」就會存進來；之後匯入會自動逐一嘗試。這裡看得到「記了幾組」、也可以整批清除（清除後改回每次輸入）。</p>
+      <p style="font-size:13px;margin-bottom:12px">目前記住 <b>${Number(s.rememberedStatementPasswordsCount) || 0}</b> 組。</p>
+      ${(Number(s.rememberedStatementPasswordsCount) || 0) ? '<div class="form-actions"><button class="btn-danger" id="clearStmtPws">全部清除</button></div>' : ''}
+    </div>
+
     <h2 class="section-title">訂閱追蹤</h2>
     <div class="card" style="margin-bottom:18px">
       <p class="muted" style="font-size:12px">續費日／停用日前 7 天內會在總覽提醒（固定值）。目前沒有其他可調整的設定——想把提醒天數開放成可調整，跟我說一聲。</p>
@@ -293,6 +300,13 @@ export async function renderSettings() {
     else return toast('沒有變更：輸入新密碼，或勾選清除。', true);
     saveSettings(body, body.taishinSecPdfPassword === '' ? '已清除證券對帳單密碼' : '證券對帳單密碼已儲存');
   };
+  { // 記住的帳單密碼：只有「全部清除」一個動作（新增走匯入時的「記住」勾選；內容絕不回瀏覽器、只有數量）
+    const btn = byId('clearStmtPws');
+    if (btn) btn.onclick = async () => {
+      try { await api('/statement/password/clear', { method: 'POST', body: {} }); toast('已清除記住的帳單密碼'); renderSettings(); }
+      catch (err) { toast('清除失敗：' + /** @type {any} */ (err).message, true); }
+    };
+  }
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories'), CAT_CFG.expense); }
     catch (err) { toast('讀取分類失敗：' + err.message, true); }

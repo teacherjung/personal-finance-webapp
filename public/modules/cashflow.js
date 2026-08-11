@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
@@ -175,22 +175,45 @@ function openBankUpload() {
     }),
     openUploadForm: (label) => {
       let file = null;
+      // 第二窗（P0.5）：已存密碼池全敗（後端回 code:'pdf_password'）才開——密碼欄＋「記住」勾選
+      //（預設不勾＝使用者拍板）。label＝把關挑出的模式分流告知句（單一住所 cashflow-model.js）。
+      const openPasswordWindow = (/** @type {string} */ b64) => openForm({
+        title: '這份對帳單需要密碼',
+        fields: [
+          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+          { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
+        ],
+        onSubmit: async (/** @type {any} */ data) => {
+          const pw = data.password || '';
+          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+          // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
+          if (data.remember && pw) {
+            try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
+            catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
+          }
+          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+        },
+      });
       openForm({
         title: '上傳銀行對帳單',
         fields: [
           { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
-          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
         ],
         onMount: (/** @type {any} */ root) => {
           const inp = root.querySelector('#f_file');
           if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
         },
-        onSubmit: async (/** @type {any} */ data) => {
+        onSubmit: async () => {
           if (!file) throw new Error('請先選擇對帳單 PDF');
           const b64 = await fileToBase64(file);
-          const pw = data.password || '';
-          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
-          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+          try {
+            // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
+            const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64 } });
+            setTimeout(() => showBankPreview(r, b64, ''), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+          } catch (e) {
+            if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
+            setTimeout(() => openPasswordWindow(b64), 0);   // 池全敗＝跳密碼窗（等 modal-root 清空）
+          }
         }
       });
     },

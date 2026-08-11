@@ -514,6 +514,7 @@ const MANIFEST = {
       '帳戶完整帳號與餘額匯入',
       '帳單原文取法 origFromStmtRef',
       '匯入對帳閘',
+      '匯入密碼池',
     ],
     exempt: [],
     files: [
@@ -523,6 +524,8 @@ const MANIFEST = {
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
       'public/modules/reconcile-summary.js', 'test/reconcile-summary.test.js',
+      // P0.5 匯入密碼池：LOCAL 考題＋錯誤 code 通道＋密碼窗文案住所（與雲端領域多重命中）
+      'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
@@ -1097,7 +1100,7 @@ function stripComments(src) {
 const UNDECLARED_IMPORTED = [
   'lib/is-main.js',                          // ← server.js（「被直接執行還是被 import」判斷）
   'lib/routes/ib.js',                        // ← server.js（IB 端點掛載；投資契約點名的是 services/ib-sync.js）
-  'lib/routes/route-helpers.js',             // ← 四支 routes（共用的回應／驗證輔助）
+  // lib/routes/route-helpers.js＝P0.5 轉正（錯誤 code 通道入收支契約「匯入密碼池」節）——欠帳清單只出不進
   'lib/routes/stock-fundamentals.js',        // ← server.js（SEC 端點掛載）
   'lib/safe-map.js',                         // ← 七個後端檔（原型污染安全的 Map 包裝＝安全承重件）
   'public/modules/dashboard-forest.js',      // ← dashboard.js
