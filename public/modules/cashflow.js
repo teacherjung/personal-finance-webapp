@@ -11,8 +11,10 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
+// 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
+import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 /** @type {Record<string, string[]>} */ let expTree = {};    // 支出樹（沿用信用卡的）
 /** @type {Record<string, string[]>} */ let incTree = {};    // 收入樹（獨立）
@@ -156,25 +158,41 @@ function subOptionsFor(flow, parent, cur = '') {
 
 // ---- 上傳銀行對帳單（三層重構 stage 2：概要區→更新/建立帳戶餘額）----
 // fileToBase64 已歸戶 file-util.js（系統優化 U1）
-async function openBankUpload() {
-  let file = null;
-  openForm({
-    title: '上傳銀行對帳單',
-    fields: [
-      { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
-      { key: 'password', label: '對帳單密碼（只在這台電腦解密、不會上傳、不會儲存）', type: 'password', full: true, placeholder: '通常是身分證字號' },
-    ],
-    onMount: (/** @type {any} */ root) => {
-      const inp = root.querySelector('#f_file');
-      if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
+// 上傳窗的連點鎖＝模組層級（不掛在按鈕元素上：月份／金流篩選會同路由重繪整頁、
+// 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
+let bankUploadBusy = false;
+
+function openBankUpload() {
+  // 為什麼開窗前要先問模式、為什麼有連點鎖與切頁作廢＝runBankUpload／bankUploadGate 的註解
+  // （cashflow-model.js）。這裡只把真的鎖、真的把關、真的開窗接進那個編排函式——
+  // 開窗前時序的考題都打得到 model 那一份，這裡的形狀由接線題掃；表單內容仍歸本檔。
+  return runBankUpload({
+    busy: { get: () => bankUploadBusy, set: (v) => { bankUploadBusy = v; } },
+    gate: () => bankUploadGate({
+      fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
+      timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq,
+    }),
+    openUploadForm: (label) => {
+      let file = null;
+      openForm({
+        title: '上傳銀行對帳單',
+        fields: [
+          { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
+          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+        ],
+        onMount: (/** @type {any} */ root) => {
+          const inp = root.querySelector('#f_file');
+          if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
+        },
+        onSubmit: async (/** @type {any} */ data) => {
+          if (!file) throw new Error('請先選擇對帳單 PDF');
+          const b64 = await fileToBase64(file);
+          const pw = data.password || '';
+          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+        }
+      });
     },
-    onSubmit: async (/** @type {any} */ data) => {
-      if (!file) throw new Error('請先選擇對帳單 PDF');
-      const b64 = await fileToBase64(file);
-      const pw = data.password || '';
-      const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
-      setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
-    }
   });
 }
 
