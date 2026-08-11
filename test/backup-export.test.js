@@ -672,6 +672,11 @@ test('⭐ 匯出前告知｜兩句逐字釘住＋**問不到模式時往「含�
   assert.equal(exportNotice({ hosted: 'true' }), EXPORT_NOTICE_LOCAL, '字串 "true" 不算 true（型別鬆掉就會講反）');
   assert.equal(exportNotice({ hosted: false }), EXPORT_NOTICE_LOCAL, 'LOCAL 明確回 false ⇒ 含機密那句');
   assert.equal(exportNotice({ hosted: true }), EXPORT_NOTICE_HOSTED, '只有明確 true 才講「不含」');
+  // hosted:true 掛在原型鏈上（Object.create）不可以放行「不含機密」句——鐵則 3.5 查表一律自有屬性
+  //（#438 r1 抓到的 main 既有同型問題：讀原型鏈的寫法會被這種輸入騙出「不含」句，
+  //  而那正是匯出告知不安全的方向——使用者以為檔案不敏感而轉寄；同型修法＝bankPasswordLabel）。
+  assert.equal(exportNotice(Object.create({ hosted: true })), EXPORT_NOTICE_LOCAL,
+    '繼承來的 hosted:true 不算數（Object.hasOwn）：原型鏈上的值不可以放行「不含機密」句');
   // ⚠️ **先去註解**（r5 阻擋②）：把接線改成註解就等於沒接，掃原始字面會給假綠。
   const src = stripJsComments(readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8'));
   // 接線三件事：用共用文案（不自己抄一句）、先問再匯出、取消就什麼都不做

@@ -264,9 +264,14 @@ export const EXPORT_NOTICE_LOCAL = '匯出檔案含 IB 憑證與帳單密碼，�
 /**
  * 依模式挑那一句。⚠️ **問不到模式時一律回「含機密」那一句**（往安全的方向錯）：
  * 猜錯的方向若是「以為不含」，代價是機密外洩；反過來只是多一句提醒。
+ * `Object.hasOwn`＝鐵則 3.5（查表一律自有屬性）：`Object.create({hosted:true})` 這種
+ * 掛在原型鏈上的值不可以放行「不含機密」句——那正是會害檔案被當成不敏感而轉寄的方向
+ * （#438 r1 抓到的 main 既有同型問題；同型修法＝cashflow-model.js 的 `bankPasswordLabel`，
+ * 兩個挑句函式的嚴格判斷方向相反、守的是同一條「只有伺服器明確回答才講放心句」）。
  * @param {{hosted?: unknown} | null | undefined} mode `GET /api/mode` 的回應（拿不到就傳 null）
  */
-export const exportNotice = (mode) => (mode && mode.hosted === true ? EXPORT_NOTICE_HOSTED : EXPORT_NOTICE_LOCAL);
+export const exportNotice = (mode) =>
+  (mode && Object.hasOwn(mode, 'hosted') && mode.hosted === true ? EXPORT_NOTICE_HOSTED : EXPORT_NOTICE_LOCAL);
 /** ⏳ 文案：按下確認之後、還沒拿到資料時的即時回饋（#417 r3 阻擋：卡住時畫面一句話都沒有）。 */
 export const BUSY_MSG = '匯出中…';
 /** 等多久算「伺服器不回話」（毫秒）。⚠️ 這個數字是**上限不是預期**：正常匯出零點幾秒就回來。 */

@@ -24,7 +24,7 @@
 
 ⚠️ **第二個消費者（2026-08-11）＝銀行對帳單上傳的密碼欄**：`public/modules/cashflow.js` 的 `openBankUpload` 開窗前先問模式（同設定頁匯出鈕的「先問再開窗」），兩句文案與挑句判準只住 `public/modules/cashflow-model.js`（`bankPasswordLabel`）。起因＝#437 r2 審查者抓到 main 既有的反方向誤導：舊文案寫「只在這台電腦解密、不會上傳」，但預覽／套用都是把 PDF 與密碼 POST 給 app 伺服器——HOSTED 下那是營運方的遠端伺服器。授權邊界不變：仍只讀那一個布林，不因多一個消費者而擴張端點。
 
-**記得同步這裡**：`public/modules/backup-export.js`（兩句文案與 `exportNotice` 的保守預設；`MODE_TIMEOUT_MS`／`defaultWithTimeout` 也住這裡）、`public/modules/settings.js`（問模式、上限、三條退出路）、`public/modules/cashflow.js`（銀行上傳密碼欄：先問模式再開窗）、`public/modules/cashflow-model.js`（密碼欄兩句文案與 `bankPasswordLabel` 的保守預設——方向與 `exportNotice` 相反）、`lib/routes/core.js`（端點本體）、`test/backup-export.test.js`（保守預設六種輸入＋接線題，**先去註解再掃**）、`test/cashflow-bank-upload.test.js`（密碼欄挑句判準＋文案誠實骨架＋接線題，同樣先去註解再掃）、`test/server.test.js` 與 HOSTED 那組（HTTP 級：LOCAL 200／HOSTED 未登入 401／HOSTED 已登入 200、回應只有 `hosted`）。
+**記得同步這裡**：`public/modules/backup-export.js`（兩句文案與 `exportNotice` 的保守預設；`MODE_TIMEOUT_MS`／`defaultWithTimeout` 也住這裡）、`public/modules/settings.js`（問模式、上限、三條退出路）、`public/modules/cashflow.js`（銀行上傳密碼欄：先問模式再開窗）、`public/modules/cashflow-model.js`（密碼欄兩句文案與 `bankPasswordLabel` 的保守預設——方向與 `exportNotice` 相反）、`lib/routes/core.js`（端點本體）、`test/backup-export.test.js`（保守預設七種輸入（第七種＝原型鏈 `Object.create`，鐵則 3.5）＋接線題，**先去註解再掃**）、`test/cashflow-bank-upload.test.js`（密碼欄挑句判準＋文案誠實骨架＋接線題，同樣先去註解再掃）、`test/server.test.js` 與 HOSTED 那組（HTTP 級：LOCAL 200／HOSTED 未登入 401／HOSTED 已登入 200、回應只有 `hosted`）。
 
 ## 雙模式與帳號系統
 
