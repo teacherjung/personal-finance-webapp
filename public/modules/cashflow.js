@@ -4,14 +4,14 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
@@ -169,28 +169,64 @@ function openBankUpload() {
   // 開窗前時序的考題都打得到 model 那一份，這裡的形狀由接線題掃；表單內容仍歸本檔。
   return runBankUpload({
     busy: { get: () => bankUploadBusy, set: (v) => { bankUploadBusy = v; } },
+    watchModal: watchModalRoot,   // r16：問 /mode 期間使用者關掉這窗、改開別的窗＝晚回來的上傳窗不可蓋掉它
     gate: () => bankUploadGate({
       fetchMode: () => api('/mode'), withTimeout: defaultWithTimeout,
-      timeoutMs: MODE_TIMEOUT_MS, routeSeq: currentRouteSeq,
+      timeoutMs: MODE_TIMEOUT_MS, navSeq: currentNavSeq,
     }),
     openUploadForm: (label) => {
       let file = null;
+      // ⚠️ preview／remember 都有 await，回來時使用者可能已換頁（r3#2/r4：把關只顧了「問 /mode」那段）。
+      //   存下開窗當下的**換頁**序號，**每個後續窗（預覽窗／密碼窗）都經 openWhenOnPage 排程**——排程當下與
+      //   callback 執行當下都核對序號，序號變了＝這些窗不屬於眼前畫面，一個都不開。
+      // ⚠️⚠️ 這裡必須是 currentNavSeq（換頁）**不是** currentRouteSeq（重繪）——r9 抓到的真實 bug：
+      //   開機的報價更新／自動快照／帳戶對齊會在**同一頁**呼叫 router()，routeSeq 就前進了。
+      //   接成 routeSeq 時 onPage() 變 false，密碼窗**靜靜不開**：使用者上傳完加密帳單，畫面什麼都沒發生。
+      const seq0 = currentNavSeq();
+      const onPage = () => seq0 === currentNavSeq();
+      // 第二窗（P0.5）：已存密碼池全敗（後端回 code:'pdf_password'）才開——密碼欄＋「記住」勾選
+      //（預設不勾＝使用者拍板）。label＝把關挑出的模式分流告知句（單一住所 cashflow-model.js）。
+      const openPasswordWindow = (/** @type {string} */ b64) => openForm({
+        title: '這份對帳單需要密碼',
+        fields: [
+          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
+          { key: 'remember', label: REMEMBER_PW_LABEL, type: 'checkbox', full: true },
+        ],
+        onSubmit: async (/** @type {any} */ data, /** @type {any} */ ctx) => {
+          // r18/r21：排下一窗的判準＝還在同一頁**且**（還沒關窗／或這次是送出成功的交棒）——
+          //   使用者按取消也是「自己關的」，但那是撤銷、不放行。
+          const canOpenNext = () => onPage() && ctx.owns.handoff();
+          const pw = data.password || '';
+          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+          // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
+          if (data.remember && pw) {
+            try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
+            catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
+          }
+          openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));   // 待 openForm 清空 modal-root 後再開；切頁／被接管都作廢
+        },
+      });
       openForm({
         title: '上傳銀行對帳單',
         fields: [
           { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
-          { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
         ],
         onMount: (/** @type {any} */ root) => {
           const inp = root.querySelector('#f_file');
           if (inp) { inp.accept = '.pdf,application/pdf'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
         },
-        onSubmit: async (/** @type {any} */ data) => {
+        onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           if (!file) throw new Error('請先選擇對帳單 PDF');
+          const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
           const b64 = await fileToBase64(file);
-          const pw = data.password || '';
-          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
-          setTimeout(() => showBankPreview(r, b64, pw), 0);   // 待 openForm 清空 modal-root 後再開預覽窗
+          try {
+            // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
+            const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64 } });
+            openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
+          } catch (e) {
+            if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
+            openWhenOnPage(canOpenNext, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
+          }
         }
       });
     },
@@ -199,7 +235,7 @@ function openBankUpload() {
 
 const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）' };
 /** @param {any} r 預覽結果 @param {string} b64 @param {string} pw */
-function showBankPreview(r, b64, pw) {
+function showBankPreview(r, b64, pw, onPage = () => true) {
   const rows = r.rows || [];
   const willUpdate = rows.filter((/** @type {any} */ x) => x.action === 'update').length;
   const willCreate = rows.filter((/** @type {any} */ x) => x.action === 'create').length;
@@ -239,11 +275,12 @@ function showBankPreview(r, b64, pw) {
     if (btn) btn.onclick = async () => {
       try {
         const res = await api('/bank-statement/apply', { method: 'POST', body: { data: b64, password: pw } });
+        if (!onPage()) return;   // r5#1：套用（含寫入）完成後切頁＝不清 modal、不重繪舊頁、不報舊 toast（資料已存，下次進頁自見）
         const t = res.transactions || {};
         toast(`帳戶：更新 ${res.updated}、新建 ${res.created}${res.skipped ? `、跳過 ${res.skipped}` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}；交易：匯入 ${t.imported || 0}${t.skipped ? `、去重 ${t.skipped}` : ''}`);
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
-      } catch (e) { toast(/** @type {any} */ (e).message || '更新失敗', true); }
+      } catch (e) { if (!onPage()) return; toast(/** @type {any} */ (e).message || '更新失敗', true); }   // r5#2：切頁後不報過期錯誤
     };
   }, 0);
 }

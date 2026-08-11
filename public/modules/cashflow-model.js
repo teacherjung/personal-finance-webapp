@@ -35,11 +35,13 @@ export function cashflowPeriodLabel(month) {
 // POST 給 app 伺服器（cashflow.js openBankUpload）。LOCAL 那台伺服器就是使用者這台電腦，
 // 「只在這台電腦」成立；HOSTED 卻是營運方的遠端伺服器——舊文案「不會上傳」在那裡是
 // **反方向誤導**（與 backup-export.js 的匯出告知同族病：講錯方向比不講更糟）。
-// 伺服器端對密碼的規矩（記憶體內解、不落檔）＝收支契約「帳戶完整帳號與餘額匯入」節；
-// 「要不要開放儲存銀行密碼」的裁決落點＝#437 計畫的 P0.5——那支若把它改成可選儲存，
-// 這兩句的「不會儲存」要跟著同一支 PR 改（test/cashflow-bank-upload.test.js 的絆線會逼著改）。
-export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；只用於這次預覽與匯入，不會儲存）';
-export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；只用於這次預覽與匯入，不會儲存）';
+// 伺服器端對密碼的規矩：解析當下只在記憶體使用；**預設用完即丟，只有使用者勾「記住」才持久化**
+//（P0.5，使用者 2026-08-11 拍板；完整規矩見收支契約「匯入密碼池」節）。#438 埋的「不會儲存」絆線在此兌現——
+// 句子改講真話：勾「記住」才儲存（LOCAL 存這台電腦／HOSTED 加密存雲端）、不勾＝只用這一次。
+export const BANK_PW_NOTICE_LOCAL = '對帳單密碼（只在這台電腦解密，不會傳上網路；勾選「記住」才會儲存在這台電腦，下次自動嘗試）';
+export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳到雲端伺服器解密；勾選「記住」會加密儲存在雲端，下次自動嘗試）';
+/** 「記住這組密碼」勾選的標籤（**預設不勾**＝使用者拍板；密碼窗文案單一住所＝本檔）。 */
+export const REMEMBER_PW_LABEL = '記住這組密碼（下次匯入自動嘗試；可到設定頁清除）';
 
 /**
  * 依 `GET /api/mode` 的回應挑句子。
@@ -64,15 +66,15 @@ export const bankPasswordLabel = (mode) =>
  * 上傳流程歸 cashflow.js，這裡都不管。
  * @param {{ fetchMode: () => Promise<any>,
  *           withTimeout: (work: Promise<any>, ms: number) => Promise<any>,
- *           timeoutMs: number, routeSeq: () => number }} deps
+ *           timeoutMs: number, navSeq: () => number }} deps
  * @returns {Promise<{ label: string, stale: boolean }>}
  */
-export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeSeq }) {
-  const seq = routeSeq();
+export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, navSeq }) {
+  const seq = navSeq();
   let mode = null;
   try { mode = await withTimeout(fetchMode(), timeoutMs); }
   catch { /* 問不到／逾時＝保守：bankPasswordLabel(null) 回雲端那句 */ }
-  return { label: bankPasswordLabel(mode), stale: routeSeq() !== seq };
+  return { label: bankPasswordLabel(mode), stale: navSeq() !== seq };
 }
 
 /**
@@ -92,16 +94,59 @@ export async function bankUploadGate({ fetchMode, withTimeout, timeoutMs, routeS
  * 3. finally 解鎖——把關丟錯也要解，否則按鈕永久啞掉。
  * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
  *           gate: () => Promise<{ label: string, stale: boolean }>,
- *           openUploadForm: (label: string) => void }} deps
+ *           openUploadForm: (label: string) => void,
+ *           watchModal?: () => () => boolean }} deps
  * @returns {Promise<'busy' | 'stale' | 'opened'>} 走到哪一步（考題斷言用；呼叫端不需要）
  */
-export async function runBankUpload({ busy, gate, openUploadForm }) {
+export async function runBankUpload({ busy, gate, openUploadForm, watchModal }) {
   if (busy.get()) return 'busy';
   busy.set(true);
+  const modalOk = watchModal ? watchModal() : () => true;   // 問 /mode 之前先看一眼共用彈窗格（唯讀）
   try {
     const g = await gate();
-    if (g.stale) return 'stale';
+    // 等待期間別人接管了 #modal-root（使用者關掉這個窗、改開別的窗）＝這一窗不可以蓋上去（r16）
+    if (g.stale || !modalOk()) return 'stale';
     openUploadForm(g.label);
+    return 'opened';
+  } finally { busy.set(false); }
+}
+
+/**
+ * 「等 modal-root 清空後開下一窗」的**切頁作廢版排程**（P0.5 r4：把散寫的 `if (!onPage())` 收成
+ * 一個可注入、可測的 helper——散寫的守門①蓋不全每條路②形狀考題證明不了每條路都守）。
+ * **兩處都核對路由序號**：排程當下（切頁後不排）＋ callback 執行當下（排完到執行前切頁也不開）。
+ * `onPage()` 回 true＝還在同一頁；`schedule` 預設 setTimeout(…,0)（等 openForm 清空 modal-root），測試可注入。
+ * @param {() => boolean} onPage @param {() => void} open @param {(fn: () => void) => void} [schedule]
+ */
+export function openWhenOnPage(onPage, open, schedule = (fn) => setTimeout(fn, 0)) {
+  if (!onPage()) return;                       // 排程前先看：已切頁＝根本不排
+  schedule(() => { if (onPage()) open(); });   // callback 執行時再看：排完到執行前切頁＝不開
+}
+
+/**
+ * 信用卡上傳的開窗編排（P0.5 r1#5）：與銀行同款「連點鎖＋切頁作廢＋finally 解鎖」——審查者不接受
+ * 「卡片線沒有 jsdom 題」當劃界，因為時序缺陷已可重現（載入 `/cards` 的 await 窗內連點＝兩條流程）。
+ * 卡片線開窗前沒有模式把關（密碼窗才 lazy 問模式），所以這裡只顧「載卡片名單」那段 await 的時序。
+ * 順序同 runBankUpload：①busy 在 await 前上鎖、被擋下不碰鎖 ②載完卡片先看 stale 再開窗
+ *（等待期間切頁＝一個窗都不開）③finally 解鎖。鎖是注入的讀寫對、不掛按鈕元素（同 #438 r3 教訓）。
+ * @param {{ busy: { get: () => boolean, set: (v: boolean) => void },
+ *           navSeq: () => number,
+ *           loadCards: () => Promise<any[]>,
+ *           openUploadForm: (cards: any[]) => void,
+ *           watchModal?: () => () => boolean }} deps
+ * @returns {Promise<'busy' | 'stale' | 'nocards' | 'opened'>}
+ */
+export async function runCardUpload({ busy, navSeq, loadCards, openUploadForm, watchModal }) {
+  if (busy.get()) return 'busy';
+  busy.set(true);
+  const seq = navSeq();
+  const modalOk = watchModal ? watchModal() : () => true;   // 載卡片之前先看一眼共用彈窗格（唯讀）
+  try {
+    const cards = await loadCards();
+    if (navSeq() !== seq) return 'stale';   // 載入卡片名單時切了頁＝這一窗不屬於眼前畫面
+    if (!modalOk()) return 'stale';         // 等待期間別人接管了 #modal-root＝不可以蓋上去（r16）
+    if (!cards.length) return 'nocards';       // 沒有信用卡＝呼叫端提示去新增（不開窗）
+    openUploadForm(cards);
     return 'opened';
   } finally { busy.set(false); }
 }

@@ -39,6 +39,7 @@ const { app } = await import('../server.js');
 const FLEX = 'FLEXTOKEN-WRITEBACK-0001';
 const TAISHIN = 'A123456789';       // 台新證券 PDF 密碼＝身分證字號（合成假值）
 const CARDPW = 'B987654321';        // 信用卡帳單 PDF 密碼（合成假值）
+const STMTPW = 'C246813579';        // 記住的帳單密碼池（P0.5 第四個機密；合成假值）
 
 const A = { id: 'user-wb-a', email: 'a@x.com' };
 const C = { id: 'user-wb-c', email: 'c@x.com' };
@@ -80,7 +81,7 @@ const jotDownOneExpense = (tok, note) => as(tok, '/api/transactions', {
 // ============================================================================
 
 test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換回正確金鑰要能救回來）', async () => {
-  // --- 佈景：用正確金鑰把三個機密都設好
+  // --- 佈景：用正確金鑰把**每一個**機密都設好（P0.5 起含密碼池——r10：新機密漏進這題＝寫回保護沒被驗到）
   assert.equal((await as('tokA', '/api/settings', {
     method: 'PUT',
     body: JSON.stringify({ taishinSecPdfPassword: TAISHIN, ib: { flexToken: FLEX, flexQueryId: '123' } }),
@@ -88,28 +89,37 @@ test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換�
   assert.equal((await as('tokA', '/api/cards', {
     method: 'POST', body: JSON.stringify({ name: '測試卡', pdfPassword: CARDPW }),
   })).status, 200);
+  // 密碼池走專屬端點＝正式的「記住」入口（匯入流程勾了「記住」走這條）。
+  // ⚠️ 不是「泛用 PUT 進不來」：`sanitizeSettings` 同時服務泛用 PUT 與匯入還原，兩邊都會收下密碼池，
+  //    只是要通過形狀與上限驗證（`pickRememberedStatementPasswords`）——r12 訂正原本寫反的註解。
+  assert.equal((await as('tokA', '/api/statement/password/remember', {
+    method: 'POST', body: JSON.stringify({ password: STMTPW }),
+  })).status, 200);
 
   const before = rawOf(A.id);
   assert.match(before, /enc:v1:/, '佈景沒做成：資料庫裡應該要有密文');
   const cipherFlex = rowOf(A.id, 'settings')?.ib?.flexToken;
   const cipherTaishin = rowOf(A.id, 'settings')?.taishinSecPdfPassword;
   const cipherCard = rowOf(A.id, 'cards')?.[0]?.pdfPassword;
-  assert.ok(cipherFlex && cipherTaishin && cipherCard, '佈景沒做成：三個密文都要抓得到');
+  const cipherPool = rowOf(A.id, 'settings')?.rememberedStatementPasswords;
+  assert.ok(cipherFlex && cipherTaishin && cipherCard && cipherPool, '佈景沒做成：每個密文都要抓得到（含密碼池）');
 
   // --- 事故：金鑰被設錯了（換了一把、忘了帶舊的、Render 環境變數貼錯……）
   process.env.NOTEASY_MASTER_KEY = KEY_WRONG;
   try {
     // 使用者不知道出事了（畫面上只是那幾個欄位變成「未設定」），照常記一筆帳
-    // ⚠️ 這裡會噴三行 `[crypto] 機密欄位解密失敗…` 的 console.warn，是**預期行為**（生存優先）
+    // ⚠️ 這裡會噴數行 `[crypto] 機密欄位解密失敗…` 的 console.warn（每個機密欄位一行），是**預期行為**（生存優先）
     assert.equal((await jotDownOneExpense('tokA', '金鑰壞掉期間的無辜記帳')).status, 200);
 
-    // 核心斷言：資料庫裡那三串密文必須**原封不動**
+    // 核心斷言：資料庫裡**每一串**密文都必須原封不動（刻意不寫死幾串——鐵則 10，加第四個機密時就漏改過）
     assert.equal(rowOf(A.id, 'settings')?.ib?.flexToken, cipherFlex,
       'IB token 的密文被空字串蓋掉了——金鑰設錯一次就永久毀資料');
     assert.equal(rowOf(A.id, 'settings')?.taishinSecPdfPassword, cipherTaishin,
       '台新證券密碼（身分證字號）的密文被蓋掉了');
     assert.equal(rowOf(A.id, 'cards')?.[0]?.pdfPassword, cipherCard,
       '卡片 PDF 密碼的密文被蓋掉了');
+    assert.equal(rowOf(A.id, 'settings')?.rememberedStatementPasswords, cipherPool,
+      '記住的帳單密碼池的密文被蓋掉了——下次匯入要重打一次密碼，而且救不回來');
 
     // 而且那筆帳真的記進去了（止血不可以是「乾脆不讓他存」）
     assert.match(JSON.stringify(rowOf(A.id, 'transactions')), /金鑰壞掉期間的無辜記帳/,
@@ -118,12 +128,13 @@ test('金鑰設錯期間的一次無辜寫入，不可以把密文蓋掉（換�
     process.env.NOTEASY_MASTER_KEY = KEY_GOOD;
   }
 
-  // --- 救援：金鑰換回來，三個機密都要回得來
+  // --- 救援：金鑰換回來，**每一個**機密都要回得來
   const s = await (await as('tokA', '/api/settings')).json();
   assert.equal(s.ib.flexTokenSet, true, '換回正確金鑰之後 IB token 應該救得回來');
   assert.equal(s.taishinSecPdfPasswordSet, true, '換回正確金鑰之後台新證券密碼應該救得回來');
   const cards = await (await as('tokA', '/api/cards')).json();
   assert.equal(cards[0].pdfPasswordSet, true, '換回正確金鑰之後卡片密碼應該救得回來');
+  assert.equal(s.rememberedStatementPasswordsCount, 1, '換回正確金鑰之後密碼池應該救得回來（投影只回組數、不回值）');
 
   // 而且救回來的是**原來那個值**，不是「有東西但是垃圾」
   const dump = await (await as('tokA', '/api/db')).text();

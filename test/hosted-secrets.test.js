@@ -1004,3 +1004,62 @@ test('HOSTED 正式接線：只吃列的匯入端點超過 1 MB → 413（不是
       `「沒被 413 擋下」就證明不了 body 過得去：${(await res.clone().text()).slice(0, 160)}`);
   }
 });
+
+// ============================================================================
+// P0.5 記住的帳單密碼池（settings.rememberedStatementPasswords＝單一 JSON 字串機密）
+// ⚠️ 這批考題**逐性質列舉新欄位**：上面各題掃的是三個既有機密常數，新欄位光加進 mapSecrets
+//    不會讓任何舊題轉紅（列舉式考題的固有縫）——每加一個機密，就要在這裡補一組同型題。
+// ============================================================================
+
+test('密碼池 at-rest：記住的帳單密碼在資料庫裡是密文，明文一個字都找不到', async () => {
+  const bankPw = 'BANKPW-pool-at-rest';
+  const r = await as('tokA', '/api/statement/password/remember', { method: 'POST', body: JSON.stringify({ password: bankPw }) });
+  assert.equal(r.status, 200, `記住密碼應該成功——${await r.clone().text()}`);
+  assert.ok((await r.json()).count >= 1, '回應要帶「已記住幾組」（不含明文）');
+  const raw = rawOf(A.id);
+  assert.ok(!raw.includes(bankPw), '記住的帳單密碼以明文躺在資料庫裡！');
+  assert.match(raw, /enc:v1:/, '應該看得到密文前綴');
+});
+
+test('密碼池投影：內容一個字都不送瀏覽器，設定頁只拿得到「已記住幾組」', async () => {
+  const bankPw = 'BANKPW-pool-proj';
+  await as('tokA', '/api/statement/password/remember', { method: 'POST', body: JSON.stringify({ password: bankPw }) });
+  for (const p of ['/api/settings', '/api/db', '/api/summary']) {
+    const body = await (await as('tokA', p)).text();
+    assert.ok(!body.includes(bankPw), `${p} 把記住的密碼送到瀏覽器了！`);
+  }
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.ok(Number(settings.rememberedStatementPasswordsCount) >= 1, '「已記住 N 組」要給設定頁顯示');
+  assert.equal(settings.rememberedStatementPasswords, undefined, '欄位本體必須被投影剝除');
+});
+
+test('密碼池雲端匯出：與其他機密同待遇——內容剝除、欄位留空', async () => {
+  const bankPw = 'BANKPW-pool-export';
+  await as('tokA', '/api/statement/password/remember', { method: 'POST', body: JSON.stringify({ password: bankPw }) });
+  const body = await (await as('tokA', '/api/export')).text();
+  assert.ok(!body.includes(bankPw), '雲端匯出不可含記住的密碼');
+  const dump = JSON.parse(body);
+  assert.equal(dump.settings.rememberedStatementPasswords, '', '欄位留著且為空＝「沒記住」，不是整個消失');
+});
+
+test('密碼池 HOSTED 匯入：檔案裡的池一律不採用、保留現值（機密回填三條件的固定路徑那型）', async () => {
+  const keepPw = 'BANKPW-import-keep';
+  await as('tokA', '/api/statement/password/clear', { method: 'POST', body: JSON.stringify({}) });
+  await as('tokA', '/api/statement/password/remember', { method: 'POST', body: JSON.stringify({ password: keepPw }) });
+  const dump = JSON.parse(await (await as('tokA', '/api/export')).text());
+  dump.settings.rememberedStatementPasswords = JSON.stringify(['EVIL-FROM-FILE']);
+  const imp = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(dump) });
+  assert.equal(imp.status, 200, `匯入應成功——${await imp.clone().text()}`);
+  const raw = rawOf(A.id);
+  assert.ok(!raw.includes('EVIL-FROM-FILE'), '檔案帶進來的池不可被採用');
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(Number(settings.rememberedStatementPasswordsCount), 1, '現值（記住的那一組）要被保留');
+});
+
+test('密碼池清除：明確清除入口把池歸零（比照機密欄位「清除已設定」慣例）', async () => {
+  await as('tokA', '/api/statement/password/remember', { method: 'POST', body: JSON.stringify({ password: 'BANKPW-clear-x' }) });
+  const c = await as('tokA', '/api/statement/password/clear', { method: 'POST', body: JSON.stringify({}) });
+  assert.equal((await c.json()).count, 0);
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(Number(settings.rememberedStatementPasswordsCount), 0);
+});

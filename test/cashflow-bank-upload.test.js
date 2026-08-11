@@ -17,7 +17,7 @@
 //
 // ⚠️ 誠實劃界：
 //   ・「/api/mode 回應只有 hosted、HOSTED 掛在 authGate 後面」由 test/server.test.js 那組守；
-//   ・「密碼在伺服器端只進記憶體、不落檔」是收支契約「帳戶完整帳號與餘額匯入」節寫明的
+//   ・「密碼解析時只進記憶體；預設用完即丟，勾記住才依 LOCAL/HOSTED 機密規則儲存（P0.5）」是收支契約寫明的
 //     lib 層規矩，本檔不驗後端；
 //   ・接線題只驗「真的把正式相依接進 runBankUpload」這個形狀：在接線層另外蓋掉結果
 //     （例如把 openUploadForm 換成無視 label 參數的實作）這一類，形狀掃描擋不住＝
@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload,
+  BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,13 +55,13 @@ test('把關｜問一次模式、逾時走保守、等待期間切頁＝回報�
   let calls = 0;
   let r = await bankUploadGate({
     fetchMode: async () => { calls++; return { hosted: false }; },
-    withTimeout: (w) => w, timeoutMs: 5, routeSeq: () => 7,
+    withTimeout: (w) => w, timeoutMs: 5, navSeq: () => 7,
   });
   assert.deepEqual([r.label, r.stale, calls], [BANK_PW_NOTICE_LOCAL, false, 1]);
   // 連不上／被拒絕：不炸、走保守雲端句。
   r = await bankUploadGate({
     fetchMode: () => Promise.reject(new Error('斷線')),
-    withTimeout: (w) => w, timeoutMs: 5, routeSeq: () => 7,
+    withTimeout: (w) => w, timeoutMs: 5, navSeq: () => 7,
   });
   assert.deepEqual([r.label, r.stale], [BANK_PW_NOTICE_HOSTED, false], '問不到＝保守，不可把錯誤往上丟');
   // 上限真的有接上：掛住的 fetch 要被注入的計時器打斷（匯出 r5 阻擋①同款病——沒上限＝開不出窗）。
@@ -74,7 +74,7 @@ test('把關｜問一次模式、逾時走保守、等待期間切頁＝回報�
       bankUploadGate({
         fetchMode: () => new Promise(() => { /* 永不回應 */ }),
         withTimeout: (_w, ms) => { sawMs = ms; return Promise.reject(new Error('逾時')); },
-        timeoutMs: 5, routeSeq: () => 7,
+        timeoutMs: 5, navSeq: () => 7,
       }),
       new Promise((_res, rej) => { raceTimer = setTimeout(() => rej(new Error('把關把「永不回應」原樣往上等＝等待上限沒接')), 1000); }),
     ]);
@@ -84,7 +84,7 @@ test('把關｜問一次模式、逾時走保守、等待期間切頁＝回報�
   let seq = 1;
   r = await bankUploadGate({
     fetchMode: async () => { seq = 2; return { hosted: false }; },
-    withTimeout: (w) => w, timeoutMs: 5, routeSeq: () => seq,
+    withTimeout: (w) => w, timeoutMs: 5, navSeq: () => seq,
   });
   assert.equal(r.stale, true, '等待期間切頁要回報作廢');
 });
@@ -159,10 +159,15 @@ test('文案｜雲端那句要坦白「會上傳」，而且不可殘留本機�
   assert.match(BANK_PW_NOTICE_HOSTED, /伺服器/, '雲端那句必須講去了伺服器');
   assert.doesNotMatch(BANK_PW_NOTICE_HOSTED, /只在這台電腦|不會上傳|不會傳上網路/, '雲端那句殘留任何本機宣稱＝舊病復發');
   assert.match(BANK_PW_NOTICE_LOCAL, /這台電腦/, '本機那句才可以講這台電腦');
-  // 「不會儲存」兩句都講＝照收支契約寫明的伺服器端規矩下的文案（後端本身不歸本檔驗，劃界見檔頭）。
-  // 這兩條同時是絆線：#437 計畫 P0.5 若開放儲存銀行密碼，文案必須跟那支 PR 一起改、這裡會先紅。
-  assert.match(BANK_PW_NOTICE_LOCAL, /不會儲存/);
-  assert.match(BANK_PW_NOTICE_HOSTED, /不會儲存/);
+  // P0.5 兌現 #438 埋的絆線（2026-08-11 使用者拍板銀行密碼改「可選儲存」）：舊承諾「不會儲存」
+  // 從此是假話——句子改講「勾『記住』才會儲存」。鎖語意骨架：①兩句都要把儲存跟「記住」的
+  // 勾選綁在一起（不勾＝不存）②無條件的「不會儲存」不得復活（那會反過來騙選了記住的人）
+  // ③HOSTED 的儲存要講「加密」（機密待遇比照卡密＝拍板內容）。
+  assert.match(BANK_PW_NOTICE_LOCAL, /記住/, '本機句要把儲存綁在「記住」勾選上');
+  assert.match(BANK_PW_NOTICE_HOSTED, /記住/, '雲端句要把儲存綁在「記住」勾選上');
+  assert.doesNotMatch(BANK_PW_NOTICE_LOCAL, /不會儲存/, '無條件「不會儲存」＝對勾了記住的人說謊');
+  assert.doesNotMatch(BANK_PW_NOTICE_HOSTED, /不會儲存/);
+  assert.match(BANK_PW_NOTICE_HOSTED, /加密/, '雲端儲存必須講加密（機密待遇＝拍板內容）');
   assert.notEqual(BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, '兩句相同＝分流白做');
 });
 
@@ -185,11 +190,168 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
   assert.match(src, /fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/, '把關要真的問 /api/mode');
   assert.match(src, /withTimeout:\s*defaultWithTimeout/, '等待上限要接匯出模組那顆共用計時器');
   assert.match(src, /timeoutMs:\s*MODE_TIMEOUT_MS/, '上限用共用常數，不可另抄一個數字');
-  assert.match(src, /routeSeq:\s*currentRouteSeq/, '作廢判準要接真的路由序號');
+  assert.match(src, /navSeq:\s*currentNavSeq/, '作廢判準要接真的**換頁**序號（不是重繪序號）');
   assert.match(src, /openUploadForm:\s*\(label\)\s*=>/, '開窗端要收把關挑出的那句');
   assert.match(src, /key: 'password', label,/, '密碼欄 label 只能來自把關結果，不可另寫一句');
   assert.doesNotMatch(src, /只在這台電腦解密、不會上傳/,
     '舊文案逐字回歸＝雲端版把「不會上傳」講給正在上傳的人聽');
   assert.doesNotMatch(src, /對帳單密碼（/,
     'cashflow.js 裡不准再出現手寫的密碼欄告知句——兩句與挑句判準只住 cashflow-model.js 一處');
+  // r4：切頁作廢改用 openWhenOnPage（排程＋執行兩次核對，行為由下面的單元題直測）——
+  //   這裡鎖「每個 deferred 開窗點都經 openWhenOnPage、且不再有裸 setTimeout(()=>showBankPreview)」。
+  assert.match(src, /const seq0 = currentNavSeq\(\);/, '銀行上傳窗要在開窗當下存下**換頁**序號（r9：接成重繪序號時密碼窗會靜靜不開）');
+  // r18/r21：判準從 onPage 升級成 canOpenNext＝**還在同一頁 且（還沒關窗／或這次是送出成功的交棒）**
+  //   ——使用者按取消也是「自己關的」，但那是撤銷、不放行。
+  assert.match(src, /const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/,
+    '排下一窗的判準要同時看換頁與彈窗格擁有權（r18 產線競態：等 preview 時關窗改開別的窗，舊 preview 會蓋掉它）');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage＋canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, '', onPage\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage＋canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage＋canOpenNext');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => showBankPreview/, '不准有裸 setTimeout 開預覽窗（繞過切頁作廢）');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => openPasswordWindow/, '不准有裸 setTimeout 開密碼窗');
+});
+
+test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序號／真開窗接進 runCardUpload（P0.5 r1#5）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/transactions-import.js'), 'utf8'));
+  assert.match(src, /runCardUpload\(\{/, '卡片開窗要走共用編排（時序防線在 cashflow-model.js，行為題直測）');
+  assert.match(src, /^let cardUploadBusy = false;/m, '卡片連點鎖要住模組層級（重繪換鈕不蒸發）');
+  assert.match(src, /busy:\s*\{ get:\s*\(\)\s*=>\s*cardUploadBusy, set:\s*\(v\)\s*=>\s*\{ cardUploadBusy = v; \} \}/,
+    '編排的鎖要接那顆模組層級變數（接成恆 false＝鎖形同虛設）');
+  assert.match(src, /navSeq:\s*currentNavSeq/, '作廢判準要接真的**換頁**序號（不是重繪序號）');
+  // r2#4：不只驗「有呼叫 runCardUpload」——loadCards 要真的載 /cards、openUploadForm 要真的開窗，
+  //   否則把 openUploadForm 接成空函式＝正式 UI 一個窗都不開、形狀題卻全綠。
+  assert.match(src, /loadCards:\s*async\s*\(\)\s*=>\s*\(await api\('\/cards'\)\)\.filter/,
+    'loadCards 要真的打 /cards 再篩信用卡');
+  assert.match(src, /openUploadForm:\s*\(cards\)\s*=>\s*openCardUploadForm\(cards\)/,
+    'openUploadForm 要真的接開窗函式（接成空函式＝不開窗）');
+  // r2#2：密碼窗問 /mode 期間切頁要作廢——挑句＋作廢走 bankUploadGate（不另抄一份 /mode 挑句）。
+  assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
+    '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
+  assert.match(src, /const modalOk = watchModalRoot\(\);/,
+    '問 /mode 之前要先唯讀觀察 #modal-root（r16：不可用 claim——那會搶走現在那個窗的擁有權）');
+  assert.match(src, /if \(g\.stale \|\| !onPage\(\) \|\| !modalOk\(\)\) return;/,
+    '問 /mode 期間切頁**或別人接管了彈窗格**（使用者關掉上傳窗改開別的窗）＝都不開密碼窗（r16 產線 bug）');
+  // r4/r5#3：卡片線每個 deferred 開窗點（含選卡/改卡）都經 openWhenOnPage、無裸 setTimeout 開窗——
+  //   **兩條 handlePreviewResult 各自斷言**（免密碼的空字串路徑＋密碼窗成功的 pw 路徑），泛化 regex
+  //   只鎖一條時、移除另一條守門會假綠（r5#3 實測）。
+  assert.match(src, /const seq0 = currentNavSeq\(\);/, '卡片上傳窗要在開窗當下存下**換頁**序號（r9：接成重繪序號時後續窗會靜靜不開）');
+  // r18：同銀行線，四個後續開窗點都要走 canOpenNext（換頁＋彈窗格被接管都作廢）
+  assert.equal((src.match(/const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/g) || []).length, 3,
+    '三個會排下一窗的 onSubmit（密碼窗／上傳窗／選卡窗）都要有 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, '', onPage\)\)/, '免密碼路徑開後續窗要走 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/, '密碼窗成功路徑開後續窗要走 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openStatementPreview\(/, '選卡重解析後開預覽窗要走 canOpenNext');
+  // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）
+  assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,120}?if \(!onPage\(\)\) return;/,
+    '改卡重解析 await 後、draw 前要核對切頁');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => (handlePreviewResult|openPasswordWindow|openStatementPreview)/, '不准有裸 setTimeout 開後續窗');
+});
+
+test('切頁作廢排程｜openWhenOnPage：同頁才開、排程前切頁不排、排完到執行前切頁不開', () => {
+  // 這是 r4 把散寫 if(!onPage()) 收成的可測 helper——兩處核對（排程當下＋callback 執行當下）。
+  let opened = 0;
+  // ① 同頁：排程且執行都開
+  {
+    /** @type {(() => void)[]} */ const q = [];
+    openWhenOnPage(() => true, () => { opened++; }, (fn) => q.push(fn));
+    assert.equal(q.length, 1, '同頁＝有排程'); q[0](); assert.equal(opened, 1, '執行時仍同頁＝開');
+  }
+  // ② 排程前已切頁：根本不排、不開
+  { let n = 0; /** @type {(() => void)[]} */ const q = []; openWhenOnPage(() => false, () => { n++; }, (fn) => q.push(fn));
+    assert.deepEqual([q.length, n], [0, 0], '排程前切頁＝不排也不開'); }
+  // ③ 排程時同頁、執行前切頁：排了但不開（callback 內第二次核對）
+  { let onp = true; let n = 0; /** @type {(() => void)[]} */ const q = [];
+    openWhenOnPage(() => onp, () => { n++; }, (fn) => q.push(fn));
+    assert.equal(q.length, 1); onp = false; q[0](); assert.equal(n, 0, '執行時已切頁＝不開'); }
+});
+
+// ---------- 信用卡上傳的開窗編排（P0.5 r1#5：卡片線也要連點鎖／切頁作廢／finally 解鎖） ----------
+
+// ⭐ r16（Codex 抓到的真實產線 bug）：開窗前的 await 期間，使用者可能關掉眼前的窗、改開別的窗——
+// 晚回來的上傳／密碼窗不可以蓋上去。行為直測兩個編排函式（形狀題證明不了「真的沒開」）。
+test('⭐ 編排｜等待期間別人接管了彈窗格＝一個窗都不開（銀行與卡片兩條線都要）', async () => {
+  const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };
+
+  // 銀行線：問 /mode 期間彈窗格被接管
+  {
+    const busy = mkBusy(); let opened = 0, taken = false;
+    const r = await runBankUpload({
+      busy,
+      watchModal: () => () => !taken,                       // 觀察時還沒被接管；回來時已被接管
+      gate: async () => { taken = true; return { label: 'L', stale: false }; },
+      openUploadForm: () => { opened++; },
+    });
+    assert.equal(r, 'stale', '彈窗格被接管＝回報 stale');
+    assert.equal(opened, 0, '不可以開窗蓋掉後開的那個窗');
+    assert.equal(busy.value(), false, 'finally 仍要解鎖');
+  }
+  // 銀行線：沒被接管＝照常開
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runBankUpload({
+      busy, watchModal: () => () => true,
+      gate: async () => ({ label: 'L', stale: false }),
+      openUploadForm: () => { opened++; },
+    });
+    assert.deepEqual([r, opened], ['opened', 1], '沒人動過＝照常開窗（不可假性擋掉正常流程）');
+  }
+  // 卡片線：載卡片期間彈窗格被接管
+  {
+    const busy = mkBusy(); let opened = 0, taken = false;
+    const r = await runCardUpload({
+      busy, navSeq: () => 1,
+      watchModal: () => () => !taken,
+      loadCards: async () => { taken = true; return [{ id: 'c1' }]; },
+      openUploadForm: () => { opened++; },
+    });
+    assert.equal(r, 'stale', '卡片線同理：彈窗格被接管＝stale');
+    assert.equal(opened, 0, '不可以開窗蓋掉後開的那個窗');
+    assert.equal(busy.value(), false, 'finally 仍要解鎖');
+  }
+  // 兩條線都要相容「沒注入 watchModal」（預設不擋，維持既有呼叫端不壞）
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, navSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.deepEqual([r, opened], ['opened', 1], '沒給 watchModal＝維持原行為');
+  }
+});
+
+test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片時切頁作廢不開窗、finally 解鎖——執行驗不靠字面', async () => {
+  const mkBusy = () => { let v = false; return { get: () => v, set: (/** @type {boolean} */ x) => { v = x; }, value: () => v }; };
+
+  // ① 正常：opened、開一次、事後鎖已解
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, navSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.equal(r, 'opened'); assert.equal(opened, 1); assert.equal(busy.value(), false, 'finally 要解鎖');
+  }
+  // ② 連點：第一條還在載卡片時，第二下立刻被 busy 擋、且不碰鎖、不開窗
+  {
+    const busy = mkBusy(); let opened = 0;
+    let release; const gate = new Promise((res) => { release = res; });
+    const first = runCardUpload({ busy, navSeq: () => 1, loadCards: () => gate.then(() => [{ id: 'c1' }]), openUploadForm: () => { opened++; } });
+    const second = await runCardUpload({ busy, navSeq: () => 1, loadCards: async () => [{ id: 'c1' }], openUploadForm: () => { opened++; } });
+    assert.equal(second, 'busy', '第二下被鎖擋'); release();
+    assert.equal(await first, 'opened'); assert.equal(opened, 1, '只開一窗');
+    assert.equal(busy.value(), false);
+  }
+  // ③ 載卡片期間切頁（navSeq 變）＝stale、不開窗
+  {
+    const busy = mkBusy(); let opened = 0; let seq = 1;
+    const r = await runCardUpload({ busy, navSeq: () => seq, loadCards: async () => { seq = 2; return [{ id: 'c1' }]; }, openUploadForm: () => { opened++; } });
+    assert.equal(r, 'stale'); assert.equal(opened, 0, '切頁後一個窗都不准開'); assert.equal(busy.value(), false);
+  }
+  // ④ 沒有信用卡＝nocards（呼叫端提示去新增）、不開窗、鎖已解
+  {
+    const busy = mkBusy(); let opened = 0;
+    const r = await runCardUpload({ busy, navSeq: () => 1, loadCards: async () => [], openUploadForm: () => { opened++; } });
+    assert.equal(r, 'nocards'); assert.equal(opened, 0); assert.equal(busy.value(), false);
+  }
+  // ⑤ 載卡片丟錯也要解鎖（否則上傳鈕永久啞掉）
+  {
+    const busy = mkBusy();
+    await assert.rejects(runCardUpload({ busy, navSeq: () => 1, loadCards: async () => { throw new Error('網路炸'); }, openUploadForm: () => {} }));
+    assert.equal(busy.value(), false, 'finally 在丟錯時也要解鎖');
+  }
 });
