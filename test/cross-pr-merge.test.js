@@ -22,7 +22,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync }
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES } from '../scripts/check-cross-pr-merge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -326,12 +326,25 @@ test('裁決｜任何一筆「執行不起來」（cantRun）→ 整輪 2，標�
   assert.doesNotMatch(v.message, /合起來會壞/);
   assert.match(v.message, /下不了定論/,
     'r2 版標題寫「這是環境問題，不是兩支相斥」——但 126／127 兩支各自全綠也造得出來（Codex 反例），只能說「下不了定論」');
-  // 訊息的「不推定成因」不是裝飾，是本輪的核心修正——r3 版被 Codex 實測「把第二種可能
-  // 改寫成另一種環境歸因，26 題照綠」＝訊息內容沒人守。這裡把兩個承重點釘住：
+  // 訊息的「不推定成因」不是裝飾（#446 r3 實測：把成因改寫成單一環境歸因，當時的
+  // 考題照綠＝散文沒人守）。字串只釘這一個詞；**結構性的守法在下面 CANT_RUN_CAUSES 的資料題**。
   assert.match(v.message, /不推定成因/,
-    '訊息又開始替 126／127 斷定成因了——127 連「測試自己印完輸出再退 127」都做得到（r3 反例）');
-  assert.match(v.message, /追蹤檔案/,
-    '「兩支合壞了 scripts 呼叫的追蹤檔案」這種非環境可能被拿掉了——看的人會以為只要修環境');
+    '訊息替 126／127 斷定了成因——127 連「測試自己印完輸出再退 127」都做得到（#446 r3 反例）');
+});
+
+test('裁決｜成因可能是資料不是散文：環境與非環境必須同時在列、且每一條都要進訊息（#446 r4——關鍵字守不住語意）', () => {
+  // #446 r4 Codex 實測：三種可能全改寫成環境歸因、保留「追蹤檔案」關鍵字，字串斷言照綠。
+  // 所以守法改成驗資料結構＋資料到訊息的接線；kind 的文字被改寫到失真屬散文層，
+  // 考題原則上守不住——那條界線寫在 CANT_RUN_CAUSES 檔頭，由審查的人守。
+  const kinds = new Set(CANT_RUN_CAUSES.map((c) => c.kind));
+  assert.ok(kinds.has('env'), '環境成因不在列——#441 那種最常見的形狀反而沒人講');
+  assert.ok(kinds.has('cross-pr'),
+    '非環境的「兩支合出來的破壞」成因不在列（#446 r2 反例）——只剩環境歸因，看的人會以為修環境就好');
+  assert.ok(kinds.has('self-exit'), '「受測內容自己退 126／127」的成因不在列（#446 r3 反例）');
+  const v = verdict([{ number: 385, ok: false, cantRun: true, why: '「校對」執行不起來（症狀：退出碼 127）：…' }]);
+  for (const c of CANT_RUN_CAUSES) {
+    assert.ok(v.message.includes(c.text), `成因「${c.kind}」沒有進到訊息裡——資料與訊息斷線`);
+  }
 });
 
 test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」→ 整輪 2，但真紅要列出、不可被標題否定（#446 r2）', () => {
@@ -344,6 +357,10 @@ test('裁決｜同輪混著「跑得起來的真紅」與「執行不起來」�
   assert.match(v.message, /#390/);
   assert.match(v.message, /已確定的阻擋/,
     'r2 版標題「不是兩支相斥」會把同輪已經量到的真阻擋一句話否定掉——它們必須被點名保留');
+  // 分類句要**照輸入算**：這一輪的已確定阻擋只有測試紅、沒有文字衝突——
+  // 寫死的散文分類句正是 #446 r4 抓到的假綠形狀（同義改寫照樣全綠）。
+  assert.match(v.message, /跑得起來的測試紅/, '測試紅那筆沒被分類句點名');
+  assert.doesNotMatch(v.message, /文字衝突/, '這一輪根本沒有文字衝突，分類句卻提到它＝分類是寫死的散文、不是照輸入算');
 });
 
 test('裁決｜「文字衝突」＋「執行不起來」混輪 → 2，衝突要被點名保留、且不可以被叫成「測試紅」（#446 r3）', () => {
@@ -355,9 +372,12 @@ test('裁決｜「文字衝突」＋「執行不起來」混輪 → 2，衝突�
   ]);
   assert.equal(v.code, 2);
   assert.match(v.message, /文字衝突/, '衝突那筆的死因不見了');
-  assert.match(v.message, /已確定的阻擋/, '文字衝突是本輪已確定的阻擋，不因下不了定論而失效——要點名保留');
-  assert.doesNotMatch(v.message, /真的測試紅/,
-    '文字衝突被斷言成「真的測試紅」——它根本沒跑到測試，看的人會去翻不存在的測試輸出（r3 版的病）');
+  assert.match(v.message, /已確定的阻擋/, '文字衝突是該輪試合併已確定的阻擋，不因下不了定論而失效——要點名保留');
+  // 分類句照輸入算：這一輪只有文字衝突，訊息裡不可以出現任何「測試紅」——
+  // 同義改寫（如「確定的測試紅，文字衝突也算在內」）在 #446 r4 被實測騙過逐字斷言，
+  // 語意斷言（輸入沒有測試紅⇒訊息不得說測試紅）才守得住。
+  assert.doesNotMatch(v.message, /測試紅/,
+    '文字衝突被歸進「測試紅」——它根本沒跑到測試，看的人會去翻不存在的測試輸出');
 });
 
 test('cantRunSignal｜判準是「拿不到數字退出碼」＋126／127，不是 errno 名單（#446 r2 High：EACCES 曾漏網）', () => {
