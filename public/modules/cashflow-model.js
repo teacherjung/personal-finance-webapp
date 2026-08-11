@@ -57,9 +57,11 @@ export const bankPasswordLabel = (mode) =>
   (mode && Object.hasOwn(mode, 'hosted') && mode.hosted === false ? BANK_PW_NOTICE_LOCAL : BANK_PW_NOTICE_HOSTED);
 
 /**
- * 開上傳窗前的把關（可注入、可執行——r1 阻擋③：挑句流程要是行為題打得到的純函式，
- * cashflow.js 只剩接線）：問一次模式（帶等待上限、問不到＝保守），並回報「等待期間
- * 路由變了沒」——晚回的視窗不可以開在別的頁面上（r1 阻擋①的切頁那一半）。
+ * 開上傳窗前的把關（零 app／DOM import、相依注入、行為題可直接執行——審查 r1 抓到
+ * 挑句流程只躺在頁面模組裡就只考得到字面）：問一次模式（帶等待上限、問不到＝保守），
+ * 並回報「等待期間路由變了沒」——晚回的視窗不可以開在別的頁面上。它呼叫的是注入的
+ * 網路／計時／路由相依＝有副作用、不是純函式；開窗時序歸 runBankUpload、表單內容與
+ * 上傳流程歸 cashflow.js，這裡都不管。
  * @param {{ fetchMode: () => Promise<any>,
  *           withTimeout: (work: Promise<any>, ms: number) => Promise<any>,
  *           timeoutMs: number, routeSeq: () => number }} deps
