@@ -200,8 +200,8 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
   // r4：切頁作廢改用 openWhenOnPage（排程＋執行兩次核對，行為由下面的單元題直測）——
   //   這裡鎖「每個 deferred 開窗點都經 openWhenOnPage、且不再有裸 setTimeout(()=>showBankPreview)」。
   assert.match(src, /const seq0 = currentRouteSeq\(\);/, '銀行上傳窗要在開窗當下存下路由序號');
-  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, pw\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage');
-  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, ''\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage（並把 onPage 傳進去守套用）');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => showBankPreview\(r, b64, '', onPage\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage');
   assert.match(src, /openWhenOnPage\(onPage, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage');
   assert.doesNotMatch(src, /setTimeout\(\(\) => showBankPreview/, '不准有裸 setTimeout 開預覽窗（繞過切頁作廢）');
   assert.doesNotMatch(src, /setTimeout\(\(\) => openPasswordWindow/, '不准有裸 setTimeout 開密碼窗');
@@ -224,9 +224,12 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   assert.match(src, /bankUploadGate\(\{ fetchMode:\s*\(\)\s*=>\s*api\('\/mode'\)/,
     '卡片密碼窗的挑句＋作廢要走 bankUploadGate');
   assert.match(src, /if \(g\.stale \|\| !onPage\(\)\) return;/, '問 /mode（或更早的 preview）期間切頁＝不開密碼窗');
-  // r4：卡片線每個 deferred 開窗點（含選卡/改卡）都經 openWhenOnPage、無裸 setTimeout 開窗
+  // r4/r5#3：卡片線每個 deferred 開窗點（含選卡/改卡）都經 openWhenOnPage、無裸 setTimeout 開窗——
+  //   **兩條 handlePreviewResult 各自斷言**（免密碼的空字串路徑＋密碼窗成功的 pw 路徑），泛化 regex
+  //   只鎖一條時、移除另一條守門會假綠（r5#3 實測）。
   assert.match(src, /const seq0 = currentRouteSeq\(\);/, '卡片上傳窗要在開窗當下存下路由序號');
-  assert.match(src, /openWhenOnPage\(onPage, \(\) => handlePreviewResult\(/, 'preview 後開後續窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => handlePreviewResult\(r, b64, cards, '', onPage\)\)/, '免密碼路徑開後續窗要走 openWhenOnPage');
+  assert.match(src, /openWhenOnPage\(onPage, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/, '密碼窗成功路徑開後續窗要走 openWhenOnPage');
   assert.match(src, /openWhenOnPage\(onPage, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage');
   assert.match(src, /openWhenOnPage\(onPage, \(\) => openStatementPreview\(/, '選卡重解析後開預覽窗要走 openWhenOnPage');
   // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）

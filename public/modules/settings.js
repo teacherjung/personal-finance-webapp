@@ -308,7 +308,7 @@ export async function renderSettings() {
         await api('/statement/password/clear', { method: 'POST', body: {} });
         if (seq !== currentRouteSeq()) return;
         toast('已清除記住的帳單密碼'); await renderSettings();   // await：重畫失敗不變成 unhandled rejection
-      } catch (err) { toast('清除失敗：' + /** @type {any} */ (err).message, true); }
+      } catch (err) { if (seq !== currentRouteSeq()) return; toast('清除失敗：' + /** @type {any} */ (err).message, true); }   // r5#2：切頁後不報過期錯誤
     };
   }
   byId('manageCatsBtn').onclick = async () => {

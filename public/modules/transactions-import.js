@@ -59,7 +59,7 @@ function openCardUploadForm(cards) {
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
         if (data.remember && pw) {
           try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
-          catch { toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
+          catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
         }
         openWhenOnPage(onPage, () => handlePreviewResult(r, b64, cards, pw, onPage));   // 切頁作廢（排程＋執行兩次核對）
       },
@@ -161,6 +161,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
     try {
       // 帳單期別由後端從帳單表頭讀出（curR.statementMonth），跟著匯入一起存進每一筆（使用者定 2026-07-19）
       const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null } });
+      if (!onPage()) return;   // r5#1：匯入（含寫入）完成後切頁＝不動月份、不開完成窗、不重繪舊頁（資料已存）
       // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
       const mc = {};
       picked.forEach(t => { const m = (t.date || '').slice(0, 7); if (m) mc[m] = (mc[m] || 0) + 1; });
@@ -169,7 +170,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       if (out.imported > 0) openImportDone(out);
       else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
       renderTransactions();
-    } catch (e) { toast('匯入失敗：' + e.message, true); }
+    } catch (e) { if (onPage()) toast('匯入失敗：' + e.message, true); }   // r5#2：切頁後不報過期錯誤
   };
 
   const draw = () => {
@@ -224,7 +225,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
         const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
         if (!onPage()) return;   // r4：改卡重解析 await 期間切頁＝不重建舊預覽窗
         curCard = newId; curR = pr; previewSort = 'none'; draw();   // 換卡＝重算重複標記、排序回原始
-      } catch (err) { toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }
+      } catch (err) { if (!onPage()) return; toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }   // r5#2：切頁後不報過期錯誤、不動舊 select
     };
   };
 
