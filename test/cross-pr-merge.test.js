@@ -18,11 +18,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail } from '../scripts/check-cross-pr-merge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -94,7 +94,7 @@ test('自報｜這支要自報是合併閘，否則註冊表數不到它', () =>
 // ── 退出碼才是這支對外的介面：用假 gh 走完整入口 ──────────────
 
 /** 造一支假的 `gh`，讓腳本走真實路徑。 @param {string} viewJson @param {string} listJson */
-function withFakeGh(viewJson, listJson, { exitCode = 0 } = {}) {
+function withFakeGh(viewJson, listJson, { exitCode = 0, pr = '385', cwd = ROOT, env = process.env } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-gh-'));
   const gh = join(dir, 'gh');
   writeFileSync(gh, `#!/bin/sh
@@ -107,9 +107,9 @@ esac
 exit ${exitCode}
 `);
   chmodSync(gh, 0o755);
-  return spawnSync(process.execPath, [SCRIPT, '385'], {
-    encoding: 'utf8', cwd: ROOT,
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+  return spawnSync(process.execPath, [SCRIPT, pr], {
+    encoding: 'utf8', cwd,
+    env: { ...env, PATH: `${dir}:${env.PATH}` },
   });
 }
 
@@ -144,6 +144,98 @@ test('CLI｜gh 回傳形狀不對（缺 headRefOid）→ exit 2', () => {
 test('CLI｜沒給 PR 編號 → exit 2', () => {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', cwd: ROOT });
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
+});
+
+// ── 環境假紅（2026-08-11 #441 實踩）：發起樹沒有 node_modules ──────────
+//
+// Codex 從 /private/tmp 的代合併樹（detached、**沒有 node_modules**）發起這道閘，
+// 臨時工作區的 node_modules symlink 指回發起樹＝懸空連結，三關全部 127，
+// 被誤報成「#442 合起來之後『校對』紅了」退出碼 1——但 #442 只動兩個 .md，
+// 從主目錄重跑同一道閘＝0。環境問題要走「查不清楚」（2），不可以冒充「兩支相斥」（1）。
+
+/** 沙盒 env **從零組**（只給 PATH／HOME）——下面會跑 `git init`（2026-08-09 事故的
+ *  兇器），紀律照 `test/worktree-integrity.test.js` 檔頭的宣告：GIT_* 不可能洩進去。 */
+const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' };
+
+/**
+ * 造一棵「發起樹」：暫存目錄裡的極小 git repo，**刻意沒有 node_modules**。
+ * 帶一顆真 commit（package.json 的三關指令必炸）——這樣萬一先驗被拿掉，
+ * 腳本會一路走到真的 worktree＋npm，**原樣重演 #441 的誤報（退出碼 1）**，
+ * 考題就用「預期 2 實得 1」把事故直接端到眼前，而不是只靠訊息比對間接推理。
+ */
+function makeInitiatorRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'cross-pr-initiator-'));
+  const g = (/** @type {string[]} */ args) => {
+    const r = spawnSync('git', args, { encoding: 'utf8', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 0, `fixture git ${args.join(' ')} 失敗：${r.stderr}`);
+    return String(r.stdout ?? '').trim();
+  };
+  g(['init', '-q', '-b', 'main', dir]);
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'cross-pr-fixture', version: '0.0.0',
+    scripts: { typecheck: 'cross-pr-fixture-no-such-cmd', lint: 'cross-pr-fixture-no-such-cmd', test: 'cross-pr-fixture-no-such-cmd' },
+  }));
+  g(['add', 'package.json']);
+  g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
+  return { dir, sha: g(['rev-parse', 'HEAD']) };
+}
+
+test('⭐ CLI｜發起樹沒有 node_modules ＋ 有其他 open PR → exit 2，訊息點名環境（#441 的誤報不可再犯）', () => {
+  const { dir, sha } = makeInitiatorRepo();
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([
+        { number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' },
+        { number: 442, headRefOid: sha, headRefName: 'b442', baseRefName: 'main' },
+      ]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 2,
+      `預期 2（查不清楚），實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——1＝把環境問題報成「兩支合起來會壞」，正是 2026-08-11 #441 的誤報原樣。');
+    assert.match(r.stderr, /node_modules/, '訊息沒點名 node_modules，看的人不知道要修的是環境');
+    assert.match(r.stderr, /主目錄|symlink/, '訊息沒指路（從主目錄跑／把 symlink 掛進發起樹）');
+    assert.doesNotMatch(r.stderr, /合起來會壞|紅了/,
+      '環境問題被包裝成相容性結論——這道閘的信用就是靠「1 永遠代表真的相斥」撐的');
+    assert.doesNotMatch(r.stderr, /建不出臨時工作區/,
+      '先驗沒接住、倒在下游的泛用訊息——歸因要在源頭，看的人才知道下一步是修環境');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI｜發起樹沒有 node_modules 但零其他 open PR → 0（結論不需要三關；#438 的正常代合併不可被誤傷）', () => {
+  const { dir, sha } = makeInitiatorRepo();
+  try {
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),
+      JSON.stringify([{ number: 441, headRefOid: sha, headRefName: 'b441', baseRefName: 'main' }]),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
+    );
+    assert.equal(r.status, 0,
+      `預期 0，實得 ${r.status}\n${r.stdout}${r.stderr}\n`
+      + '——「沒有其他 open PR」不需要 node_modules 就答得出來；把它也擋下來＝誤傷 #438 那種本來就正確的用法');
+    assert.match(r.stdout, /沒有其他 open PR/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('三關紅的死因要帶 stderr（127 的「command not found」不在 stdout——#441 當時只看得到 npm 橫幅）', () => {
+  const d = redDetail({
+    stdout: '\n> app@0.0.0 typecheck\n> tsc -p jsconfig.json\n',
+    stderr: 'sh: tsc: command not found\nnpm error Lifecycle script `typecheck` failed with error:\nnpm error code 127',
+  });
+  assert.match(d, /command not found/,
+    '死因（stderr）被丟掉，只剩 stdout 的 npm 橫幅——環境錯誤看起來就像測試紅，#441 就是這樣誤判的');
+  assert.match(d, /typecheck/, 'stdout 的橫幅也要留著（它說明倒在哪一關的哪個指令）');
+});
+
+test('三關紅但子行程兩邊都沒輸出（如 spawn 本身失敗）→ 退回 message，不可以是空死因', () => {
+  assert.match(redDetail({ message: 'spawnSync npm ENOENT' }), /ENOENT/);
+  assert.ok(redDetail(null).length > 0,
+    '連 message 都沒有也要給一句話——空字串會讓訊息停在「紅了：」，看的人什麼線索都拿不到');
 });
 
 // ⭐ 入口守衛（經過 symlink 的路徑也要真的跑）**移到 `test/entry-guard.test.js`**。
