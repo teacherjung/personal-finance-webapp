@@ -58,8 +58,12 @@ export const OUTBOUND_ENDPOINTS = [
   // 輕量讀取不限速＝2026-07-28 既有裁決（見 AGENTS 速率限制列），只列有限速的三條登入類。
   { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
   // P1b-1：AI 解析路線（★3 拍板＝Anthropic）。兩條路徑＝既有銀行上傳端點（AI 是其中的 fallback 分支，
-  // 需 useAi 同意旗標；HOSTED 停止線寫死＝目前只有 LOCAL 走得到）；限速由「上傳解析類」既有那道涵蓋。
-  { host: 'api.anthropic.com', why: 'AI 解析帳單（lib/ai-transport.js；LOCAL 專用、每次上傳前經確認窗同意）', paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'] },
+  // 需 useAi 同意旗標；HOSTED 停止線寫死）。⚠️ 限速誠實句（r1#4）：表上的「上傳解析類」只在 HOSTED
+  // 掛載（mountRateLimit 在 isHosted 分支）、而 AI 又在 HOSTED 停用——**實際可達的 LOCAL 路線沒有
+  // runtime 限速**，這是單機自用的既有設計（server.test 有「LOCAL 不掛表」考題）。AI 的成本邊界＝
+  // 每次上傳至多 2 發模型呼叫（階梯）＋每發都經前端確認窗（P1b-2）；正式成本護欄（單張費用上限／
+  // 每日次數）＝解析器計畫 P3，落地前不宣稱「已限速」。
+  { host: 'api.anthropic.com', why: 'AI 解析帳單（lib/ai-transport.js；LOCAL 專用、每次上傳前經確認窗同意；成本邊界見上註）', paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'] },
 ];
 
 /**

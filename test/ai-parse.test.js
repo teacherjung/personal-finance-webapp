@@ -214,6 +214,52 @@ test('apply｜弱閘拒收＝寫入路徑 fail-closed：db 一筆都不可多', 
   assert.equal(db.transactions.length, 0);
 });
 
+test('規矩④r1#1｜混合帳戶不搭便車：A 帳戶驗得動、B 帳戶餘額全空＝整份拒收（preview＋apply 零寫入）', async () => {
+  await seedDb(true);
+  const mixed = () => {
+    const a = goodAnswer();
+    a.accounts.push({ masked: '900500****5505', balance: 777, currency: 'TWD', label: '活存', note: '' });
+    a.transactions.push(
+      { acctMasked: '900500****5505', date: '2026-06-05', direction: 'in', amount: 999999, balance: null, summary: '轉帳存入', note: '' },
+      { acctMasked: '900500****5505', date: '2026-06-06', direction: 'out', amount: 888888, balance: null, summary: '轉帳支取', note: '' },
+    );
+    return a;
+  };
+  const spy = spyTransport([mixed(), mixed()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_weak_refused',
+    'r1#1 反例：level 是全檔旗標，B 帳戶零擋下型也曾放行＝搭便車；逐帳戶覆蓋要求要擋下');
+  const spy2 = spyTransport([mixed(), mixed()]);
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_weak_refused');
+  const db = await getDb();
+  assert.equal(db.transactions.length, 0, 'r1 實測曾 imported:4——現在必須零寫入');
+  assert.equal(db.accounts.length, 0);
+});
+
+test('r1#3｜閘紅終局錯誤不含帳單欄值：ai_reconcile_failed、marker/金額/末碼都不得外洩', async () => {
+  await seedDb(true);
+  const leaky = () => {
+    const a = goodAnswer();
+    a.transactions[1].balance = 999;                       // 鏈斷＝擋下型不一致
+    a.transactions[1].summary = 'SENSITIVE標記字串';        // 對帳閘訊息會引用摘要——不可外送
+    return a;
+  };
+  const spy = spyTransport([leaky(), leaky()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => {
+      assert.equal(e.code, 'ai_reconcile_failed', '要有機器可讀 code（前端分流）');
+      for (const leak of ['SENSITIVE標記字串', '999', '1,000', '500', '3302']) {
+        assert.ok(!String(e.message).includes(leak), `終局錯誤訊息不可含帳單欄值（${leak}）`);
+      }
+      return true;
+    });
+  assert.equal(spy.calls.length, 2, '兩級都試過才收斂到終局錯誤');
+});
+
 // ---- 機密流向 ----
 
 test('機密｜整條 AI 路線不落 log：帳單內文與鑰匙不可出現在任何 console 輸出', async () => {
@@ -249,11 +295,23 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
   assert.equal(captured.init.headers['anthropic-version'], '2023-06-01');
   const body = JSON.parse(captured.init.body);
   assert.equal(body.model, AI_BANK_MODELS.primary);
-  assert.equal(body.temperature, 0, '解析要可重現、不要創意');
+  assert.ok(!('temperature' in body), 'r1#2：Sonnet 5 家族拒非預設 sampling 參數——一律不帶（格式由結構化輸出鎖）');
   assert.equal(body.output_config.format.type, 'json_schema', '固定答案卷＝結構化輸出（2026-08-12 官方文件核對）');
   assert.deepEqual(body.output_config.format.schema, AI_BANK_SCHEMA);
   assert.equal(body.messages[0].content, '帳單文字');
   assert.equal(body.system, buildBankSystem(), '真工廠掛的是正式提示詞');
+  // r1#2 的那把刀口：升級那一發（Sonnet）的請求形狀也要釘——不帶 temperature/top_p/top_k
+  const origFetch2 = globalThis.fetch;
+  /** @type {any} */ let captured2 = null;
+  globalThis.fetch = /** @type {any} */ (async (/** @type {any} */ url, /** @type {any} */ init) => {
+    captured2 = { url, init };
+    return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
+  });
+  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').parseOnce('帳單文字', AI_BANK_MODELS.escalation); }
+  finally { globalThis.fetch = origFetch2; }
+  const body2 = JSON.parse(captured2.init.body);
+  assert.equal(body2.model, AI_BANK_MODELS.escalation);
+  for (const k of ['temperature', 'top_p', 'top_k']) assert.ok(!(k in body2), `Sonnet 5 對非預設 ${k} 回 400——升級那一發不可帶`);
 });
 
 test('transport｜錯誤分類：401=ai_auth、500=ai_unavailable(502)、refusal=ai_refusal、截斷=ai_truncated、壞 JSON=ai_bad_answer', async () => {
