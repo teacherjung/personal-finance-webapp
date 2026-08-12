@@ -42,6 +42,11 @@ test('G2｜文案：該講的都講了（辦鑰匙／兩套帳／級距不是報
   assert.match(ALL_COPY, /幾塊台幣/, '要講大概多少錢');
   assert.match(ALL_COPY, /不是報價|以 Anthropic 那邊的帳單為準|實際金額以他們的帳單為準/, '費用要標明是級距');
   assert.match(ALL_COPY, /驗算/, '★要講「設了鑰匙也不是什麼帳單都吃得下」');
+  // ★r4#1：skip 窗的驗算描述也要收在實作射程內（只驗台幣、首筆驗不到、外幣不在內）
+  assert.match(AI_KEY_INFO.skip.html, /台幣/, '要講清楚驗的是台幣帳戶');
+  assert.match(AI_KEY_INFO.skip.html, /第一筆|首筆/, '★每個帳戶的第一筆驗不到');
+  assert.match(AI_KEY_INFO.skip.html, /外幣/, '★外幣明細不在這道驗算裡');
+  assert.doesNotMatch(AI_KEY_INFO.skip.html, /整份連得起來才收/, '不可寫成整份逐筆都驗');
   assert.match(ALL_COPY, /完全可以不設定|不設定也完全可以/, '要講不設定會怎樣');
   assert.match(ALL_COPY, /只會顯示一次/, '辦 key 的實務提醒');
 });
