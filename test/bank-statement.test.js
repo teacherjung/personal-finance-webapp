@@ -635,3 +635,98 @@ test('概要區｜台幣區不受影響（sticky 只作用在外幣區）', () =
   assert.equal(r.accounts.find(a => a.suffix === '3301').currency, 'TWD');
   assert.equal(r.accounts.find(a => a.suffix === '363').currency, 'JPY');
 });
+
+// ---- 機構維度（P1a 銀行身分維度，2026-08-12）：多銀行前提工程 ----
+// 設計要旨：①帳戶記了開戶機構（bank）＝跨行不可互配；缺席＝祖父條款照舊只比數字（行為釘住）
+// ②去重鍵雙格式：台新既有格式**位元組級凍結**、他行走 bank2|機構|…——不同銀行同字樣不撞鍵
+// ③顯示層 812- 補碼只屬台新。合成機構名一律用「合成一銀」（明顯假值，同帳號末碼慣例）。
+const { reconcileBankTxAccountNames, bankDisplayNote, applyLearnedBankToDb } = await import('../lib/services/bank-import.js');
+const parsedAs = (bank, referenceDate, accounts) => ({ bank, referenceDate, accounts });
+
+test('機構維度｜蓋過機構戳的帳戶不可被他行帳單覆蓋：同字樣可見帳號→不更新、另建新帳戶', () => {
+  const db = { accounts: [{ id: 'fx', name: '一銀活儲', type: 'cash', class: '現金', bank: '合成一銀', currency: 'TWD', accountNo: '900100123453301', balance: 777 }] };
+  const r = applyBalancesToDb(db, parsedAs('台新', '2026-06-30', [accM('900100****3301', 'TWD', 23)]));
+  assert.equal(db.accounts.find(a => a.id === 'fx').balance, 777, '一銀帳戶餘額不可被台新帳單覆蓋（跨行誤配＝財務資料損毀）');
+  assert.equal(r.created, 1, '台新這筆自成新帳戶');
+  const created = db.accounts.find(a => a.id !== 'fx');
+  assert.equal(created.bank, '台新', '新建帳戶蓋機構戳（帳單自己的宣告）');
+  assert.equal(created.name, '台新 3301（活存）');
+});
+
+test('機構維度｜祖父條款：沒有機構戳的既有帳戶照舊只比數字（更新成功、且不回填機構戳）', () => {
+  const db = { accounts: [{ id: 'a1', name: '我的台新', type: 'cash', currency: 'TWD', accountNo: '900100123453301', balance: 5 }] };
+  const r = applyBalancesToDb(db, parsedAs('台新', '2026-06-30', [accM('900100****3301', 'TWD', 23)]));
+  assert.equal(r.updated, 1, '機構維度之前建的帳戶（無 bank 欄）＝既有行為不變');
+  const a = db.accounts.find(x => x.id === 'a1');
+  assert.equal(a.balance, 23);
+  assert.equal(a.bank, undefined, '比對成功＝數字推論、不是帳單宣告——不可回填機構戳（猜錯會從此擋掉正確比對）');
+});
+
+test('機構維度｜非台新帳單：新建帳戶名帶機構、蓋機構戳；無戳帳戶依祖父條款照樣可配', () => {
+  const db = { accounts: [{ id: 'old', name: '舊帳戶', type: 'cash', currency: 'TWD', accountNo: '900200123453302', balance: 1 }] };
+  const r = applyBalancesToDb(db, parsedAs('合成一銀', '2026-06-30', [accM('900200****3302', 'TWD', 88), accM('900400****4404', 'TWD', 7)]));
+  assert.equal(r.updated, 1, '無戳帳戶＝不驗機構（誠實劃界：祖父路徑的理論碰撞已記在 matchAccount 註解）');
+  assert.equal(db.accounts.find(a => a.id === 'old').bank, undefined, '更新不回填');
+  const created = db.accounts.find(a => a.accountNo === '900400****4404');
+  assert.equal(created.name, '合成一銀 4404（活存）', '自動名帶帳單機構、不再寫死台新');
+  assert.equal(created.bank, '合成一銀');
+});
+
+test('機構維度｜去重鍵雙格式：台新位元組級凍結（bank|…）、他行 bank2|機構|…', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const db1 = { accounts: [], transactions: [] };
+  importBankTxToDb(db1, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(db1.transactions[0].bankRef, 'bank|900200****3302|2026-06-01|out|20000|100|CD提款|',
+    '台新格式一個位元組都不能變——變了＝既有資料重匯判不出重複＝現金流翻倍');
+  const db2 = { accounts: [], transactions: [] };
+  importBankTxToDb(db2, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(db2.transactions[0].bankRef, 'bank2|合成一銀|900200****3302|2026-06-01|out|20000|100|CD提款|',
+    '他行新格式：機構第 2 段、帳號右移第 3 段');
+  assert.equal(db2.transactions[0].account, '合成一銀 3302', '帳戶名 fallback 帶機構、不再寫死台新');
+});
+
+test('機構維度｜不同銀行的同字樣交易不互判重複：台新已匯，同字樣他行照樣匯入（預覽也不標 duplicate）', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const db = { accounts: [], transactions: [] };
+  importBankTxToDb(db, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(pv.counts.duplicate, 0, '跨行同字樣＝不同交易，預覽不可標 duplicate');
+  const r = importBankTxToDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(r.imported, 1, '跨行同字樣＝各自成立（撞鍵會少記他行的錢）');
+});
+
+test('機構維度｜舊版末碼鍵只屬台新：台新重匯認得舊列去重、他行不可冒領', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const legacyRow = { id: 'L1', source: 'bank', bankRef: 'bank|3302|2026-06-01|out|20000|100|CD提款|' };   // stage 3 初版格式（末碼）
+  const dbA = { accounts: [], transactions: [legacyRow] };
+  const rA = importBankTxToDb(dbA, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(rA.imported, 0, '台新重匯：舊版鍵仍認得＝不重複記');
+  const dbB = { accounts: [], transactions: [{ ...legacyRow }] };
+  const rB = importBankTxToDb(dbB, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(rB.imported, 1, '他行不可拿台新時代的舊版鍵冒領去重（那會把他行的真交易吃掉）');
+});
+
+test('機構維度｜顯示層 812- 補碼只屬台新：他行行內帳號原樣呈現', () => {
+  assert.equal(bankDisplayNote('CD轉出', '00001234****5678 甲'), '現金轉出・812-00001234****5678（甲）', '台新（預設）＝補台新代碼');
+  assert.equal(bankDisplayNote('CD轉出', '00001234****5678 甲', { bank: '合成一銀' }), '現金轉出・00001234****5678（甲）', '他行帳單＝不可硬掛台新代碼（指鹿為馬）');
+});
+
+test('機構維度｜bank2 反解：改名對齊認機構、方向護欄讀第 5 段', () => {
+  // 改名對齊：bank2 列的帳號在第 3 段、機構在第 2 段——只可對到同機構（或無戳）的帳戶
+  const db = { accounts: [{ id: 'fx', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 0 }],
+    transactions: [
+      { id: 't1', source: 'bank', account: '合成一銀 3302', bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|out|100||CD提款|' },
+      { id: 't2', source: 'bank', account: '台新 3302', bankRef: 'bank|900200****3302|2026-06-01|out|100||CD提款|' },
+    ] };
+  const changed = reconcileBankTxAccountNames(db);
+  assert.equal(changed, 1, '只有 bank2 列（機構相符）改名');
+  assert.equal(db.transactions.find(t => t.id === 't1').account, '一銀活儲');
+  assert.equal(db.transactions.find(t => t.id === 't2').account, '台新 3302', '舊格式列＝台新身分，不可被一銀帳戶收編改名');
+  // 方向護欄：bank2 的方向在第 5 段（無 dir 欄的殘缺列靠 bankRef 反解）——讀錯段會把出帳當成可套收入
+  const db2 = { accounts: [], learnedBank: { '轉帳存入|付款人甲': { type: 'income', category: '其他', subcategory: '其他收入' } },
+    transactions: [{ id: 'x', source: 'bank', type: 'expense', category: '其他', subcategory: '未分類', note: '',
+      bankKey: '轉帳存入|付款人甲', bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|in|500||轉帳存入|付款人甲' }] };
+  const r = applyLearnedBankToDb(db2, '轉帳存入|付款人甲');
+  assert.equal(r.changed, 1, 'bank2 第 5 段是 in→收入規則可套（讀成第 4 段會拿帳號當方向＝全 skip）');
+  assert.equal(db2.transactions[0].type, 'income');
+});
