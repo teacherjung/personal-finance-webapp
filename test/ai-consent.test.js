@@ -180,6 +180,9 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.match(evil, /&lt;img/);
   assert.doesNotMatch(evil, /<img src=x/);
   assert.match(aiConsentBodyHtml({}), /未命名檔案/, '沒檔名也要開得起來');
+  // ⚠️ 這是 HTML 不是 markdown：`**粗體**` 會把星號原樣顯示給使用者看（要粗體請用 <b>）
+  assert.doesNotMatch(html, /\*\*/, '畫面文案不可留 markdown 星號');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'm' }), /\*\*/, '徽章同上');
   assert.ok(AI_CONSENT_TITLE.includes('AI') && AI_CONSENT_SUBMIT_LABEL.includes('同意'));
 });
 
@@ -200,9 +203,15 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.match(html, /自洽|剛好.*平|扣不起來/, '要照實講「擋得住扣不起來的錯、擋不住剛好自洽的錯」（契約 §八 的誠實劃界）');
   // ★r4#1：驗算的真實射程＝**只驗台幣**（外幣整組 skip）、**每個帳戶首筆驗不到**（沒有前一筆可比）。
   //   把它講成「每一筆都驗、驗不到就不收」是超過實作的保證。三條各自獨立斷言（不互相冒充）。
-  assert.match(html, /台幣/, '要講清楚驗的是台幣帳戶的明細');
-  assert.match(html, /第一筆|首筆/, '★要講清楚每個帳戶的第一筆驗不到');
-  assert.match(html, /外幣/, '★要講清楚外幣明細不在這道驗算裡');
+  // ⚠️ **scope 到各自承擔的那一個 <li>**（r5#2）：整份 html 掃「台幣」會被別句（「不計入台幣收支」）
+  //    滿足——Codex 實測把驗算對象從「台幣帳戶」改成「帳戶」，整份掃描仍全綠。
+  const items = html.split('<li>');
+  const gateeItem = items.find((x) => x.includes('通過驗算才准匯入')) || '';
+  const blindItem = items.find((x) => x.includes('看不到的三件事')) || '';
+  assert.ok(gateeItem && blindItem, '徽章要有「驗什麼」與「看不到什麼」兩條');
+  assert.match(gateeItem, /台幣帳戶/, '★講驗算對象的那一條就要指名台幣帳戶（整份掃描會被別句冒充）');
+  assert.match(blindItem, /第一筆|首筆/, '★要講清楚每個帳戶的第一筆驗不到');
+  assert.match(blindItem, /外幣/, '★要講清楚外幣明細不在這道驗算裡');
   assert.doesNotMatch(html, /把每一筆的餘額前後扣起來/, '不可寫成「每一筆」——首筆沒有前一筆可比');
   assert.doesNotMatch(html, /進不了你的帳本|不會記錯|保證正確|一定正確|完全正確/,
     '★閘只保證擋住「造成不一致」的錯——金額與餘額一起抄成自洽的另一組數字仍可能通過，不可講成數值正確性保證');
