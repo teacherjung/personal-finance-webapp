@@ -106,6 +106,15 @@ test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把
   assert.match(src, /aiKeyPatch\(\{ value: val\('aiApiKey'\)/, '判準要真的走純函式（複製回 settings.js＝行為沒被考題守住）');
   assert.match(src, /byId\('clearAiApiKey'\)\)\?\.checked === true/, '可選鏈：沒設定時那個 checkbox 根本不存在');
   assert.match(src, /if \(!patch\) return toast\(AI_KEY_NOCHANGE_TEXT, true\);/, '沒有變更＝紅字提示、不送 PUT');
+  // ★r8#1：把斷言 scope 到**這個 handler 自己**——否則 `await renderSettings()` 會被同檔既有的
+  //   「清除記住的帳單密碼」那條路冒充；而「算出 patch 卻沒送出去」更是整條路白做（Codex 實測：
+  //   把 body 改成 {} 仍 1959/1959 全綠＝畫面說儲存成功、鑰匙其實沒送到後端）。
+  const aiStart = src.indexOf("byId('saveAiApiKey')");
+  const aiEnd = src.indexOf('data-ai-info', aiStart);
+  assert.ok(aiStart > 0 && aiEnd > aiStart, 'AI 鑰匙 handler 要找得到（找不到就別假裝在守它）');
+  const aiBlock = src.slice(aiStart, aiEnd);
+  assert.match(aiBlock, /body: patch/, '★算出來的 patch 要真的成為 request body（送 {} 的話畫面照樣說成功、鑰匙沒存到）');
+  assert.match(aiBlock, /await renderSettings\(\);/, '★這個 handler 自己要重繪（讓清除入口當場出現）——不可靠別條路的重繪冒充');
   assert.match(src, /const seq = currentNavSeq\(\);[\s\S]{0,400}?saveAiApiKey|saveAiApiKey[\s\S]{0,400}?const seq = currentNavSeq\(\);/,
     '★問的是「還在設定頁嗎」＝換頁序號；接成 currentRouteSeq 時開機背景重繪會讓儲存成功卻不提示、清除入口不出現');
   assert.doesNotMatch(src, /saveAiApiKey[\s\S]{0,400}?currentRouteSeq/, '同上：這個區塊不可用重繪序號');

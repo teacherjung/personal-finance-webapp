@@ -294,7 +294,13 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.ok(AI_PREVIEW_LOST_TEXT.includes('重新上傳'), '票掉了要引導重新預覽');
   // 同意窗的鈕不可寫「儲存」——這是「送出去讀」的決定，不是存檔
   assert.match(src, /submitLabel: AI_CONSENT_SUBMIT_LABEL/, '同意窗要指定送出鈕文字');
+  // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
+  //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，
+  //   而所有考題照樣全綠（Codex 實測）。
+  assert.match(src, /bodyHtml: aiConsentBodyHtml\(\{ fileName \}\)/, '同意窗要把揭露內文交給 openForm');
   const appSrc = srcOf('public/app.js');
   assert.match(appSrc, /\$\{esc\(submitLabel\)\}<\/button>/,
     'openForm 的送出鈕要吃 submitLabel（寫死「儲存」的話，同意窗的鈕會變成「儲存」——使用者以為只是存個設定，其實是把帳單送出去）');
+  assert.match(appSrc, /\$\{bodyHtml \? `<div class="info-body">\$\{bodyHtml\}<\/div>` : ''\}/,
+    '★openForm 必須真的把 bodyHtml 渲染進畫面——忽略它＝同意窗變成沒有告知的空白確認框');
 });
