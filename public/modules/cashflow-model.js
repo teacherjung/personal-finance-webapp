@@ -56,7 +56,7 @@ export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
 export const BANK_UPLOAD_NOTICE = `<details>
   <summary>上傳前想先知道的事</summary>
   <p style="margin:8px 0 0">請選取銀行寄給你的對帳單 PDF。</p>
-  <p style="margin:6px 0 0">如果內建的讀取範本認不出這個版面，畫面會問你要不要交給 AI 幫忙讀——<b>只有你按下同意的那一次</b>，才會把從這份 PDF 抽出來的<b>文字</b>送給第三方 AI 公司判讀（PDF 檔本身不會送出去）。沒按同意就完全不送。</p>
+  <p style="margin:6px 0 0">如果內建程式認不出您的對帳單版面，將詢問您要不要交給 AI 幫忙判讀。（沒按同意不會送出至 AI 公司）</p>
 </details>`;
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';

@@ -375,11 +375,11 @@ test('文案｜上傳窗不寫死單一銀行，但誠實講「內建範本認�
   assert.match(BANK_UPLOAD_NOTICE, /AI/, '要預告會問「要不要交給 AI 讀」——使用者才知道那個窗為什麼跳出來');
   // ★預設收起來（William 裁示）：真正的隱私把關在同意窗，這裡只是預告
   assert.match(BANK_UPLOAD_NOTICE, /<details>[\s\S]*<summary>/, '★說明要收合，想知道的人自己點開');
-  // ★兩處事實糾正（不可退回 William 原句的措辭，那兩點與實作不符）
-  assert.match(BANK_UPLOAD_NOTICE, /抽出來的<b>文字<\/b>|抽出來的文字/, '★送出去的是抽出來的**文字**，不是 PDF 檔本身');
-  assert.match(BANK_UPLOAD_NOTICE, /PDF 檔本身不會送出去|檔案本身不會/, '★要明講原檔不出去');
-  assert.match(BANK_UPLOAD_NOTICE, /按下同意的那一次|按下同意/, '★不是「有可能自動送」——只有按下同意那一次才送');
-  assert.match(BANK_UPLOAD_NOTICE, /沒按同意就完全不送|沒同意.*不送/, '★沒同意＝完全不送，要講死');
+  // ★「沒同意就不送」是這一句在上傳階段唯一要守死的保證（William 2026-08-12 版）。
+  //   「送的是抽出來的文字、不是 PDF 檔」等細節已移到**同意窗**（那裡才是真正的告知點，
+  //   由 test/ai-consent.test.js 的 E 群守）——這裡不重複，避免同一句話兩處維護而走鐘。
+  assert.match(BANK_UPLOAD_NOTICE, /沒按同意不會送出|沒按同意.*不會送/, '★沒按同意＝不會送出，要講死');
+  assert.match(BANK_UPLOAD_NOTICE, /AI 公司|AI公司/, '要點明送去的是外部 AI 公司');
   assert.doesNotMatch(BANK_UPLOAD_NOTICE, /有可能傳給|可能會傳給|系統會自動送/,
     '★不可寫成「有可能傳給」——會讓人以為系統可能背著他送，比事實更嚴重（拍板是每次都問）');
   // 送出鈕：這個窗按下去是上傳並預覽，不是存檔

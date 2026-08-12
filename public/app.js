@@ -182,10 +182,11 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
  * - `bodyHtml`＝表單欄位**之前**的說明段落。⚠️ 語意同 `openInfo`＝**受信任的作者內容、不 esc**；
  *   呼叫端若要插使用者資料（檔名之類），自己在來源模組 `esc()`（P1b-2 的 `aiConsentBodyHtml` 就是）。
  * - `submitLabel`＝送出鈕文字（走 `esc`）。用途：確認型彈窗的鈕不該寫「儲存」。
+ * - `busyLabel`＝送出處理中的鈕文字（要等好幾秒的表單才給；失敗解鎖時自動換回 `submitLabel`）。
  * ⚠️ 刻意**不加 `onCancel`**：取消/×/背景三條路都走 `close()`＝撤銷擁有權（r20），
  *   要在取消後留下訊息就在**開窗之前**先 toast（`runAiFallback` 就是這樣做的）。 */
-/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string}} cfg */
-export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存' }) {
+/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
+export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
   const fieldHtml = fields.map(f => {
@@ -243,12 +244,15 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       out[f.key] = val;
     }
     if (submitBtn) submitBtn.disabled = true;
+    // busyLabel（2026-08-12）：送出要等好幾秒的表單（AI 解析實測 5–6 秒），只把鈕變灰看起來像當掉——
+    // 把文字換成「處理中…」讓使用者知道還在跑。失敗解鎖時要換回來（見下方 catch）。
+    if (submitBtn && busyLabel) submitBtn.textContent = busyLabel;
     // r6：onSubmit 有 await，回來時只在**仍擁有 modal-root** 時才動 UI——切頁或期間開了新彈窗＝
     //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
     // 第二個參數＝這張表單自己的擁有權把手：onSubmit 若要「送出後再開下一窗」，用 ctx.owns.handoff()
     // 判斷那一格有沒有被別人接管（r18）。既有呼叫端只收一個參數，不受影響。
     try { await onSubmit(out, { owns }); if (owns()) closeAfterSubmit(); }
-    catch (err) { if (owns()) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); } }   // 失敗才解鎖重試；成功已 close
+    catch (err) { if (owns()) { if (submitBtn) { submitBtn.disabled = false; if (busyLabel) submitBtn.textContent = submitLabel; } toast(err.message, true); } }   // 失敗才解鎖重試（並把鈕文字換回來）；成功已 close
   };
   if (onMount) onMount(root);
 }

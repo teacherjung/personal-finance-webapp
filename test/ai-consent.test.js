@@ -21,7 +21,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const {
   snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -150,13 +150,15 @@ test('D2｜runAiFallback：切頁的兩顆競態——排程當下與 callback �
 
 test('E｜同意窗內文：四件事都講到、危險句一句都不准出現、檔名要跳脫', () => {
   const html = aiConsentBodyHtml({ fileName: '2026-06 對帳單.pdf' });
-  assert.match(html, /送出哪一份/);
+  assert.match(html, /送出內容/, '要講清楚送出去的是哪一份');
   assert.match(html, /2026-06 對帳單\.pdf/, '要顯示送的是哪一份檔案');
   assert.match(html, /Anthropic/, '要講送去哪裡');
   assert.match(html, /幾塊台幣/, '要講大概多少錢');
+  assert.match(html, /大概多少/, '費用那一列的標題');
   assert.match(html, /不是報價|以他們的帳單為準/, '費用要標明是級距不是報價');
   assert.match(html, /不同意/, '要講不同意會怎樣（手動記帳、其他功能照常）');
-  assert.match(html, /每一次都會先問過你/, '★拍板：每次都問、不記住同意');
+  assert.match(html, /每一次上傳都會出現/, '★拍板：每次都問');
+  assert.match(html, /同意只算這一次|不會被記住/, '★拍板：不記住同意');
   // ★r4#2：AI 讀出來的結果不是直接進資料庫——先回畫面核對、暫存伺服器記憶體，按下匯入才寫進去。
   //   scoped 斷言（不是全文找「資料庫」字樣，那會被別句冒充）
   const resultLine = (html.split('\n').find((l) => l.includes('讀出來的結果')) || '');
@@ -171,6 +173,15 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   //   ⇒ regex 沒咬到、完整測試照綠（Codex 用反例探針證實）。改成整個詞都不准出現。
   assert.doesNotMatch(html, /這台電腦/,
     '同意窗文案必須模式中立：雲端版的資料庫不在使用者電腦上，「留在你這台電腦」是假的');
+  // ★William 2026-08-12 審稿時提出的版本，我糾正了三處與事實不符——這三條把糾正釘住：
+  assert.doesNotMatch(html, /AI 那邊不會保留|AI那邊不會保留|不會留一份/,
+    '★與上一行「會在一段時間後刪除」矛盾：留存一段時間＝有保留，不可寫成「不保留」');
+  assert.doesNotMatch(html, /William/, '★程式碼裡不寫死使用者名字（未來多人版會變錯字）');
+  assert.doesNotMatch(html, /讀取不出這份帳單的內容|讀不出.*內容/,
+    '★文字有讀到（下一行就說「抽出來的文字」）——認不出的是**版面**，不是讀不到內容');
+  assert.match(html, /認不出這份帳單的版面|認不出.*版面/, '要講清楚是版面認不出來');
+  assert.doesNotMatch(html, /帳號未碼/, '錯字：是「末碼」');
+  assert.match(html, /帳號末碼/, '要列出送出去的欄位');
   // 跳脫：檔名是使用者給的
   const evil = aiConsentBodyHtml({ fileName: '<img src=x onerror=alert(1)>.pdf' });
   assert.match(evil, /&lt;img/);
@@ -180,6 +191,9 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.doesNotMatch(html, /\*\*/, '畫面文案不可留 markdown 星號');
   assert.doesNotMatch(aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'm' }), /\*\*/, '徽章同上');
   assert.ok(AI_CONSENT_TITLE.includes('AI') && AI_CONSENT_SUBMIT_LABEL.includes('同意'));
+  assert.match(AI_CONSENT_BUSY_LABEL, /稍候|讀取中|正在/, '送出中的鈕文字要看得出「還在跑」');
+  assert.match(AI_SENDING_TEXT, /稍候|請稍等/, '提示要請使用者稍候');
+  assert.match(AI_SENDING_TEXT, /不用重按|不要重按|別重按/, '★要講「不用重按」——不然使用者會連按（票是一次性、第二次會拿到錯誤）');
 });
 
 test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「驗不到什麼」，模型名要跳脫', () => {
@@ -300,6 +314,12 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.ok(AI_PREVIEW_LOST_TEXT.includes('重新上傳'), '票掉了要引導重新預覽');
   // 同意窗的鈕不可寫「儲存」——這是「送出去讀」的決定，不是存檔
   assert.match(src, /submitLabel: AI_CONSENT_SUBMIT_LABEL/, '同意窗要指定送出鈕文字');
+  // ★等待回饋（William 2026-08-12 回報：按下同意後畫面停 5–6 秒，看起來像當掉）
+  assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL/, '★送出中要換鈕文字（只變灰看起來像沒反應）');
+  assert.match(src, /toast\(AI_SENDING_TEXT\)/, '★另外吐一句提示：視線不一定在鈕上，而且要講「不用重按」');
+  const appSrc2 = srcOf('public/app.js');
+  assert.match(appSrc2, /if \(submitBtn && busyLabel\) submitBtn\.textContent = busyLabel;/, '★openForm 要真的把 busyLabel 寫上按鈕');
+  assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');
   // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
   //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，
   //   而所有考題照樣全綠（Codex 實測）。

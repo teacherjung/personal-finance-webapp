@@ -14,7 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
-import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
+import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -196,8 +196,10 @@ function openBankUpload() {
         fields: [],
         bodyHtml: aiConsentBodyHtml({ fileName }),
         submitLabel: AI_CONSENT_SUBMIT_LABEL,
+        busyLabel: AI_CONSENT_BUSY_LABEL,   // 鈕上的字（AI 要跑 5–6 秒，只變灰看起來像當掉）
         onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           const canOpenNext = () => onPage() && ctx.owns.handoff();
+          toast(AI_SENDING_TEXT);   // 視線不一定在鈕上：另外吐一句「還在跑、不用重按」
           try {
             const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
