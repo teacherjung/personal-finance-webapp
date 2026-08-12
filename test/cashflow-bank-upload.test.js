@@ -202,9 +202,14 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
   assert.match(src, /const seq0 = currentNavSeq\(\);/, '銀行上傳窗要在開窗當下存下**換頁**序號（r9：接成重繪序號時密碼窗會靜靜不開）');
   // r18/r21：判準從 onPage 升級成 canOpenNext＝**還在同一頁 且（還沒關窗／或這次是送出成功的交棒）**
   //   ——使用者按取消也是「自己關的」，但那是撤銷、不放行。
-  assert.match(src, /const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/,
-    '排下一窗的判準要同時看換頁與彈窗格擁有權（r18 產線競態：等 preview 時關窗改開別的窗，舊 preview 會蓋掉它）');
-  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/, '密碼窗成功後開預覽窗要走 openWhenOnPage＋canOpenNext');
+  // ⚠️ 計數而非 match（P1b-2）：銀行線現在有**三個** onSubmit（上傳窗／密碼窗／同意窗），
+  //   每一個都要自己算 canOpenNext——少一個，那條路的窗就會被同頁重繪判成已切頁而靜靜不開。
+  assert.equal((src.match(/const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/g) || []).length, 3,
+    '排下一窗的判準要同時看換頁與彈窗格擁有權（r18 產線競態）；三個 onSubmit（上傳窗／密碼窗／同意窗）各一份');
+  // ⚠️ 這一行的字面在**密碼窗成功**與**同意窗成功**兩處完全相同——用 match 只要有一處在就綠，
+  //   移除另一處照樣過（r5#3 同型的假綠）。改成計數：少一條就紅。
+  assert.equal((src.match(/openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/g) || []).length, 2,
+    '密碼窗成功與同意窗成功各要開一次預覽窗（走 openWhenOnPage＋canOpenNext）——少一條＝那條路的切頁作廢被拆掉也全綠');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, '', onPage\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage＋canOpenNext');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage＋canOpenNext');
   assert.doesNotMatch(src, /setTimeout\(\(\) => showBankPreview/, '不准有裸 setTimeout 開預覽窗（繞過切頁作廢）');

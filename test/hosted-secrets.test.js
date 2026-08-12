@@ -1063,3 +1063,60 @@ test('密碼池清除：明確清除入口把池歸零（比照機密欄位「�
   const settings = await (await as('tokA', '/api/settings')).json();
   assert.equal(Number(settings.rememberedStatementPasswordsCount), 0);
 });
+
+// ============================================================================
+// P1b-2 AI 解析鑰匙（settings.aiApiKey）
+// ⚠️ 同上一批的理由：新機密光加進 mapSecrets 不會讓任何舊題轉紅（列舉式考題的固有縫）。
+//    P1b-1 建立這個欄位時只有單元級考題（test/ai-parse.test.js），本支給了它**設定頁的寫入路徑**，
+//    所以在這裡補齊五個性質——寫入端一律走真 HTTP（PUT /api/settings），不是直接改 db。
+// ============================================================================
+
+test('AI 鑰匙 at-rest：資料庫裡是密文，明文一個字都找不到', async () => {
+  const key = 'sk-ant-hosted-at-rest-synthetic';
+  const r = await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  assert.equal(r.status, 200, `存鑰匙應該成功——${await r.clone().text()}`);
+  const raw = rawOf(A.id);
+  assert.ok(!raw.includes(key), 'AI 鑰匙以明文躺在資料庫裡！');
+  assert.match(raw, /enc:v1:/, '應該看得到密文前綴');
+});
+
+test('AI 鑰匙投影：一個字都不送瀏覽器，設定頁只拿得到 aiApiKeySet 布林', async () => {
+  const key = 'sk-ant-hosted-projection-synthetic';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  for (const p of ['/api/settings', '/api/db', '/api/summary']) {
+    const body = await (await as('tokA', p)).text();
+    assert.ok(!body.includes(key), `${p} 把 AI 鑰匙送到瀏覽器了！`);
+  }
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings.aiApiKeySet, true, '設定頁靠這個布林決定「清除入口」出不出現');
+  assert.equal(settings.aiApiKey, undefined, '欄位本體必須被投影剝除');
+});
+
+test('AI 鑰匙雲端匯出：與其他機密同待遇——內容剝除、欄位留空', async () => {
+  const key = 'sk-ant-hosted-export-synthetic';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  const body = await (await as('tokA', '/api/export')).text();
+  assert.ok(!body.includes(key), '雲端匯出不可含 AI 鑰匙');
+  assert.equal(JSON.parse(body).settings.aiApiKey, '', '欄位留著且為空＝「未設定」，不是整個消失');
+});
+
+test('AI 鑰匙 HOSTED 匯入：檔案裡的鑰匙一律不採用、保留現值', async () => {
+  const keep = 'sk-ant-hosted-import-keep';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: keep }) });
+  const dump = JSON.parse(await (await as('tokA', '/api/export')).text());
+  dump.settings.aiApiKey = 'sk-ant-EVIL-FROM-FILE';   // 備份檔被人塞了一把別的鑰匙
+  const imp = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(dump) });
+  assert.equal(imp.status, 200, `匯入應該成功——${await imp.clone().text()}`);
+  const raw = rawOf(A.id);
+  assert.ok(!raw.includes('sk-ant-EVIL-FROM-FILE'), '檔案裡的鑰匙不可被採用');
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings.aiApiKeySet, true, '現值（原本存的那把）要被保留——否則匯入回自己的備份會把鑰匙洗掉');
+});
+
+test('AI 鑰匙清除：送空字串＝清空，投影布林跟著變 false', async () => {
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: 'sk-ant-hosted-clear-x' }) });
+  const r = await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: '' }) });
+  assert.equal(r.status, 200);
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings.aiApiKeySet, false, '清除後設定頁要看得出「未設定」（清除入口才會收起來）');
+});

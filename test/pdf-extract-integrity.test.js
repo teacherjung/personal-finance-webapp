@@ -812,6 +812,8 @@ test('銀行主入口｜不是台新綜合對帳單的 PDF → 明確 400，不�
   assert.equal(err.status, 400, '要回 400（可修的輸入錯誤），不是 500');
   assert.match(err.message, /台新銀行綜合對帳單/,
     '訊息要說清楚「這份看起來不是台新銀行綜合對帳單」，使用者才知道自己上傳錯檔案');
+  assert.equal(err.code, 'bank_unrecognized',
+    '要有機器判準（P1b-2）：前端靠它分辨「範本認不得」（可提供 AI 救援）與「對帳閘紅」（★6 禁止匯入、刻意無 code）——用訊息字面 regex 分辨會隨文案漂');
 });
 
 test('銀行主入口｜明細表頭**三欄全部**被逐字拆（湊不出完整欄名）→ 400，不可把欄位 x 靜默歸零', async () => {
@@ -834,6 +836,7 @@ test('銀行主入口｜明細表頭**三欄全部**被逐字拆（湊不出完�
   assert.ok(err, '欄位位置讀不到就不可以繼續解析（x 全歸零＝方向亂判，而且完全沒有錯誤訊息）');
   assert.equal(err.status, 400);
   assert.match(err.message, /讀不到銀行明細的欄位位置/, '要說清楚是「版面與預期不同」，請使用者回報');
+  assert.equal(err.code, 'bank_unrecognized', '同上：這也是「範本認不得這個版面」，前端可提供 AI 救援入口');
 });
 
 // `if (!xOut || !xIn || !xBal)` 是**三選一**：任何一欄讀不到就要擋。上面那題三欄一起拆，
@@ -862,6 +865,7 @@ for (const [col, harm] of /** @type {const} */ ([
       + `${JSON.stringify(got?.transactions?.map((/** @type {any} */ t) => [t.date, t.direction, t.amount]))}）`);
     assert.equal(err.status, 400);
     assert.match(err.message, /讀不到銀行明細的欄位位置/);
+    assert.equal(err.code, 'bank_unrecognized', '單欄讀不到也是「認不得版面」＝同一個機器判準');
   });
 }
 

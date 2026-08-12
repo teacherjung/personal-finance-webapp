@@ -1,11 +1,12 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
+import { aiKeyPatch, AI_KEY_INFO, AI_KEY_CARD_TITLE, AI_KEY_CARD_NOTE, AI_KEY_COST_LINE, AI_KEY_PLACEHOLDER_SET, AI_KEY_PLACEHOLDER_UNSET, AI_KEY_CLEAR_LABEL, AI_KEY_SAVED_TEXT, AI_KEY_CLEARED_TEXT, AI_KEY_NOCHANGE_TEXT } from './ai-key-settings.js';   // AI 解析鑰匙卡（P1b-2）：判準與文案的家
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
 import { runExport, exportNotice, defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
@@ -224,6 +225,25 @@ export async function renderSettings() {
       ${(Number(s.rememberedStatementPasswordsCount) || 0) ? '<div class="form-actions"><button class="btn-danger" id="clearStmtPws">全部清除</button></div>' : ''}
     </div>
 
+    <h2 class="section-title">帳單解析（AI）</h2>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">${AI_KEY_CARD_TITLE}</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">${AI_KEY_CARD_NOTE}</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">${AI_KEY_COST_LINE}</p>
+      <div class="muted" style="font-size:12px;display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px">
+        <button type="button" class="info-link" data-ai-info="what">ⓘ API key 是什麼？去哪辦？</button>
+        <button type="button" class="info-link" data-ai-info="cost">ⓘ 大概要花多少錢？</button>
+        <button type="button" class="info-link" data-ai-info="where">ⓘ 鑰匙存在哪？帳單會送去哪？</button>
+        <button type="button" class="info-link" data-ai-info="skip">ⓘ 不設定會怎樣？</button>
+      </div>
+      <div class="form-grid">
+        <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>
+        ${s.aiApiKeySet ? `<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearAiApiKey" type="checkbox"> ${AI_KEY_CLEAR_LABEL}</label></div>` : ''}
+      </div>
+      <div class="form-actions"><button class="btn" id="saveAiApiKey">儲存</button></div>
+    </div>
+
     <h2 class="section-title">訂閱追蹤</h2>
     <div class="card" style="margin-bottom:18px">
       <p class="muted" style="font-size:12px">續費日／停用日前 7 天內會在總覽提醒（固定值）。目前沒有其他可調整的設定——想把提醒天數開放成可調整，跟我說一聲。</p>
@@ -313,6 +333,30 @@ export async function renderSettings() {
         toast('已清除記住的帳單密碼'); await renderSettings();   // await：重畫失敗不變成 unhandled rejection
       } catch (err) { if (seq !== currentNavSeq()) return; toast('清除失敗：' + /** @type {any} */ (err).message, true); }   // r5#2：換頁後不報過期錯誤
     };
+  }
+  { // AI 解析鑰匙（P1b-2）：判準（留空＝不變更／勾清除＝送空字串／都沒動＝報錯）住 ai-key-settings.js 的
+    //   aiKeyPatch，這裡只接線。成功後**重繪**＝讓契約要求的「清除已存的鑰匙」入口當場出現，
+    //   不必切頁再回來（saveSettings 只 toast 不重繪；比照上面 clearStmtPws 那條既有的重繪路徑）。
+    const btn = byId('saveAiApiKey');
+    if (btn) btn.onclick = async () => {
+      const patch = aiKeyPatch({ value: val('aiApiKey'), clear: /** @type {HTMLInputElement} */ (byId('clearAiApiKey'))?.checked === true });
+      if (!patch) return toast(AI_KEY_NOCHANGE_TEXT, true);
+      // r10 同款：問的是「使用者還在設定頁嗎」＝**換頁**序號；接成重繪序號時，開機背景重繪會讓
+      //   儲存成功卻不提示也不重讀（清除入口不會出現）。
+      const seq = currentNavSeq();
+      try {
+        await api('/settings', { method: 'PUT', body: patch });
+        if (seq !== currentNavSeq()) return;
+        toast(patch.aiApiKey === '' ? AI_KEY_CLEARED_TEXT : AI_KEY_SAVED_TEXT);
+        await renderSettings();   // await：重畫失敗不變成 unhandled rejection
+      } catch (err) { if (seq !== currentNavSeq()) return; toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true); }   // r5#2：換頁後不報過期錯誤
+    };
+    // 就地解釋四顆（設定頁首例；形狀照 securities.js）。Object.hasOwn＝只認自有鍵（'constructor' 撈不到原型）
+    view().querySelectorAll('[data-ai-info]').forEach((/** @type {any} */ b) => { b.onclick = () => {
+      const key = String(b.dataset.aiInfo || '');
+      const info = Object.hasOwn(AI_KEY_INFO, key) ? AI_KEY_INFO[/** @type {keyof typeof AI_KEY_INFO} */ (key)] : null;
+      if (info) openInfo(info.title, info.html, { size: 'md' });
+    }; });
   }
   byId('manageCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/categories'), CAT_CFG.expense); }

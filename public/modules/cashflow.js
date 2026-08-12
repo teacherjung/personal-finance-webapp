@@ -14,6 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
+import { previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -186,6 +187,26 @@ function openBankUpload() {
       const onPage = () => seq0 === currentNavSeq();
       // 第二窗（P0.5）：已存密碼池全敗（後端回 code:'pdf_password'）才開——密碼欄＋「記住」勾選
       //（預設不勾＝使用者拍板）。label＝把關挑出的模式分流告知句（單一住所 cashflow-model.js）。
+      // 第三窗（P1b-2）：內建範本認不得這份版面（後端 code:'bank_unrecognized'）才開。
+      // ⚠️ **每一次都要問**（William 2026-08-12 拍板，不記住同意）＝這裡不寫任何持久化，也不快取答案。
+      // ⚠️ `pw` 必須一路帶進來：AI 路線自己會再抽一次字，沒帶密碼＝加密帳單打不開→回 pdf_password→
+      //    前端又跳密碼窗＝無限迴圈。
+      const openAiConsentWindow = (/** @type {string} */ b64, /** @type {string} */ pw, /** @type {string} */ fileName) => openForm({
+        title: AI_CONSENT_TITLE,
+        fields: [],
+        bodyHtml: aiConsentBodyHtml({ fileName }),
+        submitLabel: AI_CONSENT_SUBMIT_LABEL,
+        onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
+          const canOpenNext = () => onPage() && ctx.owns.handoff();
+          try {
+            const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
+            openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
+          } catch (e) {
+            // 錯誤碼→白話（含「下一步」）的唯一住所在 ai-consent.js；openForm 的 catch 會 toast 並留窗重試
+            throw new Error(aiErrorText(/** @type {any} */ (e).code, /** @type {any} */ (e).message), { cause: e });   // 保留原因鏈（專案 lint 規則）：除錯時追得回後端的 ai_* code
+          }
+        },
+      });
       const openPasswordWindow = (/** @type {string} */ b64) => openForm({
         title: '這份對帳單需要密碼',
         fields: [
@@ -197,7 +218,14 @@ function openBankUpload() {
           //   使用者按取消也是「自己關的」，但那是撤銷、不放行。
           const canOpenNext = () => onPage() && ctx.owns.handoff();
           const pw = data.password || '';
-          const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+          /** @type {any} */ let r;
+          try {
+            r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
+          } catch (e) {
+            // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
+            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, pw, file?.name || '') }) === 'rethrow') throw e;
+            return;
+          }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
           if (data.remember && pw) {
             try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
@@ -221,11 +249,12 @@ function openBankUpload() {
           const b64 = await fileToBase64(file);
           try {
             // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
-            const r = await api('/bank-statement/preview', { method: 'POST', body: { data: b64 } });
+            const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64 }) });
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
-            if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-            openWhenOnPage(canOpenNext, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
+            if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
+            // 範本認不得＝先吐原錯誤、再排同意窗（判準與競態防線都在 runAiFallback；其他錯誤照舊 toast＋留窗重試）
+            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, '', file?.name || '') }) === 'rethrow') throw e;
           }
         }
       });
@@ -246,6 +275,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
   const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).slice(0, 12);
   const body = `
+    ${aiPreviewBadgeHtml(r)}
     <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
     ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
@@ -271,16 +301,28 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     <div class="page-actions" style="margin-top:16px"><button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button></div>`;
   openInfo('銀行對帳單預覽', body, { size: 'xl' });
   setTimeout(() => {
-    const btn = byId('bankApply');
+    const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
     if (btn) btn.onclick = async () => {
+      // 防重入（P1b-2）：AI 路線的票是**一次性**，按第二次必得 ai_ticket_invalid——而第一次其實已經寫進去了，
+      // 使用者會看到「失敗」卻以為沒匯入。模板路線一樣受惠（不會送兩次）。
+      if (btn.disabled) return;
+      btn.disabled = true;
+      // AI 路線＝憑票寫入（不重送檔案與密碼）；模板路線＝照舊送 data+password。判準住 ai-consent.js
+      const payload = applyBody(r, { data: b64, password: pw });
+      if (!payload) { if (onPage()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
       try {
-        const res = await api('/bank-statement/apply', { method: 'POST', body: { data: b64, password: pw } });
+        const res = await api('/bank-statement/apply', { method: 'POST', body: payload });
         if (!onPage()) return;   // r5#1：套用（含寫入）完成後切頁＝不清 modal、不重繪舊頁、不報舊 toast（資料已存，下次進頁自見）
         const t = res.transactions || {};
         toast(`帳戶：更新 ${res.updated}、新建 ${res.created}${res.skipped ? `、跳過 ${res.skipped}` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}；交易：匯入 ${t.imported || 0}${t.skipped ? `、去重 ${t.skipped}` : ''}`);
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
-      } catch (e) { if (!onPage()) return; toast(/** @type {any} */ (e).message || '更新失敗', true); }   // r5#2：切頁後不報過期錯誤
+      } catch (e) {
+        if (!onPage()) return;   // r5#2：切頁後不報過期錯誤
+        const code = /** @type {any} */ (e).code;
+        toast(aiErrorText(code, /** @type {any} */ (e).message) || '更新失敗', true);
+        if (!isAiTicketDeadCode(code)) btn.disabled = false;   // 票類錯誤＝這份沒救了，解鎖只會讓使用者再撞一次
+      }
     };
   }, 0);
 }
