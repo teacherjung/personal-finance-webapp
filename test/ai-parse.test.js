@@ -33,6 +33,7 @@ const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '合成帳單內文�
 /** 平衡的答案卷（強閘全過：餘額鏈 2 對＋末筆 1500 對概要 1500）。 */
 const goodAnswer = () => ({
   bank: '合成一銀', referenceDate: '2026-06-30',
+  accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }],
   accounts: [{ masked: '900200****3302', balance: 1500, currency: 'TWD', label: '活存', note: '' }],
   transactions: [
     { acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: 1000, summary: '轉帳存入', note: '薪資' },
@@ -42,7 +43,7 @@ const goodAnswer = () => ({
 });
 /** 弱閘答案卷（餘額全 null、無概要帳戶＝一對都驗不到）。 */
 const weakAnswer = () => ({
-  bank: '合成一銀', referenceDate: '2026-06-30', accounts: [],
+  bank: '合成一銀', referenceDate: '2026-06-30', accountCurrencies: [], accounts: [],
   transactions: [{ acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: null, summary: '轉帳存入', note: '' }],
 });
 /** 對不上的答案卷（餘額鏈斷＝擋下型不一致）。 */
@@ -101,6 +102,44 @@ test('驗收｜機構名剝分段符（bank2 去重鍵的 | 不可入段）；�
   assert.equal(ok.accountCurrency['900200****3302'], 'TWD', 'accountCurrency 由 accounts 建（與模板同形）');
   assert.equal(ok.accounts[0].suffix, '3302', '末碼由程式自己算、不信 AI');
   assert.throws(() => normalizeAiBank({ ...goodAnswer(), bank: '|||' }), (/** @type {any} */ e) => e.code === 'ai_bad_answer', '剝完只剩空＝壞答案');
+});
+
+test('驗收｜r2#1 幣別身分權威欄：accounts 兼任幣別表＝內部矛盾與缺席都 fail-closed', () => {
+  const a = goodAnswer();
+  a.accountCurrencies = [];   // 有餘額的帳戶不在權威表＝壞答案（幣別表要含概要所有帳戶）
+  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /accountCurrencies/.test(e.message));
+  const b = goodAnswer();
+  b.accountCurrencies[0].currency = 'USD';   // 幣別矛盾＝壞答案
+  assert.throws(() => normalizeAiBank(b), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /矛盾/.test(e.message));
+  const c = goodAnswer();
+  c.accountCurrencies.push({ masked: '900600****6606', currency: 'USD' });   // 空白餘額外幣帳戶＝合法、進權威表
+  assert.equal(normalizeAiBank(c).accountCurrency['900600****6606'], 'USD', '餘額空白的帳戶幣別仍要記到（2026-07-28 模板同一課）');
+});
+
+test('r2#1｜空白餘額的外幣帳戶不得被當台幣：閘排除於 TWD 覆蓋、preview 標 foreign、apply 不入帳', async () => {
+  await seedDb(true);
+  // Codex r2 反例：TWD 帳戶正常＋USD 帳戶概要餘額空白（不在 accounts、只在幣別表）、明細餘額鏈自洽
+  const usdMixed = () => {
+    const a = goodAnswer();
+    a.accountCurrencies.push({ masked: '900700****7707', currency: 'USD' });
+    a.transactions.push(
+      { acctMasked: '900700****7707', date: '2026-06-04', direction: 'in', amount: 300, balance: 300, summary: '轉帳存入', note: '' },
+      { acctMasked: '900700****7707', date: '2026-06-05', direction: 'out', amount: 100, balance: 200, summary: '轉帳支取', note: '' },
+    );
+    return a;
+  };
+  const spy = spyTransport([usdMixed()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.equal(pv.engine, 'ai', 'TWD 帳戶覆蓋完整＝整份可過（外幣列不是 TWD 覆蓋的一員）');
+  const usdRows = pv.transactions.rows.filter((r) => r.currency === 'USD');
+  assert.equal(usdRows.length, 2, 'r2 反例：這兩筆曾被判成 currency TWD／foreign false');
+  assert.ok(usdRows.every((r) => r.foreign === true));
+  const spy2 = spyTransport([usdMixed()]);
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
+  assert.equal(res.transactions.imported, 3, '只入台幣那三筆（r2 實測曾 imported:4）');
+  assert.equal(res.transactions.foreign, 2, 'USD 兩筆誠實計入 foreign、不進台幣現金流');
+  const db = await getDb();
+  assert.ok(db.transactions.every((t) => !String(t.bankRef).includes('900700****7707')), 'USD 帳戶的列一筆都不可寫進 cashflow');
 });
 
 test('linesToText｜cells 依 x 排序後相接（座標列→AI 輸入）', () => {
@@ -218,6 +257,7 @@ test('規矩④r1#1｜混合帳戶不搭便車：A 帳戶驗得動、B 帳戶餘
   await seedDb(true);
   const mixed = () => {
     const a = goodAnswer();
+    a.accountCurrencies.push({ masked: '900500****5505', currency: 'TWD' });
     a.accounts.push({ masked: '900500****5505', balance: 777, currency: 'TWD', label: '活存', note: '' });
     a.transactions.push(
       { acctMasked: '900500****5505', date: '2026-06-05', direction: 'in', amount: 999999, balance: null, summary: '轉帳存入', note: '' },
