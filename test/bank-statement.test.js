@@ -776,6 +776,24 @@ test('機構維度｜r1#3 accounts.bank 型別牆：備份匯入擋非字串、C
   assert.ok(!('bank' in pickWritable('accounts', { name: 'n', bank: '偽造機構' })), 'CRUD 表單挾帶 bank＝剝掉');
 });
 
+test('機構維度｜r2 祖父條款保存：無戳帳戶照樣供行內轉帳翻譯與幣別補位（收緊祖父＝這裡紅）', () => {
+  // (a) 行內轉帳翻譯：機構維度之前建的無戳帳戶，他行帳單的行內帳號仍要翻得出「轉入到：」——
+  //     把 ownAccountNameByAcct 收緊成「只認 a.bank === bank」會把祖父帳戶一起丟掉（r2 實測仍綠的第一刀）
+  const db = { accounts: [{ id: 'old', name: '舊活儲', type: 'cash', currency: 'TWD', accountNo: '900200123453302', balance: 0 }], transactions: [] };
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pv.rows[0].account, '舊活儲', '無戳＝祖父條款：顯示帳戶名照樣可配');
+  assert.equal(pv.rows[0].note, '現金存入・轉入到：舊活儲（生活費）', '無戳＝祖父條款：行內轉帳翻譯照樣成立');
+  // (b) 幣別補位：無戳 JPY 現金帳戶仍要供補位——收緊成「a.bank !== bank 一律排除」會把無戳也排掉、
+  //     fail-open 成 TWD、把外幣列當台幣匯入（r2 實測仍綠的第二刀＝方向最危險的那把）
+  const dbJ = { accounts: [{ id: 'oj', name: '舊日圓', type: 'cash', currency: 'JPY', accountNo: '900200123453302' }], transactions: [] };
+  const pvJ = previewBankTxForDb(dbJ, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pvJ.rows[0].currency, 'JPY', '無戳 JPY＝祖父補位照用（排除無戳＝fail-open 成 TWD）');
+  assert.equal(pvJ.rows[0].foreign, true);
+  const rJ = importBankTxToDb(dbJ, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(rJ.imported, 0, '外幣列不匯入');
+  assert.equal(rJ.foreign, 1);
+});
+
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { reconcileAccountNamesAuto } = await import('../lib/services/bank-import.js');
 

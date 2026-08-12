@@ -149,7 +149,7 @@
 // ⚠️ **r7 複審再打回來兩處，都是「考題自己在說謊」**（2026-08-05 實測）：
 //   ⓗ **外洩斷言的整包比對是一顆假紅產生器**。`assertNoAccountLeak` 的①③原本比對整包回應字串，
 //      而 HOSTED 的 `GET /api/db`／`GET /api/transactions` 本來就逐字帶著同一串帳號——
-//      `transactions[].bankRef`（去重鍵）第 2 段＝帳單上那串遮罩帳號，而**銀行匯入自動建立的帳戶
+//      `transactions[].bankRef`（去重鍵）第 2 段（台新格式；P1a 起他行 bank2＝第 3 段）＝帳單上那串遮罩帳號，而**銀行匯入自動建立的帳戶
 //      就是拿同一串存進 `accountNo`**（`lib/services/bank-import.js`）。實測：帳戶列投影正確，
 //      整包卻含著 `900100****3301` ⇒ 現在只因為本檔暫存 DB 沒有銀行匯入資料才綠，日後有人加一筆
 //      銀行 fixture 就會紅在**對的程式**上。⇒ 射程收進「那一筆帳戶／accounts 集合」，
@@ -622,7 +622,7 @@ const valuesOf = (v, out = []) => {
  *
  * ⚠️⚠️ **`scopeText`／`scope` 是「那一筆帳戶物件／accounts 集合」，不是整包回應**（r7 實測改的）。
  *    原本①③比對的是**整包 bodyText**，而 HOSTED 的 `GET /api/db`／`GET /api/transactions`
- *    本來就會逐字帶著同一串帳號：`transactions[].bankRef`（銀行交易去重鍵）第 2 段就是帳單上那串
+ *    本來就會逐字帶著同一串帳號：`transactions[].bankRef`（銀行交易去重鍵）第 2 段（台新格式；bank2＝第 3 段）就是帳單上那串
  *    遮罩帳號（`lib/services/bank-import.js` 的 `bankRefBase`），而**銀行匯入自動建立的帳戶
  *    就是拿同一串存進 `accountNo`**（同檔 `accountNo: pa.masked`）。實測（隔離暫存 STORE_FILE、
  *    未碰 `data/store.json`）：塞一個 `accountNo:'900100****3301'` 的帳戶＋一筆
@@ -701,7 +701,7 @@ test('帳號投影（判準）｜遮罩帳號要取星號後的可見末碼、�
   //    而人照著假末碼去「訂正」帳號，才會真的動到伺服器端那個會配對的欄位。
   //    ⚠️ **不可以再寫成「UI 的任何頁面都拿不到完整帳號、末碼是唯一線索」**（r7 實測到的第二個反例，
   //       前一版只補了 LOCAL 備份下載那一個）：①LOCAL 的 `GET /api/export`（備份下載）回未投影的
-  //       完整 `accountNo`；②**HOSTED 也有一條**——`transactions[].bankRef` 的第 2 段就是帳單上
+  //       完整 `accountNo`；②**HOSTED 也有一條**——`transactions[].bankRef` 的第 2 段（台新格式；bank2＝第 3 段）就是帳單上
   //       那串帳號，`GET /api/db`／`GET /api/transactions` 原樣送出（`projectDb` 只投影
   //       cards/accounts/securityTrades/settings）。而**銀行匯入自動建立的帳戶就是拿同一串存進
   //       `accountNo`**（`lib/services/bank-import.js` 的 `accountNo: pa.masked`）⇒ 對那些帳戶，
@@ -728,7 +728,7 @@ test('外洩斷言的射程｜銀行匯入的 bankRef 帶著同一串帳號，�
   // ⚠️ **r7 洞①的活體 fixture，而且它刻意跑在下一題之前**。
   //    `assertNoAccountLeak` 的①③原本比對**整包回應字串**，但 HOSTED 的 `GET /api/db`／
   //    `GET /api/transactions` 本來就逐字帶著同一串帳號：`transactions[].bankRef`（銀行交易去重鍵）
-  //    第 2 段＝帳單上那串帳號（`lib/services/bank-import.js` 的 `bankRefBase`），而**銀行對帳單匯入
+  //    第 2 段（台新格式；bank2＝第 3 段）＝帳單上那串帳號（`lib/services/bank-import.js` 的 `bankRefBase`），而**銀行對帳單匯入
   //    自動建立的帳戶就是拿同一串存進 `accountNo`**（同檔 `accountNo: pa.masked`）；`projectDb` 只投影
   //    cards／accounts／securityTrades／settings，**transactions 原樣送出**。
   //    ⇒ 整包比對是一顆**假紅產生器**：改射程之前，它只因為本檔的暫存 DB 沒有銀行匯入資料才綠，
