@@ -14,7 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
-import { previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
+import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -207,7 +207,7 @@ function openBankUpload() {
           }
         },
       });
-      const openPasswordWindow = (/** @type {string} */ b64) => openForm({
+      const openPasswordWindow = (/** @type {string} */ b64, /** @type {string} */ fileName) => openForm({
         title: '這份對帳單需要密碼',
         fields: [
           { key: 'password', label, type: 'password', full: true, placeholder: '通常是身分證字號' },
@@ -223,7 +223,7 @@ function openBankUpload() {
             r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
           } catch (e) {
             // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, pw, file?.name || '') }) === 'rethrow') throw e;
+            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
             return;
           }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -246,15 +246,20 @@ function openBankUpload() {
         onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           if (!file) throw new Error('請先選擇對帳單 PDF');
           const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
-          const b64 = await fileToBase64(file);
+          // ⚠️ 不可變快照（r1#1）：`file` 是 onchange 會改寫的外層變數——等 await 期間使用者還能改選別的檔案，
+          //    之後任何 `file?.name` 讀到的就是新那份，同意窗會顯示 B 而實際送出 A（使用者沒對 A 同意過）。
+          //    往下三條路（預覽／密碼窗／同意窗）一律只認這一份快照。
+          const snap = snapshotUpload(file);
+          if (!snap) throw new Error('請先選擇對帳單 PDF');
+          const b64 = await fileToBase64(snap.file);
           try {
             // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
             const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64 }) });
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
-            if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
+            if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
             // 範本認不得＝先吐原錯誤、再排同意窗（判準與競態防線都在 runAiFallback；其他錯誤照舊 toast＋留窗重試）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, '', file?.name || '') }) === 'rethrow') throw e;
+            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
           }
         }
       });

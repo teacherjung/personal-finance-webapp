@@ -10,7 +10,9 @@
 //    `shouldOfferAi` 必須對它回 false，否則 UI 會在「數字對不上」的畫面上請 AI 重試一次。
 // 3. **票只活在單次預覽的閉包**：`applyBody` 從 preview 回應讀 `aiTicket`，本模組不存、呼叫端也不許存
 //    （A 帳單的票被 B 帳單的 apply 撿去用＝後端完全不看你送的檔案，把 A 的數字寫進去還回 200）。
-// 4. **文案不得誇大**：不寫「不會上傳／只在這台電腦／已限速／保證正確」；費用一律講級距並註明不是報價。
+// 4. **文案不得誇大、且必須模式中立**（r1#2）：不寫「不會上傳／已限速／保證正確」；費用一律講級距並
+//    註明不是報價。⚠️ 同意窗在雲端版**也會開**（停止線是按下去之後才擋），所以窗裡**一個字都不可以
+//    假設資料落在使用者自己的電腦上**——「留在你這台電腦的資料庫裡」在雲端版是假的。
 import { esc } from './html-escape.js';
 
 /** 同意窗的標題／送出鈕／供應商標籤／費用級距（文案單一住所）。 */
@@ -23,6 +25,18 @@ export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的公司）';
 export const AI_COST_HINT = '一份帳單通常是幾塊台幣以內，直接記在你自己的 Anthropic 帳戶上（這是級距、不是報價，實際金額以他們的帳單為準）';
 /** 預覽窗過期／已用過時的白話（票是一次性＋短效）。 */
 export const AI_PREVIEW_LOST_TEXT = '這份 AI 預覽已經過期或已經匯入過了——請重新上傳預覽一次，確認內容無誤再匯入。';
+
+/**
+ * **上傳檔案的不可變快照**（r1#1）。`cashflow.js` 的 `file` 是 onchange 會改寫的外層變數：
+ * 選了 A 按預覽、**請求在途時改選 B**，b64 已經綁定 A，但之後任何 `file?.name` 讀到的是 B——
+ * 同意窗於是顯示「送出 B」、按下去送的卻是 A。使用者從未對「把 A 送出去」表示同意。
+ * 修法＝在第一次 await **之前**把「檔案物件＋檔名」一起凍進同一個快照，之後三條路只認它。
+ * @param {any} fileLike @returns {{file:any, fileName:string}|null}
+ */
+export function snapshotUpload(fileLike) {
+  if (!fileLike) return null;
+  return Object.freeze({ file: fileLike, fileName: String(fileLike.name || '') });
+}
 
 /**
  * 這個錯誤可不可以提供「請 AI 讀一次」的入口？
@@ -87,7 +101,7 @@ export function isAiTicketDeadCode(code) {
 export function aiConsentBodyHtml({ fileName = '' } = {}) {
   const name = esc(String(fileName || '（未命名檔案）'));
   return `
-<p>內建的讀取範本認不得這份對帳單的版面。可以改請 AI 幫忙讀讀看——但這一步會把帳單內容送出這台電腦，所以<b>每一次都會先問過你</b>。</p>
+<p>內建的讀取範本認不得這份對帳單的版面。可以改請 AI 幫忙讀讀看——但這一步會把帳單內容送到外部服務，所以<b>每一次都會先問過你</b>。</p>
 <ul style="margin:10px 0 12px;padding-left:18px;line-height:1.9">
   <li><b>送出哪一份</b>：${name}（送的是從 PDF 抽出來的文字，不是 PDF 檔本身）</li>
   <li><b>送去哪裡</b>：${AI_PROVIDER_LABEL}的 API；用的是你自己在設定頁存的那把鑰匙</li>
@@ -99,7 +113,7 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
     <li>送出去的是這份帳單上印的文字：帳號末碼、每一筆的日期／金額／摘要／餘額。等於把對帳單影印一份、寄去請人幫忙看——內容就是你帳單上本來就有的那些。</li>
     <li>不會送出：PDF 檔本身、你剛才輸入的帳單密碼、這個 app 裡的其他資料（持股、其他帳戶、你設的分類規則）。</li>
     <li>依供應商公布的商業 API 政策，送過去的內容不會被拿去訓練模型、也會在一段時間後刪除（政策以供應商自己的公告為準，我們沒辦法替他們保證）。</li>
-    <li>讀出來的結果只會留在你這台電腦的資料庫裡。</li>
+    <li>讀出來的結果只會回到這個 app 自己的資料庫，跟你其他帳務資料放在一起；AI 那邊不會保留一份給你用。</li>
     <li>萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次，那次的費用會多一些。</li>
     <li>不同意完全沒關係：這份改成手動記帳就好，其他功能一切照常。</li>
   </ul>

@@ -211,7 +211,9 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
   assert.equal((src.match(/openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/g) || []).length, 2,
     '密碼窗成功與同意窗成功各要開一次預覽窗（走 openWhenOnPage＋canOpenNext）——少一條＝那條路的切頁作廢被拆掉也全綠');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, '', onPage\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage＋canOpenNext');
-  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 openWhenOnPage＋canOpenNext');
+  // P1b-2：密碼窗多收一個 fileName——它後面還會開同意窗，而檔名必須來自「按下預覽當時」的快照
+  //（讀可變的 file 會讓同意窗顯示 B、實際送出 A）
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64, snap\.fileName\)\)/, '池全敗跳密碼窗要走 openWhenOnPage＋canOpenNext，並帶上快照檔名');
   assert.doesNotMatch(src, /setTimeout\(\(\) => showBankPreview/, '不准有裸 setTimeout 開預覽窗（繞過切頁作廢）');
   assert.doesNotMatch(src, /setTimeout\(\(\) => openPasswordWindow/, '不准有裸 setTimeout 開密碼窗');
 });

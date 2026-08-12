@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
-  shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
+  snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, aiErrorText, runAiFallback,
   AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
@@ -46,6 +46,19 @@ test('A｜shouldOfferAi：只認 bank_unrecognized，對帳閘紅（400 無 code
   // 鐵則 3.5：只認自有屬性——原型鏈上的 code 不算數
   assert.equal(shouldOfferAi(Object.create({ code: 'bank_unrecognized' })), false,
     'Object.hasOwn 換成 in／直接讀屬性＝原型鏈上的值也會開出 AI 入口');
+});
+
+test('A2｜r1#1 快照：檔名與檔案內容綁在同一份、事後改選別的檔案不會污染它', () => {
+  // Codex r1 反例的行為版：選 A →（await 期間）改選 B → 同意窗顯示 B、實際送 A
+  let picked = { name: 'A-對帳單.pdf', body: 'AAA' };
+  const snap = snapshotUpload(picked);
+  picked = { name: 'B-對帳單.pdf', body: 'BBB' };   // 使用者在請求在途時改選了別的檔案
+  assert.equal(picked.name, 'B-對帳單.pdf', '（前提）外部那個可變變數確實已經換人了');
+  assert.equal(snap.fileName, 'A-對帳單.pdf', '★同意窗要顯示的是「當初按下預覽的那一份」');
+  assert.equal(snap.file.body, 'AAA', '★送出去的內容也必須是同一份（檔名與內容不可分家）');
+  assert.ok(Object.isFrozen(snap), '快照要凍結：拿到它的人不可以偷改檔名');
+  assert.equal(snapshotUpload(null), null, '沒選檔案＝沒有快照');
+  assert.equal(snapshotUpload({}).fileName, '', '沒有檔名也要開得起來（不可炸掉整條路）');
 });
 
 // ---- B 群：previewBody（「沒同意＝零外送」的行為證明）----
@@ -148,8 +161,13 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.match(html, /不是報價|以他們的帳單為準/, '費用要標明是級距不是報價');
   assert.match(html, /不同意/, '要講不同意會怎樣（手動記帳、其他功能照常）');
   assert.match(html, /每一次都會先問過你/, '★拍板：每次都問、不記住同意');
-  assert.doesNotMatch(html, /不會上傳|不會外送|只在這台電腦|已限速|保證正確|免費/,
+  assert.doesNotMatch(html, /不會上傳|不會外送|已限速|保證正確|免費/,
     '⚠️ 這幾句在 AI 路線都是假的（帳單內文真的會送出去；LOCAL 沒有 runtime 限速；閘不保證讀對）');
+  // ★r1#2：同意窗在**雲端版也會開**（停止線是按下去之後才擋）——窗裡一個字都不可以假設資料落在
+  //   使用者自己的電腦上。原本只禁「只在這台電腦」，而實際句子是「只會留在你這台電腦的資料庫裡」
+  //   ⇒ regex 沒咬到、完整測試照綠（Codex 用反例探針證實）。改成整個詞都不准出現。
+  assert.doesNotMatch(html, /這台電腦/,
+    '同意窗文案必須模式中立：雲端版的資料庫不在使用者電腦上，「留在你這台電腦」是假的');
   // 跳脫：檔名是使用者給的
   const evil = aiConsentBodyHtml({ fileName: '<img src=x onerror=alert(1)>.pdf' });
   assert.match(evil, /&lt;img/);
@@ -221,7 +239,13 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(src, /\$\{aiPreviewBadgeHtml\(r\)\}/, '徽章要真的插進 body 字串');
   // 兩條 fallback：上傳窗與密碼窗各一（少一條＝加密帳單走不到 AI）
   assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, notify:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
-  assert.match(src, /openConsent: \(\) => openAiConsentWindow\(b64, pw, /, '★密碼要一路帶進同意窗，否則 AI 抽字打不開檔案→又跳密碼窗→無限迴圈');
+  assert.match(src, /openConsent: \(\) => openAiConsentWindow\(b64, pw, fileName\)/, '★密碼要一路帶進同意窗，否則 AI 抽字打不開檔案→又跳密碼窗→無限迴圈');
+  // ★r1#1：檔名與內容必須同源。快照在第一次 await 之前取，之後全檔不得再讀可變的 file
+  assert.match(src, /const snap = snapshotUpload\(file\);/, '第一次 await 之前要先凍住「這一次上傳的是哪一份」');
+  assert.match(src, /await fileToBase64\(snap\.file\)/, '送出的內容要從快照拿（不是從可變的 file）');
+  assert.match(src, /openAiConsentWindow\(b64, '', snap\.fileName\)/, '同意窗顯示的檔名要從同一份快照拿');
+  assert.match(src, /openPasswordWindow\(b64, snap\.fileName\)/, '密碼窗也要把快照檔名帶下去（它後面還會開同意窗）');
+  assert.doesNotMatch(src, /file\?\.name/, '★不得再讀可變的 file——那正是「同意窗顯示 B、實際送 A」的來源');
   // 彈窗世代：同意窗的 onSubmit 也要用 onPage() && ctx.owns.handoff()
   assert.equal(count(src, /const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/g), 3,
     '上傳窗／密碼窗／同意窗三個 onSubmit 都要有（少一個＝那條路的窗會被同頁重繪判成已切頁而靜靜不開）');
