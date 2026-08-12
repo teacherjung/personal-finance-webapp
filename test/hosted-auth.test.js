@@ -467,6 +467,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/services/insights.js', { role: 'conduit', paths: ['/api/insights'], why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
     ['lib/services/ib-sync.js', { role: 'conduit', why: '注入 fetchFlex（lib/ib.js），自己不開新端點' }],
     ['lib/services/auth.js', { role: 'endpoint', hosts: ['SUPABASE_URL（環境變數指定的 Supabase 主機）'], paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], why: 'Supabase Auth（@supabase/ssr；HOSTED 登入／驗證）' }],
+    ['lib/ai-transport.js', { role: 'endpoint', hosts: ['api.anthropic.com'], paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'], why: 'AI 解析帳單（P1b-1，★3 拍板＝Anthropic；全 repo 唯一字面 fetch 的 AI 檔，只有全靜態路徑的 lib/routes/statement.js import 它組引擎。HOSTED 停止線寫死＋useAi 同意旗標＝實際只有 LOCAL 經確認窗走得到；表上限速僅 HOSTED 掛載＝LOCAL 實際無 runtime 限速（r1#4 誠實句）——成本邊界＝每次上傳至多 2 發＋逐次確認窗，正式成本護欄歸 P3）' }],
   ]);
   // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
   // ⚠️ r8→r9 收緊到**片段級**：登記「精確命中字串集合」——r8 的數量級仍有「刪一個提及＋
@@ -474,6 +475,11 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const COMMENT_MENTIONS = new Map([
     ['lib/parse-limits.js', { snippets: [' fetch'], why: 'JSDoc：readCappedText「把 fetch 的回應讀成字串」——收 Response、自己不發請求' }],
     ['lib/repo.js', { snippets: ['（fetch'], why: '註解：鐵則警告「不要在讀改寫中間夾 fetch」——規則說明、非外連' }],
+    // P1b-1 的 import 紀律註解（真外連只在已登記的 lib/ai-transport.js）：三個檔案的註解都在**說明**
+    // 「fetch 住哪、誰拿不到」，本身零外連——正是這道閘要的架構，說明文字照實登記。
+    ['lib/ai-parse.js', { snippets: [' fetch', ' fetch'], why: '檔頭：純模組宣告「真正打 API 的 fetch 住 lib/ai-transport.js」「本檔與服務層都拿不到 fetch」——規則說明、非外連' }],
+    ['lib/routes/statement.js', { snippets: [' fetch'], why: '註解：引擎組裝點說明「服務層與 crud.js 拿不到 fetch」——真外連在 ai-transport.js（已登記 ALLOWED）' }],
+    ['lib/services/bank-import.js', { snippets: [' fetch'], why: '註解：import 紀律「字面 fetch 只住 lib/ai-transport.js、本檔絕不可 import 它」——規則說明、非外連' }],
   ]);
   const OUTBOUND_RE_G = new RegExp(OUTBOUND_RE.source, 'g');
   // 外部程式呼叫（child_process）＝獨立類別、需登記（William 2026-08-01 裁決）
@@ -679,6 +685,34 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['/finance', '靜態站掛點'],
     ['/vendor/chart.js', '靜態資源掛點'],
     ['/api', 'API 404 收尾掛點'],
+    // P1b-1：lib/routes/statement.js 因組裝 AI 引擎（import lib/ai-transport.js）成為外連能力檔——
+    // 但檔內只有 /api/bank-statement/preview 與 /api/bank-statement/apply 的 useAi 分支會觸發 AI 上游
+    //（那兩條已登記 OUTBOUND_ENDPOINTS），其餘全是模板解析／純資料操作，逐條豁免：
+    ['/api/statement/preview', '信用卡模板解析（免選卡）；不觸發 AI 上游'],
+    ['/api/cards/:id/statement/preview', '信用卡模板解析（指定卡）；不觸發 AI 上游'],
+    ['/api/cards/:id/statement/import', '信用卡匯入（吃已解析列）；不觸發 AI 上游'],
+    ['/api/statement/password/remember', '記住帳單密碼（P0.5）；純資料操作'],
+    ['/api/statement/password/clear', '清除記住的帳單密碼（P0.5）；純資料操作'],
+    ['/api/statement/batches', '匯入批次清單；純資料操作'],
+    ['/api/statement/batch/month', '批次改期別；純資料操作'],
+    ['/api/statement/batch/delete', '整批刪除；純資料操作'],
+    ['/api/statement/reassign', '批次改卡；純資料操作'],
+    ['/api/statement/apply-category', '同店一起改分類；純資料操作'],
+    ['/api/statement/rename-store', '店名改名；純資料操作'],
+    ['/api/statement/normalize-auto', '規則指紋自動整理；純資料操作'],
+    ['/api/statement/normalize-branches', '分店名整理；純資料操作'],
+    ['/api/statement/health', '帳務體檢（唯讀）；純資料操作'],
+    ['/api/statement/health/dismiss', '體檢項目略過；純資料操作'],
+    ['/api/statement/rules', '店名規則讀寫；純資料操作'],
+    ['/api/statement/rules/preview', '店名規則影響預覽；純資料操作'],
+    ['/api/statement/learned/orphans', '孤兒學習規則清單（唯讀）；純資料操作'],
+    ['/api/learned', '信用卡學習表清單（唯讀）；純資料操作'],
+    ['/api/learned/delete', '刪除信用卡學習規則；純資料操作'],
+    ['/api/bank-statement/batches', '銀行匯入批次清單；純資料操作'],
+    ['/api/bank-statement/batch/delete', '銀行整批刪除；純資料操作'],
+    ['/api/bank-learned', '銀行學習表清單（唯讀）；純資料操作'],
+    ['/api/bank-learned/delete', '刪除銀行學習規則；純資料操作'],
+    ['/api/bank-tx/apply-learned', '同類一起改（套學過規則）；純資料操作'],
   ]);
   const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
   /** @type {string[]} */ const routeProblems = [];
