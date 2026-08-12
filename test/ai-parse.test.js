@@ -16,7 +16,7 @@ const { normalizeAiBank, linesToText, buildBankSystem, AI_BANK_MODELS, AI_BANK_S
 const { anthropicTransport, makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { previewBankStatement, applyBankStatement, aiBankRoute } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
-const { clearAiTicketsForTest, issueAiTicket, redeemAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
+const { clearAiTicketsForTest, aiTicketCountForTest, issueAiTicket, redeemAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -384,6 +384,38 @@ test('票匣｜TTL 過期＝兌不到；一次性；張數上限丟最舊；票�
   const ids = Array.from({ length: AI_TICKET_MAX + 1 }, (_, i) => issueAiTicket({ parsed: { n: i }, aiModel: 'm' }, t0));
   assert.equal(redeemAiTicket(ids[0], t0), null, '超過上限＝丟最舊');
   assert.equal(redeemAiTicket(ids[AI_TICKET_MAX], t0)?.parsed.n, AI_TICKET_MAX, '最新的還在');
+});
+
+test('r5#1｜票到期會自己把帳單內文從記憶體清掉（沒有人再碰票 API 也一樣）', (t) => {
+  clearAiTicketsForTest();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  issueAiTicket({ parsed: { bank: '合成一銀', transactions: [{ amount: 1000 }] }, aiModel: 'm' });
+  assert.equal(aiTicketCountForTest(), 1);
+  t.mock.timers.tick(AI_TICKET_TTL_MS + 1);
+  assert.equal(aiTicketCountForTest(), 0,
+    '到期＝內容真的被釋放（只靠「下次有人碰票匣才清」的話，最後一次預覽的帳單內文會留到程序結束）');
+});
+
+test('r5#2｜票不是通行證：憑票的 apply 仍過 fresh-db 閘——票裡是弱閘答案＝拒收、零寫入', async () => {
+  await seedDb(true);
+  // 直接發一張「內容是弱閘答案」的票（正常流程發不出這種票——preview 會先擋；這題要驗的是
+  // **寫入路徑自己**的那道閘還在：拿掉 applyBankStatement 的 assertAiBankReconciled 就要紅）
+  const ticket = issueAiTicket({ parsed: normalizeAiBank(weakAnswer()), aiModel: AI_BANK_MODELS.primary });
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: ticket, aiEngineFactory: engineOf(spyTransport([])), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_weak_refused');
+  const db = await getDb();
+  assert.equal(db.transactions.length, 0, '寫入路徑 fail-closed：閘一定在任何寫入之前');
+  assert.equal(db.accounts.length, 0);
+});
+
+test('r5#2b｜票裡是不一致答案（餘額鏈斷）＝fresh-db 閘擋下、零寫入', async () => {
+  await seedDb(true);
+  const ticket = issueAiTicket({ parsed: normalizeAiBank(unbalancedAnswer()), aiModel: AI_BANK_MODELS.primary });
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: ticket, aiEngineFactory: engineOf(spyTransport([])), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.status === 400);
+  assert.equal((await getDb()).transactions.length, 0);
 });
 
 // ---- 機密流向 ----
