@@ -57,6 +57,9 @@ export const OUTBOUND_ENDPOINTS = [
   // r12：Supabase 一直是實際上游（HOSTED auth），補登記。me／logout 刻意不在 paths：
   // 輕量讀取不限速＝2026-07-28 既有裁決（見 AGENTS 速率限制列），只列有限速的三條登入類。
   { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
+  // P1b-1：AI 解析路線（★3 拍板＝Anthropic）。兩條路徑＝既有銀行上傳端點（AI 是其中的 fallback 分支，
+  // 需 useAi 同意旗標；HOSTED 停止線寫死＝目前只有 LOCAL 走得到）；限速由「上傳解析類」既有那道涵蓋。
+  { host: 'api.anthropic.com', why: 'AI 解析帳單（lib/ai-transport.js；LOCAL 專用、每次上傳前經確認窗同意）', paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'] },
 ];
 
 /**

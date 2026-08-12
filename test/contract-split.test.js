@@ -516,6 +516,7 @@ const MANIFEST = {
       '帳單原文取法 origFromStmtRef',
       '匯入對帳閘',
       '匯入密碼池',
+      'AI 解析路線 P1b',
     ],
     exempt: [],
     files: [
@@ -527,6 +528,8 @@ const MANIFEST = {
       'public/modules/reconcile-summary.js', 'test/reconcile-summary.test.js',
       // P0.5 匯入密碼池：LOCAL 考題＋錯誤 code 通道＋密碼窗文案住所＋池上限常數（與雲端領域多重命中）
       'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js', 'lib/statement-password-policy.js',
+      // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）：純模組（答案卷/驗收）＋傳輸（唯一 fetch 檔，入外連登記閘）＋考題（假引擎）
+      'lib/ai-parse.js', 'lib/ai-transport.js', 'test/ai-parse.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
