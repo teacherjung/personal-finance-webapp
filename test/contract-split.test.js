@@ -465,6 +465,8 @@ const MANIFEST = {
     exempt: [],
     files: [
       'lib/derive.js', 'data/seed.json',
+      'test/ai-consent.test.js',   // 固定動作列（.sticky-actions）的考題住這裡＝與收支／雲端多重命中
+
       'lib/repo.js',
       'lib/routes/core.js',
       'lib/routes/crud.js',

@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
   BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL,
+  bankPreviewFootnote,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -406,17 +407,45 @@ test('文案｜擋下的警語不可叫使用者把帳單內容傳給我（r1#1�
   assert.match(warn, /哪一家銀行|哪一種版面/, '要講清楚回報時給什麼就夠了');
 });
 
-test('接線｜預覽的「會匯入」清單要排除外幣列，腳註也要交代（r1#2）', () => {
+test('接線｜預覽的「會匯入」清單要排除外幣列（r1#2）', () => {
   // 畫面那句是「以上 N 筆就是按下確認會匯入的全部內容」——正式匯入對非 TWD 直接跳過，
   // 外幣列若列在裡面，這句就是假的（互扣的另一半＝bank-statement.test.js 用真的 import 結果對數）。
+  // 腳註本身已收成 cashflow-model 的 bankPreviewFootnote＝由本檔下面那兩題守（r2#1）。
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   const decl = (src.match(/const previewTx = [^\n]*/) || [''])[0];
   assert.ok(decl, '要有 previewTx 這份「會匯入」清單');
   assert.match(decl, /!x\.duplicate/, '已匯入過的不列進去');
   assert.match(decl, /!x\.foreign/, '★外幣列正式匯入會被跳過——列進「會匯入」等於畫面說謊');
-  // ⚠️ 不可用 [^`]* 收尾：這句自己內含巢狀樣板字串，第一個反引號就把擷取切斷（實測只咬到半句）。
-  const foot = (src.match(/以上 \$\{previewTx\.length\} 筆[\s\S]*?<\/p>/) || [''])[0];
-  assert.ok(foot, '要有交代「以上 N 筆就是全部」的腳註');
-  assert.match(foot, /c\.duplicate/, '排掉的重複筆數要另外講，不可默默消失');
-  assert.match(foot, /c\.foreign/, '★排掉的外幣筆數也要另外講（使用者才知道那幾筆去哪了）');
+});
+
+test('腳註｜四種情況都要交代排掉的筆數——尤其「一筆都不匯入」那兩種（r2#1）', () => {
+  // ① 有東西可匯入：講清楚「以上 N 筆就是全部」，排掉的另外交代
+  const both = bankPreviewFootnote({ shown: 3, duplicate: 2, foreign: 1 });
+  assert.match(both, /以上 3 筆/);
+  assert.match(both, /2 筆之前已匯入過/);
+  assert.match(both, /1 筆外幣明細不會匯入/);
+
+  // ② ★整份只有外幣：舊版會落到「帳單裡沒有新交易」，使用者以為程式讀漏了
+  const onlyForeign = bankPreviewFootnote({ shown: 0, foreign: 4 });
+  assert.doesNotMatch(onlyForeign, /帳單裡沒有新交易/,
+    '★「沒有新交易」是假的——有 4 筆，只是外幣不匯入；這樣講會讓人以為程式讀漏了');
+  assert.match(onlyForeign, /4 筆外幣明細不會匯入/, '★要說出那 4 筆去哪了');
+
+  // ③ ★整份只有重複：同理
+  const onlyDup = bankPreviewFootnote({ shown: 0, duplicate: 5 });
+  assert.doesNotMatch(onlyDup, /帳單裡沒有新交易/, '★這份有 5 筆，只是之前匯過了');
+  assert.match(onlyDup, /5 筆之前已匯入過/);
+
+  // ④ 真的一筆都沒有：那句才成立
+  assert.equal(bankPreviewFootnote({ shown: 0 }), '帳單裡沒有新交易。');
+  assert.equal(bankPreviewFootnote({ shown: 0, duplicate: 0, foreign: 0 }), '帳單裡沒有新交易。');
+});
+
+test('接線｜預覽的腳註走 bankPreviewFootnote，cashflow.js 不可自己再拼一句（r2#1）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  assert.match(src, /bankPreviewFootnote\(\{ shown: previewTx\.length/, '★要把「真的會匯入的筆數」交給它算');
+  assert.match(src, /duplicate: c\.duplicate, foreign: c\.foreign/, '排掉的兩種筆數都要餵進去');
+  // 收成單一實作＝兩個分支不可能各說各話：就地寫死的版本必須絕跡
+  assert.doesNotMatch(src, /帳單裡沒有新交易/, '★空狀態那句要由腳註函式決定（就地寫死＝只有外幣時又會說謊）');
+  assert.doesNotMatch(src, /以上 \$\{previewTx\.length\} 筆/, '★「以上 N 筆」也不可再就地拼');
 });

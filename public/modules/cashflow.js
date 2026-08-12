@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -262,7 +262,9 @@ function openBankUpload() {
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
             if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
-            // 範本認不得＝先吐原錯誤、再排同意窗（判準與競態防線都在 runAiFallback；其他錯誤照舊 toast＋留窗重試）
+            // 範本認不得＝**只排同意窗、不吐原錯誤**（William 2026-08-12：那句紅字是多餘的——同意窗第一行
+            // 已經說了「範本認不得這個版面」，而且它還寫死單一銀行名。判準與競態防線都在 runAiFallback；
+            // 其他錯誤照舊 toast＋留窗重試）
             if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
           }
         }
@@ -310,7 +312,8 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td class="muted">${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
-    </tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:11px;margin-top:6px">以上 ${previewTx.length} 筆就是按下確認會匯入的全部內容${c.duplicate ? `；另有 ${c.duplicate} 筆之前已匯入過、這次不會重複記` : ''}${c.foreign ? `；另有 ${c.foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）` : ''}。</p>` : '<p class="empty">帳單裡沒有新交易。</p>'}
+    </tr>`).join('')}</tbody></table></div>` : ''}
+    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
 `;
   // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
   // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。

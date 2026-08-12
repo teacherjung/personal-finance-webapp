@@ -62,6 +62,25 @@ export const BANK_UPLOAD_NOTICE = `<details>
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
 
 /**
+ * 銀行預覽表格底下那句話（純文字，呼叫端自己包 HTML／esc）。
+ *
+ * ⚠️ **排掉的筆數在「一筆都不匯入」時最需要講**（r2#1）：原本那句只掛在「有東西可匯入」的分支上，
+ * 整份只有外幣或只有重複時會落到「帳單裡沒有新交易」，使用者完全不知道那幾筆去哪了——
+ * 而那正是**最容易誤以為程式讀漏了**的情況。收成單一實作＝兩個分支不可能再各說各話。
+ *
+ * @param {{shown: number, duplicate?: number, foreign?: number}} n
+ *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
+ */
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0 }) {
+  const parts = [];
+  if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
+  if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);
+  if (shown > 0) return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  if (parts.length) return `這份帳單沒有新交易要匯入：${parts.join('；')}。`;
+  return '帳單裡沒有新交易。';
+}
+
+/**
  * 依 `GET /api/mode` 的回應挑句子。
  *
  * ⚠️ 保守預設的方向與 `exportNotice`（backup-export.js）**相反**，但守的是同一條原則

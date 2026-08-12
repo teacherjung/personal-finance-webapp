@@ -357,6 +357,14 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.ok(stickyRule, '要有 .form-actions.sticky-actions 這條規則');
   assert.match(stickyRule, /position:\s*sticky/, '★要真的是 sticky（沒有這條，按鈕照樣沉在捲動內容最底）');
   assert.match(stickyRule, /background:\s*var\(--card\)/, '要不透明背景（否則捲動的表格會從按鈕底下透出來）');
+  // ★r2#2：光驗「是 sticky」擋不住**已經實測失敗過的那一版**——`bottom:-24px` 配負的下邊距時
+  //   position 照樣是 sticky、背景照樣有，按鈕卻仍會滑出窗底 8px（sticky 對齊的是含邊距的框）。
+  //   踩過的坑要用考題釘死，不然下一個人「順手把負邊距加回去做滿版」就無聲退回原狀。
+  assert.match(stickyRule, /bottom:\s*0\s*[;}]/, '★停靠點要 bottom:0（負值＝停在窗底外面，等於白做）');
+  const marginVals = ((stickyRule.match(/margin:\s*([^;}]+)/) || [])[1] || '').trim().split(/\s+/);
+  assert.ok(marginVals.length >= 3, 'margin 要寫到第三個值（下邊距）才驗得到');
+  assert.doesNotMatch(marginVals[2], /^-/,
+    '★下邊距不可為負：sticky 對齊的是 margin box，負的下邊距會把停靠點往下推（左右負邊距做滿版沒問題）');
   // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
   //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，
   //   而所有考題照樣全綠（Codex 實測）。
