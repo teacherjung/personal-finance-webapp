@@ -207,11 +207,16 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   //    滿足——Codex 實測把驗算對象從「台幣帳戶」改成「帳戶」，整份掃描仍全綠。
   const items = html.split('<li>');
   const gateeItem = items.find((x) => x.includes('通過驗算才准匯入')) || '';
-  const blindItem = items.find((x) => x.includes('看不到的三件事')) || '';
+  const blindItem = items.find((x) => x.includes('看不到的')) || '';   // 條數會隨誠實劃界增加，錨在「看不到的」不錨數字（鐵則 10）
   assert.ok(gateeItem && blindItem, '徽章要有「驗什麼」與「看不到什麼」兩條');
   assert.match(gateeItem, /台幣帳戶/, '★講驗算對象的那一條就要指名台幣帳戶（整份掃描會被別句冒充）');
   assert.match(blindItem, /第一筆|首筆/, '★要講清楚每個帳戶的第一筆驗不到');
   assert.match(blindItem, /外幣/, '★要講清楚外幣明細不在這道驗算裡');
+  // ★r6#1：概要有、明細一筆都沒有的台幣帳戶（本期無往來，很常見）——**它的餘額仍會照帳單更新或
+  //   新建帳戶，卻沒有任何明細可以驗**。Codex 走正式 preview→票→apply 重現：那個帳戶真的被建出來、
+  //   餘額 777 真的寫進去，而 twdAccountsUnverified 仍是 0（它只算「有交易列」的帳戶）。
+  assert.match(blindItem, /沒有往來|一筆都沒有|只出現在概要/, '★要揭露「這期沒往來的帳戶餘額沒被驗算」');
+  assert.match(gateeItem, /如果也印了|有印|概要餘額時/, '★末筆對概要不是每次都做——沒印概要餘額時它會被跳過');
   assert.doesNotMatch(html, /把每一筆的餘額前後扣起來/, '不可寫成「每一筆」——首筆沒有前一筆可比');
   assert.doesNotMatch(html, /進不了你的帳本|不會記錯|保證正確|一定正確|完全正確/,
     '★閘只保證擋住「造成不一致」的錯——金額與餘額一起抄成自洽的另一組數字仍可能通過，不可講成數值正確性保證');

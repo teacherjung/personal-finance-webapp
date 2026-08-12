@@ -55,6 +55,8 @@ test('G2｜文案：該講的都講了（辦鑰匙／兩套帳／級距不是報
   assert.doesNotMatch(gateePara, /整份連得起來才收/, '不可寫成整份逐筆都驗');
   assert.match(blindPara, /第一筆|首筆/, '★每個帳戶的第一筆驗不到');
   assert.match(blindPara, /外幣/, '★外幣明細不在這道驗算裡');
+  assert.match(blindPara, /沒有往來|一筆都沒有|只出現在概要/, '★r6#1：這期沒往來的帳戶餘額仍會更新、卻沒有明細可驗——要揭露');
+  assert.match(gateePara, /如果也印了|有印|概要/, '末筆對概要是有條件的（沒印概要餘額就跳過）');
   assert.match(ALL_COPY, /完全可以不設定|不設定也完全可以/, '要講不設定會怎樣');
   assert.match(ALL_COPY, /只會顯示一次/, '辦 key 的實務提醒');
 });
