@@ -279,10 +279,11 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const willCreate = rows.filter((/** @type {any} */ x) => x.action === 'create').length;
   const tx = r.transactions || { rows: [], counts: {} };
   const c = tx.counts || {};
-  // 交易分箱預覽（前 12 筆；金流用顏色）：讓使用者匯入前看到自動分箱，之後可在收支列表逐筆改
+  // 交易明細預覽（**全部即將匯入的筆數**，William 2026-08-12：只給前 12 筆看不出這次會匯入什麼；
+  // 表格自帶捲動，筆數多也不會把窗撐爆）。已匯入過的重複筆不列（它們不會再進帳本），只在上面計數。
   const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
-  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).slice(0, 12);
+  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate);
   const body = `
     ${aiPreviewBadgeHtml(r)}
     <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
@@ -298,15 +299,15 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
     <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
 
-    <div class="section-title">交易分箱（自動判斷，匯入後可在收支列表逐筆改）</div>
-    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。</p>
-    ${previewTx.length ? `<div class="tbl-wrap"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
+    <div class="section-title">交易明細</div>
+    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
+    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
       <td class="muted">${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
-    </tr>`).join('')}</tbody></table></div>${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length > 12 ? `<p class="muted" style="font-size:11px;margin-top:6px">…只顯示前 12 筆，共 ${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length} 筆</p>` : ''}` : '<p class="empty">帳單裡沒有新交易。</p>'}
+    </tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:11px;margin-top:6px">以上 ${previewTx.length} 筆就是按下確認會匯入的全部內容${c.duplicate ? `（另有 ${c.duplicate} 筆之前已匯入過、這次不會重複記）` : ''}。</p>` : '<p class="empty">帳單裡沒有新交易。</p>'}
     <div class="page-actions" style="margin-top:16px"><button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button></div>`;
   openInfo('銀行對帳單預覽', body, { size: 'xl' });
   setTimeout(() => {

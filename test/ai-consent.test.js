@@ -20,7 +20,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
   snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
-  aiConsentBodyHtml, aiPreviewBadgeHtml, aiErrorText, runAiFallback,
+  aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
   AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
@@ -203,12 +203,18 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.equal(aiPreviewBadgeHtml({ engine: 'template' }), '');
   const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
   assert.match(html, /AI 幫你讀出來的/);
-  assert.match(html, /claude-haiku-4-5-20251001/);
+  assert.match(html, /Claude Haiku 4\.5/, '模型名要人看得懂（代號留給後端與 log）');
   // ★誠實劃界的白話版：這句必須在畫面上（不可只藏在 <details> 裡）
   const firstDetails = html.indexOf('<details');
   const visible = firstDetails >= 0 ? html.slice(0, firstDetails) : html;
-  assert.match(visible, /驗算|扣不扣得起來/, '驗算的射程要講');
-  assert.match(visible, /機構名|帳號|摘要/, '★「驗不到什麼」必須在畫面上，不可只藏在展開區');
+  // ★William 2026-08-12 改版：第一眼那句從「它驗不到 X」改成「**請確認** X 有沒有讀錯」——
+  //   同樣是誠實劃界的白話版，但改成**行動指示**（更能讓人真的去看那四欄）。
+  //   完整的驗算射程與盲區改由展開區承擔（下方 blindItem 的三條斷言）。
+  assert.match(visible, /請確認/, '★第一眼要有行動指示，不能只講「AI 讀的」就沒了');
+  for (const field of ['機構名', '帳號', '日期', '摘要']) {
+    assert.ok(visible.includes(field), `★要逐項點名要核對什麼（缺「${field}」＝使用者不知道該看哪裡）`);
+  }
+  assert.doesNotMatch(visible, /都驗過|保證|放心/, '第一眼不可出現任何讓人放鬆核對的字眼');
   // ★r2#1：**全文**層級的射程（原本只掃第一個展開區之前的片段，展開區裡的過頭話完全看不到）
   assert.match(html, /自洽|剛好.*平|扣不起來/, '要照實講「擋得住扣不起來的錯、擋不住剛好自洽的錯」（契約 §八 的誠實劃界）');
   // ★r4#1：驗算的真實射程＝**只驗台幣**（外幣整組 skip）、**每個帳戶首筆驗不到**（沒有前一筆可比）。
@@ -238,6 +244,18 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   const evil = aiPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
   assert.match(evil, /&lt;b&gt;/);
   assert.doesNotMatch(evil, /<b>x/);
+  // ★模型名要人看得懂（William 2026-08-12）：代號留在後端與 log，畫面給人名
+  assert.match(html, /Claude Haiku 4\.5/, '畫面要顯示人看得懂的模型名');
+  assert.doesNotMatch(html, /claude-haiku-4-5-20251001/, '不給使用者看內部代號');
+});
+
+test('E2b｜modelDisplayName：代號→人看得懂的名字；認不得的原樣顯示（不吃掉資訊）', () => {
+  assert.equal(modelDisplayName('claude-haiku-4-5-20251001'), 'Claude Haiku 4.5');
+  assert.equal(modelDisplayName('claude-sonnet-5'), 'Claude Sonnet 5');
+  assert.equal(modelDisplayName('claude-opus-4-8-20260101'), 'Claude Opus 4.8');
+  assert.equal(modelDisplayName('gpt-x-99'), 'gpt-x-99', '認不得的原樣顯示——不可回空字串（那會讓畫面看不出用了什麼）');
+  assert.equal(modelDisplayName(''), '');
+  assert.equal(modelDisplayName(undefined), '');
 });
 
 test('E3｜aiErrorText：後端白話句原句放行＋補下一步；未知 code 不吃訊息；不回聲帳單數字', () => {

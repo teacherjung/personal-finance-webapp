@@ -146,13 +146,23 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
  * 「誰讀的、驗不到什麼」，不重述驗了幾關。
  * @param {any} preview
  */
+/** 模型代號 → 人看得懂的名字（畫面只給人看；代號留在後端與 log）。查不到就原樣顯示。 @param {string} id */
+export function modelDisplayName(id) {
+  const raw = String(id || '');
+  if (!raw) return '';
+  const m = raw.match(/^claude-(haiku|sonnet|opus)-(\d+)(?:-(\d+))?/);
+  if (!m) return raw;
+  const family = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }[m[1]] || m[1];
+  return `Claude ${family} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
+}
+
 export function aiPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
-  const model = esc(String(preview.aiModel || ''));
+  const model = esc(modelDisplayName(preview.aiModel));
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
-  <p style="margin:0 0 6px"><b>🤖 這一份是 AI 幫你讀出來的，不是內建範本讀的。</b>${model ? `（使用的模型：${model}）` : ''}</p>
-  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">下面那句驗算通過，驗的是<b>數字前後扣不扣得起來</b>；機構名、帳號、日期、摘要有沒有讀錯，它驗不到——請自己看一眼下面兩張表再按確認。</p>
+  <p style="margin:0 0 6px"><b>🤖 這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
+  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
     <ul class="muted" style="margin:8px 0 0;padding-left:18px;font-size:12px;line-height:1.9">
