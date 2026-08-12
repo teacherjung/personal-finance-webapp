@@ -275,6 +275,13 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(src, /\$\{aiPreviewBadgeHtml\(r\)\}/, '徽章要真的插進 body 字串');
   // 兩條 fallback：上傳窗與密碼窗各一（少一條＝加密帳單走不到 AI）
   assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, notify:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
+  // ★r9#1：呼叫了還不夠——回傳 'rethrow' 必須真的把原錯誤丟回去。只把密碼窗那條 throw 改成 return，
+  //   非 bank_unrecognized 的錯誤會被當成成功（表單關掉、什麼都不顯示），而三關全綠（Codex 實測）。
+  assert.equal(count(src, /=== 'rethrow'\) throw e;/g), 2, "★兩條 fallback 都要以 === 'rethrow' 控制把原錯誤丟回（吞掉＝使用者看不到任何錯誤）");
+  // ★r9#1：aiErrorText 的兩個**畫面輸出端**都要釘住——只驗翻譯函式本身，繞過它直接顯示原始
+  //   e.message 照樣全綠（技術訊息與「下一步」就不會出現在畫面上）。
+  assert.match(src, /throw new Error\(aiErrorText\(/, '同意窗的錯誤要經 aiErrorText 翻譯後才丟給 openForm 顯示');
+  assert.match(src, /toast\(aiErrorText\(code, /, '套用鈕的錯誤也要經 aiErrorText（票類/服務類的下一步就在那裡）');
   assert.match(src, /openConsent: \(\) => openAiConsentWindow\(b64, pw, fileName\)/, '★密碼要一路帶進同意窗，否則 AI 抽字打不開檔案→又跳密碼窗→無限迴圈');
   // ★r1#1：檔名與內容必須同源。快照在第一次 await 之前取，之後全檔不得再讀可變的 file
   assert.match(src, /const snap = snapshotUpload\(file\);/, '第一次 await 之前要先凍住「這一次上傳的是哪一份」');

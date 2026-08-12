@@ -124,4 +124,7 @@ test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把
     assert.match(src, new RegExp(`data-ai-info="${k}"`), `就地解釋「${k}」要掛上去`);
   }
   assert.match(src, /Object\.hasOwn\(AI_KEY_INFO, key\)/, '只認自有鍵（直接索引會讓 constructor 之類撈到原型）');
+  // ★r9#1：查到了還要真的拿去開窗——保留查表與 openInfo 呼叫、卻顯示固定占位內容，三關照樣全綠
+  //   （四顆 ⓘ 都看不到既定說明）。
+  assert.match(src, /openInfo\(info\.title, info\.html/, '★查到的說明要真的成為視窗的標題與內容');
 });
