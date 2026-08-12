@@ -43,7 +43,7 @@ const goodAnswer = () => ({
 });
 /** 弱閘答案卷（餘額全 null、無概要帳戶＝一對都驗不到）。 */
 const weakAnswer = () => ({
-  bank: '合成一銀', referenceDate: '2026-06-30', accountCurrencies: [], accounts: [],
+  bank: '合成一銀', referenceDate: '2026-06-30', accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }], accounts: [],
   transactions: [{ acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: null, summary: '轉帳存入', note: '' }],
 });
 /** 對不上的答案卷（餘額鏈斷＝擋下型不一致）。 */
@@ -99,12 +99,12 @@ test('驗收｜答案卷逐欄 fail-closed：方向/負數/假日期/無末碼�
 test('驗收｜機構名剝分段符（bank2 去重鍵的 | 不可入段）；正常答案卷過驗收＝形狀對齊模板解析器', () => {
   const ok = normalizeAiBank({ ...goodAnswer(), bank: '合成|一銀' });
   assert.equal(ok.bank, '合成一銀');
-  assert.equal(ok.accountCurrency['900200****3302'], 'TWD', 'accountCurrency 由 accounts 建（與模板同形）');
+  assert.equal(ok.accountCurrency['900200****3302'], 'TWD', 'accountCurrency 由權威幣別表 accountCurrencies 建（r2#1；與模板 accountCurrency 同形）');
   assert.equal(ok.accounts[0].suffix, '3302', '末碼由程式自己算、不信 AI');
   assert.throws(() => normalizeAiBank({ ...goodAnswer(), bank: '|||' }), (/** @type {any} */ e) => e.code === 'ai_bad_answer', '剝完只剩空＝壞答案');
 });
 
-test('驗收｜r2#1 幣別身分權威欄：accounts 兼任幣別表＝內部矛盾與缺席都 fail-closed', () => {
+test('驗收｜r2#1 幣別身分權威欄：accounts 不得兼任幣別表——與權威表缺席/矛盾都 fail-closed', () => {
   const a = goodAnswer();
   a.accountCurrencies = [];   // 有餘額的帳戶不在權威表＝壞答案（幣別表要含概要所有帳戶）
   assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /accountCurrencies/.test(e.message));
@@ -114,6 +114,28 @@ test('驗收｜r2#1 幣別身分權威欄：accounts 兼任幣別表＝內部矛
   const c = goodAnswer();
   c.accountCurrencies.push({ masked: '900600****6606', currency: 'USD' });   // 空白餘額外幣帳戶＝合法、進權威表
   assert.equal(normalizeAiBank(c).accountCurrency['900600****6606'], 'USD', '餘額空白的帳戶幣別仍要記到（2026-07-28 模板同一課）');
+});
+
+test('r3#1｜整個帳戶連幣別表一起漏交＝整份打回：交易帳號必須在權威表（否則 fallback 台幣復活）', async () => {
+  await seedDb(true);
+  // r3 反例：USD 帳戶同時漏出 accountCurrencies 與 accounts，只剩兩筆自洽交易——曾經 imported:5
+  const omitted = () => {
+    const a = goodAnswer();
+    a.transactions.push(
+      { acctMasked: '900700****7707', date: '2026-06-04', direction: 'in', amount: 300, balance: 300, summary: '轉帳存入', note: '' },
+      { acctMasked: '900700****7707', date: '2026-06-05', direction: 'out', amount: 100, balance: 200, summary: '轉帳支取', note: '' },
+    );
+    return a;
+  };
+  assert.throws(() => normalizeAiBank(omitted()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /accountCurrencies/.test(e.message),
+    '驗收層就要打回——AI 是不可信輸入，提示詞不是保證');
+  const spy = spyTransport([omitted(), omitted()]);
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer');
+  const db = await getDb();
+  assert.equal(db.transactions.length, 0, 'r3 實測曾 imported:5——現在必須零寫入');
+  assert.equal(spy.calls.length, 2, '兩級都試過（答案卷壞＝升級重試一次）');
 });
 
 test('r2#1｜空白餘額的外幣帳戶不得被當台幣：閘排除於 TWD 覆蓋、preview 標 foreign、apply 不入帳', async () => {
