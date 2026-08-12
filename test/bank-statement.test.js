@@ -813,3 +813,21 @@ test('機構維度｜r1#4 bank2 自動名重建：摘要備註右移段位、行
     'bank2 摘要在第 8 段、備註第 9 段起（退回舊段位＝拿餘額欄當摘要）；行內帳號只對同機構帳戶（台新戳同號排前面也不可抓走）');
   assert.equal(t.autoNote, t.note, 'autoNote 欄同步新格式');
 });
+
+test('預覽與匯入互扣｜外幣列不算進「會匯入」：preview 的可匯入筆數＝import 的 imported', () => {
+  // r1#2：畫面說「以上 N 筆就是會匯入的全部內容」，但正式匯入對非 TWD 直接跳過 ⇒ 數字要對得起來。
+  const db = { accounts: [], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30',
+    accounts: [{ suffix: '3302', masked: '900200****3302', balance: 0, currency: 'TWD', label: '活存', note: '' }],
+    accountCurrency: { '900200****3302': 'TWD', '900300****363': 'USD' },
+    transactions: [
+      btx({ summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),
+      btx({ acctSuffix: '363', acctMasked: '900300****363', summary: '外幣利息', direction: 'in', amount: 5, balance: 5 }),
+    ] };
+  const pv = previewBankTxForDb(db, parsed);
+  const willImport = pv.rows.filter((/** @type {any} */ r) => !r.duplicate && !r.foreign).length;
+  assert.equal(pv.counts.foreign, 1, '外幣要被認出來');
+  const res = importBankTxToDb(db, parsed);
+  assert.equal(res.imported, willImport, '★預覽宣稱會匯入的筆數，要等於實際匯入的筆數（外幣列不可算進去）');
+  assert.equal(res.foreign, pv.counts.foreign, '外幣筆數兩邊也要對得起來');
+});

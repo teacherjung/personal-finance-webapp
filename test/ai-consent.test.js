@@ -177,6 +177,16 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.doesNotMatch(html, /AI 那邊不會保留|AI那邊不會保留|不會留一份/,
     '★與上一行「會在一段時間後刪除」矛盾：留存一段時間＝有保留，不可寫成「不保留」');
   assert.doesNotMatch(html, /William/, '★程式碼裡不寫死使用者名字（未來多人版會變錯字）');
+  // ★r1#1：「不拿去訓練／會刪除」是**供應商的預設政策**，不是我們能保證的事——這條路用的是使用者
+  //   自己的 API 帳戶，那個帳戶另外同意過什麼我們看不到。所以那句必須是**有條件的**。
+  //   範圍鎖在承載保證的那顆 <li>：整份掃到「預設」兩字不算數（別處出現也會過）。
+  const policyLi = (html.match(/<li>[^]*?<\/li>/g) || []).find((/** @type {string} */ x) => /訓練/.test(x)) || '';
+  assert.ok(policyLi, '要有一句交代「會不會被拿去訓練」');
+  assert.match(policyLi, /預設政策|預設值/, '★要講明這是供應商的「預設政策」，不是我們給的保證');
+  const caveatLi = (html.match(/<li>[^]*?<\/li>/g) || []).find((/** @type {string} */ x) => /不是我們能保證/.test(x)) || '';
+  assert.ok(caveatLi, '★要有一句把「這是預設值、不是我們的保證」講死');
+  assert.match(caveatLi, /你自己的 API 帳戶|自己的帳戶/, '要點明用的是使用者自己的帳戶（我們看不到那邊同意過什麼）');
+  assert.match(caveatLi, /官方公告|以你自己的帳戶設定/, '★要把最終依據指回供應商官方公告，不要停在我們的說法');
   assert.doesNotMatch(html, /讀取不出這份帳單的內容|讀不出.*內容/,
     '★文字有讀到（下一行就說「抽出來的文字」）——認不出的是**版面**，不是讀不到內容');
   assert.match(html, /認不出這份帳單的版面|認不出.*版面/, '要講清楚是版面認不出來');
@@ -338,6 +348,15 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   const appSrc2 = srcOf('public/app.js');
   assert.match(appSrc2, /if \(submitBtn && busyLabel\) submitBtn\.textContent = busyLabel;/, '★openForm 要真的把 busyLabel 寫上按鈕');
   assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');
+  // ★r1#5：只把按鈕搬到動作列還不夠——.modal 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底
+  assert.match(appSrc2, /form-actions\$\{opts\.actionsHtml \? ' sticky-actions' : ''\}/, '有動作按鈕的資訊窗要套固定動作列');
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
+  // ⚠️ 範圍要鎖在**這條規則的大括號內**（[^}]*）：用 [\s\S]*? 會跨出區塊咬到後面別條規則的
+  //    position: sticky，把 .sticky-actions 改成 static 也照樣綠（實測假綠，2026-08-12）。
+  const stickyRule = (css.match(/\.form-actions\.sticky-actions\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(stickyRule, '要有 .form-actions.sticky-actions 這條規則');
+  assert.match(stickyRule, /position:\s*sticky/, '★要真的是 sticky（沒有這條，按鈕照樣沉在捲動內容最底）');
+  assert.match(stickyRule, /background:\s*var\(--card\)/, '要不透明背景（否則捲動的表格會從按鈕底下透出來）');
   // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
   //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，
   //   而所有考題照樣全綠（Codex 實測）。

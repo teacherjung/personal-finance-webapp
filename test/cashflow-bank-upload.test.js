@@ -394,3 +394,29 @@ test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可�
   assert.match(src, /submitLabel: BANK_UPLOAD_SUBMIT_LABEL/, '送出鈕文字走常數');
   assert.doesNotMatch(src, /台新綜合對帳單/, '★cashflow.js 不得再有寫死單一銀行的畫面文字');
 });
+
+test('文案｜擋下的警語不可叫使用者把帳單內容傳給我（r1#1）', () => {
+  const src = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
+  // 範圍鎖在那段警語本身：整份檔案掃字串會被別處的句子矇混過去。
+  const warn = (src.match(/r\.blocked \? `[^`]*`/) || [''])[0];
+  assert.ok(warn, '要有「讀不到現值參考日」的擋下警語');
+  assert.doesNotMatch(warn, /截圖|把帳單.*傳給|帳單內容傳/,
+    '★不可要求使用者把帳單內容／截圖傳出來——回報只需要「哪一家銀行、哪一種版面」');
+  assert.match(warn, /不用傳帳單內容|不需要傳帳單/, '★要主動講「不用傳帳單內容」');
+  assert.match(warn, /哪一家銀行|哪一種版面/, '要講清楚回報時給什麼就夠了');
+});
+
+test('接線｜預覽的「會匯入」清單要排除外幣列，腳註也要交代（r1#2）', () => {
+  // 畫面那句是「以上 N 筆就是按下確認會匯入的全部內容」——正式匯入對非 TWD 直接跳過，
+  // 外幣列若列在裡面，這句就是假的（互扣的另一半＝bank-statement.test.js 用真的 import 結果對數）。
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  const decl = (src.match(/const previewTx = [^\n]*/) || [''])[0];
+  assert.ok(decl, '要有 previewTx 這份「會匯入」清單');
+  assert.match(decl, /!x\.duplicate/, '已匯入過的不列進去');
+  assert.match(decl, /!x\.foreign/, '★外幣列正式匯入會被跳過——列進「會匯入」等於畫面說謊');
+  // ⚠️ 不可用 [^`]* 收尾：這句自己內含巢狀樣板字串，第一個反引號就把擷取切斷（實測只咬到半句）。
+  const foot = (src.match(/以上 \$\{previewTx\.length\} 筆[\s\S]*?<\/p>/) || [''])[0];
+  assert.ok(foot, '要有交代「以上 N 筆就是全部」的腳註');
+  assert.match(foot, /c\.duplicate/, '排掉的重複筆數要另外講，不可默默消失');
+  assert.match(foot, /c\.foreign/, '★排掉的外幣筆數也要另外講（使用者才知道那幾筆去哪了）');
+});

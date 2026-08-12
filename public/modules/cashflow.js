@@ -283,11 +283,13 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   // 表格自帶捲動，筆數多也不會把窗撐爆）。已匯入過的重複筆不列（它們不會再進帳本），只在上面計數。
   const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
-  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate);
+  // ⚠️ **外幣也要排除**（r1#2）：正式匯入對非 TWD 直接跳過（bank-import 的 importBankTxToDb），
+  //    把它算進「會匯入的全部內容」＝畫面說會進 N 筆、實際只進 N−外幣筆數，使用者會以為漏記。
+  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate && !x.foreign);
   const body = `
     ${aiPreviewBadgeHtml(r)}
     <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
-    ${r.blocked ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——按下確認會整份失敗、什麼都不會寫進去。<br>這份請改用手動記帳，或把帳單截圖傳給我看看是哪裡沒讀到。</p>` : ''}
+    ${r.blocked ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——按下確認會整份失敗、什麼都不會寫進去。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>` : ''}
     ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
@@ -308,7 +310,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td class="muted">${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
-    </tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:11px;margin-top:6px">以上 ${previewTx.length} 筆就是按下確認會匯入的全部內容${c.duplicate ? `（另有 ${c.duplicate} 筆之前已匯入過、這次不會重複記）` : ''}。</p>` : '<p class="empty">帳單裡沒有新交易。</p>'}
+    </tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:11px;margin-top:6px">以上 ${previewTx.length} 筆就是按下確認會匯入的全部內容${c.duplicate ? `；另有 ${c.duplicate} 筆之前已匯入過、這次不會重複記` : ''}${c.foreign ? `；另有 ${c.foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）` : ''}。</p>` : '<p class="empty">帳單裡沒有新交易。</p>'}
 `;
   // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
   // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。

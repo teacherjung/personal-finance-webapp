@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 const TEST_STORE = join(tmpdir(), `finance-aiparse-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
@@ -426,6 +427,18 @@ test('票制｜寫入失敗要把票放回（William 2026-08-12 實測：讀不�
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（重試不重跑 AI）');
 });
 
+test('票匣｜r1#3 放回也要守張數上限（兌走再補新票不可無限累積帳單內文）', () => {
+  clearAiTicketsForTest();
+  const t0 = 7_000_000;
+  // 發滿上限、全部兌走（模擬 in-flight），再發滿上限，最後把前面那批全部放回
+  const first = Array.from({ length: AI_TICKET_MAX }, (_, i) => issueAiTicket({ parsed: { n: i }, aiModel: 'm' }, t0));
+  const held = first.map((id) => ({ id, t: redeemAiTicket(id, t0) }));
+  for (let i = 0; i < AI_TICKET_MAX; i++) issueAiTicket({ parsed: { n: 100 + i }, aiModel: 'm' }, t0);
+  for (const { id, t } of held) restoreAiTicket(id, t, t0);
+  assert.ok(aiTicketCountForTest() <= AI_TICKET_MAX,
+    `★放回要走同一套容量政策（實測曾累積到 ${AI_TICKET_MAX * 2} 張，每張都含帳單交易內容）——現在是 ${aiTicketCountForTest()} 張`);
+});
+
 test('票匣｜restoreAiTicket：保留原到期時間、不延長；過期的不放回', () => {
   clearAiTicketsForTest();
   const t0 = 5_000_000;
@@ -587,4 +600,26 @@ test('aiApiKey｜mapSecrets 走訪（HOSTED 加密／匯出剝除／匯入不採
   const stripped = stripSecretsForBackup({ settings: { aiApiKey: 'sk-ant-synthetic-test-key', usdTwd: 32 } });
   assert.equal(stripped.settings.aiApiKey, '', 'HOSTED 匯出剝除：欄位留著且為空（同 taishinSecPdfPassword 慣例）');
   assert.equal(stripped.settings.usdTwd, 32, '非機密欄不受影響');
+});
+
+test('票匣｜r1#4 恢復邊界要蓋住 getDb 本身：儲存層讀不起來時，票不可被吃掉', async () => {
+  // 兌票之後、成功寫入之前的**每一個** await 都要在恢復邊界內。`getDb()` 自己也會 reject
+  //   （儲存層壞掉／HOSTED 拿不到租戶）——它若落在 try 外，票就永久消失、使用者得再花一次 AI 費用。
+  const db = await getDb();
+  db.accounts = [];
+  await saveDb(db);                      // 先確保 kv 有 accounts 這一列可以弄壞
+  const id = issueAiTicket({ parsed: goodAnswer(), aiModel: 'claude-haiku-4-5-20251001' });
+
+  // 接縫：用第二條連線把 kv 的一列改成壞 JSON ⇒ load() 的 JSON.parse 拋錯 ⇒ getDb() 本身 reject
+  //（不是閘擋、也不是 saveDb 失敗——那兩條路本來就在 try 內，測不出這一項）
+  const raw = new DatabaseSync(TEST_STORE);
+  const before = /** @type {any} */ (raw.prepare("SELECT data FROM kv WHERE key='accounts'").get());
+  assert.ok(before, '前置：kv 要有 accounts 這一列');
+  raw.prepare('UPDATE kv SET data=? WHERE key=?').run('{ 這不是合法 JSON', 'accounts');
+  await assert.rejects(() => applyBankStatement('', '', notRecognized, { useAi: true, aiTicket: id }),
+    '前置：儲存層壞掉時 apply 本來就該失敗');
+  raw.prepare('UPDATE kv SET data=? WHERE key=?').run(before.data, 'accounts');
+  raw.close();
+
+  assert.ok(redeemAiTicket(id), '★getDb 失敗後票要放回去（不然使用者白花一次 AI 呼叫、還得重讀一次帳單）');
 });
