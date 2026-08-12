@@ -32,7 +32,7 @@
 
 **改這裡**：**銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4）
 
-**記得同步這裡**：銀行交易匯入時存**不可竄改的 `dir:'in'\|'out'`**（`FIELD_SCHEMA` 有型別、**不進 CRUD 白名單**＝使用者改分類也不動它；amount 無正負、type 又可被改錯，唯 dir 忠實記錄錢進錢出）。①**「同類一起改」`applyLearnedBankToExisting` 逐筆過方向護欄**：收入規則只套進帳、支出只套出帳、內轉可兩向但子分類依**本筆方向**重播，回 `{changed, skipped}`，前端筆數與 toast 只算/只報可安全套用者——**不可整批套同一 cls**（同鑰匙可同時有進帳與出帳，會把出帳無聲改成收入＝毀現金流，生存優先）。⚠️**方向來源優先序（`txDirection(db,t)`，Codex r13 複審#1）**：①存好的 `dir` ②**`bankRef` 第 4 段的原始方向**（`bank\|帳號\|日期\|方向\|…`，匯入寫死不隨改分類而變）③最後才從 type/子類推——舊批次可能留下「bankRef=out 但子類=內轉入」的不一致，只靠 type/子類會把出帳誤判成 in、被收入規則改掉；用 bankRef 讀時解析（不必一次性搬家補 dir，bankRef 已是同一份事實）。②**內轉子分類一律用角色重播 `replayTransferSub(db, sub, dir)`**（out/in 角色隨本筆方向取現名、settle 方向中性保留、自訂原樣）——**不可字面比對「交割」/「內轉出」**（角色改名後字面就對不上，把交割誤翻成內轉出/入）。角色查詢集中在 `categories.js transferSubRole`（預設 token role-first，同 `conformTransferSub` #184）。
+**記得同步這裡**：銀行交易匯入時存**不可竄改的 `dir:'in'\|'out'`**（`FIELD_SCHEMA` 有型別、**不進 CRUD 白名單**＝使用者改分類也不動它；amount 無正負、type 又可被改錯，唯 dir 忠實記錄錢進錢出）。①**「同類一起改」`applyLearnedBankToExisting` 逐筆過方向護欄**：收入規則只套進帳、支出只套出帳、內轉可兩向但子分類依**本筆方向**重播，回 `{changed, skipped}`，前端筆數與 toast 只算/只報可安全套用者——**不可整批套同一 cls**（同鑰匙可同時有進帳與出帳，會把出帳無聲改成收入＝毀現金流，生存優先）。⚠️**方向來源優先序（`txDirection(db,t)`，Codex r13 複審#1）**：①存好的 `dir` ②**`bankRef` 的原始方向**（台新格式 `bank\|帳號\|日期\|方向\|…` 第 4 段、他行 `bank2\|機構\|帳號\|日期\|方向\|…` 第 5 段——`bankDirFromRef` 雙軌解析，P1a r1#4；匯入寫死不隨改分類而變）③最後才從 type/子類推——舊批次可能留下「bankRef=out 但子類=內轉入」的不一致，只靠 type/子類會把出帳誤判成 in、被收入規則改掉；用 bankRef 讀時解析（不必一次性搬家補 dir，bankRef 已是同一份事實）。②**內轉子分類一律用角色重播 `replayTransferSub(db, sub, dir)`**（out/in 角色隨本筆方向取現名、settle 方向中性保留、自訂原樣）——**不可字面比對「交割」/「內轉出」**（角色改名後字面就對不上，把交割誤翻成內轉出/入）。角色查詢集中在 `categories.js transferSubRole`（預設 token role-first，同 `conformTransferSub` #184）。
 
 ## 同類同店一起改是單一原子指令
 

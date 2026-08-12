@@ -730,3 +730,68 @@ test('機構維度｜bank2 反解：改名對齊認機構、方向護欄讀第 5
   assert.equal(r.changed, 1, 'bank2 第 5 段是 in→收入規則可套（讀成第 4 段會拿帳號當方向＝全 skip）');
   assert.equal(db2.transactions[0].type, 'income');
 });
+
+// ---- 機構維度 r1 補強（Codex r1 四條，反例逐字入題）----
+const dualStamped = () => ({ accounts: [
+  { id: 'ts', name: '台新舊帳戶', type: 'cash', bank: '台新', currency: 'TWD', accountNo: '900200123453302', balance: 1 },
+  { id: 'fb', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 2 },
+], transactions: [] });
+const xferTx = () => btx({ summary: '轉帳存入', direction: 'in', amount: 500, balance: null, note: '轉入900200****3302 生活費' });
+
+test('機構維度｜r1#1 顯示帳戶名與行內轉帳說明認機構：同號雙戳帳戶各歸各行（preview＋import）', () => {
+  const db = dualStamped();
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pv.rows[0].account, '一銀活儲', '一銀交易不可掛到台新帳戶（r1 實測反例：account=台新舊帳戶）');
+  assert.equal(pv.rows[0].note, '現金存入・轉入到：一銀活儲（生活費）', '行內轉帳翻譯也要認機構（反例：轉入到：台新舊帳戶）');
+  const r = importBankTxToDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(r.imported, 1);
+  assert.equal(db.transactions[0].account, '一銀活儲', 'import 路徑同一套查找');
+  assert.equal(db.transactions[0].note, '現金存入・轉入到：一銀活儲（生活費）');
+  // 正向對照：台新帳單照樣對到台新帳戶（祖父行為不變）
+  const pvTs = previewBankTxForDb(dualStamped(), { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pvTs.rows[0].account, '台新舊帳戶');
+  assert.equal(pvTs.rows[0].note, '現金存入・轉入到：台新舊帳戶（生活費）');
+});
+
+test('機構維度｜r1#2 幣別 fallback 認機構：他行同號 JPY 帳戶不可讓本行台幣列被當外幣丟掉', () => {
+  const db = { accounts: [
+    { id: 'jp', name: '台新日圓', type: 'cash', bank: '台新', currency: 'JPY', accountNo: '900200123453302' },
+    { id: 'tw', name: '一銀台幣', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302' },
+  ], transactions: [] };
+  const parsed = { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] };   // 概要缺幣別＝走 db 補位
+  const pv = previewBankTxForDb(db, parsed);
+  assert.equal(pv.rows[0].currency, 'TWD', 'db 補位只認同機構（r1 實測反例＝被同號台新 JPY 判成外幣）');
+  assert.equal(pv.rows[0].foreign, false);
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.imported, 1, '真台幣現金流不可被靜默丟掉');
+  assert.equal(r.foreign, 0);
+});
+
+test('機構維度｜r1#3 accounts.bank 型別牆：備份匯入擋非字串、CRUD 白名單不可寫', async () => {
+  const { validateImportItem, pickWritable, WRITABLE_FIELDS } = await import('../lib/schema.js');
+  const bad = validateImportItem('accounts', { id: 'x', name: 'n', balance: 1, bank: { spoof: '台新' } });
+  assert.ok(bad.errors.length >= 1 && bad.errors.join('；').includes('bank'), '物件型 bank 必須報錯（truthy 錯型會永久硬擋正確比對、falsy 錯型繞過護欄）');
+  assert.equal(validateImportItem('accounts', { id: 'x', name: 'n', balance: 1, bank: '台新' }).errors.length, 0, '正常字串照過');
+  assert.ok(!WRITABLE_FIELDS.accounts.includes('bank'), 'bank＝服務層擁有，不進 CRUD 白名單');
+  assert.ok(!('bank' in pickWritable('accounts', { name: 'n', bank: '偽造機構' })), 'CRUD 表單挾帶 bank＝剝掉');
+});
+
+const { getDb, saveDb } = await import('../lib/repo.js');
+const { reconcileAccountNamesAuto } = await import('../lib/services/bank-import.js');
+
+test('機構維度｜r1#4 bank2 自動名重建：摘要備註右移段位、行內帳號認機構、不補 812-', async () => {
+  const db = await getDb();
+  db.accounts = [
+    { id: 'ts2', name: '台新舊帳戶', type: 'cash', bank: '台新', currency: 'TWD', accountNo: '900200123453302', balance: 0 },
+    { id: 'fb2', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 0 },
+  ];
+  db.transactions = [{ id: 'b2note', date: '2026-06-01', type: 'income', category: '其他', subcategory: '其他收入',
+    amount: 500, account: '一銀活儲', note: '', autoNote: '', ledger: 'cashflow', source: 'bank', dir: 'in',
+    bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|in|500||轉帳存入|轉入900200****3302 生活費' }];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const t = (await getDb()).transactions.find(x => x.id === 'b2note');
+  assert.equal(t.note, '現金存入・轉入到：一銀活儲（生活費）',
+    'bank2 摘要在第 8 段、備註第 9 段起（退回舊段位＝拿餘額欄當摘要）；行內帳號只對同機構帳戶（台新戳同號排前面也不可抓走）');
+  assert.equal(t.autoNote, t.note, 'autoNote 欄同步新格式');
+});
