@@ -16,6 +16,7 @@ const { normalizeAiBank, linesToText, buildBankSystem, AI_BANK_MODELS, AI_BANK_S
 const { anthropicTransport, makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { previewBankStatement, applyBankStatement, aiBankRoute } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
+const { clearAiTicketsForTest, issueAiTicket, redeemAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -71,6 +72,7 @@ const engineOf = (spy) => () => ({ models: AI_BANK_MODELS, parseOnce: (/** @type
 
 /** 重設隔離 db：清帳戶/交易、設定鑰匙有無。 @param {boolean} withKey */
 async function seedDb(withKey) {
+  clearAiTicketsForTest();   // 票匣跨題互不干擾（比照 resetRateLimitsForTest）
   const db = await getDb();
   db.accounts = [];
   db.transactions = [];
@@ -131,11 +133,11 @@ test('r3#1｜整個帳戶連幣別表一起漏交＝整份打回：交易帳號�
     '驗收層就要打回——AI 是不可信輸入，提示詞不是保證');
   const spy = spyTransport([omitted(), omitted()]);
   await assert.rejects(
-    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
     (/** @type {any} */ e) => e.code === 'ai_bad_answer');
+  assert.equal(spy.calls.length, 2, '兩級都試過（答案卷壞＝升級重試一次）');
   const db = await getDb();
   assert.equal(db.transactions.length, 0, 'r3 實測曾 imported:5——現在必須零寫入');
-  assert.equal(spy.calls.length, 2, '兩級都試過（答案卷壞＝升級重試一次）');
 });
 
 test('r2#1｜空白餘額的外幣帳戶不得被當台幣：閘排除於 TWD 覆蓋、preview 標 foreign、apply 不入帳', async () => {
@@ -156,8 +158,7 @@ test('r2#1｜空白餘額的外幣帳戶不得被當台幣：閘排除於 TWD �
   const usdRows = pv.transactions.rows.filter((r) => r.currency === 'USD');
   assert.equal(usdRows.length, 2, 'r2 反例：這兩筆曾被判成 currency TWD／foreign false');
   assert.ok(usdRows.every((r) => r.foreign === true));
-  const spy2 = spyTransport([usdMixed()]);
-  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
   assert.equal(res.transactions.imported, 3, '只入台幣那三筆（r2 實測曾 imported:4）');
   assert.equal(res.transactions.foreign, 2, 'USD 兩筆誠實計入 foreign、不進台幣現金流');
   const db = await getDb();
@@ -252,7 +253,8 @@ test('階梯｜答案卷壞（ai_bad_answer）→升 Sonnet；服務類錯誤（
 test('apply｜快樂路徑真寫入：帳戶蓋機構戳（合成一銀）、交易 bank2 鍵、回 engine:ai', async () => {
   await seedDb(true);
   const spy = spyTransport([goodAnswer()]);
-  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
   assert.equal(res.engine, 'ai');
   assert.equal(res.aiModel, AI_BANK_MODELS.primary);
   assert.equal(res.created, 1);
@@ -264,12 +266,17 @@ test('apply｜快樂路徑真寫入：帳戶蓋機構戳（合成一銀）、交
   assert.ok(db.transactions.every((t) => t.bankRef.startsWith('bank2|合成一銀|')));
 });
 
-test('apply｜弱閘拒收＝寫入路徑 fail-closed：db 一筆都不可多', async () => {
+test('apply｜弱閘拒收＝連票都拿不到：preview 400，apply 無票再擋一次、db 一筆都不可多', async () => {
   await seedDb(true);
   const spy = spyTransport([weakAnswer(), weakAnswer()]);
   await assert.rejects(
-    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
-    (/** @type {any} */ e) => e.code === 'ai_weak_refused');
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_weak_refused', '弱閘在預覽就擋下＝發不出票');
+  const spy2 = spyTransport([weakAnswer(), weakAnswer()]);
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_ticket_required');
+  assert.equal(spy2.calls.length, 0, 'apply 不自己跑模型（r4#1）——連一發都不可');
   const db = await getDb();
   assert.equal(db.accounts.length, 0, '擋下＝零寫入');
   assert.equal(db.transactions.length, 0);
@@ -295,7 +302,7 @@ test('規矩④r1#1｜混合帳戶不搭便車：A 帳戶驗得動、B 帳戶餘
   const spy2 = spyTransport([mixed(), mixed()]);
   await assert.rejects(
     applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract }),
-    (/** @type {any} */ e) => e.code === 'ai_weak_refused');
+    (/** @type {any} */ e) => e.code === 'ai_ticket_required', 'preview 擋下＝沒有票，apply 也進不來（r4#1 之後兩道都在）');
   const db = await getDb();
   assert.equal(db.transactions.length, 0, 'r1 實測曾 imported:4——現在必須零寫入');
   assert.equal(db.accounts.length, 0);
@@ -320,6 +327,63 @@ test('r1#3｜閘紅終局錯誤不含帳單欄值：ai_reconcile_failed、marker
       return true;
     });
   assert.equal(spy.calls.length, 2, '兩級都試過才收斂到終局錯誤');
+});
+
+// ---- 確認票（r4#1：AI 非確定性，「使用者確認的＝寫入的」）----
+
+test('r4#1｜確認內容＝寫入內容：apply 憑票寫入 preview 那一份，第二份答案無法靜默落帳', async () => {
+  await seedDb(true);
+  // Codex r4 反例：兩份**各自都過強閘**但金額不同的答案（模板解析器同一份 PDF 不會這樣，AI 會）
+  const second = () => {
+    const a = goodAnswer();
+    a.transactions[1].amount = 400;   // 500 → 400
+    a.transactions[1].balance = 600;  // 鏈仍自洽：1000-400=600
+    a.transactions[2].balance = 1600;
+    a.accounts[0].balance = 1600;     // 概要也跟著＝末筆對概要照樣過
+    return a;
+  };
+  const spy = spyTransport([goodAnswer(), second()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.ok(pv.aiTicket, '預覽要發確認票');
+  assert.deepEqual(pv.transactions.rows.map((r) => r.amount), [1000, 500, 1000], '使用者看到的是第一份');
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.equal(res.transactions.imported, 3);
+  assert.equal(spy.calls.length, 1, 'apply 不可再跑模型——第二份答案根本不該被產生（r4 實測它會落帳）');
+  const db = await getDb();
+  assert.deepEqual(db.transactions.map((t) => t.amount).sort((a, b) => a - b), [500, 1000, 1000], '寫入的就是使用者確認的那一份');
+  const acc = db.accounts.find((a) => a.accountNo === '900200****3302');
+  assert.equal(acc.balance, 1500, '餘額也是第一份的 1500，不是第二份的 1600');
+});
+
+test('r4#1｜票是一次性＋認不得的票 fail-closed：重放與假票都 400、零寫入', async () => {
+  await seedDb(true);
+  const spy = spyTransport([goodAnswer()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  const before = (await getDb()).transactions.length;
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_ticket_invalid', '同一張票用第二次＝無效（也順帶擋掉「按兩次套用寫兩次」）');
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: '不存在的票號', aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_ticket_invalid');
+  assert.equal((await getDb()).transactions.length, before, '兩次拒絕都不可多寫一筆');
+  assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫');
+});
+
+test('票匣｜TTL 過期＝兌不到；一次性；張數上限丟最舊；票號不可預測', () => {
+  clearAiTicketsForTest();
+  const t0 = 1_000_000;
+  const id = issueAiTicket({ parsed: { bank: '合成一銀' }, aiModel: 'm' }, t0);
+  assert.match(id, /^[0-9a-f-]{36}$/, 'randomUUID＝猜不到');
+  assert.equal(redeemAiTicket(id, t0 + AI_TICKET_TTL_MS - 1)?.parsed.bank, '合成一銀', 'TTL 內兌得到');
+  assert.equal(redeemAiTicket(id, t0 + 1), null, '一次性：兌過就沒了');
+  const id2 = issueAiTicket({ parsed: {}, aiModel: 'm' }, t0);
+  assert.equal(redeemAiTicket(id2, t0 + AI_TICKET_TTL_MS), null, '到期即失效（帳單內文不在記憶體久留）');
+  clearAiTicketsForTest();
+  const ids = Array.from({ length: AI_TICKET_MAX + 1 }, (_, i) => issueAiTicket({ parsed: { n: i }, aiModel: 'm' }, t0));
+  assert.equal(redeemAiTicket(ids[0], t0), null, '超過上限＝丟最舊');
+  assert.equal(redeemAiTicket(ids[AI_TICKET_MAX], t0)?.parsed.n, AI_TICKET_MAX, '最新的還在');
 });
 
 // ---- 機密流向 ----
