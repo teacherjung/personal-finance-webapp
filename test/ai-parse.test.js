@@ -16,7 +16,7 @@ const { normalizeAiBank, linesToText, buildBankSystem, AI_BANK_MODELS, AI_BANK_S
 const { anthropicTransport, makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { previewBankStatement, applyBankStatement, aiBankRoute } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
-const { clearAiTicketsForTest, aiTicketCountForTest, issueAiTicket, redeemAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
+const { clearAiTicketsForTest, aiTicketCountForTest, issueAiTicket, redeemAiTicket, restoreAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -404,6 +404,44 @@ test('r4#1｜票是一次性＋認不得的票 fail-closed：重放與假票都 
     (/** @type {any} */ e) => e.code === 'ai_ticket_invalid');
   assert.equal((await getDb()).transactions.length, before, '兩次拒絕都不可多寫一筆');
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫');
+});
+
+test('票制｜寫入失敗要把票放回（William 2026-08-12 實測：讀不到現值參考日→票沒了→重來要再花一次錢）', async () => {
+  await seedDb(true);
+  // 這份答案卷過得了強閘（餘額鏈自洽），但**沒有現值參考日** ⇒ applyBalancesToDb 會 400
+  const noRefDate = () => ({ ...goodAnswer(), referenceDate: null });
+  const spy = spyTransport([noRefDate()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.ok(pv.aiTicket);
+  assert.equal(pv.blocked, true, '預覽就該標出「讀不到參考日＝套用會擋」');
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    /現值參考日/);
+  assert.equal((await getDb()).transactions.length, 0, '失敗＝零寫入');
+  // ★票要還在：不然使用者只能重新上傳、再花一次 AI 費用
+  await assert.rejects(
+    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code !== 'ai_ticket_invalid' && /現值參考日/.test(e.message),
+    '★再按一次要得到**同一個真正的原因**，不是「預覽已過期」（票被吃掉的症狀）');
+  assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（重試不重跑 AI）');
+});
+
+test('票匣｜restoreAiTicket：保留原到期時間、不延長；過期的不放回', () => {
+  clearAiTicketsForTest();
+  const t0 = 5_000_000;
+  const id = issueAiTicket({ parsed: { bank: '合成一銀' }, aiModel: 'm' }, t0);
+  const t = redeemAiTicket(id, t0);
+  assert.ok(t, '先兌走（模擬 apply 取票）');
+  assert.equal(redeemAiTicket(id, t0), null, '兌走後票匣就沒有它了');
+  assert.equal(restoreAiTicket(id, t, t0), true, '放回去');
+  assert.equal(redeemAiTicket(id, t0)?.parsed.bank, '合成一銀', '放回後兌得到、內容不變');
+  // 不延長：原到期時間之後就兌不到
+  const id2 = issueAiTicket({ parsed: {}, aiModel: 'm' }, t0);
+  const t2 = redeemAiTicket(id2, t0);
+  restoreAiTicket(id2, t2, t0 + 1000);
+  assert.equal(redeemAiTicket(id2, t0 + AI_TICKET_TTL_MS), null, '★放回不可延長壽命（短效是機密紀律）');
+  assert.equal(restoreAiTicket('x', { parsed: {}, aiModel: 'm', exp: t0 - 1 }, t0), false, '已過期的不放回');
+  assert.equal(restoreAiTicket('', null, t0), false);
 });
 
 test('票匣｜TTL 過期＝兌不到；一次性；張數上限丟最舊；票號不可預測', () => {

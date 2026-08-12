@@ -259,13 +259,15 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
 
 // 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
 /** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
+/** 資訊窗。`opts.actionsHtml`（2026-08-12）＝底部動作列要多放的按鈕 HTML，插在「了解」**右邊**
+ * （主要動作在最右＝一般慣例；William 指定）。受信任的作者內容、不 esc。 */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
-      <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>
+      <div class="form-actions"><button type="button" class="btn" data-close>了解</button>${opts.actionsHtml || ''}</div></div>
   </div></div>`;
   const close = () => { root.innerHTML = ''; owns.release(); };   // r9：同 openForm，關窗即撤銷擁有權（有主才撤）
   root.querySelector('.x-close').onclick = close;

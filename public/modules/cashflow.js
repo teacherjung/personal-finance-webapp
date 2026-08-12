@@ -286,7 +286,8 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate);
   const body = `
     ${aiPreviewBadgeHtml(r)}
-    <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    ${r.blocked ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——按下確認會整份失敗、什麼都不會寫進去。<br>這份請改用手動記帳，或把帳單截圖傳給我看看是哪裡沒讀到。</p>` : ''}
     ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
@@ -308,8 +309,10 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:11px;margin-top:6px">以上 ${previewTx.length} 筆就是按下確認會匯入的全部內容${c.duplicate ? `（另有 ${c.duplicate} 筆之前已匯入過、這次不會重複記）` : ''}。</p>` : '<p class="empty">帳單裡沒有新交易。</p>'}
-    <div class="page-actions" style="margin-top:16px"><button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button></div>`;
-  openInfo('銀行對帳單預覽', body, { size: 'xl' });
+`;
+  // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
+  // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。
+  openInfo('銀行對帳單預覽', body, { size: 'xl', actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button>` });
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
     if (btn) btn.onclick = async () => {

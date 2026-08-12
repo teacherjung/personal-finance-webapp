@@ -161,7 +161,7 @@ export function aiPreviewBadgeHtml(preview) {
   const model = esc(modelDisplayName(preview.aiModel));
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
-  <p style="margin:0 0 6px"><b>🤖 這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
+  <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
   <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
