@@ -1100,17 +1100,29 @@ test('AI 鑰匙雲端匯出：與其他機密同待遇——內容剝除、欄�
   assert.equal(JSON.parse(body).settings.aiApiKey, '', '欄位留著且為空＝「未設定」，不是整個消失');
 });
 
-test('AI 鑰匙 HOSTED 匯入：檔案裡的鑰匙一律不採用、保留現值', async () => {
+test('AI 鑰匙 HOSTED 匯入：檔案裡的鑰匙一律不採用、保留現值（解密逐字比對，不是只看「有沒有值」）', async () => {
+  // ⚠️ 這一題的第一版是**假考題**（Codex r2#2 實測：把 /api/import 改成「採用檔案裡的 aiApiKey」，
+  //    整支 44/44 全綠、完整 npm test 也 1958/1958）。原因＝匯入值會**立刻被加密**：
+  //    「資料庫原文找不到惡意值」與 `aiApiKeySet === true` 在兩種行為下都成立。
+  //    修法比照同檔既有的「匯入：檔案裡夾帶的機密…」那題：從假 Postgres 取密文、以 AAD 解密後**逐字**
+  //    比對仍是本題種下去的那一把；另在備份放一個本題專屬的非機密標記，證明匯入操作真的執行過。
   const keep = 'sk-ant-hosted-import-keep';
   await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: keep }) });
+  const rowOf = (/** @type {string} */ key) => pg.selectAs(A.id).find((r2) => r2.key === key)?.data;
+  const stored = () => decryptSecret(String(rowOf('settings')?.aiApiKey || ''), `${A.id}|settings.aiApiKey`);
+  assert.equal(stored(), keep, '前置條件：資料庫裡解出來就是本題種下去的那一把');
+
   const dump = JSON.parse(await (await as('tokA', '/api/export')).text());
   dump.settings.aiApiKey = 'sk-ant-EVIL-FROM-FILE';   // 備份檔被人塞了一把別的鑰匙
+  dump.settings.usdTwd = 31.417;                      // 非機密標記：證明這次匯入真的被執行了
+  //   （用 usdTwd 而非 capeManual：後者實測不會被匯入採用，拿它當標記會讓本題永遠紅）
   const imp = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(dump) });
   assert.equal(imp.status, 200, `匯入應該成功——${await imp.clone().text()}`);
-  const raw = rawOf(A.id);
-  assert.ok(!raw.includes('sk-ant-EVIL-FROM-FILE'), '檔案裡的鑰匙不可被採用');
   const settings = await (await as('tokA', '/api/settings')).json();
-  assert.equal(settings.aiApiKeySet, true, '現值（原本存的那把）要被保留——否則匯入回自己的備份會把鑰匙洗掉');
+  assert.equal(Number(settings.usdTwd), 31.417, '匯入確實執行（否則下面的比對是「什麼都沒發生」的假綠）');
+  assert.equal(stored(), keep, '★解密後必須仍是原本那把——採用檔案值時它會被加密，光看「原文找不到惡意值」抓不到');
+  assert.ok(!rawOf(A.id).includes('sk-ant-EVIL-FROM-FILE'), '明文更不可能出現');
+  assert.equal(settings.aiApiKeySet, true);
 });
 
 test('AI 鑰匙清除：送空字串＝清空，投影布林跟著變 false', async () => {

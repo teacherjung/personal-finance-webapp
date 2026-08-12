@@ -189,6 +189,11 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   const visible = firstDetails >= 0 ? html.slice(0, firstDetails) : html;
   assert.match(visible, /驗算|扣不扣得起來/, '驗算的射程要講');
   assert.match(visible, /機構名|帳號|摘要/, '★「驗不到什麼」必須在畫面上，不可只藏在展開區');
+  // ★r2#1：**全文**層級的射程（原本只掃第一個展開區之前的片段，展開區裡的過頭話完全看不到）
+  assert.match(html, /自洽|剛好.*平|扣不起來/, '要照實講「擋得住扣不起來的錯、擋不住剛好自洽的錯」（契約 §八 的誠實劃界）');
+  assert.doesNotMatch(html, /進不了你的帳本|不會記錯|保證正確|一定正確|完全正確/,
+    '★閘只保證擋住「造成不一致」的錯——金額與餘額一起抄成自洽的另一組數字仍可能通過，不可講成數值正確性保證');
+  assert.doesNotMatch(html, /這台電腦/, '徽章同樣要模式中立（雲端版也看得到它）');
   const evil = aiPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
   assert.match(evil, /&lt;b&gt;/);
   assert.doesNotMatch(evil, /<b>x/);
