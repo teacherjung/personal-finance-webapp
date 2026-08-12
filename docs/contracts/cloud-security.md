@@ -36,7 +36,7 @@
 
 **改這裡**：**機密欄位**（新增一個「不可外流」的欄位時）
 
-**記得同步這裡**：⚠️ **先分辨這是哪一類**（2026-07-29 起有兩張清單，見下一節）：要**加密**的走 `mapSecrets`，**刻意不加密、只是不該跟著備份檔出門**的走 `mapBackupOnlyPii`。以下講的是前者——**只改 `lib/secret-fields.js` 的 `mapSecrets`**，它是 C5 的加密清單，加密（`lib/crypto-secrets.js`）、解密、雲端匯出剝除、匯入不採用**四條路全部從它出發**。以前「哪些欄位算機密」散在三個投影函式各寫一次，再抄第四份必定走散（漏一個＝那個機密以明文躺在雲端資料庫，而且沒有人會發現）。加完跑 `test/hosted-secrets.test.js`（逐欄位驗）。⚠️ 路徑會拿去當加密 AAD，**必須穩定且唯一**（卡片用 id、不可用陣列索引；⚠️ 目前 id 缺失時會塌成 `cards..pdfPassword`，撞號的欄位在 C6 寫回保護裡會被跳過）。投影（`projectCard`/`projectSettings`）仍要各自更新——**加密管 at-rest、投影管不送瀏覽器，兩道各管各的、缺一不可**。
+**記得同步這裡**：⚠️ **先分辨這是哪一類**（2026-07-29 起有兩張清單，見下一節）：要**加密**的走 `mapSecrets`，**刻意不加密、只是不該跟著備份檔出門**的走 `mapBackupOnlyPii`。以下講的是前者——**只改 `lib/secret-fields.js` 的 `mapSecrets`**，它是 C5 的加密清單，加密（`lib/crypto-secrets.js`）、解密、雲端匯出剝除、匯入不採用**四條路全部從它出發**。以前「哪些欄位算機密」散在三個投影函式各寫一次，再抄第四份必定走散（漏一個＝那個機密以明文躺在雲端資料庫，而且沒有人會發現）。加完跑 `test/hosted-secrets.test.js`（逐欄位驗）。⚠️ **現行清單**（改這裡時一起看）：卡片 `pdfPassword`／`settings.ib.flexToken`／`settings.taishinSecPdfPassword`／`settings.rememberedStatementPasswords`（P0.5 單一 JSON 字串）／**`settings.aiApiKey`（P1b-1 建立、P1b-2 補齊設定頁寫入路徑與 HOSTED 端到端考題：at-rest 密文／投影只回 `aiApiKeySet` 布林／雲端匯出剝成空字串／HOSTED 匯入不採用檔案值保留現值／送空字串＝清除）**。⚠️ 那批考題是**逐性質列舉**：新機密光加進 `mapSecrets` 不會讓任何舊題轉紅，每加一個就要補一組同型題（P0.5 與 P1b-2 都照做了）。⚠️ 路徑會拿去當加密 AAD，**必須穩定且唯一**（卡片用 id、不可用陣列索引；⚠️ 目前 id 缺失時會塌成 `cards..pdfPassword`，撞號的欄位在 C6 寫回保護裡會被跳過）。投影（`projectCard`/`projectSettings`）仍要各自更新——**加密管 at-rest、投影管不送瀏覽器，兩道各管各的、缺一不可**。
 
 ## 只剝不加密的 PII mapBackupOnlyPii
 

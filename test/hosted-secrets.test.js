@@ -1063,3 +1063,72 @@ test('密碼池清除：明確清除入口把池歸零（比照機密欄位「�
   const settings = await (await as('tokA', '/api/settings')).json();
   assert.equal(Number(settings.rememberedStatementPasswordsCount), 0);
 });
+
+// ============================================================================
+// P1b-2 AI 解析鑰匙（settings.aiApiKey）
+// ⚠️ 同上一批的理由：新機密光加進 mapSecrets 不會讓任何舊題轉紅（列舉式考題的固有縫）。
+//    P1b-1 建立這個欄位時只有單元級考題（test/ai-parse.test.js），本支給了它**設定頁的寫入路徑**，
+//    所以在這裡補齊五個性質——寫入端一律走真 HTTP（PUT /api/settings），不是直接改 db。
+// ============================================================================
+
+test('AI 鑰匙 at-rest：資料庫裡是密文，明文一個字都找不到', async () => {
+  const key = 'sk-ant-hosted-at-rest-synthetic';
+  const r = await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  assert.equal(r.status, 200, `存鑰匙應該成功——${await r.clone().text()}`);
+  const raw = rawOf(A.id);
+  assert.ok(!raw.includes(key), 'AI 鑰匙以明文躺在資料庫裡！');
+  assert.match(raw, /enc:v1:/, '應該看得到密文前綴');
+});
+
+test('AI 鑰匙投影：一個字都不送瀏覽器，設定頁只拿得到 aiApiKeySet 布林', async () => {
+  const key = 'sk-ant-hosted-projection-synthetic';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  for (const p of ['/api/settings', '/api/db', '/api/summary']) {
+    const body = await (await as('tokA', p)).text();
+    assert.ok(!body.includes(key), `${p} 把 AI 鑰匙送到瀏覽器了！`);
+  }
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings.aiApiKeySet, true, '設定頁靠這個布林決定「清除入口」出不出現');
+  assert.equal(settings.aiApiKey, undefined, '欄位本體必須被投影剝除');
+});
+
+test('AI 鑰匙雲端匯出：與其他機密同待遇——內容剝除、欄位留空', async () => {
+  const key = 'sk-ant-hosted-export-synthetic';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: key }) });
+  const body = await (await as('tokA', '/api/export')).text();
+  assert.ok(!body.includes(key), '雲端匯出不可含 AI 鑰匙');
+  assert.equal(JSON.parse(body).settings.aiApiKey, '', '欄位留著且為空＝「未設定」，不是整個消失');
+});
+
+test('AI 鑰匙 HOSTED 匯入：檔案裡的鑰匙一律不採用、保留現值（解密逐字比對，不是只看「有沒有值」）', async () => {
+  // ⚠️ 這一題的第一版是**假考題**（Codex r2#2 實測：把 /api/import 改成「採用檔案裡的 aiApiKey」，
+  //    整支 44/44 全綠、完整 npm test 也 1958/1958）。原因＝匯入值會**立刻被加密**：
+  //    「資料庫原文找不到惡意值」與 `aiApiKeySet === true` 在兩種行為下都成立。
+  //    修法比照同檔既有的「匯入：檔案裡夾帶的機密…」那題：從假 Postgres 取密文、以 AAD 解密後**逐字**
+  //    比對仍是本題種下去的那一把；另在備份放一個本題專屬的非機密標記，證明匯入操作真的執行過。
+  const keep = 'sk-ant-hosted-import-keep';
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: keep }) });
+  const rowOf = (/** @type {string} */ key) => pg.selectAs(A.id).find((r2) => r2.key === key)?.data;
+  const stored = () => decryptSecret(String(rowOf('settings')?.aiApiKey || ''), `${A.id}|settings.aiApiKey`);
+  assert.equal(stored(), keep, '前置條件：資料庫裡解出來就是本題種下去的那一把');
+
+  const dump = JSON.parse(await (await as('tokA', '/api/export')).text());
+  dump.settings.aiApiKey = 'sk-ant-EVIL-FROM-FILE';   // 備份檔被人塞了一把別的鑰匙
+  dump.settings.usdTwd = 31.417;                      // 非機密標記：證明這次匯入真的被執行了
+  //   （用 usdTwd 而非 capeManual：後者實測不會被匯入採用，拿它當標記會讓本題永遠紅）
+  const imp = await as('tokA', '/api/import', { method: 'POST', body: JSON.stringify(dump) });
+  assert.equal(imp.status, 200, `匯入應該成功——${await imp.clone().text()}`);
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(Number(settings.usdTwd), 31.417, '匯入確實執行（否則下面的比對是「什麼都沒發生」的假綠）');
+  assert.equal(stored(), keep, '★解密後必須仍是原本那把——採用檔案值時它會被加密，光看「原文找不到惡意值」抓不到');
+  assert.ok(!rawOf(A.id).includes('sk-ant-EVIL-FROM-FILE'), '明文更不可能出現');
+  assert.equal(settings.aiApiKeySet, true);
+});
+
+test('AI 鑰匙清除：送空字串＝清空，投影布林跟著變 false', async () => {
+  await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: 'sk-ant-hosted-clear-x' }) });
+  const r = await as('tokA', '/api/settings', { method: 'PUT', body: JSON.stringify({ aiApiKey: '' }) });
+  assert.equal(r.status, 200);
+  const settings = await (await as('tokA', '/api/settings')).json();
+  assert.equal(settings.aiApiKeySet, false, '清除後設定頁要看得出「未設定」（清除入口才會收起來）');
+});

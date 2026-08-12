@@ -355,6 +355,8 @@ const MANIFEST = {
       'data/seed.json',
       'lib/bank-statement.js',
       'lib/crypto-secrets.js',
+      // P1b-2：AI 鑰匙（settings.aiApiKey）的設定頁寫入路徑與文案（機密不回顯、模式分流告知）
+      'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
       'lib/hosted.js',
       'lib/http-body.js',
       'lib/ib.js',
@@ -530,6 +532,8 @@ const MANIFEST = {
       'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js', 'lib/statement-password-policy.js',
       // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）：純模組（答案卷/驗收）＋傳輸（唯一 fetch 檔，入外連登記閘）＋考題（假引擎）
       'lib/ai-parse.js', 'lib/ai-transport.js', 'lib/ai-confirm-ticket.js', 'test/ai-parse.test.js',
+      // P1b-2 前端（2026-08-12）：同意確認窗與設定頁鑰匙欄的判準/文案純函式＋考題（與雲端領域多重命中）
+      'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',

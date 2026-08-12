@@ -329,6 +329,41 @@ test('r1#3｜閘紅終局錯誤不含帳單欄值：ai_reconcile_failed、marker
   assert.equal(spy.calls.length, 2, '兩級都試過才收斂到終局錯誤');
 });
 
+test('r6#1｜誠實劃界的行為釘樁：末筆對概要可跳過、概要-only 台幣帳戶完全沒被驗算卻會寫入', async () => {
+  await seedDb(true);
+  // 反例①：TWD 帳戶有自洽明細、但概要**沒有**這個帳戶的餘額 ⇒ endBalance 是 skip、level 仍 strong
+  const noSummary = () => {
+    const a = goodAnswer();
+    a.accounts = [];   // 概要沒有餘額可對（帳單只印明細的版面）
+    return a;
+  };
+  const spy1 = spyTransport([noSummary()]);
+  const pv1 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy1), aiExtract: fakeExtract });
+  assert.equal(pv1.reconcile.checks.endBalance, 'skip', '沒有概要餘額＝末筆對概要這一關根本沒跑');
+  assert.equal(pv1.reconcile.level, 'strong', '餘額鏈仍驗得動＝現行行為放行（文案已據此收回「一定會對概要」）');
+
+  // 反例②：一個只出現在概要、明細一筆都沒有的 TWD 帳戶 ⇒ 完全沒被驗算，卻會被新建＋寫入餘額
+  await seedDb(true);
+  const summaryOnly = () => {
+    const a = goodAnswer();
+    a.accountCurrencies.push({ masked: '900800****8808', currency: 'TWD' });
+    a.accounts.push({ masked: '900800****8808', balance: 777, currency: 'TWD', label: '活存', note: '' });
+    return a;   // 這個帳戶沒有任何 transactions
+  };
+  const spy2 = spyTransport([summaryOnly()]);
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
+  assert.equal(pv2.reconcile.stats.twdAccountsUnverified, 0, 'twdAccountsUnverified 只算「有交易列」的帳戶——概要-only 不在它的射程內');
+  assert.equal(pv2.rows.find((/** @type {any} */ r) => r.suffix === '8808').action, 'create');
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv2.aiTicket, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
+  assert.equal(res.created, 2, '★現行行為：完全沒被驗算的概要餘額仍會新建帳戶並寫入');
+  const acc = (await getDb()).accounts.find((/** @type {any} */ a) => a.accountNo === '900800****8808');
+  assert.equal(acc.balance, 777);
+  // ⚠️ 這一題**釘的是現行行為、不是理想行為**：收緊成「概要-only 也要拒收」會誤擋大量合法帳單
+  //    （真實帳單常有「這期沒往來」的帳戶——lib/statement-reconcile.js 的既有註解就是這樣寫的），
+  //    同 P0.1 外幣誤擋的教訓。所以本支選擇「文案收回＋畫面揭露」，並把「AI 路線是否該跳過未驗算的
+  //    概要餘額」列候選。將來若改政策，這一題會提醒你連同前端文案一起改。
+});
+
 // ---- 確認票（r4#1：AI 非確定性，「使用者確認的＝寫入的」）----
 
 test('r4#1｜確認內容＝寫入內容：apply 憑票寫入 preview 那一份，第二份答案無法靜默落帳', async () => {
