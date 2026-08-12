@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
+  BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -361,4 +362,26 @@ test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片�
     await assert.rejects(runCardUpload({ busy, navSeq: () => 1, loadCards: async () => { throw new Error('網路炸'); }, openUploadForm: () => {} }));
     assert.equal(busy.value(), false, 'finally 在丟錯時也要解鎖');
   }
+});
+
+test('文案｜上傳窗不寫死單一銀行，但誠實講「內建範本認得什麼、認不得會怎樣」（William 2026-08-12）', () => {
+  // 原文「對帳單 PDF（台新綜合對帳單）」已過期——AI 路線存在的理由正是不再侷限單一銀行。
+  assert.doesNotMatch(BANK_UPLOAD_FILE_LABEL, /台新|綜合對帳單/, '欄位名不可寫死單一銀行');
+  // ⚠️ 但也不可反過來吹成「支援各家銀行」：內建範本目前**確實只認得台新**，AI 是認不得時的救援
+  assert.match(BANK_UPLOAD_NOTICE, /台新/, '要誠實說明內建範本目前認得哪一種（不寫＝使用者以為都支援）');
+  assert.match(BANK_UPLOAD_NOTICE, /認不出來|認不得/, '要講認不得的情況');
+  assert.match(BANK_UPLOAD_NOTICE, /AI/, '要預告會問「要不要交給 AI 讀」——使用者才知道那個窗為什麼跳出來');
+  assert.match(BANK_UPLOAD_NOTICE, /每一次都會先問過你|會問你/, '要講清楚不是自動送出');
+  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /支援各家銀行|支援所有銀行|任何銀行都/, '不可吹成全面支援');
+  // 送出鈕：這個窗按下去是上傳並預覽，不是存檔
+  assert.doesNotMatch(BANK_UPLOAD_SUBMIT_LABEL, /儲存/, '寫「儲存」會讓人以為當場寫進帳本了');
+  assert.match(BANK_UPLOAD_SUBMIT_LABEL, /預覽|讀取/, '要講出下一步是預覽');
+});
+
+test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可在 cashflow.js 就地寫死）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  assert.match(src, /label: BANK_UPLOAD_FILE_LABEL/, '欄位名走常數');
+  assert.match(src, /bodyHtml: BANK_UPLOAD_NOTICE/, '★說明句要真的交給 openForm 渲染（算了不用＝畫面看不到）');
+  assert.match(src, /submitLabel: BANK_UPLOAD_SUBMIT_LABEL/, '送出鈕文字走常數');
+  assert.doesNotMatch(src, /台新綜合對帳單/, '★cashflow.js 不得再有寫死單一銀行的畫面文字');
 });
