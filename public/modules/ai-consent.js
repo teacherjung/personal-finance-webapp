@@ -184,17 +184,21 @@ export function aiErrorText(code, serverMessage) {
  * 的 `runBankUpload`）。回傳字串是考題的把手：
  * - `'rethrow'`＝不是可以走 AI 的錯（對帳閘紅／密碼錯／其他）⇒ 呼叫端原樣往上丟
  * - `'stale'`＝使用者已經切頁／彈窗換人 ⇒ 什麼都不做
- * - `'offered'`＝先把**模板的原錯誤訊息**吐出來（按取消後仍看得到，所以不必給 openForm 加 onCancel），
- *   再排程開同意窗；**排程前與 callback 內各驗一次 `canOpenNext()`**（#445 的兩顆競態：排程當下還在、
- *   執行時已切頁）。
- * @param {{err:any, canOpenNext:() => boolean, notify:(m:string) => void,
+ * - `'offered'`＝排程開同意窗；**排程前與 callback 內各驗一次 `canOpenNext()`**（#445 的兩顆競態：
+ *   排程當下還在、執行時已切頁）。
+ *
+ * ⚠️ **刻意不吐紅字**（William 2026-08-12 裁示）：初版會先 toast 模板的原錯誤（「這份 PDF 看起來
+ * 不是台新銀行綜合對帳單」）再開同意窗，但那句是**多餘的重複資訊**——同意窗第一行已經寫「內建的
+ * 讀取範本認不得這份對帳單的版面」，而且那句訊息**寫死台新**、在多銀行時代本身就過期了。
+ * 按取消＝使用者自己決定不用 AI，不需要再被紅字補一刀。（後端那句訊息保留：它仍是 API 的錯誤內容，
+ * 只是不再被搬到畫面上。）
+ * @param {{err:any, canOpenNext:() => boolean,
  *          openConsent:() => void, schedule?:(fn:() => void) => void}} o
  * @returns {'rethrow'|'stale'|'offered'}
  */
-export function runAiFallback({ err, canOpenNext, notify, openConsent, schedule = (fn) => setTimeout(fn, 0) }) {
+export function runAiFallback({ err, canOpenNext, openConsent, schedule = (fn) => setTimeout(fn, 0) }) {
   if (!shouldOfferAi(err)) return 'rethrow';
   if (!canOpenNext()) return 'stale';
-  notify(String(err?.message || ''));
   schedule(() => { if (canOpenNext()) openConsent(); });
   return 'offered';
 }

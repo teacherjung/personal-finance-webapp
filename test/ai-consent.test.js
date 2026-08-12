@@ -106,31 +106,28 @@ test('C2｜isAiTicketDeadCode：票類錯誤才算「這份沒救了」', () => 
 
 /** @param {{err:any, canOpen?:() => boolean}} o */
 function fallbackProbe({ err, canOpen = () => true }) {
-  const calls = { notify: /** @type {string[]} */ ([]), consent: 0 };
+  const calls = { consent: 0 };
   /** @type {(() => void)[]} */
   const scheduled = [];
   const out = runAiFallback({
     err, canOpenNext: canOpen,
-    notify: (m) => calls.notify.push(m),
     openConsent: () => { calls.consent++; },
     schedule: (fn) => scheduled.push(fn),
   });
   return { out, calls, runScheduled: () => scheduled.forEach((fn) => fn()) };
 }
 
-test('D｜runAiFallback：閘紅／密碼錯＝rethrow 且零呼叫；認不得＝先吐原句再排程開窗', () => {
+test('D｜runAiFallback：閘紅／密碼錯＝rethrow 且零呼叫；認不得＝直接排程開同意窗（不再吐紅字）', () => {
   // ★★ 最重的一條：對帳閘紅不可長出 AI 入口
   const gateRed = fallbackProbe({ err: Object.assign(new Error('帳戶 ****3302 …接不上'), { status: 400 }) });
   assert.equal(gateRed.out, 'rethrow');
   assert.equal(gateRed.calls.consent, 0, '對帳閘紅＝★6 禁止匯入，連問都不該問');
-  assert.equal(gateRed.calls.notify.length, 0, 'rethrow 的路要讓呼叫端原樣丟，不可自己先吐訊息');
   const pw = fallbackProbe({ err: Object.assign(new Error('密碼不對'), { code: 'pdf_password' }) });
   assert.equal(pw.out, 'rethrow');
   assert.equal(pw.calls.consent, 0);
   // 認不得＝offered：原句先講（按取消後仍看得到，所以不必給 openForm 加 onCancel）
   const ok = fallbackProbe({ err: Object.assign(new Error('這份 PDF 看起來不是台新銀行綜合對帳單'), { code: 'bank_unrecognized' }) });
   assert.equal(ok.out, 'offered');
-  assert.deepEqual(ok.calls.notify, ['這份 PDF 看起來不是台新銀行綜合對帳單'], '要吐模板的**原句**，不是改寫版');
   assert.equal(ok.calls.consent, 0, '排程之前不可直接開窗');
   ok.runScheduled();
   assert.equal(ok.calls.consent, 1);
@@ -140,7 +137,6 @@ test('D2｜runAiFallback：切頁的兩顆競態——排程當下與 callback �
   const staleNow = fallbackProbe({ err: { code: 'bank_unrecognized', message: 'x' }, canOpen: () => false });
   assert.equal(staleNow.out, 'stale');
   assert.equal(staleNow.calls.consent, 0);
-  assert.equal(staleNow.calls.notify.length, 0, '已經切頁就別再吐 toast');
   // 排程時還在、執行時已切頁（#445 ②號競態）
   let onPage = true;
   const later = fallbackProbe({ err: { code: 'bank_unrecognized', message: 'x' }, canOpen: () => onPage });
@@ -274,7 +270,10 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   // 徽章：插值形（只鎖呼叫名的話，`${(f(r), '')}` 會過）
   assert.match(src, /\$\{aiPreviewBadgeHtml\(r\)\}/, '徽章要真的插進 body 字串');
   // 兩條 fallback：上傳窗與密碼窗各一（少一條＝加密帳單走不到 AI）
-  assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, notify:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
+  assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, openConsent:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
+  // ★William 2026-08-12 裁示：不再把模板的原錯誤搬到畫面上——同意窗第一行已經講了「範本認不得這個
+  //   版面」，那句紅字是重複資訊，而且它寫死「台新銀行綜合對帳單」、在多銀行時代本身就過期。
+  assert.doesNotMatch(src, /runAiFallback\(\{[^}]*notify:/, '★AI 救援路徑不可再吐原錯誤紅字（多餘且過期）');
   // ★r9#1：呼叫了還不夠——回傳 'rethrow' 必須真的把原錯誤丟回去。只把密碼窗那條 throw 改成 return，
   //   非 bank_unrecognized 的錯誤會被當成成功（表單關掉、什麼都不顯示），而三關全綠（Codex 實測）。
   assert.equal(count(src, /=== 'rethrow'\) throw e;/g), 2, "★兩條 fallback 都要以 === 'rethrow' 控制把原錯誤丟回（吞掉＝使用者看不到任何錯誤）");

@@ -223,7 +223,7 @@ function openBankUpload() {
             r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
           } catch (e) {
             // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
             return;
           }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -259,7 +259,7 @@ function openBankUpload() {
           } catch (e) {
             if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
             // 範本認不得＝先吐原錯誤、再排同意窗（判準與競態防線都在 runAiFallback；其他錯誤照舊 toast＋留窗重試）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
           }
         }
       });
