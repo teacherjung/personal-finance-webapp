@@ -635,3 +635,181 @@ test('概要區｜台幣區不受影響（sticky 只作用在外幣區）', () =
   assert.equal(r.accounts.find(a => a.suffix === '3301').currency, 'TWD');
   assert.equal(r.accounts.find(a => a.suffix === '363').currency, 'JPY');
 });
+
+// ---- 機構維度（P1a 銀行身分維度，2026-08-12）：多銀行前提工程 ----
+// 設計要旨：①帳戶記了開戶機構（bank）＝跨行不可互配；缺席＝祖父條款照舊只比數字（行為釘住）
+// ②去重鍵雙格式：台新既有格式**位元組級凍結**、他行走 bank2|機構|…——不同銀行同字樣不撞鍵
+// ③顯示層 812- 補碼只屬台新。合成機構名一律用「合成一銀」（明顯假值，同帳號末碼慣例）。
+const { reconcileBankTxAccountNames, bankDisplayNote, applyLearnedBankToDb } = await import('../lib/services/bank-import.js');
+const parsedAs = (bank, referenceDate, accounts) => ({ bank, referenceDate, accounts });
+
+test('機構維度｜蓋過機構戳的帳戶不可被他行帳單覆蓋：同字樣可見帳號→不更新、另建新帳戶', () => {
+  const db = { accounts: [{ id: 'fx', name: '一銀活儲', type: 'cash', class: '現金', bank: '合成一銀', currency: 'TWD', accountNo: '900100123453301', balance: 777 }] };
+  const r = applyBalancesToDb(db, parsedAs('台新', '2026-06-30', [accM('900100****3301', 'TWD', 23)]));
+  assert.equal(db.accounts.find(a => a.id === 'fx').balance, 777, '一銀帳戶餘額不可被台新帳單覆蓋（跨行誤配＝財務資料損毀）');
+  assert.equal(r.created, 1, '台新這筆自成新帳戶');
+  const created = db.accounts.find(a => a.id !== 'fx');
+  assert.equal(created.bank, '台新', '新建帳戶蓋機構戳（帳單自己的宣告）');
+  assert.equal(created.name, '台新 3301（活存）');
+});
+
+test('機構維度｜祖父條款：沒有機構戳的既有帳戶照舊只比數字（更新成功、且不回填機構戳）', () => {
+  const db = { accounts: [{ id: 'a1', name: '我的台新', type: 'cash', currency: 'TWD', accountNo: '900100123453301', balance: 5 }] };
+  const r = applyBalancesToDb(db, parsedAs('台新', '2026-06-30', [accM('900100****3301', 'TWD', 23)]));
+  assert.equal(r.updated, 1, '機構維度之前建的帳戶（無 bank 欄）＝既有行為不變');
+  const a = db.accounts.find(x => x.id === 'a1');
+  assert.equal(a.balance, 23);
+  assert.equal(a.bank, undefined, '比對成功＝數字推論、不是帳單宣告——不可回填機構戳（猜錯會從此擋掉正確比對）');
+});
+
+test('機構維度｜非台新帳單：新建帳戶名帶機構、蓋機構戳；無戳帳戶依祖父條款照樣可配', () => {
+  const db = { accounts: [{ id: 'old', name: '舊帳戶', type: 'cash', currency: 'TWD', accountNo: '900200123453302', balance: 1 }] };
+  const r = applyBalancesToDb(db, parsedAs('合成一銀', '2026-06-30', [accM('900200****3302', 'TWD', 88), accM('900400****4404', 'TWD', 7)]));
+  assert.equal(r.updated, 1, '無戳帳戶＝不驗機構（誠實劃界：祖父路徑的理論碰撞已記在 matchAccount 註解）');
+  assert.equal(db.accounts.find(a => a.id === 'old').bank, undefined, '更新不回填');
+  const created = db.accounts.find(a => a.accountNo === '900400****4404');
+  assert.equal(created.name, '合成一銀 4404（活存）', '自動名帶帳單機構、不再寫死台新');
+  assert.equal(created.bank, '合成一銀');
+});
+
+test('機構維度｜去重鍵雙格式：台新位元組級凍結（bank|…）、他行 bank2|機構|…', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const db1 = { accounts: [], transactions: [] };
+  importBankTxToDb(db1, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(db1.transactions[0].bankRef, 'bank|900200****3302|2026-06-01|out|20000|100|CD提款|',
+    '台新格式一個位元組都不能變——變了＝既有資料重匯判不出重複＝現金流翻倍');
+  const db2 = { accounts: [], transactions: [] };
+  importBankTxToDb(db2, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(db2.transactions[0].bankRef, 'bank2|合成一銀|900200****3302|2026-06-01|out|20000|100|CD提款|',
+    '他行新格式：機構第 2 段、帳號右移第 3 段');
+  assert.equal(db2.transactions[0].account, '合成一銀 3302', '帳戶名 fallback 帶機構、不再寫死台新');
+});
+
+test('機構維度｜不同銀行的同字樣交易不互判重複：台新已匯，同字樣他行照樣匯入（預覽也不標 duplicate）', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const db = { accounts: [], transactions: [] };
+  importBankTxToDb(db, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(pv.counts.duplicate, 0, '跨行同字樣＝不同交易，預覽不可標 duplicate');
+  const r = importBankTxToDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(r.imported, 1, '跨行同字樣＝各自成立（撞鍵會少記他行的錢）');
+});
+
+test('機構維度｜舊版末碼鍵只屬台新：台新重匯認得舊列去重、他行不可冒領', () => {
+  const tx = btx({ summary: 'CD提款', amount: 20000, balance: 100 });
+  const legacyRow = { id: 'L1', source: 'bank', bankRef: 'bank|3302|2026-06-01|out|20000|100|CD提款|' };   // stage 3 初版格式（末碼）
+  const dbA = { accounts: [], transactions: [legacyRow] };
+  const rA = importBankTxToDb(dbA, { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(rA.imported, 0, '台新重匯：舊版鍵仍認得＝不重複記');
+  const dbB = { accounts: [], transactions: [{ ...legacyRow }] };
+  const rB = importBankTxToDb(dbB, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [tx] });
+  assert.equal(rB.imported, 1, '他行不可拿台新時代的舊版鍵冒領去重（那會把他行的真交易吃掉）');
+});
+
+test('機構維度｜顯示層 812- 補碼只屬台新：他行行內帳號原樣呈現', () => {
+  assert.equal(bankDisplayNote('CD轉出', '00001234****5678 甲'), '現金轉出・812-00001234****5678（甲）', '台新（預設）＝補台新代碼');
+  assert.equal(bankDisplayNote('CD轉出', '00001234****5678 甲', { bank: '合成一銀' }), '現金轉出・00001234****5678（甲）', '他行帳單＝不可硬掛台新代碼（指鹿為馬）');
+});
+
+test('機構維度｜bank2 反解：改名對齊認機構、方向護欄讀第 5 段', () => {
+  // 改名對齊：bank2 列的帳號在第 3 段、機構在第 2 段——只可對到同機構（或無戳）的帳戶
+  const db = { accounts: [{ id: 'fx', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 0 }],
+    transactions: [
+      { id: 't1', source: 'bank', account: '合成一銀 3302', bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|out|100||CD提款|' },
+      { id: 't2', source: 'bank', account: '台新 3302', bankRef: 'bank|900200****3302|2026-06-01|out|100||CD提款|' },
+    ] };
+  const changed = reconcileBankTxAccountNames(db);
+  assert.equal(changed, 1, '只有 bank2 列（機構相符）改名');
+  assert.equal(db.transactions.find(t => t.id === 't1').account, '一銀活儲');
+  assert.equal(db.transactions.find(t => t.id === 't2').account, '台新 3302', '舊格式列＝台新身分，不可被一銀帳戶收編改名');
+  // 方向護欄：bank2 的方向在第 5 段（無 dir 欄的殘缺列靠 bankRef 反解）——讀錯段會把出帳當成可套收入
+  const db2 = { accounts: [], learnedBank: { '轉帳存入|付款人甲': { type: 'income', category: '其他', subcategory: '其他收入' } },
+    transactions: [{ id: 'x', source: 'bank', type: 'expense', category: '其他', subcategory: '未分類', note: '',
+      bankKey: '轉帳存入|付款人甲', bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|in|500||轉帳存入|付款人甲' }] };
+  const r = applyLearnedBankToDb(db2, '轉帳存入|付款人甲');
+  assert.equal(r.changed, 1, 'bank2 第 5 段是 in→收入規則可套（讀成第 4 段會拿帳號當方向＝全 skip）');
+  assert.equal(db2.transactions[0].type, 'income');
+});
+
+// ---- 機構維度 r1 補強（Codex r1 四條，反例逐字入題）----
+const dualStamped = () => ({ accounts: [
+  { id: 'ts', name: '台新舊帳戶', type: 'cash', bank: '台新', currency: 'TWD', accountNo: '900200123453302', balance: 1 },
+  { id: 'fb', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 2 },
+], transactions: [] });
+const xferTx = () => btx({ summary: '轉帳存入', direction: 'in', amount: 500, balance: null, note: '轉入900200****3302 生活費' });
+
+test('機構維度｜r1#1 顯示帳戶名與行內轉帳說明認機構：同號雙戳帳戶各歸各行（preview＋import）', () => {
+  const db = dualStamped();
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pv.rows[0].account, '一銀活儲', '一銀交易不可掛到台新帳戶（r1 實測反例：account=台新舊帳戶）');
+  assert.equal(pv.rows[0].note, '現金存入・轉入到：一銀活儲（生活費）', '行內轉帳翻譯也要認機構（反例：轉入到：台新舊帳戶）');
+  const r = importBankTxToDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(r.imported, 1);
+  assert.equal(db.transactions[0].account, '一銀活儲', 'import 路徑同一套查找');
+  assert.equal(db.transactions[0].note, '現金存入・轉入到：一銀活儲（生活費）');
+  // 正向對照：台新帳單照樣對到台新帳戶（祖父行為不變）
+  const pvTs = previewBankTxForDb(dualStamped(), { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pvTs.rows[0].account, '台新舊帳戶');
+  assert.equal(pvTs.rows[0].note, '現金存入・轉入到：台新舊帳戶（生活費）');
+});
+
+test('機構維度｜r1#2 幣別 fallback 認機構：他行同號 JPY 帳戶不可讓本行台幣列被當外幣丟掉', () => {
+  const db = { accounts: [
+    { id: 'jp', name: '台新日圓', type: 'cash', bank: '台新', currency: 'JPY', accountNo: '900200123453302' },
+    { id: 'tw', name: '一銀台幣', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302' },
+  ], transactions: [] };
+  const parsed = { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] };   // 概要缺幣別＝走 db 補位
+  const pv = previewBankTxForDb(db, parsed);
+  assert.equal(pv.rows[0].currency, 'TWD', 'db 補位只認同機構（r1 實測反例＝被同號台新 JPY 判成外幣）');
+  assert.equal(pv.rows[0].foreign, false);
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.imported, 1, '真台幣現金流不可被靜默丟掉');
+  assert.equal(r.foreign, 0);
+});
+
+test('機構維度｜r1#3 accounts.bank 型別牆：備份匯入擋非字串、CRUD 白名單不可寫', async () => {
+  const { validateImportItem, pickWritable, WRITABLE_FIELDS } = await import('../lib/schema.js');
+  const bad = validateImportItem('accounts', { id: 'x', name: 'n', balance: 1, bank: { spoof: '台新' } });
+  assert.ok(bad.errors.length >= 1 && bad.errors.join('；').includes('bank'), '物件型 bank 必須報錯（truthy 錯型會永久硬擋正確比對、falsy 錯型繞過護欄）');
+  assert.equal(validateImportItem('accounts', { id: 'x', name: 'n', balance: 1, bank: '台新' }).errors.length, 0, '正常字串照過');
+  assert.ok(!WRITABLE_FIELDS.accounts.includes('bank'), 'bank＝服務層擁有，不進 CRUD 白名單');
+  assert.ok(!('bank' in pickWritable('accounts', { name: 'n', bank: '偽造機構' })), 'CRUD 表單挾帶 bank＝剝掉');
+});
+
+test('機構維度｜r2 祖父條款保存：無戳帳戶照樣供行內轉帳翻譯與幣別補位（收緊祖父＝這裡紅）', () => {
+  // (a) 行內轉帳翻譯：機構維度之前建的無戳帳戶，他行帳單的行內帳號仍要翻得出「轉入到：」——
+  //     把 ownAccountNameByAcct 收緊成「只認 a.bank === bank」會把祖父帳戶一起丟掉（r2 實測仍綠的第一刀）
+  const db = { accounts: [{ id: 'old', name: '舊活儲', type: 'cash', currency: 'TWD', accountNo: '900200123453302', balance: 0 }], transactions: [] };
+  const pv = previewBankTxForDb(db, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pv.rows[0].account, '舊活儲', '無戳＝祖父條款：顯示帳戶名照樣可配');
+  assert.equal(pv.rows[0].note, '現金存入・轉入到：舊活儲（生活費）', '無戳＝祖父條款：行內轉帳翻譯照樣成立');
+  // (b) 幣別補位：無戳 JPY 現金帳戶仍要供補位——收緊成「a.bank !== bank 一律排除」會把無戳也排掉、
+  //     fail-open 成 TWD、把外幣列當台幣匯入（r2 實測仍綠的第二刀＝方向最危險的那把）
+  const dbJ = { accounts: [{ id: 'oj', name: '舊日圓', type: 'cash', currency: 'JPY', accountNo: '900200123453302' }], transactions: [] };
+  const pvJ = previewBankTxForDb(dbJ, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(pvJ.rows[0].currency, 'JPY', '無戳 JPY＝祖父補位照用（排除無戳＝fail-open 成 TWD）');
+  assert.equal(pvJ.rows[0].foreign, true);
+  const rJ = importBankTxToDb(dbJ, { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [], transactions: [xferTx()] });
+  assert.equal(rJ.imported, 0, '外幣列不匯入');
+  assert.equal(rJ.foreign, 1);
+});
+
+const { getDb, saveDb } = await import('../lib/repo.js');
+const { reconcileAccountNamesAuto } = await import('../lib/services/bank-import.js');
+
+test('機構維度｜r1#4 bank2 自動名重建：摘要備註右移段位、行內帳號認機構、不補 812-', async () => {
+  const db = await getDb();
+  db.accounts = [
+    { id: 'ts2', name: '台新舊帳戶', type: 'cash', bank: '台新', currency: 'TWD', accountNo: '900200123453302', balance: 0 },
+    { id: 'fb2', name: '一銀活儲', type: 'cash', bank: '合成一銀', currency: 'TWD', accountNo: '900200123453302', balance: 0 },
+  ];
+  db.transactions = [{ id: 'b2note', date: '2026-06-01', type: 'income', category: '其他', subcategory: '其他收入',
+    amount: 500, account: '一銀活儲', note: '', autoNote: '', ledger: 'cashflow', source: 'bank', dir: 'in',
+    bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|in|500||轉帳存入|轉入900200****3302 生活費' }];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const t = (await getDb()).transactions.find(x => x.id === 'b2note');
+  assert.equal(t.note, '現金存入・轉入到：一銀活儲（生活費）',
+    'bank2 摘要在第 8 段、備註第 9 段起（退回舊段位＝拿餘額欄當摘要）；行內帳號只對同機構帳戶（台新戳同號排前面也不可抓走）');
+  assert.equal(t.autoNote, t.note, 'autoNote 欄同步新格式');
+});
