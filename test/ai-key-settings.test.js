@@ -55,8 +55,11 @@ test('G2｜文案：該講的都講了（辦鑰匙／兩套帳／級距不是報
   assert.doesNotMatch(gateePara, /整份連得起來才收/, '不可寫成整份逐筆都驗');
   assert.match(blindPara, /第一筆|首筆/, '★每個帳戶的第一筆驗不到');
   assert.match(blindPara, /外幣/, '★外幣明細不在這道驗算裡');
-  assert.match(blindPara, /沒有往來|一筆都沒有|只出現在概要/, '★r6#1：這期沒往來的帳戶餘額仍會更新、卻沒有明細可驗——要揭露');
-  assert.match(gateePara, /如果也印了|有印|概要/, '末筆對概要是有條件的（沒印概要餘額就跳過）');
+  // ⚠️ 同 E2 的理由（r7#1）：三件事分開釘，條件詞不接受單獨的「概要」二字
+  assert.match(blindPara, /沒有往來|一筆都沒有|只出現在概要/, '①情境：這期沒往來、只出現在概要的帳戶');
+  assert.match(blindPara, /餘額仍會|仍會照帳單更新|新建/, '②★它的餘額仍然會被寫進去');
+  assert.match(blindPara, /沒有(任何)?明細可以驗|沒有明細可以驗它|沒有明細可驗/, '③★那個數字沒有明細可以驗');
+  assert.match(gateePara, /如果也印了|有印.{0,6}概要餘額/, '★末筆對概要是**有條件**的（只出現「概要」二字不算數）');
   assert.match(ALL_COPY, /完全可以不設定|不設定也完全可以/, '要講不設定會怎樣');
   assert.match(ALL_COPY, /只會顯示一次/, '辦 key 的實務提醒');
 });
