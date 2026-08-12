@@ -367,12 +367,21 @@ test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片�
 test('文案｜上傳窗不寫死單一銀行，但誠實講「內建範本認得什麼、認不得會怎樣」（William 2026-08-12）', () => {
   // 原文「對帳單 PDF（台新綜合對帳單）」已過期——AI 路線存在的理由正是不再侷限單一銀行。
   assert.doesNotMatch(BANK_UPLOAD_FILE_LABEL, /台新|綜合對帳單/, '欄位名不可寫死單一銀行');
-  // ⚠️ 但也不可反過來吹成「支援各家銀行」：內建範本目前**確實只認得台新**，AI 是認不得時的救援
-  assert.match(BANK_UPLOAD_NOTICE, /台新/, '要誠實說明內建範本目前認得哪一種（不寫＝使用者以為都支援）');
-  assert.match(BANK_UPLOAD_NOTICE, /認不出來|認不得/, '要講認不得的情況');
+  // ⚠️ William 2026-08-12 逐點裁示：**不提台新**（未來內建讀取不會只有一家，點名會再過期一次）；
+  //    但也不可反過來吹成「支援各家銀行」——用「認不出這個版面時會怎樣」來表達，不宣稱支援範圍。
+  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /台新|綜合對帳單/, '說明也不點名單一銀行');
+  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /支援各家銀行|支援所有銀行|任何銀行都|都讀得懂/, '不可吹成全面支援');
+  assert.match(BANK_UPLOAD_NOTICE, /認不出|認不得/, '要講「認不出這個版面」的情況');
   assert.match(BANK_UPLOAD_NOTICE, /AI/, '要預告會問「要不要交給 AI 讀」——使用者才知道那個窗為什麼跳出來');
-  assert.match(BANK_UPLOAD_NOTICE, /每一次都會先問過你|會問你/, '要講清楚不是自動送出');
-  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /支援各家銀行|支援所有銀行|任何銀行都/, '不可吹成全面支援');
+  // ★預設收起來（William 裁示）：真正的隱私把關在同意窗，這裡只是預告
+  assert.match(BANK_UPLOAD_NOTICE, /<details>[\s\S]*<summary>/, '★說明要收合，想知道的人自己點開');
+  // ★兩處事實糾正（不可退回 William 原句的措辭，那兩點與實作不符）
+  assert.match(BANK_UPLOAD_NOTICE, /抽出來的<b>文字<\/b>|抽出來的文字/, '★送出去的是抽出來的**文字**，不是 PDF 檔本身');
+  assert.match(BANK_UPLOAD_NOTICE, /PDF 檔本身不會送出去|檔案本身不會/, '★要明講原檔不出去');
+  assert.match(BANK_UPLOAD_NOTICE, /按下同意的那一次|按下同意/, '★不是「有可能自動送」——只有按下同意那一次才送');
+  assert.match(BANK_UPLOAD_NOTICE, /沒按同意就完全不送|沒同意.*不送/, '★沒同意＝完全不送，要講死');
+  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /有可能傳給|可能會傳給|系統會自動送/,
+    '★不可寫成「有可能傳給」——會讓人以為系統可能背著他送，比事實更嚴重（拍板是每次都問）');
   // 送出鈕：這個窗按下去是上傳並預覽，不是存檔
   assert.doesNotMatch(BANK_UPLOAD_SUBMIT_LABEL, /儲存/, '寫「儲存」會讓人以為當場寫進帳本了');
   assert.match(BANK_UPLOAD_SUBMIT_LABEL, /預覽|讀取/, '要講出下一步是預覽');
