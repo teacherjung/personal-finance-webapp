@@ -831,3 +831,46 @@ test('預覽與匯入互扣｜外幣列不算進「會匯入」：preview 的可
   assert.equal(res.imported, willImport, '★預覽宣稱會匯入的筆數，要等於實際匯入的筆數（外幣列不可算進去）');
   assert.equal(res.foreign, pv.counts.foreign, '外幣筆數兩邊也要對得起來');
 });
+
+// ---- 疑似重複（2026-08-12 William 實測：同期間的兩種版面各匯一次＝現金流多算一份）----
+// ⚠️ 這道**不是**去重（去重鍵守的是「同一份帳單重複上傳」）：跨版式時摘要／備註原文不同 ⇒ 指紋
+//    必然不同、去重認不出來。所以另立一個寬鬆判準（帳號末碼＋日期＋方向＋金額），**只提醒不擋**。
+test('疑似重複｜同帳戶同日同額同方向、既有資料已有一筆＝標 similar（但仍會匯入、不是 duplicate）', () => {
+  const db = { accounts: [], transactions: [
+    // 既有交易：用**另一種版面**的摘要（跨版式的重點——原文不同，bankRef 必然對不上）
+    { id: 'old1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|900200****3302|2026-06-01|in|1000|1000|轉帳存入|舊版面的備註' },
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '匯款存入', direction: 'in', amount: 1000, balance: 1000, note: '新版面的備註' }),   // 同日同額同向、文字不同
+    btx({ date: '2026-06-02', summary: '轉帳存入', direction: 'in', amount: 1000, balance: 2000 }),      // 不同日
+    btx({ summary: '轉帳存入', direction: 'in', amount: 999, balance: 999 }),                             // 不同額
+    btx({ summary: '轉帳存入', direction: 'out', amount: 1000, balance: 0 }),                             // 不同方向
+  ] };
+  const pv = previewBankTxForDb(db, parsed);
+  assert.equal(pv.rows[0].similar, true, '★跨版式的同一筆交易：去重認不出來，這道要標出來');
+  assert.equal(pv.rows[0].duplicate, false, '★只提醒不擋：它仍然會被匯入（同日同額也可能真的是兩筆）');
+  assert.equal(pv.rows[1].similar, false, '不同日＝不提醒');
+  assert.equal(pv.rows[2].similar, false, '不同金額＝不提醒');
+  assert.equal(pv.rows[3].similar, false, '不同方向＝不提醒');
+  assert.equal(pv.counts.similar, 1);
+  assert.equal(pv.counts.income, 3, 'similar 與收支分類並存——它是提醒，不改變這筆算不算收入');
+});
+
+test('疑似重複｜比的是帳號末碼不是完整遮罩（不同版面的帳號印法可能不同）＋明確重複不重複標', () => {
+  const db = { accounts: [], transactions: [
+    { id: 'old1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|****3302|2026-06-01|in|1000||舊摘要|' },   // 既有：遮罩只印末碼
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),   // 新版：900200****3302
+  ] };
+  assert.equal(previewBankTxForDb(db, parsed).rows[0].similar, true, '★遮罩印法不同也要對得上（比末碼）');
+  // 明確重複（同一份帳單重匯）＝duplicate，不再多標一個 similar（同一件事不要講兩次）
+  const db2 = { accounts: [], transactions: [] };
+  importBankTxToDb(db2, parsed);
+  const pv2 = previewBankTxForDb(db2, parsed);
+  assert.equal(pv2.rows[0].duplicate, true);
+  assert.equal(pv2.rows[0].similar, false, '已經是明確重複＝不再標疑似（不會匯入的列不必提醒）');
+  assert.equal(pv2.counts.similar, 0);
+});
