@@ -407,21 +407,38 @@ test('r4#1｜票是一次性＋認不得的票 fail-closed：重放與假票都 
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫');
 });
 
-test('票制｜寫入失敗要把票放回（原情境＝讀不到現值參考日；2026-08-13 起改用對帳閘紅重現）', async () => {
+test('票制｜**apply 階段**的失敗要把票放回，而且不可只認某一種錯誤類別（r1#4）', async () => {
   await seedDb(true);
-  // ⚠️ **原本的觸發條件已經不成立**（William 2026-08-13）：讀不到現值參考日不再整份退回，
-  //    改成「餘額不動、交易照匯」。所以這題改用**仍然會擋下的**失敗來重現同一件事——
-  //    票被吃掉的話，使用者只能重新上傳、**再花一次 AI 費用**。守的東西一個字都沒少。
-  const bad = () => { const a = weakAnswer(); return a; };   // 過不了 ★6 強閘（弱閘答案卷）
-  const spy = spyTransport([bad(), bad()]);                  // 階梯會重試一次，兩發都給壞答案
+  // ⚠️ 這題的前身是「讀不到現值參考日→整份失敗」，那個情境 2026-08-13 起不再成立。
+  //    我上一版把它改成「預覽被擋就不發票」＝守的是別的東西，於是「apply 途中失敗要放回票」
+  //    在**非 getDb** 的路徑上沒有任何考題（複審把正式碼改成「只有 SyntaxError 才放回」，全綠）。
+  // ⚠️ **刻意不用 getDb 失敗**：那個失敗是 JSON.parse 丟的 `SyntaxError`，壞掉的實作照樣過得了它。
+  //    這裡改用 `saveDb` 的櫃檯清理（壞日期）丟出一般 Error——**換一種錯型**，才證明得了
+  //    「放回」不是綁在某個錯誤類別上。
+  const spy = spyTransport([goodAnswer()]);
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized,
-    { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }).catch((/** @type {any} */ e) => e);
-  assert.ok(/** @type {any} */ (pv).code, '前置：弱答案在預覽階段就被 ★6 擋下（這條路拿不到票）');
+    { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.ok(pv.aiTicket, '前置：預覽過閘、拿得到票');
 
-  // 真正要守的那件事另有專屬考題（getDb 失敗時票要放回）＝見「r1#4 恢復邊界」那題。
-  // 這裡改守**互補的一半**：預覽被擋下時**不可以發票**（發了就是給一張兌不出東西的票）。
-  assert.equal(aiTicketCountForTest(), 0, '★預覽沒過閘就不該發票（發了等於留一張永遠用不到的票占著帳單內文）');
+  const raw = new DatabaseSync(TEST_STORE);
+  const before = /** @type {any} */ (raw.prepare("SELECT data FROM kv WHERE key='transactions'").get());
+  raw.prepare('UPDATE kv SET data=? WHERE key=?')
+    .run(JSON.stringify([{ id: 'bad1', date: 'not-a-date', amount: 1, type: 'expense' }]), 'transactions');
+
+  await assert.rejects(
+    () => applyBankStatement('QUFBQQ==', undefined, notRecognized,
+      { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code !== 'ai_ticket_invalid' && !(e instanceof SyntaxError),
+    '前置：這次要因為**非 SyntaxError** 的寫入失敗而擋下，不是因為票不見');
+
+  raw.prepare('UPDATE kv SET data=? WHERE key=?').run(before.data, 'transactions');
+  raw.close();
+
+  // ★真正要守的：票還在。不然使用者為了一次寫入失敗，得重新上傳＋再花一次 AI 費用。
+  assert.ok(redeemAiTicket(pv.aiTicket), '★apply 途中失敗要把票放回——而且不可只認某一種錯誤類別');
+  assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫');
 });
+
 
 test('票匣｜r1#3 放回也要守張數上限（兌走再補新票不可無限累積帳單內文）', () => {
   clearAiTicketsForTest();
@@ -629,7 +646,17 @@ test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日
   assert.match(sys, /結束日/, '★要講明用的是結束日');
   assert.match(sys, /不可填開始日/, '★只認結束日——開始日是期初、不是餘額的時點');
   assert.match(sys, /不可填今天|不可自己推算/, '★也不准自己補一個沒印在帳單上的日期');
-  assert.match(sys, /兩者都沒有＝null|都沒有.*null/, '★真的兩種都沒印時仍要回 null（不可硬湊）');
+  // ★r1#1：規則放寬到「這類區間」就太寬了——AI 可能挑到利率適用期間、某張卡的消費期間，
+  //   選到較晚的結束日 ⇒ 拿這份帳單的餘額蓋掉較新的數字，之後正確的帳單反而被判成「較舊」。
+  //   歧義一律 null：填錯的代價遠大於不填。
+  // ★守**指令本身**，不是只守例子（實測：把「一律填 null」改成「可自行判斷」，
+  //   底下那些名詞都還在、考題照樣綠——那等於整條規則被放寬而沒人出聲）。
+  assert.match(sys, /一律填 null|一律 null/, '★歧義時必須是「一律 null」這種硬指令，不可改成「自行判斷」');
+  assert.match(sys, /不可挑一個|不可自行挑/, '★要明講不准從多個候選裡挑');
+  assert.match(sys, /唯一/, '★只認**唯一一個**明確的帳單期間');
+  assert.match(sys, /兩個以上的區間|多個區間/, '★有多個區間時要明講不可挑一個');
+  assert.match(sys, /利率適用期間|消費期間|存續期間/, '★要舉出「不是在講整份帳單」的區間例子');
+  assert.match(sys, /寧可回 null|寧可不填/, '★要講明取捨方向：填錯會蓋掉較新的餘額，回 null 只是這次不更新');
   // 答案格式的欄位說明要同口徑（AI 兩邊都會讀）
   assert.match(AI_BANK_SCHEMA.properties.referenceDate.description, /帳單期間/,
     '★schema 的欄位說明也要講同一件事——只改提示詞、schema 還寫「沒印＝null」＝兩邊互相打架');

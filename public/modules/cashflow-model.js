@@ -59,6 +59,25 @@ export const BANK_UPLOAD_NOTICE = `<details>
   <p style="margin:6px 0 0">如果內建程式認不出您的對帳單版面，將詢問您要不要交給 AI 幫忙判讀。（沒按同意不會送出至 AI 公司）</p>
 </details>`;
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
+/** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
+ * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
+ * @param {boolean} balancesSkipped */
+export function bankApplyLabel(balancesSkipped) {
+  return balancesSkipped ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
+}
+
+/** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
+ * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean}} bal
+ * @param {{imported:number, skipped?:number, foreign?:number}} tx */
+export function bankApplyDoneText(bal, tx) {
+  const acct = bal.balancesSkipped
+    ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
+    : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
+      + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`;
+  return `${acct}；交易：匯入 ${tx.imported}`
+    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+}
+
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
 
 /** 疑似重複的統計區警語（整段 <p>，作者內容）。`n`＝疑似重複的筆數。

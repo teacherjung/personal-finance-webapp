@@ -35,6 +35,8 @@ import {
   bankBlockedWarningHtml,
   bankSimilarWarningHtml,
   bankSimilarTagHtml,
+  bankApplyLabel,
+  bankApplyDoneText,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -520,9 +522,13 @@ test('接線｜疑似重複走純函式，而且 blocked 時整組壓掉（r1#1�
   // ⚠️ 要從 `${` 咬起（r2#3）：不錨定的話，在前面加個 `false &&` 讓警語**永久隱藏**，考題照樣綠。
   // ⚠️ 兩端都要咬（r3#2 實測）：只咬到函式呼叫的話，接一個 `.slice(0, 0)` 讓輸出永遠是空字串，
   //    考題照樣綠。所以從 `${` 咬到 `: ''}`——中間不准夾任何東西。
-  assert.match(src, /\$\{!r\.blocked && c\.similar \? bankSimilarWarningHtml\(c\.similar\) : ''\}/,
-    '★擋下時不可再談防重複——整份都不會寫進去，那段警語會變成自相矛盾的敘述');
-  assert.match(src, /\$\{!r\.blocked && x\.similar \? bankSimilarTagHtml\(\) : ''\}/, '★逐列標記同樣要壓掉');
+  // ⚠️ **2026-08-13 行為變更後這一題整個反過來**：`blocked` 現在只代表「餘額不更新」，
+  //    交易**照樣會進帳本** ⇒ 壓掉疑似重複提醒＝跨版式的重複交易**無聲入帳**。
+  //    舊版考題還主動鎖著「整份都不會寫進去」那個已經不成立的理由——那比沒有考題更糟。
+  assert.match(src, /\$\{c\.similar \? bankSimilarWarningHtml\(c\.similar\) : ''\}/,
+    '★疑似重複警語不可被壓掉——交易照樣會匯入，壓掉等於讓重複無聲進帳');
+  assert.match(src, /\$\{x\.similar \? bankSimilarTagHtml\(\) : ''\}/, '★逐列標記同樣要一律顯示');
+  assert.doesNotMatch(src, /!r\.blocked && [cx]\.similar/, '★不可再用 blocked 壓掉疑似重複');
   assert.doesNotMatch(src, /疑似重複/, '★文案不可留在 cashflow.js（就地寫死＝又回到守拼字的考題）');
   // ★r4#1：兩個插值本身沒被動，整份 body 卻可以在送進 openInfo 之前被截掉（`body.slice(0, 0)`）
   //   ⇒ 使用者看到一片空白而考題全綠。把送出那一手也釘死：只准原封不動地交出去。
@@ -550,3 +556,30 @@ test('型別契約｜previewBankTxForDb 的 @param 要緊貼函式本身（r3#3�
   assert.ok(after.slice(head[0].length).trimStart().startsWith('export function previewBankTxForDb'),
     '★收尾之後必須立刻就是 previewBankTxForDb（helper 請放在註解之前）');
 });
+
+test('文案｜讀不到現值參考日時，鈕上與完成提示都不可說「更新餘額」（r1#3）', () => {
+  // ⚠️ 這條線一路在修的同一種病：**畫面說的跟實際做的不一樣**。
+  //    鈕上寫「更新餘額＋匯入交易」但那次不更新餘額；完成提示照報「更新 0、新建 0」
+  //    看起來像「有跑過但沒東西可更新」，其實是「根本沒試」。
+  assert.match(bankApplyLabel(false), /更新餘額/, '正常情況照舊');
+  // ⚠️ 不能直接禁「更新餘額」四個字——「**不**更新餘額」裡也有它。要禁的是**承諾**要更新。
+  assert.doesNotMatch(bankApplyLabel(true), /(?<!不)更新餘額/, '★不更新餘額時鈕上不可承諾要更新');
+  assert.match(bankApplyLabel(true), /只匯入交易|不更新餘額/, '★要講明這次只匯交易');
+
+  const done = bankApplyDoneText({ updated: 0, created: 0, balancesSkipped: true }, { imported: 3 });
+  assert.match(done, /沒有更新|沒更新/, '★完成提示要主動說「餘額沒更新」');
+  assert.match(done, /現值參考日/, '★要講原因（不然使用者不知道為什麼）');
+  assert.match(done, /匯入 3/, '★交易的數字照報');
+  assert.doesNotMatch(done, /更新 0、新建 0/, '★不可報成「更新 0」——那看起來像試過了但沒東西可更新');
+
+  const ok = bankApplyDoneText({ updated: 2, created: 1, balancesSkipped: false }, { imported: 5, skipped: 1 });
+  assert.match(ok, /更新 2、新建 1/); assert.match(ok, /匯入 5/); assert.match(ok, /略過重複 1/);
+});
+
+test('接線｜鈕字與完成提示都要真的接上（算了不用＝畫面看不到）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  assert.match(src, /bankApplyLabel\(!!r\.blocked\)/, '★鈕字要隨「這次會不會更新餘額」改變');
+  assert.match(src, /toast\(bankApplyDoneText\(res, t\)\)/, '★完成提示要走那個函式（不然 balancesSkipped 沒人講）');
+  assert.doesNotMatch(src, /確認：更新餘額＋匯入交易/, '★鈕字不可再就地寫死');
+});
+
