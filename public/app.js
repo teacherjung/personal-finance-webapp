@@ -259,7 +259,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
 }
 
 // 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
-/** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
+/** @param {string} title @param {string} bodyHtml @param {{size?:string, actionsHtml?:string}=} opts */
 /** 資訊窗。`opts.actionsHtml`（2026-08-12）＝底部動作列要多放的按鈕 HTML，插在「了解」**右邊**
  * （主要動作在最右＝一般慣例；William 指定）。受信任的作者內容、不 esc。
  * ⚠️ 給了 actionsHtml 才會套 `.sticky-actions`＝動作列**貼在窗底不隨內容捲走**（r1#5：只把按鈕搬到

@@ -291,7 +291,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const body = `
     ${aiPreviewBadgeHtml(r)}
     <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
-    ${r.blocked ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——按下確認會整份失敗、什麼都不會寫進去。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>` : ''}
+    ${r.blocked ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——<b>整份已經被擋下來了</b>，不會寫進去任何東西（所以下面沒有確認鈕）。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>` : ''}
     ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>

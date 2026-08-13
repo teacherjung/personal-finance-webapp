@@ -350,23 +350,31 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');
   // ★r1#5：只把按鈕搬到動作列還不夠——.modal 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底
   assert.match(appSrc2, /form-actions\$\{opts\.actionsHtml \? ' sticky-actions' : ''\}/, '有動作按鈕的資訊窗要套固定動作列');
-  // ⚠️ **先去掉 CSS 註解再掃**（r3#3 實測假綠）：把正確的 `position:sticky; bottom:0` 寫進這條規則
-  //    裡的註解、正式宣告改成 static＋負下邊距，底下每一條斷言都還是綠的。形狀題掃的必須是
-  //    **正式宣告**，不是我自己寫給人看的字。
+  // ⚠️ CSS 形狀題的三個坑，三個都踩過（r3#3、r4#1 由 Codex 實測示範）：
+  //    ①**註解**：把正確宣告寫進註解、正式宣告改壞 ⇒ 先剝掉 /* */
+  //    ②**重複宣告**：`position: sticky; position: static` ⇒ 後面覆寫前面，只看第一個等於沒看
+  //    ③**多寫一條同名規則**：後面那條覆寫前面那條 ⇒ 只取第一條等於沒看
+  //    所以這裡不用「掃到就算」，而是**解析出宣告、取最後生效的那個值**。
+  //    ⚠️ 誠實劃界：只認 `.form-actions.sticky-actions {…}` 這個**單獨**選擇器；寫成群組選擇器
+  //    （`.a, .form-actions.sticky-actions {…}`）或用其他選擇器隔空覆寫，這題看不到。
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  // ⚠️ 範圍要鎖在**這條規則的大括號內**（[^}]*）：用 [\s\S]*? 會跨出區塊咬到後面別條規則的
-  //    position: sticky，把 .sticky-actions 改成 static 也照樣綠（實測假綠，2026-08-12）。
-  const stickyRule = (css.match(/\.form-actions\.sticky-actions\s*\{[^}]*\}/) || [''])[0];
-  assert.ok(stickyRule, '要有 .form-actions.sticky-actions 這條規則');
-  assert.match(stickyRule, /position:\s*sticky/, '★要真的是 sticky（沒有這條，按鈕照樣沉在捲動內容最底）');
-  assert.match(stickyRule, /background:\s*var\(--card\)/, '要不透明背景（否則捲動的表格會從按鈕底下透出來）');
-  // ★r2#2：光驗「是 sticky」擋不住**已經實測失敗過的那一版**——`bottom:-24px` 配負的下邊距時
-  //   position 照樣是 sticky、背景照樣有，按鈕卻仍會滑出窗底 8px（sticky 對齊的是含邊距的框）。
-  //   踩過的坑要用考題釘死，不然下一個人「順手把負邊距加回去做滿版」就無聲退回原狀。
-  assert.match(stickyRule, /bottom:\s*0\s*[;}]/, '★停靠點要 bottom:0（負值＝停在窗底外面，等於白做）');
-  const marginVals = ((stickyRule.match(/margin:\s*([^;}]+)/) || [])[1] || '').trim().split(/\s+/);
-  assert.ok(marginVals.length >= 3, 'margin 要寫到第三個值（下邊距）才驗得到');
-  assert.doesNotMatch(marginVals[2], /^-/,
+  const rules = css.match(/\.form-actions\.sticky-actions\s*\{[^}]*\}/g) || [];
+  assert.equal(rules.length, 1, '★只准有一條 .sticky-actions 規則（第二條會覆寫第一條）');
+  const decls = rules[0].slice(rules[0].indexOf('{') + 1, -1).split(';')
+    .map((/** @type {string} */ d) => d.trim()).filter(Boolean)
+    .map((/** @type {string} */ d) => ({ prop: d.slice(0, d.indexOf(':')).trim(), val: d.slice(d.indexOf(':') + 1).trim() }));
+  /** @param {string} prop 取最後一次宣告＝實際生效的那個 */
+  const lastOf = (prop) => { const hit = decls.filter((/** @type {any} */ d) => d.prop === prop); return hit.length ? hit[hit.length - 1].val : null; };
+  assert.equal(lastOf('position'), 'sticky', '★最後生效的 position 要是 sticky（沒有它，按鈕照樣沉在捲動內容最底）');
+  assert.equal(lastOf('bottom'), '0', '★停靠點要 bottom:0（負值＝停在窗底外面，實測按鈕滑出 8px＝白做）');
+  assert.match(String(lastOf('background')), /var\(--card\)/, '要不透明背景（否則捲動的表格會從按鈕底下透出來）');
+  // 有效下邊距＝`margin` 簡寫的第三個值與 `margin-bottom` 之中**最後寫的那個**
+  const mDecls = decls.filter((/** @type {any} */ d) => d.prop === 'margin' || d.prop === 'margin-bottom');
+  assert.ok(mDecls.length, '要寫出 margin（滿版靠左右負邊距）');
+  const lastM = mDecls[mDecls.length - 1];
+  const vals = lastM.val.split(/\s+/);
+  const effBottom = lastM.prop === 'margin-bottom' ? lastM.val : (vals.length >= 3 ? vals[2] : vals[0]);
+  assert.doesNotMatch(effBottom, /^-/,
     '★下邊距不可為負：sticky 對齊的是 margin box，負的下邊距會把停靠點往下推（左右負邊距做滿版沒問題）');
   // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
   //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，

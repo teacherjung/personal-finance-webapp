@@ -400,12 +400,18 @@ test('文案｜擋下的警語不可叫使用者把帳單內容傳給我（r1#1�
   // ⚠️ 一定要 stripComments（r3#3 實測假綠）：在正式警語前放一段「符合期待」的註解，
   //    正式文案改成要求傳截圖，考題仍會命中註解而放行。範圍也鎖在那段警語本身。
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  const warn = (src.match(/r\.blocked \? `[^`]*`/) || [''])[0];
-  assert.ok(warn, '要有「讀不到現值參考日」的擋下警語');
+  // ⚠️ 取**全部**、而且釘住只能有一段（r4#1）：只取第一個 match 的話，在正式警語**前面**插一段
+  //    「符合期待」的假分支就能瞞過去——Codex 實測示範過。
+  const warns = src.match(/r\.blocked \? `[^`]*`/g) || [];
+  assert.equal(warns.length, 1, '★只准有一段擋下警語（多一段＝前面那段先命中，後面那段愛寫什麼都行）');
+  const warn = warns[0];
   assert.doesNotMatch(warn, /截圖|把帳單.*傳給|帳單內容傳/,
     '★不可要求使用者把帳單內容／截圖傳出來——回報只需要「哪一家銀行、哪一種版面」');
   assert.match(warn, /不用傳帳單內容|不需要傳帳單/, '★要主動講「不用傳帳單內容」');
   assert.match(warn, /哪一家銀行|哪一種版面/, '要講清楚回報時給什麼就夠了');
+  // ★r4#3：擋下時已經不給確認鈕了，警語不可再叫人去「按下確認」——那顆鈕找不到
+  assert.doesNotMatch(warn, /按下確認/, '★擋下時沒有確認鈕，不可再叫使用者去按（會讓人到處找那顆鈕）');
+  assert.match(warn, /已經被擋下|已被擋下/, '要直接講「整份已經被擋下來了」');
 });
 
 test('接線｜預覽的「會匯入」清單要排除外幣列（r1#2）', () => {
