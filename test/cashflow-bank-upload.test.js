@@ -504,11 +504,13 @@ test('文案｜疑似重複警語：講清楚原因與下一步，而且不可�
   assert.match(warn.trim(), /^<p [^>]*>[\s\S]*<\/p>$/, '★整段就是一個 p，前後不可有殘留字元');
   // ⚠️ 只用 ^…$ 還不夠（r3#2 實測）：在後面再接一個 <p>碎片</p>，貪婪比對照樣從第一個 <p 咬到
   //    最後一個 </p>＝全綠。要**數**頂層標籤，才是真的「就是一個」。
+  // ⚠️ **要忽略大小寫**（r4#2 實測）：HTML 標籤名不分大小寫，`</P><P>碎片</P></p>` 在瀏覽器
+  //    眼裡是三個頂層 P、碎片看得見，但區分大小寫的計數只數到一個 ⇒ 全綠。
   const countOf = (/** @type {string} */ h, /** @type {RegExp} */ re) => (h.match(re) || []).length;
-  assert.equal(countOf(warn, /<p[\s>]/g), 1, '★警語只准有一個 <p>（多接一段碎片也是畫面上的垃圾）');
-  assert.equal(countOf(warn, /<\/p>/g), 1, '★收尾標籤也只准一個');
-  assert.equal(countOf(tag, /<span[\s>]/g), 1, '★列標記只准有一個 <span>');
-  assert.equal(countOf(tag, /<\/span>/g), 1, '★收尾標籤也只准一個');
+  assert.equal(countOf(warn, /<p[\s>]/gi), 1, '★警語只准有一個 <p>（多接一段碎片也是畫面上的垃圾）');
+  assert.equal(countOf(warn, /<\/p>/gi), 1, '★收尾標籤也只准一個');
+  assert.equal(countOf(tag, /<span[\s>]/gi), 1, '★列標記只准有一個 <span>');
+  assert.equal(countOf(tag, /<\/span>/gi), 1, '★收尾標籤也只准一個');
   for (const html of [warn, tag]) {
     assert.doesNotMatch(html, /['"`]\s*:\s*['"`]/, '★不可殘留樣板三元運算子的碎片（實測印在畫面上過）');
   }
@@ -523,6 +525,10 @@ test('接線｜疑似重複走純函式，而且 blocked 時整組壓掉（r1#1�
     '★擋下時不可再談防重複——整份都不會寫進去，那段警語會變成自相矛盾的敘述');
   assert.match(src, /\$\{!r\.blocked && x\.similar \? bankSimilarTagHtml\(\) : ''\}/, '★逐列標記同樣要壓掉');
   assert.doesNotMatch(src, /疑似重複/, '★文案不可留在 cashflow.js（就地寫死＝又回到守拼字的考題）');
+  // ★r4#1：兩個插值本身沒被動，整份 body 卻可以在送進 openInfo 之前被截掉（`body.slice(0, 0)`）
+  //   ⇒ 使用者看到一片空白而考題全綠。把送出那一手也釘死：只准原封不動地交出去。
+  assert.match(src, /openInfo\('銀行對帳單預覽', body, \{/,
+    '★body 要原封不動交給 openInfo（中途轉換＝畫面可以被整份掏空而考題看不到）');
 });
 
 test('型別契約｜previewBankTxForDb 的 @param 要緊貼函式本身（r3#3）', () => {
@@ -530,7 +536,18 @@ test('型別契約｜previewBankTxForDb 的 @param 要緊貼函式本身（r3#3�
   //    但插一個**有 JSDoc 的 helper**時它一聲不吭——註解變成孤兒、`parsed` 悄悄退化成 `any`，
   //    整條金流預覽路徑的欄位拼錯從此不再被型別檢查攔下（我在 a83488a 就是這樣弄壞的，
   //    三關全綠、審查者用 tsc 的解析結果量出來才發現）。所以用形狀題把「緊貼」釘死。
+  // ⚠️ **不可用「掃到這個樣子就算」**（r4#3 實測）：在中間插 helper、再放一行含相同字樣的普通
+  //    註解當誘餌，正則照樣命中。改成**位置**判定：那段字只准出現一次，且它的註解收尾之後
+  //    **緊接著**就必須是那個函式（中間只准空白）。
   const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
-  assert.match(src, /@param \{any\} db @param \{ParsedBankFull\} parsed\s*\*\/\s*export function previewBankTxForDb/,
-    '★文件註解與函式之間不可插入任何東西（helper 請放在註解之前）');
+  // 錨點用**這個函式獨有**的說明句（`@param {any} db @param {ParsedBankFull} parsed` 這串
+  // 本身同檔有兩個函式合法共用，拿它當唯一性錨點會誤紅）。
+  const anchor = '交易明細分箱預覽（純函式、不寫檔）';
+  assert.notEqual(src.indexOf(anchor), -1, '要有那段文件註解');
+  assert.equal(src.indexOf(anchor), src.lastIndexOf(anchor), '★這句只准出現一次（第二份就是誘餌）');
+  const after = src.slice(src.indexOf(anchor));
+  const head = after.match(/^[\s\S]{0,400}?@param \{any\} db @param \{ParsedBankFull\} parsed\s*\*\//);
+  assert.ok(head, '★型別註解要跟這段說明在同一個註解區塊裡，而且正常收尾');
+  assert.ok(after.slice(head[0].length).trimStart().startsWith('export function previewBankTxForDb'),
+    '★收尾之後必須立刻就是 previewBankTxForDb（helper 請放在註解之前）');
 });
