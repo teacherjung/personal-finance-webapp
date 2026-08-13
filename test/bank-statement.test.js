@@ -1059,43 +1059,48 @@ test('純函式｜讀不到現值參考日：交易照樣進帳本、餘額一�
 const { applyBankStatement: applyBankE2E, previewBankStatement: previewBankE2E } =
   await import('../lib/services/bank-import.js');
 
-test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStatement，交易真的落庫、餘額一動不動', async () => {
-  // ⚠️ **必須走正式入口**（`previewBankStatement`／`applyBankStatement`）、真的存檔、**再重讀資料庫**。
-  //    只直接呼叫 applyBalancesToDb／importBankTxToDb 守不住入口——有人在入口加一行
-  //    「缺日期就整份拒絕」，那種考題不會出聲。
-  const seed = await getDb();
-  seed.accounts = [
-    // ⚠️ **這一筆刻意沒有 `balanceAsOf`**（r6）：手動建立與舊資料的帳戶就是這個樣子。
-    { id: 'e2e-noasof', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
-      accountNo: '900100****3301', balance: 111 },
-    { id: 'e2e-asof', name: '台新定存', type: 'cash', bank: '台新', currency: 'TWD',
-      accountNo: '900100****9999', balance: 555, balanceAsOf: '2026-05-31' },
-  ];
-  seed.transactions = [];
-  await saveDb(seed);
+// ⚠️ **兩種「讀不到」都要走正式入口**（r7）：`null` 與**壞日期**是不同的輸入路徑——
+//    模板解析器是直接把 regex 抓到的數字組成日期字串、**不驗日曆**，所以 `2026-13-45` 這種值
+//    真的進得了正式入口。原本壞日期只有純函式題，複審把入口改成「日期非空但無效就整份 400」
+//    照樣全綠＝「壞日期再次連坐交易」這條回歸沒人守。
+for (const [label, refDate] of /** @type {[string, string|null][]} */ ([
+  ['沒有現值參考日（null）', null],
+  ['壞的現值參考日（2026-13-45）', '2026-13-45'],
+])) {
+  test(`端到端（正式入口）｜${label}：走 applyBankStatement，交易真的落庫、帳戶快照完全不動`, async () => {
+    const seed = await getDb();
+    seed.accounts = [
+      // ⚠️ 這一筆刻意**沒有** `balanceAsOf`：手動建立與舊資料的帳戶就是這個樣子。
+      { id: 'e2e-noasof', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
+        accountNo: '900100****3301', balance: 111 },
+      { id: 'e2e-asof', name: '台新定存', type: 'cash', bank: '台新', currency: 'TWD',
+        accountNo: '900100****9999', balance: 555, balanceAsOf: '2026-05-31' },
+    ];
+    seed.transactions = [];
+    await saveDb(seed);
+    const snapshotBefore = JSON.stringify((await getDb()).accounts);
 
-  // 模板路線的解析器接縫（第三參數）：回一份**沒有現值參考日**、但餘額鏈自洽的帳單
-  const parseNoRef = async () => ({ bank: '台新', referenceDate: null,
-    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
-    accountCurrency: { '900100****3301': 'TWD' },
-    transactions: [
-      btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
-      btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
-    ] });
+    // 模板路線的解析器接縫（第三參數）：餘額鏈自洽，只是參考日讀不到／壞掉
+    const parseIt = async () => ({ bank: '台新', referenceDate: refDate,
+      accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+      accountCurrency: { '900100****3301': 'TWD' },
+      transactions: [
+        btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+        btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
+      ] });
 
-  const snapshotBefore = JSON.stringify((await getDb()).accounts);
+    const pv = await previewBankE2E('QUFBQQ==', undefined, parseIt);
+    assert.equal(pv.blocked, true, '預覽要標明「這次不會更新餘額」');
 
-  const pv = await previewBankE2E('QUFBQQ==', undefined, parseNoRef);
-  assert.equal(pv.blocked, true, '預覽要標明「這次不會更新餘額」');
+    const res = await applyBankE2E('QUFBQQ==', undefined, parseIt);
+    assert.equal(res.ok, true, '★正式入口不可再整份拒絕——那正是使用者被卡住的原因');
+    assert.equal(res.balancesSkipped, true, '★回應要帶出「餘額沒更新」給畫面用');
+    assert.equal(res.transactions.imported, 2, '★交易要真的匯入');
 
-  const res = await applyBankE2E('QUFBQQ==', undefined, parseNoRef);
-  assert.equal(res.ok, true, '★正式入口不可再整份拒絕——那正是使用者被卡住的原因');
-  assert.equal(res.balancesSkipped, true, '★回應要帶出「餘額沒更新」給畫面用');
-  assert.equal(res.transactions.imported, 2, '★交易要真的匯入');
-
-  const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
-  assert.equal(after.transactions.length, 2, '★交易要真的落庫');
-  assert.equal(JSON.stringify(after.accounts), snapshotBefore,
-    '★整份帳戶快照要一模一樣——含**沒有 `balanceAsOf` 的那一筆**（手動建立與舊資料就是那個樣子；'
-    + '哨兵全都帶時點的話，「只改沒有時點的帳戶」這種突變會整批漏掉）');
-});
+    const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
+    assert.equal(after.transactions.length, 2, '★交易要真的落庫');
+    assert.equal(JSON.stringify(after.accounts), snapshotBefore,
+      '★整份帳戶快照要一模一樣——含**沒有 `balanceAsOf` 的那一筆**（哨兵全都帶時點的話，'
+      + '「只改沒有時點的帳戶」這種突變會整批漏掉）');
+  });
+}
