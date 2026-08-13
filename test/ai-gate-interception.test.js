@@ -301,8 +301,25 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   assert.deepEqual(usedTags.filter((t) => !ALLOWED_TAGS.has(t)), [],
     '★徽章出現了白名單外的標籤——`<template>` 之類會讓整段警語在畫面上消失（考題卻照樣掃得到字串）');
   assert.doesNotMatch(raw, /<!--/, '★也不可含 HTML 註解（同樣是把警語藏起來、字串卻還在）');
-  assert.doesNotMatch(raw, /\bhidden\b|display\s*:\s*none|visibility\s*:\s*hidden/i,
-    '★也不可用 hidden／display:none／visibility:hidden 藏');
+  assert.doesNotMatch(raw, /\bhidden\b/i, '★不可用 hidden 屬性藏');
+  // ⚠️ **行內樣式也要白名單**（r8#1）：我上一輪只擋了標籤，他就用 `style="opacity:0"` 穿過去——
+  //    文字全在、畫面全不可見。**能藏東西的 CSS 屬性一樣列不完**（opacity／display／visibility／
+  //    position＋left:-9999px／clip-path／transform／color:transparent／width:0…），所以反過來
+  //    白名單：徽章的行內樣式只准出現這幾個純版面屬性。
+  const ALLOWED_CSS = new Set(['margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+    'padding', 'padding-left', 'padding-top', 'padding-bottom', 'padding-right', 'font-size', 'line-height']);
+  for (const m of raw.matchAll(/style="([^"]*)"/g)) {
+    for (const decl of m[1].split(';')) {
+      const prop = decl.split(':')[0]?.trim().toLowerCase();
+      if (!prop) continue;
+      assert.ok(ALLOWED_CSS.has(prop),
+        `★徽章的行內樣式出現白名單外的屬性「${prop}」——那一族（opacity／display／position…）會讓警語在畫面上消失`);
+    }
+  }
+  assert.doesNotMatch(raw, /font-size\s*:\s*0\b/i, '★font-size:0 也是一種藏（屬性在白名單內，值卻能把字縮到看不見）');
+  // ⚠️ **誠實劃界**：以上擋的是**已知的藏匿手法**（標籤／註解／hidden／能藏東西的 CSS 屬性）。
+  //    這**不是渲染驗證**——真正確認「使用者看得見」要在瀏覽器裡量。我上一輪寫「這一族關起來了」
+  //    是**過度宣稱**（r8#1 用 opacity:0 打穿）；這裡改口，不再保證窮盡。
   const badge = raw.replace(/<!--[\s\S]*?-->/g, '');
   const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
   assert.deepEqual(missing.map((c) => c.id), [],
@@ -347,7 +364,9 @@ test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的�
   assert.match(plan, /月收支同時失真|月收入與月支出/, '★方向讀反的**後果**要講出來，不能只說「驗不到」');
   // ★r7：型數已經漂過三次（16→20→22→23），每次都是**某處複述**沒跟上。與其一處一處補斷言，
   //   不如**禁止寫死可漂的量詞**：「那兩種形狀」這種寫法一加型別就過期，改成直接點名 B8／B9／B10。
-  assert.doesNotMatch(plan, /那[一二三四五六七八九十兩]+種形狀|以上[一二三四五六七八九十兩]+種/,
+  // ⚠️ 掃 **planRaw 全文**、而且要涵蓋阿拉伯數字（r8#2）：上一版只掃 §八 的窄切片，
+  //    把那句話搬到切片外就偵測不到；regex 也漏了「那 3 種形狀」這種寫法＝**漏攔**，不是誤紅。
+  assert.doesNotMatch(planRaw, /那\s*[0-9一二三四五六七八九十兩]+\s*種形狀|以上\s*[0-9一二三四五六七八九十兩]+\s*種形狀/,
     '★不要在文件裡寫死「那 N 種形狀」——加一型就過期，而複述處補不完（直接點名 B8／B9／B10 這種寫法不會漂）');
   // 誠實劃界那兩句在**下一個項目符號**裡（不在上面那段窄範圍內），所以拿剝過註解的**全文**驗。
   // 藏進 HTML 註解已經行不通（planRaw 剝掉了），這裡要的是「這兩句確實在文件裡」。
