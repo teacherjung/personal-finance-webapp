@@ -714,4 +714,3 @@ test('答案卷驗收｜AI 給的 referenceDate 是壞日期＝整份拒收（�
   assert.equal(normalizeAiBank({ ...goodAnswer(), referenceDate: null }).referenceDate, null,
     '★null 是合法答案（帳單沒印），擋掉它就等於逼 AI 亂填');
 });
-
