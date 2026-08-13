@@ -170,7 +170,7 @@
 | 測試隔離慣例 B0 | 測試一律 STORE_FILE 指暫存 .db、絕不碰真實 data/；server.js export app、只有直接執行才 listen——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#測試隔離慣例-b0) |
 | PDF 逐列抽取器（pdfjs → 帶座標的列） | 三份刻意分工勿合併（信用卡丟座標／銀行保留 x+y／證券 x+y＋跨頁）＋各自的合成座標考題——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#pdf-逐列抽取器) |
 | **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
-| **帳戶完整帳號與餘額匯入**（`accountNo`＝PII） | GET 只回 `accountNoSet`＋`accountNoLast4`；末碼＋幣別比對、現值參考日較新才覆蓋、自動建帳戶不設 ibCashCur；密碼解析時只在記憶體、**預設用完即丟，勾記住才依機密規則儲存**（P0.5，見「匯入密碼池」節）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
+| **帳戶完整帳號與餘額匯入**（`accountNo`＝PII） | GET 只回 `accountNoSet`＋`accountNoLast4`；末碼＋幣別比對、現值參考日較新才覆蓋（**讀不到／壞日期＝只跳過更新餘額，交易照樣匯入**——不覆蓋餘額、不寫 balanceAsOf、不新建帳戶；模板與 AI 兩條路共用，2026-08-13）、自動建帳戶不設 ibCashCur；密碼解析時只在記憶體、**預設用完即丟，勾記住才依機密規則儲存**（P0.5，見「匯入密碼池」節）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
 | **帳單原文取法**（`origFromStmtRef`／`stmtOrig`） | 一律走這兩個取用器（會剝去重序號）；不要各頁手寫 split 取原文——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文取法-origfromstmtref) |
 | **匯入對帳閘**（`lib/statement-reconcile.js`，P0 2026-08-11） | 強＝銀行餘額鏈＋真末筆對概要（**只驗台幣帳戶**＝射程對齊匯入；首筆未驗＝誠實計數）、中＝摘要等式擋下＋明細對總額**影子不擋**、弱＝沒數字可對；不一致＝整份 400、缺數字＝skip 降級放行；卡閘只在預覽（importRows 不重解析）；★6：AI 路線（P1）弱閘不准匯入——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入對帳閘) |
 | **匯入密碼池**（P0.5 2026-08-11） | 先自動試所有已存密碼（''→各卡→記住的）、全敗才問＋「記住」勾選預設不勾；儲存＝settings 單一 JSON 字串機密（四條路自動接軌、投影只回數量）；機器判準 `code:'pdf_password'` 跳密碼窗；apply 自己重跑池、密碼絕不回前端——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入密碼池) |

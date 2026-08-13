@@ -1031,7 +1031,7 @@ test('去重鍵｜餘額欄讀成空白也會破壞去重（P1b-3 r13：D 類不
   assert.equal(db.transactions.length, 2, '★帳本上變成兩筆＝同一筆被記了兩次');
 });
 
-test('端到端｜讀不到現值參考日：交易照樣進帳本、餘額一動都不動（William 2026-08-13 解鎖）', () => {
+test('純函式｜讀不到現值參考日：交易照樣進帳本、餘額一動都不動（正式入口那題在檔尾）', () => {
   // ⚠️ 這題是整個變更的**承重點**：使用者的金融卡明細沒印「現值參考日」，舊行為整份退回、
   //    他只能手動記帳。新行為＝交易照匯、餘額不動。兩半都要驗，缺一半都不成立：
   //    ①只驗「交易進去了」→ 可能連餘額也被亂寫（拿舊的蓋掉新的＝無聲毀資料）
@@ -1054,5 +1054,42 @@ test('端到端｜讀不到現值參考日：交易照樣進帳本、餘額一�
   assert.equal(db.accounts[0].balance, 111, '★餘額一動都不可以動（不知道帳單新不新）');
   assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
   assert.equal(db.accounts.length, 1, '★不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
+});
+
+const { applyBankStatement: applyBankE2E, previewBankStatement: previewBankE2E } =
+  await import('../lib/services/bank-import.js');
+
+test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStatement，交易真的落庫、餘額一動不動', async () => {
+  // ⚠️ 上一版那題叫「端到端」卻只直接呼叫 applyBalancesToDb／importBankTxToDb——**沒經過正式入口**。
+  //    複審在 `applyBankStatement` 裡重新加一行「缺日期就整份拒絕」，171 題照樣全綠（r2#1）。
+  //    這一版走真的入口、真的存檔、**再重讀資料庫**驗結果，那條路才被守住。
+  const seed = await getDb();
+  seed.accounts = [{ id: 'e2e1', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
+    accountNo: '900100****3301', balance: 111, balanceAsOf: '2026-05-31' }];
+  seed.transactions = [];
+  await saveDb(seed);
+
+  // 模板路線的解析器接縫（第三參數）：回一份**沒有現值參考日**、但餘額鏈自洽的帳單
+  const parseNoRef = async () => ({ bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    accountCurrency: { '900100****3301': 'TWD' },
+    transactions: [
+      btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+      btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
+    ] });
+
+  const pv = await previewBankE2E('QUFBQQ==', undefined, parseNoRef);
+  assert.equal(pv.blocked, true, '預覽要標明「這次不會更新餘額」');
+
+  const res = await applyBankE2E('QUFBQQ==', undefined, parseNoRef);
+  assert.equal(res.ok, true, '★正式入口不可再整份拒絕——那正是使用者被卡住的原因');
+  assert.equal(res.balancesSkipped, true, '★回應要帶出「餘額沒更新」給畫面用');
+  assert.equal(res.transactions.imported, 2, '★交易要真的匯入');
+
+  const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
+  assert.equal(after.transactions.length, 2, '★交易要真的落庫');
+  assert.equal(after.accounts.length, 1, '★不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
+  assert.equal(after.accounts[0].balance, 111, '★餘額一動都不可以動');
+  assert.equal(after.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
 });
 
