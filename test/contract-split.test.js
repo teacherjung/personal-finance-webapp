@@ -536,6 +536,7 @@ const MANIFEST = {
       'lib/ai-parse.js', 'lib/ai-transport.js', 'lib/ai-confirm-ticket.js', 'test/ai-parse.test.js',
       // P1b-2 前端（2026-08-12）：同意確認窗與設定頁鑰匙欄的判準/文案純函式＋考題（與雲端領域多重命中）
       'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
+      'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
