@@ -75,7 +75,7 @@ export function bankSimilarWarningHtml(n) {
 
 /** 疑似重複的逐列標記（同上，作者內容）。 */
 export function bankSimilarTagHtml() {
-  return `<span class="flow-tag neg" title="同帳戶同一天同金額同方向的交易，你的資料裡已經有一筆——可能是同期間的另一種版面重複匯入">疑似重複</span> ' : '`;
+  return `<span class="flow-tag neg" title="同帳戶同一天同金額同方向的交易，你的資料裡已經有一筆——可能是同期間的另一種版面重複匯入">疑似重複</span>`;
 }
 
 /**

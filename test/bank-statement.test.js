@@ -926,3 +926,41 @@ test('疑似重複｜不同機構、不同可見前綴＝不是同一個帳戶�
   assert.equal(previewBankTxForDb(unknownPrefix, parsed).rows[0].similar, true,
     '★一邊只印末碼＝不知道前綴，不可拿來否決（否則跨版式救援直接失效）');
 });
+
+test('疑似重複｜機構寫法不同要算同一家，前綴帶分隔符也要分得出兩個帳戶（r2#1／r2#2）', () => {
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),   // 900200****3302
+  ] };
+  // ① 既有那筆的機構寫成全稱（AI 路線是照帳單抬頭抄的）——不正規化就漏報，跨版式重複一聲不吭落帳
+  const longName = { accounts: [], transactions: [
+    { id: 'o1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank2|台新國際商業銀行|900200****3302|2026-06-01|in|1000|1000|轉帳存入|' },
+  ] };
+  assert.equal(previewBankTxForDb(longName, parsed).rows[0].similar, true,
+    '★「台新」與「台新國際商業銀行」是同一家——漏報等於這支功能對這種帳單完全失效');
+
+  // ② 但不可亂合併：不同銀行仍要分開（正規化只剝通用後綴，不做同義詞猜測）
+  const otherBank = { accounts: [], transactions: [
+    { id: 'o2', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank2|合成一銀商業銀行|900200****3302|2026-06-01|in|1000|1000|轉帳存入|' },
+  ] };
+  assert.equal(previewBankTxForDb(otherBank, parsed).rows[0].similar, false,
+    '★剝掉「商業銀行」之後仍是不同機構，不可互報');
+
+  // ③ 前綴帶分隔符：兩個都被當成「沒有前綴」的話，同銀行的兩個帳戶會互報
+  const dashed = { accounts: [], transactions: [
+    { id: 'o3', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|900-100****3302|2026-06-01|in|1000|1000|轉帳存入|' },
+  ] };
+  const dashedParsed = { ...parsed, transactions: [
+    btx({ acctMasked: '900-200****3302', summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),
+  ] };
+  assert.equal(previewBankTxForDb(dashed, dashedParsed).rows[0].similar, false,
+    '★900-100 與 900-200 是同一家銀行的兩個不同帳戶，不可說成同一個');
+  // 同一個帳戶、只是分隔符印法不同＝仍要對得上
+  const sameDashed = { ...parsed, transactions: [
+    btx({ acctMasked: '900100****3302', summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),
+  ] };
+  assert.equal(previewBankTxForDb(dashed, sameDashed).rows[0].similar, true,
+    '★洗掉分隔符後是同一個前綴＝同一個帳戶');
+});

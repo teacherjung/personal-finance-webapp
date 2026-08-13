@@ -496,13 +496,22 @@ test('文案｜疑似重複警語：講清楚原因與下一步，而且不可�
     assert.doesNotMatch(html, /\bhidden\b|display\s*:\s*none/,
       '★不可自己把自己藏起來（看不見的警語等於沒有警語）');
   }
-  assert.match(bankSimilarTagHtml(), /疑似重複/, '列標記要看得懂');
+  // ★r2#3：搬進純函式時我把樣板尾巴的 `' : '` 一起搬了進來＝**畫面真的印出多餘字元**。
+  //   「含關鍵字」這種斷言抓不到尾端垃圾——要把整段的形狀釘住。
+  const tag = bankSimilarTagHtml();
+  assert.match(tag, /疑似重複/, '列標記要看得懂');
+  assert.match(tag.trim(), /^<span [^>]*>[^<>]*<\/span>$/, '★整段就是一個 span，前後不可有殘留字元');
+  assert.match(warn.trim(), /^<p [^>]*>[\s\S]*<\/p>$/, '★整段就是一個 p，前後不可有殘留字元');
+  for (const html of [warn, tag]) {
+    assert.doesNotMatch(html, /['"`]\s*:\s*['"`]/, '★不可殘留樣板三元運算子的碎片（實測印在畫面上過）');
+  }
 });
 
 test('接線｜疑似重複走純函式，而且 blocked 時整組壓掉（r1#1）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  assert.match(src, /!r\.blocked && c\.similar \? bankSimilarWarningHtml\(c\.similar\)/,
+  // ⚠️ 要從 `${` 咬起（r2#3）：不錨定的話，在前面加個 `false &&` 讓警語**永久隱藏**，考題照樣綠。
+  assert.match(src, /\$\{!r\.blocked && c\.similar \? bankSimilarWarningHtml\(c\.similar\)/,
     '★擋下時不可再談防重複——整份都不會寫進去，那段警語會變成自相矛盾的敘述');
-  assert.match(src, /!r\.blocked && x\.similar \? bankSimilarTagHtml\(\)/, '★逐列標記同樣要壓掉');
+  assert.match(src, /\$\{!r\.blocked && x\.similar \? bankSimilarTagHtml\(\)/, '★逐列標記同樣要壓掉');
   assert.doesNotMatch(src, /疑似重複/, '★文案不可留在 cashflow.js（就地寫死＝又回到守拼字的考題）');
 });
