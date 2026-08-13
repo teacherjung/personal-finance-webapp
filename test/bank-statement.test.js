@@ -189,7 +189,7 @@ test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯�
   assert.equal(db.accounts[0].balance, 88888, '同一天再匯不覆蓋手改值');
 });
 
-test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 400 一致）', () => {
+test('預覽｜讀不到參考日→blocked，動作標 blocked（＝「這次不更新餘額」，交易仍會匯入）', () => {
   const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****3301', 'TWD', 23)]));
   assert.equal(pv.blocked, true);
   assert.equal(pv.rows[0].action, 'blocked');
@@ -1092,4 +1092,3 @@ test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStat
   assert.equal(after.accounts[0].balance, 111, '★餘額一動都不可以動');
   assert.equal(after.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
 });
-

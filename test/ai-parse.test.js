@@ -661,4 +661,3 @@ test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日
   assert.match(AI_BANK_SCHEMA.properties.referenceDate.description, /帳單期間/,
     '★schema 的欄位說明也要講同一件事——只改提示詞、schema 還寫「沒印＝null」＝兩邊互相打架');
 });
-

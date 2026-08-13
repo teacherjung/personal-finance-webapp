@@ -419,7 +419,7 @@ test('文案｜擋下的警語：不可要帳單內容、不可叫人去按已�
   assert.match(warn, /^<p [^>]*>[\s\S]*<\/p>$/, '回傳整段 <p>＝呼叫端不必再包一層');
 });
 
-test('接線｜擋下警語走 bankBlockedWarningHtml，cashflow.js 不可就地寫死（r5#2）', () => {
+test('接線｜「餘額不更新」提醒走 bankBlockedWarningHtml，cashflow.js 不可就地寫死（r5#2）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   assert.match(src, /bankBlockedWarningHtml\(\)/, '★要真的接上（算了不用＝畫面看不到）');
   // 只禁**警語專屬**的句子：「現值參考日」在同一頁的資訊列是正當用字，不能一律禁。
@@ -517,7 +517,7 @@ test('文案｜疑似重複警語：講清楚原因與下一步，而且不可�
   }
 });
 
-test('接線｜疑似重複走純函式，而且 blocked 時整組壓掉（r1#1）', () => {
+test('接線｜疑似重複走純函式，而且**一律顯示**（#453 r1#2：交易照樣匯入，壓掉＝重複無聲入帳）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   // ⚠️ 要從 `${` 咬起（r2#3）：不錨定的話，在前面加個 `false &&` 讓警語**永久隱藏**，考題照樣綠。
   // ⚠️ 兩端都要咬（r3#2 實測）：只咬到函式呼叫的話，接一個 `.slice(0, 0)` 讓輸出永遠是空字串，
@@ -582,4 +582,3 @@ test('接線｜鈕字與完成提示都要真的接上（算了不用＝畫面�
   assert.match(src, /toast\(bankApplyDoneText\(res, t\)\)/, '★完成提示要走那個函式（不然 balancesSkipped 沒人講）');
   assert.doesNotMatch(src, /確認：更新餘額＋匯入交易/, '★鈕字不可再就地寫死');
 });
-
