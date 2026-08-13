@@ -236,7 +236,13 @@ export async function renderSettings() {
         <button type="button" class="info-link" data-ai-info="cost">ⓘ 大概要花多少錢？</button>
         <button type="button" class="info-link" data-ai-info="where">ⓘ 鑰匙存在哪？帳單會送去哪？</button>
         <button type="button" class="info-link" data-ai-info="skip">ⓘ 不設定會怎樣？</button>
+        <button type="button" class="info-link" data-ai-info="ask">ⓘ 什麼時候會送出去？</button>
       </div>
+      <label class="inline-check" style="margin-bottom:14px">
+        <input id="aiAskBeforeSend" type="checkbox" ${s.aiAskBeforeSend === true ? 'checked' : ''} />
+        <span>送給 AI 之前先問我一次</span>
+      </label>
+      <p class="muted" style="font-size:12px;margin:-8px 0 14px">預設不問：內建程式認不出版面時就直接送去讀。打開這個，每次送出前會先跳一個窗給你確認。</p>
       <div class="form-grid">
         <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>
         ${s.aiApiKeySet ? `<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearAiApiKey" type="checkbox"> ${AI_KEY_CLEAR_LABEL}</label></div>` : ''}
@@ -337,6 +343,10 @@ export async function renderSettings() {
   { // AI 解析鑰匙（P1b-2）：判準（留空＝不變更／勾清除＝送空字串／都沒動＝報錯）住 ai-key-settings.js 的
     //   aiKeyPatch，這裡只接線。成功後**重繪**＝讓契約要求的「清除已存的鑰匙」入口當場出現，
     //   不必切頁再回來（saveSettings 只 toast 不重繪；比照上面 clearStmtPws 那條既有的重繪路徑）。
+    // 「送出前先問我」＝獨立開關，勾一下就存（不跟鑰匙共用儲存鍵——鑰匙那顆有「留空＝不變更」語意，
+    //   混在一起會讓「只想改開關」的人被迫重打鑰匙）。
+    const ask = /** @type {HTMLInputElement|null} */ (byId('aiAskBeforeSend'));
+    if (ask) ask.onchange = () => saveSettings({ aiAskBeforeSend: ask.checked }, ask.checked ? '好，之後每次送出前會先問你' : '好，之後認不出版面就直接送去讀');
     const btn = byId('saveAiApiKey');
     if (btn) btn.onclick = async () => {
       const patch = aiKeyPatch({ value: val('aiApiKey'), clear: /** @type {HTMLInputElement} */ (byId('clearAiApiKey'))?.checked === true });

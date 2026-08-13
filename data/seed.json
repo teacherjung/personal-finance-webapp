@@ -34,6 +34,7 @@
       "JPY": 0.215
     },
     "taishinSecPdfPassword": "",
+    "aiAskBeforeSend": false,
     "aiApiKey": "",
     "rememberedStatementPasswords": ""
   },

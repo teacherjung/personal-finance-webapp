@@ -21,7 +21,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const {
   snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -153,7 +153,9 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.match(html, /送出內容/, '要講清楚送出去的是哪一份');
   assert.match(html, /2026-06 對帳單\.pdf/, '要顯示送的是哪一份檔案');
   assert.match(html, /Anthropic/, '要講送去哪裡');
-  assert.match(html, /幾塊台幣/, '要講大概多少錢');
+  assert.match(html, /費用|多少/, '要交代費用這件事');
+  assert.doesNotMatch(html, /幾塊|幾元|[0-9]+ ?元/,
+    '★不給金額數字（William 2026-08-13：只說「記在你自己的 Anthropic 帳戶」——實測數字要等 P1b-3 之後才有）');
   assert.match(html, /大概多少/, '費用那一列的標題');
   assert.match(html, /不是報價|以他們的帳單為準/, '費用要標明是級距不是報價');
   assert.match(html, /不同意/, '要講不同意會怎樣（手動記帳、其他功能照常）');
@@ -202,16 +204,8 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.doesNotMatch(aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'm' }), /\*\*/, '徽章同上');
   assert.ok(AI_CONSENT_TITLE.includes('AI') && AI_CONSENT_SUBMIT_LABEL.includes('同意'));
   assert.match(AI_CONSENT_BUSY_LABEL, /稍候|讀取中|正在/, '送出中的鈕文字要看得出「還在跑」');
-  assert.match(AI_SENDING_TEXT, /稍候|請稍等/, '提示要請使用者稍候');
-  assert.match(AI_SENDING_TEXT, /不用重按|不要重按|別重按/, '★要講「不用重按」——不然使用者會連按（票是一次性、第二次會拿到錯誤）');
-  // ★r7：這句在**發請求之前**就吐了，而 HOSTED 停止線與無鑰匙會在任何 AI 呼叫前擋下 ⇒
-  //   宣稱「已送出／AI 正在讀」＝謊稱帳單已經外送（使用者會同時看到它和「尚未設定鑰匙」）。
-  assert.doesNotMatch(AI_SENDING_TEXT, /已送出|已經送|已外送|送出了/,
-    '★不可宣稱已送出：這句吐在發請求之前，雲端停止線與無鑰匙都會先擋下來');
-  assert.doesNotMatch(AI_SENDING_TEXT, /AI ?正在讀|正在讀這份帳單/,
-    '★不可宣稱 AI 已經在讀（那時可能一個位元組都還沒離開這台機器）');
-  assert.match(AI_SENDING_TEXT, /接下來會|準備送|將會送/,
-    '要把外送講成「接下來會發生的事」，使用者才知道還沒送出去');
+  // ⚠️ 送出當下那則 toast 已於 2026-08-13 移除（William：「可以不用顯示」）。
+  //    「按下去不像當掉」的保證改由**上傳鈕的 busyLabel** 承載＝考題在 cashflow-bank-upload.test.js。
 });
 
 test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「驗不到什麼」，模型名要跳脫', () => {
@@ -307,11 +301,21 @@ test('E3｜aiErrorText：後端白話句原句放行＋補下一步；未知 cod
 test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 applyBody、徽章真的插進畫面', () => {
   const src = srcOf('public/modules/cashflow.js');
   // 三條 preview 路徑：上傳窗（無密碼）／密碼窗／同意窗（唯一帶 useAi 的那條）
-  assert.equal(count(src, /body: previewBody\(\{/g), 3, '三條 preview 路徑都要走 previewBody（漏一條＝那條路的判準沒被守住）');
+  assert.equal(count(src, /body: previewBody\(\{/g), 4,
+    '★四條 preview 路徑都要走 previewBody（漏一條＝那條路的判準沒被守住）——'
+    + '第四條＝`sendToAi`（William 2026-08-13「預設不問、直接送」新增的那一條）');
   assert.match(src, /previewBody\(\{ data: b64, password: pw, useAi: true \}\)/, '★同意窗那條才帶 useAi');
   assert.match(src, /previewBody\(\{ data: b64 \}\)/, '上傳窗那條不帶旗標');
   assert.match(src, /previewBody\(\{ data: b64, password: pw \}\)/, '密碼窗那條不帶旗標');
-  assert.equal(count(src, /useAi: true/g), 1, '★全檔只有同意窗那一處帶旗標——多一處＝有帳單沒問過就外送');
+  // ⚠️ **這條保證的形狀在 2026-08-13 變了**（William 拍板：預設不問、直接送）。
+  //    舊版：`useAi: true` 全檔只准出現一次（同意窗）＝「沒問過就不外送」。
+  //    新版：兩處——同意窗（設定打開時）與 sendToAi（預設路徑）。**兩處都必須在
+  //    `askBeforeSendAi()` 的分流之後**，否則「打開開關卻仍不問」就會發生而沒人擋。
+  assert.equal(count(src, /useAi: true/g), 2, '★只有這兩條路帶旗標——多一處＝有條路繞過了設定分流');
+  assert.match(src, /if \(await askBeforeSendAi\(\)\) \{[\s\S]{0,400}?openConsent:/,
+    '★「要問」那一支必須真的開同意窗（接錯＝打開開關也不會問）');
+  assert.match(src, /await sendToAi\(b64, pw, onPage, canOpenNext\)/,
+    '★「不問」那一支必須真的送出（沒接＝認不出版面就什麼都不會發生）');
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw \}\);/, 'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案）');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');
@@ -352,7 +356,7 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(src, /submitLabel: AI_CONSENT_SUBMIT_LABEL/, '同意窗要指定送出鈕文字');
   // ★等待回饋（William 2026-08-12 回報：按下同意後畫面停 5–6 秒，看起來像當掉）
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL/, '★送出中要換鈕文字（只變灰看起來像沒反應）');
-  assert.match(src, /toast\(AI_SENDING_TEXT\)/, '★另外吐一句提示：視線不一定在鈕上，而且要講「不用重按」');
+  assert.doesNotMatch(src, /AI_SENDING_TEXT/, '★那則 toast 已移除（William 2026-08-13），不可順手復活');
   const appSrc2 = srcOf('public/app.js');
   assert.match(appSrc2, /if \(submitBtn && busyLabel\) submitBtn\.textContent = busyLabel;/, '★openForm 要真的把 busyLabel 寫上按鈕');
   assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');

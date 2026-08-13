@@ -89,8 +89,8 @@ test('G3｜文案：在 HOSTED 下為假的句子一句都不准出現；不得�
   assert.match(ALL_COPY, /都會問|都會先問|有沒有設鑰匙/, '要講清楚「沒設鑰匙也會問，只是送不出去」');
 });
 
-test('G4｜AI_KEY_INFO：四把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
-  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['cost', 'skip', 'what', 'where']);
+test('G4｜AI_KEY_INFO：五把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
+  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['ask', 'cost', 'skip', 'what', 'where']);
   for (const [k, v] of Object.entries(AI_KEY_INFO)) {
     assert.ok(v.title && v.title.length > 4, `${k} 要有標題`);
     assert.ok(v.html && v.html.includes('<p>'), `${k} 要有內容`);
@@ -119,8 +119,8 @@ test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把
     '★問的是「還在設定頁嗎」＝換頁序號；接成 currentRouteSeq 時開機背景重繪會讓儲存成功卻不提示、清除入口不出現');
   assert.doesNotMatch(src, /saveAiApiKey[\s\S]{0,400}?currentRouteSeq/, '同上：這個區塊不可用重繪序號');
   assert.match(src, /await renderSettings\(\);/, '成功後重繪＝清除入口當場出現，不必切頁再回來');
-  assert.equal(count(/data-ai-info="/g), 4, '四顆就地解釋按鈕都要在（泛化 regex 只蓋一顆就假綠）');
-  for (const k of ['what', 'cost', 'where', 'skip']) {
+  assert.equal(count(/data-ai-info="/g), 5, '五顆就地解釋按鈕都要在（第五顆＝「什麼時候會送出去？」，2026-08-13 隨『預設不問』一起加）');
+  for (const k of ['what', 'cost', 'where', 'skip', 'ask']) {
     assert.match(src, new RegExp(`data-ai-info="${k}"`), `就地解釋「${k}」要掛上去`);
   }
   assert.match(src, /Object\.hasOwn\(AI_KEY_INFO, key\)/, '只認自有鍵（直接索引會讓 constructor 之類撈到原型）');

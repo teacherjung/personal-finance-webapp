@@ -11,10 +11,10 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
-import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
+import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -191,7 +191,25 @@ function openBankUpload() {
       // ⚠️ **每一次都要問**（William 2026-08-12 拍板，不記住同意）＝這裡不寫任何持久化，也不快取答案。
       // ⚠️ `pw` 必須一路帶進來：AI 路線自己會再抽一次字，沒帶密碼＝加密帳單打不開→回 pdf_password→
       //    前端又跳密碼窗＝無限迴圈。
-      const openAiConsentWindow = (/** @type {string} */ b64, /** @type {string} */ pw, /** @type {string} */ fileName) => openForm({
+
+  /** 送 AI 之前要不要先問？判準住 ai-consent.js；⚠️ **設定讀不到就當成「要問」**——
+   *  那時我們不知道使用者選了什麼，而猜錯的代價是「沒問就把帳單送出去、還花了錢」。 */
+  const askBeforeSendAi = async () => {
+    try { return shouldAskBeforeSend(await api('/settings')); } catch { return true; }
+  };
+  /** 直接送 AI 解讀（不開同意窗）。⚠️ 刻意留在**上傳表單的 onSubmit 裡** await：
+   *  送出鈕的「正在上傳…請稍候」會一路顯示到預覽窗開起來，不需要另外吐 toast。 */
+  const sendToAi = async (/** @type {string} */ b64, /** @type {string} */ pw,
+    /** @type {() => boolean} */ onPage, /** @type {() => boolean} */ canOpenNext) => {
+    try {
+      const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
+      openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
+    } catch (e) {
+      throw new Error(aiErrorText(/** @type {any} */ (e).code, /** @type {any} */ (e).message), { cause: e });
+    }
+  };
+
+  const openAiConsentWindow = (/** @type {string} */ b64, /** @type {string} */ pw, /** @type {string} */ fileName) => openForm({
         title: AI_CONSENT_TITLE,
         fields: [],
         bodyHtml: aiConsentBodyHtml({ fileName }),
@@ -199,7 +217,6 @@ function openBankUpload() {
         busyLabel: AI_CONSENT_BUSY_LABEL,   // 鈕上的字（AI 要跑 5–6 秒，只變灰看起來像當掉）
         onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           const canOpenNext = () => onPage() && ctx.owns.handoff();
-          toast(AI_SENDING_TEXT);   // 視線不一定在鈕上：另外吐一句「還在跑、不用重按」
           try {
             const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
@@ -225,7 +242,12 @@ function openBankUpload() {
             r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
           } catch (e) {
             // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
-            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
+            if (!shouldOfferAi(e)) throw e;
+            if (await askBeforeSendAi()) {   // 設定頁打開了「送出前先問我」
+              if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
+              return;
+            }
+            await sendToAi(b64, pw, onPage, canOpenNext);   // 預設：直接送（William 2026-08-13）
             return;
           }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -238,8 +260,8 @@ function openBankUpload() {
       });
       openForm({
         title: '上傳銀行對帳單',
-        bodyHtml: BANK_UPLOAD_NOTICE,
         submitLabel: BANK_UPLOAD_SUBMIT_LABEL,
+        busyLabel: BANK_UPLOAD_BUSY_LABEL,
         fields: [
           { key: 'file', label: BANK_UPLOAD_FILE_LABEL, type: 'file', full: true },
         ],
@@ -265,7 +287,12 @@ function openBankUpload() {
             // 範本認不得＝**只排同意窗、不吐原錯誤**（William 2026-08-12：那句紅字是多餘的——同意窗第一行
             // 已經說了「範本認不得這個版面」，而且它還寫死單一銀行名。判準與競態防線都在 runAiFallback；
             // 其他錯誤照舊 toast＋留窗重試）
-            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
+            if (!shouldOfferAi(e)) throw e;
+            if (await askBeforeSendAi()) {
+              if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
+              return;
+            }
+            await sendToAi(b64, '', onPage, canOpenNext);
           }
         }
       });
@@ -289,10 +316,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   //    把它算進「會匯入的全部內容」＝畫面說會進 N 筆、實際只進 N−外幣筆數，使用者會以為漏記。
   const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate && !x.foreign);
   const body = `
-    ${aiPreviewBadgeHtml(r)}
-    <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
     ${r.blocked ? bankBlockedWarningHtml() : ''}
-    ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
     <tbody>${rows.map((/** @type {any} */ x) => `<tr>
@@ -315,6 +339,15 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
     <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
+
+    <!-- ⚠️ 說明區在**最下面**（William 2026-08-13）：窗一打開先看到帳戶餘額與交易明細，
+         想知道「這是誰讀的、驗到什麼程度」再往下看。徽章裡那句「請確認…有沒有讀錯」
+         因此移到核對之後——這是 William 明示的取捨，不是漏掉。 -->
+    <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)">
+    ${aiPreviewBadgeHtml(r)}
+    <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    ${gateSummaryHtml(r.reconcile, 'bank')}
+    </div>
 `;
   // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
   // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。

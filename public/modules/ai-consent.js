@@ -16,21 +16,31 @@
 import { esc } from './html-escape.js';
 
 /** 同意窗的標題／送出鈕／供應商標籤／費用級距（文案單一住所）。 */
+/** 送 AI 之前要不要先跳確認窗？
+ *
+ * ⚠️ **預設不問**（William 2026-08-13 拍板，取代 2026-08-12 的「每次都問」）：他的方向是
+ * 「介面簡單、好用、好理解」，而這條路用的是他自己的鑰匙、自己的資料、單機自用。
+ * 設定頁留一個開關可以打開——**能力沒有被拿掉，只是預設翻面**（多人版要恢復詢問時有現成的地方）。
+ *
+ * ⚠️ **欄位讀不到 vs 讀不到設定，是兩件事**：
+ * ・欄位不存在（舊資料庫還沒有這個欄）＝照新預設「不問」。
+ * ・**整包設定拿不到**（API 掛了）＝呼叫端要當成「問」——那時我們**不知道**使用者選了什麼，
+ *   而猜錯的代價是「沒問就把帳單送出去、還花了錢」。不知道的時候往保守那邊倒。
+ * @param {any} settings
+ */
+export function shouldAskBeforeSend(settings) {
+  return settings?.aiAskBeforeSend === true;
+}
+
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
-export const AI_CONSENT_BUSY_LABEL = '正在讀取…請稍候';
-/** 送出當下的提示（鈕在彈窗裡、視線不一定在那；toast 補一句「還在跑、別重按」）。
- * ⚠️ **不可寫「已送出／AI 正在讀」**（r7）：這句是在**發請求之前**吐的，而 HOSTED 停止線與
- * 「還沒設鑰匙」都會在**任何 AI 呼叫之前**就把整條路擋下（`aiBankRoute` 前兩道）——
- * 那時使用者會同時看到「AI 正在讀」和「尚未設定鑰匙」，等於**謊稱帳單已經外送出去**。
- * 這條線的整個價值就是「畫面說的＝實際發生的」，這句尤其不能破例。 */
-export const AI_SENDING_TEXT = '處理中……接下來會把帳單文字送去給 AI 讀，通常幾秒鐘，請稍候（不用重按）';
+export const AI_CONSENT_BUSY_LABEL = '正在上傳…請稍候';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。
  * 不寫「每百萬 token 幾美元」「模型名」「至多兩發」——那些常數不回前端（鐵則 10：寫死的數字自己會漂）。 */
-export const AI_COST_HINT = '通常是幾塊台幣以內（記在你自己的 Anthropic 帳戶裡；這是級距、不是報價，實際金額以他們的帳單為準）';
+export const AI_COST_HINT = '費用記在你自己的 Anthropic 帳戶裡（實際金額以他們的帳單為準）';
 /** 預覽窗過期／已用過時的白話（票是一次性＋短效）。 */
 export const AI_PREVIEW_LOST_TEXT = '這份 AI 預覽已經過期或已經匯入過了——請重新上傳預覽一次，確認內容無誤再匯入。';
 

@@ -53,11 +53,6 @@ export const REMEMBER_PW_LABEL = '記住這組密碼（下次匯入自動嘗試�
 //   ・不是「有可能」自動送——**只有按下同意的那一次**才送，沒按就完全不送（他自己拍板的「每次都問」）
 //     寫成「有可能傳給」會讓人以為系統可能背著他送，那比事實更嚴重、也對不起這條路的設計。
 export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
-export const BANK_UPLOAD_NOTICE = `<details>
-  <summary>上傳前想先知道的事</summary>
-  <p style="margin:8px 0 0">請選取銀行寄給你的對帳單 PDF。</p>
-  <p style="margin:6px 0 0">如果內建程式認不出您的對帳單版面，將詢問您要不要交給 AI 幫忙判讀。（沒按同意不會送出至 AI 公司）</p>
-</details>`;
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 /** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
  * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
@@ -79,6 +74,9 @@ export function bankApplyDoneText(bal, tx) {
 }
 
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
+/** 送出後鈕上的字。⚠️ 講「上傳」不講「讀取」：按下去的第一件事就是把檔案送到 app 伺服器，
+ * 之後才輪到解析（認不得時可能再送 AI）——寫「讀取」會讓人以為已經在解析了。 */
+export const BANK_UPLOAD_BUSY_LABEL = '正在上傳…請稍候';
 
 /** 疑似重複的統計區警語（整段 <p>，作者內容）。`n`＝疑似重複的筆數。
  *
