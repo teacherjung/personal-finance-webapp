@@ -20,8 +20,8 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
   snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
-  aiConsentBodyHtml, aiPreviewBadgeHtml, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT,
+  aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -106,31 +106,28 @@ test('C2｜isAiTicketDeadCode：票類錯誤才算「這份沒救了」', () => 
 
 /** @param {{err:any, canOpen?:() => boolean}} o */
 function fallbackProbe({ err, canOpen = () => true }) {
-  const calls = { notify: /** @type {string[]} */ ([]), consent: 0 };
+  const calls = { consent: 0 };
   /** @type {(() => void)[]} */
   const scheduled = [];
   const out = runAiFallback({
     err, canOpenNext: canOpen,
-    notify: (m) => calls.notify.push(m),
     openConsent: () => { calls.consent++; },
     schedule: (fn) => scheduled.push(fn),
   });
   return { out, calls, runScheduled: () => scheduled.forEach((fn) => fn()) };
 }
 
-test('D｜runAiFallback：閘紅／密碼錯＝rethrow 且零呼叫；認不得＝先吐原句再排程開窗', () => {
+test('D｜runAiFallback：閘紅／密碼錯＝rethrow 且零呼叫；認不得＝直接排程開同意窗（不再吐紅字）', () => {
   // ★★ 最重的一條：對帳閘紅不可長出 AI 入口
   const gateRed = fallbackProbe({ err: Object.assign(new Error('帳戶 ****3302 …接不上'), { status: 400 }) });
   assert.equal(gateRed.out, 'rethrow');
   assert.equal(gateRed.calls.consent, 0, '對帳閘紅＝★6 禁止匯入，連問都不該問');
-  assert.equal(gateRed.calls.notify.length, 0, 'rethrow 的路要讓呼叫端原樣丟，不可自己先吐訊息');
   const pw = fallbackProbe({ err: Object.assign(new Error('密碼不對'), { code: 'pdf_password' }) });
   assert.equal(pw.out, 'rethrow');
   assert.equal(pw.calls.consent, 0);
-  // 認不得＝offered：原句先講（按取消後仍看得到，所以不必給 openForm 加 onCancel）
+  // 認不得＝offered，而且**一句紅字都不發**（William 2026-08-12：那句是多餘的重複資訊、還寫死台新）
   const ok = fallbackProbe({ err: Object.assign(new Error('這份 PDF 看起來不是台新銀行綜合對帳單'), { code: 'bank_unrecognized' }) });
   assert.equal(ok.out, 'offered');
-  assert.deepEqual(ok.calls.notify, ['這份 PDF 看起來不是台新銀行綜合對帳單'], '要吐模板的**原句**，不是改寫版');
   assert.equal(ok.calls.consent, 0, '排程之前不可直接開窗');
   ok.runScheduled();
   assert.equal(ok.calls.consent, 1);
@@ -140,7 +137,6 @@ test('D2｜runAiFallback：切頁的兩顆競態——排程當下與 callback �
   const staleNow = fallbackProbe({ err: { code: 'bank_unrecognized', message: 'x' }, canOpen: () => false });
   assert.equal(staleNow.out, 'stale');
   assert.equal(staleNow.calls.consent, 0);
-  assert.equal(staleNow.calls.notify.length, 0, '已經切頁就別再吐 toast');
   // 排程時還在、執行時已切頁（#445 ②號競態）
   let onPage = true;
   const later = fallbackProbe({ err: { code: 'bank_unrecognized', message: 'x' }, canOpen: () => onPage });
@@ -154,13 +150,15 @@ test('D2｜runAiFallback：切頁的兩顆競態——排程當下與 callback �
 
 test('E｜同意窗內文：四件事都講到、危險句一句都不准出現、檔名要跳脫', () => {
   const html = aiConsentBodyHtml({ fileName: '2026-06 對帳單.pdf' });
-  assert.match(html, /送出哪一份/);
+  assert.match(html, /送出內容/, '要講清楚送出去的是哪一份');
   assert.match(html, /2026-06 對帳單\.pdf/, '要顯示送的是哪一份檔案');
   assert.match(html, /Anthropic/, '要講送去哪裡');
   assert.match(html, /幾塊台幣/, '要講大概多少錢');
+  assert.match(html, /大概多少/, '費用那一列的標題');
   assert.match(html, /不是報價|以他們的帳單為準/, '費用要標明是級距不是報價');
   assert.match(html, /不同意/, '要講不同意會怎樣（手動記帳、其他功能照常）');
-  assert.match(html, /每一次都會先問過你/, '★拍板：每次都問、不記住同意');
+  assert.match(html, /每一次上傳都會出現/, '★拍板：每次都問');
+  assert.match(html, /同意只算這一次|不會被記住/, '★拍板：不記住同意');
   // ★r4#2：AI 讀出來的結果不是直接進資料庫——先回畫面核對、暫存伺服器記憶體，按下匯入才寫進去。
   //   scoped 斷言（不是全文找「資料庫」字樣，那會被別句冒充）
   const resultLine = (html.split('\n').find((l) => l.includes('讀出來的結果')) || '');
@@ -175,6 +173,25 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   //   ⇒ regex 沒咬到、完整測試照綠（Codex 用反例探針證實）。改成整個詞都不准出現。
   assert.doesNotMatch(html, /這台電腦/,
     '同意窗文案必須模式中立：雲端版的資料庫不在使用者電腦上，「留在你這台電腦」是假的');
+  // ★William 2026-08-12 審稿時提出的版本，我糾正了三處與事實不符——這三條把糾正釘住：
+  assert.doesNotMatch(html, /AI 那邊不會保留|AI那邊不會保留|不會留一份/,
+    '★與上一行「會在一段時間後刪除」矛盾：留存一段時間＝有保留，不可寫成「不保留」');
+  assert.doesNotMatch(html, /William/, '★程式碼裡不寫死使用者名字（未來多人版會變錯字）');
+  // ★r1#1：「不拿去訓練／會刪除」是**供應商的預設政策**，不是我們能保證的事——這條路用的是使用者
+  //   自己的 API 帳戶，那個帳戶另外同意過什麼我們看不到。所以那句必須是**有條件的**。
+  //   範圍鎖在承載保證的那顆 <li>：整份掃到「預設」兩字不算數（別處出現也會過）。
+  const policyLi = (html.match(/<li>[^]*?<\/li>/g) || []).find((/** @type {string} */ x) => /訓練/.test(x)) || '';
+  assert.ok(policyLi, '要有一句交代「會不會被拿去訓練」');
+  assert.match(policyLi, /預設政策|預設值/, '★要講明這是供應商的「預設政策」，不是我們給的保證');
+  const caveatLi = (html.match(/<li>[^]*?<\/li>/g) || []).find((/** @type {string} */ x) => /不是我們能保證/.test(x)) || '';
+  assert.ok(caveatLi, '★要有一句把「這是預設值、不是我們的保證」講死');
+  assert.match(caveatLi, /你自己的 API 帳戶|自己的帳戶/, '要點明用的是使用者自己的帳戶（我們看不到那邊同意過什麼）');
+  assert.match(caveatLi, /官方公告|以你自己的帳戶設定/, '★要把最終依據指回供應商官方公告，不要停在我們的說法');
+  assert.doesNotMatch(html, /讀取不出這份帳單的內容|讀不出.*內容/,
+    '★文字有讀到（下一行就說「抽出來的文字」）——認不出的是**版面**，不是讀不到內容');
+  assert.match(html, /認不出這份帳單的版面|認不出.*版面/, '要講清楚是版面認不出來');
+  assert.doesNotMatch(html, /帳號未碼/, '錯字：是「末碼」');
+  assert.match(html, /帳號末碼/, '要列出送出去的欄位');
   // 跳脫：檔名是使用者給的
   const evil = aiConsentBodyHtml({ fileName: '<img src=x onerror=alert(1)>.pdf' });
   assert.match(evil, /&lt;img/);
@@ -184,6 +201,17 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.doesNotMatch(html, /\*\*/, '畫面文案不可留 markdown 星號');
   assert.doesNotMatch(aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'm' }), /\*\*/, '徽章同上');
   assert.ok(AI_CONSENT_TITLE.includes('AI') && AI_CONSENT_SUBMIT_LABEL.includes('同意'));
+  assert.match(AI_CONSENT_BUSY_LABEL, /稍候|讀取中|正在/, '送出中的鈕文字要看得出「還在跑」');
+  assert.match(AI_SENDING_TEXT, /稍候|請稍等/, '提示要請使用者稍候');
+  assert.match(AI_SENDING_TEXT, /不用重按|不要重按|別重按/, '★要講「不用重按」——不然使用者會連按（票是一次性、第二次會拿到錯誤）');
+  // ★r7：這句在**發請求之前**就吐了，而 HOSTED 停止線與無鑰匙會在任何 AI 呼叫前擋下 ⇒
+  //   宣稱「已送出／AI 正在讀」＝謊稱帳單已經外送（使用者會同時看到它和「尚未設定鑰匙」）。
+  assert.doesNotMatch(AI_SENDING_TEXT, /已送出|已經送|已外送|送出了/,
+    '★不可宣稱已送出：這句吐在發請求之前，雲端停止線與無鑰匙都會先擋下來');
+  assert.doesNotMatch(AI_SENDING_TEXT, /AI ?正在讀|正在讀這份帳單/,
+    '★不可宣稱 AI 已經在讀（那時可能一個位元組都還沒離開這台機器）');
+  assert.match(AI_SENDING_TEXT, /接下來會|準備送|將會送/,
+    '要把外送講成「接下來會發生的事」，使用者才知道還沒送出去');
 });
 
 test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「驗不到什麼」，模型名要跳脫', () => {
@@ -193,12 +221,18 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.equal(aiPreviewBadgeHtml({ engine: 'template' }), '');
   const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
   assert.match(html, /AI 幫你讀出來的/);
-  assert.match(html, /claude-haiku-4-5-20251001/);
+  assert.match(html, /Claude Haiku 4\.5/, '模型名要人看得懂（代號留給後端與 log）');
   // ★誠實劃界的白話版：這句必須在畫面上（不可只藏在 <details> 裡）
   const firstDetails = html.indexOf('<details');
   const visible = firstDetails >= 0 ? html.slice(0, firstDetails) : html;
-  assert.match(visible, /驗算|扣不扣得起來/, '驗算的射程要講');
-  assert.match(visible, /機構名|帳號|摘要/, '★「驗不到什麼」必須在畫面上，不可只藏在展開區');
+  // ★William 2026-08-12 改版：第一眼那句從「它驗不到 X」改成「**請確認** X 有沒有讀錯」——
+  //   同樣是誠實劃界的白話版，但改成**行動指示**（更能讓人真的去看那四欄）。
+  //   完整的驗算射程與盲區改由展開區承擔（下方 blindItem 的三條斷言）。
+  assert.match(visible, /請確認/, '★第一眼要有行動指示，不能只講「AI 讀的」就沒了');
+  for (const field of ['機構名', '帳號', '日期', '摘要']) {
+    assert.ok(visible.includes(field), `★要逐項點名要核對什麼（缺「${field}」＝使用者不知道該看哪裡）`);
+  }
+  assert.doesNotMatch(visible, /都驗過|保證|放心/, '第一眼不可出現任何讓人放鬆核對的字眼');
   // ★r2#1：**全文**層級的射程（原本只掃第一個展開區之前的片段，展開區裡的過頭話完全看不到）
   assert.match(html, /自洽|剛好.*平|扣不起來/, '要照實講「擋得住扣不起來的錯、擋不住剛好自洽的錯」（契約 §八 的誠實劃界）');
   // ★r4#1：驗算的真實射程＝**只驗台幣**（外幣整組 skip）、**每個帳戶首筆驗不到**（沒有前一筆可比）。
@@ -228,6 +262,18 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   const evil = aiPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
   assert.match(evil, /&lt;b&gt;/);
   assert.doesNotMatch(evil, /<b>x/);
+  // ★模型名要人看得懂（William 2026-08-12）：代號留在後端與 log，畫面給人名
+  assert.match(html, /Claude Haiku 4\.5/, '畫面要顯示人看得懂的模型名');
+  assert.doesNotMatch(html, /claude-haiku-4-5-20251001/, '不給使用者看內部代號');
+});
+
+test('E2b｜modelDisplayName：代號→人看得懂的名字；認不得的原樣顯示（不吃掉資訊）', () => {
+  assert.equal(modelDisplayName('claude-haiku-4-5-20251001'), 'Claude Haiku 4.5');
+  assert.equal(modelDisplayName('claude-sonnet-5'), 'Claude Sonnet 5');
+  assert.equal(modelDisplayName('claude-opus-4-8-20260101'), 'Claude Opus 4.8');
+  assert.equal(modelDisplayName('gpt-x-99'), 'gpt-x-99', '認不得的原樣顯示——不可回空字串（那會讓畫面看不出用了什麼）');
+  assert.equal(modelDisplayName(''), '');
+  assert.equal(modelDisplayName(undefined), '');
 });
 
 test('E3｜aiErrorText：後端白話句原句放行＋補下一步；未知 code 不吃訊息；不回聲帳單數字', () => {
@@ -274,7 +320,10 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   // 徽章：插值形（只鎖呼叫名的話，`${(f(r), '')}` 會過）
   assert.match(src, /\$\{aiPreviewBadgeHtml\(r\)\}/, '徽章要真的插進 body 字串');
   // 兩條 fallback：上傳窗與密碼窗各一（少一條＝加密帳單走不到 AI）
-  assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, notify:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
+  assert.equal(count(src, /runAiFallback\(\{ err: e, canOpenNext, openConsent:/g), 2, '上傳窗與密碼窗都要有 AI 救援路徑');
+  // ★William 2026-08-12 裁示：不再把模板的原錯誤搬到畫面上——同意窗第一行已經講了「範本認不得這個
+  //   版面」，那句紅字是重複資訊，而且它寫死「台新銀行綜合對帳單」、在多銀行時代本身就過期。
+  assert.doesNotMatch(src, /runAiFallback\(\{[^}]*notify:/, '★AI 救援路徑不可再吐原錯誤紅字（多餘且過期）');
   // ★r9#1：呼叫了還不夠——回傳 'rethrow' 必須真的把原錯誤丟回去。只把密碼窗那條 throw 改成 return，
   //   非 bank_unrecognized 的錯誤會被當成成功（表單關掉、什麼都不顯示），而三關全綠（Codex 實測）。
   assert.equal(count(src, /=== 'rethrow'\) throw e;/g), 2, "★兩條 fallback 都要以 === 'rethrow' 控制把原錯誤丟回（吞掉＝使用者看不到任何錯誤）");
@@ -301,6 +350,52 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.ok(AI_PREVIEW_LOST_TEXT.includes('重新上傳'), '票掉了要引導重新預覽');
   // 同意窗的鈕不可寫「儲存」——這是「送出去讀」的決定，不是存檔
   assert.match(src, /submitLabel: AI_CONSENT_SUBMIT_LABEL/, '同意窗要指定送出鈕文字');
+  // ★等待回饋（William 2026-08-12 回報：按下同意後畫面停 5–6 秒，看起來像當掉）
+  assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL/, '★送出中要換鈕文字（只變灰看起來像沒反應）');
+  assert.match(src, /toast\(AI_SENDING_TEXT\)/, '★另外吐一句提示：視線不一定在鈕上，而且要講「不用重按」');
+  const appSrc2 = srcOf('public/app.js');
+  assert.match(appSrc2, /if \(submitBtn && busyLabel\) submitBtn\.textContent = busyLabel;/, '★openForm 要真的把 busyLabel 寫上按鈕');
+  assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');
+  // ★r1#5：只把按鈕搬到動作列還不夠——.modal 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底
+  assert.match(appSrc2, /form-actions\$\{opts\.actionsHtml \? ' sticky-actions' : ''\}/, '有動作按鈕的資訊窗要套固定動作列');
+  // ⚠️ CSS 形狀題的三個坑，三個都踩過（r3#3、r4#1 由 Codex 實測示範）：
+  //    ①**註解**：把正確宣告寫進註解、正式宣告改壞 ⇒ 先剝掉 /* */
+  //    ②**重複宣告**：`position: sticky; position: static` ⇒ 後面覆寫前面，只看第一個等於沒看
+  //    ③**多寫一條同名規則**：後面那條覆寫前面那條 ⇒ 只取第一條等於沒看
+  //    所以這裡不用「掃到就算」，而是**解析出宣告、取最後生效的那個值**。
+  //    ⚠️ 誠實劃界：只認 `.form-actions.sticky-actions {…}` 這個**單獨**選擇器；寫成群組選擇器
+  //    （`.a, .form-actions.sticky-actions {…}`）或用其他選擇器隔空覆寫，這題看不到。
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = css.match(/\.form-actions\.sticky-actions\s*\{[^}]*\}/g) || [];
+  assert.equal(rules.length, 1, '★只准有一條 .sticky-actions 規則（第二條會覆寫第一條）');
+  const decls = rules[0].slice(rules[0].indexOf('{') + 1, -1).split(';')
+    .map((/** @type {string} */ d) => d.trim()).filter(Boolean)
+    .map((/** @type {string} */ d) => ({ prop: d.slice(0, d.indexOf(':')).trim(), val: d.slice(d.indexOf(':') + 1).trim() }));
+  // ⚠️ `!` 與 `important` 之間**允許空白**、關鍵字**不分大小寫**（css-cascade-4 §important：
+  //    最後兩個非空白非註解的 token）。只認 `!important` 連寫小寫＝`! important` 照樣打穿（r6 實測）。
+  const IMPORTANT_RE = /\s*!\s*important\s*$/i;
+  /** 取**實際生效**的那個值：`!important` 贏過一般宣告，同級才比誰後寫（r5#1：只比先後的話，
+   *  `position: static !important; position: sticky;` 會被讀成 sticky，瀏覽器算出來卻是 static）。
+   *  @param {string} prop */
+  const lastOf = (prop) => {
+    const hit = decls.filter((/** @type {any} */ d) => d.prop === prop);
+    if (!hit.length) return null;
+    const imp = hit.filter((/** @type {any} */ d) => IMPORTANT_RE.test(d.val));
+    const chosen = (imp.length ? imp : hit).at(-1);
+    return String(chosen.val).replace(IMPORTANT_RE, '').trim();
+  };
+  assert.equal(lastOf('position'), 'sticky', '★最後生效的 position 要是 sticky（沒有它，按鈕照樣沉在捲動內容最底）');
+  assert.equal(lastOf('bottom'), '0', '★停靠點要 bottom:0（負值＝停在窗底外面，實測按鈕滑出 8px＝白做）');
+  assert.match(String(lastOf('background')), /var\(--card\)/, '要不透明背景（否則捲動的表格會從按鈕底下透出來）');
+  // 有效下邊距＝`margin` 簡寫的第三個值與 `margin-bottom` 之中**最後寫的那個**
+  const mDecls = decls.filter((/** @type {any} */ d) => d.prop === 'margin' || d.prop === 'margin-bottom');
+  assert.ok(mDecls.length, '要寫出 margin（滿版靠左右負邊距）');
+  const impM = mDecls.filter((/** @type {any} */ d) => IMPORTANT_RE.test(d.val));
+  const lastM = (impM.length ? impM : mDecls).at(-1);
+  const vals = String(lastM.val).replace(IMPORTANT_RE, '').trim().split(/\s+/);
+  const effBottom = lastM.prop === 'margin-bottom' ? lastM.val : (vals.length >= 3 ? vals[2] : vals[0]);
+  assert.doesNotMatch(effBottom, /^-/,
+    '★下邊距不可為負：sticky 對齊的是 margin box，負的下邊距會把停靠點往下推（左右負邊距做滿版沒問題）');
   // ★r8#1：光有「產物」不夠，要釘住**產物真的被正式路徑用掉**——否則 openForm 忽略 bodyHtml 時，
   //   同意窗只剩一顆「同意，送出去讀」的按鈕、四件事（送哪份／去哪／費用／不同意會怎樣）全都不見，
   //   而所有考題照樣全綠（Codex 實測）。

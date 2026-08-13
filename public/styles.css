@@ -236,6 +236,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .inline-check input { margin: 0; cursor: pointer; }
 .field-hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+/* 固定動作列（2026-08-12）：`.modal` 本身是 max-height:90vh + overflow-y:auto，內容一長，動作列就沉到
+   捲動內容的最底——長預覽（帳戶表＋交易明細）要一直捲才按得到「確認」。**只加在 openInfo 帶
+   actionsHtml 的窗**（新 class、既有 .form-actions 一個字不改）：貼在窗底、永遠看得到。
+   背景要不透明，否則捲動的表格會從按鈕底下透出來。 */
+.form-actions.sticky-actions {
+  /* ⚠️ bottom 要 0、下邊距不可為負：負的下邊距會把 sticky 的「停在哪」往下推（margin box 對齊
+     scrollport），實測按鈕仍會滑出窗底 8px＝白做。左右負邊距是滿版用的，那個沒問題。 */
+  position: sticky; bottom: 0;
+  margin: 22px -24px 0; padding: 14px 24px;
+  background: var(--card); border-top: 1px solid var(--line); z-index: 1;
+}
 .cost-summary-card { display: flex; flex-direction: column; align-items: flex-start; min-height: 168px; }
 .cost-summary-card .stat-sub { min-height: 18px; }
 .cost-summary-card .cost-method-btn { margin-top: auto; padding: 6px 11px; }

@@ -43,6 +43,67 @@ export const BANK_PW_NOTICE_HOSTED = '對帳單密碼（會跟 PDF 一起上傳�
 /** 「記住這組密碼」勾選的標籤（**預設不勾**＝使用者拍板；密碼窗文案單一住所＝本檔）。 */
 export const REMEMBER_PW_LABEL = '記住這組密碼（下次匯入自動嘗試；可到設定頁清除）';
 
+// 上傳窗的文案（William 2026-08-12 逐點裁示）：
+// ①欄位名不寫死銀行（原文「對帳單 PDF（台新綜合對帳單）」已過期）
+// ②**不提台新**——未來內建讀取能力不會只有一家，點名反而會再過期一次
+// ③說明**預設收起來**（想知道的人自己點開）：真正的隱私把關在**同意窗**（每次送出前都問、講得完整），
+//   這裡只是預告，不必占畫面
+// ④內容照 William 的版本，但**糾正兩處與事實不符**：
+//   ・送出去的**不是 PDF 檔本身**，是伺服器在記憶體裡抽出來的**文字**（原檔不出去、也不落地）
+//   ・不是「有可能」自動送——**只有按下同意的那一次**才送，沒按就完全不送（他自己拍板的「每次都問」）
+//     寫成「有可能傳給」會讓人以為系統可能背著他送，那比事實更嚴重、也對不起這條路的設計。
+export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
+export const BANK_UPLOAD_NOTICE = `<details>
+  <summary>上傳前想先知道的事</summary>
+  <p style="margin:8px 0 0">請選取銀行寄給你的對帳單 PDF。</p>
+  <p style="margin:6px 0 0">如果內建程式認不出您的對帳單版面，將詢問您要不要交給 AI 幫忙判讀。（沒按同意不會送出至 AI 公司）</p>
+</details>`;
+// 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
+export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
+
+/**
+ * 讀不到「現值參考日」時的擋下警語（整段 <p>，作者內容、呼叫端不 esc）。
+ *
+ * ⚠️ 為什麼住在這裡而不是就地寫在 `cashflow.js`（r5#2）：原本用形狀掃描守這段文案，
+ * 但那種考題**守的是拼字、不是行為**——把接線寫成 `r["blocked"]`、或在前面插一段
+ * 隱藏的合規分支，正則就抓不到，畫面上照樣可以要求使用者外送帳單截圖（Codex 實測示範）。
+ * 搬到純函式＝**文案本身可以直接行為測試**，形狀題只剩「有沒有接上」這件小事。
+ *
+ * ⚠️ 誠實劃界：考題守的是「這段文案的內容」＋「cashflow.js 有接它」；
+ * 有人**另外**硬插一段自己的警語 HTML，這兩題都看不到。
+ */
+export function bankBlockedWarningHtml() {
+  return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——<b>整份已經被擋下來了</b>，不會寫進去任何東西（所以下面沒有確認鈕）。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
+}
+
+/**
+ * 銀行預覽表格底下那句話（純文字，呼叫端自己包 HTML／esc）。
+ *
+ * ⚠️ **排掉的筆數在「一筆都不匯入」時最需要講**（r2#1）：原本那句只掛在「有東西可匯入」的分支上，
+ * 整份只有外幣或只有重複時會落到「帳單裡沒有新交易」，使用者完全不知道那幾筆去哪了——
+ * 而那正是**最容易誤以為程式讀漏了**的情況。收成單一實作＝兩個分支不可能再各說各話。
+ *
+ * ⚠️ **`blocked` 優先於一切**（r3#1）：讀不到「現值參考日」的帳單按下確認會**整份失敗**，
+ * 這時候還說「以上 N 筆就是會匯入的全部內容」＝同一個畫面上兩句話互相打架
+ * （上面的警語才剛說「什麼都不會寫進去」）。畫面說的必須跟實際會發生的一致。
+ *
+ * @param {{shown: number, duplicate?: number, foreign?: number, blocked?: boolean}} n
+ *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
+ */
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0, blocked = false }) {
+  if (blocked) {
+    return shown > 0
+      ? `上面這 ${shown} 筆都不會寫進去——這份缺「現值參考日」，整份會被擋下。`
+      : '這份會被擋下，什麼都不會寫進去。';
+  }
+  const parts = [];
+  if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
+  if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);
+  if (shown > 0) return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  if (parts.length) return `這份帳單沒有新交易要匯入：${parts.join('；')}。`;
+  return '帳單裡沒有新交易。';
+}
+
 /**
  * 依 `GET /api/mode` 的回應挑句子。
  *

@@ -18,11 +18,19 @@ import { esc } from './html-escape.js';
 /** 同意窗的標題／送出鈕／供應商標籤／費用級距（文案單一住所）。 */
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
-export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的公司）';
+/** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
+export const AI_CONSENT_BUSY_LABEL = '正在讀取…請稍候';
+/** 送出當下的提示（鈕在彈窗裡、視線不一定在那；toast 補一句「還在跑、別重按」）。
+ * ⚠️ **不可寫「已送出／AI 正在讀」**（r7）：這句是在**發請求之前**吐的，而 HOSTED 停止線與
+ * 「還沒設鑰匙」都會在**任何 AI 呼叫之前**就把整條路擋下（`aiBankRoute` 前兩道）——
+ * 那時使用者會同時看到「AI 正在讀」和「尚未設定鑰匙」，等於**謊稱帳單已經外送出去**。
+ * 這條線的整個價值就是「畫面說的＝實際發生的」，這句尤其不能破例。 */
+export const AI_SENDING_TEXT = '處理中……接下來會把帳單文字送去給 AI 讀，通常幾秒鐘，請稍候（不用重按）';
+export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：P1b-3 攔截率實測後回頭校準這句。
  * 不寫「每百萬 token 幾美元」「模型名」「至多兩發」——那些常數不回前端（鐵則 10：寫死的數字自己會漂）。 */
-export const AI_COST_HINT = '一份帳單通常是幾塊台幣以內，直接記在你自己的 Anthropic 帳戶上（這是級距、不是報價，實際金額以他們的帳單為準）';
+export const AI_COST_HINT = '通常是幾塊台幣以內（記在你自己的 Anthropic 帳戶裡；這是級距、不是報價，實際金額以他們的帳單為準）';
 /** 預覽窗過期／已用過時的白話（票是一次性＋短效）。 */
 export const AI_PREVIEW_LOST_TEXT = '這份 AI 預覽已經過期或已經匯入過了——請重新上傳預覽一次，確認內容無誤再匯入。';
 
@@ -101,20 +109,34 @@ export function isAiTicketDeadCode(code) {
 export function aiConsentBodyHtml({ fileName = '' } = {}) {
   const name = esc(String(fileName || '（未命名檔案）'));
   return `
-<p>內建的讀取範本認不得這份對帳單的版面。可以改請 AI 幫忙讀讀看——但這一步會把帳單內容送到外部服務，所以<b>每一次都會先問過你</b>。</p>
+<p>本 app 認不出這份帳單的版面，你想請 AI 幫忙讀讀看嗎？</p>
 <ul style="margin:10px 0 12px;padding-left:18px;line-height:1.9">
-  <li><b>送出哪一份</b>：${name}（送的是從 PDF 抽出來的文字，不是 PDF 檔本身）</li>
-  <li><b>送去哪裡</b>：${AI_PROVIDER_LABEL}的 API；用的是你自己在設定頁存的那把鑰匙</li>
-  <li><b>大概多少錢</b>：${AI_COST_HINT}</li>
+  <li><b>送出內容</b>：${name}（抽出來的文字，不是 PDF 檔本身）</li>
+  <li><b>送去哪裡</b>：${AI_PROVIDER_LABEL}</li>
+  <li><b>大概多少</b>：${AI_COST_HINT}</li>
 </ul>
 <details>
   <summary>這到底送出去什麼？會留多久？</summary>
   <ul style="margin:8px 0 0;padding-left:18px;line-height:1.9">
-    <li>送出去的是這份帳單上印的文字：帳號末碼、每一筆的日期／金額／摘要／餘額。等於把對帳單影印一份、寄去請人幫忙看——內容就是你帳單上本來就有的那些。</li>
-    <li>不會送出：PDF 檔本身、你剛才輸入的帳單密碼、這個 app 裡的其他資料（持股、其他帳戶、你設的分類規則）。</li>
-    <li>依供應商公布的商業 API 政策，送過去的內容不會被拿去訓練模型、也會在一段時間後刪除（政策以供應商自己的公告為準，我們沒辦法替他們保證）。</li>
-    <li>讀出來的結果會<b>先回到畫面上讓你核對</b>；那份暫時放在伺服器的記憶體裡（程式重開就沒了），要等你按下匯入，才寫進這個 app 自己的資料裡。AI 那邊不會保留一份給你用。</li>
+    <li>送出去的是：
+      <ul style="margin:4px 0 0;padding-left:18px">
+        <li>帳單裡的帳號末碼</li>
+        <li>每一筆的日期／金額／摘要／餘額</li>
+      </ul>
+      <div style="margin:4px 0 0">等於把對帳單影印一份、寄去請人幫忙看——內容就是你帳單上本來就有的那些。</div>
+    </li>
+    <li>不會送出：
+      <ul style="margin:4px 0 0;padding-left:18px">
+        <li>PDF 檔本身</li>
+        <li>帳單密碼</li>
+        <li>這個 app 裡的任何其他資料</li>
+      </ul>
+    </li>
+    <li>依供應商目前的<b>商用 API 預設政策</b>：送過去的內容不會被拿去訓練模型，也會在一段時間後刪除。</li>
+    <li>⚠️ 但這是<b>預設值、不是我們能保證的事</b>——這條路用的是<b>你自己的 API 帳戶</b>，如果那個帳戶另外同意過資料使用、或有另外的合約條款，實際情形可能不一樣。以你自己的帳戶設定與供應商官方公告為準。</li>
+    <li>讀出來的結果會<b>先回到畫面上讓你核對</b>；那份暫時放在伺服器的記憶體裡（程式重開就沒了），要等你按下匯入，才寫進這個 app 自己的資料裡。</li>
     <li>萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次，那次的費用會多一些。</li>
+    <li>這個問句<b>每一次上傳都會出現</b>——同意只算這一次，不會被記住。</li>
     <li>不同意完全沒關係：這份改成手動記帳就好，其他功能一切照常。</li>
   </ul>
 </details>`;
@@ -128,13 +150,23 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
  * 「誰讀的、驗不到什麼」，不重述驗了幾關。
  * @param {any} preview
  */
+/** 模型代號 → 人看得懂的名字（畫面只給人看；代號留在後端與 log）。查不到就原樣顯示。 @param {string} id */
+export function modelDisplayName(id) {
+  const raw = String(id || '');
+  if (!raw) return '';
+  const m = raw.match(/^claude-(haiku|sonnet|opus)-(\d+)(?:-(\d+))?/);
+  if (!m) return raw;
+  const family = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }[m[1]] || m[1];
+  return `Claude ${family} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
+}
+
 export function aiPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
-  const model = esc(String(preview.aiModel || ''));
+  const model = esc(modelDisplayName(preview.aiModel));
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
-  <p style="margin:0 0 6px"><b>🤖 這一份是 AI 幫你讀出來的，不是內建範本讀的。</b>${model ? `（使用的模型：${model}）` : ''}</p>
-  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">下面那句驗算通過，驗的是<b>數字前後扣不扣得起來</b>；機構名、帳號、日期、摘要有沒有讀錯，它驗不到——請自己看一眼下面兩張表再按確認。</p>
+  <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
+  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
     <ul class="muted" style="margin:8px 0 0;padding-left:18px;font-size:12px;line-height:1.9">
@@ -184,17 +216,21 @@ export function aiErrorText(code, serverMessage) {
  * 的 `runBankUpload`）。回傳字串是考題的把手：
  * - `'rethrow'`＝不是可以走 AI 的錯（對帳閘紅／密碼錯／其他）⇒ 呼叫端原樣往上丟
  * - `'stale'`＝使用者已經切頁／彈窗換人 ⇒ 什麼都不做
- * - `'offered'`＝先把**模板的原錯誤訊息**吐出來（按取消後仍看得到，所以不必給 openForm 加 onCancel），
- *   再排程開同意窗；**排程前與 callback 內各驗一次 `canOpenNext()`**（#445 的兩顆競態：排程當下還在、
- *   執行時已切頁）。
- * @param {{err:any, canOpenNext:() => boolean, notify:(m:string) => void,
+ * - `'offered'`＝排程開同意窗；**排程前與 callback 內各驗一次 `canOpenNext()`**（#445 的兩顆競態：
+ *   排程當下還在、執行時已切頁）。
+ *
+ * ⚠️ **刻意不吐紅字**（William 2026-08-12 裁示）：初版會先 toast 模板的原錯誤（「這份 PDF 看起來
+ * 不是台新銀行綜合對帳單」）再開同意窗，但那句是**多餘的重複資訊**——同意窗第一行已經寫「內建的
+ * 讀取範本認不得這份對帳單的版面」，而且那句訊息**寫死台新**、在多銀行時代本身就過期了。
+ * 按取消＝使用者自己決定不用 AI，不需要再被紅字補一刀。（後端那句訊息保留：它仍是 API 的錯誤內容，
+ * 只是不再被搬到畫面上。）
+ * @param {{err:any, canOpenNext:() => boolean,
  *          openConsent:() => void, schedule?:(fn:() => void) => void}} o
  * @returns {'rethrow'|'stale'|'offered'}
  */
-export function runAiFallback({ err, canOpenNext, notify, openConsent, schedule = (fn) => setTimeout(fn, 0) }) {
+export function runAiFallback({ err, canOpenNext, openConsent, schedule = (fn) => setTimeout(fn, 0) }) {
   if (!shouldOfferAi(err)) return 'rethrow';
   if (!canOpenNext()) return 'stale';
-  notify(String(err?.message || ''));
   schedule(() => { if (canOpenNext()) openConsent(); });
   return 'offered';
 }

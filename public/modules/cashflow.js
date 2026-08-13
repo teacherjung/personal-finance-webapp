@@ -11,10 +11,10 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
-import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
+import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -196,8 +196,10 @@ function openBankUpload() {
         fields: [],
         bodyHtml: aiConsentBodyHtml({ fileName }),
         submitLabel: AI_CONSENT_SUBMIT_LABEL,
+        busyLabel: AI_CONSENT_BUSY_LABEL,   // 鈕上的字（AI 要跑 5–6 秒，只變灰看起來像當掉）
         onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           const canOpenNext = () => onPage() && ctx.owns.handoff();
+          toast(AI_SENDING_TEXT);   // 視線不一定在鈕上：另外吐一句「還在跑、不用重按」
           try {
             const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
@@ -223,7 +225,7 @@ function openBankUpload() {
             r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
           } catch (e) {
             // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
             return;
           }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -236,8 +238,10 @@ function openBankUpload() {
       });
       openForm({
         title: '上傳銀行對帳單',
+        bodyHtml: BANK_UPLOAD_NOTICE,
+        submitLabel: BANK_UPLOAD_SUBMIT_LABEL,
         fields: [
-          { key: 'file', label: '對帳單 PDF（台新綜合對帳單）', type: 'file', full: true },
+          { key: 'file', label: BANK_UPLOAD_FILE_LABEL, type: 'file', full: true },
         ],
         onMount: (/** @type {any} */ root) => {
           const inp = root.querySelector('#f_file');
@@ -258,8 +262,10 @@ function openBankUpload() {
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
             if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
-            // 範本認不得＝先吐原錯誤、再排同意窗（判準與競態防線都在 runAiFallback；其他錯誤照舊 toast＋留窗重試）
-            if (runAiFallback({ err: e, canOpenNext, notify: (/** @type {string} */ m) => toast(m, true), openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
+            // 範本認不得＝**只排同意窗、不吐原錯誤**（William 2026-08-12：那句紅字是多餘的——同意窗第一行
+            // 已經說了「範本認不得這個版面」，而且它還寫死單一銀行名。判準與競態防線都在 runAiFallback；
+            // 其他錯誤照舊 toast＋留窗重試）
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
           }
         }
       });
@@ -275,13 +281,17 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const willCreate = rows.filter((/** @type {any} */ x) => x.action === 'create').length;
   const tx = r.transactions || { rows: [], counts: {} };
   const c = tx.counts || {};
-  // 交易分箱預覽（前 12 筆；金流用顏色）：讓使用者匯入前看到自動分箱，之後可在收支列表逐筆改
+  // 交易明細預覽（**全部即將匯入的筆數**，William 2026-08-12：只給前 12 筆看不出這次會匯入什麼；
+  // 表格自帶捲動，筆數多也不會把窗撐爆）。已匯入過的重複筆不列（它們不會再進帳本），只在上面計數。
   const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
-  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).slice(0, 12);
+  // ⚠️ **外幣也要排除**（r1#2）：正式匯入對非 TWD 直接跳過（bank-import 的 importBankTxToDb），
+  //    把它算進「會匯入的全部內容」＝畫面說會進 N 筆、實際只進 N−外幣筆數，使用者會以為漏記。
+  const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate && !x.foreign);
   const body = `
     ${aiPreviewBadgeHtml(r)}
-    <p class="muted" style="margin-bottom:10px">現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
+    ${r.blocked ? bankBlockedWarningHtml() : ''}
     ${gateSummaryHtml(r.reconcile, 'bank')}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
     <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
@@ -294,17 +304,23 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
     <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
 
-    <div class="section-title">交易分箱（自動判斷，匯入後可在收支列表逐筆改）</div>
-    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。</p>
-    ${previewTx.length ? `<div class="tbl-wrap"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
+    <div class="section-title">交易明細</div>
+    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
+    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
       <td class="muted">${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
-    </tr>`).join('')}</tbody></table></div>${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length > 12 ? `<p class="muted" style="font-size:11px;margin-top:6px">…只顯示前 12 筆，共 ${(tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate).length} 筆</p>` : ''}` : '<p class="empty">帳單裡沒有新交易。</p>'}
-    <div class="page-actions" style="margin-top:16px"><button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button></div>`;
-  openInfo('銀行對帳單預覽', body, { size: 'xl' });
+    </tr>`).join('')}</tbody></table></div>` : ''}
+    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, blocked: !!r.blocked }))}</p>
+`;
+  // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
+  // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。
+  // ⚠️ 擋下的帳單**不給確認鈕**（r3#1）：那顆按下去必定整份失敗，擺在那裡等於邀請使用者去撞一次，
+  //    而且會跟上面「什麼都不會寫進去」的警語互相打架。要做的事警語裡已經寫了（改用手動記帳）。
+  openInfo('銀行對帳單預覽', body, { size: 'xl',
+    ...(r.blocked ? {} : { actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button>` }) });
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
     if (btn) btn.onclick = async () => {

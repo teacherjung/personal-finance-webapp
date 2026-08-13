@@ -178,14 +178,16 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
 
 // 通用彈窗表單。
 /** 通用表單彈窗。
- * P1b-2 新增兩個可選參數（既有五個呼叫形狀一字不動）：
+ * P1b-2 新增三個可選參數（既有五個呼叫形狀一字不動）：
  * - `bodyHtml`＝表單欄位**之前**的說明段落。⚠️ 語意同 `openInfo`＝**受信任的作者內容、不 esc**；
  *   呼叫端若要插使用者資料（檔名之類），自己在來源模組 `esc()`（P1b-2 的 `aiConsentBodyHtml` 就是）。
  * - `submitLabel`＝送出鈕文字（走 `esc`）。用途：確認型彈窗的鈕不該寫「儲存」。
+ * - `busyLabel`＝送出處理中的鈕文字（要等好幾秒的表單才給；失敗解鎖時自動換回 `submitLabel`）。
  * ⚠️ 刻意**不加 `onCancel`**：取消/×/背景三條路都走 `close()`＝撤銷擁有權（r20），
- *   要在取消後留下訊息就在**開窗之前**先 toast（`runAiFallback` 就是這樣做的）。 */
-/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string}} cfg */
-export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存' }) {
+ *   要在取消後留下訊息就得在**開窗之前**先 toast。（⚠️ 別再拿 `runAiFallback` 當這個做法的例子——
+ *   它 2026-08-12 起**刻意連 toast 都不發**了，理由見 ai-consent.js 那支的檔頭。） */
+/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
+export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
   const fieldHtml = fields.map(f => {
@@ -243,25 +245,32 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       out[f.key] = val;
     }
     if (submitBtn) submitBtn.disabled = true;
+    // busyLabel（2026-08-12）：送出要等好幾秒的表單（AI 解析實測 5–6 秒），只把鈕變灰看起來像當掉——
+    // 把文字換成「處理中…」讓使用者知道還在跑。失敗解鎖時要換回來（見下方 catch）。
+    if (submitBtn && busyLabel) submitBtn.textContent = busyLabel;
     // r6：onSubmit 有 await，回來時只在**仍擁有 modal-root** 時才動 UI——切頁或期間開了新彈窗＝
     //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
     // 第二個參數＝這張表單自己的擁有權把手：onSubmit 若要「送出後再開下一窗」，用 ctx.owns.handoff()
     // 判斷那一格有沒有被別人接管（r18）。既有呼叫端只收一個參數，不受影響。
     try { await onSubmit(out, { owns }); if (owns()) closeAfterSubmit(); }
-    catch (err) { if (owns()) { if (submitBtn) submitBtn.disabled = false; toast(err.message, true); } }   // 失敗才解鎖重試；成功已 close
+    catch (err) { if (owns()) { if (submitBtn) { submitBtn.disabled = false; if (busyLabel) submitBtn.textContent = submitLabel; } toast(err.message, true); } }   // 失敗才解鎖重試（並把鈕文字換回來）；成功已 close
   };
   if (onMount) onMount(root);
 }
 
 // 純說明彈窗（無表單）。bodyHtml 為受信任的作者內容（不 esc）。
-/** @param {string} title @param {string} bodyHtml @param {{size?:string}=} opts */
+/** @param {string} title @param {string} bodyHtml @param {{size?:string, actionsHtml?:string}=} opts */
+/** 資訊窗。`opts.actionsHtml`（2026-08-12）＝底部動作列要多放的按鈕 HTML，插在「了解」**右邊**
+ * （主要動作在最右＝一般慣例；William 指定）。受信任的作者內容、不 esc。
+ * ⚠️ 給了 actionsHtml 才會套 `.sticky-actions`＝動作列**貼在窗底不隨內容捲走**（r1#5：只把按鈕搬到
+ * 動作列還不夠，`.modal` 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底才按得到）。 */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body"><div class="info-body">${bodyHtml}</div>
-      <div class="form-actions"><button type="button" class="btn" data-close>了解</button></div></div>
+      <div class="form-actions${opts.actionsHtml ? ' sticky-actions' : ''}"><button type="button" class="btn" data-close>了解</button>${opts.actionsHtml || ''}</div></div>
   </div></div>`;
   const close = () => { root.innerHTML = ''; owns.release(); };   // r9：同 openForm，關窗即撤銷擁有權（有主才撤）
   root.querySelector('.x-close').onclick = close;
