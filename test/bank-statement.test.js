@@ -103,11 +103,21 @@ test('餘額更新｜同末碼不同幣別＝不同帳戶（363 JPY vs 363 USD �
   assert.equal(db.accounts.find(a => a.id === 'j').balance, 300);
 });
 
-test('餘額更新｜沒有現值參考日 → 400（不敢亂更新）', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed(null, [acc('3301', 'TWD', 23)])),
-    (/** @type {any} */ e) => e.status === 400);
+test('餘額更新｜沒有現值參考日 → **餘額不動、但不再整份退回**（William 2026-08-13）', () => {
+  // ⚠️ 舊行為是丟 400、整份匯不進去。但交易明細**根本用不到**這個日期——只有「這份帳單的餘額
+  //    比 app 裡的新嗎」才需要。因為一個欄位讀不到就把整批交易也擋掉，是連坐。
+  //    ⚠️ 保守的部分一點都沒放寬：**不知道新舊就絕不覆蓋餘額**（拿舊的蓋掉新的＝無聲毀資料）。
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [] };
+  const r = applyBalancesToDb(db, parsed);
+  assert.equal(r.balancesSkipped, true, '★要明確回報「這次沒更新餘額」——呼叫端得講給使用者聽');
+  assert.equal(r.updated, 0); assert.equal(r.created, 0);
+  assert.equal(db.accounts[0].balance, 111, '★餘額一動都不可以動（不知道新舊）');
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★balanceAsOf 也不可以被改掉');
+  assert.equal(db.accounts.length, 1, '★也不可以新建帳戶（新建就等於寫進一個不知道時點的餘額）');
 });
-
 test('預覽｜列出 update/create/skip-stale，不改 db', () => {
   const db = { accounts: [
     { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', accountNo: '****3301', balance: 5 },
@@ -162,11 +172,16 @@ test('餘額更新｜不支援幣別 graceful skip，不擋整張帳單（有效
   assert.ok(!db.accounts.some(a => a.currency === 'EUR'));
 });
 
-test('餘額更新｜壞的現值參考日（2026/13/45）→ 400，不寫進 balanceAsOf 撞櫃檯 500', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed('2026-13-45', [accM('x****3301', 'TWD', 23)])),
-    (/** @type {any} */ e) => e.status === 400);
+test('餘額更新｜壞的現值參考日（2026/13/45）＝比照讀不到：餘額不動，不寫進 balanceAsOf 撞櫃檯 500', () => {
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-13-45',
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [] };
+  const r = applyBalancesToDb(db, parsed);
+  assert.equal(r.balancesSkipped, true, '★壞日期＝當成讀不到（絕不拿它當時點）');
+  assert.equal(db.accounts[0].balance, 111);
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★壞日期不可進 balanceAsOf（會讓後續比大小撞櫃檯 500）');
 });
-
 test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯入間的手動修正）', () => {
   const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '900100****3301', balance: 88888, balanceAsOf: '2026-06-30' }] };
   const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 23)]));
@@ -1015,3 +1030,29 @@ test('去重鍵｜餘額欄讀成空白也會破壞去重（P1b-3 r13：D 類不
   assert.equal(r.imported, 1, '★餘額欄不同＝指紋不同 ⇒ 認不出是同一筆，又匯進去一次');
   assert.equal(db.transactions.length, 2, '★帳本上變成兩筆＝同一筆被記了兩次');
 });
+
+test('端到端｜讀不到現值參考日：交易照樣進帳本、餘額一動都不動（William 2026-08-13 解鎖）', () => {
+  // ⚠️ 這題是整個變更的**承重點**：使用者的金融卡明細沒印「現值參考日」，舊行為整份退回、
+  //    他只能手動記帳。新行為＝交易照匯、餘額不動。兩半都要驗，缺一半都不成立：
+  //    ①只驗「交易進去了」→ 可能連餘額也被亂寫（拿舊的蓋掉新的＝無聲毀資料）
+  //    ②只驗「餘額沒動」→ 可能整份還是被擋（那就沒解鎖到任何東西）
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD',
+    balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [
+      btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+      btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
+    ] };
+
+  const bal = applyBalancesToDb(db, parsed);
+  const tx = importBankTxToDb(db, parsed);
+
+  assert.equal(tx.imported, 2, '★交易要真的進帳本——這就是這次變更解鎖的東西');
+  assert.equal(db.transactions.length, 2);
+  assert.equal(bal.balancesSkipped, true, '★要明確回報「這次沒更新餘額」');
+  assert.equal(db.accounts[0].balance, 111, '★餘額一動都不可以動（不知道帳單新不新）');
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
+  assert.equal(db.accounts.length, 1, '★不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
+});
+

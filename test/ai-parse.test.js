@@ -407,24 +407,20 @@ test('r4#1｜票是一次性＋認不得的票 fail-closed：重放與假票都 
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫');
 });
 
-test('票制｜寫入失敗要把票放回（William 2026-08-12 實測：讀不到現值參考日→票沒了→重來要再花一次錢）', async () => {
+test('票制｜寫入失敗要把票放回（原情境＝讀不到現值參考日；2026-08-13 起改用對帳閘紅重現）', async () => {
   await seedDb(true);
-  // 這份答案卷過得了強閘（餘額鏈自洽），但**沒有現值參考日** ⇒ applyBalancesToDb 會 400
-  const noRefDate = () => ({ ...goodAnswer(), referenceDate: null });
-  const spy = spyTransport([noRefDate()]);
-  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
-  assert.ok(pv.aiTicket);
-  assert.equal(pv.blocked, true, '預覽就該標出「讀不到參考日＝套用會擋」');
-  await assert.rejects(
-    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
-    /現值參考日/);
-  assert.equal((await getDb()).transactions.length, 0, '失敗＝零寫入');
-  // ★票要還在：不然使用者只能重新上傳、再花一次 AI 費用
-  await assert.rejects(
-    applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
-    (/** @type {any} */ e) => e.code !== 'ai_ticket_invalid' && /現值參考日/.test(e.message),
-    '★再按一次要得到**同一個真正的原因**，不是「預覽已過期」（票被吃掉的症狀）');
-  assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（重試不重跑 AI）');
+  // ⚠️ **原本的觸發條件已經不成立**（William 2026-08-13）：讀不到現值參考日不再整份退回，
+  //    改成「餘額不動、交易照匯」。所以這題改用**仍然會擋下的**失敗來重現同一件事——
+  //    票被吃掉的話，使用者只能重新上傳、**再花一次 AI 費用**。守的東西一個字都沒少。
+  const bad = () => { const a = weakAnswer(); return a; };   // 過不了 ★6 強閘（弱閘答案卷）
+  const spy = spyTransport([bad(), bad()]);                  // 階梯會重試一次，兩發都給壞答案
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized,
+    { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }).catch((/** @type {any} */ e) => e);
+  assert.ok(/** @type {any} */ (pv).code, '前置：弱答案在預覽階段就被 ★6 擋下（這條路拿不到票）');
+
+  // 真正要守的那件事另有專屬考題（getDb 失敗時票要放回）＝見「r1#4 恢復邊界」那題。
+  // 這裡改守**互補的一半**：預覽被擋下時**不可以發票**（發了就是給一張兌不出東西的票）。
+  assert.equal(aiTicketCountForTest(), 0, '★預覽沒過閘就不該發票（發了等於留一張永遠用不到的票占著帳單內文）');
 });
 
 test('票匣｜r1#3 放回也要守張數上限（兌走再補新票不可無限累積帳單內文）', () => {
@@ -623,3 +619,19 @@ test('票匣｜r1#4 恢復邊界要蓋住 getDb 本身：儲存層讀不起來�
 
   assert.ok(redeemAiTicket(id), '★getDb 失敗後票要放回去（不然使用者白花一次 AI 呼叫、還得重讀一次帳單）');
 });
+
+test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日**（William 2026-08-13 實測發現）', () => {
+  // 病根：規則第 1 條原本寫「讀不到現值參考日＝null」，而 William 的金融卡明細**根本沒印**那五個字、
+  //   只印「帳單期間 2026/01/01 ~ 2026/01/31」⇒ AI 照規矩回 null ⇒ 整份匯不進去。
+  //   期末餘額本來就是截至區間結束那天，所以那是**同一個事實的另一種印法**，不是臆測。
+  const sys = buildBankSystem();
+  assert.match(sys, /帳單期間/, '★要告訴 AI 這種印法也算數');
+  assert.match(sys, /結束日/, '★要講明用的是結束日');
+  assert.match(sys, /不可填開始日/, '★只認結束日——開始日是期初、不是餘額的時點');
+  assert.match(sys, /不可填今天|不可自己推算/, '★也不准自己補一個沒印在帳單上的日期');
+  assert.match(sys, /兩者都沒有＝null|都沒有.*null/, '★真的兩種都沒印時仍要回 null（不可硬湊）');
+  // 答案格式的欄位說明要同口徑（AI 兩邊都會讀）
+  assert.match(AI_BANK_SCHEMA.properties.referenceDate.description, /帳單期間/,
+    '★schema 的欄位說明也要講同一件事——只改提示詞、schema 還寫「沒印＝null」＝兩邊互相打架');
+});
+

@@ -407,8 +407,12 @@ test('文案｜擋下的警語：不可要帳單內容、不可叫人去按已�
     '★不可要求使用者把帳單內容／截圖傳出來——回報只需要「哪一家銀行、哪一種版面」');
   assert.match(warn, /不用傳帳單內容|不需要傳帳單/, '★要主動講「不用傳帳單內容」');
   assert.match(warn, /哪一家銀行|哪一種版面/, '要講清楚回報時給什麼就夠了');
-  assert.doesNotMatch(warn, /按下確認/, '★擋下時沒有確認鈕，不可再叫使用者去按（會讓人到處找那顆鈕）');
-  assert.match(warn, /已經被擋下|已被擋下/, '要直接講「整份已經被擋下來了」');
+  // ★2026-08-13 行為改了：讀不到現值參考日不再整份擋下——餘額不更新、**交易照樣匯入**。
+  //   文案必須跟著改，否則使用者會以為這份帳單完全不能用（那才是真正的損失：他會去手動記帳）。
+  assert.doesNotMatch(warn, /整份已經被擋下|什麼都不會寫進去|整份失敗/,
+    '★不可再說整份被擋——那已經不是事實，會嚇得使用者放棄這份帳單');
+  assert.match(warn, /不會更新帳戶餘額|不更新.*餘額/, '★要講明真正受影響的是「帳戶餘額不更新」');
+  assert.match(warn, /交易明細照樣匯入|交易照樣匯入/, '★也要講明交易還是會進來（不然使用者不知道能不能按確認）');
   assert.match(warn, /現值參考日/, '要講出是哪個欄位讀不到');
   assert.match(warn, /^<p [^>]*>[\s\S]*<\/p>$/, '回傳整段 <p>＝呼叫端不必再包一層');
 });
@@ -464,24 +468,19 @@ test('接線｜預覽的腳註走 bankPreviewFootnote，cashflow.js 不可自己
   assert.doesNotMatch(src, /以上 \$\{previewTx\.length\} 筆/, '★「以上 N 筆」也不可再就地拼');
 });
 
-test('腳註｜擋下的帳單不可承諾會匯入，而且連確認鈕都不給（r3#1）', () => {
-  // 同一個畫面上，警語說「按下確認會整份失敗、什麼都不會寫進去」，腳註卻說「以上 1 筆會匯入」
-  // ＝兩句話互相打架。這條線上所有的病都是同一種：畫面說的跟實際會發生的不一樣。
-  const blocked = bankPreviewFootnote({ shown: 1, blocked: true });
-  assert.doesNotMatch(blocked, /會匯入的全部內容|以上 1 筆就是/,
-    '★擋下時不可承諾匯入（上面的警語才剛說什麼都不會寫進去）');
-  assert.match(blocked, /都不會寫進去|不會寫進去/, '★要明講那幾筆不會寫進去');
-  assert.match(bankPreviewFootnote({ shown: 0, blocked: true }), /不會寫進去/);
-  // blocked 蓋過重複／外幣的敘述：整份失敗時「另有 N 筆之前匯過」已經不是重點，講了反而像還會寫一部分
-  assert.doesNotMatch(bankPreviewFootnote({ shown: 2, duplicate: 3, foreign: 4, blocked: true }), /另有/,
-    '★擋下時不要再列「另有 N 筆」——會讓人以為還是會寫進去一部分');
-  // 沒擋下時行為不變
-  assert.match(bankPreviewFootnote({ shown: 1, blocked: false }), /以上 1 筆/);
+test('腳註｜blocked 不再改口，但確認鈕要回來（2026-08-13 行為變更）', () => {
+  // ⚠️ 舊行為：讀不到現值參考日＝整份失敗 ⇒ 腳註要改口、確認鈕要拿掉（r3#1）。
+  //    新行為：只有**餘額**不更新、交易照樣匯入 ⇒ 那兩件事都要**改回來**，
+  //    否則畫面又會與實際發生的事不一致（只是這次是往「太悲觀」的方向錯）。
+  assert.match(bankPreviewFootnote({ shown: 3 }), /以上 3 筆/, '★交易照樣匯入 ⇒ 腳註照常講「以上 N 筆會匯入」');
+  const modelSrc = readFileSync(join(ROOT, 'public/modules/cashflow-model.js'), 'utf8');
+  assert.doesNotMatch(modelSrc, /blocked = false|blocked\?: boolean/,
+    '★`blocked` 參數已連同改口一起拿掉——留著沒人用的參數會讓下一個人以為它還有意義');
 
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  assert.match(src, /blocked: !!r\.blocked/, '★要把擋下狀態餵給腳註（不然它永遠當成沒擋）');
-  assert.match(src, /r\.blocked \? \{\} : \{ actionsHtml:/,
-    '★擋下時不給確認鈕：那顆按下去必定整份失敗，擺著等於邀請使用者去撞一次');
+  assert.match(src, /openInfo\('銀行對帳單預覽', body, \{ size: 'xl',\s*\n?\s*actionsHtml:/,
+    '★確認鈕要一律給——按下去真的有事情發生（交易會匯入）');
+  assert.doesNotMatch(src, /r\.blocked \? \{\} : \{ actionsHtml:/, '★不可再依 blocked 拿掉確認鈕');
 });
 
 test('文案｜疑似重複警語：講清楚原因與下一步，而且不可寫成「不會匯入」（r1#3）', () => {
