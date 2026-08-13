@@ -105,7 +105,7 @@ function aiWouldPass(parsed) {
 // 每一型都是「AI 讀帳單時真的會犯」的錯：抄錯一位數、看錯正負、跳過一行、把兩行併一行…
 // `expect` 是這一支的**承諾**：caught＝使用者匯不進去、會看到擋下訊息；missed＝閘看不到。
 
-/** @type {{id:string, 類:'A'|'B'|'C', name:string, why:string, expect:'caught'|'missed',
+/** @type {{id:string, 類:'A'|'B'|'C'|'D', name:string, why:string, expect:'caught'|'missed',
  *          badge?:string, build:() => any}[]}
  * `badge`＝這一型在**預覽窗徽章**上的那句話（B 類必填）：考題拿它去徽章裡找，
  * 找不到＝我們知道它攔不到、卻沒告訴使用者。 */
@@ -148,7 +148,11 @@ const CASES = [
     why: '只有一筆＝沒有相鄰兩筆可比，但末筆仍要對概要 ⇒ 對不上',
     build: () => { const p = corpusFull(); p.transactions = [p.transactions[0]]; return p; } },
 
-  { id: 'A10', 類: 'A', name: '某個台幣帳戶的餘額欄全空（該帳戶零驗證）', expect: 'caught',
+  // ── D 類：金額全對，但**驗算根本蓋不到那個帳戶** ⇒ ★6 保守拒收 ──
+  // ⚠️ 它**不屬於 A 類**（r3#2 指正）：A 類的承諾是「造成不一致的錯會被擋」，而這一型
+  //    一個數字都沒錯、`problems` 是空的——擋它的是**覆蓋政策**，不是偵測到不一致。
+  //    混進 A 類＝用不相干的樣本把 10/10 撐高。
+  { id: 'D1', 類: 'D', name: '某個台幣帳戶的餘額欄全空（該帳戶零驗證）', expect: 'caught',
     why: '★6 逐帳戶覆蓋：有任何一個受驗帳戶一道擋下型都沒吃到就拒收（level 是全檔旗標、擋不住搭便車）',
     build: () => corpusFreeRider() },
 
@@ -241,7 +245,7 @@ test('P1b-3 攔截率｜逐型故障注入：每一格的結果都要與寫死�
 
 test('P1b-3 攔截率｜A 類（造成不一致的錯）必須 100% 攔下——這是這支功能唯一的承諾', () => {
   const a = CASES.filter((c) => c.類 === 'A');
-  assert.ok(a.length >= 10, `A 類樣本要夠多才敢寫成承諾（現有 ${a.length} 型）`);
+  assert.ok(a.length >= 9, `A 類樣本要夠多才敢寫成承諾（現有 ${a.length} 型）——⚠️ 只收「真的有數字讀錯」的型，被覆蓋政策擋下的歸 D 類（r3#2：混進來會把攔截率撐高）`);
   const missed = a.filter((c) => aiWouldPass(c.build()));
   assert.deepEqual(missed.map((c) => c.id), [],
     '★「造成不一致的錯會被擋下來給你看」是計畫 §八 的承諾——漏掉任何一型，那句話就要改口');
@@ -253,7 +257,13 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   //    每一型自己帶一句 `badge`，那句話必須真的在徽章裡找得到。
   const b = CASES.filter((c) => c.類 === 'B');
   assert.ok(b.length >= 9, `盲點至少要收錄目前已知的九型（現有 ${b.length}）`);
-  const badge = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
+  const raw = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
+  // ⚠️ **要驗看得見的內容**（r3#1 實測）：把那幾條 <li> 包進 `<!-- -->`，字串還在、
+  //    `includes()` 照樣命中，但畫面上一條都不剩。先剝註解，而且**徽章本來就不該有註解**——
+  //    直接連「有註解」都禁掉，這條路就整個關起來。
+  assert.doesNotMatch(raw, /<!--/, '★徽章輸出不可含 HTML 註解（那是把警語藏起來的唯一手法）');
+  assert.doesNotMatch(raw, /<[a-z]+[^>]*\bhidden\b|display\s*:\s*none/i, '★也不可用 hidden／display:none 藏');
+  const badge = raw.replace(/<!--[\s\S]*?-->/g, '');
   const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
   assert.deepEqual(missing.map((c) => c.id), [],
     '★這些盲點在畫面上找不到——考題知道它們攔不到，卻沒告訴使用者');
@@ -289,4 +299,11 @@ test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的�
   assert.match(planRaw, /條件攔截率/, '★要講明量的是條件攔截率——拿掉它，讀者會把它誤讀成「AI 正確率」');
   assert.match(planRaw, /不是.*「?AI 多常犯錯/, '★要講明不是 AI 的錯誤率');
   assert.match(planRaw, /不保證完整|不再宣稱窮盡/, '★盲點清單不可宣稱窮盡（第一版的「四件事」就是假的）');
+  // ★r3#3：**同一份文件不可以自己打自己**。§二-2 曾留著「攔截率未經實測、不先給數字」，
+  //   而 §五／§八 已經宣告實測完成並給了數字——讀者會以為其中一邊在說謊（而且確實有一邊是）。
+  //   這一條掃**全文**：任何「攔截率還沒實測」的殘句都算矛盾。
+  //   ⚠️ 不可寫成掃「未實測」三個字——§八 講「**AI 的錯誤率**尚未做」是**正確且必要**的劃界，
+  //   誤殺它等於逼人拿掉那句誠實話。
+  assert.doesNotMatch(planRaw, /攔截率未經實測|攔截率的數字要等|實測前不承諾機率/,
+    '★攔截率已經實測並寫進 §八——文件裡不可再留「還沒實測」的殘句（r3#3：同檔自相矛盾）');
 });
