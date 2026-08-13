@@ -662,16 +662,18 @@ test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日
     '★schema 的欄位說明也要講同一件事——只改提示詞、schema 還寫「沒印＝null」＝兩邊互相打架');
 });
 
-test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用仍會落庫，餘額一動不動（r4 指正）', async () => {
-  // ⚠️ **William 的真實情況走的是 AI 路線，不是模板路線。** 上一版只補了模板那條的端到端，
-  //    複審把突變改成「只擋 AI＋缺參考日」，132 題照樣全綠（r4）——等於這支想解鎖的**那條路**
-  //    仍然沒被守住。這一題走完整的 AI 流程：預覽發票 → 憑票套用 → 重讀資料庫。
+test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用仍會落庫，既有餘額一動不動（r4／r5）', async () => {
+  // ⚠️ **William 的真實情況走的是 AI 路線**（r4）：上一版只補模板那條，複審把突變改成
+  //    「只擋 AI＋缺參考日」照樣全綠。
+  // ⚠️ 而且「餘額不動」必須先**種一個真的會被比對到的帳戶**（r5）：`seedDb` 會清空 accounts，
+  //    上一版最後三行其實在比 `null === null`＝**空包彈**（複審強制改寫既有餘額，1995 題全綠）。
+  //    這一版種哨兵值、套用後**重讀資料庫比對完整快照**。
   await seedDb(true);
-  const before = await getDb();
-  const acct = before.accounts.find((/** @type {any} */ a) => a.accountNo === '900200****3302');
-  const beforeBalance = acct ? acct.balance : null;
-  const beforeAsOf = acct ? acct.balanceAsOf : null;
-  const beforeCount = before.accounts.length;
+  const seed = await getDb();
+  seed.accounts = [{ id: 'ai-e2e', name: '合成活存', type: 'cash', bank: '合成一銀', currency: 'TWD',
+    accountNo: '900200****3302', balance: 4242, balanceAsOf: '2026-01-31' }];   // 哨兵值：好認、且與帳單不同
+  await saveDb(seed);
+  const snapshotBefore = JSON.stringify((await getDb()).accounts);
 
   const noRef = () => ({ ...goodAnswer(), referenceDate: null });   // 過得了強閘（餘額鏈自洽），只是沒日期
   const spy = spyTransport([noRef()]);
@@ -688,10 +690,8 @@ test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用�
 
   const after = await getDb();   // ⚠️ 重讀：只看回傳值證明不了「真的存進去了」
   assert.equal(after.transactions.length, 3, '★交易要真的落庫');
-  assert.equal(after.accounts.length, beforeCount, '★不可新建帳戶');
-  const a2 = after.accounts.find((/** @type {any} */ a) => a.accountNo === '900200****3302');
-  assert.equal(a2 ? a2.balance : null, beforeBalance, '★餘額一動都不可以動');
-  assert.equal(a2 ? a2.balanceAsOf : null, beforeAsOf, '★時點也不可以動');
+  assert.equal(JSON.stringify(after.accounts), snapshotBefore,
+    '★整份帳戶快照要一模一樣——餘額 4242、時點 2026-01-31、帳戶數都不可以動'
+    + '（比整包快照才擋得住「只改其中一欄」與「多新建一個帳戶」）');
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（apply 憑票、不重跑 AI）');
 });
-
