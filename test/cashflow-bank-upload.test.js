@@ -401,7 +401,7 @@ test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可�
   assert.doesNotMatch(src, /台新綜合對帳單/, '★cashflow.js 不得再有寫死單一銀行的畫面文字');
 });
 
-test('文案｜擋下的警語：不可要帳單內容、不可叫人去按已經不存在的鈕（r1#1／r3#1／r5#2）', () => {
+test('文案｜「餘額不更新」提醒：不可要帳單內容、不可謊稱整份被擋（r1#1／r3#1／r5#2／#453）', () => {
   // ⚠️ 這題**直接考文案本身**（純函式），不是掃 cashflow.js 的拼字——形狀掃描守不住
   //    `r["blocked"]`、隱藏的前置分支這類等價寫法（r5#2 Codex 實測示範）。
   const warn = bankBlockedWarningHtml();

@@ -661,3 +661,37 @@ test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日
   assert.match(AI_BANK_SCHEMA.properties.referenceDate.description, /帳單期間/,
     '★schema 的欄位說明也要講同一件事——只改提示詞、schema 還寫「沒印＝null」＝兩邊互相打架');
 });
+
+test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用仍會落庫，餘額一動不動（r4 指正）', async () => {
+  // ⚠️ **William 的真實情況走的是 AI 路線，不是模板路線。** 上一版只補了模板那條的端到端，
+  //    複審把突變改成「只擋 AI＋缺參考日」，132 題照樣全綠（r4）——等於這支想解鎖的**那條路**
+  //    仍然沒被守住。這一題走完整的 AI 流程：預覽發票 → 憑票套用 → 重讀資料庫。
+  await seedDb(true);
+  const before = await getDb();
+  const acct = before.accounts.find((/** @type {any} */ a) => a.accountNo === '900200****3302');
+  const beforeBalance = acct ? acct.balance : null;
+  const beforeAsOf = acct ? acct.balanceAsOf : null;
+  const beforeCount = before.accounts.length;
+
+  const noRef = () => ({ ...goodAnswer(), referenceDate: null });   // 過得了強閘（餘額鏈自洽），只是沒日期
+  const spy = spyTransport([noRef()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized,
+    { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.ok(pv.aiTicket, '★沒有現值參考日不可影響「能不能拿到預覽與票」');
+  assert.equal(pv.blocked, true, '預覽要標明「這次不更新餘額」');
+
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized,
+    { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
+  assert.equal(res.ok, true, '★AI 路線也不可再整份拒絕——那正是使用者被卡住的那條路');
+  assert.equal(res.balancesSkipped, true, '★回應要帶出「餘額沒更新」');
+  assert.equal(res.transactions.imported, 3, '★交易要真的匯入');
+
+  const after = await getDb();   // ⚠️ 重讀：只看回傳值證明不了「真的存進去了」
+  assert.equal(after.transactions.length, 3, '★交易要真的落庫');
+  assert.equal(after.accounts.length, beforeCount, '★不可新建帳戶');
+  const a2 = after.accounts.find((/** @type {any} */ a) => a.accountNo === '900200****3302');
+  assert.equal(a2 ? a2.balance : null, beforeBalance, '★餘額一動都不可以動');
+  assert.equal(a2 ? a2.balanceAsOf : null, beforeAsOf, '★時點也不可以動');
+  assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（apply 憑票、不重跑 AI）');
+});
+
