@@ -311,57 +311,23 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   const b = CASES.filter((c) => c.類 === 'B');
   assert.ok(b.length >= 10, `盲點至少要收錄目前已知的十型（現有 ${b.length}）`);
   const raw = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
-  // ⚠️ **要驗看得見的內容**（r3#1 實測）：把那幾條 <li> 包進 `<!-- -->`，字串還在、
-  //    `includes()` 照樣命中，但畫面上一條都不剩。先剝註解，而且**徽章本來就不該有註解**——
-  //    直接連「有註解」都禁掉，這條路就整個關起來。
-  // ⚠️ **白名單而非逐個補洞**（r4#1）：藏東西的方法列不完——註解、`hidden`、`display:none`、
-  //    `<template>`…每補一個就找到下一個。所以反過來只准出現這幾種標籤。
-  //    ⚠️ **這不等於「這一族關起來了」**（r8／r9 各打穿一次，我寫過那句、是過度宣稱）——
-  //    守得住什麼寫在本段最後的誠實劃界裡。
-  const ALLOWED_TAGS = new Set(['b', 'br', 'details', 'div', 'li', 'p', 'summary', 'ul']);
-  const usedTags = [...new Set([...raw.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g)].map((m) => m[1].toLowerCase()))];
-  assert.deepEqual(usedTags.filter((t) => !ALLOWED_TAGS.has(t)), [],
-    '★徽章出現了白名單外的標籤——`<template>` 之類會讓整段警語在畫面上消失（考題卻照樣掃得到字串）');
-  assert.doesNotMatch(raw, /<!--/, '★也不可含 HTML 註解（同樣是把警語藏起來、字串卻還在）');
-  assert.doesNotMatch(raw, /\bhidden\b/i, '★不可用 hidden 屬性藏');
-  // ⚠️ **行內樣式也要白名單**（r8#1）：我上一輪只擋了標籤，他就用 `style="opacity:0"` 穿過去——
-  //    文字全在、畫面全不可見。**能藏東西的 CSS 屬性一樣列不完**（opacity／display／visibility／
-  //    position＋left:-9999px／clip-path／transform／color:transparent／width:0…），所以反過來
-  //    白名單：徽章的行內樣式只准出現這幾個純版面屬性。
-  const ALLOWED_CSS = new Set(['margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
-    'padding', 'padding-left', 'padding-top', 'padding-bottom', 'padding-right', 'font-size', 'line-height']);
-  // ⚠️ 掃法要**寬鬆**才咬得到（r9#3）：`STYLE=`、`style = `、單引號、無引號都是合法 HTML，
-  //    只認 `style="…"` 等於留了四個門。
-  for (const m of raw.matchAll(/style\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
-    const css = (m[1] ?? m[2] ?? m[3] ?? '');
-    for (const decl of css.split(';')) {
-      const [rawProp, ...restVal] = decl.split(':');
-      const prop = rawProp?.trim().toLowerCase();
-      if (!prop) continue;
-      const val = restVal.join(':').trim().toLowerCase();
-      assert.ok(ALLOWED_CSS.has(prop),
-        `★徽章的行內樣式出現白名單外的屬性「${prop}」——那一族（opacity／display／position…）會讓警語在畫面上消失`);
-      // 屬性合法、值一樣能藏：`font-size:0px`／`calc(0px)` 把字縮到看不見，`margin-left:-9999px` 推出畫面
-      if (prop === 'font-size') {
-        const px = /^([0-9.]+)(px|rem|em|%)$/.exec(val);
-        assert.ok(px && Number(px[1]) > 0, `★font-size 必須是大於 0 的長度（讀到「${val}」）——0 或 calc() 都能把字藏起來`);
-      }
-      for (const num of val.matchAll(/(-?[0-9.]+)px/g)) {
-        assert.ok(Number(num[1]) > -100, `★「${prop}: ${val}」的負值太大——那是把元素推出畫面的手法`);
-      }
-    }
-  }
-  // ⚠️⚠️ **這一段守得住什麼、守不住什麼**（改口三次之後的誠實版本，不要再往上加宣稱）：
-  //   **守得住**＝①九型盲點的文字真的在輸出裡（逐型比對，刪掉任一條就紅）②白名單外的標籤
-  //   ③HTML 註解與 `hidden` 屬性 ④行內樣式的白名單外屬性、`font-size` 非正值、大負數 px。
-  //   **守不住**＝這**不是渲染驗證**。`class` 指到會隱藏的樣式、外部 CSS 蓋掉、父層被藏、
-  //   顏色與背景同色…都看不到。真正確認「使用者看得見」只能在瀏覽器裡量——
-  //   2026-08-13 我在真的瀏覽器裡量過一次（把 public/ 起在暫時的埠、渲染徽章、展開收合區）：
-  //   那條盲點 li 為 922×137px、`visibility:visible`、`opacity:1`、`font-size:12px`，①～⑧ 齊全。
-  //   ⚠️ **那是人工一次性的證據，不是這裡的保證**——下次有人改壞，這份考題不一定會出聲。
-  //   ⚠️ 我先後寫過「這一族關起來了」兩次，兩次都被打穿（r8 用 opacity:0、r9 用單引號與 calc）。
-  //   撐不住的保證要改口，不要硬撐。
-  const badge = raw.replace(/<!--[\s\S]*?-->/g, '');
+  // ⚠️⚠️ **這一題守什麼、刻意不守什麼**（William 2026-08-13 裁示）：
+  //
+  //   **守**＝這十型盲點的文字**真的在徽章的輸出裡**（逐型比對，刪掉任一條就紅）。
+  //   這防的是**真實會發生的失誤**：改文案時順手弄丟一句。本支就發生過——我重寫這段時
+  //   把「方向」兩個字弄丟了，於是「首筆方向讀反＝收入被記成支出」在畫面上消失，
+  //   三關全綠、我完全沒察覺（複審比對 main 才抓到）。這一類意外還會再發生，所以要守。
+  //
+  //   **刻意不守**＝「它不會被藏起來」（`opacity:0`／`<template>`／`display:none`…）。
+  //   理由不是做不到（雖然從 Node 也確實做不到——那要真的渲染），而是**那不是真實的失誤模式**：
+  //   沒有人會不小心寫出 `opacity:0`。我為了防它燒掉四輪覆審、被打穿四次
+  //   （`<template>`／`opacity:0`／單引號 `style='…'`／`font-size:calc(0px)`），投入沒有上限、
+  //   回報趨近於零。⚠️ **對抗式的藏匿不在本考題射程內**，這句話要明寫，不要讓後人以為守到了。
+  //
+  //   一次性的人工證據（2026-08-13）：在真的瀏覽器裡渲染徽章、展開收合區，量到那條盲點 li
+  //   為 922×137px、`visibility:visible`、`opacity:1`、`font-size:12px`、①～⑧ 齊全。
+  //   那是**當下的證據，不是持續的保證**。
+  const badge = raw;
   const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
   assert.deepEqual(missing.map((c) => c.id), [],
     '★這些盲點在畫面上找不到——考題知道它們攔不到，卻沒告訴使用者');
@@ -369,6 +335,10 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
     '★畫面不可寫死件數——寫死就等於宣稱窮盡，而它補不完');
   assert.match(badge, /不保證完整|不只這些|還有沒列到|不是全部/,
     '★畫面要明說這份清單不保證完整（少列＝對使用者說謊）');
+  // ⚠️ 只要求「有講不完整」還不夠：把那句改成**相反的話**（「這份清單就是全部」），
+  //   前一條斷言仍被標題的「（不只這些）」滿足而不出聲。宣稱窮盡的話一句都不准出現。
+  assert.doesNotMatch(badge, /就是全部|即為全部|已列完|全部列在|只有這[幾些]/,
+    '★畫面不可宣稱清單已窮盡——覆審四輪陸續又找出六型，那種話就是假的');
 });
 
 test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的（兩邊互扣，改一邊另一邊就紅）', () => {
