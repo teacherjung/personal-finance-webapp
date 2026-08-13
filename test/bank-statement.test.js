@@ -172,8 +172,10 @@ test('餘額更新｜不支援幣別 graceful skip，不擋整張帳單（有效
   assert.ok(!db.accounts.some(a => a.currency === 'EUR'));
 });
 
-test('餘額更新｜壞的現值參考日（2026/13/45）＝比照讀不到：餘額不動，不寫進 balanceAsOf 撞櫃檯 500', () => {
-  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+test('餘額更新｜壞的現值參考日（2026/13/45）＝比照讀不到：餘額不動，不寫 balanceAsOf，也不新建', () => {
+  // ⚠️ `type` 要用會被 `matchAccount` 認得的（`cash`）——用 `type:'bank'` 的話這筆根本不會被匹配，
+  //    斷言等於在驗一個沒被碰到的物件（r8 指出的空轉）。
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'cash', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
   const parsed = { bank: '台新', referenceDate: '2026-13-45',
     accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
     transactions: [] };
@@ -181,6 +183,7 @@ test('餘額更新｜壞的現值參考日（2026/13/45）＝比照讀不到：�
   assert.equal(r.balancesSkipped, true, '★壞日期＝當成讀不到（絕不拿它當時點）');
   assert.equal(db.accounts[0].balance, 111);
   assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★壞日期不可進 balanceAsOf（會讓後續比大小撞櫃檯 500）');
+  assert.equal(db.accounts.length, 1, '★也不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
 });
 test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯入間的手動修正）', () => {
   const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '900100****3301', balance: 88888, balanceAsOf: '2026-06-30' }] };
@@ -1081,9 +1084,15 @@ for (const [label, refDate] of /** @type {[string, string|null][]} */ ([
     const snapshotBefore = JSON.stringify((await getDb()).accounts);
 
     // 模板路線的解析器接縫（第三參數）：餘額鏈自洽，只是參考日讀不到／壞掉
+    // ⚠️ **摘要要蓋到三種資料狀態**（r8）：只放 3301 的話，「已匹配**且原本有時點**」與
+    //    「摘要有、db 裡沒有（會走新建）」兩格從來沒被匹配過——那兩種偷改都不會被抓到。
     const parseIt = async () => ({ bank: '台新', referenceDate: refDate,
-      accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
-      accountCurrency: { '900100****3301': 'TWD' },
+      accounts: [
+        { suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' },      // 已匹配、無時點
+        { suffix: '9999', masked: '900100****9999', balance: 888, currency: 'TWD', label: '定存', note: '' },      // 已匹配、有時點
+        { suffix: '7777', masked: '900100****7777', balance: 666, currency: 'TWD', label: '外快', note: '' },      // db 裡沒有＝正常時會被新建
+      ],
+      accountCurrency: { '900100****3301': 'TWD', '900100****9999': 'TWD', '900100****7777': 'TWD' },
       transactions: [
         btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
         btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
@@ -1100,7 +1109,7 @@ for (const [label, refDate] of /** @type {[string, string|null][]} */ ([
     const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
     assert.equal(after.transactions.length, 2, '★交易要真的落庫');
     assert.equal(JSON.stringify(after.accounts), snapshotBefore,
-      '★整份帳戶快照要一模一樣——含**沒有 `balanceAsOf` 的那一筆**（哨兵全都帶時點的話，'
-      + '「只改沒有時點的帳戶」這種突變會整批漏掉）');
+      '★整份帳戶快照要一模一樣——三種狀態都在裡面：已匹配無時點／已匹配有時點／摘要有但 db 沒有'
+      + '（最後一種在正常情況會被**新建**，這裡一個都不可以新建）');
   });
 }

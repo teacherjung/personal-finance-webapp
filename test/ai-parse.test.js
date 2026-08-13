@@ -700,3 +700,18 @@ test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用�
     + '（比整包快照才擋得住「只改其中一欄」與「多新建一個帳戶」）');
   assert.equal(spy.calls.length, 1, '全程只有 preview 那一發模型呼叫（apply 憑票、不重跑 AI）');
 });
+
+test('答案卷驗收｜AI 給的 referenceDate 是壞日期＝整份拒收（不可流到餘額那一層）', () => {
+  // ⚠️ 矩陣裡的「AI／壞日期」格（r8）：實作是有的（normalizeAiBank 驗真日曆），但沒有專屬考題。
+  //    這一層**不可以放行壞日期**——放行的話下游只剩「不是真日期就跳過更新」那道，
+  //    等於把「AI 亂填」與「帳單真的沒印」混成同一件事，使用者看到的原因會是錯的。
+  for (const bad of ['2026-13-45', '2026-02-30', '26-01-31', '2026/01/31', 'yesterday']) {
+    assert.throws(() => normalizeAiBank({ ...goodAnswer(), referenceDate: bad }),
+      (/** @type {any} */ e) => e.code === 'ai_bad_answer',
+      `★「${bad}」不是真日期，答案卷這一層就要擋下`);
+  }
+  // null 是合法的（帳單真的沒印）——不可連它一起擋
+  assert.equal(normalizeAiBank({ ...goodAnswer(), referenceDate: null }).referenceDate, null,
+    '★null 是合法答案（帳單沒印），擋掉它就等於逼 AI 亂填');
+});
+
