@@ -397,8 +397,9 @@ test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可�
 });
 
 test('文案｜擋下的警語不可叫使用者把帳單內容傳給我（r1#1）', () => {
-  const src = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
-  // 範圍鎖在那段警語本身：整份檔案掃字串會被別處的句子矇混過去。
+  // ⚠️ 一定要 stripComments（r3#3 實測假綠）：在正式警語前放一段「符合期待」的註解，
+  //    正式文案改成要求傳截圖，考題仍會命中註解而放行。範圍也鎖在那段警語本身。
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   const warn = (src.match(/r\.blocked \? `[^`]*`/) || [''])[0];
   assert.ok(warn, '要有「讀不到現值參考日」的擋下警語');
   assert.doesNotMatch(warn, /截圖|把帳單.*傳給|帳單內容傳/,
@@ -448,4 +449,24 @@ test('接線｜預覽的腳註走 bankPreviewFootnote，cashflow.js 不可自己
   // 收成單一實作＝兩個分支不可能各說各話：就地寫死的版本必須絕跡
   assert.doesNotMatch(src, /帳單裡沒有新交易/, '★空狀態那句要由腳註函式決定（就地寫死＝只有外幣時又會說謊）');
   assert.doesNotMatch(src, /以上 \$\{previewTx\.length\} 筆/, '★「以上 N 筆」也不可再就地拼');
+});
+
+test('腳註｜擋下的帳單不可承諾會匯入，而且連確認鈕都不給（r3#1）', () => {
+  // 同一個畫面上，警語說「按下確認會整份失敗、什麼都不會寫進去」，腳註卻說「以上 1 筆會匯入」
+  // ＝兩句話互相打架。這條線上所有的病都是同一種：畫面說的跟實際會發生的不一樣。
+  const blocked = bankPreviewFootnote({ shown: 1, blocked: true });
+  assert.doesNotMatch(blocked, /會匯入的全部內容|以上 1 筆就是/,
+    '★擋下時不可承諾匯入（上面的警語才剛說什麼都不會寫進去）');
+  assert.match(blocked, /都不會寫進去|不會寫進去/, '★要明講那幾筆不會寫進去');
+  assert.match(bankPreviewFootnote({ shown: 0, blocked: true }), /不會寫進去/);
+  // blocked 蓋過重複／外幣的敘述：整份失敗時「另有 N 筆之前匯過」已經不是重點，講了反而像還會寫一部分
+  assert.doesNotMatch(bankPreviewFootnote({ shown: 2, duplicate: 3, foreign: 4, blocked: true }), /另有/,
+    '★擋下時不要再列「另有 N 筆」——會讓人以為還是會寫進去一部分');
+  // 沒擋下時行為不變
+  assert.match(bankPreviewFootnote({ shown: 1, blocked: false }), /以上 1 筆/);
+
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  assert.match(src, /blocked: !!r\.blocked/, '★要把擋下狀態餵給腳註（不然它永遠當成沒擋）');
+  assert.match(src, /r\.blocked \? \{\} : \{ actionsHtml:/,
+    '★擋下時不給確認鈕：那顆按下去必定整份失敗，擺著等於邀請使用者去撞一次');
 });

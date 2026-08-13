@@ -313,11 +313,14 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
-    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
+    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, blocked: !!r.blocked }))}</p>
 `;
   // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
   // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。
-  openInfo('銀行對帳單預覽', body, { size: 'xl', actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button>` });
+  // ⚠️ 擋下的帳單**不給確認鈕**（r3#1）：那顆按下去必定整份失敗，擺在那裡等於邀請使用者去撞一次，
+  //    而且會跟上面「什麼都不會寫進去」的警語互相打架。要做的事警語裡已經寫了（改用手動記帳）。
+  openInfo('銀行對帳單預覽', body, { size: 'xl',
+    ...(r.blocked ? {} : { actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button>` }) });
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
     if (btn) btn.onclick = async () => {

@@ -68,10 +68,19 @@ export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
  * 整份只有外幣或只有重複時會落到「帳單裡沒有新交易」，使用者完全不知道那幾筆去哪了——
  * 而那正是**最容易誤以為程式讀漏了**的情況。收成單一實作＝兩個分支不可能再各說各話。
  *
- * @param {{shown: number, duplicate?: number, foreign?: number}} n
+ * ⚠️ **`blocked` 優先於一切**（r3#1）：讀不到「現值參考日」的帳單按下確認會**整份失敗**，
+ * 這時候還說「以上 N 筆就是會匯入的全部內容」＝同一個畫面上兩句話互相打架
+ * （上面的警語才剛說「什麼都不會寫進去」）。畫面說的必須跟實際會發生的一致。
+ *
+ * @param {{shown: number, duplicate?: number, foreign?: number, blocked?: boolean}} n
  *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
  */
-export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0 }) {
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0, blocked = false }) {
+  if (blocked) {
+    return shown > 0
+      ? `上面這 ${shown} 筆都不會寫進去——這份缺「現值參考日」，整份會被擋下。`
+      : '這份會被擋下，什麼都不會寫進去。';
+  }
   const parts = [];
   if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
   if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);

@@ -178,13 +178,14 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
 
 // 通用彈窗表單。
 /** 通用表單彈窗。
- * P1b-2 新增兩個可選參數（既有五個呼叫形狀一字不動）：
+ * P1b-2 新增三個可選參數（既有五個呼叫形狀一字不動）：
  * - `bodyHtml`＝表單欄位**之前**的說明段落。⚠️ 語意同 `openInfo`＝**受信任的作者內容、不 esc**；
  *   呼叫端若要插使用者資料（檔名之類），自己在來源模組 `esc()`（P1b-2 的 `aiConsentBodyHtml` 就是）。
  * - `submitLabel`＝送出鈕文字（走 `esc`）。用途：確認型彈窗的鈕不該寫「儲存」。
  * - `busyLabel`＝送出處理中的鈕文字（要等好幾秒的表單才給；失敗解鎖時自動換回 `submitLabel`）。
  * ⚠️ 刻意**不加 `onCancel`**：取消/×/背景三條路都走 `close()`＝撤銷擁有權（r20），
- *   要在取消後留下訊息就在**開窗之前**先 toast（`runAiFallback` 就是這樣做的）。 */
+ *   要在取消後留下訊息就得在**開窗之前**先 toast。（⚠️ 別再拿 `runAiFallback` 當這個做法的例子——
+ *   它 2026-08-12 起**刻意連 toast 都不發**了，理由見 ai-consent.js 那支的檔頭。） */
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');

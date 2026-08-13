@@ -125,7 +125,7 @@ test('D｜runAiFallback：閘紅／密碼錯＝rethrow 且零呼叫；認不得�
   const pw = fallbackProbe({ err: Object.assign(new Error('密碼不對'), { code: 'pdf_password' }) });
   assert.equal(pw.out, 'rethrow');
   assert.equal(pw.calls.consent, 0);
-  // 認不得＝offered：原句先講（按取消後仍看得到，所以不必給 openForm 加 onCancel）
+  // 認不得＝offered，而且**一句紅字都不發**（William 2026-08-12：那句是多餘的重複資訊、還寫死台新）
   const ok = fallbackProbe({ err: Object.assign(new Error('這份 PDF 看起來不是台新銀行綜合對帳單'), { code: 'bank_unrecognized' }) });
   assert.equal(ok.out, 'offered');
   assert.equal(ok.calls.consent, 0, '排程之前不可直接開窗');
@@ -350,7 +350,10 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');
   // ★r1#5：只把按鈕搬到動作列還不夠——.modal 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底
   assert.match(appSrc2, /form-actions\$\{opts\.actionsHtml \? ' sticky-actions' : ''\}/, '有動作按鈕的資訊窗要套固定動作列');
-  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
+  // ⚠️ **先去掉 CSS 註解再掃**（r3#3 實測假綠）：把正確的 `position:sticky; bottom:0` 寫進這條規則
+  //    裡的註解、正式宣告改成 static＋負下邊距，底下每一條斷言都還是綠的。形狀題掃的必須是
+  //    **正式宣告**，不是我自己寫給人看的字。
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   // ⚠️ 範圍要鎖在**這條規則的大括號內**（[^}]*）：用 [\s\S]*? 會跨出區塊咬到後面別條規則的
   //    position: sticky，把 .sticky-actions 改成 static 也照樣綠（實測假綠，2026-08-12）。
   const stickyRule = (css.match(/\.form-actions\.sticky-actions\s*\{[^}]*\}/) || [''])[0];
