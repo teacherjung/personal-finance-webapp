@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { reconcileBankStatement } = await import('../lib/statement-reconcile.js');
+const { aiPreviewBadgeHtml } = await import('../public/modules/ai-consent.js');
 
 // ---------- 合成語料 ----------
 
@@ -66,6 +67,18 @@ function corpusFreeRider() {
   /** @type {any} */ (p.accountCurrency)['900100****3302'] = 'TWD';
   p.transactions.push(
     tx({ acctSuffix: '3302', acctMasked: '900100****3302', date: '2026-07-09', summary: '轉入', direction: 'in', amount: 500, balance: null }),
+  );
+  return p;
+}
+
+/** 兩個台幣帳戶、**兩邊都有完整餘額鏈**＝乾淨基準（注入前必須放行，才證明得了「是注入造成攔截」）。 */
+function corpusTwoAccounts() {
+  const p = corpusFull();
+  p.accounts.push({ suffix: '3302', masked: '900100****3302', balance: 700, currency: 'TWD', label: '活存B', note: '' });
+  /** @type {any} */ (p.accountCurrency)['900100****3302'] = 'TWD';
+  p.transactions.push(
+    tx({ acctSuffix: '3302', acctMasked: '900100****3302', date: '2026-07-03', summary: '轉入', direction: 'in', amount: 500, balance: 500 }),
+    tx({ acctSuffix: '3302', acctMasked: '900100****3302', date: '2026-07-15', summary: '轉入', direction: 'in', amount: 200, balance: 700 }),
   );
   return p;
 }
@@ -118,8 +131,9 @@ const CASES = [
     build: () => { const p = corpusFull(); p.transactions[2].balance = 1400; return p; } },
 
   { id: 'A7', 類: 'A', name: '把 A 帳戶的一列掛到 B 帳戶（末碼讀錯）', expect: 'caught',
-    why: '兩邊的鏈同時被破壞',
-    build: () => { const p = corpusFreeRider(); p.transactions[1].acctMasked = '900100****3302'; p.transactions[1].acctSuffix = '3302'; return p; } },
+    why: '兩邊的鏈同時被破壞。⚠️ 基準用**兩邊都驗得動**的 corpusTwoAccounts——'
+      + '建在「本來就會被拒收」的基準上＝二元判定證明不了是注入造成的攔截（r1#2 抓到的假陽性）',
+    build: () => { const p = corpusTwoAccounts(); p.transactions[1].acctMasked = '900100****3302'; p.transactions[1].acctSuffix = '3302'; return p; } },
 
   { id: 'A8', 類: 'A', name: '期末餘額與概要對不上（漏讀期末幾筆）', expect: 'caught',
     why: '末筆餘額與概要區印的帳戶餘額互扣 ⇒ 對不上',
@@ -145,15 +159,38 @@ const CASES = [
       + '所以只改金額、其餘一個字不動，整份仍完全自洽（連概要都對得上），錢卻已經記錯了',
     build: () => { const p = corpusFull(); p.transactions[0].amount = 900; return p; } },
 
-  { id: 'B3', 類: 'B', name: '外幣明細的金額讀錯', expect: 'missed',
-    why: '盲點②：外幣列本來就不計入台幣收支、整組不驗（餘額仍會照帳單概要更新）',
-    build: () => { const p = corpusForeign(); p.transactions[5].amount = 999; return p; } },
-
-  { id: 'B4', 類: 'B', name: '本期無往來帳戶的概要餘額讀錯', expect: 'missed',
+  { id: 'B3', 類: 'B', name: '本期無往來帳戶的概要餘額讀錯', expect: 'missed',
     why: '盲點③：明細一筆都沒有＝沒有任何數字可以驗它，但那個餘額仍會被寫進帳戶',
     build: () => { const p = corpusIdleAccount(); /** @type {any} */ (p.accounts[1]).balance = 8000; return p; } },
 
+  // ⚠️ 以下四型是**審查者（Codex r1）用唯讀探針找出來的**，我原本的型錄漏了它們——
+  //    也就是說「這道驗算看不到的四件事」那句話**是假的**。清單補不完，所以改口：不再宣稱窮盡。
+  { id: 'B4', 類: 'B', name: '某筆金額讀錯、而且**同一筆的餘額讀成空白**', expect: 'missed',
+    why: '盲點⑤：餘額空白的那一對會被跳過，但該帳戶還有別對在驗 ⇒ 仍算「有驗到」，逐帳戶覆蓋不會紅',
+    build: () => { const p = corpusFull(); p.transactions[1].amount = 700; p.transactions[1].balance = null; return p; } },
+
+  { id: 'B5', 類: 'B', name: '一筆支出與一筆收入被**併成一筆淨額**', expect: 'missed',
+    why: '盲點⑥：淨額一樣 ⇒ 餘額鏈完全接得上、期末也對，但**收入與支出兩邊的總額都錯了**（最陰險的一型）',
+    build: () => { const p = corpusFull();
+      p.transactions.splice(1, 2, tx({ date: '2026-07-05', summary: '淨額', direction: 'in', amount: 500, balance: 1500 }));
+      return p; } },
+
+  { id: 'B6', 類: 'B', name: '整個帳戶被漏讀（概要與明細都沒讀到）', expect: 'missed',
+    why: '盲點⑦：沒讀到的東西沒有任何數字可以驗——剩下的部分自己是自洽的',
+    build: () => { const p = corpusTwoAccounts(); p.accounts.pop();
+      p.transactions = p.transactions.filter((/** @type {any} */ t) => t.acctSuffix !== '3302'); return p; } },
+
+  { id: 'B7', 類: 'B', name: '台幣帳戶被誤判成**外幣**', expect: 'missed',
+    why: '盲點⑧：閘整組跳過不驗，而且匯入層也會排除 ⇒ 那個帳戶的交易**一筆都不會進帳**，畫面卻說驗算通過',
+    build: () => { const p = corpusTwoAccounts(); /** @type {any} */ (p.accounts[1]).currency = 'USD';
+      /** @type {any} */ (p.accountCurrency)['900100****3302'] = 'USD'; return p; } },
+
   // ── C 類：不動到金額（閘本來就不管，靠學習表與人工改） ──
+  { id: 'C0', 類: 'C', name: '外幣明細的金額讀錯', expect: 'missed',
+    why: '外幣列整組不驗（盲點②），但**也不會匯入**＝帳本金額不受影響。'
+      + '⚠️ 原本被我歸成 B 類「會讓入帳金額出錯」＝說法過重（r1#2 指正）：錯的是畫面上看到的那個數字，不是帳',
+    build: () => { const p = corpusForeign(); p.transactions[5].amount = 999; return p; } },
+
   { id: 'C1', 類: 'C', name: '摘要抄錯字（金額全對）', expect: 'missed',
     why: '不影響任何數字；分類可能跑掉，但錢是對的——匯入後在收支列表逐筆改',
     build: () => { const p = corpusFull(); p.transactions[1].summary = '提欵'; return p; } },
@@ -193,26 +230,40 @@ test('P1b-3 攔截率｜A 類（造成不一致的錯）必須 100% 攔下——
     '★「造成不一致的錯會被擋下來給你看」是計畫 §八 的承諾——漏掉任何一型，那句話就要改口');
 });
 
-test('P1b-3 攔截率｜B 類盲點剛好四個，而且與畫面上寫給使用者的四件事一一對上', () => {
-  // 預覽窗的徽章逐條列出「這道驗算看不到的四件事」。那份清單與這裡的 B 類**必須是同一份**，
-  // 否則畫面在對使用者說謊（少列＝漏講、多列＝嚇人）。
+test('P1b-3 攔截率｜盲點清單**不宣稱窮盡**，而且畫面上不可以寫死件數', () => {
+  // ⚠️ 第一版寫「這道驗算看不到的四件事」＝**假的**：審查者用唯讀探針又找出四型（B4–B7）。
+  //    清單補不完（下次還會有第九件），所以正確的修法不是補成八件，而是**改口**：
+  //    畫面與文件都不再宣稱窮盡，並明說「還有沒列到的」。這題就是守那件事。
   const b = CASES.filter((c) => c.類 === 'B');
-  assert.equal(b.length, 4, '★盲點數目變了就要同步改畫面文案與契約');
-  for (const c of b) assert.match(c.why, /盲點[①②③④]/, `${c.id} 要標明對應畫面上的第幾件事`);
-  assert.deepEqual(b.map((c) => (c.why.match(/盲點([①②③④])/) || [])[1]).sort(), ['①', '②', '③', '④'],
-    '★四個盲點要一一對上，不可重複也不可缺');
+  assert.ok(b.length >= 7, `盲點至少要收錄目前已知的七型（現有 ${b.length}）`);
+  const badge = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
+  assert.doesNotMatch(badge, /看不到的[一二三四五六七八九十]+件事|以下[一二三四五六七八九十]+種|共[一二三四五六七八九十]+件/,
+    '★畫面不可寫死件數——寫死就等於宣稱窮盡，而它補不完');
+  assert.match(badge, /不保證完整|不只這些|還有沒列到|不是全部/,
+    '★畫面要明說這份清單不保證完整（少列＝對使用者說謊）');
+  for (const c of b) assert.match(c.why, /盲點[①-⑧]/, `${c.id} 要標明是第幾個盲點`);
 });
 
 test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的（兩邊互扣，改一邊另一邊就紅）', () => {
   // ⚠️ 攔截率一旦寫進文件就是對使用者的承諾。文件的數字**不可以**靠人記得更新（寫死的數字自己會漂），
   //    所以這裡直接拿文件去對實測：加一型錯誤、或某型的結果變了，這題就會紅、逼人一起改。
-  const plan = readFileSync(join(ROOT, 'docs/parser-generalization-plan.md'), 'utf8');
+  // ⚠️ 兩個坑（r1#3 實測）：①**HTML 註解**——把舊數字藏進 <!-- --> 就能騙過「整份搜尋」
+  //    ②**整份搜尋**——數字可以寫在文件任何角落，不必真的在講攔截率那一段。
+  //    所以：先剝註解，再把範圍鎖到 §八 裡「P1b-3 已實測」開始、到下一個 `- ` 頂層項目為止。
+  const planRaw = readFileSync(join(ROOT, 'docs/parser-generalization-plan.md'), 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '');
+  const from = planRaw.indexOf('**P1b-3 已實測');
+  assert.notEqual(from, -1, '§八 要有 P1b-3 實測那一段');
+  const plan = planRaw.slice(from, planRaw.indexOf('\n- ', from));
+  assert.ok(plan.length > 200, '★範圍要真的咬到那一段（咬空的話底下全部斷言都是空包彈）');
   const n = (/** @type {'A'|'B'|'C'} */ k) => CASES.filter((c) => c.類 === k).length;
   assert.match(plan, new RegExp(`故障注入 \\*\\*${CASES.length}\\*\\* 型`), '★總型數要與考題一致');
   assert.match(plan, new RegExp(`A 類[^\\n]*＝ ${n('A')}/${n('A')} 全數攔下`), '★A 類的分子分母都要與考題一致');
   assert.match(plan, new RegExp(`B 類[^\\n]*＝ ${n('B')} 型全數漏接`), '★B 類盲點數要與考題一致');
   assert.match(plan, new RegExp(`C 類[^\\n]*＝ ${n('C')} 型`), '★C 類型數要與考題一致');
-  // 這句是誠實劃界的承重點：拿掉它，讀者就會把條件攔截率誤讀成「AI 正確率」
-  assert.match(plan, /條件攔截率/, '★要講明量的是條件攔截率');
-  assert.match(plan, /不是.*「?AI 多常犯錯/, '★要講明不是 AI 的錯誤率');
+  // 誠實劃界那兩句在**下一個項目符號**裡（不在上面那段窄範圍內），所以拿剝過註解的**全文**驗。
+  // 藏進 HTML 註解已經行不通（planRaw 剝掉了），這裡要的是「這兩句確實在文件裡」。
+  assert.match(planRaw, /條件攔截率/, '★要講明量的是條件攔截率——拿掉它，讀者會把它誤讀成「AI 正確率」');
+  assert.match(planRaw, /不是.*「?AI 多常犯錯/, '★要講明不是 AI 的錯誤率');
+  assert.match(planRaw, /不保證完整|不再宣稱窮盡/, '★盲點清單不可宣稱窮盡（第一版的「四件事」就是假的）');
 });
