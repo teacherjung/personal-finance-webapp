@@ -6,7 +6,9 @@
 //   ・得到的是**條件攔截率**——「**如果** AI 犯了 X 型錯，會不會被擋下」。
 //   ・**不是**「AI 多常犯錯」。那要真 AI ＋ 有標準答案的語料，不在這一支（見 §八）。
 //   ・為什麼不打真 AI 量：①不可重現（同一份帳單兩次可能不同答案，票制存在的理由就是這個）
-//     ②要花使用者的錢 ③跑得動的份數小到沒有統計意義。故障注入可以**窮舉錯誤型別**、零成本、可重現。
+//     ②要花使用者的錢 ③跑得動的份數小到沒有統計意義。故障注入零成本、可重現，而且可以**逐型**測。
+//     ⚠️ 但**列不完**：審查者兩輪各找出四型與兩型我沒想到的——所以本份**不宣稱窮盡**，
+//     畫面與計畫也一律改口（第一版寫「看不到的四件事」，那句話是假的）。
 //
 // 判定用的是**AI 路線**的放行條件（★6，比模板嚴）：`ok && level==='strong' && twdAccountsUnverified===0`。
 // 不滿足＝擋下（使用者看得到、匯不進去）＝**攔截成功**。
@@ -103,7 +105,10 @@ function aiWouldPass(parsed) {
 // 每一型都是「AI 讀帳單時真的會犯」的錯：抄錯一位數、看錯正負、跳過一行、把兩行併一行…
 // `expect` 是這一支的**承諾**：caught＝使用者匯不進去、會看到擋下訊息；missed＝閘看不到。
 
-/** @type {{id:string, 類:'A'|'B'|'C', name:string, why:string, expect:'caught'|'missed', build:() => any}[]} */
+/** @type {{id:string, 類:'A'|'B'|'C', name:string, why:string, expect:'caught'|'missed',
+ *          badge?:string, build:() => any}[]}
+ * `badge`＝這一型在**預覽窗徽章**上的那句話（B 類必填）：考題拿它去徽章裡找，
+ * 找不到＝我們知道它攔不到、卻沒告訴使用者。 */
 const CASES = [
   // ── A 類：會讓入帳金額出錯，而且會造成前後不一致 ⇒ 目標全數攔下 ──
   { id: 'A1', 類: 'A', name: '單筆金額抄錯一位數（8→3）', expect: 'caught',
@@ -148,42 +153,53 @@ const CASES = [
     build: () => corpusFreeRider() },
 
   // ── B 類：會讓入帳金額出錯，但**閘看不到**（已知盲點，畫面上逐條寫給使用者看） ──
-  { id: 'B1', 類: 'B', name: '金額與餘額**一起**被改成自洽的另一組數字', expect: 'missed',
+  { id: 'B1', 類: 'B', name: '金額與餘額**一起**被改成自洽的另一組數字', expect: 'missed', badge: '自洽',
     why: '盲點④：數學是平的，驗算看不出來——只能靠使用者自己看一眼',
     build: () => { const p = corpusFull(); p.transactions[1].amount = 300; p.transactions[1].balance = 700;
       p.transactions[2].balance = 1400; p.transactions[3].balance = 1200;
       /** @type {any} */ (p.accounts[0]).balance = 1200; return p; } },
 
-  { id: 'B2', 類: 'B', name: '每個帳戶的**第一筆**金額或方向讀錯', expect: 'missed',
+  { id: 'B2', 類: 'B', name: '每個帳戶的**第一筆**金額或方向讀錯', expect: 'missed', badge: '第一筆',
     why: '盲點①：首筆沒有前一筆可比——鏈是拿它的**餘額**去比下一筆，它的**金額**沒有任何檢查用到，'
       + '所以只改金額、其餘一個字不動，整份仍完全自洽（連概要都對得上），錢卻已經記錯了',
     build: () => { const p = corpusFull(); p.transactions[0].amount = 900; return p; } },
 
-  { id: 'B3', 類: 'B', name: '本期無往來帳戶的概要餘額讀錯', expect: 'missed',
+  { id: 'B3', 類: 'B', name: '本期無往來帳戶的概要餘額讀錯', expect: 'missed', badge: '沒有往來',
     why: '盲點③：明細一筆都沒有＝沒有任何數字可以驗它，但那個餘額仍會被寫進帳戶',
     build: () => { const p = corpusIdleAccount(); /** @type {any} */ (p.accounts[1]).balance = 8000; return p; } },
 
   // ⚠️ 以下四型是**審查者（Codex r1）用唯讀探針找出來的**，我原本的型錄漏了它們——
   //    也就是說「這道驗算看不到的四件事」那句話**是假的**。清單補不完，所以改口：不再宣稱窮盡。
-  { id: 'B4', 類: 'B', name: '某筆金額讀錯、而且**同一筆的餘額讀成空白**', expect: 'missed',
+  { id: 'B4', 類: 'B', name: '某筆金額讀錯、而且**同一筆的餘額讀成空白**', expect: 'missed', badge: '餘額是空白',
     why: '盲點⑤：餘額空白的那一對會被跳過，但該帳戶還有別對在驗 ⇒ 仍算「有驗到」，逐帳戶覆蓋不會紅',
     build: () => { const p = corpusFull(); p.transactions[1].amount = 700; p.transactions[1].balance = null; return p; } },
 
-  { id: 'B5', 類: 'B', name: '一筆支出與一筆收入被**併成一筆淨額**', expect: 'missed',
+  { id: 'B5', 類: 'B', name: '一筆支出與一筆收入被**併成一筆淨額**', expect: 'missed', badge: '併成一筆淨額',
     why: '盲點⑥：淨額一樣 ⇒ 餘額鏈完全接得上、期末也對，但**收入與支出兩邊的總額都錯了**（最陰險的一型）',
     build: () => { const p = corpusFull();
       p.transactions.splice(1, 2, tx({ date: '2026-07-05', summary: '淨額', direction: 'in', amount: 500, balance: 1500 }));
       return p; } },
 
-  { id: 'B6', 類: 'B', name: '整個帳戶被漏讀（概要與明細都沒讀到）', expect: 'missed',
+  { id: 'B6', 類: 'B', name: '整個帳戶被漏讀（概要與明細都沒讀到）', expect: 'missed', badge: '整個帳戶被漏讀',
     why: '盲點⑦：沒讀到的東西沒有任何數字可以驗——剩下的部分自己是自洽的',
     build: () => { const p = corpusTwoAccounts(); p.accounts.pop();
       p.transactions = p.transactions.filter((/** @type {any} */ t) => t.acctSuffix !== '3302'); return p; } },
 
-  { id: 'B7', 類: 'B', name: '台幣帳戶被誤判成**外幣**', expect: 'missed',
+  { id: 'B7', 類: 'B', name: '台幣帳戶被誤判成**外幣**', expect: 'missed', badge: '認成外幣',
     why: '盲點⑧：閘整組跳過不驗，而且匯入層也會排除 ⇒ 那個帳戶的交易**一筆都不會進帳**，畫面卻說驗算通過',
     build: () => { const p = corpusTwoAccounts(); /** @type {any} */ (p.accounts[1]).currency = 'USD';
       /** @type {any} */ (p.accountCurrency)['900100****3302'] = 'USD'; return p; } },
+
+  // 審查者 r2 又找到的兩型：都掛在既有編號底下（畫面不新增條目，只把 ①⑧ 的說法擴寫）
+  { id: 'B8', 類: 'B', name: '**整筆漏掉**每個帳戶的第一筆', expect: 'missed', badge: '整筆漏掉',
+    why: '盲點①的另一種形狀：首筆整個不見，後面的鏈與期末仍然對得上',
+    build: () => { const p = corpusFull(); const [, ...rest] = p.transactions; p.transactions = rest; return p; } },
+
+  { id: 'B9', 類: 'B', name: '外幣帳戶被誤判成**台幣**', expect: 'missed', badge: '外幣數字被當成台幣',
+    why: '盲點⑧的反方向：外幣的數字會被當台幣入帳（比誤判成外幣更糟——那只是不進帳，這是進錯帳）',
+    build: () => { const p = corpusForeign();
+      /** @type {any} */ (p.accounts[1]).currency = 'TWD'; /** @type {any} */ (p.accountCurrency)['900100****363'] = 'TWD';
+      p.transactions[4].balance = 30; p.transactions[5].balance = 50; return p; } },
 
   // ── C 類：不動到金額（閘本來就不管，靠學習表與人工改） ──
   { id: 'C0', 類: 'C', name: '外幣明細的金額讀錯', expect: 'missed',
@@ -202,9 +218,10 @@ const CASES = [
 
 // ---------- 實測 ----------
 
-test('P1b-3 攔截率｜前置：正確的合成帳單四種形狀都要能通過（不然攔截率是被誤擋撐出來的）', () => {
+test('P1b-3 攔截率｜前置：正確的合成帳單**每一種**形狀都要能通過（不然攔截率是被誤擋撐出來的）', () => {
   for (const [name, p] of /** @type {[string, any][]} */ ([
     ['單帳戶完整', corpusFull()], ['台幣＋外幣', corpusForeign()], ['含無往來帳戶', corpusIdleAccount()],
+    ['雙台幣帳戶（A7／B6／B7 的基準）', corpusTwoAccounts()],   // ★漏驗它＝A7 可能又被髒基準的假陽性撐住（r2#1）
   ])) {
     assert.equal(aiWouldPass(p), true, `★${name}：沒有注入錯誤就該放行——會誤擋的閘算出來的攔截率沒有意義`);
   }
@@ -230,18 +247,20 @@ test('P1b-3 攔截率｜A 類（造成不一致的錯）必須 100% 攔下——
     '★「造成不一致的錯會被擋下來給你看」是計畫 §八 的承諾——漏掉任何一型，那句話就要改口');
 });
 
-test('P1b-3 攔截率｜盲點清單**不宣稱窮盡**，而且畫面上不可以寫死件數', () => {
-  // ⚠️ 第一版寫「這道驗算看不到的四件事」＝**假的**：審查者用唯讀探針又找出四型（B4–B7）。
-  //    清單補不完（下次還會有第九件），所以正確的修法不是補成八件，而是**改口**：
-  //    畫面與文件都不再宣稱窮盡，並明說「還有沒列到的」。這題就是守那件事。
+test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且不可寫死件數', () => {
+  // ⚠️ 上一版只驗「沒寫死件數＋有講不完整」＝**假綠**：審查者把 B4–B7 從徽章整段刪掉，
+  //    所有斷言照樣過（使用者的警語被刪掉會過關＝真回歸）。改成**逐型核對**：
+  //    每一型自己帶一句 `badge`，那句話必須真的在徽章裡找得到。
   const b = CASES.filter((c) => c.類 === 'B');
-  assert.ok(b.length >= 7, `盲點至少要收錄目前已知的七型（現有 ${b.length}）`);
+  assert.ok(b.length >= 9, `盲點至少要收錄目前已知的九型（現有 ${b.length}）`);
   const badge = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
+  const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
+  assert.deepEqual(missing.map((c) => c.id), [],
+    '★這些盲點在畫面上找不到——考題知道它們攔不到，卻沒告訴使用者');
   assert.doesNotMatch(badge, /看不到的[一二三四五六七八九十]+件事|以下[一二三四五六七八九十]+種|共[一二三四五六七八九十]+件/,
     '★畫面不可寫死件數——寫死就等於宣稱窮盡，而它補不完');
   assert.match(badge, /不保證完整|不只這些|還有沒列到|不是全部/,
     '★畫面要明說這份清單不保證完整（少列＝對使用者說謊）');
-  for (const c of b) assert.match(c.why, /盲點[①-⑧]/, `${c.id} 要標明是第幾個盲點`);
 });
 
 test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的（兩邊互扣，改一邊另一邊就紅）', () => {
@@ -256,6 +275,10 @@ test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的�
   assert.notEqual(from, -1, '§八 要有 P1b-3 實測那一段');
   const plan = planRaw.slice(from, planRaw.indexOf('\n- ', from));
   assert.ok(plan.length > 200, '★範圍要真的咬到那一段（咬空的話底下全部斷言都是空包彈）');
+  // ⚠️ 第三種穿透（r2#3 實測）：**把整份文件包進 `<div hidden>`**——原始字串全都還在、
+  //    斷言全過，但**渲染出來什麼都看不到**。文件是給人看的，藏起來等於刪掉。
+  assert.doesNotMatch(planRaw, /<[a-z]+[^>]*\bhidden\b/i, '★計畫文件不可用 hidden 把內容藏起來');
+  assert.doesNotMatch(planRaw, /display\s*:\s*none/i, '★也不可用 display:none 藏');
   const n = (/** @type {'A'|'B'|'C'} */ k) => CASES.filter((c) => c.類 === k).length;
   assert.match(plan, new RegExp(`故障注入 \\*\\*${CASES.length}\\*\\* 型`), '★總型數要與考題一致');
   assert.match(plan, new RegExp(`A 類[^\\n]*＝ ${n('A')}/${n('A')} 全數攔下`), '★A 類的分子分母都要與考題一致');
