@@ -964,3 +964,17 @@ test('疑似重複｜機構寫法不同要算同一家，前綴帶分隔符也�
   assert.equal(previewBankTxForDb(dashed, sameDashed).rows[0].similar, true,
     '★洗掉分隔符後是同一個前綴＝同一個帳戶');
 });
+
+test('疑似重複｜最舊的 bankRef 只存純末碼（沒有遮罩星號）也要進索引（r3#1）', () => {
+  // repo 明確保留相容性的正式資料形狀。accountSuffix 只認「星號後的數字」，讀不到就整筆不進索引
+  //   ⇒ 那些最老的交易**永遠不會被提醒**，而它們正是最可能被跨版式重匯的一批。
+  const legacy = { accounts: [], transactions: [
+    { id: 'o1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|3302|2026-06-01|in|1000|1000|舊摘要|' },
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '匯款存入', direction: 'in', amount: 1000, balance: 1000, note: '新版面' }),
+  ] };
+  assert.equal(previewBankTxForDb(legacy, parsed).rows[0].similar, true,
+    '★純末碼＝末碼本身、前綴當作不知道（不可整筆略過）');
+});
