@@ -85,6 +85,15 @@
   color: var(--accent-ink); background: var(--accent-soft); border-radius: 20px;
   font-size: 11px; font-weight: 700;
 }
+/* 餘額下面那行「對帳單更新至 YYYY-MM-DD」：資訊層級刻意低於金額本身——
+   它是判斷新舊用的旁註，不是第二個數字。`font-weight` 要覆寫 `.num` 的粗體。 */
+.bank-balance-asof {
+  display: block; margin-top: 3px;
+  color: var(--text-dim); font-size: 10.5px; font-weight: 400;
+  font-variant-numeric: tabular-nums; letter-spacing: 0;
+}
+.bank-balance-asof-none { font-style: italic; opacity: 0.75; }
+.bank-asof-info { margin-left: 8px; color: var(--accent-ink); text-decoration: underline; font-size: 11.5px; }
 .bank-account-actions .row-actions { flex-wrap: nowrap; }
 .bank-account-actions button { width: 34px; height: 32px; padding: 0; }
 

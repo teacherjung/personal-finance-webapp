@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { balanceAsOfNote } from '../public/modules/accounts-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(ROOT, path), 'utf8');
@@ -44,7 +45,9 @@ function cssBlock(source, marker) {
 function bankAccRowOf(source) {
   const block = rowBlock(source);
   const esc = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-  return Function('esc', 'icon', 'moneyCur', `${block}; return bankAccRow;`)(esc, () => '<svg></svg>', (value, cur) => `${cur} ${value}`);
+  // balanceAsOfNote 用**真的那一支**（不是替身）：本題驗的是消毒與欄位形狀，
+  // 餘額旁那行小字自己的行為在 test/bank-accounts-asof-ui.test.js。
+  return Function('esc', 'icon', 'moneyCur', 'balanceAsOfNote', `${block}; return bankAccRow;`)(esc, () => '<svg></svg>', (value, cur) => `${cur} ${value}`, balanceAsOfNote);
 }
 
 function assertBankRowBehavior(source) {

@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq, claimModalRoot } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, openInfo, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq, claimModalRoot } from '../app.js';
 import { PALETTE, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -7,7 +7,7 @@ import { rebalancePlan } from './rebalance.js';
 // 型別選項漏了 liability／creditcard（合法值選不到 ⇒ 打開那種帳戶按儲存就靜靜變 cash，
 // 50 萬負債變 50 萬資產），負債判準漏了 creditcard（信用卡帳戶被畫成藍標籤、餘額不標紅）。
 // 這些手抄清單零考題看著；理由、後果與「新增型別還要改哪裡」全寫在 accounts-model.js 檔頭。
-import { accountTypeOptions, isLiabilityAccount, ACCOUNT_CURRENCIES } from './accounts-model.js';
+import { accountTypeOptions, isLiabilityAccount, ACCOUNT_CURRENCIES, balanceAsOfNote } from './accounts-model.js';
 let chart;
 const ASSET_CLASS_DISPLAY_ORDER = Object.freeze(['股票', '債券', '現金', '黃金']);
 
@@ -238,7 +238,7 @@ export async function renderBankAccounts() {
       <section class="bank-account-details">
         <div class="bank-account-section-head">
           <div><span>帳戶明細</span><h2>現金與銀行存款</h2></div>
-          <p>餘額依各帳戶原幣顯示，不跨幣別加總</p>
+          <p>餘額依各帳戶原幣顯示，不跨幣別加總<button type="button" class="info-link bank-asof-info" id="balanceAsOfInfo">餘額下面的日期是什麼？</button></p>
         </div>
         ${accounts.length ? `<div class="tbl-wrap bank-account-table-wrap">
           <table class="bank-acc-tbl bank-account-table"><thead><tr><th>銀行帳戶</th><th>帳戶末四碼</th><th>幣別</th><th class="num">餘額</th><th aria-label="動作"></th></tr></thead>
@@ -257,6 +257,7 @@ export async function renderBankAccounts() {
   byId('addBankAcc').onclick = () => openAccForm(null, {
     defaultType: 'cash', onDone: () => rerenderBankAccountsAfterSave(seq, '銀行帳戶已新增')
   });
+  byId('balanceAsOfInfo').onclick = openBalanceAsOfInfo;   // 說明按鈕在 section head，帳戶數為 0 時照樣在（同 addBankAcc，不做 null 檢查）
   const emptyAdd = byId('addBankAccEmpty');
   if (emptyAdd) emptyAdd.onclick = () => openAccForm(null, {
     defaultType: 'cash', onDone: () => rerenderBankAccountsAfterSave(seq, '銀行帳戶已新增')
@@ -269,15 +270,27 @@ export async function renderBankAccounts() {
     confirmDelete(x.name, () => api('/accounts/' + x.id, { method: 'DELETE' }));   // confirmDelete 內建 router() 重繪目前頁（銀行帳戶）
   });
 }
+// 就地解釋（使用者鐵則）：這個日期不看說明就會被當成「餘額正確到這天」，那是**錯的**——
+// 手動改餘額不會動到它。文案本身的誠實由 `balanceAsOfNote` 的措辭撐住，這個窗補的是「為什麼」。
+function openBalanceAsOfInfo() {
+  openInfo('餘額下面的日期是什麼？', `
+    <p>那行小字是：<strong>最後一次用銀行對帳單更新這個帳戶餘額時，那份帳單算到哪一天</strong>。</p>
+    <p>它<strong>不是</strong>「餘額今天一定是對的」。你自己在帳戶表單手動改餘額時，這個日期不會跟著動——目前只有匯入對帳單會寫它。</p>
+    <p>寫著「未由對帳單更新過」的帳戶，代表餘額從來沒被對帳單更新過：可能是你手動建立、手動維護的，也可能是那份帳單上讀不到「現值參考日」（讀不到時 app 寧可不更新餘額，也不拿不知新舊的數字去蓋掉你的）。</p>
+    <p>怎麼用它判斷：<strong>日期離今天越遠，這個餘額越可能已經跟銀行的實際數字對不上。</strong>想更新就到「銀行收支」頁匯入一份最新的對帳單。</p>
+  `, { size: 'md' });
+}
+
 function bankAccRow(x) {
   const cur = x.currency || 'TWD';
   const neg = Number(x.balance) < 0;
   const suffix = x.accountNoLast4 ? `•••• ${esc(x.accountNoLast4)}` : '<span class="bank-account-unset">尚未設定</span>';
+  const asOf = balanceAsOfNote(x);
   return `<tr>
     <td class="bank-account-name-cell"><div class="bank-account-name"><span class="bank-account-mark">${icon('bank', 17)}</span><span><strong>${esc(x.name)}</strong>${x.class && x.class !== '現金' ? `<small>${esc(x.class)}</small>` : ''}</span></div></td>
     <td data-label="帳戶末四碼"><span class="bank-account-suffix">${suffix}</span></td>
     <td data-label="幣別"><span class="bank-currency-tag">${esc(cur)}</span></td>
-    <td data-label="餘額" class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}</td>
+    <td data-label="餘額" class="num ${neg ? 'neg' : ''}">${moneyCur(x.balance, cur)}<small class="bank-balance-asof${asOf.has ? '' : ' bank-balance-asof-none'}">${esc(asOf.text)}</small></td>
     <td class="bank-account-actions"><div class="row-actions"><button class="btn-link btn-sm" data-edit="${esc(x.id)}" title="編輯" aria-label="編輯 ${esc(x.name)}">${icon('edit', 15)}</button><button class="btn-danger btn-sm" data-del="${esc(x.id)}" title="刪除" aria-label="刪除 ${esc(x.name)}">${icon('trash', 15)}</button></div></td>
   </tr>`;
 }

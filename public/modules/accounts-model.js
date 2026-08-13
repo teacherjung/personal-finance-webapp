@@ -91,3 +91,31 @@ export const isLiabilityAccount = (x) => LIABILITY_TYPES.has(x?.type || '') || N
  *  只讓字串選項那一型退回舊行為，其餘考題照樣全綠——所以那一題不是裝飾，是這句話的唯一保證。）
  */
 export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];
+
+/**
+ * 餘額旁邊那一行小字：**這個餘額是被哪一天的對帳單更新的**。
+ *
+ * ⚠️ 文案為什麼不是「餘額截至 X 日」——那會說謊。`balanceAsOf` **只有銀行對帳單匯入會寫**
+ *（服務層寫、非 CRUD 白名單，見 `lib/schema.js` 該欄註解）：使用者事後在帳戶表單手動改餘額，
+ * 這個日期**不會跟著動**。所以它能誠實宣稱的只有「最後一次用對帳單更新到哪天」，
+ * 不是「餘額現在正確到哪天」。兩者的差別由頁面上的說明窗補完（assets.js 的 `openBalanceAsOfInfo`）。
+ *
+ * 日期先驗過再顯示。⚠️ **這不是在補一個活著的洞**：寫入端 `lib/schema.js` 的 `'date'` 已經用
+ * `isRealDate` 擋掉假日曆（實測 `save()` 對 `2026-02-30` 直接丟例外），`null`／`''` 也會被矯正成 `''`。
+ * 這裡再驗一次的理由只有一個——**顯示層不該相信自己的輸入**：資料庫檔被手動改過、
+ * 或日後有人寫出繞過 `save()` 的路徑時，壞掉的方式應該是「這格看起來沒日期」，
+ * 而不是把 `2026-13-45` 原樣印在使用者的餘額旁邊、讓他當成真的。
+ *
+ * @param {{balanceAsOf?: any}} [acc]
+ * @returns {{has: boolean, date: string, text: string}}
+ */
+export function balanceAsOfNote(acc) {
+  const raw = acc && typeof acc.balanceAsOf === 'string' ? acc.balanceAsOf : '';
+  // 過真實日曆：`2026-02-30` 格式對、日子不存在——回填後再讀出來對得上才算數。
+  const ok = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    && !Number.isNaN(Date.parse(`${raw}T00:00:00Z`))
+    && new Date(`${raw}T00:00:00Z`).toISOString().slice(0, 10) === raw;
+  return ok
+    ? { has: true, date: raw, text: `對帳單更新至 ${raw}` }
+    : { has: false, date: '', text: '未由對帳單更新過' };
+}
