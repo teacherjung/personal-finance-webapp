@@ -978,3 +978,25 @@ test('疑似重複｜最舊的 bankRef 只存純末碼（沒有遮罩星號）�
   assert.equal(previewBankTxForDb(legacy, parsed).rows[0].similar, true,
     '★純末碼＝末碼本身、前綴當作不知道（不可整筆略過）');
 });
+
+test('去重鍵｜摘要或日期讀錯＝重匯時認不出同一筆，會重複入帳（P1b-3 r12 實測後果）', () => {
+  // ⚠️ 這一題釘住的是**使用者真的會遇到的後果**，不是理論：AI 把摘要或日期讀錯時金額全對、
+  //    驗算也通過，但那兩欄是去重鍵 `bankRef` 的一部分 ⇒ 下次重匯同一份帳單認不出是同一筆。
+  //    複審實跑：支出從 400 變 600。日期那型連「疑似重複」提醒都不會出現（那道也拿日期比對）。
+  const base = () => ({ bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+  ] });
+
+  for (const [what, mutate] of /** @type {[string, (p:any) => void][]} */ ([
+    ['摘要讀錯', (/** @type {any} */ p) => { p.transactions[0].summary = '提欵'; }],
+    ['日期讀錯', (/** @type {any} */ p) => { p.transactions[0].date = '2026-06-06'; }],
+  ])) {
+    const db = { accounts: [], transactions: [] };
+    importBankTxToDb(db, base());
+    const second = base(); mutate(second);
+    const r = importBankTxToDb(db, second);
+    assert.equal(r.imported, 1, `★${what}：重匯時認不出是同一筆 ⇒ 又匯進去一筆（這就是為什麼它算「帳本會出錯」）`);
+    assert.equal(db.transactions.length, 2, `★${what}：帳本上變成兩筆、支出被多算一次`);
+  }
+});
+

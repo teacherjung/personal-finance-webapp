@@ -252,15 +252,19 @@ const CASES = [
       + '⚠️ 原本被我歸成 B 類「會讓入帳金額出錯」＝說法過重（r1#2 指正）：錯的是畫面上看到的那個數字，不是帳',
     build: () => { const p = corpusForeign(); p.transactions[5].amount = 999; return p; } },
 
-  { id: 'C1', 類: 'C', base: corpusFull, name: '摘要抄錯字（金額全對）', expect: 'missed',
+  { id: 'B11', 類: 'B', base: corpusFull, name: '摘要抄錯字（金額全對）', expect: 'missed', badge: '摘要或日期讀錯',
     proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.notEqual(b.transactions[1].summary, a.transactions[1].summary); assert.equal(b.transactions[1].amount, a.transactions[1].amount); assert.equal(b.transactions[1].balance, a.transactions[1].balance); },
-    why: '不影響任何數字；分類可能跑掉，但錢是對的——匯入後在收支列表逐筆改',
+    why: '盲點⑨：金額是對的，**但摘要是去重鍵 `bankRef` 的一部分**——下次重匯同一份帳單時'
+      + '認不出是同一筆、會再記一次（審查者實跑端到端：支出從 400 變 600）。'
+      + '⚠️ 原本我歸成「不動到帳本金額」＝**與我自己對 A7 的判準矛盾**（A7 正是因為「去重鍵變了、'
+      + '下次重匯會多算」才算帳本出錯）——r12 指正。分類可能跑掉是另一回事，匯入後逐筆改即可',
     build: () => { const p = corpusFull(); p.transactions[1].summary = '提欵'; return p; } },
 
-  { id: 'C2', 類: 'C', base: corpusFull, name: '日期讀錯（金額與餘額全對）', expect: 'missed',
+  { id: 'B12', 類: 'B', base: corpusFull, name: '日期讀錯（金額與餘額全對）', expect: 'missed', badge: '會被當成新的一筆再記一次',
     proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.notEqual(b.transactions[1].date, a.transactions[1].date); assert.equal(b.transactions[1].date.slice(0, 7), a.transactions[1].date.slice(0, 7)); assert.equal(b.transactions[1].amount, a.transactions[1].amount); assert.equal(b.transactions[1].balance, a.transactions[1].balance); },
-    why: '閘驗的是餘額鏈的順序關係，不是日期本身。⚠️ 本例注入的是**同月內**改日期（07-05→07-06）：'
-      + '跨月會讓那筆記到別的月份、月報表就錯了，但那不是這道驗算看得到的事——兩種都漏接',
+    why: '盲點⑨的另一半：日期同樣是去重鍵的一部分 ⇒ 重匯會重複記，而且**連「疑似重複」提醒都不會出現**'
+      + '（那道提醒也拿日期比對）——比摘要那型更難發現。⚠️ 本例注入的是**同月內**改日期'
+      + '（07-05→07-06）；跨月還會讓那筆記到別的月份，那是另一種後果',
     build: () => { const p = corpusFull(); p.transactions[1].date = '2026-07-06'; return p; } },
 ];
 
@@ -342,7 +346,7 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   //    所有斷言照樣過（使用者的警語被刪掉會過關＝真回歸）。改成**逐型核對**：
   //    每一型自己帶一句 `badge`，那句話必須真的在徽章裡找得到。
   const b = CASES.filter((c) => c.類 === 'B');
-  assert.ok(b.length >= 10, `盲點至少要收錄目前已知的十型（現有 ${b.length}）`);
+  assert.ok(b.length >= 12, `盲點至少要收錄目前已知的十二型（現有 ${b.length}）`);
   const raw = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-haiku-4-5-20251001' });
   // ⚠️⚠️ **這一題守什麼、刻意不守什麼**（William 2026-08-13 裁示）：
   //
@@ -370,7 +374,7 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   //   想改那段文案，就得連這個常數一起改——改的人自然會讀到這段說明。
   //   ⚠️ 代價：任何文字微調都會讓這題紅。那是刻意的（這段是對使用者的誠實揭露，
   //   不該有人順手改掉而沒人看見），不是誤紅。
-  const APPROVED_BLIND_SPOTS = "⚠️ <b>這道驗算看不到的（不只這些）</b>：①每個帳戶的<b>第一筆</b>——驗算是拿它的<b>餘額</b>去比下一筆，它的<b>金額與方向</b>都沒有被驗到（方向讀反＝<b>收入被記成支出</b>，月收支同時失真）；<b>整筆漏掉也一樣</b>（後面的鏈與期末仍然對得上）②<b>外幣</b>明細（本來就不計入台幣收支；外幣帳戶餘額仍會照帳單更新）③<b>這期沒有往來的帳戶</b>（只出現在概要、沒有明細可驗，但餘額仍會更新或新建帳戶）④金額和餘額<b>一起</b>被抄成剛好自洽的另一組數字 ⑤某筆金額抄錯、<b>而且同一筆的餘額是空白</b>⑥一筆支出和一筆收入被<b>併成一筆淨額</b>（餘額照樣接得上，但收入與支出的總額都錯了）⑦<b>整個帳戶被漏讀</b>（沒讀到的東西沒有數字可以驗）⑧台幣與外幣<b>互相認錯</b>——認成外幣＝那個帳戶的交易<b>一筆都不會進帳</b>；認成台幣＝<b>外幣數字被當成台幣入帳</b>。兩種畫面都會說驗算通過。<br>⚠️ <b>這份清單不保證完整</b>——⑤～⑧是 2026-08-13 覆審時才發現的，往後可能還有。所以下面兩張表還是請你自己看一眼，尤其是上面那張「帳戶餘額」。";
+  const APPROVED_BLIND_SPOTS = "⚠️ <b>這道驗算看不到的（不只這些）</b>：①每個帳戶的<b>第一筆</b>——驗算是拿它的<b>餘額</b>去比下一筆，它的<b>金額與方向</b>都沒有被驗到（方向讀反＝<b>收入被記成支出</b>，月收支同時失真）；<b>整筆漏掉也一樣</b>（後面的鏈與期末仍然對得上）②<b>外幣</b>明細（本來就不計入台幣收支；外幣帳戶餘額仍會照帳單更新）③<b>這期沒有往來的帳戶</b>（只出現在概要、沒有明細可驗，但餘額仍會更新或新建帳戶）④金額和餘額<b>一起</b>被抄成剛好自洽的另一組數字 ⑤某筆金額抄錯、<b>而且同一筆的餘額是空白</b>⑥一筆支出和一筆收入被<b>併成一筆淨額</b>（餘額照樣接得上，但收入與支出的總額都錯了）⑦<b>整個帳戶被漏讀</b>（沒讀到的東西沒有數字可以驗）⑧台幣與外幣<b>互相認錯</b>——認成外幣＝那個帳戶的交易<b>一筆都不會進帳</b>；認成台幣＝<b>外幣數字被當成台幣入帳</b>。兩種畫面都會說驗算通過 ⑨<b>摘要或日期讀錯</b>——金額是對的，但那兩欄是「這筆有沒有匯過」的辨識依據，<b>下次重匯同一份帳單時會被當成新的一筆再記一次</b>。<br>⚠️ <b>這份清單不保證完整</b>——⑤～⑧是 2026-08-13 覆審時才發現的，往後可能還有。所以下面兩張表還是請你自己看一眼，尤其是上面那張「帳戶餘額」。";
   const liMatch = badge.match(/<li>⚠️ <b>這道驗算看不到的[\s\S]*?<\/li>/);
   assert.ok(liMatch, '★徽章要有盲點清單那條 <li>');
   assert.equal(liMatch[0].slice(4, -5), APPROVED_BLIND_SPOTS,
