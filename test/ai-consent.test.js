@@ -363,15 +363,18 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   const decls = rules[0].slice(rules[0].indexOf('{') + 1, -1).split(';')
     .map((/** @type {string} */ d) => d.trim()).filter(Boolean)
     .map((/** @type {string} */ d) => ({ prop: d.slice(0, d.indexOf(':')).trim(), val: d.slice(d.indexOf(':') + 1).trim() }));
+  // ⚠️ `!` 與 `important` 之間**允許空白**、關鍵字**不分大小寫**（css-cascade-4 §important：
+  //    最後兩個非空白非註解的 token）。只認 `!important` 連寫小寫＝`! important` 照樣打穿（r6 實測）。
+  const IMPORTANT_RE = /\s*!\s*important\s*$/i;
   /** 取**實際生效**的那個值：`!important` 贏過一般宣告，同級才比誰後寫（r5#1：只比先後的話，
    *  `position: static !important; position: sticky;` 會被讀成 sticky，瀏覽器算出來卻是 static）。
    *  @param {string} prop */
   const lastOf = (prop) => {
     const hit = decls.filter((/** @type {any} */ d) => d.prop === prop);
     if (!hit.length) return null;
-    const imp = hit.filter((/** @type {any} */ d) => /!important\s*$/.test(d.val));
+    const imp = hit.filter((/** @type {any} */ d) => IMPORTANT_RE.test(d.val));
     const chosen = (imp.length ? imp : hit).at(-1);
-    return String(chosen.val).replace(/\s*!important\s*$/, '').trim();
+    return String(chosen.val).replace(IMPORTANT_RE, '').trim();
   };
   assert.equal(lastOf('position'), 'sticky', '★最後生效的 position 要是 sticky（沒有它，按鈕照樣沉在捲動內容最底）');
   assert.equal(lastOf('bottom'), '0', '★停靠點要 bottom:0（負值＝停在窗底外面，實測按鈕滑出 8px＝白做）');
@@ -379,9 +382,9 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   // 有效下邊距＝`margin` 簡寫的第三個值與 `margin-bottom` 之中**最後寫的那個**
   const mDecls = decls.filter((/** @type {any} */ d) => d.prop === 'margin' || d.prop === 'margin-bottom');
   assert.ok(mDecls.length, '要寫出 margin（滿版靠左右負邊距）');
-  const impM = mDecls.filter((/** @type {any} */ d) => /!important\s*$/.test(d.val));
+  const impM = mDecls.filter((/** @type {any} */ d) => IMPORTANT_RE.test(d.val));
   const lastM = (impM.length ? impM : mDecls).at(-1);
-  const vals = String(lastM.val).replace(/\s*!important\s*$/, '').trim().split(/\s+/);
+  const vals = String(lastM.val).replace(IMPORTANT_RE, '').trim().split(/\s+/);
   const effBottom = lastM.prop === 'margin-bottom' ? lastM.val : (vals.length >= 3 ? vals[2] : vals[0]);
   assert.doesNotMatch(effBottom, /^-/,
     '★下邊距不可為負：sticky 對齊的是 margin box，負的下邊距會把停靠點往下推（左右負邊距做滿版沒問題）');
