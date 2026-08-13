@@ -1060,12 +1060,17 @@ const { applyBankStatement: applyBankE2E, previewBankStatement: previewBankE2E }
   await import('../lib/services/bank-import.js');
 
 test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStatement，交易真的落庫、餘額一動不動', async () => {
-  // ⚠️ 上一版那題叫「端到端」卻只直接呼叫 applyBalancesToDb／importBankTxToDb——**沒經過正式入口**。
-  //    複審在 `applyBankStatement` 裡重新加一行「缺日期就整份拒絕」，171 題照樣全綠（r2#1）。
-  //    這一版走真的入口、真的存檔、**再重讀資料庫**驗結果，那條路才被守住。
+  // ⚠️ **必須走正式入口**（`previewBankStatement`／`applyBankStatement`）、真的存檔、**再重讀資料庫**。
+  //    只直接呼叫 applyBalancesToDb／importBankTxToDb 守不住入口——有人在入口加一行
+  //    「缺日期就整份拒絕」，那種考題不會出聲。
   const seed = await getDb();
-  seed.accounts = [{ id: 'e2e1', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
-    accountNo: '900100****3301', balance: 111, balanceAsOf: '2026-05-31' }];
+  seed.accounts = [
+    // ⚠️ **這一筆刻意沒有 `balanceAsOf`**（r6）：手動建立與舊資料的帳戶就是這個樣子。
+    { id: 'e2e-noasof', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
+      accountNo: '900100****3301', balance: 111 },
+    { id: 'e2e-asof', name: '台新定存', type: 'cash', bank: '台新', currency: 'TWD',
+      accountNo: '900100****9999', balance: 555, balanceAsOf: '2026-05-31' },
+  ];
   seed.transactions = [];
   await saveDb(seed);
 
@@ -1078,6 +1083,8 @@ test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStat
       btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
     ] });
 
+  const snapshotBefore = JSON.stringify((await getDb()).accounts);
+
   const pv = await previewBankE2E('QUFBQQ==', undefined, parseNoRef);
   assert.equal(pv.blocked, true, '預覽要標明「這次不會更新餘額」');
 
@@ -1088,7 +1095,7 @@ test('端到端（正式入口）｜讀不到現值參考日：走 applyBankStat
 
   const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
   assert.equal(after.transactions.length, 2, '★交易要真的落庫');
-  assert.equal(after.accounts.length, 1, '★不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
-  assert.equal(after.accounts[0].balance, 111, '★餘額一動都不可以動');
-  assert.equal(after.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
+  assert.equal(JSON.stringify(after.accounts), snapshotBefore,
+    '★整份帳戶快照要一模一樣——含**沒有 `balanceAsOf` 的那一筆**（手動建立與舊資料就是那個樣子；'
+    + '哨兵全都帶時點的話，「只改沒有時點的帳戶」這種突變會整批漏掉）');
 });

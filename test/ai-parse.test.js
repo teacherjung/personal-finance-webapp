@@ -663,15 +663,20 @@ test('提示詞｜沒印「現值參考日」時要用帳單期間的**結束日
 });
 
 test('端到端（AI 路線）｜答案卷沒有現值參考日：憑票套用仍會落庫，既有餘額一動不動（r4／r5）', async () => {
-  // ⚠️ **William 的真實情況走的是 AI 路線**（r4）：上一版只補模板那條，複審把突變改成
-  //    「只擋 AI＋缺參考日」照樣全綠。
-  // ⚠️ 而且「餘額不動」必須先**種一個真的會被比對到的帳戶**（r5）：`seedDb` 會清空 accounts，
-  //    上一版最後三行其實在比 `null === null`＝**空包彈**（複審強制改寫既有餘額，1995 題全綠）。
-  //    這一版種哨兵值、套用後**重讀資料庫比對完整快照**。
+  // ⚠️ **使用者的真實路徑是 AI fallback**，所以這一題必須走完整 AI 流程（只守模板那條＝守錯路）。
+  // ⚠️ 「餘額不動」要先**種一個真的會被比對到的帳戶**：`seedDb` 會清空 accounts，
+  //    沒種就是在比 `null === null`＝空包彈。套用後**重讀資料庫、比對整份帳戶快照**。
   await seedDb(true);
   const seed = await getDb();
-  seed.accounts = [{ id: 'ai-e2e', name: '合成活存', type: 'cash', bank: '合成一銀', currency: 'TWD',
-    accountNo: '900200****3302', balance: 4242, balanceAsOf: '2026-01-31' }];   // 哨兵值：好認、且與帳單不同
+  seed.accounts = [
+    // ⚠️ **這一筆刻意沒有 `balanceAsOf`**（r6）：手動建立與舊資料的帳戶就是這個樣子。
+    //    哨兵全都帶時點的話，「只改沒有時點的帳戶」這種突變會整批漏掉（複審實測全綠）。
+    { id: 'ai-e2e-noasof', name: '合成活存', type: 'cash', bank: '合成一銀', currency: 'TWD',
+      accountNo: '900200****3302', balance: 4242 },
+    // 另一筆有時點、且**不會**被這張帳單匹配到：兩種狀態都在快照裡
+    { id: 'ai-e2e-asof', name: '合成定存', type: 'cash', bank: '合成一銀', currency: 'TWD',
+      accountNo: '900900****9999', balance: 777, balanceAsOf: '2026-01-31' },
+  ];
   await saveDb(seed);
   const snapshotBefore = JSON.stringify((await getDb()).accounts);
 
