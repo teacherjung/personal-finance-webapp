@@ -129,7 +129,7 @@ const CASES = [
     build: () => { const p = corpusFull(); p.transactions[2].amount = 7000; return p; } },
 
   { id: 'A3', 類: 'A', base: corpusFull, name: '方向看反（存入讀成支出）', expect: 'caught',
-    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.transactions[2].direction, 'out'); assert.equal(a.transactions[2].direction, 'in'); assert.equal(b.transactions[2].amount, a.transactions[2].amount); },
+    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.transactions[2].direction, 'out'); assert.equal(a.transactions[2].direction, 'in'); assert.equal(b.transactions[2].amount, a.transactions[2].amount); assert.deepEqual(b.transactions.map((/** @type {any} */ t) => t.balance), a.transactions.map((/** @type {any} */ t) => t.balance)); },
     why: '方向反了、餘額不動 ⇒ 差兩倍金額，鏈接不上',
     build: () => { const p = corpusFull(); p.transactions[2].direction = 'out'; return p; } },
 
@@ -226,7 +226,7 @@ const CASES = [
       /** @type {any} */ (p.accountCurrency)['900100****3302'] = 'USD'; return p; } },
 
   { id: 'B10', 類: 'B', base: corpusFull, name: '首筆的**方向**讀反（收入讀成支出）', expect: 'missed', badge: '金額與方向',
-    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.transactions[0].direction, 'out'); assert.equal(a.transactions[0].direction, 'in'); assert.equal(b.transactions[0].amount, a.transactions[0].amount); },
+    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.transactions[0].direction, 'out'); assert.equal(a.transactions[0].direction, 'in'); assert.equal(b.transactions[0].amount, a.transactions[0].amount); assert.deepEqual(b.transactions.map((/** @type {any} */ t) => t.balance), a.transactions.map((/** @type {any} */ t) => t.balance)); assert.deepEqual(b.accounts, a.accounts); },
     why: '盲點①的第三種形狀，也是**後果最直接**的一種：首筆的方向同樣沒有任何檢查用到'
       + '（鏈只拿它的餘額比下一筆）⇒ 整份仍完全自洽，但那筆收入會被記成支出，**月收入與月支出同時失真**。'
       + '⚠️ main 的徽章本來就寫「金額與方向」，是我 2026-08-13 重寫那條時弄丟了「方向」（r5 抓到的回歸）',
@@ -239,7 +239,7 @@ const CASES = [
     build: () => { const p = corpusFull(); const [, ...rest] = p.transactions; p.transactions = rest; return p; } },
 
   { id: 'B9', 類: 'B', base: corpusForeign, name: '外幣帳戶被誤判成**台幣**', expect: 'missed', badge: '外幣數字被當成台幣',
-    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.accounts[1].currency, 'TWD'); assert.equal(a.accounts[1].currency, 'USD'); },
+    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.equal(b.accounts[1].currency, 'TWD'); assert.equal(a.accounts[1].currency, 'USD'); assert.equal(b.accountCurrency['900100****363'], 'TWD'); assert.equal(a.accountCurrency['900100****363'], 'USD'); assert.deepEqual(b.transactions.map((/** @type {any} */ t) => t.amount), a.transactions.map((/** @type {any} */ t) => t.amount)); },
     why: '盲點⑧的反方向：外幣的數字會被當台幣入帳（比誤判成外幣更糟——那只是不進帳，這是進錯帳）',
     build: () => { const p = corpusForeign();
       /** @type {any} */ (p.accounts[1]).currency = 'TWD'; /** @type {any} */ (p.accountCurrency)['900100****363'] = 'TWD';
@@ -258,7 +258,7 @@ const CASES = [
     build: () => { const p = corpusFull(); p.transactions[1].summary = '提欵'; return p; } },
 
   { id: 'C2', 類: 'C', base: corpusFull, name: '日期讀錯（金額與餘額全對）', expect: 'missed',
-    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.notEqual(b.transactions[1].date, a.transactions[1].date); assert.equal(b.transactions[1].amount, a.transactions[1].amount); assert.equal(b.transactions[1].balance, a.transactions[1].balance); },
+    proves: (/** @type {any} */ b, /** @type {any} */ a) => { assert.notEqual(b.transactions[1].date, a.transactions[1].date); assert.equal(b.transactions[1].date.slice(0, 7), a.transactions[1].date.slice(0, 7)); assert.equal(b.transactions[1].amount, a.transactions[1].amount); assert.equal(b.transactions[1].balance, a.transactions[1].balance); },
     why: '閘驗的是餘額鏈的順序關係，不是日期本身。⚠️ 本例注入的是**同月內**改日期（07-05→07-06）：'
       + '跨月會讓那筆記到別的月份、月報表就錯了，但那不是這道驗算看得到的事——兩種都漏接',
     build: () => { const p = corpusFull(); p.transactions[1].date = '2026-07-06'; return p; } },
@@ -364,17 +364,19 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
   assert.deepEqual(missing.map((c) => c.id), [],
     '★這些盲點在畫面上找不到——考題知道它們攔不到，卻沒告訴使用者');
-// ⚠️ **不要再維護「不准出現的話」清單**（r10#2）：反向詞庫永遠列不完——
-  //   「看不到的 10 件事」（阿拉伯數字）與「這份清單已經完整」兩個突變都繞過去了。
-  //   改成**正向逐字釘住核准句**：句子要改就得連考題一起改，改的人自然會看到這段說明。
-  const APPROVED_HEADER = '這道驗算看不到的（不只這些）';
-  const APPROVED_CAVEAT = '這份清單不保證完整';
-  assert.ok(badge.includes(APPROVED_HEADER),
-    `★標題必須逐字是「${APPROVED_HEADER}」——寫死件數（不管中文或阿拉伯數字）就等於宣稱窮盡，而它補不完`);
-  assert.ok(badge.includes(APPROVED_CAVEAT),
-    `★必須逐字有「${APPROVED_CAVEAT}」——覆審四輪陸續又找出六型，宣稱完整就是假的`);
+  // ⚠️ **`includes` 只是必要條件**（r11#2 實測）：核准句可以當成更長錯句的**前綴**——
+  //   「這道驗算看不到的（不只這些）**都列完了**」「這份清單不保證完整，**其實已經完整**」
+  //   兩句互相矛盾，includes 照樣通過。所以改成**整條 <li> 逐字相等**：
+  //   想改那段文案，就得連這個常數一起改——改的人自然會讀到這段說明。
+  //   ⚠️ 代價：任何文字微調都會讓這題紅。那是刻意的（這段是對使用者的誠實揭露，
+  //   不該有人順手改掉而沒人看見），不是誤紅。
+  const APPROVED_BLIND_SPOTS = "⚠️ <b>這道驗算看不到的（不只這些）</b>：①每個帳戶的<b>第一筆</b>——驗算是拿它的<b>餘額</b>去比下一筆，它的<b>金額與方向</b>都沒有被驗到（方向讀反＝<b>收入被記成支出</b>，月收支同時失真）；<b>整筆漏掉也一樣</b>（後面的鏈與期末仍然對得上）②<b>外幣</b>明細（本來就不計入台幣收支；外幣帳戶餘額仍會照帳單更新）③<b>這期沒有往來的帳戶</b>（只出現在概要、沒有明細可驗，但餘額仍會更新或新建帳戶）④金額和餘額<b>一起</b>被抄成剛好自洽的另一組數字 ⑤某筆金額抄錯、<b>而且同一筆的餘額是空白</b>⑥一筆支出和一筆收入被<b>併成一筆淨額</b>（餘額照樣接得上，但收入與支出的總額都錯了）⑦<b>整個帳戶被漏讀</b>（沒讀到的東西沒有數字可以驗）⑧台幣與外幣<b>互相認錯</b>——認成外幣＝那個帳戶的交易<b>一筆都不會進帳</b>；認成台幣＝<b>外幣數字被當成台幣入帳</b>。兩種畫面都會說驗算通過。<br>⚠️ <b>這份清單不保證完整</b>——⑤～⑧是 2026-08-13 覆審時才發現的，往後可能還有。所以下面兩張表還是請你自己看一眼，尤其是上面那張「帳戶餘額」。";
+  const liMatch = badge.match(/<li>⚠️ <b>這道驗算看不到的[\s\S]*?<\/li>/);
+  assert.ok(liMatch, '★徽章要有盲點清單那條 <li>');
+  assert.equal(liMatch[0].slice(4, -5), APPROVED_BLIND_SPOTS,
+    '★盲點清單那條要**逐字**等於核准版本——只要求「包含核准句」擋不住把它當前綴接上相反的話'
+    + '（實測：「…（不只這些）都列完了」「…不保證完整，其實已經完整」都能通過 includes）');
 });
-
 test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的（兩邊互扣，改一邊另一邊就紅）', () => {
   // ⚠️ 攔截率一旦寫進文件就是對使用者的承諾。文件的數字**不可以**靠人記得更新（寫死的數字自己會漂），
   //    所以這裡直接拿文件去對實測：加一型錯誤、或某型的結果變了，這題就會紅、逼人一起改。
