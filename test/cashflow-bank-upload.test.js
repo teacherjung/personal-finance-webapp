@@ -33,6 +33,8 @@ import {
   BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL,
   bankPreviewFootnote,
   bankBlockedWarningHtml,
+  bankSimilarWarningHtml,
+  bankSimilarTagHtml,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -482,11 +484,25 @@ test('腳註｜擋下的帳單不可承諾會匯入，而且連確認鈕都不�
     '★擋下時不給確認鈕：那顆按下去必定整份失敗，擺著等於邀請使用者去撞一次');
 });
 
-test('接線｜疑似重複要真的出現在畫面上（警語＋列標記），不是只算了個數字', () => {
+test('文案｜疑似重複警語：講清楚原因與下一步，而且不可寫成「不會匯入」（r1#3）', () => {
+  // ⚠️ 直接考文案本身：形狀掃描守不住「加個 hidden 就看不見」這種等價繞法（審查者實測）。
+  const warn = bankSimilarWarningHtml(3);
+  assert.match(warn, /3/, '要說出是幾筆');
+  assert.match(warn, /兩種版面|版面/, '★要講出最可能的原因（同期間匯了兩種版面）');
+  assert.match(warn, /收支頁|了解/, '要給下一步');
+  assert.doesNotMatch(warn, /不會匯入|不匯入|已略過/,
+    '★只提醒不擋：那幾筆照樣會匯入，寫成「不會匯入」是假的');
+  for (const html of [warn, bankSimilarTagHtml()]) {
+    assert.doesNotMatch(html, /\bhidden\b|display\s*:\s*none/,
+      '★不可自己把自己藏起來（看不見的警語等於沒有警語）');
+  }
+  assert.match(bankSimilarTagHtml(), /疑似重複/, '列標記要看得懂');
+});
+
+test('接線｜疑似重複走純函式，而且 blocked 時整組壓掉（r1#1）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  assert.match(src, /\$\{c\.similar \?/, '★統計區要依 counts.similar 顯示警語（算了不用＝白算）');
-  assert.match(src, /疑似重複/, '警語與列標記要看得懂');
-  assert.match(src, /\$\{x\.similar \?/, '★逐列要標出是哪幾筆（只給總數，使用者不知道要看哪裡）');
-  assert.match(src, /兩種版面|版面/, '★要講出最可能的原因（同期間匯了兩種版面），否則使用者不知道怎麼辦');
-  assert.doesNotMatch(src, /x\.similar \? .{0,80}不會匯入/, '不可寫成「不會匯入」——這道只提醒、不擋');
+  assert.match(src, /!r\.blocked && c\.similar \? bankSimilarWarningHtml\(c\.similar\)/,
+    '★擋下時不可再談防重複——整份都不會寫進去，那段警語會變成自相矛盾的敘述');
+  assert.match(src, /!r\.blocked && x\.similar \? bankSimilarTagHtml\(\)/, '★逐列標記同樣要壓掉');
+  assert.doesNotMatch(src, /疑似重複/, '★文案不可留在 cashflow.js（就地寫死＝又回到守拼字的考題）');
 });

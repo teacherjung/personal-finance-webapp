@@ -61,6 +61,23 @@ export const BANK_UPLOAD_NOTICE = `<details>
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
 
+/** 疑似重複的統計區警語（整段 <p>，作者內容）。`n`＝疑似重複的筆數。
+ *
+ * ⚠️ 住在這裡的理由同 `bankBlockedWarningHtml`：形狀掃描守不住「加個 hidden 就看不見」
+ * 這種等價繞法（r1#3 審查者實測），文案與可見性都要能直接行為測試。
+ * ⚠️ **擋下（blocked）時呼叫端不可顯示它**——整份都不會寫進去，再談防重複認不認得出來
+ * 就是自相矛盾（#450 r3#1 剛立的口徑）。
+ * @param {number} n
+ */
+export function bankSimilarWarningHtml(n) {
+  return `<p style="margin:0 0 10px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ 有 <b>${n}</b> 筆的「同一個帳戶＋同一天＋同金額＋同方向」在你的資料裡<b>已經有一筆</b>了（下表標「疑似重複」）。<br>常見原因：<b>同一期間的帳單匯入了兩種版面</b>——兩份對同一筆交易的文字寫法不同，系統的防重複認不出來。真的是兩筆不同的交易也可能（同一家店刷兩次）。<br>不確定就先按「了解」關掉，到收支頁看看那幾天是不是已經有了。</p>`;
+}
+
+/** 疑似重複的逐列標記（同上，作者內容）。 */
+export function bankSimilarTagHtml() {
+  return `<span class="flow-tag neg" title="同帳戶同一天同金額同方向的交易，你的資料裡已經有一筆——可能是同期間的另一種版面重複匯入">疑似重複</span> ' : '`;
+}
+
 /**
  * 讀不到「現值參考日」時的擋下警語（整段 <p>，作者內容、呼叫端不 esc）。
  *

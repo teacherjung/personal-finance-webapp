@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -306,11 +306,11 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
 
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
-    ${c.similar ? `<p style="margin:0 0 10px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ 有 <b>${c.similar}</b> 筆的「同一個帳戶＋同一天＋同金額＋同方向」在你的資料裡<b>已經有一筆</b>了（下表標「疑似重複」）。<br>常見原因：<b>同一期間的帳單匯入了兩種版面</b>——兩份對同一筆交易的文字寫法不同，系統的防重複認不出來。真的是兩筆不同的交易也可能（同一家店刷兩次）。<br>不確定就先按「了解」關掉，到收支頁看看那幾天是不是已經有了。</p>` : ''}
+    ${!r.blocked && c.similar ? bankSimilarWarningHtml(c.similar) : ''}
     ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
-      <td class="muted">${x.similar ? '<span class="flow-tag neg" title="同帳戶同一天同金額同方向的交易，你的資料裡已經有一筆——可能是同期間的另一種版面重複匯入">疑似重複</span> ' : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
+      <td class="muted">${!r.blocked && x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}

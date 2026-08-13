@@ -874,3 +874,55 @@ test('疑似重複｜比的是帳號末碼不是完整遮罩（不同版面的�
   assert.equal(pv2.rows[0].similar, false, '已經是明確重複＝不再標疑似（不會匯入的列不必提醒）');
   assert.equal(pv2.counts.similar, 0);
 });
+
+test('疑似重複｜只提醒不影響寫入：similar 的列照樣匯入，db 也不留這個旗標（r1#3）', () => {
+  // ⚠️ 原本只驗預覽的 duplicate/分類＝**假綠**：把正式 import 改成「similar 就跳過」，考題照樣全綠
+  //    （審查者實測）。「只提醒不擋」是本支對使用者的承諾，要用**真的寫入結果**扣住。
+  const db = { accounts: [], transactions: [
+    { id: 'old1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|900200****3302|2026-06-01|in|1000|1000|轉帳存入|舊版面的備註' },
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '匯款存入', direction: 'in', amount: 1000, balance: 1000, note: '新版面的備註' }),   // similar
+    btx({ date: '2026-06-02', summary: '轉帳存入', direction: 'in', amount: 500, balance: 1500 }),
+  ] };
+  const pv = previewBankTxForDb(db, parsed);
+  assert.equal(pv.counts.similar, 1, '前置：要真的有一筆疑似重複');
+
+  const res = importBankTxToDb(db, parsed);
+  assert.equal(res.imported, 2, '★疑似重複的那筆**照樣匯入**（只提醒、不擋）');
+  assert.equal(res.skipped, 0, '★不可被算成略過');
+  assert.equal(res.foreign, 0);
+  const added = db.transactions.filter((/** @type {any} */ t) => t.id !== 'old1');
+  assert.equal(added.length, 2, '★兩筆都要真的落進 db');
+  assert.ok(added.every((/** @type {any} */ t) => !('similar' in t)),
+    '★similar 是**預覽用的旗標**，不可寫進 db（寫進去就會被後續功能當成資料）');
+});
+
+test('疑似重複｜不同機構、不同可見前綴＝不是同一個帳戶，不可提醒（r1#2）', () => {
+  // 警語逐字說「同一個帳戶」——只比末碼的話，一銀與台新的同日同額會被說成同一個帳戶＝說謊。
+  const other = { accounts: [], transactions: [
+    { id: 'o1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank2|合成一銀|900200****3302|2026-06-01|in|1000|1000|轉帳存入|' },
+  ] };
+  const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ summary: '轉帳存入', direction: 'in', amount: 1000, balance: 1000 }),   // 台新 900200****3302
+  ] };
+  assert.equal(previewBankTxForDb(other, parsed).rows[0].similar, false,
+    '★不同銀行的同末碼帳戶不是同一個帳戶');
+
+  const samePrefixDiff = { accounts: [], transactions: [
+    { id: 'o2', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|900100****3302|2026-06-01|in|1000|1000|轉帳存入|' },   // 同銀行、前綴不同
+  ] };
+  assert.equal(previewBankTxForDb(samePrefixDiff, parsed).rows[0].similar, false,
+    '★同一家銀行但可見前綴不同＝不同帳戶');
+
+  // 但「有一邊印不出前綴」仍要對得上——那正是跨版式的常見情況
+  const unknownPrefix = { accounts: [], transactions: [
+    { id: 'o3', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
+      bankRef: 'bank|****3302|2026-06-01|in|1000|1000|轉帳存入|' },
+  ] };
+  assert.equal(previewBankTxForDb(unknownPrefix, parsed).rows[0].similar, true,
+    '★一邊只印末碼＝不知道前綴，不可拿來否決（否則跨版式救援直接失效）');
+});
