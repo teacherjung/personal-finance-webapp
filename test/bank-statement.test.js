@@ -1000,3 +1000,19 @@ test('去重鍵｜摘要或日期讀錯＝重匯時認不出同一筆，會重�
   }
 });
 
+test('去重鍵｜餘額欄讀成空白也會破壞去重（P1b-3 r13：D 類不是「帳本不會出錯」）', () => {
+  // ⚠️ 餘額欄同樣在 bankRef 裡。所以「金額與方向全對、只是餘額沒讀到」**仍會**讓重匯重複入帳。
+  //    ⚠️ 這一型在正式 AI 路線會被 ★6（逐帳戶覆蓋）擋下，**不是生產漏洞**——這題釘的是
+  //    「分類敘述不可寫成『帳本不會出錯』」這件事（r13 指正，與 r12 同型）。
+  const withBal = () => ({ bank: '台新', referenceDate: '2026-06-30', accounts: [], transactions: [
+    btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+  ] });
+  const noBal = () => { const p = withBal(); p.transactions[0].balance = null; return p; };
+
+  const db = { accounts: [], transactions: [] };
+  importBankTxToDb(db, noBal());                  // 先匯「餘額沒讀到」的版本
+  const r = importBankTxToDb(db, withBal());      // 再匯正確版本
+  assert.equal(r.imported, 1, '★餘額欄不同＝指紋不同 ⇒ 認不出是同一筆，又匯進去一次');
+  assert.equal(db.transactions.length, 2, '★帳本上變成兩筆＝同一筆被記了兩次');
+});
+
