@@ -229,7 +229,7 @@ test('P1b-3 攔截率｜前置：正確的合成帳單**每一種**形狀都要�
   ])) {
     assert.equal(aiWouldPass(p), true, `★${name}：沒有注入錯誤就該放行——會誤擋的閘算出來的攔截率沒有意義`);
   }
-  // 搭便車形狀**本來就該被拒**（A10 就是在講這件事），所以不列進「前置要通過」的名單。
+  // 搭便車形狀**本來就該被拒**（D1 就是在講這件事），所以不列進「前置要通過」的名單。
   assert.equal(aiWouldPass(corpusFreeRider()), false, '搭便車形狀＝★6 逐帳戶覆蓋要拒收');
 });
 
@@ -243,12 +243,28 @@ test('P1b-3 攔截率｜逐型故障注入：每一格的結果都要與寫死�
     '★攔截率是寫進文件、對使用者的承諾——某格變了就要連文件一起更新，不可以自己悄悄漂\n' + wrong.join('\n'));
 });
 
-test('P1b-3 攔截率｜A 類（造成不一致的錯）必須 100% 攔下——這是這支功能唯一的承諾', () => {
+test('P1b-3 攔截率｜A 類必須是「偵測到不一致」才算數，D 類必須是「金額全對但蓋不到」', () => {
+  // ⚠️ **只看「有沒有被擋下」不夠**（r4#2）：A10 金額全對、`problems` 空的，卻因為覆蓋政策被拒收，
+  //    混在 A 類裡就把 10/10 撐高了。分類的**語意**要自己被鎖住，否則下一個人再把 D1 搬回 A 類，
+  //    互扣只會跟著改數字、不會出聲。
   const a = CASES.filter((c) => c.類 === 'A');
-  assert.ok(a.length >= 9, `A 類樣本要夠多才敢寫成承諾（現有 ${a.length} 型）——⚠️ 只收「真的有數字讀錯」的型，被覆蓋政策擋下的歸 D 類（r3#2：混進來會把攔截率撐高）`);
-  const missed = a.filter((c) => aiWouldPass(c.build()));
-  assert.deepEqual(missed.map((c) => c.id), [],
-    '★「造成不一致的錯會被擋下來給你看」是計畫 §八 的承諾——漏掉任何一型，那句話就要改口');
+  assert.ok(a.length >= 9, `A 類樣本要夠多才敢寫成承諾（現有 ${a.length} 型）`);
+  for (const c of a) {
+    const v = reconcileBankStatement(c.build());
+    assert.ok(v.problems.length > 0,
+      `★${c.id}（${c.name}）沒有產生任何 problem——它不是被「偵測到不一致」擋下的，不該算在 A 類`);
+    assert.equal(aiWouldPass(c.build()), false, `★${c.id} 要真的匯不進去`);
+  }
+  const d = CASES.filter((c) => c.類 === 'D');
+  assert.equal(d.length, 1, 'D 類目前只有一型（覆蓋政策）；變了要同步改 §八');
+  for (const c of d) {
+    const v = reconcileBankStatement(c.build());
+    assert.deepEqual(v.problems, [], `★${c.id} 的金額必須全對（有 problem 就該歸 A 類）`);
+    assert.equal(v.ok, true, `★${c.id} 本身是「通過」的`);
+    assert.equal(v.level, 'strong', `★${c.id} 的 level 也是 strong——擋它的不是級別`);
+    assert.ok(v.stats.twdAccountsUnverified > 0, `★${c.id} 必須是由**逐帳戶覆蓋**拒收（★6），不是別的機制`);
+    assert.equal(aiWouldPass(c.build()), false, `★${c.id} 最後仍要匯不進去`);
+  }
 });
 
 test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且不可寫死件數', () => {
@@ -261,8 +277,16 @@ test('P1b-3 攔截率｜每一個盲點都要真的出現在畫面上，而且�
   // ⚠️ **要驗看得見的內容**（r3#1 實測）：把那幾條 <li> 包進 `<!-- -->`，字串還在、
   //    `includes()` 照樣命中，但畫面上一條都不剩。先剝註解，而且**徽章本來就不該有註解**——
   //    直接連「有註解」都禁掉，這條路就整個關起來。
-  assert.doesNotMatch(raw, /<!--/, '★徽章輸出不可含 HTML 註解（那是把警語藏起來的唯一手法）');
-  assert.doesNotMatch(raw, /<[a-z]+[^>]*\bhidden\b|display\s*:\s*none/i, '★也不可用 hidden／display:none 藏');
+  // ⚠️ **改成關門，不再逐個補洞**（r4#1）：藏東西的方法列不完——註解、`hidden`、`display:none`、
+  //    `<template>`…每補一個他就找到下一個。改成**白名單**：徽章只准出現這幾種標籤，
+  //    其餘（template／script／style／iframe…）一律紅。這一族就整個關起來了。
+  const ALLOWED_TAGS = new Set(['b', 'br', 'details', 'div', 'li', 'p', 'summary', 'ul']);
+  const usedTags = [...new Set([...raw.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g)].map((m) => m[1].toLowerCase()))];
+  assert.deepEqual(usedTags.filter((t) => !ALLOWED_TAGS.has(t)), [],
+    '★徽章出現了白名單外的標籤——`<template>` 之類會讓整段警語在畫面上消失（考題卻照樣掃得到字串）');
+  assert.doesNotMatch(raw, /<!--/, '★也不可含 HTML 註解（同樣是把警語藏起來、字串卻還在）');
+  assert.doesNotMatch(raw, /\bhidden\b|display\s*:\s*none|visibility\s*:\s*hidden/i,
+    '★也不可用 hidden／display:none／visibility:hidden 藏');
   const badge = raw.replace(/<!--[\s\S]*?-->/g, '');
   const missing = b.filter((c) => !c.badge || !badge.includes(c.badge));
   assert.deepEqual(missing.map((c) => c.id), [],
@@ -294,6 +318,9 @@ test('P1b-3 攔截率｜計畫 §八 寫的數字＝這份考題實際量到的�
   assert.match(plan, new RegExp(`A 類[^\\n]*＝ ${n('A')}/${n('A')} 全數攔下`), '★A 類的分子分母都要與考題一致');
   assert.match(plan, new RegExp(`B 類[^\\n]*＝ ${n('B')} 型全數漏接`), '★B 類盲點數要與考題一致');
   assert.match(plan, new RegExp(`C 類[^\\n]*＝ ${n('C')} 型`), '★C 類型數要與考題一致');
+  // ★r4#2：D 類也要互扣——刪掉 §八 那整段說明，之前的斷言完全不會出聲
+  assert.match(plan, new RegExp(`D 類[^\\n]*＝ ${n('D')} 型`), '★D 類型數要與考題一致');
+  assert.match(plan, /不算在 A 類|不併進 A 類/, '★§八 要寫明 D 類為什麼不算進 A 類（那正是 10/10 被撐高的病）');
   // 誠實劃界那兩句在**下一個項目符號**裡（不在上面那段窄範圍內），所以拿剝過註解的**全文**驗。
   // 藏進 HTML 註解已經行不通（planRaw 剝掉了），這裡要的是「這兩句確實在文件裡」。
   assert.match(planRaw, /條件攔截率/, '★要講明量的是條件攔截率——拿掉它，讀者會把它誤讀成「AI 正確率」');
