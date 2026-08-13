@@ -62,6 +62,21 @@ export const BANK_UPLOAD_NOTICE = `<details>
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
 
 /**
+ * 讀不到「現值參考日」時的擋下警語（整段 <p>，作者內容、呼叫端不 esc）。
+ *
+ * ⚠️ 為什麼住在這裡而不是就地寫在 `cashflow.js`（r5#2）：原本用形狀掃描守這段文案，
+ * 但那種考題**守的是拼字、不是行為**——把接線寫成 `r["blocked"]`、或在前面插一段
+ * 隱藏的合規分支，正則就抓不到，畫面上照樣可以要求使用者外送帳單截圖（Codex 實測示範）。
+ * 搬到純函式＝**文案本身可以直接行為測試**，形狀題只剩「有沒有接上」這件小事。
+ *
+ * ⚠️ 誠實劃界：考題守的是「這段文案的內容」＋「cashflow.js 有接它」；
+ * 有人**另外**硬插一段自己的警語 HTML，這兩題都看不到。
+ */
+export function bankBlockedWarningHtml() {
+  return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——<b>整份已經被擋下來了</b>，不會寫進去任何東西（所以下面沒有確認鈕）。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
+}
+
+/**
  * 銀行預覽表格底下那句話（純文字，呼叫端自己包 HTML／esc）。
  *
  * ⚠️ **排掉的筆數在「一筆都不匯入」時最需要講**（r2#1）：原本那句只掛在「有東西可匯入」的分支上，

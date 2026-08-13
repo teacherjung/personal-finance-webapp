@@ -32,6 +32,7 @@ import {
   BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
   BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL,
   bankPreviewFootnote,
+  bankBlockedWarningHtml,
 } from '../public/modules/cashflow-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -396,22 +397,26 @@ test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可�
   assert.doesNotMatch(src, /台新綜合對帳單/, '★cashflow.js 不得再有寫死單一銀行的畫面文字');
 });
 
-test('文案｜擋下的警語不可叫使用者把帳單內容傳給我（r1#1）', () => {
-  // ⚠️ 一定要 stripComments（r3#3 實測假綠）：在正式警語前放一段「符合期待」的註解，
-  //    正式文案改成要求傳截圖，考題仍會命中註解而放行。範圍也鎖在那段警語本身。
-  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  // ⚠️ 取**全部**、而且釘住只能有一段（r4#1）：只取第一個 match 的話，在正式警語**前面**插一段
-  //    「符合期待」的假分支就能瞞過去——Codex 實測示範過。
-  const warns = src.match(/r\.blocked \? `[^`]*`/g) || [];
-  assert.equal(warns.length, 1, '★只准有一段擋下警語（多一段＝前面那段先命中，後面那段愛寫什麼都行）');
-  const warn = warns[0];
+test('文案｜擋下的警語：不可要帳單內容、不可叫人去按已經不存在的鈕（r1#1／r3#1／r5#2）', () => {
+  // ⚠️ 這題**直接考文案本身**（純函式），不是掃 cashflow.js 的拼字——形狀掃描守不住
+  //    `r["blocked"]`、隱藏的前置分支這類等價寫法（r5#2 Codex 實測示範）。
+  const warn = bankBlockedWarningHtml();
   assert.doesNotMatch(warn, /截圖|把帳單.*傳給|帳單內容傳/,
     '★不可要求使用者把帳單內容／截圖傳出來——回報只需要「哪一家銀行、哪一種版面」');
   assert.match(warn, /不用傳帳單內容|不需要傳帳單/, '★要主動講「不用傳帳單內容」');
   assert.match(warn, /哪一家銀行|哪一種版面/, '要講清楚回報時給什麼就夠了');
-  // ★r4#3：擋下時已經不給確認鈕了，警語不可再叫人去「按下確認」——那顆鈕找不到
   assert.doesNotMatch(warn, /按下確認/, '★擋下時沒有確認鈕，不可再叫使用者去按（會讓人到處找那顆鈕）');
   assert.match(warn, /已經被擋下|已被擋下/, '要直接講「整份已經被擋下來了」');
+  assert.match(warn, /現值參考日/, '要講出是哪個欄位讀不到');
+  assert.match(warn, /^<p [^>]*>[\s\S]*<\/p>$/, '回傳整段 <p>＝呼叫端不必再包一層');
+});
+
+test('接線｜擋下警語走 bankBlockedWarningHtml，cashflow.js 不可就地寫死（r5#2）', () => {
+  const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
+  assert.match(src, /bankBlockedWarningHtml\(\)/, '★要真的接上（算了不用＝畫面看不到）');
+  // 只禁**警語專屬**的句子：「現值參考日」在同一頁的資訊列是正當用字，不能一律禁。
+  assert.doesNotMatch(src, /不用傳帳單內容|已經被擋下來了|哪一種版面/,
+    '★警語文案不可留在 cashflow.js（就地寫死＝又回到「守拼字」那種考題守不住的狀態）');
 });
 
 test('接線｜預覽的「會匯入」清單要排除外幣列（r1#2）', () => {
