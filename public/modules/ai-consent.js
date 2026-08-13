@@ -20,8 +20,12 @@ export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
 export const AI_CONSENT_BUSY_LABEL = '正在讀取…請稍候';
-/** 送出當下的提示（鈕在彈窗裡、視線不一定在那；toast 補一句「還在跑、別重按」）。 */
-export const AI_SENDING_TEXT = '已送出，AI 正在讀這份帳單……通常幾秒鐘，請稍候（不用重按）';
+/** 送出當下的提示（鈕在彈窗裡、視線不一定在那；toast 補一句「還在跑、別重按」）。
+ * ⚠️ **不可寫「已送出／AI 正在讀」**（r7）：這句是在**發請求之前**吐的，而 HOSTED 停止線與
+ * 「還沒設鑰匙」都會在**任何 AI 呼叫之前**就把整條路擋下（`aiBankRoute` 前兩道）——
+ * 那時使用者會同時看到「AI 正在讀」和「尚未設定鑰匙」，等於**謊稱帳單已經外送出去**。
+ * 這條線的整個價值就是「畫面說的＝實際發生的」，這句尤其不能破例。 */
+export const AI_SENDING_TEXT = '處理中……接下來會把帳單文字送去給 AI 讀，通常幾秒鐘，請稍候（不用重按）';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：P1b-3 攔截率實測後回頭校準這句。
