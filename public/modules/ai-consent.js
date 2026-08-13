@@ -28,7 +28,7 @@ export const AI_CONSENT_BUSY_LABEL = '正在讀取…請稍候';
 export const AI_SENDING_TEXT = '處理中……接下來會把帳單文字送去給 AI 讀，通常幾秒鐘，請稍候（不用重按）';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
- * 「正式數字待 ★3 實測」）。⏰ 絆線：P1b-3 攔截率實測後回頭校準這句。
+ * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。
  * 不寫「每百萬 token 幾美元」「模型名」「至多兩發」——那些常數不回前端（鐵則 10：寫死的數字自己會漂）。 */
 export const AI_COST_HINT = '通常是幾塊台幣以內（記在你自己的 Anthropic 帳戶裡；這是級距、不是報價，實際金額以他們的帳單為準）';
 /** 預覽窗過期／已用過時的白話（票是一次性＋短效）。 */

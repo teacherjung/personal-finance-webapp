@@ -1015,4 +1015,3 @@ test('去重鍵｜餘額欄讀成空白也會破壞去重（P1b-3 r13：D 類不
   assert.equal(r.imported, 1, '★餘額欄不同＝指紋不同 ⇒ 認不出是同一筆，又匯進去一次');
   assert.equal(db.transactions.length, 2, '★帳本上變成兩筆＝同一筆被記了兩次');
 });
-
