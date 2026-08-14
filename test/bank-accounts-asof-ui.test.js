@@ -322,11 +322,21 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
         assert.doesNotMatch(text, /[\p{L}\p{N}]/u,
           `★${where} 的 content 帶著文字「${text}」——對使用者說話的字必須住在 HTML（任何語言、含數字都算）`);
       }
-      // 值形狀白名單：只准 字串／attr(...)／none／normal。var()、counter()、url()…一律紅——
+      // 值形狀白名單：只准 字串／attr(data-label)／none／normal。var()、counter()、url()…一律紅——
       // 每一個都是「文字從守衛看不到的地方進畫面」的通道，與其逐一列黑名單不如關門。
+      // ⚠️ attr() **不是**全面放行（r14 阻擋）：我原本的理由「值來自 HTML、守衛看得到」是錯的——
+      //    balanceCellText 剝標籤時把屬性值一起剝掉了，塞進 data-* 屬性的假話守衛根本看不到。
+      //    唯一合法用途＝手機版欄位標籤 attr(data-label)，而 data-label 的值被
+      //    bank-accounts-forest-ui 的欄名 deepEqual 釘死（『帳戶末四碼／幣別／餘額』），
+      //    改值＝那題紅。其他任何 attr(＝從守衛盲區搬文字上畫面。
+      for (const a of d.value.matchAll(/attr\s*\(([^)]*)\)/giu)) {
+        assert.equal(a[1].trim().toLowerCase(), 'data-label',
+          `★${where} 的 content 用了 attr(${a[1].trim()})——屬性值在守衛的盲區`
+          + '（剝標籤時連值一起剝掉），只准 attr(data-label)');
+      }
       const residue = d.value
         .replace(/"[^"]*"|'[^']*'/gu, ' ')
-        .replace(/attr\([^)]*\)/giu, ' ')
+        .replace(/attr\s*\([^)]*\)/giu, ' ')
         .replace(/\b(?:none|normal)\b/giu, ' ')
         .trim();
       assert.equal(residue, '',
