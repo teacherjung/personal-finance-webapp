@@ -323,7 +323,18 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     const clean = stripComments(css);
     assert.doesNotMatch(clean, /@import/iu,
       `★${where} 用了 @import——匯進來的檔案逃出這題的射程，一律禁止（現況零使用）`);
+    assert.doesNotMatch(clean, /@counter-style/iu,
+      `★${where} 用了 @counter-style——它的 symbols/prefix/suffix 都能定義畫上畫面的文字，一律禁止（現況零使用）`);
     for (const d of declarations(clean)) {
+      // ⚠️ r16 阻擋：content 不是唯一會畫字的屬性——list-style-type 可帶**任意字串**當清單符號
+      //    （display: list-item 一配就上畫面，Chromium 實測會渲染）。字串規則同 content。
+      if (d.prop === 'list-style-type' || d.prop === 'list-style') {
+        for (const text of d.strings) {
+          assert.doesNotMatch(text, /[\p{L}\p{N}]/u,
+            `★${where} 的「${d.prop}」帶著文字「${text}」——清單符號也是畫在畫面上的字，同 content 規則`);
+        }
+        continue;
+      }
       if (d.prop !== 'content') continue;   // 其他屬性的字串（字型名、custom property 的字型堆疊）
                                             // 不會渲染成使用者看得到的話——content 的值形狀在下面
                                             // 白名單化之後，var() 進不了 content，那些字串也就到不了畫面

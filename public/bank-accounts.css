@@ -167,6 +167,9 @@
   .bank-account-table td[data-label]::before {
     content: attr(data-label); color: var(--text-dim); font-size: 11px; font-weight: 700; text-align: left;
   }
+  /* 餘額格在手機版是 grid：::before 標籤（第 1 欄）＋金額（第 2 欄）＋這行小字——
+     不指定的話它自動流到第 2 列第 1 欄＝跑到欄名下面；釘到第 2 欄才貼著金額（#454 r16 待辦） */
+  .bank-account-table .bank-balance-asof { grid-column: 2; }
   .bank-account-name-cell { padding-top: 15px !important; }
   .bank-account-actions { padding: 8px 0 12px !important; border-bottom: 0 !important; }
   .bank-account-actions .row-actions { justify-content: flex-end; }
