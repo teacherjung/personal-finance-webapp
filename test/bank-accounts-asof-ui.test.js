@@ -42,9 +42,6 @@ function renderRow(account, ibLastSync) {
 }
 
 /** 餘額格裡那行小字的**完整內容**（逐字比對用）。
- *  ⚠️ r4 阻擋：原本用「包含正句＋列舉禁詞」把關，於是在正句後面**接一句**
- *  「—這筆餘額由 IB 同步」照樣全綠——列舉永遠補不完，所以這一族改成**整串等值**。 */
-/** 餘額格裡那行小字的**完整內容**（逐字比對用）。
  *  ⚠️ 這支函式是三輪阻擋磨出來的，每一道都有名字：
  *  r4「包含正句＋列舉禁詞」被接一段繞過 → 改整串等值；
  *  r6 唯一性只放在兩題 → 收進本函式、所有呼叫者自動受保護；
@@ -54,18 +51,25 @@ function renderRow(account, ibLastSync) {
  *  （#452 已裁示不防刻意隱藏——那不是真實的失敗模式）。 */
 function asOfSmallText(html) {
   const classesOf = (/** @type {string} */ attrs) => {
-    const m = /class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/u.exec(attrs);
+    // ⚠️ 屬性名要有左邊界（r8 阻擋①）：沒有的話 `data-class="bank-balance-asof"` 也被認成 class
+    //    ——CSS 已失效、考題卻照樣綠。開頭或空白之後的 `class=` 才算。
+    const m = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/u.exec(attrs);
     return ((m && (m[1] ?? m[2] ?? m[3])) || '').split(/\s+/u);
   };
+  // 整列掛該 class 的 <small> 恰好一個（複製到別的欄位＝2＝紅）
   const rowSmalls = [...html.matchAll(/<small\b([^>]*)>([\s\S]*?)<\/small>/gu)];
   const noted = rowSmalls.filter((m) => classesOf(m[1]).includes('bank-balance-asof'));
   assert.equal(noted.length, 1,
     `整列掛 bank-balance-asof 的 <small> 必須恰好一個（實際 ${noted.length}）——單引號、屬性換序的寫法一樣要數到`);
-  const cellSmalls = [...balanceCell(html).matchAll(/<small\b[^>]*>([\s\S]*?)<\/small>/gu)];
+  // 餘額格裡任何形狀的 <small> 恰好一個，而且**那一個自己就要掛著 class**（r8 阻擋②）：
+  // 原本比「內文相等」——把掛 class 的搬去幣別格、餘額格留一個同文字的裸 <small>，
+  // 內文照樣相等＝假綠。「是不是同一個元素」要看它自己的屬性，不是看字長得像不像。
+  const cellSmalls = [...balanceCell(html).matchAll(/<small\b([^>]*)>([\s\S]*?)<\/small>/gu)];
   assert.equal(cellSmalls.length, 1,
     `餘額格裡任何形狀的 <small> 都只准一個（實際 ${cellSmalls.length}）——沒掛 class 的偷渡版一樣算`);
-  assert.equal(cellSmalls[0][1], noted[0][2], '餘額格裡那一個必須就是掛了樣式的那一個');
-  return noted[0][2];
+  assert.ok(classesOf(cellSmalls[0][1]).includes('bank-balance-asof'),
+    '餘額格裡那一個 <small> 自己就要掛 bank-balance-asof——樣式掛在別處的複本上＝這行小字沒有樣式');
+  return cellSmalls[0][2];
 }
 
 /** 取出 `data-label="餘額"` 那一格的內容——「字有出現在這一列」不算數，要在**餘額格裡** */
