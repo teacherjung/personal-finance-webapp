@@ -361,7 +361,7 @@ export async function renderSettings() {
         await renderSettings();   // await：重畫失敗不變成 unhandled rejection
       } catch (err) { if (seq !== currentNavSeq()) return; toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true); }   // r5#2：換頁後不報過期錯誤
     };
-    // 就地解釋四顆（設定頁首例；形狀照 securities.js）。Object.hasOwn＝只認自有鍵（'constructor' 撈不到原型）
+    // 就地解釋（設定頁首例；形狀照 securities.js；顆數不寫死＝寫死的數字自己會漂）。Object.hasOwn＝只認自有鍵（'constructor' 撈不到原型）
     view().querySelectorAll('[data-ai-info]').forEach((/** @type {any} */ b) => { b.onclick = () => {
       const key = String(b.dataset.aiInfo || '');
       const info = Object.hasOwn(AI_KEY_INFO, key) ? AI_KEY_INFO[/** @type {keyof typeof AI_KEY_INFO} */ (key)] : null;

@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
-  snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
+  snapshotUpload, shouldOfferAi, shouldAskBeforeSend, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
   AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
@@ -298,6 +298,27 @@ test('E3｜aiErrorText：後端白話句原句放行＋補下一步；未知 cod
 
 // ---- F 群：cashflow.js 接線形狀 ----
 
+test('A3｜shouldAskBeforeSend：只有明確設成 true 才問；讀不到設定當成「要問」（fail-closed）', () => {
+  // 這支判準決定「帳單要不要先問過你才送出去」。它原本**一條考題都沒有**（2026-08-14 預審抓到），
+  // 而它 JSDoc 承諾的「拿不到設定就當成要問」也沒人守。
+  // ⚠️ 方向為什麼是這樣：猜錯「不用問」＝沒問就把帳單送出去、還花了使用者的錢；
+  //    猜錯「要問」＝最多多一個窗。代價不對稱，所以往「問」的方向倒。
+  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: true }), true, '打開了就要問');
+  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: false }), false, '關著＝預設：直接送');
+  assert.equal(shouldAskBeforeSend({}), false, '欄位缺席＝還沒改過設定＝用預設（不問）');
+  // ⚠️ **「欄位缺席」與「讀不到設定」是兩件事**：前者是正常的預設，後者是我們不知道使用者選了什麼。
+  //    後者的 fail-closed 落在 cashflow.js 的 askBeforeSendAi（catch → true），下面那題釘它。
+  for (const truthy of ['true', 1, {}, [], 'yes']) {
+    assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: truthy }), false,
+      `★只認嚴格 true——${JSON.stringify(truthy)} 這種 truthy 值不可以當成「要問」`
+      + '（反過來說也一樣：判準要能被寫進資料庫的值，不是任何 truthy 東西）');
+  }
+  for (const bad of [null, undefined, 'x', 0]) {
+    assert.equal(shouldAskBeforeSend(bad), true,
+      `★拿不到設定物件（${JSON.stringify(bad)}）＝不知道使用者選了什麼 ⇒ 當成要問`);
+  }
+});
+
 test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 applyBody、徽章真的插進畫面', () => {
   const src = srcOf('public/modules/cashflow.js');
   // 三條 preview 路徑：上傳窗（無密碼）／密碼窗／同意窗（唯一帶 useAi 的那條）
@@ -314,8 +335,15 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.equal(count(src, /useAi: true/g), 2, '★只有這兩條路帶旗標——多一處＝有條路繞過了設定分流');
   assert.match(src, /if \(await askBeforeSendAi\(\)\) \{[\s\S]{0,400}?openConsent:/,
     '★「要問」那一支必須真的開同意窗（接錯＝打開開關也不會問）');
+  // ⚠️ **兩個呼叫點都要釘**（2026-08-14 預審抓到）：原本只釘了密碼窗那一條，
+  //    把**上傳窗那條**（免密碼帳單＝最常走的路）整行刪掉，整包考題照樣全綠——
+  //    使用者上傳一份系統不認得的帳單，畫面什麼都不會發生，而沒有任何一條考題會紅。
+  assert.equal(count(src, /await sendToAi\(/g), 2,
+    '★兩條「不問就直接送」的路都要在：上傳窗（免密碼）與密碼窗。少一條＝那條路按下去沒反應');
   assert.match(src, /await sendToAi\(b64, pw, onPage, canOpenNext\)/,
-    '★「不問」那一支必須真的送出（沒接＝認不出版面就什麼都不會發生）');
+    '★密碼窗那條必須真的送出（沒接＝認不出版面就什麼都不會發生）');
+  assert.match(src, /await sendToAi\(b64, '', onPage, canOpenNext\)/,
+    '★上傳窗那條也必須真的送出——它是**最常走的那條**（帳單沒設密碼時就走這裡）');
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw \}\);/, 'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案）');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');
