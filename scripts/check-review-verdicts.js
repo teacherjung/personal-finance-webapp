@@ -155,6 +155,83 @@ const HIDDEN_CP = /\p{Default_Ignorable_Code_Point}/u;
 const collapse = (/** @type {string} */ t) => String(t || '').trim().replace(/\s+/gu, ' ');
 
 /**
+ * **寬鬆正規化**（三步，逐字對應下面那行實作）：
+ *   ①`NFKC`（全形英數與括號折成半形：`Ｃｏｄｅｘ ＣＬＩ` → `Codex CLI`）
+ *   ②轉小寫
+ *   ③**只保留 Unicode Letter（`\p{L}`）與 Number（`\p{N}`）**，其餘一律刪掉
+ * `CLI（gpt-5.6-sol xhigh）` → `cligpt56solxhigh`
+ *
+ * ⚠️ 第③步的精確說法是「只保留字母與數字」，不是「拿掉標點」（Codex #456 r4 Medium②）：
+ * emoji、連字號、以及**未被 NFKC 合成**的 combining mark 都會被刪；combining mark 若先被
+ * NFKC 合成為字母則保留。差別看得見——把連字號留下來的話，`codex-CLI` 與 `codexCLI`
+ * 就不再相等（考題釘住這個邊界）。
+ *
+ * ⚠️ **它只餵給 `sourceLookalike()` 出聲提醒，判定路徑一個字都不用它**——
+ * 身分比對仍然是 `headerOf()` 那條「只摺疊空白」的逐字規則。理由見 `sourceLookalike()`。
+ * @param {string} s
+ */
+function looseSource(s) {
+  return String(s || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * 正規化後短於這個長度就不比——兩個字互相包含沒有指示性（`桌面` vs `桌面版`）。
+ * ⚠️ `CLI` 正好**在門檻上**（3 個字）＝要比，因為 `CLI` vs `codex CLI` 正是 #453 的漂法之一。
+ *    改這個數字會靜靜關掉那一族提醒 ⇒ 考題兩個方向都釘住（Codex #456 r1 Medium③：
+ *    改成 4 時 86 題全綠、`CLI` 那族卻已經不提醒了）。
+ */
+const LOOSE_MIN = 3;
+
+/**
+ * 兩個來源字串**看起來像不像同一位審查者**？像就回一句原因，不像回 `null`。
+ *
+ * ## 它在解什麼（2026-08-14 #453 實際踩到）
+ *
+ * 身分＝`角色`＋`來源`，而來源**只摺疊空白**（見 `headerOf()`）——全形／半形括號、
+ * 有沒有 `codex` 前綴、有沒有逗號，通通算不同的人。那天同一個 codex CLI，來源在不同輪次
+ * 被打成 `CLI（gpt-5.6-sol xhigh）` 與 `codex CLI (gpt-5.6-sol, xhigh)`，於是閘把**同一位**
+ * 審查者拆成兩個身分：r8 的「需修改後再審」掛在其中一個身分底下，他自己從來沒撤銷過它
+ * （新留言掛到另一個身分）⇒ 合併被擋；補了那一半，另一半又停在舊 sha ⇒ 再擋一次。
+ *
+ * 兩次都不是規則出錯，是**打字漂掉而現場沒有人看得出來**——閘的輸出只列出兩個名字，
+ * 沒有任何一句話說「這兩個可能是同一位」。這個函式就是補那句話。
+ *
+ * ## ⚠️ 誠實劃界：**這是警告，不是自動合併身分**
+ *
+ * ・偵測到也**不會**把兩個身分併成一位。不同 session 本來就該是不同審查者
+ *   （#383 的病根正是「兩份都自稱 Claude 複審、結論相反」），自動正規化等於把兩位悄悄
+ *   變成一位——那是**削弱這道閘**，方向剛好相反。判定規則一格都沒放寬。
+ * ・**邊界就是演算法本身**（講性質、不列清單）：任一個名字正規化後短於 `LOOSE_MIN`
+ *   （＝JS `length`／UTF-16 編碼單位，不是 Unicode 字元數：`𠮷a` 是兩個字元卻算 3），
+ *   或兩者正規化後既不相等、也不互相包含 ⇒ **不提醒**。
+ *   正規化＝NFKC → 小寫 → **只保留 Unicode Letter／Number**（三步的細節見 `looseSource()`）。
+ *   ⚠️ r1 我寫成「抓不到的有三族」，r2 Codex 當場又找出三族不在名單上（換序、中間打錯一個字、
+ *   共同後綴不同前綴）——**列舉補不完**，這是本專案認過很多次的病型，我在自己的劃界裡又犯一次。
+ *   例示（不是清單）：`CLI` vs `第二輪複審`／`codex CLI (…, xhigh)` vs `codex CLI (…, medium)`
+ *   ／`本機 codex CLI` vs `桌面 codex CLI`／`codex CLI xhigh` vs `xhigh codex CLI`
+ *   ／`codex CLI xhigh` vs `codex CLl xhigh`／`桌面` vs `桌面版`。
+ *   第二例正是文件禁止「把 effort 寫進來源」要防的漂法——**規矩比提醒可靠**。
+ * ・反方向會多嘴一次：真的有兩個 session、名字剛好一個包住另一個（`codex CLI` 與
+ *   `codex CLI 版面`）會被點名。代價是一句提醒，處方是取兩個不互相包含的名字
+ *   （標準字串表＝`REVIEW-AND-MERGE.md`「發審查提示」節）。
+ * @param {string} a @param {string} b
+ * @returns {string|null}
+ */
+export function sourceLookalike(a, b) {
+  const x = looseSource(a);
+  const y = looseSource(b);
+  if (x.length < LOOSE_MIN || y.length < LOOSE_MIN) return null;
+  // ⚠️ 理由字串要把**三步都講到**（Codex #456 r4 Medium②）：原本漏了「轉小寫」，
+  //    於是純大小寫漂移時，終端印出的原因是錯的（說成標點或全形半形的差別）。
+  if (x === y) return '折全形、轉小寫、只留字母與數字之後**完全相同**';
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  // 包含關係才是 #453 那個真實形狀（`cligpt56solxhigh` 整個包在 `codexcligpt56solxhigh` 裡）——
+  // 只比「正規化後相等」的話，漏掉工具名前綴的那次就抓不到。
+  if (long.includes(short)) return '折全形、轉小寫、只留字母與數字之後，其中一個**整個包在另一個裡面**（多半是工具名前綴打了一次、漏了一次）';
+  return null;
+}
+
+/**
  * 從一則留言抽出來歷標頭。抓不到就回 null（呼叫端決定那算不算問題）。
  * @param {string} body
  */
@@ -342,6 +419,10 @@ function stripFencesLoose(md) {
  * A 說「需修改」之後，B 說「通過」**不會**解除 A 的阻擋——那正是 #383 的情境。
  * 同一個審查者身分＝`角色 + 來源`（不是只有角色：兩個 Claude session 是兩個審查者）。
  *
+ * ⚠️ **所以來源字串是機械身分，不是描述文字**——同一個審查工具跨輪次改寫法（多一個前綴、
+ * 換成全形括號）就會被拆成兩位（2026-08-14 #453）。標準字串表與補救程序＝
+ * `REVIEW-AND-MERGE.md`「發審查提示」節；長得像的兩個來源由 `sourceLookalike()` 出聲提醒。
+ *
  * @param {{body: string}[]} comments
  * @param {string} head
  * @param {string|null} [reviewerRole] PR 說明指定的獨立審查者角色；`null`＝讀不出來（退回「任何一位都算」）
@@ -479,6 +560,31 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
         + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節）。');
+    }
+  }
+  // **同一位審查者被打成兩種來源寫法 → 閘會把他拆成兩個身分**（2026-08-14 #453 實際踩到，
+  // 完整病歷與劃界＝`sourceLookalike()`）。⚠️ **只出聲、不併身分**：不同 session 本來就該是
+  // 不同審查者，自動正規化會削弱這道閘。
+  const ids = Object.values(latest);
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      // 角色不同＝本來就是不同審查者（Claude 與 Codex 各有一個叫「CLI」的 session 很正常），不比。
+      if (ids[i].role !== ids[j].role) continue;
+      const why = sourceLookalike(ids[i].source, ids[j].source);
+      if (!why) continue;
+      warnings.push(`「${ids[i].who}」與「${ids[j].who}」的來源${why}`
+        + ' ⇒ **這兩個可能是同一位審查者被打成兩種寫法**（身分＝角色＋來源，只摺疊空白）。\n'
+        + '    ・這道閘**不會**自動把它們併成一位——所以兩邊的結論各自算數，'
+        + '其中一邊的阻擋，另一邊說「通過」也解不掉。\n'
+        // ⚠️ 處方以**身分**為單位，不可寫死「兩個」（Codex #456 r4 Medium①）：第三個別名、
+        //    重述產生的身分、中途換掉的審查角色都算，而「現況：」那行就是完整名單。
+        + '    ↳ 若真的是同一次審查：**現況列出的每一個身分**各自對目前 head 補一則合規結論，'
+        + '**輪次要大於「那個身分自己」現有的最高輪次**'
+        + '（照原輪次補發撤銷不掉——同輪相反結論＝照樣阻擋、同輪同結論＝不取代舊 sha）。\n'
+        + '    ⚠️ **這些身分在這支 PR 裡會一直存在**（留言歷史刪不掉）：之後 head 每動一次，'
+        + '**全部都要再跟一次**；「只用固定的那一個字串」是**下一支 PR** 才開始'
+        + '（標準字串表與補救程序＝REVIEW-AND-MERGE.md「發審查提示」節）。\n'
+        + '    ⛔ **不要用編輯舊留言的方式修**——改審查紀錄會洗掉稽核軌跡。');
     }
   }
   // 重述行引用的第一行若對不上任何壞留言＝空轉，要出聲（不然打錯引文會以為清掉了）。

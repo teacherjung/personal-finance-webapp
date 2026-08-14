@@ -127,3 +127,16 @@ test('⭐ CLI｜**同時有 warning 與真正的阻擋** → 仍然 exit 1（war
   assert.match(r.stderr, /不影響本閘結果/, '提醒不見了');
   assert.match(r.stderr, /未通過/, '正式阻擋的訊息不見了');
 });
+
+test('⭐ CLI｜兩個來源長得像 → **stderr 有提醒、退出碼不變**（#453：提醒不是阻擋、也不是自動併身分）', () => {
+  // 2026-08-14 #453：同一個 codex CLI 的來源被打成兩種寫法，閘把他拆成兩位審查者、擋了兩次，
+  // 而終端輸出沒有任何一句話說「這兩個可能是同一位」——現場只看得到兩個名字。
+  // ⚠️ 退出碼是這支對外的介面：提醒實作成阻擋（或實作成自動併身分）都要在這裡看得見。
+  const r = withFakeGh(payload([
+    header('CLI（gpt-5.6-sol xhigh）', 8, '通過'),
+    header('codex CLI (gpt-5.6-sol, xhigh)', 9, '通過'),
+  ]));
+  assert.equal(r.status, 0, `相似提醒把合併擋下來了。實得 ${r.status}\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /可能是同一位審查者被打成兩種寫法/, `沒印出提醒：${r.stderr}`);
+  assert.match(r.stderr, /不影響本閘結果/, '提醒要標明它不影響判定');
+});
