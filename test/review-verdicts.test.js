@@ -779,6 +779,13 @@ test('來源相似｜只差全形半形與標點 → 正規化後完全相同', 
   assert.match(sourceLookalike('codex CLI（xhigh）', 'codex CLI (xhigh)') || '', /完全相同/);
 });
 
+test('⭐ 來源相似｜全形**英數**也要折（NFKC 被拿掉時要轉紅）', () => {
+  // Codex #456 r3 Medium②：只刪 looseSource 的 .normalize('NFKC')，90 題全綠——
+  // 因為上面那題只差**括號**，而括號本來就會被後面的 regex 刪掉 ⇒ 那一題根本沒守到 NFKC。
+  // 全形英數（Ｃｏｄｅｘ ＣＬＩ）不會被 regex 刪掉，只有 NFKC 折得動它。
+  assert.match(sourceLookalike('Ｃｏｄｅｘ ＣＬＩ', 'codex CLI') || '', /完全相同/);
+});
+
 test('⭐ 來源相似｜真的不同的 session 一個都不准被點名（誤報會教人整批忽略提醒）', () => {
   for (const [a, b] of [
     ['桌面 A', '桌面 B'],
@@ -833,6 +840,7 @@ test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要�
   //    （Codex #456 r2 Medium③ 實測把「最高輪次」改成「最低輪次」，89 題全綠）。
   //    ⇒ 這一句**整句逐字**斷言，因為每個字都承重（各自／自己／最高）。
   for (const must of ['補發', '兩個身分各自', '輪次各自要大於「自己」現有的最高輪次',
+    '兩個都要再補到新的 head', '下一支 PR',
     '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
     assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
   }
@@ -852,9 +860,10 @@ test('⭐ 來源相似｜`CLI` vs `codex CLI` 要抓到（LOOSE_MIN 是門檻，
 });
 
 test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補不完，r1→r2 連錯兩次）', () => {
-  // r1 我寫「抓不到的有三族」，Codex r2 當場又找出三族不在名單上 ⇒ **那是本支相對 main 唯一一處變糟**
-  //（main 原本沒有任何窮盡宣稱）。所以這一題釘的不是「有沒有列到某一族」，
-  // 而是**文件有沒有把邊界寫成演算法本身**——列清單那種寫法會再被打穿第三次。
+  // r1 我寫「抓不到的有三族」，Codex r2 當場又找出三族不在名單上——`main` 原本沒有任何窮盡宣稱，
+  // 我卻新增了一句撐不住的 ⇒ 那是**一處**相對 main 的變糟（⚠️ r3 又找到第二處，所以這裡
+  // 刻意不寫「唯一」——「唯一」本身就是一個沒有考題撐著的保證，我在講這件事的註解裡又犯一次）。
+  // 這一題釘的不是「有沒有列到某一族」，而是**文件有沒有把邊界寫成演算法本身**。
   for (const [a, b] of [
     ['codex CLI (gpt-5.6-sol, xhigh)', 'codex CLI (gpt-5.6-sol, medium)'],   // 共同前綴、不同後綴
     ['本機 codex CLI', '桌面 codex CLI'],                                     // 共同後綴、不同前綴
@@ -862,8 +871,13 @@ test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補
     ['codex CLI xhigh', 'codex CLl xhigh'],                                   // 中間打錯一個字
   ]) assert.equal(sourceLookalike(a, b), null, `「${a}」與「${b}」的判定與劃界不符`);
   const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(doc.includes('**任一個名字正規化後短於 3 個字，或兩者正規化後既不相等、也不互相包含，就不提醒。**'),
+  assert.ok(doc.includes('既不相等、也不互相包含**\n⇒ **不提醒**'),
     '誠實劃界要寫成**演算法邊界**（性質），不是「抓不到的有 N 族」那種列舉——列舉已經被打穿兩次');
+  // r3 Medium②：只寫「正規化後」而不定義它，執行的人重建不出演算法（前文剛說身分正規化只摺疊空白）
+  assert.ok(doc.includes('`NFKC`') && doc.includes('轉小寫') && doc.includes('拿掉所有非文字非數字的字元'),
+    '劃界要逐項寫出正規化三步（NFKC → 小寫 → 去掉非文字非數字），不然「正規化後」是空話');
+  assert.ok(doc.includes('UTF-16'),
+    '「3 個字」是 JS length＝UTF-16 編碼單位，不是 Unicode 字元數——不精確的宣稱就是失真（r3 Medium②）');
   assert.ok(doc.includes('例示**（不是清單）'), '例子要標明是例示，不然下一個人又會當成完整清單');
 });
 
@@ -908,6 +922,30 @@ test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目
     `只補一半就放行了——那正是 #453 第二次被擋的原因：${halfDone.problems.join('｜')}`);
 });
 
+test('⭐ 補救之後 head 再前進：兩個身分**都**要再跟一次（別名在本 PR 內永久存在）', () => {
+  // Codex #456 r3 阻擋①：我原本第 4 步寫「從下一輪起只用選定的那一個字串」——**照做會再被鎖住**。
+  // 留言歷史刪不掉 ⇒ 兩個別名永遠是這支 PR 的兩個身分，而閘要求每個沒阻擋的身分都停在目前 head。
+  // 「只用固定那一個」要到**下一支 PR**（留言歷史重新開始）才成立。
+  const H1 = 'ffee0011223344556677889900aabbccddeeff00';
+  const settled = [   // 兩個身分都已經補到 H1 ⇒ 對 H1 全清
+    c(head('Codex', DRIFT_A, H1, 10, '通過')),
+    c(head('Codex', DRIFT_B, H1, 10, '通過')),
+  ];
+  assert.deepEqual(verdictProblems(settled, H1, 'Codex').problems, [], '前提：對 H1 本來是全清的');
+
+  // head 前進到 H2，只讓選定的那一個（A）跟上 ⇒ **仍然紅**（B 停在 H1）
+  const onlyChosen = verdictProblems([...settled, c(head('Codex', DRIFT_A, HEAD, 11, '通過'))], HEAD, 'Codex');
+  assert.ok(onlyChosen.problems.some((p) => /是對 ffee001/.test(p)),
+    `只補選定的那一個就放行了——那正是「從下一輪起只用一個字串」會踩的雷：${onlyChosen.problems.join('｜')}`);
+
+  // 兩個都跟到 H2 ⇒ 才綠
+  const bothFollow = verdictProblems([...settled,
+    c(head('Codex', DRIFT_A, HEAD, 11, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 11, '通過')),
+  ], HEAD, 'Codex');
+  assert.deepEqual(bothFollow.problems, [], `兩個身分都跟上就該全清：${bothFollow.problems.join('｜')}`);
+});
+
 test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯舊留言」的補救程序', () => {
   // ⚠️ 誠實劃界：文件題只證明「規則寫在該寫的地方、沒有被靜靜刪掉」，
   //    證明不了任何人真的照著打字（那要靠審查與上面那道相似提醒）。
@@ -940,6 +978,9 @@ test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯
     '補救程序要寫閘的**精確**規則（每個身分各自算），不是只寫「兩則都用 r10」那個簡化版');
   assert.ok(doc.includes('不是閘的必要條件'),
     '共用同一輪次是**簡化寫法**，要標明它不是閘的必要條件（分別寫 r9 與 r10 也會過）');
+  // r3 阻擋①：別名在本 PR 內永久存在，head 再動就兩個都要跟——不寫這條，照第 4 步做會被重新鎖住
+  assert.ok(doc.includes('本 PR 內所有已經出現過的身分都要跟著 head；新 PR 起只用標準來源'),
+    '補救程序少了「別名在本 PR 內永久存在」的心智模型——照舊版第 4 步做，下次推 commit 會再被鎖住');
   assert.ok(doc.includes('不可以編輯舊的結論留言'),
     '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
   const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
