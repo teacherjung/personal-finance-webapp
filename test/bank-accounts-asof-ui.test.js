@@ -49,9 +49,12 @@ function asOfSmallCount(html) {
 }
 
 function asOfSmallText(html) {
-  const m = /<small class="bank-balance-asof[^"]*">([\s\S]*?)<\/small>/u.exec(html);
-  assert.ok(m, '餘額格裡找不到那行小字（<small class="bank-balance-asof…">）');
-  return m[1];
+  const all = [...html.matchAll(/<small class="bank-balance-asof[^"]*">([\s\S]*?)<\/small>/gu)];
+  // ⚠️ r6 阻擋：唯一性斷言原本只放在一般帳戶那兩題，IB 分支多畫第二個 <small> 照樣全綠。
+  //    把「恰好一個」放進取值函式本身＝**每一條**呼叫它的路徑自動受保護，不用逐題記得加。
+  assert.equal(all.length, 1,
+    `那行小字必須恰好一個（實際 ${all.length} 個）——多畫一個＝同一格出現兩句話，哪句是真的？`);
+  return all[0][1];
 }
 
 /** 取出 `data-label="餘額"` 那一格的內容——「字有出現在這一列」不算數，要在**餘額格裡** */
