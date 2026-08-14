@@ -328,7 +328,8 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     for (const d of declarations(clean)) {
       // ⚠️ r16 阻擋：content 不是唯一會畫字的屬性——list-style-type 可帶**任意字串**當清單符號
       //    （display: list-item 一配就上畫面，Chromium 實測會渲染）。字串規則同 content。
-      if (d.prop === 'list-style-type' || d.prop === 'list-style') {
+      if (d.prop.startsWith('list-style')) {   // 整個家族（r18：列舉兩個名字漏了 list-style-image——
+                                               //  它自己也能掛 url()；-position 只有關鍵字值、順帶無害）
         for (const text of d.strings) {
           assert.doesNotMatch(text, /[\p{L}\p{N}]/u,
             `★${where} 的「${d.prop}」帶著文字「${text}」——清單符號也是畫在畫面上的字，同 content 規則`);
