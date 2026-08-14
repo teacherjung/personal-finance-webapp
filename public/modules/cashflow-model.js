@@ -59,14 +59,33 @@ export const BANK_UPLOAD_NOTICE = `<details>
   <p style="margin:6px 0 0">如果內建程式認不出您的對帳單版面，將詢問您要不要交給 AI 幫忙判讀。（沒按同意不會送出至 AI 公司）</p>
 </details>`;
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
+/** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
+ * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
+ * @param {boolean} balancesSkipped */
+export function bankApplyLabel(balancesSkipped) {
+  return balancesSkipped ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
+}
+
+/** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
+ * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean}} bal
+ * @param {{imported:number, skipped?:number, foreign?:number}} tx */
+export function bankApplyDoneText(bal, tx) {
+  const acct = bal.balancesSkipped
+    ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
+    : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
+      + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`;
+  return `${acct}；交易：匯入 ${tx.imported}`
+    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+}
+
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
 
 /** 疑似重複的統計區警語（整段 <p>，作者內容）。`n`＝疑似重複的筆數。
  *
  * ⚠️ 住在這裡的理由同 `bankBlockedWarningHtml`：形狀掃描守不住「加個 hidden 就看不見」
  * 這種等價繞法（r1#3 審查者實測），文案與可見性都要能直接行為測試。
- * ⚠️ **擋下（blocked）時呼叫端不可顯示它**——整份都不會寫進去，再談防重複認不認得出來
- * 就是自相矛盾（#450 r3#1 剛立的口徑）。
+ * ⚠️ **一律顯示，不可依 `blocked` 壓掉**：`blocked` 只代表「這次不更新餘額」，交易**照樣會進帳本**
+ * ——壓掉這段提醒等於讓跨版式的重複交易**無聲入帳**。
  * @param {number} n
  */
 export function bankSimilarWarningHtml(n) {
@@ -79,7 +98,7 @@ export function bankSimilarTagHtml() {
 }
 
 /**
- * 讀不到「現值參考日」時的擋下警語（整段 <p>，作者內容、呼叫端不 esc）。
+ * 讀不到「現值參考日」時的提醒（2026-08-13 起**不再是「擋下」**：餘額不更新、交易照匯）（整段 <p>，作者內容、呼叫端不 esc）。
  *
  * ⚠️ 為什麼住在這裡而不是就地寫在 `cashflow.js`（r5#2）：原本用形狀掃描守這段文案，
  * 但那種考題**守的是拼字、不是行為**——把接線寫成 `r["blocked"]`、或在前面插一段
@@ -90,7 +109,7 @@ export function bankSimilarTagHtml() {
  * 有人**另外**硬插一段自己的警語 HTML，這兩題都看不到。
  */
 export function bankBlockedWarningHtml() {
-  return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——<b>整份已經被擋下來了</b>，不會寫進去任何東西（所以下面沒有確認鈕）。<br>這份請改用手動記帳。要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
+  return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——所以<b>這次不會更新帳戶餘額</b>，「資產配置」頁會維持原本的數字。<br><b>交易明細照樣匯入</b>：那些交易本來就用不到這個日期，只有「這份帳單的餘額比 app 裡的新嗎」才需要它。<br>要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
 }
 
 /**
@@ -100,19 +119,17 @@ export function bankBlockedWarningHtml() {
  * 整份只有外幣或只有重複時會落到「帳單裡沒有新交易」，使用者完全不知道那幾筆去哪了——
  * 而那正是**最容易誤以為程式讀漏了**的情況。收成單一實作＝兩個分支不可能再各說各話。
  *
- * ⚠️ **`blocked` 優先於一切**（r3#1）：讀不到「現值參考日」的帳單按下確認會**整份失敗**，
- * 這時候還說「以上 N 筆就是會匯入的全部內容」＝同一個畫面上兩句話互相打架
- * （上面的警語才剛說「什麼都不會寫進去」）。畫面說的必須跟實際會發生的一致。
+ * ⚠️ **本來有個 `blocked` 參數，2026-08-13 連參數一起拿掉**：它原本用來在「讀不到現值參考日」
+ * 時改口成「什麼都不會寫進去」。行為改成「餘額不更新、交易照匯」之後那個改口就是錯的，
+ * 而留著一個沒人用的參數只會讓下一個人以為它還有意義（沒用到就刪）。
+ * 餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
  *
- * @param {{shown: number, duplicate?: number, foreign?: number, blocked?: boolean}} n
+ * @param {{shown: number, duplicate?: number, foreign?: number}} n
  *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
  */
-export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0, blocked = false }) {
-  if (blocked) {
-    return shown > 0
-      ? `上面這 ${shown} 筆都不會寫進去——這份缺「現值參考日」，整份會被擋下。`
-      : '這份會被擋下，什麼都不會寫進去。';
-  }
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0 }) {
+  // ⚠️ 2026-08-13 起 `blocked` 只代表「**餘額**不更新」，交易照樣匯入——所以腳註不再改口，
+  //    照常講「以上 N 筆會匯入」。餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
   const parts = [];
   if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
   if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);

@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -306,22 +306,24 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
 
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
-    ${!r.blocked && c.similar ? bankSimilarWarningHtml(c.similar) : ''}
+    ${c.similar ? bankSimilarWarningHtml(c.similar) : ''}
     ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
-      <td class="muted">${!r.blocked && x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
+      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
-    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, blocked: !!r.blocked }))}</p>
+    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
 `;
   // 確認鈕放**底部動作列**（與「了解」同一排、在它右邊＝主要動作在最右；William 2026-08-12）——
   // 原本埋在內容最下方，捲到底才看得到，而且與關窗鈕分屬兩處。
-  // ⚠️ 擋下的帳單**不給確認鈕**（r3#1）：那顆按下去必定整份失敗，擺在那裡等於邀請使用者去撞一次，
-  //    而且會跟上面「什麼都不會寫進去」的警語互相打架。要做的事警語裡已經寫了（改用手動記帳）。
+  // ⚠️ **確認鈕一律給**（2026-08-13）：讀不到現值參考日不再是「整份擋下」——餘額不更新、
+  //    交易照樣匯入，所以那顆鈕按下去真的有事情發生。r3#1 當初拿掉它是對的（那時按了必失敗），
+  //    行為改了就要跟著改回來，不然使用者會以為這份帳單完全不能用。
   openInfo('銀行對帳單預覽', body, { size: 'xl',
-    ...(r.blocked ? {} : { actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}確認：更新餘額＋匯入交易</button>` }) });
+    actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
+
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
     if (btn) btn.onclick = async () => {
@@ -336,7 +338,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
         const res = await api('/bank-statement/apply', { method: 'POST', body: payload });
         if (!onPage()) return;   // r5#1：套用（含寫入）完成後切頁＝不清 modal、不重繪舊頁、不報舊 toast（資料已存，下次進頁自見）
         const t = res.transactions || {};
-        toast(`帳戶：更新 ${res.updated}、新建 ${res.created}${res.skipped ? `、跳過 ${res.skipped}` : ''}${res.unsupported ? `、略過 ${res.unsupported} 個不支援幣別` : ''}；交易：匯入 ${t.imported || 0}${t.skipped ? `、去重 ${t.skipped}` : ''}`);
+        toast(bankApplyDoneText(res, t));   // ⚠️ 餘額沒更新一定要講（r1#3：不說＝使用者以為餘額是新的）
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
       } catch (e) {

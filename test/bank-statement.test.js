@@ -103,11 +103,21 @@ test('餘額更新｜同末碼不同幣別＝不同帳戶（363 JPY vs 363 USD �
   assert.equal(db.accounts.find(a => a.id === 'j').balance, 300);
 });
 
-test('餘額更新｜沒有現值參考日 → 400（不敢亂更新）', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed(null, [acc('3301', 'TWD', 23)])),
-    (/** @type {any} */ e) => e.status === 400);
+test('餘額更新｜沒有現值參考日 → **餘額不動、但不再整份退回**（William 2026-08-13）', () => {
+  // ⚠️ 舊行為是丟 400、整份匯不進去。但交易明細**根本用不到**這個日期——只有「這份帳單的餘額
+  //    比 app 裡的新嗎」才需要。因為一個欄位讀不到就把整批交易也擋掉，是連坐。
+  //    ⚠️ 保守的部分一點都沒放寬：**不知道新舊就絕不覆蓋餘額**（拿舊的蓋掉新的＝無聲毀資料）。
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [] };
+  const r = applyBalancesToDb(db, parsed);
+  assert.equal(r.balancesSkipped, true, '★要明確回報「這次沒更新餘額」——呼叫端得講給使用者聽');
+  assert.equal(r.updated, 0); assert.equal(r.created, 0);
+  assert.equal(db.accounts[0].balance, 111, '★餘額一動都不可以動（不知道新舊）');
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★balanceAsOf 也不可以被改掉');
+  assert.equal(db.accounts.length, 1, '★也不可以新建帳戶（新建就等於寫進一個不知道時點的餘額）');
 });
-
 test('預覽｜列出 update/create/skip-stale，不改 db', () => {
   const db = { accounts: [
     { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', accountNo: '****3301', balance: 5 },
@@ -162,11 +172,19 @@ test('餘額更新｜不支援幣別 graceful skip，不擋整張帳單（有效
   assert.ok(!db.accounts.some(a => a.currency === 'EUR'));
 });
 
-test('餘額更新｜壞的現值參考日（2026/13/45）→ 400，不寫進 balanceAsOf 撞櫃檯 500', () => {
-  assert.throws(() => applyBalancesToDb({ accounts: [] }, parsed('2026-13-45', [accM('x****3301', 'TWD', 23)])),
-    (/** @type {any} */ e) => e.status === 400);
+test('餘額更新｜壞的現值參考日（2026/13/45）＝比照讀不到：餘額不動，不寫 balanceAsOf，也不新建', () => {
+  // ⚠️ `type` 要用會被 `matchAccount` 認得的（`cash`）——用 `type:'bank'` 的話這筆根本不會被匹配，
+  //    斷言等於在驗一個沒被碰到的物件（r8 指出的空轉）。
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'cash', currency: 'TWD', balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: '2026-13-45',
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [] };
+  const r = applyBalancesToDb(db, parsed);
+  assert.equal(r.balancesSkipped, true, '★壞日期＝當成讀不到（絕不拿它當時點）');
+  assert.equal(db.accounts[0].balance, 111);
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★壞日期不可進 balanceAsOf（會讓後續比大小撞櫃檯 500）');
+  assert.equal(db.accounts.length, 1, '★也不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
 });
-
 test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯入間的手動修正）', () => {
   const db = { accounts: [{ id: 'a', type: 'cash', currency: 'TWD', accountNo: '900100****3301', balance: 88888, balanceAsOf: '2026-06-30' }] };
   const r = applyBalancesToDb(db, parsed('2026-06-30', [accM('900100****3301', 'TWD', 23)]));
@@ -174,7 +192,7 @@ test('餘額更新｜現值參考日「相等」也不覆蓋（保住兩次匯�
   assert.equal(db.accounts[0].balance, 88888, '同一天再匯不覆蓋手改值');
 });
 
-test('預覽｜讀不到參考日→blocked，動作標 blocked（與 apply 會 400 一致）', () => {
+test('預覽｜讀不到參考日→blocked，動作標 blocked（＝「這次不更新餘額」，交易仍會匯入）', () => {
   const pv = previewBalancesForDb({ accounts: [] }, parsed(null, [accM('x****3301', 'TWD', 23)]));
   assert.equal(pv.blocked, true);
   assert.equal(pv.rows[0].action, 'blocked');
@@ -1015,3 +1033,83 @@ test('去重鍵｜餘額欄讀成空白也會破壞去重（P1b-3 r13：D 類不
   assert.equal(r.imported, 1, '★餘額欄不同＝指紋不同 ⇒ 認不出是同一筆，又匯進去一次');
   assert.equal(db.transactions.length, 2, '★帳本上變成兩筆＝同一筆被記了兩次');
 });
+
+test('純函式｜讀不到現值參考日：交易照樣進帳本、餘額一動都不動（正式入口那題在檔尾）', () => {
+  // ⚠️ 這題是整個變更的**承重點**：使用者的金融卡明細沒印「現值參考日」，舊行為整份退回、
+  //    他只能手動記帳。新行為＝交易照匯、餘額不動。兩半都要驗，缺一半都不成立：
+  //    ①只驗「交易進去了」→ 可能連餘額也被亂寫（拿舊的蓋掉新的＝無聲毀資料）
+  //    ②只驗「餘額沒動」→ 可能整份還是被擋（那就沒解鎖到任何東西）
+  const db = { accounts: [{ id: 'a1', name: '台新活存', type: 'bank', currency: 'TWD',
+    balance: 111, accountNo: '900100****3301', balanceAsOf: '2026-05-31' }], transactions: [] };
+  const parsed = { bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' }],
+    transactions: [
+      btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+      btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
+    ] };
+
+  const bal = applyBalancesToDb(db, parsed);
+  const tx = importBankTxToDb(db, parsed);
+
+  assert.equal(tx.imported, 2, '★交易要真的進帳本——這就是這次變更解鎖的東西');
+  assert.equal(db.transactions.length, 2);
+  assert.equal(bal.balancesSkipped, true, '★要明確回報「這次沒更新餘額」');
+  assert.equal(db.accounts[0].balance, 111, '★餘額一動都不可以動（不知道帳單新不新）');
+  assert.equal(db.accounts[0].balanceAsOf, '2026-05-31', '★時點也不可以動');
+  assert.equal(db.accounts.length, 1, '★不可新建帳戶（新建＝寫進一個不知道時點的餘額）');
+});
+
+const { applyBankStatement: applyBankE2E, previewBankStatement: previewBankE2E } =
+  await import('../lib/services/bank-import.js');
+
+// ⚠️ **兩種「讀不到」都要走正式入口**（r7）：`null` 與**壞日期**是不同的輸入路徑——
+//    模板解析器是直接把 regex 抓到的數字組成日期字串、**不驗日曆**，所以 `2026-13-45` 這種值
+//    真的進得了正式入口。原本壞日期只有純函式題，複審把入口改成「日期非空但無效就整份 400」
+//    照樣全綠＝「壞日期再次連坐交易」這條回歸沒人守。
+for (const [label, refDate] of /** @type {[string, string|null][]} */ ([
+  ['沒有現值參考日（null）', null],
+  ['壞的現值參考日（2026-13-45）', '2026-13-45'],
+])) {
+  test(`端到端（正式入口）｜${label}：走 applyBankStatement，交易真的落庫、帳戶快照完全不動`, async () => {
+    const seed = await getDb();
+    seed.accounts = [
+      // ⚠️ 這一筆刻意**沒有** `balanceAsOf`：手動建立與舊資料的帳戶就是這個樣子。
+      { id: 'e2e-noasof', name: '台新活存', type: 'cash', bank: '台新', currency: 'TWD',
+        accountNo: '900100****3301', balance: 111 },
+      { id: 'e2e-asof', name: '台新定存', type: 'cash', bank: '台新', currency: 'TWD',
+        accountNo: '900100****9999', balance: 555, balanceAsOf: '2026-05-31' },
+    ];
+    seed.transactions = [];
+    await saveDb(seed);
+    const snapshotBefore = JSON.stringify((await getDb()).accounts);
+
+    // 模板路線的解析器接縫（第三參數）：餘額鏈自洽，只是參考日讀不到／壞掉
+    // ⚠️ **摘要要蓋到三種資料狀態**（r8）：只放 3301 的話，「已匹配**且原本有時點**」與
+    //    「摘要有、db 裡沒有（會走新建）」兩格從來沒被匹配過——那兩種偷改都不會被抓到。
+    const parseIt = async () => ({ bank: '台新', referenceDate: refDate,
+      accounts: [
+        { suffix: '3301', masked: '900100****3301', balance: 999, currency: 'TWD', label: '活存', note: '' },      // 已匹配、無時點
+        { suffix: '9999', masked: '900100****9999', balance: 888, currency: 'TWD', label: '定存', note: '' },      // 已匹配、有時點
+        { suffix: '7777', masked: '900100****7777', balance: 666, currency: 'TWD', label: '外快', note: '' },      // db 裡沒有＝正常時會被新建
+      ],
+      accountCurrency: { '900100****3301': 'TWD', '900100****9999': 'TWD', '900100****7777': 'TWD' },
+      transactions: [
+        btx({ date: '2026-06-05', summary: '提款', direction: 'out', amount: 400, balance: 600 }),
+        btx({ date: '2026-06-08', summary: '轉帳存入', direction: 'in', amount: 100, balance: 700 }),
+      ] });
+
+    const pv = await previewBankE2E('QUFBQQ==', undefined, parseIt);
+    assert.equal(pv.blocked, true, '預覽要標明「這次不會更新餘額」');
+
+    const res = await applyBankE2E('QUFBQQ==', undefined, parseIt);
+    assert.equal(res.ok, true, '★正式入口不可再整份拒絕——那正是使用者被卡住的原因');
+    assert.equal(res.balancesSkipped, true, '★回應要帶出「餘額沒更新」給畫面用');
+    assert.equal(res.transactions.imported, 2, '★交易要真的匯入');
+
+    const after = await getDb();   // ⚠️ 重讀資料庫：只看回傳值證明不了「真的存進去了」
+    assert.equal(after.transactions.length, 2, '★交易要真的落庫');
+    assert.equal(JSON.stringify(after.accounts), snapshotBefore,
+      '★整份帳戶快照要一模一樣——三種狀態都在裡面：已匹配無時點／已匹配有時點／摘要有但 db 沒有'
+      + '（最後一種在正常情況會被**新建**，這裡一個都不可以新建）');
+  });
+}
