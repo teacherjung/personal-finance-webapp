@@ -1,10 +1,13 @@
-// 名詞統一（William 2026-08-14 拍板；r1 事實修正後定案）：
+// 名詞統一（William 2026-08-14 拍板；r1/r2 兩輪事實修正後定案）：
 //
-// ⚠️ **r1 修正了本支的事實前提**：預覽表那一欄的內容**不是**帳單「摘要＋備註」照抄——
-// `bank-import` 會把摘要翻成白話（「CD轉出」→「現金轉出」）、刪通路詞、重排備註；
-// 已學列顯示的是自訂名。所以「摘要・備註」這個欄名（以及「逐字對得上」的說法）是假的。
-// **誠實的統一＝兩邊都叫「收支說明」**：預覽窗與收支頁顯示的本來就是同一份「整理後說明」。
-// 帳單用語（摘要／備註）與 app 說明的關係，由 ⓘ 講清楚、並明講「核對請用日期＋金額」。
+// ⚠️ **r1 證偽了「摘要・備註」**：預覽欄內容不是帳單照抄——服務層會翻譯摘要
+// （「CD轉出」→「現金轉出」）、刪通路詞、整理備註。
+// ⚠️ **r2 證偽了我第一版的「同一份內容」**：預覽樣板對未學列讀的是生的 `x.summary`、
+// 匯入後保存的卻是整理後 `note`＝同名欄位、內容不同。修正＝樣板改讀 `x.note`
+// （服務層的 displayNote 與匯入保存的 noteText 是**同一條產生式**），預覽所見＝匯入所得。
+//
+// 定案＝預覽表與收支頁**統一叫「收支說明」**；帳單用語（摘要／備註）與 app 說明的關係
+// 由 ⓘ 講清楚，並明講「核對請用日期＋金額」。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -12,6 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from '../public/modules/cashflow-model.js';
 import { aiPreviewBadgeHtml } from '../public/modules/ai-consent.js';
+import { previewBankTxForDb } from '../lib/services/bank-import.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -36,49 +40,61 @@ function renderPreviewBody(/** @type {any} */ r) {
     bankPreviewFootnote, aiPreviewBadgeHtml);
 }
 
-/** 合成資料：一列未學（顯示整理後摘要）、一列已學（顯示自訂名＋已學標籤）。全部假值。 */
-const RESULT = Object.freeze({
-  bank: '合成銀行', referenceDate: '2026-05-31', reconcile: { level: 'strong', ok: true },
-  rows: [],
-  transactions: {
-    counts: { income: 0, expense: 2, transfer: 0 },
-    rows: [
-      { date: '2026-05-02', account: '合成帳戶', summary: '現金轉出・合成通路整理後', learned: false, type: 'expense', amount: 100, category: '（不分類）' },
-      { date: '2026-05-03', account: '合成帳戶', summary: '轉帳支出', note: '合成鋼琴課', learned: true, type: 'expense', amount: 200, category: '教育' },
-    ],
-  },
+/** 外殼合成資料（rows 由各題自帶）。全部假值、零真實帳單內容。 */
+const SHELL = Object.freeze({
+  bank: '合成銀行', referenceDate: '2026-05-31', reconcile: { level: 'strong', ok: true }, rows: [],
 });
+const wrap = (/** @type {any[]} */ rows) =>
+  ({ ...SHELL, transactions: { counts: { expense: rows.length }, rows } });
 
-test('統一欄名｜預覽表與收支頁同叫「收支說明」——兩邊顯示的本來就是同一份整理後說明', () => {
+test('統一欄名｜預覽表與收支頁同叫「收支說明」', () => {
   assert.match(src(), /<th>日期<\/th><th>帳戶<\/th><th>收支說明<\/th><th>金流・分類<\/th>/u,
     '★預覽表欄名＝「收支說明」（與收支頁同名＝真正的統一）');
   assert.match(src(), /th\('note', '收支說明'\)/u, '★收支頁欄名不變');
   assert.doesNotMatch(src(), /摘要・備註/u,
-    '★「摘要・備註」不可出現——那個名字宣稱內容是帳單照抄，r1 已證偽（摘要會被翻譯、備註會被整理）');
+    '★「摘要・備註」不可出現——那個名字宣稱內容是帳單照抄，r1 已證偽');
 });
 
-test('行為｜未學列顯示整理後摘要、已學列顯示自訂名＋「已學」標籤（欄名的內容真相）', () => {
-  const html = renderPreviewBody(RESULT);
-  assert.match(html, /現金轉出・合成通路整理後/u, '★未學列＝顯示（整理後的）summary');
-  assert.match(html, /合成鋼琴課/u, '★已學列＝顯示自訂 note');
+test('跨層｜預覽顯示的＝匯入後會保存的那份文字（走真的 previewBankTxForDb，不手塞想像值）', () => {
+  // r2 教訓：手工把「整理後文字」塞進 summary 是在驗自己的想像——跨層差異就是這樣漏掉的。
+  const raw = { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-05-02',
+    summary: 'CD轉出', direction: 'out', amount: 100, balance: null, note: '合成分行 0000123 Wei' };
+  const db = { transactions: [], accounts: [], settings: {} };
+  const { rows } = previewBankTxForDb(db, {
+    bank: '台新', accounts: [], accountCurrency: { '999900****0001': 'TWD' }, transactions: [raw] });
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.ok(row.note && row.note !== row.summary,
+    `★前提自檢：整理後說明（${row.note}）必須≠原始摘要（${row.summary}）——相同的話本題什麼都證明不了`);
+  assert.match(String(row.note), /現金轉出/u, '★「CD轉出」要被翻成白話（服務層既有行為）');
+  const html = renderPreviewBody(wrap([row]));
+  assert.ok(html.includes(String(row.note).replaceAll('&', '&amp;')) || html.includes(String(row.note)),
+    '★預覽格顯示的必須是整理後說明（row.note）＝匯入後帳本會保存的那份');
+  assert.doesNotMatch(html, />CD轉出</u,
+    '★預覽格不可顯示生的摘要——預覽給人看「CD轉出」、匯入後帳本卻寫「現金轉出…」＝預覽在騙人');
+});
+
+test('行為｜已學列顯示自訂名＋「已學」標籤；沒有 note 的列退回 summary（fail-open 顯示）', () => {
+  const html = renderPreviewBody(wrap([
+    { date: '2026-05-03', account: '合成帳戶', summary: '轉帳支出', note: '合成鋼琴課', learned: true, type: 'expense', amount: 200, category: '教育' },
+    { date: '2026-05-04', account: '合成帳戶', summary: '合成無整理摘要', learned: false, type: 'expense', amount: 50, category: '（不分類）' },
+  ]));
   assert.match(html, />已學<\/span> 合成鋼琴課/u, '★已學標籤要貼著自訂名（在預覽窗）');
-  assert.doesNotMatch(html, /(?<!合成鋼琴課)轉帳支出<\/td>/u,
-    '★已學列不可顯示原 summary——顯示什麼由 learned 決定，這是欄名沒說謊的前提');
+  assert.match(html, /合成無整理摘要/u, '★note 缺席的列退回 summary——留白比顯示原文更糟');
 });
 
-test('就地解釋｜三種出身講清楚，而且不說 r1 證偽的那些話', () => {
+test('就地解釋｜三種出身講清楚，而且不說 r1/r2 證偽的那些話', () => {
   const s = src();
   assert.match(s, /byId\('noteNamingInfo'\)\.onclick = openNoteNamingInfo;/u, '按鈕要綁上');
   const start = s.indexOf('function openNoteNamingInfo()');
   assert.ok(start >= 0);
   const body = s.slice(start, s.indexOf('\n}', start));
-  assert.match(body, /整理成白話/u, '★要講「整理」——這是真相：翻譯銀行代碼、刪通路詞');
-  assert.match(body, /「CD轉出」→「現金轉出」/u, '★給一個真實形狀的例子，使用者才對得上他看到的');
-  assert.match(body, /核對請用日期＋金額/u,
-    '★字面會與帳單不同，要給使用者可靠的核對方法——不給，他會拿字面去對、對不上以為讀錯');
-  assert.match(body, /同名欄位＝同一份內容/u, '★要點名預覽窗同名同內容');
-  assert.match(body, /清空自訂名會回到 app 整理的預設說明/u,
-    '★不可說「隨時可以改回帳單原文」——清空回到的是整理後說明，不是逐字原文');
-  assert.doesNotMatch(body, /照抄|逐字對得上|帳單原文還在/u,
-    '★這三種說法 r1 已證偽（bank-import 會翻譯摘要、刪通路詞、重排備註）');
+  assert.match(body, /整理成白話/u, '★要講「整理」——真相：翻譯銀行代碼、刪通路詞');
+  assert.match(body, /「CD轉出」→「現金轉出」/u, '★給一個真實形狀的例子');
+  assert.match(body, /核對請用日期＋金額/u, '★字面與帳單不同，要給可靠的核對方法');
+  assert.match(body, /同名欄位＝同一份內容/u,
+    '★「同一份內容」現在成立了（r2：樣板改讀 note＝與匯入保存同一條產生式）——但它是被下面'
+    + '的跨層考題撐著的宣稱，不是裝飾');
+  assert.match(body, /清空自訂名會回到 app 整理的預設說明/u, '★不可說「隨時可改回帳單原文」');
+  assert.doesNotMatch(body, /照抄|逐字對得上|帳單原文還在/u, '★r1 證偽的三種說法禁令');
 });

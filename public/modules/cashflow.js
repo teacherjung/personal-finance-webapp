@@ -351,7 +351,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>收支說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
-      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
+      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String(x.note || x.summary || ''))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
