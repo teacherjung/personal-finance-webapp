@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -355,7 +355,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
-    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
+    <p id="bankPreviewFootnote" class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, similar: c.similar, skipSimilarChecked: !!c.similar }))}</p>
 
     <!-- ⚠️ 說明區在**最下面**（William 2026-08-13）：窗一打開先看到帳戶餘額與交易明細，
          想知道「這是誰讀的、驗到什麼程度」再往下看。徽章裡那句「請確認…有沒有讀錯」
@@ -372,17 +372,30 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   //    交易照樣匯入，所以那顆鈕按下去真的有事情發生。r3#1 當初拿掉它是對的（那時按了必失敗），
   //    行為改了就要跟著改回來，不然使用者會以為這份帳單完全不能用。
   openInfo('銀行對帳單預覽', body, { size: 'xl',
-    actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
+    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
 
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
+    // 勾選一動＝腳註跟著改口（r4：勾著時「以上 N 筆都會匯入」是假話——57 標示、實匯 9）。
+    // 重算用同一支純函式，不手拼第二句。
+    const skipChk = /** @type {HTMLInputElement|null} */ (byId('skipSimilarChk'));
+    if (skipChk) skipChk.onchange = () => {
+      const fn = byId('bankPreviewFootnote');
+      if (fn) fn.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
+        foreign: c.foreign, similar: c.similar, skipSimilarChecked: skipChk.checked === true });
+    };
     if (btn) btn.onclick = async () => {
       // 防重入（P1b-2）：AI 路線的票是**一次性**，按第二次必得 ai_ticket_invalid——而第一次其實已經寫進去了，
       // 使用者會看到「失敗」卻以為沒匯入。模板路線一樣受惠（不會送兩次）。
       if (btn.disabled) return;
       btn.disabled = true;
       // AI 路線＝憑票寫入（不重送檔案與密碼）；模板路線＝照舊送 data+password。判準住 ai-consent.js
-      const payload = applyBody(r, { data: b64, password: pw });
+      // 勾選＝這次跳過「疑似重複」（沒有勾選框＝similar 為 0＝照舊）。
+      // ⚠️ 語意講準（r1 待辦）：跳過集合是 apply 當下用 fresh db **重算**的（判準同預覽）——
+      //    預覽到按下確認之間若又匯了別批銀行交易，集合會跟著變；**手動記的帳不參與判準**
+      //    （similarTxIndex 只索引 source:'bank' 的既有交易，手動帳沒有機構＋帳號可比）。
+      const skipSimilar = /** @type {HTMLInputElement|null} */ (document.getElementById('skipSimilarChk'))?.checked === true;
+      const payload = applyBody(r, { data: b64, password: pw, skipSimilar });
       if (!payload) { if (onPage()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
       try {
         const res = await api('/bank-statement/apply', { method: 'POST', body: payload });

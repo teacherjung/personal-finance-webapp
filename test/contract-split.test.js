@@ -550,6 +550,7 @@ const MANIFEST = {
       'test/ib-cash-freshness.test.js',          // #454 r1：用真的 syncIb 釘住那句文案的前提
       'test/bank-accounts-asof-ui.test.js',      // #454：餘額旁小字的整族護欄（r13 待辦補登記）
       'test/bank-preview-layout.test.js',        // #455：預覽窗「說明區在最下面」的排版考題（跑真樣板驗順序）
+      'test/skip-similar-import.test.js',       // 跳過疑似重複（William 2026-08-14）：勾選＝同判準跳過＋嚴格布林三層
       'test/note-naming.test.js',               // 名詞統一（William 2026-08-14；r1 事實修正）：預覽與收支頁統一「收支說明」＋誠實 ⓘ
       'lib/services/categories.js',
       'lib/services/health-check.js',

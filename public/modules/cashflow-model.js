@@ -63,14 +63,23 @@ export function bankApplyLabel(balancesSkipped) {
 
 /** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
  * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean}} bal
- * @param {{imported:number, skipped?:number, foreign?:number}} tx */
+ * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx */
 export function bankApplyDoneText(bal, tx) {
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
     : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
       + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`;
   return `${acct}；交易：匯入 ${tx.imported}`
-    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+}
+
+/** 「這次不匯入 N 筆疑似重複」勾選框（William 2026-08-14：同期匯過另一版面時 48/57 筆重複——
+ * 全放行＝現金流多算一份、全擋掉＝剩下的也進不來）。預設勾＝往「不多算錢」那邊倒；
+ * tooltip 誠實講啟發式的代價：真的同帳戶同日同額刷兩次會被一起跳過（可事後手動補記）。
+ * n＝預覽數出來的疑似重複筆數；0＝不畫（沒東西可跳過就不給開關）。 @param {number} n */
+export function bankSkipSimilarOptionHtml(n) {
+  if (!n) return '';
+  return `<label class="skip-similar-opt" title="「疑似重複」是啟發式判斷（同帳戶＋同日＋同金額＋同方向）——真的刷兩次同額的也會被跳過，可事後手動補記"><input type="checkbox" id="skipSimilarChk" checked> 這次不匯入 ${Number(n)} 筆「疑似重複」</label>`;
 }
 
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';
@@ -122,16 +131,24 @@ export function bankBlockedWarningHtml() {
  * 而留著一個沒人用的參數只會讓下一個人以為它還有意義（沒用到就刪）。
  * 餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
  *
- * @param {{shown: number, duplicate?: number, foreign?: number}} n
+ * @param {{shown:number, duplicate?:number, foreign?:number, similar?:number, skipSimilarChecked?:boolean}} n
  *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
  */
-export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0 }) {
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0, similar = 0, skipSimilarChecked = false }) {
   // ⚠️ 2026-08-13 起 `blocked` 只代表「**餘額**不更新」，交易照樣匯入——所以腳註不再改口，
   //    照常講「以上 N 筆會匯入」。餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
+  // ⚠️ #459 r4：「這次不匯入疑似重複」勾著時，「以上 N 筆＝按確認會匯入的全部」是**假話**
+  //    （57 標示、實匯 9）——腳註必須跟著勾選狀態改口，勾選一動就重算這句（cashflow.js 接線）。
   const parts = [];
   if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
   if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);
-  if (shown > 0) return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  if (shown > 0) {
+    if (similar > 0 && skipSimilarChecked === true) {
+      return `以上 ${shown} 筆中有 ${similar} 筆標「疑似重複」——照左下的勾選這次會跳過，`
+        + `實際匯入 ${shown - similar} 筆${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+    }
+    return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  }
   if (parts.length) return `這份帳單沒有新交易要匯入：${parts.join('；')}。`;
   return '帳單裡沒有新交易。';
 }
