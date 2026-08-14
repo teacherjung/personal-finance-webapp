@@ -304,14 +304,14 @@ test('A3｜shouldAskBeforeSend：只有明確設成 true 才問；讀不到設�
   // ⚠️ 方向為什麼是這樣：猜錯「不用問」＝沒問就把帳單送出去、還花了使用者的錢；
   //    猜錯「要問」＝最多多一個窗。代價不對稱，所以往「問」的方向倒。
   assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: true }), true, '打開了就要問');
-  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: false }), false, '關著＝預設：直接送');
+  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: false }), false, '明確關著＝直接送');
   assert.equal(shouldAskBeforeSend({}), false, '欄位缺席＝還沒改過設定＝用預設（不問）');
-  // ⚠️ **「欄位缺席」與「讀不到設定」是兩件事**：前者是正常的預設，後者是我們不知道使用者選了什麼。
-  //    後者的 fail-closed 落在 cashflow.js 的 askBeforeSendAi（catch → true），下面那題釘它。
-  for (const truthy of ['true', 1, {}, [], 'yes']) {
-    assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: truthy }), false,
-      `★只認嚴格 true——${JSON.stringify(truthy)} 這種 truthy 值不可以當成「要問」`
-      + '（反過來說也一樣：判準要能被寫進資料庫的值，不是任何 truthy 東西）');
+  // ⚠️ 三分法（r1#2 修正）：上一版把「壞型別」跟「缺席」混成同一個 false——
+  //    備份還原塞進來的 'true' 字串會變成「直接外送」，方向錯。**欄位在、卻不是布林
+  //    ＝資料壞了、不知道使用者要什麼 ⇒ 保守：問**（跟「整包設定拿不到」同一個答案）。
+  for (const junk of ['true', 'false', 1, 0, {}, [], 'yes', null]) {
+    assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: junk }), true,
+      `★欄位存在但不是布林（${JSON.stringify(junk)}）＝保守要問——壞資料不可以往「外送」倒`);
   }
   for (const bad of [null, undefined, 'x', 0]) {
     assert.equal(shouldAskBeforeSend(bad), true,
@@ -344,6 +344,11 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
     '★密碼窗那條必須真的送出（沒接＝認不出版面就什麼都不會發生）');
   assert.match(src, /await sendToAi\(b64, '', onPage, canOpenNext\)/,
     '★上傳窗那條也必須真的送出——它是**最常走的那條**（帳單沒設密碼時就走這裡）');
+  // ⚠️ r1#1：等「要不要先問」設定的 await 期間使用者可能已離開——重新驗證必須是
+  //    sendToAi 的**第一個語句**（收進函式本身＝兩條路＋未來新增的呼叫者自動受保護，
+  //    同 #454 r6「唯一性收進取值函式」同一課）。
+  assert.match(src, /canOpenNext\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canOpenNext\(\)\) return;/u,
+    '★sendToAi 第一個語句必須是 canOpenNext 重新驗證——沒有它，關窗切頁後帳單照樣送出去、照樣花錢');
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw \}\);/, 'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案）');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');

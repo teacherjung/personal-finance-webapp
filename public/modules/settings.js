@@ -346,7 +346,19 @@ export async function renderSettings() {
     // 「送出前先問我」＝獨立開關，勾一下就存（不跟鑰匙共用儲存鍵——鑰匙那顆有「留空＝不變更」語意，
     //   混在一起會讓「只想改開關」的人被迫重打鑰匙）。
     const ask = /** @type {HTMLInputElement|null} */ (byId('aiAskBeforeSend'));
-    if (ask) ask.onchange = () => saveSettings({ aiAskBeforeSend: ask.checked }, ask.checked ? '好，之後每次送出前會先問你' : '好，之後認不出版面就直接送去讀');
+    // ⚠️ r1#3：不可用 saveSettings（它吞錯誤只 toast）——PUT 失敗時畫面顯示「已開」、
+    //    資料庫還是關的，下一次上傳就直接外送。失敗＝把開關**退回原狀**讓人看見。
+    if (ask) ask.onchange = async () => {
+      const want = ask.checked;
+      ask.disabled = true;
+      try {
+        await api('/settings', { method: 'PUT', body: { aiAskBeforeSend: want } });
+        toast(want ? '好，之後每次送出前會先問你' : '好，之後認不出版面就直接送去讀');
+      } catch (err) {
+        ask.checked = !want;   // 存不進去就退回——開關的樣子必須等於資料庫的真相
+        toast('儲存失敗，開關已退回：' + (/** @type {any} */ (err).message || ''), true);
+      } finally { ask.disabled = false; }
+    };
     const btn = byId('saveAiApiKey');
     if (btn) btn.onclick = async () => {
       const patch = aiKeyPatch({ value: val('aiApiKey'), clear: /** @type {HTMLInputElement} */ (byId('clearAiApiKey'))?.checked === true });

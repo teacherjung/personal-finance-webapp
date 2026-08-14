@@ -10,7 +10,7 @@
 import { AI_COST_HINT } from './ai-consent.js';   // 費用級距只有一份住所（同意窗與設定頁共用同一句）
 
 export const AI_KEY_CARD_TITLE = 'AI 解析鑰匙（Anthropic API key）';
-export const AI_KEY_CARD_NOTE = '上傳的帳單如果系統看不懂版面（新的銀行、或銀行改版），可以在你按過確認之後交給 AI 讀一次——這把鑰匙就是付那一次費用的憑證。不設定也完全可以：現有認得的帳單照常匯入，一個字都不會變。這把鑰匙和 IB Token、帳單密碼一樣是被特別保護的欄位（存好之後不會再顯示出來，這個畫面只知道「有沒有設」）。AI 解析目前只在「裝在自己電腦上」的版本開放；網頁版（雲端）在隱私同意畫面做好之前一律停用，存了鑰匙也不會用到。';
+export const AI_KEY_CARD_NOTE = '上傳的帳單如果系統看不懂版面（新的銀行、或銀行改版），會直接交給 AI 讀一次（想每次先問你，打開下面的「送給 AI 之前先問我一次」）——這把鑰匙就是付那一次費用的憑證。不設定也完全可以：現有認得的帳單照常匯入，一個字都不會變。這把鑰匙和 IB Token、帳單密碼一樣是被特別保護的欄位（存好之後不會再顯示出來，這個畫面只知道「有沒有設」）。AI 解析目前只在「裝在自己電腦上」的版本開放；網頁版（雲端）在隱私同意畫面做好之前一律停用，存了鑰匙也不會用到。';
 export const AI_KEY_PLACEHOLDER_SET = '已設定，留空＝不變更';
 export const AI_KEY_PLACEHOLDER_UNSET = '貼上 API key（sk-ant- 開頭）';
 export const AI_KEY_CLEAR_LABEL = '清除已存的鑰匙（改回未設定）';

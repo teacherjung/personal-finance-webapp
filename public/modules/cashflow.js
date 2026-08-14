@@ -201,6 +201,10 @@ function openBankUpload() {
    *  送出鈕的「正在上傳…請稍候」會一路顯示到預覽窗開起來，不需要另外吐 toast。 */
   const sendToAi = async (/** @type {string} */ b64, /** @type {string} */ pw,
     /** @type {() => boolean} */ onPage, /** @type {() => boolean} */ canOpenNext) => {
+    // ⚠️ r1#1：呼叫端在 await「要不要先問」設定的期間，使用者可能已關窗、切頁、或彈窗被接管
+    //    ——那時**連請求都不可以發**（發了就把帳單送出去、花他的錢，canOpenNext 只擋得住
+    //    預覽窗、擋不住已出門的請求）。放在函式第一行＝兩條呼叫路與未來新增的都自動受保護。
+    if (!canOpenNext()) return;
     try {
       const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
       openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));

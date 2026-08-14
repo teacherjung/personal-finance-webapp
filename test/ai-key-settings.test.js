@@ -88,8 +88,9 @@ test('G3｜文案：在 HOSTED 下為假的句子一句都不准出現；不得�
   //   ⚠️ 舊考題用的是 `/都會問|都會先問|有沒有設鑰匙/` 這種**交替式**：文案改成假話之後
   //   它照樣綠（被雲端版那句「不論有沒有設鑰匙」撞上）＝守拼字不守語意。改成兩面都釘：
   //   假話一個字都不准出現，真話必須講到。
-  assert.doesNotMatch(ALL_COPY, /沒同意就完全不送|有沒有設鑰匙都會問|每一次要送出前都得由你按過同意/u,
-    '★預設已經是「不問、直接送」——這些句子現在是假的，留著等於騙使用者他一定會被問');
+  assert.doesNotMatch(ALL_COPY, /沒同意就完全不送|有沒有設鑰匙都會問|每一次要送出前都得由你按過同意|按過確認之後|確認之後才|同意之後才/u,
+    '★預設已經是「不問、直接送」——這些句子（含 r1#4 抓到的同義句「按過確認之後」）'
+    + '現在是假的，留著等於騙使用者他一定會被問');
   assert.match(AI_KEY_INFO.where.html, /預設是直接送/u,
     '★要明講預設會直接送出去（使用者有權知道他的帳單什麼時候會離開這台機器）');
   for (const [key, info] of Object.entries(AI_KEY_INFO)) {
@@ -108,6 +109,16 @@ test('G4｜AI_KEY_INFO：五把鑰匙齊全、都有標題與內容，且是凍�
     assert.doesNotMatch(v.html, /\$\{/, `${k} 不可有插值（openInfo 不跳脫）`);
   }
   assert.ok(Object.isFrozen(AI_KEY_INFO));
+});
+
+test('G6｜「先問我」開關：存檔失敗必須把開關退回、不能畫面開著資料庫關著（r1#3）', () => {
+  const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+  // ⚠️ 不可走 saveSettings（它吞錯誤只 toast）：PUT 失敗＝畫面顯示已開、下一次上傳直接外送。
+  assert.match(src, /ask\.onchange = async \(\) => \{/u, '★開關存檔要等結果（async），不是射後不理');
+  assert.match(src, /ask\.checked = !want;/u,
+    '★失敗要退回 checkbox——開關的樣子必須等於資料庫的真相，不然使用者以為自己受保護');
+  assert.match(src, /儲存失敗，開關已退回/u, '★失敗要出聲說「已退回」，不是靜靜恢復');
+  assert.doesNotMatch(src, /saveSettings\(\{ aiAskBeforeSend/u, '★不可繞回吞錯誤的 saveSettings');
 });
 
 test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把關、判準走純函式、換頁序號', () => {

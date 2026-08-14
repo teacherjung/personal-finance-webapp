@@ -39,7 +39,14 @@ import { esc } from './html-escape.js';
 export function shouldAskBeforeSend(settings) {
   // 不是物件＝根本沒拿到設定（null／undefined／字串／數字）⇒ 保守：問。
   if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) return true;
-  return settings.aiAskBeforeSend === true;
+  const v = settings.aiAskBeforeSend;
+  // ⚠️ 三分法（r1#2）：欄位**缺席**＝還沒改過設定＝新預設（不問）；明確 false＝不問；
+  //    明確 true＝問；**欄位在、卻不是布林**＝資料壞了、不知道使用者要什麼 ⇒ 保守：問。
+  //    上一版把「壞型別」與「缺席」混成同一個 false——壞資料變成「直接外送」，方向錯。
+  if (v === undefined) return false;
+  if (v === true) return true;
+  if (v === false) return false;
+  return true;
 }
 
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
