@@ -41,6 +41,15 @@ function renderRow(account, ibLastSync) {
   return row(account, ibLastSync);
 }
 
+/** 餘額格裡那行小字的**完整內容**（逐字比對用）。
+ *  ⚠️ r4 阻擋：原本用「包含正句＋列舉禁詞」把關，於是在正句後面**接一句**
+ *  「—這筆餘額由 IB 同步」照樣全綠——列舉永遠補不完，所以這一族改成**整串等值**。 */
+function asOfSmallText(html) {
+  const m = /<small class="bank-balance-asof[^"]*">([\s\S]*?)<\/small>/u.exec(html);
+  assert.ok(m, '餘額格裡找不到那行小字（<small class="bank-balance-asof…">）');
+  return m[1];
+}
+
 /** 取出 `data-label="餘額"` 那一格的內容——「字有出現在這一列」不算數，要在**餘額格裡** */
 function balanceCell(html) {
   const m = /<td data-label="餘額"[^>]*>([\s\S]*?)<\/td>/u.exec(html);
@@ -67,7 +76,7 @@ test('有現值參考日：餘額格裡出現「對帳單更新至 <日期>」�
   assert.equal(html.split('bank-balance-asof').length - 1, 1,
     '整列只准出現一次——同一行字被畫兩次（例如又貼到幣別格）是壞掉，不是「至少有一個」');
   assert.match(cell, /TWD 12,345/, '金額不見了——旁註不可以擠掉主角');
-  assert.match(cell, /對帳單更新至 2026-05-31/, '餘額格裡沒有更新日期');
+  assert.equal(asOfSmallText(html), '對帳單更新至 2026-05-31', '★整串逐字（同上：只驗「包含」補不完）');
   assert.doesNotMatch(cell, /餘額截至|正確到/u, '不可以宣稱成「餘額截至/正確到某日」——手動改餘額不會動這個日期');
 });
 
@@ -114,16 +123,16 @@ test('就地解釋接上去了：說明按鈕存在、綁得到，而且文案�
 
 // ── IB 同步的現金帳戶（2026-08-14 預審抓到的阻擋級）─────────────────────────
 // `lib/services/ib-sync.js` 只寫 balance、不寫 balanceAsOf ⇒ 這些列會**永遠**顯示
-// 「未由對帳單更新過」，而它們其實每次同步都在更新；說明窗還叫使用者去匯對帳單，
+// 「未由對帳單更新過」，但那句對它們是錯的（它們根本不靠對帳單）；說明窗還叫使用者去匯對帳單，
 // 那條路對 IBKR 帳戶永遠走不通。這一族考題釘住「它們要走另一條文案」。
 const IB_ACCOUNT = Object.freeze({ ...ACCOUNT, name: 'IBKR 美元現金', currency: 'USD', ibCashCur: 'USD' });
 
 test('IB 現金帳戶：講「上次 IB 同步 <日期>」，不可以說成「未由對帳單更新過」', () => {
-  const cell = balanceCell(renderRow(IB_ACCOUNT, '2026-08-14T03:21:00.000Z'));
-  assert.match(cell, /上次 IB 同步 2026-08-14/, '★要用 IB 自己的時間點');
-  assert.doesNotMatch(cell, /同步更新至|更新至 2026/u,
-    '★不可以講成「這筆餘額更新到那天」（#454 r1 阻擋①）：lastSync 是每次同步無條件寫的，'
-    + '而現金報表缺失時餘額是刻意沿用舊值——同步時間前進、餘額沒動是正常狀態');
+  const html = renderRow(IB_ACCOUNT, '2026-08-14T03:21:00.000Z');
+  const cell = balanceCell(html);
+  assert.equal(asOfSmallText(html), '上次 IB 同步 2026-08-14',
+    '★**整串逐字**：不可以只是「包含」這句——在後面接一句「這筆餘額由 IB 同步」就又把來源講死了，'
+    + '而 lastSync 是每次同步無條件寫的、現金報表缺失時餘額刻意沿用舊值');
   assert.doesNotMatch(cell, /未由對帳單更新過/u,
     '★這句對 IB 帳戶是錯的：它每次同步都在更新，而 IBKR 根本不出這種對帳單');
   assert.doesNotMatch(cell, /對帳單更新至/u, '也不可以講成對帳單更新的');
@@ -134,12 +143,10 @@ test('IB 現金帳戶：沒有同步時間時只講身分，不可以宣稱這�
   //    `data/seed.json` 是 `ib.lastSync: null` 配兩個 IB 現金帳戶＝**還沒同步過**，
   //    而餘額也可能是使用者自己填的。更糟的是我原本的考題把那句錯話釘住了。
   for (const noSync of [undefined, null, '', 'not-a-date', 12345]) {
-    const cell = balanceCell(renderRow(IB_ACCOUNT, /** @type {any} */ (noSync)));
-    assert.match(cell, /IB 現金帳戶（尚無同步時間）/u, `★${JSON.stringify(noSync)}：只講身分＋時間未知`);
-    assert.doesNotMatch(cell, /同步更新|更新過/u,
-      `★${JSON.stringify(noSync)}：不可以宣稱這個餘額是同步來的（可能從沒同步過、也可能是手動填的）`);
-    assert.doesNotMatch(cell, /上次 IB 同步 /u, `★${JSON.stringify(noSync)}：驗不過就不可以編一個日期出來`);
-    assert.doesNotMatch(cell, /未由對帳單更新過/u, '★仍然不可以退回那句錯的');
+    const html = renderRow(IB_ACCOUNT, /** @type {any} */ (noSync));
+    assert.equal(asOfSmallText(html), 'IB 現金帳戶（尚無同步時間）',
+      `★${JSON.stringify(noSync)}：**整串逐字**＝只講身分＋時間未知。多接任何一句`
+      + '（例如「這筆餘額由 IB 同步」）都是把來源講死——可能從沒同步過、也可能是使用者自己填的');
   }
 });
 
@@ -192,9 +199,8 @@ test('IB 日期用**當地**日曆日，不是 UTC 日（#454 r1 阻擋②）', 
 
 test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾成 3/2）', () => {
   for (const bad of ['2026-02-30T10:00:00.000Z', '2026-13-01T10:00:00.000Z', '2026-08-14', 'x', '']) {
-    const cell = balanceCell(renderRow(IB_ACCOUNT, bad));
-    assert.match(cell, /IB 現金帳戶（尚無同步時間）/u, `★${JSON.stringify(bad)} 要退回「只講身分」`);
-    assert.doesNotMatch(cell, /上次 IB 同步 \d/u,
-      `★${JSON.stringify(bad)} 不可以印出日期——new Date 對不存在的日子不會回 NaN，會滾到下個月`);
+    assert.equal(asOfSmallText(renderRow(IB_ACCOUNT, bad)), 'IB 現金帳戶（尚無同步時間）',
+      `★${JSON.stringify(bad)} 要整串退回「只講身分」——new Date 對不存在的日子不會回 NaN、會滾到下個月，`
+      + '印出來就是一個假日期');
   }
 });
