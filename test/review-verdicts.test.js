@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { headerOf, looksLikeVerdict, verdictProblems, VERDICTS } from '../scripts/check-review-verdicts.js';
+import { headerOf, looksLikeVerdict, sourceLookalike, verdictProblems, VERDICTS } from '../scripts/check-review-verdicts.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -752,4 +752,112 @@ test('⭐ 重述｜全形 hex 的第二個 sha——NFKC 正規化後要數得�
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
     `全形指紋不可以逃過歧義計數：${problems.join('｜')}`);
   assert.ok(warnings.some((w) => /第二個 sha 長相的字/.test(w)), warnings.join('｜'));
+});
+
+// ── 來源字串漂掉：同一位審查者被拆成兩個身分（2026-08-14 PR #453 實際踩到）─────────
+// 同一個 codex CLI，來源在不同輪次被打成 `CLI（gpt-5.6-sol xhigh）` 與
+// `codex CLI (gpt-5.6-sol, xhigh)`（全形／半形括號、有無 codex 前綴、有無逗號都不同），
+// 閘把它拆成**兩位**審查者：r8 的「需修改後再審」掛在其中一個身分底下、他自己沒撤銷 ⇒ 擋一次；
+// 補了那一半，另一半又停在舊 sha ⇒ 再擋一次。
+//
+// ⚠️ 這一族考題釘的是**兩件事同時成立**：
+//   ①長得像要**出聲**（現場沒有任何一句話說「這兩個可能是同一位」，人就看不出來）
+//   ②**絕不可以自動把兩個身分併成一位**——不同 session 本來就該是不同審查者（#383 的病根），
+//     自動正規化＝削弱這道閘。②比①重要：只有①壞掉會少一句提醒，②壞掉是安全退步。
+
+const DRIFT_A = 'CLI（gpt-5.6-sol xhigh）';
+const DRIFT_B = 'codex CLI (gpt-5.6-sol, xhigh)';
+
+test('⭐ 來源相似｜#453 的真實兩種寫法要被點名（差一截前綴也要抓到）', () => {
+  // ⚠️ 只比「去掉標點空白後**相等**」會漏掉這一個真實案例——差別不只標點，還多了 `codex` 前綴。
+  const why = sourceLookalike(DRIFT_A, DRIFT_B);
+  assert.ok(why, '#453 的真實案例沒被偵測到（判準只比相等就會漏掉多一個工具名前綴的那次）');
+  assert.match(why, /包在另一個裡面/);
+});
+
+test('來源相似｜只差全形半形與標點 → 正規化後完全相同', () => {
+  assert.match(sourceLookalike('codex CLI（xhigh）', 'codex CLI (xhigh)') || '', /完全相同/);
+});
+
+test('⭐ 來源相似｜真的不同的 session 一個都不准被點名（誤報會教人整批忽略提醒）', () => {
+  for (const [a, b] of [
+    ['桌面 A', '桌面 B'],
+    ['codex CLI 版面', 'codex CLI 數字'],   // 同一輪兩個 session 的建議取名法：不互相包含
+    ['Claude 桌面', 'Claude CLI'],
+  ]) assert.equal(sourceLookalike(a, b), null, `「${a}」與「${b}」被誤判成同一位`);
+});
+
+test('⭐ 來源相似｜出聲提醒，但**判定一格都不放寬**（不可以自動併身分）', () => {
+  // 真實情境重播：同一個 codex CLI，r8 用 A 寫「需修改後再審」，r9 用 B 寫「通過」。
+  const { problems, warnings } = verdictProblems([
+    c(head('Codex', DRIFT_A, HEAD, 8, '需修改後再審')),
+    c(head('Codex', DRIFT_B, HEAD, 9, '通過')),
+  ], HEAD, 'Codex');
+  assert.ok(warnings.some((w) => /可能是同一位審查者被打成兩種寫法/.test(w)),
+    `沒有出聲提醒：${warnings.join('｜')}`);
+  // ⚠️ 這一行是本題的**主軸**：把提醒實作成「自動併成同一位」的話，r9 的通過就撤銷了 r8 的阻擋
+  //    ⇒ problems 會變成空的。閘必須照舊把它們當兩位審查者。
+  assert.ok(problems.some((p) => /還沒有被同一位審查者撤銷/.test(p)),
+    `提醒被寫成自動合併身分了——那是削弱這道閘，方向剛好相反：${problems.join('｜')}`);
+});
+
+test('⭐ 來源相似｜提醒**不阻擋**：兩個身分都對目前 head 通過時照樣放行', () => {
+  const { problems, warnings } = verdictProblems([
+    c(head('Codex', DRIFT_A, HEAD, 8, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 9, '通過')),
+  ], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `相似提醒不可以自己變成一道阻擋：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /可能是同一位審查者被打成兩種寫法/.test(w)), warnings.join('｜'));
+});
+
+test('來源相似｜角色不同就不比（Claude 與 Codex 各有一個叫 CLI 的 session 很正常）', () => {
+  const { warnings } = verdictProblems([
+    c(head('Claude', 'codex CLI', HEAD, 1, '通過')),
+    c(head('Codex', 'codex CLI (xhigh)', HEAD, 1, '通過')),
+  ], HEAD, 'Claude');
+  assert.equal(warnings.filter((w) => /可能是同一位審查者/.test(w)).length, 0,
+    `不同角色被當成同一位了：${warnings.join('｜')}`);
+});
+
+test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要收尾、不可編輯舊留言）', () => {
+  // 提醒只說「這兩個像」而沒說怎麼辦，現場還是會去編輯舊留言——那會洗掉稽核軌跡。
+  const { warnings } = verdictProblems([
+    c(head('Codex', DRIFT_A, HEAD, 8, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 9, '通過')),
+  ], HEAD, 'Codex');
+  const w = warnings.find((x) => /可能是同一位審查者/.test(x)) || '';
+  for (const must of ['補發', '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
+    assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
+  }
+});
+
+test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯舊留言」的補救程序', () => {
+  // ⚠️ 誠實劃界：文件題只證明「規則寫在該寫的地方、沒有被靜靜刪掉」，
+  //    證明不了任何人真的照著打字（那要靠審查與上面那道相似提醒）。
+  //    但機制只活在腳本裡＝打字漂掉的人**不知道該用哪個字串、也不知道怎麼救**，
+  //    #453 兩次被擋就是這樣來的。
+  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  assert.ok(doc.includes('### ⚠️ 發審查提示：**兩組字串每輪都要逐字給**'),
+    'REVIEW-AND-MERGE.md 找不到「發審查提示」那一節');
+  // ⚠️ **斷言整列，不是斷言那個字串**：第一版只寫 `doc.includes('`codex CLI`')`，
+  //    把整列從表格刪掉照樣全綠——因為同一串字在下面那條「不要留一個沒後綴的 `codex CLI`」
+  //    裡也出現過，includes 被別處滿足了（本專案認過的病型：同一句活兩處、改壞一處看不見）。
+  //    突變當場抓到（M6），這裡改成整列比對。
+  for (const row of [
+    '| 本機 `codex` CLI 起的審查 session | `codex CLI` |',
+    '| Claude Code CLI 起的審查 session | `Claude CLI` |',
+    '| Codex 桌面 session | `Codex 桌面` |',
+    '| Claude 桌面 session | `Claude 桌面` |',
+    '| William 本人（畫面驗收／產品裁決） | `William 本人` |',
+  ]) assert.ok(doc.includes(row), `標準來源字串表少了這一列：${row}\n（沒有建議值，每個人就會自己編一個）`);
+  assert.ok(doc.includes('跨輪次一字不改'), '少了「同一個工具跨輪次不可改寫法」那條');
+  assert.ok(doc.includes('通過`／`需修改後再審`／`不可合併'),
+    '發審查提示要**逐字**列出三個合規結論字串（沒列出來的那次，五支 PR 全被壞標頭鎖死）');
+  assert.ok(doc.includes('#### 已經漂掉的補救：**用補發，不可以編輯舊留言**'),
+    '少了補救程序那一節的標題（正解＝補發一則新結論，不是改舊的）');
+  assert.ok(doc.includes('不可以編輯舊的結論留言'),
+    '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  assert.ok(agents.includes('「來源」是機械身分'),
+    'AGENTS.md 少了指路的那一句（規則只寫在操作手冊裡，讀規則書的人看不到）');
 });
