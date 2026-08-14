@@ -253,14 +253,22 @@ test('畫面文字不可以住在 CSS：content 屬性不得攜帶中文或數�
   // ⚠️ r10 阻擋：`td[data-label="餘額"]::after { content: "—這筆餘額由 IB 同步" }` 能把假話
   //    直接畫在餘額格裡——字在畫面上、卻不在 HTML 裡，balanceCellText 剝標籤剝得再乾淨也看不到，
   //    esc() 消毒也管不到它。這條通道不是靠列舉選擇器去堵（列舉補不完），而是立全域不變量：
-  //    **對使用者說話的字一律住在 HTML**（守衛看得到、消毒管得到）；CSS 的 content 只准
-  //    空字串、單一裝飾符號（›、✘ 這類）與 attr(...)（值來自 HTML、守衛看得到）。
-  //    實測現況：全站八份 CSS 的 content 本來就零中文零數字——這題是把現狀釘成規矩。
+  //    **對使用者說話的字一律住在 HTML**；CSS 的 content 只准空字串、單一裝飾符號與 attr(...)。
+  // ⚠️ r11 阻擋（同 r7/r8 的字面病，病人換成這支掃描器）：
+  //    ①<link> 的屬性順序不是規格（href 在 rel 前面一樣合法）——樣式表清單改用**屬性解析**收集；
+  //    ②content 前面放個 CSS 註解就躲過「; 或 { 開頭」的錨點——掃描前先剝掉全部註解。
+  const attrOf = (/** @type {string} */ attrs, /** @type {string} */ name) => {
+    const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'u').exec(attrs);
+    return m ? (m[1] ?? m[2] ?? m[3]) : '';
+  };
   const index = read('public/index.html');
-  const hrefs = [...index.matchAll(/<link rel="stylesheet" href="([^"]+)"/gu)].map((m) => m[1]);
+  const hrefs = [...index.matchAll(/<link\b([^>]*)>/gu)]
+    .filter((m) => attrOf(m[1], 'rel').split(/\s+/u).includes('stylesheet'))
+    .map((m) => attrOf(m[1], 'href'))
+    .filter((h) => h && !/^https?:/u.test(h));
   assert.ok(hrefs.length >= 5, `index.html 應該掛著多份樣式表（實際 ${hrefs.length}）——抓不到＝這題在驗空氣`);
   for (const href of hrefs) {
-    const css = read(`public/${href}`);
+    const css = read(`public/${href}`).replace(/\/\*[\s\S]*?\*\//gu, ' ');   // 剝註解（r11②）
     for (const decl of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]*)/gu)) {
       for (const str of decl[1].matchAll(/"([^"]*)"|'([^']*)'/gu)) {
         const text = str[1] ?? str[2];
