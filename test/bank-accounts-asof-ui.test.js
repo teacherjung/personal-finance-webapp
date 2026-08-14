@@ -41,6 +41,14 @@ function renderRow(account, ibLastSync) {
   return row(account, ibLastSync);
 }
 
+/** 餘額格的**完整可見文字**（剝掉所有標籤）。
+ *  ⚠️ r9 阻擋：asOfSmallText 只看 <small> 裡面——把假宣稱接在 </small> **後面**，
+ *  字照樣顯示在餘額格、守衛卻看不到。可見文字要整格一起釘：格子裡只准有金額＋那行小字，
+ *  多一個字都是在對使用者說話、都要有人核准。 */
+function balanceCellText(html) {
+  return balanceCell(html).replace(/<[^>]+>/gu, '');
+}
+
 /** 餘額格裡那行小字的**完整內容**（逐字比對用）。
  *  ⚠️ 這支函式是三輪阻擋磨出來的，每一道都有名字：
  *  r4「包含正句＋列舉禁詞」被接一段繞過 → 改整串等值；
@@ -97,6 +105,8 @@ test('有現值參考日：餘額格裡出現「對帳單更新至 <日期>」�
   const cell = balanceCell(html);
   assert.match(cell, /TWD 12,345/, '金額不見了——旁註不可以擠掉主角');
   assert.equal(asOfSmallText(html), '對帳單更新至 2026-05-31', '★整串逐字（同上：只驗「包含」補不完）');
+  assert.equal(balanceCellText(html), 'TWD 12,345對帳單更新至 2026-05-31',
+    '★整格可見文字＝金額＋小字，一個字都不准多（r9：接在 </small> 後面的字 small 守衛看不到）');
   assert.doesNotMatch(cell, /餘額截至|正確到/u, '不可以宣稱成「餘額截至/正確到某日」——手動改餘額不會動這個日期');
 });
 
@@ -108,6 +118,7 @@ test('沒有現值參考日：餘額格裡明說「未由對帳單更新過」�
   //    ——那句對「帳單讀不到現值參考日」的帳戶是**假話**。整串等值才關得住。
   assert.equal(asOfSmallText(html), '未由對帳單更新過',
     '★整串逐字：留白會被讀成「這個餘額是新的」，多接一句又會把來源講死');
+  assert.equal(balanceCellText(html), 'TWD 12,345未由對帳單更新過', '★整格可見文字（r9）');
   assert.match(cell, /bank-balance-asof-none/, '「沒有日期」要有自己的樣式鉤子，才能跟有日期的視覺分開');
 });
 
@@ -117,6 +128,8 @@ test('沒有現值參考日：餘額格裡明說「未由對帳單更新過」�
 // 不可以把假日期原樣印在餘額旁邊冒充真的。
 test('髒日期不原樣印在餘額旁邊（顯示層不相信自己的輸入）', () => {
   for (const bad of ['', '2026-13-45', '2026-02-30', '2026/05/31', '31-05-2026', 20260531, { d: '2026-05-31' }, null]) {
+    assert.equal(balanceCellText(renderRow({ ...ACCOUNT, balanceAsOf: bad })), 'TWD 12,345未由對帳單更新過',
+      `★髒值 ${JSON.stringify(bad)}：整格可見文字（r9）`);
     assert.equal(asOfSmallText(renderRow({ ...ACCOUNT, balanceAsOf: bad })), '未由對帳單更新過',
       `★髒值 ${JSON.stringify(bad)} 要**整串**退回「沒有」——只驗「包含」的話，`
       + '把髒日期接在後面（「未由對帳單更新過（2026-02-30）」）照樣會過');
@@ -141,7 +154,7 @@ test('就地解釋接上去了：說明按鈕存在、綁得到，而且文案�
   const body = namedFunction(source, 'openBalanceAsOfInfo');
   assert.match(body, /openInfo\(/u, '說明窗要走共用的 openInfo');
   assert.match(body, /手動改餘額時，這個日期不會跟著動/u,
-    '說明必須點破這一句：不寫，使用者會把它讀成「餘額正確到這天」——那是這個功能唯一會害人的誤解');
+    '說明必須點破這一句：不寫，使用者會把它讀成「餘額正確到這天」——這正是這行小字最容易造成的誤解');
   assert.match(body, /現值參考日/u, '要交代「沒有日期」的另一個成因：帳單上讀不到現值參考日');
 });
 
@@ -154,6 +167,8 @@ const IB_ACCOUNT = Object.freeze({ ...ACCOUNT, name: 'IBKR 美元現金', curren
 test('IB 現金帳戶：講「上次 IB 同步 <日期>」，不可以說成「未由對帳單更新過」', () => {
   const html = renderRow(IB_ACCOUNT, '2026-08-14T03:21:00.000Z');
   const cell = balanceCell(html);
+  assert.equal(balanceCellText(html), 'USD 12,345上次 IB 同步 2026-08-14',
+    '★整格可見文字（r9：他的刀就是把「—這筆餘額由 IB 同步」接在 </small> 後面）');
   assert.equal(asOfSmallText(html), '上次 IB 同步 2026-08-14',
     '★**整串逐字**：不可以只是「包含」這句——在後面接一句「這筆餘額由 IB 同步」就又把來源講死了，'
     + '而 lastSync 是每次同步無條件寫的、現金報表缺失時餘額刻意沿用舊值');
@@ -169,6 +184,8 @@ test('IB 現金帳戶：沒有同步時間時只講身分，不可以宣稱這�
   //    而餘額也可能是使用者自己填的。更糟的是我原本的考題把那句錯話釘住了。
   for (const noSync of [undefined, null, '', 'not-a-date', 12345]) {
     const html = renderRow(IB_ACCOUNT, /** @type {any} */ (noSync));
+    assert.equal(balanceCellText(html), 'USD 12,345IB 現金帳戶（尚無同步時間）',
+      `★${JSON.stringify(noSync)}：整格可見文字（r9）`);
     assert.equal(asOfSmallText(html), 'IB 現金帳戶（尚無同步時間）',
       `★${JSON.stringify(noSync)}：**整串逐字**＝只講身分＋時間未知。多接任何一句`
       + '（例如「這筆餘額由 IB 同步」）都是把來源講死——可能從沒同步過、也可能是使用者自己填的');
@@ -224,6 +241,8 @@ test('IB 日期用**當地**日曆日，不是 UTC 日（#454 r1 阻擋②）', 
 
 test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾成 3/2）', () => {
   for (const bad of ['2026-02-30T10:00:00.000Z', '2026-13-01T10:00:00.000Z', '2026-08-14', 'x', '']) {
+    assert.equal(balanceCellText(renderRow(IB_ACCOUNT, bad)), 'USD 12,345IB 現金帳戶（尚無同步時間）',
+      `★${JSON.stringify(bad)}：整格可見文字（r9）`);
     assert.equal(asOfSmallText(renderRow(IB_ACCOUNT, bad)), 'IB 現金帳戶（尚無同步時間）',
       `★${JSON.stringify(bad)} 要整串退回「只講身分」——new Date 對不存在的日子不會回 NaN、會滾到下個月，`
       + '印出來就是一個假日期');
