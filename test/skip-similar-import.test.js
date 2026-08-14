@@ -108,7 +108,7 @@ test('完成訊息：跳過幾筆要說出來（不說＝使用者以為那 48 �
 test('互扣｜同末碼、不同可見前綴＝不是疑似重複：preview 不標、apply 也不跳（r2 阻擋）', async () => {
   // ⚠️ r2 的刀：preview 與 apply 的判準原本各手抄一份，apply 那份把前綴否決拔掉時 84 題全綠
   //   ——後果是「預覽判定不同帳戶（不標）、套用卻跳過**真交易**」＝使用者掉帳。
-  //   現在兩端共用 isSimilarTx；這題釘住「不同前綴」這一格在**兩端同時**成立。
+  //   判準必須單一（isSimilarTx）——這題釘住「不同前綴」這一格在**兩端同時**成立。
   const { previewBankTxForDb } = await import('../lib/services/bank-import.js');
   const dbShape = () => ({
     accounts: [], settings: {},
@@ -192,17 +192,17 @@ test('路由投影＝單一函式行為題：五種輸入的轉交值（r5：字
   assert.equal(applyOptsFromBody({ aiTicket: 123 }).aiTicket, undefined, 'aiTicket 非字串＝undefined');
 });
 
-test('路由不准再自己讀 skipSimilar：statement.js（剝註解後）零直接引用', () => {
+test('路由不准出現 skipSimilar 這個字：statement.js 原始檔零 token', () => {
   // 投影的真相只有一份（applyOptsFromBody）——路由 inline 自己的投影＝又生一份複本，
-  // 而複本的寫法字面掃描守不住。這裡直接禁「路由讀這個欄位」。
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib/routes/statement.js'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
-  // ⚠️ r6：只禁點記法會被 req.body["skipSimilar"] 與解構繞過（AGENTS「形狀考題不可只認
-  //    一種寫法」）。最強形＝**這個 token 一次都不准出現**：投影呼叫（applyOptsFromBody(req.body)）
-  //    根本不需要提到欄位名——路由檔裡出現 skipSimilar 的任何寫法＝有人又生了複本。
+  // 而複本的寫法字面掃描守不住。
+  // ⚠️ r6：只禁點記法會被 req.body["skipSimilar"] 與解構繞過。
+  // ⚠️ r7：剝註解的掃描器又被字串裡的 "abc//def" 騙（行註解正則把後半行截掉）——
+  //    掃描器每多一個環節就多一個可騙面。**最強形＝原始檔直接禁這個 token、什麼都不剝**：
+  //    投影呼叫（applyOptsFromBody(req.body)）不需要提到欄位名，註解也沒有理由提它——
+  //    沒有剝除器＝沒有剝除器可騙。
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib/routes/statement.js'), 'utf8');
   assert.doesNotMatch(src, /skipSimilar/u,
-    '★statement.js（剝註解後）不准出現 skipSimilar 這個 token——點記法、方括號、解構、字串鍵'
-    + '全部包含；嚴格布林的真相只住在 applyOptsFromBody');
+    '★statement.js **原始檔**不准出現 skipSimilar——程式、註解、字串一律；'
+    + '嚴格布林的真相只住在 applyOptsFromBody');
   assert.match(src, /applyOptsFromBody\(req\.body\)/u, '★apply 路由要走投影函式');
 });
