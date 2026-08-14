@@ -254,7 +254,9 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
   //    規則從黑名單翻成**白名單**：content 裡的字串 literal 一律不得含任何文字或數字
   //    （\p{L}\p{N}，任何語言）——「對使用者說話的字住在 HTML」不分語言。
   //    custom property 的字串（字型名這類）**不用管**：var 進不了 content（r12 定案），
-  //    它們到不了畫面。空字串與 ›、✘ 這類純符號放行；attr(...) 放行（值來自 HTML、守衛看得到）。
+  //    它們到不了畫面。空字串與 ›、✘ 這類純符號放行；attr() **只准**手機欄位標籤那一條
+  //    （名字＋selector 一起綁——「值來自 HTML 所以守衛看得到」是 r14 推翻的錯誤理由：
+  //    剝標籤時屬性值一起被剝掉，data-* 正好是守衛的盲區）。
   //    content 的**值形狀白名單化**（只准字串／attr／none／normal）：var、counter、url 全關——
   //    也因此 custom property 裡的字串（字型名這類）不用管，它們進不了 content。
   //    掃描器＝字串感知的小型解析器：屬性名大小寫不敏感、字串裡的分號不會截斷宣告、
@@ -283,13 +285,15 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     }
     return out;
   };
-  /** 逐宣告收集：每個字串 literal 掛在哪個屬性底下＋content 的完整值 @param {string} clean */
+  /** 逐宣告收集：字串掛在哪個屬性底下＋content 完整值＋**它住在哪個 selector 底下**
+   *（r15 阻擋：attr(data-label) 的白名單必須綁 selector，不然任何規則都能借這個名字搬字）
+   * @param {string} clean */
   const declarations = (clean) => {
-    /** @type {{prop: string, strings: string[], value: string}[]} */
+    /** @type {{selector: string, prop: string, strings: string[], value: string}[]} */
     const decls = [];
-    let prop = null, buf = '', value = '', inStr = null, cur = '', strings = [];
+    let prop = null, buf = '', value = '', inStr = null, cur = '', strings = [], selector = '';
     const flush = () => {
-      if (prop !== null) decls.push({ prop, strings, value: value.trim() });
+      if (prop !== null) decls.push({ selector, prop, strings, value: value.trim() });
       prop = null; buf = ''; value = ''; strings = [];
     };
     for (let i = 0; i < clean.length; i++) {
@@ -300,7 +304,12 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
         cur += c; value += c; continue;
       }
       if (c === '"' || c === "'") { inStr = c; cur = ''; if (prop !== null) value += c; continue; }
-      if (c === ';' || c === '{' || c === '}') { flush(); continue; }
+      if (c === '{') {   // 進 block：塊頭＝selector（@media 之下的內層 selector 會再覆蓋一次）
+        selector = (prop !== null ? `${prop}:${value}` : buf).trim();
+        prop = null; buf = ''; value = ''; strings = [];
+        continue;
+      }
+      if (c === ';' || c === '}') { flush(); continue; }
       if (prop === null) {
         buf += c;
         if (c === ':') prop = buf.slice(0, -1).trim().toLowerCase();
@@ -329,10 +338,15 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
       //    唯一合法用途＝手機版欄位標籤 attr(data-label)，而 data-label 的值被
       //    bank-accounts-forest-ui 的欄名 deepEqual 釘死（『帳戶末四碼／幣別／餘額』），
       //    改值＝那題紅。其他任何 attr(＝從守衛盲區搬文字上畫面。
+      // ⚠️ r15 阻擋：只驗 attr 的**名字**不夠——把 data-label 掛到 <small> 自己身上、
+      //    再用 .bank-balance-asof::after { content: attr(data-label) } 一樣搬字上畫面。
+      //    白名單＝「名字＋selector」一起綁：唯一合法的就是手機欄位標籤那一條規則。
+      const MOBILE_LABEL_SELECTOR = '.bank-account-table td[data-label]::before';
       for (const a of d.value.matchAll(/attr\s*\(([^)]*)\)/giu)) {
-        assert.equal(a[1].trim().toLowerCase(), 'data-label',
-          `★${where} 的 content 用了 attr(${a[1].trim()})——屬性值在守衛的盲區`
-          + '（剝標籤時連值一起剝掉），只准 attr(data-label)');
+        assert.ok(a[1].trim().toLowerCase() === 'data-label'
+            && d.selector.replace(/\s+/gu, ' ') === MOBILE_LABEL_SELECTOR,
+          `★${where} 的「${d.selector}」用了 attr(${a[1].trim()})——屬性值在守衛的盲區`
+          + `（剝標籤時連值一起剝掉）。唯一合法的是 ${MOBILE_LABEL_SELECTOR} 的 attr(data-label)`);
       }
       const residue = d.value
         .replace(/"[^"]*"|'[^']*'/gu, ' ')
