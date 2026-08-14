@@ -424,7 +424,9 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     const src = read(jf);
     for (const m of src.matchAll(/(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)')/giu)) {
       const val = m[1] ?? m[2];
-      assert.doesNotMatch(val, /\burl\s*\(|image-set\s*\(|cross-fade\s*\(/iu,
+      // ⚠️ r20：這組禁令必須與樣式表那組**同一份四函式集合**——上一版漏抄了 image()，
+      //    兩組清單不一致＝行內路徑獨漏一個函式。
+      assert.doesNotMatch(val, /\burl\s*\(|image-set\s*\(|cross-fade\s*\(|\bimage\s*\(/iu,
         `★${jf} 的行內 style 載了圖（「${val.slice(0, 60)}」）——寫著字的圖＝守衛看不到的字`);
     }
   }
