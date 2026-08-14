@@ -333,8 +333,19 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   //    新版：兩處——同意窗（設定打開時）與 sendToAi（預設路徑）。**兩處都必須在
   //    `askBeforeSendAi()` 的分流之後**，否則「打開開關卻仍不問」就會發生而沒人擋。
   assert.equal(count(src, /useAi: true/g), 2, '★只有這兩條路帶旗標——多一處＝有條路繞過了設定分流');
-  assert.match(src, /if \(await askBeforeSendAi\(\)\) \{[\s\S]{0,400}?openConsent:/,
-    '★「要問」那一支必須真的開同意窗（接錯＝打開開關也不會問）');
+  // ⚠️ r2#1：一條 regex 守兩條路＝另一條的比對結果會冒充它——把密碼路徑改成
+  //    `if (false && await askBeforeSendAi())`，免密碼那條照樣讓單一 regex 過。
+  //    兩條路**各自 scoped**：ask 分支 → 開自己的同意窗（引數不同＝身分）→ return → 自己的 sendToAi。
+  for (const [label, consentArgs, sendArgs] of [
+    ['密碼窗路', 'openAiConsentWindow\\(b64, pw, fileName\\)', "sendToAi\\(b64, pw, onPage, canOpenNext\\)"],
+    ['上傳窗路（免密碼＝最常走）', "openAiConsentWindow\\(b64, '', snap\\.fileName\\)", "sendToAi\\(b64, '', onPage, canOpenNext\\)"],
+  ]) {
+    assert.match(src, new RegExp(
+      'if \\(await askBeforeSendAi\\(\\)\\) \\{[\\s\\S]{0,300}?' + consentArgs
+      + "[\\s\\S]{0,120}?return;\\n\\s*\\}\\n\\s*await " + sendArgs), 
+      `★${label}：ask 分支→自己的同意窗→return→自己的 sendToAi，四件事同一段——`
+      + '任何一條被 false&& 掉，這條 scoped 斷言就找不到完整形狀');
+  }
   // ⚠️ **兩個呼叫點都要釘**（2026-08-14 預審抓到）：原本只釘了密碼窗那一條，
   //    把**上傳窗那條**（免密碼帳單＝最常走的路）整行刪掉，整包考題照樣全綠——
   //    使用者上傳一份系統不認得的帳單，畫面什麼都不會發生，而沒有任何一條考題會紅。
