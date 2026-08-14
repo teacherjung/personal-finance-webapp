@@ -826,9 +826,62 @@ test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要�
     c(head('Codex', DRIFT_B, HEAD, 9, '通過')),
   ], HEAD, 'Codex');
   const w = warnings.find((x) => /可能是同一位審查者/.test(x)) || '';
-  for (const must of ['補發', '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
+  // ⚠️ 這一串是 Codex #456 r1 Medium③ 補的：原本只斷言「補發」兩個字，
+  //    把「**兩個身分各自**」改成「其中一個身分」照樣全綠——**題名宣稱守住的東西沒有斷言**。
+  //    只補一個身分正是 #453 第二次被擋的死法（另一半停在舊 sha）。
+  for (const must of ['補發', '兩個身分各自', '輪次要大於', '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
     assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
   }
+});
+
+test('⭐ 來源相似｜`CLI` vs `codex CLI` 要抓到（LOOSE_MIN 是門檻，不是隨手填的數字）', () => {
+  // Codex #456 r1 Medium③：把 LOOSE_MIN 從 3 改成 4，86 題全綠，但 `CLI` 那一族就不再提醒了
+  // ——而 `CLI（gpt-5.6-sol xhigh）` 那種漂法正是 #453 的現場。門檻要兩個方向都釘住。
+  assert.ok(sourceLookalike('CLI', 'codex CLI'), '`CLI` 正好在門檻上＝要比（LOOSE_MIN 調大會靜靜關掉這一族）');
+  assert.equal(sourceLookalike('桌面', '桌面版'), null, '兩個字的名字互相包含沒有指示性，刻意不比（LOOSE_MIN 調小會開始亂吵）');
+});
+
+test('來源相似｜劃界要誠實：共同前綴、不同後綴抓不到——文件必須照實說', () => {
+  // Codex #456 r1 Medium②：我原本的劃界只寫「完全不同的名字抓不到」，
+  // 但 effort 不同（xhigh vs medium）也抓不到，而那正是文件禁止「effort 寫進來源」要防的漂法。
+  // **說了撐不住的話比缺口更糟**——所以行為與文字兩邊一起釘。
+  assert.equal(sourceLookalike('codex CLI (gpt-5.6-sol, xhigh)', 'codex CLI (gpt-5.6-sol, medium)'), null);
+  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  assert.ok(doc.includes('共同前綴、不同後綴'), '誠實劃界少列「共同前綴、不同後綴」這一族');
+  assert.ok(doc.includes('很短的名字'), '誠實劃界少列「短名字刻意不比」這一族');
+});
+
+test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目前 head，才真的解得掉', () => {
+  // Codex #456 r1 阻擋①：文件原本只說「兩個身分都對目前 head 補發」，沒說輪次要往上跳
+  // ——**照文件做會失敗**。這一題把整套救濟重播一次，把「怎樣沒用、怎樣才有用」都釘住。
+  const OLD = 'ffee0011223344556677889900aabbccddeeff00';
+  const drifted = [
+    c(head('Codex', DRIFT_A, OLD, 8, '需修改後再審')),   // 漂掉的身分 A：阻擋，停在舊 sha
+    c(head('Codex', DRIFT_B, OLD, 9, '通過')),           // 漂掉的身分 B：通過，也停在舊 sha
+  ];
+  assert.ok(verdictProblems(drifted, HEAD, 'Codex').problems.length > 0, '前提：漂掉的現場本來就擋著');
+
+  // ❌ 照**原輪次**補發＝兩個方向都沒用
+  const sameRound = verdictProblems([...drifted,
+    c(head('Codex', DRIFT_A, HEAD, 8, '通過')),          // 同輪相反結論 ⇒ fail-closed，照樣阻擋
+    c(head('Codex', DRIFT_B, HEAD, 9, '通過')),          // 同輪 ⇒ 不取代，仍停在舊 sha
+  ], HEAD, 'Codex');
+  assert.ok(sameRound.problems.some((p) => /同一輪（r8）出現相反結論/.test(p)),
+    `同輪補發不可以解除阻擋：${sameRound.problems.join('｜')}`);
+  assert.ok(sameRound.problems.some((p) => /是對 ffee001/.test(p)),
+    `同輪補發也不會把身分推到目前 head：${sameRound.problems.join('｜')}`);
+
+  // ✅ 兩個身分**各自**用比最高輪次更高的 r10 補發到目前 head ⇒ 全清
+  const fixed = verdictProblems([...drifted,
+    c(head('Codex', DRIFT_A, HEAD, 10, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 10, '通過')),
+  ], HEAD, 'Codex');
+  assert.deepEqual(fixed.problems, [], `照文件走完補救程序之後應該全清：${fixed.problems.join('｜')}`);
+
+  // ⚠️ 只補一個身分＝#453 第二次被擋的死法，必須仍然擋著
+  const halfDone = verdictProblems([...drifted, c(head('Codex', DRIFT_A, HEAD, 10, '通過'))], HEAD, 'Codex');
+  assert.ok(halfDone.problems.some((p) => /是對 ffee001/.test(p)),
+    `只補一半就放行了——那正是 #453 第二次被擋的原因：${halfDone.problems.join('｜')}`);
 });
 
 test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯舊留言」的補救程序', () => {
@@ -855,6 +908,8 @@ test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯
     '發審查提示要**逐字**列出三個合規結論字串（沒列出來的那次，五支 PR 全被壞標頭鎖死）');
   assert.ok(doc.includes('#### 已經漂掉的補救：**用補發，不可以編輯舊留言**'),
     '少了補救程序那一節的標題（正解＝補發一則新結論，不是改舊的）');
+  assert.ok(doc.includes('**輪次要往上跳**'),
+    '補救程序少了「輪次要大於現有最高輪次」那條——沒有它，照文件補發會失敗（同輪撤銷不掉）');
   assert.ok(doc.includes('不可以編輯舊的結論留言'),
     '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
   const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
