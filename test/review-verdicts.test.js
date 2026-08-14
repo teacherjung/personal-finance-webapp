@@ -839,11 +839,13 @@ test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要�
   // ⚠️ r2 又抓到一顆：只斷言「輪次要大於」的話，把承重的「**自己**」偷換成別的字照樣全綠
   //    （Codex #456 r2 Medium③ 實測把「最高輪次」改成「最低輪次」，89 題全綠）。
   //    ⇒ 這一句**整句逐字**斷言，因為每個字都承重（各自／自己／最高）。
-  for (const must of ['補發', '兩個身分各自', '輪次各自要大於「自己」現有的最高輪次',
-    '兩個都要再補到新的 head', '下一支 PR',
+  for (const must of ['現況列出的每一個身分', '輪次要大於「那個身分自己」現有的最高輪次',
+    '全部都要再跟一次', '下一支 PR',
     '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
     assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
   }
+  // ⚠️ 處方**不可以**寫死身分數量（Codex #456 r4 Medium①：三個別名時只補兩個照樣紅）
+  assert.ok(!/兩個身分各自|兩個都要/.test(w), `提醒把身分數量寫死成「兩個」了：${w}`);
 });
 
 test('⭐ 來源相似｜只差大小寫也要抓到（`.toLowerCase()` 被拿掉時要轉紅）', () => {
@@ -870,15 +872,40 @@ test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補
     ['codex CLI xhigh', 'xhigh codex CLI'],                                   // 換序
     ['codex CLI xhigh', 'codex CLl xhigh'],                                   // 中間打錯一個字
   ]) assert.equal(sourceLookalike(a, b), null, `「${a}」與「${b}」的判定與劃界不符`);
+  // ⚠️ r4 起這幾句住在**腳本註解**裡，不在操作手冊（審查者的實務判斷：手冊細到現場記不住，
+  //    Unicode 細節與例示搬進腳本，手冊只留「不會合併身分、會漏報也會多嘴」一句）。
+  const src = readFileSync(join(ROOT, 'scripts/check-review-verdicts.js'), 'utf8');
+  assert.ok(src.includes('也不互相包含 ⇒ **不提醒**'),
+    '劃界要寫成**演算法邊界**（性質），不是「抓不到的有 N 族」那種列舉——列舉已經被打穿兩次');
+  // ⚠️ 斷言**帶 \p{L}/\p{N} 的完整那句**，不是「只保留 Unicode Letter」這幾個字：
+  //    後者在檔案裡有兩處，刪掉一處由另一處滿足 includes ⇒ 假綠（突變 M40 當場抓到，
+  //    與 M6 同一個病型：同一句活兩處）。完整句只出現在 looseSource 的三步定義裡。
+  assert.ok(src.includes('只保留 Unicode Letter（`\\p{L}`）與 Number（`\\p{N}`）'),
+    '正規化第③步的精確說法是「只保留 Letter／Number」，不是「拿掉標點」（r4 Medium②：留下連字號就會變一個判定）');
+  assert.ok(src.includes('UTF-16'),
+    '`LOOSE_MIN` 比的是 JS length＝UTF-16 編碼單位，不是 Unicode 字元數——不精確的宣稱就是失真');
+  assert.ok(src.includes('例示（不是清單）'), '例子要標明是例示，不然下一個人又會當成完整清單');
   const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(doc.includes('既不相等、也不互相包含**\n⇒ **不提醒**'),
-    '誠實劃界要寫成**演算法邊界**（性質），不是「抓不到的有 N 族」那種列舉——列舉已經被打穿兩次');
-  // r3 Medium②：只寫「正規化後」而不定義它，執行的人重建不出演算法（前文剛說身分正規化只摺疊空白）
-  assert.ok(doc.includes('`NFKC`') && doc.includes('轉小寫') && doc.includes('拿掉所有非文字非數字的字元'),
-    '劃界要逐項寫出正規化三步（NFKC → 小寫 → 去掉非文字非數字），不然「正規化後」是空話');
-  assert.ok(doc.includes('UTF-16'),
-    '「3 個字」是 JS length＝UTF-16 編碼單位，不是 Unicode 字元數——不精確的宣稱就是失真（r3 Medium②）');
-  assert.ok(doc.includes('例示**（不是清單）'), '例子要標明是例示，不然下一個人又會當成完整清單');
+  assert.ok(doc.includes('**會漏報、也會多嘴**'),
+    '操作手冊至少要留「提醒會漏報也會誤報」這一句，不然現場會把它當成保證');
+});
+
+test('⭐ 來源相似｜印出來的**理由**要把正規化三步都講到（不然大小寫漂移時會說錯原因）', () => {
+  // Codex #456 r4 Medium②：理由字串原本漏了「轉小寫」，純大小寫漂移時終端會說成標點或全形的差別。
+  // ⚠️ 而我修完之後只斷言 /完全相同/，把整句換回舊寫法照樣全綠（突變 M36）——**題名宣稱的是理由**，
+  //    所以要斷言理由本身。兩個分支（相等／包含）都要講到三步。
+  for (const [a, b] of [['Ｃｏｄｅｘ ＣＬＩ', 'codex CLI'], ['CLI', 'codex CLI']]) {
+    const why = sourceLookalike(a, b) || '';
+    assert.match(why, /折全形/, `「${a}」vs「${b}」的理由沒講到 NFKC：${why}`);
+    assert.match(why, /轉小寫/, `「${a}」vs「${b}」的理由沒講到轉小寫：${why}`);
+    assert.match(why, /只留字母與數字/, `「${a}」vs「${b}」的理由沒講到字元邊界：${why}`);
+  }
+});
+
+test('⭐ 來源相似｜字元邊界：連字號會被刪（`codex-CLI` 與 `codexCLI` 算同一個）', () => {
+  // Codex #456 r4 Medium②：把 regex 突變成「額外保留 `-`」，92 題全綠——
+  // 也就是「只保留 Letter／Number」這條邊界完全沒有考題守著。
+  assert.match(sourceLookalike('codex-CLI', 'codexCLI') || '', /完全相同/);
 });
 
 test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目前 head，才真的解得掉', () => {
@@ -920,6 +947,23 @@ test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目
   const halfDone = verdictProblems([...drifted, c(head('Codex', DRIFT_A, HEAD, 10, '通過'))], HEAD, 'Codex');
   assert.ok(halfDone.problems.some((p) => /是對 ffee001/.test(p)),
     `只補一半就放行了——那正是 #453 第二次被擋的原因：${halfDone.problems.join('｜')}`);
+
+  // ⚠️ **判準的單位是「身分」，不是「兩個」**（Codex #456 r4 Medium①）：第三個別名一樣要收。
+  //    現實來源：重述產生的身分、中途換掉的審查角色、同一個工具第三種寫法。
+  const DRIFT_C = 'codex CLI(gpt-5.6-sol xhigh)';
+  const three = [...drifted, c(head('Codex', DRIFT_C, OLD, 9, '通過'))];
+  const twoOfThree = verdictProblems([...three,
+    c(head('Codex', DRIFT_A, HEAD, 10, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 10, '通過')),
+  ], HEAD, 'Codex');
+  assert.ok(twoOfThree.problems.some((p) => /是對 ffee001/.test(p)),
+    `三個別名只補兩個就放行了——處方寫死「兩個」正是這樣出事：${twoOfThree.problems.join('｜')}`);
+  const allThree = verdictProblems([...three,
+    c(head('Codex', DRIFT_A, HEAD, 10, '通過')),
+    c(head('Codex', DRIFT_B, HEAD, 10, '通過')),
+    c(head('Codex', DRIFT_C, HEAD, 10, '通過')),
+  ], HEAD, 'Codex');
+  assert.deepEqual(allThree.problems, [], `三個都收才該全清：${allThree.problems.join('｜')}`);
 });
 
 test('⭐ 補救之後 head 再前進：兩個身分**都**要再跟一次（別名在本 PR 內永久存在）', () => {
@@ -970,17 +1014,15 @@ test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯
     '發審查提示要**逐字**列出三個合規結論字串（沒列出來的那次，五支 PR 全被壞標頭鎖死）');
   assert.ok(doc.includes('#### 已經漂掉的補救：**用補發，不可以編輯舊留言**'),
     '少了補救程序那一節的標題（正解＝補發一則新結論，不是改舊的）');
-  assert.ok(doc.includes('**輪次要往上跳**'),
-    '補救程序少了輪次那條——沒有它，照文件補發會失敗（同輪撤銷不掉）');
-  // ⚠️ r2：閘的規則是**每個身分各自**算的，「兩則都寫 r10」只是安全的簡化寫法。
-  //    把簡化寫法講成閘的必要條件＝失真，而這份文件的全部意義就是「別跟機器照的規則對不上」。
-  assert.ok(doc.includes('嚴格大於「那個身分自己」現有的最高輪次'),
-    '補救程序要寫閘的**精確**規則（每個身分各自算），不是只寫「兩則都用 r10」那個簡化版');
-  assert.ok(doc.includes('不是閘的必要條件'),
-    '共用同一輪次是**簡化寫法**，要標明它不是閘的必要條件（分別寫 r9 與 r10 也會過）');
-  // r3 阻擋①：別名在本 PR 內永久存在，head 再動就兩個都要跟——不寫這條，照第 4 步做會被重新鎖住
+  // r4 Medium①：判準的單位是**身分**，不是寫死的「兩個」（三個別名時只補兩個照樣紅）
+  assert.ok(doc.includes('判準的單位是**身分**'),
+    '補救程序把身分數量寫死了——第三個別名／重述產生的身分／換掉的審查角色都要收');
+  // r1 阻擋＋r2 精確化：閘只認「更新的輪次」，而且是**每個身分各自**算
+  assert.ok(doc.includes('輪次要大於「那個身分自己」現有的最高輪次'),
+    '補救程序少了輪次那條——照原輪次補發撤銷不掉，而規則是每個身分各自算');
+  // r3 阻擋①：別名在本 PR 內永久存在，head 再動就全部要跟——不寫這條，照舊版做會被重新鎖住
   assert.ok(doc.includes('本 PR 內所有已經出現過的身分都要跟著 head；新 PR 起只用標準來源'),
-    '補救程序少了「別名在本 PR 內永久存在」的心智模型——照舊版第 4 步做，下次推 commit 會再被鎖住');
+    '補救程序少了「別名在本 PR 內永久存在」的心智模型——照舊版做，下次推 commit 會再被鎖住');
   assert.ok(doc.includes('不可以編輯舊的結論留言'),
     '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
   const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
