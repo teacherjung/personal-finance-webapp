@@ -63,14 +63,23 @@ export function bankApplyLabel(balancesSkipped) {
 
 /** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
  * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean}} bal
- * @param {{imported:number, skipped?:number, foreign?:number}} tx */
+ * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx */
 export function bankApplyDoneText(bal, tx) {
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
     : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
       + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`;
   return `${acct}；交易：匯入 ${tx.imported}`
-    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+}
+
+/** 「這次不匯入 N 筆疑似重複」勾選框（William 2026-08-14：同期匯過另一版面時 48/57 筆重複——
+ * 全放行＝現金流多算一份、全擋掉＝剩下的也進不來）。預設勾＝往「不多算錢」那邊倒；
+ * tooltip 誠實講啟發式的代價：真的同帳戶同日同額刷兩次會被一起跳過（可事後手動補記）。
+ * n＝預覽數出來的疑似重複筆數；0＝不畫（沒東西可跳過就不給開關）。 @param {number} n */
+export function bankSkipSimilarOptionHtml(n) {
+  if (!n) return '';
+  return `<label class="skip-similar-opt" title="「疑似重複」是啟發式判斷（同帳戶＋同日＋同金額＋同方向）——真的刷兩次同額的也會被跳過，可事後手動補記"><input type="checkbox" id="skipSimilarChk" checked> 這次不匯入 ${Number(n)} 筆「疑似重複」</label>`;
 }
 
 export const BANK_UPLOAD_SUBMIT_LABEL = '上傳並預覽';

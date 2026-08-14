@@ -404,7 +404,10 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(src, /canOpenNext\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canOpenNext\(\)\) return;/u,
     '★sendToAi 第一個語句必須是 canOpenNext 重新驗證——沒有它，關窗切頁後帳單照樣送出去、照樣花錢');
   // apply 走 applyBody（插值形，不是只出現函式名）
-  assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw \}\);/, 'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案）');
+  assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw, skipSimilar \}\);/,
+    'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案；skipSimilar＝勾選值一路帶進去）');
+  assert.match(src, /getElementById\('skipSimilarChk'\)\)\?\.checked === true/,
+    '★勾選值只認嚴格 true——沒有勾選框（similar=0）＝undefined＝不帶 key');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');
   assert.match(src, /if \(!payload\) \{[^}]*AI_PREVIEW_LOST_TEXT/, '票不見＝引導重新預覽，不可退回「送 data 讓它自己再解一次」');
   assert.doesNotMatch(src, /body: \{ data: b64, password: pw \}/, 'apply 的裸物件要被換掉，否則 AI 路線的票永遠帶不出去');

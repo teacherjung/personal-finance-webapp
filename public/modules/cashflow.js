@@ -11,7 +11,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -372,7 +372,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   //    交易照樣匯入，所以那顆鈕按下去真的有事情發生。r3#1 當初拿掉它是對的（那時按了必失敗），
   //    行為改了就要跟著改回來，不然使用者會以為這份帳單完全不能用。
   openInfo('銀行對帳單預覽', body, { size: 'xl',
-    actionsHtml: `<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
+    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
 
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
@@ -382,7 +382,9 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       if (btn.disabled) return;
       btn.disabled = true;
       // AI 路線＝憑票寫入（不重送檔案與密碼）；模板路線＝照舊送 data+password。判準住 ai-consent.js
-      const payload = applyBody(r, { data: b64, password: pw });
+      // 勾選＝這次跳過預覽標「疑似重複」的那些筆（沒有勾選框＝similar 為 0＝照舊）
+      const skipSimilar = /** @type {HTMLInputElement|null} */ (document.getElementById('skipSimilarChk'))?.checked === true;
+      const payload = applyBody(r, { data: b64, password: pw, skipSimilar });
       if (!payload) { if (onPage()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
       try {
         const res = await api('/bank-statement/apply', { method: 'POST', body: payload });

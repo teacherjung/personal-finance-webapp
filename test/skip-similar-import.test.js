@@ -1,0 +1,100 @@
+// 「這次不匯入疑似重複」（William 2026-08-14 實測時的需求）：
+// 同期間匯過另一種版面時，48/57 筆被標「疑似重複」——按確認會全部再匯一次（現金流多算一份），
+// 不匯又進不了剩下的 9 筆。解法＝預覽窗勾選框：勾了就跳過**預覽標的那些**、其餘照匯。
+//
+// 三條紀律：
+// ①判準與預覽**同一套**（similarTxIndex＋similarKey）——預覽標幾筆、匯入就跳幾筆，不另立口徑。
+// ②嚴格 true 才生效（applyBody 只在 === true 放 key；路由只認 === true；服務層只認 === true）。
+// ③誠實：「疑似」是啟發式——真的同帳戶同日同額刷兩次會被一起跳過，所以它是**勾選**不是預設行為，
+//   tooltip 明講代價（可事後手動補記）。
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { importBankTxToDb } from '../lib/services/bank-import.js';
+import { applyBody } from '../public/modules/ai-consent.js';
+import { bankSkipSimilarOptionHtml, bankApplyDoneText } from '../public/modules/cashflow-model.js';
+
+/** 合成資料（零真實帳單內容）：db 裡已有一筆「同帳戶＋同日＋同額＋同方向」的舊交易 */
+const makeDb = () => ({
+  accounts: [],
+  settings: {},
+  transactions: [{
+    id: 'old1', date: '2026-01-28', type: 'expense', amount: 305, account: '合成活儲',
+    ledger: 'cashflow', source: 'bank', dir: 'out',
+    // 舊版面的 bankRef（文字寫法不同＝bankRef 對不上＝防重複認不出來——這正是「疑似重複」的病）
+    bankRef: 'bank|999900****0001|2026-01-28|out|305||舊版面寫法',
+  }],
+});
+/** 新版面同一筆交易（文字不同、金額日期方向相同）＋一筆真正的新交易 */
+const PARSED = Object.freeze({
+  bank: '台新',
+  accounts: [],
+  accountCurrency: { '999900****0001': 'TWD' },
+  transactions: [
+    { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: null, note: '合成商店' },
+    { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-01-31', summary: '轉帳存入', direction: 'in', amount: 999, balance: null, note: '合成來源' },
+  ],
+});
+
+test('勾了＝跳過疑似重複、其餘照匯；沒勾＝照舊全匯（兩個方向都要驗）', () => {
+  const db1 = makeDb();
+  const r1 = importBankTxToDb(db1, PARSED, { skipSimilar: true });
+  assert.equal(r1.similarSkipped, 1, '★同帳戶＋同日＋同額＋同方向那筆要被跳過');
+  assert.equal(r1.imported, 1, '★真正的新交易照匯——「跳過疑似」不可以把整份擋掉');
+  assert.equal(db1.transactions.length, 2, '落庫＝舊 1＋新 1');
+
+  const db2 = makeDb();
+  const r2 = importBankTxToDb(db2, PARSED, {});
+  assert.equal(r2.similarSkipped, 0, '★沒勾＝維持既有行為（疑似重複只提醒不擋）');
+  assert.equal(r2.imported, 2, '沒勾＝兩筆都進（含重複那筆——這是使用者自己的選擇）');
+});
+
+test('嚴格 true：字串 "true"、1、undefined 都不啟動跳過（服務層那一關）', () => {
+  for (const junk of ['true', 1, {}, undefined, null]) {
+    const db = makeDb();
+    const r = importBankTxToDb(db, PARSED, { skipSimilar: /** @type {any} */ (junk) });
+    assert.equal(r.similarSkipped, 0, `★${JSON.stringify(junk)} 不可以被當成 true——跳過交易是會少記帳的動作`);
+    assert.equal(r.imported, 2);
+  }
+});
+
+test('applyBody：嚴格 true 才放 key，AI 與模板兩條路線都帶得動', () => {
+  const ai = applyBody({ engine: 'ai', aiTicket: 't1' }, { data: 'b64', skipSimilar: true });
+  assert.equal(ai.skipSimilar, true, 'AI 路線（憑票寫入）也要能帶——寫入端一樣會算疑似重複');
+  const tpl = applyBody({ rows: [] }, { data: 'b64', skipSimilar: true });
+  assert.equal(tpl.skipSimilar, true, '模板路線同樣帶');
+  for (const junk of [undefined, false, 'true', 1]) {
+    const b = applyBody({ rows: [] }, { data: 'b64', skipSimilar: /** @type {any} */ (junk) });
+    assert.equal('skipSimilar' in b, false,
+      `★${JSON.stringify(junk)} 不放 key——String(undefined) 是 truthy，鬆一次就是 #450 那族的病`);
+  }
+});
+
+test('勾選框：有疑似重複才畫、預設勾、tooltip 誠實講代價；0 筆＝不畫', () => {
+  const html = bankSkipSimilarOptionHtml(48);
+  assert.match(html, /這次不匯入 48 筆「疑似重複」/u);
+  assert.match(html, /checked/u, '★預設勾＝往「不多算錢」那邊倒（少記的可以手動補、多算的要人工找出來刪）');
+  assert.match(html, /真的刷兩次同額的也會被跳過，可事後手動補記/u,
+    '★tooltip 要誠實講啟發式的代價——不講，使用者以為勾了就零風險');
+  assert.equal(bankSkipSimilarOptionHtml(0), '', '★沒東西可跳＝不畫開關');
+});
+
+test('完成訊息：跳過幾筆要說出來（不說＝使用者以為那 48 筆也進了）', () => {
+  const msg = bankApplyDoneText(
+    { balancesSkipped: false, updated: 1, created: 0, skipped: 0, unsupported: 0 },
+    { imported: 9, skipped: 0, similarSkipped: 48, foreign: 0 });
+  assert.match(msg, /依勾選跳過疑似重複 48/u, '★勾選的結果要回報');
+  const msg2 = bankApplyDoneText(
+    { balancesSkipped: false, updated: 1, created: 0, skipped: 0, unsupported: 0 },
+    { imported: 9, skipped: 0, foreign: 0 });
+  assert.doesNotMatch(msg2, /疑似重複/u, '沒勾（欄位缺席）＝不提，維持既有訊息形狀');
+});
+
+test('路由嚴格布林：statement.js 只認 req.body.skipSimilar === true（原始碼釘住）', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
+  assert.match(src, /skipSimilar: req\.body\.skipSimilar === true/u,
+    '★路由層也要嚴格布林——服務層雖有第二道，但雙層嚴格是 useAi 的既有紀律');
+});

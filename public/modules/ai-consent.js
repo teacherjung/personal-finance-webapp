@@ -123,18 +123,24 @@ export function previewBody({ data, password, useAi }) {
  *   票不見＝回 `null`，呼叫端要引導重新預覽，**絕不可退回「送 data 讓它自己再解一次」**。
  * - **模板路線**＝照舊 `{data, password}`，且**不得出現 `aiTicket` 這個 key**：
  *   `String(undefined)==='undefined'` 是 truthy，後端 `opts.aiTicket && !ticket` 會把正常匯入 400 擋死。
- * @param {any} preview 預覽回應 @param {{data:string, password?:string}} o
+ * `skipSimilar`＝「這次跳過疑似重複」（William 2026-08-14）：**嚴格 true 才放 key**——
+ * 同 useAi 的紀律，undefined/'true' 這類值一律不出現在 body（後端也只認 === true，雙層嚴格）。
+ * @param {any} preview 預覽回應 @param {{data:string, password?:string, skipSimilar?:boolean}} o
  * @returns {Record<string, any>|null}
  */
-export function applyBody(preview, { data, password }) {
+export function applyBody(preview, { data, password, skipSimilar }) {
   if (preview && preview.engine === 'ai') {
     const ticket = preview.aiTicket;
     if (typeof ticket !== 'string' || !ticket) return null;
-    return { useAi: true, aiTicket: ticket };
+    /** @type {Record<string, any>} */
+    const ai = { useAi: true, aiTicket: ticket };
+    if (skipSimilar === true) ai.skipSimilar = true;
+    return ai;
   }
   /** @type {Record<string, any>} */
   const body = { data };
   if (typeof password === 'string') body.password = password;
+  if (skipSimilar === true) body.skipSimilar = true;
   return body;
 }
 
