@@ -829,9 +829,19 @@ test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要�
   // ⚠️ 這一串是 Codex #456 r1 Medium③ 補的：原本只斷言「補發」兩個字，
   //    把「**兩個身分各自**」改成「其中一個身分」照樣全綠——**題名宣稱守住的東西沒有斷言**。
   //    只補一個身分正是 #453 第二次被擋的死法（另一半停在舊 sha）。
-  for (const must of ['補發', '兩個身分各自', '輪次要大於', '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
+  // ⚠️ r2 又抓到一顆：只斷言「輪次要大於」的話，把承重的「**自己**」偷換成別的字照樣全綠
+  //    （Codex #456 r2 Medium③ 實測把「最高輪次」改成「最低輪次」，89 題全綠）。
+  //    ⇒ 這一句**整句逐字**斷言，因為每個字都承重（各自／自己／最高）。
+  for (const must of ['補發', '兩個身分各自', '輪次各自要大於「自己」現有的最高輪次',
+    '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
     assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
   }
+});
+
+test('⭐ 來源相似｜只差大小寫也要抓到（`.toLowerCase()` 被拿掉時要轉紅）', () => {
+  // Codex #456 r2 Medium③ 的第二顆存活突變：拿掉 looseSource 的 .toLowerCase()，89 題全綠，
+  // 但純大小寫漂移（同一個人第二輪把 CLI 打成 cli）就再也不提醒了。
+  assert.match(sourceLookalike('codex cli', 'Codex CLI') || '', /完全相同/);
 });
 
 test('⭐ 來源相似｜`CLI` vs `codex CLI` 要抓到（LOOSE_MIN 是門檻，不是隨手填的數字）', () => {
@@ -841,14 +851,20 @@ test('⭐ 來源相似｜`CLI` vs `codex CLI` 要抓到（LOOSE_MIN 是門檻，
   assert.equal(sourceLookalike('桌面', '桌面版'), null, '兩個字的名字互相包含沒有指示性，刻意不比（LOOSE_MIN 調小會開始亂吵）');
 });
 
-test('來源相似｜劃界要誠實：共同前綴、不同後綴抓不到——文件必須照實說', () => {
-  // Codex #456 r1 Medium②：我原本的劃界只寫「完全不同的名字抓不到」，
-  // 但 effort 不同（xhigh vs medium）也抓不到，而那正是文件禁止「effort 寫進來源」要防的漂法。
-  // **說了撐不住的話比缺口更糟**——所以行為與文字兩邊一起釘。
-  assert.equal(sourceLookalike('codex CLI (gpt-5.6-sol, xhigh)', 'codex CLI (gpt-5.6-sol, medium)'), null);
+test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補不完，r1→r2 連錯兩次）', () => {
+  // r1 我寫「抓不到的有三族」，Codex r2 當場又找出三族不在名單上 ⇒ **那是本支相對 main 唯一一處變糟**
+  //（main 原本沒有任何窮盡宣稱）。所以這一題釘的不是「有沒有列到某一族」，
+  // 而是**文件有沒有把邊界寫成演算法本身**——列清單那種寫法會再被打穿第三次。
+  for (const [a, b] of [
+    ['codex CLI (gpt-5.6-sol, xhigh)', 'codex CLI (gpt-5.6-sol, medium)'],   // 共同前綴、不同後綴
+    ['本機 codex CLI', '桌面 codex CLI'],                                     // 共同後綴、不同前綴
+    ['codex CLI xhigh', 'xhigh codex CLI'],                                   // 換序
+    ['codex CLI xhigh', 'codex CLl xhigh'],                                   // 中間打錯一個字
+  ]) assert.equal(sourceLookalike(a, b), null, `「${a}」與「${b}」的判定與劃界不符`);
   const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(doc.includes('共同前綴、不同後綴'), '誠實劃界少列「共同前綴、不同後綴」這一族');
-  assert.ok(doc.includes('很短的名字'), '誠實劃界少列「短名字刻意不比」這一族');
+  assert.ok(doc.includes('**任一個名字正規化後短於 3 個字，或兩者正規化後既不相等、也不互相包含，就不提醒。**'),
+    '誠實劃界要寫成**演算法邊界**（性質），不是「抓不到的有 N 族」那種列舉——列舉已經被打穿兩次');
+  assert.ok(doc.includes('例示**（不是清單）'), '例子要標明是例示，不然下一個人又會當成完整清單');
 });
 
 test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目前 head，才真的解得掉', () => {
@@ -877,6 +893,14 @@ test('⭐ 補救程序重播：兩個身分各自用**更高輪次**補發到目
     c(head('Codex', DRIFT_B, HEAD, 10, '通過')),
   ], HEAD, 'Codex');
   assert.deepEqual(fixed.problems, [], `照文件走完補救程序之後應該全清：${fixed.problems.join('｜')}`);
+
+  // ✅ **每個身分各自**大於自己的最高輪次也行（r2 精確化：r10 只是安全的簡化寫法，不是必要條件）
+  const perIdentity = verdictProblems([...drifted,
+    c(head('Codex', DRIFT_A, HEAD, 9, '通過')),    // A 自己停在 r8 ⇒ r9 就夠
+    c(head('Codex', DRIFT_B, HEAD, 10, '通過')),   // B 自己停在 r9 ⇒ 要 r10
+  ], HEAD, 'Codex');
+  assert.deepEqual(perIdentity.problems, [],
+    `閘的規則是每個身分各自算，分別用 r9／r10 也該全清：${perIdentity.problems.join('｜')}`);
 
   // ⚠️ 只補一個身分＝#453 第二次被擋的死法，必須仍然擋著
   const halfDone = verdictProblems([...drifted, c(head('Codex', DRIFT_A, HEAD, 10, '通過'))], HEAD, 'Codex');
@@ -909,7 +933,13 @@ test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯
   assert.ok(doc.includes('#### 已經漂掉的補救：**用補發，不可以編輯舊留言**'),
     '少了補救程序那一節的標題（正解＝補發一則新結論，不是改舊的）');
   assert.ok(doc.includes('**輪次要往上跳**'),
-    '補救程序少了「輪次要大於現有最高輪次」那條——沒有它，照文件補發會失敗（同輪撤銷不掉）');
+    '補救程序少了輪次那條——沒有它，照文件補發會失敗（同輪撤銷不掉）');
+  // ⚠️ r2：閘的規則是**每個身分各自**算的，「兩則都寫 r10」只是安全的簡化寫法。
+  //    把簡化寫法講成閘的必要條件＝失真，而這份文件的全部意義就是「別跟機器照的規則對不上」。
+  assert.ok(doc.includes('嚴格大於「那個身分自己」現有的最高輪次'),
+    '補救程序要寫閘的**精確**規則（每個身分各自算），不是只寫「兩則都用 r10」那個簡化版');
+  assert.ok(doc.includes('不是閘的必要條件'),
+    '共用同一輪次是**簡化寫法**，要標明它不是閘的必要條件（分別寫 r9 與 r10 也會過）');
   assert.ok(doc.includes('不可以編輯舊的結論留言'),
     '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
   const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
