@@ -5,8 +5,8 @@
 // 三條紀律：
 // ①判準與預覽**同一套**（similarTxIndex＋similarKey）——預覽標幾筆、匯入就跳幾筆，不另立口徑。
 // ②嚴格 true 才生效（applyBody 只在 === true 放 key；路由只認 === true；服務層只認 === true）。
-// ③誠實：「疑似」是啟發式——真的同帳戶同日同額刷兩次會被一起跳過，所以它是**勾選**不是預設行為，
-//   tooltip 明講代價（可事後手動補記）。
+// ③誠實：「疑似」是啟發式——真的同帳戶同日同額刷兩次會被一起跳過，所以它是**可取消的勾選**
+//   （預覽窗預設勾＝往「不多算錢」倒；使用者可取消），tooltip 明講代價（可事後手動補記）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
