@@ -61,7 +61,7 @@ test('A2｜r1#1 快照：檔名與檔案內容綁在同一份、事後改選別�
   assert.equal(snapshotUpload({}).fileName, '', '沒有檔名也要開得起來（不可炸掉整條路）');
 });
 
-// ---- B 群：previewBody（「沒同意＝零外送」的行為證明）----
+// ---- B 群：previewBody（「沒明確要求 AI＝零外送」的行為證明；useAi＝要求旗標不是同意旗標）----
 
 test('B｜previewBody：useAi 嚴格布林——沒同意就連 key 都不放；password 含空字串照放（複製 P0.5 現況）', () => {
   const plain = previewBody({ data: 'b64' });
@@ -319,6 +319,20 @@ test('A3｜shouldAskBeforeSend：只有明確設成 true 才問；讀不到設�
   }
 });
 
+test('命名｜useAi 不可再叫「同意旗標」——那個名字誤示每次都問過（r3）', () => {
+  // 2026-08-13 預設翻成直接送之後，「同意」這個名字本身就是假保證：旗標代表的是
+  // 「前端明確要求 AI」，同意窗只在 aiAskBeforeSend 打開時出現。歷史紀錄（計畫文件的
+  // 變更紀錄行）不在射程——它記的是當時，不是現在。
+  // ⚠️ 不可用 srcOf（它剝註解，而這個名字全住在註解裡＝守衛永遠看不到）——用原始檔。
+  for (const f of ['server.js', 'lib/routes/statement.js', 'lib/services/bank-import.js',
+    'public/modules/cashflow.js', 'public/modules/ai-consent.js',
+    'docs/contracts/income-expense.md', 'AGENTS.md']) {
+    const raw = readFileSync(join(ROOT, f), 'utf8');
+    assert.ok(!raw.includes('同意旗標') || raw.includes('舊名「同意旗標」'),
+      `★${f} 還在用「同意旗標」——要嘛改名、要嘛標明是棄用的舊名`);
+  }
+});
+
 test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 applyBody、徽章真的插進畫面', () => {
   const src = srcOf('public/modules/cashflow.js');
   // 三條 preview 路徑：上傳窗（無密碼）／密碼窗／同意窗（唯一帶 useAi 的那條）
@@ -342,7 +356,7 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   ]) {
     assert.match(src, new RegExp(
       'if \\(await askBeforeSendAi\\(\\)\\) \\{[\\s\\S]{0,300}?' + consentArgs
-      + "[\\s\\S]{0,120}?return;\\n\\s*\\}\\n\\s*await " + sendArgs), 
+      + "[\\s\\S]{0,120}?return;\\n\\s*\\}\\n\\s*await " + sendArgs),
       `★${label}：ask 分支→自己的同意窗→return→自己的 sendToAi，四件事同一段——`
       + '任何一條被 false&& 掉，這條 scoped 斷言就找不到完整形狀');
   }
