@@ -105,6 +105,33 @@ test('完成訊息：跳過幾筆要說出來（不說＝使用者以為那 48 �
   assert.doesNotMatch(msg2, /疑似重複/u, '沒勾（欄位缺席）＝不提，維持既有訊息形狀');
 });
 
+test('互扣｜同末碼、不同可見前綴＝不是疑似重複：preview 不標、apply 也不跳（r2 阻擋）', async () => {
+  // ⚠️ r2 的刀：preview 與 apply 的判準原本各手抄一份，apply 那份把前綴否決拔掉時 84 題全綠
+  //   ——後果是「預覽判定不同帳戶（不標）、套用卻跳過**真交易**」＝使用者掉帳。
+  //   現在兩端共用 isSimilarTx；這題釘住「不同前綴」這一格在**兩端同時**成立。
+  const { previewBankTxForDb } = await import('../lib/services/bank-import.js');
+  const dbShape = () => ({
+    accounts: [], settings: {},
+    transactions: [{
+      id: 'old1', date: '2026-01-28', type: 'expense', amount: 305, account: '合成活儲',
+      ledger: 'cashflow', source: 'bank', dir: 'out',
+      bankRef: 'bank|111100****0001|2026-01-28|out|305||舊版面寫法',   // 前綴 1111
+    }],
+  });
+  const parsedDiffPrefix = {
+    bank: '台新', accounts: [], accountCurrency: { '222200****0001': 'TWD' },
+    transactions: [   // 前綴 2222、同末碼 0001、同日同額同方向＝不同帳戶的真交易
+      { acctSuffix: '0001', acctMasked: '222200****0001', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: null, note: '合成商店' },
+    ],
+  };
+  const { rows } = previewBankTxForDb(dbShape(), parsedDiffPrefix);
+  assert.equal(rows[0].similar, false, '★preview：前綴兩邊都印得出來且不同＝不標疑似重複');
+  const db = dbShape();
+  const r = importBankTxToDb(db, parsedDiffPrefix, { skipSimilar: true });
+  assert.equal(r.similarSkipped, 0, '★apply：同一格判準——不同前綴的真交易**不可以**被跳過（跳了＝掉帳）');
+  assert.equal(r.imported, 1);
+});
+
 test('正式入口｜applyBankStatement 帶 skipSimilar：勾了跳過、沒勾全匯（r1 阻擋：接縫要有考題）', async () => {
   // ⚠️ 這題的存在理由：把 applyBankStatement 裡那行改回 importBankTxToDb(db, parsed)
   //   （完全忽略 skipSimilar），只呼叫 helper 的題全綠——「勾了卻沒跳過」正是本支最壞的結果。
