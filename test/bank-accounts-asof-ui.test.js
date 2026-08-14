@@ -325,6 +325,15 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
       `★${where} 用了 @import——匯進來的檔案逃出這題的射程，一律禁止（現況零使用）`);
     assert.doesNotMatch(clean, /@counter-style/iu,
       `★${where} 用了 @counter-style——它的 symbols/prefix/suffix 都能定義畫上畫面的文字，一律禁止（現況零使用）`);
+    // ⚠️ r19 阻擋：background-image: url(data:image/svg+xml,…<text>假話</text>…) ——
+    //    **一張寫著字的圖**跟一行字在畫面上沒有差別。逐屬性列舉（background/border-image/
+    //    cursor/mask…）補不完，關整個能力：CSS 一律不准載圖（url/image-set/cross-fade/image()；
+    //    全站現況零使用——圖示都是 JS 端的行內 SVG、背景都是漸層與色票）。
+    //    日後真要在 CSS 放圖＝這題紅、人工審那張圖。
+    for (const fn of [/\burl\s*\(/iu, /image-set\s*\(/iu, /cross-fade\s*\(/iu, /\bimage\s*\(/iu]) {
+      assert.doesNotMatch(clean, fn,
+        `★${where} 用了 CSS 圖片函式（${fn}）——寫著字的圖＝守衛看不到的字，CSS 一律不載圖（現況零使用）`);
+    }
     for (const d of declarations(clean)) {
       // ⚠️ r16 阻擋：content 不是唯一會畫字的屬性——list-style-type 可帶**任意字串**當清單符號
       //    （display: list-item 一配就上畫面，Chromium 實測會渲染）。字串規則同 content。
@@ -409,6 +418,16 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
   //    每一個 style 屬性（模板插值讓它解析不完整），不如整類關門：**JS 與 HTML 一律
   //    不准出現 list-style／listStyle**（樣式表裡的由上面的解析器管；現況 JS/HTML 零使用）。
   //    日後真的需要行內清單樣式＝這題紅、來人工審一次。
+  // style 屬性（行內樣式）同樣不准載圖——抽取器對模板插值的巢狀引號解析不完整（誠實劃界），
+  //    但字面寫在 style 屬性裡的圖片函式一定抓得到。
+  for (const jf of ['public/index.html', ...jsFiles]) {
+    const src = read(jf);
+    for (const m of src.matchAll(/(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)')/giu)) {
+      const val = m[1] ?? m[2];
+      assert.doesNotMatch(val, /\burl\s*\(|image-set\s*\(|cross-fade\s*\(/iu,
+        `★${jf} 的行內 style 載了圖（「${val.slice(0, 60)}」）——寫著字的圖＝守衛看不到的字`);
+    }
+  }
   for (const jf of ['public/index.html', ...jsFiles]) {
     assert.doesNotMatch(read(jf), /list-?style/iu,
       `★${jf} 出現 list-style／listStyle——行內清單符號能把任意字串畫上畫面`
