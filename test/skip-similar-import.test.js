@@ -198,7 +198,11 @@ test('路由不准再自己讀 skipSimilar：statement.js（剝註解後）零�
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib/routes/statement.js'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
-  assert.doesNotMatch(src, /req\.body\.skipSimilar/u,
-    '★statement.js 不准直接讀 req.body.skipSimilar——嚴格布林的真相只住在 applyOptsFromBody');
+  // ⚠️ r6：只禁點記法會被 req.body["skipSimilar"] 與解構繞過（AGENTS「形狀考題不可只認
+  //    一種寫法」）。最強形＝**這個 token 一次都不准出現**：投影呼叫（applyOptsFromBody(req.body)）
+  //    根本不需要提到欄位名——路由檔裡出現 skipSimilar 的任何寫法＝有人又生了複本。
+  assert.doesNotMatch(src, /skipSimilar/u,
+    '★statement.js（剝註解後）不准出現 skipSimilar 這個 token——點記法、方括號、解構、字串鍵'
+    + '全部包含；嚴格布林的真相只住在 applyOptsFromBody');
   assert.match(src, /applyOptsFromBody\(req\.body\)/u, '★apply 路由要走投影函式');
 });
