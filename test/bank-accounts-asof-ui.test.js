@@ -248,3 +248,27 @@ test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾�
       + '印出來就是一個假日期');
   }
 });
+
+test('畫面文字不可以住在 CSS：content 屬性不得攜帶中文或數字（r10）', () => {
+  // ⚠️ r10 阻擋：`td[data-label="餘額"]::after { content: "—這筆餘額由 IB 同步" }` 能把假話
+  //    直接畫在餘額格裡——字在畫面上、卻不在 HTML 裡，balanceCellText 剝標籤剝得再乾淨也看不到，
+  //    esc() 消毒也管不到它。這條通道不是靠列舉選擇器去堵（列舉補不完），而是立全域不變量：
+  //    **對使用者說話的字一律住在 HTML**（守衛看得到、消毒管得到）；CSS 的 content 只准
+  //    空字串、單一裝飾符號（›、✘ 這類）與 attr(...)（值來自 HTML、守衛看得到）。
+  //    實測現況：全站八份 CSS 的 content 本來就零中文零數字——這題是把現狀釘成規矩。
+  const index = read('public/index.html');
+  const hrefs = [...index.matchAll(/<link rel="stylesheet" href="([^"]+)"/gu)].map((m) => m[1]);
+  assert.ok(hrefs.length >= 5, `index.html 應該掛著多份樣式表（實際 ${hrefs.length}）——抓不到＝這題在驗空氣`);
+  for (const href of hrefs) {
+    const css = read(`public/${href}`);
+    for (const decl of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]*)/gu)) {
+      for (const str of decl[1].matchAll(/"([^"]*)"|'([^']*)'/gu)) {
+        const text = str[1] ?? str[2];
+        assert.doesNotMatch(text, /[\u3400-\u9fff\uf900-\ufaff]/u,
+          `★${href} 的 content 帶著中文「${text}」——對使用者說話的字必須住在 HTML，CSS 是守衛的盲區`);
+        assert.doesNotMatch(text, /\d/u,
+          `★${href} 的 content 帶著數字「${text}」——日期、金額這類數字從 CSS 冒出來＝守衛看不到的宣稱`);
+      }
+    }
+  }
+});
