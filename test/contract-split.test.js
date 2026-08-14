@@ -548,6 +548,7 @@ const MANIFEST = {
       'lib/services/bank-import.js',
       'lib/services/ib-sync.js',                 // #454：IB 現金帳戶那行小字的資料來源（只寫 balance、不寫 balanceAsOf）
       'test/ib-cash-freshness.test.js',          // #454 r1：用真的 syncIb 釘住那句文案的前提
+      'test/bank-accounts-asof-ui.test.js',      // #454：餘額旁小字的整族護欄（r13 待辦補登記）
       'lib/services/categories.js',
       'lib/services/health-check.js',
       'lib/services/learning.js',
@@ -603,7 +604,7 @@ const MANIFEST = {
       'lib/pdf-isolate-child.js',
       'lib/routes/auth.js',
       'lib/routes/core.js',
-      'lib/routes/market.js', 'lib/services/ib-sync.js', 'lib/services/securities-import.js', 'lib/secret-fields.js', 'lib/services/security-trades.js', 'lib/routes/securities.js', 'public/modules/securities.js', 'public/modules/securities-view.js', 'lib/types.js', 'lib/store.js', 'lib/taishin-securities.js', 'test/security-trades.test.js', 'test/securities-contract.test.js', 'test/securities-import.test.js', 'test/securities-migration.test.js', 'test/securities-preview-projection.test.js', 'test/securities-ui.test.js', 'test/taishin-securities.test.js', 'test/portfolio-activity.test.js', 'test/portfolio-chart.test.js', 'test/portfolio-details.test.js', 'test/portfolio-format.test.js', 'test/portfolio-ib-sync.test.js', 'test/portfolio-info-actions.test.js', 'test/portfolio-info.test.js', 'test/portfolio-overview.test.js', 'test/portfolio-quotes.test.js', 'test/portfolio-remote-actions.test.js', 'test/portfolio-report.test.js', 'test/portfolio-research-actions.test.js', 'test/portfolio-tables.test.js', 'test/stock-research-model.test.js', 'test/stock-research-page.test.js', 'test/stock-research-score.test.js', 'test/stock-research-view.test.js',
+      'lib/routes/market.js', 'lib/services/ib-sync.js', 'test/ib-cash-freshness.test.js', 'lib/services/securities-import.js', 'lib/secret-fields.js', 'lib/services/security-trades.js', 'lib/routes/securities.js', 'public/modules/securities.js', 'public/modules/securities-view.js', 'lib/types.js', 'lib/store.js', 'lib/taishin-securities.js', 'test/security-trades.test.js', 'test/securities-contract.test.js', 'test/securities-import.test.js', 'test/securities-migration.test.js', 'test/securities-preview-projection.test.js', 'test/securities-ui.test.js', 'test/taishin-securities.test.js', 'test/portfolio-activity.test.js', 'test/portfolio-chart.test.js', 'test/portfolio-details.test.js', 'test/portfolio-format.test.js', 'test/portfolio-ib-sync.test.js', 'test/portfolio-info-actions.test.js', 'test/portfolio-info.test.js', 'test/portfolio-overview.test.js', 'test/portfolio-quotes.test.js', 'test/portfolio-remote-actions.test.js', 'test/portfolio-report.test.js', 'test/portfolio-research-actions.test.js', 'test/portfolio-tables.test.js', 'test/stock-research-model.test.js', 'test/stock-research-page.test.js', 'test/stock-research-score.test.js', 'test/stock-research-view.test.js',
       'lib/schema.js',
       'lib/services/insights.js',
       'lib/services/market-data.js',

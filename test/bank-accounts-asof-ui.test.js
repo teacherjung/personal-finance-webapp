@@ -8,7 +8,7 @@
 //    （沒標示時使用者知道自己不知道）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -251,15 +251,16 @@ test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾�
 
 test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr／none／normal（r10–r12）', () => {
   // ⚠️ 這題三輪磨出來（r10 CJK content／r11 註解與 link 屬性序／r12 英文假話＋掃描器語彙洞）。
-  //    規則從黑名單翻成**白名單**：content 與 custom property（--*）裡的字串literal
-  //    一律不得含任何文字或數字（\p{L}\p{N}，任何語言）——「對使用者說話的字住在 HTML」
-  //    不分語言。空字串與 ›、✘ 這類純符號放行；attr(...) 放行（值來自 HTML、守衛看得到）。
+  //    規則從黑名單翻成**白名單**：content 裡的字串 literal 一律不得含任何文字或數字
+  //    （\p{L}\p{N}，任何語言）——「對使用者說話的字住在 HTML」不分語言。
+  //    custom property 的字串（字型名這類）**不用管**：var 進不了 content（r12 定案），
+  //    它們到不了畫面。空字串與 ›、✘ 這類純符號放行；attr(...) 放行（值來自 HTML、守衛看得到）。
   //    content 的**值形狀白名單化**（只准字串／attr／none／normal）：var、counter、url 全關——
   //    也因此 custom property 裡的字串（字型名這類）不用管，它們進不了 content。
   //    掃描器＝字串感知的小型解析器：屬性名大小寫不敏感、字串裡的分號不會截斷宣告、
   //    註解在字串外才剝。@import 一律禁止（匯進來的檔案逃出掃描射程；現況本來就零使用）。
   const attrOf = (/** @type {string} */ attrs, /** @type {string} */ name) => {
-    const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'u').exec(attrs);
+    const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'iu').exec(attrs);
     return m ? (m[1] ?? m[2] ?? m[3]) : '';
   };
   /** 剝註解（字串感知：字串裡的 /* 不算註解） @param {string} css */
@@ -334,8 +335,10 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     }
   };
   const index = read('public/index.html');
-  const hrefs = [...index.matchAll(/<link\b([^>]*)>/gu)]
-    .filter((m) => attrOf(m[1], 'rel').split(/\s+/u).includes('stylesheet'))
+  // ⚠️ HTML 的標籤與屬性名不分大小寫（r13 阻擋②）：<LINK REL="STYLESHEET"> 一樣合法，
+  //    只認小寫＝等價改寫就讓整份樣式表逃出射程（fail-open）。
+  const hrefs = [...index.matchAll(/<link\b([^>]*)>/giu)]
+    .filter((m) => attrOf(m[1], 'rel').toLowerCase().split(/\s+/u).includes('stylesheet'))
     .map((m) => attrOf(m[1], 'href'))
     .filter((h) => h && !/^https?:/u.test(h));
   assert.ok(hrefs.length >= 5, `index.html 應該掛著多份樣式表（實際 ${hrefs.length}）——抓不到＝這題在驗空氣`);
@@ -343,4 +346,22 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
   for (const style of index.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/giu)) {
     scanCss(style[1], 'index.html 行內 <style>');
   }
+  // ⚠️ CSS 不只住在 .css 檔（r13 阻擋①）：列印預覽（openPrintWindow）是 JS 生的 HTML，
+  //    樣式在 app.js 的 PRINT_SHELL_CSS 與各報表的 extraCss 樣板字串裡——那個視窗根本
+  //    不載 index.html 的樣式表，塞在這裡的 content 前面的掃描全部看不到。
+  //    收集方式＝命名慣例（變數名含 css，不分大小寫）；PRINT_SHELL_CSS 另設錨點斷言，
+  //    改名或搬家會當場紅、逼人回來更新收集規則，而不是靜靜漏掃。
+  const jsFiles = ['public/app.js',
+    ...readdirSync(join(ROOT, 'public/modules')).filter((f) => f.endsWith('.js')).map((f) => `public/modules/${f}`)];
+  let cssLiterals = 0, sawPrintShell = false;
+  for (const jf of jsFiles) {
+    const js = read(jf);
+    for (const m of js.matchAll(/(?:const|let|var)\s+(\w*css\w*)\s*=\s*`([\s\S]*?)`/giu)) {
+      cssLiterals++;
+      if (m[1] === 'PRINT_SHELL_CSS') sawPrintShell = true;
+      scanCss(m[2], `${jf} 的 ${m[1]} 樣板`);
+    }
+  }
+  assert.ok(sawPrintShell, 'app.js 的 PRINT_SHELL_CSS 收集不到了——改名或搬家請同步更新這裡的收集規則');
+  assert.ok(cssLiterals >= 3, `JS 裡的 CSS 樣板應該至少三份（PRINT_SHELL_CSS＋兩份報表 extraCss，實際 ${cssLiterals}）`);
 });
