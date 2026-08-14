@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from '../public/modules/cashflow-model.js';
 import { aiPreviewBadgeHtml } from '../public/modules/ai-consent.js';
-import { previewBankTxForDb } from '../lib/services/bank-import.js';
+import { previewBankTxForDb, importBankTxToDb } from '../lib/services/bank-import.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -69,9 +69,17 @@ test('跨層｜預覽顯示的＝匯入後會保存的那份文字（走真的 p
   assert.match(String(row.note), /現金轉出/u, '★「CD轉出」要被翻成白話（服務層既有行為）');
   const html = renderPreviewBody(wrap([row]));
   assert.ok(html.includes(String(row.note).replaceAll('&', '&amp;')) || html.includes(String(row.note)),
-    '★預覽格顯示的必須是整理後說明（row.note）＝匯入後帳本會保存的那份');
+    '★預覽格顯示的必須是整理後說明（row.note）');
   assert.doesNotMatch(html, />CD轉出</u,
     '★預覽格不可顯示生的摘要——預覽給人看「CD轉出」、匯入後帳本卻寫「現金轉出…」＝預覽在騙人');
+  // ⚠️ r4：題名說「＝匯入後保存」就要**真的呼叫寫入端**——只走預覽是在宣稱沒驗過的等式
+  //    （竄改 importBankTxToDb 的保存值，只走預覽的版本照樣綠）。
+  const db2 = { transactions: [], accounts: [], settings: {} };
+  importBankTxToDb(db2, {
+    bank: '台新', accounts: [], accountCurrency: { '999900****0001': 'TWD' }, transactions: [raw] });
+  assert.equal(db2.transactions.length, 1, '寫入端要真的落一筆');
+  assert.equal(db2.transactions[0].note, row.note,
+    '★匯入後保存的 note 必須逐字＝預覽顯示的那份——兩邊各自產生但同一條產生式，走散＝預覽在騙人');
 });
 
 test('行為｜已學列顯示自訂名＋「已學」標籤；沒有 note 的列退回 summary（fail-open 顯示）', () => {
@@ -95,6 +103,9 @@ test('就地解釋｜三種出身講清楚，而且不說 r1/r2 證偽的那些�
   assert.match(body, /同名欄位＝同一份內容/u,
     '★「同一份內容」現在成立了（r2：樣板改讀 note＝與匯入保存同一條產生式）——但它是被下面'
     + '的跨層考題撐著的宣稱，不是裝飾');
+  assert.match(body, /（預覽窗會標「已學」）/u,
+    '★「已學」標籤只存在於預覽窗——ⓘ 要說對地方（r4：寫成「收支明細會標」＝對著沒有標籤的畫面找標籤）');
+  assert.doesNotMatch(body, /收支明細會標|明細會標「已學」/u, '★不可宣稱收支明細有已學標籤（它沒有）');
   assert.match(body, /清空自訂名會回到 app 整理的預設說明/u, '★不可說「隨時可改回帳單原文」');
   assert.doesNotMatch(body, /照抄|逐字對得上|帳單原文還在/u, '★r1 證偽的三種說法禁令');
 });
