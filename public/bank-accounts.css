@@ -86,7 +86,9 @@
   font-size: 11px; font-weight: 700;
 }
 /* 餘額下面那行「對帳單更新至 YYYY-MM-DD」：資訊層級刻意低於金額本身——
-   它是判斷新舊用的旁註，不是第二個數字。`font-weight` 要覆寫 `.num` 的粗體。 */
+   它是判斷新舊用的旁註，不是第二個數字。
+   ⚠️ `font-weight: 400` 不是在覆寫誰（`.num` 本身沒有粗體，我原本的註解把理由編出來了）：
+   它是把這行的字重**明確釘住**，日後金額那格若加上粗體也不會連旁註一起變粗。 */
 .bank-balance-asof {
   display: block; margin-top: 3px;
   color: var(--text-dim); font-size: 10.5px; font-weight: 400;

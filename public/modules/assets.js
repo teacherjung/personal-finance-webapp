@@ -242,7 +242,7 @@ export async function renderBankAccounts() {
         </div>
         ${accounts.length ? `<div class="tbl-wrap bank-account-table-wrap">
           <table class="bank-acc-tbl bank-account-table"><thead><tr><th>銀行帳戶</th><th>帳戶末四碼</th><th>幣別</th><th class="num">餘額</th><th aria-label="動作"></th></tr></thead>
-          <tbody>${accounts.map(bankAccRow).join('')}</tbody></table>
+          <tbody>${accounts.map(a => bankAccRow(a, db.settings?.ib?.lastSync)).join('')}</tbody></table>
         </div>` : `<div class="bank-account-empty">
           <span class="bank-empty-icon">${icon('bank', 28)}</span>
           <div><strong>尚無銀行帳戶</strong><p>先新增一個銀行帳戶，或由銀行收支匯入對帳單建立。</p></div>
@@ -277,15 +277,16 @@ function openBalanceAsOfInfo() {
     <p>那行小字是：<strong>最後一次用銀行對帳單更新這個帳戶餘額時，那份帳單算到哪一天</strong>。</p>
     <p>它<strong>不是</strong>「餘額今天一定是對的」。你自己在帳戶表單手動改餘額時，這個日期不會跟著動——目前只有匯入對帳單會寫它。</p>
     <p>寫著「未由對帳單更新過」的帳戶，代表餘額從來沒被對帳單更新過：可能是你手動建立、手動維護的，也可能是那份帳單上讀不到「現值參考日」（讀不到時 app 寧可不更新餘額，也不拿不知新舊的數字去蓋掉你的）。</p>
+    <p>寫著「IB 同步更新至…」的是<strong>券商同步來的現金帳戶</strong>：它們不靠對帳單，每次 IB 同步就會更新，日期是<strong>那次同步的時間</strong>（整次同步共用一個時間，不是這個帳戶單獨的）。這種帳戶不需要、也沒有對帳單可以匯。</p>
     <p>怎麼用它判斷：<strong>日期離今天越遠，這個餘額越可能已經跟銀行的實際數字對不上。</strong>想更新就到「銀行收支」頁匯入一份最新的對帳單。</p>
   `, { size: 'md' });
 }
 
-function bankAccRow(x) {
+function bankAccRow(x, ibLastSync) {
   const cur = x.currency || 'TWD';
   const neg = Number(x.balance) < 0;
   const suffix = x.accountNoLast4 ? `•••• ${esc(x.accountNoLast4)}` : '<span class="bank-account-unset">尚未設定</span>';
-  const asOf = balanceAsOfNote(x);
+  const asOf = balanceAsOfNote(x, ibLastSync);
   return `<tr>
     <td class="bank-account-name-cell"><div class="bank-account-name"><span class="bank-account-mark">${icon('bank', 17)}</span><span><strong>${esc(x.name)}</strong>${x.class && x.class !== '現金' ? `<small>${esc(x.class)}</small>` : ''}</span></div></td>
     <td data-label="帳戶末四碼"><span class="bank-account-suffix">${suffix}</span></td>

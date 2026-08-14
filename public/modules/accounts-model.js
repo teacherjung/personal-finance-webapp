@@ -106,16 +106,29 @@ export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];
  * 或日後有人寫出繞過 `save()` 的路徑時，壞掉的方式應該是「這格看起來沒日期」，
  * 而不是把 `2026-13-45` 原樣印在使用者的餘額旁邊、讓他當成真的。
  *
- * @param {{balanceAsOf?: any}} [acc]
- * @returns {{has: boolean, date: string, text: string}}
+ * ⚠️ **IB 同步的現金帳戶要分開講**（2026-08-14 預審抓到）：`lib/services/ib-sync.js` 只寫
+ * `balance`、**不寫 `balanceAsOf`**，所以那幾列會永遠顯示「未由對帳單更新過」——
+ * 而它們其實每次同步都在更新，「去匯一份對帳單」這條路對它們**永遠走不通**（IBKR 不出這種帳單）。
+ * 判準用 `ibCashCur`（IB 同步擁有的欄位，非 CRUD 白名單）；時間點用整包設定的 `ib.lastSync`
+ * ——那是**整次同步**的時間、不是這個帳戶的，所以文案講「IB 同步」而不是「這個帳戶的餘額算到」。
+ *
+ * @param {{balanceAsOf?: any, ibCashCur?: any}} [acc]
+ * @param {string} [ibLastSync] `settings.ib.lastSync`（ISO 字串）；沒有就只講「由 IB 同步更新」
+ * @returns {{has: boolean, date: string, text: string, source: 'statement'|'ib'|'none'}}
  */
-export function balanceAsOfNote(acc) {
+export function balanceAsOfNote(acc, ibLastSync) {
+  if (acc && acc.ibCashCur) {
+    const day = typeof ibLastSync === 'string' ? ibLastSync.slice(0, 10) : '';
+    const ok = /^\d{4}-\d{2}-\d{2}$/.test(day);
+    return { has: ok, date: ok ? day : '', source: 'ib',
+      text: ok ? `IB 同步更新至 ${day}` : '由 IB 同步更新（不是對帳單）' };
+  }
   const raw = acc && typeof acc.balanceAsOf === 'string' ? acc.balanceAsOf : '';
   // 過真實日曆：`2026-02-30` 格式對、日子不存在——回填後再讀出來對得上才算數。
   const ok = /^\d{4}-\d{2}-\d{2}$/.test(raw)
     && !Number.isNaN(Date.parse(`${raw}T00:00:00Z`))
     && new Date(`${raw}T00:00:00Z`).toISOString().slice(0, 10) === raw;
   return ok
-    ? { has: true, date: raw, text: `對帳單更新至 ${raw}` }
-    : { has: false, date: '', text: '未由對帳單更新過' };
+    ? { has: true, date: raw, source: 'statement', text: `對帳單更新至 ${raw}` }
+    : { has: false, date: '', source: 'none', text: '未由對帳單更新過' };
 }

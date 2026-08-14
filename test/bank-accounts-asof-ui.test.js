@@ -30,14 +30,14 @@ function namedFunction(source, name) {
 }
 
 /** 用真的 `bankAccRow` 產一列 HTML；`balanceAsOfNote` 也是真的那一支（兩者接不上就會在這裡爆） */
-function renderRow(account) {
+function renderRow(account, ibLastSync) {
   const source = read('public/modules/assets.js');
   const esc = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   const icon = name => `<svg data-icon="${name}"></svg>`;
   const moneyCur = (n, cur) => `${cur} ${Number(n).toLocaleString('en-US')}`;
   const row = Function('esc', 'icon', 'moneyCur', 'balanceAsOfNote',
     `${namedFunction(source, 'bankAccRow')}; return bankAccRow;`)(esc, icon, moneyCur, balanceAsOfNote);
-  return row(account);
+  return row(account, ibLastSync);
 }
 
 /** 取出 `data-label="餘額"` 那一格的內容——「字有出現在這一列」不算數，要在**餘額格裡** */
@@ -80,7 +80,7 @@ test('髒日期不原樣印在餘額旁邊（顯示層不相信自己的輸入�
 
 test('純函式 balanceAsOfNote：真日曆才算數，回傳的 date 只在 has 為真時有值', () => {
   const good = balanceAsOfNote({ balanceAsOf: '2026-05-31' });
-  assert.deepEqual(good, { has: true, date: '2026-05-31', text: '對帳單更新至 2026-05-31' });
+  assert.deepEqual(good, { has: true, date: '2026-05-31', source: 'statement', text: '對帳單更新至 2026-05-31' });
   for (const bad of ['2026-02-30', '2026-13-01', '2026-00-10', '2026-05-32']) {
     assert.equal(balanceAsOfNote({ balanceAsOf: bad }).has, false, `${bad} 不是真實日期`);
     assert.equal(balanceAsOfNote({ balanceAsOf: bad }).date, '', `${bad} 不該回傳 date`);
@@ -98,4 +98,52 @@ test('就地解釋接上去了：說明按鈕存在、綁得到，而且文案�
   assert.match(body, /手動改餘額時，這個日期不會跟著動/u,
     '說明必須點破這一句：不寫，使用者會把它讀成「餘額正確到這天」——那是這個功能唯一會害人的誤解');
   assert.match(body, /現值參考日/u, '要交代「沒有日期」的另一個成因：帳單上讀不到現值參考日');
+});
+
+// ── IB 同步的現金帳戶（2026-08-14 預審抓到的阻擋級）─────────────────────────
+// `lib/services/ib-sync.js` 只寫 balance、不寫 balanceAsOf ⇒ 這些列會**永遠**顯示
+// 「未由對帳單更新過」，而它們其實每次同步都在更新；說明窗還叫使用者去匯對帳單，
+// 那條路對 IBKR 帳戶永遠走不通。這一族考題釘住「它們要走另一條文案」。
+const IB_ACCOUNT = Object.freeze({ ...ACCOUNT, name: 'IBKR 美元現金', currency: 'USD', ibCashCur: 'USD' });
+
+test('IB 現金帳戶：講「IB 同步更新至 <日期>」，不可以說成「未由對帳單更新過」', () => {
+  const cell = balanceCell(renderRow(IB_ACCOUNT, '2026-08-14T03:21:00.000Z'));
+  assert.match(cell, /IB 同步更新至 2026-08-14/, '★要用 IB 自己的時間點');
+  assert.doesNotMatch(cell, /未由對帳單更新過/u,
+    '★這句對 IB 帳戶是錯的：它每次同步都在更新，而 IBKR 根本不出這種對帳單');
+  assert.doesNotMatch(cell, /對帳單更新至/u, '也不可以講成對帳單更新的');
+});
+
+test('IB 現金帳戶：連同步時間都沒有時，仍要說清楚它靠的是 IB 而不是對帳單', () => {
+  for (const noSync of [undefined, null, '', 'not-a-date', 12345]) {
+    const cell = balanceCell(renderRow(IB_ACCOUNT, /** @type {any} */ (noSync)));
+    assert.match(cell, /由 IB 同步更新/u, `★${JSON.stringify(noSync)}：沒有時間也要講出來源`);
+    assert.doesNotMatch(cell, /未由對帳單更新過/u, '★仍然不可以退回那句錯的');
+  }
+});
+
+test('IB 的時間戳不可以外溢到一般銀行帳戶', () => {
+  const cell = balanceCell(renderRow({ ...ACCOUNT }, '2026-08-14T03:21:00.000Z'));
+  assert.match(cell, /未由對帳單更新過/u,
+    '★一般帳戶沒有 ibCashCur，就不能借 IB 的同步時間冒充自己的更新日');
+  assert.doesNotMatch(cell, /IB 同步/u);
+});
+
+test('說明窗要交代 IB 那一種，否則使用者只會看到一句沒解釋的新文案', () => {
+  const body = namedFunction(read('public/modules/assets.js'), 'openBalanceAsOfInfo');
+  assert.match(body, /IB 同步更新至/u, '說明窗要提到這種列長什麼樣');
+  assert.match(body, /不需要、也沒有對帳單可以匯|沒有對帳單/u,
+    '★要講明「這種帳戶沒有對帳單可匯」——不然使用者會照另一段去找一條不存在的路');
+});
+
+test('接線｜頁面要真的把 IB 同步時間傳給每一列（漏傳＝IB 列永遠沒有日期）', () => {
+  // ⚠️ 這一題是**接線形狀**，不是行為：上面那些題直接呼叫 bankAccRow、自己餵 ibLastSync，
+  //    所以看不到「渲染那一端有沒有傳」。漏傳的話 IB 列會退成「由 IB 同步更新（不是對帳單）」
+  //    ——文案仍然誠實，但使用者失去他要的那個判斷依據（多久沒同步了）。
+  //    這種掃描守得住「參數被拿掉」，守不住等價改寫；能做到行為級要先把整頁渲染拉進可測範圍（待辦）。
+  const source = read('public/modules/assets.js');
+  assert.match(source, /bankAccRow\(a, db\.settings\?\.ib\?\.lastSync\)/u,
+    '★渲染時要把 settings.ib.lastSync 傳進每一列');
+  assert.match(source, /function bankAccRow\(x, ibLastSync\)/u,
+    '★bankAccRow 要收得下第二個參數（簽章被改回去＝上面那行等於白傳）');
 });
