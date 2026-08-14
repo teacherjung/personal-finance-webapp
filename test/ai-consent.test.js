@@ -63,7 +63,7 @@ test('A2｜r1#1 快照：檔名與檔案內容綁在同一份、事後改選別�
 
 // ---- B 群：previewBody（「沒明確要求 AI＝零外送」的行為證明；useAi＝要求旗標不是同意旗標）----
 
-test('B｜previewBody：useAi 嚴格布林——沒同意就連 key 都不放；password 含空字串照放（複製 P0.5 現況）', () => {
+test('B｜previewBody：useAi 嚴格布林——沒明確要求 AI 就連 key 都不放；password 含空字串照放（複製 P0.5 現況）', () => {
   const plain = previewBody({ data: 'b64' });
   assert.deepEqual(plain, { data: 'b64' });
   assert.equal('useAi' in plain, false, '★沒同意＝body 裡連 useAi 這個 key 都不該有（零 AI 呼叫）');
@@ -327,9 +327,12 @@ test('命名｜useAi 不可再叫「同意旗標」——那個名字誤示每�
   for (const f of ['server.js', 'lib/routes/statement.js', 'lib/services/bank-import.js',
     'public/modules/cashflow.js', 'public/modules/ai-consent.js',
     'docs/contracts/income-expense.md', 'AGENTS.md']) {
-    const raw = readFileSync(join(ROOT, f), 'utf8');
-    assert.ok(!raw.includes('同意旗標') || raw.includes('舊名「同意旗標」'),
-      `★${f} 還在用「同意旗標」——要嘛改名、要嘛標明是棄用的舊名`);
+    // ⚠️ r4：不可用「檔裡有標記就整檔豁免」——那是檔案級放行，標記後面再塞一個
+    //    未標示的舊名照樣綠。**逐一出現**驗證：把合法的「舊名『同意旗標』」整串剝掉，
+    //    殘餘裡再出現舊名＝紅。
+    const residual = readFileSync(join(ROOT, f), 'utf8').replaceAll('舊名「同意旗標」', '');
+    assert.ok(!residual.includes('同意旗標'),
+      `★${f} 有未標示的「同意旗標」——每一次出現都要嘛改名、要嘛長成「舊名『同意旗標』」`);
   }
 });
 
