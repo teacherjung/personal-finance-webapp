@@ -49,6 +49,22 @@ export function shouldAskBeforeSend(settings) {
   return true;
 }
 
+/** 開關存檔**失敗後**，畫面該顯示什麼（#455 r5#1）。
+ *
+ * ⚠️ 不可用「!want」推定資料庫還是舊值：後端是先寫入再回應——寫入可能已成功、
+ * 只是回應沒回來。唯一誠實的做法＝**向後端重新核對**。
+ *
+ * ⚠️ 方向與 `shouldAskBeforeSend` **相反、而且應該相反**：送出路徑的保守＝「問」
+ * （保住錢）；**顯示路徑的保守＝「不宣稱受保護」**（checked=false）——畫面寫著
+ * 「會先問你」而資料庫其實不會問，是最糟的假保證。核對不到（再度失敗）＝顯示 false。
+ * @param {() => Promise<any>} fetchSettings
+ * @returns {Promise<boolean>} checkbox 該顯示的狀態
+ */
+export async function askToggleDisplayAfterSaveFailure(fetchSettings) {
+  try { return (await fetchSettings())?.aiAskBeforeSend === true; }
+  catch { return false; }
+}
+
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */

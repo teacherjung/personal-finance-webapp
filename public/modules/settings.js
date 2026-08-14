@@ -5,6 +5,7 @@ import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
+import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { aiKeyPatch, AI_KEY_INFO, AI_KEY_CARD_TITLE, AI_KEY_CARD_NOTE, AI_KEY_COST_LINE, AI_KEY_PLACEHOLDER_SET, AI_KEY_PLACEHOLDER_UNSET, AI_KEY_CLEAR_LABEL, AI_KEY_SAVED_TEXT, AI_KEY_CLEARED_TEXT, AI_KEY_NOCHANGE_TEXT } from './ai-key-settings.js';   // AI 解析鑰匙卡（P1b-2）：判準與文案的家
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
@@ -355,8 +356,11 @@ export async function renderSettings() {
         await api('/settings', { method: 'PUT', body: { aiAskBeforeSend: want } });
         toast(want ? '好，之後每次送出前會先問你' : '好，之後認不出版面就直接送去讀');
       } catch (err) {
-        ask.checked = !want;   // 存不進去就退回——開關的樣子必須等於資料庫的真相
-        toast('儲存失敗，開關已退回：' + (/** @type {any} */ (err).message || ''), true);
+        // ⚠️ 不可用 !want 推定（r5#1）：後端先寫入再回應——寫入可能已成功、回應沒回來。
+        //    向資料庫重新核對；核對不到＝顯示「直接送」（畫面寧可少保證、不做假保證）。
+        ask.checked = await askToggleDisplayAfterSaveFailure(() => api('/settings'));
+        toast('儲存失敗，已向資料庫重新核對，開關目前＝'
+          + (ask.checked ? '會先問你' : '直接送') + '：' + (/** @type {any} */ (err).message || ''), true);
       } finally { ask.disabled = false; }
     };
     const btn = byId('saveAiApiKey');

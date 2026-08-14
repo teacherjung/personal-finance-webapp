@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
-  snapshotUpload, shouldOfferAi, shouldAskBeforeSend, previewBody, applyBody, isAiTicketDeadCode,
+  snapshotUpload, shouldOfferAi, shouldAskBeforeSend, askToggleDisplayAfterSaveFailure, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
   AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
@@ -326,13 +326,32 @@ test('命名｜useAi 不可再叫「同意旗標」——那個名字誤示每�
   // ⚠️ 不可用 srcOf（它剝註解，而這個名字全住在註解裡＝守衛永遠看不到）——用原始檔。
   for (const f of ['server.js', 'lib/routes/statement.js', 'lib/services/bank-import.js',
     'public/modules/cashflow.js', 'public/modules/ai-consent.js',
-    'docs/contracts/income-expense.md', 'AGENTS.md']) {
+    'docs/contracts/income-expense.md', 'AGENTS.md',
+    'docs/parser-generalization-plan.md']) {   // r5#2：現行規格也在射程（變更紀錄行用棄用標記）
     // ⚠️ r4：不可用「檔裡有標記就整檔豁免」——那是檔案級放行，標記後面再塞一個
     //    未標示的舊名照樣綠。**逐一出現**驗證：把合法的「舊名『同意旗標』」整串剝掉，
     //    殘餘裡再出現舊名＝紅。
-    const residual = readFileSync(join(ROOT, f), 'utf8').replaceAll('舊名「同意旗標」', '');
+    const residual = readFileSync(join(ROOT, f), 'utf8')
+      .replaceAll('舊名「同意旗標」', '').replaceAll('時稱「同意旗標」', '');
     assert.ok(!residual.includes('同意旗標'),
       `★${f} 有未標示的「同意旗標」——每一次出現都要嘛改名、要嘛長成「舊名『同意旗標』」`);
+  }
+});
+
+test('A4｜開關存檔失敗後的顯示：向後端核對，核對不到＝不得宣稱受保護（r5#1）', async () => {
+  // ⚠️ 「!want 退回」是猜測：後端先寫入再回應，寫入可能已成功、回應沒回來——
+  //    使用者關掉詢問、寫入成功、回應斷線 ⇒ 畫面退回「會先問你」＝假保證，下一張直接外送。
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => ({ aiAskBeforeSend: true })), true,
+    '核對到 true＝照實顯示「會先問」');
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => ({ aiAskBeforeSend: false })), false,
+    '核對到 false＝照實顯示「直接送」');
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => { throw new Error('斷線'); }), false,
+    '★核對不到＝顯示「直接送」——畫面寫著「會先問你」而資料庫其實不會問，是最糟的假保證');
+  for (const junk of [{ aiAskBeforeSend: 'true' }, {}, null]) {
+    assert.equal(await askToggleDisplayAfterSaveFailure(async () => junk), false,
+      `★${JSON.stringify(junk)}：讀不出明確的 true＝不得宣稱受保護`
+      + '（注意：這與送出路徑的 shouldAskBeforeSend 方向相反、而且應該相反——'
+      + '送出的保守＝問（保住錢）、顯示的保守＝不宣稱（不給假安全感））');
   }
 });
 

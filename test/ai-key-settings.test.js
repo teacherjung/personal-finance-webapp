@@ -115,9 +115,13 @@ test('G6｜「先問我」開關：存檔失敗必須把開關退回、不能畫
   const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
   // ⚠️ 不可走 saveSettings（它吞錯誤只 toast）：PUT 失敗＝畫面顯示已開、下一次上傳直接外送。
   assert.match(src, /ask\.onchange = async \(\) => \{/u, '★開關存檔要等結果（async），不是射後不理');
-  assert.match(src, /ask\.checked = !want;/u,
-    '★失敗要退回 checkbox——開關的樣子必須等於資料庫的真相，不然使用者以為自己受保護');
-  assert.match(src, /儲存失敗，開關已退回/u, '★失敗要出聲說「已退回」，不是靜靜恢復');
+  // ⚠️ r5#1：「ask.checked = !want」是猜測（寫入可能已成功、回應沒回來）——禁用；
+  //    失敗後必須向後端**重新核對**（askToggleDisplayAfterSaveFailure），核對不到＝顯示直接送。
+  assert.doesNotMatch(src, /ask\.checked = !want/u,
+    '★不可用 !want 推定資料庫狀態——那是猜測，猜錯的方向正是假保證');
+  assert.match(src, /ask\.checked = await askToggleDisplayAfterSaveFailure\(\(\) => api\('\/settings'\)\)/u,
+    '★失敗要向資料庫重新核對，開關顯示核對結果');
+  assert.match(src, /儲存失敗，已向資料庫重新核對/u, '★失敗要出聲說核對後的狀態，不是靜靜恢復');
   assert.doesNotMatch(src, /saveSettings\(\{ aiAskBeforeSend/u, '★不可繞回吞錯誤的 saveSettings');
 });
 
