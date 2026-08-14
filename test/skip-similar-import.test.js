@@ -192,6 +192,49 @@ test('路由投影＝單一函式行為題：五種輸入的轉交值（r5：字
   assert.equal(applyOptsFromBody({ aiTicket: 123 }).aiTicket, undefined, 'aiTicket 非字串＝undefined');
 });
 
+test('掛載路由行為題｜真 HTTP 送五種 skipSimilar 變體：只有布林 true 會跳過（r8 終局）', async () => {
+  // ⚠️ r8：字面禁令的軍備競賽（點記法→方括號→剝除器→原始檔 token→\u0053 跳脫）證明
+  //    **靜態掃描對等價寫法是打不完的**。終局＝對掛載後的 Express 路由做行為題：
+  //    走 AI 憑票路徑（不需解析真帳單），真 HTTP 送變體、驗 db 實際結果——
+  //    路由層任何寫法的覆寫（含 Unicode 跳脫、body 中介層竄改）都會在這裡現形。
+  const { once } = await import('node:events');
+  const { app } = await import('../server.js');
+  const { issueAiTicket } = await import('../lib/ai-confirm-ticket.js');
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${/** @type {any} */ (server.address()).port}/api`;
+  // 過 ★6 強閘的合成答案：餘額鏈 1000 →(+999)→ 1999、末筆＝概要 1999（全假值）
+  const STRONG_PARSED = Object.freeze({
+    bank: '台新', referenceDate: null,
+    accounts: [{ suffix: '0001', masked: '999900****0001', balance: 1999, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '999900****0001': 'TWD' },
+    transactions: [
+      { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 1000, note: '合成商店' },
+      { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-01-31', summary: '轉帳存入', direction: 'in', amount: 999, balance: 1999, note: '合成來源' },
+    ],
+  });
+  try {
+    for (const [variant, expectSkip] of /** @type {[any, number][]} */ ([
+      [true, 1], [false, 0], ['false', 0], ['true', 0], [1, 0],
+    ])) {
+      const db = await getDb();
+      db.accounts = []; db.transactions = structuredClone(makeDb().transactions);
+      await saveDb(db);
+      const aiTicket = issueAiTicket({ parsed: structuredClone(STRONG_PARSED), aiModel: 'claude-haiku-4-5-20251001' });
+      const res = await fetch(`${base}/bank-statement/apply`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ useAi: true, aiTicket, skipSimilar: variant }),
+      });
+      assert.equal(res.status, 200, `${JSON.stringify(variant)}：套用本身要成功`);
+      const j = await res.json();
+      assert.equal(j.transactions.similarSkipped, expectSkip,
+        `★真 HTTP：skipSimilar=${JSON.stringify(variant)} → similarSkipped 應為 ${expectSkip}`
+        + '（非布林一律不跳——「false」字串被轉成 true＝錯誤跳過真交易，正是歷輪字面禁令都守不住的那個結果）');
+      assert.equal((await getDb()).transactions.length, expectSkip ? 2 : 3, '落庫筆數要跟著對');
+    }
+  } finally { server.close(); }
+});
+
 test('路由不准出現 skipSimilar 這個字：statement.js 原始檔零 token', () => {
   // 投影的真相只有一份（applyOptsFromBody）——路由 inline 自己的投影＝又生一份複本，
   // 而複本的寫法字面掃描守不住。
