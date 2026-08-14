@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { balanceAsOfNote } from '../public/modules/accounts-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,6 +46,17 @@ function balanceCell(html) {
   const m = /<td data-label="餘額"[^>]*>([\s\S]*?)<\/td>/u.exec(html);
   assert.ok(m, '找不到餘額欄位（<td data-label="餘額">）');
   return m[1];
+}
+
+
+/** 在指定時區開一個子行程跑真的 `balanceAsOfNote`，回傳那行小字。
+ *  ⚠️ 不能在本行程改 `process.env.TZ`——V8 會快取時區，改了不一定生效。 */
+function noteTextUnderTz(tz, iso) {
+  const url = pathToFileURL(join(ROOT, 'public/modules/accounts-model.js')).href;
+  const script = `import(${JSON.stringify(url)}).then(m => `
+    + `process.stdout.write(m.balanceAsOfNote({ ibCashCur: 'USD' }, ${JSON.stringify(iso)}).text));`;
+  return execFileSync(process.execPath, ['--input-type=module', '-e', script],
+    { env: { ...process.env, TZ: tz }, encoding: 'utf8' }).trim();
 }
 
 const ACCOUNT = Object.freeze({ id: 'a1', name: '測試銀行 活存', currency: 'TWD', balance: 12345, accountNoLast4: '1234' });
@@ -138,7 +150,12 @@ test('說明窗要交代 IB 那一種，否則使用者只會看到一句沒解�
   assert.match(body, /上次 IB 同步/u, '說明窗要提到這種列長什麼樣');
   assert.match(body, /不是這一筆餘額的時間/u,
     '★說明窗必須點破「整次同步的時間 ≠ 這筆餘額的時間」——不寫的話這個日期一樣會被讀成保證');
-  assert.match(body, /上界/u, '★要告訴使用者怎麼用它判斷：不會比它更新，但可能更舊');
+  assert.doesNotMatch(body, /上界|不會比它更新/u,
+    '★「上界」是被 r2 推翻的假宣稱：帳戶表單可以手動改餘額，改完數字反而**比那個日期新**');
+  assert.match(body, /比這個日期新/u, '★要講出「手動改過餘額會比它新」這個反方向');
+  assert.match(body, /不保證這個數字的新舊/u, '★要明說它只講同步時間、不保證餘額新舊');
+  assert.match(body, /IB 那幾個則是再跑一次 IB 同步/u,
+    '★結尾的「怎麼更新」要分流——一概叫使用者去匯對帳單，跟上面那段「IB 沒有對帳單可匯」自相矛盾');
   assert.doesNotMatch(body, /每次 IB 同步就會更新/u,
     '★這句話不成立：同步沒拿到現金報表時餘額刻意不動，時間卻照樣前進');
   assert.match(body, /不需要、也沒有對帳單可以匯|沒有對帳單/u,
@@ -158,12 +175,14 @@ test('接線｜頁面要真的把 IB 同步時間傳給每一列（漏傳＝IB �
 });
 
 test('IB 日期用**當地**日曆日，不是 UTC 日（#454 r1 阻擋②）', () => {
-  // 台北 2026-08-14 01:30 的同步，ISO 是前一天 17:30Z——切 UTC 會少一天。
-  const cell = balanceCell(renderRow(IB_ACCOUNT, '2026-08-13T17:30:00.000Z'));
-  const localDay = new Date('2026-08-13T17:30:00.000Z');
-  const expect = `${localDay.getFullYear()}-${String(localDay.getMonth() + 1).padStart(2, '0')}-${String(localDay.getDate()).padStart(2, '0')}`;
-  assert.match(cell, new RegExp(`上次 IB 同步 ${expect}`),
-    `★要顯示當地日曆日（本機時區算出來是 ${expect}）——切 UTC 的話台北凌晨同步會少一天`);
+  // ⚠️ **這題必須真的換時區跑**（r2 阻擋②）：第一版用跟實作同一組 local getter 算期望值，
+  //    那是恆真式；而正式 CI（GitHub Actions）跑在 UTC，兩邊剛好一致 ⇒ 就算實作切回 UTC 也全綠。
+  //    所以改成開子行程、把 TZ 釘死，斷言**兩個時區給出不同的日**——切 UTC 的實作做不到這件事。
+  const iso = '2026-08-13T17:30:00.000Z';          // 台北是 08-14 凌晨 01:30，UTC 還是 08-13
+  assert.equal(noteTextUnderTz('Asia/Taipei', iso), '上次 IB 同步 2026-08-14',
+    '★台北時區要顯示 08-14（切 UTC 的話會少一天）');
+  assert.equal(noteTextUnderTz('UTC', iso), '上次 IB 同步 2026-08-13',
+    '★UTC 時區顯示 08-13——兩個時區給出不同的日，才證明它真的看當地時間');
 });
 
 test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾成 3/2）', () => {

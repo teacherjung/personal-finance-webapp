@@ -546,6 +546,8 @@ const MANIFEST = {
       'lib/routes/statement.js',
       'lib/schema.js', 'lib/secret-fields.js', 'public/modules/assets.js', 'public/modules/accounts-model.js', 'lib/types.js', 'test/server.test.js', 'test/statement.test.js', 'test/codex-r10.test.js',
       'lib/services/bank-import.js',
+      'lib/services/ib-sync.js',                 // #454：IB 現金帳戶那行小字的資料來源（只寫 balance、不寫 balanceAsOf）
+      'test/ib-cash-freshness.test.js',          // #454 r1：用真的 syncIb 釘住那句文案的前提
       'lib/services/categories.js',
       'lib/services/health-check.js',
       'lib/services/learning.js',
