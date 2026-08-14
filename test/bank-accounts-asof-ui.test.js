@@ -390,6 +390,10 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
   const hrefs = [...index.matchAll(/<link\b([^>]*)>/giu)]
     .filter((m) => attrOf(m[1], 'rel').toLowerCase().split(/\s+/u).includes('stylesheet'))
     .map((m) => attrOf(m[1], 'href'));
+  // ⚠️ r22 阻擋：<base href="https://…"> 一行就把下面所有「合法相對路徑」重定向到外部網域
+  //    ——相對路徑白名單整個失效。現況零使用，一律禁止。
+  assert.doesNotMatch(index, /<base\b/iu,
+    '★index.html 出現 <base>——它能把所有相對路徑的樣式表重定向到外部來源，相對路徑白名單就白做了');
   // ⚠️ r21 阻擋：上一版把 http(s) 的 href **默默排除**＝fail-open——掛一條外部 <link>，
   //    整份假話 CSS 就在守衛射程外。與禁 @import 同理：**掃描讀不到的樣式表不是放過、是禁止**。
   //    href 只准單純的本地相對路徑（repo 裡讀得到＝掃得到）；http(s)／協定相對 //／data: 全紅。
