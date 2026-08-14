@@ -131,16 +131,24 @@ export function bankBlockedWarningHtml() {
  * 而留著一個沒人用的參數只會讓下一個人以為它還有意義（沒用到就刪）。
  * 餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
  *
- * @param {{shown: number, duplicate?: number, foreign?: number}} n
+ * @param {{shown:number, duplicate?:number, foreign?:number, similar?:number, skipSimilarChecked?:boolean}} n
  *   shown＝按下確認真的會寫進去的筆數（已排除重複與外幣）
  */
-export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0 }) {
+export function bankPreviewFootnote({ shown, duplicate = 0, foreign = 0, similar = 0, skipSimilarChecked = false }) {
   // ⚠️ 2026-08-13 起 `blocked` 只代表「**餘額**不更新」，交易照樣匯入——所以腳註不再改口，
   //    照常講「以上 N 筆會匯入」。餘額那件事由 `bankBlockedWarningHtml` 那段警語負責講。
+  // ⚠️ #459 r4：「這次不匯入疑似重複」勾著時，「以上 N 筆＝按確認會匯入的全部」是**假話**
+  //    （57 標示、實匯 9）——腳註必須跟著勾選狀態改口，勾選一動就重算這句（cashflow.js 接線）。
   const parts = [];
   if (duplicate > 0) parts.push(`${duplicate} 筆之前已匯入過、這次不會重複記`);
   if (foreign > 0) parts.push(`${foreign} 筆外幣明細不會匯入（尚無歷史匯率口徑，不計入台幣收支）`);
-  if (shown > 0) return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  if (shown > 0) {
+    if (similar > 0 && skipSimilarChecked === true) {
+      return `以上 ${shown} 筆中有 ${similar} 筆標「疑似重複」——照左下的勾選這次會跳過，`
+        + `實際匯入 ${shown - similar} 筆${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+    }
+    return `以上 ${shown} 筆就是按下確認會匯入的全部內容${parts.length ? `；另有 ${parts.join('；另有 ')}` : ''}。`;
+  }
   if (parts.length) return `這份帳單沒有新交易要匯入：${parts.join('；')}。`;
   return '帳單裡沒有新交易。';
 }

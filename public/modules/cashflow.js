@@ -355,7 +355,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
-    <p class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign }))}</p>
+    <p id="bankPreviewFootnote" class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, similar: c.similar, skipSimilarChecked: !!c.similar }))}</p>
 
     <!-- ⚠️ 說明區在**最下面**（William 2026-08-13）：窗一打開先看到帳戶餘額與交易明細，
          想知道「這是誰讀的、驗到什麼程度」再往下看。徽章裡那句「請確認…有沒有讀錯」
@@ -376,6 +376,14 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
 
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
+    // 勾選一動＝腳註跟著改口（r4：勾著時「以上 N 筆都會匯入」是假話——57 標示、實匯 9）。
+    // 重算用同一支純函式，不手拼第二句。
+    const skipChk = /** @type {HTMLInputElement|null} */ (byId('skipSimilarChk'));
+    if (skipChk) skipChk.onchange = () => {
+      const fn = byId('bankPreviewFootnote');
+      if (fn) fn.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
+        foreign: c.foreign, similar: c.similar, skipSimilarChecked: skipChk.checked === true });
+    };
     if (btn) btn.onclick = async () => {
       // 防重入（P1b-2）：AI 路線的票是**一次性**，按第二次必得 ai_ticket_invalid——而第一次其實已經寫進去了，
       // 使用者會看到「失敗」卻以為沒匯入。模板路線一樣受惠（不會送兩次）。

@@ -20,7 +20,7 @@ process.env.STORE_FILE = TEST_STORE;
 
 const { importBankTxToDb, applyBankStatement } = await import('../lib/services/bank-import.js');
 const { applyBody } = await import('../public/modules/ai-consent.js');
-const { bankSkipSimilarOptionHtml, bankApplyDoneText } = await import('../public/modules/cashflow-model.js');
+const { bankSkipSimilarOptionHtml, bankApplyDoneText, bankPreviewFootnote } = await import('../public/modules/cashflow-model.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 
 after(() => {
@@ -155,9 +155,37 @@ test('正式入口｜applyBankStatement 帶 skipSimilar：勾了跳過、沒勾�
   // 票機制本身另有 ai-parse 考題；本題釘的是「opts 有沒有被傳到寫入端」這個接縫。
 });
 
+test('腳註隨勾選改口：勾著＝講「實際匯入 N−M 筆」、取消＝回到原句（r4 阻擋①）', () => {
+  const on = bankPreviewFootnote({ shown: 57, similar: 48, skipSimilarChecked: true });
+  assert.match(on, /57 筆中有 48 筆標「疑似重複」/u);
+  assert.match(on, /實際匯入 9 筆/u, '★勾著＝要講實際會匯入幾筆——「57 筆都會匯入」是假話');
+  assert.doesNotMatch(on, /就是按下確認會匯入的全部內容/u, '★勾著不可再承諾全部匯入');
+  const off = bankPreviewFootnote({ shown: 57, similar: 48, skipSimilarChecked: false });
+  assert.match(off, /以上 57 筆就是按下確認會匯入的全部內容/u, '取消勾選＝全部會匯入＝原句為真');
+  assert.equal(bankPreviewFootnote({ shown: 9 }), '以上 9 筆就是按下確認會匯入的全部內容。',
+    'similar=0 ＝原行為一字不動（既有考題的射程）');
+});
+
+test('腳註接線：勾選 onchange 用同一支純函式重算（不手拼第二句）', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'public/modules/cashflow.js'), 'utf8');
+  assert.match(src, /if \(skipChk\) skipChk\.onchange = \(\) => \{/u,
+    '★勾選一動就要重算腳註——連同 if (skipChk) 守衛一起釘（if (false) 化＝字面還在、接線已死）');
+  assert.match(src, /fn\.textContent = bankPreviewFootnote\(\{ shown: previewTx\.length/u,
+    '★重算走同一支 bankPreviewFootnote——手拼第二句＝文案分家');
+  assert.match(src, /skipSimilarChecked: skipChk\.checked === true/u, '★讀真勾選狀態、嚴格布林');
+  assert.match(src, /skipSimilarChecked: !!c\.similar/u,
+    '★初始渲染＝預設勾（有疑似重複時 checkbox 預設 checked，腳註第一眼就要講對）');
+});
+
 test('路由嚴格布林：statement.js 只認 req.body.skipSimilar === true（原始碼釘住）', () => {
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
+  // ⚠️ r4：要**剝掉註解**再比對——不剝的話，把正確句留在註解、程式改成 truthy 照樣過
+  //    （驗行為不驗文字的固定維度；'false' 字串變 true＝錯誤跳過真交易）。
+  const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
   assert.match(src, /skipSimilar: req\.body\.skipSimilar === true/u,
     '★路由層也要嚴格布林——服務層雖有第二道，但雙層嚴格是 useAi 的既有紀律');
+  assert.doesNotMatch(src, /skipSimilar: !!req\.body\.skipSimilar|skipSimilar: Boolean\(/u,
+    '★truthy 形一律紅（\'false\' 字串會變 true＝錯誤跳過真交易）');
 });
