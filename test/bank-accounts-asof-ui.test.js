@@ -333,6 +333,11 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
           assert.doesNotMatch(text, /[\p{L}\p{N}]/u,
             `★${where} 的「${d.prop}」帶著文字「${text}」——清單符號也是畫在畫面上的字，同 content 規則`);
         }
+        // ⚠️ r17 阻擋②：只驗直接字串不夠——list-style-type: var(--x) 讓 custom property
+        //    那條搬字路重新開門（r12 關 content 的 var 時就是同一個理由）。url() 同理
+        //    （marker 圖片可以是一張寫滿字的圖）。關鍵字（none/disc/inside…）照常放行。
+        assert.doesNotMatch(d.value, /\b(?:var|url)\s*\(/iu,
+          `★${where} 的「${d.prop}」用了 var/url——文字（或文字圖）從守衛看不到的地方進畫面`);
         continue;
       }
       if (d.prop !== 'content') continue;   // 其他屬性的字串（字型名、custom property 的字型堆疊）
@@ -398,5 +403,15 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
     }
   }
   assert.ok(sawPrintShell, 'app.js 的 PRINT_SHELL_CSS 收集不到了——改名或搬家請同步更新這裡的收集規則');
+  // ⚠️ r17 阻擋①：行內 style 屬性是另一條畫字路——<small style="display:list-item;
+  //    list-style-type:'假話'">，字直接顯示、上面的樣式表掃描全部管不到。與其去解析
+  //    每一個 style 屬性（模板插值讓它解析不完整），不如整類關門：**JS 與 HTML 一律
+  //    不准出現 list-style／listStyle**（樣式表裡的由上面的解析器管；現況 JS/HTML 零使用）。
+  //    日後真的需要行內清單樣式＝這題紅、來人工審一次。
+  for (const jf of ['public/index.html', ...jsFiles]) {
+    assert.doesNotMatch(read(jf), /list-?style/iu,
+      `★${jf} 出現 list-style／listStyle——行內清單符號能把任意字串畫上畫面`
+      + '（style 屬性、el.style 都一樣），這一類只准住在樣式表裡給解析器審');
+  }
   assert.ok(cssLiterals >= 3, `JS 裡的 CSS 樣板應該至少三份（PRINT_SHELL_CSS＋兩份報表 extraCss，實際 ${cssLiterals}）`);
 });
