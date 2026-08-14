@@ -249,17 +249,89 @@ test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾�
   }
 });
 
-test('畫面文字不可以住在 CSS：content 屬性不得攜帶中文或數字（r10）', () => {
-  // ⚠️ r10 阻擋：`td[data-label="餘額"]::after { content: "—這筆餘額由 IB 同步" }` 能把假話
-  //    直接畫在餘額格裡——字在畫面上、卻不在 HTML 裡，balanceCellText 剝標籤剝得再乾淨也看不到，
-  //    esc() 消毒也管不到它。這條通道不是靠列舉選擇器去堵（列舉補不完），而是立全域不變量：
-  //    **對使用者說話的字一律住在 HTML**；CSS 的 content 只准空字串、單一裝飾符號與 attr(...)。
-  // ⚠️ r11 阻擋（同 r7/r8 的字面病，病人換成這支掃描器）：
-  //    ①<link> 的屬性順序不是規格（href 在 rel 前面一樣合法）——樣式表清單改用**屬性解析**收集；
-  //    ②content 前面放個 CSS 註解就躲過「; 或 { 開頭」的錨點——掃描前先剝掉全部註解。
+test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr／none／normal（r10–r12）', () => {
+  // ⚠️ 這題三輪磨出來（r10 CJK content／r11 註解與 link 屬性序／r12 英文假話＋掃描器語彙洞）。
+  //    規則從黑名單翻成**白名單**：content 與 custom property（--*）裡的字串literal
+  //    一律不得含任何文字或數字（\p{L}\p{N}，任何語言）——「對使用者說話的字住在 HTML」
+  //    不分語言。空字串與 ›、✘ 這類純符號放行；attr(...) 放行（值來自 HTML、守衛看得到）。
+  //    content 的**值形狀白名單化**（只准字串／attr／none／normal）：var、counter、url 全關——
+  //    也因此 custom property 裡的字串（字型名這類）不用管，它們進不了 content。
+  //    掃描器＝字串感知的小型解析器：屬性名大小寫不敏感、字串裡的分號不會截斷宣告、
+  //    註解在字串外才剝。@import 一律禁止（匯進來的檔案逃出掃描射程；現況本來就零使用）。
   const attrOf = (/** @type {string} */ attrs, /** @type {string} */ name) => {
     const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'u').exec(attrs);
     return m ? (m[1] ?? m[2] ?? m[3]) : '';
+  };
+  /** 剝註解（字串感知：字串裡的 /* 不算註解） @param {string} css */
+  const stripComments = (css) => {
+    let out = '', inStr = null;
+    for (let i = 0; i < css.length; i++) {
+      const c = css[i];
+      if (inStr) {
+        out += c;
+        if (c === '\\') { out += css[i + 1] ?? ''; i++; continue; }
+        if (c === inStr) inStr = null;
+        continue;
+      }
+      if (c === '"' || c === "'") { inStr = c; out += c; continue; }
+      if (c === '/' && css[i + 1] === '*') {
+        const end = css.indexOf('*/', i + 2);
+        i = (end === -1 ? css.length : end + 1); out += ' '; continue;
+      }
+      out += c;
+    }
+    return out;
+  };
+  /** 逐宣告收集：每個字串 literal 掛在哪個屬性底下＋content 的完整值 @param {string} clean */
+  const declarations = (clean) => {
+    /** @type {{prop: string, strings: string[], value: string}[]} */
+    const decls = [];
+    let prop = null, buf = '', value = '', inStr = null, cur = '', strings = [];
+    const flush = () => {
+      if (prop !== null) decls.push({ prop, strings, value: value.trim() });
+      prop = null; buf = ''; value = ''; strings = [];
+    };
+    for (let i = 0; i < clean.length; i++) {
+      const c = clean[i];
+      if (inStr) {
+        if (c === '\\') { cur += clean[i + 1] ?? ''; value += c + (clean[i + 1] ?? ''); i++; continue; }
+        if (c === inStr) { strings.push(cur); inStr = null; value += c; continue; }
+        cur += c; value += c; continue;
+      }
+      if (c === '"' || c === "'") { inStr = c; cur = ''; if (prop !== null) value += c; continue; }
+      if (c === ';' || c === '{' || c === '}') { flush(); continue; }
+      if (prop === null) {
+        buf += c;
+        if (c === ':') prop = buf.slice(0, -1).trim().toLowerCase();
+      } else value += c;
+    }
+    flush();
+    return decls;
+  };
+  /** @param {string} css @param {string} where */
+  const scanCss = (css, where) => {
+    const clean = stripComments(css);
+    assert.doesNotMatch(clean, /@import/iu,
+      `★${where} 用了 @import——匯進來的檔案逃出這題的射程，一律禁止（現況零使用）`);
+    for (const d of declarations(clean)) {
+      if (d.prop !== 'content') continue;   // 其他屬性的字串（字型名、custom property 的字型堆疊）
+                                            // 不會渲染成使用者看得到的話——content 的值形狀在下面
+                                            // 白名單化之後，var() 進不了 content，那些字串也就到不了畫面
+      for (const text of d.strings) {
+        assert.doesNotMatch(text, /[\p{L}\p{N}]/u,
+          `★${where} 的 content 帶著文字「${text}」——對使用者說話的字必須住在 HTML（任何語言、含數字都算）`);
+      }
+      // 值形狀白名單：只准 字串／attr(...)／none／normal。var()、counter()、url()…一律紅——
+      // 每一個都是「文字從守衛看不到的地方進畫面」的通道，與其逐一列黑名單不如關門。
+      const residue = d.value
+        .replace(/"[^"]*"|'[^']*'/gu, ' ')
+        .replace(/attr\([^)]*\)/giu, ' ')
+        .replace(/\b(?:none|normal)\b/giu, ' ')
+        .trim();
+      assert.equal(residue, '',
+        `★${where} 的 content 出現「${residue}」——content 只准字串／attr()／none／normal，`
+        + 'var、counter、url 這些都是守衛看不到的文字來源');
+    }
   };
   const index = read('public/index.html');
   const hrefs = [...index.matchAll(/<link\b([^>]*)>/gu)]
@@ -267,16 +339,8 @@ test('畫面文字不可以住在 CSS：content 屬性不得攜帶中文或數�
     .map((m) => attrOf(m[1], 'href'))
     .filter((h) => h && !/^https?:/u.test(h));
   assert.ok(hrefs.length >= 5, `index.html 應該掛著多份樣式表（實際 ${hrefs.length}）——抓不到＝這題在驗空氣`);
-  for (const href of hrefs) {
-    const css = read(`public/${href}`).replace(/\/\*[\s\S]*?\*\//gu, ' ');   // 剝註解（r11②）
-    for (const decl of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]*)/gu)) {
-      for (const str of decl[1].matchAll(/"([^"]*)"|'([^']*)'/gu)) {
-        const text = str[1] ?? str[2];
-        assert.doesNotMatch(text, /[\u3400-\u9fff\uf900-\ufaff]/u,
-          `★${href} 的 content 帶著中文「${text}」——對使用者說話的字必須住在 HTML，CSS 是守衛的盲區`);
-        assert.doesNotMatch(text, /\d/u,
-          `★${href} 的 content 帶著數字「${text}」——日期、金額這類數字從 CSS 冒出來＝守衛看不到的宣稱`);
-      }
-    }
+  for (const href of hrefs) scanCss(read(`public/${href}`), href);
+  for (const style of index.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/giu)) {
+    scanCss(style[1], 'index.html 行內 <style>');
   }
 });
