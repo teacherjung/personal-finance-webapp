@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const TEST_STORE = join(tmpdir(), `finance-skip-sim-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { importBankTxToDb, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { importBankTxToDb, applyBankStatement, applyOptsFromBody } = await import('../lib/services/bank-import.js');
 const { applyBody } = await import('../public/modules/ai-consent.js');
 const { bankSkipSimilarOptionHtml, bankApplyDoneText, bankPreviewFootnote } = await import('../public/modules/cashflow-model.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
@@ -177,15 +177,28 @@ test('腳註接線：勾選 onchange 用同一支純函式重算（不手拼第�
     '★初始渲染＝預設勾（有疑似重複時 checkbox 預設 checked，腳註第一眼就要講對）');
 });
 
-test('路由嚴格布林：statement.js 只認 req.body.skipSimilar === true（原始碼釘住）', () => {
-  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-  // ⚠️ r4：要**剝掉註解**再比對——不剝的話，把正確句留在註解、程式改成 truthy 照樣過
-  //    （驗行為不驗文字的固定維度；'false' 字串變 true＝錯誤跳過真交易）。
-  const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8')
+test('路由投影＝單一函式行為題：五種輸入的轉交值（r5：字面掃描守不住 === true || !!x）', () => {
+  // ⚠️ r4 的字面題被「skipSimilar: req.body.skipSimilar === true || !!req.body.skipSimilar」繞過
+  //    ——同時滿足正則與禁令，而 'false' 字串會變 true、錯誤跳過真交易。
+  //    修法＝投影收成 applyOptsFromBody，這裡直接**執行**它驗轉交值。
+  assert.equal(applyOptsFromBody({ skipSimilar: true }).skipSimilar, true);
+  assert.equal(applyOptsFromBody({ skipSimilar: false }).skipSimilar, false);
+  for (const junk of ['false', 'true', 1, {}, [], null]) {
+    assert.equal(applyOptsFromBody({ skipSimilar: junk }).skipSimilar, false,
+      `★${JSON.stringify(junk)} 轉交值必須是 false——'false' 字串變 true＝錯誤跳過真交易`);
+  }
+  assert.equal(applyOptsFromBody(null).skipSimilar, false, '整包 body 不是物件＝全部預設');
+  assert.equal(applyOptsFromBody({ useAi: 'true' }).useAi, false, 'useAi 同一套嚴格');
+  assert.equal(applyOptsFromBody({ aiTicket: 123 }).aiTicket, undefined, 'aiTicket 非字串＝undefined');
+});
+
+test('路由不准再自己讀 skipSimilar：statement.js（剝註解後）零直接引用', () => {
+  // 投影的真相只有一份（applyOptsFromBody）——路由 inline 自己的投影＝又生一份複本，
+  // 而複本的寫法字面掃描守不住。這裡直接禁「路由讀這個欄位」。
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib/routes/statement.js'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
-  assert.match(src, /skipSimilar: req\.body\.skipSimilar === true/u,
-    '★路由層也要嚴格布林——服務層雖有第二道，但雙層嚴格是 useAi 的既有紀律');
-  assert.doesNotMatch(src, /skipSimilar: !!req\.body\.skipSimilar|skipSimilar: Boolean\(/u,
-    '★truthy 形一律紅（\'false\' 字串會變 true＝錯誤跳過真交易）');
+  assert.doesNotMatch(src, /req\.body\.skipSimilar/u,
+    '★statement.js 不准直接讀 req.body.skipSimilar——嚴格布林的真相只住在 applyOptsFromBody');
+  assert.match(src, /applyOptsFromBody\(req\.body\)/u, '★apply 路由要走投影函式');
 });
