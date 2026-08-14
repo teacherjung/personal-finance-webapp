@@ -85,6 +85,17 @@
   color: var(--accent-ink); background: var(--accent-soft); border-radius: 20px;
   font-size: 11px; font-weight: 700;
 }
+/* 餘額下面那行「對帳單更新至 YYYY-MM-DD」：資訊層級刻意低於金額本身——
+   它是判斷新舊用的旁註，不是第二個數字。
+   ⚠️ `font-weight: 400` 不是在覆寫誰（`.num` 沒有設定粗體）：它是把這行的字重**明確釘住**，
+   日後金額那格若加上粗體也不會連旁註一起變粗。 */
+.bank-balance-asof {
+  display: block; margin-top: 3px;
+  color: var(--text-dim); font-size: 10.5px; font-weight: 400;
+  font-variant-numeric: tabular-nums; letter-spacing: 0;
+}
+.bank-balance-asof-none { font-style: italic; opacity: 0.75; }
+.bank-asof-info { margin-left: 8px; color: var(--accent-ink); text-decoration: underline; font-size: 11.5px; }
 .bank-account-actions .row-actions { flex-wrap: nowrap; }
 .bank-account-actions button { width: 34px; height: 32px; padding: 0; }
 
@@ -156,6 +167,9 @@
   .bank-account-table td[data-label]::before {
     content: attr(data-label); color: var(--text-dim); font-size: 11px; font-weight: 700; text-align: left;
   }
+  /* 餘額格在手機版是 grid：::before 標籤（第 1 欄）＋金額（第 2 欄）＋這行小字——
+     不指定的話它自動流到第 2 列第 1 欄＝跑到欄名下面；釘到第 2 欄才貼著金額（#454 r16 待辦） */
+  .bank-account-table .bank-balance-asof { grid-column: 2; }
   .bank-account-name-cell { padding-top: 15px !important; }
   .bank-account-actions { padding: 8px 0 12px !important; border-bottom: 0 !important; }
   .bank-account-actions .row-actions { justify-content: flex-end; }
