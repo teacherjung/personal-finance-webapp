@@ -389,8 +389,14 @@ test('畫面文字不可以住在 CSS：content 只准裝飾符號字串／attr�
   //    只認小寫＝等價改寫就讓整份樣式表逃出射程（fail-open）。
   const hrefs = [...index.matchAll(/<link\b([^>]*)>/giu)]
     .filter((m) => attrOf(m[1], 'rel').toLowerCase().split(/\s+/u).includes('stylesheet'))
-    .map((m) => attrOf(m[1], 'href'))
-    .filter((h) => h && !/^https?:/u.test(h));
+    .map((m) => attrOf(m[1], 'href'));
+  // ⚠️ r21 阻擋：上一版把 http(s) 的 href **默默排除**＝fail-open——掛一條外部 <link>，
+  //    整份假話 CSS 就在守衛射程外。與禁 @import 同理：**掃描讀不到的樣式表不是放過、是禁止**。
+  //    href 只准單純的本地相對路徑（repo 裡讀得到＝掃得到）；http(s)／協定相對 //／data: 全紅。
+  for (const href of hrefs) {
+    assert.match(href, /^[\w-]+(?:\/[\w.-]+)*\.css$/u,
+      `★index.html 掛了掃描讀不到的樣式表「${href}」——外部或非單純相對路徑＝守衛射程外，一律 fail-closed`);
+  }
   assert.ok(hrefs.length >= 5, `index.html 應該掛著多份樣式表（實際 ${hrefs.length}）——抓不到＝這題在驗空氣`);
   for (const href of hrefs) scanCss(read(`public/${href}`), href);
   for (const style of index.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/giu)) {
