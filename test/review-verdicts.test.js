@@ -859,6 +859,10 @@ test('⭐ 來源相似｜`CLI` vs `codex CLI` 要抓到（LOOSE_MIN 是門檻，
   // ——而 `CLI（gpt-5.6-sol xhigh）` 那種漂法正是 #453 的現場。門檻要兩個方向都釘住。
   assert.ok(sourceLookalike('CLI', 'codex CLI'), '`CLI` 正好在門檻上＝要比（LOOSE_MIN 調大會靜靜關掉這一族）');
   assert.equal(sourceLookalike('桌面', '桌面版'), null, '兩個字的名字互相包含沒有指示性，刻意不比（LOOSE_MIN 調小會開始亂吵）');
+  // ⚠️ **參數順序反過來也要抓到**（Codex #456 r5 建議）：把 `[short, long]` 的長短排序突變成
+  //    固定 `[x, y]`，82 題全綠，但 `('codex CLI', 'CLI')` 就漏報了——而閘是兩兩配對掃的，
+  //    誰先誰後只看留言出現的順序，等於一半的情況失去提醒。
+  assert.ok(sourceLookalike('codex CLI', 'CLI'), '參數反過來就漏報了——長短排序沒有考題守著');
 });
 
 test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補不完，r1→r2 連錯兩次）', () => {
