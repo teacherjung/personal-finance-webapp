@@ -165,14 +165,14 @@ function subOptionsFor(flow, parent, cur = '') {
 // 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
 let bankUploadBusy = false;
 
-// 就地解釋（使用者鐵則）：「收支說明」一欄混三種出身——不講清楚，銀行匯入的預設文字
-// 會被當成 app 自己寫的說明；而預覽窗同一份內容叫「摘要・備註」（名字跟著帳單走）。
+// 就地解釋（使用者鐵則）：「收支說明」一欄混三種出身——不講清楚，銀行匯入的「整理後說明」
+// 會被當成帳單原文（其實摘要被翻譯過、備註被整理過；r1 證偽了「照抄」）。預覽窗同名同內容。
 function openNoteNamingInfo() {
   openInfo('「收支說明」是什麼？', `
-    <p>這一欄的內容有三種來源：</p>
+    <p>這一欄的內容有三種來源（對帳單預覽窗的同名欄位＝同一份內容）：</p>
     <p><strong>你手動記的帳</strong>：就是你自己打的描述（房租、鐘點費…）。</p>
-    <p><strong>銀行匯入的：</strong>預設＝帳單上「摘要」與「備註」兩欄<strong>照抄合併</strong>。對帳單預覽窗裡同一份內容的欄位就叫「摘要・備註」——拿紙本帳單核對時，兩邊逐字對得上。</p>
-    <p><strong>你改過名的</strong>：顯示你取的名字並標「已學」，之後同一種交易會自動套用；帳單原文還在，隨時可以改回去。</p>
+    <p><strong>銀行匯入的</strong>：app 把帳單上「摘要」「備註」兩欄<strong>整理成白話</strong>——銀行代碼翻成人話（例如「CD轉出」→「現金轉出」）、通路代號去掉。所以字面可能跟帳單不完全一樣，<strong>核對請用日期＋金額</strong>。</p>
+    <p><strong>你改過名的</strong>：顯示你取的名字（預覽窗會標「已學」），之後同一種交易自動套用；清空自訂名會回到 app 整理的預設說明。</p>
   `, { size: 'md' });
 }
 
@@ -348,7 +348,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
     ${c.similar ? bankSimilarWarningHtml(c.similar) : ''}
-    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>摘要・備註</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
+    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>收支說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
       <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
