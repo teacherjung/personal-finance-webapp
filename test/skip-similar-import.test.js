@@ -7,14 +7,27 @@
 // ②嚴格 true 才生效（applyBody 只在 === true 放 key；路由只認 === true；服務層只認 === true）。
 // ③誠實：「疑似」是啟發式——真的同帳戶同日同額刷兩次會被一起跳過，所以它是**勾選**不是預設行為，
 //   tooltip 明講代價（可事後手動補記）。
-import test from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { importBankTxToDb } from '../lib/services/bank-import.js';
-import { applyBody } from '../public/modules/ai-consent.js';
-import { bankSkipSimilarOptionHtml, bankApplyDoneText } from '../public/modules/cashflow-model.js';
+
+// 正式入口題要碰 repo 櫃檯——隔離 DB 必須在 import 服務層**之前**設好（store.js 載入時定路徑）
+const TEST_STORE = join(tmpdir(), `finance-skip-sim-${process.pid}.db`);
+process.env.STORE_FILE = TEST_STORE;
+
+const { importBankTxToDb, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { applyBody } = await import('../public/modules/ai-consent.js');
+const { bankSkipSimilarOptionHtml, bankApplyDoneText } = await import('../public/modules/cashflow-model.js');
+const { getDb, saveDb } = await import('../lib/repo.js');
+
+after(() => {
+  for (const suffix of ['', '-wal', '-shm', '.bak']) {
+    try { rmSync(TEST_STORE + suffix); } catch { /* 沒有就算了 */ }
+  }
+});
 
 /** 合成資料（零真實帳單內容）：db 裡已有一筆「同帳戶＋同日＋同額＋同方向」的舊交易 */
 const makeDb = () => ({
@@ -90,6 +103,29 @@ test('完成訊息：跳過幾筆要說出來（不說＝使用者以為那 48 �
     { balancesSkipped: false, updated: 1, created: 0, skipped: 0, unsupported: 0 },
     { imported: 9, skipped: 0, foreign: 0 });
   assert.doesNotMatch(msg2, /疑似重複/u, '沒勾（欄位缺席）＝不提，維持既有訊息形狀');
+});
+
+test('正式入口｜applyBankStatement 帶 skipSimilar：勾了跳過、沒勾全匯（r1 阻擋：接縫要有考題）', async () => {
+  // ⚠️ 這題的存在理由：把 applyBankStatement 裡那行改回 importBankTxToDb(db, parsed)
+  //   （完全忽略 skipSimilar），只呼叫 helper 的題全綠——「勾了卻沒跳過」正是本支最壞的結果。
+  const parseIt = async () => ({ ...PARSED, referenceDate: null });
+  const seed = async () => {
+    const db = await getDb();
+    db.accounts = []; db.transactions = structuredClone(makeDb().transactions);
+    await saveDb(db);
+  };
+  await seed();
+  const r1 = await applyBankStatement('c3lu', '', parseIt, { skipSimilar: true });
+  assert.equal(r1.transactions.similarSkipped, 1, '★正式入口勾了＝要真的跳過');
+  assert.equal(r1.transactions.imported, 1, '其餘照匯');
+  assert.equal((await getDb()).transactions.length, 2, '落庫＝舊 1＋新 1');
+
+  await seed();
+  const r2 = await applyBankStatement('c3lu', '', parseIt, {});
+  assert.equal(r2.transactions.similarSkipped, 0, '★沒勾＝照舊全匯');
+  assert.equal((await getDb()).transactions.length, 3, '落庫＝舊 1＋新 2（含重複那筆）');
+  // 誠實劃界：AI 憑票路線與本接縫共用同一行 importBankTxToDb 呼叫（applyBankStatement 內），
+  // 票機制本身另有 ai-parse 考題；本題釘的是「opts 有沒有被傳到寫入端」這個接縫。
 });
 
 test('路由嚴格布林：statement.js 只認 req.body.skipSimilar === true（原始碼釘住）', () => {

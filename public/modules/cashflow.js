@@ -382,7 +382,10 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       if (btn.disabled) return;
       btn.disabled = true;
       // AI 路線＝憑票寫入（不重送檔案與密碼）；模板路線＝照舊送 data+password。判準住 ai-consent.js
-      // 勾選＝這次跳過預覽標「疑似重複」的那些筆（沒有勾選框＝similar 為 0＝照舊）
+      // 勾選＝這次跳過「疑似重複」（沒有勾選框＝similar 為 0＝照舊）。
+      // ⚠️ 語意講準（r1 待辦）：跳過集合是 apply 當下用 fresh db **重算**的（判準同預覽）——
+      //    預覽到按下確認之間若又匯了別批銀行交易，集合會跟著變；**手動記的帳不參與判準**
+      //    （similarTxIndex 只索引 source:'bank' 的既有交易，手動帳沒有機構＋帳號可比）。
       const skipSimilar = /** @type {HTMLInputElement|null} */ (document.getElementById('skipSimilarChk'))?.checked === true;
       const payload = applyBody(r, { data: b64, password: pw, skipSimilar });
       if (!payload) { if (onPage()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
