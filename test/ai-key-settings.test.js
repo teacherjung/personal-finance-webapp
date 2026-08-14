@@ -82,21 +82,47 @@ test('G3｜文案：在 HOSTED 下為假的句子一句都不准出現；不得�
   //   「沒鑰匙會指路、設了就送得出去」只對 LOCAL 成立，寫成無條件句在雲端版是假的。
   assert.match(AI_KEY_INFO.skip.html, /雲端版|網頁版/, '★按下同意之後的行為要分模式講（雲端版整條停用）');
   assert.match(AI_KEY_INFO.skip.html, /自己電腦上的版本|本機版/, '要標明「設了才送得出去」是哪一種版本的行為');
-  // ★r2#1：實作是「不論有沒有設鑰匙都會先問」（收支頁拿不到 aiApiKeySet；裁決 6 刻意讓後端講），
-  //   文案寫成「有鑰匙才會多出這個選項」與實際流程不符。
-  assert.doesNotMatch(ALL_COPY, /有鑰匙才會多出|沒鑰匙就不會問|設定後才會出現這個選項/,
-    '沒設鑰匙時同意窗照樣會開（按下才回 ai_no_key）——文案不可宣稱看得到入口＝已設定');
-  assert.match(ALL_COPY, /都會問|都會先問|有沒有設鑰匙/, '要講清楚「沒設鑰匙也會問，只是送不出去」');
+  // ⚠️ **這一段在 2026-08-13 翻面了**（William 拍板：預設不問、直接送）。
+  //   舊版文案保證「沒同意就完全不送／有沒有設鑰匙都會問」——那兩句現在是**假話**，
+  //   而且是關於「你的帳單會不會被送出去」的假話，比沒寫更糟。
+  //   ⚠️ 舊考題用的是 `/都會問|都會先問|有沒有設鑰匙/` 這種**交替式**：文案改成假話之後
+  //   它照樣綠（被雲端版那句「不論有沒有設鑰匙」撞上）＝守拼字不守語意。改成兩面都釘：
+  //   假話一個字都不准出現，真話必須講到。
+  assert.doesNotMatch(ALL_COPY, /沒同意就完全不送|有沒有設鑰匙都會問|每一次要送出前都得由你按過同意|按過確認之後|確認之後才|同意之後才/u,
+    '★預設已經是「不問、直接送」——這些句子（含 r1#4 抓到的同義句「按過確認之後」）'
+    + '現在是假的，留著等於騙使用者他一定會被問');
+  assert.match(AI_KEY_INFO.where.html, /預設是直接送/u,
+    '★要明講預設會直接送出去（使用者有權知道他的帳單什麼時候會離開這台機器）');
+  for (const [key, info] of Object.entries(AI_KEY_INFO)) {
+    if (!/送到|送出|送去/u.test(info.html)) continue;
+    assert.match(info.html, /送給 AI 之前先問我一次|上面那個開關/u,
+      `★「${key}」講到帳單會送出去，就要順帶指出「怎麼改成每次先問」——`
+      + '只講預設不給出路，等於告訴使用者這件事他管不著');
+  }
 });
 
-test('G4｜AI_KEY_INFO：四把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
-  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['cost', 'skip', 'what', 'where']);
+test('G4｜AI_KEY_INFO：五把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
+  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['ask', 'cost', 'skip', 'what', 'where']);
   for (const [k, v] of Object.entries(AI_KEY_INFO)) {
     assert.ok(v.title && v.title.length > 4, `${k} 要有標題`);
     assert.ok(v.html && v.html.includes('<p>'), `${k} 要有內容`);
     assert.doesNotMatch(v.html, /\$\{/, `${k} 不可有插值（openInfo 不跳脫）`);
   }
   assert.ok(Object.isFrozen(AI_KEY_INFO));
+});
+
+test('G6｜「先問我」開關：存檔失敗必須把開關退回、不能畫面開著資料庫關著（r1#3）', () => {
+  const src = readFileSync(join(ROOT, 'public/modules/settings.js'), 'utf8');
+  // ⚠️ 不可走 saveSettings（它吞錯誤只 toast）：PUT 失敗＝畫面顯示已開、下一次上傳直接外送。
+  assert.match(src, /ask\.onchange = async \(\) => \{/u, '★開關存檔要等結果（async），不是射後不理');
+  // ⚠️ r5#1：「ask.checked = !want」是猜測（寫入可能已成功、回應沒回來）——禁用；
+  //    失敗後必須向後端**重新核對**（askToggleDisplayAfterSaveFailure），核對不到＝顯示直接送。
+  assert.doesNotMatch(src, /ask\.checked = !want/u,
+    '★不可用 !want 推定資料庫狀態——那是猜測，猜錯的方向正是假保證');
+  assert.match(src, /ask\.checked = await askToggleDisplayAfterSaveFailure\(\(\) => api\('\/settings'\)\)/u,
+    '★失敗要向資料庫重新核對，開關顯示核對結果');
+  assert.match(src, /儲存失敗，已向資料庫重新核對/u, '★失敗要出聲說核對後的狀態，不是靜靜恢復');
+  assert.doesNotMatch(src, /saveSettings\(\{ aiAskBeforeSend/u, '★不可繞回吞錯誤的 saveSettings');
 });
 
 test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把關、判準走純函式、換頁序號', () => {
@@ -119,8 +145,8 @@ test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把
     '★問的是「還在設定頁嗎」＝換頁序號；接成 currentRouteSeq 時開機背景重繪會讓儲存成功卻不提示、清除入口不出現');
   assert.doesNotMatch(src, /saveAiApiKey[\s\S]{0,400}?currentRouteSeq/, '同上：這個區塊不可用重繪序號');
   assert.match(src, /await renderSettings\(\);/, '成功後重繪＝清除入口當場出現，不必切頁再回來');
-  assert.equal(count(/data-ai-info="/g), 4, '四顆就地解釋按鈕都要在（泛化 regex 只蓋一顆就假綠）');
-  for (const k of ['what', 'cost', 'where', 'skip']) {
+  assert.equal(count(/data-ai-info="/g), 5, '五顆就地解釋按鈕都要在（第五顆＝「什麼時候會送出去？」，2026-08-13 隨『預設不問』一起加）');
+  for (const k of ['what', 'cost', 'where', 'skip', 'ask']) {
     assert.match(src, new RegExp(`data-ai-info="${k}"`), `就地解釋「${k}」要掛上去`);
   }
   assert.match(src, /Object\.hasOwn\(AI_KEY_INFO, key\)/, '只認自有鍵（直接索引會讓 constructor 之類撈到原型）');

@@ -19,9 +19,9 @@ import { dirname, join } from 'node:path';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
-  snapshotUpload, shouldOfferAi, previewBody, applyBody, isAiTicketDeadCode,
+  snapshotUpload, shouldOfferAi, shouldAskBeforeSend, askToggleDisplayAfterSaveFailure, previewBody, applyBody, isAiTicketDeadCode,
   aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_SENDING_TEXT, AI_PREVIEW_LOST_TEXT,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -61,9 +61,9 @@ test('A2｜r1#1 快照：檔名與檔案內容綁在同一份、事後改選別�
   assert.equal(snapshotUpload({}).fileName, '', '沒有檔名也要開得起來（不可炸掉整條路）');
 });
 
-// ---- B 群：previewBody（「沒同意＝零外送」的行為證明）----
+// ---- B 群：previewBody（「沒明確要求 AI＝零外送」的行為證明；useAi＝要求旗標不是同意旗標）----
 
-test('B｜previewBody：useAi 嚴格布林——沒同意就連 key 都不放；password 含空字串照放（複製 P0.5 現況）', () => {
+test('B｜previewBody：useAi 嚴格布林——沒明確要求 AI 就連 key 都不放；password 含空字串照放（複製 P0.5 現況）', () => {
   const plain = previewBody({ data: 'b64' });
   assert.deepEqual(plain, { data: 'b64' });
   assert.equal('useAi' in plain, false, '★沒同意＝body 裡連 useAi 這個 key 都不該有（零 AI 呼叫）');
@@ -153,11 +153,20 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.match(html, /送出內容/, '要講清楚送出去的是哪一份');
   assert.match(html, /2026-06 對帳單\.pdf/, '要顯示送的是哪一份檔案');
   assert.match(html, /Anthropic/, '要講送去哪裡');
-  assert.match(html, /幾塊台幣/, '要講大概多少錢');
+  assert.match(html, /費用|多少/, '要交代費用這件事');
+  assert.doesNotMatch(html, /幾塊|幾元|[0-9]+ ?元/,
+    '★不給金額數字（William 2026-08-13：只說「記在你自己的 Anthropic 帳戶」——實測數字要等 P1b-3 之後才有）');
   assert.match(html, /大概多少/, '費用那一列的標題');
   assert.match(html, /不是報價|以他們的帳單為準/, '費用要標明是級距不是報價');
   assert.match(html, /不同意/, '要講不同意會怎樣（手動記帳、其他功能照常）');
-  assert.match(html, /每一次上傳都會出現/, '★拍板：每次都問');
+  // ⚠️ r6：這個窗有**兩條**進場路——設定打開、或設定「讀不到」（fail-closed 保守問）。
+  //    第二條路上使用者根本沒開設定，文案寫「你打開了設定…每一次都會出現」＝宣稱不存在的
+  //    長期保護（下次讀取恢復就直接送）。窗的文案是靜態的、不知道自己為什麼被開 ⇒
+  //    **一律不得推定開關狀態、不得承諾未來必問**，只講「這一次」＋指路到設定。
+  assert.match(html, /只確認<b>這一次<\/b>/u, '★只承諾這一次');
+  assert.match(html, /沒打開＝之後直接送/u, '★要講清楚沒開設定的後果（不是每次都會問）');
+  assert.doesNotMatch(html, /你打開了設定|每一次上傳都會出現|每次都會問/u,
+    '★不得推定使用者開了設定、不得承諾未來必問——設定讀不到的保守開窗也用同一份文案');
   assert.match(html, /同意只算這一次|不會被記住/, '★拍板：不記住同意');
   // ★r4#2：AI 讀出來的結果不是直接進資料庫——先回畫面核對、暫存伺服器記憶體，按下匯入才寫進去。
   //   scoped 斷言（不是全文找「資料庫」字樣，那會被別句冒充）
@@ -202,16 +211,8 @@ test('E｜同意窗內文：四件事都講到、危險句一句都不准出現�
   assert.doesNotMatch(aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'm' }), /\*\*/, '徽章同上');
   assert.ok(AI_CONSENT_TITLE.includes('AI') && AI_CONSENT_SUBMIT_LABEL.includes('同意'));
   assert.match(AI_CONSENT_BUSY_LABEL, /稍候|讀取中|正在/, '送出中的鈕文字要看得出「還在跑」');
-  assert.match(AI_SENDING_TEXT, /稍候|請稍等/, '提示要請使用者稍候');
-  assert.match(AI_SENDING_TEXT, /不用重按|不要重按|別重按/, '★要講「不用重按」——不然使用者會連按（票是一次性、第二次會拿到錯誤）');
-  // ★r7：這句在**發請求之前**就吐了，而 HOSTED 停止線與無鑰匙會在任何 AI 呼叫前擋下 ⇒
-  //   宣稱「已送出／AI 正在讀」＝謊稱帳單已經外送（使用者會同時看到它和「尚未設定鑰匙」）。
-  assert.doesNotMatch(AI_SENDING_TEXT, /已送出|已經送|已外送|送出了/,
-    '★不可宣稱已送出：這句吐在發請求之前，雲端停止線與無鑰匙都會先擋下來');
-  assert.doesNotMatch(AI_SENDING_TEXT, /AI ?正在讀|正在讀這份帳單/,
-    '★不可宣稱 AI 已經在讀（那時可能一個位元組都還沒離開這台機器）');
-  assert.match(AI_SENDING_TEXT, /接下來會|準備送|將會送/,
-    '要把外送講成「接下來會發生的事」，使用者才知道還沒送出去');
+  // ⚠️ 送出當下那則 toast 已於 2026-08-13 移除（William：「可以不用顯示」）。
+  //    「按下去不像當掉」的保證改由**上傳鈕的 busyLabel** 承載＝考題在 cashflow-bank-upload.test.js。
 });
 
 test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「驗不到什麼」，模型名要跳脫', () => {
@@ -304,14 +305,104 @@ test('E3｜aiErrorText：後端白話句原句放行＋補下一步；未知 cod
 
 // ---- F 群：cashflow.js 接線形狀 ----
 
+test('A3｜shouldAskBeforeSend：只有明確設成 true 才問；讀不到設定當成「要問」（fail-closed）', () => {
+  // 這支判準決定「帳單要不要先問過你才送出去」。它原本**一條考題都沒有**（2026-08-14 預審抓到），
+  // 而它 JSDoc 承諾的「拿不到設定就當成要問」也沒人守。
+  // ⚠️ 方向為什麼是這樣：猜錯「不用問」＝沒問就把帳單送出去、還花了使用者的錢；
+  //    猜錯「要問」＝最多多一個窗。代價不對稱，所以往「問」的方向倒。
+  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: true }), true, '打開了就要問');
+  assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: false }), false, '明確關著＝直接送');
+  assert.equal(shouldAskBeforeSend({}), false, '欄位缺席＝還沒改過設定＝用預設（不問）');
+  // ⚠️ 三分法（r1#2 修正）：上一版把「壞型別」跟「缺席」混成同一個 false——
+  //    備份還原塞進來的 'true' 字串會變成「直接外送」，方向錯。**欄位在、卻不是布林
+  //    ＝資料壞了、不知道使用者要什麼 ⇒ 保守：問**（跟「整包設定拿不到」同一個答案）。
+  for (const junk of ['true', 'false', 1, 0, {}, [], 'yes', null]) {
+    assert.equal(shouldAskBeforeSend({ aiAskBeforeSend: junk }), true,
+      `★欄位存在但不是布林（${JSON.stringify(junk)}）＝保守要問——壞資料不可以往「外送」倒`);
+  }
+  for (const bad of [null, undefined, 'x', 0]) {
+    assert.equal(shouldAskBeforeSend(bad), true,
+      `★拿不到設定物件（${JSON.stringify(bad)}）＝不知道使用者選了什麼 ⇒ 當成要問`);
+  }
+});
+
+test('命名｜useAi 不可再叫「同意旗標」——那個名字誤示每次都問過（r3）', () => {
+  // 2026-08-13 預設翻成直接送之後，「同意」這個名字本身就是假保證：旗標代表的是
+  // 「前端明確要求 AI」，同意窗只在 aiAskBeforeSend 打開時出現。歷史紀錄（計畫文件的
+  // 變更紀錄行）不在射程——它記的是當時，不是現在。
+  // ⚠️ 不可用 srcOf（它剝註解，而這個名字全住在註解裡＝守衛永遠看不到）——用原始檔。
+  for (const f of ['server.js', 'lib/routes/statement.js', 'lib/services/bank-import.js',
+    'public/modules/cashflow.js', 'public/modules/ai-consent.js',
+    'docs/contracts/income-expense.md', 'AGENTS.md',
+    'docs/parser-generalization-plan.md']) {   // r5#2：現行規格也在射程（變更紀錄行用棄用標記）
+    // ⚠️ r4：不可用「檔裡有標記就整檔豁免」——那是檔案級放行，標記後面再塞一個
+    //    未標示的舊名照樣綠。**逐一出現**驗證：把合法的「舊名『同意旗標』」整串剝掉，
+    //    殘餘裡再出現舊名＝紅。
+    const residual = readFileSync(join(ROOT, f), 'utf8')
+      .replaceAll('舊名「同意旗標」', '').replaceAll('時稱「同意旗標」', '');
+    assert.ok(!residual.includes('同意旗標'),
+      `★${f} 有未標示的「同意旗標」——每一次出現都要嘛改名、要嘛長成「舊名『同意旗標』」`);
+  }
+});
+
+test('A4｜開關存檔失敗後的顯示：向後端核對，核對不到＝不得宣稱受保護（r5#1）', async () => {
+  // ⚠️ 「!want 退回」是猜測：後端先寫入再回應，寫入可能已成功、回應沒回來——
+  //    使用者關掉詢問、寫入成功、回應斷線 ⇒ 畫面退回「會先問你」＝假保證，下一張直接外送。
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => ({ aiAskBeforeSend: true })), true,
+    '核對到 true＝照實顯示「會先問」');
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => ({ aiAskBeforeSend: false })), false,
+    '核對到 false＝照實顯示「直接送」');
+  assert.equal(await askToggleDisplayAfterSaveFailure(async () => { throw new Error('斷線'); }), false,
+    '★核對不到＝顯示「直接送」——畫面寫著「會先問你」而資料庫其實不會問，是最糟的假保證');
+  for (const junk of [{ aiAskBeforeSend: 'true' }, {}, null]) {
+    assert.equal(await askToggleDisplayAfterSaveFailure(async () => junk), false,
+      `★${JSON.stringify(junk)}：讀不出明確的 true＝不得宣稱受保護`
+      + '（注意：這與送出路徑的 shouldAskBeforeSend 方向相反、而且應該相反——'
+      + '送出的保守＝問（保住錢）、顯示的保守＝不宣稱（不給假安全感））');
+  }
+});
+
 test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 applyBody、徽章真的插進畫面', () => {
   const src = srcOf('public/modules/cashflow.js');
   // 三條 preview 路徑：上傳窗（無密碼）／密碼窗／同意窗（唯一帶 useAi 的那條）
-  assert.equal(count(src, /body: previewBody\(\{/g), 3, '三條 preview 路徑都要走 previewBody（漏一條＝那條路的判準沒被守住）');
+  assert.equal(count(src, /body: previewBody\(\{/g), 4,
+    '★四條 preview 路徑都要走 previewBody（漏一條＝那條路的判準沒被守住）——'
+    + '第四條＝`sendToAi`（William 2026-08-13「預設不問、直接送」新增的那一條）');
   assert.match(src, /previewBody\(\{ data: b64, password: pw, useAi: true \}\)/, '★同意窗那條才帶 useAi');
   assert.match(src, /previewBody\(\{ data: b64 \}\)/, '上傳窗那條不帶旗標');
   assert.match(src, /previewBody\(\{ data: b64, password: pw \}\)/, '密碼窗那條不帶旗標');
-  assert.equal(count(src, /useAi: true/g), 1, '★全檔只有同意窗那一處帶旗標——多一處＝有帳單沒問過就外送');
+  // ⚠️ **這條保證的形狀在 2026-08-13 變了**（William 拍板：預設不問、直接送）。
+  //    舊版：`useAi: true` 全檔只准出現一次（同意窗）＝「沒問過就不外送」。
+  //    新版：兩處——同意窗（設定打開時）與 sendToAi（預設路徑）。**兩處都必須在
+  //    `askBeforeSendAi()` 的分流之後**，否則「打開開關卻仍不問」就會發生而沒人擋。
+  assert.equal(count(src, /useAi: true/g), 2, '★只有這兩條路帶旗標——多一處＝有條路繞過了設定分流');
+  // ⚠️ r2#1：一條 regex 守兩條路＝另一條的比對結果會冒充它——把密碼路徑改成
+  //    `if (false && await askBeforeSendAi())`，免密碼那條照樣讓單一 regex 過。
+  //    兩條路**各自 scoped**：ask 分支 → 開自己的同意窗（引數不同＝身分）→ return → 自己的 sendToAi。
+  for (const [label, consentArgs, sendArgs] of [
+    ['密碼窗路', 'openAiConsentWindow\\(b64, pw, fileName\\)', "sendToAi\\(b64, pw, onPage, canOpenNext\\)"],
+    ['上傳窗路（免密碼＝最常走）', "openAiConsentWindow\\(b64, '', snap\\.fileName\\)", "sendToAi\\(b64, '', onPage, canOpenNext\\)"],
+  ]) {
+    assert.match(src, new RegExp(
+      'if \\(await askBeforeSendAi\\(\\)\\) \\{[\\s\\S]{0,300}?' + consentArgs
+      + "[\\s\\S]{0,120}?return;\\n\\s*\\}\\n\\s*await " + sendArgs),
+      `★${label}：ask 分支→自己的同意窗→return→自己的 sendToAi，四件事同一段——`
+      + '任何一條被 false&& 掉，這條 scoped 斷言就找不到完整形狀');
+  }
+  // ⚠️ **兩個呼叫點都要釘**（2026-08-14 預審抓到）：原本只釘了密碼窗那一條，
+  //    把**上傳窗那條**（免密碼帳單＝最常走的路）整行刪掉，整包考題照樣全綠——
+  //    使用者上傳一份系統不認得的帳單，畫面什麼都不會發生，而沒有任何一條考題會紅。
+  assert.equal(count(src, /await sendToAi\(/g), 2,
+    '★兩條「不問就直接送」的路都要在：上傳窗（免密碼）與密碼窗。少一條＝那條路按下去沒反應');
+  assert.match(src, /await sendToAi\(b64, pw, onPage, canOpenNext\)/,
+    '★密碼窗那條必須真的送出（沒接＝認不出版面就什麼都不會發生）');
+  assert.match(src, /await sendToAi\(b64, '', onPage, canOpenNext\)/,
+    '★上傳窗那條也必須真的送出——它是**最常走的那條**（帳單沒設密碼時就走這裡）');
+  // ⚠️ r1#1：等「要不要先問」設定的 await 期間使用者可能已離開——重新驗證必須是
+  //    sendToAi 的**第一個語句**（收進函式本身＝兩條路＋未來新增的呼叫者自動受保護，
+  //    同 #454 r6「唯一性收進取值函式」同一課）。
+  assert.match(src, /canOpenNext\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canOpenNext\(\)\) return;/u,
+    '★sendToAi 第一個語句必須是 canOpenNext 重新驗證——沒有它，關窗切頁後帳單照樣送出去、照樣花錢');
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw \}\);/, 'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案）');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');
@@ -352,7 +443,7 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(src, /submitLabel: AI_CONSENT_SUBMIT_LABEL/, '同意窗要指定送出鈕文字');
   // ★等待回饋（William 2026-08-12 回報：按下同意後畫面停 5–6 秒，看起來像當掉）
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL/, '★送出中要換鈕文字（只變灰看起來像沒反應）');
-  assert.match(src, /toast\(AI_SENDING_TEXT\)/, '★另外吐一句提示：視線不一定在鈕上，而且要講「不用重按」');
+  assert.doesNotMatch(src, /AI_SENDING_TEXT/, '★那則 toast 已移除（William 2026-08-13），不可順手復活');
   const appSrc2 = srcOf('public/app.js');
   assert.match(appSrc2, /if \(submitBtn && busyLabel\) submitBtn\.textContent = busyLabel;/, '★openForm 要真的把 busyLabel 寫上按鈕');
   assert.match(appSrc2, /if \(busyLabel\) submitBtn\.textContent = submitLabel;/, '★失敗解鎖時要把鈕文字換回來（否則鈕永遠停在「正在讀取…」）');

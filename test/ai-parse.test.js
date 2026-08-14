@@ -1,5 +1,5 @@
 // AI 解析引擎（P1b-1）的考題：全部走**假傳輸**（不用鑰匙、不上網、零費用）。
-// 射程：答案卷驗收 fail-closed／四道規矩（同意旗標・HOSTED 停止線・鑰匙・★6 強閘）／模型階梯／
+// 射程：答案卷驗收 fail-closed／四道規矩（AI 要求旗標・HOSTED 停止線・鑰匙・★6 強閘）／模型階梯／
 // 兩個正式入口的端到端（含 P1a 機構維度互扣：AI 報的機構直接餵 bank2 去重鍵與機構戳）／
 // anthropicTransport 的線上格式與錯誤分類（stub fetch）／機密不落 log。
 // 隔離：STORE_FILE 暫存檔（同 bank-statement.test.js 慣例）。
@@ -172,13 +172,13 @@ test('linesToText｜cells 依 x 排序後相接（座標列→AI 輸入）', () 
 
 // ---- 四道規矩（順序＝防線順序）----
 
-test('規矩②同意旗標｜缺席＝零 AI 呼叫＋模板原句錯誤照丟（確認窗沒蓋好前這條路不通）', async () => {
+test('規矩② AI 要求旗標｜缺席＝零 AI 呼叫＋模板原句錯誤照丟（確認窗沒蓋好前這條路不通）', async () => {
   await seedDb(true);
   const spy = spyTransport([goodAnswer()]);
   await assert.rejects(
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
     /看起來不是台新/);
-  assert.equal(spy.calls.length, 0, '沒有同意旗標＝連一次 AI 都不可呼叫');
+  assert.equal(spy.calls.length, 0, '沒有 AI 要求旗標＝連一次 AI 都不可呼叫');
 });
 
 test('規矩②之前｜密碼錯（pdf_password）不落 AI：要回前端跳密碼窗，不是送 AI', async () => {

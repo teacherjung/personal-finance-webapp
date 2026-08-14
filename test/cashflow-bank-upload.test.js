@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BANK_PW_NOTICE_LOCAL, BANK_PW_NOTICE_HOSTED, bankPasswordLabel, bankUploadGate, runBankUpload, runCardUpload, openWhenOnPage,
-  BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_NOTICE, BANK_UPLOAD_SUBMIT_LABEL,
+  BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL,
   bankPreviewFootnote,
   bankBlockedWarningHtml,
   bankSimilarWarningHtml,
@@ -215,8 +215,9 @@ test('接線｜cashflow.js 把模組層級的鎖／真把關／真開窗接進 r
     '排下一窗的判準要同時看換頁與彈窗格擁有權（r18 產線競態）；三個 onSubmit（上傳窗／密碼窗／同意窗）各一份');
   // ⚠️ 這一行的字面在**密碼窗成功**與**同意窗成功**兩處完全相同——用 match 只要有一處在就綠，
   //   移除另一處照樣過（r5#3 同型的假綠）。改成計數：少一條就紅。
-  assert.equal((src.match(/openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/g) || []).length, 2,
-    '密碼窗成功與同意窗成功各要開一次預覽窗（走 openWhenOnPage＋canOpenNext）——少一條＝那條路的切頁作廢被拆掉也全綠');
+  assert.equal((src.match(/openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, pw, onPage\)\)/g) || []).length, 3,
+    '★密碼窗成功／同意窗成功／**直接送 AI 成功**各要開一次預覽窗（走 openWhenOnPage＋canOpenNext）——'
+    + '少一條＝那條路的切頁作廢被拆掉了。第三條是 2026-08-13「預設不問、直接送」新增的 sendToAi。');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => showBankPreview\(r, b64, '', onPage\)\)/, '免密碼路徑開預覽窗要走 openWhenOnPage＋canOpenNext');
   // P1b-2：密碼窗多收一個 fileName——它後面還會開同意窗，而檔名必須來自「按下預覽當時」的快照
   //（讀可變的 file 會讓同意窗顯示 B、實際送出 A）
@@ -370,33 +371,25 @@ test('卡片編排｜連點只開一窗、鎖權屬第一條流程、載卡片�
   }
 });
 
-test('文案｜上傳窗不寫死單一銀行，但誠實講「內建範本認得什麼、認不得會怎樣」（William 2026-08-12）', () => {
-  // 原文「對帳單 PDF（台新綜合對帳單）」已過期——AI 路線存在的理由正是不再侷限單一銀行。
+test('文案｜上傳窗只留最少的字（William 2026-08-13）', () => {
+  // ⚠️ 這一題**取代**了原本守 BANK_UPLOAD_NOTICE 的那組斷言。William 的方向：
+  //    「介面簡單、好用、好理解；詳細說明放進 ⓘ」——上傳窗那段說明整塊移除。
+  //    ⚠️ 隨之消失的是「沒按同意不會送出至 AI 公司」這句預告——因為同意窗本身也拿掉了
+  //    （改成預設直接送、設定頁可開回詢問）。告知點因此移到**設定頁**與**預覽窗徽章**。
   assert.doesNotMatch(BANK_UPLOAD_FILE_LABEL, /台新|綜合對帳單/, '欄位名不可寫死單一銀行');
-  // ⚠️ William 2026-08-12 逐點裁示：**不提台新**（未來內建讀取不會只有一家，點名會再過期一次）；
-  //    但也不可反過來吹成「支援各家銀行」——用「認不出這個版面時會怎樣」來表達，不宣稱支援範圍。
-  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /台新|綜合對帳單/, '說明也不點名單一銀行');
-  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /支援各家銀行|支援所有銀行|任何銀行都|都讀得懂/, '不可吹成全面支援');
-  assert.match(BANK_UPLOAD_NOTICE, /認不出|認不得/, '要講「認不出這個版面」的情況');
-  assert.match(BANK_UPLOAD_NOTICE, /AI/, '要預告會問「要不要交給 AI 讀」——使用者才知道那個窗為什麼跳出來');
-  // ★預設收起來（William 裁示）：真正的隱私把關在同意窗，這裡只是預告
-  assert.match(BANK_UPLOAD_NOTICE, /<details>[\s\S]*<summary>/, '★說明要收合，想知道的人自己點開');
-  // ★「沒同意就不送」是這一句在上傳階段唯一要守死的保證（William 2026-08-12 版）。
-  //   「送的是抽出來的文字、不是 PDF 檔」等細節已移到**同意窗**（那裡才是真正的告知點，
-  //   由 test/ai-consent.test.js 的 E 群守）——這裡不重複，避免同一句話兩處維護而走鐘。
-  assert.match(BANK_UPLOAD_NOTICE, /沒按同意不會送出|沒按同意.*不會送/, '★沒按同意＝不會送出，要講死');
-  assert.match(BANK_UPLOAD_NOTICE, /AI 公司|AI公司/, '要點明送去的是外部 AI 公司');
-  assert.doesNotMatch(BANK_UPLOAD_NOTICE, /有可能傳給|可能會傳給|系統會自動送/,
-    '★不可寫成「有可能傳給」——會讓人以為系統可能背著他送，比事實更嚴重（拍板是每次都問）');
-  // 送出鈕：這個窗按下去是上傳並預覽，不是存檔
+  assert.equal(BANK_UPLOAD_FILE_LABEL, '對帳單 PDF');
   assert.doesNotMatch(BANK_UPLOAD_SUBMIT_LABEL, /儲存/, '寫「儲存」會讓人以為當場寫進帳本了');
   assert.match(BANK_UPLOAD_SUBMIT_LABEL, /預覽|讀取/, '要講出下一步是預覽');
+  // ★「按下去畫面不會像當掉」這個保證換了承載點：原本靠 toast，現在靠上傳鈕自己變字
+  assert.match(BANK_UPLOAD_BUSY_LABEL, /稍候|請稍等/, '★送出後鈕要講「請稍候」（解析要好幾秒，只變灰看起來像當掉）');
+  assert.doesNotMatch(BANK_UPLOAD_BUSY_LABEL, /讀取中|正在讀取/,
+    '★按下去的第一件事是「上傳」，不是「讀取」——寫讀取會讓人以為已經在解析了');
 });
 
 test('接線｜上傳窗的三處文案都走 cashflow-model 的常數（不可在 cashflow.js 就地寫死）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   assert.match(src, /label: BANK_UPLOAD_FILE_LABEL/, '欄位名走常數');
-  assert.match(src, /bodyHtml: BANK_UPLOAD_NOTICE/, '★說明句要真的交給 openForm 渲染（算了不用＝畫面看不到）');
+  assert.match(src, /busyLabel: BANK_UPLOAD_BUSY_LABEL/, '★上傳中的鈕字要真的接上（沒接＝畫面看起來像當掉）');
   assert.match(src, /submitLabel: BANK_UPLOAD_SUBMIT_LABEL/, '送出鈕文字走常數');
   assert.doesNotMatch(src, /台新綜合對帳單/, '★cashflow.js 不得再有寫死單一銀行的畫面文字');
 });

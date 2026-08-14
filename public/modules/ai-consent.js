@@ -4,8 +4,11 @@
 // 抽到這裡才有真正的行為考題（`test/ai-consent.test.js`）。只 import `esc`（鐵則 3 的承重點）。
 //
 // 四條硬性前提（拍板／契約，改這個檔前先讀 docs/contracts/income-expense.md「AI 解析路線 P1b」節）：
-// 1. **每次送 AI 前都要問過使用者**（William 2026-08-12 拍板，不記住同意）＝`previewBody` 只在
-//    呼叫端明給 `useAi === true` 時才放旗標；本模組**不持有任何狀態**（無模組層變數、無 storage）。
+// 1. **旗標只由呼叫端明給**＝`previewBody` 只在呼叫端明給 `useAi === true` 時才放旗標；
+//    本模組**不持有任何狀態**（無模組層變數、無 storage）。
+//    ⚠️ 「要不要先問」是**設定**（`aiAskBeforeSend`），不是本模組的前提：William 2026-08-13
+//    把預設翻成**不問、直接送**（取代 2026-08-12 的「每次都問」）。判準在 `shouldAskBeforeSend`，
+//    讀不到設定時當成「要問」（fail-closed）。
 // 2. **AI 入口只給「範本認不得」**（`code:'bank_unrecognized'`）——對帳閘紅（★6 禁止匯入）刻意無 code，
 //    `shouldOfferAi` 必須對它回 false，否則 UI 會在「數字對不上」的畫面上請 AI 重試一次。
 // 3. **票只活在單次預覽的閉包**：`applyBody` 從 preview 回應讀 `aiTicket`，本模組不存、呼叫端也不許存
@@ -16,21 +19,61 @@
 import { esc } from './html-escape.js';
 
 /** 同意窗的標題／送出鈕／供應商標籤／費用級距（文案單一住所）。 */
+/** 送 AI 之前要不要先跳確認窗？
+ *
+ * ⚠️ **預設不問**（William 2026-08-13 拍板，取代 2026-08-12 的「每次都問」）：他的方向是
+ * 「介面簡單、好用、好理解」，而這條路用的是他自己的鑰匙、自己的資料、單機自用。
+ * 設定頁留一個開關可以打開——**能力沒有被拿掉，只是預設翻面**（多人版要恢復詢問時有現成的地方）。
+ *
+ * ⚠️ **欄位讀不到 vs 讀不到設定，是兩件事**：
+ * ・欄位不存在（舊資料庫還沒有這個欄）＝照新預設「不問」。
+ * ・**整包設定拿不到**＝當成「問」——那時我們**不知道**使用者選了什麼，
+ *   而猜錯的代價是「沒問就把帳單送出去、還花了錢」。不知道的時候往保守那邊倒。
+ *
+ * ⚠️ **兩層都守**（2026-08-14）：原本只有呼叫端 `askBeforeSendAi` 的 `catch` 在守，
+ * 那擋得住「API 丟例外」，擋不住「API 好端端地回了 `null`／回了不是物件的東西」——
+ * 那時 `settings?.x === true` 是 `false`＝直接送。兩種都是「不知道使用者選了什麼」，
+ * 應該同一個答案，所以判準自己也 fail-closed。
+ * @param {any} settings
+ */
+export function shouldAskBeforeSend(settings) {
+  // 不是物件＝根本沒拿到設定（null／undefined／字串／數字）⇒ 保守：問。
+  if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) return true;
+  const v = settings.aiAskBeforeSend;
+  // ⚠️ 三分法（r1#2）：欄位**缺席**＝還沒改過設定＝新預設（不問）；明確 false＝不問；
+  //    明確 true＝問；**欄位在、卻不是布林**＝資料壞了、不知道使用者要什麼 ⇒ 保守：問。
+  //    上一版把「壞型別」與「缺席」混成同一個 false——壞資料變成「直接外送」，方向錯。
+  if (v === undefined) return false;
+  if (v === true) return true;
+  if (v === false) return false;
+  return true;
+}
+
+/** 開關存檔**失敗後**，畫面該顯示什麼（#455 r5#1）。
+ *
+ * ⚠️ 不可用「!want」推定資料庫還是舊值：後端是先寫入再回應——寫入可能已成功、
+ * 只是回應沒回來。唯一誠實的做法＝**向後端重新核對**。
+ *
+ * ⚠️ 方向與 `shouldAskBeforeSend` **相反、而且應該相反**：送出路徑的保守＝「問」
+ * （保住錢）；**顯示路徑的保守＝「不宣稱受保護」**（checked=false）——畫面寫著
+ * 「會先問你」而資料庫其實不會問，是最糟的假保證。核對不到（再度失敗）＝顯示 false。
+ * @param {() => Promise<any>} fetchSettings
+ * @returns {Promise<boolean>} checkbox 該顯示的狀態
+ */
+export async function askToggleDisplayAfterSaveFailure(fetchSettings) {
+  try { return (await fetchSettings())?.aiAskBeforeSend === true; }
+  catch { return false; }
+}
+
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
-export const AI_CONSENT_BUSY_LABEL = '正在讀取…請稍候';
-/** 送出當下的提示（鈕在彈窗裡、視線不一定在那；toast 補一句「還在跑、別重按」）。
- * ⚠️ **不可寫「已送出／AI 正在讀」**（r7）：這句是在**發請求之前**吐的，而 HOSTED 停止線與
- * 「還沒設鑰匙」都會在**任何 AI 呼叫之前**就把整條路擋下（`aiBankRoute` 前兩道）——
- * 那時使用者會同時看到「AI 正在讀」和「尚未設定鑰匙」，等於**謊稱帳單已經外送出去**。
- * 這條線的整個價值就是「畫面說的＝實際發生的」，這句尤其不能破例。 */
-export const AI_SENDING_TEXT = '處理中……接下來會把帳單文字送去給 AI 讀，通常幾秒鐘，請稍候（不用重按）';
+export const AI_CONSENT_BUSY_LABEL = '正在上傳…請稍候';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。
  * 不寫「每百萬 token 幾美元」「模型名」「至多兩發」——那些常數不回前端（鐵則 10：寫死的數字自己會漂）。 */
-export const AI_COST_HINT = '通常是幾塊台幣以內（記在你自己的 Anthropic 帳戶裡；這是級距、不是報價，實際金額以他們的帳單為準）';
+export const AI_COST_HINT = '費用記在你自己的 Anthropic 帳戶裡（實際金額以他們的帳單為準）';
 /** 預覽窗過期／已用過時的白話（票是一次性＋短效）。 */
 export const AI_PREVIEW_LOST_TEXT = '這份 AI 預覽已經過期或已經匯入過了——請重新上傳預覽一次，確認內容無誤再匯入。';
 
@@ -136,7 +179,7 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
     <li>⚠️ 但這是<b>預設值、不是我們能保證的事</b>——這條路用的是<b>你自己的 API 帳戶</b>，如果那個帳戶另外同意過資料使用、或有另外的合約條款，實際情形可能不一樣。以你自己的帳戶設定與供應商官方公告為準。</li>
     <li>讀出來的結果會<b>先回到畫面上讓你核對</b>；那份暫時放在伺服器的記憶體裡（程式重開就沒了），要等你按下匯入，才寫進這個 app 自己的資料裡。</li>
     <li>萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次，那次的費用會多一些。</li>
-    <li>這個問句<b>每一次上傳都會出現</b>——同意只算這一次，不會被記住。</li>
+    <li>這個問句只確認<b>這一次</b>——同意只算這一次，不會被記住。之後每次上傳要不要先問，由設定裡的「送給 AI 之前先問我一次」決定（<b>沒打開＝之後直接送、不再問</b>）。</li>
     <li>不同意完全沒關係：這份改成手動記帳就好，其他功能一切照常。</li>
   </ul>
 </details>`;
@@ -183,13 +226,13 @@ const AI_ADVICE = Object.freeze({
   ai_no_key: '請到「設定」頁的「AI 解析鑰匙」卡片貼上 API key，再重新上傳一次。',
   ai_auth: '這把鑰匙可能被停用或打錯了，請到「設定」頁的「AI 解析鑰匙」卡片換一把。',
   ai_hosted_off: '這份請改用手動記帳。',
-  ai_unavailable: '這是對方服務那邊的狀況，不是你的操作；等幾分鐘再按一次「同意」就好。',
+  ai_unavailable: '這是對方服務那邊的狀況，不是你的操作；等幾分鐘再上傳一次就好。',
   ai_truncated: '這份太長了，先用手動記帳；想調整上限的話跟我說一聲。',
   ai_refusal: '換更強的模型也一樣。這份請改用手動記帳。',
 });
 /** 這幾個 code 的後端訊息太技術，整句換成白話（其餘一律原句放行）。 */
 const AI_REPLACE = Object.freeze({
-  ai_bad_answer: 'AI 交回來的內容不合格式，這份沒有匯入（換更強的模型也一樣）。可以再按一次「同意」重試；還是不行就先手動記帳。',
+  ai_bad_answer: 'AI 交回來的內容不合格式，這份沒有匯入（換更強的模型也一樣）。可以再上傳一次重試；還是不行就先手動記帳。',
   ai_engine_missing: 'AI 這條路沒有接好，這是程式的問題、不是你的操作——請回報給我。',
 });
 

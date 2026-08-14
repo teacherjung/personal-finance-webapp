@@ -5,6 +5,7 @@ import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { openStoreRulesEditor } from './settings-store-rules.js';
+import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
 import { aiKeyPatch, AI_KEY_INFO, AI_KEY_CARD_TITLE, AI_KEY_CARD_NOTE, AI_KEY_COST_LINE, AI_KEY_PLACEHOLDER_SET, AI_KEY_PLACEHOLDER_UNSET, AI_KEY_CLEAR_LABEL, AI_KEY_SAVED_TEXT, AI_KEY_CLEARED_TEXT, AI_KEY_NOCHANGE_TEXT } from './ai-key-settings.js';   // AI 解析鑰匙卡（P1b-2）：判準與文案的家
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
@@ -236,7 +237,13 @@ export async function renderSettings() {
         <button type="button" class="info-link" data-ai-info="cost">ⓘ 大概要花多少錢？</button>
         <button type="button" class="info-link" data-ai-info="where">ⓘ 鑰匙存在哪？帳單會送去哪？</button>
         <button type="button" class="info-link" data-ai-info="skip">ⓘ 不設定會怎樣？</button>
+        <button type="button" class="info-link" data-ai-info="ask">ⓘ 什麼時候會送出去？</button>
       </div>
+      <label class="inline-check" style="margin-bottom:14px">
+        <input id="aiAskBeforeSend" type="checkbox" ${s.aiAskBeforeSend === true ? 'checked' : ''} />
+        <span>送給 AI 之前先問我一次</span>
+      </label>
+      <p class="muted" style="font-size:12px;margin:-8px 0 14px">預設不問：內建程式認不出版面時就直接送去讀。打開這個，每次送出前會先跳一個窗給你確認。</p>
       <div class="form-grid">
         <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>
         ${s.aiApiKeySet ? `<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearAiApiKey" type="checkbox"> ${AI_KEY_CLEAR_LABEL}</label></div>` : ''}
@@ -337,6 +344,25 @@ export async function renderSettings() {
   { // AI 解析鑰匙（P1b-2）：判準（留空＝不變更／勾清除＝送空字串／都沒動＝報錯）住 ai-key-settings.js 的
     //   aiKeyPatch，這裡只接線。成功後**重繪**＝讓契約要求的「清除已存的鑰匙」入口當場出現，
     //   不必切頁再回來（saveSettings 只 toast 不重繪；比照上面 clearStmtPws 那條既有的重繪路徑）。
+    // 「送出前先問我」＝獨立開關，勾一下就存（不跟鑰匙共用儲存鍵——鑰匙那顆有「留空＝不變更」語意，
+    //   混在一起會讓「只想改開關」的人被迫重打鑰匙）。
+    const ask = /** @type {HTMLInputElement|null} */ (byId('aiAskBeforeSend'));
+    // ⚠️ r1#3：不可用 saveSettings（它吞錯誤只 toast）——PUT 失敗時畫面顯示「已開」、
+    //    資料庫還是關的，下一次上傳就直接外送。失敗＝把開關**退回原狀**讓人看見。
+    if (ask) ask.onchange = async () => {
+      const want = ask.checked;
+      ask.disabled = true;
+      try {
+        await api('/settings', { method: 'PUT', body: { aiAskBeforeSend: want } });
+        toast(want ? '好，之後每次送出前會先問你' : '好，之後認不出版面就直接送去讀');
+      } catch (err) {
+        // ⚠️ 不可用 !want 推定（r5#1）：後端先寫入再回應——寫入可能已成功、回應沒回來。
+        //    向資料庫重新核對；核對不到＝顯示「直接送」（畫面寧可少保證、不做假保證）。
+        ask.checked = await askToggleDisplayAfterSaveFailure(() => api('/settings'));
+        toast('儲存失敗，已向資料庫重新核對，開關目前＝'
+          + (ask.checked ? '會先問你' : '直接送') + '：' + (/** @type {any} */ (err).message || ''), true);
+      } finally { ask.disabled = false; }
+    };
     const btn = byId('saveAiApiKey');
     if (btn) btn.onclick = async () => {
       const patch = aiKeyPatch({ value: val('aiApiKey'), clear: /** @type {HTMLInputElement} */ (byId('clearAiApiKey'))?.checked === true });
@@ -351,7 +377,7 @@ export async function renderSettings() {
         await renderSettings();   // await：重畫失敗不變成 unhandled rejection
       } catch (err) { if (seq !== currentNavSeq()) return; toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true); }   // r5#2：換頁後不報過期錯誤
     };
-    // 就地解釋四顆（設定頁首例；形狀照 securities.js）。Object.hasOwn＝只認自有鍵（'constructor' 撈不到原型）
+    // 就地解釋（設定頁首例；形狀照 securities.js；顆數不寫死＝寫死的數字自己會漂）。Object.hasOwn＝只認自有鍵（'constructor' 撈不到原型）
     view().querySelectorAll('[data-ai-info]').forEach((/** @type {any} */ b) => { b.onclick = () => {
       const key = String(b.dataset.aiInfo || '');
       const info = Object.hasOwn(AI_KEY_INFO, key) ? AI_KEY_INFO[/** @type {keyof typeof AI_KEY_INFO} */ (key)] : null;
