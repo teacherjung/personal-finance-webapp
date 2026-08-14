@@ -148,14 +148,17 @@ function localDay(iso) {
  * （`2026-02-30T…`），驗不過就只講來源、不編一個不存在的日期出來。
  *
  * @param {{balanceAsOf?: any, ibCashCur?: any}} [acc]
- * @param {string} [ibLastSync] `settings.ib.lastSync`（ISO 字串）；沒有就只講「由 IB 同步更新」
+ * @param {string} [ibLastSync] `settings.ib.lastSync`（ISO 字串）；沒有／驗不過就只講身分、不講時間
  * @returns {{has: boolean, date: string, text: string, source: 'statement'|'ib'|'none'}}
  */
 export function balanceAsOfNote(acc, ibLastSync) {
   if (acc && acc.ibCashCur) {
     const day = localDay(ibLastSync);
+    // ⚠️ 沒有合法同步時間時**只能講身分**（#454 r3 阻擋）：`data/seed.json` 的預設就是
+    //    `ib.lastSync: null` 配兩個 IB 現金帳戶——那時「由 IB 同步更新」是**假的**
+    //    （根本還沒同步過），而餘額也可能是使用者自己填的。時間不知道就說不知道。
     return { has: !!day, date: day, source: 'ib',
-      text: day ? `上次 IB 同步 ${day}` : '由 IB 同步更新（不是對帳單）' };
+      text: day ? `上次 IB 同步 ${day}` : 'IB 現金帳戶（尚無同步時間）' };
   }
   const raw = acc && typeof acc.balanceAsOf === 'string' ? acc.balanceAsOf : '';
   // 過真實日曆：`2026-02-30` 格式對、日子不存在——回填後再讀出來對得上才算數。

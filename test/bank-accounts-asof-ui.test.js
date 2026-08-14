@@ -129,10 +129,15 @@ test('IB 現金帳戶：講「上次 IB 同步 <日期>」，不可以說成「�
   assert.doesNotMatch(cell, /對帳單更新至/u, '也不可以講成對帳單更新的');
 });
 
-test('IB 現金帳戶：連同步時間都沒有時，仍要說清楚它靠的是 IB 而不是對帳單', () => {
+test('IB 現金帳戶：沒有同步時間時只講身分，不可以宣稱這個數字是同步來的', () => {
+  // ⚠️ r3 阻擋：舊文案「由 IB 同步更新（不是對帳單）」在**預設狀態下就是假的**——
+  //    `data/seed.json` 是 `ib.lastSync: null` 配兩個 IB 現金帳戶＝**還沒同步過**，
+  //    而餘額也可能是使用者自己填的。更糟的是我原本的考題把那句錯話釘住了。
   for (const noSync of [undefined, null, '', 'not-a-date', 12345]) {
     const cell = balanceCell(renderRow(IB_ACCOUNT, /** @type {any} */ (noSync)));
-    assert.match(cell, /由 IB 同步更新/u, `★${JSON.stringify(noSync)}：沒有時間也要講出來源`);
+    assert.match(cell, /IB 現金帳戶（尚無同步時間）/u, `★${JSON.stringify(noSync)}：只講身分＋時間未知`);
+    assert.doesNotMatch(cell, /同步更新|更新過/u,
+      `★${JSON.stringify(noSync)}：不可以宣稱這個餘額是同步來的（可能從沒同步過、也可能是手動填的）`);
     assert.doesNotMatch(cell, /上次 IB 同步 /u, `★${JSON.stringify(noSync)}：驗不過就不可以編一個日期出來`);
     assert.doesNotMatch(cell, /未由對帳單更新過/u, '★仍然不可以退回那句錯的');
   }
@@ -164,7 +169,7 @@ test('說明窗要交代 IB 那一種，否則使用者只會看到一句沒解�
 
 test('接線｜頁面要真的把 IB 同步時間傳給每一列（漏傳＝IB 列永遠沒有日期）', () => {
   // ⚠️ 這一題是**接線形狀**，不是行為：上面那些題直接呼叫 bankAccRow、自己餵 ibLastSync，
-  //    所以看不到「渲染那一端有沒有傳」。漏傳的話 IB 列會退成「由 IB 同步更新（不是對帳單）」
+  //    所以看不到「渲染那一端有沒有傳」。漏傳的話 IB 列會退成「IB 現金帳戶（尚無同步時間）」
   //    ——文案仍然誠實，但使用者失去他要的那個判斷依據（多久沒同步了）。
   //    這種掃描守得住「參數被拿掉」，守不住等價改寫；能做到行為級要先把整頁渲染拉進可測範圍（待辦）。
   const source = read('public/modules/assets.js');
@@ -188,7 +193,7 @@ test('IB 日期用**當地**日曆日，不是 UTC 日（#454 r1 阻擋②）', 
 test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾成 3/2）', () => {
   for (const bad of ['2026-02-30T10:00:00.000Z', '2026-13-01T10:00:00.000Z', '2026-08-14', 'x', '']) {
     const cell = balanceCell(renderRow(IB_ACCOUNT, bad));
-    assert.match(cell, /由 IB 同步更新（不是對帳單）/u, `★${JSON.stringify(bad)} 要退回「只講來源」`);
+    assert.match(cell, /IB 現金帳戶（尚無同步時間）/u, `★${JSON.stringify(bad)} 要退回「只講身分」`);
     assert.doesNotMatch(cell, /上次 IB 同步 \d/u,
       `★${JSON.stringify(bad)} 不可以印出日期——new Date 對不存在的日子不會回 NaN，會滾到下個月`);
   }
