@@ -106,9 +106,12 @@ test('就地解釋接上去了：說明按鈕存在、綁得到，而且文案�
 // 那條路對 IBKR 帳戶永遠走不通。這一族考題釘住「它們要走另一條文案」。
 const IB_ACCOUNT = Object.freeze({ ...ACCOUNT, name: 'IBKR 美元現金', currency: 'USD', ibCashCur: 'USD' });
 
-test('IB 現金帳戶：講「IB 同步更新至 <日期>」，不可以說成「未由對帳單更新過」', () => {
+test('IB 現金帳戶：講「上次 IB 同步 <日期>」，不可以說成「未由對帳單更新過」', () => {
   const cell = balanceCell(renderRow(IB_ACCOUNT, '2026-08-14T03:21:00.000Z'));
-  assert.match(cell, /IB 同步更新至 2026-08-14/, '★要用 IB 自己的時間點');
+  assert.match(cell, /上次 IB 同步 2026-08-14/, '★要用 IB 自己的時間點');
+  assert.doesNotMatch(cell, /同步更新至|更新至 2026/u,
+    '★不可以講成「這筆餘額更新到那天」（#454 r1 阻擋①）：lastSync 是每次同步無條件寫的，'
+    + '而現金報表缺失時餘額是刻意沿用舊值——同步時間前進、餘額沒動是正常狀態');
   assert.doesNotMatch(cell, /未由對帳單更新過/u,
     '★這句對 IB 帳戶是錯的：它每次同步都在更新，而 IBKR 根本不出這種對帳單');
   assert.doesNotMatch(cell, /對帳單更新至/u, '也不可以講成對帳單更新的');
@@ -118,6 +121,7 @@ test('IB 現金帳戶：連同步時間都沒有時，仍要說清楚它靠的�
   for (const noSync of [undefined, null, '', 'not-a-date', 12345]) {
     const cell = balanceCell(renderRow(IB_ACCOUNT, /** @type {any} */ (noSync)));
     assert.match(cell, /由 IB 同步更新/u, `★${JSON.stringify(noSync)}：沒有時間也要講出來源`);
+    assert.doesNotMatch(cell, /上次 IB 同步 /u, `★${JSON.stringify(noSync)}：驗不過就不可以編一個日期出來`);
     assert.doesNotMatch(cell, /未由對帳單更新過/u, '★仍然不可以退回那句錯的');
   }
 });
@@ -131,7 +135,12 @@ test('IB 的時間戳不可以外溢到一般銀行帳戶', () => {
 
 test('說明窗要交代 IB 那一種，否則使用者只會看到一句沒解釋的新文案', () => {
   const body = namedFunction(read('public/modules/assets.js'), 'openBalanceAsOfInfo');
-  assert.match(body, /IB 同步更新至/u, '說明窗要提到這種列長什麼樣');
+  assert.match(body, /上次 IB 同步/u, '說明窗要提到這種列長什麼樣');
+  assert.match(body, /不是這一筆餘額的時間/u,
+    '★說明窗必須點破「整次同步的時間 ≠ 這筆餘額的時間」——不寫的話這個日期一樣會被讀成保證');
+  assert.match(body, /上界/u, '★要告訴使用者怎麼用它判斷：不會比它更新，但可能更舊');
+  assert.doesNotMatch(body, /每次 IB 同步就會更新/u,
+    '★這句話不成立：同步沒拿到現金報表時餘額刻意不動，時間卻照樣前進');
   assert.match(body, /不需要、也沒有對帳單可以匯|沒有對帳單/u,
     '★要講明「這種帳戶沒有對帳單可匯」——不然使用者會照另一段去找一條不存在的路');
 });
@@ -146,4 +155,22 @@ test('接線｜頁面要真的把 IB 同步時間傳給每一列（漏傳＝IB �
     '★渲染時要把 settings.ib.lastSync 傳進每一列');
   assert.match(source, /function bankAccRow\(x, ibLastSync\)/u,
     '★bankAccRow 要收得下第二個參數（簽章被改回去＝上面那行等於白傳）');
+});
+
+test('IB 日期用**當地**日曆日，不是 UTC 日（#454 r1 阻擋②）', () => {
+  // 台北 2026-08-14 01:30 的同步，ISO 是前一天 17:30Z——切 UTC 會少一天。
+  const cell = balanceCell(renderRow(IB_ACCOUNT, '2026-08-13T17:30:00.000Z'));
+  const localDay = new Date('2026-08-13T17:30:00.000Z');
+  const expect = `${localDay.getFullYear()}-${String(localDay.getMonth() + 1).padStart(2, '0')}-${String(localDay.getDate()).padStart(2, '0')}`;
+  assert.match(cell, new RegExp(`上次 IB 同步 ${expect}`),
+    `★要顯示當地日曆日（本機時區算出來是 ${expect}）——切 UTC 的話台北凌晨同步會少一天`);
+});
+
+test('IB 的假瞬間不編出日期（2026-02-30T… 會被 new Date 悄悄滾成 3/2）', () => {
+  for (const bad of ['2026-02-30T10:00:00.000Z', '2026-13-01T10:00:00.000Z', '2026-08-14', 'x', '']) {
+    const cell = balanceCell(renderRow(IB_ACCOUNT, bad));
+    assert.match(cell, /由 IB 同步更新（不是對帳單）/u, `★${JSON.stringify(bad)} 要退回「只講來源」`);
+    assert.doesNotMatch(cell, /上次 IB 同步 \d/u,
+      `★${JSON.stringify(bad)} 不可以印出日期——new Date 對不存在的日子不會回 NaN，會滾到下個月`);
+  }
 });

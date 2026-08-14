@@ -93,6 +93,27 @@ export const isLiabilityAccount = (x) => LIABILITY_TYPES.has(x?.type || '') || N
 export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];
 
 /**
+ * ISO 瞬間 → **當地**日曆日 `YYYY-MM-DD`；不是真瞬間就回空字串。
+ * 刻意不用 `slice(0, 10)`（那取的是 UTC 日，台北凌晨的同步會少一天），
+ * 也刻意不靠 locale 字串（不同環境的 ICU 給的格式不保證一樣）——直接讀本地時間的年月日。
+ * @param {any} iso
+ */
+function localDay(iso) {
+  if (typeof iso !== 'string' || !iso) return '';
+  // ⚠️ `new Date()` **不會**擋掉不存在的日子：`2026-02-30T…` 會被悄悄滾成 3/2 而不是 NaN
+  //（實測過才發現——同一種「格式對、日子不存在」的病，`balanceAsOf` 那邊也擋著同一件事）。
+  //    所以先驗字串自己的日期部分過不過真實日曆，滾過的一律當成沒有時間戳。
+  const m = /^(\d{4})-(\d{2})-(\d{2})T/.exec(iso);
+  if (!m) return '';
+  const utcDay = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`);
+  if (Number.isNaN(utcDay.getTime()) || utcDay.toISOString().slice(0, 10) !== `${m[1]}-${m[2]}-${m[3]}`) return '';
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '';
+  const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+
+/**
  * 餘額旁邊那一行小字：**這個餘額是被哪一天的對帳單更新的**。
  *
  * ⚠️ 文案為什麼不是「餘額截至 X 日」——那會說謊。`balanceAsOf` **只有銀行對帳單匯入會寫**
@@ -108,9 +129,20 @@ export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];
  *
  * ⚠️ **IB 同步的現金帳戶要分開講**（2026-08-14 預審抓到）：`lib/services/ib-sync.js` 只寫
  * `balance`、**不寫 `balanceAsOf`**，所以那幾列會永遠顯示「未由對帳單更新過」——
- * 而它們其實每次同步都在更新，「去匯一份對帳單」這條路對它們**永遠走不通**（IBKR 不出這種帳單）。
- * 判準用 `ibCashCur`（IB 同步擁有的欄位，非 CRUD 白名單）；時間點用整包設定的 `ib.lastSync`
- * ——那是**整次同步**的時間、不是這個帳戶的，所以文案講「IB 同步」而不是「這個帳戶的餘額算到」。
+ * 而「去匯一份對帳單」這條路對它們**永遠走不通**（IBKR 不出這種帳單）。
+ * 判準用 `ibCashCur`（IB 同步擁有的欄位，非 CRUD 白名單）。
+ *
+ * ⚠️⚠️ **文案只能講「上次同步」，不可以講「這筆餘額更新到那天」**（#454 r1 阻擋①）：
+ * `ib.lastSync` 是**每次同步結束無條件寫上去的**，而現金餘額在 Cash Report 缺失／不完整／
+ * 幣別不支援時是**刻意沿用舊值**（`lib/services/ib-sync.js` 的保守路線）。
+ * 兩者合起來＝「同步時間前進、餘額其實沒動」是**正常會發生的狀態**；
+ * 寫成「IB 同步更新至 X」就是拿一個沒更新的舊餘額冒充當天的數字——
+ * 那正是這支 PR 要消滅的那種謊話，只是換了個殼。
+ * 現在的說法「上次 IB 同步 X」是**上界**：這個數字不會比 X 更新，但可能更舊。
+ *
+ * ⚠️ 日期要換成**當地日曆日**（r1 阻擋②）：`lastSync` 是 ISO 瞬間，直接 `slice(0,10)` 取的是 UTC 日，
+ * 台北時間 08-14 凌晨 01:30 的同步會顯示成 08-13。而且備份還原進得來的字串不保證是真瞬間
+ * （`2026-02-30T…`），驗不過就只講來源、不編一個不存在的日期出來。
  *
  * @param {{balanceAsOf?: any, ibCashCur?: any}} [acc]
  * @param {string} [ibLastSync] `settings.ib.lastSync`（ISO 字串）；沒有就只講「由 IB 同步更新」
@@ -118,10 +150,9 @@ export const ACCOUNT_CURRENCIES = ['TWD', 'USD', 'GBP', 'JPY'];
  */
 export function balanceAsOfNote(acc, ibLastSync) {
   if (acc && acc.ibCashCur) {
-    const day = typeof ibLastSync === 'string' ? ibLastSync.slice(0, 10) : '';
-    const ok = /^\d{4}-\d{2}-\d{2}$/.test(day);
-    return { has: ok, date: ok ? day : '', source: 'ib',
-      text: ok ? `IB 同步更新至 ${day}` : '由 IB 同步更新（不是對帳單）' };
+    const day = localDay(ibLastSync);
+    return { has: !!day, date: day, source: 'ib',
+      text: day ? `上次 IB 同步 ${day}` : '由 IB 同步更新（不是對帳單）' };
   }
   const raw = acc && typeof acc.balanceAsOf === 'string' ? acc.balanceAsOf : '';
   // 過真實日曆：`2026-02-30` 格式對、日子不存在——回填後再讀出來對得上才算數。
