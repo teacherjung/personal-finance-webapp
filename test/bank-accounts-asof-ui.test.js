@@ -44,17 +44,28 @@ function renderRow(account, ibLastSync) {
 /** 餘額格裡那行小字的**完整內容**（逐字比對用）。
  *  ⚠️ r4 阻擋：原本用「包含正句＋列舉禁詞」把關，於是在正句後面**接一句**
  *  「—這筆餘額由 IB 同步」照樣全綠——列舉永遠補不完，所以這一族改成**整串等值**。 */
-function asOfSmallCount(html) {
-  return (html.match(/<small class="bank-balance-asof/gu) || []).length;   // 數**元素**，不是數 class 字串
-}
-
+/** 餘額格裡那行小字的**完整內容**（逐字比對用）。
+ *  ⚠️ 這支函式是三輪阻擋磨出來的，每一道都有名字：
+ *  r4「包含正句＋列舉禁詞」被接一段繞過 → 改整串等值；
+ *  r6 唯一性只放在兩題 → 收進本函式、所有呼叫者自動受保護；
+ *  r7 只認 class="…" 雙引號字面 → 改成**解析元素**：<small> 用單雙引號、任何屬性順序寫都認得，
+ *  而且**餘額格裡任何形狀的 <small> 也只准一個**（沒掛 class 的偷渡版一樣算）。
+ *  誠實劃界：擋的是等價寫法（引號／屬性順序／多 class），不追對抗性藏匿
+ *  （#452 已裁示不防刻意隱藏——那不是真實的失敗模式）。 */
 function asOfSmallText(html) {
-  const all = [...html.matchAll(/<small class="bank-balance-asof[^"]*">([\s\S]*?)<\/small>/gu)];
-  // ⚠️ r6 阻擋：唯一性斷言原本只放在一般帳戶那兩題，IB 分支多畫第二個 <small> 照樣全綠。
-  //    把「恰好一個」放進取值函式本身＝**每一條**呼叫它的路徑自動受保護，不用逐題記得加。
-  assert.equal(all.length, 1,
-    `那行小字必須恰好一個（實際 ${all.length} 個）——多畫一個＝同一格出現兩句話，哪句是真的？`);
-  return all[0][1];
+  const classesOf = (/** @type {string} */ attrs) => {
+    const m = /class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/u.exec(attrs);
+    return ((m && (m[1] ?? m[2] ?? m[3])) || '').split(/\s+/u);
+  };
+  const rowSmalls = [...html.matchAll(/<small\b([^>]*)>([\s\S]*?)<\/small>/gu)];
+  const noted = rowSmalls.filter((m) => classesOf(m[1]).includes('bank-balance-asof'));
+  assert.equal(noted.length, 1,
+    `整列掛 bank-balance-asof 的 <small> 必須恰好一個（實際 ${noted.length}）——單引號、屬性換序的寫法一樣要數到`);
+  const cellSmalls = [...balanceCell(html).matchAll(/<small\b[^>]*>([\s\S]*?)<\/small>/gu)];
+  assert.equal(cellSmalls.length, 1,
+    `餘額格裡任何形狀的 <small> 都只准一個（實際 ${cellSmalls.length}）——沒掛 class 的偷渡版一樣算`);
+  assert.equal(cellSmalls[0][1], noted[0][2], '餘額格裡那一個必須就是掛了樣式的那一個');
+  return noted[0][2];
 }
 
 /** 取出 `data-label="餘額"` 那一格的內容——「字有出現在這一列」不算數，要在**餘額格裡** */
@@ -80,8 +91,6 @@ const ACCOUNT = Object.freeze({ id: 'a1', name: '測試銀行 活存', currency:
 test('有現值參考日：餘額格裡出現「對帳單更新至 <日期>」，金額本身還在', () => {
   const html = renderRow({ ...ACCOUNT, balanceAsOf: '2026-05-31' });
   const cell = balanceCell(html);
-  assert.equal(asOfSmallCount(html), 1,
-    '整列只准出現一次——同一行字被畫兩次（例如又貼到幣別格）是壞掉，不是「至少有一個」');
   assert.match(cell, /TWD 12,345/, '金額不見了——旁註不可以擠掉主角');
   assert.equal(asOfSmallText(html), '對帳單更新至 2026-05-31', '★整串逐字（同上：只驗「包含」補不完）');
   assert.doesNotMatch(cell, /餘額截至|正確到/u, '不可以宣稱成「餘額截至/正確到某日」——手動改餘額不會動這個日期');
@@ -96,7 +105,6 @@ test('沒有現值參考日：餘額格裡明說「未由對帳單更新過」�
   assert.equal(asOfSmallText(html), '未由對帳單更新過',
     '★整串逐字：留白會被讀成「這個餘額是新的」，多接一句又會把來源講死');
   assert.match(cell, /bank-balance-asof-none/, '「沒有日期」要有自己的樣式鉤子，才能跟有日期的視覺分開');
-  assert.equal(asOfSmallCount(html), 1, '整列只准出現一次');
 });
 
 // ⚠️ 這題**不是**在證明髒值會從正常路徑流進來——寫入端 `lib/schema.js` 的 `'date'` 已經擋掉了
@@ -134,9 +142,9 @@ test('就地解釋接上去了：說明按鈕存在、綁得到，而且文案�
 });
 
 // ── IB 同步的現金帳戶（2026-08-14 預審抓到的阻擋級）─────────────────────────
-// `lib/services/ib-sync.js` 只寫 balance、不寫 balanceAsOf ⇒ 這些列會**永遠**顯示
-// 「未由對帳單更新過」，但那句對它們是錯的（它們根本不靠對帳單）；說明窗還叫使用者去匯對帳單，
-// 那條路對 IBKR 帳戶永遠走不通。這一族考題釘住「它們要走另一條文案」。
+// `lib/services/ib-sync.js` 只寫 balance、不寫 balanceAsOf ⇒ **沒有 IB 分支的話**這些列
+// 會被打成「未由對帳單更新過」——那句對它們是錯的（它們根本不靠對帳單），而「去匯一份對帳單」
+// 這條路對 IBKR 永遠走不通。這一族考題釘住「它們要走另一條文案」。
 const IB_ACCOUNT = Object.freeze({ ...ACCOUNT, name: 'IBKR 美元現金', currency: 'USD', ibCashCur: 'USD' });
 
 test('IB 現金帳戶：講「上次 IB 同步 <日期>」，不可以說成「未由對帳單更新過」', () => {
