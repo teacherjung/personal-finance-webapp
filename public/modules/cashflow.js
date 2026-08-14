@@ -91,7 +91,7 @@ export async function renderCashflow() {
 
       <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
         <div class="cashflow-ledger-head">
-          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span></div>
+          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span><button type="button" class="info-link" id="noteNamingInfo">「收支說明」是什麼？</button></div>
         </div>
         <div class="tbl-wrap cashflow-ledger">
           <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
@@ -102,6 +102,7 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
+  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 名詞統一（William 2026-08-14）：這欄混三種出身，就地講清楚
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
   byId('monthSel').onchange = (e) => { monthFilter = /** @type {any} */ (e.target).value; renderCashflow(); };
@@ -163,6 +164,17 @@ function subOptionsFor(flow, parent, cur = '') {
 // 上傳窗的連點鎖＝模組層級（不掛在按鈕元素上：月份／金流篩選會同路由重繪整頁、
 // 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
 let bankUploadBusy = false;
+
+// 就地解釋（使用者鐵則）：「收支說明」一欄混三種出身——不講清楚，銀行匯入的「整理後說明」
+// 會被當成帳單原文（其實摘要被翻譯過、備註被整理過；r1 證偽了「照抄」）。預覽窗同名同內容。
+function openNoteNamingInfo() {
+  openInfo('「收支說明」是什麼？', `
+    <p>這一欄的內容有三種來源（對帳單預覽窗的同名欄位＝同一份內容）：</p>
+    <p><strong>你手動記的帳</strong>：就是你自己打的描述（房租、鐘點費…）。</p>
+    <p><strong>銀行匯入的</strong>：app 把帳單上「摘要」「備註」兩欄<strong>整理成白話</strong>——銀行代碼翻成人話（例如「CD轉出」→「現金轉出」）、通路代號去掉。所以字面可能跟帳單不完全一樣，<strong>核對請用日期＋金額</strong>。</p>
+    <p><strong>你改過名的</strong>：顯示你取的名字（預覽窗會標「已學」），之後同一種交易自動套用；清空自訂名會回到 app 整理的預設說明。</p>
+  `, { size: 'md' });
+}
 
 function openBankUpload() {
   // 為什麼開窗前要先問模式、為什麼有連點鎖與切頁作廢＝runBankUpload／bankUploadGate 的註解
@@ -336,10 +348,10 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
     ${c.similar ? bankSimilarWarningHtml(c.similar) : ''}
-    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
+    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>收支說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
-      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String((x.learned && x.note) ? x.note : (x.summary || '')))}</td>
+      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String(x.note || x.summary || ''))}</td>
       <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
       <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
     </tr>`).join('')}</tbody></table></div>` : ''}
