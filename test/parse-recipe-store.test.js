@@ -266,7 +266,7 @@ test('預審G2｜配方票＝所見即所得：preview 後配方列被整個移�
 
 test('預審G1｜並發雙套用的身分守衛：互換後的舊「previous 救場」記帳不得把壞版換回 current', async () => {
   const dbObj = /** @type {any} */ ({ parseRecipes: [row({ current: brokenRecipe(), previous: goodRecipe() })] });
-  const staleUse = { id: 'rcp-1', usedVersion: /** @type {const} */ ('previous'), usedRecipe: goodRecipe() };
+  const staleUse = { id: 'rcp-1', usedVersion: /** @type {const} */ ('previous'), currentMatched: true, usedRecipe: goodRecipe() };   // 真回滾語意（current 中版面但失靈）
   recordRecipeApplied(dbObj, staleUse);   // 第一次：合法互換（previous=good 升 current）
   assert.equal(dbObj.parseRecipes[0].current.detail.headerIn, '存進金額', '前提：好版已升 current');
   recordRecipeApplied(dbObj, staleUse);   // 第二次（並發請求的舊決定）：previous 現在是壞版≠當時用的好版
@@ -319,4 +319,53 @@ test('預審B5｜「不開裸 GET」要有守門：crud 路由表沒有 GET /api
   }
   assert.ok(gets.includes('/api/dailyValues'), `對照組要在（路由表解析法沒壞）：${gets.join('，')}`);
   assert.ok(!gets.includes('/api/parseRecipes'), '★裸 GET 不可以長出來（skip 條件被拿掉＝這裡紅）');
+});
+
+// ---- Grok 合規掃描（#468）三發現的承重域 ----
+
+test('GrokGH1｜previous 服役≠回滾：current 沒中版面（別的版面家族）＝不互換、不動畢業計數', async () => {
+  // current＝別家版面（docAnchors 不同＝對 linesA 不中）；previous＝本版面好配方——P2-3 重生後的常態
+  const otherLayout = () => { const r = goodRecipe(); r.docAnchors = ['別家帳戶總覽', '別家往來紀錄']; return r; };
+  await seedDb({ recipes: [row({ current: otherLayout(), previous: goodRecipe(), graduateStreak: 5, graduated: true })] });
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA });
+  assert.equal(r.hit?.usedVersion, 'previous');
+  assert.equal(r.hit?.currentMatched, false, '★current 根本沒中版面');
+  assert.deepEqual(r.gateFailedIds, [], '★previous 正常服役＝這列不是疑似過期候選');
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(res.ok, true);
+  const after4 = await getDb();
+  const r1 = after4.parseRecipes?.[0];
+  assert.deepEqual(r1?.current?.docAnchors, ['別家帳戶總覽', '別家往來紀錄'], '★不互換（混月匯入不得讓兩版乒乓對倒）');
+  assert.equal(r1?.graduateStreak, 5, '★current 的畢業計數不動（它對自己的版面可能好好的）');
+  assert.equal(r1?.graduated, true);
+  assert.ok(r1?.lastUsedAt, 'previous 服役有記使用時間');
+});
+
+test('GrokGH1b｜只有 previous 中版面且失靈＝這列不進疑似名單（previous 本來就是備胎）', async () => {
+  const otherLayout = () => { const r = goodRecipe(); r.docAnchors = ['別家帳戶總覽', '別家往來紀錄']; return r; };
+  await seedDb({ recipes: [
+    row({ id: 'rcp-mixed', current: otherLayout(), previous: brokenRecipe() }),   // previous 中但拒解
+    row({ id: 'rcp-good' }),
+  ] });
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(res.ok, true);
+  assert.equal(/** @type {any} */ (res).recipeId, 'rcp-good');
+  const db = await getDb();
+  assert.equal((db.parseRecipes || []).find((x) => x.id === 'rcp-mixed')?.suspect, false,
+    '★current 沒中版面＝整列不得被打成疑似（那會冤枉健康的 current）');
+});
+
+test('GrokGH3｜無 id 的列不服役：對不到列的配方不可發票、不可記帳（備份牆也會濾）', async () => {
+  const noId = /** @type {any} */ (row()); delete noId.id;
+  await seedDb();
+  const db = await getDb();
+  db.parseRecipes = [noId];   // 記憶體內直塞（存檔會被必填牆濾掉——那正是第二段在驗的事）
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA });
+  assert.equal(r.hit, null, '★沒有身分＝不服役（票/計數/疑似全對不到列）');
+  // 備份牆：id 現在是必填＝殘缺列整筆濾除
+  const db2 = /** @type {any} */ (await getDb());
+  db2.parseRecipes = [noId, row()];
+  const out = sanitizeDbForWrite(db2, { mode: 'strip' });
+  assert.equal(out.parseRecipes.length, 1, '★缺 id＝濾除');
 });
