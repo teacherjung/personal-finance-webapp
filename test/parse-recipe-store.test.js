@@ -399,3 +399,22 @@ test('r1#2｜id 形狀與唯一：數字 id 過不了牆；重複 id 後到濾�
   recordRecipeApplied(dbObj, { id: '7', usedVersion: 'current', currentMatched: true, usedRecipe: goodRecipe() });
   assert.equal(dbObj.parseRecipes[0].graduateStreak, 0, '★String() 隱式轉換的碰撞已封死');
 });
+
+test('r2｜/api/import 重複 id＝驗證階段 400＋零寫入（使用者壞備份不可被誤報成 500 伺服器錯）', async () => {
+  await seedDb({ recipes: [row({ id: 'keep-me' })] });
+  const { coreRoutes } = await import('../lib/routes/core.js');
+  const express = (await import('express')).default;
+  const app = express(); app.use(express.json({ limit: '50mb' })); app.use(coreRoutes);
+  const http = await import('node:http');
+  const srv = http.createServer(app); await new Promise((ok) => srv.listen(0, ok)); srv.unref();   // 考題結束不等它＝事件圈可收
+  const port = /** @type {any} */ (srv.address()).port;
+  const dup = { settings: {}, parseRecipes: [row({ id: 'dup' }), row({ id: 'dup' })] };   // 備份 JSON 需含 settings
+  const res = await fetch(`http://127.0.0.1:${port}/api/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(dup) });
+  assert.equal(res.status, 400, '★驗證階段就擋（櫃檯 throw tripwire 留給內部漏驗證）');
+  const body = await res.json();
+  assert.ok(String(body.error).includes('重複 id'), `錯誤要點名原因：${body.error}`);
+  srv.close();
+  const db = await getDb();
+  assert.equal(db.parseRecipes?.length, 1, '★零寫入');
+  assert.equal(db.parseRecipes?.[0]?.id, 'keep-me');
+});
