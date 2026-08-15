@@ -30,12 +30,15 @@ const notRecognized = async () => { throw Object.assign(new Error('這份 PDF �
 /** 模板解析器接縫：密碼錯（絕不可落 AI）。 */
 const pwErr = async () => { throw Object.assign(new Error('PDF 密碼不對'), { status: 400, code: 'pdf_password' }); };
 /** 抽字接縫：AI 路線的文字來源（假傳輸不看內容，給個標記字串供「不落 log」考題辨識）。 */
-const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '合成帳單內文標記字串' }] }];
+// ⚠️ 接地檢查（裁示⑧a）生效後，抽字樁的「帳單原文」必須真的印有答案卷會用到的數字——
+// 這正是接地在驗的事（答案的每個金額都要在原文找得到）；獨立的接地考題另測「不在原文＝拒」。
+const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '合成帳單內文標記字串 1,000 500 1,500 999 3 300 100 200 777 999,999 888,888' }] }];
 
 /** 平衡的答案卷（強閘全過：餘額鏈 2 對＋末筆 1500 對概要 1500）。 */
 const goodAnswer = () => ({
   bank: '合成一銀', referenceDate: '2026-06-30',
   accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }],
+  totals: { txCount: null, totalOut: null, totalIn: null },   // 必填欄（缺席＝ai_bad_answer）；null＝帳單沒印
   accounts: [{ masked: '900200****3302', balance: 1500, currency: 'TWD', label: '活存', note: '' }],
   transactions: [
     { acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: 1000, summary: '轉帳存入', note: '薪資' },
@@ -45,7 +48,7 @@ const goodAnswer = () => ({
 });
 /** 弱閘答案卷（餘額全 null、無概要帳戶＝一對都驗不到）。 */
 const weakAnswer = () => ({
-  bank: '合成一銀', referenceDate: '2026-06-30', accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }], accounts: [],
+  bank: '合成一銀', referenceDate: '2026-06-30', accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }], totals: { txCount: null, totalOut: null, totalIn: null }, accounts: [],
   transactions: [{ acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: null, summary: '轉帳存入', note: '' }],
 });
 /** 對不上的答案卷（餘額鏈斷＝擋下型不一致）。 */
@@ -214,24 +217,24 @@ test('規矩③鑰匙｜未設定＝白話 400 指路設定頁、零 AI 呼叫',
   assert.equal(spy.calls.length, 0);
 });
 
-test('規矩④★6 強閘｜弱閘答案（升 Sonnet 後仍弱）＝拒收；模型階梯真的走了兩級', async () => {
+test('規矩④★6 強閘｜弱閘答案（升級後仍弱）＝拒收；模型階梯真的走了兩級', async () => {
   await seedDb(true);
   const spy = spyTransport([weakAnswer(), weakAnswer()]);
   await assert.rejects(
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
     (/** @type {any} */ e) => e.code === 'ai_weak_refused' && /不收/.test(e.message));
   assert.deepEqual(spy.calls.map((c) => c.model), [AI_BANK_MODELS.primary, AI_BANK_MODELS.escalation],
-    '★3 拍板：Haiku 先解、閘不過升 Sonnet 重試一次——不多不少');
+    '★3＋裁示⑥：primary 先解、閘不過升 escalation 重試一次——不多不少');
 });
 
 // ---- 模型階梯與端到端 ----
 
-test('階梯｜閘紅（不一致）→升 Sonnet 成功；快樂路徑回 engine/aiModel＋P1a 機構維度直接互扣', async () => {
+test('階梯｜閘紅（不一致）→升級成功；快樂路徑回 engine/aiModel＋P1a 機構維度直接互扣', async () => {
   await seedDb(true);
   const spy = spyTransport([unbalancedAnswer(), goodAnswer()]);
   const res = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract });
   assert.equal(res.engine, 'ai');
-  assert.equal(res.aiModel, AI_BANK_MODELS.escalation, '第一發閘紅＝升級那一發成功');
+  assert.equal(res.aiModel, AI_BANK_MODELS.escalation, '第一發閘紅＝升級（escalation）那一發成功');
   assert.equal(res.reconcile.level, 'strong', '★6：AI 路線只收強閘');
   assert.equal(res.rows[0].action, 'create');
   assert.equal(res.transactions.rows.length, 3);
@@ -239,7 +242,7 @@ test('階梯｜閘紅（不一致）→升 Sonnet 成功；快樂路徑回 engin
     'AI 報的機構直接餵 P1a 的 bank2 去重鍵——不同銀行同字樣不撞鍵');
 });
 
-test('階梯｜答案卷壞（ai_bad_answer）→升 Sonnet；服務類錯誤（ai_auth）＝不升級、一發就停', async () => {
+test('階梯｜答案卷壞（ai_bad_answer）→升級；服務類錯誤（ai_auth）＝不升級、一發就停', async () => {
   await seedDb(true);
   const s1 = spyTransport([{ bank: 123 }, goodAnswer()]);   // 第一發形狀壞
   const r1 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(s1), aiExtract: fakeExtract });
@@ -552,6 +555,8 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
   assert.equal(captured.init.headers['anthropic-version'], '2023-06-01');
   const body = JSON.parse(captured.init.body);
   assert.equal(body.model, AI_BANK_MODELS.primary);
+  assert.equal(body.max_tokens, 16000, '★r1#2：thinking 同池後的上限（8192＝Haiku 遺產，退回＝這裡紅）');
+  assert.equal(body.output_config?.effort, 'medium', '★r1#2：effort:medium（抄錄型起點；拿掉＝預設 high、思考開銷失控）');
   assert.ok(!('temperature' in body), 'r1#2：Sonnet 5 家族拒非預設 sampling 參數——一律不帶（格式由結構化輸出鎖）');
   assert.equal(body.output_config.format.type, 'json_schema', '固定答案卷＝結構化輸出（2026-08-12 官方文件核對）');
   assert.deepEqual(body.output_config.format.schema, AI_BANK_SCHEMA);
@@ -621,7 +626,7 @@ test('票匣｜r1#4 恢復邊界要蓋住 getDb 本身：儲存層讀不起來�
   const db = await getDb();
   db.accounts = [];
   await saveDb(db);                      // 先確保 kv 有 accounts 這一列可以弄壞
-  const id = issueAiTicket({ parsed: goodAnswer(), aiModel: 'claude-haiku-4-5-20251001' });
+  const id = issueAiTicket({ parsed: goodAnswer(), aiModel: 'claude-sonnet-5' });
 
   // 接縫：用第二條連線把 kv 的一列改成壞 JSON ⇒ load() 的 JSON.parse 拋錯 ⇒ getDb() 本身 reject
   //（不是閘擋、也不是 saveDb 失敗——那兩條路本來就在 try 內，測不出這一項）
@@ -713,4 +718,137 @@ test('答案卷驗收｜AI 給的 referenceDate 是壞日期＝整份拒收（�
   // null 是合法的（帳單真的沒印）——不可連它一起擋
   assert.equal(normalizeAiBank({ ...goodAnswer(), referenceDate: null }).referenceDate, null,
     '★null 是合法答案（帳單沒印），擋掉它就等於逼 AI 亂填');
+});
+
+// ---- P2-2a：裁示⑥ 模型配置＋裁示⑧ 接地檢查與合計欄 ----
+
+test('裁示⑥｜模型階梯＝Sonnet 預設、Opus 升級（Haiku 退出解析路徑）——常數釘住裁示', () => {
+  assert.equal(AI_BANK_MODELS.primary, 'claude-sonnet-5', '★解析預設 Sonnet（帳單解析的錯是安靜的錢錯、省小錢冒大險不划算）');
+  assert.equal(AI_BANK_MODELS.escalation, 'claude-opus-5', '★閘紅升 Opus 重試一次');
+});
+
+test('裁示⑧a 接地｜答案的金額不在帳單原文＝ai_bad_answer 走階梯；兩級都不接地＝照實擋', async () => {
+  const { assertAiBankGrounded } = await import('../lib/ai-parse.js');
+  // 純函式面：帳戶餘額/交易金額/交易餘額/totals 逐類
+  const grounded = normalizeAiBank({ ...goodAnswer(), totals: { txCount: 3, totalOut: 500, totalIn: null } });
+  assertAiBankGrounded(grounded, '原文 1,000 500 1,500 3');   // 不丟＝通過
+  for (const [patch, where] of [
+    [(/** @type {any} */ a) => { a.accounts[0].balance = 4321; }, 'accounts balance'],
+    [(/** @type {any} */ a) => { a.transactions[1].amount = 432; }, 'tx amount'],
+    [(/** @type {any} */ a) => { a.transactions[0].balance = 4321; }, 'tx balance'],
+    [(/** @type {any} */ a) => { a.totals = { txCount: null, totalOut: 4321, totalIn: null }; }, 'totals'],
+  ]) {
+    const raw = { ...goodAnswer(), totals: { txCount: null, totalOut: null, totalIn: null } };
+    patch(raw);
+    const p = normalizeAiBank(raw);
+    assert.throws(() => assertAiBankGrounded(p, '原文 1,000 500 1,500 3'),
+      (/** @type {any} */ e) => e.code === 'ai_bad_answer' && !/4321|432/.test(e.message),
+      `★${where} 不接地＝拒、訊息不回聲數字`);
+  }
+  // 端到端：兩級模型都回「金額不在原文」的自洽答案＝終局照實擋（接地把自洽錯變 bad_answer）
+  const evil = () => { const a = goodAnswer(); a.transactions[2].amount = 424242; a.transactions[2].balance = 424742; a.accounts[0].balance = 424742; return a; };
+  const spy = spyTransport([evil(), evil()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: fakeExtract }),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer' && !/424242/.test(e.message),
+    '★自洽但不接地＝兩級都擋、不外洩數字');
+  assert.equal(spy.calls.length, 2, '接地失敗＝ai_bad_answer＝有走階梯');
+});
+
+test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆——對不上＝ai_totals_mismatch、對上＝放行', async () => {
+  const withTotals = (/** @type {any} */ t) => { const a = goodAnswer(); a.totals = t; return a; };
+  // 對得上（且數字有接地）＝放行
+  const okSpy = spyTransport([withTotals({ txCount: 3, totalOut: 500, totalIn: 2000 })]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(okSpy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000' }] }] });
+  assert.equal(pv.engine, 'ai', '合計對上＝照常出預覽');
+  // 筆數對不上＝兩級都紅＝終局 ai_totals_mismatch（訊息不回聲數字）
+  const badCount = () => withTotals({ txCount: 4, totalOut: null, totalIn: null });
+  const spy2 = spyTransport([badCount(), badCount()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 4' }] }] }),
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/[0-9]{3}/.test(e.message),
+    '★筆數不符＝擋、訊息無數字');
+  assert.equal(spy2.calls.length, 2, '閘類失敗＝有走階梯');
+  // 支出合計對不上
+  const badOut = () => withTotals({ txCount: null, totalOut: 600, totalIn: null });
+  const spy3 = spyTransport([badOut(), badOut()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy3), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 600' }] }] }),
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch');
+  // 全 null（帳單沒印）＝誠實缺席、照舊放行
+  const nullSpy = spyTransport([withTotals({ txCount: null, totalOut: null, totalIn: null })]);
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(nullSpy), aiExtract: fakeExtract });
+  assert.equal(pv2.engine, 'ai', '沒印合計＝跳過檢查、不連坐');
+});
+
+test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別加總會誤擋正確答案（真實混幣版面形）', async () => {
+  // TWD＋USD 混合＋帳單印了「台幣段」合計 500：全列加總含 USD 50 ⇒ 若不跳過必 mismatch 誤擋
+  const mixedTotals = () => {
+    const a = goodAnswer();
+    a.accountCurrencies.push({ masked: '900700****7707', currency: 'USD' });
+    a.accounts.push({ masked: '900700****7707', balance: 250, currency: 'USD', label: '外幣活存', note: '' });
+    a.transactions.push(
+      { acctMasked: '900700****7707', date: '2026-06-04', direction: 'in', amount: 300, balance: 300, summary: '轉帳存入', note: '' },
+      { acctMasked: '900700****7707', date: '2026-06-05', direction: 'out', amount: 50, balance: 250, summary: '轉帳支取', note: '' },
+    );
+    a.totals = { txCount: 3, totalOut: 500, totalIn: 2000 };   // 台幣段的合計（全列加總對不上）
+    return a;
+  };
+  const spy = spyTransport([mixedTotals()]);
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 300 50 250' }] }] });
+  assert.equal(pv.engine, 'ai', '★混幣＝合計欄跳過（涵蓋範圍機械判不出）、不連坐擋死');
+  assert.equal(spy.calls.length, 1, '一發就過、沒有白燒升級');
+});
+
+test('預審r0#2｜接地 NFKC：全形數字帳單（１，５００）不得整版誤殺；去空白變體接回被拆格的金額', async () => {
+  const { assertAiBankGrounded } = await import('../lib/ai-parse.js');
+  const p = normalizeAiBank(goodAnswer());
+  // 全形數字＋全形逗號＝NFKC 後接地成功（不丟＝通過）
+  assertAiBankGrounded(p, '原文 １，０００ ５００ １，５００');
+  // 金額被抽字器拆進兩個 cell（linesToText 以空格相接）＝去空白變體接回
+  assertAiBankGrounded(p, '原文 1,00 0 500 1,500');
+  // 對照組：真的不在原文＝照樣拒（NFKC 沒有把檢查放空）
+  assert.throws(() => assertAiBankGrounded(p, '原文 １，０００ ５００'),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer', '★缺 1,500＝照拒');
+  // r1#3：拼接限同列——跨列相鄰（上列尾+下列頭）不算接地證據
+  assert.throws(() => assertAiBankGrounded(p, '原文 1,00\n0 500 1,500'),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer', '★跨列不拼（拆 cell 只發生在同一列）');
+});
+
+test('預審r0#3｜接地剔除日期 token：金額恰等於年份/民國日期片段＝不再誤接地', async () => {
+  const { assertAiBankGrounded } = await import('../lib/ai-parse.js');
+  const a = goodAnswer();
+  a.transactions = [{ acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 2026, balance: 1500, summary: '轉帳存入', note: '' }];
+  a.accounts[0].balance = 1500;
+  const p = normalizeAiBank(a);
+  // 原文只有日期 2026-06-30 與 1,500——「2026」只以日期片段存在＝剔除後不得接地
+  assert.throws(() => assertAiBankGrounded(p, '現值參考日 2026-06-30 餘額 1,500'),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /amount/.test(e.message), '★日期片段不算接地證據');
+  // 對照組：2,026 真的印在帳單上＝通過
+  assertAiBankGrounded(p, '現值參考日 2026-06-30 存入 2,026 餘額 1,500');
+});
+
+test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；totalIn 對不上＝ai_totals_mismatch；訊息全無數字', async () => {
+  const missing = () => { const a = goodAnswer(); delete a.totals; return a; };
+  assert.throws(() => normalizeAiBank(missing()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totals/.test(e.message),
+    '★必填欄漏交＝壞答案、不靜默降級');
+  // r1#1：物件在、單鍵缺席＝照拒（own-property 逐欄必填，不靜默補 null）
+  const missingKey = () => { const a = goodAnswer(); a.totals = /** @type {any} */ ({ txCount: null, totalOut: null }); return a; };
+  assert.throws(() => normalizeAiBank(missingKey()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totalIn/.test(e.message),
+    '★單鍵缺席＝壞答案（必填不是口號）');
+  const badIn = () => { const a = goodAnswer(); a.totals = { txCount: null, totalOut: null, totalIn: 1900 }; return a; };
+  const spy = spyTransport([badIn(), badIn()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 1,900' }] }] }),
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/\d/.test(e.message),
+    '★存入合計不符＝擋（三欄各自有刀）、訊息一個數字都不可有');
+});
+
+test('預審r0#5｜真引擎工廠的模型接線＝AI_BANK_MODELS（裁示⑥不能只釘常數、要釘到出口）；提示詞規則 8 釘樁', async () => {
+  const engine = makeAnthropicBankEngine('sk-ant-synthetic-test-key');
+  assert.deepEqual(engine.models, AI_BANK_MODELS, '★正式路徑的階梯＝同一份常數（硬編舊階梯＝這裡紅）');
+  const sys = buildBankSystem();
+  for (const phrase of ['絕不自己加總', '印負號＝去號', '三欄一律填 null']) {
+    assert.ok(sys.includes(phrase), `★提示詞規則 8 必含「${phrase}」`);
+  }
 });
