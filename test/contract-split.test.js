@@ -521,6 +521,7 @@ const MANIFEST = {
       '匯入對帳閘',
       '匯入密碼池',
       'AI 解析路線 P1b',
+      '配方快取 P2',
     ],
     exempt: [],
     files: [
@@ -538,6 +539,8 @@ const MANIFEST = {
       'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
       'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
       'test/ai-gate-interception.test.js',   // P1b-3 攔截率：故障注入量閘的條件攔截率，與計畫 §八 互扣
+      // P2-1 配方快取（2026-08-15，格式 A 拍板）：配方純模組（驗證器/引擎/出生驗收）＋考題
+      'lib/parse-recipe.js', 'test/parse-recipe.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
