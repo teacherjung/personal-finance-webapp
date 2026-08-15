@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RECIPE_FORMAT_VERSION, RECIPE_LIMITS, validateRecipeStrict, recipeMatches, parseWithRecipe, recipeReproduces,
+  validateRecipeAgainstStatement,
 } from '../lib/parse-recipe.js';
 import { parseBankSummary, parseBankDetail } from '../lib/bank-statement.js';
 
@@ -464,4 +465,113 @@ test('引擎｜參考日只掃錨點之後：錨點前的日期不撿；錨點�
   // 期間錨點行夾了列印日（第三個日期）：不確定哪兩個是期間＝null（同 AI 規則 1a）
   const three = mk([[47, '帳務期間'], [150, '115/05/01'], [220, '~'], [260, '115/05/31'], [340, '列印日 115/06/15']], 'anchored-period-end');
   assert.equal(three.referenceDate, null, '★恰好兩個日期才敢認是期間——第三個日期＝不確定＝null');
+});
+
+// ---- Codex r1 的四條阻擋：逐條釘成回歸考題 ----
+
+test('驗證器｜逐槽毒化掃蕩（r1#4：headerNote 漏驗一刀假綠）——每一個文字槽都要過零內容檢', () => {
+  // r1 實測：拔掉 headerNote 的 checkSlot、23 題照綠。逐槽掃蕩＝把「哪個槽漏接檢查」整類關掉。
+  const SLOT_SETTERS = [
+    ['bank', r => { r.bank = '4444'; }],
+    ['docAnchors[1]', r => { r.docAnchors[1] = '4444'; }],
+    ['refDate.anchor', r => { r.refDate.anchor = '4444'; }],
+    ['sections[0].anchor', r => { r.summary.sections[0].anchor = '4444'; }],
+    ['sections[1].anchor', r => { r.summary.sections[1].anchor = '4444'; }],
+    ['endAnchor', r => { r.summary.endAnchor = '4444'; }],
+    ['headerOut', r => { r.detail.headerOut = '4444'; }],
+    ['headerIn', r => { r.detail.headerIn = '4444'; }],
+    ['headerBalance', r => { r.detail.headerBalance = '4444'; }],
+    ['headerNote', r => { r.detail.headerNote = '4444'; }],
+    ['headerIgnore[0]', r => { r.detail.headerIgnore = ['4444']; }],
+  ];
+  for (const [name, poison] of SLOT_SETTERS) {
+    const r = recipeA(); poison(r);
+    assert.ok(validateRecipeStrict(r).length > 0, `★槽位 ${name} 沒過零內容檢＝可走私帳單內容`);
+  }
+});
+
+test('引擎｜欄序反轉（r1#1）：存入欄在支出欄左側的版面——主路、退路、下界都不可假設「支出在左」', () => {
+  const rev = { ...recipeA(), detail: { rowIdent: 'acct-date', headerOut: '提領金額', headerIn: '存進金額', headerBalance: '結存餘額', headerNote: null, headerIgnore: [] } };
+  const doc = [
+    L(300, [[47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '存進金額'], [331, '提領金額'], [396, '結存餘額']]),   // ★存進在左
+    // 主路：右緣 290+12=302 落在 [存進272, 提領331) → in
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [290, 12, '$500']]),
+    // 退路：右緣 250+10=260 < 272 分不出；左緣 250 < 中線 301.5＝**靠左那欄＝存進** → in
+    //（r1 實測：原版下界 xOut-60=271 直接把這列丟掉＝首筆入帳無聲消失、強閘照樣放行）
+    L(90, [[53, 0, '900100****3301'], [124, 0, '2026/06/12'], [250, 10, '$700']]),
+    // 主路：右緣 340+20=360 落在 [提領331, 結存396) → out
+    L(80, [[53, 0, '900100****3301'], [124, 0, '2026/06/13'], [340, 20, '$200']]),
+  ];
+  const p = parseWithRecipe(doc, rev);
+  assert.deepEqual(p.transactions.map(t => [t.direction, t.amount]),
+    [['in', 500], ['in', 700], ['out', 200]],
+    '★三列都在：退路不丟列、中線判向跟著欄序（左半＝存進不是支出）');
+});
+
+test('引擎｜餘額右側忽略欄（r1#1）：序號欄在餘額欄右邊——序號不可被當成餘額', () => {
+  const ig = { ...recipeA(), detail: { ...recipeA().detail, headerIgnore: ['流水號'], headerNote: null } };
+  const p = parseWithRecipe([
+    L(300, [[47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額'], [450, '流水號']]),
+    // 餘額格在 [396,450)、序號格在 [450,∞)：原版餘額分支先吞所有 x≥xBal ⇒ 0000007 變餘額 7
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$500'], [400, 0, '$730'], [455, 0, '0000007']]),
+    L(90, [[53, 0, '900100****3301'], [124, 0, '2026/06/12'], [349, 40, '$100'], [455, 0, '0000008']]),   // 這列餘額真的空白
+  ], ig);
+  assert.equal(p.transactions[0].balance, 730, '★餘額取餘額欄的 730，不是序號 7');
+  assert.equal(p.transactions[1].balance, null, '★餘額空白就是 null——序號不可冒充餘額');
+});
+
+test('出生驗收｜同遮罩多帳戶（r1#3）：multiset 一對一——順序互換＝ok、其中一筆錯值＝要抓到', () => {
+  // 外幣綜合帳戶＝同一個遮罩帳號掛多幣別（計畫文件明認的真實形狀）；手構 parsed 物件測純函式。
+  const mk = () => ({
+    bank: '合成銀行', referenceDate: null,
+    accounts: [
+      { suffix: '363', masked: '900300****363', balance: 100, currency: 'JPY', label: '外幣活儲', note: '' },
+      { suffix: '363', masked: '900300****363', balance: 55, currency: 'USD', label: '外幣活儲', note: '' },
+    ],
+    accountCurrency: { '900300****363': 'USD' },
+    transactions: [{ acctSuffix: '363', acctMasked: '900300****363', date: '2026-06-11', summary: '合成', direction: 'in', amount: 1, balance: null, note: '' }],
+  });
+  const swapped = mk(); swapped.accounts.reverse();
+  assert.equal(recipeReproduces(mk(), swapped).ok, true, '★同遮罩兩幣別只換順序＝不算走樣');
+  const oneWrong = mk(); oneWrong.accounts[0].balance = 999;
+  const r = recipeReproduces(mk(), oneWrong);
+  assert.equal(r.ok, false, '★r1 實測形：Map last-wins 會讓第一筆錯值被第二筆蓋掉＝假通過');
+  assert.ok(!String(r.diff).includes('900300'), '★diff 不帶帳號');
+  const missing = mk(); missing.accounts = [missing.accounts[0], { ...missing.accounts[0] }];
+  assert.equal(recipeReproduces(mk(), missing).ok, false, '★同遮罩組組成不同（JPY×2 vs JPY+USD）＝走樣');
+});
+
+test('出生把關｜配方對帳單（r1#2）：無數字的交易內文被誤選成錨點——等值約束＋位置約束都要擋', () => {
+  // r1 實測形：把收款人文字「合成收款人甲」放進 docAnchors——字元檢查（數字/星號/直線）全過。
+  const doc = [
+    ...linesA().slice(0, 10),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成收款人甲'], [289, 30, '$500'], [418, 0, '$730']]),
+  ];
+  const parsed = parseWithRecipe(doc, recipeA());
+  assert.deepEqual(validateRecipeAgainstStatement(doc, recipeA(), parsed), [], '★正常配方（錨點都來自版面）通過');
+  // ①等值約束：錨點＝某筆交易的摘要
+  const evil1 = recipeA(); evil1.docAnchors[1] = '合成收款人甲';
+  const errs1 = validateRecipeAgainstStatement(doc, evil1, parsed);
+  assert.ok(errs1.length > 0, '★錨點與交易摘要相等＝拒收');
+  assert.ok(errs1.every(e => !e.includes('合成收款人甲')), '★錯誤訊息不回聲（那正是交易內文）');
+  // ②位置約束：交易列上的其他文字（不等於任何完整欄值、但住在交易列）也不可當錨點
+  const doc2 = [...doc.slice(0, -1),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成收款'], [230, 0, '人乙註記'], [289, 30, '$500'], [418, 0, '$730']])];
+  const parsed2 = parseWithRecipe(doc2, recipeA());
+  const evil2 = recipeA(); evil2.docAnchors[1] = '人乙註記';
+  assert.ok(validateRecipeAgainstStatement(doc2, evil2, parsed2).length > 0, '★錨點命中交易列＝拒收（版面錨點必須來自版面）');
+  // ①的獨自承重區：帳戶備註住在**概要區**（不是交易列）——位置約束管不到、只有等值約束擋得住
+  const evil3 = recipeA(); evil3.docAnchors[1] = '主要戶';
+  assert.ok(validateRecipeAgainstStatement(doc, evil3, parsed).length > 0,
+    '★錨點＝帳戶備註（概要區列、非交易列）＝拒收——這一形只有等值約束在守');
+  // 驗證器與位置約束是兩道不同的門：字元檢查對這兩形都無感（前提自檢）
+  assert.deepEqual(validateRecipeStrict(evil1), [], '前提自檢：字元檢查真的擋不住——所以才需要第二道');
 });
