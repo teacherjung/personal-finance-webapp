@@ -995,3 +995,62 @@ test('模板凍結｜parseBankDetail 對負餘額照舊回 null（r10#3：真呼
   assert.equal(txs.length, 1);
   assert.equal(txs[0].balance, null, '★台新模板不收負餘額＝凍結行為——這題直接走 parseBankDetail、模板呼叫端偷帶 allowNegative 就紅');
 });
+
+// ---- Codex r11：$ 文字冒充金額、-$100、currency 白名單、通用機構詞 ----
+
+test('引擎｜含 $ 的摘要文字不冒充金額（r11#1）：「訂單 $100」是文字、$500 才是支出', () => {
+  // ⚠️ 幾何要避開忽略/備註區間（那些分支會先吞掉文字格＝嚴格檢查沒被走到＝刀測不出，
+  // 62/63 號刀第一版就是這樣活下來的）——版面不設忽略欄、文字格直接落在金額窗內
+  const noIgn = { ...recipeA(), detail: { rowIdent: 'acct-date', headerOut: '提領金額', headerIn: '存進金額', headerBalance: '結存餘額', headerNote: null, headerIgnore: [] } };
+  const header = L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]);
+  const shell = [...linesA().slice(0, 9), header];
+  // 主路：「訂單 $100」右緣 310 落在提領窗 [272,331)、排在真支出 $500 前面——
+  // 冒充版會把它當 outCell（偽支出 100）
+  const p = parseWithRecipe([
+    ...shell,
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [280, 30, '訂單 $100'], [300, 25, '$500'], [418, 0, '$730']]),
+  ], noIgn);
+  assert.deepEqual(p.transactions.map(t => [t.direction, t.amount]), [['out', 500]],
+    '★金額窗只收整格可解的嚴格金額——夾字的 $ 格冒充＝偽支出 100 且強閘照綠（r11 實測形）');
+  // 退路同一把尺：夾字 $ 格右緣分不出欄（260 < 272）＝落退路——不可被撈成金額
+  const p2 = parseWithRecipe([
+    ...shell,
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [250, 10, '訂單 $100']]),
+    L(90, [[53, 0, '900100****3301'], [124, 0, '2026/06/12'], [349, 40, '$500'], [418, 0, '$1,730']]),
+  ], noIgn);
+  assert.equal(p2.transactions.length, 1, '★退路也不收夾字 $ 格');
+});
+
+test('引擎｜負餘額三種印法（r11#2）：-100／$-100／-$100 都收；雙負號看不懂回 null', () => {
+  for (const [txt, want] of [['-100', -100], ['$-100', -100], ['-$100', -100], ['100', 100], ['$100', 100]]) {
+    assert.deepEqual(splitAmount({ x: 0, w: 0, s: txt }, true), { amt: want, rest: '' }, `★${txt}`);
+  }
+  assert.equal(splitAmount({ x: 0, w: 0, s: '-$-100' }, true), null, '雙負號＝看不懂');
+  // date-first 端到端：-$100 的列要在
+  const doc = [
+    ...linesB().slice(0, 6),
+    L(180, [[60, 0, '115/05/02'], [150, 0, '合成扣款'], [289, 30, '8,100'], [414, 0, '-$100']]),
+    L(170, [[60, 0, '115/05/10'], [150, 0, '合成入帳'], [349, 40, '300'], [414, 0, '200']]),
+  ];
+  const p = parseWithRecipe(doc, recipeB());
+  assert.equal(p.transactions.length, 2, '★-$100 的列不可整筆消失');
+  assert.equal(p.transactions[0].balance, -100);
+});
+
+test('驗證器｜currency 白名單（r11#3）：任意三碼大寫是單槽直通路——「ATM」拒收、支援清單內照過', () => {
+  const evil = recipeA(); evil.summary.sections[1] = { anchor: '外幣總覽', currency: 'ATM' };
+  assert.ok(validateRecipeStrict(evil).length > 0, '★「ATM」不是幣別是內文——白名單拒收');
+  const ok = recipeA(); ok.summary.sections[1] = { anchor: '外幣總覽', currency: 'USD' };
+  assert.deepEqual(validateRecipeStrict(ok), [], 'USD 在支援清單＝照過');
+});
+
+test('驗證器｜bank 不可只有通用機構詞（r11#4）：「銀行」哪一家都匹配＝機構戳與跨行去重全毀', () => {
+  for (const generic of ['銀行', '商業銀行', '郵局', '銀行分行']) {
+    const r = recipeA(); r.bank = generic;
+    assert.ok(validateRecipeStrict(r).length > 0, `★bank='${generic}'：拒收`);
+  }
+  for (const okName of ['台新', '合成銀行', '合成郵局']) {
+    const r = recipeA(); r.bank = okName;
+    assert.deepEqual(validateRecipeStrict(r), [], `bank='${okName}' 有可辨識的字＝照過`);
+  }
+});
