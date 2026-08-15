@@ -33,9 +33,15 @@
 //   ・**擋不住**：註解說的內容對不對。它只驗「指路指得到東西」，不驗「指對地方」。
 //   ・**不做可達性分析**：語法上是 `test(…)` 就算一題，不管它在不在會執行的分支裡、
 //     `test` 這個名字有沒有被區域變數遮蔽。要擋那一類得做作用域分析，**未做**。
-//     （本 repo 的 `test` 一律直接 import 自 `node:test`，由下面「命名慣例」那題盯著。）
+//     ⚠️ 也**不看 `test` 這個名字是從哪裡來的**：`import { it as test }`、區域函式蓋掉它，
+//     本閘都看不出來。（我上一版在這裡寫「由命名慣例那題盯著」——那題只看 `it`／`describe`，
+//     根本不管 import 來源，是一句撐不住的保證。Grok 預審 2026-08-16 抓到。）
 //   ・**動態題名只比對得到靜態片段**：`test(\`… ${x} …\`)` 的插值處會換成一個哨兵字串，
 //     關鍵字**不可以跨過插值**（跨過就會被判 0 題——那是刻意的，不是漏抓）。
+//   ・**子題（`await t.test('…')`）不進索引**：那種寫法的 callee 是 `t.test`，而「看到 `X.test(…)`
+//     就當子題」這個判準會誤殺**全樹 76 處正規式的 `.test()`**（實測數字），代價遠大於收益。
+//     ⇒ 刻意不做。後果是**吵著紅**（用記號指子題會被判 0 題），不是靜靜放行——這一族由
+//     題名關鍵字「子題不進索引」那題釘住現況，改的人看得到這個決定。
 //   ・只掃 `test/` 底下第一層的 `*.test.js`（跟 `test/entry-guard.test.js` 掃 `scripts/` 同一個作法）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,6 +72,31 @@ const REF_RE = () => new RegExp(`${MARKER}[「]([^」]+)[」]`, 'g');
 const HOLE = '<<INTERPOLATION>>';
 
 /**
+ * node:test 裡「會定義一個題」的子命令。**刻意列舉，而且列舉的是別人的 API**（不是我的寫法）：
+ * 漏掉一個的後果是那些題沒進索引 ⇒ 指向它們的引用被判 0 題＝**吵著紅**，不是靜靜放行。
+ */
+const SUBTEST_MEMBERS = new Set(['skip', 'only', 'todo']);
+
+/**
+ * 這個 callee 是不是在「定義一題」。
+ *
+ * ⚠️⚠️ **不可以只看 `object.name === 'test'`**（Grok 預審 2026-08-16 抓到，實測）：那樣會把
+ *    `items.filter((test) => test.includes('foo'))` 算成題名 `'foo'`、
+ *    `for (const test of a) test.startsWith('/')` 算成題名 `'/'`。兩種後果都真的發生：
+ *    ・**假綠**：註解指「foo」指不到任何真題，卻因為那個假題名而 hits=1 放行。
+ *    ・**誤殺**：真題本來獨特，多一個同字的假題名就把 hits 拉成 2。
+ *    ⇒ 這正是我在 `it`／`describe` 那條修過的病，卻**留在題名這條路上**——同一支 PR 裡犯兩次。
+ *
+ * @param {any} c CallExpression 的 callee
+ */
+function isTestDefinition(c) {
+  if (c?.type === 'Identifier') return c.name === 'test';
+  return c?.type === 'MemberExpression'
+    && c.object?.type === 'Identifier' && c.object.name === 'test'
+    && c.property?.type === 'Identifier' && SUBTEST_MEMBERS.has(c.property.name);
+}
+
+/**
  * 用 parser 取出這一支檔案裡**真正的** `test(…)` 題名與**所有註解文字**。
  *
  * ⚠️ **解析不了要吵著紅**，不可以回空的——回空的話那支檔案的所有引用都會「命中 0 題」，
@@ -90,14 +121,12 @@ export function parseTestFile(source) {
     if (!node || typeof node !== 'object') return;
     if (node.type === 'CallExpression') {
       const c = node.callee;
-      const name = c?.type === 'Identifier' ? c.name
-        : (c?.type === 'MemberExpression' && c.object?.type === 'Identifier' ? c.object.name : null);
       // ⚠️ **命名慣例只認直接呼叫**（`it(…)`／`describe(…)`），不含 `it.foo()`：
       //    我第一版把 MemberExpression 也算進去，於是 `for (const it of items) it.startsWith('/')`
       //    被判成「用了 it()」＝**誤殺**（`test/hosted-auth.test.js` 實際踩到）。
       //    ⚠️ 劃界：`it.skip(…)` 這種寫法抓不到——射程換精確度，刻意的取捨。
       if (c?.type === 'Identifier' && (c.name === 'it' || c.name === 'describe')) calleeNames.add(c.name);
-      if (name === 'test') {
+      if (isTestDefinition(c)) {
         const a = node.arguments[0];
         if (a?.type === 'Literal' && typeof a.value === 'string') titles.push(a.value);
         else if (a?.type === 'TemplateLiteral') {
@@ -133,6 +162,31 @@ export function badTestRefs(source) {
     if (hits !== 1) bad.push({ keyword, hits });
   }
   return bad;
+}
+
+/** 正常文字檔本來就會有的三個控制字元：tab／換行／歸位。 */
+const ALLOWED_CONTROL = new Set([0x09, 0x0a, 0x0d]);
+
+/**
+ * 找出第一個不該出現的控制字元，回它的位置；沒有就回 -1。
+ *
+ * ⚠️ **刻意不用正規式**：直接寫跳脫序列很容易把真正的控制字元寫進檔案（我寫這一題的第一版
+ *    就這樣，當場被自己這一題抓到）；改用字串組又會撞到 eslint 的 `no-control-regex`
+ *    （它連 `new RegExp` 的字串參數一起管）。逐字檢查碼位最直白，也沒有這些坑。
+ *
+ * ⚠️ **抽成可匯出的函式**是為了讓它自己有誘餌題（Grok 預審 2026-08-16 抓到）：它原本包在
+ *    掃描題裡，而修掉既有的那顆 NUL 之後全樹本來就乾淨 ⇒ **把它改成永遠回 -1，掃描題照樣綠**。
+ *    那就是「護欄什麼都沒做卻回報通過」，本專案認過的病型。
+ *
+ * @param {string} text
+ * @returns {number} 位置，或 -1
+ */
+export function firstControl(text) {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 && !ALLOWED_CONTROL.has(code)) return i;
+  }
+  return -1;
 }
 
 /** 本檔掃的考題檔清單（`test/` 第一層的 `*.test.js`）。 */
@@ -239,6 +293,46 @@ test('⭐ 全部考題檔：註解裡帶記號的引用都要恰好命中一題'
     + '（AGENTS.md 鐵則 10：不寫會漂的序數，點名 file:line 或題名關鍵字。）');
 });
 
+test('⭐ test.xxx(字串) 不可以一律當成題名（Grok 預審抓到：同一個病我在 it 那條修了、這條沒修）', () => {
+  // ⚠️ 兩個後果都是實測出來的，不是推論。
+  assert.deepEqual(parseTestFile("test.skip('真子題', () => {});").titles, ['真子題'],
+    'node:test 的 test.skip 是真的在定義一題，抽不到會讓指向它的引用假紅');
+  assert.deepEqual(parseTestFile("const r = a.filter((test) => test.includes('foo'));").titles, [],
+    '`test` 是參數名時，`test.includes(\'foo\')` 被當成題名 \'foo\' ⇒ 註解指「foo」會假綠放行');
+  assert.deepEqual(parseTestFile("for (const test of a) if (test.startsWith('/')) b.push(test);").titles, [],
+    '同上：迴圈變數叫 test 是完全正常的寫法');
+  assert.deepEqual(parseTestFile("test.beforeEach('setup', fn);").titles, [],
+    '不是定義題目的子命令不該算（清單＝SUBTEST_MEMBERS）');
+
+  // 反面：真的假綠與誤殺各演一次
+  const M = MARKER;
+  assert.deepEqual(badTestRefs(`const r = a.filter((test) => test.includes('foo'));\n// ${M}「foo」`),
+    [{ keyword: 'foo', hits: 0 }], '假題名讓「指不到任何真題」的引用放行＝假綠');
+  assert.deepEqual(badTestRefs(`test('獨特 foo', () => {});\nconst r = a.filter((test) => test.includes('獨特 foo'));\n// ${M}「獨特 foo」`),
+    [], '真題被同字的假題名擠成 2 題＝誤殺');
+});
+
+test('⭐ 子題不進索引（誠實劃界：刻意的，因為判準會誤殺全樹的正規式 .test()）', () => {
+  // ⚠️ `await t.test('子題')` 的 callee 是 `t.test`。要抓它就得認「任何 X.test(…)」，
+  //    而全樹有 76 處正規式的 `.test()`（實測）——那個判準會把它們全部誤判成題名。
+  //    ⇒ 刻意不做。這一題釘住**現況**，讓改的人看得到這個決定，而不是以為它壞了。
+  //    後果是吵著紅（用記號指子題會被判 0 題），不是靜靜放行。
+  assert.deepEqual(parseTestFile("test('父', async (t) => { await t.test('子題', () => {}); });").titles, ['父'],
+    '子題現在進索引了 ⇒ 上面那段劃界要改寫，並確認正規式的 .test() 沒有被誤殺');
+});
+
+test('⭐ 控制字元的偵測本身要有效（自己造誘餌，不然掃描題只證明「現況乾淨」）', () => {
+  // ⚠️ Grok 預審抓到：`firstControl` 原本包在掃描題裡，而全樹本來就乾淨
+  //    ⇒ 把它改成永遠回 -1，掃描題照樣綠。閘宣稱在守「不可以有控制字元」，
+  //    考題卻只證明「現在沒掃到」，不證明「掃得到」。
+  // ⚠️ 誘餌用 String.fromCharCode 組出來——直接打字面就會把控制字元寫進本檔（第一版的原罪）。
+  assert.equal(firstControl('乾淨的文字'), -1, '正常文字被誤判成有控制字元＝整批誤殺');
+  assert.equal(firstControl('a\tb\nc\r'), -1, 'tab／換行／歸位是正常文字檔就有的，不可以誤判');
+  assert.equal(firstControl(`a${String.fromCharCode(0)}b`), 1, 'NUL 沒被抓到——那正是讓 git 判二進位的那一顆');
+  assert.equal(firstControl(`x${String.fromCharCode(1)}`), 1, 'U+0001 沒被抓到');
+  assert.equal(firstControl(`${String.fromCharCode(0x1f)}`), 0, 'U+001F 沒被抓到（範圍上界）');
+});
+
 test('⭐ it()／describe() 的偵測本身要有效（自己造誘餌，不然掃描題是空的）', () => {
   // ⚠️ 為什麼非有這一題不可：現在整個 repo 一個 `it()` 都沒有，所以**把偵測掏空，掃描那題照樣綠**
   //    （實測過）——那一題自己證明不了偵測還活著。本專案認過這個病型：護欄什麼都沒做卻回報通過。
@@ -277,18 +371,6 @@ test('⭐ 考題檔不可以含控制字元（含了 git 就當它是二進位�
   //    那支「防止註解指錯地方」的閘自己有兩輪是沒有人審得了的。
   //    ⇒ 一個看不見的位元組就能讓一份檔案退出審查制度，這值得一道閘。
   //    ⚠️ 射程：只管 `test/` 第一層的考題檔（本閘掃的那一族）。別處由別人管。
-  // ⚠️ **刻意不用正規式**：直接寫跳脫序列很容易把真正的控制字元寫進檔案
-  //    （我寫這一題的第一版就這樣，當場被自己這一題抓到）；改用字串組又會撞到 eslint 的
-  //    `no-control-regex`（它連 `new RegExp` 的字串參數一起管）。逐字檢查碼位最直白，也沒有這些坑。
-  //    允許的控制字元只有 tab／換行／歸位——那三個是正常文字檔本來就會有的。
-  const ALLOWED = new Set([0x09, 0x0a, 0x0d]);
-  const firstControl = (/** @type {string} */ text) => {
-    for (let i = 0; i < text.length; i++) {
-      const code = text.charCodeAt(i);
-      if (code < 0x20 && !ALLOWED.has(code)) return i;
-    }
-    return -1;
-  };
   /** @type {string[]} */
   const dirty = [];
   for (const f of testFiles()) {
