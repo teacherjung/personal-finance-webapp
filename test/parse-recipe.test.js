@@ -569,7 +569,9 @@ test('出生把關｜配方對帳單（r1#2）：無數字的交易內文被誤�
     L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成收款'], [230, 0, '人乙註記'], [289, 30, '$500'], [418, 0, '$730']])];
   const parsed2 = parseWithRecipe(doc2, recipeA());
   const evil2 = recipeA(); evil2.docAnchors[1] = '人乙註記';
-  assert.ok(validateRecipeAgainstStatement(doc2, evil2, parsed2).length > 0, '★錨點命中交易列＝拒收（版面錨點必須來自版面）');
+  const errsPos = validateRecipeAgainstStatement(doc2, evil2, parsed2);
+  assert.ok(errsPos.length > 0, '★錨點命中交易列＝拒收（版面錨點必須來自版面）');
+  assert.ok(errsPos.every(e => !e.includes('人乙註記')), '★位置分支的錯誤訊息也不回聲（r4#3b：那正是疑似內文）');
   // ①的獨自承重區：帳戶備註住在**概要區**（不是交易列）——位置約束管不到、只有等值約束擋得住
   const evil3 = recipeA(); evil3.docAnchors[1] = '主要戶';
   assert.ok(validateRecipeAgainstStatement(doc, evil3, parsed).length > 0,
@@ -694,4 +696,56 @@ test('引擎｜錨點是字面不是樣式（r3#4：零正則的行為守門）�
     '★「往來(紀)錄」≠「往來紀錄」——被當樣式解讀（括號成群組）就會 match＝配方偷渡了正則語意');
   const doc = linesA(); doc[8] = L(140, [[47, '往來(紀)錄明細']]);
   assert.equal(recipeMatches(doc, r), true, '★字面出現＝match（跳脫正確、不誤殺真含括號的版面）');
+});
+
+// ---- Codex r4：冒名交易兩洞＋零正則全族行為釘 ----
+
+test('引擎｜date-first 交易列必須有餘額格（r4#1：日期開頭的利率資訊列＝偽交易、又落強閘首末筆盲區）', () => {
+  const doc = [
+    ...linesB(),
+    L(150, [[60, 0, '115/06/01'], [150, 0, '合成利率資訊'], [349, 40, '50']]),   // 日期形狀＋數字、無餘額
+  ];
+  const p = parseWithRecipe(doc, recipeB());
+  assert.equal(p.transactions.length, 2, '★資訊列不可變成第三筆交易——偽列無餘額＝末筆餘額檢查退 skip、閘攔不住');
+  assert.deepEqual(p.transactions.map(t => t.amount), [1200, 2000]);
+});
+
+test('引擎｜備註欄夾在金額欄之間（r4#2）：數字型備註不可被當成金額', () => {
+  const rec = { ...recipeA(), detail: { rowIdent: 'acct-date', headerOut: '提領金額', headerIn: '存進金額', headerBalance: '結存餘額', headerNote: '附記', headerIgnore: [] } };
+  const p = parseWithRecipe([
+    L(300, [[47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [310, '附記'], [331, '存進金額'], [396, '結存餘額']]),
+    // 備註欄的數字 777（右緣 322 落在 [附記310, 存進331)）＋真存入 $500（右緣 355 落在存進窗）
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [312, 10, '777'], [335, 20, '$500'], [400, 0, '$1,730']]),
+  ], rec);
+  assert.deepEqual(p.transactions.map(t => [t.direction, t.amount]), [['in', 500]],
+    '★777 是備註不是支出——原版會產生偽造支出 777 且落首筆盲區、強閘攔不住');
+  // 備註欄在**餘額右側**（台新形）＋數字型備註：餘額分支不可把它吃成餘額
+  const p2 = parseWithRecipe([
+    ...linesA().slice(0, 10),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$500'], [495, 10, '777']]),   // 餘額空白、附記欄數字
+  ], recipeA());
+  assert.equal(p2.transactions[0].balance, null,
+    '★餘額空白就是 null——附記欄的 777 不可冒充餘額（餘額分支也要過備註區間）');
+});
+
+test('引擎｜零正則全族行為釘（r4#3a）：section／endAnchor／refDate／header 的比對都是字面不是樣式', () => {
+  // section：錨點帶括號＝不得樣式命中「合成帳戶總覽區」
+  const sec = recipeA(); sec.summary.sections = [{ anchor: '合成帳戶總(覽)', currency: 'TWD' }, { anchor: '外幣總覽', currency: 'BY-CODE' }];
+  assert.equal(parseWithRecipe(linesA(), sec).accounts.filter(a => a.currency === 'TWD').length, 0,
+    '★「總(覽)」≠「總覽」——台幣區不開張（樣式解讀會讓它命中）');
+  // refDate：錨點帶括號＝不得命中「結算基準日」
+  const ref = recipeA(); ref.refDate = { strategy: 'anchored-date', anchor: '結算基準(日)' };
+  assert.equal(parseWithRecipe(linesA(), ref).referenceDate, null, '★參考日錨點是字面');
+  // header：欄標題帶括號＝表頭認不出＝結構性失敗
+  const hdr = recipeA(); hdr.detail = { ...hdr.detail, headerOut: '提領(金)額' };
+  assert.throws(() => parseWithRecipe(linesA(), hdr), (e) => e.code === 'recipe_parse_failed', '★欄標題是字面');
+  // endAnchor：帶括號＝不得命中「總計」＝台幣區不收尾、總計後的帳戶列會被多收
+  const end = recipeA(); end.summary.endAnchor = '總(計)';
+  const doc = linesA(); doc.splice(4, 0, L(230, [[50, '收尾後'], [150, '900100****3309'], [473, '$5']]));
+  const p = parseWithRecipe(doc, end);
+  assert.ok(p.accountCurrency['900100****3309'], '★endAnchor 是字面＝「總計」不收尾、後面那列被當帳戶——樣式解讀會提前收尾');
 });
