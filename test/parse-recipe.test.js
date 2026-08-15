@@ -663,3 +663,35 @@ test('出生驗收｜masked 換值＝帳戶組成不同（r2#6：分組鍵改壞
   assert.equal(r.ok, false);
   assert.equal(r.diff, 'accounts（帳戶組成不同）', '★分組鍵（masked）走樣＝組成差異，不可靜靜通過');
 });
+
+// ---- Codex r3：命中歧義、考題假綠、零正則行為釘 ----
+
+test('驗證器｜區段錨點互為子字串＝拒收（r3#1：「帳戶」⊂「外幣帳戶」＋first-hit＝外幣被當台幣入帳）', () => {
+  const r = recipeA();
+  r.summary.sections = [{ anchor: '帳戶總覽', currency: 'TWD' }, { anchor: '外幣帳戶總覽', currency: 'BY-CODE' }];
+  const errs = validateRecipeStrict(r);
+  assert.ok(errs.length > 0, '★重疊錨點＝命中歧義，出生就拒——強閘只驗台幣、驗不出外幣被冒名台幣');
+  assert.ok(errs.some(e => e.includes('互為子字串')), '要指認是重疊問題');
+  const ok = recipeA();
+  ok.summary.sections = [{ anchor: '新臺幣總覽', currency: 'TWD' }, { anchor: '外幣總覽', currency: 'BY-CODE' }];
+  assert.deepEqual(validateRecipeStrict(ok), [], '不重疊的正常雙段照過');
+});
+
+test('引擎｜headerIgnore 單獨缺席也要拒（r3#3：原考題同時缺兩者＝headerIgnore 檢查拔掉照綠）', () => {
+  const noteNull = { ...recipeA(), detail: { ...recipeA().detail, headerNote: null } };   // 仍點名「單號」
+  const doc = [
+    ...linesA().slice(0, 9),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),   // 沒有單號
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$500'], [418, 0, '$730']]),
+  ];
+  assert.throws(() => parseWithRecipe(doc, noteNull), (e) => e.code === 'recipe_parse_failed',
+    '★headerNote=null、只有 headerIgnore 缺席——這一形必須獨立轉紅');
+});
+
+test('引擎｜錨點是字面不是樣式（r3#4：零正則的行為守門）：regex 特殊字元一律當普通字', () => {
+  const r = recipeA(); r.docAnchors = ['合成帳戶總覽', '往來(紀)錄'];
+  assert.equal(recipeMatches(linesA(), r), false,
+    '★「往來(紀)錄」≠「往來紀錄」——被當樣式解讀（括號成群組）就會 match＝配方偷渡了正則語意');
+  const doc = linesA(); doc[8] = L(140, [[47, '往來(紀)錄明細']]);
+  assert.equal(recipeMatches(doc, r), true, '★字面出現＝match（跳脫正確、不誤殺真含括號的版面）');
+});
