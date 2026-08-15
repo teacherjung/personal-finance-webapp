@@ -54,8 +54,8 @@ const optionValues = (html) => [...html.matchAll(/<option value="([^"]*)"/g)].ma
 // 帳戶型別下拉的真實形狀（資產頁那張表單）：漏列 liability／creditcard 時的樣子
 const ACCOUNT_TYPE_OPTS = [
   { value: 'cash', label: '現金 / 存款' },
-  { value: 'investment', label: '投資（股票/ETF/IB）' },
-  { value: 'property', label: '房地產' },
+  { value: 'investment', label: '證券 / 投資' },
+  { value: 'property', label: '房產 / 財產' },
 ];
 
 test('現值不在選項裡 ⇒ 必須保留它（擺最前面、帶看得懂的提示字），不可靜靜換成第一項', () => {
