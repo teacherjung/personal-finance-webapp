@@ -555,6 +555,8 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
   assert.equal(captured.init.headers['anthropic-version'], '2023-06-01');
   const body = JSON.parse(captured.init.body);
   assert.equal(body.model, AI_BANK_MODELS.primary);
+  assert.equal(body.max_tokens, 16000, '★r1#2：thinking 同池後的上限（8192＝Haiku 遺產，退回＝這裡紅）');
+  assert.equal(body.output_config?.effort, 'medium', '★r1#2：effort:medium（抄錄型起點；拿掉＝預設 high、思考開銷失控）');
   assert.ok(!('temperature' in body), 'r1#2：Sonnet 5 家族拒非預設 sampling 參數——一律不帶（格式由結構化輸出鎖）');
   assert.equal(body.output_config.format.type, 'json_schema', '固定答案卷＝結構化輸出（2026-08-12 官方文件核對）');
   assert.deepEqual(body.output_config.format.schema, AI_BANK_SCHEMA);
@@ -808,6 +810,9 @@ test('預審r0#2｜接地 NFKC：全形數字帳單（１，５００）不得�
   // 對照組：真的不在原文＝照樣拒（NFKC 沒有把檢查放空）
   assert.throws(() => assertAiBankGrounded(p, '原文 １，０００ ５００'),
     (/** @type {any} */ e) => e.code === 'ai_bad_answer', '★缺 1,500＝照拒');
+  // r1#3：拼接限同列——跨列相鄰（上列尾+下列頭）不算接地證據
+  assert.throws(() => assertAiBankGrounded(p, '原文 1,00\n0 500 1,500'),
+    (/** @type {any} */ e) => e.code === 'ai_bad_answer', '★跨列不拼（拆 cell 只發生在同一列）');
 });
 
 test('預審r0#3｜接地剔除日期 token：金額恰等於年份/民國日期片段＝不再誤接地', async () => {
@@ -827,6 +832,10 @@ test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；t
   const missing = () => { const a = goodAnswer(); delete a.totals; return a; };
   assert.throws(() => normalizeAiBank(missing()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totals/.test(e.message),
     '★必填欄漏交＝壞答案、不靜默降級');
+  // r1#1：物件在、單鍵缺席＝照拒（own-property 逐欄必填，不靜默補 null）
+  const missingKey = () => { const a = goodAnswer(); a.totals = /** @type {any} */ ({ txCount: null, totalOut: null }); return a; };
+  assert.throws(() => normalizeAiBank(missingKey()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totalIn/.test(e.message),
+    '★單鍵缺席＝壞答案（必填不是口號）');
   const badIn = () => { const a = goodAnswer(); a.totals = { txCount: null, totalOut: null, totalIn: 1900 }; return a; };
   const spy = spyTransport([badIn(), badIn()]);
   await assert.rejects(
