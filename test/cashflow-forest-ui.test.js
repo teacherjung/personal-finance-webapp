@@ -38,6 +38,9 @@ test('銀行收支接線：帳本判準、四個篩選與所有既有操作入�
   for (const id of ['monthSel', 'uploadBank', 'bankBatches', 'addCf']) {
     assert.match(source, new RegExp(`id="${id}"`));
   }
+  const actions = source.match(/<div class="page-actions">([\s\S]*?)<\/div>/)?.[1] || '';
+  assert.ok(actions.indexOf('id="addCf"') < actions.indexOf('id="bankBatches"'));
+  assert.ok(actions.indexOf('id="bankBatches"') < actions.indexOf('id="uploadBank"'));
   assert.match(source, /data-edit=/);
   assert.match(source, /data-del=/);
   assert.match(source, /class="cashflow-workspace"/);
