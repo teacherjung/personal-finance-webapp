@@ -39,7 +39,7 @@
 >   靜默失效 bug），一旦誤判，省下的正好是最需要的那次審查。**AI 不可自行分類降級**；想省額度只能由
 >   William 逐案明說，回報照舊註明用了哪一組。**機械性執行動作不是審查**（合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）、跑三關、查狀態
 >   ＝照表操課），用一般設定即可。
-> - **一律在該 PR 的拋棄式審查樹跑**（`/private/tmp/codex-review-pr<N>`；發射者先備好、審完收掉——備樹三步見下方「你的角色」節），寫入範圍限在那棵樹，碰不到主資料夾與 `data/store.db`。
+> - **一律在該 PR 的拋棄式審查樹跑**（`/private/tmp/codex-review-pr<N>`；發射者先備好、審完收掉——備樹三步見下方「你的角色」節），寫入範圍限在那棵樹；樹內沒有 `data/store.db`＝防誤觸（worktree 不是檔案系統隔離、別當安全牆——完整口徑見 AGENTS 協作流程）。
 > - **網路權限要開**：不開的話 9 個會綁 localhost 的端點測試檔會被沙箱擋掉（`listen EPERM`），測試關卡只跑得了一半（2026-07-27 實測）。
 > - **跑完檢查副作用**：`git status` 審查樹是否乾淨。**審查者不得自建其他 worktree**（新制：所有審查樹一律發射者備與收；發現多餘的樹＝回報、由發射者收，不要自己 `remove --force`）。
 > - **審尚未合併的 PR** 時，在提示詞裡指名受審 commit 與重點；審查樹已釘住該 commit，diff 一律 `git diff origin/main...HEAD`（**不要**拿會移動的 `origin/<branch>` 當對象——樹跑舊 HEAD、diff 看新 branch＝混合審查）。
@@ -285,7 +285,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 - **在該 PR 的拋棄式審查樹裡工作**（William 2026-08-04 統一「實作常設、審查拋棄」；原常設 `-codex` 審查樹已轉職為 Codex 實作樹）：Codex 審＝`/private/tmp/codex-review-pr<N>`、Claude 審＝`/private/tmp/claude-review-pr<N>`。**發射者備樹三步（審查者只用、不建不收）**：①`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` ②先 `git check-ignore -v "<審查樹>/node_modules"` 確認 `.gitignore` 擋得住，再 `ln -s "<主目錄>/node_modules" "<審查樹>/node_modules"`（跑三關要用；symlink 紀律見 AGENTS 協作流程）③審完由發射者收：`rm "<審查樹>/node_modules"`（**不帶斜線＝只刪 symlink**）→ `git worktree remove <審查樹>`。拋棄式樹釘住受審 commit＝永遠新鮮。
   - 為什麼要分開：上一輪審查時 Claude 在同一個目錄裡 rebase 與切分支十幾次，你正在讀的樹在腳下移動、看到新舊混雜的程式碼。現在 Claude 在 `-claude` worktree 工作、主目錄永遠停在 `main`，三邊互不干擾。
   - **不要在審查樹 checkout 任何分支**；本支只看 `HEAD`（樹已釘住受審 commit）。**要參考另一支 PR＝請發射者另備一棵釘選的審查樹**，不要用會移動的 `origin/<branch>` 當對象（混合審查）。
-  - 順帶一提：你的 worktree 裡**沒有** `data/store.db`（真實個資只在主目錄），所以下面那條「絕對不要讀取」現在是結構上做不到，不必再擔心誤觸。
+  - 順帶一提：你的 worktree 裡**沒有** `data/store.db`（真實個資只在主目錄），所以下面那條「絕對不要讀取」的誤觸情境不會發生（樹裡根本沒有那個檔）。⚠️ 這是防誤觸、不是對未信任程序的隔離保證——完整口徑見 AGENTS 協作流程。
   - ⚠️ **不要在你的 worktree 裡 commit 任何東西**（使用者定 2026-07-19）。你的產出是意見清單，實作與修正一律由 Claude 在 `-claude` worktree 走分支與 PR。
 - 絕對不要讀取 `data/store.db`（含 `.bak`/`-wal`/`-shm`）與 `data/store.json`（真實個資與 token；B3 起主資料庫為 SQLite `store.db`、舊 `store.json` 保留為備份）；要看資料形狀請看 `data/seed.json`，要實測請用 `STORE_FILE` 指向暫存 `.db` 檔。
 
