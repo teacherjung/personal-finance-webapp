@@ -61,7 +61,7 @@ test('真考卷閘｜required 名單動態（r1 高①）：空名單＝fail-clo
   assert.equal(r.code, 2, '保護新增 required check 時不得靜默漏查');
 });
 
-test('真考卷閘｜同名多場次取最新（completed_at＋id，r1 高②）：真跑成功後被舊草稿場次重跑蓋 skipped＝擋', () => {
+test('真考卷閘｜同名多場次取最新（completed_at，r1 高②）：真跑成功後被舊草稿場次重跑蓋 skipped＝擋', () => {
   const r = evaluateGate([
     run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z' }),
     run(NODE_JOB, 'skipped', { at: '2026-08-15T02:00:00Z' }),
