@@ -21,7 +21,7 @@
 // （在 `test/worktree-integrity.test.js`），那一題管的是關卡順序與 fail-closed，射程不同。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,32 +73,52 @@ function unsetLineOf(rel) {
   return line;
 }
 
+/**
+ * 這一行要在**哪些 shell 底下**驗。
+ *
+ * ⚠️⚠️ **不可以只挑那支腳本 shebang 上的那一個**（2026-08-15 CI 實測打臉）：上一版照
+ *    `mutate.sh` 的 `#!/bin/zsh` 去挑 `/bin/zsh`，在 macOS 永遠綠、**在 CI（Ubuntu，沒有 zsh）
+ *    永遠紅**——而且 `spawnSync` 拿不到執行檔時 `status` 是 `undefined`，訊息只會說
+ *    「跑不起來：undefined」，看的人根本不知道是機器上沒有那支 shell。
+ *    這正是本專案 #417 的病型：**開發者機器上綠，不代表別的機器上綠**。
+ * ⇒ 改成「這台機器上**有**的都跑一遍」。那一行是 POSIX 寫法，三種 shell 都該成立
+ *   （分詞規則在 zsh 與 sh 不同，所以有 zsh 的機器上一定要跑到它——`mutate.sh` 實際只在
+ *   William 的 Mac 上執行，那台一定有）。
+ * ⚠️ **誠實劃界**：沒有 zsh 的機器（CI）驗不到 zsh 的分詞語意，那一格由 macOS 這邊守。
+ */
+const CANDIDATE_SHELLS = ['/bin/sh', '/bin/bash', '/bin/zsh'];
+
 for (const { rel, why } of SHELL_COPIES) {
   test(`⭐ ${rel} 的清法真的清得掉（行為題：拿真的 shell 跑那一行）`, () => {
     // ⚠️ **只跑那一行，不跑整支腳本**：mutate.sh 會真的突變檔案，考題不可以去碰它。
     //    ⇒ 誠實劃界：本題證明「那一行有效」，**不證明**它在腳本裡的位置對
-    //      （位置由下面 mutate.sh 那一題單獨釘；pre-push 的位置由 test/worktree-integrity.test.js
-    //       實際跑一次 hook 驗）。
-    const shell = readFileSync(join(ROOT, rel), 'utf8').startsWith('#!/bin/zsh') ? '/bin/zsh' : '/bin/sh';
+    //      （位置由題名關鍵字「mutate.sh 必須先清 GIT_*」那題單獨釘；pre-push 的位置由
+    //       `test/worktree-integrity.test.js` 實際跑一次 hook 驗）。
+    const shells = CANDIDATE_SHELLS.filter((s) => existsSync(s));
+    assert.ok(shells.length > 0,
+      `這台機器上 ${CANDIDATE_SHELLS.join('／')} 一個都沒有 ⇒ 本題無法下判斷，不可以當成通過`);
     const probe = `${unsetLineOf(rel)}\nenv | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '\n`
       + 'printf ":: gh=%s" "${GITHUB_TOKEN:-MISSING}"\n';
-    const r = spawnSync(shell, ['-c', probe], {
-      encoding: 'utf8',
-      env: {
-        PATH: process.env.PATH ?? '',
-        GIT_DIR: '/fake', GIT_WORK_TREE: '/fake',
-        // 沒列過名的一族（`git -c` 生出來、會長）——列名的清法會在這裡漏網
-        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: '/fake',
-        GIT_BOGUS_FUTURE_THING: 'unlisted',
-        GITHUB_TOKEN: 'keep-me',
-      },
-    });
-    assert.equal(r.status, 0, `${shell} 跑不起來那一行：${r.stderr}`);
-    const [leftover, gh] = String(r.stdout).split('::');
-    assert.equal(leftover.trim(), '',
-      `${rel} 的清法還留著：${leftover.trim()}\n理由：${why}`);
-    assert.equal(gh.trim(), 'gh=keep-me',
-      `${rel} 把 GITHUB_TOKEN 也殺了——前綴寫成 GIT 而不是 GIT_ 就會這樣，CI 靠它`);
+    for (const shell of shells) {
+      const r = spawnSync(shell, ['-c', probe], {
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH ?? '',
+          GIT_DIR: '/fake', GIT_WORK_TREE: '/fake',
+          // 沒列過名的一族（`git -c` 生出來、會長）——列名的清法會在這裡漏網
+          GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: '/fake',
+          GIT_BOGUS_FUTURE_THING: 'unlisted',
+          GITHUB_TOKEN: 'keep-me',
+        },
+      });
+      assert.equal(r.status, 0,
+        `${shell} 跑不起來那一行（status=${r.status}／error=${r.error?.message ?? '無'}）：${r.stderr}`);
+      const [leftover, gh] = String(r.stdout).split('::');
+      assert.equal(leftover.trim(), '',
+        `${rel} 的清法在 ${shell} 底下還留著：${leftover.trim()}\n理由：${why}`);
+      assert.equal(gh.trim(), 'gh=keep-me',
+        `${rel} 在 ${shell} 底下把 GITHUB_TOKEN 也殺了——前綴寫成 GIT 而不是 GIT_ 就會這樣，CI 靠它`);
+    }
   });
 }
 
