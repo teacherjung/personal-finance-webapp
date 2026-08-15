@@ -334,7 +334,8 @@ test('引擎｜sticky 幣別三分法本體：同標題第二戶延續、匯率�
     L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
     L(100, [[53, 0, '900300****363'], [124, 0, '2026/06/11'], [289, 30, '$10'], [418, 0, '$90']]),
   ];
-  const r = { ...recipeA(), summary: { ...recipeA().summary, sections: [{ anchor: '外幣總覽', currency: 'BY-CODE' }] } };
+  const r = { ...recipeA(), summary: { ...recipeA().summary, sections: [{ anchor: '外幣總覽', currency: 'BY-CODE' }] },
+    detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } };   // 此版面表頭沒有單號/附記——點名的欄必須真的在
   const p = parseWithRecipe(lines, r);
   assert.equal(p.accountCurrency['900300****363'], 'JPY');
   assert.equal(p.accountCurrency['900300****364'], 'JPY', '★同標題第二戶要延續 JPY——歷史 150 倍虛增 bug 的回歸釘');
@@ -407,7 +408,8 @@ test('引擎｜balancePick 三選一是三種行為：first-money 取第一個�
     L(140, [[47, '往來紀錄']]),
     L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
     L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$10'], [418, 0, '$490']]),
-  ], { ...recipeA(), refDate: { strategy: 'none', anchor: null }, summary: { ...recipeA().summary, balancePick: pick } });
+  ], { ...recipeA(), refDate: { strategy: 'none', anchor: null }, summary: { ...recipeA().summary, balancePick: pick },
+    detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } });
   assert.equal(doc('first-money').accounts[0].balance, 500, '★first-money＝第一個金額格');
   assert.equal(doc('last-money').accounts[0].balance, 15900, '★last-money＝最後一個金額格');
   assert.equal(doc('first-money').referenceDate, null, '★strategy none＝參考日恆 null（文件裡有日期也不撿）');
@@ -422,7 +424,7 @@ test('引擎｜餘額空白的帳戶：幣別照記（明細判幣別不 fail-op
     L(140, [[47, '往來紀錄']]),
     L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
     L(100, [[53, 0, '900200****3302'], [124, 0, '2026/06/11'], [289, 30, '$10'], [418, 0, '$90']]),
-  ], recipeA());
+  ], { ...recipeA(), detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } });
   assert.equal(p.accounts.length, 1, '★餘額空白＝不進餘額更新清單');
   assert.equal(p.accountCurrency['900200****3302'], 'TWD', '★幣別照記——這格斷掉、明細幣別就 fail-open');
   assert.equal(p.transactions[0].acctMasked, '900200****3302', '明細照樣解');
@@ -436,7 +438,7 @@ test('引擎｜空 label 保持空——泛化引擎不猜 label（模板的台�
     L(140, [[47, '往來紀錄']]),
     L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
     L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$10'], [418, 0, '$1,220']]),
-  ], { ...recipeA(), refDate: { strategy: 'none', anchor: null } });
+  ], { ...recipeA(), refDate: { strategy: 'none', anchor: null }, detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } });
   assert.equal(p.accounts[0].label, '', '★不填「新臺幣活存」之類的預設——那是台新 hard-code，不是通則');
 });
 
@@ -574,4 +576,90 @@ test('出生把關｜配方對帳單（r1#2）：無數字的交易內文被誤�
     '★錨點＝帳戶備註（概要區列、非交易列）＝拒收——這一形只有等值約束在守');
   // 驗證器與位置約束是兩道不同的門：字元檢查對這兩形都無感（前提自檢）
   assert.deepEqual(validateRecipeStrict(evil1), [], '前提自檢：字元檢查真的擋不住——所以才需要第二道');
+});
+
+// ---- Codex r2 的五條阻擋：同族邊界形逐條釘住 ----
+
+test('引擎｜寬序號格跨過餘額欄界（r2#1）：右緣分類失效時、左緣落忽略區間＝退路也要擋', () => {
+  const ig = { ...recipeA(), detail: { ...recipeA().detail, headerIgnore: ['流水號'], headerNote: null } };
+  const p = parseWithRecipe([
+    L(300, [[47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [360, '流水號'], [396, '結存餘額']]),
+    // r2 實測形：序號 x=365、w=45 ⇒ 右緣 410 跨過 xBal=396 ⇒ colOf 回 null ⇒ 原版退路反而收下＝幽靈存款 67,890
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [365, 45, '0067890']]),
+    L(90, [[53, 0, '900100****3301'], [124, 0, '2026/06/12'], [335, 20, '$500'], [400, 0, '$1,730']]),
+  ], ig);
+  assert.equal(p.transactions.length, 1, '★寬序號列不可變幽靈存款——左緣在忽略區間就足以判它是序號');
+  assert.deepEqual([p.transactions[0].amount, p.transactions[0].direction], [500, 'in']);
+});
+
+test('引擎｜餘額欄不在金額欄右側（r2#2）：「支出｜餘額｜存入」欄序＝出生拒解，不讓它孵化後漏錢', () => {
+  const rec = { ...recipeA(), detail: { rowIdent: 'acct-date', headerOut: '提領金額', headerIn: '存進金額', headerBalance: '結存餘額', headerNote: null, headerIgnore: [] } };
+  const doc = [
+    L(300, [[47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '結存餘額'], [396, '存進金額']]),   // ★餘額夾中間
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$500'], [340, 0, '$730']]),
+  ];
+  assert.throws(() => parseWithRecipe(doc, rec), (e) => e.code === 'recipe_parse_failed',
+    '★r2 實測：這種欄序能用「只有支出」的帳單孵化，下一份的存入整筆消失且強閘照樣放行——必須出生就拒');
+});
+
+test('引擎｜配方點名的欄必須真的在表頭（r2#3 前半）：headerNote／headerIgnore 在表頭缺席＝拒解', () => {
+  const doc = [
+    ...linesA().slice(0, 9),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),   // 沒有單號、附記
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [289, 30, '$500'], [418, 0, '$730']]),
+  ];
+  assert.throws(() => parseWithRecipe(doc, recipeA()), (e) => e.code === 'recipe_parse_failed',
+    '★表頭沒有點名的欄＝xNote/忽略欄靜默歸零的走私路，關成結構性失敗');
+  const noteOnly = { ...recipeA(), detail: { ...recipeA().detail, headerIgnore: [] } };
+  assert.throws(() => parseWithRecipe(doc, noteOnly), (e) => e.code === 'recipe_parse_failed', '★headerNote 缺席單獨也要拒');
+});
+
+test('出生把關｜headerNote／headerIgnore 也要過等值＋位置約束（r2#3 後半）', () => {
+  const doc = [
+    ...linesA().slice(0, 10),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成收款人甲'], [289, 30, '$500'], [418, 0, '$730']]),
+  ];
+  const parsed = parseWithRecipe(doc, recipeA());
+  const evil = recipeA(); evil.detail.headerNote = '合成收款人甲';
+  const errs = validateRecipeAgainstStatement(doc, evil, parsed);
+  assert.ok(errs.length > 0, '★headerNote＝交易摘要＝拒收（單槽直接攜帶內文，不屬 #452 排除範圍）');
+  assert.ok(errs.every(e => !e.includes('合成收款人甲')), '★不回聲');
+  const evil2 = recipeA(); evil2.detail.headerIgnore = ['合成收款人甲'];
+  assert.ok(validateRecipeAgainstStatement(doc, evil2, parsed).length > 0, '★headerIgnore 同樣要過');
+});
+
+test('引擎｜date-first 同遮罩多幣別（r2#4）：帳戶「身分」數不是遮罩鍵數——歧義版面拒解', () => {
+  // r2 實測形：同遮罩 USD＋TWD 在 accountCurrency 塌成一鍵＝原版放行，外幣利息被套上 TWD 權威幣別
+  const doc = [
+    L(300, [[47, '帳務期間'], [200, '115/05/01'], [280, '~'], [320, '115/05/31']]),
+    L(280, [[47, '帳戶彙整']]),
+    L(260, [[50, '活期儲金'], [150, '900200****7788'], [453, '8,000']]),
+    L(250, [[47, '小計']]),
+    L(245, [[47, '外幣區']]),
+    L(240, [[367, 'USD']]),
+    L(235, [[50, '外幣存款'], [150, '900200****7788'], [453, '120']]),   // ★同遮罩、USD
+    L(230, [[47, '小計']]),
+    L(220, [[47, '交易紀錄']]),
+    L(200, [[60, '日期'], [150, '摘要'], [272, '支出'], [331, '存入'], [396, '餘額']]),
+    L(180, [[60, 0, '115/05/02'], [150, 0, '合成繳費'], [289, 30, '1,200'], [414, 0, '6,800']]),
+  ];
+  const rec = { ...recipeB(), summary: { sections: [{ anchor: '帳戶彙整', currency: 'TWD' }, { anchor: '外幣區', currency: 'BY-CODE' }], endAnchor: '小計', balancePick: 'last-money' } };
+  assert.throws(() => parseWithRecipe(doc, rec), (e) => e.code === 'recipe_parse_failed',
+    '★同遮罩兩種幣別＝交易歸屬歧義＝拒解退 AI，不可套上錯的權威幣別');
+});
+
+test('出生驗收｜masked 換值＝帳戶組成不同（r2#6：分組鍵改壞要被抓到）', () => {
+  const base = () => parseWithRecipe(linesA(), recipeA());
+  const a = base(); a.accounts[0].masked = '900900****9999';
+  const r = recipeReproduces(base(), a);
+  assert.equal(r.ok, false);
+  assert.equal(r.diff, 'accounts（帳戶組成不同）', '★分組鍵（masked）走樣＝組成差異，不可靜靜通過');
 });
