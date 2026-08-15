@@ -497,7 +497,9 @@ test('架構：kv 的鍵只有一份真相（store.js 的 KV_KEYS），adapter �
   const pgSrc = readFileSync(join(ROOT, 'lib/store-pg.js'), 'utf8');
   assert.ok(/import\s*\{[^}]*KV_KEYS[^}]*\}\s*from\s*'\.\/store\.js'/.test(pgSrc),
     'KV_KEYS 必須從 store.js 拿；各抄一份＝新增鍵時只改一邊，那個鍵在雲端版永遠寫不進去且不報錯');
-  assert.equal(KV_KEYS.length, 21, 'kv 鍵數變了就要同步檢查 db/supabase-schema.sql 與本檔');
+  // 2026-08-15 P2-2：+parseRecipes（配方快取）＝22。schema.sql 的 kv 表是通用鍵值（無逐鍵 DDL）、
+  // RLS 政策不因新鍵而變——本次同步檢查完畢；這個數字是「新增集合必須路過這裡」的絆線，照舊手動改。
+  assert.equal(KV_KEYS.length, 22, 'kv 鍵數變了就要同步檢查 db/supabase-schema.sql 與本檔');
 });
 
 // ============================================================================

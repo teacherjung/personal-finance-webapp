@@ -540,7 +540,7 @@ const MANIFEST = {
       'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
       'test/ai-gate-interception.test.js',   // P1b-3 攔截率：故障注入量閘的條件攔截率，與計畫 §八 互扣
       // P2-1 配方快取（2026-08-15，格式 A 拍板）：配方純模組（驗證器/引擎/出生驗收）＋考題
-      'lib/parse-recipe.js', 'test/parse-recipe.test.js',
+      'lib/parse-recipe.js', 'test/parse-recipe.test.js', 'test/parse-recipe-store.test.js',
       'lib/derive.js',
       'lib/pdf-isolate.js',
       'lib/repo.js',
