@@ -1224,3 +1224,15 @@ test('引擎｜BY-CODE 帳戶列的明確幣別要對 sticky 核對（r16#2）�
   const ok = parseWithRecipe(mk(L(260, [[50, '日圓活存'], [108, '900300****363'], [300, 'JPY'], [436, '$150']])), r);
   assert.equal(ok.accounts[0].currency, 'JPY', '列上幣別與 sticky 一致＝照過、不誤殺');
 });
+
+// ---- Codex r17：退路多候選 ----
+
+test('引擎｜退路多候選（r17#1）：兩格都落退路＝.find() 先到先贏會讓 7 蓋掉 100——歧義拒解', () => {
+  const noIgn = { ...recipeA(), detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } };
+  assert.throws(() => parseWithRecipe([
+    ...linesA().slice(0, 9),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
+    // 兩格右緣都 < 272（分不出欄＝都落退路）：212≤x<xBal、非忽略——次月多出的可選欄形
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [230, 10, '7'], [250, 10, '100'], [418, 0, '$900']]),
+  ], noIgn), (e) => e.code === 'recipe_parse_failed', '★退路與主路同一把「一窗一格」尺');
+});
