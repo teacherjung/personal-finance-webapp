@@ -185,9 +185,10 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 指令格式見本檔開頭的「使用方式」。
 
 - **r1 發射前置檢查（Grok 預審試行期間；發射紀律，非合併閘）**：協作欄位「實作者」＝Claude 的支，
-  發 r1 前先確認 PR 描述已附 Grok 預審成績單（或漏跑紀錄）；**未附＝發射者先補齊**（補跑預審、
+  發 r1 前先確認 PR 描述已附 Grok 預審成績單**＋鎖工具配方聲明**（或漏跑紀錄＝五格記 0＋附原因，照條款仍占分母）；成績單在場但**無配方聲明的掃描＝當未跑**；**未附＝發射者先補齊**（補跑預審、
   或照條款記漏跑）**再發射**；補跑一律用**鎖工具配方**（安全理由與要求＝AGENTS 該節；逐字旗標）：
-  `--disable-web-search --disallowed-tools read_file,run_terminal_command,grep,list_dir,get_command_or_subagent_output,write_file,edit_file,search_replace,create_file`。條款本文＝AGENTS「Grok 的邊界」節，本行是出勤檢查的最短可執行版
+  `--disable-web-search --disallowed-tools read_file,run_terminal_command,grep,list_dir,get_command_or_subagent_output,write_file,edit_file,search_replace,create_file`
+  （旗標以 **grok 1.0.3** 工具清單為準；**版本不同＝當跑不動記 0**，人工重驗工具清單後更新本行——denylist 列名補不完，fail-closed 靠停）。條款本文＝AGENTS「Grok 的邊界」節，本行是出勤檢查的最短可執行版
   （條款變動時同步本行；試滿裁決後隨條款一併處置）。〔為什麼掛這裡：規則只寫在 AGENTS＝開工時
   讀一次，比規則早出生的 session 看不到（2026-08-15 #464 實測漏跑）；發射 r1 是每支 PR 必經點、
   發射者必讀本節。〕
