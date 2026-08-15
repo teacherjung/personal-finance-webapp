@@ -523,20 +523,23 @@ test('⭐ 根本不是 repo 的目錄：要說「不認得」，不可以回「�
 
 test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有沒有寫清環境那一行）', () => {
   withSandbox(({ repo }) => {
-    const saved = process.env.GIT_DIR;
-    process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
-    // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
-    //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結論沒被帶偏。
+    // ⚠️ **順序不可以顛倒**（Grok 預審 2026-08-15 抓到，值得原地記下來）：`injectDirtyGitEnv()`
+    //    自己也會設 `GIT_DIR`（指到一個**不存在**的路徑）。先設誘餌再注入的話，誘餌會被蓋掉，
+    //    這一題就退化成「git 根本找不到 repo（fatal）」——那**不是 2026-08-09 事故的形狀**。
+    //    事故當天 hook 給的是**指向另一棵有效工作樹**的 GIT_DIR，體檢會安安靜靜量那一棵、回零問題。
+    //    ⇒ 先注入髒環境，**再**把 GIT_DIR 蓋成沙盒那棵有效的 repo。
+    const restoreDirty = injectDirtyGitEnv();
+    process.env.GIT_DIR = join(repo, '.git');   // ← 事故的真實形狀：另一棵**有效**的樹
+    // ⚠️ **這一題是代理指標，射程有限**：驅動它的是 `GIT_DIR`（實測唯一「四種呼叫形狀通吃」的變數，
+    //    對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結論沒被帶偏。
     //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由題名關鍵字
     //    「體檢交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
-    const restoreDirty = injectDirtyGitEnv();
     try {
       assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
         '環境裡有 GIT_* 時，體檢就量到別棵樹了 ⇒ 從 worktree push 時（hook 環境本來就有 GIT_DIR）'
         + '這支會靜靜量錯對象。');
     } finally {
-      restoreDirty();
-      if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+      restoreDirty();   // ⚠️ 它記的是**注入前**的值，所以上面那句覆寫也會被一併還原
     }
   });
 });

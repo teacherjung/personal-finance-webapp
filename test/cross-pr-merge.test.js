@@ -24,6 +24,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES, runIn } from '../scripts/check-cross-pr-merge.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV } from './helpers/dirty-git-env.js';
+import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -602,6 +603,48 @@ test('⭐ runIn 交給子行程的環境裡不可以有任何 GIT_*（直接斷�
       `runIn 把這些 GIT_* 原封不動傳給子行程了：\n${seen}\n`
       + '⇒ 這道閘會 spawn git 與 npm（`npm run test` 會在臨時工作區跑整套考題），'
       + '任何一個漏網的 GIT_* 都可能讓它們去動別的 repo。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ runIn 的 opts 不可以覆寫 env（Grok 預審抓到：那是一道靜靜打開的門）', () => {
+  // ⚠️ `runIn` 的註解宣稱「**不接受 `env`**」，而它成立的**唯一理由**是物件字面量裡
+  //    `env: gitEnv()` 寫在 `...opts` **後面**（後寫的鍵蓋掉先寫的）。那是一個
+  //    **沒有考題撐著的排序保證**：把 `...opts` 挪到最後（`{ cwd, …, env: gitEnv(), ...opts }`
+  //    ——一種很常見的重構寫法），呼叫端塞的 `env` 就會生效，而**本檔 43 題照樣全綠**（實測）。
+  //    ⇒ 這一題把「呼叫端硬塞 env」那條路真的走一遍：不管實作怎麼排鍵，子行程都不可以看到 GIT_*。
+  const dir = mkdtempSync(join(tmpdir(), 'runin-optsenv-'));
+  try {
+    const log = join(dir, 'seen.txt');
+    const probe = join(dir, 'probe');
+    writeFileSync(probe, `#!/bin/sh\n{ echo CALLED; env | grep '^GIT_' | cut -d= -f1 | sort; } > ${JSON.stringify(log)}\nexit 0\n`);
+    chmodSync(probe, 0o755);
+    // 呼叫端刻意把一整包髒環境當 opts.env 塞進去。型別上不接受，所以要 cast——
+    // **但型別擋不住執行期，而這一題守的正是執行期**。
+    runIn([probe], ROOT, /** @type {any} */ ({ env: { ...process.env, ...DIRTY_GIT_ENV } }));
+    const lines = readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(lines.includes('CALLED'), '探針沒被叫到 ⇒ 這一題是空轉的');
+    const leaked = lines.filter((l) => l.startsWith('GIT_'));
+    assert.deepEqual(leaked, [],
+      `呼叫端塞的 env 蓋掉了清理，子行程看到：${leaked.join('、')}\n`
+      + '⇒ `runIn` 的「不接受 env」是靠鍵的排序成立的，而那道門被打開了。'
+      + '請讓 `env: gitEnv()` 永遠寫在 `...opts` 之後（或明確把 opts.env 剔除）。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 發起樹的 fixture 不可以波及真的 repo（保險絲：本檔也會跑 git init）', () => {
+  // ⚠️ `makeInitiatorRepo()` 會在暫存目錄跑 `git init`——**那正是 2026-08-09 事故的兇器**。
+  //    它用的 `SANDBOX_ENV` 是**從零組**的（只給 PATH／HOME），所以 GIT_* 洩不進去；
+  //    但那是「現在的寫法」，不是保證。⚠️ Grok 預審（2026-08-15）指出：同族的
+  //    `test/worktree-integrity.test.js` 有這道保險絲、本檔沒有 ⇒ 有人把 SANDBOX_ENV 改成
+  //    「`process.env` 扣幾個」時，本檔的 fixture 會安安靜靜把真的 repo 寫成 bare，而沒有題會紅。
+  const { dir } = makeInitiatorRepo();
+  try {
+    assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
+      '⛔ 本檔的 fixture 把**真的 repo** 弄壞了。立刻檢查 SANDBOX_ENV 是不是被改成會帶 GIT_* 進去。');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
