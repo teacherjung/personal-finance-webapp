@@ -175,10 +175,12 @@
 - **讀取順序（preview 與 apply 同）**：模板認不得（`bank_unrecognized` 類；**pdf_password 絕不落配方**）→ `recipeBankRoute`：逐張配方先試 `current`、失靈（拒解或閘紅同待遇）自動退 `previous` 重解（**免費**、裁示④細部）→ 全敗＝照原順序輪 AI（要 useAi）或把模板原句錯誤拋回。**配方命中＝零元零外送、不需 useAi、沒鑰匙也走得通**；回應 `engine:'recipe'`＋`recipeId`（前端徽章 P2-3）。
 - **閘**：配方比照 AI＝同一顆 `assertAiBankReconciled`（強閘＋台幣零未驗；totals 交叉驗證對配方輸出自然跳過＝parseWithRecipe 不產 totals）。apply 寫入前 fresh db 重過同一顆（縱深；行為等價突變的誠實記錄在該行註解）。
 - **計數（apply 原子交易內、saveDb 之前）**：套用成功＝`graduateStreak+1`、**連 5＝graduated**（裁示②）；用 previous 救場＝**自動回滾互換**（previous 升 current、壞的降 previous＝留 1 版不變量）、streak 從 1 重數；成功套用＝suspect 解除。
+- **票綁租戶（r1#1；兌現票匣檔頭 r5 預告的硬條件）**：配方路線**沒有** HOSTED 停止線＝票匣在多租戶可達——發票綁定 `currentTenant().userId`（LOCAL＝''）、兌票/放回核對、**容量按租戶各自計**（全域上限會讓任何租戶發滿 5 張驅逐別人的票＝跨租戶阻斷）；持票本身不是授權（bearer ticket 禁令）。
+- **id＝列身分（r1#2）**：`id` 進形狀牆（`'str'`）＋必填＋**集合級唯一**（重複 id 後到濾除、throw 模式炸）；記帳與疑似標記嚴格比較（不吃 `String()` 隱式轉換＝數字 id 不可命中字串票號）。
 - **配方票（預審 G2）**：配方預覽也發確認票（`aiTicket`，同一個票匣）——「**所見即所得**」對配方同樣成立：選版依 db 現況、不是 PDF 的純函數，apply 憑票取回 preview 那份 parsed 與選版、**不重跑選版**；前端 applyBody 配方分支只送 `{aiTicket}`（票不見＝null 引導重新預覽）。無票的直接 API apply 仍可自己重解（縱深）。
 - **三因分流（Grok GH1）**：「用了 previous」有三種原因，只有「current **中版面**但失靈（拒解/閘紅）」是回滾語意（互換＋streak 重數）；current **沒中版面**（例：P2-3 重生後新舊版指紋不同、這張是舊版面帳單）＝previous 正常服役——**不互換、不動畢業計數**、只記使用時間；疑似名單也只收「current 中版面但整列沒過」（只有 previous 失靈不算——它本來就是備胎）。列身分＝`id` 必填（Grok GH3：沒 id 對不到列＝票/計數/疑似全失準；route 不讓無 id 列服役、備份牆整筆濾除）；無票路徑的世代檢查用**觀測時刻**（Grok GH2）。
 - **計數守衛（預審 G1/A2/A4）**：記帳前**身分核對**（fresh db 那格必須仍是「當時用的那版」＝JSON 相等，否則計數靜默跳過、匯入照常）——並發雙套用不得把回滾再換回去、列被還原洗過不得盲換到 undefined；suspect 標記帶**世代檢查**（票的 issuedAt；其後已自證＝lastUsedAt 較晚＝不蓋回）。票放回＝**整份**放回（預審 A1：suspectRecipeIds/recipeUse/issuedAt 不得在失敗重試路上丟失）。
 - **疑似過期（裁示②）**：preview 時「配方中版面但失靈（**拒解與閘紅同待遇**、各有承重題）」的 id 收進確認票（`suspectRecipeIds`）——**兌票完成匯入那一刻**在同一交易標 `suspect:true`、streak 歸零、graduated 取消；別張配方救場的**直接路徑**同樣標（預審 G3）。⚠️ 誠實劃界：預覽全程唯讀不變量不可破＝使用者不套用就不標。
 - **preview 純讀不變量**：recipeBankRoute 不動 db 一個位元組（版本互換與計數全在 apply）——有考題釘。
 - ⚠️ 畢業計數的操作定義殘餘（預審 A6）：「連 5 **份**」目前同一份帳單重傳也 +1（交易被去重跳過、計數照加）——「份」的判準與 `rebirths` 的 +1 落點（誰算重生）都在 **P2-3** 明文＋接線。
-- 考題＝`test/parse-recipe-store.test.js`（19 題）；刀 R1–R8＋N1–N10（R3b＝行為等價、誠實記錄；明細見 PR）。
+- 考題＝`test/parse-recipe-store.test.js`（題數刻意不寫死——寫死的數字自己會漂；r1#3）；刀表明細見 PR（R3b／GK5＝行為等價、誠實記錄）。

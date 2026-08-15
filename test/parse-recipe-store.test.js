@@ -369,3 +369,33 @@ test('GrokGH3｜無 id 的列不服役：對不到列的配方不可發票、不
   const out = sanitizeDbForWrite(db2, { mode: 'strip' });
   assert.equal(out.parseRecipes.length, 1, '★缺 id＝濾除');
 });
+
+// ---- Codex r1 的承重域（票綁租戶／id 形狀與唯一） ----
+
+test('r1#1｜票綁租戶：別的租戶兌不到、放不回、也驅逐不了我的票（HOSTED 多租戶可達後的硬條件）', async () => {
+  const { runWithTenant } = await import('../lib/tenant.js');
+  clearAiTicketsForTest();
+  const id = runWithTenant({ userId: 'tenant-A' }, () => issueAiTicket({ parsed: { bank: 'A 的帳單' }, aiModel: '' }));
+  // B 兌 A 的票＝查無（且不銷毀——B 不能幫 A 銷票）
+  assert.equal(runWithTenant({ userId: 'tenant-B' }, () => redeemAiTicket(id)), null, '★跨租戶兌票＝查無');
+  // B 發滿 5 張＝驅逐的是 B 自己的、A 的票還在
+  runWithTenant({ userId: 'tenant-B' }, () => { for (let i = 0; i < 5; i++) issueAiTicket({ parsed: { i }, aiModel: '' }); });
+  const tA = runWithTenant({ userId: 'tenant-A' }, () => redeemAiTicket(id));
+  assert.equal(tA?.parsed?.bank, 'A 的帳單', '★容量按租戶各自計——B 發滿不可驅逐 A（跨租戶阻斷）');
+  // 放回也核對：B 拿到 A 的票物件也放不回
+  assert.equal(runWithTenant({ userId: 'tenant-B' }, () => restoreAiTicket(id, /** @type {any} */ (tA))), false, '★跨租戶放回＝拒');
+  assert.equal(runWithTenant({ userId: 'tenant-A' }, () => restoreAiTicket(id, /** @type {any} */ (tA))), true, '對照：本人放回 OK');
+  clearAiTicketsForTest();
+});
+
+test('r1#2｜id 形狀與唯一：數字 id 過不了牆；重複 id 後到濾除；記帳嚴格比較不吃隱式轉換', async () => {
+  const db = /** @type {any} */ (await getDb());
+  db.parseRecipes = [ /** @type {any} */ ({ ...row(), id: 7 }), row({ id: 'dup' }), row({ id: 'dup' }) ];
+  const out = sanitizeDbForWrite(db, { mode: 'strip' });
+  assert.equal(out.parseRecipes.length, 1, '★數字 id＝必填值格式不合法整筆濾除；重複 id＝後到濾除');
+  assert.equal(out.parseRecipes[0].id, 'dup');
+  // 嚴格比較：數字 id 7 的列不可被字串票 "7" 命中（記帳打錯人）
+  const dbObj = /** @type {any} */ ({ parseRecipes: [{ ...row(), id: 7, graduateStreak: 0 }] });
+  recordRecipeApplied(dbObj, { id: '7', usedVersion: 'current', currentMatched: true, usedRecipe: goodRecipe() });
+  assert.equal(dbObj.parseRecipes[0].graduateStreak, 0, '★String() 隱式轉換的碰撞已封死');
+});
