@@ -48,9 +48,9 @@ export const LIABILITY_TYPE_LABELS = {
 /** 非負債的帳戶型別選項（順序＝下拉顯示順序）。 */
 export const ASSET_TYPES = [
   { value: 'cash', label: '現金 / 存款' },
-  { value: 'investment', label: '投資（股票/ETF/IB）' },
-  { value: 'property', label: '房地產' },
-  { value: 'insurance-cv', label: '保單現金價值' },
+  { value: 'investment', label: '證券 / 投資' },
+  { value: 'property', label: '房產 / 財產' },
+  { value: 'insurance-cv', label: '保單現值' },
   { value: 'other', label: '其他資產' },
 ];
 

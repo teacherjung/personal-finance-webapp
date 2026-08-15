@@ -41,7 +41,7 @@ export async function renderAssets() {
 
       <aside class="assets-scope-note" aria-label="資產配置資料口徑">
         <strong>資料口徑</strong>
-        <p>股票與債券由「投資組合」的持股自動換算併入；銀行與現金請到「<a href="#bank">銀行帳戶</a>」管理。黃金、房地產、保單現金價值、其他資產與負債則在本頁維護。</p>
+        <p>股票與債券由「投資組合」的持股自動換算併入；銀行與現金請到「<a href="#bank">銀行帳戶</a>」管理。黃金、房產、保單現值、其他資產與負債則在本頁維護。</p>
       </aside>
 
       <section class="asset-kpi-frame" aria-label="資產摘要">
@@ -78,7 +78,7 @@ export async function renderAssets() {
       </section>
 
       <section class="assets-details">
-        <div class="assets-details-head"><div><span class="assets-eyebrow">帳戶明細</span><h2>其他資產與負債</h2></div><p>投資、房地產與負債等；銀行帳戶見「<a href="#bank">銀行帳戶</a>」</p></div>
+        <div class="assets-details-head"><div><span class="assets-eyebrow">帳戶明細</span><h2>其他資產與負債</h2></div><p>證券投資、房產與負債等；銀行帳戶見「<a href="#bank">銀行帳戶</a>」</p></div>
         <div class="tbl-wrap">
           <table class="assets-account-table"><thead><tr><th>帳戶</th><th>類別</th><th>資產類別</th><th class="num">餘額</th><th></th></tr></thead>
           <tbody>${nonCash.map(accRow).join('') || `<tr><td colspan="5" class="empty">尚無非現金帳戶。銀行/現金帳戶請到「銀行帳戶」頁。</td></tr>`}</tbody></table>
