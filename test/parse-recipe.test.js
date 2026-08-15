@@ -1194,3 +1194,33 @@ test('引擎｜同列雙金額候選（r15#2）：支出窗與存入窗同時有
   ], noIgn), (e) => e.code === 'recipe_parse_failed',
     '★「兩欄只填一個」是台新版面事實不是通則——雙候選＝歧義、整份退 AI');
 });
+
+// ---- Codex r16：同窗多候選＋BY-CODE 帳戶列幣別核對 ----
+
+test('引擎｜同一金額窗兩個候選（r16#1）：先到先贏會讓 $100 被記成 $7——歧義拒解', () => {
+  const noIgn = { ...recipeA(), detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } };
+  assert.throws(() => parseWithRecipe([
+    ...linesA().slice(0, 9),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [280, 10, '7'], [300, 20, '100'], [418, 0, '$900']]),
+  ], noIgn), (e) => e.code === 'recipe_parse_failed', '★同 out 窗兩格＝一窗一格是台新事實不是通則');
+});
+
+test('引擎｜BY-CODE 帳戶列的明確幣別要對 sticky 核對（r16#2）：sticky=JPY、列上印 USD＝拒解', () => {
+  const r = { ...recipeA(), summary: { ...recipeA().summary, sections: [{ anchor: '外幣總覽', currency: 'BY-CODE' }] },
+    detail: { ...recipeA().detail, headerNote: null, headerIgnore: [] } };
+  const mk = (acctRow) => [
+    L(300, [[20, '合成銀行月結單'], [47, '外幣總覽區']]),
+    L(280, [[367, 'JPY']]),
+    acctRow,
+    L(240, [[47, '總計']]),
+    L(140, [[47, '合成帳戶總覽'], [200, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額']]),
+    L(100, [[53, 0, '900300****363'], [124, 0, '2026/06/11'], [289, 30, '$10'], [418, 0, '$90']]),
+  ];
+  assert.throws(() => parseWithRecipe(mk(L(260, [[50, '美元活存'], [108, '900300****363'], [300, 'USD'], [436, '$150']])), r),
+    (e) => e.code === 'recipe_parse_failed',
+    '★原版把帳戶標成 JPY、USD 掉進 note＝美元餘額被建成日圓 150 且強閘照綠');
+  const ok = parseWithRecipe(mk(L(260, [[50, '日圓活存'], [108, '900300****363'], [300, 'JPY'], [436, '$150']])), r);
+  assert.equal(ok.accounts[0].currency, 'JPY', '列上幣別與 sticky 一致＝照過、不誤殺');
+});
