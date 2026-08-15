@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
+import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 // 陷阱檔：HOSTED 模式**一個位元組都不該**寫到本機 SQLite。用 mkdtemp 整個資料夾，
 // 這樣連「備份服務偷偷建了 backups/」都驗得到（照 test/daily-backup.test.js 的形狀）。
@@ -515,6 +517,25 @@ test('SQL：RLS 政策必須 FOR ALL＋USING＋WITH CHECK＋force，且 service_
   assert.match(sql, /version\s+bigint\s+not null default 1/i, 'P1-5 樂觀鎖欄位');
 });
 
+test('⭐ 架構護欄的清單不可被繼承的 GIT_* 帶去別棵樹（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 上面兩道架構護欄（service_role、誰可以 import store.js）都是「逐檔讀 libFiles() 的內容」。
+  //    清單一被換掉，它們就掃了別棵樹而回報通過——**護欄什麼都沒做卻說通過**。
+  //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 hook 環境本來就有它。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  const restore = injectDirtyGitEnv();
+  try {
+    const files = libFiles();
+    assert.ok(files.includes('lib/store-pg.js'),
+      '注入髒 GIT_* 之後清單裡就沒有 lib/store-pg.js 了＝環境沒被隔離，架構護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入髒 GIT_* 之後只掃到 ${files.length} 個檔＝隔離失效`);
+  } finally {
+    restore();
+  }
+});
+
 // ---- 小工具 ----------------------------------------------------------------
 /**
  * 正式程式碼的檔案清單（給架構考題掃）。
@@ -523,8 +544,11 @@ test('SQL：RLS 政策必須 FOR ALL＋USING＋WITH CHECK＋force，且 service_
  * @returns {string[]}
  */
 function libFiles() {
+  // ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+  //    `cwd` 形同無效 ⇒ 這份清單會是**別棵樹**的內容，上面那些架構護欄照樣回報通過。
+  //    理由與機制在 lib/git-env.js；行為題＝本檔題名關鍵字「架構護欄的清單不可被繼承的 GIT_*」那題。
   const out = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
-    { encoding: 'utf8', cwd: ROOT }).trim();
+    { encoding: 'utf8', cwd: ROOT, env: gitEnv() }).trim();
   return out ? out.split('\n').filter(f => f.endsWith('.js')) : [];
 }
 
@@ -535,3 +559,9 @@ function fakeClientFor(tok, user) {
   });
   return factory({ headers: { cookie: `sb-test-auth-token=${tok}` } }, { set() {}, append() {} });
 }
+
+test('⭐ 架構護欄交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 題名關鍵字「架構護欄的清單不可被繼承的 GIT_*」那題是代理指標，只涵蓋「剛好會改變這個指令的變數」；
+  //    這一題直接問子行程收到什麼。
+  assertChildGitEnvClean(assert, 'hosted-store-pg 的 libFiles()', () => libFiles());
+});

@@ -21,6 +21,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
+import { gitEnv } from '../lib/git-env.js';
 
 /** @typedef {{ baseRefName: string, headRefName: string, isCrossRepository: boolean }} PrInfo */
 
@@ -79,7 +80,11 @@ export function evaluateGate(pr, dependents) {
 
 /** @param {string[]} args */
 function gh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8' });
+  // ⚠️ **`env: gitEnv()` 不可省**（AGENTS.md 鐵則 11；#463 r1 High）：`gh` 會**自己再去 spawn git**
+  //    ——實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
+  //    繼承來的 GIT_DIR 指到另一個**有效** repo 時，這道閘會去讀**那個** repo 的 PR 與留言，
+  //    而輸出看起來完全正常。行為題＝test/cross-pr-merge.test.js「四支會叫 gh 的閘」。
+  return execFileSync('gh', args, { encoding: 'utf8', env: gitEnv() });
 }
 
 function main() {

@@ -26,8 +26,8 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { worktreeIntegrityProblems, cleanGitEnv }
-  from '../scripts/check-worktree-integrity.js';
+import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -521,35 +521,36 @@ test('⭐ 根本不是 repo 的目錄：要說「不認得」，不可以回「�
   }
 });
 
-test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是看它有沒有寫 cleanGitEnv）', () => {
+test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有沒有寫清環境那一行）', () => {
   withSandbox(({ repo }) => {
-    const saved = process.env.GIT_DIR;
-    process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
+    // ⚠️ **順序不可以顛倒**（Grok 預審 2026-08-15 抓到，值得原地記下來）：`injectDirtyGitEnv()`
+    //    自己也會設 `GIT_DIR`（指到一個**不存在**的路徑）。先設誘餌再注入的話，誘餌會被蓋掉，
+    //    這一題就退化成「git 根本找不到 repo（fatal）」——那**不是 2026-08-09 事故的形狀**。
+    //    事故當天 hook 給的是**指向另一棵有效工作樹**的 GIT_DIR，體檢會安安靜靜量那一棵、回零問題。
+    //    ⇒ 先注入髒環境，**再**把 GIT_DIR 蓋成沙盒那棵有效的 repo。
+    const restoreDirty = injectDirtyGitEnv();
+    process.env.GIT_DIR = join(repo, '.git');   // ← 事故的真實形狀：另一棵**有效**的樹
+    // ⚠️ **這一題是代理指標，射程有限**：驅動它的是 `GIT_DIR`（實測唯一「四種呼叫形狀通吃」的變數，
+    //    對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結論沒被帶偏。
+    //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由題名關鍵字
+    //    「體檢交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
     try {
       assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
-        '環境裡有 GIT_DIR 時，體檢就量到別棵樹了 ⇒ 從 worktree push 時（hook 環境本來就有 GIT_DIR）'
+        '環境裡有 GIT_* 時，體檢就量到別棵樹了 ⇒ 從 worktree push 時（hook 環境本來就有 GIT_DIR）'
         + '這支會靜靜量錯對象。');
     } finally {
-      if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+      restoreDirty();   // ⚠️ 它記的是**注入前**的值，所以上面那句覆寫也會被一併還原
     }
   });
 });
 
-test('cleanGitEnv 按 GIT_ 前綴整族清：沒列過名的也要走，非 GIT_ 前綴不受傷', () => {
-  const cleaned = cleanGitEnv({
-    PATH: '/usr/bin', LANG: 'zh_TW.UTF-8', GITHUB_TOKEN: 'keep-me',
-    GIT_DIR: '/fake', GIT_WORK_TREE: '/fake', GIT_PREFIX: 'x',
-    // 這一族是 #435 r1 High② 的洞：`git -c` 會生出來、名單永遠追不上。
-    GIT_CONFIG_PARAMETERS: "'a.b=c'", GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a.b',
-    GIT_BOGUS_FUTURE_THING: 'unlisted',   // 未來才會出現的名字＝前綴關門存在的理由
-  });
-  for (const key of Object.keys(cleaned)) {
-    assert.ok(!key.startsWith('GIT_'), `${key} 沒被清掉——前綴這扇門有縫`);
-  }
-  assert.equal(cleaned.PATH, '/usr/bin');
-  assert.equal(cleaned.LANG, 'zh_TW.UTF-8', 'cleanGitEnv 不該動到無關的變數');
-  assert.equal(cleaned.GITHUB_TOKEN, 'keep-me',
-    'GITHUB_* 不是 GIT_ 前綴（第四個字元是 H 不是底線），不可以被誤殺——CI 環境靠它');
+test('⭐ 體檢交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 題名關鍵字「體檢本身不可以被 GIT_* 牽著走」那題是**代理指標**：它問「體檢的結論對不對」，
+  //    只涵蓋「剛好會改變那些指令的變數」。實測 `rev-parse --show-toplevel` 這一族
+  //    **只有 `GIT_DIR` 有影響力**（對照表在 test/helpers/dirty-git-env.js 檔頭），
+  //    所以光靠它，把清法退化成「只刪 GIT_DIR」的列名版仍會全綠。
+  //    這一題直接問子行程收到什麼，未來的新家族也涵蓋得到。
+  assertChildGitEnvClean(assert, '體檢的 runGit()', () => worktreeIntegrityProblems(ROOT));
 });
 
 /**
@@ -600,8 +601,8 @@ function runPrePush(bin) {
   polluted.GIT_CONFIG_VALUE_0 = 'fixture';
   polluted.GIT_BOGUS_FUTURE_THING = 'unlisted';
   // 哨兵：非 GIT_ 前綴（第四字元是 H），**必須活著穿過正式 hook**——前綴規則寫鬆
-  // （GIT 而非 GIT_）就會殺掉它，CI 的 GITHUB_* 會遭殃（r2 Low④：unit test 的
-  // cleanGitEnv 是另一份實作，守不到 hook 這一份）。
+  // （GIT 而非 GIT_）就會殺掉它，CI 的 GITHUB_* 會遭殃（r2 Low④：hook 那一行 sh 是
+  // **另一份實作**，`lib/git-env.js` 的考題守不到它，所以這個哨兵要在這裡再釘一次）。
   polluted.GITHUB_TOKEN = 'keep-me';
   return spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')],
     { encoding: 'utf8', cwd: ROOT, env: polluted });

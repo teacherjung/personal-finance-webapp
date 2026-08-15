@@ -31,14 +31,22 @@ import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
 /** 三方協作裡的角色名。文件名字掛上其中一個，就等於宣告「只有這一方要讀」。 */
-/** repo 追蹤中的檔案。未追蹤檔（本機工具、暫存筆記）不是 repo 的一部分。 */
+/**
+ * repo 追蹤中的檔案。未追蹤檔（本機工具、暫存筆記）不是 repo 的一部分。
+ *
+ * ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+ *    `cwd: ROOT` 形同無效 ⇒ 清單變成別棵樹的內容或空的，下面的死連結／標題配對就全部空掃而通過。
+ *    機制在 lib/git-env.js；行為題＝本檔題名關鍵字「清單與 git grep 不可被繼承的 GIT_*」那題。
+ */
 const trackedFiles = () => execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files'],
-  { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
+  { cwd: ROOT, encoding: 'utf8', env: gitEnv() }).split('\n').filter(Boolean);
 
 /**
  * 全 repo（追蹤中的文字檔）提到舊檔名的每一處，取前後 30 字當窗格。
@@ -49,8 +57,10 @@ const trackedFiles = () => execFileSync('git', ['-c', 'core.quotepath=false', 'l
  */
 function oldNameContexts() {
   const term = ['CODEX', 'REVIEW'].join('-');
+  // ⚠️ `env: gitEnv()` 的理由同 trackedFiles()：GIT_DIR 會讓 git 去搜**別棵樹**，
+  //    死連結一條都找不到而這一題全綠。
   const out = execFileSync('git', ['grep', '-I', '-n', term],
-    { cwd: ROOT, encoding: 'utf8', maxBuffer: 1e8 }).split('\n').filter(Boolean);
+    { cwd: ROOT, encoding: 'utf8', maxBuffer: 1e8, env: gitEnv() }).split('\n').filter(Boolean);
   /** @type {Record<string, string[]>} */ const found = {};
   for (const l of out) {
     const i1 = l.indexOf(':');
@@ -222,4 +232,35 @@ test('檔案真的存在（宣告的每一份都要在）', () => {
   for (const file of Object.keys(DOCS)) {
     assert.ok(existsSync(join(ROOT, file)), `DOCS 宣告了「${file}」但檔案不存在`);
   }
+});
+
+test('⭐ 清單與 git grep 不可被繼承的 GIT_* 帶走（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 本檔每一題的底料都是這兩個 git 呼叫。`cwd: ROOT` **隔離不了 `GIT_DIR`**——有它時 git 不看 cwd，
+  //    而從連結工作樹 push 時 git 自己會把它塞進 hook 環境、`pre-push` 又會跑 `npm test`。
+  //    清單被換走 ⇒ 非 ASCII 檔名那一題空掃、死連結一條都找不到，而整支全綠。
+  const baseline = { files: trackedFiles().length, contexts: Object.keys(oldNameContexts()).length };
+  assert.ok(baseline.files > 100, `基準清單只有 ${baseline.files} 支＝這一題在空轉`);
+
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  const restore = injectDirtyGitEnv();
+  try {
+    const files = trackedFiles();
+    assert.ok(files.includes('AGENTS.md'),
+      '注入髒 GIT_* 之後清單裡就沒有 AGENTS.md 了＝環境沒被隔離，本檔每一題都會掃錯對象');
+    assert.equal(files.length, baseline.files, '注入髒 GIT_* 之後清單長度變了＝隔離失效');
+    assert.equal(Object.keys(oldNameContexts()).length, baseline.contexts,
+      '注入髒 GIT_* 之後 git grep 的命中檔數變了＝死連結那一題會搜到別棵樹');
+  } finally {
+    restore();
+  }
+});
+
+test('⭐ 列檔與 git grep 交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 題名關鍵字「清單與 git grep 不可被繼承的 GIT_*」那題是代理指標，只涵蓋「剛好會改變這個指令的變數」；
+  //    這一題直接問子行程收到什麼。
+  assertChildGitEnvClean(assert, 'doc-naming 的 trackedFiles()', () => trackedFiles());
+  assertChildGitEnvClean(assert, 'doc-naming 的 oldNameContexts()', () => oldNameContexts());
 });

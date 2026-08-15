@@ -232,10 +232,13 @@ async function productionFiles() {
   const { execFileSync } = await import('node:child_process');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
+  const { gitEnv } = await import('../lib/git-env.js');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  // ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+  //    `cwd` 形同無效 ⇒ 這份清單會是**別棵樹**的內容，護欄照樣回報通過。理由與機制在 lib/git-env.js。
   const listed = execFileSync('git',
     ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
-    { encoding: 'utf8', cwd: root }).trim();
+    { encoding: 'utf8', cwd: root, env: gitEnv() }).trim();
   return (listed ? listed.split('\n') : []).filter((f) => /\.(js|mjs|cjs)$/.test(f) && !f.endsWith('.test.js'));
 }
 
@@ -409,6 +412,36 @@ test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**�
   } finally {
     rmSync(join(root, '.claude', 'worktrees', '_guard_probe'), { recursive: true, force: true });
   }
+});
+
+test('護欄本身｜檔案清單不可被繼承的 GIT_* 帶去別棵樹（拿掉 env: gitEnv() 要紅）', async () => {
+  // ⚠️ 為什麼非有這一題不可：`cwd` **隔離不了 `GIT_DIR`**——有它時 git 根本不看 cwd。
+  //    而從連結工作樹 push 時，git 自己會把 GIT_DIR 塞進 hook 環境，`pre-push` 又會跑 `npm test`
+  //    ⇒ 這份清單會靜靜換成別棵樹的內容，而護欄回報「零違規」。
+  //    這是**行為題**：把 productionFiles() 的 `env: gitEnv()` 拿掉，這一題就紅。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  const { injectDirtyGitEnv } = await import('./helpers/dirty-git-env.js');
+  const restore = injectDirtyGitEnv();
+  try {
+    const files = await productionFiles();
+    assert.ok(files.includes('lib/statement.js'),
+      '注入髒 GIT_* 之後清單裡就沒有收斂點了＝環境沒被隔離，這道護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入髒 GIT_* 之後只掃到 ${files.length} 個檔＝隔離失效`);
+  } finally {
+    restore();
+  }
+});
+
+test('護欄本身｜檔案清單交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', async () => {
+  // ⚠️ 題名關鍵字「檔案清單不可被繼承的 GIT_* 帶去別棵樹」那題是**代理指標**：
+  //    它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
+  //    這一題直接問子行程收到什麼——沒人見過的新家族也涵蓋得到（射程對照表在 helper 檔頭）。
+  const { assertChildGitEnvCleanAsync } = await import('./helpers/dirty-git-env.js');
+  await assertChildGitEnvCleanAsync(assert, 'xlsx-isolate 的 productionFiles()',
+    () => productionFiles());
 });
 
 test('架構｜收斂模組內只能有一個 XLSX.read（第二個就是繞過隔離的入口）', async () => {

@@ -35,6 +35,7 @@
 import { execFileSync } from 'node:child_process';
 import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
 import { isMainModule } from '../lib/is-main.js';
+import { gitEnv } from '../lib/git-env.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -635,7 +636,11 @@ export function verdictProblems(comments, head, reviewerRole = null) {
 
 /** @param {string} pr */
 function fetchPr(pr) {
-  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'comments,headRefOid,body'], { encoding: 'utf8' });
+  // ⚠️ **`env: gitEnv()` 不可省**（AGENTS.md 鐵則 11；#463 r1 High）：`gh` 會**自己再去 spawn git**
+  //    ——實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
+  //    繼承來的 GIT_DIR 指到另一個**有效** repo 時，這道閘會去讀**那個** repo 的 PR 與留言，
+  //    而輸出看起來完全正常。行為題＝test/cross-pr-merge.test.js「四支會叫 gh 的閘」。
+  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'comments,headRefOid,body'], { encoding: 'utf8', env: gitEnv() });
   const p = JSON.parse(out);
   if (!Array.isArray(p?.comments)) throw new Error('gh 回傳的形狀不對（comments）');
   if (typeof p.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(p.headRefOid)) {

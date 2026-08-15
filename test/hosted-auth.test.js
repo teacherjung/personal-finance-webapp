@@ -7,6 +7,20 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
+import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
+
+/**
+ * repo 追蹤中的檔案清單。
+ *
+ * ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+ *    git 根本不看 cwd ⇒ 這份清單會變成**別棵樹**的內容，甚至變空。
+ *    下面那道 secret 掃描守的是「萬能鑰匙（service_role 權杖）有沒有進 repo」，
+ *    清單一被換掉它就**掃了個寂寞、回報沒有外洩**——這一族裡後果最重的一顆假綠。
+ *    機制與理由在 lib/git-env.js；行為題＝本檔題名關鍵字「secret 掃描的清單不可被繼承的 GIT_*」那題。
+ */
+const trackedFiles = () =>
+  execFileSync('git', ['ls-files'], { encoding: 'utf8', env: gitEnv() }).trim().split('\n').filter(Boolean);
 
 const TEST_STORE = join(tmpdir(), `finance-hosted-auth-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
@@ -130,7 +144,7 @@ test('serializeCookie：Secure 無條件開、沒有任何環境變數能關（C
 });
 
 test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 解碼驗證）', () => {
-  const files = execFileSync('git', ['ls-files'], { encoding: 'utf8' }).trim().split('\n');
+  const files = trackedFiles();
   const { readFileSync } = /** @type {any} */ (process.getBuiltinModule('node:fs'));
   const jwtRe = /eyJ[A-Za-z0-9_-]+\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+/g;
   const hits = [];
@@ -145,6 +159,28 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
     }
   }
   assert.deepEqual(hits, [], 'service_role key＝萬能鑰匙，絕不可進 repo');
+  // ⚠️ 反面自檢：清單空了的話上面那圈一個檔都不讀，`hits` 當然是空的 ⇒ **零違規是假的**。
+  assert.ok(files.length > 100, `追蹤檔只列到 ${files.length} 支——清單壞了，上面那道 secret 掃描是空轉的`);
+});
+
+test('⭐ secret 掃描的清單不可被繼承的 GIT_* 帶走（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 這一題守的是題名關鍵字「secret 掃描：repo 追蹤檔不得含 service_role 權杖」那題的**前提**：
+  //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 git 自己會把它
+  //    塞進 hook 環境、`pre-push` 又會跑 `npm test`。清單被換成別棵樹或變空 ⇒ 那一題照樣綠，
+  //    而它守的是「萬能鑰匙有沒有進 repo」。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  const restore = injectDirtyGitEnv();
+  try {
+    const files = trackedFiles();
+    assert.ok(files.includes('server.js'),
+      '注入髒 GIT_* 之後清單裡就沒有 server.js 了＝環境沒被隔離，secret 掃描會掃錯對象或掃到空的');
+    assert.ok(files.length > 100, `注入髒 GIT_* 之後只列到 ${files.length} 支＝隔離失效`);
+  } finally {
+    restore();
+  }
 });
 
 // ---- C3 auth gate（P1-1：只宣稱 401／轉登入，不宣稱隔離——隔離歸 C4）----
@@ -900,4 +936,12 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['無關字串與註解', "// 一般說明\nexport const label = 'https 之類的字省略';"],
   ];
   for (const [name, snippet] of CLEAN) assert.equal(hitOn(snippet), null, `連生掃軌都不該看到：${name}`);
+});
+
+test('⭐ secret 掃描交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 題名關鍵字「secret 掃描的清單不可被繼承的 GIT_* 帶走」那題是**代理指標**：
+  //    它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
+  //    ⚠️ 不要寫「上一題」——本檔的題序會漂，複審實測那個指標當時指到的是外連掃描題（#463 r3）。
+  //    這一題直接問子行程收到什麼——沒人見過的新家族也涵蓋得到（射程對照表在 helper 檔頭）。
+  assertChildGitEnvClean(assert, 'hosted-auth 的 trackedFiles()', () => trackedFiles());
 });

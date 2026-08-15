@@ -18,11 +18,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES, runIn } from '../scripts/check-cross-pr-merge.js';
+import { injectDirtyGitEnv, DIRTY_GIT_ENV } from './helpers/dirty-git-env.js';
+import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -551,6 +553,143 @@ test('三關紅但子行程兩邊都沒輸出（如 spawn 本身失敗）→ 退
   assert.match(redDetail({ message: 'spawnSync npm ENOENT' }), /ENOENT/);
   assert.ok(redDetail(null).length > 0,
     '連 message 都沒有也要給一句話——空字串會讓訊息停在「紅了：」，看的人什麼線索都拿不到');
+});
+
+test('⭐ runIn 不可以被繼承的 GIT_* 牽著走（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 這一題守的是這道閘**動到哪一個 repo**。`runIn` 是它 worktree add／merge／remove 的唯一入口，
+  //    而 `GIT_DIR` 一存在，git 就完全不看 `cwd`——那些「建立」與「移除」有可能落在別棵樹上。
+  //
+  // ⚠️ **刻意不在考題裡 `git init` 造一棵誘餌 repo**：那正是 2026-08-09 事故的兇器
+  //    （在帶 `GIT_DIR` 的環境下 `git init` 會把共用 config 寫成 bare=true）。這裡改用
+  //    「指到不存在的 gitdir」——環境沒被清時 git 會直接 fatal、`execFileSync` 丟例外，
+  //    一樣是行為上的紅，而且不必在考題裡動任何真的 repo。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔題名關鍵字
+  //    「runIn 交給子行程的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  const restore = injectDirtyGitEnv();
+  try {
+    const top = runIn(['git', 'rev-parse', '--show-toplevel'], ROOT).trim();
+    assert.equal(realpathSync(top), realpathSync(ROOT),
+      '注入髒 GIT_* 之後 runIn 回答的 toplevel 就不是本樹了。\n'
+      + '⇒ 這道閘會在**別棵樹**上 git worktree add／remove。cwd 隔離不了 GIT_DIR——'
+      + '本題只證明「環境必須清乾淨」，不宣稱技術上只有一種寫法；'
+      + '本專案的規定是一律走 lib/git-env.js 的 gitEnv()（AGENTS.md 鐵則 11），理由是收成一份才不會漂。');
+  } finally {
+    restore();
+  }
+});
+
+test('⭐ runIn 交給子行程的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 題名關鍵字「runIn 不可以被繼承的 GIT_* 牽著走」那題是**代理指標**：它問「答案對不對」，
+  //    而那要靠注入的變數**剛好會改變 git 行為**才驗得到
+  //    ——一個沒人見過的新家族就驗不到（那正是列名式清法一路失守的形狀）。
+  //    這一題改成直接問**子行程實際收到什麼**：不管未來冒出哪個名字都涵蓋得到。
+  //    （#463 r1 複審的建議：「以假 git/gh 記錄並斷言所有 GIT_* 均未傳入」。）
+  const dir = mkdtempSync(join(tmpdir(), 'runin-env-probe-'));
+  try {
+    const log = join(dir, 'seen.txt');
+    const probe = join(dir, 'probe');
+    writeFileSync(probe, `#!/bin/sh\nenv | grep '^GIT_' | cut -d= -f1 | sort > ${JSON.stringify(log)}\nexit 0\n`);
+    chmodSync(probe, 0o755);
+    const restore = injectDirtyGitEnv();
+    try {
+      runIn([probe], ROOT);
+    } finally {
+      restore();
+    }
+    const seen = readFileSync(log, 'utf8').trim();
+    assert.equal(seen, '',
+      `runIn 把這些 GIT_* 原封不動傳給子行程了：\n${seen}\n`
+      + '⇒ 這道閘會 spawn git 與 npm（`npm run test` 會在臨時工作區跑整套考題），'
+      + '任何一個漏網的 GIT_* 都可能讓它們去動別的 repo。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ runIn 的 opts 不可以覆寫 env（Grok 預審抓到：那是一道靜靜打開的門）', () => {
+  // ⚠️ `runIn` 的註解宣稱「**不接受 `env`**」，而它成立的**唯一理由**是物件字面量裡
+  //    `env: gitEnv()` 寫在 `...opts` **後面**（後寫的鍵蓋掉先寫的）。那是一個
+  //    **沒有考題撐著的排序保證**：把 `...opts` 挪到最後（`{ cwd, …, env: gitEnv(), ...opts }`
+  //    ——一種很常見的重構寫法），呼叫端塞的 `env` 就會生效，而**本檔 43 題照樣全綠**（實測）。
+  //    ⇒ 這一題把「呼叫端硬塞 env」那條路真的走一遍：不管實作怎麼排鍵，子行程都不可以看到 GIT_*。
+  const dir = mkdtempSync(join(tmpdir(), 'runin-optsenv-'));
+  try {
+    const log = join(dir, 'seen.txt');
+    const probe = join(dir, 'probe');
+    writeFileSync(probe, `#!/bin/sh\n{ echo CALLED; env | grep '^GIT_' | cut -d= -f1 | sort; } > ${JSON.stringify(log)}\nexit 0\n`);
+    chmodSync(probe, 0o755);
+    // 呼叫端刻意把一整包髒環境當 opts.env 塞進去。型別上不接受，所以要 cast——
+    // **但型別擋不住執行期，而這一題守的正是執行期**。
+    runIn([probe], ROOT, /** @type {any} */ ({ env: { ...process.env, ...DIRTY_GIT_ENV } }));
+    const lines = readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(lines.includes('CALLED'), '探針沒被叫到 ⇒ 這一題是空轉的');
+    const leaked = lines.filter((l) => l.startsWith('GIT_'));
+    assert.deepEqual(leaked, [],
+      `呼叫端塞的 env 蓋掉了清理，子行程看到：${leaked.join('、')}\n`
+      + '⇒ `runIn` 的「不接受 env」是靠鍵的排序成立的，而那道門被打開了。'
+      + '請讓 `env: gitEnv()` 永遠寫在 `...opts` 之後（或明確把 opts.env 剔除）。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 發起樹的 fixture 不可以波及真的 repo（保險絲：本檔也會跑 git init）', () => {
+  // ⚠️ `makeInitiatorRepo()` 會在暫存目錄跑 `git init`——**那正是 2026-08-09 事故的兇器**。
+  //    它用的 `SANDBOX_ENV` 是**從零組**的（只給 PATH／HOME），所以 GIT_* 洩不進去；
+  //    但那是「現在的寫法」，不是保證。⚠️ Grok 預審（2026-08-15）指出：同族的
+  //    `test/worktree-integrity.test.js` 有這道保險絲、本檔沒有 ⇒ 有人把 SANDBOX_ENV 改成
+  //    「`process.env` 扣幾個」時，本檔的 fixture 會安安靜靜把真的 repo 寫成 bare，而沒有題會紅。
+  const { dir } = makeInitiatorRepo();
+  try {
+    assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
+      '⛔ 本檔的 fixture 把**真的 repo** 弄壞了。立刻檢查 SANDBOX_ENV 是不是被改成會帶 GIT_* 進去。');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ 四支會叫 gh 的閘，交給 gh 的環境裡也不可以有 GIT_*（r1 High）', () => {
+  // ⚠️ 為什麼 `gh` 算在鐵則 11 的射程內：**它會自己再去 spawn git**。實測（2026-08-15）
+  //    `env GIT_DIR=<不存在的路徑> gh pr view 463` ⇒ `failed to run git: fatal: not a git repository`。
+  //    後果分兩種：指到不存在的路徑＝**假阻擋**（閘查不到就 fail-closed，看起來像 PR 有問題）；
+  //    指到另一個**有效** repo＝這幾道閘會去讀**別的 repo** 的 PR、留言與 open PR 清單，
+  //    而輸出看起來完全正常——合併程序會照著別人的資料做判斷。
+  //
+  // ⚠️ 這一題用**假 gh 記錄環境**，不看指令結果：假 gh 一律 exit 1，四支閘都會走 fail-closed
+  //    的那條路直接收工 ⇒ 不會有任何一支真的去 `git worktree add`（考題不動任何真的樹）。
+  const GH_GATES = [
+    'scripts/check-cross-pr-merge.js',
+    'scripts/check-pr-collab-fields.js',
+    'scripts/check-pr-merge-gate.js',
+    'scripts/check-review-verdicts.js',
+  ];
+  for (const rel of GH_GATES) {
+    const dir = mkdtempSync(join(tmpdir(), 'gh-env-probe-'));
+    try {
+      const log = join(dir, 'seen.txt');
+      const fake = join(dir, 'gh');
+      // 記下「被叫到了」與「當下看得到哪些 GIT_*」，然後 exit 1 讓閘 fail-closed 收工。
+      writeFileSync(fake,
+        `#!/bin/sh\n{ echo CALLED; env | grep '^GIT_' | cut -d= -f1 | sort; } >> ${JSON.stringify(log)}\nexit 1\n`);
+      chmodSync(fake, 0o755);
+      spawnSync(process.execPath, [join(ROOT, rel), '463'], {
+        encoding: 'utf8', cwd: ROOT,
+        env: { ...process.env, ...DIRTY_GIT_ENV, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      });
+      const lines = readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
+      // 反面①：gh 真的被叫到了——沒被叫到的話下面那條斷言是空的（0 個 GIT_* 當然通過）
+      assert.ok(lines.includes('CALLED'),
+        `${rel} 根本沒有叫到 gh ⇒ 這一輪的斷言是空轉的（假 gh 沒被撿到？參數不對？）`);
+      const leaked = lines.filter((l) => l.startsWith('GIT_'));
+      assert.deepEqual(leaked, [],
+        `${rel} 把這些 GIT_* 傳給 gh 了：${leaked.join('、')}\n`
+        + 'gh 會自己再去 spawn git（AGENTS.md 鐵則 11 的射程），請加 env: gitEnv()。');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 // ⭐ 入口守衛（經過 symlink 的路徑也要真的跑）**移到 `test/entry-guard.test.js`**。
