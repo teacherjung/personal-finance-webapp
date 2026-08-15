@@ -3,20 +3,26 @@
 //（設計依據見 scripts/check-ci-really-ran.js 檔頭；r1 高①②＝身分過濾與排序鍵的來歷）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { evaluateGate, isCheckRunList, isRequiredList } from '../scripts/check-ci-really-ran.js';
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const SCRIPT = join(ROOT, 'scripts', 'check-ci-really-ran.js');
 
 const NODE_JOB = '上線用的 Node（.node-version）';
 const COLLAB_JOB = '協作欄位（實作者 ≠ 獨立審查者）';
 const ACTIONS_APP = 15368;   // GitHub Actions 的 App id（考題常數；正式路徑從分支保護現場讀）
 const REQ = [{ context: NODE_JOB, appId: ACTIONS_APP }, { context: COLLAB_JOB, appId: ACTIONS_APP }];
 
-let seq = 0;
-/** @param {string} name @param {string|null} conclusion @param {{at?:string, app?:number|null, id?:number}} [o] @returns {import('../scripts/check-ci-really-ran.js').CheckRun} */
+/** @param {string} name @param {string|null} conclusion @param {{at?:string, app?:number|null}} [o] @returns {import('../scripts/check-ci-really-ran.js').CheckRun} */
 const run = (name, conclusion, o = {}) => ({
   name, conclusion,
   status: conclusion === null ? 'in_progress' : 'completed',
   completed_at: conclusion === null ? null : (o.at ?? '2026-08-15T00:00:00Z'),
-  id: o.id ?? ++seq,
   app_id: o.app === undefined ? ACTIONS_APP : o.app,
 });
 
@@ -70,15 +76,24 @@ test('真考卷閘｜同名多場次取最新（completed_at＋id，r1 高②）
   assert.equal(ok.code, 0, ok.reason);
 });
 
-test('真考卷閘｜非單調時間（r1 高②實測）：completed_at 同刻以 id 決勝、陣列順序不可承重', () => {
-  // 兩場 completed_at 相同、**skipped 排在陣列前面**（id 較大＝較晚建立）：
-  // 若拿掉 id 決勝，穩定排序會讓陣列末位的 success 勝出＝假綠——這一格逼 id 真的承重。
-  const r = evaluateGate([
-    run(NODE_JOB, 'skipped', { at: '2026-08-15T01:00:00Z', id: 200 }),
-    run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z', id: 100 }),
+test('真考卷閘｜同刻並列（r2）：completed_at 平手且結論不一致＝fail-closed，兩種陣列順序都擋', () => {
+  // API 精度到秒、沒有欄位有「同刻誰晚」的契約保證（id 只承諾唯一）——同刻交集語意：
+  // 最大 completed_at 的所有場次必須全 success；success＋skipped 並列＝結論不明＝擋。
+  for (const order of [['skipped', 'success'], ['success', 'skipped']]) {
+    const r = evaluateGate([
+      run(NODE_JOB, /** @type {string} */ (order[0]), { at: '2026-08-15T01:00:00Z' }),
+      run(NODE_JOB, /** @type {string} */ (order[1]), { at: '2026-08-15T01:00:00Z' }),
+      run(COLLAB_JOB, 'success'),
+    ], false, REQ);
+    assert.equal(r.code, 1, `並列 ${order.join('+')} ＝不明＝擋（陣列順序不可承重）`);
+  }
+  // 對照：同刻全 success＝放行（例：重跑兩次都綠）
+  const ok = evaluateGate([
+    run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z' }),
+    run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z' }),
     run(COLLAB_JOB, 'success'),
   ], false, REQ);
-  assert.equal(r.code, 1, 'completed_at 平手＝id 大者為準（全域遞增＝晚建立）；陣列順序不算數');
+  assert.equal(ok.code, 0, ok.reason);
 });
 
 test('真考卷閘｜空窗防線：正牌一場都沒有＝fail-closed 退 2；任一場還在跑＝退 1 等它', () => {
@@ -107,15 +122,103 @@ test('真考卷閘｜failure／cancelled 一律不放行（cancel-in-progress �
   }
 });
 
-test('真考卷閘｜形狀驗證 fail-closed：合法但錯形的 JSON 不可幻化成放行', () => {
-  assert.equal(isCheckRunList([{ name: 'x', status: 'completed', conclusion: 'success', completed_at: 'z', id: 1, app_id: 15368 }]), true);
-  for (const bad of [null, {}, [{}], [{ name: 1, status: 'completed', conclusion: null, id: 1, app_id: null }],
-    [{ name: 'x', status: 'completed', conclusion: 'success', id: '1', app_id: null }],
-    [{ name: 'x', status: 'completed', conclusion: 'success', id: 1, app_id: '15368' }]]) {
+test('真考卷閘｜形狀驗證 fail-closed：completed_at 是承重欄、垃圾值不可混進排序（r2 新中①）', () => {
+  assert.equal(isCheckRunList([{ name: 'x', status: 'completed', conclusion: 'success', completed_at: '2026-08-15T00:00:00Z', app_id: 15368 }]), true);
+  assert.equal(isCheckRunList([{ name: 'x', status: 'in_progress', conclusion: null, completed_at: null, app_id: null }]), true);
+  for (const bad of [null, {}, [{}],
+    [{ name: 1, status: 'completed', conclusion: null, completed_at: null, app_id: null }],
+    [{ name: 'x', status: 'completed', conclusion: 'success', app_id: null }],                                  // 缺 completed_at
+    [{ name: 'x', status: 'completed', conclusion: 'success', completed_at: 42, app_id: null }],                // 數字
+    [{ name: 'x', status: 'completed', conclusion: 'success', completed_at: 'z', app_id: null }],               // 垃圾字串
+    [{ name: 'x', status: 'completed', conclusion: null, completed_at: '2026-08-15T00:00:00Z', app_id: null }], // completed 卻沒結論
+    [{ name: 'x', status: 'in_progress', conclusion: null, completed_at: '2026-08-15T00:00:00Z', app_id: null }], // 沒跑完卻有時間
+    [{ name: 'x', status: 'completed', conclusion: 'success', completed_at: '2026-08-15T00:00:00Z', app_id: '15368' }]]) {
     assert.equal(isCheckRunList(/** @type {any} */ (bad)), false, `${JSON.stringify(bad)} 要被形狀驗證拒絕`);
   }
   assert.equal(isRequiredList([{ context: 'x', appId: 15368 }, { context: 'y', appId: null }]), true);
   for (const bad of [null, [{}], [{ context: '', appId: 1 }], [{ context: 'x', appId: '15368' }]]) {
     assert.equal(isRequiredList(/** @type {any} */ (bad)), false, `${JSON.stringify(bad)} 要被名單形狀驗證拒絕`);
   }
+});
+
+// ---- 端到端（假 gh，走真的 PATH 解析；merge-gate r3 同款）---------------------------------
+// 假 gh 對**完整 argv 整串比對**：腳本呼叫 gh 的形狀（--paginate、per_page、jq 的投影欄位
+// completed_at／app.id、分支保護端點）是契約的一部分——任何漂移（jq 換回 started_at、拿掉
+// --paginate、名單改硬編＝根本不打保護端點）＝假 gh 退出 65 或劇本對不上＝考題紅（r2#1/#2 的
+// 「CLI 接縫無守門」正是這裡在關）。
+
+const VIEW_ARGV = 'pr view 999 --json headRefOid,autoMergeRequest';
+const PROT_ARGV = "api repos/{owner}/{repo}/branches/main/protection/required_status_checks --jq [.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]";
+const SHA = 'a'.repeat(40);
+const RUNS_ARGV = `api --paginate repos/{owner}/{repo}/commits/${SHA}/check-runs?per_page=100 --jq [.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]`;
+
+/** @param {{ view?: object, prot?: string, pages?: string }} sc */
+function runCli(sc) {
+  const dir = mkdtempSync(join(tmpdir(), 'fake-gh-cirr-'));
+  writeFileSync(join(dir, 'gh'),
+    '#!/bin/sh\n'
+    + 'if [ "$1 $2" = "pr view" ]; then\n'
+    + '  if [ "$*" != "$GH_EXPECT_VIEW" ]; then echo "fake gh: unexpected view argv: $*" >&2; exit 65; fi\n'
+    + '  printf %s "$GH_VIEW"; exit 0\n'
+    + 'fi\n'
+    + 'if [ "$1" = "api" ] && [ "$2" != "--paginate" ]; then\n'
+    + '  if [ "$*" != "$GH_EXPECT_PROT" ]; then echo "fake gh: unexpected protection argv: $*" >&2; exit 65; fi\n'
+    + '  printf %s "$GH_PROT"; exit 0\n'
+    + 'fi\n'
+    + 'if [ "$1 $2" = "api --paginate" ]; then\n'
+    + '  if [ "$*" != "$GH_EXPECT_RUNS" ]; then echo "fake gh: unexpected check-runs argv: $*" >&2; exit 65; fi\n'
+    + '  printf %s "$GH_PAGES"; exit 0\n'
+    + 'fi\n'
+    + 'exit 64\n');
+  chmodSync(join(dir, 'gh'), 0o755);
+  return spawnSync(process.execPath, [SCRIPT, '999'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`,
+      GH_EXPECT_VIEW: VIEW_ARGV, GH_EXPECT_PROT: PROT_ARGV, GH_EXPECT_RUNS: RUNS_ARGV,
+      GH_VIEW: JSON.stringify(sc.view ?? { headRefOid: SHA, autoMergeRequest: null }),
+      GH_PROT: sc.prot ?? '[]',
+      GH_PAGES: sc.pages ?? '' },
+  });
+}
+
+const PROT2 = JSON.stringify([{ context: NODE_JOB, appId: ACTIONS_APP }, { context: COLLAB_JOB, appId: ACTIONS_APP }]);
+/** @param {object[]} arr */
+const page = (arr) => JSON.stringify(arr);
+const okRun = (/** @type {string} */ name) => ({ name, status: 'completed', conclusion: 'success', completed_at: '2026-08-15T01:00:00Z', app_id: ACTIONS_APP });
+
+test('閘·端到端｜快樂路徑：保護兩格＋兩場真 success → 退出碼 0（argv 整串鎖住 jq 投影與 --paginate）', () => {
+  const r = runCli({ prot: PROT2, pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
+test('閘·端到端｜名單真的來自分支保護（r2#1）：保護多一格「新來的門」→ 退出碼 2（硬編名單＝這裡綠不了）', () => {
+  const prot3 = JSON.stringify([{ context: NODE_JOB, appId: ACTIONS_APP }, { context: COLLAB_JOB, appId: ACTIONS_APP }, { context: '新來的門', appId: ACTIONS_APP }]);
+  const r = runCli({ prot: prot3, pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) });
+  assert.equal(r.status, 2, '保護新增 required check 必須被驗到——名單若硬編兩個名字，這一格會退 0＝假綠');
+});
+
+test('閘·端到端｜app 身分經 CLI 進判斷層（r2#1）：保護釘 15368、場次是別的 App → 退出碼 2', () => {
+  const spoof = { name: NODE_JOB, status: 'completed', conclusion: 'success', completed_at: '2026-08-15T01:00:00Z', app_id: 99999 };
+  const r = runCli({ prot: PROT2, pages: page([spoof, okRun(COLLAB_JOB)]) });
+  assert.equal(r.status, 2, '冒名場次不是正牌——appId 若在接縫被降成 null，這一格會退 0＝假綠');
+});
+
+test('閘·端到端｜分頁合併真的發生（r2#2）：required 的 success 在第二頁 → 退出碼 0；只讀第一頁＝會退 2', () => {
+  const pages = page([okRun(NODE_JOB)]) + '\n' + page([okRun(COLLAB_JOB)]);
+  const r = runCli({ prot: PROT2, pages });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+test('閘·端到端｜skipped 與 auto-merge 走完整 CLI：各退 1', () => {
+  const skipped = { name: NODE_JOB, status: 'completed', conclusion: 'skipped', completed_at: '2026-08-15T02:00:00Z', app_id: ACTIONS_APP };
+  const r1 = runCli({ prot: PROT2, pages: page([okRun(NODE_JOB), skipped, okRun(COLLAB_JOB)]) });
+  assert.equal(r1.status, 1, '最新 skipped＝退 1');
+  const r2 = runCli({ view: { headRefOid: SHA, autoMergeRequest: { enabledAt: 'x' } }, prot: PROT2, pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) });
+  assert.equal(r2.status, 1, 'auto-merge 開著＝退 1');
+});
+
+test('閘·端到端｜fail-closed 三態：保護回錯形狀／check runs 錯形狀／sha 讀不到 → 都退 2', () => {
+  assert.equal(runCli({ prot: '{}', pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) }).status, 2);
+  assert.equal(runCli({ prot: PROT2, pages: '[{"name":"x"}]' }).status, 2);
+  assert.equal(runCli({ view: { headRefOid: 'short', autoMergeRequest: null }, prot: PROT2, pages: '' }).status, 2);
 });

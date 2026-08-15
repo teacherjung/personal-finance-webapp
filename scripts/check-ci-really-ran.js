@@ -33,16 +33,25 @@ export const MERGE_GATE = { name: '真考卷', why: '合併頭的 required check
  * @typedef {{ context: string, appId: number | null }} RequiredCheck
  */
 
-/** @typedef {{ name: string, status: string, conclusion: string | null, completed_at: string | null, id: number, app_id: number | null }} CheckRun */
+/** @typedef {{ name: string, status: string, conclusion: string | null, completed_at: string | null, app_id: number | null }} CheckRun */
 
-/** @param {unknown} v @returns {v is CheckRun[]} */
+/**
+ * 形狀驗證（r2 新中①補嚴）：completed 場次必須有**合法時間字串**的 completed_at 與非 null 的
+ * conclusion（它們是排序與判定的承重欄）；未完成場次依 API 契約兩者皆 null。
+ * @param {unknown} v @returns {v is CheckRun[]}
+ */
 export function isCheckRunList(v) {
-  return Array.isArray(v) && v.every((r) => !!r && typeof r === 'object'
-    && typeof (/** @type {any} */ (r).name) === 'string'
-    && typeof (/** @type {any} */ (r).status) === 'string'
-    && typeof (/** @type {any} */ (r).id) === 'number'
-    && ((/** @type {any} */ (r).conclusion) === null || typeof (/** @type {any} */ (r).conclusion) === 'string')
-    && ((/** @type {any} */ (r).app_id) === null || typeof (/** @type {any} */ (r).app_id) === 'number'));
+  return Array.isArray(v) && v.every((r) => {
+    if (!r || typeof r !== 'object') return false;
+    const o = /** @type {any} */ (r);
+    if (typeof o.name !== 'string' || typeof o.status !== 'string') return false;
+    if (o.app_id !== null && typeof o.app_id !== 'number') return false;
+    if (o.status === 'completed') {
+      return typeof o.conclusion === 'string'
+        && typeof o.completed_at === 'string' && Number.isFinite(Date.parse(o.completed_at));
+    }
+    return o.conclusion === null && o.completed_at === null;
+  });
 }
 
 /** @param {unknown} v @returns {v is RequiredCheck[]} */
@@ -76,12 +85,15 @@ export function evaluateGate(runs, autoMergeOn, required) {
     if (mine.some((r) => r.status !== 'completed')) {
       return { code: 1, reason: `「${context}」有場次還在跑——等它跑完再判` };
     }
-    // 最新＝GitHub 文件對 filter=latest 的裁決鍵 completed_at（r1 高②：started_at 實測會倒走），
-    // 同刻以 check run id 決勝（id 全域遞增＝晚建立的大）。
-    const latest = [...mine].sort((a, b) =>
-      String(a.completed_at || '').localeCompare(String(b.completed_at || '')) || (a.id - b.id)).at(-1);
-    if (!latest || latest.conclusion !== 'success') {
-      return { code: 1, reason: `「${context}」最新場次的結論是 ${latest?.conclusion}——skipped＝草稿期的跳過（不是真考卷）、其餘＝沒過。轉正式後重跑到真的 success 再合併` };
+    // 最新＝GitHub 文件對 filter=latest 的裁決鍵 completed_at（r1 高②：started_at 實測會倒走）。
+    // ⚠️ API 精度到秒、且沒有任何欄位有「同刻誰晚」的契約保證（r2：id 只承諾唯一、不承諾遞增）
+    //   ——所以**同刻並列取交集語意**：最大 completed_at 的所有場次必須全部 success，
+    //   有任何一場不是＝結論不明＝fail-closed 擋下（寧可多跑一次真考卷，不猜平台沒承諾的順序）。
+    const maxAt = mine.reduce((m, r) => (String(r.completed_at) > m ? String(r.completed_at) : m), '');
+    const tied = mine.filter((r) => String(r.completed_at) === maxAt);
+    const bad = tied.find((r) => r.conclusion !== 'success');
+    if (bad) {
+      return { code: 1, reason: `「${context}」最新（completed_at 並列含）場次的結論是 ${bad.conclusion}——skipped＝草稿期的跳過（不是真考卷）、其餘＝沒過；同刻結論不一致也算不明。轉正式後重跑到真的 success 再合併` };
     }
   }
   return { code: 0, reason: `required checks（${required.map((r) => r.context).join('、')}）在合併頭上皆真跑且 success、auto-merge 關閉` };
@@ -99,7 +111,7 @@ if (isMainModule(import.meta.url)) {
     const prot = JSON.parse(execFileSync('gh', ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '[.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]'], { encoding: 'utf8' }));
     if (!isRequiredList(prot)) { console.error(`真考卷閘 PR #${pr}：分支保護名單形狀不對（fail-closed）`); process.exit(2); }
     // check runs＝--paginate 撈全（r1 高②：單頁 100 筆會截斷）；--jq 每頁輸出一個陣列、串起來再合併
-    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, id, app_id: (.app.id // null) }]'], { encoding: 'utf8' });
+    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]'], { encoding: 'utf8' });
     const raw = pages.split('\n').filter((l) => l.trim()).flatMap((l) => JSON.parse(l));
     if (!isCheckRunList(raw)) { console.error(`真考卷閘 PR #${pr}：check runs 形狀不對（fail-closed）`); process.exit(2); }
     const { code, reason } = evaluateGate(raw, view?.autoMergeRequest != null, prot);
