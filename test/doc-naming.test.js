@@ -234,7 +234,7 @@ test('檔案真的存在（宣告的每一份都要在）', () => {
   }
 });
 
-test('⭐ 清單與 git grep 不可被繼承的 GIT_DIR 帶走（拿掉 env: gitEnv() 要紅）', () => {
+test('⭐ 清單與 git grep 不可被繼承的 GIT_* 帶走（拿掉 env: gitEnv() 要紅）', () => {
   // ⚠️ 本檔每一題的底料都是這兩個 git 呼叫。`cwd: ROOT` **隔離不了 `GIT_DIR`**——有它時 git 不看 cwd，
   //    而從連結工作樹 push 時 git 自己會把它塞進 hook 環境、`pre-push` 又會跑 `npm test`。
   //    清單被換走 ⇒ 非 ASCII 檔名那一題空掃、死連結一條都找不到，而整支全綠。

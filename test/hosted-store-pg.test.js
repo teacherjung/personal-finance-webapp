@@ -517,7 +517,7 @@ test('SQL：RLS 政策必須 FOR ALL＋USING＋WITH CHECK＋force，且 service_
   assert.match(sql, /version\s+bigint\s+not null default 1/i, 'P1-5 樂觀鎖欄位');
 });
 
-test('⭐ 架構護欄的清單不可被繼承的 GIT_DIR 帶去別棵樹（拿掉 env: gitEnv() 要紅）', () => {
+test('⭐ 架構護欄的清單不可被繼承的 GIT_* 帶去別棵樹（拿掉 env: gitEnv() 要紅）', () => {
   // ⚠️ 上面兩道架構護欄（service_role、誰可以 import store.js）都是「逐檔讀 libFiles() 的內容」。
   //    清單一被換掉，它們就掃了別棵樹而回報通過——**護欄什麼都沒做卻說通過**。
   //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 hook 環境本來就有它。
