@@ -525,9 +525,10 @@ test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有
   withSandbox(({ repo }) => {
     const saved = process.env.GIT_DIR;
     process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
-    // ⚠️ 除了 GIT_DIR 再注**第二個家族**（`GIT_CONFIG_*`，清單在 test/helpers/dirty-git-env.js）：
-    //    只注 GIT_DIR 的話，把 gitEnv() 退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測），
-    //    而「列名補不完」正是這一族存在的理由。
+    // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+    //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結論沒被帶偏。
+    //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由下一題
+    //    「體檢交給 git 的環境裡不可以有任何 GIT_*」（直接讀子行程收到什麼）守。
     const restoreDirty = injectDirtyGitEnv();
     try {
       assert.deepEqual(worktreeIntegrityProblems(ROOT), [],

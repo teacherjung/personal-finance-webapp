@@ -241,8 +241,10 @@ test('⭐ 清單與 git grep 不可被繼承的 GIT_DIR 帶走（拿掉 env: git
   const baseline = { files: trackedFiles().length, contexts: Object.keys(oldNameContexts()).length };
   assert.ok(baseline.files > 100, `基準清單只有 ${baseline.files} 支＝這一題在空轉`);
 
-  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
-  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
   const restore = injectDirtyGitEnv();
   try {
     const files = trackedFiles();

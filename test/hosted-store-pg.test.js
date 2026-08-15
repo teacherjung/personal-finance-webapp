@@ -521,8 +521,10 @@ test('⭐ 架構護欄的清單不可被繼承的 GIT_DIR 帶去別棵樹（拿�
   // ⚠️ 上面兩道架構護欄（service_role、誰可以 import store.js）都是「逐檔讀 libFiles() 的內容」。
   //    清單一被換掉，它們就掃了別棵樹而回報通過——**護欄什麼都沒做卻說通過**。
   //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 hook 環境本來就有它。
-  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
-  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
   const restore = injectDirtyGitEnv();
   try {
     const files = libFiles();

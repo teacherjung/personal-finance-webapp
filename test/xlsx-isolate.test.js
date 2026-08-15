@@ -419,9 +419,10 @@ test('護欄本身｜檔案清單不可被繼承的 GIT_* 帶去別棵樹（拿�
   //    而從連結工作樹 push 時，git 自己會把 GIT_DIR 塞進 hook 環境，`pre-push` 又會跑 `npm test`
   //    ⇒ 這份清單會靜靜換成別棵樹的內容，而護欄回報「零違規」。
   //    這是**行為題**：把 productionFiles() 的 `env: gitEnv()` 拿掉，這一題就紅。
-  // ⚠️ 注入的是**兩個家族**（`GIT_DIR` ＋ `GIT_CONFIG_*`），清單與實測理由在
-  //    test/helpers/dirty-git-env.js——只注 `GIT_DIR` 的話，把清法退化成「只刪 GIT_DIR」的
-  //    列名版仍會全綠（#463 r1 複審實測），而「列名補不完」正是這一族存在的理由。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
   const { injectDirtyGitEnv } = await import('./helpers/dirty-git-env.js');
   const restore = injectDirtyGitEnv();
   try {

@@ -562,10 +562,10 @@ test('⭐ runIn 不可以被繼承的 GIT_* 牽著走（拿掉 env: gitEnv() 要
   //    （在帶 `GIT_DIR` 的環境下 `git init` 會把共用 config 寫成 bare=true）。這裡改用
   //    「指到不存在的 gitdir」——環境沒被清時 git 會直接 fatal、`execFileSync` 丟例外，
   //    一樣是行為上的紅，而且不必在考題裡動任何真的 repo。
-  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
-  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
-  //    ⚠️ `GIT_CONFIG_*` 是這裡唯一有影響力的第二探針——實測 `GIT_INDEX_FILE` 與 `GIT_WORK_TREE`
-  //    對 `rev-parse --show-toplevel` **沒有**影響力，拿它們當探針等於空注。
+  // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
+  //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
+  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
   const restore = injectDirtyGitEnv();
   try {
     const top = runIn(['git', 'rev-parse', '--show-toplevel'], ROOT).trim();
