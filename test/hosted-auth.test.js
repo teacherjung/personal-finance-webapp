@@ -8,6 +8,7 @@ import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 /**
  * repo 追蹤中的檔案清單。
@@ -162,19 +163,20 @@ test('secret 掃描：repo 追蹤檔不得含 service_role 權杖（JWT payload 
   assert.ok(files.length > 100, `追蹤檔只列到 ${files.length} 支——清單壞了，上面那道 secret 掃描是空轉的`);
 });
 
-test('⭐ secret 掃描的清單不可被繼承的 GIT_DIR 帶走（拿掉 env: gitEnv() 要紅）', () => {
+test('⭐ secret 掃描的清單不可被繼承的 GIT_* 帶走（拿掉 env: gitEnv() 要紅）', () => {
   // ⚠️ 這一題守的是上一題的**前提**：`cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），
   //    而從連結工作樹 push 時 git 自己會把它塞進 hook 環境、`pre-push` 又會跑 `npm test`。
   //    清單被換成別棵樹或變空 ⇒ 上一題照樣綠，而它守的是「萬能鑰匙有沒有進 repo」。
-  const before = process.env.GIT_DIR;
-  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
+  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
+  const restore = injectDirtyGitEnv();
   try {
     const files = trackedFiles();
     assert.ok(files.includes('server.js'),
-      '注入假的 GIT_DIR 之後清單裡就沒有 server.js 了＝環境沒被隔離，secret 掃描會掃錯對象或掃到空的');
-    assert.ok(files.length > 100, `注入假的 GIT_DIR 之後只列到 ${files.length} 支＝隔離失效`);
+      '注入髒 GIT_* 之後清單裡就沒有 server.js 了＝環境沒被隔離，secret 掃描會掃錯對象或掃到空的');
+    assert.ok(files.length > 100, `注入髒 GIT_* 之後只列到 ${files.length} 支＝隔離失效`);
   } finally {
-    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+    restore();
   }
 });
 
@@ -931,4 +933,10 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['無關字串與註解', "// 一般說明\nexport const label = 'https 之類的字省略';"],
   ];
   for (const [name, snippet] of CLEAN) assert.equal(hitOn(snippet), null, `連生掃軌都不該看到：${name}`);
+});
+
+test('⭐ secret 掃描交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 上一題是**代理指標**：它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
+  //    這一題直接問子行程收到什麼——沒人見過的新家族也涵蓋得到（射程對照表在 helper 檔頭）。
+  assertChildGitEnvClean(assert, 'hosted-auth 的 trackedFiles()', () => trackedFiles());
 });

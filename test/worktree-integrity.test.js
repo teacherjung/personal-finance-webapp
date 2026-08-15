@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -520,18 +521,31 @@ test('⭐ 根本不是 repo 的目錄：要說「不認得」，不可以回「�
   }
 });
 
-test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是掃它有沒有寫清環境那一行）', () => {
+test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有沒有寫清環境那一行）', () => {
   withSandbox(({ repo }) => {
     const saved = process.env.GIT_DIR;
     process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
+    // ⚠️ 除了 GIT_DIR 再注**第二個家族**（`GIT_CONFIG_*`，清單在 test/helpers/dirty-git-env.js）：
+    //    只注 GIT_DIR 的話，把 gitEnv() 退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測），
+    //    而「列名補不完」正是這一族存在的理由。
+    const restoreDirty = injectDirtyGitEnv();
     try {
       assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
-        '環境裡有 GIT_DIR 時，體檢就量到別棵樹了 ⇒ 從 worktree push 時（hook 環境本來就有 GIT_DIR）'
+        '環境裡有 GIT_* 時，體檢就量到別棵樹了 ⇒ 從 worktree push 時（hook 環境本來就有 GIT_DIR）'
         + '這支會靜靜量錯對象。');
     } finally {
+      restoreDirty();
       if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
     }
   });
+});
+
+test('⭐ 體檢交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 上一題是**代理指標**：它問「體檢的結論對不對」，只涵蓋「剛好會改變那些指令的變數」。
+  //    實測 `rev-parse --show-toplevel` 這一族**只有 `GIT_DIR` 有影響力**（對照表在
+  //    test/helpers/dirty-git-env.js 檔頭），所以光靠上一題，把清法退化成「只刪 GIT_DIR」
+  //    的列名版仍會全綠。這一題直接問子行程收到什麼，未來的新家族也涵蓋得到。
+  assertChildGitEnvClean(assert, '體檢的 runGit()', () => worktreeIntegrityProblems(ROOT));
 });
 
 /**

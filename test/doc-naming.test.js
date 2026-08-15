@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -240,16 +241,23 @@ test('⭐ 清單與 git grep 不可被繼承的 GIT_DIR 帶走（拿掉 env: git
   const baseline = { files: trackedFiles().length, contexts: Object.keys(oldNameContexts()).length };
   assert.ok(baseline.files > 100, `基準清單只有 ${baseline.files} 支＝這一題在空轉`);
 
-  const before = process.env.GIT_DIR;
-  process.env.GIT_DIR = join(ROOT, 'definitely-not-a-git-dir-xyz');
+  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
+  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
+  const restore = injectDirtyGitEnv();
   try {
     const files = trackedFiles();
     assert.ok(files.includes('AGENTS.md'),
-      '注入假的 GIT_DIR 之後清單裡就沒有 AGENTS.md 了＝環境沒被隔離，本檔每一題都會掃錯對象');
-    assert.equal(files.length, baseline.files, '注入 GIT_DIR 之後清單長度變了＝隔離失效');
+      '注入髒 GIT_* 之後清單裡就沒有 AGENTS.md 了＝環境沒被隔離，本檔每一題都會掃錯對象');
+    assert.equal(files.length, baseline.files, '注入髒 GIT_* 之後清單長度變了＝隔離失效');
     assert.equal(Object.keys(oldNameContexts()).length, baseline.contexts,
-      '注入 GIT_DIR 之後 git grep 的命中檔數變了＝死連結那一題會搜到別棵樹');
+      '注入髒 GIT_* 之後 git grep 的命中檔數變了＝死連結那一題會搜到別棵樹');
   } finally {
-    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+    restore();
   }
+});
+
+test('⭐ 列檔與 git grep 交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 上一題是代理指標，只涵蓋「剛好會改變這個指令的變數」；這一題直接問子行程收到什麼。
+  assertChildGitEnvClean(assert, 'doc-naming 的 trackedFiles()', () => trackedFiles());
+  assertChildGitEnvClean(assert, 'doc-naming 的 oldNameContexts()', () => oldNameContexts());
 });

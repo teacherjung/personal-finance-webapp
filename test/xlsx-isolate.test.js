@@ -414,23 +414,32 @@ test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**�
   }
 });
 
-test('護欄本身｜檔案清單不可被繼承的 GIT_DIR 帶去別棵樹（拿掉 env: gitEnv() 要紅）', async () => {
+test('護欄本身｜檔案清單不可被繼承的 GIT_* 帶去別棵樹（拿掉 env: gitEnv() 要紅）', async () => {
   // ⚠️ 為什麼非有這一題不可：`cwd` **隔離不了 `GIT_DIR`**——有它時 git 根本不看 cwd。
   //    而從連結工作樹 push 時，git 自己會把 GIT_DIR 塞進 hook 環境，`pre-push` 又會跑 `npm test`
   //    ⇒ 這份清單會靜靜換成別棵樹的內容，而護欄回報「零違規」。
   //    這是**行為題**：把 productionFiles() 的 `env: gitEnv()` 拿掉，這一題就紅。
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const before = process.env.GIT_DIR;
-  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  // ⚠️ 注入的是**兩個家族**（`GIT_DIR` ＋ `GIT_CONFIG_*`），清單與實測理由在
+  //    test/helpers/dirty-git-env.js——只注 `GIT_DIR` 的話，把清法退化成「只刪 GIT_DIR」的
+  //    列名版仍會全綠（#463 r1 複審實測），而「列名補不完」正是這一族存在的理由。
+  const { injectDirtyGitEnv } = await import('./helpers/dirty-git-env.js');
+  const restore = injectDirtyGitEnv();
   try {
     const files = await productionFiles();
     assert.ok(files.includes('lib/statement.js'),
-      '注入假的 GIT_DIR 之後清單裡就沒有收斂點了＝環境沒被隔離，這道護欄會掃錯對象');
-    assert.ok(files.length > 20, `注入假的 GIT_DIR 之後只掃到 ${files.length} 個檔＝隔離失效`);
+      '注入髒 GIT_* 之後清單裡就沒有收斂點了＝環境沒被隔離，這道護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入髒 GIT_* 之後只掃到 ${files.length} 個檔＝隔離失效`);
   } finally {
-    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+    restore();
   }
+});
+
+test('護欄本身｜檔案清單交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', async () => {
+  // ⚠️ 上一題是**代理指標**：它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
+  //    這一題直接問子行程收到什麼——沒人見過的新家族也涵蓋得到（射程對照表在 helper 檔頭）。
+  const { assertChildGitEnvCleanAsync } = await import('./helpers/dirty-git-env.js');
+  await assertChildGitEnvCleanAsync(assert, 'xlsx-isolate 的 productionFiles()',
+    () => productionFiles());
 });
 
 test('架構｜收斂模組內只能有一個 XLSX.read（第二個就是繞過隔離的入口）', async () => {

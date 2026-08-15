@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 // 陷阱檔：HOSTED 模式**一個位元組都不該**寫到本機 SQLite。用 mkdtemp 整個資料夾，
 // 這樣連「備份服務偷偷建了 backups/」都驗得到（照 test/daily-backup.test.js 的形狀）。
@@ -520,15 +521,16 @@ test('⭐ 架構護欄的清單不可被繼承的 GIT_DIR 帶去別棵樹（拿�
   // ⚠️ 上面兩道架構護欄（service_role、誰可以 import store.js）都是「逐檔讀 libFiles() 的內容」。
   //    清單一被換掉，它們就掃了別棵樹而回報通過——**護欄什麼都沒做卻說通過**。
   //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 hook 環境本來就有它。
-  const before = process.env.GIT_DIR;
-  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  // ⚠️ 注入**兩個家族**（清單在 test/helpers/dirty-git-env.js）：只注 `GIT_DIR` 的話，
+  //    把清法退化成「只刪 GIT_DIR」的列名版仍會全綠（#463 r1 複審實測）。
+  const restore = injectDirtyGitEnv();
   try {
     const files = libFiles();
     assert.ok(files.includes('lib/store-pg.js'),
-      '注入假的 GIT_DIR 之後清單裡就沒有 lib/store-pg.js 了＝環境沒被隔離，架構護欄會掃錯對象');
-    assert.ok(files.length > 20, `注入假的 GIT_DIR 之後只掃到 ${files.length} 個檔＝隔離失效`);
+      '注入髒 GIT_* 之後清單裡就沒有 lib/store-pg.js 了＝環境沒被隔離，架構護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入髒 GIT_* 之後只掃到 ${files.length} 個檔＝隔離失效`);
   } finally {
-    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+    restore();
   }
 });
 
@@ -555,3 +557,8 @@ function fakeClientFor(tok, user) {
   });
   return factory({ headers: { cookie: `sb-test-auth-token=${tok}` } }, { set() {}, append() {} });
 }
+
+test('⭐ 架構護欄交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  // ⚠️ 上一題是代理指標，只涵蓋「剛好會改變這個指令的變數」；這一題直接問子行程收到什麼。
+  assertChildGitEnvClean(assert, 'hosted-store-pg 的 libFiles()', () => libFiles());
+});

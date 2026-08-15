@@ -173,9 +173,16 @@ export function verdict(results) {
   };
 }
 
-/** @param {string[]} args */
+/**
+ * ⚠️ **`gh` 也走 `runIn`**（#463 r1 High）：它會**自己再去 spawn git**——實測
+ * `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
+ * 上一版讓它繞過 `runIn`，於是下面那句「所有外部指令的唯一入口」是**撐不住的保證**。
+ * 漏清的後果分兩種：指到不存在的路徑＝假阻擋；指到另一個**有效** repo＝這道閘去讀
+ * **那個** repo 的 PR 與 open PR 清單，而輸出看起來完全正常。
+ * @param {string[]} args
+ */
 function gh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 1e8 });
+  return runIn(['gh', ...args], process.cwd(), { maxBuffer: 1e8 });
 }
 
 /**
@@ -190,12 +197,17 @@ function gh(args) {
  *    （機制在 `scripts/check-worktree-integrity.js` 檔頭）。這道閘自己就是一個
  *    「從別處繼承環境、再去跑考題」的入口，不清等於把那個前提條件重新製造一次。
  *
+ * ⚠️ **`gh` 也走這裡**（#463 r1 High）：它會自己再去 spawn git，理由與實測在 `gh()` 上方。
+ *
  * @param {string[]} argv 指令與參數（`argv[0]` 是執行檔）
  * @param {string} cwd 明確指定工作目錄——**不可省**，省了就只剩 `process.cwd()` 這個隱含前提
+ * @param {{ maxBuffer?: number }} [opts] 額外的 `execFileSync` 選項（⚠️ **不接受 `env`**：
+ *   環境是本函式存在的理由，開放覆寫等於留一道繞過清理的門）
  * @returns {string} stdout（`stdio: 'pipe'`＝不把子行程的輸出混進本閘的訊息）
  */
-export function runIn(argv, cwd) {
-  return execFileSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() });
+export function runIn(argv, cwd, opts = {}) {
+  return execFileSync(argv[0], argv.slice(1),
+    { ...opts, cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() });
 }
 
 /**

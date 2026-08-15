@@ -137,8 +137,16 @@
     - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push` 與 `mutate.sh` 不經過 Node，
       `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
       它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。
-    - 每一個呼叫點都要有**行為題**撐著（把清環境那一行拿掉必須紅）；純函式與兩份 shell 的題都在
-      `test/git-env.test.js`，它的檔頭列出各呼叫點的行為題落在哪一支。
+    - **`gh` 也在射程內**：它會自己再去 spawn git（實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>`
+      回 `failed to run git: fatal: not a git repository`）。指到另一個**有效** repo 時，
+      合併程序的那幾道閘會去讀**那個** repo 的 PR 與留言，而輸出看起來完全正常。
+    - 每一個呼叫點都要有**行為題**撐著，而且**要兩種**（#463 r1 的教訓）：
+      ①「答案仍然正確」是**代理指標**，只涵蓋「剛好會改變這個指令的變數」——實測
+      `rev-parse --show-toplevel` 那一族**只有 `GIT_DIR` 有影響力**，所以光靠①，把清法退化成
+      「只刪 `GIT_DIR`」的列名版仍會全綠（**我自己做過一次這種假綠**）。
+      ②**直接斷言子行程收到什麼**（假 `git` 放進 `PATH` 讀它實際看到的環境）——這一種才關得起門，
+      未來冒出沒人見過的家族也涵蓋得到。兩種的射程對照表在 `test/helpers/dirty-git-env.js` 檔頭。
+      純函式與兩份 shell 的題在 `test/git-env.test.js`，它的檔頭列出各呼叫點的題落在哪一支。
     - 事故的完整病理與證據鏈在 `scripts/check-worktree-integrity.js` 檔頭（單一真相，勿重抄）。
 
 

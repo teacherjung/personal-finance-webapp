@@ -7,8 +7,13 @@
 //   ・`test/hosted-auth.test.js`          ← `trackedFiles()`（secret 掃描的清單）
 //   ・`test/doc-naming.test.js`           ← `trackedFiles()`／`oldNameContexts()`
 //   ・`test/cross-pr-merge.test.js`       ← `scripts/check-cross-pr-merge.js` 的 `runIn()`
+//                                          ＋**四支會叫 `gh` 的閘**（`gh` 會自己再去 spawn git）
 // ⚠️ 為什麼要分開：純函式對了，不代表有人在用它。本專案認過這個病型
 // （護欄什麼都沒做卻回報通過），所以兩層都要有題。
+// ⚠️ 而且每個呼叫端要**兩種**題（#463 r1 的教訓，射程對照表在 `test/helpers/dirty-git-env.js` 檔頭）：
+//    ①「答案仍然正確」＝**代理指標**，只涵蓋「剛好會改變這個指令的變數」——光靠它，
+//      把清法退化成「只刪 `GIT_DIR`」的列名版仍會全綠（**我自己做過一次這種假綠**）。
+//    ②「子行程實際收到什麼」＝**直接斷言**，未來冒出沒人見過的家族也涵蓋得到。
 //
 // **例外：shell 那兩份的題就在本檔下半部**（`scripts/git-hooks/pre-push`、`mutate.sh`）。
 // 它們不經過 Node ⇒ `gitEnv()` 完全管不到，是**另外兩份實作**；放在這裡是為了讓「這條規矩
