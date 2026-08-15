@@ -121,6 +121,8 @@ export function previewBody({ data, password, useAi }) {
  * - **AI 路線**（preview 回 `engine:'ai'`）＝只送 `{useAi:true, aiTicket}`：**不送 data、不送 password**
  *   （後端憑票取回 preview 那份已驗收答案，不解析檔案也不碰密碼池——契約字面在前端也要成立）。
  *   票不見＝回 `null`，呼叫端要引導重新預覽，**絕不可退回「送 data 讓它自己再解一次」**。
+ * - **配方路線**（preview 回 `engine:'recipe'`，P2-2）＝只送 `{aiTicket}`：同 AI 的「所見即所得」
+ *   紀律（憑票取回 preview 那份答案與選版）；票不見＝回 `null` 引導重新預覽。不送 useAi。
  * - **模板路線**＝照舊 `{data, password}`，且**不得出現 `aiTicket` 這個 key**：
  *   `String(undefined)==='undefined'` 是 truthy，後端 `opts.aiTicket && !ticket` 會把正常匯入 400 擋死。
  * `skipSimilar`＝「這次跳過疑似重複」（William 2026-08-14）：**嚴格 true 才放 key**——
@@ -136,6 +138,17 @@ export function applyBody(preview, { data, password, skipSimilar }) {
     const ai = { useAi: true, aiTicket: ticket };
     if (skipSimilar === true) ai.skipSimilar = true;
     return ai;
+  }
+  // 配方路線（P2-2 預審 G2）：帶票＝「所見即所得」對配方同樣成立（後端憑票取回 preview 那份
+  // parsed 與選版，不重跑選版）。票不見＝回 null 引導重新預覽（與 AI 路線同紀律；配方雖零元，
+  // 重解可能因 db 已變而選到**另一版**——那正是票要擋的病）。不帶 useAi（沒有要同意 AI 的事）。
+  if (preview && preview.engine === 'recipe') {
+    const ticket = preview.aiTicket;
+    if (typeof ticket !== 'string' || !ticket) return null;
+    /** @type {Record<string, any>} */
+    const body = { aiTicket: ticket };
+    if (skipSimilar === true) body.skipSimilar = true;
+    return body;
   }
   /** @type {Record<string, any>} */
   const body = { data };

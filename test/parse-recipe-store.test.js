@@ -12,9 +12,9 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-recipestore-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { previewBankStatement, applyBankStatement, recipeBankRoute } = await import('../lib/services/bank-import.js');
+const { previewBankStatement, applyBankStatement, recipeBankRoute, recordRecipeApplied, markRecipesSuspect } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
-const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
+const { clearAiTicketsForTest, issueAiTicket, redeemAiTicket, restoreAiTicket } = await import('../lib/ai-confirm-ticket.js');
 const { RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
 const { sanitizeDbForWrite, READONLY_COLLECTIONS } = await import('../lib/schema.js');
 const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
@@ -109,7 +109,7 @@ test('preview｜認不得→配方命中＝engine:recipe、零 AI（不需 useAi
   assert.equal(pv.transactions.rows.length, 3, '三筆交易都到（previewBankTxForDb 的 rows 形狀）');
 });
 
-test('preview｜裁示④細部：current 閘紅＝自動退 previous 重解（免費、同一次預覽內）', async () => {
+test('preview｜裁示④細部：current 失靈（此題樣本＝拒解；真閘紅另有預審B1 題）＝自動退 previous 重解（免費）', async () => {
   await seedDb({ recipes: [row({ current: brokenRecipe(), previous: goodRecipe() })] });
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
   assert.equal(pv.engine, 'recipe', '★上一版救回來了');
@@ -133,7 +133,7 @@ test('preview｜密碼錯絕不落配方：pdf_password 原樣拋回、抽字接
 });
 
 test('preview｜配方中版面但失靈（拒解/閘紅同待遇）＋useAi＝AI 接手，票上帶著「疑似過期候選」名單', async () => {
-  await seedDb({ recipes: [row({ current: brokenRecipe() })] });
+  await seedDb({ recipes: [row({ current: brokenRecipe(), graduateStreak: 4, graduated: true })] });
   const db = await getDb(); db.settings.aiApiKey = 'sk-ant-synthetic-test-key'; await saveDb(db);
   // ⚠️ 配方與 AI 共用同一個抽字接縫（opts.aiExtract）——文字必須含版面錨點（配方才會 match 而失靈），
   //   也必須含答案卷的每個金額（AI 接地檢查）：直接用 linesA、答案數字全取自 linesA。
@@ -156,13 +156,14 @@ test('preview｜配方中版面但失靈（拒解/閘紅同待遇）＋useAi＝A
   const after1 = await getDb();
   const r1 = (after1.parseRecipes || []).find((x) => x.id === 'rcp-1');
   assert.equal(r1?.suspect, true, '★裁示②：配方失靈＝標疑似過期（在真的完成匯入那一刻寫）');
-  assert.equal(r1?.graduateStreak, 0, '★連續計數歸零');
+  assert.equal(r1?.graduateStreak, 0, '★連續計數歸零（種 4 進去＝斷言真的承重）');
+  assert.equal(r1?.graduated, false, '★畢業旗標也要取消（已畢業配方失靈＝畢業狀態不可說謊）');
 });
 
 // ---- 套用路線（apply）＋計數 ----
 
-test('apply｜配方確定性＝自己重解（不需要票）；寫入前 fresh db 重過閘；成功＝streak+1、engine:recipe', async () => {
-  await seedDb({ recipes: [row()] });
+test('apply｜配方確定性＝自己重解（不需要票）；寫入前 fresh db 重過閘；成功＝streak+1、suspect 解除、engine:recipe', async () => {
+  await seedDb({ recipes: [row({ suspect: true })] });   // 種 suspect＝「成功套用＝解除」的斷言真承重（預審 B3）
   const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
   assert.equal(res.ok, true);
   assert.equal(/** @type {any} */ (res).engine, 'recipe');
@@ -171,6 +172,7 @@ test('apply｜配方確定性＝自己重解（不需要票）；寫入前 fresh
   const r1 = (db.parseRecipes || []).find((x) => x.id === 'rcp-1');
   assert.equal(r1?.graduateStreak, 1, '★套用成功＝連續計數 +1');
   assert.equal(r1?.graduated, false);
+  assert.equal(r1?.suspect, false, '★成功套用＝suspect 解除（它剛證明自己還讀得動）');
   assert.ok(r1?.lastUsedAt, '有用過的時間戳');
 });
 
@@ -218,4 +220,103 @@ test('recipeBankRoute｜純讀不變量：預覽路線跑完，db 的配方列�
   assert.ok(r.hit, '前提：previous 命中');
   assert.equal(r.hit?.usedVersion, 'previous');
   assert.equal(JSON.stringify(db.parseRecipes), before, '★版本互換與計數是 apply 的事——preview 全程唯讀');
+});
+
+// ---- 預審 r0 補題（Grok G1/G2/G3＋工作流 A1/A4/B1/B2/B5）----
+
+/** 真閘紅樣本（預審 B1）：first-money 會讀到總覽列的誘餌數字＝過解析、卡強閘（末筆 730 對不上 999999）。 */
+const gateRedRecipe = () => { const r = goodRecipe(); r.summary.balancePick = 'first-money'; return r; };
+const decoyLines = () => linesA().map((l) => (l.y === 280
+  ? L(280, [[50, '甲種活存'], [150, '900100****3301'], [300, '999,999'], [473, '$730']])
+  : l));
+const extractDecoy = async () => decoyLines();
+
+test('預審B1｜真閘紅（非拒解）也退 previous：current 解得動但數字對不上＝previous 救場', async () => {
+  await seedDb({ recipes: [row({ current: gateRedRecipe(), previous: goodRecipe() })] });
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractDecoy });
+  assert.ok(r.hit, '★previous 要救回來');
+  assert.equal(r.hit?.usedVersion, 'previous', '★current 是閘紅（parseWithRecipe 成功、reconcile 擋）——這一格逼「閘紅 catch」真的退版');
+});
+
+test('預審B2｜先試 current 的順序承重：兩版都有效＝用 current、不互換、streak 正常累加', async () => {
+  await seedDb({ recipes: [row({ current: goodRecipe(), previous: goodRecipe(), graduateStreak: 2 })] });
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA });
+  assert.equal(r.hit?.usedVersion, 'current', '★順序反轉＝這裡變 previous＝版本乒乓、永遠畢不了業');
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(res.ok, true);
+  const after2 = await getDb();
+  assert.equal(after2.parseRecipes?.[0]?.graduateStreak, 3, '★current 路＝累加、不重數');
+  assert.ok(after2.parseRecipes?.[0]?.previous, '★沒有發生互換');
+});
+
+test('預審G2｜配方票＝所見即所得：preview 後配方列被整個移除，apply 憑票照樣寫入 preview 那份答案', async () => {
+  await seedDb({ recipes: [row()] });
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(pv.engine, 'recipe');
+  assert.ok(pv.aiTicket, '★配方預覽也發票');
+  const db = await getDb(); db.parseRecipes = []; await saveDb(db);   // 其間配方被清掉（極端漂移）
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiTicket: pv.aiTicket, aiExtract: extractA });
+  assert.equal(res.ok, true, '★票鎖住 parsed＝不重跑選版');
+  assert.equal(/** @type {any} */ (res).engine, 'recipe');
+  const after3 = await getDb();
+  assert.equal((after3.transactions || []).length, 3, '寫入的是 preview 那份（計數守衛靜默跳過＝列已不在）');
+});
+
+test('預審G1｜並發雙套用的身分守衛：互換後的舊「previous 救場」記帳不得把壞版換回 current', async () => {
+  const dbObj = /** @type {any} */ ({ parseRecipes: [row({ current: brokenRecipe(), previous: goodRecipe() })] });
+  const staleUse = { id: 'rcp-1', usedVersion: /** @type {const} */ ('previous'), usedRecipe: goodRecipe() };
+  recordRecipeApplied(dbObj, staleUse);   // 第一次：合法互換（previous=good 升 current）
+  assert.equal(dbObj.parseRecipes[0].current.detail.headerIn, '存進金額', '前提：好版已升 current');
+  recordRecipeApplied(dbObj, staleUse);   // 第二次（並發請求的舊決定）：previous 現在是壞版≠當時用的好版
+  assert.equal(dbObj.parseRecipes[0].current.detail.headerIn, '存進金額', '★身分不符＝靜默跳過，壞版不得回鍋 current');
+  // A2 邊角：previous 缺席時的舊互換決定＝不得把 current 設成 undefined（炸 saveDb）
+  const dbObj2 = /** @type {any} */ ({ parseRecipes: [row()] });
+  recordRecipeApplied(dbObj2, staleUse);
+  assert.ok(dbObj2.parseRecipes[0].current, '★current 不得變 undefined（計數副作用沒資格弄死匯入）');
+});
+
+test('預審A1｜票放回＝整份放回：suspectRecipeIds／recipeUse／issuedAt 不得在失敗重試路上被丟掉', () => {
+  clearAiTicketsForTest();
+  const id = issueAiTicket({ parsed: { bank: '合成一銀' }, aiModel: '', suspectRecipeIds: ['rcp-x'], recipeUse: { id: 'rcp-1', usedVersion: 'current', usedRecipe: goodRecipe() } });
+  const t1 = redeemAiTicket(id);
+  assert.ok(t1 && restoreAiTicket(id, t1), '前提：兌出再放回');
+  const t2 = redeemAiTicket(id);
+  assert.deepEqual(t2?.suspectRecipeIds, ['rcp-x'], '★放回後名單還在（丟了＝疑似過期永不標）');
+  assert.equal(t2?.recipeUse?.id, 'rcp-1', '★放回後配方票身分還在（丟了＝配方票退化成 AI 票）');
+  assert.ok(t2?.issuedAt, '★世代戳還在');
+});
+
+test('預審A4｜suspect 世代檢查：其後已自證的配方不被舊快照蓋回', () => {
+  const mk = (/** @type {string=} */ lastUsedAt) => /** @type {any} */ ({ parseRecipes: [row(lastUsedAt ? { lastUsedAt } : {})] });
+  const dbLate = mk('2026-08-16T02:00:00.000Z');
+  markRecipesSuspect(dbLate, ['rcp-1'], '2026-08-16T01:00:00.000Z');   // 快照比自證早＝跳過
+  assert.equal(dbLate.parseRecipes[0].suspect, false, '★期間成功套用過＝舊快照不可蓋回');
+  const dbOld = mk('2026-08-16T00:30:00.000Z');
+  markRecipesSuspect(dbOld, ['rcp-1'], '2026-08-16T01:00:00.000Z');
+  assert.equal(dbOld.parseRecipes[0].suspect, true, '對照：沒有其後自證＝照標');
+});
+
+test('預審G3｜別張配方救場（直接路徑、無票）：失靈的那張照樣被標疑似過期', async () => {
+  await seedDb({ recipes: [row({ id: 'rcp-broken', current: brokenRecipe() }), row({ id: 'rcp-good' })] });
+  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(res.ok, true);
+  assert.equal(/** @type {any} */ (res).recipeId, 'rcp-good');
+  const db = await getDb();
+  const broken = (db.parseRecipes || []).find((x) => x.id === 'rcp-broken');
+  const good = (db.parseRecipes || []).find((x) => x.id === 'rcp-good');
+  assert.equal(broken?.suspect, true, '★中版面但失靈＝標疑似（不因別張救場而漏）');
+  assert.equal(good?.suspect, false);
+  assert.equal(good?.graduateStreak, 1);
+});
+
+test('預審B5｜「不開裸 GET」要有守門：crud 路由表沒有 GET /api/parseRecipes（對照組 dailyValues 有）', async () => {
+  const { crudRoutes } = await import('../lib/routes/crud.js');
+  const gets = /** @type {string[]} */ ([]);
+  for (const layer of /** @type {any} */ (crudRoutes).stack) {
+    if (layer?.route?.path && layer.route.methods?.get) gets.push(layer.route.path);
+  }
+  assert.ok(gets.includes('/api/dailyValues'), `對照組要在（路由表解析法沒壞）：${gets.join('，')}`);
+  assert.ok(!gets.includes('/api/parseRecipes'), '★裸 GET 不可以長出來（skip 條件被拿掉＝這裡紅）');
 });

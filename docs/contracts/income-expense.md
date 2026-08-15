@@ -171,10 +171,13 @@
 
 **P2-2 儲存與讀取接線（2026-08-15 落地）**
 
-- **儲存**：`parseRecipes` 唯讀集合（`READONLY_COLLECTIONS`；bank-import 服務專寫、前端不可寫、**不開通用 GET**（crud 迴圈 skip））。列形＝`{id, bank, current, previous?, graduateStreak, graduated, suspect, rebirths, createdAt/updatedAt/lastUsedAt}`；**previous 缺席＝沒有上一版**（schema 的 object 型別不收 null）；必填＝`current`（缺＝備份牆整筆濾除）。⚠️ 深層合法性由**出生三關**在寫入前把關（P2-3）——schema.js 刻意不 import parse-recipe.js（會經 bank-statement 繞成循環），儲存牆只守形狀層。**寫入櫃檯（repo 函式）＝P2-3 與生成一起做**（P2-2 唯一寫入者是 apply 的原子交易、直接動 db）。
+- **儲存**：`parseRecipes` 唯讀集合（`READONLY_COLLECTIONS`；bank-import 服務專寫、前端不可寫、**不開通用 GET**（crud 迴圈 skip））。列形＝`{id, bank, current, previous?, graduateStreak, graduated, suspect, rebirths, createdAt/updatedAt/lastUsedAt}`；**previous 缺席＝沒有上一版**（schema 的 object 型別不收 null）；必填＝`current`（缺＝備份牆整筆濾除）。⚠️ 深層合法性由**出生三關**在寫入前把關（P2-3）——schema.js 刻意不 import parse-recipe.js（會經 bank-statement 繞成循環），儲存牆只守形狀層。**服務內唯一寫入者＝apply 的原子交易**（寫入櫃檯 P2-3 與生成一起做）；⚠️ 誠實劃界（預審 A5）：`/api/import` 備份還原是**第二個寫入門**（形狀層把關＝手改備份可種入未過出生三關的配方；錢的最後防線仍是使用時的 AI 級強閘），還原 P2 之前的舊備份＝配方與畢業/疑似計數**歸零重學**（可接受：重花一次 AI 費）。
 - **讀取順序（preview 與 apply 同）**：模板認不得（`bank_unrecognized` 類；**pdf_password 絕不落配方**）→ `recipeBankRoute`：逐張配方先試 `current`、失靈（拒解或閘紅同待遇）自動退 `previous` 重解（**免費**、裁示④細部）→ 全敗＝照原順序輪 AI（要 useAi）或把模板原句錯誤拋回。**配方命中＝零元零外送、不需 useAi、沒鑰匙也走得通**；回應 `engine:'recipe'`＋`recipeId`（前端徽章 P2-3）。
 - **閘**：配方比照 AI＝同一顆 `assertAiBankReconciled`（強閘＋台幣零未驗；totals 交叉驗證對配方輸出自然跳過＝parseWithRecipe 不產 totals）。apply 寫入前 fresh db 重過同一顆（縱深；行為等價突變的誠實記錄在該行註解）。
 - **計數（apply 原子交易內、saveDb 之前）**：套用成功＝`graduateStreak+1`、**連 5＝graduated**（裁示②）；用 previous 救場＝**自動回滾互換**（previous 升 current、壞的降 previous＝留 1 版不變量）、streak 從 1 重數；成功套用＝suspect 解除。
-- **疑似過期（裁示②）**：preview 時「配方中版面但失靈」的 id 收進 AI 確認票（`suspectRecipeIds`）——**兌票完成匯入那一刻**在同一交易標 `suspect:true`、streak 歸零。⚠️ 誠實劃界：預覽全程唯讀不變量不可破＝使用者不套用就不標；拒解與閘紅同待遇（配方對版面失靈的兩種長相）。
+- **配方票（預審 G2）**：配方預覽也發確認票（`aiTicket`，同一個票匣）——「**所見即所得**」對配方同樣成立：選版依 db 現況、不是 PDF 的純函數，apply 憑票取回 preview 那份 parsed 與選版、**不重跑選版**；前端 applyBody 配方分支只送 `{aiTicket}`（票不見＝null 引導重新預覽）。無票的直接 API apply 仍可自己重解（縱深）。
+- **計數守衛（預審 G1/A2/A4）**：記帳前**身分核對**（fresh db 那格必須仍是「當時用的那版」＝JSON 相等，否則計數靜默跳過、匯入照常）——並發雙套用不得把回滾再換回去、列被還原洗過不得盲換到 undefined；suspect 標記帶**世代檢查**（票的 issuedAt；其後已自證＝lastUsedAt 較晚＝不蓋回）。票放回＝**整份**放回（預審 A1：suspectRecipeIds/recipeUse/issuedAt 不得在失敗重試路上丟失）。
+- **疑似過期（裁示②）**：preview 時「配方中版面但失靈（**拒解與閘紅同待遇**、各有承重題）」的 id 收進確認票（`suspectRecipeIds`）——**兌票完成匯入那一刻**在同一交易標 `suspect:true`、streak 歸零、graduated 取消；別張配方救場的**直接路徑**同樣標（預審 G3）。⚠️ 誠實劃界：預覽全程唯讀不變量不可破＝使用者不套用就不標。
 - **preview 純讀不變量**：recipeBankRoute 不動 db 一個位元組（版本互換與計數全在 apply）——有考題釘。
-- 考題＝`test/parse-recipe-store.test.js`（11 題）；刀 R1–R8（R3b＝行為等價、誠實記錄）。
+- ⚠️ 畢業計數的操作定義殘餘（預審 A6）：「連 5 **份**」目前同一份帳單重傳也 +1（交易被去重跳過、計數照加）——「份」的判準與 `rebirths` 的 +1 落點（誰算重生）都在 **P2-3** 明文＋接線。
+- 考題＝`test/parse-recipe-store.test.js`（19 題）；刀 R1–R8＋N1–N10（R3b＝行為等價、誠實記錄；明細見 PR）。

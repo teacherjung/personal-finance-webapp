@@ -500,3 +500,11 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   assert.match(appSrc, /\$\{bodyHtml \? `<div class="info-body">\$\{bodyHtml\}<\/div>` : ''\}/,
     '★openForm 必須真的把 bodyHtml 渲染進畫面——忽略它＝同意窗變成沒有告知的空白確認框');
 });
+
+test('applyBody｜配方路線（P2-2）＝只送 {aiTicket}：所見即所得同紀律、不送 useAi；票不見＝null 引導重新預覽', () => {
+  const body = applyBody({ engine: 'recipe', aiTicket: 't-rcp' }, { data: 'x', password: 'p' });
+  assert.deepEqual(body, { aiTicket: 't-rcp' }, '★不送 data/password/useAi——後端憑票、不重跑選版');
+  const withSkip = applyBody({ engine: 'recipe', aiTicket: 't-rcp' }, { data: 'x', skipSimilar: true });
+  assert.deepEqual(withSkip, { aiTicket: 't-rcp', skipSimilar: true });
+  assert.equal(applyBody({ engine: 'recipe' }, { data: 'x' }), null, '★票不見＝不可退回自己再解一次');
+});
