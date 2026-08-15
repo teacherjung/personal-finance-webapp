@@ -60,9 +60,9 @@ export async function renderCashflow() {
       <div class="page-head cashflow-head">
         <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
         <div class="page-actions">
+          <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
           ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
           <button class="btn btn-upload" id="uploadBank">${icon('upload', 16)}上傳銀行對帳單</button>
-          <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
         </div>
       </div>
 
