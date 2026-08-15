@@ -289,7 +289,7 @@
   - **決策（要不要合、何時合）＝永遠 William**（角色表「合併裁決」）。任何人不得自行決定合併——「審查通過」只是門檻之一，不是合併指令。
   - **執行（按下合併鍵）核心原則＝「實作者不按自己的合併鍵」**（William 2026-07-30 定，對稱授權）：**由審查者執行**——Claude 實作、Codex 審過 → **Codex 執行**（2026-07-27 常設授權）；Codex 實作、Claude 審過 → **Claude 執行**（2026-07-30 對稱常設授權）。這是「不可自審」在執行面的延伸：合併程序裡「確認審查結論無阻擋」那一關由實作者自己判讀＝利益衝突最容易滲進來的地方。⚠️ 這裡刻意**不寫第幾關**——步驟編號會變（2026-08-02 新增協作欄位閘之後就整個往後推一格），寫死編號的敘述注定過期。
   - William 本人隨時可直接執行（GitHub「Squash and merge」）；個案明確指示（如「把 #338 合了」）可指定任何人執行該支。
-  - **不論誰執行，一律走 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**下列不可跳過的守門**（數量會長，所以這裡不寫數字——寫死的數字自己會漂）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這幾個名字都還在本段裡——⚠️ **它是從合併步驟反查的，不是手寫名單**（#385 r9：手寫的那份漂了，加了第四道閘卻照樣全綠）。
+  - **不論誰執行，一律走 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**下列不可跳過的守門**（數量會長，所以這裡不寫數字——寫死的數字自己會漂）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-ci-really-ran.js`（真考卷：required checks 在合併頭上真跑且 success——草稿期 skipped 不算、auto-merge 必須關）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這幾個名字都還在本段裡——⚠️ **它是從合併步驟反查的，不是手寫名單**（#385 r9：手寫的那份漂了，加了第四道閘卻照樣全綠）。
 - Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → **全部頁面** reload 無 console error（清單＝`app.js` 的 `ROUTES`，**不寫死頁數**——曾同檔並存 8 頁與 10 頁兩個數字、新頁面永遠追不上）；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。****資料層規則（B1／B3／真實日曆／必填欄位／B0）已拆至資料與儲存契約——索引見同步點清單對應五列。**第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。
 - **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/測試覆蓋率地圖.md`。
@@ -320,7 +320,7 @@
 
 **成功優先序**（所有取捨依此排序）：①降低改壞既有功能的機率 ②讓 Claude、Codex 容易理解與交接 ③加快未來開發 ④強化資料救援。
 
-**Codex 審查的觸發方式（William 常設授權）**：**Claude 直接用本機 `codex` CLI 自動跑審查，不必先問**——涵蓋**PR 進行中的每一輪複審**（r1、r2、r3…；2026-08-03 擴充）**與每批 PR 合併進 `main` 後**的例行審查（2026-07-27 原始授權）。完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭。要點：只在該 PR 的拋棄式審查樹跑（`/private/tmp/codex-review-pr<N>`，發射者備樹；樹內沒有 `data/store.db`＝防誤觸，非檔案系統隔離）、沙箱要開網路否則端點測試跑不了、審查樹由發射者備與收、**審查者不得自建其他 worktree**、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**。**修不修＝Claude 判斷**（William 2026-08-14 裁示；⚠️ 取代原本的「修不修仍由 William 決定／不含依審查結果自動動工」——那句已過期，47 輪的 PR 不可能每輪都問），**但有例外要停下來問——例外清單只寫在下方「審查回饋處置」，本段不複述**。授權**仍不含**：依審查結果自行開新題目、以及按合併鍵（見「實作者不按自己的合併鍵」）。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
+**Codex 審查的觸發方式（William 常設授權）**：**Claude 直接用本機 `codex` CLI 自動跑審查，不必先問**——涵蓋**PR 進行中的每一輪複審**（r1、r2、r3…；2026-08-03 擴充）**與每批 PR 合併進 `main` 後**的例行審查（2026-07-27 原始授權）。完整指令、沙箱參數、副作用檢查與回報規則見 `REVIEW-AND-MERGE.md` 開頭。要點：只在該 PR 的拋棄式審查樹跑（`/private/tmp/codex-review-pr<N>`，發射者備樹；樹內沒有 `data/store.db`＝防誤觸，非檔案系統隔離）、沙箱要開網路否則端點測試跑不了、審查樹由發射者備與收、**審查者不得自建其他 worktree**、**Codex 的回覆原文貼給 William 並附 Claude 的逐條核對**。**修不修＝Claude 判斷**（William 2026-08-14 裁示；⚠️ 取代原本的「修不修仍由 William 決定／不含依審查結果自動動工」——那句已過期，47 輪的 PR 不可能每輪都問），**但有例外要停下來問——例外清單只寫在下方「審查回饋處置」，本段不複述**。授權**仍不含**：依審查結果自行開新題目、以及按合併鍵（見「實作者不按自己的合併鍵」）。**追加（2026-07-27）：合併也由 Codex 代 William 執行**——**程序一律照 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**。⚠️ **本檔不重述那幾步**（Codex #379 r1 High②／r2 High②：這裡原本留著一份舊摘要，少了協作欄位閘與 trailer——照它執行就剛好跳過新加的關卡。同一種漂移前後抓到五處）。**但下列不可跳過的守門要在這裡點名得出來**（`test/merge-procedure-docs.test.js` 與 `test/collab-invariant-docs.test.js` 各自盯著）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-ci-really-ran.js`（真考卷：required checks 在合併頭上真跑且 success——草稿期 skipped 不算、auto-merge 必須關）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。**摘要會落後，名字不會**——這就是「指標＋守門名字」與「重述步驟」的差別。任一關卡不成立就停下來回報、不得合併，且 Codex 合併前不可自行改碼。
 
 **審查回饋處置（誰拍板／值不值得改，2026-08-05 立、2026-08-14 補上「誰拍板」那一半）**：這是**兩個**分開的判斷，混在一起講會走回無限迴圈。
 
@@ -394,7 +394,7 @@
 
 > **沒有任何一份產出，由寫它的人做「正式複審與放行」。**
 
-⚠️ **這不是禁止自審**（免與「轉 ready 前對抗式自審」互相否定）：**作者自查仍然必須做**
+⚠️ **這不是禁止自審**（免與「送審前對抗式自審」互相否定）：**作者自查仍然必須做**
 （自己先假設哪裡會壞、跑突變、過三關）——那是交件品質；**正式複審與「可以合併」的判定，作者不得擔任**。
 兩件事分開，循環才成立。
 

@@ -59,7 +59,7 @@
 >
 > （手動備援：William 也可以自己對 Codex 說「請讀 REVIEW-AND-MERGE.md 並照它執行審查」，拿到清單後整段原文貼給 Claude。）
 
-> **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這套步驟）。**七**個步驟缺一不可：
+> **合併也由 Codex 代執行（William 2026-07-27 追加授權；2026-07-30 補對稱原則「實作者不按自己的合併鍵」）**：Claude 實作、你審過的 PR 由你代執行；**你實作、Claude 審過的 PR 由 Claude 代執行**（同這套步驟）。**八**個步驟缺一不可：
 > 1. ⚠️ **協作欄位閘（機械執行）**：
 >    ```bash
 >    node scripts/check-pr-collab-fields.js <N>
@@ -84,7 +84,17 @@
 >    而 GitHub 上兩則都顯示 `teacherjung`。詳見 AGENTS.md「一支 PR 上可能有好幾個審查者」節。
 >    行為考題＝`test/review-verdicts.test.js`。〕
 >    再確認 **CI 全綠**（`gh pr checks`）；有任一不成立就**停下來回報，不要合併**。
-> 3. ⚠️ **堆疊閘（機械執行，不可憑印象跳過）**：
+> 3. ⚠️ **真考卷閘（機械執行）**：
+>    ```bash
+>    node scripts/check-ci-really-ran.js <N>
+>    ```
+>    **退出碼 0 才可進下一步**（1＝有 required check 的最新場次不是真 success（skipped／cancelled／
+>    failure）或 auto-merge 開著、2＝查不到→fail-closed）。
+>    〔為什麼要機械化：ci.yml 對草稿 PR 跳過省額度，而 GitHub 把 skipped 視同滿足——
+>    「轉正式後、真 CI 起跑前」的空窗與「重跑舊草稿場次（payload 凍結 draft:true）」
+>    都能讓 skipped 綠燈頂著合併。分支保護改不動這個語意，只能在這裡收口。
+>    2026-08-15 Grok 預審抓到、行為考題＝`test/ci-really-ran.test.js`。〕
+> 4. ⚠️ **堆疊閘（機械執行，不可憑印象跳過）**：
 >    ```bash
 >    node scripts/check-pr-merge-gate.js <N>
 >    ```
@@ -116,7 +126,7 @@
 >    「預計修改的共享檔案」預約制查的是檔案重疊——**這種撞法沒有檔案重疊**。
 >    行為考題＝`test/cross-pr-merge.test.js`。誠實劃界寫在腳本檔頭：它擋得住**測試看得到**的
 >    互相破壞，擋不住「語意矛盾但測試沒覆蓋」。〕
-> 5. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**；`--delete-branch` **僅限步驟 3 退出碼 0 時**）。
+> 6. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**；`--delete-branch` **僅限步驟 3 退出碼 0 時**）。
 >    ⚠️ **合併訊息尾端必須帶兩個 trailer**（2026-08-02 加；讓分工在 git 裡留痕）：
 >    ```
 >    Reviewed-By: <Claude|Codex|William>
@@ -128,8 +138,8 @@
 >    用 `--body` 帶上去。理由：GitHub 那邊 `mergedBy` 永遠是 token 擁有者、reviews 永遠 0 筆，
 >    「實作者不按自己的合併鍵」事後**完全無法查證**。有了 trailer，
 >    `git log --format='%h %s%n  %(trailers:key=Reviewed-By,key=Merged-By)'` 一行就能抽查。
-> 6. 確認遠端分支已刪除。
-> 7. 回報**合併結果**與**是否需要重啟服務**（動到 `lib/`、`server.js`、`package.json` ＝要重啟；只動 `public/` 的前端改動重新整理即可；純文件不必）。
+> 7. 確認遠端分支已刪除。
+> 8. 回報**合併結果**與**是否需要重啟服務**（動到 `lib/`、`server.js`、`package.json` ＝要重啟；只動 `public/` 的前端改動重新整理即可；純文件不必）。
 >
 > ⚠️ Codex 合併前**不可**自行修改程式（審查者角色不變）；發現問題就回報給 Claude 修。
 
@@ -141,7 +151,7 @@
 
 > **沒有任何一份產出，由寫它的人做「正式複審與放行」。**
 
-⚠️ **這句話不是禁止自審**（免與 AGENTS「轉 ready 前對抗式自審」互相否定）：
+⚠️ **這句話不是禁止自審**（免與 AGENTS「送審前對抗式自審」互相否定）：
 - **作者自查＝仍然必須做**（自己先假設哪裡會壞、跑突變、過三關）——那是交件品質，不是放行。
 - **正式複審與「可以合併」的判定＝作者不得擔任**。兩件事分開，循環才成立。
 
@@ -345,9 +355,9 @@ William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、
 （**一條規則的理由跟現實對不上，本身就是漂移**——那正是這份文件一直在修的病。）前例＝月度回顧 P0–P2、目標追蹤、個股研究頁。被指派時照這裡走：
 
 - **工作環境**：**不要在審查樹（拋棄式、唯讀複審）commit**。實作用你的**常設 `-codex` 樹**（2026-08-04 轉職為 Codex 實作樹、審查改走拋棄式樹——完整規則見 AGENTS.md 協作流程的目錄不變量；**絕不動主目錄**）。流程：在 `-codex` 裡 `git fetch origin && git checkout -B codex/<分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → **完工送審仍維持草稿**（省額度慣例 2026-08-15：審查在本機樹跑、草稿不影響；審到「通過」才 `gh pr ready` 轉正式）。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
-- **三關全綠才把 PR 轉 ready 送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架；雲端 CI 也會跑）。
+- **三關全綠才送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架）。⚠️ 2026-08-15 起送審**不轉 ready**（省額度慣例：審查全程草稿、雲端 CI 對草稿跳過；「通過」才轉 ready、轉完由真考卷閘驗真跑）。
 - **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（工法＝`docs/notion-spec-playbook.md`，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 3）。
-- **完工後、轉 ready 送審前，自己對抗式自審一輪**（開工就開 Draft，所以自審關卡掛在「轉 ready」而不是「開 PR」）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
+- **完工後、送審前，自己對抗式自審一輪**（2026-08-15 起送審不轉 ready——自審關卡掛在「送審」動作本身，不再掛在轉 ready）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
 - **PII**：絕不讀 `data/store.db`（含 `.bak/-wal/-shm`）與 `store.json`；測試一律 `STORE_FILE` 指暫存 `.db`；帳單 PDF 密碼＝身分證字號，只記憶體用、絕不落任何檔/log/commit。
 
 ### 自我檢查（開審前）
