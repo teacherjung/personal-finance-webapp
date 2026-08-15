@@ -39,9 +39,10 @@ jobs:
     # 慣例（同日寫入 REVIEW-AND-MERGE.md）：審查期間 PR 掛草稿、審到「通過」才轉正式。
     # ⚠️ 不變量（為什麼這樣不會放水）：GitHub 禁止合併草稿 PR；要合併必先轉正式，
     #    而「轉正式」本身就是 ready_for_review 事件＝當下的 head 會跑一次**真的** CI；
-    #    轉正式之後的每次 push 也照跑。所以**能合併的 head 一定跑過真考卷**——
-    #    skipped 只發生在（本來就合不了的）草稿狀態。job 級 skip 在分支保護顯示
-    #    「skipped」且視同滿足，這正是靠上面那條不變量兜住的。
+    #    轉正式之後的每次 push 也照跑。⚠️ 但這只是**第一層**——它有兩個洞（轉正式後真 CI
+    #    起跑前的空窗、Re-run 舊草稿場次的凍結 payload；GitHub 把 skipped 視同滿足），
+    #    「能合併的 head 一定跑過真考卷」要靠**第二層**＝合併程序的真考卷閘
+    #    scripts/check-ci-really-ran.js（required checks 必須真 success＋auto-merge 必關）補完。
     #    另（2026-08-15 實測）：Actions 帳務爆掉時 run 仍會建立並以 failure 收場（job 0 steps）
     #    ——不會留下舊的 skipped 綠燈頂著，fail-closed 沒被這個設計削弱。
     # ⚠️ 協作欄位閘（collab-fields.yml）**刻意不套這套**：那道閘的形狀被考題焊死

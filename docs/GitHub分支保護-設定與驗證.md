@@ -161,8 +161,10 @@ Settings → Branches → 編輯 `main` 的規則：
 ## 草稿期 skipped 與 required checks（2026-08-15 省額度慣例）
 
 **只有 ci.yml** 對草稿 PR 的推送以 job 級 `if` 跳過：檢查顯示 **skipped**、分支保護視同滿足。
-這**不是**放水——GitHub 本來就禁止合併草稿 PR；轉正式（ready_for_review）那一刻與其後每次 push
-都會真的跑。所以「能合併的 head 一定跑過真考卷」由「草稿合不了」這條硬規則兜住。
+這**不是**放水，但「草稿合不了＋轉正式（ready_for_review）會真跑」只是**第一層**——它有兩個洞
+（轉正式後真 CI 起跑前的空窗、Re-run 舊草稿場次的凍結 payload；GitHub 把 skipped 視同滿足）。
+不變量由**第二層**補完＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
+必須真 success、auto-merge 必須關）。
 另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps）＝不會留
 skipped 綠燈頂著 ②**協作欄位閘刻意不套**——它的形狀被 test/collab-invariant-docs.test.js
 「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線、全程照跑。

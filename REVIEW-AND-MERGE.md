@@ -98,7 +98,7 @@
 >    ```bash
 >    node scripts/check-pr-merge-gate.js <N>
 >    ```
->    **退出碼 0＝非堆疊，才可進步驟 4；非零＝停下來回報、本輪不合併**（1＝堆疊、2＝查不清楚。
+>    **退出碼 0＝非堆疊，才可進步驟 5；非零＝停下來回報、本輪不合併**（1＝堆疊、2＝查不清楚。
 >    查不清楚也一律當堆疊——fail-closed，別把「查不到」當「安全」：兩次事故畫面上都是
 >    「Merged」＋CI 全綠、零錯誤訊息）。堆疊時改走 AGENTS.md「堆疊 PR 的合併程序」：
 >    由下而上、每合併一支就把下一支的 base 改成 `main` 並 rebase（rebase 完**從步驟 1 重新開始**——
@@ -109,7 +109,7 @@
 >    刪分支會把上層連帶關閉為 MERGED 且無法重開（2026-07-10 #3/#5 的死法）。
 >    行為考題＝`test/merge-gate.test.js`（假 gh 五情境）。r1 的第一版只查②——#346 那種
 >    「自己疊在別人上面」會被放行；而且考題只掃文件關鍵字、被 HTML 註解繞過，故改成腳本。〕
-> 4. ⚠️ **跨 PR 試合併閘（機械執行）**：
+> 5. ⚠️ **跨 PR 試合併閘（機械執行）**：
 >    ```bash
 >    node scripts/check-cross-pr-merge.js <N>
 >    ```
@@ -126,7 +126,7 @@
 >    「預計修改的共享檔案」預約制查的是檔案重疊——**這種撞法沒有檔案重疊**。
 >    行為考題＝`test/cross-pr-merge.test.js`。誠實劃界寫在腳本檔頭：它擋得住**測試看得到**的
 >    互相破壞，擋不住「語意矛盾但測試沒覆蓋」。〕
-> 6. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**；`--delete-branch` **僅限步驟 3 退出碼 0 時**）。
+> 6. `gh pr merge <N> --squash --delete-branch`（**一律 Squash and merge**；`--delete-branch` **僅限步驟 4（堆疊閘）退出碼 0 時**）。
 >    ⚠️ **合併訊息尾端必須帶兩個 trailer**（2026-08-02 加；讓分工在 git 裡留痕）：
 >    ```
 >    Reviewed-By: <Claude|Codex|William>
@@ -209,9 +209,11 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 - 為什麼：**CI**（全卷考試、成本大頭）對草稿的推送直接跳過（≈0 分鐘）；審查是在本機
   審查樹跑的，草稿狀態不影響任何一輪。8 月實績：審查輪每推一次全卷重改，月中就燒完
   3,000 分鐘免費額度＋溢出額度。
-- **不放水的不變量**：GitHub 禁止合併草稿；轉正式那一刻（ready_for_review 事件）當下 head
-  會跑一次**真的** CI、轉正式後每次 push 也照跑——**能合併的 head 一定通過真考卷**。
-  草稿期 CI 顯示「skipped」屬正常、不是綠燈造假。
+- **不放水靠兩層**：第一層＝GitHub 禁止合併草稿、轉正式（ready_for_review）當下 head 會跑
+  一次**真的** CI、轉正式後每次 push 也照跑。⚠️ 第一層**有洞**（轉正式後真 CI 起跑前的空窗、
+  Re-run 舊草稿場次的凍結 payload——GitHub 把 skipped 視同滿足），所以第二層＝合併步驟的
+  **真考卷閘**（`scripts/check-ci-really-ran.js`：required checks 必須真 success＋auto-merge
+  必須關）才把不變量補完。草稿期 CI 顯示「skipped」屬正常、不是綠燈造假。
 - ⚠️ **協作欄位閘不在此列**：它的形狀被考題焊死（「只認一種形狀」、job 級 if 是列名繞法）、
   全程照跑。要讓它審查中不狂紅，用程序修法：**每輪先 commit → 先把 PR 欄位「基準版本」
   改成新 sha → 才 push**——推上去那一刻欄位已對齊、該輪的協作欄位檢查直接綠。
@@ -356,7 +358,7 @@ William 指出實際的拓樸不是那樣——實作在 Codex 桌機 session、
 
 - **工作環境**：**不要在審查樹（拋棄式、唯讀複審）commit**。實作用你的**常設 `-codex` 樹**（2026-08-04 轉職為 Codex 實作樹、審查改走拋棄式樹——完整規則見 AGENTS.md 協作流程的目錄不變量；**絕不動主目錄**）。流程：在 `-codex` 裡 `git fetch origin && git checkout -B codex/<分支> origin/main` → **開工第一步＝先開 Draft PR**（開工 commit push 後 `gh pr create --draft --base main`，說明列出預計修改的共享檔案——2026-07-31 預約制）→ 改 → commit（訊息繁中、講動機，Co-Authored-By 標你）→ push → **完工送審仍維持草稿**（省額度慣例 2026-08-15：審查在本機樹跑、草稿不影響；審到「通過」才 `gh pr ready` 轉正式）。合併＝**William 裁決**後照上方**合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行（決策與執行的完整規則在 AGENTS.md「協作流程」）；⚠️ **實作者不按自己的合併鍵**（William 2026-07-30 對稱授權）——你實作、Claude 審過的支由 **Claude** 依**同一套合併步驟（見下方編號清單；**這裡不寫幾步——加了閘就會變**）**執行；你的代合併授權只涵蓋「**Claude 實作、你審過**」的支（就這麼窄——其他實作者的支不在內）。
 - **三關全綠才送審**：`npm run typecheck && npm run lint && npm test`（pre-push hook 對**每次** push 都會擋——所以 Draft 的開工 commit 也得是綠的，通常只放說明或最小骨架）。⚠️ 2026-08-15 起送審**不轉 ready**（省額度慣例：審查全程草稿、雲端 CI 對草稿跳過；「通過」才轉 ready、轉完由真考卷閘驗真跑）。
-- **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（工法＝`docs/notion-spec-playbook.md`，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 3）。
+- **鐵則照 `AGENTS.md`**（PR 分級與流程重量見「三方協作框架」節）：一任務＝一分支＝一 PR；動到分類/店名/金額口徑順手在 `test/` 補考題；服務層擁有欄位絕不加進 CRUD 白名單（見「欄位所有權」表）；動到架構一併更新對應 Notion 頁（工法＝`docs/notion-spec-playbook.md`，留言用【Codex】開頭）；改後端合併後提醒使用者重啟；合併點提醒「Squash and merge ＋勾 delete branch」（**堆疊例外**：先跑 `node scripts/check-pr-merge-gate.js <N>`，非零就不勾 delete branch——見上方合併步驟 4（堆疊閘））。
 - **完工後、送審前，自己對抗式自審一輪**（2026-08-15 起送審不轉 ready——自審關卡掛在「送審」動作本身，不再掛在轉 ready）：money 相關路徑（現金流方向、分類、槓桿、洞察差異、原子寫入）先假設「哪裡會壞」再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現，別只憑推測。**你實作的高風險 PR＝Claude 複審後才合併**（與 Claude 的高風險 PR 由你複審對稱）。
 - **PII**：絕不讀 `data/store.db`（含 `.bak/-wal/-shm`）與 `store.json`；測試一律 `STORE_FILE` 指暫存 `.db`；帳單 PDF 密碼＝身分證字號，只記憶體用、絕不落任何檔/log/commit。
 
