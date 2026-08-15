@@ -546,7 +546,7 @@ test('⭐ 架構護欄的清單不可被繼承的 GIT_* 帶去別棵樹（拿掉
 function libFiles() {
   // ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
   //    `cwd` 形同無效 ⇒ 這份清單會是**別棵樹**的內容，上面那些架構護欄照樣回報通過。
-  //    理由與機制在 lib/git-env.js；行為題在本檔的「檔案清單不可被繼承的 GIT_DIR 帶去別棵樹」。
+  //    理由與機制在 lib/git-env.js；行為題＝本檔題名關鍵字「架構護欄的清單不可被繼承的 GIT_*」那題。
   const out = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
     { encoding: 'utf8', cwd: ROOT, env: gitEnv() }).trim();
   return out ? out.split('\n').filter(f => f.endsWith('.js')) : [];

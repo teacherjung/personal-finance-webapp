@@ -17,7 +17,7 @@ import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-e
  *    git 根本不看 cwd ⇒ 這份清單會變成**別棵樹**的內容，甚至變空。
  *    下面那道 secret 掃描守的是「萬能鑰匙（service_role 權杖）有沒有進 repo」，
  *    清單一被換掉它就**掃了個寂寞、回報沒有外洩**——這一族裡後果最重的一顆假綠。
- *    機制與理由在 lib/git-env.js；行為題見本檔「secret 掃描的清單不可被繼承的 GIT_DIR 帶走」。
+ *    機制與理由在 lib/git-env.js；行為題＝本檔題名關鍵字「secret 掃描的清單不可被繼承的 GIT_*」那題。
  */
 const trackedFiles = () =>
   execFileSync('git', ['ls-files'], { encoding: 'utf8', env: gitEnv() }).trim().split('\n').filter(Boolean);

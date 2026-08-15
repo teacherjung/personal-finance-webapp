@@ -43,7 +43,7 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
  *
  * ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
  *    `cwd: ROOT` 形同無效 ⇒ 清單變成別棵樹的內容或空的，下面的死連結／標題配對就全部空掃而通過。
- *    機制在 lib/git-env.js；行為題見本檔「清單與 git grep 不可被繼承的 GIT_DIR 帶走」。
+ *    機制在 lib/git-env.js；行為題＝本檔題名關鍵字「清單與 git grep 不可被繼承的 GIT_*」那題。
  */
 const trackedFiles = () => execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files'],
   { cwd: ROOT, encoding: 'utf8', env: gitEnv() }).split('\n').filter(Boolean);
