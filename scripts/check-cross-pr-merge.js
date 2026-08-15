@@ -176,7 +176,8 @@ export function verdict(results) {
 /**
  * ⚠️ **`gh` 也走 `runIn`**（#463 r1 High）：它會**自己再去 spawn git**——實測
  * `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
- * 上一版讓它繞過 `runIn`，於是下面那句「所有外部指令的唯一入口」是**撐不住的保證**。
+ * ⚠️ 它一度繞過 `runIn`（`fd054dc`），於是下面那句「所有外部指令的唯一入口」曾經是**撐不住的保證**
+ *   ——#463 r1 複審抓到。留著這個落點是因為那句宣稱還在，下一個人要知道它靠什麼成立。
  * 漏清的後果分兩種：指到不存在的路徑＝假阻擋；指到另一個**有效** repo＝這道閘去讀
  * **那個** repo 的 PR 與 open PR 清單，而輸出看起來完全正常。
  * @param {string[]} args

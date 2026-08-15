@@ -561,6 +561,7 @@ function fakeClientFor(tok, user) {
 }
 
 test('⭐ 架構護欄交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
-  // ⚠️ 上一題是代理指標，只涵蓋「剛好會改變這個指令的變數」；這一題直接問子行程收到什麼。
+  // ⚠️ 題名關鍵字「架構護欄的清單不可被繼承的 GIT_*」那題是代理指標，只涵蓋「剛好會改變這個指令的變數」；
+  //    這一題直接問子行程收到什麼。
   assertChildGitEnvClean(assert, 'hosted-store-pg 的 libFiles()', () => libFiles());
 });

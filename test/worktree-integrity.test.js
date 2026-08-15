@@ -527,8 +527,8 @@ test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有
     process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
     // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
     //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結論沒被帶偏。
-    //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由下一題
-    //    「體檢交給 git 的環境裡不可以有任何 GIT_*」（直接讀子行程收到什麼）守。
+    //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由題名關鍵字
+    //    「體檢交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
     const restoreDirty = injectDirtyGitEnv();
     try {
       assert.deepEqual(worktreeIntegrityProblems(ROOT), [],
@@ -542,10 +542,11 @@ test('⭐ 體檢本身不可以被 GIT_* 牽著走（行為題，不是掃它有
 });
 
 test('⭐ 體檢交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
-  // ⚠️ 上一題是**代理指標**：它問「體檢的結論對不對」，只涵蓋「剛好會改變那些指令的變數」。
-  //    實測 `rev-parse --show-toplevel` 這一族**只有 `GIT_DIR` 有影響力**（對照表在
-  //    test/helpers/dirty-git-env.js 檔頭），所以光靠上一題，把清法退化成「只刪 GIT_DIR」
-  //    的列名版仍會全綠。這一題直接問子行程收到什麼，未來的新家族也涵蓋得到。
+  // ⚠️ 題名關鍵字「體檢本身不可以被 GIT_* 牽著走」那題是**代理指標**：它問「體檢的結論對不對」，
+  //    只涵蓋「剛好會改變那些指令的變數」。實測 `rev-parse --show-toplevel` 這一族
+  //    **只有 `GIT_DIR` 有影響力**（對照表在 test/helpers/dirty-git-env.js 檔頭），
+  //    所以光靠它，把清法退化成「只刪 GIT_DIR」的列名版仍會全綠。
+  //    這一題直接問子行程收到什麼，未來的新家族也涵蓋得到。
   assertChildGitEnvClean(assert, '體檢的 runGit()', () => worktreeIntegrityProblems(ROOT));
 });
 

@@ -564,22 +564,24 @@ test('⭐ runIn 不可以被繼承的 GIT_* 牽著走（拿掉 env: gitEnv() 要
   //    一樣是行為上的紅，而且不必在考題裡動任何真的 repo。
   // ⚠️ **這一題是代理指標，射程有限**：注入的 `GIT_DIR` 是實測唯一「四種呼叫形狀通吃」的變數
   //    （對照表在 test/helpers/dirty-git-env.js 檔頭），它證明的是真實情境下結果沒被帶偏。
-  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔的
-  //    「交給 git 的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
+  //    ⚠️ 它**擋不住**「把清法退化成只刪 GIT_DIR 的列名版」——那一族由同檔題名關鍵字
+  //    「runIn 交給子行程的環境裡不可以有任何 GIT_*」那題（直接讀子行程收到什麼）守。
   const restore = injectDirtyGitEnv();
   try {
     const top = runIn(['git', 'rev-parse', '--show-toplevel'], ROOT).trim();
     assert.equal(realpathSync(top), realpathSync(ROOT),
       '注入髒 GIT_* 之後 runIn 回答的 toplevel 就不是本樹了。\n'
-      + '⇒ 這道閘會在**別棵樹**上 git worktree add／remove。cwd 隔離不了 GIT_DIR，'
-      + '唯一的擋法是 env: gitEnv()。');
+      + '⇒ 這道閘會在**別棵樹**上 git worktree add／remove。cwd 隔離不了 GIT_DIR——'
+      + '本題只證明「環境必須清乾淨」，不宣稱技術上只有一種寫法；'
+      + '本專案的規定是一律走 lib/git-env.js 的 gitEnv()（AGENTS.md 鐵則 11），理由是收成一份才不會漂。');
   } finally {
     restore();
   }
 });
 
 test('⭐ runIn 交給子行程的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
-  // ⚠️ 上一題是**代理指標**：它問「答案對不對」，而那要靠注入的變數**剛好會改變 git 行為**才驗得到
+  // ⚠️ 題名關鍵字「runIn 不可以被繼承的 GIT_* 牽著走」那題是**代理指標**：它問「答案對不對」，
+  //    而那要靠注入的變數**剛好會改變 git 行為**才驗得到
   //    ——一個沒人見過的新家族就驗不到（那正是列名式清法一路失守的形狀）。
   //    這一題改成直接問**子行程實際收到什麼**：不管未來冒出哪個名字都涵蓋得到。
   //    （#463 r1 複審的建議：「以假 git/gh 記錄並斷言所有 GIT_* 均未傳入」。）

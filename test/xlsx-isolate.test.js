@@ -436,7 +436,8 @@ test('護欄本身｜檔案清單不可被繼承的 GIT_* 帶去別棵樹（拿�
 });
 
 test('護欄本身｜檔案清單交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', async () => {
-  // ⚠️ 上一題是**代理指標**：它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
+  // ⚠️ 題名關鍵字「檔案清單不可被繼承的 GIT_* 帶去別棵樹」那題是**代理指標**：
+  //    它問「清單對不對」，只涵蓋「剛好會改變這個指令的變數」。
   //    這一題直接問子行程收到什麼——沒人見過的新家族也涵蓋得到（射程對照表在 helper 檔頭）。
   const { assertChildGitEnvCleanAsync } = await import('./helpers/dirty-git-env.js');
   await assertChildGitEnvCleanAsync(assert, 'xlsx-isolate 的 productionFiles()',
