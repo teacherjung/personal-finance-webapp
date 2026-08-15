@@ -113,3 +113,22 @@ test('合併程序：PROJECT 的「勾 delete branch」不可寫成無條件', (
     'PROJECT.md 的合併寫法提到「勾 delete branch」卻沒提堆疊例外——三份文件必須一致，不然又是一次規則漂移'
   );
 });
+
+test('合併步驟｜編號連續唯一＋具名引用指得到正確步驟（#466 r1 高③/r2#3：重編號做一半的守門）', () => {
+  const doc = read('REVIEW-AND-MERGE.md');
+  // 步驟清單＝合併段落裡的 `> N. `：必須從 1 開始、嚴格連續、無重號
+  const steps = [...doc.matchAll(/^> (\d+)\. (.*)$/gm)].map((m) => ({ n: Number(m[1]), title: m[2] }));
+  assert.ok(steps.length >= 8, `只找到 ${steps.length} 個步驟——合併步驟至少八步（2026-08-15 起）`);
+  steps.forEach((s2, i) => assert.equal(s2.n, i + 1,
+    `步驟編號斷裂：第 ${i + 1} 個項目標成「${s2.n}」（重號或缺號＝操作者照編號找會找錯道閘）`));
+  // 具名引用：「步驟 N（某某閘）」的 N 必須等於標題含「某某閘」那一步的實際編號
+  for (const m of doc.matchAll(/步驟 (\d+)（([^）]+)）/g)) {
+    const [, num, name2] = m;
+    const hit = steps.find((s2) => s2.title.includes(name2));
+    assert.ok(hit, `引用「步驟 ${num}（${name2}）」但沒有任何步驟標題含「${name2}」`);
+    assert.equal(Number(num), hit.n,
+      `「步驟 ${num}（${name2}）」指錯了——「${name2}」實際是步驟 ${hit.n}（交叉引用漂了＝重演 #466 r1 高③）`);
+  }
+  // 易漂的裸數字引用至少要具名：delete-branch 條款必須點名堆疊閘
+  assert.ok(/--delete-branch[^\n]*堆疊閘/.test(doc), 'delete-branch 的條件要具名指到堆疊閘、不可只寫裸數字');
+});
