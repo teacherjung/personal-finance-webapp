@@ -744,11 +744,11 @@ test('引擎｜零正則全族行為釘（r4#3a）：section／endAnchor／refDa
   // header：欄標題帶括號＝表頭認不出＝結構性失敗
   const hdr = recipeA(); hdr.detail = { ...hdr.detail, headerOut: '提領(金)額' };
   assert.throws(() => parseWithRecipe(linesA(), hdr), (e) => e.code === 'recipe_parse_failed', '★欄標題是字面');
-  // endAnchor：帶括號＝不得命中「總計」＝台幣區不收尾、總計後的帳戶列會被多收
+  // endAnchor：帶括號＝不得命中「總計」＝概要區永不收尾 ⇒ 撞到明細表頭時被 r6#1 守門拒解；
+  // 樣式解讀會讓「總計」收尾、整份解成功＝可觀察的差異
   const end = recipeA(); end.summary.endAnchor = '總(計)';
-  const doc = linesA(); doc.splice(4, 0, L(230, [[50, '收尾後'], [150, '900100****3309'], [473, '$5']]));
-  const p = parseWithRecipe(doc, end);
-  assert.ok(p.accountCurrency['900100****3309'], '★endAnchor 是字面＝「總計」不收尾、後面那列被當帳戶——樣式解讀會提前收尾');
+  assert.throws(() => parseWithRecipe(linesA(), end), (e) => e.code === 'recipe_parse_failed',
+    '★endAnchor 是字面＝「總計」不收尾＝概要未收尾拒解');
 });
 
 // ---- Codex r5：主路左緣區間＋明細帳號權威牆 ----
@@ -788,4 +788,29 @@ test('引擎｜明細帳號必須在概要幣別表（r5#2）：概要認不得�
   ];
   assert.throws(() => parseWithRecipe(doc, recipeA()), (e) => e.code === 'recipe_parse_failed' && !/9999/.test(e.message),
     '★明細帳號不在概要幣別表＝整份拒解（訊息不回聲帳號）——快取後遇到新帳戶寧退 AI 不無聲入帳');
+});
+
+// ---- Codex r6：概要收尾守門＋角色撞名全域禁令 ----
+
+test('引擎｜概要區未收尾就進明細＝拒解（r6#1：明細交易列會污染幣別表＝權威牆被自己餵毒）', () => {
+  // r6 實測形：後續帳單少了外幣區的收尾列 ⇒ section 還開著就撞到明細表頭——
+  // 原版概要迴圈會把明細的陌生帳戶列當帳戶列登記成該區幣別、權威牆照放行
+  const doc = linesA().filter((_, i) => i !== 7);   // 拿掉外幣區的「總計」收尾列
+  assert.throws(() => parseWithRecipe(doc, recipeA()), (e) => e.code === 'recipe_parse_failed',
+    '★收尾列缺席/改名的版面＝拒解退 AI，不讓明細列進概要迴圈');
+});
+
+test('驗證器｜欄位角色撞名全域禁令（r6#2）：忽略欄/備註欄撞金額欄名＝整欄吃掉或翻向', () => {
+  for (const [patch, why] of [
+    [r => { r.detail.headerIgnore = ['提領金額']; }, '忽略欄撞支出欄名＝整欄支出被吃掉'],
+    [r => { r.detail.headerNote = '存進金額'; }, '備註欄撞存入欄名＝存款變備註'],
+    [r => { r.detail.headerIgnore = ['附記']; }, '忽略欄撞備註欄名'],
+    [r => { r.detail.headerNote = '單 號'; }, '備註欄撞忽略欄名（squash 後判＝空白繞不過）'],
+  ]) {
+    const r = recipeA(); patch(r);
+    assert.ok(validateRecipeStrict(r).length > 0, `★${why}：必須拒收`);
+  }
+  // 幣別欄的型別牆（r6 建議）：陣列包裝 String() 後會矇混過 regex
+  const cur = recipeA(); cur.summary.sections[0].currency = ['TWD'];
+  assert.ok(validateRecipeStrict(cur).length > 0, '★currency 必須是字串——[\'TWD\'] 不是');
 });
