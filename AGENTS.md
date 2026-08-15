@@ -119,6 +119,28 @@
     ⚠️ 不寫死會漂的數字與序數（「兩題」「下一題」「共 N 處」）——點名 `file:line` 或題名關鍵字。
     ⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。
 
+11. **spawn git（或會再去 spawn git 的東西）一律清乾淨環境**：`env: gitEnv()`（`lib/git-env.js`）。
+
+    為什麼不能靠 `cwd`：**`GIT_DIR` 一存在，git 就不看 `cwd`**——`git -C <路徑>` 與
+    `execFileSync(…, { cwd })` 全部形同無效。而它不需要有人手動設：**從連結工作樹 push 時
+    git 自己會把它塞進 hook 的環境**，而 `scripts/git-hooks/pre-push` 會跑 `npm test`
+    ⇒ 整套考題預設就在那個環境下跑。兩個後果都是靜的：
+    ① 那個環境下的 `git init` 會把 `bare = true` 寫進**共用** `.git/config`
+       ——2026-08-09 主目錄與全部連結工作樹一起失去工作樹身分，而做這件事的考題**顯示通過**；
+    ② 宣稱「掃這棵樹」的護欄其實掃到別棵，於是回報「零違規」。
+    - **按 `GIT_` 前綴整族清、不列名**：`GIT_CONFIG_COUNT`／`KEY_n`／`VALUE_n` 是 `git -c` 生出來、
+      會長的一族（它們能注入 `core.excludesFile` 讓 `--exclude-standard` 靜靜隱藏違規新檔）。
+      列舉繞法補不完就要關門。射程與**刻意不清 `HOME`／`PATH` 的理由**寫在 `lib/git-env.js`。
+    - **考題裡不要 `git init`**（那正是事故的兇器）。真的需要沙盒 repo：環境一律**從零組**
+      （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
+      ——落點見 `test/worktree-integrity.test.js` 與 `test/cross-pr-merge.test.js` 的沙盒節。
+    - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push` 與 `mutate.sh` 不經過 Node，
+      `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
+      它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。
+    - 每一個呼叫點都要有**行為題**撐著（把清環境那一行拿掉必須紅）；純函式與兩份 shell 的題都在
+      `test/git-env.test.js`，它的檔頭列出各呼叫點的行為題落在哪一支。
+    - 事故的完整病理與證據鏈在 `scripts/check-worktree-integrity.js` 檔頭（單一真相，勿重抄）。
+
 
 ## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）
 

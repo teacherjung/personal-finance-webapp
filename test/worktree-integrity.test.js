@@ -26,8 +26,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { worktreeIntegrityProblems, cleanGitEnv }
-  from '../scripts/check-worktree-integrity.js';
+import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -521,7 +520,7 @@ test('⭐ 根本不是 repo 的目錄：要說「不認得」，不可以回「�
   }
 });
 
-test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是看它有沒有寫 cleanGitEnv）', () => {
+test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是掃它有沒有寫清環境那一行）', () => {
   withSandbox(({ repo }) => {
     const saved = process.env.GIT_DIR;
     process.env.GIT_DIR = join(repo, '.git');   // 假裝我們是在 hook 的環境裡跑
@@ -533,23 +532,6 @@ test('⭐ 體檢本身不可以被 GIT_DIR 牽著走（行為題，不是看它�
       if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
     }
   });
-});
-
-test('cleanGitEnv 按 GIT_ 前綴整族清：沒列過名的也要走，非 GIT_ 前綴不受傷', () => {
-  const cleaned = cleanGitEnv({
-    PATH: '/usr/bin', LANG: 'zh_TW.UTF-8', GITHUB_TOKEN: 'keep-me',
-    GIT_DIR: '/fake', GIT_WORK_TREE: '/fake', GIT_PREFIX: 'x',
-    // 這一族是 #435 r1 High② 的洞：`git -c` 會生出來、名單永遠追不上。
-    GIT_CONFIG_PARAMETERS: "'a.b=c'", GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a.b',
-    GIT_BOGUS_FUTURE_THING: 'unlisted',   // 未來才會出現的名字＝前綴關門存在的理由
-  });
-  for (const key of Object.keys(cleaned)) {
-    assert.ok(!key.startsWith('GIT_'), `${key} 沒被清掉——前綴這扇門有縫`);
-  }
-  assert.equal(cleaned.PATH, '/usr/bin');
-  assert.equal(cleaned.LANG, 'zh_TW.UTF-8', 'cleanGitEnv 不該動到無關的變數');
-  assert.equal(cleaned.GITHUB_TOKEN, 'keep-me',
-    'GITHUB_* 不是 GIT_ 前綴（第四個字元是 H 不是底線），不可以被誤殺——CI 環境靠它');
 });
 
 /**
@@ -600,8 +582,8 @@ function runPrePush(bin) {
   polluted.GIT_CONFIG_VALUE_0 = 'fixture';
   polluted.GIT_BOGUS_FUTURE_THING = 'unlisted';
   // 哨兵：非 GIT_ 前綴（第四字元是 H），**必須活著穿過正式 hook**——前綴規則寫鬆
-  // （GIT 而非 GIT_）就會殺掉它，CI 的 GITHUB_* 會遭殃（r2 Low④：unit test 的
-  // cleanGitEnv 是另一份實作，守不到 hook 這一份）。
+  // （GIT 而非 GIT_）就會殺掉它，CI 的 GITHUB_* 會遭殃（r2 Low④：hook 那一行 sh 是
+  // **另一份實作**，`lib/git-env.js` 的考題守不到它，所以這個哨兵要在這裡再釘一次）。
   polluted.GITHUB_TOKEN = 'keep-me';
   return spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')],
     { encoding: 'utf8', cwd: ROOT, env: polluted });

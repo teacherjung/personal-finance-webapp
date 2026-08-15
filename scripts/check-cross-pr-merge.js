@@ -54,6 +54,7 @@ import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isMainModule } from '../lib/is-main.js';
+import { gitEnv } from '../lib/git-env.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -178,6 +179,26 @@ function gh(args) {
 }
 
 /**
+ * **這支腳本所有外部指令的唯一入口**——一律在清乾淨的環境下跑（見 `lib/git-env.js`）。
+ *
+ * ⚠️ 為什麼這一支特別要緊：它不是唯讀的。它會 `git worktree add`／`git merge`／
+ *    `git worktree remove`，而**繼承來的 `GIT_DIR` 會讓 git 完全不看 `cwd`**
+ *    ⇒ 這些「建立」與「移除」有可能落在**別的 repo** 上。
+ *
+ * ⚠️ **`npm run …` 也走這裡，不是順手**：那條路會在臨時工作區跑整套考題，
+ *    而 2026-08-09 的事故正是「考題在帶著 `GIT_DIR` 的環境下跑」造成的
+ *    （機制在 `scripts/check-worktree-integrity.js` 檔頭）。這道閘自己就是一個
+ *    「從別處繼承環境、再去跑考題」的入口，不清等於把那個前提條件重新製造一次。
+ *
+ * @param {string[]} argv 指令與參數（`argv[0]` 是執行檔）
+ * @param {string} cwd 明確指定工作目錄——**不可省**，省了就只剩 `process.cwd()` 這個隱含前提
+ * @returns {string} stdout（`stdio: 'pipe'`＝不把子行程的輸出混進本閘的訊息）
+ */
+export function runIn(argv, cwd) {
+  return execFileSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() });
+}
+
+/**
  * 把三關失敗的 execFileSync 錯誤壓成一行死因。
  *
  * ⚠️ **stderr 的尾巴一定要帶**：只截 stdout 的話，127「指令找不到」這種環境錯誤
@@ -257,20 +278,18 @@ export function cantRunSignal(err) {
  */
 function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
   const wt = mkdtempSync(join(tmpdir(), `cross-pr-${otherNumber}-`));
-  const run = (/** @type {string[]} */ argv, /** @type {string} */ cwd) =>
-    execFileSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', stdio: 'pipe' });
   try {
-    run(['git', 'worktree', 'add', '--detach', '-q', wt, baseSha], repoRoot);
+    runIn(['git', 'worktree', 'add', '--detach', '-q', wt, baseSha], repoRoot);
     const nm = join(wt, 'node_modules');
     if (!existsSync(nm)) symlinkSync(join(repoRoot, 'node_modules'), nm);
     try {
-      run(['git', 'merge', '--no-edit', '-q', otherSha], wt);
+      runIn(['git', 'merge', '--no-edit', '-q', otherSha], wt);
     } catch {
       return { number: otherNumber, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' };
     }
     for (const [label, script] of [['校對', 'typecheck'], ['糾察', 'lint'], ['考試', 'test']]) {
       try {
-        run(['npm', 'run', script === 'test' ? 'test' : script], wt);
+        runIn(['npm', 'run', script === 'test' ? 'test' : script], wt);
       } catch (e) {
         const err = /** @type {any} */ (e);
         // ⚠️ 「執行不起來」≠「跑完是紅的」——分界與「為什麼不判定成因」寫在
@@ -290,7 +309,7 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
     // ⚠️ 先拆 symlink 再移除 worktree——`unlink` 只動得了連結，動不到主目錄的 node_modules
     const nm = join(wt, 'node_modules');
     try { unlinkSync(nm); } catch { /* 不在或不是連結都不要緊 */ }
-    try { execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: repoRoot, stdio: 'pipe' }); }
+    try { runIn(['git', 'worktree', 'remove', '--force', wt], repoRoot); }
     catch { try { rmSync(wt, { recursive: true, force: true }); } catch { /* 盡力清乾淨 */ } }
   }
 }
@@ -309,7 +328,9 @@ export function main(argv) {
   }
   let repoRoot; let self; let list;
   try {
-    repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+    // ⚠️ 這一句決定後面所有 worktree 操作**動到哪一個 repo**。繼承來的 `GIT_DIR` 會讓它回答
+    //    別的 repo（git 有 GIT_DIR 時不看 cwd）⇒ 這道閘會跑去別棵樹上建立與移除工作樹。
+    repoRoot = runIn(['git', 'rev-parse', '--show-toplevel'], process.cwd()).trim();
     self = JSON.parse(gh(['pr', 'view', pr, '--json', 'number,headRefOid,baseRefName']));
     list = JSON.parse(gh(['pr', 'list', '--state', 'open', '--base', 'main',
       '--json', 'number,headRefOid,headRefName,baseRefName,isDraft', '--limit', '100']));

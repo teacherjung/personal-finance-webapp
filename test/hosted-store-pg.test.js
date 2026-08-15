@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
+import { gitEnv } from '../lib/git-env.js';
 
 // 陷阱檔：HOSTED 模式**一個位元組都不該**寫到本機 SQLite。用 mkdtemp 整個資料夾，
 // 這樣連「備份服務偷偷建了 backups/」都驗得到（照 test/daily-backup.test.js 的形狀）。
@@ -515,6 +516,22 @@ test('SQL：RLS 政策必須 FOR ALL＋USING＋WITH CHECK＋force，且 service_
   assert.match(sql, /version\s+bigint\s+not null default 1/i, 'P1-5 樂觀鎖欄位');
 });
 
+test('⭐ 架構護欄的清單不可被繼承的 GIT_DIR 帶去別棵樹（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 上面兩道架構護欄（service_role、誰可以 import store.js）都是「逐檔讀 libFiles() 的內容」。
+  //    清單一被換掉，它們就掃了別棵樹而回報通過——**護欄什麼都沒做卻說通過**。
+  //    `cwd` 隔離不了 `GIT_DIR`（有它時 git 不看 cwd），而從連結工作樹 push 時 hook 環境本來就有它。
+  const before = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  try {
+    const files = libFiles();
+    assert.ok(files.includes('lib/store-pg.js'),
+      '注入假的 GIT_DIR 之後清單裡就沒有 lib/store-pg.js 了＝環境沒被隔離，架構護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入假的 GIT_DIR 之後只掃到 ${files.length} 個檔＝隔離失效`);
+  } finally {
+    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+  }
+});
+
 // ---- 小工具 ----------------------------------------------------------------
 /**
  * 正式程式碼的檔案清單（給架構考題掃）。
@@ -523,8 +540,11 @@ test('SQL：RLS 政策必須 FOR ALL＋USING＋WITH CHECK＋force，且 service_
  * @returns {string[]}
  */
 function libFiles() {
+  // ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+  //    `cwd` 形同無效 ⇒ 這份清單會是**別棵樹**的內容，上面那些架構護欄照樣回報通過。
+  //    理由與機制在 lib/git-env.js；行為題在本檔的「檔案清單不可被繼承的 GIT_DIR 帶去別棵樹」。
   const out = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
-    { encoding: 'utf8', cwd: ROOT }).trim();
+    { encoding: 'utf8', cwd: ROOT, env: gitEnv() }).trim();
   return out ? out.split('\n').filter(f => f.endsWith('.js')) : [];
 }
 

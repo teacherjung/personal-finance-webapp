@@ -232,10 +232,13 @@ async function productionFiles() {
   const { execFileSync } = await import('node:child_process');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
+  const { gitEnv } = await import('../lib/git-env.js');
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  // ⚠️ **`env: gitEnv()` 不可省**：`GIT_DIR` 一旦被繼承（從連結工作樹 push 時 hook 環境本來就有），
+  //    `cwd` 形同無效 ⇒ 這份清單會是**別棵樹**的內容，護欄照樣回報通過。理由與機制在 lib/git-env.js。
   const listed = execFileSync('git',
     ['ls-files', '--cached', '--others', '--exclude-standard', 'lib', 'server.js'],
-    { encoding: 'utf8', cwd: root }).trim();
+    { encoding: 'utf8', cwd: root, env: gitEnv() }).trim();
   return (listed ? listed.split('\n') : []).filter((f) => /\.(js|mjs|cjs)$/.test(f) && !f.endsWith('.test.js'));
 }
 
@@ -408,6 +411,25 @@ test('護欄本身｜檔案清單不可把 worktree 副本算進去（本題**�
     assert.ok(files.length > 20, `只掃到 ${files.length} 個檔，正式程式碼不可能這麼少——pathspec 可能錯了`);
   } finally {
     rmSync(join(root, '.claude', 'worktrees', '_guard_probe'), { recursive: true, force: true });
+  }
+});
+
+test('護欄本身｜檔案清單不可被繼承的 GIT_DIR 帶去別棵樹（拿掉 env: gitEnv() 要紅）', async () => {
+  // ⚠️ 為什麼非有這一題不可：`cwd` **隔離不了 `GIT_DIR`**——有它時 git 根本不看 cwd。
+  //    而從連結工作樹 push 時，git 自己會把 GIT_DIR 塞進 hook 環境，`pre-push` 又會跑 `npm test`
+  //    ⇒ 這份清單會靜靜換成別棵樹的內容，而護欄回報「零違規」。
+  //    這是**行為題**：把 productionFiles() 的 `env: gitEnv()` 拿掉，這一題就紅。
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const before = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  try {
+    const files = await productionFiles();
+    assert.ok(files.includes('lib/statement.js'),
+      '注入假的 GIT_DIR 之後清單裡就沒有收斂點了＝環境沒被隔離，這道護欄會掃錯對象');
+    assert.ok(files.length > 20, `注入假的 GIT_DIR 之後只掃到 ${files.length} 個檔＝隔離失效`);
+  } finally {
+    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
   }
 });
 

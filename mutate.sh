@@ -14,6 +14,16 @@
 set -u
 cd "$(dirname "$0")"
 
+# ⚠️ **先清 GIT_*，才輪到下面的髒檔檢查**（AGENTS.md 鐵則 11；機制在 lib/git-env.js）：
+#    這支腳本的每一道保護都建立在 `git status --porcelain` 上——「開跑前樹是乾淨的」「還原之後
+#    沒有殘留」。而繼承來的 `GIT_DIR` 會讓 git **完全不看 cwd**，於是那些 status 量的是別棵樹
+#    ⇒ **防假綠的工具自己假綠**：這棵樹上有殘留的突變，它照樣回報乾淨。
+#    （`GIT_INDEX_FILE` 預設＝`$GIT_DIR/index`，所以連「哪些檔案算追蹤中」都會跟著換人。）
+#    整族清、不列名的理由同 pre-push：`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` 是 `git -c` 生出來、會長的。
+#    清在最前面＝這支腳本 spawn 的所有子行程（npm、node）也一起乾淨。
+for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
+unset _gitvar
+
 fail=0
 
 # ⚠️ **髒檔檢查必須在掛 trap 之前**（2026-08-03 第四次事故，我親手踩的）：

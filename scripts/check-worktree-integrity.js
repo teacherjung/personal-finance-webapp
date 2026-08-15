@@ -72,30 +72,10 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
-
-/**
- * 把 git 的環境變數從一份環境裡拿掉——**按 `GIT_` 前綴整族清，不列名**。
- *
- * ⚠️ 為什麼不列名（#435 r1 High②；同教訓＝#433 r14）：精確列名補不完。
- *    `git rev-parse --local-env-vars` 之外還有 `GIT_CONFIG_PARAMETERS`、
- *    `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` 這種**會長的一族**（`git -c` 就會生出來），
- *    以及 `GIT_EXEC_PATH` 等；漏掉任何一個，「清乾淨了」就是假的。前綴是唯一關得起來的門。
- *    （`GITHUB_*` 不是 `GIT_` 前綴——第四個字元是 H 不是底線——不受影響；考題有釘。）
- *
- * ⚠️ 這不是潔癖：**體檢本身若在 `GIT_DIR` 之下跑，量到的就不是你指的那棵樹**
- *    （從 worktree push 時 hook 的環境正是如此），那會變成「靜靜量了別棵樹、回報一切正常」。
- *
- * @param {NodeJS.ProcessEnv} env
- * @returns {NodeJS.ProcessEnv}
- */
-export function cleanGitEnv(env) {
-  /** @type {NodeJS.ProcessEnv} */
-  const out = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (!key.startsWith('GIT_')) out[key] = value;
-  }
-  return out;
-}
+// ⚠️ 清環境的實作在 `lib/git-env.js`（前綴整族清的理由寫在那裡）。**體檢本身若在 `GIT_DIR`
+//    之下跑，量到的就不是你指的那棵樹**——從 worktree push 時 hook 的環境正是如此，
+//    那會變成「靜靜量了別棵樹、回報一切正常」，也就是這支要防的病自己中招。
+import { gitEnv } from '../lib/git-env.js';
 
 /**
  * 這個 repo 一定在版控裡的檔案——拿來驗「索引還在、`git ls-files` 沒有靜靜掃到零檔案」。
@@ -132,7 +112,7 @@ function gitOutsideRepo(args) {
  * @returns {{ status: number, out: string, err: string }}
  */
 function runGit(args, cwd) {
-  const r = spawnSync('git', args, { encoding: 'utf8', cwd, env: cleanGitEnv(process.env) });
+  const r = spawnSync('git', args, { encoding: 'utf8', cwd, env: gitEnv() });
   if (r.error) throw r.error;
   if (typeof r.status !== 'number') {
     throw new Error(`git ${args.join(' ')} 沒有正常結束（signal=${r.signal}）——體檢無法下判斷。`);

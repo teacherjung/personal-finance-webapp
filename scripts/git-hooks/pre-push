@@ -15,7 +15,9 @@
 #    考題跑在這個環境下沒有任何好處，所以在這裡一次清乾淨。
 #    ⚠️ **按 `GIT_` 前綴整族清、不列名**（#435 r1 High②；同教訓＝#433 r14：精確列名補不完——
 #       GIT_CONFIG_PARAMETERS 與 GIT_CONFIG_COUNT/KEY_n/VALUE_n 是 `git -c` 會生出來、會長的一族，
-#       另有 GIT_EXEC_PATH 等）。體檢腳本的 cleanGitEnv 同語意；GITHUB_* 不是 GIT_ 前綴、不受影響。
+#       另有 GIT_EXEC_PATH 等）。JS 那邊的同語意實作＝lib/git-env.js 的 gitEnv()（AGENTS.md 鐵則 11）；
+#       ⚠️ 這一行 sh 是**另一份實作**，那支的考題守不到它——本行由下面點名的考題直接跑 hook 驗。
+#       GITHUB_* 不是 GIT_ 前綴、不受影響。
 #       test/worktree-integrity.test.js 會實際跑這支 hook、驗注入的（含未列名的）GIT_* 全被清掉。
 for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
 unset _gitvar

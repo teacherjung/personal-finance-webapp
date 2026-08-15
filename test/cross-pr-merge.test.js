@@ -18,11 +18,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES, runIn } from '../scripts/check-cross-pr-merge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
@@ -551,6 +551,27 @@ test('三關紅但子行程兩邊都沒輸出（如 spawn 本身失敗）→ 退
   assert.match(redDetail({ message: 'spawnSync npm ENOENT' }), /ENOENT/);
   assert.ok(redDetail(null).length > 0,
     '連 message 都沒有也要給一句話——空字串會讓訊息停在「紅了：」，看的人什麼線索都拿不到');
+});
+
+test('⭐ runIn 不可以被繼承的 GIT_DIR 牽著走（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 這一題守的是這道閘**動到哪一個 repo**。`runIn` 是它 worktree add／merge／remove 的唯一入口，
+  //    而 `GIT_DIR` 一存在，git 就完全不看 `cwd`——那些「建立」與「移除」有可能落在別棵樹上。
+  //
+  // ⚠️ **刻意不在考題裡 `git init` 造一棵誘餌 repo**：那正是 2026-08-09 事故的兇器
+  //    （在帶 `GIT_DIR` 的環境下 `git init` 會把共用 config 寫成 bare=true）。這裡改用
+  //    「指到不存在的 gitdir」——環境沒被清時 git 會直接 fatal、`execFileSync` 丟例外，
+  //    一樣是行為上的紅，而且不必在考題裡動任何真的 repo。
+  const before = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(tmpdir(), 'definitely-not-a-git-dir-xyz');
+  try {
+    const top = runIn(['git', 'rev-parse', '--show-toplevel'], ROOT).trim();
+    assert.equal(realpathSync(top), realpathSync(ROOT),
+      '注入 GIT_DIR 之後 runIn 回答的 toplevel 就不是本樹了。\n'
+      + '⇒ 這道閘會在**別棵樹**上 git worktree add／remove。cwd 隔離不了 GIT_DIR，'
+      + '唯一的擋法是 env: gitEnv()。');
+  } finally {
+    if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before;
+  }
 });
 
 // ⭐ 入口守衛（經過 symlink 的路徑也要真的跑）**移到 `test/entry-guard.test.js`**。
