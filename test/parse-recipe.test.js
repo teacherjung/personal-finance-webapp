@@ -7,7 +7,7 @@ import {
   RECIPE_FORMAT_VERSION, RECIPE_LIMITS, validateRecipeStrict, recipeMatches, parseWithRecipe, recipeReproduces,
   validateRecipeAgainstStatement,
 } from '../lib/parse-recipe.js';
-import { parseBankSummary, parseBankDetail } from '../lib/bank-statement.js';
+import { parseBankSummary, parseBankDetail, splitAmount } from '../lib/bank-statement.js';
 import { classifyBankTx } from '../lib/services/bank-import.js';
 
 /** 合成列（[x,s] 或 [x,w,s]）。 */
@@ -905,4 +905,54 @@ test('驗證器｜逐層鍵白名單（r8#5 建議）：頂層／refDate／summa
     const r = recipeA(); patch(r);
     assert.ok(validateRecipeStrict(r).length > 0, `★${why} 層的多餘鍵要拒（r8 實測：拔兩層 checkKeys 照綠）`);
   }
+});
+
+// ---- Codex r9：三條已定規則的實作缺口 ----
+
+test('引擎｜銀行名必須在非交易列（r9#1）：出現在交易摘要不算數——「合成郵局卡費」不是發單機構', () => {
+  // 乙方郵局的帳單、其中一筆交易的摘要含「合成郵局」——原版全文檢照樣放行冒名
+  const doc = [
+    L(300, [[20, '乙方郵局存簿'], [47, '帳務期間'], [200, '115/05/01'], [280, '~'], [320, '115/05/31']]),
+    L(280, [[47, '帳戶彙整']]),
+    L(260, [[50, '活期儲金'], [150, '900200****7788'], [453, '8,000']]),
+    L(240, [[47, '小計']]),
+    L(220, [[47, '交易紀錄']]),
+    L(200, [[60, '日期'], [150, '摘要'], [272, '支出'], [331, '存入'], [396, '餘額']]),
+    L(180, [[60, 0, '115/05/02'], [150, 0, '合成郵局卡費'], [289, 30, '1,200'], [414, 0, '6,800']]),
+  ];
+  assert.throws(() => parseWithRecipe(doc, recipeB()), (e) => e.code === 'recipe_parse_failed',
+    '★銀行名只出現在交易列＝那是乙行帳單上關於甲行的一筆交易、不是發單機構——拒解');
+});
+
+test('引擎｜歧義判定認「同一個區間」（r9#2）：寬格從忽略欄跨過支出欄、落進另一個忽略欄＝照樣拒解', () => {
+  const ig2 = { ...recipeA(), detail: { rowIdent: 'acct-date', headerOut: '提領金額', headerIn: '存進金額', headerBalance: '結存餘額', headerNote: null, headerIgnore: ['單號', '類別'] } };
+  const doc = [
+    L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$1,230']]),
+    L(240, [[47, '總計']]),
+    L(140, [[47, '往來紀錄']]),
+    L(120, [[75, '帳號'], [135, '日期'], [200, '單號'], [272, '提領金額'], [310, '類別'], [331, '存進金額'], [396, '結存餘額']]),
+    // 寬格：左緣 210 在 [單號200,提領272)、右緣 210+110=320 落進 [類別310,存進331)——
+    // 左右都是 'ign' 但**不同區間**、中間跨過整個支出欄：原版靜默跳過＝首筆支出無聲消失
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [210, 110, '$100']]),
+    L(90, [[53, 0, '900100****3301'], [124, 0, '2026/06/12'], [345, 10, '$500'], [400, 0, '$1,730']]),
+  ];
+  assert.throws(() => parseWithRecipe(doc, ig2), (e) => e.code === 'recipe_parse_failed',
+    '★右緣必須留在左緣所屬的那一個區間內——跨出去（不管落在哪）＝歧義拒解');
+});
+
+test('引擎｜負數 running 餘額（r9#3）：-100 是合法餘額、整列要在——splitAmount 的配方旗標', () => {
+  const doc = [
+    ...linesB().slice(0, 6),
+    L(180, [[60, 0, '115/05/02'], [150, 0, '合成扣款'], [289, 30, '8,100'], [414, 0, '-100']]),   // 餘額轉負
+    L(170, [[60, 0, '115/05/10'], [150, 0, '合成入帳'], [349, 40, '300'], [414, 0, '200']]),
+    L(160, [[60, 0, '115/05/20'], [150, 0, '合成入帳'], [349, 40, '100'], [414, 0, '300']]),
+  ];
+  const p = parseWithRecipe(doc, recipeB());
+  assert.equal(p.transactions.length, 3, '★負餘額列不可整筆消失（原版：splitAmount 不收負號→bs null→date-first 丟列）');
+  assert.deepEqual(p.transactions.map(t => t.balance), [-100, 200, 300]);
+  assert.equal(p.transactions[0].direction, 'out', '餘額鏈 8000→-100＝支出 8100，方向覆寫照常');
+  // 模板行為凍結釘（bankRef 含餘額段＝位元組級凍結）：不帶旗標的 splitAmount 對負號照舊回 null
+  assert.equal(splitAmount({ x: 0, w: 0, s: '-100' }), null, '★模板呼叫端不帶旗標＝台新負餘額判讀不變');
+  assert.deepEqual(splitAmount({ x: 0, w: 0, s: '-100' }, true), { amt: -100, rest: '' });
 });
