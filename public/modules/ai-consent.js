@@ -197,7 +197,7 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
     <li>依供應商目前的<b>商用 API 預設政策</b>：送過去的內容不會被拿去訓練模型，也會在一段時間後刪除。</li>
     <li>⚠️ 但這是<b>預設值、不是我們能保證的事</b>——這條路用的是<b>你自己的 API 帳戶</b>，如果那個帳戶另外同意過資料使用、或有另外的合約條款，實際情形可能不一樣。以你自己的帳戶設定與供應商官方公告為準。</li>
     <li>讀出來的結果會<b>先回到畫面上讓你核對</b>；那份暫時放在伺服器的記憶體裡（程式重開就沒了），要等你按下匯入，才寫進這個 app 自己的資料裡。</li>
-    <li>萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次，那次的費用會多一些。</li>
+    <li>預設會讓<b>兩個 AI 各自獨立讀一遍</b>互相核對（費用兩發起跳；讀出來不一致會再請第三個 AI 仲裁、多一發）。在設定頁關掉「雙讀」的話則是先讀一次、對不平才換更強的模型再讀一次。</li>
     <li>這個問句只確認<b>這一次</b>——同意只算這一次，不會被記住。之後每次上傳要不要先問，由設定裡的「送給 AI 之前先問我一次」決定（<b>沒打開＝之後直接送、不再問</b>）。</li>
     <li>不同意完全沒關係：這份改成手動記帳就好，其他功能一切照常。</li>
   </ul>
@@ -235,9 +235,19 @@ export function recipePreviewBadgeHtml(preview) {
 export function aiPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
   const model = esc(modelDisplayName(preview.aiModel));
+  // P2-4 雙讀徽章句（裁示⑦）：只講事實、不加保證——「一致」只代表兩份獨立答案在錢欄位上相同，
+  // 驗算照跑；仲裁＝兩讀不一致、由第三讀決定採用哪份。
+  const dual = preview.dualRead === 'agree'
+    ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 雙讀一致：兩個 AI 各自獨立讀了一遍，會影響錢的欄位全部相同。</p>'
+    : preview.dualRead === 'arbitrated'
+      ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：前兩讀不一致，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+      : preview.dualRead === 'attested'
+        ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+        : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
+  ${dual}
   <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
@@ -260,6 +270,7 @@ const AI_ADVICE = Object.freeze({
   ai_unavailable: '這是對方服務那邊的狀況，不是你的操作；等幾分鐘再上傳一次就好。',
   ai_truncated: '這份太長了，先用手動記帳；想調整上限的話跟我說一聲。',
   ai_refusal: '換更強的模型也一樣。這份請改用手動記帳。',
+  ai_disagree: '訊息裡列的欄位就是幾份答案對不上的地方——這份請改用手動記帳（後端訊息只列欄位、不會回聲你的帳單數字）。',
 });
 /** 這幾個 code 的後端訊息太技術，整句換成白話（其餘一律原句放行）。 */
 const AI_REPLACE = Object.freeze({
