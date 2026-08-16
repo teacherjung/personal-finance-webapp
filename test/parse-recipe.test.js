@@ -272,6 +272,23 @@ test('等價｜台新詞彙配方 vs 模板解析器：同一份合成帳單、�
 
 // ---- 出生驗收比對器 ----
 
+test('出生驗收｜r4#1 格間空白：純文字欄（summary/note/label）空白不敏感＝拆格版面孵得出配方；真差異照紅、金額欄照樣嚴格', () => {
+  const base = () => parseWithRecipe(linesA(), recipeA());
+  // AI 照抄帶格間空白（linesToText 空格相接）、引擎輸出 squash——只差空白＝算重現
+  const soft = base();
+  if (soft.transactions[0].summary) soft.transactions[0].summary = String(soft.transactions[0].summary).split('').join(' ');
+  soft.accounts[0].label = `　${soft.accounts[0].label ?? ''} `;
+  assert.deepEqual(recipeReproduces(base(), soft), { ok: true, diff: null }, '★只差空白＝重現成（假拒收修掉）');
+  // 真差異（剝空白後仍不同）照紅
+  const bad = base();
+  bad.transactions[0].summary = `${bad.transactions[0].summary ?? ''}尾`;
+  assert.equal(recipeReproduces(base(), bad).diff, 'transactions[0].summary', '★空白不敏感不可放過真差異');
+  // 嚴格欄不軟化：date 是字串欄、塞空白也要紅
+  const strict = base();
+  strict.transactions[0].date = ` ${strict.transactions[0].date}`;
+  assert.equal(recipeReproduces(base(), strict).diff, 'transactions[0].date', '★軟等值只限純文字欄、日期欄照樣嚴格');
+});
+
 test('出生驗收｜逐欄重現＝ok；任何一欄走樣＝不 ok，diff 只帶欄位路徑、絕不帶欄值', () => {
   const base = () => parseWithRecipe(linesA(), recipeA());
   assert.deepEqual(recipeReproduces(base(), base()), { ok: true, diff: null });
