@@ -572,6 +572,6 @@ test('文案｜讀不到現值參考日時，鈕上與完成提示都不可說�
 test('接線｜鈕字與完成提示都要真的接上（算了不用＝畫面看不到）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   assert.match(src, /bankApplyLabel\(!!r\.blocked\)/, '★鈕字要隨「這次會不會更新餘額」改變');
-  assert.match(src, /toast\(bankApplyDoneText\(res, t, .*\)\)/, '★完成提示要走那個函式（不然 balancesSkipped 沒人講；P2-3 起第三參數＝配方生成結果）');
+  assert.match(src, /toast\(bankApplyDoneText\(res, t, .*\.recipe\)\)/, '★完成提示要走那個函式且第三參數釘到 res.recipe（塞 undefined/錯欄位＝這裡紅）');
   assert.doesNotMatch(src, /確認：更新餘額＋匯入交易/, '★鈕字不可再就地寫死');
 });

@@ -102,3 +102,10 @@ test('預覽窗排版｜「餘額這次不更新」是警告不是說明，要�
   assert.doesNotMatch(renderPreviewBody(RESULT), /這次不會更新/u,
     '沒 blocked 的帳單不可以出現這句（恆顯示＝這題其實沒在驗 blocked）');
 });
+
+test('P2-3｜配方預覽的徽章真的接上：engine recipe 的 body 含「版面規則卡」（只塞 harness 參數＝假綠）', () => {
+  const html = renderPreviewBody({ ...RESULT, engine: 'recipe', recipeId: 'rcp-1' });
+  assert.ok(html.includes('版面規則卡'), '★徽章要真的出現在預覽 body（cashflow.js 的插值被刪＝這裡紅）');
+  const aiHtml = renderPreviewBody({ ...RESULT, engine: 'ai' });
+  assert.equal(aiHtml.includes('版面規則卡'), false, '互斥：AI 預覽不畫配方徽章');
+});

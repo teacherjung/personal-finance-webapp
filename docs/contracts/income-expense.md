@@ -193,5 +193,7 @@
 - **出生三關（r2#5：漏一關＝白做）**＝①`validateRecipeStrict`②`recipeMatches`＋`parseWithRecipe`＋`validateRecipeAgainstStatement`（各自的 reason code：strict/match/parse/statement）③`recipeReproduces`（對黃金樣本逐欄）——任一紅＝不落庫。
 - **重生（裁示②④）**：票上 `suspectRecipeIds` 有值＝寫回**第一個**候選列（舊 current 降 previous、rebirths+1（**內建化候選訊號＝累計 5**、由人裁）、suspect 解除、streak 歸零重數）；否則新建一列。⚠️ 殘餘：一次只重生一列（其餘候選繼續掛疑似、等下次）。
 - **A6 收口（畢業「份」的操作定義，P2-3 明文）**＝`imported>0` 才算一份：同一份帳單重傳＝全被去重跳過＝只記使用時間、不累積畢業、不觸發互換（重複上傳不是新版面證據）。判準屬流程計數、非金額口徑（Claude 依授權裁量、審查可挑戰）。
+- **原文從票拿（W1/W3，DOA 修正）**：正式前端的 AI 套用**不送檔案內容**（applyBody 只送 {useAi, aiTicket}）——生成的 lines 隨票走（與 parsed 同機密等級：記憶體、TTL、不落 db/log）、**不重抽、不碰密碼池**＝r6#1「AI apply 不解析檔案」在 P2-3 後仍為真；舊票無 lines＝{saved:false}不硬抽。**生成在恢復邊界之外（W4 結構保證）**：saveDb 成功、票消耗後才 await 生成——它再怎麼失敗都碰不到票放回、也不可能把成功的匯入報成失敗（不靠「函式不會 reject」的軟前提）。**重生也吃 A4 世代檢查（W5）**：候選列其後已自證（lastUsedAt＞票 issuedAt）＝不降版、改走新建。
+- **同步生成的取捨（Grok G2）**：saveDb 成功後同請求再 await 一發 Opus（數秒）——AI 路線只在 LOCAL 可達（無 proxy 逾時面）、代價＝套用鈕多轉幾秒、換完成訊息誠實講「卡存成沒」；**未來 HOSTED 開放 AI 必改非同步**。**重生找不到候選列（Grok G5）**＝照新建一列、其餘疑似候選留待下次（票候選可能其間被清）。**imported=0 仍解除疑似（Grok G3）**：讀得動＋過閘＝版面證明可讀——疑似不捆「份」的門（份只管畢業累積）。**headerNote/headerIgnore 兩鍵一律保留（Grok G4＋W2）**：headerIgnore 空陣列、headerNote null 都是**合法值**（沒有可忽略欄/沒有備註欄的正常版面）——白名單丟鍵＝strict 紅＝這些版面全滅；⚠️ 撤回稍早「headerNote null＝表達力上限」的假宣稱（誤讀探針：測的是缺鍵不是 null；預審實測打臉、當場改口）。
 - **前端**：預覽徽章 `recipePreviewBadgeHtml`（engine:'recipe' 才畫——「版面規則卡讀的、零費用零外送、驗算照跑、自動退版」）；完成訊息 `bankApplyDoneText` 第三參數（存成/重生/沒存成都講一句、失敗不列細節不嚇人）。
 - 考題＝`test/recipe-gen.test.js`（生成/三關各紅/重生/不連坐/端到端閉環/傳輸線上格式/前端純函式）；刀 P1–P9。

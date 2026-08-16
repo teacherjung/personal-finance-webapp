@@ -79,14 +79,14 @@ async function seedDb(/** @type {any[]} */ recipes = []) {
   db.settings.aiApiKey = 'sk-ant-synthetic-test-key';
   await saveDb(db);
 }
-const ticketOf = (/** @type {string[]} */ suspects = []) => ({ parsed: golden(), aiModel: 'claude-sonnet-5', suspectRecipeIds: suspects });
+const ticketOf = (/** @type {string[]} */ suspects = [], /** @type {any} */ over = {}) => ({ parsed: golden(), aiModel: 'claude-sonnet-5', suspectRecipeIds: suspects, lines: linesA(), issuedAt: new Date().toISOString(), ...over });   // lines 隨票走（W1）
 
 // ---- 生成本體 ----
 
 test('生成｜快樂路徑：出生三關全過＝存新列（formatVersion 程式蓋、AI 多餘鍵被白名單丟掉）；模型一律 Opus（裁示⑥）', async () => {
   await seedDb();
   const genSpy = { calls: /** @type {any[]} */ ([]) };
-  const r = await generateRecipeAfterImport('QUFBQQ==', undefined, ticketOf(), { aiEngineFactory: engineOf({ genSpy }), aiExtract: extractA });
+  const r = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: engineOf({ genSpy }) });
   assert.equal(r.saved, true, /** @type {any} */ (r).reason);
   assert.equal(r.rebirth, false);
   assert.equal(genSpy.calls[0]?.model, RECIPE_MODEL, '★寫配方一律 Opus（配方錯誤會被免費複製到每一期）');
@@ -107,10 +107,11 @@ test('生成｜出生三關各自擋：零內容紅／認不得版面／重現�
     { gen: () => { const r = recipeAnswer(); r.docAnchors = ['不存在的錨點', '也不存在']; return r; }, reason: 'recipe_birth_match', why: '版面上找不到錨點＝認不得出生帳單' },
     { gen: () => { const r = recipeAnswer(); r.refDate = { strategy: 'none', anchor: null }; return r; }, reason: 'recipe_birth_reproduce', why: '解得動但 referenceDate 跟黃金樣本不同（none vs 錨定日）＝重現失敗' },
     { gen: () => { const r = recipeAnswer(); r.docAnchors = ['主要戶', '往來紀錄']; return r; }, reason: 'recipe_birth_statement', why: '錨點撞到帳戶備註文字（主要戶）＝對照出生帳單紅——只有第二關抓得到（match 與 reproduce 都會過）' },
+    { gen: () => { const r = recipeAnswer(); r.detail.headerIn = '存入金額'; return r; }, reason: 'recipe_birth_parse', why: '中版面但表頭字面錯＝parseWithRecipe 拒解（match 過、parse 拋）——birth_parse 這條路要有自己的樣本' },
   ];
   for (const c of cases) {
     await seedDb();
-    const r = await generateRecipeAfterImport('QUFBQQ==', undefined, ticketOf(), { aiEngineFactory: engineOf({ gen: c.gen }), aiExtract: extractA });
+    const r = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: engineOf({ gen: c.gen }) });
     assert.equal(r.saved, false, c.why);
     assert.equal(r.reason, c.reason, c.why);
     const db = await getDb();
@@ -122,7 +123,7 @@ test('生成｜重生（裁示②④）：票上帶疑似候選＝寫回那一�
   const old = { ...goodRecipe(), docAnchors: ['舊版錨點', '往來紀錄'] };
   await seedDb([{ id: 'rcp-old', bank: '合成銀行', current: old, graduateStreak: 5, graduated: true, suspect: true, rebirths: 1,
     createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' }]);
-  const r = await generateRecipeAfterImport('QUFBQQ==', undefined, ticketOf(['rcp-old']), { aiEngineFactory: engineOf({}), aiExtract: extractA });
+  const r = await generateRecipeAfterImport(ticketOf(['rcp-old']), { aiEngineFactory: engineOf({}) });
   assert.equal(r.saved, true);
   assert.equal(r.rebirth, true, '★疑似候選在場＝重生、不另開新列');
   const db = await getDb();
@@ -139,10 +140,10 @@ test('生成｜重生（裁示②④）：票上帶疑似候選＝寫回那一�
 test('生成｜失敗不連坐：引擎沒有 generateRecipe／生成炸掉＝匯入照常、只回 saved:false', async () => {
   await seedDb();
   const noGen = () => ({ models: AI_BANK_MODELS, parseOnce: async () => answerFromGolden() });
-  const r1 = await generateRecipeAfterImport('QUFBQQ==', undefined, ticketOf(), { aiEngineFactory: /** @type {any} */ (noGen), aiExtract: extractA });
+  const r1 = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: /** @type {any} */ (noGen) });
   assert.deepEqual(r1, { saved: false, reason: 'recipe_engine_missing' });
   const boom = () => ({ models: AI_BANK_MODELS, parseOnce: async () => answerFromGolden(), generateRecipe: async () => { throw new Error('boom'); } });
-  const r2 = await generateRecipeAfterImport('QUFBQQ==', undefined, ticketOf(), { aiEngineFactory: /** @type {any} */ (boom), aiExtract: extractA });
+  const r2 = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: /** @type {any} */ (boom) });
   assert.deepEqual(r2, { saved: false, reason: 'recipe_gen_failed' });
 });
 
@@ -150,9 +151,11 @@ test('端到端｜AI 預覽→兌票套用＝交易入帳＋配方順手存好�
   await seedDb();
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf({}), aiExtract: extractA });
   assert.equal(pv.engine, 'ai');
-  const res = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf({}), aiExtract: extractA });
+  // ⚠️ 照**正式前端的 body 形狀**打：applyBody 的 AI 分支只送 {useAi, aiTicket}——data＝undefined。
+  // 首版考題在這裡帶了 b64＝假綠（生成用 b64 重抽、正式路上 decode(undefined) 必炸＝整條路 DOA、預審 W1 抓到）。
+  const res = await applyBankStatement(/** @type {any} */ (undefined), undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf({}) });
   assert.equal(res.ok, true);
-  assert.equal(/** @type {any} */ (res).recipe?.saved, true, '★生成掛在寫入成功之後、結果進回應');
+  assert.equal(/** @type {any} */ (res).recipe?.saved, true, '★生成掛在寫入成功之後、結果進回應——且原文從票拿（data 缺席照樣成）');
   const db = await getDb();
   assert.equal((db.transactions || []).length, 3, '交易先入帳（生成失敗也不影響——這裡是成功例）');
   assert.equal(db.parseRecipes?.length, 1, '配方也存好了');
@@ -188,4 +191,71 @@ test('前端｜配方徽章：engine recipe 才畫、講「零費用零外送＋
   assert.ok(bankApplyDoneText(bal, tx, { saved: true, rebirth: true }).includes('重生'), '★重生要講');
   assert.ok(bankApplyDoneText(bal, tx, { saved: false }).includes('沒存成'), '★沒存成也要講（不嚇人、不裝沒事）');
   assert.equal(bankApplyDoneText(bal, tx).includes('規則卡'), false, '模板/配方路線沒有 recipe 欄＝一字不多');
+});
+
+test('GrokG4｜沒有可忽略欄的正常版面也存得成卡：headerIgnore 空陣列一律保留（丟鍵＝strict 紅＝這類版面全滅）', async () => {
+  const { pickRecipeCandidate } = await import('../lib/ai-parse.js');
+  const { validateRecipeStrict } = await import('../lib/parse-recipe.js');
+  const ans = recipeAnswer();
+  /** @type {any} */ (ans).detail = { ...ans.detail, headerIgnore: [] };
+  const c = /** @type {any} */ (pickRecipeCandidate(ans));
+  assert.deepEqual(c.detail.headerIgnore, [], '★空陣列要保留成鍵');
+  assert.deepEqual(validateRecipeStrict(c), [], '★strict 對「沒有可忽略欄」的版面要綠');
+});
+
+test('GrokG3｜imported 0 也解除疑似：讀得動＋過閘＝版面證明可讀（疑似不捆「份」的門）', async () => {
+  await seedDb();
+  const db0 = await getDb();
+  db0.parseRecipes = [{ id: 'rcp-sus', bank: '合成銀行', current: goodRecipe(), graduateStreak: 2, graduated: false, suspect: true, rebirths: 0,
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' }];
+  await saveDb(db0);
+  // 第一次匯入把交易寫進去
+  const r1 = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(r1.ok, true);
+  // 再標回疑似、重傳同一份（imported 0）
+  const db1 = await getDb(); /** @type {any} */ (db1.parseRecipes[0]).suspect = true; await saveDb(db1);
+  const r2 = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(r2.ok, true);
+  const db2 = await getDb();
+  assert.equal(/** @type {any} */ (db2.parseRecipes[0]).suspect, false, '★imported 0 仍解除疑似');
+  assert.equal(/** @type {any} */ (db2.parseRecipes[0]).graduateStreak, 3, '★但畢業計數不動（份＝imported>0）');
+});
+
+test('W5｜重生也吃世代檢查：候選列其後已自證（lastUsedAt＞票 issuedAt）＝不降它的版、改走新建', async () => {
+  await seedDb([{ id: 'rcp-proven', bank: '合成銀行', current: goodRecipe(), graduateStreak: 3, graduated: false, suspect: false, rebirths: 0,
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastUsedAt: '2026-08-16T05:00:00.000Z' }]);
+  const t = ticketOf(['rcp-proven'], { issuedAt: '2026-08-16T04:00:00.000Z' });   // 票比自證早
+  const r = await generateRecipeAfterImport(t, { aiEngineFactory: engineOf({}) });
+  assert.equal(r.saved, true);
+  assert.equal(r.rebirth, false, '★已自證＝不重生、走新建');
+  const db = await getDb();
+  assert.equal(db.parseRecipes?.length, 2, '★新建一列、好列原封不動');
+  const proven = /** @type {any} */ ((db.parseRecipes || []).find((x) => x.id === 'rcp-proven'));
+  assert.equal(proven.graduateStreak, 3, '★好列的畢業計數不被舊快照降版');
+});
+
+test('契約句承重｜兩個疑似候選＝只重生第一顆、第二顆仍掛疑似等下次', async () => {
+  await seedDb([
+    { id: 'rcp-a', bank: '合成銀行', current: { ...goodRecipe(), docAnchors: ['A 版錨點', '往來紀錄'] }, graduateStreak: 0, graduated: false, suspect: true, rebirths: 0, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' },
+    { id: 'rcp-b', bank: '合成銀行', current: { ...goodRecipe(), docAnchors: ['B 版錨點', '往來紀錄'] }, graduateStreak: 0, graduated: false, suspect: true, rebirths: 0, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' },
+  ]);
+  const r = await generateRecipeAfterImport(ticketOf(['rcp-a', 'rcp-b']), { aiEngineFactory: engineOf({}) });
+  assert.equal(r.saved, true);
+  assert.equal(r.rebirth, true);
+  const db = await getDb();
+  const a = /** @type {any} */ ((db.parseRecipes || []).find((x) => x.id === 'rcp-a'));
+  const b = /** @type {any} */ ((db.parseRecipes || []).find((x) => x.id === 'rcp-b'));
+  assert.equal(a.suspect, false, '第一顆重生＝疑似解除');
+  assert.deepEqual(a.current.docAnchors, ['合成帳戶總覽', '往來紀錄']);
+  assert.equal(b.suspect, true, '★第二顆仍掛疑似、等下次（一次只重生一列的殘餘要有考題）');
+});
+
+test('W2｜headerNote:null＝合法值全路通：白名單保留鍵、strict 綠（撤回假宣稱的承重域）', async () => {
+  const { pickRecipeCandidate } = await import('../lib/ai-parse.js');
+  const { validateRecipeStrict } = await import('../lib/parse-recipe.js');
+  const ans = recipeAnswer();
+  /** @type {any} */ (ans).detail = { ...ans.detail, headerNote: null };
+  const c = /** @type {any} */ (pickRecipeCandidate(ans));
+  assert.equal(c.detail.headerNote, null, '★null 保留成鍵（不是丟掉）');
+  assert.deepEqual(validateRecipeStrict(c), [], '★strict 明文放行 null——「null＝表達力上限」是誤讀探針的假宣稱、已撤回');
 });
