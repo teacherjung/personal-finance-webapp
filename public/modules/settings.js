@@ -244,6 +244,12 @@ export async function renderSettings() {
         <span>送給 AI 之前先問我一次</span>
       </label>
       <p class="muted" style="font-size:12px;margin:-8px 0 14px">預設不問：內建程式認不出版面時就直接送去讀。打開這個，每次送出前會先跳一個窗給你確認。</p>
+      <label class="inline-check" style="margin-bottom:14px">
+        <input id="aiDualRead" type="checkbox" ${s.aiDualRead === false ? '' : 'checked'} />
+        <span>新版面讓兩個 AI 各讀一次、互相核對（雙讀）</span>
+      </label>
+      <p class="muted" style="font-size:12px;margin:-8px 0 6px">只在「第一次遇到新版面」時發生：兩個 AI 各自讀、金額欄位全一致才收；不一致再請第三個 AI 仲裁，三份都不同就請你手動記帳。多花一發費用、換金額多一層獨立核對。</p>
+      <div style="margin:0 0 14px"><button type="button" class="info-link" data-ai-info="dual">ⓘ 雙讀是什麼？會多花多少錢？</button></div>
       <div class="form-grid">
         <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>
         ${s.aiApiKeySet ? `<div class="full"><label style="display:flex;align-items:center;gap:8px;font-weight:normal"><input id="clearAiApiKey" type="checkbox"> ${AI_KEY_CLEAR_LABEL}</label></div>` : ''}
@@ -349,6 +355,23 @@ export async function renderSettings() {
     const ask = /** @type {HTMLInputElement|null} */ (byId('aiAskBeforeSend'));
     // ⚠️ r1#3：不可用 saveSettings（它吞錯誤只 toast）——PUT 失敗時畫面顯示「已開」、
     //    資料庫還是關的，下一次上傳就直接外送。失敗＝把開關**退回原狀**讓人看見。
+    const dual = /** @type {HTMLInputElement|null} */ (byId('aiDualRead'));
+    if (dual) dual.onchange = async () => {
+      const want = dual.checked;
+      dual.disabled = true;
+      try {
+        await api('/settings', { method: 'PUT', body: { aiDualRead: want } });
+        toast(want ? '好，新版面會讓兩個 AI 互相核對' : '好，改回單讀（讀不好會自動換強模型重試）');
+      } catch (err) {
+        // 核對制（#455 同款）：寫入可能已成功、回應沒回來——向資料庫重新核對；核對不到＝顯示「關」
+        //（畫面寧可少保證）。⚠️ 執行期判準相反＝讀不到當「開」（dualReadWanted＝多驗證）——顯示的
+        // 保守與執行的保守方向相反、而且應該相反：畫面不假稱有保護、程式寧多驗一發。
+        try { const s2 = /** @type {any} */ (await api('/settings')); dual.checked = s2.aiDualRead !== false; }
+        catch { dual.checked = false; }
+        toast('儲存失敗，已向資料庫重新核對，開關目前＝'
+          + (dual.checked ? '雙讀' : '單讀') + '：' + (/** @type {any} */ (err).message || ''), true);
+      } finally { dual.disabled = false; }
+    };
     if (ask) ask.onchange = async () => {
       const want = ask.checked;
       ask.disabled = true;

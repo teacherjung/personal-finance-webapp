@@ -235,9 +235,17 @@ export function recipePreviewBadgeHtml(preview) {
 export function aiPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
   const model = esc(modelDisplayName(preview.aiModel));
+  // P2-4 雙讀徽章句（裁示⑦）：只講事實、不加保證——「一致」只代表兩份獨立答案在錢欄位上相同，
+  // 驗算照跑；仲裁＝兩讀不一致、由第三讀決定採用哪份。
+  const dual = preview.dualRead === 'agree'
+    ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 雙讀一致：兩個 AI 各自獨立讀了一遍，會影響錢的欄位全部相同。</p>'
+    : preview.dualRead === 'arbitrated'
+      ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：前兩讀不一致，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+      : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
+  ${dual}
   <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
@@ -260,6 +268,7 @@ const AI_ADVICE = Object.freeze({
   ai_unavailable: '這是對方服務那邊的狀況，不是你的操作；等幾分鐘再上傳一次就好。',
   ai_truncated: '這份太長了，先用手動記帳；想調整上限的話跟我說一聲。',
   ai_refusal: '換更強的模型也一樣。這份請改用手動記帳。',
+  ai_disagree: '訊息裡列的欄位就是幾份答案對不上的地方——這份請改用手動記帳（後端訊息只列欄位、不會回聲你的帳單數字）。',
 });
 /** 這幾個 code 的後端訊息太技術，整句換成白話（其餘一律原句放行）。 */
 const AI_REPLACE = Object.freeze({

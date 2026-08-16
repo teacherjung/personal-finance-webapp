@@ -74,13 +74,16 @@ function spyTransport(answers) {
 /** 假引擎工廠：包住 spyTransport＝服務層收原始答案、自己驗收（與真工廠 makeAnthropicBankEngine 同介面）。 @param {{fn:any}} spy */
 const engineOf = (spy) => () => ({ models: AI_BANK_MODELS, parseOnce: (/** @type {string} */ text, /** @type {string} */ model) => spy.fn({ model, text }) });
 
-/** 重設隔離 db：清帳戶/交易、設定鑰匙有無。 @param {boolean} withKey */
+/** 重設隔離 db：清帳戶/交易、設定鑰匙有無。 @param {boolean} withKey
+ * ⚠️ P2-4 起本卷＝**單讀＋升級階梯（雙讀開關關閉）**的行為卷——夾具一律掛 aiDualRead:false；
+ * 雙讀／仲裁的行為卷在 test/ai-dual-read.test.js（預設開的那條路歸它守）。 */
 async function seedDb(withKey) {
   clearAiTicketsForTest();   // 票匣跨題互不干擾（比照 resetRateLimitsForTest）
   const db = await getDb();
   db.accounts = [];
   db.transactions = [];
   db.settings.aiApiKey = withKey ? 'sk-ant-synthetic-test-key' : '';
+  /** @type {any} */ (db.settings).aiDualRead = false;
   await saveDb(db);
 }
 
@@ -199,7 +202,7 @@ test('規矩①HOSTED 停止線｜有鑰匙照樣 400、零 AI 呼叫；且排�
   process.env.NOTEASY_HOSTED = '1';
   try {
     await assert.rejects(
-      aiBankRoute('QUFBQQ==', undefined, { settings: { aiApiKey: 'sk-ant-synthetic-test-key' } }, { engineFactory: engineOf(spy), extract: fakeExtract }),
+      aiBankRoute('QUFBQQ==', undefined, { settings: { aiApiKey: 'sk-ant-synthetic-test-key', aiDualRead: false } }, { engineFactory: engineOf(spy), extract: fakeExtract }),
       (/** @type {any} */ e) => e.code === 'ai_hosted_off' && /雲端版/.test(e.message));
     await assert.rejects(
       aiBankRoute('QUFBQQ==', undefined, { settings: { aiApiKey: '' } }, { engineFactory: engineOf(spy), extract: fakeExtract }),
@@ -610,7 +613,7 @@ test('aiApiKey｜mapSecrets 走訪（HOSTED 加密／匯出剝除／匯入不採
   const { mapSecrets, stripSecretsForBackup } = await import('../lib/secret-fields.js');
   /** @type {{path:string, stable:boolean, v:string}[]} */
   const visited = [];
-  mapSecrets({ settings: { aiApiKey: 'sk-ant-synthetic-test-key' } }, (v, path, stable) => { visited.push({ path, stable, v }); return v; });
+  mapSecrets({ settings: { aiApiKey: 'sk-ant-synthetic-test-key', aiDualRead: false } }, (v, path, stable) => { visited.push({ path, stable, v }); return v; });
   const hit = visited.find((x) => x.path === 'settings.aiApiKey');
   assert.ok(hit, '走訪器必須 visit settings.aiApiKey——漏了＝HOSTED 明文落庫、匯出不剝、而且沒人會發現（雲端契約機密欄位節）');
   assert.equal(hit.stable, true, '單一 settings 路徑＝穩定 AAD');

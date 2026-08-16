@@ -1,6 +1,6 @@
 // @ts-check
 // 配方生成（P2-3）的考題：AI 票路線 apply 零解析重跑、寫入成功後另有至多一發生成（一律 Opus；
-// 每次上傳至多 3 發）→出生三關→存檔/重生；
+// 每次上傳至多 4 發＝P2-4 雙讀口徑）→出生三關→存檔/重生；
 // 失敗不連坐匯入；前端徽章與完成訊息純函式。隔離＝STORE_FILE 暫存檔；引擎全假＝零鑰匙零費用。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -236,7 +236,7 @@ test('r1#4｜傳輸有逾時上界：fetch 的 signal 由 AbortSignal.timeout(90
   assert.equal(timeoutMs, 90_000, '★signal 必須真的是 AbortSignal.timeout(90000) 造的——永不逾時的替身簽不出這個值');
 });
 
-test('r1#5｜成本邊界考題：preview 不加生成、apply 恰好 1 發生成 0 發解析（「至多 3 發」的那個＋1）', async () => {
+test('r1#5｜成本邊界考題：雙讀 preview 恰 2 發解析（兩讀一致＝不加仲裁）、apply 0 發解析 1 發生成（「至多 4 發」的組成）', async () => {
   await seedDb();
   const calls = { parse: 0, gen: 0 };
   const factory = () => ({
@@ -245,11 +245,12 @@ test('r1#5｜成本邊界考題：preview 不加生成、apply 恰好 1 發生�
     generateRecipe: async () => { calls.gen += 1; return recipeAnswer(); },
   });
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: /** @type {any} */ (factory), aiExtract: extractA });
+  assert.equal(calls.parse, 2, '★雙讀＝恰 2 發（兩讀一致就不許有第 3 發）');
   assert.equal(calls.gen, 0, 'preview 是等待熱路徑、不加 Opus');
   const res = await applyBankStatement(/** @type {any} */ (undefined), undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: /** @type {any} */ (factory) });
   assert.equal(res.ok, true);
-  assert.equal(calls.parse, 1, 'apply 零解析呼叫（票兌現、不重跑模型）');
-  assert.equal(calls.gen, 1, '★apply 恰好 1 發生成——多一發＝成本句「至多 3 發」變假');
+  assert.equal(calls.parse, 2, 'apply 零解析呼叫（票兌現、不重跑模型）');
+  assert.equal(calls.gen, 1, '★apply 恰好 1 發生成——多一發＝成本句「至多 4 發」變假');
 });
 
 // ---- 前端純函式 ----

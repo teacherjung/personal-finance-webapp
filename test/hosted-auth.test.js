@@ -503,7 +503,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['lib/services/insights.js', { role: 'conduit', paths: ['/api/insights'], why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
     ['lib/services/ib-sync.js', { role: 'conduit', why: '注入 fetchFlex（lib/ib.js），自己不開新端點' }],
     ['lib/services/auth.js', { role: 'endpoint', hosts: ['SUPABASE_URL（環境變數指定的 Supabase 主機）'], paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'], why: 'Supabase Auth（@supabase/ssr；HOSTED 登入／驗證）' }],
-    ['lib/ai-transport.js', { role: 'endpoint', hosts: ['api.anthropic.com'], paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'], why: 'AI 解析帳單（P1b-1，★3 拍板＝Anthropic；全 repo 唯一字面 fetch 的 AI 檔，只有全靜態路徑的 lib/routes/statement.js import 它組引擎。HOSTED 停止線寫死＋useAi AI 要求旗標＝實際只有 LOCAL 走得到（確認窗僅 aiAskBeforeSend 開啟時出現）；表上限速僅 HOSTED 掛載＝LOCAL 實際無 runtime 限速（r1#4 誠實句）——成本邊界＝每次上傳至多 3 發（preview 階梯 2＋apply 成功後 1 發配方生成＝P2-3）＋確認窗僅 aiAskBeforeSend=true 時出現，正式成本護欄歸 P3）' }],
+    ['lib/ai-transport.js', { role: 'endpoint', hosts: ['api.anthropic.com'], paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'], why: 'AI 解析帳單（P1b-1，★3 拍板＝Anthropic；全 repo 唯一字面 fetch 的 AI 檔，只有全靜態路徑的 lib/routes/statement.js import 它組引擎。HOSTED 停止線寫死＋useAi AI 要求旗標＝實際只有 LOCAL 走得到（確認窗僅 aiAskBeforeSend 開啟時出現）；表上限速僅 HOSTED 掛載＝LOCAL 實際無 runtime 限速（r1#4 誠實句）——成本邊界＝每次上傳至多 4 發（P2-4 雙讀 2＋仲裁 1＋apply 成功後配方生成 1；關雙讀＝至多 3）＋確認窗僅 aiAskBeforeSend=true 時出現，正式成本護欄歸 P3）' }],
   ]);
   // 只有註解提到 fetch 的檔案（生掃軌會看到、乾淨軌不會）——列出＝明示「這不是外連」。
   // ⚠️ r8→r9 收緊到**片段級**：登記「精確命中字串集合」——r8 的數量級仍有「刪一個提及＋
