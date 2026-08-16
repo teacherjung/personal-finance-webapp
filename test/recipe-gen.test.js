@@ -1,5 +1,6 @@
 // @ts-check
-// 配方生成（P2-3）的考題：AI 票路線寫入成功後第二呼叫（一律 Opus）→出生三關→存檔/重生；
+// 配方生成（P2-3）的考題：AI 票路線 apply 零解析重跑、寫入成功後另有至多一發生成（一律 Opus；
+// 每次上傳至多 3 發）→出生三關→存檔/重生；
 // 失敗不連坐匯入；前端徽章與完成訊息純函式。隔離＝STORE_FILE 暫存檔；引擎全假＝零鑰匙零費用。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
