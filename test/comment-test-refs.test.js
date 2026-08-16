@@ -12,8 +12,13 @@
 //
 // ## 判準（刻意極簡）
 //
-// 註解裡寫 `題名關鍵字` ＋ 全形引號夾住一段文字時，**那段文字必須在同一支檔案的別處出現**。
+// 原始碼裡出現 `題名關鍵字` ＋ 全形引號夾住一段文字時，**那段文字必須在同一支檔案的別處出現**。
 // 就這樣——**不解析程式碼**。
+//
+// ⚠️ **判準吃的是整份原始碼的純文字，不只是註解**（#470 r5 複驗者指出我原本寫「註解裡」
+//    而實作沒有那個限制）。後果：**字串裡出現這個記號也會被當成路標**——本檔自己的 fixture
+//    就是這樣（所以它們一律用 `${MARKER}` 組出來，不寫死記號字面）。
+//    要限制成「只有註解算」就得解析程式碼，而那正是這一版刻意拿掉的東西。⇒ 記著這個代價。
 //
 // ## 為什麼是這個判準，而不是「真的去數有哪些題」
 //
@@ -69,13 +74,8 @@ const OPEN_RE = () => new RegExp(`${MARKER}[:：]?[ \\t\\u3000]*[「]`, 'g');
  * ⚠️ **比對時要先把所有路標本身挖掉**：路標裡就含著關鍵字，不挖掉的話它永遠找得到自己，
  *    這道閘就等於什麼都沒檢查。
  *
- * ⚠️⚠️ **回傳 `scanned`（處理了幾份）不是裝飾**：這是「接線」這個洞的第三種變形
- *    （#470 r2／r3／r4 各一次）。前一版在真實來源裡摻誘餌，但**把真實來源整個拿掉、
- *    只留誘餌，兩條全樹題照樣 10/10 全綠**——誘餌只證明「掃描有在跑」，
- *    證明不了「掃的是那 55 支真的檔案」。⇒ 讓函式自己報數，呼叫端就斷言得到。
- *
  * @param {{ name: string, source: string }[]} sources
- * @returns {{ problems: string[], scanned: number }} `problems` 空陣列＝乾淨
+ * @returns {string[]} 每項一行可讀描述；空陣列＝乾淨
  */
 export function scanRefs(sources) {
   /** @type {string[]} */
@@ -99,7 +99,7 @@ export function scanRefs(sources) {
         + ' 是壞掉的路標（沒有合法收尾）⇒ 這條指路根本沒被檢查');
     }
   }
-  return { problems, scanned: sources.length };
+  return problems;
 }
 
 /** 正常文字檔本來就會有的三個控制字元：tab／換行／歸位。 */
@@ -128,9 +128,7 @@ export function firstControl(text) {
 
 /**
  * 掃一組來源，回報控制字元。**純函式**。
- * ⚠️ 同樣回傳 `scanned`，理由見 `scanRefs`（接線那個洞的第三種變形）。
- * @param {{ name: string, source: string }[]} sources
- * @returns {{ problems: string[], scanned: number }}
+ * @param {{ name: string, source: string }[]} sources @returns {string[]}
  */
 export function scanControl(sources) {
   /** @type {string[]} */
@@ -142,7 +140,7 @@ export function scanControl(sources) {
       problems.push(`  ${name}:${line} 有控制字元 U+${source.charCodeAt(at).toString(16).padStart(4, '0').toUpperCase()}`);
     }
   }
-  return { problems, scanned: sources.length };
+  return problems;
 }
 
 /** 本檔掃的考題檔清單（`test/` 第一層的 `*.test.js`）。 */
@@ -153,31 +151,31 @@ const realSources = () => testFiles().map((f) => ({ name: `test/${f}`, source: r
 // ── 純函式的題（fixture 由本題自己控制）──────────────────────────────
 test('⭐ 路標指不到東西要抓出來', () => {
   const src = `test('真的題名 A', () => {});\n// ${MARKER}「不存在的題名」`;
-  assert.equal(scanRefs([{ name: 'f', source: src }]).problems.length, 1);
+  assert.equal(scanRefs([{ name: 'f', source: src }]).length, 1);
 });
 
 test('⭐ 指得到就放行（否則整批誤殺）', () => {
   const src = `test('很獨特的題名', () => {});\n// ${MARKER}「很獨特的題名」`;
-  assert.deepEqual(scanRefs([{ name: 'f', source: src }]).problems, []);
+  assert.deepEqual(scanRefs([{ name: 'f', source: src }]), []);
 });
 
 test('⭐ 路標不可以自己滿足自己（比對前要先把路標挖掉）', () => {
   // ⚠️ 路標裡就含著關鍵字。不先挖掉的話，**任何**路標都會找到自己而永遠放行——
   //    那就是「什麼都沒檢查卻回報通過」。
   const src = `test('毫不相干', () => {});\n// ${MARKER}「只出現在路標裡的字」`;
-  assert.equal(scanRefs([{ name: 'f', source: src }]).problems.length, 1,
+  assert.equal(scanRefs([{ name: 'f', source: src }]).length, 1,
     '路標找到的是它自己 ⇒ 這道閘等於沒有在檢查任何東西');
 });
 
 test('⭐ 壞掉的路標要吵，不可以靜靜忽略', () => {
-  const one = (/** @type {string} */ s) => scanRefs([{ name: 'f', source: s }]).problems.length;
+  const one = (/** @type {string} */ s) => scanRefs([{ name: 'f', source: s }]).length;
   assert.equal(one(`test('x', () => {});\n// ${MARKER}「沒有關引號`), 1, '缺右引號被靜靜忽略');
   assert.equal(one(`test('x', () => {});\n// ${MARKER}「」`), 1, '空關鍵字被靜靜忽略');
   // ⚠️ 來源刻意帶縮排（真實檔案到處都是）：靠「找不找得到」判的話，`rest` 一定含得到兩個空白
   //    ⇒ 那條路標會靜靜放行。這個 fixture 就是為那個假綠造的（#470 r4）。
   assert.equal(one(`function f() {\n  const a = 1;\n}\n// ${MARKER}「  」`), 1, '純空白關鍵字被靜靜忽略');
   // 反面（誤殺防線）：把記號當名詞提到是正常敘述，不是壞掉的路標。
-  assert.deepEqual(scanRefs([{ name: 'f', source: `test('x', () => {});\n// 這個記號叫「${MARKER}」` }]).problems, [],
+  assert.deepEqual(scanRefs([{ name: 'f', source: `test('x', () => {});\n// 這個記號叫「${MARKER}」` }]), [],
     '把記號當名詞提到就被判成壞掉＝誤殺');
 });
 
@@ -185,9 +183,9 @@ test('⭐ 自然寫法要認得：記號後接冒號或空白', () => {
   // ⚠️ `記號：「…」` 是很自然的中文寫法。不認它的話那條路標會**整條消失**（靜靜不檢查）。
   for (const sep of ['', '：', ':', ' ', '： ']) {
     const ok = `test('獨特題名', () => {});\n// ${MARKER}${sep}「獨特題名」`;
-    assert.deepEqual(scanRefs([{ name: 'f', source: ok }]).problems, [], `「記號${sep}「…」」被誤判`);
+    assert.deepEqual(scanRefs([{ name: 'f', source: ok }]), [], `「記號${sep}「…」」被誤判`);
     const bad = `test('毫不相干', () => {});\n// ${MARKER}${sep}「找不到的字」`;
-    assert.equal(scanRefs([{ name: 'f', source: bad }]).problems.length, 1,
+    assert.equal(scanRefs([{ name: 'f', source: bad }]).length, 1,
       `「記號${sep}「…」」沒被解析到 ⇒ 這種寫法的路標全部是本閘的盲區`);
   }
 });
@@ -197,7 +195,7 @@ test('⭐ 合法路標不可以跨行（否則兩段不相干的文字會被配�
   //    不允許時是「壞掉的路標」——兩種都是 1 個問題，只數數量分不出來（我第一版就這樣，
   //    突變當場沒轉紅）。
   const src = `test('x', () => {});\n/* ${MARKER}「foo\n   bar」 */`;
-  const got = scanRefs([{ name: 'f', source: src }]).problems;
+  const got = scanRefs([{ name: 'f', source: src }]);
   assert.equal(got.length, 1, '跨行的路標完全沒被回報');
   assert.match(got[0], /壞掉的路標/,
     '路標跨了行卻被當成合法（只是找不到）⇒ 區塊註解裡兩段不相干的文字會被配成一條');
@@ -216,21 +214,23 @@ test('⭐ 控制字元的偵測本身要有效（自己造誘餌）', () => {
 
 // ── 接線題：**真的讀檔案，而且證明得出來自己讀到了** ────────────────────
 //
-// ⚠️⚠️ 這一節的寫法是 #470 r2／r3 換來的：上一版把掃描抽成純函式、fixture 也齊全，
-//    但**把全樹那一題裡的正式呼叫換成空陣列，20 題照樣全綠**——純函式有誘餌，
-//    不等於接線有人守。⇒ 現在每一題都在真實來源裡**摻一顆自己造的壞蘋果**：
-//    掃不到那顆＝接線斷了；除了那顆還掃到別的＝真的有問題。兩個方向同時釘住。
+// 每一題都在真實來源裡**摻一顆自己造的壞蘋果**：掃不到那顆＝掃描根本沒在跑；
+// 除了那顆還掃到別的＝真的有問題。
+//
+// ⚠️⚠️ **誠實劃界：「它真的讀了那些真實檔案」這件事，本檔證明不了。**
+//    #470 r2–r5 連續四輪都在這裡中刀：每補一層自我證明（抽成純函式、摻誘餌、回報處理份數），
+//    複驗者就找到繞過那一層的突變（只掃誘餌、所有檔名配同一份內容、截掉大半清單）。
+//    原因是結構性的：**任何「測試自己報告自己有做事」的機制，都會被同一顆突變一起改掉。**
+//    ⇒ 不再假裝證明得了。這裡只宣稱「掃描有在跑，而且掃得到壞東西」。
+//    「掃的是真的那些檔案」由**外部**證據支撐：PR 內文記錄的突變測試（改壞實作 → 這幾題轉紅），
+//    以及「真實檔案一旦有問題，這裡就會多出誘餌以外的項目」這個事實本身。
 
 test('⭐ 全部考題檔：路標都要指得到（含接線誘餌）', () => {
   const sources = realSources();
   assert.ok(sources.length > 50, `只列到 ${sources.length} 支考題檔，列舉大概壞了`);
 
   const decoy = { name: '（接線誘餌）', source: `// ${MARKER}「這段字在這支合成檔裡絕對找不到」` };
-  const { problems: withDecoy, scanned } = scanRefs([...sources, decoy]);
-  // ⚠️ **兩道斷言缺一不可**（#470 r4）：誘餌只證明「掃描有在跑」，
-  //    把真實來源整個拿掉、只留誘餌時它照樣通過。`scanned` 才證明「掃的是那些真的檔案」。
-  assert.equal(scanned, sources.length + 1,
-    `⛔ 掃描只處理了 ${scanned} 份，應該是 ${sources.length} 支真的考題檔＋1 顆誘餌 ⇒ **真實來源沒被送進去**。`);
+  const withDecoy = scanRefs([...sources, decoy]);
   assert.equal(withDecoy.filter((p) => p.includes('（接線誘餌）')).length, 1,
     '⛔ 掃描沒抓到本題自己摻進去的壞蘋果 ⇒ **接線斷了**（正式的全樹檢查其實沒在跑）。');
 
@@ -246,9 +246,7 @@ test('⭐ 全部考題檔：不可以有控制字元（含接線誘餌）', () =
   // ⚠️ 誘餌的控制字元**刻意放在 8 KiB 之後**：#463 那顆真的 NUL 在第 86,342 個位元組，
   //    「只掃前綴」的實作在真實事故上會完全漏掉。這顆誘餌就是為那個位置造的。
   const decoy = { name: '（接線誘餌）', source: `${'x'.repeat(9000)}${String.fromCharCode(0)}` };
-  const { problems: withDecoy, scanned } = scanControl([...sources, decoy]);
-  assert.equal(scanned, sources.length + 1,
-    `⛔ 掃描只處理了 ${scanned} 份，應該是 ${sources.length} 支真的考題檔＋1 顆誘餌 ⇒ **真實來源沒被送進去**。`);
+  const withDecoy = scanControl([...sources, decoy]);
   assert.equal(withDecoy.filter((p) => p.includes('（接線誘餌）')).length, 1,
     '⛔ 掃描沒抓到 8 KiB 之後的控制字元 ⇒ 接線斷了，或實作只掃前綴。');
 
