@@ -22,14 +22,20 @@ const { assertAiBankReconciled } = await import('../lib/services/bank-import.js'
 
 // ---- 合成帳單（版面原文＝接地檢查的對照物；**有印合計列**＝合計交叉驗證上膛）----
 const L = (/** @type {number} */ y, /** @type {any[]} */ pairs) => ({ y, cells: pairs.map((p) => ({ x: p[0], s: p[1] })) });
-/** 單帳戶台幣版面：期初 5,000 → 支出 200 → 存入 700 → 期末 5,500；印合計（2 筆／出 200／入 700）。 */
+/** 單帳戶台幣版面（v2＝三筆，A4「漏中間一筆」才有鏈斷可看）：期初 5,000 → 出 200 → 出 100 → 入 800
+ *  → 期末 5,500；印合計（3 筆／出 300／入 800）。 */
 const linesFull = () => [
   L(10, [[40, '合成第一銀行 存款對帳單']]),
   L(30, [[40, '900100****3301'], [200, 'TWD'], [320, '5,500']]),
   L(50, [[40, '2026/07/03'], [140, '超商繳費'], [240, '200'], [320, '4,800']]),
-  L(60, [[40, '2026/07/05'], [140, '薪資入帳'], [280, '700'], [320, '5,500']]),
-  L(80, [[40, '合計'], [140, '2 筆'], [240, '200'], [280, '700']]),
+  L(55, [[40, '2026/07/04'], [140, '咖啡'], [240, '100'], [320, '4,700']]),
+  L(60, [[40, '2026/07/05'], [140, '薪資入帳'], [280, '800'], [320, '5,500']]),
+  L(80, [[40, '合計'], [140, '3 筆'], [240, '300'], [280, '800']]),
 ];
+/** 同版面**不印合計**（負例用：合計類防線繳械）。 */
+const linesFullNoTotals = () => linesFull().filter((l) => l.y !== 80);
+/** 同版面不印合計＋一行雜數字（負例用：接地防線被「帳單他處印過的數字」繳械——利率/廣告數字是真實形）。 */
+const linesStray = () => [...linesFullNoTotals(), L(90, [[40, '本期利率參考'], [140, '250'], [200, '4,750'], [240, '4,650'], [280, '850'], [320, '700']])];
 /** 雙帳戶版面（B6/B7/A7 用）：3301 同上；3302 一筆支出 300、期末 1,200；合計 3 筆／出 500／入 700。 */
 const linesTwo = () => [
   L(10, [[40, '合成第一銀行 存款對帳單']]),
@@ -40,14 +46,11 @@ const linesTwo = () => [
   L(70, [[40, '2026/07/06'], [60, '3302'], [140, '轉帳支出'], [240, '300'], [320, '1,200']]),
   L(80, [[40, '合計'], [140, '3 筆'], [240, '500'], [280, '700']]),
 ];
-/** 含無往來帳戶（B3 用）：3301 有明細；3309 只在概要（餘額 8,000、零明細）。 */
+/** 含無往來帳戶（B3 用）：3301 三筆同 v2；3309 只在概要（餘額 8,000、零明細）。 */
 const linesIdle = () => [
-  L(10, [[40, '合成第一銀行 存款對帳單']]),
-  L(30, [[40, '900100****3301'], [200, 'TWD'], [320, '5,500']]),
+  ...linesFull().slice(0, 2),
   L(35, [[40, '900100****3309'], [200, 'TWD'], [320, '8,000']]),
-  L(50, [[40, '2026/07/03'], [140, '超商繳費'], [240, '200'], [320, '4,800']]),
-  L(60, [[40, '2026/07/05'], [140, '薪資入帳'], [280, '700'], [320, '5,500']]),
-  L(80, [[40, '合計'], [140, '2 筆'], [240, '200'], [280, '700']]),
+  ...linesFull().slice(2),
 ];
 /** 含外幣帳戶（B9/C0 用）：3301 台幣同上；3305 USD 一筆存入 50、期末 150。⚠️ 混幣＝合計整道跳過（契約） */
 const linesForeign = () => [
@@ -65,9 +68,13 @@ const tx = (/** @type {any} */ o) => ({ acctMasked: M1, date: '2026-07-03', dire
 const answerFull = () => ({
   bank: '合成第一銀行', referenceDate: '2026-07-31',
   accountCurrencies: [{ masked: M1, currency: 'TWD' }],
-  totals: { txCount: 2, totalOut: 200, totalIn: 700 },
+  totals: { txCount: 3, totalOut: 300, totalIn: 800 },
   accounts: [{ masked: M1, balance: 5500, currency: 'TWD', label: '活存', note: '' }],
-  transactions: [tx({}), tx({ date: '2026-07-05', direction: 'in', amount: 700, balance: 5500, summary: '薪資入帳' })],
+  transactions: [
+    tx({}),
+    tx({ date: '2026-07-04', amount: 100, balance: 4700, summary: '咖啡' }),
+    tx({ date: '2026-07-05', direction: 'in', amount: 800, balance: 5500, summary: '薪資入帳' }),
+  ],
 });
 const answerTwo = () => ({
   bank: '合成第一銀行', referenceDate: '2026-07-31',
@@ -118,31 +125,32 @@ function pipeline(/** @type {any} */ answer, /** @type {any[]} */ lines) {
 /** 23 型（型號與 test/ai-gate-interception.test.js 一一對應）。expect＝全管線判定；
  *  defense＝預期由哪一道擋（'missed' 型免填）；why＝為什麼（含殘洞誠實句）。 */
 const CASES = [
-  // ---- A 類（閘本來就擋；全管線照樣擋——列出以示「加防線沒有弄丟舊保護」）----
+  // ---- A 類（閘本來就擋；全管線照樣擋——列出以示「加防線沒有弄丟舊保護」。A 類不鎖 defense：
+  //      這裡的宣稱是「有人擋」，「閘自己擋」的承諾在凍結的原卷）----
   { id: 'A1', name: '單筆金額抄錯（200 讀成 900）', lines: linesFull, expect: 'caught',
     make: () => { const a = answerFull(); a.transactions[0].amount = 900; return a; },
-    why: '900 不在版面上＝接地先擋；就算在，餘額鏈也斷＝閘擋。' },
-  { id: 'A2', name: '金額差一個數量級（700 讀成 7000）', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions[1].amount = 7000; return a; },
+    why: '900 不在版面（遮罩帳號 900100 是另一個 token、數值不相等）＝接地擋；就算在，鏈與合計也斷。' },
+  { id: 'A2', name: '金額差一個數量級（800 讀成 8000）', lines: linesFull, expect: 'caught',
+    make: () => { const a = answerFull(); a.transactions[2].amount = 8000; return a; },
     why: '同 A1。' },
   { id: 'A3', name: '方向看反（存入讀成支出）', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions[1].direction = 'out'; return a; },
-    why: '餘額鏈斷＋合計出入互換＝reconcile 擋。' },
-  { id: 'A4', name: '漏讀一整筆', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions = [a.transactions[1]]; return a; },
-    why: '合計筆數 2≠1＋期初接不上＝reconcile 擋。' },
-  { id: 'A5', name: '同一筆讀成兩筆', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions = [a.transactions[0], a.transactions[0], a.transactions[1]]; return a; },
-    why: '合計筆數＋餘額鏈＝reconcile 擋。' },
+    make: () => { const a = answerFull(); a.transactions[2].direction = 'out'; return a; },
+    why: '餘額鏈斷（4700−800≠5500）＋合計出入互換＝reconcile 擋。' },
+  { id: 'A4', name: '漏讀中間一整筆（跳過一行）', lines: linesFull, expect: 'caught',
+    make: () => { const a = answerFull(); a.transactions = [a.transactions[0], a.transactions[2]]; return a; },
+    why: '鏈斷（4800＋800≠5500）＝閘的老本行（Grok H2：漏**首筆**是 B8 的刀、漏**中間**才是 A4——兩刀不同、判定不同）。' },
+  { id: 'A5', name: '同一筆讀成兩筆（重複一行）', lines: linesFull, expect: 'caught',
+    make: () => { const a = answerFull(); a.transactions = [a.transactions[0], a.transactions[0], a.transactions[1], a.transactions[2]]; return a; },
+    why: '鏈斷（4800−200≠4800）＋合計筆數＝reconcile 擋。' },
   { id: 'A6', name: '餘額欄抄錯（金額對、餘額錯）', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions[0].balance = 4700; return a; },
-    why: '4700 不在版面＝接地擋；在也會餘額鏈斷。' },
+    make: () => { const a = answerFull(); a.transactions[0].balance = 4650; return a; },
+    why: '4,650 不在版面＝接地擋；在也會鏈斷。' },
   { id: 'A7', name: '把 A 帳戶的一列掛到 B 帳戶（末碼讀錯）', lines: linesTwo, expect: 'caught',
     make: () => { const a = answerTwo(); a.transactions[2].acctMasked = M1; return a; },
     why: '兩個帳戶的餘額鏈都斷＝reconcile 擋。' },
   { id: 'A8', name: '期末與概要對不上（漏讀期末幾筆）', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions = [a.transactions[0]]; a.totals = { txCount: 1, totalOut: 200, totalIn: null }; return a; },
-    why: '末筆 4,800 對不上概要 5,500＝reconcile 擋（注入連合計一起改＝模擬 AI 自洽地漏讀）。' },
+    make: () => { const a = answerFull(); a.transactions = a.transactions.slice(0, 2); a.totals = { txCount: 2, totalOut: 300, totalIn: null }; return a; },
+    why: '末筆 4,700 對不上概要 5,500＝reconcile 擋（合計由 AI 自洽地一起漏＝孤立「末筆對概要」那道）。' },
   { id: 'A9', name: '整份只讀出一筆（其餘全漏）', lines: linesTwo, expect: 'caught',
     make: () => { const a = answerTwo(); a.transactions = [a.transactions[0]]; return a; },
     why: '合計筆數＋鏈＋概要＝reconcile 擋。' },
@@ -150,42 +158,42 @@ const CASES = [
     make: () => { const a = answerTwo(); a.transactions[2].balance = null; return a; },
     why: 'twdAccountsUnverified＞0＝★6 逐帳戶覆蓋保守拒收（與閘版同判定）。' },
   // ---- B 類（閘單獨看不到的 12 型——全管線重測＝本份的存在理由）----
-  { id: 'B1', name: '金額與餘額一起改成自洽的另一組數字', lines: linesFull, expect: 'caught', defense: 'grounded',
-    make: () => { const a = answerFull(); a.transactions[0].amount = 250; a.transactions[0].balance = 4750; a.totals = { txCount: 2, totalOut: 250, totalIn: 700 }; return a; },
-    why: '250/4,750 不在版面上＝接地擋。⚠️ 殘洞（誠實）：若湊出來的數字恰好都在帳單他處印過＝接地看不到（grounded docstring 記載的已知殘洞）。' },
-  { id: 'B2', name: '每個帳戶的第一筆金額讀錯（含餘額配合改）', lines: linesFull, expect: 'caught', defense: 'grounded',
-    make: () => { const a = answerFull(); a.transactions[0].amount = 260; a.transactions[0].balance = 4740; return a; },
-    why: '首筆的餘額沒有上一筆可比＝閘看不到；但 260/4,740 不在版面＝接地擋；帳單有印合計時合計也擋。' },
+  { id: 'B1', name: '金額與餘額一起改成自洽的另一組數字（合計也一起自洽）', lines: linesFull, expect: 'caught', defense: 'grounded',
+    make: () => { const a = answerFull(); Object.assign(a.transactions[0], { amount: 250, balance: 4750 }); Object.assign(a.transactions[1], { balance: 4650 }); Object.assign(a.transactions[2], { amount: 850 }); a.totals = { txCount: 3, totalOut: 350, totalIn: 850 }; return a; },
+    why: '鏈（250→4750→4650→＋850＝5500）與合計全自洽＝閘與合計都看不到（Grok H1 後的真自洽版）；唯一的破綻＝250/4,750/4,650/850 不在版面＝接地擋。殘洞負例見 N3。' },
+  { id: 'B2', name: '每個帳戶的第一筆金額讀錯（只改金額、鏈不動）', lines: linesFull, expect: 'caught', defense: 'reconcile',
+    make: () => { const a = answerFull(); a.transactions[0].amount = 300; return a; },
+    why: '首筆金額不進鏈（沒有上一筆可比）＝閘看不到；錯值刻意用**帳單他處印過的 300**（合計列）＝接地也看不到——孤立出「合計兼補首筆」那道：照抄的出合計 300 對不上逐筆 400＝合計擋（裁示⑧b）。錯值不在版面的情境改由接地擋（B1/B4 已證）；兩道都失效的組合見 N3。' },
   { id: 'B3', name: '本期無往來帳戶的概要餘額讀錯', lines: linesIdle, expect: 'caught', defense: 'grounded',
     make: () => { const a = answerIdle(); a.accounts[1].balance = 8800; return a; },
     why: '零明細＝閘無從驗；但 8,800 不在版面＝接地擋（P2-2a 的主要收獲之一）。' },
   { id: 'B4', name: '某筆金額讀錯、同筆餘額讀成空白', lines: linesFull, expect: 'caught', defense: 'grounded',
     make: () => { const a = answerFull(); a.transactions[0].amount = 210; a.transactions[0].balance = null; return a; },
-    why: '該對驗算被跳過＝閘看不到；但 210 不在版面＝接地擋。' },
+    why: '該對驗算被跳過＝閘看不到；但 210 不在版面＝接地擋（就算在，合計也對不上——見 N 系負例的反面條件）。' },
   { id: 'B5', name: '一筆支出與一筆收入併成一筆淨額', lines: linesFull, expect: 'caught', defense: 'grounded',
-    make: () => { const a = answerFull(); a.transactions = [tx({ direction: 'in', amount: 500, balance: 5500, summary: '淨額' })]; a.totals = { txCount: 1, totalOut: null, totalIn: 500 }; return a; },
-    why: '餘額鏈自洽＝閘看不到；但淨額 500 不在版面＝接地擋；就算在，帳單印的合計筆數/出入也對不上。' },
+    make: () => { const a = answerFull(); a.transactions = [a.transactions[0], tx({ date: '2026-07-05', direction: 'in', amount: 700, balance: 5500, summary: '淨額' })]; return a; },
+    why: '咖啡 100 出＋薪資 800 入被併成淨入 700（4800＋700＝5500 鏈自洽）＝閘看不到；但 700 不在 v2 版面＝接地擋；照抄的合計（3 筆/出 300）也對不上。兩道都失效的負例＝N4。' },
   { id: 'B6', name: '整個帳戶被漏讀（概要與明細都沒讀到）', lines: linesTwo, expect: 'caught', defense: 'reconcile',
     make: () => { const a = answerTwo(); a.accountCurrencies = [{ masked: M1, currency: 'TWD' }]; a.accounts = [a.accounts[0]]; a.transactions = a.transactions.slice(0, 2); return a; },
-    why: '漏掉的帳戶沒有數字可驗＝閘看不到；但帳單印的合計（3 筆/出 500）涵蓋整份＝合計交叉驗證擋。⚠️ 帳單沒印合計時＝仍看不到（誠實條件）。' },
+    why: '漏掉的帳戶沒有數字可驗＝閘看不到；但帳單印的合計（3 筆/出 500）涵蓋整份＝合計擋。⚠️ 沒印合計＝仍看不到（同 N1 的條件形）。' },
   { id: 'B7', name: '台幣帳戶被誤判成外幣', lines: linesTwo, expect: 'missed',
     make: () => { const a = answerTwo(); a.accountCurrencies[1].currency = 'USD'; a.accounts[1].currency = 'USD'; a.totals = { txCount: null, totalOut: null, totalIn: null }; return a; },
     why: '誤判成外幣⇒該帳戶被排除在台幣驗算外、混幣又讓合計整道跳過（契約的刻意取捨）＝三道都看不到。仍寫在預覽窗盲點清單。' },
   { id: 'B8', name: '整筆漏掉每個帳戶的第一筆', lines: linesFull, expect: 'caught', defense: 'reconcile',
-    make: () => { const a = answerFull(); a.transactions = [a.transactions[1]]; return a; },
-    why: '首筆整筆消失＝後面的鏈照樣自洽；但帳單印的合計筆數 2≠1、支出合計 200≠0＝合計擋。沒印合計＝仍看不到。' },
+    make: () => { const a = answerFull(); a.transactions = a.transactions.slice(1); return a; },
+    why: '首筆整筆消失＝剩下的鏈（4700＋800＝5500）與期末全自洽＝閘看不到（與 A4 漏**中間**刻意分刀）；但照抄的合計（3 筆/出 300）對不上（2 筆/出 100）＝合計擋。沒印合計＝仍看不到（負例 N1）。' },
   { id: 'B9', name: '外幣帳戶被誤判成台幣', lines: linesForeign, expect: 'missed',
     make: () => { const a = answerForeign(); a.accountCurrencies[1].currency = 'TWD'; a.accounts[1].currency = 'TWD'; return a; },
     why: '外幣列的數字都真的印在版面上（接地過）、自己的鏈也自洽、混幣讓合計跳過＝三道都看不到⇒外幣數字被當台幣入帳。仍是最重的已知盲點之一。' },
-  { id: 'B10', name: '首筆的方向讀反（收入讀成支出）', lines: linesFull, expect: 'caught', defense: 'reconcile',
+  { id: 'B10', name: '首筆的方向讀反（支出讀成存入）', lines: linesFull, expect: 'caught', defense: 'reconcile',
     make: () => { const a = answerFull(); a.transactions[0].direction = 'in'; return a; },
-    why: '首筆方向＝閘的既有盲點；但帳單印的出/入合計立刻對不上＝合計擋（裁示⑧b 兼補的正是這格）。沒印合計＝仍看不到。' },
+    why: '首筆方向不進鏈＝閘的既有盲點；但照抄的出/入合計立刻對不上（出 300→100、入 800→1000）＝合計擋。沒印合計＝仍看不到（負例 N2）。' },
   { id: 'B11', name: '摘要抄錯字（金額全對）', lines: linesFull, expect: 'missed',
     make: () => { const a = answerFull(); a.transactions[0].summary = '超商激費'; return a; },
-    why: '三道防線都只看數字＝看不到。⚠️ 雙讀開著時：摘要是比對欄位——兩讀不同＝比對器擋（不相關錯誤）；兩讀錯得一模一樣＝仍看不到（本份量的正是這個情境）。' },
+    why: '三道防線都只看數字＝看不到。雙讀開著時摘要在比對欄位清單內（test/ai-dual-read.test.js 的逐欄承重題）——兩讀不同＝比對器擋；兩讀錯得一模一樣（＝本份量的情境）＝仍看不到。' },
   { id: 'B12', name: '日期讀錯（金額與餘額全對）', lines: linesFull, expect: 'missed',
     make: () => { const a = answerFull(); a.transactions[0].date = '2026-07-04'; return a; },
-    why: '同 B11（日期也是比對欄位）。去重鍵含日期⇒重匯時會被當新的一筆＝仍是預覽窗要警告的重點。' },
+    why: '同 B11（日期也在比對欄位清單）。去重鍵含日期⇒重匯時會被當新的一筆＝仍是預覽窗要警告的重點。' },
   { id: 'C0', name: '外幣明細的金額讀錯', lines: linesForeign, expect: 'caught', defense: 'grounded',
     make: () => { const a = answerForeign(); a.transactions[2].amount = 60; a.transactions[2].balance = 160; return a; },
     why: 'P1b-3 時代「閘本來就不管外幣」＝漏；接地檢查不分幣別、60/160 不在版面＝擋（畫面數字錯也擋得到了）。' },
@@ -212,11 +220,44 @@ test('全管線攔截｜基準：四個版面的黃金答案全部通過三道�
   assert.equal(pipeline(answerForeign(), linesForeign()), 'missed');
 });
 
+// ---- N 系條件負例（Grok r0：「仍看不到」的每一句但書都要有題撐著——這四題就是那些「仍」）----
+// ⚠️ 不入 23 型計數：它們量的是**條件**（合計缺席／數字撞版面），不是新的錯誤型。
+test('N1｜B8 同刀但帳單沒印合計＝仍看不到（①「沒印合計」但書的負例）', () => {
+  const a = answerFull(); a.transactions = a.transactions.slice(1); a.totals = { txCount: null, totalOut: null, totalIn: null };
+  assert.equal(pipeline(a, linesFullNoTotals()), 'missed', '★合計是唯一看得到首筆整漏的防線——拿掉合計列＝誠實漏接');
+});
+
+test('N2｜B10 同刀但帳單沒印合計＝仍看不到（①方向子況的負例）', () => {
+  const a = answerFull(); a.transactions[0].direction = 'in'; a.totals = { txCount: null, totalOut: null, totalIn: null };
+  assert.equal(pipeline(a, linesFullNoTotals()), 'missed');
+});
+
+test('N3｜B1 同刀但湊的數字全是帳單他處印過的、又沒印合計＝仍看不到（④殘洞句的負例）', () => {
+  const a = answerFull();
+  Object.assign(a.transactions[0], { amount: 250, balance: 4750 });
+  Object.assign(a.transactions[1], { balance: 4650 });
+  Object.assign(a.transactions[2], { amount: 850 });
+  a.totals = { txCount: null, totalOut: null, totalIn: null };
+  assert.equal(pipeline(a, linesStray()), 'missed', '★250/4,750/4,650/850 全印在雜訊列（利率/廣告數字是真實形）＝接地過、鏈自洽、無合計可比＝三道全盲——④殘洞句就是在講這個');
+});
+
+test('N4｜B5 同刀但淨額印在帳單他處、又沒印合計＝仍看不到（⑥「兩條件都不成立」的負例）', () => {
+  const a = answerFull();
+  a.transactions = [a.transactions[0], tx({ date: '2026-07-05', direction: 'in', amount: 700, balance: 5500, summary: '淨額' })];
+  a.totals = { txCount: null, totalOut: null, totalIn: null };
+  assert.equal(pipeline(a, linesStray()), 'missed', '★淨額 700 剛好印在雜訊列＋沒印合計＝⑥的兩個擋下條件都不成立');
+});
+
 // ---- 與 §八 的互扣數字（改一邊另一邊就紅）----
-test('全管線攔截｜§八互扣數字：23 型中 19 擋下、4 型漏接（B7/B9/B11/B12；B11/B12 的不相關情境另由雙讀比對器補）', () => {
+test('全管線攔截｜§八互扣＝機械釘（Grok r0 低：原版只鎖考卷自身＝改文件不改考卷不會紅）', async () => {
   const caught = CASES.filter((c) => c.expect === 'caught').map((c) => c.id);
   const missed = CASES.filter((c) => c.expect === 'missed').map((c) => c.id);
   assert.equal(CASES.length, 23, '型數與 P1b-3 原測一一對應');
-  assert.equal(caught.length, 19, '§八「全管線重測」小節寫的擋下數');
-  assert.deepEqual(missed, ['B7', 'B9', 'B11', 'B12'], '§八寫的殘存盲點清單——多擋一型或漏一型都要回去改文件');
+  assert.equal(caught.length, 19);
+  assert.deepEqual(missed, ['B7', 'B9', 'B11', 'B12']);
+  const { readFileSync } = await import('node:fs');
+  const { join: j } = await import('node:path');
+  const plan = readFileSync(j(process.cwd(), 'docs/parser-generalization-plan.md'), 'utf8');
+  assert.ok(plan.includes('19 型擋下、4 型漏接（B7 台幣認成外幣／B9 外幣認成台幣／B11 摘要錯／B12 日期錯）'),
+    '★§八的數字與名單要跟考卷一字不差——文件改了數字、考卷沒跟＝這裡紅（真互扣）');
 });
