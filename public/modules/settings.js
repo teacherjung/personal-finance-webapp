@@ -248,7 +248,7 @@ export async function renderSettings() {
         <input id="aiDualRead" type="checkbox" ${s.aiDualRead === false ? '' : 'checked'} />
         <span>新版面讓兩個 AI 各讀一次、互相核對（雙讀）</span>
       </label>
-      <p class="muted" style="font-size:12px;margin:-8px 0 6px">只在「第一次遇到新版面」時發生：兩個 AI 各自讀、金額欄位全一致才收；不一致再請第三個 AI 仲裁，三份都不同就請你手動記帳。多花一發費用、換金額多一層獨立核對。</p>
+      <p class="muted" style="font-size:12px;margin:-8px 0 6px">只在「第一次遇到新版面」時發生：兩個 AI 各自讀、金額欄位全一致才收；不一致再請第三個 AI 仲裁，三份都不同就請你手動記帳。多花一到兩發費用（不一致時再加一發仲裁）、換金額多一層獨立核對。</p>
       <div style="margin:0 0 14px"><button type="button" class="info-link" data-ai-info="dual">ⓘ 雙讀是什麼？會多花多少錢？</button></div>
       <div class="form-grid">
         <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>

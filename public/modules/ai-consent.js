@@ -241,7 +241,9 @@ export function aiPreviewBadgeHtml(preview) {
     ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 雙讀一致：兩個 AI 各自獨立讀了一遍，會影響錢的欄位全部相同。</p>'
     : preview.dualRead === 'arbitrated'
       ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：前兩讀不一致，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
-      : '';
+      : preview.dualRead === 'attested'
+        ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+        : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
