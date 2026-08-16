@@ -177,6 +177,67 @@ test('傳輸｜generateRecipe 的線上格式：模型/配方答案卷 schema/�
   assert.ok(String(captured.system).includes('字面文字'), '★照抄字面');
 });
 
+// ---- Codex r1 五條的承重域 ----
+test('r1#1｜世代檢查吃 fresh row：候選在生成在途自證＝不降版改新建（舊快照判準會誤重生、注入實測穿過）', async () => {
+  await seedDb([{ id: 'rcp-old', bank: '台新銀行', current: goodRecipe(), suspect: true, graduateStreak: 0, rebirths: 0, lastUsedAt: '2026-01-01T00:00:00.000Z' }]);
+  const t = ticketOf(['rcp-old'], { issuedAt: '2026-02-01T00:00:00.000Z' });
+  const gen = async () => {   // 生成（await Opus）在途：候選列成功自證＝lastUsedAt 跳到票之後
+    const db = await getDb(); /** @type {any} */ (db.parseRecipes)[0].lastUsedAt = '2026-03-01T00:00:00.000Z'; await saveDb(db);
+    return recipeAnswer();
+  };
+  const r = await generateRecipeAfterImport(t, { aiEngineFactory: engineOf({ gen }) });
+  assert.equal(r.saved, true);
+  assert.equal(/** @type {any} */ (r).rebirth, false, '★自證發生在 await 之後＝只有 mutate 內 fresh row 看得到');
+  const db = await getDb();
+  assert.equal(db.parseRecipes?.length, 2, '改走新建、已自證的 rcp-old 不被降版');
+});
+
+test('r1#2｜白名單不修補：AI 整鍵漏交 headerNote/headerIgnore＝strict 紅（替它補 null/[]＝strict 退化成「驗修好的」）', async () => {
+  await seedDb();
+  const gen = () => { const r = /** @type {any} */ (recipeAnswer()); delete r.detail.headerNote; delete r.detail.headerIgnore; return r; };
+  const r = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: engineOf({ gen }) });
+  assert.equal(r.saved, false);
+  assert.equal(/** @type {any} */ (r).reason, 'recipe_birth_strict', '★缺鍵原樣交 strict 擋、不是被修成合法值放行');
+});
+
+test('r1#3｜生成整支 reject 也不能把成功的匯入變失敗：呼叫端硬 catch（接縫 aiRecipeGen 注入）', async () => {
+  await seedDb();
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf({}), aiExtract: extractA });
+  const rejecting = async () => { throw new Error('生成整支 reject（合成）'); };
+  const res = await applyBankStatement(/** @type {any} */ (undefined), undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf({}), aiRecipeGen: /** @type {any} */ (rejecting) });
+  assert.equal(res.ok, true, '★saveDb 已成功＝生成怎麼炸都不能改判匯入失敗');
+  assert.equal(/** @type {any} */ (res).recipe?.saved, false);
+  const db = await getDb();
+  assert.equal((db.transactions || []).length, 3, '帳本裡真的有貨（不是回 200 的空話）');
+});
+
+test('r1#4｜傳輸有逾時上界：fetch 帶 AbortSignal（兌票後的原文不能靠 pending 請求躲過票匣治理）', async () => {
+  /** @type {any} */ let seen = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = /** @type {any} */ (async (_url, /** @type {any} */ init) => {
+    seen = init;
+    return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
+  });
+  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').generateRecipe('帳單文字', RECIPE_MODEL); } finally { globalThis.fetch = realFetch; }
+  assert.ok(seen?.signal instanceof AbortSignal, '★拿掉 AbortSignal.timeout＝in-flight 原文無上界');
+});
+
+test('r1#5｜成本邊界考題：preview 不加生成、apply 恰好 1 發生成 0 發解析（「至多 3 發」的那個＋1）', async () => {
+  await seedDb();
+  const calls = { parse: 0, gen: 0 };
+  const factory = () => ({
+    models: AI_BANK_MODELS,
+    parseOnce: async () => { calls.parse += 1; return answerFromGolden(); },
+    generateRecipe: async () => { calls.gen += 1; return recipeAnswer(); },
+  });
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: /** @type {any} */ (factory), aiExtract: extractA });
+  assert.equal(calls.gen, 0, 'preview 是等待熱路徑、不加 Opus');
+  const res = await applyBankStatement(/** @type {any} */ (undefined), undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: /** @type {any} */ (factory) });
+  assert.equal(res.ok, true);
+  assert.equal(calls.parse, 1, 'apply 零解析呼叫（票兌現、不重跑模型）');
+  assert.equal(calls.gen, 1, '★apply 恰好 1 發生成——多一發＝成本句「至多 3 發」變假');
+});
+
 // ---- 前端純函式 ----
 
 test('前端｜配方徽章：engine recipe 才畫、講「零費用零外送＋驗算照跑＋自動退版」；完成訊息帶配方一句', () => {
