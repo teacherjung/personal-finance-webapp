@@ -278,7 +278,13 @@ test('出生驗收｜r4#1 格間空白：純文字欄（summary/note/label）空
   const soft = base();
   if (soft.transactions[0].summary) soft.transactions[0].summary = String(soft.transactions[0].summary).split('').join(' ');
   soft.accounts[0].label = `　${soft.accounts[0].label ?? ''} `;
-  assert.deepEqual(recipeReproduces(base(), soft), { ok: true, diff: null }, '★只差空白＝重現成（假拒收修掉）');
+  // r5#1：兩種 note（帳戶備註／交易備註）**各自**製造空白差異——只考 summary/label 時，
+  // 單獨把 note 移出軟等值清單的窄刀仍綠（Codex r5 loader 突變實測）。
+  soft.accounts[0].note = ` ${soft.accounts[0].note ?? ''}　`;
+  const iNote = soft.transactions.findIndex((/** @type {any} */ t) => t.note);
+  assert.ok(iNote >= 0, '夾具至少要有一筆帶備註的交易，否則本題考不到 transaction note');
+  soft.transactions[iNote].note = String(soft.transactions[iNote].note).split('').join(' ');
+  assert.deepEqual(recipeReproduces(base(), soft), { ok: true, diff: null }, '★只差空白＝重現成（假拒收修掉；四欄樣本各自到位）');
   // 真差異（剝空白後仍不同）照紅
   const bad = base();
   bad.transactions[0].summary = `${bad.transactions[0].summary ?? ''}尾`;
