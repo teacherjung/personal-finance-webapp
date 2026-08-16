@@ -102,6 +102,10 @@ test('比對器｜文字欄空白不敏感（摘要/備註）、label/note 刻�
   const a = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [], transactions: [{ acctSuffix: '1', acctMasked: 'm', date: 'd', summary: '超商 繳費', direction: 'out', amount: 1, balance: null, note: '水 電' }] });
   const b = structuredClone(a); b.transactions[0].summary = '超商繳費'; b.transactions[0].note = '水電';
   assert.equal(aiAnswersAgree(a, b).agree, true, '★只差格間空白＝一致（兩個模型取空白本來就不同）');
+  const g = structuredClone(a); g.bank = '第一 銀行'; const h = structuredClone(a); h.bank = '第一銀行';
+  assert.equal(aiAnswersAgree(g, h).agree, true, '★r1#1：機構名只差排版空白＝一致（嚴格等值＝白花仲裁甚至誤判三讀不同）');
+  const g2 = structuredClone(a); g2.bank = '第一銀行'; const h2 = structuredClone(a); h2.bank = '第二銀行';
+  assert.equal(aiAnswersAgree(g2, h2).agree, false, '真的不同家照樣紅');
   const c = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [{ masked: 'm', suffix: '1', balance: 5, currency: 'TWD', label: '活儲', note: 'A' }], transactions: [] });
   const d = structuredClone(c); d.accounts[0].label = '活期儲蓄'; d.accounts[0].note = 'B';
   assert.equal(aiAnswersAgree(c, d).agree, true, '★帳戶 label/note 措辭不同＝不比（不進帳本金額與去重鍵）');
@@ -327,4 +331,15 @@ test('設定頁｜雙讀開關接線：async 等結果、失敗向 db 重核（�
   assert.match(src, /catch \{ dual\.checked = false; \}/u, '★核對不到＝顯示「關」（畫面寧可少保證；執行期相反＝dualReadWanted 讀不到當開）');
   assert.doesNotMatch(src, /saveSettings\(\{ aiDualRead/u, '★不可繞回吞錯誤的 saveSettings');
   assert.match(src, /\$\{s\.aiDualRead === false \? '' : 'checked'\}/u, '★預設顯示勾（缺鍵＝開＝與執行期一致）');
+});
+
+test('r1#2｜使用者可見文案不得再描述舊單讀流程當預設：同意窗與設定卡都要講雙讀（關閉才是階梯）', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join: j } = await import('node:path');
+  const consent = readFileSync(j(process.cwd(), 'public/modules/ai-consent.js'), 'utf8');
+  const keyCard = readFileSync(j(process.cwd(), 'public/modules/ai-key-settings.js'), 'utf8');
+  assert.match(consent, /兩個 AI 各自獨立讀一遍/, '★同意窗要講預設雙讀');
+  assert.doesNotMatch(consent, /萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次/, '★舊單讀句不得再當預設描述');
+  assert.match(keyCard, /預設「雙讀」/, '★設定卡與費用解釋窗要講預設雙讀');
+  assert.doesNotMatch(keyCard, /會直接交給 AI 讀一次/, '★「讀一次」的舊預設描述不得殘留');
 });
