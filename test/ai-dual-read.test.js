@@ -333,13 +333,18 @@ test('設定頁｜雙讀開關接線：async 等結果、失敗向 db 重核（�
   assert.match(src, /\$\{s\.aiDualRead === false \? '' : 'checked'\}/u, '★預設顯示勾（缺鍵＝開＝與執行期一致）');
 });
 
-test('r1#2｜使用者可見文案不得再描述舊單讀流程當預設：同意窗與設定卡都要講雙讀（關閉才是階梯）', async () => {
+test('r1#2｜使用者可見文案不得再描述舊單讀流程當預設：三個輸出**各自**釘住（r2：共用一個正向斷言＝單點復發抓不到）', async () => {
   const { readFileSync } = await import('node:fs');
   const { join: j } = await import('node:path');
+  const { AI_KEY_CARD_NOTE, AI_KEY_INFO } = await import('../public/modules/ai-key-settings.js');
   const consent = readFileSync(j(process.cwd(), 'public/modules/ai-consent.js'), 'utf8');
-  const keyCard = readFileSync(j(process.cwd(), 'public/modules/ai-key-settings.js'), 'utf8');
+  // ①同意窗
   assert.match(consent, /兩個 AI 各自獨立讀一遍/, '★同意窗要講預設雙讀');
   assert.doesNotMatch(consent, /萬一第一次讀出來的數字對不平，系統會自動換更強的模型再讀一次/, '★舊單讀句不得再當預設描述');
-  assert.match(keyCard, /預設「雙讀」/, '★設定卡與費用解釋窗要講預設雙讀');
-  assert.doesNotMatch(keyCard, /會直接交給 AI 讀一次/, '★「讀一次」的舊預設描述不得殘留');
+  // ②設定卡摘要（常數本體、不是整檔掃描——r2：整檔掃描讓三處互相冒充）
+  assert.match(AI_KEY_CARD_NOTE, /預設「雙讀」/, '★設定卡摘要自己要講預設雙讀');
+  assert.doesNotMatch(AI_KEY_CARD_NOTE, /會直接交給 AI 讀一次/, '★「讀一次」的舊預設描述不得殘留');
+  // ③費用解釋窗（單獨退回這一處＝r2 的記憶體突變實測仍全綠——這兩條就是補那個洞）
+  assert.match(AI_KEY_INFO.cost.html, /預設「雙讀」/, '★費用解釋窗自己要講預設雙讀');
+  assert.doesNotMatch(AI_KEY_INFO.cost.html, /有沒有因為第一次讀不準而換大一點的模型再讀一次/, '★費用窗的舊單讀預設句不得單獨復發');
 });
