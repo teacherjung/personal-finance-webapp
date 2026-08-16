@@ -192,12 +192,21 @@ test('r1#1｜世代檢查吃 fresh row：候選在生成在途自證＝不降版
   assert.equal(db.parseRecipes?.length, 2, '改走新建、已自證的 rcp-old 不被降版');
 });
 
-test('r1#2｜白名單不修補：AI 整鍵漏交 headerNote/headerIgnore＝strict 紅（替它補 null/[]＝strict 退化成「驗修好的」）', async () => {
+// r2#2：兩個缺鍵**各自獨立**成題——合在一題會互相遮掩（單獨退回其中一鍵的修補仍綠＝假綠，Codex r2 突變實測）。
+test('r1#2a｜白名單不修補：AI 單獨漏交 headerNote＝strict 紅（補成 null＝strict 退化成「驗修好的」）', async () => {
   await seedDb();
-  const gen = () => { const r = /** @type {any} */ (recipeAnswer()); delete r.detail.headerNote; delete r.detail.headerIgnore; return r; };
+  const gen = () => { const r = /** @type {any} */ (recipeAnswer()); delete r.detail.headerNote; return r; };
   const r = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: engineOf({ gen }) });
   assert.equal(r.saved, false);
-  assert.equal(/** @type {any} */ (r).reason, 'recipe_birth_strict', '★缺鍵原樣交 strict 擋、不是被修成合法值放行');
+  assert.equal(/** @type {any} */ (r).reason, 'recipe_birth_strict', '★缺鍵原樣交 strict 擋、不是被修成 null 放行');
+});
+
+test('r1#2b｜白名單不修補：AI 單獨漏交 headerIgnore＝strict 紅（補成 []＝同上、另一鍵不得遮掩）', async () => {
+  await seedDb();
+  const gen = () => { const r = /** @type {any} */ (recipeAnswer()); delete r.detail.headerIgnore; return r; };
+  const r = await generateRecipeAfterImport(ticketOf(), { aiEngineFactory: engineOf({ gen }) });
+  assert.equal(r.saved, false);
+  assert.equal(/** @type {any} */ (r).reason, 'recipe_birth_strict', '★缺鍵原樣交 strict 擋、不是被修成 [] 放行');
 });
 
 test('r1#3｜生成整支 reject 也不能把成功的匯入變失敗：呼叫端硬 catch（接縫 aiRecipeGen 注入）', async () => {
@@ -211,15 +220,19 @@ test('r1#3｜生成整支 reject 也不能把成功的匯入變失敗：呼叫�
   assert.equal((db.transactions || []).length, 3, '帳本裡真的有貨（不是回 200 的空話）');
 });
 
-test('r1#4｜傳輸有逾時上界：fetch 帶 AbortSignal（兌票後的原文不能靠 pending 請求躲過票匣治理）', async () => {
+test('r1#4｜傳輸有逾時上界：fetch 的 signal 由 AbortSignal.timeout(90000) 建（r2#1：只驗「有 signal」＝換成永不逾時的 signal 仍綠）', async () => {
   /** @type {any} */ let seen = null;
+  /** @type {any} */ let timeoutMs = null;
   const realFetch = globalThis.fetch;
+  const realTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = /** @type {any} */ ((/** @type {number} */ ms) => { timeoutMs = ms; return realTimeout.call(AbortSignal, ms); });
   globalThis.fetch = /** @type {any} */ (async (_url, /** @type {any} */ init) => {
     seen = init;
     return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
   });
-  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').generateRecipe('帳單文字', RECIPE_MODEL); } finally { globalThis.fetch = realFetch; }
-  assert.ok(seen?.signal instanceof AbortSignal, '★拿掉 AbortSignal.timeout＝in-flight 原文無上界');
+  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').generateRecipe('帳單文字', RECIPE_MODEL); } finally { globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout; }
+  assert.ok(seen?.signal instanceof AbortSignal, '★沒帶 signal＝in-flight 原文無上界');
+  assert.equal(timeoutMs, 90_000, '★signal 必須真的是 AbortSignal.timeout(90000) 造的——永不逾時的替身簽不出這個值');
 });
 
 test('r1#5｜成本邊界考題：preview 不加生成、apply 恰好 1 發生成 0 發解析（「至多 3 發」的那個＋1）', async () => {
