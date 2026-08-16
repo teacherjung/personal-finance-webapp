@@ -65,6 +65,18 @@ const MARKER = '題名關鍵字';
 /** 帶記號的引用：記號後面緊跟一對全形引號。 */
 const REF_RE = () => new RegExp(`${MARKER}[「]([^」]+)[」]`, 'g');
 /**
+ * **壞掉的記號**：記號**緊接著左引號**、卻沒有合法收尾（缺右引號、或空關鍵字）。
+ *
+ * ⚠️ 為什麼要單獨抓（Codex #470 r1）：只用上面那條正規式的話，`記號「沒有關引號`
+ *    與 `記號「」` **完全比不到** ⇒ 靜靜忽略。寫的人以為自己留了一條會被檢查的指路，
+ *    實際上那行對本閘不存在——**「什麼都沒做卻看起來有做」正是這道閘要防的病，它自己不能犯。**
+ *
+ * ⚠️⚠️ **判準必須是「緊接著左引號」**，不可以是「後面不是合法引用」（我第一版就是後者，
+ *    當場誤殺三支檔案）：散文裡把這個詞當名詞提到（寫成「記號」那樣加引號）時，
+ *    記號後面接的是**右**引號，不是左引號——那是正常敘述，不是壞掉的指路。
+ */
+const MARKER_OPEN_RE = () => new RegExp(`${MARKER}[「]`, 'g');
+/**
  * 動態插值的哨兵。
  * ⚠️ **絕對不可以用控制字元**（第一版用 `\0`，git 當場把整支 `.js` 判成二進位，
  *    GitHub 上看不到 diff＝那支檔案沒有人審得了）。用一串正常 ASCII，關鍵字裡不可能出現。
@@ -73,6 +85,11 @@ const HOLE = '<<INTERPOLATION>>';
 
 /**
  * node:test 裡「會定義一個題」的子命令。**刻意列舉，而且列舉的是別人的 API**（不是我的寫法）。
+ *
+ * ⚠️ 清單是**實測出來的**，不是憑印象（2026-08-16，跑 `typeof test[k]`）：
+ *    `test.test`／`test.it`／`test.describe`／`test.suite`／`test.skip`／`test.only`／`test.todo`
+ *    在 node:test 上**全都是函式**，全都定義得出一題。上一版只列 skip／only／todo
+ *    ⇒ `test.it('…')` 的題不進索引 ⇒ 歧義關鍵字少算一題而**放行**（Codex #470 r1 抓到）。
  *
  * ⚠️⚠️ **漏掉一個不是只會吵紅——它會製造假綠**（Grok 預審 2026-08-16 第二輪抓到，我實測確認）。
  *    我上一版在這裡寫「漏掉的後果是吵著紅、不是靜靜放行」，**那句是錯的**：
@@ -84,7 +101,7 @@ const HOLE = '<<INTERPOLATION>>';
  *    ⇒ 漏列不只讓「指到該題的引用」變紅，還會讓**本該因多命中而紅的引用少算一題**而溜過去。
  *    ⇒ 所以下面有一題專門釘這個歧義形狀：拿掉清單裡任何一個，那一題就轉紅。
  */
-const SUBTEST_MEMBERS = new Set(['skip', 'only', 'todo']);
+const SUBTEST_MEMBERS = new Set(['test', 'it', 'describe', 'suite', 'skip', 'only', 'todo']);
 
 /**
  * 這個 callee 是不是在「定義一題」。
@@ -100,9 +117,38 @@ const SUBTEST_MEMBERS = new Set(['skip', 'only', 'todo']);
  */
 function isTestDefinition(c) {
   if (c?.type === 'Identifier') return c.name === 'test';
-  return c?.type === 'MemberExpression'
-    && c.object?.type === 'Identifier' && c.object.name === 'test'
-    && c.property?.type === 'Identifier' && SUBTEST_MEMBERS.has(c.property.name);
+  if (c?.type !== 'MemberExpression') return false;
+  if (c.object?.type !== 'Identifier' || c.object.name !== 'test') return false;
+  // ⚠️ **computed 也要認**（`test['skip'](…)`，Codex #470 r1）：只認 Identifier 屬性時，
+  //    那種寫法的題不進索引 ⇒ 歧義關鍵字少算一題而放行。字面字串的 computed 是確定的，認它安全；
+  //    變數 computed（`test[k](…)`）認不出來——那一族仍在射程外，由檔頭劃界說明。
+  if (c.property?.type === 'Identifier') return SUBTEST_MEMBERS.has(c.property.name);
+  if (c.computed && c.property?.type === 'Literal' && typeof c.property.value === 'string') {
+    return SUBTEST_MEMBERS.has(c.property.value);
+  }
+  return false;
+}
+
+/**
+ * 從第一個參數取題名。
+ *
+ * ⚠️ **字串相加也要認**（`test('前' + '後', …)`，Codex #470 r1）：只認 Literal 與 TemplateLiteral 時，
+ *    那種題不進索引 ⇒ 歧義關鍵字少算一題而放行。只攤得平**字面**相加；含變數的部分放哨兵。
+ * @param {any} node 第一個參數的 AST
+ * @returns {string | null} 題名，或 null（形狀不是字串）
+ */
+function titleOf(node) {
+  if (node?.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
+  if (node?.type === 'TemplateLiteral') {
+    return node.quasis.map((/** @type {any} */ q) => q.value.cooked).join(HOLE);
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const l = titleOf(node.left);
+    const r = titleOf(node.right);
+    // 任一邊不是字串（例如變數）⇒ 該處放哨兵，關鍵字就不能跨過它，語意與插值一致
+    return `${l ?? HOLE}${r ?? HOLE}`;
+  }
+  return null;
 }
 
 /**
@@ -136,11 +182,8 @@ export function parseTestFile(source) {
       //    ⚠️ 劃界：`it.skip(…)` 這種寫法抓不到——射程換精確度，刻意的取捨。
       if (c?.type === 'Identifier' && (c.name === 'it' || c.name === 'describe')) calleeNames.add(c.name);
       if (isTestDefinition(c)) {
-        const a = node.arguments[0];
-        if (a?.type === 'Literal' && typeof a.value === 'string') titles.push(a.value);
-        else if (a?.type === 'TemplateLiteral') {
-          titles.push(a.quasis.map((/** @type {any} */ q) => q.value.cooked).join(HOLE));
-        }
+        const title = titleOf(node.arguments[0]);
+        if (title !== null) titles.push(title);
       }
     }
     for (const key of Object.keys(node)) {
@@ -170,6 +213,13 @@ export function badTestRefs(source) {
     const hits = titles.filter((t) => t.includes(keyword)).length;
     if (hits !== 1) bad.push({ keyword, hits });
   }
+  // ⚠️ 壞掉的記號用 `hits: -1` 回報（見 MARKER_OPEN_RE 的理由）：它跟「指到 0 題」不是同一件事
+  //    ——那個是指路指錯，這個是**指路根本沒被檢查**，訊息要分得開。
+  const wellFormed = new Set([...comments.matchAll(REF_RE())].map((m) => m.index));
+  for (const m of comments.matchAll(MARKER_OPEN_RE())) {
+    if (wellFormed.has(m.index)) continue;   // 同一個位置有合法引用＝沒壞
+    bad.push({ keyword: comments.slice(m.index, m.index + MARKER.length + 13).split('\n')[0], hits: -1 });
+  }
   return bad;
 }
 
@@ -193,7 +243,10 @@ const ALLOWED_CONTROL = new Set([0x09, 0x0a, 0x0d]);
 export function firstControl(text) {
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    if (code < 0x20 && !ALLOWED_CONTROL.has(code)) return i;
+    // ⚠️ **C0 之外還有 DEL（U+007F）與 C1（U+0080–U+009F）**（Codex #470 r1）：
+    //    上一版只查 `code < 0x20`，那兩族一樣是看不見的控制字元、一樣進得了原始碼。
+    const isControl = (code < 0x20) || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+    if (isControl && !ALLOWED_CONTROL.has(code)) return i;
   }
   return -1;
 }
@@ -334,6 +387,42 @@ test('⭐ 漏列子命令會製造假綠：歧義關鍵字必須算到 test.skip
   }
 });
 
+test('⭐ 題名索引不可以漏掉 node:test 真的會定義題的寫法（Codex #470 r1）', () => {
+  // ⚠️ 清單是**實測**出來的：`typeof test[k]` 對 test／it／describe／suite／skip／only／todo
+  //    全部回 'function'。漏任何一種的後果不是吵紅，是**歧義關鍵字少算一題而放行**（假綠）。
+  for (const member of ['test', 'it', 'describe', 'suite', 'skip', 'only', 'todo']) {
+    assert.deepEqual(parseTestFile(`test.${member}('題 X', () => {});`).titles, ['題 X'],
+      `test.${member}(…) 定義得出一題，卻沒進索引 ⇒ 歧義關鍵字會少算它而放行`);
+    const amb = `test('共同 A', () => {});\ntest.${member}('共同 B', () => {});\n// ${MARKER}「共同」`;
+    assert.deepEqual(badTestRefs(amb), [{ keyword: '共同', hits: 2 }],
+      `漏算 test.${member} 的題 ⇒ 本該因「不夠獨特」而紅的引用被放行`);
+  }
+  // 字串相加也是真的題名
+  assert.deepEqual(parseTestFile("test('前' + '後', () => {});").titles, ['前後'],
+    '字串相加的題名沒進索引 ⇒ 同上');
+  // computed 但字面字串的 modifier
+  assert.deepEqual(parseTestFile("test['skip']('題 Y', () => {});").titles, ['題 Y'],
+    "test['skip'](…) 沒進索引 ⇒ 同上");
+  // 反面：含變數的相加只留得住字面片段，關鍵字不可跨過它（與插值同語意）
+  assert.deepEqual(badTestRefs(`test('前' + x + '後', () => {});\n// ${MARKER}「前後」`),
+    [{ keyword: '前後', hits: 0 }], '關鍵字跨過變數卻被判命中＝碰運氣，不是指得到');
+});
+
+test('⭐ 壞掉的記號要吵，不可以靜靜忽略（Codex #470 r1）', () => {
+  // ⚠️ 缺右引號／空關鍵字時，合法引用的正規式**完全比不到** ⇒ 上一版靜靜忽略。
+  //    寫的人以為留了一條會被檢查的指路，實際上那行對本閘不存在
+  //    ——「什麼都沒做卻看起來有做」正是這道閘要防的病，它自己不能犯。
+  const broken = badTestRefs(`test('x', () => {});\n// ${MARKER}「沒有關引號`);
+  assert.equal(broken.length, 1, '缺右引號的記號被靜靜忽略了');
+  assert.equal(broken[0].hits, -1, '壞掉的記號要用 -1 跟「指到 0 題」分開（兩者的病因不同）');
+  assert.equal(badTestRefs(`test('x', () => {});\n// ${MARKER}「」`).length, 1, '空關鍵字被靜靜忽略了');
+
+  // ⚠️ 反面（誤殺防線）：把這個詞當**名詞**提到（前後加引號）是正常敘述，不是壞掉的指路。
+  //    我第一版的判準是「後面不是合法引用就算壞」，當場誤殺三支檔案。
+  assert.deepEqual(badTestRefs(`test('x', () => {});\n// 這個記號叫「${MARKER}」，用法見檔頭`), [],
+    '把記號當名詞提到就被判成壞掉＝誤殺');
+});
+
 test('⭐ 子題不進索引（誠實劃界：刻意的，因為判準會誤殺全樹的正規式 .test()）', () => {
   // ⚠️ `await t.test('子題')` 的 callee 是 `t.test`。要抓它就得認「任何 X.test(…)」，
   //    而全樹有 76 處正規式的 `.test()`（實測）——那個判準會把它們全部誤判成題名。
@@ -360,7 +449,12 @@ test('⭐ 控制字元的偵測本身要有效（自己造誘餌，不然掃描�
   assert.equal(firstControl('a\tb\nc\r'), -1, 'tab／換行／歸位是正常文字檔就有的，不可以誤判');
   assert.equal(firstControl(`a${String.fromCharCode(0)}b`), 1, 'NUL 沒被抓到——那正是讓 git 判二進位的那一顆');
   assert.equal(firstControl(`x${String.fromCharCode(1)}`), 1, 'U+0001 沒被抓到');
-  assert.equal(firstControl(`${String.fromCharCode(0x1f)}`), 0, 'U+001F 沒被抓到（範圍上界）');
+  assert.equal(firstControl(`${String.fromCharCode(0x1f)}`), 0, 'U+001F 沒被抓到（C0 上界）');
+  // ⚠️ C0 之外還有兩族（Codex #470 r1）：DEL 與 C1。它們一樣看不見、一樣進得了原始碼。
+  assert.equal(firstControl(`a${String.fromCharCode(0x7f)}`), 1, 'U+007F（DEL）沒被抓到');
+  assert.equal(firstControl(`a${String.fromCharCode(0x80)}`), 1, 'U+0080（C1 下界）沒被抓到');
+  assert.equal(firstControl(`a${String.fromCharCode(0x9f)}`), 1, 'U+009F（C1 上界）沒被抓到');
+  assert.equal(firstControl(`a${String.fromCharCode(0xa0)}`), -1, 'U+00A0 是不斷行空格、不是控制字元，不可誤殺');
 });
 
 test('⭐ it()／describe() 的偵測本身要有效（自己造誘餌，不然掃描題是空的）', () => {
