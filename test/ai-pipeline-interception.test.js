@@ -157,10 +157,10 @@ const CASES = [
     make: () => { const a = answerTwo(); a.transactions[2].acctMasked = M1; return a; },
     proves: (/** @type {any} */ a) => a.transactions[2].acctMasked === M1 && a.accounts.length === 2,
     why: '兩個帳戶的餘額鏈都斷＝reconcile 擋。' },
-  { id: 'A8', name: '期末與概要對不上（漏讀期末幾筆）', lines: linesFull, expect: 'caught',
-    make: () => { const a = answerFull(); a.transactions = a.transactions.slice(0, 2); a.totals = { txCount: 2, totalOut: 300, totalIn: null }; return a; },
-    proves: (/** @type {any} */ a) => a.transactions.length === 2 && a.totals.txCount === 2 && a.transactions[1].balance === 4700,
-    why: '末筆 4,700 對不上概要 5,500＝reconcile 擋（合計由 AI 自洽地一起漏＝孤立「末筆對概要」那道）。' },
+  { id: 'A8', name: '期末與概要對不上（漏讀期末幾筆）', lines: linesFull, expect: 'caught', defense: 'reconcile',
+    make: () => { const a = answerFull(); a.transactions = a.transactions.slice(0, 2); a.totals = { txCount: null, totalOut: null, totalIn: null }; return a; },
+    proves: (/** @type {any} */ a) => a.transactions.length === 2 && a.totals.txCount === null && a.transactions[1].balance === 4700,
+    why: '末筆 4,700 對不上概要 5,500＝reconcile 擋。合計全 null（誠實缺席＝合計不上膛；r2#1：原版填 2、但 2 不在版面＝接地先開火＝孤立失敗）——這格鎖 reconcile 證明概要閘仍承重。' },
   { id: 'A9', name: '整份只讀出一筆（其餘全漏）', lines: linesTwo, expect: 'caught',
     make: () => { const a = answerTwo(); a.transactions = [a.transactions[0]]; return a; },
     proves: (/** @type {any} */ a) => a.transactions.length === 1 && a.accounts.length === 2,
@@ -185,7 +185,7 @@ const CASES = [
   { id: 'B4', name: '某筆金額讀錯、同筆餘額讀成空白（非首筆——空白才是閘盲掉的原因，r1#1）', lines: linesFull, expect: 'caught', defense: 'grounded',
     make: () => { const a = answerFull(); a.transactions[1].amount = 210; a.transactions[1].balance = null; return a; },
     proves: (/** @type {any} */ a) => a.transactions[1].amount === 210 && a.transactions[1].balance === null,
-    why: '餘額空白＝相鄰兩對驗算都被跳過＝閘看不到（餘額在＝4800−210≠4700 閘就抓得到——空白是真正的盲因）；但 210 不在版面＝接地擋。負例 N5＝210 印在他處＋無合計＝仍看不到。' },
+    why: '餘額空白＝相鄰兩對驗算都被跳過＝閘看不到（餘額在＝4800−210≠4700 閘就抓得到——空白是真正的盲因）；但 210 不在版面＝接地擋。負例 N5＝錯值 250 撞雜訊列＋無合計＝仍看不到。' },
   { id: 'B5', name: '一筆支出與一筆收入併成一筆淨額', lines: linesFull, expect: 'caught', defense: 'grounded',
     make: () => { const a = answerFull(); a.transactions = [a.transactions[0], tx({ date: '2026-07-05', direction: 'in', amount: 700, balance: 5500, summary: '淨額' })]; return a; },
     proves: (/** @type {any} */ a) => a.transactions.length === 2 && a.transactions[1].amount === 700 && a.transactions[1].direction === 'in',
@@ -193,7 +193,7 @@ const CASES = [
   { id: 'B6', name: '整個帳戶被漏讀（概要與明細都沒讀到）', lines: linesTwo, expect: 'caught', defense: 'reconcile',
     make: () => { const a = answerTwo(); a.accountCurrencies = [{ masked: M1, currency: 'TWD' }]; a.accounts = [a.accounts[0]]; a.transactions = a.transactions.slice(0, 2); return a; },
     proves: (/** @type {any} */ a) => a.accounts.length === 1 && a.accountCurrencies.length === 1 && a.transactions.length === 2,
-    why: '漏掉的帳戶沒有數字可驗＝閘看不到；但帳單印的合計（3 筆/出 500）涵蓋整份＝合計擋。⚠️ 沒印合計＝仍看不到（同 N1 的條件形）。' },
+    why: '漏掉的帳戶沒有數字可驗＝閘看不到；但帳單印的合計（3 筆/出 500）涵蓋整份＝合計擋。⚠️ 沒印合計＝仍看不到（專屬負例 N6）。' },
   { id: 'B7', name: '台幣帳戶被誤判成外幣', lines: linesTwo, expect: 'missed',
     make: () => { const a = answerTwo(); a.accountCurrencies[1].currency = 'USD'; a.accounts[1].currency = 'USD'; a.totals = { txCount: null, totalOut: null, totalIn: null }; return a; },
     proves: (/** @type {any} */ a) => a.accounts[1].currency === 'USD' && a.accountCurrencies[1].currency === 'USD' && a.totals.txCount === null,
@@ -248,7 +248,7 @@ test('全管線攔截｜基準：四個版面的黃金答案全部通過三道�
   assert.equal(pipeline(answerForeign(), linesForeign()), 'missed');
 });
 
-// ---- N 系條件負例（Grok r0：「仍看不到」的每一句但書都要有題撐著——這四題就是那些「仍」）----
+// ---- N 系條件負例（Grok r0＋Codex r1#3：「仍看不到」的每一句但書都要有題撐著——N 系就是那些「仍」）----
 // ⚠️ 不入 23 型計數：它們量的是**條件**（合計缺席／數字撞版面），不是新的錯誤型。
 test('N1｜B8 同刀但帳單沒印合計＝仍看不到（①「沒印合計」但書的負例）', () => {
   const a = answerFull(); a.transactions = a.transactions.slice(1); a.totals = { txCount: null, totalOut: null, totalIn: null };
@@ -278,7 +278,7 @@ test('N4｜B5 同刀但淨額印在帳單他處、又沒印合計＝仍看不到
 
 test('N5｜B4 同刀但錯值印在帳單他處＋沒印合計＝仍看不到（⑤「同④」但書的負例）', () => {
   const a = answerFull();
-  a.transactions[1].amount = 250; a.transactions[1].balance = null;   // 250 印在雜訊列
+  a.transactions[1].amount = 250; a.transactions[1].balance = null;   // 錯值 250 印在雜訊列（r2#3：舊註解誤寫 210）
   a.totals = { txCount: null, totalOut: null, totalIn: null };
   assert.equal(pipeline(a, linesStray()), 'missed', '★餘額空白讓閘盲、250 撞雜訊列讓接地盲、無合計讓合計盲＝三道全失效');
 });
