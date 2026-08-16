@@ -14,7 +14,7 @@ import { openModalShell } from './modal-shell.js';
 import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
-import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
+import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
 // 問模式的等待上限與計時器住在匯出模組（第一個需要問 /api/mode 的畫面）；第二個消費者直接借用、不另抄一份。
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
@@ -361,7 +361,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
          想知道「這是誰讀的、驗到什麼程度」再往下看。徽章裡那句「請確認…有沒有讀錯」
          因此移到核對之後——這是 William 明示的取捨，不是漏掉。 -->
     <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)">
-    ${aiPreviewBadgeHtml(r)}
+    ${aiPreviewBadgeHtml(r)}${recipePreviewBadgeHtml(r)}
     <p class="muted" style="margin-bottom:10px">${r.bank ? `銀行：<b>${esc(r.bank)}</b>　` : ''}現值參考日：<b>${esc(r.referenceDate || '—')}</b>　餘額只有帳單較新時才覆蓋。</p>
     ${gateSummaryHtml(r.reconcile, 'bank')}
     </div>
@@ -401,7 +401,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
         const res = await api('/bank-statement/apply', { method: 'POST', body: payload });
         if (!onPage()) return;   // r5#1：套用（含寫入）完成後切頁＝不清 modal、不重繪舊頁、不報舊 toast（資料已存，下次進頁自見）
         const t = res.transactions || {};
-        toast(bankApplyDoneText(res, t));   // ⚠️ 餘額沒更新一定要講（r1#3：不說＝使用者以為餘額是新的）
+        toast(bankApplyDoneText(res, t, /** @type {any} */ (res).recipe));   // ⚠️ 餘額沒更新一定要講；P2-3 配方生成結果也講一句
         document.querySelector('#modal-root')?.replaceChildren();
         renderCashflow();
       } catch (e) {

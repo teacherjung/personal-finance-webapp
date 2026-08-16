@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from '../public/modules/cashflow-model.js';
-import { aiPreviewBadgeHtml } from '../public/modules/ai-consent.js';
+import { aiPreviewBadgeHtml, recipePreviewBadgeHtml } from '../public/modules/ai-consent.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -38,11 +38,11 @@ function renderPreviewBody(/** @type {any} */ r) {
   const gateSummaryHtml = () => '<div data-stub="gate">對帳結果</div>';
   return Function('r', 'esc', 'money', 'ACTION_LABEL', 'gateSummaryHtml',
     'bankBlockedWarningHtml', 'bankSimilarWarningHtml', 'bankSimilarTagHtml',
-    'bankPreviewFootnote', 'aiPreviewBadgeHtml',
+    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml',
     `${chunk}\n return body;`)(
     r, esc, money, ACTION_LABEL, gateSummaryHtml,
     bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml,
-    bankPreviewFootnote, aiPreviewBadgeHtml);
+    bankPreviewFootnote, aiPreviewBadgeHtml, recipePreviewBadgeHtml);
 }
 
 /** 合成資料——**刻意不用任何真實帳單內容**（PII 鐵則）。 */
@@ -101,4 +101,11 @@ test('預覽窗排版｜「餘額這次不更新」是警告不是說明，要�
   assert.ok(p.警告 < p.說明區);
   assert.doesNotMatch(renderPreviewBody(RESULT), /這次不會更新/u,
     '沒 blocked 的帳單不可以出現這句（恆顯示＝這題其實沒在驗 blocked）');
+});
+
+test('P2-3｜配方預覽的徽章真的接上：engine recipe 的 body 含「版面規則卡」（只塞 harness 參數＝假綠）', () => {
+  const html = renderPreviewBody({ ...RESULT, engine: 'recipe', recipeId: 'rcp-1' });
+  assert.ok(html.includes('版面規則卡'), '★徽章要真的出現在預覽 body（cashflow.js 的插值被刪＝這裡紅）');
+  const aiHtml = renderPreviewBody({ ...RESULT, engine: 'ai' });
+  assert.equal(aiHtml.includes('版面規則卡'), false, '互斥：AI 預覽不畫配方徽章');
 });

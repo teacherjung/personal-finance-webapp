@@ -61,7 +61,7 @@ export const OUTBOUND_ENDPOINTS = [
   // 需 useAi **AI 要求旗標**（確認窗僅 aiAskBeforeSend 開啟時出現、預設直接帶——舊名「同意旗標」棄用：那個名字誤示每次都問過）；HOSTED 停止線寫死）。⚠️ 限速誠實句（r1#4）：表上的「上傳解析類」只在 HOSTED
   // 掛載（mountRateLimit 在 isHosted 分支）、而 AI 又在 HOSTED 停用——**實際可達的 LOCAL 路線沒有
   // runtime 限速**，這是單機自用的既有設計（server.test 有「LOCAL 不掛表」考題）。AI 的成本邊界＝
-  // 每次上傳至多 2 發模型呼叫（階梯）＋確認窗僅 aiAskBeforeSend=true 時出現（P1b-2；預設直接送）；正式成本護欄（單張費用上限／
+  // 每次上傳至多 **3 發**模型呼叫（preview 階梯至多 2＋apply 成功後至多 1 發 Opus 配方生成＝P2-3，r1#5 連動）＋確認窗僅 aiAskBeforeSend=true 時出現（P1b-2；預設直接送）；正式成本護欄（單張費用上限／
   // 每日次數）＝解析器計畫 P3，落地前不宣稱「已限速」。
   { host: 'api.anthropic.com', why: 'AI 解析帳單（lib/ai-transport.js；LOCAL 專用、確認窗僅 aiAskBeforeSend=true 時出現；成本邊界見上註）', paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'] },
 ];

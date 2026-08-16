@@ -62,15 +62,22 @@ export function bankApplyLabel(balancesSkipped) {
 }
 
 /** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
+ * P2-3：AI 路線寫入成功會順手生成配方卡（recipe），成功/重生要講一句（使用者才知道下次免費）；
+ * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
  * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean}} bal
- * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx */
-export function bankApplyDoneText(bal, tx) {
+ * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
+ * @param {{saved?:boolean, rebirth?:boolean}} [recipe] */
+export function bankApplyDoneText(bal, tx, recipe) {
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
     : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
       + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`;
+  const rec = recipe?.saved
+    ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面免費自動讀）' : '；已存成版面規則卡（下次同版面免費自動讀）')
+    : (recipe ? '；版面規則卡這次沒存成（不影響本次匯入；下次仍會用 AI 讀）' : '');
   return `${acct}；交易：匯入 ${tx.imported}`
-    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`;
+    + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`
+    + rec;
 }
 
 /** 「這次不匯入 N 筆疑似重複」勾選框（William 2026-08-14：同期匯過另一版面時 48/57 筆重複——
