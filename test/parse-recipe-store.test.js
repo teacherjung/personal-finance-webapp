@@ -182,6 +182,7 @@ test('apply｜裁示②畢業：連續 5 份全過強閘＝graduated（第 4 份
   assert.equal(r1.ok, true);
   let db = await getDb();
   assert.equal(db.parseRecipes?.[0]?.graduated, false, '第 4 份＝還沒畢業');
+  db.transactions = []; await saveDb(db);   // A6：重傳同份不計——清交易＝模擬同版面的「新一份」帳單
   const r2 = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA, skipSimilar: false });
   assert.equal(r2.ok, true);
   db = await getDb();
@@ -417,4 +418,18 @@ test('r2｜/api/import 重複 id＝驗證階段 400＋零寫入（使用者壞�
   const db = await getDb();
   assert.equal(db.parseRecipes?.length, 1, '★零寫入');
   assert.equal(db.parseRecipes?.[0]?.id, 'keep-me');
+});
+
+test('A6 操作定義（P2-3 明文）｜同一份帳單重傳＝imported 0＝不算一份：streak 不動、只記使用時間', async () => {
+  await seedDb({ recipes: [row({ graduateStreak: 2 })] });
+  const r1 = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(r1.ok, true);
+  let db = await getDb();
+  assert.equal(db.parseRecipes?.[0]?.graduateStreak, 3, '第一次真的匯入＝+1');
+  const r2 = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(r2.ok, true);
+  assert.equal(/** @type {any} */ (r2).transactions?.imported, 0, '前提：同一份重傳＝全被去重跳過');
+  db = await getDb();
+  assert.equal(db.parseRecipes?.[0]?.graduateStreak, 3, '★重複上傳不是新版面證據——streak 不可灌水（重傳 5 次≠畢業）');
+  assert.ok(db.parseRecipes?.[0]?.lastUsedAt, '使用時間照記');
 });

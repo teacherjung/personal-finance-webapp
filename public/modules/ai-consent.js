@@ -220,6 +220,18 @@ export function modelDisplayName(id) {
   return `Claude ${family} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
 }
 
+/** 配方徽章（P2-3）：engine:'recipe' 的預覽——講「誰讀的、為什麼免費、驗算照跑」。
+ * 與 AI 徽章互斥（engine 只會是一種）；文案鐵則同 AI（不得出現保證正確/免費以外的誇大）。
+ * @param {any} preview */
+export function recipePreviewBadgeHtml(preview) {
+  if (!preview || typeof preview !== 'object' || preview.engine !== 'recipe') return '';
+  return `
+<div class="card" style="margin-bottom:12px;padding:12px 14px">
+  <p style="margin:0 0 6px"><b>這一份是「版面規則卡」讀出來的帳單預覽。</b>（這個版面之前用 AI 讀過一次、規則卡是那次順手學下來的——本次<b>零費用、內容零外送</b>）</p>
+  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">驗算照跑、標準與 AI 讀的一樣嚴（整份數學軋不平就不會給你看）。規則卡若跟不上版面改版，會自動退回上一版重讀；都讀不動才會再請 AI。</p>
+</div>`;
+}
+
 export function aiPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
   const model = esc(modelDisplayName(preview.aiModel));

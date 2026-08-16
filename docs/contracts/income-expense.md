@@ -184,3 +184,14 @@
 - **preview 純讀不變量**：recipeBankRoute 不動 db 一個位元組（版本互換與計數全在 apply）——有考題釘。
 - ⚠️ 畢業計數的操作定義殘餘（預審 A6）：「連 5 **份**」目前同一份帳單重傳也 +1（交易被去重跳過、計數照加）——「份」的判準與 `rebirths` 的 +1 落點（誰算重生）都在 **P2-3** 明文＋接線。
 - 考題＝`test/parse-recipe-store.test.js`（題數刻意不寫死——寫死的數字自己會漂；r1#3）；刀表明細見 PR（R3b／GK5＝行為等價、誠實記錄）。
+
+**P2-3 AI 產配方（2026-08-16 落地）**
+
+- **時機**＝AI 票路線**兌票寫入成功之後**（第二呼叫）：reproduces 的黃金樣本＝「使用者確認過的那份答案」（票裡的 parsed）——沒按套用的答案沒資格當樣本；preview 是等待熱路徑不加 Opus；apply 的讀→閘→套→寫不變量禁外部 IO＝生成整段在 saveDb 之後、寫入走 repo 櫃檯 `saveParseRecipe` 另開原子交易。**失敗不連坐**：匯入已完成、生成掛掉只回 `{saved:false, reason}`（recipe_* code、不外洩內文）。
+- **模型**＝`RECIPE_MODEL`（一律 Opus，裁示⑥：配方錯誤會被免費複製到每一期）。
+- **答案卷**＝`RECIPE_SCHEMA`（格式 A 填格子：枚舉只准清單選、錨點/表頭只准版面字面；提示詞鐵則「嚴禁任何交易內容」）；`pickRecipeCandidate` 白名單化（AI 多給的鍵一律丟、formatVersion 程式蓋不信 AI）。
+- **出生三關（r2#5：漏一關＝白做）**＝①`validateRecipeStrict`②`recipeMatches`＋`parseWithRecipe`＋`validateRecipeAgainstStatement`（各自的 reason code：strict/match/parse/statement）③`recipeReproduces`（對黃金樣本逐欄）——任一紅＝不落庫。
+- **重生（裁示②④）**：票上 `suspectRecipeIds` 有值＝寫回**第一個**候選列（舊 current 降 previous、rebirths+1（**內建化候選訊號＝累計 5**、由人裁）、suspect 解除、streak 歸零重數）；否則新建一列。⚠️ 殘餘：一次只重生一列（其餘候選繼續掛疑似、等下次）。
+- **A6 收口（畢業「份」的操作定義，P2-3 明文）**＝`imported>0` 才算一份：同一份帳單重傳＝全被去重跳過＝只記使用時間、不累積畢業、不觸發互換（重複上傳不是新版面證據）。判準屬流程計數、非金額口徑（Claude 依授權裁量、審查可挑戰）。
+- **前端**：預覽徽章 `recipePreviewBadgeHtml`（engine:'recipe' 才畫——「版面規則卡讀的、零費用零外送、驗算照跑、自動退版」）；完成訊息 `bankApplyDoneText` 第三參數（存成/重生/沒存成都講一句、失敗不列細節不嚇人）。
+- 考題＝`test/recipe-gen.test.js`（生成/三關各紅/重生/不連坐/端到端閉環/傳輸線上格式/前端純函式）；刀 P1–P9。

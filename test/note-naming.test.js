@@ -33,11 +33,11 @@ function renderPreviewBody(/** @type {any} */ r) {
   const esc = (/** @type {any} */ v) => String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   return Function('r', 'esc', 'money', 'ACTION_LABEL', 'gateSummaryHtml',
     'bankBlockedWarningHtml', 'bankSimilarWarningHtml', 'bankSimilarTagHtml',
-    'bankPreviewFootnote', 'aiPreviewBadgeHtml',
+    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml',
     `${chunk}\n return body;`)(
     r, esc, String, { update: '更新餘額' }, () => '<div data-stub="gate"></div>',
     bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml,
-    bankPreviewFootnote, aiPreviewBadgeHtml);
+    bankPreviewFootnote, aiPreviewBadgeHtml, () => '');
 }
 
 /** 外殼合成資料（rows 由各題自帶）。全部假值、零真實帳單內容。 */
