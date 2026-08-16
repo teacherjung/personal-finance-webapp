@@ -62,8 +62,12 @@ const espree = createRequire(join(ROOT, 'package.json'))('espree');
  *    記號本來就不算數，但把它留成變數，改記號時只有一處要動。
  */
 const MARKER = '題名關鍵字';
-/** 帶記號的引用：記號後面緊跟一對全形引號。 */
-const REF_RE = () => new RegExp(`${MARKER}[「]([^」]+)[」]`, 'g');
+/**
+ * 帶記號的合法引用：記號**緊接**左引號、關鍵字非空白、右引號在**同一行**。
+ * ⚠️ 三個限制都是踩出來的（Codex #470 r2）：關鍵字允許純空白時，一個空白剛好命中唯一題名而放行；
+ *    允許跨行／跨註解時，兩則不相干的註解會被配成一個「合法」引用。
+ */
+const REF_RE = () => new RegExp(`${MARKER}[「]([^」\n]+)[」]`, 'g');
 /**
  * **壞掉的記號**：記號**緊接著左引號**、卻沒有合法收尾（缺右引號、或空關鍵字）。
  *
@@ -71,11 +75,12 @@ const REF_RE = () => new RegExp(`${MARKER}[「]([^」]+)[」]`, 'g');
  *    與 `記號「」` **完全比不到** ⇒ 靜靜忽略。寫的人以為自己留了一條會被檢查的指路，
  *    實際上那行對本閘不存在——**「什麼都沒做卻看起來有做」正是這道閘要防的病，它自己不能犯。**
  *
- * ⚠️⚠️ **判準必須是「緊接著左引號」**，不可以是「後面不是合法引用」（我第一版就是後者，
- *    當場誤殺三支檔案）：散文裡把這個詞當名詞提到（寫成「記號」那樣加引號）時，
- *    記號後面接的是**右**引號，不是左引號——那是正常敘述，不是壞掉的指路。
+ * ⚠️⚠️ **判準必須是「（可含水平空白後）緊接著左引號」**，不可以是「後面不是合法引用」
+ *    （我第一版是後者，當場誤殺三支檔案）：散文裡把這個詞當名詞提到（前後加引號）時，
+ *    記號後面接的是**右**引號——那是正常敘述，不是壞掉的指路。
+ * ⚠️ **水平空白也要算**（Codex #470 r2）：`記號 「唯一」` 只多一個空白，上一版就整條當作不存在。
  */
-const MARKER_OPEN_RE = () => new RegExp(`${MARKER}[「]`, 'g');
+const MARKER_OPEN_RE = () => new RegExp(`${MARKER}[ \t\u3000]*[「]`, 'g');
 /**
  * 動態插值的哨兵。
  * ⚠️ **絕對不可以用控制字元**（第一版用 `\0`，git 當場把整支 `.js` 判成二進位，
@@ -84,58 +89,37 @@ const MARKER_OPEN_RE = () => new RegExp(`${MARKER}[「]`, 'g');
 const HOLE = '<<INTERPOLATION>>';
 
 /**
- * node:test 裡「會定義一個題」的子命令。**刻意列舉，而且列舉的是別人的 API**（不是我的寫法）。
+ * 這個 CallExpression 是不是在「定義一題」，以及本閘看不看得懂它。
  *
- * ⚠️ 清單是**實測出來的**，不是憑印象（2026-08-16，跑 `typeof test[k]`）：
- *    `test.test`／`test.it`／`test.describe`／`test.suite`／`test.skip`／`test.only`／`test.todo`
- *    在 node:test 上**全都是函式**，全都定義得出一題。上一版只列 skip／only／todo
- *    ⇒ `test.it('…')` 的題不進索引 ⇒ 歧義關鍵字少算一題而**放行**（Codex #470 r1 抓到）。
+ * ⚠️⚠️ **這裡刻意沒有「支援的子命令清單」**（William 2026-08-16 裁示「看不懂就報錯」）。
+ *    上一版列了 skip／only／todo，Codex #470 r2 實測打臉：**Node 26 的 `test` 上還有
+ *    `expectFailure`**（`Object.getOwnPropertyNames(test)` 實跑），而那正是 CI 用的版本
+ *    ——清單當場就是瞎的，而漏掉的後果是**假綠**（歧義關鍵字少算一題而放行）。
+ *    ⇒ 列舉在這裡永遠追不上外部 API。改成關門：**看不懂的就當場報錯，不從索引消失。**
  *
- * ⚠️⚠️ **漏掉一個不是只會吵紅——它會製造假綠**（Grok 預審 2026-08-16 第二輪抓到，我實測確認）。
- *    我上一版在這裡寫「漏掉的後果是吵著紅、不是靜靜放行」，**那句是錯的**：
- *
- *      test('設定 A 的行為', …);  test.skip('設定 B 的行為', …);  // 引用「設定」
- *
- *    ・清單完整 ⇒ hits=2 ⇒ 紅（關鍵字不夠獨特，這正是本閘要抓的）
- *    ・漏列 `skip` ⇒ 那一題沒進索引 ⇒ hits=1 ⇒ **放行**
- *    ⇒ 漏列不只讓「指到該題的引用」變紅，還會讓**本該因多命中而紅的引用少算一題**而溜過去。
- *    ⇒ 所以下面有一題專門釘這個歧義形狀：拿掉清單裡任何一個，那一題就轉紅。
- */
-const SUBTEST_MEMBERS = new Set(['test', 'it', 'describe', 'suite', 'skip', 'only', 'todo']);
-
-/**
- * 這個 callee 是不是在「定義一題」。
- *
- * ⚠️⚠️ **不可以只看 `object.name === 'test'`**（Grok 預審 2026-08-16 抓到，實測）：那樣會把
- *    `items.filter((test) => test.includes('foo'))` 算成題名 `'foo'`、
- *    `for (const test of a) test.startsWith('/')` 算成題名 `'/'`。兩種後果都真的發生：
- *    ・**假綠**：註解指「foo」指不到任何真題，卻因為那個假題名而 hits=1 放行。
- *    ・**誤殺**：真題本來獨特，多一個同字的假題名就把 hits 拉成 2。
- *    ⇒ 這正是我在 `it`／`describe` 那條修過的病，卻**留在題名這條路上**——同一支 PR 裡犯兩次。
+ * ⚠️ 今天不會擋到任何人：全樹實測 **2169 個直接 `test(…)`、0 個 `test.<member>(…)`**。
+ *    它約束的是以後怎麼寫——要用別的寫法，改的人得回來一起改這道閘。
  *
  * @param {any} c CallExpression 的 callee
+ * @returns {'direct' | 'unsupported' | null} null＝根本不是在定義題
  */
-function isTestDefinition(c) {
-  if (c?.type === 'Identifier') return c.name === 'test';
-  if (c?.type !== 'MemberExpression') return false;
-  if (c.object?.type !== 'Identifier' || c.object.name !== 'test') return false;
-  // ⚠️ **computed 也要認**（`test['skip'](…)`，Codex #470 r1）：只認 Identifier 屬性時，
-  //    那種寫法的題不進索引 ⇒ 歧義關鍵字少算一題而放行。字面字串的 computed 是確定的，認它安全；
-  //    變數 computed（`test[k](…)`）認不出來——那一族仍在射程外，由檔頭劃界說明。
-  if (c.property?.type === 'Identifier') return SUBTEST_MEMBERS.has(c.property.name);
-  if (c.computed && c.property?.type === 'Literal' && typeof c.property.value === 'string') {
-    return SUBTEST_MEMBERS.has(c.property.value);
+function classifyCallee(c) {
+  if (c?.type === 'Identifier') return c.name === 'test' ? 'direct' : null;
+  // `test.<任何東西>(…)`／`test[…](…)`：可能是 node:test 的子命令（會定義題），
+  // 也可能是某個叫 test 的區域變數在呼叫方法。本閘分不出來 ⇒ 一律報錯，由人決定。
+  if (c?.type === 'MemberExpression' && c.object?.type === 'Identifier' && c.object.name === 'test') {
+    return 'unsupported';
   }
-  return false;
+  return null;
 }
 
 /**
- * 從第一個參數取題名。
+ * 從第一個參數取題名。**取不出來回 `null`＝本閘看不懂**（呼叫端要當成錯誤，不可以略過）。
  *
- * ⚠️ **字串相加也要認**（`test('前' + '後', …)`，Codex #470 r1）：只認 Literal 與 TemplateLiteral 時，
- *    那種題不進索引 ⇒ 歧義關鍵字少算一題而放行。只攤得平**字面**相加；含變數的部分放哨兵。
+ * ⚠️ 字串相加要攤平（`test('前' + '後', …)`）：全樹有 5 處是跨行接續的正常排版。
+ *    含變數的部分放哨兵，語意與模板插值一致——關鍵字不可以跨過它。
  * @param {any} node 第一個參數的 AST
- * @returns {string | null} 題名，或 null（形狀不是字串）
+ * @returns {string | null}
  */
 function titleOf(node) {
   if (node?.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
@@ -145,7 +129,7 @@ function titleOf(node) {
   if (node?.type === 'BinaryExpression' && node.operator === '+') {
     const l = titleOf(node.left);
     const r = titleOf(node.right);
-    // 任一邊不是字串（例如變數）⇒ 該處放哨兵，關鍵字就不能跨過它，語意與插值一致
+    if (l === null && r === null) return null;   // 兩邊都看不懂＝整個看不懂
     return `${l ?? HOLE}${r ?? HOLE}`;
   }
   return null;
@@ -158,19 +142,23 @@ function titleOf(node) {
  *    訊息會把人帶去改註解，而真正的病是檔案語法壞了（本專案認過：靜靜跳過比沒有護欄更糟）。
  *
  * @param {string} source
- * @returns {{ titles: string[], comments: string, calleeNames: Set<string> }}
+ * @returns {{ titles: string[], comments: string[], calleeNames: Set<string>, unsupported: string[] }}
+ * ⚠️ `comments` 是**逐則**回傳、不串接：串成一條之後，第一則缺右引號、第二則有右引號時
+ *    會被配成一個「合法」引用（Codex #470 r2 實測）。合法引用不可跨註解、也不可跨行。
  */
 export function parseTestFile(source) {
   // ⚠️ 選項是 `comment: true`（結果掛在 `ast.comments`）。我第一版寫 `onComment: []`——
   //    espree 不認，註解陣列**永遠是空的**，於是每一個引用都「命中 0 題」⇒ 九題一起紅。
   //    幸好是紅的：這種寫錯若剛好讓結果變空又沒人斷言，就會變成靜靜放行。
-  const ast = espree.parse(source, { ecmaVersion: 2024, sourceType: 'module', comment: true });
+  const ast = espree.parse(source, { ecmaVersion: 2024, sourceType: 'module', comment: true, loc: true });
   /** @type {any[]} */
   const comments = ast.comments ?? [];
   /** @type {string[]} */
   const titles = [];
   /** @type {Set<string>} 出現過的「像是在定義題目」的呼叫名，給命名慣例那題用 */
   const calleeNames = new Set();
+  /** @type {string[]} 本閘看不懂的測試定義寫法——**報錯用，不可以只是略過** */
+  const unsupported = [];
   /** @param {any} node */
   (function walk(node) {
     if (!node || typeof node !== 'object') return;
@@ -181,9 +169,14 @@ export function parseTestFile(source) {
       //    被判成「用了 it()」＝**誤殺**（`test/hosted-auth.test.js` 實際踩到）。
       //    ⚠️ 劃界：`it.skip(…)` 這種寫法抓不到——射程換精確度，刻意的取捨。
       if (c?.type === 'Identifier' && (c.name === 'it' || c.name === 'describe')) calleeNames.add(c.name);
-      if (isTestDefinition(c)) {
+      const kind = classifyCallee(c);
+      if (kind === 'unsupported') {
+        unsupported.push(`第 ${node.loc?.start?.line ?? '?'} 行：test.${c.property?.name ?? '[computed]'}(…)`);
+      } else if (kind === 'direct') {
         const title = titleOf(node.arguments[0]);
-        if (title !== null) titles.push(title);
+        // ⚠️ 看不懂的題名**不可以靜靜跳過**：那一題會從索引消失，歧義關鍵字就少算一題而放行。
+        if (title === null) unsupported.push(`第 ${node.loc?.start?.line ?? '?'} 行：題名不是字串／模板／字面相加`);
+        else titles.push(title);
       }
     }
     for (const key of Object.keys(node)) {
@@ -192,7 +185,7 @@ export function parseTestFile(source) {
       else if (v && typeof v === 'object') walk(v);
     }
   })(ast);
-  return { titles, comments: comments.map((/** @type {any} */ x) => x.value).join('\n'), calleeNames };
+  return { titles, comments: comments.map((/** @type {any} */ x) => String(x.value)), calleeNames, unsupported };
 }
 
 /**
@@ -208,17 +201,22 @@ export function badTestRefs(source) {
   const { titles, comments } = parseTestFile(source);
   /** @type {{ keyword: string, hits: number }[]} */
   const bad = [];
-  for (const m of comments.matchAll(REF_RE())) {
-    const keyword = m[1];
-    const hits = titles.filter((t) => t.includes(keyword)).length;
-    if (hits !== 1) bad.push({ keyword, hits });
-  }
-  // ⚠️ 壞掉的記號用 `hits: -1` 回報（見 MARKER_OPEN_RE 的理由）：它跟「指到 0 題」不是同一件事
-  //    ——那個是指路指錯，這個是**指路根本沒被檢查**，訊息要分得開。
-  const wellFormed = new Set([...comments.matchAll(REF_RE())].map((m) => m.index));
-  for (const m of comments.matchAll(MARKER_OPEN_RE())) {
-    if (wellFormed.has(m.index)) continue;   // 同一個位置有合法引用＝沒壞
-    bad.push({ keyword: comments.slice(m.index, m.index + MARKER.length + 13).split('\n')[0], hits: -1 });
+  for (const comment of comments) {
+    for (const m of comment.matchAll(REF_RE())) {
+      const keyword = m[1];
+      // ⚠️ 純空白的關鍵字要當壞掉，不可以當「獨特片段」：一個空白剛好命中唯一題名就放行了。
+      if (keyword.trim() === '') { bad.push({ keyword: `${MARKER}「${keyword}」`, hits: -1 }); continue; }
+      const hits = titles.filter((t) => t.includes(keyword)).length;
+      if (hits !== 1) bad.push({ keyword, hits });
+    }
+    // ⚠️ 壞掉的記號用 `hits: -1` 回報（見 MARKER_OPEN_RE 的理由）：它跟「指到 0 題」不是同一件事
+    //    ——那個是指路指錯，這個是**指路根本沒被檢查**，訊息要分得開。
+    // ⚠️ 空白關鍵字上面已經報過一次，這裡要把它算進 wellFormed，否則同一處會報兩遍。
+    const wellFormed = new Set([...comment.matchAll(REF_RE())].map((m) => m.index));
+    for (const m of comment.matchAll(MARKER_OPEN_RE())) {
+      if (wellFormed.has(m.index)) continue;   // 同一個位置有合法引用＝沒壞
+      bad.push({ keyword: comment.slice(m.index, m.index + MARKER.length + 13).split('\n')[0], hits: -1 });
+    }
   }
   return bad;
 }
@@ -249,6 +247,62 @@ export function firstControl(text) {
     if (isControl && !ALLOWED_CONTROL.has(code)) return i;
   }
   return -1;
+}
+
+/**
+ * 掃一組來源，回報「指路指不到東西」的問題。**純函式、可注入**。
+ *
+ * ⚠️ 為什麼要抽出來（Codex #470 r2 實測的三顆存活突變）：掃描邏輯原本寫在全樹那一題裡，
+ *    於是把 `for (… of badTestRefs(src))` 改成 `for (… of [])`——**接線整個斷掉，20 題照樣綠**。
+ *    純函式有誘餌不等於接線有人守。抽出來之後，fixture 餵一支「真的有壞引用」的合成檔，
+ *    正式全樹題再走同一支函式，拔掉接線就會紅。
+ *
+ * @param {{ name: string, source: string }[]} sources
+ * @returns {string[]} 每一項是一行可讀的問題描述；空陣列＝乾淨
+ */
+export function scanRefs(sources) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const { name, source } of sources) {
+    for (const { keyword, hits } of badTestRefs(source)) {
+      problems.push(hits === -1
+        ? `  ${name}：「${keyword}」是壞掉的記號（沒有合法收尾／關鍵字是空白）⇒ 這條指路根本沒被檢查`
+        : `  ${name}：「${keyword}」在同檔命中 ${hits} 題（要恰好 1）`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * 掃一組來源，回報「本閘看不懂的測試定義寫法」。**純函式、可注入**（理由同 `scanRefs`）。
+ * @param {{ name: string, source: string }[]} sources
+ * @returns {string[]}
+ */
+export function scanUnsupported(sources) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const { name, source } of sources) {
+    for (const u of parseTestFile(source).unsupported) problems.push(`  ${name} ${u}`);
+  }
+  return problems;
+}
+
+/**
+ * 掃一組來源，回報控制字元。**純函式、可注入**（理由同 `scanRefs`）。
+ * @param {{ name: string, source: string }[]} sources
+ * @returns {string[]}
+ */
+export function scanControl(sources) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const { name, source } of sources) {
+    const at = firstControl(source);
+    if (at !== -1) {
+      const line = source.slice(0, at).split('\n').length;
+      problems.push(`  ${name}:${line} 有控制字元 U+${source.charCodeAt(at).toString(16).padStart(4, '0').toUpperCase()}`);
+    }
+  }
+  return problems;
 }
 
 /** 本檔掃的考題檔清單（`test/` 第一層的 `*.test.js`）。 */
@@ -331,20 +385,34 @@ test('解析不了的檔案要吵著紅，不可以靜靜跳過', () => {
 });
 
 // ── 接線題：真的掃全樹（純函式對了不代表有人在用它）──────────────────────
+test('⭐ 三支掃描函式都要真的掃得到東西（餵合成檔，不靠全樹現況）', () => {
+  // ⚠️ Codex #470 r2 實測：掃描邏輯原本寫在全樹那一題裡，把它換成空陣列、
+  //    或把 firstControl 換成永遠 -1，**20 題照樣全綠**——接線斷了沒有人守。
+  //    ⇒ 抽成純函式之後，這裡餵「真的有問題」的合成檔，拔掉接線就會紅。
+  assert.deepEqual(
+    scanRefs([{ name: 'fake.js', source: `test('真題', () => {});\n// ${MARKER}「不存在的題」` }]).length,
+    1, 'scanRefs 掃不到壞引用 ⇒ 全樹那一題等於沒接線');
+  assert.deepEqual(
+    scanUnsupported([{ name: 'fake.js', source: "test.skip('x', () => {});" }]).length,
+    1, 'scanUnsupported 掃不到看不懂的寫法 ⇒ 關門那一題等於沒接線');
+
+  // ⚠️ 控制字元的誘餌**刻意放在 8 KiB 之後**：git 的二進位判定只取樣前段，而 #463 那顆真的 NUL
+  //    位在第 86,342 個位元組。只掃前綴的實作在真實事故上會完全漏掉——這個誘餌就是為它造的。
+  const far = `${'x'.repeat(9000)}${String.fromCharCode(0)}`;
+  assert.equal(scanControl([{ name: 'fake.js', source: far }]).length, 1,
+    'scanControl 漏掉 8 KiB 之後的控制字元 ⇒ 本支要防的那顆真 NUL 正好在那個位置之後');
+  assert.deepEqual(scanControl([{ name: 'ok.js', source: 'const a = 1;\n' }]), [],
+    '乾淨的來源被誤報＝整批誤殺');
+});
+
 test('⭐ 全部考題檔：註解裡帶記號的引用都要恰好命中一題', () => {
   const files = testFiles();
   assert.ok(files.length > 50, `只列到 ${files.length} 支考題檔，列舉大概壞了`);
 
-  let refCount = 0;
-  /** @type {string[]} */
-  const problems = [];
-  for (const f of files) {
-    const src = readFileSync(join(ROOT, 'test', f), 'utf8');
-    refCount += [...parseTestFile(src).comments.matchAll(REF_RE())].length;
-    for (const { keyword, hits } of badTestRefs(src)) {
-      problems.push(`  test/${f}：「${keyword}」在同檔命中 ${hits} 題（要恰好 1）`);
-    }
-  }
+  const sources = files.map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') }));
+  const refCount = sources.reduce((n, { source }) =>
+    n + parseTestFile(source).comments.reduce((m, c) => m + [...c.matchAll(REF_RE())].length, 0), 0);
+  const problems = scanRefs(sources);
   // ⚠️ 這條反面自檢**只證明「掃到了東西」**，不證明沒有部分失明——後者由上面那條逐字元的
   //    fixture 守（數量下限擋不住「少解析到一則」）。這裡刻意不寫死期望數字，那個數字會漂。
   assert.ok(refCount > 0,
@@ -355,57 +423,38 @@ test('⭐ 全部考題檔：註解裡帶記號的引用都要恰好命中一題'
     + '（AGENTS.md 鐵則 10：不寫會漂的序數，點名 file:line 或題名關鍵字。）');
 });
 
-test('⭐ test.xxx(字串) 不可以一律當成題名（Grok 預審抓到：同一個病我在 it 那條修了、這條沒修）', () => {
-  // ⚠️ 兩個後果都是實測出來的，不是推論。
-  assert.deepEqual(parseTestFile("test.skip('真子題', () => {});").titles, ['真子題'],
-    'node:test 的 test.skip 是真的在定義一題，抽不到會讓指向它的引用假紅');
-  assert.deepEqual(parseTestFile("const r = a.filter((test) => test.includes('foo'));").titles, [],
-    '`test` 是參數名時，`test.includes(\'foo\')` 被當成題名 \'foo\' ⇒ 註解指「foo」會假綠放行');
-  assert.deepEqual(parseTestFile("for (const test of a) if (test.startsWith('/')) b.push(test);").titles, [],
-    '同上：迴圈變數叫 test 是完全正常的寫法');
-  assert.deepEqual(parseTestFile("test.beforeEach('setup', fn);").titles, [],
-    '不是定義題目的子命令不該算（清單＝SUBTEST_MEMBERS）');
+test('⭐ 看不懂的測試定義寫法要當場報錯，不可以從索引消失（William 2026-08-16 裁示）', () => {
+  // ⚠️ 這一題是本閘的**關門**。理由寫在 classifyCallee 上方：列舉永遠追不上外部 API
+  //    ——Codex #470 r2 實測 Node 26 的 `test` 上多了 `expectFailure`，而那正是 CI 的版本。
+  //    漏掉的後果不是吵紅，是**歧義關鍵字少算一題而放行**（假綠）。
+  const un = (/** @type {string} */ src) => parseTestFile(src).unsupported.length;
 
-  // 反面：真的假綠與誤殺各演一次
-  const M = MARKER;
-  assert.deepEqual(badTestRefs(`const r = a.filter((test) => test.includes('foo'));\n// ${M}「foo」`),
-    [{ keyword: 'foo', hits: 0 }], '假題名讓「指不到任何真題」的引用放行＝假綠');
-  assert.deepEqual(badTestRefs(`test('獨特 foo', () => {});\nconst r = a.filter((test) => test.includes('獨特 foo'));\n// ${M}「獨特 foo」`),
-    [], '真題被同字的假題名擠成 2 題＝誤殺');
+  // ① 任何 `test.<成員>(…)` 都看不懂 ⇒ 報錯（不管它是 node:test 的子命令，還是區域變數的方法）
+  for (const member of ['skip', 'only', 'todo', 'it', 'describe', 'suite', 'expectFailure', 'includes']) {
+    assert.equal(un(`test.${member}('題', () => {});`), 1,
+      `test.${member}(…) 沒被回報成「看不懂」⇒ 它會從索引消失，歧義關鍵字就少算一題而放行`);
+  }
+  assert.equal(un("test['sk' + 'ip']('題', () => {});"), 1, 'computed 的成員呼叫沒被回報');
+  assert.equal(un('test[`skip`](\'題\', () => {});'), 1, '模板字串 computed 沒被回報');
+
+  // ② 看不懂的**題名形狀**也要報錯
+  assert.equal(un('test(someVariable, () => {});'), 1, '題名是變數卻沒被回報');
+  assert.equal(un('test(String.raw`raw`, () => {});'), 1, 'String.raw 題名沒被回報');
+  assert.equal(un('test(123, () => {});'), 1, '題名不是字串卻沒被回報');
+
+  // ③ 反面：標準寫法一個都不可以被誤報（誤殺＝整批紅）
+  assert.equal(un("test('一般字串', () => {});"), 0, '最標準的寫法被誤報了');
+  assert.equal(un('test(`模板 ${x} 題名`, () => {});'), 0, '模板題名被誤報了');
+  assert.equal(un("test('跨行' + '接續', () => {});"), 0, '字面相加被誤報了（全樹有 5 處是這種排版）');
+  assert.equal(un("const r = a.filter((x) => x.includes('foo'));"), 0, '完全無關的程式被誤報了');
 });
 
-test('⭐ 漏列子命令會製造假綠：歧義關鍵字必須算到 test.skip 那一題', () => {
-  // ⚠️ 這一題是 `SUBTEST_MEMBERS` 的**看門狗**：從清單裡拿掉 `skip`（或 only／todo），
-  //    下面這個歧義形狀就會從 hits=2 掉成 hits=1 而**靜靜放行**——那不是吵紅，是假綠。
-  // ⚠️ **清單裡的每一個都要各釘一次**：我上一版只用 `skip` 造歧義，於是拿掉 `only` 或 `todo`
-  //    這一題照樣綠（實測）——看門狗只看著三分之一的門。
-  for (const member of ['skip', 'only', 'todo']) {
-    const src = `test('設定 A 的行為', () => {});\ntest.${member}('設定 B 的行為', () => {});\n// ${MARKER}「設定」`;
-    assert.deepEqual(badTestRefs(src), [{ keyword: '設定', hits: 2 }],
-      `\`test.${member}\` 的題沒進索引 ⇒ 本該因「關鍵字不夠獨特」而紅的引用會少算一題、被放行。\n`
-      + '（檢查 SUBTEST_MEMBERS 是不是漏了 node:test 的某個子命令。）');
-  }
-});
-
-test('⭐ 題名索引不可以漏掉 node:test 真的會定義題的寫法（Codex #470 r1）', () => {
-  // ⚠️ 清單是**實測**出來的：`typeof test[k]` 對 test／it／describe／suite／skip／only／todo
-  //    全部回 'function'。漏任何一種的後果不是吵紅，是**歧義關鍵字少算一題而放行**（假綠）。
-  for (const member of ['test', 'it', 'describe', 'suite', 'skip', 'only', 'todo']) {
-    assert.deepEqual(parseTestFile(`test.${member}('題 X', () => {});`).titles, ['題 X'],
-      `test.${member}(…) 定義得出一題，卻沒進索引 ⇒ 歧義關鍵字會少算它而放行`);
-    const amb = `test('共同 A', () => {});\ntest.${member}('共同 B', () => {});\n// ${MARKER}「共同」`;
-    assert.deepEqual(badTestRefs(amb), [{ keyword: '共同', hits: 2 }],
-      `漏算 test.${member} 的題 ⇒ 本該因「不夠獨特」而紅的引用被放行`);
-  }
-  // 字串相加也是真的題名
-  assert.deepEqual(parseTestFile("test('前' + '後', () => {});").titles, ['前後'],
-    '字串相加的題名沒進索引 ⇒ 同上');
-  // computed 但字面字串的 modifier
-  assert.deepEqual(parseTestFile("test['skip']('題 Y', () => {});").titles, ['題 Y'],
-    "test['skip'](…) 沒進索引 ⇒ 同上");
-  // 反面：含變數的相加只留得住字面片段，關鍵字不可跨過它（與插值同語意）
-  assert.deepEqual(badTestRefs(`test('前' + x + '後', () => {});\n// ${MARKER}「前後」`),
-    [{ keyword: '前後', hits: 0 }], '關鍵字跨過變數卻被判命中＝碰運氣，不是指得到');
+test('⭐ 全部考題檔：不可以有本閘看不懂的測試定義寫法', () => {
+  const problems = scanUnsupported(testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') })));
+  assert.deepEqual(problems, [],
+    `這些寫法本閘看不懂，它們的題不會進索引 ⇒ 指向它們的引用會被誤判、歧義關鍵字會少算：\n${problems.join('\n')}\n`
+    + '⇒ 請改用標準寫法 `test(\'字串\'／模板／字面相加, fn)`；真要用別的寫法，'
+    + '請連同 classifyCallee()／titleOf() 一起改，再更新本題。');
 });
 
 test('⭐ 壞掉的記號要吵，不可以靜靜忽略（Codex #470 r1）', () => {
@@ -416,6 +465,21 @@ test('⭐ 壞掉的記號要吵，不可以靜靜忽略（Codex #470 r1）', () 
   assert.equal(broken.length, 1, '缺右引號的記號被靜靜忽略了');
   assert.equal(broken[0].hits, -1, '壞掉的記號要用 -1 跟「指到 0 題」分開（兩者的病因不同）');
   assert.equal(badTestRefs(`test('x', () => {});\n// ${MARKER}「」`).length, 1, '空關鍵字被靜靜忽略了');
+
+  // ⚠️ 以下三種是 Codex #470 r2 實測仍會放行的形狀，逐一釘住。
+  const one = (/** @type {string} */ src) => badTestRefs(src).filter((b) => b.hits === -1).length;
+  assert.equal(one(`test('唯一', () => {});\n// ${MARKER} 「唯一」`), 1,
+    '記號與左引號之間多一個空白，整條宣告就被當作不存在（靜靜忽略）');
+  assert.equal(one(`test('a b', () => {});\n// ${MARKER}「 」`), 1,
+    '純空白的關鍵字剛好命中唯一題名 ⇒ 被當成「合法的獨特片段」而放行');
+  // ⚠️ 兩則**分開的**註解：第一則開了引號沒收、第二則才出現右引號。
+  //    註解若被串成一條，這兩則會被配成一個「合法」引用而放行（Codex #470 r2 實測）。
+  assert.equal(one(`test('x', () => {});\n// ${MARKER}「foo\n// bar」`), 1,
+    '合法引用跨了註解 ⇒ 兩則不相干的註解會被配成一個「合法」引用');
+  // ⚠️ **區塊註解**本身就含換行，是「跨行配對」唯一觀察得到的形狀：
+  //    允許關鍵字含換行的話，下面這則會被配成一個橫跨兩行的「合法」引用而放行。
+  assert.equal(one(`test('x', () => {});\n/* ${MARKER}「foo\n   bar」 */`), 1,
+    '合法引用跨了行 ⇒ 區塊註解裡兩段不相干的文字會被配成一個「合法」引用');
 
   // ⚠️ 反面（誤殺防線）：把這個詞當**名詞**提到（前後加引號）是正常敘述，不是壞掉的指路。
   //    我第一版的判準是「後面不是合法引用就算壞」，當場誤殺三支檔案。
@@ -495,16 +559,7 @@ test('⭐ 考題檔不可以含控制字元（含了 git 就當它是二進位�
   //    那支「防止註解指錯地方」的閘自己有兩輪是沒有人審得了的。
   //    ⇒ 一個看不見的位元組就能讓一份檔案退出審查制度，這值得一道閘。
   //    ⚠️ 射程：只管 `test/` 第一層的考題檔（本閘掃的那一族）。別處由別人管。
-  /** @type {string[]} */
-  const dirty = [];
-  for (const f of testFiles()) {
-    const buf = readFileSync(join(ROOT, 'test', f), 'utf8');
-    const at = firstControl(buf);
-    if (at !== -1) {
-      const line = buf.slice(0, at).split('\n').length;
-      dirty.push(`  test/${f}:${line} 有控制字元 U+${buf.charCodeAt(at).toString(16).padStart(4, '0').toUpperCase()}`);
-    }
-  }
+  const dirty = scanControl(testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') })));
   assert.deepEqual(dirty, [],
     `這些考題檔含控制字元：\n${dirty.join('\n')}\n`
     + '⇒ git 會把它們當成二進位檔，GitHub 上看不到 diff、審查者等於審不到。\n'
