@@ -71,9 +71,8 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     accounts: [{ masked: '900200****1234', suffix: '1234', balance: 5500, currency: 'TWD', label: '活期', note: '' }],
     transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: '2026-07-01', summary: '超商繳費', direction: 'out', amount: 100, balance: 4900, note: '水電' }],
   });
-  assert.deepEqual(aiAnswersAgree(base(), base()), { agree: true, diffs: [] });
+  assert.deepEqual(aiAnswersAgree(base(), base()), { agree: true, diffs: [], textVariance: [] });
   for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
-    [(p) => { p.bank = '別家'; }, '機構名'],
     [(p) => { p.referenceDate = null; }, '現值參考日'],
     [(p) => { p.accountCurrency['900200****1234'] = 'USD'; }, '帳戶幣別表'],
     [(p) => { p.accounts[0].balance = 9; }, '帳戶餘額組成'],
@@ -81,13 +80,10 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     [(p) => { p.transactions[0].direction = 'in'; }, '第 1 筆交易的方向'],
     [(p) => { p.transactions[0].date = '2026-07-09'; }, '第 1 筆交易的日期'],
     [(p) => { p.transactions[0].balance = 1; }, '第 1 筆交易的餘額'],
-    [(p) => { p.transactions[0].acctMasked = '900200****9999'; }, '第 1 筆交易的帳號'],
     [(p) => { p.transactions[0].acctSuffix = '9999'; }, '第 1 筆交易的帳號末碼'],
-    [(p) => { p.accounts[0].masked = '900200****9999'; }, '帳戶餘額組成'],
     [(p) => { p.accounts[0].suffix = '9999'; }, '帳戶餘額組成'],
     [(p) => { p.accounts[0].currency = 'USD'; }, '帳戶餘額組成'],
     [(p) => { p.transactions[0].summary = '超商繳費A'; }, '第 1 筆交易的摘要'],
-    [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
     [(p) => { p.transactions.pop(); }, '交易筆數'],
   ])) {
     const b = base(); patch(b);
@@ -96,16 +92,37 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     assert.ok(r.diffs.includes(label), `diffs 要指認「${label}」（實得 ${JSON.stringify(r.diffs)}）`);
     assert.ok(!r.diffs.some((d) => /999|4900|5500|900200/.test(d)), 'diffs 絕不帶數值（機密紀律）');
   }
+  // P2-4b（William 2026-08-17 裁示「移出機構名＋備註」＝真帳單第一課）：寫法差異＝建議面、不觸發
+  for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
+    [(p) => { p.bank = '台新國際商業銀行'; }, '機構名'],
+    [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
+    [(p) => { p.transactions[0].acctMasked = '9002-00****1234'; }, '帳號印法'],
+    [(p) => { p.accounts[0].masked = '9002-00****1234'; p.accountCurrency = { '9002-00****1234': 'TWD' }; }, '帳號印法'],
+  ])) {
+    const b = base(); patch(b);
+    const r = aiAnswersAgree(base(), b);
+    assert.equal(r.agree, true, `★${label} 寫法差異不觸發仲裁（W 裁示；重複風險由疑似重複提醒層接）`);
+    assert.ok(r.textVariance.includes(label), `textVariance 要誠實列出「${label}」（實得 ${JSON.stringify(r.textVariance)}）`);
+    assert.ok(!r.textVariance.some((d) => /999|4900|5500|900200|1234/.test(d)), '建議面同樣不帶值');
+  }
 });
 
 test('比對器｜文字欄空白不敏感（摘要/備註）、label/note 刻意不比、順序嚴格', () => {
   const a = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [], transactions: [{ acctSuffix: '1', acctMasked: 'm', date: 'd', summary: '超商 繳費', direction: 'out', amount: 1, balance: null, note: '水 電' }] });
   const b = structuredClone(a); b.transactions[0].summary = '超商繳費'; b.transactions[0].note = '水電';
-  assert.equal(aiAnswersAgree(a, b).agree, true, '★只差格間空白＝一致（兩個模型取空白本來就不同）');
+  const rws = aiAnswersAgree(a, b);
+  assert.equal(rws.agree, true, '★只差格間空白＝一致（兩個模型取空白本來就不同）');
+  assert.deepEqual(rws.textVariance, [], '★只差空白連「建議面」都不列（不做狼來了）');
   const g = structuredClone(a); g.bank = '第一 銀行'; const h = structuredClone(a); h.bank = '第一銀行';
-  assert.equal(aiAnswersAgree(g, h).agree, true, '★r1#1：機構名只差排版空白＝一致（嚴格等值＝白花仲裁甚至誤判三讀不同）');
+  const rb = aiAnswersAgree(g, h);
+  assert.equal(rb.agree, true, '★r1#1：機構名只差排版空白＝一致');
+  assert.deepEqual(rb.textVariance, [], '空白差異連建議面都不列');
+  // P2-4b 取捨誠實記載：機構名**整欄**移出觸發（W 2026-08-17 裁示）——連「真的不同家」也只列建議面、
+  // 採 Opus 版。代價寫進契約：兩模型對同一份帳單讀出不同機構＝其中一個誤讀，靠徽章建議句給使用者看。
   const g2 = structuredClone(a); g2.bank = '第一銀行'; const h2 = structuredClone(a); h2.bank = '第二銀行';
-  assert.equal(aiAnswersAgree(g2, h2).agree, false, '真的不同家照樣紅');
+  const rb2 = aiAnswersAgree(g2, h2);
+  assert.equal(rb2.agree, true, '★裁示後不同寫法（含不同家）都不觸發');
+  assert.ok(rb2.textVariance.includes('機構名'), '但建議面必須誠實列出');
   const c = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [{ masked: 'm', suffix: '1', balance: 5, currency: 'TWD', label: '活儲', note: 'A' }], transactions: [] });
   const d = structuredClone(c); d.accounts[0].label = '活期儲蓄'; d.accounts[0].note = 'B';
   assert.equal(aiAnswersAgree(c, d).agree, true, '★帳戶 label/note 措辭不同＝不比（不進帳本金額與去重鍵）');
@@ -140,6 +157,37 @@ test('比對器｜形狀同步（Grok#1 機械化排除）：normalize 輸出必
   assert.ok(r.diffs.includes('帳戶幣別表'));
 });
 
+test('碰撞退嚴格（Grok G1/G2/G3）｜同末碼兩帳戶＝退回含 masked 的嚴格鍵：幣別/餘額歸屬對調要紅、逐筆歸屬也回 hard', () => {
+  const two = (/** @type {any} */ over = {}) => /** @type {any} */ ({
+    bank: 'x', referenceDate: null,
+    accountCurrency: { '900200****1234': 'TWD', '900211****1234': 'USD' },
+    accounts: [
+      { masked: '900200****1234', suffix: '1234', balance: 1000, currency: 'TWD', label: '', note: '' },
+      { masked: '900211****1234', suffix: '1234', balance: 2000, currency: 'USD', label: '', note: '' },
+    ],
+    transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: 'd', summary: 's', direction: 'out', amount: 1, balance: null, note: '' }],
+    ...over,
+  });
+  assert.equal(aiAnswersAgree(two(), two()).agree, true, '碰撞但兩讀一致＝照樣綠');
+  // 幣別歸屬對調（末碼 multiset 不變）＝必須紅
+  const swapCur = two({ accountCurrency: { '900200****1234': 'USD', '900211****1234': 'TWD' } });
+  assert.ok(aiAnswersAgree(two(), swapCur).diffs.includes('帳戶幣別表'), '★同末碼幣別對調＝hard（只比末碼會全綠——Grok 實指的塌縮）');
+  // 餘額歸屬對調＝必須紅
+  const swapBal = two();
+  swapBal.accounts[0].balance = 2000; swapBal.accounts[1].balance = 1000;
+  swapBal.accounts[0].currency = 'TWD'; swapBal.accounts[1].currency = 'USD';
+  assert.ok(aiAnswersAgree(two(), swapBal).diffs.includes('帳戶餘額組成'), '★同末碼餘額對調＝hard');
+  // 逐筆歸屬掛錯實體帳＝必須紅（碰撞時 masked 回 hard）
+  const swapTx = two();
+  swapTx.transactions[0].acctMasked = '900211****1234';
+  assert.ok(aiAnswersAgree(two(), swapTx).diffs.some((d) => d.includes('帳號')), '★碰撞時逐筆 masked 回 hard');
+  // 無碰撞的常見路不受影響：單帳戶印法差異仍只是建議面
+  const one = (/** @type {string} */ m) => /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: { [m]: 'TWD' }, accounts: [{ masked: m, suffix: '1234', balance: 5, currency: 'TWD', label: '', note: '' }], transactions: [] });
+  const r = aiAnswersAgree(one('900200****1234'), one('9002-00****1234'));
+  assert.equal(r.agree, true, '★無碰撞＝印法差異照裁示不觸發');
+  assert.ok(r.textVariance.includes('帳號印法'));
+});
+
 // ---- 開關判準 ----
 test('開關｜dualReadWanted：只有明確 false 才關——讀不到/壞型別＝開（fail 往多驗證）', () => {
   assert.equal(dualReadWanted({ aiDualRead: false }), false);
@@ -160,6 +208,18 @@ test('雙讀｜兩讀一致＝採 Opus 版（label 措辭不同也算一致、�
   assert.equal(r.aiModel, O, '★採用 escalation（Opus）那份');
   assert.equal(/** @type {any} */ (r).parsed.accounts[0].label, 'Opus 措辭', '★未比對欄也是 Opus 版（不留誰先回來誰贏）');
   assert.deepEqual([...spy.calls].sort(), [O, S].sort(), '★恰 2 發、無仲裁');
+});
+
+test('仲裁 tv 語意（Grok G10）｜✏️ 列的是兩份**初讀**的寫法差、不是勝者對仲裁者', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const bad = answerOf({
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [{ ...good.transactions[0], note: 'Sonnet 版備註' }, { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.includes('第 1 筆交易的備註'), '★初讀兩份在備註上的寫法差要透出（勝者 vs Fable 是同一份＝那樣算恒空）');
 });
 
 test('仲裁｜兩讀金額不一致→Fable 與其中一份全欄一致＝採用那份、恰 3 發、dualRead=arbitrated', async () => {
@@ -308,7 +368,80 @@ test('W6｜四發合成題：仲裁 preview（3 發解析）→兌票 apply（�
   assert.equal(calls.gen, 1, '★恰 1 發生成——合計 4 發＝成本句的「至多 4 發」真的有題撐');
 });
 
+test('r3#1｜三碼末碼碰撞走**正式雙讀路**：兩讀把交易整批掛到對方帳戶＝不得 agree（slice(-4) 另寫＝漏偵測的形）', async () => {
+  const db = await seedDb();
+  const M3a = '900200****363', M3b = '900300****363';
+  const lines3 = () => [
+    L(10, [[40, '一銀活期帳戶明細']]),
+    L(30, [[40, M3a], [200, 'TWD']]),          // 概要餘額空白＝只進幣別表、accounts 為空（r3#1 情境）
+    L(35, [[40, M3b], [200, 'TWD']]),
+    L(50, [[40, '2026/07/01'], [140, '超商繳費'], [240, '100'], [320, '4,900']]),
+    L(55, [[40, '2026/07/02'], [140, '薪資入帳'], [280, '600'], [320, '5,500']]),
+    L(60, [[40, '2026/07/03'], [140, '雜費'], [240, '50'], [320, '950']]),
+    L(65, [[40, '2026/07/04'], [140, '利息'], [280, '20'], [320, '970']]),
+  ];
+  const t3 = (/** @type {string} */ m, /** @type {any} */ o) => ({ acctMasked: m, note: '', ...o });
+  const ans = (/** @type {boolean} */ swap) => {
+    const a = swap ? M3b : M3a, b = swap ? M3a : M3b;
+    return {
+      bank: '第一銀行', referenceDate: '2026-07-31',
+      accountCurrencies: [{ masked: M3a, currency: 'TWD' }, { masked: M3b, currency: 'TWD' }],
+      totals: { txCount: null, totalOut: null, totalIn: null },
+      accounts: [],
+      transactions: [
+        t3(a, { date: '2026-07-01', direction: 'out', amount: 100, balance: 4900, summary: '超商繳費' }),
+        t3(a, { date: '2026-07-02', direction: 'in', amount: 600, balance: 5500, summary: '薪資入帳' }),
+        t3(b, { date: '2026-07-03', direction: 'out', amount: 50, balance: 950, summary: '雜費' }),
+        t3(b, { date: '2026-07-04', direction: 'in', amount: 20, balance: 970, summary: '利息' }),
+      ],
+    };
+  };
+  const spy = { calls: /** @type {string[]} */ ([]) };
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: ans(false), [O]: ans(true), [F]: ans(false) }, spy), extract: async () => lines3() });
+  assert.notEqual(r.dualRead, 'agree', '★整批歸屬對調（末碼同為 363、鏈各自自洽、閘全綠）不得雙讀一致');
+  assert.equal(r.dualRead, 'arbitrated', 'Fable 與正確版一致＝仲裁收回');
+  assert.equal(spy.calls.length, 3, '真的走了仲裁');
+});
+
 // ---- 前端純函式 ----
+test('r1#1｜Sonnet 勝出的仲裁：✏️ 句真的畫出且顯示 Sonnet、不得寫死 Opus；仲裁句只宣稱錢欄位一致', async () => {
+  const db = await seedDb();
+  const good = answerOf();   // Sonnet 讀對
+  const bad = answerOf({     // Opus 讀出另一條自洽鏈（hard 不同）＋備註措辭不同（讓初讀 tv 非空＝✏️ 句真的畫）
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [{ ...good.transactions[0], note: 'Opus 版備註' }, { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 第三種備註' }, good.transactions[1]] });   // 錢欄同 Sonnet、備註第三種
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: bad, [F]: fable }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  assert.equal(r.aiModel, S, '★Fable 的錢欄位與 Sonnet 版一致＝採 Sonnet');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.includes('第 1 筆交易的備註'), '初讀 tv 非空（r2#1：空 tv＝✏️ 句沒畫＝斷言全是空包）');
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: r.aiModel, dualRead: r.dualRead, dualReadTextVariance: /** @type {any} */ (r).dualReadTextVariance });
+  assert.match(html, /✏️/, '★✏️ 句真的畫出');
+  assert.match(html, /已採用.*Sonnet/, '★顯示實際中選＝Sonnet（動態模型名）');
+  assert.doesNotMatch(html, /已採用.*Opus/, '★不得謊稱採 Opus（r1#1 對抗重現的形）');
+  assert.match(html, /會影響錢的欄位.*完全一致/, '★仲裁句只宣稱錢欄位一致（文字欄可能仍不同）');
+});
+
+test('r2#1b｜attested＋文字差：一讀無效、有效讀與 Fable 錢欄一致但備註不同——不得宣稱整份完全一致、✏️ 動態名', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 備註' }, good.transactions[1]] });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: badAnswer, [O]: good, [F]: fable }), extract: extractA });
+  assert.equal(r.dualRead, 'attested');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.length, '單讀路的 tv＝勝者對仲裁者（唯一可比的兩份）');
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: r.aiModel, dualRead: r.dualRead, dualReadTextVariance: /** @type {any} */ (r).dualReadTextVariance });
+  assert.match(html, /會影響錢的欄位.*完全一致/, '★attested 句也只宣稱錢欄位（整份完全一致＝謊：備註是第三種寫法）');
+  assert.doesNotMatch(html, /讀後與這一份完全一致——/, '★舊的整份宣稱句不得復發');
+  assert.match(html, /✏️/, '文字差要誠實畫出');
+});
+
+test('r1#2｜busy 文案＝未來式：零 AI 呼叫的路（HOSTED/未設鑰匙）不得宣稱「AI 讀取中」（#455 假進度同族）', async () => {
+  const { AI_CONSENT_BUSY_LABEL } = await import('../public/modules/ai-consent.js');
+  assert.doesNotMatch(AI_CONSENT_BUSY_LABEL, /讀取中|正在讀|核對中/, '★發請求前不得宣稱 AI 動作進行式');
+  assert.match(AI_CONSENT_BUSY_LABEL, /送出/, '講的是「送出」這個當下真的在發生的事');
+});
+
 test('徽章｜dualRead=agree/arbitrated 各有一句、無 dualRead 不畫；句子只講事實不加保證', () => {
   const base = { engine: 'ai', aiModel: O };
   assert.match(aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), /雙讀一致/);
@@ -316,6 +449,12 @@ test('徽章｜dualRead=agree/arbitrated 各有一句、無 dualRead 不畫；�
   assert.match(aiPreviewBadgeHtml({ ...base, dualRead: 'attested' }), /其中一讀沒讀出合法答案/, '★W3：一讀掛掉不得謊稱「前兩讀不一致」');
   const plain = aiPreviewBadgeHtml(base);
   assert.doesNotMatch(plain, /雙讀一致|三讀仲裁/, '單讀＝不畫雙讀句');
+  // P2-4b：建議面要誠實畫出（列欄位不列值）；沒有建議面＝不畫（不做狼來了）
+  const withTv = aiPreviewBadgeHtml({ ...base, dualRead: 'agree', dualReadTextVariance: ['機構名', '第 12 筆交易的備註'] });
+  assert.match(withTv, /✏️/, '★文字欄寫法不同要有 ✏️ 句');
+  assert.match(withTv, /機構名、第 12 筆交易的備註/, '列欄位');
+  assert.match(withTv, /已採用/, '講清楚採哪份（模型名動態、r1#1）');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), /✏️/, '沒有建議面＝不畫');
   for (const h of [aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), aiPreviewBadgeHtml({ ...base, dualRead: 'arbitrated' }), aiPreviewBadgeHtml({ ...base, dualRead: 'attested' })]) {
     assert.doesNotMatch(h, /保證正確|一定對|免驗算/, '徽章不得加保證');
   }
