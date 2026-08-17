@@ -1192,3 +1192,56 @@ test('⭐ 豁免｜引文只寫壞行的前綴 → 不生效（逐字＝整句�
     [cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL), c(prefixQuote)], HEAD, 'Codex');
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `前綴引文必須維持阻擋：${problems.join('｜')}`);
 });
+
+// ── #477 r1 回饋：豁免資格三重收緊＋反引號切碎指紋＋文件階梯釘題 ──────────────
+
+test('⭐ 豁免資格｜四欄可讀的壞標頭（結論寫錯字型）不可豁免＝必須走同身分重述', () => {
+  // r1 High① 攻擊劇本：Codex r6 打錯結論（四欄可讀），Claude 用豁免宣告替它洗掉＝繞過同身分紀律。
+  const readable = '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改';
+  const wash = `${head('Claude', '桌面', HEAD, 1, '通過')}\n`
+    + `豁免留言 5310870038｜William 特准 2026-08-17｜原第一行：「${readable}」`;
+  const { problems } = verdictProblems(
+    [cu(`${readable}\n\n略。`, UNFIX_URL), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(problems.some((p) => /不符合豁免資格/.test(p)), `要講清楚為什麼沒生效：${problems.join('｜')}`);
+});
+
+test('⭐ 豁免資格｜缺 sha 型不可豁免＝必須走缺 sha 例外', () => {
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870038｜William 特准 2026-08-17｜原第一行：「${NOSHA_FIRST}」`;
+  const { problems } = verdictProblems(
+    [cu(NOSHA_MAL, UNFIX_URL), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(problems.some((p) => /不符合豁免資格/.test(p)), problems.join('｜'));
+});
+
+test('⭐ 豁免資格｜第一行不含 🤖（🤖在後文）＝前言行不可當鑰匙（防事後編輯續命）', () => {
+  // r1 High① 的編輯重播劇本：留言=「審查備註\n🤖 …」，豁免綁「審查備註」；
+  // 之後把後文改成新的阻擋句，id 與第一行不變＝舊豁免續命。鑰匙必須是壞標頭本行。
+  const preamble = '審查備註\n🤖 Codex｜來源：CLI（xhigh）｜審 壞掉 r6 結論 要求修改';
+  const wash = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '豁免留言 5310870038｜William 特准 2026-08-17｜原第一行：「審查備註」';
+  const { problems } = verdictProblems(
+    [cu(preamble, UNFIX_URL), c(wash)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `前言行鑰匙必須失效：${problems.join('｜')}`);
+});
+
+test('⭐ 缺sha例外｜成對反引號切碎的指紋照樣算指紋（拆掉再數）', () => {
+  // r1 High②：`dead`＋`beef` 每段都短於 7 位＝舊計數為零，畫面上卻是一串指紋。
+  const chopped = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審 `dead``beef1`';
+  const restate = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`${HEAD}\`｜結論：通過｜原第一行：「${chopped}」`;
+  const { problems, warnings } = verdictProblems([c(`${chopped}\n\n略。`), c(restate)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `切碎指紋必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /全行零個/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 文件｜救濟階梯與「不再刪留言」要在兩份文件都站著（指路不漂）', () => {
+  const review = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  assert.ok(/救濟階梯/.test(review), 'REVIEW-AND-MERGE 少了救濟階梯——執行者只會看到舊處方');
+  assert.ok(/不再刪留言/.test(review), 'REVIEW-AND-MERGE 少了「不再刪留言」——會有人照舊例去刪');
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  assert.ok(/缺 sha 例外/.test(agents) && /豁免宣告/.test(agents),
+    'AGENTS 還在講「唯一救濟」＝只讀規則書的人拿到過期處方');
+  assert.ok(!/重述＝壞標頭的唯一救濟/.test(agents), '「唯一救濟」這句必須退場（已有三級階梯）');
+});

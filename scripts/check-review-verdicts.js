@@ -70,7 +70,8 @@ export const VERDICTS = {
 const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜結論：(\S+?)(?:\*\*|__)?\s*$/mu;
 
 /**
- * **重述行**（2026-08-06，William 裁決 B）：清除「標頭寫壞」那種永久阻擋的唯一合規途徑。
+ * **重述行**（2026-08-06，William 裁決 B）：清除「標頭寫壞」那種永久阻擋的救濟**入口**（階梯之首——
+ * sha 欄空白型走缺 sha 例外、連身分都讀不出型走豁免宣告：QUOTED_HEAD_NOSHA／EXEMPT 兩節，2026-08-17 補）。
  *
  * ## 它在解什麼
  * 標頭寫壞（結論寫成「要求修改」「通過（無阻擋）」之類）會觸發 `hasBotMark` 的阻擋，而那個阻擋
@@ -568,7 +569,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       // 缺 sha 型＝**必須零個**（空欄位＋別處冒出的指紋＝同樣讀不準）。
       // ⚠️ 在 **NFKC 正規化副本**上數（#418 r6 High）：全形的 hex 字（ｄｅａｄｂｅｅ）在 \p{L}/\p{N}
       //    白名單內、原字串數不到，但畫面上就是一串指紋——正規化後現形。逐字比對仍用原字串。
-      const shaLikeCount = ((m[4].normalize('NFKC')).match(QUOTED_SHA_LIKE) || []).length;
+      // ⚠️ 先拆掉反引號再數（#477 r1 High②）：引文白名單允許成對反引號，`dead`＋`beef` 這種
+      //    code-span 切碎法會讓每段都短於 7 位＝計數為零，畫面上卻是一串指紋——拆掉後重新黏合現形。
+      const shaLikeCount = ((m[4].normalize('NFKC').replace(/`/gu, '')).match(QUOTED_SHA_LIKE) || []).length;
       if (q4 && shaLikeCount > 1) {
         bad('引用的第一行出現第二個 sha 長相的字——讀不準它在講哪個版本，不可重述，維持阻擋');
         continue;
@@ -619,10 +622,17 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const early = !taker && restated.find((r) => r.key === m.key);
     // 豁免（規則見 EXEMPT）：三重指認（編號＋逐字引文＋日期在宣告行裡）＋順序（宣告在壞留言之後）。
     // `m.id == null`（留言物件沒有 url 可解）＝不可豁免——fail-closed。
-    const ex = !taker && exempts.find((e) => e.key === m.key && e.idx > m.idx && m.id != null && e.id === m.id);
+    // 豁免資格（#477 r1 High①）：只有**真正的階梯③型**可豁免——壞留言第一行（＝引文）必須
+    // ①含 🤖（不含＝那是前言行；綁上去等於讓「hasBotMark 在後文命中」的留言拿一行普通文字當鑰匙，
+    //   後文事後被編輯也能續命）②兩支解析器都讀不出身分（四欄可讀＝該走同身分重述、sha 欄空白型
+    //   ＝該走缺 sha 例外——豁免不可以繞過這兩層的身分紀律）。
+    const exemptable = /🤖/u.test(m.key) && !QUOTED_HEAD.exec(m.key) && !QUOTED_HEAD_NOSHA.exec(m.key);
+    const ex = !taker && exemptable && exempts.find((e) => e.key === m.key && e.idx > m.idx && m.id != null && e.id === m.id);
     // 對稱提示（同 early）：引文／編號都對得上、卻出現在壞留言**之前**的豁免——不生效，但要出聲，
     // 不然排錯的人會以為宣告沒被吃到、重複發錯格式的豁免。
-    const earlyEx = !taker && !ex && exempts.find((e) => e.key === m.key && m.id != null && e.id === m.id);
+    const earlyEx = !taker && !ex && exemptable && exempts.find((e) => e.key === m.key && m.id != null && e.id === m.id);
+    // 不符資格卻有對得上的宣告＝也要出聲講清楚為什麼沒生效（不然會被誤判成格式打錯而重發）。
+    const inelig = !taker && !exemptable && exempts.find((e) => e.key === m.key && m.id != null && e.id === m.id);
     if (taker) {
       warnings.push(`一則壞標頭留言已被 ${taker.who} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
     } else if (ex) {
@@ -633,6 +643,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${m.excerpt}\n`
         + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
         + (earlyEx ? '    ⚠️ 有一行引文與編號都對得上的豁免宣告，但它出現在這則壞留言**之前**（豁免不可以預先授權未來的壞留言）。\n' : '')
+        + (inelig ? '    ⚠️ 有一行引文與編號都對得上的豁免宣告，但這則壞行**不符合豁免資格**——'
+          + '身分讀得出＝走同身分重述（sha 欄空白型＝缺 sha 例外），或第一行不含 🤖'
+          + '（豁免的鑰匙必須是壞標頭本行）。豁免只留給連身分都讀不出的型。\n' : '')
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
         + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節；'
         + 'sha 欄空白、其餘三欄讀得出的壞行走**缺 sha 例外**＝重述行自報版本）。\n'
