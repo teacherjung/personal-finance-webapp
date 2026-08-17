@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'autopsy-'));
 
-test('⭐ 乾淨 session（有可解析行、零工具呼叫）→ 0', () => {
+test('⭐ 乾淨 session（有可解析行、零工具足跡）→ 0', () => {
   const d = tmp();
   writeFileSync(join(d, 'updates.jsonl'),
     '{"type":"message","name":"assistant","content":"回答"}\n{"type":"result","body":"ok"}\n');
@@ -21,7 +21,7 @@ test('⭐ 乾淨 session（有可解析行、零工具呼叫）→ 0', () => {
   assert.equal(r.parsed, 2);
 });
 
-test('⭐ 有工具呼叫（含巢狀）→ 1，且列得出工具與次數', () => {
+test('⭐ 有工具足跡（含巢狀）→ 1，且列得出足跡名與筆數', () => {
   const d = tmp();
   writeFileSync(join(d, 'updates.jsonl'),
     '{"step":{"tool":{"name":"run_terminal_command","arguments":{"command":"ls /"}}}}\n'
@@ -110,7 +110,7 @@ test('⭐ fail-closed｜空 .jsonl（有檔零行）→ 2', () => {
   assert.equal(r.code, 2, r.why);
 });
 
-test('⭐ 判準｜陣列裡的工具呼叫抓得到（tool_calls: [...]）', () => {
+test('⭐ 判準｜陣列裡的工具足跡抓得到（tool_calls: [...]）', () => {
   const d = tmp();
   writeFileSync(join(d, 'updates.jsonl'), '{"tool_calls":[{"name":"web_search","args":{"q":"x"}}]}\n');
   const r = auditSessionDir(d);
