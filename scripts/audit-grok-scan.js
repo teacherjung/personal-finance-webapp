@@ -26,7 +26,7 @@
 //   CLI 若不寫日誌或換格式，這裡會退 2（fail-closed），不會假綠；但**驗不了日誌本身的誠實**
 //   （CLI 蓄意漏記工具呼叫＝驗不到）。它防的是「旗標靜默失效」這型實測發生過的事故，
 //   不是防供應商作惡——與整條預審線的信任模型一致。
-// ・足跡判準＝**六條腿＋一容器＋signals 計數器**（全部來自真日誌實測，#479 r1–r4 逐輪補齊；含整檔 .json）：
+// ・足跡判準＝**逐腿列舉如下**（刻意不寫腿數——寫死的數字自己會漂；全部來自真日誌實測、#479 逐輪補齊；含整檔 .json 與 signals 計數器）：
 //   ①`name`＋（arguments/input/args/params 任一鍵；訊息角色 user/assistant/system 不算、`tool` 照算）
 //   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
 //   ④字串 `tool_call_id`／`toolCallId`（工具結果與識別碼）⑤`_meta` 帶 "x.ai/tool" 鍵
@@ -130,11 +130,19 @@ export function auditSessionDir(sessionDir) {
     catch { dirty++; continue; }
     walk(obj, calls);
     if (obj && typeof obj === 'object') {
-      if (typeof obj.toolCallCount === 'number' && obj.toolCallCount > 0) {
-        calls['toolCallCount'] = (calls['toolCallCount'] || 0) + obj.toolCallCount;
+      // #479 r5：欄位在場但型別不對＝查不清楚（fail-closed），不可靜默略過。
+      if (Object.hasOwn(obj, 'toolCallCount')) {
+        if (typeof obj.toolCallCount === 'number' && Number.isFinite(obj.toolCallCount) && obj.toolCallCount >= 0) {
+          if (obj.toolCallCount > 0) calls['toolCallCount'] = (calls['toolCallCount'] || 0) + obj.toolCallCount;
+        } else dirty++;
       }
-      if (Array.isArray(obj.toolsUsed)) {
-        for (const t of obj.toolsUsed) { if (typeof t === 'string' && t) calls[t] = (calls[t] || 0) + 1; }
+      if (Object.hasOwn(obj, 'toolsUsed')) {
+        if (Array.isArray(obj.toolsUsed)) {
+          for (const t of obj.toolsUsed) {
+            if (typeof t === 'string' && t) calls[t] = (calls[t] || 0) + 1;
+            else dirty++;   // 陣列元素不是非空字串＝同樣查不清楚
+          }
+        } else dirty++;
       }
     }
   }

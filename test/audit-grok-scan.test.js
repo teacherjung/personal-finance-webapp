@@ -279,3 +279,13 @@ test('⭐ signals 腿｜toolCallCount:0 且 toolsUsed 空＝不誤殺（乾淨�
   const r = auditSessionDir(d);
   assert.equal(r.code, 0, r.why);
 });
+
+test('⭐ signals 腿 fail-closed｜欄位在場但型別不對 → 2（不可靜默略過）', () => {
+  for (const bad of ['{"toolCallCount":"3"}', '{"toolCallCount":-1}', '{"toolsUsed":"read_file"}', '{"toolsUsed":[42]}']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+    writeFileSync(join(d, 'signals.json'), bad);
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 2, `${bad}：${r.why}`);
+  }
+});
