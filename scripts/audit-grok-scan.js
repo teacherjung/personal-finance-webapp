@@ -129,10 +129,13 @@ export function auditSessionDir(sessionDir) {
     try { obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(join(sessionDir, f)))); parsed++; }
     catch { dirty++; continue; }
     walk(obj, calls);
+    // #479 r6：整檔 JSON 不是物件（primitive／陣列）＝形狀不對＝查不清楚，不可靜默略過。
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { dirty++; continue; }
     if (obj && typeof obj === 'object') {
       // #479 r5：欄位在場但型別不對＝查不清楚（fail-closed），不可靜默略過。
       if (Object.hasOwn(obj, 'toolCallCount')) {
-        if (typeof obj.toolCallCount === 'number' && Number.isFinite(obj.toolCallCount) && obj.toolCallCount >= 0) {
+        // 計數必須是非負整數（#479 r6：小數＝資料損毀＝查不清楚，不是「已確認越界」）
+        if (typeof obj.toolCallCount === 'number' && Number.isInteger(obj.toolCallCount) && obj.toolCallCount >= 0) {
           if (obj.toolCallCount > 0) calls['toolCallCount'] = (calls['toolCallCount'] || 0) + obj.toolCallCount;
         } else dirty++;
       }

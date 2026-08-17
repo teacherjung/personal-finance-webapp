@@ -289,3 +289,13 @@ test('⭐ signals 腿 fail-closed｜欄位在場但型別不對 → 2（不可�
     assert.equal(r.code, 2, `${bad}：${r.why}`);
   }
 });
+
+test('⭐ signals fail-closed 邊角｜整檔 primitive／陣列＝2；小數計數＝2 不是 1', () => {
+  for (const bad of ['3', '["read_file"]', '{"toolCallCount":2.5}']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+    writeFileSync(join(d, 'signals.json'), bad);
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 2, `${bad}：${r.why}`);
+  }
+});
