@@ -1138,3 +1138,35 @@ test('⭐ 豁免｜宣告行含隱形字元 → 不生效且收件截止', () =>
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `隱形字元必須 fail-closed：${problems.join('｜')}`);
   assert.ok(warnings.some((w) => /隱形字元/.test(w)), warnings.join('｜'));
 });
+
+test('⭐ 豁免｜編號對、引文錯 → 不生效、維持阻擋（三重指認的引文腿）', () => {
+  // 危險情境（污染掃描的 F1、人工驗證屬實）：只驗編號的話，留言事後被編輯成另一段壞第一行，
+  // 舊豁免仍生效＝引文腿名存實亡。突變「拿掉 e.key === m.key」必須讓本題轉紅。
+  const wrongQuote = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '豁免留言 5310870038｜William 特准 2026-08-17｜原第一行：「🤖 ｜來源：｜審 ｜r｜結論：不可合併」';
+  const { problems } = verdictProblems(
+    [cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL), c(wrongQuote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `引文不符必須維持阻擋：${problems.join('｜')}`);
+});
+
+test('⭐ 豁免｜宣告在壞留言之前且三重指認都對 → 不生效，但要出聲（對稱提示）', () => {
+  const { problems, warnings } = verdictProblems(
+    [c(EXEMPT_OK), cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), problems.join('｜'));
+  assert.ok(warnings.length === 0 || problems.some((p) => /豁免不可以預先授權/.test(p)),
+    `提早的豁免要在阻擋訊息裡出聲：${problems.join('｜')}`);
+});
+
+test('⭐ 缺sha例外｜自報「通過」不能變成對目前 head 的放行票（回歸縫）', () => {
+  // 污染掃描的 F3、人工驗證屬實：缺 sha 重述自報版本＝唯一沒有引文對帳的 sha 來源。
+  // 載體標頭 r7 阻擋、重述行 r6 自報「通過＋目前 head」——聯集裡 r7 蓋過 r6，
+  // 放行仍必須靠真的「通過」。若未來有人放寬規則④或調換 apply 順序，本題轉紅。
+  const noshaPassFirst = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：通過';
+  const carrier = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '需修改後再審')}\n`
+    + `重述 r6｜審 \`${HEAD}\`｜結論：通過｜原第一行：「${noshaPassFirst}」`;
+  const { problems } = verdictProblems([c(`${noshaPassFirst}\n\n略。`), c(carrier)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /需修改後再審.*還沒有被同一位審查者撤銷/.test(p)),
+    `r7 阻擋必須還在：${problems.join('｜')}`);
+  assert.ok(problems.some((p) => /沒有「Codex」對目前的 head/.test(p) || /需修改後再審/.test(p)),
+    `自報通過不可成為放行票：${problems.join('｜')}`);
+});

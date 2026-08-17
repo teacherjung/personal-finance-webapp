@@ -620,6 +620,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     // 豁免（規則見 EXEMPT）：三重指認（編號＋逐字引文＋日期在宣告行裡）＋順序（宣告在壞留言之後）。
     // `m.id == null`（留言物件沒有 url 可解）＝不可豁免——fail-closed。
     const ex = !taker && exempts.find((e) => e.key === m.key && e.idx > m.idx && m.id != null && e.id === m.id);
+    // 對稱提示（同 early）：引文／編號都對得上、卻出現在壞留言**之前**的豁免——不生效，但要出聲，
+    // 不然排錯的人會以為宣告沒被吃到、重複發錯格式的豁免。
+    const earlyEx = !taker && !ex && exempts.find((e) => e.key === m.key && m.id != null && e.id === m.id);
     if (taker) {
       warnings.push(`一則壞標頭留言已被 ${taker.who} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
     } else if (ex) {
@@ -629,6 +632,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
       problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${m.excerpt}\n`
         + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
+        + (earlyEx ? '    ⚠️ 有一行引文與編號都對得上的豁免宣告，但它出現在這則壞留言**之前**（豁免不可以預先授權未來的壞留言）。\n' : '')
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
         + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節；'
         + 'sha 欄空白、其餘三欄讀得出的壞行走**缺 sha 例外**＝重述行自報版本）。\n'
