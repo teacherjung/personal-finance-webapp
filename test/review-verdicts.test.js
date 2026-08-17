@@ -1332,3 +1332,21 @@ test('⭐ 文件與提示｜雜湊指認要走得通：閘的修復提示與 REV
   assert.ok(/去頭尾空白後/.test(review) && /僅同一身分可豁免/.test(review),
     'REVIEW 階梯必須教 trim 口徑與同身分豁免那一級');
 });
+
+test('⭐ 雜湊口徑（行為）｜第一行帶頭尾空白 → 雜湊算在 trim 後字串才解得了鎖', () => {
+  // r5：前一題只釘提示文句＝假綠（拿掉 first.trim() 仍全綠）。本題釘行為：
+  // 壞行實體帶頭尾空白，豁免雜湊算在 trim 後——trim 被拿掉＝鑰匙對不上＝本題轉紅。
+  const messyFirst = '  \u{1F916}\u{FE0F} 完全讀不出的壞行  ';
+  const hash = createHash('sha256').update(messyFirst.trim(), 'utf8').digest('hex');
+  const exempt = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870038｜William 特准 2026-08-17｜原第一行雜湊：${hash}`;
+  const { problems, warnings } = verdictProblems(
+    [cu(`${messyFirst}\n\n略。`, UNFIX_URL), c(exempt)], HEAD, 'Codex');
+  assert.ok(!problems.some((p) => /標頭格式不合規/.test(p)), `trim 後雜湊必須解得了鎖：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /已被\*\*豁免\*\*/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 文件｜AGENTS 階梯要教到「僅同一身分可豁免」那一級', () => {
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  assert.ok(/僅同一身分可豁免/.test(agents), 'AGENTS 階梯漏了同身分級＝只讀規則書的人不知道這條路');
+});
