@@ -33,6 +33,7 @@
 //      ⚠️ 「疑似結論卻沒帶標頭」**只印提醒、不影響退出碼**（r11 起，理由見 looksLikeVerdict）
 //   2＝查不清楚（fail-closed，比照協作欄位閘）
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fieldValue, canonicalRole } from './check-pr-collab-fields.js';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
@@ -70,7 +71,8 @@ export const VERDICTS = {
 const HEADER = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜結論：(\S+?)(?:\*\*|__)?\s*$/mu;
 
 /**
- * **重述行**（2026-08-06，William 裁決 B）：清除「標頭寫壞」那種永久阻擋的唯一合規途徑。
+ * **重述行**（2026-08-06，William 裁決 B）：清除「標頭寫壞」那種永久阻擋的救濟**入口**（階梯之首——
+ * sha 欄空白型走缺 sha 例外、連身分都讀不出型走豁免宣告：QUOTED_HEAD_NOSHA／EXEMPT 兩節，2026-08-17 補）。
  *
  * ## 它在解什麼
  * 標頭寫壞（結論寫成「要求修改」「通過（無阻擋）」之類）會觸發 `hasBotMark` 的阻擋，而那個阻擋
@@ -124,6 +126,75 @@ const RESTATE = /^ {0,3}重述\s*r(\d+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜結論
 //    所以角色、來源、sha、輪次用**同一支**錨定行首的正則一次讀出——引文的前四欄長什麼樣，
 //    重述就必須照著講。前綴容許粗體，與 HEADER 同一套。
 const QUOTED_HEAD = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*`?([0-9a-fA-F]{7,40})`?｜r(\d+)｜/u;
+/**
+ * **缺 sha 型**壞行的錨定解析器（規則⑤的唯一例外；2026-08-17 William 裁「兩個都做」之一）。
+ *
+ * ## 它在解什麼
+ * 標頭之所以壞、常常正是**缺了四欄之一**（實例 #475：shell 引號錯誤產出「審 ｜r3」＝sha 欄空白）
+ * ——四欄解析器永遠讀不出它，重述機制對這型形同虛設（第二例；首例 #461 只能靠 William
+ * 特准刪留言收場）。「打錯字把 PR 鎖死」正是重述要解的病，這型卻被排除在救濟外。
+ *
+ * ## 例外的邊界（其餘規則一格不放寬）
+ * ・只接受「sha 欄**空白**」這一種殘缺——角色、來源、輪次仍要在行首連著讀得出
+ *   （規則②的身分綁定、規則④的輪次上限、輪次綁引文照舊）。缺其他欄＝身分讀不出＝仍不可重述
+ *   （那型走豁免宣告，見 EXEMPT）。
+ * ・引文**全行**（NFKC 副本上數）不得出現任何 sha 長相的字＝零歧義——四欄型容許「恰一個」，
+ *   這裡收緊為**零**：空欄位＋別處冒出的指紋＝讀不準它在講哪個版本。
+ * ・版本由重述行**自報**（引文裡沒有可對帳的 sha）；洗白路徑仍被規則④（輪次必須小於自己）
+ *   與規則②（只能重述自己的）擋住。
+ */
+const QUOTED_HEAD_NOSHA = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來源：([^｜]+)｜審\s*(?:``|`\s*`)?\s*｜r(\d+)｜/u;
+/**
+ * **豁免宣告**（2026-08-17 William 裁「兩個都做」之二＝把「特准存檔後刪」前例機械化）。
+ *
+ * ## 它在解什麼
+ * 重述救不了的壞法（引文連角色／來源／輪次都讀不出＝規則② fail-closed 擋死）過去只有一條路：
+ * William 特准刪留言（#461、#475 兩例）——刪除本身傷稽核軌跡，逐字存檔還會把 🤖 抄成
+ * 新的壞標頭（#475 實踩：存檔留言自己變毒丸）。改為：**壞留言原地保留**，由一行豁免宣告
+ * （寫在帶合規標頭留言的收件區，與重述行同一位置規則）把那條阻擋降為警告。
+ *
+ * ## 格式（逐字；一行一則）
+ *   豁免留言 <留言編號>｜William 特准 <YYYY-MM-DD>｜原第一行：「<壞掉那則的第一行，逐字引用>」
+ *
+ * ## 規則（比重述更窄：它**只會中和、不會產生**）
+ * ・三重指認缺一不可＝留言編號（該留言 issuecomment 網址尾碼）＋逐字引文（trim 比對）＋特准日期。
+ * ・只能中和「用了 🤖 但標頭寫壞」那條阻擋——**合規結論（含阻擋）豁免不掉**（豁免只查
+ *   malformed 名單，結構上碰不到聯集）、也**不產生任何結論進聯集**（沒有洗白或放行路徑）。
+ * ・豁免宣告必須出現在壞留言**之後**（同重述規則⑥：不可預先授權未來的壞留言）。
+ * ・引文守則與重述同一套（隱形字元拒收、白名單、反引號配對）。**引不出來的行改用雜湊指認**
+ *   （#477 r2 High②：VS16、U+FFFD 這類字元被引文守則正確拒收，但那正是「不可解析原文」的常態——
+ *   最後一級救濟不能因為守則而搆不到）：「原第一行雜湊：<該行去頭尾空白後的 SHA-256>」＝精確指認、
+ *   危險字元不重印進生效行；雜湊行本身純 hex、不受引文守則影響。
+ * ・**資格與正式重述同一套身分語意**（#477 r2 High①——不可用「前綴正則有沒有 match」代替）：
+ *   ①第一行必含 🤖（防前言行鑰匙）②身分合法（canonical 角色＋非空來源）且 metadata 可讀
+ *   ＝重述家族、禁豁免 ③身分合法但 metadata 讀不出（輪次打壞、sha 非 hex——重述結構上接不了）
+ *   ＝**只有同一身分**可豁免（同身分紀律不因 metadata 壞掉而放寬）④身分讀不出＝任何合規標頭可豁免。
+ * ・誠實劃界＝與整道閘相同：「William 特准」是自我宣告、閘不驗 William 本人（這支防的是
+ *   打錯字鎖死，不防惡意——惡意者本來就能偽造整個合規標頭）；日期讓 William 事後可抽查對帳。
+ * ・⚠️ **資格分類的停戰劃界**（William 2026-08-17 裁定；#477 豁免資格家族三輪 High 後）：
+ *   資格分類對 Unicode 變體（VS15／VS16、全形字母、Markdown 粗體、容器內 🤖）的覆蓋是
+ *   **列舉性**的——已知存在「變體讓身分可讀的行被歸到第三類、被跨身分豁免」的繞法。
+ *   停戰理由＝這些繞法**全數需要蓄意偽造「William 特准」**，而本閘威脅模型明寫防打錯字
+ *   不防惡意（造假者可直接偽造整則合規「通過」標頭，容易得多）＝豁免不增加造假者的
+ *   邊際攻擊力。若未來威脅模型升級（分身分帳號上線），本段連同資格分類一起重審。
+ */
+const EXEMPT = /^ {0,3}豁免留言\s*(\d{6,})｜William 特准\s*(\d{4}-\d{2}-\d{2})｜原第一行(?:：「(.+)」|雜湊：([0-9a-fA-F]{64}))[^\S\n]*$/u;
+/**
+ * 從壞行抽「可合法重述的身分」＝與重述裁決同一套語意（canonicalRole＋非空來源）。
+ * 寬進嚴出：行內第一個 🤖（容許 VS16 變體）後讀角色與來源——讀得出合法身分＝這行屬
+ * 「同身分紀律」的射程；讀不出＝真正的階梯③型。⚠️ 只用於**豁免資格分類**，
+ * 重述裁決照舊走 QUOTED_HEAD／QUOTED_HEAD_NOSHA 的錨定解析（那邊的嚴格性一格沒動）。
+ * @param {string} line
+ */
+function restatableIdentity(line) {
+  const m = /🤖️?\s*([A-Za-z]+)｜來源：([^｜\n]*)｜/u.exec(line);
+  if (!m) return null;
+  const role = canonicalRole(m[1]);
+  if (!role) return null;
+  const source = m[2].trim().replace(/\s+/gu, ' ');
+  if (!source) return null;
+  return { role, source };
+}
 /**
  * 引文裡 sha 長相的字（7–40 位十六進位）出現幾個。**多於一個＝讀不準它在講哪個版本 ⇒ 不可重述**。
  * ⚠️ 不用「審 sha｜r<n>｜」整組去數（#418 r5 High①）：攻擊者少打一個 ｜（`r8 結論：`）就不成組，
@@ -449,8 +520,11 @@ export function verdictProblems(comments, head, reviewerRole = null) {
   };
   /** 合規重述（鑰匙＝逐字引文；idx＝重述那則留言的位置，規則⑥用）。 @type {{key: string, who: string, idx: number}[]} */
   const restated = [];
-  /** 壞標頭留言：先收集、**掃完全部留言再判**（重述通常出現在壞留言之後）。 */
-  const malformed = /** @type {{key: string, excerpt: string, idx: number}[]} */ ([]);
+  /** 壞標頭留言：先收集、**掃完全部留言再判**（重述通常出現在壞留言之後）。`id`＝issuecomment 網址尾碼（豁免宣告的指認鍵；讀不到＝null＝那則不可豁免，fail-closed）。 */
+  const malformed = /** @type {{key: string, excerpt: string, idx: number, id: string|null}[]} */ ([]);
+  /** 豁免宣告（規則見 EXEMPT；key＝逐字引文、keyHash＝雜湊指認，兩者擇一）。
+   * @type {{id: string, date: string, key: string|null, keyHash: string|null, who: string, role: string, source: string, idx: number}[]} */
+  const exempts = [];
   let idx = -1;
   for (const c of comments) {
     idx++;
@@ -460,7 +534,8 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       const shape = `（第一行要長成「🤖 角色｜來源：…｜審 \`sha\`｜r<n>｜結論：${Object.keys(VERDICTS).join('／')}」）`;
       if (hasBotMark(c.body)) {
         const first = String(c.body).split('\n').find((l) => l.trim()) || '';
-        malformed.push({ key: first.trim(), excerpt: `${shape}：${excerpt}`, idx });
+        const cid = (String(/** @type {any} */ (c).url || '').match(/#issuecomment-(\d+)$/) || [])[1] || null;
+        malformed.push({ key: first.trim(), excerpt: `${shape}：${excerpt}`, idx, id: cid });
       } else if (looksLikeVerdict(c.body)) {
         // **只警告，不阻擋**——理由見 `looksLikeVerdict()` 上方那節。
         warnings.push(`這則留言看起來在下結論，但沒有來歷標頭 ⇒ **這道閘不會採計它**${shape}：${excerpt}`);
@@ -473,34 +548,37 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const headerIdx = lines.findIndex((l) => l.trim());
     let cursor = headerIdx + 1;
     const restateIdxs = [];
+    const exemptIdxs = [];
     for (; cursor < lines.length; cursor++) {
       const raw = lines[cursor];
       if (!raw.trim()) continue;                                    // 空行可以隔開（含全形空白，見劃界）
-      if (!/^ {0,3}重述\s*r\d+｜/u.test(raw)) break;               // 第一行別的內容＝收件截止
+      const shapeRestate = /^ {0,3}重述\s*r\d+｜/u.test(raw);
+      const shapeExempt = /^ {0,3}豁免留言\s*\d/u.test(raw);        // 豁免宣告與重述共用收件區（同一套位置規則）
+      if (!shapeRestate && !shapeExempt) break;                     // 第一行別的內容＝收件截止
       // ⚠️ **整行合規才延續收件**（#418 r4 High①）：前綴像重述、整行不合規的行（例：`重述 r0｜<!--`）
       //    以前會被跳過而讓收件區繼續往下——它夾帶的 `<!--` 把下一行真生效的重述藏進 HTML 註解，
-      //    機器算數、人看不見＝可稽核性破功。現在這種行＝出聲＋收件截止。
-      if (!RESTATE.test(raw)) {
-        warnings.push('一行重述**格式不合規、且讓收件當場截止**（它之後的重述行一律不生效）：'
+      //    機器算數、人看不見＝可稽核性破功。現在這種行＝出聲＋收件截止。豁免宣告同一標準。
+      if (shapeRestate ? !RESTATE.test(raw) : !EXEMPT.test(raw)) {
+        warnings.push(`一行${shapeRestate ? '重述' : '豁免宣告'}**格式不合規、且讓收件當場截止**（它之後的重述／豁免行一律不生效）：`
           + `「${collapse(raw).slice(0, 80)}…」`);
         break;
       }
-      // ⚠️ 合規的重述行也可能在**引文裡**夾隱形容器把下一行藏出畫面（r4 抓到 <!--、r5 抓到
+      // ⚠️ 合規的行也可能在**引文裡**夾隱形容器把下一行藏出畫面（r4 抓到 <!--、r5 抓到
       //    <details> 與 ![ ——黑名單補不完）。性質收口＝引文只准白名單字元＋反引號要配對；
-      //    出界＝那一則壞留言不可重述（fail-closed 劃界），同樣收件截止。
-      const quoteM = RESTATE.exec(raw);
-      const quoteTxt = quoteM ? quoteM[4] : '';
+      //    出界＝那一則壞留言不可重述／豁免（fail-closed 劃界），同樣收件截止。
+      const quoteM = shapeRestate ? RESTATE.exec(raw) : EXEMPT.exec(raw);
+      const quoteTxt = (quoteM && quoteM[shapeRestate ? 4 : 3]) || '';   // 豁免的雜湊變體沒有引文＝空字串（守則對空字串恆過）
       if (HIDDEN_CP.test(raw)) {
-        warnings.push('一行重述含**隱形字元**（Unicode 預設不顯示的碼位）——那是把指紋或內容藏出'
-          + `畫面的原料，不可重述且收件截止：「${collapse(raw).slice(0, 80)}…」`);
+        warnings.push(`一行${shapeRestate ? '重述' : '豁免宣告'}含**隱形字元**（Unicode 預設不顯示的碼位）——那是把指紋或內容藏出`
+          + `畫面的原料，不生效且收件截止：「${collapse(raw).slice(0, 80)}…」`);
         break;
       }
       if (!QUOTE_ALLOWED.test(quoteTxt) || (raw.split('`').length - 1) % 2 !== 0) {
-        warnings.push('一行重述的引文含白名單外的字元（例如 <、[、! 這類能開啟隱形容器的）'
-          + `或未配對的反引號——不可重述且收件截止：「${collapse(raw).slice(0, 80)}…」`);
+        warnings.push(`一行${shapeRestate ? '重述' : '豁免宣告'}的引文含白名單外的字元（例如 <、[、! 這類能開啟隱形容器的）`
+          + `或未配對的反引號——不生效且收件截止：「${collapse(raw).slice(0, 80)}…」`);
         break;
       }
-      restateIdxs.push(cursor);
+      (shapeRestate ? restateIdxs : exemptIdxs).push(cursor);
     }
     for (const li of restateIdxs) {
       const line = lines[li];
@@ -513,23 +591,37 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       // 規則④：重述輪次必須小於自己標頭的輪次——否則可以用重述行造出更高輪的「通過」。
       if (round >= h.round) { bad(`重述的輪次 r${round} 不小於這則留言自己的 r${h.round}`); continue; }
       // 規則②＋⑤（#418 r4 High②：**一支錨定解析器一次綁定**）：角色、來源、sha、輪次都從引文
-      // **行首**讀出；讀不出任何一欄＝不可重述（fail-closed）。
-      const q = QUOTED_HEAD.exec(m[4]);
-      if (!q) { bad('引用的第一行讀不出「誰寫的、審哪個 sha、第幾輪」（四欄要在行首連著）——讀不出就不可重述，維持阻擋'); continue; }
-      // 引文裡若出現**第二個 sha 長相的字**＝讀不準它到底在講哪個版本（壞行可在中段再塞一組
-      // metadata、少打一個分隔符也算——#418 r5 High①）⇒ 一律不可重述。
+      // **行首**讀出；讀不出＝不可重述（fail-closed）。**唯一例外＝缺 sha 型**（規則見
+      // QUOTED_HEAD_NOSHA）：sha 欄空白、其餘三欄照舊讀得出，才走例外。
+      const q4 = QUOTED_HEAD.exec(m[4]);
+      const qn = q4 ? null : QUOTED_HEAD_NOSHA.exec(m[4]);
+      if (!q4 && !qn) { bad('引用的第一行讀不出「誰寫的、審哪個 sha、第幾輪」（四欄要在行首連著；唯一例外＝sha 欄空白而其餘讀得出的缺 sha 型）——讀不出就不可重述，維持阻擋'); continue; }
+      // 引文裡的 sha 歧義（#418 r5 High①）：四欄型＝第二個 sha 長相的字就讀不準它在講哪個版本；
+      // 缺 sha 型＝**必須零個**（空欄位＋別處冒出的指紋＝同樣讀不準）。
       // ⚠️ 在 **NFKC 正規化副本**上數（#418 r6 High）：全形的 hex 字（ｄｅａｄｂｅｅ）在 \p{L}/\p{N}
       //    白名單內、原字串數不到，但畫面上就是一串指紋——正規化後現形。逐字比對仍用原字串。
-      if (((m[4].normalize('NFKC')).match(QUOTED_SHA_LIKE) || []).length > 1) {
+      // ⚠️ 先拆掉反引號再數（#477 r1 High②）：引文白名單允許成對反引號，`dead`＋`beef` 這種
+      //    code-span 切碎法會讓每段都短於 7 位＝計數為零，畫面上卻是一串指紋——拆掉後重新黏合現形。
+      const shaLikeCount = ((m[4].normalize('NFKC').replace(/`/gu, '')).match(QUOTED_SHA_LIKE) || []).length;
+      if (q4 && shaLikeCount > 1) {
         bad('引用的第一行出現第二個 sha 長相的字——讀不準它在講哪個版本，不可重述，維持阻擋');
         continue;
       }
-      if (canonicalRole(q[1]) !== h.role || collapse(q[2]) !== h.source) {
-        bad(`只能重述**自己**的壞留言：引用裡是 ${q[1]}（${collapse(q[2])}），重述者是 ${h.role}（${h.source}）`);
+      if (qn && shaLikeCount !== 0) {
+        bad('缺 sha 型重述要求引文**全行零個** sha 長相的字——空欄位加上別處的指紋＝讀不準版本，不可重述，維持阻擋');
         continue;
       }
-      if (q[3].toLowerCase() !== m[2].toLowerCase() || Number(q[4]) !== round) {
-        bad(`重述自報的（審 ${m[2].slice(0, 7)}｜r${round}）與引文裡的（審 ${q[3].slice(0, 7)}｜r${q[4]}）不一致`);
+      const qRole = q4 ? q4[1] : /** @type {RegExpExecArray} */ (qn)[1];
+      const qSrc = q4 ? q4[2] : /** @type {RegExpExecArray} */ (qn)[2];
+      const qRound = Number(q4 ? q4[4] : /** @type {RegExpExecArray} */ (qn)[3]);
+      if (canonicalRole(qRole) !== h.role || collapse(qSrc) !== h.source) {
+        bad(`只能重述**自己**的壞留言：引用裡是 ${qRole}（${collapse(qSrc)}），重述者是 ${h.role}（${h.source}）`);
+        continue;
+      }
+      if (q4 ? (q4[3].toLowerCase() !== m[2].toLowerCase() || Number(q4[4]) !== round) : qRound !== round) {
+        bad(q4
+          ? `重述自報的（審 ${m[2].slice(0, 7)}｜r${round}）與引文裡的（審 ${/** @type {RegExpExecArray} */ (q4)[3].slice(0, 7)}｜r${/** @type {RegExpExecArray} */ (q4)[4]}）不一致`
+          : `缺 sha 型重述的輪次 r${round} 與引文裡的 r${qRound} 不一致（版本由重述行自報，輪次仍要綁引文）`);
         continue;
       }
       // 規則①的鑰匙＝逐字引用（trim-only）；規則⑥的順序綁定在收尾那一段做（要知道壞留言的位置）。
@@ -537,13 +629,21 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       applyEntry({ role: h.role, source: h.source, sha: m[2].toLowerCase(), round, verdict,
         blocking: VERDICTS[/** @type {keyof typeof VERDICTS} */ (verdict)] });
     }
-    // 位置不對的「重述 r…」樣子的行＝不生效，但要出聲（#418 r3 Medium：不然真心想重述的人
-    // 把行放錯位置，會以為清掉了）。這裡只給警告，所以用寬鬆剝除（fence／引用裡的範例不吵）。
+    for (const li of exemptIdxs) {
+      const em = EXEMPT.exec(lines[li]);
+      if (!em) continue;   // 收件迴圈已驗過整行合規；這裡只是型別保險
+      exempts.push({ id: em[1], date: em[2], key: em[3] != null ? em[3].trim() : null,
+        keyHash: em[4] ? em[4].toLowerCase() : null,
+        who: `${h.role}（${h.source}）`, role: h.role, source: h.source, idx });
+    }
+    // 位置不對的「重述 r…」／「豁免留言 …」樣子的行＝不生效，但要出聲（#418 r3 Medium：不然
+    // 真心想重述／豁免的人把行放錯位置，會以為清掉了）。只給警告，所以用寬鬆剝除（範例不吵）。
     const loose = stripFencesLoose(String(c.body || '')).replace(/^[^\S\n]*>.*$/gm, '').split('\n');
     for (let i2 = 0; i2 < loose.length; i2++) {
-      if (!/^ {0,3}重述\s*r\d+｜/u.test(loose[i2])) continue;
+      if (!/^ {0,3}(?:重述\s*r\d+｜|豁免留言\s*\d)/u.test(loose[i2])) continue;
       if (restateIdxs.some((ri) => lines[ri] === loose[i2])) continue;   // 已生效的那幾行不吵
-      warnings.push('有一行長得像重述、但**不在生效位置**（重述行必須緊跟在標頭後面，中間只准空行）'
+      if (exemptIdxs.some((ri) => lines[ri] === loose[i2])) continue;
+      warnings.push('有一行長得像重述或豁免宣告、但**不在生效位置**（必須緊跟在標頭後面，中間只准空行）'
         + `⇒ 不生效：「${collapse(loose[i2]).slice(0, 80)}…」`);
     }
     applyEntry(h);
@@ -553,14 +653,53 @@ export function verdictProblems(comments, head, reviewerRole = null) {
   for (const m of malformed) {
     const taker = restated.find((r) => r.key === m.key && r.idx > m.idx);
     const early = !taker && restated.find((r) => r.key === m.key);
+    // 豁免（規則見 EXEMPT）：三重指認（編號＋逐字引文＋日期在宣告行裡）＋順序（宣告在壞留言之後）。
+    // `m.id == null`（留言物件沒有 url 可解）＝不可豁免——fail-closed。
+    // 豁免資格（#477 r1 High①＋r2 High①：**與正式重述同一套身分語意**，不可用「前綴正則有沒有
+    // match」代替——那在兩個方向都會分類錯：Codeex／空來源被誤判成「身分讀得出」＝三級全接不了
+    // 而永久鎖死；合法身分＋輪次打壞被誤判成「讀不出」＝被別人越級豁免）：
+    // ①第一行必含 🤖（防前言行鑰匙＝事後編輯續命）
+    // ②rid（canonical 角色＋非空來源）且 metadata 可讀＝重述家族、禁豁免
+    // ③rid 可讀但 metadata 讀不出（重述結構上接不了）＝**只有同一身分**可豁免
+    // ④rid 讀不出＝任何合規標頭可豁免（原階梯③）。
+    const hasMark = /🤖/u.test(m.key);
+    const rid = restatableIdentity(m.key);
+    const metaReadable = !!(QUOTED_HEAD.exec(m.key) || QUOTED_HEAD_NOSHA.exec(m.key));
+    const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
+    const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
+      && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
+    const identityOk = (/** @type {any} */ e) => !rid || (e.role === rid.role && e.source === rid.source);
+    const exemptable = hasMark && !(rid && metaReadable);
+    const ex = !taker && exemptable && exempts.find((e) => matches(e) && identityOk(e) && e.idx > m.idx);
+    // 對稱提示（同 early）：指認都對得上、卻出現在壞留言**之前**的豁免——不生效，但要出聲，
+    // 不然排錯的人會以為宣告沒被吃到、重複發錯格式的豁免。
+    const earlyEx = !taker && !ex && exemptable && exempts.find((e) => matches(e) && identityOk(e));
+    // 不符資格卻有指認對得上的宣告＝也要出聲講清楚為什麼沒生效（不然會被誤判成格式打錯而重發）。
+    const ineligFamily = !taker && !exemptable && exempts.find((e) => matches(e));
+    const wrongIdent = !taker && exemptable && rid && !ex && !earlyEx && exempts.find((e) => matches(e));
     if (taker) {
       warnings.push(`一則壞標頭留言已被 ${taker.who} 的重述行接管（重述的結論已照常進聯集）：「${m.key.slice(0, 60)}…」`);
+    } else if (ex) {
+      warnings.push(`一則壞標頭留言已被**豁免**（William 特准 ${ex.date}，由 ${ex.who} 宣告；`
+        + `壞留言原地保留＝稽核軌跡不動，僅「標頭寫壞」這條阻擋中和、不產生任何結論）：「${m.key.slice(0, 60)}…」`);
     } else {
       // **阻擋**：出現 🤖 就是在試這個格式，寫壞了要當場說——誤判面極小。
       problems.push(`有一則留言用了 🤖 記號、但標頭格式不合規${m.excerpt}\n`
         + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
+        + (earlyEx ? '    ⚠️ 有一行引文與編號都對得上的豁免宣告，但它出現在這則壞留言**之前**（豁免不可以預先授權未來的壞留言）。\n' : '')
+        + (ineligFamily ? '    ⚠️ 有一行指認對得上的豁免宣告，但這則壞行**不符合豁免資格**——'
+          + '身分與 metadata 都讀得出＝走同身分重述（sha 欄空白型＝缺 sha 例外），'
+          + '或第一行不含 🤖（豁免的鑰匙必須是壞標頭本行）。\n' : '')
+        + (wrongIdent ? `    ⚠️ 有一行指認對得上的豁免宣告，但這則壞行**身分讀得出**（${/** @type {any} */ (rid).role}（${/** @type {any} */ (rid).source}））`
+          + '＝只有**同一身分**可豁免（同身分紀律不因 metadata 壞掉而放寬），宣告者不是它。\n' : '')
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
-        + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節）。');
+        + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節；'
+        + 'sha 欄空白、其餘三欄讀得出的壞行走**缺 sha 例外**＝重述行自報版本）。\n'
+        + '    ↳ 連角色／來源／輪次都讀不出的型＝重述救不了：經 **William 特准**後，帶合規標頭的留言'
+        + '收件區加一行「豁免留言 <留言編號>｜William 特准 <YYYY-MM-DD>｜原第一行：「＜逐字引用＞」」'
+        + '（引文含隱形／損壞字元被守則拒收時，改用「原第一行雜湊：<該行**去頭尾空白後**的 SHA-256>」指認）。\n'
+        + '    ↳ 身分讀得出、但輪次或 sha 欄損壞（重述接不了）的型＝**僅同一身分**可豁免（同上格式）'
+        + '（編號＝該留言 issuecomment 網址尾碼；壞留言**原地保留**、不再刪留言——規則見腳本 EXEMPT 一節）。');
     }
   }
   // **同一位審查者被打成兩種來源寫法 → 閘會把他拆成兩個身分**（2026-08-14 #453 實際踩到，
