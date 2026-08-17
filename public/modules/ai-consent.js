@@ -68,7 +68,7 @@ export async function askToggleDisplayAfterSaveFailure(fetchSettings) {
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
-export const AI_CONSENT_BUSY_LABEL = '正在上傳…請稍候';
+export const AI_CONSENT_BUSY_LABEL = 'AI 讀取中（兩個 AI 互相核對，通常一分鐘內；讀不一致要仲裁時會再久一點）…';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。
@@ -244,10 +244,14 @@ export function aiPreviewBadgeHtml(preview) {
       : preview.dualRead === 'attested'
         ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
         : '';
+  // P2-4b（William 2026-08-17 裁示）：文字欄寫法差異不觸發仲裁、採 Opus 版——但要誠實註明（列欄位不列值）
+  const tv = Array.isArray(preview.dualReadTextVariance) && preview.dualReadTextVariance.length
+    ? `<p class="muted" style="margin:0 0 6px;font-size:12px">✏️ 兩讀在文字欄寫法不同（${esc([...new Set(preview.dualReadTextVariance)].slice(0, 5).join('、'))}${preview.dualReadTextVariance.length > 5 ? '⋯' : ''}）——不影響金額核對，已採用 Opus 那份的寫法。</p>`
+    : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
-  ${dual}
+  ${dual}${tv}
   <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>

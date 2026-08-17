@@ -71,9 +71,8 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     accounts: [{ masked: '900200****1234', suffix: '1234', balance: 5500, currency: 'TWD', label: '活期', note: '' }],
     transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: '2026-07-01', summary: '超商繳費', direction: 'out', amount: 100, balance: 4900, note: '水電' }],
   });
-  assert.deepEqual(aiAnswersAgree(base(), base()), { agree: true, diffs: [] });
+  assert.deepEqual(aiAnswersAgree(base(), base()), { agree: true, diffs: [], textVariance: [] });
   for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
-    [(p) => { p.bank = '別家'; }, '機構名'],
     [(p) => { p.referenceDate = null; }, '現值參考日'],
     [(p) => { p.accountCurrency['900200****1234'] = 'USD'; }, '帳戶幣別表'],
     [(p) => { p.accounts[0].balance = 9; }, '帳戶餘額組成'],
@@ -81,13 +80,10 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     [(p) => { p.transactions[0].direction = 'in'; }, '第 1 筆交易的方向'],
     [(p) => { p.transactions[0].date = '2026-07-09'; }, '第 1 筆交易的日期'],
     [(p) => { p.transactions[0].balance = 1; }, '第 1 筆交易的餘額'],
-    [(p) => { p.transactions[0].acctMasked = '900200****9999'; }, '第 1 筆交易的帳號'],
     [(p) => { p.transactions[0].acctSuffix = '9999'; }, '第 1 筆交易的帳號末碼'],
-    [(p) => { p.accounts[0].masked = '900200****9999'; }, '帳戶餘額組成'],
     [(p) => { p.accounts[0].suffix = '9999'; }, '帳戶餘額組成'],
     [(p) => { p.accounts[0].currency = 'USD'; }, '帳戶餘額組成'],
     [(p) => { p.transactions[0].summary = '超商繳費A'; }, '第 1 筆交易的摘要'],
-    [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
     [(p) => { p.transactions.pop(); }, '交易筆數'],
   ])) {
     const b = base(); patch(b);
@@ -96,16 +92,37 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     assert.ok(r.diffs.includes(label), `diffs 要指認「${label}」（實得 ${JSON.stringify(r.diffs)}）`);
     assert.ok(!r.diffs.some((d) => /999|4900|5500|900200/.test(d)), 'diffs 絕不帶數值（機密紀律）');
   }
+  // P2-4b（William 2026-08-17 裁示「移出機構名＋備註」＝真帳單第一課）：寫法差異＝建議面、不觸發
+  for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
+    [(p) => { p.bank = '台新國際商業銀行'; }, '機構名'],
+    [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
+    [(p) => { p.transactions[0].acctMasked = '9002-00****1234'; }, '帳號印法'],
+    [(p) => { p.accounts[0].masked = '9002-00****1234'; p.accountCurrency = { '9002-00****1234': 'TWD' }; }, '帳號印法'],
+  ])) {
+    const b = base(); patch(b);
+    const r = aiAnswersAgree(base(), b);
+    assert.equal(r.agree, true, `★${label} 寫法差異不觸發仲裁（W 裁示；重複風險由疑似重複提醒層接）`);
+    assert.ok(r.textVariance.includes(label), `textVariance 要誠實列出「${label}」（實得 ${JSON.stringify(r.textVariance)}）`);
+    assert.ok(!r.textVariance.some((d) => /999|4900|5500|900200|1234/.test(d)), '建議面同樣不帶值');
+  }
 });
 
 test('比對器｜文字欄空白不敏感（摘要/備註）、label/note 刻意不比、順序嚴格', () => {
   const a = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [], transactions: [{ acctSuffix: '1', acctMasked: 'm', date: 'd', summary: '超商 繳費', direction: 'out', amount: 1, balance: null, note: '水 電' }] });
   const b = structuredClone(a); b.transactions[0].summary = '超商繳費'; b.transactions[0].note = '水電';
-  assert.equal(aiAnswersAgree(a, b).agree, true, '★只差格間空白＝一致（兩個模型取空白本來就不同）');
+  const rws = aiAnswersAgree(a, b);
+  assert.equal(rws.agree, true, '★只差格間空白＝一致（兩個模型取空白本來就不同）');
+  assert.deepEqual(rws.textVariance, [], '★只差空白連「建議面」都不列（不做狼來了）');
   const g = structuredClone(a); g.bank = '第一 銀行'; const h = structuredClone(a); h.bank = '第一銀行';
-  assert.equal(aiAnswersAgree(g, h).agree, true, '★r1#1：機構名只差排版空白＝一致（嚴格等值＝白花仲裁甚至誤判三讀不同）');
+  const rb = aiAnswersAgree(g, h);
+  assert.equal(rb.agree, true, '★r1#1：機構名只差排版空白＝一致');
+  assert.deepEqual(rb.textVariance, [], '空白差異連建議面都不列');
+  // P2-4b 取捨誠實記載：機構名**整欄**移出觸發（W 2026-08-17 裁示）——連「真的不同家」也只列建議面、
+  // 採 Opus 版。代價寫進契約：兩模型對同一份帳單讀出不同機構＝其中一個誤讀，靠徽章建議句給使用者看。
   const g2 = structuredClone(a); g2.bank = '第一銀行'; const h2 = structuredClone(a); h2.bank = '第二銀行';
-  assert.equal(aiAnswersAgree(g2, h2).agree, false, '真的不同家照樣紅');
+  const rb2 = aiAnswersAgree(g2, h2);
+  assert.equal(rb2.agree, true, '★裁示後不同寫法（含不同家）都不觸發');
+  assert.ok(rb2.textVariance.includes('機構名'), '但建議面必須誠實列出');
   const c = /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: {}, accounts: [{ masked: 'm', suffix: '1', balance: 5, currency: 'TWD', label: '活儲', note: 'A' }], transactions: [] });
   const d = structuredClone(c); d.accounts[0].label = '活期儲蓄'; d.accounts[0].note = 'B';
   assert.equal(aiAnswersAgree(c, d).agree, true, '★帳戶 label/note 措辭不同＝不比（不進帳本金額與去重鍵）');
@@ -316,6 +333,12 @@ test('徽章｜dualRead=agree/arbitrated 各有一句、無 dualRead 不畫；�
   assert.match(aiPreviewBadgeHtml({ ...base, dualRead: 'attested' }), /其中一讀沒讀出合法答案/, '★W3：一讀掛掉不得謊稱「前兩讀不一致」');
   const plain = aiPreviewBadgeHtml(base);
   assert.doesNotMatch(plain, /雙讀一致|三讀仲裁/, '單讀＝不畫雙讀句');
+  // P2-4b：建議面要誠實畫出（列欄位不列值）；沒有建議面＝不畫（不做狼來了）
+  const withTv = aiPreviewBadgeHtml({ ...base, dualRead: 'agree', dualReadTextVariance: ['機構名', '第 12 筆交易的備註'] });
+  assert.match(withTv, /✏️/, '★文字欄寫法不同要有 ✏️ 句');
+  assert.match(withTv, /機構名、第 12 筆交易的備註/, '列欄位');
+  assert.match(withTv, /已採用 Opus/, '講清楚採哪份');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), /✏️/, '沒有建議面＝不畫');
   for (const h of [aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), aiPreviewBadgeHtml({ ...base, dualRead: 'arbitrated' }), aiPreviewBadgeHtml({ ...base, dualRead: 'attested' })]) {
     assert.doesNotMatch(h, /保證正確|一定對|免驗算/, '徽章不得加保證');
   }
