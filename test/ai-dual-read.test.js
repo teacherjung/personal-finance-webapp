@@ -369,20 +369,36 @@ test('W6｜四發合成題：仲裁 preview（3 發解析）→兌票 apply（�
 });
 
 // ---- 前端純函式 ----
-test('r1#1｜Sonnet 勝出的仲裁：徽章 ✏️ 句要講採用的是 Sonnet、不得寫死 Opus；仲裁句只宣稱錢欄位一致', async () => {
+test('r1#1｜Sonnet 勝出的仲裁：✏️ 句真的畫出且顯示 Sonnet、不得寫死 Opus；仲裁句只宣稱錢欄位一致', async () => {
   const db = await seedDb();
   const good = answerOf();   // Sonnet 讀對
-  const bad = answerOf({     // Opus 讀出另一條自洽鏈（hard 不同）
+  const bad = answerOf({     // Opus 讀出另一條自洽鏈（hard 不同）＋備註措辭不同（讓初讀 tv 非空＝✏️ 句真的畫）
     accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
-    transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
+    transactions: [{ ...good.transactions[0], note: 'Opus 版備註' }, { ...good.transactions[1], amount: 100, balance: 5000 }],
   });
-  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 第三種備註' }, good.transactions[1]] });   // hard 同 Sonnet、備註第三種
+  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 第三種備註' }, good.transactions[1]] });   // 錢欄同 Sonnet、備註第三種
   const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: bad, [F]: fable }), extract: extractA });
   assert.equal(r.dualRead, 'arbitrated');
   assert.equal(r.aiModel, S, '★Fable 的錢欄位與 Sonnet 版一致＝採 Sonnet');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.includes('第 1 筆交易的備註'), '初讀 tv 非空（r2#1：空 tv＝✏️ 句沒畫＝斷言全是空包）');
   const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: r.aiModel, dualRead: r.dualRead, dualReadTextVariance: /** @type {any} */ (r).dualReadTextVariance });
-  assert.doesNotMatch(html, /已採用Opus|已採用 Opus/, '★採 Sonnet 時不得謊稱採 Opus（r1#1 對抗重現的形）');
+  assert.match(html, /✏️/, '★✏️ 句真的畫出');
+  assert.match(html, /已採用.*Sonnet/, '★顯示實際中選＝Sonnet（動態模型名）');
+  assert.doesNotMatch(html, /已採用.*Opus/, '★不得謊稱採 Opus（r1#1 對抗重現的形）');
   assert.match(html, /會影響錢的欄位.*完全一致/, '★仲裁句只宣稱錢欄位一致（文字欄可能仍不同）');
+});
+
+test('r2#1b｜attested＋文字差：一讀無效、有效讀與 Fable 錢欄一致但備註不同——不得宣稱整份完全一致、✏️ 動態名', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 備註' }, good.transactions[1]] });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: badAnswer, [O]: good, [F]: fable }), extract: extractA });
+  assert.equal(r.dualRead, 'attested');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.length, '單讀路的 tv＝勝者對仲裁者（唯一可比的兩份）');
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: r.aiModel, dualRead: r.dualRead, dualReadTextVariance: /** @type {any} */ (r).dualReadTextVariance });
+  assert.match(html, /會影響錢的欄位.*完全一致/, '★attested 句也只宣稱錢欄位（整份完全一致＝謊：備註是第三種寫法）');
+  assert.doesNotMatch(html, /讀後與這一份完全一致——/, '★舊的整份宣稱句不得復發');
+  assert.match(html, /✏️/, '文字差要誠實畫出');
 });
 
 test('r1#2｜busy 文案＝未來式：零 AI 呼叫的路（HOSTED/未設鑰匙）不得宣稱「AI 讀取中」（#455 假進度同族）', async () => {

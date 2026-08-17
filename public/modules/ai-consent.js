@@ -244,7 +244,8 @@ export function aiPreviewBadgeHtml(preview) {
       : preview.dualRead === 'attested'
         ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後，<b>會影響錢的欄位</b>與這一份完全一致——仍請你照下面清單核對一次。</p>'
         : '';
-  // P2-4b（William 2026-08-17 裁示）：文字欄寫法差異不觸發仲裁、採 Opus 版——但要誠實註明（列欄位不列值）
+  // P2-4b（William 2026-08-17 裁示）：文字欄寫法差異不觸發仲裁、採中選那份（一致路＝Opus、仲裁路可能＝Sonnet
+  //  ——寫死「採 Opus」＝r2#2 的畫面說謊）——要誠實註明（列欄位不列值、動態模型名）
   const tv = Array.isArray(preview.dualReadTextVariance) && preview.dualReadTextVariance.length
     ? `<p class="muted" style="margin:0 0 6px;font-size:12px">✏️ 兩讀在文字欄寫法不同（${esc([...new Set(preview.dualReadTextVariance)].slice(0, 5).join('、'))}${preview.dualReadTextVariance.length > 5 ? '⋯' : ''}）——不影響金額核對，已採用${esc(modelDisplayName(preview.aiModel) || '中選那份')}的寫法。</p>`
     : '';
