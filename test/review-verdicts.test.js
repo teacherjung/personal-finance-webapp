@@ -1150,10 +1150,11 @@ test('⭐ 豁免｜編號對、引文錯 → 不生效、維持阻擋（三重�
 });
 
 test('⭐ 豁免｜宣告在壞留言之前且三重指認都對 → 不生效，但要出聲（對稱提示）', () => {
-  const { problems, warnings } = verdictProblems(
+  const { problems } = verdictProblems(
     [c(EXEMPT_OK), cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL)], HEAD, 'Codex');
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), problems.join('｜'));
-  assert.ok(warnings.length === 0 || problems.some((p) => /豁免不可以預先授權/.test(p)),
+  // ⚠️ 第一版斷言是空包彈（warnings.length === 0 恆真＝OR 左肢永遠成立）——污染掃描二號抓到。
+  assert.ok(problems.some((p) => /豁免不可以預先授權/.test(p)),
     `提早的豁免要在阻擋訊息裡出聲：${problems.join('｜')}`);
 });
 
@@ -1169,4 +1170,25 @@ test('⭐ 缺sha例外｜自報「通過」不能變成對目前 head 的放行�
     `r7 阻擋必須還在：${problems.join('｜')}`);
   assert.ok(problems.some((p) => /沒有「Codex」對目前的 head/.test(p) || /需修改後再審/.test(p)),
     `自報通過不可成為放行票：${problems.join('｜')}`);
+});
+
+test('⭐ 缺sha例外｜假標頭藏在引文中段（行首讀不出）→ 不可重述（行首錨承重）', () => {
+  // 污染掃描二號抓到：QUOTED_HEAD_NOSHA 的 ^ 沒有考題——拿掉行首錨後，
+  // 「行首是垃圾、中段才出現缺 sha 假標頭」會被綁成低輪接管，#418 規則⑤原樣重演。
+  const midFirst = '審查備註 🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審';
+  const restate = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${midFirst}」`;
+  const { problems, warnings } = verdictProblems([c(`${midFirst}\n\n略。`), c(restate)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `行首讀不出必須維持阻擋：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /讀不出「誰寫的、審哪個 sha、第幾輪」/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 豁免｜引文只寫壞行的前綴 → 不生效（逐字＝整句，不是包含）', () => {
+  // 污染掃描二號抓到：引文腿弱化成 includes 時，「原第一行：「🤖 ｜來源：」」這種前綴宣告
+  // 就能中和整句更長的壞標頭——留言事後改寫仍含該前綴，舊豁免繼續生效。
+  const prefixQuote = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + '豁免留言 5310870038｜William 特准 2026-08-17｜原第一行：「🤖 ｜來源：」';
+  const { problems } = verdictProblems(
+    [cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL), c(prefixQuote)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), `前綴引文必須維持阻擋：${problems.join('｜')}`);
 });
