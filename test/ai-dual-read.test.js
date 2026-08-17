@@ -213,6 +213,7 @@ test('P2-4c｜帳號正規化三態：分隔符＝完全相等（零提示）；
   // Grok r0 升級的三個新形：星號中段數字差／無星完整號 vs 另一戶遮罩號／星號長短純印法
   assert.equal(maskedCmp('900200*00*1234', '900200*99*1234'), 'conflict', '★中段數字差＝首版前綴判準的洞（Grok #3）');
   assert.equal(maskedCmp('9002001234', '900311****1234'), 'conflict', '★完整號 vs 另一戶遮罩號＝無星也要擋（Grok #4）');
+  assert.equal(maskedCmp('*900200****1234', '*900311****1234'), 'conflict', '★前導星號形（Codex r1#2：舊「首星前綴」判準對這形回 variance＝真正殺得死舊版的刀口）');
   assert.equal(maskedCmp('900200**1234', '900200****1234'), 'variance', '數字序列相等＝星號長短純印法');
   assert.equal(maskedCmp('900200****1234', '900200****5678'), 'conflict', '末碼不同＝conflict（#11：這分支要有自己的題）');
   // 誠實殘餘釘現況（P1a 同款取捨）：極短前綴巧合＝相容放行
@@ -443,6 +444,43 @@ test('r3#1｜三碼末碼碰撞走**正式雙讀路**：兩讀把交易整批掛
   assert.notEqual(r.dualRead, 'agree', '★整批歸屬對調（末碼同為 363、鏈各自自洽、閘全綠）不得雙讀一致');
   assert.equal(r.dualRead, 'arbitrated', 'Fable 與正確版一致＝仲裁收回');
   assert.equal(spy.calls.length, 3, '真的走了仲裁');
+});
+
+test('r1#1｜單份答案內同帳號兩種印法＋幣別對調＝fail-closed 不得 agree（canon 捏同身分、下游卻按原字串查幣別）', async () => {
+  await seedDb();
+  const RAW1 = '9002-00****1234', RAW2 = '900200****1234';   // canon 相同、原字串不同
+  const linesDup = () => [
+    L(10, [[40, '一銀活期帳戶明細']]),
+    L(30, [[40, RAW1], [200, 'TWD'], [320, '5,500']]),
+    L(35, [[40, RAW2], [200, 'USD'], [320, '150']]),
+    L(40, [[40, '900100****3301'], [200, 'TWD'], [320, '9,000']]),
+    L(50, [[40, '2026/07/01'], [60, '3301'], [140, '零用金存入'], [280, '100'], [320, '9,100']]),
+    L(55, [[40, '2026/07/02'], [60, '3301'], [140, '超商繳費'], [240, '100'], [320, '9,000']]),
+  ];
+  const mk = (/** @type {boolean} */ swap) => ({
+    bank: '第一銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [
+      { masked: RAW1, currency: swap ? 'USD' : 'TWD' }, { masked: RAW2, currency: swap ? 'TWD' : 'USD' },
+      { masked: '900100****3301', currency: 'TWD' },
+    ],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [
+      { masked: RAW1, balance: swap ? 150 : 5500, currency: swap ? 'USD' : 'TWD', label: '', note: '' },
+      { masked: RAW2, balance: swap ? 5500 : 150, currency: swap ? 'TWD' : 'USD', label: '', note: '' },
+      { masked: '900100****3301', balance: 9000, currency: 'TWD', label: '', note: '' },
+    ],
+    transactions: [
+      { acctMasked: '900100****3301', date: '2026-07-01', direction: 'in', amount: 100, balance: 9100, summary: '零用金存入', note: '' },
+      { acctMasked: '900100****3301', date: '2026-07-02', direction: 'out', amount: 100, balance: 9000, summary: '超商繳費', note: '' },
+    ],
+  });
+  await assert.rejects(
+    () => previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => /** @type {any} */ (engineOf({ [S]: mk(false), [O]: mk(true), [F]: mk(false) })), aiExtract: async () => linesDup() }),
+    (/** @type {any} */ e) => {
+      assert.equal(e.code, 'ai_disagree', '★對調不得被任何一份「採用」——連 Fable 那份自己也帶雙印法＝一路 fail-closed 到手動');
+      assert.doesNotMatch(e.message, /5,?500|150|9,?000|900200|9002/, '機密紀律');
+      return true;
+    });
 });
 
 // ---- 前端純函式 ----
