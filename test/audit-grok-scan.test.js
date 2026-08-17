@@ -84,14 +84,14 @@ test('⭐ --workspace｜稽核全部 session：較新的乾淨 session 蓋不掉
   const { dirs } = allSessionDirs(cwd, root);
   assert.equal(dirs.length, 2);
   let code = 0;
-  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd], { env: { ...process.env, GROK_SESSIONS_ROOT: root }, encoding: 'utf8' }); }
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
   catch (e) { code = /** @type {any} */ (e).status; }
   assert.equal(code, 1, '越界 session 必須讓整體退 1，不能被較新的乾淨 session 洗掉');
 });
 
 test('⭐ --workspace｜workspace 不存在 → CLI 退 2（主路徑行為題）', () => {
   let code = 0;
-  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', '/no/such/cwd'], { env: { ...process.env, GROK_SESSIONS_ROOT: tmp() }, encoding: 'utf8' }); }
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', '/no/such/cwd', '--sessions-root', tmp()], { encoding: 'utf8' }); }
   catch (e) { code = /** @type {any} */ (e).status; }
   assert.equal(code, 2, '找不到 workspace 必須 fail-closed 退 2');
 });
@@ -123,4 +123,36 @@ test('⭐ 判準｜name:"tool" 帶參數＝照算（寧可誤殺；params 鍵也
   writeFileSync(join(d, 'updates.jsonl'), '{"name":"tool","params":{"x":1}}\n');
   const r = auditSessionDir(d);
   assert.equal(r.code, 1, r.why);
+});
+
+test('⭐ 判準第二腿｜events.jsonl 形狀（type:tool_started＋tool_name、無 name 無四鍵）照樣抓到', () => {
+  // 作廢二掃 F1/F2＋真日誌實測（tool_name 108 次、tool_started 27 次）：單靠 name+四鍵，
+  // updates/chat_history 缺席、只剩 events.jsonl 時越界會被洗成 0。
+  const d = tmp();
+  writeFileSync(join(d, 'events.jsonl'),
+    '{"type":"tool_started","tool_name":"run_terminal_command","ts":1}\n{"type":"tool_completed","tool_name":"run_terminal_command","ts":2}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+  assert.ok(r.calls.run_terminal_command >= 1);
+});
+
+test('⭐ 多檔 session｜乾淨 updates＋越界 events ＝ 1（不能只讀一份檔）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+  writeFileSync(join(d, 'events.jsonl'), '{"type":"tool_started","tool_name":"grep"}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+});
+
+test('⭐ CLI 主路徑｜positional sessionDir 的退出碼（乾淨 0／越界 1）', () => {
+  const clean = tmp();
+  writeFileSync(join(clean, 'updates.jsonl'), '{"type":"result"}\n');
+  const out = execFileSync(process.execPath, ['scripts/audit-grok-scan.js', clean], { encoding: 'utf8' });
+  assert.ok(/乾淨/.test(out));
+  const bad = tmp();
+  writeFileSync(join(bad, 'updates.jsonl'), '{"name":"grep","arguments":{}}\n');
+  let code = 0;
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', bad], { encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; }
+  assert.equal(code, 1);
 });

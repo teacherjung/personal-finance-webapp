@@ -48,6 +48,12 @@ function walk(node, calls) {
       && ['arguments', 'input', 'args', 'params'].some((k) => Object.hasOwn(node, k))) {
     calls[node.name] = (calls[node.name] || 0) + 1;
   }
+  // 第二條腿（作廢二掃 F1/F2、真日誌實測）：events.jsonl 的工具足跡長 {type:"tool_started", tool_name:…}
+  // ——沒有 name 也沒有四鍵。帶字串 tool_name 的物件一律照算（寧可誤殺；tool_completed 造成的
+  // 重複計數無妨——驗屍只問「有沒有」，不問「幾次」）。
+  if (typeof node.tool_name === 'string' && node.tool_name) {
+    calls[node.tool_name] = (calls[node.tool_name] || 0) + 1;
+  }
   for (const v of Object.values(node)) walk(v, calls);
 }
 
@@ -111,7 +117,8 @@ if (isMainModule(import.meta.url)) {
   if (args[0] === '--workspace' && args[1]) {
     // ⚠️ 稽核該工作區**全部** session（#478 預審 F3：只驗 mtime 最新＝較新的乾淨 session 會
     //    蓋掉越界日誌）。配方要求每次掃描用全新工作目錄＝這裡的全部就是那一次的全部。
-    const { dirs, why } = allSessionDirs(args[1], process.env.GROK_SESSIONS_ROOT || undefined);
+    const rootFlag = args.indexOf('--sessions-root');
+    const { dirs, why } = allSessionDirs(args[1], rootFlag > -1 ? args[rootFlag + 1] : undefined);
     if (!dirs.length) { console.log(`驗屍：**查不清楚**（${why}）——fail-closed，當越界處理`); process.exit(2); }
     let worst = 0;
     for (const d of dirs) {
