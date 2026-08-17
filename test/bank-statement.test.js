@@ -50,7 +50,7 @@ test('概要區｜台幣區：末碼＋餘額＋參考日；外幣區：取原�
   const r = parseBankSummary(lines);
   assert.equal(r.referenceDate, '2026-06-30');
   assert.equal(r.accounts.length, 4, '2 台幣 + 2 外幣（幣別各異）');
-  assert.deepEqual(r.accounts[0], { suffix: '3301', masked: '900100****3301', balance: 23, currency: 'TWD', label: '新臺幣活存', note: '' });
+  assert.deepEqual(r.accounts[0], { suffix: '3301', masked: '900100****3301', balance: 23, currency: 'TWD', label: '新臺幣活存', note: '', kind: 'demand', period: '' });
   assert.equal(r.accounts[1].balance, 136185);
   assert.equal(r.accounts[1].note, 'Richart');
   const jpy = r.accounts.find(a => a.currency === 'JPY');
