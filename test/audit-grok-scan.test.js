@@ -247,3 +247,13 @@ test('⭐ fail-closed｜workspace 目錄無法列舉 → CLI 退 2 不是 1', (t
   catch (e) { code = /** @type {any} */ (e).status; }
   assert.equal(code, 2, '列舉失敗必須是「查不清楚」，不是「已確認越界」');
 });
+
+test('⭐ 判準第六腿｜task_snapshot 真形狀（_x.ai/session/update、無前五腿任何鍵）單獨退 1', () => {
+  // #479 r3 High：真日誌 3 筆實測——bash 任務快照帶 command，前五腿全抓不到。
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'),
+    '{"timestamp":1,"method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"task_completed","task_snapshot":{"task_id":"call-abc-1","kind":"bash","command":"ls -la /tmp","completed":true}}}}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+  assert.ok(r.calls.bash >= 1, JSON.stringify(r.calls));
+});

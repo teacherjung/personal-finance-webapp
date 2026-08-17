@@ -30,6 +30,7 @@
 //   ①`name`＋（arguments/input/args/params 任一鍵；訊息角色 user/assistant/system 不算、`tool` 照算）
 //   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
 //   ④字串 `tool_call_id`／`toolCallId`（工具結果與識別碼）⑤`_meta` 帶 "x.ai/tool" 鍵
+//   ⑥物件值 `task_snapshot`（_x.ai/session/update 的 bash 任務快照）
 //   ＋session 子目錄 `terminal/call-*.log` 容器。任一腿命中＝足跡在場，不靠 companion 冗餘。
 //   判準仍屬列舉性＝格式大漂時靠版本釘（CLI 版本不同＝當未跑）收口。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -68,6 +69,14 @@ function walk(node, calls) {
   if ((typeof node.tool_call_id === 'string' && node.tool_call_id)
       || (typeof node.toolCallId === 'string' && node.toolCallId)) {
     calls['tool_call'] = (calls['tool_call'] || 0) + 1;
+  }
+  // 第六條腿（#479 r3 High、真日誌 3 筆）：_x.ai/session/update 的 params.update.task_snapshot
+  // ——bash 任務快照（kind:"bash"、task_id:"call-…"、command:…），沒有任何前五腿認得的鍵。
+  // 帶物件值 task_snapshot 的物件一律照算（名記 snapshot.kind 或 task_snapshot）。
+  if (node.task_snapshot && typeof node.task_snapshot === 'object' && !Array.isArray(node.task_snapshot)) {
+    const kind = typeof (/** @type {any} */ (node.task_snapshot).kind) === 'string' && (/** @type {any} */ (node.task_snapshot).kind)
+      ? String((/** @type {any} */ (node.task_snapshot)).kind) : 'task_snapshot';
+    calls[kind] = (calls[kind] || 0) + 1;
   }
   // 第五條腿（#479 r2 High①、真日誌 284 筆）：_meta 帶 "x.ai/tool" 鍵的 metadata 物件。
   if (node._meta && typeof node._meta === 'object' && !Array.isArray(node._meta)
