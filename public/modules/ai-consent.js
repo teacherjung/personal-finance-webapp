@@ -68,7 +68,7 @@ export async function askToggleDisplayAfterSaveFailure(fetchSettings) {
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
-export const AI_CONSENT_BUSY_LABEL = 'AI 讀取中（兩個 AI 互相核對，通常一分鐘內；讀不一致要仲裁時會再久一點）…';
+export const AI_CONSENT_BUSY_LABEL = 'AI 讀取中（通常一分鐘內；遇到要複讀或仲裁時會再久一點）…';   // G21：措辭雙模式皆真——關雙讀時沒有「兩個 AI」，不可說謊
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。

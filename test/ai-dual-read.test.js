@@ -157,6 +157,37 @@ test('比對器｜形狀同步（Grok#1 機械化排除）：normalize 輸出必
   assert.ok(r.diffs.includes('帳戶幣別表'));
 });
 
+test('碰撞退嚴格（Grok G1/G2/G3）｜同末碼兩帳戶＝退回含 masked 的嚴格鍵：幣別/餘額歸屬對調要紅、逐筆歸屬也回 hard', () => {
+  const two = (/** @type {any} */ over = {}) => /** @type {any} */ ({
+    bank: 'x', referenceDate: null,
+    accountCurrency: { '900200****1234': 'TWD', '900211****1234': 'USD' },
+    accounts: [
+      { masked: '900200****1234', suffix: '1234', balance: 1000, currency: 'TWD', label: '', note: '' },
+      { masked: '900211****1234', suffix: '1234', balance: 2000, currency: 'USD', label: '', note: '' },
+    ],
+    transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: 'd', summary: 's', direction: 'out', amount: 1, balance: null, note: '' }],
+    ...over,
+  });
+  assert.equal(aiAnswersAgree(two(), two()).agree, true, '碰撞但兩讀一致＝照樣綠');
+  // 幣別歸屬對調（末碼 multiset 不變）＝必須紅
+  const swapCur = two({ accountCurrency: { '900200****1234': 'USD', '900211****1234': 'TWD' } });
+  assert.ok(aiAnswersAgree(two(), swapCur).diffs.includes('帳戶幣別表'), '★同末碼幣別對調＝hard（只比末碼會全綠——Grok 實指的塌縮）');
+  // 餘額歸屬對調＝必須紅
+  const swapBal = two();
+  swapBal.accounts[0].balance = 2000; swapBal.accounts[1].balance = 1000;
+  swapBal.accounts[0].currency = 'TWD'; swapBal.accounts[1].currency = 'USD';
+  assert.ok(aiAnswersAgree(two(), swapBal).diffs.includes('帳戶餘額組成'), '★同末碼餘額對調＝hard');
+  // 逐筆歸屬掛錯實體帳＝必須紅（碰撞時 masked 回 hard）
+  const swapTx = two();
+  swapTx.transactions[0].acctMasked = '900211****1234';
+  assert.ok(aiAnswersAgree(two(), swapTx).diffs.some((d) => d.includes('帳號')), '★碰撞時逐筆 masked 回 hard');
+  // 無碰撞的常見路不受影響：單帳戶印法差異仍只是建議面
+  const one = (/** @type {string} */ m) => /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: { [m]: 'TWD' }, accounts: [{ masked: m, suffix: '1234', balance: 5, currency: 'TWD', label: '', note: '' }], transactions: [] });
+  const r = aiAnswersAgree(one('900200****1234'), one('9002-00****1234'));
+  assert.equal(r.agree, true, '★無碰撞＝印法差異照裁示不觸發');
+  assert.ok(r.textVariance.includes('帳號印法'));
+});
+
 // ---- 開關判準 ----
 test('開關｜dualReadWanted：只有明確 false 才關——讀不到/壞型別＝開（fail 往多驗證）', () => {
   assert.equal(dualReadWanted({ aiDualRead: false }), false);
@@ -177,6 +208,18 @@ test('雙讀｜兩讀一致＝採 Opus 版（label 措辭不同也算一致、�
   assert.equal(r.aiModel, O, '★採用 escalation（Opus）那份');
   assert.equal(/** @type {any} */ (r).parsed.accounts[0].label, 'Opus 措辭', '★未比對欄也是 Opus 版（不留誰先回來誰贏）');
   assert.deepEqual([...spy.calls].sort(), [O, S].sort(), '★恰 2 發、無仲裁');
+});
+
+test('仲裁 tv 語意（Grok G10）｜✏️ 列的是兩份**初讀**的寫法差、不是勝者對仲裁者', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const bad = answerOf({
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [{ ...good.transactions[0], note: 'Sonnet 版備註' }, { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  assert.ok(/** @type {any} */ (r).dualReadTextVariance?.includes('第 1 筆交易的備註'), '★初讀兩份在備註上的寫法差要透出（勝者 vs Fable 是同一份＝那樣算恒空）');
 });
 
 test('仲裁｜兩讀金額不一致→Fable 與其中一份全欄一致＝採用那份、恰 3 發、dualRead=arbitrated', async () => {
