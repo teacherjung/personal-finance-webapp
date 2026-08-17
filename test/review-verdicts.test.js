@@ -1324,6 +1324,11 @@ test('⭐ 文件與提示｜雜湊指認要走得通：閘的修復提示與 REV
   const blocked = problems.find((p) => /標頭格式不合規/.test(p));
   assert.ok(blocked, problems.join('｜'));
   assert.ok(/原第一行雜湊/.test(String(blocked)), '修復提示必須教雜湊指認，否則照提示操作會反覆失敗');
+  assert.ok(/去頭尾空白後/.test(String(blocked)), '提示必須講清楚雜湊算在 trim 後的字串上——教「該行」會算出解不了鎖的雜湊');
+  assert.ok(/僅同一身分/.test(String(blocked)) || /同一身分/.test(String(blocked)),
+    '提示必須教「身分可讀＋metadata 壞＝限同身分豁免」那一級');
   const review = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
   assert.ok(/原第一行雜湊/.test(review), 'REVIEW 階梯必須教雜湊指認');
+  assert.ok(/去頭尾空白後/.test(review) && /僅同一身分可豁免/.test(review),
+    'REVIEW 階梯必須教 trim 口徑與同身分豁免那一級');
 });
