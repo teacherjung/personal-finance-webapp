@@ -31,8 +31,14 @@
 //   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
 //   ④字串 `tool_call_id`／`toolCallId`（工具結果與識別碼）⑤`_meta` 帶 "x.ai/tool" 鍵
 //   ⑥物件值 `task_snapshot`（_x.ai/session/update 的 bash 任務快照）
+//   ⑦`type` 值列在工具事件集（tool_started／tool_completed／tool_result／backend_tool_call——
+//     事件名本身＝足跡，companion 缺失不影響判定）
 //   ＋session 子目錄 `terminal/call-*.log` 容器。任一腿命中＝足跡在場，不靠 companion 冗餘。
 //   判準仍屬列舉性＝格式大漂時靠版本釘（CLI 版本不同＝當未跑）收口。
+// ・**邊角完備性停戰（William 2026-08-17 裁示）**：#479 審查 r6–r9 連四輪落在「稽核輸入
+//   fail-closed 邊角」同族，裁示＝補完 r9 這刀後劃界停戰——判準只承諾涵蓋**釘住版本的真實
+//   日誌形狀**與已實測過的損毀型；再往外的理論邊角不逐輪加碼、同族發現進待辦，
+//   格式漂移的最後防線＝版本釘。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -40,6 +46,11 @@ import { isMainModule } from '../lib/is-main.js';
 
 /** 訊息角色不是工具（日誌裡 `name` 欄也會出現在對話物件上）。 */
 const MESSAGE_ROLES = new Set(['user', 'assistant', 'system']);   // ⚠️ 刻意不收 'tool'：{name:'tool',arguments:…} 寧可誤殺（fail-closed），訊息型誤殺的代價只是重掃
+
+// 事件型別腿（#479 r9）：這些 `type` 字串值只在工具活動發生時出現（真日誌實測的四種）。
+// 型別本身就是足跡——companion 欄位（tool_name/tool_call_id/kind）缺失或改名也不影響判定，
+// 否則「事件名在、細節欄位不見」的損毀行會被靜默放行成乾淨。列舉性判準，漂移靠版本釘收口。
+const TOOL_EVENT_TYPES = new Set(['tool_started', 'tool_completed', 'tool_result', 'backend_tool_call']);
 
 /**
  * 遞迴走訪一個 JSON 值，統計工具呼叫。
@@ -51,6 +62,10 @@ function walk(node, calls) {
   if (typeof node.name === 'string' && !MESSAGE_ROLES.has(node.name)
       && ['arguments', 'input', 'args', 'params'].some((k) => Object.hasOwn(node, k))) {
     calls[node.name] = (calls[node.name] || 0) + 1;
+  }
+  // 事件型別腿（#479 r9 High）：type 值本身列在工具事件集＝足跡，不等 companion。
+  if (typeof node.type === 'string' && TOOL_EVENT_TYPES.has(node.type)) {
+    calls[node.type] = (calls[node.type] || 0) + 1;
   }
   // 第二條腿（作廢二掃 F1/F2、真日誌實測）：events.jsonl 的工具足跡長 {type:"tool_started", tool_name:…}
   // ——沒有 name 也沒有四鍵。帶字串 tool_name 的物件一律照算（寧可誤殺；lifecycle 事件造成的

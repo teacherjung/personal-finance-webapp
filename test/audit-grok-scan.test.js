@@ -185,6 +185,25 @@ test('⭐ 判準第二腿承重｜只有 tool_completed（無 started、無 name
   assert.equal(r.code, 1, r.why);
 });
 
+test('⭐ 事件型別腿｜四種工具事件 type 裸行（companion 全缺）各自退 1', () => {
+  // #479 r9 High：{"type":"tool_started"} 沒有 tool_name ⇒ 原各腿全抓不到＝損毀行被放行成乾淨。
+  // 事件名本身＝足跡；四種各自獨立驗（縮成只認其中幾種會紅）。
+  for (const t of ['tool_started', 'tool_completed', 'tool_result', 'backend_tool_call']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), `{"type":${JSON.stringify(t)}}\n`);
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 1, `${t}：${r.why}`);
+    assert.ok(r.calls[t] >= 1, `${t} 應記為足跡`);
+  }
+});
+
+test('⭐ 事件型別腿反面｜非工具事件的 type 字串不誤殺（乾淨照樣 0）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"completion","content":"ok"}\n{"type":"result"}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 0, r.why);
+});
+
 test('⭐ --workspace｜dangling session entry（stat 失敗）＝查不清楚、不可洗成乾淨', () => {
   const root = tmp();
   const cwd = '/private/tmp/ws-with-dangling';
