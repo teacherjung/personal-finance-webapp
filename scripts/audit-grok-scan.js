@@ -106,7 +106,7 @@ export function auditSessionDir(sessionDir) {
   } catch (e) {
     return { code: 2, calls, parsed, why: `讀不了 session 目錄：${e instanceof Error ? e.message : String(e)}` };
   }
-  if (!files.length) return { code: 2, calls, parsed, why: '目錄裡沒有任何 .jsonl 日誌（CLI 沒寫日誌或換了格式）' };
+  const noJsonl = !files.length;   // #479 r7：不提前 return——signals／terminal 若已確認越界，1 優先於 2
   let dirty = 0;   // 壞行／讀不了的檔＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
   for (const f of files) {
     /** @type {string} */ let text;
@@ -118,7 +118,14 @@ export function auditSessionDir(sessionDir) {
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       sawLine = true;
-      try { walk(JSON.parse(line), calls); parsed++; } catch { dirty++; }
+      try {
+        const v = JSON.parse(line);
+        // #479 r7：行解析成 primitive／陣列＝不是已知日誌形狀＝損毀（fail-closed）；
+        // 物件照走六腿（陣列裡的足跡由物件行的巢狀陣列涵蓋，獨立陣列行一律當損毀）。
+        if (!v || typeof v !== 'object' || Array.isArray(v)) dirty++;
+        else walk(v, calls);
+        parsed++;
+      } catch { dirty++; }
     }
     if (!sawLine) dirty++;   // 空 .jsonl（有檔零行）＝同樣查不清楚
   }
@@ -160,7 +167,8 @@ export function auditSessionDir(sessionDir) {
   } catch { dirty++; }
   const n = Object.values(calls).reduce((a, b) => a + b, 0);
   if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 筆工具足跡` };   // 抓到工具＝越界優先於髒（足跡＝含 lifecycle 重複，不去重）
-  if (dirty > 0) return { code: 2, calls, parsed, why: `日誌有 ${dirty} 處讀不懂（壞行／讀不了的檔／空檔）——查不清楚就當越界（fail-closed）` };
+  if (noJsonl) return { code: 2, calls, parsed, why: '目錄裡沒有任何 .jsonl 日誌（CLI 沒寫日誌或換了格式）' };
+  if (dirty > 0) return { code: 2, calls, parsed, why: `日誌有 ${dirty} 處讀不懂（壞行／純值行／讀不了的檔／空檔）——查不清楚就當越界（fail-closed）` };
   if (parsed === 0) return { code: 2, calls, parsed, why: '日誌存在但無任何可解析行——查不清楚就當越界（fail-closed）' };
   return { code: 0, calls, parsed, why: '乾淨（零工具足跡）' };
 }

@@ -299,3 +299,24 @@ test('⭐ signals fail-closed 邊角｜整檔 primitive／陣列＝2；小數計
     assert.equal(r.code, 2, `${bad}：${r.why}`);
   }
 });
+
+test('⭐ JSONL 行純值／陣列＝2（不是已知日誌形狀＝損毀；#479 r7）', () => {
+  for (const bad of ['3', '[{"name":"grep","arguments":{}}]']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n' + bad + '\n');
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 2, `${bad}：${r.why}`);
+  }
+});
+
+test('⭐ 缺 JSONL 但 signals／terminal 已確認越界 → 1 優先於 2（歸因要對）', () => {
+  const a = tmp();
+  writeFileSync(join(a, 'signals.json'), '{"toolCallCount":2}');
+  const ra = auditSessionDir(a);
+  assert.equal(ra.code, 1, ra.why);
+  const b = tmp();
+  mkdirSync(join(b, 'terminal'));
+  writeFileSync(join(b, 'terminal', 'call-1.log'), 'x');
+  const rb = auditSessionDir(b);
+  assert.equal(rb.code, 1, rb.why);
+});
