@@ -132,7 +132,7 @@ test('Grok 補強｜kind 負向：「定期定額」不當定存；period 分隔
   const r = parseBankSummary(lines);
   assert.equal(r.accounts[0].kind, 'demand', '★「定期定額」是投資申購、誤中＝建假定存戶＋末筆閘卸甲');
   assert.deepEqual(r.accounts.slice(1).map((a) => a.kind), ['time', 'time', 'time']);
-  assert.ok(r.accounts.slice(1).every((a) => a.period.length > 0), `★三種分隔符都要抓到（實得 ${JSON.stringify(r.accounts.map((a) => a.period))}）`);
+  assert.ok(r.accounts.slice(1).every((a) => a.period === '2026/01/10~2026/07/10'), `★三種分隔符都抓到**且正規化成同一表示**（r1#1：原樣入鍵＝換分隔符就裂戶；實得 ${JSON.stringify(r.accounts.map((a) => a.period))}）`);
 });
 
 test('Grok 補強｜次月列印順序打亂＝異值定存照樣精確配回（金額進身分的承重；同值互換＝無感）', () => {
@@ -185,4 +185,35 @@ test('Grok 補強｜交易掛名與「轉入到」顯示繞開定存戶（契約
   const tx = { acctSuffix: '3301', acctMasked: '900100****3301', date: '2026-01-05', summary: 's', direction: 'in', amount: 1, balance: null, note: '' };
   const { accountNameForTxForTest } = await import('../lib/services/bank-import.js');
   assert.equal(accountNameForTxForTest(db, tx, parsed), '台新活儲', '★同末碼下交易掛名要挑活存戶、不可掛到定存戶');
+});
+
+test('r1#1｜跨月只變分隔符（~→至）＝照樣配回原戶、不裂戶雙計（期間正規化的承重）', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const n = db.accounts.length;
+  const linesAlt = summaryLines().map((l) => ({ y: l.y, cells: l.cells.map((c) => ({ x: c.x, s: String(c.s).replace(/~/g, '至') })) }));
+  const r2p = parseBankSummary(linesAlt);
+  const r = applyBalancesToDb(db, /** @type {any} */ ({ bank: '台新', referenceDate: '2026-02-28', accounts: r2p.accounts, accountCurrency: r2p.accountCurrency }));
+  assert.equal(r.created, 0, '★分隔符變體不得裂戶（Codex r1#1 的探針形）');
+  assert.equal(db.accounts.length, n);
+});
+
+test('r1#2｜掛名概要退路繞開定存列：定存列印在活存前＋db 無帳戶＝掛名不得取定存名', async () => {
+  const { accountNameForTxForTest } = await import('../lib/services/bank-import.js');
+  const parsed = /** @type {any} */ (parsedOf());
+  // 把台幣定存列移到最前（版面順序對掛名退路的影響＝r1#2 的形）
+  const cdRow = parsed.accounts.find((/** @type {any} */ a) => a.kind === 'time' && a.currency === 'TWD');
+  parsed.accounts = [cdRow, ...parsed.accounts.filter((/** @type {any} */ a) => a !== cdRow)];
+  const tx = { acctSuffix: '3301', acctMasked: '900100****3301', date: '2026-01-05', summary: 's', direction: 'in', amount: 1, balance: null, note: '' };
+  const name = accountNameForTxForTest(/** @type {any} */ ({ accounts: [] }), tx, parsed);
+  assert.doesNotMatch(String(name), /定存/, `★db 無帳戶時退路取概要列命名——不得取到定存列（實得 ${name}）`);
+});
+
+test('r1#3｜「轉入到」顯示繞開定存戶（ownAccountNameByAcct 的承重——首版只考了掛名一讀端＝敘事綠）', async () => {
+  const { ownAccountNameByAcctForTest } = await import('../lib/services/bank-import.js');
+  const db = dbOf([
+    { id: 'cd1', name: '台新 定存 X', type: 'cash', bank: '台新', currency: 'TWD', balance: 20000, accountNo: '900100****3301', cdKey: 'k#1' },
+    { id: 'd1', name: '台新活儲', type: 'cash', bank: '台新', currency: 'TWD', balance: 9000, accountNo: '900100****3301' },
+  ]);
+  assert.equal(ownAccountNameByAcctForTest(db, '900100****3301', '台新'), '台新活儲', '★同末碼下「轉入到」要顯示活存名');
 });
