@@ -206,7 +206,9 @@ test('r1#2｜掛名概要退路繞開定存列：定存列印在活存前＋db �
   parsed.accounts = [cdRow, ...parsed.accounts.filter((/** @type {any} */ a) => a !== cdRow)];
   const tx = { acctSuffix: '3301', acctMasked: '900100****3301', date: '2026-01-05', summary: 's', direction: 'in', amount: 1, balance: null, note: '' };
   const name = accountNameForTxForTest(/** @type {any} */ ({ accounts: [] }), tx, parsed);
-  assert.doesNotMatch(String(name), /定存/, `★db 無帳戶時退路取概要列命名——不得取到定存列（實得 ${name}）`);
+  // ⚠️ 斷言要**精確等於活存列的命名**——首版只斷言「不含定存」＝假綠（定存列的 autoName 取 note
+  //（期間＋利率）當 tag、名字裡根本沒有「定存」二字，拔掉繞開照樣過＝P77 第一刀實測沒咬）。
+  assert.equal(String(name), '台新 3301（新臺幣活存）', `★退路必須取活存列（實得 ${name}——帶期間利率＝取到定存列）`);
 });
 
 test('r1#3｜「轉入到」顯示繞開定存戶（ownAccountNameByAcct 的承重——首版只考了掛名一讀端＝敘事綠）', async () => {
