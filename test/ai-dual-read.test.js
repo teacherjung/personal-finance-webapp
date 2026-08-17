@@ -210,13 +210,24 @@ test('P2-4c｜帳號正規化三態：分隔符＝完全相等（零提示）；
   const r1 = aiAnswersAgree(base(), sep);
   assert.equal(r1.agree, true);
   assert.deepEqual(r1.textVariance, [], '★只差分隔符＝連「印法」提示都不列');
-  // 比對器面：前綴衝突＝hard（逐筆＋帳戶＋幣別表三處）
-  const con = base(); con.accountCurrency = { '900311****1234': 'TWD' }; con.accounts[0].masked = '900311****1234'; con.transactions[0].acctMasked = '900311****1234';
-  const r2 = aiAnswersAgree(base(), con);
-  assert.equal(r2.agree, false, '★同末碼但前綴對不上＝不同戶＝觸發（900200＋1234 判別法的承重）');
-  assert.ok(r2.diffs.includes('帳戶帳號'), `帳戶層指認（實得 ${JSON.stringify(r2.diffs)}）`);
-  assert.ok(r2.diffs.some((d) => d.includes('帳號')), '逐筆層也指認');
-  assert.ok(!r2.diffs.some((d) => /1234|9003|9002/.test(d)), '機密紀律：不帶號碼');
+  // Grok r0 升級的三個新形：星號中段數字差／無星完整號 vs 另一戶遮罩號／星號長短純印法
+  assert.equal(maskedCmp('900200*00*1234', '900200*99*1234'), 'conflict', '★中段數字差＝首版前綴判準的洞（Grok #3）');
+  assert.equal(maskedCmp('9002001234', '900311****1234'), 'conflict', '★完整號 vs 另一戶遮罩號＝無星也要擋（Grok #4）');
+  assert.equal(maskedCmp('900200**1234', '900200****1234'), 'variance', '數字序列相等＝星號長短純印法');
+  assert.equal(maskedCmp('900200****1234', '900200****5678'), 'conflict', '末碼不同＝conflict（#11：這分支要有自己的題）');
+  // 誠實殘餘釘現況（P1a 同款取捨）：極短前綴巧合＝相容放行
+  assert.equal(maskedCmp('0****1234', '900200****1234'), 'variance', '殘餘：1 碼前綴幾乎必相容——契約記載、非漏測');
+  // 比對器面：前綴衝突＝hard——**三處各自拆場**（Grok #10：合場＝任一層響就過、逐筆斷言被「帳戶帳號」字串蘊含）
+  const conCur = base(); conCur.accountCurrency = { '900311****1234': 'TWD' };
+  const rCur = aiAnswersAgree(base(), conCur);
+  assert.equal(rCur.diffs.filter((d) => d === '帳戶帳號').length, 1, `★只動幣別表鍵＝幣別表那條迴圈自己要響（實得 ${JSON.stringify(rCur.diffs)}）`);
+  const conAcc = base(); conAcc.accounts[0].masked = '900311****1234';
+  const rAcc = aiAnswersAgree(base(), conAcc);
+  assert.equal(rAcc.diffs.filter((d) => d === '帳戶帳號').length, 1, `★只動帳戶層 masked＝帳戶層自己要響（實得 ${JSON.stringify(rAcc.diffs)}）`);
+  const conTx = base(); conTx.transactions[0].acctMasked = '900311****1234';
+  const rTx = aiAnswersAgree(base(), conTx);
+  assert.ok(rTx.diffs.some((d) => /^第 \d+ 筆交易的帳號$/.test(d)), `★只動逐筆＝逐筆自己要響（實得 ${JSON.stringify(rTx.diffs)}）`);
+  for (const r of [rCur, rAcc, rTx]) assert.ok(!r.diffs.some((d) => /1234|9003|9002/.test(d)), '機密紀律：不帶號碼');
 });
 
 // ---- 開關判準 ----
