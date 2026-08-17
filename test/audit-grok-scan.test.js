@@ -199,3 +199,51 @@ test('⭐ --workspace｜dangling session entry（stat 失敗）＝查不清楚�
   catch (e) { code = /** @type {any} */ (e).status; }
   assert.equal(code, 2, 'dangling entry 必須 fail-closed 退 2');
 });
+
+test('⭐ 判準第四腿｜tool_result／toolCallId 單獨在場（無 companion）也退 1', () => {
+  for (const line of ['{"type":"tool_result","tool_call_id":"abc123","output":"ok"}', '{"kind":"session/update","toolCallId":"xyz789"}']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), line + '\n');
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 1, `${line.slice(0, 40)}：${r.why}`);
+  }
+});
+
+test('⭐ 判準第五腿｜_meta 帶 "x.ai/tool" 鍵單獨在場也退 1', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"kind":"text","_meta":{"x.ai/tool":{"id":1}}}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+});
+
+test('⭐ terminal 容器｜一行乾淨 JSONL＋terminal/call-*.log ＝ 1（容器即足跡）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+  mkdirSync(join(d, 'terminal'));
+  writeFileSync(join(d, 'terminal', 'call-001.log'), 'ls output...');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+  assert.equal(r.calls['terminal/call-log'], 1);
+});
+
+test('⭐ fail-closed｜無效 UTF-8 位元組 → 2（U+FFFD 靜默替換會讓足跡隱身）', () => {
+  const d = tmp();
+  const good = Buffer.from('{"name":"grep","arguments":{}}\n', 'utf8');
+  const evil = Buffer.concat([Buffer.from('{"na', 'utf8'), Buffer.from([0xff]), Buffer.from('me":"grep","arguments":{}}\n', 'utf8')]);
+  writeFileSync(join(d, 'updates.jsonl'), Buffer.concat([evil]));
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 2, r.why);
+  void good;
+});
+
+test('⭐ fail-closed｜workspace 目錄無法列舉 → CLI 退 2 不是 1', (t) => {
+  if (typeof process.getuid === 'function' && process.getuid() === 0) { t.skip('root 不受權限限制'); return; }
+  const root = tmp();
+  const cwd = '/private/tmp/ws-unlistable';
+  const ws = join(root, encodeURIComponent(cwd));
+  mkdirSync(ws, { recursive: true, mode: 0o111 });
+  let code = 0;
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; }
+  assert.equal(code, 2, '列舉失敗必須是「查不清楚」，不是「已確認越界」');
+});

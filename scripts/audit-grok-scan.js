@@ -26,9 +26,12 @@
 //   CLI 若不寫日誌或換格式，這裡會退 2（fail-closed），不會假綠；但**驗不了日誌本身的誠實**
 //   （CLI 蓄意漏記工具呼叫＝驗不到）。它防的是「旗標靜默失效」這型實測發生過的事故，
 //   不是防供應商作惡——與整條預審線的信任模型一致。
-// ・工具呼叫的判準＝日誌物件帶 `name` ＋（`arguments`／`input`／`args`／`params` 任一鍵）——
-//   涵蓋 2026-08-17 事故形狀並放寬鍵名（預審 F2）；`name` 為 user／assistant／system 訊息角色
-//   不算，`tool` **刻意照算**（寧可誤殺）。判準仍屬列舉性＝格式大漂時靠版本釘（CLI 版本不同＝當未跑）收口。
+// ・足跡判準＝**五條腿＋一容器**（全部來自真日誌實測，#479 r1–r2 逐輪補齊）：
+//   ①`name`＋（arguments/input/args/params 任一鍵；訊息角色 user/assistant/system 不算、`tool` 照算）
+//   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
+//   ④字串 `tool_call_id`／`toolCallId`（工具結果與識別碼）⑤`_meta` 帶 "x.ai/tool" 鍵
+//   ＋session 子目錄 `terminal/call-*.log` 容器。任一腿命中＝足跡在場，不靠 companion 冗餘。
+//   判準仍屬列舉性＝格式大漂時靠版本釘（CLI 版本不同＝當未跑）收口。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -60,6 +63,17 @@ function walk(node, calls) {
   if (typeof node.tool_type === 'string' && node.tool_type) {
     calls[node.tool_type] = (calls[node.tool_type] || 0) + 1;
   }
+  // 第四條腿（#479 r2 High①、真日誌 142＋872 筆）：{type:"tool_result", tool_call_id:…} 與
+  // 帶 toolCallId 的 session/update 物件——工具結果／識別碼本身就是足跡，不靠 companion。
+  if ((typeof node.tool_call_id === 'string' && node.tool_call_id)
+      || (typeof node.toolCallId === 'string' && node.toolCallId)) {
+    calls['tool_call'] = (calls['tool_call'] || 0) + 1;
+  }
+  // 第五條腿（#479 r2 High①、真日誌 284 筆）：_meta 帶 "x.ai/tool" 鍵的 metadata 物件。
+  if (node._meta && typeof node._meta === 'object' && !Array.isArray(node._meta)
+      && Object.hasOwn(node._meta, 'x.ai/tool')) {
+    calls['x.ai/tool'] = (calls['x.ai/tool'] || 0) + 1;
+  }
   for (const v of Object.values(node)) walk(v, calls);
 }
 
@@ -84,7 +98,10 @@ export function auditSessionDir(sessionDir) {
   let dirty = 0;   // 壞行／讀不了的檔＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
   for (const f of files) {
     /** @type {string} */ let text;
-    try { text = readFileSync(join(sessionDir, f), 'utf8'); } catch { dirty++; continue; }
+    // ⚠️ fatal 解碼（#479 r2 High②）：'utf8' 讀檔會把無效位元組靜默換成 U+FFFD——鍵名被變形後
+    //    仍是合法 JSON、足跡就此隱身。無效編碼＝查不清楚，不是乾淨。
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(join(sessionDir, f))); }
+    catch { dirty++; continue; }
     let sawLine = false;
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
@@ -93,6 +110,15 @@ export function auditSessionDir(sessionDir) {
     }
     if (!sawLine) dirty++;   // 空 .jsonl（有檔零行）＝同樣查不清楚
   }
+  // terminal/ 容器（#479 r2 High①、真日誌 12 例全數對應越界 session）：終端呼叫的原始輸出
+  // 存成 session 子目錄 terminal/call-*.log——容器在場＝足跡在場，不靠 JSONL companion。
+  try {
+    const termDir = join(sessionDir, 'terminal');
+    if (existsSync(termDir)) {
+      const logs = readdirSync(termDir).filter((f) => /^call-.*\.log$/.test(f));
+      if (logs.length) calls['terminal/call-log'] = (calls['terminal/call-log'] || 0) + logs.length;
+    }
+  } catch { dirty++; }
   const n = Object.values(calls).reduce((a, b) => a + b, 0);
   if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 筆工具足跡` };   // 抓到工具＝越界優先於髒（足跡＝含 lifecycle 重複，不去重）
   if (dirty > 0) return { code: 2, calls, parsed, why: `日誌有 ${dirty} 處讀不懂（壞行／讀不了的檔／空檔）——查不清楚就當越界（fail-closed）` };
@@ -112,7 +138,10 @@ export function allSessionDirs(workspaceCwd, sessionsRoot) {
   if (!existsSync(wsDir)) return { dirs: /** @type {string[]} */ ([]), unreadable: 0, why: `找不到 workspace 日誌目錄：${wsDir}` };
   /** @type {string[]} */ const dirs = [];
   let unreadable = 0;   // stat 失敗＝查不清楚的證據（#479 r1 Medium：忽略會把 dangling entry 洗成乾淨）
-  for (const name of readdirSync(wsDir)) {
+  /** @type {string[]} */ let names;
+  try { names = readdirSync(wsDir); }
+  catch { return { dirs, unreadable: 1, why: `workspace 目錄無法列舉（權限或損毀）：${wsDir}` }; }   // #479 r2 Medium：裸拋會以 exit 1 冒充「已確認越界」
+  for (const name of names) {
     const full = join(wsDir, name);
     try { if (statSync(full).isDirectory()) dirs.push(full); } catch { unreadable++; }
   }
