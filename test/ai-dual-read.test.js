@@ -368,6 +368,41 @@ test('W6｜四發合成題：仲裁 preview（3 發解析）→兌票 apply（�
   assert.equal(calls.gen, 1, '★恰 1 發生成——合計 4 發＝成本句的「至多 4 發」真的有題撐');
 });
 
+test('r3#1｜三碼末碼碰撞走**正式雙讀路**：兩讀把交易整批掛到對方帳戶＝不得 agree（slice(-4) 另寫＝漏偵測的形）', async () => {
+  const db = await seedDb();
+  const M3a = '900200****363', M3b = '900300****363';
+  const lines3 = () => [
+    L(10, [[40, '一銀活期帳戶明細']]),
+    L(30, [[40, M3a], [200, 'TWD']]),          // 概要餘額空白＝只進幣別表、accounts 為空（r3#1 情境）
+    L(35, [[40, M3b], [200, 'TWD']]),
+    L(50, [[40, '2026/07/01'], [140, '超商繳費'], [240, '100'], [320, '4,900']]),
+    L(55, [[40, '2026/07/02'], [140, '薪資入帳'], [280, '600'], [320, '5,500']]),
+    L(60, [[40, '2026/07/03'], [140, '雜費'], [240, '50'], [320, '950']]),
+    L(65, [[40, '2026/07/04'], [140, '利息'], [280, '20'], [320, '970']]),
+  ];
+  const t3 = (/** @type {string} */ m, /** @type {any} */ o) => ({ acctMasked: m, note: '', ...o });
+  const ans = (/** @type {boolean} */ swap) => {
+    const a = swap ? M3b : M3a, b = swap ? M3a : M3b;
+    return {
+      bank: '第一銀行', referenceDate: '2026-07-31',
+      accountCurrencies: [{ masked: M3a, currency: 'TWD' }, { masked: M3b, currency: 'TWD' }],
+      totals: { txCount: null, totalOut: null, totalIn: null },
+      accounts: [],
+      transactions: [
+        t3(a, { date: '2026-07-01', direction: 'out', amount: 100, balance: 4900, summary: '超商繳費' }),
+        t3(a, { date: '2026-07-02', direction: 'in', amount: 600, balance: 5500, summary: '薪資入帳' }),
+        t3(b, { date: '2026-07-03', direction: 'out', amount: 50, balance: 950, summary: '雜費' }),
+        t3(b, { date: '2026-07-04', direction: 'in', amount: 20, balance: 970, summary: '利息' }),
+      ],
+    };
+  };
+  const spy = { calls: /** @type {string[]} */ ([]) };
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: ans(false), [O]: ans(true), [F]: ans(false) }, spy), extract: async () => lines3() });
+  assert.notEqual(r.dualRead, 'agree', '★整批歸屬對調（末碼同為 363、鏈各自自洽、閘全綠）不得雙讀一致');
+  assert.equal(r.dualRead, 'arbitrated', 'Fable 與正確版一致＝仲裁收回');
+  assert.equal(spy.calls.length, 3, '真的走了仲裁');
+});
+
 // ---- 前端純函式 ----
 test('r1#1｜Sonnet 勝出的仲裁：✏️ 句真的畫出且顯示 Sonnet、不得寫死 Opus；仲裁句只宣稱錢欄位一致', async () => {
   const db = await seedDb();
