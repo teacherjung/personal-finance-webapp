@@ -13,7 +13,7 @@
 // ## 用法（掃描後立刻跑，結果寫進證據的配方聲明）
 //
 //   node scripts/audit-grok-scan.js <sessionDir>
-//   node scripts/audit-grok-scan.js --workspace <掃描時的 --cwd 路徑>   ← 自動找該 workspace 最新 session
+//   node scripts/audit-grok-scan.js --workspace <掃描時的 --cwd 路徑>   ← 稽核該 workspace 全部 session（配方＝每掃開全新目錄）
 //
 // 退出碼：
 //   0＝乾淨（日誌可讀、零工具呼叫）→ 配方聲明記「驗屍 0（session <id>）」
@@ -26,15 +26,16 @@
 //   CLI 若不寫日誌或換格式，這裡會退 2（fail-closed），不會假綠；但**驗不了日誌本身的誠實**
 //   （CLI 蓄意漏記工具呼叫＝驗不到）。它防的是「旗標靜默失效」這型實測發生過的事故，
 //   不是防供應商作惡——與整條預審線的信任模型一致。
-// ・工具呼叫的判準＝日誌物件同時帶 `name` 與（`arguments` 或 `input`）——與 2026-08-17
-//   兩次事故的實際日誌形狀一致；`name` 為 user／assistant／system 這類訊息角色者不算。
+// ・工具呼叫的判準＝日誌物件帶 `name` ＋（`arguments`／`input`／`args`／`params` 任一鍵）——
+//   涵蓋 2026-08-17 事故形狀並放寬鍵名（預審 F2）；`name` 為 user／assistant／system 訊息角色
+//   不算，`tool` **刻意照算**（寧可誤殺）。判準仍屬列舉性＝格式大漂時靠版本釘（CLI 版本不同＝當未跑）收口。
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { isMainModule } from '../lib/is-main.js';
 
 /** 訊息角色不是工具（日誌裡 `name` 欄也會出現在對話物件上）。 */
-const MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'tool']);
+const MESSAGE_ROLES = new Set(['user', 'assistant', 'system']);   // ⚠️ 刻意不收 'tool'：{name:'tool',arguments:…} 寧可誤殺（fail-closed），訊息型誤殺的代價只是重掃
 
 /**
  * 遞迴走訪一個 JSON 值，統計工具呼叫。
@@ -44,7 +45,7 @@ function walk(node, calls) {
   if (Array.isArray(node)) { for (const v of node) walk(v, calls); return; }
   if (!node || typeof node !== 'object') return;
   if (typeof node.name === 'string' && !MESSAGE_ROLES.has(node.name)
-      && (Object.hasOwn(node, 'arguments') || Object.hasOwn(node, 'input'))) {
+      && ['arguments', 'input', 'args', 'params'].some((k) => Object.hasOwn(node, k))) {
     calls[node.name] = (calls[node.name] || 0) + 1;
   }
   for (const v of Object.values(node)) walk(v, calls);
@@ -66,47 +67,65 @@ export function auditSessionDir(sessionDir) {
     return { code: 2, calls, parsed, why: `讀不了 session 目錄：${e instanceof Error ? e.message : String(e)}` };
   }
   if (!files.length) return { code: 2, calls, parsed, why: '目錄裡沒有任何 .jsonl 日誌（CLI 沒寫日誌或換了格式）' };
+  let dirty = 0;   // 壞行／讀不了的檔＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
   for (const f of files) {
     /** @type {string} */ let text;
-    try { text = readFileSync(join(sessionDir, f), 'utf8'); } catch { continue; }
+    try { text = readFileSync(join(sessionDir, f), 'utf8'); } catch { dirty++; continue; }
+    let sawLine = false;
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
-      try { walk(JSON.parse(line), calls); parsed++; } catch { /* 壞行跳過；全壞由 parsed=0 收口 */ }
+      sawLine = true;
+      try { walk(JSON.parse(line), calls); parsed++; } catch { dirty++; }
     }
+    if (!sawLine) dirty++;   // 空 .jsonl（有檔零行）＝同樣查不清楚
   }
-  if (parsed === 0) return { code: 2, calls, parsed, why: '日誌存在但無任何可解析行——查不清楚就當越界（fail-closed）' };
   const n = Object.values(calls).reduce((a, b) => a + b, 0);
-  if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 次工具呼叫` };
+  if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 次工具呼叫` };   // 抓到工具＝越界優先於髒
+  if (dirty > 0) return { code: 2, calls, parsed, why: `日誌有 ${dirty} 處讀不懂（壞行／讀不了的檔／空檔）——查不清楚就當越界（fail-closed）` };
+  if (parsed === 0) return { code: 2, calls, parsed, why: '日誌存在但無任何可解析行——查不清楚就當越界（fail-closed）' };
   return { code: 0, calls, parsed, why: '乾淨（零工具呼叫）' };
 }
 
 /**
- * 由掃描時的 `--cwd` 路徑找該 workspace 最新的 session 目錄。
+ * 由掃描時的 `--cwd` 路徑列出該 workspace **全部** session 目錄（配方＝每掃全新工作目錄）。
  * `~/.grok/sessions/` 底下的 workspace 目錄名＝encodeURIComponent(cwd)（2026-08-17 實測形狀）。
  * @param {string} workspaceCwd @param {string} [sessionsRoot] 測試用；預設 ~/.grok/sessions
- * @returns {{ dir: string|null, why: string }}
+ * @returns {{ dirs: string[], why: string }}
  */
-export function latestSessionDir(workspaceCwd, sessionsRoot) {
+export function allSessionDirs(workspaceCwd, sessionsRoot) {
   const root = sessionsRoot || join(homedir(), '.grok', 'sessions');
   const wsDir = join(root, encodeURIComponent(workspaceCwd));
-  if (!existsSync(wsDir)) return { dir: null, why: `找不到 workspace 日誌目錄：${wsDir}` };
-  /** @type {{ d: string, t: number }[]} */ const cands = [];
+  if (!existsSync(wsDir)) return { dirs: /** @type {string[]} */ ([]), why: `找不到 workspace 日誌目錄：${wsDir}` };
+  /** @type {string[]} */ const dirs = [];
   for (const name of readdirSync(wsDir)) {
     const full = join(wsDir, name);
-    try { if (statSync(full).isDirectory()) cands.push({ d: full, t: statSync(full).mtimeMs }); } catch { /* 忽略 */ }
+    try { if (statSync(full).isDirectory()) dirs.push(full); } catch { /* 忽略 */ }
   }
-  if (!cands.length) return { dir: null, why: `workspace 目錄裡沒有任何 session：${wsDir}` };
-  cands.sort((a, b) => b.t - a.t);
-  return { dir: cands[0].d, why: '' };
+  if (!dirs.length) return { dirs, why: `workspace 目錄裡沒有任何 session：${wsDir}` };
+  return { dirs, why: '' };
 }
 
 if (isMainModule(import.meta.url)) {
   const args = process.argv.slice(2);
   /** @type {string|null} */ let target = null;
   if (args[0] === '--workspace' && args[1]) {
-    const { dir, why } = latestSessionDir(args[1], process.env.GROK_SESSIONS_ROOT || undefined);
-    if (!dir) { console.log(`驗屍：**查不清楚**（${why}）——fail-closed，當越界處理`); process.exit(2); }
-    target = dir;
+    // ⚠️ 稽核該工作區**全部** session（#478 預審 F3：只驗 mtime 最新＝較新的乾淨 session 會
+    //    蓋掉越界日誌）。配方要求每次掃描用全新工作目錄＝這裡的全部就是那一次的全部。
+    const { dirs, why } = allSessionDirs(args[1], process.env.GROK_SESSIONS_ROOT || undefined);
+    if (!dirs.length) { console.log(`驗屍：**查不清楚**（${why}）——fail-closed，當越界處理`); process.exit(2); }
+    let worst = 0;
+    for (const d of dirs) {
+      const r = auditSessionDir(d);
+      const id = d.split('/').filter(Boolean).pop();
+      if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}`);
+      else if (r.code === 2) console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}`);
+      else console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}）`);
+      worst = Math.max(worst, r.code === 1 ? 3 : r.code);   // 越界最重（3>2），最後折回 1
+    }
+    const code = worst === 3 ? 1 : /** @type {0|2} */ (worst);
+    if (code === 1) console.log('→ 有 session 越界＝該掃作廢：照 AGENTS「Grok 的邊界」條款記漏跑、或鎖工具重掃後再驗');
+    else if (code === 2) console.log('→ 有 session 查不清楚＝fail-closed 當越界處理');
+    process.exit(code);
   } else if (args[0] && args[0] !== '--workspace') {
     target = args[0];
   } else {

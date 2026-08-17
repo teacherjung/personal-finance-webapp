@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { auditSessionDir, latestSessionDir } from '../scripts/audit-grok-scan.js';
+import { auditSessionDir, allSessionDirs } from '../scripts/audit-grok-scan.js';
+import { execFileSync } from 'node:child_process';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'autopsy-'));
 
@@ -59,7 +60,7 @@ test('⭐ fail-closed｜日誌存在但全是壞行 → 2（查不清楚不可�
   assert.equal(r.code, 2, r.why);
 });
 
-test('⭐ 壞行夾在好行中間＝跳過壞行、好行照算（工具藏在好行仍抓得到）', () => {
+test('⭐ 壞行夾在好行中間＝抓到工具照樣退 1（越界優先於「查不清楚」）', () => {
   const d = tmp();
   writeFileSync(join(d, 'updates.jsonl'),
     'garbage\n{"name":"grep","arguments":{"pattern":"x"}}\nalso-garbage\n');
@@ -68,7 +69,8 @@ test('⭐ 壞行夾在好行中間＝跳過壞行、好行照算（工具藏在�
   assert.equal(r.calls.grep, 1);
 });
 
-test('⭐ --workspace 解析｜用 encodeURIComponent(cwd) 找最新 session', () => {
+test('⭐ --workspace｜稽核全部 session：較新的乾淨 session 蓋不掉舊的越界（CLI 退 1）', () => {
+  // 作廢預審 F3：只驗 mtime 最新＝越界日誌會被之後的乾淨 session 洗掉。改稽核全部。
   const root = tmp();
   const cwd = '/private/tmp/some workspace/掃描區';
   const ws = join(root, encodeURIComponent(cwd));
@@ -78,13 +80,47 @@ test('⭐ --workspace 解析｜用 encodeURIComponent(cwd) 找最新 session', (
   writeFileSync(join(old, 'updates.jsonl'), '{"name":"run_terminal_command","arguments":{}}\n');
   writeFileSync(join(neu, 'updates.jsonl'), '{"type":"result"}\n');
   const t0 = Date.parse('2026-01-01T00:00:00Z') / 1000;
-  utimesSync(old, t0, t0);                                  // 舊 session 時間戳退到過去
-  const { dir, why } = latestSessionDir(cwd, root);
-  assert.equal(dir, neu, why);
-  assert.equal(auditSessionDir(/** @type {string} */ (dir)).code, 0);
+  utimesSync(old, t0, t0);
+  const { dirs } = allSessionDirs(cwd, root);
+  assert.equal(dirs.length, 2);
+  let code = 0;
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd], { env: { ...process.env, GROK_SESSIONS_ROOT: root }, encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; }
+  assert.equal(code, 1, '越界 session 必須讓整體退 1，不能被較新的乾淨 session 洗掉');
 });
 
-test('⭐ --workspace 解析｜workspace 不存在 → null（主程式據此退 2）', () => {
-  const { dir } = latestSessionDir('/no/such/cwd', tmp());
-  assert.equal(dir, null);
+test('⭐ --workspace｜workspace 不存在 → CLI 退 2（主路徑行為題）', () => {
+  let code = 0;
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', '/no/such/cwd'], { env: { ...process.env, GROK_SESSIONS_ROOT: tmp() }, encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; }
+  assert.equal(code, 2, '找不到 workspace 必須 fail-closed 退 2');
+});
+
+test('⭐ fail-closed｜乾淨行旁邊有壞行 → 2（部分可讀不可以洗成乾淨；作廢預審 F1）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\ntruncated-tool-line{{{\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 2, r.why);
+});
+
+test('⭐ fail-closed｜空 .jsonl（有檔零行）→ 2', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 2, r.why);
+});
+
+test('⭐ 判準｜陣列裡的工具呼叫抓得到（tool_calls: [...]）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"tool_calls":[{"name":"web_search","args":{"q":"x"}}]}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+  assert.equal(r.calls.web_search, 1);
+});
+
+test('⭐ 判準｜name:"tool" 帶參數＝照算（寧可誤殺；params 鍵也認）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"name":"tool","params":{"x":1}}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
 });
