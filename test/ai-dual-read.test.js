@@ -369,6 +369,28 @@ test('W6｜四發合成題：仲裁 preview（3 發解析）→兌票 apply（�
 });
 
 // ---- 前端純函式 ----
+test('r1#1｜Sonnet 勝出的仲裁：徽章 ✏️ 句要講採用的是 Sonnet、不得寫死 Opus；仲裁句只宣稱錢欄位一致', async () => {
+  const db = await seedDb();
+  const good = answerOf();   // Sonnet 讀對
+  const bad = answerOf({     // Opus 讀出另一條自洽鏈（hard 不同）
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const fable = answerOf({ transactions: [{ ...good.transactions[0], note: 'Fable 第三種備註' }, good.transactions[1]] });   // hard 同 Sonnet、備註第三種
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: bad, [F]: fable }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  assert.equal(r.aiModel, S, '★Fable 的錢欄位與 Sonnet 版一致＝採 Sonnet');
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: r.aiModel, dualRead: r.dualRead, dualReadTextVariance: /** @type {any} */ (r).dualReadTextVariance });
+  assert.doesNotMatch(html, /已採用Opus|已採用 Opus/, '★採 Sonnet 時不得謊稱採 Opus（r1#1 對抗重現的形）');
+  assert.match(html, /會影響錢的欄位.*完全一致/, '★仲裁句只宣稱錢欄位一致（文字欄可能仍不同）');
+});
+
+test('r1#2｜busy 文案＝未來式：零 AI 呼叫的路（HOSTED/未設鑰匙）不得宣稱「AI 讀取中」（#455 假進度同族）', async () => {
+  const { AI_CONSENT_BUSY_LABEL } = await import('../public/modules/ai-consent.js');
+  assert.doesNotMatch(AI_CONSENT_BUSY_LABEL, /讀取中|正在讀|核對中/, '★發請求前不得宣稱 AI 動作進行式');
+  assert.match(AI_CONSENT_BUSY_LABEL, /送出/, '講的是「送出」這個當下真的在發生的事');
+});
+
 test('徽章｜dualRead=agree/arbitrated 各有一句、無 dualRead 不畫；句子只講事實不加保證', () => {
   const base = { engine: 'ai', aiModel: O };
   assert.match(aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), /雙讀一致/);
@@ -380,7 +402,7 @@ test('徽章｜dualRead=agree/arbitrated 各有一句、無 dualRead 不畫；�
   const withTv = aiPreviewBadgeHtml({ ...base, dualRead: 'agree', dualReadTextVariance: ['機構名', '第 12 筆交易的備註'] });
   assert.match(withTv, /✏️/, '★文字欄寫法不同要有 ✏️ 句');
   assert.match(withTv, /機構名、第 12 筆交易的備註/, '列欄位');
-  assert.match(withTv, /已採用 Opus/, '講清楚採哪份');
+  assert.match(withTv, /已採用/, '講清楚採哪份（模型名動態、r1#1）');
   assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), /✏️/, '沒有建議面＝不畫');
   for (const h of [aiPreviewBadgeHtml({ ...base, dualRead: 'agree' }), aiPreviewBadgeHtml({ ...base, dualRead: 'arbitrated' }), aiPreviewBadgeHtml({ ...base, dualRead: 'attested' })]) {
     assert.doesNotMatch(h, /保證正確|一定對|免驗算/, '徽章不得加保證');

@@ -68,7 +68,7 @@ export async function askToggleDisplayAfterSaveFailure(fetchSettings) {
 export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
-export const AI_CONSENT_BUSY_LABEL = 'AI 讀取中（通常一分鐘內；遇到要複讀或仲裁時會再久一點）…';   // G21：措辭雙模式皆真——關雙讀時沒有「兩個 AI」，不可說謊
+export const AI_CONSENT_BUSY_LABEL = '正在送出…（需要 AI 讀取時通常一分鐘內，遇到仲裁會再久一點）';   // r1#2：未來式——HOSTED 停止線/未設鑰匙的路零 AI 呼叫，「AI 讀取中」＝#455 那型假進度；G21：雙模式皆真
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
  * 「正式數字待 ★3 實測」）。⏰ 絆線：**真的用 AI 跑過幾份帳單、看到 Anthropic 帳單上的實際金額之後**，回頭校準這句。⚠️ P1b-3（攔截率）**不是**那個實測——它是零成本的故障注入，一個 token 都沒花，校準不了費用。
@@ -240,13 +240,13 @@ export function aiPreviewBadgeHtml(preview) {
   const dual = preview.dualRead === 'agree'
     ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 雙讀一致：兩個 AI 各自獨立讀了一遍，會影響錢的欄位全部相同。</p>'
     : preview.dualRead === 'arbitrated'
-      ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：前兩讀不一致，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+      ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：前兩讀不一致，第三個 AI 獨立讀後，<b>會影響錢的欄位</b>與這一份完全一致（文字欄寫法可能仍不同，見下）——仍請你照下面清單核對一次。</p>'
       : preview.dualRead === 'attested'
-        ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後與這一份完全一致——仍請你照下面清單核對一次。</p>'
+        ? '<p class="muted" style="margin:0 0 6px;font-size:12px">🔁 三讀仲裁：其中一讀沒讀出合法答案，第三個 AI 獨立讀後，<b>會影響錢的欄位</b>與這一份完全一致——仍請你照下面清單核對一次。</p>'
         : '';
   // P2-4b（William 2026-08-17 裁示）：文字欄寫法差異不觸發仲裁、採 Opus 版——但要誠實註明（列欄位不列值）
   const tv = Array.isArray(preview.dualReadTextVariance) && preview.dualReadTextVariance.length
-    ? `<p class="muted" style="margin:0 0 6px;font-size:12px">✏️ 兩讀在文字欄寫法不同（${esc([...new Set(preview.dualReadTextVariance)].slice(0, 5).join('、'))}${preview.dualReadTextVariance.length > 5 ? '⋯' : ''}）——不影響金額核對，已採用 Opus 那份的寫法。</p>`
+    ? `<p class="muted" style="margin:0 0 6px;font-size:12px">✏️ 兩讀在文字欄寫法不同（${esc([...new Set(preview.dualReadTextVariance)].slice(0, 5).join('、'))}${preview.dualReadTextVariance.length > 5 ? '⋯' : ''}）——不影響金額核對，已採用${esc(modelDisplayName(preview.aiModel) || '中選那份')}的寫法。</p>`
     : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
