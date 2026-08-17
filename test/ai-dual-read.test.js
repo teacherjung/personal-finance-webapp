@@ -96,8 +96,8 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
   for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
     [(p) => { p.bank = '台新國際商業銀行'; }, '機構名'],
     [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
-    [(p) => { p.transactions[0].acctMasked = '9002-00****1234'; }, '帳號印法'],
-    [(p) => { p.accounts[0].masked = '9002-00****1234'; p.accountCurrency = { '9002-00****1234': 'TWD' }; }, '帳號印法'],
+    [(p) => { p.transactions[0].acctMasked = '****1234'; }, '帳號印法'],
+    [(p) => { p.accounts[0].masked = '****1234'; p.accountCurrency = { '****1234': 'TWD' }; }, '帳號印法'],
   ])) {
     const b = base(); patch(b);
     const r = aiAnswersAgree(base(), b);
@@ -183,9 +183,40 @@ test('碰撞退嚴格（Grok G1/G2/G3）｜同末碼兩帳戶＝退回含 masked
   assert.ok(aiAnswersAgree(two(), swapTx).diffs.some((d) => d.includes('帳號')), '★碰撞時逐筆 masked 回 hard');
   // 無碰撞的常見路不受影響：單帳戶印法差異仍只是建議面
   const one = (/** @type {string} */ m) => /** @type {any} */ ({ bank: 'x', referenceDate: null, accountCurrency: { [m]: 'TWD' }, accounts: [{ masked: m, suffix: '1234', balance: 5, currency: 'TWD', label: '', note: '' }], transactions: [] });
-  const r = aiAnswersAgree(one('900200****1234'), one('9002-00****1234'));
-  assert.equal(r.agree, true, '★無碰撞＝印法差異照裁示不觸發');
+  const rSep = aiAnswersAgree(one('900200****1234'), one('9002-00****1234'));
+  assert.equal(rSep.agree, true, '★無碰撞＋只差分隔符＝一致（P2-4c 後連提示都不列）');
+  assert.deepEqual(rSep.textVariance, []);
+  const r = aiAnswersAgree(one('900200****1234'), one('****1234'));
+  assert.equal(r.agree, true, '★無碰撞＝少印前綴＝印法差異照裁示不觸發');
   assert.ok(r.textVariance.includes('帳號印法'));
+});
+
+test('P2-4c｜帳號正規化三態：分隔符＝完全相等（零提示）；前綴都印得出且對不上＝hard；少印前綴＝建議面', async () => {
+  const { canonMasked, maskedCmp } = await import('../lib/ai-parse.js');
+  // 純函式面
+  assert.equal(canonMasked('9002-00****1234'), '900200****1234', '★剝分隔符（William 的 900200＋1234 判別法、程式端做）');
+  assert.equal(canonMasked('9002 00＊？'), '900200*', 'NFKC 後全形＊＝星號要保留、其餘符號剝');
+  assert.equal(maskedCmp('9002-00****1234', '900200****1234'), 'same');
+  assert.equal(maskedCmp('****1234', '900200****1234'), 'variance', '少印前綴＝印法');
+  assert.equal(maskedCmp('0200****1234', '900200****1234'), 'variance', '前綴一長一短尾端相容＝同戶印法（P1a 同款）');
+  assert.equal(maskedCmp('900311****1234', '900200****1234'), 'conflict', '★兩邊都印得出前綴且對不上＝不同戶');
+  // 比對器面：分隔符差異＝agree 且零建議（不做狼來了）
+  const base = () => /** @type {any} */ ({
+    bank: 'x', referenceDate: null, accountCurrency: { '900200****1234': 'TWD' },
+    accounts: [{ masked: '900200****1234', suffix: '1234', balance: 5, currency: 'TWD', label: '', note: '' }],
+    transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: 'd', summary: 's', direction: 'out', amount: 1, balance: null, note: '' }],
+  });
+  const sep = base(); sep.accountCurrency = { '9002-00****1234': 'TWD' }; sep.accounts[0].masked = '9002-00****1234'; sep.transactions[0].acctMasked = '9002-00****1234';
+  const r1 = aiAnswersAgree(base(), sep);
+  assert.equal(r1.agree, true);
+  assert.deepEqual(r1.textVariance, [], '★只差分隔符＝連「印法」提示都不列');
+  // 比對器面：前綴衝突＝hard（逐筆＋帳戶＋幣別表三處）
+  const con = base(); con.accountCurrency = { '900311****1234': 'TWD' }; con.accounts[0].masked = '900311****1234'; con.transactions[0].acctMasked = '900311****1234';
+  const r2 = aiAnswersAgree(base(), con);
+  assert.equal(r2.agree, false, '★同末碼但前綴對不上＝不同戶＝觸發（900200＋1234 判別法的承重）');
+  assert.ok(r2.diffs.includes('帳戶帳號'), `帳戶層指認（實得 ${JSON.stringify(r2.diffs)}）`);
+  assert.ok(r2.diffs.some((d) => d.includes('帳號')), '逐筆層也指認');
+  assert.ok(!r2.diffs.some((d) => /1234|9003|9002/.test(d)), '機密紀律：不帶號碼');
 });
 
 // ---- 開關判準 ----
