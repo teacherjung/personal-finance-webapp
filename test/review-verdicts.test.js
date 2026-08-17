@@ -1316,3 +1316,14 @@ test('⭐ 雜湊指認｜U+FFFD 壞行 → 用雜湊豁免救得動；雜湊錯�
   const ko = verdictProblems([cu(`${fffdFirst}\n\n略。`, UNFIX_URL), c(bad)], HEAD, 'Codex');
   assert.ok(ko.problems.some((p) => /標頭格式不合規/.test(p)), `雜湊錯一位必須維持阻擋：${ko.problems.join('｜')}`);
 });
+
+test('⭐ 文件與提示｜雜湊指認要走得通：閘的修復提示與 REVIEW 階梯都要教它', () => {
+  // r3 Medium：VS16／U+FFFD 正是因逐字引文被拒才需要雜湊路徑，但提示只教逐字引用＝照做必失敗。
+  const vs16First = '\u{1F916}\u{FE0F} 完全讀不出的壞行';
+  const { problems } = verdictProblems([cu(`${vs16First}\n\n略。`, UNFIX_URL)], HEAD, 'Codex');
+  const blocked = problems.find((p) => /標頭格式不合規/.test(p));
+  assert.ok(blocked, problems.join('｜'));
+  assert.ok(/原第一行雜湊/.test(String(blocked)), '修復提示必須教雜湊指認，否則照提示操作會反覆失敗');
+  const review = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  assert.ok(/原第一行雜湊/.test(review), 'REVIEW 階梯必須教雜湊指認');
+});
