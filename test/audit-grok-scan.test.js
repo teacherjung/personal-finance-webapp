@@ -257,3 +257,25 @@ test('⭐ 判準第六腿｜task_snapshot 真形狀（_x.ai/session/update、無
   assert.equal(r.code, 1, r.why);
   assert.ok(r.calls.bash >= 1, JSON.stringify(r.calls));
 });
+
+test('⭐ signals 腿｜只有 signals.json 帶 toolCallCount>0 也退 1；toolsUsed 陣列同理', () => {
+  // #479 r4 High：真日誌 signals.json 帶計數器——只讀 .jsonl 會整檔跳過。
+  const a = tmp();
+  writeFileSync(join(a, 'updates.jsonl'), '{"type":"result"}\n');
+  writeFileSync(join(a, 'signals.json'), '{"turnCount":1,"toolCallCount":3}');
+  const ra = auditSessionDir(a);
+  assert.equal(ra.code, 1, ra.why);
+  const b = tmp();
+  writeFileSync(join(b, 'updates.jsonl'), '{"type":"result"}\n');
+  writeFileSync(join(b, 'signals.json'), '{"toolsUsed":["read_file"]}');
+  const rb = auditSessionDir(b);
+  assert.equal(rb.code, 1, rb.why);
+});
+
+test('⭐ signals 腿｜toolCallCount:0 且 toolsUsed 空＝不誤殺（乾淨照樣 0）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+  writeFileSync(join(d, 'signals.json'), '{"turnCount":2,"toolCallCount":0,"toolsUsed":[]}');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 0, r.why);
+});

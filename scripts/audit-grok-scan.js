@@ -26,7 +26,7 @@
 //   CLI 若不寫日誌或換格式，這裡會退 2（fail-closed），不會假綠；但**驗不了日誌本身的誠實**
 //   （CLI 蓄意漏記工具呼叫＝驗不到）。它防的是「旗標靜默失效」這型實測發生過的事故，
 //   不是防供應商作惡——與整條預審線的信任模型一致。
-// ・足跡判準＝**五條腿＋一容器**（全部來自真日誌實測，#479 r1–r2 逐輪補齊）：
+// ・足跡判準＝**六條腿＋一容器＋signals 計數器**（全部來自真日誌實測，#479 r1–r4 逐輪補齊；含整檔 .json）：
 //   ①`name`＋（arguments/input/args/params 任一鍵；訊息角色 user/assistant/system 不算、`tool` 照算）
 //   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
 //   ④字串 `tool_call_id`／`toolCallId`（工具結果與識別碼）⑤`_meta` 帶 "x.ai/tool" 鍵
@@ -98,8 +98,11 @@ export function auditSessionDir(sessionDir) {
   let parsed = 0;
   if (!existsSync(sessionDir)) return { code: 2, calls, parsed, why: `session 目錄不存在：${sessionDir}` };
   /** @type {string[]} */ let files;
+  /** @type {string[]} */ let jsonFiles;
   try {
-    files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
+    const all = readdirSync(sessionDir);
+    files = all.filter((f) => f.endsWith('.jsonl'));
+    jsonFiles = all.filter((f) => f.endsWith('.json'));   // #479 r4：signals.json 等整檔 JSON 也有足跡
   } catch (e) {
     return { code: 2, calls, parsed, why: `讀不了 session 目錄：${e instanceof Error ? e.message : String(e)}` };
   }
@@ -118,6 +121,22 @@ export function auditSessionDir(sessionDir) {
       try { walk(JSON.parse(line), calls); parsed++; } catch { dirty++; }
     }
     if (!sawLine) dirty++;   // 空 .jsonl（有檔零行）＝同樣查不清楚
+  }
+  // 整檔 JSON（#479 r4 High、真日誌實測 signals.json 帶 toolCallCount/toolsUsed）：
+  // 走同一套腿，另加 signals 腿——數字 toolCallCount>0 或非空 toolsUsed 陣列＝足跡。
+  for (const f of jsonFiles) {
+    /** @type {any} */ let obj;
+    try { obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(join(sessionDir, f)))); parsed++; }
+    catch { dirty++; continue; }
+    walk(obj, calls);
+    if (obj && typeof obj === 'object') {
+      if (typeof obj.toolCallCount === 'number' && obj.toolCallCount > 0) {
+        calls['toolCallCount'] = (calls['toolCallCount'] || 0) + obj.toolCallCount;
+      }
+      if (Array.isArray(obj.toolsUsed)) {
+        for (const t of obj.toolsUsed) { if (typeof t === 'string' && t) calls[t] = (calls[t] || 0) + 1; }
+      }
+    }
   }
   // terminal/ 容器（#479 r2 High①、真日誌 12 例全數對應越界 session）：終端呼叫的原始輸出
   // 存成 session 子目錄 terminal/call-*.log——容器在場＝足跡在場，不靠 JSONL companion。
