@@ -191,7 +191,7 @@
 
 **定存分開列管（William 2026-08-18 裁示；外幣與台幣一體適用）**：
 - **背景（真實形）**：台新綜合對帳單概要區把同一帳戶印多列（活存一列＋每筆定存各一列）；「存單號碼」欄**空白**、兩筆定存可**完全同值**（William 的兩筆 51 美元實例）＝沒有現成唯一鍵。舊行為＝apply 以 `masked|currency` first-wins 塌列（定存被無聲丟棄）、且 preview 不去重＝所見≠所得。
-- **解析**（模板路線 `parseBankSummary`）：概要列補 `kind`（'time'＝label 含定存/定期）與 `period`（帳號右側格的日期區間；素材本來就在 note、只是結構化）——三處 typedef 同步（bank-statement 兩處＋bank-import ParsedBank）。
+- **解析**（模板路線 `parseBankSummary`）：概要列補 `kind`（'time'＝label 命中 `/定存|定期存款/`——**刻意不用裸「定期」**：「定期定額」是投資申購、誤中＝建假定存戶＋末筆閘卸甲）與 `period`（帳號右側格的日期區間；素材本來就在 note、只是結構化）——三處 typedef 同步（bank-statement 兩處＋bank-import ParsedBank）。
 - **身分鍵** `cdKey`＝`機構|末碼|幣別|起迄日|金額|#序`（`annotateCdRows`＝preview/apply 共用單一實作）：**金額進身分**＝不同額不吃列印順序；**同值多筆**才靠列印序分「第 n 筆」（同值互換無感＝順序依賴縮到無害）；定存餘額到期前不變＝鍵穩定；續存＝新期別＝自然成新帳戶。schema：`cdKey`＝服務層欄（FIELD_SCHEMA 'str'、非 CRUD 白名單，同 bank 前例）。
 - **寫入**：kind time 列各自配 `a.cdKey === cdKey`、各自建帳戶（type 'cash'＝緊急預備金分子「活存定存都算」的既有語意；名稱＝`autoNameCd` 帶期別＋金額＋同值序、使用者可改）；**matchAccount 對有 cdKey 的帳戶一律 return false**；自寫末碼比對的讀端中，**交易掛名（accountNameForTx，含概要退路）與「轉入到」顯示（ownAccountNameByAcct）繞開定存戶**（掛到定存名＝誤導）；**txCurrency 刻意不繞開**（r1#3 撤回：幣別要的是實體帳戶的幣、定存戶幣別＝正確資訊，繞開反而在 db 只剩定存戶時把外幣誤判台幣）＝回溯相容核心。**到期（帳單不再印那列）＝不動不刪不歸零**（錢的紀錄留給使用者；餘額更新日停格＋名稱帶期別一眼可辨）。
 - **preview**＝同一套註記與去重（**2026-08-18 起 preview 也去重**＝修「preview 不去重、apply first-wins」的所見≠所得舊縫）；預覽 label 直接顯示定存名（含第 n 筆）。

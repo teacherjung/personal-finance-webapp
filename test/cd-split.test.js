@@ -176,7 +176,7 @@ test('Grok 補強（釘現況）｜中途變額＝新鍵新戶、舊戶停格雙
   assert.equal(db.accounts.find((a) => /101\.88/.test(String(a.name)))?.balanceAsOf, '2026-01-31', '舊戶停格');
 });
 
-test('Grok 補強｜交易掛名與「轉入到」顯示繞開定存戶（契約「全繞開」的承重；只打 apply＝敘事綠）', async () => {
+test('Grok 補強｜交易掛名繞開定存戶（accountNameForTx 直測；「轉入到」的承重在下一題）', async () => {
   const db = dbOf([
     { id: 'cd1', name: '台新 定存 X', type: 'cash', bank: '台新', currency: 'TWD', balance: 20000, accountNo: '900100****3301', cdKey: '台新|3301|TWD|p|20000|#1' },
     { id: 'demand1', name: '台新活儲', type: 'cash', bank: '台新', currency: 'TWD', balance: 9000, accountNo: '900100****3301' },
@@ -218,4 +218,15 @@ test('r1#3｜「轉入到」顯示繞開定存戶（ownAccountNameByAcct 的承�
     { id: 'd1', name: '台新活儲', type: 'cash', bank: '台新', currency: 'TWD', balance: 9000, accountNo: '900100****3301' },
   ]);
   assert.equal(ownAccountNameByAcctForTest(db, '900100****3301', '台新'), '台新活儲', '★同末碼下「轉入到」要顯示活存名');
+});
+
+test('r2#1｜跨月只變日期補零印法（2026/01/10→2026/1/10）＝照樣配回原戶不裂戶（期間固定表示的承重）', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const n = db.accounts.length;
+  const linesAlt = summaryLines().map((l) => ({ y: l.y, cells: l.cells.map((c) => ({ x: c.x, s: String(c.s).replace(/2026\/01\/10/g, '2026/1/10').replace(/2026\/07\/10/g, '2026/7/10') })) }));
+  const r2p = parseBankSummary(linesAlt);
+  const r = applyBalancesToDb(db, /** @type {any} */ ({ bank: '台新', referenceDate: '2026-02-28', accounts: r2p.accounts, accountCurrency: r2p.accountCurrency }));
+  assert.equal(r.created, 0, '★同一天的兩種合法印法不得裂戶（Codex r2#1 合成重現的形）');
+  assert.equal(db.accounts.length, n);
 });
