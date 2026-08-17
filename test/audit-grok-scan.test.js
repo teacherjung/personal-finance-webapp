@@ -4,7 +4,7 @@
 // 可靠的圍欄＝掃完機械稽核日誌。方向要 fail-closed：查不清楚一律當越界。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { auditSessionDir, allSessionDirs } from '../scripts/audit-grok-scan.js';
@@ -155,4 +155,47 @@ test('⭐ CLI 主路徑｜positional sessionDir 的退出碼（乾淨 0／越界
   try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', bad], { encoding: 'utf8' }); }
   catch (e) { code = /** @type {any} */ (e).status; }
   assert.equal(code, 1);
+});
+
+test('⭐ 原型鍵鐵則｜__proto__／constructor／toString 當工具名照樣退 1', () => {
+  // #479 r1 High②：普通物件當計數器，這三個名字會寫不進去或算出 NaN＝越界洗成乾淨。
+  for (const evil of ['__proto__', 'constructor', 'toString']) {
+    const d = tmp();
+    writeFileSync(join(d, 'updates.jsonl'), `{"name":${JSON.stringify(evil)},"arguments":{}}\n`);
+    const r = auditSessionDir(d);
+    assert.equal(r.code, 1, `${evil}：${r.why}`);
+  }
+});
+
+test('⭐ 判準第三腿｜backend_tool_call 真實形狀（kind.tool_type、無 name 無 tool_name）退 1', () => {
+  // #479 r1 High①：真日誌實測 5 筆頂層 backend_tool_call；原兩條腿全抓不到。
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'),
+    '{"type":"backend_tool_call","kind":{"tool_type":"web_search","action":{"type":"search","query":"x","sources":[]}}}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+  assert.ok(r.calls.web_search >= 1);
+});
+
+test('⭐ 判準第二腿承重｜只有 tool_completed（無 started、無 name 腿）也要退 1', () => {
+  // #479 r1 Medium：原 fixture started+completed 同在＝縮成只認 tool_started 仍全綠。
+  const d = tmp();
+  writeFileSync(join(d, 'events.jsonl'), '{"type":"tool_completed","tool_name":"read_file"}\n');
+  const r = auditSessionDir(d);
+  assert.equal(r.code, 1, r.why);
+});
+
+test('⭐ --workspace｜dangling session entry（stat 失敗）＝查不清楚、不可洗成乾淨', () => {
+  const root = tmp();
+  const cwd = '/private/tmp/ws-with-dangling';
+  const ws = join(root, encodeURIComponent(cwd));
+  mkdirSync(ws, { recursive: true });
+  const good = join(ws, 'session-ok');
+  mkdirSync(good);
+  writeFileSync(join(good, 'updates.jsonl'), '{"type":"result"}\n');
+  symlinkSync(join(ws, 'no-such-target'), join(ws, 'session-dangling'));
+  let code = 0;
+  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; }
+  assert.equal(code, 2, 'dangling entry 必須 fail-closed 退 2');
 });

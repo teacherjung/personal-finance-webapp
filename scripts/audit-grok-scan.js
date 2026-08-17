@@ -49,10 +49,16 @@ function walk(node, calls) {
     calls[node.name] = (calls[node.name] || 0) + 1;
   }
   // 第二條腿（作廢二掃 F1/F2、真日誌實測）：events.jsonl 的工具足跡長 {type:"tool_started", tool_name:…}
-  // ——沒有 name 也沒有四鍵。帶字串 tool_name 的物件一律照算（寧可誤殺；tool_completed 造成的
-  // 重複計數無妨——驗屍只問「有沒有」，不問「幾次」）。
+  // ——沒有 name 也沒有四鍵。帶字串 tool_name 的物件一律照算（寧可誤殺；lifecycle 事件造成的
+  // 重複計數無妨——驗屍只問「有沒有」，不問「幾次」，輸出叫「足跡」不叫「呼叫」）。
   if (typeof node.tool_name === 'string' && node.tool_name) {
     calls[node.tool_name] = (calls[node.tool_name] || 0) + 1;
+  }
+  // 第三條腿（#479 r1 High①、真日誌實測 5 筆）：backend 工具長
+  // {type:"backend_tool_call", kind:{tool_type:"web_search", action:{…}}}——kind 物件帶字串
+  // tool_type、沒有 name 也沒有 tool_name。帶字串 tool_type 的物件一律照算。
+  if (typeof node.tool_type === 'string' && node.tool_type) {
+    calls[node.tool_type] = (calls[node.tool_type] || 0) + 1;
   }
   for (const v of Object.values(node)) walk(v, calls);
 }
@@ -63,7 +69,9 @@ function walk(node, calls) {
  * @returns {{ code: 0|1|2, calls: Record<string, number>, parsed: number, why: string }}
  */
 export function auditSessionDir(sessionDir) {
-  /** @type {Record<string, number>} */ const calls = {};
+  // ⚠️ 原型鍵鐵則（#479 r1 High②）：工具名當 key，__proto__／constructor／toString 會在普通物件上
+  //    寫不進去或算出 NaN ⇒ 越界被洗成乾淨。null-prototype 物件沒有這些繼承鍵。
+  /** @type {Record<string, number>} */ const calls = Object.create(null);
   let parsed = 0;
   if (!existsSync(sessionDir)) return { code: 2, calls, parsed, why: `session 目錄不存在：${sessionDir}` };
   /** @type {string[]} */ let files;
@@ -86,29 +94,30 @@ export function auditSessionDir(sessionDir) {
     if (!sawLine) dirty++;   // 空 .jsonl（有檔零行）＝同樣查不清楚
   }
   const n = Object.values(calls).reduce((a, b) => a + b, 0);
-  if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 次工具呼叫` };   // 抓到工具＝越界優先於髒
+  if (n > 0) return { code: 1, calls, parsed, why: `越界：${n} 筆工具足跡` };   // 抓到工具＝越界優先於髒（足跡＝含 lifecycle 重複，不去重）
   if (dirty > 0) return { code: 2, calls, parsed, why: `日誌有 ${dirty} 處讀不懂（壞行／讀不了的檔／空檔）——查不清楚就當越界（fail-closed）` };
   if (parsed === 0) return { code: 2, calls, parsed, why: '日誌存在但無任何可解析行——查不清楚就當越界（fail-closed）' };
-  return { code: 0, calls, parsed, why: '乾淨（零工具呼叫）' };
+  return { code: 0, calls, parsed, why: '乾淨（零工具足跡）' };
 }
 
 /**
  * 由掃描時的 `--cwd` 路徑列出該 workspace **全部** session 目錄（配方＝每掃全新工作目錄）。
  * `~/.grok/sessions/` 底下的 workspace 目錄名＝encodeURIComponent(cwd)（2026-08-17 實測形狀）。
  * @param {string} workspaceCwd @param {string} [sessionsRoot] 測試用；預設 ~/.grok/sessions
- * @returns {{ dirs: string[], why: string }}
+ * @returns {{ dirs: string[], unreadable: number, why: string }}
  */
 export function allSessionDirs(workspaceCwd, sessionsRoot) {
   const root = sessionsRoot || join(homedir(), '.grok', 'sessions');
   const wsDir = join(root, encodeURIComponent(workspaceCwd));
-  if (!existsSync(wsDir)) return { dirs: /** @type {string[]} */ ([]), why: `找不到 workspace 日誌目錄：${wsDir}` };
+  if (!existsSync(wsDir)) return { dirs: /** @type {string[]} */ ([]), unreadable: 0, why: `找不到 workspace 日誌目錄：${wsDir}` };
   /** @type {string[]} */ const dirs = [];
+  let unreadable = 0;   // stat 失敗＝查不清楚的證據（#479 r1 Medium：忽略會把 dangling entry 洗成乾淨）
   for (const name of readdirSync(wsDir)) {
     const full = join(wsDir, name);
-    try { if (statSync(full).isDirectory()) dirs.push(full); } catch { /* 忽略 */ }
+    try { if (statSync(full).isDirectory()) dirs.push(full); } catch { unreadable++; }
   }
-  if (!dirs.length) return { dirs, why: `workspace 目錄裡沒有任何 session：${wsDir}` };
-  return { dirs, why: '' };
+  if (!dirs.length && !unreadable) return { dirs, unreadable, why: `workspace 目錄裡沒有任何 session：${wsDir}` };
+  return { dirs, unreadable, why: unreadable ? `有 ${unreadable} 個 session entry 無法判讀（stat 失敗）` : '' };
 }
 
 if (isMainModule(import.meta.url)) {
@@ -118,9 +127,10 @@ if (isMainModule(import.meta.url)) {
     // ⚠️ 稽核該工作區**全部** session（#478 預審 F3：只驗 mtime 最新＝較新的乾淨 session 會
     //    蓋掉越界日誌）。配方要求每次掃描用全新工作目錄＝這裡的全部就是那一次的全部。
     const rootFlag = args.indexOf('--sessions-root');
-    const { dirs, why } = allSessionDirs(args[1], rootFlag > -1 ? args[rootFlag + 1] : undefined);
-    if (!dirs.length) { console.log(`驗屍：**查不清楚**（${why}）——fail-closed，當越界處理`); process.exit(2); }
-    let worst = 0;
+    const { dirs, unreadable, why } = allSessionDirs(args[1], rootFlag > -1 ? args[rootFlag + 1] : undefined);
+    if (!dirs.length) { console.log(`驗屍：**查不清楚**（${why || '無 session'}）——fail-closed，當越界處理`); process.exit(2); }
+    let worst = unreadable ? 2 : 0;
+    if (unreadable) console.log(`驗屍 ⚠️ ${why}——fail-closed，這些 entry 當越界處理`);
     for (const d of dirs) {
       const r = auditSessionDir(d);
       const id = d.split('/').filter(Boolean).pop();
