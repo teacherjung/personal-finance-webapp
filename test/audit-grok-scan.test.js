@@ -320,3 +320,14 @@ test('⭐ 缺 JSONL 但 signals／terminal 已確認越界 → 1 優先於 2（�
   const rb = auditSessionDir(b);
   assert.equal(rb.code, 1, rb.why);
 });
+
+test('⭐ 過深巢狀 .json＝2、不得裸崩冒充 1（#479 r8）', () => {
+  const d = tmp();
+  writeFileSync(join(d, 'updates.jsonl'), '{"type":"result"}\n');
+  const deep = '{"a":'.repeat(200000) + 'null' + '}'.repeat(200000);
+  writeFileSync(join(d, 'deep.json'), deep);
+  let code = 0; let out;
+  try { out = execFileSync(process.execPath, ['scripts/audit-grok-scan.js', d], { encoding: 'utf8' }); }
+  catch (e) { code = /** @type {any} */ (e).status; out = String(/** @type {any} */ (e).stdout || ''); }
+  assert.equal(code, 2, `過深資料必須是查不清楚：exit=${code} out=${out.slice(0, 80)}`);
+});

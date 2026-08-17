@@ -6,7 +6,7 @@
 //
 // Grok 預審的呼叫紀律要求鎖工具（AGENTS「Grok 的邊界」節），但 2026-08-17 實測：
 // **同版本（1.0.3 執行檔未變）、同旗標，鎖工具會「非決定性靜默失效」**——此前五次掃描
-// 日誌全零工具呼叫，#477 連兩掃卻各跑 54／56 次終端呼叫（足跡到主目錄與兩棵工作樹；
+// 日誌全零工具足跡，#477 連兩掃卻各跑 54／56 次終端呼叫（足跡到主目錄與兩棵工作樹；
 // 金絲雀實測其內建 `workspace` 沙箱也擋不住讀檔）。旗標與沙箱都只能當第一層；
 // **可靠的圍欄＝掃完機械稽核它自己的本機日誌**：有任何工具呼叫＝該掃作廢（照條款記漏跑）。
 //
@@ -16,7 +16,7 @@
 //   node scripts/audit-grok-scan.js --workspace <掃描時的 --cwd 路徑>   ← 稽核該 workspace 全部 session（配方＝每掃開全新目錄）
 //
 // 退出碼：
-//   0＝乾淨（日誌可讀、零工具呼叫）→ 配方聲明記「驗屍 0（session <id>）」
+//   0＝乾淨（日誌可讀、零工具足跡）→ 配方聲明記「驗屍 0（session <id>）」
 //   1＝**越界**（有工具呼叫；列出工具與次數）→ 該掃作廢、照條款記漏跑或鎖工具重掃
 //   2＝**查不清楚**（session 找不到／日誌缺失／無任何可解析行）→ fail-closed，當越界處理
 //
@@ -121,7 +121,7 @@ export function auditSessionDir(sessionDir) {
       try {
         const v = JSON.parse(line);
         // #479 r7：行解析成 primitive／陣列＝不是已知日誌形狀＝損毀（fail-closed）；
-        // 物件照走六腿（陣列裡的足跡由物件行的巢狀陣列涵蓋，獨立陣列行一律當損毀）。
+        // 物件照走全部腿（刻意不寫腿數；陣列裡的足跡由物件行的巢狀陣列涵蓋，獨立陣列行一律當損毀）。
         if (!v || typeof v !== 'object' || Array.isArray(v)) dirty++;
         else walk(v, calls);
         parsed++;
@@ -135,9 +135,12 @@ export function auditSessionDir(sessionDir) {
     /** @type {any} */ let obj;
     try { obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(join(sessionDir, f)))); parsed++; }
     catch { dirty++; continue; }
-    walk(obj, calls);
-    // #479 r6：整檔 JSON 不是物件（primitive／陣列）＝形狀不對＝查不清楚，不可靜默略過。
+    // #479 r6＋r8：形狀先驗（primitive／陣列＝查不清楚），再走訪——走訪與欄位檢查包 try：
+    // 過深巢狀會讓 walk 爆遞迴（RangeError），裸拋＝行程退 1 冒充「已確認越界」。
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { dirty++; continue; }
+    try {
+      walk(obj, calls);
+    } catch { dirty++; continue; }
     if (obj && typeof obj === 'object') {
       // #479 r5：欄位在場但型別不對＝查不清楚（fail-closed），不可靜默略過。
       if (Object.hasOwn(obj, 'toolCallCount')) {
@@ -227,7 +230,7 @@ if (isMainModule(import.meta.url)) {
   }
   const r = auditSessionDir(target);
   const id = target.split('/').filter(Boolean).pop();
-  if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具呼叫）`);
+  if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具足跡）`);
   else if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 該掃作廢：照 AGENTS「Grok 的邊界」條款記漏跑、或鎖工具重掃後再驗一次`);
   else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed 當越界處理`);
   process.exit(r.code);
