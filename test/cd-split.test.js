@@ -120,3 +120,69 @@ test('對帳閘｜台幣定存列不進「末筆對概要」（定存沒有明�
   const rec2 = reconcileBankStatement(bad);
   assert.ok(rec2.problems.some((/** @type {any} */ p) => p.code === 'bank-end-balance'), '★活存列照樣進末筆對概要');
 });
+
+test('Grok 補強｜kind 負向：「定期定額」不當定存；period 分隔符變體（〜/至/-）都抓得到', () => {
+  const lines = [
+    L([[47, '新臺幣帳戶概要區'], [452, '現值參考日:2026/01/31']]),
+    L([[50, '定期定額'], [150, '900100****3301'], [473, '$5,000']]),
+    L([[50, '新臺幣定存'], [150, '900100****3301'], [300, '2026/01/10〜2026/07/10'], [473, '$1,000']]),
+    L([[50, '新臺幣定存'], [150, '900100****3301'], [300, '2026/01/10至2026/07/10'], [473, '$2,000']]),
+    L([[50, '定期存款'], [150, '900100****3301'], [300, '2026/01/10-2026/07/10'], [473, '$3,000']]),
+  ];
+  const r = parseBankSummary(lines);
+  assert.equal(r.accounts[0].kind, 'demand', '★「定期定額」是投資申購、誤中＝建假定存戶＋末筆閘卸甲');
+  assert.deepEqual(r.accounts.slice(1).map((a) => a.kind), ['time', 'time', 'time']);
+  assert.ok(r.accounts.slice(1).every((a) => a.period.length > 0), `★三種分隔符都要抓到（實得 ${JSON.stringify(r.accounts.map((a) => a.period))}）`);
+});
+
+test('Grok 補強｜次月列印順序打亂＝異值定存照樣精確配回（金額進身分的承重；同值互換＝無感）', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const n = db.accounts.length;
+  const m2 = /** @type {any} */ (parsedOf('2026-02-28'));
+  const cds = m2.accounts.filter((/** @type {any} */ a) => a.kind === 'time');
+  m2.accounts = [...m2.accounts.filter((/** @type {any} */ a) => a.kind !== 'time'), ...cds.reverse()];   // 101.88 移到最後
+  const r = applyBalancesToDb(db, m2);
+  assert.equal(r.created, 0, '★順序打亂不得裂戶（金額在身分裡）');
+  assert.equal(db.accounts.length, n);
+  const big = db.accounts.find((a) => /101\.88/.test(String(a.name)));
+  assert.equal(big?.balanceAsOf, '2026-02-28', '101.88 那顆真的被更新到');
+});
+
+test('Grok 補強（釘現況）｜同值兩筆只到期一筆＝殘存列重編第1筆、第2筆停格——已知殘餘（無存單號機械無解）', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const m2 = /** @type {any} */ (parsedOf('2026-02-28'));
+  const c51 = m2.accounts.filter((/** @type {any} */ a) => a.kind === 'time' && a.balance === 50.94);
+  m2.accounts = m2.accounts.filter((/** @type {any} */ a) => a !== c51[1]);   // 拿掉一筆 50.94
+  const r = applyBalancesToDb(db, m2);
+  assert.equal(r.created, 0, '★不裂新戶');
+  const first = db.accounts.find((a) => /50\.94（第1筆）/.test(String(a.name)));
+  const second = db.accounts.find((a) => /50\.94（第2筆）/.test(String(a.name)));
+  assert.equal(first?.balanceAsOf, '2026-02-28', '殘存那筆更新到 #1（同值互換無感＝可接受）');
+  assert.equal(second?.balanceAsOf, '2026-01-31', '#2 停格（契約紅字殘餘①的現況釘住——行為變了要回去改契約）');
+});
+
+test('Grok 補強（釘現況）｜中途變額＝新鍵新戶、舊戶停格雙戶並列（可見不錯配；契約紅字殘餘②）', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const n = db.accounts.length;
+  const m2 = /** @type {any} */ (parsedOf('2026-02-28'));
+  const big = m2.accounts.find((/** @type {any} */ a) => a.kind === 'time' && a.balance === 101.88);
+  big.balance = 102.5;   // 本息合印＝金額變
+  const r = applyBalancesToDb(db, m2);
+  assert.equal(r.created, 1, '★變額＝新戶（寧可雙戶可見、不錯配）');
+  assert.equal(db.accounts.length, n + 1);
+  assert.equal(db.accounts.find((a) => /101\.88/.test(String(a.name)))?.balanceAsOf, '2026-01-31', '舊戶停格');
+});
+
+test('Grok 補強｜交易掛名與「轉入到」顯示繞開定存戶（契約「全繞開」的承重；只打 apply＝敘事綠）', async () => {
+  const db = dbOf([
+    { id: 'cd1', name: '台新 定存 X', type: 'cash', bank: '台新', currency: 'TWD', balance: 20000, accountNo: '900100****3301', cdKey: '台新|3301|TWD|p|20000|#1' },
+    { id: 'demand1', name: '台新活儲', type: 'cash', bank: '台新', currency: 'TWD', balance: 9000, accountNo: '900100****3301' },
+  ]);
+  const parsed = /** @type {any} */ (parsedOf());
+  const tx = { acctSuffix: '3301', acctMasked: '900100****3301', date: '2026-01-05', summary: 's', direction: 'in', amount: 1, balance: null, note: '' };
+  const { accountNameForTxForTest } = await import('../lib/services/bank-import.js');
+  assert.equal(accountNameForTxForTest(db, tx, parsed), '台新活儲', '★同末碼下交易掛名要挑活存戶、不可掛到定存戶');
+});
