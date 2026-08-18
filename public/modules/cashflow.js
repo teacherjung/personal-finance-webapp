@@ -4,7 +4,8 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
+import { api, apiStream, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
+import { progressText } from './progress-text.js';   // 上傳進度：後端推代碼、句子住這支純模組（可行為測）
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -212,14 +213,21 @@ function openBankUpload() {
   };
   /** 直接送 AI 解讀（不開同意窗）。⚠️ 刻意留在**上傳表單的 onSubmit 裡** await：
    *  送出鈕的「正在上傳…請稍候」會一路顯示到預覽窗開起來，不需要另外吐 toast。 */
+  /** 串流版預覽（2026-08-18）：body 帶 stream:true → 後端逐階段推代碼 → progressText 翻成句子。
+   * ⚠️ 沒有 setProgress（例如呼叫端不是表單）＝照樣走串流、只是不顯示，結果與錯誤契約完全相同。
+   * ⚠️ 進度句只在**收到後端 frame** 時才更新——這裡沒有任何計時器／預設清單（假進度禁令）。 */
+  const previewWithProgress = (/** @type {any} */ bodyArgs, /** @type {((t:string)=>void)|undefined} */ setProgress) =>
+    apiStream('/bank-statement/preview', { ...previewBody(bodyArgs), stream: true }, (f) => { const t = progressText(f); if (t && setProgress) setProgress(t); });
+
   const sendToAi = async (/** @type {string} */ b64, /** @type {string} */ pw,
-    /** @type {() => boolean} */ onPage, /** @type {() => boolean} */ canOpenNext) => {
+    /** @type {() => boolean} */ onPage, /** @type {() => boolean} */ canOpenNext,
+    /** @type {((t:string)=>void)|undefined} */ setProgress) => {
     // ⚠️ r1#1：呼叫端在 await「要不要先問」設定的期間，使用者可能已關窗、切頁、或彈窗被接管
     //    ——那時**連請求都不可以發**（發了就把帳單送出去、花他的錢，canOpenNext 只擋得住
     //    預覽窗、擋不住已出門的請求）。放在函式第一行＝兩條呼叫路與未來新增的都自動受保護。
     if (!canOpenNext()) return;
     try {
-      const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
+      const r = await previewWithProgress({ data: b64, password: pw, useAi: true }, setProgress);
       openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
     } catch (e) {
       throw new Error(aiErrorText(/** @type {any} */ (e).code, /** @type {any} */ (e).message), { cause: e });
@@ -235,7 +243,7 @@ function openBankUpload() {
         onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
           const canOpenNext = () => onPage() && ctx.owns.handoff();
           try {
-            const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw, useAi: true }) });
+            const r = await previewWithProgress({ data: b64, password: pw, useAi: true }, ctx?.setProgress);
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, pw, onPage));
           } catch (e) {
             // 錯誤碼→白話（含「下一步」）的唯一住所在 ai-consent.js；openForm 的 catch 會 toast 並留窗重試
@@ -256,7 +264,7 @@ function openBankUpload() {
           const pw = data.password || '';
           /** @type {any} */ let r;
           try {
-            r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64, password: pw }) });
+            r = await previewWithProgress({ data: b64, password: pw }, ctx?.setProgress);
           } catch (e) {
             // 密碼對了、但範本認不得這個版面＝可以問要不要送 AI（加密帳單也走得到這條路）
             if (!shouldOfferAi(e)) throw e;
@@ -264,7 +272,7 @@ function openBankUpload() {
               if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
               return;
             }
-            await sendToAi(b64, pw, onPage, canOpenNext);   // 預設：直接送（William 2026-08-13）
+            await sendToAi(b64, pw, onPage, canOpenNext, ctx?.setProgress);   // 預設：直接送（William 2026-08-13）
             return;
           }
           // 預覽成功才記（記一個開不了檔的密碼沒有意義）；記不進去不擋匯入、只提示
@@ -297,7 +305,7 @@ function openBankUpload() {
           const b64 = await fileToBase64(snap.file);
           try {
             // P0.5：先不帶密碼＝後端自動試統一密碼池（''→各卡→記住的）；多數情況一發就過、全程免輸入
-            const r = await api('/bank-statement/preview', { method: 'POST', body: previewBody({ data: b64 }) });
+            const r = await previewWithProgress({ data: b64 }, ctx?.setProgress);   // 串流：後端逐階段推、收到才寫（不做假動畫）
             openWhenOnPage(canOpenNext, () => showBankPreview(r, b64, '', onPage));   // 待 modal-root 清空後再開；切頁／被接管都作廢
           } catch (e) {
             if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
@@ -309,7 +317,7 @@ function openBankUpload() {
               if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
               return;
             }
-            await sendToAi(b64, '', onPage, canOpenNext);
+            await sendToAi(b64, '', onPage, canOpenNext, ctx?.setProgress);
           }
         }
       });

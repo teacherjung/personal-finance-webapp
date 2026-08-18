@@ -172,8 +172,12 @@ test('接線｜openForm 的 async onSubmit 只在 owns() 時 close/toast；關�
   assert.match(app, /readNav: \(\) => currentNavSeq\(\)/, 'ownership 要吃**換頁**序號 currentNavSeq；且包一層箭頭避 TDZ');
   assert.doesNotMatch(app, /readNav: \(\) => currentRouteSeq\(\)/, '不可接回重繪序號 routeSeq（r7 的 bug 來源）');
   assert.match(app, /const owns = claimModalRoot\(\);/, 'openForm 要在開窗當下 claim 並留 owns');
-  assert.match(app, /await onSubmit\(out, \{ owns \}\); if \(owns\(\)\) closeAfterSubmit\(\);/,
+  // 2026-08-18（進度串流）起 ctx 多一把 setProgress——擁有權語意不變：仍是同一個 owns、仍只在
+  // owns() 時才關窗。斷言放寬到「ctx 帶 owns」而非整串字面，但**保留 owns() 守門那半段**。
+  assert.match(app, /await onSubmit\(out, \{ owns[^)]*\}\); if \(owns\(\)\) closeAfterSubmit\(\);/,
     'onSubmit 後只在仍擁有時才關窗；並把自己的擁有權把手交給 onSubmit（r18：後續開窗要據它判斷有沒有被接管）');
+  assert.match(app, /const setProgress = \([\s\S]{0,200}?if \(!progressEl \|\| !owns\(\) \|\| !text\) return;/,
+    '★進度筆也吃 owns()：切頁／被接管之後不得再往別人的窗寫字（同 r6 的理由）');
   // r20：兩種關窗必須分開——使用者按 ×／取消／背景＝撤銷（不留交接授權），送出成功才交棒
   assert.match(app, /const close = \(\) => \{ root\.innerHTML = ''; owns\.release\(\); \};/,
     '使用者關窗走 owns.release()（不帶交接授權）');
