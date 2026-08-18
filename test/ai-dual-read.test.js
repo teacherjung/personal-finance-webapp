@@ -567,3 +567,54 @@ test('r1#2｜使用者可見文案不得再描述舊單讀流程當預設：三�
   assert.match(AI_KEY_INFO.cost.html, /預設「雙讀」/, '★費用解釋窗自己要講預設雙讀');
   assert.doesNotMatch(AI_KEY_INFO.cost.html, /有沒有因為第一次讀不準而換大一點的模型再讀一次/, '★費用窗的舊單讀預設句不得單獨復發');
 });
+
+// ---- 仲裁差異欄名現形（William 2026-08-18：「希望降低仲裁的需要」→先讓證據現形才能照證據調校）----
+test('差異現形｜arbitrated 帶 dualReadDiffs（只列欄名、絕不帶欄值）；一路透到 preview', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const bad = answerOf({
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  const dd = /** @type {any} */ (r).dualReadDiffs;
+  assert.ok(Array.isArray(dd) && dd.length > 0, '★仲裁成功要把「差在哪幾欄」帶出來（沒有它＝每次都只能猜要不要調比對器）');
+  assert.ok(dd.includes('帳戶餘額組成') || dd.some((/** @type {string} */ x) => x.includes('金額')), `差異欄要點名錢欄（實得 ${JSON.stringify(dd)}）`);
+  for (const x of dd) {
+    assert.equal(typeof x, 'string');
+    assert.doesNotMatch(x, /5000|5500|4900|100\b/, `★欄名不得夾帶欄值（機密紀律同 aiAnswersAgree）：${x}`);
+  }
+  // 一路透到正式 preview（服務回了、preview 漏掛＝畫面永不亮）
+  clearAiTicketsForTest();
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), aiExtract: extractA });
+  assert.deepEqual(/** @type {any} */ (pv).dualReadDiffs, dd, '★preview 原樣透出');
+});
+
+test('差異現形｜attested 沒有第二份答案可比＝不帶 dualReadDiffs；agree 也不帶', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const dead = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  const r1 = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: dead, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r1.dualRead, 'attested');
+  assert.ok(!('dualReadDiffs' in r1), '★attested 帶它＝畫面唸「差異：（空）」的怪話');
+  const r2 = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: answerOf({ accounts: [{ ...good.accounts[0], label: 'Opus 措辭' }] }) }), extract: extractA });
+  assert.equal(r2.dualRead, 'agree');
+  assert.ok(!('dualReadDiffs' in r2), '★一致路不帶（沒有差異可講）');
+});
+
+test('差異現形｜徽章句：有 diffs 畫 ⚠️ 句（收合區外＝「請核對哪幾處」素材）、逃逸、去重截斷；沒有＝不畫', () => {
+  const base = { engine: 'ai', aiModel: O, dualRead: 'arbitrated' };
+  const withDd = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['帳戶餘額組成', '第 2 筆交易的金額', '第 2 筆交易的金額'] });
+  assert.match(withDd, /兩份初讀不一致的欄位/);
+  assert.match(withDd, /帳戶餘額組成、第 2 筆交易的金額/, '★去重後列出');
+  assert.match(withDd, /特別核對這幾處/);
+  // 收合區外＝⚠️ 句必須出現在 <details 之前（explain-must-knows 家規：核對前提不得藏進收合）
+  const dIdx = withDd.indexOf('兩份初讀不一致'); const detIdx = withDd.indexOf('<details');
+  assert.ok(dIdx >= 0 && (detIdx === -1 || dIdx < detIdx), '★不得藏進收合區');
+  const xss = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['<img src=x onerror=alert(1)>'] });
+  assert.ok(!xss.includes('<img'), '★欄名要逃逸（後端理論上只給白名單欄名，但畫面不賭這件事）');
+  const seven = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['a欄', 'b欄', 'c欄', 'd欄', 'e欄', 'f欄', 'g欄'] });
+  assert.match(seven, /等 7 處/, '超過 6 個＝截斷加總數');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base }), /兩份初讀不一致/, '★沒有 diffs＝不畫');
+});
