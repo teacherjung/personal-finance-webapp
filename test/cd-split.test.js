@@ -60,7 +60,7 @@ test('套用｜每筆定存各自建帳戶：同值兩筆＝第1筆/第2筆；�
   assert.ok(cdAccs.every((a) => a.type === 'cash' && a.balanceAsOf === '2026-01-31'), '定存＝cash 型（緊急預備金分子「活存定存都算」＝derive 既有語意）');
 });
 
-test('套用｜次月同帳單重匯＝精確更新既有定存帳戶、不重複建；到期（列消失）＝不動不刪不歸零', () => {
+test('套用｜次月同帳單重匯＝精確更新既有定存帳戶、不重複建；到期（列消失＋過迄日）＝歸零加註「已到期」（William 2026-08-18 裁示 b 改版）', () => {
   const db = dbOf();
   applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
   const afterFirst = db.accounts.length;
@@ -68,13 +68,76 @@ test('套用｜次月同帳單重匯＝精確更新既有定存帳戶、不重�
   assert.equal(db.accounts.length, afterFirst, '★同批定存全部配回原帳戶（cdKey 精確配對）——重建＝配對壞了');
   assert.equal(r2.created, 0);
   assert.ok(db.accounts.filter((a) => a.cdKey).every((a) => a.balanceAsOf === '2026-02-28'), '每筆定存的餘額更新日都跟上');
-  // 到期：帳單不再印定存列（只剩活存）——定存帳戶原樣留著（餘額更新日停在最後一期＝使用者一眼可辨）
-  const noCd = /** @type {any} */ (parsedOf('2026-03-31'));
+  // 到期：帳單不再印定存列（只剩活存）＋現值參考日已過迄日（外幣定存迄日 2026/04/25、台幣 2026/07/10）
+  const noCd = /** @type {any} */ (parsedOf('2026-05-31'));
   noCd.accounts = noCd.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
-  applyBalancesToDb(db, noCd);
+  const r3 = applyBalancesToDb(db, noCd);
   const cds = db.accounts.filter((a) => a.cdKey);
-  assert.equal(cds.length, 4, '★到期不刪');
-  assert.ok(cds.every((a) => a.balanceAsOf === '2026-02-28'), '★到期不動（不歸零、更新日停格）——錢的紀錄留給使用者處理');
+  assert.equal(cds.length, 4, '★到期不刪（帳戶留著＝歷史與掛名不斷線）');
+  const usd = cds.filter((a) => a.currency === 'USD');
+  assert.equal(r3.matured, 3, '★三筆外幣定存過了迄日＝歸零（裁示 b）');
+  assert.ok(usd.every((a) => a.balance === 0 && /（已到期）/.test(String(a.name))), '★歸零＋名稱加「已到期」');
+  assert.ok(usd.every((a) => a.balanceAsOf === '2026-05-31'), '歸零那一刻的參考日');
+  const twd = cds.find((a) => a.currency === 'TWD');
+  assert.equal(twd?.balance, 20000, '★台幣定存迄日 2026/07/10 還沒到＝不動（只有過了迄日才歸零）');
+  assert.ok(!/（已到期）/.test(String(twd?.name)), '沒到期不加註');
+});
+
+test('到期歸零｜三個條件缺一不可：別家帳單／這期還印著／迄日未到／讀不出迄日＝一律不歸零（不誤歸零）', () => {
+  const base = () => [{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }];
+  const noCdParsed = (/** @type {string} */ ref, /** @type {any} */ over = {}) => {
+    const p = /** @type {any} */ (parsedOf(ref));
+    p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+    return { ...p, ...over };
+  };
+  // ①別家帳單（機構不同）＝不判它死活
+  const d1 = dbOf(base());
+  applyBalancesToDb(d1, /** @type {any} */ ({ ...noCdParsed('2026-05-31'), bank: '一銀' }));
+  assert.equal(d1.accounts[0].balance, 100, '★別家帳單不得歸零本行定存');
+  // ②這張帳單沒涵蓋這個末碼＝不判（帳號集合裡沒有 162）
+  const d2 = dbOf(base());
+  const p2 = noCdParsed('2026-05-31');
+  p2.accounts = p2.accounts.filter((/** @type {any} */ a) => a.suffix !== '162');
+  p2.accountCurrency = Object.fromEntries(Object.entries(p2.accountCurrency).filter(([k]) => !k.endsWith('162')));
+  applyBalancesToDb(d2, /** @type {any} */ (p2));
+  assert.equal(d2.accounts[0].balance, 100, '★帳單沒涵蓋該帳號＝不判死活');
+  // ③迄日未到
+  const d3 = dbOf(base());
+  applyBalancesToDb(d3, /** @type {any} */ (noCdParsed('2026-03-31')));
+  assert.equal(d3.accounts[0].balance, 100, '★迄日 4/25 未到＝不歸零');
+  // ④讀不出迄日（舊帳戶 cdKey 無期間）＝fail-safe 不歸零
+  const d4 = dbOf([{ ...base()[0], cdKey: '台新|162|USD||100|#1' }]);
+  applyBalancesToDb(d4, /** @type {any} */ (noCdParsed('2026-05-31')));
+  assert.equal(d4.accounts[0].balance, 100, '★讀不出迄日＝不歸零（fail-safe）');
+  // ⑤這期還印著（正常在存）＝不歸零：帳戶的 cdKey 用**帳單真的會產生**的那把（金額 101.88），
+  //   餘額先設成舊值 1 來驗「有被更新、沒被歸零」。
+  const d5 = dbOf([{ id: 'y', name: '台新 USD 定存 B', type: 'cash', bank: '台新', currency: 'USD', balance: 1,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|101.88|#1', balanceAsOf: '2026-01-31' }]);
+  applyBalancesToDb(d5, /** @type {any} */ (parsedOf('2026-05-31')));
+  const still = d5.accounts.find((a) => a.cdKey === '台新|162|USD|2026/01/25~2026/04/25|101.88|#1');
+  assert.equal(still?.balance, 101.88, '★這期還印著＝照常更新、不歸零（雖然過了迄日）');
+  assert.ok(!/（已到期）/.test(String(still?.name)), '還印著就不加註');
+});
+
+test('到期歸零｜預覽就看得到（所見即所得）＋完成提示會講；已歸零的不重複動', async () => {
+  const { bankApplyDoneText } = await import('../public/modules/cashflow-model.js');
+  const db = dbOf([{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
+  const p = /** @type {any} */ (parsedOf('2026-05-31'));
+  p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+  const pv = previewBalancesForDb(db, p);
+  const row = pv.rows.find((r) => r.action === 'mature-zero');
+  assert.ok(row, '★預覽要列出到期歸零那一列（不能匯入後才發現餘額被清成 0）');
+  assert.equal(row.balance, 0);
+  assert.equal(row.oldBalance, 100);
+  assert.match(String(row.label), /（已到期）/);
+  const r = applyBalancesToDb(db, p);
+  assert.equal(r.matured, 1);
+  assert.match(bankApplyDoneText(/** @type {any} */ (r), /** @type {any} */ ({ imported: 0 })), /1 筆定存已到期歸零/, '★完成提示要講（餘額被清了卻不說＝畫面說謊）');
+  const again = applyBalancesToDb(db, /** @type {any} */ ({ ...p, referenceDate: '2026-06-30' }));
+  assert.equal(again.matured, undefined, '★已歸零的不重複動（不重寫日期、不重複加註）');
+  assert.equal(db.accounts[0].name.match(/（已到期）/g)?.length, 1, '「已到期」只加一次');
 });
 
 test('保護｜活存列絕不配到定存帳戶（cdKey 帳戶不進泛用比對）——同末碼同幣別也不行', () => {
