@@ -293,3 +293,71 @@ test('r2#1｜跨月只變日期補零印法（2026/01/10→2026/1/10）＝照樣
   assert.equal(r.created, 0, '★同一天的兩種合法印法不得裂戶（Codex r2#1 合成重現的形）');
   assert.equal(db.accounts.length, n);
 });
+
+test('Grok 補強｜參考日非 ISO（2026/03/31）：正式路在上游就 blocked＝不歸零也不更新（誠實：Grok 那條「高」不可達）＋正規化縱深直測', async () => {
+  const { maturedCdAccountsForTest } = await import('../lib/services/bank-import.js');
+  const acc = () => [{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }];
+  const noCd = (/** @type {string} */ ref) => {
+    const p = /** @type {any} */ (parsedOf('2026-01-31'));
+    p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+    return { ...p, referenceDate: ref };
+  };
+  // ①正式路：非 ISO 參考日＝整份 balancesSkipped（既有行為）＝定存也不會被誤歸零
+  const db = dbOf(acc());
+  const r = applyBalancesToDb(db, /** @type {any} */ (noCd('2026/03/31')));
+  assert.equal(r.balancesSkipped, true, '★非 ISO 參考日在上游就擋（不是靠歸零這段防）');
+  assert.equal(db.accounts[0].balance, 100);
+  // ②縱深防禦直測：就算有呼叫端不先驗 ref，兩端正規化後也不得反向（迄日 4/25 未到＝不歸零）
+  const early = maturedCdAccountsForTest(acc(), noCd('2026/03/31'), '台新', new Set(), '2026/03/31');
+  assert.equal(early.length, 0, '★字串序陷阱（「/」>「-」）不得讓未到期定存進歸零名單');
+  const late = maturedCdAccountsForTest(acc(), noCd('2026/05/31'), '台新', new Set(), '2026/05/31');
+  assert.equal(late.length, 1, '★正規化後照樣認得出已過迄日');
+});
+
+test('Grok 補強｜迄日當天（ref === 迄日）＝仍算在存、不歸零；隔天才歸零（邊界釘死）', () => {
+  const acc = () => [{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }];
+  const noCd = (/** @type {string} */ ref) => {
+    const p = /** @type {any} */ (parsedOf('2026-01-31'));
+    p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+    return { ...p, referenceDate: ref };
+  };
+  const sameDay = dbOf(acc());
+  applyBalancesToDb(sameDay, /** @type {any} */ (noCd('2026-04-25')));
+  assert.equal(sameDay.accounts[0].balance, 100, '★迄日當天不歸零（當天才解約、錢可能還在）');
+  const nextDay = dbOf(acc());
+  assert.equal(applyBalancesToDb(nextDay, /** @type {any} */ (noCd('2026-04-26'))).matured, 1, '★隔天＝歸零');
+});
+
+test('Grok 補強｜沒有機構戳的定存戶＝不歸零（fail-safe；與 matchAccount 的「無戳寬鬆」刻意相反）', () => {
+  const db = dbOf([{ id: 'x', name: '手動建的定存', type: 'cash', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
+  const p = /** @type {any} */ (parsedOf('2026-05-31'));
+  p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+  applyBalancesToDb(db, p);
+  assert.equal(db.accounts[0].balance, 100, '★無戳＝不敢判它是不是這家的＝不歸零（猜錯就是把還在的定存清成 0）');
+});
+
+test('Grok 補強｜台幣定存過了迄日也會歸零（正向覆蓋，不是只有外幣）；多筆時預覽列數＝套用筆數', () => {
+  const db = dbOf();
+  applyBalancesToDb(db, /** @type {any} */ (parsedOf('2026-01-31')));
+  const late = /** @type {any} */ (parsedOf('2026-08-31'));   // 台幣迄日 2026/07/10、外幣 04/25 都過了
+  late.accounts = late.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+  const pv = previewBalancesForDb(db, late);
+  const pvCount = pv.rows.filter((r) => r.action === 'mature-zero').length;
+  const r = applyBalancesToDb(db, late);
+  assert.equal(r.matured, 4, '★台幣＋三筆外幣全部歸零');
+  assert.equal(pvCount, r.matured, '★預覽列數＝實際歸零筆數（多筆時最容易漂）');
+  assert.ok(db.accounts.filter((a) => a.cdKey).every((a) => a.balance === 0));
+});
+
+test('Grok 補強｜半形「(已到期)」也算已加註（手改過的名字不得被追加第二截）', () => {
+  const db = dbOf([{ id: 'x', name: '台新 USD 定存 A(已到期)', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
+  const p = /** @type {any} */ (parsedOf('2026-05-31'));
+  p.accounts = p.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+  applyBalancesToDb(db, p);
+  assert.equal(db.accounts[0].name, '台新 USD 定存 A(已到期)', '★不重複加註（半形也認）');
+  assert.equal(db.accounts[0].balance, 0, '照樣歸零');
+});
