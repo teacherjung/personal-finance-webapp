@@ -4,11 +4,11 @@
 //
 // ## 它在解什麼
 //
-// Grok 預審的呼叫紀律要求鎖工具（AGENTS「Grok 的邊界」節），但 2026-08-17 實測：
+// Grok 複審後掃的呼叫紀律要求鎖工具（AGENTS「Grok 的邊界」節），但 2026-08-17 實測：
 // **同版本（1.0.3 執行檔未變）、同旗標，鎖工具會「非決定性靜默失效」**——此前五次掃描
 // 日誌全零工具足跡，#477 連兩掃卻各跑 54／56 次終端呼叫（足跡到主目錄與兩棵工作樹；
 // 金絲雀實測其內建 `workspace` 沙箱也擋不住讀檔）。旗標與沙箱都只能當第一層；
-// **可靠的圍欄＝掃完機械稽核它自己的本機日誌**：有任何工具足跡＝該掃作廢（照條款記漏跑）。
+// **可靠的圍欄＝掃完機械稽核它自己的本機日誌**：有任何工具足跡＝該掃作廢（照條款在 PR 描述記一行）。
 //
 // ## 用法（掃描後立刻跑，結果寫進證據的配方聲明）
 //
@@ -16,9 +16,9 @@
 //   node scripts/audit-grok-scan.js --workspace <掃描時的 --cwd 路徑>   ← 稽核該 workspace 全部 session（配方＝每掃開全新目錄）
 //
 // 退出碼：
-//   0＝乾淨（日誌可讀、零工具足跡）→ 配方聲明記「驗屍 0（session <id>）」
+//   0＝乾淨（日誌可讀、零工具足跡）→ 配方聲明記「驗屍 0（session <id>）」＋掃描時用的目錄路徑
 //   1＝**越界**（有工具足跡；列出足跡名與筆數——lifecycle 一次呼叫會留多筆足跡，數字不是呼叫次數）
-//     → 該掃作廢、照條款記漏跑或鎖工具重掃
+//     → 該掃作廢、照條款在 PR 描述記一行原因或鎖工具重掃
 //   2＝**查不清楚**（session 找不到／日誌缺失／無任何可解析行）→ fail-closed，當越界處理
 //
 // ## 誠實劃界
@@ -26,7 +26,7 @@
 // ・它讀的是 Grok CLI 自己寫的日誌（`~/.grok/sessions/<workspace>/<session>/*.jsonl`）——
 //   CLI 若不寫日誌或換格式，這裡會退 2（fail-closed），不會假綠；但**驗不了日誌本身的誠實**
 //   （CLI 蓄意漏記工具呼叫＝驗不到）。它防的是「旗標靜默失效」這型實測發生過的事故，
-//   不是防供應商作惡——與整條預審線的信任模型一致。
+//   不是防供應商作惡——與整條複審後掃線的信任模型一致。
 // ・足跡判準＝**逐腿列舉如下**（刻意不寫腿數——寫死的數字自己會漂；全部來自真日誌實測、#479 逐輪補齊；含整檔 .json 與 signals 計數器）：
 //   ①`name`＋（arguments/input/args/params 任一鍵；訊息角色 user/assistant/system 不算、`tool` 照算）
 //   ②字串 `tool_name`（events 的 tool_started/completed）③字串 `tool_type`（backend_tool_call 的 kind）
@@ -235,7 +235,7 @@ if (isMainModule(import.meta.url)) {
       worst = Math.max(worst, r.code === 1 ? 3 : r.code);   // 越界最重（3>2），最後折回 1
     }
     const code = worst === 3 ? 1 : /** @type {0|2} */ (worst);
-    if (code === 1) console.log('→ 有 session 越界＝該掃作廢：照 AGENTS「Grok 的邊界」條款記漏跑、或鎖工具重掃後再驗');
+    if (code === 1) console.log('→ 有 session 越界＝該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗');
     else if (code === 2) console.log('→ 有 session 查不清楚＝fail-closed 當越界處理');
     process.exit(code);
   } else if (args[0] && args[0] !== '--workspace') {
@@ -247,7 +247,7 @@ if (isMainModule(import.meta.url)) {
   const r = auditSessionDir(target);
   const id = target.split('/').filter(Boolean).pop();
   if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具足跡）`);
-  else if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 該掃作廢：照 AGENTS「Grok 的邊界」條款記漏跑、或鎖工具重掃後再驗一次`);
+  else if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗一次`);
   else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed 當越界處理`);
   process.exit(r.code);
 }
