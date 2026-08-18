@@ -1,5 +1,6 @@
 // @ts-check
 // 個人理財中心 — 前端主程式
+import { makeNdjsonParser, reduceFrames, TRUNCATED } from './modules/ndjson-stream.js';   // 串流協議解讀（純模組＝可直測）
 import { renderDashboard } from './modules/dashboard.js';
 import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
@@ -44,27 +45,17 @@ export async function apiStream(path, body, onStage) {
   }
   const reader = res.body.getReader();
   const dec = new TextDecoder();
-  let buf = '', done = null, failed = null;
-  const handle = (/** @type {string} */ line) => {
-    const s = line.trim();
-    if (!s) return;
-    let f; try { f = JSON.parse(s); } catch { return; }   // 壞行跳過（不讓半行毀掉整趟）
-    if (f.t === 'stage') { try { onStage(f); } catch { /* 進度不得影響結果 */ } return; }
-    if (f.t === 'done') { done = f.r; return; }
-    if (f.t === 'error') failed = Object.assign(new Error(String(f.error || '匯入失敗')), f.code ? { code: String(f.code) } : {});
-  };
+  const parser = makeNdjsonParser();
+  /** @type {any} */ let out = null;
   for (;;) {
     const { value, done: end } = await reader.read();
     if (end) break;
-    buf += dec.decode(value, { stream: true });
-    const parts = buf.split('\n');
-    buf = parts.pop() || '';
-    for (const line of parts) handle(line);
+    out = reduceFrames(parser.push(dec.decode(value, { stream: true })), onStage) || out;
   }
-  handle(buf);
-  if (failed) throw failed;
-  if (done === null) throw new Error('連線中斷了（沒有收到完整結果）——請再試一次');   // 半途斷線＝誠實說沒收到，不假裝成功
-  return done;
+  out = reduceFrames(parser.end(), onStage) || out;
+  const final = out || TRUNCATED;
+  if (final.ok) return final.result;
+  throw Object.assign(new Error(final.error), final.code ? { code: String(final.code) } : {});
 }
 
 export async function api(path, opts = {}) {

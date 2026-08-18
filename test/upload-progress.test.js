@@ -118,26 +118,41 @@ test('序列｜模板認得＝open→template_try→template_hit→verify→buil
   await seedDb();
   const parsedOk = async () => ({ bank: '台新', referenceDate: '2026-07-31', accounts: [], accountCurrency: {}, transactions: [] });
   const { codes } = await stagesOf({}, parsedOk);
-  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_TRY, STAGES.TEMPLATE_HIT, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
+  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_HIT, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
 });
 
 test('序列｜認不得→無規則卡→AI 雙讀一致：recipe_try→recipe_miss→ai_start→ai_dual→ai_compare（無仲裁）', async () => {
   await seedDb();
   const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
-  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_TRY, STAGES.TEMPLATE_MISS,
-    STAGES.RECIPE_TRY, STAGES.RECIPE_MISS, STAGES.AI_START, STAGES.AI_DUAL, STAGES.AI_COMPARE]);
+  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_MISS,
+    STAGES.RECIPE_TRY, STAGES.RECIPE_MISS, STAGES.OPEN_PDF, STAGES.AI_START, STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
   assert.ok(!codes.includes(STAGES.AI_ARBITRATE), '★兩讀一致就不准說在仲裁');
 });
 
-test('序列｜兩讀不一致＝多一個 ai_arbitrate（仲裁真的發生了才報）', async () => {
+test('序列｜**兩讀都有效但不一致**＝compare 之後才 arbitrate（仲裁真的發生了才報）', async () => {
   await seedDb();
   const good = goodAnswer();
+  // ⚠️ 兩份都要真的通過驗收＋接地＋強閘，才算「兩讀不一致」——否則是「一讀掛掉」的另一型（掛羊頭：
+  // 我第一版的 other 用了 5,000，但版面沒印過這個數字＝接地擋掉＝根本只有一讀有效）。
+  // 這裡讓版面多一列雜訊（利率參考）印出 5,000，other 的自洽鏈才接得到地。
+  const linesWithStray = async () => [...linesA(), L(70, [[40, '本期利率參考'], [140, '5,000']])];
   const other = goodAnswer({
     accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
     transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
   });
-  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: other, [AI_BANK_MODELS.escalation]: good, [AI_ARBITER_MODEL]: good }), aiExtract: extractA });
-  assert.deepEqual(codes.slice(-3), [STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.AI_ARBITRATE]);
+  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: other, [AI_BANK_MODELS.escalation]: good, [AI_ARBITER_MODEL]: good }), aiExtract: linesWithStray });
+  // 兩讀有效但不一致：dual → compare（真的有兩份可比）→ arbitrate → 整理
+  assert.deepEqual(codes.slice(-4), [STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.AI_ARBITRATE, STAGES.BUILD_PREVIEW]);
+});
+
+test('序列｜兩讀都掛＝不得說「兩份都讀完了正在比對」（P101 的承重：無條件推 compare 就會說謊）', async () => {
+  await seedDb();
+  const bad = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  const { codes, r } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: bad, [AI_BANK_MODELS.escalation]: bad, [AI_ARBITER_MODEL]: bad }), aiExtract: extractA });
+  assert.ok(/** @type {any} */ (r).__err, '兩讀都掛＝整份不收');
+  assert.ok(codes.includes(STAGES.AI_DUAL), '雙讀真的發生過');
+  assert.ok(!codes.includes(STAGES.AI_COMPARE), '★沒有兩份可比＝不准說在比對');
+  assert.ok(!codes.includes(STAGES.BUILD_PREVIEW), '沒整理成預覽就不准說在整理');
 });
 
 test('序列｜關掉雙讀＝ai_single（不得謊稱兩個 AI 在讀）；升級才報 ai_escalate', async () => {
@@ -196,4 +211,71 @@ test('接線｜前端：四條路徑走單一出口、出口帶 stream:true、�
   const app = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
   assert.match(app, /export async function apiStream/, 'apiStream 在 app.js（與 api 同一個家）');
   assert.match(app, /throw Object\.assign\(new Error\(msg\), code \? \{ code: String\(code\) \} : \{\}\)/, '非 200 也保 code 通道');
+});
+
+// ---- Grok r0 補強：客戶端還原層（apiStream）與唯一出口的機械保證 ----
+test('G6｜串流協議解讀（純模組直測）：半行/壞行/error 帶 code/斷線不假裝成功/stage 交出去', async () => {
+  const { makeNdjsonParser, reduceFrames, TRUNCATED } = await import('../public/modules/ndjson-stream.js');
+  /** 餵任意分塊，回 {frames 收斂結果, 收到的 stage} */
+  const feed = (/** @type {string[]} */ chunks) => {
+    const p = makeNdjsonParser();
+    /** @type {any[]} */ const seen = [];
+    /** @type {any} */ let out = null;
+    for (const c of chunks) out = reduceFrames(p.push(c), (f) => seen.push(f)) || out;
+    out = reduceFrames(p.end(), (f) => seen.push(f)) || out;
+    return { out: out || TRUNCATED, seen };
+  };
+  // ①半行：frame 被切在中間，拼回來要完整解讀
+  const a = feed(['{"t":"stage","s":"read_', 'db"}\n{"t":"done","r":{"ok":1}}\n']);
+  assert.deepEqual(a.seen.map((f) => f.s), ['read_db'], '★半行要拼回來');
+  assert.deepEqual(a.out, { ok: true, result: { ok: 1 } });
+  // ②壞行（代理雜訊）不毀整趟
+  assert.deepEqual(feed(['<html>proxy junk</html>\n{"t":"done","r":{"ok":2}}\n']).out, { ok: true, result: { ok: 2 } });
+  // ③error frame：訊息與 code 都要還原（密碼窗靠 code 才跳得出來）
+  assert.deepEqual(feed(['{"t":"error","error":"這份 PDF 有加密","code":"pdf_password"}\n']).out,
+    { ok: false, error: '這份 PDF 有加密', code: 'pdf_password' });
+  // ④沒有換行結尾的最後一行也要收（end() 收尾）
+  assert.deepEqual(feed(['{"t":"done","r":3}']).out, { ok: true, result: 3 });
+  // ⑤斷線＝沒有終端 frame＝誠實報中斷，不得假裝成功
+  const d = feed(['{"t":"stage","s":"read_db"}\n']);
+  assert.equal(d.out.ok, false);
+  assert.match(String(/** @type {any} */ (d.out).error), /連線中斷/);
+  // ⑥onStage 爆掉不得影響結果
+  const p2 = makeNdjsonParser();
+  const r2 = reduceFrames(p2.push('{"t":"stage","s":"read_db"}\n{"t":"done","r":9}\n'), () => { throw new Error('前端爆炸'); });
+  assert.deepEqual(r2, { ok: true, result: 9 });
+});
+
+test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保住 code 自有屬性', () => {
+  const app = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
+  assert.match(app, /import \{ makeNdjsonParser, reduceFrames, TRUNCATED \}/, '協議解讀集中在純模組（可直測）');
+  assert.match(app, /const final = out \|\| TRUNCATED;/, '沒有終端 frame＝斷線結果（不假裝成功）');
+  assert.match(app, /throw Object\.assign\(new Error\(final\.error\), final\.code \? \{ code: String\(final\.code\) \} : \{\}\)/, '★error frame 路：code 自有屬性');
+  assert.match(app, /throw Object\.assign\(new Error\(msg\), code \? \{ code: String\(code\) \} : \{\}\)/, '★非 200 路：code 自有屬性');
+});
+
+test('G8｜唯一出口的機械保證：服務層只能經 stage sink 推，不得直接呼叫 onStage', () => {
+  const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
+  const bad = src.split('\n').filter((l) => /\bonStage\s*\(/.test(l) && !/makeStageSink|@param|opts\.onStage \}/.test(l));
+  assert.deepEqual(bad, [], `★服務層不得直接呼叫 onStage（繞過 stageFrame 白名單＝自由物件上船）：${JSON.stringify(bad)}`);
+  assert.match(src, /const stage = makeStageSink\(opts\.onStage\)/, 'preview 走 sink');
+  assert.match(src, /const stage = makeStageSink\(seams\.onStage\)/, 'aiBankRoute 走 sink');
+});
+
+test('G7｜model 白名單：只收 modelDisplayName 形狀，長字串／帳單內容一律丟掉', () => {
+  assert.equal(stageFrame('ai_single', { model: 'Claude Sonnet 5' })?.model, 'Claude Sonnet 5');
+  assert.equal(stageFrame('ai_single', { model: 'Claude Opus 4.6' })?.model, 'Claude Opus 4.6');
+  assert.equal(stageFrame('ai_single', { model: '帳戶 900200****1234 餘額 5,500' })?.model, undefined, '★帳單內容塞進 model 也上不了船');
+  assert.equal(stageFrame('ai_single', { model: 'x'.repeat(200) })?.model, undefined, '★長度上限');
+  assert.equal(stageFrame('ai_single', { model: 'claude-sonnet-5' })?.model, undefined, '模型代號（非顯示名）不外送＝既有慣例');
+});
+
+test('G2｜文案不得預測下一步（recipe_miss 不可說「要送 AI」——此時還沒判 useAi／停止線／鑰匙）', () => {
+  // 只掃**句子字面**（引號內），不掃行內註解——註解本來就要寫得出「不得說『要送 AI 讀』」這種禁令。
+  const src = readFileSync(join(ROOT, 'public/modules/progress-text.js'), 'utf8');
+  const table = src.slice(src.indexOf('const TEXT'), src.indexOf('});', src.indexOf('const TEXT')));
+  const sentences = [...table.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  assert.ok(sentences.length >= 10, `抓得到句子（實得 ${sentences.length} 句；抓不到＝這題空轉）`);
+  for (const line of sentences) assert.doesNotMatch(line, /要送 ?AI|接下來會|再來會|預計|剩下/, `★預測下一步／ETA＝假進度同族：「${line}」`);
+  assert.match(progressText({ t: 'stage', s: STAGES.RECIPE_MISS }), /沒有合用的版面規則卡/);
 });

@@ -11,13 +11,12 @@
 /** 階段代碼 → 畫面句（未知代碼＝不畫，前端沿用上一句：新後端配舊前端時不吐亂碼）。 */
 const TEXT = Object.freeze({
   read_db: '正在讀取你的帳戶設定…',
-  open_pdf: '正在開啟 PDF（如果有密碼會自動試你存過的）…',
-  template_try: '正在用內建範本認這份版面…',
+  open_pdf: '正在開啟 PDF、辨識版面（如果有密碼會自動試你存過的）…',
   template_hit: '內建範本認得這個版面，正在整理…',
   template_miss: '內建範本認不得這個版面，換下一招…',
   recipe_try: '正在試之前學會的版面規則卡（零費用、內容不外送）…',
   recipe_hit: '規則卡讀成功，正在整理…',
-  recipe_miss: '沒有合用的規則卡，要送 AI 讀…',
+  recipe_miss: '沒有合用的版面規則卡…',   // ⚠️ 不得接「要送 AI 讀」：此時還沒判 useAi／雲端停止線／有沒有鑰匙——預測下一步＝假進度同族（Grok r0）
   ai_start: '正在送給 AI 讀…',
   ai_dual: '兩個 AI 各自獨立讀一遍（互相核對）…',
   ai_single: '請 AI 讀一次…',
