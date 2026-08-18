@@ -223,7 +223,16 @@ test('Grok 補強（釘現況）｜同值兩筆只到期一筆＝殘存列重編
   const first = db.accounts.find((a) => /50\.94（第1筆）/.test(String(a.name)));
   const second = db.accounts.find((a) => /50\.94（第2筆）/.test(String(a.name)));
   assert.equal(first?.balanceAsOf, '2026-02-28', '殘存那筆更新到 #1（同值互換無感＝可接受）');
-  assert.equal(second?.balanceAsOf, '2026-01-31', '#2 停格（契約紅字殘餘①的現況釘住——行為變了要回去改契約）');
+  assert.equal(second?.balanceAsOf, '2026-01-31', '#2 停格（迄日 4/25 未到＝fail-safe 不歸零）');
+  assert.equal(second?.balance, 50.94, '迄日前不歸零');
+  // 過迄日之後：#2（被當成不再印的那顆）會歸零加註＝契約殘餘①現在的真行為（r1#3：原題只證迄日前）
+  const m3 = /** @type {any} */ (parsedOf('2026-05-31'));
+  const c51b = m3.accounts.filter((/** @type {any} */ a) => a.kind === 'time' && a.balance === 50.94);
+  m3.accounts = m3.accounts.filter((/** @type {any} */ a) => a !== c51b[1]);
+  applyBalancesToDb(db, m3);
+  const second2 = db.accounts.find((a) => /50\.94（第2筆）/.test(String(a.name)) || /50\.94（第2筆）（已到期）/.test(String(a.name)));
+  assert.equal(second2?.balance, 0, '★過迄日＋這期不再印它＝歸零（契約殘餘①的新行為）');
+  assert.match(String(second2?.name), /（已到期）/);
 });
 
 test('Grok 補強（釘現況）｜中途變額＝新鍵新戶、舊戶停格雙戶並列（可見不錯配；契約紅字殘餘②）', () => {
@@ -236,7 +245,15 @@ test('Grok 補強（釘現況）｜中途變額＝新鍵新戶、舊戶停格雙
   const r = applyBalancesToDb(db, m2);
   assert.equal(r.created, 1, '★變額＝新戶（寧可雙戶可見、不錯配）');
   assert.equal(db.accounts.length, n + 1);
-  assert.equal(db.accounts.find((a) => /101\.88/.test(String(a.name)))?.balanceAsOf, '2026-01-31', '舊戶停格');
+  assert.equal(db.accounts.find((a) => /101\.88/.test(String(a.name)))?.balanceAsOf, '2026-01-31', '舊戶停格（迄日 4/25 未到）');
+  // 過迄日之後：舊鍵那顆歸零加註＝契約殘餘②的真行為
+  const m3 = /** @type {any} */ (parsedOf('2026-05-31'));
+  const big3 = m3.accounts.find((/** @type {any} */ a) => a.kind === 'time' && a.balance === 101.88);
+  big3.balance = 102.5;
+  applyBalancesToDb(db, m3);
+  const old101 = db.accounts.find((a) => /101\.88/.test(String(a.name)));
+  assert.equal(old101?.balance, 0, '★過迄日的舊鍵戶歸零（不再是永久雙戶並列）');
+  assert.match(String(old101?.name), /（已到期）/);
 });
 
 test('Grok 補強｜交易掛名繞開定存戶（accountNameForTx 直測；「轉入到」的承重在下一題）', async () => {
@@ -360,4 +377,31 @@ test('Grok 補強｜半形「(已到期)」也算已加註（手改過的名字�
   applyBalancesToDb(db, p);
   assert.equal(db.accounts[0].name, '台新 USD 定存 A(已到期)', '★不重複加註（半形也認）');
   assert.equal(db.accounts[0].balance, 0, '照樣歸零');
+});
+
+test('r1#1｜AI／配方形狀（accounts 無 kind）＝不判定存死活：明明還印著的定存不得被歸零', () => {
+  const db = dbOf([{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
+  // AI/配方輸出：同銀行、同末碼、同餘額、參考日已過迄日，但 accounts 沒有 kind/period 欄
+  const aiLike = { bank: '台新', referenceDate: '2026-05-31',
+    accounts: [{ suffix: '162', masked: '900300****162', balance: 100, currency: 'USD', label: '外幣', note: '' }],
+    accountCurrency: { '900300****162': 'USD' } };
+  const pv = previewBalancesForDb(db, /** @type {any} */ (aiLike));
+  assert.ok(!pv.rows.some((r) => r.action === 'mature-zero'), '★無結構化欄位＝不判死活（預覽就不得出現歸零列）');
+  const r = applyBalancesToDb(db, /** @type {any} */ (aiLike));
+  assert.equal(r.matured, undefined, '★AI/配方路線照舊（契約明文）');
+  assert.equal(db.accounts[0].balance, 100, '★還印著的定存不得被清成 0（審查者可達情境）');
+});
+
+test('r1#2｜倒序匯入：舊帳單不得把較新的定存餘額清成 0（到期分支也吃 stale guard）', () => {
+  const db = dbOf([{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
+    accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-06-30' }]);
+  const older = /** @type {any} */ (parsedOf('2026-05-31'));
+  older.accounts = older.accounts.filter((/** @type {any} */ a) => a.kind !== 'time');
+  const pv = previewBalancesForDb(db, older);
+  assert.ok(!pv.rows.some((r) => r.action === 'mature-zero'), '★預覽也不得顯示歸零（所見即所得）');
+  const r = applyBalancesToDb(db, older);
+  assert.equal(r.matured, undefined);
+  assert.equal(db.accounts[0].balance, 100, '★舊帳單不得覆蓋較新的餘額');
+  assert.equal(db.accounts[0].balanceAsOf, '2026-06-30', '★日期不得倒退');
 });
