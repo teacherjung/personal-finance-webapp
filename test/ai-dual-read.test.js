@@ -567,3 +567,130 @@ test('r1#2｜使用者可見文案不得再描述舊單讀流程當預設：三�
   assert.match(AI_KEY_INFO.cost.html, /預設「雙讀」/, '★費用解釋窗自己要講預設雙讀');
   assert.doesNotMatch(AI_KEY_INFO.cost.html, /有沒有因為第一次讀不準而換大一點的模型再讀一次/, '★費用窗的舊單讀預設句不得單獨復發');
 });
+
+// ---- 仲裁差異欄名現形（William 2026-08-18：「希望降低仲裁的需要」→先讓證據現形才能照證據調校）----
+test('差異現形｜arbitrated 帶 dualReadDiffs（只列欄名、絕不帶欄值）；一路透到 preview', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const bad = answerOf({
+    accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
+    transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
+  });
+  const r = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r.dualRead, 'arbitrated');
+  const dd = /** @type {any} */ (r).dualReadDiffs;
+  assert.ok(Array.isArray(dd) && dd.length > 0, '★仲裁成功要把「差在哪幾欄」帶出來（沒有它＝每次都只能猜要不要調比對器）');
+  assert.ok(dd.includes('帳戶餘額組成') || dd.some((/** @type {string} */ x) => x.includes('金額')), `差異欄要點名錢欄（實得 ${JSON.stringify(dd)}）`);
+  // ★白名單形狀（Grok r0：只擋魔術數字＝「帳號 900200****1234 的金額」這種欄名能全綠出站）：
+  //   每一格都必須落在封閉集合——固定欄名或「第 N 筆交易的X」，**數字只准是序號**。
+  //   aiAnswersAgree 新增路徑會把這題打紅＝強迫來這裡有意識登記，帳號/金額類欄值長不進欄名。
+  const SHAPE = /^(現值參考日|帳戶帳號|帳戶幣別表|帳戶餘額組成|交易筆數|第 \d+ 筆交易的(日期|方向|金額|餘額|帳號末碼|摘要|帳號))$/;
+  for (const x of dd) assert.match(String(x), SHAPE, `★欄名必須是封閉白名單形狀（夾帶任何欄值都不合形）：${x}`);
+  // 一路透到正式 preview（服務回了、preview 漏掛＝畫面永不亮）
+  clearAiTicketsForTest();
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), aiExtract: extractA });
+  assert.deepEqual(/** @type {any} */ (pv).dualReadDiffs, dd, '★preview 原樣透出');
+});
+
+test('差異現形｜attested 沒有第二份答案可比＝不帶 dualReadDiffs；agree 也不帶', async () => {
+  const db = await seedDb();
+  const good = answerOf();
+  const dead = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  const r1 = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: dead, [O]: good, [F]: good }), extract: extractA });
+  assert.equal(r1.dualRead, 'attested');
+  assert.ok(!('dualReadDiffs' in r1), '★attested 不得帶——沒有兩份合法初讀就不存在「兩份的差異」（語意，非畫面問題）');
+  const r2 = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: answerOf({ accounts: [{ ...good.accounts[0], label: 'Opus 措辭' }] }) }), extract: extractA });
+  assert.equal(r2.dualRead, 'agree');
+  assert.ok(!('dualReadDiffs' in r2), '★一致路不帶（沒有差異可講）');
+  clearAiTicketsForTest();
+  const pvAgree = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: good, [O]: good }), aiExtract: extractA });
+  assert.ok(!('dualReadDiffs' in /** @type {any} */ (pvAgree)), '★preview 層也不帶（透傳層不對稱＝Grok r0）');
+});
+
+test('差異現形｜徽章句：有 diffs 畫 ⚠️ 句（收合區外＝「請核對哪幾處」素材）、逃逸、去重截斷；沒有＝不畫', () => {
+  const base = { engine: 'ai', aiModel: O, dualRead: 'arbitrated' };
+  const withDd = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['帳戶餘額組成', '第 2 筆交易的金額', '第 2 筆交易的金額'] });
+  assert.match(withDd, /兩份初讀不一致的欄位/);
+  assert.match(withDd, /帳戶餘額組成、第 2 筆交易的金額/, '★去重後列出');
+  assert.match(withDd, /特別核對這幾處/);
+  // 收合區外＝⚠️ 句必須出現在 <details 之前（explain-must-knows 家規：核對前提不得藏進收合）
+  const dIdx = withDd.indexOf('兩份初讀不一致'); const detIdx = withDd.indexOf('<details');
+  assert.ok(dIdx >= 0 && (detIdx === -1 || dIdx < detIdx), '★不得藏進收合區');
+  // ★XSS 斷言看**esc 的輸出真的在**（Grok r0：只驗「沒有 <img」＝整段剝掉或 <IMG 大寫都能綠）
+  const xss = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['<img src=x onerror=alert(1)>'] });
+  assert.ok(!/<img/i.test(xss), '★大小寫都不得出現原始標籤');
+  assert.ok(xss.includes('&lt;img'), '★esc 後的輸出必須真的在（整段被剝掉也算失敗——那是靜靜丟資料）');
+  // ★第二道閘：來源誤把 diffs 掛到 agree/attested，畫面不得跟著說「兩份初讀不一致」
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'agree', dualReadDiffs: ['帳戶餘額組成'] }), /兩份初讀不一致/, '★agree 誤掛不畫');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'attested', dualReadDiffs: ['帳戶餘額組成'] }), /兩份初讀不一致/, '★attested 誤掛不畫');
+  // ★非字串濾掉（join 會唸出 [object Object] 的怪句）；長欄名截斷（esc 只管逃逸不管長度）
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualReadDiffs: [/** @type {any} */ ({ a: 1 }), '帳戶餘額組成'] }), /object Object/);
+  const longName = 'Ｘ'.repeat(100);
+  const capped = aiPreviewBadgeHtml({ ...base, dualReadDiffs: [longName] });
+  assert.ok(!capped.includes(longName), '★單欄名要截長（版面不賭後端白名單）');
+  assert.match(capped, /Ｘ{24}⋯/, '截到 24 字加省略號');
+  const seven = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['a欄', 'b欄', 'c欄', 'd欄', 'e欄', 'f欄', 'g欄'] });
+  assert.match(seven, /等 7 處/, '超過 6 個＝截斷加總數');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base }), /兩份初讀不一致/, '★沒有 diffs＝不畫');
+});
+
+// ---- Codex r1 補強：逐欄突變矩陣＋出站 fail-closed 的承重 ----
+test('r1#1｜逐欄突變矩陣：每一個 hard 欄位的 diffs 輸出都要落在封閉形狀、序號要是真實索引', async () => {
+  const { aiAnswersAgree: agreeFn, sanitizeAiDiffs, normalizeAiBank } = await import('../lib/ai-parse.js');
+  // ⚠️ 比對器在正式管線吃的是**驗收後**的形狀（accountCurrency 表是 normalizeAiBank 長出來的）——
+  //   矩陣若餵原始答案卷，幣別表那格根本不會產生 diffs＝空轉（這一版第一跑就被自己的空轉斷言抓到）。
+  const base = answerOf();
+  /** 每個 hard 分支各做一個「只差這一欄」的變體（Codex r1#1：白名單題只掃一個夾具＝其他分支沒被鎖）。 */
+  const MUTS = /** @type {[string, (b: any) => void][]} */ ([
+    ['現值參考日', (b) => { b.referenceDate = '2026-07-30'; }],
+    ['帳戶帳號', (b) => { b.accounts[0].masked = '900200****9999'; b.accountCurrencies[0].masked = '900200****9999'; for (const t of b.transactions) t.acctMasked = '900200****9999'; }],
+    ['帳戶幣別表', (b) => { b.accountCurrencies.push({ masked: '900200****7777', currency: 'USD' }); }],
+    ['帳戶餘額組成', (b) => { b.accounts[0].balance = 9999; }],
+    ['交易筆數', (b) => { b.transactions.pop(); }],
+    ['交易日期', (b) => { b.transactions[1].date = '2026-07-09'; }],
+    ['交易方向', (b) => { b.transactions[1].direction = 'out'; }],
+    ['交易金額', (b) => { b.transactions[1].amount = 123; }],
+    ['交易餘額', (b) => { b.transactions[1].balance = 123; }],
+    ['交易摘要', (b) => { b.transactions[1].summary = '完全不同的摘要'; }],
+  ]);
+  for (const [label, mut] of MUTS) {
+    const b = answerOf(); mut(b);
+    const { diffs } = agreeFn(normalizeAiBank(base), normalizeAiBank(b));
+    assert.ok(diffs.length > 0, `${label}：突變要真的產生 diffs（否則這一格是空轉）`);
+    const maxTx = Math.max(base.transactions.length, b.transactions.length);   // 原始與驗收後筆數同（驗收不增刪列）
+    const safe = sanitizeAiDiffs(diffs, maxTx);
+    assert.deepEqual(safe, diffs, `★${label}：合法路徑必須原樣通過 fail-closed（被丟＝白名單漏登記＝使用者少看到提示）`);
+    for (const x of diffs) {
+      const m = /^第 (\d+) 筆交易的/.exec(x);
+      if (m) assert.ok(Number(m[1]) >= 1 && Number(m[1]) <= maxTx, `★序號必須是真實交易索引（${x}，maxTx=${maxTx}）`);
+      assert.doesNotMatch(x, /9999|123\b|USD|2026|完全不同/, `★欄名不得夾帶這次突變塞入的欄值：${x}`);
+    }
+  }
+});
+
+test('r1#1b｜出站 fail-closed：夾帶欄值或假序號的欄名在正式路被丟掉（機密優先於資訊完整）', async () => {
+  const { sanitizeAiDiffs } = await import('../lib/ai-parse.js');
+  // Codex 的兩個突變重放：①固定欄名夾日期值 ②金額被寫進序號位（第 100 筆、帳單只有 2 筆）
+  assert.deepEqual(sanitizeAiDiffs(['現值參考日 2026-07-31', '帳戶餘額組成'], 2), ['帳戶餘額組成'], '★夾值＝整格丟');
+  assert.deepEqual(sanitizeAiDiffs(['第 100 筆交易的金額', '第 2 筆交易的金額'], 2), ['第 2 筆交易的金額'], '★序號超出實際筆數＝有人把值寫進序號位＝丟');
+  assert.deepEqual(sanitizeAiDiffs(['帳號 900200****1234 的金額'], 2), [], '★帳號型欄名整格丟');
+  assert.deepEqual(sanitizeAiDiffs(/** @type {any} */ ([42, null, '機構名']), 2), ['機構名'], '非字串丟');
+  assert.deepEqual(sanitizeAiDiffs(['第 0 筆交易的金額'], 2), [], '序號從 1 起算');
+  // ★接線承重（P118 教訓：合法輸入下過濾器＝恆等函式，拔掉接線沒有行為差可測）——
+  //   直接鎖「出站那一行必須經 sanitizeAiDiffs」的形狀；過濾器行為本身由上面的單元斷言承重。
+  const { readFileSync } = await import('node:fs');
+  const { join: j2 } = await import('node:path');
+  const src = readFileSync(j2(process.cwd(), 'lib/services/bank-import.js'), 'utf8');
+  assert.match(src, /const safe = sanitizeAiDiffs\(first\.diffs, maxTx\);/, '★dualReadDiffs 出站前必須過 fail-closed（直通＝未來的洩漏形直接上船）');
+  assert.match(src, /return safe\.length \? \{ dualReadDiffs: safe \}/, '★出站的是過濾後那份');
+});
+
+test('r1#2｜attested 的正式 preview 也不帶 dualReadDiffs（透傳層三情境對稱鎖住）', async () => {
+  await seedDb();
+  const good = answerOf();
+  const dead = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  clearAiTicketsForTest();
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: dead, [O]: good, [F]: good }), aiExtract: extractA });
+  assert.equal(/** @type {any} */ (pv).dualRead, 'attested');
+  assert.ok(!('dualReadDiffs' in /** @type {any} */ (pv)), '★attested 的 preview 誤掛＝這題抓（Codex r1#2：原本只鎖 agree）');
+});

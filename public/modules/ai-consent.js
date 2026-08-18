@@ -246,13 +246,26 @@ export function aiPreviewBadgeHtml(preview) {
         : '';
   // P2-4b（William 2026-08-17 裁示）：文字欄寫法差異不觸發仲裁、採中選那份（一致路＝Opus、仲裁路可能＝Sonnet
   //  ——寫死「採 Opus」＝r2#2 的畫面說謊）——要誠實註明（列欄位不列值、動態模型名）
+  // 仲裁差異欄名現形（2026-08-18）：兩份初讀在錢欄位差在哪幾欄——這是「請特別核對哪幾處」的素材，
+  // 依家規放收合區外。只列欄名不列值（後端 diffs 本來就只帶欄位路徑）；仲裁已裁定＝訊息是「請核對」
+  // 不是「有錯」。attested 不會有這個欄位（沒有第二份答案可比）。
+  // ⚠️ 畫面自己也守（Grok r0）：①只在 dualRead==='arbitrated' 才畫——句子講的是「兩份初讀不一致、
+  //   第三讀裁定」，來源若誤把 diffs 掛到 agree/attested，沒有這道閘畫面就跟著說謊；②非字串濾掉
+  //   （join 會把物件唸成 [object Object] 的怪句）；③單一欄名截長（esc 只賭了逃逸、沒賭長度——
+  //   後端理論上只給短白名單欄名，畫面不賭這件事）。
+  const ddList = preview.dualRead === 'arbitrated' && Array.isArray(preview.dualReadDiffs)
+    ? [...new Set(preview.dualReadDiffs.filter((/** @type {any} */ x) => typeof x === 'string' && x))].map((x) => x.length > 24 ? `${x.slice(0, 24)}⋯` : x)
+    : [];
+  const dd = ddList.length
+    ? `<p class="muted" style="margin:0 0 6px;font-size:12px">⚠️ 兩份初讀不一致的欄位：<b>${esc(ddList.slice(0, 6).join('、'))}</b>${ddList.length > 6 ? `⋯等 ${ddList.length} 處` : ''}——第三讀已裁定採用這一份，請在下方預覽<b>特別核對這幾處</b>。</p>`
+    : '';
   const tv = Array.isArray(preview.dualReadTextVariance) && preview.dualReadTextVariance.length
     ? `<p class="muted" style="margin:0 0 6px;font-size:12px">✏️ 兩讀在文字欄寫法不同（${esc([...new Set(preview.dualReadTextVariance)].slice(0, 5).join('、'))}${preview.dualReadTextVariance.length > 5 ? '⋯' : ''}）——不影響金額核對，已採用${esc(modelDisplayName(preview.aiModel) || '中選那份')}的寫法。</p>`
     : '';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
-  ${dual}${tv}
+  ${dual}${dd}${tv}
   <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「機構名」、「帳號」、「日期」、「摘要」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
