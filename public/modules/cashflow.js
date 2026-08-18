@@ -317,7 +317,7 @@ function openBankUpload() {
   });
 }
 
-const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）' };
+const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）', 'mature-zero': '定存已到期 → 餘額歸零' };
 /** @param {any} r 預覽結果 @param {string} b64 @param {string} pw */
 function showBankPreview(r, b64, pw, onPage = () => true) {
   const rows = r.rows || [];
