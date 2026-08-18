@@ -581,10 +581,11 @@ test('差異現形｜arbitrated 帶 dualReadDiffs（只列欄名、絕不帶欄�
   const dd = /** @type {any} */ (r).dualReadDiffs;
   assert.ok(Array.isArray(dd) && dd.length > 0, '★仲裁成功要把「差在哪幾欄」帶出來（沒有它＝每次都只能猜要不要調比對器）');
   assert.ok(dd.includes('帳戶餘額組成') || dd.some((/** @type {string} */ x) => x.includes('金額')), `差異欄要點名錢欄（實得 ${JSON.stringify(dd)}）`);
-  for (const x of dd) {
-    assert.equal(typeof x, 'string');
-    assert.doesNotMatch(x, /5000|5500|4900|100\b/, `★欄名不得夾帶欄值（機密紀律同 aiAnswersAgree）：${x}`);
-  }
+  // ★白名單形狀（Grok r0：只擋魔術數字＝「帳號 900200****1234 的金額」這種欄名能全綠出站）：
+  //   每一格都必須落在封閉集合——固定欄名或「第 N 筆交易的X」，**數字只准是序號**。
+  //   aiAnswersAgree 新增路徑會把這題打紅＝強迫來這裡有意識登記，帳號/金額類欄值長不進欄名。
+  const SHAPE = /^(現值參考日|帳戶帳號|帳戶幣別表|帳戶餘額組成|交易筆數|第 \d+ 筆交易的(日期|方向|金額|餘額|帳號末碼|摘要|帳號))$/;
+  for (const x of dd) assert.match(String(x), SHAPE, `★欄名必須是封閉白名單形狀（夾帶任何欄值都不合形）：${x}`);
   // 一路透到正式 preview（服務回了、preview 漏掛＝畫面永不亮）
   clearAiTicketsForTest();
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: bad, [O]: good, [F]: good }), aiExtract: extractA });
@@ -601,6 +602,9 @@ test('差異現形｜attested 沒有第二份答案可比＝不帶 dualReadDiffs
   const r2 = await aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engineOf({ [S]: good, [O]: answerOf({ accounts: [{ ...good.accounts[0], label: 'Opus 措辭' }] }) }), extract: extractA });
   assert.equal(r2.dualRead, 'agree');
   assert.ok(!('dualReadDiffs' in r2), '★一致路不帶（沒有差異可講）');
+  clearAiTicketsForTest();
+  const pvAgree = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => engineOf({ [S]: good, [O]: good }), aiExtract: extractA });
+  assert.ok(!('dualReadDiffs' in /** @type {any} */ (pvAgree)), '★preview 層也不帶（透傳層不對稱＝Grok r0）');
 });
 
 test('差異現形｜徽章句：有 diffs 畫 ⚠️ 句（收合區外＝「請核對哪幾處」素材）、逃逸、去重截斷；沒有＝不畫', () => {
@@ -612,8 +616,19 @@ test('差異現形｜徽章句：有 diffs 畫 ⚠️ 句（收合區外＝「�
   // 收合區外＝⚠️ 句必須出現在 <details 之前（explain-must-knows 家規：核對前提不得藏進收合）
   const dIdx = withDd.indexOf('兩份初讀不一致'); const detIdx = withDd.indexOf('<details');
   assert.ok(dIdx >= 0 && (detIdx === -1 || dIdx < detIdx), '★不得藏進收合區');
+  // ★XSS 斷言看**esc 的輸出真的在**（Grok r0：只驗「沒有 <img」＝整段剝掉或 <IMG 大寫都能綠）
   const xss = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['<img src=x onerror=alert(1)>'] });
-  assert.ok(!xss.includes('<img'), '★欄名要逃逸（後端理論上只給白名單欄名，但畫面不賭這件事）');
+  assert.ok(!/<img/i.test(xss), '★大小寫都不得出現原始標籤');
+  assert.ok(xss.includes('&lt;img'), '★esc 後的輸出必須真的在（整段被剝掉也算失敗——那是靜靜丟資料）');
+  // ★第二道閘：來源誤把 diffs 掛到 agree/attested，畫面不得跟著說「兩份初讀不一致」
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'agree', dualReadDiffs: ['帳戶餘額組成'] }), /兩份初讀不一致/, '★agree 誤掛不畫');
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualRead: 'attested', dualReadDiffs: ['帳戶餘額組成'] }), /兩份初讀不一致/, '★attested 誤掛不畫');
+  // ★非字串濾掉（join 會唸出 [object Object] 的怪句）；長欄名截斷（esc 只管逃逸不管長度）
+  assert.doesNotMatch(aiPreviewBadgeHtml({ ...base, dualReadDiffs: [/** @type {any} */ ({ a: 1 }), '帳戶餘額組成'] }), /object Object/);
+  const longName = 'Ｘ'.repeat(100);
+  const capped = aiPreviewBadgeHtml({ ...base, dualReadDiffs: [longName] });
+  assert.ok(!capped.includes(longName), '★單欄名要截長（版面不賭後端白名單）');
+  assert.match(capped, /Ｘ{24}⋯/, '截到 24 字加省略號');
   const seven = aiPreviewBadgeHtml({ ...base, dualReadDiffs: ['a欄', 'b欄', 'c欄', 'd欄', 'e欄', 'f欄', 'g欄'] });
   assert.match(seven, /等 7 處/, '超過 6 個＝截斷加總數');
   assert.doesNotMatch(aiPreviewBadgeHtml({ ...base }), /兩份初讀不一致/, '★沒有 diffs＝不畫');
