@@ -189,6 +189,15 @@
 
 - **時機**＝AI 票路線**兌票寫入成功之後**（另一發生成呼叫——preview 若已走過升級階梯它其實是第三發，勿再稱「第二」）：reproduces 的黃金樣本＝「使用者確認過的那份答案」（票裡的 parsed）——沒按套用的答案沒資格當樣本；preview 是等待熱路徑不加 Opus；apply 的讀→閘→套→寫不變量禁外部 IO＝生成整段在 saveDb 之後、寫入走 repo 櫃檯 `saveParseRecipe` 另開原子交易（**成本連動 r1#5→P2-4**：每次上傳成本邊界「至多 4 發」——preview 雙讀 2＋仲裁 1＋這裡 1（關雙讀＝至多 3），考題釘呼叫數；「apply 零外部 IO」的舊句一律改「零**解析**外部 IO」）。**失敗不連坐**：匯入已完成、生成掛掉只回 `{saved:false, reason}`（recipe_* code、不外洩內文）。
 
+**上傳進度即時顯示（William 2026-08-18：「停頓太久像當掉，能不能即時寫出背景在跑什麼」）**：
+- **傳輸**＝**同一條** `/api/bank-statement/preview`、由 body 的 `stream === true`（嚴格布林）切成 NDJSON 串流（`streamNdjson`＝全 repo 第一支串流回應）。**刻意不新開端點**：新路徑得同時登記 body 上限白名單／外連登記三張表／限速表／HOSTED 入場管制，漏任一處＝機械閘紅或 413；同路徑全部沿用。不帶旗標的呼叫端行為**零位移**（照舊一發 JSON）。
+- **形狀**＝`{t:'stage',s,model?}`＊N →最後一行 `{t:'done',r}` 或 `{t:'error',error,code?}`；**HTTP 一律 200**（第一行推出去後 headers 已送，`res.status().json()` 與全域錯誤中介都失效）——成敗看最後一行，前端 `apiStream` 還原成 Error 並**保住 code 自有屬性**（`pdf_password` 跳密碼窗、`shouldOfferAi` 的 `Object.hasOwn` 都靠它）。
+- **機密機械化（第一鐵則）＝零插值**：後端只推 `lib/progress-stages.js` 的**封閉列舉代碼**（`stageFrame` 是唯一出口、非表列一律丟掉），白話句住 `public/modules/progress-text.js`（純函式、可行為測）。**不推**帳單欄值／密碼池大小／規則卡張數／頁數；唯一容許的附帶值＝**已在預覽徽章揭露過的模型顯示名**。
+- **誠實（第二鐵則）＝真的發生才推**：`ai_start` 只在 HOSTED 停止線／鑰匙／引擎三道之後（那三道零 AI 呼叫）；兩讀一致就不報仲裁；關雙讀報 `ai_single`（不得謊稱兩個 AI）。**禁止**時間驅動的假動畫與 ETA（#455 那課的正解方向：那次是把假的拿掉、這次是把真的補上）。
+- **序列由資料決定（第三鐵則）**：模板命中／配方命中／AI 雙讀／仲裁四條路各自不同，前端不得寫死清單。
+- **進度是附屬品**：sink 自己爆掉、連線斷掉都不得影響解析與匯入（`makeStageSink` 吞例外、`send` 包 try）。前端進度筆吃 `owns()`（切頁／被接管後不再往別人的窗寫字）。
+- 考題＝`test/upload-progress.test.js`（frame 內容全掃／唯一出口／sink 爆掉／零 AI 呼叫路無 ai_*／四條序列／文案互扣＋ETA 禁令／NDJSON 形狀與 code 通道／接線）。⚠️ 殘餘：**apply 路徑尚未串流**（P2-3 生成那數秒仍是靜默）＝另案；HOSTED 的代理緩衝與入場管制名額（串流讓連線變長）**未實測**、AI 在 HOSTED 本就停用故不影響現況。
+
 **定存分開列管（William 2026-08-18 裁示；外幣與台幣一體適用）**：
 - **背景（真實形）**：台新綜合對帳單概要區把同一帳戶印多列（活存一列＋每筆定存各一列）；「存單號碼」欄**空白**、兩筆定存可**完全同值**（William 的兩筆 51 美元實例）＝沒有現成唯一鍵。舊行為＝apply 以 `masked|currency` first-wins 塌列（定存被無聲丟棄）、且 preview 不去重＝所見≠所得。
 - **解析**（模板路線 `parseBankSummary`）：概要列補 `kind`（'time'＝label 命中 `/定存|定期存款/`——**刻意不用裸「定期」**：「定期定額」是投資申購、誤中＝建假定存戶＋末筆閘卸甲）與 `period`（帳號右側格的日期區間；素材本來就在 note、只是結構化）——三處 typedef 同步（bank-statement 兩處＋bank-import ParsedBank）。

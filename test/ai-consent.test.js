@@ -365,12 +365,17 @@ test('A4｜開關存檔失敗後的顯示：向後端核對，核對不到＝不
 test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 applyBody、徽章真的插進畫面', () => {
   const src = srcOf('public/modules/cashflow.js');
   // 三條 preview 路徑：上傳窗（無密碼）／密碼窗／同意窗（唯一帶 useAi 的那條）
-  assert.equal(count(src, /body: previewBody\(\{/g), 4,
-    '★四條 preview 路徑都要走 previewBody（漏一條＝那條路的判準沒被守住）——'
+  // ⚠️ 形狀在 2026-08-18（進度串流）又變一次：四條路徑改**經由單一出口** previewWithProgress，
+  //    由它一處呼叫 previewBody（比原本「四處各自呼叫」更嚴：判準不可能在某一條路被繞過）。
+  //    因此改釘：①出口自己走 previewBody ②四條路徑都走出口 ③各自的旗標形狀不變。
+  assert.match(src, /const previewWithProgress = [\s\S]{0,400}?previewBody\(bodyArgs\)/,
+    '★單一出口自己要走 previewBody（繞過它＝useAi 嚴格布林等判準全失守）');
+  assert.equal(count(src, /previewWithProgress\(\{/g), 4,
+    '★四條 preview 路徑都要走那個出口（漏一條＝那條路沒有判準也沒有進度）——'
     + '第四條＝`sendToAi`（William 2026-08-13「預設不問、直接送」新增的那一條）');
-  assert.match(src, /previewBody\(\{ data: b64, password: pw, useAi: true \}\)/, '★同意窗那條才帶 useAi');
-  assert.match(src, /previewBody\(\{ data: b64 \}\)/, '上傳窗那條不帶旗標');
-  assert.match(src, /previewBody\(\{ data: b64, password: pw \}\)/, '密碼窗那條不帶旗標');
+  assert.match(src, /previewWithProgress\(\{ data: b64, password: pw, useAi: true \}/, '★同意窗那條才帶 useAi');
+  assert.match(src, /previewWithProgress\(\{ data: b64 \}/, '上傳窗那條不帶旗標');
+  assert.match(src, /previewWithProgress\(\{ data: b64, password: pw \}/, '密碼窗那條不帶旗標');
   // ⚠️ **這條保證的形狀在 2026-08-13 變了**（William 拍板：預設不問、直接送）。
   //    舊版：`useAi: true` 全檔只准出現一次（同意窗）＝「沒問過就不外送」。
   //    新版：兩處——同意窗（設定打開時）與 sendToAi（預設路徑）。**兩處都必須在
@@ -380,8 +385,9 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   //    `if (false && await askBeforeSendAi())`，免密碼那條照樣讓單一 regex 過。
   //    兩條路**各自 scoped**：ask 分支 → 開自己的同意窗（引數不同＝身分）→ return → 自己的 sendToAi。
   for (const [label, consentArgs, sendArgs] of [
-    ['密碼窗路', 'openAiConsentWindow\\(b64, pw, fileName\\)', "sendToAi\\(b64, pw, onPage, canOpenNext\\)"],
-    ['上傳窗路（免密碼＝最常走）', "openAiConsentWindow\\(b64, '', snap\\.fileName\\)", "sendToAi\\(b64, '', onPage, canOpenNext\\)"],
+    // 2026-08-18：sendToAi 多收一把 setProgress（進度筆）——身分引數（b64/pw）不變，尾參數放寬。
+    ['密碼窗路', 'openAiConsentWindow\\(b64, pw, fileName\\)', "sendToAi\\(b64, pw, onPage, canOpenNext[^)]*\\)"],
+    ['上傳窗路（免密碼＝最常走）', "openAiConsentWindow\\(b64, '', snap\\.fileName\\)", "sendToAi\\(b64, '', onPage, canOpenNext[^)]*\\)"],
   ]) {
     assert.match(src, new RegExp(
       'if \\(await askBeforeSendAi\\(\\)\\) \\{[\\s\\S]{0,300}?' + consentArgs
@@ -394,14 +400,16 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   //    使用者上傳一份系統不認得的帳單，畫面什麼都不會發生，而沒有任何一條考題會紅。
   assert.equal(count(src, /await sendToAi\(/g), 2,
     '★兩條「不問就直接送」的路都要在：上傳窗（免密碼）與密碼窗。少一條＝那條路按下去沒反應');
-  assert.match(src, /await sendToAi\(b64, pw, onPage, canOpenNext\)/,
+  // 2026-08-18：尾參數多一把進度筆（setProgress）——身分引數（b64/pw）照舊釘死。
+  assert.match(src, /await sendToAi\(b64, pw, onPage, canOpenNext[^)]*\)/,
     '★密碼窗那條必須真的送出（沒接＝認不出版面就什麼都不會發生）');
-  assert.match(src, /await sendToAi\(b64, '', onPage, canOpenNext\)/,
+  assert.match(src, /await sendToAi\(b64, '', onPage, canOpenNext[^)]*\)/,
     '★上傳窗那條也必須真的送出——它是**最常走的那條**（帳單沒設密碼時就走這裡）');
   // ⚠️ r1#1：等「要不要先問」設定的 await 期間使用者可能已離開——重新驗證必須是
   //    sendToAi 的**第一個語句**（收進函式本身＝兩條路＋未來新增的呼叫者自動受保護，
   //    同 #454 r6「唯一性收進取值函式」同一課）。
-  assert.match(src, /canOpenNext\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canOpenNext\(\)\) return;/u,
+  // 2026-08-18：簽名尾端多一個 setProgress 參數（可能換行）——重新驗證仍必須是**第一個語句**。
+  assert.match(src, /canOpenNext,?\n?[^)]*\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canOpenNext\(\)\) return;/u,
     '★sendToAi 第一個語句必須是 canOpenNext 重新驗證——沒有它，關窗切頁後帳單照樣送出去、照樣花錢');
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw, skipSimilar \}\);/,

@@ -27,6 +27,46 @@ export const view = () => $('#view');
 export const byId = (id) => document.getElementById(id);
 
 /** 呼叫後端 API（自動帶 JSON）。 @param {string} path 例 '/transactions' @param {{method?:string, body?:any}=} opts @returns {Promise<any>} */
+/**
+ * 串流版 api（2026-08-18 上傳進度）：POST 一發、回應是 NDJSON——中途的 `{t:'stage'}` 逐行交給
+ * `onStage`，最後一行 `{t:'done',r}` 回傳 r、`{t:'error',…}` 丟 Error。
+ * ⚠️ **契約與 api() 完全一致**：成功回 parsed JSON、失敗丟 Error 且 **code 是自有屬性**
+ *（下游 `e.code === 'pdf_password'`、`Object.hasOwn(err,'code')` 都靠這個）——串流化不得偷換這條。
+ * ⚠️ 進度是附屬品：`onStage` 自己爆掉不可影響結果（包 try）。
+ * @param {string} path @param {any} body @param {(f:any)=>void} onStage
+ */
+export async function apiStream(path, body, onStage) {
+  const res = await fetch('/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok || !res.body) {   // 串流端點正常一律 200；非 200＝連 frame 都沒開始（限速/入場管制/413…）＝照 api() 的老路解讀
+    let msg = res.statusText, code;
+    try { const b = await res.json(); msg = b.error || msg; code = b.code; } catch { /* 非 JSON */ }
+    throw Object.assign(new Error(msg), code ? { code: String(code) } : {});
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', done = null, failed = null;
+  const handle = (/** @type {string} */ line) => {
+    const s = line.trim();
+    if (!s) return;
+    let f; try { f = JSON.parse(s); } catch { return; }   // 壞行跳過（不讓半行毀掉整趟）
+    if (f.t === 'stage') { try { onStage(f); } catch { /* 進度不得影響結果 */ } return; }
+    if (f.t === 'done') { done = f.r; return; }
+    if (f.t === 'error') failed = Object.assign(new Error(String(f.error || '匯入失敗')), f.code ? { code: String(f.code) } : {});
+  };
+  for (;;) {
+    const { value, done: end } = await reader.read();
+    if (end) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n');
+    buf = parts.pop() || '';
+    for (const line of parts) handle(line);
+  }
+  handle(buf);
+  if (failed) throw failed;
+  if (done === null) throw new Error('連線中斷了（沒有收到完整結果）——請再試一次');   // 半途斷線＝誠實說沒收到，不假裝成功
+  return done;
+}
+
 export async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
     headers: { 'Content-Type': 'application/json' },
@@ -186,7 +226,7 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
  * ⚠️ 刻意**不加 `onCancel`**：取消/×/背景三條路都走 `close()`＝撤銷擁有權（r20），
  *   要在取消後留下訊息就得在**開窗之前**先 toast。（⚠️ 別再拿 `runAiFallback` 當這個做法的例子——
  *   它 2026-08-12 起**刻意連 toast 都不發**了，理由見 ai-consent.js 那支的檔頭。） */
-/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
+/** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any, setProgress?:(t:string)=>void})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
@@ -219,6 +259,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body">${bodyHtml ? `<div class="info-body">${bodyHtml}</div>` : ''}<form id="modalForm"><div class="form-grid">${fieldHtml}</div>
+      <p id="form-progress" class="muted" style="margin:10px 0 0;font-size:12px;line-height:1.7" hidden></p>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
       <button type="submit" class="btn">${esc(submitLabel)}</button></div></form></div>
   </div></div>`;
@@ -248,12 +289,21 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
     // busyLabel（2026-08-12）：送出要等好幾秒的表單（AI 解析實測 5–6 秒），只把鈕變灰看起來像當掉——
     // 把文字換成「處理中…」讓使用者知道還在跑。失敗解鎖時要換回來（見下方 catch）。
     if (submitBtn && busyLabel) submitBtn.textContent = busyLabel;
+    // 進度插槽（2026-08-18）：長工作的表單可以逐行更新「後端現在在做什麼」。
+    // ⚠️ 只有**真的收到後端推的階段**才會有字（見 apiStream）——這裡不放任何時間驅動的假動畫。
+    const progressEl = /** @type {HTMLElement|null} */ (root.querySelector('#form-progress'));
+    if (progressEl) { progressEl.textContent = ''; progressEl.hidden = true; }
     // r6：onSubmit 有 await，回來時只在**仍擁有 modal-root** 時才動 UI——切頁或期間開了新彈窗＝
     //   舊 continuation 不可 close（會清掉後開的彈窗）也不可報過期錯誤。owns() false＝這一格已不是我們的。
     // 第二個參數＝這張表單自己的擁有權把手：onSubmit 若要「送出後再開下一窗」，用 ctx.owns.handoff()
     // 判斷那一格有沒有被別人接管（r18）。既有呼叫端只收一個參數，不受影響。
-    try { await onSubmit(out, { owns }); if (owns()) closeAfterSubmit(); }
-    catch (err) { if (owns()) { if (submitBtn) { submitBtn.disabled = false; if (busyLabel) submitBtn.textContent = submitLabel; } toast(err.message, true); } }   // 失敗才解鎖重試（並把鈕文字換回來）；成功已 close
+    /** 給 onSubmit 用的進度筆：收到一句就寫一句（空字串＝沿用上一句，見 progress-text）。 */
+    const setProgress = (/** @type {string} */ text) => {
+      if (!progressEl || !owns() || !text) return;
+      progressEl.textContent = text; progressEl.hidden = false;
+    };
+    try { await onSubmit(out, { owns, setProgress }); if (owns()) closeAfterSubmit(); }
+    catch (err) { if (owns()) { if (submitBtn) { submitBtn.disabled = false; if (busyLabel) submitBtn.textContent = submitLabel; } if (progressEl) { progressEl.textContent = ''; progressEl.hidden = true; } toast(err.message, true); } }   // 失敗才解鎖重試（鈕字換回、進度清掉）；成功已 close
   };
   if (onMount) onMount(root);
 }
