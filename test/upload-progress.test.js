@@ -118,7 +118,7 @@ test('誠實｜未設鑰匙＝零 AI 呼叫的路：一個 ai_* 階段都不准�
 });
 
 // ---- ③ 階段序列由資料決定 ----
-test('序列｜模板認得＝open→template_try→template_hit→verify→build_preview，且不含 ai/recipe 階段', async () => {
+test('序列｜模板認得＝read_db→open_pdf→template_hit→verify→build_preview，且不含 ai/recipe 階段', async () => {
   await seedDb();
   const parsedOk = async () => ({ bank: '台新', referenceDate: '2026-07-31', accounts: [], accountCurrency: {}, transactions: [] });
   const { codes } = await stagesOf({}, parsedOk);
