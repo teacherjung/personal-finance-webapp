@@ -34,7 +34,11 @@ const linesA = () => [
   L(55, [[40, '2026/07/02'], [140, '薪資入帳'], [280, '600'], [320, '5,500']]),
 ];
 const extractA = async () => linesA();
-const notRecognized = async () => { throw Object.assign(new Error('這份 PDF 看起來不是台新銀行綜合對帳單'), { status: 400 }); };
+// ⚠️ 照**真實解析器**的形狀：認不得會帶 code:'bank_unrecognized'（AI 入口的判準也是它）——
+// 夾具漏了這個碼，就測不到「只有真的判定版面不符才說範本認不得」那條（Codex r1#1）。
+const notRecognized = async () => { throw Object.assign(new Error('這份 PDF 看起來不是台新銀行綜合對帳單'), { status: 400, code: 'bank_unrecognized' }); };
+/** 壞檔／資源上限：不是「版面不符」——畫面不得說成範本認不得。 */
+const brokenPdf = async () => { throw Object.assign(new Error('PDF 無法開啟：Invalid PDF structure'), { status: 400 }); };
 const goodAnswer = (/** @type {any} */ over = {}) => ({
   bank: '第一銀行', referenceDate: '2026-07-31',
   accountCurrencies: [{ masked: '900200****1234', currency: 'TWD' }],
@@ -119,14 +123,6 @@ test('序列｜模板認得＝open→template_try→template_hit→verify→buil
   const parsedOk = async () => ({ bank: '台新', referenceDate: '2026-07-31', accounts: [], accountCurrency: {}, transactions: [] });
   const { codes } = await stagesOf({}, parsedOk);
   assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_HIT, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
-});
-
-test('序列｜認不得→無規則卡→AI 雙讀一致：recipe_try→recipe_miss→ai_start→ai_dual→ai_compare（無仲裁）', async () => {
-  await seedDb();
-  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
-  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_MISS,
-    STAGES.RECIPE_TRY, STAGES.RECIPE_MISS, STAGES.OPEN_PDF, STAGES.AI_START, STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
-  assert.ok(!codes.includes(STAGES.AI_ARBITRATE), '★兩讀一致就不准說在仲裁');
 });
 
 test('序列｜**兩讀都有效但不一致**＝compare 之後才 arbitrate（仲裁真的發生了才報）', async () => {
@@ -278,4 +274,42 @@ test('G2｜文案不得預測下一步（recipe_miss 不可說「要送 AI」—
   assert.ok(sentences.length >= 10, `抓得到句子（實得 ${sentences.length} 句；抓不到＝這題空轉）`);
   for (const line of sentences) assert.doesNotMatch(line, /要送 ?AI|接下來會|再來會|預計|剩下/, `★預測下一步／ETA＝假進度同族：「${line}」`);
   assert.match(progressText({ t: 'stage', s: STAGES.RECIPE_MISS }), /沒有合用的版面規則卡/);
+});
+
+// ---- Codex r1 補強：失敗種類與「真的進了那一步」 ----
+test('r1#1｜壞掉的 PDF（非版面不符）＝不得說「範本認不得」、也不得說在試規則卡', async () => {
+  await seedDb();
+  const { codes, r } = await stagesOf({}, brokenPdf);
+  assert.ok(/** @type {any} */ (r).__err, '錯誤照樣往上丟');
+  assert.ok(!codes.includes(STAGES.TEMPLATE_MISS), `★壞檔＝先報錯死因（實得 ${JSON.stringify(codes)}）`);
+  assert.ok(!codes.includes(STAGES.RECIPE_TRY), '★沒進規則卡迴圈就不准說在試');
+  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF]);
+});
+
+test('r1#1b｜沒有任何規則卡＝不推 recipe_try/miss（recipeBankRoute 根本直接返回）', async () => {
+  await seedDb();   // parseRecipes 空
+  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
+  assert.ok(!codes.includes(STAGES.RECIPE_TRY) && !codes.includes(STAGES.RECIPE_MISS),
+    `★無卡＝那兩碼都不推（實得 ${JSON.stringify(codes)}）`);
+  assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_MISS, STAGES.OPEN_PDF,
+    STAGES.AI_START, STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
+});
+
+test('r1#1c｜有規則卡但都不合用＝recipe_try→recipe_miss（真的進了迴圈才報）', async () => {
+  await seedDb();
+  const db = await getDb();
+  db.parseRecipes = [{ id: 'rcp-x', bank: '別家', current: { formatVersion: 1, bank: '別家', docAnchors: ['不會命中的錨點'], dateFormat: 'YYYY/MM/DD', refDate: { strategy: 'none', anchor: null }, summary: { sections: [], endAnchor: '合計', balancePick: 'first' }, detail: { rowIdent: 'date-first', headerOut: '支出', headerIn: '存入', headerBalance: '餘額', headerNote: null, headerIgnore: [] } }, graduateStreak: 0, rebirths: 0 }];
+  await saveDb(db);
+  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
+  assert.ok(codes.includes(STAGES.RECIPE_TRY) && codes.includes(STAGES.RECIPE_MISS), `★有卡＝報試用與結果（實得 ${JSON.stringify(codes)}）`);
+});
+
+test('r1#2｜一讀掛掉走的是 ai_attest（不得用「兩份讀得不一樣」那句——#476 r1#1 同一課）', async () => {
+  await seedDb();
+  const bad = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: bad, [AI_BANK_MODELS.escalation]: goodAnswer(), [AI_ARBITER_MODEL]: goodAnswer() }), aiExtract: extractA });
+  assert.ok(codes.includes(STAGES.AI_ATTEST), `★一讀掛掉＝attest（實得 ${JSON.stringify(codes)}）`);
+  assert.ok(!codes.includes(STAGES.AI_ARBITRATE), '★不得報成「兩份不一致」');
+  assert.match(progressText({ t: 'stage', s: STAGES.AI_ATTEST }), /其中一讀沒讀出合法答案/);
+  assert.doesNotMatch(progressText({ t: 'stage', s: STAGES.AI_ATTEST }), /兩份讀得不一樣/);
 });

@@ -23,6 +23,7 @@ const TEXT = Object.freeze({
   ai_escalate: '讀出來的結果不夠好，換更強的模型再讀一次…',
   ai_compare: '兩份都讀完了，正在比對會影響錢的欄位…',
   ai_arbitrate: '兩份讀得不一樣，正在請第三個 AI 獨立仲裁…',
+  ai_attest: '其中一讀沒讀出合法答案，正在請第三個 AI 補一份獨立答案…',   // ⚠️ 不可與 arbitrate 共用句子（#476 r1#1 同一課：那時是徽章、這次是進度）
   verify: '正在驗算（餘額鏈與合計）…',
   build_preview: '驗算通過，正在整理預覽…',
 });
