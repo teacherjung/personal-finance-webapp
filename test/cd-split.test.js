@@ -386,14 +386,14 @@ test('Grok 補強｜半形「(已到期)」也算已加註（手改過的名字�
 test('r1#1｜**沒有 kind 欄的形狀**（配方路線／舊 AI 答案）＝不判定存死活：明明還印著的定存不得被歸零', () => {
   const db = dbOf([{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
     accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
-  // AI/配方輸出：同銀行、同末碼、同餘額、參考日已過迄日，但 accounts 沒有 kind/period 欄
+  // 沒有 kind/period 欄的形狀（配方路線／2026-08-18 之前的 AI 答案）：同銀行、同末碼、同餘額、參考日已過迄日
   const aiLike = { bank: '台新', referenceDate: '2026-05-31',
     accounts: [{ suffix: '162', masked: '900300****162', balance: 100, currency: 'USD', label: '外幣', note: '' }],
     accountCurrency: { '900300****162': 'USD' } };
   const pv = previewBalancesForDb(db, /** @type {any} */ (aiLike), DET);
   assert.ok(!pv.rows.some((r) => r.action === 'mature-zero'), '★無結構化欄位＝不判死活（預覽就不得出現歸零列）');
   const r = applyBalancesToDb(db, /** @type {any} */ (aiLike), DET);
-  assert.equal(r.matured, undefined, '★AI/配方路線照舊（契約明文）');
+  assert.equal(r.matured, undefined, '★沒有 kind 欄＝不判死活（第二道判準；路線那道是 deterministic）');
   assert.equal(db.accounts[0].balance, 100, '★還印著的定存不得被清成 0（審查者可達情境）');
 });
 

@@ -6,9 +6,9 @@
 //   ①分開列管（annotateCdRows→cdKey）②〜〜到期歸零〜〜＝**r1#1 之後改為只吃模板路線**（見下方 落地③）
 //   ③對帳閘的「定存概要列不對末筆」skip（判準 kind==='time'）。
 // 所以本卷的重點不在「新程式做了什麼」，而在三個**界線**：
-//   Ａ「AI 有講才算數」——一列都沒有 kind 欄＝退回舊形狀（欄位在但型別/值不合法＝拒收，不得靜靜降級）。
-//     ⚠️ 這條**不是**擋誤歸零的那道：擋誤歸零的是 bank-import 的 deterministic 旗標（到期歸零只吃內建
-//     範本）——本條只決定「這份答案要不要帶定存結構」。
+//   Ａ「AI 有講才算數」＝決定「這份答案帶不帶定存結構」（影響分開列管與對帳閘的定存 skip）。
+//     一列都沒有 kind 欄＝退回舊形狀；欄位在但型別/值不合法＝拒收整份，不得靜靜降級。
+//     ⚠️ 它**不是**防誤歸零的邊界——那道是 bank-import 的 deterministic 旗標（到期歸零只吃內建範本）。
 //   Ｂ 期間正規化——兩讀寫法不同不得變成**新的仲裁來源**；認不出＝空字串（fail-safe）。
 //   Ｃ kind 進 hard 比對、期間「缺席≠矛盾」——一讀說 time 一讀說 demand＝匯入結果差一整筆錢。
 //
@@ -43,12 +43,12 @@ const rawAnswer = (/** @type {any} */ over = {}) => ({
 });
 
 // ---- Ａ「AI 有講才算數」 ----
-test('界線Ａ｜一列都沒填 kind＝退回舊形狀（accounts 完全沒有 kind 欄）', () => {
+test('界線Ａ｜一列都**沒有 kind 欄**＝退回舊形狀（缺席才算沒講；型別錯另有一題）', () => {
   const raw = rawAnswer();
   for (const a of raw.accounts) { delete (/** @type {any} */ (a)).kind; delete (/** @type {any} */ (a)).period; }
   const p = normalizeAiBank(raw);
   for (const a of p.accounts) {
-    assert.ok(!('kind' in a), '★沒講就不可補預設——補了會讓「沒看懂定存」的答案冒充結構化，把還印著的定存誤歸零（#483 r1#1）');
+    assert.ok(!('kind' in a), '★沒講就不可補預設——補了等於替這份答案宣稱它認得定存（下游會據此分戶）；防誤歸零的是 deterministic 旗標，不是這裡');
     assert.ok(!('period' in a), '同上');
   }
 });
