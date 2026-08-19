@@ -268,7 +268,7 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.doesNotMatch(html, /claude-haiku-4-5-20251001/, '不給使用者看內部代號');
 });
 
-test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再無條件講「帳單有印合計＝擋得住」（William 2026-08-19：他自己的帳單正是混幣）', () => {
+test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再無條件講「帳單有印合計＝擋得住」（William 2026-08-19 指出的問題；他自己的帳單正是混幣）', () => {
   const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
   const blindItem = (html.split('<li>').find((x) => x.includes('看不到的'))) || '';
   assert.ok(blindItem, '要有「看不到什麼」那一條');

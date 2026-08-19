@@ -169,6 +169,20 @@ test('文案｜每個後端代碼都有句子（互扣：新增代碼沒補文�
   assert.match(progressText({ t: 'stage', s: STAGES.AI_SINGLE, model: 'Claude Sonnet 5' }), /（Claude Sonnet 5）/, '模型名附在句尾');
 });
 
+test('文案｜驗算那句不可無條件宣稱「合計」也驗了——那道對混幣帳單整道跳過（Codex #490 r1#2 抓到的假綠）', () => {
+  // ⚠️ 這題守的是**同一族的畫面說謊**：混幣帳單的合計交叉驗證整道不跑（lib/services/bank-import.js
+  //   的 assertAiBankReconciled），而使用者自己的帳單正是混幣——進度條卻在說「正在驗算（餘額鏈與合計）」。
+  //   兩條斷言刻意一條鎖字面、一條鎖語意：只鎖字面守的是拼字，只鎖語意則對「完全不提合計」誤紅。
+  const v = progressText({ t: 'stage', s: STAGES.VERIFY });
+  assert.ok(v, '驗算階段要有句子');
+  assert.doesNotMatch(v, /餘額鏈與合計|餘額鏈、合計|餘額鏈及合計/,
+    '★不可把合計與餘額鏈並列成「都會驗」（退回 main 那句就是這樣寫的）');
+  if (/合計/.test(v)) {
+    assert.match(v, /要|才|不一定|未必|能.*的話/,
+      '★提到合計就要同時講出它的條件（帳單要印、又不能混幣）——否則就是宣稱一道沒跑的檢查跑了');
+  }
+});
+
 test('文案｜不得出現預估時間／快好了／步數（假進度禁令的文字面）', () => {
   // 只掃**句子本體**（TEXT 表），不掃註解——註解本來就要能寫「不得出現預計…」這種禁令說明。
   const src = readFileSync(join(ROOT, 'public/modules/progress-text.js'), 'utf8');

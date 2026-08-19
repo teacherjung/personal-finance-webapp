@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateSummaryHtml, totalsCheckSentence } from '../public/modules/reconcile-summary.js';
-import { TOTALS_CHECK } from '../lib/statement-reconcile.js';
+import { TOTALS_CHECK, TOTALS_FIELDS } from '../lib/statement-reconcile.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -146,7 +146,7 @@ test('advisories 不是陣列＝當空處理、stats 缺席＝計數當 0（防�
   assert.doesNotMatch(b, /：。/, '不可留空冒號句');
 });
 
-// ---- 合計交叉驗證的實況（2026-08-19；William：「混幣讓合計交叉驗證關閉，但畫面說它擋得住」）----
+// ---- 合計交叉驗證的實況（2026-08-19；William 指出混幣時這道整個關掉、畫面卻說它擋得住＝轉述）----
 // 這幾題守的是**畫面不說謊**：那道檢查對混幣帳單整道跳過，而說明區把它當現役防線在講。
 // 少一道檢查使用者還知道要自己核對；畫面說它有把關＝他連核對都省了。
 
@@ -168,6 +168,23 @@ test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不�
   assert.match(h, /合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。/);
   assert.doesNotMatch(h, /存入合計/, '★沒印的欄不可混進來（那會把「沒得對」講成「對過了」）');
   assert.doesNotMatch(h, /沒有跑/);
+  // 三欄全印＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
+  // 後端說「存入合計真的比對過了」、畫面卻靜靜不講，而那正是這支要消滅的病）
+  const all = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
+    totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] } }, 'bank');
+  assert.match(all, /合計交叉驗證：帳單印的筆數、支出合計、存入合計與逐筆算出來的一致。/);
+});
+
+test('合計｜每個欄名都翻得出白話（互扣：後端說比對過、畫面卻靜靜不講＝Codex #490 r1#2 的假綠）', () => {
+  for (const f of TOTALS_FIELDS) {
+    const line = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: [f] });
+    assert.notEqual(line, '', `欄名 ${f} 沒有對應的白話——後端會回這個欄，畫面卻唸不出來`);
+    assert.match(line, /合計交叉驗證：帳單印的.+與逐筆算出來的一致。/, `欄名 ${f} 的句子形狀不對`);
+  }
+  // 認得的欄與不認得的欄混在一起＝只唸認得的那些（不可整句消失、也不可把陌生欄名原樣吐出去）
+  const mixed = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'newField'] });
+  assert.match(mixed, /筆數/);
+  assert.doesNotMatch(mixed, /newField/);
 });
 
 test('合計｜每個後端狀態碼都有句子（互扣：新增碼沒補文案＝這裡紅）；未知碼／空 fields＝不吐、不編造', () => {

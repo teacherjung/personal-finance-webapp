@@ -805,8 +805,8 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 300 50 250' }] }] });
   assert.equal(pv.engine, 'ai', '★混幣＝合計欄跳過（涵蓋範圍機械判不出）、不連坐擋死');
   assert.equal(spy.calls.length, 1, '一發就過、沒有白燒升級');
-  // ⚠️ **跳過要說得出口**（2026-08-19，William：「混幣讓合計交叉驗證關閉，但畫面說它擋得住——
-  //   你的帳單正是混幣」）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
+  // ⚠️ **跳過要說得出口**（2026-08-19；William 指出混幣時這道整個關掉、畫面卻說它擋得住，而他自己的
+  //   帳單正是混幣＝轉述）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
   assert.deepEqual(pv.reconcile.totalsCheck, { status: 'mixed-currency', fields: [] },
     '★整道跳過的事實必須傳到畫面（不傳＝說明區那句「帳單有印合計＝合計也擋」對這份帳單就是假話）');
   assert.ok(!JSON.stringify(pv.reconcile.totalsCheck).includes('900700'),
