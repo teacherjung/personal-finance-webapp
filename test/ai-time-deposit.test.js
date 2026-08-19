@@ -6,8 +6,9 @@
 //   ①分開列管（annotateCdRows→cdKey）②〜〜到期歸零〜〜＝**r1#1 之後改為只吃模板路線**（見下方 落地③）
 //   ③對帳閘的「定存概要列不對末筆」skip（判準 kind==='time'）。
 // 所以本卷的重點不在「新程式做了什麼」，而在三個**界線**：
-//   Ａ「AI 有講才算數」——一列都沒填 kind＝退回舊形狀（**不可**補預設 demand 讓沒看懂的答案冒充
-//     結構化，否則還印在帳單上的定存會被誤歸零＝#483 r1#1 那顆高）。
+//   Ａ「AI 有講才算數」——一列都沒有 kind 欄＝退回舊形狀（欄位在但型別/值不合法＝拒收，不得靜靜降級）。
+//     ⚠️ 這條**不是**擋誤歸零的那道：擋誤歸零的是 bank-import 的 deterministic 旗標（到期歸零只吃內建
+//     範本）——本條只決定「這份答案要不要帶定存結構」。
 //   Ｂ 期間正規化——兩讀寫法不同不得變成**新的仲裁來源**；認不出＝空字串（fail-safe）。
 //   Ｃ kind 進 hard 比對、期間「缺席≠矛盾」——一讀說 time 一讀說 demand＝匯入結果差一整筆錢。
 //
@@ -57,6 +58,24 @@ test('界線Ａ｜有任何一列填了 kind＝整份結構化，沒填的那列
   delete (/** @type {any} */ (raw.accounts[0])).kind;   // 活存那列沒填
   const p = normalizeAiBank(raw);
   assert.deepEqual(p.accounts.map((/** @type {any} */ a) => a.kind), ['demand', 'time', 'time']);
+});
+
+test('界線Ａ｜kind **欄位在但型別不對**＝壞答案，不得被當成「沒講」而繞過驗收（r4#1）', () => {
+  for (const bad of [1, true, null, {}, ['time']]) {
+    const raw = rawAnswer();
+    raw.accounts[1].kind = /** @type {any} */ (bad);
+    assert.throws(() => normalizeAiBank(raw), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /kind/.test(e.message),
+      `★「${JSON.stringify(bad)}」要被擋（舊寫法會整份當成舊形狀＝兩筆同遮罩定存被吃成一筆、總額少一半）`);
+  }
+  // ★審查者點名的情境：**每一列**都不合法——舊寫法會整份判成「沒講」、靜靜退回舊形狀
+  const allBad = rawAnswer();
+  for (const a of allBad.accounts) (/** @type {any} */ (a)).kind = 1;
+  assert.throws(() => normalizeAiBank(allBad), (/** @type {any} */ e) => e.code === 'ai_bad_answer',
+    '★全列型別錯＝拒收（舊寫法會當成舊形狀，兩筆同遮罩定存被吃成一筆＝總額少一半）');
+  // 對照：欄位**真的缺席**才走舊形狀
+  const gone = rawAnswer();
+  for (const a of gone.accounts) delete (/** @type {any} */ (a)).kind;
+  assert.ok(!('kind' in normalizeAiBank(gone).accounts[0]), '缺席＝舊形狀（這一格分開「缺席」與「型別錯」）');
 });
 
 test('界線Ａ｜kind 只收 demand/time，其他值＝壞答案（fail-closed，不猜）', () => {

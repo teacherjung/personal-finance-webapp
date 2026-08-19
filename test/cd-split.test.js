@@ -383,7 +383,7 @@ test('Grok 補強｜半形「(已到期)」也算已加註（手改過的名字�
   assert.equal(db.accounts[0].balance, 0, '照樣歸零');
 });
 
-test('r1#1｜AI／配方形狀（accounts 無 kind）＝不判定存死活：明明還印著的定存不得被歸零', () => {
+test('r1#1｜**沒有 kind 欄的形狀**（配方路線／舊 AI 答案）＝不判定存死活：明明還印著的定存不得被歸零', () => {
   const db = dbOf([{ id: 'x', name: '台新 USD 定存 A', type: 'cash', bank: '台新', currency: 'USD', balance: 100,
     accountNo: '900300****162', cdKey: '台新|162|USD|2026/01/25~2026/04/25|100|#1', balanceAsOf: '2026-01-31' }]);
   // AI/配方輸出：同銀行、同末碼、同餘額、參考日已過迄日，但 accounts 沒有 kind/period 欄
