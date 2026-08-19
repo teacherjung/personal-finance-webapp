@@ -22,7 +22,12 @@ const TEXT = Object.freeze({
 });
 
 /** @param {string} code @returns {string} */
-export function birthText(code) { return /** @type {any} */ (TEXT)[String(code)] || ''; }
+export function birthText(code) {
+  // ⚠️ 家規 3.5：用**自有屬性**查表——裸的 `TEXT[code]` 對 `toString`／`constructor`／`__proto__`
+  //    會撈到原型上的內建東西，完成提示就會把 native function 的文字印給使用者（Codex #489 r3#2 實測）。
+  const k = String(code);
+  return Object.hasOwn(TEXT, k) ? /** @type {any} */ (TEXT)[k] : '';
+}
 
 /** 這張表涵蓋的代碼（考題用：與後端 BIRTH_CODES 互扣）。 */
 export function birthTextCodes() { return Object.keys(TEXT).sort(); }

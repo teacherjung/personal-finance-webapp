@@ -119,6 +119,10 @@ test('界線Ｃ｜前後端的摘要口徑一致（前端不 import lib/，各�
 test('文案｜每個代碼都有白話句（互扣：後端新增代碼沒補文案＝這裡紅）', () => {
   assert.deepEqual(birthTextCodes(), [...BIRTH_CODES].sort(), '★代碼表與文案表逐一對應');
   assert.equal(birthText('沒這個代碼'), '', '未知＝不畫');
+  // ★原型保留字（家規 3.5；r3#2 實測 birthText('toString') 會回傳內建函式，完成提示就把它印出來）
+  for (const k of ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty']) {
+    assert.equal(birthText(k), '', `★保留字也要回空字串：${k}`);
+  }
   assert.match(birthText('recipe_birth_reproduce'), /跟你剛才確認過的那份對不起來/);
 });
 
@@ -283,4 +287,16 @@ test('行為｜備份還原**經正式 HTTP 入口**要帶回出生紀錄（匯�
     assert.equal(res2.status, 200);
     assert.deepEqual(Object.keys(store.load().settings.recipeBirthStats || {}), ['ok'], '★白名單外的鍵不得跟著還原進來');
   } finally { server.close(); }
+});
+
+test('r3#1｜出生紀錄用**本地**日曆日：台北 00:00–07:59 不得記成前一天', async () => {
+  const { nowLocal } = await import('../lib/services/snapshot.js');
+  const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
+  assert.match(src, /const today = nowLocal\(\)\.date;/, '★用本地日曆日（toISOString 是 UTC）');
+  assert.doesNotMatch(src.slice(src.indexOf('recordBirth')), /toISOString\(\)\.slice\(0, 10\)/, '★這條路上不得再出現 UTC 取日');
+  // 行為面：nowLocal 對「台北清晨」這個時刻，回的是本地日而不是 UTC 日
+  const d = new Date();
+  const localYmd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  assert.equal(nowLocal().date, localYmd, '★nowLocal 回本地日');
+  assert.equal(recordBirth({}, 'ok', '台新', nowLocal().date).ok.lastAt, localYmd, '★記進去的就是本地日');
 });
