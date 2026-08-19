@@ -102,11 +102,19 @@ test('Grok 複審後掃｜時機是「轉正式之前」：正本、最短可執
   const lines = visible(rm).split('\n');
   const mergeSteps = lines.findIndex((l) => l.startsWith('>') && l.includes('合併也由 Codex 代執行'));
   assert.notEqual(mergeSteps, -1, 'REVIEW-AND-MERGE.md 找不到合併步驟區塊（「合併也由 Codex 代執行」）——這道考題要跟著更新');
-  // 前導＝合併步驟那行之前、且中間不隔著任何標題（隔了標題就是別的小節，那個人翻不到）
-  let runUp = mergeSteps - 1;
-  while (runUp >= 0 && !/^#{1,6} /.test(lines[runUp])) runUp--;
-  const pointer = lines.slice(runUp + 1, mergeSteps).find((l) => l.startsWith('>') && l.includes('Grok 複審後掃'));
-  assert.ok(pointer, '合併步驟的前導裡找不到 Grok 複審後掃的指路句（被刪、被搬到別的小節、或整句被 HTML 註解掉）');
+  // 前導＝**緊鄰合併步驟的前一個 blockquote 區塊**。
+  // ⚠️ 不能用「往回找到上一個標題」來夾範圍：這份檔案的第一個標題在合併步驟**之後**，
+  //    於是那種寫法的範圍等於「檔案開頭到合併步驟」，把指路句搬到第 3 行照樣算過（r2 突變 M2d 實測）。
+  let scan = mergeSteps - 1;
+  while (scan >= 0 && lines[scan].trim() === '') scan--;   // 跳過中間的空行
+  const blockEnd = scan;
+  while (scan >= 0 && lines[scan].startsWith('>')) scan--;  // 收攏這一塊連續的 blockquote
+  const pointer = lines.slice(scan + 1, blockEnd + 1).find((l) => l.includes('Grok 複審後掃'));
+  assert.ok(
+    pointer,
+    '緊鄰合併步驟的那一塊前導裡找不到 Grok 複審後掃的指路句——'
+      + '被刪、被搬去檔案別處、或整句被 HTML 註解掉了；那個人翻到合併步驟時就看不到它'
+  );
   assert.ok(
     pointer.includes('轉正式之前'),
     '合併步驟的指路句沒寫出「轉正式之前」——人走到合併步驟時 PR 通常早已轉正式，這句話漏了時機就是叫人走燒額度的那條路'
