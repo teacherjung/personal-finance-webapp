@@ -53,11 +53,18 @@ test('界線Ａ｜一列都**沒有 kind 欄**＝退回舊形狀（缺席才算�
   }
 });
 
-test('界線Ａ｜有任何一列填了 kind＝整份結構化，沒填的那列補 demand（不是丟掉）', () => {
-  const raw = rawAnswer();
-  delete (/** @type {any} */ (raw.accounts[0])).kind;   // 活存那列沒填
-  const p = normalizeAiBank(raw);
-  assert.deepEqual(p.accounts.map((/** @type {any} */ a) => a.kind), ['demand', 'time', 'time']);
+test('界線Ａ｜整份已結構化就**不准有列漏填**（漏的若是定存列＝又回到少算一筆；Grok G5）', () => {
+  // 舊行為：漏填的補 demand ⇒ 定存列被當活存 ⇒ 同遮罩去重吃掉 ⇒ 兩筆 51 變一筆
+  const cdMissing = rawAnswer();
+  delete (/** @type {any} */ (cdMissing.accounts[2])).kind;   // 漏的是**定存**那列
+  assert.throws(() => normalizeAiBank(cdMissing), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /kind/.test(e.message),
+    '★定存列漏填＝拒收整份（補成 demand 就是靜靜少算一筆）');
+  // 漏的是活存列一樣拒收——「同一份答案裡不可有的有、有的沒有」比逐列猜意圖安全
+  const demandMissing = rawAnswer();
+  delete (/** @type {any} */ (demandMissing.accounts[0])).kind;
+  assert.throws(() => normalizeAiBank(demandMissing), (/** @type {any} */ e) => e.code === 'ai_bad_answer');
+  // 全部都有＝正常通過
+  assert.deepEqual(normalizeAiBank(rawAnswer()).accounts.map((/** @type {any} */ a) => a.kind), ['demand', 'time', 'time']);
 });
 
 test('界線Ａ｜kind **欄位在但型別不對**＝壞答案，不得被當成「沒講」而繞過驗收（r4#1）', () => {
@@ -148,6 +155,13 @@ test('落地①｜兩筆同值定存不再被吃掉：預覽三列、各自成�
   assert.equal(pv.rows.length, 3, `★三列各自現形（舊行為＝2 列，少算一筆 51 美元；實得 ${JSON.stringify(pv.rows.map((/** @type {any} */ r) => [r.label, r.balance]))}）`);
   const cdNames = pv.rows.map((/** @type {any} */ r) => r.label).filter((/** @type {string} */ n) => /定存/.test(n));
   assert.equal(new Set(cdNames).size, 2, '★兩筆同值定存要有各自可辨的名字（第1筆/第2筆）');
+  // ★錢真的要進庫（Grok G1：headline 題只驗預覽＝「只讓預覽好看」也會綠；P127 同一課）
+  const r = applyBalancesToDb(db, /** @type {any} */ (p), { deterministic: false });
+  assert.equal(r.created, 3, `★三戶真的建起來（實得 ${JSON.stringify(r)}）`);
+  const cds = db.accounts.filter((/** @type {any} */ a) => a.cdKey);
+  assert.equal(cds.length, 2, '★兩顆定存戶各自存在');
+  assert.equal(cds.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + a.balance, 0), 102, '★兩筆 51 都在（舊行為＝只剩 51）');
+  assert.equal(db.accounts.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + a.balance, 0), 402, '★總額＝活存 300＋定存 102');
 });
 
 test('落地②｜對帳閘的定存 skip 認得出來了：同遮罩「活存＋定存」不再整份誤擋', () => {
@@ -197,7 +211,7 @@ test('落地③b｜端到端保存題：AI 誤標定存為活存時，既有定�
   const after = db.accounts.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + a.balance, 0);
   assert.equal(/** @type {any} */ (r).matured, undefined, '★不得有任何歸零');
   assert.equal(db.accounts.find((/** @type {any} */ a) => a.id === 'a1').balance, 51, '★定存戶的錢原封不動');
-  assert.ok(after >= before - 0, `★總額不得因為 AI 誤標而變少（${before} → ${after}）`);
+  assert.equal(after, before, `★總額必須一格不差（Grok G2：舊寫的 >= before-0 在「定存歸零＋另建同額活存」時也會綠）；${before} → ${after}`);
 });
 
 test('接線｜答案卷 schema 帶 kind（必填、封閉列舉）與 period；提示詞教了「每筆各列一列」', () => {
@@ -270,4 +284,7 @@ test('接線｜**端到端**走一趟 AI 匯入：正式路不得把既有定存
   const cd = after.accounts.find((/** @type {any} */ a) => a.id === 'a1');
   assert.equal(cd.balance, 20000, '★正式路走一趟之後，定存戶的錢必須原封不動（接線斷掉＝這裡變 0）');
   assert.ok(!/已到期/.test(cd.name), '★也不得加註「已到期」');
+  // ★預覽也不得出現歸零列（Grok G3：預覽誤傳 deterministic:true、apply 沒傳＝畫面說要歸零、實際沒歸零＝所見≠所得）
+  assert.ok(!(/** @type {any} */ (pv).rows || []).some((/** @type {any} */ r2) => r2.action === 'mature-zero'),
+    `★AI 路線的預覽不得出現「定存已到期→歸零」那一列（實得 ${JSON.stringify((/** @type {any} */ (pv).rows || []).map((/** @type {any} */ r2) => r2.action))}）`);
 });
