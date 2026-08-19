@@ -9,6 +9,11 @@
  *   控制得了的事，所以文案不得寫「下次應該就會成功」，也不得寫「免費自動讀」。
  */
 
+/** 畫面層的封閉鍵（與後端 BIRTH_CODES 互扣，見考題）——**顯示端自己也要守**：寫入與匯入都消毒了，
+ * 但 db 若被別的路徑寫髒（手改檔、未來新寫入門），畫面不得把鍵名當文案畫出來、也不得把髒數字灌進摘要。 */
+const CODES = Object.freeze(['ok', 'recipe_engine_missing', 'recipe_gen_failed', 'recipe_birth_strict',
+  'recipe_birth_match', 'recipe_birth_parse', 'recipe_birth_statement', 'recipe_birth_reproduce']);
+
 /** 代碼 → 給使用者看的一句話（未知代碼＝空字串，畫面不吐亂碼）。 */
 const TEXT = Object.freeze({
   ok: '已經學會這個版面（下次同版面會先用這張規則卡讀，讀得過就不花 AI 費用；讀不過會自動退回 AI）',
@@ -40,7 +45,7 @@ export function birthStatsHtml(stats, summary, esc) {
     return '<p class="muted" style="margin:0;font-size:12px">還沒有紀錄——<b>用 AI 讀過一次帳單並按下套用之後</b>，這裡會開始累積「有沒有學會這個版面、卡在哪一關」。</p>';
   }
   const rows = Object.entries(stats || {})
-    .filter(([, v]) => v && Number(v.n) > 0)
+    .filter(([k, v]) => CODES.includes(k) && v && Number(v.n) > 0)
     .sort((a, b) => Number(b[1].n) - Number(a[1].n))
     .map(([code, v]) => {
       const t = birthText(code) || code;
@@ -58,6 +63,7 @@ export function birthSummary(stats) {
   let total = 0, ok = 0;
   /** @type {{code:string, n:number}|null} */ let top = null;
   for (const [k, v] of Object.entries(stats || {})) {
+    if (!CODES.includes(k)) continue;   // 摘要也走封閉鍵（髒鍵不得灌進總數）
     const n = Number(v && /** @type {any} */ (v).n);
     if (!Number.isFinite(n) || n <= 0) continue;
     total += n;

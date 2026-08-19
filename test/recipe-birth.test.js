@@ -113,6 +113,11 @@ test('界線Ｃ｜成功也記（沒有分母就看不出失敗率）；摘要�
 test('界線Ｃ｜前後端的摘要口徑一致（前端不 import lib/，各自一份＝必須互扣）', () => {
   const s = recordBirth(recordBirth(recordBirth({}, 'ok', 'A', '2026-08-19'), 'recipe_birth_parse', 'B', '2026-08-19'), 'recipe_birth_parse', 'B', '2026-08-20');
   assert.deepEqual(feSummary(s), birthSummary(s), '★兩邊算出來要一模一樣（不然畫面上的數字跟後端不同）');
+  // ★髒鍵情境也要一致（前端顯示層自己要守封閉鍵；db 被別的路徑寫髒時不得灌進總數）
+  const dirty = { ...s, 亂鍵: { n: 99, lastAt: '2026-08-19', lastBank: 'X' } };
+  assert.deepEqual(feSummary(dirty), birthSummary(dirty), '★髒鍵不得讓前後端數字分家');
+  assert.equal(feSummary(dirty).total, feSummary(s).total, '★髒鍵不得灌進總數');
+  assert.ok(!birthStatsHtml(dirty, feSummary(dirty), esc).includes('亂鍵'), '★髒鍵不得被當文案畫出來');
 });
 
 // ---- 文案與畫面 ----
@@ -187,7 +192,8 @@ test('行為｜統計寫入失敗**不連坐**：匯入照樣成功、資料已�
   assert.equal(/** @type {any} */ (res).ok, true, '★匯入仍回成功');
   const after = await getDb();
   assert.equal(after.transactions.length, 1, '★交易真的落盤了（不是回滾）');
-  assert.ok(aiTicketCountForTest() < before || before === 0, '★票仍維持消耗（不因統計失敗而放回）');
+  assert.ok(before > 0, '前提：preview 真的發了票（before=0 會讓下一句變空包彈）');
+  assert.ok(aiTicketCountForTest() < before, '★票仍維持消耗（不因統計失敗而放回）');
 });
 
 test('行為｜統計真的會被記進去（成功路徑走正式 applyBankStatement）', async () => {
@@ -293,10 +299,121 @@ test('r3#1｜出生紀錄用**本地**日曆日：台北 00:00–07:59 不得記
   const { nowLocal } = await import('../lib/services/snapshot.js');
   const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
   assert.match(src, /const today = nowLocal\(\)\.date;/, '★用本地日曆日（toISOString 是 UTC）');
-  assert.doesNotMatch(src.slice(src.indexOf('recordBirth')), /toISOString\(\)\.slice\(0, 10\)/, '★這條路上不得再出現 UTC 取日');
+  assert.doesNotMatch(src.slice(src.indexOf('recordBirth')), /toISOString\(\)\s*\.\s*slice\(\s*0\s*,\s*10\s*\)/, '★這條路上不得再出現 UTC 取日（空白/換行都算）');
   // 行為面：nowLocal 對「台北清晨」這個時刻，回的是本地日而不是 UTC 日
   const d = new Date();
   const localYmd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   assert.equal(nowLocal().date, localYmd, '★nowLocal 回本地日');
   assert.equal(recordBirth({}, 'ok', '台新', nowLocal().date).ok.lastAt, localYmd, '★記進去的就是本地日');
+});
+
+// ---- Grok 複審後掃：三處「拿掉保護仍綠」的補強 ----
+test('G高｜機密行為題：只有「機構名」那一格會進統計，帳單內容不會（不是只掃呼叫點字串）', async () => {
+  const { previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
+  const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
+  clearAiTicketsForTest();
+  const db = await getDb();
+  db.accounts = []; db.transactions = [];
+  delete db.settings.recipeBirthStats;
+  db.settings.aiApiKey = 'sk-ant-synthetic-test-key';
+  await saveDb(db);
+  const M = '900200****7788';
+  const answer = {
+    bank: '合成銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [{ masked: M, currency: 'TWD' }],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [{ masked: M, balance: 5500, currency: 'TWD', label: '台幣活存', note: '', kind: 'demand', period: '' }],
+    transactions: [{ acctMasked: M, date: '2026-07-05', direction: 'in', amount: 500, balance: 5500, summary: '機密摘要不可外流', note: '' }],
+  };
+  const engine = () => ({ models: AI_BANK_MODELS, parseOnce: async () => structuredClone(answer) });
+  const notRecognized = async () => { throw Object.assign(new Error('不是內建範本認得的版面'), { status: 400, code: 'bank_unrecognized' }); };
+  const extract = async () => [
+    { y: 10, cells: [{ x: 40, s: '合成銀行 存款對帳單' }] },
+    { y: 30, cells: [{ x: 40, s: M }, { x: 200, s: 'TWD' }, { x: 320, s: '5,500' }] },
+    { y: 50, cells: [{ x: 40, s: '2026/07/05' }, { x: 140, s: '機密摘要不可外流' }, { x: 280, s: '500' }, { x: 320, s: '5,500' }] },
+  ];
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engine, aiExtract: extract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, {
+    useAi: true, aiTicket: /** @type {any} */ (pv).aiTicket, aiEngineFactory: engine, aiExtract: extract,
+    aiRecipeGen: async () => ({ saved: false, reason: 'recipe_birth_match' }),
+  });
+  const stats = (await getDb()).settings.recipeBirthStats || {};
+  const blob = JSON.stringify(stats);
+  assert.match(blob, /合成銀行/, '機構名有進去（這是刻意記的那一格）');
+  assert.doesNotMatch(blob, /7788|\*{2,}|機密摘要|5,?500|2026-07-05/,
+    `★帳單內容（帳號、遮罩、摘要、金額、交易日）一格都不得進統計；實得 ${blob}`);
+});
+
+test('G中｜成功分支（ok）也走過正式 apply（三元反過來就得紅）', async () => {
+  const { previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
+  const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
+  clearAiTicketsForTest();
+  const db = await getDb();
+  db.accounts = []; db.transactions = [];
+  delete db.settings.recipeBirthStats;
+  db.settings.aiApiKey = 'sk-ant-synthetic-test-key';
+  await saveDb(db);
+  const M = '900200****7799';
+  const answer = {
+    bank: '合成銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [{ masked: M, currency: 'TWD' }],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [{ masked: M, balance: 5500, currency: 'TWD', label: '台幣活存', note: '', kind: 'demand', period: '' }],
+    transactions: [{ acctMasked: M, date: '2026-07-05', direction: 'in', amount: 500, balance: 5500, summary: '薪資', note: '' }],
+  };
+  const engine = () => ({ models: AI_BANK_MODELS, parseOnce: async () => structuredClone(answer) });
+  const notRecognized = async () => { throw Object.assign(new Error('不是內建範本認得的版面'), { status: 400, code: 'bank_unrecognized' }); };
+  const extract = async () => [
+    { y: 10, cells: [{ x: 40, s: '合成銀行 存款對帳單' }] },
+    { y: 30, cells: [{ x: 40, s: M }, { x: 200, s: 'TWD' }, { x: 320, s: '5,500' }] },
+    { y: 50, cells: [{ x: 40, s: '2026/07/05' }, { x: 140, s: '薪資' }, { x: 280, s: '500' }, { x: 320, s: '5,500' }] },
+  ];
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engine, aiExtract: extract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, {
+    useAi: true, aiTicket: /** @type {any} */ (pv).aiTicket, aiEngineFactory: engine, aiExtract: extract,
+    aiRecipeGen: async () => ({ saved: true, recipeId: 'rcp-x', rebirth: false }),   // ★出生成功
+  });
+  const stats = (await getDb()).settings.recipeBirthStats || {};
+  assert.equal(stats.ok?.n, 1, `★成功也要記（分母；實得 ${JSON.stringify(stats)}）`);
+  assert.equal(stats.recipe_gen_failed, undefined, '成功不得同時記成失敗');
+});
+
+test('G中｜PUT /settings **真 HTTP** 寫不進來；匯出→匯入**真的走兩個端點**要帶得回來', async () => {
+  const { once } = await import('node:events');
+  const { app } = await import('../server.js');
+  const store = await import('../lib/store.js');
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = /** @type {any} */ (server.address()).port;
+  const url = (/** @type {string} */ p2) => `http://127.0.0.1:${port}/api${p2}`;
+  try {
+    const seeded = { ok: { n: 4, lastAt: '2026-08-19', lastBank: '台新' } };
+    const base = store.load();
+    store.save({ ...base, settings: { ...base.settings, recipeBirthStats: seeded } });
+    // ★真 HTTP PUT：偽造寫不進來、既有值原封不動（r1#1 那課：只直呼消毒器＝假綠）
+    const put = await fetch(url('/settings'), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipeBirthStats: { ok: { n: 999, lastAt: '2026-08-19', lastBank: '偽造' } } }),
+    });
+    assert.ok(put.ok, 'PUT 本身仍回成功（只是這一欄不收）');
+    assert.equal(store.load().settings.recipeBirthStats?.ok?.n, 4, '★前端寫不進來、既有值不被蓋');
+    // ★真的走匯出端點再匯入（原本手組 emptyDb＝匯出若剝掉這欄仍會綠）
+    const exp = await fetch(url('/export'));
+    assert.ok(exp.ok, '匯出要成功');
+    const backup = await exp.json();
+    assert.equal(backup?.settings?.recipeBirthStats?.ok?.n, 4, '★匯出檔裡要有這份紀錄（沒有＝還原一定丟）');
+    store.save({ ...store.load(), settings: { ...store.load().settings, recipeBirthStats: {} } });
+    const imp = await fetch(url('/import'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) });
+    assert.equal(imp.status, 200, '匯入要成功');
+    assert.equal(store.load().settings.recipeBirthStats?.ok?.n, 4, '★還原之後紀錄回來了');
+  } finally { server.close(); }
+});
+
+test('G中｜完成提示的**呼叫端**真的把整包 recipe 傳進去（只驗 model 端＝reason 永遠空也會綠）', () => {
+  const caller = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
+  assert.match(caller, /bankApplyDoneText\(res, t,[\s\S]{0,80}?\.recipe\)/, '★呼叫端傳的是整包 recipe（含 reason），不是只有 saved/rebirth');
 });
