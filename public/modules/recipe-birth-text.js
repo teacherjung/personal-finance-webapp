@@ -10,7 +10,7 @@
 
 /** 代碼 → 給使用者看的一句話（未知代碼＝空字串，畫面不吐亂碼）。 */
 const TEXT = Object.freeze({
-  ok: '已經學會這個版面（下次同版面免費自動讀、不花 AI 費用）',
+  ok: '已經學會這個版面（下次同版面會先用這張規則卡讀，讀得過就不花 AI 費用；讀不過會自動退回 AI）',
   recipe_engine_missing: '沒有去學（沒設定 AI 鑰匙，或這次沒走 AI 讀取）',
   recipe_gen_failed: '學習過程本身失敗了（模型出錯或這張票沒有原文）',
   recipe_birth_strict: '學出來的規則不合格（欄位太長、混進數字之類）',
@@ -31,7 +31,7 @@ export function birthTextCodes() { return Object.keys(TEXT).sort(); }
  * @param {(s:string)=>string} esc @returns {string} */
 export function birthStatsHtml(stats, summary, esc) {
   if (!summary || !summary.total) {
-    return '<p class="muted" style="margin:0;font-size:12px">還沒有紀錄——**用 AI 讀過一次帳單並按下套用之後**，這裡會開始累積「有沒有學會這個版面、卡在哪一關」。</p>';
+    return '<p class="muted" style="margin:0;font-size:12px">還沒有紀錄——<b>用 AI 讀過一次帳單並按下套用之後</b>，這裡會開始累積「有沒有學會這個版面、卡在哪一關」。</p>';
   }
   const rows = Object.entries(stats || {})
     .filter(([, v]) => v && Number(v.n) > 0)

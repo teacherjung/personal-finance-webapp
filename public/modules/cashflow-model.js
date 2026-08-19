@@ -75,7 +75,7 @@ export function bankApplyDoneText(bal, tx, recipe) {
       + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`
       + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
   const rec = recipe?.saved
-    ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面免費自動讀）' : '；已存成版面規則卡（下次同版面免費自動讀）')
+    ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面會先用它讀，讀得過就免費）' : '；已存成版面規則卡（下次同版面會先用它讀，讀得過就免費）')
     : (recipe ? `；版面規則卡這次沒存成（不影響本次匯入；下次仍會用 AI 讀）${birthText(recipe.reason || '') ? `——${birthText(recipe.reason || '')}` : ''}` : '');   // 2026-08-19：講出**哪一關**沒過（原本只有通稱＝使用者與維護者都看不到卡在哪）
   return `${acct}；交易：匯入 ${tx.imported}`
     + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`

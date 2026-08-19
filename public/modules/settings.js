@@ -110,7 +110,7 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">版面規則卡（省 AI 費用的學習成果）</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:10px">用 AI 讀過一次帳單並套用之後，系統會試著把那個版面「學成一張規則卡」——學會了，<b>下次同版面就免費自動讀、不再花 AI 費用</b>。學不學得會取決於兩次獨立的 AI 讀取能不能逐字對上，所以會失敗；這裡如實列出<b>試了幾次、學會幾次、沒學成的卡在哪一關</b>。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">用 AI 讀過一次帳單並套用之後，系統會試著把那個版面「學成一張規則卡」——學會了，<b>下次同版面會先用這張卡讀，讀得過就不花 AI 費用</b>（讀不過、或驗算沒過，會自動退回 AI）。學習本身會失敗：它要另外請 AI 寫出一張「怎麼讀這個版面」的規則，再用那張規則回頭把你剛確認過的那份逐欄重現一次，對不起來就不收。這裡如實列出<b>試了幾次、學會幾次、沒學成的卡在哪一關</b>。</p>
       ${birthStatsHtml(s?.recipeBirthStats, birthSummary(s?.recipeBirthStats), esc)}
     </div>
 
