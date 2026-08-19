@@ -20,7 +20,9 @@ import { join } from 'node:path';
 process.env.STORE_FILE = join(tmpdir(), `finance-aicd-${process.pid}.db`);
 
 const { normalizeAiBank, canonPeriod, aiAnswersAgree, AI_BANK_SCHEMA, buildBankSystem } = await import('../lib/ai-parse.js');
-const { previewBalancesForDb, maturedCdAccountsForTest } = await import('../lib/services/bank-import.js');
+const { previewBalancesForDb, applyBalancesToDb, maturedCdAccountsForTest, previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
+const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { reconcileBankStatement } = await import('../lib/statement-reconcile.js');
 
@@ -72,7 +74,7 @@ test('界線Ｂ｜canonPeriod：各種寫法收斂成同一形；認不出＝空
     '2026-1-15 至 2026-7-15', '起 2026/01/15 迄 2026/07/15', '2026/01/15〜2026/07/15']) {
     assert.equal(canonPeriod(v), want, `★「${v}」要收斂成同一形（不收斂＝新的仲裁來源）`);
   }
-  for (const v of ['', null, undefined, '2026/01/15', '一年期', '2026/13/45~x']) {
+  for (const v of ['', null, undefined, '2026/01/15', '一年期', '2026/13/45~x', '2026/13/45~2026/14/99', '2026/02/30~2026/07/15']) {   // 後兩個＝外形完整但不是真日期（Codex r1#2：假身分永遠到不了期）
     assert.equal(canonPeriod(v), '', `★認不出兩個完整日期＝空字串（fail-safe）：${JSON.stringify(v)}`);
   }
 });
@@ -147,22 +149,55 @@ test('落地②｜對帳閘的定存 skip 認得出來了：同遮罩「活存�
   assert.equal(noKind.ok, false, '★對照組：沒有 kind 就會誤擋（這題同時釘住「修好了」與「本來壞在哪」）');
 });
 
-test('落地③｜到期歸零：AI 有講＝真的會歸零；沒講＝一顆都不動（行為題，不是形狀題）', () => {
-  // db 裡有一筆去年到期的定存（cdKey 形狀同模板路線）；本次 AI 帳單不再印它、參考日已過迄日
+test('落地③｜到期歸零**不吃 AI／配方路線**：機率性解析讀漏一列不得把還在的定存清成 0（r1#1）', () => {
+  // Codex r1#1 的真彈：schema 把 kind 設成必填之後，每份 AI 答案都自稱結構化——AI 只要把定存那列
+  // 誤標成 demand，那列就被同遮罩去重吃掉，db 裡的定存又因「本批沒印它」被歸零＝總額靜靜變少。
   const cdKey = '第一銀行|1234|USD|2026/01/15~2026/07/15|51|#1';
-  const accounts = [{ id: 'a1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' }];
+  const accounts = () => [{ id: 'a1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' }];
   const raw = rawAnswer();
-  raw.accounts = [raw.accounts[0]];   // 這期只印活存（定存已解約/到期）
+  raw.accounts = [raw.accounts[0]];   // 這期 AI 只交出活存那列（誤標／漏讀都是這個形狀）
   const p = normalizeAiBank(raw);
-  const live = new Set();   // 本批沒有任何定存列
-  const hit = maturedCdAccountsForTest(accounts, p, '第一銀行', live, '2026-07-31');
-  assert.deepEqual(hit.map((/** @type {any} */ a) => a.id), ['a1'], `★AI 有講＝到期歸零真的適用（實得 ${JSON.stringify(hit)}）`);
-  // 對照：同一份答案拿掉 kind（＝這支之前的 AI 形狀）＝一顆都不動（fail-safe：沒看懂就不判死活）
-  const rawNo = rawAnswer(); rawNo.accounts = [rawNo.accounts[0]];
-  for (const a of rawNo.accounts) { delete (/** @type {any} */ (a)).kind; delete (/** @type {any} */ (a)).period; }
-  const pNo = normalizeAiBank(rawNo);
-  assert.deepEqual(maturedCdAccountsForTest(accounts, pNo, '第一銀行', live, '2026-07-31'), [], '★沒講＝不判死活');
-  assert.ok(!('kind' in pNo.accounts[0]), '★沒講＝維持舊形狀＝到期歸零整段不適用（fail-safe）');
+  const live = new Set();
+  assert.deepEqual(maturedCdAccountsForTest(accounts(), p, '第一銀行', live, '2026-07-31', false), [],
+    '★AI 路線一律不歸零——AI 讀漏一列是可能的，而歸零是不可逆的減錢');
+  // 同一份資料走確定性路線（內建範本）＝照舊會歸零（這一格證明擋的是「路線」不是「功能壞了」）
+  assert.deepEqual(maturedCdAccountsForTest(accounts(), p, '第一銀行', live, '2026-07-31', true).map((/** @type {any} */ a) => a.id), ['a1']);
+});
+
+test('落地③b｜端到端保存題：AI 誤標定存為活存時，既有定存戶的錢必須原封不動（r1#1 的真彈）', () => {
+  const cdKey = '第一銀行|1234|USD|2026/01/15~2026/07/15|51|#1';
+  const db = { accounts: [
+    { id: 'a0', name: '第一銀行 1234（外幣活存）', bank: '第一銀行', currency: 'USD', balance: 300, balanceAsOf: '2026-07-01', accountNo: M },
+    { id: 'a1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' },
+  ], transactions: [] };
+  const before = db.accounts.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + a.balance, 0);
+  const raw = rawAnswer();
+  // schema 完全合法：兩列都有 kind，只是定存那列被 AI 誤標成 demand（餘額 51 照抄）
+  raw.accounts = [raw.accounts[0], { ...raw.accounts[1], kind: 'demand', period: '' }];
+  const r = applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank(raw)), { deterministic: false });
+  const after = db.accounts.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + a.balance, 0);
+  assert.equal(/** @type {any} */ (r).matured, undefined, '★不得有任何歸零');
+  assert.equal(db.accounts.find((/** @type {any} */ a) => a.id === 'a1').balance, 51, '★定存戶的錢原封不動');
+  assert.ok(after >= before - 0, `★總額不得因為 AI 誤標而變少（${before} → ${after}）`);
+});
+
+test('落地④｜期間後補不裂戶：這期沒印期間、下期印了＝同一戶（不是憑空多一份錢）（r1#2）', () => {
+  const db = { accounts: [], transactions: [] };
+  const noPeriod = rawAnswer();
+  noPeriod.accounts = [{ ...noPeriod.accounts[1], period: '' }];   // 只有一筆定存、沒印期間
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank(noPeriod)), { deterministic: false });
+  assert.equal(db.accounts.length, 1, '第一期：建一戶');
+  const withPeriod = rawAnswer();
+  withPeriod.accounts = [{ ...withPeriod.accounts[1], period: '2026/01/15~2026/07/15' }];
+  const p2 = normalizeAiBank({ ...withPeriod, referenceDate: '2026-08-31' });
+  applyBalancesToDb(db, /** @type {any} */ (p2), { deterministic: false });
+  assert.equal(db.accounts.length, 1, `★下期補上期間仍是同一戶（裂成兩戶＝帳面憑空多 51 美元；實得 ${db.accounts.length}）`);
+  assert.match(String(db.accounts[0].cdKey), /2026\/01\/15~2026\/07\/15/, '★身分鍵升級成資訊較全的那一把（否則下期又要靠盲配）');
+  // 反向也要成立：兩邊期間都有值而**不同**＝真的是不同期別，該分開
+  const other = rawAnswer();
+  other.accounts = [{ ...other.accounts[1], period: '2026/03/20~2026/09/20' }];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...other, referenceDate: '2026-09-30' })), { deterministic: false });
+  assert.equal(db.accounts.length, 2, '★不同期別要各自成戶（分開列管的本意）');
 });
 
 // ---- 提示詞與答案卷形狀 ----
@@ -174,4 +209,41 @@ test('接線｜答案卷 schema 帶 kind（必填、封閉列舉）與 period；
   const sys = buildBankSystem();
   assert.match(sys, /每一筆各列一列/, '★同帳號多筆定存不可合併——合併就是使用者少算錢');
   assert.match(sys, /看不出來就填 demand/, '★不確定時倒向 demand（填錯成 time 會用期間當身分）');
+});
+
+// ---- 接線（P127 教訓：我測的是函式、不是那條線）----
+test('接線｜**端到端**走一趟 AI 匯入：正式路不得把既有定存歸零（r1#1 的真彈，走完整 preview→apply）', async () => {
+  clearAiTicketsForTest();
+  const TM = '900200****3301';
+  const db = await getDb();
+  db.accounts = [
+    { id: 'a0', name: '第一銀行 3301（台幣活存）', type: 'cash', bank: '第一銀行', currency: 'TWD', balance: 5000, balanceAsOf: '2026-07-01', accountNo: TM },
+    { id: 'a1', name: '第一銀行 3301（台幣定存 第1筆）', type: 'cash', bank: '第一銀行', cdKey: '第一銀行|3301|TWD|2026/01/15~2026/07/15|20000|#1', currency: 'TWD', balance: 20000, balanceAsOf: '2026-07-01' },
+  ];
+  db.transactions = [];
+  db.settings.aiApiKey = 'sk-ant-synthetic-test-key';   // 假引擎注入，這把鑰匙只是讓路線走得下去
+  delete db.settings.aiDualRead;
+  await saveDb(db);
+  // AI 這期只交出活存那列（定存被誤標成活存／漏讀都是這個形狀）——schema 完全合法、且過得了強閘
+  const answer = {
+    bank: '第一銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [{ masked: TM, currency: 'TWD' }],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [{ masked: TM, balance: 5500, currency: 'TWD', label: '台幣活存', note: '', kind: 'demand', period: '' }],
+    transactions: [{ acctMasked: TM, date: '2026-07-05', direction: 'in', amount: 500, balance: 5500, summary: '薪資入帳', note: '' }],
+  };
+  const engine = () => ({ models: AI_BANK_MODELS, parseOnce: async () => structuredClone(answer) });
+  const notRecognized = async () => { throw Object.assign(new Error('不是內建範本認得的版面'), { status: 400, code: 'bank_unrecognized' }); };
+  const extract = async () => [
+    { y: 10, cells: [{ x: 40, s: '合成第一銀行 存款對帳單' }] },
+    { y: 30, cells: [{ x: 40, s: TM }, { x: 200, s: 'TWD' }, { x: 320, s: '5,500' }] },
+    { y: 50, cells: [{ x: 40, s: '2026/07/05' }, { x: 140, s: '薪資入帳' }, { x: 280, s: '500' }, { x: 320, s: '5,500' }] },
+  ];
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engine, aiExtract: extract });
+  assert.ok(/** @type {any} */ (pv).aiTicket, '前提：走到 AI 路線並發票');
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: /** @type {any} */ (pv).aiTicket, aiEngineFactory: engine, aiExtract: extract });
+  const after = await getDb();
+  const cd = after.accounts.find((/** @type {any} */ a) => a.id === 'a1');
+  assert.equal(cd.balance, 20000, '★正式路走一趟之後，定存戶的錢必須原封不動（接線斷掉＝這裡變 0）');
+  assert.ok(!/已到期/.test(cd.name), '★也不得加註「已到期」');
 });
