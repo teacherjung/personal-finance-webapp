@@ -16,9 +16,11 @@
 // ——照它做的人會產出一份 AGENTS 判定為「根本沒跑」的掃描，而他自己不會知道。
 //
 // ⚠️ 誠實劃界（本檔證明什麼、不證明什麼）：
-//   ・證明＝**指定的那幾個字串，在指定的那兩個區塊裡都還在**（且是渲染得出來的字，不是註解
-//     或程式碼範例裡的字），而且被指向的腳本檔真的存在。⚠️ 原本這裡寫「兩份檔案講法一致」
-//     ——那也是誇大（同上 r1）：字串相同不等於講法一致，改口。
+//   ・證明＝**指定的那幾個字串，在指定的那兩個區塊裡都還在**，而且被指向的腳本檔真的存在。
+//     「還在」＝不在 HTML 註解裡、不在 fence 裡（含 blockquote 內的 fence）——但**縮排式
+//     程式碼區塊不涵蓋**，見 `visible()` 的劃界。⚠️ 這句話本身改口過兩次：r1 原寫
+//     「兩份檔案講法一致」（字串相同不等於講法一致），r2 原寫「不是程式碼範例裡的字」
+//     （被 blockquote 裡的 fence 當場推翻）。現在寫的是它真正做得到的射程。
 //   ・**不證明**＝有沒有人真的跑過那一遍掃描。條文本身就寫著「沒有任何機械保證，全靠自律」，
 //     這道考題不會、也不打算改變那件事——別把它讀成「有考題＝掃有在跑」。
 //   ・**不證明那些字現在還算不算數**：字串考題讀不出語意。兩種形狀實測照樣全綠——
@@ -29,7 +31,9 @@
 //     否定詞偵測（「不再」「已停用」「廢止」…）——列舉繞法補不完，補了只會長出新的假保證；
 //     照 #479 的劃界停戰裁示，照實劃界比再補一層好。
 //   ・也不鎖字數、不鎖件數、不鎖節的長相（鐵則 10）：只鎖**承重的字串**。
-//     條文改寫時這道會紅——那是刻意的，紅了就是提醒你「另一份也要跟著改」。
+//     ⚠️ 原本這裡寫「條文改寫時這道會紅」——那句跟上面兩格直接打架（上面才剛列出
+//     兩種改寫**不會**紅），2026-08-19 Codex r2 點名，改口：**只有動到那幾個承重字串
+//     才會紅**；其餘的改寫它一律沉默。紅的時候就是提醒你「另一份也要跟著改」。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -42,13 +46,34 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 /**
  * 只留「規則真的在對讀者發號施令」的那些字。剝兩種：
  * ①HTML 註解——`merge-procedure-docs` r1 實測：只搜關鍵字的考題，用註解就繞得過。
- * ②fenced code——2026-08-19 Codex r1 實測：把最短可執行版整段包進 ``` 之後，
- *   那一段在畫面上變成「程式碼範例」而不再是規則，但字面全在、六題照樣全綠。
- * ⚠️ 只剝 fenced（```），**不剝行內反引號**——條文本來就用行內 code 標指令與固定字串，
- * 剝掉會把承重的字一起剝掉。
+ * ②fenced code——把一段規則包進 fence，畫面上它就從「你要照做的規則」變成「程式碼範例」，
+ *   字面卻一個沒少（2026-08-19 Codex r1 實測 6/6 假綠）。
+ *
+ * ⚠️ fence 這一段刻意**不是**用正則列舉寫法（r1 用了欄首三個反引號的正則，r2 就被
+ * 「blockquote 裡的 fence」整個繞過去——那種 fence 每行前面都有 `>`，欄首根本不是反引號）。
+ * 列舉補不完（三個以上反引號／波浪號／縮排／blockquote 內…），所以改成**逐行狀態機**：
+ * 先把每行的 blockquote 標記剝掉，再判斷這行是不是 fence 的開關，在 fence 裡的行整行丟掉。
+ *
+ * ⚠️ 只剝 fenced，**不剝行內反引號**——條文本來就用行內 code 標指令與固定字串，剝掉會把承重的字一起剝掉。
+ * ⚠️ 已知不涵蓋：**縮排式程式碼區塊**（四個空白）——那種寫法在這幾份檔案裡跟一般的
+ * 縮排續行分不開，硬要分會誤殺真規則。這一格照實劃界，不假裝守得住。
  */
-const visible = (/** @type {string} */ md) =>
-  md.replace(/<!--[\s\S]*?-->/g, '').replace(/^```[\s\S]*?^```/gm, '');
+function visible(/** @type {string} */ md) {
+  const out = [];
+  let fence = null;   // 目前這段 fence 的記號（` 或 ~）；null＝不在 fence 裡
+  for (const raw of md.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+    // 剝掉 blockquote 標記再看——`> ``` ` 在畫面上一樣是 fence（r2 的繞法）
+    const line = raw.replace(/^(\s*>)+\s?/, '');
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence === null) {
+      if (m) { fence = m[1][0]; continue; }   // fence 開始：這行本身不算內容
+      out.push(raw);
+    } else if (m && m[1][0] === fence) {
+      fence = null;                            // 同款記號才算收——fence 裡出現另一種不算
+    }
+  }
+  return out.join('\n');
+}
 
 /**
  * 抓 AGENTS.md 的「Grok 的邊界」節：從節首那行到下一個粗體段落標題為止。
@@ -60,8 +85,17 @@ const visible = (/** @type {string} */ md) =>
 function grokSection(visibleMd) {
   const md = visibleMd;
   const lines = md.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('**Grok 的邊界（'));
-  assert.notEqual(start, -1, 'AGENTS.md 找不到「Grok 的邊界」節——整節被刪或改名了，這道考題要跟著更新');
+  const starts = lines.map((l, i) => (l.startsWith('**Grok 的邊界（') ? i : -1)).filter((i) => i !== -1);
+  assert.notEqual(starts.length, 0, 'AGENTS.md 找不到「Grok 的邊界」節——整節被刪或改名了，這道考題要跟著更新');
+  // ⚠️ 先驗唯一再擷取（2026-08-19 Codex r2 實測的繞法）：把整節複製一份到
+  // 「## 已停用存查」底下、補一個同形結尾錨點，`findIndex` 就抓到那份存查副本，
+  // 於是現行那一節怎麼壞都全綠。多一份同形節首＝這道考題已經不知道自己在讀誰。
+  assert.equal(
+    starts.length, 1,
+    `AGENTS.md 有 ${starts.length} 處「Grok 的邊界」節首（第 ${starts.map((i) => i + 1).join('、')} 行）——`
+      + '這道考題只讀得到第一處；有存查／草稿副本時，現行那一節壞掉也不會紅'
+  );
+  const start = starts[0];
   let end = start + 1;
   while (end < lines.length && !lines[end].startsWith('**⚠️ 協作的唯一不變量')) end++;
   assert.notEqual(end, lines.length, 'AGENTS.md 抓不到「Grok 的邊界」節的結尾（下一節「協作的唯一不變量」不見了）');
@@ -80,9 +114,24 @@ function grokSection(visibleMd) {
  */
 function shortVersion(visibleMd) {
   const md = visibleMd;
-  const lines = md.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('- **複審通過後、'));
-  assert.notEqual(start, -1, 'REVIEW-AND-MERGE.md 找不到「複審通過後、…」那條——最短可執行版被刪了');
+  const allLines = md.split('\n');
+  // ⚠️ 先把視窗夾在「### 怎麼執行」這一節之內（2026-08-19 Codex r2 實測的繞法）：
+  // 在那顆 bullet 前面插一個同級標題「### 已停用存查」，最短可執行版就不在被三處指路
+  // 共同指著的那一節裡了，而全檔 findIndex 照樣找得到 ⇒ 六題全綠。
+  const secStart = allLines.findIndex((l) => l.startsWith('### 怎麼執行'));
+  assert.notEqual(secStart, -1, 'REVIEW-AND-MERGE.md 找不到「### 怎麼執行」節——三處指路都指著它，改名要一起改');
+  let secEnd = secStart + 1;
+  while (secEnd < allLines.length && !/^#{1,3} /.test(allLines[secEnd])) secEnd++;
+  const lines = allLines.slice(secStart, secEnd);
+
+  const starts = lines.map((l, i) => (l.startsWith('- **複審通過後、') ? i : -1)).filter((i) => i !== -1);
+  assert.notEqual(
+    starts.length, 0,
+    'REVIEW-AND-MERGE.md 的「### 怎麼執行」節裡找不到「複審通過後、…」那條——'
+      + '最短可執行版被刪了，或被搬出那一節（三處指路都指著那一節）'
+  );
+  assert.equal(starts.length, 1, `「### 怎麼執行」節裡有 ${starts.length} 條「複審通過後、…」——這道考題只讀得到第一條`);
+  const start = starts[0];
   let end = start + 1;
   while (end < lines.length && !/^(>|#{1,6} )/.test(lines[end])) end++;
   assert.notEqual(
@@ -93,8 +142,10 @@ function shortVersion(visibleMd) {
   return lines.slice(start, end).join('\n');
 }
 
-// 三個「漏了就整遍作廢」的條件。逐字相同才算兩份檔案講同一件事——
-// 換句話說就是換一種講法，讀的人分不出是不是同一條規則。
+// 三個「漏了就整遍作廢」的條件。這裡要求兩份檔案**逐字相同**，理由是操作面的：
+// 換句話說就是換一種講法，讀的人分不出是不是同一條規則、也 grep 不到。
+// ⚠️ 逐字相同**不等於**講法一致（檔頭劃界已寫明本檔讀不出語意）——原本這行寫成
+// 「逐字相同才算兩份檔案講同一件事」，那是誇大，2026-08-19 Codex r2 點名後改口。
 const KILL_CONDITIONS = ['版本不同＝當未跑', '退出碼非 0＝該掃作廢', '缺這一行＝當未跑'];
 
 test('Grok 複審後掃｜三個失效條件：AGENTS 正本與最短可執行版必須逐字一致（2026-08-19 實測漂移：時序那條只寫在正本）', () => {
