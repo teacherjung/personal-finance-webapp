@@ -53,9 +53,12 @@ const visible = (/** @type {string} */ md) =>
 /**
  * 抓 AGENTS.md 的「Grok 的邊界」節：從節首那行到下一個粗體段落標題為止。
  * 不用行號、不用固定行數——那些一改就漂。
- * @param {string} md
+ * ⚠️ 傳進來的必須是 `visible()` 過的字（呼叫端負責）：先剝再抓，否則「整段包進 fence」時
+ * 起點錨點仍在原文裡找得到，剝除只發生在區塊內部，這一題會靜靜通過而由別的題轉紅（誤導）。
+ * @param {string} visibleMd
  */
-function grokSection(md) {
+function grokSection(visibleMd) {
+  const md = visibleMd;
   const lines = md.split('\n');
   const start = lines.findIndex((l) => l.startsWith('**Grok 的邊界（'));
   assert.notEqual(start, -1, 'AGENTS.md 找不到「Grok 的邊界」節——整節被刪或改名了，這道考題要跟著更新');
@@ -71,9 +74,12 @@ function grokSection(md) {
  * 於是把後面那顆 blockquote 改寫成一般段落（純排版動作、沒人會察覺）就讓視窗從 22 行漲到 138 行、
  * 把「省額度慣例」整節吞進來——承重句只要被**搬**到那一節，斷言就在錯的範圍裡命中＝靜靜通過。
  * 收不到錨點一律 fail-closed 地紅，不是靜靜跑到檔尾。
- * @param {string} md
+ * ⚠️ 同上：傳進來的必須是 `visible()` 過的字。整段被包進 fence 時，這一段就整個不見了，
+ * 於是起點錨點找不到＝直接紅在「最短可執行版被刪了」，訊息指到對的地方。
+ * @param {string} visibleMd
  */
-function shortVersion(md) {
+function shortVersion(visibleMd) {
+  const md = visibleMd;
   const lines = md.split('\n');
   const start = lines.findIndex((l) => l.startsWith('- **複審通過後、'));
   assert.notEqual(start, -1, 'REVIEW-AND-MERGE.md 找不到「複審通過後、…」那條——最短可執行版被刪了');
@@ -92,8 +98,8 @@ function shortVersion(md) {
 const KILL_CONDITIONS = ['版本不同＝當未跑', '退出碼非 0＝該掃作廢', '缺這一行＝當未跑'];
 
 test('Grok 複審後掃｜三個失效條件：AGENTS 正本與最短可執行版必須逐字一致（2026-08-19 實測漂移：時序那條只寫在正本）', () => {
-  const canon = visible(grokSection(read('AGENTS.md')));
-  const short = visible(shortVersion(read('REVIEW-AND-MERGE.md')));
+  const canon = grokSection(visible(read('AGENTS.md')));
+  const short = shortVersion(visible(read('REVIEW-AND-MERGE.md')));
   for (const c of KILL_CONDITIONS) {
     assert.ok(canon.includes(c), `AGENTS「Grok 的邊界」節少了失效條件「${c}」`);
     assert.ok(
@@ -107,8 +113,8 @@ test('Grok 複審後掃｜三個失效條件：AGENTS 正本與最短可執行�
 test('Grok 複審後掃｜時機是「轉正式之前」：正本、最短可執行版、合併步驟指路句三處都要寫（寫成「合併之前」＝每修一條多燒一次全卷 CI）', () => {
   const rm = read('REVIEW-AND-MERGE.md');
   const READY = '`gh pr ready` 轉正式之前';
-  assert.ok(visible(grokSection(read('AGENTS.md'))).includes(READY), `AGENTS「Grok 的邊界」節的時機沒寫成「${READY}」`);
-  assert.ok(visible(shortVersion(rm)).includes(READY), `REVIEW-AND-MERGE 最短可執行版的時機沒寫成「${READY}」`);
+  assert.ok(grokSection(visible(read('AGENTS.md'))).includes(READY), `AGENTS「Grok 的邊界」節的時機沒寫成「${READY}」`);
+  assert.ok(shortVersion(visible(rm)).includes(READY), `REVIEW-AND-MERGE 最短可執行版的時機沒寫成「${READY}」`);
 
   // 合併步驟開頭那句指路——它是給「翻到合併步驟才第一次看到這件事」的人看的，
   // 所以它①必須真的在合併步驟的前導（搬到檔案別處＝那個人看不到）②必須自己講清楚時機已經過了
@@ -139,7 +145,7 @@ test('Grok 複審後掃｜時機是「轉正式之前」：正本、最短可執
 test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、PR 範本要真的吐得出這個字串', () => {
   const HEADING = '### Grok 複審後掃';
   assert.ok(
-    visible(grokSection(read('AGENTS.md'))).includes(`\`${HEADING}\``),
+    grokSection(visible(read('AGENTS.md'))).includes(`\`${HEADING}\``),
     'AGENTS「Grok 的邊界」節不再釘住固定小標——沒有固定字串，日後要重裁 Grok 去留就翻不出紀錄（#483 記成零分的根因）'
   );
   const tpl = visible(read('.github/pull_request_template.md'));
@@ -173,7 +179,7 @@ test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且那顆
         + '兩種相反答案並存時，只讀到其中一句的人會直接漏跑'
     );
   }
-  const section = visible(grokSection(read('AGENTS.md')));
+  const section = grokSection(visible(read('AGENTS.md')));
   const bullet = section.split('\n').find((l) => l.startsWith('- **程式線'));
   assert.ok(bullet, 'AGENTS「Grok 的邊界」節裡找不到「程式線」那顆 bullet');
   assert.ok(
