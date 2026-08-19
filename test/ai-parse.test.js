@@ -764,6 +764,8 @@ test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆
   const okSpy = spyTransport([withTotals({ txCount: 3, totalOut: 500, totalIn: 2000 })]);
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(okSpy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000' }] }] });
   assert.equal(pv.engine, 'ai', '合計對上＝照常出預覽');
+  assert.deepEqual(pv.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
+    '★這道跑了沒有要跟著裁決走到畫面（2026-08-19）：三欄都印了＝三欄都比對過');
   // 筆數對不上＝兩級都紅＝終局 ai_totals_mismatch（訊息不回聲數字）
   const badCount = () => withTotals({ txCount: 4, totalOut: null, totalIn: null });
   const spy2 = spyTransport([badCount(), badCount()]);
@@ -782,6 +784,8 @@ test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆
   const nullSpy = spyTransport([withTotals({ txCount: null, totalOut: null, totalIn: null })]);
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(nullSpy), aiExtract: fakeExtract });
   assert.equal(pv2.engine, 'ai', '沒印合計＝跳過檢查、不連坐');
+  assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'not-printed', fields: [] },
+    '★沒印＝畫面要說得出「這次沒跑、因為帳單沒印」（不可讓人以為驗過了）');
 });
 
 test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別加總會誤擋正確答案（真實混幣版面形）', async () => {
@@ -801,6 +805,24 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 300 50 250' }] }] });
   assert.equal(pv.engine, 'ai', '★混幣＝合計欄跳過（涵蓋範圍機械判不出）、不連坐擋死');
   assert.equal(spy.calls.length, 1, '一發就過、沒有白燒升級');
+  // ⚠️ **跳過要說得出口**（2026-08-19，William：「混幣讓合計交叉驗證關閉，但畫面說它擋得住——
+  //   你的帳單正是混幣」）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
+  assert.deepEqual(pv.reconcile.totalsCheck, { status: 'mixed-currency', fields: [] },
+    '★整道跳過的事實必須傳到畫面（不傳＝說明區那句「帳單有印合計＝合計也擋」對這份帳單就是假話）');
+  assert.ok(!JSON.stringify(pv.reconcile.totalsCheck).includes('900700'),
+    '★狀態只帶封閉代碼與欄名，帳單欄值一個都不外送（同 ai_reconcile_failed 的機密紀律）');
+});
+
+test('合計交叉驗證｜配方路線沒有合計欄＝no-totals（不可靜靜當成 pass）', async () => {
+  const { assertAiBankReconciled } = await import('../lib/services/bank-import.js');
+  const parsed = normalizeAiBank(goodAnswer());
+  const withTotals = assertAiBankReconciled(parsed, { accounts: [] });
+  assert.equal(withTotals.totalsCheck.status, 'not-printed', '答案卷有欄、三欄 null＝帳單沒印');
+  delete (/** @type {any} */ (parsed)).totals;            // 配方路線＝parseWithRecipe 根本不產這個欄
+  const noTotals = assertAiBankReconciled(parsed, { accounts: [] });
+  assert.deepEqual(noTotals.totalsCheck, { status: 'no-totals', fields: [] },
+    '★路線不產合計欄＝照實說沒跑（規則卡讀的那份也不可宣稱合計把過關）');
+  assert.equal(noTotals.level, 'strong', '既有裁決欄位照舊（新欄是加的、不是換的）');
 });
 
 test('預審r0#2｜接地 NFKC：全形數字帳單（１，５００）不得整版誤殺；去空白變體接回被拆格的金額', async () => {

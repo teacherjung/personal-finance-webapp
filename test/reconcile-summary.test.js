@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gateSummaryHtml } from '../public/modules/reconcile-summary.js';
+import { gateSummaryHtml, totalsCheckSentence } from '../public/modules/reconcile-summary.js';
+import { TOTALS_CHECK } from '../lib/statement-reconcile.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -143,4 +144,54 @@ test('advisories 不是陣列＝當空處理、stats 缺席＝計數當 0（防�
   assert.match(b, /✓ 帳單數學驗算通過/, 'stats 缺席仍給結論');
   assert.doesNotMatch(b, /0 關/, '不可湊出「0 關」（r1#2）');
   assert.doesNotMatch(b, /：。/, '不可留空冒號句');
+});
+
+// ---- 合計交叉驗證的實況（2026-08-19；William：「混幣讓合計交叉驗證關閉，但畫面說它擋得住」）----
+// 這幾題守的是**畫面不說謊**：那道檢查對混幣帳單整道跳過，而說明區把它當現役防線在講。
+// 少一道檢查使用者還知道要自己核對；畫面說它有把關＝他連核對都省了。
+
+test('合計｜混幣＝必須明講「這次沒有跑」＋原因＋少了它看不到什麼（不可只有 ✓ 通過那句）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [],
+    stats: { pairsChecked: 2, endChecked: 1 }, totalsCheck: { status: 'mixed-currency', fields: [] } }, 'bank');
+  assert.match(h, /✓ 帳單數學驗算通過/, '餘額鏈那道真的跑了＝照講（不因為另一道沒跑就整段改口）');
+  assert.match(h, /合計交叉驗證這次<b>沒有跑<\/b>/, '★沒跑就要明講沒跑');
+  assert.match(h, /台幣[^。]*外幣/, '★要講出原因是混幣（使用者才知道這是他這份帳單的性質、不是壞掉）');
+  assert.match(h, /第一筆的方向讀反/, '★要講少了這一道看不到什麼——而且限定在真的只靠合計擋得住的那幾型');
+  assert.doesNotMatch(h, /<b>方向讀反<\/b>/, '★不可講成「所有方向讀反都看不到」（非首筆的餘額鏈當場接不上）＝誇大損失');
+  assert.match(h, /核對筆數與金額/, '★要給下一步');
+  assert.doesNotMatch(h, /合計交叉驗證：/, '★不可同時出現「合計對得上」那句');
+});
+
+test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不可說「都對得上」）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
+    totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut'] } }, 'bank');
+  assert.match(h, /合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。/);
+  assert.doesNotMatch(h, /存入合計/, '★沒印的欄不可混進來（那會把「沒得對」講成「對過了」）');
+  assert.doesNotMatch(h, /沒有跑/);
+});
+
+test('合計｜每個後端狀態碼都有句子（互扣：新增碼沒補文案＝這裡紅）；未知碼／空 fields＝不吐、不編造', () => {
+  for (const code of Object.values(TOTALS_CHECK)) {
+    const tc = { status: code, fields: code === TOTALS_CHECK.PASS ? ['txCount'] : [] };
+    assert.notEqual(totalsCheckSentence(tc), '', `狀態碼 ${code} 沒有對應的白話句`);
+  }
+  assert.equal(totalsCheckSentence({ status: 'bogus', fields: [] }), '', '不認得的碼＝不吐亂碼（新後端配舊前端）');
+  assert.equal(totalsCheckSentence(null), '');
+  assert.equal(totalsCheckSentence(/** @type {any} */ ('pass')), '', '字串不是物件');
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: [] }), '',
+    '★pass 卻一欄都沒比對過＝形狀不對，不可編造「對得上」');
+  const tpl = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 } }, 'bank');
+  assert.doesNotMatch(tpl, /合計交叉驗證/, '模板路線的裁決沒有這一欄＝畫面不長這句（那道檢查本來就不存在）');
+});
+
+test('合計｜壞形狀不得變成畫面上的東西：狀態碼與欄名只當查表鍵，永遠不插進 HTML', () => {
+  // 這句話全部是本模組自己的字面（後端只給封閉代碼）——所以句子裡的 <b> 不經 esc。
+  // 那個設計成立的**前提**就是「外來字串一個都進不了」，這題把前提釘住。
+  assert.equal(totalsCheckSentence({ status: '<img src=x onerror=alert(1)>', fields: [] }), '');
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['<img src=x onerror=alert(1)>'] }), '',
+    '★不認得的欄名不是「原樣顯示」而是不算數（一欄都不認得＝這句話不成立）');
+  const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 1 },
+    totalsCheck: /** @type {any} */ ({ status: 'pass', fields: ['txCount', '<img src=x>'] }) }, 'bank');
+  assert.match(h, /合計交叉驗證：帳單印的筆數與/);
+  assert.doesNotMatch(h, /<img/, '★外來字串不可有機會進 HTML');
 });

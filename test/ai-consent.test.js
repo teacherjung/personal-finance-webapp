@@ -268,6 +268,18 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.doesNotMatch(html, /claude-haiku-4-5-20251001/, '不給使用者看內部代號');
 });
 
+test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再無條件講「帳單有印合計＝擋得住」（William 2026-08-19：他自己的帳單正是混幣）', () => {
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  const blindItem = (html.split('<li>').find((x) => x.includes('看不到的'))) || '';
+  assert.ok(blindItem, '要有「看不到什麼」那一條');
+  assert.match(blindItem, /台幣[^。]{0,24}外幣/, '★要點名條件是台幣與外幣混合（不講條件＝這份帳單的使用者被誤導）');
+  assert.match(blindItem, /整道關閉|沒跑|沒有跑/, '★要講那道檢查會整個關掉，不是「比較弱」');
+  assert.match(blindItem, /帳單數學驗算/, '★要指路：這一份到底跑了沒有，看畫面上那一段');
+  assert.doesNotMatch(blindItem, /帳單有印合計＝合計也擋/, '★舊的無條件講法（①）不可留');
+  assert.doesNotMatch(blindItem, /帳單有印整份合計＝擋下/, '★舊的無條件講法（⑦）不可留');
+  assert.doesNotMatch(blindItem, /或帳單有印合計＝擋下/, '★舊的無條件講法（⑥）不可留');
+});
+
 test('E2b｜modelDisplayName：代號→人看得懂的名字；認不得的原樣顯示（不吃掉資訊）', () => {
   assert.equal(modelDisplayName('claude-haiku-4-5-20251001'), 'Claude Haiku 4.5');
   assert.equal(modelDisplayName('claude-sonnet-5'), 'Claude Sonnet 5');
