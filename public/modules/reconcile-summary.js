@@ -11,6 +11,11 @@ import { esc } from './html-escape.js';
 
 /** 各畫面合法的裁決級別（r1#3）：不認得的 level＝形狀不對＝回空字串，不可誤套弱級句。 */
 const KNOWN_LEVELS = { bank: ['strong', 'weak'], card: ['medium', 'weak'] };
+/** 封閉查表的唯一讀法（鐵則 3.5「查表一律 hasOwn」；Codex #490 r2#1 抓到本檔三張表都沒守）：
+ * `({...})['toString']` 撈到的是**原型上的函式**——`if (!x) return ''` 這種空值守衛對它完全無效，
+ * 函式本體會被樣板字串直接印進畫面（實測：「合計交叉驗證這次沒有跑：function toString() {…}」）。
+ * @param {Record<string, any>} table @param {any} key */
+const own = (table, key) => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : undefined);
 
 /** 合計交叉驗證真的比對過的欄名 → 白話（後端只給封閉欄名＝零插值，見 lib/statement-reconcile.js）。 */
 const TOTALS_FIELD_TEXT = Object.freeze({ txCount: '筆數', totalOut: '支出合計', totalIn: '存入合計' });
@@ -34,12 +39,12 @@ export function totalsCheckSentence(tc) {
   const status = String(tc.status || '');
   if (status === 'pass') {
     const names = (Array.isArray(tc.fields) ? tc.fields : [])
-      .map((f) => /** @type {any} */ (TOTALS_FIELD_TEXT)[String(f)]).filter(Boolean);
+      .map((f) => own(TOTALS_FIELD_TEXT, String(f))).filter(Boolean);
     // fields 空的 pass＝形狀不對（後端會給 not-printed）＝不編造「都對得上」
     if (!names.length) return '';
     return `合計交叉驗證：帳單印的${names.join('、')}與逐筆算出來的一致。`;
   }
-  const why = /** @type {any} */ (TOTALS_SKIP_TEXT)[status];
+  const why = own(TOTALS_SKIP_TEXT, status);
   if (!why) return '';
   // ⚠️ 這裡只列**真的只靠合計擋得住**的那幾型（徽章盲點清單的①⑥⑦）——非首筆的方向讀反／漏掉會讓
   //    餘額鏈當場接不上，把它們也算進來＝反過來誇大損失（誇大與遮掩同罪）。
@@ -66,7 +71,7 @@ function totalsCheckHtml(tc) {
  */
 export function gateSummaryHtml(reconcile, kind) {
   if (!reconcile || typeof reconcile !== 'object' || !reconcile.level) return '';
-  if (!(KNOWN_LEVELS[kind] || []).includes(reconcile.level)) return '';
+  if (!(own(KNOWN_LEVELS, kind) || []).includes(reconcile.level)) return '';   // kind='toString' 撈到函式＝.includes 直接 TypeError 炸掉畫面
   const s = reconcile.stats || {};
   const n = (/** @type {string} */ k) => Number(s[k]) || 0;
   const advisories = Array.isArray(reconcile.advisories) ? reconcile.advisories : [];

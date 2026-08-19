@@ -204,6 +204,19 @@ test('合計｜每個後端狀態碼都有句子（互扣：新增碼沒補文�
     assert.notEqual(totalsCheckSentence(tc), '', `狀態碼 ${code} 沒有對應的白話句`);
   }
   assert.equal(totalsCheckSentence({ status: 'bogus', fields: [] }), '', '不認得的碼＝不吐亂碼（新後端配舊前端）');
+  // ⚠️ 原型鍵是「不認得的碼」裡最陰的一種（鐵則 3.5；Codex #490 r2#1 抓到）：
+  //    `({...})['toString']` 撈到的是原型上的**函式**，`if (!why) return ''` 這種空值守衛對它無效，
+  //    函式本體會被樣板字串印進畫面。實測原本會印出「合計交叉驗證這次沒有跑：function toString() {…}」。
+  //    ⚠️ 自有的 `__proto__` 鍵只有 `JSON.parse` 造得出來（物件字面量裡那個是設原型的特殊語法），
+  //    所以這題的 fields 走 JSON.parse——用字面量寫永遠測不到真實路徑。
+  for (const k of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+    assert.equal(totalsCheckSentence({ status: k, fields: [] }), '', `★原型鍵 ${k} 不可撈到原型上的東西`);
+    assert.equal(totalsCheckSentence({ status: 'pass', fields: [k] }), '', `★欄名是原型鍵 ${k} 時同樣不算數`);
+  }
+  const fromJson = JSON.parse('{"status":"pass","fields":["__proto__","toString"]}');
+  assert.equal(totalsCheckSentence(fromJson), '', '★JSON.parse 造出的自有保留字鍵也不可撈到東西');
+  assert.equal(gateSummaryHtml({ level: 'strong', advisories: [], stats: {} }, /** @type {any} */ ('toString')), '',
+    '★kind 是原型鍵＝撈到函式後 .includes 會直接 TypeError 炸掉整個預覽窗');
   assert.equal(totalsCheckSentence(null), '');
   assert.equal(totalsCheckSentence(/** @type {any} */ ('pass')), '', '字串不是物件');
   assert.equal(totalsCheckSentence({ status: 'pass', fields: [] }), '',

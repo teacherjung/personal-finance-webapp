@@ -164,6 +164,12 @@ test('文案｜每個後端代碼都有句子（互扣：新增代碼沒補文�
   assert.deepEqual(progressTextCodes(), Object.values(STAGES).sort(), '★代碼表與文案表逐一對應');
   assert.match(progressText({ t: 'stage', s: STAGES.AI_DUAL }), /兩個 AI/);
   assert.equal(progressText({ t: 'stage', s: 'made_up' }), '', '未知代碼＝不畫（新後端配舊前端不吐亂碼）');
+  // 原型鍵＝未知代碼裡最陰的一種（鐵則 3.5；Codex #490 r2#1 同族）：`TEXT['toString']` 撈到原型函式，
+  // `|| ''` 擋不住它，畫面會印出 function 本體。自有 __proto__ 鍵只有 JSON.parse 造得出來。
+  for (const k of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+    assert.equal(progressText({ t: 'stage', s: k }), '', `★原型鍵 ${k} 不可撈到原型上的函式`);
+  }
+  assert.equal(progressText(JSON.parse('{"t":"stage","s":"__proto__"}')), '', '★JSON.parse 造的自有保留字鍵同樣不畫');
   assert.equal(progressText({ t: 'done', r: {} }), '');
   assert.equal(progressText(null), '');
   assert.match(progressText({ t: 'stage', s: STAGES.AI_SINGLE, model: 'Claude Sonnet 5' }), /（Claude Sonnet 5）/, '模型名附在句尾');

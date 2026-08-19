@@ -33,7 +33,9 @@ const TEXT = Object.freeze({
  *  @returns {string} 要顯示的句子；未知代碼／壞形狀＝空字串（呼叫端沿用上一句） */
 export function progressText(frame) {
   if (!frame || frame.t !== 'stage') return '';
-  const base = /** @type {any} */ (TEXT)[String(frame.s)] || '';
+  // 鐵則 3.5：查表一律 hasOwn——`TEXT['toString']` 撈到原型函式，`|| ''` 擋不住它（Codex #490 r2#1 同族）
+  const key = String(frame.s);
+  const base = Object.hasOwn(TEXT, key) ? /** @type {any} */ (TEXT)[key] : '';
   if (!base) return '';
   // 模型名只在後端有帶時附上（它本來就會出現在預覽徽章＝不是新洩漏面）
   return frame.model ? base.replace(/…$/, `（${frame.model}）…`) : base;
