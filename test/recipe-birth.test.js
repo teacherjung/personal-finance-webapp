@@ -11,8 +11,14 @@
 //   Ｃ**成功也記**：沒有分母就看不出失敗率（「試了 5 次學會 0 次」和「試了 1 次沒學會」是兩件事）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+// ⚠️ **必須在任何會載入 repo/store 的 import 之前**（Codex #489 r2#1 的 High）：本卷有走正式
+//    applyBankStatement 與 /api/import 的行為題，會清空集合並覆寫整庫——沒有先把 STORE_FILE 指到
+//    暫存目錄，在主目錄跑 `npm test` 就會直接操作**真實的 data/store.db**（鐵則 1）。
+process.env.STORE_FILE = join(mkdtempSync(join(tmpdir(), 'finance-recipe-birth-')), 'store.db');
 
 const { BIRTH_CODES, recordBirth, sanitizeBirthStats, birthSummary } = await import('../lib/recipe-birth.js');
 const { birthText, birthTextCodes, birthStatsHtml, birthSummary: feSummary } = await import('../public/modules/recipe-birth-text.js');
@@ -42,8 +48,16 @@ test('界線Ａ｜壞資料進來不炸畫面：非物件、負數、超大數�
 test('界線Ａ｜這是 server-owned 診斷資料：前端 PUT 寫不進來，匯入備份要過消毒器', () => {
   // ★前端 PUT：不在 SETTINGS_FIELD_TYPES ⇒ 整欄丟掉（同 quotesLastAt 的既有作法）。
   //   前端能寫＝使用者（或壞掉的備份還原）可以偽造「學會了 999 次」，診斷資料就沒有意義了。
-  const put = sanitizeSettings({ recipeBirthStats: { ok: { n: 3, lastAt: '2026-08-19', lastBank: '台新' } } }, []);
+  /** @type {string[]} */ const putBad = [];
+  const put = sanitizeSettings({ recipeBirthStats: { ok: { n: 3, lastAt: '2026-08-19', lastBank: '台新' } } }, { badOut: putBad });
   assert.ok(!('recipeBirthStats' in put), '★PUT 路徑：整欄不收（server-owned）');
+  assert.ok(putBad.includes('settings.recipeBirthStats'), 'PUT 路徑要照實回報剝掉了什麼');
+  // ★匯入路徑保留時**不得**同時回報「已剝掉」（r2#4：資料留著卻警告說剝掉＝診斷說謊，
+  //   未來呼叫端（例如 /api/import 的 wiped 判斷）會把合法備份誤判成壞檔）
+  /** @type {string[]} */ const impBad = [];
+  const impKeep = sanitizeSettings({ recipeBirthStats: { ok: { n: 3, lastAt: '2026-08-19', lastBank: '台新' } } }, { allowIbSyncFields: true, badOut: impBad });
+  assert.equal(impKeep.recipeBirthStats?.ok?.n, 3, '★匯入路徑：資料留下');
+  assert.ok(!impBad.includes('settings.recipeBirthStats'), '★留下來就不能同時說它被剝掉');
   // ★匯入備份：好資料留下、壞形狀與白名單外的鍵剝除
   const imp = sanitizeSettingsDeep({ recipeBirthStats: { ok: { n: 2, lastAt: '2026-08-19', lastBank: '台新' }, 亂鍵: { n: 5 } } }).value;   // 回 {value, bad}
   assert.deepEqual(Object.keys(imp.recipeBirthStats || {}), ['ok'], '★匯入路徑：白名單外剝除、好資料留下');
@@ -120,6 +134,8 @@ test('畫面｜沒紀錄＝講清楚要怎樣才會有；有紀錄＝列出次�
   const empty = birthStatsHtml({}, feSummary({}), esc);
   assert.match(empty, /還沒有紀錄/);
   assert.match(empty, /按下套用之後/, '★要講清楚什麼時候才會開始累積（不然使用者以為壞了）');
+  assert.match(empty, /<b>用 AI 讀過一次帳單並按下套用之後<\/b>/, '★用 HTML 粗體（r2#3：這裡是 innerHTML，Markdown 星號會原樣顯示成 ****）');
+  assert.ok(!empty.includes('**'), '★輸出不得殘留 Markdown 標記');
   const s = recordBirth({}, 'recipe_birth_match', '<img src=x>', '2026-08-19');
   const html = birthStatsHtml(s, feSummary(s), esc);
   assert.match(html, /找不到它說的定位詞/);
