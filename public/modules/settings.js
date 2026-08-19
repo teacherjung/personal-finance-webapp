@@ -4,6 +4,7 @@ import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, curre
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
+import { birthStatsHtml, birthSummary } from './recipe-birth-text.js';   // 規則卡出生統計（省 AI 那條路的診斷儀表）
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
@@ -105,6 +106,12 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">內轉分類管理</h3>
       <p class="muted" style="font-size:12px;margin-bottom:14px">內轉沒有大類，只有一串子分類。<b>內轉出／內轉入／交割</b>是系統自動判斷用的（錢出／進、證券劃撥）——<b>改名／刪除都可以</b>，自動判斷會跟著你改的走（刪掉的話，該類的自動判斷會變成空白，仍是內轉、只是沒子分類）。你也可以新增自己的（例：還卡費、定存互轉）。<b>改名</b>會套用到所有舊的內轉交易。</p>
       <div><button class="btn-ghost" id="manageTransferSubsBtn">${icon('refresh', 16) || ''}管理內轉分類</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">版面規則卡（省 AI 費用的學習成果）</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">用 AI 讀過一次帳單並套用之後，系統會試著把那個版面「學成一張規則卡」——學會了，<b>下次同版面就免費自動讀、不再花 AI 費用</b>。學不學得會取決於兩次獨立的 AI 讀取能不能逐字對上，所以會失敗；這裡如實列出<b>試了幾次、學會幾次、沒學成的卡在哪一關</b>。</p>
+      ${birthStatsHtml(s?.recipeBirthStats, birthSummary(s?.recipeBirthStats), esc)}
     </div>
 
     <div class="card" style="margin-bottom:18px">

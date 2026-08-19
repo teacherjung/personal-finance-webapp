@@ -1,4 +1,5 @@
 // @ts-check
+import { birthText } from './recipe-birth-text.js';   // 規則卡出生結果的白話句（後端只給代碼；2026-08-19）
 
 /**
  * 銀行收支頁的月份摘要。呼叫端先用 isCardTx 排除信用卡帳本；
@@ -66,7 +67,7 @@ export function bankApplyLabel(balancesSkipped) {
  * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
  * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, matured?:number}} bal
  * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
- * @param {{saved?:boolean, rebirth?:boolean}} [recipe] */
+ * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
 export function bankApplyDoneText(bal, tx, recipe) {
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
@@ -75,7 +76,7 @@ export function bankApplyDoneText(bal, tx, recipe) {
       + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
   const rec = recipe?.saved
     ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面免費自動讀）' : '；已存成版面規則卡（下次同版面免費自動讀）')
-    : (recipe ? '；版面規則卡這次沒存成（不影響本次匯入；下次仍會用 AI 讀）' : '');
+    : (recipe ? `；版面規則卡這次沒存成（不影響本次匯入；下次仍會用 AI 讀）${birthText(recipe.reason || '') ? `——${birthText(recipe.reason || '')}` : ''}` : '');   // 2026-08-19：講出**哪一關**沒過（原本只有通稱＝使用者與維護者都看不到卡在哪）
   return `${acct}；交易：匯入 ${tx.imported}`
     + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`
     + rec;
