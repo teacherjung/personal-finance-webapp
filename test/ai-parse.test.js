@@ -851,21 +851,28 @@ test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是�
     '★只印一半＝只列真的比對過的那一欄（fields 的契約：不可把「沒得對」講成「都對得上」）');
 });
 
-test('合計交叉驗證｜誠實殘餘：金額 0 的列方向對調，兩側合計都不變＝比到出入合計也看不到（畫面那句「任一邊都抓得到」的前提）', async () => {
+test('合計交叉驗證｜誠實殘餘：金額 0 或不大於容差（0.004）的列方向對調，兩側合計都不動＝看不到', async () => {
   // Codex #490 r4#1 抓到：程式正式接受 amount >= 0，而合計還有 BAL_EPS 容差——所以
   // 「方向對調會讓兩邊同時變」只在金額大於容差時成立。這是**已知取捨、不是 bug**（0 元的列
   // 方向記反不影響任何金額），但徽章那句寫著「金額 0 的列除外」＝**保證要有考題撐著**。
-  const withZeroRow = (/** @type {'in'|'out'} */ dir) => {
+  const withTinyRow = (/** @type {'in'|'out'} */ dir, /** @type {number} */ amt, /** @type {number} */ bal) => {
     const a = goodAnswer();
-    a.transactions.push({ acctMasked: '900200****3302', date: '2026-06-04', direction: dir, amount: 0, balance: 1500, summary: '手續費減免', note: '' });
+    a.transactions.push({ acctMasked: '900200****3302', date: '2026-06-04', direction: dir, amount: amt, balance: bal, summary: '手續費減免', note: '' });
+    a.accounts[0].balance = bal;
     a.totals = { txCount: 4, totalOut: 500, totalIn: 2000 };   // 兩種方向都吻合這一組合計
     return a;
   };
-  const text = async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 4 2,000 0' }] }];
-  for (const dir of /** @type {const} */ (['in', 'out'])) {
-    const spy = spyTransport([withZeroRow(dir)]);
-    const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: text });
-    assert.equal(pv.reconcile.totalsCheck.status, 'pass', `★金額 0 的列記成 ${dir} 都過得了合計交叉驗證＝殘餘照實存在`);
+  // 邊界要**兩顆**（Codex #490 r5#2：只驗 0 守不住真正的門檻＝BAL_EPS）：0 元與 0.004 元
+  // （0.004 < 0.005 ⇒ 餘額鏈與合計兩邊都在容差內）。金額本身微不足道，記錄的是「這道看不到它」。
+  for (const amt of [0, 0.004]) {
+    for (const dir of /** @type {const} */ (['in', 'out'])) {
+      const bal = dir === 'in' ? 1500 + amt : 1500 - amt;   // 餘額鏈要跟著方向走（不然斷的是鏈、不是這題要測的合計）
+      const text = async () => [{ y: 0, cells: [{ x: 0, s: `原文 1,000 500 1,500 4 2,000 ${amt} ${bal}` }] }];
+      const spy = spyTransport([withTinyRow(dir, amt, bal)]);
+      const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: text });
+      assert.equal(pv.reconcile.totalsCheck.status, 'pass',
+        `★金額 ${amt} 的列記成 ${dir}：逐筆加總 ${dir === 'out' ? '支出' : '存入'} 差了 ${amt}，仍在容差內＝合計這道看不到（門檻＝BAL_EPS 0.005）`);
+    }
   }
 });
 
