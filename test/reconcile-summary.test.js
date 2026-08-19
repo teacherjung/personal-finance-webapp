@@ -168,7 +168,7 @@ test('合計｜混幣＝必須明講「這次沒有跑」＋原因＋少了它�
   assert.doesNotMatch(h, /合計交叉驗證：/, '★不可同時出現「合計對得上」那句');
 });
 
-test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不可說「都對得上」）', () => {
+test('合計｜有跑＝只列真的比對過的欄（只交回一半時不可說「都對得上」）', () => {
   const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
     totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut'] } }, 'bank');
   assert.match(h, /AI 抄回來的筆數、支出合計與它自己逐筆算出來的對得上/);
@@ -188,7 +188,7 @@ test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不�
     '合計交叉驗證：AI 抄回來的筆數、支出合計、存入合計與它自己逐筆算出來的對得上。'
     + '這一道比的是這兩邊，擋得住抄漏、抄多、方向對調這種<b>兩邊對不上</b>的錯，<b>擋不住整組一起抄錯</b>。',
     '★逐字相等——誇大可以接在句號後面，子字串比對永遠攔不到（三欄全比到＝這句就是全部，不可再多掛）');
-  // 三欄全印＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
+  // 三欄全交回＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
   // 後端說「存入合計真的比對過了」、畫面卻靜靜不講，而那正是這支要消滅的病）
   const all = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
     totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] } }, 'bank');
@@ -197,7 +197,7 @@ test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不�
 
 test('合計｜只比到筆數＝要自己講「方向讀反仍沒把關」（複審後掃抓到：「有跑」≠「這幾型都罩到了」）', () => {
   // 實測：首筆 in→out 對調後**筆數 3→3 一模一樣**（支出合計 500→1500 才會不符）——
-  // 帳單只印明細總筆數時，這道比得到的那一欄對「方向讀反」完全無效。不講的話，使用者照徽章
+  // AI 只交回明細總筆數時，這道比得到的那一欄對「方向讀反」完全無效。不講的話，使用者照徽章
   // 的指路看到「合計交叉驗證…一致」就以為方向也有人看＝這支要消滅的同一種假話換個角落復發。
   const onlyCount = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount'] });
   assert.match(onlyCount, /這次沒讀到支出合計、存入合計/, '★沒比到的欄要點名（而且說「沒讀到」不說「帳單沒印」）');
@@ -214,7 +214,7 @@ test('合計｜只比到筆數＝要自己講「方向讀反仍沒把關」（�
   assert.match(noIn, /沒讀到存入合計/, '★缺存入合計也要講（漏抄一筆收入時它才是那把刀）');
   assert.doesNotMatch(noIn, /方向讀反/, '★但方向讀反這一型已經有支出合計罩著，不可重複嚇人');
   assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'totalOut', 'totalIn'] }),
-    /沒讀到|沒印/, '★三欄全比到＝沒有欄可點名，不可硬掛一句');
+    /沒讀到/, '★三欄全比到＝沒有欄可點名，不可硬掛一句');
 });
 
 test('合計｜每個欄名都翻得出白話（互扣：後端說比對過、畫面卻靜靜不講＝Codex #490 r1#2 的假綠）', () => {

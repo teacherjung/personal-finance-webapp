@@ -794,7 +794,7 @@ test('裁示⑧b 合計欄｜AI 抄回來的筆數/支出/存入合計 vs 它自
   // 全 null（AI 沒交回那一欄）＝誠實缺席、照舊放行
   const nullSpy = spyTransport([withTotals({ txCount: null, totalOut: null, totalIn: null })]);
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(nullSpy), aiExtract: fakeExtract });
-  assert.equal(pv2.engine, 'ai', '沒印合計＝跳過檢查、不連坐');
+  assert.equal(pv2.engine, 'ai', '沒交回合計＝跳過檢查、不連坐');
   assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'not-read', fields: [] },
     '★沒交回合計欄＝畫面要說得出「這次沒跑」（不可讓人以為驗過了）；碼名刻意不叫 not-printed——管線分不出是帳單沒印還是 AI 沒讀出來（r7#1）');
 });
@@ -831,7 +831,7 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
 test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；只交回一半＝只算比對過的那幾欄', async () => {
   await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   // 自審突變兩顆（M-mixed-criterion-widen／M-fields-overclaim）——原本後端只有兩個極端有題
-  // （三欄全印、三欄全 null；真有外幣交易、完全沒有外幣），中間這兩格一題都沒有。
+  // （三欄全交回、三欄全 null；真有外幣交易、完全沒有外幣），中間這兩格一題都沒有。
   // ①**概要有外幣帳戶、但本期明細全是台幣**：合計涵蓋哪一段沒有歧義 ⇒ 這道要照驗。
   //    判準若被簡化成「掃幣別表有沒有外幣」，使用者每一期都有外幣帳戶＝這道從此永遠靜靜關掉，
   //    而畫面還會給他一個對這份根本不成立的理由（「這份同時有台幣與外幣所以判不出涵蓋範圍」）。
@@ -846,13 +846,13 @@ test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是�
   const pv1 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy1), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 250' }] }] });
   assert.deepEqual(pv1.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
     '★外幣帳戶只出現在概要、明細全台幣＝合計照驗（跳過的條件是明細真的有外幣列）');
-  // ②**帳單只印了筆數**：fields 只能有那一欄——「跑到 pass 就是三欄都驗過了」這種簡化，
-  //    會讓畫面唸出「筆數、支出合計、存入合計都一致」，而後兩欄帳單根本沒印、一次都沒比。
+  // ②**AI 只交回了筆數**：fields 只能有那一欄——「跑到 pass 就是三欄都驗過了」這種簡化，
+  //    會讓畫面唸出「筆數、支出合計、存入合計都一致」，而後兩欄根本沒交回、一次都沒比。
   const onlyCount = () => { const a = goodAnswer(); a.totals = { txCount: 3, totalOut: null, totalIn: null }; return a; };
   const spy2 = spyTransport([onlyCount()]);
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
   assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'pass', fields: ['txCount'] },
-    '★只印一半＝只列真的比對過的那一欄（fields 的契約：不可把「沒得對」講成「都對得上」）');
+    '★只交回一半＝只列真的比對過的那一欄（fields 的契約：不可把「沒得對」講成「都對得上」）');
 });
 
 test('合計交叉驗證｜誠實殘餘：金額 0 或不大於容差（0.004）的列方向對調，兩側合計都不動＝看不到', async () => {
