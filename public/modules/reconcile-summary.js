@@ -22,7 +22,7 @@ const TOTALS_FIELD_TEXT = Object.freeze({ txCount: '筆數', totalOut: '支出�
 /** 沒跑起來的原因 → 白話（鍵＝後端 TOTALS_CHECK 的封閉狀態碼；互扣考題釘住「每個碼都有句子」）。 */
 const TOTALS_SKIP_TEXT = Object.freeze({
   'mixed-currency': '這份帳單同時有台幣與外幣，而合計欄涵蓋哪一段（整份？還是台幣那段？）機械上判不出來——硬比會把正確的答案誤擋，所以整道跳過',
-  'not-printed': '這次沒讀到帳單的明細合計（帳單沒印、或 AI 沒讀出來都算），沒有數字可以對',
+  'not-read': '這次沒讀到帳單的明細合計（帳單沒印、或 AI 沒讀出來都算），沒有數字可以對',
   'no-totals': '這次讀這份帳單的方式沒有讀出合計欄',
 });
 
@@ -41,7 +41,7 @@ export function totalsCheckSentence(tc) {
     const seen = (Array.isArray(tc.fields) ? tc.fields : []).map((f) => String(f))
       .filter((f) => own(TOTALS_FIELD_TEXT, f));
     const names = seen.map((f) => own(TOTALS_FIELD_TEXT, f));
-    // fields 空的 pass＝形狀不對（後端會給 not-printed）＝不編造「都對得上」
+    // fields 空的 pass＝形狀不對（後端會給 not-read）＝不編造「都對得上」
     if (!names.length) return '';
     // ⚠️ **「有跑」不等於「這幾型都罩到了」**（2026-08-19 複審後掃抓到；實測：首筆 in→out
     //    對調後筆數 3→3 一模一樣、而支出合計 500→1500 當場不符）：帳單只印明細總筆數時，

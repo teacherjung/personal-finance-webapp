@@ -273,7 +273,7 @@ test('合計｜三個「沒跑」的理由不可互換：各自要講自己那�
   // 最傷的一種：no-totals（規則卡路線根本不抄合計欄＝我們的鍋）被改成「你的帳單沒印」，
   // 直接違反本模組檔頭立的 r1#1「弱級句不可把鍋甩給帳單」，使用者也就不會想到換一條路線重讀。
   const mixed = totalsCheckSentence({ status: TOTALS_CHECK.MIXED_CURRENCY, fields: [] });
-  const notPrinted = totalsCheckSentence({ status: TOTALS_CHECK.NOT_PRINTED, fields: [] });
+  const notPrinted = totalsCheckSentence({ status: TOTALS_CHECK.NOT_READ, fields: [] });
   const noTotals = totalsCheckSentence({ status: TOTALS_CHECK.NO_TOTALS, fields: [] });
   assert.match(mixed, /台幣[^。]{0,24}外幣/, '混幣要講混幣');
   assert.match(mixed, /判不出來|跳過/, '混幣要講出「為什麼不能硬比」');
