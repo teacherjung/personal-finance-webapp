@@ -118,8 +118,17 @@ function shortVersion(visibleMd) {
   // ⚠️ 先把視窗夾在「### 怎麼執行」這一節之內（2026-08-19 Codex r2 實測的繞法）：
   // 在那顆 bullet 前面插一個同級標題「### 已停用存查」，最短可執行版就不在被三處指路
   // 共同指著的那一節裡了，而全檔 findIndex 照樣找得到 ⇒ 六題全綠。
-  const secStart = allLines.findIndex((l) => l.startsWith('### 怎麼執行'));
-  assert.notEqual(secStart, -1, 'REVIEW-AND-MERGE.md 找不到「### 怎麼執行」節——三處指路都指著它，改名要一起改');
+  // ⚠️ 父節**自己**也要先驗唯一（2026-08-19 Codex r3 實測）：r2 只驗了 bullet 在選中的父節裡唯一，
+  // 於是在現行節前面插一個「### 怎麼執行（已停用存查）」、裡面放一份合格的短版，
+  // 再把真正現行那節還原成舊時機 ⇒ 讀到的是存查副本，六題全綠。
+  const secStarts = allLines.map((l, i) => (l.startsWith('### 怎麼執行') ? i : -1)).filter((i) => i !== -1);
+  assert.notEqual(secStarts.length, 0, 'REVIEW-AND-MERGE.md 找不到「### 怎麼執行」節——三處指路都指著它，改名要一起改');
+  assert.equal(
+    secStarts.length, 1,
+    `REVIEW-AND-MERGE.md 有 ${secStarts.length} 個「### 怎麼執行」節（第 ${secStarts.map((i) => i + 1).join('、')} 行）——`
+      + '這道考題只讀得到第一個；存查／草稿副本一出現，現行那節壞掉也不會紅'
+  );
+  const secStart = secStarts[0];
   let secEnd = secStart + 1;
   while (secEnd < allLines.length && !/^#{1,3} /.test(allLines[secEnd])) secEnd++;
   const lines = allLines.slice(secStart, secEnd);
@@ -206,12 +215,20 @@ test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、
   );
 });
 
-test('Grok 複審後掃｜被指向的驗屍腳本必須真的存在（文件指著一支不存在的腳本＝規則等於不存在）', () => {
+test('Grok 複審後掃｜驗屍腳本要被**正式那兩段**指到，而且真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
   const SCRIPT = 'scripts/audit-grok-scan.js';
-  for (const f of ['AGENTS.md', 'REVIEW-AND-MERGE.md']) {
-    assert.ok(visible(read(f)).includes(SCRIPT), `${f} 沒有指向 ${SCRIPT}`);
-  }
-  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩份文件都在叫人跑一支不存在的腳本`);
+  // ⚠️ 不可以用全檔 includes（2026-08-19 Codex r3 實測）：把正式命令都改成不存在的腳本、
+  // 只在檔案開頭各留一句「歷史檔名存查：`scripts/audit-grok-scan.js`」，全檔搜尋照樣命中 ⇒
+  // 正式流程已經指著一支不存在的腳本，而考題全綠。要綁在**發號施令的那兩段**裡。
+  assert.ok(
+    grokSection(visible(read('AGENTS.md'))).includes(SCRIPT),
+    `AGENTS「Grok 的邊界」節裡沒有指向 ${SCRIPT}（別處提到不算——那不是發號施令的地方）`
+  );
+  assert.ok(
+    shortVersion(visible(read('REVIEW-AND-MERGE.md'))).includes(SCRIPT),
+    `REVIEW-AND-MERGE 的最短可執行版裡沒有指向 ${SCRIPT}（別處提到不算）`
+  );
+  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩份文件的正式流程都在叫人跑一支不存在的腳本`);
 });
 
 test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且那顆 bullet 上還留著「常設」「複審後掃」兩個詞（查字不查語意）', () => {
