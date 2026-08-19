@@ -273,15 +273,15 @@ test('合計｜三個「沒跑」的理由不可互換：各自要講自己那�
   // 最傷的一種：no-totals（規則卡路線根本不抄合計欄＝我們的鍋）被改成「你的帳單沒印」，
   // 直接違反本模組檔頭立的 r1#1「弱級句不可把鍋甩給帳單」，使用者也就不會想到換一條路線重讀。
   const mixed = totalsCheckSentence({ status: TOTALS_CHECK.MIXED_CURRENCY, fields: [] });
-  const notPrinted = totalsCheckSentence({ status: TOTALS_CHECK.NOT_READ, fields: [] });
+  const notRead = totalsCheckSentence({ status: TOTALS_CHECK.NOT_READ, fields: [] });
   const noTotals = totalsCheckSentence({ status: TOTALS_CHECK.NO_TOTALS, fields: [] });
   assert.match(mixed, /台幣[^。]{0,24}外幣/, '混幣要講混幣');
   assert.match(mixed, /判不出來|跳過/, '混幣要講出「為什麼不能硬比」');
-  assert.match(notPrinted, /沒讀到/, '★只能說「這次沒讀到」——帳單可能印了、只是 AI 沒交回來（r5#3）');
-  assert.doesNotMatch(notPrinted, /^這份帳單自己沒印/, '★不可斷言是帳單沒印（管線分不出來）');
+  assert.match(notRead, /沒讀到/, '★只能說「這次沒讀到」——帳單可能印了、只是 AI 沒交回來（r5#3）');
+  assert.doesNotMatch(notRead, /^這份帳單自己沒印/, '★不可斷言是帳單沒印（管線分不出來）');
   assert.match(noTotals, /讀這份帳單的方式|這條路線|沒有讀出/, '★路線不產這個欄＝我們的鍋，不可甩給帳單');
   assert.doesNotMatch(noTotals, /帳單自己沒印/, '★no-totals 不可講成「帳單沒印」（那是另一種情況、而且是甩鍋）');
-  assert.equal(new Set([mixed, notPrinted, noTotals]).size, 3, '★三句必須各自不同（互相複製貼上＝這裡紅）');
+  assert.equal(new Set([mixed, notRead, noTotals]).size, 3, '★三句必須各自不同（互相複製貼上＝這裡紅）');
 });
 
 test('合計｜有影子提醒時這句不可被擠掉（M-adv-suppress：兩者從未同時出現在任何一題裡）', () => {

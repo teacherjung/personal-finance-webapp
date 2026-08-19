@@ -38,7 +38,7 @@ const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '合成帳單內文�
 const goodAnswer = () => ({
   bank: '合成一銀', referenceDate: '2026-06-30',
   accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }],
-  totals: { txCount: null, totalOut: null, totalIn: null },   // 必填欄（缺席＝ai_bad_answer）；null＝帳單沒印
+  totals: { txCount: null, totalOut: null, totalIn: null },   // 必填欄（缺席＝ai_bad_answer）；null＝AI 沒交回那一欄
   accounts: [{ masked: '900200****3302', balance: 1500, currency: 'TWD', label: '活存', note: '' }],
   transactions: [
     { acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: 1000, summary: '轉帳存入', note: '薪資' },
@@ -731,6 +731,7 @@ test('裁示⑥｜模型階梯＝Sonnet 預設、Opus 升級（Haiku 退出解�
 });
 
 test('裁示⑧a 接地｜答案的金額不在帳單原文＝ai_bad_answer 走階梯；兩級都不接地＝照實擋', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const { assertAiBankGrounded } = await import('../lib/ai-parse.js');
   // 純函式面：帳戶餘額/交易金額/交易餘額/totals 逐類
   const grounded = normalizeAiBank({ ...goodAnswer(), totals: { txCount: 3, totalOut: 500, totalIn: null } });
@@ -758,14 +759,15 @@ test('裁示⑧a 接地｜答案的金額不在帳單原文＝ai_bad_answer 走�
   assert.equal(spy.calls.length, 2, '接地失敗＝ai_bad_answer＝有走階梯');
 });
 
-test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆——對不上＝ai_totals_mismatch、對上＝放行', async () => {
+test('裁示⑧b 合計欄｜AI 抄回來的筆數/支出/存入合計 vs 它自己的逐筆——對不上＝ai_totals_mismatch、對上＝放行', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const withTotals = (/** @type {any} */ t) => { const a = goodAnswer(); a.totals = t; return a; };
   // 對得上（且數字有接地）＝放行
   const okSpy = spyTransport([withTotals({ txCount: 3, totalOut: 500, totalIn: 2000 })]);
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(okSpy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000' }] }] });
   assert.equal(pv.engine, 'ai', '合計對上＝照常出預覽');
   assert.deepEqual(pv.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
-    '★這道跑了沒有要跟著裁決走到畫面（2026-08-19）：三欄都印了＝三欄都比對過');
+    '★這道跑了沒有要跟著裁決走到畫面（2026-08-19）：三欄都交回來了＝三欄都比對過');
   // 筆數對不上＝兩級都紅＝終局 ai_totals_mismatch（訊息不回聲數字）
   const badCount = () => withTotals({ txCount: 4, totalOut: null, totalIn: null });
   const spy2 = spyTransport([badCount(), badCount()]);
@@ -789,7 +791,7 @@ test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spyEps), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 500.02' }] }] }),
     (/** @type {any} */ e) => e.code === 'ai_totals_mismatch',
     '★差 0.02（> BAL_EPS 0.005）就要擋——容差被放寬到「幾十元不算」時這裡要紅');
-  // 全 null（帳單沒印）＝誠實缺席、照舊放行
+  // 全 null（AI 沒交回那一欄）＝誠實缺席、照舊放行
   const nullSpy = spyTransport([withTotals({ txCount: null, totalOut: null, totalIn: null })]);
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(nullSpy), aiExtract: fakeExtract });
   assert.equal(pv2.engine, 'ai', '沒印合計＝跳過檢查、不連坐');
@@ -798,6 +800,7 @@ test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆
 });
 
 test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別加總會誤擋正確答案（真實混幣版面形）', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   // TWD＋USD 混合＋帳單印了「台幣段」合計 500：全列加總含 USD 50 ⇒ 若不跳過必 mismatch 誤擋
   const mixedTotals = () => {
     const a = goodAnswer();
@@ -825,7 +828,8 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   //    突變當場 4 題紅）。冗餘斷言配一個假證據比沒有更糟，所以整組刪掉、把真相記在這裡。
 });
 
-test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；帳單只印一半＝只算比對過的那幾欄', async () => {
+test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；只交回一半＝只算比對過的那幾欄', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   // 自審突變兩顆（M-mixed-criterion-widen／M-fields-overclaim）——原本後端只有兩個極端有題
   // （三欄全印、三欄全 null；真有外幣交易、完全沒有外幣），中間這兩格一題都沒有。
   // ①**概要有外幣帳戶、但本期明細全是台幣**：合計涵蓋哪一段沒有歧義 ⇒ 這道要照驗。
@@ -922,6 +926,7 @@ test('預審r0#3｜接地剔除日期 token：金額恰等於年份/民國日期
 });
 
 test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；totalIn 對不上＝ai_totals_mismatch；訊息全無數字', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const missing = () => { const a = goodAnswer(); delete a.totals; return a; };
   assert.throws(() => normalizeAiBank(missing()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totals/.test(e.message),
     '★必填欄漏交＝壞答案、不靜默降級');
