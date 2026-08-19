@@ -16,7 +16,6 @@ process.env.STORE_FILE = TEST_STORE;
 const { normalizeAiBank, linesToText, buildBankSystem, AI_BANK_MODELS, AI_BANK_SCHEMA } = await import('../lib/ai-parse.js');
 const { anthropicTransport, makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { previewBankStatement, applyBankStatement, aiBankRoute } = await import('../lib/services/bank-import.js');
-const { TOTALS_CHECK, TOTALS_FIELDS } = await import('../lib/statement-reconcile.js');   // 封閉詞彙＝機密斷言的比對基準
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { clearAiTicketsForTest, aiTicketCountForTest, issueAiTicket, redeemAiTicket, restoreAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
 
@@ -819,14 +818,11 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   //   帳單正是混幣＝轉述）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
   assert.deepEqual(pv.reconcile.totalsCheck, { status: 'mixed-currency', fields: [] },
     '★整道跳過的事實必須傳到畫面（不傳＝說明區那句「帳單有印合計＝合計也擋」對這份帳單就是假話）');
-  // ⚠️ **結構斷言、不是字串搜尋**（複審後掃抓到原版名過其實：只搜這組 fixture 的帳號片段
-  //    `900700`，把 totalOut:500／txCount:3 塞進去照樣全綠＝守到的不是它宣稱的「零插值」）：
-  //    鍵只能是那兩個、status 只能是封閉碼、fields 只能是封閉欄名——任何帳單欄值都塞不進來。
-  const tc = pv.reconcile.totalsCheck;
-  assert.deepEqual(Object.keys(tc).sort(), ['fields', 'status'], '★只有這兩個鍵（多一個就是新的外送面）');
-  assert.ok(Object.values(TOTALS_CHECK).includes(tc.status), '★status 只能是封閉狀態碼');
-  assert.ok(Array.isArray(tc.fields) && tc.fields.every((/** @type {any} */ f) => TOTALS_FIELDS.includes(f)),
-    '★fields 只能是封閉欄名（帳單數字塞不進來）');
+  // 機密面（帳單欄值不隨裁決外送）由**上面那條 deepEqual** 守住：整個物件逐鍵比對，多塞一個
+  // `totalOut: 500` 就有 4 題轉紅（實測 2026-08-19）。
+  // ⚠️ 這裡原本另外加了三條「結構斷言」，理由寫成「原版只搜 900700、把 totalOut 塞進去照樣
+  //    全綠」——**那句話是我沒實測就寫的，而且是錯的**（Codex #490 r4#2 在舊 head 上重現：同一發
+  //    突變當場 4 題紅）。冗餘斷言配一個假證據比沒有更糟，所以整組刪掉、把真相記在這裡。
 });
 
 test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；帳單只印一半＝只算比對過的那幾欄', async () => {
@@ -853,6 +849,24 @@ test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是�
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
   assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'pass', fields: ['txCount'] },
     '★只印一半＝只列真的比對過的那一欄（fields 的契約：不可把「沒得對」講成「都對得上」）');
+});
+
+test('合計交叉驗證｜誠實殘餘：金額 0 的列方向對調，兩側合計都不變＝比到出入合計也看不到（畫面那句「任一邊都抓得到」的前提）', async () => {
+  // Codex #490 r4#1 抓到：程式正式接受 amount >= 0，而合計還有 BAL_EPS 容差——所以
+  // 「方向對調會讓兩邊同時變」只在金額大於容差時成立。這是**已知取捨、不是 bug**（0 元的列
+  // 方向記反不影響任何金額），但徽章那句寫著「金額 0 的列除外」＝**保證要有考題撐著**。
+  const withZeroRow = (/** @type {'in'|'out'} */ dir) => {
+    const a = goodAnswer();
+    a.transactions.push({ acctMasked: '900200****3302', date: '2026-06-04', direction: dir, amount: 0, balance: 1500, summary: '手續費減免', note: '' });
+    a.totals = { txCount: 4, totalOut: 500, totalIn: 2000 };   // 兩種方向都吻合這一組合計
+    return a;
+  };
+  const text = async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 4 2,000 0' }] }];
+  for (const dir of /** @type {const} */ (['in', 'out'])) {
+    const spy = spyTransport([withZeroRow(dir)]);
+    const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: text });
+    assert.equal(pv.reconcile.totalsCheck.status, 'pass', `★金額 0 的列記成 ${dir} 都過得了合計交叉驗證＝殘餘照實存在`);
+  }
 });
 
 test('合計交叉驗證｜配方路線沒有合計欄＝no-totals（不可靜靜當成 pass）', async () => {

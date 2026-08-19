@@ -172,13 +172,16 @@ test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不�
   const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
     totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut'] } }, 'bank');
   assert.match(h, /合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。/);
-  assert.doesNotMatch(h, /存入合計/, '★沒印的欄不可混進來（那會把「沒得對」講成「對過了」）');
+  // 「一致」那一句本身不可含沒印的欄（後半段點名「沒印存入合計」是另一回事＝r4#1 要求的誠實）
+  const claim = h.slice(h.indexOf('合計交叉驗證：'), h.indexOf('⚠️ 帳單沒印'));
+  assert.ok(claim.includes('一致'), '抓得到「一致」那一句（抓不到＝這題空轉）');
+  assert.doesNotMatch(claim, /存入合計/, '★沒印的欄不可混進「對得上」那一句（那會把「沒得對」講成「對過了」）');
   assert.doesNotMatch(h, /沒有跑/);
   // 句子**到句號為止**（自審突變 M-pass-overclaim：三題全是 match＝子字串，句號後面接
   // 「每一筆的金額與方向都被驗過了」照樣全綠——合計只比三個控制總額，首筆的金額/方向本來就驗不到）
-  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['txCount', 'totalOut'] }),
-    '合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。',
-    '★逐字相等——誇大可以接在句號後面，子字串比對永遠攔不到（比到出入合計＝不掛「只比到筆數」那句附註）');
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] }),
+    '合計交叉驗證：帳單印的筆數、支出合計、存入合計與逐筆算出來的一致。',
+    '★逐字相等——誇大可以接在句號後面，子字串比對永遠攔不到（三欄全比到＝這句就是全部，不可再多掛）');
   // 三欄全印＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
   // 後端說「存入合計真的比對過了」、畫面卻靜靜不講，而那正是這支要消滅的病）
   const all = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
@@ -191,15 +194,22 @@ test('合計｜只比到筆數＝要自己講「方向讀反仍沒把關」（�
   // 帳單只印明細總筆數時，這道比得到的那一欄對「方向讀反」完全無效。不講的話，使用者照徽章
   // 的指路看到「合計交叉驗證…一致」就以為方向也有人看＝這支要消滅的同一種假話換個角落復發。
   const onlyCount = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount'] });
-  assert.match(onlyCount, /只比到筆數/, '★要明講這次只比到哪一欄');
+  assert.match(onlyCount, /沒印支出合計、存入合計/, '★沒比到的欄要點名');
+  assert.match(onlyCount, /只擋得住<b>會改動筆數<\/b>的錯/, '★要講出這道的真實射程＝只罩得住會改動比到那幾欄的錯');
   assert.match(onlyCount, /方向對調不會改變筆數/, '★要講出原因（否則使用者不知道為什麼筆數對了還要自己看）');
   assert.match(onlyCount, /第一筆的方向讀反/, '★要點名仍然沒把關的是哪一型');
   assert.match(onlyCount, /核對收支方向/, '★要給下一步');
-  // 出入合計只要比到一個，方向讀反就擋得住（對調會讓兩邊同時變）＝不可再掛這句嚇人
+  // 出入合計只要比到一個，方向讀反就擋得住（對調會讓兩邊同時變）＝不可再掛「方向沒把關」嚇人
   for (const f of [['txCount', 'totalOut'], ['txCount', 'totalIn'], ['totalOut'], ['txCount', 'totalOut', 'totalIn']]) {
-    assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: f }), /只比到筆數/,
+    assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: f }), /方向讀反/,
       `★${f.join('+')} 比到了出入合計＝方向讀反擋得住，不可誇大成「仍沒把關」`);
   }
+  // 沒比到的欄一律點名（r4#1：漏掉一筆收入不會改動支出合計——「只比筆數」不是唯一有洞的那一格）
+  const noIn = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'totalOut'] });
+  assert.match(noIn, /沒印存入合計/, '★缺存入合計也要講（漏抄一筆收入時它才是那把刀）');
+  assert.doesNotMatch(noIn, /方向讀反/, '★但方向讀反這一型已經有支出合計罩著，不可重複嚇人');
+  assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'totalOut', 'totalIn'] }),
+    /沒印|只擋得住/, '★三欄全比到＝沒有欄可點名，不可硬掛一句');
 });
 
 test('合計｜每個欄名都翻得出白話（互扣：後端說比對過、畫面卻靜靜不講＝Codex #490 r1#2 的假綠）', () => {
