@@ -224,6 +224,28 @@ test('接線｜答案卷 schema 帶 kind（必填、封閉列舉）與 period；
   assert.match(sys, /看不出來就填 demand/, '★不確定時倒向 demand（填錯成 time 會用期間當身分）');
 });
 
+test('r8｜末碼碰撞時，期間歸屬不得在不同遮罩帳戶之間互換（碰撞鍵的承重題）', () => {
+  // 兩顆定存：末碼同為 1234、遮罩不同（900100 / 900200）、幣別金額都一樣 —— 只有「哪一段期間屬於哪一戶」不同。
+  // 舊鍵（suffix|currency|balance）會把兩戶揉成同一組，兩邊排序後看起來一模一樣＝錯報 agree。
+  const mk = (/** @type {string} */ p1, /** @type {string} */ p2) => normalizeAiBank({
+    bank: '第一銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [{ masked: '900100****1234', currency: 'USD' }, { masked: '900200****1234', currency: 'USD' }],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [
+      { masked: '900100****1234', balance: 51, currency: 'USD', label: '外幣定存', note: '', kind: 'time', period: p1 },
+      { masked: '900200****1234', balance: 51, currency: 'USD', label: '外幣定存', note: '', kind: 'time', period: p2 },
+    ],
+    transactions: [],
+  });
+  const A = mk('2026/01/15~2026/07/15', '2026/02/20~2026/08/20');
+  const B = mk('2026/02/20~2026/08/20', '2026/01/15~2026/07/15');   // 期間對調
+  const r = aiAnswersAgree(A, B);
+  assert.ok(r.diffs.includes('定存期間'), `★期間掛錯戶＝hard（實得 ${JSON.stringify(r.diffs)}）——用舊鍵會錯報一致`);
+  assert.equal(r.agree, false);
+  // 對照：期間沒對調＝完全一致（確認上面那顆紅不是因為別的欄位）
+  assert.equal(aiAnswersAgree(A, mk('2026/01/15~2026/07/15', '2026/02/20~2026/08/20')).agree, true);
+});
+
 // ---- Codex r2#3（保留）：期間必須是合法區間 ----
 test('r2#3｜起日晚於迄日＝抄反了，整段不收；假日期同樣不收（假身分永遠到不了期）', () => {
   assert.equal(canonPeriod('2026/07/15~2026/01/15'), '', '★反向區間回空');
