@@ -24,7 +24,8 @@ const TEXT = Object.freeze({
   ai_compare: '兩份都讀完了，正在比對會影響錢的欄位…',
   ai_arbitrate: '兩份讀得不一樣，正在請第三個 AI 獨立仲裁…',
   ai_attest: '其中一讀沒讀出合法答案，正在請第三個 AI 補一份獨立答案…',   // ⚠️ 不可與 arbitrate 共用句子（#476 r1#1 同一課：那時是徽章、這次是進度）
-  verify: '正在驗算（餘額鏈與合計）…',
+  verify: '正在驗算（逐筆餘額鏈；有讀到合計欄、又沒有混幣時才會多比一次合計）…',   // ⚠️ 三條都踩過（2026-08-19）：①不可寫死「餘額鏈與合計」——合計那道對混幣帳單整道跳過②不可說「帳單印得出來」——管線只知道有沒有讀到那一欄③**不可提 AI**——模板路線（零 AI）也會推這個階段碼（r9#1）
+  // （行為由 test/upload-progress.test.js 的「合計」那題釘住——提到合計就要同時講出條件）
   build_preview: '驗算通過，正在整理預覽…',
 });
 
@@ -32,7 +33,9 @@ const TEXT = Object.freeze({
  *  @returns {string} 要顯示的句子；未知代碼／壞形狀＝空字串（呼叫端沿用上一句） */
 export function progressText(frame) {
   if (!frame || frame.t !== 'stage') return '';
-  const base = /** @type {any} */ (TEXT)[String(frame.s)] || '';
+  // 鐵則 3.5：查表一律 hasOwn——`TEXT['toString']` 撈到原型函式，`|| ''` 擋不住它（Codex #490 r2#1 同族）
+  const key = String(frame.s);
+  const base = Object.hasOwn(TEXT, key) ? /** @type {any} */ (TEXT)[key] : '';
   if (!base) return '';
   // 模型名只在後端有帶時附上（它本來就會出現在預覽徽章＝不是新洩漏面）
   return frame.model ? base.replace(/…$/, `（${frame.model}）…`) : base;

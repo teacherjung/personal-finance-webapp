@@ -38,7 +38,7 @@ const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '合成帳單內文�
 const goodAnswer = () => ({
   bank: '合成一銀', referenceDate: '2026-06-30',
   accountCurrencies: [{ masked: '900200****3302', currency: 'TWD' }],
-  totals: { txCount: null, totalOut: null, totalIn: null },   // 必填欄（缺席＝ai_bad_answer）；null＝帳單沒印
+  totals: { txCount: null, totalOut: null, totalIn: null },   // 必填欄（缺席＝ai_bad_answer）；null＝AI 沒交回那一欄
   accounts: [{ masked: '900200****3302', balance: 1500, currency: 'TWD', label: '活存', note: '' }],
   transactions: [
     { acctMasked: '900200****3302', date: '2026-06-01', direction: 'in', amount: 1000, balance: 1000, summary: '轉帳存入', note: '薪資' },
@@ -731,6 +731,7 @@ test('裁示⑥｜模型階梯＝Sonnet 預設、Opus 升級（Haiku 退出解�
 });
 
 test('裁示⑧a 接地｜答案的金額不在帳單原文＝ai_bad_answer 走階梯；兩級都不接地＝照實擋', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const { assertAiBankGrounded } = await import('../lib/ai-parse.js');
   // 純函式面：帳戶餘額/交易金額/交易餘額/totals 逐類
   const grounded = normalizeAiBank({ ...goodAnswer(), totals: { txCount: 3, totalOut: 500, totalIn: null } });
@@ -758,33 +759,48 @@ test('裁示⑧a 接地｜答案的金額不在帳單原文＝ai_bad_answer 走�
   assert.equal(spy.calls.length, 2, '接地失敗＝ai_bad_answer＝有走階梯');
 });
 
-test('裁示⑧b 合計欄｜帳單印的筆數/支出/存入合計 vs AI 逐筆——對不上＝ai_totals_mismatch、對上＝放行', async () => {
+test('裁示⑧b 合計欄｜AI 抄回來的筆數/支出/存入合計 vs 它自己的逐筆——對不上＝ai_totals_mismatch、對上＝放行', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const withTotals = (/** @type {any} */ t) => { const a = goodAnswer(); a.totals = t; return a; };
   // 對得上（且數字有接地）＝放行
   const okSpy = spyTransport([withTotals({ txCount: 3, totalOut: 500, totalIn: 2000 })]);
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(okSpy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000' }] }] });
   assert.equal(pv.engine, 'ai', '合計對上＝照常出預覽');
+  assert.deepEqual(pv.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
+    '★這道跑了沒有要跟著裁決走到畫面（2026-08-19）：三欄都交回來了＝三欄都比對過');
   // 筆數對不上＝兩級都紅＝終局 ai_totals_mismatch（訊息不回聲數字）
   const badCount = () => withTotals({ txCount: 4, totalOut: null, totalIn: null });
   const spy2 = spyTransport([badCount(), badCount()]);
   await assert.rejects(
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 4' }] }] }),
-    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/[0-9]{3}/.test(e.message),
-    '★筆數不符＝擋、訊息無數字');
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/\d/.test(e.message) && /筆數/.test(e.message) && !/帳單印的/.test(e.message),
+    '★筆數不符＝擋、訊息無數字、要點名是「筆數」那一欄、而且主詞不可說成「帳單印的」（r7#1：管線只知道 AI 交回什麼）（自審突變 M-wrong-column-msg：三段訊息互相對調全綠——使用者去核對錯的欄位，真正抄錯的那欄沒人看）');
   assert.equal(spy2.calls.length, 2, '閘類失敗＝有走階梯');
   // 支出合計對不上
   const badOut = () => withTotals({ txCount: null, totalOut: 600, totalIn: null });
   const spy3 = spyTransport([badOut(), badOut()]);
   await assert.rejects(
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy3), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 600' }] }] }),
-    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch');
-  // 全 null（帳單沒印）＝誠實缺席、照舊放行
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/\d/.test(e.message) && /支出合計/.test(e.message) && !/帳單印的/.test(e.message),
+    '★支出欄的刀原本只驗 code＝零訊息守衛（主詞同上：突變實測退回「帳單印的支出合計」全綠）（自審突變 M-msg-echo-out：把 AI 誤讀的帳單金額插進訊息全綠，違反本檔自己的機密紀律）');
+  // 容差＝BAL_EPS（與餘額鏈同一把尺）：差 0.02 就要擋（自審突變 M-eps-50：把尺換成硬寫的 50
+  // 全綠——三題的差額都是 100，只釘住一個量級，這道檢查存在的理由可以被靜靜掏空）
+  const epsBad = () => withTotals({ txCount: null, totalOut: 500.02, totalIn: null });
+  const spyEps = spyTransport([epsBad(), epsBad()]);
+  await assert.rejects(
+    previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spyEps), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 500.02' }] }] }),
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch',
+    '★差 0.02（> BAL_EPS 0.005）就要擋——容差被放寬到「幾十元不算」時這裡要紅');
+  // 全 null（AI 沒交回那一欄）＝誠實缺席、照舊放行
   const nullSpy = spyTransport([withTotals({ txCount: null, totalOut: null, totalIn: null })]);
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(nullSpy), aiExtract: fakeExtract });
-  assert.equal(pv2.engine, 'ai', '沒印合計＝跳過檢查、不連坐');
+  assert.equal(pv2.engine, 'ai', '沒交回合計＝跳過檢查、不連坐');
+  assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'not-read', fields: [] },
+    '★沒交回合計欄＝畫面要說得出「這次沒跑」（不可讓人以為驗過了）；碼名刻意不叫 not-printed——管線分不出是帳單沒印還是 AI 沒讀出來（r7#1）');
 });
 
 test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別加總會誤擋正確答案（真實混幣版面形）', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   // TWD＋USD 混合＋帳單印了「台幣段」合計 500：全列加總含 USD 50 ⇒ 若不跳過必 mismatch 誤擋
   const mixedTotals = () => {
     const a = goodAnswer();
@@ -801,6 +817,84 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 300 50 250' }] }] });
   assert.equal(pv.engine, 'ai', '★混幣＝合計欄跳過（涵蓋範圍機械判不出）、不連坐擋死');
   assert.equal(spy.calls.length, 1, '一發就過、沒有白燒升級');
+  // ⚠️ **跳過要說得出口**（2026-08-19；William 指出混幣時這道整個關掉、畫面卻說它擋得住，而他自己的
+  //   帳單正是混幣＝轉述）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
+  assert.deepEqual(pv.reconcile.totalsCheck, { status: 'mixed-currency', fields: [] },
+    '★整道跳過的事實必須傳到畫面（不傳＝說明區那句「帳單有印合計＝合計也擋」對這份帳單就是假話）');
+  // 機密面（帳單欄值不隨裁決外送）由**上面那條 deepEqual** 守住：整個物件逐鍵比對，多塞一個
+  // `totalOut: 500` 就有 4 題轉紅（實測 2026-08-19）。
+  // ⚠️ 這裡原本另外加了三條「結構斷言」，理由寫成「原版只搜 900700、把 totalOut 塞進去照樣
+  //    全綠」——**那句話是我沒實測就寫的，而且是錯的**（Codex #490 r4#2 在舊 head 上重現：同一發
+  //    突變當場 4 題紅）。冗餘斷言配一個假證據比沒有更糟，所以整組刪掉、把真相記在這裡。
+});
+
+test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；只交回一半＝只算比對過的那幾欄', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
+  // 自審突變兩顆（M-mixed-criterion-widen／M-fields-overclaim）——原本後端只有兩個極端有題
+  // （三欄全交回、三欄全 null；真有外幣交易、完全沒有外幣），中間這兩格一題都沒有。
+  // ①**概要有外幣帳戶、但本期明細全是台幣**：合計涵蓋哪一段沒有歧義 ⇒ 這道要照驗。
+  //    判準若被簡化成「掃幣別表有沒有外幣」，使用者每一期都有外幣帳戶＝這道從此永遠靜靜關掉，
+  //    而畫面還會給他一個對這份根本不成立的理由（「這份同時有台幣與外幣所以判不出涵蓋範圍」）。
+  const foreignAcctOnly = () => {
+    const a = goodAnswer();
+    a.accountCurrencies.push({ masked: '900700****7707', currency: 'USD' });
+    a.accounts.push({ masked: '900700****7707', balance: 250, currency: 'USD', label: '外幣活存', note: '' });
+    a.totals = { txCount: 3, totalOut: 500, totalIn: 2000 };
+    return a;
+  };
+  const spy1 = spyTransport([foreignAcctOnly()]);
+  const pv1 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy1), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 3 2,000 250' }] }] });
+  assert.deepEqual(pv1.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
+    '★外幣帳戶只出現在概要、明細全台幣＝合計照驗（跳過的條件是明細真的有外幣列）');
+  // ②**AI 只交回了筆數**：fields 只能有那一欄——「跑到 pass 就是三欄都驗過了」這種簡化，
+  //    會讓畫面唸出「筆數、支出合計、存入合計都一致」，而後兩欄根本沒交回、一次都沒比。
+  const onlyCount = () => { const a = goodAnswer(); a.totals = { txCount: 3, totalOut: null, totalIn: null }; return a; };
+  const spy2 = spyTransport([onlyCount()]);
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy2), aiExtract: fakeExtract });
+  assert.deepEqual(pv2.reconcile.totalsCheck, { status: 'pass', fields: ['txCount'] },
+    '★只交回一半＝只列真的比對過的那一欄（fields 的契約：不可把「沒得對」講成「都對得上」）');
+});
+
+test('合計交叉驗證｜誠實殘餘：金額 0 或不大於容差（0.004）的列方向對調，兩側合計都不動＝看不到', async () => {
+  // Codex #490 r4#1 抓到：程式正式接受 amount >= 0，而合計還有 BAL_EPS 容差——所以
+  // 「方向對調會讓兩邊同時變」只在金額大於容差時成立。這是**已知取捨、不是 bug**（那種列不影響金額）。
+  // ⚠️ William 2026-08-19 裁範圍之後**這條殘餘不寫進畫面**（收回誇大、不再加註），只住在
+  //    reconcile-summary.js 的註解與這一題——所以它更需要真的驗得動，不能只看預設值。
+  await seedDb(true);   // r6#2：自己 seed（靠前一題留下的 db 狀態＝單獨跑會 ai_no_key）
+  const withTinyRow = (/** @type {'in'|'out'} */ dir, /** @type {number} */ amt, /** @type {number} */ bal) => {
+    const a = goodAnswer();
+    a.transactions.push({ acctMasked: '900200****3302', date: '2026-06-04', direction: dir, amount: amt, balance: bal, summary: '手續費減免', note: '' });
+    a.accounts[0].balance = bal;
+    a.totals = { txCount: 4, totalOut: 500, totalIn: 2000 };   // 兩種方向都吻合這一組合計
+    return a;
+  };
+  // 邊界要**兩顆**（Codex #490 r5#2：只驗 0 守不住真正的門檻＝BAL_EPS）：0 元與 0.004 元
+  // （0.004 < 0.005 ⇒ 餘額鏈與合計兩邊都在容差內）。金額本身微不足道，記錄的是「這道看不到它」。
+  for (const amt of [0, 0.004]) {
+    for (const dir of /** @type {const} */ (['in', 'out'])) {
+      const bal = dir === 'in' ? 1500 + amt : 1500 - amt;   // 餘額鏈要跟著方向走（不然斷的是鏈、不是這題要測的合計）
+      const text = async () => [{ y: 0, cells: [{ x: 0, s: `原文 1,000 500 1,500 4 2,000 ${amt} ${bal}` }] }];
+      const spy = spyTransport([withTinyRow(dir, amt, bal)]);
+      const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: text });
+      // status 的預設值就是 pass ⇒ 只斷言它證明不了「這道真的比過」（r6#2）：要連**比到哪幾欄**
+      // 與**級別**一起釘，才排除得掉「其實走了 not-read／根本沒進到比對」那些解釋。
+      assert.deepEqual(pv.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
+        `★金額 ${amt} 的列記成 ${dir}：三欄都真的比過了`);
+      assert.equal(pv.reconcile.level, 'strong', '★而且是強閘下的結果（餘額鏈也接得上）');
+    }
+  }
+});
+
+test('合計交叉驗證｜配方路線沒有合計欄＝no-totals（不可靜靜當成 pass）', async () => {
+  const { assertAiBankReconciled } = await import('../lib/services/bank-import.js');
+  const parsed = normalizeAiBank(goodAnswer());
+  const withTotals = assertAiBankReconciled(parsed, { accounts: [] });
+  assert.equal(withTotals.totalsCheck.status, 'not-read', '答案卷有欄、三欄 null＝AI 沒交回那一欄');
+  delete (/** @type {any} */ (parsed)).totals;            // 配方路線＝parseWithRecipe 根本不產這個欄
+  const noTotals = assertAiBankReconciled(parsed, { accounts: [] });
+  assert.deepEqual(noTotals.totalsCheck, { status: 'no-totals', fields: [] },
+    '★路線不產合計欄＝照實說沒跑（規則卡讀的那份也不可宣稱合計把過關）');
+  assert.equal(noTotals.level, 'strong', '既有裁決欄位照舊（新欄是加的、不是換的）');
 });
 
 test('預審r0#2｜接地 NFKC：全形數字帳單（１，５００）不得整版誤殺；去空白變體接回被拆格的金額', async () => {
@@ -832,6 +926,7 @@ test('預審r0#3｜接地剔除日期 token：金額恰等於年份/民國日期
 });
 
 test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；totalIn 對不上＝ai_totals_mismatch；訊息全無數字', async () => {
+  await seedDb(true);   // 自己 seed：靠前一題留下的鑰匙＝單獨跑會 ai_no_key（r8#2）
   const missing = () => { const a = goodAnswer(); delete a.totals; return a; };
   assert.throws(() => normalizeAiBank(missing()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totals/.test(e.message),
     '★必填欄漏交＝壞答案、不靜默降級');
@@ -839,12 +934,12 @@ test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；t
   const missingKey = () => { const a = goodAnswer(); a.totals = /** @type {any} */ ({ txCount: null, totalOut: null }); return a; };
   assert.throws(() => normalizeAiBank(missingKey()), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /totalIn/.test(e.message),
     '★單鍵缺席＝壞答案（必填不是口號）');
-  const badIn = () => { const a = goodAnswer(); a.totals = { txCount: null, totalOut: null, totalIn: 1900 }; return a; };
+  const badIn = () => { const a = goodAnswer(); a.totals = { txCount: null, totalOut: null, totalIn: 1900 }; return a; };   // 訊息要點名「存入合計」（見 ⑧b 那題的同族斷言）
   const spy = spyTransport([badIn(), badIn()]);
   await assert.rejects(
     previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: async () => [{ y: 0, cells: [{ x: 0, s: '原文 1,000 500 1,500 1,900' }] }] }),
-    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/\d/.test(e.message),
-    '★存入合計不符＝擋（三欄各自有刀）、訊息一個數字都不可有');
+    (/** @type {any} */ e) => e.code === 'ai_totals_mismatch' && !/\d/.test(e.message) && /存入合計/.test(e.message) && !/帳單印的/.test(e.message),
+    '★存入合計不符＝擋（三欄各自有刀）、訊息一個數字都不可有、要點名自己那一欄、主詞不可誤稱');
 });
 
 test('預審r0#5｜真引擎工廠的模型接線＝AI_BANK_MODELS（裁示⑥不能只釘常數、要釘到出口）；提示詞規則 8 釘樁', async () => {

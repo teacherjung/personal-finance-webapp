@@ -268,6 +268,34 @@ test('E2｜預覽徽章：模板回空字串；AI 版要講「誰讀的」與「
   assert.doesNotMatch(html, /claude-haiku-4-5-20251001/, '不給使用者看內部代號');
 });
 
+test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再無條件講「帳單有印合計＝擋得住」（William 2026-08-19 指出的問題；他自己的帳單正是混幣）', () => {
+  const html = aiPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  const blindItem = (html.split('<li>').find((x) => x.includes('看不到的'))) || '';
+  assert.ok(blindItem, '要有「看不到什麼」那一條');
+  assert.match(blindItem, /台幣[^。]{0,24}外幣/, '★要點名條件是台幣與外幣混合（不講條件＝這份帳單的使用者被誤導）');
+  assert.match(blindItem, /整道關閉|沒跑|沒有跑/, '★要講那道檢查會整個關掉，不是「比較弱」');
+  assert.match(blindItem, /帳單數學驗算/, '★要指路：這一份到底跑了沒有，看畫面上那一段');
+  assert.doesNotMatch(blindItem, /帳單有印合計＝合計也擋/, '★舊的無條件講法（①）不可留');
+  assert.doesNotMatch(blindItem, /帳單有印整份合計＝擋下/, '★舊的無條件講法（⑦）不可留');
+  assert.doesNotMatch(blindItem, /或帳單有印合計＝擋下/, '★舊的無條件講法（⑥）不可留');
+  // ⚠️ 「有跑」還要看**比到哪幾欄**（複審後掃抓到）：只印明細總筆數的帳單，這道比得到的那一欄
+  //    對「方向讀反」完全無效（實測首筆 in→out 對調後筆數不變）。①不可再用二元的「有跑／沒跑」講。
+  assert.match(blindItem, /只比到筆數/, '★要點出「只比到筆數」這一格');
+  // r4#1：**同方向**才是那把刀——漏掉一筆收入時只比支出合計是看不到的（Codex 用正式管線實測 PASS）
+  assert.match(blindItem, /同一個方向/, '★金額抄錯要靠同方向的那一欄');
+  assert.match(blindItem, /漏掉一筆收入時，只比支出合計是看不到的/, '★整筆漏掉也是同方向，不可寫成「任一出入合計」');
+  // ⚠️ William 2026-08-19 裁範圍（這一族連三輪中刀）：**收回誇大句、不再加註**——
+  //    講法一律改成「要比到 X 才擋得住」（必要條件），不再宣稱「比到了就擋得住」（充分條件）。
+  //    r5 實測：整組改成自洽的另一套數字，三欄全 pass ⇒ 充分講法本來就不成立。
+  assert.match(blindItem, /要比到「同一個方向」的合計/, '★必要講法');
+  assert.doesNotMatch(blindItem, /＝合計也擋/, '★充分講法不可回來');
+  assert.match(blindItem, /整組一起抄錯它看不出來/, '★開場要自己講出這道的真正邊界');
+  // r6#1：主詞不可誤稱——那兩個數字是 AI 交回來的，不是我們看到帳單印的
+  assert.doesNotMatch(blindItem, /帳單自己印的筆數/, '★不可把 AI 回傳值稱作「帳單自己印的」');
+  assert.match(blindItem, /AI 抄回來的筆數與出入合計/, '★要用對主詞');
+  assert.doesNotMatch(blindItem, /<b>合計那道這次有跑<\/b>＝合計也擋/, '★二元講法不可留');
+});
+
 test('E2b｜modelDisplayName：代號→人看得懂的名字；認不得的原樣顯示（不吃掉資訊）', () => {
   assert.equal(modelDisplayName('claude-haiku-4-5-20251001'), 'Claude Haiku 4.5');
   assert.equal(modelDisplayName('claude-sonnet-5'), 'Claude Sonnet 5');

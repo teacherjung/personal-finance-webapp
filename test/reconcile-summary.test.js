@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gateSummaryHtml } from '../public/modules/reconcile-summary.js';
+import { gateSummaryHtml, totalsCheckSentence } from '../public/modules/reconcile-summary.js';
+import { TOTALS_CHECK, TOTALS_FIELDS } from '../lib/statement-reconcile.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -144,3 +145,154 @@ test('advisories 不是陣列＝當空處理、stats 缺席＝計數當 0（防�
   assert.doesNotMatch(b, /0 關/, '不可湊出「0 關」（r1#2）');
   assert.doesNotMatch(b, /：。/, '不可留空冒號句');
 });
+
+// ---- 合計交叉驗證的實況（2026-08-19；William 指出混幣時這道整個關掉、畫面卻說它擋得住＝轉述）----
+// 這幾題守的是**畫面不說謊**：那道檢查對混幣帳單整道跳過，而說明區把它當現役防線在講。
+// 少一道檢查使用者還知道要自己核對；畫面說它有把關＝他連核對都省了。
+
+test('合計｜混幣＝必須明講「這次沒有跑」＋原因＋少了它看不到什麼（不可只有 ✓ 通過那句）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [],
+    stats: { pairsChecked: 2, endChecked: 1 }, totalsCheck: { status: 'mixed-currency', fields: [] } }, 'bank');
+  assert.match(h, /✓ 帳單數學驗算通過/, '餘額鏈那道真的跑了＝照講（不因為另一道沒跑就整段改口）');
+  assert.match(h, /合計交叉驗證這次<b>沒有跑<\/b>/, '★沒跑就要明講沒跑');
+  assert.match(h, /台幣[^。]*外幣/, '★要講出原因是混幣（使用者才知道這是他這份帳單的性質、不是壞掉）');
+  // 三型**逐型**斷言（自審突變 M-loss-list-drop：原本只釘①，把⑥⑦砍掉全綠——契約寫著
+  // 「多列＝誇大、少列＝遮掩」，而只有「誇大」那半有題，「遮掩」那半是空的）
+  assert.match(h, /第一筆的方向讀反/, '★①每個帳戶第一筆的方向讀反或整筆漏掉');
+  assert.match(h, /整個帳戶被漏讀/, '★⑦整個帳戶被漏讀——整帳戶的錢不見、餘額鏈完全接得上，最陰險的一型不可被砍掉');
+  assert.match(h, /併成淨額/, '★⑥一收一支併成淨額');
+  assert.doesNotMatch(h, /<b>方向讀反<\/b>/, '★不可講成「所有方向讀反都看不到」（非首筆的餘額鏈當場接不上）＝誇大損失');
+  assert.match(h, /核對筆數與金額/, '★要給下一步');
+  assert.match(h, /<p[^>]*>⚠️ 合計交叉驗證/, '★警示記號不可被拿掉（M-warn-sign-drop）：這段是 muted 小字、又緊接在綠色「✓ 通過」下面，沒有記號會被讀成中性附註');
+  assert.doesNotMatch(h, /核對過|已經驗過|不影響/, '★理由不可反過來安撫（M-mixed-reason-lie：改寫成「台幣那段已經另外核對過了」仍含「台幣與外幣」＝拼字守衛攔不住）');
+  assert.doesNotMatch(h, /合計交叉驗證：/, '★不可同時出現「合計對得上」那句');
+});
+
+test('合計｜有跑＝只列真的比對過的欄（只交回一半時不可說「都對得上」）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
+    totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut'] } }, 'bank');
+  assert.match(h, /AI 抄回來的筆數、支出合計與它自己逐筆算出來的對得上/);
+  // 「對得上」那一句本身不可含沒讀到的欄（後面括號點名「這次沒讀到存入合計」是另一回事）
+  const claim = h.slice(h.indexOf('合計交叉驗證：'), h.indexOf('（這次沒讀到'));
+  assert.ok(claim.includes('對得上'), '抓得到「對得上」那一句（抓不到＝這題空轉）');
+  assert.doesNotMatch(claim, /存入合計/, '★沒讀到的欄不可混進「對得上」那一句（那會把「沒得對」講成「對過了」）');
+  assert.doesNotMatch(h, /沒有跑/);
+  // ⚠️ William 2026-08-19 裁範圍（這一族連三輪中刀）：**收回誇大句**——這道能保證的只有
+  //    「兩邊對得上」，不是「會改動那幾欄的錯都擋得住」（r5 實測：整組改成自洽的另一套數字全通過）。
+  assert.match(h, /擋不住整組一起抄錯/, '★要自己講出真正的邊界');
+  assert.doesNotMatch(h, /只擋得住<b>會改動/, '★誇大句不可回來');
+  assert.doesNotMatch(h, /帳單印的/, '★不可斷言「帳單印的」——那是 AI 抄回來的，管線分不出帳單真的印了什麼');
+  // 句子**到句號為止**（自審突變 M-pass-overclaim：三題全是 match＝子字串，句號後面接
+  // 「每一筆的金額與方向都被驗過了」照樣全綠——合計只比三個控制總額，首筆的金額/方向本來就驗不到）
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] }),
+    '合計交叉驗證：AI 抄回來的筆數、支出合計、存入合計與它自己逐筆算出來的對得上。'
+    + '這一道比的是這兩邊，擋得住抄漏、抄多、方向對調這種<b>兩邊對不上</b>的錯，<b>擋不住整組一起抄錯</b>。',
+    '★逐字相等——誇大可以接在句號後面，子字串比對永遠攔不到（三欄全比到＝這句就是全部，不可再多掛）');
+  // 三欄全交回＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
+  // 後端說「存入合計真的比對過了」、畫面卻靜靜不講，而那正是這支要消滅的病）
+  const all = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
+    totalsCheck: { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] } }, 'bank');
+  assert.match(all, /AI 抄回來的筆數、支出合計、存入合計與它自己逐筆算出來的對得上/);
+});
+
+test('合計｜只比到筆數＝要自己講「方向讀反仍沒把關」（複審後掃抓到：「有跑」≠「這幾型都罩到了」）', () => {
+  // 實測：首筆 in→out 對調後**筆數 3→3 一模一樣**（支出合計 500→1500 才會不符）——
+  // AI 只交回明細總筆數時，這道比得到的那一欄對「方向讀反」完全無效。不講的話，使用者照徽章
+  // 的指路看到「合計交叉驗證…一致」就以為方向也有人看＝這支要消滅的同一種假話換個角落復發。
+  const onlyCount = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount'] });
+  assert.match(onlyCount, /這次沒讀到支出合計、存入合計/, '★沒比到的欄要點名（而且說「沒讀到」不說「帳單沒印」）');
+  assert.match(onlyCount, /方向對調不會改變筆數/, '★要講出原因（否則使用者不知道為什麼筆數對了還要自己看）');
+  assert.match(onlyCount, /第一筆的方向讀反/, '★要點名仍然沒把關的是哪一型');
+  assert.match(onlyCount, /核對收支方向/, '★要給下一步');
+  // 出入合計只要比到一個，方向讀反就擋得住（對調會讓兩邊同時變）＝不可再掛「方向沒把關」嚇人
+  for (const f of [['txCount', 'totalOut'], ['txCount', 'totalIn'], ['totalOut'], ['txCount', 'totalOut', 'totalIn']]) {
+    assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: f }), /方向讀反/,
+      `★${f.join('+')} 比到了出入合計＝方向讀反擋得住，不可誇大成「仍沒把關」`);
+  }
+  // 沒比到的欄一律點名（r4#1：漏掉一筆收入不會改動支出合計——「只比筆數」不是唯一有洞的那一格）
+  const noIn = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'totalOut'] });
+  assert.match(noIn, /沒讀到存入合計/, '★缺存入合計也要講（漏抄一筆收入時它才是那把刀）');
+  assert.doesNotMatch(noIn, /方向讀反/, '★但方向讀反這一型已經有支出合計罩著，不可重複嚇人');
+  assert.doesNotMatch(totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'totalOut', 'totalIn'] }),
+    /沒讀到/, '★三欄全比到＝沒有欄可點名，不可硬掛一句');
+});
+
+test('合計｜每個欄名都翻得出白話（互扣：後端說比對過、畫面卻靜靜不講＝Codex #490 r1#2 的假綠）', () => {
+  for (const f of TOTALS_FIELDS) {
+    const line = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: [f] });
+    assert.notEqual(line, '', `欄名 ${f} 沒有對應的白話——後端會回這個欄，畫面卻唸不出來`);
+    assert.match(line, /合計交叉驗證：AI 抄回來的.+與它自己逐筆算出來的對得上/, `欄名 ${f} 的句子形狀不對`);
+  }
+  // 認得的欄與不認得的欄混在一起＝只唸認得的那些（不可整句消失、也不可把陌生欄名原樣吐出去）
+  const mixed = totalsCheckSentence({ status: TOTALS_CHECK.PASS, fields: ['txCount', 'newField'] });
+  assert.match(mixed, /筆數/);
+  assert.doesNotMatch(mixed, /newField/);
+});
+
+test('合計｜每個後端狀態碼都有句子（互扣：新增碼沒補文案＝這裡紅）；未知碼／空 fields＝不吐、不編造', () => {
+  for (const code of Object.values(TOTALS_CHECK)) {
+    const tc = { status: code, fields: code === TOTALS_CHECK.PASS ? ['txCount'] : [] };
+    assert.notEqual(totalsCheckSentence(tc), '', `狀態碼 ${code} 沒有對應的白話句`);
+  }
+  assert.equal(totalsCheckSentence({ status: 'bogus', fields: [] }), '', '不認得的碼＝不吐亂碼（新後端配舊前端）');
+  // ⚠️ 原型鍵是「不認得的碼」裡最陰的一種（鐵則 3.5；Codex #490 r2#1 抓到）：
+  //    `({...})['toString']` 撈到的是原型上的**函式**，`if (!why) return ''` 這種空值守衛對它無效，
+  //    函式本體會被樣板字串印進畫面。實測原本會印出「合計交叉驗證這次沒有跑：function toString() {…}」。
+  //    ⚠️ 自有的 `__proto__` 鍵只有 `JSON.parse` 造得出來（物件字面量裡那個是設原型的特殊語法），
+  //    所以這題的 fields 走 JSON.parse——用字面量寫永遠測不到真實路徑。
+  for (const k of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+    assert.equal(totalsCheckSentence({ status: k, fields: [] }), '', `★原型鍵 ${k} 不可撈到原型上的東西`);
+    assert.equal(totalsCheckSentence({ status: 'pass', fields: [k] }), '', `★欄名是原型鍵 ${k} 時同樣不算數`);
+  }
+  const fromJson = JSON.parse('{"status":"pass","fields":["__proto__","toString"]}');
+  assert.equal(totalsCheckSentence(fromJson), '', '★JSON.parse 造出的自有保留字鍵也不可撈到東西');
+  assert.equal(gateSummaryHtml({ level: 'strong', advisories: [], stats: {} }, /** @type {any} */ ('toString')), '',
+    '★kind 是原型鍵＝撈到函式後 .includes 會直接 TypeError 炸掉整個預覽窗');
+  assert.equal(totalsCheckSentence(null), '');
+  assert.equal(totalsCheckSentence(/** @type {any} */ ('pass')), '', '字串不是物件');
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: [] }), '',
+    '★pass 卻一欄都沒比對過＝形狀不對，不可編造「對得上」');
+  const tpl = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 } }, 'bank');
+  assert.doesNotMatch(tpl, /合計交叉驗證/, '模板路線的裁決沒有這一欄＝畫面不長這句（那道檢查本來就不存在）');
+});
+
+test('合計｜壞形狀不得變成畫面上的東西：狀態碼與欄名只當查表鍵，永遠不插進 HTML', () => {
+  // 這句話全部是本模組自己的字面（後端只給封閉代碼）——所以句子裡的 <b> 不經 esc。
+  // 那個設計成立的**前提**就是「外來字串一個都進不了」，這題把前提釘住。
+  assert.equal(totalsCheckSentence({ status: '<img src=x onerror=alert(1)>', fields: [] }), '');
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['<img src=x onerror=alert(1)>'] }), '',
+    '★不認得的欄名不是「原樣顯示」而是不算數（一欄都不認得＝這句話不成立）');
+  const h = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 1 },
+    totalsCheck: /** @type {any} */ ({ status: 'pass', fields: ['txCount', '<img src=x>'] }) }, 'bank');
+  assert.match(h, /合計交叉驗證：AI 抄回來的筆數與/);
+  assert.doesNotMatch(h, /<img/, '★外來字串不可有機會進 HTML');
+});
+
+test('合計｜三個「沒跑」的理由不可互換：各自要講自己那一種（M-no-totals-blame）', () => {
+  // 自審突變：三句可以互相複製貼上而全綠——互扣題只問「每個碼查得到非空句子」。
+  // 最傷的一種：no-totals（規則卡路線根本不抄合計欄＝我們的鍋）被改成「你的帳單沒印」，
+  // 直接違反本模組檔頭立的 r1#1「弱級句不可把鍋甩給帳單」，使用者也就不會想到換一條路線重讀。
+  const mixed = totalsCheckSentence({ status: TOTALS_CHECK.MIXED_CURRENCY, fields: [] });
+  const notRead = totalsCheckSentence({ status: TOTALS_CHECK.NOT_READ, fields: [] });
+  const noTotals = totalsCheckSentence({ status: TOTALS_CHECK.NO_TOTALS, fields: [] });
+  assert.match(mixed, /台幣[^。]{0,24}外幣/, '混幣要講混幣');
+  assert.match(mixed, /判不出來|跳過/, '混幣要講出「為什麼不能硬比」');
+  assert.match(notRead, /沒讀到/, '★只能說「這次沒讀到」——帳單可能印了、只是 AI 沒交回來（r5#3）');
+  assert.doesNotMatch(notRead, /^這份帳單自己沒印/, '★不可斷言是帳單沒印（管線分不出來）');
+  assert.match(noTotals, /讀這份帳單的方式|這條路線|沒有讀出/, '★路線不產這個欄＝我們的鍋，不可甩給帳單');
+  assert.doesNotMatch(noTotals, /帳單自己沒印/, '★no-totals 不可講成「帳單沒印」（那是另一種情況、而且是甩鍋）');
+  assert.equal(new Set([mixed, notRead, noTotals]).size, 3, '★三句必須各自不同（互相複製貼上＝這裡紅）');
+});
+
+test('合計｜有影子提醒時這句不可被擠掉（M-adv-suppress：兩者從未同時出現在任何一題裡）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [{ message: '差 100——可能漏讀' }],
+    stats: { pairsChecked: 2 }, totalsCheck: { status: 'mixed-currency', fields: [] } }, 'bank');
+  assert.match(h, /合計交叉驗證這次<b>沒有跑<\/b>/, '★同時有影子提醒又混幣＝最需要人工核對的那一份，不可反而不講');
+  assert.match(h, /⚠ 差 100/, '影子提醒照舊列出');
+});
+
+// ⚠️ **誠實劃界：本檔的考題驗的是「字串內容」，不驗「畫面上看不看得見」**。
+//    自審突變 M-hide-line（在這句的 style 加 display:none）確實全綠——句子照樣被組進 HTML、
+//    畫面上卻消失。**刻意不守**：那不是真實的失誤模式（沒有人會不小心寫出 display:none），
+//    而本專案為了防它燒過四輪覆審、被四種寫法輪流打穿（`test/ai-gate-interception.test.js`
+//    的「攔截率」題有 William 2026-08-13 的同款裁示與完整病歷）。可見性要靠真的渲染才驗得到。
