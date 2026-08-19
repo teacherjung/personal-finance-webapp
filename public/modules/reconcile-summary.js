@@ -21,7 +21,7 @@ const own = (table, key) => (typeof key === 'string' && Object.hasOwn(table, key
 const TOTALS_FIELD_TEXT = Object.freeze({ txCount: '筆數', totalOut: '支出合計', totalIn: '存入合計' });
 /** 沒跑起來的原因 → 白話（鍵＝後端 TOTALS_CHECK 的封閉狀態碼；互扣考題釘住「每個碼都有句子」）。 */
 const TOTALS_SKIP_TEXT = Object.freeze({
-  'mixed-currency': '這份帳單同時有台幣與外幣，而帳單印的合計涵蓋哪一段（整份？還是台幣那段？）機械上判不出來——硬比會把正確的答案誤擋，所以整道跳過',
+  'mixed-currency': '這份帳單同時有台幣與外幣，而合計欄涵蓋哪一段（整份？還是台幣那段？）機械上判不出來——硬比會把正確的答案誤擋，所以整道跳過',
   'not-printed': '這次沒讀到帳單的明細合計（帳單沒印、或 AI 沒讀出來都算），沒有數字可以對',
   'no-totals': '這次讀這份帳單的方式沒有讀出合計欄',
 });
@@ -29,7 +29,7 @@ const TOTALS_SKIP_TEXT = Object.freeze({
 /**
  * 合計交叉驗證的**這一份**實際狀態（2026-08-19；William 指出混幣時這道整個關掉、畫面卻說它擋得住＝轉述）。
  * ⚠️ 這句話的存在理由＝**不讓畫面說謊**：沒跑就要明講沒跑、並講出「少了它看不到什麼」——
- * 說明區列的「帳單有印合計＝合計也擋」是**機制**，這裡講的是**這一份到底跑了沒有**。
+ * 說明區列的「要比到哪一欄才擋得住」是**機制**，這裡講的是**這一份到底比到了什麼**。
  * 裁決沒帶這個欄（模板路線＝這道檢查本來就不存在）／狀態碼不認得（新後端配舊前端）＝回空字串。
  * @param {{status?:string, fields?:string[]}|null|undefined} tc
  * @returns {string}

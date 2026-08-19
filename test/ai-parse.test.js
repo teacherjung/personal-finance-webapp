@@ -853,8 +853,10 @@ test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是�
 
 test('合計交叉驗證｜誠實殘餘：金額 0 或不大於容差（0.004）的列方向對調，兩側合計都不動＝看不到', async () => {
   // Codex #490 r4#1 抓到：程式正式接受 amount >= 0，而合計還有 BAL_EPS 容差——所以
-  // 「方向對調會讓兩邊同時變」只在金額大於容差時成立。這是**已知取捨、不是 bug**（0 元的列
-  // 方向記反不影響任何金額），但徽章那句寫著「金額 0 的列除外」＝**保證要有考題撐著**。
+  // 「方向對調會讓兩邊同時變」只在金額大於容差時成立。這是**已知取捨、不是 bug**（那種列不影響金額）。
+  // ⚠️ William 2026-08-19 裁範圍之後**這條殘餘不寫進畫面**（收回誇大、不再加註），只住在
+  //    reconcile-summary.js 的註解與這一題——所以它更需要真的驗得動，不能只看預設值。
+  await seedDb(true);   // r6#2：自己 seed（靠前一題留下的 db 狀態＝單獨跑會 ai_no_key）
   const withTinyRow = (/** @type {'in'|'out'} */ dir, /** @type {number} */ amt, /** @type {number} */ bal) => {
     const a = goodAnswer();
     a.transactions.push({ acctMasked: '900200****3302', date: '2026-06-04', direction: dir, amount: amt, balance: bal, summary: '手續費減免', note: '' });
@@ -870,8 +872,11 @@ test('合計交叉驗證｜誠實殘餘：金額 0 或不大於容差（0.004）
       const text = async () => [{ y: 0, cells: [{ x: 0, s: `原文 1,000 500 1,500 4 2,000 ${amt} ${bal}` }] }];
       const spy = spyTransport([withTinyRow(dir, amt, bal)]);
       const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(spy), aiExtract: text });
-      assert.equal(pv.reconcile.totalsCheck.status, 'pass',
-        `★金額 ${amt} 的列記成 ${dir}：逐筆加總 ${dir === 'out' ? '支出' : '存入'} 差了 ${amt}，仍在容差內＝合計這道看不到（門檻＝BAL_EPS 0.005）`);
+      // status 的預設值就是 pass ⇒ 只斷言它證明不了「這道真的比過」（r6#2）：要連**比到哪幾欄**
+      // 與**級別**一起釘，才排除得掉「其實走了 not-printed／根本沒進到比對」那些解釋。
+      assert.deepEqual(pv.reconcile.totalsCheck, { status: 'pass', fields: ['txCount', 'totalOut', 'totalIn'] },
+        `★金額 ${amt} 的列記成 ${dir}：三欄都真的比過了`);
+      assert.equal(pv.reconcile.level, 'strong', '★而且是強閘下的結果（餘額鏈也接得上）');
     }
   }
 });

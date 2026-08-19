@@ -290,6 +290,9 @@ test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再�
   assert.match(blindItem, /要比到「同一個方向」的合計/, '★必要講法');
   assert.doesNotMatch(blindItem, /＝合計也擋/, '★充分講法不可回來');
   assert.match(blindItem, /整組一起抄錯它看不出來/, '★開場要自己講出這道的真正邊界');
+  // r6#1：主詞不可誤稱——那兩個數字是 AI 交回來的，不是我們看到帳單印的
+  assert.doesNotMatch(blindItem, /帳單自己印的筆數/, '★不可把 AI 回傳值稱作「帳單自己印的」');
+  assert.match(blindItem, /AI 抄回來的筆數與出入合計/, '★要用對主詞');
   assert.doesNotMatch(blindItem, /<b>合計那道這次有跑<\/b>＝合計也擋/, '★二元講法不可留');
 });
 
