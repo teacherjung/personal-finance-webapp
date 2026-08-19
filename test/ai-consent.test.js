@@ -278,6 +278,11 @@ test('E2c｜合計交叉驗證**不是每份都跑得起來**：說明不可再�
   assert.doesNotMatch(blindItem, /帳單有印合計＝合計也擋/, '★舊的無條件講法（①）不可留');
   assert.doesNotMatch(blindItem, /帳單有印整份合計＝擋下/, '★舊的無條件講法（⑦）不可留');
   assert.doesNotMatch(blindItem, /或帳單有印合計＝擋下/, '★舊的無條件講法（⑥）不可留');
+  // ⚠️ 「有跑」還要看**比到哪幾欄**（複審後掃抓到）：只印明細總筆數的帳單，這道比得到的那一欄
+  //    對「方向讀反」完全無效（實測首筆 in→out 對調後筆數不變）。①不可再用二元的「有跑／沒跑」講。
+  assert.match(blindItem, /只比到筆數/, '★要點出「只比到筆數」這一格');
+  assert.match(blindItem, /只有出入合計/, '★方向讀反靠的是出入合計，不是筆數');
+  assert.doesNotMatch(blindItem, /<b>合計那道這次有跑<\/b>＝合計也擋/, '★二元講法不可留');
 });
 
 test('E2b｜modelDisplayName：代號→人看得懂的名字；認不得的原樣顯示（不吃掉資訊）', () => {

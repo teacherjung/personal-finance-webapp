@@ -16,6 +16,7 @@ process.env.STORE_FILE = TEST_STORE;
 const { normalizeAiBank, linesToText, buildBankSystem, AI_BANK_MODELS, AI_BANK_SCHEMA } = await import('../lib/ai-parse.js');
 const { anthropicTransport, makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { previewBankStatement, applyBankStatement, aiBankRoute } = await import('../lib/services/bank-import.js');
+const { TOTALS_CHECK, TOTALS_FIELDS } = await import('../lib/statement-reconcile.js');   // 封閉詞彙＝機密斷言的比對基準
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { clearAiTicketsForTest, aiTicketCountForTest, issueAiTicket, redeemAiTicket, restoreAiTicket, AI_TICKET_MAX, AI_TICKET_TTL_MS } = await import('../lib/ai-confirm-ticket.js');
 
@@ -818,8 +819,14 @@ test('預審r0#1｜混幣帳單＝合計欄整道跳過：外幣列不分幣別�
   //   帳單正是混幣＝轉述）：狀態碼隨裁決回到預覽，白話句由 reconcile-summary.js 翻譯。
   assert.deepEqual(pv.reconcile.totalsCheck, { status: 'mixed-currency', fields: [] },
     '★整道跳過的事實必須傳到畫面（不傳＝說明區那句「帳單有印合計＝合計也擋」對這份帳單就是假話）');
-  assert.ok(!JSON.stringify(pv.reconcile.totalsCheck).includes('900700'),
-    '★狀態只帶封閉代碼與欄名，帳單欄值一個都不外送（同 ai_reconcile_failed 的機密紀律）');
+  // ⚠️ **結構斷言、不是字串搜尋**（複審後掃抓到原版名過其實：只搜這組 fixture 的帳號片段
+  //    `900700`，把 totalOut:500／txCount:3 塞進去照樣全綠＝守到的不是它宣稱的「零插值」）：
+  //    鍵只能是那兩個、status 只能是封閉碼、fields 只能是封閉欄名——任何帳單欄值都塞不進來。
+  const tc = pv.reconcile.totalsCheck;
+  assert.deepEqual(Object.keys(tc).sort(), ['fields', 'status'], '★只有這兩個鍵（多一個就是新的外送面）');
+  assert.ok(Object.values(TOTALS_CHECK).includes(tc.status), '★status 只能是封閉狀態碼');
+  assert.ok(Array.isArray(tc.fields) && tc.fields.every((/** @type {any} */ f) => TOTALS_FIELDS.includes(f)),
+    '★fields 只能是封閉欄名（帳單數字塞不進來）');
 });
 
 test('合計交叉驗證｜判準是「明細裡有沒有外幣列」而不是「帳單上有沒有外幣帳戶」；帳單只印一半＝只算比對過的那幾欄', async () => {

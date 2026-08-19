@@ -38,11 +38,19 @@ export function totalsCheckSentence(tc) {
   if (!tc || typeof tc !== 'object') return '';
   const status = String(tc.status || '');
   if (status === 'pass') {
-    const names = (Array.isArray(tc.fields) ? tc.fields : [])
-      .map((f) => own(TOTALS_FIELD_TEXT, String(f))).filter(Boolean);
+    const seen = (Array.isArray(tc.fields) ? tc.fields : []).map((f) => String(f))
+      .filter((f) => own(TOTALS_FIELD_TEXT, f));
+    const names = seen.map((f) => own(TOTALS_FIELD_TEXT, f));
     // fields 空的 pass＝形狀不對（後端會給 not-printed）＝不編造「都對得上」
     if (!names.length) return '';
-    return `合計交叉驗證：帳單印的${names.join('、')}與逐筆算出來的一致。`;
+    // ⚠️ **「有跑」不等於「這幾型都罩到了」**（2026-08-19 複審後掃抓到；實測：首筆 in→out
+    //    對調後筆數 3→3 一模一樣、而支出合計 500→1500 當場不符）：帳單只印明細總筆數時，
+    //    這道只比得到筆數——「第一筆方向讀反」改不動筆數，於是它仍然沒有第二道把關。
+    //    不講＝使用者照徽章的指路看到「有跑」，就以為方向也有人看＝這支要消滅的同一種假話。
+    const sums = seen.includes('totalOut') || seen.includes('totalIn');
+    return `合計交叉驗證：帳單印的${names.join('、')}與逐筆算出來的一致。`
+      + (sums ? '' : '⚠️ 但這次<b>只比到筆數</b>——<b>方向對調不會改變筆數</b>，'
+        + '所以「每個帳戶第一筆的方向讀反」這一型仍然沒有第二道把關，請自己核對收支方向。');
   }
   const why = own(TOTALS_SKIP_TEXT, status);
   if (!why) return '';
