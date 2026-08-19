@@ -3,7 +3,7 @@
 // 同一個遮罩帳號下的多筆定存被當成重複、first-wins 只留一筆。William 的兩筆 51 美元定存實例）。
 //
 // 這支補的是**答案卷的兩個欄位**（kind/period），落地效果全部是既有機制自動生效：
-//   ①分開列管（annotateCdRows→cdKey）②到期歸零（maturedCdAccounts 的 structured 前提）
+//   ①分開列管（annotateCdRows→cdKey）②〜〜到期歸零〜〜＝**r1#1 之後改為只吃模板路線**（見下方 落地③）
 //   ③對帳閘的「定存概要列不對末筆」skip（判準 kind==='time'）。
 // 所以本卷的重點不在「新程式做了什麼」，而在三個**界線**：
 //   Ａ「AI 有講才算數」——一列都沒填 kind＝退回舊形狀（**不可**補預設 demand 讓沒看懂的答案冒充
@@ -209,6 +209,91 @@ test('接線｜答案卷 schema 帶 kind（必填、封閉列舉）與 period；
   const sys = buildBankSystem();
   assert.match(sys, /每一筆各列一列/, '★同帳號多筆定存不可合併——合併就是使用者少算錢');
   assert.match(sys, /看不出來就填 demand/, '★不確定時倒向 demand（填錯成 time 會用期間當身分）');
+});
+
+// ---- Codex r2 三顆高：盲配的三道門／單向升級／起迄順序 ----
+test('r2#1｜盲配不復活已歸零的定存戶（總額 51→102 的那顆真彈）', () => {
+  const base = '第一銀行|1234|USD|';
+  const db = { accounts: [
+    { id: 'old', name: '第一銀行 1234（外幣定存 第1筆）（已到期）', bank: '第一銀行', cdKey: `${base}2025/01/15~2025/07/15|51|#1`, currency: 'USD', balance: 0, balanceAsOf: '2026-01-31' },
+    { id: 'live', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: `${base}2026/01/15~2026/07/15|51|#1`, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' },
+  ], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [{ ...raw.accounts[1], period: '' }];   // 本期 AI 沒抄到期間
+  const r = applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  const old = db.accounts.find((/** @type {any} */ a) => a.id === 'old');
+  assert.equal(old.balance, 0, '★已歸零的戶不得被「復活」成 51（那是看不見的加錢）');
+  assert.ok(r, '有回傳');
+  const total = db.accounts.reduce((/** @type {number} */ s2, /** @type {any} */ a) => s2 + Number(a.balance || 0), 0);
+  assert.ok(total <= 51 + 51, `★總額不得暴增（實得 ${total}）`);
+});
+
+test('r2#1c｜餘額 0 的定存戶一律不盲配——即使名稱沒有「已到期」（使用者自己歸零的也算）', () => {
+  const base = '第一銀行|1234|USD|';
+  const db = { accounts: [
+    { id: 'zero', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: `${base}2025/01/15~2025/07/15|51|#1`, currency: 'USD', balance: 0, balanceAsOf: '2026-01-31' },
+  ], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [{ ...raw.accounts[1], period: '' }];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  assert.equal(db.accounts.find((/** @type {any} */ a) => a.id === 'zero').balance, 0, '★零餘額戶不得被盲配復活（這一格單獨釘住餘額門，不靠名稱門搭便車）');
+  assert.equal(db.accounts.length, 2, '該新建一戶');
+});
+
+test('r2#1e｜名稱已註記「已到期」的戶不盲配——即使使用者自己把餘額改回非 0（名稱門單獨承重）', () => {
+  // 可達狀態：帳戶餘額是使用者可編輯的，他可能在到期歸零之後自己填回一個數字（記錯、或續存後手動更新）
+  const db = { accounts: [
+    { id: 'm', name: '第一銀行 1234（外幣定存 第1筆）（已到期）', bank: '第一銀行', cdKey: '第一銀行|1234|USD|2025/01/15~2025/07/15|51|#1', currency: 'USD', balance: 51, balanceAsOf: '2026-01-31' },
+  ], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [{ ...raw.accounts[1], period: '' }];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  const m = db.accounts.find((/** @type {any} */ a) => a.id === 'm');
+  assert.match(String(m.cdKey), /2025\/01\/15~2025\/07\/15/, '★已註記到期的戶不得被新一期的定存接手身分');
+  assert.equal(db.accounts.length, 2, '該新建一戶');
+});
+
+test('r2#1d｜同一張帳單印兩筆不同期別＝各自成戶（一顆缺期間的舊戶只會被其中一列接手）', () => {
+  // db 只有一顆「沒印期間」的定存；本期帳單印出兩筆同額、期間不同的定存
+  const db = { accounts: [
+    { id: 'a1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: '第一銀行|1234|USD||51|#1', currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' },
+  ], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [
+    { ...raw.accounts[1], period: '2026/01/15~2026/07/15' },
+    { ...raw.accounts[2], period: '2026/02/20~2026/08/20' },
+  ];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  assert.equal(db.accounts.length, 2, `★兩列不可都收斂到同一顆戶；實得 ${JSON.stringify(db.accounts.map((/** @type {any} */ a) => [a.id, a.cdKey]))}`);
+  const keys = db.accounts.map((/** @type {any} */ a) => String(a.cdKey));
+  assert.equal(new Set(keys).size, 2, '★兩顆的身分鍵要各自不同');
+});
+
+test('r2#1b｜候選不唯一＝不猜（同銀行末碼幣別本金有兩顆現役定存時，缺期間那列不盲配）', () => {
+  const base = '第一銀行|1234|USD|';
+  const db = { accounts: [
+    { id: 'c1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: `${base}2026/01/15~2026/07/15|51|#1`, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' },
+    // ⚠️ 真實的歧義形：兩顆是**不同月份各自建立**的，各自在自己那期都是「第1筆」——序號分不開它們
+    { id: 'c2', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: `${base}2026/02/20~2026/08/20|51|#1`, currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' },
+  ], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [{ ...raw.accounts[1], period: '' }];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  assert.equal(db.accounts.find((/** @type {any} */ a) => a.id === 'c1').cdKey, `${base}2026/01/15~2026/07/15|51|#1`, '★歧義時不得動既有戶的身分');
+  assert.equal(db.accounts.length, 3, '★分不出來就新建一戶（看得見的多一戶）而不是猜一顆去改');
+});
+
+test('r2#2｜cdKey 只做單向升級：既有有期間、新的漏抄＝不得把期間抹掉', () => {
+  const db = { accounts: [{ id: 'a1', name: '第一銀行 1234（外幣定存 第1筆）', bank: '第一銀行', cdKey: '第一銀行|1234|USD|2026/03/20~2026/09/20|51|#1', currency: 'USD', balance: 51, balanceAsOf: '2026-07-01' }], transactions: [] };
+  const raw = rawAnswer();
+  raw.accounts = [{ ...raw.accounts[1], period: '' }];
+  applyBalancesToDb(db, /** @type {any} */ (normalizeAiBank({ ...raw, referenceDate: '2026-08-31' })), { deterministic: false });
+  assert.match(String(db.accounts[0].cdKey), /2026\/03\/20~2026\/09\/20/, '★到期資訊不得被抹掉（抹掉＝那顆定存永遠不會到期，也會亂配別顆）');
+});
+
+test('r2#3｜起日晚於迄日＝抄反了，整段不收（否則下期讀成正確順序就裂成兩戶）', () => {
+  assert.equal(canonPeriod('2026/07/15~2026/01/15'), '', '★反向區間回空');
+  assert.equal(canonPeriod('2026/01/15~2026/01/15'), '2026/01/15~2026/01/15', '同日仍合法（單日期別）');
 });
 
 // ---- 接線（P127 教訓：我測的是函式、不是那條線）----
