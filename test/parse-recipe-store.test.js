@@ -107,6 +107,11 @@ test('preview｜認不得→配方命中＝engine:recipe、零 AI（不需 useAi
   assert.equal(pv.recipeId, 'rcp-1');
   assert.equal(pv.reconcile.level, 'strong', '★配方比照 AI＝只收強閘');
   assert.equal(pv.transactions.rows.length, 3, '三筆交易都到（previewBankTxForDb 的 rows 形狀）');
+  // ⚠️ 合計交叉驗證的狀態要**真的走到這條出口**（自審突變 M-recipe-drop-totals：把這條 return
+  //    改成逐欄挑既有欄位就全綠——規則卡是唯一每次都 no-totals 的路線，而它的端到端題從不看這欄）。
+  //    掉了它＝規則卡使用者的預覽窗只剩「✓ 驗算通過」，而徽章才剛指路說「跑了沒有寫在那一段」。
+  assert.deepEqual(pv.reconcile.totalsCheck, { status: 'no-totals', fields: [] },
+    '★配方路線不產合計欄＝畫面要照實說「這次沒有跑」');
 });
 
 test('preview｜裁示④細部：current 失靈（此題樣本＝拒解；真閘紅另有預審B1 題）＝自動退 previous 重解（免費）', async () => {

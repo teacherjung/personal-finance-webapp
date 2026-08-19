@@ -156,9 +156,15 @@ test('合計｜混幣＝必須明講「這次沒有跑」＋原因＋少了它�
   assert.match(h, /✓ 帳單數學驗算通過/, '餘額鏈那道真的跑了＝照講（不因為另一道沒跑就整段改口）');
   assert.match(h, /合計交叉驗證這次<b>沒有跑<\/b>/, '★沒跑就要明講沒跑');
   assert.match(h, /台幣[^。]*外幣/, '★要講出原因是混幣（使用者才知道這是他這份帳單的性質、不是壞掉）');
-  assert.match(h, /第一筆的方向讀反/, '★要講少了這一道看不到什麼——而且限定在真的只靠合計擋得住的那幾型');
+  // 三型**逐型**斷言（自審突變 M-loss-list-drop：原本只釘①，把⑥⑦砍掉全綠——契約寫著
+  // 「多列＝誇大、少列＝遮掩」，而只有「誇大」那半有題，「遮掩」那半是空的）
+  assert.match(h, /第一筆的方向讀反/, '★①每個帳戶第一筆的方向讀反或整筆漏掉');
+  assert.match(h, /整個帳戶被漏讀/, '★⑦整個帳戶被漏讀——整帳戶的錢不見、餘額鏈完全接得上，最陰險的一型不可被砍掉');
+  assert.match(h, /併成淨額/, '★⑥一收一支併成淨額');
   assert.doesNotMatch(h, /<b>方向讀反<\/b>/, '★不可講成「所有方向讀反都看不到」（非首筆的餘額鏈當場接不上）＝誇大損失');
   assert.match(h, /核對筆數與金額/, '★要給下一步');
+  assert.match(h, /<p[^>]*>⚠️ 合計交叉驗證/, '★警示記號不可被拿掉（M-warn-sign-drop）：這段是 muted 小字、又緊接在綠色「✓ 通過」下面，沒有記號會被讀成中性附註');
+  assert.doesNotMatch(h, /核對過|已經驗過|不影響/, '★理由不可反過來安撫（M-mixed-reason-lie：改寫成「台幣那段已經另外核對過了」仍含「台幣與外幣」＝拼字守衛攔不住）');
   assert.doesNotMatch(h, /合計交叉驗證：/, '★不可同時出現「合計對得上」那句');
 });
 
@@ -168,6 +174,11 @@ test('合計｜有跑＝只列真的比對過的欄（帳單只印一半時不�
   assert.match(h, /合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。/);
   assert.doesNotMatch(h, /存入合計/, '★沒印的欄不可混進來（那會把「沒得對」講成「對過了」）');
   assert.doesNotMatch(h, /沒有跑/);
+  // 句子**到句號為止**（自審突變 M-pass-overclaim：三題全是 match＝子字串，句號後面接
+  // 「每一筆的金額與方向都被驗過了」照樣全綠——合計只比三個控制總額，首筆的金額/方向本來就驗不到）
+  assert.equal(totalsCheckSentence({ status: 'pass', fields: ['txCount', 'totalOut'] }),
+    '合計交叉驗證：帳單印的筆數、支出合計與逐筆算出來的一致。',
+    '★逐字相等——誇大可以接在句號後面，子字串比對永遠攔不到');
   // 三欄全印＝三欄都要唸出來（Codex #490 r1#2：原本只驗兩欄，刪掉 totalIn 的翻譯全綠＝
   // 後端說「存入合計真的比對過了」、畫面卻靜靜不講，而那正是這支要消滅的病）
   const all = gateSummaryHtml({ level: 'strong', advisories: [], stats: { pairsChecked: 2 },
@@ -212,3 +223,31 @@ test('合計｜壞形狀不得變成畫面上的東西：狀態碼與欄名只�
   assert.match(h, /合計交叉驗證：帳單印的筆數與/);
   assert.doesNotMatch(h, /<img/, '★外來字串不可有機會進 HTML');
 });
+
+test('合計｜三個「沒跑」的理由不可互換：各自要講自己那一種（M-no-totals-blame）', () => {
+  // 自審突變：三句可以互相複製貼上而全綠——互扣題只問「每個碼查得到非空句子」。
+  // 最傷的一種：no-totals（規則卡路線根本不抄合計欄＝我們的鍋）被改成「你的帳單沒印」，
+  // 直接違反本模組檔頭立的 r1#1「弱級句不可把鍋甩給帳單」，使用者也就不會想到換一條路線重讀。
+  const mixed = totalsCheckSentence({ status: TOTALS_CHECK.MIXED_CURRENCY, fields: [] });
+  const notPrinted = totalsCheckSentence({ status: TOTALS_CHECK.NOT_PRINTED, fields: [] });
+  const noTotals = totalsCheckSentence({ status: TOTALS_CHECK.NO_TOTALS, fields: [] });
+  assert.match(mixed, /台幣[^。]{0,24}外幣/, '混幣要講混幣');
+  assert.match(mixed, /判不出來|跳過/, '混幣要講出「為什麼不能硬比」');
+  assert.match(notPrinted, /帳單.{0,8}沒印|沒印.{0,6}合計/, '沒印要講帳單沒印');
+  assert.match(noTotals, /讀這份帳單的方式|這條路線|沒有讀出/, '★路線不產這個欄＝我們的鍋，不可甩給帳單');
+  assert.doesNotMatch(noTotals, /帳單自己沒印|帳單沒印/, '★no-totals 不可講成「帳單沒印」（那是另一種情況、而且是甩鍋）');
+  assert.equal(new Set([mixed, notPrinted, noTotals]).size, 3, '★三句必須各自不同（互相複製貼上＝這裡紅）');
+});
+
+test('合計｜有影子提醒時這句不可被擠掉（M-adv-suppress：兩者從未同時出現在任何一題裡）', () => {
+  const h = gateSummaryHtml({ level: 'strong', advisories: [{ message: '差 100——可能漏讀' }],
+    stats: { pairsChecked: 2 }, totalsCheck: { status: 'mixed-currency', fields: [] } }, 'bank');
+  assert.match(h, /合計交叉驗證這次<b>沒有跑<\/b>/, '★同時有影子提醒又混幣＝最需要人工核對的那一份，不可反而不講');
+  assert.match(h, /⚠ 差 100/, '影子提醒照舊列出');
+});
+
+// ⚠️ **誠實劃界：本檔的考題驗的是「字串內容」，不驗「畫面上看不看得見」**。
+//    自審突變 M-hide-line（在這句的 style 加 display:none）確實全綠——句子照樣被組進 HTML、
+//    畫面上卻消失。**刻意不守**：那不是真實的失誤模式（沒有人會不小心寫出 display:none），
+//    而本專案為了防它燒過四輪覆審、被四種寫法輪流打穿（`test/ai-gate-interception.test.js`
+//    的「攔截率」題有 William 2026-08-13 的同款裁示與完整病歷）。可見性要靠真的渲染才驗得到。
