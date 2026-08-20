@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 const { isTaishinDebitStatement, parseTaishinDebit, parseTaishinDebitDetail } = await import('../lib/bank-statement.js');
 const { reconcileBankStatement } = await import('../lib/statement-reconcile.js');
-const { previewBalancesForDb } = await import('../lib/services/bank-import.js');   // 走正式的帳戶比對，不重抄判準
+const { previewBalancesForDb, applyBalancesToDb } = await import('../lib/services/bank-import.js');   // 走正式的帳戶比對，不重抄判準
 
 /** 合成一列。`[x, 文字, 寬度]`——寬度會影響欄位判定（值取右緣），所以要照真版面給。
  * @param {number} y @param {[number,string,number?][]} cells */
@@ -114,31 +114,75 @@ test('明細｜方向由支出/存入哪一欄有數字決定；餘額格黏著�
   assert.match(t2.note, /822CCA4B27/, '★拆下來的字不可丟掉（它是這筆的辨識資訊）');
 });
 
-test('★不建帳戶、不動餘額｜這個版面只印得出末四碼，身分不夠明確（自動建戶會裂成兩個帳戶）', () => {
+test('★Stage 1｜帳戶三情境（William 2026-08-20 拍板）：先金融卡建戶帶標記→綜合對帳單認出同顆並補登帳號', () => {
   const p = parseTaishinDebit(wholeStatement());
   assert.equal(p.bank, '台新', '★機構名要逐字「台新」——去重鍵靠它走既有格式，寫別的字舊資料就認不得了');
-  assert.deepEqual(p.accounts, [], '★刻意不產帳戶：帳號只印 **********1234，自動建戶會把 accountNo 寫成它');
-  // 為什麼不建戶：走**正式的** previewBalancesForDb（裡面就是正式的 matchAccount），
-  // 證明「金融卡先建的戶，日後綜合對帳單會配不到它、於是再建第二顆」。
-  // ⚠️ 這裡刻意**不重抄一份判準**（Codex #492 r1 實測：抄一份的話，把正式 matchAccount 的
-  //    前綴檢查改成永遠成功，這題照樣全綠＝守的是抄本不是行為）。
-  const comboParsed = {
-    bank: '台新', referenceDate: '2026-02-28',
-    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 500, currency: 'TWD', label: '', note: '' }],
-    accountCurrency: { '900100****1234': 'TWD' }, transactions: [],
-  };
-  const dbFromDebit = { accounts: [{ id: 'a1', name: '台新 1234', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '**********1234', balance: 100 }] };
-  const split = previewBalancesForDb(dbFromDebit, comboParsed);
-  assert.equal(split.rows[0].action, 'create',
-    '★裂戶就是這樣發生的：金融卡建的戶只有末四碼，綜合對帳單（900100****1234）配不到它 ⇒ 再建一顆');
-  // 反方向沒事：綜合先建、金融卡（只有末四碼）配得到 ⇒ 不對稱，所以不能賭使用者的匯入順序
-  const debitParsed = { ...comboParsed, accounts: [{ ...comboParsed.accounts[0], masked: '**********1234' }],
-    accountCurrency: { '**********1234': 'TWD' } };
-  const dbFromCombo = { accounts: [{ id: 'a1', name: '台新 1234', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900100****1234', balance: 100 }] };
-  assert.equal(previewBalancesForDb(dbFromCombo, debitParsed).rows[0].action, 'update', '反方向配得到');
-  // 幣別表仍要有它：下游靠它判幣別、也靠它把這個帳號算成「自己人」（帳戶互轉才不會被當成收支）
+  assert.equal(p.accounts.length, 1, '★這個版面要產帳戶（Stage 1 取代 #492 的「不建戶」裁決）');
+  const pa = p.accounts[0];
+  assert.deepEqual(
+    { masked: pa.masked, suffix: pa.suffix, balance: pa.balance, currency: pa.currency, suffixOnly: pa.suffixOnly, fromDetail: pa.balanceFromDetail },
+    { masked: '**********1234', suffix: '1234', balance: 417500, currency: 'TWD', suffixOnly: true, fromDetail: true },
+    '★帳號照抄原樣＋兩個旗標：suffixOnly（走唯一命中寬鬆徑）、balanceFromDetail（對帳閘不拿它自證）');
   assert.deepEqual(p.accountCurrency, { '**********1234': 'TWD' });
   for (const t of p.transactions) assert.equal(t.acctMasked, '**********1234', '每一筆都要掛上帳號（去重鍵要用）');
+
+  // 情境①：先匯金融卡＝建戶（帳號只有末四碼、蓋 accountNoSuffixOnly 標記）
+  const db = { accounts: [] };
+  const r1 = applyBalancesToDb(db, p);
+  assert.equal(r1.created, 1, '①建一顆戶');
+  const acct = db.accounts[0];
+  assert.equal(acct.accountNo, '**********1234');
+  assert.equal(acct.accountNoSuffixOnly, true, '★標記要蓋上（日後綜合對帳單憑它認親）');
+  assert.equal(acct.balance, 417500);
+  assert.equal(acct.balanceAsOf, '2026-01-31', '餘額時點＝對帳單期間結束日');
+
+  // 情境②：日後匯綜合對帳單（完整遮罩 900100****1234、較新一期）＝認出同一顆、補登帳號、清掉標記
+  const combo = { bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 500000, currency: 'TWD', label: '活存', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD' }, transactions: [] };
+  const r2 = applyBalancesToDb(db, combo);
+  assert.equal(r2.updated, 1, '②同一顆＝更新、不新建');
+  assert.equal(db.accounts.length, 1, '★不裂戶（#492 當初不建戶就是怕這個——Stage 1 用標記＋補登解掉）');
+  assert.equal(acct.accountNo, '900100****1234', '★帳號補登成完整遮罩（只增不減）');
+  assert.equal(acct.accountNoSuffixOnly, undefined, '★標記清掉（身分已完整）');
+  assert.equal(acct.balance, 500000);
+
+  // 情境③：反過來先綜合後金融卡＝末碼直接配得到、帳號**不退化**回末四碼
+  const db2 = { accounts: [] };
+  applyBalancesToDb(db2, combo);
+  const r3 = applyBalancesToDb(db2, { ...parseTaishinDebit(wholeStatement()), referenceDate: '2026-03-31' });
+  assert.equal(r3.updated, 1, '③配得到＝更新');
+  assert.equal(db2.accounts.length, 1, '不裂戶');
+  assert.equal(db2.accounts[0].accountNo, '900100****1234', '★帳號只增不減：金融卡帳單不可把完整帳號洗回末四碼');
+  assert.equal(db2.accounts[0].accountNoSuffixOnly, undefined, '標記也不可長回來');
+});
+
+test('★Stage 1｜同末碼撞多顆＝停手（不更新、不新建、預覽照實顯示 ambiguous）', () => {
+  // 金融卡帳單（只有末碼）遇到兩顆同銀行同末碼的現金戶：挑一顆＝把餘額蓋到別人頭上、
+  // 新建＝第三顆戶——都比「不動」更危險（Codex #492 r1 也點過 find 取第一不安全）。
+  const two = { accounts: [
+    { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900100****1234', balance: 1 },
+    { id: 'a2', name: '乙', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900200****1234', balance: 2 },
+  ] };
+  const p = parseTaishinDebit(wholeStatement());
+  const r = applyBalancesToDb(two, p);
+  assert.equal(r.updated, 0, '★不更新');
+  assert.equal(r.created, 0, '★不新建');
+  assert.equal(two.accounts.length, 2, '★帳戶數不變');
+  assert.equal(two.accounts[0].balance, 1); assert.equal(two.accounts[1].balance, 2);
+  const pv = previewBalancesForDb(two, p);
+  assert.equal(pv.rows[0].action, 'ambiguous', '★預覽照實顯示（前端翻成白話「認不出是哪一個」）');
+  // 綜合對帳單版的歧義：兩顆 suffixOnly 戶同末碼＝也停手（分不出 900100 是哪一顆）
+  const twoSuffix = { accounts: [
+    { id: 'b1', name: '丙', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '**********1234', accountNoSuffixOnly: true, balance: 3 },
+    { id: 'b2', name: '丁', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '****1234', accountNoSuffixOnly: true, balance: 4 },
+  ] };
+  const combo = { bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 500, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD' }, transactions: [] };
+  const rc = applyBalancesToDb(twoSuffix, combo);
+  assert.equal(rc.updated + rc.created, 0, '★兩顆 suffixOnly 同末碼＝停手（挑錯＝補登到別人頭上）');
+  assert.equal(twoSuffix.accounts[0].accountNo, '**********1234', '帳號一個都不可被動');
 });
 
 test('現值參考日｜取「對帳單期間」的結束日；沒有那一行＝null（絕不補今天）', () => {
@@ -178,7 +222,8 @@ test('端到端｜合成整份過既有對帳閘：強閘、餘額鏈全接上�
   assert.equal(g.problems.length, 0);
   assert.equal(g.stats.pairsChecked, 3, '四筆＝三對');
   assert.equal(g.stats.endChecked, 0,
-    '★沒有「末筆對概要」可驗——這份帳單沒有獨立的概要餘額，硬要驗就是拿同一個數字對自己（誠實劃界，不是漏掉）');
+    '★沒有「末筆對概要」可驗——帳戶餘額就是明細末列抄來的（balanceFromDetail），硬對＝拿同一個數字對自己恆綠、'
+    + '還把覆蓋計數灌水（Stage 1 起帳戶回來了，靠這個旗標讓閘誠實 skip；旗標拿掉＝這裡變 1 ⇒ 紅）');
   assert.equal(g.stats.twdAccountsUnverified, 0, '★沒有帳戶是零驗證搭便車（餘額鏈就罩得住）');
   // 反面：把中間一列的餘額改壞 ⇒ 閘要當場抓到（證明這題不是空包彈）
   const broken = parseTaishinDebit(wholeStatement());
