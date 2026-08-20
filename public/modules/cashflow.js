@@ -343,7 +343,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const body = `
     ${r.blocked ? bankBlockedWarningHtml() : ''}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
-    <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
+    ${bankNoAccountNote(r.noAccountReason) ? `<p class="muted" style="margin:8px 0 18px;font-size:12px">ℹ️ ${bankNoAccountNote(r.noAccountReason)}</p>` : `<div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
     <tbody>${rows.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.matchedName || x.label || '')}<span class="muted">・末${esc(x.suffix)}</span></td>
       <td class="muted">${esc(x.currency)}</td>
@@ -351,8 +351,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td class="num muted">${x.oldBalance == null ? '—' : money(x.oldBalance)}</td>
       <td>${esc(ACTION_LABEL[x.action] || x.action)}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
-    ${bankNoAccountNote(r.noAccountReason) ? `<p class="muted" style="margin:8px 0 0;font-size:12px">ℹ️ ${bankNoAccountNote(r.noAccountReason)}</p>` : ''}
-    <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
+    <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>`}
 
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>

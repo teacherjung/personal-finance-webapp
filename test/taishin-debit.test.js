@@ -263,6 +263,16 @@ test('★離場錨點｜「已消費未扣款」等區塊若重印在明細之�
   assert.equal(transactions.length, 1, '★錨點之後一律不收——多張卡／跨頁時「表頭之前不收」守不住');
   assert.equal(transactions[0].amount, 2884);
   assert.ok(!transactions.some((t) => t.amount === 500 || t.amount === 43638), '★錨點後的列連金額都不可出現');
+  // A 區（刷卡消費明細）重印在 D 之後（Grok #492 掃後補）：靠它表頭的「外幣折換日」擋。
+  // 陷阱列同樣用明細列的座標＝錨點是唯一擋得住它的東西。
+  const aReprint = [...headerLines(), HEAD,
+    row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),
+    L(380, [[143, '扣款日', 20], [185, '消費日', 20], [230, '消費明細 / 消費地區', 60], [310, '外幣折換日', 35], [370, '幣別', 15]]),
+    row(370, '2026/01/28', '刷卡消費', '305', '0', '318,186'),
+  ];
+  const a = parseTaishinDebitDetail(aReprint);
+  assert.equal(a.transactions.length, 1, '★A 區重印後的列不可入帳（同一筆錢的另一種印法）');
+  assert.ok(!a.transactions.some((t) => t.amount === 305), '★連金額都不可出現');
 });
 
 test('★支出/存入欄讀不出數字＝throw，「讀不到」不可折疊成 0（r2#1：折疊＝靜靜匯入 0 筆回報成功）', () => {
