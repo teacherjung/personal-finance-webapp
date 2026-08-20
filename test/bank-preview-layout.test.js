@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from '../public/modules/cashflow-model.js';
+import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml, bankNoAccountNote } from '../public/modules/cashflow-model.js';
 import { aiPreviewBadgeHtml, recipePreviewBadgeHtml } from '../public/modules/ai-consent.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,11 +38,11 @@ function renderPreviewBody(/** @type {any} */ r) {
   const gateSummaryHtml = () => '<div data-stub="gate">對帳結果</div>';
   return Function('r', 'esc', 'money', 'ACTION_LABEL', 'gateSummaryHtml',
     'bankBlockedWarningHtml', 'bankSimilarWarningHtml', 'bankSimilarTagHtml',
-    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml',
+    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml', 'bankNoAccountNote',
     `${chunk}\n return body;`)(
     r, esc, money, ACTION_LABEL, gateSummaryHtml,
     bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml,
-    bankPreviewFootnote, aiPreviewBadgeHtml, recipePreviewBadgeHtml);
+    bankPreviewFootnote, aiPreviewBadgeHtml, recipePreviewBadgeHtml, bankNoAccountNote);
 }
 
 /** 合成資料——**刻意不用任何真實帳單內容**（PII 鐵則）。 */

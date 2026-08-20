@@ -128,6 +128,21 @@ export function bankBlockedWarningHtml() {
   return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——所以<b>這次不會更新帳戶餘額</b>，「資產配置」頁會維持原本的數字。<br><b>交易明細照樣匯入</b>：那些交易本來就用不到這個日期，只有「這份帳單的餘額比 app 裡的新嗎」才需要它。<br>要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
 }
 
+/** 「這份帳單為什麼沒有可更新的帳戶」的白話（封閉代碼→句子；後端只給代碼＝零插值）。
+ * ⚠️ 存在的理由：空表那句「帳單裡沒有可更新的帳戶」對簽帳金融卡明細是**誤導**——
+ *    不是帳單沒有，是它只印得出末四碼、我們**刻意**不建戶（建了會與綜合對帳單裂成兩顆帳戶）。
+ *    查表一律 `Object.hasOwn`（鐵則 3.5：`table['toString']` 會撈到原型上的函式）。 */
+const NO_ACCOUNT_TEXT = Object.freeze({
+  'masked-suffix-only': '這份帳單只印得出帳號末四碼，看不出是你的哪一個帳戶，'
+    + '所以<b>這次只匯入交易明細、不更新帳戶餘額</b>（餘額請以綜合對帳單那一份為準）。',
+});
+
+/** @param {any} code @returns {string} 認不得的代碼／缺席＝空字串（畫面不多長東西） */
+export function bankNoAccountNote(code) {
+  const k = typeof code === 'string' ? code : '';
+  return k && Object.hasOwn(NO_ACCOUNT_TEXT, k) ? /** @type {any} */ (NO_ACCOUNT_TEXT)[k] : '';
+}
+
 /**
  * 銀行預覽表格底下那句話（純文字，呼叫端自己包 HTML／esc）。
  *
