@@ -57,23 +57,30 @@ export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 /** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
  * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
- * @param {boolean} balancesSkipped */
-export function bankApplyLabel(balancesSkipped) {
-  return balancesSkipped ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
+ * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這份帳單根本沒有可更新的帳戶 */
+export function bankApplyLabel(balancesSkipped, noAccounts) {
+  // ⚠️ 兩種「這次不會更新餘額」都要改口（Codex #492 r1#2）：①讀不到現值參考日（balancesSkipped）
+  //    ②這份帳單沒有可更新的帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②＝同一個畫面上面寫
+  //    「只匯入交易明細」、鈕上卻寫「更新餘額＋匯入交易」，自相矛盾。
+  return (balancesSkipped || noAccounts) ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
 }
 
 /** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
  * P2-3：AI 路線寫入成功會順手生成配方卡（recipe），成功/重生要講一句（使用者才知道下次免費）；
  * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
- * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, matured?:number}} bal
+ * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, noAccounts?:boolean, matured?:number}} bal
  * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
  * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
 export function bankApplyDoneText(bal, tx, recipe) {
+  // ⚠️ 兩種「這次沒更新餘額」都要講（Codex #492 r1#2）：①讀不到現值參考日 ②這份帳單沒有可更新的
+  //    帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②會印「帳戶：更新 0、新建 0」讓人以為壞了。
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
-    : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
-      + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`
-      + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
+    : bal.noAccounts
+      ? '帳戶餘額：這次沒有更新（這份帳單沒有可更新的帳戶）'
+      : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
+        + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`
+        + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
   const rec = recipe?.saved
     ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面會先用它讀，讀得過就免費）' : '；已存成版面規則卡（下次同版面會先用它讀，讀得過就免費）')
     : (recipe ? `；版面規則卡這次沒存成（不影響本次匯入）${birthText(recipe.reason || '') ? `——${birthText(recipe.reason || '')}` : ''}` : '');   // 不寫「下次仍會用 AI 讀」：重生失敗時舊卡還在，下次仍會先試卡   // 2026-08-19：講出**哪一關**沒過（原本只有通稱＝使用者與維護者都看不到卡在哪）

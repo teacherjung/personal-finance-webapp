@@ -381,7 +381,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   //    交易照樣匯入，所以那顆鈕按下去真的有事情發生。r3#1 當初拿掉它是對的（那時按了必失敗），
   //    行為改了就要跟著改回來，不然使用者會以為這份帳單完全不能用。
   openInfo('銀行對帳單預覽', body, { size: 'xl',
-    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked))}</button>` });
+    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked, !rows.length))}</button>` });
 
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));

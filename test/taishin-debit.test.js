@@ -9,12 +9,15 @@
 //
 // 這支範本最要命的風險＝**同一筆錢被算兩次**：帳單前面還印著「刷卡消費明細」與
 // 「已消費未扣款」兩區，它們的列同樣以日期起頭。所以「只收表頭之後那一區」是硬界線，
-// 下面第一題就是守它的。
+// 守它的是題名含「錢不可被算兩次」與「離場錨點」的那兩題。
+// ⚠️ 那兩題的陷阱列**刻意用與明細列相同的欄位座標**：若陷阱列本來就解析不成交易，
+//    考題就是在驗幾何巧合、不是在驗守門（Codex #492 r1 實測：拿掉守門仍全綠）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { isTaishinDebitStatement, parseTaishinDebit, parseTaishinDebitDetail } = await import('../lib/bank-statement.js');
 const { reconcileBankStatement } = await import('../lib/statement-reconcile.js');
+const { previewBalancesForDb } = await import('../lib/services/bank-import.js');   // 走正式的帳戶比對，不重抄判準
 
 /** 合成一列。`[x, 文字, 寬度]`——寬度會影響欄位判定（值取右緣），所以要照真版面給。
  * @param {number} y @param {[number,string,number?][]} cells */
@@ -38,18 +41,18 @@ const headerLines = () => [
 
 /** ⚠️ 表頭**之前**的三個區塊——它們的列也以日期起頭，全部都不可以變成交易。 */
 const trapLines = () => [
-  // A 刷卡消費明細（同一筆錢的另一種印法：消費日／入帳日／回饋／金額）
-  L(600, [[159, '2026/01/28 2026/01/24', 37], [277, '5', 11], [396, '305', 12]]),
-  L(595, [[159, 'APPLE.COM/BILL', 40]]),
+  // A 刷卡消費明細（同一筆錢的另一種印法）。⚠️ **刻意用與明細列相同的座標**：
+  //    只有「表頭之前不收」那道守門擋得住它——拿掉守門，這一列就會變成一筆 305 元支出。
+  L(600, [[131, '2026/01/28', 37], [185, '刷卡消費', 27], [251, '305', 17], [312, '0', 11], [346, '318,186', 25], [390, 'APPLE.COM/BILL', 61]]),
   // B 本月總額與類別表
   L(560, [[370, '本月消費金額共計', 58], [430, 'NT$ 45,809', 41]]),
   L(550, [[373, '本月退款金額共計', 58], [433, 'NT$ -9,614', 40]]),
   L(540, [[158, '消費支出類別', 40], [277, '台幣金額', 27], [395, '百分比(%)', 31]]),
   L(530, [[165, '百貨超市', 27], [280, '43,638', 21], [401, '95.26', 17]]),
   L(520, [[168, '總金額', 20], [280, '45,809', 21], [404, '100', 12]]),
-  // C 已消費未扣款（還沒從帳戶扣錢）
+  // C 已消費未扣款（還沒從帳戶扣錢）。同樣用明細列的座標＝守門是唯一擋得住它的東西。
   L(510, [[168, '消費日', 20], [262, '原始交易幣別', 40], [380, '交易金額(台幣)', 45]]),
-  L(500, [[159, '2026/01/27', 37], [277, 'TW', 11], [396, '500', 12]]),
+  L(500, [[131, '2026/01/27', 37], [185, '刷卡消費', 27], [251, '500', 17], [312, '0', 11], [346, '317,686', 25]]),
 ];
 
 /** 一份完整的合成帳單（抬頭＋三個陷阱區＋明細四列）。 */
@@ -71,6 +74,16 @@ test('版面辨識｜三個特徵都要在才算數；綜合對帳單不可被�
   assert.equal(isTaishinDebitStatement(combined), false, '★不可搶走綜合對帳單那條路');
   // 只有「簽帳金融卡」四個字、沒有明細表頭＝不是這個版面（例如純宣導信）
   assert.equal(isTaishinDebitStatement([...headerLines()]), false, '★缺六欄表頭＝不算（沒有明細可讀）');
+  // 三個條件**逐條**各一題（Codex #492 r1 實測：原本少了這一條，把「對帳單期間」從判準拿掉全綠）。
+  // ⚠️ 每一題只能少**那一個**條件：用「濾掉含某字樣的列」會連別的條件一起濾掉
+  //    （抬頭那句同時含「簽帳金融卡」與「對帳單期間」），那樣就變成在測另一個條件＝又一顆空包彈。
+  const onlyMissingPeriod = [
+    L(700, [[137, '感謝您使用本行簽帳金融卡消費(存款帳號**********1234)', 293]]),   // 保留「簽帳金融卡」
+    HEAD, row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),                  // 保留六欄表頭
+  ];
+  assert.equal(isTaishinDebitStatement(onlyMissingPeriod), false, '★只缺「對帳單期間」就不算');
+  const noDebitWord = wholeStatement().map((l) => ({ y: l.y, cells: l.cells.map((c) => ({ ...c, s: c.s.replace(/簽帳金融卡/g, '') })) }));
+  assert.equal(isTaishinDebitStatement(noDebitWord), false, '★缺「簽帳金融卡」＝不算（信用卡帳單也有「消費明細」四個字）');
 });
 
 test('★錢不可被算兩次｜表頭之前的「刷卡消費明細」與「已消費未扣款」都不得變成交易', () => {
@@ -79,6 +92,8 @@ test('★錢不可被算兩次｜表頭之前的「刷卡消費明細」與「�
   const dates = p.transactions.map((t) => t.date);
   assert.ok(!dates.includes('2026-01-28'), '★A 區（刷卡消費明細 2026/01/28）不可入帳——它是明細裡刷卡消費那幾列的另一種印法');
   assert.ok(!dates.includes('2026-01-27'), '★C 區（已消費未扣款 2026/01/27）不可入帳——那筆錢還沒從帳戶扣走');
+  assert.ok(!p.transactions.some((t) => t.amount === 305 || t.amount === 500),
+    '★連金額都不可出現（兩個陷阱列用的是與明細列相同的座標，拿掉「表頭之前不收」就會被收進來）');
   // B 區的「總金額 45,809」不是日期起頭，但仍釘住它沒有混進金額
   assert.ok(!p.transactions.some((t) => t.amount === 45809), '★總額列不可變成一筆交易');
 });
@@ -100,19 +115,24 @@ test('★不建帳戶、不動餘額｜這個版面只印得出末四碼，身�
   const p = parseTaishinDebit(wholeStatement());
   assert.equal(p.bank, '台新', '★機構名要逐字「台新」——去重鍵靠它走既有格式，寫別的字舊資料就認不得了');
   assert.deepEqual(p.accounts, [], '★刻意不產帳戶：帳號只印 **********1234，自動建戶會把 accountNo 寫成它');
-  // 為什麼：之後同一個真實帳戶的綜合對帳單（900100****1234）配不到它 ⇒ 再建第二顆 ⇒ 同一筆錢算兩次。
-  // 這裡把那個判準逐字重演一次，改壞 matchAccount 的前綴規則時這題會跟著紅。
-  const maskedParts = (/** @type {string} */ m) => { const x = String(m).replace(/\s/g, '').match(/^(\d+)\*+(\d+)$/); return x ? { prefix: x[1] } : { prefix: '' }; };
-  const canMatch = (/** @type {string} */ accountNo, /** @type {string} */ paMasked, /** @type {string} */ suffix) => {
-    const d = String(accountNo).replace(/\D/g, '');
-    if (d.length < suffix.length || !d.endsWith(suffix)) return false;
-    const { prefix } = maskedParts(paMasked);
-    return !prefix || d.startsWith(prefix);
+  // 為什麼不建戶：走**正式的** previewBalancesForDb（裡面就是正式的 matchAccount），
+  // 證明「金融卡先建的戶，日後綜合對帳單會配不到它、於是再建第二顆」。
+  // ⚠️ 這裡刻意**不重抄一份判準**（Codex #492 r1 實測：抄一份的話，把正式 matchAccount 的
+  //    前綴檢查改成永遠成功，這題照樣全綠＝守的是抄本不是行為）。
+  const comboParsed = {
+    bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 500, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD' }, transactions: [],
   };
-  assert.equal(canMatch('**********1234', '900100****1234', '1234'), false,
-    '★這就是不建帳戶的理由：金融卡建的戶，日後綜合對帳單配不到它');
-  assert.equal(canMatch('900100****1234', '**********1234', '1234'), true,
-    '反方向沒事（綜合先建、金融卡配得到）——不對稱，所以不能賭使用者的匯入順序');
+  const dbFromDebit = { accounts: [{ id: 'a1', name: '台新 1234', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '**********1234', balance: 100 }] };
+  const split = previewBalancesForDb(dbFromDebit, comboParsed);
+  assert.equal(split.rows[0].action, 'create',
+    '★裂戶就是這樣發生的：金融卡建的戶只有末四碼，綜合對帳單（900100****1234）配不到它 ⇒ 再建一顆');
+  // 反方向沒事：綜合先建、金融卡（只有末四碼）配得到 ⇒ 不對稱，所以不能賭使用者的匯入順序
+  const debitParsed = { ...comboParsed, accounts: [{ ...comboParsed.accounts[0], masked: '**********1234' }],
+    accountCurrency: { '**********1234': 'TWD' } };
+  const dbFromCombo = { accounts: [{ id: 'a1', name: '台新 1234', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900100****1234', balance: 100 }] };
+  assert.equal(previewBalancesForDb(dbFromCombo, debitParsed).rows[0].action, 'update', '反方向配得到');
   // 幣別表仍要有它：下游靠它判幣別、也靠它把這個帳號算成「自己人」（帳戶互轉才不會被當成收支）
   assert.deepEqual(p.accountCurrency, { '**********1234': 'TWD' });
   for (const t of p.transactions) assert.equal(t.acctMasked, '**********1234', '每一筆都要掛上帳號（去重鍵要用）');
@@ -164,16 +184,24 @@ test('端到端｜合成整份過既有對帳閘：強閘、餘額鏈全接上�
   assert.equal(g2.ok, false, '★餘額改壞＝閘要紅（不紅代表上面那題什麼都沒守）');
 });
 
-// ---- 以下五題來自「送審前的多視角查證」＋真檔量測（每一題都對應一個實測過的失敗形狀）----
+// ---- 以下幾題來自「送審前的多視角查證」＋真檔量測（每一題都對應一個實測過的失敗形狀）----
 
-test('★認得版面卻一列都讀不到＝throw，不可靜靜匯入 0 筆回報成功', () => {
-  // 實測過的形狀：抽字把六欄表頭拆成兩列 ⇒ 認版判準（看整份文字）說認得、
-  // 表頭判準（看單列）說沒有 ⇒ 交易 0 筆 ⇒ 對帳閘回 weak/ok:true ⇒ 一路放行。
-  // 「靜靜匯入 0 筆」比擋下來更糟：使用者以為匯進去了。
-  const headerOnly = [...headerLines(), HEAD];
-  assert.throws(() => parseTaishinDebit(headerOnly),
-    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /一列交易都讀不出來/.test(e.message),
-    '★丟既有的 bank_unrecognized＝退回 AI 救援那條路，不新增第二種錯誤碼');
+test('★認得版面卻收不到東西＝throw，不可靜靜匯入 0 筆回報成功（表頭被拆兩列也算）', () => {
+  // 形狀一：定位得到表頭、但一列交易都沒有。
+  assert.throws(() => parseTaishinDebit([...headerLines(), HEAD]),
+    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /一列交易都讀不出來/.test(e.message));
+  // 形狀二（Codex #492 r1#1 實測）：抽字把六欄表頭**拆成兩列**。
+  //   辨識用的是整份文字 ⇒ 說「認得」；定位用的是單一列 ⇒ 找不到表頭 ⇒ 迴圈一列都沒進去。
+  //   舊守衛以「有定位到表頭」為前提，正好漏掉這一種＝偵測成功、0 筆、不丟錯。
+  const splitHead = [...headerLines(),
+    L(400, [[143, '日期', 13], [191, '摘要', 13], [239, '支出', 13]]),
+    L(396, [[291, '存入', 13], [342, '餘額', 13], [415, '備註', 13]]),
+    row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),
+  ];
+  assert.equal(isTaishinDebitStatement(splitHead), true, '★辨識仍會說認得（六個欄名在整份文字裡都在）');
+  assert.throws(() => parseTaishinDebit(splitHead),
+    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /定位不到/.test(e.message),
+    '★所以要有第二道：認得版面卻定位不到表頭＝照實喊認不得，不可回 0 筆成功');
 });
 
 test('★支出與存入同時有數字＝方向讀不出來，照實喊認不得（不可挑一個）', () => {
@@ -223,11 +251,27 @@ test('★離場錨點｜「已消費未扣款」等區塊若重印在明細之�
   const lines = [...headerLines(), HEAD,
     row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),
     L(380, [[168, '已消費未扣款明細', 40]]),                      // 區塊 C 被重印在明細後面
-    L(370, [[159, '2026/01/27', 37], [277, 'TW', 11], [396, '500', 12]]),
+    // ⚠️ 這一列**與明細列同樣座標**＝錨點是唯一擋得住它的東西（把錨點改成不生效，這題就會紅）
+    row(370, '2026/01/27', '刷卡消費', '500', '0', '317,991'),
     L(360, [[168, '消費支出類別', 40], [277, '台幣金額', 27]]),
-    L(350, [[165, '百貨超市', 27], [251, '43,638', 21], [319, '0', 4], [346, '99,999', 25]]),
+    row(350, '2026/01/28', '百貨超市', '43,638', '0', '274,353'),
   ];
   const { transactions } = parseTaishinDebitDetail(lines);
   assert.equal(transactions.length, 1, '★錨點之後一律不收——多張卡／跨頁時「表頭之前不收」守不住');
   assert.equal(transactions[0].amount, 2884);
+  assert.ok(!transactions.some((t) => t.amount === 500 || t.amount === 43638), '★錨點後的列連金額都不可出現');
+});
+
+test('日期只驗長相不夠：2026/02/31 要當場擋下，不可拖到寫入櫃檯才變成程式錯誤', () => {
+  const bad = [...headerLines(), HEAD, row(390, '2026/02/31', 'CD轉出', '2,884', '0', '318,491')];
+  assert.throws(() => parseTaishinDebit(bad),
+    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /真日曆日/.test(e.message),
+    '★丟得早才有 AI 救援那條路；拖到寫入才擋＝使用者看到看不懂的程式錯誤');
+  // 現值參考日同理：假日期＝當成讀不到（不可拿去比新舊、覆蓋餘額）
+  const badRef = [
+    L(700, [[137, '感謝您使用本行簽帳金融卡消費(存款帳號**********1234)', 293]]),
+    L(690, [[137, '對帳單期間：2026/01/01 ~ 2026/02/31', 123]]),
+    HEAD, row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),
+  ];
+  assert.equal(parseTaishinDebit(badRef).referenceDate, null, '★假的結束日＝當成讀不到');
 });

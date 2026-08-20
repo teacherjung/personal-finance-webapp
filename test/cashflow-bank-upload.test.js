@@ -36,6 +36,7 @@ import {
   bankSimilarWarningHtml,
   bankSimilarTagHtml,
   bankApplyLabel,
+  bankNoAccountNote,
   bankApplyDoneText,
 } from '../public/modules/cashflow-model.js';
 
@@ -567,11 +568,31 @@ test('文案｜讀不到現值參考日時，鈕上與完成提示都不可說�
 
   const ok = bankApplyDoneText({ updated: 2, created: 1, balancesSkipped: false }, { imported: 5, skipped: 1 });
   assert.match(ok, /更新 2、新建 1/); assert.match(ok, /匯入 5/); assert.match(ok, /略過重複 1/);
+  // 第二種「沒更新餘額」＝這份帳單根本沒有可更新的帳戶（簽帳金融卡明細只印末四碼那條路）
+  const none = bankApplyDoneText({ updated: 0, created: 0, noAccounts: true }, { imported: 48 });
+  assert.match(none, /沒有可更新的帳戶/, '★不可印「更新 0、新建 0」讓人以為壞了');
+  assert.doesNotMatch(none, /更新 0/, '★零就不要報數字');
+  assert.equal(bankApplyLabel(false, true), '確認：只匯入交易（這次不更新餘額）',
+    '★鈕上的字要跟畫面上「只匯入交易明細」那句一致（r1#2：兩句原本互相矛盾）');
+  assert.equal(bankApplyLabel(false, false), '確認：更新餘額＋匯入交易', '一般情況不變');
+  // 封閉代碼→白話句（後端只給代碼；認不得的碼／缺席＝不長東西）
+  assert.match(bankNoAccountNote('masked-suffix-only'), /只印得出帳號末四碼/);
+  assert.match(bankNoAccountNote('masked-suffix-only'), /不更新帳戶餘額/, '★要講清楚代價');
+  assert.equal(bankNoAccountNote('bogus'), '', '不認得的碼＝不吐亂碼');
+  assert.equal(bankNoAccountNote(undefined), '');
+  for (const k of ['toString', 'constructor', '__proto__']) {
+    assert.equal(bankNoAccountNote(k), '', `★原型鍵 ${k} 不可撈到原型上的函式（鐵則 3.5）`);
+  }
 });
 
 test('接線｜鈕字與完成提示都要真的接上（算了不用＝畫面看不到）', () => {
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
-  assert.match(src, /bankApplyLabel\(!!r\.blocked\)/, '★鈕字要隨「這次會不會更新餘額」改變');
+  // ⚠️ 第二個參數＝「這份帳單沒有可更新的帳戶」（Codex #492 r1#2）：只吃 blocked 會讓
+  //    簽帳金融卡明細那條路上面寫「只匯入交易明細」、鈕卻寫「更新餘額＋匯入交易」。
+  assert.match(src, /bankApplyLabel\(!!r\.blocked, !rows\.length\)/, '★鈕字要隨「這次會不會更新餘額」改變（兩種情況都要吃）');
+  // 「這份為什麼沒有可更新的帳戶」那句也要真的插進畫面（顯示型接線被拔＝功能靜靜消失）
+  assert.match(src, /\$\{bankNoAccountNote\(r\.noAccountReason\)/, '★說明要插進預覽窗');
+  assert.match(src, /from '\.\/cashflow-model\.js'/);
   assert.match(src, /toast\(bankApplyDoneText\(res, t, .*\.recipe\)\)/, '★完成提示要走那個函式且第三參數釘到 res.recipe（塞 undefined/錯欄位＝這裡紅）');
   assert.doesNotMatch(src, /確認：更新餘額＋匯入交易/, '★鈕字不可再就地寫死');
 });
