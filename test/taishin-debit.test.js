@@ -292,6 +292,15 @@ test('★離場錨點｜「已消費未扣款」等區塊若重印在明細之�
   const op = parseTaishinDebitDetail(orphanPoison);
   assert.equal(op.transactions.length, 2, '★單獨的「外幣折換日」五個字不可觸發錨點（同列合取才算 A 表頭）');
   assert.match(String(op.transactions[0].note), /外幣折換日/, '而且照樣黏回它該去的那一筆');
+  // ④「交易列免疫」要**單獨**成立（r5：上面①用的是合取字樣——把錨點移回日期判定之前、
+  //    保留合取，①照樣綠，因為單獨的「外幣折換日」本來就不觸發合取。B/C 錨點是**單裸字**判定，
+  //    唯一擋住它誤殺交易列的就是「錨點只看非交易列」那一道——這題直接踩它）。
+  const bcPoison = [...headerLines(), HEAD,
+    row(390, '2026/01/02', '轉帳支取', '1,000', '0', '317,491', '已消費未扣款查詢'),
+    row(380, '2026/01/03', 'CD轉出', '500', '0', '316,991'),
+  ];
+  const bp = parseTaishinDebitDetail(bcPoison);
+  assert.equal(bp.transactions.length, 2, '★備註含 B/C 錨點字樣（單裸字）的交易列不可被誤殺——日期起頭＝免疫');
 });
 
 test('★支出/存入欄讀不出數字＝throw，「讀不到」不可折疊成 0（r2#1：折疊＝靜靜匯入 0 筆回報成功）', () => {
