@@ -57,23 +57,30 @@ export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 /** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
  * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
- * @param {boolean} balancesSkipped */
-export function bankApplyLabel(balancesSkipped) {
-  return balancesSkipped ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
+ * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這份帳單根本沒有可更新的帳戶 */
+export function bankApplyLabel(balancesSkipped, noAccounts) {
+  // ⚠️ 兩種「這次不會更新餘額」都要改口（Codex #492 r1#2）：①讀不到現值參考日（balancesSkipped）
+  //    ②這份帳單沒有可更新的帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②＝同一個畫面上面寫
+  //    「只匯入交易明細」、鈕上卻寫「更新餘額＋匯入交易」，自相矛盾。
+  return (balancesSkipped || noAccounts) ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
 }
 
 /** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
  * P2-3：AI 路線寫入成功會順手生成配方卡（recipe），成功/重生要講一句（使用者才知道下次免費）；
  * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
- * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, matured?:number}} bal
+ * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, noAccounts?:boolean, matured?:number}} bal
  * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
  * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
 export function bankApplyDoneText(bal, tx, recipe) {
+  // ⚠️ 兩種「這次沒更新餘額」都要講（Codex #492 r1#2）：①讀不到現值參考日 ②這份帳單沒有可更新的
+  //    帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②會印「帳戶：更新 0、新建 0」讓人以為壞了。
   const acct = bal.balancesSkipped
     ? '帳戶餘額：這次沒有更新（帳單讀不到「現值參考日」，不知道新舊就不敢覆蓋）'
-    : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
-      + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`
-      + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
+    : bal.noAccounts
+      ? '帳戶餘額：這次沒有更新（這份帳單沒有可更新的帳戶）'
+      : `帳戶：更新 ${bal.updated}、新建 ${bal.created}`
+        + `${bal.skipped ? `、跳過 ${bal.skipped}` : ''}${bal.unsupported ? `、略過 ${bal.unsupported} 個不支援幣別` : ''}`
+        + `${bal.matured ? `、${bal.matured} 筆定存已到期歸零` : ''}`;   // 到期歸零要說出來（畫面不說＝餘額被清了卻不知道）
   const rec = recipe?.saved
     ? (recipe.rebirth ? '；版面規則卡已重生（下次同版面會先用它讀，讀得過就免費）' : '；已存成版面規則卡（下次同版面會先用它讀，讀得過就免費）')
     : (recipe ? `；版面規則卡這次沒存成（不影響本次匯入）${birthText(recipe.reason || '') ? `——${birthText(recipe.reason || '')}` : ''}` : '');   // 不寫「下次仍會用 AI 讀」：重生失敗時舊卡還在，下次仍會先試卡   // 2026-08-19：講出**哪一關**沒過（原本只有通稱＝使用者與維護者都看不到卡在哪）
@@ -126,6 +133,21 @@ export function bankSimilarTagHtml() {
  */
 export function bankBlockedWarningHtml() {
   return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——所以<b>這次不會更新帳戶餘額</b>，「資產配置」頁會維持原本的數字。<br><b>交易明細照樣匯入</b>：那些交易本來就用不到這個日期，只有「這份帳單的餘額比 app 裡的新嗎」才需要它。<br>要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
+}
+
+/** 「這份帳單為什麼沒有可更新的帳戶」的白話（封閉代碼→句子；後端只給代碼＝零插值）。
+ * ⚠️ 存在的理由：空表那句「帳單裡沒有可更新的帳戶」對簽帳金融卡明細是**誤導**——
+ *    不是帳單沒有，是它只印得出末四碼、我們**刻意**不建戶（建了會與綜合對帳單裂成兩顆帳戶）。
+ *    查表一律 `Object.hasOwn`（鐵則 3.5：`table['toString']` 會撈到原型上的函式）。 */
+const NO_ACCOUNT_TEXT = Object.freeze({
+  'masked-suffix-only': '這份帳單只印得出帳號末四碼，看不出是你的哪一個帳戶，'
+    + '所以<b>這次只匯入交易明細、不更新帳戶餘額</b>（餘額請以綜合對帳單那一份為準）。',
+});
+
+/** @param {any} code @returns {string} 認不得的代碼／缺席＝空字串（畫面不多長東西） */
+export function bankNoAccountNote(code) {
+  const k = typeof code === 'string' ? code : '';
+  return k && Object.hasOwn(NO_ACCOUNT_TEXT, k) ? /** @type {any} */ (NO_ACCOUNT_TEXT)[k] : '';
 }
 
 /**

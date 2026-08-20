@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml } from '../public/modules/cashflow-model.js';
+import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml, bankNoAccountNote } from '../public/modules/cashflow-model.js';
 import { aiPreviewBadgeHtml, recipePreviewBadgeHtml } from '../public/modules/ai-consent.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,11 +38,11 @@ function renderPreviewBody(/** @type {any} */ r) {
   const gateSummaryHtml = () => '<div data-stub="gate">對帳結果</div>';
   return Function('r', 'esc', 'money', 'ACTION_LABEL', 'gateSummaryHtml',
     'bankBlockedWarningHtml', 'bankSimilarWarningHtml', 'bankSimilarTagHtml',
-    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml',
+    'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml', 'bankNoAccountNote',
     `${chunk}\n return body;`)(
     r, esc, money, ACTION_LABEL, gateSummaryHtml,
     bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml,
-    bankPreviewFootnote, aiPreviewBadgeHtml, recipePreviewBadgeHtml);
+    bankPreviewFootnote, aiPreviewBadgeHtml, recipePreviewBadgeHtml, bankNoAccountNote);
 }
 
 /** 合成資料——**刻意不用任何真實帳單內容**（PII 鐵則）。 */
@@ -108,4 +108,19 @@ test('P2-3｜配方預覽的徽章真的接上：engine recipe 的 body 含「�
   assert.ok(html.includes('版面規則卡'), '★徽章要真的出現在預覽 body（cashflow.js 的插值被刪＝這裡紅）');
   const aiHtml = renderPreviewBody({ ...RESULT, engine: 'ai' });
   assert.equal(aiHtml.includes('版面規則卡'), false, '互斥：AI 預覽不畫配方徽章');
+});
+
+test('預覽窗行為｜有 noAccountReason＝只出 ℹ️ 句，不出空表、不出「將更新 0 個」（三句並存＝自相矛盾）', () => {
+  // Codex #492 r4#2：接線題只掃「有沒有呼叫」＝把整檔換回三句並存的舊版照樣全綠。
+  // 這裡直接渲染 body 驗行為：三句只能剩一句。
+  const html = renderPreviewBody({ ...RESULT, rows: [], noAccountReason: 'masked-suffix-only' });
+  assert.match(html, /只印得出帳號末四碼/, '★ℹ️ 那句要在（講清楚為什麼、以及不更新餘額的代價）');
+  assert.doesNotMatch(html, /帳單裡沒有可更新的帳戶/, '★空表句不可同框（它對這個版面是誤導：不是帳單沒有，是刻意不建）');
+  assert.doesNotMatch(html, /將更新 0 個、新建 0 個/, '★「更新 0 個」不可同框（讓人以為壞了）');
+  // 對照：沒有 noAccountReason 的正常路線一個字都不變
+  const normal = renderPreviewBody(RESULT);
+  assert.match(normal, /將更新 1 個、新建 0 個/, '★正常路線照舊出統計句');
+  assert.doesNotMatch(normal, /只印得出帳號末四碼/, '★正常路線不出 ℹ️ 句');
+  const emptyNoReason = renderPreviewBody({ ...RESULT, rows: [] });
+  assert.match(emptyNoReason, /帳單裡沒有可更新的帳戶/, '★沒有 reason 的空表（別的版面）照舊用空表句');
 });

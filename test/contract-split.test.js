@@ -526,7 +526,7 @@ const MANIFEST = {
     exempt: [],
     files: [
       'data/seed.json',
-      'lib/bank-statement.js', 'test/bank-statement.test.js',
+      'lib/bank-statement.js', 'test/bank-statement.test.js', 'test/taishin-debit.test.js',
       // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
