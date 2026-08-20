@@ -273,6 +273,25 @@ test('★離場錨點｜「已消費未扣款」等區塊若重印在明細之�
   const a = parseTaishinDebitDetail(aReprint);
   assert.equal(a.transactions.length, 1, '★A 區重印後的列不可入帳（同一筆錢的另一種印法）');
   assert.ok(!a.transactions.some((t) => t.amount === 305), '★連金額都不可出現');
+  // ⚠️ 錨點**只看非交易列**（r4#1 的三個負例——裸字樣判定會把含錨點字樣的合法交易連同後面
+  //    全部截掉，而截斷後的前綴餘額鏈仍自洽＝閘看不到）：
+  // ①合法交易的**備註**含「外幣折換日」＝照樣入帳、後面不截斷
+  const notePoison = [...headerLines(), HEAD,
+    row(390, '2026/01/02', '轉帳支取', '1,000', '0', '317,491', '外幣折換日通知'),
+    row(380, '2026/01/03', 'CD轉出', '500', '0', '316,991'),
+  ];
+  const np = parseTaishinDebitDetail(notePoison);
+  assert.equal(np.transactions.length, 2, '★備註含錨點字樣的交易列不可被誤殺（後面那筆也要在）');
+  // ②合法交易的**摘要**含「消費」開頭的字樣同理（B 區錨點「消費支出類別」是整串比對、不會誤中「刷卡消費」）
+  // ③**跨行備註**單獨含「外幣折換日」＝不觸發錨點（A 判準是同列合取：還要同列有「扣款日／消費日」）
+  const orphanPoison = [...headerLines(), HEAD,
+    row(390, '2026/01/02', '轉帳支取', '1,000', '0', '317,491'),
+    L(386, [[420, '外幣折換日', 40]]),           // 落在備註欄帶的跨行字（距離 4 ⇒ 會被黏回）
+    row(373, '2026/01/03', 'CD轉出', '500', '0', '316,991'),
+  ];
+  const op = parseTaishinDebitDetail(orphanPoison);
+  assert.equal(op.transactions.length, 2, '★單獨的「外幣折換日」五個字不可觸發錨點（同列合取才算 A 表頭）');
+  assert.match(String(op.transactions[0].note), /外幣折換日/, '而且照樣黏回它該去的那一筆');
 });
 
 test('★支出/存入欄讀不出數字＝throw，「讀不到」不可折疊成 0（r2#1：折疊＝靜靜匯入 0 筆回報成功）', () => {
