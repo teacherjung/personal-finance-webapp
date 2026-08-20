@@ -87,6 +87,9 @@ test('版面辨識｜三個特徵都要在才算數；綜合對帳單不可被�
 });
 
 test('★錢不可被算兩次｜表頭之前的「刷卡消費明細」與「已消費未扣款」都不得變成交易', () => {
+  // 承重機制（r2#2 驗過「這題自己紅、不靠別題代為報警」）：拿掉「表頭之前不收」的守門時，
+  // 陷阱列會在**欄界還是 0** 的狀態下被解析 ⇒ 支出/存入格找不到 ⇒「讀不到不可折疊成 0」
+  // 那道會 throw ⇒ 本題在第一行就爆。單跑 --test-name-pattern="錢不可被算兩次" 實測轉紅。
   const p = parseTaishinDebit(wholeStatement());
   assert.equal(p.transactions.length, 4, '★只有明細那一區的四列（陷阱區各有一列以日期起頭）');
   const dates = p.transactions.map((t) => t.date);
@@ -260,6 +263,20 @@ test('★離場錨點｜「已消費未扣款」等區塊若重印在明細之�
   assert.equal(transactions.length, 1, '★錨點之後一律不收——多張卡／跨頁時「表頭之前不收」守不住');
   assert.equal(transactions[0].amount, 2884);
   assert.ok(!transactions.some((t) => t.amount === 500 || t.amount === 43638), '★錨點後的列連金額都不可出現');
+});
+
+test('★支出/存入欄讀不出數字＝throw，「讀不到」不可折疊成 0（r2#1：折疊＝靜靜匯入 0 筆回報成功）', () => {
+  // Codex r2 探針：支出格「無法辨識」、存入格 0 ⇒ 舊版折疊成 0/0 ⇒ 走「兩欄都 0＝跳過」
+  // ⇒ 0 筆、對帳閘 weak/ok、apply 發 batchId ＝使用者以為匯進去了。
+  const badCell = [...headerLines(), HEAD, row(390, '2026/01/02', 'CD轉出', '無法辨識', '0', '318,491')];
+  assert.throws(() => parseTaishinDebit(badCell),
+    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /讀不出數字/.test(e.message),
+    '★非數字＝欄位定位讀錯了，照實喊認不得（不可變成一份 0 筆的「成功」）');
+  // 真數字 0 仍照舊：兩欄都真的印 0＝沒有金流，跳過（不丟錯——真檔就有這種列）
+  const zeroRow = [...headerLines(), HEAD,
+    row(390, '2026/01/02', 'CD轉出', '2,884', '0', '318,491'),
+    row(380, '2026/01/03', '通知', '0', '0', '318,491')];
+  assert.equal(parseTaishinDebit(zeroRow).transactions.length, 1, '真數字 0/0＝跳過、不誤擋');
 });
 
 test('日期只驗長相不夠：2026/02/31 要當場擋下，不可拖到寫入櫃檯才變成程式錯誤', () => {
