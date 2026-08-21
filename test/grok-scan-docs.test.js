@@ -85,7 +85,9 @@ const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
  *   ②反引號框的資訊字串裡不准再有反引號，否則它根本不算開頭
  *   ③收尾必須是**同款**記號
  *   ④收尾的長度要**大於等於**開頭，而且後面只能是空白
- * 這四條就是規格本身，不是「再補一種繞法」。
+ * 這四條是**本函式採用的 fence 判準**，不是「再補一種繞法」。
+ * ⚠️ 不要讀成「這四條就是規格本身」——完整的 block grammar 比它大得多（見上一段），
+ * 那句話 2026-08-21 Codex r11 點名，已改口。
  *
  * ⚠️ 只剝 fenced，**不剝行內反引號**——條文本來就用行內 code 標指令與固定字串，剝掉會把承重的字一起剝掉。
  * ⚠️ **已知不涵蓋、也不打算涵蓋：縮排式程式碼區塊（四個空白起跳）。** 在這幾份檔案裡它跟
@@ -140,7 +142,8 @@ function grokSection(visibleMd) {
 }
 
 /**
- * 抓 REVIEW-AND-MERGE.md 的最短可執行版：從那顆 bullet 到**下一個 blockquote 或下一個標題**為止。
+ * 抓 REVIEW-AND-MERGE.md 的最短可執行版：從那顆 bullet 到**下一個 blockquote 或下一個 ATX 標題**（`#` 開頭）為止。
+ * ⚠️ **只認 ATX**：用底線畫的 Setext 標題收不到——那正是檔頭已列的已知盲點之一。
  * ⚠️ 結尾錨點兩種都要收（2026-08-19 預審實測）：原版只認 blockquote，
  * 於是把後面那顆 blockquote 改寫成一般段落（純排版動作、沒人會察覺）就讓視窗從 22 行漲到 138 行、
  * 把「省額度慣例」整節吞進來——承重句只要被**搬**到那一節，斷言就在錯的範圍裡命中＝靜靜通過。
@@ -184,7 +187,7 @@ function shortVersion(visibleMd) {
   while (end < lines.length && !/^(>|#{1,6} )/.test(lines[end])) end++;
   assert.notEqual(
     end, lines.length,
-    'REVIEW-AND-MERGE.md 抓不到最短可執行版的結尾（後面既沒有 blockquote 也沒有標題）——'
+    'REVIEW-AND-MERGE.md 抓不到最短可執行版的結尾（後面既沒有 blockquote 也沒有 ATX 標題）——'
       + '若放行下去，視窗會一路吃到檔尾、斷言在錯的範圍裡命中——所以這裡先擋；這道考題要跟著更新'
   );
   return lines.slice(start, end).join('\n');
@@ -262,21 +265,24 @@ test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、
   );
 });
 
-test('Grok 複審後掃｜驗屍腳本要被**兩個自訂文字視窗**指到，而且真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
+test('Grok 複審後掃｜驗屍腳本的**路徑字串**要出現在兩個自訂視窗裡，且那支檔案真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
   const SCRIPT = 'scripts/audit-grok-scan.js';
   // ⚠️ 不可以用全檔 includes（2026-08-19 Codex r3 實測）：把**被選中的文字視窗**裡的命令
   // 改成不存在的腳本、只在檔案開頭各留一句「歷史檔名存查：`scripts/audit-grok-scan.js`」，
   // 全檔搜尋照樣命中而考題全綠。要綁在**兩個自訂文字視窗**裡。
-  // ⚠️ 視窗是不是現行區塊，本檔不保證（見檔頭劃界）。
+  // ⚠️ 兩件事本檔**不保證**：①視窗是不是現行區塊（見檔頭劃界）；
+  // ②視窗裡那個路徑**是不是正式命令**——把命令改成別的腳本、只在同一個視窗裡留一句
+  // 「已停用舊檔：scripts/audit-grok-scan.js」，這題照樣綠（2026-08-21 Codex r11 實測）。
+  // 它證明的是「路徑字串出現在視窗裡」＋「repo 裡那支檔案存在」，不是「視窗指向它」。
   assert.ok(
     grokSection(visible(read('AGENTS.md'))).includes(SCRIPT),
-    `AGENTS「Grok 的邊界」視窗裡沒有指向 ${SCRIPT}（視窗外提到不算）`
+    `AGENTS「Grok 的邊界」視窗裡沒有出現 ${SCRIPT} 這個路徑字串（視窗外提到不算）`
   );
   assert.ok(
     shortVersion(visible(read('REVIEW-AND-MERGE.md'))).includes(SCRIPT),
-    `REVIEW-AND-MERGE 最短可執行版視窗裡沒有指向 ${SCRIPT}（視窗外提到不算）`
+    `REVIEW-AND-MERGE 最短可執行版視窗裡沒有出現 ${SCRIPT} 這個路徑字串（視窗外提到不算）`
   );
-  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩個視窗都在叫人跑一支不存在的腳本`);
+  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩個視窗裡都寫著這個路徑，而 repo 裡沒有這支檔案`);
 });
 
 test('Grok 複審後掃｜程式線的定位：那兩個舊字串形狀不得出現，且**第一顆**「程式線」bullet 上還留著「常設」「複審後掃」兩個詞（查字不查語意）', () => {
