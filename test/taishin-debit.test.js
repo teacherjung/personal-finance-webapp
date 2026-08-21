@@ -545,3 +545,38 @@ test('G3｜歧義時交易掛名不可退回「取第一顆」（匯入當下就
     assert.match(String(row.account), /台新/, '退回帳單概要的自動名（「台新 1234」）——與餘額 ambiguous 同一條紀律');
   }
 });
+
+test('r4#1a｜第二個同末碼帳戶只活在 accountCurrency（餘額空白）＝G1 照樣要停手', () => {
+  // 餘額空白的帳戶只在幣別表——那才是帳單的完整帳戶清單；只掃 accounts 會漏掉它，
+  // 寬鬆徑照樣把純末碼標記戶不可逆認錯親（Codex r4 實測：update＋補登成 900100）。
+  const db = { accounts: [{ id: 'm', name: '標記戶', type: 'cash', currency: 'TWD', bank: '台新',
+    accountNo: '1234', accountNoSuffixOnly: true, balance: 5 }] };
+  const combo = { bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 111, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD', '900200****1234': 'TWD' },   // 900200 沒印餘額、只在幣別表
+    transactions: [] };
+  const pv = previewBalancesForDb({ accounts: [...db.accounts] }, combo);
+  assert.equal(pv.rows[0].action, 'ambiguous', '★帳單末碼仍不唯一（另一顆在幣別表）＝停手');
+  const r = applyBalancesToDb(db, combo);
+  assert.equal(r.updated + r.created, 0);
+  assert.equal(db.accounts[0].accountNo, '1234', '★不可被補登');
+});
+
+test('r4#1b｜G1×G2 交叉：過期標記戶＋帳單兩個同末碼完整帳號＝嚴格徑照樣放行（update＋create）', () => {
+  // 手動補成 900100、標記殘留；帳單印 900100 與 900200。dup 停手若排在嚴格徑之前，
+  // 連「前綴全等」的正路都被誤擋（Codex r4 實測：ambiguous×2、什麼都不動）。
+  // 正確＝900100 走嚴格徑更新、900200 新建，手填帳號不被洗掉。
+  const db = { accounts: [{ id: 'm', name: '補過號', type: 'cash', currency: 'TWD', bank: '台新',
+    accountNo: '900100****1234', accountNoSuffixOnly: true, balance: 5 }] };
+  const combo = { bank: '台新', referenceDate: '2026-02-28', accounts: [
+    { suffix: '1234', masked: '900100****1234', balance: 111, currency: 'TWD', label: '', note: '' },
+    { suffix: '1234', masked: '900200****1234', balance: 222, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD', '900200****1234': 'TWD' }, transactions: [] };
+  const pv = previewBalancesForDb({ accounts: [...db.accounts] }, combo);
+  assert.deepEqual(pv.rows.map((x) => x.action), ['update', 'create'], '★前綴就是分辨器——dup 只擋憑末碼的寬鬆徑');
+  const r = applyBalancesToDb(db, combo);
+  assert.equal(r.updated, 1); assert.equal(r.created, 1);
+  assert.equal(db.accounts[0].accountNo, '900100****1234', '★手填帳號不被洗掉');
+  assert.equal(db.accounts[0].balance, 111);
+  assert.equal(db.accounts.length, 2, '900200 是另一顆＝新建正確');
+});
