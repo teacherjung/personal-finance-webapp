@@ -57,7 +57,7 @@ export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 /** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
  * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
- * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這份帳單根本沒有可更新的帳戶 */
+ * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這次**不會動任何帳戶餘額**（沒有 update/create/mature-zero 列——含「全部歧義停手」：Grok #494 掃 G3，ambiguous 列讓 rows 非空、舊判準 !rows.length 會讓鈕謊稱要更新餘額） */
 export function bankApplyLabel(balancesSkipped, noAccounts) {
   // ⚠️ 兩種「這次不會更新餘額」都要改口（Codex #492 r1#2）：①讀不到現值參考日（balancesSkipped）
   //    ②這份帳單沒有可更新的帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②＝同一個畫面上面寫

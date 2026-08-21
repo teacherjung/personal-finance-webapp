@@ -580,7 +580,10 @@ test('接線｜鈕字與完成提示都要真的接上（算了不用＝畫面�
   const src = stripComments(readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8'));
   // ⚠️ 第二個參數＝「這份帳單沒有可更新的帳戶」（Codex #492 r1#2）：只吃 blocked 會讓
   //    簽帳金融卡明細那條路上面寫「只匯入交易明細」、鈕卻寫「更新餘額＋匯入交易」。
-  assert.match(src, /bankApplyLabel\(!!r\.blocked, !rows\.length\)/, '★鈕字要隨「這次會不會更新餘額」改變（兩種情況都要吃）');
+  // Grok #494 掃 G3：ambiguous 列讓 rows 非空、舊判準 !rows.length 會讓鈕謊稱「更新餘額」——
+  // 判準改成「有沒有任何真的會動餘額的列」（update/create/mature-zero）。
+  assert.match(src, /bankApplyLabel\(!!r\.blocked, !rows\.some\(/, '★鈕字要看「會不會真的動餘額」，不是「有沒有列」');
+  assert.doesNotMatch(src, /bankApplyLabel\(!!r\.blocked, !rows\.length\)/, '★舊判準不可回來（全歧義時它說謊）');
   assert.match(src, /from '\.\/cashflow-model\.js'/);
   assert.match(src, /toast\(bankApplyDoneText\(res, t, .*\.recipe\)\)/, '★完成提示要走那個函式且第三參數釘到 res.recipe（塞 undefined/錯欄位＝這裡紅）');
   assert.doesNotMatch(src, /確認：更新餘額＋匯入交易/, '★鈕字不可再就地寫死');

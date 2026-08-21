@@ -488,3 +488,60 @@ test('r1#6｜全星號遮罩的交易掛名：帳戶改名後 reconcile 認得�
   assert.equal(reconcileBankTxAccountNames(db2), 0, '★分不出是哪顆＝不改（歧義停手，與餘額同一條紀律）');
   assert.equal(db2.transactions[0].account, '舊名字');
 });
+
+// ---- Grok #494 複審後掃三條（新制首航：它自己跑正式程式重現的，我逐條再驗）----
+
+test('G1｜帳單自己印兩個同末碼帳號＝寬鬆徑停手（不補登、不裂戶）', () => {
+  // 900100****1234 與 900200****1234 同一份出現＝末碼在這份帳單上本來就不唯一，
+  // 「憑末碼認親」的前提整個不成立——舊行為：第一列補登 900100、第二列 create ＝補登錯＋裂戶。
+  const db = { accounts: [{ id: 'm', name: '標記戶', type: 'cash', currency: 'TWD', bank: '台新',
+    accountNo: '**********1234', accountNoSuffixOnly: true, balance: 5 }] };
+  const combo = { bank: '台新', referenceDate: '2026-02-28', accounts: [
+    { suffix: '1234', masked: '900100****1234', balance: 111, currency: 'TWD', label: '', note: '' },
+    { suffix: '1234', masked: '900200****1234', balance: 222, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD', '900200****1234': 'TWD' }, transactions: [] };
+  const r = applyBalancesToDb(db, combo);
+  assert.equal(r.updated + r.created, 0, '★兩列都停手');
+  assert.equal(db.accounts.length, 1, '★不裂戶');
+  assert.equal(db.accounts[0].accountNo, '**********1234', '★標記戶不可被其中一列搶先補登');
+  assert.equal(db.accounts[0].accountNoSuffixOnly, true);
+  const pv = previewBalancesForDb({ accounts: [...db.accounts] }, combo);
+  assert.deepEqual(pv.rows.map((x) => x.action), ['ambiguous', 'ambiguous'], '★預覽兩列都照實說認不出');
+});
+
+test('G2｜使用者手動補了完整帳號但標記殘留＝寬鬆徑不可再信標記（親手填的 900100 不可被帳單洗成 900200）', () => {
+  // accountNo 在 CRUD 白名單、標記不在：資產頁補完整帳號後標記還掛著。
+  // 寬鬆徑只信「帳號數字部分＝末碼而已」的標記戶；數字更長＝身分其實已完整＝交給嚴格徑。
+  const db = { accounts: [{ id: 'm', name: '補過號', type: 'cash', currency: 'TWD', bank: '台新',
+    accountNo: '900100****1234', accountNoSuffixOnly: true, balance: 5 }] };
+  const combo = { bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900200****1234', balance: 999, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900200****1234': 'TWD' }, transactions: [] };
+  const r = applyBalancesToDb(db, combo);
+  assert.equal(db.accounts[0].accountNo, '900100****1234', '★使用者填的前綴是歧義證據，不是「還不完整」');
+  assert.equal(r.updated, 0, '★900200 對 900100＝前綴對不上＝不是同一顆');
+  assert.equal(r.created, 1, '900200 是另一顆帳戶＝新建是正確行為');
+  // 對照：真的 900100 帳單來＝嚴格徑照配（標記殘留不擋正路）
+  const db2 = { accounts: [{ id: 'm', name: '補過號', type: 'cash', currency: 'TWD', bank: '台新',
+    accountNo: '900100****1234', accountNoSuffixOnly: true, balance: 5 }] };
+  const combo2 = { bank: '台新', referenceDate: '2026-02-28',
+    accounts: [{ suffix: '1234', masked: '900100****1234', balance: 777, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: { '900100****1234': 'TWD' }, transactions: [] };
+  assert.equal(applyBalancesToDb(db2, combo2).updated, 1, '同前綴照樣更新');
+});
+
+test('G3｜歧義時交易掛名不可退回「取第一顆」（匯入當下就掛到別人名下、事後對齊救不回）', async () => {
+  const { previewBankTxForDb } = await import('../lib/services/bank-import.js');
+  const db = { accounts: [
+    { id: 'a1', name: '甲', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900100****1234', balance: 0 },
+    { id: 'a2', name: '乙', type: 'cash', currency: 'TWD', bank: '台新', accountNo: '900200****1234', balance: 0 },
+  ], transactions: [] };
+  const p = parseTaishinDebit(wholeStatement());
+  const pv = previewBankTxForDb(db, p);
+  assert.ok(pv.rows.length > 0);
+  for (const row of pv.rows) {
+    assert.notEqual(row.account, '甲', '★全星號帳號分不出是誰＝不可掛到第一顆');
+    assert.notEqual(row.account, '乙');
+    assert.match(String(row.account), /台新/, '退回帳單概要的自動名（「台新 1234」）——與餘額 ambiguous 同一條紀律');
+  }
+});
