@@ -185,7 +185,7 @@ function shortVersion(visibleMd) {
 // 「逐字相同才算兩份檔案講同一件事」，那是誇大，2026-08-19 Codex r2 點名後改口。
 const KILL_CONDITIONS = ['版本不同＝當未跑', '退出碼非 0＝該掃作廢', '缺這一行＝當未跑'];
 
-test('Grok 複審後掃｜三個失效條件：AGENTS 正本與最短可執行版必須逐字一致（2026-08-19 實測漂移：時序那條只寫在正本）', () => {
+test('Grok 複審後掃｜三個失效條件的字串，兩個視窗裡都要有（2026-08-19 實測漂移：時序那條只寫在正本）', () => {
   const canon = grokSection(visible(read('AGENTS.md')));
   const short = shortVersion(visible(read('REVIEW-AND-MERGE.md')));
   for (const c of KILL_CONDITIONS) {
@@ -261,7 +261,7 @@ test('Grok 複審後掃｜驗屍腳本要被**兩個自訂文字視窗**指到�
   assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩個視窗都在叫人跑一支不存在的腳本`);
 });
 
-test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且那顆 bullet 上還留著「常設」「複審後掃」兩個詞（查字不查語意）', () => {
+test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且**第一顆**「程式線」bullet 上還留著「常設」「複審後掃」兩個詞（查字不查語意）', () => {
   // ⚠️ 2026-08-19 預審抓到的假綠：絆線原本只搜「程式線預設關門」，
   // 但 AGENTS 原標題實際寫的是「程式線＝預設關門」（**中間有全形等號**）——
   // 於是這支 PR 最核心的那處修正可以整行逐字還原，而考題全綠。
@@ -289,7 +289,7 @@ test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且那顆
   );
 });
 
-test('Grok 複審後掃｜CLAUDE.md 必須自己提一次，且時機要跟它寫在同一句（新 session 只保證讀到 CLAUDE.md）', () => {
+test('Grok 複審後掃｜CLAUDE.md 至少有一句同時講出「Grok 複審後掃」與「轉正式之前」（新 session 只保證讀到 CLAUDE.md）', () => {
   // 兩個字串各查各的會被「散在兩個無關 bullet」蒙混過去（2026-08-19 預審抓到）——綁同一行。
   const hit = visible(read('CLAUDE.md')).split('\n')
     .find((l) => l.includes('Grok 複審後掃') && l.includes('轉正式之前'));
