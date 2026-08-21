@@ -32,8 +32,11 @@
 //   > 仍在現行規則區塊、或仍具規範效力。擷取所依賴的節首／節尾／bullet／相鄰 blockquote
 //   > 形狀會被鎖住；**其餘 Markdown 容器與標題語法不在射程**。
 //
-// 講白話：**它抓得到「規則被刪掉、被搬走、被改字」，抓不到「規則還在原地、但被排版弄成不算數」。**
-// 後者要靠複審者的眼睛，不是字串考題。（24 顆突變全紅的是前者那一類；後者已知至少五種形狀繞得過。）
+// 講白話：**它只檢查題內明列的字串條件與擷取錨點，並檢查驗屍腳本存在。**
+// **它不判斷命中的文字是不是現行規則、是不是仍具規範效力，也不解析完整 GFM。**
+// 已跑過的突變只證明那些具體形狀會紅；其他未列形狀不在保證內。
+// ⚠️ 這兩行是 Codex r5 逐字給的（我 r4 自己寫的白話版又把射程放大了：說它「抓得到被搬走」，
+// 而同一段下面才剛承認同視窗搬進存查附錄繞得過）。**不要再自己潤飾。**
 //
 //   ・**不證明**＝有沒有人真的跑過那一遍掃描。條文本身就寫著「沒有任何機械保證，全靠自律」，
 //     這道考題不會、也不打算改變那件事——別把它讀成「有考題＝掃有在跑」。
@@ -44,7 +47,7 @@
 //   ・**鎖了哪些長相**（⚠️ r4 更正：原本寫「不鎖節的長相」，與程式相反）：節首、節尾、
 //     bullet 前綴、相鄰 blockquote 這幾個**擷取用的錨點形狀是鎖死的**，動到它們這道會紅
 //     並要求跟著更新。不鎖的是**字數、件數、節有多長**（鐵則 10）。
-//   ・**只有動到那幾個承重字串才會紅**；其餘改寫它一律沉默。
+//   ・**機械射程**＝題內明列的字串條件與擷取錨點；其他改寫是否轉紅，不作保證。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -55,7 +58,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
 /**
- * 只留「規則真的在對讀者發號施令」的那些字。剝兩種：
+ * 剝掉本函式辨識得到的 HTML 註解與 fenced code；這不是「哪些字仍在發號施令」的判定器。剝兩種：
  * ①HTML 註解——`merge-procedure-docs` r1 實測：只搜關鍵字的考題，用註解就繞得過。
  * ②fenced code——把一段規則包進 fence，畫面上它就從「你要照做的規則」變成「程式碼範例」，
  *   字面卻一個沒少（2026-08-19 Codex r1 實測 6/6 假綠）。
@@ -202,10 +205,11 @@ test('Grok 複審後掃｜時機是「轉正式之前」：正本、最短可執
   assert.ok(shortVersion(visible(rm)).includes(READY), `REVIEW-AND-MERGE 最短可執行版的時機沒寫成「${READY}」`);
 
   // 合併步驟開頭那句指路——它是給「翻到合併步驟才第一次看到這件事」的人看的，
-  // 所以它①必須真的在合併步驟的前導（搬到檔案別處＝那個人看不到）②必須自己講清楚時機已經過了
+  // 所以它①必須在**被選中的那個**合併步驟 block 的前導（搬到檔案別處＝那個人看不到）②必須自己講清楚時機已經過了
   // ③必須是渲染得出來的字（包進 HTML 註解＝讀的人一個字都看不到）。
   // ⚠️ 三件都是 2026-08-19 預審實測過的繞法：原版用整份原文 find，三種都能靜靜通過。
   const lines = visible(rm).split('\n');
+  // ⚠️ 這裡只把 findIndex 選中的第一個「合併也由 Codex 代執行」block 當作合併步驟；不保證它是現行區塊。
   const mergeSteps = lines.findIndex((l) => l.startsWith('>') && l.includes('合併也由 Codex 代執行'));
   assert.notEqual(mergeSteps, -1, 'REVIEW-AND-MERGE.md 找不到合併步驟區塊（「合併也由 Codex 代執行」）——這道考題要跟著更新');
   // 前導＝**緊鄰合併步驟的前一個 blockquote 區塊**。
@@ -240,20 +244,21 @@ test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、
   );
 });
 
-test('Grok 複審後掃｜驗屍腳本要被**正式那兩段**指到，而且真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
+test('Grok 複審後掃｜驗屍腳本要被**兩個自訂文字視窗**指到，而且真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
   const SCRIPT = 'scripts/audit-grok-scan.js';
-  // ⚠️ 不可以用全檔 includes（2026-08-19 Codex r3 實測）：把正式命令都改成不存在的腳本、
-  // 只在檔案開頭各留一句「歷史檔名存查：`scripts/audit-grok-scan.js`」，全檔搜尋照樣命中 ⇒
-  // 正式流程已經指著一支不存在的腳本，而考題全綠。要綁在**發號施令的那兩段**裡。
+  // ⚠️ 不可以用全檔 includes（2026-08-19 Codex r3 實測）：把**被選中的文字視窗**裡的命令
+  // 改成不存在的腳本、只在檔案開頭各留一句「歷史檔名存查：`scripts/audit-grok-scan.js`」，
+  // 全檔搜尋照樣命中而考題全綠。要綁在**兩個自訂文字視窗**裡。
+  // ⚠️ 視窗是不是現行區塊，本檔不保證（見檔頭劃界）。
   assert.ok(
     grokSection(visible(read('AGENTS.md'))).includes(SCRIPT),
-    `AGENTS「Grok 的邊界」節裡沒有指向 ${SCRIPT}（別處提到不算——那不是發號施令的地方）`
+    `AGENTS「Grok 的邊界」視窗裡沒有指向 ${SCRIPT}（視窗外提到不算）`
   );
   assert.ok(
     shortVersion(visible(read('REVIEW-AND-MERGE.md'))).includes(SCRIPT),
-    `REVIEW-AND-MERGE 的最短可執行版裡沒有指向 ${SCRIPT}（別處提到不算）`
+    `REVIEW-AND-MERGE 最短可執行版視窗裡沒有指向 ${SCRIPT}（視窗外提到不算）`
   );
-  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩份文件的正式流程都在叫人跑一支不存在的腳本`);
+  assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩個視窗都在叫人跑一支不存在的腳本`);
 });
 
 test('Grok 複審後掃｜程式線的定位：舊標籤不得復活，且那顆 bullet 上還留著「常設」「複審後掃」兩個詞（查字不查語意）', () => {
