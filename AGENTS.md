@@ -175,7 +175,7 @@
 - **色彩分工**（原鐵則 4）：
    - 分類色（圖表/長條/圓餅/圓點）只從 `theme.js` 的 `CHART`/`PALETTE` 取——分類色盤（theme.js）已通過 dataviz 驗證，不要自創 hex。品牌珊瑚色（趨勢線、單色漸層）用 `theme.js` 的 `ACCENT`/`ACCENT_SOFT`。
    - 全站介面主色＝暖米色背景＋理財中心錢幣橘：`--accent:#DC5818` 只負責邊線、底線、排序、focus 等視覺效果；小字與選取文字用同色相、對比合格的 `--accent-ink:#B2430C`。綠色 `--action` 只給主要動作按鈕，`--pos`/`--pos-soft` 只給收入、獲利等正向財務語意；不可因此把一般背景或互動狀態染成綠色系。
-   - 語意色 `--pos/--neg/--warn`（CSS token，六色盤同色相加深、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
+   - 語意色 `--pos/--neg/--warn`（CSS token，與分類色盤同色相加深（色數以 theme.js 為準）、對比 ≥4.5:1）**只給文字/標籤/提醒邊框**。
    - **填色條一律用 CHART 亮版**，不可拿深色 token 當填色（使用者抓過違規）。
 - **金額格式**（原鐵則 5）（app.js 統一格式器，不要自己 toLocaleString）：
    - 統計卡片大數字 → `wan()`（萬）；表格/明細 → `money()`（元整數）/`moneyCur()`（原幣）。**例外：訂閱追蹤頁（含內嵌歷史紀錄）全部用 `money()` 元**——訂閱金額為千元級，用萬會變「0.1 萬」不可讀（使用者拍板 D7）；**例外二：證券交易頁**（原幣多幣別的查帳表）用自製 `fmtAmt/fmtQty/fmtPrice`——純數字千分位、**不掛幣別後綴**（幣別自成一欄，掛了會擠爆），數量留 6 位小數（IB 碎股）、價格 4 位（securities.js 檔頭有註；S3 落地）
@@ -273,7 +273,7 @@
 | 支出分類（兩層：分類/子類，**使用者可自訂** 2026-07） | 生效樹＝`settings.expenseTree`＋`effectiveTree(db)`；改名連動與別名、刪除歸「其他/未分類」（強制保留的退路）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#支出分類兩層與使用者自訂) |
 | `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 三層先中先贏：特殊指定→店家/關鍵字→**場所保底排表尾**（具體店家 > 場所）；重複判定鍵＝`stmtRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#category_rules-關鍵字順序) |
 | 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX；PDF 再依**文件內容**判富邦/台新） | 銀行由**文件內容**判斷不看選的卡；富邦/台新 PDF＋台新 XLSX（HOSTED 走子行程）；`finalize()` 共用；`statementMonth` 只掃表頭——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單多銀行與多格式解析) |
-| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | 只加在顯示名（`note`）**絕不進 `storeKey`**；只加在「自動名」，使用者取過的名字逐字保留；三處呼叫端——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
+| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | 只加在顯示名（`note`）**絕不進 `storeKey`**；只加在「自動名」，使用者取過的名字逐字保留；各呼叫端（處數以 grep 為準、契約記載已漂過一次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
 | **使用者自訂店名規則 `settings.storeRules`**（第三帖「規則自助化」，使用者定 2026-07-19） | 純資料非正規表示式（使用者只填純文字）；每種規則排在同類內建規則**前面**；寫入端嚴格、櫃檯端寬鬆——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#使用者自訂店名規則-storerules) |
 | **「規則入櫃檯」**（第三帖）：`lib/repo.js` 每次讀取都把 `settings.storeRules` 餵給 `store-rules.js` 的模組級單例 | `repo.js` 每次讀取都經 `loadSynced()` 餵規則進純函式模組；預覽要講兩種不可逆變更；預覽失敗不可繼續儲存——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則入櫃檯) |
 | 規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據） | 內建規則雜湊＋使用者規則**每次重算**；`normalizeIfRulesChanged` 必須**先 `getDb()` 再算指紋**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則指紋-storeruleshash) |

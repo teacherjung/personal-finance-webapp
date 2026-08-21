@@ -30,7 +30,7 @@
 
 ## 必填欄位機制與跨欄不變式
 
-**改這裡**：**必填欄位機制（`REQUIRED_FIELDS`，**哪些集合、哪些欄一律以 `lib/schema.js` 的 `REQUIRED_FIELDS` 為準**——本檔曾凍結一份清單、實際已漂：文件列 5 個集合、schema 已有 8 個＝改 schema 的人看不到這裡；`securityTrades` 的查帳合約欄全列必填，含核心金額 price/grossAmount/netSettlement）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；清單以 schema.js 的 ROW_RULES 為準——例：securityTrades 的 buy→out／sell→in）
+**改這裡**：**必填欄位機制（`REQUIRED_FIELDS`，哪些集合、哪些欄一律以 `lib/schema.js` 的 `REQUIRED_FIELDS` 為準——本檔曾凍結一份清單、實際已漂＝改 schema 的人看不到這裡（③殘渣教訓：教材句自己也不寫數字）；`securityTrades` 的查帳合約欄全列必填，含核心金額 price/grossAmount/netSettlement）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；清單以 schema.js 的 ROW_RULES 為準——例：securityTrades 的 buy→out／sell→in）
 
 **記得同步這裡**：三個強制點——CRUD 新增回乾淨 400、匯入逐筆列 errors→整份 400、櫃檯 throw 模式當場 throw。**strip 模式（舊 JSON 搬家專用）對必填欄位「缺席／空值／格式錯／數字型」一律整筆濾除，不可只刪欄位**（只刪欄位會留下缺主鍵的殘骸，讓讀取端 `.slice`/`.split` 崩，Codex#12）；PUT 部分更新天然安全（合併保留舊值）。新增「不可缺的主鍵欄」時補進 `REQUIRED_FIELDS`。
 
@@ -38,7 +38,7 @@
 
 **改這裡**：**HOSTED 的並行安全＝compare-and-swap（C4b，契約 P1-5）**
 
-**記得同步這裡**：兩條寫入路徑處置不同、刻意的：**櫃檯自己的五支**（`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`updateSettings`）改動邏輯在櫃檯手上，撞版本時**重讀重做重寫一次**、呼叫端無感；**`getDb…saveDb` 這一對**改動邏輯在呼叫端的記憶體物件裡，櫃檯**沒有能力重算**，直接丟 **409**（`server.js` 有專屬分支回原味訊息，不走「請求格式不正確」）。假裝重試＝拿舊快照再寫一次＝把別人剛寫的吃掉，比 409 危險得多。**`saveDb` 對「沒有版本戳的整包寫入」預設 throw**，只有 `/api/import` 明寫 `{ overwrite: true, from: snapshot }` 才准（全 repo 僅此一處）。⚠️**`from` 必須是呼叫端讀資料時那一次 `getDb()` 的結果**（2026-07-29 契約，Codex 收官審查 #2）——它同時是「機密的來源」與「版本戳的來源」，兩者**必須是同一次讀取**。舊行為是「寫入前一刻自己重抓一次目前版本」＝**自己蓋章給自己看**：CAS 只保護「重抓」到「寫入」那一瞬間，而真正要保護的是「呼叫端讀資料」到「寫入」的整段。已重現：A 分頁還原備份的同時 B 分頁存了新的 IB token → CAS 照樣通過 → 新 token 被舊值蓋掉、**而且回 200 說成功**。拿不出 `from` 一律 throw（`kv_no_version`），讓「無來源版本的整包覆蓋」在櫃檯上根本不存在；`store-pg.js` 的 `currentVersions()` 已**移除**（它的存在本身就是那個 bug，原地留墓誌銘說明不要加回來）。考題 `test/hosted-import-overwrite.test.js`（各並發方各一題＋架構題釘死「只准一個入口、而且一定要帶 `from`」）。
+**記得同步這裡**：兩條寫入路徑處置不同、刻意的：**櫃檯經 `mutate` 的寫入函式**（清單以 `lib/repo.js` 為準：`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`updateSettings`）改動邏輯在櫃檯手上，撞版本時**重讀重做重寫一次**、呼叫端無感；**`getDb…saveDb` 這一對**改動邏輯在呼叫端的記憶體物件裡，櫃檯**沒有能力重算**，直接丟 **409**（`server.js` 有專屬分支回原味訊息，不走「請求格式不正確」）。假裝重試＝拿舊快照再寫一次＝把別人剛寫的吃掉，比 409 危險得多。**`saveDb` 對「沒有版本戳的整包寫入」預設 throw**，只有 `/api/import` 明寫 `{ overwrite: true, from: snapshot }` 才准（全 repo 僅此一處）。⚠️**`from` 必須是呼叫端讀資料時那一次 `getDb()` 的結果**（2026-07-29 契約，Codex 收官審查 #2）——它同時是「機密的來源」與「版本戳的來源」，兩者**必須是同一次讀取**。舊行為是「寫入前一刻自己重抓一次目前版本」＝**自己蓋章給自己看**：CAS 只保護「重抓」到「寫入」那一瞬間，而真正要保護的是「呼叫端讀資料」到「寫入」的整段。已重現：A 分頁還原備份的同時 B 分頁存了新的 IB token → CAS 照樣通過 → 新 token 被舊值蓋掉、**而且回 200 說成功**。拿不出 `from` 一律 throw（`kv_no_version`），讓「無來源版本的整包覆蓋」在櫃檯上根本不存在；`store-pg.js` 的 `currentVersions()` 已**移除**（它的存在本身就是那個 bug，原地留墓誌銘說明不要加回來）。考題 `test/hosted-import-overwrite.test.js`（各並發方各一題＋架構題釘死「只准一個入口、而且一定要帶 `from`」）。
 
 ## HOSTED 資料層與測試替身
 
