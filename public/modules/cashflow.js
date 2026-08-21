@@ -12,7 +12,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml, bankNoAccountNote } from './cashflow-model.js';
+import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -325,7 +325,7 @@ function openBankUpload() {
   });
 }
 
-const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）', 'mature-zero': '定存已到期 → 餘額歸零' };
+const ACTION_LABEL = { update: '更新餘額', create: '新建帳戶', 'skip-stale': '跳過（帳單同期或較舊）', unsupported: '跳過（不支援幣別）', blocked: '無法更新（讀不到參考日）', 'mature-zero': '定存已到期 → 餘額歸零', ambiguous: '不動（同末碼有多個帳戶，認不出是哪一個）' };
 /** @param {any} r 預覽結果 @param {string} b64 @param {string} pw */
 function showBankPreview(r, b64, pw, onPage = () => true) {
   const rows = r.rows || [];
@@ -343,7 +343,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   const body = `
     ${r.blocked ? bankBlockedWarningHtml() : ''}
     <div class="section-title" style="margin-top:0">帳戶餘額</div>
-    ${bankNoAccountNote(r.noAccountReason) ? `<p class="muted" style="margin:8px 0 18px;font-size:12px">ℹ️ ${bankNoAccountNote(r.noAccountReason)}</p>` : `<div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
+    <div class="tbl-wrap"><table><thead><tr><th>帳戶</th><th>幣別</th><th class="num">帳單餘額</th><th class="num">目前餘額</th><th>動作</th></tr></thead>
     <tbody>${rows.map((/** @type {any} */ x) => `<tr>
       <td>${esc(x.matchedName || x.label || '')}<span class="muted">・末${esc(x.suffix)}</span></td>
       <td class="muted">${esc(x.currency)}</td>
@@ -351,7 +351,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
       <td class="num muted">${x.oldBalance == null ? '—' : money(x.oldBalance)}</td>
       <td>${esc(ACTION_LABEL[x.action] || x.action)}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="empty">帳單裡沒有可更新的帳戶。</td></tr>'}</tbody></table></div>
-    <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>`}
+    <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
 
     <div class="section-title">交易明細</div>
     <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
@@ -380,7 +380,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   //    交易照樣匯入，所以那顆鈕按下去真的有事情發生。r3#1 當初拿掉它是對的（那時按了必失敗），
   //    行為改了就要跟著改回來，不然使用者會以為這份帳單完全不能用。
   openInfo('銀行對帳單預覽', body, { size: 'xl',
-    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked, !rows.length))}</button>` });
+    actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked, !rows.some((/** @type {any} */ x) => ['update', 'create', 'mature-zero'].includes(x.action))))}</button>` });
 
   setTimeout(() => {
     const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));

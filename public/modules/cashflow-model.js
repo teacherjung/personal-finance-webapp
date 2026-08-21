@@ -57,7 +57,7 @@ export const BANK_UPLOAD_FILE_LABEL = '對帳單 PDF';
 // 送出鈕：這個窗按下去是「上傳並預覽」，不是存檔——寫「儲存」會讓人以為當場寫進帳本了。
 /** 預覽窗確認鈕的字。⚠️ **讀不到現值參考日時不可再寫「更新餘額」**（r1#3）：那次不會更新餘額，
  * 鈕上卻寫著要更新＝按下去做的事跟鈕上寫的不一樣。這是這條線一路在修的同一種病。
- * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這份帳單根本沒有可更新的帳戶 */
+ * @param {boolean} balancesSkipped @param {boolean} [noAccounts] 這次**不會動任何帳戶餘額**（沒有 update/create/mature-zero 列——含「全部歧義停手」：Grok #494 掃 G3，ambiguous 列讓 rows 非空、舊判準 !rows.length 會讓鈕謊稱要更新餘額） */
 export function bankApplyLabel(balancesSkipped, noAccounts) {
   // ⚠️ 兩種「這次不會更新餘額」都要改口（Codex #492 r1#2）：①讀不到現值參考日（balancesSkipped）
   //    ②這份帳單沒有可更新的帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②＝同一個畫面上面寫
@@ -133,21 +133,6 @@ export function bankSimilarTagHtml() {
  */
 export function bankBlockedWarningHtml() {
   return `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:color-mix(in srgb, var(--warn) 10%, transparent);border:1px solid color-mix(in srgb, var(--warn) 45%, transparent);font-size:13px;line-height:1.8">⚠️ <b>這份讀不到「現值參考日」</b>（帳單上那個「資料截至某日」的日期）——所以<b>這次不會更新帳戶餘額</b>，「資產配置」頁會維持原本的數字。<br><b>交易明細照樣匯入</b>：那些交易本來就用不到這個日期，只有「這份帳單的餘額比 app 裡的新嗎」才需要它。<br>要回報的話，<b>不用傳帳單內容</b>——講「哪一家銀行、哪一種版面（例如綜合對帳單／金融卡明細）」就夠了。</p>`;
-}
-
-/** 「這份帳單為什麼沒有可更新的帳戶」的白話（封閉代碼→句子；後端只給代碼＝零插值）。
- * ⚠️ 存在的理由：空表那句「帳單裡沒有可更新的帳戶」對簽帳金融卡明細是**誤導**——
- *    不是帳單沒有，是它只印得出末四碼、我們**刻意**不建戶（建了會與綜合對帳單裂成兩顆帳戶）。
- *    查表一律 `Object.hasOwn`（鐵則 3.5：`table['toString']` 會撈到原型上的函式）。 */
-const NO_ACCOUNT_TEXT = Object.freeze({
-  'masked-suffix-only': '這份帳單只印得出帳號末四碼，看不出是你的哪一個帳戶，'
-    + '所以<b>這次只匯入交易明細、不更新帳戶餘額</b>（餘額請以綜合對帳單那一份為準）。',
-});
-
-/** @param {any} code @returns {string} 認不得的代碼／缺席＝空字串（畫面不多長東西） */
-export function bankNoAccountNote(code) {
-  const k = typeof code === 'string' ? code : '';
-  return k && Object.hasOwn(NO_ACCOUNT_TEXT, k) ? /** @type {any} */ (NO_ACCOUNT_TEXT)[k] : '';
 }
 
 /**
