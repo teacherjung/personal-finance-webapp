@@ -262,6 +262,7 @@
 | 集合新增欄位（表單加新欄） | checklist：使用者可寫→補 **`lib/schema.js` 的 `WRITABLE_FIELDS`**（漏加會被默默剝掉、console 有警告）；數值/布林/枚舉/陣列→同補 **`FIELD_SCHEMA`**＋`lib/types.js` typedef；**服務層擁有的衍生欄位絕不進 CRUD 白名單**。原則、三道寫入閘門、逐集合歸屬與「PUT 挾帶假值」病史＝下方「**欄位所有權**」節（單一真相）。測試種帳單假資料走 repo 直寫（`server.test.js seedTx`），不可為了種資料把白名單加回去 |
 | **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | `syncIb` **等待網路請求之前只讀「發請求需要的設定」（`getSettings`），整包資料庫等回應之後才 `getDb()`**。原本一開頭就拿整包、請求結束把那份過期快照整包寫回——Flex Query 要跑數秒到數十秒，期間任何寫入都被靜默吃掉（Codex 實測：同步中寫入的當日日線，同步完成後整個消失；交易與月快照同理且**不會自癒**）。⚠️ 任何「讀整包 → await → 寫整包」的流程都有這個病，新增類似流程時一律「await 之後重讀再合併」（另兩個前例＝`normalizeIfRulesChanged` 的 `const fresh = getDb()`；`lib/services/market-data.js refreshQuotesIfStale` await 前只讀新鮮度＋要抓哪些代號、await 後才 `getDb()` 合併匯率/股價再寫，Codex r13#1——原本 await 前拿整包、報價回來把舊快照整包寫回，會吞掉抓報價期間的記帳/店名整理）。 |
 | **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | 不可竄改的 `dir`、方向護欄與來源優先序、內轉子分類用角色重播（不可字面比對）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行收支真學習的方向與內轉子分類) |
+| **帳單原文（摘要／備註）分兩欄留底**（Stage 2，使用者定 2026-08-22） | `note` 是顯示用的組合結果、改了就回不到原文；原文另存 `bankSummary`／`bankNote`（服務層寫、非 CRUD），顯示層走 `bankRawText`＝有欄讀欄、舊列才反解 `bankRef`（**不回填**）；去重鍵與學習鑰匙格式沒動——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文摘要與備註分兩欄留底) |
 | **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | 一次寫檔全有或全無；純函式 worker＋`PUT applyAll` 原子入口，標準端點只留相容薄殼——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#同類同店一起改是單一原子指令) |
 | **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | 觸發＝停車費子類的**現名身分**、非字面；`parkSub` 整批算一次傳入；六個呼叫點；與 strip 反向對稱——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |
 | **帳戶顯示名 denormalized 到 `transactions.account`**（使用者定 2026-07-21「改一次、處處同步」） | 銀行交易靠 `bankRef` 遮罩帳號比對現名、手動記帳走舊名→新名；三處跑 reconcile——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶顯示名-denormalized-到交易) |
@@ -290,7 +291,7 @@
 
 | 集合 | 使用者可寫（CRUD 白名單） | 服務層擁有（誰寫、不進白名單） | 唯讀/衍生 |
 |---|---|---|---|
-| `transactions` | date, type, category, subcategory, amount, account, note | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey；ledger 亦由遷移寫 | — |
+| `transactions` | date, type, category, subcategory, amount, account, note | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey, bankSummary/bankNote（帳單原文留底，Stage 2）；ledger 亦由遷移寫 | — |
 | `accounts` | name, type, class, currency, balance, accountNo（PII，前端可填、GET 剝成末 4 碼） | **balanceAsOf**（銀行對帳單「較新才覆蓋」的餘額參考日——**服務層寫、非 CRUD 白名單**，Codex r14#5：勿誤列成使用者可寫）、ibCashCur（IB 同步）、**bank**（開戶機構戳，P1a 機構維度——銀行匯入**新建**帳戶時蓋、比對成功不回填；matchAccount 憑它擋跨行誤配；FIELD_SCHEMA 驗字串（P1a r1#3）） | — |
 | `holdings` | symbol, name, layer, currency, quantity, price, avgCost, cost, quoteSymbol | source（IB 同步；`source:'ib'` 決定融資槓桿，假值會藏風險） | ⚠️`price` **多方合法寫**：使用者手動＋前端「更新報價」按鈕＋後端 D1 `refreshQuotesIfStale`（開 app 自動）——都合法，非違規 |
 | `watchlist` | symbol, name, targetPrice, currency, quoteSymbol, note | — | ⚠️`lastPrice`/`lastAt`＝**報價衍生**，目前**前端「更新報價」按鈕**寫（PUT）故**仍在白名單**。低風險（觀察清單不進淨值）。**待辦**：D-engine market-data 服務化後，把持股/觀察清單報價更新全移到後端（比照 D1），`lastPrice`/`lastAt`（＋或 `holdings.price`）退出白名單＝純服務擁有 |
