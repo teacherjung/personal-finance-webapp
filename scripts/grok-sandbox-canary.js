@@ -51,6 +51,20 @@ export function runInSandbox(box, argv, opt = {}) {
 }
 
 /**
+ * 「這隻反面金絲雀算不算擋住」——**唯一的判斷**，抽出來是為了讓考題直接考它。
+ * 擋住＝status 是「非 0 的數字」**且**輸出裡沒有暗號。
+ * ⚠️ status 為 null（被訊號殺掉／ENOBUFS／逾時）**不算擋住**——那是金絲雀自己壞了。
+ *    第一版把 null 當成擋住：拿掉 deny network 後 curl 吞整頁 Google 塞爆緩衝被殺，
+ *    金絲雀竟報「全部擋住」（2026-08-22 突變實測的假紅）。
+ * @param {{ status: number | null, stdout?: string | null }} r
+ * @param {string} secret
+ */
+export function isBlocked(r, secret) {
+  const leaked = (r.stdout || '').includes(secret);
+  return typeof r.status === 'number' && r.status !== 0 && !leaked;
+}
+
+/**
  * 跑完整金絲雀。回傳 { code, lines }——lines 是逐條結果（給 PR 描述貼）。
  * @param {string} box
  */
@@ -74,11 +88,7 @@ export function runCanary(box) {
   /** 反面：必須失敗 */
   const mustFail = (/** @type {string} */ label, /** @type {string[]} */ argv) => {
     const r = runInSandbox(box, argv);
-    const leaked = (r.stdout || '').includes(secret);
-    // ⚠️ status 必須是「非 0 的數字」才算擋住。null（被訊號殺掉／ENOBUFS／逾時）＝金絲雀自己壞了，
-    //    一律算「活著」——第一版把 null 當成擋住，拿掉 deny network 後 curl 吞整頁 Google 塞爆緩衝被殺，
-    //    金絲雀竟報「全部擋住」（2026-08-22 突變實測的假紅）。
-    const blocked = typeof r.status === 'number' && r.status !== 0 && !leaked;
+    const blocked = isBlocked(r, secret);   // 判斷只有一份（見 isBlocked 的劃界）
     const why = r.status === null ? `（status null：${r.error?.message || r.signal || '?'}）` : '';
     lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜${label}${why}`);
     if (!blocked) dead++;
