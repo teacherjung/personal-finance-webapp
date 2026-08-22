@@ -5,8 +5,15 @@
 // 寫法不一致的後果：重匯同一份帳單認不出重複（現金流翻倍）、同一顆帳戶被當成他行而裂戶、
 // 台新走 AI 路線時去重鍵走錯格式。這份考題釘：①正規化的規則本身 ②**祖父條款**——存好的鍵
 // 一個位元組不改，比對時兩邊都正規化就認得出來 ③不可亂合併（證券≠銀行）。
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
+
+const TEST_STORE = join(tmpdir(), `finance-bank-alias-${process.pid}.db`);
+process.env.STORE_FILE = TEST_STORE;   // 最後那題走 getDb/saveDb（顯示層的自動整理），要隔離暫存檔
+after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 const { canonicalBank, sameBank, canonRef, canonCdKey } = await import('../lib/bank-alias.js');
 const { previewBankTxForDb, importBankTxToDb, previewBalancesForDb, applyBalancesToDb } = await import('../lib/services/bank-import.js');
@@ -163,4 +170,138 @@ test('★帳戶｜金融卡明細（只有末碼）對上機構戳是舊寫法�
   const db = { accounts: [{ id: 'a', name: '台新活儲', type: 'cash', currency: 'TWD', balance: 100, balanceAsOf: '2026-05-31', accountNo: '900100****8791', bank: '台新銀行' }], transactions: [], settings: {} };
   const rows = previewBalancesForDb(db, /** @type {any} */ (parsed)).rows;
   assert.equal(rows[0].action, 'update', `★舊戳「台新銀行」＝能證明是台新的戶，要更新（實得 ${rows[0].action}）`);
+});
+
+// ---------- 不可亂合併：一張「彼此是不同機構」的表，正規化後必須兩兩不同 ----------
+// 別名表與剝後綴的每一條規則都可能把兩家壓成一家（預審實測：三家「上海」被壓成同一個短名＝餘額互蓋）。
+// 這一題是那個方向唯一的機械守門：表裡任兩家同名＝紅。表要維護：加別名或剝後綴規則時先想「會不會跟這裡撞」。
+const DISTINCT_INSTITUTIONS = [
+  '台新國際商業銀行', '台新證券', '國泰世華商業銀行', '玉山商業銀行', '中國信託商業銀行', '中國銀行',
+  '台北富邦商業銀行', '兆豐國際商業銀行', '第一商業銀行', '華南商業銀行', '永豐商業銀行', '合作金庫商業銀行',
+  'LINE Bank', '中華郵政', '台灣銀行', '台灣土地銀行', '台灣中小企業銀行',
+  '上海商業儲蓄銀行', '上海商業銀行', '上海銀行',   // 台灣／香港／中國三家，剝掉後綴會撞成城市名
+  '花蓮第二信用合作社', 'HSBC', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
+];
+test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不同（別名表或剝後綴規則撞在一起＝這裡紅）', () => {
+  const seen = new Map();
+  for (const name of DISTINCT_INSTITUTIONS) {
+    const c = canonicalBank(name);
+    assert.ok(c, `${name} 不可正規化成空`);
+    assert.ok(!seen.has(c), `★「${name}」與「${seen.get(c)}」被壓成同一個短名「${c}」`);
+    seen.set(c, name);
+  }
+});
+
+// ---------- 同一家：各種寫法必須壓成同一個短名（別名表指錯家＝這裡紅） ----------
+const SAME_INSTITUTION = [
+  ['台新', ['台新銀行', '台新國際商業銀行', 'Taishin Bank', 'Taishin International Bank', 'ＴＡＩＳＨＩＮ　ＢＡＮＫ', 'Richart', '臺新銀行']],
+  ['兆豐', ['兆豐銀行', '兆豐國際商業銀行', 'Mega International Commercial Bank', 'Mega Bank']],
+  ['玉山', ['玉山銀行', '玉山商業銀行', 'E.SUN Bank', 'ESUN']],
+  ['中國信託', ['中國信託商業銀行', 'CTBC Bank', '中信']],
+  ['第一', ['第一銀行', '第一商業銀行', 'First Commercial Bank', '一銀']],
+  ['上海商業儲蓄銀行', ['上海商銀', '上海商業儲蓄銀行']],
+  ['HSBC', ['HSBC', 'hsbc', 'HSBC Bank']],
+  ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社']],
+  // 別名表每一條都要在這裡有一列：刪掉或指錯任何一條＝紅
+  ['國泰世華', ['國泰世華商業銀行', 'Cathay United Bank']],
+  ['台北富邦', ['台北富邦商業銀行', 'Taipei Fubon Bank', 'Fubon', '北富銀']],
+  ['華南', ['華南商業銀行', 'Hua Nan Commercial Bank']],
+  ['永豐', ['永豐商業銀行', 'Bank SinoPac', 'SinoPac']],
+  ['合作金庫', ['合作金庫商業銀行', '合庫']],
+  ['中華郵政', ['中華郵政', '郵局', 'Chunghwa Post']],
+  ['台灣銀行', ['台灣銀行', '臺灣銀行', 'Bank of Taiwan', '台銀']],
+  ['LINE Bank', ['LINE Bank', 'LINE']],
+];
+test('同一家的各種寫法壓成同一個短名（全形、英文、縮寫、信合社後綴都算）', () => {
+  for (const [want, forms] of SAME_INSTITUTION) {
+    for (const f of forms) assert.equal(canonicalBank(f), want, `${f} → ${want}`);
+  }
+});
+
+// ---------- 每一處機構守門都要過同一把尺（預審突變逐處存活後補的行為題） ----------
+test('★幣別判定：機構戳舊寫法「台新銀行」的外幣帳戶，台新帳單沒印幣別表時仍要判成外幣、不可當台幣匯進現金流', () => {
+  // txCurrency 的退路：帳單自己沒有這個帳號的幣別 ⇒ 查 db 帳戶；機構守門若逐字比，「台新銀行」≠「台新」
+  // ＝查不到 ⇒ fail-open 成 TWD ⇒ 美元交易被當台幣入帳。
+  const db = { accounts: [{ id: 'u', name: '台新美元', type: 'cash', currency: 'USD', accountNo: '900100****7777', bank: '台新銀行' }], transactions: [], learnedBank: {}, settings: {} };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: {}, transactions: [btx({ acctSuffix: '7777', acctMasked: '900100****7777', amount: 100 })] };
+  const r = importBankTxToDb(db, parsed);
+  assert.equal(r.foreign, 1, '★判成外幣（不匯入）');
+  assert.equal(r.imported, 0);
+});
+
+test('★定存到期：舊戳「第一銀行」的定存，新一期帳單（第一）沒印它、參考日已過迄日＝要歸零（守門逐字比就永遠不歸零）', () => {
+  const db = { accounts: [
+    { id: 'cd1', name: '第一 定存', type: 'cash', currency: 'USD', balance: 51, balanceAsOf: '2026-06-30', accountNo: '900100****1234', bank: '第一銀行', cdKey: '第一銀行|1234|USD|2026-01-01~2026-07-01|51|#1' },
+  ], transactions: [], settings: {} };
+  // 新一期：只印活存、沒印定存；參考日 8/31 已過迄日 7/1
+  const parsed = { bank: '第一', referenceDate: '2026-08-31', accounts: [{ suffix: '1234', masked: '900100****1234', balance: 999, currency: 'USD', label: '活存', note: '', kind: 'demand', period: '' }], accountCurrency: { '900100****1234': 'USD' }, transactions: [] };
+  const rows = previewBalancesForDb(db, /** @type {any} */ (parsed), { deterministic: true }).rows;
+  assert.ok(rows.some((r) => r.action === 'mature-zero'), `★要有一列到期歸零（實得 ${rows.map((r) => r.action).join(',')}）`);
+  applyBalancesToDb(db, /** @type {any} */ (parsed), { deterministic: true });
+  const cd = /** @type {any} */ (db.accounts.find((a) => a.id === 'cd1'));
+  assert.equal(cd.balance, 0, '★到期定存歸零');
+});
+
+test('★交易掛名：機構戳舊寫法「台新銀行」的帳戶，台新帳單的交易要掛到它名下（不可退化成「台新 3301」）', () => {
+  const db = { accounts: [{ id: 'a', name: '我的台新活儲', type: 'cash', currency: 'TWD', accountNo: '900100****3301', bank: '台新銀行' }], transactions: [], learnedBank: {}, settings: {} };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({})] };
+  importBankTxToDb(db, parsed);
+  assert.equal(/** @type {any} */ (db.transactions.at(-1)).account, '我的台新活儲');
+});
+
+test('★顯示「轉入到：」：對方帳號是自己機構戳舊寫法的帳戶，顯示名要翻成帳戶名', () => {
+  const db = { accounts: [
+    { id: 'a', name: '台新活儲', type: 'cash', currency: 'TWD', accountNo: '900100****3301', bank: '台新銀行' },
+    { id: 'b', name: '台新預備', type: 'cash', currency: 'TWD', accountNo: '900100****8791', bank: '台新銀行' },
+  ], transactions: [], learnedBank: {}, settings: {} };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({ summary: '轉帳支取', note: '轉入900100****8791', direction: 'out', amount: 500 })] };
+  importBankTxToDb(db, parsed);
+  assert.match(String(/** @type {any} */ (db.transactions.at(-1)).note), /轉入到：台新預備/);
+});
+
+test('★疑似重複索引：既有列機構抄成英文「Taishin Bank」、帳號只印末碼，新帳單（台新）同日同額＝要提醒疑似重複', () => {
+  // 鍵不同（帳號遮罩不同）＝不是明確重複；機構名若沒過同一把尺，索引鍵對不上＝不提醒＝跨版式重複靜默落帳
+  const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [
+    { id: 'old', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他',
+      bankRef: 'bank2|Taishin Bank|****3301|2026-06-10|in|1000||轉帳存入|' },
+  ] };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({})] };
+  const row = previewBankTxForDb(db, parsed).rows[0];
+  assert.equal(row.duplicate, false, '帳號遮罩不同＝不是明確重複');
+  assert.equal(row.similar, true, '★但要提醒疑似重複');
+});
+
+test('★去重比對形要保留批內出現序 #N：兩筆全同的列（餘額讀不到）重匯時兩筆都要認出是重複', () => {
+  const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [] };
+  const two = { bank: '玉山銀行', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({}), btx({})] };
+  assert.equal(importBankTxToDb(db, two).imported, 2);
+  const again = { ...two, bank: '玉山' };
+  const r = importBankTxToDb(db, again);
+  assert.equal(r.imported, 0, '★第二筆（#2）也要認出是重複——比對形若剝掉 #N，第二筆會再匯一次');
+  assert.equal(r.skipped, 2);
+});
+
+test('預覽／套用回傳的 bank 欄＝正規短名（畫面上的「銀行：」與新建帳戶的戳一致）', () => {
+  const parsed = { bank: '台新國際商業銀行', referenceDate: '2026-06-30', accounts: [], accountCurrency: {}, transactions: [] };
+  const db = { accounts: [], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed)).bank, '台新');
+  assert.equal(applyBalancesToDb({ accounts: [], transactions: [], settings: {} }, /** @type {any} */ (parsed)).bank, '台新');
+});
+
+test('★顯示層的機構段也過同一把尺：舊列 `bank2|台新銀行|…` 的自動說明要跟 `bank|…` 列一樣補「812-」前綴', async () => {
+  const { reconcileAccountNamesAuto } = await import('../lib/services/bank-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const db = await getDb();
+  db.accounts = [];
+  const tail = '2026-06-10|out|1000||轉帳支出|轉出900300****9999';
+  db.transactions = [
+    { id: 'x1', date: '2026-06-10', type: 'transfer', category: '內轉', subcategory: '內轉出', amount: 1000, account: '台新 8791', note: '', ledger: 'cashflow', source: 'bank', dir: 'out', bankRef: `bank2|台新銀行|900100****8791|${tail}` },
+    { id: 'x2', date: '2026-06-10', type: 'transfer', category: '內轉', subcategory: '內轉出', amount: 1000, account: '台新 8791', note: '', ledger: 'cashflow', source: 'bank', dir: 'out', bankRef: `bank|900100****8791|${tail}` },
+  ];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const fresh = await getDb();
+  const n = (/** @type {string} */ id) => String(/** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === id)).note);
+  assert.equal(n('x1'), n('x2'), `★兩列同一家、同內容，顯示名必須相同（實得 ${n('x1')} vs ${n('x2')}）`);
+  assert.match(n('x2'), /812-/, '台新行內帳號顯示補 812-');
 });
