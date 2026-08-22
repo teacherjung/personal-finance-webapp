@@ -212,3 +212,36 @@ test('runScan｜發射紀錄 launch.json 留在結果包（事後能分辨「旗
   assert.match(launch.profileSha256, /^[0-9a-f]{64}$/);
   assert.ok(!('GITHUB_TOKEN' in launch.env) && !('ANTHROPIC_API_KEY' in launch.env), 'env 白名單漏了 token 類變數');
 });
+
+test('runScan｜每一條失敗出口都清盒子：轉送器沒 READY／grok 非 0／零 session 三條，盒子掃完都不在', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const cases = [
+    ['轉送器沒 READY', { grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') }],
+    ['grok 非 0', { grokInstall: fakeGrok({ status: 1 }), relayScript: fakeRelay('ok') }],
+    ['零 session', { grokInstall: fakeGrok({ noSession: true }), relayScript: fakeRelay('ok') }],
+  ];
+  for (const [name, extra] of /** @type {[string, object][]} */ (cases)) {
+    const repo = tinyRepo();
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, ...extra });
+    assert.equal(r.code, 2, `${name}：該退 2`);
+    const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
+    assert.ok(box, `${name}：沒印盒子路徑`);
+    assert.ok(!existsSync(box), `${name}：失敗後盒子（含 auth.json 副本）還留在 ${box}`);
+  }
+});
+
+test('runScan｜驗屍查到破口線索（日誌裡出現私鑰標頭這種盒子外才有的形狀）→ 1＝事故，不是 2', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  // 假 grok 把一段「BEGIN RSA PRIVATE KEY」寫進 session 日誌——模擬「它讀到了盒子外的東西並回錄」。
+  // 不用活金絲雀的暗號：那要在正式程式留測試鉤子把暗號塞進盒子，鉤子本身就是洞。驗屍認得的另一種形狀同樣走 code 1。
+  const inst = fakeGrok();
+  const before = readFileSync(join(inst, 'bin', 'grok'), 'utf8');
+  const after = before.replace('"content":"x"', '"content":"-----BEGIN RSA PRIVATE KEY-----"');
+  assert.notEqual(after, before, '假 grok 改寫沒套上');
+  writeFileSync(join(inst, 'bin', 'grok'), after);
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: inst, relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /沙箱破了/);
+});

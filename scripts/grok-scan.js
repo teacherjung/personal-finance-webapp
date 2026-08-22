@@ -229,7 +229,7 @@ export async function runScan(args, deps = {}) {
     summary.push(`足跡 ${n} 筆`);
     // 破口線索：掃描期間放在家目錄的暗號、以及幾種明文機密形狀（heuristic，見檔頭劃界）
     const g = spawnSync('/usr/bin/grep', ['-rlE', `${liveSecret}|flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH) PRIVATE KEY`, d], { encoding: 'utf8' });
-    if (g.status === 0) { log(`⚠️ 驗屍：session ${d} 的日誌出現盒子外才有的內容——沙箱破了，這是事故`); worst = 1; }
+    if (g.status === 0) { const m = `⚠️ 驗屍：session ${d.split('/').pop()} 的日誌出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
     else if (g.status !== 1) return failAndClean(`驗屍：grep 自己失敗（status ${g.status}）：${g.stderr}`);
   }
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，去機密）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
