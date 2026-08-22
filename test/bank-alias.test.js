@@ -39,7 +39,8 @@ test('canonicalBank｜別名表：英文寫法與暱稱對得回中文短名（�
 
 test('★canonicalBank｜不可亂合併：不同實體剝不掉（證券≠銀行）、不認得的名字原樣回、只剩通用詞不回空', () => {
   assert.notEqual(canonicalBank('台新證券'), '台新', '★證券是另一家——剝掉等於把兩家併成一家');
-  assert.equal(canonicalBank('HSBC'), 'HSBC', '不認得＝原樣（寧可兩個短名並存，也不猜）');
+  assert.equal(canonicalBank('Citibank'), 'CITIBANK', '不認得＝原樣（寧可兩個短名並存，也不猜）');
+  assert.equal(canonicalBank('Rakuten Bank'), 'RAKUTEN BANK', '★不在白名單＝銀行後綴不剝（剝了就跟樂天國際商業銀行撞在一起）');
   assert.equal(canonicalBank('銀行'), '銀行', '只剩通用詞＝回剝之前的形，不回空（空會被當成缺席）');
   assert.equal(canonicalBank(''), '', '空輸入才回空');
   assert.ok(!canonicalBank('台新|x').includes('|'), '分段符一律剝掉（去重鍵用 | 分段，機構段含它就切錯位）');
@@ -177,11 +178,12 @@ test('★帳戶｜金融卡明細（只有末碼）對上機構戳是舊寫法�
 // 這一題是那個方向唯一的機械守門：表裡任兩家同名＝紅。表要維護：加別名或剝後綴規則時先想「會不會跟這裡撞」。
 const DISTINCT_INSTITUTIONS = [
   '台新國際商業銀行', '台新證券', '國泰世華商業銀行', '玉山商業銀行', '中國信託商業銀行', '中國銀行',
-  '中國國際商業銀行',   // 與中國銀行是不同法人（受保護名：剝掉後綴都剩「中國」）
+  '中國國際商業銀行',   // 與中國銀行是不同法人（剝掉後綴都剩「中國」——不在白名單＝都不剝）
   '台北富邦商業銀行', '兆豐國際商業銀行', '第一商業銀行', '華南商業銀行', '永豐商業銀行', '合作金庫商業銀行',
   'LINE Bank', '中華郵政', '台灣銀行', '台灣土地銀行', '台灣中小企業銀行',
   '上海商業儲蓄銀行', '上海商業銀行', '上海銀行',   // 台灣／香港／中國三家，剝掉後綴會撞成城市名
-  '花蓮二信', 'HSBC', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
+  '花蓮二信', '滙豐', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
+  '樂天銀行', '樂天國際商業銀行', 'Rakuten Bank, Ltd.', 'Rakuten International Commercial Bank Co., Ltd.',   // 日本樂天銀行 vs 台灣樂天國際商業銀行＝兩家（白名單刻意不收「樂天」）
   '臺中商業銀行', '高雄銀行', '彰化商業銀行', '台中', '高雄', '彰化',   // 城市名銀行 vs 裸城市名：不可同名
 ];
 test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不同（別名表或剝後綴規則撞在一起＝這裡紅）', () => {
@@ -203,7 +205,7 @@ const SAME_INSTITUTION = [
   ['上海商業儲蓄銀行', ['上海商銀', '上海商業儲蓄銀行', '上海商業儲蓄銀行股份有限公司']],
   ['中國銀行', ['中國銀行', '中國銀行股份有限公司']],
   ['中國國際商業銀行', ['中國國際商業銀行', '中國國際商業銀行股份有限公司']],
-  ['HSBC', ['HSBC', 'hsbc', 'HSBC Bank']],
+  ['滙豐', ['HSBC', 'hsbc', 'HSBC Bank', '滙豐銀行', '匯豐']],
   ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社', '花蓮第二信用合作社']],   // 法定名與官方自稱是同一家
   // 別名表每一條都要在這裡有一列：刪掉或指錯任何一條＝紅
   ['華南', ['華南商業銀行', 'Hua Nan Commercial Bank', 'HuaNan']],
@@ -237,7 +239,7 @@ test('英文公司型態字要整個詞才剝：「Vinc」「U.S. Bancorp」的�
   assert.equal(canonicalBank('Vinc'), 'VINC');
   assert.equal(canonicalBank('U.S. Bancorp'), 'U.S. BANCORP');
   assert.equal(canonicalBank('Lincoln Inc.'), 'LINCOLN');
-  assert.equal(canonicalBank('Foo Bank, Ltd.'), 'FOO');
+  assert.equal(canonicalBank('Foo Bank, Ltd.'), 'FOO BANK', '公司字剝掉；Bank 不剝（Foo 不在白名單＝剝了也不知道是誰）');
 });
 
 test('裸地名不是機構：「台灣」「台中」「上海」自己一個詞，不可被當成任何一家銀行', () => {
@@ -247,7 +249,7 @@ test('裸地名不是機構：「台灣」「台中」「上海」自己一個�
   }
 });
 
-test('★剝完只剩地名＝不剝：城市名銀行的正式名不可縮成裸城市字串（城市不是機構）', () => {
+test('★白名單之外不剝：城市名銀行的正式名不可縮成裸城市字串（城市不是機構）', () => {
   for (const [name, want] of [['臺中商業銀行股份有限公司', '台中商業銀行'], ['高雄銀行股份有限公司', '高雄銀行'], ['彰化商業銀行', '彰化商業銀行'], ['台北銀行', '台北銀行'], ['日本銀行', '日本銀行']]) {
     assert.equal(canonicalBank(name), want, name);
     assert.equal(sameBank(name, want.replace(/商業銀行|銀行/g, '')), false, `★${name} 不可與裸城市名同家`);

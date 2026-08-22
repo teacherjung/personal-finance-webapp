@@ -230,7 +230,7 @@ test('行為｜統計真的會被記進去（成功路徑走正式 applyBankStat
   const after = await getDb();
   const stats = after.settings.recipeBirthStats || {};
   assert.equal(stats.recipe_birth_strict?.n, 1, `★正式路真的記了一筆（實得 ${JSON.stringify(stats)}）`);
-  assert.equal(stats.recipe_birth_strict?.lastBank, '合成第一', '★機構名記得對（記的是正規短名：「合成第一銀行」剝掉通用後綴＝同一家不分兩列）');
+  assert.equal(stats.recipe_birth_strict?.lastBank, '合成第一銀行', '★機構名記得對');
   assert.match(String(stats.recipe_birth_strict?.lastAt), /^\d{4}-\d{2}-\d{2}$/);
 });
 
@@ -341,7 +341,7 @@ test('G高｜機密行為題：只有「機構名」那一格會進統計，帳�
   });
   const stats = (await getDb()).settings.recipeBirthStats || {};
   const blob = JSON.stringify(stats);
-  assert.match(blob, /"lastBank":"合成"/, '機構名有進去（這是刻意記的那一格；記正規短名＝「合成銀行」剝掉「銀行」）');
+  assert.match(blob, /合成銀行/, '機構名有進去（這是刻意記的那一格）');
   assert.doesNotMatch(blob, /7788|\*{2,}|機密摘要|5,?500|2026-07-05/,
     `★帳單內容（帳號、遮罩、摘要、金額、交易日）一格都不得進統計；實得 ${blob}`);
 });
