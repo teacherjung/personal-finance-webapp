@@ -45,8 +45,8 @@ export const RELAY_PORT = 18765;
 /**
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
  * @property {string} [repo]
- * @property {string} [grokBin]
- * @property {string} [sessionsRoot]
+ * @property {string} [grokHome] 預設 ~/.grok；考題注入假的（bin/grok 是假 grok、sessions/ 是假日誌根）——
+ *   假 grok 必須放在沙箱讀得到的地方，而 GROK_HOME 正是沙箱放行的那個參數
  * @property {(msg: string) => void} [log]
  * @property {string} [relayScript]
  */
@@ -59,7 +59,9 @@ export const RELAY_PORT = 18765;
  */
 export async function runScan(args, deps = {}) {
   const repo = deps.repo ?? REPO;
-  const grokBin = deps.grokBin ?? join(homedir(), '.grok', 'bin', 'grok');
+  const grokHome = realpathSync(deps.grokHome ?? join(homedir(), '.grok'));   // 沙箱比對解析後路徑，見 runInSandbox
+  const grokBin = join(grokHome, 'bin', 'grok');
+  const sessionsRoot = join(grokHome, 'sessions');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
   const log = deps.log ?? ((m) => console.log(m));
   /** @type {string[]} */
@@ -78,7 +80,7 @@ export async function runScan(args, deps = {}) {
   if (ver.status !== 0 || !verText.startsWith(EXPECTED_GROK_VERSION)) return fail(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」——轉送器目的地是從那個版本 strings 出來的，升版要重驗`);
 
   // ── ① 建盒子 ──
-  const box = mkdtempSync(`/private/tmp/grok-scan-${head.slice(0, 7)}-`);
+  const box = realpathSync(mkdtempSync(`/private/tmp/grok-scan-${head.slice(0, 7)}-`));
   const src = join(box, 'src');
   mkdirSync(src); mkdirSync(join(box, 'tmp'));
   log(`盒子：${box}`);
@@ -140,9 +142,9 @@ export async function runScan(args, deps = {}) {
   const home = homedir();
   const startedAt = new Date().toISOString();
   log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
-  const sbArgv = ['-f', PROFILE, '-D', `HOME=${home}`, '-D', `GROK_HOME=${join(home, '.grok')}`, '-D', `SCAN_DIR=${box}`];
+  const sbArgv = ['-f', PROFILE, '-D', `HOME=${home}`, '-D', `GROK_HOME=${grokHome}`, '-D', `SCAN_DIR=${box}`];
   const grokArgv = [grokBin, '--disable-web-search', '-p', '<materials>'];
-  const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
+  const env = { ...sandboxEnv(box, grokHome), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(box, 'launch.json'), JSON.stringify({
@@ -164,7 +166,7 @@ export async function runScan(args, deps = {}) {
   if (!reply.trim()) return fail('grok 退 0 但回覆是空的');
 
   // ── ⑤ 驗屍：足跡＋破口線索 ──
-  const { dirs, unreadable, why } = allSessionDirs(src, deps.sessionsRoot);
+  const { dirs, unreadable, why } = allSessionDirs(src, sessionsRoot);
   if (!dirs.length) return fail(`驗屍：找不到這次的 session 日誌（${why || '零 session'}）——沒有日誌＝證明不了它做了什麼`);
   if (unreadable) return fail(`驗屍：有 session 讀不清楚（${why}）`);
   let worst = 0;
