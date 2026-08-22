@@ -99,7 +99,7 @@ test('備註空白：顯示只剩摘要——不可拿去重鍵裡的字冒充�
 
 test('探針：兩欄都是空字串＝原文真的是空的，仍不可掉回反解（判定是「欄位存在」，不是「有沒有值」）', async () => {
   // ⚠️ 這是**探針考題**、不是真實資料形狀（真實列的原文欄與去重鍵尾兩段本來就一致）：
-  //    它存在的唯一理由是釘住 bankRawText 的判定寫法——把 typeof 改寫成 truthy 就只有這一格會紅。
+  //    它存在的唯一理由是釘住 bankRawText 的判定寫法——把 typeof 改寫成 truthy 就會在這裡紅。
   const db = await getDb();
   db.accounts = [];
   db.transactions = [{
@@ -114,9 +114,24 @@ test('探針：兩欄都是空字串＝原文真的是空的，仍不可掉回�
   assert.equal(t.note, '', '原文是空的就顯示空的，不可從去重鍵撿字回來');
 });
 
+test('端到端｜摘要含 `|` 走正式匯入→落庫→顯示：存的是整段、顯示的是整段（寫入端偷切也要紅）', async () => {
+  // 為什麼要走正式匯入而不是手種欄位：手種正確值的考題抓不到「寫入端自己把摘要切短」
+  // （Codex #497 r2#1 實測：寫入改成 split('|')[0] 仍全綠）。
+  const db = await getDb();
+  db.accounts = [{ id: 'a', name: '台新 3301', type: 'cash', currency: 'TWD', accountNo: '900100****3301' }];
+  db.transactions = []; db.learnedBank = {};
+  const summary = '媒體轉入|第二段';
+  importBankTxToDb(db, parsed([btx({ summary, note: '基金配息', direction: 'in', amount: 100 })]));
+  const stored = /** @type {any} */ (db.transactions.at(-1));
+  assert.equal(stored.bankSummary, summary, '★落庫的摘要是整段');
+  assert.equal(stored.bankRef, `bank|900100****3301|2026-06-10|in|100||${summary}|基金配息`, '去重鍵格式：摘要含 `|` 也照拼');
+  await saveDb(db);
+  await reconcileAccountNamesAuto();   // 開 app 的自動整理＝顯示層會重算一次；這裡就是「讀原文欄」發生的地方
+  const t = /** @type {any} */ (((await getDb()).transactions || []).find((/** @type {any} */ x) => x.id === stored.id));
+  assert.equal(t.note, '媒體轉入|第二段・基金配息', '★顯示的摘要是整段（反解會切成「現金轉入・第二段|基金配息」）');
+});
+
 test('摘要自己含 `|`：讀原文欄才拿得回完整摘要（反解會在第一個 `|` 切斷、把後半歸給備註）', async () => {
-  // Codex #497 r1#2 找到的第 10 顆突變：先前每一題的摘要都不含 `|`，去重鍵那一段剛好與原文相同 ⇒
-  // 「摘要改從 bankRef 讀」這種突變全綠通過。這一題就是補那個洞。
   const db = await getDb();
   db.accounts = [];
   const summary = '媒體轉入|第二段';
@@ -137,8 +152,8 @@ test('摘要自己含 `|`：讀原文欄才拿得回完整摘要（反解會在�
 });
 
 test('原文欄是 null（外部備份／手改進來的）＝當成沒有這兩欄，退回反解——退化但不編造', async () => {
-  // #497 r1#1：FIELD_SCHEMA 的 'str' 全站接受 null（清空語意），備份還原與櫃檯 strip 都會原樣保留。
-  // 這一題把「那時候顯示什麼」釘死：走②反解＝舊資料本來就走的路，不可當成「有原文」而顯示空白。
+  // FIELD_SCHEMA 的 'str' 全站接受 null（清空語意），備份還原與櫃檯 strip 都會原樣保留。
+  // 這一題把「那時候顯示什麼」釘死：走反解＝沒原文欄的列本來就走的路，不可當成「有原文」而顯示空白。
   const db = await getDb();
   db.accounts = [];
   db.transactions = [{
@@ -151,6 +166,26 @@ test('原文欄是 null（外部備份／手改進來的）＝當成沒有這兩
   await reconcileAccountNamesAuto();
   const t = /** @type {any} */ (((await getDb()).transactions || [])[0]);
   assert.equal(t.note, '存款利息・不是原文的備註', 'null＝沒有原文欄，照舊反解');
+});
+
+test('只剩一欄（另一欄缺席）＝不算原文，退回反解——半份不拿來充數', async () => {
+  // 匯入端永遠兩欄一起寫；缺一欄只可能是外部改壞。用反解（誠實的退化）比拿半份當原文好。
+  const db = await getDb();
+  db.accounts = [];
+  const bankRef = 'bank|900100****3301|2026-07-06|in|23||存款息|去重鍵裡的備註';
+  db.transactions = [
+    { id: 'h1', date: '2026-07-06', type: 'income', category: '被動', subcategory: '利息', amount: 23, account: '台新 3301',
+      note: '', ledger: 'cashflow', source: 'bank', dir: 'in', bankRef, bankNote: '只有備註欄' },            // 缺摘要欄
+    { id: 'h2', date: '2026-07-06', type: 'income', category: '被動', subcategory: '利息', amount: 23, account: '台新 3301',
+      note: '', ledger: 'cashflow', source: 'bank', dir: 'in', bankRef, bankSummary: '只有摘要欄' },          // 缺備註欄
+  ];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const fresh = await getDb();
+  for (const id of ['h1', 'h2']) {
+    const t = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ x) => x.id === id));
+    assert.equal(t.note, '存款利息・去重鍵裡的備註', `${id}：半份原文不採用、整筆退回反解`);
+  }
 });
 
 // ---------- 登記：型別與長度 ----------
