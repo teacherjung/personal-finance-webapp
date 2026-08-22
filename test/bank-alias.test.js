@@ -15,7 +15,7 @@ const TEST_STORE = join(tmpdir(), `finance-bank-alias-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;   // 最後那題走 getDb/saveDb（顯示層的自動整理），要隔離暫存檔
 after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
-const { canonicalBank, sameBank, canonRef, canonCdKey } = await import('../lib/bank-alias.js');
+const { canonicalBank, sameBank, canonRef, canonCdKey, aliasEntriesForTest } = await import('../lib/bank-alias.js');
 const { previewBankTxForDb, importBankTxToDb, previewBalancesForDb, applyBalancesToDb } = await import('../lib/services/bank-import.js');
 
 // ---------- ① 規則本身 ----------
@@ -198,28 +198,54 @@ test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不�
 const SAME_INSTITUTION = [
   ['台新', ['台新銀行', '台新國際商業銀行', 'Taishin Bank', 'Taishin International Bank', 'ＴＡＩＳＨＩＮ　ＢＡＮＫ', 'Richart', '臺新銀行',
     'Taishin Bank Co., Ltd.', 'Taishin Bank Co Ltd', 'TAISHIN INTERNATIONAL BANK CO., LTD.', '台新國際商業銀行股份有限公司']],   // 英文公司型態字也要剝（Codex #499 r2#1）
-  ['兆豐', ['兆豐銀行', '兆豐國際商業銀行', 'Mega International Commercial Bank', 'Mega Bank']],
-  ['玉山', ['玉山銀行', '玉山商業銀行', 'E.SUN Bank', 'ESUN']],
-  ['中國信託', ['中國信託商業銀行', 'CTBC Bank', '中信']],
-  ['第一', ['第一銀行', '第一商業銀行', 'First Commercial Bank', '一銀']],
+  ['第一', ['第一銀行', '第一商業銀行', 'First Commercial Bank', '一銀', 'First Bank']],
+  ['永豐', ['永豐商業銀行', 'Bank SinoPac', 'SinoPac']],
   ['上海商業儲蓄銀行', ['上海商銀', '上海商業儲蓄銀行', '上海商業儲蓄銀行股份有限公司']],
   ['中國銀行', ['中國銀行', '中國銀行股份有限公司']],
   ['中國國際商業銀行', ['中國國際商業銀行', '中國國際商業銀行股份有限公司']],
   ['HSBC', ['HSBC', 'hsbc', 'HSBC Bank']],
   ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社']],
   // 別名表每一條都要在這裡有一列：刪掉或指錯任何一條＝紅
-  ['國泰世華', ['國泰世華商業銀行', 'Cathay United Bank']],
-  ['台北富邦', ['台北富邦商業銀行', 'Taipei Fubon Bank', 'Fubon', '北富銀']],
-  ['華南', ['華南商業銀行', 'Hua Nan Commercial Bank']],
-  ['永豐', ['永豐商業銀行', 'Bank SinoPac', 'SinoPac']],
-  ['合作金庫', ['合作金庫商業銀行', '合庫']],
+  ['華南', ['華南商業銀行', 'Hua Nan Commercial Bank', 'HuaNan']],
+  ['兆豐', ['兆豐銀行', '兆豐國際商業銀行', 'Mega International Commercial Bank', 'Mega Bank', 'Mega']],
+  ['玉山', ['玉山銀行', '玉山商業銀行', 'E.SUN Bank', 'ESUN', 'E.SUN']],
+  ['台北富邦', ['台北富邦商業銀行', 'Taipei Fubon Bank', 'Fubon', '北富銀', 'Taipei Fubon']],
   ['中華郵政', ['中華郵政', '郵局', 'Chunghwa Post']],
-  ['台灣銀行', ['台灣銀行', '臺灣銀行', 'Bank of Taiwan', '台銀']],
+  ['國泰世華', ['國泰世華商業銀行', 'Cathay United Bank', 'Cathay United']],
+  ['合作金庫', ['合作金庫商業銀行', '合庫']],
+  ['台灣銀行', ['台灣銀行', '臺灣銀行', 'Bank of Taiwan', '台銀', '台灣銀行股份有限公司']],
+  ['中國信託', ['中國信託商業銀行', 'CTBC Bank', 'CTBC', 'Chinatrust', '中信']],
   ['LINE Bank', ['LINE Bank', 'LINE']],
 ];
 test('同一家的各種寫法壓成同一個短名（全形、英文、縮寫、信合社後綴都算）', () => {
   for (const [want, forms] of SAME_INSTITUTION) {
     for (const f of forms) assert.equal(canonicalBank(f), want, `${f} → ${want}`);
+  }
+});
+
+test('★別名表每一條都有考題＝機械保證：表上每個鍵，上面的「同一家寫法」表都要有一個寫法對得到它、且值正確', () => {
+  const { entries, keyOf } = aliasEntriesForTest();
+  const covered = new Map();   // 比對形鍵 → 它在同一家表裡對到的短名
+  for (const [want, forms] of SAME_INSTITUTION) for (const f of forms) covered.set(keyOf(f), want);
+  for (const [key, value] of entries) {
+    // 同一家表的寫法多半帶後綴（Taishin Bank），剝完才等於鍵；所以用「剝完的比對形」對
+    const hit = [...covered.entries()].find(([k]) => k === key || k.endsWith(key) || k.startsWith(key));
+    assert.ok(hit, `★別名 ${key}→${value} 沒有任何考題寫法對得到它（刪掉或指錯家都不會紅）`);
+    assert.equal(hit[1], value, `★別名 ${key} 的值 ${value} 與考題表的短名 ${hit[1]} 不符`);
+  }
+});
+
+test('英文公司型態字要整個詞才剝：「Vinc」「U.S. Bancorp」的尾巴不是 Inc／Corp；「Lincoln Inc.」的 Inc. 才是', () => {
+  assert.equal(canonicalBank('Vinc'), 'VINC');
+  assert.equal(canonicalBank('U.S. Bancorp'), 'U.S. BANCORP');
+  assert.equal(canonicalBank('Lincoln Inc.'), 'LINCOLN');
+  assert.equal(canonicalBank('Foo Bank, Ltd.'), 'FOO');
+});
+
+test('裸地名不是機構：「台灣」「台中」「上海」自己一個詞，不可被當成任何一家銀行', () => {
+  for (const place of ['台灣', '台中', '高雄', '上海', '中國']) {
+    assert.equal(sameBank(place, `${place}銀行`), false, `★${place} ≠ ${place}銀行`);
+    assert.equal(sameBank(place, '台灣銀行'), false);
   }
 });
 
