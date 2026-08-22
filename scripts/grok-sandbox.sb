@@ -50,7 +50,11 @@
 (allow network-inbound (local tcp "localhost:*"))
 (allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
 
-;; ── IPC：剪貼簿、Keychain、Apple Events、TCC（列舉式；對照組實測：沙箱外 pbpaste 讀得到、Keychain 212 項；沙箱內 0、0）──
+;; ── IPC：剪貼簿、Keychain、Apple Events、TCC（列舉式）──
+;; 突變實測（2026-08-22）：拿掉 pasteboard deny → 剪貼簿金絲雀活（這條有效）；
+;; 拿掉 securityd deny → Keychain 金絲雀**仍擋住**——二分後發現真正擋住 Keychain 的是上面的
+;; (deny file-write*)（`security` 要開 keychain DB 的寫鎖）。securityd 那兩條**單獨證明不了**，
+;; 留著當第二層、**不計為已驗證**。Apple Events／TCC 沒有金絲雀，同樣不計。
 (deny mach-lookup
   (global-name "com.apple.pasteboard.1")
   (global-name "com.apple.securityd") (global-name "com.apple.SecurityServer")
