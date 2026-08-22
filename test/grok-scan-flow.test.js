@@ -51,7 +51,7 @@ function tinyRepo() {
  */
 function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean }} */ o = {}) {
   const d = mkdtempSync(join(tmpdir(), 'fake-grok-install-'));
-  mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), '');
+  mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), '{"fake":true}');
   const p = join(d, 'bin', 'grok');
   const session = o.noSession ? '' : `
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '{"type":"assistant","content":"x"}\n' > "$ws/fake-session/updates.jsonl"`;
@@ -75,33 +75,35 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 }
 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
+/** 每題獨立的沙箱 auth 目錄與結果根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results） */
+const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')) });
 const quiet = { log: () => {} };
 
 test('runScan｜base／head 不是寫死 SHA → 2（條款：不可用會移動的名稱）', async () => {
-  const r = await runScan({ base: 'origin/main', head: 'HEAD', promptFile: promptFile() }, { ...quiet, grokInstall: fakeGrok() });
+  const r = await runScan({ base: 'origin/main', head: 'HEAD', promptFile: promptFile() }, { ...quiet, ...isolated(), grokInstall: fakeGrok() });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /寫死的 SHA/);
 });
 
 test('runScan｜grok 版本不符 → 2（條款：版本不同＝當未跑；轉送器目的地是從該版本 strings 出來的）', async () => {
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok({ version: 'grok 9.9.9' }) });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok({ version: 'grok 9.9.9' }) });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /版本不符/);
 });
 
 test('runScan｜版本要**精確等於**，前綴不算（r2：wrapper 印 "grok 1.0.3-evil" 就能過 startsWith）', async () => {
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok({ version: EXPECTED_GROK_VERSION + '-evil' }) });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok({ version: EXPECTED_GROK_VERSION + '-evil' }) });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /版本不符/);
 });
 
 test('runScan｜grok --version 本身失敗 → 2（不是靜靜當作版本對）', async () => {
   const repo = tinyRepo();
-  const d = mkdtempSync(join(tmpdir(), 'fake-grok-bad-')); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions'));
+  const d = mkdtempSync(join(tmpdir(), 'fake-grok-bad-')); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'auth.json'), '{}');
   writeFileSync(join(d, 'bin', 'grok'), '#!/bin/sh\nexit 3\n'); chmodSync(join(d, 'bin', 'grok'), 0o755);
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: d });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: d });
   assert.equal(r.code, 2);
 });
 
@@ -113,7 +115,7 @@ test('runScan｜node_modules 是 symlink（工作樹形狀）→ clone 後盒子
   mkdirSync(join(real, 'eslint')); writeFileSync(join(real, 'eslint', 'package.json'), '{}');
   rmSync(join(repo.dir, 'node_modules'), { recursive: true });
   execFileSync('ln', ['-s', real, join(repo.dir, 'node_modules')]);
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
   // 會在轉送器那步退 2（假轉送器故意死）——但**不是**在 node_modules 那步退
   assert.equal(r.code, 2);
   assert.doesNotMatch(r.summary.join('\n'), /node_modules/, 'symlink 的 node_modules 沒被正確 clone 成真目錄（cp -Rc 對 symlink operand 不跟隨＝Codex r1 實測）');
@@ -123,7 +125,7 @@ test('runScan｜node_modules 是 symlink（工作樹形狀）→ clone 後盒子
 test('runScan｜轉送器沒 READY 就死 → 2', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /轉送器沒有 READY/);
 });
@@ -134,28 +136,33 @@ test('runScan｜轉送器 READY 之後、grok 結束前死掉 → 2（r2：r1 �
   // 假 grok 睡 1 秒再回 0；假轉送器 READY 後 200ms 死——grok 結束時轉送器已死，必須退 2
   const inst = fakeGrok();
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace("printf '%s'", "sleep 1; printf '%s'"));
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: inst, relayScript: fakeRelay('die-after-ready') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: inst, relayScript: fakeRelay('die-after-ready') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /轉送器在掃描結束前死了/);
 });
 
-test('runScan｜正常路徑：假 grok 回覆、寫了 session 日誌 → 0，且 grok-home 是盒內副本、真安裝樹沒被寫', async (t) => {
+test('runScan｜正常路徑：→ 0；盒子（含憑證副本）掃完清掉、結果包只留 launch.json＋sessions、真安裝樹沒被寫', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   const inst = fakeGrok();
   /** @type {string[]} */ const logs = [];
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), repo: repo.dir, grokInstall: inst, relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: inst, relayScript: fakeRelay('ok') });
   assert.equal(r.code, 0, r.summary.join('\n'));
   const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
-  assert.ok(existsSync(join(box, 'grok-home', 'bin', 'grok')), '盒子裡沒有 grok-home 副本');
-  assert.ok(existsSync(join(box, 'grok-home', 'sessions')), '盒子裡的 grok-home 沒有 sessions/');
+  // r3：盒子（含憑證副本）掃完必須**不在**；結果包（去機密）必須在
+  assert.ok(!existsSync(box), `盒子掃完還留在 /private/tmp（裡面有 auth.json 副本）：${box}`);
+  const resultsLine = r.summary.find((l) => l.includes('結果包=')) || '';
+  const resultsDir = /結果包=([^（]+)/.exec(resultsLine)?.[1];
+  assert.ok(resultsDir && existsSync(join(resultsDir, 'launch.json')), '結果包裡沒有 launch.json');
+  assert.ok(resultsDir && existsSync(join(resultsDir, 'sessions')), '結果包裡沒有 sessions/');
+  assert.ok(resultsDir && !existsSync(join(resultsDir, 'auth.json')), '結果包裡有 auth.json——憑證不該留在結果包');
   assert.ok(!existsSync(join(inst, 'sessions', 'fake-session')) && readdirSync(join(inst, 'sessions')).length === 0, '真安裝樹的 sessions/ 被寫了——GROK_HOME 沒有指進盒子');
 });
 
 test('runScan｜grok 退出碼非 0 → 2（第一版只印出來、照樣退 0）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok({ status: 1 }), relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok({ status: 1 }), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /grok 沒有正常結束/);
 });
@@ -163,7 +170,7 @@ test('runScan｜grok 退出碼非 0 → 2（第一版只印出來、照樣退 0�
 test('runScan｜grok 退 0 但回覆是空的 → 2', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok({ reply: '' }), relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok({ reply: '' }), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /回覆是空的/);
 });
@@ -171,7 +178,7 @@ test('runScan｜grok 退 0 但回覆是空的 → 2', async (t) => {
 test('runScan｜grok 正常、但零 session 日誌 → 2（第一版 dirs=[] 直接走到 exit 0——Codex r1 實測）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok({ noSession: true }), relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok({ noSession: true }), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /找不到這次的 session 日誌/);
 });
@@ -181,26 +188,27 @@ test('runScan｜鐵則 11：髒的 GIT_* 環境下 git archive／diff 仍對（�
   const repo = tinyRepo();
   const restore = injectDirtyGitEnv();
   try {
-    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('ok') });
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 0, '髒 GIT_* 環境讓 runScan 壞掉：' + r.summary.join('\n'));
   } finally { restore(); }
   await assertChildGitEnvCleanAsync(assert, 'grok-scan 的 git archive／diff', async () => {
-    await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
+    await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('die-before-ready') });
   });
 });
 
-test('runScan｜發射紀錄 launch.json 會留在盒子（事後能分辨「旗標失效」與「沒帶旗標」）', async (t) => {
+test('runScan｜發射紀錄 launch.json 留在結果包（事後能分辨「旗標失效」與「沒帶旗標」；盒子本身已清）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   /** @type {string[]} */ const logs = [];
-  await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('ok') });
-  const boxLine = logs.find((l) => l.startsWith('盒子：'));
-  assert.ok(boxLine, '沒印盒子路徑');
-  const box = boxLine.slice('盒子：'.length);
-  const launch = JSON.parse(readFileSync(join(box, 'launch.json'), 'utf8'));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), relayScript: fakeRelay('ok') });
+  const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
+  const resultsDir = /結果包=([^（]+)/.exec(r.summary.find((l) => l.includes('結果包=')) || '')?.[1];
+  assert.ok(resultsDir, '沒印結果包路徑');
+  const launch = JSON.parse(readFileSync(join(resultsDir, 'launch.json'), 'utf8'));
   assert.ok(launch.sbArgv.includes('-f'), '發射紀錄沒有沙箱參數');
-  assert.ok(launch.grokArgv.includes('--disable-web-search'), '發射紀錄沒有 grok 旗標');
+  assert.ok(launch.grokArgv.includes('--disable-web-search') && launch.grokArgv.includes('--no-subagents'), '發射紀錄沒有 grok 旗標');
   assert.equal(launch.env.HOME, box, '發射紀錄的 env.HOME 不是盒子');
+  assert.equal(launch.env.GROK_HOME, join(box, 'grok-home'), '發射紀錄的 env.GROK_HOME 不是盒內副本');
   assert.match(launch.profileSha256, /^[0-9a-f]{64}$/);
   assert.ok(!('GITHUB_TOKEN' in launch.env) && !('ANTHROPIC_API_KEY' in launch.env), 'env 白名單漏了 token 類變數');
 });
