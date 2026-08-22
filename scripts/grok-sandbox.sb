@@ -1,0 +1,35 @@
+;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路）。
+;;
+;; 為什麼存在：鎖工具旗標 52/53 次靜默失效（~/.grok/sessions 全量稽核），「請它不要做」擋不住；
+;; 這份設定改成「作業系統不讓它做」。William 2026-08-20 已拍板允許 Grok 跑指令——
+;; 在這個盒子裡跑指令是安全的，因為盒子裡沒有它不該看的東西。
+;;
+;; 原則：家目錄**全拒**，再逐項放行；每條放行都要說得出「為什麼非它不可」。
+;; 參數（由 scripts/grok-scan.js 傳入）：HOME＝真家目錄、GROK_HOME＝~/.grok、SCAN_DIR＝盒子。
+;;
+;; ⚠️ 誠實劃界：
+;; ・sandbox-exec 是 Apple 標為過時但仍可用的工具（macOS 15.7 實測）；它哪天消失，這道圍欄就沒了。
+;; ・網路規則只認 localhost／*，放不了特定網域——所以一律只准 localhost，
+;;   由 scripts/grok-relay.js 在 localhost 上接手、只轉到 xAI 那一個寫死的位址。
+;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
+;; ・金絲雀（test/grok-sandbox.test.js＋掃描前必跑）只證明「這幾件事擋得住」，不證明沒有別的洞。
+(version 1)
+(allow default)
+
+;; ── 家目錄全拒：store.db、.ssh、.gitconfig、Desktop、Documents… 全在這底下 ──
+(deny file-read* (subpath (param "HOME")))
+
+;; ── 放行①：grok 自己的家（執行檔、設定、登入憑證、session 日誌——驗屍要讀這裡）──
+(allow file-read* (subpath (param "GROK_HOME")))
+
+;; ── 放行②：盒子（git archive 出來的已 commit 原始碼＋APFS clone 的 node_modules）──
+;; 盒子不在家目錄底下（/private/tmp），這條是為了「HOME 指進盒子」後 git／npm 的寫入。
+(allow file-read* (subpath (param "SCAN_DIR")))
+
+;; ── 網路：全拒，只准 localhost ──
+;; outbound → 轉送器；bind/inbound → 考題會起本機 Express 伺服器（外面連不進來，仍在盒子裡）
+(deny network*)
+(allow network-outbound (remote tcp "localhost:*"))
+(allow network-bind (local tcp "localhost:*"))
+(allow network-inbound (local tcp "localhost:*"))
+(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
