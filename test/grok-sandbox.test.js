@@ -13,13 +13,16 @@
 //   兩個都修了——金絲雀要先證明自己會叫，才能拿來證明圍欄。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { runCanary, runInSandbox, isBlocked, PROFILE } from '../scripts/grok-sandbox-canary.js';
+import { runCanary, runInSandbox, isBlocked, canApplySandbox, PROFILE } from '../scripts/grok-sandbox-canary.js';
 
-const CAN_SANDBOX = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec');
-const SKIP = 'sandbox-exec 只在 macOS 有；這台跑不了沙箱（強制點在 scripts/grok-scan.js 的掃描前金絲雀）';
+// ⚠️ 不是「darwin＋有 sandbox-exec」就能跑：巢狀沙箱環境（Codex 的審查樹）apply 會退 71——r2 版因此三關紅、
+//    而反面題把 71 當「禁區擋住」假綠（Codex r3 #1）。一律用能力探測決定 skip，反面題一律走 isBlocked()。
+const CAP = (() => { const d = mkdtempSync('/private/tmp/grok-sandbox-cap-'); try { return canApplySandbox(d); } finally { rmSync(d, { recursive: true, force: true }); } })();
+const CAN_SANDBOX = CAP.ok;
+const SKIP = `這台套不上沙箱：${CAP.why}（強制點在 scripts/grok-scan.js 的掃描前金絲雀，它會 fail-closed）`;
 
 /** 建一個最小盒子（在 /private/tmp，不在家目錄底下——沙箱設定放行的是盒子路徑）。 */
 function tmpBox() {
@@ -28,11 +31,11 @@ function tmpBox() {
   return d;
 }
 
-test('沙箱｜金絲雀：列出的禁區全部擋住、正面案例通過（退出碼 0）', (t) => {
+test('沙箱｜金絲雀：列出的禁區全部擋住、正面案例通過（退出碼 0）', async (t) => {
   if (!CAN_SANDBOX) { t.skip(SKIP); return; }
   const box = tmpBox();
   try {
-    const { code, lines } = runCanary(box);
+    const { code, lines } = await runCanary(box);
     assert.equal(code, 0, '金絲雀結果：\n' + lines.join('\n'));
     assert.ok(lines.some((l) => l.includes('擋住') && l.includes('假機密')), '至少要有「假機密被擋住」這一條');
     assert.ok(lines.some((l) => l.includes('通過') && l.includes('盒子')), '至少要有「盒子裡的檔讀得到」這一條');
@@ -48,9 +51,11 @@ test('沙箱｜真正的 repo 禁區：data/ 目錄、.ssh、.gitconfig 在盒�
       ['repo 的 data/ 目錄', ['/bin/ls', join(home, 'Desktop')]],   // store.db 住在 Desktop 底下的 repo；Desktop 本身就該擋
       ['~/.ssh', ['/bin/ls', join(home, '.ssh')]],
       ['~/.gitconfig', ['/bin/cat', join(home, '.gitconfig')]],
+      ['真 ~/.grok（不在沙箱裡）', ['/bin/ls', join(home, '.grok')]],
     ])) {
       const r = runInSandbox(box, argv);
-      assert.ok(typeof r.status === 'number' && r.status !== 0, `${label} 在沙箱裡居然讀得到（status ${r.status}）`);
+      // 一律走 isBlocked()：status 71（沙箱沒套上）與 null（被殺）都不算擋住
+      assert.ok(isBlocked(r, '\u0000never'), `${label} 在沙箱裡沒有被擋住（status ${r.status}）`);
       assert.ok(!(r.stdout || '').trim(), `${label} 在沙箱裡有輸出：${(r.stdout || '').slice(0, 80)}`);
     }
   } finally { rmSync(box, { recursive: true, force: true }); }
@@ -79,9 +84,11 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   // r2：deny-default＋system.sb 是骨架；沒有這兩行就退回 r1 那種列舉式的洞
   assert.match(sb, /\(deny default\)/, '少了 (deny default)——退回列舉式 deny，Codex r2 實證那不是封閉邊界');
   assert.match(sb, /\(import "system\.sb"\)/, '少了 (import "system.sb")——deny default 下程式起不來');
-  // 安裝樹唯讀：只能有 file-read* 指向 GROK_INSTALL，不能有 file-write*
-  assert.match(sb, /\(allow file-read\* \(subpath \(param "GROK_INSTALL"\)\)\)/, '少了 grok 安裝樹的唯讀放行');
-  assert.doesNotMatch(sb, /file-write\*[^\n]*GROK_INSTALL/, '安裝樹被放行寫入——r2 #2 升級鏈：沙箱裡改 bin/grok、下次在沙箱外執行');
+  // r3：真 ~/.grok **完全不進沙箱**——設定檔裡不可以再出現 GROK_INSTALL 這個參數
+  assert.doesNotMatch(sb, /GROK_INSTALL/, '設定檔又把真 ~/.grok 放進沙箱——r2 放行整棵唯讀被抓到：歷史 sessions 仍可讀');
+  // r3 收窄：/opt/homebrew/lib（全域 npm＝使用者程式碼）與 /Library/Developer 整棵不可放行
+  assert.doesNotMatch(sb, /\(subpath "\/opt\/homebrew\/lib"\)/, '放行了 /opt/homebrew/lib——裡面是全域 npm 套件');
+  assert.doesNotMatch(sb, /\(subpath "\/Library\/Developer"\)/, '放行了整棵 /Library/Developer——只需要 CommandLineTools');
   // 網路：只准轉送器 port；不可有 localhost:* 的 outbound（理財 app 的 4321 吐真實餘額）
   assert.match(sb, /\(allow network-outbound \(remote tcp \(string-append "localhost:" \(param "RELAY_PORT"\)\)\)\)/, '少了「只准連轉送器 port」');
   assert.doesNotMatch(sb, /\(allow network-outbound[^\n]*"localhost:\*"/, '放行了 localhost:* outbound——盒內程式連得到本機理財 app');
