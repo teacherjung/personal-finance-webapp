@@ -218,7 +218,7 @@ test('Grok 複審後掃｜三個失效條件的字串，兩個視窗裡都要有
   }
 });
 
-test('Grok 複審後掃｜時機：三處都要寫「轉正式之前」、要跟「通過」綁在同一行，且三個舊時機字面不得復活', () => {
+test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過」和「轉正式之前」綁在同一行；合併步驟前導寫「轉正式之前」；四處現行指示不得出現三個舊時機字面', () => {
   const rm = read('REVIEW-AND-MERGE.md');
   const READY = '`gh pr ready` 轉正式之前';
   // ⚠️ 不能只查新字串**在**（2026-08-21 Grok 掃到、我自己重現過的兩發）：
@@ -226,16 +226,6 @@ test('Grok 複審後掃｜時機：三處都要寫「轉正式之前」、要跟
   //        Test 5 已經為「程式線」防住、卻沒為「時機」防住的同一個病。**這次補上反面絆線。**
   //   3(b) 沒有任何一題把時機綁在**「通過」之後**：把那半句整段拿掉、甚至改回「送審前」，
   //        六題全綠——本條存在的理由整段被拆掉也不響。**這次要求同一行同時出現「通過」。**
-  const OLD_TIMINGS = ['請 Codex 執行合併之前', '發射合併前', '請人代合併之前'];
-  for (const f of ['AGENTS.md', 'CLAUDE.md', 'REVIEW-AND-MERGE.md']) {
-    for (const old of OLD_TIMINGS) {
-      assert.ok(
-        !visible(read(f)).includes(old),
-        `${f} 又出現舊時機「${old}」——只要新字串也還在，兩種相反答案就並存；`
-          + '只讀到舊那半句的人會在合併前才掃，每修一條多燒一次全卷 CI（那正是這次改時機要關掉的路）'
-      );
-    }
-  }
   /** 時機那一句必須**同一行**同時出現「通過」與 READY——只查 READY 等於沒守住「通過之後」。 */
   const timingLine = (/** @type {string} */ text, /** @type {string} */ where) => {
     const hit = text.split('\n').find((l) => l.includes(READY) && l.includes('通過'));
@@ -280,6 +270,36 @@ test('Grok 複審後掃｜時機：三處都要寫「轉正式之前」、要跟
     pointer.includes('轉正式之前'),
     '合併步驟的指路句沒寫出「轉正式之前」——人走到合併步驟時 PR 通常早已轉正式，這句話漏了時機就是叫人走燒額度的那條路'
   );
+  assert.ok(
+    pointer.includes('通過'),
+    '合併步驟的指路句沒寫出「通過」——只寫「轉正式之前」時，把「Codex 通過之後、」刪掉這道考題不會紅'
+      + '（2026-08-21 Codex r13 實測），而「通過已留在紀錄上」正是本條存在的唯一理由'
+  );
+
+  // ⚠️ 反面絆線**只掃四處現行指示**，不掃整份檔案（2026-08-21 Codex r13 實測：
+  // 只在 CLAUDE.md 末尾加一行「歷史記錄：舊版曾寫『請人代合併之前』。」，現行指示完全不動，
+  // 整份掃描版本就由 6/6 變 5/6 ＝ **誤殺沿革文字**。沿革本來就該保留舊字面，那是來歷不是指令）。
+  const OLD_TIMINGS = ['請 Codex 執行合併之前', '發射合併前', '請人代合併之前'];
+  const one = (/** @type {string} */ file, /** @type {string} */ prefix) => {
+    const hits = visible(read(file)).split('\n').filter((l) => l.startsWith(prefix));
+    assert.equal(hits.length, 1, `${file} 裡以「${prefix}」開頭的行有 ${hits.length} 行（需恰好 1）——這道考題要跟著更新`);
+    return hits[0];
+  };
+  const CURRENT_DIRECTIVES = [
+    ['AGENTS 複審後掃條', one('AGENTS.md', '- **複審後掃（')],
+    ['CLAUDE.md 入口句', one('CLAUDE.md', '- **你實作的 PR：')],
+    ['REVIEW 最短可執行版開頭兩行', shortVersion(visible(rm)).split('\n').slice(0, 2).join('\n')],
+    ['合併步驟指路句', pointer],
+  ];
+  for (const [where, text] of CURRENT_DIRECTIVES) {
+    for (const old of OLD_TIMINGS) {
+      assert.ok(
+        !text.includes(old),
+        `${where}出現舊時機「${old}」——只要新字串也還在，兩種相反答案就並存；`
+          + '只讀到舊那半句的人會在合併前才掃，每修一條多燒一次全卷 CI（那正是這次改時機要關掉的路）'
+      );
+    }
+  }
 });
 
 test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、PR 範本要真的吐得出這個字串', () => {
@@ -336,20 +356,21 @@ test('Grok 複審後掃｜程式線的定位：那兩個舊字串形狀不得出
   }
   const section = grokSection(visible(read('AGENTS.md')));
   // ⚠️ 這裡也要驗唯一（2026-08-21 Grok 指出的不對稱）：節首／父節／短版 bullet 都有
-  // assert.equal(..., 1)，只有這一顆是裸 find()。上面插一顆也含「常設」「複審後掃」的
-  // decoy、下面那顆改成別的意思，正面斷言照樣綠。
+  // assert.equal(..., 1)，這一顆當時沒有。多一顆同形 bullet 就讓定位不唯一——
+  // 上面插一顆也含「常設」「複審後掃」的 decoy、下面那顆改成別的意思，就能把真的藏掉，
+  // 所以現在多一顆就直接擋下來。
   const bullets = section.split('\n').filter((l) => l.startsWith('- **程式線'));
   assert.notEqual(bullets.length, 0, 'AGENTS「Grok 的邊界」節裡找不到「程式線」那顆 bullet');
   assert.equal(
     bullets.length, 1,
-    `AGENTS「Grok 的邊界」節裡有 ${bullets.length} 顆「程式線」bullet——擷取只取第一顆，所以這裡直接擋下來`
+    `AGENTS「Grok 的邊界」節裡有 ${bullets.length} 顆「程式線」bullet——多一顆同形 bullet 就讓定位不唯一，因此直接擋下來`
   );
   const bullet = bullets[0];
   assert.ok(
     bullet.includes('常設') && bullet.includes('複審後掃'),
-    'find() 選中的第一顆「程式線」bullet 上沒有同時出現「常設」與「複審後掃」——'
-      + '這題只檢查被選中的那一顆；反面絆線只檢查舊字串本身，'
-      + '被選中的那一顆改成第三種不提常設的寫法時，才由這一道轉紅。'
+    '唯一那顆「程式線」bullet 上沒有同時出現「常設」與「複審後掃」——'
+      + '這題只檢查那唯一一顆；反面絆線只檢查舊字串本身，'
+      + '那唯一一顆改成第三種不提常設的寫法時，才由這一道轉紅。'
       + '（⚠️ 這一道只查字在不在，查不出語意：寫成「不再常設」它照樣過。）'
   );
 });
@@ -357,8 +378,9 @@ test('Grok 複審後掃｜程式線的定位：那兩個舊字串形狀不得出
 test('Grok 複審後掃｜CLAUDE.md **恰有一行**同時出現「Grok 複審後掃」與「轉正式之前」（新 session 只保證讀到 CLAUDE.md）', () => {
   // 兩個字串各查各的會被「散在兩個無關 bullet」蒙混過去（2026-08-19 預審抓到）——綁同一行。
   // ⚠️ 綁的是**同一行**，不是「同一句」：同一行放兩句不相干的話照樣綠（Codex r9 實測）。。
-  // ⚠️ 同樣要驗唯一（2026-08-21 Grok 指出）：只取第一個命中時，前面插一行不相干但同時
-  // 含這兩個詞的話、再把後面真正那條整條刪掉，這一題照樣綠。
+  // ⚠️ 同樣要驗唯一（2026-08-21 Grok 指出）：不驗唯一時，前面插一行不相干但同時
+  // 含這兩個詞的話，就能把後面真正那條藏掉，所以多一行就直接擋下來。
+  // （⚠️ 擋不住「decoy 取代真句」——那一顆列在檔頭已知繞法清單裡。）
   const hits = visible(read('CLAUDE.md')).split('\n')
     .filter((l) => l.includes('Grok 複審後掃') && l.includes('轉正式之前'));
   assert.notEqual(
@@ -370,6 +392,6 @@ test('Grok 複審後掃｜CLAUDE.md **恰有一行**同時出現「Grok 複審�
   );
   assert.equal(
     hits.length, 1,
-    `CLAUDE.md 有 ${hits.length} 行同時出現這兩個字串——只取第一行，所以這裡直接擋下來（前面插一行 decoy 就能把真正那條藏掉）`
+    `CLAUDE.md 有 ${hits.length} 行同時出現這兩個字串——多一行就讓定位不唯一，因此直接擋下來（decoy 能把真正那條藏掉）`
   );
 });
