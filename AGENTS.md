@@ -266,14 +266,14 @@
 | **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | 觸發＝停車費子類的**現名身分**、非字面；`parkSub` 整批算一次傳入；呼叫點見契約；與 strip 反向對稱——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |
 | **帳戶顯示名 denormalized 到 `transactions.account`**（使用者定 2026-07-21「改一次、處處同步」） | 銀行交易靠 `bankRef` 遮罩帳號比對現名、手動記帳走舊名→新名；reconcile 的落點見契約——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶顯示名-denormalized-到交易) |
 | **時鐘倒退保護**（Codex r3#8，中） | 現在比資料庫最新一天早＝不寫；自動流程安靜略過、手動按鈕 throw 400；`nowLocal()` 整個流程只擷取一次——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#時鐘倒退保護) |
-| **淨值日線 `dailyValues`**（D0） | `recordDailyValue()` 唯一寫入口；同日覆寫、跨日累積（月快照跳過不代表日線跳過）；支援的外幣匯率都留底（幣別名單以 snapshot.js 為準）；`date` 用 datereq 必填、READONLY——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值日線-dailyvalues) |
+| **淨值日線 `dailyValues`**（D0） | `recordDailyValue()` 唯一寫入口；同日覆寫、跨日累積（月快照跳過不代表日線跳過）；支援的外幣匯率都留底（外幣＝`schema.js` 的 `CURRENCIES` 扣掉本幣 TWD；實際留底哪幾欄見 snapshot.js）；`date` 用 datereq 必填、READONLY——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值日線-dailyvalues) |
 | 估值訊號門檻／檔位（**程式單一真相＝`public/modules/signal-tiers.js`**，D3 抽出） | 單一真相 signal-tiers.js、前後端都 import；改門檻要同步白話文件＋SIGNALS_INFO_HTML——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#估值訊號門檻檔位) |
 | **每日洞察引擎書籤 `insightState`＋差異引擎**（D3，2026-07-22） | 唯一寫入口 getInsights（讀取有寫檔副作用）／同顧慮同 key 鐵律／註冊五件套 `KV_KEYS`＋`KV_MAP_KEYS`＋schema＋`emptyDb`＋types——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#每日洞察引擎書籤-insightstate) |
 | `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY 自動算、不手動——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#settings-signals) |
 | 支出分類（兩層：分類/子類，**使用者可自訂** 2026-07） | 生效樹＝`settings.expenseTree`＋`effectiveTree(db)`；改名連動與別名、刪除歸「其他/未分類」（強制保留的退路）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#支出分類兩層與使用者自訂) |
 | `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 三層先中先贏：特殊指定→店家/關鍵字→**場所保底排表尾**（具體店家 > 場所）；重複判定鍵＝`stmtRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#category_rules-關鍵字順序) |
 | 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX；PDF 再依**文件內容**判富邦/台新） | 銀行由**文件內容**判斷不看選的卡；富邦/台新 PDF＋台新 XLSX（HOSTED 走子行程）；`finalize()` 共用；`statementMonth` 只掃表頭——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單多銀行與多格式解析) |
-| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | 只加在顯示名（`note`）**絕不進 `storeKey`**；只加在「自動名」，使用者取過的名字逐字保留；各呼叫端（處數以 grep 為準、契約記載已漂過一次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
+| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | 只加在顯示名（`note`）**絕不進 `storeKey`**；只加在「自動名」，使用者取過的名字逐字保留；各呼叫端（具名清單見契約、處數不寫死；契約記載已漂過一次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
 | **使用者自訂店名規則 `settings.storeRules`**（第三帖「規則自助化」，使用者定 2026-07-19） | 純資料非正規表示式（使用者只填純文字）；每種規則排在同類內建規則**前面**；寫入端嚴格、櫃檯端寬鬆——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#使用者自訂店名規則-storerules) |
 | **「規則入櫃檯」**（第三帖）：`lib/repo.js` 每次讀取都把 `settings.storeRules` 餵給 `store-rules.js` 的模組級單例 | `repo.js` 每次讀取都經 `loadSynced()` 餵規則進純函式模組；預覽要講兩種不可逆變更；預覽失敗不可繼續儲存——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則入櫃檯) |
 | 規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據） | 內建規則雜湊＋使用者規則**每次重算**；`normalizeIfRulesChanged` 必須**先 `getDb()` 再算指紋**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則指紋-storeruleshash) |
