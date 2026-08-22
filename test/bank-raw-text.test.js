@@ -114,6 +114,45 @@ test('探針：兩欄都是空字串＝原文真的是空的，仍不可掉回�
   assert.equal(t.note, '', '原文是空的就顯示空的，不可從去重鍵撿字回來');
 });
 
+test('摘要自己含 `|`：讀原文欄才拿得回完整摘要（反解會在第一個 `|` 切斷、把後半歸給備註）', async () => {
+  // Codex #497 r1#2 找到的第 10 顆突變：先前每一題的摘要都不含 `|`，去重鍵那一段剛好與原文相同 ⇒
+  // 「摘要改從 bankRef 讀」這種突變全綠通過。這一題就是補那個洞。
+  const db = await getDb();
+  db.accounts = [];
+  const summary = '媒體轉入|第二段';
+  const note = '基金配息';
+  const bankRef = `bank|288810****8791|2026-07-04|in|100|900|${summary}|${note}`;   // 寫入端就是這樣拼的（摘要含 `|` 也照拼）
+  const row = (/** @type {string} */ id, /** @type {any} */ extra) => ({
+    id, date: '2026-07-04', type: 'income', category: '被動', subcategory: '股息', amount: 100,
+    account: '台新 8791', note: '', ledger: 'cashflow', source: 'bank', dir: 'in', bankRef, ...extra,
+  });
+  db.transactions = [row('p-new', { bankSummary: summary, bankNote: note }), row('p-old', {})];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const fresh = await getDb();
+  const tNew = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'p-new'));
+  const tOld = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'p-old'));
+  assert.equal(tNew.note, '媒體轉入|第二段・基金配息', '有原文欄＝摘要一字不少');
+  assert.equal(tOld.note, '現金轉入・第二段|基金配息', '反解＝摘要被切斷、後半跑到備註那邊（原樣呈現這個舊行為）');
+});
+
+test('原文欄是 null（外部備份／手改進來的）＝當成沒有這兩欄，退回反解——退化但不編造', async () => {
+  // #497 r1#1：FIELD_SCHEMA 的 'str' 全站接受 null（清空語意），備份還原與櫃檯 strip 都會原樣保留。
+  // 這一題把「那時候顯示什麼」釘死：走②反解＝舊資料本來就走的路，不可當成「有原文」而顯示空白。
+  const db = await getDb();
+  db.accounts = [];
+  db.transactions = [{
+    id: 'n1', date: '2026-07-05', type: 'income', category: '被動', subcategory: '利息', amount: 23,
+    account: '台新 3301', note: '', ledger: 'cashflow', source: 'bank', dir: 'in',
+    bankSummary: null, bankNote: null,
+    bankRef: 'bank|900100****3301|2026-07-05|in|23||存款息|不是原文的備註',
+  }];
+  await saveDb(db);
+  await reconcileAccountNamesAuto();
+  const t = /** @type {any} */ (((await getDb()).transactions || [])[0]);
+  assert.equal(t.note, '存款利息・不是原文的備註', 'null＝沒有原文欄，照舊反解');
+});
+
 // ---------- 登記：型別與長度 ----------
 test('登記：兩欄進 FIELD_SCHEMA（壞型別被剝除）與長內容名單（匯入原文不被短欄位上限誤傷）', () => {
   assert.equal(FIELD_SCHEMA.transactions.bankSummary, 'str');
