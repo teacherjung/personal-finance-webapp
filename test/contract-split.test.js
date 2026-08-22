@@ -518,6 +518,7 @@ const MANIFEST = {
       '銀行對帳單解析與分箱',
       '帳戶完整帳號與餘額匯入',
       '帳單原文取法 origFromStmtRef',
+      '帳單原文摘要與備註分兩欄留底',
       '匯入對帳閘',
       '匯入密碼池',
       'AI 解析路線 P1b',
@@ -527,6 +528,7 @@ const MANIFEST = {
     files: [
       'data/seed.json',
       'lib/bank-statement.js', 'test/bank-statement.test.js', 'test/taishin-debit.test.js',
+      'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
       // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
