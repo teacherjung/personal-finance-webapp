@@ -177,6 +177,7 @@ test('★帳戶｜金融卡明細（只有末碼）對上機構戳是舊寫法�
 // 這一題是那個方向唯一的機械守門：表裡任兩家同名＝紅。表要維護：加別名或剝後綴規則時先想「會不會跟這裡撞」。
 const DISTINCT_INSTITUTIONS = [
   '台新國際商業銀行', '台新證券', '國泰世華商業銀行', '玉山商業銀行', '中國信託商業銀行', '中國銀行',
+  '中國國際商業銀行',   // 與中國銀行是不同法人（受保護名：剝掉後綴都剩「中國」）
   '台北富邦商業銀行', '兆豐國際商業銀行', '第一商業銀行', '華南商業銀行', '永豐商業銀行', '合作金庫商業銀行',
   'LINE Bank', '中華郵政', '台灣銀行', '台灣土地銀行', '台灣中小企業銀行',
   '上海商業儲蓄銀行', '上海商業銀行', '上海銀行',   // 台灣／香港／中國三家，剝掉後綴會撞成城市名
@@ -199,7 +200,9 @@ const SAME_INSTITUTION = [
   ['玉山', ['玉山銀行', '玉山商業銀行', 'E.SUN Bank', 'ESUN']],
   ['中國信託', ['中國信託商業銀行', 'CTBC Bank', '中信']],
   ['第一', ['第一銀行', '第一商業銀行', 'First Commercial Bank', '一銀']],
-  ['上海商業儲蓄銀行', ['上海商銀', '上海商業儲蓄銀行']],
+  ['上海商業儲蓄銀行', ['上海商銀', '上海商業儲蓄銀行', '上海商業儲蓄銀行股份有限公司']],
+  ['中國銀行', ['中國銀行', '中國銀行股份有限公司']],
+  ['中國國際商業銀行', ['中國國際商業銀行', '中國國際商業銀行股份有限公司']],
   ['HSBC', ['HSBC', 'hsbc', 'HSBC Bank']],
   ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社']],
   // 別名表每一條都要在這裡有一列：刪掉或指錯任何一條＝紅
@@ -216,6 +219,43 @@ test('同一家的各種寫法壓成同一個短名（全形、英文、縮寫�
   for (const [want, forms] of SAME_INSTITUTION) {
     for (const f of forms) assert.equal(canonicalBank(f), want, `${f} → ${want}`);
   }
+});
+
+test('★原型鍵（鐵則 3.5）：機構名是外部文字，`__proto__`／`constructor`／`toString` 不可撈到原型上的東西', () => {
+  for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+    const c = canonicalBank(k);
+    assert.equal(typeof c, 'string', `${k} 要回字串`);
+    assert.equal(sameBank(k, '台新'), false);
+  }
+  // 走正式預覽：機構名是保留字的帳單不可讓預覽炸掉（instKey 會對結果 .toLowerCase()）
+  const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [
+    { id: 'o', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他', bankRef: 'bank2|constructor|900100****3301|2026-06-10|in|1000||轉帳存入|' },
+  ] };
+  const parsed = { bank: '__proto__', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({})] };
+  assert.doesNotThrow(() => previewBankTxForDb(db, parsed));
+});
+
+test('★去重比對形不可冒充末碼祖父鍵：`bank2|台新|<純末碼>|…` 不改寫成 `bank|`（那是 bankRefLegacy 的命名空間）', () => {
+  // 舊列帳號段只有末碼（沒星號）；新列是同銀行、同末碼、**不同前綴**的另一顆帳戶——兩者不是同一筆
+  const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [
+    { id: 'old', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他',
+      bankRef: 'bank2|台新銀行|3301|2026-06-10|in|1000||轉帳存入|' },
+  ] };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: { '900200****3301': 'TWD' }, transactions: [btx({ acctMasked: '900200****3301' })] };
+  assert.equal(previewBankTxForDb(db, parsed).rows[0].duplicate, false, '★不可標成明確重複');
+  assert.equal(importBankTxToDb(db, parsed).imported, 1, '★真交易要匯進來');
+  assert.equal(canonRef('bank2|台新銀行|3301|2026-06-10|in|1000||轉帳存入|'), 'bank2|台新|3301|2026-06-10|in|1000||轉帳存入|');
+});
+
+test('★跨機構正式路：中國銀行（股份有限公司）的帳戶，中國國際商業銀行（股份有限公司）的帳單不可配到它', () => {
+  const parsed = { bank: '中國國際商業銀行股份有限公司', referenceDate: '2026-06-30', accounts: [{ suffix: '3301', masked: '900100****3301', balance: 1, currency: 'TWD', label: '活儲', note: '', kind: 'demand', period: '' }], accountCurrency: { '900100****3301': 'TWD' }, transactions: [] };
+  const db = { accounts: [{ id: 'a', name: '中銀活儲', type: 'cash', currency: 'TWD', balance: 5000, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '中國銀行股份有限公司' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed)).rows[0].action, 'create', '★不同機構＝建新戶，不可 update 蓋餘額');
+  applyBalancesToDb(db, /** @type {any} */ (parsed));
+  assert.equal(db.accounts[0].balance, 5000, '★中國銀行的餘額不可被蓋');
+  // 定存與去重同一把尺
+  assert.notEqual(canonCdKey('中國銀行股份有限公司|3301|USD||51|#1'), canonCdKey('中國國際商業銀行股份有限公司|3301|USD||51|#1'));
+  assert.notEqual(canonRef('bank2|中國銀行股份有限公司|900100****3301|2026-06-10|in|1||a|b'), canonRef('bank2|中國國際商業銀行股份有限公司|900100****3301|2026-06-10|in|1||a|b'));
 });
 
 // ---------- 每一處機構守門都要過同一把尺（預審突變逐處存活後補的行為題） ----------
