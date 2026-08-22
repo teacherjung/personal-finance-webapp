@@ -61,19 +61,16 @@ export const RELAY_PORT = 18765;
  * 在沙箱裡跑一條指令。cwd 預設＝盒子（考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到）。
  * @param {string} box
  * @param {string[]} argv 指令與參數（絕對路徑）
- * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, grokInstall?: string, relayPort?: number }} [opt]
- *   grokInstall 預設＝真 ~/.grok（沙箱裡**唯讀**）；考題注入假的（裡面放假 bin/grok）
+ * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, relayPort?: number }} [opt]
  */
 export function runInSandbox(box, argv, opt = {}) {
   // ⚠️ 傳給沙箱的路徑一律先 realpath：sandbox-exec 比對的是**解析後**路徑，
   //    /var/folders/… 其實是 /private/var/folders/…，沒解析就永遠比不中（考題用 tmpdir() 時實際踩到，exec 退 126）。
-  const grokInstall = realpathSync(opt.grokInstall ?? join(homedir(), '.grok'));
   const boxReal = realpathSync(box);
   mkdirSync(join(boxReal, 'tmp'), { recursive: true });
   mkdirSync(join(boxReal, 'grok-home'), { recursive: true });
   return spawnSync('/usr/bin/sandbox-exec', [
     '-f', PROFILE,
-    '-D', `GROK_INSTALL=${grokInstall}`,
     '-D', `SCAN_DIR=${boxReal}`,
     '-D', `RELAY_PORT=${opt.relayPort ?? RELAY_PORT}`,
     ...argv,
@@ -113,7 +110,7 @@ export function canApplySandbox(box) {
  * 跑完整金絲雀。回傳 { code, lines }——lines 是逐條結果（給 PR 描述貼）。
  * @param {string} box
  */
-export function runCanary(box) {
+export async function runCanary(box) {
   /** @type {string[]} */
   const lines = [];
   const cap = canApplySandbox(box);
@@ -132,10 +129,16 @@ export function runCanary(box) {
   writeFileSync(join(outsideVarTmp, 'x.txt'), secret + '\n');
   const inside = join(box, 'canary-inside.txt');
   writeFileSync(inside, 'INSIDE-OK\n');
-  // 剪貼簿：**先存、後還原**（r1 直接覆寫再清空＝把使用者的剪貼簿弄丟；Codex r2 跑考題時實際觸發）
+  // 剪貼簿：**先存、後還原**（r1 直接覆寫再清空＝把使用者的剪貼簿弄丟；Codex r2 跑考題時實際觸發）。
+  // r3：只在「現在剪貼簿還是我放的暗號」時才還原——使用者在金絲雀跑的那幾秒複製了新東西，不能被蓋掉。
   const clipBefore = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
-  const restoreClipboard = () => { spawnSync('/usr/bin/pbcopy', { input: clipBefore.status === 0 ? (clipBefore.stdout || '') : '', encoding: 'utf8', timeout: 5000 }); };
-  const grokInstall = realpathSync(join(home, '.grok'));
+  const restoreClipboard = () => {
+    const now = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
+    if ((now.stdout || '').includes(secret)) spawnSync('/usr/bin/pbcopy', { input: clipBefore.status === 0 ? (clipBefore.stdout || '') : '', encoding: 'utf8', timeout: 5000 });
+  };
+  // 盒內 grok-home 的探針目標（r3：不再碰真 ~/.grok——它不在沙箱裡，寫入探針對它沒有意義，反而 cleanup 會動到使用者檔）
+  /** 唯一且確認原本不存在的路徑——cleanup 只刪自己建的（r3 #3：固定名＋無條件刪會把使用者同名檔刪掉） */
+  const uniq = (/** @type {string} */ dir, /** @type {string} */ stem) => { const p = join(dir, `${stem}-${secret}`); if (existsSync(p)) throw new Error(`探針路徑已存在：${p}`); return p; };
 
   let dead = 0;
   const mustFail = (/** @type {string} */ label, /** @type {string[]} */ argv) => {
@@ -172,11 +175,25 @@ export function runCanary(box) {
     mustFail('寫家目錄', ['/bin/sh', '-c', `echo x > "${join(outsideHome, 'w.txt')}"`]);
     mustFail('寫 /private/tmp', ['/bin/sh', '-c', `echo x > "${join(outsideTmp, 'w.txt')}"`]);
     if (outsideShared) mustFail('寫 /Users/Shared', ['/bin/sh', '-c', `echo x > "${join(outsideShared, 'w.txt')}"`]);
-    // r2 #2 升級鏈：grok 安裝樹在沙箱裡必須**唯讀**——能寫 bin/grok 就能埋雷給下一次沙箱外的 --version
-    mustFail('寫 grok 安裝樹（~/.grok）', ['/bin/sh', '-c', `echo x > "${join(grokInstall, 'grok-canary-w.txt')}"`]);
-    mustFail('寫 grok 執行檔旁邊', ['/bin/sh', '-c', `echo x > "${join(grokInstall, 'bin', 'grok-canary-w')}"`]);
-    // 網路：只准轉送器那一個 port——連別的本機 port 要失敗（r1 放行 localhost:* 被抓到：理財 app 的 4321 吐真實餘額）
-    mustFail('連本機非轉送器 port', [process.execPath, '-e', `require("node:net").connect(${RELAY_PORT + 1},"127.0.0.1").on("connect",()=>{console.log("CONNECTED");process.exit(0)}).on("error",(e)=>{console.error(e.code);process.exit(1)})`]);
+    // r2 #2 升級鏈 → r3：真 ~/.grok 根本不在沙箱裡——讀它就該失敗（不只是寫）
+    mustFail('讀真 ~/.grok（不在沙箱裡）', ['/bin/ls', join(home, '.grok')]);
+    mustFail('讀真 ~/.grok 的執行檔', ['/bin/cat', join(home, '.grok', 'bin', 'grok')]);
+    mustFail('寫真 ~/.grok', ['/bin/sh', '-c', `echo x > "${uniq(join(home, '.grok'), 'w')}"`]);
+    // 網路：只准轉送器那一個 port。r3 #2：要**真的起一個 listener**，先證明沙箱外連得上、再證明盒內 EPERM——
+    // 沒有 listener 時沙箱外也是 ECONNREFUSED，金絲雀必然假綠（Codex r3 實測 reportedBlocked:true）。
+    {
+      // 起一個活的 listener（背景），拿到 port
+      const { spawn } = await import('node:child_process');
+      const srv = spawn(process.execPath, ['-e', 'const s=require("node:net").createServer(c=>c.end("HI")).listen(0,"127.0.0.1",()=>process.stdout.write(String(s.address().port)+"\\n"));setTimeout(()=>process.exit(0),20000)'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const port = await new Promise((ok) => { srv.stdout.on('data', (d) => ok(Number(String(d).trim()))); setTimeout(() => ok(0), 5000); });
+      try {
+        if (!port) { lines.push('⛔ 對照組不活｜連本機非轉送器 port（listener 起不來）——這隻測不出，fail-closed'); dead += 1000; }
+        else {
+          const probe = `require("node:net").connect(${port},"127.0.0.1").on("data",(d)=>{console.log(String(d));process.exit(0)}).on("error",(e)=>{console.error(e.code);process.exit(1)})`;
+          mustFailWithControl(`連本機非轉送器 port（:${port}，沙箱外連得上）`, [process.execPath, '-e', probe], (r) => r.status === 0 && (r.stdout || '').includes('HI'));
+        }
+      } finally { srv.kill(); }
+    }
     // 網路（要對照：沙箱外取得到 1 byte 才算探針活的）
     mustFailWithControl('連外網（curl 取 1 byte）', ['/usr/bin/curl', '-s', '-m', '5', '-f', '-o', '/dev/null', '-r', '0-0', 'https://example.com/'], (r) => r.status === 0);
     // IPC：剪貼簿（要對照：先放暗號，沙箱外讀得到才算；結束一律還原使用者原本的內容）
@@ -206,7 +223,6 @@ export function runCanary(box) {
     // 正面：不能誤殺
     mustPass('讀盒子裡的檔', ['/bin/cat', inside], 'INSIDE-OK');
     mustPass('寫盒子裡的檔', ['/bin/sh', '-c', `echo WRITE-OK > "${join(box, 'canary-w.txt')}" && cat "${join(box, 'canary-w.txt')}"`], 'WRITE-OK');
-    mustPass('讀 grok 安裝樹（唯讀）', ['/bin/ls', grokInstall], 'config.toml');
     mustPass('寫盒子裡的 grok-home', ['/bin/sh', '-c', `echo HOME-OK > "${join(box, 'grok-home', 'canary.txt')}" && cat "${join(box, 'grok-home', 'canary.txt')}"`], 'HOME-OK');
     mustPass('node 跑得起來', [process.execPath, '-e', 'console.log("NODE-OK")'], 'NODE-OK');
     mustPass('git 跑得起來（真 git，不走 xcrun shim）', [join(CLT_BIN, 'git'), '--version'], 'git version');
@@ -219,15 +235,14 @@ export function runCanary(box) {
     rmSync(inside, { force: true });
     rmSync(join(box, 'canary-w.txt'), { force: true });
     rmSync(join(box, 'grok-home', 'canary.txt'), { force: true });
-    // 安裝樹那兩個寫入探針**預期失敗**所以不會留下檔；萬一沙箱是假的它們會留下——也只刪自己的名字
-    rmSync(join(grokInstall, 'grok-canary-w.txt'), { force: true });
-    rmSync(join(grokInstall, 'bin', 'grok-canary-w'), { force: true });
+    // 真 ~/.grok 的寫入探針路徑帶 secret、確認過原本不存在——沙箱是假的時它會留下，也只刪這個唯一名
+    rmSync(join(home, '.grok', `w-${secret}`), { force: true });
   }
   return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines };
 }
 
 if (isMainModule(import.meta.url)) {
-  const { code, lines } = runCanary(process.argv[2] ? resolve(process.argv[2]) : '');
+  const { code, lines } = await runCanary(process.argv[2] ? resolve(process.argv[2]) : '');
   for (const l of lines) console.log(l);
   console.log(code === 0 ? '金絲雀：全部擋住、正面通過——沙箱有效，可以掃'
     : code === 1 ? '金絲雀：**有一隻活著＝沙箱是假的，不准掃**'

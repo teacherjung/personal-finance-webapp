@@ -11,15 +11,18 @@
 ;; （例如 node 要 /opt/homebrew/etc/openssl@3/openssl.cnf），不是黑箱。所以這版是真正的預設拒絕。
 ;;
 ;; ## 參數（由 scripts/grok-scan.js 傳入）
-;;   GROK_INSTALL＝真的 ~/.grok（**唯讀**——執行檔、bundled skills、設定範本）
-;;   SCAN_DIR＝盒子（讀寫；裡面有 src/、tmp/、grok-home/＝這次掃描專用的 GROK_HOME 副本）
+;;   SCAN_DIR＝盒子（讀寫；裡面有 src/、tmp/、grok-home/＝白名單複製的 grok 家）
 ;;   RELAY_PORT＝轉送器的 port（網路**只准連這一個**）
+;; 真 ~/.grok 不是參數——它不在沙箱裡，任何路徑都讀不到。
 ;; 環境變數由 grok-scan.js 用白名單重建：HOME／TMPDIR／GROK_HOME 全指進盒子、PATH 指真 git（繞開 xcrun shim）。
 ;;
-;; ## 為什麼 GROK_HOME 不能是真的 ~/.grok（Codex r2 #2，升級鏈）
-;; r1 放行整棵 ~/.grok 讀寫。受掃 repo 的 prompt injection 可以讓第 N 次掃描把 ~/.grok/bin/grok 換成 wrapper；
-;; 第 N+1 次掃描時 grok-scan.js 在**沙箱外**跑 `grok --version`——wrapper 就在沙箱外執行了。
-;; 修法：真安裝樹在沙箱裡唯讀；grok 的可寫家＝每次新建在盒子裡的副本，掃完即棄。
+;; ## 為什麼真 ~/.grok 完全不進沙箱（Codex r2 #2 升級鏈 → r3 #4 整樹暴露）
+;; r1 放行整棵 ~/.grok 讀寫：受掃 repo 的 prompt injection 可讓第 N 次掃描把 bin/grok 換成 wrapper、
+;; 第 N+1 次在沙箱外執行。r2 改唯讀＋clone 整棵進盒子：歷史 sessions 仍可讀（Grok 從執行檔路徑就找得回根目錄），
+;; 而 clone 把 auth.json（與若有的 mcp_credentials.json）整包複製進 /private/tmp、掃完沒清。
+;; r3：真 ~/.grok 不進沙箱；盒內家只複製**白名單四個檔**（bin/grok、config.toml、auth.json、agent_id）＋空 sessions/；
+;; 登入狀態放沙箱專用的 0700 目錄（~/.grok-sandbox-auth，只含 auth.json，每掃同步回去）；
+;; 盒子在所有出口清掉、只留去機密的結果包（launch.json＋sessions）。
 ;;
 ;; ## 誠實劃界
 ;; ・sandbox-exec 是 Apple 標為過時但 macOS 15.7 仍可用的工具；它消失這道圍欄就沒了。
@@ -28,8 +31,9 @@
 ;; ・網路**只准連轉送器那一個 port**（r1 放行 localhost:* 被抓到：盒內程式連得到本機理財 app 的 4321，
 ;;   那裡直接吐真實餘額）。代價：會起本機 HTTP 伺服器再連自己的整合型考題，在盒子裡跑不了（EPERM，33ms 快失敗）。
 ;;   bind／inbound 仍准，所以伺服器起得來、只是客戶端連不上——照實寫進材料提示。
-;; ・IPC 沒有另外放行（deny default 已含）；剪貼簿／Keychain 金絲雀證明的是「在這份 profile 下那兩個指令失敗」，
-;;   不能歸因到哪一條規則。
+;; ・**IPC 不在 deny-default 內**：匯入的 system.sb 本身就放行空前綴的 mach-register 與 XPC mach-lookup
+;;   （這台 macOS 15.7 的 system.sb:19,23；Codex r3 實查）。剪貼簿／Keychain 金絲雀證明的只是「那兩個指令在這份
+;;   profile 下失敗」，不能歸因到哪條規則、也不能說 IPC 被關了。私有 system.sb 日後擴張時沒有考題會紅。
 ;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
 (version 1)
 (deny default)
@@ -38,20 +42,25 @@
 ;; ── 程序基本功能 ──
 (allow process-exec*) (allow process-fork) (allow signal) (allow sysctl-read)
 
-;; ── 讀：系統與工具鏈（每一條都是「跑不起來」實測出來的；加新的要寫正負金絲雀）──
+;; ── 讀：系統與工具鏈（r3 收窄：每條都對應 otool -L 實查；加新的要寫正面金絲雀證明需要）──
+;; grok 執行檔與 CLT git 只靠 /System、/usr/lib；Homebrew node 另靠 Cellar 裡 17 個 formula（經 /opt/homebrew/opt 的 symlink）。
+;; 刻意不放：/opt/homebrew/lib（裡面是全域 npm 套件＝使用者程式碼）、/Library/Frameworks（沒人用）、
+;;           /Library/Developer 整棵（只需 CommandLineTools）、/dev 整棵（列舉實際需要的裝置）。
 (allow file-read*
   (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
-  (subpath "/Library/Frameworks") (subpath "/Library/Apple") (subpath "/Library/Developer")
+  (subpath "/Library/Developer/CommandLineTools")
   (subpath "/Library/Preferences/Logging") (subpath "/private/etc")
-  (subpath "/opt/homebrew/bin") (subpath "/opt/homebrew/Cellar") (subpath "/opt/homebrew/lib") (subpath "/opt/homebrew/opt")
-  (subpath "/opt/homebrew/etc/openssl@3")   ; node 啟動要讀 openssl.cnf——只放這一個目錄，不放 /opt/homebrew/etc
-  (subpath "/private/var/db/timezone") (subpath "/private/var/select") (subpath "/dev"))
+  (subpath "/opt/homebrew/bin") (subpath "/opt/homebrew/Cellar") (subpath "/opt/homebrew/opt")
+  (subpath "/opt/homebrew/etc/openssl@3")   ; node 啟動要讀 openssl.cnf——只放這一個目錄
+  (subpath "/private/var/db/timezone") (subpath "/private/var/select"))
 (allow file-read-metadata)
-(allow file-write* (subpath "/dev"))
+(allow file-read* file-write*
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")
+  (literal "/dev/dtracehelper") (regex #"^/dev/tty") (regex #"^/dev/fd/") (literal "/dev/fd"))
+(allow file-ioctl (regex #"^/dev/"))
 
-;; ── grok 安裝樹：唯讀 ──
-(allow file-read* (subpath (param "GROK_INSTALL")))
-;; ── 盒子：唯一可寫的地方（src/、tmp/、grok-home/）──
+;; ── 盒子：唯一可寫的地方（src/、tmp/、grok-home/＝白名單複製的 grok 家：bin/grok、config.toml、auth.json、agent_id、sessions/）──
+;; r3：真 ~/.grok **完全不進沙箱**（r2 放行整棵唯讀被抓到：歷史 sessions 仍可讀；clone 整棵又把憑證複製進 /private/tmp）。
 (allow file-read* file-write* (subpath (param "SCAN_DIR")))
 
 ;; ── 網路：只准連轉送器；本機伺服器准起（bind/inbound）但客戶端連不到它（見劃界）──
