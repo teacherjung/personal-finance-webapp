@@ -3,9 +3,10 @@
 // 為什麼要存：交易上的 `note` 是**顯示用**的組合結果（收支說明過濾器的好讀版，或使用者自己取的名字），
 // 一旦改寫就回不到原文；在這之前，唯一的原文留底是去重鍵 `bankRef` 的尾兩段——而那要靠切 `|` 反解，
 // 備註以 `#數字` 結尾（會被當成批內出現序剝掉）或摘要自己含 `|`（切點錯位）就還原不出原文。
-// 這份考題釘四件事：①匯入把原文一字不改地存下來，且**去重鍵格式一個位元組沒動**（動了＝重匯同帳單
-// 認不出重複＝現金流翻倍）②顯示層讀的是原文欄、不是反解 ③沒有原文欄的列走反解、**不回填**
-// ④備註是空字串時不可掉回反解（型別判定 typeof 'string'，不是 truthy）。
+// 這份考題守的範圍：匯入把原文一字不改地存下來，且**去重鍵格式一個位元組沒動**（動了＝重匯同帳單
+// 認不出重複＝現金流翻倍）；顯示層讀的是原文欄、不是反解；沒有原文欄的列走反解、**不回填**；
+// 「有原文」的判定邊界（空字串算、null／半份不算）；以及兩欄的所有權與登記（不進 CRUD 白名單、
+// FIELD_SCHEMA 驗型別、長內容名單）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,7 @@ const btx = (/** @type {any} */ o) => ({ acctSuffix: '3301', acctMasked: '900100
 const parsed = (/** @type {any[]} */ txns) => ({ accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: txns });
 const baseDb = () => ({ transactions: [], accounts: [{ id: 'a', name: '台新 3301', type: 'cash', currency: 'TWD', accountNo: '900100****3301' }], learnedBank: {}, settings: {} });
 
-// ---------- ① 匯入：原文一字不改地留底 ----------
+// ---------- 匯入：原文一字不改地留底 ----------
 test('匯入：摘要與備註各自原樣存下（含反解會弄丟的 #數字結尾），去重鍵格式一個位元組沒動', () => {
   const db = baseDb();
   const summary = '轉帳支取';
@@ -51,7 +52,7 @@ test('匯入：備註空白時存空字串（不是 undefined）——顯示層�
   assert.equal(typeof t.bankNote, 'string');
 });
 
-// ---------- ②③ 顯示層讀原文欄；沒有原文欄的列反解、不回填 ----------
+// ---------- 顯示層讀原文欄；沒有原文欄的列反解、不回填 ----------
 test('顯示層：有原文欄的讀原文欄、沒有的才反解——同一筆資料兩種結果，證明讀的真的是欄位', async () => {
   const db = await getDb();
   db.accounts = [{ id: 'a1', name: '合成活儲', type: 'cash', class: '現金', currency: 'TWD', balance: 0, accountNo: '900100****8791' }];
@@ -79,7 +80,7 @@ test('顯示層：有原文欄的讀原文欄、沒有的才反解——同一�
   assert.equal(Object.hasOwn(tOld, 'bankNote'), false);
 });
 
-// ---------- ④ 空備註不掉回反解 ----------
+// ---------- 「有原文」的判定邊界 ----------
 test('備註空白：顯示只剩摘要——不可拿去重鍵裡的字冒充原文', async () => {
   const db = await getDb();
   db.accounts = [];
