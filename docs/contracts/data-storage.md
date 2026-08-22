@@ -30,7 +30,7 @@
 
 ## 必填欄位機制與跨欄不變式
 
-**改這裡**：**必填欄位機制（`REQUIRED_FIELDS`，目前＝history/portfolioSnapshots/snapshots 的 `month` 主鍵欄＋`dailyValues` 的 `date`＋`securityTrades` 的查帳合約 11 欄——身分/方向/數量/幣別/去重鍵＋三個核心金額 price/grossAmount/netSettlement，Codex S2r1#5＋S3r2#4）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；目前＝securityTrades 的 buy→out／sell→in）
+**改這裡**：**必填欄位機制（`REQUIRED_FIELDS`，哪些集合、哪些欄一律以 `lib/schema.js` 的 `REQUIRED_FIELDS` 為準——本檔曾凍結一份清單、實際已漂＝改 schema 的人看不到這裡（教材句自己也不寫數字——寫了就是下一個會漂的）；`securityTrades` 的查帳合約欄全列必填，含核心金額 price/grossAmount/netSettlement）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；清單以 schema.js 的 ROW_RULES 為準——例：securityTrades 的 buy→out／sell→in）
 
 **記得同步這裡**：三個強制點——CRUD 新增回乾淨 400、匯入逐筆列 errors→整份 400、櫃檯 throw 模式當場 throw。**strip 模式（舊 JSON 搬家專用）對必填欄位「缺席／空值／格式錯／數字型」一律整筆濾除，不可只刪欄位**（只刪欄位會留下缺主鍵的殘骸，讓讀取端 `.slice`/`.split` 崩，Codex#12）；PUT 部分更新天然安全（合併保留舊值）。新增「不可缺的主鍵欄」時補進 `REQUIRED_FIELDS`。
 
@@ -38,7 +38,7 @@
 
 **改這裡**：**HOSTED 的並行安全＝compare-and-swap（C4b，契約 P1-5）**
 
-**記得同步這裡**：兩條寫入路徑處置不同、刻意的：**櫃檯自己的五支**（`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`updateSettings`）改動邏輯在櫃檯手上，撞版本時**重讀重做重寫一次**、呼叫端無感；**`getDb…saveDb` 這一對**改動邏輯在呼叫端的記憶體物件裡，櫃檯**沒有能力重算**，直接丟 **409**（`server.js` 有專屬分支回原味訊息，不走「請求格式不正確」）。假裝重試＝拿舊快照再寫一次＝把別人剛寫的吃掉，比 409 危險得多。**`saveDb` 對「沒有版本戳的整包寫入」預設 throw**，只有 `/api/import` 明寫 `{ overwrite: true, from: snapshot }` 才准（全 repo 僅此一處）。⚠️**`from` 必須是呼叫端讀資料時那一次 `getDb()` 的結果**（2026-07-29 契約，Codex 收官審查 #2）——它同時是「機密的來源」與「版本戳的來源」，兩者**必須是同一次讀取**。舊行為是「寫入前一刻自己重抓一次目前版本」＝**自己蓋章給自己看**：CAS 只保護「重抓」到「寫入」那一瞬間，而真正要保護的是「呼叫端讀資料」到「寫入」的整段。已重現：A 分頁還原備份的同時 B 分頁存了新的 IB token → CAS 照樣通過 → 新 token 被舊值蓋掉、**而且回 200 說成功**。拿不出 `from` 一律 throw（`kv_no_version`），讓「無來源版本的整包覆蓋」在櫃檯上根本不存在；`store-pg.js` 的 `currentVersions()` 已**移除**（它的存在本身就是那個 bug，原地留墓誌銘說明不要加回來）。考題 `test/hosted-import-overwrite.test.js`（三種並發方各一題＋架構題釘死「只准一個入口、而且一定要帶 `from`」）。
+**記得同步這裡**：兩條寫入路徑處置不同、刻意的：**櫃檯經 `mutate` 的寫入函式**（例如 `addItem`/`updateItem`——**完整清單以 `lib/repo.js` 裡走 `mutate` 的函式為準**，重印一份在這裡就會漂）改動邏輯在櫃檯手上，撞版本時**重讀重做重寫一次**、呼叫端無感；**`getDb…saveDb` 這一對**改動邏輯在呼叫端的記憶體物件裡，櫃檯**沒有能力重算**，直接丟 **409**（`server.js` 有專屬分支回原味訊息，不走「請求格式不正確」）。假裝重試＝拿舊快照再寫一次＝把別人剛寫的吃掉，比 409 危險得多。**`saveDb` 對「沒有版本戳的整包寫入」預設 throw**，只有 `/api/import` 明寫 `{ overwrite: true, from: snapshot }` 才准（全 repo 僅此一處）。⚠️**`from` 必須是呼叫端讀資料時那一次 `getDb()` 的結果**（2026-07-29 契約，Codex 收官審查 #2）——它同時是「機密的來源」與「版本戳的來源」，兩者**必須是同一次讀取**。舊行為是「寫入前一刻自己重抓一次目前版本」＝**自己蓋章給自己看**：CAS 只保護「重抓」到「寫入」那一瞬間，而真正要保護的是「呼叫端讀資料」到「寫入」的整段。已重現：A 分頁還原備份的同時 B 分頁存了新的 IB token → CAS 照樣通過 → 新 token 被舊值蓋掉、**而且回 200 說成功**。拿不出 `from` 一律 throw（`kv_no_version`），讓「無來源版本的整包覆蓋」在櫃檯上根本不存在；`store-pg.js` 的 `currentVersions()` 已**移除**（它的存在本身就是那個 bug，原地留墓誌銘說明不要加回來）。考題 `test/hosted-import-overwrite.test.js`（各並發方各一題＋架構題釘死「只准一個入口、而且一定要帶 `from`」）。
 
 ## HOSTED 資料層與測試替身
 
@@ -62,7 +62,7 @@
 
 **改這裡**：每日滾動備份（階段四 A，2026-07-27 上線）
 
-**記得同步這裡**：三種備份共用 `store.js snapshotTo(dest)`（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `{tag}.bak`＝backupNow（**函式還在、正式操作路徑零呼叫**，見下一節的裁決）／**每日 `data/backups/` 底下的 store-YYYY-MM-DD.db＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。
+**記得同步這裡**：新的備份路徑一律走 `store.js snapshotTo(dest)`（⚠️ 它**不是**唯一一份 VACUUM→rename——`backupOnce` 與搬家函式各有自己的一份，劃界見 snapshotTo 檔頭註解；別寫「大家都共用它」）（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `{tag}.bak`＝backupNow（**函式還在、正式操作路徑零呼叫**，見下一節的裁決）／**每日 `data/backups/` 底下的 store-YYYY-MM-DD.db＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。
 
 ## 不可逆整批操作刻意沒有操作前備份
 
