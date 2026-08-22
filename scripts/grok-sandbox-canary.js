@@ -25,7 +25,7 @@
 // 退出碼：0＝全部擋住且正面案例通過（可以掃）／1＝有一隻金絲雀活著（**沙箱是假的，不准掃**）／
 //        2＝這台機器跑不了（非 macOS、沒有 sandbox-exec、沙箱 apply 不了、對照組不活、盒子不存在）——fail-closed，同樣不准掃。
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,14 +40,14 @@ const CLT_BIN = '/Library/Developer/CommandLineTools/usr/bin';
  * 沙箱裡的環境變數＝**白名單重建**，不繼承呼叫者的（Codex r1：整包 process.env 交進去＝token 直接給它）。
  * HOME／TMPDIR 指進盒子；grok 靠 GROK_HOME 找自己的家（它正式文件支援的變數）。
  * @param {string} box
+ * @param {string} [grokHome] 預設 ~/.grok；考題注入假的（裡面放假 grok 與假 sessions）
  */
-export function sandboxEnv(box) {
-  const home = homedir();
+export function sandboxEnv(box, grokHome = join(homedir(), '.grok')) {
   return {
     HOME: box,
     TMPDIR: join(box, 'tmp'),
     PATH: `${CLT_BIN}:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin`,
-    GROK_HOME: join(home, '.grok'),
+    GROK_HOME: grokHome,
     LANG: 'en_US.UTF-8',
     TERM: 'dumb',
   };
@@ -57,18 +57,22 @@ export function sandboxEnv(box) {
  * 在沙箱裡跑一條指令。cwd 預設＝盒子（考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到）。
  * @param {string} box
  * @param {string[]} argv 指令與參數（絕對路徑）
- * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number }} [opt]
+ * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, grokHome?: string }} [opt]
  */
 export function runInSandbox(box, argv, opt = {}) {
   const home = homedir();
-  mkdirSync(join(box, 'tmp'), { recursive: true });
+  // ⚠️ 傳給沙箱的路徑一律先 realpath：sandbox-exec 比對的是**解析後**路徑，
+  //    /var/folders/… 其實是 /private/var/folders/…，沒解析就永遠比不中（考題用 tmpdir() 時實際踩到，exec 退 126）。
+  const grokHome = realpathSync(opt.grokHome ?? join(home, '.grok'));
+  const boxReal = realpathSync(box);
+  mkdirSync(join(boxReal, 'tmp'), { recursive: true });
   return spawnSync('/usr/bin/sandbox-exec', [
     '-f', PROFILE,
     '-D', `HOME=${home}`,
-    '-D', `GROK_HOME=${join(home, '.grok')}`,
-    '-D', `SCAN_DIR=${box}`,
+    '-D', `GROK_HOME=${grokHome}`,
+    '-D', `SCAN_DIR=${boxReal}`,
     ...argv,
-  ], { encoding: 'utf8', cwd: opt.cwd ?? box, env: opt.env ?? sandboxEnv(box), timeout: opt.timeout ?? 20_000 });
+  ], { encoding: 'utf8', cwd: opt.cwd ?? boxReal, env: opt.env ?? sandboxEnv(boxReal, grokHome), timeout: opt.timeout ?? 20_000 });
 }
 
 /**
