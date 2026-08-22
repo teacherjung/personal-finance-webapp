@@ -94,11 +94,31 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '設定檔放行了任意對外網路');
 });
 
-test('沙箱｜轉送器的目的地寫死、不從請求取（唯一的安全性質，要釘住）', () => {
+test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 Host／X-Upstream／absolute-form URL 都改不了 host/port（平台無關，CI 也跑）', async () => {
+  const { upstreamOptions } = await import('../scripts/grok-relay.js');
+  const attacks = [
+    { url: '/v1/responses', headers: { host: 'evil.example' } },
+    { url: '/v1/responses', headers: { 'x-upstream': 'evil.example', 'x-forwarded-host': 'evil.example' } },
+    { url: 'http://evil.example/v1/responses?x=1', headers: {} },
+    { url: 'https://evil.example:8443/v1/responses', headers: { host: 'evil.example:8443' } },
+  ];
+  for (const a of attacks) {
+    const o = upstreamOptions({ method: 'POST', ...a });
+    assert.equal(o.host, 'cli-chat-proxy.grok.com', `host 被請求改走了：${JSON.stringify(a)}`);
+    assert.equal(o.port, 443, `port 被請求改走了：${JSON.stringify(a)}`);
+    assert.equal(o.headers.host, 'cli-chat-proxy.grok.com', `Host header 沒被蓋掉：${JSON.stringify(a)}`);
+    assert.ok(String(o.path).startsWith('/'), `absolute-form URL 沒被剝成 path：${o.path}`);
+    assert.ok(!String(o.path).includes('evil.example'), `path 還帶著攻擊者的主機名：${o.path}`);
+  }
+  // 正常請求照過
+  const ok = upstreamOptions({ method: 'GET', url: '/v1/models', headers: { authorization: 'Bearer x' } });
+  assert.equal(ok.path, '/v1/models');
+  assert.equal(ok.headers.authorization, 'Bearer x', '正常 header 被剝掉了（登入憑證要原樣過）');
+});
+
+test('轉送器｜只綁 127.0.0.1（原始碼釘樁；行為面由 grok-scan 的端對端覆蓋）', () => {
   const js = readFileSync(join(process.cwd(), 'scripts', 'grok-relay.js'), 'utf8');
-  assert.ok(js.includes("const UPSTREAM_HOST = 'cli-chat-proxy.grok.com'"), '轉送器的 UPSTREAM_HOST 不是寫死的常數');
   assert.ok(js.includes("server.listen(port, '127.0.0.1'"), '轉送器沒有綁在 127.0.0.1——外面的機器連得到');
-  assert.ok(!/req\.headers\[['"]host['"]\]\s*\|\|/.test(js) && !/UPSTREAM_HOST\s*=\s*req/.test(js), '轉送器從請求取目的地——那就不是單向的了');
 });
 
 test('金絲雀自己｜isBlocked：status 為 null（被殺／ENOBUFS／逾時）不算擋住——第一版的假紅（平台無關，CI 也跑）', () => {

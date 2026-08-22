@@ -32,17 +32,30 @@ import { isMainModule } from '../lib/is-main.js';
 const UPSTREAM_HOST = 'cli-chat-proxy.grok.com';
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'host']);
 
-/** @param {number} port */
-export function startRelay(port) {
-const server = http.createServer((req, res) => {
+/**
+ * 「這個請求要送到哪、帶什麼」——**唯一的決定點**，抽出來是為了讓考題直接考它。
+ * 不管請求的 Host、X-Forwarded-*、X-Upstream、absolute-form URL 寫什麼，host/port 永遠是寫死的那組。
+ * @param {{ method?: string, url?: string, headers: Record<string, string | string[] | undefined> }} req
+ */
+export function upstreamOptions(req) {
   /** @type {Record<string, string | string[]>} */
   const headers = {};
   for (const [k, v] of Object.entries(req.headers)) {
     if (!HOP.has(k.toLowerCase()) && v !== undefined) headers[k] = v;
   }
   headers.host = UPSTREAM_HOST;
+  // absolute-form（`GET http://evil/x`）只留 path——不然 path 本身就能帶走整個 URL
+  let path = req.url || '/';
+  try { if (/^[a-z]+:\/\//i.test(path)) path = new URL(path).pathname + new URL(path).search; } catch { path = '/'; }
+  return { host: UPSTREAM_HOST, port: 443, method: req.method, path, headers, timeout: 300_000 };
+}
+
+/** @param {number} port */
+export function startRelay(port) {
+const server = http.createServer((req, res) => {
+  if (req.method === 'CONNECT') { res.writeHead(405); res.end('relay: CONNECT not supported'); return; }
   const up = https.request(
-    { host: UPSTREAM_HOST, port: 443, method: req.method, path: req.url, headers, timeout: 300_000 },
+    upstreamOptions(req),
     (upRes) => {
       /** @type {Record<string, string | string[]>} */
       const out = {};
