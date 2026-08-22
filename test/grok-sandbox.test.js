@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { runCanary, runInSandbox, PROFILE } from '../scripts/grok-sandbox-canary.js';
+import { runCanary, runInSandbox, isBlocked, PROFILE } from '../scripts/grok-sandbox-canary.js';
 
 const CAN_SANDBOX = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec');
 const SKIP = 'sandbox-exec 只在 macOS 有；這台跑不了沙箱（強制點在 scripts/grok-scan.js 的掃描前金絲雀）';
@@ -93,4 +93,17 @@ test('沙箱｜轉送器的目的地寫死、不從請求取（唯一的安全�
   assert.ok(js.includes("const UPSTREAM_HOST = 'cli-chat-proxy.grok.com'"), '轉送器的 UPSTREAM_HOST 不是寫死的常數');
   assert.ok(js.includes("server.listen(port, '127.0.0.1'"), '轉送器沒有綁在 127.0.0.1——外面的機器連得到');
   assert.ok(!/req\.headers\[['"]host['"]\]\s*\|\|/.test(js) && !/UPSTREAM_HOST\s*=\s*req/.test(js), '轉送器從請求取目的地——那就不是單向的了');
+});
+
+test('金絲雀自己｜isBlocked：status 為 null（被殺／ENOBUFS／逾時）不算擋住——第一版的假紅（平台無關，CI 也跑）', () => {
+  // 真擋住：非 0 數字、沒洩漏
+  assert.equal(isBlocked({ status: 1, stdout: '' }, 'SECRET'), true);
+  assert.equal(isBlocked({ status: 126, stdout: 'Operation not permitted' }, 'SECRET'), true);
+  // 沒擋住：成功了
+  assert.equal(isBlocked({ status: 0, stdout: '' }, 'SECRET'), false);
+  // 沒擋住：退出碼非 0 但暗號洩漏了（例如 cat 讀到了又因別的原因失敗）
+  assert.equal(isBlocked({ status: 1, stdout: 'CANARY-SECRET-x' }, 'CANARY-SECRET-x'), false);
+  // ⭐ 金絲雀自己壞了：status null 一律不算擋住（突變⑤實測：改回 `r.status !== 0` 這裡會假綠）
+  assert.equal(isBlocked({ status: null, stdout: '' }, 'SECRET'), false, 'status null 被當成擋住＝金絲雀被殺時會假報「沙箱有效」');
+  assert.equal(isBlocked({ status: null, stdout: null }, 'SECRET'), false);
 });
