@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runCanary, runInSandbox, isBlocked, PROFILE } from '../scripts/grok-sandbox-canary.js';
 
