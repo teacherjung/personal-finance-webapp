@@ -74,18 +74,24 @@ test('沙箱｜盒子裡跑得了 node 與 git（中間路的承諾：它能在�
   } finally { rmSync(box, { recursive: true, force: true }); }
 });
 
-test('沙箱｜設定檔的承重行還在（被刪掉時金絲雀會叫，這題讓「刪掉」本身先紅）', () => {
-  const sb = readFileSync(PROFILE, 'utf8');
-  for (const line of [
-    '(deny file-read* (subpath (param "HOME")))',
-    '(deny network*)',
-    '(allow network-outbound (remote tcp "localhost:*"))',
-  ]) {
-    assert.ok(sb.includes(line), `scripts/grok-sandbox.sb 少了承重行：${line}`);
+test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，這題讓「刪掉」本身先紅；平台無關，CI 也跑）', () => {
+  const sb = readFileSync(PROFILE, 'utf8').replace(/;;[^\n]*/g, '');   // 剝註解——註解裡的字不算數
+  // 寫入 deny-default
+  assert.match(sb, /\(deny file-write\*\)/, '少了「寫入全域 deny」——第一版就是漏了這條，Grok 能寫 store.db');
+  // 讀取的列舉 deny：每一個位置各自要在（一行含多個 subpath，所以逐一查 subpath、不查整行）
+  for (const where of ['(param "HOME")', '"/private/tmp"', '"/private/var/folders"', '"/Library/Keychains"', '"/Users/Shared"', '"/Volumes"']) {
+    assert.ok(new RegExp(`\\(deny file-read\\*[^)]*\\(subpath ${where.replace(/[()"/]/g, '\\$&')}\\)`).test(sb) || sb.includes(`(subpath ${where})`) && /\(deny file-read\*/.test(sb),
+      `讀取 deny 少了 ${where}（#495 那次 Grok 正是 cd 進 /private/tmp 的審查樹）`);
   }
-  // 反面：不可以有「放行整個家目錄」或「放行任意對外網路」這種把圍欄拆掉的行
-  assert.ok(!/\(allow file-read\*\s+\(subpath \(param "HOME"\)\)\)/.test(sb), '設定檔放行了整個家目錄');
-  assert.ok(!/\(allow network-outbound\s+\(remote (tcp|ip) "\*/.test(sb), '設定檔放行了任意對外網路');
+  // 網路 deny-default＋只准 localhost
+  assert.match(sb, /\(deny network\*\)/, '少了「網路全拒」');
+  assert.match(sb, /\(allow network-outbound \(remote tcp "localhost:\*"\)\)/, '少了 localhost 放行（轉送器會連不上）');
+  // IPC：至少剪貼簿那條（它是突變驗證過唯一單獨有效的）
+  assert.match(sb, /com\.apple\.pasteboard\.1/, '少了剪貼簿 deny（突變實測：拿掉它剪貼簿金絲雀就活）');
+  // 反面：不可以有把圍欄拆掉的行
+  assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath \(param "HOME"\)\)/, '設定檔放行了整個家目錄');
+  assert.doesNotMatch(sb, /\(allow file-write\*[^\n]*\(subpath \(param "HOME"\)\)/, '設定檔放行了寫整個家目錄');
+  assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '設定檔放行了任意對外網路');
 });
 
 test('沙箱｜轉送器的目的地寫死、不從請求取（唯一的安全性質，要釘住）', () => {
