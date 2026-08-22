@@ -182,6 +182,7 @@ const DISTINCT_INSTITUTIONS = [
   'LINE Bank', '中華郵政', '台灣銀行', '台灣土地銀行', '台灣中小企業銀行',
   '上海商業儲蓄銀行', '上海商業銀行', '上海銀行',   // 台灣／香港／中國三家，剝掉後綴會撞成城市名
   '花蓮第二信用合作社', 'HSBC', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
+  '臺中商業銀行', '高雄銀行', '彰化商業銀行', '台中', '高雄', '彰化',   // 城市名銀行 vs 裸城市名：不可同名
 ];
 test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不同（別名表或剝後綴規則撞在一起＝這裡紅）', () => {
   const seen = new Map();
@@ -195,7 +196,8 @@ test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不�
 
 // ---------- 同一家：各種寫法必須壓成同一個短名（別名表指錯家＝這裡紅） ----------
 const SAME_INSTITUTION = [
-  ['台新', ['台新銀行', '台新國際商業銀行', 'Taishin Bank', 'Taishin International Bank', 'ＴＡＩＳＨＩＮ　ＢＡＮＫ', 'Richart', '臺新銀行']],
+  ['台新', ['台新銀行', '台新國際商業銀行', 'Taishin Bank', 'Taishin International Bank', 'ＴＡＩＳＨＩＮ　ＢＡＮＫ', 'Richart', '臺新銀行',
+    'Taishin Bank Co., Ltd.', 'Taishin Bank Co Ltd', 'TAISHIN INTERNATIONAL BANK CO., LTD.', '台新國際商業銀行股份有限公司']],   // 英文公司型態字也要剝（Codex #499 r2#1）
   ['兆豐', ['兆豐銀行', '兆豐國際商業銀行', 'Mega International Commercial Bank', 'Mega Bank']],
   ['玉山', ['玉山銀行', '玉山商業銀行', 'E.SUN Bank', 'ESUN']],
   ['中國信託', ['中國信託商業銀行', 'CTBC Bank', '中信']],
@@ -219,6 +221,33 @@ test('同一家的各種寫法壓成同一個短名（全形、英文、縮寫�
   for (const [want, forms] of SAME_INSTITUTION) {
     for (const f of forms) assert.equal(canonicalBank(f), want, `${f} → ${want}`);
   }
+});
+
+test('★剝完只剩地名＝不剝：城市名銀行的正式名不可縮成裸城市字串（城市不是機構）', () => {
+  for (const [name, want] of [['臺中商業銀行股份有限公司', '台中商業銀行'], ['高雄銀行股份有限公司', '高雄銀行'], ['彰化商業銀行', '彰化商業銀行'], ['台北銀行', '台北銀行'], ['日本銀行', '日本銀行']]) {
+    assert.equal(canonicalBank(name), want, name);
+    assert.equal(sameBank(name, want.replace(/商業銀行|銀行/g, '')), false, `★${name} 不可與裸城市名同家`);
+  }
+});
+
+test('★英文公司型態字：「Taishin Bank Co Ltd」抄回來的台新列，與內建範本同一筆＝明確重複、餘額配到同一顆', () => {
+  const db = { accounts: [{ id: 'a', name: '台新活儲', type: 'cash', currency: 'TWD', balance: 100, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '台新' }], learnedBank: {}, settings: {}, transactions: [
+    { id: 'old', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他', bankRef: 'bank|900100****3301|2026-06-10|in|1000||轉帳存入|' },
+  ] };
+  const parsed = { bank: 'Taishin Bank Co Ltd', referenceDate: '2026-06-30', accounts: [{ suffix: '3301', masked: '900100****3301', balance: 5000, currency: 'TWD', label: '活儲', note: '', kind: 'demand', period: '' }], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({})] };
+  assert.equal(previewBankTxForDb(db, parsed).rows[0].duplicate, true, '★明確重複');
+  assert.equal(importBankTxToDb(db, parsed).imported, 0);
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed)).rows[0].action, 'update', '★配到同一顆、不裂戶');
+});
+
+test('★去重比對形：舊 `bank2|台新銀行|x****3302|…`（沒遮罩時自己補的佔位）對新的無遮罩列＝明確重複', () => {
+  // bankRefBase 沒有 acctMasked 時會拼 `x****末碼`；這種帳號段含星號＝要改寫成 bank|（跟新列拼出來的一樣）
+  const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [
+    { id: 'old', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他', bankRef: 'bank2|台新銀行|x****3302|2026-06-10|in|1000||轉帳存入|' },
+  ] };
+  const parsed = { bank: '台新', accounts: [], accountCurrency: {}, transactions: [btx({ acctSuffix: '3302', acctMasked: '' })] };
+  assert.equal(previewBankTxForDb(db, parsed).rows[0].duplicate, true, '★佔位遮罩也是遮罩＝同一筆');
+  assert.equal(importBankTxToDb(db, parsed).imported, 0);
 });
 
 test('★原型鍵（鐵則 3.5）：機構名是外部文字，`__proto__`／`constructor`／`toString` 不可撈到原型上的東西', () => {
