@@ -219,7 +219,7 @@ test('Grok 複審後掃｜三個失效條件的字串，兩個視窗裡都要有
   }
 });
 
-test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過」和「轉正式之前」綁在同一行；合併步驟前導寫「轉正式之前」；四處現行指示不得出現三個舊時機字面', () => {
+test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過」和「轉正式之前」綁在同一行；合併步驟前導寫「轉正式之前」；列出的現行指示不得出現三個舊時機字面', () => {
   const rm = read('REVIEW-AND-MERGE.md');
   const READY = '`gh pr ready` 轉正式之前';
   // ⚠️ 不能只查新字串**在**（2026-08-21 Grok 掃到、我自己重現過的兩發）：
@@ -277,7 +277,8 @@ test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過
       + '（2026-08-21 Codex r13 實測），而「通過已留在紀錄上」正是本條存在的唯一理由'
   );
 
-  // ⚠️ 反面絆線**只掃四處現行指示**，不掃整份檔案（2026-08-21 Codex r13 實測：
+  // ⚠️ 反面絆線**只掃下面列出的現行指示**（刻意不寫幾處——寫死當場就會過期，
+  // r14 補第五處時原本那句「四處」立刻變成假話），不掃整份檔案（2026-08-21 Codex r13 實測：
   // 只在 CLAUDE.md 末尾加一行「歷史記錄：舊版曾寫『請人代合併之前』。」，現行指示完全不動，
   // 整份掃描版本就由 6/6 變 5/6 ＝ **誤殺沿革文字**。沿革本來就該保留舊字面，那是來歷不是指令）。
   const OLD_TIMINGS = ['請 Codex 執行合併之前', '發射合併前', '請人代合併之前'];
@@ -286,11 +287,26 @@ test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過
     assert.equal(hits.length, 1, `${file} 裡以「${prefix}」開頭的行有 ${hits.length} 行（需恰好 1）——這道考題要跟著更新`);
     return hits[0];
   };
+  /** 整顆 bullet（含續行）——「省額度慣例」那條的時機寫在第二行，只取首行會漏。 */
+  const oneBlock = (/** @type {string} */ file, /** @type {string} */ prefix) => {
+    const lines = visible(read(file)).split('\n');
+    const starts = lines.map((l, i) => (l.startsWith(prefix) ? i : -1)).filter((i) => i !== -1);
+    assert.equal(starts.length, 1, `${file} 裡以「${prefix}」開頭的區塊有 ${starts.length} 塊（需恰好 1）——這道考題要跟著更新`);
+    const start = starts[0];
+    let end = start + 1;
+    while (end < lines.length && !/^(?:- |#{1,6} )/.test(lines[end])) end++;
+    return lines.slice(start, end).join('\n');
+  };
   const CURRENT_DIRECTIVES = [
     ['AGENTS 複審後掃條', one('AGENTS.md', '- **複審後掃（')],
     ['CLAUDE.md 入口句', one('CLAUDE.md', '- **你實作的 PR：')],
     ['REVIEW 最短可執行版開頭兩行', shortVersion(visible(rm)).split('\n').slice(0, 2).join('\n')],
     ['合併步驟指路句', pointer],
+    // ⚠️ 第五處：「省額度慣例」那條不是沿革，它直接規定「通過 → 先做 Grok → ready」。
+    // 收斂射程時漏了它（2026-08-21 Codex r14 實測：只把那條改成「請人代合併之前」，
+    // 其餘不動，六題仍全綠 ⇒ 兩種相反時機重新並存）。
+    ['REVIEW 省額度慣例條',
+      oneBlock('REVIEW-AND-MERGE.md', '- **開 PR 一律 `--draft`；')],
   ];
   for (const [where, text] of CURRENT_DIRECTIVES) {
     for (const old of OLD_TIMINGS) {
