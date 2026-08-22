@@ -181,7 +181,7 @@ const DISTINCT_INSTITUTIONS = [
   '台北富邦商業銀行', '兆豐國際商業銀行', '第一商業銀行', '華南商業銀行', '永豐商業銀行', '合作金庫商業銀行',
   'LINE Bank', '中華郵政', '台灣銀行', '台灣土地銀行', '台灣中小企業銀行',
   '上海商業儲蓄銀行', '上海商業銀行', '上海銀行',   // 台灣／香港／中國三家，剝掉後綴會撞成城市名
-  '花蓮第二信用合作社', 'HSBC', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
+  '花蓮二信', 'HSBC', 'Citibank', '凱基商業銀行', '元大商業銀行', '國泰人壽',
   '臺中商業銀行', '高雄銀行', '彰化商業銀行', '台中', '高雄', '彰化',   // 城市名銀行 vs 裸城市名：不可同名
 ];
 test('★不可亂合併：彼此不同的機構，正規化後必須兩兩不同（別名表或剝後綴規則撞在一起＝這裡紅）', () => {
@@ -204,7 +204,7 @@ const SAME_INSTITUTION = [
   ['中國銀行', ['中國銀行', '中國銀行股份有限公司']],
   ['中國國際商業銀行', ['中國國際商業銀行', '中國國際商業銀行股份有限公司']],
   ['HSBC', ['HSBC', 'hsbc', 'HSBC Bank']],
-  ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社']],
+  ['花蓮二信', ['花蓮二信信用合作社', '花蓮二信信合社', '花蓮第二信用合作社']],   // 法定名與官方自稱是同一家
   // 別名表每一條都要在這裡有一列：刪掉或指錯任何一條＝紅
   ['華南', ['華南商業銀行', 'Hua Nan Commercial Bank', 'HuaNan']],
   ['兆豐', ['兆豐銀行', '兆豐國際商業銀行', 'Mega International Commercial Bank', 'Mega Bank', 'Mega']],
@@ -224,14 +224,12 @@ test('同一家的各種寫法壓成同一個短名（全形、英文、縮寫�
 });
 
 test('★別名表每一條都有考題＝機械保證：表上每個鍵，上面的「同一家寫法」表都要有一個寫法對得到它、且值正確', () => {
-  const { entries, keyOf } = aliasEntriesForTest();
-  const covered = new Map();   // 比對形鍵 → 它在同一家表裡對到的短名
-  for (const [want, forms] of SAME_INSTITUTION) for (const f of forms) covered.set(keyOf(f), want);
+  const { entries, lookupKeyOf } = aliasEntriesForTest();
+  const covered = new Map();   // 正式路徑會去查表的那把鍵 → 它在同一家表裡對到的短名（精確相等，不是包含）
+  for (const [want, forms] of SAME_INSTITUTION) for (const f of forms) { const k = lookupKeyOf(f); if (k) covered.set(k, want); }
   for (const [key, value] of entries) {
-    // 同一家表的寫法多半帶後綴（Taishin Bank），剝完才等於鍵；所以用「剝完的比對形」對
-    const hit = [...covered.entries()].find(([k]) => k === key || k.endsWith(key) || k.startsWith(key));
-    assert.ok(hit, `★別名 ${key}→${value} 沒有任何考題寫法對得到它（刪掉或指錯家都不會紅）`);
-    assert.equal(hit[1], value, `★別名 ${key} 的值 ${value} 與考題表的短名 ${hit[1]} 不符`);
+    assert.ok(covered.has(key), `★別名 ${key}→${value} 沒有任何考題寫法會查到這把鍵（刪掉或指錯家都不會紅）`);
+    assert.equal(covered.get(key), value, `★別名 ${key} 的值 ${value} 與考題表的短名 ${covered.get(key)} 不符`);
   }
 });
 
