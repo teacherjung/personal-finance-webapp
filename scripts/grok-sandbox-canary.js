@@ -38,41 +38,46 @@ const CLT_BIN = '/Library/Developer/CommandLineTools/usr/bin';
 
 /**
  * 沙箱裡的環境變數＝**白名單重建**，不繼承呼叫者的（Codex r1：整包 process.env 交進去＝token 直接給它）。
- * HOME／TMPDIR 指進盒子；grok 靠 GROK_HOME 找自己的家（它正式文件支援的變數）。
+ * HOME／TMPDIR／GROK_HOME **全部指進盒子**（r2：GROK_HOME 指真 ~/.grok 是升級鏈，見 grok-sandbox.sb 檔頭）。
+ * 另外明確關掉跨 session 記憶、自動更新、子代理（Codex r2：不關＝靜靜保留那些能力，不是起不來）。
  * @param {string} box
- * @param {string} [grokHome] 預設 ~/.grok；考題注入假的（裡面放假 grok 與假 sessions）
  */
-export function sandboxEnv(box, grokHome = join(homedir(), '.grok')) {
+export function sandboxEnv(box) {
   return {
     HOME: box,
     TMPDIR: join(box, 'tmp'),
     PATH: `${CLT_BIN}:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin`,
-    GROK_HOME: grokHome,
+    GROK_HOME: join(box, 'grok-home'),
+    GROK_MEMORY: '0',
+    GROK_DISABLE_AUTOUPDATER: '1',
     LANG: 'en_US.UTF-8',
     TERM: 'dumb',
   };
 }
 
+export const RELAY_PORT = 18765;
+
 /**
  * 在沙箱裡跑一條指令。cwd 預設＝盒子（考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到）。
  * @param {string} box
  * @param {string[]} argv 指令與參數（絕對路徑）
- * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, grokHome?: string }} [opt]
+ * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, grokInstall?: string, relayPort?: number }} [opt]
+ *   grokInstall 預設＝真 ~/.grok（沙箱裡**唯讀**）；考題注入假的（裡面放假 bin/grok）
  */
 export function runInSandbox(box, argv, opt = {}) {
-  const home = homedir();
   // ⚠️ 傳給沙箱的路徑一律先 realpath：sandbox-exec 比對的是**解析後**路徑，
   //    /var/folders/… 其實是 /private/var/folders/…，沒解析就永遠比不中（考題用 tmpdir() 時實際踩到，exec 退 126）。
-  const grokHome = realpathSync(opt.grokHome ?? join(home, '.grok'));
+  const grokInstall = realpathSync(opt.grokInstall ?? join(homedir(), '.grok'));
   const boxReal = realpathSync(box);
   mkdirSync(join(boxReal, 'tmp'), { recursive: true });
+  mkdirSync(join(boxReal, 'grok-home'), { recursive: true });
   return spawnSync('/usr/bin/sandbox-exec', [
     '-f', PROFILE,
-    '-D', `HOME=${home}`,
-    '-D', `GROK_HOME=${grokHome}`,
+    '-D', `GROK_INSTALL=${grokInstall}`,
     '-D', `SCAN_DIR=${boxReal}`,
+    '-D', `RELAY_PORT=${opt.relayPort ?? RELAY_PORT}`,
     ...argv,
-  ], { encoding: 'utf8', cwd: opt.cwd ?? boxReal, env: opt.env ?? sandboxEnv(boxReal, grokHome), timeout: opt.timeout ?? 20_000 });
+  ], { encoding: 'utf8', cwd: opt.cwd ?? boxReal, env: opt.env ?? sandboxEnv(boxReal), timeout: opt.timeout ?? 20_000 });
 }
 
 /**
@@ -118,11 +123,19 @@ export function runCanary(box) {
   const secret = `CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const outsideHome = mkdtempSync(join(home, '.grok-canary-'));       // 家目錄底下
   const outsideTmp = mkdtempSync(join('/private/tmp', 'grok-canary-')); // /private/tmp（其他審查樹住這）
+  const outsideVarTmp = mkdtempSync('/private/var/tmp/grok-canary-');   // r2 點名漏掉的位置
+  // /Users/Shared：**mkdtemp 建唯一目錄**、cleanup 只刪自己建的（r1 用固定檔名＋無條件刪＝會動到使用者既有檔）
+  const outsideShared = existsSync('/Users/Shared') ? mkdtempSync('/Users/Shared/grok-canary-') : null;
   const secretFile = join(outsideHome, 'fake-store.db');
   writeFileSync(secretFile, secret + '\n');
   writeFileSync(join(outsideTmp, 'other-worktree.txt'), secret + '\n');
+  writeFileSync(join(outsideVarTmp, 'x.txt'), secret + '\n');
   const inside = join(box, 'canary-inside.txt');
   writeFileSync(inside, 'INSIDE-OK\n');
+  // 剪貼簿：**先存、後還原**（r1 直接覆寫再清空＝把使用者的剪貼簿弄丟；Codex r2 跑考題時實際觸發）
+  const clipBefore = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
+  const restoreClipboard = () => { spawnSync('/usr/bin/pbcopy', { input: clipBefore.status === 0 ? (clipBefore.stdout || '') : '', encoding: 'utf8', timeout: 5000 }); };
+  const grokInstall = realpathSync(join(home, '.grok'));
 
   let dead = 0;
   const mustFail = (/** @type {string} */ label, /** @type {string[]} */ argv) => {
@@ -155,36 +168,60 @@ export function runCanary(box) {
     mustFail('列使用者暫存區', ['/bin/ls', tmpdir()]);
     mustFail('列 /Library/Keychains', ['/bin/ls', '/Library/Keychains']);
     // 寫：家目錄、/private/tmp、/Users/Shared（r1 抓到第一版沒擋寫）
+    mustFail('讀 /private/var/tmp', ['/bin/cat', join(outsideVarTmp, 'x.txt')]);
     mustFail('寫家目錄', ['/bin/sh', '-c', `echo x > "${join(outsideHome, 'w.txt')}"`]);
     mustFail('寫 /private/tmp', ['/bin/sh', '-c', `echo x > "${join(outsideTmp, 'w.txt')}"`]);
-    mustFail('寫 /Users/Shared', ['/bin/sh', '-c', 'echo x > /Users/Shared/grok-canary-w.txt']);
+    if (outsideShared) mustFail('寫 /Users/Shared', ['/bin/sh', '-c', `echo x > "${join(outsideShared, 'w.txt')}"`]);
+    // r2 #2 升級鏈：grok 安裝樹在沙箱裡必須**唯讀**——能寫 bin/grok 就能埋雷給下一次沙箱外的 --version
+    mustFail('寫 grok 安裝樹（~/.grok）', ['/bin/sh', '-c', `echo x > "${join(grokInstall, 'grok-canary-w.txt')}"`]);
+    mustFail('寫 grok 執行檔旁邊', ['/bin/sh', '-c', `echo x > "${join(grokInstall, 'bin', 'grok-canary-w')}"`]);
+    // 網路：只准轉送器那一個 port——連別的本機 port 要失敗（r1 放行 localhost:* 被抓到：理財 app 的 4321 吐真實餘額）
+    mustFail('連本機非轉送器 port', [process.execPath, '-e', `require("node:net").connect(${RELAY_PORT + 1},"127.0.0.1").on("connect",()=>{console.log("CONNECTED");process.exit(0)}).on("error",(e)=>{console.error(e.code);process.exit(1)})`]);
     // 網路（要對照：沙箱外取得到 1 byte 才算探針活的）
     mustFailWithControl('連外網（curl 取 1 byte）', ['/usr/bin/curl', '-s', '-m', '5', '-f', '-o', '/dev/null', '-r', '0-0', 'https://example.com/'], (r) => r.status === 0);
-    // IPC：剪貼簿（要對照：先放暗號，沙箱外讀得到才算）
+    // IPC：剪貼簿（要對照：先放暗號，沙箱外讀得到才算；結束一律還原使用者原本的內容）
     spawnSync('/usr/bin/pbcopy', { input: secret, encoding: 'utf8' });
     mustFailWithControl('讀剪貼簿（pbpaste）', ['/bin/sh', '-c', `/usr/bin/pbpaste | /usr/bin/grep -q ${secret}`], (r) => r.status === 0);
-    spawnSync('/usr/bin/pbcopy', { input: '', encoding: 'utf8' });
+    restoreClipboard();
     // IPC：Keychain（對照：沙箱外 dump 有項目）
     mustFailWithControl('讀 Keychain（security dump-keychain）', ['/bin/sh', '-c', '/usr/bin/security dump-keychain 2>/dev/null | /usr/bin/grep -q "keychain:"'], (r) => r.status === 0);
-    // 環境變數：盒內 env 不得含呼叫者的 token（把一個假 token 放進呼叫者 env，盒內不得看到）
+    // 環境變數：**確定性注入**哨兵到呼叫者 env（r2：r1 只在父環境剛好有 token 時才測得到），盒內 env 不得出現
     {
-      const r = runInSandbox(box, ['/usr/bin/env'], { env: { ...sandboxEnv(box) } });
-      const leak = /TOKEN|SECRET|API_KEY|GH_|GITHUB_|ANTHROPIC|OPENAI|AWS_/i.test(r.stdout || '');
-      lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（盒內 env 不含 token／key 類變數）`);
+      const sentinels = { GITHUB_TOKEN: 'SENTINEL-GH-' + secret, ANTHROPIC_API_KEY: 'SENTINEL-AN-' + secret, AWS_SECRET_ACCESS_KEY: 'SENTINEL-AWS-' + secret };
+      const prev = { ...process.env };
+      Object.assign(process.env, sentinels);
+      let r;
+      try { r = runInSandbox(box, ['/usr/bin/env']); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
+      finally { for (const k of Object.keys(sentinels)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
+      const leak = Object.values(sentinels).some((v) => (r.stdout || '').includes(v));
+      lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（注入 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);
       if (leak || r.status !== 0) dead++;
+      // 明確關掉的能力要在 env 裡看得到（r2：不關＝靜靜保留跨 session 記憶／自動更新）
+      for (const [k, v] of [['GROK_MEMORY', '0'], ['GROK_DISABLE_AUTOUPDATER', '1']]) {
+        const ok = (r.stdout || '').includes(`${k}=${v}`);
+        lines.push(`${ok ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜盒內 env 明確 ${k}=${v}`);
+        if (!ok) dead++;
+      }
     }
     // 正面：不能誤殺
     mustPass('讀盒子裡的檔', ['/bin/cat', inside], 'INSIDE-OK');
     mustPass('寫盒子裡的檔', ['/bin/sh', '-c', `echo WRITE-OK > "${join(box, 'canary-w.txt')}" && cat "${join(box, 'canary-w.txt')}"`], 'WRITE-OK');
-    mustPass('讀 grok 自己的家', ['/bin/ls', join(home, '.grok')], 'config.toml');
+    mustPass('讀 grok 安裝樹（唯讀）', ['/bin/ls', grokInstall], 'config.toml');
+    mustPass('寫盒子裡的 grok-home', ['/bin/sh', '-c', `echo HOME-OK > "${join(box, 'grok-home', 'canary.txt')}" && cat "${join(box, 'grok-home', 'canary.txt')}"`], 'HOME-OK');
     mustPass('node 跑得起來', [process.execPath, '-e', 'console.log("NODE-OK")'], 'NODE-OK');
     mustPass('git 跑得起來（真 git，不走 xcrun shim）', [join(CLT_BIN, 'git'), '--version'], 'git version');
   } finally {
+    restoreClipboard();   // 不管成功失敗都還原（mustFailWithControl 中途退出也會走到這裡）
     rmSync(outsideHome, { recursive: true, force: true });
     rmSync(outsideTmp, { recursive: true, force: true });
+    rmSync(outsideVarTmp, { recursive: true, force: true });
+    if (outsideShared) rmSync(outsideShared, { recursive: true, force: true });   // 只刪自己 mkdtemp 的
     rmSync(inside, { force: true });
     rmSync(join(box, 'canary-w.txt'), { force: true });
-    rmSync('/Users/Shared/grok-canary-w.txt', { force: true });
+    rmSync(join(box, 'grok-home', 'canary.txt'), { force: true });
+    // 安裝樹那兩個寫入探針**預期失敗**所以不會留下檔；萬一沙箱是假的它們會留下——也只刪自己的名字
+    rmSync(join(grokInstall, 'grok-canary-w.txt'), { force: true });
+    rmSync(join(grokInstall, 'bin', 'grok-canary-w'), { force: true });
   }
   return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines };
 }

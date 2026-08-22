@@ -1,63 +1,62 @@
-;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路；r1 重做：Codex 抓到第一版只擋讀、沒擋寫）。
+;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路）。
 ;;
 ;; 為什麼存在：鎖工具旗標 52/53 次靜默失效（~/.grok/sessions 全量稽核），「請它不要做」擋不住；
 ;; 改成「作業系統不讓它做」。William 2026-08-20 已拍板允許 Grok 跑指令——在盒子裡跑是安全的，
 ;; 因為盒子裡沒有它不該看的東西。
 ;;
-;; ## 結構（r1 重做後）
-;; ・**寫入：deny-default**，只放行 /dev、~/.grok、盒子。
-;; ・**讀取：allow-default＋列舉 deny**——讀取 deny-default 試過兩種寫法都讓 cat 起不來（SIGABRT、無日誌），
-;;   退而列舉使用者資料住的地方。這是列舉式的，漏掉的就可讀，照實記在下面。
-;; ・**網路：deny-default**，只准 localhost。
-;; ・**IPC：列舉 deny**（剪貼簿、Keychain、Apple Events、TCC）。
-;; 第一版只有「讀取列舉 deny」一項，寫入、/private/tmp、IPC 全開——Codex r1 抓到，整份重做。
+;; ## 結構（r2 重做）：**(deny default)＋(import "system.sb")**，再逐項放行
+;; r1 用「allow default＋列舉 deny」被 Codex 抓到漏 /private/var/tmp、/opt/homebrew/var、/Library/Application Support…
+;; ——列舉 deny 不是封閉邊界。我原以為 deny-default 讓 cat 起不來（SIGABRT、無日誌）是死路；
+;; Codex r2 實證：加 (import "system.sb")（Apple 自己 CUPS 等沙箱的骨架）就能跑，而且缺什麼有**明確錯誤**
+;; （例如 node 要 /opt/homebrew/etc/openssl@3/openssl.cnf），不是黑箱。所以這版是真正的預設拒絕。
 ;;
-;; 參數（由 scripts/grok-scan.js 傳入）：HOME＝真家目錄、GROK_HOME＝~/.grok、SCAN_DIR＝盒子。
-;; 環境變數由 grok-scan.js 用白名單重建（env -i）：HOME／TMPDIR 指進盒子、PATH 指真 git（繞開 xcrun shim）。
+;; ## 參數（由 scripts/grok-scan.js 傳入）
+;;   GROK_INSTALL＝真的 ~/.grok（**唯讀**——執行檔、bundled skills、設定範本）
+;;   SCAN_DIR＝盒子（讀寫；裡面有 src/、tmp/、grok-home/＝這次掃描專用的 GROK_HOME 副本）
+;;   RELAY_PORT＝轉送器的 port（網路**只准連這一個**）
+;; 環境變數由 grok-scan.js 用白名單重建：HOME／TMPDIR／GROK_HOME 全指進盒子、PATH 指真 git（繞開 xcrun shim）。
 ;;
-;; ## 誠實劃界（金絲雀只證明下面「已驗證」的那些；沒列的就是沒驗）
+;; ## 為什麼 GROK_HOME 不能是真的 ~/.grok（Codex r2 #2，升級鏈）
+;; r1 放行整棵 ~/.grok 讀寫。受掃 repo 的 prompt injection 可以讓第 N 次掃描把 ~/.grok/bin/grok 換成 wrapper；
+;; 第 N+1 次掃描時 grok-scan.js 在**沙箱外**跑 `grok --version`——wrapper 就在沙箱外執行了。
+;; 修法：真安裝樹在沙箱裡唯讀；grok 的可寫家＝每次新建在盒子裡的副本，掃完即棄。
+;;
+;; ## 誠實劃界
 ;; ・sandbox-exec 是 Apple 標為過時但 macOS 15.7 仍可用的工具；它消失這道圍欄就沒了。
-;; ・網路規則只認 localhost，放不了特定網域——所以靠 scripts/grok-relay.js。**localhost:* 是開的**：
-;;   盒內程式連得到本機任何服務（考題要起 Express＋連自己，Seatbelt 表達不了「只准連自己綁的 port」）。
-;;   這是中間路的代價，列為已知不涵蓋。
-;; ・file-read-metadata 全開：stat 任何路徑（知道存在與否、大小；讀不到內容、列不了目錄）——
-;;   node／git 解析路徑需要。猜得到檔名就知道它存不存在，列為已知不涵蓋。
-;; ・IPC deny 是列舉式（剪貼簿、Keychain、Apple Events、TCC）：只擋列出的；其他 mach 服務沒驗。
-;; ・~/.grok 整棵放行（執行檔、設定、憑證、session 日誌要寫）：歷史 session 不是盒子的內容，但它們
-;;   本來就是 Grok 自己寫的、已送 xAI 的東西。
+;; ・system.sb 是 Apple 的私有介面（檔頭自己寫「subject to change at any time」）；macOS 升版要重驗金絲雀。
+;; ・file-read-metadata 全開：stat 任何路徑（知道存在與否；讀不到內容、列不了目錄）——node／git 解析路徑需要。
+;; ・網路**只准連轉送器那一個 port**（r1 放行 localhost:* 被抓到：盒內程式連得到本機理財 app 的 4321，
+;;   那裡直接吐真實餘額）。代價：會起本機 HTTP 伺服器再連自己的整合型考題，在盒子裡跑不了（EPERM，33ms 快失敗）。
+;;   bind／inbound 仍准，所以伺服器起得來、只是客戶端連不上——照實寫進材料提示。
+;; ・IPC 沒有另外放行（deny default 已含）；剪貼簿／Keychain 金絲雀證明的是「在這份 profile 下那兩個指令失敗」，
+;;   不能歸因到哪一條規則。
 ;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
 (version 1)
-(allow default)
+(deny default)
+(import "system.sb")
 
-;; ── 寫入：全域 deny，只放行 /dev、grok 的家、盒子（deny-default——寫入是最該關死的）──
-(deny file-write*)
-(allow file-write* (subpath "/dev") (subpath (param "GROK_HOME")) (subpath (param "SCAN_DIR")))
+;; ── 程序基本功能 ──
+(allow process-exec*) (allow process-fork) (allow signal) (allow sysctl-read)
 
-;; ── 讀取：allow-default＋**列舉 deny**（⚠️ 這是列舉式的，照實記）──
-;; 試過讀取也 deny-default 再放行系統路徑：連 cat 都起不來（SIGABRT）、系統日誌不記拒絕原因，無法迭代。
-;; 退而列舉「使用者資料住的地方」：家目錄、/private/tmp（其他審查樹）、使用者暫存區、Keychain、/Users/Shared、外接碟。
-;; 列舉外仍可讀的：/usr /bin /System /Library（除 Keychains）/private/etc /opt /Applications——系統與程式，不是使用者資料。
-;; 單人 Mac 沒有其他使用者的家目錄；有的話要加進來。
-(deny file-read* (subpath (param "HOME")) (subpath "/private/tmp") (subpath "/private/var/folders")
-                 (subpath "/Library/Keychains") (subpath "/Users/Shared") (subpath "/Volumes"))
-(allow file-read* (subpath (param "GROK_HOME")) (subpath (param "SCAN_DIR")))
+;; ── 讀：系統與工具鏈（每一條都是「跑不起來」實測出來的；加新的要寫正負金絲雀）──
+(allow file-read*
+  (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
+  (subpath "/Library/Frameworks") (subpath "/Library/Apple") (subpath "/Library/Developer")
+  (subpath "/Library/Preferences/Logging") (subpath "/private/etc")
+  (subpath "/opt/homebrew/bin") (subpath "/opt/homebrew/Cellar") (subpath "/opt/homebrew/lib") (subpath "/opt/homebrew/opt")
+  (subpath "/opt/homebrew/etc/openssl@3")   ; node 啟動要讀 openssl.cnf——只放這一個目錄，不放 /opt/homebrew/etc
+  (subpath "/private/var/db/timezone") (subpath "/private/var/select") (subpath "/dev"))
 (allow file-read-metadata)
+(allow file-write* (subpath "/dev"))
 
-;; ── 網路：全拒，只准 localhost（outbound→轉送器；bind/inbound→考題起本機 Express）──
-(deny network*)
-(allow network-outbound (remote tcp "localhost:*"))
+;; ── grok 安裝樹：唯讀 ──
+(allow file-read* (subpath (param "GROK_INSTALL")))
+;; ── 盒子：唯一可寫的地方（src/、tmp/、grok-home/）──
+(allow file-read* file-write* (subpath (param "SCAN_DIR")))
+
+;; ── 網路：只准連轉送器；本機伺服器准起（bind/inbound）但客戶端連不到它（見劃界）──
+(allow network-outbound (remote tcp (string-append "localhost:" (param "RELAY_PORT"))))
 (allow network-bind (local tcp "localhost:*"))
 (allow network-inbound (local tcp "localhost:*"))
 (allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
-
-;; ── IPC：剪貼簿、Keychain、Apple Events、TCC（列舉式）──
-;; 突變實測（2026-08-22）：拿掉 pasteboard deny → 剪貼簿金絲雀活（這條有效）；
-;; 拿掉 securityd deny → Keychain 金絲雀**仍擋住**——二分後發現真正擋住 Keychain 的是上面的
-;; (deny file-write*)（`security` 要開 keychain DB 的寫鎖）。securityd 那兩條**單獨證明不了**，
-;; 留著當第二層、**不計為已驗證**。Apple Events／TCC 沒有金絲雀，同樣不計。
-(deny mach-lookup
-  (global-name "com.apple.pasteboard.1")
-  (global-name "com.apple.securityd") (global-name "com.apple.SecurityServer")
-  (global-name "com.apple.coreservices.appleevents")
-  (global-name "com.apple.tccd") (global-name "com.apple.tccd.system"))
-(deny appleevent-send)
+(allow system-socket)
