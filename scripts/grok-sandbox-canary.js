@@ -31,7 +31,8 @@ export const PROFILE = join(HERE, 'grok-sandbox.sb');
  * 在沙箱裡跑一條指令。
  * @param {string} box 盒子路徑
  * @param {string[]} argv 指令與參數（絕對路徑）
- * @param {{ home?: string }} [opt]
+ * @param {{ home?: string, cwd?: string }} [opt] cwd 預設＝盒子（⚠️ 不可以留在呼叫者的 cwd——
+ *   考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到，git 會退 128；那是考題選錯 cwd，不是沙箱壞）
  */
 export function runInSandbox(box, argv, opt = {}) {
   const home = homedir();
@@ -43,6 +44,7 @@ export function runInSandbox(box, argv, opt = {}) {
     ...argv,
   ], {
     encoding: 'utf8',
+    cwd: opt.cwd ?? box,
     env: { ...process.env, HOME: opt.home ?? box, GROK_HOME: join(home, '.grok') },
     timeout: 20_000,
   });

@@ -2,6 +2,16 @@
 // @ts-check
 // **Grok 掃後驗屍**（William 2026-08-17 拍板「一定要有制度確保、不靠運氣」）。
 //
+// ## ⚠️ 2026-08-22 起的角色（William 裁示 B：沙箱制）
+//
+// 本腳本數的是**工具足跡**，那個數字仍然準；但它的**解讀**變了：
+// ・舊制（鎖工具）：有足跡＝旗標失效＝該掃作廢。
+// ・新制（scripts/grok-sandbox.sb）：Grok 在盒子裡跑指令是**准的**（William 2026-08-20 拍板允許跑指令），
+//   有足跡＝正常。圍欄改由作業系統擋（金絲雀＝紅燈證明），驗屍改看「有沒有讀到盒子外的東西」
+//   ——那一段在 scripts/grok-scan.js 的第⑤步，它呼叫本檔的 auditSessionDir() 取足跡，再另查破口證據。
+// ・退出碼 0／1／2 的**事實語意不變**（零足跡／有足跡／查不清楚），考題釘的是這個；
+//   下面「該掃作廢」的舊解讀保留給**沒走沙箱**的掃描（那種掃描本來就不該再發生）。
+//
 // ## 它在解什麼
 //
 // Grok 複審後掃的呼叫紀律要求鎖工具（AGENTS「Grok 的邊界」節），但 2026-08-17 實測：
@@ -17,8 +27,9 @@
 //
 // 退出碼：
 //   0＝乾淨（日誌可讀、零工具足跡）→ 配方聲明記「驗屍 0（session <id>）」＋掃描時用的目錄路徑
-//   1＝**越界**（有工具足跡；列出足跡名與筆數——lifecycle 一次呼叫會留多筆足跡，數字不是呼叫次數）
-//     → 該掃作廢、照條款在 PR 描述記一行原因或鎖工具重掃
+//   1＝**有工具足跡**（列出足跡名與筆數——lifecycle 一次呼叫會留多筆足跡，數字不是呼叫次數）
+//     → 沙箱制：正常，不作廢（盒子裡准跑）；破口另由 grok-scan.js 查
+//     → 未走沙箱（舊制）：該掃作廢、照條款在 PR 描述記一行原因
 //   2＝**查不清楚**（session 找不到／日誌缺失／無任何可解析行）→ fail-closed，當越界處理
 //
 // ## 誠實劃界
@@ -229,13 +240,13 @@ if (isMainModule(import.meta.url)) {
     for (const d of dirs) {
       const r = auditSessionDir(d);
       const id = d.split('/').filter(Boolean).pop();
-      if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}`);
+      if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}`);
       else if (r.code === 2) console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}`);
       else console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}）`);
       worst = Math.max(worst, r.code === 1 ? 3 : r.code);   // 越界最重（3>2），最後折回 1
     }
     const code = worst === 3 ? 1 : /** @type {0|2} */ (worst);
-    if (code === 1) console.log('→ 有 session 越界＝該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗');
+    if (code === 1) console.log('→ 有工具足跡。走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）');
     else if (code === 2) console.log('→ 有 session 查不清楚＝fail-closed 當越界處理');
     process.exit(code);
   } else if (args[0] && args[0] !== '--workspace') {
