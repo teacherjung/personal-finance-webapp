@@ -954,8 +954,11 @@ test('疑似重複｜機構寫法不同要算同一家，前綴帶分隔符也�
     { id: 'o1', source: 'bank', date: '2026-06-01', amount: 1000, dir: 'in',
       bankRef: 'bank2|台新國際商業銀行|900200****3302|2026-06-01|in|1000|1000|轉帳存入|' },
   ] };
-  assert.equal(previewBankTxForDb(longName, parsed).rows[0].similar, true,
-    '★「台新」與「台新國際商業銀行」是同一家——漏報等於這支功能對這種帳單完全失效');
+  // Stage 4（機構名正規化）起，這一筆**升格成明確重複**：去重鍵的比對形把「台新國際商業銀行」壓成
+  // 「台新」＝與內建範本拼出的 `bank|…` 一模一樣，不必再靠「疑似」提醒——使用者連勾都不用勾。
+  const r1 = previewBankTxForDb(longName, parsed).rows[0];
+  assert.equal(r1.duplicate, true, '★「台新」與「台新國際商業銀行」是同一家——同鍵＝明確重複（以前只能疑似）');
+  assert.equal(r1.similar, false, '明確重複就不再同時標疑似（疑似只問「不是明確重複」的列）');
 
   // ② 但不可亂合併：不同銀行仍要分開（正規化只剝通用後綴，不做同義詞猜測）
   const otherBank = { accounts: [], transactions: [
