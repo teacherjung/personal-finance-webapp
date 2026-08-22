@@ -26,6 +26,7 @@
 //   不證明沙箱完整。沙箱有效的證明在第②步的金絲雀，不在這裡。
 // ・本腳本不決定掃描時機（條款：Codex 通過之後、gh pr ready 之前）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -125,7 +126,9 @@ export async function runScan(args, deps = {}) {
   // ── ③ 轉送器（監看它的生死）──
   const relay = spawn(process.execPath, [relayScript, String(RELAY_PORT)], { stdio: ['ignore', 'pipe', 'pipe'] });
   let relayDead = /** @type {string | null} */ (null);
-  relay.on('exit', (c, sig) => { relayDead = `轉送器退出（code ${c}, signal ${sig}）`; });
+  let relayErr = '';
+  relay.stderr?.on('data', (d) => { relayErr += String(d); });
+  relay.on('exit', (c, sig) => { relayDead = `轉送器退出（code ${c}, signal ${sig}）${relayErr.trim() ? `：${relayErr.trim().slice(-200)}` : ''}`; });
   const ready = await new Promise((ok) => {
     const t = setTimeout(() => ok(false), 5000);
     relay.stdout?.on('data', (d) => { if (String(d).includes('READY')) { clearTimeout(t); ok(true); } });
@@ -137,12 +140,18 @@ export async function runScan(args, deps = {}) {
   const home = homedir();
   const startedAt = new Date().toISOString();
   log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
-  const grok = spawnSync('/usr/bin/sandbox-exec', [
-    '-f', PROFILE, '-D', `HOME=${home}`, '-D', `GROK_HOME=${join(home, '.grok')}`, '-D', `SCAN_DIR=${box}`,
-    grokBin, '--disable-web-search', '-p', materials,
-  ], {
-    cwd: src, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` },
+  const sbArgv = ['-f', PROFILE, '-D', `HOME=${home}`, '-D', `GROK_HOME=${join(home, '.grok')}`, '-D', `SCAN_DIR=${box}`];
+  const grokArgv = [grokBin, '--disable-web-search', '-p', '<materials>'];
+  const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
+  // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
+  // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
+  writeFileSync(join(box, 'launch.json'), JSON.stringify({
+    startedAt, base, head, sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText,
+    profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
+    materialsSha256: createHash('sha256').update(materials).digest('hex'),
+  }, null, 2));
+  const grok = spawnSync('/usr/bin/sandbox-exec', [...sbArgv, grokBin, '--disable-web-search', '-p', materials], {
+    cwd: src, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000, stdio: ['ignore', 'pipe', 'pipe'], env,
   });
   const endedAt = new Date().toISOString();
   relay.kill();
@@ -170,7 +179,7 @@ export async function runScan(args, deps = {}) {
     if (g.status === 0) { log(`⚠️ 驗屍：session ${d} 的日誌出現盒子外才有的內容——沙箱破了，這是事故`); worst = 1; }
     else if (g.status !== 1) return fail(`驗屍：grep 自己失敗（status ${g.status}）：${g.stderr}`);
   }
-  const recipe = `base..head=${base}..${head}｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜盒子=${box}｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
+  const recipe = `base..head=${base}..${head}｜發射紀錄=${join(box, 'launch.json')}｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜盒子=${box}｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   summary.push(recipe);
   return { code: /** @type {0|1} */ (worst), summary };
