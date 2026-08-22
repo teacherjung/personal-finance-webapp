@@ -4,7 +4,7 @@
 // 一旦改寫就回不到原文；在這之前，唯一的原文留底是去重鍵 `bankRef` 的尾兩段——而那要靠切 `|` 反解，
 // 備註以 `#數字` 結尾（會被當成批內出現序剝掉）或摘要自己含 `|`（切點錯位）就還原不出原文。
 // 這份考題釘四件事：①匯入把原文一字不改地存下來，且**去重鍵格式一個位元組沒動**（動了＝重匯同帳單
-// 認不出重複＝現金流翻倍）②顯示層讀的是原文欄、不是反解 ③舊資料照舊走反解、**不回填**
+// 認不出重複＝現金流翻倍）②顯示層讀的是原文欄、不是反解 ③沒有原文欄的列走反解、**不回填**
 // ④備註是空字串時不可掉回反解（型別判定 typeof 'string'，不是 truthy）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +16,7 @@ const TEST_STORE = join(tmpdir(), `finance-bank-rawtext-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const { importBankTxToDb, reconcileAccountNamesAuto } = await import('../lib/services/bank-import.js');
-const { FIELD_SCHEMA, LONG_TEXT_FIELDS, lengthErrorOf, sanitizeDbForWrite } = await import('../lib/schema.js');
+const { FIELD_SCHEMA, LONG_TEXT_FIELDS, WRITABLE_FIELDS, lengthErrorOf, sanitizeDbForWrite, pickWritable } = await import('../lib/schema.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 
 after(() => {
@@ -38,7 +38,7 @@ test('匯入：摘要與備註各自原樣存下（含反解會弄丟的 #數字
   const t = /** @type {any} */ (db.transactions.at(-1));
   assert.equal(t.bankSummary, summary, '摘要原文原樣');
   assert.equal(t.bankNote, note, '備註原文原樣（#2 不可被吃掉）');
-  // 去重鍵＝祖父條款，格式不可變（台新照舊 bank|完整遮罩帳號|日期|方向|金額|餘額|摘要|備註）
+  // 去重鍵＝祖父條款，格式不可變（台新＝ bank|完整遮罩帳號|日期|方向|金額|餘額|摘要|備註）
   assert.equal(t.bankRef, `bank|900100****3301|2026-06-10|out|5000||${summary}|${note}`);
 });
 
@@ -51,7 +51,7 @@ test('匯入：備註空白時存空字串（不是 undefined）——顯示層�
   assert.equal(typeof t.bankNote, 'string');
 });
 
-// ---------- ②③ 顯示層讀原文欄；舊資料照舊反解、不回填 ----------
+// ---------- ②③ 顯示層讀原文欄；沒有原文欄的列反解、不回填 ----------
 test('顯示層：有原文欄的讀原文欄、沒有的才反解——同一筆資料兩種結果，證明讀的真的是欄位', async () => {
   const db = await getDb();
   db.accounts = [{ id: 'a1', name: '合成活儲', type: 'cash', class: '現金', currency: 'TWD', balance: 0, accountNo: '900100****8791' }];
@@ -72,7 +72,7 @@ test('顯示層：有原文欄的讀原文欄、沒有的才反解——同一�
   const tNew = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'new'));
   const tOld = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'old'));
   assert.equal(tNew.note, '現金轉入・合成配息#2', '有原文欄＝顯示得出完整原文');
-  assert.equal(tOld.note, '現金轉入・合成配息', '沒有原文欄＝照舊反解（#2 被當出現序剝掉，這就是要存欄位的理由）');
+  assert.equal(tOld.note, '現金轉入・合成配息', '沒有原文欄＝從去重鍵反解（#2 被當出現序剝掉，這就是要存欄位的理由）');
   assert.notEqual(tNew.note, tOld.note, '兩者必須不同——相同就代表顯示層根本沒讀原文欄');
   // 舊資料不回填（使用者定）：原文只有帳單知道，拿反解結果冒充原文比誠實反解更糟
   assert.equal(Object.hasOwn(tOld, 'bankSummary'), false, '舊列不可被偷偷補上原文欄');
@@ -101,7 +101,7 @@ test('探針：兩欄都是空字串＝原文真的是空的——不可從去�
   // ⚠️ 這是**探針考題**、不是真實資料形狀（真實列的原文欄與去重鍵尾兩段本來就一致）：
   //    它存在的唯一理由是釘住 bankRawText 的判定寫法——把 typeof 改寫成 truthy 就會在這裡紅。
   //    邊界照實：原文為空時好讀版算出來也是空，reconcileAccountNamesAuto 對「空」只做一件事＝
-  //    空 note 補回既存 autoNote 欄（那是舊行為）；**不會**去反解 bankRef。
+  //    空 note 補回既存 autoNote 欄；**不會**去反解 bankRef。
   const db = await getDb();
   db.accounts = [];
   const row = (/** @type {string} */ id, /** @type {any} */ extra) => ({
@@ -117,7 +117,7 @@ test('探針：兩欄都是空字串＝原文真的是空的——不可從去�
   const z1 = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ x) => x.id === 'z1'));
   const z2 = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ x) => x.id === 'z2'));
   assert.equal(z1.note, '', '沒有 autoNote：原文是空的就顯示空的');
-  assert.equal(z2.note, '既存自動說明', '有 autoNote：補回它（舊行為）');
+  assert.equal(z2.note, '既存自動說明', '有 autoNote：補回它');
   for (const t of [z1, z2]) assert.ok(!String(t.note).includes('不是原文'), '★兩種都不可從去重鍵撿字回來');
 });
 
@@ -155,7 +155,7 @@ test('摘要自己含 `|`：讀原文欄才拿得回完整摘要（反解會在�
   const tNew = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'p-new'));
   const tOld = /** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === 'p-old'));
   assert.equal(tNew.note, '媒體轉入|第二段・基金配息', '有原文欄＝摘要一字不少');
-  assert.equal(tOld.note, '現金轉入・第二段|基金配息', '反解＝摘要被切斷、後半跑到備註那邊（原樣呈現這個舊行為）');
+  assert.equal(tOld.note, '現金轉入・第二段|基金配息', '反解＝摘要被切斷、後半跑到備註那邊');
 });
 
 test('原文欄是 null（外部備份／手改進來的）＝當成沒有這兩欄，退回反解——退化但不編造', async () => {
@@ -172,7 +172,7 @@ test('原文欄是 null（外部備份／手改進來的）＝當成沒有這兩
   await saveDb(db);
   await reconcileAccountNamesAuto();
   const t = /** @type {any} */ (((await getDb()).transactions || [])[0]);
-  assert.equal(t.note, '存款利息・不是原文的備註', 'null＝沒有原文欄，照舊反解');
+  assert.equal(t.note, '存款利息・不是原文的備註', 'null＝沒有原文欄，從去重鍵反解');
 });
 
 test('只剩一欄（另一欄缺席）＝不算原文，退回反解——半份不拿來充數', async () => {
@@ -196,6 +196,16 @@ test('只剩一欄（另一欄缺席）＝不算原文，退回反解——半�
 });
 
 // ---------- 登記：型別與長度 ----------
+test('★所有權：兩欄不進 CRUD 白名單——一般 POST／PUT 帶著它們也會被剝掉，不可偽造「帳單原文」', () => {
+  // 原文是解析器抄的、只有服務層寫；若前端能直寫，「原文」就不再是原文（顯示層會拿它當真相）。
+  assert.ok(!WRITABLE_FIELDS.transactions.includes('bankSummary'));
+  assert.ok(!WRITABLE_FIELDS.transactions.includes('bankNote'));
+  const { value } = pickWritable('transactions', { date: '2026-06-01', type: 'expense', category: 'x', amount: 1, note: '手打', bankSummary: '偽造摘要', bankNote: '偽造備註' });
+  assert.equal(value.note, '手打', '白名單內的欄位照收（證明 pickWritable 真的有跑）');
+  assert.equal(Object.hasOwn(value, 'bankSummary'), false, '★CRUD 剝掉 bankSummary');
+  assert.equal(Object.hasOwn(value, 'bankNote'), false, '★CRUD 剝掉 bankNote');
+});
+
 test('登記：兩欄進 FIELD_SCHEMA（壞型別被剝除）與長內容名單（匯入原文不被短欄位上限誤傷）', () => {
   assert.equal(FIELD_SCHEMA.transactions.bankSummary, 'str');
   assert.equal(FIELD_SCHEMA.transactions.bankNote, 'str');
