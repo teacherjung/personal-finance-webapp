@@ -31,22 +31,23 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCanary, sandboxEnv, PROFILE } from './grok-sandbox-canary.js';
+import { runCanary, sandboxEnv, PROFILE, RELAY_PORT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
-/** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款） */
-export const EXPECTED_GROK_VERSION = 'grok 1.0.3';
-export const RELAY_PORT = 18765;
+/** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
+export const EXPECTED_GROK_VERSION = '1.0.3';
+export { RELAY_PORT };
 
 /**
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
  * @property {string} [repo]
- * @property {string} [grokHome] 預設 ~/.grok；考題注入假的（bin/grok 是假 grok、sessions/ 是假日誌根）——
- *   假 grok 必須放在沙箱讀得到的地方，而 GROK_HOME 正是沙箱放行的那個參數
+ * @property {string} [grokInstall] 預設 ~/.grok＝**安裝樹，沙箱裡唯讀**（bin/grok、bundled、config 範本、auth）；
+ *   考題注入假的（bin/grok 是假 grok）。每次掃描會把它 APFS clone 一份進盒子當 GROK_HOME（可寫、掃完即棄）——
+ *   r2 #2：真 ~/.grok 可寫＝第 N 次掃描能把 bin/grok 換成 wrapper、第 N+1 次在沙箱外執行
  * @property {(msg: string) => void} [log]
  * @property {string} [relayScript]
  */
@@ -59,9 +60,8 @@ export const RELAY_PORT = 18765;
  */
 export async function runScan(args, deps = {}) {
   const repo = deps.repo ?? REPO;
-  const grokHome = realpathSync(deps.grokHome ?? join(homedir(), '.grok'));   // 沙箱比對解析後路徑，見 runInSandbox
-  const grokBin = join(grokHome, 'bin', 'grok');
-  const sessionsRoot = join(grokHome, 'sessions');
+  const grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));   // 沙箱比對解析後路徑，見 runInSandbox
+  const grokBin = join(grokInstall, 'bin', 'grok');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
   const log = deps.log ?? ((m) => console.log(m));
   /** @type {string[]} */
@@ -74,16 +74,27 @@ export async function runScan(args, deps = {}) {
   if (!existsSync(promptFile)) return fail(`指示檔不存在：${promptFile}`);
   if (!existsSync(grokBin)) return fail(`找不到 grok：${grokBin}`);
 
-  // ── 版本釘（條款：版本不同＝當未跑）──
-  const ver = spawnSync(grokBin, ['--version'], { encoding: 'utf8', timeout: 20_000 });
+  // ── 版本釘（條款：版本不同＝當未跑）。在沙箱外跑，所以執行檔必須來自沙箱裡**唯讀**的安裝樹（r2 #2）。
+  //    env 用白名單、不繼承（r2：沙箱外執行的東西也不該拿到呼叫者的 token）；解析後**精確等於**，不用前綴。
+  const ver = spawnSync(grokBin, ['--version'], { encoding: 'utf8', timeout: 20_000, env: { PATH: '/usr/bin:/bin', HOME: homedir() } });
   const verText = (ver.stdout || '').trim();
-  if (ver.status !== 0 || !verText.startsWith(EXPECTED_GROK_VERSION)) return fail(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」——轉送器目的地是從那個版本 strings 出來的，升版要重驗`);
+  const parsed = /^grok (\S+)/.exec(verText)?.[1];
+  if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return fail(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」——轉送器目的地是從那個版本 strings 出來的，升版要重驗`);
 
   // ── ① 建盒子 ──
   const box = realpathSync(mkdtempSync(`/private/tmp/grok-scan-${head.slice(0, 7)}-`));
   const src = join(box, 'src');
   mkdirSync(src); mkdirSync(join(box, 'tmp'));
   log(`盒子：${box}`);
+  // grok 的可寫家＝安裝樹的 APFS clone（除 sessions——那是歷史，不該給它；這次的日誌寫進空的 sessions/）
+  const grokHome = join(box, 'grok-home');
+  {
+    const c = spawnSync('/bin/cp', ['-Rc', grokInstall, grokHome], { encoding: 'utf8' });
+    if (c.status !== 0) return fail(`grok-home clone 失敗：${c.stderr}`);
+    rmSync(join(grokHome, 'sessions'), { recursive: true, force: true });
+    mkdirSync(join(grokHome, 'sessions'));
+  }
+  const sessionsRoot = join(grokHome, 'sessions');
   {
     // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）
     const tarPath = join(box, 'src.tar');
@@ -139,12 +150,11 @@ export async function runScan(args, deps = {}) {
   if (!ready) { rmSync(liveDir, { recursive: true, force: true }); return fail(`轉送器沒有 READY（${relayDead ?? '5 秒逾時'}）`); }
 
   // ── ④ 沙箱裡跑 grok ──
-  const home = homedir();
   const startedAt = new Date().toISOString();
   log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
-  const sbArgv = ['-f', PROFILE, '-D', `HOME=${home}`, '-D', `GROK_HOME=${grokHome}`, '-D', `SCAN_DIR=${box}`];
-  const grokArgv = [grokBin, '--disable-web-search', '-p', '<materials>'];
-  const env = { ...sandboxEnv(box, grokHome), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
+  const sbArgv = ['-f', PROFILE, '-D', `GROK_INSTALL=${grokInstall}`, '-D', `SCAN_DIR=${box}`, '-D', `RELAY_PORT=${RELAY_PORT}`];
+  const grokArgv = [grokBin, '--disable-web-search', '--no-subagents', '-p', '<materials>'];
+  const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(box, 'launch.json'), JSON.stringify({
@@ -152,8 +162,18 @@ export async function runScan(args, deps = {}) {
     profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
     materialsSha256: createHash('sha256').update(materials).digest('hex'),
   }, null, 2));
-  const grok = spawnSync('/usr/bin/sandbox-exec', [...sbArgv, grokBin, '--disable-web-search', '-p', materials], {
-    cwd: src, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000, stdio: ['ignore', 'pipe', 'pipe'], env,
+  // ⚠️ 不用 spawnSync：它卡住事件迴圈，轉送器的 exit 事件要等 grok 結束後才派發，
+  //    「轉送器中途死」就永遠量不到（r2 的行為題抓到：假轉送器 READY 後 200ms 死、假 grok 回 0，結果退 0）。
+  const grok = await new Promise((resolve) => {
+    const child = spawn('/usr/bin/sandbox-exec', [...sbArgv, grokBin, '--disable-web-search', '--no-subagents', '-p', materials], {
+      cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env,
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    const t = setTimeout(() => child.kill('SIGKILL'), 30 * 60_000);
+    child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, stdout, stderr }); });
+    child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr }); });
   });
   const endedAt = new Date().toISOString();
   relay.kill();
@@ -161,7 +181,8 @@ export async function runScan(args, deps = {}) {
   const reply = grok.stdout || '';
   if (outFile) writeFileSync(outFile, reply);
   log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字${outFile ? `，已寫 ${outFile}` : ''}`);
-  if (relayDead && grok.status !== 0) return fail(`轉送器中途死了：${relayDead}；grok 退出碼 ${grok.status}`);
+  // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
+  if (relayDead) return fail(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}`);
   if (grok.status !== 0) return fail(`grok 沒有正常結束（status ${grok.status}${grok.signal ? `, signal ${grok.signal}` : ''}${grok.error ? `, ${grok.error.message}` : ''}）：${(grok.stderr || '').slice(-400)}`);
   if (!reply.trim()) return fail('grok 退 0 但回覆是空的');
 
@@ -181,7 +202,7 @@ export async function runScan(args, deps = {}) {
     if (g.status === 0) { log(`⚠️ 驗屍：session ${d} 的日誌出現盒子外才有的內容——沙箱破了，這是事故`); worst = 1; }
     else if (g.status !== 1) return fail(`驗屍：grep 自己失敗（status ${g.status}）：${g.stderr}`);
   }
-  const recipe = `base..head=${base}..${head}｜發射紀錄=${join(box, 'launch.json')}｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜盒子=${box}｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
+  const recipe = `base..head=${base}..${head}｜發射紀錄=${join(box, 'launch.json')}｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜盒子=${box}（grok-home 是安裝樹的拋棄式副本）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   summary.push(recipe);
   return { code: /** @type {0|1} */ (worst), summary };
