@@ -204,7 +204,8 @@ function shortVersion(visibleMd) {
 // 條件後面加一句補語，兩份已經不一樣了，這道題照樣綠（2026-08-21 Codex r8 實測）。
 // 〔這一行改口過兩次：原寫「逐字相同才算兩份檔案講同一件事」（r2 點名：字串相同 ≠ 講法一致）、
 // 再寫「這裡要求兩份檔案逐字相同」（r8 點名：實作根本沒要求逐字相同）。〕
-const KILL_CONDITIONS = ['版本不同＝當未跑', '退出碼非 0＝該掃作廢', '缺這一行＝當未跑'];
+// 2026-08-22 沙箱制：「退出碼非 0＝該掃作廢」換成「金絲雀非 0＝不掃」（驗屍不再作廢、改查破口）
+const KILL_CONDITIONS = ['版本不同＝當未跑', '金絲雀非 0＝不掃', '缺這一行＝當未跑'];
 
 test('Grok 複審後掃｜三個失效條件的字串，兩個視窗裡都要有（2026-08-19 實測漂移：時序那條只寫在正本）', () => {
   const canon = grokSection(visible(read('AGENTS.md')));
@@ -339,7 +340,9 @@ test('Grok 複審後掃｜固定小標 `### Grok 複審後掃`：條文釘它、
 });
 
 test('Grok 複審後掃｜驗屍腳本的**路徑字串**要出現在兩個自訂視窗裡，且那支檔案真的存在（全檔搜尋會被「歷史檔名存查」那種句子矇混）', () => {
-  const SCRIPT = 'scripts/audit-grok-scan.js';
+  // 2026-08-22 沙箱制：兩份文件指的**入口**是 grok-scan.js（它把建盒子→金絲雀→轉送器→沙箱→驗屍串成一支）；
+  // 驗屍腳本與金絲雀、轉送器、沙箱設定是它的零件——零件存在與否另驗，入口路徑才是兩個視窗都要寫的。
+  const SCRIPT = 'scripts/grok-scan.js';
   // ⚠️ 不可以用全檔 includes（2026-08-19 Codex r3 實測）：把**被選中的文字視窗**裡的命令
   // 改成不存在的腳本、只在檔案開頭各留一句「歷史檔名存查：`scripts/audit-grok-scan.js`」，
   // 全檔搜尋照樣命中而考題全綠。要綁在**兩個自訂文字視窗**裡。
@@ -356,6 +359,10 @@ test('Grok 複審後掃｜驗屍腳本的**路徑字串**要出現在兩個自�
     `REVIEW-AND-MERGE 最短可執行版視窗裡沒有出現 ${SCRIPT} 這個路徑字串（視窗外提到不算）`
   );
   assert.ok(existsSync(join(ROOT, SCRIPT)), `${SCRIPT} 不存在——兩個視窗裡都寫著這個路徑，而 repo 裡沒有這支檔案`);
+  // 入口的零件也要在（入口 import 它們；少一個＝入口起不來，但這裡先紅、訊息指到對的檔）
+  for (const part of ['scripts/grok-sandbox.sb', 'scripts/grok-sandbox-canary.js', 'scripts/grok-relay.js', 'scripts/audit-grok-scan.js']) {
+    assert.ok(existsSync(join(ROOT, part)), `${SCRIPT} 的零件 ${part} 不存在`);
+  }
 });
 
 test('Grok 複審後掃｜程式線的定位：那兩個舊字串形狀不得出現，且節內**恰有一顆**「程式線」bullet、上面還留著「常設」「複審後掃」（查字不查語意）', () => {

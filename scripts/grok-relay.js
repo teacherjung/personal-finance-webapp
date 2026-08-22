@@ -17,7 +17,9 @@
 //
 // ## 用法
 //
-//   node scripts/grok-relay.js [port]      預設 18765；啟動後 stdout 印一行 `READY <port>`（給 grok-scan.js 同步用）
+//   node scripts/grok-relay.js <port>      port **必填**；啟動後 stdout 印一行 `READY <port>`（給 grok-scan.js 同步用）
+//   ⚠️ 無參數＝印用法、退 2，**不啟動**——test/entry-guard.test.js 會無參數執行每支 scripts/*.js，
+//      一支會永遠聽下去的伺服器會讓整套考題無聲卡死（2026-08-22 實際卡了 10 分鐘）。
 //   然後 grok 以 GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:<port>/v1 啟動。
 //
 // UPSTREAM 是從 grok 1.0.3 執行檔裡 `strings` 出來的（`https://cli-chat-proxy.grok.com/v1`），
@@ -25,11 +27,13 @@
 // 壞法是「grok 連不上」（轉送器回 502），不是靜靜放行到別處。
 import http from 'node:http';
 import https from 'node:https';
+import { isMainModule } from '../lib/is-main.js';
 
 const UPSTREAM_HOST = 'cli-chat-proxy.grok.com';
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'host']);
 
-const port = Number(process.argv[2] || 18765);
+/** @param {number} port */
+export function startRelay(port) {
 const server = http.createServer((req, res) => {
   /** @type {Record<string, string | string[]>} */
   const headers = {};
@@ -61,3 +65,14 @@ server.listen(port, '127.0.0.1', () => {
   process.stdout.write(`READY ${port}\n`);
   process.stderr.write(`[relay] 127.0.0.1:${port} → https://${UPSTREAM_HOST}（只此一家）\n`);
 });
+return server;
+}
+
+if (isMainModule(import.meta.url)) {
+  const port = Number(process.argv[2]);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    console.error('用法：node scripts/grok-relay.js <port>（port 必填；無參數不啟動——見檔頭）');
+    process.exit(2);
+  }
+  startRelay(port);
+}

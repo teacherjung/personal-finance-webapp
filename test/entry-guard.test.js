@@ -140,7 +140,9 @@ function runThrice(rel) {
     const link = join(dir, 'probe.js');
     symlinkSync(join(ROOT, rel), link);
     const env = { PATH: process.env.PATH || '', HOME: process.env.HOME || '' };
-    const opts = { encoding: 'utf8', env, cwd: ROOT };
+    // timeout（2026-08-22 加）：一支無參數就開始聽的伺服器型腳本，會讓這裡**無聲卡死**（grok-relay.js 第一版實際卡了 10 分鐘）。
+    // 有 timeout＝它變成「紅、訊息指名哪支腳本」，而不是「整套考題永遠不結束」。
+    const opts = { encoding: 'utf8', env, cwd: ROOT, timeout: 20_000 };
     const shape = (r) => ({ status: r.status, out: `${r.stdout}${r.stderr}` });
     return {
       direct: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
