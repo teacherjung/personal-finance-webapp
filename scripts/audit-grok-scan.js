@@ -258,7 +258,7 @@ if (isMainModule(import.meta.url)) {
   const r = auditSessionDir(target);
   const id = target.split('/').filter(Boolean).pop();
   if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具足跡）`);
-  else if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗一次`);
-  else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed 當越界處理`);
+  else if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱（舊制）＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因`);
+  else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed：證明不了它做了什麼，當「沒掃成」處理`);
   process.exit(r.code);
 }

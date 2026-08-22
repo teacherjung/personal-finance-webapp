@@ -76,22 +76,20 @@ test('沙箱｜盒子裡跑得了 node 與 git（中間路的承諾：它能在�
 
 test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，這題讓「刪掉」本身先紅；平台無關，CI 也跑）', () => {
   const sb = readFileSync(PROFILE, 'utf8').replace(/;;[^\n]*/g, '');   // 剝註解——註解裡的字不算數
-  // 寫入 deny-default
-  assert.match(sb, /\(deny file-write\*\)/, '少了「寫入全域 deny」——第一版就是漏了這條，Grok 能寫 store.db');
-  // 讀取的列舉 deny：每一個位置各自要在（一行含多個 subpath，所以逐一查 subpath、不查整行）
-  for (const where of ['(param "HOME")', '"/private/tmp"', '"/private/var/folders"', '"/Library/Keychains"', '"/Users/Shared"', '"/Volumes"']) {
-    assert.ok(new RegExp(`\\(deny file-read\\*[^)]*\\(subpath ${where.replace(/[()"/]/g, '\\$&')}\\)`).test(sb) || sb.includes(`(subpath ${where})`) && /\(deny file-read\*/.test(sb),
-      `讀取 deny 少了 ${where}（#495 那次 Grok 正是 cd 進 /private/tmp 的審查樹）`);
-  }
-  // 網路 deny-default＋只准 localhost
-  assert.match(sb, /\(deny network\*\)/, '少了「網路全拒」');
-  assert.match(sb, /\(allow network-outbound \(remote tcp "localhost:\*"\)\)/, '少了 localhost 放行（轉送器會連不上）');
-  // IPC：至少剪貼簿那條（它是突變驗證過唯一單獨有效的）
-  assert.match(sb, /com\.apple\.pasteboard\.1/, '少了剪貼簿 deny（突變實測：拿掉它剪貼簿金絲雀就活）');
+  // r2：deny-default＋system.sb 是骨架；沒有這兩行就退回 r1 那種列舉式的洞
+  assert.match(sb, /\(deny default\)/, '少了 (deny default)——退回列舉式 deny，Codex r2 實證那不是封閉邊界');
+  assert.match(sb, /\(import "system\.sb"\)/, '少了 (import "system.sb")——deny default 下程式起不來');
+  // 安裝樹唯讀：只能有 file-read* 指向 GROK_INSTALL，不能有 file-write*
+  assert.match(sb, /\(allow file-read\* \(subpath \(param "GROK_INSTALL"\)\)\)/, '少了 grok 安裝樹的唯讀放行');
+  assert.doesNotMatch(sb, /file-write\*[^\n]*GROK_INSTALL/, '安裝樹被放行寫入——r2 #2 升級鏈：沙箱裡改 bin/grok、下次在沙箱外執行');
+  // 網路：只准轉送器 port；不可有 localhost:* 的 outbound（理財 app 的 4321 吐真實餘額）
+  assert.match(sb, /\(allow network-outbound \(remote tcp \(string-append "localhost:" \(param "RELAY_PORT"\)\)\)\)/, '少了「只准連轉送器 port」');
+  assert.doesNotMatch(sb, /\(allow network-outbound[^\n]*"localhost:\*"/, '放行了 localhost:* outbound——盒內程式連得到本機理財 app');
+  assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '放行了任意對外網路');
   // 反面：不可以有把圍欄拆掉的行
-  assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath \(param "HOME"\)\)/, '設定檔放行了整個家目錄');
-  assert.doesNotMatch(sb, /\(allow file-write\*[^\n]*\(subpath \(param "HOME"\)\)/, '設定檔放行了寫整個家目錄');
-  assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '設定檔放行了任意對外網路');
+  assert.doesNotMatch(sb, /\(allow default\)/, '設定檔回到 allow default');
+  assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/"\)/, '設定檔放行了整個檔案系統');
+  assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/Users"\)/, '設定檔放行了 /Users');
 });
 
 test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 Host／X-Upstream／absolute-form URL 都改不了 host/port（平台無關，CI 也跑）', async () => {
@@ -116,9 +114,14 @@ test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 
   assert.equal(ok.headers.authorization, 'Bearer x', '正常 header 被剝掉了（登入憑證要原樣過）');
 });
 
-test('轉送器｜只綁 127.0.0.1（原始碼釘樁；行為面由 grok-scan 的端對端覆蓋）', () => {
-  const js = readFileSync(join(process.cwd(), 'scripts', 'grok-relay.js'), 'utf8');
-  assert.ok(js.includes("server.listen(port, '127.0.0.1'"), '轉送器沒有綁在 127.0.0.1——外面的機器連得到');
+test('轉送器｜只綁 127.0.0.1——**行為題**：真的起一個、看它 listen 的位址（平台無關，CI 也跑）', async () => {
+  const { startRelay } = await import('../scripts/grok-relay.js');
+  const server = startRelay(0);   // port 0＝隨機
+  try {
+    await new Promise((ok) => server.once('listening', ok));
+    const addr = /** @type {import('node:net').AddressInfo} */ (server.address());
+    assert.equal(addr.address, '127.0.0.1', `轉送器 listen 在 ${addr.address}——外面的機器連得到`);
+  } finally { server.close(); }
 });
 
 test('金絲雀自己｜isBlocked：status 為 null（被殺／ENOBUFS／逾時）不算擋住——第一版的假紅（平台無關，CI 也跑）', () => {
