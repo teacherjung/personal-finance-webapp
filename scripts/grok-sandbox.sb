@@ -1,35 +1,59 @@
-;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路）。
+;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路；r1 重做：Codex 抓到第一版只擋讀、沒擋寫）。
 ;;
 ;; 為什麼存在：鎖工具旗標 52/53 次靜默失效（~/.grok/sessions 全量稽核），「請它不要做」擋不住；
-;; 這份設定改成「作業系統不讓它做」。William 2026-08-20 已拍板允許 Grok 跑指令——
-;; 在這個盒子裡跑指令是安全的，因為盒子裡沒有它不該看的東西。
+;; 改成「作業系統不讓它做」。William 2026-08-20 已拍板允許 Grok 跑指令——在盒子裡跑是安全的，
+;; 因為盒子裡沒有它不該看的東西。
 ;;
-;; 原則：家目錄**全拒**，再逐項放行；每條放行都要說得出「為什麼非它不可」。
+;; ## 結構（r1 重做後）
+;; ・**寫入：deny-default**，只放行 /dev、~/.grok、盒子。
+;; ・**讀取：allow-default＋列舉 deny**——讀取 deny-default 試過兩種寫法都讓 cat 起不來（SIGABRT、無日誌），
+;;   退而列舉使用者資料住的地方。這是列舉式的，漏掉的就可讀，照實記在下面。
+;; ・**網路：deny-default**，只准 localhost。
+;; ・**IPC：列舉 deny**（剪貼簿、Keychain、Apple Events、TCC）。
+;; 第一版只有「讀取列舉 deny」一項，寫入、/private/tmp、IPC 全開——Codex r1 抓到，整份重做。
+;;
 ;; 參數（由 scripts/grok-scan.js 傳入）：HOME＝真家目錄、GROK_HOME＝~/.grok、SCAN_DIR＝盒子。
+;; 環境變數由 grok-scan.js 用白名單重建（env -i）：HOME／TMPDIR 指進盒子、PATH 指真 git（繞開 xcrun shim）。
 ;;
-;; ⚠️ 誠實劃界：
-;; ・sandbox-exec 是 Apple 標為過時但仍可用的工具（macOS 15.7 實測）；它哪天消失，這道圍欄就沒了。
-;; ・網路規則只認 localhost／*，放不了特定網域——所以一律只准 localhost，
-;;   由 scripts/grok-relay.js 在 localhost 上接手、只轉到 xAI 那一個寫死的位址。
+;; ## 誠實劃界（金絲雀只證明下面「已驗證」的那些；沒列的就是沒驗）
+;; ・sandbox-exec 是 Apple 標為過時但 macOS 15.7 仍可用的工具；它消失這道圍欄就沒了。
+;; ・網路規則只認 localhost，放不了特定網域——所以靠 scripts/grok-relay.js。**localhost:* 是開的**：
+;;   盒內程式連得到本機任何服務（考題要起 Express＋連自己，Seatbelt 表達不了「只准連自己綁的 port」）。
+;;   這是中間路的代價，列為已知不涵蓋。
+;; ・file-read-metadata 全開：stat 任何路徑（知道存在與否、大小；讀不到內容、列不了目錄）——
+;;   node／git 解析路徑需要。猜得到檔名就知道它存不存在，列為已知不涵蓋。
+;; ・IPC deny 是列舉式（剪貼簿、Keychain、Apple Events、TCC）：只擋列出的；其他 mach 服務沒驗。
+;; ・~/.grok 整棵放行（執行檔、設定、憑證、session 日誌要寫）：歷史 session 不是盒子的內容，但它們
+;;   本來就是 Grok 自己寫的、已送 xAI 的東西。
 ;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
-;; ・金絲雀（test/grok-sandbox.test.js＋掃描前必跑）只證明「這幾件事擋得住」，不證明沒有別的洞。
 (version 1)
 (allow default)
 
-;; ── 家目錄全拒：store.db、.ssh、.gitconfig、Desktop、Documents… 全在這底下 ──
-(deny file-read* (subpath (param "HOME")))
+;; ── 寫入：全域 deny，只放行 /dev、grok 的家、盒子（deny-default——寫入是最該關死的）──
+(deny file-write*)
+(allow file-write* (subpath "/dev") (subpath (param "GROK_HOME")) (subpath (param "SCAN_DIR")))
 
-;; ── 放行①：grok 自己的家（執行檔、設定、登入憑證、session 日誌——驗屍要讀這裡）──
-(allow file-read* (subpath (param "GROK_HOME")))
+;; ── 讀取：allow-default＋**列舉 deny**（⚠️ 這是列舉式的，照實記）──
+;; 試過讀取也 deny-default 再放行系統路徑：連 cat 都起不來（SIGABRT）、系統日誌不記拒絕原因，無法迭代。
+;; 退而列舉「使用者資料住的地方」：家目錄、/private/tmp（其他審查樹）、使用者暫存區、Keychain、/Users/Shared、外接碟。
+;; 列舉外仍可讀的：/usr /bin /System /Library（除 Keychains）/private/etc /opt /Applications——系統與程式，不是使用者資料。
+;; 單人 Mac 沒有其他使用者的家目錄；有的話要加進來。
+(deny file-read* (subpath (param "HOME")) (subpath "/private/tmp") (subpath "/private/var/folders")
+                 (subpath "/Library/Keychains") (subpath "/Users/Shared") (subpath "/Volumes"))
+(allow file-read* (subpath (param "GROK_HOME")) (subpath (param "SCAN_DIR")))
+(allow file-read-metadata)
 
-;; ── 放行②：盒子（git archive 出來的已 commit 原始碼＋APFS clone 的 node_modules）──
-;; 盒子不在家目錄底下（/private/tmp），這條是為了「HOME 指進盒子」後 git／npm 的寫入。
-(allow file-read* (subpath (param "SCAN_DIR")))
-
-;; ── 網路：全拒，只准 localhost ──
-;; outbound → 轉送器；bind/inbound → 考題會起本機 Express 伺服器（外面連不進來，仍在盒子裡）
+;; ── 網路：全拒，只准 localhost（outbound→轉送器；bind/inbound→考題起本機 Express）──
 (deny network*)
 (allow network-outbound (remote tcp "localhost:*"))
 (allow network-bind (local tcp "localhost:*"))
 (allow network-inbound (local tcp "localhost:*"))
 (allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
+
+;; ── IPC：剪貼簿、Keychain、Apple Events、TCC（列舉式；對照組實測：沙箱外 pbpaste 讀得到、Keychain 212 項；沙箱內 0、0）──
+(deny mach-lookup
+  (global-name "com.apple.pasteboard.1")
+  (global-name "com.apple.securityd") (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.coreservices.appleevents")
+  (global-name "com.apple.tccd") (global-name "com.apple.tccd.system"))
+(deny appleevent-send)
