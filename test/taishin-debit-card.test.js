@@ -1,7 +1,7 @@
 // @ts-check
-// 台新簽帳金融卡明細的 A 區「刷卡消費明細」（Stage 5a，2026-08-22）。
+// 台新簽帳金融卡明細的 A 區「刷卡消費明細」（2026-08-22）。
 // 這一區是 D 區「刷卡消費／刷卡退貨」那幾筆的**另一種印法**：多了消費日、店名、消費地區＝「買了什麼」。
-// 本支只讀出來、對到 D 區的列，**不決定怎麼入帳**（同一筆錢兩區都出現，怎麼不算兩次是下一支的裁決）。
+// 這兩個函式的責任只有「讀出來、對到 D 區的列」；它們**不決定怎麼入帳**（同一筆錢兩區都出現，怎麼不算兩次＝未決的產品裁決）。
 // ⚠️ 合成座標列（同 taishin-debit.test.js 家規）：店名、金額、卡號全是編的；座標照真版面。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,6 +43,21 @@ test('A 區｜三筆（含退款負數、店名換行）：扣款日／消費日
   ], '★退款負號保留；店名尾端的「/」剝掉；換行店名由上而下接起來');
 });
 
+test('★A 區｜相鄰兩筆照真版面的列距（13~17）：店名與地區各歸最近的那一筆，不可互相污染', () => {
+  // Codex #501 r1#1：半徑內「全收」會讓第一筆的地區吃到第二筆的店名。真版面主列相距 13~17，上一筆的地區（-4）與
+  // 下一筆的店名（+5）中間只隔 4~8，兩者都落在另一筆的半徑 10 內——只有「每片歸最近的那一筆」才分得開。
+  for (const pitch of [13, 14, 15, 16, 17]) {
+    const lines = [A_HEAD(), CARD(244, '8808'),
+      ...purchase(227, '2026/01/28', '2026/01/27', '甲店', '100'),
+      ...purchase(227 - pitch, '2026/01/26', '2026/01/25', '乙店', '200'),
+      ...purchase(227 - 2 * pitch, '2026/01/24', '2026/01/23', '丙店', '300'),
+      EXIT,
+    ];
+    const { rows } = parseTaishinDebitCardRows(lines);
+    assert.deepEqual(rows.map((r) => [r.desc, r.region]), [['甲店', 'TW'], ['乙店', 'TW'], ['丙店', 'TW']], `★列距 ${pitch}：店名與地區各歸各的`);
+  }
+});
+
 test('A 區｜多張卡：第二個「卡號末四碼」之後的筆換卡；跨頁重印表頭不中斷', () => {
   const lines = [
     A_HEAD(), CARD(244, '8808'),
@@ -78,6 +93,13 @@ test('★A 區｜只收表頭之後、離場錨點之前：B 區總額列、C �
     L(40, [[126, '2026/01/05 2026/01/04', 77], [423, '0', 4], [457, '888', 12]]),
   ];
   assert.deepEqual(parseTaishinDebitCardRows(direct).rows.map((r) => r.amount), [100], '★D 表頭本身就是離場錨點');
+  // D 表頭被抽字拆成兩列（同 Stage 3 認得的形狀）：碎片那一列就是離場錨點，後面的列不可再被當 A 區收
+  const splitHead = [A_HEAD(), CARD(244, '8808'), ...purchase(227, '2026/01/28', '2026/01/27', '甲店', '100'),
+    L(50, [[143, '日期', 13], [191, '摘要', 13], [239, '支出', 13]]),
+    L(46, [[291, '存入', 13], [342, '餘額', 13], [415, '備註', 13]]),
+    L(40, [[126, '2026/01/05 2026/01/04', 77], [423, '0', 4], [457, '888', 12]]),
+  ];
+  assert.deepEqual(parseTaishinDebitCardRows(splitHead).rows.map((r) => r.amount), [100], '★拆成兩列的 D 表頭也是離場錨點（Codex #501 r1#4）');
 });
 
 test('A 區｜店名只認「消費明細」x 帶裡、y 距離 ≤ 上限的片段：別欄的字與隔太遠的列不可黏進店名', () => {
@@ -109,14 +131,26 @@ test('★A 區｜外幣列（主列多於一格在中間）：台幣金額仍取
   assert.equal(rows[0].extra, '2026/01/28 USD 10.00 5');
 });
 
-test('★A 區｜讀不出＝丟 bank_unrecognized（假日期、金額不是數字），不可靜靜跳過', () => {
+test('★A 區｜抄不對就說（一律 bank_unrecognized、不靜靜跳過）：假日曆日、日期長得像卻讀不成、金額不是數字', () => {
   const bad = (/** @type {any} */ main) => [A_HEAD(), CARD(244, '8808'), L(232, [[208, '甲店 /', 65]]), main, EXIT];
-  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/02/31 2026/01/27', 77], [423, '0', 4], [457, '100', 12]]))),
-    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /真日曆日/.test(e.message));
-  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/01/28 2026/01/27', 77], [423, '0', 4], [457, 'N/A', 12]]))),
-    (/** @type {any} */ e) => e.code === 'bank_unrecognized' && /台幣金額/.test(e.message));
+  const unrecog = (/** @type {RegExp} */ re) => (/** @type {any} */ e) => e.code === 'bank_unrecognized' && re.test(e.message);
+  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/02/31 2026/01/27', 77], [423, '0', 4], [457, '100', 12]]))), unrecog(/真日曆日/));
+  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/01/28 2026/01/27', 77], [423, '0', 4], [457, 'N/A', 12]]))), unrecog(/台幣金額/));
+  // ★以日期起頭卻讀不成兩個日期（Codex #501 r1#2：以前會被當成說明列靜靜跳過＝整筆消失、下一筆照收）
+  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/01/2X 2026/01/27', 77], [423, '0', 4], [457, '100', 12]]))), unrecog(/讀不成「扣款日 消費日」/));
+  assert.throws(() => parseTaishinDebitCardRows(bad(L(227, [[126, '2026/01/28', 37], [423, '0', 4], [457, '100', 12]]))), unrecog(/讀不成「扣款日 消費日」/), '只有一個日期');
+  // 日期拆成兩格＝抽字的正常變體，要收
+  const split = parseTaishinDebitCardRows(bad(L(227, [[126, '2026/01/28', 37], [170, '2026/01/27', 37], [423, '0', 4], [457, '100', 12]])));
+  assert.deepEqual([split.rows[0].postDate, split.rows[0].date, split.rows[0].amount, split.rows[0].fee], ['2026-01-28', '2026-01-27', 100, 0]);
   // 沒有表頭＝沒有 A 區（不是錯，就是讀不到）
   assert.deepEqual(parseTaishinDebitCardRows([EXIT]), { rows: [], sawHeader: false });
+});
+
+test('★A 區｜卡號：還沒看到「卡號末四碼」就出現消費列＝丟錯；看到「卡號末四碼」卻讀不出四碼＝丟錯（不可沿用上一張）', () => {
+  const unrecog = (/** @type {RegExp} */ re) => (/** @type {any} */ e) => e.code === 'bank_unrecognized' && re.test(e.message);
+  assert.throws(() => parseTaishinDebitCardRows([A_HEAD(), ...purchase(227, '2026/01/28', '2026/01/27', '甲店', '100'), EXIT]), unrecog(/還沒看到「卡號末四碼」/));
+  assert.throws(() => parseTaishinDebitCardRows([A_HEAD(), CARD(244, '8808'), ...purchase(227, '2026/01/28', '2026/01/27', '甲店', '100'),
+    L(200, [[269, '卡號末四碼：12X4', 56]]), ...purchase(180, '2026/01/20', '2026/01/19', '乙店', '200'), EXIT]), unrecog(/讀不出四碼/), '★第二張讀不出＝不可把乙店掛到 8808');
 });
 
 test('A 區｜表頭少了定位用的欄名（消費明細／外幣折換日）＝不進 A 區，免拿錯的 x 帶亂歸店名', () => {
@@ -138,17 +172,29 @@ test('對照｜扣款日＋金額一對一：退款配「刷卡退貨」的進�
   ];
   const cards = [card({}), card({ desc: '乙店' }), card({ amount: -305 }), card({ postDate: '2026-01-24', amount: 999 })];
   const r = linkDebitCardRows(cards, txs);
-  assert.deepEqual(r.pairs, [{ card: 0, tx: 1 }, { card: 1, tx: 2 }, { card: 2, tx: 3 }, { card: 3, tx: 4 }]);
+  assert.deepEqual(r.pairs, [
+    { card: 0, tx: 1, ambiguous: true }, { card: 1, tx: 2, ambiguous: true },   // ★同日同額兩筆＝只能說「這一群對得上」，哪一筆對哪一筆不可當真
+    { card: 2, tx: 3, ambiguous: false }, { card: 3, tx: 4, ambiguous: false },
+  ]);
   assert.deepEqual(r.unmatchedCards, []);
   assert.deepEqual(r.unmatchedTxs, []);
   assert.deepEqual(DEBIT_CARD_SUMMARIES, ['刷卡消費', '刷卡退貨']);
+});
+
+test('★對照｜同鍵多筆的歧義要標出來：群組不等長時配上的那一對也是 ambiguous（A 多或 D 多都算）', () => {
+  const r = linkDebitCardRows([card({}), card({ desc: '乙店' })], [tx({ amount: 100 })]);
+  assert.deepEqual(r.pairs, [{ card: 0, tx: 0, ambiguous: true }]);
+  assert.deepEqual(r.unmatchedCards, [1]);
+  const r2 = linkDebitCardRows([card({})], [tx({ amount: 100 }), tx({ amount: 100 })]);
+  assert.deepEqual(r2.pairs, [{ card: 0, tx: 0, ambiguous: true }], '★D 區那邊有兩筆同鍵＝哪一筆對上也不可當真');
+  assert.deepEqual(r2.unmatchedTxs, [1]);
 });
 
 test('★對照｜對不上的兩邊都要列出來（不可靜靜丟掉）：A 多一筆、D 多一筆', () => {
   const txs = [tx({ amount: 100 }), tx({ amount: 50, date: '2026-01-20' })];
   const cards = [card({}), card({ amount: 70, postDate: '2026-01-21' })];
   const r = linkDebitCardRows(cards, txs);
-  assert.deepEqual(r.pairs, [{ card: 0, tx: 0 }]);
+  assert.deepEqual(r.pairs, [{ card: 0, tx: 0, ambiguous: false }]);
   assert.deepEqual(r.unmatchedCards, [1]);
   assert.deepEqual(r.unmatchedTxs, [1]);
 });
