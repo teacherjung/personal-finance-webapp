@@ -61,6 +61,11 @@ const server = http.createServer((req, res) => {
   req.pipe(up);
 });
 
+server.on('error', (/** @type {NodeJS.ErrnoException} */ e) => {
+  // EADDRINUSE 最常見＝上一次掃描的轉送器沒收乾淨；說清楚，不要丟一串 stack
+  process.stderr.write(`[relay] 起不來：${e.code === 'EADDRINUSE' ? `port ${port} 被占著（lsof -i :${port} 找出來殺掉）` : e.message}\n`);
+  process.exit(1);
+});
 server.listen(port, '127.0.0.1', () => {
   process.stdout.write(`READY ${port}\n`);
   process.stderr.write(`[relay] 127.0.0.1:${port} → https://${UPSTREAM_HOST}（只此一家）\n`);
