@@ -27,13 +27,14 @@
 // ・本腳本不決定掃描時機（條款：Codex 通過之後、gh pr ready 之前）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
+import { refreshSandboxAuth } from './grok-auth-refresh.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +56,10 @@ export { RELAY_PORT };
  *   （bin/grok、config.toml、agent_id；auth.json 走沙箱專用目錄）；考題注入假的（bin/grok 是假 grok）。
  *   r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
  * @property {string} [authDir] 預設 ~/.grok-sandbox-auth（0700，只含 auth.json）：沙箱跑的 grok 用這份登入狀態，
- *   第一次從真 ~/.grok/auth.json 種、每掃同步回來（盒內 refresh 過的 token 才會保留到下一掃）；真 auth.json 不動。
+ *   第一次從真 ~/.grok/auth.json 種；**掃描前由父程序做 OIDC refresh**（沙箱裡連不到 auth.x.ai，grok 自己 refresh 不了——
+ *   r4 端對端實際踩到：token 六小時過期後「auth_kind=none」）；盒內只放**去掉 refresh_token 的短效版本**，
+ *   所以**不再有掃後同步**（盒內沒有長效憑證，沒東西要同步回來——r4 #3 的整族問題由構造消失）；真 auth.json 不動。
+ * @property {typeof fetch} [fetchImpl] 考題注入假 fetch 給 refresh 用
  * @property {string} [resultsRoot] 預設 ~/.grok-scan-results：掃完只留去機密的結果包（launch.json＋sessions），盒子整個清掉
  * @property {string} [expectedSha256] 預設 EXPECTED_GROK_SHA256；考題用假 grok 時傳它自己的 hash
  * @property {(msg: string) => void} [log]
@@ -127,7 +131,7 @@ export async function runScan(args, deps = {}) {
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來）
   const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
   /** @type {string} */ let verText;
-  /** @type {Record<string, string>} */ let authBefore;
+  /** @type {Record<string, unknown>} */ let authBefore;
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
   try {
@@ -148,9 +152,12 @@ export async function runScan(args, deps = {}) {
       if (!existsSync(join(grokInstall, 'auth.json'))) return failAndClean(`找不到登入狀態：${join(grokInstall, 'auth.json')} 也沒有——先在沙箱外登入一次`);
       writeFileSync(join(authDir, 'auth.json'), readFileSync(join(grokInstall, 'auth.json')), { mode: 0o600 });
     }
-    const authRaw = readFileSync(join(authDir, 'auth.json'), 'utf8');
-    try { authBefore = JSON.parse(authRaw); } catch { return failAndClean(`沙箱專用 auth.json 不是合法 JSON：${join(authDir, 'auth.json')}`); }
-    writeFileSync(join(grokHome, 'auth.json'), authRaw, { mode: 0o600 });
+    // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放短效版本
+    try {
+      const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
+      authBefore = a.forBox;
+      writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });
+    } catch (e) { return failAndClean(`憑證 refresh 失敗：${/** @type {Error} */ (e).message}`); }
   }
   // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
   {
@@ -277,7 +284,9 @@ export async function runScan(args, deps = {}) {
   //    拿**本次已知的憑證值**去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   //    ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。而且 token 在走轉送器時就已到 xAI
   //    ——那是它自己發的 token，不算外流；真正要防的是它被帶出盒子進到 GitHub／磁碟。
-  const secretValues = Object.values(authBefore).flatMap((v) => (typeof v === 'string' && v.length >= 16 ? [v] : typeof v === 'object' && v ? Object.values(v).filter((x) => typeof x === 'string' && x.length >= 16) : []));
+  // 本次已知的憑證值＝盒內 auth.json 裡 ≥16 字的字串（access token、id 等）；refresh_token 不在盒內，但也一併比對 authDir 那份
+  const authDirVals = (() => { try { return Object.values(JSON.parse(readFileSync(join(authDir, 'auth.json'), 'utf8'))); } catch { return []; } })();
+  const secretValues = [...Object.values(authBefore), ...authDirVals].flatMap((v) => (typeof v === 'string' && v.length >= 16 ? [v] : typeof v === 'object' && v ? Object.values(v).filter((x) => typeof x === 'string' && x.length >= 16) : []));
   const leaksIn = (/** @type {string} */ text) => secretValues.some((v) => text.includes(v));
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現登入憑證的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
   for (const d of dirs) {
@@ -287,19 +296,7 @@ export async function runScan(args, deps = {}) {
     }
   }
   if (worst === 0 && outFile) writeFileSync(outFile, reply);
-  // ── auth 同步（r4 #3）：**只在成功**時、驗過是 regular file＋合法 JSON＋鍵集合沒少，才以 temp＋rename 原子寫回 ──
-  if (worst === 0) {
-    const ap = join(grokHome, 'auth.json');
-    const st = existsSync(ap) ? lstatSync(ap) : null;
-    if (st && st.isFile()) {
-      try {
-        const raw = readFileSync(ap, 'utf8'); const parsed = JSON.parse(raw);
-        const missing = Object.keys(authBefore).filter((k) => !(k in parsed));
-        if (missing.length) log(`（auth.json 沒同步回：盒內版少了鍵 ${missing.join('、')}——保留上一份好的）`);
-        else { const tmp = join(authDir, `auth.json.${process.pid}.tmp`); writeFileSync(tmp, raw, { mode: 0o600 }); renameSync(tmp, join(authDir, 'auth.json')); }
-      } catch (e) { log(`（auth.json 沒同步回：盒內版不是合法 JSON——保留上一份好的：${/** @type {Error} */ (e).message}）`); }
-    }
-  }
+  // （r4 之後沒有「掃後同步 auth」：盒內是去掉 refresh_token 的短效版本，長效的只住在 authDir、由掃描前的 refresh 維護）
   if (worst === 1) rmSync(sessionsRoot, { recursive: true, force: true });   // 事故：日誌不進結果包
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對憑證值）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);

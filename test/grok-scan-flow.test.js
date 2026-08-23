@@ -52,7 +52,7 @@ function tinyRepo() {
  */
 function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean }} */ o = {}) {
   const d = mkdtempSync(join(tmpdir(), 'fake-grok-install-'));
-  mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), '{"fake":true}');
+  mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
   const session = o.noSession ? '' : `
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '{"type":"assistant","content":"x"}\n' > "$ws/fake-session/updates.jsonl"`;
@@ -77,10 +77,20 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
 /** 每題獨立的沙箱 auth 目錄與結果根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results） */
-const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')) });
+const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')), fetchImpl: noFetch });
 /** 假 grok 的 sha256（r4：runScan 對盒內副本驗 hash；考題要把假 grok 自己的 hash 傳進去） */
 const shaOf = (/** @type {string} */ installDir) => createHash('sha256').update(readFileSync(join(installDir, 'bin', 'grok'))).digest('hex');
 const quiet = { log: () => {} };
+/** 假的 OIDC auth.json（跟真的同形：issuer／client_id／refresh_token／expires_at／key）。預設到期在一天後＝不會觸發 refresh。 */
+const fakeAuth = (/** @type {{ key?: string, refresh?: string, expiresInMs?: number }} */ o = {}) => JSON.stringify({
+  'https://auth.example::client-0000': {
+    oidc_issuer: 'https://auth.example', oidc_client_id: 'client-0000',
+    key: o.key ?? 'ACCESS-TOKEN-VALUE-0123456789abcdef', refresh_token: o.refresh ?? 'REFRESH-TOKEN-VALUE-0123456789abcdef',
+    expires_at: new Date(Date.now() + (o.expiresInMs ?? 86_400_000)).toISOString(), auth_mode: 'oidc',
+  },
+});
+/** 不該被呼叫的 fetch（憑證還新時 refresh 不能發生） */
+const noFetch = /** @type {typeof fetch} */ (async () => { throw new Error('不該呼叫 fetch：憑證還新'); });
 /** 把假安裝樹與它的 hash 一起給 runScan */
 const withGrok = (/** @type {string} */ inst) => ({ grokInstall: inst, expectedSha256: shaOf(inst) });
 
@@ -120,7 +130,7 @@ test('runScan｜執行檔 sha256 不符 → 2，而且**不執行它**（r4 #5�
 test('runScan｜grok --version 本身失敗 → 2（不是靜靜當作版本對）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // r4：--version 改在沙箱內跑
   const repo = tinyRepo();
-  const d = mkdtempSync(join(tmpdir(), 'fake-grok-bad-')); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'auth.json'), '{}');
+  const d = mkdtempSync(join(tmpdir(), 'fake-grok-bad-')); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'auth.json'), fakeAuth());
   writeFileSync(join(d, 'bin', 'grok'), '#!/bin/sh\nexit 3\n'); chmodSync(join(d, 'bin', 'grok'), 0o755);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(d) });
   assert.equal(r.code, 2);
@@ -286,7 +296,7 @@ test('runScan｜去機密：grok 把自己的登入憑證寫進回覆 → 1＝�
   const repo = tinyRepo();
   const inst = fakeGrok();
   // 安裝樹的 auth.json 放一個夠長的 token；假 grok 把 $GROK_HOME/auth.json 的內容印進回覆
-  writeFileSync(join(inst, 'auth.json'), JSON.stringify({ access_token: 'SECRET-TOKEN-VALUE-0123456789abcdef', kind: 'fake' }));
+  writeFileSync(join(inst, 'auth.json'), fakeAuth({ key: 'SECRET-TOKEN-VALUE-0123456789abcdef' }));
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'cat "$GROK_HOME/auth.json"; $1'));
   const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
@@ -297,33 +307,50 @@ test('runScan｜去機密：grok 把自己的登入憑證寫進回覆 → 1＝�
   assert.ok(resultsDir && !existsSync(join(resultsDir, 'sessions')), '憑證洩漏時 sessions 還是進了結果包');
 });
 
-test('runScan｜auth 同步：掃描失敗時不同步、盒內 auth.json 壞掉時保留上一份好的（r4 #3）', async (t) => {
+test('runScan｜憑證：盒內 auth.json **沒有 refresh_token**；還新＝不 refresh；到期＝父程序 refresh 並原子寫回；refresh 失敗＝不掃、舊檔原樣（r4 #3 由構造消失）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  const repo = tinyRepo();
-  const iso = isolated();
-  const good = JSON.stringify({ access_token: 'GOOD-TOKEN-VALUE-0123456789abcdef', refresh: 'r' });
-  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), good);
-  // ① 假 grok 把盒內 auth.json 寫壞（非 JSON）然後正常結束
-  const inst = fakeGrok();
-  writeFileSync(join(inst, 'auth.json'), good);
-  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo GARBAGE > "$GROK_HOME/auth.json"; $1'));
-  const r1 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
-  assert.equal(r1.code, 0);
-  assert.equal(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), good, '盒內壞掉的 auth.json 被同步回去了——蓋掉好的');
-  // ② 假 grok 正常 refresh（鍵集合不少）但掃描失敗（非 0）→ 不同步
-  const inst2 = fakeGrok({ status: 1 });
-  writeFileSync(join(inst2, 'auth.json'), good);
-  writeFileSync(join(inst2, 'bin', 'grok'), readFileSync(join(inst2, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo \'{"access_token":"NEW-TOKEN-VALUE-0123456789abcdef","refresh":"r2"}\' > "$GROK_HOME/auth.json"; $1'));
-  const r2 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst2), relayScript: fakeRelay('ok') });
-  assert.equal(r2.code, 2);
-  assert.equal(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), good, '掃描失敗仍把盒內 auth.json 同步回去');
-  // ③ 成功＋合法 refresh → 同步
-  const inst3 = fakeGrok();
-  writeFileSync(join(inst3, 'auth.json'), good);
-  writeFileSync(join(inst3, 'bin', 'grok'), readFileSync(join(inst3, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo \'{"access_token":"NEW-TOKEN-VALUE-0123456789abcdef","refresh":"r2"}\' > "$GROK_HOME/auth.json"; $1'));
-  const r3 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst3), relayScript: fakeRelay('ok') });
-  assert.equal(r3.code, 0, r3.summary.join('\n'));
-  assert.match(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), /NEW-TOKEN/, '成功且合法的 refresh 沒有同步回去');
+  // ① 還新：不呼叫 fetch；盒內 auth.json 沒有 refresh_token（假 grok 把它 cat 進回覆來驗）
+  {
+    const repo = tinyRepo(); const iso = isolated();
+    const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'grep -c refresh_token "$GROK_HOME/auth.json" > "$GROK_HOME/has-refresh"; $1'));
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    // 盒子已清；從假 grok 留在 sessions 的檔看不到 has-refresh——改用 launch.json 以外的證據：盒內 auth 是 forBox（去掉 refresh_token）
+    // 直接驗 refreshSandboxAuth 的回傳形狀
+    const { refreshSandboxAuth } = await import('../scripts/grok-auth-refresh.js');
+    const a = await refreshSandboxAuth(iso.authDir, { fetchImpl: noFetch });
+    assert.equal(a.refreshed, false);
+    assert.ok(!JSON.stringify(a.forBox).includes('refresh_token'), '給盒子的版本還含 refresh_token');
+    assert.ok(JSON.stringify(a.forBox).includes('ACCESS-TOKEN-VALUE'), '給盒子的版本少了 access token');
+  }
+  // ② 到期：父程序 refresh（假 fetch 回新 token＋新 refresh_token），authDir 原子寫回；盒內拿到新 access token
+  {
+    const repo = tinyRepo(); const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ expiresInMs: -1000 }));
+    let calls = 0;
+    const okFetch = /** @type {typeof fetch} */ (async (_u, init) => { calls++; const b = String(init?.body); assert.match(b, /grant_type=refresh_token/); assert.match(b, /REFRESH-TOKEN-VALUE/); return new Response(JSON.stringify({ access_token: 'NEW-ACCESS-0123456789abcdef', refresh_token: 'NEW-REFRESH-0123456789abcdef', expires_in: 21600 }), { status: 200 }); });
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, fetchImpl: okFetch, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    assert.equal(calls, 1, 'refresh 該恰好呼叫一次');
+    const saved = readFileSync(join(iso.authDir, 'auth.json'), 'utf8');
+    assert.match(saved, /NEW-ACCESS/); assert.match(saved, /NEW-REFRESH/);
+    assert.doesNotMatch(saved, /REFRESH-TOKEN-VALUE-0123/, '舊的 refresh_token 沒被輪替掉');
+  }
+  // ③ 到期但 refresh 失敗（HTTP 401）：不掃（2）、authDir 原樣、盒子清掉
+  {
+    const repo = tinyRepo(); const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true }); const before = fakeAuth({ expiresInMs: -1000 }); writeFileSync(join(iso.authDir, 'auth.json'), before);
+    const badFetch = /** @type {typeof fetch} */ (async () => new Response('nope', { status: 401 }));
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, fetchImpl: badFetch, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 2);
+    assert.match(r.summary.join('\n'), /refresh 失敗/);
+    assert.equal(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), before, 'refresh 失敗卻動了 authDir');
+    const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
+    assert.ok(box && !existsSync(box), 'refresh 失敗後盒子沒清');
+  }
 });
 
 test('runScan｜confused deputy：盒內 sessions 裡的 symlink 不被父程序跟隨（r4 #1）', async (t) => {
