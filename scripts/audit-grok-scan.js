@@ -51,7 +51,7 @@
 //   fail-closed 邊角」同族，裁示＝補完 r9 這刀後劃界停戰——判準只承諾涵蓋**釘住版本的真實
 //   日誌形狀**與已實測過的損毀型；再往外的理論邊角不逐輪加碼、同族發現進待辦，
 //   格式漂移的最後防線＝版本釘。
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { isMainModule } from '../lib/is-main.js';
@@ -126,15 +126,20 @@ export function auditSessionDir(sessionDir) {
   if (!existsSync(sessionDir)) return { code: 2, calls, parsed, why: `session 目錄不存在：${sessionDir}` };
   /** @type {string[]} */ let files;
   /** @type {string[]} */ let jsonFiles;
+  /** @type {number} */ let nonRegular;
   try {
     const all = readdirSync(sessionDir);
-    files = all.filter((f) => f.endsWith('.jsonl'));
-    jsonFiles = all.filter((f) => f.endsWith('.json'));   // #479 r4：signals.json 等整檔 JSON 也有足跡
+    // r4（#500）：只收 regular file——symlink 指到盒外時，readFileSync 會替被審者跟出去讀（confused deputy）。
+    //   非 regular 的一律當「讀不了」（dirty），fail-closed。
+    const regular = all.filter((f) => { try { return lstatSync(join(sessionDir, f)).isFile(); } catch { return false; } });
+    nonRegular = all.length - regular.length - all.filter((f) => { try { return lstatSync(join(sessionDir, f)).isDirectory(); } catch { return false; } }).length;
+    files = regular.filter((f) => f.endsWith('.jsonl'));
+    jsonFiles = regular.filter((f) => f.endsWith('.json'));   // #479 r4：signals.json 等整檔 JSON 也有足跡
   } catch (e) {
     return { code: 2, calls, parsed, why: `讀不了 session 目錄：${e instanceof Error ? e.message : String(e)}` };
   }
   const noJsonl = !files.length;   // #479 r7：不提前 return——signals／terminal 若已確認越界，1 優先於 2
-  let dirty = 0;   // 壞行／讀不了的檔＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
+  let dirty = nonRegular;   // 壞行／讀不了的檔／非 regular（symlink 等）＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
   for (const f of files) {
     /** @type {string} */ let text;
     // ⚠️ fatal 解碼（#479 r2 High②）：'utf8' 讀檔會把無效位元組靜默換成 U+FFFD——鍵名被變形後

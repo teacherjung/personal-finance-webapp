@@ -58,7 +58,7 @@ function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '{"type":"assistant","content":"x"}\n' > "$ws/fake-session/updates.jsonl"`;
   writeFileSync(p, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
-printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/'/g, "'\\''")}"
+printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/'/g, "'\\''")}" # REPLY-LINE
 exit ${o.status ?? 0}
 `);
   chmodSync(p, 0o755);
@@ -154,7 +154,7 @@ test('runScan｜轉送器 READY 之後、grok 結束前死掉 → 2（r2：r1 �
   const repo = tinyRepo();
   // 假 grok 睡 1 秒再回 0；假轉送器 READY 後 200ms 死——grok 結束時轉送器已死，必須退 2
   const inst = fakeGrok();
-  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace("printf '%s'", "sleep 1; printf '%s'"));
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, "sleep 1; $1"));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('die-after-ready') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /轉送器在掃描結束前死了/);
@@ -263,4 +263,85 @@ test('runScan｜驗屍查到破口線索（日誌裡出現私鑰標頭這種盒�
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 1, r.summary.join('\n'));
   assert.match(r.summary.join('\n'), /沙箱破了/);
+});
+
+test('runScan｜--out 指到寫不進去的地方 → 退 2 且盒子仍清掉（r4 #4：r3 版在那裡 throw、盒子留著）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  /** @type {string[]} */ const logs = [];
+  let threw = false;
+  let r;
+  try {
+    r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: '/no/such/dir/reply.txt' }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+  } catch { threw = true; }
+  const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
+  assert.ok(box, '沒印盒子路徑');
+  assert.ok(!existsSync(box), `--out 寫失敗後盒子（含 auth.json 副本）還留在 ${box}`);
+  // 允許 throw 或退 2——重點是盒子不在；但不可以退 0
+  if (!threw) assert.notEqual(r?.code, 0, '--out 寫失敗還退 0');
+});
+
+test('runScan｜去機密：grok 把自己的登入憑證寫進回覆 → 1＝事故，--out 不寫、sessions 不留（r4 #2）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  const inst = fakeGrok();
+  // 安裝樹的 auth.json 放一個夠長的 token；假 grok 把 $GROK_HOME/auth.json 的內容印進回覆
+  writeFileSync(join(inst, 'auth.json'), JSON.stringify({ access_token: 'SECRET-TOKEN-VALUE-0123456789abcdef', kind: 'fake' }));
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'cat "$GROK_HOME/auth.json"; $1'));
+  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /去機密/);
+  assert.ok(!existsSync(out), '憑證洩漏時 --out 還是寫了');
+  const resultsDir = /結果包=([^（]+)/.exec(r.summary.find((l) => l.includes('結果包=')) || '')?.[1];
+  assert.ok(resultsDir && !existsSync(join(resultsDir, 'sessions')), '憑證洩漏時 sessions 還是進了結果包');
+});
+
+test('runScan｜auth 同步：掃描失敗時不同步、盒內 auth.json 壞掉時保留上一份好的（r4 #3）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  const iso = isolated();
+  const good = JSON.stringify({ access_token: 'GOOD-TOKEN-VALUE-0123456789abcdef', refresh: 'r' });
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), good);
+  // ① 假 grok 把盒內 auth.json 寫壞（非 JSON）然後正常結束
+  const inst = fakeGrok();
+  writeFileSync(join(inst, 'auth.json'), good);
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo GARBAGE > "$GROK_HOME/auth.json"; $1'));
+  const r1 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r1.code, 0);
+  assert.equal(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), good, '盒內壞掉的 auth.json 被同步回去了——蓋掉好的');
+  // ② 假 grok 正常 refresh（鍵集合不少）但掃描失敗（非 0）→ 不同步
+  const inst2 = fakeGrok({ status: 1 });
+  writeFileSync(join(inst2, 'auth.json'), good);
+  writeFileSync(join(inst2, 'bin', 'grok'), readFileSync(join(inst2, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo \'{"access_token":"NEW-TOKEN-VALUE-0123456789abcdef","refresh":"r2"}\' > "$GROK_HOME/auth.json"; $1'));
+  const r2 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst2), relayScript: fakeRelay('ok') });
+  assert.equal(r2.code, 2);
+  assert.equal(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), good, '掃描失敗仍把盒內 auth.json 同步回去');
+  // ③ 成功＋合法 refresh → 同步
+  const inst3 = fakeGrok();
+  writeFileSync(join(inst3, 'auth.json'), good);
+  writeFileSync(join(inst3, 'bin', 'grok'), readFileSync(join(inst3, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'echo \'{"access_token":"NEW-TOKEN-VALUE-0123456789abcdef","refresh":"r2"}\' > "$GROK_HOME/auth.json"; $1'));
+  const r3 = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst3), relayScript: fakeRelay('ok') });
+  assert.equal(r3.code, 0, r3.summary.join('\n'));
+  assert.match(readFileSync(join(iso.authDir, 'auth.json'), 'utf8'), /NEW-TOKEN/, '成功且合法的 refresh 沒有同步回去');
+});
+
+test('runScan｜confused deputy：盒內 sessions 裡的 symlink 不被父程序跟隨（r4 #1）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  const iso = isolated();
+  // 盒外放一個機密檔；假 grok 在 sessions 裡放一個指向它的 symlink
+  const outside = mkdtempSync(join(tmpdir(), 'outside-')); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET-CONTENT');
+  const inst = fakeGrok();
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `ln -s "${join(outside, 'secret.txt')}" "$ws/fake-session/leak.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  // 日誌區出現 symlink＝Grok 在放捷徑＝事故（1），而且 sessions 不得進結果包
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /非 regular file/);
+  const leaked = readdirSync(iso.resultsRoot, { recursive: true }).some((f) => String(f).endsWith('leak.jsonl') || String(f).includes('OUTSIDE-SECRET'));
+  assert.ok(!leaked, '父程序跟隨了盒內 symlink、把盒外內容抄進結果包');
+  // 盒外那個機密檔的內容也不可以出現在結果包的任何檔裡
+  for (const f of readdirSync(iso.resultsRoot, { recursive: true, withFileTypes: true })) {
+    if (f.isFile()) assert.ok(!readFileSync(join(f.parentPath ?? f.path, f.name), 'utf8').includes('OUTSIDE-SECRET'), `結果包 ${f.name} 裡有盒外內容`);
+  }
 });

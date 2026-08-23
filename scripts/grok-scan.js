@@ -250,6 +250,14 @@ export async function runScan(args, deps = {}) {
   if (!reply.trim()) return failAndClean('grok 退 0 但回覆是空的');
 
   // ── ⑤ 驗屍：足跡＋破口線索 ──
+  // r4 #1：先掃 sessions 樹——任何非 regular file／目錄（symlink、裝置…）＝Grok 在自己的日誌區放了捷徑，
+  //        父程序（驗屍、複製）讀它就會替 Grok 跟到盒外。這本身就是事故（code 1），不是「讀不清楚」。
+  {
+    const odd = [];
+    const walk = (/** @type {string} */ d) => { for (const n of readdirSync(d)) { const f = join(d, n); const st = lstatSync(f); if (st.isDirectory()) walk(f); else if (!st.isFile()) odd.push(f); } };
+    if (existsSync(sessionsRoot)) walk(sessionsRoot);
+    if (odd.length) { const m = `⚠️ 驗屍：sessions 裡有 ${odd.length} 個非 regular file（symlink／特殊檔）——Grok 在日誌區放了捷徑，這是事故：${odd.slice(0, 3).join('、')}`; log(m); summary.push(m); rmSync(sessionsRoot, { recursive: true, force: true }); return { code: 1, summary }; }
+  }
   const { dirs, unreadable, why } = allSessionDirs(src, sessionsRoot);
   if (!dirs.length) return failAndClean(`驗屍：找不到這次的 session 日誌（${why || '零 session'}）——沒有日誌＝證明不了它做了什麼`);
   if (unreadable) return failAndClean(`驗屍：有 session 讀不清楚（${why}）`);
