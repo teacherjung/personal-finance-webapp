@@ -47,6 +47,9 @@ export const BOX_FIELDS = Object.freeze({
   oidc_client_id: (v) => v === PINNED_CLIENT_ID,
 });
 
+/** 盒內 auth.json 登入項的**鍵名**——grok 1.0.3 用 `<issuer>::<client_id>`（實測）；只有這個形狀准進盒子 */
+export function boxEntryKey(pins = { issuer: PINNED_ISSUER, clientId: PINNED_CLIENT_ID }) { return `${pins.issuer}::${pins.clientId}`; }
+
 /** 每掃一個新的假值：前綴＋48 個十六進位字（轉送器比對整個值） */
 export function newDummyBearer() { return DUMMY_BEARER_PREFIX + randomBytes(24).toString('hex'); }
 
@@ -57,7 +60,7 @@ export function newDummyBearer() { return DUMMY_BEARER_PREFIX + randomBytes(24).
 export const ENUM_FIELDS = Object.freeze(['principal_type']);
 
 /**
- * DLP 針＝真 auth.json 裡**沒給盒子**的每一個字串值（遞迴、不分長短）。
+ * DLP 針＝真 auth.json 裡**沒給盒子**的每一個字串值（遞迴、不分長短）。登入項的鍵名不算（它被釘成公開的 issuer::client_id）。
  * 「沒給盒子」看的是**值**：給了盒子的值不算針，不管它在真檔裡還叫什麼欄位（2026-08-23 真跑實測：principal_id 的值
  * 等於 user_id，user_id 給了盒子、grok 自然寫進日誌，r6 初版把它當 principal_id 的針→假事故）。
  * 按**欄位**排除、不按內容形狀（r6 #6：原本用「ISO 日期開頭」排時間戳，會把恰好長那樣的 credential 也排掉）。
@@ -72,9 +75,9 @@ export function authNeedles(authJson) {
     else if (Array.isArray(v)) v.forEach((x) => walk(x, into));
     else if (v && typeof v === 'object') Object.values(v).forEach((x) => walk(x, into));
   };
-  for (const [name, cred] of Object.entries(authJson)) {
+  for (const cred of Object.values(authJson)) {
     if (!cred || typeof cred !== 'object') continue;
-    givenToBox.add(name);   // 登入項的鍵名也給了盒子
+    // 鍵名不加進 givenToBox：它必須等於釘住的公開形狀才進得了盒子（refreshSandboxAuth 驗），不是「任意值」
     for (const [k, v] of Object.entries(cred)) {
       if (k in BOX_FIELDS) walk(v, givenToBox);
       else if (!ENUM_FIELDS.includes(k)) walk(v, out);
@@ -135,7 +138,9 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
     if (!ok(current[k])) throw new Error(`auth.json 的 ${k} 格式不對——不重建盒內登入項、不掃`);
     forBox[k] = current[k];
   }
-  if (!/^[\x21-\x7e]{1,128}$/.test(key)) throw new Error('auth.json 登入項的鍵名格式不對（要可列印 ASCII、無空白、≤128 字）——不掃');
+  // r7（Codex）：外層鍵名也是「進盒子的資料」——原本只驗可列印 ASCII，鍵名若是 email 就原樣進盒、又因「給了盒子」不被 DLP 抓。
+  // 實測 grok 1.0.3 的鍵名＝`<issuer>::<client_id>`（兩個公開值）；釘死成這個形狀，不等於＝不掃。
+  if (key !== boxEntryKey(pins)) throw new Error('auth.json 登入項的鍵名不是「釘住的 issuer::client_id」——鍵名也會進盒子，不接受別的形狀、不掃');
   const dummyBearer = opt.dummyBearer ?? newDummyBearer();
   forBox.key = dummyBearer;   // r5 broker：假的；轉送器在沙箱外換真的
   return { forBox: { [key]: forBox }, dummyBearer, refreshed, expiresAt: String(current.expires_at) };

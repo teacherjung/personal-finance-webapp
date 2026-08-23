@@ -44,6 +44,7 @@ import { runCanary, sandboxEnv, PROFILE, RELAY_PORT } from './grok-sandbox-canar
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles } from './grok-auth-refresh.js';
+import { REFUSED_PREFIX, TOLERATED_REFUSALS } from './grok-relay.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -316,7 +317,7 @@ export async function runScan(args, deps = {}) {
   relay = relayProc;
   let relayDead = /** @type {string | null} */ (null);
   let relayErr = '';
-  relayProc.stderr?.on('data', (d) => { relayErr += String(d); });
+  relayProc.stderr?.on('data', (d) => { if (relayErr.length < 1024 * 1024) relayErr += String(d); });   // 有界：轉送器自己也有 MAX_REFUSALS
   relayProc.on('exit', (c, sig) => { relayDead = `轉送器退出（code ${c}, signal ${sig}）${relayErr.trim() ? `：${relayErr.trim().slice(-200)}` : ''}`; });
   const ready = await new Promise((ok) => {
     const t = setTimeout(() => ok(false), 5000);
@@ -368,6 +369,14 @@ export async function runScan(args, deps = {}) {
   if (grok.truncated) return failAndClean(`grok 輸出超過 ${OUT_CAP} bytes——丟棄`);
   if (relayDead) return failAndClean(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}（輸出已丟棄）`);
   if (grok.status === 97) return failAndClean('ulimit 設不上去——不在沒有資源上限的情況下跑');
+  // r7（Codex #2）：轉送器的每次拒絕都記在 stderr；除了刻意擋的那幾個形狀，任何拒絕＝白名單漏記或盒內程式打了不該打的＝退 2（吵），
+  //   不靠 grok 的退出碼（它收到 403 照常退 0）。
+  {
+    const refused = relayErr.split('\n').filter((l) => l.startsWith(REFUSED_PREFIX)).map((l) => l.slice(REFUSED_PREFIX.length));
+    const bad = refused.filter((l) => !TOLERATED_REFUSALS.some((t) => l.startsWith(t + ' ')));
+    if (bad.length) return failAndClean(`轉送器拒絕了 ${bad.length} 個不在白名單的請求（白名單漏記＝靜默降級，不掃）：${bad.slice(0, 3).join('；')}`);
+    if (refused.length) log(`（轉送器拒絕了 ${refused.length} 個刻意擋的形狀：${[...new Set(refused.map((l) => l.split(' (')[0]))].join('、')}）`);
+  }
   if (grok.status !== 0) return failAndClean(`grok 沒有正常結束（status ${grok.status}${grok.signal ? `, signal ${grok.signal}` : ''}${grok.error ? `, ${grok.error.message}` : ''}）——輸出已丟棄，不印`);
   if (!reply.trim()) return failAndClean('grok 退 0 但回覆是空的');
 

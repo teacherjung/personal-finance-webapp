@@ -15,7 +15,9 @@
 // ## r6 收窄（Codex r6 #5：「替任何 DUMMY 前綴、任何 method／path 背書」＝confused deputy，且能力可跨掃描重用）
 // ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃離開來的程序拿公開前綴等不到下一掃的真 token。
 // ・只轉 grok 1.0.3 實際會打的 method＋path（ALLOWED_REQUESTS，2026-08-23 用記錄型 proxy 實測抄下來的）；
-//   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。grok 升版多打新端點＝這裡 403＝掃不成（吵）。
+//   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。每次拒絕寫一行 REFUSED_PREFIX 到 stderr，
+//   grok-scan.js 讀到非 TOLERATED_REFUSALS 的拒絕＝該掃退 2——「升版多打新端點＝掃不成（吵）」由這條承重，
+//   不是由 grok 自己的退出碼（r7：grok 收到 403 照常退 0，靠它就是靜默降級）。
 // ・Authorization 不等於假值（含缺、含自編）＝403 不轉——不替盒內程式自編的 bearer 背書，也不讓它拿別的 token 借道。
 // ・上限：每個轉送器生命週期 MAX_REQUESTS 個請求、同時 MAX_INFLIGHT 個、每個 body ≤ MAX_BODY bytes；超過＝503／413、不轉。
 //
@@ -66,6 +68,12 @@ export const ALLOWED_REQUESTS = Object.freeze([
   { method: 'POST', path: /^\/v1\/sessions\/[0-9a-f-]{36}\/turn-deltas$/ },
   { method: 'POST', path: /^\/v1\/traces$/ },
 ]);
+/** 拒絕記錄的行首（grok-scan.js 用它解析 stderr） */
+export const REFUSED_PREFIX = '[relay] refused: ';
+/** 刻意擋、且實測 grok 照常回答的形狀——只有這些拒絕不讓掃描失敗 */
+export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive']);
+/** 拒絕次數上限：超過＝轉送器自己退出（退出碼 3）→ grok-scan 看到轉送器死＝退 2。否則盒內程式可以用無限個被拒請求灌爆 stderr。 */
+export const MAX_REFUSALS = 100;
 export const MAX_REQUESTS = 2000;          // 一次掃描的上限（實測一輪問答約 10 個請求）
 export const MAX_INFLIGHT = 8;
 export const MAX_BODY = 96 * 1024 * 1024;  // /v1/responses 會帶整份材料（diff 上限 64MB）
@@ -141,11 +149,18 @@ if (opt.authDir) {
   dummyBearer = readFileSync(opt.dummyFile, 'utf8').trim();
   if (!dummyBearer.startsWith(DUMMY_BEARER_PREFIX) || dummyBearer.length < DUMMY_BEARER_PREFIX.length + 32) throw new Error('broker：假值形狀不對（要 DUMMY_BEARER_PREFIX＋≥32 字隨機）');
 }
-let served = 0, inflight = 0;
+let served = 0, inflight = 0, refusals = 0;
 const server = http.createServer((req, res) => {
   if (req.method === 'CONNECT') { res.writeHead(405); res.end('relay: CONNECT not supported'); return; }
   const why = rejectReason(req, dummyBearer);
-  if (why) { res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`relay: refused (${why})`); req.resume(); return; }
+  if (why) {
+    // r7（Codex）：拒絕不能靜靜發生——grok 收到 403 多半照常退 0（實測 bundle/archive），掃描就會靜默降級。
+    // 每一次拒絕都寫一行固定格式到 stderr，grok-scan.js 讀它：除了 TOLERATED_REFUSALS 裡刻意擋的，任何拒絕＝該掃退 2（吵）。
+    process.stderr.write(`${REFUSED_PREFIX}${String(req.method || '').toUpperCase()} ${requestPath(req.url).split('?')[0].slice(0, 200)} (${why})\n`);
+    res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`relay: refused (${why})`); req.resume();
+    if (++refusals >= MAX_REFUSALS) { process.stderr.write(`[relay] 拒絕次數達 ${MAX_REFUSALS}，轉送器退出\n`); process.exit(3); }
+    return;
+  }
   if (served >= MAX_REQUESTS) { res.writeHead(503, { 'content-type': 'text/plain' }); res.end('relay: request cap reached'); req.resume(); return; }
   if (inflight >= MAX_INFLIGHT) { res.writeHead(503, { 'content-type': 'text/plain' }); res.end('relay: too many in flight'); req.resume(); return; }
   served++; inflight++;
