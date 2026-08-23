@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
-import { refreshSandboxAuth } from './grok-auth-refresh.js';
+import { refreshSandboxAuth, PINNED_ISSUER, PINNED_CLIENT_ID, DUMMY_BEARER_PREFIX } from './grok-auth-refresh.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -119,12 +119,12 @@ export async function runScan(args, deps = {}) {
   const resultsDir = join(resultsRoot, `${head.slice(0, 7)}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
   /** 盒內 → 結果包：只收 regular file，不跟 symlink（lstat）；任何非 regular 一律跳過並記 */
-  const copyRegularTree = (/** @type {string} */ from, /** @type {string} */ to) => {
+  const copyRegularTree = (/** @type {string} */ from, /** @type {string} */ to, /** @type {Set<string>} */ exclude = new Set()) => {
     const skipped = [];
     const walk = (/** @type {string} */ f, /** @type {string} */ t) => {
       const st = lstatSync(f);
       if (st.isDirectory()) { mkdirSync(t, { recursive: true }); for (const n of readdirSync(f)) walk(join(f, n), join(t, n)); }
-      else if (st.isFile()) writeFileSync(t, readFileSync(f));
+      else if (st.isFile()) { if (!exclude.has(f)) writeFileSync(t, readFileSync(f)); }
       else skipped.push(f);
     };
     if (existsSync(from)) walk(from, to);
@@ -132,11 +132,12 @@ export async function runScan(args, deps = {}) {
   };
   let cleaned = false;
   let keepSessions = false;   // r5 #1：只有走完 DLP 的成功路徑才設 true——其餘出口一律丟棄盒內輸出
+  /** @type {Set<string>} */ let excludeFromResults = new Set();   // DLP 驗不了的（非 UTF-8）不進結果包
   const cleanup = () => {
     if (cleaned) return; cleaned = true;
     try {
       if (keepSessions) {
-        const skipped = copyRegularTree(sessionsRoot, join(resultsDir, 'sessions'));
+        const skipped = copyRegularTree(sessionsRoot, join(resultsDir, 'sessions'), excludeFromResults);
         if (skipped.length) log(`⚠️ 結果包略過 ${skipped.length} 個非 regular file（symlink／特殊檔）：${skipped.slice(0, 3).join('、')}`);
       }
     } finally {
@@ -148,7 +149,6 @@ export async function runScan(args, deps = {}) {
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來）
   const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
   /** @type {string} */ let verText;
-  /** @type {Record<string, unknown>} */ let authBefore;
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
   /** @type {number | null} */ let grokPgid = null;
@@ -187,8 +187,7 @@ export async function runScan(args, deps = {}) {
     // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放短效版本
     try {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
-      authBefore = a.forBox;
-      writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });
+      writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });   // forBox：假 token、無 refresh_token
     } catch (e) { return failAndClean(`憑證 refresh 失敗：${/** @type {Error} */ (e).message}`); }
   }
   // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
@@ -325,29 +324,40 @@ export async function runScan(args, deps = {}) {
   //    拿**本次已知的憑證值**去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   //    ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。而且 token 在走轉送器時就已到 xAI
   //    ——那是它自己發的 token，不算外流；真正要防的是它被帶出盒子進到 GitHub／磁碟。
-  // 本次已知的憑證值＝盒內 auth.json 裡 ≥16 字的字串（access token、id 等）；refresh_token 不在盒內，但也一併比對 authDir 那份
+  // 本次已知的機密值＝**authDir 那份真 auth.json** 裡 ≥16 字的字串（真 access token、refresh_token、user_id／email 等身分欄位），
+  // 排除：時間戳（ISO 日期形狀）、釘死的公開 issuer／client_id。盒內那份（authBefore）是假 token＋同樣的身分欄位，不另加。
+  // ⚠️ broker 之後真 token 從未進盒子，這一段是 defense-in-depth：撐不起「去機密」的保證（Base64／拆段擋不住），
+  //    只證明「明文沒出現」。
   const authDirVals = (() => { try { return Object.values(JSON.parse(readFileSync(join(authDir, 'auth.json'), 'utf8'))); } catch { return []; } })();
-  const secretValues = [...Object.values(authBefore), ...authDirVals].flatMap((v) => (typeof v === 'string' && v.length >= 16 ? [v] : typeof v === 'object' && v ? Object.values(v).filter((x) => typeof x === 'string' && x.length >= 16) : []));
+  const isTimestamp = (/** @type {string} */ x) => /^\d{4}-\d{2}-\d{2}T/.test(x);
+  /** @type {Set<string>} */ const binaries = new Set();
+  const publicVals = new Set([PINNED_ISSUER, PINNED_CLIENT_ID]);
+  const secretValues = authDirVals.flatMap((v) => (typeof v === 'object' && v ? Object.values(v) : [v]))
+    .filter((x) => typeof x === 'string' && x.length >= 16 && !isTimestamp(x) && !publicVals.has(x) && !x.startsWith(DUMMY_BEARER_PREFIX));
   const leaksIn = (/** @type {string} */ text) => secretValues.some((v) => text.includes(v));
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現登入憑證的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
   // 遞迴整棵 sessions（r5 #1：原本只掃根層，terminal/call-*.log 這種巢狀日誌漏掉）；no-follow；fatal decode（解不開＝不保存）
   {
     const dec = new TextDecoder('utf-8', { fatal: true });
     const walk = (/** @type {string} */ d) => {
+      if (!existsSync(d)) return false;
       for (const n of readdirSync(d)) {
         const fp = join(d, n); const st = lstatSync(fp);
         if (st.isDirectory()) { if (walk(fp)) return true; continue; }
         if (!st.isFile()) continue;   // 非 regular 已在驗屍前擋成事故；這裡防禦性跳過
-        let text; try { text = dec.decode(readFileSync(fp)); } catch { const m = `⚠️ 去機密：session 檔 ${fp.split('/').slice(-2).join('/')} 不是合法 UTF-8——不保存`; log(m); summary.push(m); worst = 1; return true; }
+        // 非 UTF-8（grok 自己寫的 session_search.sqlite 之類）＝驗不了＝**不保存**，但不是事故；記進 binaries 讓複製時跳過
+        let text; try { text = dec.decode(readFileSync(fp)); } catch { binaries.add(fp); continue; }
         if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${fp.split('/').slice(-2).join('/')} 裡出現登入憑證的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; return true; }
       }
       return false;
     };
     if (existsSync(sessionsRoot)) walk(sessionsRoot);
+    if (binaries.size) log(`（結果包略過 ${binaries.size} 個非 UTF-8 檔——驗不了就不保存：${[...binaries].slice(0, 3).map((f) => f.split('/').pop()).join('、')}）`);
   }
   if (worst === 0 && outFile) writeFileSync(outFile, reply);
   // （r4 之後沒有「掃後同步 auth」：盒內是去掉 refresh_token 的短效版本，長效的只住在 authDir、由掃描前的 refresh 維護）
   keepSessions = worst === 0;   // 事故：日誌不進結果包；成功：這是唯一把「可保存」設成 true 的地方
+  excludeFromResults = binaries;
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對憑證值）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   summary.push(recipe);
