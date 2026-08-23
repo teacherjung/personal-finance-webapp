@@ -2,7 +2,7 @@
 // 與總覽月度回顧同一套判準（配對由後端 derive.pairRefunds 算，這裡只驗「拿配對結果做加總與標記」）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth } from '../public/modules/refund-attribution.js';
+import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth, rewardsForMonth } from '../public/modules/refund-attribution.js';
 
 const tx = (id, date, category, amount, extra = {}) => ({ id, date, category, amount, ...extra });
 
@@ -110,4 +110,24 @@ test('未對應清單：只留本月、且只留這個帳本裡的那幾筆', ()
   assert.deepEqual(got.map(u => u.id), ['r1']);
   assert.deepEqual(unmatchedRefundsForMonth(unmatched, all, '2026-02').map(u => u.id), ['r2']);
   assert.deepEqual(unmatchedRefundsForMonth(null, all, '2026-03'), []);
+});
+
+test('回饋按月篩：與未對應退款同一把尺（信用卡費頁是按月看的那一頭）', () => {
+  // ⚠️ 這一題是 Grok 掃描 2026-08-23 第 3 條補的：在此之前 `rewardsForMonth` 在整個 test/ 裡**零次**出現，
+  //    只有 API 那頭有題（斷言 body.rewards 存在）。前端若漏接這個欄位、或改成自己拿字樣重算，
+  //    當時沒有任何一題會轉紅——而信用卡費頁角落那筆錢就會消失。
+  const all = [
+    { id: 'rw1', date: '2026-03-14', amount: -365 },
+    { id: 'rw2', date: '2026-02-09', amount: -120 },
+  ];
+  const rewards = [
+    { id: 'rw1', date: '2026-03-14', amount: 365, store: '折帳單（信用卡點數折抵消費）' },
+    { id: 'rw2', date: '2026-02-09', amount: 120, store: '點數折抵' },
+    { id: 'ghost', date: '2026-03-02', amount: 99, store: '不在本帳本的回饋' },
+  ];
+  assert.deepEqual(rewardsForMonth(rewards, all, '2026-03').map(r => r.id), ['rw1']);
+  assert.deepEqual(rewardsForMonth(rewards, all, '2026-02').map(r => r.id), ['rw2']);
+  assert.deepEqual(rewardsForMonth(rewards, all, '2026-01'), [], '沒有回饋的月份要回空陣列');
+  assert.deepEqual(rewardsForMonth(null, all, '2026-03'), [], '端點沒回 rewards 時不可炸掉整頁');
+  assert.deepEqual(rewardsForMonth(undefined, all, '2026-03'), []);
 });

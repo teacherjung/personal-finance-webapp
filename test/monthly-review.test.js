@@ -2,7 +2,8 @@
 // 只用合成資料，不讀取任何真實 store。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { consumptionByMonth, buildMonthlyReview } from '../lib/derive.js';
+import { consumptionByMonth, buildMonthlyReview, pairRefunds } from '../lib/derive.js';
+import { refundPairKeyOf } from '../lib/statement.js';
 
 const tx = (id, date, amount, extra = {}) => ({
   id, date, amount, type: 'expense', ledger: 'card', source: 'stmt',
@@ -136,6 +137,11 @@ test('回饋｜不進退款配對：配對身分真的撞上時，那筆真消�
   //    （Grok 掃描 2026-08-23 抓到；我實跑那個突變確認 12 題全過＝原版是空包彈。）
   //    正解＝兩組的配對鑰匙**都相同**（都是 `星巴克`），唯一的變因只有負數列原文帶不帶回饋字樣。
   const buy = (id) => tx(id, '2026-05-10', 365, { note: '星巴克', stmtRef: 'card-1|2026-05-10|365|星巴克' });
+  // ⚠️ **變因只有一個**這件事要自己斷言，不能靠「今天剛好相等」：兩組的配對鑰匙必須都等於消費那把。
+  //    現況三者都被 lib/statement.js 的 STORE_CANON 收成 `星巴克`；哪天有人把 /點數折抵/ 排到 /星巴克/ 前面，
+  //    實驗組的鑰匙就會變成 `點數折抵` ⇒ 兩組不再可比 ⇒ 這題會靜靜退化成空包彈。（Grok 掃描 2026-08-23 第 2 條）
+  assert.equal(refundPairKeyOf('退貨_星巴克'), refundPairKeyOf('星巴克'), '對照組與消費不同鑰匙＝這題比不出東西');
+  assert.equal(refundPairKeyOf('點數折抵_星巴克'), refundPairKeyOf('星巴克'), '實驗組與消費不同鑰匙＝這題比不出東西');
 
   // 對照組：同一把鑰匙、負數列**沒有**回饋字樣 ⇒ 是普通退款 ⇒ 配得起來、5 月被抵成 0
   const asRefund = consumptionByMonth({ transactions: [
@@ -162,19 +168,26 @@ test('回饋｜自己的月份不長出負數、不新增分類', () => {
   assert.equal(out.rewards.length, 1);
 });
 
-test('回饋｜讓位給真退款：三列同一把配對鑰匙時，消費該被真退款抵、不該被回饋佔走', () => {
-  // 同卡、**同一把配對鑰匙（星巴克）**、同金額：一筆消費、一筆較早的回饋、一筆較晚的真退款。
-  // 回饋若仍進配對池，它日期較早會先把消費配走 ⇒ 真退款被擠進未對應清單、5 月不會歸零。
+test('回饋｜讓位給真退款：三列同一把配對鑰匙時，配上那筆消費的必須是真退款、不是回饋', () => {
+  // ⚠️ **不可以用「5 月歸零」當這題的核心斷言**：回饋若仍進配對池，它日期較早會先把消費配走，
+  //    5 月**照樣歸零**（只是抵它的人換成回饋）——那條斷言在目標突變下恆真，證明不了題名說的事。
+  //    （第一版的註解正好寫反，說「回饋若仍進配對池⋯5 月不會歸零」；Grok 掃描 2026-08-23 第 1 條抓到。）
+  //    真正要釘的是**配對關係本身**：pairs 裡那一對的 refund 必須是 `ref`，不是 `rw`。
   const rows = [
     tx('buy', '2026-05-10', 365, { note: '星巴克', stmtRef: 'card-1|2026-05-10|365|星巴克' }),
     tx('rw', '2026-05-20', -365, { note: '點數折抵（星巴克）', stmtRef: 'card-1|2026-05-20|-365|點數折抵_星巴克' }),
     tx('ref', '2026-06-14', -365, { note: '星巴克退貨', stmtRef: 'card-1|2026-06-14|-365|退貨_星巴克' }),
   ];
+  const { pairs, unmatchedRefunds, rewards } = pairRefunds({ transactions: rows });
+  assert.equal(pairs.length, 1, '應該恰好配成一對');
+  assert.equal(pairs[0].refund.id, 'ref', '配上那筆消費的不是真退款（被回饋佔走了？）');
+  assert.equal(pairs[0].purchase.id, 'buy');
+  assert.deepEqual(unmatchedRefunds, [], '真退款被擠到未對應清單去了');
+  assert.equal(rewards.length, 1, '回饋要獨立成一格');
+  assert.equal(rewards[0].id, 'rw');
+  // 連帶：消費視角那一頭 5 月確實被抵成 0（由真退款抵的）
   const out = consumptionByMonth({ transactions: rows });
-  assert.equal(out.byMonth['2026-05']['飲食'].total, 0, '真退款沒有抵到那筆消費（被回饋佔走了？）');
-  assert.deepEqual(out.unmatchedRefunds, [], '真退款被擠到未對應清單去了');
-  assert.equal(out.rewards.length, 1, '回饋要獨立成一格');
-  assert.equal(out.rewards[0].id, 'rw');
+  assert.equal(out.byMonth['2026-05']['飲食'].total, 0);
 });
 
 test('回饋｜繳款優先：同時像繳款又像回饋的說明仍走繳款那格（順序不可調換）', () => {

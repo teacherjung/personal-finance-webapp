@@ -71,11 +71,13 @@ test('與月度回顧同一份判準：配對結果一致（同步點，走散�
     reviewBody.unmatchedRefunds.items.map((/** @type {any} */ u) => u.id));
 });
 
-test('回饋要一起吐出來：信用卡費頁的「本月回饋」只認這個欄位（漏傳＝那筆錢從角落消失）', async () => {
+test('GET /api/refund-pairs 要吐出 rewards 欄位（這題只驗 API JSON；前端怎麼用它＝refund-attribution 那支）', async () => {
   // ⚠️ 這支端點是**手動挑欄位**回傳（lib/routes/core.js），不是整包 pairRefunds 直送——
   //    所以「rewards 有沒有被傳出去」需要自己一題釘住。實測把 res.json 裡的 rewards 拿掉：
-  //    這支檔其餘題與月度回顧那條路（回整包 buildMonthlyReview）都還是綠的，
-  //    但信用卡費頁的回饋註記與彈窗表會變空＝那筆錢只剩明細列、角落說明沒了。（Grok 掃描 2026-08-23）
+  //    這支檔其餘題與月度回顧那條路（回整包 buildMonthlyReview）都還是綠的。
+  //    ⚠️ **本題只證明 API 吐得出來**，不證明信用卡費頁有接上——前端那半由
+  //    test/refund-attribution.test.js 的 rewardsForMonth 那題守（Grok 掃描 2026-08-23 第 3 條：
+  //    原本的題名寫「信用卡費頁只認這個欄位」，比斷言大）。
   store.save({ ...store.emptyDb(), transactions: [
     card('buy', '2026-01-12', '飲食', 365, '星巴克'),
     card('rw', '2026-02-14', '其他', -365, '點數折抵_星巴克'),

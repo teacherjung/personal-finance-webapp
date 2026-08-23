@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   MONTHLY_REVIEW_INFO,
   monthlyReviewCardHtml,
@@ -34,7 +35,7 @@ const review = {
   rewards: { count: 1, total: 365, items: [{ date: '2025-09-14', store: '<回饋店>', amount: 365 }] },
 };
 
-test('月度回顧卡：大類先顯示、子類可展開，五個白話入口與兩把尺標示齊全', () => {
+test('月度回顧卡片：白話入口每一把鑰匙都長出按鈕、使用者文字跳脫、兩種尺與退款／回饋註記齊全', () => {
   const html = monthlyReviewCardHtml(review, fmt);
   assert.match(html, /月度回顧/);
   assert.match(html, /<details class="mr-category">/);
@@ -108,4 +109,17 @@ test('月度回顧空狀態與載入失敗不讓總覽崩潰', () => {
   assert.match(monthlyReviewCardHtml(null, fmt), /暫時無法載入/);
   assert.match(monthlyReviewCardHtml({ months: [], selectedMonth: null }, fmt), /尚無已結清月份/);
   assert.equal(MONTHLY_REVIEW_INFO.lens.title, '「消費」和「現金流支出」差在哪？');
+});
+
+test('總覽的 ⓘ 接線：cashback 這把鑰匙必須走 rewardInfoHtml，不能只吐 info.html', () => {
+  // ⚠️ **這是原始碼形狀掃描，不是行為考題**——`public/modules/dashboard.js` 頂層 import `app.js`，
+  //    node 載不動整頁模組（本 repo 既有劃界，同款先例＝test/dashboard-forest.test.js 的接線題）。
+  //    它擋得住的：有人把 `key === 'cashback' ? rewardInfoHtml(...)` 那條三元拿掉。
+  //    它擋不住的：接線還在但傳錯參數、或 rewardInfoHtml 自己壞掉（那由本檔上面的行為題守）。
+  //    為什麼需要它：Grok 掃描 2026-08-23 第 4 條——拿掉那條三元，ⓘ 只剩固定文案、折抵列表整張消失，
+  //    而當時三個考題檔**全綠**（它們都只測純函式，沒人測那條接線）。
+  const source = readFileSync(new URL('../public/modules/dashboard.js', import.meta.url), 'utf8');
+  assert.match(source, /rewardInfoHtml/, 'dashboard 沒有 import／呼叫 rewardInfoHtml');
+  assert.match(source, /key === 'cashback'\s*\?\s*rewardInfoHtml\(/, 'cashback 這把鑰匙沒有接到 rewardInfoHtml');
+  assert.match(source, /key === 'refund'\s*\?\s*unmatchedRefundInfoHtml\(/, '孿生的退款接線也要在（一起改壞才不會靜靜通過）');
 });
