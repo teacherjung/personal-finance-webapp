@@ -210,7 +210,7 @@ test('強閘×匯入｜幣別判準四種來源同向：map 命中／accounts �
   assert.equal(imp.foreign, 2, '匯入端把同兩列當外幣跳過＝兩邊同向');
   assert.equal(imp.imported, 0);
   // c. 帳單查無、db 現金帳戶說 USD → 服務層帶 db 補位＝skip
-  const db3 = { accounts: [{ type: 'cash', currency: 'USD', accountNo: '900500888', name: '外幣戶' }] };
+  const db3 = { accounts: [{ type: 'cash', currency: 'USD', accountNo: '9005001234888', name: '外幣戶' }] };   // 完整號：可見頭 900500＋藏四碼＋尾 888（星號至少藏一碼，#504 r4#1）
   assert.equal(assertBankReconciled(base(), db3).ok, true, 'db 補位判外幣＝閘也要跳過');
   // d. 全 miss → fallback TWD＝會被當台幣匯入＝亂鏈必須照擋
   assert.throws(() => assertBankReconciled(base()), (/** @type {any} */ e) => e.status === 400);
