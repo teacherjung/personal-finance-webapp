@@ -9,7 +9,7 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
-import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth } from './refund-attribution.js';
+import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth, rewardsForMonth } from './refund-attribution.js';
 import { subcategoryOptionsHtml } from './form-options.js';
 import { openStatementUpload, openBatchManager } from './transactions-import.js';
 
@@ -62,6 +62,8 @@ export async function renderTransactions() {
   const expense = Object.values(byCat).reduce((s, v) => s + Number(v || 0), 0);
   const unmatchedThisMonth = unmatchedRefundsForMonth(refundData?.unmatchedRefunds, all, monthFilter);
   const unmatchedTotal = unmatchedThisMonth.reduce((s, /** @type {any} */ u) => s + Math.abs(Number(u.amount) || 0), 0);
+  const rewardsThisMonth = rewardsForMonth(refundData?.rewards, all, monthFilter);
+  const rewardTotal = rewardsThisMonth.reduce((s, /** @type {any} */ u) => s + Math.abs(Number(u.amount) || 0), 0);
   const topCats = topSpendCategories(byCat, 6);   // 淨額 0 的分類不畫（Codex 複審 2026-07-27，與月度回顧同口徑）
   const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
 
@@ -104,8 +106,9 @@ export async function renderTransactions() {
               <div class="credit-category-label"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
               <div class="pill-bar credit-category-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
             </div>`).join('') : '<p class="empty credit-category-empty">本月尚無消費。</p>'}
-          ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款算在退款當月）。重新整理可再試一次。</p>' : ''}
+          ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款與點數折抵都算在發生當月）。重新整理可再試一次。</p>' : ''}
           ${unmatchedThisMonth.length ? `<p class="credit-category-note">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo">為什麼？</button></p>` : ''}
+          ${rewardsThisMonth.length ? `<p class="credit-category-note">本月另有 ${rewardsThisMonth.length} 筆回饋（共 ${money(rewardTotal)}）是點數折抵帳單，未計入上面的統計。 <button type="button" class="info-link" id="rewardInfo">為什麼？</button></p>` : ''}
         </div>
       </section>
 
@@ -143,11 +146,22 @@ export async function renderTransactions() {
     <ul>
       <li><b>原始消費那個月的帳單還沒匯入</b>——補匯之後會自動接上，不用手動修。</li>
       <li><b>部分退款</b>：退的金額和原始消費對不起來（v1 只做金額完全相同的精準配對）。</li>
-      <li><b>本來就沒有對應消費</b>：點數折抵、儲值贖回這類，天然不會有配對。</li>
+      <li><b>本來就沒有對應消費</b>：儲值贖回這類，天然不會有配對。（點數折抵已另外歸成「回饋」，不在這份清單裡。）</li>
     </ul>
     <p>配不到就不猜，寧可少抵也不要亂抵到別家店的消費上。</p>
     <div class="table-wrap"><table class="summary-table"><thead><tr><th>退款日</th><th>店家</th><th class="num">金額</th></tr></thead>
       <tbody>${unmatchedThisMonth.map((/** @type {any} */ u) =>
+    `<tr><td>${esc(u.date)}</td><td>${esc(u.store)}</td><td class="num">${money(Math.abs(Number(u.amount) || 0))}</td></tr>`).join('')}</tbody></table></div>`, { size: 'md' });
+  const rewardBtn = byId('rewardInfo');
+  if (rewardBtn) rewardBtn.onclick = () => openInfo('回饋為什麼不算進消費？', `
+    <p>這幾筆是<b>用點數折抵帳單</b>：帳單上印成負數，長得很像退款，但它不是把某一筆消費的錢退還給你。</p>
+    <ul>
+      <li>退款＝那筆東西你沒買成，錢退回來 ⇒ 要回頭把<b>當初那個月</b>的花費減掉。</li>
+      <li>回饋＝東西你照買了、錢照花了，只是這次帳單用點數少收你一些 ⇒ 減掉當月花費會讓你以為那個月比較省。</li>
+    </ul>
+    <p>所以它單獨列在這裡，不進上面的分類統計。不過它確實讓你這期要繳的卡費變少，「緊急預備金可以撐幾個月」那個提醒仍然把它算進去。</p>
+    <div class="table-wrap"><table class="summary-table"><thead><tr><th>折抵日</th><th>帳單說明</th><th class="num">金額</th></tr></thead>
+      <tbody>${rewardsThisMonth.map((/** @type {any} */ u) =>
     `<tr><td>${esc(u.date)}</td><td>${esc(u.store)}</td><td class="num">${money(Math.abs(Number(u.amount) || 0))}</td></tr>`).join('')}</tbody></table></div>`, { size: 'md' });
   bindSortClicks(view(), listSort, renderTransactions);   // 共用排序 infra（tx-sort.js）
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));

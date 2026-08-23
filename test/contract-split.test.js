@@ -583,6 +583,8 @@ const MANIFEST = {
       'public/modules/form-options.js',
       'test/refund-attribution.test.js',
       'test/refund-pairing-aggregate.test.js',
+      // 回饋（點數折抵）＝負數列第三格：安全網刻意不排除回饋，那條保存型考題住這裡
+      'test/reminder-thresholds.test.js',
       'test/statement-pipeline.test.js',
       'test/store-rules.test.js',
     ],

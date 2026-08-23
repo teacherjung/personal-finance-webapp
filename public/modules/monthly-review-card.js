@@ -20,6 +20,10 @@ export const MONTHLY_REVIEW_INFO = Object.freeze({
     title: '退款是怎麼算的？',
     html: '<p>退款會自動尋找對應的消費，把錢退回<b>當初購買的月份</b>，這樣每個月的花費才準。</p><p>如果找不到對應消費，例如舊帳單還沒匯入，就先不計入，免得某個月憑空多一筆退款、看起來像多賺錢。補匯原消費月份的帳單後，它會自動歸位。</p>',
   },
+  cashback: {
+    title: '回饋是什麼？為什麼不算進消費？',
+    html: '<p>用信用卡點數折抵帳單的那幾筆，帳單上印成負數，看起來很像退款——但它不是「把某一筆消費的錢退還給你」，而是<b>拿點數去折掉帳單金額</b>。</p><p>所以它不會回頭抵減任何一個月的花費（那會讓那個月看起來變便宜，其實你當初真的花了那些錢），而是單獨列在這裡讓你知道<b>這段期間總共折抵了多少</b>。</p><p>另外，它確實會讓你之後要繳的卡費變少，所以「緊急預備金可以撐幾個月」那個提醒仍然把它算進去。</p>',
+  },
   incomplete: {
     title: '這個月花很少？',
     html: '<p>這個月看起來特別低，可能是那個月的帳單還沒匯入，<b>不一定是真的省</b>。補匯之後，月度回顧會自動更新。</p>',
@@ -81,6 +85,8 @@ export function monthlyReviewCardHtml(review, fmt) {
   const cf = review.selected?.cashflow || {};
   const net = Number(cf.net || 0);
   const unmatched = review.unmatchedRefunds || { count: 0, total: 0, items: [] };
+  // 與 unmatched 同為**全庫不分月**（口徑理由見 lib/derive.js 的 buildMonthlyReview 回傳處）
+  const cashback = review.rewards || { count: 0, total: 0, items: [] };
   const hasIncomplete = months.some((/** @type {any} */ row) => row.possiblyIncomplete);
 
   return `<section class="monthly-review dash-block">
@@ -103,7 +109,18 @@ export function monthlyReviewCardHtml(review, fmt) {
       <div class="mr-cf-values"><div><span>收入</span><b>${fmt.money(cf.income)}</b></div><div><span>支出</span><b>${fmt.money(cf.expense)}</b></div><div><span>淨額</span><b class="${net < 0 ? 'neg' : 'pos'}">${net >= 0 ? '+' : ''}${fmt.money(net)}</b></div>${cf.overdraft ? `<div class="mr-overdraft"><span>本月透支</span><b class="neg">${fmt.money(-Number(cf.overdraftAmount || 0))}</b></div>` : ''}</div>
     </div>
     ${Number(unmatched.count || 0) > 0 ? `<div class="mr-refund-note">另有 ${Number(unmatched.count)} 筆退款（共 ${fmt.money(unmatched.total)}）找不到對應消費、未計入。 <button type="button" class="info-link" data-mr-info="refund">查看與說明</button></div>` : ''}
+    ${Number(cashback.count || 0) > 0 ? `<div class="mr-refund-note">另有 ${Number(cashback.count)} 筆回饋（共 ${fmt.money(cashback.total)}）是點數折抵帳單、不列入消費。 <button type="button" class="info-link" data-mr-info="cashback">查看與說明</button></div>` : ''}
   </section>`;
+}
+
+/**
+ * @param {any} review
+ * @param {{esc:(v:unknown)=>string, money:(v:any)=>string}} fmt
+ */
+export function rewardInfoHtml(review, fmt) {
+  const items = Array.isArray(review?.rewards?.items) ? review.rewards.items : [];
+  const rows = items.map((/** @type {any} */ row) => `<tr><td>${fmt.esc(row.date)}</td><td>${fmt.esc(row.store)}</td><td class="num">${fmt.money(row.amount)}</td></tr>`).join('');
+  return `${MONTHLY_REVIEW_INFO.cashback.html}${rows ? `<div class="table-wrap"><table class="summary-table"><thead><tr><th>折抵日</th><th>帳單說明</th><th class="num">金額</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}`;
 }
 
 /**
