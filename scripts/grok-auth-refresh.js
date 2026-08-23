@@ -51,22 +51,36 @@ export const BOX_FIELDS = Object.freeze({
 export function newDummyBearer() { return DUMMY_BEARER_PREFIX + randomBytes(24).toString('hex'); }
 
 /**
- * DLP 針＝真 auth.json 裡**沒給盒子**的每一個字串值（遞迴、不分長短；登入項的鍵名也給了盒子、不算）。
+ * 不是身分也不是憑證的枚舉欄位——值是 xAI 的詞彙（例如 principal_type 是一個四字的類別詞），拿來當針只會誤中任何日誌。
+ * **只點名這些**；不在 BOX_FIELDS 也不在這裡的欄位（含日後新增的）一律當針（fail-closed 方向）。
+ */
+export const ENUM_FIELDS = Object.freeze(['principal_type']);
+
+/**
+ * DLP 針＝真 auth.json 裡**沒給盒子**的每一個字串值（遞迴、不分長短）。
+ * 「沒給盒子」看的是**值**：給了盒子的值不算針，不管它在真檔裡還叫什麼欄位（2026-08-23 真跑實測：principal_id 的值
+ * 等於 user_id，user_id 給了盒子、grok 自然寫進日誌，r6 初版把它當 principal_id 的針→假事故）。
  * 按**欄位**排除、不按內容形狀（r6 #6：原本用「ISO 日期開頭」排時間戳，會把恰好長那樣的 credential 也排掉）。
  * 呼叫端還要再剔掉「已在給盒子的材料裡出現」的針（在輸入裡的字串偵測不了外流）——那一步在 grok-scan.js。
  * @param {Record<string, Record<string, unknown>>} authJson
  */
 export function authNeedles(authJson) {
   /** @type {Set<string>} */ const out = new Set();
-  const walk = (/** @type {unknown} */ v) => {
-    if (typeof v === 'string') { if (v) out.add(v); }
-    else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  /** @type {Set<string>} */ const givenToBox = new Set();
+  const walk = (/** @type {unknown} */ v, /** @type {Set<string>} */ into) => {
+    if (typeof v === 'string') { if (v) into.add(v); }
+    else if (Array.isArray(v)) v.forEach((x) => walk(x, into));
+    else if (v && typeof v === 'object') Object.values(v).forEach((x) => walk(x, into));
   };
-  for (const cred of Object.values(authJson)) {
+  for (const [name, cred] of Object.entries(authJson)) {
     if (!cred || typeof cred !== 'object') continue;
-    for (const [k, v] of Object.entries(cred)) if (!(k in BOX_FIELDS)) walk(v);
+    givenToBox.add(name);   // 登入項的鍵名也給了盒子
+    for (const [k, v] of Object.entries(cred)) {
+      if (k in BOX_FIELDS) walk(v, givenToBox);
+      else if (!ENUM_FIELDS.includes(k)) walk(v, out);
+    }
   }
+  for (const v of givenToBox) out.delete(v);
   return [...out];
 }
 

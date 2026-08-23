@@ -28,7 +28,7 @@
 // 退出碼：0＝全部擋住且正面案例通過（可以掃）／1＝有一隻金絲雀活著（**沙箱是假的，不准掃**）／
 //        2＝這台機器跑不了（非 macOS、沒有 sandbox-exec、沙箱 apply 不了、對照組不活、盒子不存在）——fail-closed，同樣不准掃。
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync, lstatSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,11 +137,29 @@ export async function runCanary(box, opt = {}) {
   writeFileSync(inside, 'INSIDE-OK\n');
   // 剪貼簿：**先存、後還原**（r1 直接覆寫再清空＝把使用者的剪貼簿弄丟；Codex r2 跑考題時實際觸發）。
   // r3：只在「現在剪貼簿還是我放的暗號」時才還原——使用者在金絲雀跑的那幾秒複製了新東西，不能被蓋掉。
-  const clipBefore = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
+  // r6：剪貼簿是**全機唯一**的共享狀態——npm test 平行跑多個考題檔、每個都跑金絲雀，兩個同時 pbcopy／pbpaste／還原會互踩
+  //     （實測 ~2/7 次：對照組 pbpaste 退 1＝被另一個還原成空 → 整隻金絲雀退 2）。所以這一段用跨程序鎖序列化（mkdir 原子鎖，陳舊鎖 60 秒回收）。
+  /** @type {import('node:child_process').SpawnSyncReturns<string> | null} */ let clipBefore = null;
   const restoreClipboard = () => {
+    if (!clipBefore) return;   // 還沒拿過鎖＝沒動過剪貼簿
     const now = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
     if ((now.stdout || '').includes(secret)) spawnSync('/usr/bin/pbcopy', { input: clipBefore.status === 0 ? (clipBefore.stdout || '') : '', encoding: 'utf8', timeout: 5000 });
   };
+  const CLIP_LOCK = '/private/tmp/grok-canary-clipboard.lock';
+  const sleepSync = (/** @type {number} */ ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  /** 拿到鎖回 true；等超過 60 秒回 false（呼叫端當「對照組不活」處理，fail-closed） */
+  const acquireClipLock = () => {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try { mkdirSync(CLIP_LOCK); return true; }
+      catch {
+        try { if (Date.now() - lstatSync(CLIP_LOCK).mtimeMs > 60_000) rmSync(CLIP_LOCK, { recursive: true, force: true }); } catch { /* 別人剛釋放 */ }
+        sleepSync(50);
+      }
+    }
+    return false;
+  };
+  const releaseClipLock = () => { try { rmSync(CLIP_LOCK, { recursive: true, force: true }); } catch { /* 已釋放 */ } };
   // 盒內 grok-home 的探針目標（r3：不再碰真 ~/.grok——它不在沙箱裡，寫入探針對它沒有意義，反而 cleanup 會動到使用者檔）
   /** 唯一且確認原本不存在的路徑——cleanup 只刪自己建的（r3 #3：固定名＋無條件刪會把使用者同名檔刪掉） */
   const uniq = (/** @type {string} */ dir, /** @type {string} */ stem) => { const p = join(dir, `${stem}-${secret}`); if (existsSync(p)) throw new Error(`探針路徑已存在：${p}`); return p; };
@@ -234,9 +252,15 @@ export async function runCanary(box, opt = {}) {
     // 網路（要對照：沙箱外取得到 1 byte 才算探針活的）
     mustFailWithControl('連外網（curl 取 1 byte）', ['/usr/bin/curl', '-s', '-m', '5', '-f', '-o', '/dev/null', '-r', '0-0', 'https://example.com/'], (r) => r.status === 0);
     // IPC：剪貼簿（要對照：先放暗號，沙箱外讀得到才算；結束一律還原使用者原本的內容）
-    spawnSync('/usr/bin/pbcopy', { input: secret, encoding: 'utf8' });
-    mustFailWithControl('讀剪貼簿（pbpaste）', ['/bin/sh', '-c', `/usr/bin/pbpaste | /usr/bin/grep -q ${secret}`], (r) => r.status === 0);
-    restoreClipboard();
+    if (!acquireClipLock()) { lines.push('⛔ 對照組不活｜讀剪貼簿（pbpaste）（60 秒等不到剪貼簿鎖）——這隻測不出，fail-closed'); dead += 1000; }
+    else {
+      try {
+        clipBefore = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
+        spawnSync('/usr/bin/pbcopy', { input: secret, encoding: 'utf8' });
+        mustFailWithControl('讀剪貼簿（pbpaste）', ['/bin/sh', '-c', `/usr/bin/pbpaste | /usr/bin/grep -q ${secret}`], (r) => r.status === 0);
+        restoreClipboard();
+      } finally { releaseClipLock(); }
+    }
     // IPC：Keychain（對照：沙箱外 dump 有項目）
     mustFailWithControl('讀 Keychain（security dump-keychain）', ['/bin/sh', '-c', '/usr/bin/security dump-keychain 2>/dev/null | /usr/bin/grep -q "keychain:"'], (r) => r.status === 0);
     // 環境變數：**確定性注入**哨兵到呼叫者 env（r2：r1 只在父環境剛好有 token 時才測得到），盒內 env 不得出現

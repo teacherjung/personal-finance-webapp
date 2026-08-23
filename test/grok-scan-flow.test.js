@@ -484,7 +484,7 @@ test('runScan｜r6 #6：DLP 真相來源（authDir/auth.json）在掃描中途�
   assert.equal(readdirSync(iso.resultsRoot).flatMap((d) => readdirSync(join(iso.resultsRoot, d))).includes('sessions'), false, '真相來源讀不到還保存了 sessions');
 });
 
-test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email 出現在回覆＝1；已在材料裡的針（first_name）剔除並記錄、出現在回覆不算', async (t) => {
+test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email／日期形狀 token 出現在回覆＝1；給了盒子的值與枚舉詞不算針；已在材料裡的針剔除並記錄', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   // ① email（24 字以下、不是 token 形狀）出現在回覆 → 1
@@ -501,7 +501,23 @@ test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email 出�
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 1, `日期形狀的 token 外流沒被當事故：${r.summary.join('\n')}`);
   }
-  // ③ first_name「測試用」在指示檔裡本來就有 → 針剔除、有 log；回覆含它 → 0
+  // ③ 給了盒子的值不算針、不管真檔裡還叫什麼欄位：principal_id 的值＝user_id（真檔實際如此）；枚舉欄位 principal_type 不算針
+  {
+    const iso = isolated(); mkdirSync(iso.authDir, { recursive: true });
+    writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ extra: { principal_id: '0ed1fd13-5d15-4f01-9a1e-2d9cb2f1f111', principal_type: 'User' } }));
+    const inst = fakeGrok({ reply: 'User 0ed1fd13-5d15-4f01-9a1e-2d9cb2f1f111 wrote this' });
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, `給了盒子的 user_id／枚舉詞被當成針：${r.summary.join('\n')}`);
+  }
+  // ④ 但 team_id（沒給盒子、跟 user_id 不同值）出現在回覆 → 1
+  {
+    const iso = isolated(); mkdirSync(iso.authDir, { recursive: true });
+    writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ extra: { team_id: '7777aaaa-5d15-4f01-9a1e-2d9cb2f1f222' } }));
+    const inst = fakeGrok({ reply: 'team 7777aaaa-5d15-4f01-9a1e-2d9cb2f1f222' });
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 1, `team_id 外流沒被當事故：${r.summary.join('\n')}`);
+  }
+  // ⑤ first_name「測試用」在指示檔裡本來就有 → 針剔除、有 log；回覆含它 → 0
   {
     const iso = isolated(); mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth());
     const inst = fakeGrok({ reply: 'FAKE-REPLY 測試用' });
