@@ -107,6 +107,7 @@
   font-size: 10.5px; font-weight: 700;
 }
 .card-type-tag.membership { color: var(--text-dim); background: var(--card-2); }
+.card-type-tag.debit { color: var(--text-dim); background: var(--card-2); }   /* 簽帳金融卡：跟會員卡一樣用淡色（不是帳務卡） */
 
 .card-schedule {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));

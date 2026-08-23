@@ -196,6 +196,20 @@ test('A 區｜表頭少了定位用的欄名（消費明細／外幣折換日）
   assert.deepEqual(parseTaishinDebitCardRows(lines), { rows: [], sawHeader: false });
 });
 
+test('★parseTaishinDebit 的輸出帶 cardRows（A 區讀出的筆）：這是 bank-import 記卡片帳本的唯一來源', async () => {
+  const { parseTaishinDebit } = await import('../lib/bank-statement.js');
+  const lines = [
+    L(700, [[137, '感謝您使用本行簽帳金融卡消費(存款帳號**********1234) ，對帳單期間內之消費明細提供您核對。', 293]]),
+    L(690, [[137, '對帳單期間：2026/01/01 ~ 2026/01/31', 123]]),
+    A_HEAD(), CARD(244, '8808'), ...purchase(227, '2026/01/28', '2026/01/27', '甲店', '305'),
+    L(120, [[143, '日期', 13], [191, '摘要', 13], [239, '支出', 13], [291, '存入', 13], [342, '餘額', 13], [415, '備註', 13]]),
+    L(110, [[131, '2026/01/28', 37], [185, '刷卡消費', 27], [251, '305', 17], [312, '0', 11], [346, '9,695', 25], [390, '甲店', 61]]),
+  ];
+  const r = parseTaishinDebit(lines);
+  assert.equal(r.transactions.length, 1);
+  assert.deepEqual(r.cardRows.map((c) => [c.date, c.desc, c.amount, c.lastFour]), [['2026-01-27', '甲店', 305, '8808']], '★A 區的筆要一起交出去');
+});
+
 // ---------- 對到 D 區 ----------
 const tx = (/** @type {any} */ o) => ({ acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: null, note: '', ...o });
 const card = (/** @type {any} */ o) => ({ postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 0, lastFour: '8808', desc: '甲店', region: 'TW', extra: '', ...o });
