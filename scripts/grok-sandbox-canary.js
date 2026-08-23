@@ -248,6 +248,9 @@ export async function runCanary(box, opt = {}) {
         }
       } finally { srv.kill(); }
     }
+    // DNS（Grok 第一次正式掃描抓到：r1–r14 放行 mDNSResponder socket＝盒內能解析任意網域＝查詢名就是外送通道）：
+    //   沙箱外 dns.lookup 成功（對照）、盒內必須失敗。走 getaddrinfo（mDNSResponder），跟 TCP 連外是兩條不同的路。
+    mustFailWithControl('DNS 解析外部網域（getaddrinfo → mDNSResponder）', [process.execPath, '-e', `require('node:dns').lookup('example.com',(e,a)=>{if(e){console.log('DNS-ERR '+e.code);process.exit(3)}console.log('DNS-RESOLVED-${secret} '+a)})`], (r) => r.status === 0 && (r.stdout || '').includes('DNS-RESOLVED-'));
     // 網路（要對照：沙箱外取得到 1 byte 才算探針活的）
     mustFailWithControl('連外網（curl 取 1 byte）', ['/usr/bin/curl', '-s', '-m', '5', '-f', '-o', '/dev/null', '-r', '0-0', 'https://example.com/'], (r) => r.status === 0);
     // IPC：剪貼簿（要對照：先放暗號，沙箱外讀得到才算；結束一律還原使用者原本的內容）

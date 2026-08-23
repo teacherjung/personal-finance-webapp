@@ -712,3 +712,33 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
   assert.ok(!ps.includes(box), 'grok 群組還活著');
 });
+
+test('runScan｜Grok 掃描抓到：活金絲雀暗號只出現在 grok 的**回覆**（不在 session）→ 1、--out 不寫、sessions 不留（原本只掃 session 檔）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const liveSecret = 'LIVE-CANARY-TEST-0123456789';
+  const inst = fakeGrok({ reply: `I read your store.db: ${liveSecret}` });
+  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), liveSecret });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  assert.ok(!existsSync(out), '事故還寫了 --out');
+  assert.equal(readdirSync(iso.resultsRoot).flatMap((d) => readdirSync(join(iso.resultsRoot, d))).includes('sessions'), false, '事故還保存了 sessions');
+});
+
+test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-results 留任何目錄；事故（退 1）留 launch.json、不留 sessions', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  {
+    const iso = isolated();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ status: 1 })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 2);
+    assert.deepEqual(readdirSync(iso.resultsRoot), [], '退 2 還在結果根留了目錄');
+  }
+  {
+    const iso = isolated();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: 'LIVE-CANARY-X-0123456789' })), relayScript: fakeRelay('ok'), liveSecret: 'LIVE-CANARY-X-0123456789' });
+    assert.equal(r.code, 1);
+    const dirs = readdirSync(iso.resultsRoot); assert.equal(dirs.length, 1, '事故應留一個結果目錄當證據');
+    assert.deepEqual(readdirSync(join(iso.resultsRoot, dirs[0])), ['launch.json']);
+  }
+});

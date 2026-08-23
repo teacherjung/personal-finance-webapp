@@ -42,13 +42,13 @@ test('沙箱｜金絲雀：列出的禁區全部擋住、正面案例通過（�
   } finally { rmSync(box, { recursive: true, force: true }); }
 });
 
-test('沙箱｜真正的 repo 禁區：data/ 目錄、.ssh、.gitconfig 在盒子裡讀不到（不靠金絲雀的假檔）', (t) => {
+test('沙箱｜家目錄底下的真實路徑（Desktop＝repo 與 store.db 住的地方、.ssh、.gitconfig、真 ~/.grok）在盒子裡讀不到（不靠金絲雀的假檔；Grok 掃描抓到舊題名寫「data/」但 argv 是 Desktop）', (t) => {
   if (!CAN_SANDBOX) { t.skip(SKIP); return; }
   const box = tmpBox();
   const home = homedir();
   try {
     for (const [label, argv] of /** @type {[string, string[]][]} */ ([
-      ['repo 的 data/ 目錄', ['/bin/ls', join(home, 'Desktop')]],   // store.db 住在 Desktop 底下的 repo；Desktop 本身就該擋
+      ['~/Desktop（repo 與 store.db 住這底下）', ['/bin/ls', join(home, 'Desktop')]],
       ['~/.ssh', ['/bin/ls', join(home, '.ssh')]],
       ['~/.gitconfig', ['/bin/cat', join(home, '.gitconfig')]],
       ['真 ~/.grok（不在沙箱裡）', ['/bin/ls', join(home, '.grok')]],
@@ -93,6 +93,9 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   assert.match(sb, /\(allow network-outbound \(remote tcp \(string-append "localhost:" \(param "RELAY_PORT"\)\)\)\)/, '少了「只准連轉送器 port」');
   assert.doesNotMatch(sb, /\(allow network-outbound[^\n]*"localhost:\*"/, '放行了 localhost:* outbound——盒內程式連得到本機理財 app');
   assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '放行了任意對外網路');
+  // Grok 第一次正式掃描抓到：放行 mDNSResponder 的 unix socket＝盒內能解析任意網域＝DNS 查詢名是外送通道
+  assert.doesNotMatch(sb, /\(allow network-outbound[^\n]*unix-socket/, '放行了 unix-socket outbound（mDNSResponder＝DNS 外送通道）');
+  assert.doesNotMatch(sb, /^\s*\(allow[^\n]*mDNSResponder/m, '放行了 mDNSResponder——盒內就能解析任意網域');
   // r6 #1：/usr/local 明確拒（讀＋執行）在檔尾（後面的規則蓋前面的）
   assert.match(sb, /\(deny file-read\* process-exec\* \(subpath "\/usr\/local"\)\)/, '少了 /usr/local 的明確 deny——放行整棵 /usr 會把 pkg 裝的第二顆 node 帶進來');
   // setpgid（82）**不可以**擋：grok 的工具靠它起子行程，擋了就 spawn EPERM、盒子裡一條指令都跑不了（煙霧測試實際踩到）

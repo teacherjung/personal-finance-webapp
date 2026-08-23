@@ -114,11 +114,13 @@
 ;; r3：真 ~/.grok **完全不進沙箱**（r2 放行整棵唯讀被抓到：歷史 sessions 仍可讀；clone 整棵又把憑證複製進 /private/tmp）。
 (allow file-read* file-write* (subpath (param "SCAN_DIR")))
 
-;; ── 網路：只准連轉送器；本機伺服器准起（bind/inbound）但客戶端連不到它（見劃界）──
+;; ── 網路：只准連轉送器（TCP）；不給 DNS；本機伺服器准起（bind/inbound）但客戶端連不到它（見劃界）──
 (allow network-outbound (remote tcp (string-append "localhost:" (param "RELAY_PORT"))))
 (allow network-bind (local tcp "localhost:*"))
 (allow network-inbound (local tcp "localhost:*"))
-(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
+;; ⚠️ 不放行 /private/var/run/mDNSResponder 的 unix socket（r1–r14 一直放著）：有它盒內就能 getaddrinfo **任意網域**——
+;;    DNS 查詢名本身就是一條不經轉送器、不需假 token 的外送通道（Grok 2026-08-23 第一次正式沙箱掃描實測 dns.lookup 成功；
+;;    Codex 十四輪沒看到）。grok 只連 127.0.0.1:RELAY_PORT（數字 IP），不需要 DNS；反面金絲雀：盒內 dns.lookup 必須失敗。
 (allow system-socket)
 
 ;; ── r6 明確拒絕（Seatbelt 後面的規則蓋前面的；這段要留在檔尾）──

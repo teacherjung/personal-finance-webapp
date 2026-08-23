@@ -28,7 +28,8 @@
 //   不證明沙箱完整。沙箱有效的證明在第②步的金絲雀，不在這裡。
 // ・setsid 在 Seatbelt 擋不住（實測：deny syscall-unix 147 無效；82＝setpgid 擋得住但 grok 的工具靠它起子行程、擋了就跑不了指令，所以也不擋）。
 //   「程序群組已全部收束」**不是**本腳本的保證；
-//   保證的是離開群組的程序**無害**：它的沙箱只准連本掃的隨機 port（下一掃換 port＝連不到）、只認本掃的假值、
+//   保證的是離開群組的程序**無害**：它的沙箱只准連本掃的隨機 port（下一掃換 port＝連不到）、**沒有 DNS**（r15 拿掉 mDNSResponder socket；
+//   之前查詢名本身就是外送通道——Grok 第一次正式掃描抓到、Codex 十四輪沒看到）、只認本掃的假值、
 //   只能讀寫已被刪掉的盒子路徑；父程序讀 sessions 是單趟＋上限，它改檔只會讓本掃 fail-closed，改不了結果包。
 //   另加 lsof 掃蕩（best-effort，找 cwd／txt 在盒內的程序殺掉並記數）。
 // ・資源上限是 ulimit（單檔 64MB、程序數＝啟動時同 uid 程序數＋256、CPU 1800 秒）＋父程序讀 sessions 的上限；
@@ -169,6 +170,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {(msg: string) => void} [log]
  * @property {string} [relayScript]
  * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
+ * @property {string} [liveSecret] 活金絲雀的暗號；預設隨機。只給考題（假 grok 要能把它寫進 stdout／session 來證明會被抓）
  */
 
 /**
@@ -216,8 +218,10 @@ export async function runScan(args, deps = {}) {
     try { rmSync(dummyFile, { force: true }); } catch { /* 沒建 */ }
     rmSync(box, { recursive: true, force: true });
   };
+  /** 沒掃成（退 2）＝結果包整個不留（Grok 掃描抓到：原本每次失敗都在 ~/.grok-scan-results 留一個空目錄或只有 launch.json）；事故（退 1）留 launch.json 當證據、不留 sessions */
+  const dropResultsDir = () => { try { rmSync(resultsDir, { recursive: true, force: true }); } catch { /* 盡力 */ } };
   /** @param {string} why @returns {{ code: 2, summary: string[] }} */
-  const failAndClean = (why) => { cleanup(); return fail(why); };
+  const failAndClean = (why) => { cleanup(); dropResultsDir(); return fail(why); };
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來；r6：只剩 bin/grok＋重建的 auth.json＋空 sessions/）
   const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
   /** @type {string} */ let verText;
@@ -333,7 +337,7 @@ export async function runScan(args, deps = {}) {
   }
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
-  const liveSecret = `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   liveDir = mkdtempSync(join(homedir(), '.grok-live-canary-'));
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
@@ -441,6 +445,8 @@ export async function runScan(args, deps = {}) {
   // 拿真 auth.json 裡**沒給盒子**的每個值去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
+  // 回覆也跑破口線索（Grok 第一次正式掃描抓到：原本只掃 session 檔，盒外內容只寫進最終回覆就退 0 並寫 --out）
+  if (breachHits(reply).length) { const m = '⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out'; log(m); summary.push(m); worst = 1; }
   for (const [rp, buf] of snap.files) {
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     if (breachHits(text).length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
