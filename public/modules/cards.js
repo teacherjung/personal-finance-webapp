@@ -3,7 +3,9 @@ import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, t
 import { icon } from './icons.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
-const TYPE_LABEL = { credit: '信用卡', membership: '會員卡' };
+const TYPE_LABEL = { credit: '信用卡', membership: '會員卡', debit: '簽帳金融卡' };
+// 簽帳金融卡（Stage 5b）：刷卡直接從存款帳戶扣，**沒有結帳日、繳款日、年費**；它存在的理由是讓金融卡帳單的
+// 「刷卡消費明細」有一本自己的消費帳本（跟信用卡一樣做分類分析），銀行匯入時會自動建一張。
 
 // 卡片效期只記年/月（卡面 MM/YY），有效到該月「月底」——倒數與停用判斷都以月底計。
 // 兼容舊資料的完整日期（YYYY-MM-DD 原樣沿用）。
@@ -14,9 +16,11 @@ const expiryEnd = (e) => /^\d{4}-\d{2}$/.test(e || '')
 function cardSummary(list) {
   const credit = list.filter(c => (c.type || 'credit') === 'credit');
   const member = list.filter(c => c.type === 'membership');
+  const debit = list.filter(c => c.type === 'debit');
   return {
     credit,
     member,
+    debit,
     annualFees: credit.reduce((sum, c) => sum + Number(c.annualFee || 0), 0),
     expiringSoon: list.filter(c => {
       const days = daysUntil(expiryEnd(c.expiry));
@@ -118,6 +122,7 @@ export async function renderCards() {
       </div>
 
       ${cardSection('信用卡', '帳務與繳款', summary.credit, 'credit')}
+      ${cardSection('簽帳金融卡', '直接扣帳戶，只記消費', summary.debit, 'debit')}
       ${cardSection('會員卡', '會籍與權益', summary.member, 'membership')}
     </div>
   `;
@@ -135,10 +140,12 @@ export async function renderCards() {
 }
 
 function cardSection(title, eyebrow, list, type) {
-  const emptyText = type === 'credit' ? '尚無信用卡' : '尚無會員卡';
+  const emptyText = type === 'credit' ? '尚無信用卡' : type === 'debit' ? '尚無簽帳金融卡' : '尚無會員卡';
   const emptyGuide = type === 'credit'
     ? '新增後可一起查看結帳日、繳款日、年費與效期。'
-    : '新增後可記錄會員編號、等級、權益與效期。';
+    : type === 'debit'
+      ? '上傳金融卡帳單時會自動建立；刷卡消費明細會記到它的消費帳本做分類分析。'
+      : '新增後可記錄會員編號、等級、權益與效期。';
   return `<section class="card-tracker-section">
     <div class="card-tracker-section-head">
       <div><span>${eyebrow}</span><h2>${title}</h2></div>
@@ -156,6 +163,7 @@ function cardSection(title, eyebrow, list, type) {
 
 function cardPanel(c) {
   const credit = (c.type || 'credit') === 'credit';
+  const debit = c.type === 'debit';
   const expiry = expiryMeta(c.expiry);
   const dueLabel = c.dueDay
     ? `${Number(c.statementDay) && Number(c.dueDay) < Number(c.statementDay) ? '次月' : '每月'} ${c.dueDay} 日`
@@ -164,6 +172,10 @@ function cardPanel(c) {
     ['末四碼', c.lastFour ? `•••• ${c.lastFour}` : '未設定'],
     ['卡片組織', c.network || '未設定'],
     ['年費', c.annualFee === '' || c.annualFee == null ? '未設定' : money(c.annualFee)],
+  ] : debit ? [
+    ['末四碼', c.lastFour ? `•••• ${c.lastFour}` : '未設定'],
+    ['發卡銀行', c.issuer || '未設定'],
+    ['卡片組織', c.network && c.network !== '—' ? c.network : '未設定'],
   ] : [
     ['會員編號', c.memberId || '未設定'],
     ['會員等級', c.level || '未設定'],
@@ -175,7 +187,7 @@ function cardPanel(c) {
         <span class="card-tracker-mark">${icon('card', 18)}</span>
         <div><h3>${esc(c.name)}</h3><p>${esc(c.issuer || (credit ? '發卡銀行未設定' : '發卡機構未設定'))}</p></div>
       </div>
-      <span class="card-type-tag ${credit ? 'credit' : 'membership'}">${TYPE_LABEL[c.type || 'credit'] || '信用卡'}</span>
+      <span class="card-type-tag ${credit ? 'credit' : debit ? 'debit' : 'membership'}">${TYPE_LABEL[c.type || 'credit'] || '信用卡'}</span>
     </div>
 
     ${credit ? `<div class="card-schedule" aria-label="結帳與繳款日">
@@ -205,7 +217,7 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
   openForm({
     title: c ? '編輯卡片' : '新增卡片',
     fields: [
-      { key: 'type', label: '卡片類型', type: 'select', options: [{ value: 'credit', label: '信用卡' }, { value: 'membership', label: '會員卡' }], default: 'credit' },
+      { key: 'type', label: '卡片類型', type: 'select', options: [{ value: 'credit', label: '信用卡' }, { value: 'debit', label: '簽帳金融卡' }, { value: 'membership', label: '會員卡' }], default: 'credit' },
       { key: 'name', label: '卡片名稱', type: 'text', required: true, placeholder: '例：台新 GOGO 卡' },
       { key: 'issuer', label: '發卡銀行 / 機構', type: 'text', placeholder: '例：台新銀行' },
       { key: 'network', label: '卡片類別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },

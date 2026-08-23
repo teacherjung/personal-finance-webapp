@@ -107,6 +107,7 @@
   font-size: 10.5px; font-weight: 700;
 }
 .card-type-tag.membership { color: var(--text-dim); background: var(--card-2); }
+.card-type-tag.debit { color: var(--text-dim); background: var(--card-2); }   /* 簽帳金融卡：淡色——它有消費帳本、但沒有結帳／繳款要追 */
 
 .card-schedule {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));

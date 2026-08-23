@@ -213,7 +213,7 @@
 | 必填欄位與跨欄不變式 | REQUIRED_FIELDS／ROW_RULES 三個強制點（CRUD 400／匯入整份 400／櫃檯 throw）；strip 對壞必填整筆濾除不可只刪欄位；新主鍵欄補進 REQUIRED_FIELDS——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#必填欄位機制與跨欄不變式) |
 | 測試隔離慣例 B0 | 測試一律 STORE_FILE 指暫存 .db、絕不碰真實 data/；server.js export app、只有直接執行才 listen——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#測試隔離慣例-b0) |
 | PDF 逐列抽取器（pdfjs → 帶座標的列） | 三份刻意分工勿合併（信用卡丟座標／銀行保留 x+y／證券 x+y＋跨頁）＋各自的合成座標考題——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#pdf-逐列抽取器) |
-| **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
+| **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`；**簽帳金融卡明細一份帳單兩種明細**（A 區刷卡消費→自動建簽帳卡、走信用卡帳單同一條路進卡片帳本；D 區刷卡列分類留空＝錢不算兩次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
 | **帳戶完整帳號與餘額匯入**（`accountNo`＝PII） | GET 只回 `accountNoSet`＋`accountNoLast4`；末碼＋幣別比對、現值參考日較新才覆蓋（**讀不到／壞日期＝只跳過更新餘額，交易照樣匯入**——不覆蓋餘額、不寫 balanceAsOf、不新建帳戶；模板與 AI 兩條路共用，2026-08-13）、自動建帳戶不設 ibCashCur；密碼解析時只在記憶體、**預設用完即丟，勾記住才依機密規則儲存**（P0.5，見「匯入密碼池」節）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
 | **帳單原文取法**（`origFromStmtRef`／`stmtOrig`） | 一律走這兩個取用器（會剝去重序號）；不要各頁手寫 split 取原文——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文取法-origfromstmtref) |
 | **匯入對帳閘**（`lib/statement-reconcile.js`，P0 2026-08-11） | 強＝銀行餘額鏈＋真末筆對概要（**只驗台幣帳戶**＝射程對齊匯入；首筆未驗＝誠實計數）、中＝摘要等式擋下＋明細對總額**影子不擋**、弱＝沒數字可對；不一致＝整份 400、缺數字＝skip 降級放行；卡閘只在預覽（importRows 不重解析）；★6：AI 路線（P1）弱閘不准匯入——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入對帳閘) |
@@ -296,7 +296,7 @@
 | `accounts` | name, type, class, currency, balance, accountNo（PII，前端可填、GET 剝成末 4 碼） | **balanceAsOf**（銀行對帳單「較新才覆蓋」的餘額參考日——**服務層寫、非 CRUD 白名單**，Codex r14#5：勿誤列成使用者可寫）、ibCashCur（IB 同步）、**bank**（開戶機構戳，P1a 機構維度——銀行匯入**新建**帳戶時蓋、比對成功不回填；matchAccount 憑它擋跨行誤配；FIELD_SCHEMA 驗字串（P1a r1#3）） | — |
 | `holdings` | symbol, name, layer, currency, quantity, price, avgCost, cost, quoteSymbol | source（IB 同步；`source:'ib'` 決定融資槓桿，假值會藏風險） | ⚠️`price` **多方合法寫**：使用者手動＋前端「更新報價」按鈕＋後端 D1 `refreshQuotesIfStale`（開 app 自動）——都合法，非違規 |
 | `watchlist` | symbol, name, targetPrice, currency, quoteSymbol, note | — | ⚠️`lastPrice`/`lastAt`＝**報價衍生**，目前**前端「更新報價」按鈕**寫（PUT）故**仍在白名單**。低風險（觀察清單不進淨值）。**待辦**：D-engine market-data 服務化後，把持股/觀察清單報價更新全移到後端（比照 D1），`lastPrice`/`lastAt`（＋或 `holdings.price`）退出白名單＝純服務擁有 |
-| `cards` | name, type, issuer, network, lastFour, level, memberId, statementDay, dueDay, annualFee, expiry, benefits, note, pdfPassword | — | pdfPassword＝PII（身分證字號；讀寫端 `projectCard` 剝，只卡片編輯窗需要） |
+| `cards` | name, type（credit／debit／membership）, issuer, network, lastFour, level, memberId, statementDay, dueDay, annualFee, expiry, benefits, note, pdfPassword | 銀行匯入（bank-import）會**自動建**簽帳金融卡（type:'debit'；Stage 5b） | pdfPassword＝PII（身分證字號；讀寫端 `projectCard` 剝，只卡片編輯窗需要） |
 | `subscriptions` / `insurance` / `research` / `history` | 全部欄位（見 `WRITABLE_FIELDS`） | — | — |
 | `settings` | 頂層／signals／ib 各有白名單（見同步點「settings 新增欄位」列） | quotesLastAt（報價更新）、storeRulesHash（規則整理）、healthDismissed（體檢略過）；其餘服務欄與「**匯入備份要保留**」規則＝同步點「settings 新增欄位」列（單一真相，此處不重抄清單） | — |
 | `securityTrades` | —（READONLY，前端只 GET） | **IB 同步雙寫＋台新對帳單匯入**；細節見同步點清單「securityTrades 欄位所有權與去重」列 | — |
