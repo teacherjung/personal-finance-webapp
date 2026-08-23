@@ -60,6 +60,8 @@ export function sandboxEnv(box) {
 
 /** 金絲雀單獨跑時用的 port 參數（正式掃描每掃向 OS 要一個隨機 port、再把它傳給 runCanary——金絲雀與發射用同一組參數） */
 export const RELAY_PORT = 18765;
+/** 盒子住的地方：macOS 的 /private/tmp（sandbox-exec 比對 realpath；其他審查樹也住這）；沒有它的平台（CI 的 Linux）退回 tmpdir()——那裡本來就套不上沙箱、金絲雀會 fail-closed */
+export const BOX_ROOT = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
 
 /**
  * 在沙箱裡跑一條指令。cwd 預設＝盒子（考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到）。
@@ -125,7 +127,7 @@ export async function runCanary(box, opt = {}) {
   const home = homedir();
   const secret = `CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const outsideHome = mkdtempSync(join(home, '.grok-canary-'));       // 家目錄底下
-  const outsideTmp = mkdtempSync(join('/private/tmp', 'grok-canary-')); // /private/tmp（其他審查樹住這）
+  const outsideTmp = mkdtempSync(join(BOX_ROOT, 'grok-canary-')); // /private/tmp（其他審查樹住這）
   const outsideVarTmp = mkdtempSync('/private/var/tmp/grok-canary-');   // r2 點名漏掉的位置
   // /Users/Shared：**mkdtemp 建唯一目錄**、cleanup 只刪自己建的（r1 用固定檔名＋無條件刪＝會動到使用者既有檔）
   const outsideShared = existsSync('/Users/Shared') ? mkdtempSync('/Users/Shared/grok-canary-') : null;
@@ -145,7 +147,7 @@ export async function runCanary(box, opt = {}) {
     const now = spawnSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 });
     if ((now.stdout || '').includes(secret)) spawnSync('/usr/bin/pbcopy', { input: clipBefore.status === 0 ? (clipBefore.stdout || '') : '', encoding: 'utf8', timeout: 5000 });
   };
-  const CLIP_LOCK = '/private/tmp/grok-canary-clipboard.lock';
+  const CLIP_LOCK = join(BOX_ROOT, 'grok-canary-clipboard.lock');
   const sleepSync = (/** @type {number} */ ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   /** 拿到鎖回 true；等超過 60 秒回 false（呼叫端當「對照組不活」處理，fail-closed） */
   const acquireClipLock = () => {

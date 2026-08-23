@@ -42,7 +42,7 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCanary, sandboxEnv, PROFILE, RELAY_PORT } from './grok-sandbox-canary.js';
+import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles } from './grok-auth-refresh.js';
@@ -60,6 +60,8 @@ export const EXPECTED_GROK_VERSION = '1.0.3';
  */
 export const EXPECTED_GROK_SHA256 = '09deaf06804955ff2d6ccef2042af4031c659c47fd16eb3c72664a8f533832da';
 export { RELAY_PORT };
+/** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
+const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
 
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });
@@ -199,7 +201,7 @@ export async function runScan(args, deps = {}) {
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
   // ── ① 建盒子 ──
-  const box = realpathSync(mkdtempSync(`/private/tmp/grok-scan-${head.slice(0, 7)}-`));
+  const box = realpathSync(mkdtempSync(join(BOX_ROOT, `grok-scan-${head.slice(0, 7)}-`)));
   const src = join(box, 'src');
   mkdirSync(src); mkdirSync(join(box, 'tmp'));
   log(`盒子：${box}`);
@@ -242,7 +244,7 @@ export async function runScan(args, deps = {}) {
   const relayPort = await freePort();
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
-    const c = spawnSync('/bin/cp', ['-c', realGrokBin, grokBin], { encoding: 'utf8' });   // APFS clone，127MB 免費
+    const c = spawnSync('/bin/cp', [...CP_CLONE, realGrokBin, grokBin], { encoding: 'utf8' });   // APFS clone，127MB 免費
     if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗：${c.stderr}`);
     // r4 #5：對**盒內副本**算 hash（不是真檔——檢查與複製之間的路徑替換競態）；不符＝不掃；之後只執行這份副本
     const sha = createHash('sha256').update(readFileSync(grokBin)).digest('hex');
@@ -282,7 +284,7 @@ export async function runScan(args, deps = {}) {
     rmSync(tarPath);
     // node_modules：先 realpath（工作樹裡它是 symlink；cp -Rc 對 operand 本身是 symlink 時會複製 symlink、不跟隨——Codex r1 實測）
     const nmReal = realpathSync(join(repo, 'node_modules'));
-    const c = spawnSync('/bin/cp', ['-Rc', nmReal, join(src, 'node_modules')], { encoding: 'utf8' });
+    const c = spawnSync('/bin/cp', ['-R', ...CP_CLONE, nmReal, join(src, 'node_modules')], { encoding: 'utf8' });
     if (c.status !== 0) return failAndClean(`node_modules clone 失敗：${c.stderr}`);
     const st = lstatSync(join(src, 'node_modules'));
     if (!st.isDirectory() || st.isSymbolicLink()) return failAndClean('盒子裡的 node_modules 不是真目錄（symlink 指回家目錄＝沙箱裡讀不到）');

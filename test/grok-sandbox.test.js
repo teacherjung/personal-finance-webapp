@@ -16,17 +16,17 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { runCanary, runInSandbox, isBlocked, canApplySandbox, PROFILE } from '../scripts/grok-sandbox-canary.js';
+import { runCanary, runInSandbox, isBlocked, canApplySandbox, PROFILE, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 
 // ⚠️ 不是「darwin＋有 sandbox-exec」就能跑：巢狀沙箱環境（Codex 的審查樹）apply 會退 71——r2 版因此三關紅、
 //    而反面題把 71 當「禁區擋住」假綠（Codex r3 #1）。一律用能力探測決定 skip，反面題一律走 isBlocked()。
-const CAP = (() => { const d = mkdtempSync('/private/tmp/grok-sandbox-cap-'); try { return canApplySandbox(d); } finally { rmSync(d, { recursive: true, force: true }); } })();
+const CAP = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-sandbox-cap-')); try { return canApplySandbox(d); } finally { rmSync(d, { recursive: true, force: true }); } })();
 const CAN_SANDBOX = CAP.ok;
 const SKIP = `這台套不上沙箱：${CAP.why}（強制點在 scripts/grok-scan.js 的掃描前金絲雀，它會 fail-closed）`;
 
 /** 建一個最小盒子（在 /private/tmp，不在家目錄底下——沙箱設定放行的是盒子路徑）。 */
 function tmpBox() {
-  const d = mkdtempSync('/private/tmp/grok-sandbox-test-');
+  const d = mkdtempSync(join(BOX_ROOT, 'grok-sandbox-test-'));
   writeFileSync(join(d, 'hello.txt'), 'HELLO-FROM-BOX\n');
   return d;
 }
