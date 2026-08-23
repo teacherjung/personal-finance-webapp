@@ -12,7 +12,7 @@
 ;;
 ;; ## 參數（由 scripts/grok-scan.js 傳入）
 ;;   SCAN_DIR＝盒子（讀寫；裡面有 src/、tmp/、grok-home/＝bin/grok＋重建的 auth.json＋空 sessions/）
-;;   RELAY_PORT＝轉送器的 port（網路**只准連這一個**；每掃隨機——上一掃逃出群組的程序，其沙箱連不到下一掃的轉送器）
+;;   RELAY_PORT＝轉送器的 port（網路**只准連這一個**；每掃隨機——上一掃離開群組的程序，其沙箱連不到下一掃的轉送器）
 ;; 真 ~/.grok 不是參數——它不在沙箱裡，任何路徑都讀不到。
 ;; 環境變數由 grok-scan.js 用白名單重建：HOME／TMPDIR／GROK_HOME 全指進盒子、PATH 指真 git（繞開 xcrun shim）。
 ;;
@@ -37,7 +37,7 @@
 ;;   （這台 macOS 15.7 的 system.sb:19,23；Codex r3 實查）。剪貼簿／Keychain 金絲雀證明的只是「那兩個指令在這份
 ;;   profile 下失敗」，不能歸因到哪條規則、也不能說 IPC 被關了。私有 system.sb 日後擴張時沒有考題會紅。
 ;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
-;; ・setsid **擋不住**（r6 實測：deny syscall-unix 147 無效、82＝setpgid 有效）——逃出程序群組是可能的；它無害的理由在 grok-scan.js 檔頭。
+;; ・setsid **擋不住**（r6 實測：deny syscall-unix 147 無效、82＝setpgid 有效）——離開程序群組是可能的；它無害的理由在 grok-scan.js 檔頭。
 (version 1)
 (deny default)
 (import "system.sb")
@@ -126,7 +126,7 @@
 ;; Python 連結；上面放行整棵 /usr 等於把它一起帶進來（Codex r6 #1）。明確拒讀＋拒執行。
 ;; 反面金絲雀：/usr/local/bin/node 在盒內必須跑不起來、/usr/local 列不了。
 (deny file-read* process-exec* (subpath "/usr/local"))
-;; setsid(147)／setpgid(82)：盒內程式自己換 session／process group 就逃出父程序的 kill(-pgid)（Codex r6 #2 反例）。
+;; setsid(147)／setpgid(82)：盒內程式自己換 session／process group 就離開父程序的 kill(-pgid)（Codex r6 #2 反例）。
 ;; 號碼來自 MacOSX.sdk sys/syscall.h；syscall-unix 是私有介面，所以這條靠金絲雀撐：
 ;; 盒內 perl POSIX::setsid／setpgid 必須 EPERM、node detached spawn 必須失敗（test/grok-sandbox.test.js）。
 (deny syscall-unix (syscall-number 147) (syscall-number 82))

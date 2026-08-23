@@ -114,7 +114,7 @@ test('runScan｜grok 版本不符 → 2（條款：版本不同＝當未跑；�
   assert.match(r.summary.join('\n'), /版本不符/);
 });
 
-test('runScan｜版本要**精確等於**，前綴不算（r2：wrapper 印 "grok 1.0.3-evil" 就能過 startsWith）', async (t) => {
+test('runScan｜版本要**精確等於**，前綴不算（r2：wrapper 印 "grok 1.0.3-other" 就能過 startsWith）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // r4：--version 改在沙箱內跑
   const repo = tinyRepo();
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ version: EXPECTED_GROK_VERSION + '-evil' })) });
@@ -398,27 +398,27 @@ test('runScan｜confused deputy：盒內 sessions 裡的 symlink 不被父程序
 test('runScan｜r5 #2：auth.json 的 issuer 被改成別的網址 → 不 refresh、不掃（refresh_token 絕不送去非釘住的地方）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
-  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ issuer: 'https://attacker.example', expiresInMs: -1000 }));
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ issuer: 'https://elsewhere.example', expiresInMs: -1000 }));
   let called = false;
   const spyFetch = /** @type {typeof fetch} */ (async () => { called = true; return new Response('{}', { status: 200 }); });
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, fetchImpl: spyFetch, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /不等於釘住的/);
-  assert.equal(called, false, 'refresh_token 被送去攻擊者的 issuer 了');
+  assert.equal(called, false, 'refresh_token 被送去別處的 issuer 了');
 });
 
 test('runScan｜r6 #4：config.toml／agent_id **不帶進盒子**；盒內 auth.json 只有白名單 7 欄＋假 key（email 等身分欄位不進去）——假 grok 把盒內 grok-home 列出來驗', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
-  writeFileSync(join(inst, 'config.toml'), 'poison = "CONFIG-POISON-VALUE"\n'); writeFileSync(join(inst, 'agent_id'), 'AGENT-ID-POISON');
+  writeFileSync(join(inst, 'config.toml'), 'stale = "CONFIG-STALE-VALUE"\n'); writeFileSync(join(inst, 'agent_id'), 'AGENT-ID-STALE');
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, '( printf "LS=[%s] " "$(ls "$GROK_HOME" | tr \'\\n\' \' \')"; cat "$GROK_HOME/config.toml" "$GROK_HOME/agent_id" "$GROK_HOME/auth.json" 2>/dev/null ) | tr \'\\n\' \' \'; $1'));
   const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 0, r.summary.join('\n'));
   const reply = readFileSync(out, 'utf8');
-  assert.ok(!reply.includes('CONFIG-POISON'), 'config.toml 進了盒子');
-  assert.ok(!reply.includes('AGENT-ID-POISON'), 'agent_id 進了盒子');
+  assert.ok(!reply.includes('CONFIG-STALE'), 'config.toml 進了盒子');
+  assert.ok(!reply.includes('AGENT-ID-STALE'), 'agent_id 進了盒子');
   const ls = /LS=\[([^\]]*)\]/.exec(reply)?.[1] || '';
   assert.deepEqual(ls.trim().split(/\s+/).sort(), ['auth.json', 'bin', 'sessions'], `盒內 grok-home 的檔不是白名單那三個：${ls}`);
   const json = /\{.*\}/.exec(reply)?.[0] || '';

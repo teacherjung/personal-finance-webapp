@@ -231,7 +231,7 @@ export async function runCanary(box, opt = {}) {
         if (!blocked) dead++;
       }
     } else lines.push('（略）執行 /usr/local/bin/node——這台沒有，沒探針可用');
-    // r6 #2：換程序群組（setpgid）要擋——父程序靠 kill(-pgid) 收束。setsid 實測擋不住（見 grok-scan.js 檔頭：靠隨機 port／假值／單趟讀讓逃逸無害），
+    // r6 #2：換程序群組（setpgid）要擋——父程序靠 kill(-pgid) 收束。setsid 實測擋不住（見 grok-scan.js 檔頭：靠隨機 port／假值／單趟讀讓離開群組無害），
     // 所以這裡只驗 setpgid；不對 setsid 做任何「已擋」的宣稱。
     mustFailWithControl('setpgid（換程序群組）', ['/usr/bin/perl', '-MPOSIX', '-e', `POSIX::setpgid(0,0) or exit 3; print "SETPGID-${secret}\n"`], (r) => r.status === 0 && (r.stdout || '').includes('SETPGID-'));
     // 網路：只准轉送器那一個 port。r3 #2：要**真的起一個 listener**，先證明沙箱外連得上、再證明盒內 EPERM——
@@ -263,7 +263,7 @@ export async function runCanary(box, opt = {}) {
     }
     // IPC：Keychain（對照：沙箱外 dump 有項目）
     mustFailWithControl('讀 Keychain（security dump-keychain）', ['/bin/sh', '-c', '/usr/bin/security dump-keychain 2>/dev/null | /usr/bin/grep -q "keychain:"'], (r) => r.status === 0);
-    // 環境變數：**確定性注入**哨兵到呼叫者 env（r2：r1 只在父環境剛好有 token 時才測得到），盒內 env 不得出現
+    // 環境變數：**確定性放**哨兵到呼叫者 env（r2：r1 只在父環境剛好有 token 時才測得到），盒內 env 不得出現
     {
       const sentinels = { GITHUB_TOKEN: 'SENTINEL-GH-' + secret, ANTHROPIC_API_KEY: 'SENTINEL-AN-' + secret, AWS_SECRET_ACCESS_KEY: 'SENTINEL-AWS-' + secret };
       const prev = { ...process.env };
@@ -272,7 +272,7 @@ export async function runCanary(box, opt = {}) {
       try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
       finally { for (const k of Object.keys(sentinels)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
       const leak = Object.values(sentinels).some((v) => (r.stdout || '').includes(v));
-      lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（注入 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);
+      lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（放 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);
       if (leak || r.status !== 0) dead++;
       // 明確關掉的能力要在 env 裡看得到（r2：不關＝靜靜保留跨 session 記憶／自動更新）
       for (const [k, v] of [['GROK_MEMORY', '0'], ['GROK_DISABLE_AUTOUPDATER', '1']]) {

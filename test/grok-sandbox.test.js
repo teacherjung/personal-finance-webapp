@@ -95,20 +95,20 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '放行了任意對外網路');
   // r6 #1／#2：/usr/local 明確拒（讀＋執行）；setpgid 拒——兩條都在檔尾（後面的規則蓋前面的）
   assert.match(sb, /\(deny file-read\* process-exec\* \(subpath "\/usr\/local"\)\)/, '少了 /usr/local 的明確 deny——放行整棵 /usr 會把 pkg 裝的第二顆 node 帶進來');
-  assert.match(sb, /\(deny syscall-unix[^\n]*\(syscall-number 82\)/, '少了 setpgid（82）的 deny——盒內程式換群組就逃出 kill(-pgid)');
+  assert.match(sb, /\(deny syscall-unix[^\n]*\(syscall-number 82\)/, '少了 setpgid（82）的 deny——盒內程式換群組就離開 kill(-pgid)');
   // 反面：不可以有把圍欄拆掉的行
   assert.doesNotMatch(sb, /\(allow default\)/, '設定檔回到 allow default');
   assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/"\)/, '設定檔放行了整個檔案系統');
   assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/Users"\)/, '設定檔放行了 /Users');
 });
 
-test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 Host／X-Upstream／absolute-form URL 都改不了 host/port（平台無關，CI 也跑）', async () => {
+test('轉送器｜目的地寫死、不從請求取——**行為題**：外來 Host／X-Upstream／absolute-form URL 都改不了 host/port（平台無關，CI 也跑）', async () => {
   const { upstreamOptions } = await import('../scripts/grok-relay.js');
   const attacks = [
-    { url: '/v1/responses', headers: { host: 'evil.example' } },
-    { url: '/v1/responses', headers: { 'x-upstream': 'evil.example', 'x-forwarded-host': 'evil.example' } },
-    { url: 'http://evil.example/v1/responses?x=1', headers: {} },
-    { url: 'https://evil.example:8443/v1/responses', headers: { host: 'evil.example:8443' } },
+    { url: '/v1/responses', headers: { host: 'elsewhere.example' } },
+    { url: '/v1/responses', headers: { 'x-upstream': 'elsewhere.example', 'x-forwarded-host': 'elsewhere.example' } },
+    { url: 'http://elsewhere.example/v1/responses?x=1', headers: {} },
+    { url: 'https://elsewhere.example:8443/v1/responses', headers: { host: 'elsewhere.example:8443' } },
   ];
   for (const a of attacks) {
     const o = upstreamOptions({ method: 'POST', ...a });
@@ -116,7 +116,7 @@ test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 
     assert.equal(o.port, 443, `port 被請求改走了：${JSON.stringify(a)}`);
     assert.equal(o.headers.host, 'cli-chat-proxy.grok.com', `Host header 沒被蓋掉：${JSON.stringify(a)}`);
     assert.ok(String(o.path).startsWith('/'), `absolute-form URL 沒被剝成 path：${o.path}`);
-    assert.ok(!String(o.path).includes('evil.example'), `path 還帶著攻擊者的主機名：${o.path}`);
+    assert.ok(!String(o.path).includes('elsewhere.example'), `path 還帶著別處的主機名：${o.path}`);
   }
   // 正常請求照過（純轉送模式：沒有 realBearer 就不動 Authorization）
   const ok = upstreamOptions({ method: 'GET', url: '/v1/models', headers: { authorization: 'Bearer x' } });
@@ -132,8 +132,8 @@ test('轉送器｜r6 #5 broker 權限收窄——**行為題**：錯 nonce／錯
   // Codex r6 的純函式反例：DELETE /v1/not-a-scan＋前綴假值——r5 會換真 token
   const bad = [
     { ...good, method: 'DELETE', url: '/v1/not-a-scan' },
-    { ...good, method: 'DELETE', url: '/v1/not-a-scan', headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}attacker` } },
-    { ...good, headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}attacker` } },            // 前綴對、值不對
+    { ...good, method: 'DELETE', url: '/v1/not-a-scan', headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}other-scan` } },
+    { ...good, headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}other-scan` } },            // 前綴對、值不對
     { ...good, headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}${'b'.repeat(48)}` } },   // 上一掃的假值
     { ...good, headers: { authorization: 'Bearer SOME-OTHER-REAL-LOOKING-TOKEN' } },            // 自編 bearer：也不轉
     { ...good, headers: {} },                                                                     // 缺 Authorization
@@ -141,7 +141,7 @@ test('轉送器｜r6 #5 broker 權限收窄——**行為題**：錯 nonce／錯
     { ...good, method: 'GET' },                                                                   // 對 path、錯 method
     { ...good, url: '/v1/sessions/not-a-uuid/signals' },
     { ...good, url: '/v1/bundle/archive', method: 'GET' },                                       // 刻意不放的遠端 bundle
-    { ...good, url: 'http://evil.example/v1/admin' },
+    { ...good, url: 'http://elsewhere.example/v1/admin' },
   ];
   for (const b of bad) assert.ok(rejectReason(b, nonce), `該拒沒拒：${b.method} ${b.url} ${JSON.stringify(b.headers)}`);
   // 白名單每一形狀都過；query 不擋
@@ -172,7 +172,7 @@ test('轉送器｜r6 #5 broker 模式沒給 --dummy-file 就不啟動；給了�
     const port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
     const status = async (/** @type {string} */ method, /** @type {string} */ path, /** @type {string | undefined} */ auth) =>
       (await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: auth ? { authorization: auth } : {} })).status;
-    assert.equal(await status('GET', '/v1/models', `Bearer ${DUMMY_BEARER_PREFIX}attacker`), 403, '錯 nonce 沒被拒');
+    assert.equal(await status('GET', '/v1/models', `Bearer ${DUMMY_BEARER_PREFIX}other-scan`), 403, '錯 nonce 沒被拒');
     assert.equal(await status('DELETE', '/v1/not-a-scan', `Bearer ${nonce}`), 403, '錯形狀沒被拒');
     assert.equal(await status('GET', '/v1/models', undefined), 403, '缺 Authorization 沒被拒');
     // 對的那種會真的往上游連——這題不連外網，只驗「不是 403」（上游連不到＝502）

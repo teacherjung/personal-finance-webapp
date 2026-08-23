@@ -7,7 +7,7 @@
 //   ②金絲雀（沙箱的紅燈證明；任何一隻活著＝不掃，fail-closed）
 //   ③起轉送器（localhost 隨機 port → xAI 那一個寫死的位址；只轉白名單形狀、只認本掃的假值），**並持續監看它有沒有死**
 //   ④在沙箱裡跑 grok（env 白名單、HOME／TMPDIR／GROK_HOME 全指進盒子；盒內 auth 的 key 是**每掃隨機的假值**，轉送器在沙箱外換真的；
-//     ulimit 包著：單檔大小／程序數／CPU 秒；結束後 SIGKILL 整個程序群組、再 lsof 掃蕩逃出群組的）
+//     ulimit 包著：單檔大小／程序數／CPU 秒；結束後 SIGKILL 整個程序群組、再 lsof 掃蕩離開群組的）
 //   ⑤驗屍：sessions **單趟**讀進記憶體（no-follow＋檔數／深度／單檔／總量上限）→ 數足跡＋查破口線索＋比對 DLP 針
 //     → 乾淨才寫進盒外的結果包。讀過的 bytes 就是存的 bytes（沒有第二次讀＝沒有 TOCTOU 窗）。
 //
@@ -27,7 +27,7 @@
 // ・第⑤步的破口線索是 **heuristic**：只證明「它沒讀到那一個暗號檔」與「日誌裡沒有那幾種明文」，
 //   不證明沙箱完整。沙箱有效的證明在第②步的金絲雀，不在這裡。
 // ・setsid 在 Seatbelt 擋不住（實測：deny syscall-unix 147 無效；setpgid 82 有效）。所以「程序群組已全部收束」**不是**本腳本的保證；
-//   保證的是逃出群組的程序**無害**：它的沙箱只准連本掃的隨機 port（下一掃換 port＝連不到）、只認本掃的假值、
+//   保證的是離開群組的程序**無害**：它的沙箱只准連本掃的隨機 port（下一掃換 port＝連不到）、只認本掃的假值、
 //   只能讀寫已被刪掉的盒子路徑；父程序讀 sessions 是單趟＋上限，它改檔只會讓本掃 fail-closed，改不了結果包。
 //   另加 lsof 掃蕩（best-effort，找 cwd／txt 在盒內的程序殺掉並記數）。
 // ・資源上限是 ulimit（單檔 64MB、程序數＝啟動時同 uid 程序數＋256、CPU 1800 秒）＋父程序讀 sessions 的上限；
@@ -78,8 +78,8 @@ async function killGroupAndWait(pgid) {
 }
 
 /**
- * 掃蕩逃出程序群組的（setsid 擋不住，見檔頭）：同 uid、cwd 或執行檔在盒子裡的程序，SIGKILL。best-effort——
- * chdir 到別處、執行檔在盒外（/bin/sh）的逃逸者找不到；它們無害的理由在檔頭，不在這裡。
+ * 掃蕩離開程序群組的（setsid 擋不住，見檔頭）：同 uid、cwd 或執行檔在盒子裡的程序，SIGKILL。best-effort——
+ * chdir 到別處、執行檔在盒外（/bin/sh）的離開群組的程序找不到；它們無害的理由在檔頭，不在這裡。
  * @param {string} box realpath
  * @param {(m: string) => void} log
  */
@@ -93,11 +93,11 @@ function sweepEscapees(box, log) {
     else if (line.startsWith('n') && pid && pid !== process.pid && (line.slice(1) === box || line.slice(1).startsWith(box + '/'))) hits.add(pid);
   }
   for (const p of hits) { try { process.kill(p, 'SIGKILL'); } catch { /* 已死 */ } }
-  if (hits.size) log(`⚠️ 掃蕩：${hits.size} 個逃出程序群組的程序（cwd／執行檔在盒內）已 SIGKILL`);
+  if (hits.size) log(`⚠️ 掃蕩：${hits.size} 個離開程序群組的程序（cwd／執行檔在盒內）已 SIGKILL`);
   return hits.size;
 }
 
-/** 向 OS 要一個目前沒人用的 127.0.0.1 port（每掃不同：上一掃逃出來的程序，其沙箱只准連舊 port） */
+/** 向 OS 要一個目前沒人用的 127.0.0.1 port（每掃不同：上一掃離開來的程序，其沙箱只准連舊 port） */
 function freePort() {
   return new Promise((ok, bad) => {
     const s = createServer();
@@ -147,13 +147,13 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
  * @property {string} [repo]
  * @property {string} [grokInstall] 預設 ~/.grok＝安裝樹，**完全不進沙箱**。只從它拿 bin/grok（APFS clone＋盒內 hash）；
- *   考題注入假的（bin/grok 是假 grok）。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
+ *   考題給假的（bin/grok 是假 grok）。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
  *   r6 #4：config.toml／agent_id **不再帶進盒子**（2026-08-23 實測 grok -p 不需要；先前未隔離的 Grok 可能已在那兩個檔裡埋東西）。
  * @property {string} [authDir] 預設 ~/.grok-sandbox-auth（0700，只含 auth.json）：沙箱跑的 grok 用這份登入狀態，
  *   第一次從真 ~/.grok/auth.json 種；**掃描前由父程序做 OIDC refresh**（沙箱裡連不到 auth.x.ai，grok 自己 refresh 不了——
  *   r4 端對端實際踩到：token 六小時過期後「auth_kind=none」）；盒內只放**白名單重建的 7 欄＋假 key**，
  *   所以**不再有掃後同步**（盒內沒有任何真憑證，沒東西要同步回來——r4 #3 的整族問題由構造消失）；真 auth.json 不動。
- * @property {typeof fetch} [fetchImpl] 考題注入假 fetch 給 refresh 用
+ * @property {typeof fetch} [fetchImpl] 考題給假 fetch 給 refresh 用
  * @property {string} [resultsRoot] 預設 ~/.grok-scan-results：掃完只留去機密的結果包（launch.json＋sessions），盒子整個清掉
  * @property {string} [expectedSha256] 預設 EXPECTED_GROK_SHA256；考題用假 grok 時傳它自己的 hash
  * @property {(msg: string) => void} [log]
@@ -338,7 +338,7 @@ export async function runScan(args, deps = {}) {
   // ⚠️ 不用 spawnSync：它卡住事件迴圈，轉送器的 exit 事件要等 grok 結束後才派發，
   //    「轉送器中途死」就永遠量不到（r2 的行為題抓到：假轉送器 READY 後 200ms 死、假 grok 回 0，結果退 0）。
   // r5 #3：grok 跑在**自己的程序群組**（detached＝setsid）。結束後先 SIGKILL 整群、等到群裡沒人，再 lsof 掃蕩，父程序才碰盒內任何東西。
-  //   輸出設上限（r5：無界字串＝OOM 繞過 finally）。
+  //   輸出設上限（r5：無界字串＝OOM 跳過 finally）。
   const OUT_CAP = 8 * 1024 * 1024;
   const grok = await new Promise((resolve) => {
     const child = spawn('/bin/sh', shArgv, { cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });

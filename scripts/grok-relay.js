@@ -13,7 +13,7 @@
 // （從 0700 的 authDir 讀），看到 Authorization **恰等於** `Bearer <那個假值>` 就換成真的。**真 token 從未進過盒子**。
 //
 // ## r6 收窄（Codex r6 #5：「替任何 DUMMY 前綴、任何 method／path 背書」＝confused deputy，且能力可跨掃描重用）
-// ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃逃出來的程序拿公開前綴等不到下一掃的真 token。
+// ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃離開來的程序拿公開前綴等不到下一掃的真 token。
 // ・只轉 grok 1.0.3 實際會打的 method＋path（ALLOWED_REQUESTS，2026-08-23 用記錄型 proxy 實測抄下來的）；
 //   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。grok 升版多打新端點＝這裡 403＝掃不成（吵）。
 // ・Authorization 不等於假值（含缺、含自編）＝403 不轉——不替盒內程式自編的 bearer 背書，也不讓它拿別的 token 借道。
@@ -73,7 +73,7 @@ const MAX_PATH = 2048;
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'host']);
 
 /**
- * 請求的 path（absolute-form `GET http://evil/x` 只留 path——不然 path 本身就能帶走整個 URL）
+ * 請求的 path（absolute-form `GET http://other-host/x` 只留 path——不然 path 本身就能帶走整個 URL）
  * @param {string | undefined} url
  */
 function requestPath(url) {
