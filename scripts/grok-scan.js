@@ -66,6 +66,31 @@ const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });
 
+export const GROK_HOME_MANIFEST = Object.freeze({
+  topLevelEntries: Object.freeze(['auth.json', 'bin', 'sessions']),
+  authEntryFields: Object.freeze(['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id']),
+  reviewSmoke: Object.freeze({ minToolFootprints: 1 }),
+});
+
+/** @param {string} grokHome */
+function validateGrokHomeManifest(grokHome) {
+  const actual = readdirSync(grokHome).sort();
+  assertStringListEqual(actual, GROK_HOME_MANIFEST.topLevelEntries, `盒內 grok-home 頂層檔案不是 manifest 宣告的最小家：${actual.join(', ')}`);
+  const auth = JSON.parse(readFileSync(join(grokHome, 'auth.json'), 'utf8'));
+  const entries = Object.values(auth);
+  if (entries.length !== 1 || !entries[0] || typeof entries[0] !== 'object' || Array.isArray(entries[0])) {
+    throw new Error('盒內 auth.json 不是恰一個登入物件');
+  }
+  assertStringListEqual(Object.keys(/** @type {Record<string, unknown>} */ (entries[0])).sort(), GROK_HOME_MANIFEST.authEntryFields, '盒內 auth.json 欄位不是 manifest 宣告的白名單');
+}
+
+/** @param {string[]} actual @param {readonly string[]} expected @param {string} msg */
+function assertStringListEqual(actual, expected, msg) {
+  if (actual.length !== expected.length || actual.some((v, i) => v !== expected[i])) {
+    throw new Error(`${msg}；應為 ${expected.join(', ')}`);
+  }
+}
+
 /**
  * SIGKILL 整個程序群組，並等到群裡沒有任何程序（kill(-pgid, 0) 回 ESRCH）。
  * 只有 ESRCH 算「群已空」；EPERM／EINVAL 等其他錯＝不知道群裡還有誰，**丟出去**（r6 #2：原本任何錯都當已空）。
@@ -173,6 +198,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {string} [relayScript]
  * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
  * @property {string} [liveSecret] 活金絲雀的暗號；預設隨機。只給考題（假 grok 要能把它寫進 stdout／session 來證明會被抓）
+ * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
 /**
@@ -201,7 +227,32 @@ export async function runScan(args, deps = {}) {
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
   // ── ① 建盒子 ──
-  const box = realpathSync(mkdtempSync(join(BOX_ROOT, `grok-scan-${head.slice(0, 7)}-`)));
+  /** @type {string | undefined} */ let box;
+  /** @type {string | undefined} */ let resultsDir;
+  /** @type {string | undefined} */ let dummyFile;
+  /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
+  /** @type {string | undefined} */ let liveDir;
+  /** @type {number | null} */ let grokPgid = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return; cleaned = true;
+    try { if (dummyFile) rmSync(dummyFile, { force: true }); } catch { /* 沒建 */ }
+    try { if (box) rmSync(box, { recursive: true, force: true }); } catch { /* 盡力 */ }
+  };
+  /** 沒掃成（退 2）＝結果包整個不留（Grok 掃描抓到：原本每次失敗都在 ~/.grok-scan-results 留一個空目錄或只有 launch.json）；事故（退 1）留 launch.json 當證據、不留 sessions */
+  const dropResultsDir = () => { try { if (resultsDir) rmSync(resultsDir, { recursive: true, force: true }); } catch { /* 盡力 */ } };
+  // Handler 在擁有暫存路徑之前就掛上：早於這裡的同步檢查還沒有可清的盒子；finally 清完後才卸載。
+  const emergency = () => {
+    try { if (grokPgid) { process.kill(-grokPgid, 'SIGKILL'); for (let i = 0; i < 60; i++) { try { process.kill(-grokPgid, 0); } catch { break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); } } } catch { /* 已空 */ }
+    try { relay?.kill('SIGKILL'); } catch { /* 已死 */ }
+    try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
+    dropResultsDir();
+    cleanup();
+    (deps.exit ?? process.exit)(2);
+  };
+  process.on('SIGTERM', emergency); process.on('SIGINT', emergency);
+  try {
+  box = realpathSync(mkdtempSync(join(BOX_ROOT, `grok-scan-${head.slice(0, 7)}-`)));
   const src = join(box, 'src');
   mkdirSync(src); mkdirSync(join(box, 'tmp'));
   log(`盒子：${box}`);
@@ -211,36 +262,14 @@ export async function runScan(args, deps = {}) {
   // r6：sessions 不再「cleanup 時從盒子複製」——成功路徑在 DLP 之後把**記憶體裡那份**寫進結果包（單趟讀），cleanup 只刪盒子。
   const grokHome = join(box, 'grok-home');
   const sessionsRoot = join(grokHome, 'sessions');
-  const resultsDir = join(resultsRoot, `${head.slice(0, 7)}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  resultsDir = join(resultsRoot, `${head.slice(0, 7)}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
-  const dummyFile = join(authDir, `dummy-bearer.${process.pid}`);
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return; cleaned = true;
-    try { rmSync(dummyFile, { force: true }); } catch { /* 沒建 */ }
-    rmSync(box, { recursive: true, force: true });
-  };
-  /** 沒掃成（退 2）＝結果包整個不留（Grok 掃描抓到：原本每次失敗都在 ~/.grok-scan-results 留一個空目錄或只有 launch.json）；事故（退 1）留 launch.json 當證據、不留 sessions */
-  const dropResultsDir = () => { try { rmSync(resultsDir, { recursive: true, force: true }); } catch { /* 盡力 */ } };
+  dummyFile = join(authDir, `dummy-bearer.${process.pid}`);
   /** @param {string} why @returns {{ code: 2, summary: string[] }} */
   const failAndClean = (why) => { cleanup(); dropResultsDir(); return fail(why); };
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來；r6：只剩 bin/grok＋重建的 auth.json＋空 sessions/）
   const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
   /** @type {string} */ let verText;
-  /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
-  /** @type {string | undefined} */ let liveDir;
-  /** @type {number | null} */ let grokPgid = null;
-  // 父程序被 SIGTERM／SIGINT（例如呼叫它的工具逾時）時 finally 不會跑——第五次正式掃描實際留下盒子、假值檔、活金絲雀目錄。
-  // 緊急收尾：同步 SIGKILL 整群、等到群空（最多 ~3 秒）、殺轉送器、刪活金絲雀／假值檔／盒子，然後退 2。所有輸出丟棄。
-  const emergency = () => {
-    try { if (grokPgid) { process.kill(-grokPgid, 'SIGKILL'); for (let i = 0; i < 60; i++) { try { process.kill(-grokPgid, 0); } catch { break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); } } } catch { /* 已空 */ }
-    try { relay?.kill('SIGKILL'); } catch { /* 已死 */ }
-    try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
-    try { cleanup(); } catch { /* 盡力 */ }
-    (deps.exit ?? process.exit)(2);
-  };
-  process.on('SIGTERM', emergency); process.on('SIGINT', emergency);
-  try {
   const relayPort = await freePort();
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
@@ -263,7 +292,10 @@ export async function runScan(args, deps = {}) {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
       writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });
       writeFileSync(dummyFile, a.dummyBearer + '\n', { mode: 0o600 });
+      deps.afterGrokHomeAuthWrite?.(grokHome);
     } catch (e) { return failAndClean(`憑證 refresh 失敗：${/** @type {Error} */ (e).message}`); }
+    try { validateGrokHomeManifest(grokHome); }
+    catch (e) { return failAndClean(`盒內最小家 manifest 不符：${/** @type {Error} */ (e).message}`); }
   }
   const sbArgv = ['-f', PROFILE, '-D', `SCAN_DIR=${box}`, '-D', `RELAY_PORT=${relayPort}`];
   // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
@@ -465,12 +497,18 @@ export async function runScan(args, deps = {}) {
   const { dirs, unreadable, why } = allSessionDirs(src, resultsSessions);
   if (!dirs.length) { dropResults(); return failAndClean(`驗屍：找不到這次的 session 日誌（${why || '零 session'}）`); }
   if (unreadable) { dropResults(); return failAndClean(`驗屍：有 session 讀不清楚（${why}）`); }
+  let totalFootprints = 0;
   for (const d of dirs) {
     const a = auditSessionDir(d);
     if (a.code === 2) { dropResults(); return failAndClean(`驗屍：session ${d} 日誌讀不清楚：${a.why}`); }
     const n = Object.values(a.calls).reduce((s, v) => s + v, 0);
+    totalFootprints += n;
     log(`驗屍 session ${d.split('/').pop()}：工具足跡 ${n} 筆（盒子裡准跑）`);
     summary.push(`足跡 ${n} 筆`);
+  }
+  if (totalFootprints < GROK_HOME_MANIFEST.reviewSmoke.minToolFootprints) {
+    dropResults();
+    return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
   if (outFile) writeFileSync(outFile, reply);
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
@@ -478,12 +516,16 @@ export async function runScan(args, deps = {}) {
   summary.push(recipe);
   return { code: 0, summary };
   } finally {
-    process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
     // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
-    await killGroupAndWait(grokPgid);
-    try { relay?.kill(); } catch { /* 已死 */ }
-    try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
-    cleanup();
+    try {
+      await killGroupAndWait(grokPgid);
+      try { relay?.kill(); } catch { /* 已死 */ }
+      try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
+      cleanup();
+    } finally {
+      // 卸掉本輪 handler；若前面的收尾步驟丟錯，暫存路徑是否仍存在由那個錯誤回報，不在這行保證。
+      process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
+    }
   }
 }
 

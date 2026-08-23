@@ -79,7 +79,7 @@ export function authNeedles(authJson) {
     if (!cred || typeof cred !== 'object') continue;
     // 鍵名不加進 givenToBox：它必須等於釘住的公開形狀才進得了盒子（refreshSandboxAuth 驗），不是「任意值」
     for (const [k, v] of Object.entries(cred)) {
-      if (k in BOX_FIELDS) walk(v, givenToBox);
+      if (Object.hasOwn(BOX_FIELDS, k)) walk(v, givenToBox);
       else if (!ENUM_FIELDS.includes(k)) walk(v, out);
     }
   }
