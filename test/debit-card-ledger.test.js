@@ -338,8 +338,14 @@ test('退款跨版面的口徑（釘現況）：綜合對帳單先匯→退貨�
   await resetDb();
   await applyBankStatement('QUJD', '', async () => buyRefundCombined());
   assert.equal(consumption(await getDb()), 305, 'main 既有口徑：銀行側退貨列是收入，不抵消費');
-  await applyBankStatement('QUJD', '', async () => buyRefundDebit(), { skipSimilar: true });
-  assert.equal(consumption(await getDb()), 305, '★金融卡後匯：A 區兩筆都被「帳戶那邊已帶分類」擋掉＝不動（不會變 610、也不會偷偷變 0）');
+  const pv = await previewBankStatement('QUJD', '', async () => buyRefundDebit());
+  assert.equal(pv.cardLedger.notRecorded.cashflowCategorized, 2, '★買與退兩筆都被「帳戶那邊已帶分類」擋（退貨那列是收入、也帶分類＝照樣是 blocker）');
+  assert.equal(pv.cardLedger.count, 0);
+  const ap = await applyBankStatement('QUJD', '', async () => buyRefundDebit(), { skipSimilar: true });
+  assert.equal(ap.cardLedger.imported, 0, '★一筆都不記');
+  assert.equal((await getDb()).cards.length, 0, '★沒建卡');
+  assert.equal((await getDb()).transactions.filter((/** @type {any} */ t) => t.ledger === 'card').length, 0, '★卡片帳本沒有列');
+  assert.equal(consumption(await getDb()), 305, '★不動（不會變 610、也不會偷偷變 0）');
   // 金融卡先：卡片帳本一買一退配對＝消費 0；綜合後匯（勾跳過）＝不動
   await resetDb();
   await applyBankStatement('QUJD', '', async () => buyRefundDebit());
@@ -395,6 +401,25 @@ test('★A 區與 D 區筆數對不上：對不上的 A 區筆不記、對不上
   const r2 = await previewBankStatement('QUJD', '', async () => extra);
   assert.equal(r2.cardLedger.notRecorded.unmatched, 1, '★對不上的那筆不記');
   assert.equal(r2.cardLedger.count, 2);
+});
+
+test('★同鍵群組裡一筆抄不完整＝整群不記，而且計數也整群（畫面不可低報沒記到卡片的筆數）', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => {
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9695, note: '合成商店Ａ' },
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9390, note: '合成商店Ｂ' },
+    ];
+    f.accounts[0].balance = 9390;
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 305, fee: 0, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 305, fee: 0, lastFour: '8808', desc: '', region: 'TW', extra: '' },   // 店名空
+    ];
+  });
+  const r = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r.cardLedger.count, 0, '整群不記');
+  assert.equal(r.cardLedger.notRecorded.unreadable, 2, '★兩筆都算進「沒記」（不是只算壞的那一筆）');
+  assert.ok(r.transactions.rows.every((x) => x.category), 'D 兩列都照舊分類');
 });
 
 test('★A 區某筆抄得不完整（店名空／含分段符／金額 0）：那筆不記、對應的 D 區列不留空（不可兩本帳都沒分類）', async () => {

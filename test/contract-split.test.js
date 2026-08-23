@@ -533,6 +533,7 @@ const MANIFEST = {
       'lib/bank-alias.js', 'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
       'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
       'test/debit-card-ledger.test.js',   // Stage 5b：簽帳金融卡明細一份帳單兩種明細（A 區→卡片帳本、D 區刷卡列留空）
+      'test/debit-card-ledger-http.test.js',   // Stage 5b：兩本帳互為條件的單筆 DELETE 守門（走正式 HTTP）
       // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
       'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
       // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題

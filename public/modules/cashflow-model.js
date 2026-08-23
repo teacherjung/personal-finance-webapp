@@ -65,14 +65,8 @@ export function bankApplyLabel(balancesSkipped, noAccounts) {
   return (balancesSkipped || noAccounts) ? '確認：只匯入交易（這次不更新餘額）' : '確認：更新餘額＋匯入交易';
 }
 
-/** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
- * P2-3：AI 路線寫入成功會順手生成配方卡（recipe），成功/重生要講一句（使用者才知道下次免費）；
- * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
- * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, noAccounts?:boolean, matured?:number}} bal
- * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
- * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
 /** 簽帳金融卡明細（Stage 5b）：預覽窗的一句白話——這份帳單的「刷卡消費明細」會記到哪張卡、幾筆、哪些不記、
- * 為什麼錢不會算兩次。沒有 A 區（綜合對帳單）＝空字串、不畫；A 區讀不出來＝講原因、講「只記了帳戶明細」。
+ * 為什麼消費分析裡這幾筆只算卡片那一份。沒有 A 區（綜合對帳單）＝空字串、不畫；A 區讀不出來＝講原因、講「只記了帳戶明細」。
  * @param {{cards?:{name:string, exists:boolean}[], count?:number, duplicate?:number, notRecorded?:{unmatched?:number, unreadable?:number, cashflowCategorized?:number}, error?:string}|null|undefined} cl */
 export function bankCardLedgerNote(cl) {
   if (cl?.error) return `這份帳單的「刷卡消費明細」這次讀不出來（${cl.error}），所以只記了帳戶明細——刷卡扣款照常分類。`;
@@ -107,6 +101,12 @@ export function bankCardLedgerDoneText(cl) {
   return `；刷卡消費明細：${parts.join('；')}`;
 }
 
+/** 套用完成後的提示。⚠️ **餘額沒更新一定要講**——沒說＝使用者以為餘額是新的（畫面說謊）。
+ * P2-3：AI 路線寫入成功會順手生成配方卡（recipe），成功/重生要講一句（使用者才知道下次免費）；
+ * 失敗**不列細節**（匯入本身已成功、不用嚇人），一句「這次沒存成」即可。
+ * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, noAccounts?:boolean, matured?:number, cardLedger?:any}} bal
+ * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
+ * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
 export function bankApplyDoneText(bal, tx, recipe) {
   // ⚠️ 兩種「這次沒更新餘額」都要講（Codex #492 r1#2）：①讀不到現值參考日 ②這份帳單沒有可更新的
   //    帳戶（簽帳金融卡明細只印末四碼那條路）。漏掉②會印「帳戶：更新 0、新建 0」讓人以為壞了。
@@ -122,7 +122,7 @@ export function bankApplyDoneText(bal, tx, recipe) {
     : (recipe ? `；版面規則卡這次沒存成（不影響本次匯入）${birthText(recipe.reason || '') ? `——${birthText(recipe.reason || '')}` : ''}` : '');   // 不寫「下次仍會用 AI 讀」：重生失敗時舊卡還在，下次仍會先試卡   // 2026-08-19：講出**哪一關**沒過（原本只有通稱＝使用者與維護者都看不到卡在哪）
   return `${acct}；交易：匯入 ${tx.imported}`
     + `${tx.skipped ? `、略過重複 ${tx.skipped}` : ''}${tx.similarSkipped ? `、依勾選跳過疑似重複 ${tx.similarSkipped}` : ''}${tx.foreign ? `、外幣 ${tx.foreign} 筆不計入` : ''}`
-    + bankCardLedgerDoneText(/** @type {any} */ (bal).cardLedger)
+    + bankCardLedgerDoneText(bal.cardLedger)
     + rec;
 }
 
