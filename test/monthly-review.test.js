@@ -121,3 +121,71 @@ test('buildMonthlyReview：未指定月份時跳過尚未匯入的空月，明�
   const requestedEmpty = buildMonthlyReview(db, '2026-06', now);
   assert.equal(requestedEmpty.selectedMonth, '2026-06', '使用者明點空月時仍須尊重選擇');
 });
+
+// ── 回饋（點數折抵）＝負數列的第三格（使用者定 2026-08-06）─────────────────────────────
+// 判準本身的正負例在 test/reward-credit.test.js；這裡測的是「進了 pairRefunds 之後行為變成怎樣」。
+const reward = (id, date, amount, extra = {}) => tx(id, date, amount, {
+  storeKey: '折帳單', note: '折帳單（信用卡點數折抵消費）', category: '其他', subcategory: '未分類',
+  stmtRef: `card-1|${date}|${amount}|折帳單_信用卡點數折抵消費`, ...extra,
+});
+
+test('回饋｜不進退款配對：金額剛好撞上同卡同店真消費時，那筆消費不會被抵掉', () => {
+  // ⚠️ 對照組先證明「拿掉回饋字樣就真的配得起來」——不先證明這件事，下面那半只是空包彈。
+  const asRefund = consumptionByMonth({ transactions: [
+    tx('buy', '2026-05-10', 365, { storeKey: '折帳單', note: '折帳單', stmtRef: 'card-1|2026-05-10|365|某店消費' }),
+    tx('neg', '2026-06-14', -365, { storeKey: '折帳單', note: '某店退款', stmtRef: 'card-1|2026-06-14|-365|某店消費' }),
+  ] });
+  assert.equal(asRefund.byMonth['2026-05']['飲食'].total, 0, '對照組沒配起來＝這題證明不了任何事');
+
+  const asReward = consumptionByMonth({ transactions: [
+    tx('buy', '2026-05-10', 365, { storeKey: '折帳單', note: '折帳單', stmtRef: 'card-1|2026-05-10|365|某店消費' }),
+    reward('rw', '2026-06-14', -365),
+  ] });
+  assert.equal(asReward.byMonth['2026-05']['飲食'].total, 365, '回饋把真消費抵掉了');
+  assert.deepEqual(asReward.unmatchedRefunds, [], '回饋不該落進未對應退款清單');
+  assert.equal(asReward.rewards.length, 1);
+  assert.equal(asReward.rewards[0].amount, 365, '回饋金額要取絕對值＝畫面講「有多少錢」');
+});
+
+test('回饋｜自己的月份不長出負數、不新增分類', () => {
+  const out = consumptionByMonth({ transactions: [reward('rw', '2026-06-14', -365)] });
+  assert.deepEqual(Object.keys(out.byMonth), [], '回饋自己不可長出任何月份');
+  assert.equal(out.rewards.length, 1);
+});
+
+test('回饋｜讓位給真退款：回饋不再佔走消費，同額真退款因此配得上（錢有搬家、也搬對）', () => {
+  // 同卡、同配對身分、同金額：一筆消費、一筆較早的回饋、一筆較晚的真退款。
+  const rows = [
+    tx('buy', '2026-05-10', 365, { storeKey: '折帳單', note: '折帳單', stmtRef: 'card-1|2026-05-10|365|某店消費' }),
+    reward('rw', '2026-05-20', -365),
+    tx('ref', '2026-06-14', -365, { storeKey: '折帳單', note: '某店退款', stmtRef: 'card-1|2026-06-14|-365|某店消費' }),
+  ];
+  const out = consumptionByMonth({ transactions: rows });
+  assert.equal(out.byMonth['2026-05']['飲食'].total, 0, '真退款沒有抵到那筆消費');
+  assert.deepEqual(out.unmatchedRefunds, [], '真退款被擠到未對應清單去了');
+  assert.equal(out.rewards.length, 1);
+});
+
+test('回饋｜繳款優先：同時像繳款又像回饋的說明仍走繳款那格（順序不可調換）', () => {
+  const out = consumptionByMonth({ transactions: [
+    tx('pay', '2026-06-20', -1000, {
+      storeKey: '折帳單', note: '自動轉帳扣繳信用卡款 折帳單',
+      stmtRef: 'card-1|2026-06-20|-1000|自動轉帳扣繳信用卡款_折帳單',
+    }),
+  ] });
+  assert.deepEqual(out.unmatchedRefunds, []);
+  assert.deepEqual(out.rewards, [], '繳款被判成回饋了——三格的順序被調換過');
+});
+
+test('回饋｜月度回顧的回饋格與未對應退款同為全庫口徑（窗口外的回饋不可從畫面消失）', () => {
+  // 回饋日期刻意放在「近六個已結清月」之外——那正是使用者真實資料的處境（2025-09 的折抵）。
+  const now = new Date(2026, 7, 24);   // 2026-08-24：窗口＝2026-02〜2026-07
+  const review = buildMonthlyReview({ transactions: [
+    reward('rw', '2025-09-14', -365),
+    tx('buy', '2026-06-10', 500),
+  ] }, '', now);
+  assert.equal(review.rewards.count, 1, '窗口外的回饋在月度回顧上整個看不見了');
+  assert.equal(review.rewards.total, 365);
+  assert.equal(review.rewards.items[0].store, '折帳單（信用卡點數折抵消費）');
+  assert.equal(review.unmatchedRefunds.count, 0, '回饋不該同時出現在未對應退款那一格');
+});

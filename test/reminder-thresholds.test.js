@@ -1249,6 +1249,35 @@ test('提醒｜緊急預備金高估：卡帳月均與現金流月均「恰好�
     '卡帳月均只要多 1 元就要出聲（門檻乘 2、乘 10 都會讓這張網靜靜關閉，而使用者不會發現）');
 });
 
+test('提醒｜緊急預備金高估：回饋照樣抵減卡帳月均（保存型——「回饋不計入消費」不可以蔓延到這裡）', () => {
+  // ⚠️ **保存型考題**：這裡守的是「現況不可以被改掉」，不是新行為。
+  //    使用者定 2026-08-06 的裁決③「安全網要扣掉回饋」＝現況已經成立（回饋是負數 expense，
+  //    在 avgMonthlyCardExpense 的加總裡天然抵減）。真正的風險是反方向：
+  //    有人照「回饋不列入消費統計」的字面，在 avgMonthlyCardExpense 的迴圈補一句
+  //    `if (isRewardCredit(...)) continue;` ⇒ cardAvg 變大 ⇒ 這張過渡期保險開始誤鳴。
+  //    有效突變＝加上那句 continue，本題必須轉紅。
+  //    為什麼安全網與消費統計刻意不對稱：消費統計問「那個月你花了多少」（點數折抵不會讓你當初少花），
+  //    安全網問「這些卡費之後要從現金流出多少」（點數折抵確實讓帳單少收）。兩個問題不同，答案就不同。
+  const m1 = monthsAgo(1);
+  const withReward = (rows) => ({
+    accounts: [{ id: 'c1', name: '現金', type: 'cash', class: '現金', currency: 'TWD', balance: 100000 }],
+    cards: [{ id: 'card1', name: '測試卡', type: 'credit' }],
+    transactions: [
+      { id: 't1', date: `${m1}-05`, type: 'expense', category: '生活', amount: 10000, ledger: 'cashflow' },
+      { id: 't2', date: `${m1}-06`, type: 'expense', category: '生活', amount: 10001, ledger: 'card', source: 'stmt', cardId: 'card1' },
+      ...rows,
+    ],
+  });
+  assert.ok(keysOf(withReward([])).includes('emergency-fund-optimistic'),
+    '對照組：卡帳月均 10,001 > 現金流 10,000 ⇒ 本來要出聲（不出聲＝這題證明不了任何事）');
+  const reward = {
+    id: 't3', date: `${m1}-07`, type: 'expense', category: '其他', amount: -1, ledger: 'card', source: 'stmt', cardId: 'card1',
+    note: '折帳單（信用卡點數折抵消費）', stmtRef: `card1|${m1}-07|-1|折帳單_信用卡點數折抵消費`,
+  };
+  assert.ok(!keysOf(withReward([reward])).includes('emergency-fund-optimistic'),
+    '一筆 −1 元的回饋把卡帳月均壓回 10,000 就該安靜——沒安靜＝回饋在安全網裡被跳過了');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 三、樣本數與口徑（目標追蹤、訂閱狀態、退款配對）
 // ─────────────────────────────────────────────────────────────────────────────

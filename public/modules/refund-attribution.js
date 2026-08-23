@@ -98,3 +98,14 @@ export function unmatchedRefundsForMonth(unmatched, allRows, month) {
   return (Array.isArray(unmatched) ? unmatched : [])
     .filter(u => u && String(u.date || '').slice(0, 7) === String(month || '') && ids.has(String(u.id || '')));
 }
+
+/**
+ * 這個月的回饋列（點數折抵）。形狀與未對應退款相同（後端 pairRefunds 用同一支 negativeRowSummary 產），
+ * 所以直接沿用同一個篩法——**刻意不另寫一份**，兩邊的「哪些算這個月」必須是同一把尺。
+ * ⚠️ 這一頁是按月看的，所以回饋在這裡按月；月度回顧卡那邊是全庫口徑（那張卡只有近六個已結清月，
+ *    跟著月份走會讓窗口外的回饋整個看不見）。兩個口徑不同是刻意的，各自的理由寫在各自的落點。
+ * @param {any[]|undefined|null} rewards @param {any[]} allRows @param {string} month
+ */
+export function rewardsForMonth(rewards, allRows, month) {
+  return unmatchedRefundsForMonth(rewards, allRows, month);
+}

@@ -64,3 +64,25 @@ export const DEFAULT_EXPENSE = ['其他', '未分類'];
  * @param {any} t @returns {boolean}
  */
 export const isCardTx = (t) => t?.ledger === 'card' || (t?.ledger == null && t?.source === 'stmt');
+
+/**
+ * 帳單上「點數／紅利折抵」的字樣（使用者定 2026-08-06：折抵不是退款，是第三種身分「回饋」）。
+ * 住在這個分類資料檔、而不是與同族 isCardPayment 為鄰的 lib/statement.js，理由是**前端 import 不到 lib/**，
+ * 而卡片明細的徽章與後端的彙總必須是同一把尺——判準分兩份就會走散（同一列兩個畫面兩個名字）。
+ * 字樣是**資料不是規則**：新寫法往下加一行就好，判準本體不動，也沒有正則要維護。
+ * ⚠️ 只收「帳單上證明過的寫法」——比照 isCardPayment 的教訓（不用寬泛的「繳款」兩字，免得誤擋真退貨）。
+ *    這兩個字樣都出自同一份台新帳單原文「折帳單_信用卡點數折抵消費」（William 2026-08-06 提供）。
+ * ⚠️ 加字樣時 test/reward-credit.test.js 的字面清單斷言會轉紅——刻意的，逼加字樣的人一起想「會不會誤中」。
+ * @type {readonly string[]}
+ */
+export const REWARD_CREDIT_WORDS = Object.freeze(['折帳單', '點數折抵']);
+
+/**
+ * 這段帳單說明是不是「回饋」（點數折抵帳單）。**唯一一份**，前後端共用（後端經 lib/derive.js 轉供）。
+ * 吃字串不吃整筆交易＝與同族判準（isCardPayment／isServiceFee）同慣例，取原文的責任留在呼叫端。
+ * ⚠️ **呼叫端必須自己先確定那是一筆負數的卡片帳本列**：使用者的銀行帳本裡有「現金轉入・消費回饋」
+ *    這種**正數**進帳（真的錢進帳戶、本來就該算收入），字面一樣含「回饋」二字。判準刻意不自己擋，
+ *    因為它只判字串；擋的責任在呼叫端的正負分流（lib/derive.js 的 amount < 0 分支）與徽章的負數條件。
+ * @param {string} desc @returns {boolean}
+ */
+export const isRewardCredit = (desc) => { const s = String(desc || ''); return REWARD_CREDIT_WORDS.some((w) => s.includes(w)); };

@@ -3,7 +3,7 @@ import { api, view, byId, wan, money, pct, esc, currentRouteSeq, openInfo, toast
 import { CHART, PALETTE, AXIS, GRID, ACCENT, ACCENT_SOFT } from './theme.js';
 import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
-import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml } from './monthly-review-card.js';
+import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml, rewardInfoHtml } from './monthly-review-card.js';
 import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
 import {
   dashboardCashflowSeries,
@@ -206,7 +206,9 @@ function wireMonthlyReviewInfo(review) {
       const key = String(el.dataset.mrInfo || '');
       const info = Object.hasOwn(MONTHLY_REVIEW_INFO, key) ? MONTHLY_REVIEW_INFO[key] : null;
       if (!info) return;
-      const html = key === 'refund' ? unmatchedRefundInfoHtml(review, { esc, money }) : info.html;
+      const html = key === 'refund' ? unmatchedRefundInfoHtml(review, { esc, money })
+        : key === 'cashback' ? rewardInfoHtml(review, { esc, money })
+        : info.html;
       openInfo(info.title, html, { size: key === 'refund' ? 'md' : 'sm' });
     };
   });
