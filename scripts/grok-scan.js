@@ -109,6 +109,10 @@ function freePort() {
 /**
  * sessions **單趟**讀取（r6 #2／#3）：no-follow 開檔→fstat→regular 且在上限內→讀；回傳 { files: Map<相對路徑, Buffer> }。
  * 超過任何上限＝丟 Error（呼叫端退 2、不保存）。非 regular（symlink／裝置…）＝回 odd（呼叫端當事故）。
+ * 目錄（含 sessions 根目錄本身）也 no-follow：lstat 必須是目錄、realpath 必須解析在盒內 grok-home 底下——
+ * r7（Codex 被分類器切掉前的片段）：根目錄被換成指向盒外的捷徑時，原版 readdir 會跟過去、odd 是空的。
+ * ⚠️ 誠實劃界：目錄沒有 O_NOFOLLOW 的 readdir（Node 沒有 fdopendir），lstat／realpath 與 readdir 之間仍有微小窗口；
+ *    要利用它得有一個活在盒內、離開了程序群組、又躲過 lsof 清理的程序在那一瞬間換檔——那條鏈每一環都已各自收窄。
  * 讀過的 bytes 就是後面 DLP 與結果包用的 bytes——盒內背景 writer 在這之後改檔，改不到我們手上的副本。
  * @param {string} root
  * @param {typeof SESSION_CAPS} caps
@@ -117,8 +121,12 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
   /** @type {Map<string, Buffer>} */ const files = new Map();
   /** @type {string[]} */ const odd = [];
   let total = 0;
+  const rootReal = realpathSync(dirname(root));   // 盒內 grok-home（由我們建、realpath 過）；底下每一層都要解析回這裡面
+  /** 目錄也要 no-follow：lstat 說是目錄還不夠（lstat 與 readdir 之間可被換成捷徑），再用 realpath 確認它解析在盒內 */
+  const dirIsInside = (/** @type {string} */ d) => { try { const r = realpathSync(d); return r === rootReal || r.startsWith(rootReal + '/'); } catch { return false; } };
   const walk = (/** @type {string} */ d, /** @type {string} */ rel, /** @type {number} */ depth) => {
     if (depth > caps.depth) throw new Error(`sessions 目錄深度超過 ${caps.depth}：${rel}`);
+    if (!lstatSync(d).isDirectory() || !dirIsInside(d)) { odd.push(rel || '.'); return; }   // 根目錄或中介目錄是 symlink／解析到盒外＝捷徑
     for (const n of readdirSync(d)) {
       const fp = join(d, n); const rp = rel ? `${rel}/${n}` : n;
       const st = lstatSync(fp);

@@ -580,3 +580,44 @@ fs.writeFileSync(${JSON.stringify(join(rd, 'seen.txt'))},v);process.stdout.write
   assert.ok(readFileSync(out, 'utf8').includes(`"key":"${seen}"`), '盒內 auth.json 的 key 不等於轉送器拿到的假值');
   assert.ok(!readdirSync(iso.authDir).some((n) => n.startsWith('dummy-bearer')), '掃完假值檔還留在 authDir');
 });
+
+test('readSessionsOnce｜r7：sessions 根目錄或中介目錄是 symlink → 當捷徑（odd）、不跟過去讀盒外（純函式，平台無關，CI 也跑）', async () => {
+  const { readSessionsOnce } = await import('../scripts/grok-scan.js');
+  const outside = mkdtempSync(join(tmpdir(), 'outside-')); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET');
+  // ① 根目錄本身是指向盒外的 symlink
+  {
+    const home = mkdtempSync(join(tmpdir(), 'grok-home-'));
+    execFileSync('ln', ['-s', outside, join(home, 'sessions')]);
+    const r = readSessionsOnce(join(home, 'sessions'));
+    assert.deepEqual(r.odd, ['.'], '根目錄是捷徑沒被當成捷徑');
+    assert.equal(r.files.size, 0, '跟著根目錄捷徑讀到盒外的檔');
+  }
+  // ② 中介目錄是 symlink
+  {
+    const home = mkdtempSync(join(tmpdir(), 'grok-home-')); mkdirSync(join(home, 'sessions'));
+    execFileSync('ln', ['-s', outside, join(home, 'sessions', 'ws')]);
+    const r = readSessionsOnce(join(home, 'sessions'));
+    assert.deepEqual(r.odd, ['ws']);
+    assert.equal(r.files.size, 0);
+  }
+  // ③ 正常樹照讀
+  {
+    const home = mkdtempSync(join(tmpdir(), 'grok-home-')); mkdirSync(join(home, 'sessions', 'ws'), { recursive: true }); writeFileSync(join(home, 'sessions', 'ws', 'a.jsonl'), 'x');
+    const r = readSessionsOnce(join(home, 'sessions'));
+    assert.deepEqual(r.odd, []); assert.deepEqual([...r.files.keys()], ['ws/a.jsonl']);
+  }
+});
+
+test('runScan｜r7：假 grok 把整個 sessions 目錄換成指向盒外的 symlink → 1（事故）、盒外內容不進結果包', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const inst = fakeGrok();
+  // 盒外目標放在假安裝樹裡（沙箱裡 ln -s 的目標不需要讀得到，symlink 本身寫在盒內就行）
+  const outside = mkdtempSync(join(tmpdir(), 'outside-sessions-')); writeFileSync(join(outside, 'leak.txt'), 'OUTSIDE-SESSIONS-SECRET');
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `rm -rf "$GROK_HOME/sessions"; /bin/ln -s ${JSON.stringify(outside)} "$GROK_HOME/sessions"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /捷徑/);
+  const all = readdirSync(iso.resultsRoot).flatMap((d) => readdirSync(join(iso.resultsRoot, d)));
+  assert.ok(!all.includes('sessions'), '事故還保存了 sessions');
+});
