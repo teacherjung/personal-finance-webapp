@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -691,4 +691,24 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
     const r = await runScan({ base: repo.base, head: head3, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
   }
+});
+
+test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急收尾：grok 群組死、盒子／假值檔／活金絲雀都清掉、退 2（第五次正式掃描實際留下殘留）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const inst = fakeGrok();
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'sleep 30; $1'));
+  /** @type {string[]} */ const logs = [];
+  /** @type {number[]} */ const exits = [];
+  const livesBefore = readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length;
+  const p = runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) setTimeout(() => process.emit('SIGTERM'), 300); }, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), exit: (c) => exits.push(c) });
+  const r = await p;
+  assert.deepEqual(exits, [2], '緊急收尾沒呼叫 exit(2)');
+  assert.equal(r.code, 2);
+  const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
+  assert.ok(box && !existsSync(box), '盒子沒清');
+  assert.ok(!readdirSync(iso.authDir).some((n) => n.startsWith('dummy-bearer')), '假值檔沒清');
+  assert.equal(readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length, livesBefore, '活金絲雀目錄沒清');
+  const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
+  assert.ok(!ps.includes(box), 'grok 群組還活著');
 });

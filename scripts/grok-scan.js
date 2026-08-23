@@ -168,6 +168,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {string} [expectedSha256] 預設 EXPECTED_GROK_SHA256；考題用假 grok 時傳它自己的 hash
  * @property {(msg: string) => void} [log]
  * @property {string} [relayScript]
+ * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
  */
 
 /**
@@ -223,6 +224,16 @@ export async function runScan(args, deps = {}) {
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
   /** @type {number | null} */ let grokPgid = null;
+  // 父程序被 SIGTERM／SIGINT（例如呼叫它的工具逾時）時 finally 不會跑——第五次正式掃描實際留下盒子、假值檔、活金絲雀目錄。
+  // 緊急收尾：同步 SIGKILL 整群、等到群空（最多 ~3 秒）、殺轉送器、刪活金絲雀／假值檔／盒子，然後退 2。所有輸出丟棄。
+  const emergency = () => {
+    try { if (grokPgid) { process.kill(-grokPgid, 'SIGKILL'); for (let i = 0; i < 60; i++) { try { process.kill(-grokPgid, 0); } catch { break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); } } } catch { /* 已空 */ }
+    try { relay?.kill('SIGKILL'); } catch { /* 已死 */ }
+    try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
+    try { cleanup(); } catch { /* 盡力 */ }
+    (deps.exit ?? process.exit)(2);
+  };
+  process.on('SIGTERM', emergency); process.on('SIGINT', emergency);
   try {
   const relayPort = await freePort();
   {
@@ -459,6 +470,7 @@ export async function runScan(args, deps = {}) {
   summary.push(recipe);
   return { code: 0, summary };
   } finally {
+    process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
     // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
     await killGroupAndWait(grokPgid);
     try { relay?.kill(); } catch { /* 已死 */ }
