@@ -27,7 +27,7 @@
 // ・本腳本不決定掃描時機（條款：Codex 通過之後、gh pr ready 之前）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 /** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
 export const EXPECTED_GROK_VERSION = '1.0.3';
+/**
+ * 釘住執行檔本身（r4 #5：版本字串是被檢者自己印的，wrapper 印「grok 1.0.3」就過；而且 r3 版在**沙箱外**執行它）。
+ * 流程：cp 真執行檔進盒子 → 對**盒內副本**算 sha256 → 不等於這個值＝不掃 → `--version` 在**沙箱內**對盒內副本跑。
+ * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
+ */
+export const EXPECTED_GROK_SHA256 = '09deaf06804955ff2d6ccef2042af4031c659c47fd16eb3c72664a8f533832da';
 export { RELAY_PORT };
 
 /**
@@ -51,6 +57,7 @@ export { RELAY_PORT };
  * @property {string} [authDir] 預設 ~/.grok-sandbox-auth（0700，只含 auth.json）：沙箱跑的 grok 用這份登入狀態，
  *   第一次從真 ~/.grok/auth.json 種、每掃同步回來（盒內 refresh 過的 token 才會保留到下一掃）；真 auth.json 不動。
  * @property {string} [resultsRoot] 預設 ~/.grok-scan-results：掃完只留去機密的結果包（launch.json＋sessions），盒子整個清掉
+ * @property {string} [expectedSha256] 預設 EXPECTED_GROK_SHA256；考題用假 grok 時傳它自己的 hash
  * @property {(msg: string) => void} [log]
  * @property {string} [relayScript]
  */
@@ -78,53 +85,81 @@ export async function runScan(args, deps = {}) {
   if (!/^[0-9a-f]{7,40}$/.test(base) || !/^[0-9a-f]{7,40}$/.test(head)) return fail('base／head 必須是寫死的 SHA（條款：不可用會移動的名稱）');
   if (!existsSync(promptFile)) return fail(`指示檔不存在：${promptFile}`);
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
-
-  // ── 版本釘（條款：版本不同＝當未跑）。在沙箱外跑，所以執行檔必須來自沙箱裡**唯讀**的安裝樹（r2 #2）。
-  //    env 用白名單、不繼承（r2：沙箱外執行的東西也不該拿到呼叫者的 token）；解析後**精確等於**，不用前綴。
-  const ver = spawnSync(realGrokBin, ['--version'], { encoding: 'utf8', timeout: 20_000, env: { PATH: '/usr/bin:/bin', HOME: homedir() } });
-  const verText = (ver.stdout || '').trim();
-  const parsed = /^grok (\S+)/.exec(verText)?.[1];
-  if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return fail(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」——轉送器目的地是從那個版本 strings 出來的，升版要重驗`);
+  const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
   // ── ① 建盒子 ──
   const box = realpathSync(mkdtempSync(`/private/tmp/grok-scan-${head.slice(0, 7)}-`));
   const src = join(box, 'src');
   mkdirSync(src); mkdirSync(join(box, 'tmp'));
   log(`盒子：${box}`);
-  // 盒子在**所有出口**都要清（r3 #4：r2 沒清＝每掃在 /private/tmp 留一份憑證副本）；只留去機密的結果包
+  // 盒子在**所有出口**都要清（r3 #4：r2 沒清＝每掃在 /private/tmp 留一份憑證副本）；只留去機密的結果包。
+  // r4 #1／#4：①結果檔（launch.json）由父程序**直接寫在盒外**的結果包——不經盒子，Grok 改不到；
+  //   ②sessions 的複製逐層 lstat、只收 regular file，拒 symlink／特殊檔（父程序在沙箱外，會替 Grok 跟隨捷徑＝confused deputy）；
+  //   ③整段流程包在 try/finally，任何 throw 都走 cleanup（r3 版 --out 指到寫不進去的地方就 throw、盒子留著）。
   const grokHome = join(box, 'grok-home');
   const sessionsRoot = join(grokHome, 'sessions');
   const resultsDir = join(resultsRoot, `${head.slice(0, 7)}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
-  /** @param {string} why @returns {{ code: 2, summary: string[] }} */
-  const failAndClean = (why) => { cleanup(); return fail(why); };
+  mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
+  /** 盒內 → 結果包：只收 regular file，不跟 symlink（lstat）；任何非 regular 一律跳過並記 */
+  const copyRegularTree = (/** @type {string} */ from, /** @type {string} */ to) => {
+    const skipped = [];
+    const walk = (/** @type {string} */ f, /** @type {string} */ t) => {
+      const st = lstatSync(f);
+      if (st.isDirectory()) { mkdirSync(t, { recursive: true }); for (const n of readdirSync(f)) walk(join(f, n), join(t, n)); }
+      else if (st.isFile()) writeFileSync(t, readFileSync(f));
+      else skipped.push(f);
+    };
+    if (existsSync(from)) walk(from, to);
+    return skipped;
+  };
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned) return; cleaned = true;
     try {
-      mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
-      for (const f of ['launch.json']) { if (existsSync(join(box, f))) spawnSync('/bin/cp', [join(box, f), resultsDir]); }
-      if (existsSync(sessionsRoot)) spawnSync('/bin/cp', ['-R', sessionsRoot, join(resultsDir, 'sessions')]);
-      // 盒內 auth.json 若被 grok refresh 過，同步回沙箱專用 auth 目錄（不碰真 ~/.grok）
-      if (existsSync(join(grokHome, 'auth.json'))) spawnSync('/bin/cp', [join(grokHome, 'auth.json'), join(authDir, 'auth.json')]);
+      const skipped = copyRegularTree(sessionsRoot, join(resultsDir, 'sessions'));
+      if (skipped.length) log(`⚠️ 結果包略過 ${skipped.length} 個非 regular file（symlink／特殊檔）：${skipped.slice(0, 3).join('、')}`);
     } finally {
       rmSync(box, { recursive: true, force: true });
     }
   };
+  /** @param {string} why @returns {{ code: 2, summary: string[] }} */
+  const failAndClean = (why) => { cleanup(); return fail(why); };
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來）
+  const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
+  /** @type {string} */ let verText;
+  /** @type {Record<string, string>} */ let authBefore;
+  /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
+  /** @type {string | undefined} */ let liveDir;
+  try {
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
-    const c = spawnSync('/bin/cp', ['-c', realGrokBin, join(grokHome, 'bin', 'grok')], { encoding: 'utf8' });   // APFS clone，127MB 免費
+    const c = spawnSync('/bin/cp', ['-c', realGrokBin, grokBin], { encoding: 'utf8' });   // APFS clone，127MB 免費
     if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗：${c.stderr}`);
+    // r4 #5：對**盒內副本**算 hash（不是真檔——檢查與複製之間的路徑替換競態）；不符＝不掃；之後只執行這份副本
+    const sha = createHash('sha256').update(readFileSync(grokBin)).digest('hex');
+    if (sha !== expectedSha) return failAndClean(`grok 執行檔 sha256 不符：要 ${expectedSha.slice(0, 12)}…，實際 ${sha.slice(0, 12)}…——執行檔被換過或升版了；升版要改 EXPECTED_GROK_SHA256 並重驗轉送器目的地`);
     for (const f of ['config.toml', 'agent_id']) {
-      if (existsSync(join(grokInstall, f))) spawnSync('/bin/cp', [join(grokInstall, f), join(grokHome, f)]);
+      if (existsSync(join(grokInstall, f))) { const r = spawnSync('/bin/cp', [join(grokInstall, f), join(grokHome, f)], { encoding: 'utf8' }); if (r.status !== 0) return failAndClean(`複製 ${f} 失敗：${r.stderr}`); }
+      else log(`（${f} 不在安裝樹，略過——grok 會用預設）`);
     }
-    // 登入狀態：沙箱專用目錄（0700、只含 auth.json）；第一次從真的種
-    mkdirSync(authDir, { recursive: true, mode: 0o700 });
+    // 登入狀態：沙箱專用目錄（0700、只含 auth.json）；第一次從真的種；目錄已存在也把 mode 修成 0700（mkdir 的 mode 不會改既有目錄）
+    mkdirSync(authDir, { recursive: true, mode: 0o700 }); chmodSync(authDir, 0o700);
     if (!existsSync(join(authDir, 'auth.json'))) {
       if (!existsSync(join(grokInstall, 'auth.json'))) return failAndClean(`找不到登入狀態：${join(grokInstall, 'auth.json')} 也沒有——先在沙箱外登入一次`);
-      spawnSync('/bin/cp', [join(grokInstall, 'auth.json'), join(authDir, 'auth.json')]);
+      writeFileSync(join(authDir, 'auth.json'), readFileSync(join(grokInstall, 'auth.json')), { mode: 0o600 });
     }
-    spawnSync('/bin/cp', [join(authDir, 'auth.json'), join(grokHome, 'auth.json')]);
+    const authRaw = readFileSync(join(authDir, 'auth.json'), 'utf8');
+    try { authBefore = JSON.parse(authRaw); } catch { return failAndClean(`沙箱專用 auth.json 不是合法 JSON：${join(authDir, 'auth.json')}`); }
+    writeFileSync(join(grokHome, 'auth.json'), authRaw, { mode: 0o600 });
   }
-  const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
+  // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
+  {
+    const ver = spawnSync('/usr/bin/sandbox-exec', ['-f', PROFILE, '-D', `SCAN_DIR=${box}`, '-D', `RELAY_PORT=${RELAY_PORT}`, grokBin, '--version'],
+      { encoding: 'utf8', timeout: 20_000, cwd: box, env: sandboxEnv(box) });
+    verText = (ver.stdout || '').trim();
+    const parsed = /^grok (\S+)/.exec(verText)?.[1];
+    if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return failAndClean(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）`);
+  }
   {
     // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）
     const tarPath = join(box, 'src.tar');
@@ -163,21 +198,22 @@ export async function runScan(args, deps = {}) {
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  const liveDir = mkdtempSync(join(homedir(), '.grok-live-canary-'));
+  liveDir = mkdtempSync(join(homedir(), '.grok-live-canary-'));
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
   // ── ③ 轉送器（監看它的生死）──
-  const relay = spawn(process.execPath, [relayScript, String(RELAY_PORT)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const relayProc = spawn(process.execPath, [relayScript, String(RELAY_PORT)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  relay = relayProc;
   let relayDead = /** @type {string | null} */ (null);
   let relayErr = '';
-  relay.stderr?.on('data', (d) => { relayErr += String(d); });
-  relay.on('exit', (c, sig) => { relayDead = `轉送器退出（code ${c}, signal ${sig}）${relayErr.trim() ? `：${relayErr.trim().slice(-200)}` : ''}`; });
+  relayProc.stderr?.on('data', (d) => { relayErr += String(d); });
+  relayProc.on('exit', (c, sig) => { relayDead = `轉送器退出（code ${c}, signal ${sig}）${relayErr.trim() ? `：${relayErr.trim().slice(-200)}` : ''}`; });
   const ready = await new Promise((ok) => {
     const t = setTimeout(() => ok(false), 5000);
-    relay.stdout?.on('data', (d) => { if (String(d).includes('READY')) { clearTimeout(t); ok(true); } });
-    relay.on('exit', () => { clearTimeout(t); ok(false); });
+    relayProc.stdout?.on('data', (d) => { if (String(d).includes('READY')) { clearTimeout(t); ok(true); } });
+    relayProc.on('exit', () => { clearTimeout(t); ok(false); });
   });
-  if (!ready) { rmSync(liveDir, { recursive: true, force: true }); return failAndClean(`轉送器沒有 READY（${relayDead ?? '5 秒逾時'}）`); }
+  if (!ready) { return failAndClean(`轉送器沒有 READY（${relayDead ?? '5 秒逾時'}）`); }
 
   // ── ④ 沙箱裡跑 grok ──
   const startedAt = new Date().toISOString();
@@ -187,7 +223,7 @@ export async function runScan(args, deps = {}) {
   const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${RELAY_PORT}/v1` };
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
-  writeFileSync(join(box, 'launch.json'), JSON.stringify({
+  writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
     startedAt, base, head, sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText,
     profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
     materialsSha256: createHash('sha256').update(materials).digest('hex'),
@@ -206,11 +242,8 @@ export async function runScan(args, deps = {}) {
     child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr }); });
   });
   const endedAt = new Date().toISOString();
-  relay.kill();
-  rmSync(liveDir, { recursive: true, force: true });
   const reply = grok.stdout || '';
-  if (outFile) writeFileSync(outFile, reply);
-  log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字${outFile ? `，已寫 ${outFile}` : ''}`);
+  log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字`);
   // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
   if (relayDead) return failAndClean(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}`);
   if (grok.status !== 0) return failAndClean(`grok 沒有正常結束（status ${grok.status}${grok.signal ? `, signal ${grok.signal}` : ''}${grok.error ? `, ${grok.error.message}` : ''}）：${(grok.stderr || '').slice(-400)}`);
@@ -232,11 +265,44 @@ export async function runScan(args, deps = {}) {
     if (g.status === 0) { const m = `⚠️ 驗屍：session ${d.split('/').pop()} 的日誌出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
     else if (g.status !== 1) return failAndClean(`驗屍：grep 自己失敗（status ${g.status}）：${g.stderr}`);
   }
-  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，去機密）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
+  // ── 去機密（r4 #2）：Grok 讀得到自己的 auth.json，可以把 token 寫進回覆／日誌——回覆會進 PR 描述、日誌會進結果包。
+  //    拿**本次已知的憑證值**去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
+  //    ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。而且 token 在走轉送器時就已到 xAI
+  //    ——那是它自己發的 token，不算外流；真正要防的是它被帶出盒子進到 GitHub／磁碟。
+  const secretValues = Object.values(authBefore).flatMap((v) => (typeof v === 'string' && v.length >= 16 ? [v] : typeof v === 'object' && v ? Object.values(v).filter((x) => typeof x === 'string' && x.length >= 16) : []));
+  const leaksIn = (/** @type {string} */ text) => secretValues.some((v) => text.includes(v));
+  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現登入憑證的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
+  for (const d of dirs) {
+    for (const f of readdirSync(d)) {
+      const fp = join(d, f); if (!lstatSync(fp).isFile()) continue;
+      if (leaksIn(readFileSync(fp, 'utf8'))) { const m = `⚠️ 去機密：session 日誌 ${f} 裡出現登入憑證的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; break; }
+    }
+  }
+  if (worst === 0 && outFile) writeFileSync(outFile, reply);
+  // ── auth 同步（r4 #3）：**只在成功**時、驗過是 regular file＋合法 JSON＋鍵集合沒少，才以 temp＋rename 原子寫回 ──
+  if (worst === 0) {
+    const ap = join(grokHome, 'auth.json');
+    const st = existsSync(ap) ? lstatSync(ap) : null;
+    if (st && st.isFile()) {
+      try {
+        const raw = readFileSync(ap, 'utf8'); const parsed = JSON.parse(raw);
+        const missing = Object.keys(authBefore).filter((k) => !(k in parsed));
+        if (missing.length) log(`（auth.json 沒同步回：盒內版少了鍵 ${missing.join('、')}——保留上一份好的）`);
+        else { const tmp = join(authDir, `auth.json.${process.pid}.tmp`); writeFileSync(tmp, raw, { mode: 0o600 }); renameSync(tmp, join(authDir, 'auth.json')); }
+      } catch (e) { log(`（auth.json 沒同步回：盒內版不是合法 JSON——保留上一份好的：${/** @type {Error} */ (e).message}）`); }
+    }
+  }
+  if (worst === 1) rmSync(sessionsRoot, { recursive: true, force: true });   // 事故：日誌不進結果包
+  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對憑證值）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   summary.push(recipe);
-  cleanup();   // 成功路徑也清：盒子（含憑證副本）不留在 /private/tmp
   return { code: /** @type {0|1} */ (worst), summary };
+  } finally {
+    // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收
+    try { relay?.kill(); } catch { /* 已死 */ }
+    try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
+    cleanup();
+  }
 }
 
 if (isMainModule(import.meta.url)) {
