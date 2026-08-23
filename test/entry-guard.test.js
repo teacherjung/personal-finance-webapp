@@ -140,8 +140,17 @@ function runThrice(rel) {
     const link = join(dir, 'probe.js');
     symlinkSync(join(ROOT, rel), link);
     const env = { PATH: process.env.PATH || '', HOME: process.env.HOME || '' };
-    const opts = { encoding: 'utf8', env, cwd: ROOT };
-    const shape = (r) => ({ status: r.status, out: `${r.stdout}${r.stderr}` });
+    // timeout（2026-08-22 加）：一支無參數就開始聽的伺服器型腳本，會讓這裡**無聲卡死**（grok-relay.js 第一版實際卡了 10 分鐘）。
+    // ⚠️ 光加 timeout 不夠（Codex #496 r1 實測）：被殺的腳本 status 是 null，而 shape() 原本把 null 照樣收進去、
+    //    三次比對都是 {status:null,out:'READY'} → 相等 → **照樣綠**。所以 shape() 要把「被殺」變成紅：
+    //    status 不是數字＝這支腳本無參數跑不完（伺服器？等 stdin？），那不是「輸出穩定」，是「本題證不了它」。
+    const opts = { encoding: 'utf8', env, cwd: ROOT, timeout: 20_000 };
+    const shape = (r) => {
+      assert.equal(typeof r.status, 'number',
+        `${rel} 無參數執行 20 秒內沒結束（${r.error?.code || r.signal || 'status null'}）⇒ 它在無參數時啟動了長駐程序或在等輸入。\n`
+        + '專案慣例：scripts/*.js 無參數要印用法、立刻退出。（grok-relay.js 第一版就是這樣卡死整套考題。）');
+      return { status: r.status, out: `${r.stdout}${r.stderr}` };
+    };
     return {
       direct: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
       again: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),

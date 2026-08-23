@@ -1,0 +1,134 @@
+;; Grok 複審後掃專用沙箱（William 2026-08-22 裁示 B＋中間路）。
+;;
+;; 為什麼存在：鎖工具旗標 52/53 次靜默失效（~/.grok/sessions 全量稽核），「請它不要做」擋不住；
+;; 改成「作業系統不讓它做」。William 2026-08-20 已拍板允許 Grok 跑指令——在盒子裡跑是安全的，
+;; 因為盒子裡沒有它不該看的東西。
+;;
+;; ## 結構（r2 重做）：**(deny default)＋(import "system.sb")**，再逐項放行
+;; r1 用「allow default＋列舉 deny」被 Codex 抓到漏 /private/var/tmp、/opt/homebrew/var、/Library/Application Support…
+;; ——列舉 deny 不是封閉邊界。我原以為 deny-default 讓 cat 起不來（SIGABRT、無日誌）是死路；
+;; Codex r2 實證：加 (import "system.sb")（Apple 自己 CUPS 等沙箱的骨架）就能跑，而且缺什麼有**明確錯誤**
+;; （例如 node 要 /opt/homebrew/etc/openssl@3/openssl.cnf），不是黑箱。所以這版是真正的預設拒絕。
+;;
+;; ## 參數（由 scripts/grok-scan.js 傳入）
+;;   SCAN_DIR＝盒子（讀寫；裡面有 src/、tmp/、grok-home/＝bin/grok＋重建的 auth.json＋空 sessions/）
+;;   RELAY_PORT＝轉送器的 port（網路**只准連這一個**；每掃隨機——上一掃離開群組的程序，其沙箱連不到下一掃的轉送器）
+;; 真 ~/.grok 不是參數——它不在沙箱裡，任何路徑都讀不到。
+;; 環境變數由 grok-scan.js 用白名單重建：HOME／TMPDIR／GROK_HOME 全指進盒子、PATH 指真 git（繞開 xcrun shim）。
+;;
+;; ## 為什麼真 ~/.grok 完全不進沙箱（Codex r2 #2 升級鏈 → r3 #4 整樹暴露）
+;; r1 放行整棵 ~/.grok 讀寫：受掃 repo 的 prompt injection 可讓第 N 次掃描把 bin/grok 換成 wrapper、
+;; 第 N+1 次在沙箱外執行。r2 改唯讀＋clone 整棵進盒子：歷史 sessions 仍可讀（Grok 從執行檔路徑就找得回根目錄），
+;; 而 clone 把 auth.json（與若有的 mcp_credentials.json）整包複製進 /private/tmp、掃完沒清。
+;; r3：真 ~/.grok 不進沙箱；盒內家只有 bin/grok（盒內副本驗 sha256）＋空 sessions/＋auth.json；r6：config.toml／agent_id 也不帶（-p 實測不需要）、
+;; auth.json 是**白名單 7 欄重建**的（不是抄的）；
+;; 登入狀態放沙箱專用的 0700 目錄（~/.grok-sandbox-auth，只含 auth.json；掃描前由父程序 refresh——**沒有掃後同步**，
+;; 盒內 auth 的 key 是假的、轉送器在沙箱外換真的）；
+;; 盒子在所有出口清掉、只留去機密的結果包（launch.json＋sessions）。
+;;
+;; ## 誠實劃界
+;; ・sandbox-exec 是 Apple 標為過時但 macOS 15.7 仍可用的工具；它消失這道圍欄就沒了。
+;; ・system.sb 是 Apple 的私有介面（檔頭自己寫「subject to change at any time」）；macOS 升版要重驗金絲雀。
+;; ・file-read-metadata 全開：stat 任何路徑（知道存在與否；讀不到內容、列不了目錄）——node／git 解析路徑需要。
+;; ・網路**只准連轉送器那一個 port**（r1 放行 localhost:* 被抓到：盒內程式連得到本機理財 app 的 4321，
+;;   那裡直接吐真實餘額）。代價：會起本機 HTTP 伺服器再連自己的整合型考題，在盒子裡跑不了（EPERM，33ms 快失敗）。
+;;   bind／inbound 仍准，所以伺服器起得來、只是客戶端連不上——照實寫進材料提示。
+;; ・**IPC 不在 deny-default 內**：匯入的 system.sb 本身就放行空前綴的 mach-register 與 XPC mach-lookup
+;;   （這台 macOS 15.7 的 system.sb:19,23；Codex r3 實查）。剪貼簿／Keychain 金絲雀證明的只是「那兩個指令在這份
+;;   profile 下失敗」，不能歸因到哪條規則、也不能說 IPC 被關了。私有 system.sb 日後擴張時沒有考題會紅。
+;; ・盒子裡放什麼仍是我們的責任：沙箱擋外面，擋不了我們自己把機密放進去。
+;; ・setsid **擋不住**（r6 實測：deny syscall-unix 147 無效、82＝setpgid 有效）——離開程序群組是可能的；它無害的理由在 grok-scan.js 檔頭。
+(version 1)
+(deny default)
+(import "system.sb")
+
+;; ── 程序基本功能 ──
+(allow process-fork) (allow signal) (allow sysctl-read)
+;; ⚠️ process-exec 是**獨立權限**，deny file-read 擋不住執行（r4 實測：/opt/homebrew/Cellar/gh 讀不到卻跑得起來）。
+;; 只准執行系統、CLT、node 的 Cellar、以及盒子裡的東西（盒內 grok、node_modules/.bin）。
+(allow process-exec*
+  (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
+  (subpath "/Library/Developer/CommandLineTools")
+  (subpath "/opt/homebrew/Cellar/ada-url/3.4.4")
+  (subpath "/opt/homebrew/Cellar/brotli/1.2.0")
+  (subpath "/opt/homebrew/Cellar/c-ares/1.34.6")
+  (subpath "/opt/homebrew/Cellar/hdrhistogram_c/0.11.9")
+  (subpath "/opt/homebrew/Cellar/icu4c@78/78.3")
+  (subpath "/opt/homebrew/Cellar/libnghttp2/1.69.0")
+  (subpath "/opt/homebrew/Cellar/libnghttp3/1.15.0")
+  (subpath "/opt/homebrew/Cellar/libngtcp2/1.22.1")
+  (subpath "/opt/homebrew/Cellar/libuv/1.52.1")
+  (subpath "/opt/homebrew/Cellar/llhttp/9.4.1")
+  (subpath "/opt/homebrew/Cellar/merve/1.2.2_1")
+  (subpath "/opt/homebrew/Cellar/nbytes/0.1.4")
+  (subpath "/opt/homebrew/Cellar/node/26.0.0")
+  (subpath "/opt/homebrew/Cellar/openssl@3/3.6.2")
+  (subpath "/opt/homebrew/Cellar/simdjson/4.6.4")
+  (subpath "/opt/homebrew/Cellar/simdutf/9.0.0")
+  (subpath "/opt/homebrew/Cellar/sqlite/3.53.1")
+  (subpath "/opt/homebrew/Cellar/uvwasi/0.0.23")
+  (subpath "/opt/homebrew/Cellar/zstd/1.5.7_1")
+  (subpath (param "SCAN_DIR")))
+
+;; ── 讀：系統與工具鏈（每條都對應 otool -L 實查；加新的要寫正面金絲雀證明需要）──
+;; grok 執行檔與 CLT git 只靠 /System、/usr/lib。Homebrew node 靠 Cellar 裡 17 個 formula——
+;; r4 改成**精確版本目錄＝遞移閉包**（r3 放行整棵 Cellar/opt 被抓到：下次 brew install 什麼、盒內就多什麼，零考題會紅；
+;; 只列直接依賴也不夠：merve→simdutf 這種間接依賴讓 node 起不來）。
+;; brew upgrade 會讓這些路徑失效＝node 起不來＝正面金絲雀紅＝不掃——壞法是「吵」，不是「靜靜放寬」。
+;; 反面金絲雀：/opt/homebrew/bin/gh（brew 裝的、非 node 依賴）在盒內必須執行不了。
+;; 刻意不放：/opt/homebrew/bin（symlink 指向整個 Cellar）、/opt/homebrew/lib（全域 npm）、/opt/homebrew/opt 整棵、
+;;           /Library/Frameworks、/Library/Developer 整棵（只需 CommandLineTools）、/dev 整棵（列舉裝置）。
+(allow file-read*
+  (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
+  (subpath "/Library/Developer/CommandLineTools")
+  (subpath "/Library/Preferences/Logging") (subpath "/private/etc")
+  (subpath "/private/var/db/timezone") (subpath "/private/var/select")
+  (subpath "/opt/homebrew/etc/openssl@3")   ; node 啟動要讀 openssl.cnf——只放這一個目錄
+  (subpath "/opt/homebrew/Cellar/ada-url/3.4.4")
+  (subpath "/opt/homebrew/Cellar/brotli/1.2.0")
+  (subpath "/opt/homebrew/Cellar/c-ares/1.34.6")
+  (subpath "/opt/homebrew/Cellar/hdrhistogram_c/0.11.9")
+  (subpath "/opt/homebrew/Cellar/icu4c@78/78.3")
+  (subpath "/opt/homebrew/Cellar/libnghttp2/1.69.0")
+  (subpath "/opt/homebrew/Cellar/libnghttp3/1.15.0")
+  (subpath "/opt/homebrew/Cellar/libngtcp2/1.22.1")
+  (subpath "/opt/homebrew/Cellar/libuv/1.52.1")
+  (subpath "/opt/homebrew/Cellar/llhttp/9.4.1")
+  (subpath "/opt/homebrew/Cellar/merve/1.2.2_1")
+  (subpath "/opt/homebrew/Cellar/nbytes/0.1.4")
+  (subpath "/opt/homebrew/Cellar/node/26.0.0")
+  (subpath "/opt/homebrew/Cellar/openssl@3/3.6.2")
+  (subpath "/opt/homebrew/Cellar/simdjson/4.6.4")
+  (subpath "/opt/homebrew/Cellar/simdutf/9.0.0")
+  (subpath "/opt/homebrew/Cellar/sqlite/3.53.1")
+  (subpath "/opt/homebrew/Cellar/uvwasi/0.0.23")
+  (subpath "/opt/homebrew/Cellar/zstd/1.5.7_1")
+)
+(allow file-read-metadata)
+(allow file-read* file-write*
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")
+  (literal "/dev/dtracehelper") (regex #"^/dev/tty") (regex #"^/dev/fd/") (literal "/dev/fd"))
+(allow file-ioctl (regex #"^/dev/"))
+
+;; ── 盒子：唯一可寫的地方（src/、tmp/、grok-home/＝bin/grok、重建的 auth.json、sessions/）──
+;; r3：真 ~/.grok **完全不進沙箱**（r2 放行整棵唯讀被抓到：歷史 sessions 仍可讀；clone 整棵又把憑證複製進 /private/tmp）。
+(allow file-read* file-write* (subpath (param "SCAN_DIR")))
+
+;; ── 網路：只准連轉送器（TCP）；不給 DNS；本機伺服器准起（bind/inbound）但客戶端連不到它（見劃界）──
+(allow network-outbound (remote tcp (string-append "localhost:" (param "RELAY_PORT"))))
+(allow network-bind (local tcp "localhost:*"))
+(allow network-inbound (local tcp "localhost:*"))
+;; ⚠️ 不放行 /private/var/run/mDNSResponder 的 unix socket（r1–r14 一直放著）：有它盒內就能 getaddrinfo **任意網域**——
+;;    DNS 查詢名本身就是一條不經轉送器、不需假 token 的外送通道（Grok 2026-08-23 第一次正式沙箱掃描實測 dns.lookup 成功；
+;;    Codex 十四輪沒看到）。grok 只連 127.0.0.1:RELAY_PORT（數字 IP），不需要 DNS；反面金絲雀：盒內 dns.lookup 必須失敗。
+(allow system-socket)
+
+;; ── r6 明確拒絕（Seatbelt 後面的規則蓋前面的；這段要留在檔尾）──
+;; /usr/local 不是 SIP 保護的系統樹（Apple SIP 文件明列它是 /usr 的開發者例外）——這台裡面有 pkg 裝的第二顆 node、
+;; Python 連結；上面放行整棵 /usr 等於把它一起帶進來（Codex r6 #1）。明確拒讀＋拒執行。
+;; 反面金絲雀：/usr/local/bin/node 在盒內必須跑不起來、/usr/local 列不了。
+(deny file-read* process-exec* (subpath "/usr/local"))
+;; setsid(147)／setpgid(82)：盒內程式自己換 session／process group 就離開父程序的 kill(-pgid)（Codex r6 #2 反例）。
+;; 實測：Seatbelt 的 syscall-unix 過濾對 147 無效、對 82 有效——但 grok 的 run_terminal_command 靠 setpgid 起子行程，
+;; 擋 82 它就「spawn shell … Operation not permitted」、盒子裡一條指令都跑不了（第四次正式掃描後的煙霧測試實際踩到）。
+;; 所以**兩個都不擋**；「離開程序群組的程序無害」的理由在 grok-scan.js 檔頭（隨機 port／本掃假值／單趟讀／lsof 掃蕩）。

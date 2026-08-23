@@ -2,13 +2,23 @@
 // @ts-check
 // **Grok 掃後驗屍**（William 2026-08-17 拍板「一定要有制度確保、不靠運氣」）。
 //
+// ## ⚠️ 2026-08-22 起的角色（William 裁示 B：沙箱制）
+//
+// 本腳本數的是**工具足跡**，那個數字仍然準；但它的**解讀**變了：
+// ・舊制（鎖工具）：有足跡＝旗標失效＝該掃作廢。
+// ・新制（scripts/grok-sandbox.sb）：Grok 在盒子裡跑指令是**准的**（William 2026-08-20 拍板允許跑指令），
+//   有足跡＝正常。圍欄改由作業系統擋（金絲雀＝紅燈證明），驗屍改看「有沒有讀到盒子外的東西」
+//   ——那一段在 scripts/grok-scan.js 的第⑤步，它呼叫本檔的 auditSessionDir() 取足跡，再另查破口證據。
+// ・退出碼 0／1／2 的**事實語意不變**（零足跡／有足跡／查不清楚），考題釘的是這個；
+//   下面「該掃作廢」的舊解讀保留給**沒走沙箱**的掃描（那種掃描本來就不該再發生）。
+//
 // ## 它在解什麼
 //
-// Grok 複審後掃的呼叫紀律要求鎖工具（AGENTS「Grok 的邊界」節），但 2026-08-17 實測：
-// **同版本（1.0.3 執行檔未變）、同旗標，鎖工具會「非決定性靜默失效」**——此前五次掃描
-// 日誌全零工具足跡，#477 連兩掃卻各跑 54／56 次終端呼叫（足跡到主目錄與兩棵工作樹；
-// 金絲雀實測其內建 `workspace` 沙箱也擋不住讀檔）。旗標與沙箱都只能當第一層；
-// **可靠的圍欄＝掃完機械稽核它自己的本機日誌**：有任何工具足跡＝該掃作廢（照條款在 PR 描述記一行）。
+// 〔沿革，2026-08-17〜08-21 的舊制〕呼叫紀律曾要求鎖工具，但實測**同版本、同旗標，鎖工具會「非決定性
+// 靜默失效」**（#477 連兩掃各跑 54／56 次終端呼叫，足跡到主目錄與兩棵工作樹；全量稽核後是 52/53）。
+// 舊制下本腳本是圍欄本身：有任何工具足跡＝該掃作廢。
+// 〔現行，2026-08-22 起〕圍欄改成 OS 沙箱（scripts/grok-sandbox.sb，金絲雀證明）；本腳本退成**足跡計數器**，
+// 由 scripts/grok-scan.js 呼叫、把足跡數寫進紀錄，並另查破口線索。有足跡不作廢。
 //
 // ## 用法（掃描後立刻跑，結果寫進證據的配方聲明）
 //
@@ -17,8 +27,9 @@
 //
 // 退出碼：
 //   0＝乾淨（日誌可讀、零工具足跡）→ 配方聲明記「驗屍 0（session <id>）」＋掃描時用的目錄路徑
-//   1＝**越界**（有工具足跡；列出足跡名與筆數——lifecycle 一次呼叫會留多筆足跡，數字不是呼叫次數）
-//     → 該掃作廢、照條款在 PR 描述記一行原因或鎖工具重掃
+//   1＝**有工具足跡**（列出足跡名與筆數——lifecycle 一次呼叫會留多筆足跡，數字不是呼叫次數）
+//     → 沙箱制：正常，不作廢（盒子裡准跑）；破口另由 grok-scan.js 查
+//     → 未走沙箱（舊制）：該掃作廢、照條款在 PR 描述記一行原因
 //   2＝**查不清楚**（session 找不到／日誌缺失／無任何可解析行）→ fail-closed，當越界處理
 //
 // ## 誠實劃界
@@ -40,7 +51,7 @@
 //   fail-closed 邊角」同族，裁示＝補完 r9 這刀後劃界停戰——判準只承諾涵蓋**釘住版本的真實
 //   日誌形狀**與已實測過的損毀型；再往外的理論邊角不逐輪加碼、同族發現進待辦，
 //   格式漂移的最後防線＝版本釘。
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { isMainModule } from '../lib/is-main.js';
@@ -115,15 +126,20 @@ export function auditSessionDir(sessionDir) {
   if (!existsSync(sessionDir)) return { code: 2, calls, parsed, why: `session 目錄不存在：${sessionDir}` };
   /** @type {string[]} */ let files;
   /** @type {string[]} */ let jsonFiles;
+  /** @type {number} */ let nonRegular;
   try {
     const all = readdirSync(sessionDir);
-    files = all.filter((f) => f.endsWith('.jsonl'));
-    jsonFiles = all.filter((f) => f.endsWith('.json'));   // #479 r4：signals.json 等整檔 JSON 也有足跡
+    // r4（#500）：只收 regular file——symlink 指到盒外時，readFileSync 會替被審者跟出去讀（confused deputy）。
+    //   非 regular 的一律當「讀不了」（dirty），fail-closed。
+    const regular = all.filter((f) => { try { return lstatSync(join(sessionDir, f)).isFile(); } catch { return false; } });
+    nonRegular = all.length - regular.length - all.filter((f) => { try { return lstatSync(join(sessionDir, f)).isDirectory(); } catch { return false; } }).length;
+    files = regular.filter((f) => f.endsWith('.jsonl'));
+    jsonFiles = regular.filter((f) => f.endsWith('.json'));   // #479 r4：signals.json 等整檔 JSON 也有足跡
   } catch (e) {
     return { code: 2, calls, parsed, why: `讀不了 session 目錄：${e instanceof Error ? e.message : String(e)}` };
   }
   const noJsonl = !files.length;   // #479 r7：不提前 return——signals／terminal 若已確認越界，1 優先於 2
-  let dirty = 0;   // 壞行／讀不了的檔＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
+  let dirty = nonRegular;   // 壞行／讀不了的檔／非 regular（symlink 等）＝「查不清楚」的證據（#478 預審 F1：部分可讀不可以洗成乾淨）
   for (const f of files) {
     /** @type {string} */ let text;
     // ⚠️ fatal 解碼（#479 r2 High②）：'utf8' 讀檔會把無效位元組靜默換成 U+FFFD——鍵名被變形後
@@ -229,13 +245,13 @@ if (isMainModule(import.meta.url)) {
     for (const d of dirs) {
       const r = auditSessionDir(d);
       const id = d.split('/').filter(Boolean).pop();
-      if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}`);
+      if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}`);
       else if (r.code === 2) console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}`);
       else console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}）`);
       worst = Math.max(worst, r.code === 1 ? 3 : r.code);   // 越界最重（3>2），最後折回 1
     }
     const code = worst === 3 ? 1 : /** @type {0|2} */ (worst);
-    if (code === 1) console.log('→ 有 session 越界＝該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗');
+    if (code === 1) console.log('→ 有工具足跡。走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）');
     else if (code === 2) console.log('→ 有 session 查不清楚＝fail-closed 當越界處理');
     process.exit(code);
   } else if (args[0] && args[0] !== '--workspace') {
@@ -247,7 +263,7 @@ if (isMainModule(import.meta.url)) {
   const r = auditSessionDir(target);
   const id = target.split('/').filter(Boolean).pop();
   if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具足跡）`);
-  else if (r.code === 1) console.log(`驗屍 ❌ 越界（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 該掃作廢：照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）、或鎖工具重掃後再驗一次`);
-  else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed 當越界處理`);
+  else if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱（舊制）＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因`);
+  else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed：證明不了它做了什麼，當「沒掃成」處理`);
   process.exit(r.code);
 }

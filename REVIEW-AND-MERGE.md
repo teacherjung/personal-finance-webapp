@@ -204,12 +204,13 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
   **撈到的發現修不修＝照 AGENTS「審查回饋處置」**（本檔刻意不複述——同本檔對那條規則已立過的規矩）：
   判定要修**且屬本支 diff**者就修在這支，修完 head 一變，複審結論閘與協作欄位閘本來就會要求對新 head
   重新給結論、更新「基準版本」；判定不修或範圍外的**寫待辦，不為它多開一輪**。
-  掃描一律用**鎖工具配方**（安全理由＝AGENTS 該節；逐字旗標）：
-  `--disable-web-search --disallowed-tools read_file,run_terminal_command,grep,list_dir,get_command_or_subagent_output,write_file,edit_file,search_replace,create_file`
-  ↑ **這一段就是「鎖工具配方」**（AGENTS 該節指的就是它）。旗標以 **grok 1.0.3** 工具清單為準；
-  **版本不同＝當未跑**，人工重驗工具清單後更新本行——denylist 列名補不完，fail-closed 靠停。
-  掃完**必驗屍**：`node scripts/audit-grok-scan.js --workspace <掃描 cwd>`，
-  **退出碼非 0＝該掃作廢**。
+  掃描一律用**一支腳本**（2026-08-22 起沙箱制；安全理由＝AGENTS 該節「呼叫紀律」）：
+  `node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> --out <回覆檔>`
+  ↑ 它自己會：建盒子（已 commit 原始碼副本＋驗過雜湊的 grok 執行檔＋重建的假 auth.json，沒有 store.db／.env／歷史 session／真憑證）→
+  跑金絲雀（**金絲雀非 0＝不掃**）→ 起轉送器 → 在 OS 沙箱裡跑盒內的 grok（盒子裡跑指令是准的；
+  網路只通轉送器、沒有 DNS，整合型考題跑不了）→ 驗屍 → **清掉盒子**、結果包留在 `~/.grok-scan-results/`（沒掃成不留）。**不准手動啟動 grok CLI。**
+  轉送器的目的地以 **grok 1.0.3** 執行檔為準；**版本不同＝當未跑**，人工重驗後更新 `scripts/grok-relay.js`。
+  驗屍（腳本第⑤步）若報「日誌出現盒子外才有的內容」＝**沙箱破了＝事故**，不只是作廢：停掃、回報 William。
   PR 描述裡**必記掃描時序一行**（對應哪一則「通過」留言的網址＋掃描時間）——**必須是掃的當下那一則通過**，
   之後又出現新的通過也不改指（改指最新那則＝欄位仍齊、SHA 仍對得上，但時序是假的）——**缺這一行＝當未跑**（與上面兩條同級：整條推論就靠先後，先後沒記＝這一遍不成立）。
   條款本文＝AGENTS「Grok 的邊界」節，本行是最短可執行版（條款變動時同步本行）。
