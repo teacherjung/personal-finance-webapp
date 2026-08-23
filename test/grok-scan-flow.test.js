@@ -28,6 +28,7 @@ const SKIP_AFTER_CANARY = '金絲雀之後的路徑只在套得上沙箱的 macO
 /** 沙盒專用環境：**從零組**，不是從 process.env 扣（鐵則 11；Codex r2 抓到 r1 版是 `{...process.env, GIT_DIR: undefined}`——
  *  從 linked worktree 的 pre-push 跑時會把 GIT_WORK_TREE／GIT_CONFIG_* 整族帶進 `git init`，正是 AGENTS 記載過把共用 config 寫成 bare 的事故形狀）。 */
 const CLEAN_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x' };
+const EXPECTED_BOX_AUTH_FIELDS = ['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id'];
 
 /** 一個最小的真 git repo（有一顆 commit），當 runScan 的 repo。 */
 function tinyRepo() {
@@ -420,7 +421,7 @@ test('runScan｜r5 #2：auth.json 的 issuer 被改成別的網址 → 不 refre
   assert.equal(called, false, 'refresh_token 被送去別處的 issuer 了');
 });
 
-test('runScan｜盒內最小家 manifest：config.toml／agent_id **不帶進盒子**；auth.json 只含宣告欄位；審查 smoke 要有工具足跡', async (t) => {
+test('runScan｜盒內最小家 manifest：config.toml／agent_id **不帶進盒子**；auth.json 只含固定欄位；審查 smoke 要有工具足跡', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
@@ -436,9 +437,31 @@ test('runScan｜盒內最小家 manifest：config.toml／agent_id **不帶進盒
   assert.deepEqual(ls.trim().split(/\s+/).sort(), [...GROK_HOME_MANIFEST.topLevelEntries], `盒內 grok-home 的檔不是 manifest 宣告的最小家：${ls}`);
   const json = /\{.*\}/.exec(reply)?.[0] || '';
   const entry = Object.values(JSON.parse(json))[0];
-  assert.deepEqual(Object.keys(/** @type {object} */ (entry)).sort(), [...GROK_HOME_MANIFEST.authEntryFields], '盒內 auth.json 的欄位不是 manifest 宣告的白名單');
+  assert.deepEqual(Object.keys(/** @type {object} */ (entry)).sort(), EXPECTED_BOX_AUTH_FIELDS, '盒內 auth.json 的欄位不是固定白名單');
   assert.ok(!reply.includes('fake-owner@example.test'), 'email 進了盒子');
   assert.match(r.summary.join('\n'), /足跡 [1-9]\d* 筆/, '審查能力 smoke 沒有看到工具足跡');
+});
+
+test('runScan｜盒內最小家 manifest 接線：refresh 後若 auth.json 多出白名單外欄位 → 2', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
+    ...quiet,
+    ...iso,
+    repo: repo.dir,
+    ...withGrok(fakeGrok()),
+    relayScript: fakeRelay('ok'),
+    afterGrokHomeAuthWrite: (grokHome) => {
+      const p = join(grokHome, 'auth.json');
+      const auth = JSON.parse(readFileSync(p, 'utf8'));
+      const entry = /** @type {Record<string, unknown>} */ (Object.values(auth)[0]);
+      entry.principal_id = 'BOX-BYPASS-FIELD-0123456789';
+      writeFileSync(p, JSON.stringify(auth), { mode: 0o600 });
+    },
+  });
+  assert.equal(r.code, 2);
+  assert.match(r.summary.join('\n'), /manifest 不符/);
+  assert.match(r.summary.join('\n'), /auth\.json 欄位/);
 });
 
 test('runScan｜r5 #1：失敗路徑全丟棄——grok 非 0 且把 token 寫進 stderr 與 session，結果包與 summary 都不得有 token', async (t) => {

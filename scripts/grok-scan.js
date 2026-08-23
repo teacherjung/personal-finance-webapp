@@ -45,7 +45,7 @@ import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
-import { refreshSandboxAuth, authNeedles, BOX_FIELDS } from './grok-auth-refresh.js';
+import { refreshSandboxAuth, authNeedles } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, TOLERATED_REFUSALS } from './grok-relay.js';
 import { isMainModule } from '../lib/is-main.js';
 
@@ -68,7 +68,7 @@ export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 1
 
 export const GROK_HOME_MANIFEST = Object.freeze({
   topLevelEntries: Object.freeze(['auth.json', 'bin', 'sessions']),
-  authEntryFields: Object.freeze([...Object.keys(BOX_FIELDS), 'key'].sort()),
+  authEntryFields: Object.freeze(['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id']),
   reviewSmoke: Object.freeze({ minToolFootprints: 1 }),
 });
 
@@ -198,6 +198,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {string} [relayScript]
  * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
  * @property {string} [liveSecret] 活金絲雀的暗號；預設隨機。只給考題（假 grok 要能把它寫進 stdout／session 來證明會被抓）
+ * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
 /**
@@ -291,6 +292,7 @@ export async function runScan(args, deps = {}) {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
       writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });
       writeFileSync(dummyFile, a.dummyBearer + '\n', { mode: 0o600 });
+      deps.afterGrokHomeAuthWrite?.(grokHome);
     } catch (e) { return failAndClean(`憑證 refresh 失敗：${/** @type {Error} */ (e).message}`); }
     try { validateGrokHomeManifest(grokHome); }
     catch (e) { return failAndClean(`盒內最小家 manifest 不符：${/** @type {Error} */ (e).message}`); }
@@ -521,7 +523,7 @@ export async function runScan(args, deps = {}) {
       try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
       cleanup();
     } finally {
-      // 這行之後 runScan 已沒有自己建立的暫存路徑；外層行程要怎麼處理 SIGTERM 不屬於本函式的保證。
+      // 卸掉本輪 handler；若前面的收尾步驟丟錯，暫存路徑是否仍存在由那個錯誤回報，不在這行保證。
       process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
     }
   }
