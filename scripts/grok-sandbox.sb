@@ -127,6 +127,6 @@
 ;; 反面金絲雀：/usr/local/bin/node 在盒內必須跑不起來、/usr/local 列不了。
 (deny file-read* process-exec* (subpath "/usr/local"))
 ;; setsid(147)／setpgid(82)：盒內程式自己換 session／process group 就離開父程序的 kill(-pgid)（Codex r6 #2 反例）。
-;; 號碼來自 MacOSX.sdk sys/syscall.h；syscall-unix 是私有介面，所以這條靠金絲雀撐：
-;; 盒內 perl POSIX::setsid／setpgid 必須 EPERM、node detached spawn 必須失敗（test/grok-sandbox.test.js）。
-(deny syscall-unix (syscall-number 147) (syscall-number 82))
+;; 實測：Seatbelt 的 syscall-unix 過濾對 147 無效、對 82 有效——但 grok 的 run_terminal_command 靠 setpgid 起子行程，
+;; 擋 82 它就「spawn shell … Operation not permitted」、盒子裡一條指令都跑不了（第四次正式掃描後的煙霧測試實際踩到）。
+;; 所以**兩個都不擋**；「離開程序群組的程序無害」的理由在 grok-scan.js 檔頭（隨機 port／本掃假值／單趟讀／lsof 掃蕩）。

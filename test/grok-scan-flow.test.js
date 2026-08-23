@@ -35,9 +35,10 @@ function tinyRepo() {
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', d, ...a], { encoding: 'utf8', env: CLEAN_ENV });
   git(['init', '-q']);
   writeFileSync(join(d, 'a.txt'), 'hello\n');
+  writeFileSync(join(d, 'tree-only.txt'), 'TREE-ONLY-PUBLIC-VALUE\n');   // 兩顆 commit 都有、不在 diff 裡＝只在樹裡
   mkdirSync(join(d, 'node_modules', 'eslint'), { recursive: true });
   writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
-  git(['add', 'a.txt']);
+  git(['add', 'a.txt', 'tree-only.txt']);
   git(['commit', '-q', '-m', 'one']);
   const head = git(['rev-parse', 'HEAD']).trim();
   writeFileSync(join(d, 'a.txt'), 'hello world\n');
@@ -242,6 +243,7 @@ test('runScan｜發射紀錄 launch.json 留在結果包（事後能分辨「旗
   assert.ok(resultsDir, '沒印結果包路徑');
   const launch = JSON.parse(readFileSync(join(resultsDir, 'launch.json'), 'utf8'));
   assert.ok(launch.sbArgv.includes('-f'), '發射紀錄沒有沙箱參數');
+  assert.ok(launch.grokArgv.includes('--always-approve'), '少了 --always-approve：盒內跑指令會停在權限確認、-p 模式整輪取消、退 0 只印旁白（第四次正式掃描實際發生）');
   assert.ok(launch.grokArgv.includes('--disable-web-search') && launch.grokArgv.includes('--no-subagents'), '發射紀錄沒有 grok 旗標');
   assert.equal(launch.env.HOME, box, '發射紀錄的 env.HOME 不是盒子');
   assert.equal(launch.env.GROK_HOME, join(box, 'grok-home'), '發射紀錄的 env.GROK_HOME 不是盒內副本');
@@ -517,6 +519,16 @@ test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email／�
     const inst = fakeGrok({ reply: 'team 7777aaaa-5d15-4f01-9a1e-2d9cb2f1f222' });
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 1, `team_id 外流沒被當事故：${r.summary.join('\n')}`);
+  }
+  // ⑥ 針不在材料（diff）裡、但在 head 樹裡（例：名字在 AGENTS.md）→ 也剔除；回覆含它 → 0（空 diff 煙霧測試實際踩到）
+  {
+    const iso = isolated(); mkdirSync(iso.authDir, { recursive: true });
+    writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ extra: { team_id: 'TREE-ONLY-PUBLIC-VALUE' } }));
+    const inst = fakeGrok({ reply: 'saw TREE-ONLY-PUBLIC-VALUE in the tree' });
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, `樹裡本來就有的值被當成針：${r.summary.join('\n')}`);
+    assert.ok(logs.some((l) => l.includes('不採用')), '剔除樹裡已有的針時沒有記錄');
   }
   // ⑤ first_name「測試用」在指示檔裡本來就有 → 針剔除、有 log；回覆含它 → 0
   {

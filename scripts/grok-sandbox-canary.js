@@ -231,9 +231,8 @@ export async function runCanary(box, opt = {}) {
         if (!blocked) dead++;
       }
     } else lines.push('（略）執行 /usr/local/bin/node——這台沒有，沒探針可用');
-    // r6 #2：換程序群組（setpgid）要擋——父程序靠 kill(-pgid) 收束。setsid 實測擋不住（見 grok-scan.js 檔頭：靠隨機 port／假值／單趟讀讓離開群組無害），
-    // 所以這裡只驗 setpgid；不對 setsid 做任何「已擋」的宣稱。
-    mustFailWithControl('setpgid（換程序群組）', ['/usr/bin/perl', '-MPOSIX', '-e', `POSIX::setpgid(0,0) or exit 3; print "SETPGID-${secret}\n"`], (r) => r.status === 0 && (r.stdout || '').includes('SETPGID-'));
+    // r6 #2 曾加「setpgid 必須擋」的探針——後來拿掉：grok 的工具靠 setpgid 起子行程，擋了它就一條指令都跑不了（中間路沒了）。
+    // setsid 本來就擋不住。程序收束因此**不是**沙箱的保證，見 grok-scan.js 檔頭的無害化設計；這裡不做任何相關宣稱。
     // 網路：只准轉送器那一個 port。r3 #2：要**真的起一個 listener**，先證明沙箱外連得上、再證明盒內 EPERM——
     // 沒有 listener 時沙箱外也是 ECONNREFUSED，金絲雀必然假綠（Codex r3 實測 reportedBlocked:true）。
     {

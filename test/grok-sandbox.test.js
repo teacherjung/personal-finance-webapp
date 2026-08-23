@@ -95,7 +95,8 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '放行了任意對外網路');
   // r6 #1／#2：/usr/local 明確拒（讀＋執行）；setpgid 拒——兩條都在檔尾（後面的規則蓋前面的）
   assert.match(sb, /\(deny file-read\* process-exec\* \(subpath "\/usr\/local"\)\)/, '少了 /usr/local 的明確 deny——放行整棵 /usr 會把 pkg 裝的第二顆 node 帶進來');
-  assert.match(sb, /\(deny syscall-unix[^\n]*\(syscall-number 82\)/, '少了 setpgid（82）的 deny——盒內程式換群組就離開 kill(-pgid)');
+  // setpgid（82）**不可以**擋：grok 的工具靠它起子行程，擋了就 spawn EPERM、盒子裡一條指令都跑不了（煙霧測試實際踩到）
+  assert.doesNotMatch(sb, /\(deny syscall-unix[^\n]*\(syscall-number 82\)/, '擋了 setpgid——grok 的 run_terminal_command 會整個起不來');
   // 反面：不可以有把圍欄拆掉的行
   assert.doesNotMatch(sb, /\(allow default\)/, '設定檔回到 allow default');
   assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/"\)/, '設定檔放行了整個檔案系統');

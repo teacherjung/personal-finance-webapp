@@ -26,7 +26,8 @@
 // ・轉送器擋不住「把資料 POST 給 xAI」；真正的保護是它讀不到可以送的東西（grok-sandbox.sb 的劃界）。
 // ・第⑤步的破口線索是 **heuristic**：只證明「它沒讀到那一個暗號檔」與「日誌裡沒有那幾種明文」，
 //   不證明沙箱完整。沙箱有效的證明在第②步的金絲雀，不在這裡。
-// ・setsid 在 Seatbelt 擋不住（實測：deny syscall-unix 147 無效；setpgid 82 有效）。所以「程序群組已全部收束」**不是**本腳本的保證；
+// ・setsid 在 Seatbelt 擋不住（實測：deny syscall-unix 147 無效；82＝setpgid 擋得住但 grok 的工具靠它起子行程、擋了就跑不了指令，所以也不擋）。
+//   「程序群組已全部收束」**不是**本腳本的保證；
 //   保證的是離開群組的程序**無害**：它的沙箱只准連本掃的隨機 port（下一掃換 port＝連不到）、只認本掃的假值、
 //   只能讀寫已被刪掉的盒子路徑；父程序讀 sessions 是單趟＋上限，它改檔只會讓本掃 fail-closed，改不了結果包。
 //   另加 lsof 掃蕩（best-effort，找 cwd／txt 在盒內的程序殺掉並記數）。
@@ -300,10 +301,23 @@ export async function runScan(args, deps = {}) {
     needles = authNeedles(JSON.parse(readFileSync(p, 'utf8')));
   } catch (e) { return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${/** @type {Error} */ (e).message}——沒有針就不能證明沒外流，不掃`); }
   {
-    // 已在給盒子的材料裡出現的針偵測不了外流（例：名字本來就在 AGENTS.md 幾百次）；剔掉並記錄——這是唯一的排除理由
-    const inMaterials = needles.filter((n) => materials.includes(n));
-    if (inMaterials.length) log(`（DLP：${inMaterials.length} 根針已在材料裡出現、不採用——長度 ${inMaterials.map((n) => n.length).join('/')}）`);
-    needles = needles.filter((n) => !materials.includes(n));
+    // 已在**給盒子的東西**裡出現的針偵測不了外流——給盒子的東西＝材料（指示＋diff）**＋ head 整棵已 commit 原始碼**
+    //   （第四次正式掃描後的煙霧測試：空 diff、名字不在材料裡，但 AGENTS.md 裡有幾百次，grok 讀檔的 tool_result 就帶出來＝假事故）。
+    //   樹裡有沒有用 `git grep -F -f <0600 檔>` 查：針不走 argv（同 uid 的程序 ps 看得到）、不進盒子（authDir 在盒外）。剔掉並記錄。
+    const inTree = (/** @type {string} */ needle) => {
+      const pf = join(authDir, `needle.${process.pid}`);
+      try {
+        writeFileSync(pf, needle + '\n', { mode: 0o600 });
+        const g = spawnSync('git', ['-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
+        if (g.status !== 0 && g.status !== 1) throw new Error(`git grep 失敗（status ${g.status}）：${g.stderr}`);
+        return g.status === 0;
+      } finally { rmSync(pf, { force: true }); }
+    };
+    /** @type {string[]} */ const given = [];
+    try { for (const n of needles) if (materials.includes(n) || inTree(n)) given.push(n); }
+    catch (e) { return failAndClean(`DLP：查針是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
+    if (given.length) log(`（DLP：${given.length} 根針已在給盒子的材料／原始碼裡出現、不採用——長度 ${given.map((n) => n.length).join('/')}）`);
+    needles = needles.filter((n) => !given.includes(n));
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
@@ -329,14 +343,18 @@ export async function runScan(args, deps = {}) {
   // ── ④ 沙箱裡跑 grok ──
   const startedAt = new Date().toISOString();
   log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
-  const grokArgv = [grokBin, '--disable-web-search', '--no-subagents', '-p', '<materials>'];
+  // --always-approve：盒內跑指令不需人工確認（William 2026-08-20 裁示准跑指令；盒子裡沒有它不該碰的東西）。
+  //   第四次正式掃描才發現：r6 拿掉 config.toml（裡面有 permission_mode = "always-approve"）後，grok 回到預設「跑指令要問」，
+  //   -p 模式沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
+  const GROK_FLAGS = ['--disable-web-search', '--no-subagents', '--always-approve'];
+  const grokArgv = [grokBin, ...GROK_FLAGS, '-p', '<materials>'];
   const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
   // r6 #3：ulimit 包著整個沙箱（sh 設完 exec sandbox-exec；限制隨 fork 繼承）：
   //   -f 單檔 64MB（1024-byte 單位）／-u 程序數＝同 uid 現有數＋256（macOS 的 -u 是 per-uid 計數，設太低連 fork 都不行）／-t CPU 1800 秒。
   //   -v（虛擬記憶體）在 macOS 設不了（EINVAL），沒放。
   const procNow = (spawnSync('/bin/ps', ['-u', String(process.getuid?.() ?? 0), '-o', 'pid='], { encoding: 'utf8' }).stdout || '').split('\n').filter(Boolean).length;
   const ulimits = `ulimit -f ${64 * 1024} -u ${procNow + 256} -t 1800 || exit 97`;
-  const shArgv = ['-c', `${ulimits}; exec /usr/bin/sandbox-exec "$@"`, 'grok-scan-sh', ...sbArgv, grokBin, '--disable-web-search', '--no-subagents', '-p', materials];
+  const shArgv = ['-c', `${ulimits}; exec /usr/bin/sandbox-exec "$@"`, 'grok-scan-sh', ...sbArgv, grokBin, ...GROK_FLAGS, '-p', materials];
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
