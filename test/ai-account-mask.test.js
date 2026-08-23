@@ -293,7 +293,7 @@ test('★登記遮罩形對遮罩帳單：可見前綴逐段比，不可把登�
   assert.equal(act('900133****3301', '9001****3301'), 'ambiguous', '★相容≠命中（r3#1）：9001****3301 只代表「某個 9001 開頭 3301 結尾的戶」，不能證明就是 900133 那顆');
   assert.equal(act('900100****3301', '900100****3301'), 'update', '比對形全等＝命中');
   assert.equal(act('900-100****3301', '900100XXXX3301'), 'update', '分隔符與遮罩字元差異＝同一個比對形');
-  assert.equal(act('**********3301', '900100****3301'), 'create', '登記看不到前綴＝既有行為：另建（Stage 1 標記戶另走寬鬆徑）');
+  assert.equal(act('**********3301', '900100****3301'), 'ambiguous', '★登記看不到前綴（AI 全星號帳單自動建的、沒標記）＝相容但證明不了＝停手（Stage 1 標記戶另走寬鬆徑補登）');
   // 可見字母是身分的一部分，不可剝掉再比（r2#1／r3#1）
   assert.equal(act('AB****5678', '12345678'), 'create', '★AB****5678 對 12345678：AB 是可見位、對不上');
   assert.equal(act('12345678', 'AB****5678'), 'create', '★反向：登記純數字、帳單 AB 遮罩＝AB 不是空前綴');
@@ -419,8 +419,10 @@ test('★金融卡計畫的「帳戶那邊早就帶分類記過」擋門也認�
     cardRows: [{ postDate: '2026-01-28', date: '2026-01-27', amount: 305, fee: 0, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' }],
   };
   for (const [ref, why] of [
-    ['bank|90010011228791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '完整號列＝末四碼解讀'],
-    ['bank|18791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '五碼純數字段兩種解讀都收：當完整號讀＝末四碼 8791 對上（寧可少記一筆卡片明細、看得見）'],
+    ['bank2|台新|90010011228791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', 'bank2 格式的完整號列＝末四碼解讀'],
+    ['bank2|台新|900-100-1122-8791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', 'bank2 格式、AI 照抄分隔符＝先剝再讀'],
+    ['bank|18791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', 'bank| 格式的五碼純數字＝祖父末碼 18791 ≠ 8791＝不算（r7#3：不可截成四碼冒充）'],
+    ['bank|90010011228791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', 'bank| 格式的長純數字也當祖父末碼讀＝不算（取捨 d′）'],
     ['bank|2791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '四碼祖父鍵 2791 ≠ 8791＝不算'],
   ]) {
     await seedDb();
@@ -511,9 +513,13 @@ test('★多段遮罩的中間可見碼也要比（r6#1）：900100**22**3301 �
   assert.equal(act('9001009911993301', '900100**99**3301'), 'create', '★99 要在「藏至少一碼之後、3301 之前再藏至少一碼」——這個完整號排不出來＝不是');
   assert.equal(act('9001009911993301', '9001**9911**3301'), 'update', '藏 00、見 9911、藏 99＝排得出來＝命中');
   assert.equal(act('9001009911993301', '9001009911993301'), 'update');
-  // 遮罩對遮罩：段數相同時中段要全等；段數不同＝只比頭尾＝相容
-  assert.equal(act('900100**11**3301', '900100**22**3301'), 'create', '★兩遮中段衝突＝不是');
+  // 遮罩對遮罩＝語言有沒有交集：900100**11**3301 與 900100**22**3301 同時描述 900100a11b22c3301＝相容＝停手（r7#2：「中段全等」那條手寫規則是錯的）
+  assert.equal(act('900100**11**3301', '900100**22**3301'), 'ambiguous', '★兩個遮罩語言有交集＝證明不了不同＝停手、不可新建');
+  assert.equal(act('9001**11**3301', '9001**9911**3301'), 'ambiguous', '★r7#2 的反例：兩者同時描述 90015991173301');
   assert.equal(act('900100**11**3301', '900100****3301'), 'ambiguous', '段數不同＝相容＝停手');
+  assert.equal(act('900100**11**3301', '900200**11**3301'), 'create', '前綴字面衝突＝沒有交集＝另一顆');
+  assert.equal(act('9001**3301', '90012**3301'), 'ambiguous', '9001 與 90012 開頭相容（90012x3301 同時符合）');
+  assert.equal(act('90013**3301', '90012**3301'), 'create', '第五碼 3 對 2 衝突＝沒有交集');
   // 疑似重複
   await seedDb();
   const full = answer('9001009911993301');
@@ -558,4 +564,68 @@ test('★Stage 1 標記戶的真實形狀（**********1234 ＋ accountNoSuffixOn
   assert.equal(db.accounts.length, 1);
   assert.equal(db.accounts[0].accountNo, '90010011221234', '★補登成完整號');
   assert.equal(db.accounts[0].accountNoSuffixOnly, undefined);
+});
+
+test('★看不到前綴的多段遮罩（****22**3301）不可走「只比末碼」（r7#1）：對沒有 22 的完整號＝不是；疑似重複對 ****11**3301＝不算；中段字母也比（r7#4）', async () => {
+  const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
+  const mk = (/** @type {string} */ accountNo) => ({ accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo, bank: '合成一銀' }], transactions: [], settings: {} });
+  const act = (/** @type {string} */ reg, /** @type {string} */ stmt) => previewBalancesForDb(mk(reg), /** @type {any} */ (parsed(stmt))).rows[0].action;
+  assert.equal(act('9001009911993301', '****22**3301'), 'create', '★完整號裡沒有 22＝不是');
+  assert.equal(act('9001009911993301', '****11**3301'), 'update', '11 在藏至少一碼之後、3301 之前再藏至少一碼＝蓋得住＝命中（登記完整號是身分）');
+  assert.equal(act('9001009911993301', '****3301'), 'update', '單段全星號＝只比末碼（既有語意）');
+  // 中段字母
+  assert.equal(act('AB12CD345678', 'AB**CD**5678'), 'update', '★中段 CD 對上');
+  assert.equal(act('AB12ZZ345678', 'AB**CD**5678'), 'create', '★中段 CD 對 ZZ 衝突');
+  assert.equal(act('AB12CD345678', 'AB**cd**5678'), 'create', '大小寫是可見字元');
+  // 疑似重複：既有 ****11**3301、新 ****22**3301＝不算；既有完整號、新 ****22**3301（沒有 22）＝不算
+  await seedDb();
+  const m11 = answer('****11**3301');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m11), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(m11), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const m22 = answer('****22**3301');
+  for (const t of m22.transactions) t.summary = `${t.summary}(22)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m22), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 0, '★同一家銀行不會把同一顆戶印成不同中段＝不算（算了＝預設跳過另一顆戶的真交易）');
+  const r = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv2.aiTicket, aiEngineFactory: engineOf(m22), aiExtract: fakeExtract, skipSimilar: true });
+  assert.equal(/** @type {any} */ (r).transactions.imported, 3);
+  await seedDb();
+  const full = answer('9001009911993301');
+  const pv3 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv3.aiTicket, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  for (const [masked, want] of [['****22**3301', 0], ['****11**3301', 3], ['AB**CD**5678', 0]]) {
+    clearAiTicketsForTest();
+    const m = answer(masked);
+    for (const t of m.transactions) t.summary = `${t.summary}(${masked})`;
+    const pvm = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+    assert.equal(pvm.transactions.counts.similar, want, `★${masked}`);
+  }
+});
+
+test('★語言交集判準本身（acctPatternsIntersect 透過身分判定觀察）：星號至少吃一碼、兩星號互吃、字面逐字', () => {
+  const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
+  const mk = (/** @type {string} */ accountNo) => ({ accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo, bank: '合成一銀' }], transactions: [], settings: {} });
+  const act = (/** @type {string} */ reg, /** @type {string} */ stmt) => previewBalancesForDb(mk(reg), /** @type {any} */ (parsed(stmt))).rows[0].action;
+  assert.equal(act('90013301', '9001****3301'), 'create', '9001 與 3301 之間沒有任何一碼可藏＝蓋不住');
+  assert.equal(act('900153301', '9001****3301'), 'update', '藏一碼＝蓋得住');
+  assert.equal(act('9001**3301', '90013**3301'), 'ambiguous', '9001* 與 90013*：第二邊的 3 落在第一邊的星號裡＝有交集');
+  assert.equal(act('9001**13301', '90013**3301'), 'ambiguous', '9001*13301 與 90013*3301：90013x13301？第一邊要 …13301 結尾、第二邊 90013 開頭＝9001 3 … 1 3301 有交集');
+  assert.equal(act('9001**23301', '90013**3301'), 'ambiguous', '9001 3 … 2 3301');
+  assert.equal(act('9002**3301', '9001**3301'), 'create', '第四碼 2 對 1 衝突');
+});
+
+
+test('語言交集是對稱的（直測）：星號在哪一邊都至少吃一碼、兩邊星號互吃、字面逐字', async () => {
+  const { acctPatternsIntersectForTest: X } = await import('../lib/services/bank-import.js');
+  assert.equal(X('900100****3301', '90010011223301'), true);
+  assert.equal(X('90010011223301', '900100****3301'), true, '★對稱');
+  assert.equal(X('9001003301', '900100****3301'), false, '★對方星號也至少吃一碼');
+  assert.equal(X('900100****3301', '9001003301'), false);
+  assert.equal(X('9001**11**3301', '9001**9911**3301'), true, 'r7#2');
+  assert.equal(X('9001**9911**3301', '9001**11**3301'), true);
+  assert.equal(X('9002****3301', '9001****3301'), false);
+  assert.equal(X('AB****5678', 'CD****5678'), false);
+  assert.equal(X('AB****5678', 'AB125678'), true);
+  assert.equal(X('****3301', '****3301'), true);
+  assert.equal(X('', '****3301'), false);
 });
