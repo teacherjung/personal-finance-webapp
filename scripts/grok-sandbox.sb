@@ -40,19 +40,67 @@
 (import "system.sb")
 
 ;; ── 程序基本功能 ──
-(allow process-exec*) (allow process-fork) (allow signal) (allow sysctl-read)
+(allow process-fork) (allow signal) (allow sysctl-read)
+;; ⚠️ process-exec 是**獨立權限**，deny file-read 擋不住執行（r4 實測：/opt/homebrew/Cellar/gh 讀不到卻跑得起來）。
+;; 只准執行系統、CLT、node 的 Cellar、以及盒子裡的東西（盒內 grok、node_modules/.bin）。
+(allow process-exec*
+  (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
+  (subpath "/Library/Developer/CommandLineTools")
+  (subpath "/opt/homebrew/Cellar/ada-url/3.4.4")
+  (subpath "/opt/homebrew/Cellar/brotli/1.2.0")
+  (subpath "/opt/homebrew/Cellar/c-ares/1.34.6")
+  (subpath "/opt/homebrew/Cellar/hdrhistogram_c/0.11.9")
+  (subpath "/opt/homebrew/Cellar/icu4c@78/78.3")
+  (subpath "/opt/homebrew/Cellar/libnghttp2/1.69.0")
+  (subpath "/opt/homebrew/Cellar/libnghttp3/1.15.0")
+  (subpath "/opt/homebrew/Cellar/libngtcp2/1.22.1")
+  (subpath "/opt/homebrew/Cellar/libuv/1.52.1")
+  (subpath "/opt/homebrew/Cellar/llhttp/9.4.1")
+  (subpath "/opt/homebrew/Cellar/merve/1.2.2_1")
+  (subpath "/opt/homebrew/Cellar/nbytes/0.1.4")
+  (subpath "/opt/homebrew/Cellar/node/26.0.0")
+  (subpath "/opt/homebrew/Cellar/openssl@3/3.6.2")
+  (subpath "/opt/homebrew/Cellar/simdjson/4.6.4")
+  (subpath "/opt/homebrew/Cellar/simdutf/9.0.0")
+  (subpath "/opt/homebrew/Cellar/sqlite/3.53.1")
+  (subpath "/opt/homebrew/Cellar/uvwasi/0.0.23")
+  (subpath "/opt/homebrew/Cellar/zstd/1.5.7_1")
+  (subpath (param "SCAN_DIR")))
 
-;; ── 讀：系統與工具鏈（r3 收窄：每條都對應 otool -L 實查；加新的要寫正面金絲雀證明需要）──
-;; grok 執行檔與 CLT git 只靠 /System、/usr/lib；Homebrew node 另靠 Cellar 裡 17 個 formula（經 /opt/homebrew/opt 的 symlink）。
-;; 刻意不放：/opt/homebrew/lib（裡面是全域 npm 套件＝使用者程式碼）、/Library/Frameworks（沒人用）、
-;;           /Library/Developer 整棵（只需 CommandLineTools）、/dev 整棵（列舉實際需要的裝置）。
+;; ── 讀：系統與工具鏈（每條都對應 otool -L 實查；加新的要寫正面金絲雀證明需要）──
+;; grok 執行檔與 CLT git 只靠 /System、/usr/lib。Homebrew node 靠 Cellar 裡 17 個 formula——
+;; r4 改成**精確版本目錄＝遞移閉包**（r3 放行整棵 Cellar/opt 被抓到：下次 brew install 什麼、盒內就多什麼，零考題會紅；
+;; 只列直接依賴也不夠：merve→simdutf 這種間接依賴讓 node 起不來）。
+;; brew upgrade 會讓這些路徑失效＝node 起不來＝正面金絲雀紅＝不掃——壞法是「吵」，不是「靜靜放寬」。
+;; 反面金絲雀：/opt/homebrew/bin/gh（brew 裝的、非 node 依賴）在盒內必須執行不了。
+;; 刻意不放：/opt/homebrew/bin（symlink 指向整個 Cellar）、/opt/homebrew/lib（全域 npm）、/opt/homebrew/opt 整棵、
+;;           /Library/Frameworks、/Library/Developer 整棵（只需 CommandLineTools）、/dev 整棵（列舉裝置）。
 (allow file-read*
   (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System")
   (subpath "/Library/Developer/CommandLineTools")
   (subpath "/Library/Preferences/Logging") (subpath "/private/etc")
-  (subpath "/opt/homebrew/bin") (subpath "/opt/homebrew/Cellar") (subpath "/opt/homebrew/opt")
+  (subpath "/private/var/db/timezone") (subpath "/private/var/select")
   (subpath "/opt/homebrew/etc/openssl@3")   ; node 啟動要讀 openssl.cnf——只放這一個目錄
-  (subpath "/private/var/db/timezone") (subpath "/private/var/select"))
+  (subpath "/opt/homebrew/Cellar/ada-url/3.4.4")
+  (subpath "/opt/homebrew/Cellar/brotli/1.2.0")
+  (subpath "/opt/homebrew/Cellar/c-ares/1.34.6")
+  (subpath "/opt/homebrew/Cellar/hdrhistogram_c/0.11.9")
+  (subpath "/opt/homebrew/Cellar/icu4c@78/78.3")
+  (subpath "/opt/homebrew/Cellar/libnghttp2/1.69.0")
+  (subpath "/opt/homebrew/Cellar/libnghttp3/1.15.0")
+  (subpath "/opt/homebrew/Cellar/libngtcp2/1.22.1")
+  (subpath "/opt/homebrew/Cellar/libuv/1.52.1")
+  (subpath "/opt/homebrew/Cellar/llhttp/9.4.1")
+  (subpath "/opt/homebrew/Cellar/merve/1.2.2_1")
+  (subpath "/opt/homebrew/Cellar/nbytes/0.1.4")
+  (subpath "/opt/homebrew/Cellar/node/26.0.0")
+  (subpath "/opt/homebrew/Cellar/openssl@3/3.6.2")
+  (subpath "/opt/homebrew/Cellar/simdjson/4.6.4")
+  (subpath "/opt/homebrew/Cellar/simdutf/9.0.0")
+  (subpath "/opt/homebrew/Cellar/sqlite/3.53.1")
+  (subpath "/opt/homebrew/Cellar/uvwasi/0.0.23")
+  (subpath "/opt/homebrew/Cellar/zstd/1.5.7_1")
+)
 (allow file-read-metadata)
 (allow file-read* file-write*
   (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")
