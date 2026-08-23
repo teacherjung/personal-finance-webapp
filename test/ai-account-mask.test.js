@@ -22,14 +22,16 @@ const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
 after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
 // ---------- 純函式 ----------
-test('normalizeMaskShape｜X／x／圓點／全形星／×／# → 同數量的半形星號；沒遮罩的完整帳號原樣不動；分隔符不動', () => {
+test('normalizeMaskShape｜X／x／圓點／全形星／× → 同數量的半形星號；沒遮罩的完整帳號原樣不動；分隔符不動；# 不是遮罩', () => {
   assert.equal(normalizeMaskShape('123XXXX456'), '123****456');
   assert.equal(normalizeMaskShape('123xxxx456'), '123****456');
   assert.equal(normalizeMaskShape('123••••456'), '123****456');
   assert.equal(normalizeMaskShape('123●●●456'), '123***456', '同數量（三顆就三顆）');
   assert.equal(normalizeMaskShape('900100＊＊＊＊3301'), '900100****3301');
   assert.equal(normalizeMaskShape('123××456'), '123**456', '乘號也是遮罩（Codex #504 r1#5）');
-  assert.equal(normalizeMaskShape('123##456'), '123**456', '井號也是遮罩');
+  assert.equal(normalizeMaskShape('123##456'), '123##456', '★井號不是遮罩（常是「帳號#」標籤；當遮罩改寫＝#12345678903301 的整串被當成末碼）');
+  assert.equal(accountSuffixAny(normalizeMaskShape('#12345678903301')), '', '★帶 # 的取不出末碼＝拒收，不會存成 *1234…');
+  assert.ok(!MASK_CHARS.includes('#'));
   assert.equal(normalizeMaskShape('900100****3301'), '900100****3301', '本來就是半形星號＝不動');
   assert.equal(normalizeMaskShape('12345678901234'), '12345678901234', '★沒遮就不動');
   assert.equal(normalizeMaskShape('900-100****3301'), '900-100****3301', '分隔符原樣（比對那邊會剝）');
@@ -224,15 +226,56 @@ test('★疑似重複的前綴否決認得完整號：兩個不同完整號（�
   for (const t of wide.transactions) t.summary = `${t.summary}(16碼)`;
   const pv3 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(wide), aiExtract: fakeExtract });
   assert.equal(pv3.transactions.counts.similar, 0);
-  // 一遮一全：遮罩蓋不住既有的完整號（前綴不同、或寬度不同）＝不是疑似重複
-  for (const [masked, why] of [['900300****3301', '前綴不同（庫裡是 900100 與 900200 兩顆）'], ['900100******3301', '六顆星＝16 碼、蓋不住 14 碼']]) {
+  // 一遮一全：前綴或末碼對不上＝不是疑似重複；**寬度刻意不驗**（星號數與藏掉位數不同的印法很常見，疑似重複是提醒、寧可多問一句）
+  for (const [masked, why, want] of [
+    ['900300****3301', '前綴不同（庫裡是 900100 與 900200 兩顆）', 0],
+    ['900100****2301', '末碼不同', 0],
+    ['**********2301', '看不到前綴、但末碼 2301 對 3301 不一致', 0],
+    ['**********3301', '看不到前綴、末碼一致＝提醒', 3],
+    ['900100******3301', '六顆星對 14 碼完整號＝寬度不驗、照樣提醒', 3],
+  ]) {
     clearAiTicketsForTest();
     const m = answer(masked);
     for (const t of m.transactions) t.summary = `${t.summary}(${why})`;
     const pvm = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
-    assert.equal(pvm.transactions.counts.similar, 0, `★${why}`);
+    assert.equal(pvm.transactions.counts.similar, want, `★${why}`);
   }
 });
+
+test('★三碼末碼的遮罩印法（900300****162）對同一顆戶的完整號（…3162）：疑似重複照樣提醒、轉給它的列照樣算內轉（預審 #504：末碼長度不同不可讓同一份帳單匯兩次）', async () => {
+  await seedDb();
+  const m = answer('900300****162');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const full = answer('90030011223162');
+  for (const t of full.transactions) t.summary = `${t.summary}(完整號印法)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 3, '★末碼 162 對 3162＝同一顆戶的兩種印法');
+  // 反向：先完整號、再三碼遮罩
+  await seedDb();
+  const pv3 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv3.aiTicket, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const pv4 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(answer('900300****162')), aiExtract: fakeExtract });
+  assert.equal(pv4.transactions.counts.similar, 3, '★反向也提醒');
+  // 內轉：自己的完整號 …3162，備註照銀行印法寫 ****162
+  const raw = answer('90030011223162');
+  raw.transactions[1] = { acctMasked: '90030011223162', date: '2026-06-02', direction: 'out', amount: 500, balance: 500, summary: '轉帳支出', note: '轉入 ****162' };
+  const row = previewBankTxForDb({ accounts: [], transactions: [], settings: {} }, /** @type {any} */ (normalizeAiBank(raw))).rows.find((/** @type {any} */ r) => r.date === '2026-06-02');
+  assert.equal(row && row.type, 'transfer', '★末三碼也算自己的');
+});
+
+test('★分隔符：`900-100XXXX3301` 的可見前綴不可因為連字號而變成空（空＝任何同末碼的戶都配得上）；親手填的 X 遮罩登記戶對完整號帳單也配得到', () => {
+  const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
+  const db = { accounts: [{ id: 'b', name: 'B戶', type: 'cash', currency: 'TWD', balance: 77, balanceAsOf: '2026-05-31', accountNo: '90020011223301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-100XXXX3301'))).rows[0].action, 'create', '★900-100 不是 900200 那顆');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-200****3301'))).rows[0].action, 'update', '連字號剝掉後 900200 配得到');
+  const db2 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo: '900100XXXX3301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90010011223301'))).rows[0].action, 'update', '★親手填 X 遮罩＝同一把改寫再比');
+  assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90020011223301'))).rows[0].action, 'create');
+});
+
 
 test('★交易掛名：帳單印完整號、庫裡只有「另一個完整號、末碼相同」的戶＝不可退回末碼撿它（Codex #504 r1#1）；登記只填末幾碼／多了銀行代碼的戶照舊退得到', () => {
   const parsedFor = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: answer(masked).transactions.slice(0, 1) });
