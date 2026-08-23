@@ -93,6 +93,9 @@ test('沙箱｜設定檔的承重規則還在（被刪掉時金絲雀會叫，�
   assert.match(sb, /\(allow network-outbound \(remote tcp \(string-append "localhost:" \(param "RELAY_PORT"\)\)\)\)/, '少了「只准連轉送器 port」');
   assert.doesNotMatch(sb, /\(allow network-outbound[^\n]*"localhost:\*"/, '放行了 localhost:* outbound——盒內程式連得到本機理財 app');
   assert.doesNotMatch(sb, /\(allow network-outbound\s+\(remote (tcp|ip) "\*/, '放行了任意對外網路');
+  // r6 #1／#2：/usr/local 明確拒（讀＋執行）；setpgid 拒——兩條都在檔尾（後面的規則蓋前面的）
+  assert.match(sb, /\(deny file-read\* process-exec\* \(subpath "\/usr\/local"\)\)/, '少了 /usr/local 的明確 deny——放行整棵 /usr 會把 pkg 裝的第二顆 node 帶進來');
+  assert.match(sb, /\(deny syscall-unix[^\n]*\(syscall-number 82\)/, '少了 setpgid（82）的 deny——盒內程式換群組就逃出 kill(-pgid)');
   // 反面：不可以有把圍欄拆掉的行
   assert.doesNotMatch(sb, /\(allow default\)/, '設定檔回到 allow default');
   assert.doesNotMatch(sb, /\(allow file-read\*[^\n]*\(subpath "\/"\)/, '設定檔放行了整個檔案系統');
@@ -115,10 +118,66 @@ test('轉送器｜目的地寫死、不從請求取——**行為題**：惡意 
     assert.ok(String(o.path).startsWith('/'), `absolute-form URL 沒被剝成 path：${o.path}`);
     assert.ok(!String(o.path).includes('evil.example'), `path 還帶著攻擊者的主機名：${o.path}`);
   }
-  // 正常請求照過
+  // 正常請求照過（純轉送模式：沒有 realBearer 就不動 Authorization）
   const ok = upstreamOptions({ method: 'GET', url: '/v1/models', headers: { authorization: 'Bearer x' } });
   assert.equal(ok.path, '/v1/models');
-  assert.equal(ok.headers.authorization, 'Bearer x', '正常 header 被剝掉了（登入憑證要原樣過）');
+  assert.equal(ok.headers.authorization, 'Bearer x', '正常 header 被剝掉了');
+});
+
+test('轉送器｜r6 #5 broker 權限收窄——**行為題**：錯 nonce／錯 method／錯 path／缺 Authorization 全部拒；只有「本掃假值精確相等＋白名單形狀」才換真 token（平台無關，CI 也跑）', async () => {
+  const { rejectReason, upstreamOptions, DUMMY_BEARER_PREFIX, ALLOWED_REQUESTS } = await import('../scripts/grok-relay.js');
+  const nonce = DUMMY_BEARER_PREFIX + 'a'.repeat(48);
+  const good = { method: 'POST', url: '/v1/responses', headers: { authorization: `Bearer ${nonce}` } };
+  assert.equal(rejectReason(good, nonce), null, '正常請求被拒');
+  // Codex r6 的純函式反例：DELETE /v1/not-a-scan＋前綴假值——r5 會換真 token
+  const bad = [
+    { ...good, method: 'DELETE', url: '/v1/not-a-scan' },
+    { ...good, method: 'DELETE', url: '/v1/not-a-scan', headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}attacker` } },
+    { ...good, headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}attacker` } },            // 前綴對、值不對
+    { ...good, headers: { authorization: `Bearer ${DUMMY_BEARER_PREFIX}${'b'.repeat(48)}` } },   // 上一掃的假值
+    { ...good, headers: { authorization: 'Bearer SOME-OTHER-REAL-LOOKING-TOKEN' } },            // 自編 bearer：也不轉
+    { ...good, headers: {} },                                                                     // 缺 Authorization
+    { ...good, url: '/v1/responses/../admin' },
+    { ...good, method: 'GET' },                                                                   // 對 path、錯 method
+    { ...good, url: '/v1/sessions/not-a-uuid/signals' },
+    { ...good, url: '/v1/bundle/archive', method: 'GET' },                                       // 刻意不放的遠端 bundle
+    { ...good, url: 'http://evil.example/v1/admin' },
+  ];
+  for (const b of bad) assert.ok(rejectReason(b, nonce), `該拒沒拒：${b.method} ${b.url} ${JSON.stringify(b.headers)}`);
+  // 白名單每一形狀都過；query 不擋
+  for (const a of ALLOWED_REQUESTS) {
+    const path = a.path.source.replace(/^\^|\$$/g, '').replace(/\\\//g, '/').replace('[0-9a-f-]{36}', '0ed1fd13-5d15-4f01-9a1e-2d9cb2f1f111');
+    assert.equal(rejectReason({ method: a.method, url: `${path}?x=1`, headers: { authorization: `Bearer ${nonce}` } }, nonce), null, `白名單形狀被拒：${a.method} ${path}`);
+  }
+  // 通過之後才換真 token；換的是整個值
+  const o = upstreamOptions(good, 'REAL-TOKEN');
+  assert.equal(o.headers.authorization, 'Bearer REAL-TOKEN');
+});
+
+test('轉送器｜r6 #5 broker 模式沒給 --dummy-file 就不啟動；給了就只認它——**行為題**：真的起一個、打三種請求看狀態碼（平台無關，CI 也跑）', async () => {
+  const { startRelay, DUMMY_BEARER_PREFIX } = await import('../scripts/grok-relay.js');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'relay-broker-'));
+  writeFileSync(join(dir, 'auth.json'), JSON.stringify({ k: { key: 'REAL-TOKEN-0123456789abcdef' } }));
+  assert.throws(() => startRelay(0, { authDir: dir }), /dummy-file/, 'broker 模式沒給假值檔竟然起來了——無從精確比對');
+  writeFileSync(join(dir, 'dummy'), `${DUMMY_BEARER_PREFIX}short\n`);
+  assert.throws(() => startRelay(0, { authDir: dir, dummyFile: join(dir, 'dummy') }), /形狀不對/, '太短的假值被接受了');
+  const nonce = DUMMY_BEARER_PREFIX + 'c'.repeat(48);
+  writeFileSync(join(dir, 'dummy'), `${nonce}\n`);
+  const server = startRelay(0, { authDir: dir, dummyFile: join(dir, 'dummy') });
+  try {
+    await new Promise((ok) => server.once('listening', ok));
+    const port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
+    const status = async (/** @type {string} */ method, /** @type {string} */ path, /** @type {string | undefined} */ auth) =>
+      (await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: auth ? { authorization: auth } : {} })).status;
+    assert.equal(await status('GET', '/v1/models', `Bearer ${DUMMY_BEARER_PREFIX}attacker`), 403, '錯 nonce 沒被拒');
+    assert.equal(await status('DELETE', '/v1/not-a-scan', `Bearer ${nonce}`), 403, '錯形狀沒被拒');
+    assert.equal(await status('GET', '/v1/models', undefined), 403, '缺 Authorization 沒被拒');
+    // 對的那種會真的往上游連——這題不連外網，只驗「不是 403」（上游連不到＝502）
+    assert.notEqual(await status('GET', '/v1/models', `Bearer ${nonce}`), 403, '對的請求被拒了');
+  } finally { server.close(); }
 });
 
 test('轉送器｜只綁 127.0.0.1——**行為題**：真的起一個、看它 listen 的位址（平台無關，CI 也跑）', async () => {

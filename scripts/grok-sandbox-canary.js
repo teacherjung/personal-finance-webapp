@@ -58,6 +58,7 @@ export function sandboxEnv(box) {
   };
 }
 
+/** 金絲雀單獨跑時用的 port 參數（正式掃描每掃向 OS 要一個隨機 port、再把它傳給 runCanary——金絲雀與發射用同一組參數） */
 export const RELAY_PORT = 18765;
 
 /**
@@ -112,8 +113,10 @@ export function canApplySandbox(box) {
 /**
  * 跑完整金絲雀。回傳 { code, lines }——lines 是逐條結果（給 PR 描述貼）。
  * @param {string} box
+ * @param {{ relayPort?: number }} [opt] 正式掃描傳本掃的隨機 port——金絲雀跟發射用同一組沙箱參數
  */
-export async function runCanary(box) {
+export async function runCanary(box, opt = {}) {
+  const relayPort = opt.relayPort ?? RELAY_PORT;
   /** @type {string[]} */
   const lines = [];
   const cap = canApplySandbox(box);
@@ -145,14 +148,14 @@ export async function runCanary(box) {
 
   let dead = 0;
   const mustFail = (/** @type {string} */ label, /** @type {string[]} */ argv) => {
-    const r = runInSandbox(box, argv);
+    const r = runInSandbox(box, argv, { relayPort });
     const blocked = isBlocked(r, secret);
     const why = r.status === null ? `（status null：${r.error?.message || r.signal || '?'}）` : r.status === 71 ? '（status 71＝沙箱沒套上）' : '';
     lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜${label}${why}`);
     if (!blocked) dead++;
   };
   const mustPass = (/** @type {string} */ label, /** @type {string[]} */ argv, /** @type {string} */ expect) => {
-    const r = runInSandbox(box, argv);
+    const r = runInSandbox(box, argv, { relayPort });
     const ok = r.status === 0 && (r.stdout || '').includes(expect);
     lines.push(`${ok ? '✅ 通過' : '❌ 誤殺'}｜${label}${ok ? '' : `（status ${r.status}：${(r.stderr || '').trim().slice(0, 80)}）`}`);
     if (!ok) dead++;
@@ -191,13 +194,28 @@ export async function runCanary(box) {
         const ctl = spawnSync(gh, ['--version'], { encoding: 'utf8', timeout: 10_000 });
         if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 brew 裝的非依賴工具（gh 在沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
         else {
-          const r = runInSandbox(box, [gh, '--version']);
+          const r = runInSandbox(box, [gh, '--version'], { relayPort });
           const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !(r.stdout || '').includes('gh version');
           lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 brew 裝的非依賴工具（gh；process-exec 限路徑）`);
           if (!blocked) dead++;
         }
       } else lines.push('（略）執行 brew 裝的非依賴工具——這台沒裝 gh，沒探針可用');
     }
+    // r6 #1：/usr/local 不是 SIP 樹（這台有 pkg 裝的第二顆 node）——放行整棵 /usr 會帶進來；profile 檔尾明確 deny。讀與執行都要擋。
+    mustFailWithControl('列 /usr/local（非 SIP 的開發者樹）', ['/bin/ls', '/usr/local'], (r) => r.status === 0);
+    if (existsSync('/usr/local/bin/node')) {
+      const ctl = spawnSync('/usr/local/bin/node', ['--version'], { encoding: 'utf8', timeout: 10_000 });
+      if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 /usr/local/bin/node（沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
+      else {
+        const r = runInSandbox(box, ['/usr/local/bin/node', '--version'], { relayPort });
+        const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !/^v\d/.test(r.stdout || '');
+        lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 /usr/local/bin/node（process-exec 拒 /usr/local）`);
+        if (!blocked) dead++;
+      }
+    } else lines.push('（略）執行 /usr/local/bin/node——這台沒有，沒探針可用');
+    // r6 #2：換程序群組（setpgid）要擋——父程序靠 kill(-pgid) 收束。setsid 實測擋不住（見 grok-scan.js 檔頭：靠隨機 port／假值／單趟讀讓逃逸無害），
+    // 所以這裡只驗 setpgid；不對 setsid 做任何「已擋」的宣稱。
+    mustFailWithControl('setpgid（換程序群組）', ['/usr/bin/perl', '-MPOSIX', '-e', `POSIX::setpgid(0,0) or exit 3; print "SETPGID-${secret}\n"`], (r) => r.status === 0 && (r.stdout || '').includes('SETPGID-'));
     // 網路：只准轉送器那一個 port。r3 #2：要**真的起一個 listener**，先證明沙箱外連得上、再證明盒內 EPERM——
     // 沒有 listener 時沙箱外也是 ECONNREFUSED，金絲雀必然假綠（Codex r3 實測 reportedBlocked:true）。
     {
@@ -227,7 +245,7 @@ export async function runCanary(box) {
       const prev = { ...process.env };
       Object.assign(process.env, sentinels);
       let r;
-      try { r = runInSandbox(box, ['/usr/bin/env']); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
+      try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
       finally { for (const k of Object.keys(sentinels)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
       const leak = Object.values(sentinels).some((v) => (r.stdout || '').includes(v));
       lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（注入 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);

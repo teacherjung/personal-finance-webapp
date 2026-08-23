@@ -206,7 +206,7 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
   重新給結論、更新「基準版本」；判定不修或範圍外的**寫待辦，不為它多開一輪**。
   掃描一律用**一支腳本**（2026-08-22 起沙箱制；安全理由＝AGENTS 該節「呼叫紀律」）：
   `node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> --out <回覆檔>`
-  ↑ 它自己會：建盒子（已 commit 原始碼副本＋白名單複製的 grok 家，沒有 store.db／.env／歷史 session）→
+  ↑ 它自己會：建盒子（已 commit 原始碼副本＋驗過雜湊的 grok 執行檔＋重建的假 auth.json，沒有 store.db／.env／歷史 session／真憑證）→
   跑金絲雀（**金絲雀非 0＝不掃**）→ 起轉送器 → 在 OS 沙箱裡跑盒內的 grok（盒子裡跑指令是准的；
   網路只通轉送器，整合型考題跑不了）→ 驗屍 → **清掉盒子**、結果包留在 `~/.grok-scan-results/`。**不准手動啟動 grok CLI。**
   轉送器的目的地以 **grok 1.0.3** 執行檔為準；**版本不同＝當未跑**，人工重驗後更新 `scripts/grok-relay.js`。
