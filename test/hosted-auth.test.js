@@ -378,12 +378,15 @@ test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一
 // 而**沒有任何考題會紅**——因為所有考題都是從 `RATE_LIMITS` 反查的，漏列的當然查不到。
 // 「從清單反查」只證得了「表上的每一道都掛上了」，證不了「該上表的都上了」。
 //
-// 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝我們會去打誰）跟它對帳。
+// 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝**需要限速的業務外連**去打的是誰）跟它對帳。
 // 這一題守的不是某個 bug，是**「有人新增未登記的對外模組／能力卻忘了限速」這個動作**。
 // ⚠️ 誠實劃界（r7）：已登記模組（ALLOWED）**改打新主機本題不偵測**——主機級對帳（每模組
 // 主機清單×URL 掃描雙向對帳）＝另案（William 2026-08-01 裁決另開 PR）。
+// ⚠️ 誠實劃界（射程）：本題**只比對兩張表**。它證得了「表上每條路徑在 `RATE_LIMITS` 找得到
+// 前綴涵蓋」；**證不了**「限速中介層真的掛上去了」（那是本檔 HTTP 行為題的事），
+// 也證不了「該上表的都上了」——沒登記的路徑本題根本看不見。
 
-test('對帳：`OUTBOUND_ENDPOINTS` 上的每一條都被某道限速涵蓋（登記了卻忘了掛限速就會在這裡紅；**沒登記**的由本檔的路由錨定那題攔）', async () => {
+test('對帳：`OUTBOUND_ENDPOINTS` 上的每一條路徑，都在 `RATE_LIMITS` 找得到前綴涵蓋', async () => {
   const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
   assert.ok(OUTBOUND_ENDPOINTS.length >= 6, '對外端點清單看起來被刪過');
 

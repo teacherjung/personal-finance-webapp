@@ -33,9 +33,12 @@ const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
 /**
  * **要跟 `RATE_LIMITS` 對帳的外連端點清單（單一真相）**——「這條端點會去打別人，所以它必須被限速」。
  *
- * ⚠️ **誠實劃界**：它**不是**「所有會外連的程式路徑」。`authGate` 對每個受保護請求都會打 Supabase
- * 驗簽（`lib/services/auth.js` 的 `currentSession` → `supabase.auth.getUser()`），而 `me`／`logout`
- * 依既有裁決不限速，兩者都刻意不在表上（見下方 Supabase 那一筆的註解）。這張表守的是**限速涵蓋率**。
+ * ⚠️ **誠實劃界**：它**不是**「所有會外連的程式路徑」，只收**需要靠 `RATE_LIMITS` 節流的業務型外連**。
+ * HOSTED 的**基礎設施型外連刻意不在表上**——**例如**（不是完整名單）`authGate` 每個受保護請求都做的
+ * Supabase 驗簽（`lib/services/auth.js` 的 `currentSession` → `getUser()`）、`me`／`logout` 的輕量
+ * session 操作、`lib/store-pg.js` 的 PostgREST 查詢與 `kv_save` RPC。**口徑的單一真相＝
+ * `test/hosted-auth.test.js` 裡 `ROUTE_EXEMPT` 的檔內註解**，不在這裡重抄清單。
+ * 這張表守的是**限速涵蓋率**。
  *
  * 為什麼要獨立成一張表（Codex 收官審查 #6，2026-07-28）：`RATE_LIMITS` 原本的註解寫著
  * 「IB 同步是全站唯一『我們去打別人』的端點」，同一個檔案往下 30 行就自己推翻了（報價也對外）；
