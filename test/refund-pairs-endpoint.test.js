@@ -71,6 +71,27 @@ test('與月度回顧同一份判準：配對結果一致（同步點，走散�
     reviewBody.unmatchedRefunds.items.map((/** @type {any} */ u) => u.id));
 });
 
+test('GET /api/refund-pairs 要吐出 rewards 欄位（這題只驗 API JSON；前端怎麼用它＝refund-attribution 那支）', async () => {
+  // ⚠️ 這支端點是**手動挑欄位**回傳（lib/routes/core.js），不是整包 pairRefunds 直送——
+  //    所以「rewards 有沒有被傳出去」需要自己一題釘住。實測把 res.json 裡的 rewards 拿掉：
+  //    這支檔其餘題與月度回顧那條路（回整包 buildMonthlyReview）都還是綠的。
+  //    ⚠️ **本題只證明 API 吐得出來**，不證明信用卡費頁有接上——前端那半由
+  //    test/refund-attribution.test.js 的 rewardsForMonth 那題守（Grok 掃描 2026-08-23 第 3 條：
+  //    原本的題名寫「信用卡費頁只認這個欄位」，比斷言大）。
+  store.save({ ...store.emptyDb(), transactions: [
+    card('buy', '2026-01-12', '飲食', 365, '星巴克'),
+    card('rw', '2026-02-14', '其他', -365, '點數折抵_星巴克'),
+  ] });
+  const body = await fetch(`http://127.0.0.1:${port}/api/refund-pairs`).then(r => r.json());
+  assert.ok(Array.isArray(body.rewards), '端點沒有吐出 rewards');
+  assert.equal(body.rewards.length, 1);
+  assert.equal(body.rewards[0].id, 'rw');
+  assert.equal(body.rewards[0].amount, 365, '金額要取絕對值（畫面講「有多少錢」）');
+  // 同一把配對鑰匙（星巴克）卻沒被配走，也沒落進未對應清單
+  assert.deepEqual(body.pairs, [], '回饋被當成退款配走了');
+  assert.deepEqual(body.unmatchedRefunds, [], '回饋落進未對應退款清單了');
+});
+
 test('繳卡費的負數不是退款（不可被當成可配對的退款）', async () => {
   store.save({ ...store.emptyDb(), transactions: [
     card('buy', '2026-01-12', '飲食', 800, '餐廳'),
