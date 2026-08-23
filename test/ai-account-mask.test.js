@@ -176,22 +176,27 @@ test('★端到端：帳單沒遮罩（完整帳號）→ 收、末碼＝末四�
   assert.ok(db.transactions.every((/** @type {any} */ t) => t.account === '我的一銀'), '交易掛到自己的帳戶');
 });
 
-test('沒遮罩的帳號與既有遮罩帳戶的關係：登記的是遮罩形（900100****3301）、帳單印完整號＝前綴對得上才配；對不上＝新建', () => {
+test('沒遮罩的帳號與既有遮罩帳戶的關係：登記的是遮罩形（900100****3301）、帳單印完整號＝頭尾對得上也只能「證明不了」停手（r5#1）；對不上＝新建', () => {
   const parsed = (/** @type {string} */ masked) => ({ bank: '合成一銀', referenceDate: '2026-06-30', accounts: [{ suffix: '3301', masked, balance: 1500, currency: 'TWD', label: '活存', note: '', kind: 'demand', period: '' }], accountCurrency: { [masked]: 'TWD' }, transactions: [] });
   const db = { accounts: [{ id: 'a', name: '登記遮罩形', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
-  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010011223301'))).rows[0].action, 'update', '遮罩逐位蓋得住完整號＝配得到');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010011223301'))).rows[0].action, 'ambiguous', '★登記的遮罩是自動建戶抄來的，證明不了它就是這個完整號（可能是 …1111… 也可能是 …9999…）＝停手');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010099993301'))).rows[0].action, 'ambiguous', '★r5#1 的反例：不可 update');
   assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90020011223301'))).rows[0].action, 'create', '★前綴不同＝另一顆');
-  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('9001001122333301'))).rows[0].action, 'update', '★星號數不是證據（repo 既有考題就用四顆星配 15 碼）：可見頭尾都對上＝同一顆（與兩份遮罩帳單互比同強度）');
-  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-100-1122-3301'))).rows[0].action, 'update', '分隔符剝掉再比');
-  // 三碼末碼的印法（900300****162）對完整號 …3162：末碼長度不同也不可拆成兩顆（r2#2：兩顆餘額都進資產＝多算一份）
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('9001001122333301'))).rows[0].action, 'ambiguous', '星號數不是證據（repo 既有考題就用四顆星配 15 碼）：頭尾對上＝相容＝一樣停手');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-100-1122-3301'))).rows[0].action, 'ambiguous', '分隔符剝掉再比');
+  applyBalancesToDb(db, /** @type {any} */ (parsed('90010099993301')));
+  assert.equal(db.accounts.length, 1, '★停手＝不新建');
+  assert.equal(db.accounts[0].balance, 1, '★停手＝不蓋');
+  // 三碼末碼的印法（900300****162）對完整號 …3162：末碼長度不同也一樣停手、不可拆成兩顆（r2#2：兩顆餘額都進資產＝多算一份）
   const db162 = { accounts: [{ id: 'a', name: '登記遮罩形', type: 'cash', currency: 'TWD', balance: 100, balanceAsOf: '2026-05-31', accountNo: '900300****162', bank: '合成一銀' }], transactions: [], settings: {} };
   const p162 = { bank: '合成一銀', referenceDate: '2026-06-30', accounts: [{ suffix: '3162', masked: '90030011223162', balance: 1500, currency: 'TWD', label: '活存', note: '', kind: 'demand', period: '' }], accountCurrency: { '90030011223162': 'TWD' }, transactions: [] };
-  assert.equal(previewBalancesForDb(db162, /** @type {any} */ (p162)).rows[0].action, 'update', '★可見頭尾都對上＝同一顆');
+  assert.equal(previewBalancesForDb(db162, /** @type {any} */ (p162)).rows[0].action, 'ambiguous', '★可見頭尾都對上＝相容＝停手');
   applyBalancesToDb(db162, /** @type {any} */ (p162));
   assert.equal(db162.accounts.length, 1, '★沒有新建第二顆');
-  assert.equal(db162.accounts[0].balance, 1500);
-  applyBalancesToDb(db, /** @type {any} */ (parsed('90010011223301')));
-  assert.equal(db.accounts[0].balance, 1500);
+  assert.equal(db162.accounts[0].balance, 100, '★也沒有蓋');
+  // 使用者到資產頁把帳號補成完整號之後＝完整對完整全等＝命中
+  db.accounts[0].accountNo = '90010099993301';
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010099993301'))).rows[0].action, 'update', '★補完整後就命中');
   // ★使用者親手填的完整帳號（沒星號）不走「前綴延伸」那條：完整對完整＝整串都要對
   const db2 = { accounts: [{ id: 'b', name: '親手填完整號', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo: '90010011223301', bank: '合成一銀' }], transactions: [], settings: {} };
   assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90010099993301'))).rows[0].action, 'create', '★中段不同＝另一顆');
@@ -312,7 +317,8 @@ test('★多顆候選＝停手（r3#1）：兩顆相容戶取第一顆、全星�
     assert.deepEqual(db.accounts.map((/** @type {any} */ a) => a.balance), [10, 20], `★餘額不動：${why}`);
     assert.equal(db.accounts.length, 2, `★帳戶數不變：${why}`);
     const rows = previewBankTxForDb(db, /** @type {any} */ (parsed)).rows;
-    assert.ok(rows.every((/** @type {any} */ r) => r.account !== 'A戶' && r.account !== 'B戶'), `★交易不掛既有戶（實得 ${rows[0].account}）：${why}`);
+    assert.equal(rows.length, 3);
+    for (const r of rows) assert.equal(r.account, '合成一銀 3301（活存）', `★交易掛帳單概要的 autoName、不掛既有戶（實得 ${r.account}）：${why}`);
   }
   // 對照：只有一顆＝照常命中
   const db1 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
@@ -335,8 +341,9 @@ test('★分隔符：`900-100XXXX3301` 的可見前綴不可因為連字號而�
   assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-100XXXX3301'))).rows[0].action, 'create', '★900-100 不是 900200 那顆');
   assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900-200****3301'))).rows[0].action, 'update', '連字號剝掉後 900200 配得到');
   const db2 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 1, balanceAsOf: '2026-05-31', accountNo: '900100XXXX3301', bank: '合成一銀' }], transactions: [], settings: {} };
-  assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90010011223301'))).rows[0].action, 'update', '★親手填 X 遮罩＝同一把改寫再比');
+  assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90010011223301'))).rows[0].action, 'ambiguous', '★親手填 X 遮罩＝同一把改寫再比（相容＝停手，與星號遮罩同）');
   assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('90020011223301'))).rows[0].action, 'create');
+  assert.equal(previewBalancesForDb(db2, /** @type {any} */ (parsed('900100XXXX3301'))).rows[0].action, 'update', '遮罩對遮罩比對形全等＝命中');
 });
 
 
@@ -346,10 +353,11 @@ test('★交易掛名：帳單印完整號、庫裡只有「另一個完整號�
   const nameOf = (/** @type {any} */ db, /** @type {string} */ masked) => previewBankTxForDb(db, /** @type {any} */ (parsedFor(masked))).rows[0].account;
   assert.notEqual(nameOf(mk('90010011223301'), '90020011223301'), 'A戶', '★B 戶的交易不可掛到 A 戶');
   assert.equal(nameOf(mk('90010011223301'), '90010011223301'), 'A戶', '整串相同＝掛得到');
-  assert.equal(nameOf(mk('3301'), '90010011223301'), 'A戶', '登記只填末四碼＝退路撿得到');
-  assert.equal(nameOf(mk('812-90010011223301'), '90010011223301'), 'A戶', '登記多了銀行代碼＝退路撿得到');
-  assert.equal(nameOf(mk('900100****3301'), '90010011223301'), 'A戶', '登記遮罩形、逐位蓋得住＝掛得到');
-  assert.equal(nameOf(mk('900100****3301'), '9001001122333301'), 'A戶', '星號數不是證據：頭尾都對上＝掛得到');
+  assert.equal(nameOf(mk('3301'), '90010011223301'), 'A戶', '登記只填末四碼（數字＝末碼本身）＝退路撿得到');
+  assert.notEqual(nameOf(mk('11223301'), '90010011223301'), 'A戶', '★較短但比末碼長的號＝分不出是只填末幾碼還是另一顆短帳號（r5#3）＝不撿');
+  assert.notEqual(nameOf(mk('812-90010011223301'), '90010011223301'), 'A戶', '登記多了銀行代碼＝證明不了＝不撿（autoName）');
+  assert.notEqual(nameOf(mk('900100****3301'), '90010011223301'), 'A戶', '★登記遮罩形對完整號＝相容但證明不了＝不掛');
+  assert.notEqual(nameOf(mk('900100****3301'), '9001001122333301'), 'A戶');
   assert.notEqual(nameOf(mk('9001****3301'), '77777790013301'), 'A戶', '★登記遮罩形的數字 90013301 是完整號的尾段、卻不是同一顆（r2#1）：退路不准撿遮罩形');
 });
 
@@ -438,7 +446,7 @@ test('★一遮一全至少要藏一碼（r4#1）：900100****3301 對 10 碼的
   const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
   const db = { accounts: [{ id: 'a', name: '遮罩戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
   assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('9001003301'))).rows[0].action, 'create', '★零藏碼＝不是');
-  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010013301'))).rows[0].action, 'update', '藏一碼＝是');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010013301'))).rows[0].action, 'ambiguous', '藏一碼＝相容（停手）');
   await seedDb();
   const m = answer('900100****3301');
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
@@ -449,4 +457,47 @@ test('★一遮一全至少要藏一碼（r4#1）：900100****3301 對 10 碼的
   const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(ten), aiExtract: fakeExtract });
   assert.equal(pv2.transactions.counts.similar, 0, '★零藏碼＝不是疑似重複（預設跳過會吃掉真交易）');
   assert.equal(pv2.rows[0].action, 'create', '★餘額那邊也判成另一顆（autoName 與第一顆同名是既有的命名取捨，不在本支）');
+});
+
+
+test('★疑似重複的方向性（r5#1）：既有列是遮罩、新列是完整號＝證明不了＝不算疑似重複（算了會被預設跳過、吃掉另一顆戶的真交易）；反向（既有完整號、新列遮罩）照算', async () => {
+  await seedDb();
+  const m = answer('900100****3301');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const full = answer('90010099993301');
+  for (const t of full.transactions) t.summary = `${t.summary}(另一顆)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(full), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 0, '★不算');
+  const r = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv2.aiTicket, aiEngineFactory: engineOf(full), aiExtract: fakeExtract, skipSimilar: true });
+  assert.equal(/** @type {any} */ (r).transactions.imported, 3, '★預設跳過也不會吃掉');
+});
+
+test('★去重鍵帳號段帶分隔符的完整號（AI 照抄 900-100-1122-3301）：疑似重複索引與金融卡擋門都要認得（r5#2）', async () => {
+  await seedDb();
+  const dashed = answer('900-100-1122-3301');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(dashed), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(dashed), aiExtract: fakeExtract });
+  const db = await getDb();
+  assert.ok(db.transactions.every((/** @type {any} */ t) => String(t.bankRef).includes('|900-100-1122-3301|')), '去重鍵照抄分隔符（既有設計）');
+  clearAiTicketsForTest();
+  const plain = answer('90010011223301');
+  for (const t of plain.transactions) t.summary = `${t.summary}(沒分隔符)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(plain), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 3, `★同一顆戶的兩種印法＝提醒（實得 ${JSON.stringify(pv2.transactions.counts)}）`);
+  // 金融卡擋門：既有列帳號段帶分隔符
+  const MASKED = '**********3301';
+  const parsedCard = {
+    bank: '合成一銀', referenceDate: '2026-06-30',
+    accounts: [{ suffix: '3301', masked: MASKED, balance: 500, currency: 'TWD', label: '簽帳金融卡', note: '', kind: 'demand', period: '', suffixOnly: true, balanceFromDetail: true }],
+    accountCurrency: { [MASKED]: 'TWD' },
+    transactions: [{ acctSuffix: '3301', acctMasked: MASKED, date: '2026-06-02', summary: '刷卡消費', direction: 'out', amount: 500, balance: 500, note: '合成商店' }],
+    cardRows: [{ postDate: '2026-06-02', date: '2026-06-01', amount: 500, fee: 0, lastFour: '8808', desc: '合成商店', region: 'TW', extra: '' }],
+  };
+  const db2 = await getDb();
+  db2.transactions = [{ id: 'x', ledger: 'cashflow', source: 'bank', date: '2026-06-02', type: 'expense', category: '餐飲', subcategory: '', amount: 500, account: 'A', note: '合成商店', bankRef: 'bank2|合成一銀|900-100-1122-3301|2026-06-02|out|500|500|刷卡消費|合成商店', bankSummary: '刷卡消費', bankNote: '合成商店', dir: 'out' }];
+  await saveDb(db2);
+  const r = await previewBankStatement('QUJD', '', async () => /** @type {any} */ (parsedCard));
+  assert.equal(r.cardLedger.notRecorded.cashflowCategorized, 1, `★帶分隔符的完整號列也擋得住（實得 ${JSON.stringify(r.cardLedger.notRecorded)}）`);
 });
