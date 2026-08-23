@@ -90,6 +90,22 @@ export function bankCardLedgerNote(cl) {
     + '。記到卡片的那幾筆，帳戶那邊對應的刷卡扣款只記錢的流向、不分類——所以消費分析裡這幾筆只算卡片那一份。';
 }
 
+/** 銀行匯入紀錄裡一批的「筆數」格與刪除確認文字——金融卡帳單那一批連帶記了卡片消費明細（cardCount），刪除會
+ * 兩本帳一起拿掉，筆數與確認句都要把兩邊講出來（只講現金流那邊＝確認 3 筆、實際刪 5 筆；Codex #503 r3#1）。
+ * @param {{count:number, cardCount?:number, minDate?:string, maxDate?:string}} b */
+export function bankBatchCountText(b) {
+  const cc = Number(b?.cardCount) || 0;
+  return cc ? `${b.count}（＋卡片消費明細 ${cc}）` : String(b.count);
+}
+/** @param {{count:number, cardCount?:number, minDate?:string, maxDate?:string}} b */
+export function bankBatchDeleteConfirmText(b) {
+  const cc = Number(b?.cardCount) || 0;
+  const range = `（${b.minDate}~${b.maxDate}）`;
+  return cc
+    ? `整批 ${b.count} 筆收支交易＋連帶記到卡片的 ${cc} 筆刷卡消費明細${range}——兩本帳一起刪`
+    : `整批 ${b.count} 筆${range}`;
+}
+
 /** 套用完成那句的「刷卡消費明細」段落（同 bankApplyDoneText 的口吻）。 @param {{cards?:{name:string, created:boolean, imported:number, skipped:number}[], imported?:number, skipped?:number, notRecorded?:{unmatched?:number, unreadable?:number, cashflowCategorized?:number}}|null|undefined} cl */
 export function bankCardLedgerDoneText(cl) {
   const cards = Array.isArray(cl?.cards) ? cl.cards : [];

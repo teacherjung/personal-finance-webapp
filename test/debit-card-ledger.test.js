@@ -228,6 +228,18 @@ test('預覽窗那一句：講到記到哪張卡、幾筆、重複幾筆、以�
   assert.ok(bankCardLedgerDoneText({ cards: [{ name: 'X', created: false, imported: 0, skipped: 5 }] }).includes('略過重複 5'));
 });
 
+test('銀行匯入紀錄的筆數格與刪除確認句要把兩本帳都講出來（確認 3 筆、實際刪 5 筆＝畫面說謊）', async () => {
+  const { bankBatchCountText, bankBatchDeleteConfirmText } = await import('../public/modules/cashflow-model.js');
+  assert.equal(bankBatchCountText({ count: 3 }), '3');
+  assert.equal(bankBatchCountText({ count: 3, cardCount: 2 }), '3（＋卡片消費明細 2）');
+  const t = bankBatchDeleteConfirmText({ count: 3, cardCount: 2, minDate: '2026-01-28', maxDate: '2026-01-30' });
+  assert.ok(t.includes('3 筆收支交易') && t.includes('2 筆刷卡消費明細') && t.includes('一起刪'), `★兩本帳都要講：${t}`);
+  assert.equal(bankBatchDeleteConfirmText({ count: 3, minDate: 'a', maxDate: 'b' }), '整批 3 筆（a~b）', '沒有連帶＝照舊');
+  const src = readFileSync(new URL('../public/modules/cashflow.js', import.meta.url), 'utf8');
+  assert.match(src, /confirmDelete\(bankBatchDeleteConfirmText\(b\)/, '★確認窗走共用句');
+  assert.match(src, /bankBatchCountText\(b\)/, '★筆數格走共用句');
+});
+
 test('預覽窗真的接上那一句（cashflow.js 樣板走 bankCardLedgerNote、有 cardLedger 才畫）', () => {
   const src = readFileSync(new URL('../public/modules/cashflow.js', import.meta.url), 'utf8');
   assert.match(src, /bankCardLedgerNote\(\/\*\* @type \{any\} \*\/ \(r\)\.cardLedger\)/, '★樣板要呼叫 bankCardLedgerNote(r.cardLedger)');
