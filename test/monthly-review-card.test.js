@@ -7,6 +7,7 @@ import {
   monthlyReviewMonthLabel,
   monthlyReviewSummary,
   unmatchedRefundInfoHtml,
+  rewardInfoHtml,
 } from '../public/modules/monthly-review-card.js';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -30,6 +31,7 @@ const review = {
     cashflow: { income: 10000, expense: 18000, net: -8000, overdraft: true, overdraftAmount: 8000 },
   },
   unmatchedRefunds: { count: 1, total: 300, items: [{ date: '2026-07-01', store: '<退款店>', amount: 300 }] },
+  rewards: { count: 1, total: 365, items: [{ date: '2025-09-14', store: '<回饋店>', amount: 365 }] },
 };
 
 test('月度回顧卡：大類先顯示、子類可展開，五個白話入口與兩把尺標示齊全', () => {
@@ -38,9 +40,13 @@ test('月度回顧卡：大類先顯示、子類可展開，五個白話入口�
   assert.match(html, /<details class="mr-category">/);
   assert.doesNotMatch(html, /<details class="mr-category" open/);
   assert.match(html, /&lt;飲食&gt;/, '使用者分類必須跳脫');
-  for (const key of ['settled', 'lens', 'overdraft', 'refund', 'incomplete']) assert.match(html, new RegExp(`data-mr-info="${key}"`));
+  // ⚠️ **兩層都要**：字面清單是「有哪幾把鑰匙」的存在性下限（加減鑰匙都被迫回來改這行），
+  //    迴圈則保證每一把都真的長出按鈕。只留迴圈＝鑰匙與按鈕同進同退，整把 ⓘ 一起刪也全綠（本 repo 已記載過的盲區）。
+  assert.deepEqual(Object.keys(MONTHLY_REVIEW_INFO).sort(), ['cashback', 'incomplete', 'lens', 'overdraft', 'refund', 'settled']);
+  for (const key of Object.keys(MONTHLY_REVIEW_INFO)) assert.match(html, new RegExp(`data-mr-info="${key}"`), `${key} 這把 ⓘ 沒有長出按鈕`);
   assert.match(html, /本月透支/);
   assert.match(html, /另有 1 筆退款/);
+  assert.match(html, /另有 1 筆回饋/);
   assert.match(html, /資料可能未齊/);
 });
 
@@ -82,6 +88,20 @@ test('未對應退款說明：列出日期、店家、金額且跳脫使用者�
   assert.match(html, /2026-07-01/);
   assert.match(html, /&lt;退款店&gt;/);
   assert.match(html, /300 元/);
+});
+
+test('回饋說明：列出折抵日、帳單說明、金額且跳脫使用者文字（孿生的未對應退款函式有這題，這支原本沒有）', () => {
+  const html = rewardInfoHtml(review, { esc, money });
+  assert.match(html, /點數折抵/);
+  assert.match(html, /2025-09-14/);
+  assert.match(html, /&lt;回饋店&gt;/, '帳單說明必須跳脫');
+  assert.match(html, /365 元/);
+});
+
+test('回饋為 0 時那一行與 ⓘ 都不出現（不可長出「另有 0 筆回饋」）', () => {
+  const html = monthlyReviewCardHtml({ ...review, rewards: { count: 0, total: 0, items: [] } }, fmt);
+  assert.doesNotMatch(html, /筆回饋/);
+  assert.doesNotMatch(html, /data-mr-info="cashback"/);
 });
 
 test('月度回顧空狀態與載入失敗不讓總覽崩潰', () => {
