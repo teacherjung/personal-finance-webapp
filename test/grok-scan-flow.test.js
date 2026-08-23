@@ -643,7 +643,7 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
-  for (const [label, path, want] of /** @type {[string, string, 0|2][]} */ ([['白名單外', '/v1/not-in-allowlist', 2], ['刻意擋的', '/v1/bundle/archive', 0]])) {
+  for (const [label, path, want] of /** @type {[string, string, 0|2][]} */ ([['白名單外', '/v1/not-in-allowlist', 2], ['刻意擋的', '/v1/bundle/archive', 0], ['刻意擋的（subagents）', '/v1/subagents/bundle', 0]])) {
     const iso = isolated(); const inst = fakeGrok();
     // 假 grok 用盒內 curl 打本掃轉送器（port 從 env 來）；grok 自己仍退 0
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `/usr/bin/curl -s -o /dev/null -m 5 "\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}${path}" -H "Authorization: Bearer $(sed -n 's/.*"key":"\\([^"]*\\)".*/\\1/p' "$GROK_HOME/auth.json")"; $1`));
@@ -651,6 +651,6 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: real });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
     if (want === 2) assert.match(r.summary.join('\n'), /轉送器拒絕了 1 個不在白名單/, label);
-    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes('GET /v1/bundle/archive')), `${label}：沒記錄被容許的拒絕`);
+    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes(`GET ${path}`)), `${label}：沒記錄被容許的拒絕`);
   }
 });

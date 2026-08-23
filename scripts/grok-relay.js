@@ -56,8 +56,8 @@ const UPSTREAM_HOST = 'cli-chat-proxy.grok.com';
 export const DUMMY_BEARER_PREFIX = 'DUMMY-SCAN-TOKEN-';
 /**
  * grok 1.0.3 實際會打的形狀（2026-08-23 記錄型 proxy 實測：-p 模式、跑 bash 與讀檔工具各一次）。
- * 刻意**不放** GET /v1/bundle/archive（它也打了一次；那是下載可執行 bundle——釘了執行檔雜湊卻放行遠端換程式碼就自相矛盾；
- * 實測擋掉它 grok 照常回答）。path 只比 pathname，query 原樣過（上限見 MAX_PATH）。
+ * 刻意**不放** GET /v1/bundle/archive 與 GET /v1/subagents/bundle（下載可執行 bundle——釘了執行檔雜湊卻放行遠端換程式碼就自相矛盾；
+ * 實測擋掉 grok 照常回答；它們在 TOLERATED_REFUSALS 裡＝拒絕不讓掃描失敗）。path 只比 pathname，query 原樣過（上限見 MAX_PATH）。
  */
 export const ALLOWED_REQUESTS = Object.freeze([
   { method: 'GET', path: /^\/v1\/models$/ },
@@ -70,8 +70,12 @@ export const ALLOWED_REQUESTS = Object.freeze([
 ]);
 /** 拒絕記錄的行首（grok-scan.js 用它解析 stderr） */
 export const REFUSED_PREFIX = '[relay] refused: ';
-/** 刻意擋、且實測 grok 照常回答的形狀——只有這些拒絕不讓掃描失敗 */
-export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive']);
+/**
+ * 刻意擋、且實測 grok 照常回答的形狀——只有這些拒絕不讓掃描失敗。
+ * 兩個都是「下載可執行 bundle」：釘了執行檔雜湊卻放行遠端換碼自相矛盾。subagents/bundle 是 #500 第一次正式掃描（2026-08-23）
+ * 被自己的拒絕閘擋下來才發現的——`--no-subagents` 下 grok 仍會去拿；那次掃描照設計退 2、輸出丟棄，這裡補上後重掃。
+ */
+export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive', 'GET /v1/subagents/bundle']);
 /** 拒絕次數上限：超過＝轉送器自己退出（退出碼 3）→ grok-scan 看到轉送器死＝退 2。否則盒內程式可以用無限個被拒請求灌爆 stderr。 */
 export const MAX_REFUSALS = 100;
 export const MAX_REQUESTS = 2000;          // 一次掃描的上限（實測一輪問答約 10 個請求）
