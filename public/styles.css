@@ -16,11 +16,11 @@
   --accent-soft: #FCE7C5;
   --action: #557f3c;
   --action-hover: #456c32;
-  /* 語意色＝柔和六色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
-  --pos: #47793E;         /* 收入 / 獲利（六色盤綠 #6FA75F 加深）*/
+  /* 語意色＝柔和分類色盤（theme.js）同色相的深色版，深度為了文字對比（≥4.5:1）*/
+  --pos: #47793E;         /* 收入 / 獲利（分類色盤綠 #6FA75F 加深）*/
   --pos-soft: #e3edcf;
-  --neg: #B84A39;         /* 支出 / 虧損（六色盤紅 #D96352 加深）*/
-  --warn: #A8681F;        /* 提醒（六色盤橘 #E8944A 加深）*/
+  --neg: #B84A39;         /* 支出 / 虧損（分類色盤紅 #D96352 加深）*/
+  --warn: #A8681F;        /* 提醒（分類色盤橘 #E8944A 加深）*/
   --danger: #B84A39;
   --info: #6b7f99;        /* 資訊（霧藍）*/
   --shadow: 4px 4px 0 rgba(184, 148, 62, .38);
@@ -719,7 +719,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 /* 紀律檢查卡：現值 vs 上限 進度條（黑刻度＝上限、紅＝超標溢出） */
 .cap-row { grid-template-columns: 110px 1fr 190px; }
 .cap-bar { position: relative; display: flex; height: 8px; background: var(--card-2); border-radius: 6px; }
-/* 條的填色用六色盤「色塊亮版」（=theme.js CHART.green/red），與其他圖表條一致；深色 token 只給文字 */
+/* 條的填色用分類色盤「色塊亮版」（=theme.js CHART.green/red），與其他圖表條一致；深色 token 只給文字 */
 .cap-bar .cb-ok { height: 100%; background: #6FA75F; border-radius: 6px; }
 .cap-bar .cb-over { height: 100%; background: #D96352; border-radius: 0 6px 6px 0; margin-left: -2px; }
 .cap-bar .cb-mark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); border-radius: 1px; }

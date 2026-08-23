@@ -327,7 +327,7 @@ test('速率限制：/api/auth/me 這種輕量讀取不限速（限了只會擋�
 });
 
 test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住（漏掛一道就會在這裡紅）', async () => {
-  // ⚠️ 從 `RATE_LIMITS` 反查、不逐條手寫：手寫的話，下一個人加了第五道限速卻忘了掛，
+  // ⚠️ 從 `RATE_LIMITS` 反查、不逐條手寫：手寫的話，下一個人新增一道限速卻忘了掛，
   //    不會有任何考題紅。這一題與 `test/server.test.js` 的 LOCAL 反向題共用同一張表——
   //    一張表同時守住「HOSTED 要擋」與「LOCAL 不可以擋」兩個方向。
   const { RATE_LIMITS } = await import('../server.js');
