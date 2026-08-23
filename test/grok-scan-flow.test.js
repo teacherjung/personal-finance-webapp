@@ -660,12 +660,16 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
   // repo 的 head 多一個檔，內容就是破口考題的字面——那會進 diff＝進材料
   const repo = tinyRepo();
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
-  const fakeKey = '-----BEGIN RSA PRIVATE KEY-----\\nMIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n-----END RSA PRIVATE KEY-----';
-  writeFileSync(join(repo.dir, 'fixture.txt'), `a test fixture key: ${fakeKey.replace(/\\\\n/g, '\\n')}\n`);
+  // 假鑰放進 repo 的 head（跨行＝真鑰的樣子；進 diff 後每行多一個 `+`）
+  const keyLines = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '-----END RSA PRIVATE KEY-----'];
+  writeFileSync(join(repo.dir, 'fixture.txt'), `a test fixture key:\n${keyLines.join('\n')}\n`);
   git(['add', 'fixture.txt']); git(['commit', '-q', '-m', 'fixture']);
   const head3 = git(['rev-parse', 'HEAD']).trim();
+  const fakeKeyJson = keyLines.join('\\n');                 // 日誌是 JSON：換行成字面 \n
+  const fakeKeyJson2 = keyLines.join('\\\\n');              // 巢狀 JSON：再轉義一層
   for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
-    ['材料裡那把假鑰原樣被 echo', `printf '%s\\n' '{"type":"assistant","content":"echo ${fakeKey}"}'`, 0],
+    ['材料裡那把假鑰以 JSON 字串形式出現在日誌（換行成字面 \\n）', `printf '%s\\n' '{"type":"assistant","content":"${fakeKeyJson}"}'`, 0],
+    ['材料裡那把假鑰以巢狀 JSON（雙重轉義）出現在日誌', `printf '%s\\n' '{"type":"assistant","content":"{\\"k\\":\\"${fakeKeyJson2}\\"}"}'`, 0],
     ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
     ['同標頭、不同內容的外部私鑰（r10：材料有標頭也不能放過）', `printf '%s\\n' '{"type":"assistant","content":"outside: -----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\\n-----END RSA PRIVATE KEY-----"}'`, 1],
     ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN OPENSSH PRIVATE KEY-----\\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2g\\n"}'`, 1],
