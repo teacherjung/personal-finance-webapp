@@ -327,7 +327,7 @@ test('速率限制：/api/auth/me 這種輕量讀取不限速（限了只會擋�
 });
 
 test('速率限制：**路徑表上的每一道**在 HOSTED 都真的擋得住（漏掛一道就會在這裡紅）', async () => {
-  // ⚠️ 從 `RATE_LIMITS` 反查、不逐條手寫：手寫的話，下一個人加了第五道限速卻忘了掛，
+  // ⚠️ 從 `RATE_LIMITS` 反查、不逐條手寫：手寫的話，下一個人新增一道限速卻忘了掛，
   //    不會有任何考題紅。這一題與 `test/server.test.js` 的 LOCAL 反向題共用同一張表——
   //    一張表同時守住「HOSTED 要擋」與「LOCAL 不可以擋」兩個方向。
   const { RATE_LIMITS } = await import('../server.js');
@@ -378,12 +378,16 @@ test('登入限速掛在 JSON parser **之前**：畸形 JSON 與超大 body 一
 // 而**沒有任何考題會紅**——因為所有考題都是從 `RATE_LIMITS` 反查的，漏列的當然查不到。
 // 「從清單反查」只證得了「表上的每一道都掛上了」，證不了「該上表的都上了」。
 //
-// 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝我們會去打誰）跟它對帳。
-// 這一題守的不是某個 bug，是**「有人新增未登記的對外模組／能力卻忘了限速」這個動作**。
+// 所以要有第二張表（`OUTBOUND_ENDPOINTS`＝**需要限速的業務外連**去打的是誰）跟它對帳。
+// 這一題守的不是某個 bug，是**「新增了 `OUTBOUND_ENDPOINTS` 路徑卻忘了讓 `RATE_LIMITS` 涵蓋它」
+// 這個動作**（射程見下方標「誠實劃界（射程）」那段）。
 // ⚠️ 誠實劃界（r7）：已登記模組（ALLOWED）**改打新主機本題不偵測**——主機級對帳（每模組
 // 主機清單×URL 掃描雙向對帳）＝另案（William 2026-08-01 裁決另開 PR）。
+// ⚠️ 誠實劃界（射程）：本題**只比對兩張表**。它證得了「表上每條路徑在 `RATE_LIMITS` 找得到
+// 前綴涵蓋」；**證不了**「限速中介層真的掛上去了」（那是本檔 HTTP 行為題的事），
+// 也證不了「該上表的都上了」——沒登記的路徑本題根本看不見。
 
-test('對帳：每一條會對外連線的端點都被某道限速涵蓋（新增未登記的對外能力卻忘了限速就會在這裡紅）', async () => {
+test('對帳：`OUTBOUND_ENDPOINTS` 上的每一條路徑，都在 `RATE_LIMITS` 找得到前綴涵蓋', async () => {
   const { RATE_LIMITS, OUTBOUND_ENDPOINTS } = await import('../server.js');
   assert.ok(OUTBOUND_ENDPOINTS.length >= 6, '對外端點清單看起來被刪過');
 
@@ -671,7 +675,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.deepEqual(roleProblems, [], `端點主↔端點表對帳失敗：\n  ${roleProblems.join('\n  ')}`);
   // ②d 路由錨定（r14）：兩張登記表互相一致不夠——要錨到真實 route。規則：**具外連能力的
   //   路由檔**（自身 import 閉包碰得到 ALLOWED 模組）的每條路徑，必須「登記 OUTBOUND_ENDPOINTS」
-  //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不是對外入口；未來改成會觸發外連就要搬進 OE）」。
+  //   或「在 ROUTE_EXEMPT 明示豁免（＝宣告此路徑不觸發**需要限速的業務上游**；口徑與既有裁決
+  //   見 ROUTE_EXEMPT 內的註解；未來改成會觸發業務上游就要搬進 OE）」。
   //   新增 route 忘了登記＝紅（r14 的 /api/r14-known-host 繞法從此必死）。
   // r14→r19 統一路由參數解析器：動詞集合＝Node 官方 http.METHODS（小寫）＋all/use/route
   //   （機械完備，trace/search 等不再靠手列）；點後允許空白（r19 繞法）。第一參數規則：
@@ -812,7 +817,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   assert.ok(HASH_RE.test("import '#r18-client';"), '#alias side-effect 探針（r18 繞法）');
   assert.deepEqual(routeProblems, [],
     `具外連能力的路由檔出現「未登記也未豁免」的路徑：\n  ${routeProblems.join('\n  ')}\n` +
-    '會觸發外連＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why。');
+    '會觸發**業務上游**＝登記 OUTBOUND_ENDPOINTS＋確認限速；不會＝加 ROUTE_EXEMPT 附 why（口徑見該表註解）。');
   // 解析器探針（r16 繞法全數入陣）
   assert.deepEqual(parseRouteArgs("r.get('/api/a', h); r.all('/api/b', h); r.head('/api/c', h);").statics, ['/api/a', '/api/b', '/api/c'], '動詞覆蓋');
   assert.equal(parseRouteArgs('r.get("/api/x" + sfx, h);').dynamics.length, 1, '串接式必須歸動態（r16 繞法）');
