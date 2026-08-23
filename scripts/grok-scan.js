@@ -89,7 +89,7 @@ async function killGroupAndWait(pgid) {
 export async function runScan(args, deps = {}) {
   const repo = deps.repo ?? REPO;
   const grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
-  const realGrokBin = realpathSync(join(grokInstall, 'bin', 'grok'));   // 沙箱外跑 --version 用**真**執行檔（Grok 碰不到它）
+  const realGrokBin = realpathSync(join(grokInstall, 'bin', 'grok'));   // 只拿來 cp 進盒子；**不在沙箱外執行它**（hash 盒內副本、--version 在沙箱內跑）
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
   const resultsRoot = deps.resultsRoot ?? join(homedir(), '.grok-scan-results');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');

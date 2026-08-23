@@ -21,7 +21,8 @@
 ;; 第 N+1 次在沙箱外執行。r2 改唯讀＋clone 整棵進盒子：歷史 sessions 仍可讀（Grok 從執行檔路徑就找得回根目錄），
 ;; 而 clone 把 auth.json（與若有的 mcp_credentials.json）整包複製進 /private/tmp、掃完沒清。
 ;; r3：真 ~/.grok 不進沙箱；盒內家只複製**白名單四個檔**（bin/grok、config.toml、auth.json、agent_id）＋空 sessions/；
-;; 登入狀態放沙箱專用的 0700 目錄（~/.grok-sandbox-auth，只含 auth.json，每掃同步回去）；
+;; 登入狀態放沙箱專用的 0700 目錄（~/.grok-sandbox-auth，只含 auth.json；掃描前由父程序 refresh——**沒有掃後同步**，
+;; 盒內 auth 的 key 是假的、轉送器在沙箱外換真的）；
 ;; 盒子在所有出口清掉、只留去機密的結果包（launch.json＋sessions）。
 ;;
 ;; ## 誠實劃界
