@@ -182,6 +182,22 @@ export async function runCanary(box) {
     mustFail('讀真 ~/.grok（不在沙箱裡）', ['/bin/ls', join(home, '.grok')]);
     mustFail('讀真 ~/.grok 的執行檔', ['/bin/cat', join(home, '.grok', 'bin', 'grok')]);
     mustFail('寫真 ~/.grok', ['/bin/sh', '-c', `echo x > "${uniq(join(home, '.grok'), 'w')}"`]);
+    // r4 #6：brew 裝的、非 node 依賴的工具在盒內必須**執行不了**——process-exec 是獨立權限，deny file-read 擋不住
+    // （r4 實測 gh 讀不到卻跑得起來）。exec 被沙箱拒時 sandbox-exec 退 71＋stderr「execvp() … Operation not permitted」；
+    // 71 在 isBlocked 裡不算擋住（那是「沙箱套不上」的碼），所以這隻自己判：71＋那句 stderr＝擋住。
+    {
+      const gh = existsSync('/opt/homebrew/bin/gh') ? realpathSync('/opt/homebrew/bin/gh') : null;
+      if (gh) {
+        const ctl = spawnSync(gh, ['--version'], { encoding: 'utf8', timeout: 10_000 });
+        if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 brew 裝的非依賴工具（gh 在沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
+        else {
+          const r = runInSandbox(box, [gh, '--version']);
+          const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !(r.stdout || '').includes('gh version');
+          lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 brew 裝的非依賴工具（gh；process-exec 限路徑）`);
+          if (!blocked) dead++;
+        }
+      } else lines.push('（略）執行 brew 裝的非依賴工具——這台沒裝 gh，沒探針可用');
+    }
     // 網路：只准轉送器那一個 port。r3 #2：要**真的起一個 listener**，先證明沙箱外連得上、再證明盒內 EPERM——
     // 沒有 listener 時沙箱外也是 ECONNREFUSED，金絲雀必然假綠（Codex r3 實測 reportedBlocked:true）。
     {
