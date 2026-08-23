@@ -36,8 +36,10 @@ test('normalizeMaskShape｜X／x／圓點／全形星／× → 同數量的半�
   assert.equal(normalizeMaskShape('12345678901234'), '12345678901234', '★沒遮就不動');
   assert.equal(normalizeMaskShape('900-100****3301'), '900-100****3301', '分隔符原樣（比對那邊會剝）');
   assert.equal(normalizeMaskShape('**********8791'), '**********8791');
-  // MASK_CHARS 的每一個字元都真的會被改寫（兩個正則與常數同一組字元）
-  for (const ch of MASK_CHARS) assert.equal(normalizeMaskShape(`123${ch}${ch}456`), '123**456', `★遮罩字元 ${JSON.stringify(ch)}`);
+  // 核准的遮罩字元清單**固定寫在考題裡**（不從正式常數導出——常數與正則一起漏掉某字元時，導出的迴圈會一起少測；r4#4）
+  const APPROVED_MASK_CHARS = ['*', 'x', 'X', '•', '●', '·', '○', '◯', '×'];
+  assert.deepEqual([...MASK_CHARS].sort(), [...APPROVED_MASK_CHARS].sort(), '★正式常數要與核准清單完全一致');
+  for (const ch of APPROVED_MASK_CHARS) assert.equal(normalizeMaskShape(`123${ch}${ch}456`), '123**456', `★遮罩字元 ${JSON.stringify(ch)}`);
   assert.equal(normalizeMaskShape('*12345678903301'), '*12345678903301', '單一星號原樣（放寬前就收的形）');
 });
 
@@ -47,7 +49,7 @@ test('normalizeMaskShape｜含其他字母的字串一個字不動（X 分不出
   assert.equal(normalizeMaskShape('IBAN GB29NWBKXXXX1234'), 'IBAN GB29NWBKXXXX1234');
   assert.equal(normalizeMaskShape('123X456'), '123X456', '★單一個 X 可能是帳號本文／檢查碼＝不當遮罩（r2#5）');
   assert.equal(accountSuffixAny(normalizeMaskShape('123X456')), '', '★取不出末碼＝拒收');
-  assert.equal(normalizeMaskShape('123XX456'), '123**456', '連續兩個以上才是遮罩');
+  assert.equal(normalizeMaskShape('123XX456'), '123**456', '連續兩個以上才是遮罩（已知取捨：帳號本文真的連續兩個 X 會被誤當遮罩——支援 X 遮罩就分不出，契約記載）');
 });
 
 test('normalizeMaskShape｜全形數字折成半形（同一個數字的另一種印法，不算改寫）', () => {
@@ -236,7 +238,7 @@ test('★疑似重複的前綴否決認得完整號：兩個不同完整號（�
   for (const t of wide.transactions) t.summary = `${t.summary}(16碼)`;
   const pv3 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(wide), aiExtract: fakeExtract });
   assert.equal(pv3.transactions.counts.similar, 0);
-  // 一遮一全：前綴／末碼／寬度任一對不上＝不是疑似重複（疑似重複預設跳過＝寬一分就是真交易少匯一筆，r2#4：與餘額身分那把同樣嚴）
+  // 一遮一全：可見頭尾任一對不上、或完整號沒比頭尾更長（沒藏到任何一碼）＝不是疑似重複；頭尾都對上＝疑似重複（與餘額身分那把同一把尺、不驗「藏幾碼＝幾顆星」）
   for (const [masked, why, want] of [
     ['900300****3301', '前綴不同（庫裡是 900100 與 900200 兩顆）', 0],
     ['900100****2301', '末碼不同', 0],
@@ -379,4 +381,72 @@ test('★幣別退路也走裁決器：兩顆同號登記戶（JPY／TWD）分�
   assert.equal(previewBankTxForDb(db, /** @type {any} */ (parsed)).rows[0].foreign, false);
   db.accounts[0].currency = 'JPY';   // 唯一命中且是外幣＝外幣
   assert.equal(previewBankTxForDb(db, /** @type {any} */ (parsed)).rows[0].foreign, true);
+});
+
+test('★五碼以上的純末碼祖父鍵（bank|12345|…）仍要被疑似重複認得（r4#2：寬版別名不可把祖父鍵截成四碼）；完整號列也照樣認得', async () => {
+  await seedDb();
+  const db0 = await getDb();
+  db0.transactions = [
+    { id: 'old1', ledger: 'cashflow', source: 'bank', date: '2026-06-01', type: 'income', category: '其他收入', subcategory: '', amount: 1000, account: '舊戶', note: '舊版摘要', bankRef: 'bank|12345|2026-06-01|in|1000|1000|舊版摘要|' },
+  ];
+  await saveDb(db0);
+  // 台新（bank| 祖父格式）、帳單印五碼末碼
+  const a = { ...answer('900100****12345'), bank: '台新' };
+  a.transactions = [{ acctMasked: '900100****12345', date: '2026-06-01', direction: 'in', amount: 1000, balance: 1000, summary: '新版摘要', note: '' }];
+  a.accounts[0].balance = 1000;
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(a), aiExtract: fakeExtract });
+  assert.equal(pv.transactions.counts.duplicate, 0, '摘要不同＝去重鍵不同');
+  assert.equal(pv.transactions.counts.similar, 1, `★祖父鍵 12345 解讀成末碼＝提醒（實得 ${JSON.stringify(pv.transactions.counts)}）`);
+  const r = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(a), aiExtract: fakeExtract, skipSimilar: true });
+  assert.equal(/** @type {any} */ (r).transactions.similarSkipped, 1, '★預設跳過＝不多算現金流');
+});
+
+test('★金融卡計畫的「帳戶那邊早就帶分類記過」擋門也認得兩種解讀：完整號列與五碼祖父鍵列都算（r4#2）', async () => {
+  const MASKED = '**********8791';
+  const parsed = {
+    bank: '台新', referenceDate: '2026-01-31',
+    accounts: [{ suffix: '8791', masked: MASKED, balance: 9695, currency: 'TWD', label: '簽帳金融卡', note: '', kind: 'demand', period: '', suffixOnly: true, balanceFromDetail: true }],
+    accountCurrency: { [MASKED]: 'TWD' },
+    transactions: [{ acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9695, note: '合成商店Ａ' }],
+    cardRows: [{ postDate: '2026-01-28', date: '2026-01-27', amount: 305, fee: 0, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' }],
+  };
+  for (const [ref, why] of [
+    ['bank|90010011228791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '完整號列＝末四碼解讀'],
+    ['bank|18791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '五碼純數字段兩種解讀都收：當完整號讀＝末四碼 8791 對上（寧可少記一筆卡片明細、看得見）'],
+    ['bank|2791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', '四碼祖父鍵 2791 ≠ 8791＝不算'],
+  ]) {
+    await seedDb();
+    const db0 = await getDb();
+    db0.transactions = [{ id: 'x', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '餐飲', subcategory: '', amount: 305, account: 'A', note: '合成商店Ａ', bankRef: ref, bankSummary: '刷卡消費', bankNote: '合成商店Ａ', dir: 'out' }];
+    await saveDb(db0);
+    const r = await previewBankStatement('QUJD', '', async () => /** @type {any} */ (parsed));
+    const want = why.includes('不算') ? 0 : 1;
+    assert.equal(r.cardLedger.notRecorded.cashflowCategorized, want, `★${why}（實得 ${JSON.stringify(r.cardLedger.notRecorded)}）`);
+  }
+  // 五碼祖父鍵且末碼真的是帳單的五碼末碼（****18791）：兩種解讀都收＝擋得住
+  const parsed5 = { ...parsed, accounts: [{ ...parsed.accounts[0], suffix: '18791', masked: '*********18791' }], accountCurrency: { '*********18791': 'TWD' },
+    transactions: [{ ...parsed.transactions[0], acctSuffix: '18791', acctMasked: '*********18791' }] };
+  await seedDb();
+  const db1 = await getDb();
+  db1.transactions = [{ id: 'x', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '餐飲', subcategory: '', amount: 305, account: 'A', note: '合成商店Ａ', bankRef: 'bank|18791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ', dir: 'out' }];
+  await saveDb(db1);
+  const r5 = await previewBankStatement('QUJD', '', async () => /** @type {any} */ (parsed5));
+  assert.equal(r5.cardLedger.notRecorded.cashflowCategorized, 1, `★五碼祖父鍵對五碼末碼＝擋得住（實得 ${JSON.stringify(r5.cardLedger.notRecorded)}）`);
+});
+
+test('★一遮一全至少要藏一碼（r4#1）：900100****3301 對 10 碼的 9001003301＝不是同一顆（餘額不蓋、不掛名、不當疑似重複）', async () => {
+  const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
+  const db = { accounts: [{ id: 'a', name: '遮罩戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('9001003301'))).rows[0].action, 'create', '★零藏碼＝不是');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('90010013301'))).rows[0].action, 'update', '藏一碼＝是');
+  await seedDb();
+  const m = answer('900100****3301');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const ten = answer('9001003301');
+  for (const t of ten.transactions) t.summary = `${t.summary}(10碼)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(ten), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 0, '★零藏碼＝不是疑似重複（預設跳過會吃掉真交易）');
+  assert.equal(pv2.rows[0].action, 'create', '★餘額那邊也判成另一顆（autoName 與第一顆同名是既有的命名取捨，不在本支）');
 });
