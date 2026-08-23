@@ -210,7 +210,8 @@ test('預覽窗那一句：講到記到哪張卡、幾筆、重複幾筆、以�
   assert.equal(bankCardLedgerNote({ cards: [], count: 0, duplicate: 0 }), '');
   assert.equal(bankCardLedgerNote(null), '');
   const s = bankCardLedgerNote({ cards: [{ name: '台新簽帳金融卡 8808', exists: false }], count: 17, duplicate: 2 });
-  for (const must of ['刷卡消費明細', '17 筆', '台新簽帳金融卡 8808', '會新建這張卡', '2 筆之前記過', '不再分類', '不會算兩次']) assert.ok(s.includes(must), `★缺「${must}」：${s}`);
+  for (const must of ['刷卡消費明細', '17 筆', '台新簽帳金融卡 8808', '會新建這張卡', '2 筆之前記過', '不分類', '只算卡片那一份']) assert.ok(s.includes(must), `★缺「${must}」：${s}`);
+  assert.ok(!s.includes('不會算兩次'), '★不寫無條件保證（事後手動補分類、刪卡重匯都會讓它變假——只說這幾筆怎麼算）');
   assert.ok(!bankCardLedgerNote({ cards: [{ name: 'X', exists: true }], count: 3, duplicate: 0 }).includes('新建'), '卡已存在＝不說新建');
   assert.ok(bankCardLedgerNote({ cards: [{ name: 'X', exists: true }], count: 3, duplicate: 3 }).includes('全部都記過了'), '全重複＝要說這次不會再記');
   // 不記的三種原因各自講得出來；A 區讀不出來＝講原因
@@ -266,10 +267,11 @@ test('★綜合對帳單先匯（刷卡列帶分類）、金融卡帳單後匯�
   assert.equal(consumption(await getDb()), before, '★消費視角不翻倍');
 });
 
-test('★「帳戶那邊早就帶分類記過」只認同末碼＋刷卡摘要：別的帳戶、或不是刷卡的列（同日同額）都不擋', async () => {
+test('★「帳戶那邊早就帶分類記過」只認同機構同末碼＋刷卡摘要：別的帳戶、別家銀行、不是刷卡的列（同日同額）都不擋', async () => {
   for (const [label, row] of /** @type {[string, any][]} */ ([
     ['別的帳戶同日同額', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, dir: 'out', type: 'expense', category: '生活', account: '別戶', bankRef: 'bank|900100****1234|2026-01-28|out|305||刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ' }],
     ['同帳戶同日同額但不是刷卡', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, dir: 'out', type: 'expense', category: '生活', account: '台新 8791', bankRef: 'bank|900200****8791|2026-01-28|out|305||CD轉出|', bankSummary: 'CD轉出', bankNote: '' }],
+    ['別家銀行同末碼同日同額的刷卡', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, dir: 'out', type: 'expense', category: '生活', account: '玉山 8791', bankRef: 'bank2|玉山商業銀行|700100****8791|2026-01-28|out|305||刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ' }],
   ])) {
     await resetDb();
     const db0 = await getDb(); db0.transactions = [row]; await saveDb(db0);
@@ -277,6 +279,94 @@ test('★「帳戶那邊早就帶分類記過」只認同末碼＋刷卡摘要�
     assert.equal(r.cardLedger.notRecorded.cashflowCategorized, 0, `★${label}：不擋`);
     assert.equal(r.cardLedger.count, 2, `★${label}：兩筆照記`);
   }
+});
+
+test('★「帳戶那邊早就帶分類記過」要認得舊資料：沒有 dir 欄（方向從 bankRef 還原）、最舊的純末碼鍵、沒有原文欄（反解）都擋', async () => {
+  for (const [label, row] of /** @type {[string, any][]} */ ([
+    ['舊列沒有 dir', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, type: 'expense', category: '生活', account: '台新 8791', bankRef: 'bank|900200****8791|2026-01-28|out|305||刷卡消費|合成商店Ａ' }],
+    ['最舊的純末碼鍵', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, type: 'expense', category: '生活', account: '台新 8791', bankRef: 'bank|8791|2026-01-28|out|305||刷卡消費|合成商店Ａ' }],
+    ['AI 抄成台新銀行的 bank2 鍵', { id: 'o', source: 'bank', date: '2026-01-28', amount: 305, dir: 'out', type: 'expense', category: '生活', account: '台新 8791', bankRef: 'bank2|台新銀行|900200****8791|2026-01-28|out|305||刷卡消費|合成商店Ａ' }],
+  ])) {
+    await resetDb();
+    const db0 = await getDb(); db0.transactions = [row]; await saveDb(db0);
+    const r = await previewBankStatement('QUJD', '', async () => debitParsed());
+    assert.equal(r.cardLedger.notRecorded.cashflowCategorized, 1, `★${label}：那一筆要擋`);
+    assert.equal(r.cardLedger.count, 1, `★${label}：另一筆照記`);
+    const a = await applyBankStatement('QUJD', '', async () => debitParsed(), { skipSimilar: true });
+    assert.equal(a.cardLedger.imported, 1);
+    assert.equal(consumption(await getDb()), 305 + 1234, `★${label}：消費不翻倍`);
+  }
+});
+
+test('★同日同額多筆、兩區筆數不等：整群不搬，而且預覽＝套用（A 區 1 筆、D 區 2 筆：卡片記 0、D 兩列都照舊分類）', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => {
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9695, note: '合成商店Ａ' },
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9390, note: '合成商店Ａ' },
+    ];
+    f.accounts[0].balance = 9390;
+    f.cardRows = [f.cardRows[0]];
+  });
+  const r = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r.cardLedger.count, 0, '★預覽：整群不搬');
+  assert.ok(r.transactions.rows.every((x) => x.category), '★D 兩列都照舊分類');
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.cardLedger.imported, 0, '★套用＝預覽');
+  const db = await getDb();
+  assert.equal(consumption(db), 610, '兩筆刷卡各算一次（走帳戶那邊的分類）');
+  assert.ok((db.transactions || []).filter((/** @type {any} */ t) => t.source === 'bank').every((/** @type {any} */ t) => t.category));
+});
+
+test('退款跨版面的口徑（釘現況）：綜合對帳單先匯→退貨列是收入、不抵消費（main 既有口徑）；金融卡先匯→卡片帳本配對退款、消費歸零', async () => {
+  const buyRefundDebit = () => debitParsed((f) => {
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9695, note: '合成商店Ａ' },
+      { acctSuffix: '8791', acctMasked: MASKED, date: '2026-01-30', summary: '刷卡退貨', direction: 'in', amount: 305, balance: 10000, note: '合成商店Ａ' },
+    ];
+    f.accounts[0].balance = 10000;
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 305, fee: 0, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-30', date: '2026-01-29', amount: -305, fee: 0, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+    ];
+  });
+  const buyRefundCombined = () => ({ ...combinedParsed(), transactions: [
+    { acctSuffix: '8791', acctMasked: '900200****8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 305, balance: 9695, note: '合成商店Ａ' },
+    { acctSuffix: '8791', acctMasked: '900200****8791', date: '2026-01-30', summary: '刷卡退貨', direction: 'in', amount: 305, balance: 10000, note: '合成商店Ａ' },
+  ], accounts: [{ suffix: '8791', masked: '900200****8791', balance: 10000, currency: 'TWD', label: '活儲', note: '', kind: 'demand', period: '' }] });
+  // 綜合先：刷卡消費帶分類（305）、刷卡退貨是收入——消費 305（與 main 相同）；金融卡後匯＝A 區兩筆都被擋、不變
+  await resetDb();
+  await applyBankStatement('QUJD', '', async () => buyRefundCombined());
+  assert.equal(consumption(await getDb()), 305, 'main 既有口徑：銀行側退貨列是收入，不抵消費');
+  await applyBankStatement('QUJD', '', async () => buyRefundDebit(), { skipSimilar: true });
+  assert.equal(consumption(await getDb()), 305, '★金融卡後匯：A 區兩筆都被「帳戶那邊已帶分類」擋掉＝不動（不會變 610、也不會偷偷變 0）');
+  // 金融卡先：卡片帳本一買一退配對＝消費 0；綜合後匯（勾跳過）＝不動
+  await resetDb();
+  await applyBankStatement('QUJD', '', async () => buyRefundDebit());
+  assert.equal(consumption(await getDb()), 0, '卡片帳本的退款配對抵掉消費');
+  await applyBankStatement('QUJD', '', async () => buyRefundCombined(), { skipSimilar: true });
+  assert.equal(consumption(await getDb()), 0, '★綜合後匯（勾跳過）：不動');
+});
+
+test('★批次生命週期跟著那份銀行帳單：卡片帳本那幾筆不列在信用卡匯入紀錄、不准改卡／單獨刪；從銀行匯入紀錄刪那份帳單時一起拿掉', async () => {
+  const { listBatches, reassignBatch, deleteBatch } = await import('../lib/services/statement-import.js');
+  const { listBankBatches, deleteBankBatch } = await import('../lib/services/bank-import.js');
+  await resetDb();
+  const db0 = await getDb(); db0.cards = [{ id: 'cc', name: '某信用卡', type: 'credit' }]; await saveDb(db0);
+  await applyBankStatement('QUJD', '', async () => debitParsed());
+  const db = await getDb();
+  const cardTx = (db.transactions || []).filter((/** @type {any} */ t) => t.ledger === 'card');
+  const bankBatch = (db.transactions || []).find((/** @type {any} */ t) => t.source === 'bank').importBatch;
+  assert.ok(cardTx.every((/** @type {any} */ t) => t.bankBatch === bankBatch), '★卡片帳本列蓋上那份銀行帳單的批次代號');
+  assert.equal((await listBatches()).length, 0, '★信用卡匯入紀錄不列它');
+  const bb = (await listBankBatches()).find((/** @type {any} */ b) => b.batchId === bankBatch);
+  assert.equal(bb.cardCount, 2, '銀行匯入紀錄知道這份帳單連帶記了 2 筆卡片消費');
+  const cardBatch = cardTx[0].importBatch;
+  await assert.rejects(reassignBatch(cardBatch, 'cc'), (/** @type {any} */ e) => e.status === 400 && /銀行帳單綁在一起/.test(e.message), '★不准改卡（改了 stmtRef 換卡片 id＝重匯時再記一次）');
+  await assert.rejects(deleteBatch(cardBatch), (/** @type {any} */ e) => e.status === 400, '★不准單獨刪（D 區那幾列已留空＝消費少算）');
+  const r = await deleteBankBatch(bankBatch);
+  assert.equal(r.removed, 3 + 2, '★刪那份銀行帳單＝現金流 3 筆＋卡片帳本 2 筆一起拿掉');
+  assert.equal((await getDb()).transactions.length, 0);
 });
 
 test('★金融卡帳單先匯、綜合對帳單後匯（勾跳過疑似重複）：消費只算卡片那一份', async () => {

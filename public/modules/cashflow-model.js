@@ -93,7 +93,7 @@ export function bankCardLedgerNote(cl) {
     + `${dup ? `（其中 ${dup} 筆之前記過、這次不重複）` : ''}`
     + `${fresh ? '' : '——全部都記過了，這次不會再記'}`
     + `${skipped.length ? `；另有 ${skipped.join('；')}` : ''}`
-    + '。記到卡片的那幾筆，帳戶那邊對應的刷卡扣款只記錢的流向、不再分類——消費分析只算卡片那一份，錢不會算兩次。';
+    + '。記到卡片的那幾筆，帳戶那邊對應的刷卡扣款只記錢的流向、不分類——所以消費分析裡這幾筆只算卡片那一份。';
 }
 
 /** 套用完成那句的「刷卡消費明細」段落（同 bankApplyDoneText 的口吻）。 @param {{cards?:{name:string, created:boolean, imported:number, skipped:number}[], imported?:number, skipped?:number, notRecorded?:{unmatched?:number, unreadable?:number, cashflowCategorized?:number}}|null|undefined} cl */
