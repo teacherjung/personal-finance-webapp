@@ -52,8 +52,7 @@ const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
  *（已記錄邊界：已登記模組改打新主機＝主機級對帳另案；蓄意混淆＝code review 職責）。
  *
  * ⚠️ 新增**業務型**對外連線時：①在這裡登記 ②確認 `RATE_LIMITS` 涵蓋得到（前綴比對也算）。
- *    基礎設施型的外連（`authGate` 每個受保護請求都打的 Supabase 驗簽、`me`／`logout` 的輕量
- *    session 操作）**刻意不在這張表上**——判準與既有裁決見上方劃界與 `ROUTE_EXEMPT` 的口徑註解。
+ *    基礎設施型的外連照上方劃界與 `ROUTE_EXEMPT` 的口徑處理，這裡不另列項目。
  */
 export const OUTBOUND_ENDPOINTS = [
   { host: 'ndcdyn.interactivebrokers.com', why: 'IBKR Flex Web Service（拉整份報表）', paths: ['/api/ib/sync'] },
