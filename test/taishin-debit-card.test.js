@@ -208,6 +208,14 @@ test('★parseTaishinDebit 的輸出帶 cardRows（A 區讀出的筆）：這是
   const r = parseTaishinDebit(lines);
   assert.equal(r.transactions.length, 1);
   assert.deepEqual(r.cardRows.map((c) => [c.date, c.desc, c.amount, c.lastFour]), [['2026-01-27', '甲店', 305, '8808']], '★A 區的筆要一起交出去');
+  assert.equal(r.cardRowsError, '');
+  // ★A 區某列抄不對：不擋 D 區（帳戶明細本來就匯得進去），原因帶在 cardRowsError
+  const bad = [...lines];
+  bad.splice(bad.indexOf(lines[4]) + 1, 0, L(200, [[126, '2026/01/20 2026/01/19', 77], [423, '0', 4], [457, 'N/A', 12]]));
+  const r2 = parseTaishinDebit(bad);
+  assert.equal(r2.transactions.length, 1, '★D 區照常');
+  assert.deepEqual(r2.cardRows, [], 'A 區整區不交（抄不對就說、不交半份）');
+  assert.match(r2.cardRowsError, /台幣金額/);
 });
 
 // ---------- 對到 D 區 ----------

@@ -71,26 +71,39 @@ export function bankApplyLabel(balancesSkipped, noAccounts) {
  * @param {{updated:number, created:number, skipped?:number, unsupported?:number, balancesSkipped?:boolean, noAccounts?:boolean, matured?:number}} bal
  * @param {{imported:number, skipped?:number, similarSkipped?:number, foreign?:number}} tx
  * @param {{saved?:boolean, rebirth?:boolean, reason?:string}} [recipe] */
-/** 簽帳金融卡明細（Stage 5b）：預覽窗的一句白話——這份帳單的「刷卡消費明細」會記到哪張卡、幾筆、
- * 為什麼錢不會算兩次。沒有 A 區（綜合對帳單）＝空字串、不畫。 @param {{cards?:{name:string, exists:boolean}[], count?:number, duplicate?:number}|null|undefined} cl */
+/** 簽帳金融卡明細（Stage 5b）：預覽窗的一句白話——這份帳單的「刷卡消費明細」會記到哪張卡、幾筆、哪些不記、
+ * 為什麼錢不會算兩次。沒有 A 區（綜合對帳單）＝空字串、不畫；A 區讀不出來＝講原因、講「只記了帳戶明細」。
+ * @param {{cards?:{name:string, exists:boolean}[], count?:number, duplicate?:number, notRecorded?:{unmatched?:number, unreadable?:number, cashflowCategorized?:number}, error?:string}|null|undefined} cl */
 export function bankCardLedgerNote(cl) {
+  if (cl?.error) return `這份帳單的「刷卡消費明細」這次讀不出來（${cl.error}），所以只記了帳戶明細——刷卡扣款照常分類。`;
   const cards = Array.isArray(cl?.cards) ? cl.cards : [];
   const count = Number(cl?.count) || 0;
-  if (!cards.length || !count) return '';
+  const nr = cl?.notRecorded || {};
+  const skipped = [];
+  if (Number(nr.cashflowCategorized) > 0) skipped.push(`${nr.cashflowCategorized} 筆帳戶那邊之前已經記過、帶著分類（例如匯過同期的綜合對帳單），這次不記到卡片`);
+  if (Number(nr.unmatched) > 0) skipped.push(`${nr.unmatched} 筆對不上帳戶明細裡的刷卡扣款，這次不記到卡片`);
+  if (Number(nr.unreadable) > 0) skipped.push(`${nr.unreadable} 筆店名或金額沒讀完整，這次不記到卡片`);
+  if (!cards.length || !count) {
+    return skipped.length ? `這份帳單的「刷卡消費明細」這次沒有記到卡片：${skipped.join('；')}。帳戶那邊的刷卡扣款照常分類。` : '';
+  }
   const dup = Number(cl?.duplicate) || 0;
   const names = cards.map((c) => `「${c.name}」${c.exists ? '' : '（會新建這張卡）'}`).join('、');
   const fresh = count - dup;
   return `另外，這份帳單的「刷卡消費明細」${count} 筆會記到卡片 ${names} 的消費帳本`
     + `${dup ? `（其中 ${dup} 筆之前記過、這次不重複）` : ''}`
     + `${fresh ? '' : '——全部都記過了，這次不會再記'}`
-    + '。上面帳戶那邊的刷卡扣款只記錢的流向、不再分類，消費分析只算卡片那一份，錢不會算兩次。';
+    + `${skipped.length ? `；另有 ${skipped.join('；')}` : ''}`
+    + '。記到卡片的那幾筆，帳戶那邊對應的刷卡扣款只記錢的流向、不再分類——消費分析只算卡片那一份，錢不會算兩次。';
 }
 
-/** 套用完成那句的「刷卡消費明細」段落（同 bankApplyDoneText 的口吻）。 @param {{cards?:{name:string, created:boolean, imported:number, skipped:number}[], imported?:number, skipped?:number}|null|undefined} cl */
+/** 套用完成那句的「刷卡消費明細」段落（同 bankApplyDoneText 的口吻）。 @param {{cards?:{name:string, created:boolean, imported:number, skipped:number}[], imported?:number, skipped?:number, notRecorded?:{unmatched?:number, unreadable?:number, cashflowCategorized?:number}}|null|undefined} cl */
 export function bankCardLedgerDoneText(cl) {
   const cards = Array.isArray(cl?.cards) ? cl.cards : [];
-  if (!cards.length) return '';
+  const nr = cl?.notRecorded || {};
+  const notRecorded = (Number(nr.cashflowCategorized) || 0) + (Number(nr.unmatched) || 0) + (Number(nr.unreadable) || 0);
+  if (!cards.length && !notRecorded) return '';
   const parts = cards.map((c) => `「${c.name}」${c.created ? '（新建）' : ''} ${c.imported} 筆${c.skipped ? `、略過重複 ${c.skipped}` : ''}`);
+  if (notRecorded) parts.push(`${notRecorded} 筆沒記到卡片（預覽窗有說明）`);
   return `；刷卡消費明細：${parts.join('；')}`;
 }
 
