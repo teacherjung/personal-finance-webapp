@@ -42,13 +42,15 @@ const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
  * 而 `/api/cape`、`/api/realyield`、`/api/insights` 三條同樣對外，**一條都不在表上**。
  * 實測後果：模擬上游失敗後連打 65 次 `/api/cape`，65 次全部真的出去、0 個 429。
  *
- * 病根不是「漏了三條」，是**沒有人負責維護「哪些端點會對外」這件事**——
+ * 病根不是「漏了三條」，是**沒有人負責維護「哪些端點會對外、而且需要限速」這件事**——
  * 註解不是清單，考題也只能從 `RATE_LIMITS` 反查（漏列的當然查不到）。
  * 所以改成：這張表列出**上游主機 → 端點**，考題拿它跟 `RATE_LIMITS` 對帳，
  * **少限一條就紅**。新增未登記的對外能力由 test/hosted-auth.test.js 的雙軌絆索攔
  *（已記錄邊界：已登記模組改打新主機＝主機級對帳另案；蓄意混淆＝code review 職責）。
  *
- * ⚠️ 新增對外連線時：①在這裡登記 ②確認 `RATE_LIMITS` 涵蓋得到（前綴比對也算）。
+ * ⚠️ 新增**業務型**對外連線時：①在這裡登記 ②確認 `RATE_LIMITS` 涵蓋得到（前綴比對也算）。
+ *    基礎設施型的外連（`authGate` 每個受保護請求都打的 Supabase 驗簽、`me`／`logout` 的輕量
+ *    session 操作）**刻意不在這張表上**——判準與既有裁決見上方劃界與 `ROUTE_EXEMPT` 的口徑註解。
  */
 export const OUTBOUND_ENDPOINTS = [
   { host: 'ndcdyn.interactivebrokers.com', why: 'IBKR Flex Web Service（拉整份報表）', paths: ['/api/ib/sync'] },
@@ -209,7 +211,7 @@ if (isHosted()) {
   // **哪幾道＝上面的 `RATE_LIMITS` 表**：道數與編號會隨表增減，這裡不重抄——重抄一份就會漂。
   // 幾個關於「為什麼要限」的重點：
   //   ・上傳解析類：解 PDF／XLSX／XML，全站最貴的 CPU 操作——**多人化才成立的攻擊面**
-  //      （以前只有你自己會反覆丟大檔，現在任何一位受邀使用者都可以）。
+  //      （HOSTED 是多使用者、共用同一個行程，任一位使用者反覆丟大檔就能把解析成本吃光）。
   //   ・**會對外連線**的那幾道：猛打它們等於拿我們的伺服器去打上游服務。是哪幾道＝對照上面的
   //      `OUTBOUND_ENDPOINTS`（⚠️ 那張表登記的是「要跟限速對帳的外連端點」，不是所有會外連的
   //      程式路徑——劃界見它的檔頭註解）。
