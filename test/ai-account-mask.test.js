@@ -72,7 +72,9 @@ test('x 緊鄰星號＝遮罩的一部分（x****3301 → *****3301，與 bankRe
   assert.equal(normalizeMaskShape('*1234'), '*1234', '單一個星號原樣');
 });
 
-test('accountSuffixAny｜有遮罩＝同 accountSuffix；沒遮罩的完整帳號＝末四碼；整串被遮或不是帳號長相＝空', () => {
+test('accountSuffixAny｜先剝分隔符再用窄版取遮罩末碼（123-****-456 窄版空、寬版 456）；沒遮罩的完整帳號＝末四碼；整串被遮或不是帳號長相＝空', () => {
+  assert.equal(accountSuffix('123-****-456'), '', '★窄版不剝分隔符（模板路線的帳號沒有這種形）');
+  assert.equal(accountSuffixAny('123-****-456'), '456', '★寬版先剝再取');
   assert.equal(accountSuffixAny('900100****3301'), '3301');
   assert.equal(accountSuffixAny('900200****363'), '363', '三碼末碼照舊');
   assert.equal(accountSuffixAny('12345678901234'), '1234', '★沒遮＝末四碼');
