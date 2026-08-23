@@ -61,7 +61,7 @@ test('normalizeMaskShape｜全形數字折成半形（同一個數字的另一�
     assert.equal(normalizeMaskShape(raw), raw, `★不折：${raw}`);
     assert.equal(accountSuffixAny(normalizeMaskShape(raw)), '', `★拒收：${raw}`);
   }
-  assert.equal(normalizeMaskShape('⑨00100****3301'), '⑨00100****3301', '帶星號的：⑨ 留著當可見字面（對 900100… 的戶不會相交）');
+  assert.equal(normalizeMaskShape('⑨00100****3301'), '⑨00100****3301', '帶星號的：⑨ 不折（文法閘會整個拒收）');
 });
 
 test('x 緊鄰星號＝遮罩的一部分（x****3301 → *****3301，與 bankRefBase 的佔位同形＝都是「只比末碼」）；不緊鄰星號的單一個 x 是字面（r8#3）', () => {
@@ -335,9 +335,19 @@ test('★多顆候選＝停手（r3#1）：兩顆相容戶取第一顆、全星�
     assert.equal(rows.length, 3);
     for (const r of rows) assert.equal(r.account, '合成一銀 3301（活存）', `★交易掛帳單概要的 autoName、不掛既有戶（實得 ${r.account}）：${why}`);
   }
-  // 對照：只有一顆＝照常命中
-  const db1 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
-  assert.equal(previewBalancesForDb(db1, /** @type {any} */ (normalizeAiBank(answer('XXXXXXXXXX3301')))).rows[0].action, 'update');
+  // 對照：只有一顆＝登記完整號才命中；登記是另一個遮罩形＝有交集也只能停手（r9#1：存在可能相同≠證明相同）
+  const full1 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '90010011223301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(full1, /** @type {any} */ (normalizeAiBank(answer('XXXXXXXXXX3301')))).rows[0].action, 'update');
+  const mask1 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(mask1, /** @type {any} */ (normalizeAiBank(answer('XXXXXXXXXX3301')))).rows[0].action, 'ambiguous', '★登記遮罩形對全星號帳單＝停手');
+  const mask301 = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 100, balanceAsOf: '2026-05-31', accountNo: '9001****301', bank: '合成一銀' }], transactions: [], settings: {} };
+  const p3301 = normalizeAiBank(answer('****3301'));
+  assert.equal(previewBalancesForDb(mask301, /** @type {any} */ (p3301)).rows[0].action, 'ambiguous', '★r9#1 的反例：9001****301 對 ****3301 不可 update');
+  applyBalancesToDb(mask301, /** @type {any} */ (p3301));
+  assert.equal(mask301.accounts[0].balance, 100);
+  assert.equal(mask301.accounts.length, 1);
+  assert.equal(previewBankTxForDb(mask301, /** @type {any} */ (p3301)).rows[0].account, '合成一銀 3301（活存）', '★交易不掛 A 戶');
+  assert.equal(previewBalancesForDb(mask1, /** @type {any} */ (normalizeAiBank(answer('900100****3301')))).rows[0].action, 'update', '比對形全等＝命中');
 });
 
 test('★雙讀比對保留可見字母（r3#2）：AB****5678 對 CD****5678＝衝突，不可因剝掉字母而「一致」', async () => {
@@ -690,4 +700,38 @@ test('★台新沒遮的完整號寫成 bank2|台新|…（來源可判）：同
   await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv3.aiTicket, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
   const db3 = await getDb();
   assert.ok(db3.transactions.every((/** @type {any} */ t) => String(t.bankRef).startsWith('bank|900100****3301|')), '台新遮罩＝bank| 祖父格式不變');
+});
+
+
+test('★星號數不是資訊（r9#3）：900100*****3301 對登記 900100****3301＝全等命中；重匯同一份只改星號數＝疑似重複（預設跳過）', async () => {
+  const parsed = (/** @type {string} */ masked) => normalizeAiBank({ ...answer(masked), transactions: [] });
+  const db = { accounts: [{ id: 'a', name: 'A戶', type: 'cash', currency: 'TWD', balance: 10, balanceAsOf: '2026-05-31', accountNo: '900100****3301', bank: '合成一銀' }], transactions: [], settings: {} };
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900100*****3301'))).rows[0].action, 'update');
+  assert.equal(previewBalancesForDb(db, /** @type {any} */ (parsed('900100**3301'))).rows[0].action, 'update');
+  await seedDb();
+  const m = answer('900100****3301');
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(m), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const m5 = answer('900100*****3301');
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(m5), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.duplicate + pv2.transactions.counts.similar, 3, `★同一份帳單只改星號數＝重複或疑似重複（實得 ${JSON.stringify(pv2.transactions.counts)}）`);
+  const r = await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv2.aiTicket, aiEngineFactory: engineOf(m5), aiExtract: fakeExtract, skipSimilar: true });
+  assert.equal(/** @type {any} */ (r).transactions.imported, 0, '★不會算兩次');
+});
+
+test('★帳號文法整串驗（r9#2）：夾沒核准符號的 #900100****3301 三個欄位都拒收（不可只看星號後的數字）', () => {
+  for (const raw of ['#900100****3301', '900100****3301#', '⑨00100****3301', '900100****3301/1']) {
+    assert.equal(accountSuffixAny(normalizeMaskShape(raw)), '', `★取不出：${raw}`);
+    for (const breakIt of [
+      (/** @type {any} */ a) => { a.accountCurrencies[0].masked = raw; },
+      (/** @type {any} */ a) => { a.accounts[0].masked = raw; },
+      (/** @type {any} */ a) => { a.transactions[0].acctMasked = raw; },
+    ]) {
+      const a = answer('900100****3301'); breakIt(a);
+      assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /看不出末幾碼/.test(e.message) && !e.message.includes(raw), `★拒收：${raw}`);
+    }
+  }
+  assert.equal(accountSuffixAny('AB****5678'), '5678', '字母合法');
+  assert.equal(accountSuffixAny('900-100 ****3301'), '3301', '分隔符合法');
 });
