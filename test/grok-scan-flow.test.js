@@ -16,11 +16,11 @@ import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION } from '../scripts/grok-scan.js';
+import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
 import { createHash } from 'node:crypto';
-import { PINNED_ISSUER, PINNED_CLIENT_ID, DUMMY_BEARER_PREFIX } from '../scripts/grok-auth-refresh.js';
+import { PINNED_ISSUER, PINNED_CLIENT_ID, DUMMY_BEARER_PREFIX, authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 
 const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
 const SKIP_AFTER_CANARY = '金絲雀之後的路徑只在套得上沙箱的 macOS 考得到（這台套不上；金絲雀自己會退 2＝fail-closed）';
@@ -53,12 +53,12 @@ function tinyRepo() {
  * 假 grok 放在 tmpdir() 會被沙箱正確擋住（126），那是沙箱做對，不是考題該繞的。
  * 預設寫一個會把 session 日誌寫進 $GROK_HOME/sessions/ 的假 grok（驗屍要讀得到）。
  */
-function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean }} */ o = {}) {
+function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean }} */ o = {}) {
   const d = mkdtempSync(join(tmpdir(), 'fake-grok-install-'));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
   const session = o.noSession ? '' : `
-ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '{"type":"assistant","content":"x"}\n' > "$ws/fake-session/updates.jsonl"`;
+ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '${o.noToolFootprint ? '{"type":"assistant","content":"x"}' : '{"type":"tool_started","tool_name":"run_terminal_command"}'}\n' > "$ws/fake-session/updates.jsonl"`;
   writeFileSync(p, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
 printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/'/g, "'\\''")}" # REPLY-LINE
@@ -196,6 +196,15 @@ test('runScan｜正常路徑：→ 0；盒子（含憑證副本）掃完清掉�
   assert.ok(!existsSync(join(inst, 'sessions', 'fake-session')) && readdirSync(join(inst, 'sessions')).length === 0, '真安裝樹的 sessions/ 被寫了——GROK_HOME 沒有指進盒子');
 });
 
+test('runScan｜審查能力 smoke：零工具足跡 → 2 且不保存（chat-only 回覆不能冒充複審）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ noToolFootprint: true })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 2, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /沒有任何工具足跡/);
+  assert.deepEqual(readdirSync(iso.resultsRoot), [], '零工具足跡還保存了結果包');
+});
+
 test('runScan｜grok 退出碼非 0 → 2（第一版只印出來、照樣退 0）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
@@ -276,7 +285,8 @@ test('runScan｜驗屍查到破口線索（日誌裡出現私鑰標頭這種盒�
   // 不用活金絲雀的暗號：那要在正式程式留測試鉤子把暗號塞進盒子，鉤子本身就是洞。驗屍認得的另一種形狀同樣走 code 1。
   const inst = fakeGrok();
   const before = readFileSync(join(inst, 'bin', 'grok'), 'utf8');
-  const after = before.replace('"content":"x"', '"content":"-----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\\n-----END RSA PRIVATE KEY-----"');   // r10：要含內容，光標頭不是鑰匙
+  const after = before.replace(/^(printf '%s' .*# REPLY-LINE)$/m,
+    `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\\\nMIIEOUTSIDEKEYBODYCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\\\\n-----END RSA PRIVATE KEY-----"}' >> "$ws/fake-session/updates.jsonl"; $1`);   // r10：要含內容，光標頭不是鑰匙
   assert.notEqual(after, before, '假 grok 改寫沒套上');
   writeFileSync(join(inst, 'bin', 'grok'), after);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
@@ -410,7 +420,7 @@ test('runScan｜r5 #2：auth.json 的 issuer 被改成別的網址 → 不 refre
   assert.equal(called, false, 'refresh_token 被送去別處的 issuer 了');
 });
 
-test('runScan｜r6 #4：config.toml／agent_id **不帶進盒子**；盒內 auth.json 只有白名單 7 欄＋假 key（email 等身分欄位不進去）——假 grok 把盒內 grok-home 列出來驗', async (t) => {
+test('runScan｜盒內最小家 manifest：config.toml／agent_id **不帶進盒子**；auth.json 只含宣告欄位；審查 smoke 要有工具足跡', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
@@ -423,11 +433,12 @@ test('runScan｜r6 #4：config.toml／agent_id **不帶進盒子**；盒內 auth
   assert.ok(!reply.includes('CONFIG-STALE'), 'config.toml 進了盒子');
   assert.ok(!reply.includes('AGENT-ID-STALE'), 'agent_id 進了盒子');
   const ls = /LS=\[([^\]]*)\]/.exec(reply)?.[1] || '';
-  assert.deepEqual(ls.trim().split(/\s+/).sort(), ['auth.json', 'bin', 'sessions'], `盒內 grok-home 的檔不是白名單那三個：${ls}`);
+  assert.deepEqual(ls.trim().split(/\s+/).sort(), [...GROK_HOME_MANIFEST.topLevelEntries], `盒內 grok-home 的檔不是 manifest 宣告的最小家：${ls}`);
   const json = /\{.*\}/.exec(reply)?.[0] || '';
   const entry = Object.values(JSON.parse(json))[0];
-  assert.deepEqual(Object.keys(/** @type {object} */ (entry)).sort(), ['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id'], '盒內 auth.json 的欄位不是白名單那 7 個');
+  assert.deepEqual(Object.keys(/** @type {object} */ (entry)).sort(), [...GROK_HOME_MANIFEST.authEntryFields], '盒內 auth.json 的欄位不是 manifest 宣告的白名單');
   assert.ok(!reply.includes('fake-owner@example.test'), 'email 進了盒子');
+  assert.match(r.summary.join('\n'), /足跡 [1-9]\d* 筆/, '審查能力 smoke 沒有看到工具足跡');
 });
 
 test('runScan｜r5 #1：失敗路徑全丟棄——grok 非 0 且把 token 寫進 stderr 與 session，結果包與 summary 都不得有 token', async (t) => {
@@ -636,7 +647,7 @@ test('runScan｜r7：假 grok 把整個 sessions 目錄換成指向盒外的 sym
 });
 
 test('憑證｜r7（Codex #1）：auth.json 的外層鍵名不是釘住的 issuer::client_id → 不重建、不掃；鍵名不進 DLP 的「給了盒子」集合（純函式，CI 也跑）', async () => {
-  const { refreshSandboxAuth, authNeedles, boxEntryKey } = await import('../scripts/grok-auth-refresh.js');
+  const { refreshSandboxAuth } = await import('../scripts/grok-auth-refresh.js');
   const dir = mkdtempSync(join(tmpdir(), 'auth-key-'));
   const cred = JSON.parse(fakeAuth())[boxEntryKey()];
   // 鍵名是 email → 拒
@@ -649,6 +660,16 @@ test('憑證｜r7（Codex #1）：auth.json 的外層鍵名不是釘住的 issue
   // 鍵名若含身分字串，authNeedles 不會因為「鍵名給了盒子」而排除同值的針
   const needles = authNeedles({ 'fake-owner@example.test': { ...cred, email: 'fake-owner@example.test' } });
   assert.ok(needles.includes('fake-owner@example.test'), '鍵名同值的 email 被排除出針了');
+});
+
+test('憑證｜DLP 針收集：toString／constructor 這類原型繼承名不可被當成 BOX_FIELDS', () => {
+  const auth = JSON.parse(fakeAuth());
+  const cred = auth[boxEntryKey()];
+  cred.toString = 'TOSTRING-SHOULD-BE-A-DLP-NEEDLE';
+  cred.constructor = 'CONSTRUCTOR-SHOULD-BE-A-DLP-NEEDLE';
+  const needles = authNeedles(auth);
+  assert.ok(needles.includes('TOSTRING-SHOULD-BE-A-DLP-NEEDLE'), 'toString 被當成盒內白名單欄位，沒有進 DLP 針');
+  assert.ok(needles.includes('CONSTRUCTOR-SHOULD-BE-A-DLP-NEEDLE'), 'constructor 被當成盒內白名單欄位，沒有進 DLP 針');
 });
 
 test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 → 掃描退 2（吵），不靠 grok 的退出碼；刻意擋的 bundle/archive → 容許、只記錄', async (t) => {
@@ -701,13 +722,24 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   /** @type {string[]} */ const logs = [];
   /** @type {number[]} */ const exits = [];
   const livesBefore = readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length;
-  const p = runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) setTimeout(() => process.emit('SIGTERM'), 300); }, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), exit: (c) => exits.push(c) });
+  const p = runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
+    log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) setTimeout(() => process.emit('SIGTERM'), 300); },
+    ...iso,
+    repo: repo.dir,
+    ...withGrok(inst),
+    relayScript: fakeRelay('ok'),
+    exit: (c) => {
+      exits.push(c);
+      assert.deepEqual(readdirSync(iso.resultsRoot), [], 'emergency 呼叫 exit 前還留下結果目錄');
+    },
+  });
   const r = await p;
   assert.deepEqual(exits, [2], '緊急收尾沒呼叫 exit(2)');
   assert.equal(r.code, 2);
   const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
   assert.ok(box && !existsSync(box), '盒子沒清');
   assert.ok(!readdirSync(iso.authDir).some((n) => n.startsWith('dummy-bearer')), '假值檔沒清');
+  assert.deepEqual(readdirSync(iso.resultsRoot), [], '緊急收尾還留下只有 launch.json 的結果目錄');
   assert.equal(readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length, livesBefore, '活金絲雀目錄沒清');
   const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
   assert.ok(!ps.includes(box), 'grok 群組還活著');
