@@ -274,7 +274,7 @@ test('runScan｜驗屍查到破口線索（日誌裡出現私鑰標頭這種盒�
   // 不用活金絲雀的暗號：那要在正式程式留測試鉤子把暗號塞進盒子，鉤子本身就是洞。驗屍認得的另一種形狀同樣走 code 1。
   const inst = fakeGrok();
   const before = readFileSync(join(inst, 'bin', 'grok'), 'utf8');
-  const after = before.replace('"content":"x"', '"content":"-----BEGIN RSA PRIVATE KEY-----"');
+  const after = before.replace('"content":"x"', '"content":"-----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\\n-----END RSA PRIVATE KEY-----"');   // r10：要含內容，光標頭不是鑰匙
   assert.notEqual(after, before, '假 grok 改寫沒套上');
   writeFileSync(join(inst, 'bin', 'grok'), after);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
@@ -660,12 +660,15 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
   // repo 的 head 多一個檔，內容就是破口考題的字面——那會進 diff＝進材料
   const repo = tinyRepo();
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
-  writeFileSync(join(repo.dir, 'fixture.txt'), 'line with -----BEGIN RSA PRIVATE KEY----- inside a test fixture\n');
+  const fakeKey = '-----BEGIN RSA PRIVATE KEY-----\\nMIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n-----END RSA PRIVATE KEY-----';
+  writeFileSync(join(repo.dir, 'fixture.txt'), `a test fixture key: ${fakeKey.replace(/\\\\n/g, '\\n')}\n`);
   git(['add', 'fixture.txt']); git(['commit', '-q', '-m', 'fixture']);
   const head3 = git(['rev-parse', 'HEAD']).trim();
   for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
-    ['材料裡有的字面', `printf '%s\\n' '{"type":"assistant","content":"material BEGIN RSA PRIVATE KEY echoed"}'`, 0],
-    ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"BEGIN OPENSSH PRIVATE KEY from outside"}'`, 1],
+    ['材料裡那把假鑰原樣被 echo', `printf '%s\\n' '{"type":"assistant","content":"echo ${fakeKey}"}'`, 0],
+    ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
+    ['同標頭、不同內容的外部私鑰（r10：材料有標頭也不能放過）', `printf '%s\\n' '{"type":"assistant","content":"outside: -----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\\n-----END RSA PRIVATE KEY-----"}'`, 1],
+    ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN OPENSSH PRIVATE KEY-----\\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2g\\n"}'`, 1],
   ])) {
     const iso = isolated(); const inst = fakeGrok();
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `${sessionLine} >> "$ws/fake-session/updates.jsonl"; $1`));
