@@ -735,3 +735,24 @@ test('★帳號文法整串驗（r9#2）：夾沒核准符號的 #900100****3301
   assert.equal(accountSuffixAny('AB****5678'), '5678', '字母合法');
   assert.equal(accountSuffixAny('900-100 ****3301'), '3301', '分隔符合法');
 });
+
+test('★遮罩與末碼之間有分隔符（123-XXXX-456）：末碼明明看得見＝收、三個欄位都過；重匯換成沒分隔符＝疑似重複（r11#1）', async () => {
+  for (const raw of ['123-XXXX-456', '123-••••-456', '900-100-****-3301', '900100-****-3301']) {
+    assert.notEqual(accountSuffixAny(normalizeMaskShape(raw)), '', `★取得出末碼：${raw}`);
+  }
+  assert.equal(accountSuffixAny(normalizeMaskShape('123-XXXX-456')), '456');
+  const a = answer('900-100-****-3301');
+  const p = normalizeAiBank(a);
+  assert.equal(p.accounts[0].masked, '900-100-****-3301', '存改寫後的形、分隔符照抄');
+  assert.equal(p.accounts[0].suffix, '3301');
+  assert.equal(p.transactions[0].acctSuffix, '3301');
+  await seedDb();
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(a), aiExtract: fakeExtract });
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiTicket: pv.aiTicket, aiEngineFactory: engineOf(a), aiExtract: fakeExtract });
+  clearAiTicketsForTest();
+  const b = answer('900100****3301');
+  for (const t of b.transactions) t.summary = `${t.summary}(沒分隔符)`;
+  const pv2 = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: engineOf(b), aiExtract: fakeExtract });
+  assert.equal(pv2.transactions.counts.similar, 3, `★同一顆戶的兩種印法（實得 ${JSON.stringify(pv2.transactions.counts)}）`);
+  assert.equal(pv2.rows[0].action, 'skip-stale', '比對形全等（分隔符剝掉）＝認出同一顆（同參考日＝跳過不蓋，不是新建）');
+});
