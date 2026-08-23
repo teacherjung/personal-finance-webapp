@@ -654,3 +654,22 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
     else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes(`GET ${path}`)), `${label}：沒記錄被容許的拒絕`);
   }
 });
+
+test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含私鑰標頭字面）→ 不算事故；不在材料裡的同形狀仍是 1（#500 第一次正式掃描誤中自己）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // repo 的 head 多一個檔，內容就是破口考題的字面——那會進 diff＝進材料
+  const repo = tinyRepo();
+  const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
+  writeFileSync(join(repo.dir, 'fixture.txt'), 'line with -----BEGIN RSA PRIVATE KEY----- inside a test fixture\n');
+  git(['add', 'fixture.txt']); git(['commit', '-q', '-m', 'fixture']);
+  const head3 = git(['rev-parse', 'HEAD']).trim();
+  for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
+    ['材料裡有的字面', `printf '%s\\n' '{"type":"assistant","content":"material BEGIN RSA PRIVATE KEY echoed"}'`, 0],
+    ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"BEGIN OPENSSH PRIVATE KEY from outside"}'`, 1],
+  ])) {
+    const iso = isolated(); const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `${sessionLine} >> "$ws/fake-session/updates.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: head3, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
+  }
+});

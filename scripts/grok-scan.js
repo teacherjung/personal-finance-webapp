@@ -394,14 +394,18 @@ export async function runScan(args, deps = {}) {
   const dec = new TextDecoder('utf-8', { fatal: true });
   /** @type {string[]} */ const binaries = [];
   const leaksIn = (/** @type {string} */ text) => needles.some((v) => text.includes(v));
-  const BREACH = new RegExp(`${liveSecret}|flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH) PRIVATE KEY`);
+  // 破口線索的命中若**已在材料裡**就不算（在輸入裡的字串偵測不了外流——跟 DLP 針同一個原則）：
+  // #500 第一次正式掃描就誤中自己——受掃 diff 含破口考題的 `BEGIN RSA PRIVATE KEY` 字面與這條正則的原文，grok 把材料寫進 prompt_0.txt，
+  // 驗屍把「材料裡本來就有的」當「盒子外才有的」。活金絲雀的暗號是隨機的、永遠不在材料裡，所以它不受這條影響。
+  const BREACH = new RegExp(`${liveSecret}|flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH) PRIVATE KEY`, 'g');
+  const breachHits = (/** @type {string} */ text) => [...text.matchAll(BREACH)].map((m) => m[0]).filter((h) => !materials.includes(h));
   // 去機密（r4 #2）：Grok 讀得到盒內 auth.json（假值＋user_id／時間戳）、可以把任何東西寫進回覆／日誌——回覆會進 PR 描述、日誌會進結果包。
   // 拿真 auth.json 裡**沒給盒子**的每個值去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
   for (const [rp, buf] of snap.files) {
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
-    if (BREACH.test(text)) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
+    if (breachHits(text).length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
     if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${rp} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; }
   }
   if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => f.split('/').pop()).join('、')}）`);
