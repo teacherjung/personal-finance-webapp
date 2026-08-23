@@ -6,7 +6,7 @@
 //   ①建盒子（git archive 已 commit 的原始碼＋APFS clone 的 node_modules；沒有 data/store.db、沒有 .env）
 //   ②金絲雀（沙箱的紅燈證明；任何一隻活著＝不掃，fail-closed）
 //   ③起轉送器（localhost → xAI 那一個寫死的位址），**並持續監看它有沒有死**
-//   ④在沙箱裡跑 grok（env 白名單、HOME／TMPDIR 指進盒子、GROK_HOME 指真家）
+//   ④在沙箱裡跑 grok（env 白名單、HOME／TMPDIR／GROK_HOME 全指進盒子；盒內 auth 的 token 是**假的**，轉送器在沙箱外換真的）
 //   ⑤驗屍：數足跡（在盒子裡跑指令是准的）＋查破口線索（掃描期間**一直放著**的金絲雀暗號有沒有出現在日誌裡）
 //
 // ## fail-closed（r1 之後每一步都有）
@@ -48,6 +48,20 @@ export const EXPECTED_GROK_VERSION = '1.0.3';
  */
 export const EXPECTED_GROK_SHA256 = '09deaf06804955ff2d6ccef2042af4031c659c47fd16eb3c72664a8f533832da';
 export { RELAY_PORT };
+
+/**
+ * SIGKILL 整個程序群組，並等到群裡沒有任何程序（kill(-pgid, 0) 回 ESRCH）。
+ * @param {number | null} pgid
+ */
+async function killGroupAndWait(pgid) {
+  if (!pgid) return;
+  for (let i = 0; i < 200; i++) {   // 最多 ~10 秒
+    try { process.kill(-pgid, 'SIGKILL'); } catch { return; }   // ESRCH＝群已空
+    try { process.kill(-pgid, 0); } catch { return; }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`grok 的程序群組 ${pgid} 10 秒內殺不乾淨——不碰盒子`);
+}
 
 /**
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
@@ -117,11 +131,14 @@ export async function runScan(args, deps = {}) {
     return skipped;
   };
   let cleaned = false;
+  let keepSessions = false;   // r5 #1：只有走完 DLP 的成功路徑才設 true——其餘出口一律丟棄盒內輸出
   const cleanup = () => {
     if (cleaned) return; cleaned = true;
     try {
-      const skipped = copyRegularTree(sessionsRoot, join(resultsDir, 'sessions'));
-      if (skipped.length) log(`⚠️ 結果包略過 ${skipped.length} 個非 regular file（symlink／特殊檔）：${skipped.slice(0, 3).join('、')}`);
+      if (keepSessions) {
+        const skipped = copyRegularTree(sessionsRoot, join(resultsDir, 'sessions'));
+        if (skipped.length) log(`⚠️ 結果包略過 ${skipped.length} 個非 regular file（symlink／特殊檔）：${skipped.slice(0, 3).join('、')}`);
+      }
     } finally {
       rmSync(box, { recursive: true, force: true });
     }
@@ -134,6 +151,7 @@ export async function runScan(args, deps = {}) {
   /** @type {Record<string, unknown>} */ let authBefore;
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
+  /** @type {number | null} */ let grokPgid = null;
   try {
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
@@ -142,15 +160,29 @@ export async function runScan(args, deps = {}) {
     // r4 #5：對**盒內副本**算 hash（不是真檔——檢查與複製之間的路徑替換競態）；不符＝不掃；之後只執行這份副本
     const sha = createHash('sha256').update(readFileSync(grokBin)).digest('hex');
     if (sha !== expectedSha) return failAndClean(`grok 執行檔 sha256 不符：要 ${expectedSha.slice(0, 12)}…，實際 ${sha.slice(0, 12)}…——執行檔被換過或升版了；升版要改 EXPECTED_GROK_SHA256 並重驗轉送器目的地`);
-    for (const f of ['config.toml', 'agent_id']) {
-      if (existsSync(join(grokInstall, f))) { const r = spawnSync('/bin/cp', [join(grokInstall, f), join(grokHome, f)], { encoding: 'utf8' }); if (r.status !== 0) return failAndClean(`複製 ${f} 失敗：${r.stderr}`); }
-      else log(`（${f} 不在安裝樹，略過——grok 會用預設）`);
+    // r5 #2a：從真 ~/.grok 搬進盒子的檔，逐檔 lstat（no-follow）＋大小上限——白名單檔名不是白名單內容；
+    //   先前未隔離的 Grok 可能把 config.toml 做成指向盒外私密檔的 symlink，父程序盲 cp 就替它帶進盒子
+    const copyRegularSmall = (/** @type {string} */ name, /** @type {number} */ maxBytes) => {
+      const from = join(grokInstall, name);
+      if (!existsSync(from)) { log(`（${name} 不在安裝樹，略過——grok 會用預設）`); return null; }
+      const st = lstatSync(from);
+      if (!st.isFile()) return `安裝樹的 ${name} 不是 regular file（symlink／特殊檔）——不搬`;
+      if (st.size > maxBytes) return `安裝樹的 ${name} 超過 ${maxBytes} bytes——不搬`;
+      writeFileSync(join(grokHome, name), readFileSync(from), { mode: 0o600 });
+      return null;
+    };
+    for (const [name, max] of /** @type {[string, number][]} */ ([['config.toml', 64 * 1024], ['agent_id', 1024]])) {
+      const why = copyRegularSmall(name, max);
+      if (why) return failAndClean(why);
     }
     // 登入狀態：沙箱專用目錄（0700、只含 auth.json）；第一次從真的種；目錄已存在也把 mode 修成 0700（mkdir 的 mode 不會改既有目錄）
     mkdirSync(authDir, { recursive: true, mode: 0o700 }); chmodSync(authDir, 0o700);
     if (!existsSync(join(authDir, 'auth.json'))) {
-      if (!existsSync(join(grokInstall, 'auth.json'))) return failAndClean(`找不到登入狀態：${join(grokInstall, 'auth.json')} 也沒有——先在沙箱外登入一次`);
-      writeFileSync(join(authDir, 'auth.json'), readFileSync(join(grokInstall, 'auth.json')), { mode: 0o600 });
+      const seed = join(grokInstall, 'auth.json');
+      if (!existsSync(seed)) return failAndClean(`找不到登入狀態：${seed} 也沒有——先在沙箱外登入一次`);
+      const st = lstatSync(seed);
+      if (!st.isFile() || st.size > 64 * 1024) return failAndClean(`安裝樹的 auth.json 不是 regular file 或超過 64KB——不種`);
+      writeFileSync(join(authDir, 'auth.json'), readFileSync(seed), { mode: 0o600 });
     }
     // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放短效版本
     try {
@@ -209,7 +241,7 @@ export async function runScan(args, deps = {}) {
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
   // ── ③ 轉送器（監看它的生死）──
-  const relayProc = spawn(process.execPath, [relayScript, String(RELAY_PORT)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const relayProc = spawn(process.execPath, [relayScript, String(RELAY_PORT), '--auth-dir', authDir], { stdio: ['ignore', 'pipe', 'pipe'] });   // broker：真 token 只在轉送器手上
   relay = relayProc;
   let relayDead = /** @type {string | null} */ (null);
   let relayErr = '';
@@ -237,23 +269,32 @@ export async function runScan(args, deps = {}) {
   }, null, 2));
   // ⚠️ 不用 spawnSync：它卡住事件迴圈，轉送器的 exit 事件要等 grok 結束後才派發，
   //    「轉送器中途死」就永遠量不到（r2 的行為題抓到：假轉送器 READY 後 200ms 死、假 grok 回 0，結果退 0）。
+  // r5 #3：grok 跑在**自己的程序群組**（detached＝setsid）。結束後先 SIGKILL 整群、等到群裡沒人，父程序才碰盒內任何東西
+  //   ——否則盒內留一個背景 writer，等我們 lstat 完再換檔（TOCTOU），或持有 token FD 繼續活。
+  //   輸出設上限（r5：無界字串＝OOM 繞過 finally）。
+  const OUT_CAP = 8 * 1024 * 1024;
   const grok = await new Promise((resolve) => {
     const child = spawn('/usr/bin/sandbox-exec', [...sbArgv, grokBin, '--disable-web-search', '--no-subagents', '-p', materials], {
-      cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env,
+      cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true,
     });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    const t = setTimeout(() => child.kill('SIGKILL'), 30 * 60_000);
-    child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, stdout, stderr }); });
-    child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr }); });
+    grokPgid = child.pid ?? null;
+    let stdout = '', stderr = '', truncated = false;
+    child.stdout.on('data', (d) => { if (stdout.length < OUT_CAP) stdout += d; else truncated = true; });
+    child.stderr.on('data', (d) => { if (stderr.length < OUT_CAP) stderr += d; else truncated = true; });
+    const t = setTimeout(() => { if (grokPgid) try { process.kill(-grokPgid, 'SIGKILL'); } catch { /* 已死 */ } }, 30 * 60_000);
+    child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, stdout, stderr, truncated }); });
+    child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr, truncated }); });
   });
+  await killGroupAndWait(grokPgid);
   const endedAt = new Date().toISOString();
   const reply = grok.stdout || '';
-  log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字`);
+  log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字；程序群組已收束`);
   // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
-  if (relayDead) return failAndClean(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}`);
-  if (grok.status !== 0) return failAndClean(`grok 沒有正常結束（status ${grok.status}${grok.signal ? `, signal ${grok.signal}` : ''}${grok.error ? `, ${grok.error.message}` : ''}）：${(grok.stderr || '').slice(-400)}`);
+  // r5 #1：失敗＝**全丟棄**。Grok 可控的 stdout／stderr／sessions 一律不進結果包、不進 log（stderr 尾巴也是它可控的）。
+  //   「可保存」是成功路徑最後才出現的顯式狀態（見下方 DLP 之後的 keepSessions）。
+  if (grok.truncated) return failAndClean(`grok 輸出超過 ${OUT_CAP} bytes——丟棄`);
+  if (relayDead) return failAndClean(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}（輸出已丟棄）`);
+  if (grok.status !== 0) return failAndClean(`grok 沒有正常結束（status ${grok.status}${grok.signal ? `, signal ${grok.signal}` : ''}${grok.error ? `, ${grok.error.message}` : ''}）——輸出已丟棄，不印`);
   if (!reply.trim()) return failAndClean('grok 退 0 但回覆是空的');
 
   // ── ⑤ 驗屍：足跡＋破口線索 ──
@@ -289,21 +330,31 @@ export async function runScan(args, deps = {}) {
   const secretValues = [...Object.values(authBefore), ...authDirVals].flatMap((v) => (typeof v === 'string' && v.length >= 16 ? [v] : typeof v === 'object' && v ? Object.values(v).filter((x) => typeof x === 'string' && x.length >= 16) : []));
   const leaksIn = (/** @type {string} */ text) => secretValues.some((v) => text.includes(v));
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現登入憑證的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
-  for (const d of dirs) {
-    for (const f of readdirSync(d)) {
-      const fp = join(d, f); if (!lstatSync(fp).isFile()) continue;
-      if (leaksIn(readFileSync(fp, 'utf8'))) { const m = `⚠️ 去機密：session 日誌 ${f} 裡出現登入憑證的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; break; }
-    }
+  // 遞迴整棵 sessions（r5 #1：原本只掃根層，terminal/call-*.log 這種巢狀日誌漏掉）；no-follow；fatal decode（解不開＝不保存）
+  {
+    const dec = new TextDecoder('utf-8', { fatal: true });
+    const walk = (/** @type {string} */ d) => {
+      for (const n of readdirSync(d)) {
+        const fp = join(d, n); const st = lstatSync(fp);
+        if (st.isDirectory()) { if (walk(fp)) return true; continue; }
+        if (!st.isFile()) continue;   // 非 regular 已在驗屍前擋成事故；這裡防禦性跳過
+        let text; try { text = dec.decode(readFileSync(fp)); } catch { const m = `⚠️ 去機密：session 檔 ${fp.split('/').slice(-2).join('/')} 不是合法 UTF-8——不保存`; log(m); summary.push(m); worst = 1; return true; }
+        if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${fp.split('/').slice(-2).join('/')} 裡出現登入憑證的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; return true; }
+      }
+      return false;
+    };
+    if (existsSync(sessionsRoot)) walk(sessionsRoot);
   }
   if (worst === 0 && outFile) writeFileSync(outFile, reply);
   // （r4 之後沒有「掃後同步 auth」：盒內是去掉 refresh_token 的短效版本，長效的只住在 authDir、由掃描前的 refresh 維護）
-  if (worst === 1) rmSync(sessionsRoot, { recursive: true, force: true });   // 事故：日誌不進結果包
+  keepSessions = worst === 0;   // 事故：日誌不進結果包；成功：這是唯一把「可保存」設成 true 的地方
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對憑證值）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${RELAY_PORT}→cli-chat-proxy.grok.com｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   summary.push(recipe);
   return { code: /** @type {0|1} */ (worst), summary };
   } finally {
-    // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收
+    // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
+    await killGroupAndWait(grokPgid);
     try { relay?.kill(); } catch { /* 已死 */ }
     try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
     cleanup();
