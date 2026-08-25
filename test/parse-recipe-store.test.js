@@ -438,3 +438,60 @@ test('A6 操作定義（P2-3 明文）｜同一份帳單重傳＝imported 0＝�
   assert.equal(db.parseRecipes?.[0]?.graduateStreak, 3, '★重複上傳不是新版面證據——streak 不可灌水（重傳 5 次≠畢業）');
   assert.ok(db.parseRecipes?.[0]?.lastUsedAt, '使用時間照記');
 });
+
+test('recipeBankRoute｜三路一致（A4）：命中＝stage sink 收到 verify 恰一次（多張卡逐一試也不跳針）、且在結論之前；沒命中＝不報 verify（沒驗算成就不說驗算了）', async () => {
+  const { STAGES } = await import('../lib/progress-stages.js');
+  await seedDb({ recipes: [row({ current: brokenRecipe(), previous: goodRecipe() }), row({ id: 'rcp-2', current: goodRecipe() })] });
+  const db = await getDb();
+  /** @type {string[]} */ const stages = [];
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA, stage: (s) => stages.push(s) });
+  assert.ok(r.hit, '前提：命中');
+  assert.deepEqual(stages, [STAGES.VERIFY], `★恰一次（實得 ${JSON.stringify(stages)}）`);
+  /** @type {string[]} */ const stages2 = [];
+  const db2 = await getDb();
+  db2.parseRecipes = [];
+  const r2 = await recipeBankRoute('QUFBQQ==', undefined, db2, { extract: extractA, stage: (s) => stages2.push(s) });
+  assert.equal(r2.hit, null);
+  assert.deepEqual(stages2, [], '★沒進閘＝不報');
+  // 兩張卡都進閘、都被弱閘擋（明細無餘額格）＝驗算真的各跑了一次，但**只報一次**（跳針＝進度列來回閃）
+  const weakLines = linesA().map((l) => ({ ...l, cells: l.cells.filter((c) => !['$1,730', '$730', '$97,400'].includes(c.s) || l.y > 110) }));
+  await seedDb({ recipes: [row(), row({ id: 'rcp-2' })] });
+  const db3 = await getDb();
+  /** @type {string[]} */ const stages3 = [];
+  const r3 = await recipeBankRoute('QUFBQQ==', undefined, db3, { extract: async () => weakLines, stage: (s) => stages3.push(s) });
+  assert.equal(r3.hit, null, '前提：兩張都閘紅');
+  assert.equal(r3.gateFailedIds.length, 2, `前提：兩張都進了閘（實得 ${JSON.stringify(r3.gateFailedIds)}）`);
+  assert.deepEqual(stages3, [STAGES.VERIFY], '★恰一次、不跳針');
+  // 前卡 parse 失敗（brokenRecipe＝根本沒進閘）、後卡命中＝仍恰一次（Codex #512 r1#2 矩陣）
+  await seedDb({ recipes: [row({ current: brokenRecipe() }), row({ id: 'rcp-2', current: goodRecipe() })] });
+  const db4 = await getDb();
+  /** @type {string[]} */ const stages4 = [];
+  const r4 = await recipeBankRoute('QUFBQQ==', undefined, db4, { extract: extractA, stage: (s) => stages4.push(s) });
+  assert.equal(r4.hit?.recipeId, 'rcp-2', '前提：前卡失敗、後卡命中');
+  assert.deepEqual(stages4, [STAGES.VERIFY], '★恰一次');
+  // 有卡但**全部 parse 失敗**（沒有任何一張進到閘）＝不報 verify——把 stageVerify 移到 parse 之前就會在這裡謊報
+  await seedDb({ recipes: [row({ current: brokenRecipe() })] });
+  const db5 = await getDb();
+  /** @type {string[]} */ const stages5 = [];
+  const r5 = await recipeBankRoute('QUFBQQ==', undefined, db5, { extract: extractA, stage: (s) => stages5.push(s) });
+  assert.equal(r5.hit, null);
+  assert.deepEqual(r5.gateFailedIds, ['rcp-1'], '前提：中版面但解不動（疑似過期候選）');
+  assert.deepEqual(stages5, [], '★沒進閘＝一個字都不報');
+});
+
+test('★recipe 命中路的 frame 行為保證（Codex #512 r1#1：字面掃描擋不住別名——行為面直接驗）：整條 preview 收到的每一格都是合法 stageFrame、verify 在 build_preview 之前、不回聲帳單內容', async () => {
+  const { STAGES } = await import('../lib/progress-stages.js');
+  await seedDb({ recipes: [row()] });
+  /** @type {any[]} */ const frames = [];
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA, onStage: (f) => frames.push(f) });
+  assert.equal(/** @type {any} */ (pv).engine, 'recipe', '前提：配方命中');
+  assert.ok(frames.length > 0, '要有進度');
+  const { stageFrame } = await import('../lib/progress-stages.js');
+  for (const f of frames) {
+    assert.deepEqual(f, stageFrame(f.s, { model: f.model }), `★逐格對 stageFrame 標準輸出（多餘欄位／不合白名單的 model 都現形）：${JSON.stringify(f)}`);
+    assert.doesNotMatch(JSON.stringify(f), /900100|3301|730|97,?400|合成銀行月結單/, '★不回聲帳單內容');
+  }
+  const codes = frames.map((f) => f.s);
+  assert.ok(codes.indexOf(STAGES.VERIFY) > -1 && codes.indexOf(STAGES.VERIFY) < codes.indexOf(STAGES.BUILD_PREVIEW), `★verify 在 build_preview 之前（實得 ${JSON.stringify(codes)}）`);
+  assert.equal(codes.filter((c) => c === STAGES.VERIFY).length, 1, '★恰一次');
+});
