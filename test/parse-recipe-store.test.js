@@ -534,7 +534,7 @@ test('管理｜deleteParseRecipe：刪指定那張（嚴格比較 id）、其餘
   assert.equal(r.hit, null, '★刪掉＝這個版面回到沒有規則卡的狀態');
 });
 
-test('管理｜畢業計數接上讀端（原本只寫不讀）：套用一份成功匯入的帳單後，list 的 graduateStreak 前進、lastUsedAt 有值', async () => {
+test('管理｜畢業計數有讀端：套用一份成功匯入的帳單後，list 的 graduateStreak 前進、lastUsedAt 有值（計數不是只寫進 db 的黑盒）', async () => {
   const { listParseRecipes } = await import('../lib/services/bank-import.js');
   await seedDb({ recipes: [row()] });
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
@@ -545,19 +545,23 @@ test('管理｜畢業計數接上讀端（原本只寫不讀）：套用一份�
   assert.ok(list[0].lastUsedAt, '★最後使用時間有值');
 });
 
-test('管理｜設定頁接線與文案（去註解形狀釘——settings.js 是頁面模組載不進 node；行為卷在上面三題）', () => {
+test('管理｜設定頁接線與文案（去註解形狀釘——settings.js 是頁面模組載不進 node；服務層行為另有專卷）', () => {
   const src = readFileSync(new URL('../public/modules/settings.js', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
   assert.match(src, /manageParseRecipesBtn/, '管理鈕在規則卡卡片裡');
   assert.match(src, /api\('\/parse-recipes'\)/, '接 GET');
   assert.match(src, /\/parse-recipes\/delete/, '接刪除');
-  const fn = src.split('function openParseRecipesManager')[1] || '';
+  const fn = (src.split('function openParseRecipesManager')[1] || '').split('\nfunction ')[0];   // 只掃這一支函式（掃到下一支＝別支的 confirm 也算數＝假綠）
   assert.match(fn, /畢業（穩定）/, '★畢業進度接上讀端（原本只寫不讀）');
   assert.match(fn, /學習中 \$\{.*\}\/5/, '學習中 n/5');
   assert.match(fn, /疑似過期/, 'suspect 狀態');
   assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚');
   assert.match(fn, /再花一次 AI 費用/, '★刪掉的代價就地講清楚');
+  assert.match(fn, /window\.confirm\(/, '★刪除必經 confirm（Codex #513 r1#2：拿掉 confirm 的突變要紅）');
+  assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
+  assert.ok(!/\$\{r\.bank/.test(fn), '★不得有未跳脫的 r.bank 插入');
+  assert.match(fn, /\$\{esc\(r\.id\)\}/, '★data-del 的 id 也經 esc');
   for (const banned of ['只存這台電腦', '永不上傳', '已限速', '保證正確', '免費']) {
     assert.ok(!fn.includes(banned), `★文案鐵則：${banned}`);
   }
