@@ -703,3 +703,29 @@ test('★fail-closed 可達路徑（Codex #509 r3#1）：庫裡有「空分類�
   assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 0, '★零 stmt 列（記了＝沒有 bankBatch 的孤兒）');
   assert.equal((db.cards || []).length, 0, '★不建卡');
 });
+
+test('★祖父去重鍵的 D 列也走服務費升級路徑（Codex #509 r4#1）：舊鍵 bank|末碼|… 的空分類 D 列＝去重認得、批次也查得到＝主筆＋服務費綁舊批、刪批零殘留', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.transactions = [{
+    id: 'legacy', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 305, account: '祖父時代匯的', note: '刷卡消費', dir: 'out', importBatch: 'legacy-batch', importedAt: '2026-02-01T00:00:00.000Z',
+    bankRef: 'bank|8791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ',
+  }];
+  await saveDb(db0);
+  const parsed = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.cardRows[0].fee = 15;
+    f.transactions = [{ ...f.transactions[0], note: '合成商店Ａ' }];
+    f.accounts[0].balance = 9695;
+  });
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.transactions.skipped, 1, `前提：祖父鍵被去重認出（實得 ${JSON.stringify(a.transactions)}）`);
+  assert.equal(a.cardLedger.imported, 2, `★主筆＋服務費都補進卡片帳本（實得 ${JSON.stringify(a.cardLedger)}）`);
+  const db = await getDb();
+  const stmt = db.transactions.filter((t) => t.source === 'stmt');
+  assert.deepEqual(stmt.map((t) => t.bankBatch), ['legacy-batch', 'legacy-batch'], '★都綁祖父列的批次');
+  await deleteBankBatch('legacy-batch');
+  const db2 = await getDb();
+  assert.equal(db2.transactions.length, 0, '★刪祖父批次＝零殘留');
+});
