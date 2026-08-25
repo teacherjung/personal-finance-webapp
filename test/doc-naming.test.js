@@ -201,8 +201,6 @@ const LEGACY_NON_ASCII_PATHS = [
   'docs/多人上線-施工計畫.md',
   'docs/安全與健壯性-待辦地圖.md',
   'docs/帳單匯入與分類-運作說明.md',
-  'docs/教學影片/EP01-生存優先-腳本.md',
-  'docs/教學影片/製作流程與分工.md',
   'docs/文案審稿-雲端版的九句假話.md',
   'docs/每日洞察引擎-施工計畫.md',
   'docs/測試覆蓋率地圖.md',
