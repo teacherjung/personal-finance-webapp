@@ -13,7 +13,7 @@ import { rmSync, readFileSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-debit-ledger-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { previewBankStatement, applyBankStatement, listBankBatches, deleteBankBatch } = await import('../lib/services/bank-import.js');
 const { consumptionByMonth } = await import('../lib/derive.js');
 const { FIELD_SCHEMA } = await import('../lib/schema.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
@@ -503,4 +503,339 @@ test('預覽：刷卡退貨的 D 區列留空時型別是 income（不是一律 
   await applyBankStatement('QUJD', '', async () => parsed);
   const db = await getDb();
   assert.ok((db.transactions || []).filter((/** @type {any} */ t) => t.ledger === 'card').every((/** @type {any} */ t) => !Object.hasOwn(t, 'stmtDue')), '★不寫 stmtDue（批次列表才顯示「—」而不是 0）');
+});
+
+test('★國外交易服務費另立一筆（William 2026-08-23 拍板）：主筆金額照帳單、服務費記「店名 國外交易服務費」；0 不多記；重匯全重複；刪銀行批次一起走（null／負值另有專題）', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => {
+    f.cardRows[0].fee = 15;                      // 合成商店Ａ 305＋服務費 15
+    f.cardRows[1].fee = 0;                       // 0＝不多記
+  });
+  const r = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r.cardLedger.count, 3, '★兩筆主筆＋一筆服務費');
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.cardLedger.imported, 3);
+  const db = await getDb();
+  const ledger = db.transactions.filter((t) => t.source === 'stmt');
+  assert.equal(ledger.length, 3);
+  const fee = ledger.find((t) => /國外交易服務費/.test(String(t.store || t.note || '')));
+  assert.ok(fee, `★服務費那筆存在（實得 ${JSON.stringify(ledger.map((t) => [t.store || t.note, t.amount]))}）`);
+  assert.equal(fee.amount, 15);
+  assert.match(String(fee.note || fee.store || ''), /合成商店Ａ/, '★服務費筆帶店名（查帳認得出是哪筆消費的、也是 stmtRef 的去重身分）');
+  assert.equal(fee.date, '2026-01-27', '消費日與主筆同一天');
+  assert.ok(fee.bankBatch, '★生命週期跟著銀行帳單（bankBatch 蓋上＝刪批次一起走、單獨刪擋下）');
+  const main = ledger.find((t) => t.amount === 305);
+  assert.equal(main.amount, 305, '★主筆金額照帳單原樣（不含服務費）');
+  assert.equal(ledger.filter((t) => /國外交易服務費/.test(String(t.store || t.note || ''))).length, 1, '★fee 0 的那筆不多記');
+  // 消費視角：總額＝兩筆相加
+  const spend = ledger.reduce((s, t) => s + t.amount, 0);
+  assert.equal(spend, 305 + 15 + 1234);
+  // 重匯＝全重複（stmtRef 帶 desc＝服務費那筆自己有身分）
+  const r2 = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r2.cardLedger.duplicate, 3, '★三筆全認出重複');
+  // 刪銀行批次＝服務費那筆一起走
+  const batches = await listBankBatches();
+  await deleteBankBatch(batches[0].batchId);
+  const db2 = await getDb();
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '★卡片帳本（含服務費筆）清空');
+});
+
+test('★服務費邊界各自成題（r1#1）：null／缺欄不多記；負值（退款的服務費退回）照記負筆', async () => {
+  await resetDb();
+  const pNull = debitParsed((f) => { f.cardRows[0].fee = null; delete f.cardRows[1].fee; });
+  const rNull = await previewBankStatement('QUJD', '', async () => pNull);
+  assert.equal(rNull.cardLedger.count, 2, '★null／缺欄都不多記');
+  await resetDb();
+  const pNeg = debitParsed((f) => {
+    f.cardRows[0].fee = 15;
+    // 退款列：金額負、服務費也負（退回）
+    f.cardRows[1] = { ...f.cardRows[1], amount: -1234, fee: -15 };
+    f.transactions[2] = { ...f.transactions[2], summary: '刷卡退貨', direction: 'in', amount: 1234, balance: 11929 };
+    f.accounts[0].balance = 11929;
+  });
+  const rNeg = await previewBankStatement('QUJD', '', async () => pNeg);
+  assert.equal(rNeg.cardLedger.count, 4, `★兩主筆＋兩服務費（實得 ${JSON.stringify(rNeg.cardLedger)}）`);
+  await applyBankStatement('QUJD', '', async () => pNeg);
+  const db = await getDb();
+  const ledger = db.transactions.filter((t) => t.source === 'stmt');
+  const feeRows = ledger.filter((t) => /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.deepEqual(feeRows.map((t) => t.amount).sort((a, b) => a - b), [-15, 15], '★負值服務費照記');
+  const neg = feeRows.find((t) => t.amount === -15);
+  assert.match(String(neg.note || neg.store || ''), /合成商店Ｂ/, '★退回筆帶店名');
+  assert.ok(new Set(ledger.map((t) => t.stmtRef)).size === ledger.length, 'stmtRef 各自唯一');
+});
+
+test('★部分重匯：庫裡只剩服務費那筆時，重匯補回主筆、服務費跳過（stmtRef 各自身分）；同店同日同額兩筆各帶費＝#2 序號分得開', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  await applyBankStatement('QUJD', '', async () => parsed);
+  let db = await getDb();
+  const feeRef = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || ''))).stmtRef;
+  db.transactions = db.transactions.filter((t) => t.source !== 'stmt' || /國外交易服務費/.test(String(t.note || t.store || '')));
+  await saveDb(db);
+  const r2 = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r2.cardLedger.duplicate, 1, '★只有服務費那筆算重複');
+  assert.equal(r2.cardLedger.count, 3);
+  const a2 = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a2.cardLedger.imported, 2, '★補回兩筆主筆');
+  db = await getDb();
+  assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 3);
+  assert.equal(db.transactions.filter((t) => t.stmtRef === feeRef).length, 1, '★服務費沒被重複記');
+  // 同鍵兩筆各帶費＝#2 序號
+  await resetDb();
+  const twin = debitParsed((f) => {
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+    ];
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9900, note: '合成商店Ａ' },
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9800, note: '合成商店Ａ' },
+    ];
+    f.accounts[0].balance = 9800;
+  });
+  await applyBankStatement('QUJD', '', async () => twin);
+  const db2 = await getDb();
+  const refs = db2.transactions.filter((t) => t.source === 'stmt').map((t) => String(t.stmtRef));
+  assert.equal(refs.length, 4, `★兩主筆＋兩服務費（實得 ${JSON.stringify(refs)}）`);
+  assert.equal(new Set(refs).size, 4, '★同鍵靠 #2 序號分得開');
+  assert.equal(refs.filter((r) => r.endsWith('#2')).length, 2);
+});
+
+test('★部分重匯的批次歸屬（Codex #509 r2#1）：舊帳單已匯（沒有服務費那年代）、重匯補服務費＝服務費綁到「它 D 列所屬的舊批次」，不是沒有銀行列的新批次；刪舊批次零殘留', async () => {
+  await resetDb();
+  const old = debitParsed((f) => { f.cardRows[0].fee = 0; });
+  await applyBankStatement('QUJD', '', async () => old);
+  const before = await listBankBatches();
+  assert.equal(before.length, 1);
+  const oldBatch = before[0].batchId;
+  // 升級路徑：同一份帳單、這次讀出服務費欄
+  const upgraded = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  const a2 = await applyBankStatement('QUJD', '', async () => upgraded);
+  assert.equal(a2.transactions.imported, 0, 'D 區全重複');
+  assert.equal(a2.cardLedger.imported, 1, '只補服務費一筆');
+  const db = await getDb();
+  const fee = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee.bankBatch, oldBatch, `★綁舊批次（實得 ${fee.bankBatch}、舊批次 ${oldBatch}）`);
+  const after = await listBankBatches();
+  assert.equal(after.length, 1, '★沒有多出一個空批次');
+  assert.equal(after[0].cardCount, 3, `★卡片列三筆都算在同一批（實得 ${JSON.stringify(after)}）`);
+  await deleteBankBatch(oldBatch);
+  const db2 = await getDb();
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '★刪舊批次＝服務費一起走、零殘留');
+  assert.equal(db2.transactions.filter((t) => t.source === 'bank').length, 0);
+});
+
+test('★服務費繼承主筆學過的最終分類（Codex #509 r2#2）：學過「合成商店Ａ→娛樂/遊戲」＝主筆與服務費都歸娛樂；consumptionByMonth 直接驗、其他不落 15', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.learnedCategories = { '合成商店Ａ': { category: '娛樂', subcategory: '遊戲' } };   // 娛樂/遊戲＝內建分類樹既有
+  await saveDb(db0);
+  const parsed = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  await applyBankStatement('QUJD', '', async () => parsed);   // 建卡路徑＝匯入端會用真卡 id 重算列＋重做繼承（兩個繼承點都吃到）
+  const db = await getDb();
+  const fee = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee.category, '娛樂');
+  assert.equal(fee.subcategory, '遊戲');
+  const cons = consumptionByMonth(db).byMonth['2026-01'] || {};
+  assert.equal(Number(cons['娛樂']?.total || 0), 305 + 15, `★消費分析正式路徑：娛樂＝320（實得 ${JSON.stringify(cons)}）`);
+  assert.equal(Number(cons['其他']?.total || 0), 1234, '★其他只有合成商店Ｂ那筆＝服務費 15 沒有落進來');
+  // exists 路徑（卡已存在＝不重算列、直接用 plan 的列）：刪批次留卡、重匯＝繼承同樣成立
+  const batches = await listBankBatches();
+  await deleteBankBatch(batches[0].batchId);
+  const dbMid = await getDb();
+  assert.equal(dbMid.cards.length, 1, '前提：卡留著');
+  await applyBankStatement('QUJD', '', async () => parsed);
+  const db2 = await getDb();
+  const fee2 = db2.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee2.category, '娛樂', '★exists 路徑也繼承');
+  assert.equal(fee2.subcategory, '遊戲');
+});
+
+test('★混批次的部分重匯：一半 D 列在舊批次、一半新匯＝各卡片列綁各自 D 列的批次（重複列不佔序）', async () => {
+  await resetDb();
+  const short = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.transactions = [f.transactions[0]];
+    f.accounts[0].balance = 9695;
+  });
+  await applyBankStatement('QUJD', '', async () => short);
+  const oldBatch = (await listBankBatches())[0].batchId;
+  const full = debitParsed();
+  const a2 = await applyBankStatement('QUJD', '', async () => full);
+  assert.equal(a2.transactions.imported, 2, 'D1 重複、D2/D3 新匯');
+  assert.equal(a2.cardLedger.imported, 1, '卡片只補 1234 那筆');
+  const db = await getDb();
+  const batches = await listBankBatches();
+  assert.equal(batches.length, 2);
+  const newBatch = batches.map((b) => b.batchId).find((id) => id !== oldBatch);
+  const main1 = db.transactions.find((t) => t.source === 'stmt' && t.amount === 305);
+  const main2 = db.transactions.find((t) => t.source === 'stmt' && t.amount === 1234);
+  assert.equal(main1.bankBatch, oldBatch, '★305 綁舊批次（它的 D 列在舊批）');
+  assert.equal(main2.bankBatch, newBatch, `★1234 綁新批次（重複列不佔 written 序；實得 ${main2.bankBatch}、新批 ${newBatch}）`);
+  await deleteBankBatch(oldBatch);
+  const db2 = await getDb();
+  assert.ok(db2.transactions.some((t) => t.stmtRef === main2.stmtRef), '刪舊批次不掃到新批的卡片列');
+  await deleteBankBatch(newBatch);
+  assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0, '零殘留');
+});
+
+test('★fail-closed 可達路徑（Codex #509 r3#1）：庫裡有「空分類的攣生 D 列」＋預設跳過疑似重複＝D 被跳過、卡片整筆（含服務費）不記、不建卡、計入對不上', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.transactions = [{
+    id: 'twin', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 305, account: '別版面匯的', note: '刷卡消費', dir: 'out',
+    bankRef: 'bank|**********8791|2026-01-28|out|305|9695|金融卡消費|別版面原文', bankSummary: '金融卡消費', bankNote: '別版面原文',
+  }];
+  await saveDb(db0);
+  const parsed = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.cardRows[0].fee = 15;
+    f.transactions = [f.transactions[0]];
+    f.accounts[0].balance = 9695;
+  });
+  const a = await applyBankStatement('QUJD', '', async () => parsed, { skipSimilar: true });
+  assert.equal(a.transactions.similarSkipped, 1, `前提：D 列被當疑似重複跳過（實得 ${JSON.stringify(a.transactions)}）`);
+  assert.equal(a.cardLedger.imported, 0, '★卡片一筆都不記');
+  assert.equal(a.cardLedger.notRecorded.unmatched, 2, `★主筆＋服務費都計入對不上（實得 ${JSON.stringify(a.cardLedger.notRecorded)}）`);
+  const db = await getDb();
+  assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 0, '★零 stmt 列（記了＝沒有 bankBatch 的孤兒）');
+  assert.equal((db.cards || []).length, 0, '★不建卡');
+});
+
+test('★祖父去重鍵的 D 列也走服務費升級路徑（Codex #509 r4#1）：舊鍵 bank|末碼|… 的空分類 D 列＝去重認得、批次也查得到＝主筆＋服務費綁舊批、刪批零殘留', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.transactions = [{
+    id: 'legacy', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 305, account: '祖父時代匯的', note: '刷卡消費', dir: 'out', importBatch: 'legacy-batch', importedAt: '2026-02-01T00:00:00.000Z',
+    bankRef: 'bank|8791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ',
+  }];
+  await saveDb(db0);
+  const parsed = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.cardRows[0].fee = 15;
+    f.transactions = [{ ...f.transactions[0], note: '合成商店Ａ' }];
+    f.accounts[0].balance = 9695;
+  });
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.transactions.skipped, 1, `前提：祖父鍵被去重認出（實得 ${JSON.stringify(a.transactions)}）`);
+  assert.equal(a.cardLedger.imported, 2, `★主筆＋服務費都補進卡片帳本（實得 ${JSON.stringify(a.cardLedger)}）`);
+  const db = await getDb();
+  const stmt = db.transactions.filter((t) => t.source === 'stmt');
+  assert.deepEqual(stmt.map((t) => t.bankBatch), ['legacy-batch', 'legacy-batch'], '★都綁祖父列的批次');
+  await deleteBankBatch('legacy-batch');
+  const db2 = await getDb();
+  assert.equal(db2.transactions.length, 0, '★刪祖父批次＝零殘留');
+});
+
+test('★同鍵歧義群跨舊新批次＝整群不記、也不留空（Codex #509 r5#1）：不按列印順序猜批次；單批的同鍵群照常記', async () => {
+  await resetDb();
+  // 舊批：「B 那筆」的 D 列＋它的 A 區卡片筆（＝D 留空、卡片主筆已記；去重鍵與新帳單的第二列 D 完全相同）
+  const short = debitParsed((f) => {
+    f.cardRows = [{ postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 0, lastFour: '8808', desc: '店Ｂ', region: 'TW', extra: '' }];
+    f.transactions = [{ acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9900, note: '店Ｂ' }];
+    f.accounts[0].balance = 9900;
+  });
+  await applyBankStatement('QUJD', '', async () => short);
+  const oldBatch = (await listBankBatches())[0].batchId;
+  // 新帳單：同鍵（同扣款日同額）兩筆——A 新匯、B 是舊批的重複；A 區順序 A→B、D 區順序 B→A（順序故意反）
+  const full = debitParsed((f) => {
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '店Ｂ', region: 'TW', extra: '' },
+    ];
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9900, note: '店Ｂ' },
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9800, note: '店Ａ' },
+    ];
+    f.accounts[0].balance = 9800;
+  });
+  const a = await applyBankStatement('QUJD', '', async () => full);
+  assert.equal(a.transactions.skipped, 1, `前提：B 的 D 列是舊批重複（實得 ${JSON.stringify(a.transactions)}）`);
+  assert.equal(a.cardLedger.imported, 0, '★跨批的同鍵群整群不記');
+  assert.equal(a.cardLedger.notRecorded.unmatched, 2, `★整群計入對不上（實得 ${JSON.stringify(a.cardLedger.notRecorded)}）`);
+  const db = await getDb();
+  assert.deepEqual(db.transactions.filter((t) => t.source === 'stmt').map((t) => [t.note || '', t.amount]), [['店Ｂ', 100]], '★只剩舊批那筆卡片主筆——A 的主筆／兩筆服務費都沒被亂綁進來');
+  const newD = db.transactions.find((t) => t.source === 'bank' && t.bankNote === '店Ａ');
+  assert.notEqual(newD.category, '', '★不留空（不記就不留空——錢不可從消費視角消失）');
+  await deleteBankBatch(oldBatch);
+  const db2 = await getDb();
+  assert.equal(db2.transactions.filter((t) => t.source === 'bank').length, 1, '刪舊批不掃到新批的 D 列');
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '刪舊批把它的卡片主筆帶走、零殘留');
+});
+
+test('★超限 fee 在計畫層就擋（Codex #509 r5#2）：整群 unreadable、D 不留空、預覽＝套用；別群不受影響、批次不錯綁', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => { f.cardRows[0].fee = 100000001; });
+  const r = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r.cardLedger.count, 1, `★超限那群（主筆＋費）整群不進 count、只剩 1234 那筆（實得 ${JSON.stringify(r.cardLedger)}）`);
+  assert.equal(r.cardLedger.notRecorded.unreadable, 1, '★計入抄不完整');
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.cardLedger.imported, 1, '★套用＝預覽（沒有寫入層才略過的分家）');
+  const db = await getDb();
+  const stmt = db.transactions.filter((t) => t.source === 'stmt');
+  assert.deepEqual(stmt.map((t) => t.amount), [1234]);
+  const newBatch = (await listBankBatches())[0].batchId;
+  assert.equal(stmt[0].bankBatch, newBatch, '★1234 綁對自己的批次（沒被錯位）');
+  const d305 = db.transactions.find((t) => t.source === 'bank' && t.amount === 305);
+  assert.notEqual(d305.category, '', '★超限那群的 D 不留空');
+});
+
+test('★無批次的舊 D 列（批次制之前匯的）＝生命週期沒有家（Codex #509 r6#1）：同鍵群含它＝整群不記、兩筆 D 都不留空；單筆對上它也不記', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.transactions = [{
+    id: 'preBatch', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 100, account: '批次制之前匯的', note: '刷卡消費', dir: 'out',
+    bankRef: 'bank|**********8791|2026-01-28|out|100|9900|刷卡消費|店Ｂ', bankSummary: '刷卡消費', bankNote: '店Ｂ',
+  }];
+  await saveDb(db0);
+  // 同鍵兩筆：店Ｂ＝那筆無批次舊列的重複、店Ａ＝新；A 區 fee 各不同、D 順序反轉
+  const full = debitParsed((f) => {
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 25, lastFour: '8808', desc: '店Ｂ', region: 'TW', extra: '' },
+    ];
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9900, note: '店Ｂ' },
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9800, note: '店Ａ' },
+    ];
+    f.accounts[0].balance = 9800;
+  });
+  const r = await previewBankStatement('QUJD', '', async () => full);
+  assert.equal(r.cardLedger.count, 0, `★預覽就整群不記（實得 ${JSON.stringify(r.cardLedger)}）`);
+  assert.equal(r.cardLedger.notRecorded.unmatched, 2);
+  const a = await applyBankStatement('QUJD', '', async () => full);
+  assert.equal(a.cardLedger.imported, 0, '★套用＝預覽');
+  const db = await getDb();
+  assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 0, '★零卡片列（不錯綁任何批次）');
+  for (const t of db.transactions.filter((x) => x.source === 'bank' && x.id !== 'preBatch')) {
+    assert.notEqual(t.category, '', `★新匯的 D 不留空（${t.bankNote}）`);
+  }
+  const newBatch = (await listBankBatches()).find((b) => b.cardCount === 0);
+  assert.ok(newBatch, '新批次沒有連帶卡片列');
+  await deleteBankBatch(newBatch.batchId);
+  const db2 = await getDb();
+  assert.ok(db2.transactions.some((t) => t.id === 'preBatch'), '刪新批不掃到無批次舊列');
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '零殘缺生命週期');
+  // 單筆（非同鍵群）對上無批次舊列＝同樣不記、不留空
+  await resetDb();
+  const db3 = await getDb();
+  db3.transactions = [{
+    id: 'preBatch2', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 305, account: '批次制之前匯的', note: '刷卡消費', dir: 'out',
+    bankRef: 'bank|**********8791|2026-01-28|out|305|9695|刷卡消費|合成商店Ａ', bankSummary: '刷卡消費', bankNote: '合成商店Ａ',
+  }];
+  await saveDb(db3);
+  const single = debitParsed((f) => {
+    f.cardRows = [{ ...f.cardRows[0], fee: 15 }];
+    f.transactions = [{ ...f.transactions[0], note: '合成商店Ａ' }];
+    f.accounts[0].balance = 9695;
+  });
+  const a2 = await applyBankStatement('QUJD', '', async () => single);
+  assert.equal(a2.cardLedger.imported, 0, `★單筆也不記（實得 ${JSON.stringify(a2.cardLedger)}）`);
+  assert.equal(a2.cardLedger.notRecorded.unmatched, 1);
+  assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0);
 });
