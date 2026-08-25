@@ -679,3 +679,27 @@ test('★混批次的部分重匯：一半 D 列在舊批次、一半新匯＝�
   await deleteBankBatch(newBatch);
   assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0, '零殘留');
 });
+
+test('★fail-closed 可達路徑（Codex #509 r3#1）：庫裡有「空分類的攣生 D 列」＋預設跳過疑似重複＝D 被跳過、卡片整筆（含服務費）不記、不建卡、計入對不上', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.transactions = [{
+    id: 'twin', ledger: 'cashflow', source: 'bank', date: '2026-01-28', type: 'expense', category: '', subcategory: '',
+    amount: 305, account: '別版面匯的', note: '刷卡消費', dir: 'out',
+    bankRef: 'bank|**********8791|2026-01-28|out|305|9695|金融卡消費|別版面原文', bankSummary: '金融卡消費', bankNote: '別版面原文',
+  }];
+  await saveDb(db0);
+  const parsed = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.cardRows[0].fee = 15;
+    f.transactions = [f.transactions[0]];
+    f.accounts[0].balance = 9695;
+  });
+  const a = await applyBankStatement('QUJD', '', async () => parsed, { skipSimilar: true });
+  assert.equal(a.transactions.similarSkipped, 1, `前提：D 列被當疑似重複跳過（實得 ${JSON.stringify(a.transactions)}）`);
+  assert.equal(a.cardLedger.imported, 0, '★卡片一筆都不記');
+  assert.equal(a.cardLedger.notRecorded.unmatched, 2, `★主筆＋服務費都計入對不上（實得 ${JSON.stringify(a.cardLedger.notRecorded)}）`);
+  const db = await getDb();
+  assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 0, '★零 stmt 列（記了＝沒有 bankBatch 的孤兒）');
+  assert.equal((db.cards || []).length, 0, '★不建卡');
+});
