@@ -505,7 +505,7 @@ test('預覽：刷卡退貨的 D 區列留空時型別是 income（不是一律 
   assert.ok((db.transactions || []).filter((/** @type {any} */ t) => t.ledger === 'card').every((/** @type {any} */ t) => !Object.hasOwn(t, 'stmtDue')), '★不寫 stmtDue（批次列表才顯示「—」而不是 0）');
 });
 
-test('★國外交易服務費另立一筆（William 2026-08-23 拍板）：主筆金額照帳單、服務費記「店名 國外交易服務費」；0／空不多記；重匯全重複；刪銀行批次一起走', async () => {
+test('★國外交易服務費另立一筆（William 2026-08-23 拍板）：主筆金額照帳單、服務費記「店名 國外交易服務費」；0 不多記；重匯全重複；刪銀行批次一起走（null／負值另有專題）', async () => {
   await resetDb();
   const parsed = debitParsed((f) => {
     f.cardRows[0].fee = 15;                      // 合成商店Ａ 305＋服務費 15
@@ -538,4 +538,66 @@ test('★國外交易服務費另立一筆（William 2026-08-23 拍板）：主�
   await deleteBankBatch(batches[0].batchId);
   const db2 = await getDb();
   assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '★卡片帳本（含服務費筆）清空');
+});
+
+test('★服務費邊界各自成題（r1#1）：null／缺欄不多記；負值（退款的服務費退回）照記負筆', async () => {
+  await resetDb();
+  const pNull = debitParsed((f) => { f.cardRows[0].fee = null; delete f.cardRows[1].fee; });
+  const rNull = await previewBankStatement('QUJD', '', async () => pNull);
+  assert.equal(rNull.cardLedger.count, 2, '★null／缺欄都不多記');
+  await resetDb();
+  const pNeg = debitParsed((f) => {
+    f.cardRows[0].fee = 15;
+    // 退款列：金額負、服務費也負（退回）
+    f.cardRows[1] = { ...f.cardRows[1], amount: -1234, fee: -15 };
+    f.transactions[2] = { ...f.transactions[2], summary: '刷卡退貨', direction: 'in', amount: 1234, balance: 11929 };
+    f.accounts[0].balance = 11929;
+  });
+  const rNeg = await previewBankStatement('QUJD', '', async () => pNeg);
+  assert.equal(rNeg.cardLedger.count, 4, `★兩主筆＋兩服務費（實得 ${JSON.stringify(rNeg.cardLedger)}）`);
+  await applyBankStatement('QUJD', '', async () => pNeg);
+  const db = await getDb();
+  const ledger = db.transactions.filter((t) => t.source === 'stmt');
+  const feeRows = ledger.filter((t) => /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.deepEqual(feeRows.map((t) => t.amount).sort((a, b) => a - b), [-15, 15], '★負值服務費照記');
+  const neg = feeRows.find((t) => t.amount === -15);
+  assert.match(String(neg.note || neg.store || ''), /合成商店Ｂ/, '★退回筆帶店名');
+  assert.ok(new Set(ledger.map((t) => t.stmtRef)).size === ledger.length, 'stmtRef 各自唯一');
+});
+
+test('★部分重匯：庫裡只剩服務費那筆時，重匯補回主筆、服務費跳過（stmtRef 各自身分）；同店同日同額兩筆各帶費＝#2 序號分得開', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  await applyBankStatement('QUJD', '', async () => parsed);
+  let db = await getDb();
+  const feeRef = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || ''))).stmtRef;
+  db.transactions = db.transactions.filter((t) => t.source !== 'stmt' || /國外交易服務費/.test(String(t.note || t.store || '')));
+  await saveDb(db);
+  const r2 = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r2.cardLedger.duplicate, 1, '★只有服務費那筆算重複');
+  assert.equal(r2.cardLedger.count, 3);
+  const a2 = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a2.cardLedger.imported, 2, '★補回兩筆主筆');
+  db = await getDb();
+  assert.equal(db.transactions.filter((t) => t.source === 'stmt').length, 3);
+  assert.equal(db.transactions.filter((t) => t.stmtRef === feeRef).length, 1, '★服務費沒被重複記');
+  // 同鍵兩筆各帶費＝#2 序號
+  await resetDb();
+  const twin = debitParsed((f) => {
+    f.cardRows = [
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+      { postDate: '2026-01-28', date: '2026-01-27', amount: 100, fee: 15, lastFour: '8808', desc: '合成商店Ａ', region: 'TW', extra: '' },
+    ];
+    f.transactions = [
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9900, note: '合成商店Ａ' },
+      { acctSuffix: '8791', acctMasked: '**********8791', date: '2026-01-28', summary: '刷卡消費', direction: 'out', amount: 100, balance: 9800, note: '合成商店Ａ' },
+    ];
+    f.accounts[0].balance = 9800;
+  });
+  await applyBankStatement('QUJD', '', async () => twin);
+  const db2 = await getDb();
+  const refs = db2.transactions.filter((t) => t.source === 'stmt').map((t) => String(t.stmtRef));
+  assert.equal(refs.length, 4, `★兩主筆＋兩服務費（實得 ${JSON.stringify(refs)}）`);
+  assert.equal(new Set(refs).size, 4, '★同鍵靠 #2 序號分得開');
+  assert.equal(refs.filter((r) => r.endsWith('#2')).length, 2);
 });
