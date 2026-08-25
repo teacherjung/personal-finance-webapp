@@ -61,6 +61,9 @@ test('POST /api/parse-recipes/delete｜真 HTTP：缺 id 400、錯 id 404（零�
   await saveDb(db);
   const post = (/** @type {any} */ body) => fetch(`${base}/api/parse-recipes/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   assert.equal((await post({})).status, 400);
+  for (const bad of [7, ['rcp-a'], { id: 'rcp-a' }, true]) {
+    assert.equal((await post({ id: bad })).status, 400, `★型別嚴格（Codex #513 r2#1）：${JSON.stringify(bad)} 不可被 String() 強轉後誤刪`);
+  }
   assert.equal((await post({ id: 'rcp-x' })).status, 404);
   assert.equal((await getDb()).parseRecipes.length, 2, '錯 id／缺 id＝零改動');
   const ok = await post({ id: 'rcp-b' });

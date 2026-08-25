@@ -5,6 +5,7 @@ import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { birthStatsHtml, birthSummary } from './recipe-birth-text.js';   // 規則卡出生統計（省 AI 那條路的診斷儀表）
+import { deleteRecipeFlow } from './parse-recipes-ui.js';   // 規則卡刪除流程（行為核心在純模組、confirm 語意才測得動）
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
@@ -898,14 +899,10 @@ function openParseRecipesManager(list) {
     });
     root.querySelector('[data-close]').onclick = close;
     root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
-      const id = /** @type {HTMLElement} */ (btn).dataset.del;
+      const id = String(/** @type {HTMLElement} */ (btn).dataset.del || '');
       const r = rows.find(x => x.id === id);
-      if (!window.confirm(`確定刪掉「${r?.bank || '這張'}」的規則卡嗎？\n刪掉後下次這個版面會重新用 AI 讀（再花一次 AI 費用）；不影響已匯入的交易。`)) return;
-      try {
-        await api('/parse-recipes/delete', { method: 'POST', body: { id } });
-        toast('已刪除這張規則卡');
-        render(rows.filter(x => x.id !== id));   // 就地移除、不必重抓
-      } catch (e) { toast('刪除失敗：' + /** @type {any} */ (e).message, true); }
+      await deleteRecipeFlow({ id, bank: String(r?.bank || ''), confirm: (m) => window.confirm(m), api, toast,
+        onDeleted: (gone) => render(rows.filter(x => x.id !== gone)) });   // 就地移除、不必重抓
     });
   };
   render(list || []);

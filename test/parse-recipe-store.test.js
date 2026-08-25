@@ -551,18 +551,42 @@ test('管理｜設定頁接線與文案（去註解形狀釘——settings.js �
     .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
   assert.match(src, /manageParseRecipesBtn/, '管理鈕在規則卡卡片裡');
   assert.match(src, /api\('\/parse-recipes'\)/, '接 GET');
-  assert.match(src, /\/parse-recipes\/delete/, '接刪除');
+  assert.match(src, /deleteRecipeFlow/, '接刪除（端點路徑住在行為核心 parse-recipes-ui）');
   const fn = (src.split('function openParseRecipesManager')[1] || '').split('\nfunction ')[0];   // 只掃這一支函式（掃到下一支＝別支的 confirm 也算數＝假綠）
-  assert.match(fn, /畢業（穩定）/, '★畢業進度接上讀端（原本只寫不讀）');
+  assert.match(fn, /畢業（穩定）/, '★畢業進度在畫面上讀得到');
   assert.match(fn, /學習中 \$\{.*\}\/5/, '學習中 n/5');
   assert.match(fn, /疑似過期/, 'suspect 狀態');
-  assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚');
-  assert.match(fn, /再花一次 AI 費用/, '★刪掉的代價就地講清楚');
-  assert.match(fn, /window\.confirm\(/, '★刪除必經 confirm（Codex #513 r1#2：拿掉 confirm 的突變要紅）');
+  assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚（窗內說明）');
+  assert.match(fn, /deleteRecipeFlow\(/, '★刪除走行為核心（confirm 語意的行為卷在 parse-recipes-ui 專題）');
   assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
   assert.ok(!/\$\{r\.bank/.test(fn), '★不得有未跳脫的 r.bank 插入');
   assert.match(fn, /\$\{esc\(r\.id\)\}/, '★data-del 的 id 也經 esc');
   for (const banned of ['只存這台電腦', '永不上傳', '已限速', '保證正確', '免費']) {
     assert.ok(!fn.includes(banned), `★文案鐵則：${banned}`);
   }
+});
+
+
+test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝零 API 呼叫；確認＝恰一次、成功才更新畫面；失敗＝報錯不更新', async () => {
+  const { deleteRecipeFlow, recipeDeleteConfirmText } = await import('../public/modules/parse-recipes-ui.js');
+  assert.match(recipeDeleteConfirmText('合成銀行'), /再花一次 AI 費用/);
+  assert.match(recipeDeleteConfirmText(''), /「這張」/);
+  /** @type {any[]} */ const calls = []; /** @type {string[]} */ const gone = []; /** @type {string[]} */ const toasts = [];
+  const deps = (/** @type {boolean} */ yes, /** @type {boolean} */ fail = false) => ({
+    id: 'rcp-1', bank: '合成銀行',
+    confirm: () => yes,
+    api: async (/** @type {string} */ p, /** @type {any} */ o) => { calls.push([p, o?.method, o?.body?.id]); if (fail) throw new Error('合成失敗'); },
+    toast: (/** @type {string} */ m) => toasts.push(m),
+    onDeleted: (/** @type {string} */ id) => gone.push(id),
+  });
+  assert.equal(await deleteRecipeFlow(deps(false)), false);
+  assert.deepEqual(calls, [], '★取消＝零 API 呼叫（呼叫 confirm 卻忽略結果的壞法在這裡紅）');
+  assert.deepEqual(gone, []);
+  assert.equal(await deleteRecipeFlow(deps(true)), true);
+  assert.deepEqual(calls, [['/parse-recipes/delete', 'POST', 'rcp-1']], '★確認＝恰一次、帶對 id');
+  assert.deepEqual(gone, ['rcp-1'], '成功才更新畫面');
+  calls.length = 0; gone.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, true)), false);
+  assert.deepEqual(gone, [], '★失敗＝不更新畫面');
+  assert.ok(toasts.some((m) => /刪除失敗/.test(m)));
 });
