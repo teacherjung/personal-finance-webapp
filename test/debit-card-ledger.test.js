@@ -13,7 +13,7 @@ import { rmSync, readFileSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-debit-ledger-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
+const { previewBankStatement, applyBankStatement, listBankBatches, deleteBankBatch } = await import('../lib/services/bank-import.js');
 const { consumptionByMonth } = await import('../lib/derive.js');
 const { FIELD_SCHEMA } = await import('../lib/schema.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
@@ -503,4 +503,39 @@ test('預覽：刷卡退貨的 D 區列留空時型別是 income（不是一律 
   await applyBankStatement('QUJD', '', async () => parsed);
   const db = await getDb();
   assert.ok((db.transactions || []).filter((/** @type {any} */ t) => t.ledger === 'card').every((/** @type {any} */ t) => !Object.hasOwn(t, 'stmtDue')), '★不寫 stmtDue（批次列表才顯示「—」而不是 0）');
+});
+
+test('★國外交易服務費另立一筆（William 2026-08-23 拍板）：主筆金額照帳單、服務費記「店名 國外交易服務費」；0／空不多記；重匯全重複；刪銀行批次一起走', async () => {
+  await resetDb();
+  const parsed = debitParsed((f) => {
+    f.cardRows[0].fee = 15;                      // 合成商店Ａ 305＋服務費 15
+    f.cardRows[1].fee = 0;                       // 0＝不多記
+  });
+  const r = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r.cardLedger.count, 3, '★兩筆主筆＋一筆服務費');
+  const a = await applyBankStatement('QUJD', '', async () => parsed);
+  assert.equal(a.cardLedger.imported, 3);
+  const db = await getDb();
+  const ledger = db.transactions.filter((t) => t.source === 'stmt');
+  assert.equal(ledger.length, 3);
+  const fee = ledger.find((t) => /國外交易服務費/.test(String(t.store || t.note || '')));
+  assert.ok(fee, `★服務費那筆存在（實得 ${JSON.stringify(ledger.map((t) => [t.store || t.note, t.amount]))}）`);
+  assert.equal(fee.amount, 15);
+  assert.match(String(fee.note || fee.store || ''), /合成商店Ａ/, '★服務費筆帶店名（查帳認得出是哪筆消費的、也是 stmtRef 的去重身分）');
+  assert.equal(fee.date, '2026-01-27', '消費日與主筆同一天');
+  assert.ok(fee.bankBatch, '★生命週期跟著銀行帳單（bankBatch 蓋上＝刪批次一起走、單獨刪擋下）');
+  const main = ledger.find((t) => t.amount === 305);
+  assert.equal(main.amount, 305, '★主筆金額照帳單原樣（不含服務費）');
+  assert.equal(ledger.filter((t) => /國外交易服務費/.test(String(t.store || t.note || ''))).length, 1, '★fee 0 的那筆不多記');
+  // 消費視角：總額＝兩筆相加
+  const spend = ledger.reduce((s, t) => s + t.amount, 0);
+  assert.equal(spend, 305 + 15 + 1234);
+  // 重匯＝全重複（stmtRef 帶 desc＝服務費那筆自己有身分）
+  const r2 = await previewBankStatement('QUJD', '', async () => parsed);
+  assert.equal(r2.cardLedger.duplicate, 3, '★三筆全認出重複');
+  // 刪銀行批次＝服務費那筆一起走
+  const batches = await listBankBatches();
+  await deleteBankBatch(batches[0].batchId);
+  const db2 = await getDb();
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '★卡片帳本（含服務費筆）清空');
 });
