@@ -839,3 +839,10 @@ test('★無批次的舊 D 列（批次制之前匯的）＝生命週期沒有�
   assert.equal(a2.cardLedger.notRecorded.unmatched, 1);
   assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0);
 });
+
+test('編輯窗的「帳戶／卡片」下拉收簽帳金融卡（#503 待辦 A2）：形狀釘（transactions.js 是頁面模組、載不進 node——弱考題，守的是拼字；行為由「保留現值 unshift」既有機制兜底）', () => {
+  const src = readFileSync(new URL('../public/modules/transactions.js', import.meta.url), 'utf8');
+  assert.match(src, /\['credit', 'debit'\]\.includes\(c\.type \|\| 'credit'\)/, '★簽帳卡也在下拉（會員卡仍不收）');
+  assert.match(src, /label: '信用卡／簽帳卡'/, '欄位名不再只寫信用卡');
+  assert.ok(!/c\.type \|\| 'credit'\) === 'credit'/.test(src.split('accountOptions')[1].slice(0, 400)), '舊的二元判準已移除');
+});
