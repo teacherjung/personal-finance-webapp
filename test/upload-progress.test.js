@@ -137,8 +137,8 @@ test('序列｜**兩讀都有效但不一致**＝compare 之後才 arbitrate（�
     transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
   });
   const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: other, [AI_BANK_MODELS.escalation]: good, [AI_ARBITER_MODEL]: good }), aiExtract: linesWithStray });
-  // 兩讀有效但不一致：dual → compare（真的有兩份可比）→ arbitrate → 整理
-  assert.deepEqual(codes.slice(-4), [STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.AI_ARBITRATE, STAGES.BUILD_PREVIEW]);
+  // 兩讀有效但不一致：dual → compare（真的有兩份可比）→ arbitrate → 驗算（三路一致，A4：採納已各自過閘的那份時報）→ 整理
+  assert.deepEqual(codes.slice(-5), [STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.AI_ARBITRATE, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
 });
 
 test('序列｜兩讀都掛＝不得說「兩份都讀完了正在比對」（P101 的承重：無條件推 compare 就會說謊）', async () => {
@@ -282,10 +282,11 @@ test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保�
 
 test('G8｜唯一出口的機械保證：服務層只能經 stage sink 推，不得直接呼叫 onStage', () => {
   const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
-  const bad = src.split('\n').filter((l) => /\bonStage\s*\(/.test(l) && !/makeStageSink|@param|opts\.onStage \}/.test(l));
+  const bad = src.split('\n').filter((l) => /\bonStage\s*(\?\.)?\(/.test(l) && !/makeStageSink|@param|opts\.onStage \}/.test(l));   // 可選鏈 onStage?.() 也算直接呼叫（A4 自查：字面掃描漏了這型）
   assert.deepEqual(bad, [], `★服務層不得直接呼叫 onStage（繞過 stageFrame 白名單＝自由物件上船）：${JSON.stringify(bad)}`);
   assert.match(src, /const stage = makeStageSink\(opts\.onStage\)/, 'preview 走 sink');
   assert.match(src, /const stage = makeStageSink\(seams\.onStage\)/, 'aiBankRoute 走 sink');
+  assert.match(src, /recipeBankRoute\(b64, password, db, \{ extract: opts\.aiExtract, stage \}\)/, '配方路收的是 sink 本人（吃代碼、frame 由 sink 包）——不是裸 onStage');
 });
 
 test('G7｜model 白名單：只收 modelDisplayName 形狀，長字串／帳單內容一律丟掉', () => {
@@ -342,4 +343,24 @@ test('r1#2｜一讀掛掉走的是 ai_attest（不得用「兩份讀得不一樣
   assert.ok(!codes.includes(STAGES.AI_ARBITRATE), '★不得報成「兩份不一致」');
   assert.match(progressText({ t: 'stage', s: STAGES.AI_ATTEST }), /其中一讀沒讀出合法答案/);
   assert.doesNotMatch(progressText({ t: 'stage', s: STAGES.AI_ATTEST }), /兩份讀得不一樣/);
+});
+
+test('★三路一致（A4）：單讀、仲裁、僅存一讀、配方——每條會入帳的路都報 verify（驗算真的發生在那條路上）', async () => {
+  // 單讀階梯：第一發就過＝ai_single → verify → build_preview
+  await seedDb();
+  const db0 = await getDb();
+  /** @type {any} */ (db0.settings).aiDualRead = false;
+  await saveDb(db0);
+  const one = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
+  assert.deepEqual(one.codes.slice(-3), [STAGES.AI_SINGLE, STAGES.VERIFY, STAGES.BUILD_PREVIEW], `★單讀（實得 ${JSON.stringify(one.codes)}）`);
+  // 僅存一讀（attest）：另一讀壞＝attest → verify → build_preview
+  await seedDb();
+  const bad = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
+  const att = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: bad, [AI_BANK_MODELS.escalation]: goodAnswer(), [AI_ARBITER_MODEL]: goodAnswer() }), aiExtract: extractA });
+  assert.ok(att.codes.includes(STAGES.AI_ATTEST), `前提：走 attest（實得 ${JSON.stringify(att.codes)}）`);
+  assert.deepEqual(att.codes.slice(-3), [STAGES.AI_ATTEST, STAGES.VERIFY, STAGES.BUILD_PREVIEW], '★僅存一讀');
+  // 模板路（對照）：本來就有 verify（既有序列考題），這裡只驗雙讀一致路仍有
+  await seedDb();
+  const agree = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
+  assert.ok(agree.codes.includes(STAGES.VERIFY), '雙讀一致路照舊');
 });
