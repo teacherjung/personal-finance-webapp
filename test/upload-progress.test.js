@@ -280,7 +280,7 @@ test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保�
   assert.match(app, /throw Object\.assign\(new Error\(msg\), code \? \{ code: String\(code\) \} : \{\}\)/, '★非 200 路：code 自有屬性');
 });
 
-test('G8｜唯一出口的機械保證：服務層只能經 stage sink 推，不得直接呼叫 onStage', () => {
+test('G8｜onStage 直呼叫的**字面絆線**（誠實劃界：別名／解構／bind 掃不到——真正的保證是行為面 frame 全掃：本檔①那題（模板＋AI 路）與 parse-recipe-store 的 recipe 命中 frame 題）', () => {
   const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
   const bad = src.split('\n').filter((l) => /\bonStage\s*(\?\.)?\(/.test(l) && !/makeStageSink|@param|opts\.onStage \}/.test(l));   // 可選鏈 onStage?.() 也算直接呼叫（A4 自查：字面掃描漏了這型）
   assert.deepEqual(bad, [], `★服務層不得直接呼叫 onStage（繞過 stageFrame 白名單＝自由物件上船）：${JSON.stringify(bad)}`);
