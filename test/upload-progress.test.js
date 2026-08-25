@@ -118,11 +118,15 @@ test('誠實｜未設鑰匙＝零 AI 呼叫的路：一個 ai_* 階段都不准�
 });
 
 // ---- ③ 階段序列由資料決定 ----
-test('序列｜模板認得＝read_db→open_pdf→template_hit→verify→build_preview，且不含 ai/recipe 階段', async () => {
+test('序列｜模板認得＝read_db→open_pdf→template_hit→verify→build_preview，且不含 ai/recipe 階段；每一格 frame 形狀合法、不夾私貨（Codex #512 r2：三路都要驗到形狀，行為保證才撐得住字面絆線的弱）', async () => {
   await seedDb();
   const parsedOk = async () => ({ bank: '台新', referenceDate: '2026-07-31', accounts: [], accountCurrency: {}, transactions: [] });
-  const { codes } = await stagesOf({}, parsedOk);
+  const { codes, frames } = await stagesOf({}, parsedOk);
   assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_HIT, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
+  for (const f of frames) {
+    assert.deepEqual(Object.keys(f).sort(), f.model ? ['model', 's', 't'] : ['s', 't'], `★frame 只能有 t/s(/model)：${JSON.stringify(f)}`);
+    assert.equal(f.t, 'stage');
+  }
 });
 
 test('序列｜**兩讀都有效但不一致**＝compare 之後才 arbitrate（仲裁真的發生了才報）', async () => {
@@ -280,7 +284,7 @@ test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保�
   assert.match(app, /throw Object\.assign\(new Error\(msg\), code \? \{ code: String\(code\) \} : \{\}\)/, '★非 200 路：code 自有屬性');
 });
 
-test('G8｜onStage 直呼叫的**字面絆線**（誠實劃界：別名／解構／bind 掃不到——真正的保證是行為面 frame 全掃：本檔①那題（模板＋AI 路）與 parse-recipe-store 的 recipe 命中 frame 題）', () => {
+test('G8｜onStage 直呼叫的**字面絆線**（誠實劃界：別名／解構／bind 掃不到——真正的保證是行為面 frame **形狀**全掃：模板序列題、①AI 路題、parse-recipe-store 的 recipe 命中題，三路每一格都驗 t/s(/model)）', () => {
   const src = readFileSync(join(ROOT, 'lib/services/bank-import.js'), 'utf8');
   const bad = src.split('\n').filter((l) => /\bonStage\s*(\?\.)?\(/.test(l) && !/makeStageSink|@param|opts\.onStage \}/.test(l));   // 可選鏈 onStage?.() 也算直接呼叫（A4 自查：字面掃描漏了這型）
   assert.deepEqual(bad, [], `★服務層不得直接呼叫 onStage（繞過 stageFrame 白名單＝自由物件上船）：${JSON.stringify(bad)}`);
