@@ -5,7 +5,7 @@ import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { birthStatsHtml, birthSummary } from './recipe-birth-text.js';   // 規則卡出生統計（省 AI 那條路的診斷儀表）
-import { deleteRecipeFlow } from './parse-recipes-ui.js';   // 規則卡刪除流程（行為核心在純模組、confirm 語意才測得動）
+import { createRecipeManager } from './parse-recipes-ui.js';   // 規則卡管理核心（rows 狀態／序列化／confirm 接線都在純模組、node 才測得動）
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
@@ -898,15 +898,14 @@ function openParseRecipesManager(list) {
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
     });
     root.querySelector('[data-close]').onclick = close;
-    root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
-      const id = String(/** @type {HTMLElement} */ (btn).dataset.del || '');
-      const r = rows.find(x => x.id === id);
-      await deleteRecipeFlow({ id, bank: String(r?.bank || ''), confirm: (m) => window.confirm(m), api, toast,
-        watchModal: watchModalRoot,   // r6#1：等回應期間使用者關窗/開別窗/換頁＝不重畫（重畫會復活已關的管理窗）
-        onDeleted: (gone) => render(rows.filter(x => x.id !== gone)) });   // 就地移除、不必重抓
+    root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = () => {
+      mgr.del(String(/** @type {HTMLElement} */ (btn).dataset.del || ''));   // 序列化／confirm／重畫時機全在核心
     });
   };
-  render(list || []);
+  const mgr = createRecipeManager({ rows: list || [], win: window, api, toast,
+    watchModal: watchModalRoot,   // r6#1：等回應期間使用者關窗/開別窗/換頁＝不重畫（重畫會復活已關的管理窗）
+    onRows: render });   // 成功刪除＝拿核心的新 rows 就地重畫、不必重抓
+  render(mgr.rows());
 }
 
 function openBankLearnedManager(list) {

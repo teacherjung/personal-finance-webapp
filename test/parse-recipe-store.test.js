@@ -551,13 +551,15 @@ test('管理｜設定頁接線與文案（去註解形狀釘——settings.js �
     .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
   assert.match(src, /manageParseRecipesBtn/, '管理鈕在規則卡卡片裡');
   assert.match(src, /api\('\/parse-recipes'\)/, '接 GET');
-  assert.match(src, /deleteRecipeFlow/, '接刪除（端點路徑住在行為核心 parse-recipes-ui）');
+  assert.match(src, /createRecipeManager/, '接管理核心（端點路徑／序列化／confirm 接線都住在 parse-recipes-ui）');
   const fn = (src.split('function openParseRecipesManager')[1] || '').split('\nfunction ')[0];   // 只掃這一支函式（掃到下一支＝別支的 confirm 也算數＝假綠）
   assert.match(fn, /畢業（穩定）/, '★畢業進度在畫面上讀得到');
   assert.match(fn, /學習中 \$\{.*\}\/5/, '學習中 n/5');
   assert.match(fn, /疑似過期/, 'suspect 狀態');
   assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚（窗內說明）');
-  assert.match(fn, /deleteRecipeFlow\(/, '★刪除走行為核心（confirm 語意的行為卷在 parse-recipes-ui 專題）');
+  assert.match(fn, /createRecipeManager\(/, '★刪除走管理核心（confirm／序列化語意的行為卷在 parse-recipes-ui 專題）');
+  assert.match(fn, /win:\s*window/, '★confirm 接線只傳 window——「按取消照樣刪」的壞法（r7#2）住在純模組、由行為卷承重');
+  assert.ok(!/confirm:/.test(fn), '★settings 不得自帶 confirm 接線（自帶＝繞過核心的承重卷）');
   assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
   assert.ok(!/\$\{r\.bank/.test(fn), '★不得有未跳脫的 r.bank 插入');
   assert.match(fn, /\$\{esc\(r\.id\)\}/, '★data-del 的 id 也經 esc');
@@ -604,4 +606,60 @@ test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝
   calls.length = 0;
   assert.equal(await deleteRecipeFlow(deps(true, true, true)), false);
   assert.deepEqual(toasts, [], '★失敗路同款：失去彈窗＝連報錯 toast 都不出');
+});
+
+test('管理｜管理核心行為卷（createRecipeManager）：confirm 回傳值承重；在途序列化；rows 單一住所', async () => {
+  const { createRecipeManager } = await import('../public/modules/parse-recipes-ui.js');
+  const make = () => {
+    /** @type {any[]} */ const apiCalls = []; /** @type {string[]} */ const asked = []; /** @type {any[][]} */ const paints = [];
+    /** @type {Array<{resolve: () => void, reject: (e: any) => void}>} */ const pending = [];
+    let answer = true;
+    const mgr = createRecipeManager({
+      rows: [{ id: 'a', bank: '甲銀行' }, { id: 'b', bank: '乙銀行' }],
+      win: { confirm: (/** @type {string} */ m) => { asked.push(m); return answer; } },
+      api: (/** @type {string} */ p, /** @type {any} */ o) => { apiCalls.push([p, o?.body?.id]); return new Promise((resolve, reject) => pending.push({ resolve: () => resolve(undefined), reject })); },
+      toast: () => {},
+      watchModal: () => () => true,
+      onRows: (/** @type {any[]} */ rows) => paints.push(rows.map((r) => r.id)),
+    });
+    return { mgr, apiCalls, asked, paints, pending, setAnswer: (/** @type {boolean} */ v) => { answer = v; } };
+  };
+  // ⚠️ 每個「期望立即回來」的 await 都包一秒競速（codex-exec 教訓的同款）：合成 api 回的是
+  //   永不 settle 的 deferred，突變版（confirm 不看結果／拔序列化鎖）會真的去 await 它＝考題吊死
+  //   而不是快紅——2026-08-26 實際吊死過兩顆 node 程序才補這一層。
+  const fast = (/** @type {Promise<any>} */ pr) => Promise.race([pr, new Promise((r) => setTimeout(() => r('hung'), 1000))]);
+  // ① confirm 接線承重（r7#2）：使用者按「取消」＝零 API——核心把 win.confirm(m) 的回傳值當真，
+  //   「呼叫了 confirm、不看結果、照樣刪」的接線壞法在這裡紅（settings 只傳 window，壞不出這一味）。
+  const t1 = make();
+  t1.setAnswer(false);
+  assert.equal(await fast(t1.mgr.del('a')), false, '★按取消＝立刻回 false（hung＝壞版真的去打了 API）');
+  assert.equal(t1.asked.length, 1, 'confirm 有問');
+  assert.deepEqual(t1.apiCalls, [], '★按取消＝零 API（confirm 回傳值必須承重）');
+  // ② 在途序列化（r7#1）：第一刀 API 在途時再點第二刀＝整個不動（不問 confirm、零 API、回 false）——
+  //   不鎖的話：第一刀回應重畫（新世代）、第二刀失去擁有權跳過重畫＝後端兩張都刪了、畫面殘留一張。
+  const t2 = make();
+  const p1 = t2.mgr.del('a');
+  assert.equal(t2.mgr.busy(), true);
+  assert.equal(await fast(t2.mgr.del('b')), false, '★在途＝第二刀不動（hung＝沒鎖、真的去等第二個 API）');
+  assert.equal(t2.asked.length, 1, '★第二刀連 confirm 都不問');
+  assert.deepEqual(t2.apiCalls, [['/parse-recipes/delete', 'a']], '★第二刀零 API');
+  t2.pending[0].resolve();
+  assert.equal(await p1, true);
+  // ③ rows 單一住所：成功刪除＝核心的新 rows 重畫；解鎖後第二張刪得動、畫面收斂到空
+  assert.deepEqual(t2.paints, [['b']], '刪 a 之後畫面只剩 b');
+  assert.equal(t2.mgr.busy(), false, '完成＝解鎖');
+  const p2 = t2.mgr.del('b');
+  t2.pending[1].resolve();
+  assert.equal(await p2, true);
+  assert.deepEqual(t2.paints, [['b'], []], '解鎖後第二刀刪得動、rows 收斂到空（閉包舊 rows 的壞法在這裡紅）');
+  assert.deepEqual(t2.mgr.rows(), []);
+  // ④ 失敗也解鎖：API 炸掉之後還能再刪（busy 卡死＝管理窗從此壞掉）
+  const t3 = make();
+  const p3 = t3.mgr.del('a');
+  t3.pending[0].reject(new Error('合成失敗'));
+  assert.equal(await p3, false);
+  assert.equal(t3.mgr.busy(), false, '★失敗＝照樣解鎖');
+  // ⑤ 不存在的 id＝不問不打
+  assert.equal(await fast(t3.mgr.del('nope')), false);
+  assert.equal(t3.asked.length, 1, '不存在的 id 不問 confirm');
 });
