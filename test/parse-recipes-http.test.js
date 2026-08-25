@@ -52,13 +52,30 @@ test('GET /api/parse-recipes｜真 HTTP：鍵集合精確封閉、整個 body �
   assert.equal(list[0].graduateStreak, 2);
 });
 
-test('POST /api/parse-recipes/delete｜真 HTTP：缺 id 400、錯 id 404（零改動）、正刪只刪那張', async () => {
+test('GET /api/db｜旁路也封（Codex #513 r3#1）：整份 db 投影不含 parseRecipes——配方字面不可從別的門出去', async () => {
+  const db = await getDb();
+  db.parseRecipes = [{ id: 'rcp-db', bank: '合成銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z' }];
+  await saveDb(db);
+  const res = await fetch(`${base}/api/db`);
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.ok(!text.includes('parseRecipes'), '★整個集合剝掉（前端沒有頁面讀它）');
+  for (const literal of [SECRET_ANCHOR, SECRET_HEADER]) assert.ok(!text.includes(literal), `★配方字面不外送：${literal}`);
+});
+
+test('POST /api/parse-recipes/delete｜真 HTTP：缺 id 400、錯 id 404（零改動）、正刪只刪那張、既有交易一筆不動', async () => {
   const db = await getDb();
   db.parseRecipes = [
     { id: 'rcp-a', bank: '合成銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z' },
     { id: 'rcp-b', bank: '別家銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z' },
   ];
+  // 交易哨兵（Codex #513 r3#2）：「刪卡不影響已匯入交易」是文案與契約的保證——要有考題撐著
+  db.transactions = [
+    { id: 'tx-keep-1', ledger: 'cashflow', source: 'bank', date: '2026-06-01', type: 'income', category: '其他收入', subcategory: '', amount: 1000, account: '哨兵戶', note: '哨兵一', bankRef: 'bank2|合成銀行|900100****3301|2026-06-01|in|1000|1000|哨兵一|' },
+    { id: 'tx-keep-2', ledger: 'card', source: 'stmt', date: '2026-06-02', type: 'expense', category: '其他', subcategory: '', amount: 200, account: '哨兵卡', note: '哨兵二', stmtRef: 'card-x|2026-06-02|200|哨兵二' },
+  ];
   await saveDb(db);
+  const txSnapshot = JSON.stringify((await getDb()).transactions);
   const post = (/** @type {any} */ body) => fetch(`${base}/api/parse-recipes/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   assert.equal((await post({})).status, 400);
   for (const bad of [7, ['rcp-a'], { id: 'rcp-a' }, true]) {
@@ -69,4 +86,5 @@ test('POST /api/parse-recipes/delete｜真 HTTP：缺 id 400、錯 id 404（零�
   const ok = await post({ id: 'rcp-b' });
   assert.equal(ok.status, 200);
   assert.deepEqual((await getDb()).parseRecipes.map((/** @type {any} */ r) => r.id), ['rcp-a'], '★只刪指定那張（不是陣列頭）');
+  assert.equal(JSON.stringify((await getDb()).transactions), txSnapshot, '★兩本帳的既有交易逐位元組不動（「刪卡不影響已匯入交易」的保證要有考題撐）');
 });
