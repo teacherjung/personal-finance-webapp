@@ -139,9 +139,10 @@ test('序列｜**兩讀都有效但不一致**＝compare 之後才 arbitrate（�
     accounts: [{ masked: '900200****1234', balance: 5000, currency: 'TWD', label: '活期', note: '' }],
     transactions: [good.transactions[0], { ...good.transactions[1], amount: 100, balance: 5000 }],
   });
-  const { codes } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: other, [AI_BANK_MODELS.escalation]: good, [AI_ARBITER_MODEL]: good }), aiExtract: linesWithStray });
+  const { codes, r } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: other, [AI_BANK_MODELS.escalation]: good, [AI_ARBITER_MODEL]: good }), aiExtract: linesWithStray });
   // 兩讀有效但不一致：dual → compare（真的有兩份可比）→ arbitrate → 驗算（三路一致，A4：採納已各自過閘的那份時報）→ 整理
   assert.deepEqual(codes.slice(-5), [STAGES.AI_DUAL, STAGES.AI_COMPARE, STAGES.AI_ARBITRATE, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
+  assert.equal(/** @type {any} */ (r).reconcile?.level, 'strong', '★仲裁採納那份的 reconcile＝VERIFY 當場重跑的裁決');
 });
 
 test('序列｜兩讀都掛＝不得說「兩份都讀完了正在比對」（P101 的承重：無條件推 compare 就會說謊）', async () => {
@@ -356,14 +357,17 @@ test('★三路一致（A4）：單讀、仲裁、僅存一讀、配方——每
   await saveDb(db0);
   const one = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
   assert.deepEqual(one.codes.slice(-3), [STAGES.AI_SINGLE, STAGES.VERIFY, STAGES.BUILD_PREVIEW], `★單讀（實得 ${JSON.stringify(one.codes)}）`);
+  assert.equal(/** @type {any} */ (one.r).reconcile?.level, 'strong', '★回傳的 reconcile 是 VERIFY 那一刻真跑出來的裁決（不是 undefined 或舊值）');
   // 僅存一讀（attest）：另一讀壞＝attest → verify → build_preview
   await seedDb();
   const bad = () => Object.assign(new Error('壞答案'), { status: 400, code: 'ai_bad_answer' });
   const att = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: bad, [AI_BANK_MODELS.escalation]: goodAnswer(), [AI_ARBITER_MODEL]: goodAnswer() }), aiExtract: extractA });
   assert.ok(att.codes.includes(STAGES.AI_ATTEST), `前提：走 attest（實得 ${JSON.stringify(att.codes)}）`);
   assert.deepEqual(att.codes.slice(-3), [STAGES.AI_ATTEST, STAGES.VERIFY, STAGES.BUILD_PREVIEW], '★僅存一讀');
+  assert.equal(/** @type {any} */ (att.r).reconcile?.level, 'strong', '★attest 採納那份的 reconcile＝VERIFY 當場重跑的裁決（aiTryModel 刻意不回傳 reconcile——改用現成的＝這裡拿到 undefined）');
   // 模板路（對照）：本來就有 verify（既有序列考題），這裡只驗雙讀一致路仍有
   await seedDb();
   const agree = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
   assert.ok(agree.codes.includes(STAGES.VERIFY), '雙讀一致路照舊');
+  assert.equal(/** @type {any} */ (agree.r).reconcile?.level, 'strong', '★雙讀一致同款：reconcile＝採納時當場重跑的裁決');
 });
