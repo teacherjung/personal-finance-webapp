@@ -6,6 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 
@@ -494,4 +495,188 @@ test('★recipe 命中路的 frame 行為保證（Codex #512 r1#1：字面掃描
   const codes = frames.map((f) => f.s);
   assert.ok(codes.indexOf(STAGES.VERIFY) > -1 && codes.indexOf(STAGES.VERIFY) < codes.indexOf(STAGES.BUILD_PREVIEW), `★verify 在 build_preview 之前（實得 ${JSON.stringify(codes)}）`);
   assert.equal(codes.filter((c) => c === STAGES.VERIFY).length, 1, '★恰一次');
+});
+
+// ---- 規則卡管理面板（解析器優化 B1，2026-08-25）----
+test('管理｜listParseRecipes 只給身分與統計投影：配方內容（版面字面）一個字不外送；空庫＝空陣列', async () => {
+  const { listParseRecipes } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row({ previous: goodRecipe(), graduateStreak: 3, lastUsedAt: '2026-08-20T01:02:03.000Z', suspect: true, rebirths: 2 })] });
+  const list = await listParseRecipes();
+  assert.equal(list.length, 1);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'id', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), '★欄位封閉（多一欄＝多外送一分）');
+  assert.equal(list[0].bank, '合成銀行');
+  assert.equal(list[0].graduateStreak, 3);
+  assert.equal(list[0].suspect, true);
+  assert.equal(list[0].hasPrevious, true);
+  const blob = JSON.stringify(list);
+  for (const literal of ['存進金額', '提領金額', '結存餘額', '合成帳戶總覽', '結算基準日', 'docAnchors', 'headerIn']) {
+    assert.ok(!blob.includes(literal), `★配方內容不外送：${literal}`);
+  }
+  const db2 = await getDb(); db2.parseRecipes = []; await saveDb(db2);
+  assert.deepEqual(await listParseRecipes(), []);
+});
+
+test('管理｜deleteParseRecipe：刪指定那張（嚴格比較 id）、其餘不動；刪掉後同版面重新走 AI；錯 id＝404、缺 id＝400、零改動', async () => {
+  const { listParseRecipes, deleteParseRecipe } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row(), row({ id: 'rcp-2', bank: '別家銀行', current: { ...goodRecipe(), docAnchors: ['不會命中的錨點', '第二錨'] } })] });
+  await assert.rejects(() => deleteParseRecipe(''), (/** @type {any} */ e) => e.status === 400);
+  await assert.rejects(() => deleteParseRecipe('rcp-999'), (/** @type {any} */ e) => e.status === 404 && /找不到這張規則卡/.test(e.message));
+  assert.equal((await listParseRecipes()).length, 2, '錯 id／缺 id＝零改動');
+  await deleteParseRecipe('rcp-2');   // 刪第二張（不是陣列頭）＝「亂刪第一張」的壞法分得出來
+  assert.deepEqual((await listParseRecipes()).map((r) => r.id), ['rcp-1'], '★只刪指定那張、其餘不動');
+  await seedDb({ recipes: [row(), row({ id: 'rcp-2', bank: '別家銀行', current: { ...goodRecipe(), docAnchors: ['不會命中的錨點', '第二錨'] } })] });
+  await deleteParseRecipe('rcp-1');
+  const left = await listParseRecipes();
+  assert.deepEqual(left.map((r) => r.id), ['rcp-2'], '★刪第一張也對');
+  // 刪掉之後：同版面（rcp-1 的錨點）沒有卡可用＝recipeBankRoute 不命中（下次會走 AI；rcp-2 錨點不同、命不中這份）
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA });
+  assert.equal(r.hit, null, '★刪掉＝這個版面回到沒有規則卡的狀態');
+});
+
+test('管理｜畢業計數有讀端：套用一份成功匯入的帳單後，list 的 graduateStreak 前進、lastUsedAt 有值（計數不是只寫進 db 的黑盒）', async () => {
+  const { listParseRecipes } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row()] });
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(/** @type {any} */ (pv).engine, 'recipe', '前提：配方命中');
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA, aiTicket: /** @type {any} */ (pv).aiTicket });
+  const list = await listParseRecipes();
+  assert.equal(list[0].graduateStreak, 1, `★套用（真的匯入）＝畢業累積 +1（實得 ${JSON.stringify(list[0])}）`);
+  assert.ok(list[0].lastUsedAt, '★最後使用時間有值');
+});
+
+test('管理｜設定頁接線與文案（去註解形狀釘——settings.js 是頁面模組載不進 node；服務層行為另有專卷）', () => {
+  const src = readFileSync(new URL('../public/modules/settings.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+  assert.match(src, /manageParseRecipesBtn/, '管理鈕在規則卡卡片裡');
+  assert.match(src, /api\('\/parse-recipes'\)/, '接 GET');
+  assert.match(src, /createRecipeManager/, '接管理核心（端點路徑／序列化／confirm 接線都住在 parse-recipes-ui）');
+  const fn = (src.split('function openParseRecipesManager')[1] || '').split('\nfunction ')[0];   // 只掃這一支函式（掃到下一支＝別支的 confirm 也算數＝假綠）
+  assert.match(fn, /畢業（穩定）/, '★畢業進度在畫面上讀得到');
+  assert.match(fn, /學習中 \$\{.*\}\/5/, '學習中 n/5');
+  assert.match(fn, /疑似過期/, 'suspect 狀態');
+  assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚（窗內說明）');
+  assert.match(fn, /createRecipeManager\(/, '★刪除走管理核心（confirm／序列化語意的行為卷在 parse-recipes-ui 專題）');
+  assert.match(fn, /mgr\.bindDeleteButtons\(/, '★刪除鈕綁定也走核心（r8#1：綁定寫在 settings＝「按了沒反應」測不到）');
+  assert.match(fn, /win:\s*window/, '★confirm 接線只傳 window——「按取消照樣刪」的壞法（r7#2）住在純模組、由行為卷承重');
+  assert.ok(!/confirm:/.test(fn), '★settings 不得自帶 confirm 接線（自帶＝繞過核心的承重卷）');
+  assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
+  assert.ok(!/\$\{r\.bank/.test(fn), '★不得有未跳脫的 r.bank 插入');
+  assert.match(fn, /\$\{esc\(r\.id\)\}/, '★data-del 的 id 也經 esc');
+  assert.match(fn, /watchModal:\s*watchModalRoot/, '★接真的 watchModalRoot（接 () => () => true＝r6#1 的復活窗回來）');
+  for (const banned of ['只存這台電腦', '永不上傳', '已限速', '保證正確', '免費']) {
+    assert.ok(!fn.includes(banned), `★文案鐵則：${banned}`);
+  }
+});
+
+
+test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝零 API 呼叫；確認＝恰一次、成功才更新畫面；失敗＝報錯不更新；等回應期間失去彈窗＝零 UI 接續', async () => {
+  const { deleteRecipeFlow, recipeDeleteConfirmText } = await import('../public/modules/parse-recipes-ui.js');
+  assert.match(recipeDeleteConfirmText('合成銀行'), /再花一次 AI 費用/);
+  assert.match(recipeDeleteConfirmText(''), /「這張」/);
+  /** @type {any[]} */ const calls = []; /** @type {string[]} */ const gone = []; /** @type {string[]} */ const toasts = []; /** @type {string[]} */ const asked = [];
+  // 彈窗世代模擬（app.js watchModalRoot 的語意）：watchModal() 拍當下世代的快照，別人接管＝世代 +1。
+  // lose=true＝api 等待期間有人接管（使用者關窗/開別窗）——⚠️ 快照必須在發請求**前**拍，
+  // 改成回應後才拍的壞法在這裡看到的是新世代、會照樣重畫（r6#1 的復活窗）＝這卷紅。
+  let gen = 1;
+  const deps = (/** @type {boolean} */ yes, /** @type {boolean} */ fail = false, /** @type {boolean} */ lose = false) => ({
+    id: 'rcp-1', bank: '合成銀行',
+    confirm: (/** @type {string} */ msg) => { asked.push(msg); return yes; },
+    api: async (/** @type {string} */ p, /** @type {any} */ o) => { calls.push([p, o?.method, o?.body?.id]); if (lose) gen++; if (fail) throw new Error('合成失敗'); },
+    toast: (/** @type {string} */ m) => toasts.push(m),
+    onDeleted: (/** @type {string} */ id) => gone.push(id),
+    watchModal: () => { const g = gen; return () => g === gen; },
+  });
+  assert.equal(await deleteRecipeFlow(deps(false)), false);
+  assert.deepEqual(calls, [], '★取消＝零 API 呼叫（呼叫 confirm 卻忽略結果的壞法在這裡紅）');
+  assert.deepEqual(asked, [recipeDeleteConfirmText('合成銀行')], '★確認窗收到的就是那句完整警告（Codex #513 r5#1：流程改問「確定刪除？」＝代價與範圍從真正的窗消失）');
+  assert.deepEqual(gone, []);
+  assert.equal(await deleteRecipeFlow(deps(true)), true);
+  assert.deepEqual(calls, [['/parse-recipes/delete', 'POST', 'rcp-1']], '★確認＝恰一次、帶對 id');
+  assert.deepEqual(gone, ['rcp-1'], '成功才更新畫面');
+  calls.length = 0; gone.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, true)), false);
+  assert.deepEqual(gone, [], '★失敗＝不更新畫面');
+  assert.ok(toasts.some((m) => /刪除失敗/.test(m)));
+  calls.length = 0; gone.length = 0; toasts.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, false, true)), true, '刪除在後端已完成＝回傳照實');
+  assert.deepEqual(calls, [['/parse-recipes/delete', 'POST', 'rcp-1']], 'API 照打（失去的是畫面、不是刪除）');
+  assert.deepEqual(gone, [], '★等回應期間失去彈窗＝不重畫（重畫會復活已關的管理窗、蓋掉後開彈窗——Codex #513 r6#1）');
+  assert.deepEqual(toasts, [], '★連 toast 都不接續（零 UI continuation）');
+  calls.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, true, true)), false);
+  assert.deepEqual(toasts, [], '★失敗路同款：失去彈窗＝連報錯 toast 都不出');
+});
+
+test('管理｜管理核心行為卷（createRecipeManager）：confirm 回傳值承重；在途序列化；rows 單一住所', async () => {
+  const { createRecipeManager } = await import('../public/modules/parse-recipes-ui.js');
+  const make = () => {
+    /** @type {any[]} */ const apiCalls = []; /** @type {string[]} */ const asked = []; /** @type {any[][]} */ const paints = [];
+    /** @type {Array<{resolve: () => void, reject: (e: any) => void}>} */ const pending = [];
+    let answer = true;
+    const mgr = createRecipeManager({
+      rows: [{ id: 'a', bank: '甲銀行' }, { id: 'b', bank: '乙銀行' }],
+      win: { confirm: (/** @type {string} */ m) => { asked.push(m); return answer; } },
+      api: (/** @type {string} */ p, /** @type {any} */ o) => { apiCalls.push([p, o?.body?.id]); return new Promise((resolve, reject) => pending.push({ resolve: () => resolve(undefined), reject })); },
+      toast: () => {},
+      watchModal: () => () => true,
+      onRows: (/** @type {any[]} */ rows) => paints.push(rows.map((r) => r.id)),
+    });
+    return { mgr, apiCalls, asked, paints, pending, setAnswer: (/** @type {boolean} */ v) => { answer = v; } };
+  };
+  // ⚠️ 每個「期望立即回來」的 await 都包一秒競速（codex-exec 教訓的同款）：合成 api 回的是
+  //   永不 settle 的 deferred，突變版（confirm 不看結果／拔序列化鎖）會真的去 await 它＝考題吊死
+  //   而不是快紅——2026-08-26 實際吊死過兩顆 node 程序才補這一層。
+  const fast = (/** @type {Promise<any>} */ pr) => Promise.race([pr, new Promise((r) => setTimeout(() => r('hung'), 1000))]);
+  // ① confirm 接線承重（r7#2）：使用者按「取消」＝零 API——核心把 win.confirm(m) 的回傳值當真，
+  //   「呼叫了 confirm、不看結果、照樣刪」的接線壞法在這裡紅（settings 只傳 window，壞不出這一味）。
+  const t1 = make();
+  t1.setAnswer(false);
+  assert.equal(await fast(t1.mgr.del('a')), false, '★按取消＝立刻回 false（hung＝壞版真的去打了 API）');
+  assert.equal(t1.asked.length, 1, 'confirm 有問');
+  assert.deepEqual(t1.apiCalls, [], '★按取消＝零 API（confirm 回傳值必須承重）');
+  // ② 在途序列化（r7#1）：第一刀 API 在途時再點第二刀＝整個不動（不問 confirm、零 API、回 false）——
+  //   不鎖的話：第一刀回應重畫（新世代）、第二刀失去擁有權跳過重畫＝後端兩張都刪了、畫面殘留一張。
+  const t2 = make();
+  const p1 = t2.mgr.del('a');
+  assert.equal(t2.mgr.busy(), true);
+  assert.equal(await fast(t2.mgr.del('b')), false, '★在途＝第二刀不動（hung＝沒鎖、真的去等第二個 API）');
+  assert.equal(t2.asked.length, 1, '★第二刀連 confirm 都不問');
+  assert.deepEqual(t2.apiCalls, [['/parse-recipes/delete', 'a']], '★第二刀零 API');
+  t2.pending[0].resolve();
+  assert.equal(await p1, true);
+  // ③ rows 單一住所：成功刪除＝核心的新 rows 重畫；解鎖後第二張刪得動、畫面收斂到空
+  assert.deepEqual(t2.paints, [['b']], '刪 a 之後畫面只剩 b');
+  assert.equal(t2.mgr.busy(), false, '完成＝解鎖');
+  const p2 = t2.mgr.del('b');
+  t2.pending[1].resolve();
+  assert.equal(await p2, true);
+  assert.deepEqual(t2.paints, [['b'], []], '解鎖後第二刀刪得動、rows 收斂到空（閉包舊 rows 的壞法在這裡紅）');
+  assert.deepEqual(t2.mgr.rows(), []);
+  // ④ 失敗也解鎖：API 炸掉之後還能再刪（busy 卡死＝管理窗從此壞掉）
+  const t3 = make();
+  const p3 = t3.mgr.del('a');
+  t3.pending[0].reject(new Error('合成失敗'));
+  assert.equal(await p3, false);
+  assert.equal(t3.mgr.busy(), false, '★失敗＝照樣解鎖');
+  // ⑤ 不存在的 id＝不問不打
+  assert.equal(await fast(t3.mgr.del('nope')), false);
+  assert.equal(t3.asked.length, 1, '不存在的 id 不問 confirm');
+  // ⑥ 鈕綁定承重（r8#1）：假鈕過 bindDeleteButtons，點下去要真的走到 confirm／API——
+  //   「綁了 onclick 卻不呼叫 del」的突變（按鈕全死）在這裡紅。
+  const t4 = make();
+  /** @type {any[]} */ const btns = [{ dataset: { del: 'a' } }, { dataset: { del: 'b' } }, { dataset: {} }];
+  t4.mgr.bindDeleteButtons(btns);
+  t4.setAnswer(false);
+  assert.equal(await fast(btns[0].onclick()), false, '★點鈕真的走進 del（hung/undefined＝onclick 沒接 del）');
+  assert.equal(t4.asked.length, 1, '★點鈕有問 confirm（鈕全死的壞法在這裡紅）');
+  assert.match(t4.asked[0], /甲銀行/, '★問的是這顆鈕那張卡');
+  t4.setAnswer(true);
+  const pDel = btns[1].onclick();
+  assert.deepEqual(t4.apiCalls, [['/parse-recipes/delete', 'b']], '★id 從 data-del 讀對、打對 API');
+  t4.pending[0].resolve();
+  assert.equal(await pDel, true);
+  assert.equal(await fast(btns[2].onclick()), false, '沒 data-del 的鈕＝空 id＝不動');
+  assert.equal(t4.asked.length, 2, '空 id 不問 confirm');
 });

@@ -87,6 +87,12 @@ function seedTenant(uid, mark) {
   db.insurance = [{ id: `${mark}-insurance`, name: `${mark}保單` }];
   db.cards = [{ id: `${mark}-cards`, name: `${mark}卡`, pdfPassword: `${mark}-SECRET` }];
   db.history = [{ id: `${mark}-history`, month: '2026-07', name: `${mark}史` }];
+  db.parseRecipes = [{ id: `${mark}-parseRecipes`, bank: `${mark}銀行`,
+    current: { formatVersion: 1, bank: `${mark}銀行`, docAnchors: [`${mark}錨點`], dateFormat: 'west-slash',
+      refDate: { strategy: 'none', anchor: null }, summary: { sections: [], endAnchor: '總計', balancePick: 'first' },
+      detail: { rowIdent: 'date-first', headerOut: '支出', headerIn: '存入', headerBalance: '餘額', headerNote: null, headerIgnore: [] } },
+    graduateStreak: 0, graduated: false, suspect: false, rebirths: 0,
+    createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z' }];
   db.holdings = [{ id: `${mark}-holdings`, symbol: `${mark}SYM`.toUpperCase().replace(/[^A-Z]/g, ''), name: `${mark}持股`, shares: 1, avgCost: 1, currency: 'USD', layer: 'core' }];
   db.watchlist = [{ id: `${mark}-watchlist`, symbol: 'WATCH', note: `${mark}願望` }];
   db.research = [{ id: `${mark}-research`, symbol: `${mark}RES`.toUpperCase().replace(/[^A-Z]/g, ''), thesis: `${mark}論點` }];
@@ -133,7 +139,7 @@ test('A/B 隔離：兩人各自有全套資料，A 打每一個讀取端點都�
     '/api/securities', '/api/securities/batches',
     '/api/stock-fundamentals/CAL',
     '/api/db', '/api/summary', '/api/settings', '/api/export',
-    '/api/learned', '/api/bank-learned', '/api/statement/batches', '/api/bank-statement/batches',
+    '/api/learned', '/api/bank-learned', '/api/parse-recipes', '/api/statement/batches', '/api/bank-statement/batches',
     '/api/refund-pairs', '/api/monthly-review', '/api/categories', '/api/income-categories',
     '/api/transfer-subcategories', '/api/statement/rules', '/api/statement/health',
   ];
@@ -149,11 +155,27 @@ test('A/B 隔離：兩人各自有全套資料，A 打每一個讀取端點都�
     assert.ok(!body.includes('MARKA'), `GET ${p}（以 B 的身分）洩漏了 A 的資料！`);
   }
   // 而且要真的看得到自己的（否則「都是空的」也會通過上面的斷言）
+  assert.match(await (await as('tokA', '/api/parse-recipes')).text(), /MARKA-parseRecipes/, '自己的規則卡看得到（不是兩邊都空）');
+  assert.match(await (await as('tokB', '/api/parse-recipes')).text(), /MARKB-parseRecipes/);
   assert.match(await (await as('tokA', '/api/transactions')).text(), /MARKA-transactions/);
   assert.match(await (await as('tokB', '/api/transactions')).text(), /MARKB-transactions/);
   assert.match(await (await as('tokA', '/api/stock-fundamentals/CAL')).text(), /MARKA-stockFundamentals/);
   assert.match(await (await as('tokB', '/api/stock-fundamentals/CAL')).text(), /MARKB-stockFundamentals/);
 });
+
+test('A/B 隔離：規則卡刪除端點——A 刪 B 的卡＝404 且 B 一張不少；A 刪自己的卡＝成功（Codex #513 r4）', async () => {
+  seedTenant(A.id, 'MARKA');
+  seedTenant(B.id, 'MARKB');
+  const del = (/** @type {string} */ tok, /** @type {string} */ id) => as(tok, '/api/parse-recipes/delete', { method: 'POST', body: JSON.stringify({ id }) });
+  const r1 = await del('tokA', 'MARKB-parseRecipes');
+  assert.equal(r1.status, 404, '★A 刪 B 的 id＝在 A 的世界裡找不到（重複 Content-Type 標頭會讓 body 解析失敗＝400——del 不另帶 headers、用 as() 的預設）');
+  assert.match(await (await as('tokB', '/api/parse-recipes')).text(), /MARKB-parseRecipes/, '★B 的卡一張不少');
+  const r2 = await del('tokA', 'MARKA-parseRecipes');
+  assert.equal(r2.status, 200, 'A 刪自己的卡＝成功');
+  assert.doesNotMatch(await (await as('tokA', '/api/parse-recipes')).text(), /MARKA-parseRecipes/);
+  assert.match(await (await as('tokB', '/api/parse-recipes')).text(), /MARKB-parseRecipes/, 'B 仍完整');
+});
+
 
 test('A/B 並發更新同一代號：公開 SEC 請求只抓一輪，兩人的快取各寫回自己的 RLS namespace', async () => {
   const fixture = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/sec/calendar-year-company.json'), 'utf8'));

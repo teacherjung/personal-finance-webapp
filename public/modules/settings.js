@@ -1,10 +1,11 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose, watchModalRoot } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
 import { birthStatsHtml, birthSummary } from './recipe-birth-text.js';   // 規則卡出生統計（省 AI 那條路的診斷儀表）
+import { createRecipeManager } from './parse-recipes-ui.js';   // 規則卡管理核心（rows 狀態／序列化／confirm 接線都在純模組、node 才測得動）
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
@@ -112,6 +113,7 @@ export async function renderSettings() {
       <h3 style="margin-bottom:6px">版面規則卡（省 AI 費用的學習成果）</h3>
       <p class="muted" style="font-size:12px;margin-bottom:10px">用 AI 讀過一次帳單並套用之後，系統會試著把那個版面「學成一張規則卡」——學會了，<b>下次同版面會先用這張卡讀，讀得過就不花 AI 費用</b>（讀不過、或驗算沒過，會自動退回 AI）。學習本身會失敗：它要另外請 AI 寫出一張「怎麼讀這個版面」的規則，再用那張規則回頭把你剛確認過的那份逐欄重現一次，對不起來就不收。這裡如實列出<b>試了幾次、學會幾次、沒學成的卡在哪一關</b>。</p>
       ${birthStatsHtml(s?.recipeBirthStats, birthSummary(s?.recipeBirthStats), esc)}
+      <div style="margin-top:10px"><button class="btn-ghost" id="manageParseRecipesBtn">${icon('history', 16) || ''}管理規則卡</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
@@ -421,6 +423,10 @@ export async function renderSettings() {
   byId('manageIncomeCatsBtn').onclick = async () => {
     try { openCategoryEditor(await api('/income-categories'), CAT_CFG.income); }
     catch (err) { toast('讀取收入分類失敗：' + err.message, true); }
+  };
+  byId('manageParseRecipesBtn').onclick = async () => {
+    try { openParseRecipesManager(await api('/parse-recipes')); }
+    catch (e) { toast('讀取規則卡失敗：' + /** @type {any} */ (e).message, true); }
   };
   byId('manageBankLearnedBtn').onclick = async () => {
     try { openBankLearnedManager(await api('/bank-learned')); }
@@ -861,6 +867,45 @@ function openTransferSubEditor(list) {
 // 一列＝一條「摘要＋對方帳號 → type/分類/顯示名」的學過規則。可檢視、逐條刪除（教錯的救援）。
 // 刪除只影響「下次匯入該對象」（回自動判斷），不動已匯入的交易。
 /** @param {any[]} list */
+// 規則卡（配方）管理面板（解析器優化 B1，2026-08-25）：學會的版面「看得到、刪得掉」＋畢業進度接上讀端。
+// 只顯示身分與統計（配方內容＝版面字面，後端刻意不外送）；刪掉＝下次同版面重新走 AI（會再花一次 AI 費用、
+// 之後可能再學一張新的），**不影響**任何已匯入的交易——規則卡只在「上傳當下」被用來讀版面。
+/** @param {any[]} list */
+function openParseRecipesManager(list) {
+  const root = byId('modal-root');
+  const day = (/** @type {string} */ iso) => iso ? String(iso).slice(0, 10) : '—';
+  const statusHtml = (/** @type {any} */ r) => {
+    if (r.suspect) return '<span class="flow-tag neg">疑似過期</span>';
+    if (r.graduated) return '<span class="flow-tag pos">畢業（穩定）</span>';
+    return `<span class="flow-tag muted">學習中 ${Math.min(Number(r.graduateStreak) || 0, 5)}/5</span>`;
+  };
+  const render = (/** @type {any[]} */ rows) => {
+    const body = rows.map(r => `<tr>
+      <td>${esc(r.bank || '（沒記到銀行名）')}${r.rebirths ? `<br><span class="muted" style="font-size:11px">重學過 ${esc(String(r.rebirths))} 次</span>` : ''}</td>
+      <td>${statusHtml(r)}</td>
+      <td class="muted nowrap">${esc(day(r.createdAt))}</td>
+      <td class="muted nowrap">${r.lastUsedAt ? esc(day(r.lastUsedAt)) : '（還沒用過）'}</td>
+      <td><button class="btn-danger btn-sm" data-del="${esc(r.id)}" title="刪除這張規則卡">${icon('trash', 15)}</button></td>
+    </tr>`).join('');
+    const { close } = openModalShell({
+      title: '版面規則卡', size: 'lg',
+      bodyHtml: `
+        <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是一個學會的帳單版面。<b>畢業（穩定）</b>＝這張卡連續 5 份帳單都讀得過驗算；<b>學習中 n/5</b>＝往畢業累積中（讀壞一次會從頭數）；<b>疑似過期</b>＝最近有同版面帳單它讀不動（銀行可能改版）。刪掉＝下次這個版面重新用 AI 讀（會再花一次 AI 費用、之後可能再學一張新的卡）；<b>不影響</b>已匯入的交易。</p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>銀行</th><th>狀態</th><th>學會日</th><th>最後使用</th><th></th></tr></thead>
+          <tbody>${body || '<tr><td colspan="5" class="empty">還沒有學會任何版面。用 AI 讀過一份帳單並套用之後，系統會自動試著學。</td></tr>'}</tbody>
+        </table></div>
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+    });
+    root.querySelector('[data-close]').onclick = close;
+    mgr.bindDeleteButtons(root.querySelectorAll('[data-del]'));   // 綁定本體在核心（r8#1）：序列化／confirm／id 讀法全測得動
+  };
+  const mgr = createRecipeManager({ rows: list || [], win: window, api, toast,
+    watchModal: watchModalRoot,   // r6#1：等回應期間使用者關窗/開別窗/換頁＝不重畫（重畫會復活已關的管理窗）
+    onRows: render });   // 成功刪除＝拿核心的新 rows 就地重畫、不必重抓
+  render(mgr.rows());
+}
+
 function openBankLearnedManager(list) {
   const root = byId('modal-root');
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
