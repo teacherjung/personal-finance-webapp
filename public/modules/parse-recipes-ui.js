@@ -55,11 +55,8 @@ export async function deleteRecipeFlow({ id, bank, confirm, api, toast, onDelete
 export function createRecipeManager({ rows, win, api, toast, watchModal, onRows }) {
   let cur = (Array.isArray(rows) ? rows : []).slice();
   let busy = false;
-  return {
-    rows: () => cur.slice(),
-    busy: () => busy,
-    /** @param {string} id */
-    async del(id) {
+  /** @param {string} id */
+  const del = async (id) => {
       if (busy) return false;
       const row = cur.find((/** @type {any} */ r) => r?.id === id);
       if (!row) return false;
@@ -72,6 +69,21 @@ export function createRecipeManager({ rows, win, api, toast, watchModal, onRows 
           onDeleted: (gone) => { cur = cur.filter((/** @type {any} */ r) => r?.id !== gone); onRows(cur.slice()); },
         });
       } finally { busy = false; }
+  };
+  return {
+    rows: () => cur.slice(),
+    busy: () => busy,
+    del,
+    /**
+     * 把管理窗的刪除鈕接到 del（r8#1：這一段留在 settings＝node 測不到「按了沒反應」——
+     * 把 `mgr.del(...)` 突變成不呼叫，鈕全死、考題照綠）。onclick 回傳 del 的 Promise
+     * （DOM 不理回傳值，行為卷靠它 await）。
+     * @param {Iterable<any>} buttons
+     */
+    bindDeleteButtons(buttons) {
+      for (const btn of buttons) {
+        btn.onclick = () => del(String(btn?.dataset?.del || ''));
+      }
     },
   };
 }

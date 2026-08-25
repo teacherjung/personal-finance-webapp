@@ -898,9 +898,7 @@ function openParseRecipesManager(list) {
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
     });
     root.querySelector('[data-close]').onclick = close;
-    root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = () => {
-      mgr.del(String(/** @type {HTMLElement} */ (btn).dataset.del || ''));   // 序列化／confirm／重畫時機全在核心
-    });
+    mgr.bindDeleteButtons(root.querySelectorAll('[data-del]'));   // 綁定本體在核心（r8#1）：序列化／confirm／id 讀法全測得動
   };
   const mgr = createRecipeManager({ rows: list || [], win: window, api, toast,
     watchModal: watchModalRoot,   // r6#1：等回應期間使用者關窗/開別窗/換頁＝不重畫（重畫會復活已關的管理窗）

@@ -558,6 +558,7 @@ test('管理｜設定頁接線與文案（去註解形狀釘——settings.js �
   assert.match(fn, /疑似過期/, 'suspect 狀態');
   assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚（窗內說明）');
   assert.match(fn, /createRecipeManager\(/, '★刪除走管理核心（confirm／序列化語意的行為卷在 parse-recipes-ui 專題）');
+  assert.match(fn, /mgr\.bindDeleteButtons\(/, '★刪除鈕綁定也走核心（r8#1：綁定寫在 settings＝「按了沒反應」測不到）');
   assert.match(fn, /win:\s*window/, '★confirm 接線只傳 window——「按取消照樣刪」的壞法（r7#2）住在純模組、由行為卷承重');
   assert.ok(!/confirm:/.test(fn), '★settings 不得自帶 confirm 接線（自帶＝繞過核心的承重卷）');
   assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
@@ -662,4 +663,20 @@ test('管理｜管理核心行為卷（createRecipeManager）：confirm 回傳�
   // ⑤ 不存在的 id＝不問不打
   assert.equal(await fast(t3.mgr.del('nope')), false);
   assert.equal(t3.asked.length, 1, '不存在的 id 不問 confirm');
+  // ⑥ 鈕綁定承重（r8#1）：假鈕過 bindDeleteButtons，點下去要真的走到 confirm／API——
+  //   「綁了 onclick 卻不呼叫 del」的突變（按鈕全死）在這裡紅。
+  const t4 = make();
+  /** @type {any[]} */ const btns = [{ dataset: { del: 'a' } }, { dataset: { del: 'b' } }, { dataset: {} }];
+  t4.mgr.bindDeleteButtons(btns);
+  t4.setAnswer(false);
+  assert.equal(await fast(btns[0].onclick()), false, '★點鈕真的走進 del（hung/undefined＝onclick 沒接 del）');
+  assert.equal(t4.asked.length, 1, '★點鈕有問 confirm（鈕全死的壞法在這裡紅）');
+  assert.match(t4.asked[0], /甲銀行/, '★問的是這顆鈕那張卡');
+  t4.setAnswer(true);
+  const pDel = btns[1].onclick();
+  assert.deepEqual(t4.apiCalls, [['/parse-recipes/delete', 'b']], '★id 從 data-del 讀對、打對 API');
+  t4.pending[0].resolve();
+  assert.equal(await pDel, true);
+  assert.equal(await fast(btns[2].onclick()), false, '沒 data-del 的鈕＝空 id＝不動');
+  assert.equal(t4.asked.length, 2, '空 id 不問 confirm');
 });
