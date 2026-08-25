@@ -601,3 +601,81 @@ test('★部分重匯：庫裡只剩服務費那筆時，重匯補回主筆、�
   assert.equal(new Set(refs).size, 4, '★同鍵靠 #2 序號分得開');
   assert.equal(refs.filter((r) => r.endsWith('#2')).length, 2);
 });
+
+test('★部分重匯的批次歸屬（Codex #509 r2#1）：舊帳單已匯（沒有服務費那年代）、重匯補服務費＝服務費綁到「它 D 列所屬的舊批次」，不是沒有銀行列的新批次；刪舊批次零殘留', async () => {
+  await resetDb();
+  const old = debitParsed((f) => { f.cardRows[0].fee = 0; });
+  await applyBankStatement('QUJD', '', async () => old);
+  const before = await listBankBatches();
+  assert.equal(before.length, 1);
+  const oldBatch = before[0].batchId;
+  // 升級路徑：同一份帳單、這次讀出服務費欄
+  const upgraded = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  const a2 = await applyBankStatement('QUJD', '', async () => upgraded);
+  assert.equal(a2.transactions.imported, 0, 'D 區全重複');
+  assert.equal(a2.cardLedger.imported, 1, '只補服務費一筆');
+  const db = await getDb();
+  const fee = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee.bankBatch, oldBatch, `★綁舊批次（實得 ${fee.bankBatch}、舊批次 ${oldBatch}）`);
+  const after = await listBankBatches();
+  assert.equal(after.length, 1, '★沒有多出一個空批次');
+  assert.equal(after[0].cardCount, 3, `★卡片列三筆都算在同一批（實得 ${JSON.stringify(after)}）`);
+  await deleteBankBatch(oldBatch);
+  const db2 = await getDb();
+  assert.equal(db2.transactions.filter((t) => t.source === 'stmt').length, 0, '★刪舊批次＝服務費一起走、零殘留');
+  assert.equal(db2.transactions.filter((t) => t.source === 'bank').length, 0);
+});
+
+test('★服務費繼承主筆學過的最終分類（Codex #509 r2#2）：學過「合成商店Ａ→娛樂/遊戲」＝主筆與服務費都歸娛樂；consumptionByMonth 直接驗、其他不落 15', async () => {
+  await resetDb();
+  const db0 = await getDb();
+  db0.learnedCategories = { '合成商店Ａ': { category: '娛樂', subcategory: '遊戲' } };   // 娛樂/遊戲＝內建分類樹既有
+  await saveDb(db0);
+  const parsed = debitParsed((f) => { f.cardRows[0].fee = 15; });
+  await applyBankStatement('QUJD', '', async () => parsed);   // 建卡路徑＝匯入端會用真卡 id 重算列＋重做繼承（兩個繼承點都吃到）
+  const db = await getDb();
+  const fee = db.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee.category, '娛樂');
+  assert.equal(fee.subcategory, '遊戲');
+  const cons = consumptionByMonth(db).byMonth['2026-01'] || {};
+  assert.equal(Number(cons['娛樂']?.total || 0), 305 + 15, `★消費分析正式路徑：娛樂＝320（實得 ${JSON.stringify(cons)}）`);
+  assert.equal(Number(cons['其他']?.total || 0), 1234, '★其他只有合成商店Ｂ那筆＝服務費 15 沒有落進來');
+  // exists 路徑（卡已存在＝不重算列、直接用 plan 的列）：刪批次留卡、重匯＝繼承同樣成立
+  const batches = await listBankBatches();
+  await deleteBankBatch(batches[0].batchId);
+  const dbMid = await getDb();
+  assert.equal(dbMid.cards.length, 1, '前提：卡留著');
+  await applyBankStatement('QUJD', '', async () => parsed);
+  const db2 = await getDb();
+  const fee2 = db2.transactions.find((t) => t.source === 'stmt' && /國外交易服務費/.test(String(t.note || t.store || '')));
+  assert.equal(fee2.category, '娛樂', '★exists 路徑也繼承');
+  assert.equal(fee2.subcategory, '遊戲');
+});
+
+test('★混批次的部分重匯：一半 D 列在舊批次、一半新匯＝各卡片列綁各自 D 列的批次（重複列不佔序）', async () => {
+  await resetDb();
+  const short = debitParsed((f) => {
+    f.cardRows = [f.cardRows[0]];
+    f.transactions = [f.transactions[0]];
+    f.accounts[0].balance = 9695;
+  });
+  await applyBankStatement('QUJD', '', async () => short);
+  const oldBatch = (await listBankBatches())[0].batchId;
+  const full = debitParsed();
+  const a2 = await applyBankStatement('QUJD', '', async () => full);
+  assert.equal(a2.transactions.imported, 2, 'D1 重複、D2/D3 新匯');
+  assert.equal(a2.cardLedger.imported, 1, '卡片只補 1234 那筆');
+  const db = await getDb();
+  const batches = await listBankBatches();
+  assert.equal(batches.length, 2);
+  const newBatch = batches.map((b) => b.batchId).find((id) => id !== oldBatch);
+  const main1 = db.transactions.find((t) => t.source === 'stmt' && t.amount === 305);
+  const main2 = db.transactions.find((t) => t.source === 'stmt' && t.amount === 1234);
+  assert.equal(main1.bankBatch, oldBatch, '★305 綁舊批次（它的 D 列在舊批）');
+  assert.equal(main2.bankBatch, newBatch, `★1234 綁新批次（重複列不佔 written 序；實得 ${main2.bankBatch}、新批 ${newBatch}）`);
+  await deleteBankBatch(oldBatch);
+  const db2 = await getDb();
+  assert.ok(db2.transactions.some((t) => t.stmtRef === main2.stmtRef), '刪舊批次不掃到新批的卡片列');
+  await deleteBankBatch(newBatch);
+  assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0, '零殘留');
+});
