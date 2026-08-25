@@ -839,3 +839,54 @@ test('★無批次的舊 D 列（批次制之前匯的）＝生命週期沒有�
   assert.equal(a2.cardLedger.notRecorded.unmatched, 1);
   assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0);
 });
+
+test('編輯窗的「帳戶／卡片」下拉收簽帳金融卡（#503 待辦 A2）：去註解形狀釘（transactions.js 是頁面模組、載不進 node——弱考題，守的是拼字；行為由「保留現值 unshift」既有機制兜底）', () => {
+  // 去註解再掃（鐵則 9：把判準字串放進註解就能矇混的考題＝假保證）
+  const src = readFileSync(new URL('../public/modules/transactions.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+  const fn = src.split('function accountOptions')[1]?.slice(0, 400) || '';
+  assert.match(fn, /\['credit', 'debit'\]\.includes\(c\.type \|\| 'credit'\)/, '★下拉的卡片集合＝信用卡＋簽帳卡（會員卡不是消費的家）');
+  assert.match(src, /label: '信用卡／簽帳卡'/, '欄位名要涵蓋兩種卡');
+  assert.ok(!/\(c\.type \|\| 'credit'\) === 'credit'/.test(fn), '★accountOptions 的判準不可是「只收 credit」（那會把簽帳卡的列變成清單外孤兒）');
+});
+
+test('★指定卡入口只收信用卡（Codex #510 r1）：對簽帳卡直打 previewForCard／importRows／reassignBatch 目標＝400 白話、零寫入；銀行線不受影響', async () => {
+  await resetDb();
+  const parsed = debitParsed();
+  await applyBankStatement('QUJD', '', async () => parsed);   // 建出簽帳卡＋卡片列（走 in-db 工作函式＝不經這道門）
+  const db0 = await getDb();
+  const debit = db0.cards.find((c) => c.type === 'debit');
+  assert.ok(debit, '前提：簽帳卡在');
+  
+  const { importRows, previewForCard, reassignBatch } = await import('../lib/services/statement-import.js');
+  const db0b = await getDb();
+  db0b.cards.push({ id: 'mem1', type: 'membership', name: '合成會員卡', lastFour: '9999', network: '—' });
+  await saveDb(db0b);
+  const before = db0b.transactions.length;
+  for (const badId of [String(debit.id), 'mem1']) {   // 非 credit 都要擋（只擋 debit＝會員卡照樣繞，Codex #510 r2#2）
+    for (const call of [
+      () => importRows(badId, [{ date: '2026-01-27', desc: '繞道', amount: 99, stmtRef: `${badId}|2026-01-27|99|繞道` }], '2026-01', null),
+      () => previewForCard(badId, 'QUJD', ''),
+    ]) {
+      await assert.rejects(call, (/** @type {any} */ e) => {
+        assert.equal(e.status, 400);
+        assert.match(e.message, /只匯信用卡帳單/, `★白話（實得 ${e.message}）`);
+        assert.match(e.message, /銀行對帳單/, '★指路下一步');
+        return true;
+      });
+    }
+  }
+  const db1 = await getDb();
+  assert.equal(db1.transactions.length, before, '★零寫入');
+  assert.ok(!db1.transactions.some((t) => t.note === '繞道' || String(t.stmtRef || '').includes('繞道')), '★繞道那筆不存在');
+  // 改卡片目標＝簽帳卡：也擋（來源批次用一個非連帶的假信用卡批次）
+  db1.cards.push({ id: 'cc1', type: 'credit', name: '合成信用卡', lastFour: '1111', network: '—' });
+  db1.transactions.push({ id: 'ccx', ledger: 'card', source: 'stmt', date: '2026-01-05', type: 'expense', category: '其他', subcategory: '', amount: 50, account: '合成信用卡', note: '合成店', storeKey: '合成店', stmtRef: 'cc1|2026-01-05|50|合成店', importBatch: 'cc-batch', importedAt: '2026-02-01T00:00:00.000Z' });
+  await saveDb(db1);
+  for (const badId of [String(debit.id), 'mem1']) {
+    await assert.rejects(() => reassignBatch('cc-batch', badId), (/** @type {any} */ e) => e.status === 400 && /只匯信用卡帳單/.test(e.message));
+  }
+  const db2 = await getDb();
+  assert.equal(db2.transactions.find((t) => t.id === 'ccx').account, '合成信用卡', '★批次沒被搬走');
+});

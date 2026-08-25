@@ -304,14 +304,16 @@ function openStoreProfile(t, all) {
   `, { size: 'md' });
 }
 
-// 「帳戶 / 信用卡」下拉選項＝現有帳戶＋信用卡的名稱（account 存的就是名稱字串，與帳單匯入同口徑）。
+// 「帳戶 / 卡片」下拉選項＝現有帳戶＋信用卡＋簽帳金融卡的名稱（account 存的就是名稱字串，與帳單匯入同口徑）。
+// 簽帳金融卡在列的理由：金融卡帳單匯入的卡片列 account＝簽帳卡名，不在清單裡就只能靠「保留現值」unshift
+// 撐著＝看起來像清單外孤兒；會員卡不收（不是消費的家、沒有消費列會掛在它名下）。
 // ⚠️ 保留現有值：若這筆的 account 不在清單裡（卡片改名/刪除、或舊資料），要補進選項——
 // 否則 select 找不到相符項會自動跳到第一項，一存檔就把使用者的資料默默改掉。
 /** @param {any[]} accounts @param {any[]} cards @param {string=} current */
 function accountOptions(accounts, cards, current) {
   const names = [
     ...(accounts || []).map(a => a.name),
-    ...(cards || []).filter(c => (c.type || 'credit') === 'credit').map(c => c.name)
+    ...(cards || []).filter(c => ['credit', 'debit'].includes(c.type || 'credit')).map(c => c.name)
   ].filter(Boolean);
   const uniq = [...new Set(names)];
   if (current && !uniq.includes(current)) uniq.unshift(current);
@@ -335,7 +337,7 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
       { key: 'category', label: '分類', type: 'select', options: allCategories(), default: expTree['飲食'] ? '飲食' : (expenseParents()[0] || '其他') },
       { key: 'subcategory', label: '子類（可留白）', type: 'select', options: [] },   // 由 onMount 依分類連動
       { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
-      { key: 'account', label: '信用卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
+      { key: 'account', label: '信用卡／簽帳卡', type: 'select', options: accountOptions(accounts, cards, tx?.account) },
       // 標籤與列表表頭一致（使用者定）；「店名／品項」＝這欄也常拿來記買了什麼（LG 18升除濕機（momo）），
       // 不是只有店名（使用者定 2026-07-19）
       { key: 'note', label: '消費說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' },
