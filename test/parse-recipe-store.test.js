@@ -486,9 +486,9 @@ test('★recipe 命中路的 frame 行為保證（Codex #512 r1#1：字面掃描
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA, onStage: (f) => frames.push(f) });
   assert.equal(/** @type {any} */ (pv).engine, 'recipe', '前提：配方命中');
   assert.ok(frames.length > 0, '要有進度');
+  const { stageFrame } = await import('../lib/progress-stages.js');
   for (const f of frames) {
-    assert.deepEqual(Object.keys(f).sort(), f.model ? ['model', 's', 't'] : ['s', 't'], `★frame 只能有 t/s(/model)：${JSON.stringify(f)}`);
-    assert.equal(f.t, 'stage');
+    assert.deepEqual(f, stageFrame(f.s, { model: f.model }), `★逐格對 stageFrame 標準輸出（多餘欄位／不合白名單的 model 都現形）：${JSON.stringify(f)}`);
     assert.doesNotMatch(JSON.stringify(f), /900100|3301|730|97,?400|合成銀行月結單/, '★不回聲帳單內容');
   }
   const codes = frames.map((f) => f.s);

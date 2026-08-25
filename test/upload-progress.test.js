@@ -81,7 +81,7 @@ test('機密｜frame 只有代碼與（唯一例外）模型顯示名——帳�
   const { frames } = await stagesOf({ useAi: true, aiEngineFactory: engineOf({ [AI_BANK_MODELS.primary]: goodAnswer(), [AI_BANK_MODELS.escalation]: goodAnswer() }), aiExtract: extractA });
   assert.ok(frames.length > 0, '要有進度');
   for (const f of frames) {
-    assert.deepEqual(Object.keys(f).sort(), f.model ? ['model', 's', 't'] : ['s', 't'], `★frame 只能有 t/s(/model)：${JSON.stringify(f)}`);
+    assert.deepEqual(f, stageFrame(f.s, { model: f.model }), `★逐格對 stageFrame 標準輸出（多餘欄位／不合白名單的 model 都現形）：${JSON.stringify(f)}`);
     const blob = JSON.stringify(f);
     assert.doesNotMatch(blob, /900200|1234|5,?500|4,?900|超商|薪資|sk-ant/, '★絕不回聲帳單內容或鑰匙');
   }
@@ -124,8 +124,7 @@ test('序列｜模板認得＝read_db→open_pdf→template_hit→verify→build
   const { codes, frames } = await stagesOf({}, parsedOk);
   assert.deepEqual(codes, [STAGES.READ_DB, STAGES.OPEN_PDF, STAGES.TEMPLATE_HIT, STAGES.VERIFY, STAGES.BUILD_PREVIEW]);
   for (const f of frames) {
-    assert.deepEqual(Object.keys(f).sort(), f.model ? ['model', 's', 't'] : ['s', 't'], `★frame 只能有 t/s(/model)：${JSON.stringify(f)}`);
-    assert.equal(f.t, 'stage');
+    assert.deepEqual(f, stageFrame(f.s, { model: f.model }), `★逐格對 stageFrame 標準輸出（多餘欄位／不合白名單的 model 都現形）：${JSON.stringify(f)}`);
   }
 });
 
