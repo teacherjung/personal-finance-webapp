@@ -6,6 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 
@@ -494,4 +495,70 @@ test('★recipe 命中路的 frame 行為保證（Codex #512 r1#1：字面掃描
   const codes = frames.map((f) => f.s);
   assert.ok(codes.indexOf(STAGES.VERIFY) > -1 && codes.indexOf(STAGES.VERIFY) < codes.indexOf(STAGES.BUILD_PREVIEW), `★verify 在 build_preview 之前（實得 ${JSON.stringify(codes)}）`);
   assert.equal(codes.filter((c) => c === STAGES.VERIFY).length, 1, '★恰一次');
+});
+
+// ---- 規則卡管理面板（解析器優化 B1，2026-08-25）----
+test('管理｜listParseRecipes 只給身分與統計投影：配方內容（版面字面）一個字不外送；空庫＝空陣列', async () => {
+  const { listParseRecipes } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row({ previous: goodRecipe(), graduateStreak: 3, lastUsedAt: '2026-08-20T01:02:03.000Z', suspect: true, rebirths: 2 })] });
+  const list = await listParseRecipes();
+  assert.equal(list.length, 1);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'id', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), '★欄位封閉（多一欄＝多外送一分）');
+  assert.equal(list[0].bank, '合成銀行');
+  assert.equal(list[0].graduateStreak, 3);
+  assert.equal(list[0].suspect, true);
+  assert.equal(list[0].hasPrevious, true);
+  const blob = JSON.stringify(list);
+  for (const literal of ['存進金額', '提領金額', '結存餘額', '合成帳戶總覽', '結算基準日', 'docAnchors', 'headerIn']) {
+    assert.ok(!blob.includes(literal), `★配方內容不外送：${literal}`);
+  }
+  const db2 = await getDb(); db2.parseRecipes = []; await saveDb(db2);
+  assert.deepEqual(await listParseRecipes(), []);
+});
+
+test('管理｜deleteParseRecipe：刪指定那張（嚴格比較 id）、其餘不動；刪掉後同版面重新走 AI；錯 id＝404、缺 id＝400、零改動', async () => {
+  const { listParseRecipes, deleteParseRecipe } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row(), row({ id: 'rcp-2', bank: '別家銀行', current: { ...goodRecipe(), docAnchors: ['不會命中的錨點', '第二錨'] } })] });
+  await assert.rejects(() => deleteParseRecipe(''), (/** @type {any} */ e) => e.status === 400);
+  await assert.rejects(() => deleteParseRecipe('rcp-999'), (/** @type {any} */ e) => e.status === 404 && /找不到這張規則卡/.test(e.message));
+  assert.equal((await listParseRecipes()).length, 2, '錯 id／缺 id＝零改動');
+  await deleteParseRecipe('rcp-2');   // 刪第二張（不是陣列頭）＝「亂刪第一張」的壞法分得出來
+  assert.deepEqual((await listParseRecipes()).map((r) => r.id), ['rcp-1'], '★只刪指定那張、其餘不動');
+  await seedDb({ recipes: [row(), row({ id: 'rcp-2', bank: '別家銀行', current: { ...goodRecipe(), docAnchors: ['不會命中的錨點', '第二錨'] } })] });
+  await deleteParseRecipe('rcp-1');
+  const left = await listParseRecipes();
+  assert.deepEqual(left.map((r) => r.id), ['rcp-2'], '★刪第一張也對');
+  // 刪掉之後：同版面（rcp-1 的錨點）沒有卡可用＝recipeBankRoute 不命中（下次會走 AI；rcp-2 錨點不同、命不中這份）
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: extractA });
+  assert.equal(r.hit, null, '★刪掉＝這個版面回到沒有規則卡的狀態');
+});
+
+test('管理｜畢業計數接上讀端（原本只寫不讀）：套用一份成功匯入的帳單後，list 的 graduateStreak 前進、lastUsedAt 有值', async () => {
+  const { listParseRecipes } = await import('../lib/services/bank-import.js');
+  await seedDb({ recipes: [row()] });
+  const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
+  assert.equal(/** @type {any} */ (pv).engine, 'recipe', '前提：配方命中');
+  await applyBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA, aiTicket: /** @type {any} */ (pv).aiTicket });
+  const list = await listParseRecipes();
+  assert.equal(list[0].graduateStreak, 1, `★套用（真的匯入）＝畢業累積 +1（實得 ${JSON.stringify(list[0])}）`);
+  assert.ok(list[0].lastUsedAt, '★最後使用時間有值');
+});
+
+test('管理｜設定頁接線與文案（去註解形狀釘——settings.js 是頁面模組載不進 node；行為卷在上面三題）', () => {
+  const src = readFileSync(new URL('../public/modules/settings.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+  assert.match(src, /manageParseRecipesBtn/, '管理鈕在規則卡卡片裡');
+  assert.match(src, /api\('\/parse-recipes'\)/, '接 GET');
+  assert.match(src, /\/parse-recipes\/delete/, '接刪除');
+  const fn = src.split('function openParseRecipesManager')[1] || '';
+  assert.match(fn, /畢業（穩定）/, '★畢業進度接上讀端（原本只寫不讀）');
+  assert.match(fn, /學習中 \$\{.*\}\/5/, '學習中 n/5');
+  assert.match(fn, /疑似過期/, 'suspect 狀態');
+  assert.match(fn, /不影響.*已匯入的交易|不影響<\/b>已匯入的交易/, '★刪除語意就地講清楚');
+  assert.match(fn, /再花一次 AI 費用/, '★刪掉的代價就地講清楚');
+  for (const banned of ['只存這台電腦', '永不上傳', '已限速', '保證正確', '免費']) {
+    assert.ok(!fn.includes(banned), `★文案鐵則：${banned}`);
+  }
 });

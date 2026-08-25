@@ -753,6 +753,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['/api/bank-statement/batch/delete', '銀行整批刪除；純資料操作'],
     ['/api/bank-learned', '銀行學習表清單（唯讀）；純資料操作'],
     ['/api/bank-learned/delete', '刪除銀行學習規則；純資料操作'],
+    ['/api/parse-recipes', '規則卡清單（唯讀、只有身分與統計投影）；純資料操作'],
+    ['/api/parse-recipes/delete', '刪除規則卡；純資料操作'],
     ['/api/bank-tx/apply-learned', '同類一起改（套學過規則）；純資料操作'],
   ]);
   const routeFiles = scanTargets.filter((rel) => rel.startsWith('lib/routes/') || rel === 'server.js');
