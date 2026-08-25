@@ -1,6 +1,6 @@
 // @ts-check
 // 設定頁（頁面本體）：店名規則編輯器已歸戶 settings-store-rules.js（系統優化階段二④）。
-import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose } from '../app.js';
+import { api, view, byId, esc, money, toast, openForm, openInfo, stmtOrig, currentRouteSeq, currentNavSeq, bindBackdropClose, watchModalRoot } from '../app.js';
 import { openModalShell } from './modal-shell.js';   // 彈窗外殼歸戶（U3 擴大）；規則預覽窗除外（見 settings-store-rules.js 的 openRulePreview 註記）
 import { icon } from './icons.js';
 import { netWorthTargetFromWan, netWorthTargetPreview, netWorthTargetWanInput } from './goal-tracking.js';
@@ -902,6 +902,7 @@ function openParseRecipesManager(list) {
       const id = String(/** @type {HTMLElement} */ (btn).dataset.del || '');
       const r = rows.find(x => x.id === id);
       await deleteRecipeFlow({ id, bank: String(r?.bank || ''), confirm: (m) => window.confirm(m), api, toast,
+        watchModal: watchModalRoot,   // r6#1：等回應期間使用者關窗/開別窗/換頁＝不重畫（重畫會復活已關的管理窗）
         onDeleted: (gone) => render(rows.filter(x => x.id !== gone)) });   // 就地移除、不必重抓
     });
   };

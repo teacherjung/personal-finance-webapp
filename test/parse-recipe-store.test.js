@@ -561,23 +561,29 @@ test('管理｜設定頁接線與文案（去註解形狀釘——settings.js �
   assert.match(fn, /\$\{esc\(r\.bank/, '★銀行名經 esc 才插入（XSS 鐵則）');
   assert.ok(!/\$\{r\.bank/.test(fn), '★不得有未跳脫的 r.bank 插入');
   assert.match(fn, /\$\{esc\(r\.id\)\}/, '★data-del 的 id 也經 esc');
+  assert.match(fn, /watchModal:\s*watchModalRoot/, '★接真的 watchModalRoot（接 () => () => true＝r6#1 的復活窗回來）');
   for (const banned of ['只存這台電腦', '永不上傳', '已限速', '保證正確', '免費']) {
     assert.ok(!fn.includes(banned), `★文案鐵則：${banned}`);
   }
 });
 
 
-test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝零 API 呼叫；確認＝恰一次、成功才更新畫面；失敗＝報錯不更新', async () => {
+test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝零 API 呼叫；確認＝恰一次、成功才更新畫面；失敗＝報錯不更新；等回應期間失去彈窗＝零 UI 接續', async () => {
   const { deleteRecipeFlow, recipeDeleteConfirmText } = await import('../public/modules/parse-recipes-ui.js');
   assert.match(recipeDeleteConfirmText('合成銀行'), /再花一次 AI 費用/);
   assert.match(recipeDeleteConfirmText(''), /「這張」/);
   /** @type {any[]} */ const calls = []; /** @type {string[]} */ const gone = []; /** @type {string[]} */ const toasts = []; /** @type {string[]} */ const asked = [];
-  const deps = (/** @type {boolean} */ yes, /** @type {boolean} */ fail = false) => ({
+  // 彈窗世代模擬（app.js watchModalRoot 的語意）：watchModal() 拍當下世代的快照，別人接管＝世代 +1。
+  // lose=true＝api 等待期間有人接管（使用者關窗/開別窗）——⚠️ 快照必須在發請求**前**拍，
+  // 改成回應後才拍的壞法在這裡看到的是新世代、會照樣重畫（r6#1 的復活窗）＝這卷紅。
+  let gen = 1;
+  const deps = (/** @type {boolean} */ yes, /** @type {boolean} */ fail = false, /** @type {boolean} */ lose = false) => ({
     id: 'rcp-1', bank: '合成銀行',
     confirm: (/** @type {string} */ msg) => { asked.push(msg); return yes; },
-    api: async (/** @type {string} */ p, /** @type {any} */ o) => { calls.push([p, o?.method, o?.body?.id]); if (fail) throw new Error('合成失敗'); },
+    api: async (/** @type {string} */ p, /** @type {any} */ o) => { calls.push([p, o?.method, o?.body?.id]); if (lose) gen++; if (fail) throw new Error('合成失敗'); },
     toast: (/** @type {string} */ m) => toasts.push(m),
     onDeleted: (/** @type {string} */ id) => gone.push(id),
+    watchModal: () => { const g = gen; return () => g === gen; },
   });
   assert.equal(await deleteRecipeFlow(deps(false)), false);
   assert.deepEqual(calls, [], '★取消＝零 API 呼叫（呼叫 confirm 卻忽略結果的壞法在這裡紅）');
@@ -590,4 +596,12 @@ test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝
   assert.equal(await deleteRecipeFlow(deps(true, true)), false);
   assert.deepEqual(gone, [], '★失敗＝不更新畫面');
   assert.ok(toasts.some((m) => /刪除失敗/.test(m)));
+  calls.length = 0; gone.length = 0; toasts.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, false, true)), true, '刪除在後端已完成＝回傳照實');
+  assert.deepEqual(calls, [['/parse-recipes/delete', 'POST', 'rcp-1']], 'API 照打（失去的是畫面、不是刪除）');
+  assert.deepEqual(gone, [], '★等回應期間失去彈窗＝不重畫（重畫會復活已關的管理窗、蓋掉後開彈窗——Codex #513 r6#1）');
+  assert.deepEqual(toasts, [], '★連 toast 都不接續（零 UI continuation）');
+  calls.length = 0;
+  assert.equal(await deleteRecipeFlow(deps(true, true, true)), false);
+  assert.deepEqual(toasts, [], '★失敗路同款：失去彈窗＝連報錯 toast 都不出');
 });
