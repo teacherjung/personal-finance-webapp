@@ -846,3 +846,34 @@ test('編輯窗的「帳戶／卡片」下拉收簽帳金融卡（#503 待辦 A2
   assert.match(src, /label: '信用卡／簽帳卡'/, '欄位名不再只寫信用卡');
   assert.ok(!/c\.type \|\| 'credit'\) === 'credit'/.test(src.split('accountOptions')[1].slice(0, 400)), '舊的二元判準已移除');
 });
+
+test('★指定卡入口只收信用卡（Codex #510 r1）：對簽帳卡直打 previewForCard／importRows／reassignBatch 目標＝400 白話、零寫入；銀行線不受影響', async () => {
+  await resetDb();
+  const parsed = debitParsed();
+  await applyBankStatement('QUJD', '', async () => parsed);   // 建出簽帳卡＋卡片列（走 in-db 工作函式＝不經這道門）
+  const db0 = await getDb();
+  const debit = db0.cards.find((c) => c.type === 'debit');
+  assert.ok(debit, '前提：簽帳卡在');
+  const before = db0.transactions.length;
+  const { importRows, previewForCard, reassignBatch } = await import('../lib/services/statement-import.js');
+  for (const call of [
+    () => importRows(String(debit.id), [{ date: '2026-01-27', desc: '繞道', amount: 99, stmtRef: `${debit.id}|2026-01-27|99|繞道` }], '2026-01', null),
+    () => previewForCard(String(debit.id), 'QUJD', ''),
+  ]) {
+    await assert.rejects(call, (/** @type {any} */ e) => {
+      assert.equal(e.status, 400);
+      assert.match(e.message, /只匯信用卡帳單/, `★白話（實得 ${e.message}）`);
+      assert.match(e.message, /銀行對帳單/, '★指路下一步');
+      return true;
+    });
+  }
+  const db1 = await getDb();
+  assert.equal(db1.transactions.length, before, '★零寫入');
+  // 改卡片目標＝簽帳卡：也擋（來源批次用一個非連帶的假信用卡批次）
+  db1.cards.push({ id: 'cc1', type: 'credit', name: '合成信用卡', lastFour: '1111', network: '—' });
+  db1.transactions.push({ id: 'ccx', ledger: 'card', source: 'stmt', date: '2026-01-05', type: 'expense', category: '其他', subcategory: '', amount: 50, account: '合成信用卡', note: '合成店', storeKey: '合成店', stmtRef: 'cc1|2026-01-05|50|合成店', importBatch: 'cc-batch', importedAt: '2026-02-01T00:00:00.000Z' });
+  await saveDb(db1);
+  await assert.rejects(() => reassignBatch('cc-batch', String(debit.id)), (/** @type {any} */ e) => e.status === 400 && /只匯信用卡帳單/.test(e.message));
+  const db2 = await getDb();
+  assert.equal(db2.transactions.find((t) => t.id === 'ccx').account, '合成信用卡', '★批次沒被搬走');
+});
