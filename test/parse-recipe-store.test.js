@@ -571,16 +571,17 @@ test('管理｜刪除流程行為卷（parse-recipes-ui 純模組）：取消＝
   const { deleteRecipeFlow, recipeDeleteConfirmText } = await import('../public/modules/parse-recipes-ui.js');
   assert.match(recipeDeleteConfirmText('合成銀行'), /再花一次 AI 費用/);
   assert.match(recipeDeleteConfirmText(''), /「這張」/);
-  /** @type {any[]} */ const calls = []; /** @type {string[]} */ const gone = []; /** @type {string[]} */ const toasts = [];
+  /** @type {any[]} */ const calls = []; /** @type {string[]} */ const gone = []; /** @type {string[]} */ const toasts = []; /** @type {string[]} */ const asked = [];
   const deps = (/** @type {boolean} */ yes, /** @type {boolean} */ fail = false) => ({
     id: 'rcp-1', bank: '合成銀行',
-    confirm: () => yes,
+    confirm: (/** @type {string} */ msg) => { asked.push(msg); return yes; },
     api: async (/** @type {string} */ p, /** @type {any} */ o) => { calls.push([p, o?.method, o?.body?.id]); if (fail) throw new Error('合成失敗'); },
     toast: (/** @type {string} */ m) => toasts.push(m),
     onDeleted: (/** @type {string} */ id) => gone.push(id),
   });
   assert.equal(await deleteRecipeFlow(deps(false)), false);
   assert.deepEqual(calls, [], '★取消＝零 API 呼叫（呼叫 confirm 卻忽略結果的壞法在這裡紅）');
+  assert.deepEqual(asked, [recipeDeleteConfirmText('合成銀行')], '★確認窗收到的就是那句完整警告（Codex #513 r5#1：流程改問「確定刪除？」＝代價與範圍從真正的窗消失）');
   assert.deepEqual(gone, []);
   assert.equal(await deleteRecipeFlow(deps(true)), true);
   assert.deepEqual(calls, [['/parse-recipes/delete', 'POST', 'rcp-1']], '★確認＝恰一次、帶對 id');

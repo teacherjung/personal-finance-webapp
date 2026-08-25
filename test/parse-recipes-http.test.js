@@ -59,7 +59,7 @@ test('GET /api/db｜旁路也封（Codex #513 r3#1）：整份 db 投影不含 p
   const res = await fetch(`${base}/api/db`);
   assert.equal(res.status, 200);
   const text = await res.text();
-  assert.ok(!text.includes('parseRecipes'), '★整個集合剝掉（前端沒有頁面讀它）');
+  assert.ok(!text.includes('parseRecipes'), '★整個集合剝掉（要它的畫面走封閉投影端點、不走廣域 /api/db）');
   for (const literal of [SECRET_ANCHOR, SECRET_HEADER]) assert.ok(!text.includes(literal), `★配方字面不外送：${literal}`);
 });
 
