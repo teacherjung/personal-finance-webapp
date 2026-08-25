@@ -950,3 +950,18 @@ test('預審r0#5｜真引擎工廠的模型接線＝AI_BANK_MODELS（裁示⑥�
     assert.ok(sys.includes(phrase), `★提示詞規則 8 必含「${phrase}」`);
   }
 });
+
+test('合計交叉驗證｜原型鍵防線：帳號字樣 constructor 不可被當成「查得到幣別」而誤觸混幣跳過（own-property 查表；強閘鏈照樣驗得過）', async () => {
+  const { assertAiBankReconciled } = await import('../lib/services/bank-import.js');
+  const A = 'constructor';
+  const parsed = /** @type {any} */ ({
+    bank: '合成一銀', referenceDate: '2026-06-30',
+    accounts: [{ masked: A, suffix: '', balance: 500, currency: 'TWD', label: '', note: '' }],
+    accountCurrency: {},   // 幣別表**沒有**這把鍵：帳戶層（accounts 陣列 find）補位＝TWD；直讀 map 會拿到 Object 原型成員
+    totals: { txCount: 1, totalOut: 0, totalIn: 500 },
+    transactions: [{ acctMasked: A, acctSuffix: '', date: '2026-06-01', direction: 'in', amount: 500, balance: 500, summary: '合成存入', note: '' }],
+  });
+  const r = assertAiBankReconciled(parsed, { accounts: [] });
+  assert.notEqual(r.totalsCheck.status, 'mixed-currency', `★空幣別表查 ${A}＝查不到＝當台幣比（實得 ${JSON.stringify(r.totalsCheck)}）`);
+  assert.equal(r.totalsCheck.status, 'pass', '三欄真的比過且相符');
+});

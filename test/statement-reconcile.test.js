@@ -577,3 +577,11 @@ test('端到端｜今日的官網 XLSX（只有「本期帳單金額」、無交
   assert.equal(r.reconcile.level, 'weak');
   assert.equal(r.reconcile.ok, true);
 });
+
+test('原型鍵防線（own-property 查表）：帳號字樣是 constructor／__proto__ 時，幣別表查不到＝null（不可拿 Object 原型成員當幣別）', async () => {
+  const { statementCurrencyLookup } = await import('../lib/statement-reconcile.js');
+  for (const evil of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    assert.equal(statementCurrencyLookup({ accountCurrency: {}, accounts: [] }, evil), null, `★${evil}：空表查不到就是查不到`);
+  }
+  assert.equal(statementCurrencyLookup({ accountCurrency: { '900100****3301': 'JPY' }, accounts: [] }, '900100****3301'), 'JPY', '正常鍵照查');
+});
