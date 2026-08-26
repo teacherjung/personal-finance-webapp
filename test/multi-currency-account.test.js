@@ -30,7 +30,7 @@ const TEST_STORE = join(tmpdir(), `finance-multicur-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
-const { parseBankSummary, makeCurrencyTable, UNKNOWN_CURRENCY, MIXED_CURRENCY_MSG } = await import('../lib/bank-statement.js');
+const { parseBankSummary, makeCurrencyTable, UNKNOWN_CURRENCY, MIXED_CURRENCY_MSG, MAX_CURRENCY_ROWS } = await import('../lib/bank-statement.js');
 const { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
 const { normalizeAiBank, aiAnswersAgree } = await import('../lib/ai-parse.js');
 const { previewBankTxForDb, importBankTxToDb, assertBankReconciled, previewBankStatement } = await import('../lib/services/bank-import.js');
@@ -41,7 +41,9 @@ const SOLO = '900100****3301';
 
 // ---- 登記器（三條路的單一實作）----
 
-const tableOf = (/** @type {[string,string][]} */ pairs) => { const t = makeCurrencyTable(); for (const [m, c] of pairs) t.note(m, c); return t; };
+// ⚠️ 照三條解析路的正式用法：登記完**呼叫 finalize()** 才做等價印法互看
+//   （分開的理由＝每筆都重算是 Θ(n³)、實測 300 列 8.38 秒卡住主行程，見 makeCurrencyTable 的說明）
+const tableOf = (/** @type {[string,string][]} */ pairs) => { const t = makeCurrencyTable(); for (const [m, c] of pairs) t.note(m, c); t.finalize(); return t; };
 
 test('幣別表｜同號多幣別＝哨兵，且與登記順序無關；同幣別重複不受影響；哨兵黏著', () => {
   const a = tableOf([[MULTI, 'JPY'], [MULTI, 'USD']]);
@@ -439,4 +441,59 @@ test('★哨兵必須是 truthy（Grok 掃描第 2 條）：查表端寫的是 `
   assert.equal(statementCurrencyLookup(parsed, MULTI), UNKNOWN_CURRENCY, '★沒有 accounts 補位時仍查得到哨兵');
   const falsy = { accountCurrency: { [MULTI]: '' }, accounts: [] };
   assert.equal(statementCurrencyLookup(falsy, MULTI), null, '對照組：falsy 值真的會被當成查無（所以那個契約是實的、不是我在猜）');
+});
+
+test('★等價印法互看只在 finalize 跑一次（Codex #517 r12：每筆都重算＝Θ(n³)，他實測 300 列 8.38 秒同步卡住主行程）＋帳號列數上限 fail-closed', () => {
+  const build = (/** @type {number} */ n) => {
+    const t = makeCurrencyTable();
+    for (let i = 0; i < n; i++) t.note(`9001${String(i).padStart(4, '0')}****${String(i).padStart(4, '0')}`, i % 2 ? 'TWD' : 'USD');
+    return t;
+  };
+  // ★時間斷言刻意寬鬆（不同機器差很多）：這一題守的是**數量級**，不是效能調校。
+  //   Θ(n³) 版在這台機器 n=300 是 8.38 秒；Θ(n²) 版是 0.1 秒。門檻設 2 秒＝退回每筆重算必紅、正常版有 20 倍餘裕。
+  const t0 = Date.now();
+  build(300).finalize();
+  const ms = Date.now() - t0;
+  assert.ok(ms < 2000, `★300 列的建表要在數量級內完成（實測 ${ms}ms；每筆重算的壞法在這裡紅）`);
+  // ★上限＝fail-closed 縱深：超過就拒收，不是靜靜跳過互看（跳過＝哨兵漏塌＝fail-open）
+  assert.equal(MAX_CURRENCY_ROWS, 500, '上限是寫死的常數（真實帳單個位到數十，數十倍餘裕）');
+  assert.throws(() => build(MAX_CURRENCY_ROWS + 1).finalize(),
+    (/** @type {any} */ e) => e.code === 'bank_too_many_accounts', '★超過上限＝拒收');
+  assert.doesNotThrow(() => build(MAX_CURRENCY_ROWS).finalize(), '★剛好上限＝照收（邊界不要差一）');
+});
+
+test('★等價印法在三條路各自的實際行為（行為驗證，不是掃原始碼有沒有 finalize 這幾個字）：模板與 AI 塌成哨兵、配方由既有的身分重疊守衛更早擋下', () => {
+  // 同一個帳號、兩種印法、兩種外幣。⚠️ 這裡用**星號數**不同、不用連字號：
+  //   模板／配方的帳號列要過 `isMaskedAccount`（/^\d+\*{2,}\d+$/），帶連字號的寫法**在那兩條路不可達**
+  //   （上游就不會被認成帳號列）——用不可達的形狀當素材＝這題會變成在測一個不存在的情境。
+  const P1 = '900300****0363', P2 = '900300*****0363';
+  const twoForms = (/** @type {any[]} */ lines) => lines.map((ln) => ({ ...ln,
+    cells: ln.cells.map((/** @type {any} */ c) => (c.s === MULTI ? { ...c, s: P1 } : c)) }));
+  // ① 模板：外幣區兩列改成兩種印法（JPY 用 P1、USD 用 P2）
+  const tpl = templateLines().map((ln, i) => ({ ...ln,
+    cells: ln.cells.map((/** @type {any} */ c) => (c.s === MULTI ? { ...c, s: (i <= 6 ? P1 : P2) } : c)) }));
+  const t = parseBankSummary(tpl);
+  assert.equal(t.accountCurrency[P1], UNKNOWN_CURRENCY, '★模板路：兩種印法互相看見＝都塌成哨兵');
+  assert.equal(t.accountCurrency[P2], UNKNOWN_CURRENCY);
+  // ② 配方：**行為不同、而且是既有守衛先擋**——配方引擎本來就有「概要帳戶身分重疊」這道拒解
+  //   （比等價印法互看更早）。照實斷言，不硬求三條路長一樣：射程仍是 fail-closed（這張配方不適用、
+  //   退回上一版／AI），不會靜靜產出「兩個確定的幣別」。
+  const rl = recipeLines().map((ln, i) => ({ ...ln,
+    cells: ln.cells.map((/** @type {any} */ c) => (c.s === MULTI ? { ...c, s: (i <= 5 ? P1 : P2) } : c)) }));
+  assert.throws(() => parseWithRecipe(rl, recipe()),
+    (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /身分重疊/.test(String(e?.message || '')),
+    '★配方路：既有的「概要帳戶身分重疊」守衛先擋（fail-closed，不是靜靜給出兩個確定幣別）');
+  // ③ AI：幣別表把同一個帳號用兩種印法各列一次
+  const a = aiAnswer();
+  a.accountCurrencies = [{ masked: SOLO, currency: 'TWD' }, { masked: P1, currency: 'JPY' }, { masked: P2, currency: 'USD' }];
+  a.accounts = [
+    { masked: SOLO, balance: 1730, currency: 'TWD', label: '甲種活存', note: '' },
+    { masked: P1, balance: 700, currency: 'JPY', label: '外幣活儲', note: '' },
+    { masked: P2, balance: 500, currency: 'USD', label: '外幣活儲', note: '' },
+  ];
+  const p = normalizeAiBank(a);
+  assert.equal(p.accountCurrency[P1], UNKNOWN_CURRENCY, '★AI 路：同款');
+  assert.equal(p.accountCurrency[P2], UNKNOWN_CURRENCY);
+  assert.equal(p.accountCurrency[SOLO], 'TWD', '不相干的帳號不受連累（三條路都一樣）');
+  assert.ok(twoForms);   // 保留輔助，供未來擴充
 });
