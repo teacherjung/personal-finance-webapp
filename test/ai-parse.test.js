@@ -10,6 +10,10 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
+// 成本護欄 C1：transport 組裝必帶 budget（漏接當場炸）。本檔多數題測的是請求形狀／錯誤分類，
+// 不是預算——給零阻力假預算；預算行為的專卷在 test/ai-budget.test.js。
+const NOOP_BUDGET = { take: async () => {} };
+
 const TEST_STORE = join(tmpdir(), `finance-aiparse-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
@@ -550,7 +554,7 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
     return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"pinged":true}' }] }) };
   });
   try {
-    const out = await makeAnthropicBankEngine('sk-ant-synthetic-test-key').parseOnce('帳單文字', AI_BANK_MODELS.primary);
+    const out = await makeAnthropicBankEngine('sk-ant-synthetic-test-key', NOOP_BUDGET).parseOnce('帳單文字', AI_BANK_MODELS.primary);
     assert.deepEqual(out, { pinged: true }, '真工廠交原始答案（驗收在服務層）');
   } finally { globalThis.fetch = origFetch; }
   assert.equal(captured.url, 'https://api.anthropic.com/v1/messages');
@@ -572,7 +576,7 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
     captured2 = { url, init };
     return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
   });
-  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').parseOnce('帳單文字', AI_BANK_MODELS.escalation); }
+  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key', NOOP_BUDGET).parseOnce('帳單文字', AI_BANK_MODELS.escalation); }
   finally { globalThis.fetch = origFetch2; }
   const body2 = JSON.parse(captured2.init.body);
   assert.equal(body2.model, AI_BANK_MODELS.escalation);
@@ -582,7 +586,7 @@ test('transport｜請求形狀＝官方結構化輸出（output_config.format.js
 test('transport｜錯誤分類：401=ai_auth、500=ai_unavailable(502)、refusal=ai_refusal、截斷=ai_truncated、壞 JSON=ai_bad_answer', async () => {
   const origFetch = globalThis.fetch;
   const respond = (/** @type {any} */ r) => { globalThis.fetch = /** @type {any} */ (async () => r); };
-  const call = () => anthropicTransport('k')({ model: 'm', system: 's', user: 'u', schema: {} });
+  const call = () => anthropicTransport('k', NOOP_BUDGET)({ model: 'm', system: 's', user: 'u', schema: {} });
   try {
     respond({ ok: false, status: 401, json: async () => ({}) });
     await assert.rejects(call(), (/** @type {any} */ e) => e.code === 'ai_auth' && e.status === 400);
@@ -943,7 +947,7 @@ test('預審r0#4｜totals 缺席＝ai_bad_answer（與 accounts 同口徑）；t
 });
 
 test('預審r0#5｜真引擎工廠的模型接線＝AI_BANK_MODELS（裁示⑥不能只釘常數、要釘到出口）；提示詞規則 8 釘樁', async () => {
-  const engine = makeAnthropicBankEngine('sk-ant-synthetic-test-key');
+  const engine = makeAnthropicBankEngine('sk-ant-synthetic-test-key', NOOP_BUDGET);
   assert.deepEqual(engine.models, AI_BANK_MODELS, '★正式路徑的階梯＝同一份常數（硬編舊階梯＝這裡紅）');
   const sys = buildBankSystem();
   for (const phrase of ['絕不自己加總', '印負號＝去號', '三欄一律填 null']) {
