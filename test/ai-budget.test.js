@@ -93,7 +93,7 @@ test('take｜嚴格序列化：邊界上兩發並發只放行一發（雙讀 Pro
   const m = memUsage({ aiCapPerBill: 6, aiCapPerDay: 99 });
   const b = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26', billUsed: 5 });
   const results = await Promise.allSettled([b.take(), b.take()]);
-  assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected'], '★恰一發過、恰一發被擋（不序列化＝兩發都看到「還剩 1」一起過）');
+  assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected'], '★恰一發過、恰一發被擋——主力防線＝updater 內讀 live 計數（序列化鏈是第二層保險、在本卷排程下等價，見 ai-budget.js 註）');
   assert.equal(b.used(), 6, '上限 6 就是 6，不會變 7');
   assert.equal(m.box.settings.aiUsage.n, 1, '每日只記真的放行那發');
 });
@@ -224,8 +224,14 @@ test('settings｜上限兩欄可由 PUT 寫（posnum）；aiUsage＝server-owned
   assert.ok(!('aiCapPerBill' in bad) && !('aiCapPerDay' in bad), '壞型別＝剝掉（讀取端 capOf 另有預設）');
   const put = sanitizeSettings({ aiUsage: { date: '2026-08-26', n: 5 } });
   assert.ok(!('aiUsage' in put), '★前端 PUT 寫不進每日計數（server-owned；能寫＝保險絲可被歸零）');
-  const imp = sanitizeSettings({ aiUsage: { date: '2026-08-26', n: 5.7, extra: 'x' } }, { allowIbSyncFields: true });
+  const warns = /** @type {string[]} */ ([]);
+  const origWarn = console.warn;
+  console.warn = (/** @type {any[]} */ ...args) => { warns.push(args.join(' ')); };
+  let imp;
+  try { imp = sanitizeSettings({ aiUsage: { date: '2026-08-26', n: 5.7, extra: 'x' } }, { allowIbSyncFields: true }); }
+  finally { console.warn = origWarn; }
   assert.deepEqual(/** @type {any} */ (imp).aiUsage, { date: '2026-08-26', n: 5 }, '★備份還原保留＋消毒（只收 date/n、取整）');
+  assert.ok(!warns.some((w) => w.includes('aiUsage')), '★保留了就不可回報「剝掉」（Codex #489 r2#4 診斷說謊同族：合法備份被誤判成壞檔）');
   const impBad = sanitizeSettings({ aiUsage: { date: 9, n: 'x' } }, { allowIbSyncFields: true });
   assert.ok(!('aiUsage' in impBad), '壞形狀＝剝掉不硬收');
 });
