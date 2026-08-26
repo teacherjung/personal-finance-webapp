@@ -68,6 +68,21 @@ test('幣別表｜「是不是同一個帳號」用 acctPatternsIntersect 語言
     '★語言沒有交集＝不同帳號（判準是保守的「有交集就算同一個」，不是「長得像就算」）');
 });
 
+test('★等價印法的同一個帳號也要塌成哨兵（Grok 掃描第 1 條：那把身分尺原本只接在 hasMixedTwd 上，note() 仍用原字串當鍵）', () => {
+  // 純外幣同號、兩種印法：原本各自成鍵、各自單一幣別＝**不會**塌成哨兵（下游看到的是 JPY 與 USD 兩個「確定」的答案）
+  const t = tableOf([['900300****0363', 'JPY'], ['900300-****-0363', 'USD']]);
+  assert.equal(t.map['900300****0363'], UNKNOWN_CURRENCY, '★兩個鍵都要變哨兵');
+  assert.equal(t.map['900300-****-0363'], UNKNOWN_CURRENCY);
+  const t2 = tableOf([['900300****0363', 'JPY'], ['90030012340363', 'USD']]);   // 完整號 vs 遮罩
+  assert.equal(t2.map['900300****0363'], UNKNOWN_CURRENCY, '★完整號那一種也算同一個帳號');
+  assert.equal(t2.map['90030012340363'], UNKNOWN_CURRENCY);
+  const t3 = tableOf([[SOLO, 'TWD'], ['900300****0363', 'USD']]);   // 語言沒交集＝各自保留
+  assert.equal(t3.map[SOLO], 'TWD', '不同帳號不受連累');
+  assert.equal(t3.map['900300****0363'], 'USD');
+  const t4 = tableOf([['900300****0363', 'JPY'], ['900300-****-0363', 'JPY']]);   // 同一個帳號、同一種幣別
+  assert.equal(t4.map['900300****0363'], 'JPY', '★同幣別的兩種印法不得誤降成哨兵（只有幣別不同才是歧義）');
+});
+
 test('幣別表｜map 是 null-prototype（AGENTS 鐵則：使用者文字當鍵的 map 沒有例外）——`__proto__` 不得靜默缺鍵', () => {
   const t = tableOf([['__proto__', 'TWD'], ['__proto__', 'USD']]);
   assert.equal(Object.getPrototypeOf(t.map), null, '★null-proto');
@@ -226,8 +241,9 @@ test('★三條路都擋混台外幣（Codex #517 r2#1：只擋 AI 不夠——�
   assert.throws(() => parseBankSummary(mixLines), (/** @type {any} */ e) => e.code === 'bank_mixed_currency',
     '★模板路線也擋（他實測：不擋的話閘仍 strong、未驗算的 TWD 餘額 50,000 照樣建戶寫入）');
   const mixRecipeLines = recipeLines().map((ln) => ({ ...ln, cells: ln.cells.map((/** @type {any} */ c) => (c.s === 'JPY' ? { ...c, s: 'TWD' } : c)) }));
-  assert.throws(() => parseWithRecipe(mixRecipeLines, recipe()), (/** @type {any} */ e) => /台幣與外幣/.test(String(e?.message || '')),
-    '★配方路線也擋（丟的是與模板同一個**終局碼**，不是「這張配方不合用」——後者會被 recipeBankRoute 吞成 miss、照舊落到 AI 救援，見 r6#1 那題）');
+  assert.throws(() => parseWithRecipe(mixRecipeLines, recipe()),
+    (/** @type {any} */ e) => e.code === 'bank_mixed_currency' && /台幣與外幣/.test(String(e?.message || '')),
+    '★配方路線也擋，而且丟的是與模板**同一個終局碼**（Grok 掃描第 3 條：原本只斷言訊息＝假綠——recipe_parse_failed 帶同一句 MIXED_CURRENCY_MSG 照樣過，而那個碼會被 recipeBankRoute 吞成 miss、照舊落到 AI 救援）');
   const a = aiAnswer();
   a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });
   a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
@@ -381,5 +397,25 @@ test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘�
   assert.equal(res.foreign, 2, '★兩筆判不出幣別的列＝foreign 計數');
   assert.equal(res.imported, 1, '★只有台幣那一筆入帳');
   assert.equal(db.transactions.length, before + 1, '★db 只多一筆（多的是台幣那筆）');
-  assert.ok(db.transactions.every((/** @type {any} */ t) => !/外幣/.test(String(t.desc || '') + String(t.note || ''))), '★多幣別帳號的兩筆一筆都沒進 db');
+  // ⚠️ 原本這裡比對 `t.desc`——**匯入列根本沒有那個欄**（Grok 掃描第 4 條），半截斷言是死的。
+  //   改成打在真的有的欄上，並補「哨兵不得進入帳戶的幣別欄」（餘額更新走逐列 pa.currency、不是那張表；
+  //   沒人釘的話哪天有人改成讀表就會把 UNKNOWN 寫進帳戶）。
+  assert.ok(db.transactions.every((/** @type {any} */ t) => !/合成外幣/.test(String(t.note || '') + String(t.bankSummary || ''))), '★多幣別帳號的兩筆一筆都沒進 db');
+  const { applyBalancesToDb } = await import('../lib/services/bank-import.js');
+  const db2 = { accounts: [], transactions: [], cards: [], settings: {} };
+  applyBalancesToDb(db2, p);
+  assert.ok(db2.accounts.length > 0, '概要有帳戶＝有建戶（本題要看的是建出來的幣別欄）');
+  assert.ok(db2.accounts.every((/** @type {any} */ a) => a.currency !== UNKNOWN_CURRENCY), '★哨兵不得被寫進帳戶的幣別欄');
+  assert.deepEqual(db2.accounts.map((/** @type {any} */ a) => a.currency).sort(), ['JPY', 'TWD', 'USD'], '★三顆戶各自帶原幣（同號不同幣＝不同帳戶，既有行為）');
+});
+
+test('★哨兵必須是 truthy（Grok 掃描第 2 條）：查表端寫的是 `if (byMap) return byMap`——改成空字串／null 會讓「查到了」被當成「查無」而 fail-open 成台幣', async () => {
+  const { statementCurrencyLookup } = await import('../lib/statement-reconcile.js');
+  assert.ok(UNKNOWN_CURRENCY, '★非空字串（這是下游 truthy 查表的隱含契約）');
+  // 餘額空白的帳戶**只進幣別表、不進 accounts**（parseBankSummary 先 note 再 `if (balance == null) continue`），
+  // 那時沒有 accounts 補位可接——哨兵一旦變 falsy，這條路會一路退到 db、再退到 TWD。
+  const parsed = { accountCurrency: { [MULTI]: UNKNOWN_CURRENCY }, accounts: [] };
+  assert.equal(statementCurrencyLookup(parsed, MULTI), UNKNOWN_CURRENCY, '★沒有 accounts 補位時仍查得到哨兵');
+  const falsy = { accountCurrency: { [MULTI]: '' }, accounts: [] };
+  assert.equal(statementCurrencyLookup(falsy, MULTI), null, '對照組：falsy 值真的會被當成查無（所以那個契約是實的、不是我在猜）');
 });
