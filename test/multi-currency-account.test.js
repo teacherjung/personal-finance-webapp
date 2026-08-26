@@ -81,6 +81,27 @@ test('★等價印法的同一個帳號也要塌成哨兵（Grok 掃描第 1 條
   assert.equal(t3.map['900300****0363'], 'USD');
   const t4 = tableOf([['900300****0363', 'JPY'], ['900300-****-0363', 'JPY']]);   // 同一個帳號、同一種幣別
   assert.equal(t4.map['900300****0363'], 'JPY', '★同幣別的兩種印法不得誤降成哨兵（只有幣別不同才是歧義）');
+  // 一般的遮罩對遮罩相交（不是只有「完整號 vs 遮罩」那一種）——Codex r11 指出原題沒直接釘這格
+  const t5 = tableOf([['9003**0363', 'JPY'], ['900300*0363', 'USD']]);
+  assert.equal(t5.map['9003**0363'], UNKNOWN_CURRENCY, '★遮罩對遮罩語言相交也算同一個帳號');
+  assert.equal(t5.map['900300*0363'], UNKNOWN_CURRENCY);
+});
+
+test('★整張表**重算**、與登記順序無關（Codex r11 非阻擋建議；「順序相依」正是本支廢除 last-wins 的理由，修的東西不可自己長出同一族毛病）', () => {
+  // 三節點鏈：A(完整號,JPY) 與 C(完整號,USD) 彼此不相交，但都與 B(寬遮罩) 相交。
+  const A = '90030011110363', B = '9003*0363', C = '90030022220363';
+  const rows = /** @type {[string,string][]} */ ([[A, 'JPY'], [B, 'JPY'], [C, 'USD']]);
+  /** 六種登記順序 */
+  const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  const shots = perms.map((order) => {
+    const t = tableOf(order.map((i) => rows[i]));
+    return JSON.stringify({ A: t.map[A], B: t.map[B], C: t.map[C] });
+  });
+  assert.equal(new Set(shots).size, 1, `★六種登記順序得到同一張表（逐次互看的壞法在這裡紅）：${shots.join(' | ')}`);
+  const one = JSON.parse(shots[0]);
+  assert.equal(one.B, UNKNOWN_CURRENCY, '★B 同時看到 JPY 與 USD＝歧義');
+  assert.equal(one.A, 'JPY', '★A 只與 B 直接相交、與 C 不相交＝保持 JPY（誠實劃界：只看直接相交、不做傳遞閉包）');
+  assert.equal(one.C, UNKNOWN_CURRENCY, '★C 與 B 直接相交、B 帶著 JPY＝歧義');
 });
 
 test('幣別表｜map 是 null-prototype（AGENTS 鐵則：使用者文字當鍵的 map 沒有例外）——`__proto__` 不得靜默缺鍵', () => {
