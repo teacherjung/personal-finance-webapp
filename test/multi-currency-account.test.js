@@ -139,6 +139,36 @@ test('AI 路線｜舊護欄一格沒放鬆：沒列過的幣別仍拒（r2#1）�
     '★交易帳號必須有幣別身分（r3#1）');
 });
 
+test('★同號混台幣＋外幣＝拒收（不是哨兵）：預審抓到的 regression——哨兵會讓對帳閘被整組繞過、未驗算的台幣餘額照樣入帳', () => {
+  const a = aiAnswer();
+  a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });   // 同號多一種台幣＝我們真的判不出來的形狀
+  a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
+  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /同時列了台幣與外幣/.test(e.message),
+    '★留在原地的 loud 拒收：改成哨兵＝①壞餘額鏈不再被擋（twdCheckable 看壓平值）②台幣概要餘額仍入帳（applyBalancesToDb 走逐列 pa.currency）③真台幣明細列被當外幣丟掉且畫面說是「外幣明細」——拿 loud 換 silent 錢錯');
+  const pure = aiAnswer();   // 純外幣同號＝安全（那些列本來就不入帳）＝照樣放行
+  assert.equal(normalizeAiBank(pure).accountCurrency[MULTI], UNKNOWN_CURRENCY, '★純外幣同號不受這道影響（放寬的射程剛好是安全的那一格）');
+});
+
+test('登記器｜原型鍵防線：constructor／toString 這種名字不得因為讀到原型成員而被誤降成哨兵', () => {
+  const m = {};
+  noteAccountCurrency(m, 'constructor', 'JPY');
+  assert.equal(m['constructor'], 'JPY', '★own-property 讀（直讀會拿到 Object 原型的 function ⇒ 第一次登記就變 UNKNOWN）');
+  const m2 = {};
+  noteAccountCurrency(m2, 'toString', 'TWD'); noteAccountCurrency(m2, 'toString', 'TWD');
+  assert.equal(m2['toString'], 'TWD');
+});
+
+test('提示詞｜同號多幣別要各列一列（規則 6）——沒教的話 AI 合併成一列，本支的放寬就吃不到、仍整份被打回', async () => {
+  const { buildBankSystem } = await import('../lib/ai-parse.js');
+  const sys = buildBankSystem();
+  assert.match(sys, /每一種幣別各列一列/, '★提示詞要明講（對稱於定存那條「每一筆各列一列」）');
+  // 合併形的處置＝照實記載：幣別表只列一種、概要卻有兩列 ⇒ 仍拒（誠實殘餘，不是靜靜放行）
+  const merged = aiAnswer();
+  merged.accountCurrencies = merged.accountCurrencies.filter((/** @type {any} */ x) => !(x.masked === MULTI && x.currency === 'USD'));
+  assert.throws(() => normalizeAiBank(merged), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /矛盾/.test(e.message),
+    '★合併形仍被打回（所以提示詞那句是必要的，不是裝飾）');
+});
+
 test('語意不變｜多幣別帳號＝「分不出」＝下游照舊不驗算、不入帳（本批刻意不讓外幣入帳）', async () => {
   const { statementCurrencyLookup } = await import('../lib/statement-reconcile.js');
   const p = normalizeAiBank(aiAnswer());
