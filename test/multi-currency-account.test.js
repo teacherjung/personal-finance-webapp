@@ -293,6 +293,42 @@ test('★AI 救援不得把已偵測到的混台外幣救回（Codex #517 r5#2�
   assert.ok(AI_ARBITER_MODEL, '仲裁模型常數存在（本題刻意不讓它被叫到）');
 });
 
+test('★**從配方偵測起跑**：配方看到混台外幣＝終局，不得被吞成一般 miss 而落到 AI 救援（Codex #517 r6#1：既有兩題一個只直接呼叫解析器、一個只從模板的碼起跑，都沒守到這條接線）', async () => {
+  const { previewBankStatement } = await import('../lib/services/bank-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const mixLines = [
+    L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, MULTI], [473, '$1,730']]),
+    L(270, [[47, '總計'], [445, '$1,730']]),
+    L(260, [[47, '外幣總覽區']]), L(250, [[366, 'USD']]),
+    L(240, [[56, '外幣活儲'], [108, MULTI], [436, '$500'], [491, '$15,900']]),
+    L(210, [[47, '總計'], [490, '0']]),
+    L(140, [[47, '往來紀錄明細']]),
+    L(120, [[75, '帳號'], [135, '日期'], [200, '單號'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額'], [489, '附記']]),
+    L(100, [[53, 0, MULTI], [124, 0, '2026/06/11'], [177, 0, '合成轉入'], [349, 40, '$500'], [418, 0, '$1,730']]),
+  ];
+  const db0 = await getDb();
+  db0.parseRecipes = [{ id: 'rcp-term', bank: '合成銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0,
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastUsedAt: '2026-08-01T00:00:00.000Z' }];
+  db0.transactions = []; db0.accounts = [];
+  db0.settings = { ...db0.settings, aiApiKey: 'sk-ant-synthetic' };
+  await saveDb(db0);
+  const txBefore = (await getDb()).transactions.length;
+  let engineCalls = 0;
+  // 模板認不得（一般的 bank_unrecognized）⇒ 走規則卡救援 ⇒ 配方解析時才偵測到混幣
+  const unrecognized = async () => { throw Object.assign(new Error('這份 PDF 看起來不是內建範本'), { status: 400, code: 'bank_unrecognized' }); };
+  await assert.rejects(
+    () => previewBankStatement('QUFBQQ==', undefined, /** @type {any} */ (unrecognized), {
+      useAi: true,   // ★使用者明確要求 AI，仍不得送出去
+      aiEngineFactory: () => { engineCalls++; return /** @type {any} */ ({ models: { primary: 'p', escalation: 'e' }, parseOnce: async () => ({}) }); },
+      aiExtract: async () => mixLines,
+    }),
+    (/** @type {any} */ e) => e.code === 'bank_mixed_currency',
+    '★配方偵測到的混幣要原樣穿出去（被 catch{continue} 吞掉＝回 hit:null＝照舊當「範本認不得」去試 AI）');
+  assert.equal(engineCalls, 0, '★AI 引擎一次都沒組裝（吞掉的話 AI 只要漏掉外幣區就會把它當純台幣接受、實測 level:strong）');
+  assert.equal((await getDb()).transactions.length, txBefore, '★db 零變動');
+});
+
 test('⚠️ 誠實殘餘｜配方**只被教過台幣區**時看不到外幣區＝那個混幣帳號會被當純台幣解出來（Codex #517 r4#1；**既有缺口、非本支引入**）', () => {
   // A/B 實測（2026-08-26）：同一份素材、同一張配方，載入 main 8bb51fb 與本支 HEAD 的 lib，
   //   輸出**逐字相同**＝`accountCurrency={"900300****0363":"TWD"}`、交易 1 筆、帳戶 1 個。

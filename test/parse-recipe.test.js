@@ -687,8 +687,12 @@ test('引擎｜date-first 同遮罩多幣別（r2#4）：帳戶「身分」數�
     L(180, [[60, 0, '115/05/02'], [150, 0, '合成繳費'], [289, 30, '1,200'], [414, 0, '6,800']]),
   ];
   const rec = { ...recipeB(), summary: { sections: [{ anchor: '帳戶彙整', currency: 'TWD' }, { anchor: '外幣區', currency: 'BY-CODE' }], endAnchor: '小計', balancePick: 'last-money' } };
-  assert.throws(() => parseWithRecipe(doc, rec), (e) => e.code === 'recipe_parse_failed',
-    '★同遮罩兩種幣別＝交易歸屬歧義＝拒解退 AI，不可套上錯的權威幣別');
+  // ⚠️ **期望碼在 #517 批一改變（由 recipe_parse_failed → bank_mixed_currency）**，而且原本那句
+  //   「拒解**退 AI**」現在知道是不安全的：退 AI 之後，AI 只要漏掉外幣區就會把它當純台幣接受並匯入
+  //   （Codex #517 r6#1 實測 aiAccepted:true、level:strong）。同遮罩混台幣＋外幣是**版面事實**，
+  //   看到的那一方說了算 ⇒ 終局碼、三條路都不再落到規則卡／AI 救援。歧義拒解的語意沒有放寬，是**加嚴**。
+  assert.throws(() => parseWithRecipe(doc, rec), (/** @type {any} */ e) => e.code === 'bank_mixed_currency',
+    '★同遮罩兩種幣別＝終局拒收（不是「這張配方不合用、換 AI 試試」）');
 });
 
 test('出生驗收｜masked 換值＝帳戶組成不同（r2#6：分組鍵改壞要被抓到）', () => {
