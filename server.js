@@ -67,10 +67,13 @@ export const OUTBOUND_ENDPOINTS = [
   { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
   // P1b-1：AI 解析路線（★3 拍板＝Anthropic）。兩條路徑＝既有銀行上傳端點（AI 是其中的 fallback 分支，
   // 需 useAi **AI 要求旗標**（確認窗僅 aiAskBeforeSend 開啟時出現、預設直接帶——舊名「同意旗標」棄用：那個名字誤示每次都問過）；HOSTED 停止線寫死）。⚠️ 限速誠實句（r1#4）：表上的「上傳解析類」只在 HOSTED
-  // 掛載（mountRateLimit 在 isHosted 分支）、而 AI 又在 HOSTED 停用——**實際可達的 LOCAL 路線沒有
-  // runtime 限速**，這是單機自用的既有設計（server.test 有「LOCAL 不掛表」考題）。AI 的成本邊界＝
-  // 每次上傳至多 **4 發**模型呼叫（P2-4 雙讀預設開＝preview 雙讀 2＋不一致仲裁 1＋apply 成功後配方生成 1；關雙讀＝單讀階梯至多 2＋生成 1＝至多 3 發）＋確認窗僅 aiAskBeforeSend=true 時出現（P1b-2；預設直接送）；正式成本護欄（單張費用上限／
-  // 每日次數）＝解析器計畫 P3，落地前不宣稱「已限速」。
+  // 掛載（mountRateLimit 在 isHosted 分支）、而 AI 又在 HOSTED 停用——**這張限速表不管 LOCAL 的 AI 路線**
+  //（server.test 有「LOCAL 不掛表」考題）。LOCAL AI 的成本護欄＝**發數上限**（C1，William 2026-08-26：
+  // 單張預設 6 發／單日預設 20 發、設定頁可調、超限那發不出門＋白話說明）——擋點在 lib/ai-transport.js
+  // 的 transport 進入處（每一發先過 lib/ai-budget.js 的 take()），單日計數落 db（settings.aiUsage）。
+  // 結構上每次上傳至多 **4 發**模型呼叫（P2-4 雙讀預設開＝preview 雙讀 2＋不一致仲裁 1＋apply 成功後配方生成 1；
+  // 關雙讀＝單讀階梯至多 2＋生成 1＝至多 3 發）＝單張 6 是防未來重試迴圈的裕度，不是日常會撞到的數。
+  // ⚠️ 這是**發數**上限不是金額上限（實際 NT$ 依 Anthropic 帳單；費用級距絆線在 ai-consent.js）。
   { host: 'api.anthropic.com', why: 'AI 解析帳單（lib/ai-transport.js；LOCAL 專用、確認窗僅 aiAskBeforeSend=true 時出現；成本邊界見上註）', paths: ['/api/bank-statement/preview', '/api/bank-statement/apply'] },
 ];
 

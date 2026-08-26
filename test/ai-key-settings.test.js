@@ -69,7 +69,7 @@ test('G3｜文案：在 HOSTED 下為假的句子一句都不准出現；不得�
   assert.doesNotMatch(ALL_COPY, /只存這台電腦|永不上傳|不會離開這台電腦|絕不外傳/,
     'AI 鑰匙在雲端版會加密落庫，而且它本來就會以 x-api-key 送到供應商——照抄台新那句就是說謊');
   assert.doesNotMatch(ALL_COPY, /已限速|每日次數上限|單張費用上限|自動停用超額/,
-    'LOCAL 路線目前沒有 runtime 限速，成本護欄是 P3——契約明文不得宣稱');
+    '成本護欄 C1 已落地但單位是**發數**——金額字樣（單張費用上限）仍是說謊；「已限速」語焉不詳（限的是誰、多少）仍禁：要講就講「單張／單日幾發」的具體上限');
   assert.doesNotMatch(ALL_COPY, /免費|不用錢|保證讀對|保證正確|一定正確|進不了你的帳本/, '不可誇大');
   assert.doesNotMatch(ALL_COPY, /\*\*/, '這是 HTML 不是 markdown：`**粗體**` 會把星號原樣顯示給使用者（要粗體用 <b>）');
   // ★r3#1：本機版的「匯出備份」刻意回完整未投影資料（cloud-security C5 裁決⑤），設定頁那顆下載鈕
@@ -101,8 +101,8 @@ test('G3｜文案：在 HOSTED 下為假的句子一句都不准出現；不得�
   }
 });
 
-test('G4｜AI_KEY_INFO：六把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
-  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['ask', 'cost', 'dual', 'skip', 'what', 'where']);
+test('G4｜AI_KEY_INFO：七把鑰匙齊全、都有標題與內容，且是凍結常數（零插值＝openInfo 不 esc 也安全）', () => {
+  assert.deepEqual(Object.keys(AI_KEY_INFO).sort(), ['ask', 'budget', 'cost', 'dual', 'skip', 'what', 'where']);
   for (const [k, v] of Object.entries(AI_KEY_INFO)) {
     assert.ok(v.title && v.title.length > 4, `${k} 要有標題`);
     assert.ok(v.html && v.html.includes('<p>'), `${k} 要有內容`);
@@ -145,7 +145,7 @@ test('G5｜settings.js 接線：鑰匙不回顯、清除入口由投影布林把
     '★問的是「還在設定頁嗎」＝換頁序號；接成 currentRouteSeq 時開機背景重繪會讓儲存成功卻不提示、清除入口不出現');
   assert.doesNotMatch(src, /saveAiApiKey[\s\S]{0,400}?currentRouteSeq/, '同上：這個區塊不可用重繪序號');
   assert.match(src, /await renderSettings\(\);/, '成功後重繪＝清除入口當場出現，不必切頁再回來');
-  assert.equal(count(/data-ai-info="/g), 6, '六顆就地解釋按鈕都要在（第六顆＝「雙讀」，2026-08-16 隨 P2-4 一起加）');
+  assert.equal(count(/data-ai-info="/g), 7, '七顆就地解釋按鈕都要在（第七顆＝「發數上限」，2026-08-26 隨成本護欄 C1 一起加）');
   for (const k of ['what', 'cost', 'where', 'skip', 'ask', 'dual']) {
     assert.match(src, new RegExp(`data-ai-info="${k}"`), `就地解釋「${k}」要掛上去`);
   }

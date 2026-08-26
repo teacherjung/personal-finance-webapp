@@ -170,7 +170,7 @@ test('傳輸｜generateRecipe 的線上格式：模型/配方答案卷 schema/�
     return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
   });
   try {
-    await makeAnthropicBankEngine('sk-ant-synthetic-test-key').generateRecipe('帳單文字', RECIPE_MODEL);
+    await makeAnthropicBankEngine('sk-ant-synthetic-test-key', { take: async () => {} }).generateRecipe('帳單文字', RECIPE_MODEL);
   } finally { globalThis.fetch = realFetch; }
   assert.equal(captured.model, RECIPE_MODEL);
   assert.equal(captured.output_config.format.schema.properties.docAnchors.maxItems > 0, true, '★掛的是配方答案卷 schema');
@@ -231,7 +231,7 @@ test('r1#4｜傳輸有逾時上界：fetch 的 signal 由 AbortSignal.timeout(90
     seen = init;
     return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) };
   });
-  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key').generateRecipe('帳單文字', RECIPE_MODEL); } finally { globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout; }
+  try { await makeAnthropicBankEngine('sk-ant-synthetic-test-key', { take: async () => {} }).generateRecipe('帳單文字', RECIPE_MODEL); } finally { globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout; }
   assert.ok(seen?.signal instanceof AbortSignal, '★沒帶 signal＝in-flight 原文無上界');
   assert.equal(timeoutMs, 90_000, '★signal 必須真的是 AbortSignal.timeout(90000) 造的——永不逾時的替身簽不出這個值');
 });

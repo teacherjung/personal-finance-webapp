@@ -357,8 +357,9 @@ test('W1｜仲裁那發專屬逾時 300 秒、其他模型 90 秒（Fable 單請
   AbortSignal.timeout = /** @type {any} */ ((/** @type {number} */ ms) => { seen.push(ms); return realTimeout.call(AbortSignal, ms); });
   globalThis.fetch = /** @type {any} */ (async () => ({ ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) }));
   try {
-    await makeAnthropicBankEngine('sk-ant-synthetic-test-key').parseOnce('x', F);
-    await makeAnthropicBankEngine('sk-ant-synthetic-test-key').parseOnce('x', S);
+    const noopBudget = { take: async () => {} };   // C1：組裝必帶；本題測逾時、不測預算（專卷在 ai-budget.test.js）
+    await makeAnthropicBankEngine('sk-ant-synthetic-test-key', noopBudget).parseOnce('x', F);
+    await makeAnthropicBankEngine('sk-ant-synthetic-test-key', noopBudget).parseOnce('x', S);
   } finally { globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout; }
   assert.deepEqual(seen, [300_000, 90_000], '★仲裁 300 秒、其他照舊 90 秒——共用 90 秒＝W1 復發');
 });
