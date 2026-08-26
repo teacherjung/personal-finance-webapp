@@ -56,7 +56,11 @@ test('幣別表｜混台外幣的判定用**正規形**分組：不同遮罩印�
   assert.equal(tableOf([[MULTI, 'JPY'], [MULTI, 'USD']]).hasMixedTwd(), false, '純外幣同號＝不是混台外幣');
   assert.equal(tableOf([[MULTI, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), true, '同一個字串的混台外幣');
   assert.equal(tableOf([['900300****0363', 'TWD'], ['900300-****-0363', 'USD']]).hasMixedTwd(), true,
-    '★兩種印法是同一個帳號（用原字串分組會被繞過：實測兩筆都被當 TWD、foreign=0、閘仍 strong）');
+    '★分隔符不是資訊（用原字串分組會被繞過：實測兩筆都被當 TWD、foreign=0、閘仍 strong）');
+  assert.equal(tableOf([['900300****0363', 'TWD'], ['900300*****0363', 'USD']]).hasMixedTwd(), true,
+    '★**星號數也不是資訊**（r3#1：只剝分隔符仍被繞過——實測 imported=2、db 真的多兩筆台幣交易）');
+  assert.equal(tableOf([['900300****0363', 'TWD'], ['9003 00＊＊＊＊0363', 'USD']]).hasMixedTwd(), true,
+    '★全形星號＋空白也是同一個帳號');
   assert.equal(tableOf([[SOLO, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), false, '不同帳號各自單一幣別＝不是混');
 });
 
@@ -243,7 +247,26 @@ test('★混台外幣不落到規則卡／AI 救援：**引擎工廠一次都不
   assert.equal(extractCalls, 0, '★規則卡救援也沒被試（抽字是那條路的第一步；拿掉配方那道排除＝這裡會變 ≥1）');
 });
 
-test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘與匯入——閘整組跳過、預覽標 foreign、匯入零筆、db 不增交易', async () => {
+test('★apply 這條路也不得被舊配方救回混台外幣（Codex #517 r3#2：我 r2 只改了 preview——一張只涵蓋台幣區的舊配方就能把外幣當台幣寫進帳本）', async () => {
+  const { applyBankStatement } = await import('../lib/services/bank-import.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const db0 = await getDb();
+  db0.parseRecipes = [{ id: 'rcp-apply', bank: '合成銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0,
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastUsedAt: '2026-08-01T00:00:00.000Z' }];
+  db0.transactions = []; db0.accounts = [];
+  await saveDb(db0);
+  const txBefore = (await getDb()).transactions.length;
+  const acctBefore = (await getDb()).accounts.length;
+  const mixed = async () => { throw Object.assign(new Error('同一個帳號同時列了台幣與外幣'), { status: 400, code: 'bank_mixed_currency' }); };
+  await assert.rejects(
+    () => applyBankStatement('QUFBQQ==', undefined, /** @type {any} */ (mixed), { aiExtract: async () => recipeLines() }),
+    (/** @type {any} */ e) => e.code === 'bank_mixed_currency', '★原錯誤照實丟回');
+  const after = await getDb();
+  assert.equal(after.transactions.length, txBefore, '★db 交易數零變動（不擋的話他實測 imported:2、TWD 與 USD 兩筆都寫進去）');
+  assert.equal(after.accounts.length, acctBefore, '★也沒有建出帳戶');
+});
+
+test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘與匯入——閘整組跳過、預覽標 foreign、**歧義那兩筆**匯入零筆（同份帳單的台幣列照常入帳 1 筆）', async () => {
   const { statementCurrencyLookup } = await import('../lib/statement-reconcile.js');
   const p = normalizeAiBank(aiAnswer(false, true));
   assert.equal(statementCurrencyLookup(p, MULTI), UNKNOWN_CURRENCY, '查表回哨兵');
