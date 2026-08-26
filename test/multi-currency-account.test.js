@@ -11,7 +11,8 @@
 //   ②**表填哨兵、與登記順序無關**（last-wins 是順序相依的：兩個模型把兩列順序寫反＝雙讀硬差異
 //     ⇒ 隨機仲裁／隨機拒收；換句話說天真的放寬會把「必然拒收」換成「隨機拒收＋白燒一發」）
 //   ③**三條路同一份判準**（模板／配方／AI）——只改一處的話，配方出生第三關 `recipeReproduces`
-//     逐鍵比幣別永遠不吻合 ⇒ 配方**永遠孵不出來、同版面每期付全額 AI 錢**，而且不會有任何考題轉紅
+//     逐鍵比幣別永遠不吻合 ⇒ 配方**永遠孵不出來、同版面每期付全額 AI 錢**（沒有任何**既有**考題會抓到，
+//     本卷就是為此存在）
 //   ④**兩道舊護欄一格沒放鬆**：沒列過的幣別仍拒（r2#1）、交易帳號不在表裡仍拒（r3#1＝防查無幣別
 //     fallback 成 TWD 靜靜入帳，當年實測 imported:5）
 // ⚠️ 誠實劃界：本批**不讓外幣入帳**（那是批三，要先有匯率口徑）。明細列上沒有幣別欄，所以多幣別
@@ -19,8 +20,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBankSummary, noteAccountCurrency, UNKNOWN_CURRENCY } from '../lib/bank-statement.js';
-import { parseWithRecipe, RECIPE_FORMAT_VERSION } from '../lib/parse-recipe.js';
-import { normalizeAiBank } from '../lib/ai-parse.js';
+import { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } from '../lib/parse-recipe.js';
+import { normalizeAiBank, aiAnswersAgree } from '../lib/ai-parse.js';
+import { previewBankTxForDb, importBankTxToDb, assertBankReconciled } from '../lib/services/bank-import.js';
 
 const L = (/** @type {number} */ y, /** @type {any[]} */ pairs) => ({ y, cells: pairs.map((p) => (p.length === 3 ? { x: p[0], w: p[1], s: p[2] } : { x: p[0], s: p[1] })) });
 const MULTI = '900300****363';   // 合成：同一個遮罩帳號同時掛 JPY 與 USD（真帳單就是這個形狀）
@@ -45,8 +47,8 @@ test('登記器｜同號多幣別＝哨兵，且與登記順序無關；同幣�
 const templateLines = () => [
   L(300, [[47, '新臺幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
   L(290, [[78, '帳號類別'], [163, '帳戶號碼'], [433, '帳戶餘額'], [509, '備註']]),
-  L(280, [[50, '新臺幣活存'], [150, SOLO], [473, '$1,230']]),
-  L(270, [[47, '合計'], [445, '$1,230']]),
+  L(280, [[50, '新臺幣活存'], [150, SOLO], [473, '$1,730']]),
+  L(270, [[47, '合計'], [445, '$1,730']]),
   L(260, [[47, '外幣帳戶概要區'], [452, '現值參考日:2026/06/30']]),
   L(250, [[367, 'JPY']]),
   L(240, [[56, '外幣活存'], [108, MULTI], [436, '$700'], [491, '$150']]),
@@ -58,8 +60,8 @@ const templateLines = () => [
 /** 配方版面：同一份帳單的配方路線版（外幣區走 BY-CODE＝幣別由小標帶入） */
 const recipeLines = () => [
   L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
-  L(280, [[50, '甲種活存'], [150, SOLO], [473, '$1,230']]),
-  L(270, [[47, '總計'], [445, '$1,230']]),
+  L(280, [[50, '甲種活存'], [150, SOLO], [473, '$1,730']]),
+  L(270, [[47, '總計'], [445, '$1,730']]),
   L(260, [[47, '外幣總覽區']]),
   L(250, [[367, 'JPY']]),
   L(240, [[56, '外幣活儲'], [108, MULTI], [436, '$700'], [491, '$150']]),
@@ -79,18 +81,27 @@ const recipe = () => ({
 });
 
 /** AI 答案卷：同一份帳單的 AI 版（幣別表把 MULTI 列兩次＝提示詞規則 6「概要區每一個帳戶」的誠實產出） */
-const aiAnswer = (/** @type {boolean} */ swap = false) => {
+const aiAnswer = (/** @type {boolean} */ swap = false, /** @type {boolean} */ withMultiTx = false) => {
   const fx = [{ masked: MULTI, currency: 'JPY' }, { masked: MULTI, currency: 'USD' }];
   return {
     bank: '合成銀行', referenceDate: '2026-06-30',
     accountCurrencies: [{ masked: SOLO, currency: 'TWD' }, ...(swap ? fx.slice().reverse() : fx)],
     totals: { txCount: null, totalOut: null, totalIn: null },
     accounts: [
-      { masked: SOLO, balance: 1230, currency: 'TWD', label: '新臺幣活存', note: '' },
-      { masked: MULTI, balance: 700, currency: 'JPY', label: '外幣活存', note: '' },
-      { masked: MULTI, balance: 500, currency: 'USD', label: '外幣活存', note: '' },
+      // 標籤／備註刻意對齊配方版面的字面——出生第三關 recipeReproduces 是**逐欄**比對，
+      // 這裡不對齊就會在 label 上先掛掉、量不到我們真正要測的幣別那一格。
+      { masked: SOLO, balance: 1730, currency: 'TWD', label: '甲種活存', note: '' },   // ＝明細末筆餘額（閘要算得平）
+      { masked: MULTI, balance: 700, currency: 'JPY', label: '外幣活儲', note: '' },
+      { masked: MULTI, balance: 500, currency: 'USD', label: '外幣活儲', note: '' },
     ],
-    transactions: [{ acctMasked: SOLO, date: '2026-06-11', direction: 'in', amount: 500, balance: 1730, summary: '合成轉入', note: '' }],
+    transactions: [
+      { acctMasked: SOLO, date: '2026-06-11', direction: 'in', amount: 500, balance: 1730, summary: '合成轉入', note: '' },   // 同上：與配方版面同一筆
+      // 多幣別帳號自己的明細（只有走閘／匯入那一題會帶）：它們正是「判不出幣別」的那些列
+      ...(withMultiTx ? [
+        { acctMasked: MULTI, date: '2026-06-12', direction: /** @type {const} */ ('in'), amount: 700, balance: 700, summary: '合成外幣存入', note: '' },
+        { acctMasked: MULTI, date: '2026-06-13', direction: /** @type {const} */ ('out'), amount: 200, balance: 500, summary: '合成外幣支出', note: '' },
+      ] : []),
+    ],
   };
 };
 
@@ -108,7 +119,12 @@ test('配方路線｜同一份帳單給出與模板**逐鍵相同**的幣別表�
   assert.equal(rec.accountCurrency[MULTI], UNKNOWN_CURRENCY);
   assert.equal(rec.accountCurrency[SOLO], 'TWD');
   const tpl = parseBankSummary(templateLines());
-  assert.deepEqual(rec.accountCurrency, tpl.accountCurrency, '★兩條路同一份判準（只改一處＝recipeReproduces 逐鍵比幣別永遠打架、而且沒有考題會紅）');
+  assert.deepEqual(rec.accountCurrency, tpl.accountCurrency, '★兩條路同一份判準');
+  // ★呼叫**正式的出生第三關**（Codex #517 r1#3：只比兩張 map＝把 recipeReproduces 改成遇 UNKNOWN 必敗
+  //   也全綠＝守不住那個接縫）。expected＝AI 那份（黃金樣本）、actual＝配方重解的那份。
+  const ai = normalizeAiBank(aiAnswer());
+  const verdict = recipeReproduces(ai, rec);
+  assert.equal(verdict.ok, true, `★配方孵得出來（不吻合＝規則卡永遠不存檔、同版面每期付全額 AI 錢）：${JSON.stringify(verdict.diff)}`);
 });
 
 test('AI 路線｜多幣別答案卷**不再整份拒收**，且幣別表與模板逐鍵相同', () => {
@@ -119,9 +135,14 @@ test('AI 路線｜多幣別答案卷**不再整份拒收**，且幣別表與模�
   assert.equal(p.accounts.filter((/** @type {any} */ a) => a.masked === MULTI).length, 2, '兩列都收下來');
 });
 
-test('AI 路線｜幣別表兩列順序互換＝產出完全相同（雙讀不會因為列的順序判成硬差異、白燒一發仲裁）', () => {
-  assert.deepEqual(normalizeAiBank(aiAnswer(false)), normalizeAiBank(aiAnswer(true)),
-    '★順序無關（last-wins 下一份是 JPY、一份是 USD ⇒ aiAnswersAgree 硬差異「帳戶幣別表」⇒ 仲裁 ⇒ 三份互不相同 ⇒ ai_disagree）');
+test('AI 路線｜幣別表兩列順序互換＝雙讀判定 agree（不因列序判成硬差異、白燒一發仲裁）', () => {
+  const a = normalizeAiBank(aiAnswer(false));
+  const b = normalizeAiBank(aiAnswer(true));
+  assert.deepEqual(a, b, '正規化產出本身就與順序無關');
+  // ★呼叫**正式的雙讀比對**（Codex #517 r1#3：只比兩份 normalize 結果＝把 aiAnswersAgree 改成遇 UNKNOWN
+  //   強制硬差異也全綠）。last-wins 下這裡會是 agree:false、hard diff「帳戶幣別表」⇒ 仲裁 ⇒ 三份互不相同 ⇒ ai_disagree。
+  const cmp = aiAnswersAgree(a, b);
+  assert.equal(cmp.agree, true, `★兩讀一致（不一致＝每張外幣綜合帳單都白燒一發仲裁）：${JSON.stringify(cmp.diffs || [])}`);
 });
 
 test('AI 路線｜舊護欄一格沒放鬆：沒列過的幣別仍拒（r2#1）、交易帳號不在表裡仍拒（r3#1）', () => {
@@ -169,9 +190,29 @@ test('提示詞｜同號多幣別要各列一列（規則 6）——沒教的話
     '★合併形仍被打回（所以提示詞那句是必要的，不是裝飾）');
 });
 
-test('語意不變｜多幣別帳號＝「分不出」＝下游照舊不驗算、不入帳（本批刻意不讓外幣入帳）', async () => {
+test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘與匯入——閘整組跳過、預覽標 foreign、匯入零筆、db 不增交易', async () => {
   const { statementCurrencyLookup } = await import('../lib/statement-reconcile.js');
-  const p = normalizeAiBank(aiAnswer());
-  assert.equal(statementCurrencyLookup(p, MULTI), UNKNOWN_CURRENCY, '★查表回哨兵＝非 TWD＝閘整組跳過、匯入標 foreign 不入帳');
-  assert.equal(statementCurrencyLookup(p, SOLO), 'TWD', '同一份帳單裡的台幣帳號照常入帳（不連坐）');
+  const p = normalizeAiBank(aiAnswer(false, true));
+  assert.equal(statementCurrencyLookup(p, MULTI), UNKNOWN_CURRENCY, '查表回哨兵');
+  assert.equal(statementCurrencyLookup(p, SOLO), 'TWD', '同一份帳單裡的台幣帳號不連坐');
+  // ★①真的跑閘（Codex #517 r1#2：只呼叫查表＝把 twdCheckable 改成也接受 UNKNOWN 仍全綠）
+  const gate = assertBankReconciled(p, { accounts: [] });
+  assert.equal(gate.stats.foreignRowsSkipped, 2, '★多幣別帳號的兩筆明細＝閘整組跳過（被當台幣驗＝這裡會變 0）');
+  assert.equal(gate.stats.foreignAccountsSkipped, 2, '★概要那兩列（JPY/USD）也跳過');
+  // ★②真的跑預覽投影
+  const { rows, counts } = previewBankTxForDb({ accounts: [], transactions: [], cards: [] }, p);   // 回 { rows, counts }
+  // 預覽列**不帶帳號欄**（機密紀律），所以按幣別欄認：判不出的那兩列＝哨兵＋foreign
+  const multiRows = rows.filter((/** @type {any} */ r) => r.currency === UNKNOWN_CURRENCY);
+  assert.equal(multiRows.length, 2, '兩筆判不出幣別的列都在預覽投影裡');
+  assert.ok(multiRows.every((/** @type {any} */ r) => r.foreign === true), '★預覽標 foreign（本批不讓外幣入帳）');
+  assert.equal(counts.foreign, 2, '★腳註那個「不會匯入」的計數也算到它們');
+  assert.equal(rows.filter((/** @type {any} */ r) => r.currency === 'TWD' && !r.foreign).length, 1, '台幣那筆照常會匯入');
+  // ★③真的跑正式匯入牆，並斷言 db 交易數（Codex 的第二刀＝讓歧義列進台幣現金流，這裡會紅）
+  const db = { accounts: [], transactions: [], cards: [], settings: {} };
+  const before = db.transactions.length;
+  const res = importBankTxToDb(db, p);
+  assert.equal(res.foreign, 2, '★兩筆判不出幣別的列＝foreign 計數');
+  assert.equal(res.imported, 1, '★只有台幣那一筆入帳');
+  assert.equal(db.transactions.length, before + 1, '★db 只多一筆（多的是台幣那筆）');
+  assert.ok(db.transactions.every((/** @type {any} */ t) => !/外幣/.test(String(t.desc || '') + String(t.note || ''))), '★多幣別帳號的兩筆一筆都沒進 db');
 });
