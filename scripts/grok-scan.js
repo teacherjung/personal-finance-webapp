@@ -203,11 +203,13 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   另一個 session／審查樹／合併閘同時在掃就會誤紅（2026-08-26 觀察到跨 PR 試合併閘兩次退 0、一次退 1；
  *   Codex 在 #514 r8 也中過。⚠️ 閘的退出碼不帶題名＝歸因是假說，不是實測）。所以給考題一個隔離根。
  *   ⚠️ **射程**：釘住預設值的那一題直接呼叫 `runScan`，**不涵蓋檔尾 CLI 入口那個接縫**——
- *   在那裡注入一個根目錄，餌就搬家而全套考題照樣綠（Codex #516 r1 實測）。動那個接縫要另行複核。
+ *   Codex #516 r1 在那個接縫注入 `BOX_ROOT`（非家目錄、且已存在）實測跑過全卷：餌搬家、全卷照樣綠。
+ *   動那個接縫要另行複核。
  *   ⚠️ 換根目錄不會讓金絲雀落進沙箱看得到的地方——profile 是 deny default，家目錄與使用者暫存區都不在放行清單裡。
  *   ⚠️ 但位置就是這個餌的全部意義：家目錄同時住著真 ~/.grok、~/.grok-sandbox-auth 與真的 store.db，
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
- *   ⚠️ 注入的目錄**必須已經存在**：底下用 mkdtempSync 開子目錄，根目錄不存在時丟出的例外**沒有**被轉成退 2（同 212 行的既有形狀）。
+ *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
+ *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -387,8 +389,8 @@ export async function runScan(args, deps = {}) {
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
   // ⚠️ 誠實劃界——那一題**只**守 runScan 的預設值，守不到兩件事：
   //    ①它只看得到這**一個**建立點，日後多長一個它看不到；
-  //    ②它直接呼叫 runScan，**不涵蓋檔尾 CLI 入口那個接縫**（Codex #516 r1 實測：在那裡注入
-  //      `{ liveRoot: … }`，餌搬家而全套考題照樣綠）——動那個接縫要另行複核。
+  //    ②它直接呼叫 runScan，**不涵蓋檔尾 CLI 入口那個接縫**（Codex #516 r1 在那裡注入 `BOX_ROOT`
+  //      ——非家目錄、且已存在——實測跑過全卷：餌搬家、全卷照樣綠）——動那個接縫要另行複核。
   liveDir = mkdtempSync(join(deps.liveRoot ?? homedir(), '.grok-live-canary-'));
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
