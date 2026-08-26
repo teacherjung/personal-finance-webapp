@@ -599,10 +599,10 @@ test('成本護欄 C1｜被上限擋下的 take＝settings 版本不動（skip �
     const db = await getDb();
     db.settings = { ...db.settings, aiCapPerBill: 9, aiCapPerDay: 1 };
     await saveDb(db);
-    const b1 = makeAiBudget({ updateUsage: updateAiUsage, today: '2026-08-26' });
+    const b1 = makeAiBudget({ updateUsage: updateAiUsage, today: () => '2026-08-26' });
     await b1.take();   // 放行那發＝真的寫（版本前進）
     const verAfterTake = verOf();
-    const b2 = makeAiBudget({ updateUsage: updateAiUsage, today: '2026-08-26' });   // 第二份帳單、單日已滿
+    const b2 = makeAiBudget({ updateUsage: updateAiUsage, today: () => '2026-08-26' });   // 第二份帳單、單日已滿
     await assert.rejects(b2.take(), (/** @type {any} */ e) => e.code === 'ai_budget_exceeded');
     assert.equal(verOf(), verAfterTake, '★被擋那發＝零寫入、版本不動（值沒變還落盤＝白佔一次 CAS 窗口）');
     const usage = /** @type {any} */ ((await getDb()).settings).aiUsage;

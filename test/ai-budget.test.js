@@ -60,13 +60,32 @@ test('rollDaily｜同日沿用、換日歸零、壞資料當 0', () => {
   assert.deepEqual(rollDaily({ date: '2026-08-25', n: 20 }, '2026-08-26'), { date: '2026-08-26', n: 0 }, '★換日＝保險絲自動恢復');
   assert.deepEqual(rollDaily(undefined, '2026-08-26'), { date: '2026-08-26', n: 0 });
   assert.deepEqual(rollDaily({ date: '2026-08-26', n: 'x' }, '2026-08-26'), { date: '2026-08-26', n: 0 });
+  assert.deepEqual(rollDaily({ date: '2026-08-27', n: 19 }, '2026-08-26'), { date: '2026-08-27', n: 19 }, '★db 的日期比我們新＝以 db 為準、絕不倒寫（r3#1：跨午夜請求用舊日蓋掉新日 19 發）');
+});
+
+test('跨午夜｜同一份預算跨日＝計數記到新日；舊日請求撞上新日既有計數＝接著數、不倒寫', async () => {
+  // ① 同一份預算跨午夜：today 函式每發都問——23:59 那發記 8/26、00:01 那發記 8/27（凍住日期＝整路寫舊日）
+  const m1 = memUsage({ aiCapPerBill: 9, aiCapPerDay: 9 });
+  const days = ['2026-08-26', '2026-08-27'];
+  let i = 0;
+  const b1 = makeAiBudget({ updateUsage: m1.updateUsage, today: () => days[Math.min(i++, 1)] });
+  await b1.take();
+  assert.deepEqual(m1.box.settings.aiUsage, { date: '2026-08-26', n: 1 });
+  await b1.take();
+  assert.deepEqual(m1.box.settings.aiUsage, { date: '2026-08-27', n: 1 }, '★午夜後那發記到新日（不是舊日累積成 2）');
+  // ② 倒寫防護：db 已是 {8/27, n:19}（別的請求在新日寫的）、這份預算還以為是 8/26——接著 19 數、上限照咬
+  const m2 = memUsage({ aiCapPerBill: 9, aiCapPerDay: 20, aiUsage: { date: '2026-08-27', n: 19 } });
+  const b2 = makeAiBudget({ updateUsage: m2.updateUsage, today: () => '2026-08-26' });
+  await b2.take();
+  assert.deepEqual(m2.box.settings.aiUsage, { date: '2026-08-27', n: 20 }, '★不倒寫＝新日的 19 發沒被遺忘、這發接著數成 20');
+  await assert.rejects(b2.take(), (/** @type {any} */ e) => e.code === 'ai_budget_exceeded', '★第 21 發被單日上限咬住（倒寫的壞法＝{8/26, n:1} 重新給滿）');
 });
 
 // ---- take() 行為 ----
 
 test('take｜單張上限：到頂那發 throw ai_budget_exceeded、訊息含上限與下一步；被擋那發不佔每日名額', async () => {
   const m = memUsage({ aiCapPerBill: 2, aiCapPerDay: 99 });
-  const b = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26' });
+  const b = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-26' });
   await b.take(); await b.take();
   assert.equal(b.used(), 2);
   await assert.rejects(b.take(), (/** @type {any} */ e) =>
@@ -78,16 +97,16 @@ test('take｜單張上限：到頂那發 throw ai_budget_exceeded、訊息含上
 
 test('take｜單日上限：跨兩份帳單合計數；到頂 throw、db 計數不動；換日自動恢復', async () => {
   const m = memUsage({ aiCapPerBill: 9, aiCapPerDay: 3 });
-  const b1 = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26' });
+  const b1 = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-26' });
   await b1.take(); await b1.take();
-  const b2 = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26' });   // 第二份帳單（單張計數歸零）
+  const b2 = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-26' });   // 第二份帳單（單張計數歸零）
   await b2.take();
   assert.equal(m.box.settings.aiUsage.n, 3, '兩份帳單共用同一個每日計數');
   await assert.rejects(b2.take(), (/** @type {any} */ e) =>
     e.code === 'ai_budget_exceeded' && /單日上限/.test(e.message) && /3 發/.test(e.message) && /明天/.test(e.message));
   assert.deepEqual(m.box.settings.aiUsage, { date: '2026-08-26', n: 3 }, '★被擋那發計數值不變（真櫃檯對相同值另有 skip 不落盤——見 repo.updateAiUsage 註）');
   assert.equal(b2.used(), 1, '被擋不計入單張');
-  const b3 = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-27' });   // 隔天
+  const b3 = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-27' });   // 隔天
   await b3.take();
   assert.deepEqual(m.box.settings.aiUsage, { date: '2026-08-27', n: 1 }, '★換日歸零重數＝保險絲自動恢復');
 });
@@ -99,7 +118,7 @@ test('take｜嚴格序列化（真櫃檯）：邊界上兩發並發只放行一�
   db.settings = { ...db.settings, aiCapPerBill: 6, aiCapPerDay: 99 };
   delete (/** @type {any} */ (db.settings)).aiUsage;
   await saveDb(db);
-  const b = makeAiBudget({ updateUsage: updateAiUsage, today: '2026-08-26', billUsed: 5 });
+  const b = makeAiBudget({ updateUsage: updateAiUsage, today: () => '2026-08-26', billUsed: 5 });
   const results = await Promise.allSettled([b.take(), b.take()]);
   assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected'], '★恰一發過、恰一發被擋（拔序列化鏈＝兩發都看到「還剩 1」一起過）');
   assert.equal(b.used(), 6, '★上限 6 就是 6，不會變 7');
@@ -114,7 +133,7 @@ test('take｜CAS 重跑純度：updater 被重跑兩次＝仍只算一發（副�
       box.settings = { ...box.settings, aiUsage: updater(box.settings) };   // 對 fresh 重跑才算數
       return box.settings.aiUsage;
     },
-    today: '2026-08-26',
+    today: () => '2026-08-26',
   });
   await b.take();
   assert.equal(b.used(), 1, '★重跑兩次仍只佔一個單張名額');
@@ -123,7 +142,7 @@ test('take｜CAS 重跑純度：updater 被重跑兩次＝仍只算一發（副�
 
 test('loadBill｜apply 兌票續數：載入後單張剩餘跟著縮；壞值當 0', async () => {
   const m = memUsage({ aiCapPerBill: 4, aiCapPerDay: 99 });
-  const b = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26' });
+  const b = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-26' });
   b.loadBill(3);
   assert.equal(b.used(), 3);
   await b.take();
@@ -173,7 +192,7 @@ test('transport｜真預算＋stub fetch 端到端：單日上限內照常出門
   globalThis.fetch = /** @type {any} */ (async () => { fetches++; return { ok: true, status: 200, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] }) }; });
   try {
     const m = memUsage({ aiCapPerBill: 9, aiCapPerDay: 2 });
-    const budget = makeAiBudget({ updateUsage: m.updateUsage, today: '2026-08-26' });
+    const budget = makeAiBudget({ updateUsage: m.updateUsage, today: () => '2026-08-26' });
     const engine = makeAnthropicBankEngine('k', budget);
     await engine.parseOnce('文字', AI_BANK_MODELS.primary);
     await engine.parseOnce('文字', AI_BANK_MODELS.escalation);
@@ -321,7 +340,7 @@ const decomment = (/** @type {string} */ src) => src.replace(/\/\*[\s\S]*?\*\//g
 
 test('接線｜statement.js：每請求一份預算、engine 工廠閉包同一份、preview/apply 都帶 aiBudget', () => {
   const src = decomment(readFileSync(new URL('../lib/routes/statement.js', import.meta.url), 'utf8'));
-  assert.match(src, /makeAiBudget\(\{ updateUsage: updateAiUsage, today: nowLocal\(\)\.date \}\)/, '★真櫃檯＋本地日曆日（UTC 會讓台北早上的「今天」早一天）');
+  assert.match(src, /makeAiBudget\(\{ updateUsage: updateAiUsage, today: \(\) => nowLocal\(\)\.date \}\)/, '★真櫃檯＋本地日曆日**函式**（字串＝請求建立時凍住、跨午夜整路寫舊日——r3#1）');
   assert.match(src, /const aiWiring = \(\) => \{\s*const budget = makeAiBudget/, '★預算建在 aiWiring **函式體內**＝每請求一份（吊到模組層＝全站共用一份、單張計數變成跨帳單累積）');
   assert.match(src, /makeAnthropicBankEngine\(key, budget\)/, '★工廠閉包預算＝transport 每發先裁');
   assert.match(src, /aiBudget: budget/, '★同一份也交給服務層（發票寫數／兌票續數）');
