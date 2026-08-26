@@ -17,12 +17,23 @@
 //     fallback 成 TWD 靜靜入帳，當年實測 imported:5）
 // ⚠️ 誠實劃界：本批**不讓外幣入帳**（那是批三，要先有匯率口徑）。明細列上沒有幣別欄，所以多幣別
 //    帳號的每一筆交易仍判不出自己是哪一幣＝一律「分不出」不入帳；逐筆幣別是批二。
-import { test } from 'node:test';
+// ⚠️ **隔離資料庫（鐵則 1）**：本卷有題會走 previewBankStatement，而它 getDb()——沒隔離的話會在
+//    執行目錄開/建 data/store.db，還會 backupOnce 覆蓋 store.db.bak。靜態 import 會被提升到設定
+//    環境變數之前，所以一律用動態 import。
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBankSummary, noteAccountCurrency, UNKNOWN_CURRENCY } from '../lib/bank-statement.js';
-import { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } from '../lib/parse-recipe.js';
-import { normalizeAiBank, aiAnswersAgree } from '../lib/ai-parse.js';
-import { previewBankTxForDb, importBankTxToDb, assertBankReconciled } from '../lib/services/bank-import.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
+
+const TEST_STORE = join(tmpdir(), `finance-multicur-${process.pid}.db`);
+process.env.STORE_FILE = TEST_STORE;
+after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
+
+const { parseBankSummary, makeCurrencyTable, UNKNOWN_CURRENCY, MIXED_CURRENCY_MSG } = await import('../lib/bank-statement.js');
+const { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
+const { normalizeAiBank, aiAnswersAgree } = await import('../lib/ai-parse.js');
+const { previewBankTxForDb, importBankTxToDb, assertBankReconciled, previewBankStatement } = await import('../lib/services/bank-import.js');
 
 const L = (/** @type {number} */ y, /** @type {any[]} */ pairs) => ({ y, cells: pairs.map((p) => (p.length === 3 ? { x: p[0], w: p[1], s: p[2] } : { x: p[0], s: p[1] })) });
 const MULTI = '900300****363';   // 合成：同一個遮罩帳號同時掛 JPY 與 USD（真帳單就是這個形狀）
@@ -30,15 +41,23 @@ const SOLO = '900100****3301';
 
 // ---- 登記器（三條路的單一實作）----
 
-test('登記器｜同號多幣別＝哨兵，且與登記順序無關；同幣別重複登記不受影響；哨兵黏著', () => {
-  const a = {}; noteAccountCurrency(a, MULTI, 'JPY'); noteAccountCurrency(a, MULTI, 'USD');
-  const b = {}; noteAccountCurrency(b, MULTI, 'USD'); noteAccountCurrency(b, MULTI, 'JPY');
-  assert.equal(a[MULTI], UNKNOWN_CURRENCY);
-  assert.deepEqual(a, b, '★兩種順序得到完全相同的表（last-wins 在這裡會一份 JPY 一份 USD＝雙讀硬差異）');
-  const c = {}; noteAccountCurrency(c, SOLO, 'TWD'); noteAccountCurrency(c, SOLO, 'TWD');
-  assert.equal(c[SOLO], 'TWD', '同幣別重複＝照舊');
-  const d = {}; noteAccountCurrency(d, MULTI, 'JPY'); noteAccountCurrency(d, MULTI, 'USD'); noteAccountCurrency(d, MULTI, 'JPY');
-  assert.equal(d[MULTI], UNKNOWN_CURRENCY, '★哨兵黏著（第三次登記救不回來——救回來就等於又在猜）');
+const tableOf = (/** @type {[string,string][]} */ pairs) => { const t = makeCurrencyTable(); for (const [m, c] of pairs) t.note(m, c); return t; };
+
+test('幣別表｜同號多幣別＝哨兵，且與登記順序無關；同幣別重複不受影響；哨兵黏著', () => {
+  const a = tableOf([[MULTI, 'JPY'], [MULTI, 'USD']]);
+  const b = tableOf([[MULTI, 'USD'], [MULTI, 'JPY']]);
+  assert.equal(a.map[MULTI], UNKNOWN_CURRENCY);
+  assert.deepEqual(a.map, b.map, '★兩種順序得到完全相同的表（last-wins 在這裡會一份 JPY 一份 USD＝雙讀硬差異）');
+  assert.equal(tableOf([[SOLO, 'TWD'], [SOLO, 'TWD']]).map[SOLO], 'TWD', '同幣別重複＝照舊');
+  assert.equal(tableOf([[MULTI, 'JPY'], [MULTI, 'USD'], [MULTI, 'JPY']]).map[MULTI], UNKNOWN_CURRENCY, '★哨兵黏著（第三次登記救不回來＝又在猜）');
+});
+
+test('幣別表｜混台外幣的判定用**正規形**分組：不同遮罩印法不得繞過（Codex #517 r2#2 實測可繞）', () => {
+  assert.equal(tableOf([[MULTI, 'JPY'], [MULTI, 'USD']]).hasMixedTwd(), false, '純外幣同號＝不是混台外幣');
+  assert.equal(tableOf([[MULTI, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), true, '同一個字串的混台外幣');
+  assert.equal(tableOf([['900300****0363', 'TWD'], ['900300-****-0363', 'USD']]).hasMixedTwd(), true,
+    '★兩種印法是同一個帳號（用原字串分組會被繞過：實測兩筆都被當 TWD、foreign=0、閘仍 strong）');
+  assert.equal(tableOf([[SOLO, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), false, '不同帳號各自單一幣別＝不是混');
 });
 
 // ---- 三條路 ----
@@ -170,13 +189,9 @@ test('★同號混台幣＋外幣＝拒收（不是哨兵）：預審抓到的 r
   assert.equal(normalizeAiBank(pure).accountCurrency[MULTI], UNKNOWN_CURRENCY, '★純外幣同號不受這道影響（放寬的射程剛好是安全的那一格）');
 });
 
-test('登記器｜原型鍵防線：constructor／toString 這種名字不得因為讀到原型成員而被誤降成哨兵', () => {
-  const m = {};
-  noteAccountCurrency(m, 'constructor', 'JPY');
-  assert.equal(m['constructor'], 'JPY', '★own-property 讀（直讀會拿到 Object 原型的 function ⇒ 第一次登記就變 UNKNOWN）');
-  const m2 = {};
-  noteAccountCurrency(m2, 'toString', 'TWD'); noteAccountCurrency(m2, 'toString', 'TWD');
-  assert.equal(m2['toString'], 'TWD');
+test('幣別表｜原型鍵防線：constructor／toString 這種名字不得因為讀到原型成員而被誤降成哨兵', () => {
+  assert.equal(tableOf([['constructor', 'JPY']]).map['constructor'], 'JPY', '★own-property 讀（直讀會拿到 Object 原型的 function ⇒ 第一次登記就變 UNKNOWN）');
+  assert.equal(tableOf([['toString', 'TWD'], ['toString', 'TWD']]).map['toString'], 'TWD');
 });
 
 test('提示詞｜同號多幣別要各列一列（規則 6）——沒教的話 AI 合併成一列，本支的放寬就吃不到、仍整份被打回', async () => {
@@ -188,6 +203,44 @@ test('提示詞｜同號多幣別要各列一列（規則 6）——沒教的話
   merged.accountCurrencies = merged.accountCurrencies.filter((/** @type {any} */ x) => !(x.masked === MULTI && x.currency === 'USD'));
   assert.throws(() => normalizeAiBank(merged), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /矛盾/.test(e.message),
     '★合併形仍被打回（所以提示詞那句是必要的，不是裝飾）');
+});
+
+test('★三條路都擋混台外幣（Codex #517 r2#1：只擋 AI 不夠——歧義的來源是明細列沒有幣別欄，那是版面事實、跟誰讀的無關）', async () => {
+  const mixLines = templateLines().map((ln) => ({ ...ln, cells: ln.cells.map((/** @type {any} */ c) => (c.s === 'JPY' ? { ...c, s: 'TWD' } : c)) }));
+  assert.throws(() => parseBankSummary(mixLines), (/** @type {any} */ e) => e.code === 'bank_mixed_currency',
+    '★模板路線也擋（他實測：不擋的話閘仍 strong、未驗算的 TWD 餘額 50,000 照樣建戶寫入）');
+  const mixRecipeLines = recipeLines().map((ln) => ({ ...ln, cells: ln.cells.map((/** @type {any} */ c) => (c.s === 'JPY' ? { ...c, s: 'TWD' } : c)) }));
+  assert.throws(() => parseWithRecipe(mixRecipeLines, recipe()), (/** @type {any} */ e) => /台幣與外幣/.test(String(e?.message || '')),
+    '★配方路線也擋（呼叫端 fail-closed 當 miss，不會靜靜產出歧義結果）');
+  const a = aiAnswer();
+  a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });
+  a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
+  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /台幣與外幣/.test(e.message), '★AI 路線也擋');
+  // 三條路共用同一句白話（不帶任何欄值）
+  assert.ok(!/\d{3}/.test(MIXED_CURRENCY_MSG), '★訊息不含帳號/末碼（欄值一律不回聲）');
+});
+
+test('★混台外幣不落到規則卡／AI 救援：**引擎工廠一次都不能被呼叫**（同一道判定，換誰讀答案都一樣——白繞一圈還白燒 AI 發數）', async () => {
+  // ⚠️ 這裡刻意**不用形狀釘**：原本掃「原始碼含 code !== 'bank_mixed_currency'」是假綠——
+  //    同一檔另一處（配方救援那條分支）也含同一段字面，砍掉 aiEligible 那處照樣全綠（實測）。
+  let engineCalls = 0, extractCalls = 0;
+  // ⚠️ 庫裡要**真的有一張規則卡**，這題才分得出「規則卡救援有沒有被試」——沒有卡的話
+  //    recipeBankRoute 一開始就返回、根本不會抽字，拿掉那道排除也量不到差別（實測全綠＝假綠）。
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const db0 = await getDb();
+  db0.parseRecipes = [{ id: 'rcp-mc', bank: '合成銀行', current: recipe(), graduateStreak: 0, graduated: false, suspect: false, rebirths: 0,
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastUsedAt: '2026-08-01T00:00:00.000Z' }];
+  await saveDb(db0);
+  const mixed = async () => { throw Object.assign(new Error('同一個帳號同時列了台幣與外幣'), { status: 400, code: 'bank_mixed_currency' }); };
+  await assert.rejects(
+    () => previewBankStatement('QUFBQQ==', undefined, /** @type {any} */ (mixed), {
+      useAi: true,   // ★連使用者明確要求 AI 都不該送出去
+      aiEngineFactory: () => { engineCalls++; return /** @type {any} */ ({ models: { primary: 'p', escalation: 'e' }, parseOnce: async () => ({}) }); },
+      aiExtract: async () => { extractCalls++; return [{ y: 0, cells: [{ x: 0, s: '合成' }] }]; },
+    }),
+    (/** @type {any} */ e) => e.code === 'bank_mixed_currency', '★原錯誤照實丟回（不是被改寫成「範本認不得」）');
+  assert.equal(engineCalls, 0, '★AI 引擎一次都沒組裝＝零發數（拿掉 aiEligible 那道排除＝這裡會變 ≥1）');
+  assert.equal(extractCalls, 0, '★規則卡救援也沒被試（抽字是那條路的第一步；拿掉配方那道排除＝這裡會變 ≥1）');
 });
 
 test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘與匯入——閘整組跳過、預覽標 foreign、匯入零筆、db 不增交易', async () => {
