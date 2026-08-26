@@ -198,6 +198,20 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {string} [relayScript]
  * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
  * @property {string} [liveSecret] 活金絲雀的暗號；預設隨機。只給考題（假 grok 要能把它寫進 stdout／session 來證明會被抓）
+ * @property {string} [liveRoot] 活金絲雀目錄建在哪裡；**預設＝真的家目錄**。
+ *   為什麼可注入：家目錄是**跨程序共用**的，考題在那裡數 `.grok-live-canary-*` 的前後差值，
+ *   另一個 session／審查樹／合併閘同時在掃就會誤紅（2026-08-26 觀察到跨 PR 試合併閘兩次退 0、一次退 1；
+ *   Codex 在 #514 r8 也中過。⚠️ 閘的退出碼不帶題名＝歸因是假說，不是實測）。所以給考題一個隔離根。
+ *   ⚠️ **射程**：釘住預設值的那一題直接呼叫 `runScan`，**不涵蓋檔尾 CLI 入口那個接縫**——
+ *   Codex #516 r1 在那個接縫注入 `BOX_ROOT`（非家目錄、且已存在）實測跑過全卷：餌搬家、全卷照樣綠。
+ *   動那個接縫要另行複核。
+ *   ⚠️ 考題注入的那種根（`tmpdir()` 底下）不會讓金絲雀落進沙箱讀得到的地方——profile 是 deny default，
+ *   家目錄與使用者暫存區都不在放行清單裡。**但這不是對任意根成立的保證**：profile 放行讀的樹底下
+ *   若有使用者寫得進去的位置（例如 Cellar 的版本目錄），把根指到那裡餌就變成盒內讀得到——所以這一格別亂傳。
+ *   ⚠️ 但位置就是這個餌的全部意義：家目錄同時住著真 ~/.grok、~/.grok-sandbox-auth 與真的 store.db，
+ *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
+ *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
+ *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -372,7 +386,15 @@ export async function runScan(args, deps = {}) {
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  liveDir = mkdtempSync(join(homedir(), '.grok-live-canary-'));
+  // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
+  // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
+  // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
+  // ⚠️ 誠實劃界——那一題**只**守 runScan 的預設值，守不到兩件事：
+  //    ①它看的是「這次 runScan 在真家目錄留下幾個帶本輪暗號的目錄」＝**不涵蓋這次沒執行到的建立點**
+  //      （同一次 runScan 若在「掃描開始」前多建一顆同暗號的，它反而會紅——那不是它守得住的範圍，是副作用）；
+  //    ②它直接呼叫 runScan，**不涵蓋檔尾 CLI 入口那個接縫**（Codex #516 r1 在那裡注入 `BOX_ROOT`
+  //      ——非家目錄、且已存在——實測跑過全卷：餌搬家、全卷照樣綠）——動那個接縫要另行複核。
+  liveDir = mkdtempSync(join(deps.liveRoot ?? homedir(), '.grok-live-canary-'));
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
   // ── ③ 轉送器（監看它的生死）──
@@ -535,6 +557,10 @@ if (isMainModule(import.meta.url)) {
   const arg = (flag) => { const i = ARGS.indexOf(flag); return i >= 0 ? ARGS[i + 1] : undefined; };
   const base = arg('--base'), head = arg('--head'), promptFile = arg('--prompt'), outFile = arg('--out');
   if (!base || !head || !promptFile) { console.error('用法：node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>]'); process.exit(2); }
+  // ⚠️ 這裡**不要**傳 deps：`ScanDeps` 的每一格預設都是「正式掃描該用的那個值」，尤其 `liveRoot`——
+  //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入一個
+  //    **不是家目錄、且已經存在**的根目錄，餌就搬家，而全套考題照樣綠（Codex #516 r1 對 BOX_ROOT 實測跑過全卷）
+  //    ——釘住預設值的那一題直接呼叫 runScan、不經過這個接縫。
   const { code } = await runScan({ base, head, promptFile, outFile });
   process.exit(code);
 }

@@ -9,7 +9,7 @@
 //   「金絲雀之前」的路徑（版本不符、盒子壞）在 CI 也考得到；「金絲雀之後」的路徑（轉送器、grok、
 //   驗屍）只在 macOS 考得到，其他平台明確 skip。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PINNED_ISSUER, PINNED_CLIENT_ID, DUMMY_BEARER_PREFIX, authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 
 const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
@@ -80,8 +80,31 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 }
 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
-/** 每題獨立的沙箱 auth 目錄與結果根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results） */
-const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')), fetchImpl: noFetch });
+/**
+ * isolated() 建過的暫存根，跑完整支考題檔一起清。
+ * ⚠️ **這三個根本身 `runScan` 不會刪**（它只清自己在根底下建的東西；盒子根本不住這裡，是在 BOX_ROOT）——
+ *    根是考題建的、要考題自己收。沒有這個 hook，每呼叫一次 isolated() 就在使用者暫存區多留三個目錄，
+ *    而且走得夠遠的題還會**留著內容**：`fake-auth-` 的假 auth.json、`fake-results-` 的整包結果（launch.json＋sessions）；
+ *    早早退場的題（例如 base／head 不是寫死 SHA 那題）則三個都還是空的。
+ *    （Codex #516 r1 抓到我新加的 `fake-live-` 那一族；`fake-auth-`／`fake-results-` 兩族是既有的，
+ *    同一個 helper 建的、沒有道理分開清。）
+ */
+const TEMP_ROOTS = /** @type {string[]} */ ([]);
+const keep = (/** @type {string} */ dir) => { TEMP_ROOTS.push(dir); return dir; };
+after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 盡力 */ } } });
+
+/**
+ * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄）。
+ * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
+ * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
+ */
+const isolated = () => ({ authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
+/**
+ * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
+ * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，
+ * 這裡蓋到的是舊名、新名照樣流進去 ⇒ 題名關鍵字「不注入 liveRoot」那題會直接紅，不會靜靜放行。
+ */
+const isolatedRealHome = () => ({ ...isolated(), liveRoot: undefined });
 /** 假 grok 的 sha256（r4：runScan 對盒內副本驗 hash；考題要把假 grok 自己的 hash 傳進去） */
 const shaOf = (/** @type {string} */ installDir) => createHash('sha256').update(readFileSync(join(installDir, 'bin', 'grok'))).digest('hex');
 const quiet = { log: () => {} };
@@ -744,9 +767,14 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'sleep 30; $1'));
   /** @type {string[]} */ const logs = [];
   /** @type {number[]} */ const exits = [];
-  const livesBefore = readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length;
+  /**
+   * 掃描進行中（金絲雀已建、還沒收）那一刻，**注入的**根目錄裡有什麼。
+   * ⚠️ 少了這一格，下面「清乾淨」的斷言就是空包彈：注入沒接上時金絲雀跑去真家目錄建，
+   *    隔離目錄從頭到尾是空的，斷言照樣通過。
+   */
+  /** @type {string[] | null} */ let livesDuring = null;
   const p = runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
-    log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) setTimeout(() => process.emit('SIGTERM'), 300); },
+    log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) { livesDuring = readdirSync(iso.liveRoot); setTimeout(() => process.emit('SIGTERM'), 300); } },
     ...iso,
     repo: repo.dir,
     ...withGrok(inst),
@@ -754,6 +782,9 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
     exit: (c) => {
       exits.push(c);
       assert.deepEqual(readdirSync(iso.resultsRoot), [], 'emergency 呼叫 exit 前還留下結果目錄');
+      // ⚠️ 這一句要在**這裡**問：跑完才問的話，後面 finally 也會清一次，
+      //    「emergency 自己有沒有清」就永遠問不出來（拿掉 emergency 那行、結尾的斷言仍然是綠的——實測過）。
+      assert.deepEqual(readdirSync(iso.liveRoot), [], 'emergency 呼叫 exit 前還沒清活金絲雀');
     },
   });
   const r = await p;
@@ -763,9 +794,39 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   assert.ok(box && !existsSync(box), '盒子沒清');
   assert.ok(!readdirSync(iso.authDir).some((n) => n.startsWith('dummy-bearer')), '假值檔沒清');
   assert.deepEqual(readdirSync(iso.resultsRoot), [], '緊急收尾還留下只有 launch.json 的結果目錄');
-  assert.equal(readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length, livesBefore, '活金絲雀目錄沒清');
+  assert.equal((livesDuring ?? []).filter((n) => n.startsWith('.grok-live-canary-')).length, 1, `掃描中金絲雀沒建在注入的根目錄（實際內容：${JSON.stringify(livesDuring)}）——liveRoot 沒接上，下一行的斷言會變空包彈`);
+  assert.deepEqual(readdirSync(iso.liveRoot), [], '活金絲雀目錄沒清');
   const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
   assert.ok(!ps.includes(box), 'grok 群組還活著');
+});
+
+test('runScan｜不注入 liveRoot 時，活金絲雀建在真的家目錄：掃描期間認得出本輪暗號那一個、掃完清掉', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這一題**刻意**讓活金絲雀落在真家目錄：金絲雀的意義就在**位置**——家目錄同時住著真 ~/.grok、
+  //    ~/.grok-sandbox-auth 與真的 store.db，是破出沙箱的人第一個會翻的地方。位置只能在正式位置上考。
+  //    其餘走到活金絲雀那一步的題都經 isolated() 改道到隔離根。
+  //    ⚠️ 但「考題不碰真家目錄」這件事本支只做到一半：**走到 `runCanary()` 的題**（沙箱金絲雀）都會在家目錄
+  //    mkdtemp 一個 `.grok-canary-*`，它的四個根寫死、沒有可注入的參數——本支不動它（Codex #516 r5／r6 抓到我原本
+  //    在這裡寫「全檔唯一還在真家目錄建東西的題」與「每一題都會」都是假的：更早退場的題與純函式題根本沒跑到它）。
+  // ⚠️ 認身分靠**每輪隨機的暗號內容**、不數個數：別的 session／審查樹／合併閘同時在跑也認不錯。
+  //    （數個數正是上一題原本的寫法，也正是本支要修掉的病。）
+  // ⚠️ 暗號會被原樣插進驗屍的正規式（grok-scan.js 的 BREACH_SRC），randomUUID 只有十六進位與 `-`＝正則安全。
+  const repo = tinyRepo();
+  const liveSecret = `LIVE-CANARY-PIN-${randomUUID()}`;
+  /** @type {string[]} */ let mine = [];
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
+    ...isolatedRealHome(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok'), liveSecret,
+    log: (m) => {
+      if (!m.startsWith('掃描開始')) return;   // 這一刻金絲雀一定已經建好（建立點在這行 log 之前）
+      mine = readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).filter((n) => {
+        try { return readFileSync(join(homedir(), n, 'store.db'), 'utf8').includes(liveSecret); }
+        catch { return false; }   // 別人的金絲雀隨時可能被清掉，讀不到就跳過
+      });
+    },
+  });
+  assert.equal(r.code, 0, r.summary.join('\n'));
+  assert.equal(mine.length, 1, '掃描期間在真家目錄找不到帶本輪暗號的金絲雀＝預設根目錄已經不是家目錄了（而搬走它不會有別的題轉紅）');
+  assert.ok(mine[0] && !existsSync(join(homedir(), mine[0])), '掃完沒清掉真家目錄裡的金絲雀');
 });
 
 test('runScan｜Grok 掃描抓到：活金絲雀暗號只出現在 grok 的**回覆**（不在 session）→ 1、--out 不寫、sessions 不留（原本只掃 session 檔）', async (t) => {
