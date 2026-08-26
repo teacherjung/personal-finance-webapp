@@ -52,7 +52,7 @@ test('幣別表｜同號多幣別＝哨兵，且與登記順序無關；同幣�
   assert.equal(tableOf([[MULTI, 'JPY'], [MULTI, 'USD'], [MULTI, 'JPY']]).map[MULTI], UNKNOWN_CURRENCY, '★哨兵黏著（第三次登記救不回來＝又在猜）');
 });
 
-test('幣別表｜混台外幣的判定用**正規形**分組：不同遮罩印法不得繞過（Codex #517 r2#2 實測可繞）', () => {
+test('幣別表｜「是不是同一個帳號」用 acctPatternsIntersect 語言交集判準（#504 那把尺），不是比字串相等——分隔符／星號數／完整號對遮罩都涵蓋（#517 r2#2・r3#1・r5#1 各示範一種未涵蓋的寫法）', () => {
   assert.equal(tableOf([[MULTI, 'JPY'], [MULTI, 'USD']]).hasMixedTwd(), false, '純外幣同號＝不是混台外幣');
   assert.equal(tableOf([[MULTI, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), true, '同一個字串的混台外幣');
   assert.equal(tableOf([['900300****0363', 'TWD'], ['900300-****-0363', 'USD']]).hasMixedTwd(), true,
@@ -227,7 +227,7 @@ test('★三條路都擋混台外幣（Codex #517 r2#1：只擋 AI 不夠——�
     '★模板路線也擋（他實測：不擋的話閘仍 strong、未驗算的 TWD 餘額 50,000 照樣建戶寫入）');
   const mixRecipeLines = recipeLines().map((ln) => ({ ...ln, cells: ln.cells.map((/** @type {any} */ c) => (c.s === 'JPY' ? { ...c, s: 'TWD' } : c)) }));
   assert.throws(() => parseWithRecipe(mixRecipeLines, recipe()), (/** @type {any} */ e) => /台幣與外幣/.test(String(e?.message || '')),
-    '★配方路線也擋（呼叫端 fail-closed 當 miss，不會靜靜產出歧義結果）');
+    '★配方路線也擋（丟的是與模板同一個**終局碼**，不是「這張配方不合用」——後者會被 recipeBankRoute 吞成 miss、照舊落到 AI 救援，見 r6#1 那題）');
   const a = aiAnswer();
   a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });
   a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
