@@ -9,7 +9,7 @@
 //   「金絲雀之前」的路徑（版本不符、盒子壞）在 CI 也考得到；「金絲雀之後」的路徑（轉送器、grok、
 //   驗屍）只在 macOS 考得到，其他平台明確 skip。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
@@ -81,11 +81,21 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
 /**
+ * isolated() 建過的暫存根，跑完整支考題檔一起清。
+ * ⚠️ `runScan` 只清它自己在這些根**底下**建的東西（盒子、金絲雀），**根目錄本身是考題建的、要考題自己收**——
+ *    沒有這個 hook，每跑一次 npm test 就在使用者暫存區多留幾十個空目錄（Codex #516 r1 抓到我新加的 fake-live- 那一族；
+ *    fake-auth-／fake-results- 兩族是既有的，同一個 helper 建的、沒有道理分開清）。
+ */
+const TEMP_ROOTS = /** @type {string[]} */ ([]);
+const keep = (/** @type {string} */ dir) => { TEMP_ROOTS.push(dir); return dir; };
+after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 盡力 */ } } });
+
+/**
  * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄）。
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
-const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')), liveRoot: mkdtempSync(join(tmpdir(), 'fake-live-')), fetchImpl: noFetch });
+const isolated = () => ({ authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，
