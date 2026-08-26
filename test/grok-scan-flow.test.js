@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -80,8 +80,12 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 }
 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
-/** 每題獨立的沙箱 auth 目錄與結果根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results） */
-const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')), fetchImpl: noFetch });
+/**
+ * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄）。
+ * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
+ * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
+ */
+const isolated = () => ({ authDir: mkdtempSync(join(tmpdir(), 'fake-auth-')), resultsRoot: mkdtempSync(join(tmpdir(), 'fake-results-')), liveRoot: mkdtempSync(join(tmpdir(), 'fake-live-')), fetchImpl: noFetch });
 /** 假 grok 的 sha256（r4：runScan 對盒內副本驗 hash；考題要把假 grok 自己的 hash 傳進去） */
 const shaOf = (/** @type {string} */ installDir) => createHash('sha256').update(readFileSync(join(installDir, 'bin', 'grok'))).digest('hex');
 const quiet = { log: () => {} };
@@ -744,9 +748,14 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'sleep 30; $1'));
   /** @type {string[]} */ const logs = [];
   /** @type {number[]} */ const exits = [];
-  const livesBefore = readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length;
+  /**
+   * 掃描進行中（金絲雀已建、還沒收）那一刻，**注入的**根目錄裡有什麼。
+   * ⚠️ 少了這一格，下面「清乾淨」的斷言就是空包彈：注入沒接上時金絲雀跑去真家目錄建，
+   *    隔離目錄從頭到尾是空的，斷言照樣通過。
+   */
+  /** @type {string[] | null} */ let livesDuring = null;
   const p = runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
-    log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) setTimeout(() => process.emit('SIGTERM'), 300); },
+    log: (m) => { logs.push(m); if (m.startsWith('掃描開始')) { livesDuring = readdirSync(iso.liveRoot); setTimeout(() => process.emit('SIGTERM'), 300); } },
     ...iso,
     repo: repo.dir,
     ...withGrok(inst),
@@ -763,7 +772,8 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   assert.ok(box && !existsSync(box), '盒子沒清');
   assert.ok(!readdirSync(iso.authDir).some((n) => n.startsWith('dummy-bearer')), '假值檔沒清');
   assert.deepEqual(readdirSync(iso.resultsRoot), [], '緊急收尾還留下只有 launch.json 的結果目錄');
-  assert.equal(readdirSync(homedir()).filter((n) => n.startsWith('.grok-live-canary-')).length, livesBefore, '活金絲雀目錄沒清');
+  assert.equal((livesDuring ?? []).filter((n) => n.startsWith('.grok-live-canary-')).length, 1, `掃描中金絲雀沒建在注入的根目錄（實際內容：${JSON.stringify(livesDuring)}）——liveRoot 沒接上，下一行的斷言會變空包彈`);
+  assert.deepEqual(readdirSync(iso.liveRoot), [], '活金絲雀目錄沒清');
   const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
   assert.ok(!ps.includes(box), 'grok 群組還活著');
 });

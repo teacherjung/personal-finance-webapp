@@ -198,6 +198,10 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {string} [relayScript]
  * @property {(code: number) => void} [exit] 收到 SIGTERM／SIGINT 時緊急收尾後呼叫；預設 process.exit（考題注入假的，免得殺掉考題自己）
  * @property {string} [liveSecret] 活金絲雀的暗號；預設隨機。只給考題（假 grok 要能把它寫進 stdout／session 來證明會被抓）
+ * @property {string} [liveRoot] 活金絲雀目錄建在哪裡；**預設＝真的家目錄**，正式路徑（CLI）不傳它。
+ *   只給考題注入隔離暫存目錄：考題若在真家目錄數 `.grok-live-canary-*` 的前後差值，另一個 session／審查樹／
+ *   合併閘同時在掃就會誤紅（2026-08-26 實測：同一道跨 PR 試合併閘兩次退 0、一次退 1；Codex 在 #514 r8 也中過）。
+ *   ⚠️ 換根目錄不會讓金絲雀落進沙箱看得到的地方——profile 是 deny default，家目錄與使用者暫存區都不在放行清單裡。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -372,7 +376,10 @@ export async function runScan(args, deps = {}) {
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  liveDir = mkdtempSync(join(homedir(), '.grok-live-canary-'));
+  // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
+  // ⚠️ 誠實劃界：沒有考題證明「不注入時落在真家目錄」（那要改 process.env.HOME，等於在考題檔裡加一個
+  //    全域可變狀態——正是本次修掉的那一類跨程序干擾）。預設值被改掉只有複審看得見。
+  liveDir = mkdtempSync(join(deps.liveRoot ?? homedir(), '.grok-live-canary-'));
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
   // ── ③ 轉送器（監看它的生死）──
