@@ -9,7 +9,7 @@ import { createRecipeManager } from './parse-recipes-ui.js';   // 規則卡管�
 import { openStoreRulesEditor } from './settings-store-rules.js';
 import { askToggleDisplayAfterSaveFailure } from './ai-consent.js';   // r5#1：開關失敗後的顯示判準（核對制）
 import { sortStoreRows, storeCatCell, STORE_SORT_DEFAULT } from './settings-store-table.js';
-import { aiKeyPatch, AI_KEY_INFO, AI_KEY_CARD_TITLE, AI_KEY_CARD_NOTE, AI_KEY_COST_LINE, AI_KEY_PLACEHOLDER_SET, AI_KEY_PLACEHOLDER_UNSET, AI_KEY_CLEAR_LABEL, AI_KEY_SAVED_TEXT, AI_KEY_CLEARED_TEXT, AI_KEY_NOCHANGE_TEXT } from './ai-key-settings.js';   // AI 解析鑰匙卡（P1b-2）：判準與文案的家
+import { aiKeyPatch, aiCapDisplay, AI_KEY_INFO, AI_KEY_CARD_TITLE, AI_KEY_CARD_NOTE, AI_KEY_COST_LINE, AI_KEY_PLACEHOLDER_SET, AI_KEY_PLACEHOLDER_UNSET, AI_KEY_CLEAR_LABEL, AI_KEY_SAVED_TEXT, AI_KEY_CLEARED_TEXT, AI_KEY_NOCHANGE_TEXT } from './ai-key-settings.js';   // AI 解析鑰匙卡（P1b-2）：判準與文案的家
 import { thBuilder, bindSortClicks } from './tx-sort.js';   // 表頭三角形與點擊綁定＝與收支頁／訂閱頁同一套
 import { runExport, exportNotice, defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';   // 匯出備份「按下去會說話」（先驗再存，見 exportBtn 的 onclick）
 import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「保留清單外的現值」的單一實作（#409）
@@ -260,8 +260,8 @@ export async function renderSettings() {
       <p class="muted" style="font-size:12px;margin:-8px 0 6px">只在「第一次遇到新版面」時發生：兩個 AI 各自讀、金額欄位全一致才收；不一致再請第三個 AI 仲裁，三份都不同就請你手動記帳。多花一到兩發費用（不一致時再加一發仲裁）、換金額多一層獨立核對。</p>
       <div style="margin:0 0 14px"><button type="button" class="info-link" data-ai-info="dual">ⓘ 雙讀是什麼？會多花多少錢？</button></div>
       <div class="form-grid" style="margin-bottom:14px">
-        <div><label>單張上限（發）</label><input id="aiCapPerBill" type="number" min="1" step="1" value="${Number(s.aiCapPerBill) >= 1 ? Math.floor(Number(s.aiCapPerBill)) : 6}" /></div>
-        <div><label>單日上限（發）</label><input id="aiCapPerDay" type="number" min="1" step="1" value="${Number(s.aiCapPerDay) >= 1 ? Math.floor(Number(s.aiCapPerDay)) : 20}" /></div>
+        <div><label>單張上限（發）</label><input id="aiCapPerBill" type="number" min="1" step="1" value="${aiCapDisplay(s.aiCapPerBill, 6)}" /></div>
+        <div><label>單日上限（發）</label><input id="aiCapPerDay" type="number" min="1" step="1" value="${aiCapDisplay(s.aiCapPerDay, 20)}" /></div>
       </div>
       <p class="muted" style="font-size:12px;margin:-8px 0 6px">一發＝讓 AI 讀一次；新版面開雙讀＝兩發起跳、關掉＝一發起跳。單日上限是防程式出錯狂重試的保險絲，隔天自動恢復。撞到上限＝那發不送出（不花錢），畫面會講清楚。</p>
       <div style="margin:0 0 14px"><button type="button" class="info-link" data-ai-info="budget">ⓘ 發數上限是什麼？怎麼算一發？</button></div>
@@ -414,7 +414,7 @@ export async function renderSettings() {
           await api('/settings', { method: 'PUT', body: { [capKey]: n } });
           toast('已更新上限＝' + n + ' 發');
         } catch (err) {
-          try { const s2 = /** @type {any} */ (await api('/settings')); const cur = Number(s2?.[capKey]); inp.value = String(cur >= 1 ? Math.floor(cur) : (capKey === 'aiCapPerBill' ? 6 : 20)); }
+          try { const s2 = /** @type {any} */ (await api('/settings')); inp.value = String(aiCapDisplay(s2?.[capKey], capKey === 'aiCapPerBill' ? 6 : 20)); }
           catch { /* 讀不回來就留使用者輸入的值，下次重繪以 db 為準 */ }
           toast('儲存失敗：' + (/** @type {any} */ (err).message || ''), true);
         } finally { inp.disabled = false; }

@@ -33,6 +33,15 @@ export function aiKeyPatch({ value, clear } = {}) {
   return v ? { aiApiKey: v } : null;
 }
 
+/** 上限的**顯示尺**（Codex #515 r2#1：畫面用「>=1 才顯示、否則印預設」、執行端 capOf 用「>0 夾 1」
+ * ——存 0.5 時畫面說 6/20、實際上限 1/1＝使用者第一發就被擋卻看到另一組設定）。
+ * 語意必須與 lib/ai-budget.js 的 capOf **逐字等值**（前端載不進 lib＝抄一份；等值由
+ * test/ai-budget.test.js 的對照表考題釘住、兩邊誰改了都紅）。 @param {any} v @param {number} fallback */
+export function aiCapDisplay(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.max(1, Math.floor(n)) : fallback;
+}
+
 /** 就地解釋（設定頁的 ⓘ；顆數刻意不寫死——寫死的數字自己會漂，實際幾顆由考題釘住）。全部是常數、零插值 ⇒ 交給 `openInfo` 不 esc 也安全。 */
 export const AI_KEY_INFO = Object.freeze({
   dual: {

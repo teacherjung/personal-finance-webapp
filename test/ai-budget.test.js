@@ -132,6 +132,14 @@ test('loadBill｜apply 兌票續數：載入後單張剩餘跟著縮；壞值當
   assert.equal(b.used(), 0, '壞值當 0（老票沒這欄＝從頭數，寬鬆方向：不會把合法生成誤擋）');
 });
 
+test('顯示尺＝執行尺（Codex #515 r2#1）：aiCapDisplay 與 capOf 對照表逐值相等——畫面顯示的上限就是真正執行的上限', async () => {
+  const { aiCapDisplay } = await import('../public/modules/ai-key-settings.js');
+  for (const [v, fb] of /** @type {[any, number][]} */ ([[0.5, 6], [0.5, 20], [7.9, 6], [1, 20], [0, 6], [-1, 20], ['abc', 6], [null, 20], ['', 6], [1e9, 20], [Number.NaN, 6]])) {
+    assert.equal(aiCapDisplay(v, fb), budgetCaps({ aiCapPerBill: v, aiCapPerDay: v })[fb === 6 ? 'perBill' : 'perDay'],
+      `★值 ${String(v)}：顯示與執行必須同一把尺（存 0.5 畫面說預設、實際夾 1＝使用者第一發被擋卻看到另一組設定）`);
+  }
+});
+
 // ---- transport 擋點 ----
 
 test('transport｜組裝必帶 budget：漏接當場炸（ai_budget_missing）＝不靜靜不設防', () => {
@@ -327,6 +335,10 @@ test('接線｜設定頁（頁面模組＝形狀釘）：兩個上限輸入欄�
   assert.match(src, /id="aiCapPerDay"/, '單日上限輸入欄');
   assert.match(src, /data-ai-info="budget"/, '就地解釋鈕（必須懂的就地解釋鐵則）');
   assert.match(src, /for \(const capKey of \['aiCapPerBill', 'aiCapPerDay'\]\)/, '★兩欄都接 onchange 存檔迴圈（預審：題名寫存檔、斷言沒釘＝整刪迴圈全綠）');
+  assert.match(src, /value="\$\{aiCapDisplay\(s\.aiCapPerBill, 6\)\}"/, '★渲染走顯示尺（r2#1）');
+  assert.match(src, /value="\$\{aiCapDisplay\(s\.aiCapPerDay, 20\)\}"/, '★兩欄都走');
+  assert.match(src, /aiCapDisplay\(s2\?\.\[capKey\]/, '★失敗重核也走同一把尺（不是自己再發明一條顯示規則）');
+  assert.ok(!/Number\(s\.aiCapPer/.test(src), '★不得殘留自帶的顯示判準');
   assert.match(src, /body: \{ \[capKey\]: n \}/, '★存的就是那一欄、值是驗過的整數');
   for (const banned of ['已限速', '保證正確', '不會超過', '絕不超過']) assert.ok(!src.includes(banned), `文案鐵則：${banned}`);
 });
