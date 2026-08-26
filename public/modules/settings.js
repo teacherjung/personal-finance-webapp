@@ -263,7 +263,7 @@ export async function renderSettings() {
         <div><label>單張上限（發）</label><input id="aiCapPerBill" type="number" min="1" step="1" value="${Number(s.aiCapPerBill) >= 1 ? Math.floor(Number(s.aiCapPerBill)) : 6}" /></div>
         <div><label>單日上限（發）</label><input id="aiCapPerDay" type="number" min="1" step="1" value="${Number(s.aiCapPerDay) >= 1 ? Math.floor(Number(s.aiCapPerDay)) : 20}" /></div>
       </div>
-      <p class="muted" style="font-size:12px;margin:-8px 0 6px">一發＝讓 AI 讀一次；一份新版面正常兩發起跳。單日上限是防程式出錯狂重試的保險絲，隔天自動恢復。撞到上限＝那發不送出（不花錢），畫面會講清楚。</p>
+      <p class="muted" style="font-size:12px;margin:-8px 0 6px">一發＝讓 AI 讀一次；新版面開雙讀＝兩發起跳、關掉＝一發起跳。單日上限是防程式出錯狂重試的保險絲，隔天自動恢復。撞到上限＝那發不送出（不花錢），畫面會講清楚。</p>
       <div style="margin:0 0 14px"><button type="button" class="info-link" data-ai-info="budget">ⓘ 發數上限是什麼？怎麼算一發？</button></div>
       <div class="form-grid">
         <div class="full"><label>API key</label><input id="aiApiKey" type="password" value="" placeholder="${s.aiApiKeySet ? AI_KEY_PLACEHOLDER_SET : AI_KEY_PLACEHOLDER_UNSET}" /></div>
@@ -401,7 +401,8 @@ export async function renderSettings() {
           + (ask.checked ? '會先問你' : '直接送') + '：' + (/** @type {any} */ (err).message || ''), true);
       } finally { ask.disabled = false; }
     };
-    // 成本護欄兩個上限（C1）：改完就存（数字欄、失敗退回 db 現值——同 aiDualRead 的核對制方向：畫面以 db 為準）
+    // 成本護欄兩個上限（C1）：改完就存。存檔失敗＝向 db 重核、畫面以 db 為準（同 aiDualRead 的核對制）；
+    // 輸入不合法＝清空欄位請重填（不是退回 db 值——那會讓「打錯了」看起來像「存好了」）。
     for (const capKey of ['aiCapPerBill', 'aiCapPerDay']) {
       const inp = /** @type {HTMLInputElement|null} */ (byId(capKey));
       if (!inp) continue;
