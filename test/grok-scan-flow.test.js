@@ -769,6 +769,9 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
     exit: (c) => {
       exits.push(c);
       assert.deepEqual(readdirSync(iso.resultsRoot), [], 'emergency 呼叫 exit 前還留下結果目錄');
+      // ⚠️ 這一句要在**這裡**問：跑完才問的話，後面 finally 也會清一次，
+      //    「emergency 自己有沒有清」就永遠問不出來（拿掉 emergency 那行、結尾的斷言仍然是綠的——實測過）。
+      assert.deepEqual(readdirSync(iso.liveRoot), [], 'emergency 呼叫 exit 前還沒清活金絲雀');
     },
   });
   const r = await p;
