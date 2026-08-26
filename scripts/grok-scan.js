@@ -205,7 +205,9 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   ⚠️ **射程**：釘住預設值的那一題直接呼叫 `runScan`，**不涵蓋檔尾 CLI 入口那個接縫**——
  *   Codex #516 r1 在那個接縫注入 `BOX_ROOT`（非家目錄、且已存在）實測跑過全卷：餌搬家、全卷照樣綠。
  *   動那個接縫要另行複核。
- *   ⚠️ 換根目錄不會讓金絲雀落進沙箱看得到的地方——profile 是 deny default，家目錄與使用者暫存區都不在放行清單裡。
+ *   ⚠️ 考題注入的那種根（`tmpdir()` 底下）不會讓金絲雀落進沙箱讀得到的地方——profile 是 deny default，
+ *   家目錄與使用者暫存區都不在放行清單裡。**但這不是對任意根成立的保證**：profile 放行讀的樹底下
+ *   若有使用者寫得進去的位置（例如 Cellar 的版本目錄），把根指到那裡餌就變成盒內讀得到——所以這一格別亂傳。
  *   ⚠️ 但位置就是這個餌的全部意義：家目錄同時住著真 ~/.grok、~/.grok-sandbox-auth 與真的 store.db，
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
@@ -388,7 +390,8 @@ export async function runScan(args, deps = {}) {
   // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
   // ⚠️ 誠實劃界——那一題**只**守 runScan 的預設值，守不到兩件事：
-  //    ①它只看得到這**一個**建立點，日後多長一個它看不到；
+  //    ①它看的是「這次 runScan 在真家目錄留下幾個帶本輪暗號的目錄」＝**不涵蓋這次沒執行到的建立點**
+  //      （同一次 runScan 若在「掃描開始」前多建一顆同暗號的，它反而會紅——那不是它守得住的範圍，是副作用）；
   //    ②它直接呼叫 runScan，**不涵蓋檔尾 CLI 入口那個接縫**（Codex #516 r1 在那裡注入 `BOX_ROOT`
   //      ——非家目錄、且已存在——實測跑過全卷：餌搬家、全卷照樣綠）——動那個接縫要另行複核。
   liveDir = mkdtempSync(join(deps.liveRoot ?? homedir(), '.grok-live-canary-'));

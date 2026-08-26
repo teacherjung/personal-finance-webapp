@@ -82,9 +82,10 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
 /**
  * isolated() 建過的暫存根，跑完整支考題檔一起清。
- * ⚠️ `runScan` 只清它自己在這些根**底下**建的東西（盒子、金絲雀），**根目錄本身是考題建的、要考題自己收**——
- *    沒有這個 hook，每呼叫一次 isolated() 就在使用者暫存區多留三個目錄，**而且不是空的**：
- *    `fake-auth-` 裡留著假 auth.json、`fake-results-` 留著整包結果（launch.json＋sessions），只有 `fake-live-` 是空的。
+ * ⚠️ **這三個根本身 `runScan` 不會刪**（它只清自己在根底下建的東西；盒子根本不住這裡，是在 BOX_ROOT）——
+ *    根是考題建的、要考題自己收。沒有這個 hook，每呼叫一次 isolated() 就在使用者暫存區多留三個目錄，
+ *    而且走得夠遠的題還會**留著內容**：`fake-auth-` 的假 auth.json、`fake-results-` 的整包結果（launch.json＋sessions）；
+ *    早早退場的題（例如 base／head 不是寫死 SHA 那題）則三個都還是空的。
  *    （Codex #516 r1 抓到我新加的 `fake-live-` 那一族；`fake-auth-`／`fake-results-` 兩族是既有的，
  *    同一個 helper 建的、沒有道理分開清。）
  */
@@ -803,10 +804,10 @@ test('runScan｜不注入 liveRoot 時，活金絲雀建在真的家目錄：掃
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ 這一題**刻意**讓活金絲雀落在真家目錄：金絲雀的意義就在**位置**——家目錄同時住著真 ~/.grok、
   //    ~/.grok-sandbox-auth 與真的 store.db，是破出沙箱的人第一個會翻的地方。位置只能在正式位置上考。
-  //    其餘每一題都經 isolated() 把**活**金絲雀改道到隔離根。
-  //    ⚠️ 但「考題不碰真家目錄」這件事本支只做到一半：`runCanary()`（沙箱金絲雀）每一題都會在家目錄
-  //    mkdtemp 一個 `.grok-canary-*`，它的四個根寫死、沒有可注入的參數——本支不動它（Codex #516 r5 抓到我原本
-  //    在這裡寫「全檔唯一還在真家目錄建東西的題」是假的）。
+  //    其餘走到活金絲雀那一步的題都經 isolated() 改道到隔離根。
+  //    ⚠️ 但「考題不碰真家目錄」這件事本支只做到一半：**走到 `runCanary()` 的題**（沙箱金絲雀）都會在家目錄
+  //    mkdtemp 一個 `.grok-canary-*`，它的四個根寫死、沒有可注入的參數——本支不動它（Codex #516 r5／r6 抓到我原本
+  //    在這裡寫「全檔唯一還在真家目錄建東西的題」與「每一題都會」都是假的：更早退場的題與純函式題根本沒跑到它）。
   // ⚠️ 認身分靠**每輪隨機的暗號內容**、不數個數：別的 session／審查樹／合併閘同時在跑也認不錯。
   //    （數個數正是上一題原本的寫法，也正是本支要修掉的病。）
   // ⚠️ 暗號會被原樣插進驗屍的正規式（grok-scan.js 的 BREACH_SRC），randomUUID 只有十六進位與 `-`＝正則安全。
