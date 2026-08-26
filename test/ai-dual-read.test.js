@@ -483,7 +483,7 @@ test('r1#1｜單份答案內同帳號兩種印法＋幣別對調＝fail-closed �
       //   兩者都是 fail-closed 到手動記帳。⚠️ **成本只省一發、不是省全部**（Codex #517 r3#3 更正我
       //   原本寫的「連第一發都不會出門」）：雙讀是 Promise.all 並行送出 Sonnet 與 Opus，**兩發照樣出門**、
       //   各自在 normalizeAiBank 掛掉，省下的是 Fable 那發仲裁。純外幣的雙印法對調仍走原路，見下一題。
-      assert.equal(e.code, 'ai_bad_answer', '★對調不得被任何一份「採用」——驗收就擋下（同號混台幣＋外幣）');
+      assert.equal(e.code, 'ai_mixed_currency', '★對調不得被任何一份「採用」——驗收就擋下（同號混台幣＋外幣、專用終局碼）');
       assert.doesNotMatch(e.message, /5,?500|150|9,?000|900200|9002/, '機密紀律');
       return true;
     });

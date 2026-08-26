@@ -150,7 +150,9 @@ test('引擎｜版面 A 全解析：概要雙段＋sticky 幣別、右緣分欄�
   const p = parseWithRecipe(linesA(), recipeA());
   assert.equal(p.bank, '合成銀行');
   assert.equal(p.referenceDate, '2026-06-30', '★錨點行取日期');
-  assert.deepEqual(p.accountCurrency, { '900100****3301': 'TWD', '900200****3302': 'TWD', '900300****363': 'JPY' });
+  // ⚠️ 展開再比（#517 批一起 accountCurrency 是 **null-prototype**：AGENTS 鐵則要求使用者文字當鍵的 map
+  //   不得有原型鏈——字面 {} 遇到 `__proto__` 會靜默不落地）。內容判準一格未變。
+  assert.deepEqual({ ...p.accountCurrency }, { '900100****3301': 'TWD', '900200****3302': 'TWD', '900300****363': 'JPY' });
   assert.equal(p.accounts.length, 3);
   assert.deepEqual(p.accounts[0], { suffix: '3301', masked: '900100****3301', balance: 1230, currency: 'TWD', label: '甲種活存', note: '' });
   assert.equal(p.accounts[1].note, '主要戶');

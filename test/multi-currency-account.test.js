@@ -62,6 +62,18 @@ test('幣別表｜混台外幣的判定用**正規形**分組：不同遮罩印�
   assert.equal(tableOf([['900300****0363', 'TWD'], ['9003 00＊＊＊＊0363', 'USD']]).hasMixedTwd(), true,
     '★全形星號＋空白也是同一個帳號');
   assert.equal(tableOf([[SOLO, 'TWD'], [MULTI, 'USD']]).hasMixedTwd(), false, '不同帳號各自單一幣別＝不是混');
+  assert.equal(tableOf([['90030012340363', 'TWD'], ['900300****0363', 'USD']]).hasMixedTwd(), true,
+    '★**完整號 vs 遮罩**也是同一個帳號（r5#1：字串正規化後不相等，但完整號 ∈ 遮罩的語言——實測繞過後 imported=2、db 真的多兩筆台幣交易）');
+  assert.equal(tableOf([['900999****1111', 'TWD'], ['900300****0363', 'USD']]).hasMixedTwd(), false,
+    '★語言沒有交集＝不同帳號（判準是保守的「有交集就算同一個」，不是「長得像就算」）');
+});
+
+test('幣別表｜map 是 null-prototype（AGENTS 鐵則：使用者文字當鍵的 map 沒有例外）——`__proto__` 不得靜默缺鍵', () => {
+  const t = tableOf([['__proto__', 'TWD'], ['__proto__', 'USD']]);
+  assert.equal(Object.getPrototypeOf(t.map), null, '★null-proto');
+  assert.equal(t.map['__proto__'], UNKNOWN_CURRENCY, '★字面 {} 的話這個鍵會靜默不落地（成員表有資料、map 卻缺鍵）');
+  assert.ok(Object.hasOwn(t.map, '__proto__'), '★真的是自有鍵');
+  assert.equal(tableOf([['constructor', 'JPY']]).map['constructor'], 'JPY', 'constructor 同款（原型成員不得誤命中）');
 });
 
 // ---- 三條路 ----
@@ -187,7 +199,7 @@ test('★同號混台幣＋外幣＝拒收（不是哨兵）：預審抓到的 r
   const a = aiAnswer();
   a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });   // 同號多一種台幣＝我們真的判不出來的形狀
   a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
-  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /同時列了台幣與外幣/.test(e.message),
+  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_mixed_currency' && /同時列了台幣與外幣/.test(e.message),
     '★留在原地的 loud 拒收：改成哨兵＝①壞餘額鏈不再被擋（twdCheckable 看壓平值）②台幣概要餘額仍入帳（applyBalancesToDb 走逐列 pa.currency）③真台幣明細列被當外幣丟掉且畫面說是「外幣明細」——拿 loud 換 silent 錢錯');
   const pure = aiAnswer();   // 純外幣同號＝安全（那些列本來就不入帳）＝照樣放行
   assert.equal(normalizeAiBank(pure).accountCurrency[MULTI], UNKNOWN_CURRENCY, '★純外幣同號不受這道影響（放寬的射程剛好是安全的那一格）');
@@ -219,7 +231,7 @@ test('★三條路都擋混台外幣（Codex #517 r2#1：只擋 AI 不夠——�
   const a = aiAnswer();
   a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' });
   a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' });
-  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_bad_answer' && /台幣與外幣/.test(e.message), '★AI 路線也擋');
+  assert.throws(() => normalizeAiBank(a), (/** @type {any} */ e) => e.code === 'ai_mixed_currency' && /台幣與外幣/.test(e.message), '★AI 路線也擋（專用終局碼，不是通用 ai_bad_answer——通用碼會被換模型／仲裁救回，見下一題）');
   // 三條路共用同一句白話（不帶任何欄值）
   assert.ok(!/\d{3}/.test(MIXED_CURRENCY_MSG), '★訊息不含帳號/末碼（欄值一律不回聲）');
 });
@@ -264,6 +276,21 @@ test('★apply 這條路看到 bank_mixed_currency 也不得去試配方救援�
   const after = await getDb();
   assert.equal(after.transactions.length, txBefore, '★db 交易數零變動（不擋的話他實測 imported:2、TWD 與 USD 兩筆都寫進去）');
   assert.equal(after.accounts.length, acctBefore, '★也沒有建出帳戶');
+});
+
+test('★AI 救援不得把已偵測到的混台外幣救回（Codex #517 r5#2：通用碼會被換模型／仲裁頂上——實測 Sonnet 誠實列出被拒、Opus 與 Fable 漏掉外幣區，於是 attested 過閘、匯入 2 筆）', async () => {
+  const { aiBankRoute } = await import('../lib/services/bank-import.js');
+  const honest = () => { const a = aiAnswer(); a.accountCurrencies.push({ masked: MULTI, currency: 'TWD' }); a.accounts.push({ masked: MULTI, balance: 50000, currency: 'TWD', label: '新臺幣活存', note: '' }); return a; };
+  const blind = () => { const a = aiAnswer(); a.accountCurrencies = a.accountCurrencies.filter((/** @type {any} */ x) => !(x.masked === MULTI)); a.accounts = a.accounts.filter((/** @type {any} */ x) => x.masked !== MULTI); return a; };
+  const { AI_BANK_MODELS, AI_ARBITER_MODEL } = await import('../lib/ai-parse.js');
+  const db = { settings: { aiApiKey: 'sk-ant-synthetic', aiDualRead: true }, accounts: [] };
+  // 誠實那讀（Sonnet）看到混幣、另外兩讀（Opus/Fable）漏掉外幣區
+  const engine = { models: AI_BANK_MODELS, parseOnce: async (/** @type {string} */ _t, /** @type {string} */ m) => (m === AI_BANK_MODELS.primary ? honest() : blind()) };
+  await assert.rejects(
+    aiBankRoute('QUFBQQ==', undefined, db, { engineFactory: () => engine, extract: async () => [{ y: 0, cells: [{ x: 0, s: '1,730 500 50,000 700' }] }] }),
+    (/** @type {any} */ e) => e.code === 'ai_mixed_currency',
+    '★任一讀偵測到＝終局（混幣是版面事實，別讀沒看到只是它漏了；通用碼會走 attest→仲裁被救回）');
+  assert.ok(AI_ARBITER_MODEL, '仲裁模型常數存在（本題刻意不讓它被叫到）');
 });
 
 test('⚠️ 誠實殘餘｜配方**只被教過台幣區**時看不到外幣區＝那個混幣帳號會被當純台幣解出來（Codex #517 r4#1；**既有缺口、非本支引入**）', () => {
