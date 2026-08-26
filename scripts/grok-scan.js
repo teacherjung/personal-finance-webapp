@@ -553,8 +553,9 @@ if (isMainModule(import.meta.url)) {
   const base = arg('--base'), head = arg('--head'), promptFile = arg('--prompt'), outFile = arg('--out');
   if (!base || !head || !promptFile) { console.error('用法：node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>]'); process.exit(2); }
   // ⚠️ 這裡**不要**傳 deps：`ScanDeps` 的每一格預設都是「正式掃描該用的那個值」，尤其 `liveRoot`——
-  //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入任何根目錄，
-  //    餌就搬家，而**沒有任何考題會紅**（釘住預設值的那一題直接呼叫 runScan、不經過這個接縫）。
+  //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入一個
+  //    **不是家目錄、且已經存在**的根目錄，餌就搬家，而全套考題照樣綠（Codex #516 r1 對 BOX_ROOT 實測跑過全卷）
+  //    ——釘住預設值的那一題直接呼叫 runScan、不經過這個接縫。
   const { code } = await runScan({ base, head, promptFile, outFile });
   process.exit(code);
 }
