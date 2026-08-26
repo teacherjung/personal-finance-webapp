@@ -83,8 +83,10 @@ function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); c
 /**
  * isolated() 建過的暫存根，跑完整支考題檔一起清。
  * ⚠️ `runScan` 只清它自己在這些根**底下**建的東西（盒子、金絲雀），**根目錄本身是考題建的、要考題自己收**——
- *    沒有這個 hook，每跑一次 npm test 就在使用者暫存區多留幾十個空目錄（Codex #516 r1 抓到我新加的 fake-live- 那一族；
- *    fake-auth-／fake-results- 兩族是既有的，同一個 helper 建的、沒有道理分開清）。
+ *    沒有這個 hook，每呼叫一次 isolated() 就在使用者暫存區多留三個目錄，**而且不是空的**：
+ *    `fake-auth-` 裡留著假 auth.json、`fake-results-` 留著整包結果（launch.json＋sessions），只有 `fake-live-` 是空的。
+ *    （Codex #516 r1 抓到我新加的 `fake-live-` 那一族；`fake-auth-`／`fake-results-` 兩族是既有的，
+ *    同一個 helper 建的、沒有道理分開清。）
  */
 const TEMP_ROOTS = /** @type {string[]} */ ([]);
 const keep = (/** @type {string} */ dir) => { TEMP_ROOTS.push(dir); return dir; };
