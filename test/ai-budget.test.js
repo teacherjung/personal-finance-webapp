@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync, readFileSync } from 'node:fs';
+import { once } from 'node:events';
 
 const TEST_STORE = join(tmpdir(), `finance-aibudget-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
@@ -283,6 +284,27 @@ test('repo｜updateAiUsage 櫃檯：updater 收 fresh settings、寫回 settings
   });
   assert.deepEqual(got, { date: '2026-08-26', n: 1 });
   assert.deepEqual(/** @type {any} */ ((await getDb()).settings).aiUsage, { date: '2026-08-26', n: 1 }, '真的落 db');
+});
+
+test('真 HTTP｜匯出→匯入 round trip：aiUsage 跟著備份回來（消毒在路上）；PUT 直寫被剝（Codex #515 r1#2：只測 sanitizer＝路由刪一行照樣全綠）', async () => {
+  const { app } = await import('../server.js');
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${/** @type {any} */ (server.address()).port}`;
+  try {
+    const db = await getDb();
+    db.settings = { ...db.settings, aiUsage: { date: '2026-08-20', n: 7 } };
+    await saveDb(db);
+    const exported = await (await fetch(`${base}/api/export`)).json();
+    assert.deepEqual(exported.settings.aiUsage, { date: '2026-08-20', n: 7 }, 'LOCAL 匯出＝完整未投影（既有裁決）＝計數在備份裡');
+    exported.settings.aiUsage = { date: '2026-08-24', n: 5.7 };   // 竄改成小數＝證明消毒真的在路上、不是只在單元測試裡
+    const imp = await fetch(`${base}/api/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(exported) });
+    assert.equal(imp.status, 200);
+    assert.deepEqual(/** @type {any} */ ((await getDb()).settings).aiUsage, { date: '2026-08-24', n: 5 }, '★還原真的把每日保險絲帶回來（路由層丟掉這欄＝無聲歸零、當天上限重新給滿）＋消毒取整');
+    const put = await fetch(`${base}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ aiUsage: { date: '2026-08-24', n: 0 } }) });
+    assert.equal(put.status, 200);
+    assert.deepEqual(/** @type {any} */ ((await getDb()).settings).aiUsage, { date: '2026-08-24', n: 5 }, '★PUT 是把計數歸零的旁路——真 HTTP 打也寫不進（server-owned）');
+  } finally { server.close(); }
 });
 
 // ---- 接線形狀（路由與設定頁）----

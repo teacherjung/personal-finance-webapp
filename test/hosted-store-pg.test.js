@@ -589,3 +589,23 @@ test('⭐ 架構護欄交給 git 的環境裡不可以有任何 GIT_*（直接�
   //    這一題直接問子行程收到什麼。
   assertChildGitEnvClean(assert, 'hosted-store-pg 的 libFiles()', () => libFiles());
 });
+
+test('成本護欄 C1｜被上限擋下的 take＝settings 版本不動（skip 不落盤；Codex #515 r1#1：永不 skip 的壞法讓被擋請求整庫寫入、HOSTED 推版本增加 CAS 對撞）', async () => {
+  const { updateAiUsage } = await import('../lib/repo.js');
+  const { makeAiBudget } = await import('../lib/ai-budget.js');
+  const { getDb, saveDb } = await import('../lib/repo.js');
+  const verOf = () => /** @type {any} */ (pg.allRows().find((r) => r.user_id === A.id && r.key === 'settings'))?.version;
+  await runWithTenant({ userId: A.id, supabase: fakeClientFor('tokA') }, async () => {
+    const db = await getDb();
+    db.settings = { ...db.settings, aiCapPerBill: 9, aiCapPerDay: 1 };
+    await saveDb(db);
+    const b1 = makeAiBudget({ updateUsage: updateAiUsage, today: '2026-08-26' });
+    await b1.take();   // 放行那發＝真的寫（版本前進）
+    const verAfterTake = verOf();
+    const b2 = makeAiBudget({ updateUsage: updateAiUsage, today: '2026-08-26' });   // 第二份帳單、單日已滿
+    await assert.rejects(b2.take(), (/** @type {any} */ e) => e.code === 'ai_budget_exceeded');
+    assert.equal(verOf(), verAfterTake, '★被擋那發＝零寫入、版本不動（值沒變還落盤＝白佔一次 CAS 窗口）');
+    const usage = /** @type {any} */ ((await getDb()).settings).aiUsage;
+    assert.deepEqual(usage, { date: '2026-08-26', n: 1 }, '計數也沒被動');
+  });
+});
