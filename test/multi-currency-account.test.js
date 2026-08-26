@@ -247,7 +247,7 @@ test('★混台外幣不落到規則卡／AI 救援：**引擎工廠一次都不
   assert.equal(extractCalls, 0, '★規則卡救援也沒被試（抽字是那條路的第一步；拿掉配方那道排除＝這裡會變 ≥1）');
 });
 
-test('★apply 這條路也不得被舊配方救回混台外幣（Codex #517 r3#2：我 r2 只改了 preview——一張只涵蓋台幣區的舊配方就能把外幣當台幣寫進帳本）', async () => {
+test('★apply 這條路看到 bank_mixed_currency 也不得去試配方救援（Codex #517 r3#2：我 r2 只改了 preview；r4#2 更正題名——本題證的是「看到這個碼就不救援」，**不是**「配方一定攔得住」，後者見下一題的誠實殘餘）', async () => {
   const { applyBankStatement } = await import('../lib/services/bank-import.js');
   const { getDb, saveDb } = await import('../lib/repo.js');
   const db0 = await getDb();
@@ -264,6 +264,34 @@ test('★apply 這條路也不得被舊配方救回混台外幣（Codex #517 r3#
   const after = await getDb();
   assert.equal(after.transactions.length, txBefore, '★db 交易數零變動（不擋的話他實測 imported:2、TWD 與 USD 兩筆都寫進去）');
   assert.equal(after.accounts.length, acctBefore, '★也沒有建出帳戶');
+});
+
+test('⚠️ 誠實殘餘｜配方**只被教過台幣區**時看不到外幣區＝那個混幣帳號會被當純台幣解出來（Codex #517 r4#1；**既有缺口、非本支引入**）', () => {
+  // A/B 實測（2026-08-26）：同一份素材、同一張配方，載入 main 8bb51fb 與本支 HEAD 的 lib，
+  //   輸出**逐字相同**＝`accountCurrency={"900300****0363":"TWD"}`、交易 1 筆、帳戶 1 個。
+  //   根因＝`hasMixedTwd()` 只看得到**配方實際解析出的區段**；配方沒被教過的外幣區它根本不知道存在。
+  // ⚠️ 本題**照實釘住現況**，不是在祝福它：真正的修法是「配方必須解釋整份帳單的帳號／不得忽略
+  //   未宣告的概要區段」——那會改到配方的適用性與既有配方，是獨立議題（已記待辦、留 William 裁）。
+  //   釘住它的用意：未來有人修好時這題會紅，逼他回來把這段誠實劃界一起更新。
+  const twdOnlyRecipe = { ...recipe(), summary: { ...recipe().summary, sections: [{ anchor: '合成帳戶總覽', currency: 'TWD' }] } };
+  // 混幣帳號要**同時出現在台幣區與外幣區**（真實的外幣綜合帳戶就是這個長相）
+  const mixLines = [
+    L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, MULTI], [473, '$1,730']]),          // 台幣區：這個帳號
+    L(270, [[47, '總計'], [445, '$1,730']]),
+    L(260, [[47, '外幣總覽區']]),
+    L(250, [[367, 'USD']]),
+    L(240, [[56, '外幣活儲'], [108, MULTI], [436, '$500'], [491, '$15,900']]),   // 外幣區：同一個帳號
+    L(210, [[47, '總計'], [490, '0']]),
+    L(140, [[47, '往來紀錄明細']]),
+    L(120, [[75, '帳號'], [135, '日期'], [200, '單號'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額'], [489, '附記']]),
+    L(100, [[53, 0, MULTI], [124, 0, '2026/06/11'], [177, 0, '合成轉入'], [349, 40, '$500'], [418, 0, '$1,730']]),
+  ];
+  const p = /** @type {any} */ (parseWithRecipe(mixLines, twdOnlyRecipe));
+  assert.equal(p.accountCurrency[MULTI], 'TWD', '★現況＝被當純台幣（配方看不到外幣區）——修好之後這裡會變 UNKNOWN 或整份拒收，屆時請一併更新契約的誠實劃界');
+  // 對照：配方**有**被教過外幣區時，同一份帳單就擋得住（射程差別完全來自配方描述了什麼）
+  assert.throws(() => parseWithRecipe(mixLines, recipe()), (/** @type {any} */ e) => /台幣與外幣/.test(String(e?.message || '')),
+    '★配方看得到那個區段時就擋得住＝拒收的射程＝「解析器看得到的範圍」');
 });
 
 test('語意不變｜多幣別帳號＝「分不出」：**真的**走對帳閘與匯入——閘整組跳過、預覽標 foreign、**歧義那兩筆**匯入零筆（同份帳單的台幣列照常入帳 1 筆）', async () => {
