@@ -110,7 +110,8 @@ test('★parsePdfAuto｜0 列＝noRows、證據指向別家＝otherIssuer；⚠�
   ];
   assert.equal(parseTaishinPdf(merchants).length, 2, '前提：這兩列確實被寬鬆列判準抓成交易');
   const r2 = /** @type {any} */ (parsePdfAuto(merchants));
-  assert.equal(r2.otherIssuer, true, '★證據列印的是「遠東國際商業銀行」⇒ 整份丟棄');
+  assert.deepEqual(r2.otherIssuer, ['遠東國際商業銀行'],
+    '★證據列印的是「遠東國際商業銀行」⇒ 整份丟棄，而且**要把是誰帶出來**（錯誤訊息要講得出來，不可以說「找不到消費明細」）');
   assert.equal(r2.raw.length, 0, '★丟棄就要真的把列丟掉，不可以只是不掛機構名');
   assert.equal(r2.bank, '');
   // 真的認得的版面照舊

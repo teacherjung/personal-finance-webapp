@@ -18,7 +18,7 @@ import {
 } from '../lib/card-identity.js';
 import {
   parseStatementFromLines, parseStatementFromXlsx, parseStatement,
-  parseFubon, parseTaishinPdf, CARD_UNRECOGNIZED_MSG,
+  parseFubon, parseTaishinPdf, parseTaishinXlsxRows, parsePdfAuto, CARD_UNRECOGNIZED_MSG,
 } from '../lib/statement.js';
 import { cjkPdf, nonStatementPdf } from './helpers/build-pdf.js';
 
@@ -28,7 +28,15 @@ function grab(fn) {
   throw new assert.AssertionError({ message: '預期會丟錯，但它沒有丟' });
 }
 
-/** 跑一遍分流，把四個值攤成同一種形狀（規矩②：四個值一起斷）。 */
+/**
+ * 跑一遍分流，把四個值攤成同一種形狀（規矩②：四個值一起斷）。
+ *
+ * ⚠️ 錯誤路徑上的四個值**必須從實作真的產生的東西讀**，不可以寫死（Grok 2026-08-27 掃出）：
+ *    前一版在 catch 裡直接回 `bank:'' / bankEvidence:'none' / rows:0`，於是「解析器忘了丟列
+ *    但仍然 throw」這種壞法在四個值上**看起來一模一樣** ⇒ 規矩②對錯誤路徑是演戲。
+ *    丟出來的 Error 本身帶不了這些欄位，所以改成回頭問 `parsePdfAuto`——它才是真正決定
+ *    「交出幾列、掛不掛機構名」的地方。
+ */
 function run(lines) {
   try {
     const r = parseStatementFromLines(lines);
@@ -36,7 +44,8 @@ function run(lines) {
   } catch (e) {
     const err = /** @type {any} */ (e);
     if (!err?.code) throw e;   // 非預期的錯不要被吞掉
-    return { code: err.code, status: err.status, bank: '', bankEvidence: 'none', rows: 0 };
+    const p = parsePdfAuto(lines);   // ★實作真的產生了什麼（不是我在測試裡假設的）
+    return { code: err.code, status: err.status, bank: p.bank, bankEvidence: p.bankEvidence, rows: p.raw.length };
   }
 }
 
@@ -134,9 +143,8 @@ test('D2 ★被解析器當成換行說明吃掉的那一列，也不得成為�
   const r = run(f);
   assert.equal(identifyIssuer([f[2]], new Set()).bank, '台新',
     '前提：那個說明單獨拿去判會命中台新 ⇒ 本題真的踩得到那條路');
-  assert.equal(r.bank, '', '說明列上的行名不算證據 ⇒ 不掛機構名');
-  assert.equal(r.bankEvidence, 'none');
-  assert.equal(r.code, null, '不掛機構名不等於丟棄——列照給，只是不自動歸卡');
+  assert.deepEqual(r, { code: null, bank: '', bankEvidence: 'none', rows: 1 },
+    '★四值一起斷：說明列上的行名不算證據 ⇒ 不掛機構名，但列照給（不是丟棄）');
 });
 
 test('E1b ★「解析器不吃、但看起來像交易列」的列也不算證據（used 擋不到這一格）', () => {
@@ -164,8 +172,9 @@ test('E1 ★同一個行名，位置不同結果必須相反', () => {
   const asHeader = [['台新國際商業銀行'], ['115/06/02', '115/06/04', '星巴克', '150']];
   // 同一個字，放在交易列裡當店名 ⇒ 不算證據
   const asMerchant = [['信用卡帳單'], ['115/06/02', '115/06/04', '台新銀行ATM手續費', '15']];
-  assert.equal(run(asHeader).bank, '台新');
-  assert.equal(run(asMerchant).bank, '', '同一個「台新」落在交易列上就不算證據');
+  assert.deepEqual(run(asHeader), { code: null, bank: '台新', bankEvidence: 'header', rows: 1 });
+  assert.deepEqual(run(asMerchant), { code: null, bank: '', bankEvidence: 'none', rows: 1 },
+    '★四值一起斷：同一個「台新」落在交易列上就不算證據，但列照給（不是丟棄）');
 });
 
 test('F1 台新空帳單（摘要讀得到、0 列）→ card_unrecognized，不再假裝分得出「這期沒交易」', () => {
@@ -179,6 +188,10 @@ test('F2 ★通用行業用語不再讓別家被告知「這期沒有交易」',
   // 那八個鍵全是全台通用用語，於是**多數別家使用者**都會收到一句關於自己的錢的假話。
   const f = [['玉山商業銀行 信用卡對帳單'], ['本期應繳總額', '5,678']];
   assert.deepEqual(run(f), { code: 'card_unrecognized', status: 400, bank: '', bankEvidence: 'none', rows: 0 });
+  // ★題名說的是「不再被告知這期沒有交易」——斷言就要打在**訊息**上，不能只斷 code。
+  //   ⚠️ 這一份是 0 列，走的是 `CARD_UNRECOGNIZED_MSG`（兩種可能並陳，合法）。
+  //      「讀到列卻說沒消費」那條在下面的 r5#1（分支②）。
+  assert.match(grab(() => parseStatementFromLines(f)).message, /讀不動/, '★必須並陳「可能讀不動」，不可以只講沒消費');
 });
 
 test('F3 ★連「條款樣板」都會被舊判準讀成金額——同樣不得說「這期沒有交易」', async () => {
@@ -214,7 +227,7 @@ test('G2 ★不變量是 throw 不是夾正（沒有這一題，G1 會變成恆�
   assert.throws(() => assertCardIdentityInvariants({ bank: '台新', bankEvidence: 'none', rows: [] }), /不變量/);
   assert.throws(() => assertCardIdentityInvariants({ bank: '玉山', bankEvidence: 'header', rows: [] }), /不在內建範本清單/);
   assert.throws(() => assertCardIdentityInvariants({ bank: '', bankEvidence: 'none', rows: [1], code: 'card_unrecognized' }), /不得同時交出列/);
-  assert.throws(() => assertCardIdentityInvariants({ bank: '', bankEvidence: '亂寫', rows: [] }), /不是已知的三種/);
+  assert.throws(() => assertCardIdentityInvariants({ bank: '', bankEvidence: '亂寫', rows: [] }), /不是已知的兩種/);
   // 正向：合法組合不得丟
   assert.doesNotThrow(() => assertCardIdentityInvariants({ bank: '台新', bankEvidence: 'header', rows: [1] }));
   assert.doesNotThrow(() => assertCardIdentityInvariants({ bank: '', bankEvidence: 'none', rows: [], code: 'card_unrecognized' }));
@@ -249,15 +262,42 @@ test('I1 XLSX 只有表頭列（0 筆）→ card_unrecognized', () => {
   assert.equal(r.status, 400);
 });
 
-test('I2 XLSX 台新官網欄序：正常解析、機構名台新、證據標成較弱的 xlsx-template', () => {
+test('I2 XLSX 走與 PDF 相同的身分判準：表頭印了機構名才掛名', () => {
   const rows = [
+    ['台新銀行 2026/07 信用卡明細'],
     ['消費日期', '入帳日期', '消費明細', '幣別', '金額', '', '', ''],
     ['2026/07/03', '2026/07/05', '家樂福內湖店', 'TWD', 1250, '', '', ''],
   ];
   const r = parseStatementFromXlsx(rows, '本期應繳總額 1,250');
   assert.equal(r.bank, '台新');
-  assert.equal(r.bankEvidence, 'xlsx-template', '★XLSX 的身分是靠欄位位置認的，比 header 弱——型別上就要看得出來');
+  assert.equal(r.bankEvidence, 'header', '★XLSX 也用同一套證據——不再有「弱證據型別」這種東西');
   assert.equal(r.transactions.length, 1);
+});
+
+test('★I2b XLSX 表頭印了**別家**：整份丟棄（欄序碰巧對上不代表是我們認得的版面）', () => {
+  // Grok 2026-08-27 掃出：`parseTaishinXlsxRows` **純靠欄位位置**（第 0 欄日期、第 4 欄金額、
+  // 第 2 欄說明），零身分檢查 ⇒ 別家 XLSX 欄序碰巧對上就會被標成台新並自動歸卡。
+  const rows = [
+    ['玉山銀行 信用卡消費明細'],
+    ['消費日期', '入帳日期', '消費明細', '幣別', '金額', '', '', ''],
+    ['2026/07/03', '2026/07/05', '家樂福內湖店', 'TWD', 1250, '', '', ''],
+  ];
+  assert.equal(parseTaishinXlsxRows(rows).length, 1, '前提：欄序對得上，解析器真的讀出 1 列（不是「反正 0 列」）');
+  const e = grab(() => parseStatementFromXlsx(rows, ''));
+  assert.equal(e.code, 'card_unrecognized');
+  assert.match(e.message, /玉山銀行/, '★要講出是誰的帳單，不可以說「找不到消費明細」');
+});
+
+test('★I2c XLSX 表頭什麼機構名都沒印：列照給但不掛名（分支④）', () => {
+  const rows = [
+    ['帳單明細'],
+    ['消費日期', '入帳日期', '消費明細', '幣別', '金額', '', '', ''],
+    ['2026/07/03', '2026/07/05', '家樂福內湖店', 'TWD', 1250, '', '', ''],
+  ];
+  const r = parseStatementFromXlsx(rows, '');
+  assert.equal(r.bank, '', '★認不出就不猜');
+  assert.equal(r.bankEvidence, 'none');
+  assert.equal(r.transactions.length, 1, '列照給');
 });
 
 test('I3 ★documenting test：別家 XLSX 欄序不同會靜靜抄錯欄（已知缺口，本支不修）', () => {
@@ -279,6 +319,11 @@ test('K1 ★表格自檢：否證器不得與自家撞號（雙向子字串檢�
   for (const o of OTHER_ISSUERS) {
     for (const own of OWN_ISSUERS) {
       assert.ok(!own.re.test(o), `否證器「${o}」命中自家樣式 ${own.bank}`);
+      // ★反方向（題名說「雙向」，前一版只有上面那半 ⇒ 題名大於斷言）：
+      //   自家的**典型抬頭**不得含任何否證器字串，否則自家帳單會自己觸發否證器。
+      const typical = own.bank === '台新' ? ['台新銀行信用卡帳單', 'Richart信用卡帳單']
+        : ['台北富邦銀行信用卡帳單', '台北富邦商業銀行'];
+      for (const t of typical) assert.ok(!t.includes(o), `自家抬頭「${t}」含否證器字串「${o}」`);
     }
   }
 });
@@ -547,4 +592,46 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
   assert.equal(issuerBank('玉山銀行'), '');
   assert.equal(issuerBank(''), '');
   assert.equal(issuerBank(null), '');
+});
+
+
+// ── Grok 複審後掃（2026-08-27）───────────────────────────────────────────────
+
+test('★掃#1 分支②讀到了列、也知道是誰 ⇒ 訊息不得說「可能是這一期真的沒有消費」', () => {
+  // 這正是本支撤回 card_no_rows 的理由（對使用者的錢說假話），我卻把同一句話包進了分支②。
+  const f = [
+    ['國泰世華銀行 信用卡帳單'],
+    ['消費日', '摘要', '入帳日', '金額'],
+    ['115/07/03', '家樂福內湖店', '115/07/05', '1,250'],
+    ['115/07/11', 'UBER TRIP', '115/07/13', '260'],
+  ];
+  assert.equal(parseFubon(f).length, 2, '前提：我們**真的讀到了 2 筆**（不是找不到）');
+  const e = grab(() => parseStatementFromLines(f));
+  assert.equal(e.code, 'card_unrecognized');
+  assert.doesNotMatch(e.message, /沒有消費|沒有交易/, '★不可以說「這期沒有消費」——我們讀到列了');
+  assert.doesNotMatch(e.message, /找不到任何消費明細/, '★也不可以說「找不到」');
+  assert.match(e.message, /國泰世華/, '★要講出是誰的帳單——那是我們真的知道的事');
+  // 對照：真的 0 列時仍然用並陳版（兩種可能都要講）
+  assert.match(grab(() => parseStatementFromLines([['隨便什麼字']])).message, /沒有消費/);
+});
+
+test('★掃#2 認不出機構時，說明像人話的那一支勝過筆數多的那一支', () => {
+  // 富邦官網版：parseFubon 讀出店名、parseTaishinPdf 把第三格的 TWD 當說明。
+  // 只比筆數的話，筆數一翻面就交出一整批 desc:'TWD'。
+  const f = [
+    ['帳單明細查詢'],                                   // 刻意不印機構名 ⇒ 認不出 ⇒ 走 tie-break
+    ['115/07/03', '115/07/05', 'TWD', '1,250'],
+    ['家樂福內湖店'],
+    ['115/07/09', '115/07/11', 'TWD', '8,450'],
+    ['本期應繳總額'],
+    ['115/07/11', '115/07/13', 'TWD', '260'],
+    ['全聯福利中心'],
+  ];
+  const t = parseTaishinPdf(f), fb = parseFubon(f);
+  assert.ok(t.length > fb.length, `前提：台新解析器抓得比較多（${t.length} vs ${fb.length}）⇒ 只比筆數會選到它`);
+  assert.ok(t.every((x) => /^[A-Z]{3}$/.test(x.desc)), '前提：而它讀出來的說明全是幣別代碼');
+  const r = parseStatementFromLines(f);
+  assert.equal(r.bank, '', '前提：確實認不出機構');
+  assert.ok(r.transactions.every((x) => !/^[A-Z]{3}$/.test(x.desc)), '★不得交出一整批「TWD」當店名');
+  assert.ok(r.transactions.some((x) => x.desc.includes('家樂福')), '★要交出讀得出店名的那一支');
 });
