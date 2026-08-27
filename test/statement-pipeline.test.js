@@ -59,7 +59,7 @@ test('預覽要把「帳單年月」與「應繳金額」交出來（前端就�
 
 test('免選卡預覽（自動歸卡那條路）也要交出這兩個值', async () => {
   const r = await previewAuto(taishinXlsxB64());
-  assert.ok(r.resolvedCard, '末四碼唯一命中→自動歸卡');
+  assert.ok(r.resolvedCard, '末四碼唯一命中＋機構認得出來＋那張卡的發卡行對得上→自動歸卡');
   assert.equal(r.statementMonth, '2026-01');
   assert.equal(r.statementDue, 46299);
 });

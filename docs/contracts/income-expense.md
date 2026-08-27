@@ -117,7 +117,7 @@
 
 **改這裡**：帳單上傳「免選卡」自動歸卡（`POST /api/statement/preview`）
 
-**記得同步這裡**：上傳只丟檔案、不先選卡。後端逐一試各卡 `pdfPassword` 解密（`['', ...各卡去重密碼]`，只在密碼類錯誤才換下一個）→ 判銀行＋末四碼 → **對卡決策樹**：①末四碼唯一命中→自動；②該銀行單卡→自動；③否則回 `candidates`（該銀行優先、無則全部信用卡）請使用者選。`issuerMatchesBank`＝`card.issuer` 含 bank 字串。認不出時前端用 `POST /api/cards/:id/statement/preview`（指定卡）重解析。**卡片對應靠 `card.lastFour`**——末四碼抓取樣式（`extractLastFour`）真實帳單校準後再補；抓不到/對不準一律退回請使用者選（＝保底、不會卡住）。預覽頂部可改「記到卡片」（改了用該卡重解析＝重算重複標記）。**同步點：改 `stmtDupFlag` 的 stmtRef 格式要連動 reassign 前綴重寫。** **坑（已修 PR #30）：pdfjs `getDocument` 會 detach 傳入的 ArrayBuffer，試密碼迴圈重用同一份 bytes 第 2 次起會爆「Cannot transfer object of unsupported type」→ `extractLines` 一律傳 `new Uint8Array(data)` 副本，勿改回直接傳 data。**
+**記得同步這裡**：上傳只丟檔案、不先選卡。後端逐一試各卡 `pdfPassword` 解密（`['', ...各卡去重密碼]`，只在密碼類錯誤才換下一個）→ 判銀行＋末四碼 → **對卡決策樹**（2026-08-27 收緊，每一條都有前提）：①末四碼唯一命中**且機構認得出來（`parsed.bank !== ''`）且那張卡的發卡行對得上**→自動；②該銀行單卡→自動（`issuerMatchesBank` 空機構名回 `false`，所以認不出機構時 `bankCards` 是空的、走不到這條）；③否則回 `candidates`（該銀行優先、無則全部信用卡）請使用者選。⚠️ ①②原本都是**無條件**的：末四碼不是全域唯一、`includes` 又讓香港富邦算成台北富邦，兩條路都會**把交易寫到錯的卡**。`issuerMatchesBank`＝`card.issuer` 含 bank 字串。認不出時前端用 `POST /api/cards/:id/statement/preview`（指定卡）重解析。**卡片對應靠 `card.lastFour`**——末四碼抓取樣式（`extractLastFour`）真實帳單校準後再補；抓不到/對不準一律退回請使用者選（＝保底、不會卡住）。預覽頂部可改「記到卡片」（改了用該卡重解析＝重算重複標記）。**同步點：改 `stmtDupFlag` 的 stmtRef 格式要連動 reassign 前綴重寫。** **坑（已修 PR #30）：pdfjs `getDocument` 會 detach 傳入的 ArrayBuffer，試密碼迴圈重用同一份 bytes 第 2 次起會爆「Cannot transfer object of unsupported type」→ `extractLines` 一律傳 `new Uint8Array(data)` 副本，勿改回直接傳 data。**
 
 ## 帳單匯入批次與事後整批改卡片
 
