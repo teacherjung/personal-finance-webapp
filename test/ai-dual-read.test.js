@@ -478,7 +478,49 @@ test('r1#1｜單份答案內同帳號兩種印法＋幣別對調＝fail-closed �
   await assert.rejects(
     () => previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => /** @type {any} */ (engineOf({ [S]: mk(false), [O]: mk(true), [F]: mk(false) })), aiExtract: async () => linesDup() }),
     (/** @type {any} */ e) => {
-      assert.equal(e.code, 'ai_disagree', '★對調不得被任何一份「採用」——連 Fable 那份自己也帶雙印法＝一路 fail-closed 到手動');
+      // ⚠️ **擋下的位置從「三讀不一致」前移到「驗收」**（#517 批一）：這份素材是 TWD 與 USD 掛在
+      //   canon 相同的帳號上＝「同號混台幣＋外幣」，新的幣別表在驗收就整份拒收。**保護沒有變弱**：
+      //   兩者都是 fail-closed 到手動記帳。⚠️ **成本只省一發、不是省全部**（Codex #517 r3#3 更正我
+      //   原本寫的「連第一發都不會出門」）：雙讀是 Promise.all 並行送出 Sonnet 與 Opus，**兩發照樣出門**、
+      //   各自在 normalizeAiBank 掛掉，省下的是 Fable 那發仲裁。純外幣的雙印法對調仍走原路，見下一題。
+      assert.equal(e.code, 'ai_mixed_currency', '★對調不得被任何一份「採用」——驗收就擋下（同號混台幣＋外幣、專用終局碼）');
+      assert.doesNotMatch(e.message, /5,?500|150|9,?000|900200|9002/, '機密紀律');
+      return true;
+    });
+});
+
+test('r1#1b｜**純外幣**同帳號兩種印法＋幣別對調＝雙讀那條路仍要 fail-closed（#517 把混台幣那格前移之後，這一格才是原本機制的射程）', async () => {
+  await seedDb();
+  const RAW1 = '9002-00****1234', RAW2 = '900200****1234';   // canon 相同、原字串不同
+  const linesDup = () => [
+    L(10, [[40, '一銀活期帳戶明細']]),
+    L(30, [[40, RAW1], [200, 'JPY'], [320, '5,500']]),
+    L(35, [[40, RAW2], [200, 'USD'], [320, '150']]),
+    L(40, [[40, '900100****3301'], [200, 'TWD'], [320, '9,000']]),
+    L(50, [[40, '2026/07/01'], [60, '3301'], [140, '零用金存入'], [280, '100'], [320, '9,100']]),
+    L(55, [[40, '2026/07/02'], [60, '3301'], [140, '超商繳費'], [240, '100'], [320, '9,000']]),
+  ];
+  const mk = (/** @type {boolean} */ swap) => ({
+    bank: '第一銀行', referenceDate: '2026-07-31',
+    accountCurrencies: [
+      { masked: RAW1, currency: swap ? 'USD' : 'JPY' }, { masked: RAW2, currency: swap ? 'JPY' : 'USD' },
+      { masked: '900100****3301', currency: 'TWD' },
+    ],
+    totals: { txCount: null, totalOut: null, totalIn: null },
+    accounts: [
+      { masked: RAW1, balance: swap ? 150 : 5500, currency: swap ? 'USD' : 'JPY', label: '', note: '' },
+      { masked: RAW2, balance: swap ? 5500 : 150, currency: swap ? 'JPY' : 'USD', label: '', note: '' },
+      { masked: '900100****3301', balance: 9000, currency: 'TWD', label: '', note: '' },
+    ],
+    transactions: [
+      { acctMasked: '900100****3301', date: '2026-07-01', direction: 'in', amount: 100, balance: 9100, summary: '零用金存入', note: '' },
+      { acctMasked: '900100****3301', date: '2026-07-02', direction: 'out', amount: 100, balance: 9000, summary: '超商繳費', note: '' },
+    ],
+  });
+  await assert.rejects(
+    () => previewBankStatement('QUFBQQ==', undefined, notRecognized, { useAi: true, aiEngineFactory: () => /** @type {any} */ (engineOf({ [S]: mk(false), [O]: mk(true), [F]: mk(false) })), aiExtract: async () => linesDup() }),
+    (/** @type {any} */ e) => {
+      assert.equal(e.code, 'ai_disagree', '★純外幣的雙印法對調＝走雙讀比對那條路、三份互不相同＝擋下（沒有台幣所以驗收那道不管它）');
       assert.doesNotMatch(e.message, /5,?500|150|9,?000|900200|9002/, '機密紀律');
       return true;
     });
