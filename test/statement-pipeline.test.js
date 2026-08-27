@@ -299,3 +299,31 @@ test('★J5b 對照：機構與末四碼**一致**時仍然自動歸卡（沒有
   assert.ok(r.resolvedCard, '★兩個訊號一致 ⇒ 照舊自動歸卡');
   assert.equal(r.resolvedCard.id, 'ts');
 });
+
+test('★J6 台北富邦帳單＋同末四碼的**香港富邦**卡 ⇒ 不得自動歸卡（Codex #518 r3#2）', async () => {
+  // `String(issuer).includes('富邦')` 對「富邦銀行（香港）有限公司」為真 ⇒ 舊寫法直接歸到香港卡。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'hk', name: '香港富邦卡', type: 'credit', issuer: '富邦銀行（香港）有限公司', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['卡號末四碼 1234'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
+  assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張香港卡對得上');
+  assert.equal(r.resolvedCard, null, '★香港富邦不是台北富邦 ⇒ 退人工選');
+});
+
+test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'tp', name: '台北富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['卡號末四碼 1234'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.ok(r.resolvedCard, '★機構對得上就照舊自動歸卡（上一題不是「什麼都不歸」）');
+  assert.equal(r.resolvedCard.id, 'tp');
+});

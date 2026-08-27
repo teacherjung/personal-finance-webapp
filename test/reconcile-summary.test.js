@@ -310,3 +310,19 @@ test('★認不出機構時要有就地警語；認得出來就不得亂鳴', as
   assert.equal(unknownIssuerNoticeHtml(undefined), '');
   assert.equal(unknownIssuerNoticeHtml(''), '');
 });
+
+test('★接線：預覽窗真的有呼叫「認不出機構」警語（Codex #518 r3#3：拔掉呼叫不會紅）', async () => {
+  // ⚠️ 這是**形狀釘**，本卷其餘題都是行為題。放它的理由：這條接線是「畫面會不會說謊」的唯一保證，
+  //    而預覽窗是靠字串樣板組出來的（沒有 DOM 測試環境可以直接驗）。同檔既有的對帳說明也是這樣釘的。
+  //    ⚠️ 它證明的只有「呼叫存在、參數對」，**不保證它印在使用者看得到的位置**。
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../public/modules/transactions-import.js', import.meta.url), 'utf-8');
+  assert.match(src, /import \{[^}]*unknownIssuerNoticeHtml[^}]*\} from '\.\/reconcile-summary\.js'/,
+    '★要從單一真相引入，不可以在前端自己拼一句');
+  assert.match(src, /\$\{unknownIssuerNoticeHtml\(curR\.bankEvidence\)\}/,
+    '★要用後端回來的 bankEvidence 當參數（寫死或傳錯欄位＝警語永遠不出現／永遠出現）');
+  // 它必須跟對帳說明一起出現在預覽窗的 bodyHtml 裡（兩者相鄰＝同一個區塊）
+  const i = src.indexOf('unknownIssuerNoticeHtml(curR.bankEvidence)');
+  const j = src.indexOf("gateSummaryHtml(curR.reconcile, 'card')");
+  assert.ok(i > 0 && j > 0 && Math.abs(i - j) < 200, '★兩句要在預覽窗的同一個區塊裡');
+});

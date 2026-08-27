@@ -122,16 +122,19 @@ test('D1 ★商店名沒有投票權：台新帳單刷了兩次「富邦人壽�
 });
 
 test('D2 ★被解析器當成換行說明吃掉的那一列，也不得成為機構名證據', () => {
+  // ⚠️ 說明列要挑一個**現行樣式真的會命中**的名字（Codex r3#3 指出「富邦人壽」已不命中 ⇒ 這題空心）。
   const f = [
     ['信用卡帳單'],                       // 刻意不印任何機構名
     ['115/07/03', '115/07/05', 'TWD', '1,250'],
-    ['富邦人壽保險費扣繳'],                 // ← 換行說明，會被 parseFubon 消耗
+    ['台新銀行代收保險費'],                 // ← 換行說明，會被 parseFubon 消耗
   ];
   const used = new Set();
   assert.equal(parseFubon(f, used).length, 1, '前提：這份真的走到「換行說明」那條路');
   assert.ok(used.has(2), '前提：說明列（索引 2）確實被解析器記成「我用掉了」');
   const r = run(f);
-  assert.equal(r.bank, '', '說明列上的「富邦」不算證據 ⇒ 不掛機構名');
+  assert.equal(identifyIssuer([f[2]], new Set()).bank, '台新',
+    '前提：那個說明單獨拿去判會命中台新 ⇒ 本題真的踩得到那條路');
+  assert.equal(r.bank, '', '說明列上的行名不算證據 ⇒ 不掛機構名');
   assert.equal(r.bankEvidence, 'none');
   assert.equal(r.code, null, '不掛機構名不等於丟棄——列照給，只是不自動歸卡');
 });
@@ -320,7 +323,8 @@ test('零件｜evidenceRows：回**逐列**字串、只取表頭區（跨列拼�
 });
 
 test('零件｜identifyIssuer：兩家自家都命中＝不猜（fail-closed 到「不掛名」）', () => {
-  const both = identifyIssuer([['台新銀行與台北富邦銀行聯名卡']], new Set());
+  // ⚠️ 錨定在列開頭之後，同一列不可能同時命中兩家 ⇒ 用兩列（`own` 是跨列取聯集的）。
+  const both = identifyIssuer([['台新銀行聯名卡'], ['台北富邦銀行聯名卡']], new Set());
   assert.deepEqual(both.own.sort(), ['台新', '富邦']);
   assert.equal(both.bank, '');
   assert.equal(both.bankEvidence, 'none');
@@ -351,18 +355,27 @@ test('★r1#1b 明細區後面的商店續行不得重獲投票權（前一版�
   //    第一版用「富邦人壽」，但富邦樣式已收緊成「台北富邦」⇒ 那個字本來就不命中 ⇒ 突變測試證明
   //    （r2 之後行名還要跟佐證詞，所以這裡也從「台新人壽」改成「台新銀行ATM跨行手續費」）
   //    這題什麼都沒考（拿掉表頭區限制照樣綠）。負向題的 fixture 要自己確認「真的踩得到那條路」。
+  // ⚠️ 交易列用**台新式**（前兩格都是民國日期）：用富邦式的話台新解析器 0 列 ⇒ 誤判時會被
+  //    r2#3 的「自家解析器零筆＝認不得」先丟錯，這題就變成在考別的東西（Codex r3#3 指出）。
+  // ⚠️ 中間那列「小計」是必要的：台新式交易列在 parseFubon 眼中沒有說明（兩個日期相鄰），
+  //    它會把**下一列**當成換行說明吃掉——商店名一旦進了 `used`，這題就變成 `used` 在擋、
+  //    而不是表頭區在擋（本檔 E1b 記過同一個陷阱，這裡又踩了一次）。
+  //    「小計」在 parseFubon 的排除清單裡，所以它會停手，商店續行才留得住。
   const f = [
     ['信用卡帳單'],                        // 刻意不印機構名，讓證據只可能來自下面那一列
-    ['115/07/03', '一般店', '115/07/05', '100'],
-    ['台新銀行ATM跨行手續費'],              // ← 明細區的續行＝商店名（含自家行名＋佐證詞）
+    ['115/07/03', '115/07/05', '一般店', '100'],
+    ['小計'],
+    ['台新銀行ATM跨行手續費'],              // ← 明細區的續行＝商店名（含自家行名＋佐證詞、在列開頭）
   ];
   const used = new Set();
   parseFubon(f, used); parseTaishinPdf(f, used);
-  assert.ok(!used.has(2), '前提：這一列沒有被任何解析器消耗');
-  assert.ok(!looksLikeTxRow(f[2]), '前提：它也不長得像交易列——所以前一版的兩層過濾都擋不到它');
-  assert.ok(identifyIssuer([f[2]], new Set()).bank === '台新',
+  assert.equal(parseTaishinPdf(f).length, 1, '前提：台新解析器抓得到 ⇒ 誤判成台新時會一路走完，不會被 r2#3 擋掉');
+  assert.ok(!used.has(3), '前提：商店續行沒有被任何解析器消耗');
+  assert.ok(!looksLikeTxRow(f[3]), '前提：它也不長得像交易列——所以前一版的兩層過濾都擋不到它');
+  assert.ok(identifyIssuer([f[3]], new Set()).bank === '台新',
     '前提：這個商店名**單獨拿去判會命中台新** ⇒ 本題真的踩得到那條路（不是「反正不命中」）');
-  assert.equal(run(f).bank, '', '★它在第一筆交易列**之後**，不是表頭區 ⇒ 沒有投票權');
+  assert.deepEqual(run(f), { code: null, bank: '', bankEvidence: 'none', rows: 1 },
+    '★四值一起斷（本卷規矩②）：它在第一筆交易列**之後** ⇒ 沒有投票權，但列照給');
 });
 
 test('★r1#1c 富邦只認「台北富邦」——裸的「富邦」／Fubon 不算（香港富邦也發卡）', () => {
@@ -495,4 +508,43 @@ test('★r2#3 認出是台新、但台新解析器 0 列 ⇒ 認不得（不可�
   assert.equal(fubonRows[0].amount, 3, '★前提：而且它讀到的金額是「回饋點數 3」，不是消費的 150');
   assert.deepEqual(run(f), { code: 'card_unrecognized', status: 400, bank: '', bankEvidence: 'none', rows: 0 },
     '★「我知道這是誰印的、但我讀不動它的版面」＝認不得，不是換一把尺再試一次');
+});
+
+
+// ── Codex #518 r3 ───────────────────────────────────────────────────────────
+
+test('★r3#1 錨定在列開頭：三個「補佐證詞補不完」的繞法全部擋掉', () => {
+  // r2 只做了「行名後面要跟佐證詞」，Codex r3 當場找到三個繞法。列舉補不完 ⇒ 改成關門：
+  // 真行名印在抬頭、抬頭在**列的開頭**；接縫上拼出來的一定在列中間。
+  const TX = ['115/07/03', '115/07/05', '一般商店', '100'];   // 台新式（誤判時會一路走完）
+  for (const [head, why] of [
+    [['購物平台', '新銀座推薦'], '踩單字「銀」'],
+    [['某某TAI', 'SHIN新戶推薦'], '踩沒有邊界的英文分支'],
+    [['我的Rich', 'art卡回饋'], '踩 Richart'],
+    [['電子服務平台', '新戶刷卡禮'], 'r2 原案'],
+  ]) {
+    const f = [head, TX];
+    assert.equal(parseTaishinPdf(f).length, 1, `前提（${why}）：交易列抓得到，誤判時會一路走完`);
+    assert.notEqual(run(f).bank, '台新', `★${why}：接縫在列中間，不算行名`);
+  }
+  // ★佐證詞**不可以是單字**：錨定之後「台新銀」仍會命中「台新銀座」這種列開頭。
+  //   r2 原本的清單裡有單字「銀」，Codex r3#1 就是踩它進來的。
+  assert.notEqual(run([['台新銀座百貨消費明細'], TX]).bank, '台新', '★佐證詞不可以放單字');
+  assert.notEqual(run([['台新銀樓貴金屬'], TX]).bank, '台新');
+  // 對照：真的印在列開頭就要認得（否則上面只是「什麼都不認」）
+  assert.equal(run([['台新銀行綜合對帳單'], TX]).bank, '台新');
+  assert.equal(run([['Richart信用卡帳單'], TX]).bank, '台新', '英文抬頭在列開頭也算');
+});
+
+test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算成台北富邦）', async () => {
+  const { issuerBank } = await import('../lib/card-identity.js');
+  assert.equal(issuerBank('台北富邦銀行'), '富邦');
+  assert.equal(issuerBank('台北富邦商業銀行'), '富邦');
+  assert.equal(issuerBank('台新銀行'), '台新');
+  assert.equal(issuerBank('Richart'), '台新');
+  assert.equal(issuerBank('富邦銀行（香港）有限公司'), '', '★香港富邦不是台北富邦（lib/bank-alias.js:17 記過的撞名）');
+  assert.equal(issuerBank('Fubon Bank (Hong Kong) Limited'), '');
+  assert.equal(issuerBank('玉山銀行'), '');
+  assert.equal(issuerBank(''), '');
+  assert.equal(issuerBank(null), '');
 });
