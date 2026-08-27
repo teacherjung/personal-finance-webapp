@@ -302,7 +302,7 @@ test('★認不出機構時要有就地警語；認得出來就不得亂鳴', as
   const { unknownIssuerNoticeHtml } = await import('../public/modules/reconcile-summary.js');
   const html = unknownIssuerNoticeHtml('none');
   assert.match(html, /認不出/, '★要講清楚我們不知道這是哪一家');
-  assert.match(html, /逐列核對/, '★要告訴使用者該做什麼（列可能有漏抄或抄錯）');
+  assert.match(html, /核對再匯入/, '★要告訴使用者該做什麼（列可能有漏抄或抄錯）');
   assert.match(html, /不會自動/, '★要說明為什麼要自己選卡');
   // 認得出來、或欄位根本沒帶（舊回應）都不得印——狼來了會讓警語失效
   assert.equal(unknownIssuerNoticeHtml('header'), '');

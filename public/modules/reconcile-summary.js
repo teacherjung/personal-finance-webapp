@@ -145,8 +145,10 @@ export function gateSummaryHtml(reconcile, kind) {
  */
 export function unknownIssuerNoticeHtml(bankEvidence) {
   if (bankEvidence !== 'none') return '';
+  // ⚠️ 文案由 William 2026-08-27 逐字核定（他的規矩：文案 Claude 起草、他審改）。
+  //    他的兩處修改：拿掉句首的 ⚠️ 記號、「請**逐列**核對」改成「請核對」。**改字前先問過他。**
   return `<div class="empty" style="margin-bottom:10px">${esc(
-    '⚠️ 認不出這是哪一家銀行的帳單。下面的明細是用內建版面「盡力」讀出來的，可能有漏抄或抄錯，'
-    + '請逐列核對再匯入；卡片也請自己選（這種情況不會自動幫你歸卡）。',
+    '認不出這是哪一家銀行的帳單。下面的明細是用內建版面「盡力」讀出來的，可能有漏抄或抄錯，'
+    + '請核對再匯入；卡片也請自己選（這種情況不會自動幫你歸卡）。',
   )}</div>`;
 }

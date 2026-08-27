@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  looksLikeTxRow, evidenceText, identifyIssuer, assertCardIdentityInvariants,
+  looksLikeTxRow, evidenceRows, identifyIssuer, assertCardIdentityInvariants,
   OWN_ISSUERS, OTHER_ISSUERS,
 } from '../lib/card-identity.js';
 import {
@@ -296,17 +296,94 @@ test('零件｜looksLikeTxRow：三格以上＋有日期樣＋有金額樣才算
   assert.ok(!looksLikeTxRow(['上期應繳總額', '本期應繳總額', '1,000']), '沒有日期樣不算 ⇒ 摘要列仍是合法證據來源');
 });
 
-test('零件｜evidenceText：used 與交易列都排除，且逐列 squash（不跨列拼字）', () => {
-  const lines = [['台', '新'], ['115/06/02', '星巴克', '150'], ['富'], ['邦']];
-  const text = evidenceText(lines, new Set([1]));
-  assert.match(text, /台新/, '同一列內的字要黏起來（台新把標題逐字拆開）');
-  assert.ok(!/富邦/.test(text), '★「富」與「邦」在不同列，不可以跨列拼成「富邦」');
-  assert.ok(!/星巴克/.test(text), 'used 的列不得出現在證據裡');
+test('零件｜evidenceRows：回**逐列**字串、只取表頭區（跨列拼字在結構上不可能）', () => {
+  // 兩列各自都**不含**任何行名，但列尾＋列頭可以拼出「台新」——這正是 r1#1a 的真實形狀。
+  const lines = [['電子服務平', '台'], ['新', '戶刷卡禮'], ['115/06/02', '星巴克', '150']];
+  const used = new Set([2]);
+  const rows = evidenceRows(lines, used);
+  assert.ok(Array.isArray(rows), '★必須回陣列——回一整串就是把跨列通道打開');
+  assert.deepEqual(rows, ['電子服務平台', '新戶刷卡禮'], '同一列內黏起來（台新把標題逐字拆開），列與列之間不黏');
+  assert.ok(rows.every((t) => !/台新/.test(t)), '前提：沒有任何**單一列**含「台新」');
+  assert.ok(/台新/.test(rows.join('')), '前提：但併起來就有——所以這題真的在考跨列通道');
+  // ⚠️ 這裡刻意用 `join('')` 而不是 `join('\n')`：換行只擋得住**沒有 `\s` 的**正規式，
+  //    而 r1#1a 打穿的正是 `/台\s*新/`（`\s` 吃換行）。真正的保護是**逐列比對**這個結構，
+  //    不是分隔字元——所以前提要用「最寬鬆的併法」來陳述危害。
+  // ★真正的斷言：**走判準本身**，不是只看字串裡有沒有那幾個字。
+  //   前一版這題只 assert.match(text, /富邦/)，題名寫「不跨列拼行名」而斷言只看字面 ⇒ 題名大於斷言。
+  assert.equal(identifyIssuer(lines, used).bank, '', '★兩列不得被拼成一個行名');
 });
 
 test('零件｜identifyIssuer：兩家自家都命中＝不猜（fail-closed 到「不掛名」）', () => {
-  const both = identifyIssuer([['台新銀行與富邦銀行聯名卡']], new Set());
+  const both = identifyIssuer([['台新銀行與台北富邦銀行聯名卡']], new Set());
   assert.deepEqual(both.own.sort(), ['台新', '富邦']);
   assert.equal(both.bank, '');
   assert.equal(both.bankEvidence, 'none');
+});
+
+
+// ── Codex #518 r1 的四個實測案例，一條一題 ──────────────────────────────────
+
+test('★r1#1a 跨列拼行名：正規式的 \\s 曾經吃掉換行，把兩列拼成「台新」', () => {
+  // Codex 實測：`/台\s*新/` 比對 `evidenceText` 的 join('\n') 整串時，
+  // 「電子服務平**台**」＋「**新**戶刷卡禮」→ 拼成「台新」⇒ 臺中商銀帳單掛上台新標籤並自動歸卡。
+  const f = [
+    ['臺中商業銀行信用卡帳單'],
+    ['電子服務平台'],
+    ['新戶刷卡禮'],
+    ['115/07/03', '一般商店', '115/07/05', '100'],
+  ];
+  assert.equal(parseFubon(f).length, 1, '前提：這份確實被寬鬆列判準抓到 1 列（不是「反正 0 列」）');
+  const r = run(f);
+  assert.notEqual(r.bank, '台新', '★兩列不得被拼成一個行名');
+  assert.deepEqual(r, { code: 'card_unrecognized', status: 400, bank: '', bankEvidence: 'none', rows: 0 },
+    '★證據列印的是臺中商銀 ⇒ 否證器命中 ⇒ 整份丟棄');
+});
+
+test('★r1#1b 明細區後面的商店續行不得重獲投票權（前一版「不像交易列」擋不住它）', () => {
+  // Codex 實測：最後那一列既不在 used、也不符合 looksLikeTxRow ⇒ 前一版讓它成為證據 ⇒ 判成富邦。
+  const f = [
+    ['信用卡帳單'],                        // 刻意不印機構名，讓證據只可能來自下面那一列
+    ['115/07/03', '一般店', '115/07/05', '100'],
+    ['富邦人壽保險費'],                     // ← 明細區的續行＝商店名
+  ];
+  const used = new Set();
+  parseFubon(f, used); parseTaishinPdf(f, used);
+  assert.ok(!used.has(2), '前提：這一列沒有被任何解析器消耗');
+  assert.ok(!looksLikeTxRow(f[2]), '前提：它也不長得像交易列——所以前一版的兩層過濾都擋不到它');
+  assert.equal(run(f).bank, '', '★它在第一筆交易列**之後**，不是表頭區 ⇒ 沒有投票權');
+});
+
+test('★r1#1c 富邦只認「台北富邦」——裸的「富邦」／Fubon 不算（香港富邦也發卡）', () => {
+  // lib/bank-alias.js:17 自己就記著「富邦香港 vs 台北富邦」是已知撞名危害。
+  assert.equal(identifyIssuer([['台北富邦銀行 信用卡帳單']], new Set()).bank, '富邦');
+  assert.equal(identifyIssuer([['富邦銀行（香港）有限公司 信用卡月結單']], new Set()).bank, '',
+    '★香港富邦不得被當成台北富邦（認錯家＝自動歸到錯的卡）');
+  assert.equal(identifyIssuer([['Fubon Bank (Hong Kong) Limited']], new Set()).bank, '');
+});
+
+// ★r1#2（末四碼不得繞過分支④）是服務層的事，端到端題在 test/statement-pipeline.test.js 的 J3。
+//   這裡刻意**不**放「掃原始碼字樣」的形狀釘——那種斷言在別處也會命中，是這個 repo 記過的假綠來源。
+
+
+test('★r1#3 認出是哪一家就要用那一家的解析器（不可只比筆數）', () => {
+  // Codex 實測：兩支各抓一筆 ⇒ 平手 ⇒ 舊寫法取富邦，說明變成「謹慎理財信用至上（星巴克）」，
+  // 標籤卻仍是台新 ⇒ 畫面說台新、資料是富邦解析器讀的。
+  const f = [['台新銀行'], ['115/06/02', '115/06/05', '星巴克', '150'], ['謹慎理財信用至上']];
+  assert.equal(parseTaishinPdf(f).length, 1, '前提：台新解析器抓到 1 筆');
+  assert.equal(parseFubon(f).length, 1, '前提：富邦解析器也抓到 1 筆（平手）');
+  const r = parseStatementFromLines(f);
+  assert.equal(r.bank, '台新');
+  assert.equal(r.transactions.length, 1);
+  assert.equal(r.transactions[0].desc, '星巴克', '★機構名與明細必須出自同一支解析器');
+});
+
+test('★r1 補洞：台新「向相鄰列借說明」時，那一列也必須記進 used', () => {
+  // Codex 指出：拿掉 parseTaishinPdf 的 used.add(descIdx)，既有考題仍全綠。
+  const f = [['台新銀行'], ['星巴克'], ['115/06/02', '115/06/05', '150']];
+  const used = new Set();
+  const raw = parseTaishinPdf(f, used);
+  assert.equal(raw.length, 1);
+  assert.equal(raw[0].desc, '星巴克', '前提：說明確實是向上一列借的');
+  assert.ok(used.has(1), '★借來當說明的那一列＝已消耗，不得再有投票權');
+  assert.ok(used.has(2), '交易列自己也要記');
 });

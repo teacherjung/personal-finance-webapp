@@ -232,3 +232,40 @@ test('★J2b 對照：認得出機構時，「該銀行只有一張卡」那條�
   assert.ok(r.resolvedCard, '★認得出機構＋該銀行唯一一張卡 ⇒ 仍然自動歸卡');
   assert.equal(r.resolvedCard.id, 'only');
 });
+
+test('★J3 認不出機構時，末四碼唯一命中也**只當候選**、不自動選（Codex #518 r1#2）', async () => {
+  // 分支④說「禁止自動歸卡」，但 previewAuto 原本先用 lastFour 決定 resolvedCard ⇒ 整條分支被繞過。
+  // 末四碼不是全域唯一，而「認不出機構」代表那些列可能是別家版面被硬讀出來的垃圾。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'c9', name: '某張卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],                       // 沒有機構名
+    ['卡號末四碼 9999'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '', '前提：這份確實認不出機構');
+  assert.equal(r.lastFour, '9999', '前提：末四碼讀得到、而且只有一張卡對得上');
+  assert.equal(r.resolvedCard, null, '★末四碼唯一命中也不准自動選——認不出機構時列本身就可疑');
+  assert.deepEqual(r.candidates.map(c => c.id), ['c9'], '要把那張卡列成候選，讓使用者自己確認');
+});
+
+test('★J4 選卡／改卡之後，「認不出機構」的警語不得消失（Codex #518 r1#4）', async () => {
+  // 前端選卡會改打 previewForCard 並用回應覆蓋 curR；那個端點原本沒回 bankEvidence，
+  // 於是警語在**使用者最需要看到它的時刻**（正要決定記到哪張卡）消失＝畫面說謊。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'c9', name: '某張卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const unknown = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewForCard('c9', unknown);
+  assert.equal(r.bank, '');
+  assert.equal(r.bankEvidence, 'none', '★指定卡片預覽也要交出證據種類，否則警語印不出來');
+  // 對照：認得出機構時不得亂鳴
+  const known = Buffer.from(cjkPdf([
+    ['台新國際商業銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  assert.equal((await previewForCard('c9', known)).bankEvidence, 'header');
+});
