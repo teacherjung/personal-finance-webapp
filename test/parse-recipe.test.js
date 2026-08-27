@@ -1741,6 +1741,36 @@ test('同一把尺｜出生對照的等值與位置兩道約束也用它：相�
     '★bank 抄成相容字寫法的帳戶標籤＝單槽直通路（r8#3）又打開了');
 });
 
+test('同一把尺｜出生驗收也認得字體差異：AI 抄正規字、引擎讀到相容字＝算重現（否則這些銀行的卡永遠孵不出來）', () => {
+  // 出生驗收比的是「使用者確認的 AI 答案」vs「配方重解的結果」。帳單印相容字時，引擎讀到的是
+  // 相容字、AI 抄回來的多半是正規字——兩串字在畫面上一模一樣，嚴格等值卻永遠對不上 ⇒ 卡不存
+  // ⇒ 每期付全額 AI 錢。r4#1 對「格間空白」擇的就是「比對前兩邊同法正規化」，字體是同族的第二種形。
+  const exp = parseWithRecipe(linesNContent(), recipeN());
+  const act = parseWithRecipe(linesNContent(), recipeN());
+  // 四個純文字欄各自給一個樣本（同 r5#1 那一課：只考其中一兩欄時，單獨把某一欄改窄的刀仍綠）
+  exp.transactions[0].summary = '合成轉入';       act.transactions[0].summary = toRad('合成轉入');
+  exp.transactions[0].note = '日結';              act.transactions[0].note = toRad('日結');
+  exp.accounts[0].label = '甲戶活存';             act.accounts[0].label = toRad('甲戶活存');
+  exp.accounts[0].note = '月報';                  act.accounts[0].note = toRad('月報');
+  assert.deepEqual(recipeReproduces(exp, act), { ok: true, diff: null }, '★只差字體＝算重現（四欄樣本各自到位）');
+  assert.deepEqual(recipeReproduces(act, exp), { ok: true, diff: null }, '★哪一邊帶相容字都一樣（尺是對稱的）');
+  // 空白與字體同時出現也要算重現（兩種印法差是同一把尺一起吃掉的，不是兩套機關）
+  const mixed = parseWithRecipe(linesNContent(), recipeN());
+  mixed.transactions[0].summary = toRad('合成轉入').split('').join(' ');
+  const plain = parseWithRecipe(linesNContent(), recipeN());
+  plain.transactions[0].summary = '合成轉入';
+  assert.deepEqual(recipeReproduces(plain, mixed), { ok: true, diff: null }, '★空白＋字體一起差＝同一把尺一次吃掉');
+  // 真差異照紅、嚴格欄照樣嚴格（放寬只限「看起來一樣」的印法差）
+  const bad = parseWithRecipe(linesNContent(), recipeN());
+  bad.transactions[0].summary = `${bad.transactions[0].summary}尾`;
+  assert.equal(recipeReproduces(parseWithRecipe(linesNContent(), recipeN()), bad).diff, 'transactions[0].summary',
+    '★換尺不可放過真差異');
+  const strict = parseWithRecipe(linesNContent(), recipeN());
+  strict.transactions[0].amount += 1;
+  assert.equal(recipeReproduces(parseWithRecipe(linesNContent(), recipeN()), strict).diff, 'transactions[0].amount',
+    '★金額欄不在軟等值清單裡——「配方所得＝使用者確認的所得」對數字照樣成立');
+});
+
 test('同一把尺｜槽位長度量的是「真正拿去比對的那個字串」：¯ 只值一個字、㈱ 展開成三個字', () => {
   // minLen 存在的理由＝1 字錨點會在交易列上誤觸發。它要量的是**拿去比對的那個字串**，
   // 不是原字面——兩者在相容字上會差開。
