@@ -30,7 +30,7 @@ const TEST_STORE = join(tmpdir(), `finance-multicur-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 after(() => { for (const suf of ['', '.bak', '.pre-ledger-migration.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } } });
 
-const { parseBankSummary, makeCurrencyTable, UNKNOWN_CURRENCY, MIXED_CURRENCY_MSG, MAX_CURRENCY_ROWS, MAX_CURRENCY_CHARS } = await import('../lib/bank-statement.js');
+const { parseBankSummary, makeCurrencyTable, UNKNOWN_CURRENCY, MIXED_CURRENCY_MSG, MAX_CURRENCY_ROWS, MAX_CURRENCY_CHARS, MAX_ACCOUNT_KEY_LEN } = await import('../lib/bank-statement.js');
 const { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
 const { normalizeAiBank, aiAnswersAgree } = await import('../lib/ai-parse.js');
 const { previewBankTxForDb, importBankTxToDb, assertBankReconciled, previewBankStatement } = await import('../lib/services/bank-import.js');
@@ -443,7 +443,7 @@ test('★哨兵必須是 truthy（Grok 掃描第 2 條）：查表端寫的是 `
   assert.equal(statementCurrencyLookup(falsy, MULTI), null, '對照組：falsy 值真的會被當成查無（所以那個契約是實的、不是我在猜）');
 });
 
-test('★互看在 note() 不跑、只在 finalize() 跑（Codex #517 r12：每筆都重算＝Θ(n³)，他實測 300 列 8.38 秒同步卡住主行程）', () => {
+test('★note() 那段是線性的、互看的代價落在 finalize()（Codex #517 r12：每筆都重算＝Θ(n³)、實測 300 列 8.38 秒卡住主行程；r14 提醒題名不可宣稱「note 完全不互看」——時間斷言證不到絕對敘述）', () => {
   const keys = (/** @type {number} */ n) => Array.from({ length: n }, (_, i) => `9001${String(i).padStart(4, '0')}****${String(i).padStart(4, '0')}`);
   // ★把兩段時間**分開量**：note() 那段必須是線性的（每筆重算的壞法會讓它變成整個建表的成本）
   const t = makeCurrencyTable();
@@ -459,7 +459,7 @@ test('★互看在 note() 不跑、只在 finalize() 跑（Codex #517 r12：每�
   assert.ok(finalizeMs < 2000, `★finalize() 的 Θ(n²) 在數量級內（實測 ${finalizeMs}ms）`);
 });
 
-test('★兩道 fail-closed 上限：不同帳號鍵數 與 鍵的總字元數（只擋列數不夠——互看的代價是 (Σ 鍵長)²，r13 用 500 個 1KB 帳號實測卡 14.3 秒）', () => {
+test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／**單鍵長度**（r13：500 個 1KB 帳號卡 14.3 秒；r14：兩個 4,702 字元、合計 9,404<10,000 的合法鍵卡 6 秒後丟 RangeError＝連 fail-closed 都沒做到）', () => {
   const build = (/** @type {number} */ n, /** @type {number} */ pad = 4) => {
     const t = makeCurrencyTable();
     for (let i = 0; i < n; i++) t.note(`9001${String(i).padStart(pad, '0')}****${String(i).padStart(4, '0')}`, 'TWD');
@@ -478,9 +478,31 @@ test('★兩道 fail-closed 上限：不同帳號鍵數 與 鍵的總字元數�
   for (let i = 0; i < 20; i++) fat.note(`9001${String(i).padStart(4, '0')}${'*'.repeat(600)}0001`, 'TWD');
   assert.throws(() => fat.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
     '★20 列但每列 600+ 字元＝總字元超標＝拒收（只擋列數的話這裡會放行並卡住主行程）');
+  // ★第三道：**總長在上限內、但單鍵超長**——r14 的素材（兩個 4,702 字元、合計 9,404 < 10,000，
+  //   星號段位置不同、尾碼不同）讓 DP 卡 6,021ms 後丟 RangeError＝**連 fail-closed 都沒做到**。
+  //   真正引爆的是**形狀不是長度**，所以要限單鍵長度＝結構性封頂（每對狀態 ≤ 64×64）。
+  assert.equal(MAX_ACCOUNT_KEY_LEN, 64);
+  const big = (/** @type {number} */ pos) => '9'.repeat(pos) + '**' + '1'.repeat(4702 - pos - 2);
+  const long = makeCurrencyTable();
+  const k1 = big(1), k2 = big(50);
+  assert.notEqual(k1, k2, '素材真的是兩個不同的鍵');
+  assert.equal(k1.length + k2.length, 9404, '總長 9,404 < 10,000＝總字元那道擋不住它（這正是 r14 的重點）');
+  assert.ok([k1, k2].every((k) => /^\d+\*{2,}\d+$/.test(k)), '★素材是**合法**遮罩帳號（過得了 isMaskedAccount，不是靠壞資料擋掉的）');
+  long.note(k1, 'TWD'); long.note(k2, 'USD');
+  const t0 = Date.now();
+  assert.throws(() => long.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
+    '★單鍵超長＝拒收，而且是**帶 code 的 fail-closed**（原本是 RangeError 崩潰＝沒有 code/status）');
+  assert.ok(Date.now() - t0 < 500, '★而且要**立刻**擋下（原本卡 6 秒才崩）');
+  // ★上限內的最壞情形要在數量級內（本機實測 52ms）
+  const n = Math.floor(MAX_CURRENCY_CHARS / MAX_ACCOUNT_KEY_LEN);
+  const worst = makeCurrencyTable();
+  for (let i = 0; i < n; i++) worst.note('9'.repeat(1 + (i % 40)) + '**' + '1'.repeat(64 - 3 - (i % 40)), i % 2 ? 'TWD' : 'USD');
+  const t1 = Date.now();
+  worst.finalize();
+  assert.ok(Date.now() - t1 < 3000, `★三道上限之內的最壞情形仍在數量級內（實測 ${Date.now() - t1}ms）`);
 });
 
-test('★等價印法在三條路各自的實際行為（行為驗證，不是掃原始碼有沒有 finalize 這幾個字）：模板與 AI 塌成哨兵、配方由既有的身分重疊守衛更早擋下', () => {
+test('★等價印法在三條路各自的實際行為（行為驗證，不是掃原始碼有沒有 finalize 這幾個字）：模板與 AI 塌成哨兵、配方**先**塌成哨兵、之後明細段的身分重疊守衛才拒解', () => {
   // 同一個帳號、兩種印法、兩種外幣。⚠️ 這裡用**星號數**不同、不用連字號：
   //   模板／配方的帳號列要過 `isMaskedAccount`（/^\d+\*{2,}\d+$/），帶連字號的寫法**在那兩條路不可達**
   //   （上游就不會被認成帳號列）——用不可達的形狀當素材＝這題會變成在測一個不存在的情境。
@@ -499,7 +521,7 @@ test('★等價印法在三條路各自的實際行為（行為驗證，不是�
     cells: ln.cells.map((/** @type {any} */ c) => (c.s === MULTI ? { ...c, s: (i <= 5 ? P1 : P2) } : c)) }));
   assert.throws(() => parseWithRecipe(rl, recipe()),
     (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /身分重疊/.test(String(e?.message || '')),
-    '★配方路：既有的「概要帳戶身分重疊」守衛先擋（fail-closed，不是靜靜給出兩個確定幣別）');
+    '★配方路：互看先把兩個鍵塌成哨兵，之後明細段的「概要帳戶身分重疊」守衛才拒解（fail-closed，不是靜靜給出兩個確定幣別）');
   // ③ AI：幣別表把同一個帳號用兩種印法各列一次
   const a = aiAnswer();
   a.accountCurrencies = [{ masked: SOLO, currency: 'TWD' }, { masked: P1, currency: 'JPY' }, { masked: P2, currency: 'USD' }];
