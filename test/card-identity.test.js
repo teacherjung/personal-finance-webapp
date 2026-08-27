@@ -341,15 +341,20 @@ test('★r1#1a 跨列拼行名：正規式的 \\s 曾經吃掉換行，把兩列
 
 test('★r1#1b 明細區後面的商店續行不得重獲投票權（前一版「不像交易列」擋不住它）', () => {
   // Codex 實測：最後那一列既不在 used、也不符合 looksLikeTxRow ⇒ 前一版讓它成為證據 ⇒ 判成富邦。
+  // ⚠️ 商店名必須挑一個**自家樣式真的會命中**的（這裡用「台新」）。
+  //    第一版用「富邦人壽」，但富邦樣式已收緊成「台北富邦」⇒ 那個字本來就不命中 ⇒ 突變測試證明
+  //    這題什麼都沒考（拿掉表頭區限制照樣綠）。負向題的 fixture 要自己確認「真的踩得到那條路」。
   const f = [
     ['信用卡帳單'],                        // 刻意不印機構名，讓證據只可能來自下面那一列
     ['115/07/03', '一般店', '115/07/05', '100'],
-    ['富邦人壽保險費'],                     // ← 明細區的續行＝商店名
+    ['台新人壽保險費'],                     // ← 明細區的續行＝商店名（含自家行名）
   ];
   const used = new Set();
   parseFubon(f, used); parseTaishinPdf(f, used);
   assert.ok(!used.has(2), '前提：這一列沒有被任何解析器消耗');
   assert.ok(!looksLikeTxRow(f[2]), '前提：它也不長得像交易列——所以前一版的兩層過濾都擋不到它');
+  assert.ok(identifyIssuer([f[2]], new Set()).bank === '台新',
+    '前提：這個商店名**單獨拿去判會命中台新** ⇒ 本題真的踩得到那條路（不是「反正不命中」）');
   assert.equal(run(f).bank, '', '★它在第一筆交易列**之後**，不是表頭區 ⇒ 沒有投票權');
 });
 
@@ -375,6 +380,27 @@ test('★r1#3 認出是哪一家就要用那一家的解析器（不可只比筆
   assert.equal(r.bank, '台新');
   assert.equal(r.transactions.length, 1);
   assert.equal(r.transactions[0].desc, '星巴克', '★機構名與明細必須出自同一支解析器');
+});
+
+test('★分界必須同時看 used：向**上一列**借來的說明不得變成表頭區證據', () => {
+  // 台新版面的說明有時印在交易列的**上一行**。那一列在文件順序上位於第一筆交易列**之前**，
+  // 所以只靠「第一列像交易列的位置」當分界會把它算進表頭區——而它是商店名。
+  // 這就是分界要 `u.has(i) || looksLikeTxRow(...)` 兩個條件都看的理由（少看 used 這半邊就漏）。
+  const f = [
+    ['信用卡帳單'],                          // 沒印機構名
+    ['玉山銀行ATM跨行手續費'],                // ← 說明印在上一行，會被 parseTaishinPdf 借走
+    ['115/06/02', '115/06/05', '15'],
+  ];
+  const used = new Set();
+  const raw = parseTaishinPdf(f, used);
+  assert.equal(raw.length, 1, '前提：這份確實走到「向上一列借說明」那條路');
+  assert.equal(raw[0].desc, '玉山銀行ATM跨行手續費', '前提：說明真的是那一列');
+  assert.ok(used.has(1), '前提：借走的那一列已記進 used');
+  assert.ok(!looksLikeTxRow(f[1]), '前提：它不長得像交易列 ⇒ 只靠 looksLikeTxRow 的分界擋不到它');
+  const r = run(f);
+  assert.equal(r.code, null, '★不得因為說明列上的「玉山銀行」而觸發否證器、整份丟棄');
+  assert.equal(r.bank, '');
+  assert.equal(r.rows, 1, '★列照給（分支④），不是丟棄（分支②）');
 });
 
 test('★r1 補洞：台新「向相鄰列借說明」時，那一列也必須記進 used', () => {
