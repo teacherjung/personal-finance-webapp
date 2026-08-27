@@ -19,7 +19,8 @@ const TEST_STORE = join(tmpdir(), `finance-pipeline-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { previewAuto, previewForCard, importRows, listBatches, setBatchMonth } = await import('../lib/services/statement-import.js');
+const { previewAuto, previewForCard, importRows, listBatches, setBatchMonth, issuerMatchesBank } = await import('../lib/services/statement-import.js');
+const { cjkPdf } = await import('./helpers/build-pdf.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -58,7 +59,7 @@ test('預覽要把「帳單年月」與「應繳金額」交出來（前端就�
 
 test('免選卡預覽（自動歸卡那條路）也要交出這兩個值', async () => {
   const r = await previewAuto(taishinXlsxB64());
-  assert.ok(r.resolvedCard, '末四碼唯一命中→自動歸卡');
+  assert.ok(r.resolvedCard, '末四碼唯一命中＋機構認得出來＋那張卡的發卡行對得上→自動歸卡');
   assert.equal(r.statementMonth, '2026-01');
   assert.equal(r.statementDue, 46299);
 });
@@ -185,4 +186,144 @@ test('自主體檢｜同帳單同店同日同額兩筆真消費：都匯入；�
   const r2 = await importRows('k1', prev2.transactions);
   assert.equal(r2.imported, 0, '重匯不可多出任何一筆');
   assert.equal(store.load().transactions.filter(t => String(t.note).includes('星巴克')).length, 2, '總數仍是 2');
+});
+
+
+// ── 認不出機構時的守門（2026-08-27）─────────────────────────────────────────────
+// 背景：`String(issuer).includes('')` 恆真，所以解析器判不出是哪一家（`bank: ''`）時，
+//   **每一張信用卡**都會算成「這家的卡」，於是「該銀行只有一張卡就自動歸」那條會把別家帳單
+//   自動記到使用者唯一的那張卡上——錢記到錯的卡，畫面上沒有任何提示。
+
+test('★J1 認不出機構（bank 空字串）時，不得有任何卡片算「這家的卡」', () => {
+  assert.equal(issuerMatchesBank('台新銀行', '台新'), true);
+  assert.equal(issuerMatchesBank('台新銀行', ''), false, '★空機構名不得恆真（includes(\'\') 的陷阱）');
+  assert.equal(issuerMatchesBank('', ''), false);
+  assert.equal(issuerMatchesBank(null, ''), false);
+  assert.equal(issuerMatchesBank('玉山銀行', '台新'), false);
+});
+
+test('★J2 端到端：讀得到列但認不出機構的 PDF，即使只有一張卡也不准自動歸卡', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'only', name: '我唯一的卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  // 這份 PDF 讀得到兩筆交易，但**沒印任何機構名**，末四碼也對不上那張卡。
+  const b64 = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+    ['115/06/05', '115/06/07', '全聯福利中心', '320'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '', '前提：這份確實認不出機構');
+  assert.equal(r.bankEvidence, 'none', '★證據種類要一路帶到回應（前端據它印警語）');
+  assert.ok(r.transactions === undefined || r.transactions.length >= 0);
+  assert.equal(r.resolvedCard, null, '★不准自動歸卡——即使他只有一張卡');
+  assert.ok(Array.isArray(r.candidates) && r.candidates.length >= 1, '要回候選讓使用者自己選');
+});
+
+test('★J2b 對照：認得出機構時，「該銀行只有一張卡」那條照舊自動歸卡（沒有被誤殺）', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'only', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新國際商業銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：這份認得出機構');
+  assert.equal(r.bankEvidence, 'header');
+  assert.ok(r.resolvedCard, '★認得出機構＋該銀行唯一一張卡 ⇒ 仍然自動歸卡');
+  assert.equal(r.resolvedCard.id, 'only');
+});
+
+test('★J3 認不出機構時，末四碼唯一命中也**只當候選**、不自動選（Codex #518 r1#2）', async () => {
+  // 分支④說「禁止自動歸卡」，但 previewAuto 原本先用 lastFour 決定 resolvedCard ⇒ 整條分支被繞過。
+  // 末四碼不是全域唯一，而「認不出機構」代表那些列可能是別家版面被硬讀出來的垃圾。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'c9', name: '某張卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],                       // 沒有機構名
+    ['卡號末四碼 9999'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '', '前提：這份確實認不出機構');
+  assert.equal(r.lastFour, '9999', '前提：末四碼讀得到、而且只有一張卡對得上');
+  assert.equal(r.resolvedCard, null, '★末四碼唯一命中也不准自動選——認不出機構時列本身就可疑');
+  assert.deepEqual(r.candidates.map(c => c.id), ['c9'], '要把那張卡列成候選，讓使用者自己確認');
+});
+
+test('★J4 選卡／改卡之後，「認不出機構」的警語不得消失（Codex #518 r1#4）', async () => {
+  // 前端選卡會改打 previewForCard 並用回應覆蓋 curR；那個端點原本沒回 bankEvidence，
+  // 於是警語在**使用者最需要看到它的時刻**（正要決定記到哪張卡）消失＝畫面說謊。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'c9', name: '某張卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const unknown = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewForCard('c9', unknown);
+  assert.equal(r.bank, '');
+  assert.equal(r.bankEvidence, 'none', '★指定卡片預覽也要交出證據種類，否則警語印不出來');
+  // 對照：認得出機構時不得亂鳴
+  const known = Buffer.from(cjkPdf([
+    ['台新國際商業銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  assert.equal((await previewForCard('c9', known)).bankEvidence, 'header');
+});
+
+test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就退人工選（Codex #518 r2#4）', async () => {
+  // 實測：帳單清楚印「台新」、末四碼 1234，而資料庫裡唯一的 1234 是台北富邦卡
+  // ⇒ 舊寫法照樣自動選中那張富邦卡＝交易寫到錯的卡。末四碼不是全域唯一。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'fb', name: '富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 1234'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：機構認得出來是台新');
+  assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張富邦卡對得上');
+  assert.equal(r.resolvedCard, null, '★訊號打架就不自動選');
+  assert.deepEqual(r.candidates.map(c => c.id), ['fb'], '把它列成候選讓使用者自己確認');
+});
+
+test('★J5b 對照：機構與末四碼**一致**時仍然自動歸卡（沒有被誤殺）', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 1234'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.ok(r.resolvedCard, '★兩個訊號一致 ⇒ 照舊自動歸卡');
+  assert.equal(r.resolvedCard.id, 'ts');
+});
+
+test('★J6 台北富邦帳單＋同末四碼的**香港富邦**卡 ⇒ 不得自動歸卡（Codex #518 r3#2）', async () => {
+  // `String(issuer).includes('富邦')` 對「富邦銀行（香港）有限公司」為真 ⇒ 舊寫法直接歸到香港卡。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'hk', name: '香港富邦卡', type: 'credit', issuer: '富邦銀行（香港）有限公司', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['卡號末四碼 1234'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
+  assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張香港卡對得上');
+  assert.equal(r.resolvedCard, null, '★香港富邦不是台北富邦 ⇒ 退人工選');
+});
+
+test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'tp', name: '台北富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['卡號末四碼 1234'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.ok(r.resolvedCard, '★機構對得上就照舊自動歸卡（上一題不是「什麼都不歸」）');
+  assert.equal(r.resolvedCard.id, 'tp');
 });

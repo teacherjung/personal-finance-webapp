@@ -296,3 +296,32 @@ test('合計｜有影子提醒時這句不可被擠掉（M-adv-suppress：兩者
 //    畫面上卻消失。**刻意不守**：那不是真實的失誤模式（沒有人會不小心寫出 display:none），
 //    而本專案為了防它燒過四輪覆審、被四種寫法輪流打穿（`test/ai-gate-interception.test.js`
 //    的「攔截率」題有 William 2026-08-13 的同款裁示與完整病歷）。可見性要靠真的渲染才驗得到。
+
+// ── 認不出機構的就地警語（2026-08-27）─────────────────────────────────────────
+test('★認不出機構時要有就地警語；認得出來就不得亂鳴', async () => {
+  const { unknownIssuerNoticeHtml } = await import('../public/modules/reconcile-summary.js');
+  const html = unknownIssuerNoticeHtml('none');
+  assert.match(html, /認不出/, '★要講清楚我們不知道這是哪一家');
+  assert.match(html, /核對再匯入/, '★要告訴使用者該做什麼（列可能有漏抄或抄錯）');
+  assert.match(html, /不會自動/, '★要說明為什麼要自己選卡');
+  // 認得出來、或欄位根本沒帶（舊回應）都不得印——狼來了會讓警語失效
+  assert.equal(unknownIssuerNoticeHtml('header'), '');
+  assert.equal(unknownIssuerNoticeHtml(undefined), '');
+  assert.equal(unknownIssuerNoticeHtml(''), '');
+});
+
+test('★接線：預覽窗真的有呼叫「認不出機構」警語（Codex #518 r3#3：拔掉呼叫不會紅）', async () => {
+  // ⚠️ 這是**形狀釘**，本卷其餘題都是行為題。放它的理由：這條接線是「畫面會不會說謊」的唯一保證，
+  //    而預覽窗是靠字串樣板組出來的（沒有 DOM 測試環境可以直接驗）。同檔既有的對帳說明也是這樣釘的。
+  //    ⚠️ 它證明的只有「呼叫存在、參數對」，**不保證它印在使用者看得到的位置**。
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../public/modules/transactions-import.js', import.meta.url), 'utf-8');
+  assert.match(src, /import \{[^}]*unknownIssuerNoticeHtml[^}]*\} from '\.\/reconcile-summary\.js'/,
+    '★要從單一真相引入，不可以在前端自己拼一句');
+  assert.match(src, /\$\{unknownIssuerNoticeHtml\(curR\.bankEvidence\)\}/,
+    '★要用後端回來的 bankEvidence 當參數（寫死或傳錯欄位＝警語永遠不出現／永遠出現）');
+  // 它必須跟對帳說明一起出現在預覽窗的 bodyHtml 裡（兩者相鄰＝同一個區塊）
+  const i = src.indexOf('unknownIssuerNoticeHtml(curR.bankEvidence)');
+  const j = src.indexOf("gateSummaryHtml(curR.reconcile, 'card')");
+  assert.ok(i > 0 && j > 0 && Math.abs(i - j) < 200, '★兩句要在預覽窗的同一個區塊裡');
+});

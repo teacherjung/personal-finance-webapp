@@ -508,7 +508,7 @@ test('端到端｜免選卡那條路（previewAuto）同樣擋 C1、同樣帶 re
   await assert.rejects(previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '9,999' }, TX_OK)),
     (/** @type {any} */ e) => { assert.equal(e.status, 400); assert.match(e.message, /對帳沒過/); return true; });
   const r = await previewAuto(xlsxB64({ prev: '10,449', paid: '2,449', add: '450', due: '8,450' }, TX_OK));
-  assert.ok(r.resolvedCard, '末四碼 5678 唯一命中→自動歸卡');
+  assert.ok(r.resolvedCard, '末四碼 5678 唯一命中＋機構認得出來＋那張卡的發卡行對得上→自動歸卡（三個條件缺一就退人工選）');
   assert.equal(r.reconcile.level, 'medium');
   assert.deepEqual(r.statementTotals, { due: 8450, prevDue: 10449, paidAndRefund: 2449, newCharges: 450 },
     '免選卡那條路也要逐欄帶四格（r2#2：只驗 previewForCard 的話這邊拔掉照樣全綠）');

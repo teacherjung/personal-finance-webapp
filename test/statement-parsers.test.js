@@ -89,6 +89,37 @@ test('parsePdfAuto：依文件內容判斷銀行（不看卡片）', () => {
   assert.equal(parsePdfAuto([['台北富邦銀行'], ['115/06/02', '星巴克', '115/06/05', '150']]).bank, '富邦');
 });
 
+test('★parsePdfAuto｜0 列＝noRows、證據指向別家＝otherIssuer；⚠️ 行名關鍵字**不可**當判準——它掃全文、會數到消費明細裡的商店名', () => {
+  // ⚠️ 這份 fixture 原本的第二列只有**一格**，被 `cells.length < 3` 當場擋掉 ⇒ 永遠走不到日期判準
+  //    ＝空包彈（斷言是綠的，但它什麼都沒證明）。改成多格、並在下面附「到達性前提」。
+  const other = [['遠東商銀信用卡帳單'], ['交易日', '2026-06-02', '摘要', '星巴克', '金額', '150']];
+  assert.equal(parseTaishinPdf(other).length + parseFubon(other).length, 0,
+    '前提：這份版面的日期不是民國兩欄式、金額也不在末格 ⇒ 兩支解析器確實都抓 0 列');
+  const r = /** @type {any} */ (parsePdfAuto(other));
+  assert.equal(r.noRows, true, '★誠實回報「讀不動」，而不是挑一家貼上去');
+  assert.equal(r.raw.length, 0);
+  assert.equal(r.bank, '', '★也不編一個機構名');
+  assert.equal(r.bankEvidence, 'none');
+  // ⚠️ 實測踩過的坑：遠銀帳單刷了「富邦人壽」「台新」之類的消費，行名關鍵字命中 1〜4 次。
+  //    ★這一組的交易列**真的抓得到**（不是 0 列），所以它證明的是「商店名不算證據」，
+  //    不是「反正 0 列」——沒有下面這句前提，本題會退化成上一題的重複。
+  const merchants = [
+    ['遠東國際商業銀行 信用卡帳單'],
+    ['115/06/02', '115/06/04', '富邦人壽保費', '3,000'],
+    ['115/06/03', '115/06/05', '台新銀行轉帳', '500'],
+  ];
+  assert.equal(parseTaishinPdf(merchants).length, 2, '前提：這兩列確實被寬鬆列判準抓成交易');
+  const r2 = /** @type {any} */ (parsePdfAuto(merchants));
+  assert.deepEqual(r2.otherIssuer, ['遠東國際商業銀行'],
+    '★證據列印的是「遠東國際商業銀行」⇒ 整份丟棄，而且**要把是誰帶出來**（錯誤訊息要講得出來，不可以說「找不到消費明細」）');
+  assert.equal(r2.raw.length, 0, '★丟棄就要真的把列丟掉，不可以只是不掛機構名');
+  assert.equal(r2.bank, '');
+  // 真的認得的版面照舊
+  const ok = /** @type {any} */ (parsePdfAuto([['台新銀行'], ['115/06/02', '115/06/05', '星巴克', '150']]));
+  assert.ok(!ok.noRows && !ok.otherIssuer, '認得的版面不得被誤判');
+  assert.equal(ok.bank, '台新');
+});
+
 test('extractLastFour：各種卡號樣式抓末四碼', () => {
   assert.equal(extractLastFour('卡號末四碼 1234'), '1234');
   assert.equal(extractLastFour('末4碼：5678'), '5678');
