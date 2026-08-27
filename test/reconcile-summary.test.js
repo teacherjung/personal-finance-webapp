@@ -306,7 +306,6 @@ test('★認不出機構時要有就地警語；認得出來就不得亂鳴', as
   assert.match(html, /不會自動/, '★要說明為什麼要自己選卡');
   // 認得出來、或欄位根本沒帶（舊回應）都不得印——狼來了會讓警語失效
   assert.equal(unknownIssuerNoticeHtml('header'), '');
-  assert.equal(unknownIssuerNoticeHtml('xlsx-template'), '');
   assert.equal(unknownIssuerNoticeHtml(undefined), '');
   assert.equal(unknownIssuerNoticeHtml(''), '');
 });

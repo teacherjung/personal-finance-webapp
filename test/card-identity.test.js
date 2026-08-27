@@ -615,6 +615,24 @@ test('★掃#1 分支②讀到了列、也知道是誰 ⇒ 訊息不得說「可
   assert.match(grab(() => parseStatementFromLines([['隨便什麼字']])).message, /沒有消費/);
 });
 
+test('★r5#1 三碼大寫的**合法店名**不得被當成幣別（我第一版判準造成的漏帳）', () => {
+  // Codex 實測：`/^[A-Z]{3}$/` 把「KFC」也當幣別 ⇒ 台新那支被扣分 ⇒ 改選富邦 ⇒
+  // **漏記一筆 200、另一筆店名錯置**。「三碼大寫」不是幣別的定義。
+  const f = [
+    ['信用卡帳單'],
+    ['KFC'],
+    ['115/07/03', '115/07/05', '100'],
+    ['星巴克'],
+    ['115/07/09', '115/07/11', '200'],
+  ];
+  const t = parseTaishinPdf(f), fb = parseFubon(f);
+  assert.equal(t.length, 2, '前提：台新解析器正確讀到 2 筆');
+  assert.equal(fb.length, 1, '前提：富邦解析器只讀到 1 筆（而且店名錯置）');
+  const r = parseStatementFromLines(f);
+  assert.equal(r.transactions.length, 2, '★不得因為「KFC」被誤判成幣別而選到漏記的那一支');
+  assert.deepEqual(r.transactions.map((x) => [x.desc, x.amount]), [['KFC', 100], ['星巴克', 200]]);
+});
+
 test('★掃#2 認不出機構時，說明像人話的那一支勝過筆數多的那一支', () => {
   // 富邦官網版：parseFubon 讀出店名、parseTaishinPdf 把第三格的 TWD 當說明。
   // 只比筆數的話，筆數一翻面就交出一整批 desc:'TWD'。
