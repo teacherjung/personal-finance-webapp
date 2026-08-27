@@ -129,3 +129,24 @@ export function gateSummaryHtml(reconcile, kind) {
     : '';
   return `<div class="gate-summary" style="margin-bottom:10px"><p class="muted" style="margin:0;font-size:12.5px">${main}</p>${totals}${adv}</div>`;
 }
+
+/**
+ * 「認不出這是哪一家銀行的帳單」的就地警語（2026-08-27）。
+ *
+ * 什麼時候會看到：解析器讀出了列，但**找不到夠格的機構名證據**（`bankEvidence: 'none'`——判準見
+ * `lib/card-identity.js`：機構名只能來自「解析器沒消耗掉、又不像交易列」的列，商店名沒有投票權）。
+ * 這時列還是照給（可能是對的），但**不會自動歸卡**，而且很可能是別家版面被內建範本硬讀出來的。
+ *
+ * 白話鐵則同本檔其餘句子：不講術語、只講「我知道什麼／你要做什麼」。
+ * ⚠️ 這一段是**使用者必須懂的概念**（懂了才不會把「盡力讀出來的列」當成核對過的資料），
+ *    所以就地寫在畫面上、不是只寫在文件裡。
+ *
+ * @param {string|undefined} bankEvidence @returns {string} HTML（無警語時回空字串）
+ */
+export function unknownIssuerNoticeHtml(bankEvidence) {
+  if (bankEvidence !== 'none') return '';
+  return `<div class="empty" style="margin-bottom:10px">${esc(
+    '⚠️ 認不出這是哪一家銀行的帳單。下面的明細是用內建版面「盡力」讀出來的，可能有漏抄或抄錯，'
+    + '請逐列核對再匯入；卡片也請自己選（這種情況不會自動幫你歸卡）。',
+  )}</div>`;
+}

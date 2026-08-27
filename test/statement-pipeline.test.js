@@ -19,7 +19,8 @@ const TEST_STORE = join(tmpdir(), `finance-pipeline-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { previewAuto, previewForCard, importRows, listBatches, setBatchMonth } = await import('../lib/services/statement-import.js');
+const { previewAuto, previewForCard, importRows, listBatches, setBatchMonth, issuerMatchesBank } = await import('../lib/services/statement-import.js');
+const { cjkPdf } = await import('./helpers/build-pdf.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -185,4 +186,49 @@ test('自主體檢｜同帳單同店同日同額兩筆真消費：都匯入；�
   const r2 = await importRows('k1', prev2.transactions);
   assert.equal(r2.imported, 0, '重匯不可多出任何一筆');
   assert.equal(store.load().transactions.filter(t => String(t.note).includes('星巴克')).length, 2, '總數仍是 2');
+});
+
+
+// ── 認不出機構時的守門（2026-08-27）─────────────────────────────────────────────
+// 背景：`String(issuer).includes('')` 恆真，所以解析器判不出是哪一家（`bank: ''`）時，
+//   **每一張信用卡**都會算成「這家的卡」，於是「該銀行只有一張卡就自動歸」那條會把別家帳單
+//   自動記到使用者唯一的那張卡上——錢記到錯的卡，畫面上沒有任何提示。
+
+test('★J1 認不出機構（bank 空字串）時，不得有任何卡片算「這家的卡」', () => {
+  assert.equal(issuerMatchesBank('台新銀行', '台新'), true);
+  assert.equal(issuerMatchesBank('台新銀行', ''), false, '★空機構名不得恆真（includes(\'\') 的陷阱）');
+  assert.equal(issuerMatchesBank('', ''), false);
+  assert.equal(issuerMatchesBank(null, ''), false);
+  assert.equal(issuerMatchesBank('玉山銀行', '台新'), false);
+});
+
+test('★J2 端到端：讀得到列但認不出機構的 PDF，即使只有一張卡也不准自動歸卡', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'only', name: '我唯一的卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  // 這份 PDF 讀得到兩筆交易，但**沒印任何機構名**，末四碼也對不上那張卡。
+  const b64 = Buffer.from(cjkPdf([
+    ['信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+    ['115/06/05', '115/06/07', '全聯福利中心', '320'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '', '前提：這份確實認不出機構');
+  assert.equal(r.bankEvidence, 'none', '★證據種類要一路帶到回應（前端據它印警語）');
+  assert.ok(r.transactions === undefined || r.transactions.length >= 0);
+  assert.equal(r.resolvedCard, null, '★不准自動歸卡——即使他只有一張卡');
+  assert.ok(Array.isArray(r.candidates) && r.candidates.length >= 1, '要回候選讓使用者自己選');
+});
+
+test('★J2b 對照：認得出機構時，「該銀行只有一張卡」那條照舊自動歸卡（沒有被誤殺）', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'only', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新國際商業銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：這份認得出機構');
+  assert.equal(r.bankEvidence, 'header');
+  assert.ok(r.resolvedCard, '★認得出機構＋該銀行唯一一張卡 ⇒ 仍然自動歸卡');
+  assert.equal(r.resolvedCard.id, 'only');
 });

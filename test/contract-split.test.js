@@ -529,6 +529,7 @@ const MANIFEST = {
     files: [
       'data/seed.json',
       'lib/bank-statement.js', 'test/bank-statement.test.js', 'test/taishin-debit.test.js',
+      'test/card-identity.test.js', 'test/helpers/build-pdf.js',
       'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
       'lib/bank-alias.js', 'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
       'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
@@ -567,6 +568,7 @@ const MANIFEST = {
       'lib/services/learning.js',
       'lib/services/statement-import.js',
       'lib/services/store-rules.js',
+      'lib/card-identity.js',
       'lib/statement.js',
       'lib/store-rules.js',
       'lib/store.js',

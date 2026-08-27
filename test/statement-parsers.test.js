@@ -89,20 +89,34 @@ test('parsePdfAuto：依文件內容判斷銀行（不看卡片）', () => {
   assert.equal(parsePdfAuto([['台北富邦銀行'], ['115/06/02', '星巴克', '115/06/05', '150']]).bank, '富邦');
 });
 
-test('★parsePdfAuto｜兩支解析器都抓到 0 列＝noRows（不再無條件挑一家貼標籤）；⚠️ 行名關鍵字**不可**當「認不認得版面」的判準——它掃全文、會數到消費明細裡的商店名', () => {
-  // 別家銀行的版面：日期不是民國兩欄式、金額也不在末格 ⇒ 兩支都抓 0 列
-  const other = [['遠東商銀信用卡帳單'], ['交易日 2026-06-02 摘要 星巴克 金額 150']];
+test('★parsePdfAuto｜0 列＝noRows、證據指向別家＝otherIssuer；⚠️ 行名關鍵字**不可**當判準——它掃全文、會數到消費明細裡的商店名', () => {
+  // ⚠️ 這份 fixture 原本的第二列只有**一格**，被 `cells.length < 3` 當場擋掉 ⇒ 永遠走不到日期判準
+  //    ＝空包彈（斷言是綠的，但它什麼都沒證明）。改成多格、並在下面附「到達性前提」。
+  const other = [['遠東商銀信用卡帳單'], ['交易日', '2026-06-02', '摘要', '星巴克', '金額', '150']];
+  assert.equal(parseTaishinPdf(other).length + parseFubon(other).length, 0,
+    '前提：這份版面的日期不是民國兩欄式、金額也不在末格 ⇒ 兩支解析器確實都抓 0 列');
   const r = /** @type {any} */ (parsePdfAuto(other));
   assert.equal(r.noRows, true, '★誠實回報「讀不動」，而不是挑一家貼上去');
   assert.equal(r.raw.length, 0);
-  assert.equal(r.bank, '', '★也不編一個機構名（錯的機構名會進歸卡比對與預覽標題）');
-  // ⚠️ 實測踩過的坑：遠銀帳單因為刷了「富邦人壽」「台新」之類的消費，行名關鍵字命中 1〜4 次。
-  //    若拿「行名有沒有出現」當判準，這種帳單會被說成「認得這個版面」。
-  const otherWithMerchants = [['遠東商銀信用卡帳單'], ['交易日 2026-06-02 摘要 富邦人壽保費 金額 3000'], ['交易日 2026-06-03 摘要 台新銀行轉帳 金額 500']];
-  const r2 = /** @type {any} */ (parsePdfAuto(otherWithMerchants));
-  assert.equal(r2.noRows, true, '★消費明細裡出現「富邦」「台新」不代表這是他們家的帳單');
-  // 真的認得的版面照舊（行名仍用來在兩家之間挑方向）
-  assert.ok(!(/** @type {any} */ (parsePdfAuto([['台新銀行'], ['115/06/02', '115/06/05', '星巴克', '150']])).noRows), '認得的版面不得被誤判');
+  assert.equal(r.bank, '', '★也不編一個機構名');
+  assert.equal(r.bankEvidence, 'none');
+  // ⚠️ 實測踩過的坑：遠銀帳單刷了「富邦人壽」「台新」之類的消費，行名關鍵字命中 1〜4 次。
+  //    ★這一組的交易列**真的抓得到**（不是 0 列），所以它證明的是「商店名不算證據」，
+  //    不是「反正 0 列」——沒有下面這句前提，本題會退化成上一題的重複。
+  const merchants = [
+    ['遠東國際商業銀行 信用卡帳單'],
+    ['115/06/02', '115/06/04', '富邦人壽保費', '3,000'],
+    ['115/06/03', '115/06/05', '台新銀行轉帳', '500'],
+  ];
+  assert.equal(parseTaishinPdf(merchants).length, 2, '前提：這兩列確實被寬鬆列判準抓成交易');
+  const r2 = /** @type {any} */ (parsePdfAuto(merchants));
+  assert.equal(r2.otherIssuer, true, '★證據列印的是「遠東國際商業銀行」⇒ 整份丟棄');
+  assert.equal(r2.raw.length, 0, '★丟棄就要真的把列丟掉，不可以只是不掛機構名');
+  assert.equal(r2.bank, '');
+  // 真的認得的版面照舊
+  const ok = /** @type {any} */ (parsePdfAuto([['台新銀行'], ['115/06/02', '115/06/05', '星巴克', '150']]));
+  assert.ok(!ok.noRows && !ok.otherIssuer, '認得的版面不得被誤判');
+  assert.equal(ok.bank, '台新');
 });
 
 test('extractLastFour：各種卡號樣式抓末四碼', () => {
@@ -339,26 +353,3 @@ test('自主體檢｜isAmt 至少要一個數字：「,,,」「-,」不可被當
   assert.equal(r.length, 0, '純逗號/負號組合不是金額，整列不可解析成交易');
 });
 
-test('★「認不得版面」與「這期沒交易」要分得開（判準＝摘要四格讀不讀得到；混在一起＝空帳單也會去燒 AI）', async () => {
-  const { parseStatement } = await import('../lib/statement.js');
-  // ⚠️ 走真的 parseStatement 需要 PDF；這裡改用它內部的兩個判準零件直接驗語意
-  //（PDF 合成不了＝本檔既有劃界，同 bank-statement.test.js）。
-  const { extractStatementTotals } = await import('../lib/statement.js');
-  // ① 認得的版面（台新等式行）＝摘要格讀得到 ⇒ 抓不到列時該說「這期沒交易」
-  const taishinLike = '上期應款總額 已繳款金額 本期新增款項 本期累計應繳金額\n1,000 200 300 1,100';
-  assert.ok(Object.values(extractStatementTotals(taishinLike)).some((v) => v != null), '★內建版面的摘要格讀得到');
-  // ② 別家版面（遠銀實測：印了等式行，但欄位名與內建鍵組不同）＝一格都讀不到 ⇒ 該說「認不得版面」
-  const otherLike = '上期應繳總額 已繳款 / 退款 金額 本期新增款項 利息 違約金 本期應繳總額 最低應繳總額\n1,000 200 300 0 0 1,100 100';
-  const got = Object.values(extractStatementTotals(otherLike)).filter((v) => v != null);
-  assert.equal(got.length, 0, '★實測事實：遠銀那種欄位名，內建鍵組一格都抓不到——所以「四格全無」是「認不得版面」的可靠證據');
-  // ★分流本身（原本只驗零件＝假綠：把 card_no_rows 那一支整個刪掉，考題照樣全綠）
-  const { noRowsError } = await import('../lib/statement.js');
-  assert.equal(/** @type {any} */ (noRowsError(extractStatementTotals(taishinLike))).code, 'card_no_rows', '★認得版面＋沒明細＝這期沒交易（不該去燒 AI）');
-  assert.equal(/** @type {any} */ (noRowsError(extractStatementTotals(otherLike))).code, 'card_unrecognized', '★四格全無＝認不得版面（未來 AI 救援的唯一入口）');
-  assert.equal(/** @type {any} */ (noRowsError({ due: null, prevDue: null, paidAndRefund: null, newCharges: null })).code, 'card_unrecognized');
-  assert.equal(/** @type {any} */ (noRowsError({ due: 100, prevDue: null, paidAndRefund: null, newCharges: null })).code, 'card_no_rows', '★只讀到一格也算認得（台新官網 XLSX 就只印 due 那格）');
-  for (const t of [taishinLike, otherLike]) {
-    assert.doesNotMatch(String(noRowsError(extractStatementTotals(t)).message), /或該期沒有交易/, '★兩種原因不得再共用同一句話');
-  }
-  assert.ok(typeof parseStatement === 'function');
-});

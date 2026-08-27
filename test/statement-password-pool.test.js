@@ -163,7 +163,9 @@ test('r1#1｜rethrowParseError 保留 pdf_password code（前端跳窗的機器�
     (/** @type {any} */ e) => { assert.equal(e.code, undefined, '只放行白名單 code'); return true; });
   // ★2026-08-27：卡片版的兩個判準也要活著送到前端（漏加＝重包時被丟掉、前端只收到沒有判準的 400，
   //   正是上面那條註解記過的前科；未來的卡片 AI 救援入口就是靠 card_unrecognized）
-  for (const code of ['card_unrecognized', 'card_no_rows']) {
+  // ⚠️ 2026-08-27 撤回 card_no_rows：那個判準（摘要四格）量到的是**通用行業用語**，
+  //    會讓別家使用者被告知「這期沒有交易」＝對他的錢說假話。現在讀不出明細只有一個 code。
+  for (const code of ['card_unrecognized']) {
     assert.throws(() => rethrowParseError(Object.assign(new Error('x'), { status: 400, code })),
       (/** @type {any} */ e) => { assert.equal(e.code, code, `★${code} 要在白名單裡`); return true; });
   }

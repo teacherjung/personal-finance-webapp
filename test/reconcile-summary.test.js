@@ -296,3 +296,17 @@ test('合計｜有影子提醒時這句不可被擠掉（M-adv-suppress：兩者
 //    畫面上卻消失。**刻意不守**：那不是真實的失誤模式（沒有人會不小心寫出 display:none），
 //    而本專案為了防它燒過四輪覆審、被四種寫法輪流打穿（`test/ai-gate-interception.test.js`
 //    的「攔截率」題有 William 2026-08-13 的同款裁示與完整病歷）。可見性要靠真的渲染才驗得到。
+
+// ── 認不出機構的就地警語（2026-08-27）─────────────────────────────────────────
+test('★認不出機構時要有就地警語；認得出來就不得亂鳴', async () => {
+  const { unknownIssuerNoticeHtml } = await import('../public/modules/reconcile-summary.js');
+  const html = unknownIssuerNoticeHtml('none');
+  assert.match(html, /認不出/, '★要講清楚我們不知道這是哪一家');
+  assert.match(html, /逐列核對/, '★要告訴使用者該做什麼（列可能有漏抄或抄錯）');
+  assert.match(html, /不會自動/, '★要說明為什麼要自己選卡');
+  // 認得出來、或欄位根本沒帶（舊回應）都不得印——狼來了會讓警語失效
+  assert.equal(unknownIssuerNoticeHtml('header'), '');
+  assert.equal(unknownIssuerNoticeHtml('xlsx-template'), '');
+  assert.equal(unknownIssuerNoticeHtml(undefined), '');
+  assert.equal(unknownIssuerNoticeHtml(''), '');
+});
