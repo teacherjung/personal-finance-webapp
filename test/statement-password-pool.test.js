@@ -161,6 +161,12 @@ test('r1#1｜rethrowParseError 保留 pdf_password code（前端跳窗的機器�
     (/** @type {any} */ e) => { assert.equal(e.status, 400); assert.equal(e.code, 'pdf_password'); return true; });
   assert.throws(() => rethrowParseError(Object.assign(new Error('別的'), { status: 400, code: 'something_else' })),
     (/** @type {any} */ e) => { assert.equal(e.code, undefined, '只放行白名單 code'); return true; });
+  // ★2026-08-27：卡片版的兩個判準也要活著送到前端（漏加＝重包時被丟掉、前端只收到沒有判準的 400，
+  //   正是上面那條註解記過的前科；未來的卡片 AI 救援入口就是靠 card_unrecognized）
+  for (const code of ['card_unrecognized', 'card_no_rows']) {
+    assert.throws(() => rethrowParseError(Object.assign(new Error('x'), { status: 400, code })),
+      (/** @type {any} */ e) => { assert.equal(e.code, code, `★${code} 要在白名單裡`); return true; });
+  }
 });
 
 test('r1#2｜讀取端 fail-safe 上限：raw 有 20 組/超長字串，pool 只吃 ≤8 組×≤100 字', () => {
