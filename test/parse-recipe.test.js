@@ -1544,7 +1544,7 @@ test('引擎｜帳戶標籤不算銀行身分證據（r28#2）：「甲方自動
 // 每個月照舊燒一次 AI。下面這幾題把「兩邊都過同一把尺」釘在**每一個**比對點上。
 
 /** 正常字 → 康熙部首（PDF 文字層真的會這樣印；NFKC 會把部首折回正常字）。 */
-const RAD = { 金: '⾦', 戶: '⼾', 日: '⽇', 月: '⽉', 頁: '⾴', 車: '⾞', 支: '⽀', 入: '⼊', 小: '⼩' };
+const RAD = { 金: '⾦', 戶: '⼾', 日: '⽇', 月: '⽉', 頁: '⾴', 車: '⾞', 支: '⽀', 入: '⼊', 小: '⼩', 手: '⼿' };
 /** 把字串裡有部首寫法的字換成部首＝「同一句話的另一種印法」。 */
 const toRad = (/** @type {string} */ s) => [...String(s)].map(ch => RAD[ch] ?? ch).join('');
 /** 配方的**文字槽**（會拿去跟帳單原文比對的那些）。 */
@@ -1769,6 +1769,41 @@ test('同一把尺｜出生驗收也認得字體差異：AI 抄正規字、引�
   strict.transactions[0].amount += 1;
   assert.equal(recipeReproduces(parseWithRecipe(linesNContent(), recipeN()), strict).diff, 'transactions[0].amount',
     '★金額欄不在軟等值清單裡——「配方所得＝使用者確認的所得」對數字照樣成立');
+});
+
+test('同一把尺｜日期的「值」不過這把尺：全形日期不得多出候選、把已存卡的現值日改讀成另一個（Codex r1 High）', () => {
+  // 只把整列正規化＝全形印的日期也變得掃得到 ⇒ anchored-date 取第一個就換人。實測反例：
+  // base 讀 2026-06-30、只換尺後讀 2099-05-06——那是合法日期、會寫進 balanceAsOf，
+  // 往後每期真帳單都比它舊 ⇒ 餘額更新被當 stale 一路跳過。**不是 fail-closed**。
+  const mixed = linesN();
+  mixed[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, '結算日 備查期限２０９９／０５／０６ 本期末2026/06/30']]);
+  assert.equal(parseWithRecipe(mixed, recipeN()).referenceDate, '2026-06-30',
+    '★候選必須是帳單真的用值層印法印出來的那些——全形那個不算數（與 base 逐字相同）');
+  // 整份用全形印參考日＝照舊讀不到 ⇒ null（同規則 1a「寧可 null」；這是 base 就有的限制、非本支新增）
+  const full = linesN();
+  full[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, '結算日 ２０２６／０６／３０']]);
+  assert.equal(parseWithRecipe(full, recipeN()).referenceDate, null,
+    '★讀不到就是 null（不更新餘額），不是猜一個');
+  // 但**錨點**仍要能在相容字版面上定位（否則本支的主修就被這條抵銷掉了）
+  const radAnchor = linesN(true);
+  assert.equal(parseWithRecipe(radAnchor, recipeN()).referenceDate, '2026-06-30',
+    '★錨點用新尺定位、日期用舊尺讀值——兩件事不可互相抵銷');
+});
+
+test('同一把尺｜同遮罩多帳戶的組比對也要用它（Codex r1 Medium：單帳戶組換了、平行路徑沒換）', () => {
+  // 「同一遮罩掛多幣別」是本檔別處承認的真實形狀（外幣綜合帳戶）。單帳戶組走 softEq、
+  // 多帳戶組走 multiset key——只換一邊，這種版面照舊孵不出卡、每期重送 AI。
+  const acc = (/** @type {string} */ label, /** @type {string} */ cur, /** @type {number} */ bal) =>
+    ({ suffix: '3301', masked: '900100****3301', balance: bal, currency: cur, label, note: '' });
+  const pair = (/** @type {string} */ l0) => ({
+    bank: '合成金庫', referenceDate: null, accountCurrency: { '900100****3301': '' },
+    accounts: [acc(l0, 'TWD', 1), acc('活儲', 'USD', 2)], transactions: [],
+  });
+  assert.notEqual(toRad('手續費'), '手續費', '★樣本必須真的換得動字——換不動的話這一題什麼都沒測（P4 突變實測活過）');
+  assert.deepEqual(recipeReproduces(pair('手續費'), pair(toRad('手續費'))), { ok: true, diff: null },
+    '★組內只差字體＝算重現');
+  assert.equal(recipeReproduces(pair('手續費'), pair('手續金')).diff, 'accounts（同遮罩多帳戶組不吻合）',
+    '★換尺不可放過真差異');
 });
 
 test('同一把尺｜槽位長度量的是「真正拿去比對的那個字串」：¯ 只值一個字、㈱ 展開成三個字', () => {
