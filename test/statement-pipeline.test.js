@@ -273,8 +273,14 @@ test('★J4 選卡／改卡之後，「認不出機構」的警語不得消失�
 test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就退人工選（Codex #518 r2#4）', async () => {
   // 實測：帳單清楚印「台新」、末四碼 1234，而資料庫裡唯一的 1234 是台北富邦卡
   // ⇒ 舊寫法照樣自動選中那張富邦卡＝交易寫到錯的卡。末四碼不是全域唯一。
-  store.save({ ...store.emptyDb(),
-    cards: [{ id: 'fb', name: '富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' }] });
+  // ⚠️ 一定要**多放一張末四碼不同的同行卡**（Codex #520 r8#1）：只放 fb 一張時，把
+  //    「candidates = hit」那行整個拿掉，fallback 找不到同行卡會退回全部卡片＝同樣只有 fb
+  //    ⇒ 本題照樣綠、契約宣稱的「末四碼優先當線索」其實沒人釘。加了 ts 之後那個突變會紅
+  //    （拿掉 hit 分支 ⇒ 台新單卡走分支②自動歸 ts，resolvedCard 不再是 null）。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'fb', name: '富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' },
+    { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' },
+  ] });
   const b64 = Buffer.from(cjkPdf([
     ['台新銀行 信用卡消費明細'],
     ['卡號末四碼 1234'],
@@ -283,8 +289,9 @@ test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就
   const r = await previewAuto(b64);
   assert.equal(r.bank, '台新', '前提：機構認得出來是台新');
   assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張富邦卡對得上');
-  assert.equal(r.resolvedCard, null, '★訊號打架就不自動選');
-  assert.deepEqual(r.candidates.map(c => c.id), ['fb'], '把它列成候選讓使用者自己確認');
+  assert.equal(r.resolvedCard, null, '★訊號打架就不自動選——即使同行的台新卡只有一張');
+  assert.deepEqual(r.candidates.map(c => c.id), ['fb'],
+    '★候選＝末四碼命中的那張、不進同行 fallback（末四碼優先當線索；契約決策樹③(a)）');
 });
 
 test('★J5b 對照：機構與末四碼**一致**時仍然自動歸卡（沒有被誤殺）', async () => {
