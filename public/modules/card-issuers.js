@@ -146,6 +146,16 @@ export const SHARED_ISSUER_NAMES = Object.freeze([
  *    「台新銀行 」（尾巴一個空白）靜靜掉進「其他」。
  * ⚠️ 這是**放寬**：正規化後相等的字串會被當成同一家 ⇒ 更多字串對得上 `bank` 非空的那兩家
  *    ⇒ 自動歸卡的面積變大。所以 `aka` 一律**只寫那個法人真的自稱過的寫法**，不加推測的變體。
+ *
+ * ## ⚠️ 這一支是「誰有資格當台新／富邦」的**真正入口**（Codex #520 r3#1）
+ *
+ * `test/card-issuers.test.js` 的兩道集合閘管的是**清單資料**（宣告過的寫法與共用組），
+ * 它們**管不到這裡**：在這個函式裡多加一條對映（例如把 `hsbc` 抹成 `台新`），
+ * 那兩題與整卷考題都照樣綠，而 `issuerBank('HSBC')` 會變成 `'台新'`（Codex 實測）。
+ * ⇒ **改這個函式等於改身分判準**，要當成錢類改動看待；等價類造成的行為差異由
+ *   `test/card-identity.test.js` 的「相對 base 的行為改變逐項釘住」那一題列名。
+ * ⇒ 要在結構上關掉這條路，字串本身辦不到——得改存穩定的機構代號（只有從清單挑的代號才授予身分）。
+ *   **William 2026-08-28 裁示：本支只把話講準，代號另開一張卡。**
  * @param {unknown} s
  */
 export const issuerNameKey = (s) => String(s ?? '').normalize('NFKC').replace(/\s+/g, '').replace(/臺/g, '台').toLowerCase();
