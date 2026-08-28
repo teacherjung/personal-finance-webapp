@@ -290,8 +290,12 @@ test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分
 
 // ───────────────────────── ④ 接線（讀原始碼）─────────────────────────
 
-test('★接線｜卡片表單真的用了清單（純函式全對、沒接上去＝使用者看到的還是自由文字框）', () => {
-  const src = read('public/modules/cards.js');
+/**
+ * 接線判準的**唯一實作**——正常題與突變題共用同一份（Grok 複審後掃 2026-08-28 #3：
+ * 原本突變題把 regex／字串**抄一份**再自己斷言，兩份判準走散時突變題就守不到接線題）。
+ * @param {string} src public/modules/cards.js 的原始碼
+ */
+function assertPicklistWiring(src) {
   assert.match(src, /import \{[^}]*issuerOptions[^}]*\} from '\.\/card-issuers\.js';/);
   assert.match(src, /\{ key: 'issuer', label: '發卡銀行 \/ 機構', type: 'select', options: issuerOptions\(\) \}/,
     '★發卡行必須是 select＋清單，不可以是自由文字框');
@@ -300,6 +304,10 @@ test('★接線｜卡片表單真的用了清單（純函式全對、沒接上�
   assert.match(src, /data\.issuer = resolveIssuerInput\(data\.issuer, data\.issuerOther\); delete data\.issuerOther;/,
     '★送出前要合併兩欄，而且 issuerOther 不是 schema 欄位、不可以送到後端');
   assert.match(src, /cell\.hidden = sel\.value !== ISSUER_OTHER/, '★自訂欄只在選了「其他」時出現');
+}
+
+test('★接線｜卡片表單真的用了清單（純函式全對、沒接上去＝使用者看到的還是自由文字框）', () => {
+  assertPicklistWiring(read('public/modules/cards.js'));
 });
 
 test('★接線｜「為什麼要從清單挑」有就地解釋（專案鐵則：不可只寫在文件裡）', () => {
@@ -315,6 +323,19 @@ test('★接線｜「為什麼要從清單挑」有就地解釋（專案鐵則�
   assert.equal(/[Bb]ank|API|schema/.test(copy), false, '文案不可出現 Bank／API／schema 這三個程式術語');
 });
 
+/**
+ * 文案邊界判準的**唯一實作**——正常題與突變題共用（同 assertPicklistWiring 的理由）。
+ * @param {string} copy 說明窗那段文案 @param {string} doc 運作說明全文
+ */
+function assertCopyBoundaries(copy, doc) {
+  assert.ok(copy.includes('不等於帳單一定會自動對上'), '★說明窗要講清楚「挑清單」與「看得懂帳單格式」是兩件事');
+  assert.ok(doc.includes('挑了清單不等於帳單就會自動對上'), '★運作說明也要有同一條邊界');
+  for (const banned of ['不會少記、也不會記錯', '永遠不會卡住或默默記錯']) {
+    assert.equal(doc.includes(banned), false, `★運作說明出現撐不住的保證「${banned}」`);
+    assert.equal(copy.includes(banned), false, `★說明窗出現撐不住的保證「${banned}」`);
+  }
+}
+
 test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r2#4）', () => {
   const src = read('public/modules/cards.js');
   const doc = read('docs/帳單匯入與分類-運作說明.md');
@@ -329,8 +350,7 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
     //    （Codex #520 r3#3：原本的訊息寫「⇒ 帳單照樣要手選」，那句沒有跑過解析流程，是推論不是證據）。
     assert.equal(issuerBank(o.name), '', `★挑「${o.name}」仍然掛不上內建範本`);
   }
-  assert.ok(copy.includes('不等於帳單一定會自動對上'), '★說明窗要講清楚「挑清單」與「看得懂帳單格式」是兩件事');
-  assert.ok(doc.includes('挑了清單不等於帳單就會自動對上'), '★運作說明也要有同一條邊界');
+  assertCopyBoundaries(copy, doc);
 
   // ④「讀不懂版面」與「讀得懂但認不出卡片」是**兩條不同的退路**，文案不可混成一條（r3#3）。
   //    正式路徑：兩支解析器都讀不到列（或證據指向別家）⇒ `lib/statement.js` 先丟 `card_unrecognized`，
@@ -343,11 +363,6 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
   // ⚠️ **誠實劃界**：這裡釘的是**實際寫過、而且被 Codex 抓出來拿掉的那兩句**，外加要求兩處的免責句還在。
   //    它**不證明**「文案裡沒有任何過度宣稱」——換一種說法寫的新保證，這一題看不出來
   //    （列舉補不完；這個 repo 對這種情形的規矩是照實劃界，不是假裝擋得住）。
-  for (const [where, text] of [['說明窗', copy], ['運作說明', doc]]) {
-    for (const banned of ['不會少記、也不會記錯', '永遠不會卡住或默默記錯']) {
-      assert.equal(text.includes(banned), false, `★${where}出現撐不住的保證「${banned}」`);
-    }
-  }
   assert.ok(doc.includes('不等於「絕不會判錯」'), '★運作說明的保底原則要自己說出它的極限');
   assert.ok(doc.includes('不承諾「永遠不會記錯」'), '★發卡行那段的免責句要在');
 
@@ -408,25 +423,30 @@ test('★真 DOM｜「其他」的文字框只在選了其他時出現，切換�
 
 // ───────────────────────── ⑤ 突變：拿掉守門會不會紅 ─────────────────────────
 
-test('★突變｜接線題與文案題拿掉守門會紅', () => {
-  // ⚠️ 這一題原本題名寫「接線題與**文案題**」，卻只突變接線題的兩個目標（工作流 2026-08-28 抓到
-  //    ——正是這個 repo 記過的「護欄自己說謊」）。現在文案那兩條守門也真的各突變一次。
+test('★突變｜接線題與文案題拿掉守門會紅（跑的是**同一份**判準函式，不是抄一份）', () => {
+  // ⚠️ 兩次教訓：工作流 2026-08-28 抓到題名寫「文案題」卻沒突變文案；Grok 複審後掃再抓到
+  //    修法本身是**自我證明**——把 regex／字串抄一份再自己斷言，判準走散時突變題就守不到原題。
+  //    現在突變後的內容直接餵**原題用的那份**判準函式，斷言它 throw。
   const src = read('public/modules/cards.js');
   const doc = read('docs/帳單匯入與分類-運作說明.md');
+  const copyOf = (/** @type {string} */ s2) => s2.slice(s2.indexOf('const ISSUER_INFO_HTML'), s2.indexOf('const TYPE_LABEL'));
+  // 基準：未突變時兩份判準都要綠（否則下面的 throws 是恆真）
+  assertPicklistWiring(src);
+  assertCopyBoundaries(copyOf(src), doc);
   // 接線①：發卡行欄改回自由文字框
   const broken = src.replace("type: 'select', options: issuerOptions()", "type: 'text', placeholder: '例：台新銀行'");
   assert.notEqual(broken, src, '突變目標必須存在');
-  assert.doesNotMatch(broken, /\{ key: 'issuer', label: '發卡銀行 \/ 機構', type: 'select', options: issuerOptions\(\) \}/);
+  assert.throws(() => assertPicklistWiring(broken), '★改回自由文字框，接線判準要紅');
   // 接線②：拿掉兩欄合併
   const noMerge = src.replace('data.issuer = resolveIssuerInput(data.issuer, data.issuerOther); delete data.issuerOther;', '');
   assert.notEqual(noMerge, src, '突變目標必須存在');
-  assert.doesNotMatch(noMerge, /data\.issuer = resolveIssuerInput/);
-  // 文案①：把「挑清單≠自動認卡」那句拿掉 ⇒ 文案題的斷言要抓得到
+  assert.throws(() => assertPicklistWiring(noMerge), '★拿掉合併，接線判準要紅');
+  // 文案①：把「挑清單≠自動認卡」那句改掉
   const noBoundary = src.replace('不等於帳單一定會自動對上', '一定會自動對上');
   assert.notEqual(noBoundary, src, '突變目標必須存在');
-  assert.equal(noBoundary.includes('不等於帳單一定會自動對上'), false, '★文案守門①：這一句被改掉就要看得出來');
-  // 文案②：把絕對保證加回運作說明 ⇒ 禁語斷言要抓得到
+  assert.throws(() => assertCopyBoundaries(copyOf(noBoundary), doc), '★邊界句被改掉，文案判準要紅');
+  // 文案②：把絕對保證加回運作說明
   const absolute = doc.replace('**不會卡住**', '**永遠不會卡住或默默記錯**');
   assert.notEqual(absolute, doc, '突變目標必須存在');
-  assert.equal(absolute.includes('永遠不會卡住或默默記錯'), true, '★文案守門②：絕對保證復活就要被禁語清單抓到');
+  assert.throws(() => assertCopyBoundaries(copyOf(src), absolute), '★絕對保證復活，文案判準要紅');
 });
