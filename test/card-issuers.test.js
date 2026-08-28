@@ -26,7 +26,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CARD_ISSUERS, ISSUER_OTHER, ISSUER_OTHER_LABEL, ISSUER_UNSET_LABEL,
+  CARD_ISSUERS, SHARED_ISSUER_NAMES, ISSUER_OTHER, ISSUER_OTHER_LABEL, ISSUER_UNSET_LABEL,
   issuerNameKey, issuersNamed, issuerOptions, issuerFormValues, resolveIssuerInput,
 } from '../public/modules/card-issuers.js';
 import { OWN_ISSUERS, issuerBank } from '../lib/card-identity.js';
@@ -96,27 +96,35 @@ test('★清單｜「富邦」「富邦銀行」必須被**兩家**宣稱——�
   }
 });
 
-test('★清單｜每一個別名都必須**改變結果**——裝飾用的別名（全球品牌短名）會轉紅', () => {
-  // 這一題是本支自審抓到的：我第一版替每一家都補了「HSBC」「Rakuten」「星展」這種短名，
-  // 而那正是本支要消掉的東西——同一個品牌在不同法域是不同法人（`lib/bank-alias.js` 記著
-  // 「日本樂天 vs 台灣樂天」）。寫下去＝替使用者猜他指的是哪個法人，而清單存在的理由就是不要猜。
-  // 一個別名只有兩種身分才留得住：①製造**有效的**歧義 ②收既有短名（樣式那條路對不出這一家）。
-  //
-  // ⚠️ r1 的第一版只寫「宣稱數 ≥2 或樣式對不出」，Codex #520 r1#5 實測**兩個突變全綠**：
-  //    ①同時替兩家 `bank: ''` 補同一個「HSBC」——是歧義沒錯，但兩邊都不掛機構名，
-  //      有沒有它 `issuerBank` 都回 `''` ⇒ 一個結果都沒改。**所以歧義要「有效」＝至少一個宣稱者
-  //      有內建範本**（下面 `ambiguityMatters`），否則它擋住的是一個本來就不會發生的判定。
-  //    ②同一家同時列 `['台新','臺新']`——正規化後是同一把鑰匙，第二個純粹是重複。
-  //      由下一題（別名不可與自己或同伴撞鑰匙）擋。
-  for (const o of CARD_ISSUERS) {
-    for (const a of o.aka || []) {
-      const claimers = issuersNamed(a);
-      const ambiguityMatters = claimers.length >= 2 && claimers.some(c => c.bank !== '');
-      const patternMisses = claimers.length === 1 && byPattern(a) !== o.bank;
-      assert.ok(ambiguityMatters || patternMisses,
-        `「${a}」對結果沒有任何影響 ⇒ 刪掉（宣稱者 ${claimers.length} 家、`
-        + `其中有內建範本的 ${claimers.filter(c => c.bank !== '').length} 家、樣式那條路說它是「${byPattern(a)}」）`);
-    }
+test('★清單｜靠清單判得出機構的寫法＝**逐字白名單**（Codex #520 r2#1）', () => {
+  // r1／r2 的閘都用「這個別名有沒有改變結果」當判準，兩次都被同族資料寫法躲過：
+  //   ・r1：兩家 `bank: ''` 同補 `HSBC`（是歧義，但兩邊都不掛機構名 ⇒ 一個結果都沒改）
+  //   ・r2：只替**台新**補 `HSBC`——`issuerBank('HSBC')` 直接變成 `'台新'`，**全套照樣綠**（實測）
+  // 這個 repo 的教訓是「列舉補不完就關門」：改成**精確集合相等**——清單上「能判出機構」的寫法
+  // 就是下面這四個，多一個少一個都紅。要新增就得先改這一題＝刻意的審批點。
+  const resolvable = CARD_ISSUERS
+    .flatMap(o => [o.name, ...(o.aka || [])])
+    .filter(t => issuerBank(t) !== '')
+    .sort();
+  assert.deepEqual(resolvable, ['台北富邦', '台北富邦銀行', '台新', '台新銀行'].sort(),
+    '★清單裡「判得出機構」的寫法變了——這是自動歸卡的入口，多一個就是多一條錢的路徑');
+});
+
+test('★清單｜共用寫法（歧義）＝**逐組宣告**，與資料精確相等（Codex #520 r2#1）', () => {
+  // 上面那題管的是「判得出機構」的那一側；這一題管另一側——**判不出來是因為兩家都叫這個名字**。
+  // 兩題合起來才把「別名能造成的兩種後果」都關上：多一個共用寫法（例如替兩家同補 HSBC）會在這裡紅。
+  const computed = [...new Set(CARD_ISSUERS.flatMap(o => o.aka || []))]
+    .map(a => ({ name: a, claimedBy: issuersNamed(a).map(o => o.name) }))
+    .filter(x => x.claimedBy.length >= 2)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const declared = SHARED_ISSUER_NAMES
+    .map(x => ({ name: x.name, claimedBy: [...x.claimedBy] }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  assert.deepEqual(computed, declared,
+    '★清單算出來的共用寫法與 SHARED_ISSUER_NAMES 的宣告對不上——新增共用寫法要先去那裡列名並寫下理由');
+  for (const x of SHARED_ISSUER_NAMES) {
+    assert.ok(x.why && x.why.length >= 6, `共用寫法「${x.name}」沒寫為什麼是真的共用`);
+    assert.equal(issuerBank(x.name), '', `★共用寫法「${x.name}」必須判不出身分`);
   }
 });
 
@@ -220,9 +228,17 @@ test('★表單｜打開表單、什麼都不改就儲存，發卡行不會變�
   // ⚠️ 唯一還會動到既有值的路徑（誠實劃界，不是漏網）：整串空白 → 空字串。
   //    兩者在畫面與行為上本來就等價（都顯示「未設定」、都不參與歸卡）。
   assert.equal(roundTrip('   '), '', '★純空白視同未設定——這一格刻意不 round-trip');
-  // 唯一容許的改動＝同一個名字的另一種字形被寫成清單上的正式寫法（要使用者按下儲存才會發生）
-  assert.equal(roundTrip('臺新銀行'), '台新銀行');
-  assert.equal(issuerNameKey(roundTrip('臺新銀行')), issuerNameKey('臺新銀行'), '★而且必須還是同一家');
+  // 唯一容許的改動＝同一個名字的另一種字形被寫成清單上的正式寫法（要使用者按下儲存才會發生）。
+  // ⚠️ Codex #520 r2#3：這一格**不是**「純空白」那一格的例外之外的意外——三種會動到既有值的路徑
+  //    （自訂值原字／正式名稱正規化／純空白清空）在 `card-issuers.js` 的 `resolveIssuerInput` 檔內逐條列名。
+  for (const [before, after] of [
+    ['臺新銀行', '台新銀行'],
+    ['台 新 銀 行', '台新銀行'],
+    ['富邦銀行(香港)', '富邦銀行（香港）'],
+  ]) {
+    assert.equal(roundTrip(before), after, `「${before}」應收斂成清單正式寫法`);
+    assert.equal(issuerNameKey(roundTrip(before)), issuerNameKey(before), '★而且必須還是同一家');
+  }
 });
 
 test('表單｜下拉選項＝（未設定）在最前、其他在最後，值不重複', () => {
@@ -257,6 +273,39 @@ test('★接線｜「為什麼要從清單挑」有就地解釋（專案鐵則�
     assert.ok(copy.includes(must), `說明文案少了「${must}」——講不清楚為什麼要改，使用者只會覺得表單變難用`);
   }
   assert.equal(/[Bb]ank|API|schema/.test(copy), false, '文案不可出現英文技術詞（使用者沒有程式背景）');
+});
+
+test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r2#4）', () => {
+  const src = read('public/modules/cards.js');
+  const doc = read('docs/帳單匯入與分類-運作說明.md');
+  const copy = src.slice(src.indexOf('const ISSUER_INFO_HTML'), src.indexOf('const TYPE_LABEL'));
+
+  // ①「挑了清單就會自動認卡」是假的：清單 38 家裡只有兩家有內建範本，其餘照樣要手選。
+  //    這一題把那個前提**用行為釘住**，文案只要再滑回去承諾自動認卡，前提與文案就會一起被看到。
+  const listedWithoutTemplate = CARD_ISSUERS.filter(o => o.bank === '');
+  assert.ok(listedWithoutTemplate.length > 0, '前提：清單上大多數銀行沒有內建範本');
+  for (const o of listedWithoutTemplate.slice(0, 5)) {
+    assert.equal(issuerBank(o.name), '', `★挑「${o.name}」仍然判不出內建範本 ⇒ 帳單照樣要手選`);
+  }
+  assert.ok(copy.includes('不等於帳單一定會自動對上') || copy.includes('不等於'),
+    '★說明窗要講清楚「挑清單」與「看得懂帳單格式」是兩件事');
+  assert.ok(doc.includes('挑了清單不等於帳單就會自動對上'), '★運作說明也要有同一條邊界');
+
+  // ②不可出現絕對保證——`lib/card-identity.js` 自己就記著相容比對可能誤命中。
+  // ⚠️ **誠實劃界**：這裡釘的是**實際寫過、而且被 Codex 抓出來拿掉的那兩句**，外加要求兩處的免責句還在。
+  //    它**不證明**「文案裡沒有任何過度宣稱」——換一種說法寫的新保證，這一題看不出來
+  //    （列舉補不完；這個 repo 對這種情形的規矩是照實劃界，不是假裝擋得住）。
+  for (const [where, text] of [['說明窗', copy], ['運作說明', doc]]) {
+    for (const banned of ['不會少記、也不會記錯', '永遠不會卡住或默默記錯']) {
+      assert.equal(text.includes(banned), false, `★${where}出現撐不住的保證「${banned}」`);
+    }
+  }
+  assert.ok(doc.includes('不等於「絕不會判錯」'), '★運作說明的保底原則要自己說出它的極限');
+  assert.ok(doc.includes('不承諾「永遠不會記錯」'), '★發卡行那段的免責句要在');
+
+  // ③自訂值仍走相容比對——文案不可反過來說「自己打的一定認不出來」。
+  assert.equal(issuerBank('台新國際商業銀行股份有限公司'), '台新', '前提：清單外的寫法仍走樣式比對');
+  assert.ok(copy.includes('先用舊的方式盡量認'), '★說明窗要講出「自訂值仍會先被盡量認」的實況');
 });
 
 // ───────────────────────── ⑤ 突變：拿掉守門會不會紅 ─────────────────────────

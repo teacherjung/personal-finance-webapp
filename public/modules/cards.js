@@ -13,11 +13,16 @@ const ISSUER_INFO_HTML = `
   <p>這件事會影響到錢：上傳帳單時，程式會用發卡銀行去猜「這份帳單是哪一張卡的」。認錯家，
   這個月的消費就會記到<strong>別張卡</strong>上。所以現在改成從清單挑——挑「台北富邦銀行」或
   「富邦銀行（香港）」，就沒有猜的空間了。</p>
+  <p><strong>但挑了清單，不等於帳單一定會自動對上。</strong>那是兩件事：清單解決「這是哪一家銀行」，
+  另一件是「程式看不看得懂這家的帳單格式」。目前只讀得懂<strong>台新</strong>和<strong>台北富邦</strong>兩家，
+  其他銀行（包含清單上的）上傳帳單時本來就要你自己選卡——跟以前一樣，這支沒有變好也沒有變差。</p>
   <p><strong>清單裡沒有你的銀行怎麼辦？</strong>選最下面的「其他（自行輸入）」再自己打，跟以前一樣。
   自己打的名字，程式會先用舊的方式盡量認（像「台新國際商業銀行股份有限公司」還是認得出台新）；
   認不出來就會請你自己選是哪一張卡，多按一下而已。</p>
-  <p><strong>本來就填好的卡片不用動</strong>：舊的名字會原樣留著、照樣顯示。想讓帳單自動對上，
-  再打開那張卡改成清單上的選項就好。</p>`;
+  <p><strong>本來就填好的卡片不用動</strong>：舊的名字會原樣留著、照樣顯示。想把「這是哪一家」講清楚，
+  再打開那張卡改成清單上的選項就好。</p>
+  <p>只有一種情況名字會變：你的舊名字<strong>剛好是清單上同一家的另一種寫法</strong>
+  （像「臺新銀行」之於「台新銀行」）——下次你按儲存時，它會被寫成清單上的那一種。同一家銀行，換個字形而已。</p>`;
 const TYPE_LABEL = { credit: '信用卡', membership: '會員卡', debit: '簽帳金融卡' };
 // 簽帳金融卡（Stage 5b）：刷卡直接從存款帳戶扣，**沒有結帳日、繳款日、年費**；它存在的理由是讓金融卡帳單的
 // 「刷卡消費明細」有一本自己的消費帳本（跟信用卡一樣做分類分析），銀行匯入時會自動建一張。
@@ -138,7 +143,7 @@ export async function renderCards() {
 
       <div class="card-privacy-note">
         <span class="card-privacy-icon">${icon('bank', 17)}</span>
-        <div><strong>發卡銀行請從清單挑</strong><p>挑清單上的銀行，帳單才認得出是哪一張卡。<button type="button" class="info-link" id="issuerInfo">為什麼不能自己打字？</button></p></div>
+        <div><strong>發卡銀行請從清單挑</strong><p>清單把「這是哪一家銀行」講清楚，帳單才不會歸到錯的卡。<button type="button" class="info-link" id="issuerInfo">為什麼不能自己打字？</button></p></div>
       </div>
 
       ${cardSection('信用卡', '帳務與繳款', summary.credit, 'credit')}
