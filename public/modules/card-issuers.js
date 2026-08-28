@@ -62,8 +62,10 @@
  *    **custom 欄可以合法地是同一個字串**——使用者在自訂欄真的打 `__other__` 就會存 `__other__`
  *    （`resolveIssuerInput(ISSUER_OTHER, ISSUER_OTHER) === '__other__'`，Codex #520 r5#3 實測），
  *    CRUD／備份匯入也送得進來。⚠️ 所以**不要**把這個常數說成「永遠不會被存進 `card.issuer`」——
- *    我寫過那句、被推翻了。存進去之後它在讀取端與一般自由文字同路（round-trip 原字不動、
- *    `issuersNamed` 查不到 ⇒ 不參與歸卡），沒有任何一處拿存下來的值與哨兵比對，所以不是缺陷。 */
+ *    我寫過那句、被推翻了。存進去之後它與一般自由文字同路——**有考題撐著的**是：round-trip 原字不動、
+ *    `issuersNamed('__other__')` 查不到 ⇒ 不參與歸卡（`test/card-issuers.test.js` 的下拉選項題斷言
+ *    哨兵不是任何一家的名字或別名）。「全 repo 沒有別處拿存下來的值與哨兵比對」是**清點時的現況**，
+ *    沒有考題撐——日後誰新增那種比對，這句話不會替你轉紅。 */
 export const ISSUER_OTHER = '__other__';
 /** 「其他（自行輸入）」的選項文字。 */
 export const ISSUER_OTHER_LABEL = '其他（自行輸入）';

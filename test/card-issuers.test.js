@@ -114,7 +114,7 @@ test('★清單｜**清單上宣告的**寫法裡，判得出機構的就是這�
   //   ——`issuerBank('臺 新') === '台新'` 就在白名單之外。這一題**只**保證：
   //   「`CARD_ISSUERS` 裡**宣告過**的寫法中，判得出機構的恰好是這四個」。
   // ⚠️ 它**擋不住**「有人改 `issuerNameKey`、讓別的字串落進這四個的等價類」——Codex r3#1 實測：
-  //   在正規化器裡加一條 `hsbc → 台新`，本卷 24/24 全綠而 `issuerBank('HSBC')` 變成 `'台新'`。
+  //   在正規化器裡加一條 `hsbc → 台新`，本卷**全數照樣綠**而 `issuerBank('HSBC')` 變成 `'台新'`。
   //   **不要**把這一題當成「新字串不可能取得身分」的保證。
   // ⚠️ 要真的關起那道門，字串架構本身辦不到——得改成存穩定的機構代號（只有從清單挑的代號才授予身分）。
   //   **William 2026-08-28 裁示：本支只把話講準，代號另開一張卡。** 等價類造成的行為差異
@@ -128,10 +128,10 @@ test('★清單｜**清單上宣告的**寫法裡，判得出機構的就是這�
 });
 
 test('★清單｜共用寫法（歧義）＝**逐組宣告**，與資料精確相等（Codex #520 r2#1）', () => {
-  // 上面那題管的是「判得出機構」的那一側；這一題管另一側——**判不出來是因為兩家都叫這個名字**。
+  // 「逐字白名單」那題管的是「判得出機構」的那一側；這一題管另一側——**判不出來是因為兩家都叫這個名字**。
   // 多一個共用寫法（例如替兩家同補 HSBC）會在這裡紅。
-  // ⚠️ 同上一題的劃界：兩題管的都是**清單宣告的資料**，不是所有 runtime 輸入
-  //    （改 `issuerNameKey` 讓某個字串落進共用寫法的等價類，這兩題都看不到）。
+  // ⚠️ 與「逐字白名單」題同一份劃界：這一對集合閘管的都是**清單宣告的資料**，不是所有 runtime 輸入
+  //    （改 `issuerNameKey` 讓某個字串落進共用寫法的等價類，這一對都看不到）。
   const computed = [...new Set(CARD_ISSUERS.flatMap(o => o.aka || []))]
     .map(a => ({ name: a, claimedBy: issuersNamed(a).map(o => o.name) }))
     .filter(x => x.claimedBy.length >= 2)
@@ -149,7 +149,7 @@ test('★清單｜共用寫法（歧義）＝**逐組宣告**，與資料精確�
 
 test('★清單｜別名不可以與自己的正式名稱、或同一家的其他別名撞同一把鑰匙（Codex #520 r1#5②）', () => {
   // `issuerNameKey` 會把「臺新」壓成跟「台新」同一把，所以 `aka: ['台新','臺新']` 的第二個是死字：
-  // 刪掉它一個結果都不會變，上面那一題卻放行。重複的別名讓清單看起來比實際嚴謹。
+  // 刪掉它一個結果都不會變，「共用寫法逐組宣告」那題卻放行。重複的別名讓清單看起來比實際嚴謹。
   for (const o of CARD_ISSUERS) {
     const seen = new Set([issuerNameKey(o.name)]);
     for (const a of o.aka || []) {
@@ -237,7 +237,7 @@ test('表單｜送出時兩欄合回一欄', () => {
   assert.equal(resolveIssuerInput('', ''), '');
 });
 
-test('★表單｜打開表單、什麼都不改就儲存＝只有三種行為：原字保存／正式名稱收斂／純空白清空', () => {
+test('★表單｜字串 issuer 打開表單、什麼都不改就儲存＝只有三種行為：原字保存／正式名稱收斂／純空白清空（非字串另有第四條，見 resolveIssuerInput 檔內）', () => {
   const roundTrip = (/** @type {string} */ x) => { const v = issuerFormValues(x); return resolveIssuerInput(v.issuer, v.issuerOther); };
   // ①**原字保存**：自訂值與別名一個字元都不動（含頭尾空白——r1#1 實測第一版會靜靜 trim 掉）
   for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部',
@@ -320,7 +320,7 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
   const doc = read('docs/帳單匯入與分類-運作說明.md');
   const copy = src.slice(src.indexOf('const ISSUER_INFO_HTML'), src.indexOf('const TYPE_LABEL'));
 
-  // ①「挑了清單就會自動認卡」是假的：清單裡只有兩家有內建範本，其餘照樣要手選（家數由 filter 動態取、不寫死）。
+  // ①「挑了清單就會自動認卡」是假的：清單絕大多數機構沒有內建範本 ⇒ 挑了也掛不上機構身分。
   //    這一題把那個前提**用行為釘住**，文案只要再滑回去承諾自動認卡，前提與文案就會一起被看到。
   const listedWithoutTemplate = CARD_ISSUERS.filter(o => o.bank === '');
   assert.ok(listedWithoutTemplate.length > 0, '前提：清單上大多數銀行沒有內建範本');

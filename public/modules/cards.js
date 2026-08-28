@@ -24,7 +24,7 @@ const ISSUER_INFO_HTML = `
   <p><strong>清單裡沒有你的銀行怎麼辦？</strong>選最下面的「其他（自行輸入）」再自己打，跟以前一樣。
   自己打的名字，程式會先用舊的方式盡量認（像「台新國際商業銀行股份有限公司」還是認得出台新）；
   認不出來就會請你自己選是哪一張卡，多按一下而已。</p>
-  <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>只有三種情況：
+  <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>發卡行原本是文字時（正常操作存進去的都是），只有三種情況：
   自己打的名字<strong>原字留著</strong>；名字剛好是清單上同一家的另一種寫法
   （像「臺新銀行」之於「台新銀行」）會被寫成清單上的那一種——同一家，換個字形；
   整格都是空白會被清成「未設定」。除這三種之外不會動你的字。</p>
@@ -152,7 +152,7 @@ export async function renderCards() {
 
       <div class="card-privacy-note">
         <span class="card-privacy-icon">${icon('bank', 17)}</span>
-        <div><strong>發卡銀行請從清單挑</strong><p>清單把「這是哪一家銀行」講清楚，帳單才不會歸到錯的卡。<button type="button" class="info-link" id="issuerInfo">為什麼不能自己打字？</button></p></div>
+        <div><strong>發卡銀行請從清單挑</strong><p>清單把「這是哪一家銀行」講清楚，降低帳單歸錯卡的機會。<button type="button" class="info-link" id="issuerInfo">為什麼不能自己打字？</button></p></div>
       </div>
 
       ${cardSection('信用卡', '帳務與繳款', summary.credit, 'credit')}
