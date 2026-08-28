@@ -313,10 +313,13 @@ test('★J8 「判不出發卡行」的卡不可以靜靜出局——沒填發�
     '★候選要含那張沒填的卡（看得到才選得到、也才會想起去填發卡行）、照原卡片順序');
 });
 
-test('★J8b 「清單與樣式都認不出的字」與「壞資料」同樣擋——每一種判不出身分的出局原因都不可放行自動歸', async () => {
+test('★J8b 「清單與樣式都認不出」的出局原因都擋——含壞型別 String() 後仍認不出的（真陣列經櫃檯直達）', async () => {
   for (const [label, issuer] of [
     ['清單外文字', '某某會員俱樂部'],
-    ['壞型別被 String() 定型後的垃圾', '[object Object]'],
+    ['壞型別字串化後的垃圾（字串形）', '[object Object]'],
+    // ⚠️ 真非字串、經 store 櫃檯原樣落庫直達 previewAuto（Codex #522 r1 指定的第四格）：
+    //    {} 字串化成 "[object Object]" ⇒ 判不出 ⇒ 擋。
+    ['壞型別（真物件經櫃檯）', /** @type {any} */ ({ bad: true })],
   ]) {
     store.save({ ...store.emptyDb(), cards: [
       { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
@@ -330,6 +333,24 @@ test('★J8b 「清單與樣式都認不出的字」與「壞資料」同樣擋�
     assert.equal(r.resolvedCard, null, `★${label}＝判不出 ⇒ 擋自動歸`);
     assert.ok((r.candidates || []).some((/** @type {any} */ c) => c.id === 'x'), `★${label}的卡要進候選`);
   }
+});
+
+test('★J8e documenting：壞型別 String() 後**剛好認得出**＝照字面判、不擋（#520 裁定「字串化的答案」）', async () => {
+  // Codex #522 r1 的重現案例。這不是理想行為的背書，是**照實記載既有語意**：#520 已裁定並用考題釘住
+  // 「壞型別的答案＝它字串化之後的答案＝與使用者直接打那串字同義」。要把「形狀壞」本身當不確定
+  // ＝翻掉那個裁定，另案再議；在那之前，文件與守門的宣稱都以本題為準（「壞資料」限縮成
+  // 「String() 後仍認不出的值」）。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
+    { id: 'arr', name: '陣列發卡行的卡', type: 'credit', issuer: /** @type {any} */ (['玉山銀行']) },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard?.id, 'ts',
+    '★String(["玉山銀行"])＝"玉山銀行"＝確定別家 ⇒ 台新單卡照樣自動歸（documenting）');
 });
 
 test('★J8c 對照：清單認得的別家卡（含沒有內建範本的那些）**不**擋——「認得出但沒範本」不是「判不出」', async () => {

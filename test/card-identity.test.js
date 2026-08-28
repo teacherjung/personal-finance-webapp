@@ -623,9 +623,12 @@ test('★issuerCertainlyNot｜「確定是別家」的判準——分支②唯�
   assert.equal(issuerCertainlyNot('富邦', '富邦'), false, '★歧義含這家（#520 J7 的原始守門，由本判準涵蓋）');
   assert.equal(issuerCertainlyNot('', '台新'), false, '★沒填＝零資訊＝說不定是任何一家');
   assert.equal(issuerCertainlyNot('某某會員俱樂部', '台新'), false, '★清單與樣式都認不出＝判不出');
-  assert.equal(issuerCertainlyNot('[object Object]', '台新'), false, '★壞資料被 String() 定型後同樣判不出');
+  assert.equal(issuerCertainlyNot('[object Object]', '台新'), false, '★壞資料 String() 定型後**仍認不出**＝不確定');
   assert.equal(issuerCertainlyNot(null, '台新'), false);
-  assert.equal(issuerCertainlyNot({ bad: true }, '台新'), false, '★非字串直接餵也不炸、判不確定');
+  assert.equal(issuerCertainlyNot({ bad: true }, '台新'), false, '★非字串不炸；{bad:true} 字串化後認不出＝不確定');
+  // ⚠️ **非字串不是一律不確定**（Codex #522 r1）：#520 裁定「壞型別的答案＝字串化的答案」——
+  //    陣列攤平後剛好是認得出的寫法，就照字面判（與使用者直接打那串字同義）。documenting，不宣稱理想。
+  assert.equal(issuerCertainlyNot(['玉山銀行'], '台新'), true, '★String(["玉山銀行"])＝"玉山銀行" ⇒ 照字面＝確定別家、不擋');
   // 邊界：同行卡（不會被守門問到，語意上也不「確定不是」）；空機構名＝防呆回 false
   assert.equal(issuerCertainlyNot('台新銀行', '台新'), false);
   assert.equal(issuerCertainlyNot('台新', ''), false, '★bank 空＝沒有「這一家」可言（防呆，非承重——bankCards 空時走不到分支②）');
