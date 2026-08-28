@@ -17,8 +17,14 @@
 //
 // - **擋不住「清單漏了某一家銀行」**：那是人的判斷，而且清單本來就不完整（所以才有「其他」）。
 // - **擋不住「使用者挑錯自己那張卡的發卡行」**：挑錯的後果與填錯自由文字相同。
-// - **不驗畫面**：`onMount` 的顯示／隱藏只驗原始碼有那段接線，沒有真的跑 DOM
-//   （`public/app.js` 頂層碰 document，node 裡 import 不進來——同 `test/form-options.test.js` 的理由）。
+// - **`onMount` 的顯示／隱藏用真 DOM 驗**（jsdom；#520 r4 之後補上）。
+//   ⚠️ 這裡原本寫「不驗畫面，因為 `public/app.js` 頂層碰 document、node 裡 import 不進來」——
+//   前半句的**結論**是錯的（工作流 2026-08-28 實測：jsdom 已是 devDependency，`test/backup-export.test.js`
+//   與 `test/reminder-thresholds.test.js` 早就在用）。當時只靠一行原始碼 regex 守著，實測把
+//   `other?.closest('div')` 改成 `root.querySelector('div')`（抓到 `.modal-bg`＝整個彈窗被隱藏）**89 題全綠**。
+//   ⚠️ 誠實劃界：本檔在 jsdom 裡重建的是 `openForm` 產出的**那兩格欄位**，不是整支 `cards.js`
+//   （它 import `../app.js`，頂層讀 localStorage，node 裡 import 不進來——這句仍為真）。
+//   所以本題證明的是「**這段 onMount 程式碼**放進那個 DOM 會正確切換」，不是「整張表單畫面正確」。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -262,24 +268,24 @@ test('表單｜下拉選項＝（未設定）在最前、其他在最後，值�
   assert.equal(issuersNamed(ISSUER_OTHER).length, 0, '★「其他」的哨兵值不可以是任何一家的名字或別名');
 });
 
-test('★型別｜`card.issuer` 必須是字串——CRUD 與備份匯入都要真的擋（Codex #520 r3#2）', async () => {
-  // 沒有這道驗證之前，`{ issuer: { … } }` 經 CRUD 與匯入都零錯誤保留，表單再把它變成
-  // 字串 `"[object Object]"` ⇒ 那是「原字保存／正式名稱收斂／純空白清空」三條之外的**第四條**
-  // 會動到既有值的路徑。加 `issuer: 'str'`（同 `expiry` 的既有前例）把它關掉。
-  // ⚠️ 刻意**只驗型別、不加枚舉**：封閉清單以外的機構（會員卡的發卡商店）就填不進去了。
-  const { pickWritable, validateImportItem } = await import('../lib/schema.js');
-  for (const bad of [{ unexpected: true }, 123, ['台新'], true]) {
-    const w = pickWritable('cards', { name: '卡', type: 'credit', issuer: bad });
-    assert.equal('issuer' in w.value, false, `★CRUD 不可以把 ${JSON.stringify(bad)} 當發卡行存下去`);
-    const v = validateImportItem('cards', { id: 'x', name: '卡', type: 'credit', issuer: bad });
-    assert.ok(v.errors.includes('issuer'), `★匯入要點名 issuer（${JSON.stringify(bad)}）`);
+test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分（#520 r3#2 加過型別牆、r4#1 撤回）', async () => {
+  // 為什麼**不**加 `FIELD_SCHEMA.cards.issuer = 'str'`：理由逐條寫在 `lib/schema.js` 那一格
+  //（升級前的壞值會讓每一次整庫寫入炸掉，而型別牆買不到對應的好處）。
+  // ⚠️ 這裡**刻意不寫** `assert.equal('issuer' in FIELD_SCHEMA.cards, false)` 那種「反向護欄」：
+  //    它斷言的是 schema 的形狀，不是它訊息裡宣稱的那個危害——那正是這個 repo 記過的假護欄
+  //    （護欄不能自己證明自己有在跑）。要釘就釘**行為**。
+  const { issuerBank } = await import('../lib/card-identity.js');
+  for (const bad of [{ unexpected: true }, 123, true, {}, ['台北富邦銀行', '玉山']]) {
+    // ①不崩：讀取端一律 `String()` 包好，這是這個欄位今天安全的**唯一**理由
+    assert.doesNotThrow(() => issuerBank(bad), `issuerBank(${JSON.stringify(bad)}) 不可丟例外`);
+    assert.doesNotThrow(() => issuerFormValues(bad));
+    // ②不多給身分：壞型別的答案 **等於** 它字串化之後的答案（兩邊走同一個 String()）
+    assert.equal(issuerBank(bad), issuerBank(String(bad)), '★壞型別不可以走到與字串化不同的答案');
   }
-  // 對照：合法字串與 null（清空）照樣過，不可因為加了型別就把正常路徑弄壞
-  for (const good of ['台新銀行', '某某會員俱樂部', '', null]) {
-    const w = pickWritable('cards', { name: '卡', type: 'credit', issuer: good });
-    assert.equal(w.value.issuer, good, `★合法值 ${JSON.stringify(good)} 要存得進去`);
-    assert.deepEqual(validateImportItem('cards', { id: 'x', name: '卡', type: 'credit', issuer: good }).errors, []);
-  }
+  // ⚠️ **誠實劃界：非字串「不是一律判不出身分」**——陣列被 String() 攤平後剛好等於合法寫法就會判得出來。
+  //    這與使用者直接打那串字同義（base 也是這樣），所以不是本支的洞；但不寫下來就會變成假保證。
+  assert.equal(issuerBank(['台新']), '台新', '★String(["台新"]) === "台新" ⇒ 判得出來，這是既有行為');
+  assert.equal(issuerBank({ unexpected: true }), '', '對照：物件字串化成 [object Object] ⇒ 判不出來');
 });
 
 // ───────────────────────── ④ 接線（讀原始碼）─────────────────────────
@@ -304,7 +310,9 @@ test('★接線｜「為什麼要從清單挑」有就地解釋（專案鐵則�
   for (const must of ['台北富邦', '香港', '其他（自行輸入）']) {
     assert.ok(copy.includes(must), `說明文案少了「${must}」——講不清楚為什麼要改，使用者只會覺得表單變難用`);
   }
-  assert.equal(/[Bb]ank|API|schema/.test(copy), false, '文案不可出現英文技術詞（使用者沒有程式背景）');
+  // ⚠️ 判準只擋這三個 token，訊息就只能說這三個（工作流 2026-08-28：原訊息寫「不可出現英文技術詞」
+  //    是通則，而文案裡本來就有「AI」照樣綠 ⇒ 訊息大於判準，下一個人會以為英文詞已被機械把關）。
+  assert.equal(/[Bb]ank|API|schema/.test(copy), false, '文案不可出現 Bank／API／schema 這三個程式術語');
 });
 
 test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r2#4）', () => {
@@ -348,14 +356,77 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
   assert.ok(copy.includes('先用舊的方式盡量認'), '★說明窗要講出「自訂值仍會先被盡量認」的實況');
 });
 
+test('★真 DOM｜「其他」的文字框只在選了其他時出現，切換選項會即時跟著（jsdom，跑的是正式 onMount 程式碼）', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { selectOptionsHtml } = await import('../public/modules/form-options.js');
+  const src = read('public/modules/cards.js');
+
+  // 取出**正式的** onMount 函式本體（不是另寫一份）——改壞它這一題就會紅
+  const start = src.indexOf('onMount: (root) => {');
+  const end = src.indexOf('\n    },\n    onSubmit:', start);
+  assert.ok(start >= 0 && end > start, '找不到卡片表單的 onMount（接線改名了就要更新這一題）');
+  const body = src.slice(src.indexOf('{', start) + 1, end);
+  const runOnMount = new Function('root', 'ISSUER_OTHER', body);
+
+  /** 重建 `openForm` 對這兩格欄位產出的 DOM（欄位包在一個 div 裡，select 用同一支選項產生器）。 */
+  const build = (/** @type {string} */ issuerValue) => {
+    const dom = new JSDOM(`<!doctype html><body><div class="modal-bg"><div class="modal-sm"><form><div class="form-grid">
+      <div><label>發卡銀行 / 機構</label><select id="f_issuer">${selectOptionsHtml(issuerOptions(), issuerValue)}</select></div>
+      <div><label>其他發卡銀行 / 機構名稱</label><input id="f_issuerOther" type="text" value="" /></div>
+    </div></form></div></div></body>`);
+    const root = dom.window.document.body;
+    return { dom, root, sel: root.querySelector('#f_issuer'), cell: root.querySelector('#f_issuerOther').closest('div') };
+  };
+
+  // ①清單上的正式寫法 ⇒ 自訂欄收起來
+  {
+    const { root, sel, cell } = build(issuerFormValues('台新銀行').issuer);
+    runOnMount(root, ISSUER_OTHER);
+    assert.equal(sel.value, '台新銀行', '前提：下拉選中清單上那一項');
+    assert.equal(cell.hidden, true, '★挑了清單上的銀行，「其他」的文字框不該出現');
+  }
+  // ②既有自由文字（落到「其他」）⇒ 自訂欄要看得見，否則使用者看不到自己現在填的是什麼
+  {
+    const { root, sel, cell } = build(issuerFormValues('富邦').issuer);
+    runOnMount(root, ISSUER_OTHER);
+    assert.equal(sel.value, ISSUER_OTHER, '前提：既有自由文字落到「其他」');
+    assert.equal(cell.hidden, false, '★落到「其他」時文字框必須看得見');
+  }
+  // ③使用者當場切換 ⇒ 要即時跟著（這是 onMount 唯一的動態行為）
+  {
+    const { dom, root, sel, cell } = build('');
+    runOnMount(root, ISSUER_OTHER);
+    assert.equal(cell.hidden, true, '前提：一開始是（未設定）⇒ 收起來');
+    sel.value = ISSUER_OTHER;
+    sel.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(cell.hidden, false, '★切到「其他」要即時打開');
+    sel.value = '台北富邦銀行';
+    sel.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(cell.hidden, true, '★切回清單上的銀行要即時收起來');
+  }
+});
+
 // ───────────────────────── ⑤ 突變：拿掉守門會不會紅 ─────────────────────────
 
 test('★突變｜接線題與文案題拿掉守門會紅', () => {
+  // ⚠️ 這一題原本題名寫「接線題與**文案題**」，卻只突變接線題的兩個目標（工作流 2026-08-28 抓到
+  //    ——正是這個 repo 記過的「護欄自己說謊」）。現在文案那兩條守門也真的各突變一次。
   const src = read('public/modules/cards.js');
+  const doc = read('docs/帳單匯入與分類-運作說明.md');
+  // 接線①：發卡行欄改回自由文字框
   const broken = src.replace("type: 'select', options: issuerOptions()", "type: 'text', placeholder: '例：台新銀行'");
   assert.notEqual(broken, src, '突變目標必須存在');
   assert.doesNotMatch(broken, /\{ key: 'issuer', label: '發卡銀行 \/ 機構', type: 'select', options: issuerOptions\(\) \}/);
+  // 接線②：拿掉兩欄合併
   const noMerge = src.replace('data.issuer = resolveIssuerInput(data.issuer, data.issuerOther); delete data.issuerOther;', '');
   assert.notEqual(noMerge, src, '突變目標必須存在');
   assert.doesNotMatch(noMerge, /data\.issuer = resolveIssuerInput/);
+  // 文案①：把「挑清單≠自動認卡」那句拿掉 ⇒ 文案題的斷言要抓得到
+  const noBoundary = src.replace('不等於帳單一定會自動對上', '一定會自動對上');
+  assert.notEqual(noBoundary, src, '突變目標必須存在');
+  assert.equal(noBoundary.includes('不等於帳單一定會自動對上'), false, '★文案守門①：這一句被改掉就要看得出來');
+  // 文案②：把絕對保證加回運作說明 ⇒ 禁語斷言要抓得到
+  const absolute = doc.replace('**不會卡住**', '**永遠不會卡住或默默記錯**');
+  assert.notEqual(absolute, doc, '突變目標必須存在');
+  assert.equal(absolute.includes('永遠不會卡住或默默記錯'), true, '★文案守門②：絕對保證復活就要被禁語清單抓到');
 });
