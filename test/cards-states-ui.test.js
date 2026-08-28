@@ -68,7 +68,9 @@ function assertStateWiring(source) {
   assert.match(source, /cardNoticeHtml\(notice\)/);
   assert.match(source, /function rerenderCardsAfterSave\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;/);
   assert.match(source, /querySelectorAll\('\[data-add-type\]'\)[\s\S]*openCardForm\(null, \{ defaultType: b\.dataset\.addType \}\)/);
-  assert.match(source, /values: c \? \{ \.\.\.c, expiry:[^\n]+\} : \{ type: defaultType \}/);
+  // 發卡行清單化（2026-08-28）之後這一行多了 `...issuerFormValues(...)`：兩條路都要過它，
+  // 否則編輯既有卡片時下拉會落到第一項、按儲存就把發卡行靜靜改掉（form-options.js 檔頭那個坑）。
+  assert.match(source, /values: c \? \{ \.\.\.c, \.\.\.issuerFormValues\(c\.issuer\), expiry:[^\n]+\} : \{ type: defaultType, \.\.\.issuerFormValues\(''\) \}/);
   assert.match(source, /await api\('\/cards\/' \+ c\.id, \{ method: 'DELETE' \}\);\s*cardNotice = '卡片已刪除';/);
   assert.match(source, /const message = c \? '卡片資料已更新' : `\$\{TYPE_LABEL\[data\.type\] \|\| '卡片'\}已新增`;/);
 }
