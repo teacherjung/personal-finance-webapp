@@ -611,6 +611,26 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
   assert.equal(issuerBank('富邦銀行'), '', '★香港富邦官方也自稱「富邦銀行」⇒ 同樣不猜');
 });
 
+test('★issuerCertainlyNot｜「確定是別家」的判準——分支②唯一性前提的純函式直測', async () => {
+  const { issuerCertainlyNot } = await import('../lib/card-identity.js');
+  // 確定別家（可以出局、不擋自動歸）：清單唯一宣稱者不是這家（含 bank:'' 的無範本機構）、樣式判得出是別家
+  assert.equal(issuerCertainlyNot('玉山銀行', '台新'), true);
+  assert.equal(issuerCertainlyNot('遠東商銀', '台新'), true, '★「認得出但沒範本」不是「判不出」——不可擋台新的自動歸');
+  assert.equal(issuerCertainlyNot('台北富邦銀行', '台新'), true);
+  assert.equal(issuerCertainlyNot('富邦', '台新'), true, '★歧義但兩家都不是台新 ⇒ 確定別家');
+  assert.equal(issuerCertainlyNot('台新國際商業銀行股份有限公司', '富邦'), true, '★清單外但樣式判得出是台新 ⇒ 對富邦確定別家');
+  // 不確定（必須擋自動歸）：歧義含這家、沒填、清單與樣式都認不出、壞資料
+  assert.equal(issuerCertainlyNot('富邦', '富邦'), false, '★歧義含這家（#520 J7 的原始守門，由本判準涵蓋）');
+  assert.equal(issuerCertainlyNot('', '台新'), false, '★沒填＝零資訊＝說不定是任何一家');
+  assert.equal(issuerCertainlyNot('某某會員俱樂部', '台新'), false, '★清單與樣式都認不出＝判不出');
+  assert.equal(issuerCertainlyNot('[object Object]', '台新'), false, '★壞資料被 String() 定型後同樣判不出');
+  assert.equal(issuerCertainlyNot(null, '台新'), false);
+  assert.equal(issuerCertainlyNot({ bad: true }, '台新'), false, '★非字串直接餵也不炸、判不確定');
+  // 邊界：同行卡（不會被守門問到，語意上也不「確定不是」）；空機構名＝防呆回 false
+  assert.equal(issuerCertainlyNot('台新銀行', '台新'), false);
+  assert.equal(issuerCertainlyNot('台新', ''), false, '★bank 空＝沒有「這一家」可言（防呆，非承重——bankCards 空時走不到分支②）');
+});
+
 test('★發卡行清單化：相對 base 的行為改變**逐項**釘住（Codex #520 r1#4）', async () => {
   // r1 的 PR 內文寫「唯一的行為改變＝『富邦』」——**那是錯的**。Codex 對 base `a3cdd6b` 與本支逐一跑過，
   // 除了「富邦」還有三類都動了，而且**三類都是放寬**（＝自動歸卡的面積變大＝錢的風險面變大），

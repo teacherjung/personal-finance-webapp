@@ -294,6 +294,75 @@ test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就
     '★候選＝末四碼命中的那張、不進同行 fallback（末四碼優先當線索；契約決策樹③(a)）');
 });
 
+test('★J8 「判不出發卡行」的卡不可以靜靜出局——沒填發卡行的卡在庫，單卡自動歸要退手選', async () => {
+  // 族群過濾＋唯一性判準的陷阱補完（William 2026-08-28 裁示「擋：不確定就問我」）：
+  // #520 只補了「歧義寫法」這一個入口，「判不出身分」的卡（沒填是最常見的形狀）仍被無聲排除
+  // ⇒ 那張卡如果就是帳單這家的（新建卡還沒填發卡行），帳單自動記到另一張有填的卡＝錢記錯。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
+    { id: 'blank', name: '還沒填發卡行的卡', type: 'credit' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
+  assert.equal(r.resolvedCard, null, '★沒填發卡行的卡「說不定就是台新的」⇒ 不可自動歸');
+  assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['ts', 'blank'],
+    '★候選要含那張沒填的卡（看得到才選得到、也才會想起去填發卡行）、照原卡片順序');
+});
+
+test('★J8b 「清單與樣式都認不出的字」與「壞資料」同樣擋——每一種判不出身分的出局原因都不可放行自動歸', async () => {
+  for (const [label, issuer] of [
+    ['清單外文字', '某某會員俱樂部'],
+    ['壞型別被 String() 定型後的垃圾', '[object Object]'],
+  ]) {
+    store.save({ ...store.emptyDb(), cards: [
+      { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
+      { id: 'x', name: '判不出的卡', type: 'credit', issuer },
+    ] });
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.resolvedCard, null, `★${label}＝判不出 ⇒ 擋自動歸`);
+    assert.ok((r.candidates || []).some((/** @type {any} */ c) => c.id === 'x'), `★${label}的卡要進候選`);
+  }
+});
+
+test('★J8c 對照：清單認得的別家卡（含沒有內建範本的那些）**不**擋——「認得出但沒範本」不是「判不出」', async () => {
+  // 沒有這一題，守門會被「乾脆把 issuerBank 回空的都擋」蒙混過去——那會讓 William 的遠東商銀卡
+  // 擋掉他所有台新／富邦帳單的自動歸（過度 fail-closed，裁示時攤開過的邊界）。
+  for (const other of ['遠東商銀', '玉山銀行', '台北富邦銀行']) {
+    store.save({ ...store.emptyDb(), cards: [
+      { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
+      { id: 'o', name: '別家卡', type: 'credit', issuer: other },
+    ] });
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.resolvedCard?.id, 'ts', `★「${other}」確定不是台新 ⇒ 台新單卡照樣自動歸`);
+  }
+});
+
+test('★J8d 對照：歧義寫法但**都不是這家**（「富邦」卡 vs 台新帳單）不擋——歧義只擋歧義所含的那幾家', async () => {
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' },
+    { id: 'fb', name: '舊寫法富邦卡', type: 'credit', issuer: '富邦' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard?.id, 'ts',
+    '★「富邦」不管是台北還是香港都不是台新 ⇒ 確定別家 ⇒ 台新單卡照樣自動歸');
+});
+
 test('★J5b 對照：機構與末四碼**一致**時仍然自動歸卡（沒有被誤殺）', async () => {
   store.save({ ...store.emptyDb(),
     cards: [{ id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' }] });
