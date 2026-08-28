@@ -220,17 +220,16 @@ test('表單｜送出時兩欄合回一欄', () => {
 
 test('★表單｜打開表單、什麼都不改就儲存，發卡行不會變（正規化字形除外）', () => {
   const roundTrip = (/** @type {string} */ x) => { const v = issuerFormValues(x); return resolveIssuerInput(v.issuer, v.issuerOther); };
+  // ①**原字保存**：自訂值與別名一個字元都不動（含頭尾空白——r1#1 實測第一版會靜靜 trim 掉）
   for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部',
-    // ★Codex #520 r1#1 實測會被靜靜改掉的兩個（第一版無條件 trim）：含頭尾空白的既有自訂值
     ' 某某會員俱樂部 ', '富邦 ', ' 台新']) {
     assert.equal(roundTrip(x), x, `「${x}」被表單改掉了`);
   }
-  // ⚠️ 唯一還會動到既有值的路徑（誠實劃界，不是漏網）：整串空白 → 空字串。
-  //    兩者在畫面與行為上本來就等價（都顯示「未設定」、都不參與歸卡）。
+  // ⚠️ **會動到既有值的只有下面兩格**（Codex #520 r2#3／r3#2：這裡曾有三句各自寫「唯一」、互相打架）。
+  //    正本＝`card-issuers.js` 的 `resolveIssuerInput` 檔內那份逐條列名，本題只負責把它們釘成行為。
+  // ②**整串空白 → 空字串**：兩者在畫面與行為上本來就等價（都顯示「未設定」、都不參與歸卡）
   assert.equal(roundTrip('   '), '', '★純空白視同未設定——這一格刻意不 round-trip');
-  // 唯一容許的改動＝同一個名字的另一種字形被寫成清單上的正式寫法（要使用者按下儲存才會發生）。
-  // ⚠️ Codex #520 r2#3：這一格**不是**「純空白」那一格的例外之外的意外——三種會動到既有值的路徑
-  //    （自訂值原字／正式名稱正規化／純空白清空）在 `card-issuers.js` 的 `resolveIssuerInput` 檔內逐條列名。
+  // ③**正式名稱的另一種字形 → 收斂成清單寫法**（要使用者按下儲存才會發生，而且必須還是同一家）
   for (const [before, after] of [
     ['臺新銀行', '台新銀行'],
     ['台 新 銀 行', '台新銀行'],
@@ -248,6 +247,26 @@ test('表單｜下拉選項＝（未設定）在最前、其他在最後，值�
   assert.equal(opts.length, CARD_ISSUERS.length + 2);
   assert.equal(new Set(opts.map(o => o.value)).size, opts.length, '選項的值不可重複（重複＝挑不到其中一項）');
   assert.equal(issuersNamed(ISSUER_OTHER).length, 0, '★「其他」的哨兵值不可以是任何一家的名字或別名');
+});
+
+test('★型別｜`card.issuer` 必須是字串——CRUD 與備份匯入都要真的擋（Codex #520 r3#2）', async () => {
+  // 沒有這道驗證之前，`{ issuer: { … } }` 經 CRUD 與匯入都零錯誤保留，表單再把它變成
+  // 字串 `"[object Object]"` ⇒ 那是「原字保存／正式名稱收斂／純空白清空」三條之外的**第四條**
+  // 會動到既有值的路徑。加 `issuer: 'str'`（同 `expiry` 的既有前例）把它關掉。
+  // ⚠️ 刻意**只驗型別、不加枚舉**：封閉清單以外的機構（會員卡的發卡商店）就填不進去了。
+  const { pickWritable, validateImportItem } = await import('../lib/schema.js');
+  for (const bad of [{ unexpected: true }, 123, ['台新'], true]) {
+    const w = pickWritable('cards', { name: '卡', type: 'credit', issuer: bad });
+    assert.equal('issuer' in w.value, false, `★CRUD 不可以把 ${JSON.stringify(bad)} 當發卡行存下去`);
+    const v = validateImportItem('cards', { id: 'x', name: '卡', type: 'credit', issuer: bad });
+    assert.ok(v.errors.includes('issuer'), `★匯入要點名 issuer（${JSON.stringify(bad)}）`);
+  }
+  // 對照：合法字串與 null（清空）照樣過，不可因為加了型別就把正常路徑弄壞
+  for (const good of ['台新銀行', '某某會員俱樂部', '', null]) {
+    const w = pickWritable('cards', { name: '卡', type: 'credit', issuer: good });
+    assert.equal(w.value.issuer, good, `★合法值 ${JSON.stringify(good)} 要存得進去`);
+    assert.deepEqual(validateImportItem('cards', { id: 'x', name: '卡', type: 'credit', issuer: good }).errors, []);
+  }
 });
 
 // ───────────────────────── ④ 接線（讀原始碼）─────────────────────────
@@ -285,11 +304,19 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
   const listedWithoutTemplate = CARD_ISSUERS.filter(o => o.bank === '');
   assert.ok(listedWithoutTemplate.length > 0, '前提：清單上大多數銀行沒有內建範本');
   for (const o of listedWithoutTemplate.slice(0, 5)) {
-    assert.equal(issuerBank(o.name), '', `★挑「${o.name}」仍然判不出內建範本 ⇒ 帳單照樣要手選`);
+    // ⚠️ 這一題**只**斷言「挑了它仍然掛不上內建範本」——**不**推論它下游會走哪一條退路
+    //    （Codex #520 r3#3：原本的訊息寫「⇒ 帳單照樣要手選」，那句沒有跑過解析流程，是推論不是證據）。
+    assert.equal(issuerBank(o.name), '', `★挑「${o.name}」仍然掛不上內建範本`);
   }
-  assert.ok(copy.includes('不等於帳單一定會自動對上') || copy.includes('不等於'),
-    '★說明窗要講清楚「挑清單」與「看得懂帳單格式」是兩件事');
+  assert.ok(copy.includes('不等於帳單一定會自動對上'), '★說明窗要講清楚「挑清單」與「看得懂帳單格式」是兩件事');
   assert.ok(doc.includes('挑了清單不等於帳單就會自動對上'), '★運作說明也要有同一條邊界');
+
+  // ④「讀不懂版面」與「讀得懂但認不出卡片」是**兩條不同的退路**，文案不可混成一條（r3#3）。
+  //    正式路徑：兩支解析器都讀不到列（或證據指向別家）⇒ `lib/statement.js` 先丟 `card_unrecognized`，
+  //    **根本走不到選卡窗**；選卡窗只發生在明細已經抽出來之後。
+  assert.ok(copy.includes('整個讀不懂'), '★說明窗要把「整份讀不動」單獨講出來');
+  assert.ok(copy.includes('不會') && copy.includes('跳出選卡'), '★而且要說清楚那種情況不會跳出選卡');
+  assert.ok(doc.includes('card_unrecognized'), '★運作說明要指到真正會丟的那個錯');
 
   // ②不可出現絕對保證——`lib/card-identity.js` 自己就記著相容比對可能誤命中。
   // ⚠️ **誠實劃界**：這裡釘的是**實際寫過、而且被 Codex 抓出來拿掉的那兩句**，外加要求兩處的免責句還在。
