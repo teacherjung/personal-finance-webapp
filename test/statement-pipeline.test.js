@@ -333,7 +333,9 @@ test('★J8b 「清單與樣式都認不出」的出局原因都擋——含壞�
     //    這一格就不再是在考「真物件直達」——但沒填發卡行的 J8 也會擋，考題照樣綠＝題名大於斷言。
     if (typeof issuer === 'object') {
       const back = store.load().cards.find((/** @type {any} */ c) => c.id === 'x');
-      assert.equal(typeof back.issuer, 'object', '★前提：物件真的原樣落庫直達（不是被櫃檯字串化或丟棄）');
+      // ⚠️ 不可用 `typeof === 'object'` 當釘子（Codex r4 抓到）：`typeof null === 'object'`——
+      //    櫃檯把物件改寫成 null 時那個斷言照樣綠。deepEqual 才撐得起「原樣、未改寫」。
+      assert.deepEqual(back.issuer, issuer, '★前提：物件真的原樣落庫直達（不是被櫃檯字串化、改寫成 null、或丟棄）');
     }
     const r = await previewAuto(b64);
     assert.equal(r.resolvedCard, null, `★${label}＝判不出 ⇒ 擋自動歸`);
