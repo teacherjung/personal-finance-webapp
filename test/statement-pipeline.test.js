@@ -334,9 +334,12 @@ test('★★J7 歧義寫法的卡不可以靜靜出局，把「該問使用者�
   assert.ok(!r.lastFour, '前提：末四碼讀不出來 ⇒ 只能靠「該銀行單卡」那條分支');
   assert.equal(r.resolvedCard, null,
     '★不可自動歸卡——舊那張「富邦」說不定就是同一家，base 在這裡是問使用者的');
-  const ids = (r.candidates || []).map((/** @type {any} */ c) => c.id).sort();
-  assert.deepEqual(ids, ['new', 'old'],
-    '★兩張都要進候選：使用者看不到舊那張就選不到它');
+  // ⚠️ **直接驗正式回應的順序，不可先 sort 再比**（Codex #520 r5#1）：前端選卡 select 沒有
+  //    空白提示項，第一項＝預設選中。sort 過的斷言看不到「守門把預選從舊卡偏向新卡」這種變更；
+  //    base 的候選順序＝原卡片順序（old → new），守門後必須維持。
+  const ids = (r.candidates || []).map((/** @type {any} */ c) => c.id);
+  assert.deepEqual(ids, ['old', 'new'],
+    '★兩張都要進候選、且照原卡片順序——串接順序會把預設選中靜靜換成新卡');
 });
 
 test('★J7b 對照：舊卡換成**別家**（不是歧義、是真的不同家）時，分支②照樣自動歸卡', async () => {

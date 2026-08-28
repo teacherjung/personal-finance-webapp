@@ -21,7 +21,7 @@
 //   ⚠️ 這裡原本寫「不驗畫面，因為 `public/app.js` 頂層碰 document、node 裡 import 不進來」——
 //   前半句的**結論**是錯的（工作流 2026-08-28 實測：jsdom 已是 devDependency，`test/backup-export.test.js`
 //   與 `test/reminder-thresholds.test.js` 早就在用）。當時只靠一行原始碼 regex 守著，實測把
-//   `other?.closest('div')` 改成 `root.querySelector('div')`（抓到 `.modal-bg`＝整個彈窗被隱藏）**89 題全綠**。
+//   `other?.closest('div')` 改成 `root.querySelector('div')`（抓到 `.modal-bg`＝整個彈窗被隱藏）**當時的相關考卷全綠**。
 //   ⚠️ 誠實劃界：本檔在 jsdom 裡重建的是 `openForm` 產出的**那兩格欄位**，不是整支 `cards.js`
 //   （它 import `../app.js`，頂層讀 localStorage，node 裡 import 不進來——這句仍為真）。
 //   所以本題證明的是「**這段 onMount 程式碼**放進那個 DOM 會正確切換」，不是「整張表單畫面正確」。
@@ -237,7 +237,7 @@ test('表單｜送出時兩欄合回一欄', () => {
   assert.equal(resolveIssuerInput('', ''), '');
 });
 
-test('★表單｜打開表單、什麼都不改就儲存，發卡行不會變（正規化字形除外）', () => {
+test('★表單｜打開表單、什麼都不改就儲存＝只有三種行為：原字保存／正式名稱收斂／純空白清空', () => {
   const roundTrip = (/** @type {string} */ x) => { const v = issuerFormValues(x); return resolveIssuerInput(v.issuer, v.issuerOther); };
   // ①**原字保存**：自訂值與別名一個字元都不動（含頭尾空白——r1#1 實測第一版會靜靜 trim 掉）
   for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部',
@@ -320,7 +320,7 @@ test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r
   const doc = read('docs/帳單匯入與分類-運作說明.md');
   const copy = src.slice(src.indexOf('const ISSUER_INFO_HTML'), src.indexOf('const TYPE_LABEL'));
 
-  // ①「挑了清單就會自動認卡」是假的：清單 38 家裡只有兩家有內建範本，其餘照樣要手選。
+  // ①「挑了清單就會自動認卡」是假的：清單裡只有兩家有內建範本，其餘照樣要手選（家數由 filter 動態取、不寫死）。
   //    這一題把那個前提**用行為釘住**，文案只要再滑回去承諾自動認卡，前提與文案就會一起被看到。
   const listedWithoutTemplate = CARD_ISSUERS.filter(o => o.bank === '');
   assert.ok(listedWithoutTemplate.length > 0, '前提：清單上大多數銀行沒有內建範本');
