@@ -54,6 +54,8 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 卡片頁的「提示條」樣式。⚠️ 類名沿用歷史（第一個用它的是卡號隱私提示），現在是這一頁**共用**的
+   提示條：隱私提示與發卡行清單提示都套它——刻意不複製第二份同樣的 CSS（同一個外觀兩份規則會各自漂）。 */
 .card-privacy-note {
   display: flex; align-items: flex-start; gap: 12px; margin-bottom: 28px; padding: 13px 16px;
   background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--accent);
@@ -65,6 +67,9 @@
 }
 .card-privacy-note strong { color: var(--accent-ink); font-size: 12px; }
 .card-privacy-note p { margin-top: 2px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+/* 提示條裡的說明入口：`.info-link` 本身是 color: inherit（看起來就是內文），呼叫端要自己上色
+   ——不上色使用者不會知道那句話按得下去（既有慣例：.mr-refund-note / .credit-category-note 都這樣做）。 */
+.card-privacy-note .info-link { color: var(--accent-ink); text-decoration: underline; }
 
 .card-tracker-section { margin-top: 28px; }
 .card-tracker-section + .card-tracker-section { margin-top: 34px; }

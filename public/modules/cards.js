@@ -1,8 +1,37 @@
 // @ts-check
-import { api, view, byId, wan, money, esc, daysUntil, openForm, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, wan, money, esc, daysUntil, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
+import { issuerOptions, issuerFormValues, resolveIssuerInput, ISSUER_OTHER } from './card-issuers.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
+// 就地解釋（專案鐵則：懂了才不會把正常行為當成程式算錯的概念，一律在網頁上白話講，不可只寫在文件裡）。
+// ⚠️ 文案由 Claude 起草、老師審改；改字要連 `test/card-issuers.test.js` 的文案題一起改。
+const ISSUER_INFO_HTML = `
+  <p><strong>因為光看名字，分不出是哪一家銀行。</strong></p>
+  <p>「富邦」這兩個字，<strong>香港的富邦銀行</strong>和<strong>台北富邦銀行</strong>都在用——兩家是不同的銀行，
+  只是同一個集團、名字撞在一起。所以就算你打得很精確，只寫「富邦」，程式還是不知道你手上這張卡是哪一家發的。</p>
+  <p>這件事會影響到錢：上傳帳單時，程式會用發卡銀行去猜「這份帳單是哪一張卡的」。認錯家，
+  這個月的消費就會記到<strong>別張卡</strong>上。所以現在改成從清單挑——挑「台北富邦銀行」或
+  「富邦銀行（香港）」，就沒有猜的空間了。</p>
+  <p><strong>但挑了清單，不等於帳單一定會自動對上。</strong>那是兩件事：清單解決「這是哪一家銀行」，
+  另一件是「程式看不看得懂這家的帳單格式」。目前內建的格式只有<strong>台新</strong>和<strong>台北富邦</strong>兩家：</p>
+  <ul>
+    <li>帳單<strong>讀得懂、但認不出是哪張卡</strong> → 跳出清單請你選一次。</li>
+    <li>帳單<strong>整個讀不懂</strong>（多半是其他銀行的格式）→ 會停下來告訴你讀不動，<strong>不會</strong>跳出選卡、也不會硬記。
+    這種情況目前沒有別的辦法，只能等我們補上那家的格式。</li>
+  </ul>
+  <p>這兩件事跟這次的清單無關，以前也是這樣。</p>
+  <p><strong>清單裡沒有你的銀行怎麼辦？</strong>選最下面的「其他（自行輸入）」再自己打，跟以前一樣。
+  自己打的名字，程式會先用舊的方式盡量認（像「台新國際商業銀行股份有限公司」還是認得出台新）；
+  認不出來就會請你自己選是哪一張卡，多按一下而已。</p>
+  <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>發卡行原本是文字時（正常操作存進去的都是），只有三種情況：
+  自己打的名字<strong>原字留著</strong>；名字剛好是清單上同一家的另一種寫法
+  （像「臺新銀行」之於「台新銀行」）會被寫成清單上的那一種——同一家，換個字形；
+  整格都是空白會被清成「未設定」。除這三種之外不會動你的字。</p>
+  <p>另外有一種舊寫法要請你動一下：發卡行只填「<strong>富邦</strong>」兩個字的卡。
+  以前程式會當它是台北富邦，現在改成不猜了（因為它也可能是香港富邦），所以那張卡的帳單會變成要你自己選。
+  打開那張卡、從清單挑「台北富邦銀行」或「富邦銀行（香港）」，就恢復自動對上。</p>
+`;
 const TYPE_LABEL = { credit: '信用卡', membership: '會員卡', debit: '簽帳金融卡' };
 // 簽帳金融卡（Stage 5b）：刷卡直接從存款帳戶扣，**沒有結帳日、繳款日、年費**；它存在的理由是讓金融卡帳單的
 // 「刷卡消費明細」有一本自己的消費帳本（跟信用卡一樣做分類分析），銀行匯入時會自動建一張。
@@ -121,12 +150,18 @@ export async function renderCards() {
         <div><strong>卡號只顯示末四碼</strong><p>帳單密碼不會回填到頁面；需要更新時再於編輯表單輸入。</p></div>
       </div>
 
+      <div class="card-privacy-note">
+        <span class="card-privacy-icon">${icon('bank', 17)}</span>
+        <div><strong>發卡銀行請從清單挑</strong><p>清單把「這是哪一家銀行」講清楚，降低帳單歸錯卡的機會。<button type="button" class="info-link" id="issuerInfo">為什麼不能自己打字？</button></p></div>
+      </div>
+
       ${cardSection('信用卡', '帳務與繳款', summary.credit, 'credit')}
       ${cardSection('簽帳金融卡', '直接扣帳戶，只記消費', summary.debit, 'debit')}
       ${cardSection('會員卡', '會籍與權益', summary.member, 'membership')}
     </div>
   `;
 
+  byId('issuerInfo').onclick = () => openInfo('為什麼發卡銀行要從清單挑？', ISSUER_INFO_HTML);
   byId('addCard').onclick = () => openCardForm();
   view().querySelectorAll('[data-add-type]').forEach(b => b.onclick = () => openCardForm(null, { defaultType: b.dataset.addType }));
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openCardForm(list.find(c => c.id === b.dataset.edit)));
@@ -219,7 +254,13 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
     fields: [
       { key: 'type', label: '卡片類型', type: 'select', options: [{ value: 'credit', label: '信用卡' }, { value: 'debit', label: '簽帳金融卡' }, { value: 'membership', label: '會員卡' }], default: 'credit' },
       { key: 'name', label: '卡片名稱', type: 'text', required: true, placeholder: '例：台新 GOGO 卡' },
-      { key: 'issuer', label: '發卡銀行 / 機構', type: 'text', placeholder: '例：台新銀行' },
+      // 發卡行＝**清單＋其他（自行輸入）**（2026-08-28）：自由文字本身無法消歧——香港富邦與台北富邦
+      // 官方都自稱「富邦銀行」，填得再精確也分不出是哪一家，而分錯的代價是帳單自動歸到錯的卡。
+      // 清單以外的機構（會員卡的發卡商店、清單漏掉的銀行）走「其他」，行為與清單化之前的自由文字相同。
+      { key: 'issuer', label: '發卡銀行 / 機構', type: 'select', options: issuerOptions() },
+      // 只在選了「其他」時顯示（onMount 切換）。⚠️ 隱藏時它仍然會被送出，所以合併規則一律走
+      // `resolveIssuerInput`：沒選「其他」就無視這一欄，不會把舊的自訂字偷偷寫回去。
+      { key: 'issuerOther', label: '其他發卡銀行 / 機構名稱', type: 'text', placeholder: '例：某某銀行、某某會員俱樂部' },
       { key: 'network', label: '卡片類別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
       { key: 'lastFour', label: '末四碼', type: 'text', placeholder: '1234' },
       { key: 'statementDay', label: '結帳日（信用卡，幾號）', type: 'number', placeholder: '5' },
@@ -235,8 +276,22 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
       { key: 'note', label: '備註', type: 'text', full: true }
     ],
     // 機密不預填（自主體檢）：GET /api/cards 已剝掉 pdfPassword，編輯時本來就沒有值可填
-    values: c ? { ...c, expiry: (c.expiry || '').slice(0, 7) } : { type: defaultType },
+    // 發卡行拆成兩欄餵進表單：清單上有這個正式寫法就預選它，其餘（既有自由文字、自訂機構）
+    // 一律落到「其他」並**原字**填進文字框——不可趁使用者打開表單就把 issuer 靜靜改寫（見 card-issuers.js）。
+    values: c ? { ...c, ...issuerFormValues(c.issuer), expiry: (c.expiry || '').slice(0, 7) } : { type: defaultType, ...issuerFormValues('') },
+    onMount: (root) => {
+      // 「其他（自行輸入）」的文字框只在選了「其他」時出現。⚠️ 用 hidden 屬性（`.form-grid` 沒有
+      // 覆寫 display 的規則，UA 預設的 `[hidden]{display:none}` 就把這一格從格線裡拿掉）。
+      const sel = /** @type {HTMLSelectElement|null} */ (root.querySelector('#f_issuer'));
+      const other = /** @type {HTMLInputElement|null} */ (root.querySelector('#f_issuerOther'));
+      const cell = /** @type {HTMLElement|null} */ (other?.closest('div') || null);
+      if (!sel || !other || !cell) return;
+      const sync = () => { cell.hidden = sel.value !== ISSUER_OTHER; };
+      sel.onchange = () => { sync(); if (sel.value === ISSUER_OTHER) other.focus(); };
+      sync();
+    },
     onSubmit: async (data) => {
+      data.issuer = resolveIssuerInput(data.issuer, data.issuerOther); delete data.issuerOther;   // 非 schema 欄位，送出前合併並移除
       const clearPw = data.clearPdfPassword; delete data.clearPdfPassword;   // 非 schema 欄位，送出前移除
       // 勾「清除」→ 明確送空字串清空（後端接受 '' ＝清除）；否則留空＝不變更（PUT 部分合併保留舊密碼）
       if (c && clearPw) data.pdfPassword = '';

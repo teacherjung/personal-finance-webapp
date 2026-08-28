@@ -569,6 +569,9 @@ const MANIFEST = {
       'lib/services/statement-import.js',
       'lib/services/store-rules.js',
       'lib/card-identity.js',
+      // 發卡行可選清單（2026-08-28）：卡片表單與 card-identity 的 issuerBank 共用同一份機構清單
+      'public/modules/card-issuers.js', 'test/card-issuers.test.js',
+      'public/modules/cards.js',   // 發卡行下拉的接線與文案（多領域命中：前端／雲端也點名它）
       'lib/statement.js',
       'lib/store-rules.js',
       'lib/store.js',

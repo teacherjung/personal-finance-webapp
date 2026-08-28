@@ -273,8 +273,14 @@ test('★J4 選卡／改卡之後，「認不出機構」的警語不得消失�
 test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就退人工選（Codex #518 r2#4）', async () => {
   // 實測：帳單清楚印「台新」、末四碼 1234，而資料庫裡唯一的 1234 是台北富邦卡
   // ⇒ 舊寫法照樣自動選中那張富邦卡＝交易寫到錯的卡。末四碼不是全域唯一。
-  store.save({ ...store.emptyDb(),
-    cards: [{ id: 'fb', name: '富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' }] });
+  // ⚠️ 一定要**多放一張末四碼不同的同行卡**（Codex #520 r8#1）：只放 fb 一張時，把
+  //    「candidates = hit」那行整個拿掉，fallback 找不到同行卡會退回全部卡片＝同樣只有 fb
+  //    ⇒ 本題照樣綠、契約宣稱的「末四碼優先當線索」其實沒人釘。加了 ts 之後那個突變會紅
+  //    （拿掉 hit 分支 ⇒ 台新單卡走分支②自動歸 ts，resolvedCard 不再是 null）。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'fb', name: '富邦卡', type: 'credit', issuer: '台北富邦銀行', lastFour: '1234' },
+    { id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' },
+  ] });
   const b64 = Buffer.from(cjkPdf([
     ['台新銀行 信用卡消費明細'],
     ['卡號末四碼 1234'],
@@ -283,8 +289,9 @@ test('★J5 已知機構＋末四碼指向別家的卡 ⇒ 兩個訊號打架就
   const r = await previewAuto(b64);
   assert.equal(r.bank, '台新', '前提：機構認得出來是台新');
   assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張富邦卡對得上');
-  assert.equal(r.resolvedCard, null, '★訊號打架就不自動選');
-  assert.deepEqual(r.candidates.map(c => c.id), ['fb'], '把它列成候選讓使用者自己確認');
+  assert.equal(r.resolvedCard, null, '★訊號打架就不自動選——即使同行的台新卡只有一張');
+  assert.deepEqual(r.candidates.map(c => c.id), ['fb'],
+    '★候選＝末四碼命中的那張、不進同行 fallback（末四碼優先當線索；契約決策樹③(a)）');
 });
 
 test('★J5b 對照：機構與末四碼**一致**時仍然自動歸卡（沒有被誤殺）', async () => {
@@ -313,6 +320,47 @@ test('★J6 台北富邦帳單＋同末四碼的**香港富邦**卡 ⇒ 不得�
   assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
   assert.equal(r.lastFour, '1234', '前提：末四碼讀得到、而且只有那張香港卡對得上');
   assert.equal(r.resolvedCard, null, '★香港富邦不是台北富邦 ⇒ 退人工選');
+});
+
+test('★★J7 歧義寫法的卡不可以靜靜出局，把「該問使用者」變成「自動歸卡」（工作流對抗驗證 2026-08-28）', async () => {
+  // 這是**本支自己引入**的回歸，Codex 四輪都沒看到，工作流的對抗驗證抓到並實測重現。
+  //   `bankCards` 是族群過濾、分支②是唯一性判準 ⇒ 把一張「說不定就是這家」的卡移出族群，
+  //   會讓「兩張、有歧義、該問使用者」靜靜變成「只剩一張、自動歸卡」。
+  // 情境：兩張台北富邦卡——舊那張的 issuer 是清單化之前的自由文字「富邦」（歧義寫法），
+  //   新那張是清單上的正式寫法；帳單認得出機構，但**末四碼讀不出來**（所以只能靠分支②）。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'old', name: '舊寫法的富邦卡', type: 'credit', issuer: '富邦' },
+    { id: 'new', name: '清單挑的富邦卡', type: 'credit', issuer: '台北富邦銀行' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
+  assert.ok(!r.lastFour, '前提：末四碼讀不出來 ⇒ 只能靠「該銀行單卡」那條分支');
+  assert.equal(r.resolvedCard, null,
+    '★不可自動歸卡——舊那張「富邦」說不定就是同一家，base 在這裡是問使用者的');
+  // ⚠️ **直接驗正式回應的順序，不可先 sort 再比**（Codex #520 r5#1）：前端選卡 select 沒有
+  //    空白提示項，第一項＝預設選中。sort 過的斷言看不到「守門把預選從舊卡偏向新卡」這種變更；
+  //    base 的候選順序＝原卡片順序（old → new），守門後必須維持。
+  const ids = (r.candidates || []).map((/** @type {any} */ c) => c.id);
+  assert.deepEqual(ids, ['old', 'new'],
+    '★兩張都要進候選、且照原卡片順序——串接順序會把預設選中靜靜換成新卡');
+});
+
+test('★J7b 對照：舊卡換成**別家**（不是歧義、是真的不同家）時，分支②照樣自動歸卡', async () => {
+  // 沒有這一題，J7 會被「乾脆整個不自動歸卡」蒙混過去——那是把護欄做成恆真。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'esun', name: '玉山卡', type: 'credit', issuer: '玉山銀行' },
+    { id: 'new', name: '清單挑的富邦卡', type: 'credit', issuer: '台北富邦銀行' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard?.id, 'new', '★玉山不是「說不定的富邦」，它出局是對的 ⇒ 仍然只剩一張 ⇒ 自動歸');
 });
 
 test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡', async () => {
