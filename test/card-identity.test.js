@@ -605,6 +605,33 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
   //   判不出來的代價只是使用者多按一次選卡，而清單就是那張卡的永久解。
   assert.equal(issuerBank('富邦'), '', '★歧義短名不猜——挑清單上的「台北富邦銀行」或「富邦銀行（香港）」才說得清楚');
   assert.equal(issuerBank('富邦銀行'), '', '★香港富邦官方也自稱「富邦銀行」⇒ 同樣不猜');
+});
+
+test('★發卡行清單化：相對 base 的行為改變**逐項**釘住（Codex #520 r1#4）', async () => {
+  // r1 的 PR 內文寫「唯一的行為改變＝『富邦』」——**那是錯的**。Codex 對 base `a3cdd6b` 與本支逐一跑過，
+  // 除了「富邦」還有三類都動了，而且**三類都是放寬**（＝自動歸卡的面積變大＝錢的風險面變大），
+  // 所以不可以只靠 `issuerNameKey` 的相等題代替下游行為題。下面每一條都是 `issuerBank` 的直接斷言。
+  const { issuerBank } = await import('../lib/card-identity.js');
+
+  // ①收緊（唯一一條）：歧義短名不再猜
+  assert.equal(issuerBank('富邦'), '', 'base 回「富邦」（猜台北富邦）');
+
+  // ②放寬：清單的 `aka` 收既有短名——樣式那條路要求「台北富邦…銀行」，裸的四個字對不上
+  assert.equal(issuerBank('台北富邦'), '富邦', 'base 回 ""');
+
+  // ③放寬：`issuerNameKey` 的臺→台與去空白
+  assert.equal(issuerBank('臺新'), '台新', 'base 回 ""');
+  assert.equal(issuerBank('臺 新'), '台新', 'base 回 ""');
+
+  // ④放寬：NFKC 的**相容字**射程（全形、squared CJK…）。
+  // ⚠️ **裁決＝接受，不收窄**（2026-08-28）：相容字就是同一個字的另一種印法，判成同一家是對的；
+  //    而且 `lib/bank-alias.js` 的 `baseForm` 早就用 NFKC ⇒ 收窄反而變成同一件事兩把尺。
+  //    代價照實記：射程包含「台🈟」（U+1F21F＝squared 新）這種沒人會打的字形，它同樣會判成台新。
+  //    這一條是 documenting test——它釘的是**已知的射程**，不是「這樣很理想」。
+  assert.equal(issuerBank('台🈟'), '台新', '★NFKC 把 U+1F21F 正規化成「新」——射程照實記載，不宣稱它很理想');
+
+  // 對照：**沒有**跟著放寬的（樣式那條路的輸入是 PDF 文字，不吃 issuerNameKey）
+  assert.equal(issuerBank('ｒｉｃｈａｒｔ'), '', '★全形拉丁不在清單上 ⇒ 走樣式，樣式不做 NFKC（與 base 相同）');
   assert.equal(issuerBank('富邦人壽'), '', '★保險公司不是發卡行');
   // ★抬頭那條路**不得**跟著放寬（輸入是 PDF 文字，接縫假陽性靠錨定＋佐證詞擋）
   assert.equal(identifyIssuer([['台新'], ['115/06/02', '115/06/04', '星巴克', '150']], new Set()).bank, '',

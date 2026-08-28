@@ -184,10 +184,22 @@ export function issuerFormValues(issuer) {
 
 /**
  * 表單送出時把兩個欄位合回一個 `card.issuer`。
- * 選了「其他」就用文字框的字（前後空白去掉）；否則用選項的值（`''`＝未設定）。
+ * 選了「其他」就用文字框的字；否則用選項的值（`''`＝未設定）。
+ *
+ * ⚠️ **自訂文字刻意不 `trim()`**（Codex #520 r1#1）：第一版無條件 trim，於是既有的
+ *    `card.issuer = ' 某某會員俱樂部 '` 打開表單、**什麼都不改按儲存**就被存成去掉空白的版本
+ *    ——那正是本檔開頭宣稱要避免的「靜靜改掉使用者資料」，宣稱與實作對不上。
+ *    不 trim 也不會弄壞比對：`issuerNameKey` 本來就把空白全部去掉，前後空白不影響認不認得出機構。
+ *    同一張表單的 `name`／`note` 也都不 trim ⇒ 這一欄跟著同一個慣例。
+ * ⚠️ **唯一的例外＝整串都是空白**：那視同「沒填」（回 `''`）。不這樣做的話卡片頁的
+ *    `c.issuer || '未設定'` 會判成「有填」而印出一串看不見的空白。
+ *    ⚠️ 誠實劃界：既有值本來就是純空白時，這一步**會**把它改成空字串——那是這支唯一還會動到
+ *    既有值的路徑，考題釘住（畫面與行為上兩者本來就等價：都顯示「未設定」、都不參與歸卡）。
  * @param {unknown} selected @param {unknown} custom @returns {string}
  */
 export function resolveIssuerInput(selected, custom) {
   const sel = String(selected ?? '');
-  return sel === ISSUER_OTHER ? String(custom ?? '').trim() : sel;
+  if (sel !== ISSUER_OTHER) return sel;
+  const text = String(custom ?? '');
+  return text.trim() === '' ? '' : text;
 }

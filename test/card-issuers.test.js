@@ -100,13 +100,35 @@ test('★清單｜每一個別名都必須**改變結果**——裝飾用的別�
   // 這一題是本支自審抓到的：我第一版替每一家都補了「HSBC」「Rakuten」「星展」這種短名，
   // 而那正是本支要消掉的東西——同一個品牌在不同法域是不同法人（`lib/bank-alias.js` 記著
   // 「日本樂天 vs 台灣樂天」）。寫下去＝替使用者猜他指的是哪個法人，而清單存在的理由就是不要猜。
-  // 一個別名只有兩種身分才留得住：①製造歧義（兩家以上宣稱）②收既有短名（樣式那條路對不出這一家）。
+  // 一個別名只有兩種身分才留得住：①製造**有效的**歧義 ②收既有短名（樣式那條路對不出這一家）。
+  //
+  // ⚠️ r1 的第一版只寫「宣稱數 ≥2 或樣式對不出」，Codex #520 r1#5 實測**兩個突變全綠**：
+  //    ①同時替兩家 `bank: ''` 補同一個「HSBC」——是歧義沒錯，但兩邊都不掛機構名，
+  //      有沒有它 `issuerBank` 都回 `''` ⇒ 一個結果都沒改。**所以歧義要「有效」＝至少一個宣稱者
+  //      有內建範本**（下面 `ambiguityMatters`），否則它擋住的是一個本來就不會發生的判定。
+  //    ②同一家同時列 `['台新','臺新']`——正規化後是同一把鑰匙，第二個純粹是重複。
+  //      由下一題（別名不可與自己或同伴撞鑰匙）擋。
   for (const o of CARD_ISSUERS) {
     for (const a of o.aka || []) {
-      const shared = issuersNamed(a).length >= 2;
-      const patternMisses = byPattern(a) !== o.bank;
-      assert.ok(shared || patternMisses,
-        `「${a}」對結果沒有任何影響（樣式那條路本來就對得出 ${o.bank}，也沒有第二家宣稱它）⇒ 刪掉`);
+      const claimers = issuersNamed(a);
+      const ambiguityMatters = claimers.length >= 2 && claimers.some(c => c.bank !== '');
+      const patternMisses = claimers.length === 1 && byPattern(a) !== o.bank;
+      assert.ok(ambiguityMatters || patternMisses,
+        `「${a}」對結果沒有任何影響 ⇒ 刪掉（宣稱者 ${claimers.length} 家、`
+        + `其中有內建範本的 ${claimers.filter(c => c.bank !== '').length} 家、樣式那條路說它是「${byPattern(a)}」）`);
+    }
+  }
+});
+
+test('★清單｜別名不可以與自己的正式名稱、或同一家的其他別名撞同一把鑰匙（Codex #520 r1#5②）', () => {
+  // `issuerNameKey` 會把「臺新」壓成跟「台新」同一把，所以 `aka: ['台新','臺新']` 的第二個是死字：
+  // 刪掉它一個結果都不會變，上面那一題卻放行。重複的別名讓清單看起來比實際嚴謹。
+  for (const o of CARD_ISSUERS) {
+    const seen = new Set([issuerNameKey(o.name)]);
+    for (const a of o.aka || []) {
+      const k = issuerNameKey(a);
+      assert.equal(seen.has(k), false, `${o.name} 的別名「${a}」與同一家的別的寫法壓成同一把鑰匙（${k}）`);
+      seen.add(k);
     }
   }
 });
@@ -181,16 +203,23 @@ test('表單｜正式寫法才預選；空值＝未設定', () => {
 test('表單｜送出時兩欄合回一欄', () => {
   assert.equal(resolveIssuerInput('台新銀行', ''), '台新銀行');
   assert.equal(resolveIssuerInput('台新銀行', '殘留的舊字'), '台新銀行', '★沒選「其他」就無視自訂欄（它隱藏時仍會被送出）');
-  assert.equal(resolveIssuerInput(ISSUER_OTHER, '  某某銀行 '), '某某銀行');
+  assert.equal(resolveIssuerInput(ISSUER_OTHER, '  某某銀行 '), '  某某銀行 ',
+    '★自訂文字不 trim（Codex #520 r1#1：無條件 trim 會讓既有值在「什麼都不改」的儲存裡被靜靜改掉）');
   assert.equal(resolveIssuerInput(ISSUER_OTHER, ''), '', '選了其他卻留白＝未設定');
+  assert.equal(resolveIssuerInput(ISSUER_OTHER, '   '), '', '★整串空白視同沒填（否則卡片頁會判成「有填」印出一串看不見的空白）');
   assert.equal(resolveIssuerInput('', ''), '');
 });
 
 test('★表單｜打開表單、什麼都不改就儲存，發卡行不會變（正規化字形除外）', () => {
   const roundTrip = (/** @type {string} */ x) => { const v = issuerFormValues(x); return resolveIssuerInput(v.issuer, v.issuerOther); };
-  for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部']) {
+  for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部',
+    // ★Codex #520 r1#1 實測會被靜靜改掉的兩個（第一版無條件 trim）：含頭尾空白的既有自訂值
+    ' 某某會員俱樂部 ', '富邦 ', ' 台新']) {
     assert.equal(roundTrip(x), x, `「${x}」被表單改掉了`);
   }
+  // ⚠️ 唯一還會動到既有值的路徑（誠實劃界，不是漏網）：整串空白 → 空字串。
+  //    兩者在畫面與行為上本來就等價（都顯示「未設定」、都不參與歸卡）。
+  assert.equal(roundTrip('   '), '', '★純空白視同未設定——這一格刻意不 round-trip');
   // 唯一容許的改動＝同一個名字的另一種字形被寫成清單上的正式寫法（要使用者按下儲存才會發生）
   assert.equal(roundTrip('臺新銀行'), '台新銀行');
   assert.equal(issuerNameKey(roundTrip('臺新銀行')), issuerNameKey('臺新銀行'), '★而且必須還是同一家');
@@ -231,15 +260,6 @@ test('★接線｜「為什麼要從清單挑」有就地解釋（專案鐵則�
 });
 
 // ───────────────────────── ⑤ 突變：拿掉守門會不會紅 ─────────────────────────
-
-test('★突變｜把香港富邦對「富邦」的宣稱拿掉，歧義那一題要紅', () => {
-  // 資料面的突變沒辦法真的改 import 進來的常數，所以直接對同一個判準重跑一次：
-  // 若清單只剩台北富邦宣稱「富邦」，`issuersNamed('富邦').length` 就會是 1 ⇒ 回去猜。
-  const withoutHk = CARD_ISSUERS.filter(o => o.name !== '富邦銀行（香港）');
-  const named = withoutHk.filter(o => o.name === '富邦' || (o.aka || []).some(a => a === '富邦'));
-  assert.equal(named.length, 1, '前提：拿掉香港富邦之後「富邦」就只剩一家宣稱');
-  assert.notEqual(named[0].bank, '', '★而那一家是有內建範本的台北富邦 ⇒ 少了香港那一筆就會判成它（本支要修的就是這個）');
-});
 
 test('★突變｜接線題與文案題拿掉守門會紅', () => {
   const src = read('public/modules/cards.js');
