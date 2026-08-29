@@ -102,6 +102,22 @@ test('生成｜快樂路徑：出生三關全過＝存新列（formatVersion 程
   assert.equal(pv.engine, 'recipe', '★閉環：AI 教的、app 自己會了');
 });
 
+test('生成｜出生三關也是「整份跑兩趟、每趟只用一把尺」：帳單印相容字時，第二趟才孵得出卡（#523）', async () => {
+  // ⚠️ 只跑一趟（舊尺）的話，帳單把**版面文字**印成相容字時 AI 的正規字暗號永遠對不上 ⇒
+  //   `recipe_birth_match` ⇒ **那些銀行的卡永遠孵不出來、每期照付 AI 錢**（本支要修的病，出生端這一半）。
+  const RAD = { 合: '合', 金: '⾦', 戶: '⼾', 日: '⽇', 來: '來', 總: '總' };
+  const rad = (/** @type {string} */ x) => [...x].map(c => RAD[c] ?? c).join('');
+  assert.notEqual(rad('合成帳戶總覽區'), '合成帳戶總覽區', '★樣本必須真的換得動字');
+  const ls = linesA();
+  ls[0] = L(300, [[20, '合成銀行月結單'], [47, rad('合成帳戶總覽區')], [452, `${rad('結算基準日')}:2026/06/30`]]);
+  const g = /** @type {any} */ (parseWithRecipe(ls, goodRecipe(), { ruler: 'new' }));
+  await seedDb();
+  const r = await generateRecipeAfterImport(ticketOf([], { lines: ls, parsed: g }), { aiEngineFactory: engineOf({}) });
+  assert.equal(r.saved, true, `★第二趟要孵得出來（實際：${/** @type {any} */ (r).reason}）`);
+  const db = await getDb();
+  assert.equal(db.parseRecipes?.length, 1, '★卡真的落庫了');
+});
+
 test('生成｜出生三關各自擋：零內容紅／認不得版面／重現不了黃金樣本＝都不存（r2#5 漏一關＝白做）', async () => {
   const cases = [
     { gen: () => { const r = recipeAnswer(); r.docAnchors = ['錨點1234567', '往來紀錄']; return r; }, reason: 'recipe_birth_strict', why: '錨點含長數字＝零內容驗證紅' },

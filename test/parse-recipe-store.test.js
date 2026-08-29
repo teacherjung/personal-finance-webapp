@@ -248,6 +248,19 @@ test('recipeBankRoute｜第二趟仍在：舊尺一張都沒中時，新尺認�
     '★兩趟不可以退化成「只跑舊尺」——那樣本支的主修就沒了');
 });
 
+test('recipeBankRoute｜勝出的那一列不可以留在疑似過期名單裡（#523 r11）', async () => {
+  // 第一趟（舊尺）：current 中版面但拒解 ⇒ 這一列被標進失敗名單；previous 舊尺不中版面。
+  // 第二趟（新尺）：previous 中版面且過閘 ⇒ **同一列**成為 winner。名單是跨趟共用的，
+  // 不濾掉的話 apply 會把剛救回來的好版標成疑似過期、畢業計數歸零。
+  const cur = brokenRecipe(); cur.docAnchors = ['Oﬃce', '往來紀錄'];      // 舊尺就中版面、但解不動
+  const prev = goodRecipe(); prev.docAnchors = ['Office', '往來紀錄'];    // 只有新尺中版面、解得動
+  await seedDb({ recipes: [row({ current: cur, previous: prev })] });
+  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
+  assert.equal(r.hit?.usedVersion, 'previous', '前提：第二趟用 previous 救回來');
+  assert.ok(!r.gateFailedIds.includes('rcp-1'),
+    '★★救回來的那一列不可以同時掛在疑似過期名單上（apply 會把好版標成失效、畢業歸零）');
+});
+
 test('recipeBankRoute｜純讀不變量：預覽路線跑完，db 的配方列一個位元組都沒動', async () => {
   await seedDb({ recipes: [row({ current: brokenRecipe(), previous: goodRecipe() })] });
   const db = await getDb();
