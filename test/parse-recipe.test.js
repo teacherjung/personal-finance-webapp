@@ -1853,6 +1853,49 @@ test('同一把尺｜辨識一律「舊尺或新尺」：新尺只增不減，ma
     '★★銀行身分／findX／表頭完整性三處都要收舊尺——少一處就是 main 解得動、我們解不動');
 });
 
+test('同一把尺｜歧義守門也要「任一尺看到衝突就拒收」——不是只走新尺（Codex r7）', () => {
+  // ⚠️ 我曾宣稱「拒收型守門只走新尺＝比 main 嚴」——**那句是錯的**：兩把尺**不可比較**，
+  //   舊尺看得到的衝突新尺可能看不到 ⇒ 變成 **main 拒收、我們放行**。實測後果：台幣帳戶被標成
+  //   USD、歧義表頭下的 1,200 被解成一筆支出。⇒ 歧義守門與辨識**對稱**：`old || new`。
+  const K = '\u030A';
+  // ①區段錨點互為子字串：舊尺（去空白後）是前綴、新尺（先 NFKC）因為 A+K 合成而看不出重疊
+  const r1 = { ...recipeN(), summary: { ...recipeN().summary,
+    sections: [{ anchor: `總覽A ${K}`, currency: 'USD' }, { anchor: `總覽A${K}乙`, currency: 'TWD' }] } };
+  assert.equal(squash(`總覽A${K}乙`).includes(squash(`總覽A ${K}`)), true, '★前提：舊尺要看得到重疊');
+  assert.equal(recipeNorm(`總覽A${K}乙`).includes(recipeNorm(`總覽A ${K}`)), false, '★前提：新尺要看不到');
+  assert.ok(validateRecipeStrict(r1).some(e => e.includes('互為子字串')),
+    '★★只看新尺＝放行 ⇒ 引擎用舊尺命中先列的短錨點、外幣區被台幣段吃掉（實測帳戶變 USD）');
+  // ②欄位角色撞名：同一族（`findX` 接受舊尺相等，撞名稽核也必須看舊尺）
+  const r2 = { ...recipeN(), detail: { ...recipeN().detail, headerOut: `支出A${K}`, headerIgnore: [`支出A ${K}`] } };
+  assert.equal(squash(`支出A${K}`) === squash(`支出A ${K}`), true, '★前提：舊尺要看到撞名');
+  assert.equal(recipeNorm(`支出A${K}`) === recipeNorm(`支出A ${K}`), false, '★前提：新尺要看不到');
+  assert.ok(validateRecipeStrict(r2).some(e => e.includes('不可相同')), '★忽略欄用舊尺撞支出欄名＝findX 綁同一格');
+  // ③表頭同名格重複：守門必須與 findX 用**完全同一組**判準
+  const r3 = { ...recipeN(), detail: { ...recipeN().detail, headerOut: `支出A ${K}` } };
+  const ls = linesN();
+  ls[4] = L(120, [[75, '帳號'], [135, '日期'], [200, '車號'], [272, `支出A ${K}`], [300, `支出A${K}`],
+    [331, '存入金流'], [396, '本日餘額'], [489, '日誌註記']]);
+  ls[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成轉入'], [289, 30, '$1,200'], [418, 0, '$30']]);
+  assert.throws(() => parseWithRecipe(ls, r3),
+    (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /重複/.test(e.message),
+    '★★守門比 findX 窄＝第二格漏數 ⇒ 它下面的 1,200 被解成一筆支出（main 是拒解的）');
+  // ④出生對照：舊尺才等值的交易內文，不得冒充版面錨點（引擎正是用舊尺命中它）
+  const r4 = { ...recipeN(), detail: { ...recipeN().detail, headerIgnore: [`敏感A ${K}`] } };
+  assert.ok(validateRecipeAgainstStatement(linesN(), r4, { transactions: [{ summary: `敏感A${K}`, note: '' }], accounts: [] })
+    .some(e => e.includes('相等')), '★**等值**約束要兩把尺——否則舊尺才等值的交易內文可以冒充錨點');
+  // 位置約束也要各考一刀（只考等值的話，位置那一刀活得下來——突變 Y6 實測）：
+  //   這個槽**不等於**任何內文，但舊尺在交易列上找得到、新尺找不到。
+  const posSlot = `合成轉A ${K}`;
+  const lsPos = linesN();
+  lsPos[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, `合成轉A${K}尾`],
+    [349, 40, '$500'], [418, 0, '$1,730']]);
+  assert.equal(squash(`合成轉A${K}尾`).includes(squash(posSlot)), true, '★前提：舊尺在交易列上找得到');
+  assert.equal(recipeNorm(`合成轉A${K}尾`).includes(recipeNorm(posSlot)), false, '★前提：新尺找不到');
+  const r5 = { ...recipeN(), detail: { ...recipeN().detail, headerIgnore: [posSlot] } };
+  assert.ok(validateRecipeAgainstStatement(lsPos, r5, { transactions: [{ summary: `合成轉A${K}尾`, note: '' }], accounts: [] })
+    .some(e => e.includes('交易列')), '★**位置**約束也要兩把尺（與引擎命中同一組）');
+});
+
 test('同一把尺｜表頭邊界一律 old||new：舊尺認得、新尺不認得的那一格，不可跨過 main 的結構邊界', () => {
   // ⚠️ Codex #523 r6：真值表的第四格。NFKC 會把**跨格相鄰**的字合成掉——欄名尾字 `A` 與下一格
   //   開頭的組合附標 U+030A 併成 `Å` ⇒ 舊尺三個 substring 都命中、新尺不命中。
