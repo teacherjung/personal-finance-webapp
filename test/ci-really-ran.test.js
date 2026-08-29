@@ -1,5 +1,5 @@
 // @ts-check
-// 真考卷閘的行為考題：skipped 不是綠、冒名的同名 check 不算數、空窗與舊場次重跑都要被擋
+// 真考卷閘的行為考題：skipped 不是綠、冒名的同名 check 不算數、缺場次 fail-closed 與舊場次重跑都要被擋
 //（設計依據見 scripts/check-ci-really-ran.js 檔頭；r1 高①②＝身分過濾與排序鍵的來歷）。
 import test from 'node:test';
 import assert from 'node:assert/strict';

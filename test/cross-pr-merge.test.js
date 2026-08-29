@@ -650,7 +650,7 @@ test('⭐ 發起樹的 fixture 不可以波及真的 repo（保險絲：本檔�
   }
 });
 
-test('⭐ 四支會叫 gh 的閘，交給 gh 的環境裡也不可以有 GIT_*（r1 High）', () => {
+test('⭐ 會叫 gh 的閘（不寫死幾支——#526 r3 抓到寫死的『四』漏了真考卷），交給 gh 的環境裡也不可以有 GIT_*（r1 High）', () => {
   // ⚠️ 為什麼 `gh` 算在鐵則 11 的射程內：**它會自己再去 spawn git**。實測（2026-08-15）
   //    `env GIT_DIR=<不存在的路徑> gh pr view 463` ⇒ `failed to run git: fatal: not a git repository`。
   //    後果分兩種：指到不存在的路徑＝**假阻擋**（閘查不到就 fail-closed，看起來像 PR 有問題）；
@@ -660,6 +660,7 @@ test('⭐ 四支會叫 gh 的閘，交給 gh 的環境裡也不可以有 GIT_*�
   // ⚠️ 這一題用**假 gh 記錄環境**，不看指令結果：假 gh 一律 exit 1，四支閘都會走 fail-closed
   //    的那條路直接收工 ⇒ 不會有任何一支真的去 `git worktree add`（考題不動任何真的樹）。
   const GH_GATES = [
+    'scripts/check-ci-really-ran.js',   // #526 r3（Codex）：漏在原「四支」清單外，三次 gh 呼叫都沒 gitEnv()
     'scripts/check-cross-pr-merge.js',
     'scripts/check-pr-collab-fields.js',
     'scripts/check-pr-merge-gate.js',

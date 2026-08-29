@@ -137,10 +137,12 @@ Settings → Branches → 編輯 `main` 的規則：
 
 - **fork 來的 PR（2026-08-29 照「repo 已公開」改寫；原文寫的是 private 世界）**：repo 已是
   public＝任何人可 fork、可開 PR。fork PR 的 workflow 會不會跑由 Actions 的 fork 核准政策決定
-  （2026-08-29 實讀＝`first_time_contributors`：首次貢獻者要人工核准才跑）；就算跑，
+  （2026-08-29 實讀＝`first_time_contributors`：**首次**貢獻者要人工核准才跑；⚠️ **已有
+  合併紀錄的外部貢獻者會自動執行、不經核准**——GitHub 自己警告過：一個簡單貢獻被合併後
+  就跨過此門，所以核准政策是道**弱門**，別當成主防線）；就算跑，
   GITHUB_TOKEN 對 fork 是**唯讀**、secrets 不給（GitHub 預設模型）。三個後果：
-  ①協作欄位閘在 fork PR 上要嘛等核准、要嘛跑不了——required check 等不到＝合不進來，
-  fail-closed 方向正確 ②核准政策、唯讀 token 與分支保護擋的是**未經核准的執行、對 base
+  ①協作欄位閘在 fork PR 上：首次貢獻者的場次等核准；回頭客自動跑——等不到 required check
+  的＝合不進來（fail-closed），跑起來的照後兩點對待 ②核准政策、唯讀 token 與分支保護擋的是**未經核准的執行、對 base
   的寫入、拿 secrets**——**不是檢查結果的可信度**：③**fork 可以連 workflow 與腳本本身
   一起改**（GitHub 要求核准前先看 PR 有沒有動 workflow，正是這個原因；本機合併閘跑的
   也是受審 HEAD 上的腳本，一樣改得到），所以任何「PR 自己帶的檢查」對 fork 都不可信

@@ -25,6 +25,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
+import { gitEnv } from '../lib/git-env.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -110,14 +111,14 @@ if (isMainModule(import.meta.url)) {
   const pr = process.argv[2];
   if (!pr || !/^\d+$/.test(pr)) { console.error('用法：node scripts/check-ci-really-ran.js <PR 編號>'); process.exit(2); }
   try {
-    const view = JSON.parse(execFileSync('gh', ['pr', 'view', pr, '--json', 'headRefOid,autoMergeRequest'], { encoding: 'utf8' }));
+    const view = JSON.parse(execFileSync('gh', ['pr', 'view', pr, '--json', 'headRefOid,autoMergeRequest'], { encoding: 'utf8', env: gitEnv() }));
     const sha = view?.headRefOid;
     if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) { console.error(`真考卷閘 PR #${pr}：讀不到合併頭 sha（fail-closed）`); process.exit(2); }
     // required 名單＝現場讀分支保護（r1 高①）；讀不到／空＝fail-closed
-    const prot = JSON.parse(execFileSync('gh', ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '[.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]'], { encoding: 'utf8' }));
+    const prot = JSON.parse(execFileSync('gh', ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '[.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]'], { encoding: 'utf8', env: gitEnv() }));
     if (!isRequiredList(prot)) { console.error(`真考卷閘 PR #${pr}：分支保護名單形狀不對（fail-closed）`); process.exit(2); }
     // check runs＝--paginate 撈全（r1 高②：單頁 100 筆會截斷）；--jq 每頁輸出一個陣列、串起來再合併
-    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]'], { encoding: 'utf8' });
+    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]'], { encoding: 'utf8', env: gitEnv() });
     const raw = pages.split('\n').filter((l) => l.trim()).flatMap((l) => JSON.parse(l));
     if (!isCheckRunList(raw)) { console.error(`真考卷閘 PR #${pr}：check runs 形狀不對（fail-closed）`); process.exit(2); }
     const { code, reason } = evaluateGate(raw, view?.autoMergeRequest != null, prot);
