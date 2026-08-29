@@ -247,7 +247,7 @@ test('極限｜註解夾在 SHA 中間：改得動但驗不過 ⇒ 什麼都不�
 //    ⚠️ 關卡**順序**由 test/worktree-integrity.test.js 那題釘（deepEqual 全序列），
 //       這裡只釘「有沒有拿到 stdin」，兩題不重疊。
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -430,6 +430,89 @@ test('★r1#4 pickPr：同名多支不猜、fork 的 PR 一律不動（「恰好
   // 形狀防呆
   assert.equal(pickPr('not-a-list', 'x'), null);
   assert.equal(pickPr([{ number: 1 }], 'x'), null, '缺 body/url＝不動');
+});
+
+test('★GH_TIMEOUT_MS 必須是正的有限值（=0 在 Node 語意＝沒有逾時）', async () => {
+  const { GH_TIMEOUT_MS } = await import('../scripts/sync-pr-base-version.js');
+  assert.ok(Number.isFinite(GH_TIMEOUT_MS) && GH_TIMEOUT_MS > 0, `實得 ${GH_TIMEOUT_MS}`);
+  assert.ok(GH_TIMEOUT_MS <= 60_000, '單次上限超過一分鐘＝實質上就是掛住 push');
+});
+
+test('★CLI 端到端：真的跑腳本、gh 用 PATH 假身替換（生產接線的行為題）', () => {
+  // ⚠️ 接線題的 stub 攔掉了**全部 node**，從不跑這支 JS——於是「entry 漏帶 argv[2]」與
+  //    「findPr 繞過 pickPr」兩顆突變都全綠（Grok 掃④）。這裡讓真 CLI 跑起來，只假 gh。
+  const dir = mkdtempSync(join(tmpdir(), 'basever-cli-'));
+  try {
+    const bin = join(dir, 'bin'); mkdirSync(bin);
+    const ghLog = join(dir, 'gh.log'), editFile = join(dir, 'edit.body');
+    const listOne = join(dir, 'list1.json'), listTwo = join(dir, 'list2.json'), viewF = join(dir, 'view.json');
+    const body = bodyWith(OLD.slice(0, 7));
+    const pr = { number: 5, body, url: `${REPO_URL}/pull/5`, headRefName: 'x', isCrossRepository: false };
+    writeFileSync(listOne, JSON.stringify([pr]));
+    writeFileSync(listTwo, JSON.stringify([pr, { ...pr, number: 6, url: `${REPO_URL}/pull/6` }]));
+    writeFileSync(viewF, JSON.stringify({ body }));
+    const gh = join(bin, 'gh');
+    writeFileSync(gh, `#!/bin/sh
+echo "ARGS::$*" >> ${JSON.stringify(ghLog)}
+echo "GITDIR::\${GIT_DIR:-none}" >> ${JSON.stringify(ghLog)}
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body" ]; then printf '%s' "$a" > ${JSON.stringify(editFile)}; fi
+  prev="$a"
+done
+case "$*" in
+  *"pr list"*) cat "$FAKE_LIST" ;;
+  *"pr view"*) cat ${JSON.stringify(viewF)} ;;
+esac
+exit 0
+`);
+    chmodSync(gh, 0o755);
+    const refs = `refs/heads/x ${NEW} refs/heads/x ${OLD}\n`;
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`,
+      FAKE_LIST: listOne, GIT_DIR: '/tmp/絕對不該外洩的髒GIT_DIR' };   // ★鐵則 11：gitEnv 要把它清掉
+    // ① 正常：一支同 repo PR ⇒ 真的 edit、內容過閘、退出碼 0
+    let r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'sync-pr-base-version.js'), `${REPO_URL}.git`],
+      { encoding: 'utf8', cwd: ROOT, input: refs, env });
+    assert.equal(r.status, 0, r.stderr);
+    const edited = readFileSync(editFile, 'utf8');
+    assert.deepEqual(staleBaseProblems(edited, NEW), [], '★真 CLI 送出的說明要過閘的尺');
+    assert.ok(readFileSync(ghLog, 'utf8').includes('GITDIR::none'),
+      '★髒 GIT_DIR 傳進 gh 了＝gitEnv() 沒接上（gh 會去讀另一棵樹的 PR）');
+    // ② 不帶 remote URL（argv 漏接）⇒ 不動
+    rmSync(editFile, { force: true }); rmSync(ghLog, { force: true });
+    r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'sync-pr-base-version.js')],
+      { encoding: 'utf8', cwd: ROOT, input: refs, env });
+    assert.equal(r.status, 0);
+    assert.ok(!existsSync(editFile), '★沒有 remote URL＝綁定不成立＝一定不動（entry 漏帶 argv[2] 在這裡轉紅）');
+    // ③ 同名兩支 PR ⇒ 不猜（真路徑必須經過 pickPr 的唯一性）
+    r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'sync-pr-base-version.js'), `${REPO_URL}.git`],
+      { encoding: 'utf8', cwd: ROOT, input: refs, env: { ...env, FAKE_LIST: listTwo } });
+    assert.equal(r.status, 0);
+    assert.ok(!existsSync(editFile), '★同名兩支還去改＝findPr 沒走 pickPr 的唯一性');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('★hook fail-open：對齊腳本以非零死掉，pre-push 仍放行並講一聲', () => {
+  // 殺「把 || echo 改成 || exit 1（讓文書工具變成閘）」那顆突變（Grok 掃①：原本沒有行為題）。
+  const dir = mkdtempSync(join(tmpdir(), 'prepush-failopen-'));
+  try {
+    const bin = join(dir, 'bin'); mkdirSync(bin);
+    for (const name of ['node', 'npm']) {
+      const stub = join(bin, name);
+      writeFileSync(stub, `#!/bin/sh
+cat > /dev/null
+case "$*" in *sync-pr-base-version.js*) exit 7 ;; esac
+exit 0
+`);
+      chmodSync(stub, 0o755);
+    }
+    const r = spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push'), 'origin', 'https://github.com/o/r.git'], {
+      encoding: 'utf8', cwd: ROOT, input: `refs/heads/x ${NEW} refs/heads/x ${OLD}\n`,
+      env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' },
+    });
+    assert.equal(r.status, 0, `★文書工具死掉不可以擋 push（實得退出碼 ${r.status}）：\n${r.stdout}${r.stderr}`);
+    assert.ok(r.stdout.includes('沒跑成功'), '★失敗要講一聲，不能靜靜吞掉');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ── 同一把尺：手抄的欄位正則不可以跟閘漂開 ──────────────────

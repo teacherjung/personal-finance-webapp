@@ -21,6 +21,9 @@
 //   ・⚠️ 內容面另有一個誠實劃界：整份讀寫之間有無法歸零的毫秒級窗口，並行的 PR 說明編輯
 //     可能被蓋掉且看起來像成功（詳見 main 內事後驗證處）。兩線同時動同一支 PR 本來就該避免
 //     （先在 PR 留言認領）。
+//   ・⚠️ 另一個照實劃界：它排在 hook 所有關卡之後，但**擋不住 hook 成功之後 git 才被拒**
+//     （non-fast-forward、權限、斷線）——那時欄位已指向沒上去的 commit、不回滾。
+//     後果是協作欄位閘**紅**（不是放水），下一次成功 push 會再對齊回來。
 //
 // ## ⚠️ 為什麼自動推進這個欄位不算開後門（動手前查證過，不是推論）
 //
@@ -140,12 +143,10 @@ export function parsePushRefs(stdin) {
   return out;
 }
 
-/**
- * ⚠️ `env: gitEnv()` 不可省（AGENTS.md 鐵則 11）：`gh` 會自己再 spawn git，
- *    繼承來的 `GIT_DIR` 會讓它去讀**另一個** repo 的 PR，而輸出看起來完全正常。
- * @param {string[]} args @returns {string}
- */
-/** gh 呼叫的逾時上限：一次 API 往返加充分裕度；超過＝網路異常，寧可放棄對齊也不掛住 push。 */
+/** gh 呼叫的逾時上限：一次 API 往返加充分裕度；超過＝網路異常，寧可放棄對齊也不掛住 push。
+ * ⚠️ 這是**單次呼叫**的上限：成功路徑一輪最多打數次 gh（查 PR／重讀／寫入／驗證），
+ *    最壞延遲＝各次上限相加、不是一個 15 秒（劃界照實寫在 REVIEW-AND-MERGE.md 該節）。
+ * ⚠️ =0 在 Node 的語意是「**沒有逾時**」——考題釘住它必須是正的有限值。 */
 export const GH_TIMEOUT_MS = 15_000;
 
 /**
@@ -155,6 +156,8 @@ export const GH_TIMEOUT_MS = 15_000;
  * @param {string} file @param {string[]} args @param {number} [timeoutMs]
  * @returns {string}
  */
+// ⚠️ `env: gitEnv()` 不可省（AGENTS.md 鐵則 11）：`gh` 會自己再 spawn git，繼承來的 `GIT_DIR`
+//    會讓它去讀**另一棵樹**的 PR 而輸出看起來完全正常（CLI 端到端題用髒 GIT_DIR 直接驗）。
 export function runWithTimeout(file, args, timeoutMs = GH_TIMEOUT_MS) {
   return execFileSync(file, args, { encoding: 'utf8', env: gitEnv(), timeout: timeoutMs, killSignal: 'SIGKILL' });
 }
