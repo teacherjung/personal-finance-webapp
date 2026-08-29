@@ -1574,7 +1574,9 @@ const recipeN = () => ({
 const linesN = (rad = false) => {
   const t = rad ? toRad : (/** @type {string} */ x) => x;
   return [
-    L(300, [[20, t('合成金庫月結單')], [47, t('存戶總表')], [452, `${t('結算日')}:2026/06/30`]]),
+    // ⚠️ 參考日錨點**刻意不換**：那一段整段維持 main 原狀、走舊尺（William 2026-08-29 裁示「甲」）
+    //   ——換了它 referenceDate 會變 null，那是**預期行為**，另有專題釘（題名含「參考日整段維持舊尺」）。
+    L(300, [[20, t('合成金庫月結單')], [47, t('存戶總表')], [452, '結算日:2026/06/30']]),
     L(280, [[50, '甲戶活存'], [150, '900100****3301'], [473, '$1,230']]),   // 標籤挑成「換得動」的詞：出生對照那題要拿它當內文樣本
     L(240, [[47, t('本頁小計')], [445, '$1,230']]),
     L(140, [[47, t('收支明細月報')]]),
@@ -1596,7 +1598,7 @@ const recipeNRad = () => {
     ...r,
     bank: toRad(r.bank),
     docAnchors: r.docAnchors.map(toRad),
-    refDate: { ...r.refDate, anchor: toRad(r.refDate.anchor) },
+    refDate: r.refDate,   // ⚠️ 參考日錨點刻意不換＝那一段走舊尺、本支不碰（同 linesN 的說明）
     summary: {
       ...r.summary,
       sections: r.summary.sections.map(x => ({ ...x, anchor: toRad(x.anchor) })),
@@ -1743,83 +1745,35 @@ test('同一把尺｜出生對照的等值與位置兩道約束也用它：相�
     '★bank 抄成相容字寫法的帳戶標籤＝單槽直通路（r8#3）又打開了');
 });
 
-test('同一把尺｜參考日的候選完全在舊尺上產生：正規化既會多出候選、也會吃掉候選（r1＋r2 兩個方向）', () => {
-  // ①**多出候選**（Codex r1）：全形日期變得掃得到 ⇒ anchored-date 取第一個就換人。
-  //   base 讀 2026-06-30、只換尺讀 2099-05-06＝現值日被寫成未來日，往後每期真帳單都比它舊
-  //   ⇒ 餘額更新一路被當 stale 跳過。
-  const mixed = linesN();
-  mixed[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, '結算日 備查期限２０９９／０５／０６ 本期末2026/06/30']]);
-  assert.equal(parseWithRecipe(mixed, recipeN()).referenceDate, '2026-06-30',
-    '★全形那一個不是候選（與 base 逐字相同）');
-  // ②**吃掉候選**（Codex r2）：一顆全形數字貼著民國日期，NFKC 把它黏成四位數，
-  //   `(?<!\d)` 就把整顆民國日期消掉。濾網只能刪候選、救不回被吃掉的——所以掃描一律跑舊尺。
-  const roc = (/** @type {string} */ strategy, /** @type {string} */ anchorLine) => {
-    const ls = linesB();
-    ls[0] = L(300, [[20, '合成郵局存簿'], [47, anchorLine]]);
-    return parseWithRecipe(ls, { ...recipeB(), refDate: { strategy, anchor: '帳務期間' } }).referenceDate;
-  };
-  const two = '帳務期間２115/05/06列印日116/05/06';
-  assert.equal(roc('anchored-date', two), '2026-05-06', '★候選 2 個、取第一個（吃掉候選會變成 2027-05-06）');
-  assert.equal(roc('anchored-period-end', two), '2027-05-06', '★候選恰 2 個、取第二個（吃掉候選會變成 null＝餘額更新靜靜停掉）');
-  assert.equal(roc('anchored-period-end', `${two}到期日117/05/06`), null,
-    '★候選 3 個＝不確定＝null（吃掉一顆會變成「恰兩個」而讀出 2028-05-06）');
-  // ③**切片本身是判準的一部分**（Codex r3）：錨點以 ASCII 數字結尾、日期緊鄰下一格時，
-  //   整列掃描的 `(?<!\d)` 會把候選吃掉，而先切片會重設那個左界。main 讀得到、整列掃描版讀不到。
-  const numAnchor = (/** @type {string} */ strategy, /** @type {any[]} */ cells) => {
-    const ls = linesB();
-    ls[0] = L(300, cells);
-    return parseWithRecipe(ls, { ...recipeB(), refDate: { strategy, anchor: '結算1' } }).referenceDate;
-  };
-  assert.deepEqual(validateRecipeStrict({ ...recipeB(), refDate: { strategy: 'anchored-date', anchor: '結算1' } }), [],
-    '前提：以數字結尾的錨點是合法配方（3 位以內數字是正當詞彙空間）');
-  assert.equal(numAnchor('anchored-date', [[20, '合成郵局存簿'], [47, '結算1'], [120, '115/06/30']]), '2026-06-30',
-    '★錨點末碼與日期首碼相連＝整列掃描會把候選吃掉；切片才是對的');
-  assert.equal(numAnchor('anchored-period-end', [[20, '合成郵局存簿'], [47, '結算1'], [120, '115/05/01'], [200, '~'], [260, '115/05/31']]), '2026-05-31',
-    '★同一族：吃掉第一顆就只剩一顆、撞「恰兩個」邊界而回 null');
-  // ④**錨點**仍要在相容字版面上定得了位（否則本支的主修就被這條抵銷掉）
-  assert.equal(parseWithRecipe(linesN(true), recipeN()).referenceDate, '2026-06-30',
-    '★正規化用來定位錨點、候選從原文切片產生——兩件事不可互相抵銷');
+test('同一把尺｜參考日整段維持舊尺：相容字錨點＝讀不到＝null，但交易照樣匯入（保存型）', () => {
+  // ⚠️ 這題守的是「**不要**把這把尺套進參考日」。套進去要算**位置**（錨點在哪結束、日期從哪開始掃），
+  //   而位置一碰正規化就歪——Codex #523 連續四輪各抓到一種歪法，每一種都是「main 讀得到、
+  //   改版讀不到或讀錯」，其中兩種會把餘額日期寫成**未來日** ⇒ 之後每份真帳單都被判 stale
+  //   ⇒ 該帳戶餘額從此靜靜不再更新。William 2026-08-29 裁示「甲：整段退回」。
+  //   代價（預期行為，不是缺陷）：帳單把參考日錨點印成相容字 ⇒ null ⇒ **只跳過餘額更新**。
+  const ls = linesN();
+  ls[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, `${toRad('結算日')}:2026/06/30`]]);
+  assert.notEqual(toRad('結算日'), '結算日', '★樣本必須真的換得動字');
+  const p = parseWithRecipe(ls, recipeN());
+  assert.equal(p.referenceDate, null, '★相容字錨點＝讀不到參考日（與 main 相同；套上新尺才會變成讀得到）');
+  assert.equal(p.transactions.length, 1, '★★但交易照樣匯入——參考日只管「要不要更新餘額」');
+  assert.equal(p.accounts.length, 1, '★帳戶也照樣解出來');
+  // 正規字錨點照舊讀得到（證明差別只在錨點的印法，不是這段壞了）
+  assert.equal(parseWithRecipe(linesN(), recipeN()).referenceDate, '2026-06-30', '對照組：正規字錨點正常');
+  // **另一個方向**：規則卡上的錨點抄成相容字、帳單印正規字 ⇒ 一樣讀不到（錨點兩邊都走舊尺）。
+  //   只考帳單那一邊的話，「錨點改走新尺」那一刀會活過去（突變 U2 實測）。
+  const rRad = { ...recipeN(), refDate: { ...recipeN().refDate, anchor: toRad('結算日') } };
+  assert.deepEqual(validateRecipeStrict(rRad), [], '前提：相容字寫法的錨點也是合法配方');
+  assert.equal(parseWithRecipe(linesN(), rRad).referenceDate, null,
+    '★配方那一邊也走舊尺——把錨點改走新尺，這裡就會變成讀得到');
+  // **日期候選也整段走舊尺**：一顆全形數字貼著民國日期時，正規化會把候選整顆吃掉（r2 那型）。
+  //   只考錨點的話，「掃描器吃正規化後的切片」那一刀會活過去（突變 U3 實測）。
+  const rocLines = linesB();
+  rocLines[0] = L(300, [[20, '合成郵局存簿'], [47, '帳務期間２115/05/06列印日116/05/06']]);
+  assert.equal(parseWithRecipe(rocLines, { ...recipeB(), refDate: { strategy: 'anchored-date', anchor: '帳務期間' } }).referenceDate,
+    '2026-05-06', '★候選在原文上產生（吃掉候選的話會變成 2027-05-06）');
 });
 
-test('同一把尺｜切點兩段式：快路徑＝main 那條、慢路徑只給相容字錨點且有上限（Codex r4）', () => {
-  // ①**基字＋空白＋組合附標**的錨點：切點若在「去空白後」的字串上逐位算，NFKC 會把
-  //   `A`＋U+030A 合成 `Å` ⇒ 錨點反而找不到 ⇒ main 讀得到、它讀不到（r4#1 實測）。
-  //   快路徑（原文裡直接找錨點）走的就是 main 那條，位置逐字相同。
-  const A = 'A \u030A日';
-  const rA = { ...recipeB(), refDate: { strategy: /** @type {const} */ ('anchored-date'), anchor: A } };
-  assert.deepEqual(validateRecipeStrict(rA), [], '前提：這是合法配方');
-  const lsA = linesB();
-  lsA[0] = L(300, [[20, '合成郵局存簿'], [47, A], [120, '115/05/31']]);
-  assert.equal(parseWithRecipe(lsA, rA).referenceDate, '2026-05-31',
-    '★切點在去空白後的字串上算＝組合附標被合成掉、錨點找不到、參考日變 null');
-  // ②相容字錨點：快路徑落空、慢路徑接手（本支的主修，不可被①的修法抵銷）
-  assert.equal(parseWithRecipe(linesN(true), recipeN()).referenceDate, '2026-06-30',
-    '★慢路徑仍要找得到相容字錨點');
-  // ②b **慢路徑自己也要用對尺**：錨點同時含相容字（⇒ 快路徑落空、非走慢路徑不可）與
-  //     「基字＋空白＋組合附標」（⇒ 慢路徑若在去空白後的字串上算就會把它合成掉）。
-  //     ①只走得到快路徑，考不到這裡（突變實測：只改慢路徑那一行，①仍綠）。
-  const AB = `A \u030A${toRad('日')}`;
-  const rB2 = { ...recipeB(), refDate: { strategy: /** @type {const} */ ('anchored-date'), anchor: AB } };
-  assert.deepEqual(validateRecipeStrict(rB2), [], '前提：這是合法配方');
-  const lsB2 = linesB();
-  lsB2[0] = L(300, [[20, '合成郵局存簿'], [47, AB], [120, '115/05/31']]);
-  assert.equal(parseWithRecipe(lsB2, rB2).referenceDate, '2026-05-31',
-    '★慢路徑要在**未去空白**的原文上算，否則組合附標被合成、錨點找不到');
-  // ②c **上限只准綁在慢路徑上**：正規字錨點（＝所有既有規則卡）走快路徑，
-  //     再長也不受掃描上限影響——上限不可以變成既有行為的回歸。
-  const farPlain = linesN();
-  farPlain[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [100, '填'.repeat(2100)],
-    [452, '結算日:2026/06/30']]);
-  assert.equal(parseWithRecipe(farPlain, recipeN()).referenceDate, '2026-06-30',
-    '★正規字錨點在 2000 字之後照樣讀得到（快路徑無上限＝與 base 相同）');
-  // ③慢路徑**有上限**（逐位重算前綴＝平方級；上限之外＝當作找不到 ⇒ null＝既有 fail-safe，
-  //   不是讓父行程掃到停頓）。
-  const far = linesN(true);
-  far[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [100, '填'.repeat(2100)],
-    [452, `${toRad('結算日')}:2026/06/30`]]);
-  assert.equal(parseWithRecipe(far, recipeN()).referenceDate, null,
-    '★錨點落在掃描上限之外＝null（餘額不更新），不是無上限地逐位掃');
-});
 test('同一把尺｜引擎輸出的文字**不**正規化：原文留底／去重鍵／帳號身分三條界線（保存型）', () => {
   // 這題守的是「**不要**做什麼」。正規化一旦流進**存下來的字**，會同時打破三件事：
   //  ①`bankSummary`／`bankNote` 的「帳單原文、一字未改」契約（`lib/types.js`）
