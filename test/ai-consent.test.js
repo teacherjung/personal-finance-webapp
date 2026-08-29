@@ -580,6 +580,8 @@ test('批二 r1#5｜卡片版 AI 徽章：只講卡片真的跑過的閘，不�
   assert.match(html, /看不到/, '照實劃界：要講這些閘看不到什麼（就地解釋鐵則）');
   assert.match(html, /抵銷/, '★r6#1 的盲點要就地揭露：正負互抵的整組漏抄，加總與等式都看不到');
   assert.match(html, /退款被抄成繳款/, '★r8#1 的盲點要就地揭露：負數列身分靠沒接地的說明文字判定');
+  assert.match(html, /只拿來驗算、不會記進消費明細/, '★Grok 掃#3：具名調整不入帳＝要就地講清楚（少記年費/利息不是 bug 是取捨）');
+  assert.match(html, /1 元容差/, '★Grok 掃#1：容差縫隙要就地揭露（恰差 1 元的漏抄/多抄看不到）');
   assert.doesNotMatch(html, /已經按過一次確認/, '★r8#2：卡片匯入不驗票——「按過確認就失效」是銀行線的事實、卡片線不可照抄');
   assert.match(html, /過期後請重新上傳/, '票的真實範圍（換卡重看短效）要講、過期出路要給');
   const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });

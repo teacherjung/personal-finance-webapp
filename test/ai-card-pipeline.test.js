@@ -11,7 +11,8 @@ const TEST_STORE = join(tmpdir(), `finance-ai-card-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { previewAuto, previewForCard } = await import('../lib/services/statement-import.js');
+const { previewAuto, previewForCard, aiCardRoute } = await import('../lib/services/statement-import.js');
+const { issueAiTicket, redeemAiTicket } = await import('../lib/ai-confirm-ticket.js');
 const { cjkPdf, passwordPdf } = await import('./helpers/build-pdf.js');
 
 after(() => {
@@ -166,6 +167,35 @@ test('★票制｜選卡憑票：不重跑模型、回新票；舊票一次性�
   const p2 = await previewForCard('ts', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: p1.aiTicket });
   assert.equal(p2.resolvedCard.id, 'ts');
   assert.equal(p2.transactions.length, 3);
+});
+
+test('★HOSTED 停止線｜雲端版 400、零 AI 呼叫；且排在鑰匙檢查**之前**（Grok 掃#5：缺這題時刪掉停止線照樣全綠）', async () => {
+  // 直打 aiCardRoute（見其 export 註解：整合層翻 NOTEASY_HOSTED 會讓儲存層先要租戶而炸、到不了守門）
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  process.env.NOTEASY_HOSTED = '1';
+  try {
+    await assert.rejects(() => aiCardRoute(new Uint8Array([1]), undefined, { settings: { aiApiKey: 'k-test' } }, { aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() }),
+      (/** @type {any} */ e) => e.code === 'ai_hosted_off' && /雲端版/.test(e.message));
+    await assert.rejects(() => aiCardRoute(new Uint8Array([1]), undefined, { settings: {} }, { aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() }),
+      (/** @type {any} */ e) => e.code === 'ai_hosted_off', '★停止線在鑰匙檢查之前——雲端版連「去設鑰匙」都不該被指路');
+  } finally { delete process.env.NOTEASY_HOSTED; }
+  assert.equal(fe.modelsUsed.length, 0);
+});
+
+test('★票綁用途｜銀行式票（無 aiKind）拿到卡片預覽＝拒收且**還票**（Grok 掃#4：銀行列不得變卡片消費）', async () => {
+  // 銀行/配方票的 parsed 沒有卡片摘要 ⇒ 卡片中閘只會弱閘放行——kind 閘要在中閘之前擋下
+  const bankish = issueAiTicket({ parsed: { bank: '台新銀行', accounts: [], transactions: [] }, aiModel: 'm' });
+  await assert.rejects(() => previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: bankish }),
+    (/** @type {any} */ e) => e.code === 'ai_ticket_invalid' && /不是這份信用卡帳單/.test(e.message));
+  assert.ok(redeemAiTicket(bankish), '★票要放回——那張票屬於銀行線，吞掉會害銀行 apply 只能重跑模型');
+});
+
+test('★兌票後半路丟錯＝還票再丟（Grok 掃#8）：中閘紅不吞票、使用者不必重跑模型', async () => {
+  const badTotals = { prevDue: 0, paidAndRefund: 0, newCharges: 100, due: 999 };   // 等式差 899 ⇒ 中閘紅
+  const cardBad = issueAiTicket({ parsed: { bank: '', bankEvidence: 'none', statementTotals: badTotals,
+    transactions: [{ date: '2026-07-03', desc: '甲', amount: 100 }] }, aiModel: 'm', aiKind: 'card' });
+  await assert.rejects(() => previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: cardBad }));
+  assert.ok(redeemAiTicket(cardBad), '★半路丟錯要把票放回（同銀行 apply 的 restore 慣例）');
 });
 
 test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也過中閘；模板 parsed 沒這欄＝行為零改變', async () => {

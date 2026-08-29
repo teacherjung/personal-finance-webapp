@@ -269,6 +269,14 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
     'AI 後備分流之後、發同意窗／直送之前要先記密碼');
   assert.match(src, /\}\s*await rememberPw\(\);\s*openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/,
     '模板成功路照舊記密碼（抽成同一支 rememberPw、不是抄兩份）');
+  // Grok 掃#6（批二）：同意接線不能只鎖文案——卡片路是平行實作，分流與旗標形狀要各自釘
+  //（銀行 F 群只掃 cashflow.js；刪掉卡片路的 askBeforeSendAi 分流時，同意考題原本仍全綠）
+  assert.equal((src.match(/await askBeforeSendAi\(\)/g) || []).length, 2,
+    '兩條上傳路（免密碼／密碼窗）都要有「送 AI 前要不要先問」的分流');
+  assert.match(src, /async function sendCardToAi[\s\S]{0,400}?if \(!canOpenNext\(\)\) return;/,
+    'sendCardToAi 第一行要驗 canOpenNext（await 設定期間關窗/切頁＝連請求都不可發）');
+  assert.match(src, /body: \{ data: b64, \.\.\.\(pw \? \{ password: pw \} : \{\}\), useAi: true \}/,
+    'AI 要求旗標要嚴格 useAi:true 手組（不是沿用模板 body）');
   // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
   assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');

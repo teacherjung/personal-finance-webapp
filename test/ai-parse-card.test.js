@@ -123,9 +123,10 @@ test('接地｜答案卷上的每個金額都要在原文出現過：臆測的�
   const g = GOOD(); g.transactions[0].amount = 151;   // 原文只有 150
   const p = normalizeAiCard(g);
   assert.equal(codeOf(() => assertAiCardGrounded(p, TEXT)), 'ai_bad_answer');
-  // totals 與 adjustments 也在接地射程內
+  // totals 與 adjustments 也在接地射程內（Grok 掃#7：原本這行掛了個把 480 換成 480 的空操作
+  // replace——看起來在測「原文仍印 480」、實際只測「481 不在原文」；拿掉空操作、斷言不變）
   const g2 = GOOD(); g2.totals.due = 481;
-  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g2), TEXT.replace('本期應繳總額 480', '本期應繳總額 480'))), 'ai_bad_answer');
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g2), TEXT)), 'ai_bad_answer');
   const g3 = GOOD(); g3.adjustments[0].amount = 31;
   assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g3), TEXT)), 'ai_bad_answer');
 });

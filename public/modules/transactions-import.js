@@ -170,7 +170,9 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
   const pick = (r.candidates && r.candidates.length) ? r.candidates : cards;
   // AI 路：抄回的機構名只當顯示（不參與歸卡——#518 的判準不給 AI 投票權），幫使用者辨認是哪家的帳單
   const who = r.aiIssuer ? `AI 讀到「${esc(String(r.aiIssuer))}」的帳單` : (r.bank ? r.bank + '帳單' : '這份帳單');
-  const detail = `${who}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}`;
+  // AI 路（Grok 掃#2）：機構名與末四碼**都是 AI 抄的、都可能有誤**——候選清單是照這組末四碼篩的，
+  // 抄錯會把使用者往錯的卡推一把；就地講清楚，選卡的最後把關是人。
+  const detail = `${who}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}${r.aiIssuer ? '——機構名與末四碼都是 AI 抄的、可能有誤，請對照帳單原本選卡' : ''}`;
   openForm({
     title: '選擇要記到哪張卡片',
     size: 'sm',
