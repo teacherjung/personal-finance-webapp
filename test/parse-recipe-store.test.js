@@ -230,7 +230,8 @@ const ligRecipe = (/** @type {string} */ anchor) => { const r = goodRecipe(); r.
 test('recipeBankRoute｜兩趟掃描：舊尺先跑一遍，main 選哪張卡我們就選哪張（#523 r10）', async () => {
   // ⚠️ #523 讓版面比對收「舊尺或新尺」之後，候選卡變多 ⇒ 這裡「照列序取第一張成功的」會選到
   //   **main 選不到的卡**。實測後果：真台幣戶被標成外幣 ⇒ 那戶交易被當外幣**不匯入**＝現金流漏帳，
-  //   而閘仍是 strong。⇒ 第一趟只用舊尺（逐字＝main），一張都沒中才跑第二趟用聯集。
+  //   而閘仍是 strong。⇒ 第一趟只用舊尺（逐字＝main），一張都沒中才跑第二趟、**那一趟只用新尺**
+  //   （兩趟都不混尺——混用正是 r6–r11 五輪的病根）。
   await seedDb({ recipes: [
     row({ id: 'rcp-new', current: ligRecipe('Office') }),   // 只有新尺命中，且**排在前面**
     row({ id: 'rcp-old', current: ligRecipe('Oﬃce') }),     // 舊尺就命中＝main 的答案
@@ -238,7 +239,7 @@ test('recipeBankRoute｜兩趟掃描：舊尺先跑一遍，main 選哪張卡我
   const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
   assert.ok(r.hit, '前提：這份帳單解得出來');
   assert.equal(r.hit?.recipeId, 'rcp-old',
-    '★★卡片列序不可以改寫 main 的答案——聯集版會選到排在前面的 rcp-new');
+    '★★卡片列序不可以改寫 main 的答案——只跑一趟的版本會選到排在前面的 rcp-new');
 });
 
 test('recipeBankRoute｜第二趟仍在：舊尺一張都沒中時，新尺認得的卡照樣服役（#523 r10）', async () => {
@@ -259,6 +260,19 @@ test('recipeBankRoute｜勝出的那一列不可以留在疑似過期名單裡�
   assert.equal(r.hit?.usedVersion, 'previous', '前提：第二趟用 previous 救回來');
   assert.ok(!r.gateFailedIds.includes('rcp-1'),
     '★★救回來的那一列不可以同時掛在疑似過期名單上（apply 會把好版標成失效、畢業歸零）');
+});
+
+test('recipeBankRoute｜current 曾中版面的事實要跨趟保留（否則壞版永遠升不掉，#523 r12）', async () => {
+  // 第一趟（舊尺）：current 中版面但拒解。第二趟（新尺）：previous 救回來。
+  // `currentMatched` 若放在趟裡，第二趟會把它重設成 false ⇒ apply 走「只是別版面服役」分支
+  // ⇒ **壞的 current 永遠升不掉、last-known-good 永遠升不上去、也永遠無法重新畢業**。
+  const cur = brokenRecipe(); cur.docAnchors = ['Oﬃce', '往來紀錄'];      // 只有舊尺中版面（新尺會合成成 Office）
+  const prev = goodRecipe(); prev.docAnchors = ['Office', '往來紀錄'];    // 只有新尺中版面
+  await seedDb({ recipes: [row({ current: cur, previous: prev })] });
+  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
+  assert.equal(r.hit?.usedVersion, 'previous', '前提：第二趟用 previous 救回來');
+  assert.equal(r.hit?.currentMatched, true,
+    '★★current 在第一趟中過版面＝這是回滾語意（互換版本＋streak 重數），不是「別版面服役」');
 });
 
 test('recipeBankRoute｜純讀不變量：預覽路線跑完，db 的配方列一個位元組都沒動', async () => {
