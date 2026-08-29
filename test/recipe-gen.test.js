@@ -14,7 +14,8 @@ process.env.STORE_FILE = TEST_STORE;
 const { generateRecipeAfterImport, previewBankStatement, applyBankStatement } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { clearAiTicketsForTest } = await import('../lib/ai-confirm-ticket.js');
-const { parseWithRecipe, RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
+const { parseWithRecipe, RECIPE_FORMAT_VERSION, recipeNorm } = await import('../lib/parse-recipe.js');
+const { squash } = await import('../lib/bank-statement.js');
 const { RECIPE_MODEL, AI_BANK_MODELS } = await import('../lib/ai-parse.js');
 const { makeAnthropicBankEngine } = await import('../lib/ai-transport.js');
 const { bankApplyDoneText } = await import('../public/modules/cashflow-model.js');
@@ -100,6 +101,63 @@ test('生成｜快樂路徑：出生三關全過＝存新列（formatVersion 程
   // 存下來的配方真的可用：同版面第二份直接零元命中
   const pv = await previewBankStatement('QUFBQQ==', undefined, notRecognized, { aiExtract: extractA });
   assert.equal(pv.engine, 'recipe', '★閉環：AI 教的、app 自己會了');
+});
+
+test('生成｜出生三關也是「整份跑兩趟、每趟只用一把尺」：帳單印相容字時，第二趟才孵得出卡（#523）', async () => {
+  // ⚠️ 只跑一趟（舊尺）的話，帳單把**版面文字**印成相容字時 AI 的正規字暗號永遠對不上 ⇒
+  //   `recipe_birth_match` ⇒ **那些銀行的卡永遠孵不出來、每期照付 AI 錢**（本支要修的病，出生端這一半）。
+  const RAD = { 合: '合', 金: '⾦', 戶: '⼾', 日: '⽇', 來: '來', 總: '總' };
+  const rad = (/** @type {string} */ x) => [...x].map(c => RAD[c] ?? c).join('');
+  assert.notEqual(rad('合成帳戶總覽區'), '合成帳戶總覽區', '★樣本必須真的換得動字');
+  const ls = linesA();
+  ls[0] = L(300, [[20, '合成銀行月結單'], [47, rad('合成帳戶總覽區')], [452, `${rad('結算基準日')}:2026/06/30`]]);
+  const g = /** @type {any} */ (parseWithRecipe(ls, goodRecipe(), { ruler: 'new' }));
+  await seedDb();
+  const r = await generateRecipeAfterImport(ticketOf([], { lines: ls, parsed: g }), { aiEngineFactory: engineOf({}) });
+  assert.equal(r.saved, true, `★第二趟要孵得出來（實際：${/** @type {any} */ (r).reason}）`);
+  const db = await getDb();
+  assert.equal(db.parseRecipes?.length, 1, '★卡真的落庫了');
+  // ⚠️ **失敗代碼要報最後一趟實際卡住的那一關**（Codex #523 r12#2）：相容字版面在舊尺那一趟
+  //   必然停在 `recipe_birth_match`（暗號本來就對不上）——記第一趟等於把「預期中的 old miss」
+  //   當成根因，把 new 真正卡住的關卡系統性蓋掉，而出生統計正是「該放寬哪一關」的證據來源。
+  await seedDb();
+  const bad = () => { const r = recipeAnswer(); r.detail.headerIn = '存入金額'; return r; };   // 中版面但表頭字面錯
+  const r2 = await generateRecipeAfterImport(ticketOf([], { lines: ls, parsed: g }), { aiEngineFactory: engineOf({ gen: bad }) });
+  assert.equal(r2.saved, false);
+  assert.equal(/** @type {any} */ (r2).reason, 'recipe_birth_parse',
+    '★★要報走得最深的那一關（new 的 parse），不是 old 那一趟意料之中的 match');
+  // **反方向也可達**（Codex #523 r13#1）：暗號「A＋U+030A」印在相鄰兩格 ⇒ old 長度 2、一路走到
+  //   parse 才因表頭錯誤失敗；new 卻在第一關就因 NFKC 合成成單一字元 `Å` 而 strict 太短。
+  //   取「最後一趟」會回報 strict ⇒ 統計指向「放寬 minLen」，但 old 早就通過那道安全門，
+  //   真正要處理的是 parse。⇒ 取**最深**。
+  const K2 = '\u030A';
+  const ls2 = linesA();
+  ls2[0] = L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [300, 'A'], [310, K2], [452, '結算基準日:2026/06/30']]);
+  assert.equal(squash(`A${K2}`).length, 2, '★前提：舊尺看到兩個字');
+  assert.equal(recipeNorm(`A${K2}`).length, 1, '★前提：新尺合成成一個字（strict 會嫌太短）');
+  const deep = () => { const r = recipeAnswer(); r.docAnchors = [`A${K2}`, '往來紀錄']; r.detail.headerIn = '存入金額'; return r; };
+  await seedDb();
+  const r3 = await generateRecipeAfterImport(ticketOf([], { lines: ls2 }), { aiEngineFactory: engineOf({ gen: deep }) });
+  assert.equal(/** @type {any} */ (r3).reason, 'recipe_birth_parse',
+    '★★淺層失敗（new 的 strict）不可以蓋掉更深、也更可行動的根因（old 的 parse）');
+});
+
+test('生成｜出生第一趟（舊尺）不可以被拿掉：舊尺才認得的版面照樣要孵得出卡（#523 r12）', async () => {
+  // ⚠️ 只跑新尺那一趟的話，**舊尺認得、新尺反而不認得**的版面會從「main 孵得出來」退成孵不出來
+  //   （NFKC 會把跨格相鄰的字合成掉）。這一題就是那個方向的承重點——只有相容字那一題的話，
+  //   把出生迴圈改成只跑 new 仍然全綠（突變實測）。
+  const K = '\u030A';
+  const ls = linesA();
+  // 暗號 `ZA`：文件把 `Z`、`A`、U+030A 拆在相鄰三格 ⇒ 舊尺看得到 `ZA`、新尺合成成 `ZÅ` 看不到
+  ls[0] = L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [300, 'Z'], [310, 'A'], [320, K],
+    [452, '結算基準日:2026/06/30']]);
+  assert.equal(squash(ls[0].cells.map((/** @type {any} */ c) => c.s).join('')).includes('ZA'), true, '★前提：舊尺看得到');
+  assert.equal(recipeNorm(ls[0].cells.map((/** @type {any} */ c) => c.s).join('')).includes('ZA'), false, '★前提：新尺看不到');
+  const gen = () => { const r = recipeAnswer(); r.docAnchors = ['ZA', '往來紀錄']; return r; };
+  const g = /** @type {any} */ (parseWithRecipe(ls, { ...goodRecipe(), docAnchors: ['ZA', '往來紀錄'] }));
+  await seedDb();
+  const r = await generateRecipeAfterImport(ticketOf([], { lines: ls, parsed: g }), { aiEngineFactory: engineOf({ gen }) });
+  assert.equal(r.saved, true, `★舊尺那一趟不可以被拿掉（實際：${/** @type {any} */ (r).reason}）`);
 });
 
 test('生成｜出生三關各自擋：零內容紅／認不得版面／重現不了黃金樣本＝都不存（r2#5 漏一關＝白做）', async () => {
