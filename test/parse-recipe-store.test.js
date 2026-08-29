@@ -219,6 +219,35 @@ test('preview｜配方比照 AI＝只收強閘：弱閘版面（明細無餘額�
     /不是台新銀行/, '★弱閘＝配方不收、原句拋回');
 });
 
+// ---- #523 r10：「哪一張規則卡獲勝」也是一種「是哪一個」 ----
+
+/** 帳單多印一個**連字** `Oﬃce`（NFKC 後是 `Office`）。 */
+const linesLig = () => { const ls = linesA(); ls[0] = L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [300, 'Oﬃce'], [452, '結算基準日:2026/06/30']]); return ls; };
+const extractLig = async () => linesLig();
+/** 兩張卡只差暗號的寫法：一張抄正規字（只有新尺命中）、一張抄帳單原文（舊尺就命中＝main 選它）。 */
+const ligRecipe = (/** @type {string} */ anchor) => { const r = goodRecipe(); r.docAnchors = [anchor, '往來紀錄']; return r; };
+
+test('recipeBankRoute｜兩趟掃描：舊尺先跑一遍，main 選哪張卡我們就選哪張（#523 r10）', async () => {
+  // ⚠️ #523 讓版面比對收「舊尺或新尺」之後，候選卡變多 ⇒ 這裡「照列序取第一張成功的」會選到
+  //   **main 選不到的卡**。實測後果：真台幣戶被標成外幣 ⇒ 那戶交易被當外幣**不匯入**＝現金流漏帳，
+  //   而閘仍是 strong。⇒ 第一趟只用舊尺（逐字＝main），一張都沒中才跑第二趟用聯集。
+  await seedDb({ recipes: [
+    row({ id: 'rcp-new', current: ligRecipe('Office') }),   // 只有新尺命中，且**排在前面**
+    row({ id: 'rcp-old', current: ligRecipe('Oﬃce') }),     // 舊尺就命中＝main 的答案
+  ] });
+  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
+  assert.ok(r.hit, '前提：這份帳單解得出來');
+  assert.equal(r.hit?.recipeId, 'rcp-old',
+    '★★卡片列序不可以改寫 main 的答案——聯集版會選到排在前面的 rcp-new');
+});
+
+test('recipeBankRoute｜第二趟仍在：舊尺一張都沒中時，新尺認得的卡照樣服役（#523 r10）', async () => {
+  await seedDb({ recipes: [row({ id: 'rcp-new', current: ligRecipe('Office') })] });
+  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
+  assert.equal(r.hit?.recipeId, 'rcp-new',
+    '★兩趟不可以退化成「只跑舊尺」——那樣本支的主修就沒了');
+});
+
 test('recipeBankRoute｜純讀不變量：預覽路線跑完，db 的配方列一個位元組都沒動', async () => {
   await seedDb({ recipes: [row({ current: brokenRecipe(), previous: goodRecipe() })] });
   const db = await getDb();
