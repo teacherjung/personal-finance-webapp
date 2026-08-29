@@ -64,12 +64,20 @@ function openCardUploadForm(cards) {
         //   使用者按取消也是「自己關的」，但那是撤銷、不放行。
         const canOpenNext = () => onPage() && ctx.owns.handoff();
         const pw = data.password || '';
+        // 「記住密碼」抽成一支：模板成功路與 AI 後備路**都要記**（Codex r5#3——card_unrecognized
+        // 代表 PDF 已被這組密碼打開、只是版面認不得；勾了記住卻只在模板路記＝下次上傳又要再問）。
+        const rememberPw = async () => {
+          if (!(data.remember && pw)) return;
+          try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
+          catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
+        };
         /** @type {any} */ let r;
         try {
           r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
         } catch (e) {
           // 批二：密碼對了、但版面認不得 ⇒ 同一套 AI 後備（pw 必須一路帶——AI 路自己會再抽一次字）
           if (!shouldOfferAi(e)) throw e;
+          await rememberPw();
           if (await askBeforeSendAi()) {
             // fileName 從上傳窗一路帶進來（Codex r1#3 附帶）：這裡本來丟 ''，同意窗會顯示「未命名」
             if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
@@ -78,10 +86,7 @@ function openCardUploadForm(cards) {
           await sendCardToAi(b64, pw, canOpenNext);
           return;
         }
-        if (data.remember && pw) {
-          try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
-          catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
-        }
+        await rememberPw();
         openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, pw, onPage));   // 切頁／被接管都作廢（排程＋執行兩次核對）
       },
     });

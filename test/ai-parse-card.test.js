@@ -259,15 +259,61 @@ test('接地｜lastFour 先占位（r3#2）：卡號 token 不得被虛構明細
   const forged = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '憑空店', amount: 1234 }] };
   assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
     '★三個 1234 的位置＝末四碼＋兩格摘要，虛構明細沒位置可借');
-  // 完整卡號在場時：占的是長 token（卡號本人），摘要與明細的同數字不受影響
+  // 完整卡號在場、金額**不撞**末四碼＝正常過（占長 token 不影響金額）
   const text2 = [
+    '測試商業銀行 卡號 4321567812341234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 500 本期應繳總額 500',
+    '115/07/03 真的店 500',
+  ].join('\n');
+  const legit = { ...base, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 500, due: 500 },
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '真的店', amount: 500 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(legit), text2)), null,
+    '★完整卡號那型占位零成本——金額不撞末四碼就不受影響');
+  // 長數字串與撞號金額**同場**＝每型各占一格（r5#1）：可能誤擋，是檔頭劃界寫明的 fail-closed 代價
+  //（只占長的那型會把真卡號 token 留給虛構明細借——r5 的對帳單編號反例，見下一題）。
+  const text3 = [
     '測試商業銀行 卡號 4321567812341234',
     '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1234 本期應繳總額 1234',
     '115/07/03 真的店 1234',
   ].join('\n');
-  const legit = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '真的店', amount: 1234 }] };
-  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(legit), text2)), null,
-    '★lastFour 占長 token（完整卡號），三個金額 1234 各有各的位置——不誤擋');
+  const collide = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '真的店', amount: 1234 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(collide), text3)), 'ai_bad_answer',
+    '★撞號＋長數字串同場＝多占一格、寧擋勿收（誠實劃界的已知代價）');
+});
+
+test('接地｜「大到不可能是金額」不等於「是卡號」（r5#1）：對帳單編號不可搶走末四碼的占位', () => {
+  // 帳單另印含 1234 的長數字串（對帳單編號）——只占它的話，真的「1234」卡號 token 會留給
+  // 虛構的 1234 元明細借用。改「每型各占一格」後：長串與末四碼本人都占，虛構明細沒得借。
+  const text = [
+    '對帳單編號 991234567890 卡號末四碼 1234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1234 本期應繳總額 1234',
+  ].join('\n');
+  const base = { ...GOOD(), lastFour: '1234', totals: { prevDue: 0, paidAndRefund: 0, newCharges: 1234, due: 1234 }, adjustments: [] };
+  assertAiCardGrounded(normalizeAiCard({ ...base, transactions: [] }), text);   // 誠實（零明細）＝過
+  const forged = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '憑空店', amount: 1234 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★編號占一格、末四碼本人占一格、兩格摘要占兩格——虛構明細沒位置可借');
+});
+
+test('接地｜句讀逗號湊成合法千分位（r5#2）：「100， 200」不得拼成幻影 100200；兩個真金額照樣接得到地', () => {
+  const text = [
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 300 本期應繳總額 300',
+    '消費清單 100， 200',
+  ].join('\n');
+  // 誠實：100 與 200 各自是印出來的金額（句讀讀法）＝過三關
+  const honest = { ...GOOD(), lastFour: null, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 300, due: 300 }, adjustments: [],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '甲店', amount: 100 },
+      { date: '2026-07-04', postDate: null, desc: '乙店', amount: 200 },
+    ] };
+  const hp = normalizeAiCard(honest);
+  assertAiCardGrounded(hp, text);
+  reconcileAiCard(hp);
+  // 攻擊：宣稱帳單印過 100200（兩段都能獨立成數＝當句讀讀、不拼）
+  const forged = { ...honest, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 100200, due: 100200 },
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '幻影店', amount: 100200 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★「100，」＋「200」拼下去＝憑空登記帳單沒印過的數字（r5 的誤收路）');
 });
 
 test('接地｜符號嚴格、無絕對值後備（r1#2 的另一個方向）：帳單印正數、AI 宣稱負數＝擋', () => {

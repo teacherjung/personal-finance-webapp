@@ -69,8 +69,7 @@ export const AI_CONSENT_TITLE = '要請 AI 幫忙讀這份帳單嗎？';
 export const AI_CONSENT_SUBMIT_LABEL = '同意，送出去讀';
 /** 送出後鈕上的字（AI 解析實測要 5–6 秒；只把鈕變灰看起來像當掉）。 */
 export const AI_CONSENT_BUSY_LABEL = '正在送出…（需要 AI 讀取時通常一分鐘內，遇到仲裁會再久一點）';   // r1#2：未來式——HOSTED 停止線/未設鑰匙的路零 AI 呼叫，「AI 讀取中」＝#455 那型假進度；G21：雙模式皆真
-/** 卡片線自己的送出中字樣（Codex r1#5）：信用卡刻意單讀、沒有仲裁——借銀行那句會宣稱不存在的流程。
- * ⚠️ 文案草稿待 William 審改。 */
+/** 卡片線自己的送出中字樣（Codex r1#5）：信用卡刻意單讀、沒有仲裁——借銀行那句會宣稱不存在的流程。 */
 export const AI_CONSENT_BUSY_LABEL_CARD = '正在送出…（需要 AI 讀取時通常一分鐘內，第一讀不順會換更強的模型再讀、會再久一點）';
 export const AI_PROVIDER_LABEL = 'Anthropic（做 Claude 的 AI 公司）';
 /** ⚠️ 費用級距的唯一住所。出處＝`docs/parser-generalization-plan.md` §六 的計算基礎（該處自己標
@@ -292,7 +291,6 @@ export function aiPreviewBadgeHtml(preview) {
  * **信用卡**AI 預覽徽章（批二；Codex r1#5）：不可借銀行的 `aiPreviewBadgeHtml`——那張講的是
  * 帳戶餘額鏈／概要餘額／雙讀仲裁，信用卡一項都沒跑，借來用＝讓使用者錯信不存在的防線。
  * 這張只講卡片線真的跑過的：等式閘＋加總閘＋接地檢查，以及它們看不到的（就地白話、照實劃界）。
- * ⚠️ 文案草稿待 William 審改。
  * @param {any} preview
  */
 export function aiCardPreviewBadgeHtml(preview) {

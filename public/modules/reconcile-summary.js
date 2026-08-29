@@ -161,7 +161,7 @@ export function unknownIssuerNoticeHtml(bankEvidence) {
  * **AI 路**的「不自動歸卡」警語（批二；Codex r2#4）：AI 預覽固定 `bankEvidence:'none'`，
  * 但上面那句講「內建版面盡力讀出」——跟同畫面的 AI 徽章當場矛盾（這份明明是 AI 讀的）。
  * AI 路換這句：只講歸卡紀律（讀取品質的劃界已在 AI 徽章講過，不重複）。
- * ⚠️ 文案草稿待 William 審改（上面模板版那句是他核定的，一字未動）。
+ * （上面模板版那句是 William 核定的，一字未動。）
  * @returns {string}
  */
 export function aiUnknownCardNoticeHtml() {

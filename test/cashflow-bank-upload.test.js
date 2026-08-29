@@ -263,6 +263,12 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   assert.match(src, /const snap = snapshotUpload\(file\);[\s\S]{0,300}?await fileToBase64\(snap\.file\)/,
     '快照要在第一個 await 之前凍好、b64 從快照讀');
   assert.doesNotMatch(src, /file\?\.name/, '快照之後不准再讀可變的 file?.name（同意窗顯示與實際送出會分家）');
+  // Codex r5#3（批二）：AI 後備路也要記密碼——card_unrecognized 代表 PDF 已被打開、只是版面認不得；
+  //   只在模板成功路記＝勾了記住、下次上傳照樣再問
+  assert.match(src, /if \(!shouldOfferAi\(e\)\) throw e;\s*await rememberPw\(\);/,
+    'AI 後備分流之後、發同意窗／直送之前要先記密碼');
+  assert.match(src, /\}\s*await rememberPw\(\);\s*openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/,
+    '模板成功路照舊記密碼（抽成同一支 rememberPw、不是抄兩份）');
   // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
   assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');
