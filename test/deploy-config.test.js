@@ -120,3 +120,47 @@ test('xlsx 從原廠 CDN 裝，而且 lockfile 有 integrity 指紋（別「順�
   assert.ok(/^0\.(19\.[3-9]|19\.\d\d|[2-9]\d*\.)/.test(String(v.version)),
     `xlsx 版本要 ≥ 0.19.3（兩個 advisory 的修正版），實際 ${v.version}`);
 });
+
+test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 半鬆綁）', () => {
+  const ci = read('.github/workflows/ci.yml');
+  // ⚠️ 只掃**生效的設定**，不掃註解——註解裡寫「draft」是在講歷史與理由，不是條件。
+  //    行尾註解也要剝（Grok #526 掃到：只丟「整行 # 開頭」的話，把真 types 改掉、
+  //    舊列表當行尾備註留著＝types 斷言命中的是註解＝假綠）——沿用同檔的 uncommented()。
+  const active = uncommented(ci).split('\n').filter((l) => l.trim() !== '');
+  // ⚠️ 掃「任何生效行」而不是只掃 `if:` 行（2026-08-29 預審抓到的洞）：YAML 多行寫法
+  //    （`if: >-` 換行接條件）會讓「if: 與 draft 同一行」的判準靜靜漏抓——被拆掉的那條
+  //    原本就 70+ 字元，日後折行加回來剛好繞過。改成整行掃，折行、env 間接引用都逃不掉。
+  const hits = active.filter((l) => /draft/i.test(l));
+  assert.deepEqual(hits, [],
+    'ci.yml 的生效設定又出現 draft（草稿跳過？）——省錢的理由已隨 repo 公開消失，而「草稿不考」'
+      + '的代價實測過：本機三關全在 macOS，Linux 才壞的東西要到轉 ready 才現形、每修一條'
+      + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
+      + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/GitHub分支保護-設定與驗證.md 一起改'
+      + '——別留兩種相反答案並存。');
+  // ⚠️ 本題的身分＝**防「不小心加回去」的絆線，不是防惡意 YAML 的安全閘**（Codex #526
+  //    r1 中①→r2 中① 兩輪釐清出來的劃界）：安全不變量「能合併的 head 一定跑過真考卷」
+  //    住在 scripts/check-ci-really-ran.js——就算有人把跳過加回來，合併頭仍要有真 success
+  //    才合得了；本題丟的只是「草稿期的早期訊號」（macOS/Linux 盲點回到 ready 才現形），
+  //    是流程品質、不是安全。對手是「未來在成本壓力下順手加回 if 的自己人」，不是 YAML
+  //    寫法高手——所以用正則收攏**常見拼法**（`if:`／`if :`／`"if":`／`'if':`，r2 抓到
+  //    後兩種），不引入 YAML 解析器去追殺 flow-map、explicit-key、跳脫鍵這些沒人會
+  //    不小心寫出來的形狀（列舉補不完；為非安全絆線加相依不成比例）。
+  //    本檔兩個 job（required 的上線 Node＋探照燈 dev-machine）必須無條件執行；日後真需要條件（如 step 級 if: failure()）＝
+  //    有意識地連同本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
+  //    間接層（composite action／reusable workflow）同樣掃不到——靠審查（`uses:` 本地
+  //    路徑＝訊號）。
+  // 清單項寫法也收（Grok #526 低）：step 級 if 常寫成 `- if: …`（dash 後才是鍵）。
+  const conds = active.filter((l) => /^\s*(?:-\s*)?["']?if["']?[^\S\n]*:/.test(l));
+  assert.deepEqual(conds, [],
+    'ci.yml 出現 if: 條件——本檔兩個 job（required 的「上線用的 Node」＋探照燈 dev-machine，與其步驟）必須無條件執行，否則「草稿也照跑」'
+      + '只是註解宣稱。2026-08-15〜08-29 的草稿跳過正是一條 job 級 if；等價寫法'
+      + '（event_name/action 判斷）不含 draft 字也一樣跳過草稿場次。真有正當理由加條件，'
+      + '請連本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。');
+  // 「草稿也跑」的前提是 pull_request 事件本身有訂閱（opened/synchronize 對草稿也會發）；
+  // ready_for_review 留著＝補考保險。types 列表變動＝這個前提可能被抽走，要人來看。
+  // ⚠️ 只對**生效行**斷言（預審抓到）：掃全文的話，types 行被改掉、而某條註解引用舊字面
+  //    （本 repo 註解慣常逐字引用退役設定，ci.yml 檔頭就有一例）＝斷言靜靜通過。
+  assert.match(active.join('\n'), /types: \[opened, synchronize, reopened, ready_for_review\]/,
+    'pull_request 的 types 變了——草稿期照跑靠 opened/synchronize 事件，'
+      + 'ready_for_review 是「萬一沒跑成，轉正式補考一次」的保險；動這行要連同上一題的前提一起想');
+});

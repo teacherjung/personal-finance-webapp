@@ -1,10 +1,10 @@
 // @ts-check
-// 真考卷閘的行為考題：skipped 不是綠、冒名的同名 check 不算數、空窗與舊場次重跑都要被擋
+// 真考卷閘的行為考題：skipped 不是綠、冒名的同名 check 不算數、缺場次 fail-closed 與舊場次重跑都要被擋
 //（設計依據見 scripts/check-ci-really-ran.js 檔頭；r1 高①②＝身分過濾與排序鍵的來歷）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,10 +31,10 @@ test('真考卷閘｜兩個 required 都真 success＋auto-merge 關＝放行', 
   assert.equal(r.code, 0, r.reason);
 });
 
-test('真考卷閘｜skipped 不是綠：草稿期跳過的場次不放行（GitHub 視同滿足、這裡不買帳）', () => {
+test('真考卷閘｜skipped 不是綠：不放行（2026-08-29 草稿也照跑後，skipped＝舊草稿場次重跑或異常跳過；GitHub 視同滿足、這裡不買帳）', () => {
   const r = evaluateGate([run(NODE_JOB, 'skipped'), run(COLLAB_JOB, 'success')], false, REQ);
   assert.equal(r.code, 1);
-  assert.ok(r.reason.includes('skipped'), '★理由要點名 skipped＝草稿跳過');
+  assert.ok(r.reason.includes('skipped'), '★理由要點名 skipped');
 });
 
 test('真考卷閘｜冒名不算數（r1 高①）：別的 App 貼同名 success 不能替真考卷放行', () => {
@@ -96,10 +96,10 @@ test('真考卷閘｜同刻並列（r2）：completed_at 平手且結論不一�
   assert.equal(ok.code, 0, ok.reason);
 });
 
-test('真考卷閘｜空窗防線：正牌一場都沒有＝fail-closed 退 2；任一場還在跑＝退 1 等它', () => {
+test('真考卷閘｜缺場次防線：正牌一場都沒有＝fail-closed 退 2；任一場還在跑＝退 1 等它', () => {
   const none = evaluateGate([run(COLLAB_JOB, 'success')], false, REQ);
-  assert.equal(none.code, 2, '轉正式後 run 還沒建立的空窗＝查不到＝不安全');
-  // 舊 success 已完成＋新場次在跑（例：轉正式後的真考卷正在跑）：**必須等**、不可拿舊綠搶跑放行——
+  assert.equal(none.code, 2, '正牌場次一場都沒有＝查不到＝不安全（fail-closed，缺場次不放行）');
+  // 舊 success 已完成＋新場次在跑（例：新推送的真考卷正在跑）：**必須等**、不可拿舊綠搶跑放行——
   // 若拿掉「在跑＝等」檢查，這一格會變 code 0（舊 success 勝出）＝假綠承重域。
   const running = evaluateGate([
     run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z' }),
@@ -110,7 +110,7 @@ test('真考卷閘｜空窗防線：正牌一場都沒有＝fail-closed 退 2；
   assert.ok(running.reason.includes('還在跑'), '★理由要是「等」、不是誤判成紅');
 });
 
-test('真考卷閘｜auto-merge 開著＝直接擋（空窗洞的自動化版本，人手都不用按）', () => {
+test('真考卷閘｜auto-merge 開著＝直接擋（它只看分支保護、繞過整套合併程序，人手都不用按）', () => {
   const r = evaluateGate([run(NODE_JOB, 'success'), run(COLLAB_JOB, 'success')], true, REQ);
   assert.equal(r.code, 1);
   assert.ok(r.reason.includes('auto-merge'));
@@ -221,4 +221,48 @@ test('閘·端到端｜fail-closed 三態：保護回錯形狀／check runs 錯�
   assert.equal(runCli({ prot: '{}', pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) }).status, 2);
   assert.equal(runCli({ prot: PROT2, pages: '[{"name":"x"}]' }).status, 2);
   assert.equal(runCli({ view: { headRefOid: 'short', autoMergeRequest: null }, prot: PROT2, pages: '' }).status, 2);
+});
+// ── 鐵則 11：三次 gh 呼叫**每一個呼叫點**都要驗（#526 r4 高）──────────────
+// ⚠️ cross-pr-merge.test.js 那題的通用假 gh 一叫就 exit 1 ⇒ 本閘 fail-closed 收工，
+//    **只有第一次呼叫被走到**——r3 宣稱「拿掉任一處 gitEnv 都轉紅」是抽到唯一有覆蓋的
+//    那格（Codex r4 逐處突變實測：第一處紅、第二三處綠）。那題刻意不給合法資料
+//    （給了，別支閘會真的去做 worktree add 之類的動作），所以三段式覆蓋只能在這裡
+//    用**本閘專屬**的假 gh 做：回三段合法資料、讓 CLI 走完全程，逐次斷言環境乾淨。
+test('⭐ 鐵則11｜三次 gh 呼叫逐一驗：假 gh 回合法資料走完全程，每一次都不得看到 GIT_*', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-gh3-'));
+  const log = join(dir, 'calls.log');
+  const fake = join(dir, 'gh');
+  const SHA40 = 'a'.repeat(40);
+  // 依參數分派三段回應；每次呼叫記下「第幾類＋當下看得到哪些 GIT_*」
+  writeFileSync(fake, `#!/bin/sh
+{ printf '%.50s::' "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; echo; } >> ${JSON.stringify(log)}
+case "$*" in
+  *"pr view"*) echo '{"headRefOid":"${SHA40}","autoMergeRequest":null}';;
+  *protection*) echo '[{"context":"CI-A","appId":null}]';;
+  *check-runs*) echo '[{"name":"CI-A","status":"completed","conclusion":"success","completed_at":"2026-08-30T00:00:00Z","app_id":null}]';;
+  *) echo 'unexpected gh args' >&2; exit 9;;
+esac
+`);
+  chmodSync(fake, 0o755);
+  /** @type {Record<string,string>} */
+  const env = { PATH: `${dir}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' };
+  // 注入列過名的與沒列過名的（同 cross-pr-merge 那題的口徑：族會長、不列名）
+  env.GIT_DIR = '/fake/path/.git/worktrees/x';
+  env.GIT_CONFIG_COUNT = '1';
+  env.GIT_CONFIG_KEY_0 = 'user.name';
+  env.GIT_CONFIG_VALUE_0 = 'fixture';
+  env.GIT_BOGUS_FUTURE_THING = 'unlisted';
+  const r = spawnSync('node', [SCRIPT, '526'], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, `合法三段資料下閘應通過，實得 ${r.status}：\n${r.stdout}${r.stderr}`);
+
+  const lines = readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 3, `gh 應被呼叫恰三次（pr view／protection／check-runs），實得 ${lines.length}：\n${lines.join('\n')}`);
+  for (const [i, line] of lines.entries()) {
+    const leaked = line.split('::')[1].trim();
+    assert.equal(leaked, '',
+      `第 ${i + 1} 次 gh 呼叫仍看得到 GIT_*：${leaked}\n`
+        + `   （該行：${line}）\n`
+        + '   繼承有效 GIT_DIR 時這一步會查到**別的 repo** 且輸出看起來正常——'
+        + '每一個呼叫點都必須 env: gitEnv()，少一處就是一個沒守到的門。');
+  }
 });

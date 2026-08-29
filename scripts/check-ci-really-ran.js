@@ -1,24 +1,31 @@
 // @ts-check
 // 真考卷閘：合併前驗「required checks 在合併頭上**真的跑過且成功**」——skipped／cancelled 不算數。
 //
-// 為什麼需要它（2026-08-15，省額度改造的 Grok 預審抓到的兩個【高】）：
-//   ci.yml 對草稿 PR 的推送用 job 級 `if` 跳過省額度，而 GitHub 把 skipped 的 required check
-//   **視同滿足**。設計上的不變量是「草稿合不了；轉正式那一刻（ready_for_review）會真跑一次」，
-//   但它有兩個機械上兜不住的洞：
+// 為什麼需要它（2026-08-15，省額度改造的 Grok 預審抓到的兩個【高】；2026-08-29 更新：
+// 草稿跳過已拆——repo 公開＝CI 免費、草稿也照跑——但本閘**不可跟著拆**，理由在後）：
+//   2026-08-15〜08-29 ci.yml 對草稿 PR 用 job 級 `if` 跳過省額度，而 GitHub 把 skipped 的
+//   required check **視同滿足**。當時的不變量是「草稿合不了；轉正式那一刻（ready_for_review）
+//   會真跑一次」，但它有兩個機械上兜不住的洞：
 //   ①空窗：`gh pr ready` 之後、真 CI 的 check run 建立之前，分支保護看到的仍是舊 head 的
 //     skipped＝綠——這段空窗裡按合併（或 auto-merge）就是「沒跑考卷就合」。
 //   ②舊場次重跑：GitHub 的 Re-run 沿用**原始事件 payload**（`draft: true` 凍結在裡面），
 //     重跑舊草稿場次會再蓋一筆 skipped；配上 concurrency cancel-in-progress 還可能先取消
 //     正在跑的真考卷。
-//   分支保護擋不住這兩個（skipped＝滿足是 GitHub 的語意，改不動），所以在**合併程序**收口：
+//   分支保護擋不住這兩個（skipped＝滿足是 GitHub 的語意，改不動），所以在**合併程序**收口。
+//   2026-08-29 之後：①的空窗基本消失（head 在草稿期就有真場次），但②與現行 workflow 無關
+//   ——Re-run 舊草稿時代的場次至今仍會蓋 skipped；且未來若有人把跳過加回來、或帳務狀態
+//   讓場次以非 success 收場，這裡仍是「能合併的 head 一定跑過真考卷」的最後收口。
+//   auto-merge 必關的檢查與草稿無關、照舊。收口的做法：
 //   本閘直接讀合併頭的 check runs，逐一要求 conclusion === 'success'——skipped 就是紅。
-//   同時要求 auto-merge 必須關著（空窗洞的自動化版本：檢查已「綠」時 ready 一按就自動合）。
+//   同時要求 auto-merge 必須關著（它只看分支保護＝skipped 也算滿足、且繞過整套合併程序的閘，
+//   「綠」一到就自動合——與草稿跳過存不存在無關）。
 //
 // 慣例同其他閘：純判斷層（evaluateGate）供考題直測；CLI 包裝 fail-closed
 //（查不到／形狀不對＝退出碼 2，不放行）。
 
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
+import { gitEnv } from '../lib/git-env.js';
 
 /**
  * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
@@ -70,7 +77,7 @@ export function isRequiredList(v) {
  */
 export function evaluateGate(runs, autoMergeOn, required) {
   if (autoMergeOn) {
-    return { code: 1, reason: 'auto-merge 開著——草稿轉正式的空窗裡它會拿舊的 skipped 綠燈直接合併，先 `gh pr merge --disable-auto` 關掉' };
+    return { code: 1, reason: 'auto-merge 開著——它只看分支保護（skipped 也算滿足，重跑舊草稿場次仍蓋得出來）、且繞過整套合併程序的閘，先 `gh pr merge --disable-auto` 關掉' };
   }
   if (required.length === 0) {
     return { code: 2, reason: '分支保護的 required checks 名單是空的——查不到＝不安全（保護被關掉了？）' };
@@ -93,7 +100,7 @@ export function evaluateGate(runs, autoMergeOn, required) {
     const tied = mine.filter((r) => String(r.completed_at) === maxAt);
     const bad = tied.find((r) => r.conclusion !== 'success');
     if (bad) {
-      return { code: 1, reason: `「${context}」最新（completed_at 並列含）場次的結論是 ${bad.conclusion}——skipped＝草稿期的跳過（不是真考卷）、其餘＝沒過；同刻結論不一致也算不明。轉正式後重跑到真的 success 再合併` };
+      return { code: 1, reason: `「${context}」最新（completed_at 並列含）場次的結論是 ${bad.conclusion}——skipped＝沒真跑（2026-08-29 草稿也照跑之後，多半是重跑了舊草稿場次或異常跳過）、其餘＝沒過；同刻結論不一致也算不明。Re-run 到真的 success 再合併` };
     }
   }
   return { code: 0, reason: `required checks（${required.map((r) => r.context).join('、')}）在合併頭上皆真跑且 success、auto-merge 關閉` };
@@ -104,14 +111,14 @@ if (isMainModule(import.meta.url)) {
   const pr = process.argv[2];
   if (!pr || !/^\d+$/.test(pr)) { console.error('用法：node scripts/check-ci-really-ran.js <PR 編號>'); process.exit(2); }
   try {
-    const view = JSON.parse(execFileSync('gh', ['pr', 'view', pr, '--json', 'headRefOid,autoMergeRequest'], { encoding: 'utf8' }));
+    const view = JSON.parse(execFileSync('gh', ['pr', 'view', pr, '--json', 'headRefOid,autoMergeRequest'], { encoding: 'utf8', env: gitEnv() }));
     const sha = view?.headRefOid;
     if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) { console.error(`真考卷閘 PR #${pr}：讀不到合併頭 sha（fail-closed）`); process.exit(2); }
     // required 名單＝現場讀分支保護（r1 高①）；讀不到／空＝fail-closed
-    const prot = JSON.parse(execFileSync('gh', ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '[.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]'], { encoding: 'utf8' }));
+    const prot = JSON.parse(execFileSync('gh', ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '[.checks[] | { context, appId: (if (.app_id // -1) < 0 then null else .app_id end) }]'], { encoding: 'utf8', env: gitEnv() }));
     if (!isRequiredList(prot)) { console.error(`真考卷閘 PR #${pr}：分支保護名單形狀不對（fail-closed）`); process.exit(2); }
     // check runs＝--paginate 撈全（r1 高②：單頁 100 筆會截斷）；--jq 每頁輸出一個陣列、串起來再合併
-    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]'], { encoding: 'utf8' });
+    const pages = execFileSync('gh', ['api', '--paginate', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '[.check_runs[] | { name, status, conclusion, completed_at, app_id: (.app.id // null) }]'], { encoding: 'utf8', env: gitEnv() });
     const raw = pages.split('\n').filter((l) => l.trim()).flatMap((l) => JSON.parse(l));
     if (!isCheckRunList(raw)) { console.error(`真考卷閘 PR #${pr}：check runs 形狀不對（fail-closed）`); process.exit(2); }
     const { code, reason } = evaluateGate(raw, view?.autoMergeRequest != null, prot);

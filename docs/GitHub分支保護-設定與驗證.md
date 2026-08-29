@@ -7,9 +7,12 @@
 
 ## 前提
 
-- repo 是 **private**，方案必須是 **GitHub Pro 以上**。
-  Free 方案下分支保護 API 直接回 403（`Upgrade to GitHub Pro or make this repository public`），
-  **一條規則都設不了**。2026-08-02 已升級。
+- 2026-08-02 設定當時 repo 是 **private**，所以方案必須是 **GitHub Pro 以上**
+  （Free 方案下私有 repo 的分支保護 API 直接回 403（`Upgrade to GitHub Pro or make this
+  repository public`），一條規則都設不了。2026-08-02 已升級）。
+  ⚠️ **2026-08 下旬 repo 已轉公開**（省 Actions 額度）：公開 repo 的分支保護免費＝Pro 不再是
+  硬前提；但轉公開改變的是**威脅模型**（任何人可 fork、可開 PR）——fork 邊界見下方
+  「守備範圍」節，那節已照公開世界改寫（2026-08-29 #526 Codex r1 抓到本檔仍寫舊世界）。
 
 ## A. 目前 GitHub 上真正的設定（2026-08-02 用唯讀 API 實讀，不是憑印象）
 
@@ -132,11 +135,19 @@ Settings → Branches → 編輯 `main` 的規則：
 
 ## ⚠️ 這道閘的守備範圍（誠實劃界，Codex #382 r2 查證）
 
-- **fork 來的 PR 不在守備範圍內。** 這個 private repo 目前
-  `run_workflows_from_fork_pull_requests: false`，fork PR **根本不會跑 workflow**——
-  設成 required check 之後會等不到它（既有的 CI required check 也一樣，不是這次分檔引進的）。
-  未來若要接受 fork 的 PR，這道閘要重新設計成 base-controlled（因為 fork 可以連 workflow
-  與腳本本身一起改）。**現在三方都用同一個帳號、沒有 fork，所以不是問題。**
+- **fork 來的 PR（2026-08-29 照「repo 已公開」改寫；原文寫的是 private 世界）**：repo 已是
+  public＝任何人可 fork、可開 PR。fork PR 的 workflow 會不會跑由 Actions 的 fork 核准政策決定
+  （2026-08-29 實讀＝`first_time_contributors`：**首次**貢獻者要人工核准才跑；⚠️ **已有
+  合併紀錄的外部貢獻者會自動執行、不經核准**——GitHub 自己警告過：一個簡單貢獻被合併後
+  就跨過此門，所以核准政策是道**弱門**，別當成主防線）；就算跑，
+  GITHUB_TOKEN 對 fork 是**唯讀**、secrets 不給（GitHub 預設模型）。三個後果：
+  ①協作欄位閘在 fork PR 上：首次貢獻者的場次等核准；回頭客自動跑——等不到 required check
+  的＝合不進來（fail-closed），跑起來的照後兩點對待 ②核准政策、唯讀 token 與分支保護擋的是**未經核准的執行、對 base
+  的寫入、拿 secrets**——**不是檢查結果的可信度**：③**fork 可以連 workflow 與腳本本身
+  一起改**（GitHub 要求核准前先看 PR 有沒有動 workflow，正是這個原因；本機合併閘跑的
+  也是受審 HEAD 上的腳本，一樣改得到），所以任何「PR 自己帶的檢查」對 fork 都不可信
+  ——檢查結果要可信，靠**人工審 diff**、或用**可信 base 版本的工具**去驗 head。
+  現在三方仍用同一個帳號開發；fork PR 出現＝陌生人貢獻，**先人工讀 diff 再談其他**。
 - **它擋的是「PR 說明寫了誰」，不是「實際上是誰按的」。** 後者只有分身分能補（見下）。
 
 ## 之後的第二步：分身分（尚未做）
@@ -159,14 +170,17 @@ Settings → Branches → 編輯 `main` 的規則：
 - `REVIEW-AND-MERGE.md` — 合併步驟
 - `AGENTS.md`「三方協作框架」節 — 唯一不變量與角色分工
 
-## 草稿期 skipped 與 required checks（2026-08-15 省額度慣例）
+## 草稿期 skipped 與 required checks（2026-08-15 立；2026-08-29 半鬆綁後 skipped＝異常）
 
-**只有 ci.yml** 對草稿 PR 的推送以 job 級 `if` 跳過：檢查顯示 **skipped**、分支保護視同滿足。
-這**不是**放水，但「草稿合不了＋轉正式（ready_for_review）會真跑」只是**第一層**——它有兩個洞
-（轉正式後真 CI 起跑前的空窗、Re-run 舊草稿場次的凍結 payload；GitHub 把 skipped 視同滿足）。
-不變量由**第二層**補完＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
+2026-08-15〜08-29 ci.yml 曾對草稿 PR 以 job 級 `if` 跳過（省額度）：那段期間檢查顯示 **skipped**、
+分支保護視同滿足＝設計內。**2026-08-29 半鬆綁後草稿也照跑**（repo 公開＝免費；理由與前提綁定
+＝REVIEW-AND-MERGE.md「省額度慣例」節）——**現在看到 skipped＝異常**（多半是 Re-run 舊草稿時代
+的場次沿用凍結 payload 蓋出來的），而分支保護仍會把它視同滿足（GitHub 的語意、改不動），
+所以不變量仍由**第二層**收口＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
 必須真 success、auto-merge 必須關）。
-另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps）＝不會留
-skipped 綠燈頂著 ②**協作欄位閘刻意不套**——它的形狀被 test/collab-invariant-docs.test.js
-「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線、全程照跑。
-若未來把 ci.yml 的 `ready_for_review` 觸發或 draft 條件拿掉，不變量會破——動那兩行前先回來讀這節。
+另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps；repo 轉回
+私有才可能再遇到）＝不會留 skipped 綠燈頂著 ②**協作欄位閘從頭到尾不曾跳過**——它的形狀被
+test/collab-invariant-docs.test.js「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線。
+若未來要把 draft 跳過**加回來**、或動 `ready_for_review` 觸發——先回來讀這節與 REVIEW-AND-MERGE.md
+「省額度慣例」節，並讓 test/deploy-config.test.js「CI 對草稿也要跑」的考題跟著改；**別留兩種相反
+答案並存**（本節 2026-08-29 就是被預審抓到殘留才改的——絆線寫了、踩了、沒回來，考題才是真的）。
