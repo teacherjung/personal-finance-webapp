@@ -159,14 +159,17 @@ Settings → Branches → 編輯 `main` 的規則：
 - `REVIEW-AND-MERGE.md` — 合併步驟
 - `AGENTS.md`「三方協作框架」節 — 唯一不變量與角色分工
 
-## 草稿期 skipped 與 required checks（2026-08-15 省額度慣例）
+## 草稿期 skipped 與 required checks（2026-08-15 立；2026-08-29 半鬆綁後 skipped＝異常）
 
-**只有 ci.yml** 對草稿 PR 的推送以 job 級 `if` 跳過：檢查顯示 **skipped**、分支保護視同滿足。
-這**不是**放水，但「草稿合不了＋轉正式（ready_for_review）會真跑」只是**第一層**——它有兩個洞
-（轉正式後真 CI 起跑前的空窗、Re-run 舊草稿場次的凍結 payload；GitHub 把 skipped 視同滿足）。
-不變量由**第二層**補完＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
+2026-08-15〜08-29 ci.yml 曾對草稿 PR 以 job 級 `if` 跳過（省額度）：那段期間檢查顯示 **skipped**、
+分支保護視同滿足＝設計內。**2026-08-29 半鬆綁後草稿也照跑**（repo 公開＝免費；理由與前提綁定
+＝REVIEW-AND-MERGE.md「省額度慣例」節）——**現在看到 skipped＝異常**（多半是 Re-run 舊草稿時代
+的場次沿用凍結 payload 蓋出來的），而分支保護仍會把它視同滿足（GitHub 的語意、改不動），
+所以不變量仍由**第二層**收口＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
 必須真 success、auto-merge 必須關）。
-另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps）＝不會留
-skipped 綠燈頂著 ②**協作欄位閘刻意不套**——它的形狀被 test/collab-invariant-docs.test.js
-「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線、全程照跑。
-若未來把 ci.yml 的 `ready_for_review` 觸發或 draft 條件拿掉，不變量會破——動那兩行前先回來讀這節。
+另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps；repo 轉回
+私有才可能再遇到）＝不會留 skipped 綠燈頂著 ②**協作欄位閘從頭到尾不曾跳過**——它的形狀被
+test/collab-invariant-docs.test.js「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線。
+若未來要把 draft 跳過**加回來**、或動 `ready_for_review` 觸發——先回來讀這節與 REVIEW-AND-MERGE.md
+「省額度慣例」節，並讓 test/deploy-config.test.js「CI 對草稿也要跑」的考題跟著改；**別留兩種相反
+答案並存**（本節 2026-08-29 就是被預審抓到殘留才改的——絆線寫了、踩了、沒回來，考題才是真的）。

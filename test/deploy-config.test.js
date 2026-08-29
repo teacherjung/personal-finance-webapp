@@ -121,19 +121,25 @@ test('xlsx 從原廠 CDN 裝，而且 lockfile 有 integrity 指紋（別「順�
     `xlsx 版本要 ≥ 0.19.3（兩個 advisory 的修正版），實際 ${v.version}`);
 });
 
-test('CI 對草稿也要跑：ci.yml 不准有 draft 條件（2026-08-29 半鬆綁）', () => {
+test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 半鬆綁）', () => {
   const ci = read('.github/workflows/ci.yml');
   // ⚠️ 只掃**生效的設定行**，不掃註解——註解裡寫「draft」是在講歷史與理由，不是條件。
   const active = ci.split('\n').filter((l) => !l.trim().startsWith('#'));
-  const conditioned = active.filter((l) => /^\s*if:/.test(l) && /draft/i.test(l));
-  assert.deepEqual(conditioned, [],
-    'ci.yml 又長出 draft 條件（草稿跳過）——省錢的理由已隨 repo 公開消失，而「草稿不考」'
+  // ⚠️ 掃「任何生效行」而不是只掃 `if:` 行（2026-08-29 預審抓到的洞）：YAML 多行寫法
+  //    （`if: >-` 換行接條件）會讓「if: 與 draft 同一行」的判準靜靜漏抓——被拆掉的那條
+  //    原本就 70+ 字元，日後折行加回來剛好繞過。改成整行掃，折行、env 間接引用都逃不掉。
+  const hits = active.filter((l) => /draft/i.test(l));
+  assert.deepEqual(hits, [],
+    'ci.yml 的生效設定又出現 draft（草稿跳過？）——省錢的理由已隨 repo 公開消失，而「草稿不考」'
       + '的代價實測過：本機三關全在 macOS，Linux 才壞的東西要到轉 ready 才現形、每修一條'
-      + '重拿一張「通過」＝燒審查輪。要加回來先讀 REVIEW-AND-MERGE.md「省額度慣例」節'
-      + '（且那節的「CI 對草稿也照跑」要一起改，別留兩種相反答案並存）。');
+      + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
+      + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/GitHub分支保護-設定與驗證.md 一起改'
+      + '——別留兩種相反答案並存。');
   // 「草稿也跑」的前提是 pull_request 事件本身有訂閱（opened/synchronize 對草稿也會發）；
   // ready_for_review 留著＝補考保險。types 列表變動＝這個前提可能被抽走，要人來看。
-  assert.match(ci, /types: \[opened, synchronize, reopened, ready_for_review\]/,
+  // ⚠️ 只對**生效行**斷言（預審抓到）：掃全文的話，types 行被改掉、而某條註解引用舊字面
+  //    （本 repo 註解慣常逐字引用退役設定，ci.yml 檔頭就有一例）＝斷言靜靜通過。
+  assert.match(active.join('\n'), /types: \[opened, synchronize, reopened, ready_for_review\]/,
     'pull_request 的 types 變了——草稿期照跑靠 opened/synchronize 事件，'
       + 'ready_for_review 是「萬一沒跑成，轉正式補考一次」的保險；動這行要連同上一題的前提一起想');
 });

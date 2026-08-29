@@ -17,7 +17,8 @@
 //   讓場次以非 success 收場，這裡仍是「能合併的 head 一定跑過真考卷」的最後收口。
 //   auto-merge 必關的檢查與草稿無關、照舊。收口的做法：
 //   本閘直接讀合併頭的 check runs，逐一要求 conclusion === 'success'——skipped 就是紅。
-//   同時要求 auto-merge 必須關著（空窗洞的自動化版本：檢查已「綠」時 ready 一按就自動合）。
+//   同時要求 auto-merge 必須關著（它只看分支保護＝skipped 也算滿足、且繞過整套合併程序的閘，
+//   「綠」一到就自動合——與草稿跳過存不存在無關）。
 //
 // 慣例同其他閘：純判斷層（evaluateGate）供考題直測；CLI 包裝 fail-closed
 //（查不到／形狀不對＝退出碼 2，不放行）。
@@ -75,7 +76,7 @@ export function isRequiredList(v) {
  */
 export function evaluateGate(runs, autoMergeOn, required) {
   if (autoMergeOn) {
-    return { code: 1, reason: 'auto-merge 開著——草稿轉正式的空窗裡它會拿舊的 skipped 綠燈直接合併，先 `gh pr merge --disable-auto` 關掉' };
+    return { code: 1, reason: 'auto-merge 開著——它只看分支保護（skipped 也算滿足，重跑舊草稿場次仍蓋得出來）、且繞過整套合併程序的閘，先 `gh pr merge --disable-auto` 關掉' };
   }
   if (required.length === 0) {
     return { code: 2, reason: '分支保護的 required checks 名單是空的——查不到＝不安全（保護被關掉了？）' };

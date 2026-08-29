@@ -49,7 +49,7 @@ jobs:
     # ⚠️ 真考卷閘（scripts/check-ci-really-ran.js）刻意不跟著拆：Re-run 舊場次沿用凍結
     #    payload（draft:true 凍在裡面）仍會蓋出 skipped，而 GitHub 把 skipped 視同滿足——
     #    「能合併的 head 一定跑過真考卷」的收口仍是它（完整病理見該檔檔頭）。
-    # 考題＝test/deploy-config.test.js「CI 對草稿也要跑」：不准再長出 draft 條件。
+    # 考題＝test/deploy-config.test.js「CI 對草稿也要跑」：生效行不准出現 draft（含折行寫法）。
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
