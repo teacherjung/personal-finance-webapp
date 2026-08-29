@@ -201,6 +201,52 @@ test('接地｜殘片紀律（r3#1）：拆格碎片不得當獨立金額；拼�
     '★殘片「1,」不是帳單印的 1——它只活在拼接組裡，獨立宣稱借不走');
 });
 
+test('接地｜前逗號拆格（r4#1）：「1 ,000」的頭段「1」自己是合法形——照樣不得獨立供位', () => {
+  // r3 的形狀篩只擋得住「1,│000」方向（殘片自己壞形）；「1 │,000」的頭段是合法的「1」，
+  // 要靠「拼接組成員一律不得獨立登記」才擋得住。
+  const text = [
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1,001 本期應繳總額 1,001',
+    '拆格店 1 ,000',
+    '單獨數字 1',
+  ].join('\n');
+  const honest = { ...GOOD(), lastFour: null, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 1001, due: 1001 }, adjustments: [],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '拆格店', amount: 1000 },
+      { date: '2026-07-04', postDate: null, desc: '單獨一元', amount: 1 },
+    ] };
+  assertAiCardGrounded(normalizeAiCard(honest), text);
+  // ⚠️ forged **刻意不宣稱 1000**：連 1000 一起宣稱時，壞版本會因為頭段「1」先被搶走、換 1000
+  //   那格 miss——一樣紅、但紅錯理由（突變演練㉕實測）。拿掉 1000 才讓「頭段可不可獨立供位」
+  //   成為唯一判別點。
+  const forged = { ...honest, transactions: [
+    { date: '2026-07-04', postDate: null, desc: '真的一元', amount: 1 },
+    { date: '2026-07-04', postDate: null, desc: '假的一元', amount: 1 },   // 只能指望拆格頭段的「1」
+  ] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★拆格頭段的「1」是碎片（夥伴「,000」帶著邊界逗號）——不得再獨立供位');
+});
+
+test('接地｜句讀逗號不誤殺（r4#3）：全形逗號被 NFKC 折成半形黏在數字上，剝掉再驗形', () => {
+  // 帳單印「…450，本期應繳…」＝token「450,」——它不是拆格碎片（右鄰不是數字），是句讀。
+  const p = normalizeAiCard(GOOD());
+  const textPunct = TEXT.replace('本期新增款項 450 ', '本期新增款項 450， ');
+  assertAiCardGrounded(p, textPunct);   // 不丟＝450 還接得到地
+});
+
+test('接地｜lastFour 候選只認無逗號 token（r4#2）：「91,234」是金額不是卡號，不得被搶去占位', () => {
+  // 偏好「最長」的舊排序會把 91,234（剝逗號後含 1234）當末四碼占掉——占錯位之後，
+  // 真的卡號 token 反而留給虛構的 1,234 明細借用。
+  const text = [
+    '測試商業銀行 卡號末四碼 1234',
+    '上期應繳總額 91,234 已繳款退款金額 91,234 本期新增款項 1,234 本期應繳總額 1,234',
+  ].join('\n');
+  const base = { ...GOOD(), lastFour: '1234', totals: { prevDue: 91234, paidAndRefund: 91234, newCharges: 1234, due: 1234 }, adjustments: [] };
+  assertAiCardGrounded(normalizeAiCard({ ...base, transactions: [] }), text);   // 誠實（零明細）＝過
+  const forged = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '憑空店', amount: 1234 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★lastFour 占「1234」本人、兩格摘要占兩個「1,234」——虛構明細沒位置可借');
+});
+
 test('接地｜lastFour 先占位（r3#2）：卡號 token 不得被虛構明細借去當金額位置', () => {
   // 末四碼、本期新增、本期應繳恰好同為 1234、原文沒有任何交易列——虛構一筆 1234 不可過。
   const text = [
