@@ -98,7 +98,9 @@ export function snapshotUpload(fileLike) {
  */
 export function shouldOfferAi(err) {
   if (!err || typeof err !== 'object') return false;
-  return Object.hasOwn(err, 'code') && err.code === 'bank_unrecognized';
+  // 批二起兩個入口：銀行對帳單（bank_unrecognized）與信用卡帳單（card_unrecognized）。
+  // 仍是封閉列舉——**不是**「所有 *_unrecognized」的樣式比對（那會把未來新增的碼靜靜放進 AI 路）。
+  return Object.hasOwn(err, 'code') && (err.code === 'bank_unrecognized' || err.code === 'card_unrecognized');
 }
 
 /**
@@ -166,10 +168,11 @@ export function isAiTicketDeadCode(code) {
 /**
  * 同意窗的內文。⚠️ 彈窗裡**絕不可放 `.info-link`**（`#modal-root` 只有一格，開說明窗會把同意窗
  * 整個蓋掉）——要展開的細節一律用 `<details>`。`fileName` 是使用者的檔名＝必經 `esc`。
- * @param {{fileName?: string}} o
+ * @param {{fileName?: string, kind?: 'bank'|'card'}} o kind＝哪條線的變體（批二加 card；預設 bank 字串一字不動）
  */
-export function aiConsentBodyHtml({ fileName = '' } = {}) {
+export function aiConsentBodyHtml({ fileName = '', kind = /** @type {'bank'|'card'} */ ('bank') } = {}) {
   const name = esc(String(fileName || '（未命名檔案）'));
+  const card = kind === 'card';
   return `
 <p>本 app 認不出這份帳單的版面，你想請 AI 幫忙讀讀看嗎？</p>
 <ul style="margin:10px 0 12px;padding-left:18px;line-height:1.9">
@@ -182,8 +185,9 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
   <ul style="margin:8px 0 0;padding-left:18px;line-height:1.9">
     <li>送出去的是：
       <ul style="margin:4px 0 0;padding-left:18px">
-        <li>帳單裡的帳號末碼</li>
-        <li>每一筆的日期／金額／摘要／餘額</li>
+        ${card ? `<li>卡號末四碼（帳單有印的話）</li>
+        <li>每一筆消費的日期／店名／金額，與帳單的摘要金額</li>` : `<li>帳單裡的帳號末碼</li>
+        <li>每一筆的日期／金額／摘要／餘額</li>`}
       </ul>
       <div style="margin:4px 0 0">等於把對帳單影印一份、寄去請人幫忙看——內容就是你帳單上本來就有的那些。</div>
     </li>
@@ -197,7 +201,9 @@ export function aiConsentBodyHtml({ fileName = '' } = {}) {
     <li>依供應商目前的<b>商用 API 預設政策</b>：送過去的內容不會被拿去訓練模型，也會在一段時間後刪除。</li>
     <li>⚠️ 但這是<b>預設值、不是我們能保證的事</b>——這條路用的是<b>你自己的 API 帳戶</b>，如果那個帳戶另外同意過資料使用、或有另外的合約條款，實際情形可能不一樣。以你自己的帳戶設定與供應商官方公告為準。</li>
     <li>讀出來的結果會<b>先回到畫面上讓你核對</b>；那份暫時放在伺服器的記憶體裡（程式重開就沒了），要等你按下匯入，才寫進這個 app 自己的資料裡。</li>
-    <li>預設會讓<b>兩個 AI 各自獨立讀一遍</b>互相核對（費用兩發起跳；讀出來不一致會再請第三個 AI 仲裁、多一發）。在設定頁關掉「雙讀」的話則是先讀一次、對不平才換更強的模型再讀一次。</li>
+    ${card
+    ? `<li>信用卡帳單走<b>單讀</b>：先讀一次，讀出來對不平才換更強的模型再讀一次（費用一發起跳、最多兩發）。讀出來的每一筆會先跟帳單自己印的合計<b>逐筆驗算</b>，對不上就整份不收。</li>`
+    : `<li>預設會讓<b>兩個 AI 各自獨立讀一遍</b>互相核對（費用兩發起跳；讀出來不一致會再請第三個 AI 仲裁、多一發）。在設定頁關掉「雙讀」的話則是先讀一次、對不平才換更強的模型再讀一次。</li>`}
     <li>這個問句只確認<b>這一次</b>——同意只算這一次，不會被記住。之後每次上傳要不要先問，由設定裡的「送給 AI 之前先問我一次」決定（<b>沒打開＝之後直接送、不再問</b>）。</li>
     <li>不同意完全沒關係：這份改成手動記帳就好，其他功能一切照常。</li>
   </ul>

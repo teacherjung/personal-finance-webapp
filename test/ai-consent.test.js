@@ -33,7 +33,10 @@ const count = (s, re) => (s.match(re) || []).length;
 
 // ---- A 群：shouldOfferAi（AI 入口的唯一判準）----
 
-test('A｜shouldOfferAi：只認 bank_unrecognized，對帳閘紅（400 無 code）一律 false', () => {
+test('shouldOfferAi：封閉列舉 bank_unrecognized＋card_unrecognized（批二加卡片入口）——不是 *_unrecognized 樣式比對', () => {
+  // 批二：卡片碼也是合法入口（正）；隨便一個 *_unrecognized 不是（反——封閉列舉不是樣式比對）
+  assert.equal(shouldOfferAi({ code: 'card_unrecognized' }), true);
+  assert.equal(shouldOfferAi({ code: 'foo_unrecognized' }), false);
   assert.equal(shouldOfferAi({ code: 'bank_unrecognized', status: 400 }), true);
   assert.equal(shouldOfferAi({ code: 'pdf_password', status: 400 }), false, '密碼錯要跳密碼窗，不是送 AI');
   // ★承重：對帳閘紅＝★6 裁決「禁止匯入」，絕不可讓 AI 撿去重試一次
@@ -543,4 +546,16 @@ test('applyBody｜配方路線（P2-2）＝只送 {aiTicket}：所見即所得�
   const withSkip = applyBody({ engine: 'recipe', aiTicket: 't-rcp' }, { data: 'x', skipSimilar: true });
   assert.deepEqual(withSkip, { aiTicket: 't-rcp', skipSimilar: true });
   assert.equal(applyBody({ engine: 'recipe' }, { data: 'x' }), null, '★票不見＝不可退回自己再解一次');
+});
+
+
+test('批二｜aiConsentBodyHtml 的 card 變體：單讀說明取代雙讀、送出內容講卡片欄位；bank 預設一字不動', async () => {
+  const bank = aiConsentBodyHtml({ fileName: 'x.pdf' });
+  const card = aiConsentBodyHtml({ fileName: 'x.pdf', kind: 'card' });
+  assert.ok(bank.includes('兩個 AI 各自獨立讀一遍'), 'bank 預設仍是雙讀說明');
+  assert.ok(!card.includes('兩個 AI 各自獨立讀一遍'), '★card 不得沿用雙讀說明（裁示②＝單讀；照抄＝對使用者謊報費用）');
+  assert.ok(card.includes('單讀'), 'card 要講單讀');
+  assert.ok(card.includes('逐筆驗算'), 'card 要講驗算閘（裁示①）');
+  assert.ok(card.includes('卡號末四碼'), 'card 的送出內容講卡片欄位');
+  assert.ok(bank.includes('帳號末碼'), 'bank 的送出內容不變');
 });

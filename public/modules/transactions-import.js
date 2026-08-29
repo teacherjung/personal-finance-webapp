@@ -13,6 +13,7 @@ import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml, unknownIssuerNoticeHtml } from './reconcile-summary.js';
+import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, aiConsentBodyHtml, aiErrorText, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
 import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
@@ -63,7 +64,19 @@ function openCardUploadForm(cards) {
         //   使用者按取消也是「自己關的」，但那是撤銷、不放行。
         const canOpenNext = () => onPage() && ctx.owns.handoff();
         const pw = data.password || '';
-        const r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+        /** @type {any} */ let r;
+        try {
+          r = await api('/statement/preview', { method: 'POST', body: { data: b64, password: pw } });
+        } catch (e) {
+          // 批二：密碼對了、但版面認不得 ⇒ 同一套 AI 後備（pw 必須一路帶——AI 路自己會再抽一次字）
+          if (!shouldOfferAi(e)) throw e;
+          if (await askBeforeSendAi()) {
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, '') }) === 'rethrow') throw e;
+            return;
+          }
+          await sendCardToAi(b64, pw, canOpenNext);
+          return;
+        }
         if (data.remember && pw) {
           try { await api('/statement/password/remember', { method: 'POST', body: { password: pw } }); }
           catch { if (onPage()) toast('密碼記不進去（匯入不受影響），可稍後再試', true); }
@@ -90,11 +103,48 @@ function openCardUploadForm(cards) {
         // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫（切頁作廢）
         openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, '', onPage));
       } catch (e) {
-        if (/** @type {any} */ (e).code !== 'pdf_password') throw e;   // 非密碼問題照舊：toast＋留窗重試
-        openWhenOnPage(canOpenNext, () => openPasswordWindow(b64));   // 池全敗＝跳密碼窗（切頁／被接管都作廢）
+        if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64)); return; }   // 池全敗＝跳密碼窗
+        // 批二：內建範本認不得＝提供 AI 入口（判準與競態防線同銀行線 runAiFallback；不吐原紅字——
+        // 同意窗第一行已講「認不出版面」，William 2026-08-12 的裁示在卡片線同樣適用）。
+        if (!shouldOfferAi(e)) throw e;
+        if (await askBeforeSendAi()) {
+          if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', file?.name || '') }) === 'rethrow') throw e;
+          return;
+        }
+        await sendCardToAi(b64, '', canOpenNext);
       }
     }
   });
+
+  /** 送 AI 之前要不要先問？（同銀行線：設定讀不到＝當「要問」——猜錯的代價是沒問就把帳單送出去） */
+  async function askBeforeSendAi() {
+    try { return shouldAskBeforeSend(await api('/settings')); } catch { return true; }
+  }
+  /** 直接送 AI 解讀（不開同意窗；askBeforeSend 關閉時）。⚠️ 第一行就驗 canOpenNext——
+   *  await 設定期間使用者可能已關窗/切頁，那時連請求都不可以發（發了＝帳單出門＋花錢）。 */
+  async function sendCardToAi(/** @type {string} */ b64, /** @type {string} */ pw, /** @type {() => boolean} */ canOpenNext) {
+    if (!canOpenNext()) return;
+    try {
+      const r = await api('/statement/preview', { method: 'POST', body: { data: b64, ...(pw ? { password: pw } : {}), useAi: true } });
+      openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, pw, onPage));
+    } catch (e) {
+      throw new Error(aiErrorText(/** @type {any} */ (e).code, /** @type {any} */ (e).message), { cause: e });
+    }
+  }
+  /** AI 同意窗（卡片版文案＝aiConsentBodyHtml 的 kind:'card' 變體）。 */
+  function openAiConsentWindow(/** @type {string} */ b64, /** @type {string} */ pw, /** @type {string} */ fileName) {
+    openForm({
+      title: AI_CONSENT_TITLE,
+      fields: [],
+      bodyHtml: aiConsentBodyHtml({ fileName, kind: 'card' }),
+      submitLabel: AI_CONSENT_SUBMIT_LABEL,
+      busyLabel: AI_CONSENT_BUSY_LABEL,
+      onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
+        const canOpenNext = () => onPage() && ctx.owns.handoff();
+        await sendCardToAi(b64, pw, canOpenNext);
+      },
+    });
+  }
 }
 
 // 自動預覽結果：判得出卡片就直接預覽；認不出就請使用者從候選（或全部卡）選一張。
@@ -108,7 +158,9 @@ function handlePreviewResult(r, b64, cards, typedPw = '', onPage = () => true) {
 // 認不出卡片時請使用者選（候選優先，無候選則列全部信用卡），選後用該卡重新解析預覽。
 function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
   const pick = (r.candidates && r.candidates.length) ? r.candidates : cards;
-  const detail = `${r.bank ? r.bank + '帳單' : '這份帳單'}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}`;
+  // AI 路：抄回的機構名只當顯示（不參與歸卡——#518 的判準不給 AI 投票權），幫使用者辨認是哪家的帳單
+  const who = r.aiIssuer ? `AI 讀到「${esc(String(r.aiIssuer))}」的帳單` : (r.bank ? r.bank + '帳單' : '這份帳單');
+  const detail = `${who}${r.lastFour ? `（末四碼 ${esc(r.lastFour)}）` : ''}`;
   openForm({
     title: '選擇要記到哪張卡片',
     size: 'sm',
@@ -119,7 +171,8 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
     onSubmit: async (data, /** @type {any} */ ctx) => {
       // 沿用使用者輸入的密碼（r1#3）：後端 previewForCard 會把它排在池最前；不帶＝沒勾記住時又失敗
       const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
-      const pr = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
+      // AI 路憑票（批二）：帶 aiTicket＝後端取回同一份已驗收＋已過閘的答案，不重跑模型也不再抽字
+      const pr = await api(`/cards/${data.cardId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw, ...(r.aiTicket ? { aiTicket: r.aiTicket } : {}) } });
       openWhenOnPage(canOpenNext, () => openStatementPreview(data.cardId, pr, b64, cards, typedPw, onPage));   // r4：重解析期間切頁／被接管＝不開
     }
   });
@@ -130,7 +183,7 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
 function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () => true) {
   const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
-  const detected = `${curR.bank ? curR.bank : '未知'}${curR.lastFour ? ` · 末四碼 ${curR.lastFour}` : ''}`;   // 原文即可——標題由外殼負責 esc（防雙重跳脫）
+  const detected = `${curR.bank ? curR.bank : (curR.aiIssuer ? `AI 讀到「${curR.aiIssuer}」` : '未知')}${curR.lastFour ? ` · 末四碼 ${curR.lastFour}` : ''}`;   // 原文即可——標題由外殼負責 esc（防雙重跳脫）
   const close = () => { root.innerHTML = ''; };
   // 重繪前把目前的勾選與分類選擇存回資料，排序後不遺失
   const syncEdits = () => curR.transactions.forEach((t, i) => {
@@ -211,6 +264,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
             <select id="previewCard">${cardOpts()}</select></label>
           <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；真正繳款不匯入，退款會保留為消費抵減。</span>
         </div>
+        ${aiPreviewBadgeHtml(curR)}
         ${unknownIssuerNoticeHtml(curR.bankEvidence)}
         ${gateSummaryHtml(curR.reconcile, 'card')}
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
@@ -232,7 +286,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       const newId = e.target.value;
       try {
         // 沿用使用者輸入的密碼（r1#3）：改卡重解析時 typedPw 排在池最前，沒勾記住也開得了
-        const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw } });
+        const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw, ...(curR.aiTicket ? { aiTicket: curR.aiTicket } : {}) } });
         if (!onPage()) return;   // r4：改卡重解析 await 期間切頁＝不重建舊預覽窗
         curCard = newId; curR = pr; previewSort = 'none'; draw();   // 換卡＝重算重複標記、排序回原始
       } catch (err) { if (!onPage()) return; toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }   // r5#2：切頁後不報過期錯誤、不動舊 select
