@@ -148,6 +148,11 @@ test('stdin｜分支名含斜線不會被切斷', () => {
   assert.equal(got.branch, 'claude/a/b/c');
 });
 
+// 讓 io 考題通過 repo 綁定與競態縮窗的最小配件（r1 之後 main 需要 url／remoteUrl／fetch）。
+const REPO_URL = 'https://github.com/o/r';
+const prOf = (/** @type {number} */ n, /** @type {string} */ body) => ({ number: n, body, url: `${REPO_URL}/pull/${n}` });
+const IO_REPO = { remoteUrl: `${REPO_URL}.git` };
+
 // ── 它不是閘：任何狀況都不准擋 push ─────────────────────────
 test('不擋 push｜查 PR 爆炸也回 0，而且不改任何東西', () => {
   /** @type {string[]} */ const logs = [];
@@ -163,9 +168,11 @@ test('不擋 push｜查 PR 爆炸也回 0，而且不改任何東西', () => {
 });
 
 test('不擋 push｜改不進去也回 0', () => {
+  const body = bodyWith(OLD.slice(0, 7));
   const code = main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
-    log: () => {},
-    find: () => ({ number: 1, body: bodyWith(OLD.slice(0, 7)) }),
+    ...IO_REPO, log: () => {},
+    find: () => prOf(1, body),
+    fetch: () => body,
     edit: () => { throw new Error('權限不足'); },
   });
   assert.equal(code, 0);
@@ -186,9 +193,11 @@ test('不擋 push｜還沒開 PR 是正常路徑（第一次推分支）', () =>
 
 test('不擋 push｜真的有 PR 時，送出去的說明必須是驗過的那一份', () => {
   /** @type {string[]} */ const sent = [];
+  const body = bodyWith(OLD.slice(0, 7));
   main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
-    log: () => {},
-    find: () => ({ number: 7, body: bodyWith(OLD.slice(0, 7)) }),
+    ...IO_REPO, log: () => {},
+    find: () => prOf(7, body),
+    fetch: () => sent[0] ?? body,   // 寫入前＝原文；寫入後＝我們送出的那份（模擬無並行）
     edit: (n, b) => { assert.equal(n, 7); sent.push(b); },
   });
   assert.equal(sent.length, 1);
@@ -219,8 +228,9 @@ test('極限｜註解夾在 SHA 中間：改得動但驗不過 ⇒ 什麼都不�
   /** @type {string[]} */ const logs = [];
   /** @type {string[]} */ const sent = [];
   main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
-    log: (s) => logs.push(s),
-    find: () => ({ number: 9, body }),
+    ...IO_REPO, log: (s) => logs.push(s),
+    find: () => prOf(9, body),
+    fetch: () => body,
     // ⚠️ **不可以在這裡 assert.fail**：`main` 把 edit 包在 try/catch 裡，丟出去會被吞掉、
     //    考題反而全綠（M3 突變實測過）。一律記下來、事後在 catch 外面斷言。
     edit: (_n, b) => { sent.push(b); },
@@ -277,6 +287,97 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── Codex #519 r1 的四條，一條一族 ──────────────────────────
+import { pickPr, repoSlug } from '../scripts/sync-pr-base-version.js';
+
+test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被舊快照蓋掉', () => {
+  // #522 才剛發生過兩線並行編輯。Codex 合成重現：concurrentMarkerSurvives:false。
+  const body = bodyWith(OLD.slice(0, 7));
+  const MARKER = '\n\n### 別條線在查 PR 之後補上的 Grok 掃描紀錄（不可以消失）';
+  const fresh = body + MARKER;
+  /** @type {string[]} */ const sent = [];
+  let fetches = 0;
+  main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
+    ...IO_REPO, log: () => {},
+    find: () => prOf(3, body),                       // 快照＝還沒有 MARKER 的舊版
+    fetch: () => { fetches += 1; return fetches === 1 ? fresh : (sent[0] ?? fresh); },
+    edit: (_n, b) => { sent.push(b); },
+  });
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].includes(MARKER), '★並行編輯被舊快照蓋掉了（改動必須落在重讀後的最新版上）');
+  assert.deepEqual(staleBaseProblems(sent[0], NEW), [], '對齊本身也要成立');
+});
+
+test('★r1#1b 事後驗證：寫完發現欄位不是我們的樣子（並行編輯贏）⇒ 講一聲、絕不重試覆蓋', () => {
+  const body = bodyWith(OLD.slice(0, 7));
+  /** @type {string[]} */ const logs = [];
+  let edits = 0;
+  main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
+    ...IO_REPO, log: (s) => logs.push(s),
+    find: () => prOf(3, body),
+    // 寫入前重讀＝原文；寫入後讀回＝**對方的版本**（欄位仍是舊 SHA）
+    fetch: () => body,
+    edit: () => { edits += 1; },
+  });
+  assert.equal(edits, 1, '★重試覆蓋＝去打 #522 那種編輯戰——只准寫一次');
+  assert.ok(logs.join('\n').includes('不重試'), '要講一聲，不能靜靜當作成功');
+  assert.ok(!logs.join('\n').includes('✅'), '驗證不過就不可以宣稱已對齊');
+});
+
+test('★r1#3 repo 綁定：PR 不屬於這次 push 的 repo ⇒ 整批不動', () => {
+  const body = bodyWith(OLD.slice(0, 7));
+  /** @type {string[]} */ const logs = [];
+  let edits = 0;
+  main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
+    remoteUrl: 'git@github.com:other/elsewhere.git',   // push 去別的 repo
+    log: (s) => logs.push(s),
+    find: () => prOf(3, body),                          // 查到的 PR 在 o/r
+    fetch: () => body,
+    edit: () => { edits += 1; },
+  });
+  assert.equal(edits, 0, '★推去 A repo 卻改了 B repo 的 PR 說明');
+  assert.ok(logs.join('\n').includes('不屬於'), '要講一聲');
+  // 沒給 remoteUrl（手動呼叫）＝同向不動；⚠️ 不可讓 null === null 誤判成同 repo
+  let edits2 = 0;
+  main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
+    log: () => {}, find: () => ({ number: 3, body, url: '' }), fetch: () => body, edit: () => { edits2 += 1; },
+  });
+  assert.equal(edits2, 0, '★兩邊都抽不出 slug 時不得誤判成「同 repo」');
+});
+
+test('★r1#3b repoSlug：https／ssh／.git／大小寫都收斂到同一個 owner/repo', () => {
+  for (const u of ['https://github.com/O/R', 'https://github.com/o/r.git', 'git@github.com:o/r.git',
+    'ssh://git@github.com/o/r', 'https://github.com/o/r/pull/9']) {
+    assert.equal(repoSlug(u), 'o/r', u);
+  }
+  assert.equal(repoSlug('https://gitlab.com/o/r'), null, '非 GitHub 抽不出＝不動（fail-open 同向）');
+  assert.equal(repoSlug(''), null);
+});
+
+test('★r1#3c 分支名取 remote-ref：push 本地名:遠端名 要查「遠端名」的 PR', () => {
+  const got = parsePushRefs(`refs/heads/local-name ${NEW} refs/heads/pr-name ${OLD}`);
+  assert.deepEqual(got, [{ branch: 'pr-name', sha: NEW }],
+    '★PR 掛在遠端分支名上——拿本地名去查會改到別支同名分支的 PR');
+});
+
+test('★r1#4 pickPr：同名多支不猜、fork 的 PR 一律不動（「恰好一支」要有行為題）', () => {
+  const mk = (/** @type {number} */ n, /** @type {object} */ extra = {}) =>
+    ({ number: n, body: `b${n}`, url: `${REPO_URL}/pull/${n}`, headRefName: 'x', isCrossRepository: false, ...extra });
+  // 恰好一支 ⇒ 取它
+  assert.equal(pickPr([mk(1)], 'x')?.number, 1);
+  // ★同名兩支（都非 fork）⇒ null——「非空取第一支」的退化在這裡轉紅（Codex 的第十一刀）
+  assert.equal(pickPr([mk(1), mk(2)], 'x'), null, '★>1 支必須不猜');
+  // ★只有 fork 的那支 ⇒ null（不是我們推的 head 的 PR，改它＝改到別人的說明）
+  assert.equal(pickPr([mk(1, { isCrossRepository: true })], 'x'), null, '★fork 不動');
+  // fork＋一支自家 ⇒ 取自家那支
+  assert.equal(pickPr([mk(1, { isCrossRepository: true }), mk(2)], 'x')?.number, 2);
+  // headRefName 對不上（gh --head 的寬鬆比對）⇒ 濾掉
+  assert.equal(pickPr([mk(1, { headRefName: 'x-other' })], 'x'), null);
+  // 形狀防呆
+  assert.equal(pickPr('not-a-list', 'x'), null);
+  assert.equal(pickPr([{ number: 1 }], 'x'), null, '缺 body/url＝不動');
 });
 
 // ── 同一把尺：手抄的欄位正則不可以跟閘漂開 ──────────────────

@@ -45,6 +45,6 @@ node scripts/check-worktree-integrity.js || { echo "❌ 考試把工作樹弄壞
 #    scripts/check-pr-collab-fields.js 在雲端與合併步驟各自獨立檢查（fail-closed 沒被動到）。
 #    讓它有權力擋 push 才是錯的：文書小工具壞掉不該擋住送審。用 `echo` 而不是 `true`
 #    ——失敗要看得見，安靜吞掉就等於沒有。
-printf '%s\n' "$_refs" | node scripts/sync-pr-base-version.js \
+printf '%s\n' "$_refs" | node scripts/sync-pr-base-version.js "$2" \
   || echo "⚠️ 基準版本自動對齊沒跑成功——不影響這次 push；協作欄位閘照常會檢查（必要時手動改欄位）。"
 echo "✅ 守門通過，放行 push。"

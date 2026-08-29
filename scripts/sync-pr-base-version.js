@@ -118,17 +118,21 @@ export function rewriteBaseVersion(body, sha) {
 /**
  * 解析 git 餵給 pre-push 的 stdin：`<local-ref> <local-sha> <remote-ref> <remote-sha>`。
  * 只回傳「推分支、而且不是刪除」的那些。
+ *
+ * ⚠️ **分支名取第 3 欄（remote-ref），不是第 1 欄**（Codex #519 r1#3）：
+ *    `git push origin 本地名:遠端名` 時 PR 掛在**遠端名**上——拿本地名去查，改到的可能是
+ *    另一支同名分支的 PR。SHA 仍取第 2 欄（local-sha＝即將成為遠端 head 的那顆）。
  * @param {string} stdin @returns {Array<{ branch: string, sha: string }>}
  */
 export function parsePushRefs(stdin) {
   /** @type {Array<{ branch: string, sha: string }>} */ const out = [];
   for (const line of String(stdin || '').split('\n')) {
-    const [localRef, localSha] = line.trim().split(/\s+/);
-    if (!localRef || !localSha) continue;
-    if (!localRef.startsWith('refs/heads/')) continue;      // tag／其他 ref 與這件事無關
+    const [localRef, localSha, remoteRef] = line.trim().split(/\s+/);
+    if (!localRef || !localSha || !remoteRef) continue;
+    if (!remoteRef.startsWith('refs/heads/')) continue;     // 推 tag／notes 與這件事無關
     if (/^0{40}$/.test(localSha)) continue;                 // 全零＝刪分支，沒有 head 可對齊
     if (!/^[0-9a-f]{40}$/.test(localSha)) continue;
-    out.push({ branch: localRef.slice('refs/heads/'.length), sha: localSha });
+    out.push({ branch: remoteRef.slice('refs/heads/'.length), sha: localSha });
   }
   return out;
 }
@@ -139,28 +143,69 @@ export function parsePushRefs(stdin) {
  * @param {string[]} args @returns {string}
  */
 function gh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', env: gitEnv() });
+  // ⚠️ `timeout` 不可省（Codex #519 r1#2）：`gh` 預設可以無限等（DNS 卡住、API 不回應），
+  //    而這支跑在 pre-push 的關鍵路徑上——沒有 timeout，「它不可以擋 push」就是一句空話。
+  //    15 秒＝一次 API 往返加充分裕度；超過＝網路異常，寧可放棄這次對齊（欄位紅一次＝今天的行為）。
+  //    逾時丟例外 → 各呼叫端的 catch 照「安靜地不做事」處理。
+  return execFileSync('gh', args, { encoding: 'utf8', env: gitEnv(), timeout: 15_000, killSignal: 'SIGKILL' });
 }
 
-/** @param {string} branch @returns {{ number: number, body: string } | null} */
+/**
+ * 從 `gh pr list` 的結果挑出「可以動的那一支」——挑不出**唯一**一支就回 `null`（不猜）。
+ *
+ * ⚠️ 抽成純函式是為了讓判準測得到（Codex #519 r1#4：「恰好一支」的守門原本沒有行為題，
+ *    退化成「非空取第一支」考題照樣全綠）。
+ * ⚠️ **fork 的 PR 一律不動**（r1#3）：`gh pr list --head X` 會把別人 fork 上同名分支的 PR
+ *    也列進來——那不是我們推的這顆 head 的 PR，改它＝改到別人的說明。
+ * @param {unknown} list @param {string} branch
+ * @returns {{ number: number, body: string, url: string } | null}
+ */
+export function pickPr(list, branch) {
+  if (!Array.isArray(list)) return null;
+  const mine = list.filter((p) => p && p.isCrossRepository === false && p.headRefName === branch);
+  if (mine.length !== 1) return null;   // 0 支＝還沒開 PR；>1＝不猜（恰好一支才有資格）
+  const [pr] = mine;
+  if (typeof pr?.number !== 'number' || typeof pr?.body !== 'string' || typeof pr?.url !== 'string') return null;
+  return { number: pr.number, body: pr.body, url: pr.url };
+}
+
+/** 從 GitHub 網址（https／ssh／git@ 各形）抽出小寫的 `owner/repo`；抽不出回 null。 @param {string} u */
+export function repoSlug(u) {
+  const m = String(u || '').match(/github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/|$)/i);
+  return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+}
+
+/** @param {string} branch @returns {{ number: number, body: string, url: string } | null} */
 function findPr(branch) {
-  const out = gh(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number,body']);
-  const list = JSON.parse(out);
-  if (!Array.isArray(list) || list.length !== 1) return null;   // 0 支＝還沒開 PR；>1＝不猜
-  const [pr] = list;
-  if (typeof pr?.number !== 'number' || typeof pr?.body !== 'string') return null;
-  return { number: pr.number, body: pr.body };
+  const out = gh(['pr', 'list', '--head', branch, '--state', 'open',
+    '--json', 'number,body,url,headRefName,isCrossRepository']);
+  return pickPr(JSON.parse(out), branch);
+}
+
+/** 只抓最新的 body（競態縮窗與事後驗證用）。 @param {number} n @returns {string} */
+function fetchBody(n) {
+  const out = gh(['pr', 'view', String(n), '--json', 'body']);
+  const v = JSON.parse(out);
+  if (typeof v?.body !== 'string') throw new Error('讀不到 PR 說明');
+  return v.body;
 }
 
 /**
  * @param {string} stdin
- * @param {{ log?: (s: string) => void, find?: typeof findPr, edit?: (n: number, b: string) => void }} [io]
+ * @param {{ log?: (s: string) => void, find?: typeof findPr, edit?: (n: number, b: string) => void,
+ *           fetch?: (n: number) => string, remoteUrl?: string }} [io]
  * @returns {number} 永遠 0
  */
 export function main(stdin, io = {}) {
   const log = io.log || ((s) => console.log(s));
   const find = io.find || findPr;
   const edit = io.edit || ((n, b) => { gh(['pr', 'edit', String(n), '--body', b]); });
+  const fetch = io.fetch || fetchBody;
+  // ⚠️ 推去哪個 repo 就只動哪個 repo 的 PR（Codex #519 r1#3）：hook 把 push 的 remote URL 傳進來，
+  //    與 PR 自己的網址比對 `owner/repo`。對不上（例如同名分支在別的 remote）＝整批不動。
+  //    ⚠️ 判準是「**兩邊都抽得出 slug 且相等**」——沒給 remoteUrl／抽不出（手動呼叫、非 GitHub remote）
+  //    一律**不動**。不可寫成 `repoSlug(a) !== repoSlug(b)`：兩邊都是 null 時 `null === null` 會誤判成同 repo。
+  const pushSlug = repoSlug(io.remoteUrl || '');
 
   const refs = parsePushRefs(stdin);
   // ⚠️ **這一句不是裝飾**：`test/entry-guard.test.js` 靠「跑起來看不看得到輸出」判斷
@@ -180,11 +225,33 @@ export function main(stdin, io = {}) {
       log(`   （基準版本：查不到 ${branch} 的 PR（${/** @type {any} */ (e)?.message}）——不動它，閘照常會檢查）`);
       continue;
     }
-    if (!pr) continue;                                   // 還沒開 PR＝正常，第一次推分支就是這樣
+    if (!pr) continue;                                   // 還沒開 PR／挑不出唯一一支＝不動（不猜）
+    if (!pushSlug || repoSlug(pr.url) !== pushSlug) {
+      log(`   （基準版本：PR #${pr.number} 不屬於這次 push 的 repo——不動它）`);
+      continue;
+    }
 
-    const r = rewriteBaseVersion(pr.body, sha);
+    let r = rewriteBaseVersion(pr.body, sha);
     if (!r.changed) {
       if (r.reason && !r.reason.includes('已經是')) log(`   （基準版本：${r.reason}——不動它）`);
+      continue;
+    }
+    // ⚠️ **競態縮窗**（Codex #519 r1#1：讀完整份、隔一段時間整份蓋回去＝把別條線這段時間補的
+    //    說明內容吃掉——#522 才剛發生過兩線並行編輯）。寫入前**重讀一次**，改動落在最新的那份上；
+    //    窗口從「查 PR 到寫入的整段」縮到「重讀與寫入之間的單次往返」。
+    //    ⚠️ 誠實劃界：毫秒級窗口**無法歸零**（GitHub API 沒有 compare-and-swap）；最壞情況＝
+    //    並行編輯恰好落在那次往返裡被蓋掉，靠下面的事後驗證看見、且**絕不重試覆蓋**。
+    try {
+      const fresh = fetch(pr.number);
+      if (fresh !== pr.body) {
+        r = rewriteBaseVersion(fresh, sha);
+        if (!r.changed) {
+          if (r.reason && !r.reason.includes('已經是')) log(`   （基準版本：說明剛被別條線改過，重讀後${r.reason}——不動它）`);
+          continue;
+        }
+      }
+    } catch (e) {
+      log(`   （基準版本：寫入前重讀失敗（${/** @type {any} */ (e)?.message}）——不動它，閘照常會檢查）`);
       continue;
     }
     // ⚠️ **拿閘自己的尺回頭驗一次**：改出來的東西如果自己都過不了閘，那就是改錯了，
@@ -196,10 +263,23 @@ export function main(stdin, io = {}) {
     }
     try {
       edit(pr.number, r.body);
-      log(`   ✅ 基準版本已對齊 PR #${pr.number} → ${sha.slice(0, 7)}（這一輪的協作欄位檢查就不會紅了）`);
     } catch (e) {
       log(`   （基準版本：改不進去（${/** @type {any} */ (e)?.message}）——不動它，閘照常會檢查）`);
+      continue;
     }
+    // ⚠️ **事後驗證、絕不重試**：寫完再讀一次，欄位若不是我們對齊後的樣子＝有別條線在同一瞬間
+    //    也在編輯（它的版本贏）。這時**什麼都不再做**——重試覆蓋就是去打 #522 那種編輯戰。
+    try {
+      const back = fetch(pr.number);
+      if (staleBaseProblems(back, sha).length) {
+        log(`   ⚠️ 基準版本寫入後驗證不過（疑似並行編輯，對方版本保留）——不重試；協作欄位閘照常會檢查。`);
+        continue;
+      }
+    } catch {
+      log(`   （基準版本：寫入後驗證讀不到——已寫入的內容不回滾，閘照常會檢查）`);
+      continue;
+    }
+    log(`   ✅ 基準版本已對齊 PR #${pr.number} → ${sha.slice(0, 7)}（這一輪的協作欄位檢查就不會紅了）`);
   }
   return 0;
 }
@@ -208,5 +288,6 @@ if (isMainModule(import.meta.url)) {
   let input = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (c) => { input += c; });
-  process.stdin.on('end', () => { process.exit(main(input)); });
+  // argv[2]＝pre-push 傳進來的 remote URL（git 給 hook 的第 2 個參數）——repo 綁定的依據。
+  process.stdin.on('end', () => { process.exit(main(input, { remoteUrl: process.argv[2] })); });
 }
