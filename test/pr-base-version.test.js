@@ -148,7 +148,7 @@ test('stdin｜分支名含斜線不會被切斷', () => {
   assert.equal(got.branch, 'claude/a/b/c');
 });
 
-// 讓 io 考題通過 repo 綁定與競態縮窗的最小配件（main 需要 url／remoteUrl／fetch 三樣才走得到 edit）。
+// 讓 io 考題走完 main 的完整路徑用的共用配件（url 過 repo 綁定、remoteUrl 給綁定比對、fetch 免打真 gh）。
 const REPO_URL = 'https://github.com/o/r';
 const prOf = (/** @type {number} */ n, /** @type {string} */ body) => ({ number: n, body, url: `${REPO_URL}/pull/${n}` });
 const IO_REPO = { remoteUrl: `${REPO_URL}.git` };
@@ -294,7 +294,7 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
   }
 });
 
-// ── 審查輪次抓到的各族（競態／綁定／逾時／唯一性），一條一族 ─────────
+// ── 審查輪次抓到的各族（競態／綁定／逾時／唯一性）───────────────
 import { pickPr, repoSlug, runWithTimeout } from '../scripts/sync-pr-base-version.js';
 
 test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被舊快照蓋掉', () => {
