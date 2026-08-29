@@ -1722,13 +1722,8 @@ test('同一把尺｜出生對照的等值與位置兩道約束也用它：相�
   // ⚠️ 出生對照拿到的 `parsed` 是**AI 的答案卷**（呼叫端傳票裡那份），不是引擎輸出——AI 若忠實
   //   照抄，內文就是相容字寫法。引擎輸出自 2026-08-28 裁示「乙」起會正規化，所以這裡**刻意手動
   //   放回相容字**，才是真呼叫端的形狀（拿引擎輸出當替身＝這題會變成什麼都沒測）。
-  const engineOut = parseWithRecipe(linesNContent(), recipeN());
-  assert.equal(engineOut.transactions[0].summary, '合成轉入', '引擎那一邊現在輸出正規字（裁示「乙」）');
-  const parsedC = {
-    ...engineOut,
-    transactions: engineOut.transactions.map((/** @type {any} */ t) => ({ ...t, summary: toRad('合成轉入') })),
-    accounts: engineOut.accounts.map((/** @type {any} */ a) => ({ ...a, label: toRad('甲戶活存') })),
-  };
+  const parsedC = parseWithRecipe(linesNContent(), recipeN());
+  assert.equal(parsedC.transactions[0].summary, toRad('合成轉入'), '前提：引擎照帳單原文輸出（見「原文留底／去重鍵／帳號身分三條界線」那題）');
   const r3 = recipeN();
   r3.detail.headerIgnore = ['合成轉入'];
   assert.ok(validateRecipeAgainstStatement(linesNContent(), r3, parsedC).some(e => e.startsWith('detail.headerIgnore[0]') && e.includes('相等')),
@@ -1749,101 +1744,55 @@ test('同一把尺｜出生對照的等值與位置兩道約束也用它：相�
     '★bank 抄成相容字寫法的帳戶標籤＝單槽直通路（r8#3）又打開了');
 });
 
-test('同一把尺｜出生驗收也認得字體差異：AI 抄正規字、引擎讀到相容字＝算重現（否則這些銀行的卡永遠孵不出來）', () => {
-  // 出生驗收比的是「使用者確認的 AI 答案」vs「配方重解的結果」。帳單印相容字時，引擎讀到的是
-  // 相容字、AI 抄回來的多半是正規字——兩串字在畫面上一模一樣，嚴格等值卻永遠對不上 ⇒ 卡不存
-  // ⇒ 每期付全額 AI 錢。r4#1 對「格間空白」擇的就是「比對前兩邊同法正規化」，字體是同族的第二種形。
-  const exp = parseWithRecipe(linesNContent(), recipeN());
-  const act = parseWithRecipe(linesNContent(), recipeN());
-  // 四個純文字欄各自給一個樣本（同 r5#1 那一課：只考其中一兩欄時，單獨把某一欄改窄的刀仍綠）
-  exp.transactions[0].summary = '合成轉入';       act.transactions[0].summary = toRad('合成轉入');
-  exp.transactions[0].note = '日結';              act.transactions[0].note = toRad('日結');
-  exp.accounts[0].label = '甲戶活存';             act.accounts[0].label = toRad('甲戶活存');
-  exp.accounts[0].note = '月報';                  act.accounts[0].note = toRad('月報');
-  assert.deepEqual(recipeReproduces(exp, act), { ok: true, diff: null }, '★只差字體＝算重現（四欄樣本各自到位）');
-  assert.deepEqual(recipeReproduces(act, exp), { ok: true, diff: null }, '★哪一邊帶相容字都一樣（尺是對稱的）');
-  // 空白與字體同時出現也要算重現（兩種印法差是同一把尺一起吃掉的，不是兩套機關）
-  const mixed = parseWithRecipe(linesNContent(), recipeN());
-  mixed.transactions[0].summary = toRad('合成轉入').split('').join(' ');
-  const plain = parseWithRecipe(linesNContent(), recipeN());
-  plain.transactions[0].summary = '合成轉入';
-  assert.deepEqual(recipeReproduces(plain, mixed), { ok: true, diff: null }, '★空白＋字體一起差＝同一把尺一次吃掉');
-  // 真差異照紅、嚴格欄照樣嚴格（放寬只限「看起來一樣」的印法差）
-  const bad = parseWithRecipe(linesNContent(), recipeN());
-  bad.transactions[0].summary = `${bad.transactions[0].summary}尾`;
-  assert.equal(recipeReproduces(parseWithRecipe(linesNContent(), recipeN()), bad).diff, 'transactions[0].summary',
-    '★換尺不可放過真差異');
-  const strict = parseWithRecipe(linesNContent(), recipeN());
-  strict.transactions[0].amount += 1;
-  assert.equal(recipeReproduces(parseWithRecipe(linesNContent(), recipeN()), strict).diff, 'transactions[0].amount',
-    '★金額欄不在軟等值清單裡——「配方所得＝使用者確認的所得」對數字照樣成立');
-});
-
-test('同一把尺｜日期的「值」不過這把尺：全形日期不得多出候選、把已存卡的現值日改讀成另一個（Codex r1 High）', () => {
-  // 只把整列正規化＝全形印的日期也變得掃得到 ⇒ anchored-date 取第一個就換人。實測反例：
-  // base 讀 2026-06-30、只換尺後讀 2099-05-06——那是合法日期、會寫進 balanceAsOf，
-  // 往後每期真帳單都比它舊 ⇒ 餘額更新被當 stale 一路跳過。**不是 fail-closed**。
+test('同一把尺｜參考日的候選完全在舊尺上產生：正規化既會多出候選、也會吃掉候選（r1＋r2 兩個方向）', () => {
+  // ①**多出候選**（Codex r1）：全形日期變得掃得到 ⇒ anchored-date 取第一個就換人。
+  //   base 讀 2026-06-30、只換尺讀 2099-05-06＝現值日被寫成未來日，往後每期真帳單都比它舊
+  //   ⇒ 餘額更新一路被當 stale 跳過。
   const mixed = linesN();
   mixed[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, '結算日 備查期限２０９９／０５／０６ 本期末2026/06/30']]);
   assert.equal(parseWithRecipe(mixed, recipeN()).referenceDate, '2026-06-30',
-    '★候選必須是帳單真的用值層印法印出來的那些——全形那個不算數（與 base 逐字相同）');
-  // 整份用全形印參考日＝照舊讀不到 ⇒ null（同規則 1a「寧可 null」；這是 base 就有的限制、非本支新增）
-  const full = linesN();
-  full[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [452, '結算日 ２０２６／０６／３０']]);
-  assert.equal(parseWithRecipe(full, recipeN()).referenceDate, null,
-    '★讀不到就是 null（不更新餘額），不是猜一個');
-  // 但**錨點**仍要能在相容字版面上定位（否則本支的主修就被這條抵銷掉了）
-  const radAnchor = linesN(true);
-  assert.equal(parseWithRecipe(radAnchor, recipeN()).referenceDate, '2026-06-30',
-    '★錨點用新尺定位、日期用舊尺讀值——兩件事不可互相抵銷');
+    '★全形那一個不是候選（與 base 逐字相同）');
+  // ②**吃掉候選**（Codex r2）：一顆全形數字貼著民國日期，NFKC 把它黏成四位數，
+  //   `(?<!\d)` 就把整顆民國日期消掉。濾網只能刪候選、救不回被吃掉的——所以掃描一律跑舊尺。
+  const roc = (/** @type {string} */ strategy, /** @type {string} */ anchorLine) => {
+    const ls = linesB();
+    ls[0] = L(300, [[20, '合成郵局存簿'], [47, anchorLine]]);
+    return parseWithRecipe(ls, { ...recipeB(), refDate: { strategy, anchor: '帳務期間' } }).referenceDate;
+  };
+  const two = '帳務期間２115/05/06列印日116/05/06';
+  assert.equal(roc('anchored-date', two), '2026-05-06', '★候選 2 個、取第一個（吃掉候選會變成 2027-05-06）');
+  assert.equal(roc('anchored-period-end', two), '2027-05-06', '★候選恰 2 個、取第二個（吃掉候選會變成 null＝餘額更新靜靜停掉）');
+  assert.equal(roc('anchored-period-end', `${two}到期日117/05/06`), null,
+    '★候選 3 個＝不確定＝null（吃掉一顆會變成「恰兩個」而讀出 2028-05-06）');
+  // ③**錨點**仍要在相容字版面上定得了位（否則本支的主修就被這條抵銷掉）
+  assert.equal(parseWithRecipe(linesN(true), recipeN()).referenceDate, '2026-06-30',
+    '★錨點用新尺定位、候選用舊尺產生——兩件事不可互相抵銷');
 });
-
-test('同一把尺｜同遮罩多帳戶的組比對也要用它（Codex r1 Medium：單帳戶組換了、平行路徑沒換）', () => {
-  // 「同一遮罩掛多幣別」是本檔別處承認的真實形狀（外幣綜合帳戶）。單帳戶組走 softEq、
-  // 多帳戶組走 multiset key——只換一邊，這種版面照舊孵不出卡、每期重送 AI。
-  const acc = (/** @type {string} */ label, /** @type {string} */ cur, /** @type {number} */ bal) =>
-    ({ suffix: '3301', masked: '900100****3301', balance: bal, currency: cur, label, note: '' });
-  const pair = (/** @type {string} */ l0) => ({
-    bank: '合成金庫', referenceDate: null, accountCurrency: { '900100****3301': '' },
-    accounts: [acc(l0, 'TWD', 1), acc('活儲', 'USD', 2)], transactions: [],
-  });
-  assert.notEqual(toRad('手續費'), '手續費', '★樣本必須真的換得動字——換不動的話這一題什麼都沒測（P4 突變實測活過）');
-  assert.deepEqual(recipeReproduces(pair('手續費'), pair(toRad('手續費'))), { ok: true, diff: null },
-    '★組內只差字體＝算重現');
-  assert.equal(recipeReproduces(pair('手續費'), pair('手續金')).diff, 'accounts（同遮罩多帳戶組不吻合）',
-    '★換尺不可放過真差異');
-});
-
-test('同一把尺｜引擎輸出的文字也正規化（William 裁示「乙」）：繳卡費不會因為字體掉進「其他/未分類」', () => {
-  // Codex #523 r1 High②：出生驗收放寬字體之後，配方路線若原樣保留相容字，
-  // `classifyBankTx` 的 `/卡費|信用卡款/` 就漏認 ⇒ 繳卡費從「不分類」掉進「其他/未分類」，
-  // **與已分類的卡明細重複計算**。這是錢的數字，不是顯示問題。
-  assert.notEqual(toRad('信用卡款'), '信用卡款', '★樣本必須真的換得動字（否則這題什麼都沒測）');
+test('同一把尺｜引擎輸出的文字**不**正規化：原文留底／去重鍵／帳號身分三條界線（保存型）', () => {
+  // 這題守的是「**不要**做什麼」。正規化一旦流進**存下來的字**，會同時打破三件事：
+  //  ①`bankSummary`／`bankNote` 的「帳單原文、一字未改」契約（`lib/types.js`）
+  //  ②`bankRef` 精準去重（單邊正規化＝同一筆交易兩條路線的鍵不同；`skipSimilar` 是選配、擋不住）
+  //  ③`noteAccountSuffixes` 的帳號身分——NFKC 把 `①` 折成 `1`（`lib/bank-statement.js` 的
+  //    `foldWidth` 早就為了同一個理由拒絕對帳號整串做 NFKC，#504 r8#4）
+  // 走過並被打掉的路＝William 2026-08-28 先裁「乙＝輸出也正規化」、Codex #523 r2 打掉三條後
+  // 於 2026-08-29 改裁「縮回只修辨識層」。
   const lines = linesN();
   lines[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, toRad('信用卡款')],
-    [289, 30, '$500'], [418, 0, '$730']]);
+    [289, 30, '$500'], [418, 0, '$730'], [500, 0, '****①234']]);
+  assert.notEqual(toRad('信用卡款'), '信用卡款', '★樣本必須真的換得動字');
   const p = parseWithRecipe(lines, recipeN());
-  assert.equal(p.transactions[0].summary, '信用卡款', '★帳單印相容字、帳本記正規字');
-  assert.equal(p.transactions[0].direction, 'out', '前提：這筆要是支出，繳卡費判準只在支出側');
-  assert.deepEqual(classifyBankTx(p.transactions[0], new Set()), { type: 'expense', category: '', subcategory: '' },
-    '★★繳卡費要落在「不分類」那一格——留著相容字＝漏認＝與卡明細重複計算');
-  // 帳戶標籤與備註同樣走這把尺（三個文字欄各自到位，避免單欄窄刀活過去）
-  const l2 = linesN();
-  l2[1] = L(280, [[50, toRad('甲戶活存')], [150, '900100****3301'], [473, '$1,230'], [530, toRad('月報')]]);
-  const p2 = parseWithRecipe(l2, recipeN());
-  assert.equal(p2.accounts[0].label, '甲戶活存', '★帳戶標籤');
-  assert.equal(p2.accounts[0].note, '月報', '★帳戶備註');
-  // 交易備註：**只做正規化那一半**——字體要磨、格間空白要留（那一欄今天不 squash，
-  // 而本次裁示要改的是字體不是空白；`classifyBankTx` 判的是「摘要＋備註」全文，
-  // 備註留著相容字一樣會讓關鍵字漏認）。這兩個斷言各擋一個方向。
-  const l3 = linesN();
-  l3[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成轉入'],
-    [349, 40, '$500'], [418, 0, '$1,730'], [500, 0, toRad('月 報')]]);
-  assert.notEqual(toRad('月 報'), '月 報', '★樣本必須真的換得動字');
-  assert.equal(parseWithRecipe(l3, recipeN()).transactions[0].note, '月 報',
-    '★交易備註：字體磨成正規字（少了＝關鍵字漏認），但格間空白原樣留著（多磨＝超出裁示範圍的行為改變）');
+  assert.equal(p.transactions[0].summary, toRad('信用卡款'), '★摘要照帳單原文輸出（不磨字）');
+  assert.equal(p.transactions[0].note, '****①234', '★備註照帳單原文輸出（連 ① 都不動）');
+  // ★行為面（不是字串面）：`①` 一旦被折成 `1` 就冒充成自有帳號末碼 ⇒ 一般支出被判成內轉
+  //   ⇒ transfer 不進收支加總 ⇒ **真支出從現金流消失**。
+  assert.equal(classifyBankTx(p.transactions[0], new Set(['1234'])).type, 'expense',
+    '★★備註做了 NFKC ⇒ ****①234 變 ****1234 ⇒ 真支出被判成內轉、從現金流消失');
+  // ⚠️ 誠實劃界：這一筆的繳卡費關鍵字（`信⽤卡款`）**確實漏認**、落在「其他/未分類」。
+  //   那是 main 上就到得了的既有缺陷（AI 忠實照抄相容字時，暗號兩邊同形、舊尺照樣命中），
+  //   不是本支造成、也不由本支修——要修是修**分類那一層**（比對用正規形、原文不動）。
+  assert.equal(classifyBankTx(p.transactions[0], new Set(['1234'])).subcategory, '未分類',
+    '★把既有缺陷照實釘住：修好那天這題會紅，紅了才去改口');
 });
-
 test('同一把尺｜槽位長度量的是「真正拿去比對的那個字串」：¯ 只值一個字、㈱ 展開成三個字', () => {
   // minLen 存在的理由＝1 字錨點會在交易列上誤觸發。它要量的是**拿去比對的那個字串**，
   // 不是原字面——兩者在相容字上會差開。
