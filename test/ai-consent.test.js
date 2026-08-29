@@ -579,6 +579,9 @@ test('批二 r1#5｜卡片版 AI 徽章：只講卡片真的跑過的閘，不�
   assert.doesNotMatch(html, /餘額|仲裁|雙讀|帳號/, '★銀行線的防線一項都沒跑——出現就是讓使用者錯信不存在的防線');
   assert.match(html, /看不到/, '照實劃界：要講這些閘看不到什麼（就地解釋鐵則）');
   assert.match(html, /抵銷/, '★r6#1 的盲點要就地揭露：正負互抵的整組漏抄，加總與等式都看不到');
+  assert.match(html, /退款被抄成繳款/, '★r8#1 的盲點要就地揭露：負數列身分靠沒接地的說明文字判定');
+  assert.doesNotMatch(html, /已經按過一次確認/, '★r8#2：卡片匯入不驗票——「按過確認就失效」是銀行線的事實、卡片線不可照抄');
+  assert.match(html, /過期後請重新上傳/, '票的真實範圍（換卡重看短效）要講、過期出路要給');
   const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
   assert.doesNotMatch(evil, /<b>x<\/b>/, '模型名要逃逸');
 });
