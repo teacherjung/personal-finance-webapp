@@ -145,7 +145,7 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
   //    寫法高手——所以用正則收攏**常見拼法**（`if:`／`if :`／`"if":`／`'if':`，r2 抓到
   //    後兩種），不引入 YAML 解析器去追殺 flow-map、explicit-key、跳脫鍵這些沒人會
   //    不小心寫出來的形狀（列舉補不完；為非安全絆線加相依不成比例）。
-  //    兩個 required job 必須無條件執行；日後真需要條件（如 step 級 if: failure()）＝
+  //    本檔兩個 job（required 的上線 Node＋探照燈 dev-machine）必須無條件執行；日後真需要條件（如 step 級 if: failure()）＝
   //    有意識地連同本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
   //    間接層（composite action／reusable workflow）同樣掃不到——靠審查（`uses:` 本地
   //    路徑＝訊號）。
