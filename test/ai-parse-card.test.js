@@ -153,6 +153,77 @@ test('接地｜多重集消耗（r1#1）：把三筆明細縮成一筆、金額�
   assertAiCardGrounded(normalizeAiCard(dup), dupText);
 });
 
+test('接地｜殘片紀律（r3#1）：拆格碎片不得當獨立金額；拼接只認斷在千分位逗號的形', () => {
+  // 真交易 1,000 被抽成「1,│000」＝AI 不可以拆開交回「1 元」假明細（殘片「1,」「000」都不是
+  // 帳單印的數字）；相鄰普通數字「1 2」也不可以拼成帳單沒印過的 12。
+  const text = [
+    '測試商業銀行 信用卡帳單 卡號末四碼 1234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1,002 本期應繳總額 1,002',
+    '115/07/03 拆格店 1, 000',
+    '115/07/04 兩個小數字 1 2',
+  ].join('\n');
+  // 誠實答案：1000（拼接）＋1＋2（各自獨立 token）＝過
+  const honest = { ...GOOD(), totals: { prevDue: 0, paidAndRefund: 0, newCharges: 1002, due: 1002 }, adjustments: [],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '拆格店', amount: 1000 },
+      { date: '2026-07-04', postDate: null, desc: '小額甲', amount: 1 },
+      { date: '2026-07-04', postDate: null, desc: '小額乙', amount: 2 },
+    ] };
+  assertAiCardGrounded(normalizeAiCard(honest), text);
+  // 攻擊①：把拆格的 1,000 拆成假明細「1 元」——殘片「1,」不得供位（G2 也平不了，但接地要先擋）
+  const shred = { ...honest, transactions: [
+    { date: '2026-07-03', postDate: null, desc: '假拆', amount: 1 },
+    { date: '2026-07-03', postDate: null, desc: '假拆', amount: 1 },   // 第二個 1 只能指望殘片「1,」
+    { date: '2026-07-04', postDate: null, desc: '小額乙', amount: 1000 },
+  ] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(shred), text)), 'ai_bad_answer',
+    '★殘片「1,」若被登記成獨立的 1，這份就會過');
+  // 攻擊②：相鄰普通數字「1 2」拼成 12（帳單沒印過 12）
+  const merge = { ...honest, transactions: [
+    { date: '2026-07-03', postDate: null, desc: '拆格店', amount: 1000 },
+    { date: '2026-07-04', postDate: null, desc: '憑空合體', amount: 12 },
+  ] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(merge), text)), 'ai_bad_answer',
+    '★拼接不認沒有逗號斷點的形——「1 2」不是被拆開的 12');
+  // 攻擊③（判別場景）：殘片提供「致勝籌碼」而拼接值本身沒被宣稱——上面兩式在殘片照登的壞版本裡
+  // 也可能因為別格先搶位而剛好紅（突變演練㉒實測），這一式只有殘片紀律本人擋得住。
+  const text3 = [
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 2 本期應繳總額 2',
+    '拆格殘片 1, 000',
+    '單獨數字 1',
+  ].join('\n');
+  const forged3 = { ...GOOD(), lastFour: null, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 2, due: 2 }, adjustments: [],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '真的一元', amount: 1 },
+      { date: '2026-07-03', postDate: null, desc: '假的一元', amount: 1 },   // 只能指望殘片「1,」
+    ] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged3), text3)), 'ai_bad_answer',
+    '★殘片「1,」不是帳單印的 1——它只活在拼接組裡，獨立宣稱借不走');
+});
+
+test('接地｜lastFour 先占位（r3#2）：卡號 token 不得被虛構明細借去當金額位置', () => {
+  // 末四碼、本期新增、本期應繳恰好同為 1234、原文沒有任何交易列——虛構一筆 1234 不可過。
+  const text = [
+    '測試商業銀行 信用卡帳單 卡號末四碼 1234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1234 本期應繳總額 1234',
+  ].join('\n');
+  const base = { ...GOOD(), lastFour: '1234', totals: { prevDue: 0, paidAndRefund: 0, newCharges: 1234, due: 1234 }, adjustments: [] };
+  // 誠實（零明細）＝接地過（之後 G2 自然會紅，那是驗算閘的事）
+  assertAiCardGrounded(normalizeAiCard({ ...base, transactions: [] }), text);
+  const forged = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '憑空店', amount: 1234 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★三個 1234 的位置＝末四碼＋兩格摘要，虛構明細沒位置可借');
+  // 完整卡號在場時：占的是長 token（卡號本人），摘要與明細的同數字不受影響
+  const text2 = [
+    '測試商業銀行 卡號 4321567812341234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 1234 本期應繳總額 1234',
+    '115/07/03 真的店 1234',
+  ].join('\n');
+  const legit = { ...base, transactions: [{ date: '2026-07-03', postDate: null, desc: '真的店', amount: 1234 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(legit), text2)), null,
+    '★lastFour 占長 token（完整卡號），三個金額 1234 各有各的位置——不誤擋');
+});
+
 test('接地｜符號嚴格、無絕對值後備（r1#2 的另一個方向）：帳單印正數、AI 宣稱負數＝擋', () => {
   // 消費被讀成退款：單筆會被 G2 擋，但**成對反轉會在 G2 互相抵消**——接地是唯一每筆獨立把關的位置，
   // 放寬成「配絕對值也算」這裡就破了（突變演練⑯抓到的洞，2026-08-30）。
