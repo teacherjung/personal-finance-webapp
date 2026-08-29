@@ -148,7 +148,7 @@ test('stdin｜分支名含斜線不會被切斷', () => {
   assert.equal(got.branch, 'claude/a/b/c');
 });
 
-// 讓 io 考題通過 repo 綁定與競態縮窗的最小配件（r1 之後 main 需要 url／remoteUrl／fetch）。
+// 讓 io 考題通過 repo 綁定與競態縮窗的最小配件（main 需要 url／remoteUrl／fetch 三樣才走得到 edit）。
 const REPO_URL = 'https://github.com/o/r';
 const prOf = (/** @type {number} */ n, /** @type {string} */ body) => ({ number: n, body, url: `${REPO_URL}/pull/${n}` });
 const IO_REPO = { remoteUrl: `${REPO_URL}.git` };
@@ -294,11 +294,11 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
   }
 });
 
-// ── Codex #519 r1 的四條，一條一族 ──────────────────────────
+// ── 審查輪次抓到的各族（競態／綁定／逾時／唯一性），一條一族 ─────────
 import { pickPr, repoSlug, runWithTimeout } from '../scripts/sync-pr-base-version.js';
 
 test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被舊快照蓋掉', () => {
-  // #522 才剛發生過兩線並行編輯。Codex 合成重現：concurrentMarkerSurvives:false。
+  // 兩線並行編輯有真實前例（#522）。Codex 曾合成重現：concurrentMarkerSurvives:false。
   const body = bodyWith(OLD.slice(0, 7));
   const MARKER = '\n\n### 別條線在查 PR 之後補上的 Grok 掃描紀錄（不可以消失）';
   const fresh = body + MARKER;
@@ -316,24 +316,33 @@ test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被
 });
 
 test('★documenting：重讀之後對方先寫、我方後寫 ⇒ 對方內容被蓋且**看起來像成功**（偵測不到的那一半，照實記載）', () => {
-  // ⚠️ 本題**不宣稱**這個行為是對的——它釘住「事後驗證只看得見對方最後寫入那一半」這個劃界，
-  //    讓任何人想把註解改寫成「並行編輯一定看得見」時，先撞到這一題的存在。
-  //    偵測不到的根因＝GitHub API 沒有 compare-and-swap；能歸零的那天，這題應改成正向斷言。
+  // ⚠️ 本題**不宣稱**這個行為是對的——它用**真的遠端狀態模型**重演那一半：
+  //    對方的寫入真的落在「我方重讀之後、寫入之前」，然後被我方的整份寫回蓋掉。
+  //    （第一版沒有模擬遠端、MARKER 從未被寫入＝斷言「本來就不存在的字不會出現」＝假證據，
+  //    Codex #519 r3 抓到。）偵測不到的根因＝GitHub API 沒有 compare-and-swap；
+  //    能歸零的那天，這題應改成正向斷言。
   const body = bodyWith(OLD.slice(0, 7));
   const MARKER = '\n\n### 對方在重讀之後、我方寫入之前補的內容';
+  let remote = body;                       // ★遠端的真實狀態（fetch 讀它、edit 寫它）
   /** @type {string[]} */ const logs = [];
-  /** @type {string[]} */ const sent = [];
   let fetches = 0;
   main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
     ...IO_REPO, log: (s) => logs.push(s),
     find: () => prOf(3, body),
-    // 重讀＝還沒有 MARKER；（對方在此時寫入 MARKER，但我方看不到）；寫入後讀回＝我方版本
-    fetch: () => { fetches += 1; return fetches === 1 ? body : (sent[0] ?? body); },
-    edit: (_n, b) => { sent.push(b); },
+    fetch: () => {
+      fetches += 1;
+      if (fetches === 1) {                 // 我方重讀拿到的是「對方還沒寫」的版本……
+        const seen = remote;
+        remote += MARKER;                  // ……對方隨即寫入（真的改了遠端）
+        return seen;
+      }
+      return remote;                       // 事後驗證讀到的是遠端當下的狀態
+    },
+    edit: (_n, b) => { remote = b; },      // 我方整份寫回 ⇒ 蓋掉對方剛寫的
   });
-  assert.equal(sent.length, 1);
-  assert.ok(!sent[0].includes(MARKER), '★現況：對方那段內容不在我方送出的版本裡＝被蓋掉');
-  assert.ok(logs.join('\n').includes('✅'), '★現況：而且看起來像成功——這正是劃界要照實記載的那一半');
+  assert.ok(!remote.includes(MARKER), '★對方**真的寫進遠端**的內容，在我方寫回之後不見了＝被蓋掉');
+  assert.deepEqual(staleBaseProblems(remote, NEW), [], '遠端欄位是我方對齊後的樣子');
+  assert.ok(logs.join('\n').includes('✅'), '★而且看起來像成功——這正是劃界要照實記載的那一半');
 });
 
 test('★r1#1b 事後驗證：寫完發現欄位不是我們的樣子（並行編輯贏）⇒ 講一聲、絕不重試覆蓋', () => {
@@ -410,7 +419,7 @@ test('★r1#4 pickPr：同名多支不猜、fork 的 PR 一律不動（「恰好
     ({ number: n, body: `b${n}`, url: `${REPO_URL}/pull/${n}`, headRefName: 'x', isCrossRepository: false, ...extra });
   // 恰好一支 ⇒ 取它
   assert.equal(pickPr([mk(1)], 'x')?.number, 1);
-  // ★同名兩支（都非 fork）⇒ null——「非空取第一支」的退化在這裡轉紅（Codex 的第十一刀）
+  // ★同名兩支（都非 fork）⇒ null——「非空取第一支」的退化在這裡轉紅
   assert.equal(pickPr([mk(1), mk(2)], 'x'), null, '★>1 支必須不猜');
   // ★只有 fork 的那支 ⇒ null（不是我們推的 head 的 PR，改它＝改到別人的說明）
   assert.equal(pickPr([mk(1, { isCrossRepository: true })], 'x'), null, '★fork 不動');
