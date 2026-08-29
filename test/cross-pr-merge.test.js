@@ -657,8 +657,10 @@ test('⭐ 會叫 gh 的閘（不寫死幾支——#526 r3 抓到寫死的『四�
   //    指到另一個**有效** repo＝這幾道閘會去讀**別的 repo** 的 PR、留言與 open PR 清單，
   //    而輸出看起來完全正常——合併程序會照著別人的資料做判斷。
   //
-  // ⚠️ 這一題用**假 gh 記錄環境**，不看指令結果：假 gh 一律 exit 1，四支閘都會走 fail-closed
+  // ⚠️ 這一題用**假 gh 記錄環境**，不看指令結果：假 gh 一律 exit 1，這幾支閘都會走 fail-closed
   //    的那條路直接收工 ⇒ 不會有任何一支真的去 `git worktree add`（考題不動任何真的樹）。
+  //    ⚠️ 也因此**每支閘只有第一次 gh 呼叫被走到**（#526 r4）——多次呼叫的閘（如真考卷閘）
+  //    後面幾個呼叫點的行為題在它自己的考題檔（test/ci-really-ran.test.js 鐵則 11 那題）。
   const GH_GATES = [
     'scripts/check-ci-really-ran.js',   // #526 r3（Codex）：漏在原「四支」清單外，三次 gh 呼叫都沒 gitEnv()
     'scripts/check-cross-pr-merge.js',

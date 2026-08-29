@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -221,4 +221,48 @@ test('閘·端到端｜fail-closed 三態：保護回錯形狀／check runs 錯�
   assert.equal(runCli({ prot: '{}', pages: page([okRun(NODE_JOB), okRun(COLLAB_JOB)]) }).status, 2);
   assert.equal(runCli({ prot: PROT2, pages: '[{"name":"x"}]' }).status, 2);
   assert.equal(runCli({ view: { headRefOid: 'short', autoMergeRequest: null }, prot: PROT2, pages: '' }).status, 2);
+});
+// ── 鐵則 11：三次 gh 呼叫**每一個呼叫點**都要驗（#526 r4 高）──────────────
+// ⚠️ cross-pr-merge.test.js 那題的通用假 gh 一叫就 exit 1 ⇒ 本閘 fail-closed 收工，
+//    **只有第一次呼叫被走到**——r3 宣稱「拿掉任一處 gitEnv 都轉紅」是抽到唯一有覆蓋的
+//    那格（Codex r4 逐處突變實測：第一處紅、第二三處綠）。那題刻意不給合法資料
+//    （給了，別支閘會真的去做 worktree add 之類的動作），所以三段式覆蓋只能在這裡
+//    用**本閘專屬**的假 gh 做：回三段合法資料、讓 CLI 走完全程，逐次斷言環境乾淨。
+test('⭐ 鐵則11｜三次 gh 呼叫逐一驗：假 gh 回合法資料走完全程，每一次都不得看到 GIT_*', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-gh3-'));
+  const log = join(dir, 'calls.log');
+  const fake = join(dir, 'gh');
+  const SHA40 = 'a'.repeat(40);
+  // 依參數分派三段回應；每次呼叫記下「第幾類＋當下看得到哪些 GIT_*」
+  writeFileSync(fake, `#!/bin/sh
+{ printf '%.50s::' "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; echo; } >> ${JSON.stringify(log)}
+case "$*" in
+  *"pr view"*) echo '{"headRefOid":"${SHA40}","autoMergeRequest":null}';;
+  *protection*) echo '[{"context":"CI-A","appId":null}]';;
+  *check-runs*) echo '[{"name":"CI-A","status":"completed","conclusion":"success","completed_at":"2026-08-30T00:00:00Z","app_id":null}]';;
+  *) echo 'unexpected gh args' >&2; exit 9;;
+esac
+`);
+  chmodSync(fake, 0o755);
+  /** @type {Record<string,string>} */
+  const env = { PATH: `${dir}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' };
+  // 注入列過名的與沒列過名的（同 cross-pr-merge 那題的口徑：族會長、不列名）
+  env.GIT_DIR = '/fake/path/.git/worktrees/x';
+  env.GIT_CONFIG_COUNT = '1';
+  env.GIT_CONFIG_KEY_0 = 'user.name';
+  env.GIT_CONFIG_VALUE_0 = 'fixture';
+  env.GIT_BOGUS_FUTURE_THING = 'unlisted';
+  const r = spawnSync('node', [SCRIPT, '526'], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, `合法三段資料下閘應通過，實得 ${r.status}：\n${r.stdout}${r.stderr}`);
+
+  const lines = readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 3, `gh 應被呼叫恰三次（pr view／protection／check-runs），實得 ${lines.length}：\n${lines.join('\n')}`);
+  for (const [i, line] of lines.entries()) {
+    const leaked = line.split('::')[1].trim();
+    assert.equal(leaked, '',
+      `第 ${i + 1} 次 gh 呼叫仍看得到 GIT_*：${leaked}\n`
+        + `   （該行：${line}）\n`
+        + '   繼承有效 GIT_DIR 時這一步會查到**別的 repo** 且輸出看起來正常——'
+        + '每一個呼叫點都必須 env: gitEnv()，少一處就是一個沒守到的門。');
+  }
 });
