@@ -124,6 +124,23 @@ export function cjkPdf(rows, opts = {}) {
   return build(objs, { 3: stream, 7: cmap });
 }
 
+/** 造一份**開檔就要密碼**的 PDF（給「密碼錯不落 AI／不落配方」類考題用）。
+ * 手法：掛一個 /O /U 對不上任何密碼的 /Encrypt 字典——pdfjs 試密碼失敗就丟 PasswordException，
+ * 不需要真的實作 RC4 加密（我們要的是「要密碼」這個狀態，不是可解開的內容）。 */
+export function passwordPdf() {
+  /** @type {string[]} */
+  const objs = [];
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objs[2] = '<< /Type /Pages /Kids [4 0 R] /Count 1 >>';
+  objs[3] = '<< /Length 33 >>';
+  objs[4] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 3 0 R >>';
+  objs[5] = '<< /Filter /Standard /V 1 /R 2 '
+    + '/O <28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a> '
+    + '/U <11111111111111111111111111111111> /P -44 >>';
+  return build(objs, { 3: Buffer.from('BT /F1 12 Tf 40 700 Td (x) Tj ET\n', 'latin1') },
+    '/Encrypt 5 0 R /ID [<0102030405060708090a0b0c0d0e0f10> <0102030405060708090a0b0c0d0e0f10>]');
+}
+
 /** 造一份**只有拉丁字母、完全不像任何帳單**的一頁 PDF（給「認不得的版面」用）。 */
 export function nonStatementPdf(text = 'hello world this is not a statement') {
   const stream = Buffer.from(`BT /F1 12 Tf 40 700 Td (${text.replace(/[()\\]/g, '')}) Tj ET\n`, 'latin1');

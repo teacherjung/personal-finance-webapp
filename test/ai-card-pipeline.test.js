@@ -12,7 +12,7 @@ process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
 const { previewAuto, previewForCard } = await import('../lib/services/statement-import.js');
-const { cjkPdf } = await import('./helpers/build-pdf.js');
+const { cjkPdf, passwordPdf } = await import('./helpers/build-pdf.js');
 
 after(() => {
   for (const suf of ['', '.bak', '-wal', '-shm', '.json']) { try { rmSync(TEST_STORE + suf); } catch { /* 可能不存在 */ } }
@@ -98,15 +98,29 @@ test('★守門｜旗標缺席＝原錯誤原句丟回、零 AI 呼叫（同意�
   assert.equal(fe.modelsUsed.length, 0, '★沒有 useAi:true 卻打了引擎＝同意機制被繞過');
 });
 
-test('★守門｜密碼錯不走 AI（pdf_password 換模型救不了，照舊跳密碼窗）', async () => {
+test('★守門｜認得的版面不走 AI（useAi 只是「認不得時可以用」，不是「一律用」）', async () => {
   const fe = fakeEngine([GOOD_ANSWER()]);
-  // 加密的 PDF 合成不易；等價路徑：一份「認得的台新版面」不會丟 card_unrecognized ⇒ AI 不介入。
   const okPdf = cjkPdf([
     ['台新國際商業銀行', '信用卡消費明細'],
     ['115/06/02', '115/06/04', '星巴克', '150'],
   ]);
   const r = await previewAuto(b64Of(okPdf), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
-  assert.equal(r.engine, undefined, '★模板讀得動就不走 AI（useAi 只是「認不得時可以用」，不是「一律用」）');
+  assert.equal(r.engine, undefined, '★模板讀得動就不走 AI');
+  assert.equal(fe.modelsUsed.length, 0);
+});
+
+test('★守門｜密碼錯不走 AI：pdf_password 原 code 丟回（跳密碼窗），連「去設鑰匙」都不可搶在它前面', async () => {
+  // 真加密 PDF 走完整真路（passwordPdf 見 helpers）。突變演練抓到的洞（2026-08-30）：
+  // 原本用「認得的台新版面」當等價路徑，守門放寬成 ['card_unrecognized','pdf_password'] 也全綠。
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  await assert.rejects(() => previewAuto(b64Of(passwordPdf()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() }),
+    (/** @type {any} */ e) => e.code === 'pdf_password');
+  assert.equal(fe.modelsUsed.length, 0, '★密碼錯＝零 AI 呼叫');
+  // ★判別點：沒設鑰匙時**仍然**回 pdf_password、不是 ai_no_key——密碼窗的優先序不可被 AI 路的
+  //   前置檢查搶走（守門若放寬讓 pdf_password 進 aiCardRoute，使用者會先被指去設鑰匙、密碼窗永遠跳不出來）。
+  store.save({ ...store.emptyDb(), settings: {}, cards: [] });
+  await assert.rejects(() => previewAuto(b64Of(passwordPdf()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() }),
+    (/** @type {any} */ e) => e.code === 'pdf_password');
   assert.equal(fe.modelsUsed.length, 0);
 });
 

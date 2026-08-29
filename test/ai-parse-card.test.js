@@ -137,6 +137,11 @@ test('驗算｜四格摘要缺任一＝驗算不了＝不收（加嚴的定義�
     const g = GOOD(); g.totals[f] = null;
     assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g))), 'ai_reconcile_failed', `★缺 ${f} 沒被擋`);
   }
+  // ★缺兩格互相抵消也要擋（突變演練抓到的洞，2026-08-30）：單缺一格時 null→0 讓等式自己不平、
+  //   等式閘會「代打」擋下——上面那圈其實沒證明缺格閘存在。這組 prevDue 與 paidAndRefund 同缺
+  //   ＝ 0−0 抵消、等式假平衡（0−0＋450＋30＝480 ✓），只有缺格閘本人擋得住。
+  const g2 = GOOD(); g2.totals.prevDue = null; g2.totals.paidAndRefund = null;
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed', '★缺格閘被等式閘掩護＝形同不存在');
 });
 
 test('驗算｜容差＝1 元（吸收去尾差；差 2 元就要擋）', () => {
