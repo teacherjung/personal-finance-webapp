@@ -20,8 +20,8 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
   snapshotUpload, shouldOfferAi, shouldAskBeforeSend, askToggleDisplayAfterSaveFailure, previewBody, applyBody, isAiTicketDeadCode,
-  aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
+  aiConsentBodyHtml, aiPreviewBadgeHtml, aiCardPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_CONSENT_BUSY_LABEL_CARD, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -33,7 +33,10 @@ const count = (s, re) => (s.match(re) || []).length;
 
 // ---- A 群：shouldOfferAi（AI 入口的唯一判準）----
 
-test('A｜shouldOfferAi：只認 bank_unrecognized，對帳閘紅（400 無 code）一律 false', () => {
+test('shouldOfferAi：封閉列舉 bank_unrecognized＋card_unrecognized（批二加卡片入口）——不是 *_unrecognized 樣式比對', () => {
+  // 批二：卡片碼也是合法入口（正）；隨便一個 *_unrecognized 不是（反——封閉列舉不是樣式比對）
+  assert.equal(shouldOfferAi({ code: 'card_unrecognized' }), true);
+  assert.equal(shouldOfferAi({ code: 'foo_unrecognized' }), false);
   assert.equal(shouldOfferAi({ code: 'bank_unrecognized', status: 400 }), true);
   assert.equal(shouldOfferAi({ code: 'pdf_password', status: 400 }), false, '密碼錯要跳密碼窗，不是送 AI');
   // ★承重：對帳閘紅＝★6 裁決「禁止匯入」，絕不可讓 AI 撿去重試一次
@@ -543,4 +546,55 @@ test('applyBody｜配方路線（P2-2）＝只送 {aiTicket}：所見即所得�
   const withSkip = applyBody({ engine: 'recipe', aiTicket: 't-rcp' }, { data: 'x', skipSimilar: true });
   assert.deepEqual(withSkip, { aiTicket: 't-rcp', skipSimilar: true });
   assert.equal(applyBody({ engine: 'recipe' }, { data: 'x' }), null, '★票不見＝不可退回自己再解一次');
+});
+
+
+test('批二｜aiConsentBodyHtml 的 card 變體：單讀說明取代雙讀、送出內容講卡片欄位；bank 預設一字不動', async () => {
+  const bank = aiConsentBodyHtml({ fileName: 'x.pdf' });
+  const card = aiConsentBodyHtml({ fileName: 'x.pdf', kind: 'card' });
+  assert.ok(bank.includes('兩個 AI 各自獨立讀一遍'), 'bank 預設仍是雙讀說明');
+  assert.ok(!card.includes('兩個 AI 各自獨立讀一遍'), '★card 不得沿用雙讀說明（裁示②＝單讀；照抄＝對使用者謊報費用）');
+  assert.ok(card.includes('單讀'), 'card 要講單讀');
+  assert.ok(card.includes('逐筆驗算'), 'card 要講驗算閘（裁示①）');
+  assert.ok(card.includes('卡號末四碼'), 'card 的送出內容講卡片欄位');
+  assert.ok(bank.includes('帳號末碼'), 'bank 的送出內容不變');
+});
+
+test('批二 r1#5｜卡片版送出中字樣：不可講「仲裁」（單讀沒有這個流程）；bank 那句一字不動', () => {
+  assert.doesNotMatch(AI_CONSENT_BUSY_LABEL_CARD, /仲裁/, '★卡片單讀沒有仲裁——借銀行那句＝宣稱不存在的流程');
+  assert.match(AI_CONSENT_BUSY_LABEL_CARD, /正在|稍候|讀取中/, '要看得出「還在跑」');
+  assert.match(AI_CONSENT_BUSY_LABEL_CARD, /更強的模型/, '要照實講單讀階梯（第一讀不順會升級）');
+  assert.match(AI_CONSENT_BUSY_LABEL, /仲裁/, 'bank 那句保持原樣（銀行線雙讀真的有仲裁）');
+});
+
+test('批二 r1#5｜卡片版 AI 徽章：只講卡片真的跑過的閘，不可借銀行的餘額鏈／仲裁文案', () => {
+  assert.equal(aiCardPreviewBadgeHtml({ rows: [] }), '', '模板路線不可長出徽章');
+  assert.equal(aiCardPreviewBadgeHtml(null), '');
+  assert.equal(aiCardPreviewBadgeHtml({ engine: 'template' }), '');
+  const html = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  assert.match(html, /應繳等式/, '要講等式閘（卡片真的跑的）');
+  assert.match(html, /逐筆加總/, '要講加總閘');
+  assert.match(html, /接地檢查/, '要講接地');
+  assert.match(html, /卡號末四碼/, '請確認清單講卡片欄位');
+  assert.doesNotMatch(html, /餘額|仲裁|雙讀|帳號/, '★銀行線的防線一項都沒跑——出現就是讓使用者錯信不存在的防線');
+  assert.match(html, /看不到/, '照實劃界：要講這些閘看不到什麼（就地解釋鐵則）');
+  assert.match(html, /抵銷/, '★r6#1 的盲點要就地揭露：正負互抵的整組漏抄，加總與等式都看不到');
+  assert.match(html, /退款被抄成繳款/, '★r8#1 的盲點要就地揭露：負數列身分靠沒接地的說明文字判定');
+  assert.match(html, /只拿來驗算、不會記進消費明細/, '★Grok 掃#3：具名調整不入帳＝要就地講清楚（少記年費/利息不是 bug 是取捨）');
+  assert.match(html, /1 元容差/, '★Grok 掃#1：容差縫隙要就地揭露（恰差 1 元的漏抄/多抄看不到）');
+  assert.doesNotMatch(html, /已經按過一次確認/, '★r8#2：卡片匯入不驗票——「按過確認就失效」是銀行線的事實、卡片線不可照抄');
+  assert.match(html, /過期後請重新上傳/, '票的真實範圍（換卡重看短效）要講、過期出路要給');
+  const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
+  assert.doesNotMatch(evil, /<b>x<\/b>/, '模型名要逃逸');
+});
+
+test('批二 r2#3｜徽章要亮出帳單期別讓使用者核對（後端只驗格式接不了地，顯示是唯一防線）', () => {
+  const withMonth = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5', statementMonth: '2026-07' });
+  assert.match(withMonth, /2026-07/, '★讀到的期別要顯示——它會寫進每一筆，讀錯＝整批歸錯月份');
+  assert.match(withMonth, /整批歸到錯的月份/, '要講清楚讀錯的代價（就地解釋鐵則）');
+  const noMonth = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  assert.match(noMonth, /沒讀到帳單期別/, '沒讀到＝照實說，不冒充有期別');
+  assert.doesNotMatch(noMonth, /整批歸到錯的月份/);
+  const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'm', statementMonth: '<i>x</i>' });
+  assert.doesNotMatch(evil, /<i>x<\/i>/, '期別要逃逸（後端驗過格式，畫面仍不賭這件事）');
 });

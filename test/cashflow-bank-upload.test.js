@@ -251,14 +251,38 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   //   只鎖一條時、移除另一條守門會假綠（r5#3 實測）。
   assert.match(src, /const seq0 = currentNavSeq\(\);/, '卡片上傳窗要在開窗當下存下**換頁**序號（r9：接成重繪序號時後續窗會靜靜不開）');
   // r18：同銀行線，四個後續開窗點都要走 canOpenNext（換頁＋彈窗格被接管都作廢）
-  assert.equal((src.match(/const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/g) || []).length, 3,
-    '三個會排下一窗的 onSubmit（密碼窗／上傳窗／選卡窗）都要有 canOpenNext');
+  assert.equal((src.match(/const canOpenNext = \(\) => onPage\(\) && ctx\.owns\.handoff\(\);/g) || []).length, 4,
+    '四個會排下一窗的 onSubmit（密碼窗／上傳窗／選卡窗／AI 同意窗）都要有 canOpenNext');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, '', onPage\)\)/, '免密碼路徑開後續窗要走 canOpenNext');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/, '密碼窗成功路徑開後續窗要走 canOpenNext');
-  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64, snap\.fileName\)\)/,
+    '池全敗跳密碼窗要走 canOpenNext（且把快照檔名一路帶進去——密碼後備的同意窗才不會顯示「未命名」）');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openStatementPreview\(/, '選卡重解析後開預覽窗要走 canOpenNext');
+  // Codex r1#3（批二）：`file` 是 onchange 會改寫的外層變數——第一個 await 之前要凍快照，
+  //   之後所有路只認 snap（晚讀 file?.name 會在「請求在途時改選 B」時顯示 B 的名字、實際送出 A）。
+  assert.match(src, /const snap = snapshotUpload\(file\);[\s\S]{0,300}?await fileToBase64\(snap\.file\)/,
+    '快照要在第一個 await 之前凍好、b64 從快照讀');
+  assert.doesNotMatch(src, /file\?\.name/, '快照之後不准再讀可變的 file?.name（同意窗顯示與實際送出會分家）');
+  // Codex r5#3（批二）：AI 後備路也要記密碼——card_unrecognized 代表 PDF 已被打開、只是版面認不得；
+  //   只在模板成功路記＝勾了記住、下次上傳照樣再問
+  assert.match(src, /if \(!shouldOfferAi\(e\)\) throw e;\s*await rememberPw\(\);/,
+    'AI 後備分流之後、發同意窗／直送之前要先記密碼');
+  assert.match(src, /\}\s*await rememberPw\(\);\s*openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/,
+    '模板成功路照舊記密碼（抽成同一支 rememberPw、不是抄兩份）');
+  // Grok 掃#6（批二）：同意接線不能只鎖文案——卡片路是平行實作，分流與旗標形狀要各自釘
+  //（銀行 F 群只掃 cashflow.js；刪掉卡片路的 askBeforeSendAi 分流時，同意考題原本仍全綠）
+  assert.equal((src.match(/await askBeforeSendAi\(\)/g) || []).length, 2,
+    '兩條上傳路（免密碼／密碼窗）都要有「送 AI 前要不要先問」的分流');
+  assert.match(src, /async function sendCardToAi[\s\S]{0,400}?if \(!canOpenNext\(\)\) return;/,
+    'sendCardToAi 第一行要驗 canOpenNext（await 設定期間關窗/切頁＝連請求都不可發）');
+  assert.match(src, /body: \{ data: b64, \.\.\.\(pw \? \{ password: pw \} : \{\}\), useAi: true \}/,
+    'AI 要求旗標要嚴格 useAi:true 手組（不是沿用模板 body）');
+  // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
+  assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
+  assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');
+  assert.doesNotMatch(src, /\baiPreviewBadgeHtml\(/, '銀行版徽章（餘額鏈／仲裁文案）不准出現在卡片線');
   // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）
-  assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,120}?if \(!onPage\(\)\) return;/,
+  assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,200}?if \(!onPage\(\)\) return;/,
     '改卡重解析 await 後、draw 前要核對切頁');
   assert.doesNotMatch(src, /setTimeout\(\(\) => (handlePreviewResult|openPasswordWindow|openStatementPreview)/, '不准有裸 setTimeout 開後續窗');
 });

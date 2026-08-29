@@ -530,6 +530,7 @@ const MANIFEST = {
       'data/seed.json',
       'lib/bank-statement.js', 'test/bank-statement.test.js', 'test/taishin-debit.test.js',
       'test/card-identity.test.js', 'test/helpers/build-pdf.js',
+      'test/ai-parse-card.test.js', 'test/ai-card-pipeline.test.js',
       'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
       'lib/bank-alias.js', 'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
       'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
@@ -569,6 +570,7 @@ const MANIFEST = {
       'lib/services/statement-import.js',
       'lib/services/store-rules.js',
       'lib/card-identity.js',
+      'lib/ai-parse-card.js',
       // 發卡行可選清單（2026-08-28）：卡片表單與 card-identity 的 issuerBank 共用同一份機構清單
       'public/modules/card-issuers.js', 'test/card-issuers.test.js',
       'public/modules/cards.js',   // 發卡行下拉的接線與文案（多領域命中：前端／雲端也點名它）

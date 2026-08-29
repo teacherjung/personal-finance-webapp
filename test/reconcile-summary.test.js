@@ -102,6 +102,25 @@ test('信用卡｜摘要驗算通過＝講等式本人；零提醒＝不長清�
   assert.doesNotMatch(h, /<ul/);
 });
 
+test('批二 r2#4｜AI 路的「不自動歸卡」警語：不可講「內建版面盡力讀出」（那句跟 AI 徽章當場矛盾）', async () => {
+  const { unknownIssuerNoticeHtml, aiUnknownCardNoticeHtml } = await import('../public/modules/reconcile-summary.js');
+  const h = aiUnknownCardNoticeHtml();
+  assert.match(h, /不會自動歸卡/, '歸卡紀律要講');
+  assert.match(h, /只當參考/, 'AI 讀到的機構名＝顯示用，不拿來歸卡');
+  assert.doesNotMatch(h, /內建版面|盡力/, '★模板版警語的來歷描述在 AI 路是假話');
+  // 模板版那句（William 逐字核定）一字不動
+  assert.match(unknownIssuerNoticeHtml('none'), /內建版面「盡力」讀出來的/);
+});
+
+test('信用卡｜等式摺入具名調整時（r2#2 批二）：說明句要照實含調整項；沒摺＝原句一字不變', () => {
+  const folded = gateSummaryHtml({ level: 'medium', advisories: [], stats: { adjFolded: 30 } }, 'card');
+  assert.match(folded, /上期應繳 − 已繳款 ＋ 本期新增 ＋ 帳單上有名字的調整項（利息／年費等） ＝ 本期應繳/,
+    '★摺了就講摺了的公式——說明句宣稱「沒摺也相等」＝畫面與實際閘矛盾');
+  const plain = gateSummaryHtml({ level: 'medium', advisories: [], stats: { adjFolded: 0 } }, 'card');
+  assert.match(plain, /上期應繳 − 已繳款 ＋ 本期新增 ＝ 本期應繳/);
+  assert.doesNotMatch(plain, /調整項/, '模板路（adjFolded 恆 0）句子一字不變');
+});
+
 test('信用卡｜影子提醒原文列出、不擋匯入；訊息內容一律跳脫（advisory 文字進 HTML 的唯一通道）', () => {
   const h = gateSummaryHtml({ level: 'medium', stats: {},
     advisories: [{ message: '差 100——可能漏讀' }, { message: '<img src=x onerror=alert(1)>' }] }, 'card');
@@ -318,8 +337,10 @@ test('★接線：預覽窗真的有呼叫「認不出機構」警語（Codex #5
   const src = readFileSync(new URL('../public/modules/transactions-import.js', import.meta.url), 'utf-8');
   assert.match(src, /import \{[^}]*unknownIssuerNoticeHtml[^}]*\} from '\.\/reconcile-summary\.js'/,
     '★要從單一真相引入，不可以在前端自己拼一句');
-  assert.match(src, /\$\{unknownIssuerNoticeHtml\(curR\.bankEvidence\)\}/,
-    '★要用後端回來的 bankEvidence 當參數（寫死或傳錯欄位＝警語永遠不出現／永遠出現）');
+  // 批二 r2#4：AI 路換 AI 專用句（模板句的「內建版面盡力讀出」在 AI 路是假話）——用引擎分流，
+  // 模板路仍走原句＋原參數
+  assert.match(src, /curR\.engine === 'ai' \? aiUnknownCardNoticeHtml\(\) : unknownIssuerNoticeHtml\(curR\.bankEvidence\)/,
+    '★AI 路走 AI 專用警語；模板路要用後端回來的 bankEvidence 當參數（寫死或傳錯欄位＝警語永遠不出現／永遠出現）');
   // 它必須跟對帳說明一起出現在預覽窗的 bodyHtml 裡（兩者相鄰＝同一個區塊）
   const i = src.indexOf('unknownIssuerNoticeHtml(curR.bankEvidence)');
   const j = src.indexOf("gateSummaryHtml(curR.reconcile, 'card')");

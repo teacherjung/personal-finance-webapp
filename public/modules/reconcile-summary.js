@@ -115,7 +115,11 @@ export function gateSummaryHtml(reconcile, kind) {
     }
   } else {
     if (reconcile.level === 'medium') {
-      main = '<b class="pos">✓ 帳單摘要驗算通過</b>：上期應繳 − 已繳款 ＋ 本期新增 ＝ 本期應繳，數字互相吻合。';
+      // r2#2（批二）：AI 路的等式摺入了具名調整（利息／年費…）——摺了就照實講，不可讓說明句
+      // 宣稱一條沒摺調整也相等的公式（畫面與實際公式矛盾＝畫面說謊）。模板路 adjFolded 恆 0＝原句不變。
+      main = n('adjFolded')
+        ? '<b class="pos">✓ 帳單摘要驗算通過</b>：上期應繳 − 已繳款 ＋ 本期新增 ＋ 帳單上有名字的調整項（利息／年費等） ＝ 本期應繳，數字互相吻合。'
+        : '<b class="pos">✓ 帳單摘要驗算通過</b>：上期應繳 − 已繳款 ＋ 本期新增 ＝ 本期應繳，數字互相吻合。';
     } else {
       main = '<b>△ 沒讀到可交叉驗算的總額</b>（例如官網下載的 XLSX 就沒有印）：只會匯入下面讀到且勾選的明細，匯入前建議對帳單核對筆數與金額。';
     }
@@ -150,5 +154,19 @@ export function unknownIssuerNoticeHtml(bankEvidence) {
   return `<div class="empty" style="margin-bottom:10px">${esc(
     '認不出這是哪一家銀行的帳單。下面的明細是用內建版面「盡力」讀出來的，可能有漏抄或抄錯，'
     + '請核對再匯入；卡片也請自己選（這種情況不會自動幫你歸卡）。',
+  )}</div>`;
+}
+
+/**
+ * **AI 路**的「不自動歸卡」警語（批二；Codex r2#4）：AI 預覽固定 `bankEvidence:'none'`，
+ * 但上面那句講「內建版面盡力讀出」——跟同畫面的 AI 徽章當場矛盾（這份明明是 AI 讀的）。
+ * AI 路換這句：只講歸卡紀律（讀取品質的劃界已在 AI 徽章講過，不重複）。
+ * （上面模板版那句是 William 核定的，一字未動。）
+ * @returns {string}
+ */
+export function aiUnknownCardNoticeHtml() {
+  return `<div class="empty" style="margin-bottom:10px">${esc(
+    '這份帳單不會自動歸卡：AI 讀到的機構名只當參考、不拿來決定錢記到哪張卡。'
+    + '請自己選對卡片，再照上面的清單核對內容後匯入。',
   )}</div>`;
 }
