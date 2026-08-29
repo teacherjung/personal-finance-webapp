@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RECIPE_FORMAT_VERSION, RECIPE_LIMITS, validateRecipeStrict, recipeMatches, parseWithRecipe, recipeReproduces,
-  validateRecipeAgainstStatement, recipeNorm,
+  validateRecipeAgainstStatement, recipeNorm, hitEither,
 } from '../lib/parse-recipe.js';
 import { parseBankSummary, parseBankDetail, splitAmount, squash } from '../lib/bank-statement.js';
 import { classifyBankTx } from '../lib/services/bank-import.js';
@@ -1798,6 +1798,59 @@ test('同一把尺｜參考日整段維持舊尺：相容字錨點＝讀不到�
   rocLines[0] = L(300, [[20, '合成郵局存簿'], [47, '帳務期間２115/05/06列印日116/05/06']]);
   assert.equal(parseWithRecipe(rocLines, { ...recipeB(), refDate: { strategy: 'anchored-date', anchor: '帳務期間' } }).referenceDate,
     '2026-05-06', '★候選在原文上產生（吃掉候選的話會變成 2027-05-06）');
+});
+
+test('同一把尺｜辨識一律「舊尺或新尺」：新尺只增不減，main 認得的一定也認得（裁示「甲」）', () => {
+  // ⚠️ 我一路假設「新尺 ⊇ 舊尺」——**那不成立**。NFKC 會把**跨格相鄰**的字合成掉
+  //   （`A`＋U+030A ⇒ `Å`），於是有些東西**舊尺認得、新尺反而不認得**。只換成新尺 ⇒ 我們會在
+  //   main 停下來的地方繼續往前（r6 實測：銀行身分牆 fail-open、概要多讀帳戶、靜默漏交易）。
+  const R = '\u030A';
+  // ①**屬性**：舊尺命中 ⇒ `hitEither` 一定命中（這是「只增不減」的機械定義）
+  const cases = [
+    ['甲A' + R + '乙', '甲A'],            // ★跨格相鄰被合成：舊尺命中、新尺不命中
+    ['現金帳戶總覽', '現金帳戶總覽'],      // 兩尺都命中
+    ['現⾦帳戶總覽', '現金帳戶總覽'],      // 只有新尺命中（本支要修的病）
+    ['第１２３類', '第123類'],
+    ['無關文字', '找不到的'],
+  ];
+  for (const [text, needle] of cases) {
+    const oldHit = squash(text).includes(squash(needle));
+    if (oldHit) assert.equal(hitEither(text, needle), true, `★舊尺命中「${needle}」⇒ hitEither 必須也命中`);
+  }
+  // 前提自檢：第一組真的是「舊尺命中、新尺不命中」，否則整題什麼都沒測
+  assert.equal(squash('甲A' + R + '乙').includes(squash('甲A')), true, '★前提：舊尺要命中');
+  assert.equal(recipeNorm('甲A' + R + '乙').includes(recipeNorm('甲A')), false, '★前提：新尺要不命中');
+  assert.equal(hitEither('甲A' + R + '乙', '甲A'), true, '★★hitEither 要接住它');
+  assert.equal(hitEither('現⾦帳戶總覽', '現金帳戶總覽'), true, '★新尺那一半也要在（否則本支主修沒了）');
+  // ②**端到端**：暗號／區段錨點／收尾錨點三個辨識點各放一個「舊尺才認得」的形狀，整份要照常解出來
+  const r = { ...recipeN(), docAnchors: ['存戶總表A', '收支明細月報'],
+    summary: { ...recipeN().summary, sections: [{ anchor: '存戶總表A', currency: 'TWD' }], endAnchor: '本頁小計A' } };
+  assert.deepEqual(validateRecipeStrict(r), [], '前提：這是合法配方');
+  const ls = linesN();
+  ls[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表A'], [60, R + '註'], [452, '結算日:2026/06/30']]);
+  ls[2] = L(240, [[47, '本頁小計A' + R], [445, '$1,230']]);
+  assert.equal(recipeMatches(ls, r), true, '★暗號：舊尺認得的，新尺認不得也要算認得');
+  const p = parseWithRecipe(ls, r);
+  assert.equal(p.accounts.length, 1, '★區段錨點：舊尺認得 ⇒ 概要區照樣開得起來');
+  assert.equal(p.transactions.length, 1, '★收尾錨點：舊尺認得 ⇒ 概要區照樣收得了尾');
+  assert.equal(p.referenceDate, '2026-06-30');
+  // ③**銀行身分**、**findX**、**表頭完整性**三個辨識點各再一個「舊尺才認得」的形狀
+  //   （突變實測：只靠上面那三點，這三格的刀都活得下來）。
+  const r2 = { ...recipeN(), bank: '合成金庫A',
+    detail: { ...recipeN().detail, headerOut: `支出A ${R}` } };   // 錨點帶空白 ⇒ 新尺不合成；帳單那格沒空白 ⇒ 會合成
+  assert.deepEqual(validateRecipeStrict(r2), [], '前提：這是合法配方');
+  const ls2 = linesN();
+  ls2[0] = L(300, [[20, '合成金庫A'], [40, R + '月結單'], [47, '存戶總表'], [452, '結算日:2026/06/30']]);
+  ls2[4] = L(120, [[75, '帳號'], [135, '日期'], [200, '車號'], [272, `支出A${R}`],
+    [331, '存入金流'], [396, '本日餘額'], [489, '日誌註記']]);
+  // 前提自檢：這兩處真的是「舊尺命中／相等、新尺不命中／不相等」
+  assert.equal(hitEither('合成金庫A' + R + '月結單', '合成金庫A'), true);
+  assert.equal(recipeNorm('合成金庫A' + R + '月結單').includes(recipeNorm('合成金庫A')), false, '★前提：銀行名新尺要不命中');
+  assert.equal(squash(`支出A${R}`) === squash(`支出A ${R}`), true, '★前提：欄名舊尺要相等');
+  assert.equal(recipeNorm(`支出A${R}`) === recipeNorm(`支出A ${R}`), false, '★前提：欄名新尺要不相等');
+  const p2 = parseWithRecipe(ls2, r2);
+  assert.equal(p2.transactions.length, 1,
+    '★★銀行身分／findX／表頭完整性三處都要收舊尺——少一處就是 main 解得動、我們解不動');
 });
 
 test('同一把尺｜表頭邊界一律 old||new：舊尺認得、新尺不認得的那一格，不可跨過 main 的結構邊界', () => {
