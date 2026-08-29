@@ -16,7 +16,8 @@ process.env.STORE_FILE = TEST_STORE;
 const { previewBankStatement, applyBankStatement, recipeBankRoute, recordRecipeApplied, markRecipesSuspect } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { clearAiTicketsForTest, issueAiTicket, redeemAiTicket, restoreAiTicket } = await import('../lib/ai-confirm-ticket.js');
-const { RECIPE_FORMAT_VERSION } = await import('../lib/parse-recipe.js');
+const { RECIPE_FORMAT_VERSION, recipeNorm } = await import('../lib/parse-recipe.js');
+const { squash } = await import('../lib/bank-statement.js');
 const { sanitizeDbForWrite, READONLY_COLLECTIONS } = await import('../lib/schema.js');
 const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
 
@@ -262,14 +263,24 @@ test('recipeBankRoute｜勝出的那一列不可以留在疑似過期名單裡�
     '★★救回來的那一列不可以同時掛在疑似過期名單上（apply 會把好版標成失效、畢業歸零）');
 });
 
+/** 帳單把 `Z`、`A`、U+030A 拆在**相鄰三格**：舊尺看得到 `ZA`、新尺會合成成 `ZÅ` ⇒ 看不到 `ZA`。 */
+const linesSplit = () => { const ls = linesA(); ls[0] = L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [300, 'Z'], [310, 'A'], [320, '\u030A'], [452, '結算基準日:2026/06/30']]); return ls; };
+const extractSplit = async () => linesSplit();
+
 test('recipeBankRoute｜current 曾中版面的事實要跨趟保留（否則壞版永遠升不掉，#523 r12）', async () => {
   // 第一趟（舊尺）：current 中版面但拒解。第二趟（新尺）：previous 救回來。
   // `currentMatched` 若放在趟裡，第二趟會把它重設成 false ⇒ apply 走「只是別版面服役」分支
   // ⇒ **壞的 current 永遠升不掉、last-known-good 永遠升不上去、也永遠無法重新畢業**。
-  const cur = brokenRecipe(); cur.docAnchors = ['Oﬃce', '往來紀錄'];      // 只有舊尺中版面（新尺會合成成 Office）
-  const prev = goodRecipe(); prev.docAnchors = ['Office', '往來紀錄'];    // 只有新尺中版面
+  // ⚠️ 夾具必須是**真的只有舊尺中版面**（Codex #523 r13#2：我上一版用 `Oﬃce`／`Office`，
+  //   新尺會把兩邊一起正規化成 `Office` ⇒ current 在第二趟又 match 了 ⇒ 把 Map 退化成每趟重置，
+  //   這一題照樣全綠＝假護欄）。所以改用「跨格 `Z`＋`A`＋U+030A」：舊尺 `ZA`、新尺 `ZÅ`。
+  const cur = brokenRecipe(); cur.docAnchors = ['ZA', '往來紀錄'];        // 只有舊尺中版面
+  const prev = goodRecipe(); prev.docAnchors = ['ZÅ', '往來紀錄'];        // 只有新尺中版面
+  const raw = linesSplit()[0].cells.map((/** @type {any} */ c) => c.s).join('');
+  assert.equal(squash(raw).includes('ZA'), true, '★前提：舊尺看得到 ZA');
+  assert.equal(recipeNorm(raw).includes('ZA'), false, '★前提：新尺看不到 ZA（合成成 ZÅ）');
   await seedDb({ recipes: [row({ current: cur, previous: prev })] });
-  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractLig });
+  const r = await recipeBankRoute('QUFBQQ==', undefined, await getDb(), { extract: extractSplit });
   assert.equal(r.hit?.usedVersion, 'previous', '前提：第二趟用 previous 救回來');
   assert.equal(r.hit?.currentMatched, true,
     '★★current 在第一趟中過版面＝這是回滾語意（互換版本＋streak 重數），不是「別版面服役」');

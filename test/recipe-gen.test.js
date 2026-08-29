@@ -125,7 +125,21 @@ test('生成｜出生三關也是「整份跑兩趟、每趟只用一把尺」�
   const r2 = await generateRecipeAfterImport(ticketOf([], { lines: ls, parsed: g }), { aiEngineFactory: engineOf({ gen: bad }) });
   assert.equal(r2.saved, false);
   assert.equal(/** @type {any} */ (r2).reason, 'recipe_birth_parse',
-    '★★要報 new 那一趟真正卡住的關（parse），不是 old 那一趟意料之中的 match');
+    '★★要報走得最深的那一關（new 的 parse），不是 old 那一趟意料之中的 match');
+  // **反方向也可達**（Codex #523 r13#1）：暗號「A＋U+030A」印在相鄰兩格 ⇒ old 長度 2、一路走到
+  //   parse 才因表頭錯誤失敗；new 卻在第一關就因 NFKC 合成成單一字元 `Å` 而 strict 太短。
+  //   取「最後一趟」會回報 strict ⇒ 統計指向「放寬 minLen」，但 old 早就通過那道安全門，
+  //   真正要處理的是 parse。⇒ 取**最深**。
+  const K2 = '\u030A';
+  const ls2 = linesA();
+  ls2[0] = L(300, [[20, '合成銀行月結單'], [47, '合成帳戶總覽區'], [300, 'A'], [310, K2], [452, '結算基準日:2026/06/30']]);
+  assert.equal(squash(`A${K2}`).length, 2, '★前提：舊尺看到兩個字');
+  assert.equal(recipeNorm(`A${K2}`).length, 1, '★前提：新尺合成成一個字（strict 會嫌太短）');
+  const deep = () => { const r = recipeAnswer(); r.docAnchors = [`A${K2}`, '往來紀錄']; r.detail.headerIn = '存入金額'; return r; };
+  await seedDb();
+  const r3 = await generateRecipeAfterImport(ticketOf([], { lines: ls2 }), { aiEngineFactory: engineOf({ gen: deep }) });
+  assert.equal(/** @type {any} */ (r3).reason, 'recipe_birth_parse',
+    '★★淺層失敗（new 的 strict）不可以蓋掉更深、也更可行動的根因（old 的 parse）');
 });
 
 test('生成｜出生第一趟（舊尺）不可以被拿掉：舊尺才認得的版面照樣要孵得出卡（#523 r12）', async () => {

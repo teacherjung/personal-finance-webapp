@@ -1615,8 +1615,14 @@ test('相容字｜第二趟（新尺）認得整份印相容字的版面，逐�
   rRad.detail.headerOut = toRad(rRad.detail.headerOut); rRad.detail.headerIn = toRad(rRad.detail.headerIn);
   rRad.detail.headerBalance = toRad(rRad.detail.headerBalance); rRad.detail.headerNote = toRad(rRad.detail.headerNote);
   rRad.detail.headerIgnore = rRad.detail.headerIgnore.map(toRad);
-  for (const slot of [rRad.bank, ...rRad.docAnchors, rRad.refDate.anchor, rRad.summary.endAnchor, rRad.detail.headerOut]) {
-    assert.notEqual(slot, toRad(slot) === slot ? '' : slot.normalize('NFKC'), '★樣本必須真的換得動字');
+  // ⚠️ 前提自檢要真的成立（Codex #523 r12#4／r13#3——**我上一輪說修了但腳本中途中止、實際沒寫進去**）：
+  //   這些槽位必須真的含相容字，也就是**與自己的 NFKC 正規形不同**。
+  //   原本寫成三元式：沒有可替換字時右側變成 `''`，任何非空槽位都會通過＝空斷言。
+  for (const slot of [rRad.bank, ...rRad.docAnchors, rRad.refDate.anchor,
+    ...rRad.summary.sections.map((/** @type {any} */ x) => x.anchor), rRad.summary.endAnchor,
+    rRad.detail.headerOut, rRad.detail.headerIn, rRad.detail.headerBalance, rRad.detail.headerNote,
+    ...rRad.detail.headerIgnore]) {
+    assert.notEqual(String(slot).normalize('NFKC'), String(slot), `★槽位「${slot}」必須真的含相容字（否則這一題什麼都沒測）`);
   }
   const out = parseWithRecipe(linesN(), rRad, { ruler: 'new' });
   assert.equal(out.bank, rRad.bank, 'bank 是原樣回聲的**輸出值**、不是比對點');
