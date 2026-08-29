@@ -1780,6 +1780,46 @@ test('同一把尺｜參考日的候選完全在舊尺上產生：正規化既�
   assert.equal(parseWithRecipe(linesN(true), recipeN()).referenceDate, '2026-06-30',
     '★正規化用來定位錨點、候選從原文切片產生——兩件事不可互相抵銷');
 });
+
+test('同一把尺｜切點兩段式：快路徑＝main 那條、慢路徑只給相容字錨點且有上限（Codex r4）', () => {
+  // ①**基字＋空白＋組合附標**的錨點：切點若在「去空白後」的字串上逐位算，NFKC 會把
+  //   `A`＋U+030A 合成 `Å` ⇒ 錨點反而找不到 ⇒ main 讀得到、它讀不到（r4#1 實測）。
+  //   快路徑（原文裡直接找錨點）走的就是 main 那條，位置逐字相同。
+  const A = 'A \u030A日';
+  const rA = { ...recipeB(), refDate: { strategy: /** @type {const} */ ('anchored-date'), anchor: A } };
+  assert.deepEqual(validateRecipeStrict(rA), [], '前提：這是合法配方');
+  const lsA = linesB();
+  lsA[0] = L(300, [[20, '合成郵局存簿'], [47, A], [120, '115/05/31']]);
+  assert.equal(parseWithRecipe(lsA, rA).referenceDate, '2026-05-31',
+    '★切點在去空白後的字串上算＝組合附標被合成掉、錨點找不到、參考日變 null');
+  // ②相容字錨點：快路徑落空、慢路徑接手（本支的主修，不可被①的修法抵銷）
+  assert.equal(parseWithRecipe(linesN(true), recipeN()).referenceDate, '2026-06-30',
+    '★慢路徑仍要找得到相容字錨點');
+  // ②b **慢路徑自己也要用對尺**：錨點同時含相容字（⇒ 快路徑落空、非走慢路徑不可）與
+  //     「基字＋空白＋組合附標」（⇒ 慢路徑若在去空白後的字串上算就會把它合成掉）。
+  //     ①只走得到快路徑，考不到這裡（突變實測：只改慢路徑那一行，①仍綠）。
+  const AB = `A \u030A${toRad('日')}`;
+  const rB2 = { ...recipeB(), refDate: { strategy: /** @type {const} */ ('anchored-date'), anchor: AB } };
+  assert.deepEqual(validateRecipeStrict(rB2), [], '前提：這是合法配方');
+  const lsB2 = linesB();
+  lsB2[0] = L(300, [[20, '合成郵局存簿'], [47, AB], [120, '115/05/31']]);
+  assert.equal(parseWithRecipe(lsB2, rB2).referenceDate, '2026-05-31',
+    '★慢路徑要在**未去空白**的原文上算，否則組合附標被合成、錨點找不到');
+  // ②c **上限只准綁在慢路徑上**：正規字錨點（＝所有既有規則卡）走快路徑，
+  //     再長也不受掃描上限影響——上限不可以變成既有行為的回歸。
+  const farPlain = linesN();
+  farPlain[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [100, '填'.repeat(2100)],
+    [452, '結算日:2026/06/30']]);
+  assert.equal(parseWithRecipe(farPlain, recipeN()).referenceDate, '2026-06-30',
+    '★正規字錨點在 2000 字之後照樣讀得到（快路徑無上限＝與 base 相同）');
+  // ③慢路徑**有上限**（逐位重算前綴＝平方級；上限之外＝當作找不到 ⇒ null＝既有 fail-safe，
+  //   不是讓父行程掃到停頓）。
+  const far = linesN(true);
+  far[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表'], [100, '填'.repeat(2100)],
+    [452, `${toRad('結算日')}:2026/06/30`]]);
+  assert.equal(parseWithRecipe(far, recipeN()).referenceDate, null,
+    '★錨點落在掃描上限之外＝null（餘額不更新），不是無上限地逐位掃');
+});
 test('同一把尺｜引擎輸出的文字**不**正規化：原文留底／去重鍵／帳號身分三條界線（保存型）', () => {
   // 這題守的是「**不要**做什麼」。正規化一旦流進**存下來的字**，會同時打破三件事：
   //  ①`bankSummary`／`bankNote` 的「帳單原文、一字未改」契約（`lib/types.js`）
@@ -1814,19 +1854,15 @@ test('既有缺陷現況｜帳單印相容字時分類關鍵字漏認（characte
   //   ⚠️ **main 上就到得了**（AI 忠實照抄相容字時，暗號兩邊同形、舊尺照樣命中、出生驗收照樣過），
   //   不是本支造成、也不由本支修——要修是修**分類那一層**（比對用正規形、原文不動）。
   //   修好那天這題會紅：**紅了就把這題刪掉**，不要為了它保留缺陷。
-  const lines = linesN();
-  lines[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, toRad('信用卡款')],
-    [289, 30, '$500'], [418, 0, '$730']]);
-  const p = parseWithRecipe(lines, recipeN());
-  assert.deepEqual(classifyBankTx(p.transactions[0], new Set()),
-    { type: 'expense', category: '其他', subcategory: '未分類' },
-    '現況：繳卡費因字體漏認、落在「其他/未分類」（正規字寫法會落在「不分類」那一格）');
-  // 對照組：同一句話用正規字印，分類就對了＝證明差別真的只在字體
-  const ok = linesN();
-  ok[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '信用卡款'],
-    [289, 30, '$500'], [418, 0, '$730']]);
-  assert.deepEqual(classifyBankTx(parseWithRecipe(ok, recipeN()).transactions[0], new Set()),
-    { type: 'expense', category: '', subcategory: '' }, '對照組：正規字寫法＝繳卡費不分類');
+  // ⚠️ **刻意不經過配方引擎**（Codex #523 r4#3）：經過引擎的話，動到「引擎輸出邊界」那條界線
+  //   會連坐這一題，兩題就分不開了。這題只問分類器本身。
+  const tx = (/** @type {string} */ summary) => ({ acctSuffix: '3301', acctMasked: '900100****3301',
+    date: '2026-06-11', summary, direction: /** @type {const} */ ('out'), amount: 500, balance: 730, note: '' });
+  assert.notEqual(toRad('信用卡款'), '信用卡款', '★樣本必須真的換得動字');
+  assert.deepEqual(classifyBankTx(tx(toRad('信用卡款')), new Set()),
+    { type: 'expense', category: '其他', subcategory: '未分類' }, '現況：相容字寫法漏認、落在「其他/未分類」');
+  assert.deepEqual(classifyBankTx(tx('信用卡款'), new Set()),
+    { type: 'expense', category: '', subcategory: '' }, '對照組：正規字寫法＝繳卡費不分類（差別只在字體）');
 });
 test('同一把尺｜槽位長度量的是「真正拿去比對的那個字串」：¯ 只值一個字、㈱ 展開成三個字', () => {
   // minLen 存在的理由＝1 字錨點會在交易列上誤觸發。它要量的是**拿去比對的那個字串**，
