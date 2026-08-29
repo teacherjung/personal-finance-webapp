@@ -13,10 +13,10 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-recipestore-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { previewBankStatement, applyBankStatement, recipeBankRoute, recordRecipeApplied, markRecipesSuspect } = await import('../lib/services/bank-import.js');
+const { previewBankStatement, applyBankStatement, recipeBankRoute, recordRecipeApplied, markRecipesSuspect, previewBankTxForDb } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
 const { clearAiTicketsForTest, issueAiTicket, redeemAiTicket, restoreAiTicket } = await import('../lib/ai-confirm-ticket.js');
-const { RECIPE_FORMAT_VERSION, recipeNorm } = await import('../lib/parse-recipe.js');
+const { RECIPE_FORMAT_VERSION, recipeNorm, parseWithRecipe: parseWithRecipeDefault } = await import('../lib/parse-recipe.js');
 const { squash } = await import('../lib/bank-statement.js');
 const { sanitizeDbForWrite, READONLY_COLLECTIONS } = await import('../lib/schema.js');
 const { AI_BANK_MODELS } = await import('../lib/ai-parse.js');
@@ -284,6 +284,46 @@ test('recipeBankRoute｜current 曾中版面的事實要跨趟保留（否則壞
   assert.equal(r.hit?.usedVersion, 'previous', '前提：第二趟用 previous 救回來');
   assert.equal(r.hit?.currentMatched, true,
     '★★current 在第一趟中過版面＝這是回滾語意（互換版本＋streak 重數），不是「別版面服役」');
+});
+
+test('已接受的界線｜新尺命中＝以卡代 AI（characterization；William 2026-08-29 裁示「甲」）：碰撞卡標錯幣別、強閘照樣 strong、真台幣交易被標 foreign', async () => {
+  // ⚠️ 這題**照實描述一條已接受的取捨**，不是缺陷回歸題（Codex #523 r14 抓到、William 裁「甲」接受）：
+  //   old 沒 hit 時 main 會退給 AI；新尺命中＝以卡代 AI ⇒ 若卡在別的版面出生、對這份帳單把某區
+  //   標錯幣別，強閘因「外幣列不受驗」的既有盲區仍回 strong ⇒ 那一區的真台幣交易被當外幣不匯入。
+  //   **同一條鏈對舊尺命中的卡在 main 上同樣存在**（下半題移植實測）＝P2「以卡代 AI」的固有取捨，
+  //   圍欄同一套（出生三關／防撞名／強閘／疑似過期／預覽確認）。若未來加了新圍欄讓這題轉紅，
+  //   請照新行為改寫這題，不要為了綠燈保留舊行為。
+  const collide = (/** @type {string} */ anchor) => { const r = goodRecipe();
+    r.docAnchors = [anchor, '往來紀錄'];
+    r.summary.sections = [{ anchor: '合成帳戶總覽', currency: 'TWD' }, { anchor: '次要帳戶清單', currency: 'USD' }];
+    return r; };
+  const mislabeledLines = (/** @type {string} */ printed) => [
+    L(300, [[20, '合成銀行月結單'], [30, printed], [47, '合成帳戶總覽區'], [452, '結算基準日:2026/06/30']]),
+    L(280, [[50, '甲種活存'], [150, '900100****3301'], [473, '$730']]),
+    L(270, [[47, '總計'], [445, '$730']]),
+    L(260, [[47, '次要帳戶清單區']]),          // ★這一區其實也是台幣，卡卻宣告 USD（碰撞）
+    L(250, [[50, '乙種活存'], [150, '900200****3302'], [453, '$97,400']]),
+    L(240, [[47, '總計'], [445, '$97,400']]),
+    L(140, [[47, '往來紀錄明細']]),
+    L(120, [[75, '帳號'], [135, '日期'], [200, '單號'], [272, '提領金額'], [331, '存進金額'], [396, '結存餘額'], [489, '附記']]),
+    L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, '合成轉入'], [349, 40, '$500'], [418, 0, '$730']]),
+    L(66, [[53, 0, '900200****3302'], [124, 0, '2026/06/02'], [180, 0, '合成入帳'], [349, 40, '$2,400'], [414, 0, '$97,400']]),
+  ];
+  // 上半：new-only（帳單印連字 `Oﬃce`、卡上是正規字 `Office`）＝main 在這份帳單會退 AI
+  await seedDb({ recipes: [row({ current: collide('Office') })] });
+  const db = await getDb();
+  const r = await recipeBankRoute('QUFBQQ==', undefined, db, { extract: async () => mislabeledLines('Oﬃce') });
+  assert.ok(r.hit, '前提：新尺命中、整份解得動');
+  assert.equal(r.hit?.parsed.accountCurrency['900200****3302'], 'USD', '★碰撞卡把真台幣區標成 USD');
+  assert.equal(r.hit?.reconcile.level, 'strong', '★強閘照樣 strong（外幣列不受驗＝既有盲區）');
+  const { rows: rows2 } = previewBankTxForDb(db, r.hit?.parsed);
+  const hitRow = rows2.find((/** @type {any} */ x) => x.amount === 2400);
+  assert.equal(hitRow?.foreign, true, '★★那筆 2,400 的真台幣收入被標 foreign＝正式匯入會略過（這就是被接受的代價）');
+  // 下半（移植實測）：同一張碰撞卡改成**同形印法** ⇒ main 的舊尺（＝預設）就命中、同樣標錯
+  //   ＝證明這條鏈不是本支新造，而是 P2 以卡代 AI 的固有取捨。
+  const pOld = parseWithRecipeDefault(mislabeledLines('Office'), collide('Office'));
+  assert.equal(pOld.accountCurrency['900200****3302'], 'USD',
+    '★同形版在預設（舊尺＝main 語意）下同樣標錯——風險類別是既有的，本支只是把暴露面延伸到相容字帳單');
 });
 
 test('recipeBankRoute｜純讀不變量：預覽路線跑完，db 的配方列一個位元組都沒動', async () => {
