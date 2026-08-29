@@ -135,15 +135,19 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
       + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
       + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/GitHub分支保護-設定與驗證.md 一起改'
       + '——別留兩種相反答案並存。');
-  // ⚠️ 結構化斷言（Codex #526 r1 中①）：光掃「draft」這個字擋不住**等價條件**——
-  //    `if: github.event.action == 'ready_for_review'` 一個 draft 字都沒有，卻讓草稿的
-  //    opened/synchronize 照樣跳過。所以直接釘死：ci.yml **不准有任何 `if:` 條件**
-  //    ——兩個 required job 必須無條件執行，這正是本題要守的行為。日後真需要條件
-  //    （例如 step 級 if: failure()）＝有人在動 CI 的執行條件，必須有意識地連同
-  //    本題與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
-  //    誠實劃界：條件搬進 composite action／reusable workflow 這類間接層，本題掃不到
-  //    ——這是絆線不是安全閘，深層繞法靠審查制度（ci.yml 出現 uses: 本地 action 就是訊號）。
-  const conds = active.filter((l) => /^\s*if:/.test(l));
+  // ⚠️ 本題的身分＝**防「不小心加回去」的絆線，不是防惡意 YAML 的安全閘**（Codex #526
+  //    r1 中①→r2 中① 兩輪釐清出來的劃界）：安全不變量「能合併的 head 一定跑過真考卷」
+  //    住在 scripts/check-ci-really-ran.js——就算有人把跳過加回來，合併頭仍要有真 success
+  //    才合得了；本題丟的只是「草稿期的早期訊號」（macOS/Linux 盲點回到 ready 才現形），
+  //    是流程品質、不是安全。對手是「未來在成本壓力下順手加回 if 的自己人」，不是 YAML
+  //    寫法高手——所以用正則收攏**常見拼法**（`if:`／`if :`／`"if":`／`'if':`，r2 抓到
+  //    後兩種），不引入 YAML 解析器去追殺 flow-map、explicit-key、跳脫鍵這些沒人會
+  //    不小心寫出來的形狀（列舉補不完；為非安全絆線加相依不成比例）。
+  //    兩個 required job 必須無條件執行；日後真需要條件（如 step 級 if: failure()）＝
+  //    有意識地連同本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
+  //    間接層（composite action／reusable workflow）同樣掃不到——靠審查（`uses:` 本地
+  //    路徑＝訊號）。
+  const conds = active.filter((l) => /^\s*["']?if["']?[^\S\n]*:/.test(l));
   assert.deepEqual(conds, [],
     'ci.yml 出現 if: 條件——兩個 required job（與其步驟）必須無條件執行，否則「草稿也照跑真考卷」'
       + '只是註解宣稱。2026-08-15〜08-29 的草稿跳過正是一條 job 級 if；等價寫法'

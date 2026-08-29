@@ -140,10 +140,12 @@ Settings → Branches → 編輯 `main` 的規則：
   （2026-08-29 實讀＝`first_time_contributors`：首次貢獻者要人工核准才跑）；就算跑，
   GITHUB_TOKEN 對 fork 是**唯讀**、secrets 不給（GitHub 預設模型）。三個後果：
   ①協作欄位閘在 fork PR 上要嘛等核准、要嘛跑不了——required check 等不到＝合不進來，
-  fail-closed 方向正確 ②真正的防線仍是分支保護＋**合併程序的本機閘**，兩者都不依賴 fork
-  那側的 workflow ③**fork 可以連 workflow 與腳本本身一起改**——任何「PR 自己帶的檢查」對
-  fork 都不可信，這一點 private 時代就成立、公開後更重要。現在三方仍用同一個帳號開發；
-  fork PR 出現＝陌生人貢獻，**先人工讀 diff 再談其他**。
+  fail-closed 方向正確 ②核准政策、唯讀 token 與分支保護擋的是**未經核准的執行、對 base
+  的寫入、拿 secrets**——**不是檢查結果的可信度**：③**fork 可以連 workflow 與腳本本身
+  一起改**（GitHub 要求核准前先看 PR 有沒有動 workflow，正是這個原因；本機合併閘跑的
+  也是受審 HEAD 上的腳本，一樣改得到），所以任何「PR 自己帶的檢查」對 fork 都不可信
+  ——檢查結果要可信，靠**人工審 diff**、或用**可信 base 版本的工具**去驗 head。
+  現在三方仍用同一個帳號開發；fork PR 出現＝陌生人貢獻，**先人工讀 diff 再談其他**。
 - **它擋的是「PR 說明寫了誰」，不是「實際上是誰按的」。** 後者只有分身分能補（見下）。
 
 ## 之後的第二步：分身分（尚未做）

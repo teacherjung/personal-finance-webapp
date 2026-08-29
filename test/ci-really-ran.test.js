@@ -96,10 +96,10 @@ test('真考卷閘｜同刻並列（r2）：completed_at 平手且結論不一�
   assert.equal(ok.code, 0, ok.reason);
 });
 
-test('真考卷閘｜空窗防線：正牌一場都沒有＝fail-closed 退 2；任一場還在跑＝退 1 等它', () => {
+test('真考卷閘｜缺場次防線：正牌一場都沒有＝fail-closed 退 2；任一場還在跑＝退 1 等它', () => {
   const none = evaluateGate([run(COLLAB_JOB, 'success')], false, REQ);
-  assert.equal(none.code, 2, '轉正式後 run 還沒建立的空窗＝查不到＝不安全');
-  // 舊 success 已完成＋新場次在跑（例：轉正式後的真考卷正在跑）：**必須等**、不可拿舊綠搶跑放行——
+  assert.equal(none.code, 2, '正牌場次一場都沒有＝查不到＝不安全（fail-closed，缺場次不放行）');
+  // 舊 success 已完成＋新場次在跑（例：新推送的真考卷正在跑）：**必須等**、不可拿舊綠搶跑放行——
   // 若拿掉「在跑＝等」檢查，這一格會變 code 0（舊 success 勝出）＝假綠承重域。
   const running = evaluateGate([
     run(NODE_JOB, 'success', { at: '2026-08-15T01:00:00Z' }),
@@ -110,7 +110,7 @@ test('真考卷閘｜空窗防線：正牌一場都沒有＝fail-closed 退 2；
   assert.ok(running.reason.includes('還在跑'), '★理由要是「等」、不是誤判成紅');
 });
 
-test('真考卷閘｜auto-merge 開著＝直接擋（空窗洞的自動化版本，人手都不用按）', () => {
+test('真考卷閘｜auto-merge 開著＝直接擋（它只看分支保護、繞過整套合併程序，人手都不用按）', () => {
   const r = evaluateGate([run(NODE_JOB, 'success'), run(COLLAB_JOB, 'success')], true, REQ);
   assert.equal(r.code, 1);
   assert.ok(r.reason.includes('auto-merge'));
