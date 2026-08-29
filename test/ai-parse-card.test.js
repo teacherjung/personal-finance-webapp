@@ -295,6 +295,40 @@ test('接地｜「大到不可能是金額」不等於「是卡號」（r5#1）�
     '★編號占一格、末四碼本人占一格、兩格摘要占兩格——虛構明細沒位置可借');
 });
 
+test('接地｜無空白的全形句讀（r6#2）：「100，200」不得被 NFKC 折成千分位；ASCII 逗號的真千分位照收', () => {
+  // NFKC 把全形逗號折成半形——沒有空白時「100，200」整個變成合法千分位 token「100,200」，
+  // r5 的兩-token 判準管不到。修在折疊之前：全形逗號永遠是句讀、先換成空白。
+  const text = [
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 300 本期應繳總額 300',
+    '消費清單 100，200',
+  ].join('\n');
+  const honest = { ...GOOD(), lastFour: null, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 300, due: 300 }, adjustments: [],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '甲店', amount: 100 },
+      { date: '2026-07-04', postDate: null, desc: '乙店', amount: 200 },
+    ] };
+  const hp = normalizeAiCard(honest);
+  assertAiCardGrounded(hp, text);
+  reconcileAiCard(hp);
+  const forged = { ...honest, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 100200, due: 100200 },
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '幻影店', amount: 100200 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
+    '★句讀合成的 100200 不是帳單印的數字');
+  // 對照：ASCII 逗號的真千分位（帳單本來的印法）照收——摘要與明細各印各的、位置夠分
+  const textReal = [
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 100,200 本期應繳總額 100,200',
+    '真的大額 100,200',
+  ].join('\n');
+  const big = { ...honest, totals: { prevDue: 0, paidAndRefund: 0, newCharges: 100200, due: 100200 },
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '真的大額', amount: 100200 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(big), textReal)), null,
+    '★ASCII 逗號＝真千分位、不可誤殺');
+});
+
+test('提示詞｜抵銷對也要抄（r6#1 的提示詞半邊）：加總制驗算看不到正負互抵的整組漏抄', () => {
+  assert.ok(buildCardSystem().includes('互相抵銷'), '★提示詞要明令：兩筆恰好互抵的交易都要抄');
+});
+
 test('接地｜句讀逗號湊成合法千分位（r5#2）：「100， 200」不得拼成幻影 100200；兩個真金額照樣接得到地', () => {
   const text = [
     '上期應繳總額 0 已繳款退款金額 0 本期新增款項 300 本期應繳總額 300',
