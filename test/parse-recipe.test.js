@@ -1982,13 +1982,25 @@ test('既有缺陷現況｜帳單印相容字時分類關鍵字漏認（characte
   assert.deepEqual(classifyBankTx(tx('信用卡款'), new Set()),
     { type: 'expense', category: '', subcategory: '' }, '對照組：正規字寫法＝繳卡費不分類（差別只在字體）');
 });
-test('同一把尺｜槽位長度量的是「真正拿去比對的那個字串」：¯ 只值一個字、㈱ 展開成三個字', () => {
-  // minLen 存在的理由＝1 字錨點會在交易列上誤觸發。它要量的是**拿去比對的那個字串**，
-  // 不是原字面——兩者在相容字上會差開。
-  const one = recipeA(); one.docAnchors[0] = '¯';
-  assert.ok(validateRecipeStrict(one).some(e => e.includes('至少 2 個字')),
-    '★NFKC 把 ¯ 展成「空白＋附標」——先去空白，1 個字才不會被算成 2 個字混過 minLen');
-  const wide = recipeA(); wide.docAnchors[0] = '㈱';
-  assert.deepEqual(validateRecipeStrict(wide), [],
-    '★反過來：㈱ 展開後真的有 3 個字「(株)」＝比對吃的就是那 3 個字，不該拿原字面的 1 個字判它太短');
+test('同一把尺｜槽位長度「兩把尺任一太短就拒收」：一個字元不得靠 NFKC 展開混過去', () => {
+  // minLen 存在的理由＝1 字錨點會在交易列或常見版面文字上誤觸發。
+  // ⚠️ 只量新尺時，`㈱`／`⑴`／`№`／`㍿` 這類**一個字元**會被展開成 `(株)`／`(1)`／`No`／`株式会社`
+  //   ⇒ 長度過關 ⇒ **main 拒收、我們放行**（Codex #523 r8）。⇒ 與其他守門對稱：任一尺太短就拒收。
+  //   ⚠️ 我原本在這裡寫的是相反的斷言（要求 `㈱` 合格）＝**那題在保護一個相對 main 的放寬**。
+  for (const [ch, why] of [['¯', 'NFKC 展成「空白＋附標」'], ['㈱', '展開成 (株)'],
+    ['⑴', '展開成 (1)'], ['№', '展開成 No'], ['㍿', '展開成 株式会社']]) {
+    const r = recipeA(); r.docAnchors[0] = ch;
+    assert.ok(validateRecipeStrict(r).some(e => e.includes('至少 2 個字')),
+      `★一個字元的「${ch}」（${why}）＝main 拒收，我們也要拒收`);
+  }
+  // **另一個方向**：舊尺看起來有兩個字、新尺合成後只剩一個 ⇒ 也要拒收（比 main 嚴＝fail-closed，
+  //   因為拿去比對時它真的只有一個字）。只量舊尺的話這一刀活得下來（突變 Z2 實測）。
+  const composed = recipeA(); composed.docAnchors[0] = 'e\u0301';   // squash 後 2 個字、NFKC 合成成 é
+  assert.equal(squash('e\u0301').length, 2, '★前提：舊尺看起來有兩個字');
+  assert.equal(recipeNorm('e\u0301').length, 1, '★前提：新尺合成後只剩一個');
+  assert.ok(validateRecipeStrict(composed).some(e => e.includes('至少 2 個字')),
+    '★新尺看出來太短也要拒收——拿去比對時它真的只有一個字');
+  // 對照組：真的有兩個字的錨點照樣合格（別把整條 minLen 判成「什麼都拒」）
+  const ok = recipeA(); ok.docAnchors[0] = '總覽';
+  assert.deepEqual(validateRecipeStrict(ok), [], '對照組：兩個字的正當錨點不受影響');
 });
