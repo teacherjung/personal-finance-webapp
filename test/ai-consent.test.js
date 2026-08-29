@@ -581,3 +581,14 @@ test('批二 r1#5｜卡片版 AI 徽章：只講卡片真的跑過的閘，不�
   const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
   assert.doesNotMatch(evil, /<b>x<\/b>/, '模型名要逃逸');
 });
+
+test('批二 r2#3｜徽章要亮出帳單期別讓使用者核對（後端只驗格式接不了地，顯示是唯一防線）', () => {
+  const withMonth = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5', statementMonth: '2026-07' });
+  assert.match(withMonth, /2026-07/, '★讀到的期別要顯示——它會寫進每一筆，讀錯＝整批歸錯月份');
+  assert.match(withMonth, /整批歸到錯的月份/, '要講清楚讀錯的代價（就地解釋鐵則）');
+  const noMonth = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  assert.match(noMonth, /沒讀到帳單期別/, '沒讀到＝照實說，不冒充有期別');
+  assert.doesNotMatch(noMonth, /整批歸到錯的月份/);
+  const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'm', statementMonth: '<i>x</i>' });
+  assert.doesNotMatch(evil, /<i>x<\/i>/, '期別要逃逸（後端驗過格式，畫面仍不賭這件事）');
+});

@@ -174,6 +174,8 @@ test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也�
   const txs = [{ amount: 150, desc: '星巴克' }, { amount: 350, desc: '全聯' }, { amount: -50, desc: '退款', isRefund: true }];
   const ai = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals, transactions: txs, aiAdjustments: [{ label: '利息', amount: 30 }] }));
   assert.equal(ai.checks.equation, 'pass', '★具名調整摺進等式（遠銀的 due 含利息）');
+  assert.equal(ai.stats.adjFolded, 30, '★摺了多少要進 stats——前端摘要句靠它照實換寫法（r2#2）');
   const tpl = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals, transactions: txs }));
   assert.equal(tpl.checks.equation, 'fail', '★模板 parsed 沒有 aiAdjustments ⇒ 同一組數字照舊不平（行為零改變的證據）');
+  assert.equal(tpl.stats.adjFolded, 0, '★模板路恆 0＝前端句子一字不變');
 });

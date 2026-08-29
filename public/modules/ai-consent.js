@@ -298,10 +298,16 @@ export function aiPreviewBadgeHtml(preview) {
 export function aiCardPreviewBadgeHtml(preview) {
   if (!preview || typeof preview !== 'object' || preview.engine !== 'ai') return '';
   const model = esc(modelDisplayName(preview.aiModel));
+  // r2#3：帳單期別會寫進整批交易，但它是 AI 讀的、後端只驗格式**接不了地**（民國換算後字面不同）
+  // ——唯一的防線是把值亮出來讓使用者核對。沒讀到＝照實說（那時整批靠各筆日期，不冒充有期別）。
+  const month = typeof preview.statementMonth === 'string' && preview.statementMonth
+    ? `<p class="muted" style="margin:0 0 6px;font-size:12px">帳單期別讀到 <b>${esc(preview.statementMonth)}</b>——這欄會跟著寫進每一筆，讀錯會整批歸到錯的月份，請對著帳單看一眼。</p>`
+    : '<p class="muted" style="margin:0 0 6px;font-size:12px">AI 沒讀到帳單期別——這欄不會寫進交易，列表會改用各筆日期推估。</p>';
   return `
 <div class="card" style="margin-bottom:12px;padding:12px 14px">
   <p style="margin:0 0 6px"><b>這一份是 AI 幫你讀出來的帳單預覽。</b>${model ? `（使用的模型：${model}）` : ''}</p>
-  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「發卡機構」、「卡號末四碼」、「日期」、「店名」有沒有讀錯。</p>
+  ${month}
+  <p class="muted" style="margin:0;font-size:12px;line-height:1.8">請確認「發卡機構」、「卡號末四碼」、「帳單期別」、「日期」、「店名」有沒有讀錯。</p>
   <details style="margin-top:8px">
     <summary style="font-size:12px">AI 讀的，跟平常讀的差在哪？</summary>
     <ul class="muted" style="margin:8px 0 0;padding-left:18px;font-size:12px;line-height:1.9">

@@ -172,6 +172,26 @@ test('接地｜千分位與拆 cell 拼接：1,000 印成「1, 000」（同列�
   assertAiCardGrounded(p, brokenText);   // 不丟＝拼接有效
 });
 
+test('接地｜拼接不產生免費籌碼（r2#1）：拼出來的值與組成 token 共用實體位置', () => {
+  // 摘要列「0 0 100 100」相鄰只隔空白 ⇒「0」+「100」會拼出第三個 100；拼接若「額外加入」
+  // 而不共用位置，一筆日期店名都憑空的 100 明細可借它同時過接地、G1、G2（Codex r2 最小重現）。
+  const text = [
+    '測試商業銀行 信用卡帳單 卡號末四碼 1234',
+    '0 0 100 100',
+    '115/07/03 真的店 100',
+  ].join('\n');
+  const answer = { ...GOOD(), lastFour: '1234', totals: { prevDue: 0, paidAndRefund: 0, newCharges: 100, due: 100 },
+    adjustments: [], transactions: [
+      { date: '2026-07-03', postDate: null, desc: '真的店', amount: 100 },
+      { date: '2026-07-04', postDate: null, desc: '憑空的店', amount: 100 },
+    ] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(answer), text)), 'ai_bad_answer',
+    '★摘要與真明細占完位置之後，憑空的第二筆 100 沒有位置可借（拼接組的兩格都已被占）');
+  // 對照：誠實的一筆 ⇒ 過（位置夠分）
+  const one = { ...answer, transactions: [answer.transactions[0]] };
+  assertAiCardGrounded(normalizeAiCard(one), text);
+});
+
 test('驗算｜等式閘：具名調整（利息）摺進等式才平——這正是「天真版比錯了東西」的修法（裁示①三層的第一層）', () => {
   // GOOD：1000 − 1000 ＋ 450 ＋ 30(利息) ＝ 480 ✓
   reconcileAiCard(normalizeAiCard(GOOD()));

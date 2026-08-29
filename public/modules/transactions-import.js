@@ -12,7 +12,7 @@ import { icon } from './icons.js';
 import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
-import { gateSummaryHtml, unknownIssuerNoticeHtml } from './reconcile-summary.js';
+import { gateSummaryHtml, unknownIssuerNoticeHtml, aiUnknownCardNoticeHtml } from './reconcile-summary.js';
 import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, snapshotUpload, aiConsentBodyHtml, aiErrorText, aiCardPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL_CARD } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
 import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
@@ -270,7 +270,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
           <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；真正繳款不匯入，退款會保留為消費抵減。</span>
         </div>
         ${aiCardPreviewBadgeHtml(curR)}
-        ${unknownIssuerNoticeHtml(curR.bankEvidence)}
+        ${curR.engine === 'ai' ? aiUnknownCardNoticeHtml() : unknownIssuerNoticeHtml(curR.bankEvidence)}
         ${gateSummaryHtml(curR.reconcile, 'card')}
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
           <table><thead><tr><th></th><th>消費日</th><th id="pvSortNote" style="cursor:pointer;user-select:none" title="依店名排序">說明 <span class="muted">${sortInd}</span></th><th>分類</th><th class="num">金額</th><th>狀態</th></tr></thead>
