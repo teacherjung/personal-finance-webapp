@@ -1853,6 +1853,46 @@ test('同一把尺｜辨識一律「舊尺或新尺」：新尺只增不減，ma
     '★★銀行身分／findX／表頭完整性三處都要收舊尺——少一處就是 main 解得動、我們解不動');
 });
 
+test('同一把尺｜「是哪一個」不能取聯集：兩把尺裁決不同＝歧義拒解（Codex r9）', () => {
+  // ⚠️ 聯集只對**布林**（「是不是表頭／有沒有這個暗號」）成立。一旦要在候選之間**挑一個**，
+  //   聯集會改寫 main 的答案：同一列可以「A 段只有舊尺命中、B 段只有新尺命中」，而 `.find()`
+  //   取配方**列序**第一個 ⇒ main 選 B、聯集版選 A。
+  //   實測後果不只是標籤：真台幣帳戶被統計成外幣（`foreignAccountsSkipped`），匯入端會把它的
+  //   交易**當外幣直接略過** ⇒ **現金流漏帳**，而強閘仍是 strong。
+  //   ⇒ 裁決一律**舊尺優先**（＝main 的答案），新尺只在舊尺沒有裁決時補上；**兩把尺裁決不同＝拒解**。
+  //   代價（誠實）：這種版面 main 解得動、我們退 AI——歧義不猜是這支檔一貫的立場。
+  const mk = (/** @type {any[]} */ sections, /** @type {string} */ endAnchor) => ({ ...recipeN(),
+    summary: { ...recipeN().summary, sections, endAnchor } });
+  const run = (/** @type {any} */ r, /** @type {string} */ anchorCell) => {
+    const ls = linesN();
+    ls[0] = L(300, [[20, '合成金庫月結單'], [47, anchorCell], [452, '結算日:2026/06/30']]);
+    return parseWithRecipe(ls, r);
+  };
+  // ①半形片假名：帳單印 `ｶﾞ`；前列錨點用合成的 `ガ`（只有新尺命中）、後列用 `ｶ`（只有舊尺命中）
+  const r1 = mk([{ anchor: '存戶總表ガ', currency: 'USD' }, { anchor: '存戶總表ｶ', currency: 'TWD' }], '本頁小計');
+  assert.deepEqual(validateRecipeStrict(r1), [], '前提：strict 看不出這個歧義（兩個錨點在同尺下都不互含）');
+  assert.equal(squash('存戶總表ｶﾞ').includes(squash('存戶總表ｶ')), true, '★前提：後列只有舊尺命中');
+  assert.equal(recipeNorm('存戶總表ｶﾞ').includes(recipeNorm('存戶總表ガ')), true, '★前提：前列只有新尺命中');
+  assert.throws(() => run(r1, '存戶總表ｶﾞ'),
+    (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /裁決不同/.test(e.message),
+    '★★聯集版會選到 USD ⇒ 真台幣帳戶被當外幣略過（現金流漏帳）');
+  // ②韓文相容序列：同一族的另一種形狀
+  const r2 = mk([{ anchor: '存戶總表가', currency: 'USD' }, { anchor: '存戶總表ㄱ', currency: 'TWD' }], '本頁小計');
+  assert.throws(() => run(r2, '存戶總表ㄱㅏ'),
+    (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /裁決不同/.test(e.message),
+    '★同族第二種形狀');
+  // ③**區段 vs 收尾**跨尺：新尺 section 排在舊尺 endAnchor 之前 ⇒ main 收尾、聯集版反而重開一段
+  const r3 = mk([{ anchor: '存戶總表', currency: 'TWD' }, { anchor: '本頁小計ガ', currency: 'USD' }], '本頁小計ｶ');
+  const ls3 = linesN();
+  ls3[2] = L(240, [[47, '本頁小計ｶﾞ'], [445, '$1,230']]);
+  assert.throws(() => parseWithRecipe(ls3, r3),
+    (/** @type {any} */ e) => e.code === 'recipe_parse_failed' && /裁決不同/.test(e.message),
+    '★收尾與區段在兩把尺下裁決不同＝一樣拒解');
+  // 對照組：兩把尺裁決**相同**時照常解（別把整條判成「什麼都拒」）
+  const ok = mk([{ anchor: '存戶總表', currency: 'TWD' }], '本頁小計');
+  assert.equal(run(ok, '存戶總表').accounts[0].currency, 'TWD', '對照組：沒有跨尺歧義就照常解');
+});
+
 test('同一把尺｜歧義守門也要「任一尺看到衝突就拒收」——不是只走新尺（Codex r7）', () => {
   // ⚠️ 我曾宣稱「拒收型守門只走新尺＝比 main 嚴」——**那句是錯的**：兩把尺**不可比較**，
   //   舊尺看得到的衝突新尺可能看不到 ⇒ 變成 **main 拒收、我們放行**。實測後果：台幣帳戶被標成
