@@ -123,8 +123,10 @@ test('xlsx 從原廠 CDN 裝，而且 lockfile 有 integrity 指紋（別「順�
 
 test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 半鬆綁）', () => {
   const ci = read('.github/workflows/ci.yml');
-  // ⚠️ 只掃**生效的設定行**，不掃註解——註解裡寫「draft」是在講歷史與理由，不是條件。
-  const active = ci.split('\n').filter((l) => !l.trim().startsWith('#'));
+  // ⚠️ 只掃**生效的設定**，不掃註解——註解裡寫「draft」是在講歷史與理由，不是條件。
+  //    行尾註解也要剝（Grok #526 掃到：只丟「整行 # 開頭」的話，把真 types 改掉、
+  //    舊列表當行尾備註留著＝types 斷言命中的是註解＝假綠）——沿用同檔的 uncommented()。
+  const active = uncommented(ci).split('\n').filter((l) => l.trim() !== '');
   // ⚠️ 掃「任何生效行」而不是只掃 `if:` 行（2026-08-29 預審抓到的洞）：YAML 多行寫法
   //    （`if: >-` 換行接條件）會讓「if: 與 draft 同一行」的判準靜靜漏抓——被拆掉的那條
   //    原本就 70+ 字元，日後折行加回來剛好繞過。改成整行掃，折行、env 間接引用都逃不掉。
@@ -147,9 +149,10 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
   //    有意識地連同本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
   //    間接層（composite action／reusable workflow）同樣掃不到——靠審查（`uses:` 本地
   //    路徑＝訊號）。
-  const conds = active.filter((l) => /^\s*["']?if["']?[^\S\n]*:/.test(l));
+  // 清單項寫法也收（Grok #526 低）：step 級 if 常寫成 `- if: …`（dash 後才是鍵）。
+  const conds = active.filter((l) => /^\s*(?:-\s*)?["']?if["']?[^\S\n]*:/.test(l));
   assert.deepEqual(conds, [],
-    'ci.yml 出現 if: 條件——兩個 required job（與其步驟）必須無條件執行，否則「草稿也照跑真考卷」'
+    'ci.yml 出現 if: 條件——本檔兩個 job（required 的「上線用的 Node」＋探照燈 dev-machine，與其步驟）必須無條件執行，否則「草稿也照跑」'
       + '只是註解宣稱。2026-08-15〜08-29 的草稿跳過正是一條 job 級 if；等價寫法'
       + '（event_name/action 判斷）不含 draft 字也一樣跳過草稿場次。真有正當理由加條件，'
       + '請連本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。');

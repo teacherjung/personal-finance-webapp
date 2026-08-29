@@ -174,7 +174,7 @@ function fetchPr(pr) {
   // ⚠️ **`env: gitEnv()` 不可省**（AGENTS.md 鐵則 11；#463 r1 High）：`gh` 會**自己再去 spawn git**
   //    ——實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
   //    繼承來的 GIT_DIR 指到另一個**有效** repo 時，這道閘會去讀**那個** repo 的 PR 與留言，
-  //    而輸出看起來完全正常。行為題＝test/cross-pr-merge.test.js「四支會叫 gh 的閘」。
+  //    而輸出看起來完全正常。行為題＝test/cross-pr-merge.test.js「會叫 gh 的閘」那題（#526 起不寫死幾支）。
   const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body,headRefOid'], { encoding: 'utf8', env: gitEnv() });
   const parsed = JSON.parse(out);
   if (!parsed || typeof parsed.body !== 'string') throw new Error('gh 回傳的形狀不對');
