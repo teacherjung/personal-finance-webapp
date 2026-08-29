@@ -135,6 +135,20 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
       + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
       + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/GitHub分支保護-設定與驗證.md 一起改'
       + '——別留兩種相反答案並存。');
+  // ⚠️ 結構化斷言（Codex #526 r1 中①）：光掃「draft」這個字擋不住**等價條件**——
+  //    `if: github.event.action == 'ready_for_review'` 一個 draft 字都沒有，卻讓草稿的
+  //    opened/synchronize 照樣跳過。所以直接釘死：ci.yml **不准有任何 `if:` 條件**
+  //    ——兩個 required job 必須無條件執行，這正是本題要守的行為。日後真需要條件
+  //    （例如 step 級 if: failure()）＝有人在動 CI 的執行條件，必須有意識地連同
+  //    本題與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。
+  //    誠實劃界：條件搬進 composite action／reusable workflow 這類間接層，本題掃不到
+  //    ——這是絆線不是安全閘，深層繞法靠審查制度（ci.yml 出現 uses: 本地 action 就是訊號）。
+  const conds = active.filter((l) => /^\s*if:/.test(l));
+  assert.deepEqual(conds, [],
+    'ci.yml 出現 if: 條件——兩個 required job（與其步驟）必須無條件執行，否則「草稿也照跑真考卷」'
+      + '只是註解宣稱。2026-08-15〜08-29 的草稿跳過正是一條 job 級 if；等價寫法'
+      + '（event_name/action 判斷）不含 draft 字也一樣跳過草稿場次。真有正當理由加條件，'
+      + '請連本題、ci.yml 註解與 REVIEW-AND-MERGE.md「省額度慣例」節一起改。');
   // 「草稿也跑」的前提是 pull_request 事件本身有訂閱（opened/synchronize 對草稿也會發）；
   // ready_for_review 留著＝補考保險。types 列表變動＝這個前提可能被抽走，要人來看。
   // ⚠️ 只對**生效行**斷言（預審抓到）：掃全文的話，types 行被改掉、而某條註解引用舊字面

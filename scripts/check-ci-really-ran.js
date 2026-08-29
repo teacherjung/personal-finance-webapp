@@ -99,7 +99,7 @@ export function evaluateGate(runs, autoMergeOn, required) {
     const tied = mine.filter((r) => String(r.completed_at) === maxAt);
     const bad = tied.find((r) => r.conclusion !== 'success');
     if (bad) {
-      return { code: 1, reason: `「${context}」最新（completed_at 並列含）場次的結論是 ${bad.conclusion}——skipped＝草稿期的跳過（不是真考卷）、其餘＝沒過；同刻結論不一致也算不明。轉正式後重跑到真的 success 再合併` };
+      return { code: 1, reason: `「${context}」最新（completed_at 並列含）場次的結論是 ${bad.conclusion}——skipped＝沒真跑（2026-08-29 草稿也照跑之後，多半是重跑了舊草稿場次或異常跳過）、其餘＝沒過；同刻結論不一致也算不明。Re-run 到真的 success 再合併` };
     }
   }
   return { code: 0, reason: `required checks（${required.map((r) => r.context).join('、')}）在合併頭上皆真跑且 success、auto-merge 關閉` };

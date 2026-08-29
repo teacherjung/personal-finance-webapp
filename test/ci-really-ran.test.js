@@ -31,10 +31,10 @@ test('真考卷閘｜兩個 required 都真 success＋auto-merge 關＝放行', 
   assert.equal(r.code, 0, r.reason);
 });
 
-test('真考卷閘｜skipped 不是綠：草稿期跳過的場次不放行（GitHub 視同滿足、這裡不買帳）', () => {
+test('真考卷閘｜skipped 不是綠：不放行（2026-08-29 草稿也照跑後，skipped＝舊草稿場次重跑或異常跳過；GitHub 視同滿足、這裡不買帳）', () => {
   const r = evaluateGate([run(NODE_JOB, 'skipped'), run(COLLAB_JOB, 'success')], false, REQ);
   assert.equal(r.code, 1);
-  assert.ok(r.reason.includes('skipped'), '★理由要點名 skipped＝草稿跳過');
+  assert.ok(r.reason.includes('skipped'), '★理由要點名 skipped');
 });
 
 test('真考卷閘｜冒名不算數（r1 高①）：別的 App 貼同名 success 不能替真考卷放行', () => {

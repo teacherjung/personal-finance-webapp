@@ -7,9 +7,12 @@
 
 ## 前提
 
-- repo 是 **private**，方案必須是 **GitHub Pro 以上**。
-  Free 方案下分支保護 API 直接回 403（`Upgrade to GitHub Pro or make this repository public`），
-  **一條規則都設不了**。2026-08-02 已升級。
+- 2026-08-02 設定當時 repo 是 **private**，所以方案必須是 **GitHub Pro 以上**
+  （Free 方案下私有 repo 的分支保護 API 直接回 403（`Upgrade to GitHub Pro or make this
+  repository public`），一條規則都設不了。2026-08-02 已升級）。
+  ⚠️ **2026-08 下旬 repo 已轉公開**（省 Actions 額度）：公開 repo 的分支保護免費＝Pro 不再是
+  硬前提；但轉公開改變的是**威脅模型**（任何人可 fork、可開 PR）——fork 邊界見下方
+  「守備範圍」節，那節已照公開世界改寫（2026-08-29 #526 Codex r1 抓到本檔仍寫舊世界）。
 
 ## A. 目前 GitHub 上真正的設定（2026-08-02 用唯讀 API 實讀，不是憑印象）
 
@@ -132,11 +135,15 @@ Settings → Branches → 編輯 `main` 的規則：
 
 ## ⚠️ 這道閘的守備範圍（誠實劃界，Codex #382 r2 查證）
 
-- **fork 來的 PR 不在守備範圍內。** 這個 private repo 目前
-  `run_workflows_from_fork_pull_requests: false`，fork PR **根本不會跑 workflow**——
-  設成 required check 之後會等不到它（既有的 CI required check 也一樣，不是這次分檔引進的）。
-  未來若要接受 fork 的 PR，這道閘要重新設計成 base-controlled（因為 fork 可以連 workflow
-  與腳本本身一起改）。**現在三方都用同一個帳號、沒有 fork，所以不是問題。**
+- **fork 來的 PR（2026-08-29 照「repo 已公開」改寫；原文寫的是 private 世界）**：repo 已是
+  public＝任何人可 fork、可開 PR。fork PR 的 workflow 會不會跑由 Actions 的 fork 核准政策決定
+  （2026-08-29 實讀＝`first_time_contributors`：首次貢獻者要人工核准才跑）；就算跑，
+  GITHUB_TOKEN 對 fork 是**唯讀**、secrets 不給（GitHub 預設模型）。三個後果：
+  ①協作欄位閘在 fork PR 上要嘛等核准、要嘛跑不了——required check 等不到＝合不進來，
+  fail-closed 方向正確 ②真正的防線仍是分支保護＋**合併程序的本機閘**，兩者都不依賴 fork
+  那側的 workflow ③**fork 可以連 workflow 與腳本本身一起改**——任何「PR 自己帶的檢查」對
+  fork 都不可信，這一點 private 時代就成立、公開後更重要。現在三方仍用同一個帳號開發；
+  fork PR 出現＝陌生人貢獻，**先人工讀 diff 再談其他**。
 - **它擋的是「PR 說明寫了誰」，不是「實際上是誰按的」。** 後者只有分身分能補（見下）。
 
 ## 之後的第二步：分身分（尚未做）
