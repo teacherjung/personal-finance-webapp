@@ -12,7 +12,7 @@ process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
 const { previewAuto, previewForCard, aiCardRoute } = await import('../lib/services/statement-import.js');
-const { issueAiTicket, redeemAiTicket } = await import('../lib/ai-confirm-ticket.js');
+const { issueAiTicket, redeemAiTicket, clearAiTicketsForTest, aiTicketCountForTest } = await import('../lib/ai-confirm-ticket.js');
 const { cjkPdf, passwordPdf } = await import('./helpers/build-pdf.js');
 
 after(() => {
@@ -196,6 +196,19 @@ test('★兌票後半路丟錯＝還票再丟（Grok 掃#8）：中閘紅不吞�
     transactions: [{ date: '2026-07-03', desc: '甲', amount: 100 }] }, aiModel: 'm', aiKind: 'card' });
   await assert.rejects(() => previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: cardBad }));
   assert.ok(redeemAiTicket(cardBad), '★半路丟錯要把票放回（同銀行 apply 的 restore 慣例）');
+});
+
+test('★發新票在最後一刻（Codex r12）：中閘之後、列組裝丟錯＝還舊票且**不留幽靈新票**', async () => {
+  clearAiTicketsForTest();
+  // 陷阱只在列組裝引爆：中閘讀 amount/desc、previewRowsForCard 才碰 date——date 是丟錯的 getter。
+  const totals = { prevDue: 0, paidAndRefund: 0, newCharges: 100, due: 100 };   // 等式平 ⇒ 中閘綠
+  const trapped = { amount: 100, desc: '甲店', get date() { throw new Error('列組裝陷阱'); } };
+  const id = issueAiTicket({ parsed: { bank: '', bankEvidence: 'none', statementTotals: totals,
+    transactions: [trapped] }, aiModel: 'm', aiKind: 'card' });
+  await assert.rejects(() => previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: id }),
+    /列組裝陷阱/);
+  assert.equal(aiTicketCountForTest(), 1, '★只剩還回來的那一張——發票夾在中途時這裡會是 2（幽靈新票以全新 TTL 活著）');
+  assert.ok(redeemAiTicket(id), '還回來的是原票、照樣可兌');
 });
 
 test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也過中閘；模板 parsed 沒這欄＝行為零改變', async () => {
