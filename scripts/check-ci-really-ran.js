@@ -1,16 +1,21 @@
 // @ts-check
 // 真考卷閘：合併前驗「required checks 在合併頭上**真的跑過且成功**」——skipped／cancelled 不算數。
 //
-// 為什麼需要它（2026-08-15，省額度改造的 Grok 預審抓到的兩個【高】）：
-//   ci.yml 對草稿 PR 的推送用 job 級 `if` 跳過省額度，而 GitHub 把 skipped 的 required check
-//   **視同滿足**。設計上的不變量是「草稿合不了；轉正式那一刻（ready_for_review）會真跑一次」，
-//   但它有兩個機械上兜不住的洞：
+// 為什麼需要它（2026-08-15，省額度改造的 Grok 預審抓到的兩個【高】；2026-08-29 更新：
+// 草稿跳過已拆——repo 公開＝CI 免費、草稿也照跑——但本閘**不可跟著拆**，理由在後）：
+//   2026-08-15〜08-29 ci.yml 對草稿 PR 用 job 級 `if` 跳過省額度，而 GitHub 把 skipped 的
+//   required check **視同滿足**。當時的不變量是「草稿合不了；轉正式那一刻（ready_for_review）
+//   會真跑一次」，但它有兩個機械上兜不住的洞：
 //   ①空窗：`gh pr ready` 之後、真 CI 的 check run 建立之前，分支保護看到的仍是舊 head 的
 //     skipped＝綠——這段空窗裡按合併（或 auto-merge）就是「沒跑考卷就合」。
 //   ②舊場次重跑：GitHub 的 Re-run 沿用**原始事件 payload**（`draft: true` 凍結在裡面），
 //     重跑舊草稿場次會再蓋一筆 skipped；配上 concurrency cancel-in-progress 還可能先取消
 //     正在跑的真考卷。
-//   分支保護擋不住這兩個（skipped＝滿足是 GitHub 的語意，改不動），所以在**合併程序**收口：
+//   分支保護擋不住這兩個（skipped＝滿足是 GitHub 的語意，改不動），所以在**合併程序**收口。
+//   2026-08-29 之後：①的空窗基本消失（head 在草稿期就有真場次），但②與現行 workflow 無關
+//   ——Re-run 舊草稿時代的場次至今仍會蓋 skipped；且未來若有人把跳過加回來、或帳務狀態
+//   讓場次以非 success 收場，這裡仍是「能合併的 head 一定跑過真考卷」的最後收口。
+//   auto-merge 必關的檢查與草稿無關、照舊。收口的做法：
 //   本閘直接讀合併頭的 check runs，逐一要求 conclusion === 'success'——skipped 就是紅。
 //   同時要求 auto-merge 必須關著（空窗洞的自動化版本：檢查已「綠」時 ready 一按就自動合）。
 //

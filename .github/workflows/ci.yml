@@ -22,7 +22,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    # ready_for_review 必列：草稿轉正式那一刻要跑一次「真的」——見下方 draft 跳過的不變量
+    # ready_for_review 留著＝保險：2026-08-29 起草稿的每次推送已照跑真 CI（opened/synchronize
+    # 對草稿也會發），轉正式那次通常是同一顆 head 的重複場次（免費、無害）；
+    # 萬一某場次沒跑成，轉正式仍會補考一次。
     types: [opened, synchronize, reopened, ready_for_review]
 
 # 省額度①（2026-08-15，Actions 額度月中爆掉的直接教訓）：同一支 PR 連續推時，
@@ -35,20 +37,19 @@ jobs:
   deploy-runtime:
     name: 上線用的 Node（.node-version）
     runs-on: ubuntu-latest
-    # 省額度②：**草稿 PR 的推送不跑考卷**（job 直接 skipped ≈ 0 分鐘）。
-    # 慣例（同日寫入 REVIEW-AND-MERGE.md）：審查期間 PR 掛草稿、審到「通過」才轉正式。
-    # ⚠️ 不變量（為什麼這樣不會放水）：GitHub 禁止合併草稿 PR；要合併必先轉正式，
-    #    而「轉正式」本身就是 ready_for_review 事件＝當下的 head 會跑一次**真的** CI；
-    #    轉正式之後的每次 push 也照跑。⚠️ 但這只是**第一層**——它有兩個洞（轉正式後真 CI
-    #    起跑前的空窗、Re-run 舊草稿場次的凍結 payload；GitHub 把 skipped 視同滿足），
-    #    「能合併的 head 一定跑過真考卷」要靠**第二層**＝合併程序的真考卷閘
-    #    scripts/check-ci-really-ran.js（required checks 必須真 success＋auto-merge 必關）補完。
-    #    另（2026-08-15 實測）：Actions 帳務爆掉時 run 仍會建立並以 failure 收場（job 0 steps）
-    #    ——不會留下舊的 skipped 綠燈頂著，fail-closed 沒被這個設計削弱。
-    # ⚠️ 協作欄位閘（collab-fields.yml）**刻意不套這套**：那道閘的形狀被考題焊死
-    #    （「只認一種形狀」——job 級 if 正是它列名封殺的繞法），守的是「沒人能自審自合」
-    #    的協作底線；它單次 ≈20 秒、不是成本大頭，留著全程跑。
-    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    # 草稿也照跑（2026-08-29 半鬆綁，William 裁示；取代 2026-08-15〜08-29 的「草稿跳過省額度」）：
+    #   repo 已公開＝標準 runner 免費，省錢的理由消失；而「草稿不考」的代價實測過——
+    #   本機三關（Claude／Codex）全在 macOS，這裡是 Linux＝兩個把關者同一個盲點：
+    #   Linux 才壞的東西（前例＝shell 考題釘在 CI 沒有的 /bin/zsh 那次）在草稿期整段隱形，
+    #   要到審查全部走完、轉 ready 才第一次現形——那時每修一條都要重拿一張「通過」
+    #   （複審結論閘釘著 head）＝燒的是審查輪，比機器分鐘貴。每輪都考，r1 就看見。
+    # ⚠️ 前提綁定：「免費」以 repo 公開＋GitHub 現行政策為前提；轉回私有這筆帳整個回來，
+    #    屆時要重評（帳務爆過的行為留檔：run 仍會建立並以 failure 收場＝fail-closed，
+    #    2026-08-15 實測——不會留舊的 skipped 綠燈頂著）。
+    # ⚠️ 真考卷閘（scripts/check-ci-really-ran.js）刻意不跟著拆：Re-run 舊場次沿用凍結
+    #    payload（draft:true 凍在裡面）仍會蓋出 skipped，而 GitHub 把 skipped 視同滿足——
+    #    「能合併的 head 一定跑過真考卷」的收口仍是它（完整病理見該檔檔頭）。
+    # 考題＝test/deploy-config.test.js「CI 對草稿也要跑」：不准再長出 draft 條件。
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -68,7 +69,6 @@ jobs:
     name: 開發機的 Node（最新版，前瞻｜不擋部署）
     runs-on: ubuntu-latest
     continue-on-error: true
-    if: github.event_name == 'push' || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
