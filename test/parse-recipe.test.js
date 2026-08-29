@@ -1568,7 +1568,8 @@ const recipeN = () => ({
     headerNote: '日誌註記', headerIgnore: ['車號'],
   },
 });
-/** 版面 N 的合成帳單。`rad=true`＝**版面文字**（暗號／區段／收尾／參考日／銀行名／表頭）整份改印相容字。
+/** 版面 N 的合成帳單。`rad=true`＝**認版面用的文字**（暗號／區段／收尾／銀行名／表頭）整份改印相容字。
+ * ⚠️ **參考日錨點刻意不換**——那一段整段走舊尺、不在這把尺的射程內（見題名含「參考日整段維持舊尺」那題）。
  * ⚠️ 帳號、日期、金額、摘要、標籤**刻意不換**：那些是輸出值不是比對點（引擎照原樣輸出、原樣進
  * bankRef 去重鍵），換了它們這兩題就變成在考別件事。 */
 const linesN = (rad = false) => {
@@ -1591,7 +1592,8 @@ const linesNContent = () => {
   ls[5] = L(100, [[53, 0, '900100****3301'], [124, 0, '2026/06/11'], [177, 0, toRad('合成轉入')], [349, 40, '$500'], [418, 0, '$1,730']]);   // 交易摘要
   return ls;
 };
-/** 版面 N 的配方，**每個文字槽都抄成相容字寫法**（AI 照版面逐字抄就會長這樣）。 */
+/** 版面 N 的配方，**認版面用的文字槽都抄成相容字寫法**（AI 照版面逐字抄就會長這樣）。
+ * ⚠️ 參考日錨點刻意不換，理由同 `linesN`。 */
 const recipeNRad = () => {
   const r = recipeN();
   return {
@@ -1619,8 +1621,12 @@ test('同一把尺｜夾具自檢：版面 N 的配方合格、正規字版整�
   assert.equal(p.referenceDate, '2026-06-30');
   assert.equal(p.accounts.length, 1);
   assert.equal(p.transactions.length, 1);
-  // 每個文字槽都至少有一個字換得動——這是「帳單相容字」「配方相容字」兩題的承重點
-  for (const slot of textSlotsOf(recipeN())) {
+  // **認版面用的**每個文字槽都至少有一個字換得動——這是「帳單相容字」「配方相容字」兩題的承重點。
+  // ⚠️ `refDate.anchor` 刻意排除：那一段走舊尺、不在這把尺的射程內（它由題名含「參考日整段維持
+  //    舊尺」那題守）。把它算進來會讓這一題看起來守著一個它其實沒守的比對點（Codex #523 r5#2）。
+  const layoutSlots = textSlotsOf(recipeN()).filter(x => x !== recipeN().refDate.anchor);
+  assert.ok(layoutSlots.length >= 8, '★排除參考日之後仍要覆蓋所有認版面的槽位（少了就是這一題自己縮水）');
+  for (const slot of layoutSlots) {
     assert.notEqual(toRad(slot), slot, `★槽位「${slot}」沒有任何字有部首寫法＝那個比對點漏掉尺也不會紅`);
   }
 });
@@ -1679,7 +1685,8 @@ test('同一把尺｜換尺對「舊尺生出來的規則卡」是恆等：卡�
   assert.deepEqual(validateRecipeStrict(recipeA()), [], '換尺不得讓既有配方變成不合格（拒解＝那張卡當場失效）');
   assert.deepEqual(validateRecipeStrict(recipeB()), []);
   // ⚠️ 誠實劃界（沒有考題撐、也不打算加）：反方向不保證——NFKC 不保證子字串關係在正規化後仍
-  // 成立（暗號結尾的基字，若文件裡緊跟組合附標會合成成另一個字）。CJK 帳單沒有這種形。
+  // 成立（暗號結尾的基字，若文件裡緊跟組合附標會合成成另一個字）。**本支不支援這種形，
+  // 也沒有量測過真帳單有沒有**——不替真實帳單下保證（Codex #523 r5#2）。
 });
 
 test('同一把尺｜表頭重複的相容字寫法照樣算「重複」（尺比 findX 窄＝第二格的值靜靜落錯窗）', () => {
@@ -1766,6 +1773,24 @@ test('同一把尺｜參考日整段維持舊尺：相容字錨點＝讀不到�
   assert.deepEqual(validateRecipeStrict(rRad), [], '前提：相容字寫法的錨點也是合法配方');
   assert.equal(parseWithRecipe(linesN(), rRad).referenceDate, null,
     '★配方那一邊也走舊尺——把錨點改走新尺，這裡就會變成讀得到');
+  // **控制流也要顧**（Codex r5#1）：新尺會提早認出相容字表頭並收尾 ⇒ 舊尺的參考日區塊
+  //   根本沒機會跑。實測同一份帳單 main 讀 2026-06-30、只換尺讀 null——修好區塊內部不夠。
+  const early = linesN();
+  early.splice(4, 0, L(280, [[47, '結算日:2026/06/30'], [200, toRad('車號')], [272, toRad('支出金額')],
+    [331, toRad('存入金流')], [396, toRad('本日餘額')], [489, toRad('日誌註記')]]));
+  early[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表']]);   // 參考日搬到那一列上，第一列不再有
+  const pe = parseWithRecipe(early, recipeN());
+  assert.equal(pe.referenceDate, '2026-06-30',
+    '★★參考日要在「因新尺表頭而收尾」之前先跑——否則 main 讀得到的參考日會整個跳掉');
+  assert.equal(pe.transactions.length, 1, '★而且那一列被當表頭收尾之後，明細照樣解得出來');
+  // 但**舊尺就認得的表頭**那一列，main 是先收尾、不讀參考日——我們也不可以讀（否則就是比 main 多讀）。
+  //   少了這個 guard，上面那一題照樣綠（突變實測），所以這一刀要另外考。
+  const onHeader = linesN();
+  onHeader[0] = L(300, [[20, '合成金庫月結單'], [47, '存戶總表']]);   // 第一列不再有參考日
+  onHeader[4] = L(120, [[47, '結算日:2026/06/30'], [75, '帳號'], [135, '日期'], [200, '車號'],
+    [272, '支出金額'], [331, '存入金流'], [396, '本日餘額'], [489, '日誌註記']]);
+  assert.equal(parseWithRecipe(onHeader, recipeN()).referenceDate, null,
+    '★參考日印在（舊尺就認得的）表頭列上＝main 先收尾、不讀 ⇒ 我們也不讀');
   // **日期候選也整段走舊尺**：一顆全形數字貼著民國日期時，正規化會把候選整顆吃掉（r2 那型）。
   //   只考錨點的話，「掃描器吃正規化後的切片」那一刀會活過去（突變 U3 實測）。
   const rocLines = linesB();
