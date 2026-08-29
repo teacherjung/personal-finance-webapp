@@ -314,6 +314,14 @@ test('接地｜無空白的全形句讀（r6#2）：「100，200」不得被 NFK
     transactions: [{ date: '2026-07-03', postDate: null, desc: '幻影店', amount: 100200 }] };
   assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), text)), 'ai_bad_answer',
     '★句讀合成的 100200 不是帳單印的數字');
+  // r7#1：不只全形逗號——**任何** NFKC 後是逗號的字元都是句讀（U+FE50 小逗號、U+FE10 直排逗號
+  // 這類親戚，列舉字元表必漏）
+  for (const punct of ['﹐', '︐']) {
+    const t2 = text.replace('100，200', `100${punct}200`);
+    assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(forged), t2)), 'ai_bad_answer',
+      `★U+${punct.codePointAt(0).toString(16).toUpperCase()} 也折成逗號——通則不是字元表`);
+    assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(honest), t2)), null, '誠實的 100 與 200 照樣接得到地');
+  }
   // 對照：ASCII 逗號的真千分位（帳單本來的印法）照收——摘要與明細各印各的、位置夠分
   const textReal = [
     '上期應繳總額 0 已繳款退款金額 0 本期新增款項 100,200 本期應繳總額 100,200',
