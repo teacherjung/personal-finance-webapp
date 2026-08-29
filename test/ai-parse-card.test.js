@@ -80,11 +80,36 @@ test('驗收｜筆數上限 fail-closed（超過＝壞答案，不是截斷收�
   assert.equal(codeOf(() => normalizeAiCard(g2)), 'ai_bad_answer');
 });
 
-test('驗收｜totals 抄了負號＝取絕對值（符號由程式定、不由 AI 定——同遮罩符號的前例）', () => {
+test('驗收｜符號紀律（r1#2）：只有 paidAndRefund 取絕對值，其餘三格保留帳單的正負號', () => {
   const g = GOOD();
-  g.totals.paidAndRefund = -1000;   // 有的帳單把已繳款印成負數
+  g.totals.paidAndRefund = -1000;   // 有的帳單把已繳款印成負數；等式自帶減號＝這格是量值
   const p = normalizeAiCard(g);
   assert.equal(p.statementTotals.paidAndRefund, 1000);
+  // 退款期的本期新增／應繳可以是負數——全取絕對值會把方向反轉成消費（r1 的高危重現）
+  const g2 = GOOD(); g2.totals.newCharges = -100; g2.totals.due = -100;
+  const p2 = normalizeAiCard(g2);
+  assert.equal(p2.statementTotals.newCharges, -100, '★負的本期新增要原樣保留');
+  assert.equal(p2.statementTotals.due, -100, '★負的應繳（溢繳）要原樣保留');
+});
+
+test('驗算＋接地｜退款期方向不可反轉（r1#2 完整重現）：帳單印 -100、AI 翻成 +100 ＝擋', () => {
+  const totalsNeg = { prevDue: 0, paidAndRefund: 0, newCharges: -100, due: -100 };
+  const textNeg = [
+    '測試商業銀行 信用卡帳單 卡號末四碼 1234',
+    '上期應繳總額 0 已繳款退款金額 0 本期新增款項 -100 本期應繳總額 -100',
+    '115/07/12 退款商店 -100',
+  ].join('\n');
+  // 誠實答案（照抄負號）＝三關全過
+  const honest = { ...GOOD(), totals: { ...totalsNeg }, adjustments: [],
+    transactions: [{ date: '2026-07-12', postDate: null, desc: '退款商店', amount: -100 }] };
+  const hp = normalizeAiCard(honest);
+  assertAiCardGrounded(hp, textNeg);
+  reconcileAiCard(hp);
+  // 翻正的答案（+100 摘要＋ +100 明細）＝接地就擋：帳單上只有 -100，沒有 +100 這個位置
+  const flipped = { ...GOOD(), totals: { prevDue: 0, paidAndRefund: 0, newCharges: 100, due: 100 }, adjustments: [],
+    transactions: [{ date: '2026-07-12', postDate: null, desc: '退款商店', amount: 100 }] };
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(flipped), textNeg)), 'ai_bad_answer',
+    '★退款被讀成消費、等式與加總卻照樣全平——只有帶符號的接地擋得住這型');
 });
 
 test('驗收｜desc 走 normalizeDesc（裁示③）：同一店名不同空白＝同一個字串（否則 stmtRef 分岔＝重複入帳）', () => {
@@ -103,6 +128,37 @@ test('接地｜答案卷上的每個金額都要在原文出現過：臆測的�
   assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g2), TEXT.replace('本期應繳總額 480', '本期應繳總額 480'))), 'ai_bad_answer');
   const g3 = GOOD(); g3.adjustments[0].amount = 31;
   assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g3), TEXT)), 'ai_bad_answer');
+});
+
+test('接地｜多重集消耗（r1#1）：把三筆明細縮成一筆、金額借摘要的「本期新增」＝擋', () => {
+  // 摘要的 450 印在帳單上 ⇒ 舊版「全文出現過就好」會放行這份縮寫答案（等式、加總也全平）。
+  // 消耗制：totals.newCharges 先占掉 450 唯一的位置，明細再要 450 就沒得借。
+  const g = GOOD();
+  g.transactions = [{ date: '2026-07-03', postDate: null, desc: '星巴克', amount: 450 }];
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g), TEXT)), 'ai_bad_answer',
+    '★明細不可以借摘要的數字——縮成一筆的幻覺明細要在接地就死');
+  // 對照：真的有兩筆同額時，帳單印兩次、消耗兩次都成立（不會誤擋）
+  const dup = GOOD();
+  dup.totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 300, due: 330 };
+  dup.transactions = [
+    { date: '2026-07-03', postDate: null, desc: '星巴克', amount: 150 },
+    { date: '2026-07-04', postDate: null, desc: '星巴克', amount: 150 },
+  ];
+  const dupText = [
+    '遠東國際商業銀行 信用卡帳單 卡號末四碼 1234',
+    '上期應繳總額 1,000 已繳款/退款金額 1,000 本期新增款項 300 循環信用利息 30 本期應繳總額 330',
+    '115/07/03 星巴克 150',
+    '115/07/04 星巴克 150',
+  ].join('\n');
+  assertAiCardGrounded(normalizeAiCard(dup), dupText);
+});
+
+test('接地｜符號嚴格、無絕對值後備（r1#2 的另一個方向）：帳單印正數、AI 宣稱負數＝擋', () => {
+  // 消費被讀成退款：單筆會被 G2 擋，但**成對反轉會在 G2 互相抵消**——接地是唯一每筆獨立把關的位置，
+  // 放寬成「配絕對值也算」這裡就破了（突變演練⑯抓到的洞，2026-08-30）。
+  const g = GOOD(); g.transactions[0].amount = -150;   // TEXT 只印正的 150
+  assert.equal(codeOf(() => assertAiCardGrounded(normalizeAiCard(g), TEXT)), 'ai_bad_answer',
+    '★負數宣稱不可以借正數 token（尾綴負號印法會被誤擋＝已在檔頭照實劃界，寧擋勿收）');
 });
 
 test('接地｜lastFour 也要在原文出現（憑空編末四碼＝ai_bad_answer）', () => {
@@ -130,6 +186,17 @@ test('驗算｜加總閘：Σ明細 ≈ 本期新增；漏抄一筆＝擋，且�
   try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); assert.equal(/** @type {any} */ (e).code, 'ai_reconcile_failed'); }
   assert.match(msg, /差了 50 元/, '★要說明差多少（裁示②的白話說明）');
   assert.doesNotMatch(msg, /450|480|1,?000/, '★不回聲帳單的原始金額（機密紀律；差額是衍生值、單獨回推不出內容）');
+});
+
+test('驗算｜加總閘排除繳款列（r1#4，同模板路 finalize／中閘的那把尺）：明細裡有繳款的合法帳單不可誤擋', () => {
+  // 很多帳單把「已繳款」列在明細區；「本期新增款項」卻不含繳款——不排除的話帳單全對也必然開紅。
+  const g = GOOD();
+  g.transactions = [...g.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -1000 }];
+  reconcileAiCard(normalizeAiCard(g));   // Σ(不含繳款)＝450＝newCharges ⇒ 過；不排除會差 1000
+  // 判準同模板：要「負數＋繳款字樣」兩個條件都成立才排除——正數列即使叫繳款也照算（單向、不多排）
+  const g2 = GOOD();
+  g2.transactions = [...g2.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: 1000 }];
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed');
 });
 
 test('驗算｜四格摘要缺任一＝驗算不了＝不收（加嚴的定義；★6 不放寬）', () => {

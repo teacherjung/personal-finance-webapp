@@ -20,8 +20,8 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const {
   snapshotUpload, shouldOfferAi, shouldAskBeforeSend, askToggleDisplayAfterSaveFailure, previewBody, applyBody, isAiTicketDeadCode,
-  aiConsentBodyHtml, aiPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
-  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT,
+  aiConsentBodyHtml, aiPreviewBadgeHtml, aiCardPreviewBadgeHtml, modelDisplayName, aiErrorText, runAiFallback,
+  AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_CONSENT_BUSY_LABEL_CARD, AI_PREVIEW_LOST_TEXT,
 } = await import('../public/modules/ai-consent.js');
 
 /** 去註解後的原始碼（形狀題一律掃這份：註解裡的字不算數）。 @param {string} rel */
@@ -558,4 +558,26 @@ test('批二｜aiConsentBodyHtml 的 card 變體：單讀說明取代雙讀、�
   assert.ok(card.includes('逐筆驗算'), 'card 要講驗算閘（裁示①）');
   assert.ok(card.includes('卡號末四碼'), 'card 的送出內容講卡片欄位');
   assert.ok(bank.includes('帳號末碼'), 'bank 的送出內容不變');
+});
+
+test('批二 r1#5｜卡片版送出中字樣：不可講「仲裁」（單讀沒有這個流程）；bank 那句一字不動', () => {
+  assert.doesNotMatch(AI_CONSENT_BUSY_LABEL_CARD, /仲裁/, '★卡片單讀沒有仲裁——借銀行那句＝宣稱不存在的流程');
+  assert.match(AI_CONSENT_BUSY_LABEL_CARD, /正在|稍候|讀取中/, '要看得出「還在跑」');
+  assert.match(AI_CONSENT_BUSY_LABEL_CARD, /更強的模型/, '要照實講單讀階梯（第一讀不順會升級）');
+  assert.match(AI_CONSENT_BUSY_LABEL, /仲裁/, 'bank 那句保持原樣（銀行線雙讀真的有仲裁）');
+});
+
+test('批二 r1#5｜卡片版 AI 徽章：只講卡片真的跑過的閘，不可借銀行的餘額鏈／仲裁文案', () => {
+  assert.equal(aiCardPreviewBadgeHtml({ rows: [] }), '', '模板路線不可長出徽章');
+  assert.equal(aiCardPreviewBadgeHtml(null), '');
+  assert.equal(aiCardPreviewBadgeHtml({ engine: 'template' }), '');
+  const html = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: 'claude-sonnet-5' });
+  assert.match(html, /應繳等式/, '要講等式閘（卡片真的跑的）');
+  assert.match(html, /逐筆加總/, '要講加總閘');
+  assert.match(html, /接地檢查/, '要講接地');
+  assert.match(html, /卡號末四碼/, '請確認清單講卡片欄位');
+  assert.doesNotMatch(html, /餘額|仲裁|雙讀|帳號/, '★銀行線的防線一項都沒跑——出現就是讓使用者錯信不存在的防線');
+  assert.match(html, /看不到/, '照實劃界：要講這些閘看不到什麼（就地解釋鐵則）');
+  const evil = aiCardPreviewBadgeHtml({ engine: 'ai', aiModel: '<b>x</b>' });
+  assert.doesNotMatch(evil, /<b>x<\/b>/, '模型名要逃逸');
 });

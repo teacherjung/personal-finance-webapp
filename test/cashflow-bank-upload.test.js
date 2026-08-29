@@ -255,8 +255,18 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
     '四個會排下一窗的 onSubmit（密碼窗／上傳窗／選卡窗／AI 同意窗）都要有 canOpenNext');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, '', onPage\)\)/, '免密碼路徑開後續窗要走 canOpenNext');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => handlePreviewResult\(r, b64, cards, pw, onPage\)\)/, '密碼窗成功路徑開後續窗要走 canOpenNext');
-  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64\)\)/, '池全敗跳密碼窗要走 canOpenNext');
+  assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openPasswordWindow\(b64, snap\.fileName\)\)/,
+    '池全敗跳密碼窗要走 canOpenNext（且把快照檔名一路帶進去——密碼後備的同意窗才不會顯示「未命名」）');
   assert.match(src, /openWhenOnPage\(canOpenNext, \(\) => openStatementPreview\(/, '選卡重解析後開預覽窗要走 canOpenNext');
+  // Codex r1#3（批二）：`file` 是 onchange 會改寫的外層變數——第一個 await 之前要凍快照，
+  //   之後所有路只認 snap（晚讀 file?.name 會在「請求在途時改選 B」時顯示 B 的名字、實際送出 A）。
+  assert.match(src, /const snap = snapshotUpload\(file\);[\s\S]{0,300}?await fileToBase64\(snap\.file\)/,
+    '快照要在第一個 await 之前凍好、b64 從快照讀');
+  assert.doesNotMatch(src, /file\?\.name/, '快照之後不准再讀可變的 file?.name（同意窗顯示與實際送出會分家）');
+  // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
+  assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
+  assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');
+  assert.doesNotMatch(src, /\baiPreviewBadgeHtml\(/, '銀行版徽章（餘額鏈／仲裁文案）不准出現在卡片線');
   // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）
   assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,200}?if \(!onPage\(\)\) return;/,
     '改卡重解析 await 後、draw 前要核對切頁');

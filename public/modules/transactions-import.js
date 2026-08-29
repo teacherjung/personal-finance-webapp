@@ -13,7 +13,7 @@ import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml, unknownIssuerNoticeHtml } from './reconcile-summary.js';
-import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, aiConsentBodyHtml, aiErrorText, aiPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
+import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, snapshotUpload, aiConsentBodyHtml, aiErrorText, aiCardPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL_CARD } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
 import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
@@ -45,7 +45,7 @@ function openCardUploadForm(cards) {
   // 第二窗（P0.5）：已存密碼池（各卡＋記住的）全敗＝後端回 code:'pdf_password' 才開。
   // 告知句依模式分流（借銀行同一份挑句；問不到＝保守當雲端講）、勾「記住」預設不勾。
   // typedPw＝使用者這次輸入的密碼，往後選卡/改卡重解析要沿用（r1#3：沒勾記住時正確密碼不在任何池裡）。
-  const openPasswordWindow = async (/** @type {string} */ b64) => {
+  const openPasswordWindow = async (/** @type {string} */ b64, /** @type {string} */ fileName = '') => {
     // 挑句＋切頁作廢都走 bankUploadGate（r2#2：問 /mode 期間切頁＝不開密碼窗，補上這條非同步縫；
     // 挑句判準與保守方向沿用同一份，不另抄）。
     const modalOk = watchModalRoot();   // r16：問 /mode 之前先看一眼共用彈窗格（唯讀，不可用 claim——那會搶走現在那個窗的擁有權）
@@ -71,7 +71,8 @@ function openCardUploadForm(cards) {
           // 批二：密碼對了、但版面認不得 ⇒ 同一套 AI 後備（pw 必須一路帶——AI 路自己會再抽一次字）
           if (!shouldOfferAi(e)) throw e;
           if (await askBeforeSendAi()) {
-            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, '') }) === 'rethrow') throw e;
+            // fileName 從上傳窗一路帶進來（Codex r1#3 附帶）：這裡本來丟 ''，同意窗會顯示「未命名」
+            if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, pw, fileName) }) === 'rethrow') throw e;
             return;
           }
           await sendCardToAi(b64, pw, canOpenNext);
@@ -95,20 +96,24 @@ function openCardUploadForm(cards) {
       if (inp) { inp.accept = '.pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.onchange = () => { file = inp.files?.[0] || null; }; }
     },
     onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
-      if (!file) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
+      // ⚠️ 第一個 await 之前先凍快照（Codex r1#3；同銀行線 cashflow.js 的 r1#1）：`file` 是 onchange
+      //   會改寫的外層變數——選 A 按送出、請求在途時改選 B，晚讀的 `file?.name` 會變成 B 的名字，
+      //   同意窗於是顯示 B、實際送出的卻是 A ＝ 對錯的帳單取得同意。之後所有路只認 snap。
+      const snap = snapshotUpload(file);
+      if (!snap) throw new Error('請先選擇帳單檔案（PDF 或 XLSX）');
       const canOpenNext = () => onPage() && ctx.owns.handoff();   // r18：同上
-      const b64 = await fileToBase64(file);
+      const b64 = await fileToBase64(snap.file);
       try {
         const r = await api('/statement/preview', { method: 'POST', body: { data: b64 } });
         // openForm 送出後會清空 #modal-root，後續彈窗也在 #modal-root，故延到關閉之後再畫（切頁作廢）
         openWhenOnPage(canOpenNext, () => handlePreviewResult(r, b64, cards, '', onPage));
       } catch (e) {
-        if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64)); return; }   // 池全敗＝跳密碼窗
+        if (/** @type {any} */ (e).code === 'pdf_password') { openWhenOnPage(canOpenNext, () => openPasswordWindow(b64, snap.fileName)); return; }   // 池全敗＝跳密碼窗
         // 批二：內建範本認不得＝提供 AI 入口（判準與競態防線同銀行線 runAiFallback；不吐原紅字——
         // 同意窗第一行已講「認不出版面」，William 2026-08-12 的裁示在卡片線同樣適用）。
         if (!shouldOfferAi(e)) throw e;
         if (await askBeforeSendAi()) {
-          if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', file?.name || '') }) === 'rethrow') throw e;
+          if (runAiFallback({ err: e, canOpenNext, openConsent: () => openAiConsentWindow(b64, '', snap.fileName) }) === 'rethrow') throw e;
           return;
         }
         await sendCardToAi(b64, '', canOpenNext);
@@ -138,7 +143,7 @@ function openCardUploadForm(cards) {
       fields: [],
       bodyHtml: aiConsentBodyHtml({ fileName, kind: 'card' }),
       submitLabel: AI_CONSENT_SUBMIT_LABEL,
-      busyLabel: AI_CONSENT_BUSY_LABEL,
+      busyLabel: AI_CONSENT_BUSY_LABEL_CARD,   // r1#5：卡片單讀、沒有仲裁，不借銀行那句
       onSubmit: async (/** @type {any} */ _data, /** @type {any} */ ctx) => {
         const canOpenNext = () => onPage() && ctx.owns.handoff();
         await sendCardToAi(b64, pw, canOpenNext);
@@ -264,7 +269,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
             <select id="previewCard">${cardOpts()}</select></label>
           <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；真正繳款不匯入，退款會保留為消費抵減。</span>
         </div>
-        ${aiPreviewBadgeHtml(curR)}
+        ${aiCardPreviewBadgeHtml(curR)}
         ${unknownIssuerNoticeHtml(curR.bankEvidence)}
         ${gateSummaryHtml(curR.reconcile, 'card')}
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">
