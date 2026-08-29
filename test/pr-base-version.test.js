@@ -267,7 +267,9 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
       chmodSync(stub, 0o755);
     }
     const refs = `refs/heads/claude/demo ${NEW} refs/heads/claude/demo ${OLD}`;
-    const r = spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push')], {
+    const REMOTE_URL = 'https://github.com/o/r.git';
+    // ⚠️ $1=remote 名、$2=remote URL——git 真的會這樣呼叫 pre-push。少了它們，repo 綁定整條斷線。
+    const r = spawnSync('sh', [join(ROOT, 'scripts', 'git-hooks', 'pre-push'), 'origin', REMOTE_URL], {
       encoding: 'utf8', cwd: ROOT, input: `${refs}\n`,
       env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: process.env.HOME ?? '' },
     });
@@ -278,6 +280,9 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
     assert.ok(hit, `pre-push 根本沒叫基準版本對齊：\n${lines.join('\n')}`);
     assert.ok(hit.includes(refs),
       `對齊腳本沒收到 git 給的 ref（很可能是 stdin 被前面的關卡讀走了）。實得：\n${hit}`);
+    // ★remote URL 也要真的傳到（Codex r2#3：把 hook 那個 "$2" 拿掉，原本的考題照樣全綠）
+    assert.ok(hit.includes(REMOTE_URL),
+      `★對齊腳本沒收到 remote URL（repo 綁定斷線＝推去 A repo 可能改到 B repo 的 PR）。實得：\n${hit}`);
 
     // ⚠️ 反向：前面的關卡**不可以**拿到那份 ref——拿得到就表示 stdin 沒被收乾淨，
     //    誰先讀誰贏，對齊腳本會時靈時不靈（跨機器的 flaky，最難查的那種）。
@@ -290,7 +295,7 @@ test('接線｜pre-push 把 git 給的 ref 原樣餵進基準版本對齊', () =
 });
 
 // ── Codex #519 r1 的四條，一條一族 ──────────────────────────
-import { pickPr, repoSlug } from '../scripts/sync-pr-base-version.js';
+import { pickPr, repoSlug, runWithTimeout } from '../scripts/sync-pr-base-version.js';
 
 test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被舊快照蓋掉', () => {
   // #522 才剛發生過兩線並行編輯。Codex 合成重現：concurrentMarkerSurvives:false。
@@ -308,6 +313,27 @@ test('★r1#1 競態縮窗：寫入前重讀，別條線剛補的內容不得被
   assert.equal(sent.length, 1);
   assert.ok(sent[0].includes(MARKER), '★並行編輯被舊快照蓋掉了（改動必須落在重讀後的最新版上）');
   assert.deepEqual(staleBaseProblems(sent[0], NEW), [], '對齊本身也要成立');
+});
+
+test('★documenting：重讀之後對方先寫、我方後寫 ⇒ 對方內容被蓋且**看起來像成功**（偵測不到的那一半，照實記載）', () => {
+  // ⚠️ 本題**不宣稱**這個行為是對的——它釘住「事後驗證只看得見對方最後寫入那一半」這個劃界，
+  //    讓任何人想把註解改寫成「並行編輯一定看得見」時，先撞到這一題的存在。
+  //    偵測不到的根因＝GitHub API 沒有 compare-and-swap；能歸零的那天，這題應改成正向斷言。
+  const body = bodyWith(OLD.slice(0, 7));
+  const MARKER = '\n\n### 對方在重讀之後、我方寫入之前補的內容';
+  /** @type {string[]} */ const logs = [];
+  /** @type {string[]} */ const sent = [];
+  let fetches = 0;
+  main(`refs/heads/x ${NEW} refs/heads/x ${OLD}`, {
+    ...IO_REPO, log: (s) => logs.push(s),
+    find: () => prOf(3, body),
+    // 重讀＝還沒有 MARKER；（對方在此時寫入 MARKER，但我方看不到）；寫入後讀回＝我方版本
+    fetch: () => { fetches += 1; return fetches === 1 ? body : (sent[0] ?? body); },
+    edit: (_n, b) => { sent.push(b); },
+  });
+  assert.equal(sent.length, 1);
+  assert.ok(!sent[0].includes(MARKER), '★現況：對方那段內容不在我方送出的版本裡＝被蓋掉');
+  assert.ok(logs.join('\n').includes('✅'), '★現況：而且看起來像成功——這正是劃界要照實記載的那一半');
 });
 
 test('★r1#1b 事後驗證：寫完發現欄位不是我們的樣子（並行編輯贏）⇒ 講一聲、絕不重試覆蓋', () => {
@@ -347,13 +373,30 @@ test('★r1#3 repo 綁定：PR 不屬於這次 push 的 repo ⇒ 整批不動', 
   assert.equal(edits2, 0, '★兩邊都抽不出 slug 時不得誤判成「同 repo」');
 });
 
-test('★r1#3b repoSlug：https／ssh／.git／大小寫都收斂到同一個 owner/repo', () => {
+test('★repoSlug：https／ssh／scp／.git／大小寫／帶 port 都收斂到同一個 owner/repo', () => {
   for (const u of ['https://github.com/O/R', 'https://github.com/o/r.git', 'git@github.com:o/r.git',
-    'ssh://git@github.com/o/r', 'https://github.com/o/r/pull/9']) {
+    'ssh://git@github.com/o/r', 'https://github.com/o/r/pull/9',
+    'ssh://git@github.com:22/o/r.git']) {   // ★帶 port 的合法形（曾被誤抽成 22/o）
     assert.equal(repoSlug(u), 'o/r', u);
+  }
+  // ★主機必須**全等**，不是子字串（三個真實繞法：主機像、主機前綴、路徑裡藏 github.com）
+  for (const u of ['https://evilgithub.com/o/r.git', 'git@evilgithub.com:o/r.git',
+    'https://evil.example/github.com/o/r.git', 'ssh://git@github.com.evil.tld/o/r']) {
+    assert.equal(repoSlug(u), null, `★繞法沒被擋：${u}`);
   }
   assert.equal(repoSlug('https://gitlab.com/o/r'), null, '非 GitHub 抽不出＝不動（fail-open 同向）');
   assert.equal(repoSlug(''), null);
+});
+
+test('★逾時是行為不是形狀：睡著的子行程在 50ms 就被 SIGKILL 收掉', () => {
+  // 把 timeout 拿掉的突變：子行程睡滿一秒後正常結束、這裡等不到丟錯 ⇒ 轉紅（上限一秒，不會掛住）。
+  const t0 = Date.now();
+  let err = null;
+  try { runWithTimeout(process.execPath, ['-e', 'setTimeout(() => {}, 1000)'], 50); }
+  catch (e) { err = /** @type {any} */ (e); }
+  assert.ok(err, '★沒有逾時保護——真掛住的 gh 會讓 push 無限等');
+  assert.ok(err.code === 'ETIMEDOUT' || err.signal === 'SIGKILL', `要因逾時而死，實得 code=${err.code} signal=${err.signal}`);
+  assert.ok(Date.now() - t0 < 900, '逾時要在設定值附近觸發，不是等子行程自己結束');
 });
 
 test('★r1#3c 分支名取 remote-ref：push 本地名:遠端名 要查「遠端名」的 PR', () => {

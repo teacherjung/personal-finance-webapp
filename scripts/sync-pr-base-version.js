@@ -142,20 +142,33 @@ export function parsePushRefs(stdin) {
  *    繼承來的 `GIT_DIR` 會讓它去讀**另一個** repo 的 PR，而輸出看起來完全正常。
  * @param {string[]} args @returns {string}
  */
+/** gh 呼叫的逾時上限：一次 API 往返加充分裕度；超過＝網路異常，寧可放棄對齊也不掛住 push。 */
+export const GH_TIMEOUT_MS = 15_000;
+
+/**
+ * 帶逾時的同步執行。⚠️ 抽成匯出函式是為了**讓逾時測得到**（Codex #519 r2#4：
+ * 「只有形狀保證」不夠——考題用一支睡著的子行程配 50ms 逾時直測 ETIMEDOUT＋SIGKILL，
+ * 把 timeout 拿掉那顆突變會在一秒內因「沒有丟錯」轉紅，不依賴網路也不會永久掛住）。
+ * @param {string} file @param {string[]} args @param {number} [timeoutMs]
+ * @returns {string}
+ */
+export function runWithTimeout(file, args, timeoutMs = GH_TIMEOUT_MS) {
+  return execFileSync(file, args, { encoding: 'utf8', env: gitEnv(), timeout: timeoutMs, killSignal: 'SIGKILL' });
+}
+
 function gh(args) {
-  // ⚠️ `timeout` 不可省（Codex #519 r1#2）：`gh` 預設可以無限等（DNS 卡住、API 不回應），
-  //    而這支跑在 pre-push 的關鍵路徑上——沒有 timeout，「它不可以擋 push」就是一句空話。
-  //    15 秒＝一次 API 往返加充分裕度；超過＝網路異常，寧可放棄這次對齊（欄位紅一次＝今天的行為）。
+  // ⚠️ 逾時不可省（Codex #519 r1#2）：`gh` 預設可以無限等（DNS 卡住、API 不回應），
+  //    而這支跑在 pre-push 的關鍵路徑上——沒有逾時，「它不可以擋 push」就是一句空話。
   //    逾時丟例外 → 各呼叫端的 catch 照「安靜地不做事」處理。
-  return execFileSync('gh', args, { encoding: 'utf8', env: gitEnv(), timeout: 15_000, killSignal: 'SIGKILL' });
+  return runWithTimeout('gh', args);
 }
 
 /**
  * 從 `gh pr list` 的結果挑出「可以動的那一支」——挑不出**唯一**一支就回 `null`（不猜）。
  *
- * ⚠️ 抽成純函式是為了讓判準測得到（Codex #519 r1#4：「恰好一支」的守門原本沒有行為題，
- *    退化成「非空取第一支」考題照樣全綠）。
- * ⚠️ **fork 的 PR 一律不動**（r1#3）：`gh pr list --head X` 會把別人 fork 上同名分支的 PR
+ * ⚠️ 抽成純函式是為了讓判準測得到（「恰好一支」的守門要有行為題，
+ *    否則退化成「非空取第一支」考題照樣全綠）。
+ * ⚠️ **fork 的 PR 一律不動**：`gh pr list --head X` 會把別人 fork 上同名分支的 PR
  *    也列進來——那不是我們推的這顆 head 的 PR，改它＝改到別人的說明。
  * @param {unknown} list @param {string} branch
  * @returns {{ number: number, body: string, url: string } | null}
@@ -169,10 +182,31 @@ export function pickPr(list, branch) {
   return { number: pr.number, body: pr.body, url: pr.url };
 }
 
-/** 從 GitHub 網址（https／ssh／git@ 各形）抽出小寫的 `owner/repo`；抽不出回 null。 @param {string} u */
+/**
+ * 從 GitHub 網址抽出小寫的 `owner/repo`；抽不出回 null（＝綁定不成立＝不動，fail-open 同向）。
+ *
+ * ⚠️ **主機必須錨定**（Codex #519 r2#2 給了三個繞法＋一個誤抽）：第一版用
+ *    `/github\.com[:/]+…/` 掃**子字串**，於是 `evilgithub.com`、`git@evilgithub.com:`、
+ *    `https://evil.example/github.com/o/r` 都被抽出 `o/r`＝綁定形同虛設；
+ *    而合法的 `ssh://git@github.com:22/o/r.git` 反而被抽成 `22/o`。
+ *    正解＝有 scheme 的交給 URL parser 驗 hostname；scp 形（`git@github.com:o/r`）用**行首錨定**的樣式。
+ * @param {string} u @returns {string | null}
+ */
 export function repoSlug(u) {
-  const m = String(u || '').match(/github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/|$)/i);
-  return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+  const raw = String(u || '').trim();
+  if (!raw) return null;
+  const clean = (/** @type {string} */ o, /** @type {string} */ r) => {
+    const repo = r.replace(/\.git$/i, '');
+    return o && repo ? `${o}/${repo}`.toLowerCase() : null;
+  };
+  const scp = raw.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)\/?$/i);   // scp 形沒有 scheme，URL 吃不了
+  if (scp) return clean(scp[1], scp[2]);
+  try {
+    const url = new URL(raw);
+    if (url.hostname.toLowerCase() !== 'github.com') return null;            // ⚠️ hostname 全等，不是包含
+    const [owner, repo] = url.pathname.split('/').filter(Boolean);
+    return owner && repo ? clean(owner, repo) : null;
+  } catch { return null; }
 }
 
 /** @param {string} branch @returns {{ number: number, body: string, url: string } | null} */
@@ -201,7 +235,7 @@ export function main(stdin, io = {}) {
   const find = io.find || findPr;
   const edit = io.edit || ((n, b) => { gh(['pr', 'edit', String(n), '--body', b]); });
   const fetch = io.fetch || fetchBody;
-  // ⚠️ 推去哪個 repo 就只動哪個 repo 的 PR（Codex #519 r1#3）：hook 把 push 的 remote URL 傳進來，
+  // ⚠️ 推去哪個 repo 就只動哪個 repo 的 PR：hook 把 push 的 remote URL 傳進來，
   //    與 PR 自己的網址比對 `owner/repo`。對不上（例如同名分支在別的 remote）＝整批不動。
   //    ⚠️ 判準是「**兩邊都抽得出 slug 且相等**」——沒給 remoteUrl／抽不出（手動呼叫、非 GitHub remote）
   //    一律**不動**。不可寫成 `repoSlug(a) !== repoSlug(b)`：兩邊都是 null 時 `null === null` 會誤判成同 repo。
@@ -236,8 +270,8 @@ export function main(stdin, io = {}) {
       if (r.reason && !r.reason.includes('已經是')) log(`   （基準版本：${r.reason}——不動它）`);
       continue;
     }
-    // ⚠️ **競態縮窗**（Codex #519 r1#1：讀完整份、隔一段時間整份蓋回去＝把別條線這段時間補的
-    //    說明內容吃掉——#522 才剛發生過兩線並行編輯）。寫入前**重讀一次**，改動落在最新的那份上；
+    // ⚠️ **競態縮窗**（讀完整份、隔一段時間整份蓋回去＝把別條線這段時間補的說明內容吃掉；
+    //    #522 有過兩線並行編輯的實例）。寫入前**重讀一次**，改動落在最新的那份上；
     //    窗口從「查 PR 到寫入的整段」縮到「重讀與寫入之間的單次往返」。
     //    ⚠️ 誠實劃界：毫秒級窗口**無法歸零**（GitHub API 沒有 compare-and-swap）；最壞情況＝
     //    並行編輯恰好落在那次往返裡被蓋掉，靠下面的事後驗證看見、且**絕不重試覆蓋**。
@@ -268,7 +302,11 @@ export function main(stdin, io = {}) {
       continue;
     }
     // ⚠️ **事後驗證、絕不重試**：寫完再讀一次，欄位若不是我們對齊後的樣子＝有別條線在同一瞬間
-    //    也在編輯（它的版本贏）。這時**什麼都不再做**——重試覆蓋就是去打 #522 那種編輯戰。
+    //    也在編輯（它的版本贏）。這時**什麼都不再做**——重試覆蓋就是打編輯戰。
+    // ⚠️ **誠實劃界（Codex #519 r2#1 糾正過一次）**：這道驗證**只看得見「對方最後寫入」那一半**。
+    //    另一半（重讀之後、我方寫入之前，對方先寫、我方後寫）＝對方的內容被蓋掉、讀回是我方版本、
+    //    看起來像成功——**偵測不到**。沒有 server 端 compare-and-swap 就沒有辦法歸零，能做的只有
+    //    縮窗（重讀與寫入相鄰）＋這句照實記載。最糟損失＝那個毫秒級窗口裡別條線對 PR 說明的編輯。
     try {
       const back = fetch(pr.number);
       if (staleBaseProblems(back, sha).length) {
@@ -279,7 +317,8 @@ export function main(stdin, io = {}) {
       log(`   （基準版本：寫入後驗證讀不到——已寫入的內容不回滾，閘照常會檢查）`);
       continue;
     }
-    log(`   ✅ 基準版本已對齊 PR #${pr.number} → ${sha.slice(0, 7)}（這一輪的協作欄位檢查就不會紅了）`);
+    // ⚠️ 措辭只講**這個欄位**（r2 敘述整理）：其他欄位、後續 push 成不成功，這支既不知道也不保證。
+    log(`   ✅ 基準版本欄位已對齊 PR #${pr.number} → ${sha.slice(0, 7)}（其餘仍由協作欄位閘照常檢查）`);
   }
   return 0;
 }
