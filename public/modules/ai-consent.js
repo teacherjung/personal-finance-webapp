@@ -9,7 +9,8 @@
 //    ⚠️ 「要不要先問」是**設定**（`aiAskBeforeSend`），不是本模組的前提：William 2026-08-13
 //    把預設翻成**不問、直接送**（取代 2026-08-12 的「每次都問」）。判準在 `shouldAskBeforeSend`，
 //    讀不到設定時當成「要問」（fail-closed）。
-// 2. **AI 入口只給「範本認不得」**（`code:'bank_unrecognized'`）——對帳閘紅（★6 禁止匯入）刻意無 code，
+// 2. **AI 入口只給「範本認不得」**（封閉列舉 `bank_unrecognized`＋`card_unrecognized`，批二加卡片入口）
+//    ——對帳閘紅（★6 禁止匯入）刻意無 code，
 //    `shouldOfferAi` 必須對它回 false，否則 UI 會在「數字對不上」的畫面上請 AI 重試一次。
 // 3. **票只活在單次預覽的閉包**：`applyBody` 從 preview 回應讀 `aiTicket`，本模組不存、呼叫端也不許存
 //    （A 帳單的票被 B 帳單的 apply 撿去用＝後端完全不看你送的檔案，把 A 的數字寫進去還回 200）。
@@ -93,7 +94,8 @@ export function snapshotUpload(fileLike) {
 
 /**
  * 這個錯誤可不可以提供「請 AI 讀一次」的入口？
- * ⚠️ **只認 `bank_unrecognized`**（前提 2）：對帳閘紅是 400 **無 code**，寫成 `!err.code` 或
+ * ⚠️ **封閉列舉 `bank_unrecognized`＋`card_unrecognized`**（前提 2；批二加卡片入口）：
+ * 對帳閘紅是 400 **無 code**，寫成 `!err.code` 或
  * `err.code !== 'pdf_password'` 都會讓「數字對不上」的帳單長出 AI 入口＝違反 ★6。
  * ⚠️ `Object.hasOwn`＝只認自有屬性（鐵則 3.5，同 `bankPasswordLabel`／`exportNotice` 前例）。
  * @param {any} err @returns {boolean}
