@@ -22,6 +22,12 @@
 for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
 unset _gitvar
 
+# ⚠️ **stdin 要在這裡就收乾淨**：git 把「這次要推哪些 ref」從 stdin 餵給 pre-push
+#    （格式＝`<local-ref> <local-sha> <remote-ref> <remote-sha>`，每行一個），
+#    而下面的 `npm test` 會**繼承同一個 stdin**——被任何一個子行程讀掉就再也拿不回來。
+#    收在變數裡，等全部關卡都過了再用（見檔尾「基準版本自動對齊」）。
+_refs=$(cat)
+
 echo "🚧 自動守門：工作樹體檢→校對→糾察→考試→工作樹複檢，全過才放行 push…"
 node scripts/check-worktree-integrity.js || { echo "❌ 工作樹體檢沒過（push 之前就已經壞了）。照上面的訊息還原再推。"; exit 1; }
 npm run typecheck || { echo "❌ 校對（typecheck）沒過，push 已擋下。修好再推。"; exit 1; }
@@ -31,4 +37,14 @@ npm test || { echo "❌ 考試（test）沒過，push 已擋下。修好再推�
 #    順序也不保證，所以「某支考題把整個 repo 弄成 bare」這件事，體檢自己那一支**不保證**會在
 #    同一次執行裡抓到。放在這裡就跑得掉——考試前是好的、跑完不是了，push 就出不去。
 node scripts/check-worktree-integrity.js || { echo "❌ 考試把工作樹弄壞了（考試前是好的、跑完就不是了）。照訊息還原，並查是哪一支考題做的。"; exit 1; }
+# 基準版本自動對齊（2026-08-27）：把 PR 說明的「基準版本」改成**即將推上去的**那顆 commit。
+# ⚠️ 位置刻意在**所有關卡之後**：被擋下來的 push 不該先把欄位推進去（那會讓說明指著一顆
+#    根本沒上去的 commit）。
+# ⚠️ 這一行的 `||` 是**刻意**的，而且與「閘不可以接 || true」那條規則不衝突——
+#    因為**這支不是閘**：它只做文書對齊，一次都不做放行的決定。欄位對不對，仍由
+#    scripts/check-pr-collab-fields.js 在雲端與合併步驟各自獨立檢查（fail-closed 沒被動到）。
+#    讓它有權力擋 push 才是錯的：文書小工具壞掉不該擋住送審。用 `echo` 而不是 `true`
+#    ——失敗要看得見，安靜吞掉就等於沒有。
+printf '%s\n' "$_refs" | node scripts/sync-pr-base-version.js "$2" \
+  || echo "⚠️ 基準版本自動對齊沒跑成功——不影響這次 push；協作欄位閘照常會檢查（必要時手動改欄位）。"
 echo "✅ 守門通過，放行 push。"
