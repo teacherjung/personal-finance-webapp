@@ -248,6 +248,20 @@ test('套用｜r8#2：期別列兩個日期＝分不出（帳單期間 06/21–0
     '★取第一個＝整批月份記錯、調整項期別 1 號跟著錯——唯一候選同金額/末四碼紀律');
 });
 
+test('套用｜r9#1：無分隔日期（20260704／1150704）也是申報形＝拒解不跳過；8 位大金額不誤判', () => {
+  for (const bare of ['20260704', '1150704']) {
+    const lines = LINES().map((l) => l);
+    lines.splice(10, 0, [bare, bare, '甲店', '100']);
+    assert.equal(codeOf(() => parseCardWithRecipe(lines, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+      `★無分隔日期 ${bare} 的列不得當雜訊（互抵漏抄）`);
+  }
+  // 月/日位不像月/日的 8 位數（大金額）＝不是日期形——純雜訊列帶它照樣跳過、不誤擋
+  const amt = LINES().map((l) => l);
+  amt.splice(10, 0, ['累計消費回饋試算', '12345678']);   // 34 不是月——雜訊照跳
+  const answer = parseCardWithRecipe(amt, /** @type {any} */ (GOOD()));
+  assert.equal(answer.transactions.length, 3, '8 位大金額的雜訊列不得被誤判成日期漂移');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名

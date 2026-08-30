@@ -737,3 +737,13 @@ test('★快照在讀櫃之前（r8#1）｜票的 snapshotAt 不得晚於 AI 路
   const t = redeem(r.aiTicket);
   assert.ok(t.snapshotAt && t.snapshotAt <= after, '★snapshotAt 要是「讀櫃之前」那一刻——晚蓋 120ms 以上＝在 AI 之後才取（並行自證會被清洗）');
 });
+
+test('★快照先於讀櫃（r9#2）｜previewAuto 的 observedAt 在 getDb 之前（源碼釘——時序競態合成不了穩定行為題）', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../lib/services/statement-import.js', import.meta.url), 'utf-8');
+  const fn = src.slice(src.indexOf('export async function previewAuto'));
+  const iObs = fn.indexOf('const observedAt = new Date().toISOString();');
+  const iDb = fn.indexOf('const db = await getDb();');
+  assert.ok(iObs > -1 && iDb > -1 && iObs < iDb,
+    '★observedAt 必須在 getDb 之前——db 舊快照＋新時間戳的縫隙裡完成的自證會被疑似名單清洗');
+});
