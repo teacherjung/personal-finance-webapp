@@ -11,7 +11,7 @@ const TEST_STORE = join(tmpdir(), `finance-ai-card-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
 const store = await import('../lib/store.js');
-const { previewAuto, previewForCard, aiCardRoute } = await import('../lib/services/statement-import.js');
+const { previewAuto, previewForCard, aiCardRoute, importRows } = await import('../lib/services/statement-import.js');
 const { issueAiTicket, redeemAiTicket, clearAiTicketsForTest, aiTicketCountForTest } = await import('../lib/ai-confirm-ticket.js');
 const { cjkPdf, passwordPdf } = await import('./helpers/build-pdf.js');
 
@@ -293,6 +293,10 @@ test('★負的具名調整不是繳款（r8#1）｜「自動扣繳回饋金」�
   assert.ok(rebate);
   assert.equal(rebate.isPayment, false, '★調整列不是繳款——標成繳款＝預覽禁選、直匯略過＝違反裁示②');
   assert.equal(rebate.isRefund, true, '負的調整＝抵減（消費視角）');
+  // r9#1：**真寫入**——匯入端「不信前端重判 desc」會把它當繳款靜默略過（r8 考題只停在預覽）
+  const out = await importRows('feib', [rebate], '2026-07', 470);
+  assert.equal(out.skipped, 0, '★預覽說會記、寫入就要記——skipped 1 ＝畫面說謊');
+  assert.equal(out.imported, 1);
 });
 
 test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {

@@ -455,6 +455,15 @@ test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款�
     try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
     assert.match(msg, /繳款差 1 元/, '★繳款半邊差 1＝說得出那個 1');
   }
+  // r9#2：**消費側零列**時不報消費差額——0 減整格摘要＝把「本期新增」原值當差額回聲出去
+  {
+    const g = { ...GOOD(), adjustments: [], transactions: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 731, due: 731 } };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg, '零明細＋摘要有新增＝照樣擋');
+    assert.doesNotMatch(msg, /731/, '★不可把摘要原值回聲成「差 731 元」');
+  }
   // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
   const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
     adjustments: [], transactions: [
