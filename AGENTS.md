@@ -292,7 +292,7 @@
 
 | 集合 | 使用者可寫（CRUD 白名單） | 服務層擁有（誰寫、不進白名單） | 唯讀/衍生 |
 |---|---|---|---|
-| `transactions` | date, type, category, subcategory, amount, account, note | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey, bankSummary/bankNote（帳單原文留底，Stage 2）；ledger 亦由遷移寫 | — |
+| `transactions` | date, type, category, subcategory, amount, account, note | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf, isAdjustment（AI 帳單具名調整列，#529）；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey, bankSummary/bankNote（帳單原文留底，Stage 2）；ledger 亦由遷移寫 | — |
 | `accounts` | name, type, class, currency, balance, accountNo（PII，前端可填、GET 剝成末 4 碼） | **balanceAsOf**（銀行對帳單「較新才覆蓋」的餘額參考日——**服務層寫、非 CRUD 白名單**，Codex r14#5：勿誤列成使用者可寫）、ibCashCur（IB 同步）、**bank**（開戶機構戳，P1a 機構維度——銀行匯入**新建**帳戶時蓋、比對成功不回填；matchAccount 憑它擋跨行誤配；FIELD_SCHEMA 驗字串（P1a r1#3）） | — |
 | `holdings` | symbol, name, layer, currency, quantity, price, avgCost, cost, quoteSymbol | source（IB 同步；`source:'ib'` 決定融資槓桿，假值會藏風險） | ⚠️`price` **多方合法寫**：使用者手動＋前端「更新報價」按鈕＋後端 D1 `refreshQuotesIfStale`（開 app 自動）——都合法，非違規 |
 | `watchlist` | symbol, name, targetPrice, currency, quoteSymbol, note | — | ⚠️`lastPrice`/`lastAt`＝**報價衍生**，目前**前端「更新報價」按鈕**寫（PUT）故**仍在白名單**。低風險（觀察清單不進淨值）。**待辦**：D-engine market-data 服務化後，把持股/觀察清單報價更新全移到後端（比照 D1），`lastPrice`/`lastAt`（＋或 `holdings.price`）退出白名單＝純服務擁有 |

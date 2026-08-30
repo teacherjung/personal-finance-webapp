@@ -484,6 +484,14 @@ test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款�
     try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
     assert.ok(msg); assert.doesNotMatch(msg, /731/, '★A 式淨額 0 那側不報（報了＝回聲 newCharges）');
   }
+  // r12#1 誠實劃界的釘子：桶驗不了時（繳款只列摘要）、桶裡的退款被漏抄＝**會過**（帳本少記那筆退款）
+  // ——改成會擋＝這題轉紅提醒重寫劃界（機械關法＝強驗桶＝把常見合法版面全誤擋，刻意不做）
+  {
+    const g = { ...GOOD(), adjustments: [],
+      totals: { prevDue: 1000, paidAndRefund: 1100, newCharges: 500, due: 400 },
+      transactions: [{ date: '2026-07-03', postDate: null, desc: '甲店', amount: 500 }] };
+    reconcileAiCard(normalizeAiCard(g));   // 原文另有 -100 退款在桶裡、答案漏抄——等式 1000−1100+500=400 照樣平
+  }
   // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
   const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
     adjustments: [], transactions: [
