@@ -447,6 +447,14 @@ test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款�
     adjustments: [{ label: '循環信用利息', amount: 30, date: null }] };
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(partial))), 'ai_reconcile_failed',
     '★refundAbs(50)≠桶(1050) 且繳款缺席——舊版不等式會放行、r1#1 攻擊正是鑽這條（fail-closed 誤擋照實認）');
+  // r8#3：差額出在**繳款半邊**時，訊息要報得出來（只報消費和半邊會印「差 0 元」）
+  {
+    const g = GOOD(); g.totals.paidAndRefund = 1000;
+    g.transactions = [...g.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -999 }];
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.match(msg, /繳款差 1 元/, '★繳款半邊差 1＝說得出那個 1');
+  }
   // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
   const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
     adjustments: [], transactions: [

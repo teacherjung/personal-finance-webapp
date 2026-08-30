@@ -275,6 +275,26 @@ test('★調整列分開 finalize（r1#2）｜「國外交易服務費」不得�
   assert.equal(fee.isAdjustment, true, '標記要通過 finalize 存活（中閘據它跳過列對總額）');
 });
 
+test('★負的具名調整不是繳款（r8#1）｜「自動扣繳回饋金」標籤命中繳款判準也要可記帳', async () => {
+  const pdf = cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'], ['卡號末四碼', '5678'],
+    ['上期應繳總額', '1,000'], ['已繳款退款金額', '1,000'], ['本期新增款項', '500'],
+    ['自動扣繳回饋金', '-30'], ['本期應繳總額', '470'],
+    ['2026/07/03', '全聯福利中心', '500'],
+  ]);
+  const answer = { issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: '2026-07',
+    totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 470 },
+    adjustments: [{ label: '自動扣繳回饋金', amount: -30, date: null }],
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '全聯福利中心', amount: 500 }] };
+  const fe = fakeEngine([answer]);
+  const r = await previewAuto(b64Of(pdf), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const p = await previewForCard('feib', b64Of(pdf), undefined, undefined, { aiTicket: r.aiTicket });
+  const rebate = p.transactions.find((/** @type {any} */ t) => t.desc === '自動扣繳回饋金');
+  assert.ok(rebate);
+  assert.equal(rebate.isPayment, false, '★調整列不是繳款——標成繳款＝預覽禁選、直匯略過＝違反裁示②');
+  assert.equal(rebate.isRefund, true, '負的調整＝抵減（消費視角）');
+});
+
 test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {
   // 兩筆明細、日期一前一後（r4#2：只放一筆分不出「最新」「第一筆」「任一筆」——sort().pop()
   // 突變成取第一筆時考題要會紅）
