@@ -319,6 +319,13 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
  *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
  * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
+ * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；預設＝真的那一支。**只給考題注入。**
+ *   為什麼可注入：真金絲雀是**全機共用資源的使用者**——它搶一把住在 BOX_ROOT 的剪貼簿鎖（系統剪貼簿只有一份，
+ *   拿不到就整支退 2），並在家目錄／BOX_ROOT／/private/var/tmp／/Users/Shared 各建一個誘餌目錄。
+ *   `runScan` 的流程考題每一題都會順帶跑它一次（實測單次 1.1 秒、30 個探針），於是 `node --test` 多檔並行時
+ *   互相搶鎖、也在四個共用位置留下殘留。⚠️ 沙箱**是不是真的有效**由金絲雀自己的考題檔證明，不是這裡；
+ *   流程考題只需要「金絲雀回什麼、runScan 就怎麼反應」，那正是注入能給的。
+ *   ⚠️ 正式路徑（CLI 入口）不傳 deps ⇒ 結構上一定跑真的那一支。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -461,7 +468,7 @@ export async function runScan(args, deps = {}) {
 
   // ── ② 金絲雀（fail-closed；用本掃的 port 跑，跟正式發射同一組參數）──
   {
-    const { code, lines } = await runCanary(box, { relayPort });
+    const { code, lines } = await (deps.runCanary ?? runCanary)(box, { relayPort });
     for (const l of lines) log('  ' + l);
     summary.push(...lines);
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');

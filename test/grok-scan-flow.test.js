@@ -123,7 +123,18 @@ after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, f
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
-const isolated = () => ({ authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
+/**
+ * 假的第②步金絲雀：流程考題只需要「它回什麼、runScan 就怎麼反應」。
+ * 真的那一支是**全機共用資源的使用者**（系統剪貼簿只有一份，搶不到鎖就整支退 2；另在家目錄／BOX_ROOT／
+ * /private/var/tmp／/Users/Shared 各建一個誘餌目錄），單次 1.1 秒、30 個探針。本檔每一題都會順帶跑它一次
+ * ⇒ `node --test` 多檔並行時互相搶鎖、也在四個共用位置留殘留。
+ * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
+ *   本檔換成假的之後，這裡不再對沙箱有效性提供任何證據，那是刻意的分工，不是把它弄弱。
+ * @param {0|1|2} [code]
+ * @param {string[]} [lines] 有題把「金絲雀印出第一行」當時序鉤子，那種題就地傳自己要的行，別讓預設值偷偷去滿足它
+ */
+const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）`]) => async () => ({ code, lines });
+const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，
@@ -554,15 +565,29 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
   assert.ok(!ps.includes(box), `runScan 回來後還有程序帶著盒子路徑在跑：${ps.split('\n').filter((l) => l.includes(box)).join(' | ').slice(0, 200)}`);
 });
 
+test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（跑不了／對照組不活）各自的訊息都要說得出來', async () => {
+  // ⚠️ 這兩條路今天**沒有題**直接考——本檔在非 macOS 上是「整族 skip」，在 macOS 上真金絲雀永遠回 0，
+  //    所以「金絲雀說不行時 runScan 怎麼辦」一直只是隱含行為。金絲雀改成可注入之後才問得出來。
+  //    本題也不需要沙箱：金絲雀之前的路徑跨平台都走得到。
+  const repo = tinyRepo();
+  for (const [code, re] of /** @type {[1|2, RegExp][]} */ ([[1, /沙箱是假的/], [2, /跑不了沙箱／對照組不活/]])) {
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), runCanary: fakeCanary(code), repo: repo.dir, ...withGrok(fakeGrok()) });
+    assert.equal(r.code, 2, `金絲雀回 ${code} 時沒有退 2：${r.summary.join('\n')}`);
+    assert.match(r.summary.join('\n'), re, `金絲雀回 ${code} 時的訊息分不出是哪一種`);
+  }
+});
+
 test('runScan｜r6 #6：DLP 真相來源（authDir/auth.json）在掃描中途讀不到 → 2、不保存（原本 catch 成空集合＝fail-open）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
   mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth());
   let pulled = false;
-  // 金絲雀的第一行 log 出現時（refresh 已做完、DLP 還沒讀）把真相來源抽掉
+  // 金絲雀的第一行 log 出現時（refresh 已做完、DLP 還沒讀）把真相來源抽掉。
+  // ⚠️ 本題把「金絲雀印出第一行」當**時序鉤子**，所以就地注入一支會印那個記號的假金絲雀——
+  //    讓這個依賴看得見，而不是靠 isolated() 的預設值碰巧滿足它。
   const log = (/** @type {string} */ m) => { if (!pulled && m.includes('🔴')) { pulled = true; rmSync(join(iso.authDir, 'auth.json')); } };
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log, ...iso, runCanary: fakeCanary(0, ['🔴 假探針（本題拿它當時序鉤子）']), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(pulled, true, '考題沒抽到檔（時序變了？）');
   assert.equal(r.code, 2, r.summary.join('\n'));
   assert.match(r.summary.join('\n'), /DLP 真相來源/);
