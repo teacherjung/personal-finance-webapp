@@ -276,16 +276,21 @@ test('★調整列分開 finalize（r1#2）｜「國外交易服務費」不得�
 });
 
 test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {
+  // 兩筆明細、日期一前一後（r4#2：只放一筆分不出「最新」「第一筆」「任一筆」——sort().pop()
+  // 突變成取第一筆時考題要會紅）
   const mk = (/** @type {any} */ adjDate, /** @type {any} */ month) => ({
     issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: month,
     totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 530 },
     adjustments: [{ label: '循環信用利息', amount: 30, date: adjDate }],
-    transactions: [{ date: '2026-07-03', postDate: null, desc: '全聯福利中心', amount: 500 }] });
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '星巴克', amount: 200 },   // 第一筆＝較早（讓「取第一筆」的突變會紅）
+      { date: '2026-07-20', postDate: null, desc: '全聯福利中心', amount: 300 },
+    ] });
   const pdf = (/** @type {string[][]} */ extra) => cjkPdf([
     ['遠東國際商業銀行', '信用卡帳單'], ['卡號末四碼', '5678'],
     ['上期應繳總額', '1,000'], ['已繳款退款金額', '1,000'], ['本期新增款項', '500'],
     ['循環信用利息', '30'], ['本期應繳總額', '530'],
-    ['2026/07/03', '全聯福利中心', '500'], ...extra,
+    ['2026/07/20', '全聯福利中心', '300'], ['2026/07/03', '星巴克', '200'], ...extra,
   ]);
   const rowOf = async (/** @type {any} */ answer, /** @type {any} */ p0) => {
     const fe = fakeEngine([answer]);
@@ -295,7 +300,7 @@ test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日�
   };
   assert.equal((await rowOf(mk('2026-07-15', '2026-07'), pdf([['2026/07/15', '利息列印日']]))).date, '2026-07-15', '★列印了日期＝用它');
   assert.equal((await rowOf(mk(null, '2026-07'), pdf([]))).date, '2026-07-01', '★沒印列日期＝期別 1 號');
-  assert.equal((await rowOf(mk(null, null), pdf([]))).date, '2026-07-03', '★連期別都沒有＝最新明細日');
+  assert.equal((await rowOf(mk(null, null), pdf([]))).date, '2026-07-20', '★連期別都沒有＝**最新**明細日（不是第一筆——兩筆日期一前一後才驗得出）');
   // 三者皆無＝照實不收（fail-closed，不靜靜丟、不亂編日期）——零明細帳單：新增 0、應繳＝利息 30
   const corner = { issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: null,
     totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 0, due: 30 },
