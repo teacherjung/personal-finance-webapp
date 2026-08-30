@@ -289,6 +289,35 @@ test('套用｜r11#1：日期後緊接數字的併格（7-ELEVEN 店名／第二
   assert.equal(codeOf(() => parseCardWithRecipe(bareStore, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
 });
 
+test('套用｜r12#1：日期字內空白×數字開頭店名的交叉形＝申報形拒解（逐 token 黏合掃描）', () => {
+  // r12 對抗重現的四組形：字內空白＋數字店名／Tab／全形空白＋數字店名／字內空白＋第二日期
+  const shapes = [
+    [['2026 / 07 / 04 7-ELEVEN', '100'], ['2026 / 07 / 05 7-ELEVEN 退', '-100']],
+    [['2026/07/04\t7-ELEVEN', '100'], ['2026/07/05\t7-ELEVEN 退', '-100']],
+    [['２０２６ ／ ０７ ／ ０４ 7-ELEVEN', '100'], ['２０２６ ／ ０７ ／ ０５ 7-ELEVEN 退', '-100']],
+    [['2026 / 07 / 04 2026/07/05 甲店', '100'], ['2026 / 07 / 06 2026/07/07 甲店退', '-100']],
+    // 無分隔（民國表格印法）字內空白×數字店名＝黏合掃描獨力承重的形：整格剝空白會黏成
+    // 11507047-ELEVEN（無分隔形的數字邊界不成立）、原樣又只有 115 開頭——逐段黏到 1150704 才認得
+    [['115 07 04 7-ELEVEN', '100'], ['115 07 05 7-ELEVEN 退', '-100']],
+  ];
+  for (const [row1, row2] of shapes) {
+    const merged = LINES().map((l) => l);
+    merged.splice(10, 0, row1, row2);
+    assert.equal(codeOf(() => parseCardWithRecipe(merged, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+      `★互抵成對跳過＝驗算照樣平＝靜默漏帳：${JSON.stringify(row1[0])}`);
+  }
+  // 黏死無空白（分隔符形不設數字邊界）也認得
+  const glued = LINES().map((l) => l);
+  glued.splice(10, 0, ['2026/07/047-ELEVEN', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(glued, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★兩個分隔符已經夠像日期＝後面黏什麼都拒解');
+  // 無分隔形照舊擋大金額誤判：8 位金額當雜訊、非日期開頭雜訊照跳（誤擋不外溢）
+  const noise = LINES().map((l) => l);
+  noise.splice(10, 0, ['折扣代碼 20269999', '備註'], ['會員點數 20260704100'], ['共 2/3 頁']);
+  assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3,
+    '20269999 月位 99 不像月、20260704100 日期後黏數字＝與長數字分不出＝都不是日期；雜訊列行為不變');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
