@@ -807,10 +807,10 @@ test('runScan｜假 grok 先把鑰匙形狀寫進盒內 src、再把同一串回
   assert.equal(r.code, 1, `盒內自己種的鑰匙不該讓驗屍放行：${r.summary.join('\n')}`);
 });
 
-test('runScan｜事故訊息要帶得出族別與筆數，而且**一個字元的命中內容都不放**（退 1 不留 sessions，事後只剩這行）', async (t) => {
+test('runScan｜事故訊息要帶得出族別與筆數，而且**完整命中值不回聲**（退 1 不留 sessions，事後只剩這行）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // 退 1 不留 sessions ⇒ 事後能拿來分辨「真破口」與「#516 式假事故」的只有這行字。
-  // 而 repo 是公開的、失敗原因會被抄進 PR 描述 ⇒ 內容一個字元都不能放。
+  // 而 repo 是公開的、失敗原因會被抄進 PR 描述 ⇒ 命中內容不可以回聲進去。
   {
     const liveSecret = 'LIVE-CANARY-BRIEF-77c1e0'; const iso = isolated(); const repo = tinyRepo();
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `saw ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
@@ -819,7 +819,7 @@ test('runScan｜事故訊息要帶得出族別與筆數，而且**一個字元�
     assert.match(s, /暗號 1 條/, '沒帶出「命中的是暗號那一族、幾條」');
     assert.match(s, /形狀 0 條/, '沒帶出形狀那族的筆數');
     assert.equal(s.includes(liveSecret), false, '事故訊息把暗號本身印出來了——那會被抄進公開的 PR 描述');
-    // ⚠️ 斷言只涵蓋「完整命中值不回聲」；只洩前綴這題抓不到（照實劃界，不寫成「一個字元都不放」）。
+    // ⚠️ 斷言涵蓋的就是「**完整**命中值不回聲」；只洩前綴這題抓不到——題名與註解都照這個射程寫。
     assert.match(s, /形狀那族＝剝完行號記號後仍不在本次排除集合裡/, '尾句改回「不在 head 樹裡」那種不成立的話也不會紅');
   }
   {
