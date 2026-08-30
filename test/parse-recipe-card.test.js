@@ -129,6 +129,24 @@ test('套用｜r1#1：首格是日期的列**不准**當雜訊跳過——形狀
     '★日期開頭＝申報形——歧義要拒解不准跳過（跳過安全的前提只給非日期開頭的雜訊列）');
 });
 
+test('套用｜r2#1：長得像日期但不過規則卡格式（不補零）＝拒解不跳過；r2#3：單日期繳款列照收', () => {
+  // 不補零的日期列（版面日期印法漂了）：舊版當雜訊跳過 ⇒ +100/−100 互抵漏抄
+  const drift = LINES().map((l) => l);
+  drift.splice(10, 0, ['2026/8/1', '2026/8/2', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(drift, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★日期印法與規則卡不符＝版面漂了＝整份拒解退回 AI（跳過＝互抵漏抄從別的門進來）');
+  // 單日期列（繳款常只印一個日期）：雙日期 rowShape 也要照收、不誤擋
+  const mixed = LINES().map((l) => l);
+  mixed.splice(12, 0, ['2026/07/15', '信用卡自動扣繳', '-1000']);
+  const answer = parseCardWithRecipe(mixed, /** @type {any} */ (GOOD()));
+  const pay = answer.transactions.find((t) => t.desc === '信用卡自動扣繳');
+  assert.ok(pay, '★單日期繳款列要收進來（真實版面雙日期消費與單日期繳款混排）');
+  assert.equal(pay.postDate, null);
+  // 收進來之後照樣過批二的閘（繳款列 G2 不計、桶對得上）
+  const g = normalizeAiCard(answer);
+  reconcileAiCard(g);
+});
+
 test('套用＋重現｜r1#2：具名調整同列印了日期就抄；日期不同＝重現關紅（防重傳時利息 stmtRef 分岔重複記帳）', () => {
   const lines = LINES().map((l) => (l[0] === '循環信用利息' ? ['循環信用利息', '2026/06/30', '30'] : l));
   const answer = parseCardWithRecipe(lines, /** @type {any} */ (GOOD()));

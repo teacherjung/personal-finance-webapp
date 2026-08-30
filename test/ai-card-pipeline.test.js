@@ -605,3 +605,44 @@ test('★異種票先還再忽略（r1#5）｜銀行票丟進卡片匯入＝匯�
   assert.equal(out.imported, 1, '匯入本身照常');
   assert.ok(redeemAiTicket(bankish), '★票要放回——破壞性兌掉＝銀行 apply 只能重花錢重讀');
 });
+
+test('★出生載回票發數（r2#2）｜loadBill(ticket.aiCalls)＝單張上限跨 preview→import 不歸零', async () => {
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  fakeGen.candidate = CARD_RECIPE();
+  // 假引擎不經真 transport＝take 不會累積——preview 的護欄注入 used:()=>2，票就記下 aiCalls=2
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine,
+    aiBudget: { used: () => 2, take: async () => {}, loadBill: () => {} } });
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  /** @type {number[]} */ const loaded = [];
+  const budget = { used: () => 0, take: async () => {}, loadBill: (/** @type {number} */ n) => { loaded.push(n); } };
+  await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: budget });
+  assert.deepEqual(loaded, [2], '★票裡 preview 用掉的發數要載回護欄——不載＝出生那發從零起算、單張上限被請求邊界繞過');
+  fakeGen.candidate = null;
+});
+
+test('★同種票兌後失敗要還票（r2#5）｜計數/寫入段炸掉＝票放回、錯誤原樣丟（同銀行 apply 的還票邊界）', async () => {
+  // 兌票之後、saveDb 完成之前的失敗都走同一個 catch——這裡用票內 recipeUse 的陷阱 getter
+  // 從官方通道引爆計數段（SQLite 連線先開＝檔案權限注入對已開的 fd 無效，saveDb 難以外部弄炸；
+  // 兩種失敗共用同一條還票邊界，引爆哪一段證明的是同一件事）。
+  const trap = { id: 'rcp-x', get usedVersion() { throw new Error('boom-counting'); }, currentMatched: true, usedRecipe: {} };
+  const cardT = issueAiTicket({ parsed: { bank: '', bankEvidence: 'none',
+    statementTotals: { prevDue: 0, paidAndRefund: 0, newCharges: 100, due: 100 },
+    transactions: [{ date: '2026-07-03', desc: '甲', amount: 100 }] }, aiModel: '', aiKind: 'card',
+    recipeUse: /** @type {any} */ (trap) });
+  await assert.rejects(() => importRows('feib', [
+    { date: '2026-07-03', desc: '甲店', amount: 100, category: '餐飲', stmtRef: 'x|2026-07-03|100|甲店' },
+  ], '2026-07', 100, { aiTicket: cardT }), /boom-counting/);
+  assert.ok(redeemAiTicket(cardT), '★兌了卻沒完成寫入＝票要放回（吞掉＝重試會寫錢卻永遠學不成卡）');
+});
+
+test('★疑似過期鎖同櫃（r2#4）｜卡片票的失靈名單撞到銀行同 id 列＝不動它', async () => {
+  const { markRecipesSuspect } = await import('../lib/services/bank-import.js');
+  const db = { parseRecipes: [
+    { id: 'same-id', bank: '台新', current: { x: 1 }, graduateStreak: 5, graduated: true, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+  ] };
+  markRecipesSuspect(/** @type {any} */ (db), ['same-id'], '2099-01-01T00:00:00.000Z', 'card');
+  assert.equal(db.parseRecipes[0].suspect, false, '★卡片線只動卡片櫃——銀行列的畢業狀態不可被跨櫃清洗');
+  assert.equal(db.parseRecipes[0].graduated, true);
+  markRecipesSuspect(/** @type {any} */ (db), ['same-id'], '2099-01-01T00:00:00.000Z');   // 銀行線自己動自己＝照舊
+  assert.equal(db.parseRecipes[0].suspect, true, '銀行線（缺席 kind 預設 bank）行為零改變');
+});
