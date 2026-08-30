@@ -119,21 +119,23 @@ const keep = (/** @type {string} */ dir) => { TEMP_ROOTS.push(dir); return dir; 
 after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 盡力 */ } } });
 
 /**
- * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄）。
- * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
- * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
- */
-/**
  * 假的第②步金絲雀：流程考題只需要「它回什麼、runScan 就怎麼反應」。
- * 真的那一支是**全機共用資源的使用者**（系統剪貼簿只有一份，搶不到鎖就整支退 2；另在家目錄／BOX_ROOT／
- * /private/var/tmp／/Users/Shared 各建一個誘餌目錄），單次 1.1 秒、30 個探針。**走到第②步的題**都會順帶跑它一次
- * ⇒ `node --test` 多檔並行時互相搶鎖、也在四個共用位置留殘留。
+ * 為什麼非換掉不可：真的那一支是**全機共用資源的使用者**（搶系統唯一那份剪貼簿、在幾個共用位置開誘餌目錄）。
+ * ⚠️ 規格與代價（秒數、探針數、位置清單）只寫在 `scripts/grok-scan.js` 的 `runCanary` 那格 JSDoc——
+ *   這裡刻意不複述：同一組會漂的數字有兩個家，日後一定只改到一邊。
  * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
  *   本檔換成假的之後，這裡不再對沙箱有效性提供任何證據，那是刻意的分工，不是把它弄弱。
  * @param {0|1|2} [code]
  * @param {string[]} [lines] 有題把「金絲雀印出第一行」當時序鉤子，那種題就地傳自己要的行，別讓預設值偷偷去滿足它
  */
 const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）`]) => async () => ({ code, lines });
+/**
+ * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄），
+ * **並注入上面那個假金絲雀**——所以凡是用 `isolated()` 的題都走不到真的第②步；要考「不注入時走哪一支」，
+ * 得自己把 `runCanary` 這一格拿掉（見題名關鍵字「不注入」那題）。
+ * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
+ * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
+ */
 const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
@@ -567,9 +569,9 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
 
 test('runScan｜**不注入**時，走到的那一支會印出真探針詞彙的行（擋得住「接線被拿掉或換成空殼」）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  // ⚠️ 為什麼要有這一題：本檔其餘的題都注入假金絲雀，所以「不注入時到底走到什麼」在本檔沒有別的題會問。
-  //    main 是靠每一題順帶跑真的來隱含帶到（Codex #533 r1 的 N3 突變：把 fallback 換成空輸出替身，
-  //    當時 66 題照樣全綠）。這一題只花一次 1.1 秒、不是 40 次。
+  // ⚠️ 為什麼要有這一題：本支把第②步改成可注入，多出一個「不注入時走哪一支」的接縫，而本檔其餘的題都注入假的
+  //    ⇒ 那個接縫沒有別的題會問（Codex #533 r1 的 N3 突變：把它換成不印探針行的空殼，當時整檔照樣全綠）。
+  //    這一題把它變成明講的，而且只跑一次真的——不是每一道走到第②步的題各跑一次。
   // ⚠️ **誠實劃界——它守得住什麼、守不住什麼**（Codex #533 r2 的 N3b 反例）：
   //    ・守得住：fallback 被拿掉、或換成不印那些行的空殼。
   //    ・**守不住**：換成一支**完全不跑探針、只偽造同形文字**的替身——那樣它照樣綠。
@@ -586,8 +588,9 @@ test('runScan｜**不注入**時，走到的那一支會印出真探針詞彙的
 
 test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（跑不了／對照組不活）各自的訊息都要說得出來', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  // ⚠️ 這兩條路今天**沒有題**直接考——本檔在非 macOS 上是「整族 skip」，在 macOS 上真金絲雀永遠回 0，
-  //    所以「金絲雀說不行時 runScan 怎麼辦」一直只是隱含行為。金絲雀改成可注入之後才問得出來。
+  // ⚠️ 這兩條路在**本支之前**沒有題直接考，下面這個迴圈就是第一支：真金絲雀在正常情況下回 0
+  //    ——它自己也會退 2（搶不到剪貼簿鎖、對照組不活、沙箱套不上），但那幾種都 flaky、當不了考題。
+  //    所以「金絲雀說不行時 runScan 怎麼辦」一直只是隱含行為，改成可注入之後才問得出來。
   // ⚠️ 我原本以為它不需要沙箱、跨平台都跑得到——**錯的**：`--version` 檢查在金絲雀**之前**就已經在沙箱裡跑，
   //    非 macOS 會先死在那裡、走不到注入點（Codex #533 r1 實測 CI 兩個 Node job 都紅）。
   const repo = tinyRepo();

@@ -319,13 +319,20 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
  *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
  * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
- * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；預設＝真的那一支。**只給考題注入。**
+ * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；不注入時走 `?? runCanary`（本檔上方那一支）。**只給考題注入。**
  *   為什麼可注入：真金絲雀是**全機共用資源的使用者**——它搶一把住在 BOX_ROOT 的剪貼簿鎖（系統剪貼簿只有一份，
- *   拿不到就整支退 2），並在家目錄／BOX_ROOT／/private/var/tmp／/Users/Shared 各建一個誘餌目錄。
- *   `runScan` 的流程考題**只要走到第②步**就會順帶跑它一次（實測單次 1.1 秒、30 個探針），於是 `node --test` 多檔並行時
- *   互相搶鎖、也在四個共用位置留下殘留。⚠️ 沙箱**是不是真的有效**由金絲雀自己的考題檔證明，不是這裡；
+ *   等不到 60 秒就整支退 2），期間還在家目錄／BOX_ROOT／/private/var/tmp／`/Users/Shared`（存在才建）
+ *   各開一個誘餌目錄；目錄由它自己的 `finally` 清，**被中斷／砍掉時才留下**（#516 清過一批）。
+ *   **未注入**時，只要走到第②步就會跑它一次（實測單次 1.1 秒、30 個探針）；本支之前沒有這個注入點，
+ *   於是流程考題只要走到第②步就各跑一次真的（前置就失敗的題與純函式題到不了那裡），`node --test` 多檔並行時
+ *   互相搶那唯一一份系統剪貼簿。⚠️ 沙箱**是不是真的有效**由金絲雀自己的考題檔證明，不是這裡；
  *   流程考題只需要「金絲雀回什麼、runScan 就怎麼反應」，那正是注入能給的。
- *   ⚠️ 正式路徑（CLI 入口）不傳 deps ⇒ 結構上一定跑真的那一支。
+ *   ⚠️ **這一格的守門只到「文字」為止**：把上面那個 `??` 的預設換成**不印探針行**的空殼，在**套得上沙箱的 macOS**
+ *   上會有一題轉紅（考題檔裡題名關鍵字「不注入」那題）；換成**照樣印出同形文字**的替身，全綠（Codex #533 r2 的
+ *   N3b 反例）。而那一題自己有 SANDBOX_OK guard ⇒ **CI 跑 ubuntu、整題 skip，兩種突變在 CI 都是綠的**。
+ *   所以「CLI 入口不傳 deps ⇒ 正式掃描跑的是真的那一支」最終由複審讀那一行認定，不是機械保證。
+ *   ⚠️ 別把這一格與 `liveRoot` 混為一談：那一格的預設**有行為題釘著**（見那一格）；只有 `maxBlobBytes` 與這一格
+ *   是「預設值沒有題、靠複審」。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
