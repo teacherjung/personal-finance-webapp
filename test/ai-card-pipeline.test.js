@@ -710,3 +710,16 @@ test('★出生結果不靜默（r6#4）｜importRows 回 recipeBirth：學成 s
   assert.equal(out2.recipeBirth?.reason, 'recipe_birth_statement', '沒學成也要講清楚是哪一關（同出生統計代碼）');
   fakeGen.candidate = null;
 });
+
+test('★快照時刻傳承（r7#4）｜換卡重發票不得刷新 issuedAt 當疑似名單的基準（自證窗口不可被蓋掉）', async () => {
+  const { redeemAiTicket: redeem } = await import('../lib/ai-confirm-ticket.js');
+  const t0 = issueAiTicket({ parsed: { bank: '', bankEvidence: 'none',
+    statementTotals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 },
+    aiAdjustments: [{ label: '循環信用利息', amount: 30 }],
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '甲', amount: 450, isPayment: false, isRefund: false }] },
+    aiModel: 'm', aiKind: 'card', snapshotAt: '2026-07-01T00:00:00.000Z', suspectRecipeIds: ['rcp-s'] });
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: t0 });
+  const t1 = redeem(p1.aiTicket);
+  assert.equal(t1.snapshotAt, '2026-07-01T00:00:00.000Z', '★新票要傳承原始預覽時刻——用重發時刻＝把「其後已自證」的窗口蓋掉');
+  assert.deepEqual(t1.suspectRecipeIds, ['rcp-s']);
+});

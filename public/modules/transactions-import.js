@@ -13,6 +13,7 @@ import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml, unknownIssuerNoticeHtml, aiUnknownCardNoticeHtml } from './reconcile-summary.js';
+import { birthText } from './recipe-birth-text.js';   // 出生失敗原因的白話字典（單一住所）
 import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, snapshotUpload, aiConsentBodyHtml, aiErrorText, aiCardPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL_CARD } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
 import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
@@ -237,10 +238,11 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       // 批四：票一併送——AI 讀的＝匯入後學規則卡（下期免費）；規則卡讀的＝畢業計數。沒有票＝照舊。
       const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null, ...(typeof curR.aiTicket === 'string' ? { aiTicket: curR.aiTicket } : {}) } });
       if (!onPage()) return;   // r5#1：匯入（含寫入）完成後切頁＝不動月份、不開完成窗、不重繪舊頁（資料已存）
-      // 批四 r6#4：出生結果不可靜默——使用者為那一發付了費，學成沒學成都要講（文案草稿）
+      // 批四 r6#4→r7#2：出生結果不可靜默、且不可過度承諾——規則卡只保證「下期先免費試讀」，
+      // 對不上/驗算紅照樣退 AI；失敗要講卡在哪一關（白話字典＝recipe-birth-text 同一份）。
       if (out && out.recipeBirth) {
-        if (out.recipeBirth.saved) toast('已把這個版面學成規則卡——下期同版面免費、不再外送');
-        else toast('這期沒學成規則卡（帳單照樣匯好了）；下期同版面仍會用 AI 讀', true);
+        if (out.recipeBirth.saved) toast('已把這個版面學成規則卡——下期同版面會先免費試讀，讀不動才會再用 AI');
+        else toast(`這期沒學成規則卡（帳單照樣匯好了）：${birthText(out.recipeBirth.reason)}。下期照舊會先試已有的規則卡、不行再用 AI`, true);
       }
       // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
       const mc = {};

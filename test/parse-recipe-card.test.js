@@ -219,6 +219,15 @@ test('套用｜r6#1/#2/#3：民國年月日形＝申報形；末四碼格唯一�
   const gLF = GOOD(); gLF.lastFourLabel = '卡號末四碼';
   assert.equal(codeOf(() => parseCardWithRecipe(two4, /** @type {any} */ (gLF))), 'recipe_parse_failed',
     '★同列兩個四位數＝末四碼分不出（取第一個會把 2027 當末四碼、候選縮到錯卡）');
+  // r7#1：雙日期形的**單日期支路**同款洞——「日期、持卡人、日期、店名、金額」走 fallback 時
+  // 後格也要掃（不掃＝第二個日期併進店名）
+  const fb = [
+    ...LINES().slice(0, 9),
+    ['2026/07/03', '持卡人甲', '2026/07/05', '星巴克', '150'],   // d1 不是日期 ⇒ 走單日期支路
+    ['本期消費小計', '450'],
+  ];
+  assert.equal(codeOf(() => parseCardWithRecipe(fb, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★雙日期形 fallback 的後格日期＝拒解（r6#3 只修到另一個 rowShape）');
   // r6#3：單日期形「持卡人欄插中間」＝第三格帶日期也要拒解（只看第二格會漏）——
   // fixture 只留單日期列（其他列不得自己踩中第二格判準、讓突變紅錯理由）
   const g = GOOD(); g.detail = { headerAnchor: '交易日期', rowShape: 'date-desc-amount', stopAnchors: ['本期消費小計'] };

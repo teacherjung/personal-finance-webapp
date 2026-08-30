@@ -284,6 +284,8 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   assert.match(src, /\.\.\.\(typeof curR\.aiTicket === 'string' \? \{ aiTicket: curR\.aiTicket \} : \{\}\)/,
     '批四：匯入要把票一併送——AI 票＝學規則卡、規則卡票＝畢業計數；沒票＝照舊');
   assert.match(src, /out\.recipeBirth\.saved/, 'r6#4：出生結果要 toast——使用者為那一發付了費，學成沒學成不可靜默');
+  assert.match(src, /birthText\(out\.recipeBirth\.reason\)/, 'r7#2：失敗要講卡在哪一關（白話字典＝recipe-birth-text 同一份，不另抄）');
+  assert.match(src, /先免費試讀/, 'r7#2：成功 toast 也是條件式——不得承諾「不再外送」');
   assert.match(src, /t\.isAdjustment \? '<span class="tag amber">調整<\/span>'/,
     'Grok 掃#6：調整列要有自己的標籤——標成「退款」會誤導成店家退款');
   assert.doesNotMatch(src, /\baiPreviewBadgeHtml\(/, '銀行版徽章（餘額鏈／仲裁文案）不准出現在卡片線');
