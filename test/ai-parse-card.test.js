@@ -410,12 +410,29 @@ test('驗算｜等式閘：具名調整（利息）摺進等式才平——這�
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g))), 'ai_reconcile_failed');
 });
 
-test('驗算｜加總閘：Σ明細 ≈ 本期新增；漏抄一筆＝擋，且訊息只帶差額與筆數、不回聲帳單原值', () => {
+test('驗算｜加總閘（慣例閘）：漏抄一筆＝兩種印法都對不上＝擋；訊息只帶差額與筆數、不回聲帳單原值', () => {
   const g = GOOD(); g.transactions = g.transactions.slice(0, 2);   // 漏掉 -50 那筆 ⇒ Σ=500 vs 450
   let msg = '';
   try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); assert.equal(/** @type {any} */ (e).code, 'ai_reconcile_failed'); }
-  assert.match(msg, /差了 50 元/, '★要說明差多少（裁示②的白話說明）');
+  assert.match(msg, /差 50 元/, '★要說明差多少（裁示②的白話說明；兩種印法各報各的差額）');
   assert.doesNotMatch(msg, /450|480|1,?000/, '★不回聲帳單的原始金額（機密紀律；差額是衍生值、單獨回推不出內容）');
+});
+
+test('驗算｜慣例閘（裁示③2026-08-30）：兩種退款印法各自全對才收其一；跨桶抄錯＝兩種都對不上＝擋', () => {
+  // 慣例 B（退款進「已繳款＋退款」桶）：本期新增＝純消費 500、桶＝繳款 1000＋退款 50
+  const B = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }] };
+  // 等式：1000 − 1050 + 500 + 30 = 480 ✓；明細照舊三筆（繳款只列摘要＝缺席放行）
+  reconcileAiCard(normalizeAiCard(B));
+  // r8 攻擊在 A 慣例下（GOOD）：退款 -50 被抄成繳款字樣 ⇒ 消費和少了退款的抵減、兩式全紅
+  const atk = GOOD(); atk.transactions[2] = { ...atk.transactions[2], desc: '信用卡自動扣繳' };
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(atk))), 'ai_reconcile_failed',
+    '★退款被抄成繳款＝跨桶＝擋（r8 的洞由裁示③關上；桶內互抄仍分不出、徽章照實揭露）');
+  // 繳款有列出來就要對得上（缺席放行只給 payAbs===0）
+  const listed = GOOD(); listed.totals.paidAndRefund = 1000;
+  listed.transactions = [...listed.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -999 }];
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(listed))), 'ai_reconcile_failed',
+    '★繳款列有印（-999）就要對上摘要的 1000——差 1 也擋（容差 0）');
 });
 
 test('驗算｜加總閘排除繳款列（r1#4，同模板路 finalize／中閘的那把尺）：明細裡有繳款的合法帳單不可誤擋', () => {
@@ -441,12 +458,11 @@ test('驗算｜四格摘要缺任一＝驗算不了＝不收（加嚴的定義�
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed', '★缺格閘被等式閘掩護＝形同不存在');
 });
 
-test('驗算｜容差＝1 元（吸收去尾差；差 2 元就要擋）', () => {
-  const g1 = GOOD(); g1.totals.due = 481;   // 等式差 1 ⇒ 收
-  reconcileAiCard(normalizeAiCard(g1));
-  const g2 = GOOD(); g2.totals.due = 482;   // 差 2 ⇒ 擋
-  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed');
-  assert.equal(CARD_TOLERANCE, 1);
+test('驗算｜容差＝0（裁示①2026-08-30）：分毫不差才收——差 1 元也擋', () => {
+  const g1 = GOOD(); g1.totals.due = 481;   // 等式差 1 ⇒ 首版（容差 1）會收，現在擋
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g1))), 'ai_reconcile_failed',
+    '★帳單自己是自洽的：整數相加必然全等；留 1 元＝恰差 1 元的漏抄/多抄看不到（Grok 掃#1 的洞由裁示①關上）');
+  assert.equal(CARD_TOLERANCE, 0);
 });
 
 test('提示詞｜四條鐵則與關鍵語意都在（只抄不猜／原文照抄／一列一筆／民國換算；具名列進 adjustments）', () => {

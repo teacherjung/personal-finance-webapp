@@ -157,7 +157,7 @@ test('★票制｜選卡憑票：不重跑模型、回新票；舊票一次性�
   assert.equal(fe.modelsUsed.length, callsAfterPreview, '★憑票＝不重跑模型（AI 非確定性＋省發數）');
   assert.equal(p1.engine, 'ai');
   assert.equal(p1.resolvedCard.id, 'feib');
-  assert.equal(p1.transactions.length, 3);
+  assert.equal(p1.transactions.length, 4, '3 筆明細＋1 筆具名調整（裁示②＝利息記帳）');
   assert.equal(typeof p1.aiTicket, 'string');
   assert.notEqual(p1.aiTicket, r.aiTicket, '★票一次性 ⇒ 回應要發新票');
   // 舊票再用＝fail-closed
@@ -166,7 +166,7 @@ test('★票制｜選卡憑票：不重跑模型、回新票；舊票一次性�
   // 新票換另一張卡照樣走
   const p2 = await previewForCard('ts', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: p1.aiTicket });
   assert.equal(p2.resolvedCard.id, 'ts');
-  assert.equal(p2.transactions.length, 3);
+  assert.equal(p2.transactions.length, 4);
 });
 
 test('★HOSTED 停止線｜雲端版 400、零 AI 呼叫；且排在鑰匙檢查**之前**（Grok 掃#5：缺這題時刪掉停止線照樣全綠）', async () => {
@@ -221,4 +221,24 @@ test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也�
   const tpl = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals, transactions: txs }));
   assert.equal(tpl.checks.equation, 'fail', '★模板 parsed 沒有 aiAdjustments ⇒ 同一組數字照舊不平（行為零改變的證據）');
   assert.equal(tpl.stats.adjFolded, 0, '★模板路恆 0＝前端句子一字不變');
+});
+
+test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；模板路同一組數字仍只提醒（行為零改變）', async () => {
+  const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
+  const totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 };
+  const rows = [{ amount: 150, desc: '星巴克', isPayment: false, isRefund: false },
+    { amount: 350, desc: '全聯', isPayment: false, isRefund: false }];   // 漏了 -50 那筆 ⇒ 兩種慣例都差 50
+  const ai = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals, transactions: rows,
+    aiAdjustments: [{ label: '利息', amount: 30 }] }));
+  assert.equal(ai.ok, false, '★AI 路（有 aiAdjustments 欄＝標記）＝慣例閘升級成擋');
+  assert.ok(ai.problems.some((/** @type {any} */ p) => p.code === 'card-rows-vs-totals'));
+  const tpl = reconcileCardStatement(/** @type {any} */ ({ statementTotals: { ...totals, due: 450 }, transactions: rows }));
+  assert.equal(tpl.ok, true, '★模板路同款差 50＝照舊只提醒不擋（行為零改變）');
+  assert.ok(tpl.advisories.some((/** @type {any} */ p) => p.code === 'card-new-vs-rows'));
+  // 具名調整列（isAdjustment）不得參與列對總額（等式已摺過 adjSum、再計入＝重複計）
+  const withAdj = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals,
+    transactions: [...rows, { amount: -50, desc: '退款', isPayment: false, isRefund: true },
+      { amount: 30, desc: '循環信用利息', isAdjustment: true, isPayment: false, isRefund: false }],
+    aiAdjustments: [{ label: '循環信用利息', amount: 30 }] }));
+  assert.equal(withAdj.ok, true, '★調整列跳過後：450 對 450、等式摺 30 對 480——全綠');
 });
