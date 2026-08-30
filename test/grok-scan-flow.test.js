@@ -565,10 +565,28 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
   assert.ok(!ps.includes(box), `runScan 回來後還有程序帶著盒子路徑在跑：${ps.split('\n').filter((l) => l.includes(box)).join(' | ').slice(0, 200)}`);
 });
 
-test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（跑不了／對照組不活）各自的訊息都要說得出來', async () => {
+test('runScan｜**不注入**時跑的是真金絲雀：summary 裡要有真探針的行（正式接線的守門）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 為什麼要有這一題：本檔其餘的題都注入假金絲雀，於是「正式路徑真的接著真金絲雀」這件事
+  //    在本檔會失去守門——main 是靠每一題順帶跑真的來隱含保證的（Codex #533 r1 用突變證明：
+  //    把接線改回寫死的真金絲雀之外的任何東西，66 題照樣全綠）。這一題把那份保證變成明確的、
+  //    而且只花一次的 1.1 秒，不是 40 次。
+  // ⚠️ 誠實劃界：它只證明「不注入時跑到的是會印真探針行的那一支」，**不證明**沙箱真的有效
+  //    （那是 test/grok-sandbox.test.js 的事），也不涵蓋 CLI 入口那一行有沒有傳 deps。
+  const repo = tinyRepo(); const iso = isolated();
+  const { runCanary: _dropped, ...noCanary } = iso;   // 刻意不注入金絲雀
+  void _dropped;
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...noCanary, repo: repo.dir, ...withGrok(fakeGrok({ status: 1 })), relayScript: fakeRelay('ok') });
+  const s = r.summary.join('\n');
+  assert.ok(/🔴 擋住｜/.test(s) && /✅ 通過｜/.test(s), `summary 裡沒有真金絲雀的探針行——正式路徑可能沒接著真的那一支：${s.slice(0, 200)}`);
+});
+
+test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（跑不了／對照組不活）各自的訊息都要說得出來', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ 這兩條路今天**沒有題**直接考——本檔在非 macOS 上是「整族 skip」，在 macOS 上真金絲雀永遠回 0，
   //    所以「金絲雀說不行時 runScan 怎麼辦」一直只是隱含行為。金絲雀改成可注入之後才問得出來。
-  //    本題也不需要沙箱：金絲雀之前的路徑跨平台都走得到。
+  // ⚠️ 我原本以為它不需要沙箱、跨平台都跑得到——**錯的**：`--version` 檢查在金絲雀**之前**就已經在沙箱裡跑，
+  //    非 macOS 會先死在那裡、走不到注入點（Codex #533 r1 實測 CI 兩個 Node job 都紅）。
   const repo = tinyRepo();
   for (const [code, re] of /** @type {[1|2, RegExp][]} */ ([[1, /沙箱是假的/], [2, /跑不了沙箱／對照組不活/]])) {
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), runCanary: fakeCanary(code), repo: repo.dir, ...withGrok(fakeGrok()) });
