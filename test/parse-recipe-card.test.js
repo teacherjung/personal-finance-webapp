@@ -241,6 +241,13 @@ test('套用｜r6#1/#2/#3：民國年月日形＝申報形；末四碼格唯一�
     '★任何後格長出日期＝版面變了該重學，不得把日期污染進店名');
 });
 
+test('套用｜r8#2：期別列兩個日期＝分不出（帳單期間 06/21–07/20 版面不得靜默取第一個）', () => {
+  const two = LINES().map((l) => (l[0] === '結帳日期' ? ['帳單期間', '2026/06/21', '2026/07/20'] : l));
+  const g = GOOD(); g.monthLabel = '帳單期間';
+  assert.equal(codeOf(() => parseCardWithRecipe(two, /** @type {any} */ (g))), 'recipe_parse_failed',
+    '★取第一個＝整批月份記錯、調整項期別 1 號跟著錯——唯一候選同金額/末四碼紀律');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名

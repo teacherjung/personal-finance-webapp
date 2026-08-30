@@ -723,3 +723,17 @@ test('★快照時刻傳承（r7#4）｜換卡重發票不得刷新 issuedAt 當
   assert.equal(t1.snapshotAt, '2026-07-01T00:00:00.000Z', '★新票要傳承原始預覽時刻——用重發時刻＝把「其後已自證」的窗口蓋掉');
   assert.deepEqual(t1.suspectRecipeIds, ['rcp-s']);
 });
+
+test('★快照在讀櫃之前（r8#1）｜票的 snapshotAt 不得晚於 AI 路完成時刻（並行自證的窗口不可被蓋掉）', async () => {
+  const { redeemAiTicket: redeem } = await import('../lib/ai-confirm-ticket.js');
+  const db0 = store.load(); db0.parseRecipes = []; db0.transactions = []; store.save(db0);
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  fakeGen.candidate = null;
+  const before = new Date().toISOString();
+  // 慢引擎：AI 回覆前刻意等待——快照若在 route/AI 之後才蓋，會晚於這段等待
+  const slow = { models: fe.engine.models, parseOnce: async (/** @type {string} */ t, /** @type {string} */ m) => { await new Promise((res) => setTimeout(res, 120)); return fe.engine.parseOnce(t, m); }, generateRecipe: fe.engine.generateRecipe };
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => slow, aiBudget: fakeBudget() });
+  const after = new Date(Date.parse(before) + 100).toISOString();
+  const t = redeem(r.aiTicket);
+  assert.ok(t.snapshotAt && t.snapshotAt <= after, '★snapshotAt 要是「讀櫃之前」那一刻——晚蓋 120ms 以上＝在 AI 之後才取（並行自證會被清洗）');
+});
