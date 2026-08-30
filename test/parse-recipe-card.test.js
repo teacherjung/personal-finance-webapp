@@ -208,6 +208,30 @@ test('套用｜r5#1：日期漂到後格（版面前面多長一欄）＝拒解�
   assert.ok(validateCardRecipeStrict(g2).length > 0, '★調整標籤共用摘要標籤＝同一格被摺兩次');
 });
 
+test('套用｜r6#1/#2/#3：民國年月日形＝申報形；末四碼格唯一；單日期形任何後格帶日期＝拒解', () => {
+  // r6#1：115年07月04日 的交易列不得當雜訊（互抵漏抄）
+  const cjk = LINES().map((l) => l);
+  cjk.splice(10, 0, ['115年07月04日', '115年07月05日', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(cjk, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★中文/民國日期印法也是申報形——跳過＝互抵漏抄');
+  // r6#2：末四碼列多出另一個四位數（製表年度）＝分不出、不得取第一個
+  const two4 = LINES().map((l) => (l[0] === '卡號末四碼' ? ['製表年度', '2027', '卡號末四碼', '5678'] : l));
+  const gLF = GOOD(); gLF.lastFourLabel = '卡號末四碼';
+  assert.equal(codeOf(() => parseCardWithRecipe(two4, /** @type {any} */ (gLF))), 'recipe_parse_failed',
+    '★同列兩個四位數＝末四碼分不出（取第一個會把 2027 當末四碼、候選縮到錯卡）');
+  // r6#3：單日期形「持卡人欄插中間」＝第三格帶日期也要拒解（只看第二格會漏）——
+  // fixture 只留單日期列（其他列不得自己踩中第二格判準、讓突變紅錯理由）
+  const g = GOOD(); g.detail = { headerAnchor: '交易日期', rowShape: 'date-desc-amount', stopAnchors: ['本期消費小計'] };
+  const mid = [
+    ...LINES().slice(0, 9),
+    ['2026/07/03', '持卡人甲', '2026/07/05', '星巴克', '150'],   // 陷阱列：日期在第三格
+    ['2026/07/10', '全聯福利中心', '350'],                        // 正常單日期列（第二格不是日期）
+    ['本期消費小計', '450'],
+  ];
+  assert.equal(codeOf(() => parseCardWithRecipe(mid, /** @type {any} */ (g))), 'recipe_parse_failed',
+    '★任何後格長出日期＝版面變了該重學，不得把日期污染進店名');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名

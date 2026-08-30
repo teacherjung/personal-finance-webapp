@@ -237,6 +237,11 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       // 批四：票一併送——AI 讀的＝匯入後學規則卡（下期免費）；規則卡讀的＝畢業計數。沒有票＝照舊。
       const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null, ...(typeof curR.aiTicket === 'string' ? { aiTicket: curR.aiTicket } : {}) } });
       if (!onPage()) return;   // r5#1：匯入（含寫入）完成後切頁＝不動月份、不開完成窗、不重繪舊頁（資料已存）
+      // 批四 r6#4：出生結果不可靜默——使用者為那一發付了費，學成沒學成都要講（文案草稿）
+      if (out && out.recipeBirth) {
+        if (out.recipeBirth.saved) toast('已把這個版面學成規則卡——下期同版面免費、不再外送');
+        else toast('這期沒學成規則卡（帳單照樣匯好了）；下期同版面仍會用 AI 讀', true);
+      }
       // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
       const mc = {};
       picked.forEach(t => { const m = (t.date || '').slice(0, 7); if (m) mc[m] = (mc[m] || 0) + 1; });

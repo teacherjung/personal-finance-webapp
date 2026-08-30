@@ -680,3 +680,33 @@ test('★重生守門缺席≡bank（r4#6）｜顯式 kind:"bank" 的列、銀�
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0].current, { y: 2 });
 });
+
+test('★壞卡跳過不炸（r6#5）｜櫃子裡 current:{} 的卡片列＝規則卡層 continue、照舊退到認不得/AI', async () => {
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-broken', bank: '遠銀', kind: 'card', current: {},
+    graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  await assert.rejects(() => previewAuto(b64Of(CARD_PDF()), undefined, {}),
+    (/** @type {any} */ e) => e.code === 'card_unrecognized',
+    '★備份形狀牆只驗到 current 是物件——{} 要被嚴格驗證跳過，不是 TypeError 500 弄死整條上傳路');
+});
+
+test('★出生結果不靜默（r6#4）｜importRows 回 recipeBirth：學成 saved:true、沒學成帶 reason', async () => {
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  fakeGen.candidate = CARD_RECIPE();
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  const out = await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.deepEqual(out.recipeBirth, { saved: true }, '★使用者為那一發付了費——學成要回報（前端 toast 據此）');
+  // 沒學成＝帶 reason（用壞候選）
+  const db0 = store.load(); db0.parseRecipes = []; db0.transactions = []; store.save(db0);   // 交易也清＝第二次匯入才有 imported>0（重複列不觸發出生）
+  const fe2 = fakeEngine([GOOD_ANSWER()]);
+  const bad = CARD_RECIPE(); bad.adjustmentLabels = ['星巴克'];
+  fakeGen.candidate = bad;
+  const r2 = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe2.engine, aiBudget: fakeBudget() });
+  const p2 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r2.aiTicket });
+  const out2 = await importRows('feib', p2.transactions, '2026-07', 480, { aiTicket: p2.aiTicket, aiEngineFactory: () => fe2.engine, aiBudget: fakeBudget() });
+  assert.equal(out2.recipeBirth?.saved, false);
+  assert.equal(out2.recipeBirth?.reason, 'recipe_birth_statement', '沒學成也要講清楚是哪一關（同出生統計代碼）');
+  fakeGen.candidate = null;
+});
