@@ -30,6 +30,24 @@ const SKIP_AFTER_CANARY = '金絲雀之後的路徑只在套得上沙箱的 macO
 const CLEAN_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x' };
 const EXPECTED_BOX_AUTH_FIELDS = ['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id'];
 
+/**
+ * 破口形狀的標頭：**執行時才拼**，本檔源碼裡不留 `-----BEGIN <KIND> PRIVATE KEY-----` 的字面。
+ *
+ * 為什麼（#516／#530 兩支的複審後掃都判事故、都靠 William 裁示「視為誤判」才放行，根因同一個）：
+ *   本檔是破口偵測器自己的考題檔，裡面的假鑰跟真鑰匙同形。字面留在檔裡，Grok 每次讀／引用本檔
+ *   都可能把它帶進日誌；引用時只要換了呈現，逐字對不上就判事故。
+ *   往「放寬比對」修的代價實測是排除語言從 12 條字串脹成 598 條，而最短的合法前綴只有 58 個字元、
+ *   其中可以一個酬載字元都沒有（`{32,}` 的字元類含空白與反斜線＝長度下限、不是熵下限）。
+ *   往這裡修則是讓爭議在源頭消失，判準一個字元都不用放寬。
+ * ⚠️ 誠實劃界（兩條）：
+ *   ①這只讓**源碼本身**不含命中。考題**執行後**的值若進了日誌仍會判事故——那條路本來就該判事故，
+ *     本 helper 不宣稱修得掉它。
+ *   ②`-----END …-----` 不經這裡：現行 BREACH_SHAPES 只從 `BEGIN` 起錨，留字面不會造出命中。
+ *     這是照現行正則讀出來的，**沒有考題撐著**；正則的起錨點若改，這裡要一起重看。
+ * @param {'RSA'|'OPENSSH'|'EC'|'DSA'} kind
+ */
+const PEM_BEGIN = (kind) => `-----BEGIN ${kind} PRIVATE KEY-----`;
+
 /** 一個最小的真 git repo（有一顆 commit），當 runScan 的 repo。 */
 function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'grok-flow-repo-')));
@@ -314,7 +332,7 @@ test('runScan｜驗屍查到破口線索（日誌裡出現私鑰標頭這種盒�
   const inst = fakeGrok();
   const before = readFileSync(join(inst, 'bin', 'grok'), 'utf8');
   const after = before.replace(/^(printf '%s' .*# REPLY-LINE)$/m,
-    `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\\\nMIIEOUTSIDEKEYBODYCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\\\\n-----END RSA PRIVATE KEY-----"}' >> "$ws/fake-session/updates.jsonl"; $1`);   // r10：要含內容，光標頭不是鑰匙
+    `printf '%s\\n' '{"type":"assistant","content":"${PEM_BEGIN('RSA')}\\\\nMIIEOUTSIDEKEYBODYCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\\\\n-----END RSA PRIVATE KEY-----"}' >> "$ws/fake-session/updates.jsonl"; $1`);   // r10：要含內容，光標頭不是鑰匙
   assert.notEqual(after, before, '假 grok 改寫沒套上');
   writeFileSync(join(inst, 'bin', 'grok'), after);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
@@ -744,7 +762,7 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
   //    （原版把它 commit 進 head，於是材料那條整個壞掉這題也照樣綠——Codex #530 r1 用突變證明過）。
   //    做法：base 有這個檔、head **刪掉**它 ⇒ 內容以 `-` 開頭的行出現在 diff 裡、而 head 樹裡沒有。
   //    diff 行首那個記號正是 `unprefixed` 那半在還原的東西，所以這題也順便守著它。
-  const keyLines = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '-----END RSA PRIVATE KEY-----'];
+  const keyLines = [PEM_BEGIN('RSA'), 'MIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '-----END RSA PRIVATE KEY-----'];
   const repo = tinyRepo({ firstCommitFiles: { 'fixture.txt': `a test fixture key:\n${keyLines.join('\n')}\n` } });
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
   git(['rm', '-q', 'fixture.txt']); git(['commit', '-q', '-m', 'drop fixture']);
@@ -756,8 +774,15 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
     ['材料裡那把假鑰以 JSON 字串形式出現在日誌（換行成字面 \\n）', `printf '%s\\n' '{"type":"assistant","content":"${fakeKeyJson}"}'`, 0],
     ['材料裡那把假鑰以巢狀 JSON（雙重轉義）出現在日誌', `printf '%s\\n' '{"type":"assistant","content":"{\\"k\\":\\"${fakeKeyJson2}\\"}"}'`, 0],
     ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
-    ['同標頭、不同內容的外部私鑰（r10：材料有標頭也不能放過）', `printf '%s\\n' '{"type":"assistant","content":"outside: -----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\\n-----END RSA PRIVATE KEY-----"}'`, 1],
-    ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN OPENSSH PRIVATE KEY-----\\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2g\\n"}'`, 1],
+    ['同標頭、不同內容的外部私鑰（r10：材料有標頭也不能放過）', `printf '%s\\n' '{"type":"assistant","content":"outside: ${PEM_BEGIN('RSA')}\\nMIIEOUTSIDEKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\\n-----END RSA PRIVATE KEY-----"}'`, 1],
+    // body 刻意是**明顯的假值**：原本那串 `b3BlbnNzaC1rZXktdjEA…AAAAtzc2g` 是每一把未加密 ed25519 私鑰
+    //   **逐字相同的真開頭**（用格式常數重算：未加密 OpenSSH 共用前 52 個 base64 字元、ed25519 共用前 84 個，
+    //   而那串是 67 個 ⇒ 它是任何真 ed25519 私鑰的合法前綴）。精確比對下無害，但只要哪天有人把樹那半
+    //   放寬成前綴，它就變成一條「被截短的真 SSH 私鑰一律當本來就給它的東西」的路。本題只需要「一種
+    //   材料裡沒有的 kind」，換掉不影響它在守的行為。
+    // ⚠️ 本題**沒有**在守「OPENSSH 這個 kind 走得到」（改成 RSA 它照樣綠）——四種 kind 都被偵測器認得，
+    //   是由 題名關鍵字「本檔源碼不留破口形狀的字面」那一題釘的。
+    ['材料裡沒有的同形狀', `printf '%s\\n' '{"type":"assistant","content":"${PEM_BEGIN('OPENSSH')}\\nMIIEOPENSSHKEYBODYDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD\\n"}'`, 1],
   ])) {
     const iso = isolated(); const inst = fakeGrok();
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `${sessionLine} >> "$ws/fake-session/updates.jsonl"; $1`));
@@ -767,7 +792,7 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
 });
 
 /** 一把「真實長度」的假鑰：標頭＋8 行 64 字 base64＋結尾，真換行（不是 JS 字面的 \n） */
-const PEM_LINES = ['-----BEGIN RSA PRIVATE KEY-----', ...Array.from({ length: 8 }, (_, i) => `MIIETREEONLYKEYBODY${String.fromCharCode(65 + i).repeat(45)}`), '-----END RSA PRIVATE KEY-----'];
+const PEM_LINES = [PEM_BEGIN('RSA'), ...Array.from({ length: 8 }, (_, i) => `MIIETREEONLYKEYBODY${String.fromCharCode(65 + i).repeat(45)}`), '-----END RSA PRIVATE KEY-----'];
 const PEM_TEXT = PEM_LINES.join('\n') + '\n';
 
 test('runScan｜破口形狀只在 head 樹裡、不在 diff 裡 → 不算事故（#516 的假事故）；樹裡沒有的同形狀仍是 1', async (t) => {
@@ -781,7 +806,7 @@ test('runScan｜破口形狀只在 head 樹裡、不在 diff 裡 → 不算事�
   for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
     ['樹裡那把鑰匙原樣回錄（cat 形）', `printf '%s\\n' '{"type":"assistant","content":"${inTreeJson}"}'`, 0],
     ['樹裡那把鑰匙帶讀檔工具的行號記號回錄', `printf '%s\\n' '{"type":"assistant","content":"${withMarkers}"}'`, 0],
-    ['同標頭、不同內容（樹裡沒有這一把）', `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ\\n"}'`, 1],
+    ['同標頭、不同內容（樹裡沒有這一把）', `printf '%s\\n' '{"type":"assistant","content":"${PEM_BEGIN('RSA')}\\nMIIEOUTSIDEKEYBODYZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ\\n"}'`, 1],
     ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
     // 樹那半刻意用**精確比對**：放寬成子字串包含就等於允許「真外洩剛好是某條 fixture 的前綴」被排除。
     // 這一案把樹裡那把鑰匙截成前綴（少了尾巴幾行）⇒ 逐字對不上 ⇒ 仍要報事故。
@@ -826,7 +851,7 @@ test('runScan｜事故訊息要帶得出族別與筆數，而且**完整命中�
     // 形狀那族：樹裡沒有的私鑰形狀 → 要帶出筆數與長度，同樣不得出現內容
     const body = 'MIIEBRIEFSHAPEKEYBODY' + 'W'.repeat(50);
     const iso = isolated(); const repo = tinyRepo(); const inst = fakeGrok();
-    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\n${body}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"${PEM_BEGIN('RSA')}\\n${body}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     const s = r.summary.join('\n');
     assert.equal(r.code, 1, s);
@@ -868,7 +893,7 @@ test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純�
 test('knownShapeHitsFromTree｜非 ASCII 檔名的 blob 也要讀到（`-z`；不然掃描器會靜靜跳過中文檔名）', () => {
   // 這個 repo 本來就有中文檔名。git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，
   // 沒有 -z 的話那些檔會查不到而被**靜靜跳過**——排除集合少一塊、引用到就誤報事故。
-  const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIECJKNAMEKEYBODY' + 'Q'.repeat(50)}\n`;
+  const key = `${PEM_BEGIN('RSA')}\n${'MIIECJKNAMEKEYBODY' + 'Q'.repeat(50)}\n`;
   const repo = tinyRepo({ firstCommitFiles: { '中文檔名-鑰匙.pem': key } });
   const r = knownShapeHitsFromTree(repo.dir, repo.head);
   assert.equal(r.hits.size > 0, true, '非 ASCII 檔名的 blob 沒被讀到＝那個檔的形狀不在排除集合裡');
@@ -881,7 +906,7 @@ test('knownShapeHitsFromTree｜超過單檔上限的 blob 要跳過，**而且�
   // ⚠️ 用**注入的小門檻**而不是真的 16 MiB 檔：CI 上 `node --test` 多檔並行，
   //    真的大檔會配置數十 MB、把隔壁計時型考題壓過門檻（實測本支 2/2 紅、同時段重跑 main 綠）。
   const body = 'M'.repeat(200);
-  const repo = tinyRepo({ firstCommitFiles: { 'big-key.pem': `-----BEGIN RSA PRIVATE KEY-----\n${body}\n` } });
+  const repo = tinyRepo({ firstCommitFiles: { 'big-key.pem': `${PEM_BEGIN('RSA')}\n${body}\n` } });
   const r = knownShapeHitsFromTree(repo.dir, repo.head, 64);
   assert.deepEqual(r.skippedBig, ['big-key.pem'], '跳過的大檔沒有被列出來＝呼叫端印不出缺口');
   assert.equal(r.hits.size, 0, '大檔的形狀不該進排除集合（跳過就是跳過；方向是誤報，不是靜靜放行）');
@@ -901,7 +926,7 @@ test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳�
   // ⚠️ 純函式題只證明「回傳值裡有 skippedBig」；把**呼叫端那條記帳**整行拿掉、或只拿掉「等 N 個」，
   //    純函式題都還是綠的（Codex #530 r5 用定點突變證明）。所以這一題直接驗注入的 log 收到的字串。
   const big = 'M'.repeat(200);   // 搭配注入的小門檻（理由同上：不要在 CI 上配置大塊記憶體）
-  const files = Object.fromEntries(['big1.pem', 'big2.pem', 'big3.pem', 'big4.pem'].map((n) => [n, `-----BEGIN RSA PRIVATE KEY-----\n${big}\n`]));
+  const files = Object.fromEntries(['big1.pem', 'big2.pem', 'big3.pem', 'big4.pem'].map((n) => [n, `${PEM_BEGIN('RSA')}\n${big}\n`]));
   const repo = tinyRepo({ firstCommitFiles: files });
   /** @type {string[]} */ const logs = [];
   // ⚠️ 故意讓它在**雜湊檢查**就退場（給錯的 expectedSha256）：記帳那行在更早就印了，
@@ -925,6 +950,29 @@ test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它
   assert.match(r.summary.join('\n'), /已知來源/, '退 2 了但沒說是「已知來源建不出來」——分不出是哪一種失敗');
 });
 
+test('考題檔｜本檔源碼不留破口形狀的字面（純函式，平台無關，CI 也跑）', () => {
+  // 為什麼要有這一題：#516（2026-08-26）與 #530（2026-08-30）兩支的複審後掃都判事故、兩次都因為本檔含
+  // 字面假鑰、兩次都靠 William 裁示「視為誤判」放行。字面一旦回來，下一支動到本檔的 PR 又會掃不乾淨——
+  // 而**沒有任何合併閘看複審後掃**（五道 MERGE_GATE 都不看、workflows 裡也沒有），漏掉不會有東西擋人。
+  // 這一題是目前唯一會為此轉紅的東西。
+  // ⚠️ 誠實劃界（三條）：
+  //   ①看的是**本檔**，不是整棵樹：別的檔案新增假鑰它抓不到。全樹那條靠 runScan 的記帳行
+  //     （會列出「來自 <檔>×<n>」）看得見，那是**看得見、不是擋得住**。
+  //   ②只看**源碼**：考題執行後的值若進了 grok 的日誌仍會判事故——那本來就該判事故。
+  //   ③掃描讀的是**已 commit** 的 blob，這一題讀的是工作區的檔；未 commit 的改動兩邊會不一致。
+  const src = readFileSync(new URL(import.meta.url), 'utf8');
+  assert.deepEqual(shapeHitsIn(src), [], '本檔源碼含破口形狀命中——Grok 讀到它就可能判假事故');
+  for (const form of [JSON.stringify(src), JSON.stringify(JSON.stringify(src))]) {
+    assert.deepEqual(shapeHitsIn(form), [], '本檔源碼的 JSON 轉義形含破口形狀命中（日誌是 JSONL，走的是這一形）');
+  }
+  // 比「有沒有命中」寬一點的規則，因為它是人記得住的那一版：本檔不寫具體 kind 的字面標頭
+  assert.equal(/-----BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----/.test(src), false, '本檔出現字面標頭——請改用 PEM_BEGIN(kind) 執行時拼');
+  // helper 自己要對：四種 kind 都要被偵測器認得，否則「改用 helper」等於把某些題悄悄變成不再命中
+  for (const kind of /** @type {const} */ (['RSA', 'OPENSSH', 'EC', 'DSA'])) {
+    assert.equal(shapeHitsIn(`${PEM_BEGIN(kind)}\n${'A'.repeat(40)}`).length, 1, `PEM_BEGIN('${kind}') 拼出來的標頭偵測器認不得`);
+  }
+});
+
 test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台無關，CI 也跑）', () => {
   assert.equal(stripLineMarkers('1→abc\n10→def'), 'abc\ndef', '原文換行的記號沒剝掉');
   assert.equal(stripLineMarkers('x\\n12→abc'), 'x\\nabc', 'JSONL 的字面 \\n 前綴沒認出來');
@@ -935,7 +983,7 @@ test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台�
   assert.equal(stripLineMarkers('x\\n12→y'), 'x\\ny', '這是已知的過度剝除，改行為要連同註解的劃界一起改');
   // `→` 不在破口正則的字元類裡：記號落在 `{32,}` **湊滿之前**時整條不匹配＝真鑰匙靜靜放行，剝完才看得見。
   // ⚠️ 條件是「湊滿之前」，**不是**「標頭之後」——先湊滿 32 個合法字元、記號落在那之後仍然命中（Codex #530 r8 的反例）。
-  const keyWithMarker = `-----BEGIN RSA PRIVATE KEY-----\n10→${'MIIEREALKEYBODY' + 'A'.repeat(50)}`;
+  const keyWithMarker = `${PEM_BEGIN('RSA')}\n10→${'MIIEREALKEYBODY' + 'A'.repeat(50)}`;
   assert.equal(shapeHitsIn(keyWithMarker).length, 0, '前提變了：帶記號時本來就抓得到，這題的理由要重寫');
   assert.equal(shapeHitsIn(stripLineMarkers(keyWithMarker)).length, 1, '剝完仍抓不到＝靜默漏放沒被修掉');
 });
