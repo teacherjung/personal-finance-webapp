@@ -99,7 +99,11 @@ export const shapeHitsIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES,
 export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d{1,7}→/g, '$1');
 
 /**
- * 從 **git 物件庫**取 head 整棵樹，收集它本身含有的破口形狀命中（含 JSON 轉義階梯）。
+ * 從 **git 物件庫**取 head 樹的 blob，收集它們含有的破口形狀命中（含 JSON 轉義階梯）。
+ *
+ * ⚠️ **不是「整棵樹」**：單檔超過 `SESSION_CAPS.fileBytes` 的 blob 會跳過（三形階梯要做兩次
+ * `JSON.stringify`，大檔瞬間長成數倍）。跳過＝那個檔的形狀**不進**排除集合＝萬一 grok 引用到它就會
+ * 誤報事故（方向是吵、不是靜靜放行）。跳了哪些由回傳值帶出去、呼叫端印出來，不讓缺口悄悄發生。
  *
  * 為什麼來源是 git 而不是磁碟上的 `<box>/src`：**盒子對 grok 是可寫的**（profile 放行整個 SCAN_DIR）。
  * 拿盒內磁碟當已知來源，破出沙箱的 grok 只要把偷到的內容寫成一個檔丟進 src，就能讓驗屍把自己的外洩
@@ -112,7 +116,7 @@ export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d
  *
  * @param {string} repo
  * @param {string} head
- * @returns {{ hits: Set<string>, blobs: number, bytes: number, bySource: Map<string, number> }}
+ * @returns {{ hits: Set<string>, blobs: number, bytes: number, bySource: Map<string, number>, skippedBig: string[] }}
  */
 export function knownShapeHitsFromTree(repo, head) {
   // -z：git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，拿去查就 fatal 而掃描器**靜靜跳過**
@@ -132,6 +136,7 @@ export function knownShapeHitsFromTree(repo, head) {
   const out = /** @type {Buffer} */ (cat.stdout);
   /** @type {Set<string>} */ const hits = new Set();
   /** @type {Map<string, number>} */ const bySource = new Map();
+  /** @type {string[]} */ const skippedBig = [];
   let off = 0, bytes = 0, i = 0;
   while (off < out.length) {
     const nl = out.indexOf(10, off);
@@ -142,7 +147,9 @@ export function knownShapeHitsFromTree(repo, head) {
     const path = blobs[i++]?.path ?? '?';
     bytes += size;
     // 大檔跳過：三形階梯會做兩次 JSON.stringify，大檔瞬間長成數倍。跳過＝那個檔的形狀不進排除集合＝誤報方向。
-    if (size <= SESSION_CAPS.fileBytes) {
+    // 跳了誰要說出來（呼叫端會印）：不然「涵蓋範圍其實有缺口」就悄悄發生了。
+    if (size > SESSION_CAPS.fileBytes) skippedBig.push(path);
+    else {
       // 解碼用有損模式（跟日誌側 fatal 的語意刻意不同）：二進位檔解不乾淨頂多少收一條＝誤報方向，不會多排除。
       const raw = out.toString('utf8', start, start + size);
       if (raw.includes('PRIVATE KEY-----') || raw.includes('flexToken')) {   // 廉價前置過濾，結果不變
@@ -154,7 +161,7 @@ export function knownShapeHitsFromTree(repo, head) {
     }
     off = start + size + 1;
   }
-  return { hits, blobs: blobs.length, bytes, bySource };
+  return { hits, blobs: blobs.length, bytes, bySource, skippedBig };
 }
 
 export const GROK_HOME_MANIFEST = Object.freeze({
@@ -341,7 +348,7 @@ export async function runScan(args, deps = {}) {
   catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
   // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
   // 或悄悄變大（豁免面擴張）都看得見。
-  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}）`);
+  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}${treeKnown.skippedBig.length ? `；⚠️ ${treeKnown.skippedBig.length} 個超過單檔上限沒讀（它們的形狀不在排除集合裡＝引用到會誤報事故）：${treeKnown.skippedBig.slice(0, 3).join('、')}` : ''}）`);
 
   // ── ① 建盒子 ──
   /** @type {string | undefined} */ let box;
