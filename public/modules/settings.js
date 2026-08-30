@@ -906,7 +906,7 @@ function openParseRecipesManager(list) {
   };
   const render = (/** @type {any[]} */ rows) => {
     const body = rows.map(r => `<tr>
-      <td>${esc(r.bank || '（沒記到銀行名）')}${r.rebirths ? `<br><span class="muted" style="font-size:11px">重學過 ${esc(String(r.rebirths))} 次</span>` : ''}</td>
+      <td>${esc(r.bank || '（沒記到銀行名）')}${r.kind === 'card' ? ' <span class="tag" style="font-size:11px">信用卡</span>' : ''}${r.rebirths ? `<br><span class="muted" style="font-size:11px">重學過 ${esc(String(r.rebirths))} 次</span>` : ''}</td>
       <td>${statusHtml(r)}</td>
       <td class="muted nowrap">${esc(day(r.createdAt))}</td>
       <td class="muted nowrap">${r.lastUsedAt ? esc(day(r.lastUsedAt)) : '（還沒用過）'}</td>

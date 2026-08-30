@@ -610,7 +610,7 @@ test('管理｜listParseRecipes 只給身分與統計投影：配方內容（版
   await seedDb({ recipes: [row({ previous: goodRecipe(), graduateStreak: 3, lastUsedAt: '2026-08-20T01:02:03.000Z', suspect: true, rebirths: 2 })] });
   const list = await listParseRecipes();
   assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'id', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), '★欄位封閉（多一欄＝多外送一分）');
+  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'id', 'kind', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), '★欄位封閉（多一欄＝多外送一分）；kind＝批四種類標籤（bank/card 枚舉、非機密）');
   assert.equal(list[0].bank, '合成銀行');
   assert.equal(list[0].graduateStreak, 3);
   assert.equal(list[0].suspect, true);

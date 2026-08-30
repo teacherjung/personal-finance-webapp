@@ -24,6 +24,7 @@ after(() => {
 const CARD_PDF = () => cjkPdf([
   ['遠東國際商業銀行', '信用卡帳單'],
   ['卡號末四碼', '5678'],
+  ['結帳日期', '2026/07/20'],
   ['上期應繳總額', '1,000'],
   ['已繳款退款金額', '1,000'],
   ['本期新增款項', '450'],
@@ -63,10 +64,26 @@ function fakeEngine(answers) {
         if (typeof a === 'function') throw a();
         return a;
       },
+      // 批四：規則卡生成（考題可注入候選；沒設定＝表現得像沒有這個能力）
+      generateRecipe: async (/** @type {string} */ _text, /** @type {string} */ model) => {
+        modelsUsed.push(`gen:${model}`);
+        if (!(/** @type {any} */ (fakeGen).candidate)) throw new Error('no candidate');
+        return /** @type {any} */ (fakeGen).candidate;
+      },
     },
   };
 }
 const fakeBudget = () => { let n = 0; return { used: () => n, take: async () => { n += 1; }, loadBill: () => {} }; };
+/** 生成候選的注入點（generateRecipe 讀它；每題自行設定/清空）。 */
+const fakeGen = { candidate: /** @type {any} */ (null) };
+/** 一張與 CARD_PDF 版面全對的卡片規則卡（出生/命中考題共用）。 */
+const CARD_RECIPE = () => ({
+  formatVersion: 1, bank: '遠東國際商業銀行',
+  docAnchors: ['信用卡帳單', '本期應繳總額'], dateFormat: 'west-slash',
+  totalsLabels: { prevDue: '上期應繳總額', paidAndRefund: '已繳款退款金額', newCharges: '本期新增款項', due: '本期應繳總額' },
+  adjustmentLabels: ['循環信用利息'], lastFourLabel: '卡號末四碼', monthLabel: '結帳日期',
+  detail: { headerAnchor: '本期應繳總額', rowShape: 'date-desc-amount', stopAnchors: [] },   // CARD_PDF 沒獨立表頭列＝用摘要末列當起點錨
+});
 
 beforeEach(() => {
   store.save({ ...store.emptyDb(),
@@ -421,4 +438,146 @@ test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；�
       { amount: 30, desc: '循環信用利息', isAdjustment: true, isPayment: false, isRefund: false }],
     aiAdjustments: [{ label: '循環信用利息', amount: 30 }] }));
   assert.equal(withAdj.ok, true, '★調整列跳過後：450 對 450、等式摺 30 對 480——全綠');
+});
+
+// ── 批四：規則卡（免費路）＋出生全循環 ─────────────────────────────────────────
+
+test('★規則卡命中｜認不得＋櫃子有 kind=card 的卡＝**免費**讀出（零 AI 呼叫、不需 useAi）；票帶 recipeUse', async () => {
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-card1', bank: '遠東國際商業銀行', kind: 'card', current: CARD_RECIPE(),
+    graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.equal(r.engine, 'recipe', '★規則卡讀的＝engine recipe（前端徽章據此換句）');
+  assert.equal(r.recipeId, 'rcp-card1');
+  assert.equal(fe.modelsUsed.length, 0, '★零 AI 呼叫＝零費用（連 useAi 旗標都不用）');
+  assert.equal(r.bank, '', '★歸卡紀律同 AI：規則卡的機構名也只當顯示、不投票');
+  assert.equal(r.aiIssuer, '遠東國際商業銀行');
+  assert.deepEqual(r.statementTotals, { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 });
+  // 憑票換卡＝同一份、engine 仍是 recipe、新票傳承 recipeUse
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  assert.equal(p1.engine, 'recipe');
+  assert.equal(p1.recipeId, 'rcp-card1');
+  // 匯入帶票＝畢業計數 +1（真的寫入了才算）
+  const out = await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket });
+  assert.ok(out.imported > 0);
+  const row = (store.load().parseRecipes || []).find((/** @type {any} */ x) => x.id === 'rcp-card1');
+  assert.equal(row.graduateStreak, 1, '★用 current 成功匯入＝畢業計數 +1（與銀行同一支 recordRecipeApplied）');
+});
+
+test('★規則卡全敗｜useAi 才輪到 AI；AI 票帶 gateFailedIds（匯入成功才標疑似過期）', async () => {
+  const db0 = store.load();
+  const stale = CARD_RECIPE(); stale.totalsLabels = { ...stale.totalsLabels, prevDue: '上期結欠' };   // 版面對不上這張卡
+  db0.parseRecipes = [{ id: 'rcp-stale', bank: '遠東國際商業銀行', kind: 'card', current: stale,
+    graduateStreak: 3, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.equal(r.engine, 'ai', '規則卡救不了＝AI 救');
+  assert.ok(fe.modelsUsed.length > 0);
+  // 匯入（AI 票）＝疑似過期落地：rcp-stale 的 current 中了版面暗號、整列沒過 ⇒ 標 suspect
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  fakeGen.candidate = null;   // 這題不測出生
+  const out = await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.ok(out.imported > 0);
+  const row = (store.load().parseRecipes || []).find((/** @type {any} */ x) => x.id === 'rcp-stale');
+  assert.equal(row.suspect, true, '★current 中暗號卻整列沒過＝疑似過期（匯入成功才標；同銀行）');
+  assert.equal(row.graduateStreak, 0, '疑似過期＝畢業計數歸零');
+});
+
+test('★出生全循環｜AI 讀→匯入學卡（Opus 一發、出生把關全過、kind=card）→**同版面第二份免費**', async () => {
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  fakeGen.candidate = CARD_RECIPE();
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.equal(r.engine, 'ai');
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  const out = await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.ok(out.imported > 0);
+  assert.ok(fe.modelsUsed.includes('gen:claude-opus-5'), '★出生那一發一律 Opus（同銀行 RECIPE_MODEL）');
+  const rows = (store.load().parseRecipes || []).filter((/** @type {any} */ x) => x.kind === 'card');
+  assert.equal(rows.length, 1, '★學成一張卡片規則卡（kind=card 進同一個櫃子）');
+  assert.equal(rows[0].bank, '遠東國際商業銀行');
+  // 第二份同版面＝免費（零 AI 呼叫、不需 useAi）
+  const fe2 = fakeEngine([GOOD_ANSWER()]);
+  const r2 = await previewAuto(b64Of(CARD_PDF()), undefined, { aiEngineFactory: () => fe2.engine, aiBudget: fakeBudget() });
+  assert.equal(r2.engine, 'recipe', '★「AI 讀一次 → 學成規則卡 → 之後免費」全循環閉合');
+  assert.equal(fe2.modelsUsed.length, 0);
+  fakeGen.candidate = null;
+});
+
+test('★出生把關擋壞卡｜候選錨點是店名＝不存卡、匯入不受影響（不連坐）', async () => {
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  const bad = CARD_RECIPE(); bad.adjustmentLabels = ['星巴克'];   // 錨點＝帳單內容（出生對照關要擋）
+  fakeGen.candidate = bad;
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  const out = await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.ok(out.imported > 0, '★出生失敗不連坐——匯入照常完成');
+  assert.equal((store.load().parseRecipes || []).filter((/** @type {any} */ x) => x.kind === 'card').length, 0, '★壞卡不入櫃');
+  const stats = store.load().settings?.recipeBirthStats || {};
+  assert.ok(/** @type {any} */ (stats).recipe_birth_statement?.n >= 1, '★出生統計記下是哪一關擋的（對照關）');
+  fakeGen.candidate = null;
+});
+
+test('★櫃子分流｜kind=card 的卡不進銀行路（銀行帳單不會拿它試、也不會把它標成疑似過期）', async () => {
+  const { recipeBankRoute } = await import('../lib/services/bank-import.js');
+  // 卡片卡的 docAnchors 故意選會出現在銀行帳單裡的字（若沒過濾，match 會中、parse 會敗 ⇒ 進 gateFailedIds）
+  const cardRow = { id: 'rcp-cardX', bank: '遠銀', kind: 'card',
+    current: { ...CARD_RECIPE(), docAnchors: ['台幣', '存款'] },
+    graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' };
+  const db = { parseRecipes: [cardRow], settings: {}, cards: [] };
+  const fakeExtract = async () => [{ y: 0, cells: [{ x: 0, s: '台幣' }, { x: 1, s: '存款' }] }];
+  const out = await recipeBankRoute('QUFBQQ==', undefined, /** @type {any} */ (db), { extract: fakeExtract });
+  assert.equal(out.hit, null);
+  assert.deepEqual(out.gateFailedIds, [], '★沒過濾的話這張卡會被銀行路標成疑似過期候選（畢業計數會被銀行匯入清洗）');
+});
+
+test('★面板投影帶 kind｜listParseRecipes 分得出信用卡卡（面板顯示「信用卡」標籤用）', async () => {
+  const db0 = store.load();
+  db0.parseRecipes = [
+    { id: 'rcp-b', bank: '台新', current: { x: 1 }, graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+    { id: 'rcp-c', bank: '遠銀', kind: 'card', current: { x: 1 }, graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+  ];
+  store.save(db0);
+  const { listParseRecipes } = await import('../lib/services/bank-import.js');
+  const rows = await listParseRecipes();
+  assert.equal(rows.find((/** @type {any} */ r) => r.id === 'rcp-b').kind, 'bank', '缺席＝bank（既有卡零遷移）');
+  assert.equal(rows.find((/** @type {any} */ r) => r.id === 'rcp-c').kind, 'card');
+});
+
+test('★櫃子分流（反向）｜銀行卡不進卡片路：暗號撞上卡片帳單也不得被試、不得被標疑似過期', async () => {
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-bankX', bank: '台新',   // 沒有 kind＝銀行卡；暗號故意撞 CARD_PDF
+    current: { formatVersion: 1, bank: '台新', docAnchors: ['信用卡帳單', '本期應繳總額'], dateFormat: 'west-slash',
+      refDate: { strategy: 'none', anchor: null }, summary: { sections: [{ anchor: '台幣', currency: 'TWD' }], endAnchor: '總計', balancePick: 'last' },
+      detail: { rowIdent: 'date-first', headerOut: '支出', headerIn: '存入', headerBalance: '餘額', headerNote: null, headerIgnore: [] } },
+    graduateStreak: 4, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  const fe = fakeEngine([GOOD_ANSWER()]);
+  fakeGen.candidate = null;
+  const r = await previewAuto(b64Of(CARD_PDF()), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  assert.equal(r.engine, 'ai', '銀行卡不服役卡片路＝照樣走 AI');
+  const p1 = await previewForCard('feib', b64Of(CARD_PDF()), undefined, undefined, { aiTicket: r.aiTicket });
+  await importRows('feib', p1.transactions, '2026-07', 480, { aiTicket: p1.aiTicket, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const row = (store.load().parseRecipes || []).find((/** @type {any} */ x) => x.id === 'rcp-bankX');
+  assert.equal(row.suspect, false, '★不濾 kind 的話：銀行卡暗號撞中卡片帳單→解不動→進疑似名單→卡片匯入把它清洗（鏡像銀行路那題）');
+  assert.equal(row.graduateStreak, 4, '畢業計數不受卡片匯入影響');
+});
+
+test('★規則卡不收爛帳｜版面命中但帳單數學不平＝當作沒有規則卡（fail-closed 退回認不得/AI）', async () => {
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-card1', bank: '遠東國際商業銀行', kind: 'card', current: CARD_RECIPE(),
+    graduateStreak: 0, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  // 同版面、但「本期應繳」印錯（等式差 100）——規則卡解得動、驗算閘要擋
+  const badPdf = cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'], ['卡號末四碼', '5678'], ['結帳日期', '2026/07/20'],
+    ['上期應繳總額', '1,000'], ['已繳款退款金額', '1,000'], ['本期新增款項', '450'],
+    ['循環信用利息', '30'], ['本期應繳總額', '580'],
+    ['2026/07/03', '星巴克', '150'], ['2026/07/10', '全聯福利中心', '350'], ['2026/07/12', '退款全聯', '-50'],
+  ]);
+  await assert.rejects(() => previewAuto(b64Of(badPdf), undefined, {}),
+    (/** @type {any} */ e) => e.code === 'card_unrecognized',
+    '★規則卡讀的走批二同一把閘——閘紅＝這張卡這次不算命中，原錯誤照丟（前端照舊長 AI 入口）');
 });

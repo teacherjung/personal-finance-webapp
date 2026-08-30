@@ -13,7 +13,7 @@ import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
 import { gateSummaryHtml, unknownIssuerNoticeHtml, aiUnknownCardNoticeHtml } from './reconcile-summary.js';
-import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, snapshotUpload, aiConsentBodyHtml, aiErrorText, aiCardPreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL_CARD } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
+import { shouldOfferAi, shouldAskBeforeSend, runAiFallback, snapshotUpload, aiConsentBodyHtml, aiErrorText, aiCardPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL_CARD } from './ai-consent.js';   // 批二：卡片 AI 同意路線（判準與文案同一個家）
 // 密碼窗文案與開窗編排借銀行那套（單一住所 cashflow-model.js；P0.5＝兩條匯入線同一種體驗、同一份句子與時序防線）
 import { REMEMBER_PW_LABEL, runCardUpload, bankUploadGate, openWhenOnPage } from './cashflow-model.js';
 import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
@@ -234,7 +234,8 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
     if (!picked.length) return toast('沒有勾選任何項目', true);
     try {
       // 帳單期別由後端從帳單表頭讀出（curR.statementMonth），跟著匯入一起存進每一筆（使用者定 2026-07-19）
-      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null } });
+      // 批四：票一併送——AI 讀的＝匯入後學規則卡（下期免費）；規則卡讀的＝畢業計數。沒有票＝照舊。
+      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null, ...(typeof curR.aiTicket === 'string' ? { aiTicket: curR.aiTicket } : {}) } });
       if (!onPage()) return;   // r5#1：匯入（含寫入）完成後切頁＝不動月份、不開完成窗、不重繪舊頁（資料已存）
       // 匯入後跳到「筆數最多」的月份：信用卡帳單主體常落在前一個月，避免停在幾乎空的最新月
       const mc = {};
@@ -279,7 +280,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
             <select id="previewCard">${cardOpts()}</select></label>
           <span class="muted" style="font-size:12.5px">共 ${curR.transactions.length} 筆。判斷錯了可在此改卡片；分類可逐筆改；「已存在」＝之前匯過（預設不重記）；真正繳款不匯入，退款會保留為消費抵減。</span>
         </div>
-        ${aiCardPreviewBadgeHtml(curR)}
+        ${curR.engine === 'recipe' ? recipePreviewBadgeHtml(curR) : aiCardPreviewBadgeHtml(curR)}
         ${curR.engine === 'ai' ? aiUnknownCardNoticeHtml() : unknownIssuerNoticeHtml(curR.bankEvidence)}
         ${gateSummaryHtml(curR.reconcile, 'card')}
         <div class="tbl-wrap" style="max-height:48vh;overflow-y:auto">

@@ -279,7 +279,10 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
     'AI 要求旗標要嚴格 useAi:true 手組（不是沿用模板 body）');
   // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
-  assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');
+  assert.match(src, /curR\.engine === 'recipe' \? recipePreviewBadgeHtml\(curR\) : aiCardPreviewBadgeHtml\(curR\)/,
+    '批四：規則卡讀的要畫規則卡徽章（文字中性、與銀行同一份）；AI 讀的照舊卡片版徽章');
+  assert.match(src, /\.\.\.\(typeof curR\.aiTicket === 'string' \? \{ aiTicket: curR\.aiTicket \} : \{\}\)/,
+    '批四：匯入要把票一併送——AI 票＝學規則卡、規則卡票＝畢業計數；沒票＝照舊');
   assert.match(src, /t\.isAdjustment \? '<span class="tag amber">調整<\/span>'/,
     'Grok 掃#6：調整列要有自己的標籤——標成「退款」會誤導成店家退款');
   assert.doesNotMatch(src, /\baiPreviewBadgeHtml\(/, '銀行版徽章（餘額鏈／仲裁文案）不准出現在卡片線');
