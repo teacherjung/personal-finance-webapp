@@ -83,12 +83,18 @@ export const shapeHitsIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES,
  * 為什麼要剝（兩個方向都受害，後者更嚴重）：
  *   ①記號落進命中區間，把同一份內容切成跟樹裡對不上的字串 ⇒ 樹裡本來就有的 fixture 排不掉＝假事故；
  *   ②`→` 不在破口正則的字元類裡，記號落在標頭之後時 `{32,}` 湊不滿、**整條不匹配** ⇒ 真鑰匙被讀進日誌卻靜靜放行。
- * ⚠️ 誠實劃界：這是照**觀察到的**日誌呈現寫的，不是 grok 的承諾。中段截斷、markdown 包裹、`檔:行:` 前綴
- *    都還原不了，那些呈現仍會對不上（方向＝誤報事故）。**只剝日誌側、不剝樹側**——樹是沒有記號的真相，
- *    兩側都剝會讓「可被排除的集合」有機會變大。
+ * ⚠️ 誠實劃界（三條，撐不住的話寧可寫出來）：
+ *   ①這是照**觀察到的**日誌呈現寫的，不是 grok 的承諾。中段截斷、markdown 包裹、`檔:行:` 前綴
+ *     都還原不了，那些呈現仍會對不上（方向＝誤報事故）。
+ *   ②**正文裡字面的 `\n12→` 與真的工具記號在文字層面分不出來**，這條規則會把它也剝掉。
+ *     方向是「排除語言變大」＝可能少報事故——所以只剝日誌側、**不剝樹側**（樹是沒有記號的真相），
+ *     兩側不會一起被正規化到同一個更寬的語言裡。真外洩要踩到它得同時滿足「內容含字面 `\n<數字>→`」
+ *     與「剝完之後逐字等於樹裡某條 fixture」；那是機率論證、不是保證。
+ *     題名關鍵字「已知的過度剝除」那一格照實釘著這個行為，改行為要連同這段劃界一起改。
+ *   ③`(?<!\\)` 是為了不從**反斜線串的中段**開始比對（5 個以上反斜線時 `{1,4}` 會從第 2 個起算而誤剝——Codex #530 r1 抓到）。
  * @param {string} text
  */
-export const stripLineMarkers = (text) => text.replace(/(^|\n|\\{1,4}n)\d{1,7}→/g, '$1');
+export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d{1,7}→/g, '$1');
 
 /**
  * 從 **git 物件庫**取 head 整棵樹，收集它本身含有的破口形狀命中（含 JSON 轉義階梯）。
@@ -139,7 +145,8 @@ export function knownShapeHitsFromTree(repo, head) {
       const raw = out.toString('utf8', start, start + size);
       if (raw.includes('PRIVATE KEY-----') || raw.includes('flexToken')) {   // 廉價前置過濾，結果不變
         for (const form of [raw, JSON.stringify(raw), JSON.stringify(JSON.stringify(raw))]) {
-          for (const h of shapeHitsIn(form)) { hits.add(h); bySource.set(path, (bySource.get(path) ?? 0) + 1); }
+          // 只在「這條命中是新的」時記帳：同一條在三形階梯裡會各出現一次，逐次累加會讓數字虛胖三倍
+          for (const h of shapeHitsIn(form)) { if (!hits.has(h)) { hits.add(h); bySource.set(path, (bySource.get(path) ?? 0) + 1); } }
         }
       }
     }
@@ -322,6 +329,18 @@ export async function runScan(args, deps = {}) {
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
+  // ── 破口判準的「已在給盒子的東西裡」之一：head 整棵已 commit 原始碼 ──
+  // 位置在**建盒子之前**：①建不出來就此刻退 2，還沒建任何暫存路徑、也還沒燒掃描時間
+  //   ②不經沙箱 ⇒ 這條路的行為題在非 macOS 也跑得到（掛在盒子之後的話，CI 會先在版本檢查退場、
+  //     行為題永遠驗不到這一步——Codex #530 r1 實測 CI 因此紅）。
+  // ⚠️ 免疫「盒子可寫」靠的是**來源是 git 物件庫**，不是這個位置——搬到別處仍然正確，只是失敗變貴。
+  /** @type {ReturnType<typeof knownShapeHitsFromTree>} */ let treeKnown;
+  try { treeKnown = knownShapeHitsFromTree(repo, head); }
+  catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
+  // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
+  // 或悄悄變大（豁免面擴張）都看得見。
+  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}）`);
+
   // ── ① 建盒子 ──
   /** @type {string | undefined} */ let box;
   /** @type {string | undefined} */ let resultsDir;
@@ -402,16 +421,6 @@ export async function runScan(args, deps = {}) {
     const parsed = /^grok (\S+)/.exec(verText)?.[1];
     if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return failAndClean(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）`);
   }
-  // ── 破口判準的「已在給盒子的東西裡」之一：head 整棵已 commit 原始碼 ──
-  // 放在 archive 之前只是為了失敗得早（此刻還沒燒掃描時間）；免疫「盒子可寫」靠的是**來源是 git 物件庫**，
-  // 不是這個位置——搬到別處仍然正確，只是失敗變貴。
-  /** @type {ReturnType<typeof knownShapeHitsFromTree>} */ let treeKnown;
-  try { treeKnown = knownShapeHitsFromTree(repo, head); }
-  catch (e) { return failAndClean(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
-  // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
-  // 或悄悄變大（豁免面擴張）都看得見。
-  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource.keys()].join('、')}` : ''}）`);
-
   {
     // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）
     const tarPath = join(box, 'src.tar');
@@ -592,15 +601,26 @@ export async function runScan(args, deps = {}) {
   //      拿日誌裡的轉義形去 `git grep -F` 找不到（實測 status 1），照抄會變成什麼都沒修的空修。
   //   ⚠️ 這是**擴大豁免**：樹裡若真的 commit 過一把真鑰匙，破口偵測從此對它的外洩失明。
   //      射程因此往回延伸到所有歷史（比 diff 那半難毒——要先合併一支 PR 才進得了樹——但確實變大了）。
-  const liveHitsIn = (/** @type {string} */ text) => [...text.matchAll(new RegExp(liveSecret, 'g'))].map((m) => m[0]);
+  // 暗號用**字面**搜尋、不編譯成正則：暗號是可注入的（考題會傳），帶 `[` 會讓 new RegExp 當場丟、
+  // 帶 `.` 會大量誤中、帶 `$` 反而找不到自己。正式路徑的暗號是 base36 所以碰不到，
+  // 但這一格沒有理由留著那個 bug class（main 的舊寫法把它插進正則字串，同樣暴露）。
+  const liveHitsIn = (/** @type {string} */ text) => {
+    /** @type {string[]} */ const out = [];
+    for (let i = text.indexOf(liveSecret); i >= 0; i = text.indexOf(liveSecret, i + liveSecret.length)) out.push(liveSecret);
+    return out;
+  };
   /** @type {Set<string>} */ const knownHits = new Set();
   const unprefixed = materials.replace(/^[+ -]/gm, '');   // diff 每行多一個 `+`；樹側**不套**，那會憑空造出樹裡沒有的排除項
   for (const base0 of [materials, unprefixed]) for (const form of [base0, JSON.stringify(base0), JSON.stringify(JSON.stringify(base0))]) for (const h of shapeHitsIn(form)) knownHits.add(h);
   for (const h of treeKnown.hits) knownHits.add(h);
   /**
    * 這段文字裡「證明不了是盒內來源」的命中，分兩族回傳。
-   * 精確比對，**不放寬成子字串包含**——那等於允許「真外洩剛好是某條 fixture 的前綴」被排除。
-   * ⚠️ 誠實劃界：日誌把內容切成跟樹不同邊界時（中段截斷、markdown 包裹…）精確比對對不上＝仍會誤報事故。
+   * ⚠️ 兩半的比對強度**不一樣**，別讀成一致（Codex #530 r1 抓到我原本一句話蓋兩半）：
+   *   ・**樹那半是精確比對**（`knownHits.has`）——刻意不放寬成子字串包含，那等於允許
+   *     「真外洩剛好是某條 fixture 的前綴」被排除；題名關鍵字「截成前綴」那一格釘著這件事。
+   *   ・**材料那半保留既有的 `materials.includes(h)`**＝子字串排除（main 就是這樣、非本支新增）：
+   *     材料命中被截成前綴時仍會被排掉。要收它得另支評估，本支不動、照實寫出來。
+   * ⚠️ 誠實劃界：日誌把內容切成跟樹不同邊界時（中段截斷、markdown 包裹…）樹那半對不上＝仍會誤報事故。
    */
   const breachHits = (/** @type {string} */ text) => {
     const t = stripLineMarkers(text);
