@@ -119,6 +119,15 @@ test('驗收｜desc 走 normalizeDesc（裁示③）：同一店名不同空白�
     '★AI 兩次讀同一份差一個空白就變兩筆——這正是裁示③要擋的');
 });
 
+test('驗收｜調整列 label 走 normalizeDesc（r3#1；同裁示③店名）：空白漂移不得產生兩個 stmtRef', () => {
+  const g1 = GOOD(); g1.adjustments = [{ label: '循環信用利息', amount: 30, date: null }];
+  const g2 = GOOD(); g2.adjustments = [{ label: '循環  信用　利息', amount: 30, date: null }];
+  assert.equal(normalizeAiCard(g1).adjustments[0].label, normalizeAiCard(g2).adjustments[0].label,
+    '★同一筆利息兩種空白寫法＝同一個字串——否則重匯時 stmtRef 分岔＝利息重複記帳');
+  const g3 = GOOD(); g3.adjustments = [{ label: '   ', amount: 30, date: null }];
+  assert.equal(codeOf(() => normalizeAiCard(g3)), 'ai_bad_answer', '清完只剩空＝拒收');
+});
+
 test('接地｜答案卷上的每個金額都要在原文出現過：臆測的金額＝ai_bad_answer', () => {
   const g = GOOD(); g.transactions[0].amount = 151;   // 原文只有 150
   const p = normalizeAiCard(g);
@@ -410,12 +419,94 @@ test('驗算｜等式閘：具名調整（利息）摺進等式才平——這�
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g))), 'ai_reconcile_failed');
 });
 
-test('驗算｜加總閘：Σ明細 ≈ 本期新增；漏抄一筆＝擋，且訊息只帶差額與筆數、不回聲帳單原值', () => {
+test('驗算｜加總閘（慣例閘）：漏抄一筆＝兩種印法都對不上＝擋；訊息只帶差額與筆數、不回聲帳單原值', () => {
   const g = GOOD(); g.transactions = g.transactions.slice(0, 2);   // 漏掉 -50 那筆 ⇒ Σ=500 vs 450
   let msg = '';
   try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); assert.equal(/** @type {any} */ (e).code, 'ai_reconcile_failed'); }
-  assert.match(msg, /差了 50 元/, '★要說明差多少（裁示②的白話說明）');
+  assert.match(msg, /差 50 元/, '★要說明差多少（裁示②的白話說明；兩種印法各報各的差額）');
   assert.doesNotMatch(msg, /450|480|1,?000/, '★不回聲帳單的原始金額（機密紀律；差額是衍生值、單獨回推不出內容）');
+});
+
+test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款印法各自全對才收其一', async () => {
+  // 慣例 B 全列版：桶 1050 ＝ 繳款 1000（有列）＋退款 50（有列）；本期新增＝純消費 500
+  const B = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }],
+    transactions: [...GOOD().transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -1000 }] };
+  reconcileAiCard(normalizeAiCard(B));   // 等式 1000−1050+500+30=480 ✓；B 式 500==500、1000+50==1050 ✓
+  // r8 攻擊在 A 慣例下（GOOD）：退款 -50 被抄成繳款字樣 ⇒ 消費和少了退款的抵減、兩式全紅
+  const atk = GOOD(); atk.transactions[2] = { ...atk.transactions[2], desc: '信用卡自動扣繳' };
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(atk))), 'ai_reconcile_failed',
+    '★退款被抄成繳款（A 慣例）＝擋——這是慣例閘真正擋得住的那一型');
+  // 繳款有列出來就要對得上（A 的缺席放行只給 payAbs===0）
+  const listed = GOOD(); listed.totals.paidAndRefund = 1000;
+  listed.transactions = [...listed.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -999 }];
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(listed))), 'ai_reconcile_failed',
+    '★繳款列有印（-999）就要對上摘要的 1000——差 1 也擋（容差 0）');
+  // r1#1 的收緊：B 的「不等式缺席放行」拿掉——桶裡有沒列的繳款＋有列的退款＝混桶、驗不了＝擋
+  const partial = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }] };
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(partial))), 'ai_reconcile_failed',
+    '★refundAbs(50)≠桶(1050) 且繳款缺席——舊版不等式會放行、r1#1 攻擊正是鑽這條（fail-closed 誤擋照實認）');
+  // r8#3：差額出在**繳款半邊**時，訊息要報得出來（只報消費和半邊會印「差 0 元」）
+  {
+    const g = GOOD(); g.totals.paidAndRefund = 1000;
+    g.transactions = [...g.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -999 }];
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.match(msg, /繳款差 1 元/, '★繳款半邊差 1＝說得出那個 1');
+  }
+  // r9#2：**消費側零列**時不報消費差額——0 減整格摘要＝把「本期新增」原值當差額回聲出去
+  {
+    const g = { ...GOOD(), adjustments: [], transactions: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 731, due: 731 } };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg, '零明細＋摘要有新增＝照樣擋');
+    assert.doesNotMatch(msg, /731/, '★不可把摘要原值回聲成「差 731 元」');
+  }
+  // Grok 掃#2：G1 在「只有一個等式項非零」時不報差額——「差了 731 元」＝應繳原值回聲
+  {
+    const g = { ...GOOD(), adjustments: [], transactions: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 0, due: 731 } };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg); assert.doesNotMatch(msg, /731/, '★等式差額＝唯一非零那格的原值＝不報');
+  }
+  // Grok 掃#3：淨額恰為 0 的列（+100/−100）＝「消費和差 731」照樣是摘要原值——兩側皆非零才報
+  {
+    const g = { ...GOOD(), adjustments: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 731, due: 731 },
+      transactions: [
+        { date: '2026-07-03', postDate: null, desc: '甲', amount: 100 },
+        { date: '2026-07-04', postDate: null, desc: '乙退款', amount: -100 },
+      ] };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg); assert.doesNotMatch(msg, /731/, '★A 式淨額 0 那側不報（報了＝回聲 newCharges）');
+  }
+  // r12#1 誠實劃界的釘子：桶驗不了時（繳款只列摘要）、桶裡的退款被漏抄＝**會過**（帳本少記那筆退款）
+  // ——改成會擋＝這題轉紅提醒重寫劃界（機械關法＝強驗桶＝把常見合法版面全誤擋，刻意不做）。
+  // r13#1：釘子要走完**正式兩層閘**——只釘第一層的話，第二層若日後擋下這個反例，
+  // 產品已不再誤收、本題仍綠、檔頭與徽章卻繼續錯稱會少記。
+  {
+    const g = { ...GOOD(), adjustments: [],
+      totals: { prevDue: 1000, paidAndRefund: 1100, newCharges: 500, due: 400 },
+      transactions: [{ date: '2026-07-03', postDate: null, desc: '甲店', amount: 500 }] };
+    const p = normalizeAiCard(g);
+    reconcileAiCard(p);   // 第一層：原文另有 -100 退款在桶裡、答案漏抄——等式 1000−1100+500=400 照樣平
+    const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
+    const mid = reconcileCardStatement(/** @type {any} */ ({ statementTotals: p.statementTotals,
+      transactions: p.transactions.map((t) => ({ ...t, isPayment: false, isRefund: t.amount < 0 })),
+      aiAdjustments: p.adjustments }));
+    assert.equal(mid.ok, true, '★第二層（中閘慣例閘）也放行＝盲點在正式全程都存在（documented）');
+  }
+  // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
+  const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
+    adjustments: [], transactions: [
+      { date: '2026-07-03', postDate: null, desc: '星巴克', amount: 500 },
+      { date: '2026-07-05', postDate: null, desc: '感謝您的支持', amount: -1000 },   // 真身是繳款、字樣抄壞
+    ] };
+  reconcileAiCard(normalizeAiCard(blind));   // 不丟＝盲點如實存在（改成會丟＝這題轉紅提醒重寫劃界）
 });
 
 test('驗算｜加總閘排除繳款列（r1#4，同模板路 finalize／中閘的那把尺）：明細裡有繳款的合法帳單不可誤擋', () => {
@@ -441,12 +532,11 @@ test('驗算｜四格摘要缺任一＝驗算不了＝不收（加嚴的定義�
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed', '★缺格閘被等式閘掩護＝形同不存在');
 });
 
-test('驗算｜容差＝1 元（吸收去尾差；差 2 元就要擋）', () => {
-  const g1 = GOOD(); g1.totals.due = 481;   // 等式差 1 ⇒ 收
-  reconcileAiCard(normalizeAiCard(g1));
-  const g2 = GOOD(); g2.totals.due = 482;   // 差 2 ⇒ 擋
-  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g2))), 'ai_reconcile_failed');
-  assert.equal(CARD_TOLERANCE, 1);
+test('驗算｜容差＝0（裁示①2026-08-30）：分毫不差才收——差 1 元也擋', () => {
+  const g1 = GOOD(); g1.totals.due = 481;   // 等式差 1 ⇒ 首版（容差 1）會收，現在擋
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(g1))), 'ai_reconcile_failed',
+    '★帳單自己是自洽的：整數相加必然全等；留 1 元＝恰差 1 元的漏抄/多抄看不到（Grok 掃#1 的洞由裁示①關上）');
+  assert.equal(CARD_TOLERANCE, 0);
 });
 
 test('提示詞｜四條鐵則與關鍵語意都在（只抄不猜／原文照抄／一列一筆／民國換算；具名列進 adjustments）', () => {

@@ -280,6 +280,8 @@ test('接線｜transactions-import.js 卡片上傳把模組層級鎖／路由序
   // Codex r1#5（批二）：卡片線的送出中字樣與預覽徽章不可借銀行版——單讀沒有仲裁、也沒跑餘額鏈
   assert.match(src, /busyLabel: AI_CONSENT_BUSY_LABEL_CARD/, '卡片同意窗要用卡片版送出中字樣');
   assert.match(src, /aiCardPreviewBadgeHtml\(curR\)/, '卡片預覽要畫卡片版 AI 徽章');
+  assert.match(src, /t\.isAdjustment \? '<span class="tag amber">調整<\/span>'/,
+    'Grok 掃#6：調整列要有自己的標籤——標成「退款」會誤導成店家退款');
   assert.doesNotMatch(src, /\baiPreviewBadgeHtml\(/, '銀行版徽章（餘額鏈／仲裁文案）不准出現在卡片線');
   // 改卡重解析（previewCard.onchange）＝直接 await 後 draw()，非 setTimeout；draw 前要有 onPage 核對（去註解後只剩裸 guard）
   assert.match(src, /const pr = await api\(`\/cards\/\$\{newId\}\/statement\/preview`[\s\S]{0,200}?if \(!onPage\(\)\) return;/,
