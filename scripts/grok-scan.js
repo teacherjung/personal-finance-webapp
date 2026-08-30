@@ -322,7 +322,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；預設＝真的那一支。**只給考題注入。**
  *   為什麼可注入：真金絲雀是**全機共用資源的使用者**——它搶一把住在 BOX_ROOT 的剪貼簿鎖（系統剪貼簿只有一份，
  *   拿不到就整支退 2），並在家目錄／BOX_ROOT／/private/var/tmp／/Users/Shared 各建一個誘餌目錄。
- *   `runScan` 的流程考題每一題都會順帶跑它一次（實測單次 1.1 秒、30 個探針），於是 `node --test` 多檔並行時
+ *   `runScan` 的流程考題**只要走到第②步**就會順帶跑它一次（實測單次 1.1 秒、30 個探針），於是 `node --test` 多檔並行時
  *   互相搶鎖、也在四個共用位置留下殘留。⚠️ 沙箱**是不是真的有效**由金絲雀自己的考題檔證明，不是這裡；
  *   流程考題只需要「金絲雀回什麼、runScan 就怎麼反應」，那正是注入能給的。
  *   ⚠️ 正式路徑（CLI 入口）不傳 deps ⇒ 結構上一定跑真的那一支。

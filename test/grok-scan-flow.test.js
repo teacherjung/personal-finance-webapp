@@ -5,9 +5,9 @@
 // 而不是像第一版那樣：Grok 沒跑、轉送器中途死、零 session——全部退 0。
 //
 // ⚠️ 誠實劃界：
-// ・這些題在**非 macOS** 會在「金絲雀」那一步退 2（沙箱套不上）——那正是 fail-closed，所以
-//   「金絲雀之前」的路徑（版本不符、盒子壞）在 CI 也考得到；「金絲雀之後」的路徑（轉送器、grok、
-//   驗屍）只在 macOS 考得到，其他平台明確 skip。
+// ・非 macOS 上，沙箱套不上 ⇒ **`--version` 檢查**（它在沙箱裡跑、位置在金絲雀之前）就會先停下來；
+//   有 SANDBOX_OK guard 的題直接 skip，沒有 guard 的路徑則停在那一關。所以「沙箱之前」的路徑
+//   （寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -126,7 +126,7 @@ after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, f
 /**
  * 假的第②步金絲雀：流程考題只需要「它回什麼、runScan 就怎麼反應」。
  * 真的那一支是**全機共用資源的使用者**（系統剪貼簿只有一份，搶不到鎖就整支退 2；另在家目錄／BOX_ROOT／
- * /private/var/tmp／/Users/Shared 各建一個誘餌目錄），單次 1.1 秒、30 個探針。本檔每一題都會順帶跑它一次
+ * /private/var/tmp／/Users/Shared 各建一個誘餌目錄），單次 1.1 秒、30 個探針。**走到第②步的題**都會順帶跑它一次
  * ⇒ `node --test` 多檔並行時互相搶鎖、也在四個共用位置留殘留。
  * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
  *   本檔換成假的之後，這裡不再對沙箱有效性提供任何證據，那是刻意的分工，不是把它弄弱。
@@ -565,14 +565,17 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
   assert.ok(!ps.includes(box), `runScan 回來後還有程序帶著盒子路徑在跑：${ps.split('\n').filter((l) => l.includes(box)).join(' | ').slice(0, 200)}`);
 });
 
-test('runScan｜**不注入**時跑的是真金絲雀：summary 裡要有真探針的行（正式接線的守門）', async (t) => {
+test('runScan｜**不注入**時，走到的那一支會印出真探針詞彙的行（擋得住「接線被拿掉或換成空殼」）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  // ⚠️ 為什麼要有這一題：本檔其餘的題都注入假金絲雀，於是「正式路徑真的接著真金絲雀」這件事
-  //    在本檔會失去守門——main 是靠每一題順帶跑真的來隱含保證的（Codex #533 r1 用突變證明：
-  //    把接線改回寫死的真金絲雀之外的任何東西，66 題照樣全綠）。這一題把那份保證變成明確的、
-  //    而且只花一次的 1.1 秒，不是 40 次。
-  // ⚠️ 誠實劃界：它只證明「不注入時跑到的是會印真探針行的那一支」，**不證明**沙箱真的有效
-  //    （那是 test/grok-sandbox.test.js 的事），也不涵蓋 CLI 入口那一行有沒有傳 deps。
+  // ⚠️ 為什麼要有這一題：本檔其餘的題都注入假金絲雀，所以「不注入時到底走到什麼」在本檔沒有別的題會問。
+  //    main 是靠每一題順帶跑真的來隱含帶到（Codex #533 r1 的 N3 突變：把 fallback 換成空輸出替身，
+  //    當時 66 題照樣全綠）。這一題只花一次 1.1 秒、不是 40 次。
+  // ⚠️ **誠實劃界——它守得住什麼、守不住什麼**（Codex #533 r2 的 N3b 反例）：
+  //    ・守得住：fallback 被拿掉、或換成不印那些行的空殼。
+  //    ・**守不住**：換成一支**完全不跑探針、只偽造同形文字**的替身——那樣它照樣綠。
+  //      我評估過「同等強度的身分證據」（函式身分／執行期副作用／耗時），沒有便宜又不 flaky 的做法，
+  //      所以照家規改口，不把這一題稱為「真金絲雀接線的守門」。
+  //    ・也不證明沙箱真的有效（那是 test/grok-sandbox.test.js 的事），不涵蓋 CLI 入口那一行。
   const repo = tinyRepo(); const iso = isolated();
   const { runCanary: _dropped, ...noCanary } = iso;   // 刻意不注入金絲雀
   void _dropped;
