@@ -807,6 +807,33 @@ test('runScan｜假 grok 先把鑰匙形狀寫進盒內 src、再把同一串回
   assert.equal(r.code, 1, `盒內自己種的鑰匙不該讓驗屍放行：${r.summary.join('\n')}`);
 });
 
+test('runScan｜事故訊息要帶得出族別與筆數，而且**一個字元的命中內容都不放**（退 1 不留 sessions，事後只剩這行）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // 退 1 不留 sessions ⇒ 事後能拿來分辨「真破口」與「#516 式假事故」的只有這行字。
+  // 而 repo 是公開的、失敗原因會被抄進 PR 描述 ⇒ 內容一個字元都不能放。
+  {
+    const liveSecret = 'LIVE-CANARY-BRIEF-77c1e0'; const iso = isolated(); const repo = tinyRepo();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `saw ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
+    const s = r.summary.join('\n');
+    assert.equal(r.code, 1, s);
+    assert.match(s, /暗號 1 條/, '沒帶出「命中的是暗號那一族、幾條」');
+    assert.match(s, /形狀 0 條/, '沒帶出形狀那族的筆數');
+    assert.equal(s.includes(liveSecret), false, '事故訊息把暗號本身印出來了——那會被抄進公開的 PR 描述');
+  }
+  {
+    // 形狀那族：樹裡沒有的私鑰形狀 → 要帶出筆數與長度，同樣不得出現內容
+    const body = 'MIIEBRIEFSHAPEKEYBODY' + 'W'.repeat(50);
+    const iso = isolated(); const repo = tinyRepo(); const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\n${body}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    const s = r.summary.join('\n');
+    assert.equal(r.code, 1, s);
+    assert.match(s, /形狀 1 條/, '沒帶出形狀那族的筆數');
+    assert.match(s, /形狀長度 \d+/, '沒帶出形狀命中的長度');
+    assert.equal(s.includes(body), false, '事故訊息把命中內容印出來了');
+  }
+});
+
 test('runScan｜暗號帶正則元字元也照樣抓得到（字面搜尋，不編譯成正則）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // `[` 會讓 new RegExp 當場丟、`.` 會大量誤中、`$` 反而找不到自己。正式路徑的暗號是 base36 碰不到，
