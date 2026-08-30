@@ -878,9 +878,11 @@ test('knownShapeHitsFromTree｜非 ASCII 檔名的 blob 也要讀到（`-z`；�
 test('knownShapeHitsFromTree｜超過單檔上限的 blob 要跳過，**而且要說出跳了誰**（涵蓋缺口不可以悄悄發生）', () => {
   // ⚠️ 這題釘的是「缺口看得見」，不是「缺口不存在」：跳過本身是刻意的（三形階梯會做兩次 JSON.stringify），
   //    但跳過的檔案形狀不進排除集合 ⇒ grok 引用到它就會誤報事故。所以跳了誰一定要能被印出來。
-  const body = 'M'.repeat(SESSION_CAPS.fileBytes);   // 標頭＋這一段就超過上限
+  // ⚠️ 用**注入的小門檻**而不是真的 16 MiB 檔：CI 上 `node --test` 多檔並行，
+  //    真的大檔會配置數十 MB、把隔壁計時型考題壓過門檻（實測本支 2/2 紅、同時段重跑 main 綠）。
+  const body = 'M'.repeat(200);
   const repo = tinyRepo({ firstCommitFiles: { 'big-key.pem': `-----BEGIN RSA PRIVATE KEY-----\n${body}\n` } });
-  const r = knownShapeHitsFromTree(repo.dir, repo.head);
+  const r = knownShapeHitsFromTree(repo.dir, repo.head, 64);
   assert.deepEqual(r.skippedBig, ['big-key.pem'], '跳過的大檔沒有被列出來＝呼叫端印不出缺口');
   assert.equal(r.hits.size, 0, '大檔的形狀不該進排除集合（跳過就是跳過；方向是誤報，不是靜靜放行）');
 });
@@ -898,13 +900,13 @@ test('knownShapeHitsFromTree｜非 blob 的樹項目要跳過（gitlink＝物件
 test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳過的大檔（含「等 N 個」）——缺口要看得見', async () => {
   // ⚠️ 純函式題只證明「回傳值裡有 skippedBig」；把**呼叫端那條記帳**整行拿掉、或只拿掉「等 N 個」，
   //    純函式題都還是綠的（Codex #530 r5 用定點突變證明）。所以這一題直接驗注入的 log 收到的字串。
-  const big = 'M'.repeat(SESSION_CAPS.fileBytes);
+  const big = 'M'.repeat(200);   // 搭配注入的小門檻（理由同上：不要在 CI 上配置大塊記憶體）
   const files = Object.fromEntries(['big1.pem', 'big2.pem', 'big3.pem', 'big4.pem'].map((n) => [n, `-----BEGIN RSA PRIVATE KEY-----\n${big}\n`]));
   const repo = tinyRepo({ firstCommitFiles: files });
   /** @type {string[]} */ const logs = [];
   // ⚠️ 故意讓它在**雜湊檢查**就退場（給錯的 expectedSha256）：記帳那行在更早就印了，
   //    而這樣就不會起轉送器、不會跑沙箱——本題只看那一行，不該把整條掃描流程拖進來。
-  await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), expectedSha256: '0'.repeat(64) });
+  await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), expectedSha256: '0'.repeat(64), maxBlobBytes: 64 });
   const line = logs.find((l) => l.startsWith('（破口已知來源：'));
   assert.ok(line, `記帳那行沒印出來：${logs.slice(0, 3).join(' / ')}`);
   // ⚠️ 用 \d+ 會放過「把數字硬編成任意值」——這裡驗真正的數字：

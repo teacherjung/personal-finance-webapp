@@ -120,9 +120,13 @@ export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d
  *
  * @param {string} repo
  * @param {string} head
+ * @param {number} [maxBlobBytes] 單檔上限；預設 `SESSION_CAPS.fileBytes`。**只給考題注入小門檻**——
+ *   考題若要驗「跳過並說出跳了誰」，用真的 16 MiB 檔會在 CI 上配置數十 MB，而 `node --test` 是**多檔並行**跑的，
+ *   實測把隔壁一支計時型考題壓過門檻（對照組：同時段重跑 main 是綠的，本支 2/2 紅）。
+ *   ⚠️ 預設值本身**沒有考題釘住**：它是記憶體護欄的門檻，改小只會多跳過檔案（＝誤報方向）、改大只會多吃記憶體。
  * @returns {{ hits: Set<string>, blobs: number, bytes: number, bySource: Map<string, number>, skippedBig: string[] }}
  */
-export function knownShapeHitsFromTree(repo, head) {
+export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.fileBytes) {
   // -z：git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，拿去查就 fatal 而掃描器**靜靜跳過**
   //     ——本專案踩過的「掃描器跳過中文檔名」同一個坑。
   const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
@@ -152,7 +156,7 @@ export function knownShapeHitsFromTree(repo, head) {
     bytes += size;
     // 大檔跳過：三形階梯會做兩次 JSON.stringify，大檔瞬間長成數倍。跳過＝那個檔的形狀不進排除集合＝誤報方向。
     // 跳了誰要說出來（呼叫端會印）：不然「涵蓋範圍其實有缺口」就悄悄發生了。
-    if (size > SESSION_CAPS.fileBytes) skippedBig.push(path);
+    if (size > maxBlobBytes) skippedBig.push(path);
     else {
       // 解碼用有損模式（跟日誌側 fatal 的語意刻意不同）：二進位檔解不乾淨頂多少收一條＝誤報方向，不會多排除。
       const raw = out.toString('utf8', start, start + size);
@@ -314,6 +318,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
  *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
+ * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -348,7 +353,7 @@ export async function runScan(args, deps = {}) {
   //     行為題永遠驗不到這一步——Codex #530 r1 實測 CI 因此紅）。
   // ⚠️ 免疫「盒子可寫」靠的是**來源是 git 物件庫**，不是這個位置——搬到別處仍然正確，只是失敗變貴。
   /** @type {ReturnType<typeof knownShapeHitsFromTree>} */ let treeKnown;
-  try { treeKnown = knownShapeHitsFromTree(repo, head); }
+  try { treeKnown = knownShapeHitsFromTree(repo, head, deps.maxBlobBytes); }
   catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
   // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
   // 或悄悄變大（豁免面擴張）都看得見。
