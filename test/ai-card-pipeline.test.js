@@ -223,6 +223,18 @@ test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也�
   assert.equal(tpl.stats.adjFolded, 0, '★模板路恆 0＝前端句子一字不變');
 });
 
+test('★中閘等式容差分路（Grok 掃#1）｜AI 路差 1 元＝擋（裁示①）；模板路照舊 ±1（行為零改變）', async () => {
+  const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
+  const totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 481 };   // 計算值 480、差 1
+  const rows = [{ amount: 450, desc: '星巴克', isPayment: false, isRefund: false }];
+  const ai = reconcileCardStatement(/** @type {any} */ ({ statementTotals: totals, transactions: rows,
+    aiAdjustments: [{ label: '利息', amount: 30 }] }));
+  assert.equal(ai.ok, false, '★兌票只重跑中閘那條路——中閘留 ±1＝差 1 元照收、與 G1 的 0 矛盾');
+  // 模板組沒有 adjSum＝四格要自己差 1（450 vs 451），不能照抄 AI 組（那組差 31）
+  const tpl = reconcileCardStatement(/** @type {any} */ ({ statementTotals: { ...totals, due: 451 }, transactions: rows }));
+  assert.equal(tpl.checks.equation, 'pass', '★模板路照舊 CARD_EPS（差 1 收＝行為零改變）');
+});
+
 test('★中閘提醒（r1#1）｜明細無繳款列卻有退款列＝就地示警（盲點型：繳款被抄成退款恰等於桶）', async () => {
   const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
   const v = reconcileCardStatement(/** @type {any} */ ({
@@ -297,6 +309,16 @@ test('★負的具名調整不是繳款（r8#1）｜「自動扣繳回饋金」�
   const out = await importRows('feib', [rebate], '2026-07', 470);
   assert.equal(out.skipped, 0, '★預覽說會記、寫入就要記——skipped 1 ＝畫面說謊');
   assert.equal(out.imported, 1);
+  // Grok 掃#4：旗標要**入庫**、消費視角的配對尺要看得見——只活在預覽→匯入那一跳的話，
+  // pairRefunds 照 desc 把這筆負回饋金當繳款丟掉＝月度回顧當它沒發生（裁示②只做到查帳那半）
+  const { pairRefunds } = await import('../lib/derive.js');
+  const db = store.load();
+  const saved = (db.transactions || []).find((/** @type {any} */ t) => t.note === '自動扣繳回饋金' || t.storeKey === rebate.storeKey);
+  assert.ok(saved && saved.isAdjustment === true, '★isAdjustment 要寫進資料庫');
+  const { pairs, unmatchedRefunds, rewards } = pairRefunds(db);
+  const inPool = [...(unmatchedRefunds || []), ...(rewards || []), ...((pairs || []).map((/** @type {any} */ p) => p.refund))]
+    .some((/** @type {any} */ t) => t && t.id === saved.id);
+  assert.ok(inPool, '★負的具名調整要進消費視角（退款候選/回饋任一格），不得被繳款 continue 吃掉');
 });
 
 test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {
@@ -370,7 +392,7 @@ test('★調整列逐列 finalize（r2#1）｜同批調整彼此也不得污染�
   assert.notEqual(fee.category, stages.category, '兩列各走各的 categorize（分期攤還含店名＝會被歸進該店分類，這是它自己的事）');
 });
 
-test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；模板路同一組數字仍只提醒（行為零改變）', async () => {
+test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；模板路**同款列差額**仍只提醒（Grok 掃#5：模板組 due 改 450 讓 C1 過——本題射程只在 C2 的擋/不擋，不宣稱四格相同）', async () => {
   const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
   const totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 };
   const rows = [{ amount: 150, desc: '星巴克', isPayment: false, isRefund: false },

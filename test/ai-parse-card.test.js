@@ -464,6 +464,26 @@ test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款�
     assert.ok(msg, '零明細＋摘要有新增＝照樣擋');
     assert.doesNotMatch(msg, /731/, '★不可把摘要原值回聲成「差 731 元」');
   }
+  // Grok 掃#2：G1 在「只有一個等式項非零」時不報差額——「差了 731 元」＝應繳原值回聲
+  {
+    const g = { ...GOOD(), adjustments: [], transactions: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 0, due: 731 } };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg); assert.doesNotMatch(msg, /731/, '★等式差額＝唯一非零那格的原值＝不報');
+  }
+  // Grok 掃#3：淨額恰為 0 的列（+100/−100）＝「消費和差 731」照樣是摘要原值——兩側皆非零才報
+  {
+    const g = { ...GOOD(), adjustments: [],
+      totals: { prevDue: 0, paidAndRefund: 0, newCharges: 731, due: 731 },
+      transactions: [
+        { date: '2026-07-03', postDate: null, desc: '甲', amount: 100 },
+        { date: '2026-07-04', postDate: null, desc: '乙退款', amount: -100 },
+      ] };
+    let msg = '';
+    try { reconcileAiCard(normalizeAiCard(g)); } catch (e) { msg = String(/** @type {any} */ (e).message); }
+    assert.ok(msg); assert.doesNotMatch(msg, /731/, '★A 式淨額 0 那側不報（報了＝回聲 newCharges）');
+  }
   // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
   const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
     adjustments: [], transactions: [

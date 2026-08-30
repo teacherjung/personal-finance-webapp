@@ -254,9 +254,12 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       const dis = t.isPayment;                       // 只有真正繳款不可匯入；退款是要保留的消費抵減
       const isRefund = t.isRefund || (Number(t.amount) < 0 && !t.isPayment);
       const checked = t._checked !== undefined ? t._checked : (!dis && !t.duplicate);   // 沿用使用者勾選，否則重複預設不勾
+      // 調整列自己的標籤（Grok 掃#6）：負的回饋金/折抵標成「退款」會誤導成店家退款——
+      // 它是帳單層級的具名調整（利息/年費/回饋），照實標「調整」（文案草稿、William 可改）
       const status = t.isPayment ? '<span class="tag">繳款</span>'
         : t.duplicate ? '<span class="tag amber">已存在</span>'
-          : isRefund ? '<span class="tag amber">退款</span>' : '<span class="tag green">新</span>';
+          : t.isAdjustment ? '<span class="tag amber">調整</span>'
+            : isRefund ? '<span class="tag amber">退款</span>' : '<span class="tag green">新</span>';
       return `<tr class="${dis ? 'muted' : ''}">
         <td><input type="checkbox" data-row="${i}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}></td>
         <td class="nowrap">${esc(t.date || '')}</td>
