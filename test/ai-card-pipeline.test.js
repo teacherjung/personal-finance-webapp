@@ -223,6 +223,58 @@ test('★中閘摺入｜AI 的 parsed 帶 aiAdjustments ⇒ 等式含利息也�
   assert.equal(tpl.stats.adjFolded, 0, '★模板路恆 0＝前端句子一字不變');
 });
 
+test('★中閘提醒（r1#1）｜明細無繳款列卻有退款列＝就地示警（盲點型：繳款被抄成退款恰等於桶）', async () => {
+  const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
+  const v = reconcileCardStatement(/** @type {any} */ ({
+    statementTotals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
+    transactions: [{ amount: 500, desc: '星巴克', isPayment: false, isRefund: false },
+      { amount: -1000, desc: '感謝您的支持', isPayment: false, isRefund: true }],
+    aiAdjustments: [] }));
+  assert.equal(v.ok, true, '算術上與真退款不可區分＝閘放行（已在檔頭與徽章劃界）');
+  assert.ok(v.advisories.some((/** @type {any} */ p) => p.code === 'card-refund-check'),
+    '★但要就地提醒：沒有繳款列、卻有退款列——請使用者看那幾筆負數');
+  // 有繳款列＝正常形，不亂鳴
+  const ok = reconcileCardStatement(/** @type {any} */ ({
+    statementTotals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 450 },
+    transactions: [{ amount: 450, desc: '星巴克', isPayment: false, isRefund: false },
+      { amount: -1000, desc: '信用卡自動扣繳', isPayment: true, isRefund: false }],
+    aiAdjustments: [] }));
+  assert.equal(ok.ok, true);
+  assert.ok(!ok.advisories.some((/** @type {any} */ p) => p.code === 'card-refund-check'), '繳款有列＝不鳴（狼來了會讓提醒失效）');
+});
+
+test('★調整列分開 finalize（r1#2）｜「國外交易服務費」不得繼承最後一筆消費的分類', async () => {
+  const { categorize } = await import('../lib/statement.js');
+  const pdf = cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'],
+    ['卡號末四碼', '5678'],
+    ['上期應繳總額', '1,000'],
+    ['已繳款退款金額', '1,000'],
+    ['本期新增款項', '500'],
+    ['國外交易服務費', '30'],
+    ['本期應繳總額', '530'],
+    ['2026/07/03', '全聯福利中心', '350'],
+    ['2026/07/10', '星巴克', '150'],
+  ]);
+  const answer = { issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: '2026-07',
+    totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 530 },
+    adjustments: [{ label: '國外交易服務費', amount: 30, date: null }],
+    transactions: [
+      { date: '2026-07-03', postDate: null, desc: '全聯福利中心', amount: 350 },
+      { date: '2026-07-10', postDate: null, desc: '星巴克', amount: 150 },
+    ] };
+  const fe = fakeEngine([answer]);
+  const r = await previewAuto(b64Of(pdf), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const p = await previewForCard('feib', b64Of(pdf), undefined, undefined, { aiTicket: r.aiTicket });   // 列走憑票預覽（同正式 UI 動線）
+  const fee = p.transactions.find((/** @type {any} */ t) => t.desc === '國外交易服務費');
+  const coffee = p.transactions.find((/** @type {any} */ t) => t.desc === '星巴克');
+  assert.ok(fee && coffee);
+  const [expCat] = categorize('國外交易服務費');
+  assert.equal(fee.category, expCat, '★分類走它自己的 categorize——不繼承相鄰消費');
+  assert.notEqual(fee.category, coffee.category, '★尾接消費列一起 finalize 時會繼承星巴克的分類（finalize 的相鄰特例）——分開跑就不會');
+  assert.equal(fee.isAdjustment, true, '標記要通過 finalize 存活（中閘據它跳過列對總額）');
+});
+
 test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；模板路同一組數字仍只提醒（行為零改變）', async () => {
   const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
   const totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 };

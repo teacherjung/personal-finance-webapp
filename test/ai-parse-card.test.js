@@ -418,21 +418,33 @@ test('驗算｜加總閘（慣例閘）：漏抄一筆＝兩種印法都對不�
   assert.doesNotMatch(msg, /450|480|1,?000/, '★不回聲帳單的原始金額（機密紀律；差額是衍生值、單獨回推不出內容）');
 });
 
-test('驗算｜慣例閘（裁示③2026-08-30）：兩種退款印法各自全對才收其一；跨桶抄錯＝兩種都對不上＝擋', () => {
-  // 慣例 B（退款進「已繳款＋退款」桶）：本期新增＝純消費 500、桶＝繳款 1000＋退款 50
+test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款印法各自全對才收其一', () => {
+  // 慣例 B 全列版：桶 1050 ＝ 繳款 1000（有列）＋退款 50（有列）；本期新增＝純消費 500
   const B = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
-    adjustments: [{ label: '循環信用利息', amount: 30, date: null }] };
-  // 等式：1000 − 1050 + 500 + 30 = 480 ✓；明細照舊三筆（繳款只列摘要＝缺席放行）
-  reconcileAiCard(normalizeAiCard(B));
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }],
+    transactions: [...GOOD().transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -1000 }] };
+  reconcileAiCard(normalizeAiCard(B));   // 等式 1000−1050+500+30=480 ✓；B 式 500==500、1000+50==1050 ✓
   // r8 攻擊在 A 慣例下（GOOD）：退款 -50 被抄成繳款字樣 ⇒ 消費和少了退款的抵減、兩式全紅
   const atk = GOOD(); atk.transactions[2] = { ...atk.transactions[2], desc: '信用卡自動扣繳' };
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(atk))), 'ai_reconcile_failed',
-    '★退款被抄成繳款＝跨桶＝擋（r8 的洞由裁示③關上；桶內互抄仍分不出、徽章照實揭露）');
-  // 繳款有列出來就要對得上（缺席放行只給 payAbs===0）
+    '★退款被抄成繳款（A 慣例）＝擋——這是慣例閘真正擋得住的那一型');
+  // 繳款有列出來就要對得上（A 的缺席放行只給 payAbs===0）
   const listed = GOOD(); listed.totals.paidAndRefund = 1000;
   listed.transactions = [...listed.transactions, { date: '2026-07-05', postDate: null, desc: '信用卡自動扣繳', amount: -999 }];
   assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(listed))), 'ai_reconcile_failed',
     '★繳款列有印（-999）就要對上摘要的 1000——差 1 也擋（容差 0）');
+  // r1#1 的收緊：B 的「不等式缺席放行」拿掉——桶裡有沒列的繳款＋有列的退款＝混桶、驗不了＝擋
+  const partial = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }] };
+  assert.equal(codeOf(() => reconcileAiCard(normalizeAiCard(partial))), 'ai_reconcile_failed',
+    '★refundAbs(50)≠桶(1050) 且繳款缺席——舊版不等式會放行、r1#1 攻擊正是鑽這條（fail-closed 誤擋照實認）');
+  // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
+  const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
+    adjustments: [], transactions: [
+      { date: '2026-07-03', postDate: null, desc: '星巴克', amount: 500 },
+      { date: '2026-07-05', postDate: null, desc: '感謝您的支持', amount: -1000 },   // 真身是繳款、字樣抄壞
+    ] };
+  reconcileAiCard(normalizeAiCard(blind));   // 不丟＝盲點如實存在（改成會丟＝這題轉紅提醒重寫劃界）
 });
 
 test('驗算｜加總閘排除繳款列（r1#4，同模板路 finalize／中閘的那把尺）：明細裡有繳款的合法帳單不可誤擋', () => {
