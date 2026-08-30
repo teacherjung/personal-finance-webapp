@@ -157,6 +157,21 @@ test('套用＋重現｜r1#2：具名調整同列印了日期就抄；日期不�
   assert.equal(cardRecipeReproduces(e, a2).ok, false, '★調整日期不同＝重現關要紅');
 });
 
+test('套用｜r3#1/#2：全形相容日期＝old 趟拒解（不准當雜訊）、new 趟 NFKC 後解得動；入帳日漂移也拒解', () => {
+  // 全形日期列插進明細區：old 趟（逐字）解不動、但**長得像日期**＝拒解不跳過（互抵漏抄的門）
+  const fw = LINES().map((l) => l);
+  fw.splice(10, 0, ['２０２６／０７／０４', '２０２６／０７／０５', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(fw, /** @type {any} */ (GOOD()), { ruler: 'old' })), 'recipe_parse_failed',
+    '★old 趟：全形日期＝漂移拒解——當雜訊跳過＝一正一負互抵從這裡漏');
+  const answer = parseCardWithRecipe(fw, /** @type {any} */ (GOOD()), { ruler: 'new' });
+  assert.equal(answer.transactions.length, 4, '★new 趟：NFKC 把全形折回 ASCII＝那一列照收（兩把尺協定的意義）');
+  // 入帳日（第二格）漂成不補零＝拒解、不得降級成「說明文字」（r3#2：日期會污染店名與去重身分）
+  const drift2 = LINES().map((l) => l);
+  drift2.splice(10, 0, ['2026/07/04', '2026/7/5', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(drift2, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★第二格長得像日期但解不動＝同樣是漂移');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
@@ -165,6 +180,9 @@ test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點�
   const g2 = GOOD(); g2.bank = '星巴克';   // r1#3：bank 也是槽位——店名進 bank 一樣是內容入卡
   assert.ok(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (g2), answer).length > 0,
     '★店名存進 bank＝長期留在共用櫃並被面板投影送到前端');
+  const g3 = GOOD(); g3.bank = '憑空商業銀行';   // r3#5：bank 也要接地
+  assert.ok(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (g3), answer).length > 0,
+    '★帳單上找不到的機構名＝憑空的字不入卡（存了會長期顯示給使用者）');
   assert.equal(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (GOOD()), answer).length, 0, '全對的卡要過');
 });
 

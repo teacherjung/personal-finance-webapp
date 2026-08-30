@@ -646,3 +646,24 @@ test('★疑似過期鎖同櫃（r2#4）｜卡片票的失靈名單撞到銀行�
   markRecipesSuspect(/** @type {any} */ (db), ['same-id'], '2099-01-01T00:00:00.000Z');   // 銀行線自己動自己＝照舊
   assert.equal(db.parseRecipes[0].suspect, true, '銀行線（缺席 kind 預設 bank）行為零改變');
 });
+
+test('★畢業計數鎖同櫃（r3#3）｜卡片票的 recipeUse 撞到銀行同 id 同內容列＝不動它', async () => {
+  const { recordRecipeApplied } = await import('../lib/services/bank-import.js');
+  const db = { parseRecipes: [
+    { id: 'same-id2', bank: '台新', current: { x: 1 }, graduateStreak: 4, graduated: false, suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+  ] };
+  recordRecipeApplied(/** @type {any} */ (db), { id: 'same-id2', usedVersion: 'current', currentMatched: true, usedRecipe: { x: 1 }, imported: 3 }, 'card');
+  assert.equal(db.parseRecipes[0].graduateStreak, 4, '★卡片線不可把銀行列的 streak 推到 5＝畢業（跨櫃污染）');
+  recordRecipeApplied(/** @type {any} */ (db), { id: 'same-id2', usedVersion: 'current', currentMatched: true, usedRecipe: { x: 1 }, imported: 3 });
+  assert.equal(db.parseRecipes[0].graduateStreak, 5, '銀行線（預設 bank）行為零改變');
+  assert.equal(db.parseRecipes[0].graduated, true);
+});
+
+test('★kind 是封閉枚舉（r3#4）｜備份塞 kind:"cadr" ＝驗證擋下，不得靜默當成銀行列', async () => {
+  const { validateImportItem } = await import('../lib/schema.js');
+  const base = { id: 'rcp-1', current: { x: 1 } };
+  assert.ok(validateImportItem('parseRecipes', { ...base, kind: 'cadr' }).errors.length > 0,
+    '★kind 是兩櫃唯一的分流鍵——拼錯值靜默通過＝靜默改櫃');
+  assert.equal(validateImportItem('parseRecipes', { ...base, kind: 'card' }).errors.length, 0);
+  assert.equal(validateImportItem('parseRecipes', base).errors.length, 0, '缺席＝銀行（既有備份零改變）');
+});
