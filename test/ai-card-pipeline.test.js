@@ -275,6 +275,41 @@ test('★調整列分開 finalize（r1#2）｜「國外交易服務費」不得�
   assert.equal(fee.isAdjustment, true, '標記要通過 finalize 存活（中閘據它跳過列對總額）');
 });
 
+test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {
+  const mk = (/** @type {any} */ adjDate, /** @type {any} */ month) => ({
+    issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: month,
+    totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 530 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: adjDate }],
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '全聯福利中心', amount: 500 }] });
+  const pdf = (/** @type {string[][]} */ extra) => cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'], ['卡號末四碼', '5678'],
+    ['上期應繳總額', '1,000'], ['已繳款退款金額', '1,000'], ['本期新增款項', '500'],
+    ['循環信用利息', '30'], ['本期應繳總額', '530'],
+    ['2026/07/03', '全聯福利中心', '500'], ...extra,
+  ]);
+  const rowOf = async (/** @type {any} */ answer, /** @type {any} */ p0) => {
+    const fe = fakeEngine([answer]);
+    const r = await previewAuto(b64Of(p0), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+    const p = await previewForCard('feib', b64Of(p0), undefined, undefined, { aiTicket: r.aiTicket });
+    return p.transactions.find((/** @type {any} */ t) => t.desc === '循環信用利息');
+  };
+  assert.equal((await rowOf(mk('2026-07-15', '2026-07'), pdf([['2026/07/15', '利息列印日']]))).date, '2026-07-15', '★列印了日期＝用它');
+  assert.equal((await rowOf(mk(null, '2026-07'), pdf([]))).date, '2026-07-01', '★沒印列日期＝期別 1 號');
+  assert.equal((await rowOf(mk(null, null), pdf([]))).date, '2026-07-03', '★連期別都沒有＝最新明細日');
+  // 三者皆無＝照實不收（fail-closed，不靜靜丟、不亂編日期）——零明細帳單：新增 0、應繳＝利息 30
+  const corner = { issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: null,
+    totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 0, due: 30 },
+    adjustments: [{ label: '循環信用利息', amount: 30, date: null }], transactions: [] };
+  const cornerPdf = cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'], ['卡號末四碼', '5678'],
+    ['上期應繳總額', '1,000'], ['已繳款退款金額', '1,000'], ['本期新增款項', '0'],
+    ['循環信用利息', '30'], ['本期應繳總額', '30'],
+  ]);
+  const fe = fakeEngine([corner]);
+  await assert.rejects(() => previewAuto(b64Of(cornerPdf), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() }),
+    /記不了帳|沒印日期/);
+});
+
 test('★調整列逐列 finalize（r2#1）｜同批調整彼此也不得污染：「星巴克分期攤還」後的服務費不歸咖啡', async () => {
   const { categorize } = await import('../lib/statement.js');
   const pdf = cjkPdf([

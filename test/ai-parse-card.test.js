@@ -119,6 +119,15 @@ test('驗收｜desc 走 normalizeDesc（裁示③）：同一店名不同空白�
     '★AI 兩次讀同一份差一個空白就變兩筆——這正是裁示③要擋的');
 });
 
+test('驗收｜調整列 label 走 normalizeDesc（r3#1；同裁示③店名）：空白漂移不得產生兩個 stmtRef', () => {
+  const g1 = GOOD(); g1.adjustments = [{ label: '循環信用利息', amount: 30, date: null }];
+  const g2 = GOOD(); g2.adjustments = [{ label: '循環  信用　利息', amount: 30, date: null }];
+  assert.equal(normalizeAiCard(g1).adjustments[0].label, normalizeAiCard(g2).adjustments[0].label,
+    '★同一筆利息兩種空白寫法＝同一個字串——否則重匯時 stmtRef 分岔＝利息重複記帳');
+  const g3 = GOOD(); g3.adjustments = [{ label: '   ', amount: 30, date: null }];
+  assert.equal(codeOf(() => normalizeAiCard(g3)), 'ai_bad_answer', '清完只剩空＝拒收');
+});
+
 test('接地｜答案卷上的每個金額都要在原文出現過：臆測的金額＝ai_bad_answer', () => {
   const g = GOOD(); g.transactions[0].amount = 151;   // 原文只有 150
   const p = normalizeAiCard(g);
