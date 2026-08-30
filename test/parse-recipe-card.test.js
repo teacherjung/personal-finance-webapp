@@ -262,6 +262,17 @@ test('套用｜r9#1：無分隔日期（20260704／1150704）也是申報形＝�
   assert.equal(answer.transactions.length, 3, '8 位大金額的雜訊列不得被誤判成日期漂移');
 });
 
+test('套用｜r10#1：日期與店名併成同一格（2026/07/04 甲店）＝申報形拒解，不得當雜訊', () => {
+  const merged = LINES().map((l) => l);
+  merged.splice(10, 0, ['2026/07/04 甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(merged, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★抽字併格是 card-identity 記載過的真實形——跳過＝互抵漏抄；整格純日期與雜訊列行為不變');
+  // 雜訊仍是雜訊：非日期開頭的併字格照跳（頁次 1/2 在 LINES 既有、此處再驗一個含斜線的）
+  const noise = LINES().map((l) => l);
+  noise.splice(10, 0, ['共 2/3 頁']);
+  assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3, '非日期開頭＝照舊跳過');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
