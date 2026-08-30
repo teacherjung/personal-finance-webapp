@@ -32,7 +32,7 @@ const EXPECTED_BOX_AUTH_FIELDS = ['auth_mode', 'create_time', 'expires_at', 'key
 
 /** 一個最小的真 git repo（有一顆 commit），當 runScan 的 repo。 */
 function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o = {}) {
-  const d = mkdtempSync(join(tmpdir(), 'grok-flow-repo-'));
+  const d = keep(mkdtempSync(join(tmpdir(), 'grok-flow-repo-')));
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', d, ...a], { encoding: 'utf8', env: CLEAN_ENV });
   git(['init', '-q']);
   writeFileSync(join(d, 'a.txt'), 'hello\n');
@@ -58,7 +58,7 @@ function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o
  * 預設寫一個會把 session 日誌寫進 $GROK_HOME/sessions/ 的假 grok（驗屍要讀得到）。
  */
 function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean }} */ o = {}) {
-  const d = mkdtempSync(join(tmpdir(), 'fake-grok-install-'));
+  const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
   const session = o.noSession ? '' : `
@@ -74,7 +74,7 @@ exit ${o.status ?? 0}
 
 /** 假轉送器：印 READY 然後活著；或照指定行為死掉。 */
 function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok') {
-  const d = mkdtempSync(join(tmpdir(), 'fake-relay-'));
+  const d = keep(mkdtempSync(join(tmpdir(), 'fake-relay-')));
   const p = join(d, 'relay.js');
   writeFileSync(p, mode === 'die-before-ready' ? 'process.exit(1);'
     : mode === 'die-after-ready' ? "process.stdout.write('READY 1\\n'); setTimeout(() => process.exit(1), 200);"
@@ -83,7 +83,7 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
 }
 
 /** @param {string} [extra] 附加到指示檔內容後面；指示檔會進 materials，**永遠不會進受掃樹**——要單獨考「材料那條路」就靠它 */
-function promptFile(extra) { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n' + (extra ?? '')); return p; }
+function promptFile(extra) { const d = keep(mkdtempSync(join(tmpdir(), 'fake-prompt-'))); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n' + (extra ?? '')); return p; }
 /**
  * isolated() 建過的暫存根，跑完整支考題檔一起清。
  * ⚠️ **這三個根本身 `runScan` 不會刪**（它只清自己在根底下建的東西；盒子根本不住這裡，是在 BOX_ROOT）——
@@ -819,6 +819,8 @@ test('runScan｜事故訊息要帶得出族別與筆數，而且**一個字元�
     assert.match(s, /暗號 1 條/, '沒帶出「命中的是暗號那一族、幾條」');
     assert.match(s, /形狀 0 條/, '沒帶出形狀那族的筆數');
     assert.equal(s.includes(liveSecret), false, '事故訊息把暗號本身印出來了——那會被抄進公開的 PR 描述');
+    // ⚠️ 斷言只涵蓋「完整命中值不回聲」；只洩前綴這題抓不到（照實劃界，不寫成「一個字元都不放」）。
+    assert.match(s, /形狀那族＝剝完行號記號後仍不在本次排除集合裡/, '尾句改回「不在 head 樹裡」那種不成立的話也不會紅');
   }
   {
     // 形狀那族：樹裡沒有的私鑰形狀 → 要帶出筆數與長度，同樣不得出現內容
@@ -855,8 +857,7 @@ test('runScan｜活金絲雀的暗號逐字 commit 在受掃樹裡，出現在�
 
 test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純函式，平台無關，CI 也跑）', () => {
   const repo = tinyRepo();
-  // ⚠️ 這題**刻意不經 runScan**：非 macOS 上 runScan 會先在版本檢查那一關退場（沙箱套不上），
-  //    永遠走不到已知來源這一步，掛在 runScan 上的話 CI 會紅在完全無關的地方（r1 實測）。
+  // 這題直接打純函式：失敗形狀與訊息不必經過整條掃描流程就驗得到（接線由下一題跨平台驗）。
   assert.throws(() => knownShapeHitsFromTree(repo.dir, 'f'.repeat(40)), /ls-tree/, '查不到的 head 應該 throw');
   // 回空集合＝安靜退化成修法之前的行為，比丟例外糟：那會讓 #516 的假事故重新出現而沒人知道
   const ok = knownShapeHitsFromTree(repo.dir, repo.head);
@@ -865,7 +866,7 @@ test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純�
 });
 
 test('knownShapeHitsFromTree｜非 ASCII 檔名的 blob 也要讀到（`-z`；不然掃描器會靜靜跳過中文檔名）', () => {
-  // 這個 repo 本來就有 19 個中文檔名。git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，
+  // 這個 repo 本來就有中文檔名。git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，
   // 沒有 -z 的話那些檔會查不到而被**靜靜跳過**——排除集合少一塊、引用到就誤報事故。
   const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIECJKNAMEKEYBODY' + 'Q'.repeat(50)}\n`;
   const repo = tinyRepo({ firstCommitFiles: { '中文檔名-鑰匙.pem': key } });
@@ -906,8 +907,10 @@ test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳�
   await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), expectedSha256: '0'.repeat(64) });
   const line = logs.find((l) => l.startsWith('（破口已知來源：'));
   assert.ok(line, `記帳那行沒印出來：${logs.slice(0, 3).join(' / ')}`);
-  assert.match(line, /head 樹 \d+ 個 blob/, '沒印 blob 數');
-  assert.match(line, /形狀命中 \d+ 條/, '沒印命中數');
+  // ⚠️ 用 \d+ 會放過「把數字硬編成任意值」——這裡驗真正的數字：
+  //    tinyRepo 的第一顆 commit＝a.txt＋tree-only.txt＋四個大檔＝6 個 blob；大檔全跳過 ⇒ 形狀命中 0 條。
+  assert.match(line, /head 樹 6 個 blob/, 'blob 數不對（或只印了外形）');
+  assert.match(line, /形狀命中 0 條/, '命中數不對（大檔跳過了就不該有命中）');
   assert.match(line, /4 個超過單檔上限沒讀/, '沒印跳過幾個大檔');
   assert.match(line, /等 4 個/, '跳過清單被截成前三個卻沒說還有更多');
 });
