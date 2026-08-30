@@ -667,3 +667,16 @@ test('★kind 是封閉枚舉（r3#4）｜備份塞 kind:"cadr" ＝驗證擋下�
   assert.equal(validateImportItem('parseRecipes', { ...base, kind: 'card' }).errors.length, 0);
   assert.equal(validateImportItem('parseRecipes', base).errors.length, 0, '缺席＝銀行（既有備份零改變）');
 });
+
+test('★重生守門缺席≡bank（r4#6）｜顯式 kind:"bank" 的列、銀行重生省略 kind＝照樣重生（不誤判跨櫃另建）', async () => {
+  const { saveParseRecipe } = await import('../lib/repo.js');
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-bankZ', bank: '台新', kind: 'bank', current: { x: 1 }, graduateStreak: 2, graduated: false,
+    suspect: true, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  const out = await saveParseRecipe(/** @type {any} */ ({ y: 2 }), { rebirthId: 'rcp-bankZ', notAfter: '2099-01-01T00:00:00.000Z' });
+  assert.equal(out.rebirth, true, '★缺席 kind 與顯式 bank ＝同一櫃——誤判跨櫃會另建重複列、疑似卡留著');
+  const rows = store.load().parseRecipes || [];
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].current, { y: 2 });
+});

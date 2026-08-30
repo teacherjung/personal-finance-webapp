@@ -172,6 +172,29 @@ test('套用｜r3#1/#2：全形相容日期＝old 趟拒解（不准當雜訊）
     '★第二格長得像日期但解不動＝同樣是漂移');
 });
 
+test('嚴格驗證｜r4#1：四格標籤兩兩相異——共用標籤＝下一期四格分家時全讀成同一格', () => {
+  const g = GOOD(); g.totalsLabels = { prevDue: '本期新增款項', paidAndRefund: '已繳款退款金額', newCharges: '本期新增款項', due: '本期應繳總額' };
+  assert.ok(validateCardRecipeStrict(g).length > 0, '★prevDue 與 newCharges 共用標籤要在出生第一關就擋');
+});
+
+test('套用｜r4#2/#3/#4：帶空白的全形日期＝old 拒解；交易列撞停止錨＝拒解；單日期形多出日期欄＝拒解', () => {
+  // r4#2：全形＋字內空白（２０２６ ／ ０７ ／ ０４）——old 趟不得當雜訊
+  const fw = LINES().map((l) => l);
+  fw.splice(10, 0, ['２０２６ ／ ０７ ／ ０４', '２０２６ ／ ０７ ／ ０５', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(fw, /** @type {any} */ (GOOD()), { ruler: 'old' })), 'recipe_parse_failed',
+    '★帶空白的全形日期＝漂移拒解（尺會去空白、偵測也要）');
+  // r4#3：交易列的某格恰等於停止錨——先 break 會吞掉該列與其後（互抵漏抄）＝拒解
+  const clash = LINES().map((l) => l);
+  clash.splice(10, 0, ['2026/07/04', '2026/07/05', '本期消費小計', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(clash, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★日期開頭又撞停止錨＝分不出交易還是收尾＝整份拒解');
+  // r4#4：單日期版面長出第二個日期欄＝拒解不併進說明
+  const g = GOOD(); g.detail = { headerAnchor: '交易日期', rowShape: 'date-desc-amount', stopAnchors: ['本期消費小計'] };
+  const grown = LINES().map((l) => (l[0] === '2026/07/03' ? ['2026/07/03', '2026/07/05', '星巴克', '150'] : l));
+  assert.equal(codeOf(() => parseCardWithRecipe(grown, /** @type {any} */ (g))), 'recipe_parse_failed',
+    '★第二格長得像日期＝版面變了該重學，不得把日期污染進店名');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
@@ -183,6 +206,12 @@ test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點�
   const g3 = GOOD(); g3.bank = '憑空商業銀行';   // r3#5：bank 也要接地
   assert.ok(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (g3), answer).length > 0,
     '★帳單上找不到的機構名＝憑空的字不入卡（存了會長期顯示給使用者）');
+  // r4#5：new 趟的全形日期交易列也要被認成交易列——錨點釘在它上面照樣要擋
+  const fwLines = LINES().map((l) => l);
+  fwLines.splice(10, 0, ['２０２６／０７／０４', '２０２６／０７／０５', '星巴克門市', '100']);
+  const g4 = GOOD(); g4.docAnchors = ['信用卡帳單', '星巴克門市'];
+  assert.ok(validateCardRecipeAgainstStatement(fwLines, /** @type {any} */ (g4), answer, { ruler: 'new' }).length > 0,
+    '★交易列判定要走該趟的尺＋寬日期偵測——否則內容牆被全形交易列旁路');
   assert.equal(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (GOOD()), answer).length, 0, '全對的卡要過');
 });
 
