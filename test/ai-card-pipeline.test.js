@@ -321,6 +321,17 @@ test('★負的具名調整不是繳款（r8#1）｜「自動扣繳回饋金」�
   assert.ok(inPool, '★負的具名調整要進消費視角（退款候選/回饋任一格），不得被繳款 continue 吃掉');
 });
 
+test('★isAdjustment 是登記過型別的服務欄位（Codex r11）：還原塞 "false" 字串＝淨化成 false，不得 truthy 誤豁免繳款', async () => {
+  // 還原路的規矩是**寬容淨化**不是拒收（異常輸入防線：合法舊資料不可因升級被刪）——
+  // 危險的是「沒登記＝原樣收回」：'false' 字串是 truthy，pairRefunds 會把普通自動繳款改列成未對應退款。
+  const { validateImportItem } = await import('../lib/schema.js');
+  const base = { id: 'x', date: '2026-07-01', type: 'expense', category: '餐飲', amount: -1000 };
+  assert.equal(validateImportItem('transactions', { ...base, isAdjustment: 'false' }).item.isAdjustment, false,
+    '★"false" 字串要被淨化成布林 false（沒登記型別＝原樣收回＝truthy 誤豁免）');
+  assert.equal(validateImportItem('transactions', { ...base, isAdjustment: true }).item.isAdjustment, true, '真 boolean 原樣保留');
+  assert.ok(!('isAdjustment' in validateImportItem('transactions', base).item), '缺席不憑空長出欄位（既有列零改變）');
+});
+
 test('★調整列日期鏈（r3#3）｜三環各自有行為斷言：列印日期 → 期別 1 號 → 最新明細日；三者皆無＝不收', async () => {
   // 兩筆明細、日期一前一後（r4#2：只放一筆分不出「最新」「第一筆」「任一筆」——sort().pop()
   // 突變成取第一筆時考題要會紅）
