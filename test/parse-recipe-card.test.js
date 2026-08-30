@@ -195,6 +195,19 @@ test('套用｜r4#2/#3/#4：帶空白的全形日期＝old 拒解；交易列撞
     '★第二格長得像日期＝版面變了該重學，不得把日期污染進店名');
 });
 
+test('套用｜r5#1：日期漂到後格（版面前面多長一欄）＝拒解不跳過；嚴格驗證 r5#2：取值標籤全域相異', () => {
+  // 「持卡人、交易日、入帳日、店名、金額」形＝日期不在首格——當雜訊跳過＝互抵漏抄同一扇門
+  const shifted = LINES().map((l) => l);
+  shifted.splice(10, 0, ['王小明', '2026/07/04', '2026/07/05', '甲店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(shifted, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★整列任何一格帶日期形＝申報形——不在首格＝版面形狀與規則卡不符＝整份拒解');
+  // r5#2：lastFourLabel 兼用摘要標籤＝下一期把應繳金額當末四碼（候選縮成錯的卡）
+  const g = GOOD(); g.lastFourLabel = '本期應繳總額';
+  assert.ok(validateCardRecipeStrict(g).length > 0, '★取值標籤（含末四碼/期別/調整）與四格全域兩兩相異');
+  const g2 = GOOD(); g2.adjustmentLabels = ['本期新增款項'];
+  assert.ok(validateCardRecipeStrict(g2).length > 0, '★調整標籤共用摘要標籤＝同一格被摺兩次');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名

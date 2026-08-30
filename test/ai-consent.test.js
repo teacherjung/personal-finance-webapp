@@ -557,6 +557,8 @@ test('批二｜aiConsentBodyHtml 的 card 變體：單讀說明取代雙讀、�
   assert.ok(card.includes('單讀'), 'card 要講單讀');
   assert.ok(card.includes('逐筆驗算'), 'card 要講驗算閘（裁示①）');
   assert.ok(card.includes('卡號末四碼'), 'card 的送出內容講卡片欄位');
+  assert.ok(card.includes('再花一發'), '★批四 r5#3：出生那一發要在同意窗照實講——「最多兩發」只講讀取＝費用說明不實');
+  assert.ok(card.includes('免費'), '學成規則卡之後免費也要講（這是使用者同意多花那一發的理由）');
   assert.ok(bank.includes('帳號末碼'), 'bank 的送出內容不變');
 });
 
