@@ -931,7 +931,8 @@ test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台�
   assert.equal(stripLineMarkers('a\\\\\\\\\\n12→b'), 'a\\\\\\\\\\n12→b', '從反斜線串中段開始比對＝誤剝');
   // ⚠️ 誠實劃界：正文裡字面的 `\n12→` 與真記號分不出來，這一格照實斷言「會被剝掉」，不假裝守得住
   assert.equal(stripLineMarkers('x\\n12→y'), 'x\\ny', '這是已知的過度剝除，改行為要連同註解的劃界一起改');
-  // 記號落在標頭之後時 `→` 不在破口正則的字元類裡 ⇒ 整條不匹配＝真鑰匙靜靜放行；剝完才看得見
+  // `→` 不在破口正則的字元類裡：記號落在 `{32,}` **湊滿之前**時整條不匹配＝真鑰匙靜靜放行，剝完才看得見。
+  // ⚠️ 條件是「湊滿之前」，**不是**「標頭之後」——先湊滿 32 個合法字元、記號落在那之後仍然命中（Codex #530 r8 的反例）。
   const keyWithMarker = `-----BEGIN RSA PRIVATE KEY-----\n10→${'MIIEREALKEYBODY' + 'A'.repeat(50)}`;
   assert.equal(shapeHitsIn(keyWithMarker).length, 0, '前提變了：帶記號時本來就抓得到，這題的理由要重寫');
   assert.equal(shapeHitsIn(stripLineMarkers(keyWithMarker)).length, 1, '剝完仍抓不到＝靜默漏放沒被修掉');
