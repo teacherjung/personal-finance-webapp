@@ -273,6 +273,22 @@ test('套用｜r10#1：日期與店名併成同一格（2026/07/04 甲店）＝�
   assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3, '非日期開頭＝照舊跳過');
 });
 
+test('套用｜r11#1：日期後緊接數字的併格（7-ELEVEN 店名／第二個日期）＝申報形拒解，剝空白不得吃掉 token 邊界', () => {
+  // 互抵成對插入＝r11 對抗重現的原形：跳過的話驗算照樣平、靜默漏帳
+  const digitStore = LINES().map((l) => l);
+  digitStore.splice(10, 0, ['2026/07/04 7-ELEVEN', '100'], ['2026/07/05 7-ELEVEN 退', '-100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(digitStore, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★數字開頭店名：剝空白黏成「…047-ELEVEN」＝(?!\\d) 不成立——原樣形（空白＝邊界）必須也測');
+  const doubleDate = LINES().map((l) => l);
+  doubleDate.splice(10, 0, ['2026/07/04 2026/07/05 甲店', '100'], ['2026/07/06 2026/07/07 甲店退', '-100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(doubleDate, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★兩個日期併一格同理（剝空白＝日期黏日期）');
+  // 無分隔日期＋空白＋店名：BARE 形也吃原樣邊界
+  const bareStore = LINES().map((l) => l);
+  bareStore.splice(10, 0, ['20260704 乙店', '100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(bareStore, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
