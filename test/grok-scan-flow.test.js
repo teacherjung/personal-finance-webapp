@@ -16,7 +16,7 @@ import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST } from '../scripts/grok-scan.js';
+import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -31,15 +31,18 @@ const CLEAN_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', 
 const EXPECTED_BOX_AUTH_FIELDS = ['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id'];
 
 /** 一個最小的真 git repo（有一顆 commit），當 runScan 的 repo。 */
-function tinyRepo() {
-  const d = mkdtempSync(join(tmpdir(), 'grok-flow-repo-'));
+function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o = {}) {
+  const d = keep(mkdtempSync(join(tmpdir(), 'grok-flow-repo-')));
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', d, ...a], { encoding: 'utf8', env: CLEAN_ENV });
   git(['init', '-q']);
   writeFileSync(join(d, 'a.txt'), 'hello\n');
   writeFileSync(join(d, 'tree-only.txt'), 'TREE-ONLY-PUBLIC-VALUE\n');   // 兩顆 commit 都有、不在 diff 裡＝只在樹裡
   mkdirSync(join(d, 'node_modules', 'eslint'), { recursive: true });
   writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
-  git(['add', 'a.txt', 'tree-only.txt']);
+  // firstCommitFiles：進**第一顆 commit**＝在 base 之前 ⇒ 在 head 樹裡、不在 base..head 的 diff 裡。
+  // 預設不傳：把鑰匙形狀塞進共用夾具會讓每一題的樹都帶著它，反而遮蔽別的題。
+  for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) writeFileSync(join(d, name), body);
+  git(['add', 'a.txt', 'tree-only.txt', ...Object.keys(o.firstCommitFiles ?? {})]);
   git(['commit', '-q', '-m', 'one']);
   const head = git(['rev-parse', 'HEAD']).trim();
   writeFileSync(join(d, 'a.txt'), 'hello world\n');
@@ -55,7 +58,7 @@ function tinyRepo() {
  * 預設寫一個會把 session 日誌寫進 $GROK_HOME/sessions/ 的假 grok（驗屍要讀得到）。
  */
 function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean }} */ o = {}) {
-  const d = mkdtempSync(join(tmpdir(), 'fake-grok-install-'));
+  const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
   const session = o.noSession ? '' : `
@@ -71,7 +74,7 @@ exit ${o.status ?? 0}
 
 /** 假轉送器：印 READY 然後活著；或照指定行為死掉。 */
 function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok') {
-  const d = mkdtempSync(join(tmpdir(), 'fake-relay-'));
+  const d = keep(mkdtempSync(join(tmpdir(), 'fake-relay-')));
   const p = join(d, 'relay.js');
   writeFileSync(p, mode === 'die-before-ready' ? 'process.exit(1);'
     : mode === 'die-after-ready' ? "process.stdout.write('READY 1\\n'); setTimeout(() => process.exit(1), 200);"
@@ -79,7 +82,8 @@ function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ 
   return p;
 }
 
-function promptFile() { const d = mkdtempSync(join(tmpdir(), 'fake-prompt-')); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n'); return p; }
+/** @param {string} [extra] 附加到指示檔內容後面；指示檔會進 materials，**永遠不會進受掃樹**——要單獨考「材料那條路」就靠它 */
+function promptFile(extra) { const d = keep(mkdtempSync(join(tmpdir(), 'fake-prompt-'))); const p = join(d, 'p.txt'); writeFileSync(p, '【界線】測試用\n' + (extra ?? '')); return p; }
 /**
  * isolated() 建過的暫存根，跑完整支考題檔一起清。
  * ⚠️ **這三個根本身 `runScan` 不會刪**（它只清自己在根底下建的東西；盒子根本不住這裡，是在 BOX_ROOT）——
@@ -734,16 +738,18 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
   }
 });
 
-test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含私鑰標頭字面）→ 不算事故；不在材料裡的同形狀仍是 1（#500 第一次正式掃描誤中自己）', async (t) => {
+test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含私鑰字面、head 樹裡沒有）→ 不算事故；材料裡沒有的同形狀仍是 1（#500 第一次正式掃描誤中自己；材料那條路）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  // repo 的 head 多一個檔，內容就是破口考題的字面——那會進 diff＝進材料
-  const repo = tinyRepo();
-  const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
-  // 假鑰放進 repo 的 head（跨行＝真鑰的樣子；進 diff 後每行多一個 `+`）
+  // ⚠️ 假鑰要落在「**只有材料有、樹裡沒有**」的位置，否則樹那條排除路會把這題一起變綠＝兩道護欄互相遮蔽
+  //    （原版把它 commit 進 head，於是材料那條整個壞掉這題也照樣綠——Codex #530 r1 用突變證明過）。
+  //    做法：base 有這個檔、head **刪掉**它 ⇒ 內容以 `-` 開頭的行出現在 diff 裡、而 head 樹裡沒有。
+  //    diff 行首那個記號正是 `unprefixed` 那半在還原的東西，所以這題也順便守著它。
   const keyLines = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIEFAKEFIXTUREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '-----END RSA PRIVATE KEY-----'];
-  writeFileSync(join(repo.dir, 'fixture.txt'), `a test fixture key:\n${keyLines.join('\n')}\n`);
-  git(['add', 'fixture.txt']); git(['commit', '-q', '-m', 'fixture']);
+  const repo = tinyRepo({ firstCommitFiles: { 'fixture.txt': `a test fixture key:\n${keyLines.join('\n')}\n` } });
+  const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
+  git(['rm', '-q', 'fixture.txt']); git(['commit', '-q', '-m', 'drop fixture']);
   const head3 = git(['rev-parse', 'HEAD']).trim();
+  const prompt = promptFile();
   const fakeKeyJson = keyLines.join('\\n');                 // 日誌是 JSON：換行成字面 \n
   const fakeKeyJson2 = keyLines.join('\\\\n');              // 巢狀 JSON：再轉義一層
   for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
@@ -755,9 +761,183 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
   ])) {
     const iso = isolated(); const inst = fakeGrok();
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `${sessionLine} >> "$ws/fake-session/updates.jsonl"; $1`));
-    const r = await runScan({ base: repo.base, head: head3, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    const r = await runScan({ base: repo.base, head: head3, promptFile: prompt }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
   }
+});
+
+/** 一把「真實長度」的假鑰：標頭＋8 行 64 字 base64＋結尾，真換行（不是 JS 字面的 \n） */
+const PEM_LINES = ['-----BEGIN RSA PRIVATE KEY-----', ...Array.from({ length: 8 }, (_, i) => `MIIETREEONLYKEYBODY${String.fromCharCode(65 + i).repeat(45)}`), '-----END RSA PRIVATE KEY-----'];
+const PEM_TEXT = PEM_LINES.join('\n') + '\n';
+
+test('runScan｜破口形狀只在 head 樹裡、不在 diff 裡 → 不算事故（#516 的假事故）；樹裡沒有的同形狀仍是 1', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // 假鑰 commit 在 base **之前** ⇒ 在 head 樹裡、不在 base..head 的 diff 裡＝不在材料裡。
+  // 2026-08-26 #516 就是這個形狀：受掃檔自己含假鑰 fixture，grok 讀了它就被判成「沙箱破了」。
+  const repo = tinyRepo({ firstCommitFiles: { 'fixture-key.pem': PEM_TEXT } });
+  const inTreeJson = PEM_LINES.join('\\n');        // 日誌是 JSON：真換行成字面 \n
+  // 讀檔工具會在第 1 行與每 10 行插 `N→`；這裡刻意讓記號落在鑰匙區間內
+  const withMarkers = PEM_LINES.map((l, i) => (i === 0 || (i + 1) % 10 === 0 ? `${i + 1}→${l}` : l)).join('\\n');
+  for (const [label, sessionLine, want] of /** @type {[string, string, 0|1][]} */ ([
+    ['樹裡那把鑰匙原樣回錄（cat 形）', `printf '%s\\n' '{"type":"assistant","content":"${inTreeJson}"}'`, 0],
+    ['樹裡那把鑰匙帶讀檔工具的行號記號回錄', `printf '%s\\n' '{"type":"assistant","content":"${withMarkers}"}'`, 0],
+    ['同標頭、不同內容（樹裡沒有這一把）', `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\nMIIEOUTSIDEKEYBODYZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ\\n"}'`, 1],
+    ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
+    // 樹那半刻意用**精確比對**：放寬成子字串包含就等於允許「真外洩剛好是某條 fixture 的前綴」被排除。
+    // 這一案把樹裡那把鑰匙截成前綴（少了尾巴幾行）⇒ 逐字對不上 ⇒ 仍要報事故。
+    ['樹裡那把鑰匙被截成前綴（日誌中段截斷的形狀）', `printf '%s\\n' '{"type":"assistant","content":"${PEM_LINES.slice(0, 4).join('\\n')}"}'`, 1],
+  ])) {
+    const iso = isolated(); const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `${sessionLine} >> "$ws/fake-session/updates.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
+  }
+});
+
+test('runScan｜假 grok 先把鑰匙形狀寫進盒內 src、再把同一串回錄 → 仍是 1（已知來源不採信盒子裡的磁碟）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這題不是驗新功能，是**釘住來源不准換成 `<box>/src`**：盒子對 grok 是可寫的（profile 放行整個 SCAN_DIR），
+  //    任何從盒內磁碟建已知集合的實作，都會讓破出沙箱的 grok 把自己的外洩登記成「本來就給它的東西」。
+  const repo = tinyRepo(); const iso = isolated(); const inst = fakeGrok();
+  const planted = PEM_LINES.join('\\n');
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8')
+    .replace(/^(printf '%s' .*# REPLY-LINE)$/m,
+      `printf '%s\\n' '${planted}' > ./planted-key.pem; printf '%s\\n' '{"type":"assistant","content":"${planted}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, `盒內自己種的鑰匙不該讓驗屍放行：${r.summary.join('\n')}`);
+});
+
+test('runScan｜事故訊息要帶得出族別與筆數，而且**完整命中值不回聲**（退 1 不留 sessions，事後只剩這行）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // 退 1 不留 sessions ⇒ 事後能拿來分辨「真破口」與「#516 式假事故」的只有這行字。
+  // 而 repo 是公開的、失敗原因會被抄進 PR 描述 ⇒ 命中內容不可以回聲進去。
+  {
+    const liveSecret = 'LIVE-CANARY-BRIEF-77c1e0'; const iso = isolated(); const repo = tinyRepo();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `saw ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
+    const s = r.summary.join('\n');
+    assert.equal(r.code, 1, s);
+    assert.match(s, /暗號 1 條/, '沒帶出「命中的是暗號那一族、幾條」');
+    assert.match(s, /形狀 0 條/, '沒帶出形狀那族的筆數');
+    assert.equal(s.includes(liveSecret), false, '事故訊息把暗號本身印出來了——那會被抄進公開的 PR 描述');
+    // ⚠️ 斷言涵蓋的就是「**完整**命中值不回聲」；只洩前綴這題抓不到——題名與註解都照這個射程寫。
+    assert.match(s, /形狀那族＝剝完行號記號後仍不在本次排除集合裡/, '尾句改回「不在 head 樹裡」那種不成立的話也不會紅');
+  }
+  {
+    // 形狀那族：樹裡沒有的私鑰形狀 → 要帶出筆數與長度，同樣不得出現內容
+    const body = 'MIIEBRIEFSHAPEKEYBODY' + 'W'.repeat(50);
+    const iso = isolated(); const repo = tinyRepo(); const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"-----BEGIN RSA PRIVATE KEY-----\\n${body}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    const s = r.summary.join('\n');
+    assert.equal(r.code, 1, s);
+    assert.match(s, /形狀 1 條/, '沒帶出形狀那族的筆數');
+    assert.match(s, /形狀長度 \d+/, '沒帶出形狀命中的長度');
+    assert.equal(s.includes(body), false, '事故訊息把命中內容印出來了');
+  }
+});
+
+test('runScan｜暗號帶正則元字元也照樣抓得到（字面搜尋，不編譯成正則）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // `[` 會讓 new RegExp 當場丟、`.` 會大量誤中、`$` 反而找不到自己。正式路徑的暗號是 base36 碰不到，
+  // 但這一格是可注入的，宣稱「字面搜尋」就要有題撐著（Codex #530 r5：改回 new RegExp 時四題活金絲雀題全綠）。
+  const liveSecret = 'LIVE-CANARY-[meta].$^(regex)-9f2c4a7b';
+  const iso = isolated(); const repo = tinyRepo();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `leaked: ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
+  assert.equal(r.code, 1, `帶元字元的暗號沒被抓到（或整支炸掉）：${r.summary.join('\n')}`);
+});
+
+test('runScan｜活金絲雀的暗號逐字 commit 在受掃樹裡，出現在回覆仍是 1（排除只作用在形狀那一族）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const liveSecret = 'LIVE-CANARY-TREE-9f2c4a7b1e';
+  const repo = tinyRepo({ firstCommitFiles: { 'canary-lookalike.txt': liveSecret + '\n' } });
+  const iso = isolated();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `I read your store.db: ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
+  assert.equal(r.code, 1, `暗號被樹來源排除掉了——那是唯一不可偽造的那根針：${r.summary.join('\n')}`);
+});
+
+test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純函式，平台無關，CI 也跑）', () => {
+  const repo = tinyRepo();
+  // 這題直接打純函式：失敗形狀與訊息不必經過整條掃描流程就驗得到（接線由下一題跨平台驗）。
+  assert.throws(() => knownShapeHitsFromTree(repo.dir, 'f'.repeat(40)), /ls-tree/, '查不到的 head 應該 throw');
+  // 回空集合＝安靜退化成修法之前的行為，比丟例外糟：那會讓 #516 的假事故重新出現而沒人知道
+  const ok = knownShapeHitsFromTree(repo.dir, repo.head);
+  assert.equal(ok.hits.size, 0, 'tinyRepo 的樹裡沒有鑰匙形狀，這裡不該有命中');
+  assert.ok(ok.blobs >= 2, `blob 數不對：${ok.blobs}`);
+});
+
+test('knownShapeHitsFromTree｜非 ASCII 檔名的 blob 也要讀到（`-z`；不然掃描器會靜靜跳過中文檔名）', () => {
+  // 這個 repo 本來就有中文檔名。git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，
+  // 沒有 -z 的話那些檔會查不到而被**靜靜跳過**——排除集合少一塊、引用到就誤報事故。
+  const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIECJKNAMEKEYBODY' + 'Q'.repeat(50)}\n`;
+  const repo = tinyRepo({ firstCommitFiles: { '中文檔名-鑰匙.pem': key } });
+  const r = knownShapeHitsFromTree(repo.dir, repo.head);
+  assert.equal(r.hits.size > 0, true, '非 ASCII 檔名的 blob 沒被讀到＝那個檔的形狀不在排除集合裡');
+  assert.deepEqual([...r.bySource.keys()], ['中文檔名-鑰匙.pem'], `來源檔名不對：${[...r.bySource.keys()]}`);
+});
+
+test('knownShapeHitsFromTree｜超過單檔上限的 blob 要跳過，**而且要說出跳了誰**（涵蓋缺口不可以悄悄發生）', () => {
+  // ⚠️ 這題釘的是「缺口看得見」，不是「缺口不存在」：跳過本身是刻意的（三形階梯會做兩次 JSON.stringify），
+  //    但跳過的檔案形狀不進排除集合 ⇒ grok 引用到它就會誤報事故。所以跳了誰一定要能被印出來。
+  // ⚠️ 用**注入的小門檻**而不是真的 16 MiB 檔：CI 上 `node --test` 多檔並行，
+  //    真的大檔會配置數十 MB、把隔壁計時型考題壓過門檻（實測本支 2/2 紅、同時段重跑 main 綠）。
+  const body = 'M'.repeat(200);
+  const repo = tinyRepo({ firstCommitFiles: { 'big-key.pem': `-----BEGIN RSA PRIVATE KEY-----\n${body}\n` } });
+  const r = knownShapeHitsFromTree(repo.dir, repo.head, 64);
+  assert.deepEqual(r.skippedBig, ['big-key.pem'], '跳過的大檔沒有被列出來＝呼叫端印不出缺口');
+  assert.equal(r.hits.size, 0, '大檔的形狀不該進排除集合（跳過就是跳過；方向是誤報，不是靜靜放行）');
+});
+
+test('knownShapeHitsFromTree｜非 blob 的樹項目要跳過（gitlink＝物件不在這個 repo 裡，不跳過就會 throw）', () => {
+  const repo = tinyRepo();
+  const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
+  // 直接寫一個 gitlink 進索引：它的 oid 指向一顆**這個 repo 裡沒有**的 commit
+  git(['update-index', '--add', '--cacheinfo', `160000,${'a'.repeat(40)},sub`]);
+  git(['commit', '-q', '-m', 'gitlink']);
+  const head = git(['rev-parse', 'HEAD']).trim();
+  assert.doesNotThrow(() => knownShapeHitsFromTree(repo.dir, head), '沒跳過非 blob ⇒ cat-file 會查不到那顆物件而失敗');
+});
+
+test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳過的大檔（含「等 N 個」）——缺口要看得見', async () => {
+  // ⚠️ 純函式題只證明「回傳值裡有 skippedBig」；把**呼叫端那條記帳**整行拿掉、或只拿掉「等 N 個」，
+  //    純函式題都還是綠的（Codex #530 r5 用定點突變證明）。所以這一題直接驗注入的 log 收到的字串。
+  const big = 'M'.repeat(200);   // 搭配注入的小門檻（理由同上：不要在 CI 上配置大塊記憶體）
+  const files = Object.fromEntries(['big1.pem', 'big2.pem', 'big3.pem', 'big4.pem'].map((n) => [n, `-----BEGIN RSA PRIVATE KEY-----\n${big}\n`]));
+  const repo = tinyRepo({ firstCommitFiles: files });
+  /** @type {string[]} */ const logs = [];
+  // ⚠️ 故意讓它在**雜湊檢查**就退場（給錯的 expectedSha256）：記帳那行在更早就印了，
+  //    而這樣就不會起轉送器、不會跑沙箱——本題只看那一行，不該把整條掃描流程拖進來。
+  await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), expectedSha256: '0'.repeat(64), maxBlobBytes: 64 });
+  const line = logs.find((l) => l.startsWith('（破口已知來源：'));
+  assert.ok(line, `記帳那行沒印出來：${logs.slice(0, 3).join(' / ')}`);
+  // ⚠️ 用 \d+ 會放過「把數字硬編成任意值」——這裡驗真正的數字：
+  //    tinyRepo 的第一顆 commit＝a.txt＋tree-only.txt＋四個大檔＝6 個 blob；大檔全跳過 ⇒ 形狀命中 0 條。
+  assert.match(line, /head 樹 6 個 blob/, 'blob 數不對（或只印了外形）');
+  assert.match(line, /形狀命中 0 條/, '命中數不對（大檔跳過了就不該有命中）');
+  assert.match(line, /4 個超過單檔上限沒讀/, '沒印跳過幾個大檔');
+  assert.match(line, /等 4 個/, '跳過清單被截成前三個卻沒說還有更多');
+});
+
+test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它，不安靜退回「只認材料」（接線；建盒子之前就退，平台無關）', async () => {
+  const repo = tinyRepo();
+  // 通過寫死 SHA 的格式檢查、但這個 repo 裡沒有這顆 commit
+  const r = await runScan({ base: repo.base, head: 'f'.repeat(40), promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
+  assert.equal(r.code, 2);
+  assert.match(r.summary.join('\n'), /已知來源/, '退 2 了但沒說是「已知來源建不出來」——分不出是哪一種失敗');
+});
+
+test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台無關，CI 也跑）', () => {
+  assert.equal(stripLineMarkers('1→abc\n10→def'), 'abc\ndef', '原文換行的記號沒剝掉');
+  assert.equal(stripLineMarkers('x\\n12→abc'), 'x\\nabc', 'JSONL 的字面 \\n 前綴沒認出來');
+  assert.equal(stripLineMarkers('見 12→ 那格'), '見 12→ 那格', '沒有換行前綴的數字不可以被當成行號吃掉');
+  // ⚠️ 反斜線串要從**頭**認起：5 個以上時 `{1,4}` 會從第 2 個起算而誤剝（Codex #530 r1 抓到）
+  assert.equal(stripLineMarkers('a\\\\\\\\\\n12→b'), 'a\\\\\\\\\\n12→b', '從反斜線串中段開始比對＝誤剝');
+  // ⚠️ 誠實劃界：正文裡字面的 `\n12→` 與真記號分不出來，這一格照實斷言「會被剝掉」，不假裝守得住
+  assert.equal(stripLineMarkers('x\\n12→y'), 'x\\ny', '這是已知的過度剝除，改行為要連同註解的劃界一起改');
+  // `→` 不在破口正則的字元類裡：記號落在 `{32,}` **湊滿之前**時整條不匹配＝真鑰匙靜靜放行，剝完才看得見。
+  // ⚠️ 條件是「湊滿之前」，**不是**「標頭之後」——先湊滿 32 個合法字元、記號落在那之後仍然命中（Codex #530 r8 的反例）。
+  const keyWithMarker = `-----BEGIN RSA PRIVATE KEY-----\n10→${'MIIEREALKEYBODY' + 'A'.repeat(50)}`;
+  assert.equal(shapeHitsIn(keyWithMarker).length, 0, '前提變了：帶記號時本來就抓得到，這題的理由要重寫');
+  assert.equal(shapeHitsIn(stripLineMarkers(keyWithMarker)).length, 1, '剝完仍抓不到＝靜默漏放沒被修掉');
 });
 
 test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急收尾：grok 群組死、盒子／假值檔／活金絲雀都清掉、退 2（第五次正式掃描實際留下殘留）', async (t) => {
@@ -810,7 +990,7 @@ test('runScan｜不注入 liveRoot 時，活金絲雀建在真的家目錄：掃
   //    在這裡寫「全檔唯一還在真家目錄建東西的題」與「每一題都會」都是假的：更早退場的題與純函式題根本沒跑到它）。
   // ⚠️ 認身分靠**每輪隨機的暗號內容**、不數個數：別的 session／審查樹／合併閘同時在跑也認不錯。
   //    （數個數正是上一題原本的寫法，也正是本支要修掉的病。）
-  // ⚠️ 暗號會被原樣插進驗屍的正規式（grok-scan.js 的 BREACH_SRC），randomUUID 只有十六進位與 `-`＝正則安全。
+  // ⚠️ 暗號現在走字面比對（不編譯成正則），所以帶元字元也不會炸；randomUUID 只有十六進位與 `-`，兩種寫法都安全。
   const repo = tinyRepo();
   const liveSecret = `LIVE-CANARY-PIN-${randomUUID()}`;
   /** @type {string[]} */ let mine = [];

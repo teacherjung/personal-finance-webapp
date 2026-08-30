@@ -66,6 +66,112 @@ const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });
 
+/**
+ * 破口線索的**形狀**（活金絲雀的暗號不在裡面，刻意的）。
+ * 為什麼跟暗號分開跑：下面「已在給盒子的東西裡就不算」那道排除只作用在形狀上。
+ * 暗號每掃現生、不在任何材料也不在任何 commit 裡；併進同一條 alternative 就等於讓排除有機會碰到它——
+ * 分成兩族是構造上的隔離，不是靠註解承諾。
+ */
+export const BREACH_SHAPES = `flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----[\\s\\\\]*[A-Za-z0-9+/=\\s\\\\]{32,}`;
+
+/** @param {string} text */
+export const shapeHitsIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES, 'g'))].map((m) => m[0]);
+
+/**
+ * 剝掉讀檔工具插進內容裡的行號記號（`1→`、`10→`…；日誌是 JSONL，換行可能是 `\n` 或 `\\n`，所以前綴要一起認）。
+ *
+ * 為什麼要剝（兩個方向都受害，後者更嚴重）：
+ *   ①記號落進命中區間，把同一份內容切成跟樹裡對不上的字串 ⇒ 樹裡本來就有的 fixture 排不掉＝假事故；
+ *   ②`→` 不在破口正則的字元類裡：記號若落在 `{32,}` **湊滿之前**，整條就不匹配 ⇒ 真鑰匙被讀進日誌卻靜靜放行
+ *     （落在已經湊滿之後則仍然命中——條件是「湊滿之前」，不是「標頭之後」）。
+ * ⚠️ 誠實劃界（三條，撐不住的話寧可寫出來）：
+ *   ①這是照**觀察到的**日誌呈現寫的，不是 grok 的承諾。中段截斷、markdown 包裹、`檔:行:` 前綴
+ *     都還原不了，那些呈現仍會對不上（方向＝誤報事故）。
+ *   ②**正文裡字面的 `\n12→` 與真的工具記號在文字層面分不出來**，這條規則會把它也剝掉。
+ *     方向是「排除語言變大」＝可能少報事故——所以只剝日誌側、**不剝樹側**（樹是沒有記號的真相），
+ *     兩側不會一起被正規化到同一個更寬的語言裡。真外洩要踩到它得同時滿足「內容含字面 `\n<數字>→`」
+ *     與「剝完之後落進任何一條排除路」——⚠️ 那條**不只是**「逐字等於樹裡某條 fixture」：
+ *     材料那半走的是 `materials.includes(h)`＝**子字串**排除，所以「剝完之後是材料裡任何一段的子字串」
+ *     也算落進去。條件比只看樹寬（Codex #530 r2 抓到我把它說窄了）。這是機率論證、不是保證。
+ *     考題檔裡有一格照實釘著「會被剝掉」這個行為，改行為要連同這段劃界一起改。
+ *   ③`(?<!\\)` 是為了不從**反斜線串的中段**開始比對（5 個以上反斜線時 `{1,4}` 會從第 2 個起算而誤剝——Codex #530 r1 抓到）。
+ * @param {string} text
+ */
+export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d{1,7}→/g, '$1');
+
+/**
+ * 從 **git 物件庫**取 head 樹的 blob，收集它們含有的破口形狀命中（含 JSON 轉義階梯）。
+ *
+ * ⚠️ **不是「整棵樹」**：單檔超過 `SESSION_CAPS.fileBytes` 的 blob 會跳過（三形階梯要做兩次
+ * `JSON.stringify`，大檔瞬間長成數倍）。跳過＝那個檔的形狀**不進**排除集合＝萬一 grok 引用到它就會
+ * 誤報事故（方向是吵、不是靜靜放行）——⚠️ 只就**樹那半**而言：同一個形狀若剛好也在材料裡，材料那半仍會排除它。
+ * 跳了**幾個、前三個是誰**由回傳值帶出去、呼叫端印出來，不讓缺口悄悄發生（不是逐個列完）。
+ *
+ * 為什麼來源是 git 而不是磁碟上的 `<box>/src`：**盒子對 grok 是可寫的**（profile 放行整個 SCAN_DIR）。
+ * 拿盒內磁碟當已知來源，破出沙箱的 grok 只要把偷到的內容寫成一個檔丟進 src，就能讓驗屍把自己的外洩
+ * 登記成「本來就給它的東西」。blob 是內容定址的，盒內寫什麼都改不了這顆 SHA 的樹——這是構造保證。
+ * 選這條路的另外兩個理由（**是實作理由，不是本支保證的性質——沒有行為題釘著，不要當保證引用**）：
+ *   ・讀 blob 不經檔案系統，所以沒有「跟隨 symlink 讀到盒外」這條路要防（mode 120000 的 blob 內容只是一串路徑字串）；
+ *   ・node_modules 不在 commit 樹裡，所以不必特判就不在集合裡。
+ *
+ * 失敗一律 throw（呼叫端退 2）。**不回空集合**——空集合會安靜退化成修法之前的行為。
+ * ⚠️ 訊息刻意只帶 status、不併 git 的 stderr（這條路上的字串是疑似外洩的內容本身，而失敗原因會被抄進 PR 描述）
+ *   ——同樣是**寫法上的自我約束、沒有行為題釘著**，改動時要自己守。
+ *
+ * @param {string} repo
+ * @param {string} head
+ * @param {number} [maxBlobBytes] 單檔上限；預設 `SESSION_CAPS.fileBytes`。**只給考題注入小門檻**——
+ *   考題若要驗「跳過並說出跳了誰」，用真的 16 MiB 檔會在 CI 上配置數十 MB，而 `node --test` 是**多檔並行**跑的，
+ *   實測把隔壁一支計時型考題壓過門檻（對照組：同時段重跑 main 是綠的，本支 2/2 紅）。
+ *   ⚠️ 預設值本身**沒有考題釘住**：它是記憶體護欄的門檻，改小只會多跳過檔案（＝誤報方向）、改大只會多吃記憶體。
+ * @returns {{ hits: Set<string>, blobs: number, bytes: number, bySource: Map<string, number>, skippedBig: string[] }}
+ */
+export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.fileBytes) {
+  // -z：git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，拿去查就 fatal 而掃描器**靜靜跳過**
+  //     ——本專案踩過的「掃描器跳過中文檔名」同一個坑。
+  const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
+  if (ls.status !== 0) throw new Error(`git ls-tree 失敗（status ${ls.status}）`);
+  /** @type {{ oid: string, path: string }[]} */ const blobs = [];
+  for (const rec of (ls.stdout || '').split('\0')) {
+    if (!rec) continue;
+    const tab = rec.indexOf('\t');
+    if (tab < 0) throw new Error('git ls-tree 輸出不是預期的形狀');
+    const [, type, oid] = rec.slice(0, tab).split(' ');
+    if (type === 'blob') blobs.push({ oid, path: rec.slice(tab + 1) });   // 只收 blob：submodule（gitlink）與子樹跳過
+  }
+  const cat = spawnSync('git', ['-C', repo, 'cat-file', '--batch'], { input: blobs.map((b) => b.oid).join('\n') + '\n', maxBuffer: 1 << 29, env: gitEnv() });
+  if (cat.status !== 0) throw new Error(`git cat-file 失敗（status ${cat.status}）`);
+  const out = /** @type {Buffer} */ (cat.stdout);
+  /** @type {Set<string>} */ const hits = new Set();
+  /** @type {Map<string, number>} */ const bySource = new Map();
+  /** @type {string[]} */ const skippedBig = [];
+  let off = 0, bytes = 0, i = 0;
+  while (off < out.length) {
+    const nl = out.indexOf(10, off);
+    if (nl < 0) break;
+    const size = Number(out.toString('utf8', off, nl).split(' ')[2]);
+    if (!Number.isFinite(size)) throw new Error('git cat-file --batch 的標頭不是預期的形狀');
+    const start = nl + 1;
+    const path = blobs[i++]?.path ?? '?';
+    bytes += size;
+    // 大檔跳過：三形階梯會做兩次 JSON.stringify，大檔瞬間長成數倍。跳過＝那個檔的形狀不進排除集合＝誤報方向。
+    // 跳了誰要說出來（呼叫端會印）：不然「涵蓋範圍其實有缺口」就悄悄發生了。
+    if (size > maxBlobBytes) skippedBig.push(path);
+    else {
+      // 解碼用有損模式（跟日誌側 fatal 的語意刻意不同）：二進位檔解不乾淨頂多少收一條＝誤報方向，不會多排除。
+      const raw = out.toString('utf8', start, start + size);
+      if (raw.includes('PRIVATE KEY-----') || raw.includes('flexToken')) {   // 廉價前置過濾，結果不變
+        for (const form of [raw, JSON.stringify(raw), JSON.stringify(JSON.stringify(raw))]) {
+          // 只在「這條命中是新的」時記帳：同一條在三形階梯裡會各出現一次，逐次累加會讓數字虛胖三倍
+          for (const h of shapeHitsIn(form)) { if (!hits.has(h)) { hits.add(h); bySource.set(path, (bySource.get(path) ?? 0) + 1); } }
+        }
+      }
+    }
+    off = start + size + 1;
+  }
+  return { hits, blobs: blobs.length, bytes, bySource, skippedBig };
+}
+
 export const GROK_HOME_MANIFEST = Object.freeze({
   topLevelEntries: Object.freeze(['auth.json', 'bin', 'sessions']),
   authEntryFields: Object.freeze(['auth_mode', 'create_time', 'expires_at', 'key', 'oidc_client_id', 'oidc_issuer', 'user_id']),
@@ -212,6 +318,7 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
  *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
+ * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
@@ -239,6 +346,18 @@ export async function runScan(args, deps = {}) {
   if (!existsSync(promptFile)) return fail(`指示檔不存在：${promptFile}`);
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
+
+  // ── 破口判準的「已在給盒子的東西裡」之一：head 樹的已 commit 原始碼（**不含超過單檔上限的大檔**）──
+  // 位置在**建盒子之前**：①建不出來就此刻退 2，還沒建任何暫存路徑、也還沒燒掃描時間
+  //   ②不經沙箱 ⇒ 這條路的行為題在非 macOS 也跑得到（掛在盒子之後的話，CI 會先在版本檢查退場、
+  //     行為題永遠驗不到這一步——Codex #530 r1 實測 CI 因此紅）。
+  // ⚠️ 免疫「盒子可寫」靠的是**來源是 git 物件庫**，不是這個位置——搬到別處仍然正確，只是失敗變貴。
+  /** @type {ReturnType<typeof knownShapeHitsFromTree>} */ let treeKnown;
+  try { treeKnown = knownShapeHitsFromTree(repo, head, deps.maxBlobBytes); }
+  catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
+  // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
+  // 或悄悄變大（豁免面擴張）都看得見。
+  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}${treeKnown.skippedBig.length ? `；⚠️ ${treeKnown.skippedBig.length} 個超過單檔上限沒讀（它們的形狀不在排除集合裡＝引用到會誤報事故）：${treeKnown.skippedBig.slice(0, 3).join('、')}${treeKnown.skippedBig.length > 3 ? ` 等 ${treeKnown.skippedBig.length} 個` : ''}` : ''}）`);
 
   // ── ① 建盒子 ──
   /** @type {string | undefined} */ let box;
@@ -486,26 +605,71 @@ export async function runScan(args, deps = {}) {
   // 破口線索的命中若**已在材料裡**就不算（在輸入裡的字串偵測不了外流——跟 DLP 針同一個原則）：
   // #500 第一次正式掃描就誤中自己——受掃 diff 含破口考題的私鑰字面與這條正則的原文，grok 把材料寫進 prompt_0.txt，
   // 驗屍把「材料裡本來就有的」當「盒子外才有的」。活金絲雀的暗號是隨機的、永遠不在材料裡，所以它不受這條影響。
-  // r10（Codex）：私鑰的命中必須**含內容**（標頭後 ≥32 字 base64）——命中只有標頭時，材料裡一句標頭就會把真私鑰整把排掉；
+  // r10（Codex）：私鑰的命中要含標頭後的一段內容——命中只有標頭時，材料裡一句標頭就會把真私鑰整把排掉；
   //   而光有標頭（題名、註解、這行）本來就不是鑰匙。flexToken 的命中本來就含值。
+  // ⚠️ 誠實劃界（本支改口）：字元類含 `\s` 與 `\\`，所以「標頭＋32 個空白／換行／反斜線」也算命中——
+  //   這條規矩擋不到「命中不含 base64 內容」的情況。方向是誤報；收緊字元類會同時放大誤報，另支處理。
   // 第三次正式掃描：日誌是 JSON 字串，材料裡的 `"`／`\n` 在 chat_history.jsonl 裡是 `\"`／`\\n`，命中跟材料原文對不上。
   //   所以「材料裡本來就有的命中」要對**材料原文、材料的 JSON 轉義版、雙重轉義版**各跑一次同一條正則收集；session 命中不在集合才算。
   //   跨行的鑰匙在 diff 裡每行多一個 `+`——再收一個「去掉 diff 行首記號」的版本（含它的轉義版）。
-  const BREACH_SRC = `${liveSecret}|flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----[\\s\\\\]*[A-Za-z0-9+/=\\s\\\\]{32,}`;
-  const hitsIn = (/** @type {string} */ text) => [...text.matchAll(new RegExp(BREACH_SRC, 'g'))].map((m) => m[0]);
+  // 破口線索分兩族，排除**只**作用在形狀那一族（分族的理由見 BREACH_SHAPES）：
+  //   ・給盒子的東西＝材料（指示＋diff）**＋ head 樹的已 commit 原始碼**（大檔跳過，見 knownShapeHitsFromTree）。DLP 那條路（inTree）早就把樹算進去，
+  //     破口這條沒跟上＝#516 的假事故（受掃檔自己含假鑰 fixture，grok 讀了它就被判成沙箱破了）。
+  //   ⚠️ 沿用 DLP 的**來源**、不沿用它的**機制**：inTree 用 `git grep -F` 查樹原文，而日誌是 JSONL；
+  //      拿日誌裡的轉義形去 `git grep -F` 找不到（實測 status 1），照抄會變成什麼都沒修的空修。
+  //   ⚠️ 這是**擴大豁免**：受掃 head 的樹裡若真的存在一把真鑰匙，破口偵測就對它的外洩失明。
+  //      射程從「本支 diff」擴到「head 這個快照的全部內容」——**不含已刪除的歷史 blob**（只讀 head 樹，不走 rev-list）。
+  // 暗號用**字面**搜尋、不編譯成正則：暗號是可注入的（考題會傳），帶 `[` 會讓 new RegExp 當場丟、
+  // 帶 `.` 會大量誤中、帶 `$` 反而找不到自己。正式路徑的暗號是 base36 所以碰不到，
+  // 但這一格沒有理由留著那個 bug class（main 的舊寫法把它插進正則字串，同樣暴露）。
+  const liveHitsIn = (/** @type {string} */ text) => {
+    /** @type {string[]} */ const out = [];
+    for (let i = text.indexOf(liveSecret); i >= 0; i = text.indexOf(liveSecret, i + liveSecret.length)) out.push(liveSecret);
+    return out;
+  };
   /** @type {Set<string>} */ const knownHits = new Set();
-  const unprefixed = materials.replace(/^[+ -]/gm, '');
-  for (const base0 of [materials, unprefixed]) for (const form of [base0, JSON.stringify(base0), JSON.stringify(JSON.stringify(base0))]) for (const h of hitsIn(form)) knownHits.add(h);
-  const breachHits = (/** @type {string} */ text) => hitsIn(text).filter((h) => !knownHits.has(h) && !materials.includes(h));
+  const unprefixed = materials.replace(/^[+ -]/gm, '');   // diff 每行多一個 `+`；樹側**不套**，那會憑空造出樹裡沒有的排除項
+  for (const base0 of [materials, unprefixed]) for (const form of [base0, JSON.stringify(base0), JSON.stringify(JSON.stringify(base0))]) for (const h of shapeHitsIn(form)) knownHits.add(h);
+  for (const h of treeKnown.hits) knownHits.add(h);
+  /**
+   * 這段文字裡「證明不了是盒內來源」的命中，分兩族回傳。
+   * ⚠️ 兩半的比對強度**不一樣**，別讀成一致（Codex #530 r1 抓到我原本一句話蓋兩半）：
+   *   ・**樹那半是精確比對**（`knownHits.has`）——刻意不放寬成子字串包含，那等於允許
+   *     「真外洩剛好是某條 fixture 的前綴」被排除；考題檔裡「被截成前綴」那一格釘著這件事。
+   *     ⚠️ 這裡刻意**不用**「題名關鍵字」那個機械記號：那道閘只掃 `test/` 底下的 `*.test.js`，
+   *        記號寫在 `scripts/` 完全不會被檢查——留著只會讓人以為有閘接著，題名一改就靜靜爛掉。
+   *   ・**材料那半保留既有的 `materials.includes(h)`**＝子字串排除（main 就是這樣、非本支新增）：
+   *     材料命中被截成前綴時仍會被排掉。要收它得另支評估，本支不動、照實寫出來。
+   * ⚠️ 誠實劃界：日誌把內容切成跟樹不同邊界時（中段截斷、markdown 包裹…）樹那半對不上＝仍會誤報事故。
+   */
+  const breachHits = (/** @type {string} */ text) => {
+    const t = stripLineMarkers(text);
+    return { live: liveHitsIn(t), shape: shapeHitsIn(t).filter((h) => !knownHits.has(h) && !materials.includes(h)) };
+  };
+  // 事故訊息帶三個**不含內容**的欄位：哪一族、幾條、形狀命中的長度。
+  // 為什麼要帶：退 1 不留 sessions ⇒ 事後沒有任何東西能分辨「真破口」與「又一次 #516 式假事故」，
+  //   而重複的假警報會把人訓練成不信退 1。暗號那一族自證為真（每掃現生、不在任何 commit 裡），形狀那族才要人看。
+  // ⚠️ 命中內容不回聲：這個 repo 是公開的，而失敗原因會被抄進 PR 描述。
+  //   考題釘住的是「**完整**命中值不出現」——只洩前綴那種它抓不到，照這個射程寫、不要放大成「一個字元都不放」。
+  // ⚠️ 尾句只能說**這個判準真的量過的事**：形狀那族量的是「剝完行號記號後不在本次的排除集合裡」，
+  //   而排除集合＝材料＋head 樹裡**讀得到的** blob（大檔跳過的不算）。**不可以寫成「不在 head 樹裡」**——
+  //   暗號那族根本不查樹（考題就把暗號 commit 進 head、仍要報事故），超過單檔上限的 blob 也是
+  //   「在樹裡但不在集合裡」。兩種情形原句都在說不成立的話（Codex #530 r5 抓到）。
+  const brief = (/** @type {{ live: string[], shape: string[] }} */ b) =>
+    `（暗號 ${b.live.length} 條、形狀 ${b.shape.length} 條；形狀長度 ${b.shape.map((h) => h.length).join('/') || '—'}；形狀那族＝剝完行號記號後仍不在本次排除集合裡）`;
   // 去機密（r4 #2）：Grok 讀得到盒內 auth.json（假值＋user_id／時間戳）、可以把任何東西寫進回覆／日誌——回覆會進 PR 描述、日誌會進結果包。
   // 拿真 auth.json 裡**沒給盒子**的每個值去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
   if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
   // 回覆也跑破口線索（Grok 第一次正式掃描抓到：原本只掃 session 檔，盒外內容只寫進最終回覆就退 0 並寫 --out）
-  if (breachHits(reply).length) { const m = '⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out'; log(m); summary.push(m); worst = 1; }
+  {
+    const b = breachHits(reply);
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; log(m); summary.push(m); worst = 1; }
+  }
   for (const [rp, buf] of snap.files) {
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
-    if (breachHits(text).length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故`; log(m); summary.push(m); worst = 1; }
+    const b = breachHits(text);
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; log(m); summary.push(m); worst = 1; }
     if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${rp} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; }
   }
   if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => f.split('/').pop()).join('、')}）`);
