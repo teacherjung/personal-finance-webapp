@@ -776,8 +776,10 @@ test('runScan｜驗屍的破口線索若已在材料裡（受掃 diff 自己含�
     ['只有標頭、沒內容（題名／註解）', `printf '%s\\n' '{"type":"assistant","content":"see BEGIN RSA PRIVATE KEY in test name"}'`, 0],
     ['同標頭、不同內容的外部私鑰（r10：材料有標頭也不能放過）', `printf '%s\\n' '{"type":"assistant","content":"outside: ${PEM_BEGIN('RSA')}\\nMIIEOUTSIDEKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\\n-----END RSA PRIVATE KEY-----"}'`, 1],
     // body 刻意是**明顯的假值**：原本那串 `b3BlbnNzaC1rZXktdjEA…AAAAtzc2g` 是每一把未加密 ed25519 私鑰
-    //   **逐字相同的真開頭**（用格式常數重算：未加密 OpenSSH 共用前 52 個 base64 字元、ed25519 共用前 84 個，
-    //   而那串是 67 個 ⇒ 它是任何真 ed25519 私鑰的合法前綴）。精確比對下無害，但只要哪天有人把樹那半
+    //   **逐字相同的真開頭**（用格式常數重算，沒有產生任何真鑰匙：未加密 OpenSSH 的固定段 39 bytes
+    //   ⇒ base64 前 **52** 個字元完全決定；ed25519 再加公鑰段的長度欄與識別字後固定段 62 bytes
+    //   ⇒ 前 **80** 個字元完全決定。而那串是 67 個字元、落在完全決定的範圍內 ⇒ 它是任何真 ed25519
+    //   私鑰的合法前綴，實測 startsWith 為真）。精確比對下無害，但只要哪天有人把樹那半
     //   放寬成前綴，它就變成一條「被截短的真 SSH 私鑰一律當本來就給它的東西」的路。本題只需要「一種
     //   材料裡沒有的 kind」，換掉不影響它在守的行為。
     // ⚠️ 本題**沒有**在守「OPENSSH 這個 kind 走得到」（改成 RSA 它照樣綠）——四種 kind 都被偵測器認得，
@@ -950,6 +952,25 @@ test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它
   assert.match(r.summary.join('\n'), /已知來源/, '退 2 了但沒說是「已知來源建不出來」——分不出是哪一種失敗');
 });
 
+test('runScan｜比對強度：命中「以某條已知命中開頭」也不得被排除（放寬的危險方向）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 放寬有兩個方向，危險程度差很多：
+  //   ・`known.startsWith(hit)`（命中是已知命中的前綴）＝截斷那一族；
+  //   ・`hit.startsWith(known)`（命中**以**已知命中開頭）＝**更危險**：一條短的已知命中會把所有
+  //     以它開頭的東西一起吞掉，而最短的合法命中只有 58 個字元、其中可以一個酬載字元都沒有
+  //     （`{32,}` 的字元類含空白與反斜線＝長度下限、不是熵下限）。
+  //   Codex #531 r1 抓到我原本只對前者做了突變、後者沒有題守著。
+  // 做法：樹裡放一把鑰匙，日誌裡送「同一把鑰匙**再接上**更多酬載」——它以樹裡那條開頭，仍必須是事故。
+  const repo = tinyRepo({ firstCommitFiles: { 'fixture-key.pem': PEM_TEXT } });
+  // ⚠️ 要延長的是**命中本身**，所以接在 END 之前：`-----END` 裡的 `-` 不在破口正則的字元類裡，
+  //    接在它後面命中會在那裡截斷，送出去的其實就是樹裡那條本身（第一版就是這樣，未突變也紅）。
+  const extended = PEM_LINES.slice(0, -1).join('\\n') + '\\n' + 'MIIEEXTENDEDBEYONDTHEFIXTURE' + 'V'.repeat(40);
+  const iso = isolated(); const inst = fakeGrok();
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"${extended}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, `以已知命中開頭的更長命中被排除了——那是放寬裡最危險的方向：${r.summary.join('\n')}`);
+});
+
 test('考題檔｜本檔源碼不留破口形狀的字面（純函式，平台無關，CI 也跑）', () => {
   // 為什麼要有這一題：#516（2026-08-26）與 #530（2026-08-30）兩支的複審後掃都判事故、兩次都因為本檔含
   // 字面假鑰、兩次都靠 William 裁示「視為誤判」放行。字面一旦回來，下一支動到本檔的 PR 又會掃不乾淨——
@@ -970,6 +991,9 @@ test('考題檔｜本檔源碼不留破口形狀的字面（純函式，平台�
   // helper 自己要對：四種 kind 都要被偵測器認得，否則「改用 helper」等於把某些題悄悄變成不再命中
   for (const kind of /** @type {const} */ (['RSA', 'OPENSSH', 'EC', 'DSA'])) {
     assert.equal(shapeHitsIn(`${PEM_BEGIN(kind)}\n${'A'.repeat(40)}`).length, 1, `PEM_BEGIN('${kind}') 拼出來的標頭偵測器認不得`);
+    // ⚠️ 上一行單獨是空包彈：helper 若忽略 kind、一律回 RSA，四種都還是命中 1（Codex #531 r1 實測）。
+    //    要驗的是「kind 真的有進到標頭裡」。
+    assert.equal(PEM_BEGIN(kind).includes(kind), true, `PEM_BEGIN('${kind}') 沒有把 kind 放進標頭——helper 忽略參數了`);
   }
 });
 
