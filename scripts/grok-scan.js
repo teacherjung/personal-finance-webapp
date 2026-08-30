@@ -338,7 +338,7 @@ export async function runScan(args, deps = {}) {
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
-  // ── 破口判準的「已在給盒子的東西裡」之一：head 整棵已 commit 原始碼 ──
+  // ── 破口判準的「已在給盒子的東西裡」之一：head 樹的已 commit 原始碼（**不含超過單檔上限的大檔**）──
   // 位置在**建盒子之前**：①建不出來就此刻退 2，還沒建任何暫存路徑、也還沒燒掃描時間
   //   ②不經沙箱 ⇒ 這條路的行為題在非 macOS 也跑得到（掛在盒子之後的話，CI 會先在版本檢查退場、
   //     行為題永遠驗不到這一步——Codex #530 r1 實測 CI 因此紅）。
@@ -348,7 +348,7 @@ export async function runScan(args, deps = {}) {
   catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
   // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
   // 或悄悄變大（豁免面擴張）都看得見。
-  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}${treeKnown.skippedBig.length ? `；⚠️ ${treeKnown.skippedBig.length} 個超過單檔上限沒讀（它們的形狀不在排除集合裡＝引用到會誤報事故）：${treeKnown.skippedBig.slice(0, 3).join('、')}` : ''}）`);
+  log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}${treeKnown.skippedBig.length ? `；⚠️ ${treeKnown.skippedBig.length} 個超過單檔上限沒讀（它們的形狀不在排除集合裡＝引用到會誤報事故）：${treeKnown.skippedBig.slice(0, 3).join('、')}${treeKnown.skippedBig.length > 3 ? ` 等 ${treeKnown.skippedBig.length} 個` : ''}` : ''}）`);
 
   // ── ① 建盒子 ──
   /** @type {string | undefined} */ let box;
@@ -604,7 +604,7 @@ export async function runScan(args, deps = {}) {
   //   所以「材料裡本來就有的命中」要對**材料原文、材料的 JSON 轉義版、雙重轉義版**各跑一次同一條正則收集；session 命中不在集合才算。
   //   跨行的鑰匙在 diff 裡每行多一個 `+`——再收一個「去掉 diff 行首記號」的版本（含它的轉義版）。
   // 破口線索分兩族，排除**只**作用在形狀那一族（分族的理由見 BREACH_SHAPES）：
-  //   ・給盒子的東西＝材料（指示＋diff）**＋ head 整棵已 commit 原始碼**。DLP 那條路（inTree）早就把樹算進去，
+  //   ・給盒子的東西＝材料（指示＋diff）**＋ head 樹的已 commit 原始碼**（大檔跳過，見 knownShapeHitsFromTree）。DLP 那條路（inTree）早就把樹算進去，
   //     破口這條沒跟上＝#516 的假事故（受掃檔自己含假鑰 fixture，grok 讀了它就被判成沙箱破了）。
   //   ⚠️ 沿用 DLP 的**來源**、不沿用它的**機制**：inTree 用 `git grep -F` 查樹原文，而日誌是 JSONL；
   //      拿日誌裡的轉義形去 `git grep -F` 找不到（實測 status 1），照抄會變成什麼都沒修的空修。

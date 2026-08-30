@@ -827,6 +827,16 @@ test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純�
   assert.ok(ok.blobs >= 2, `blob 數不對：${ok.blobs}`);
 });
 
+test('knownShapeHitsFromTree｜超過單檔上限的 blob 要跳過，**而且要說出跳了誰**（涵蓋缺口不可以悄悄發生）', () => {
+  // ⚠️ 這題釘的是「缺口看得見」，不是「缺口不存在」：跳過本身是刻意的（三形階梯會做兩次 JSON.stringify），
+  //    但跳過的檔案形狀不進排除集合 ⇒ grok 引用到它就會誤報事故。所以跳了誰一定要能被印出來。
+  const body = 'M'.repeat(SESSION_CAPS.fileBytes);   // 標頭＋這一段就超過上限
+  const repo = tinyRepo({ firstCommitFiles: { 'big-key.pem': `-----BEGIN RSA PRIVATE KEY-----\n${body}\n` } });
+  const r = knownShapeHitsFromTree(repo.dir, repo.head);
+  assert.deepEqual(r.skippedBig, ['big-key.pem'], '跳過的大檔沒有被列出來＝呼叫端印不出缺口');
+  assert.equal(r.hits.size, 0, '大檔的形狀不該進排除集合（跳過就是跳過；方向是誤報，不是靜靜放行）');
+});
+
 test('knownShapeHitsFromTree｜非 blob 的樹項目要跳過（gitlink＝物件不在這個 repo 裡，不跳過就會 throw）', () => {
   const repo = tinyRepo();
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', repo.dir, ...a], { encoding: 'utf8', env: CLEAN_ENV });
