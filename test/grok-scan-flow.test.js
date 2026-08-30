@@ -807,6 +807,16 @@ test('runScan｜假 grok 先把鑰匙形狀寫進盒內 src、再把同一串回
   assert.equal(r.code, 1, `盒內自己種的鑰匙不該讓驗屍放行：${r.summary.join('\n')}`);
 });
 
+test('runScan｜暗號帶正則元字元也照樣抓得到（字面搜尋，不編譯成正則）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // `[` 會讓 new RegExp 當場丟、`.` 會大量誤中、`$` 反而找不到自己。正式路徑的暗號是 base36 碰不到，
+  // 但這一格是可注入的，宣稱「字面搜尋」就要有題撐著（Codex #530 r5：改回 new RegExp 時四題活金絲雀題全綠）。
+  const liveSecret = 'LIVE-CANARY-[meta].$^(regex)-9f2c4a7b';
+  const iso = isolated(); const repo = tinyRepo();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `leaked: ${liveSecret}` })), relayScript: fakeRelay('ok'), liveSecret });
+  assert.equal(r.code, 1, `帶元字元的暗號沒被抓到（或整支炸掉）：${r.summary.join('\n')}`);
+});
+
 test('runScan｜活金絲雀的暗號逐字 commit 在受掃樹裡，出現在回覆仍是 1（排除只作用在形狀那一族）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const liveSecret = 'LIVE-CANARY-TREE-9f2c4a7b1e';
@@ -827,6 +837,16 @@ test('knownShapeHitsFromTree｜建不出來一律 throw，不回空集合（純�
   assert.ok(ok.blobs >= 2, `blob 數不對：${ok.blobs}`);
 });
 
+test('knownShapeHitsFromTree｜非 ASCII 檔名的 blob 也要讀到（`-z`；不然掃描器會靜靜跳過中文檔名）', () => {
+  // 這個 repo 本來就有 19 個中文檔名。git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，
+  // 沒有 -z 的話那些檔會查不到而被**靜靜跳過**——排除集合少一塊、引用到就誤報事故。
+  const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIECJKNAMEKEYBODY' + 'Q'.repeat(50)}\n`;
+  const repo = tinyRepo({ firstCommitFiles: { '中文檔名-鑰匙.pem': key } });
+  const r = knownShapeHitsFromTree(repo.dir, repo.head);
+  assert.equal(r.hits.size > 0, true, '非 ASCII 檔名的 blob 沒被讀到＝那個檔的形狀不在排除集合裡');
+  assert.deepEqual([...r.bySource.keys()], ['中文檔名-鑰匙.pem'], `來源檔名不對：${[...r.bySource.keys()]}`);
+});
+
 test('knownShapeHitsFromTree｜超過單檔上限的 blob 要跳過，**而且要說出跳了誰**（涵蓋缺口不可以悄悄發生）', () => {
   // ⚠️ 這題釘的是「缺口看得見」，不是「缺口不存在」：跳過本身是刻意的（三形階梯會做兩次 JSON.stringify），
   //    但跳過的檔案形狀不進排除集合 ⇒ grok 引用到它就會誤報事故。所以跳了誰一定要能被印出來。
@@ -845,6 +865,24 @@ test('knownShapeHitsFromTree｜非 blob 的樹項目要跳過（gitlink＝物件
   git(['commit', '-q', '-m', 'gitlink']);
   const head = git(['rev-parse', 'HEAD']).trim();
   assert.doesNotThrow(() => knownShapeHitsFromTree(repo.dir, head), '沒跳過非 blob ⇒ cat-file 會查不到那顆物件而失敗');
+});
+
+test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳過的大檔（含「等 N 個」）——缺口要看得見', async () => {
+  // ⚠️ 純函式題只證明「回傳值裡有 skippedBig」；把**呼叫端那條記帳**整行拿掉、或只拿掉「等 N 個」，
+  //    純函式題都還是綠的（Codex #530 r5 用定點突變證明）。所以這一題直接驗注入的 log 收到的字串。
+  const big = 'M'.repeat(SESSION_CAPS.fileBytes);
+  const files = Object.fromEntries(['big1.pem', 'big2.pem', 'big3.pem', 'big4.pem'].map((n) => [n, `-----BEGIN RSA PRIVATE KEY-----\n${big}\n`]));
+  const repo = tinyRepo({ firstCommitFiles: files });
+  /** @type {string[]} */ const logs = [];
+  // ⚠️ 故意讓它在**雜湊檢查**就退場（給錯的 expectedSha256）：記帳那行在更早就印了，
+  //    而這樣就不會起轉送器、不會跑沙箱——本題只看那一行，不該把整條掃描流程拖進來。
+  await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, grokInstall: fakeGrok(), expectedSha256: '0'.repeat(64) });
+  const line = logs.find((l) => l.startsWith('（破口已知來源：'));
+  assert.ok(line, `記帳那行沒印出來：${logs.slice(0, 3).join(' / ')}`);
+  assert.match(line, /head 樹 \d+ 個 blob/, '沒印 blob 數');
+  assert.match(line, /形狀命中 \d+ 條/, '沒印命中數');
+  assert.match(line, /4 個超過單檔上限沒讀/, '沒印跳過幾個大檔');
+  assert.match(line, /等 4 個/, '跳過清單被截成前三個卻沒說還有更多');
 });
 
 test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它，不安靜退回「只認材料」（接線；建盒子之前就退，平台無關）', async () => {
