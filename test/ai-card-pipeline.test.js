@@ -275,6 +275,37 @@ test('★調整列分開 finalize（r1#2）｜「國外交易服務費」不得�
   assert.equal(fee.isAdjustment, true, '標記要通過 finalize 存活（中閘據它跳過列對總額）');
 });
 
+test('★調整列逐列 finalize（r2#1）｜同批調整彼此也不得污染：「星巴克分期攤還」後的服務費不歸咖啡', async () => {
+  const { categorize } = await import('../lib/statement.js');
+  const pdf = cjkPdf([
+    ['遠東國際商業銀行', '信用卡帳單'],
+    ['卡號末四碼', '5678'],
+    ['上期應繳總額', '1,000'],
+    ['已繳款退款金額', '1,000'],
+    ['本期新增款項', '500'],
+    ['星巴克分期攤還', '200'],
+    ['國外交易服務費', '30'],
+    ['本期應繳總額', '730'],
+    ['2026/07/03', '全聯福利中心', '500'],
+  ]);
+  const answer = { issuer: '遠東國際商業銀行', lastFour: '5678', statementMonth: '2026-07',
+    totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 730 },
+    adjustments: [
+      { label: '星巴克分期攤還', amount: 200, date: null },
+      { label: '國外交易服務費', amount: 30, date: null },
+    ],
+    transactions: [{ date: '2026-07-03', postDate: null, desc: '全聯福利中心', amount: 500 }] };
+  const fe = fakeEngine([answer]);
+  const r = await previewAuto(b64Of(pdf), undefined, { useAi: true, aiEngineFactory: () => fe.engine, aiBudget: fakeBudget() });
+  const p = await previewForCard('feib', b64Of(pdf), undefined, undefined, { aiTicket: r.aiTicket });
+  const fee = p.transactions.find((/** @type {any} */ t) => t.desc === '國外交易服務費');
+  const stages = p.transactions.find((/** @type {any} */ t) => t.desc === '星巴克分期攤還');
+  assert.ok(fee && stages);
+  assert.equal(fee.category, categorize('國外交易服務費')[0],
+    '★逐列 finalize＝誰都不相鄰；同批一起跑時服務費會繼承前一列（分期攤還→咖啡）的分類');
+  assert.notEqual(fee.category, stages.category, '兩列各走各的 categorize（分期攤還含店名＝會被歸進該店分類，這是它自己的事）');
+});
+
 test('★中閘慣例閘（裁示③）｜AI 路列對總額對不上＝擋；模板路同一組數字仍只提醒（行為零改變）', async () => {
   const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
   const totals = { prevDue: 1000, paidAndRefund: 1000, newCharges: 450, due: 480 };
