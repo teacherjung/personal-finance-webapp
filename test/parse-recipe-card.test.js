@@ -121,11 +121,32 @@ test('套用｜rowShape=date-desc-amount 的版面也解得動；停止錨與摘
   reconcileAiCard(normalizeAiCard(answer));
 });
 
+test('套用｜r1#1：首格是日期的列**不准**當雜訊跳過——形狀/金額歧義＝整份拒解（防一正一負互抵漏抄）', () => {
+  // 兩筆申報形的列各帶兩個金額格（歧義）：舊版靜靜跳過兩筆 ⇒ +100/−100 互抵、驗算閘看不到
+  const lines = LINES().map((l) => l);
+  lines.splice(10, 0, ['2026/07/04', '2026/07/05', '甲店', '100', '100']);   // 兩個金額格＝分不出
+  assert.equal(codeOf(() => parseCardWithRecipe(lines, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★日期開頭＝申報形——歧義要拒解不准跳過（跳過安全的前提只給非日期開頭的雜訊列）');
+});
+
+test('套用＋重現｜r1#2：具名調整同列印了日期就抄；日期不同＝重現關紅（防重傳時利息 stmtRef 分岔重複記帳）', () => {
+  const lines = LINES().map((l) => (l[0] === '循環信用利息' ? ['循環信用利息', '2026/06/30', '30'] : l));
+  const answer = parseCardWithRecipe(lines, /** @type {any} */ (GOOD()));
+  assert.equal(answer.adjustments[0].date, '2026-06-30', '★同列的日期要抄下來（AI 黃金答案帶日期時才重現得了）');
+  const e = normalizeAiCard(answer);
+  const a2 = normalizeAiCard(parseCardWithRecipe(lines, /** @type {any} */ (GOOD())));
+  /** @type {any} */ (a2).adjustments[0] = { .../** @type {any} */ (a2).adjustments[0], date: null };
+  assert.equal(cardRecipeReproduces(e, a2).ok, false, '★調整日期不同＝重現關要紅');
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
   assert.ok(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (g1), answer).length > 0,
     '★錨點與交易店名相等＝把帳單內容當版面詞彙（換一期店名不同就失靈、還可能誤釘）');
+  const g2 = GOOD(); g2.bank = '星巴克';   // r1#3：bank 也是槽位——店名進 bank 一樣是內容入卡
+  assert.ok(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (g2), answer).length > 0,
+    '★店名存進 bank＝長期留在共用櫃並被面板投影送到前端');
   assert.equal(validateCardRecipeAgainstStatement(LINES(), /** @type {any} */ (GOOD()), answer).length, 0, '全對的卡要過');
 });
 

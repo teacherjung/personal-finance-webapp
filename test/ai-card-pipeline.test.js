@@ -581,3 +581,27 @@ test('★規則卡不收爛帳｜版面命中但帳單數學不平＝當作沒�
     (/** @type {any} */ e) => e.code === 'card_unrecognized',
     '★規則卡讀的走批二同一把閘——閘紅＝這張卡這次不算命中，原錯誤照丟（前端照舊長 AI 入口）');
 });
+
+test('★重生鎖同 kind（r1#4）｜rebirthId 撞到銀行列＝改走新建、不跨線覆寫', async () => {
+  const { saveParseRecipe } = await import('../lib/repo.js');
+  const db0 = store.load();
+  db0.parseRecipes = [{ id: 'rcp-bankY', bank: '台新', current: { x: 1 }, graduateStreak: 5, graduated: true,
+    suspect: false, rebirths: 0, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' }];
+  store.save(db0);
+  const out = await saveParseRecipe(/** @type {any} */ (CARD_RECIPE()), { kind: 'card', rebirthId: 'rcp-bankY', notAfter: '2099-01-01T00:00:00.000Z' });
+  assert.equal(out.rebirth, false, '★異 kind＝不重生、走新建');
+  const rows = store.load().parseRecipes || [];
+  const bankRow = rows.find((/** @type {any} */ x) => x.id === 'rcp-bankY');
+  assert.equal(bankRow.graduated, true, '★銀行列的畢業狀態一根汗毛都不能動');
+  assert.deepEqual(bankRow.current, { x: 1 });
+  assert.ok(rows.some((/** @type {any} */ x) => x.kind === 'card' && x.id !== 'rcp-bankY'), '卡片卡另立新列');
+});
+
+test('★異種票先還再忽略（r1#5）｜銀行票丟進卡片匯入＝匯入照常、票放回（銀行 apply 不必重跑模型）', async () => {
+  const bankish = issueAiTicket({ parsed: { bank: '台新', accounts: [], transactions: [] }, aiModel: 'm' });
+  const out = await importRows('feib', [
+    { date: '2026-07-03', desc: '甲店', amount: 100, category: '餐飲', stmtRef: 'feib|2026-07-03|100|甲店' },
+  ], '2026-07', 100, { aiTicket: bankish });
+  assert.equal(out.imported, 1, '匯入本身照常');
+  assert.ok(redeemAiTicket(bankish), '★票要放回——破壞性兌掉＝銀行 apply 只能重花錢重讀');
+});
