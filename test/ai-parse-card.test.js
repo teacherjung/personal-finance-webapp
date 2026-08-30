@@ -427,7 +427,7 @@ test('驗算｜加總閘（慣例閘）：漏抄一筆＝兩種印法都對不�
   assert.doesNotMatch(msg, /450|480|1,?000/, '★不回聲帳單的原始金額（機密紀律；差額是衍生值、單獨回推不出內容）');
 });
 
-test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款印法各自全對才收其一', () => {
+test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款印法各自全對才收其一', async () => {
   // 慣例 B 全列版：桶 1050 ＝ 繳款 1000（有列）＋退款 50（有列）；本期新增＝純消費 500
   const B = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1050, newCharges: 500, due: 480 },
     adjustments: [{ label: '循環信用利息', amount: 30, date: null }],
@@ -485,12 +485,20 @@ test('驗算｜慣例閘（裁示③2026-08-30；r1#1 收緊）：兩種退款�
     assert.ok(msg); assert.doesNotMatch(msg, /731/, '★A 式淨額 0 那側不報（報了＝回聲 newCharges）');
   }
   // r12#1 誠實劃界的釘子：桶驗不了時（繳款只列摘要）、桶裡的退款被漏抄＝**會過**（帳本少記那筆退款）
-  // ——改成會擋＝這題轉紅提醒重寫劃界（機械關法＝強驗桶＝把常見合法版面全誤擋，刻意不做）
+  // ——改成會擋＝這題轉紅提醒重寫劃界（機械關法＝強驗桶＝把常見合法版面全誤擋，刻意不做）。
+  // r13#1：釘子要走完**正式兩層閘**——只釘第一層的話，第二層若日後擋下這個反例，
+  // 產品已不再誤收、本題仍綠、檔頭與徽章卻繼續錯稱會少記。
   {
     const g = { ...GOOD(), adjustments: [],
       totals: { prevDue: 1000, paidAndRefund: 1100, newCharges: 500, due: 400 },
       transactions: [{ date: '2026-07-03', postDate: null, desc: '甲店', amount: 500 }] };
-    reconcileAiCard(normalizeAiCard(g));   // 原文另有 -100 退款在桶裡、答案漏抄——等式 1000−1100+500=400 照樣平
+    const p = normalizeAiCard(g);
+    reconcileAiCard(p);   // 第一層：原文另有 -100 退款在桶裡、答案漏抄——等式 1000−1100+500=400 照樣平
+    const { reconcileCardStatement } = await import('../lib/statement-reconcile.js');
+    const mid = reconcileCardStatement(/** @type {any} */ ({ statementTotals: p.statementTotals,
+      transactions: p.transactions.map((t) => ({ ...t, isPayment: false, isRefund: t.amount < 0 })),
+      aiAdjustments: p.adjustments }));
+    assert.equal(mid.ok, true, '★第二層（中閘慣例閘）也放行＝盲點在正式全程都存在（documented）');
   }
   // r1#1 誠實劃界的釘子：整筆繳款被抄成退款、金額恰等於桶＝算術不可區分＝**會過**（已文件化的盲點）
   const blind = { ...GOOD(), totals: { prevDue: 1000, paidAndRefund: 1000, newCharges: 500, due: 500 },
