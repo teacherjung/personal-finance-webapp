@@ -1296,13 +1296,16 @@ test('incident.json｜暗號族：欄位白名單、charOffset 是真的字元�
   const repo = tinyRepo(); const iso = isolated();
   // 暗號出現兩次，且第一次不在開頭——序號（0、1）與真位置就分得出來了
   const inst = fakeGrok({ reply: `前面墊一段話讓位置不是零。${SECRET} 中間 ${SECRET} 結束` });
-  // 再讓 Grok 用**暗號當檔名**建一個 session 檔：那條路徑會走 redactPath，遮法一樣不准留可查表的雜湊
-  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf 'x\n' > "$ws/fake-session/${SECRET}.jsonl"; $1`));
+  // 再讓 Grok 用**暗號當檔名**建一個 session 檔（內容也放暗號，才會走到那兩條事故訊息）：
+  // 那條路徑會被回聲進 summary＝**公開的** PR 描述，所以 summary 與 incident 兩個輸出面都要斷言。
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '${SECRET}\n' > "$ws/fake-session/${SECRET}.jsonl"; $1`));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), liveSecret: SECRET });
   assert.equal(r.code, 1, r.summary.join('\n'));
+  // ⚠️ summary 會被抄進公開的 PR 描述——受控路徑在這裡回聲，遮了 incident 也沒用
+  assert.equal(r.summary.join('\n').includes(SECRET), false, '公開摘要回聲了受控路徑裡的暗號');
   const { json, raw } = readIncident(iso.resultsRoot);
   const live = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'live');
-  assert.equal(live.length, 2, `暗號族命中數不對：${JSON.stringify(json.hits.map((/** @type {{family:string}} */ h) => h.family))}`);
+  assert.ok(live.length >= 2, `暗號族命中數不對：${JSON.stringify(json.hits.map((/** @type {{family:string}} */ h) => h.family))}`);
   for (const h of live) assert.deepEqual(Object.keys(h).sort(), ['charOffset', 'family', 'len', 'where'], '暗號族多了不該有的欄位');
   assert.ok(live[0].charOffset > 0, `charOffset 是陣列序號不是字元位置：${live[0].charOffset}`);
   assert.notEqual(live[0].charOffset, live[1].charOffset, '兩次命中的位置一樣＝記的不是位置');
@@ -1339,13 +1342,30 @@ test('incident.json｜兩條形狀命中靠在一起時，不可以透過彼此�
   assert.equal(raw.includes(B), false, '第二條命中的內容被另一條的上下文帶出去了');
 });
 
-test('redactWindow｜已知機密跨在視窗邊界上也要遮得到（純函式，平台無關，CI 也跑）', () => {
-  // ⚠️ r1 抓到：先切窗再替換的話，剛好壓在邊界的機密只會留下半截、替換比對不到。
-  const secret = 'BOUNDARY-SECRET-VALUE';
-  const text = `${'x'.repeat(30)}${secret}${'y'.repeat(20)}HITHITHIT尾巴`;
-  const w = redactWindow(text, text.indexOf('HITHITHIT'), 9, [secret], 25);   // span 25 ⇒ secret 壓在邊界
-  assert.equal(w.includes(secret), false, '跨邊界的已知機密沒被遮掉');
-  assert.ok(w.includes('‹已遮蔽›'), '沒有遮蔽記號＝根本沒切到那一段');
+test('redactWindow｜壓在視窗邊界上的東西**連半截都不准留**（純函式，平台無關，CI 也跑）', () => {
+  // ⚠️ r1 抓到「先切後替換會留半截」，我改成往外加寬——r2 證明那只是**把邊界往外移**：
+  //    新邊界上照樣切得到半截。所以改成在原文上算區間、凡與視窗相交就整段換掉。
+  //    這一題要守的是「半截」，不是「完整原文」——只斷言完整原文不出現，加寬版也會過。
+  {
+    const secret = 'BOUNDARY-SECRET-VALUE';
+    const text = `${'x'.repeat(30)}${secret}${'y'.repeat(20)}HITHITHIT尾巴`;
+    const w = redactWindow(text, text.indexOf('HITHITHIT'), 9, [secret], 25);   // span 25 ⇒ secret 壓在邊界
+    assert.equal(w.includes(secret), false, '跨邊界的已知機密沒被遮掉');
+    // 半截：任何長度 8 以上的連續片段都不准出現在視窗裡
+    for (let i = 0; i + 8 <= secret.length; i++) assert.equal(w.includes(secret.slice(i, i + 8)), false, `視窗裡留下了機密的半截：位移 ${i}`);
+    assert.ok(w.includes('‹已遮蔽›'), '沒有遮蔽記號＝根本沒切到那一段');
+  }
+  {
+    // 長形狀命中跨過視窗外邊界：目標命中的視窗不可以帶出它的尾巴
+    const longBody = 'MIIELONGONE' + 'A'.repeat(280);
+    const longHit = `${PEM_BEGIN('RSA')}\n${longBody}\n`;
+    const target = `${PEM_BEGIN('EC')}\nMIIETARGET${'B'.repeat(60)}\n`;
+    const text = `${longHit}!間隔!${target}尾巴`;
+    const idx = text.indexOf(PEM_BEGIN('EC'));
+    const w = redactWindow(text, idx, shapeHitsIn(target)[0].length, [], 40);   // span 40 ⇒ 長命中橫跨外邊界
+    assert.equal(w.includes('A'.repeat(20)), false, '長命中的尾巴被帶進視窗了');
+    assert.ok(w.includes('‹另一條命中'), '相交的另一條命中沒有被整段換掉');
+  }
 });
 
 test('nearestKnown｜兩臂比較：同一把鑰匙被截斷 vs 同標頭但無關（純函式，平台無關，CI 也跑）', () => {

@@ -183,11 +183,12 @@ export const nearestKnown = (h, known, materials) => {
  * （DLP 針、本輪暗號）會被遮掉，但**認不得的擋不住**（別的服務的 token、別種格式的鑰匙）。
  * 真破口時那一小段就是盒外讀到的東西。William 明示接受這個取捨；檔案是 0600、只在本機、不上 GitHub。
  * ⚠️ 遮的**不只是自己那一條**：視窗裡若還有別的形狀命中（兩條靠得近時一定會互相入鏡），
- *   那一條也要遮掉——否則 A 的視窗把 B 的原文完整帶出去，等於沒遮（Codex #535 r1 用兩條相鄰的
- *   合成命中重現過）。
- * ⚠️ 切窗**先加寬再遮**：已知機密若剛好跨在視窗邊界上，先切後遮只會留下半截而遮不到，
- *   所以往外多切一段（最長那條機密的長度）再做替換。代價是視窗會比 `span` 略寬——
- *   多出來的部分同樣遮過，不是漏洞。
+ *   那一條也要遮掉——否則 A 的視窗把 B 的原文完整帶出去，等於沒遮。
+ * ⚠️ **在原文上算區間，不是先切窗再替換**（Codex #535 r1／r2 連兩輪打在同一處）：
+ *   先切後替換的話，壓在視窗邊界上的機密／命中只會留下**半截**，字串比對就對不上了。
+ *   把視窗往外加寬也只是**把邊界往外移**、沒有把它關掉——新邊界上照樣切得到半截。
+ *   正解是：在**整份原文**上先把所有該遮的區間找出來，凡是**與視窗相交**的區間就整段換成佔位符
+ *   （即使它伸出視窗外），這樣任何邊界上都不會留下半截。
  * @param {string} text 命中所在的那份文字（剝完行號記號的那一份——比對就是在它上面做的）
  * @param {number} index 命中起點
  * @param {number} len 命中長度
@@ -195,16 +196,28 @@ export const nearestKnown = (h, known, materials) => {
  * @param {number} [span] 前後各留幾個字
  */
 export const redactWindow = (text, index, len, secrets, span = 200) => {
-  const pad = Math.max(0, ...secrets.map((v) => (v ? v.length : 0)));
-  const scrub = (/** @type {string} */ part) => {
-    let out = part;
-    for (const m of shapeMatchesIn(out)) out = out.split(m.hit).join(`‹另一條命中 ${m.hit.length} 字，內容不留›`);
-    for (const v of secrets) if (v) out = out.split(v).join('‹已遮蔽›');
-    return out;
-  };
-  const before = scrub(text.slice(Math.max(0, index - span - pad), index));
-  const after = scrub(text.slice(index + len, index + len + span + pad));
-  return `${before}‹命中 ${len} 字，內容不留›${after}`;
+  /** 該遮的區間（原文座標）：自己那一條、別的形狀命中、每一段已知機密的每一次出現 */
+  const marks = [{ start: index, end: index + len, label: `‹命中 ${len} 字，內容不留›` }];
+  for (const m of shapeMatchesIn(text)) {
+    if (m.index === index) continue;
+    marks.push({ start: m.index, end: m.index + m.hit.length, label: `‹另一條命中 ${m.hit.length} 字，內容不留›` });
+  }
+  for (const v of secrets) {
+    if (!v) continue;
+    for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + v.length)) marks.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
+  }
+  marks.sort((a, b) => a.start - b.start);
+  const lo = Math.max(0, index - span), hi = Math.min(text.length, index + len + span);
+  let out = '', pos = lo;
+  for (const mk of marks) {
+    if (mk.end <= pos) continue;        // 已經走過
+    if (mk.start >= hi) break;          // 整段在視窗之外
+    if (mk.start > pos) out += text.slice(pos, mk.start);
+    out += mk.label;                    // 相交就整段換掉——即使它伸出視窗外，也不留半截
+    pos = mk.end;
+  }
+  if (pos < hi) out += text.slice(pos, hi);
+  return out;
 };
 
 /**
@@ -920,10 +933,11 @@ export async function runScan(args, deps = {}) {
   for (const [rp, buf] of snap.files) {
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     const b = breachHits(text);
-    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; log(m); summary.push(m); collectBreach(b, redactPath(rp)); }
-    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${rp} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+    // ⚠️ 路徑是 Grok 取的，兩條訊息都會被抄進**公開的** PR 描述 ⇒ 回聲之前一律過同一把尺
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${redactPath(rp)} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; log(m); summary.push(m); collectBreach(b, redactPath(rp)); }
+    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
   }
-  if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => f.split('/').pop()).join('、')}）`);
+  if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => redactPath(f.split('/').pop() ?? f)).join('、')}）`);
   if (incidentHits.length) return writeIncidentAndStop();
   for (const [rp, buf] of snap.files) {
     if (binaries.includes(rp)) continue;
