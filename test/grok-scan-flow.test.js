@@ -78,6 +78,12 @@ function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o
  * 假 grok 放在 tmpdir() 會被沙箱正確擋住（126），那是沙箱做對，不是考題該繞的。
  * 預設寫一個會把 session 日誌寫進 $GROK_HOME/sessions/ 的假 grok（驗屍要讀得到）。
  */
+/**
+ * 假的 grok 執行檔。
+ * ⚠️ `reply` 是塞進 shell 的**雙引號字串**裡的，所以 `"`／`\`／`$`／`` ` `` 一律要跳脫——
+ *   原本只跳脫單引號，於是帶 `"` 的回覆會被 shell 切成好幾個字、`printf '%s'` 只印第一個。
+ *   那是**靜靜壞掉**：考題照樣綠，但它根本沒測到想測的東西（2026-09-01 寫「命中含機密」那題時踩到）。
+ */
 function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
@@ -86,7 +92,7 @@ function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '${o.noToolFootprint ? '{"type":"assistant","content":"x"}' : '{"type":"tool_started","tool_name":"run_terminal_command"}'}\n' > "$ws/fake-session/updates.jsonl"`;
   writeFileSync(p, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
-printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/'/g, "'\\''")}" # REPLY-LINE
+printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE
 exit ${o.status ?? 0}
 `);
   chmodSync(p, 0o755);
@@ -1366,6 +1372,93 @@ test('redactWindow｜壓在視窗邊界上的東西**連半截都不准留**（�
     assert.equal(w.includes('A'.repeat(20)), false, '長命中的尾巴被帶進視窗了');
     assert.ok(w.includes('‹另一條命中'), '相交的另一條命中沒有被整段換掉');
   }
+});
+
+test('關門｜任何文字進公開摘要／進事故檔之前都要先清洗（四種出口一起考）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這一題守的是**做法**不是單一出口：前三輪每一輪都被抓到「又一個沒遮到的出口」
+  //    （自我重疊的機密、命中本身包住機密、深層路徑的錯誤訊息、提示檔的檔名）。
+  //    William 2026-09-01 裁示改成關門：所有文字走同一支清洗。所以這一題挑**四個不同的出口**一起打，
+  //    任何一個沒走那道門就會紅。
+  const REAL = 'REAL-LOW-ENTROPY-NAME';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  // 出口④：提示檔的**檔名**含機密
+  const pd = keep(mkdtempSync(join(tmpdir(), 'fake-prompt-')));
+  const pf = join(pd, `${REAL}.txt`); writeFileSync(pf, '【界線】測試用\n');
+  // 出口②：形狀命中**本身包住**那個機密（值就是它）
+  const inst = fakeGrok({ reply: `{"flex${'Token'}": "${REAL}-padding-to-8"}` });
+  // 出口③：Grok 用機密當目錄名、疊到超過深度上限 ⇒ 錯誤訊息會逐字帶出那個路徑
+  const deep = Array.from({ length: 14 }, (_, i) => (i === 0 ? REAL : `d${i}`)).join('/');
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `mkdir -p "$ws/fake-session/${deep}"; printf 'x\n' > "$ws/fake-session/${deep}/x.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: pf }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.notEqual(r.code, 0, `這一題要走到事故或退 2 才量得到東西：${r.summary.join('\n')}`);
+  assert.equal(r.summary.join('\n').includes(REAL), false, `公開摘要漏出機密：${r.summary.join('\n').slice(0, 300)}`);
+  // 有留事故包的話，整包也不准有
+  for (const d of readdirSync(iso.resultsRoot)) for (const f of readdirSync(join(iso.resultsRoot, d))) {
+    assert.equal(readFileSync(join(iso.resultsRoot, d, f), 'utf8').includes(REAL), false, `${f} 漏出機密`);
+  }
+});
+
+test('關門｜事故檔整份寫出前要再過一次清洗：提示檔路徑這種「沒人各自遮」的欄位才擋得住', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這一題挑的是**只有最後那道門擋得到**的欄位：`promptFile` 路徑沒有經過任何一個各自的遮蔽器。
+  //    （我第一版把它跟別的出口混在同一題，結果那次跑出來是退 2、根本沒有事故包，
+  //     於是「事故檔不過關門」的突變照樣綠＝空包彈。）
+  const REAL = 'REAL-LOW-ENTROPY-NAME';
+  const SECRET = 'LIVE-CANARY-PACK-0123456789';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  const pd = keep(mkdtempSync(join(tmpdir(), 'fake-prompt-')));
+  const pf = join(pd, `${REAL}.txt`); writeFileSync(pf, '【界線】測試用\n');
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: pf }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `洩漏：${SECRET}` })), relayScript: fakeRelay('ok'), liveSecret: SECRET });
+  assert.equal(r.code, 1, `這一題要走到事故才有事故包：${r.summary.join('\n')}`);
+  const { json, raw } = readIncident(iso.resultsRoot);
+  assert.ok(json.hits.some((/** @type {{family: string}} */ h) => h.family === 'live'), '沒有暗號族命中＝這一題量不到東西');
+  assert.equal(raw.includes(REAL), false, '提示檔路徑裡的機密進了事故包（整份清洗那道門沒生效）');
+  assert.equal(raw.includes(SECRET), false, '事故包裡有暗號原文');
+});
+
+test('關門｜清洗要把重疊區間接成一整段：機密自我重疊時，公開摘要不可以留下殘段', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這一題守的是**關門那支清洗函式**（不是視窗那支）。
+  //    ⚠️ 病不在「起點漏掃」而在**殘段**：機密是 16 個 A、文字裡有 24 個 A 時，換掉第一段之後
+  //    剩下的 8 個 A **本身不構成完整機密**，再怎麼往下找都找不到。所以要把重疊的區間先接成一整段再拿掉。
+  //    （我第一版寫成「每次前進 1 個字」，那只解決起點、解決不了殘段，考題當場打臉。）
+  const REAL = 'A'.repeat(16);                      // 自我重疊的 DLP 針
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  // 讓 Grok 用「更長的同一個字元」當目錄名、疊過深度上限 ⇒ 錯誤訊息會帶出那串字，走 fail → say
+  const deep = Array.from({ length: 14 }, (_, i) => (i === 0 ? 'A'.repeat(24) : `d${i}`)).join('/');
+  const inst = fakeGrok();
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `mkdir -p "$ws/fake-session/${deep}"; printf 'x\n' > "$ws/fake-session/${deep}/x.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  const out = r.summary.join('\n');
+  assert.match(out, /深度|讀不完/, `這一題要走到「sessions 讀不完」那條路才量得到東西：${out.slice(0, 300)}`);
+  assert.equal(out.includes('A'.repeat(8)), false, `公開摘要留下了自我重疊機密的半截：${out.slice(0, 300)}`);
+});
+
+test('關門｜形狀命中本身包住已知機密時，連雜湊都不給（否則就是「固定前綴＋低熵值」的可查表雜湊）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const REAL = 'REAL-LOW-ENTROPY-NAME';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `{"flex${'Token'}": "${REAL}-padding"}` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const shape = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'shape');
+  assert.ok(shape.length >= 1, `這一題要有形狀命中才量得到東西：${JSON.stringify(json.hits)}`);
+  for (const h of shape) assert.deepEqual(Object.keys(h).sort(), ['charOffset', 'family', 'len', 'where'], '命中含已知機密，卻還是寫了雜湊／上下文');
+  assert.equal(raw.includes(REAL), false, '事故包漏出機密');
+});
+
+test('redactWindow｜機密自我重疊時，每一個起點都要遮到（純函式，平台無關，CI 也跑）', () => {
+  // ⚠️ Codex r3：原本每找到一次就前進 v.length，自我重疊的機密會漏掉後面的起點，
+  //    剩下的半截照樣是可辨識的片段。
+  const secret = 'A'.repeat(16);
+  const text = `${'A'.repeat(24)}HITHITHIT尾巴`;
+  const w = redactWindow(text, text.indexOf('HITHITHIT'), 9, [secret], 100);
+  assert.equal(w.includes('A'.repeat(8)), false, `自我重疊的機密留下了半截：${w.slice(0, 60)}`);
 });
 
 test('nearestKnown｜兩臂比較：同一把鑰匙被截斷 vs 同標頭但無關（純函式，平台無關，CI 也跑）', () => {

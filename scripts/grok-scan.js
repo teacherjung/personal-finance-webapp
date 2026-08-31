@@ -204,7 +204,9 @@ export const redactWindow = (text, index, len, secrets, span = 200) => {
   }
   for (const v of secrets) {
     if (!v) continue;
-    for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + v.length)) marks.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
+    // ⚠️ 每次前進 1 個字：機密自我重疊時要收下**每一個**起點，下面走訪時才會把它們接成一整段
+    //   （只收第一個的話，剩下的殘段本身不構成完整機密、永遠掃不到——Codex #535 r3）。
+    for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + 1)) marks.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
   }
   marks.sort((a, b) => a.start - b.start);
   const lo = Math.max(0, index - span), hi = Math.min(text.length, index + len + span);
@@ -213,6 +215,7 @@ export const redactWindow = (text, index, len, secrets, span = 200) => {
     if (mk.end <= pos) continue;        // 已經走過
     if (mk.start >= hi) break;          // 整段在視窗之外
     if (mk.start > pos) out += text.slice(pos, mk.start);
+    else if (out.endsWith(mk.label)) { pos = mk.end; continue; }   // 與前一段重疊＝同一段，別重複貼記號
     out += mk.label;                    // 相交就整段換掉——即使它伸出視窗外，也不留半截
     pos = mk.end;
   }
@@ -494,11 +497,55 @@ export async function runScan(args, deps = {}) {
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
   const resultsRoot = deps.resultsRoot ?? join(homedir(), '.grok-scan-results');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
-  const log = deps.log ?? ((m) => console.log(m));
+  const rawLog = deps.log ?? ((m) => console.log(m));
+  /**
+   * ⚠️ **關門，不是列舉出口**（William 2026-09-01 裁示）。
+   *
+   * 本支前三輪都在做同一件事：發現「又一個沒遮到的出口」就補一個遮蔽——視窗、事故訊息、路徑欄位…
+   * Codex r1／r2／r3 每一輪都找得到下一個（自我重疊的機密、命中本身包住機密、深層路徑的錯誤訊息、
+   * 提示檔的檔名）。那是「列舉繞法補不完」的形狀。
+   *
+   * 所以改成單一關卡：**任何文字要進公開摘要、或要寫進事故檔，都先過這裡**。
+   * 之後再冒出什麼新出口（新的錯誤訊息、新的欄位）都不必各自記得遮——它們天生走不出去。
+   * ⚠️ 這道門擋的仍然只有**我們認得的**東西（本輪暗號、DLP 針、本輪的破口形狀）；
+   *   認不得的照樣出得去（別的服務的 token、別種格式的鑰匙）。門關的是「已知」那一半。
+   * @type {string[]}
+   */
+  let scrubSecrets = [];
+  /**
+   * ⚠️ **算區間再合併，不是逐個替換**。逐個替換擋不住自我重疊的機密：
+   *   機密是 16 個 A、文字裡有 24 個 A 時，換掉第一個起點之後**剩下的 8 個 A 本身不構成完整機密**，
+   *   再怎麼往下找都找不到，那 8 個字就留在輸出裡（Codex #535 r3 的反例；我第一版「每次前進 1 個字」
+   *   同樣解決不了，因為問題不在起點漏掃，在**殘段**）。
+   *   合併重疊區間之後，24 個 A 會被當成一整段拿掉。
+   * @param {string} text
+   */
+  const scrubText = (text) => {
+    /** @type {{ start: number, end: number, label: string }[]} */ const spans = [];
+    for (const v of scrubSecrets) {
+      if (!v) continue;
+      for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + 1)) spans.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
+    }
+    for (const m of shapeMatchesIn(text)) spans.push({ start: m.index, end: m.index + m.hit.length, label: `‹命中 ${m.hit.length} 字，內容不留›` });
+    if (!spans.length) return text;
+    spans.sort((a, b) => a.start - b.start);
+    let out = '', pos = 0;
+    for (const sp of spans) {
+      if (sp.end <= pos) continue;             // 已被前一段吃掉
+      if (sp.start > pos) out += text.slice(pos, sp.start);
+      else if (out.endsWith(sp.label)) { pos = sp.end; continue; }   // 與前一段重疊＝同一段，別重複貼記號
+      out += sp.label;
+      pos = sp.end;
+    }
+    return out + text.slice(pos);
+  };
+  const log = (/** @type {string} */ m) => rawLog(scrubText(m));
+  /** 進公開摘要的唯一入口（summary 會被抄進 PR 描述） */
+  const say = (/** @type {string} */ m) => { const t = scrubText(m); rawLog(t); summary.push(t); };
   /** @type {string[]} */
   const summary = [];
   /** @param {string} why @returns {{ code: 2, summary: string[] }} */
-  const fail = (why) => { log(`⛔ ${why}`); summary.push(`⛔ ${why}`); return { code: 2, summary }; };
+  const fail = (why) => { say(`⛔ ${why}`); return { code: 2, summary }; };
 
   const { base, head, promptFile, outFile } = args;
   if (!/^[0-9a-f]{7,40}$/.test(base) || !/^[0-9a-f]{7,40}$/.test(head)) return fail('base／head 必須是寫死的 SHA（條款：不可用會移動的名稱）');
@@ -621,8 +668,7 @@ export async function runScan(args, deps = {}) {
   // ── ② 金絲雀（fail-closed；用本掃的 port 跑，跟正式發射同一組參數）──
   {
     const { code, lines } = await (deps.runCanary ?? runCanary)(box, { relayPort });
-    for (const l of lines) log('  ' + l);
-    summary.push(...lines);
+    for (const l of lines) say('  ' + l);   // 摘要與 log 同一份、同一道門
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');
   }
 
@@ -659,11 +705,13 @@ export async function runScan(args, deps = {}) {
     catch (e) { return failAndClean(`DLP：查針是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
     if (given.length) log(`（DLP：${given.length} 根針已在給盒子的材料／原始碼裡出現、不採用——長度 ${given.map((n) => n.length).join('/')}）`);
     needles = needles.filter((n) => !given.includes(n));
+    scrubSecrets = [...scrubSecrets, ...needles];   // 關門的字典：DLP 針這一半定稿
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  scrubSecrets = [...scrubSecrets, liveSecret];   // 關門的字典：暗號這一半定稿（它比 DLP 針晚生）
   // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
   // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
@@ -782,10 +830,12 @@ export async function runScan(args, deps = {}) {
     try {
       if (!resultsDir) throw new Error('這一次沒有結果包目錄');
       const to = join(resultsDir, 'incident.json');
-      writeFileSync(to, JSON.stringify({ note: '事故指紋包：不含任何命中值本身。上下文視窗裡的命中已換成佔位符，已知機密已遮蔽（認不得的擋不住）。', ...payload }, null, 2), { mode: 0o600 });
-      const m = `事故指紋已寫入 ${to}（不含命中內容）`; log(m); summary.push(m);
+      // ⚠️ **整份序列化之後再過一次那道門**：這樣「哪一個欄位可能夾帶已知機密」就不必逐格記得
+      //   （提示檔路徑、錯誤訊息、之後新增的任何欄位都一樣）。佔位符不含引號與反斜線，JSON 仍然合法。
+      writeFileSync(to, scrubText(JSON.stringify({ note: '事故指紋包：不含任何命中值本身。整份寫出前會再過一次清洗（已知機密與破口形狀都換成佔位符）；認不得的擋不住。', ...payload }, null, 2)), { mode: 0o600 });
+      say(`事故指紋已寫入 ${to}（不含命中內容）`);
     } catch (e) {
-      const m = `⚠️ 事故指紋寫不出來（${/** @type {Error} */ (e).message}）——這一次沒有證據可查`; log(m); summary.push(m);
+      say(`⚠️ 事故指紋寫不出來（${/** @type {Error} */ (e).message}）——這一次沒有證據可查`);
     }
   };
 
@@ -793,7 +843,7 @@ export async function runScan(args, deps = {}) {
   if (snap.odd.length) {
     const shown = snap.odd.slice(0, 3).map(redactPath);   // 項目名是 Grok 取的，會被回聲進公開的 PR 描述
     const m = `⚠️ 驗屍：sessions 裡有 ${snap.odd.length} 個非 regular file（symlink／特殊檔）——Grok 在日誌區放了捷徑，這是事故：${shown.join('、')}`;
-    log(m); summary.push(m);
+    say(m);
     writeIncident({
       startedAt, endedAt, base, head, promptFile,
       hits: snap.odd.map((rp) => ({ family: 'odd', where: redactPath(rp), len: rp.length })),
@@ -885,13 +935,18 @@ export async function runScan(args, deps = {}) {
    */
   const collectBreach = (b, where) => {
     for (const l of b.live) incidentHits.push({ family: 'live', where, len: liveSecret.length, charOffset: l.index });
-    for (const m of b.shape) incidentHits.push({
-      family: 'shape', where, len: m.hit.length, charOffset: m.index,
-      sha256: createHash('sha256').update(m.hit).digest('hex'),
-      profile: hitProfile(m.hit),
-      nearest: nearestKnown(m.hit, knownHits, materials),
-      context: redactWindow(b.stripped, m.index, m.hit.length, [liveSecret, ...needles]),
-    });
+    for (const m of b.shape) {
+      // ⚠️ 形狀命中**本身包住已知機密**時（例如鍵值對的值就是一個 DLP 值），
+      //   它的雜湊就是「固定前綴＋低熵值」的雜湊＝可查表。這種就退回跟另外兩族同一格：只留位置。
+      if (m.hit.includes(liveSecret) || leaksIn(m.hit)) { incidentHits.push({ family: 'shape', where, len: m.hit.length, charOffset: m.index }); continue; }
+      incidentHits.push({
+        family: 'shape', where, len: m.hit.length, charOffset: m.index,
+        sha256: createHash('sha256').update(m.hit).digest('hex'),
+        profile: hitProfile(m.hit),
+        nearest: nearestKnown(m.hit, knownHits, materials),
+        context: redactWindow(b.stripped, m.index, m.hit.length, [liveSecret, ...needles]),
+      });
+    }
   };
 
   /**
@@ -924,18 +979,18 @@ export async function runScan(args, deps = {}) {
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
   // ⚠️ DLP 與暗號兩族**只記族別與位置，不記雜湊、不記上下文**：它們的命中值由構造已知
   //    （就是 needles[i]／liveSecret），寫衍生物不增加任何判斷力，卻等於把它們的可查表表示留上磁碟。
-  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); incidentHits.push({ family: 'dlp', where: 'reply', len: 0 }); }
+  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; say(m); incidentHits.push({ family: 'dlp', where: 'reply', len: 0 }); }
   // 回覆也跑破口線索（Grok 第一次正式掃描抓到：原本只掃 session 檔，盒外內容只寫進最終回覆就退 0 並寫 --out）
   {
     const b = breachHits(reply);
-    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; log(m); summary.push(m); collectBreach(b, 'reply'); }
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; say(m); collectBreach(b, 'reply'); }
   }
   for (const [rp, buf] of snap.files) {
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     const b = breachHits(text);
     // ⚠️ 路徑是 Grok 取的，兩條訊息都會被抄進**公開的** PR 描述 ⇒ 回聲之前一律過同一把尺
-    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${redactPath(rp)} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; log(m); summary.push(m); collectBreach(b, redactPath(rp)); }
-    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${redactPath(rp)} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; say(m); collectBreach(b, redactPath(rp)); }
+    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; say(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
   }
   if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => redactPath(f.split('/').pop() ?? f)).join('、')}）`);
   if (incidentHits.length) return writeIncidentAndStop();
@@ -955,7 +1010,7 @@ export async function runScan(args, deps = {}) {
     const n = Object.values(a.calls).reduce((s, v) => s + v, 0);
     totalFootprints += n;
     log(`驗屍 session ${d.split('/').pop()}：工具足跡 ${n} 筆（盒子裡准跑）`);
-    summary.push(`足跡 ${n} 筆`);
+    say(`足跡 ${n} 筆`);
   }
   if (totalFootprints < GROK_HOME_MANIFEST.reviewSmoke.minToolFootprints) {
     dropResults();
@@ -964,7 +1019,7 @@ export async function runScan(args, deps = {}) {
   if (outFile) writeFileSync(outFile, reply);
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
-  summary.push(recipe);
+  say(recipe);
   return { code: 0, summary };
   } finally {
     // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
