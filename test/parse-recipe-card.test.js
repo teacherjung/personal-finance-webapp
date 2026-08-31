@@ -393,7 +393,7 @@ test('套用｜r16：金額錨自身的三個洞——豁免夾帶／怪形金�
       `★互抵成對的怪形金額不得當雜訊：${JSON.stringify(amtA)}`);
   }
   // r17#1：正負號印在幣別記號前面（+NT$100／-NT$100）——剝記號要把號留下來，整對不得被跳過
-  for (const [amtA, amtB] of [['+NT$100', '-NT$100'], ['(NT$100)', 'NT$100']]) {
+  for (const [amtA, amtB] of [['+NT$100', '-NT$100'], ['(NT$100)', 'NT$100'], ['+ NT$100', '- NT$100'], ['\u2212 US$100', 'US$100']]) {
     const pair = LINES().map((l) => l);
     pair.splice(10, 0, ['甲店', amtA], ['甲店退', amtB]);
     assert.equal(codeOf(() => parseCardWithRecipe(pair, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
