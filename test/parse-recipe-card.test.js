@@ -392,6 +392,19 @@ test('套用｜r16：金額錨自身的三個洞——豁免夾帶／怪形金�
     assert.equal(codeOf(() => parseCardWithRecipe(pair, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
       `★互抵成對的怪形金額不得當雜訊：${JSON.stringify(amtA)}`);
   }
+  // r17#1：正負號印在幣別記號前面（+NT$100／-NT$100）——剝記號要把號留下來，整對不得被跳過
+  for (const [amtA, amtB] of [['+NT$100', '-NT$100'], ['(NT$100)', 'NT$100']]) {
+    const pair = LINES().map((l) => l);
+    pair.splice(10, 0, ['甲店', amtA], ['甲店退', amtB]);
+    assert.equal(codeOf(() => parseCardWithRecipe(pair, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+      `★號在記號前也是錢：${JSON.stringify(amtA)}`);
+  }
+  // r17#2：長輸入不得二次方回溯（3 萬字元舊判準實測兩秒級；線性判準毫秒級——門檻放很寬防機器快慢）
+  const longCell = LINES().map((l) => l);
+  longCell.splice(10, 0, [`${'1'.repeat(50000)}X`]);
+  const t0 = Date.now();
+  assert.equal(parseCardWithRecipe(longCell, /** @type {any} */ (GOOD())).transactions.length, 3, '數字堆＋非集字元＝不是金額形＝雜訊');
+  assert.ok(Date.now() - t0 < 1500, `★單格 5 萬字元要毫秒級收工，實測 ${Date.now() - t0}ms`);
   // r16#3：點號千分位 1.000 不是合法金額（舊判準被 Number 讀成 1＝整份自洽的錯數字）——
   // 摘要用它＝金額格分不出＝拒解；交易列多一格它＝不得被說明吃掉
   const dotted = LINES().map((l) => (l[0] === '上期應繳總額' ? ['上期應繳總額', '1.000'] : l));
