@@ -44,9 +44,24 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
-  FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS,
+  FORBIDDEN_TOOLS as RAW_FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT as RAW_FORBIDDEN_AFTER_RECONNECT,
+  FORBIDDEN_FAMILY as RAW_FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES as RAW_ALLOWED_LOOKALIKES,
+  FAMILY_VERBS as RAW_FAMILY_VERBS, FAMILY_NOUNS as RAW_FAMILY_NOUNS, FUND_KEYWORDS as RAW_FUND_KEYWORDS,
 } from './helpers/money-family-probes.js';
+
+// r4 H：身分釘與矩陣必須消費**同一份行為不可自訂的快照**——helper 匯出的陣列可以
+// 自訂 Symbol.iterator 讓「序列化視圖」與「迭代視圖」分家（JSON.stringify 走索引、
+// spread／for-of 走 iterator；Codex #536 r4 突變實證：釘綠、矩陣卻不再考 submit_order）。
+// JSON round-trip 恰一次、之後釘與矩陣都只吃這份平凡快照＝視圖分家這一**類**等價寫法
+// 整類關掉（快照是 JSON.parse 生的 plain array，沒有可自訂行為；單次讀取，Proxy 也
+// 沒有第二次說謊的機會）。
+const [
+  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS,
+  FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
+] = JSON.parse(JSON.stringify([
+  RAW_FORBIDDEN_TOOLS, RAW_FORBIDDEN_AFTER_RECONNECT, RAW_FAMILY_VERBS, RAW_FAMILY_NOUNS,
+  RAW_FUND_KEYWORDS, RAW_FORBIDDEN_FAMILY, RAW_ALLOWED_LOOKALIKES,
+]));
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const codexFile = JSON.parse(readFileSync(path.join(ROOT, '.codex', 'hooks.json'), 'utf8'));
