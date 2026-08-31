@@ -592,11 +592,20 @@ test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（
   //    但那幾種都 flaky、當不了考題，所以「金絲雀說不行時 runScan 怎麼辦」只有注入才問得出來。
   // ⚠️ 這一題**需要**沙箱 guard，雖然注入點本身與平台無關：`--version` 檢查在金絲雀**之前**就已經在沙箱裡跑，
   //    非 macOS 會先死在那裡、走不到注入點（實測 CI 兩個 Node job 都紅）。
+  // ⚠️ 「退 2＋訊息對」還不夠：`failAndClean` 是先清盒子再回傳，所以**漏掉那個 `return`**時訊息照樣在 summary 裡、
+  //    掃描繼續往下跑、再因為盒子已被清掉而退 2——兩個斷言都會過（實測：拿掉 return，本題仍綠）。
+  //    ⚠️ 釘「掃描開始那一行不可出現」也不夠：漏 return 的實況是**走不到那一行**（它死在轉送器起不來），
+  //    所以那條斷言同樣抓不到（也實測過）。真正分得出來的是**「不掃」之後還有沒有動作**——
+  //    正常收場時那一行就是最後一行；漏 return 時它後面還會冒出 DLP 與轉送器的行。
   const repo = tinyRepo();
   for (const [code, re] of /** @type {[1|2, RegExp][]} */ ([[1, /沙箱是假的/], [2, /跑不了沙箱／對照組不活/]])) {
-    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), runCanary: fakeCanary(code), repo: repo.dir, ...withGrok(fakeGrok()) });
+    const logs = /** @type {string[]} */ ([]);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), runCanary: fakeCanary(code), repo: repo.dir, ...withGrok(fakeGrok()) });
     assert.equal(r.code, 2, `金絲雀回 ${code} 時沒有退 2：${r.summary.join('\n')}`);
     assert.match(r.summary.join('\n'), re, `金絲雀回 ${code} 時的訊息分不出是哪一種`);
+    const stopped = logs.findIndex((l) => l.startsWith('⛔ 金絲雀：'));
+    assert.notEqual(stopped, -1, `金絲雀回 ${code} 時沒印出「不掃」那一行：${logs.join(' | ').slice(0, 300)}`);
+    assert.equal(stopped, logs.length - 1, `金絲雀回 ${code} 說了「不掃」，後面卻還有動作＝其實還在掃：${logs.slice(stopped + 1).join(' | ').slice(0, 300)}`);
   }
 });
 
@@ -1116,9 +1125,9 @@ test('runScan｜不注入 liveRoot 時，活金絲雀建在真的家目錄：掃
   // ⚠️ 這一題**刻意**讓活金絲雀落在真家目錄：金絲雀的意義就在**位置**——家目錄同時住著真 ~/.grok、
   //    ~/.grok-sandbox-auth 與真的 store.db，是破出沙箱的人第一個會翻的地方。位置只能在正式位置上考。
   //    其餘走到活金絲雀那一步的題都經 isolated() 改道到隔離根。
-  //    ⚠️ 但「考題不碰真家目錄」這件事本支只做到一半：**走到 `runCanary()` 的題**（沙箱金絲雀）都會在家目錄
-  //    mkdtemp 一個 `.grok-canary-*`，它的四個根寫死、沒有可注入的參數——本支不動它（Codex #516 r5／r6 抓到我原本
-  //    在這裡寫「全檔唯一還在真家目錄建東西的題」與「每一題都會」都是假的：更早退場的題與純函式題根本沒跑到它）。
+  //    ⚠️ 另一個會碰真家目錄的是**沙箱金絲雀**：`runCanary` 也在家目錄 mkdtemp 一個 `.grok-canary-*`，
+  //    而且它的四個根寫死、沒有可注入的參數。本檔只有題名關鍵字「不注入」那一題會走到它，其餘都注入假的。
+  //    ⚠️ 別在這裡寫「全檔唯一還在真家目錄建東西的題」或「每一題都會」——兩種說法都不成立。
   // ⚠️ 認身分靠**每輪隨機的暗號內容**、不數個數：別的 session／審查樹／合併閘同時在跑也認不錯。
   //    （數個數正是上一題原本的寫法，也正是本支要修掉的病。）
   // ⚠️ 暗號現在走字面比對（不編譯成正則），所以帶元字元也不會炸；randomUUID 只有十六進位與 `-`，兩種寫法都安全。
