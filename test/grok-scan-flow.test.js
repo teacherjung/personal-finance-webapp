@@ -16,7 +16,7 @@ import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms } from '../scripts/grok-scan.js';
+import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms, hitProfile, nearestKnown, redactWindow } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -464,10 +464,16 @@ test('runScan｜confused deputy：盒內 sessions 裡的 symlink 不被父程序
   assert.match(r.summary.join('\n'), /非 regular file/);
   const leaked = readdirSync(iso.resultsRoot, { recursive: true }).some((f) => String(f).endsWith('leak.jsonl') || String(f).includes('OUTSIDE-SECRET'));
   assert.ok(!leaked, '父程序跟隨了盒內 symlink、把盒外內容抄進結果包');
-  // 盒外那個機密檔的內容也不可以出現在結果包的任何檔裡
+  // 盒外那個機密檔的內容也不可以出現在結果包的任何檔裡（含新增的 incident.json）
   for (const f of readdirSync(iso.resultsRoot, { recursive: true, withFileTypes: true })) {
     if (f.isFile()) assert.ok(!readFileSync(join(f.parentPath ?? f.path, f.name), 'utf8').includes('OUTSIDE-SECRET'), `結果包 ${f.name} 裡有盒外內容`);
   }
+  // ⚠️ 這條事故路徑（odd）也要留指紋：它跟破口那條一樣，原本什麼都不留就回傳了
+  const oddDirs = readdirSync(iso.resultsRoot);
+  assert.equal(oddDirs.length, 1, 'odd 事故沒留結果目錄');
+  const oddInc = join(iso.resultsRoot, oddDirs[0], 'incident.json');
+  assert.ok(existsSync(oddInc), 'odd 事故沒留 incident.json');
+  assert.equal(JSON.parse(readFileSync(oddInc, 'utf8')).hits[0].family, 'odd');
 });
 
 test('runScan｜r5 #2：auth.json 的 issuer 被改成別的網址 → 不 refresh、不掃（refresh_token 絕不送去非釘住的地方）', async (t) => {
@@ -1210,7 +1216,112 @@ test('runScan｜Grok 掃描抓到：活金絲雀暗號只出現在 grok 的**回
   assert.equal(readdirSync(iso.resultsRoot).flatMap((d) => readdirSync(join(iso.resultsRoot, d))).includes('sessions'), false, '事故還保存了 sessions');
 });
 
-test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-results 留任何目錄；事故（退 1）留 launch.json、不留 sessions', async (t) => {
+/** 讀事故指紋包；沒有就直接讓題目說清楚（不要在後面才 undefined 爆掉） */
+const readIncident = (/** @type {string} */ resultsRoot) => {
+  const dirs = readdirSync(resultsRoot);
+  assert.equal(dirs.length, 1, `結果根應該只有一個事故包，實際 ${dirs.length} 個`);
+  const p = join(resultsRoot, dirs[0], 'incident.json');
+  assert.ok(existsSync(p), '事故沒有留下 incident.json——證據又沒了');
+  return { dir: join(resultsRoot, dirs[0]), json: JSON.parse(readFileSync(p, 'utf8')), raw: readFileSync(p, 'utf8') };
+};
+
+test('incident.json｜三族的欄位是**白名單**：DLP 與暗號族連雜湊、上下文都不可以有', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 為什麼用「鍵名白名單」而不是「值黑名單」：斷言「檔案裡沒有 sha256(REAL)」擋不住
+  //    `sha256(REAL).slice(0,12)`、`base64(REAL)`、`{前四碼, 長度}` 這些同樣可反查的衍生物。
+  //    DLP 針裡有低熵值（身分字串），截斷雜湊照樣查得回去，所以只能限制**能有哪些欄位**。
+  const REAL = 'REAL-TOKEN-NEVER-IN-BOX-0123456789abcdef';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `leaked: ${REAL}` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const dlp = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'dlp');
+  assert.ok(dlp.length >= 1, '沒有 dlp 族的命中——這一題量不到東西');
+  for (const h of dlp) assert.deepEqual(Object.keys(h).sort(), ['family', 'len', 'where'], 'DLP 族多了不該有的欄位（雜湊／上下文都算）');
+  assert.equal(raw.includes(REAL), false, '指紋包裡有真 token 原文');
+});
+
+test('incident.json｜形狀族要留得下判得出真假的東西：雜湊、字元組成、最近似排除項、遮蔽過的上下文', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const BODY = 'MIIEPLANTEDBODY' + 'W'.repeat(50);
+  const planted = `${PEM_BEGIN('RSA')}\n${BODY}\n`;
+  const repo = tinyRepo(); const iso = isolated();
+  const replyText = `我編的示範：${planted}以上是示範`;
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: replyText })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const shape = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'shape');
+  assert.equal(shape.length, 1, `形狀族命中數不對：${JSON.stringify(json.hits.map((/** @type {{family:string}} */ h) => h.family))}`);
+  const h = shape[0];
+  assert.equal(h.where, 'reply');
+  // 期望值由考題自己算（拿實作的輸出回填就變成自證）；要對**回覆那份文字**算，
+  // 因為私鑰那條腿的字元類含空白，命中會吃到 planted 後面緊接的空白為止。
+  const expected = shapeHitsIn(replyText)[0];
+  assert.ok(expected, '夾具沒產生命中');
+  assert.equal(h.len, expected.length, '長度不是這條命中的');
+  assert.equal(h.sha256, createHash('sha256').update(expected).digest('hex'), '雜湊不是這條命中的');
+  assert.ok(h.profile.maxB64Run >= 50, `字元組成沒認出 base64 body：${JSON.stringify(h.profile)}`);
+  assert.equal(typeof h.nearest.prefixLen, 'number');
+  // 上下文：命中本身換成佔位符、周圍的字要在（那正是判「這是它編的示範」的依據）
+  assert.equal(h.context.includes(BODY), false, '上下文把命中內容也寫進去了');
+  assert.ok(h.context.includes('‹命中'), '上下文沒有佔位符');
+  assert.ok(h.context.includes('我編的示範') && h.context.includes('以上是示範'), '上下文沒帶到周圍的字＝判不出真假');
+  assert.equal(raw.includes(BODY), false, '指紋包裡有命中內容');
+});
+
+test('incident.json｜同一次掃描兩族都中刀時，族別不可以被標成同一種', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 沒有這一題，「照第一個中刀的族別標全部」與「只要有形狀命中就全部加雜湊」兩種突變都會過。
+  const REAL = 'REAL-TOKEN-NEVER-IN-BOX-0123456789abcdef';
+  const planted = `${PEM_BEGIN('EC')}\nMIIEBOTHFAMILIES${'Q'.repeat(50)}\n`;
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `${REAL} 與 ${planted}` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json } = readIncident(iso.resultsRoot);
+  const fams = new Set(json.hits.map((/** @type {{family: string}} */ h) => h.family));
+  assert.ok(fams.has('dlp') && fams.has('shape'), `兩族沒有各自標到：${[...fams].join('、')}`);
+  for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'dlp')) assert.deepEqual(Object.keys(h).sort(), ['family', 'len', 'where']);
+  for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'shape')) assert.ok(h.sha256 && h.context, '形狀族少了判定要用的欄位');
+});
+
+test('nearestKnown｜兩臂比較：同一把鑰匙被截斷 vs 同標頭但無關（純函式，平台無關，CI 也跑）', () => {
+  // ⚠️ 這一題刻意寫成**兩臂比較**，不是單臂門檻：單臂門檻是我自己挑的數字，證明不了它分得開兩種情形。
+  const treeKey = `${PEM_BEGIN('RSA')}\n${Array.from({ length: 8 }, (_, i) => `MIIETREEARM${String.fromCharCode(65 + i).repeat(45)}`).join('\n')}\n`;
+  const known = new Set(shapeHitsIn(treeKey));
+  assert.equal(known.size, 1, '夾具沒產生排除項＝這一題量不到東西');
+  const truncated = shapeHitsIn(treeKey.slice(0, Math.floor(treeKey.length * 0.55)))[0];
+  const unrelated = shapeHitsIn(`${PEM_BEGIN('RSA')}\n${Array.from({ length: 8 }, (_, i) => `MIIEOTHERARM${String.fromCharCode(97 + i).repeat(46)}`).join('\n')}\n`)[0];
+  assert.ok(truncated && unrelated, '兩臂夾具沒都命中');
+  const a = nearestKnown(truncated, known, ''), b = nearestKnown(unrelated, known, '');
+  const ratio = (/** @type {{prefixLen: number, hitLen: number}} */ n) => n.prefixLen / n.hitLen;
+  assert.ok(ratio(a) > 0.9, `截斷臂沒被認出同源：${JSON.stringify(a)}`);
+  assert.ok(ratio(b) < 0.3, `無關臂被誤認成同源：${JSON.stringify(b)}`);
+  assert.ok(ratio(a) - ratio(b) > 0.5, '兩臂拉不開＝這個判別式交付不了它的承諾');
+});
+
+test('hitProfile｜「標頭＋一堆空白」那個自承的誤報族要看得出來（純函式，平台無關，CI 也跑）', () => {
+  // 破口正則的字元類含 \s 與 \\，所以「標頭＋32 個空白」也算命中。最長連續 b64 片段能否證它不是鑰匙？
+  const noisy = shapeHitsIn(`${PEM_BEGIN('DSA')}${' '.repeat(40)}`)[0];
+  const real = shapeHitsIn(`${PEM_BEGIN('DSA')}\n${'M'.repeat(64)}`)[0];
+  assert.ok(noisy && real, '夾具沒都命中');
+  assert.ok(hitProfile(noisy).maxB64Run < 10, `空白那族的最長 b64 片段太長：${JSON.stringify(hitProfile(noisy))}`);
+  assert.ok(hitProfile(real).maxB64Run >= 60, `真 body 的最長 b64 片段太短：${JSON.stringify(hitProfile(real))}`);
+  // ⚠️ 只否證一個方向：maxB64Run 大**不代表**是真外洩（真假鑰匙的 body 都是 base64）。
+});
+
+test('redactWindow｜命中換成佔位符、已知機密遮掉、周圍的字要留著（純函式，平台無關，CI 也跑）', () => {
+  const secret = 'ANOTHER-KNOWN-SECRET';
+  const text = `前面說了${secret}然後 HITHITHIT 後面還有話`;
+  const w = redactWindow(text, text.indexOf('HITHITHIT'), 9, [secret], 50);
+  assert.equal(w.includes('HITHITHIT'), false, '命中沒被換掉');
+  assert.equal(w.includes(secret), false, '視窗裡的已知機密沒被遮掉');
+  assert.ok(w.includes('‹命中 9 字，內容不留›'), '佔位符不對');
+  assert.ok(w.includes('前面說了') && w.includes('後面還有話'), '周圍的字沒留＝判不出真假');
+});
+
+test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-results 留任何目錄；事故（退 1）留 launch.json＋incident.json、不留 sessions', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   {
@@ -1224,6 +1335,9 @@ test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-resu
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: 'LIVE-CANARY-X-0123456789' })), relayScript: fakeRelay('ok'), liveSecret: 'LIVE-CANARY-X-0123456789' });
     assert.equal(r.code, 1);
     const dirs = readdirSync(iso.resultsRoot); assert.equal(dirs.length, 1, '事故應留一個結果目錄當證據');
-    assert.deepEqual(readdirSync(join(iso.resultsRoot, dirs[0])), ['launch.json']);
+    const dir = join(iso.resultsRoot, dirs[0]);
+    assert.deepEqual(readdirSync(dir).sort(), ['incident.json', 'launch.json'], '事故包的內容物變了');
+    // ⚠️ 檔名清單證明不了「沒有把命中內容寫上磁碟」——逐檔掃內容才算。本例的命中就是暗號本身。
+    for (const f of readdirSync(dir)) assert.equal(readFileSync(join(dir, f), 'utf8').includes('LIVE-CANARY-X-0123456789'), false, `${f} 裡有命中內容`);
   }
 });
