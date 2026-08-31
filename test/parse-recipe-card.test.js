@@ -375,6 +375,39 @@ test('套用｜r15：有金額就必須看懂（William 2026-08-31 裁示）—�
   assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3);
 });
 
+test('套用｜r16：金額錨自身的三個洞——豁免夾帶／怪形金額／點號千分位', () => {
+  // r16#1：末四碼列搬進明細區、夾帶一正一負——豁免列上只准有「被抄走那格」的金額形
+  const smuggle = LINES().filter((l) => l[0] !== '卡號末四碼');
+  smuggle.splice(9, 0, ['卡號末四碼', '5678', '100', '-100']);
+  assert.equal(codeOf(() => parseCardWithRecipe(smuggle, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★宣告列豁免不得變成漏帳門');
+  // 同家族：具名調整列在區內夾帶一格 toAmount 認不得的全形金額
+  const adjSmuggle = LINES().filter((l) => l[0] !== '循環信用利息');
+  adjSmuggle.splice(10, 0, ['循環信用利息', '30', '１００']);
+  assert.equal(codeOf(() => parseCardWithRecipe(adjSmuggle, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
+  // r16#2：toAmount 認不得的金額形（全形／阿拉伯-印度數字／撇號分組／幣別記號）＝寬判準也是錢，拒解
+  for (const [amtA, amtB] of [['１００', '－１００'], ['\u0661\u0660\u0660', '-\u0661\u0660\u0660'], ["1'000", "-1'000"], ['NT$100', 'NT$-100'], ['100元', '-100元']]) {
+    const pair = LINES().map((l) => l);
+    pair.splice(10, 0, ['甲店', amtA], ['甲店退', amtB]);
+    assert.equal(codeOf(() => parseCardWithRecipe(pair, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+      `★互抵成對的怪形金額不得當雜訊：${JSON.stringify(amtA)}`);
+  }
+  // r16#3：點號千分位 1.000 不是合法金額（舊判準被 Number 讀成 1＝整份自洽的錯數字）——
+  // 摘要用它＝金額格分不出＝拒解；交易列多一格它＝不得被說明吃掉
+  const dotted = LINES().map((l) => (l[0] === '上期應繳總額' ? ['上期應繳總額', '1.000'] : l));
+  assert.equal(codeOf(() => parseCardWithRecipe(dotted, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
+  const dottedTx = LINES().map((l) => l);
+  dottedTx.splice(10, 0, ['2026/07/04', '2026/07/05', '星巴克', '1.000', '150']);
+  assert.equal(codeOf(() => parseCardWithRecipe(dottedTx, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★1.000 被 desc 吃掉＝錢混進店名裡消失');
+  // 合法千分位與小數照收；雜訊列（文字夾數字）照跳＝寬判準不誤殺
+  const fine = LINES().map((l) => l);
+  fine.splice(10, 0, ['2026/07/04', '2026/07/05', '乙店', '1,234.56']);
+  const ok = parseCardWithRecipe(fine, /** @type {any} */ (GOOD()));
+  assert.equal(ok.transactions.length, 4);
+  assert.equal(ok.transactions[1].amount, 1234.56);
+});
+
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
   const answer = { transactions: [{ desc: '星巴克' }, { desc: '全聯福利中心' }] };
   const g1 = GOOD(); g1.adjustmentLabels = ['星巴克'];   // 錨點是店名
