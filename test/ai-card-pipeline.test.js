@@ -747,3 +747,16 @@ test('★快照先於讀櫃（r9#2）｜previewAuto 的 observedAt 在 getDb 之
   assert.ok(iObs > -1 && iDb > -1 && iObs < iDb,
     '★observedAt 必須在 getDb 之前——db 舊快照＋新時間戳的縫隙裡完成的自證會被疑似名單清洗');
 });
+
+test('Grok 掃#6｜反向 kind 鎖：卡片票拿去銀行 apply＝先還再拒、訊息講「開錯用途」不是「讀不到餘額」', async () => {
+  const { applyBankStatement } = await import('../lib/services/bank-import.js');
+  const { issueAiTicket, redeemAiTicket, restoreAiTicket } = await import('../lib/ai-confirm-ticket.js');
+  const cardTicket = issueAiTicket({ parsed: { transactions: [] }, aiModel: 'x', aiKind: 'card' });
+  let err = null;
+  try { await applyBankStatement('', '', undefined, { aiTicket: cardTicket }); } catch (e) { err = e; }
+  assert.equal(/** @type {any} */ (err)?.code, 'ai_ticket_invalid');
+  assert.match(String(/** @type {any} */ (err)?.message || ''), /信用卡/, '訊息要講「開錯用途」——不是靠 AI 級閘巧合擋住時那句「讀不到餘額」');
+  const back = redeemAiTicket(cardTicket);
+  assert.ok(back, '先還再拒：拒收後票要還在（可重新走正確用途）');
+  if (back) restoreAiTicket(cardTicket, back);
+});

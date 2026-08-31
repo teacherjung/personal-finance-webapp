@@ -32,7 +32,7 @@ const LINES = () => [
   ['本期應繳總額', '480'],
   ['交易日期', '入帳日期', '消費說明', '金額'],
   ['2026/07/03', '2026/07/05', '星巴克', '150'],
-  ['頁次 1/2'],                                        // 雜訊列（跳過＝驗算閘接住）
+  ['頁次 1/2'],                                        // 雜訊列（無日期形也無金額形＝跳過；r15 金額錨）
   ['2026/07/10', '2026/07/11', '全聯福利中心', '350'],
   ['2026/07/12', '2026/07/13', '退款全聯', '-50'],
   ['本期消費小計', '450'],
@@ -369,6 +369,11 @@ test('套用｜r15：有金額就必須看懂（William 2026-08-31 裁示）—�
   const ok = parseCardWithRecipe(inRegion, /** @type {any} */ (GOOD()));
   assert.equal(ok.transactions.length, 3);
   assert.deepEqual(ok.adjustments, [{ label: '循環信用利息', amount: 30, date: null }], '宣告列在區內＝豁免且照抄');
+  // 頁碼獨立格（['1']）＝整格純數字＝金額形＝拒解——這是裁示言明代價的一部分（多頁帳單的
+  // 頁碼常自佔一格；學不成卡、照舊走 AI），characterization 題釘住「這是故意的不是漏的」
+  const pageNo = LINES().map((l) => l);
+  pageNo.splice(10, 0, ['1']);
+  assert.equal(codeOf(() => parseCardWithRecipe(pageNo, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
   // 純文字雜訊照跳（沒有錢可漏）
   const noise = LINES().map((l) => l);
   noise.splice(10, 0, ['\u672c\u671f\u512a\u60e0\u8a73\u898b\u5b98\u7db2', '\u5099\u8a3b']);
@@ -464,15 +469,15 @@ test('出生把關｜重現：逐欄比對（錢嚴格、文字空白不敏感�
 });
 
 test('兩把尺｜相容字版面：old（逐字）整趟敗、new（NFKC）過——一趟一把尺不混用', () => {
-  // 帳單把「上期應繳總額」印成相容字（NFKC 後同形）：這裡用全形英數當代表
-  const lines = LINES().map((l) => l.map((c) => c.replace('上期應繳總額', '上期應繳總額０'.slice(0, -1))));
-  void lines;   // 中文相容字難以穩定合成——改用「標籤帶全形空白」這個 recipeNorm 能吸收、squash 也能吸收的形不成立，
-  // 故此題改驗協定本身：同一張卡、同一份帳單，兩把尺各自跑都要成功（尺不影響全 ASCII-safe 版面）
-  const g = GOOD();
-  for (const ruler of ['old', 'new']) {
-    const answer = parseCardWithRecipe(LINES(), /** @type {any} */ (g), { ruler });
-    assert.equal(answer.transactions.length, 3, `ruler=${ruler} 也解得動`);
-  }
+  // Grok 掃#4 抓到本題原版是空包彈（replace no-op＋void lines＝實際測的是 ASCII 兩尺都過）。
+  // 真分歧的合成：規則卡標籤存半形 VISA、帳單印全形 ＶＩＳＡ——NFKC 後同形、逐字不同形。
+  const g = GOOD(); g.lastFourLabel = 'VISA末四碼';
+  const lines = LINES().map((l) => (l[0] === '卡號末四碼' ? ['ＶＩＳＡ末四碼', '5678'] : l));
+  assert.equal(codeOf(() => parseCardWithRecipe(lines, /** @type {any} */ (g), { ruler: 'old' })), 'recipe_parse_failed',
+    '★old（逐字）：全形標籤對不上半形槽＝整趟敗');
+  const answer = parseCardWithRecipe(lines, /** @type {any} */ (g), { ruler: 'new' });
+  assert.equal(answer.lastFour, '5678', '★new（NFKC）：同一份帳單解得動——兩把尺真的各是各的');
+  assert.equal(answer.transactions.length, 3);
 });
 
 test('形狀｜枚舉表與上限是封閉常數（考題釘住：改值要先來這裡對帳）', () => {
