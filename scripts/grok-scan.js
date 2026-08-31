@@ -72,7 +72,47 @@ export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 1
  * 暗號每掃現生、不在任何材料也不在任何 commit 裡；併進同一條 alternative 就等於讓排除有機會碰到它——
  * 分成兩族是構造上的隔離，不是靠註解承諾。
  */
-export const BREACH_SHAPES = `flexToken"\\s*:\\s*"[^"]{8,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----[\\s\\\\]*[A-Za-z0-9+/=\\s\\\\]{32,}`;
+/**
+ * 同一份內容在 grok 的日誌裡可能被 JSON 字串**包過幾層**（session 檔是 JSONL，內容裡還會再嵌 JSON），
+ * 所以有三種寫法：原文、轉一層、轉兩層。樹側排除、材料側排除、破口正則的引號原子都用這一支
+ * ——**用同一把尺是這支函式存在的理由**：偵測側與排除側若各自寫階梯，同一份內容會算出對不上的字串＝假事故。
+ * ⚠️ 深度到 2 為止是**觀察值不是定理**：更深的包法兩側都認不得，方向是漏報。
+ */
+const jsonEscOnce = (/** @type {string} */ s) => JSON.stringify(s).slice(1, -1);
+export const escapeForms = (/** @type {string} */ s) => { const out = [s]; while (out.length < 3) out.push(jsonEscOnce(out[out.length - 1])); return out; };
+
+/** 正則字面轉義（把一段文字當字面塞進正則） */
+const reLit = (/** @type {string} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * 「任一轉義深度的雙引號」。**用 escapeForms 疊出來、不手打**——手打就會跟排除側的階梯各自漂。
+ * ⚠️ 這裡**不排序**分支：三種寫法分別要求 0／1／3 個反斜線後接引號 ⇒ 在任一位置互斥
+ *   （沒有誰是誰的前綴），所以 alternation 取哪一個成功分支結果都一樣。
+ */
+const Q = `(?:${escapeForms('"').map(reLit).join('|')})`;
+
+/**
+ * ⚠️ flexToken 那條腿為什麼長這樣（2026-08-31 修的一個**靜靜放過**）：
+ *   舊寫法是 `flexToken"\s*:\s*"[^"]{8,}`，要求 `flexToken` 後面緊跟一個**字面**的 `"`。
+ *   但它掃的日誌是 JSONL，那裡的 `"` 是 `\"` ⇒ **真的 flexToken 外洩到日誌裡，這條腿一條都認不得**
+ *   （實測：深度 0 命中、深度 1／2 都是 0）。私鑰那條腿的字元類含 `\s` 與 `\\`，僥倖躲過同一個病。
+ * ⚠️ 值那格 `(?:(?!Q|\\n)[^"\n]){8,}` 的兩個排除**各有理由，不是防禦性複製**：
+ *   ・`(?!Q)`＝遇到任一深度的引號就停 ⇒ 命中**逐字結束在值本身**，不夾帶轉義殘渣。
+ *   ・`[^"\n]` 與 `(?!\\n)`＝**不跨行**（連轉義形的兩字元 `\n` 也不跨）。這一格是防假事故的關鍵：
+ *     值沒有收尾引號時（散文、表格、註解、grep 只列命中行——這個 repo 天天在寫的東西），
+ *     沒有這一格的話命中會一路吃到「下一個引號」為止＝**長度由上下文決定、不由內容決定**，
+ *     於是同一段無害文字在材料裡與在日誌裡算出不同字串、排除對不上 ⇒ 假事故。
+ *     有了行界，同一段內容的命中就**不隨後文改變**。（量到的長度數字留在 PR／commit，不寫進這裡：
+ *     它會隨夾具長度漂，而沒有任何考題會因為它過期而轉紅。）
+ *   代價：跨行的值認不得（方向是漏報，照實寫在這裡）。
+ * ⚠️ **這條腿只涵蓋「被 JSON 序列化過」的那一種呈現**，射程到此為止。以下**認不得**：
+ *   ・`util.inspect`／`console.log` 印出來的 JS 物件（`flexToken: 'xxx'`——單引號、鍵沒引號）＝**靜靜放過**；
+ *   ・ANSI 逸出序列插進鍵與引號之間（上色輸出會這樣）破壞「相鄰」＝**靜靜放過**；
+ *   ・非 UTF-8 的 session 檔**不進比對**——這一條不是無聲：略過幾個檔會印出來，而且不會讓掃描失敗
+ *     （＝紀錄看得到、但那幾個檔的內容沒有被查過）。
+ *   `flexToken` 不在 DLP 針裡（針只取自沙箱 auth.json），所以前兩條沒有第二道網。要收得換成
+ *   「比對真值」而不是「比對形狀」的判準——那是另一支的事，本支不宣稱修掉它們。
+ */
+export const BREACH_SHAPES = `flexToken${Q}\\s*:\\s*${Q}(?:(?!${Q}|\\\\n)[^"\\n]){8,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----[\\s\\\\]*[A-Za-z0-9+/=\\s\\\\]{32,}`;
 
 /** @param {string} text */
 export const shapeHitsIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES, 'g'))].map((m) => m[0]);
@@ -161,7 +201,7 @@ export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.f
       // 解碼用有損模式（跟日誌側 fatal 的語意刻意不同）：二進位檔解不乾淨頂多少收一條＝誤報方向，不會多排除。
       const raw = out.toString('utf8', start, start + size);
       if (raw.includes('PRIVATE KEY-----') || raw.includes('flexToken')) {   // 廉價前置過濾，結果不變
-        for (const form of [raw, JSON.stringify(raw), JSON.stringify(JSON.stringify(raw))]) {
+        for (const form of escapeForms(raw)) {
           // 只在「這條命中是新的」時記帳：同一條在三形階梯裡會各出現一次，逐次累加會讓數字虛胖三倍
           for (const h of shapeHitsIn(form)) { if (!hits.has(h)) { hits.add(h); bySource.set(path, (bySource.get(path) ?? 0) + 1); } }
         }
@@ -645,7 +685,7 @@ export async function runScan(args, deps = {}) {
   };
   /** @type {Set<string>} */ const knownHits = new Set();
   const unprefixed = materials.replace(/^[+ -]/gm, '');   // diff 每行多一個 `+`；樹側**不套**，那會憑空造出樹裡沒有的排除項
-  for (const base0 of [materials, unprefixed]) for (const form of [base0, JSON.stringify(base0), JSON.stringify(JSON.stringify(base0))]) for (const h of shapeHitsIn(form)) knownHits.add(h);
+  for (const base0 of [materials, unprefixed]) for (const form of escapeForms(base0)) for (const h of shapeHitsIn(form)) knownHits.add(h);
   for (const h of treeKnown.hits) knownHits.add(h);
   /**
    * 這段文字裡「證明不了是盒內來源」的命中，分兩族回傳。
