@@ -182,6 +182,12 @@ export const nearestKnown = (h, known, materials) => {
  * ⚠️ **誠實劃界——這一格會把盒外內容多留一份在磁碟上**：視窗裡若有我們**認得**的機密
  * （DLP 針、本輪暗號）會被遮掉，但**認不得的擋不住**（別的服務的 token、別種格式的鑰匙）。
  * 真破口時那一小段就是盒外讀到的東西。William 明示接受這個取捨；檔案是 0600、只在本機、不上 GitHub。
+ * ⚠️ 遮的**不只是自己那一條**：視窗裡若還有別的形狀命中（兩條靠得近時一定會互相入鏡），
+ *   那一條也要遮掉——否則 A 的視窗把 B 的原文完整帶出去，等於沒遮（Codex #535 r1 用兩條相鄰的
+ *   合成命中重現過）。
+ * ⚠️ 切窗**先加寬再遮**：已知機密若剛好跨在視窗邊界上，先切後遮只會留下半截而遮不到，
+ *   所以往外多切一段（最長那條機密的長度）再做替換。代價是視窗會比 `span` 略寬——
+ *   多出來的部分同樣遮過，不是漏洞。
  * @param {string} text 命中所在的那份文字（剝完行號記號的那一份——比對就是在它上面做的）
  * @param {number} index 命中起點
  * @param {number} len 命中長度
@@ -189,11 +195,16 @@ export const nearestKnown = (h, known, materials) => {
  * @param {number} [span] 前後各留幾個字
  */
 export const redactWindow = (text, index, len, secrets, span = 200) => {
-  const before = text.slice(Math.max(0, index - span), index);
-  const after = text.slice(index + len, index + len + span);
-  let w = `${before}‹命中 ${len} 字，內容不留›${after}`;
-  for (const v of secrets) if (v) w = w.split(v).join('‹已遮蔽›');
-  return w;
+  const pad = Math.max(0, ...secrets.map((v) => (v ? v.length : 0)));
+  const scrub = (/** @type {string} */ part) => {
+    let out = part;
+    for (const m of shapeMatchesIn(out)) out = out.split(m.hit).join(`‹另一條命中 ${m.hit.length} 字，內容不留›`);
+    for (const v of secrets) if (v) out = out.split(v).join('‹已遮蔽›');
+    return out;
+  };
+  const before = scrub(text.slice(Math.max(0, index - span - pad), index));
+  const after = scrub(text.slice(index + len, index + len + span + pad));
+  return `${before}‹命中 ${len} 字，內容不留›${after}`;
 };
 
 /**
@@ -732,11 +743,23 @@ export async function runScan(args, deps = {}) {
    * Grok 可控的字串（session 相對路徑、odd 的項目名）要先過濾再放進 summary／指紋包：
    * 它可以用「檔名就是暗號」的方式，靠一個回聲把內容送進**公開的** PR 描述。
    * ⚠️ 只擋得到我們認得的那兩族（暗號、本輪的破口形狀）；認不得的擋不住——方向與 `redactWindow` 同。
+   * ⚠️ 遮掉的路徑**連截斷雜湊都不留**：路徑短、熵低，12 碼 SHA 對一個已知候選清單就是可查表的
+   *   （Codex #535 r1）。留長度就夠回答「有幾個、多長」，那是這一格唯一該回答的事。
    * ⚠️ 這兩個宣告刻意提到 odd 那道檢查**之前**：odd 也是一條事故路徑，它一樣要留指紋。
    * @param {string} rp
    */
   const redactPath = (rp) => (rp.includes(liveSecret) || leaksIn(rp) || shapeHitsIn(rp).length
-    ? `‹路徑已遮蔽 sha ${createHash('sha256').update(rp).digest('hex').slice(0, 12)}，長 ${rp.length}›` : rp);
+    ? `‹路徑已遮蔽，長 ${rp.length}›` : rp);
+  /**
+   * 只在「這段內容裡沒有我們認得的機密」時才給雜湊。
+   * ⚠️ 為什麼要這道：整份內容的雜湊平常不可逆，但**內容本身就是一個低熵的已知機密**時
+   *   （例如回覆就只有一個 DLP 值），那個雜湊就是該值的完整 SHA-256＝可查表
+   *   （Codex #535 r1）。所以「兩族不留雜湊」這條約束要套到**整個指紋包**，不是只套在 `hits[]` 那幾格。
+   * @param {string} text
+   */
+  const safeSha = (text) => (text.includes(liveSecret) || leaksIn(text)
+    ? null : createHash('sha256').update(text).digest('hex'));
+
   /**
    * 寫事故指紋包。**寫不出來不改變結論**（事故就是事故），但要說出來——
    * 「以為有證據」比明知沒有更糟。
@@ -761,7 +784,7 @@ export async function runScan(args, deps = {}) {
     writeIncident({
       startedAt, endedAt, base, head, promptFile,
       hits: snap.odd.map((rp) => ({ family: 'odd', where: redactPath(rp), len: rp.length })),
-      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') })),
+      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: safeSha(buf.toString('utf8')) })),
     });
     return { code: 1, summary };
   }
@@ -825,7 +848,7 @@ export async function runScan(args, deps = {}) {
     const t = stripLineMarkers(text);
     return {
       stripped: t,
-      live: liveHitsIn(t).map((hit, i) => ({ hit, index: i })),
+      live: liveHitsIn(t).map((index) => ({ index })),   // liveHitsIn 回的就是字元位置；r1 這裡誤用了陣列序號
       shape: shapeMatchesIn(t).filter((m) => !knownHits.has(m.hit) && !materials.includes(m.hit)),
     };
   };
@@ -871,12 +894,12 @@ export async function runScan(args, deps = {}) {
     const payload = {
       startedAt, endedAt, base, head,
       promptFile, materialsSha256: createHash('sha256').update(materials).digest('hex'),
-      replyLen: reply.length, replySha256: createHash('sha256').update(reply).digest('hex'),
+      replyLen: reply.length, replySha256: safeSha(reply),   // null＝回覆裡有已知機密，連雜湊都不給
       treeKnown: { blobs: treeKnown.blobs, bytes: treeKnown.bytes, hits: treeKnown.hits.size, skippedBig: treeKnown.skippedBig },
       knownHitsSize: knownHits.size,
       needleCount: needles.length,
       binaries: binaries.map(redactPath),
-      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') })),
+      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: safeSha(buf.toString('utf8')) })),
       hits: incidentHits,
     };
     writeIncident(payload);

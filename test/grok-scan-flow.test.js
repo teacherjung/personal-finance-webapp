@@ -1286,6 +1286,68 @@ test('incident.json｜同一次掃描兩族都中刀時，族別不可以被標�
   for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'shape')) assert.ok(h.sha256 && h.context, '形狀族少了判定要用的欄位');
 });
 
+test('incident.json｜暗號族：欄位白名單、charOffset 是真的字元位置、整包不留任何可查表的衍生物', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 這一題補的是 r1 抓到的假綠：原本只有 dlp 族有白名單，暗號族沒有
+  //    ⇒ 幫暗號族加上 sha256(liveSecret) 的突變當時 4 題全綠。
+  //    而且約束要套到**整包**，不是只套在 hits[]：頂層的 replySha256、sessionFiles[].sha256、
+  //    被遮蔽的 where，任何一格留下可查表的衍生物都算破口。
+  const SECRET = 'LIVE-CANARY-OFFSET-0123456789';
+  const repo = tinyRepo(); const iso = isolated();
+  // 暗號出現兩次，且第一次不在開頭——序號（0、1）與真位置就分得出來了
+  const inst = fakeGrok({ reply: `前面墊一段話讓位置不是零。${SECRET} 中間 ${SECRET} 結束` });
+  // 再讓 Grok 用**暗號當檔名**建一個 session 檔：那條路徑會走 redactPath，遮法一樣不准留可查表的雜湊
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf 'x\n' > "$ws/fake-session/${SECRET}.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), liveSecret: SECRET });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const live = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'live');
+  assert.equal(live.length, 2, `暗號族命中數不對：${JSON.stringify(json.hits.map((/** @type {{family:string}} */ h) => h.family))}`);
+  for (const h of live) assert.deepEqual(Object.keys(h).sort(), ['charOffset', 'family', 'len', 'where'], '暗號族多了不該有的欄位');
+  assert.ok(live[0].charOffset > 0, `charOffset 是陣列序號不是字元位置：${live[0].charOffset}`);
+  assert.notEqual(live[0].charOffset, live[1].charOffset, '兩次命中的位置一樣＝記的不是位置');
+  // 整包：值本身、完整雜湊、截斷雜湊都不可以出現
+  const full = createHash('sha256').update(SECRET).digest('hex');
+  assert.equal(raw.includes(SECRET), false, '指紋包裡有暗號原文');
+  assert.equal(raw.includes(full), false, '指紋包裡有暗號的完整雜湊');
+  assert.equal(raw.includes(full.slice(0, 12)), false, '指紋包裡有暗號的截斷雜湊（一樣可查表）');
+  assert.equal(json.replySha256, null, '回覆裡有已知機密，雜湊還是寫了');
+  // 路徑那一格：遮蔽後的字串必須**就只有**記號與長度。
+  // ⚠️ 不能靠上面那幾條「暗號的雜湊不出現」來守它——redactPath 雜湊的是**路徑**、不是暗號，
+  //    兩者的 SHA 不一樣，那幾條斷言對這一格完全沒有射程（我第一版就是這樣守錯的）。
+  //    路徑短、熵低，截斷雜湊對一個已知候選清單就是可查表的，所以只准留長度。
+  const masked = json.sessionFiles.filter((/** @type {{rp: string}} */ f) => f.rp.startsWith('‹路徑已遮蔽'));
+  assert.equal(masked.length, 1, `含暗號的路徑沒有被遮：${JSON.stringify(json.sessionFiles.map((/** @type {{rp:string}} */ f) => f.rp))}`);
+  assert.match(masked[0].rp, /^‹路徑已遮蔽，長 \d+›$/, '遮蔽後的路徑帶了長度以外的東西（雜湊也算）');
+});
+
+test('incident.json｜兩條形狀命中靠在一起時，不可以透過彼此的上下文把對方原文帶出去', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ r1 抓到：redactWindow 原本只挖掉「自己那一條」，於是 A 的視窗完整包含 B、B 的視窗完整包含 A。
+  //    原本的形狀族考題只有單一命中，所以量不到。
+  const A = 'MIIEFIRSTHIT' + 'A'.repeat(50);
+  const B = 'MIIESECONDHIT' + 'B'.repeat(50);
+  const both = `${PEM_BEGIN('RSA')}\n${A}\n!間隔!${PEM_BEGIN('EC')}\n${B}\n`;
+  const repo = tinyRepo(); const iso = isolated();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: both })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const shape = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'shape');
+  assert.equal(shape.length, 2, `這一題要兩條命中才量得到東西，實際 ${shape.length} 條`);
+  assert.ok(shape.every((/** @type {{context: string}} */ h) => h.context.includes('‹另一條命中')), '視窗沒有遮掉另一條命中');
+  assert.equal(raw.includes(A), false, '第一條命中的內容被另一條的上下文帶出去了');
+  assert.equal(raw.includes(B), false, '第二條命中的內容被另一條的上下文帶出去了');
+});
+
+test('redactWindow｜已知機密跨在視窗邊界上也要遮得到（純函式，平台無關，CI 也跑）', () => {
+  // ⚠️ r1 抓到：先切窗再替換的話，剛好壓在邊界的機密只會留下半截、替換比對不到。
+  const secret = 'BOUNDARY-SECRET-VALUE';
+  const text = `${'x'.repeat(30)}${secret}${'y'.repeat(20)}HITHITHIT尾巴`;
+  const w = redactWindow(text, text.indexOf('HITHITHIT'), 9, [secret], 25);   // span 25 ⇒ secret 壓在邊界
+  assert.equal(w.includes(secret), false, '跨邊界的已知機密沒被遮掉');
+  assert.ok(w.includes('‹已遮蔽›'), '沒有遮蔽記號＝根本沒切到那一段');
+});
+
 test('nearestKnown｜兩臂比較：同一把鑰匙被截斷 vs 同標頭但無關（純函式，平台無關，CI 也跑）', () => {
   // ⚠️ 這一題刻意寫成**兩臂比較**，不是單臂門檻：單臂門檻是我自己挑的數字，證明不了它分得開兩種情形。
   const treeKey = `${PEM_BEGIN('RSA')}\n${Array.from({ length: 8 }, (_, i) => `MIIETREEARM${String.fromCharCode(65 + i).repeat(45)}`).join('\n')}\n`;
