@@ -73,10 +73,25 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 承重字表與探針清單＝test/helpers/money-family-probes.js（唯一住所；Codex #536 r2 H 抽出，
 // 讓 codex-money-hook.test.js 把完整矩陣直接跑在 Codex 副本上——不准在別處複抄）。
+import { createHash } from 'node:crypto';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
+  FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
 } from './helpers/money-family-probes.js';
+
+// 禁止面字表的身分釘（Codex #536 r3 H1：helper 是兩張考卷的共同失效點——釘住題目本身，
+// 改 helper 必須同時改本檔與 codex-money-hook.test.js 的同款字面雜湊；劃界見 helper 標頭）。
+const FORBIDDEN_IDENTITY = 'da640bd852087ff3f171a3091238931f5932a34e5922db08c4a70978c6636373';
+
+test('禁止面字表的身分釘：helper 的題目被改＝本考卷這裡轉紅', () => {
+  const actual = createHash('sha256').update(JSON.stringify(
+    [FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS, FORBIDDEN_FAMILY],
+  )).digest('hex');
+  assert.equal(actual, FORBIDDEN_IDENTITY,
+    '禁止面清單（helper）與本考卷的字面身分釘不符——增刪或改寫任何必擋探針時，'
+    + '要有意識地同步更新本檔與 test/codex-money-hook.test.js 的兩顆釘（跑 node 重算 sha256）。');
+});
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));

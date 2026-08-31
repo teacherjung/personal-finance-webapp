@@ -1,5 +1,5 @@
 {
-  "description": "錢的絕對邊界（William 2026-08-03 拍板；2026-08-04 家族攔截 v5）——Codex 專案層副本，2026-08-29 由 Codex 桌面 app 的遷移功能自 .claude/settings.json 產生、個人 hook 已剔除。matcher 與 command 和 .claude/settings.json 的同款封鎖 hook 由考題機械互鎖（test/codex-money-hook.test.js；改任一側不同步＝考題轉紅），家族攔截的完整考卷在 test/money-boundary.test.js。⚠️ 檔案在 ≠ 鎖有效：Codex 的 hook 要 William 在 Codex 介面（/hooks）對這個檔案按過「信任」才會執行；未信任＝codex exec 一聲不吭地跳過（2026-09-01 本機實測：未信任時 shell 直接放行、零 hook 訊息；帶 --dangerously-bypass-hook-trust 時同檔案成功攔下＝格式與攔截邏輯都對，斷點只在信任開關）。改到 matcher 或 command 會讓 hash 變＝Codex 標為 Modified、停止執行並要求重新按信任（防篡改特性，不是 bug）。",
+  "description": "錢的絕對邊界（William 2026-08-03 拍板；2026-08-04 家族攔截 v5）——Codex 專案層副本，2026-08-29 由 Codex 桌面 app 的遷移功能自 .claude/settings.json 產生、個人 hook 已剔除。matcher 與 command 和 .claude/settings.json 的同款封鎖 hook 由考題機械互鎖（test/codex-money-hook.test.js；改任一側不同步＝考題轉紅）；家族攔截的完整矩陣由同一支考題直接跑在本檔的 command 上，字表唯一住所＝test/helpers/money-family-probes.js（Claude 側同款由 test/money-boundary.test.js 考）。⚠️ 檔案在 ≠ 鎖有效：Codex 的 hook 要 William 在 Codex 介面（/hooks）對這個檔案按過「信任」才會執行；未信任＝codex exec 一聲不吭地跳過（2026-09-01 本機實測：未信任時 shell 直接放行、零 hook 訊息；帶 --dangerously-bypass-hook-trust 時同檔案成功攔下＝格式與攔截邏輯都對，斷點只在信任開關）。改到 matcher 或 command 會讓 hash 變＝Codex 標為 Modified、停止執行並要求重新按信任（防篡改特性，不是 bug）。",
   "hooks": {
     "PreToolUse": [
       {
