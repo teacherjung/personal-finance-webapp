@@ -255,11 +255,12 @@ test('套用｜r9#1：無分隔日期（20260704／1150704）也是申報形＝�
     assert.equal(codeOf(() => parseCardWithRecipe(lines, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
       `★無分隔日期 ${bare} 的列不得當雜訊（互抵漏抄）`);
   }
-  // 月/日位不像月/日的 8 位數（大金額）＝不是日期形——純雜訊列帶它照樣跳過、不誤擋
+  // 月/日位不像月/日的 8 位數＝不是日期形；但它是**金額形**——r15 起帶金額的列必須看懂，
+  // 拒解（原本斷言「雜訊照跳」＝2026-08-31 裁示前的行為，該列正是可漏帳的形）
   const amt = LINES().map((l) => l);
-  amt.splice(10, 0, ['累計消費回饋試算', '12345678']);   // 34 不是月——雜訊照跳
-  const answer = parseCardWithRecipe(amt, /** @type {any} */ (GOOD()));
-  assert.equal(answer.transactions.length, 3, '8 位大金額的雜訊列不得被誤判成日期漂移');
+  amt.splice(10, 0, ['累計消費回饋試算', '12345678']);
+  assert.equal(codeOf(() => parseCardWithRecipe(amt, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+    '★帶金額解不成交易＝拒解（不再因為「不像日期」就當雜訊放行）');
 });
 
 test('套用｜r10#1：日期與店名併成同一格（2026/07/04 甲店）＝申報形拒解，不得當雜訊', () => {
@@ -339,6 +340,39 @@ test('套用｜r13#1：文字黏在日期前面（王小明2026/07/04）＝申�
   noise.splice(10, 0, ['流水號 9920260704', '備註'], ['客服 02-2712-3456']);
   assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3,
     '9920260704 前面是數字＝無分隔形邊界不成立；電話兩段連字號拼不出日期形');
+});
+
+test('套用｜r15：有金額就必須看懂（William 2026-08-31 裁示）——日期印成怪字形也逃不掉金額錨', () => {
+  // r14 的 Unicode 逃逸族（U+2010 連字號／en dash／減號／分數斜線／組合字／阿拉伯-印度數字）：
+  // 日期偵測認不得沒關係——列上有 ASCII 金額＝拒解，互抵漏抄的路被金額錨堵死
+  const escapes = [
+    '\u738b2026\u201007\u201004 \u7532\u5e97',
+    '2026\u201307\u201304 \u7532\u5e97',
+    '2026\u221207\u221204 \u7532\u5e97',
+    '2026\u204407\u204404 \u7532\u5e97',
+    '2026/07\u034f/04 \u7532\u5e97',
+    '\u0662\u0660\u0662\u0666/\u0660\u0667/\u0660\u0664 \u7532\u5e97',
+  ];
+  for (const cell of escapes) {
+    const merged = LINES().map((l) => l);
+    merged.splice(10, 0, [cell, '100'], [`${cell}\u9000`, '-100']);
+    assert.equal(codeOf(() => parseCardWithRecipe(merged, /** @type {any} */ (GOOD()))), 'recipe_parse_failed',
+      `★互抵成對也漏不掉：${JSON.stringify(cell)}`);
+  }
+  // 未宣告的小計列＝帶金額解不成＝拒解（裁示言明的代價：這種版面學不成卡、照舊走 AI）
+  const subtotal = LINES().map((l) => l);
+  subtotal.splice(10, 0, ['促銷活動小計', '1,234']);
+  assert.equal(codeOf(() => parseCardWithRecipe(subtotal, /** @type {any} */ (GOOD()))), 'recipe_parse_failed');
+  // 豁免＝規則卡宣告過的標籤列：具名調整落在明細區內照樣有名有分，不拒解、照收
+  const inRegion = LINES().filter((l) => l[0] !== '循環信用利息');
+  inRegion.splice(10, 0, ['循環信用利息', '30']);   // 移進明細區（頁次列之後）
+  const ok = parseCardWithRecipe(inRegion, /** @type {any} */ (GOOD()));
+  assert.equal(ok.transactions.length, 3);
+  assert.deepEqual(ok.adjustments, [{ label: '循環信用利息', amount: 30, date: null }], '宣告列在區內＝豁免且照抄');
+  // 純文字雜訊照跳（沒有錢可漏）
+  const noise = LINES().map((l) => l);
+  noise.splice(10, 0, ['\u672c\u671f\u512a\u60e0\u8a73\u898b\u5b98\u7db2', '\u5099\u8a3b']);
+  assert.equal(parseCardWithRecipe(noise, /** @type {any} */ (GOOD())).transactions.length, 3);
 });
 
 test('出生把關｜對照帳單：錨點＝某筆店名（等值）或錨點命中交易列（位置）＝擋', () => {
