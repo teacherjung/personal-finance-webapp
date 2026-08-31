@@ -44,7 +44,7 @@ test('GET /api/parse-recipes｜真 HTTP：鍵集合精確封閉、整個 body �
   const text = await res.text();
   const list = JSON.parse(text);
   assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'id', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), `★端點回應的鍵集合精確封閉（實得 ${text}）`);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['bank', 'createdAt', 'graduateStreak', 'graduated', 'hasPrevious', 'kind', 'id', 'lastUsedAt', 'rebirths', 'suspect', 'updatedAt'].sort(), `★端點回應的鍵集合精確封閉（實得 ${text}）`);
   for (const literal of [SECRET_ANCHOR, SECRET_HEADER, 'docAnchors', 'headerIn', '結算基準日', '提領金額', 'current', 'previous']) {
     assert.ok(!text.includes(`"${literal}"`) && !text.includes(literal === 'current' || literal === 'previous' ? `"${literal}"` : literal), `★body 不含配方字面／內容欄：${literal}`);
   }
