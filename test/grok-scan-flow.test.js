@@ -5,9 +5,9 @@
 // 而不是像第一版那樣：Grok 沒跑、轉送器中途死、零 session——全部退 0。
 //
 // ⚠️ 誠實劃界：
-// ・這些題在**非 macOS** 會在「金絲雀」那一步退 2（沙箱套不上）——那正是 fail-closed，所以
-//   「金絲雀之前」的路徑（版本不符、盒子壞）在 CI 也考得到；「金絲雀之後」的路徑（轉送器、grok、
-//   驗屍）只在 macOS 考得到，其他平台明確 skip。
+// ・非 macOS 上，沙箱套不上 ⇒ **`--version` 檢查**（它在沙箱裡跑、位置在金絲雀之前）就會先停下來；
+//   有 SANDBOX_OK guard 的題直接 skip，沒有 guard 的路徑則停在那一關。所以「沙箱之前」的路徑
+//   （寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -119,11 +119,24 @@ const keep = (/** @type {string} */ dir) => { TEMP_ROOTS.push(dir); return dir; 
 after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 盡力 */ } } });
 
 /**
- * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄）。
+ * 假的第②步金絲雀：流程考題只需要「它回什麼、runScan 就怎麼反應」。
+ * 為什麼非換掉不可：真的那一支是**全機共用資源的使用者**（搶系統唯一那份剪貼簿、在幾個共用位置開誘餌目錄）。
+ * ⚠️ 規格與代價（秒數、探針數、位置清單）只寫在 `scripts/grok-scan.js` 的 `runCanary` 那格 JSDoc——
+ *   這裡刻意不複述：同一組會漂的數字有兩個家，日後一定只改到一邊。
+ * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
+ *   本檔用假的 ⇒ 這裡不對沙箱有效性提供任何證據，那是刻意的分工。
+ * @param {0|1|2} [code]
+ * @param {string[]} [lines] 有題把「金絲雀印出第一行」當時序鉤子，那種題就地傳自己要的行，別讓預設值偷偷去滿足它
+ */
+const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）`]) => async () => ({ code, lines });
+/**
+ * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄），
+ * **並注入上面那個假金絲雀**——所以凡是用 `isolated()` 的題都走不到真的第②步；要考「不注入時走哪一支」，
+ * 得自己把 `runCanary` 這一格拿掉（見題名關鍵字「不注入」那題）。
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
-const isolated = () => ({ authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
+const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，
@@ -554,15 +567,59 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
   assert.ok(!ps.includes(box), `runScan 回來後還有程序帶著盒子路徑在跑：${ps.split('\n').filter((l) => l.includes(box)).join(' | ').slice(0, 200)}`);
 });
 
+test('runScan｜**不注入**時，走到的那一支會印出真探針詞彙的行（擋得住「接線被拿掉或換成空殼」）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 為什麼要有這一題：`deps.runCanary ?? runCanary` 是個接縫，而本檔其餘的題都注入假金絲雀
+  //    ⇒ 沒有別的題會問「不注入時走到哪一支」。把那個 `??` 的預設換成不印探針行的空殼，其餘全檔照樣綠。
+  //    這一題只跑一次真的，不是每一道走到第②步的題各跑一次。
+  // ⚠️ **誠實劃界——它守得住什麼、守不住什麼**：
+  //    ・守得住：fallback 被拿掉、或換成不印那些行的空殼。
+  //    ・**守不住**：換成一支**完全不跑探針、只偽造同形文字**的替身——那樣它照樣綠。
+  //      「同等強度的身分證據」三條路都不通——比函式身分是在測常數不是測呼叫點、誘餌目錄在 `finally` 就清掉
+  //      觀察不到、拿耗時當門檻會 flaky——所以照家規改口，不把這一題稱為「真金絲雀接線的守門」。
+  //    ・也不證明沙箱真的有效（那是 test/grok-sandbox.test.js 的事），不涵蓋 CLI 入口那一行。
+  const repo = tinyRepo(); const iso = isolated();
+  const { runCanary: _dropped, ...noCanary } = iso;   // 刻意不注入金絲雀
+  void _dropped;
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...noCanary, repo: repo.dir, ...withGrok(fakeGrok({ status: 1 })), relayScript: fakeRelay('ok') });
+  const s = r.summary.join('\n');
+  assert.ok(/🔴 擋住｜/.test(s) && /✅ 通過｜/.test(s), `summary 裡沒有真金絲雀的探針行——正式路徑可能沒接著真的那一支：${s.slice(0, 200)}`);
+});
+
+test('runScan｜金絲雀非 0 就不掃：退 1（沙箱是假的）與退 2（跑不了／對照組不活）各自的訊息都要說得出來', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 為什麼非注入不可：真金絲雀在正常情況下回 0——它自己也會退 2（搶不到剪貼簿鎖、對照組不活、沙箱套不上），
+  //    但那幾種都 flaky、當不了考題，所以「金絲雀說不行時 runScan 怎麼辦」只有注入才問得出來。
+  // ⚠️ 這一題**需要**沙箱 guard，雖然注入點本身與平台無關：`--version` 檢查在金絲雀**之前**就已經在沙箱裡跑，
+  //    非 macOS 會先死在那裡、走不到注入點（實測 CI 兩個 Node job 都紅）。
+  // ⚠️ 「退 2＋訊息對」還不夠：`failAndClean` 是先清盒子再回傳，所以**漏掉那個 `return`**時訊息照樣在 summary 裡、
+  //    掃描繼續往下跑、再因為盒子已被清掉而退 2——兩個斷言都會過（實測：拿掉 return，本題仍綠）。
+  //    ⚠️ 釘「掃描開始那一行不可出現」也不夠：漏 return 的實況是**走不到那一行**（它死在轉送器起不來），
+  //    所以那條斷言同樣抓不到（也實測過）。真正分得出來的是**「不掃」之後還有沒有動作**——
+  //    正常收場時那一行就是最後一行；漏 return 時它後面還會冒出 DLP 與轉送器的行。
+  const repo = tinyRepo();
+  for (const [code, re] of /** @type {[1|2, RegExp][]} */ ([[1, /沙箱是假的/], [2, /跑不了沙箱／對照組不活/]])) {
+    const logs = /** @type {string[]} */ ([]);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...isolated(), runCanary: fakeCanary(code), repo: repo.dir, ...withGrok(fakeGrok()) });
+    assert.equal(r.code, 2, `金絲雀回 ${code} 時沒有退 2：${r.summary.join('\n')}`);
+    assert.match(r.summary.join('\n'), re, `金絲雀回 ${code} 時的訊息分不出是哪一種`);
+    const stopped = logs.findIndex((l) => l.startsWith('⛔ 金絲雀：'));
+    assert.notEqual(stopped, -1, `金絲雀回 ${code} 時沒印出「不掃」那一行：${logs.join(' | ').slice(0, 300)}`);
+    assert.equal(stopped, logs.length - 1, `金絲雀回 ${code} 說了「不掃」，後面卻還有動作＝其實還在掃：${logs.slice(stopped + 1).join(' | ').slice(0, 300)}`);
+  }
+});
+
 test('runScan｜r6 #6：DLP 真相來源（authDir/auth.json）在掃描中途讀不到 → 2、不保存（原本 catch 成空集合＝fail-open）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
   mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth());
   let pulled = false;
-  // 金絲雀的第一行 log 出現時（refresh 已做完、DLP 還沒讀）把真相來源抽掉
+  // 金絲雀的第一行 log 出現時（refresh 已做完、DLP 還沒讀）把真相來源抽掉。
+  // ⚠️ 本題把「金絲雀印出第一行」當**時序鉤子**，所以就地注入一支會印那個記號的假金絲雀——
+  //    讓這個依賴看得見，而不是靠 isolated() 的預設值碰巧滿足它。
   const log = (/** @type {string} */ m) => { if (!pulled && m.includes('🔴')) { pulled = true; rmSync(join(iso.authDir, 'auth.json')); } };
-  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log, ...iso, runCanary: fakeCanary(0, ['🔴 假探針（本題拿它當時序鉤子）']), repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(pulled, true, '考題沒抽到檔（時序變了？）');
   assert.equal(r.code, 2, r.summary.join('\n'));
   assert.match(r.summary.join('\n'), /DLP 真相來源/);
@@ -1068,9 +1125,9 @@ test('runScan｜不注入 liveRoot 時，活金絲雀建在真的家目錄：掃
   // ⚠️ 這一題**刻意**讓活金絲雀落在真家目錄：金絲雀的意義就在**位置**——家目錄同時住著真 ~/.grok、
   //    ~/.grok-sandbox-auth 與真的 store.db，是破出沙箱的人第一個會翻的地方。位置只能在正式位置上考。
   //    其餘走到活金絲雀那一步的題都經 isolated() 改道到隔離根。
-  //    ⚠️ 但「考題不碰真家目錄」這件事本支只做到一半：**走到 `runCanary()` 的題**（沙箱金絲雀）都會在家目錄
-  //    mkdtemp 一個 `.grok-canary-*`，它的四個根寫死、沒有可注入的參數——本支不動它（Codex #516 r5／r6 抓到我原本
-  //    在這裡寫「全檔唯一還在真家目錄建東西的題」與「每一題都會」都是假的：更早退場的題與純函式題根本沒跑到它）。
+  //    ⚠️ 另一個會碰真家目錄的是**沙箱金絲雀**：`runCanary` 也在家目錄 mkdtemp 一個 `.grok-canary-*`，
+  //    而且它的四個根寫死、沒有可注入的參數。本檔只有題名關鍵字「不注入」那一題會走到它，其餘都注入假的。
+  //    ⚠️ 別在這裡寫「全檔唯一還在真家目錄建東西的題」或「每一題都會」——兩種說法都不成立。
   // ⚠️ 認身分靠**每輪隨機的暗號內容**、不數個數：別的 session／審查樹／合併閘同時在跑也認不錯。
   //    （數個數正是上一題原本的寫法，也正是本支要修掉的病。）
   // ⚠️ 暗號現在走字面比對（不編譯成正則），所以帶元字元也不會炸；randomUUID 只有十六進位與 `-`，兩種寫法都安全。
