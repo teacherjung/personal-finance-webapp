@@ -124,7 +124,7 @@ after(() => { for (const d of TEMP_ROOTS) { try { rmSync(d, { recursive: true, f
  * ⚠️ 規格與代價（秒數、探針數、位置清單）只寫在 `scripts/grok-scan.js` 的 `runCanary` 那格 JSDoc——
  *   這裡刻意不複述：同一組會漂的數字有兩個家，日後一定只改到一邊。
  * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
- *   本檔換成假的之後，這裡不再對沙箱有效性提供任何證據，那是刻意的分工，不是把它弄弱。
+ *   本檔用假的 ⇒ 這裡不對沙箱有效性提供任何證據，那是刻意的分工。
  * @param {0|1|2} [code]
  * @param {string[]} [lines] 有題把「金絲雀印出第一行」當時序鉤子，那種題就地傳自己要的行，別讓預設值偷偷去滿足它
  */
