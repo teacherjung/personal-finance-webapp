@@ -1,32 +1,27 @@
 /**
- * 「Codex 側錢鎖」考題（2026-09-01，.codex/hooks.json 入版控時配發；r1 修訂見下）
+ * 「Codex 側錢鎖」考題（2026-09-01，.codex/hooks.json 入版控時配發；r1／r2 修訂見下）
  *
- * 承重結構（r1 之後）：**身分互鎖＋行為煙霧測＋結構封閉**三層——
- *   ① **身分互鎖**：`.codex/hooks.json` 的 matcher 與 command 必須與
- *      `.claude/settings.json` 裡「實際會 deny 錢類工具名」的那組 PreToolUse hook
- *      **逐位相同**。這一鎖讓 `test/money-boundary.test.js` 的整套家族攔截考題
- *      （60+ 支必擋探針＋36 支誤傷探針＋數量釘）**對 Codex 副本共同承重**：
- *      改弱 Claude 側＝那支紅；兩側不同步＝本支紅。家族網完整性的正本在那支，
- *      本檔刻意不複抄那四張字表（複本會漂）。
- *   ② **行為煙霧測**：把檔案裡的 command 原樣拿出來跑、餵 stdin JSON——
- *      deny 斷言的是 Codex 0.145.0 真正的阻擋契約（`hookSpecificOutput` 物件、
- *      `hookEventName: 'PreToolUse'`、`permissionDecision: 'deny'`、理由非空），
- *      放行斷言的是「stdout 全空＋exit 0」。只查 `includes('"deny"')` 的舊判準
- *      被 Codex r1 突變實證打穿（輸出裸字串 "deny" 可假綠但 Codex 不會擋）。
- *   ③ **結構封閉**：宣告式白名單——恰一個事件（PreToolUse）、恰一組、恰一個
- *      handler、handler 只准 {type:'command', command}（`commandWindows` 等平台
- *      分流欄位一律紅）；全檔任何字串出現機器絕對路徑（/Users、/home、/root、
- *      磁碟機代號）一律紅。r1 突變實證：只掃 hooks[0] 時，第二個 handler 可以
- *      載著個人朗讀路徑混進來。
+ * 承重結構（r2 之後）：**直接矩陣＋身分互鎖＋煙霧測＋結構封閉**四層——
+ *   ① **全家族矩陣直接跑在 Codex 副本上**（r2 H 起的主承重）：完整
+ *      FORBIDDEN／ALLOWED 清單（唯一住所＝test/helpers/money-family-probes.js，
+ *      與 money-boundary.test.js 共用同一份）逐名餵 codexHook.command——
+ *      Codex 真正會執行的那條指令自己考自己的試，誰都不能代考。
+ *   ② **身分互鎖（同步紀律）**：matcher＋command 必須與 .claude/settings.json
+ *      實際會擋錢的那組逐位相同——兩側不同步＝紅。⚠️ r2 突變實證它**不能獨自承重**：
+ *      兩側同步弱化＋Claude 側另加一組原版 command，互鎖與 money-boundary 都綠、
+ *      Codex 實際放行 submit_order——所以主承重是①，互鎖只守「不漂移」。
+ *   ③ **行為煙霧測**：deny 斷言 Codex 0.145.0 真正的阻擋契約（hookSpecificOutput
+ *      物件、hookEventName、permissionDecision、理由 trim 後非空），放行斷言
+ *      stdout 全空＋跑完。只查 includes('"deny"') 的舊判準被 r1 突變打穿。
+ *   ④ **結構封閉＋路徑絆線**：宣告式白名單（恰一事件／組／handler、欄位白名單）；
+ *      全檔字串掃**常見**機器絕對路徑形狀——這是絆線不是安全閘（形狀列不完，
+ *      完整保證靠互鎖＋兩側都過審查；r2 M 補 /private、/Volumes、正斜線磁碟機、UNC）。
  *
- * r1 修訂（Codex #536 r1，2H1M1L 全收）：
- *   - H①：deny 判準從「stdout 含 "deny" 字樣」改為解析完整阻擋契約（見②）。
- *   - H②：8 支 deny fixture 守不住家族網（只認名單的突變 command 可假綠）——
- *          改身分互鎖讓 money-boundary 全家族考題承重（見①），煙霧測補
- *          deposit／wire／cancel_order 三支 r1 點名的漏網探針＋字面數量釘。
- *   - M：結構不變量從「只看第一個 handler」改為封閉遍歷（見③）。
- *   - L：description 的「兩側一致」從口頭現況保證改為由①機械維持；
- *        「回到未信任」修正為 Codex 的實際狀態語意（標 Modified、停止執行）。
+ * r1 修訂（Codex #536 r1，2H1M1L 全收）：deny 判準改真實阻擋契約；煙霧測補
+ *   deposit／wire／cancel_order＋數量釘；結構從「只看 hooks[0]」改封閉遍歷；
+ *   description 的「兩側一致」改機械維持、「回到未信任」修正為標 Modified 語意。
+ * r2 修訂（Codex #536 r2，1H1M2L 全收）：H＝加①直接矩陣（互鎖代考洞，突變實證）；
+ *   M＝路徑掃描擴形狀並照實降級為絆線；L＝理由判準加 trim；L＝PR 描述數字同步。
  *
  * ⚠️ 誠實劃界——這支考題證明不了的事：
  *   - **Codex 會不會真的執行這個檔案**。Codex 的 hook 要 William 在 Codex 介面
@@ -42,6 +37,9 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import {
+  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
+} from './helpers/money-family-probes.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const codexFile = JSON.parse(readFileSync(path.join(ROOT, '.codex', 'hooks.json'), 'utf8'));
@@ -74,8 +72,8 @@ function assertDenies(command, stdinText, why) {
   assert.equal(typeof d, 'object', `${why}：缺 hookSpecificOutput 物件＝不會擋（裸字串假綠是 r1 H① 的突變實證）`);
   assert.equal(d.hookEventName, 'PreToolUse', `${why}：hookEventName 不對＝不會擋`);
   assert.equal(d.permissionDecision, 'deny', `${why}：permissionDecision 不是 deny`);
-  assert.ok(typeof d.permissionDecisionReason === 'string' && d.permissionDecisionReason.length > 0,
-    `${why}：deny 理由是空的——被擋的一方要看得懂為什麼`);
+  assert.ok(typeof d.permissionDecisionReason === 'string' && d.permissionDecisionReason.trim().length > 0,
+    `${why}：deny 理由是空的（或全空白）——被擋的一方要看得懂為什麼`);
 }
 
 /** 放行契約：stdout 全空（任何輸出都可能被解讀）＋跑完（execFileSync 非零會 throw）。 */
@@ -144,6 +142,20 @@ test('煙霧測：錢的形狀回合規 deny、唯讀與非錢全空放行、壞
   assertDenies(codexHook.command, '{"no_tool_name":1}', '缺 tool_name 要合規 deny（fail-closed）');
 });
 
+
+test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不可被代考）', () => {
+  // r2 突變實證：兩側同步弱化＋Claude 側另加一組保留完整 command 的 hook ⇒
+  // 互鎖 twins=1 照樣成立、money-boundary 由那組代考＝兩支考題全綠，但 Codex
+  // 實際放行 submit_order。唯一關得死的判準＝完整矩陣**直接**餵 codexHook.command。
+  for (const name of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
+    assertDenies(codexHook.command, JSON.stringify({ tool_name: name, tool_input: {} }),
+      `家族必擋名 ${name}`);
+  }
+  for (const name of ALLOWED_LOOKALIKES) {
+    assertPasses(codexHook.command, name, '規則 2 可用名不得誤傷');
+  }
+});
+
 // ---------- ③ 結構封閉：宣告式白名單，任何新增形狀一律紅 ----------
 
 test('結構封閉：恰一事件、恰一組、恰一 handler、欄位白名單（第二個 handler 混不進來）', () => {
@@ -161,11 +173,14 @@ test('結構封閉：恰一事件、恰一組、恰一 handler、欄位白名單
   assert.equal(codexHook.type, 'command');
 });
 
-test('結構封閉：全檔任何字串不含機器絕對路徑', () => {
+test('絆線：全檔字串不含常見的機器絕對路徑形狀（列名式，列不完的形狀靠審查）', () => {
+  // r2 M：這是**絆線不是安全閘**——絕對路徑的寫法列不完（相對路徑、變數拼接更列不完），
+  // 完整保證靠「command 與 Claude 側互鎖＋兩側都過審查」，本絆線只抓常見拼法讓誤觸先紅。
+  const MACHINE_PATH = /\/(Users|home|root|private|Volumes|var|tmp|opt|etc)\/|[A-Za-z]:[\\/]|\\\\/;
   const paths = [];
   (function walk(node, at) {
     if (typeof node === 'string') {
-      if (/\/Users\/|\/home\/|\/root\/|[A-Za-z]:\\/.test(node)) paths.push(at);
+      if (MACHINE_PATH.test(node)) paths.push(at);
     } else if (Array.isArray(node)) {
       node.forEach((v, i) => walk(v, `${at}[${i}]`));
     } else if (node && typeof node === 'object') {
@@ -173,5 +188,6 @@ test('結構封閉：全檔任何字串不含機器絕對路徑', () => {
     }
   })(codexFile, '$');
   assert.deepEqual(paths, [],
-    `這些位置出現機器絕對路徑（/Users、/home、/root、磁碟機代號）＝把單一機器的東西寫進 repo：${paths.join('、')}`);
+    `這些位置出現機器路徑形狀（/Users、/home、/root、/private、/Volumes、/var、/tmp、/opt、/etc、`
+    + `磁碟機代號、UNC）＝把單一機器的東西寫進 repo：${paths.join('、')}`);
 });
