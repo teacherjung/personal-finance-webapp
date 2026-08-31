@@ -469,8 +469,8 @@ test('出生把關｜重現：逐欄比對（錢嚴格、文字空白不敏感�
 });
 
 test('兩把尺｜相容字版面：old（逐字）整趟敗、new（NFKC）過——一趟一把尺不混用', () => {
-  // Grok 掃#4 抓到本題原版是空包彈（replace no-op＋void lines＝實際測的是 ASCII 兩尺都過）。
-  // 真分歧的合成：規則卡標籤存半形 VISA、帳單印全形 ＶＩＳＡ——NFKC 後同形、逐字不同形。
+  // ASCII fixture 在兩把尺下同形＝驗不出「一趟一把尺」——本題必須用能讓 old/new 真分歧的
+  // 相容字：規則卡標籤存半形 VISA、帳單印全形 ＶＩＳＡ（NFKC 後同形、逐字不同形）。
   const g = GOOD(); g.lastFourLabel = 'VISA末四碼';
   const lines = LINES().map((l) => (l[0] === '卡號末四碼' ? ['ＶＩＳＡ末四碼', '5678'] : l));
   assert.equal(codeOf(() => parseCardWithRecipe(lines, /** @type {any} */ (g), { ruler: 'old' })), 'recipe_parse_failed',
