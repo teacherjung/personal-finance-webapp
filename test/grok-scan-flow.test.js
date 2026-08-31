@@ -16,7 +16,7 @@ import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree } from '../scripts/grok-scan.js';
+import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1029,6 +1029,51 @@ test('runScan｜比對強度：命中「以某條已知命中開頭」也不得�
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\\n' '{"type":"assistant","content":"${extended}"}' >> "$ws/fake-session/updates.jsonl"; $1`));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 1, `以已知命中開頭的更長命中被排除了——那是放寬裡最危險的方向：${r.summary.join('\n')}`);
+});
+
+/**
+ * flexToken 那條腿的夾具：鍵名**執行時才拼**。
+ * 直接寫字面會讓題名關鍵字「本檔源碼不留破口形狀的字面」那一題轉紅——那是既有的假事故防線，
+ * 不可以為了寫這一題而放寬它。
+ */
+const FLEX_KV = (/** @type {string} */ val) => `"flex${'Token'}": ${JSON.stringify(val)}`;
+const FLEX_VAL = 'SECRET-VALUE-1234567890';
+
+test('BREACH_SHAPES｜flexToken 腿在 JSON 轉義形下也要認得（純函式，平台無關，CI 也跑）', () => {
+  // 為什麼要有這一題：這條腿掃的是 grok 的 session 日誌，而那是 **JSONL**——原文的 `"` 在檔案裡是 `\"`。
+  // 舊寫法要求 `flexToken` 後面緊跟一個**字面**的 `"` ⇒ 真的 flexToken 外洩到日誌裡**一條都認不得**，
+  // 而且沒有第二道網（DLP 針只取自沙箱 auth.json，不含 flexToken）＝靜靜放過。
+  assert.ok(FLEX_KV('x').includes('flex' + 'Token'), '夾具沒拼出鍵名');                       // 反空包彈
+  assert.ok(FLEX_KV(FLEX_VAL).includes(FLEX_VAL), '夾具沒帶值');
+  const material = `  ib: {\n${FLEX_KV(FLEX_VAL)}\n  }\n`;
+  const [d0, d1, d2] = escapeForms(material);
+  assert.equal(shapeHitsIn(d0).length, 1, '原文形（對照組：修法前後都該是 1）');
+  assert.equal(shapeHitsIn(d1).length, 1, 'JSON 轉一層認不得——日誌走的就是這一形');
+  assert.equal(shapeHitsIn(d2).length, 1, 'JSON 轉兩層認不得（同一檔裡兩種深度都出現過）');
+  // 命中要**逐字結束在值本身**：只換引號、不擋轉義殘渣的話，命中會多吃反斜線 ⇒ 這一行轉紅
+  assert.ok(shapeHitsIn(d1)[0].endsWith(FLEX_VAL), `命中夾帶了值以外的轉義殘渣：${JSON.stringify(shapeHitsIn(d1)[0].slice(-12))}`);
+  // 真日誌長相：JSONL 一行、內容還帶讀檔工具的行號記號
+  const line = JSON.stringify({ type: 'tool_result', content: `280→${material}` });
+  const got = shapeHitsIn(stripLineMarkers(line));
+  assert.equal(got.length, 1, '真 JSONL 一行（含行號記號）抓不到');
+  // 對稱：日誌形的命中必須逐字落在排除側同一把階梯算出的集合裡，否則修完會變成下一次假事故
+  const known = new Set(escapeForms(material).flatMap((f) => shapeHitsIn(f)));
+  for (const h of got) assert.ok(known.has(h), '日誌命中跟排除側對不上＝假事故');
+});
+
+test('BREACH_SHAPES｜值沒有收尾引號時，命中長度不可以由「上下文」決定（純函式，平台無關，CI 也跑）', () => {
+  // ⚠️ 這一題守的是**修法自己會製造的假事故**：值那格若只擋引號、不擋換行，沒有收尾引號的文字
+  //    （散文、表格、註解、grep 只列命中行——本專案天天在寫）會讓命中一路吃到「下一個引號」為止。
+  //    於是同一段無害文字，在材料裡與在日誌裡算出**不同長度的字串**、精確比對的排除對不上 ⇒ 事故。
+  //    這種文字最先出現的地方就是講這條腿的 PR 描述與註解本身。
+  const one = `  一層  flex${'Token'}\\": \\"${FLEX_VAL}      舊 0 條／新 1 條   ← 病灶\n`;
+  const withMore = one + `  兩層  flex${'Token'}\\\\\\": SOMETHING\n`;
+  assert.ok(one.includes(FLEX_VAL) && withMore.includes(FLEX_VAL), '夾具沒帶值');   // 反空包彈
+  const a = shapeHitsIn(one), b = shapeHitsIn(withMore);
+  assert.equal(a.length, 1, '這段文字本來就該命中（不然本題量不到東西）');
+  assert.equal(b.length, 1, '加上後文之後命中數變了');
+  assert.equal(a[0], b[0], `同一段文字因為後文不同而算出不同命中＝排除必然對不上＝假事故：${a[0].length} vs ${b[0].length}`);
+  assert.ok(!a[0].includes('\n'), '命中跨行了——視窗不是行內局部');
 });
 
 test('考題檔｜本檔源碼不留破口形狀的字面（純函式，平台無關，CI 也跑）', () => {
