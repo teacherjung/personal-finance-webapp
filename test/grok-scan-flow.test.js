@@ -1046,7 +1046,11 @@ test('BREACH_SHAPES｜flexToken 腿在 JSON 轉義形下也要認得（純函式
   assert.ok(FLEX_KV('x').includes('flex' + 'Token'), '夾具沒拼出鍵名');                       // 反空包彈
   assert.ok(FLEX_KV(FLEX_VAL).includes(FLEX_VAL), '夾具沒帶值');
   const material = `  ib: {\n${FLEX_KV(FLEX_VAL)}\n  }\n`;
-  const [d0, d1, d2] = escapeForms(material);
+  // ⚠️ 夾具**不可以**用 escapeForms 生（Codex #534 r1 的突變：讓它第三格重複第二格，這一題照樣綠
+  //    ＝拿受測函式自己當 oracle）。這裡就地把三形算出來，再單獨斷言階梯本身逐字相同。
+  const d0 = material, d1 = JSON.stringify(d0).slice(1, -1), d2 = JSON.stringify(d1).slice(1, -1);
+  assert.notEqual(d1, d2, '就地算的兩形一樣＝夾具自己壞了，後面量不到東西');
+  assert.deepEqual(escapeForms(material), [d0, d1, d2], 'escapeForms 的三形跟就地算的對不上');
   assert.equal(shapeHitsIn(d0).length, 1, '原文形（對照組：修法前後都該是 1）');
   assert.equal(shapeHitsIn(d1).length, 1, 'JSON 轉一層認不得——日誌走的就是這一形');
   assert.equal(shapeHitsIn(d2).length, 1, 'JSON 轉兩層認不得（同一檔裡兩種深度都出現過）');
@@ -1057,7 +1061,7 @@ test('BREACH_SHAPES｜flexToken 腿在 JSON 轉義形下也要認得（純函式
   const got = shapeHitsIn(stripLineMarkers(line));
   assert.equal(got.length, 1, '真 JSONL 一行（含行號記號）抓不到');
   // 對稱：日誌形的命中必須逐字落在排除側同一把階梯算出的集合裡，否則修完會變成下一次假事故
-  const known = new Set(escapeForms(material).flatMap((f) => shapeHitsIn(f)));
+  const known = new Set([d0, d1, d2].flatMap((f) => shapeHitsIn(f)));
   for (const h of got) assert.ok(known.has(h), '日誌命中跟排除側對不上＝假事故');
 });
 

@@ -73,11 +73,10 @@ export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 1
  * 分成兩族是構造上的隔離，不是靠註解承諾。
  */
 /**
- * 同一份內容在 grok 的日誌裡可能被 JSON 字串**包過幾層**（session 檔是 JSONL，內容裡還會再嵌 JSON）。
- * 實測一次真掃描的結果包：`.jsonl`／`.json` 佔 session bytes 的 99.1%，且同一檔裡 `\"` 與 `\\"` 都出現。
- * 所以「同一份內容」在這裡有三種寫法：原文、轉一層、轉兩層。**這個階梯只寫在這裡一處**——
- * 樹側排除、材料側排除、破口正則的引號原子三處共用它，改深度只要改這一行。
- * ⚠️ 深度到 2 為止是**觀察值不是定理**：更深的包法（本專案未觀察到）兩側都認不得，方向是漏報。
+ * 同一份內容在 grok 的日誌裡可能被 JSON 字串**包過幾層**（session 檔是 JSONL，內容裡還會再嵌 JSON），
+ * 所以有三種寫法：原文、轉一層、轉兩層。樹側排除、材料側排除、破口正則的引號原子都用這一支
+ * ——**用同一把尺是這支函式存在的理由**：偵測側與排除側若各自寫階梯，同一份內容會算出對不上的字串＝假事故。
+ * ⚠️ 深度到 2 為止是**觀察值不是定理**：更深的包法兩側都認不得，方向是漏報。
  */
 const jsonEscOnce = (/** @type {string} */ s) => JSON.stringify(s).slice(1, -1);
 export const escapeForms = (/** @type {string} */ s) => { const out = [s]; while (out.length < 3) out.push(jsonEscOnce(out[out.length - 1])); return out; };
@@ -86,10 +85,8 @@ export const escapeForms = (/** @type {string} */ s) => { const out = [s]; while
 const reLit = (/** @type {string} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /**
  * 「任一轉義深度的雙引號」。**用 escapeForms 疊出來、不手打**——手打就會跟排除側的階梯各自漂。
- * ⚠️ 分支順序不影響結果，所以這裡不排序：三種寫法是 `"`／`\"`／`\\\"`，反斜線數目不同
- *   ⇒ 在任一位置**互斥**（沒有誰是誰的前綴），alternation 取哪一個成功分支都一樣。
- *   我原本寫了「長的排前面，否則短的會先吃掉一個反斜線」並照做——那是**沒有考題撐著的保證**，
- *   拿掉排序的突變全卷 60 題照樣綠、結果包 619 檔的命中數也一字不差，所以連同那句話一起刪掉。
+ * ⚠️ 這裡**不排序**分支：三種寫法分別要求 0／1／3 個反斜線後接引號 ⇒ 在任一位置互斥
+ *   （沒有誰是誰的前綴），所以 alternation 取哪一個成功分支結果都一樣。
  */
 const Q = `(?:${escapeForms('"').map(reLit).join('|')})`;
 
