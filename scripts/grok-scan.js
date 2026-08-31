@@ -705,13 +705,16 @@ export async function runScan(args, deps = {}) {
     catch (e) { return failAndClean(`DLP：查針是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
     if (given.length) log(`（DLP：${given.length} 根針已在給盒子的材料／原始碼裡出現、不採用——長度 ${given.map((n) => n.length).join('/')}）`);
     needles = needles.filter((n) => !given.includes(n));
-    scrubSecrets = [...scrubSecrets, ...needles];   // 關門的字典：DLP 針這一半定稿
+    // ⚠️ 字典要含**各種序列化表示**，不是只有原文：事故檔是先 `JSON.stringify` 再過門的，
+    //   針裡只要有 `"`／反斜線／換行，序列化之後就不再逐字含原文 ⇒ 門命不中（Codex #535 r4 用
+    //   合成針 `SYNTHETIC-"QUOTE"-BACK\SLASH` 端到端重現）。escapeForms 就是 #534 那把同一階梯。
+    scrubSecrets = [...scrubSecrets, ...needles.flatMap((n) => escapeForms(n))];
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  scrubSecrets = [...scrubSecrets, liveSecret];   // 關門的字典：暗號這一半定稿（它比 DLP 針晚生）
+  scrubSecrets = [...scrubSecrets, ...escapeForms(liveSecret)];   // 暗號這一半（它比 DLP 針晚生）；同樣含轉義形
   // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
   // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
@@ -986,6 +989,13 @@ export async function runScan(args, deps = {}) {
     if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; say(m); collectBreach(b, 'reply'); }
   }
   for (const [rp, buf] of snap.files) {
+    // ⚠️ **檔名本身也是 Grok 寫的內容**：機密只出現在檔名、內容無害時，舊寫法一路走到成功路徑，
+    //    把原始檔名接進結果包落盤（Codex #535 r4 端到端重現）。所以名字跟內容用同一套判準。
+    {
+      const nb = breachHits(rp);
+      if (nb.live.length || nb.shape.length) { say(`⚠️ 驗屍：session 檔名 ${redactPath(rp)} 帶著盒子外才有的內容——沙箱破了，這是事故${brief(nb)}`); collectBreach(nb, redactPath(rp)); }
+      if (leaksIn(rp)) { say(`⚠️ 去機密：session 檔名 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+    }
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     const b = breachHits(text);
     // ⚠️ 路徑是 Grok 取的，兩條訊息都會被抄進**公開的** PR 描述 ⇒ 回聲之前一律過同一把尺

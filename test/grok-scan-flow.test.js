@@ -1419,6 +1419,53 @@ test('關門｜事故檔整份寫出前要再過一次清洗：提示檔路徑�
   assert.equal(raw.includes(SECRET), false, '事故包裡有暗號原文');
 });
 
+test('關門｜帶跳脫字元的機密：事故檔的**各種序列化表示**都不准留（parse 回來也要乾淨）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ Codex #535 r4：事故檔是先 JSON.stringify 再過門的，針裡有 `"`／反斜線時，
+  //    序列化後的文字不再逐字含原文 ⇒ 門命不中，而 JSON.parse 回來還原得出完整機密。
+  //    所以斷言要**兩種都驗**：raw 文字不含各種表示，parse 後的語意值也不含。
+  const REAL = 'SYNTHETIC-"QUOTE"-BACK\\SLASH-0123456789';
+  const SECRET = 'LIVE-CANARY-ESCAPED-0123456789';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  // ⚠️ 機密要放在**真的會原樣進事故檔的欄位**——`promptFile` 路徑就是那一格。
+  //    我第一版只把它放進回覆，但回覆原文根本不進事故檔 ⇒ 有沒有轉義形都一樣過＝空包彈。
+  const pd = keep(mkdtempSync(join(tmpdir(), 'fake-prompt-')));
+  const pf = join(pd, `${REAL}.txt`); writeFileSync(pf, '【界線】測試用\n');
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: pf }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `洩漏：${SECRET}` })), relayScript: fakeRelay('ok'), liveSecret: SECRET });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { raw } = readIncident(iso.resultsRoot);
+  for (const form of escapeForms(REAL)) assert.equal(raw.includes(form), false, `事故檔留下了機密的某一種序列化表示（長 ${form.length}）`);
+  // 語意層：整份 parse 回來，任何字串欄位都不准還原出那個值
+  const walk = (/** @type {unknown} */ v) => {
+    if (typeof v === 'string') assert.equal(v.includes(REAL), false, 'parse 回來還原得出完整機密');
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(JSON.parse(raw));
+  assert.equal(r.summary.join('\n').includes(REAL), false, '公開摘要也留下了機密');
+});
+
+test('關門｜機密只出現在 session 檔名、內容無害時，也要算事故（第三個出口）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ Codex #535 r4：驗屍原本只比對檔案**內容**，所以「只有檔名帶機密」會一路走到成功路徑，
+  //    把原始檔名接進結果包落盤——那是 say() 與 writeIncident() 以外的第三個出口。
+  const REAL = 'SYNTHETIC-FILENAME-DLP-0123456789';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  const inst = fakeGrok();   // 回覆與檔案內容都無害
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf 'harmless\n' > "$ws/fake-session/${REAL}.jsonl"; $1`));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, `只有檔名帶機密時沒有判成事故：${r.summary.join('\n')}`);
+  assert.equal(r.summary.join('\n').includes(REAL), false, '公開摘要回聲了檔名裡的機密');
+  // 結果樹裡**任何一段路徑或內容**都不准含那個值
+  for (const f of readdirSync(iso.resultsRoot, { recursive: true, withFileTypes: true })) {
+    const full = join(f.parentPath ?? f.path, f.name);
+    assert.equal(full.includes(REAL), false, `結果包留下了帶機密的路徑：${f.name}`);
+    if (f.isFile()) assert.equal(readFileSync(full, 'utf8').includes(REAL), false, `${f.name} 內容含機密`);
+  }
+});
+
 test('關門｜清洗要把重疊區間接成一整段：機密自我重疊時，公開摘要不可以留下殘段', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ 這一題守的是**關門那支清洗函式**（不是視窗那支）。
