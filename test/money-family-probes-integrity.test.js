@@ -22,8 +22,9 @@
  * 改了 helper（含改註解）就要重算下面這行：
  *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('test/helpers/money-family-probes.js')).digest('hex'))"
  *
- * 一句話總結它證明什麼：**在沒有人刻意注入程式碼的前提下，磁碟上的 helper
- * ＝被審查過的那一版**。探針的**行為**正確性由
+ * 一句話總結它證明什麼（機器真能證明的那句）：**在沒有人動取樣環境的前提下，
+ * 磁碟上的 helper ＝本檔字面釘的那一版**——「那一版有沒有被審查過」機器證明不了，
+ * 那是重算雜湊時人要負的責任。探針的**行為**正確性由
  * `test/money-boundary.test.js` 與 `test/codex-money-hook.test.js` 的實跑斷言把守。
  */
 import { test } from 'node:test';
@@ -37,7 +38,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HELPER = path.join(ROOT, 'test', 'helpers', 'money-family-probes.js');
 
 // helper 檔案位元組的 sha256（William 2026-09-01 裁示的那顆釘）。
-const HELPER_BYTES_SHA256 = '73a250f8d4db28e352326476c16b1bba94b0e6add8ad4bb32a97c1778a06ad2d';
+const HELPER_BYTES_SHA256 = '71bcbfa50ebbbaf9958950e8dbe985f958ec0bdab4522e552b0b55c912276bc9';
 
 test('承重字表 helper 的位元組與釘相符（本行程不載入它，取樣不可能被它污染）', () => {
   const actual = createHash('sha256').update(readFileSync(HELPER)).digest('hex');

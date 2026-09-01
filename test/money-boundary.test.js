@@ -26,8 +26,12 @@
  *   - 它驗「repo 裡的條文與設定存在且精確」，**證明不了任何 AI 執行期真的守規**——
  *     執行期靠 Claude Code 權限系統（deny）與 hook 去攔；本考題防的是那些設定與條文
  *     **被靜靜刪掉或改弱**（規則消失比規則被違反更難察覺）。
- *   - `.claude/settings.json` 只約束 Claude Code；**Codex CLI 不讀這個檔**，
- *     約束 Codex 靠 AGENTS.md 條文（Codex 每次開工必讀）＋審查制度。
+ *   - `.claude/settings.json` 只約束 Claude Code；**Codex CLI 不讀這個檔**。
+ *     Codex 側自 2026-09-01（PR #536）起另有 `.codex/hooks.json`＝同款封鎖的專案層副本，
+ *     但那是**條件式**的：要 William 在 Codex 介面按過「信任」才會執行，
+ *     信任狀態存在 `~/.codex/config.toml`、**不在 repo**＝本考題看不到、也不假裝看得到
+ *     （未信任時 Codex 會一聲不吭地跳過）。所以約束 Codex 仍以 AGENTS.md 條文
+ *     （每次開工必讀）＋審查制度為主，那道 hook 是信任之後才加上的一層。
  *   - William 機器 user 層 `~/.claude/settings.json` 另有同款封鎖——不在 repo，
  *     本考題看不到、也不假裝看得到。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
@@ -78,9 +82,10 @@ import {
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
 } from './helpers/money-family-probes.js';
 
-// 字表 helper 的完整性由**隔離行程**的 test/money-family-probes-integrity.test.js 把守
+// 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
-// 一律先於本檔程式碼執行；換行程才有終點。本檔因此不再自帶位元組釘）。
+// 一律先於本檔程式碼執行。換行程擋掉的是那一形，不是終點——r6 已證明還有別的形；
+// 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));

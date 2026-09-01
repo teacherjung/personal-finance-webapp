@@ -32,7 +32,8 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 // 下面四張清單是 hook 指令裡家族正則的**承重字表複本**，考題用它們機械生成探針：
 // 指令裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
 // 少任何一個出入金詞→「initiate_{詞}」轉紅；唯讀豁免名單少任何一個→對應放行探針轉紅。
-// ⚠️ 這裡與 .claude/settings.json 的指令必須同步改（兩邊都改才綠＝雙人規則）。
+// ⚠️ 這裡與 .claude/settings.json 的指令必須同步改；2026-09-01（#536）起 .codex/hooks.json
+// 的指令也在同一條線上（三者一致才綠——身分互鎖考題釘 Claude／Codex 兩份 command 逐位相同）。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
   'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];

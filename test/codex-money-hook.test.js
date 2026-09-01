@@ -14,8 +14,9 @@
  *      物件、hookEventName、permissionDecision、理由 trim 後非空），放行斷言
  *      stdout 全空＋跑完。只查 includes('"deny"') 的舊判準被 r1 突變打穿。
  *   ④ **結構封閉＋路徑絆線**：宣告式白名單（恰一事件／組／handler、欄位白名單）；
- *      全檔字串掃**常見**機器絕對路徑形狀——這是絆線不是安全閘（形狀列不完，
- *      完整保證靠互鎖＋兩側都過審查；r2 M 補 /private、/Volumes、正斜線磁碟機、UNC）。
+ *      全檔字串掃**常見**機器絕對路徑形狀——這是絆線不是安全閘（形狀列不完；
+ *      互鎖只涵蓋 matcher＋command 兩個欄位，其餘靠審查看 diff——那是殘餘守備、
+ *      不是完整保證；r2 M 補 /private、/Volumes、正斜線磁碟機、UNC）。
  *
  * r1 修訂（Codex #536 r1，2H1M1L 全收）：deny 判準改真實阻擋契約；煙霧測補
  *   deposit／wire／cancel_order＋數量釘；結構從「只看 hooks[0]」改封閉遍歷；
@@ -108,9 +109,10 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
   }
 });
 
-// 字表 helper 的完整性由**隔離行程**的 test/money-family-probes-integrity.test.js 把守
+// 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
-// 一律先於本檔程式碼執行；換行程才有終點。本檔因此不再自帶位元組釘）。
+// 一律先於本檔程式碼執行。換行程擋掉的是那一形，不是終點——r6 已證明還有別的形；
+// 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
 
 // ---------- ② 身分互鎖（同步紀律；主承重在①） ----------
 
@@ -178,6 +180,9 @@ test('煙霧測：錢的形狀回合規 deny、唯讀與非錢全空放行、壞
 test('結構封閉：恰一事件、恰一組、恰一 handler、欄位白名單（第二個 handler 混不進來）', () => {
   assert.deepEqual(Object.keys(codexFile).sort(), ['description', 'hooks'],
     '檔案頂層只准 description＋hooks——多出來的鍵要先過這裡');
+  assert.equal(typeof codexFile.description, 'string',
+    'description 必須是字串——Codex 的 HooksFile 把它定義成 Option<String>，'
+    + '改成物件或陣列會讓 loader 拒收整份檔案（Codex #536 r7 H）');
   assert.deepEqual(Object.keys(codexFile.hooks), ['PreToolUse'],
     'repo 副本只准有 PreToolUse——個人 hook（Stop 朗讀之類）不可跟著遷移進版控');
   assert.ok(Array.isArray(codexFile.hooks.PreToolUse),
@@ -210,6 +215,7 @@ test('絆線：全檔字串不含常見的機器絕對路徑形狀（列名式�
       for (const [k, v] of Object.entries(node)) walk(v, `${at}.${k}`);
     }
   })(codexFile, '$');
+  // ⚠️ 列名式＝形狀列不完；互鎖只涵蓋 matcher＋command，其餘漂移靠審查看 diff（殘餘守備）。
   assert.deepEqual(paths, [],
     `這些位置出現機器路徑形狀（/Users、/home、/root、/private、/Volumes、/var、/tmp、/opt、/etc、`
     + `磁碟機代號、UNC）＝把單一機器的東西寫進 repo：${paths.join('、')}`);
