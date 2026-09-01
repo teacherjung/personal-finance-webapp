@@ -102,8 +102,13 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
   const pins = opt.pins ?? { issuer: PINNED_ISSUER, clientId: PINNED_CLIENT_ID };
   const p = join(authDir, 'auth.json');
   if (!existsSync(p) || !lstatSync(p).isFile()) throw new Error(`沙箱專用 auth.json 不存在或不是 regular file：${p}`);
+  // ⚠️ **解析失敗的訊息不可以往外送**：Node 原生的 SyntaxError 會把輸入的前綴印進 message
+  //   （`Unexpected token ... "SYNTHET"...`），而這一段跑在 DLP 遮罩字典就緒**之前**、
+  //   呼叫端會把 message 接進公開摘要＝抄進 PR 描述（Codex #535 r8）。所以換成固定訊息。
   /** @type {Record<string, Record<string, unknown>>} */
-  const all = JSON.parse(readFileSync(p, 'utf8'));
+  let all;
+  try { all = JSON.parse(readFileSync(p, 'utf8')); }
+  catch { throw new Error('auth.json 不是合法 JSON（內容不回顯）——先在沙箱外 grok 登入一次'); }
   const entries = Object.entries(all);
   if (entries.length !== 1) throw new Error(`auth.json 應恰有一個登入項，實際 ${entries.length}`);
   const [key, cred] = entries[0];
@@ -124,7 +129,10 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
     const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: String(cred.refresh_token), client_id: pins.clientId });
     const r = await f(`${pins.issuer}/oauth2/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });   // 用釘住的，不用檔裡的
     if (!r.ok) throw new Error(`refresh 失敗：HTTP ${r.status}——refresh_token 可能已失效，先在沙箱外 grok 登入一次、再把 ~/.grok/auth.json 抄到 ${authDir}`);
-    const j = /** @type {{ access_token?: string, refresh_token?: string, expires_in?: number }} */ (await r.json());
+    // 同上：回應解析失敗的原生訊息會帶出回應內容的前綴，而那裡可能是**還沒進字典的新值**
+    /** @type {{ access_token?: string, refresh_token?: string, expires_in?: number }} */ let j;
+    try { j = /** @type {typeof j} */ (await r.json()); }
+    catch { throw new Error('refresh 回應不是合法 JSON（內容不回顯）'); }
     if (!j.access_token || !j.expires_in) throw new Error('refresh 回應缺 access_token／expires_in');
     current = { ...cred, key: j.access_token, refresh_token: j.refresh_token ?? cred.refresh_token, expires_at: new Date(now() + j.expires_in * 1000).toISOString() };
     // 原子寫回：temp＋fsync＋rename；失敗時舊檔原樣（fsync：rename 只保證讀者看不到半份，不保證已落盤）

@@ -1464,13 +1464,18 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
   // ⚠️ Codex #535 r7：`scrubSecrets` 原本要等到 DLP 針那段（在後面很多行）才有內容，
   //    但憑證 refresh 的錯誤訊息在那之前就會走 `fail → say` 進公開摘要 ⇒ fail-closed 擋得住掃描，
   //    **擋不住那句話被抄進 PR 描述**。門有了但還沒上膛，等於沒有。
-  //    ⚠️ 守的是**整個階段**，不是單一那句話：這個階段每一條會走 `fail → say` 的錯誤路徑都考一次。
+  //    ⚠️ 射程講清楚：守的是這個階段**列出來的這幾條**錯誤路徑，不是「每一條」——
+  //       原本那樣寫超過實際射程（Codex #535 r8）。含兩條**隱式**的解析例外：
+  //       Node 原生的 SyntaxError 會把輸入前綴印進 message，只擋自己寫的訊息是擋不到的。
+  //    ⚠️ 斷言也要擋**前綴**，不是只擋完整值：洩漏出去的往往只是開頭幾個字。
   const EARLY = 'SYNTHETIC-EARLY-VALUE-SECRET-0123456789';
   const repo = tinyRepo();
   for (const [label, auth, want] of /** @type {[string, string, RegExp][]} */ ([
     ['issuer 不合法', fakeAuth({ issuer: EARLY }), /不等於釘住的/],
     ['client_id 不合法', fakeAuth({ clientId: EARLY }), /oidc_client_id/],
     ['進盒欄位格式不對', fakeAuth({ extra: { user_id: EARLY } }), /格式不對|不等於釘住的|鍵名/],
+    // 隱式：壞掉的 auth JSON ⇒ 原生 SyntaxError 會帶出內容前綴
+    ['auth.json 不是合法 JSON', `{"broken": "${EARLY}"`, /不是合法 JSON|讀不出來/],
   ])) {
     const iso = isolated();
     mkdirSync(iso.authDir, { recursive: true });
@@ -1479,7 +1484,23 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
     const out = r.summary.join('\n');
     assert.equal(r.code, 2, `${label}：沒有 fail-closed：${out}`);
     assert.match(out, want, `${label}：走的不是預期那條路＝這一格量不到東西`);
+    // 完整值的每一種表示都不准出現；**前綴也不准**（原生解析錯誤洩的就是前綴）
     for (const form of escapeForms(EARLY)) assert.equal(out.includes(form), false, `${label}：公開摘要帶出了 auth 實值（長 ${form.length}）`);
+    for (let n = 8; n <= EARLY.length; n++) assert.equal(out.includes(EARLY.slice(0, n)), false, `${label}：公開摘要帶出了 auth 實值的前 ${n} 個字`);
+  }
+  // 第五條：**refresh 回應**不是合法 JSON。這條特別要緊——回應裡可能是**還沒進字典的新值**
+  //（Codex #535 r8 點名），所以連「事後才建字典」都救不了它，只能不回顯。
+  {
+    const NEW = 'SYNTHETIC-FRESH-TOKEN-FROM-SERVER-0123456789';
+    const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true });
+    writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ expiresInMs: -1000 }));   // 已過期 ⇒ 會去 refresh
+    const badJson = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError(`Unexpected token 'S', "${NEW}" is not valid JSON`); } });
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, fetchImpl: badJson, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    const out = r.summary.join('\n');
+    assert.equal(r.code, 2, `refresh 回應壞掉時沒有 fail-closed：${out}`);
+    assert.match(out, /不是合法 JSON|refresh/, '走的不是預期那條路＝這一格量不到東西');
+    for (let n = 8; n <= NEW.length; n++) assert.equal(out.includes(NEW.slice(0, n)), false, `refresh 回應：公開摘要帶出了伺服器回來的新值的前 ${n} 個字`);
   }
 });
 

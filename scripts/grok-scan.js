@@ -701,7 +701,11 @@ export async function runScan(args, deps = {}) {
     const p = join(authDir, 'auth.json');
     if (!lstatSync(p).isFile()) throw new Error('不是 regular file');
     needles = authNeedles(JSON.parse(readFileSync(p, 'utf8')));
-  } catch (e) { return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${/** @type {Error} */ (e).message}——沒有針就不能證明沒外流，不掃`); }
+  // ⚠️ 這一格也在字典就緒**之前**（針就是這裡讀出來的）：不可以把 `e.message` 原樣往外送——
+  //   JSON 解析失敗時它會帶出檔案內容的前綴。只回錯誤的**類別**（SyntaxError／檔案系統錯誤碼）。
+  //   ⚠️ 誠實劃界：**這一格今天走不到、也沒有考題釘著**——檔案壞掉的話 `refreshSandboxAuth` 會先擋下。
+  //   留著是因為它跟上面那兩處是同一條規矩（上膛前不回顯 `e.message`），不是因為量得到。
+  } catch (e) { const x = /** @type {Error & { code?: string }} */ (e); return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${x.code ?? x.name}（內容不回顯）——沒有針就不能證明沒外流，不掃`); }
   {
     // 已在**給盒子的東西**裡出現的針偵測不了外流——給盒子的東西＝材料（指示＋diff）**＋ head 整棵已 commit 原始碼**
     //   （第四次正式掃描後的煙霧測試：空 diff、名字不在材料裡，但 AGENTS.md 裡有幾百次，grok 讀檔的 tool_result 就帶出來＝假事故）。
