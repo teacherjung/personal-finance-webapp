@@ -4,7 +4,9 @@
 // 病根（自審抓到的兩個 blocking，都已重現）：
 //     138 KB 的**一頁** PDF（約 200 萬個文字節點）→ 行程死掉，峰值 612MB
 //     207 KB 的**一頁** PDF（內容串流解壓後 83MB）→ 行程死掉，峰值 704MB
-// 兩份都**結構完全合法**，既有的兩道牆（頁數、文字節點）都看到「正常」。
+// 兩份都**結構完全合法**，而**當時**那兩道牆（頁數、事後才數的 `countTextItems`）都看到「正常」。
+// ⚠️ 「都看到正常」講的是 2026-07-29 之前；之後文字節點牆改成邊收邊數，這兩顆現在**會**被它擋下
+//    （前提是取消真的生效——那正是 2026-08-29 修的東西）。
 //
 // ⚠️ **死法不只 OOM**：也可能是「跑不完」——子行程沒有輸出，父行程只好靠逾時收回。
 //
@@ -29,7 +31,7 @@
 // ⚠️ **LOCAL 刻意不套**（William 2026-07-29 裁決）：這道防線保護的是「多人共用的那台機器」，
 //    本機只有自己在用、檔案都是自己從銀行下載的，不值得付每次 250ms 的代價。
 //    **這代表 LOCAL 仍然帶著這個洞——那是明知的取捨，不是漏掉的。**
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
@@ -127,6 +129,12 @@ function encryptedPdf() {
 /** @param {Promise<any>} p */
 const errOf = (p) => p.then(() => null, (/** @type {any} */ e) => e);
 
+// ⚠️ **集中還原，不靠每題自己記得**（Codex #538 r1 實測的缺口）：兩個測試接縫都是 module-global，
+//    而「漏還原」不會被下一題抓到——下一題只要自己也設了值，就把污染靜靜蓋過去
+//   （他刪掉某一題的還原，22 題照樣全綠）。所以還原集中在這裡，各題**不再各自 finally**；
+//    拿掉這個 hook 就會有題轉紅（突變驗過）。
+afterEach(() => { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); });
+
 // ============================================================================
 // 一、攻擊：子行程死掉，**父行程必須活著**
 // ============================================================================
@@ -186,7 +194,7 @@ const fakeChild = (name) => join(ROOT, 'test-doubles', name);
 test('歸類｜子行程**真的卡住** → 等到逾時才 SIGKILL、回誠實的 400 pdf_timeout', async () => {
   setPdfChildScriptForTest(fakeChild('pdf-child-hang.js'));
   setPdfTimeoutForTest(500);
-  try {
+  {
     const t0 = Date.now();
     const err = await errOf(parseStatement(normalPdf()));
     assert.ok(err, '子行程卡住竟然還回了結果');
@@ -195,7 +203,7 @@ test('歸類｜子行程**真的卡住** → 等到逾時才 SIGKILL、回誠實
     assert.match(String(err.message), /太久|上限/, '訊息要讓使用者知道該做什麼');
     assert.ok(Date.now() - t0 >= 500,
       '必須是「等到逾時」才收回——提早回來代表它是被別的原因判掉的，不是真的等過');
-  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+  }
 });
 
 test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**絕不可以假裝成 400**', async () => {
@@ -205,7 +213,7 @@ test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**
   //    child 入口打錯、相依壞掉、程式例外一樣沒有 stdout，全判 400 會**責怪使用者、藏起我們的故障**。
   setPdfChildScriptForTest(fakeChild('pdf-child-crash.js'));
   setPdfTimeoutForTest(5_000);   // 給得很寬：本題要看的是「它自己死」，不是逾時
-  try {
+  {
     const t0 = Date.now();
     const err = await errOf(parseStatement(normalPdf()));
     assert.ok(err, '子行程炸了竟然還回了結果');
@@ -215,7 +223,7 @@ test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**
     assert.notEqual(err.code, 'pdf_resource_exhausted', '也不可以猜成資源耗盡：我們並不知道它為什麼死');
     assert.ok(!/太久|文字節點/.test(String(err.message)), '對外訊息不可以說成使用者的檔案有問題');
     assert.ok(Date.now() - t0 < 4_000, '它是自己死的，不該等到逾時');
-  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+  }
 });
 
 test('歸類｜子行程**安靜退出（code 0、零輸出）** → 一樣是 500，不可以猜成資源耗盡', async () => {
@@ -223,12 +231,12 @@ test('歸類｜子行程**安靜退出（code 0、零輸出）** → 一樣是 5
   // 正式子行程掛 keep-alive 就是為了不長成這樣；父行程這一側則要**照實說不知道**。
   setPdfChildScriptForTest(fakeChild('pdf-child-silent.js'));
   setPdfTimeoutForTest(5_000);
-  try {
+  {
     const err = await errOf(parseStatement(normalPdf()));
     assert.ok(err, '子行程什麼都沒回，竟然還當成成功');
     assert.equal(err.status, 500, `沒有輸出＝我們不知道發生什麼事，只能是 500（實際 ${err.status}）`);
     assert.equal(err.code, 'pdf_isolate_child_failed', `實際 ${err.code}`);
-  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+  }
 });
 
 test('三個抽取器都走同一層隔離（不是只修了信用卡那條）', async () => {
@@ -242,7 +250,7 @@ test('三個抽取器都走同一層隔離（不是只修了信用卡那條）',
   const { parseTaishinSecuritiesPdf } = await import('../lib/taishin-securities.js');
   setPdfChildScriptForTest(fakeChild('pdf-child-hang.js'));
   setPdfTimeoutForTest(500);
-  try {
+  {
     /** @type {[string, (d: Uint8Array) => Promise<any>][]} */
     const entries = [
       ['信用卡帳單', parseStatement],
@@ -254,7 +262,7 @@ test('三個抽取器都走同一層隔離（不是只修了信用卡那條）',
       assert.equal(err?.code, 'pdf_timeout',
         `${name}那條沒接上隔離——它自己在行程內解析了這份正常 PDF（實際 ${err?.code ?? '成功回傳'}）`);
     }
-  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+  }
 });
 
 // ============================================================================
@@ -451,6 +459,47 @@ test('邊收邊數｜**改回 getTextContent 就會紅**：本題直接打 readP
   assert.equal(r.count, 2);
   assert.ok(typeof page.streamTextContent === 'function');
   assert.equal(page.state.cancelled, true);
+});
+
+test('邊收邊數｜取消**失敗**時：原本的 400 不可以被蓋掉，而且要出聲、不可印出帳單內容', async () => {
+  // ⚠️ 這一題是 Codex #538 r1 抓到的缺口：`cancelStream` 的 catch 改成 rethrow，22 題照樣全綠。
+  //    而 `finally` 正是最容易把原錯換掉的地方——真正到使用者眼前的會變成一個看不懂的錯，
+  //    「你的帳單文字太多」那句就不見了。這是**保存型**考題：破壞保存機制（catch 改 rethrow）就轉紅。
+  // ⚠️ 也順便釘住「出聲但不洩內容」：帳單內容含真實金額與帳號，日誌只能有錯誤訊息。
+  const SECRET = 'A1234-機密店名-9876';
+  const stubborn = {
+    streamTextContent() {
+      let i = 0;
+      return { getReader: () => ({
+        async read() {
+          i += 1;
+          return i > 1
+            ? { done: true, value: undefined }
+            : { done: false, value: { items: Array.from({ length: MAX_PDF_TEXT_ITEMS + 1 }, () => ({ str: SECRET })) } };
+        },
+        // 帶了正確理由**還是**拒絕（pdfjs 未來改行為、或串流已經壞掉都可能這樣）
+        async cancel() { throw new Error('串流已經壞掉'); },
+      }) };
+    },
+  };
+  const logged = [];
+  const realError = console.error;
+  console.error = (/** @type {any[]} */ ...a) => { logged.push(a.map(String).join(' ')); };
+  let err;
+  try {
+    err = await errOf(readPageTextCapped(/** @type {any} */ (stubborn), 0, '測試檔'));
+  } finally { console.error = realError; }
+
+  assert.equal(err?.code, 'pdf_too_many_text_items',
+    `取消失敗把原本的錯換掉了（實際 ${err?.code}）——使用者會看到一個他無法處理的錯誤`);
+  assert.equal(err?.status, 400, '仍然是使用者層錯誤');
+  assert.ok(logged.some((m) => /取消 pdfjs 串流失敗/.test(m)),
+    '取消失敗要出聲——靜靜失效會讓「牆擋下了」變成「卡死」，而那正是本支在修的病');
+  // ⚠️ 劃界要準（本題第一版自己踩到）：**我們手上的東西**（抽到的文字節點）一律不進日誌——
+  //    那是帳單內容，含真實金額與帳號。至於例外訊息本身是 pdfjs 產生的，印它是診斷所需；
+  //    這一題守的是前者：有人日後改成 `console.error(..., chunk)` 或把 items 帶進訊息就轉紅。
+  assert.ok(!logged.some((m) => m.includes(SECRET)),
+    '日誌出現了抽到的文字節點內容——帳單含真實金額與帳號，不可以進日誌');
 });
 
 test('邊收邊數｜**取消要真的生效**：超標之後 pdfjs 的 task.destroy() 必須回得來（本案的本體）', async () => {
