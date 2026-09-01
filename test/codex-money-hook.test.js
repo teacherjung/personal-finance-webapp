@@ -124,7 +124,8 @@ test('身分互鎖：Codex 副本的 matcher＋command 與 Claude 側「實際�
     (e.hooks ?? []).some((h) => h.type === 'command' && h.command === codexHook.command));
   assert.equal(twins.length, 1,
     '在 .claude/settings.json 找不到（或找到多組）matcher＋command 逐位相同的 PreToolUse hook——' +
-    '兩側不同步了。改任一側都必須同步另一側（字表正本＝test/helpers/money-family-probes.js，'
+    '兩側不同步了。改任一側都必須同步另一側（生產詞表住在這兩份 command 裡，'
+    + 'test/helpers/money-family-probes.js 是**探針**的唯一住所、不是詞表正本；'
     + 'Claude 側的同款全套考題在 test/money-boundary.test.js）。');
   // 互鎖對象必須是「真的會擋錢」的那組，不是恰好同 matcher 的旁觀 hook：
   assertDenies(codexHook.command,
