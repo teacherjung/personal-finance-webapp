@@ -22,11 +22,14 @@
  *   description 的「兩側一致」改機械維持、「回到未信任」修正為標 Modified 語意。
  * r2 修訂（Codex #536 r2，1H1M2L 全收）：H＝加①直接矩陣（互鎖代考洞，突變實證）；
  *   M＝路徑掃描擴形狀並照實降級為絆線；L＝理由判準加 trim；L＝PR 描述數字同步。
- * r5 修訂（Codex #536 r5 中間發現＋William 2026-09-01 裁示「位元組釘」）：
- *   r4 的 canonical 快照「類關閉」宣稱被原型層 iterator 變體推翻（同族第四形）——
- *   照審查輪數預算停損，裁示後改**位元組釘**（sha256 over helper 檔案位元組）、
- *   拆掉 canonical 層：釘涵蓋「只動 helper」的一切形狀＝該方向的機械終點；
- *   動考卷本身或連釘齊改＝審查制度守備（helper 標頭有完整劃界）。
+ * r5 修訂（Codex #536 r5，1H＋William 2026-09-01 裁示「位元組釘」）：
+ *   同族第五形＝**改寫取樣器本身**（helper 靜態 import 先於本檔程式碼執行，可改寫
+ *   readFileSync＋syncBuiltinESMExports 讓同行程的位元組釘取樣到舊內容而假綠，
+ *   Codex 已實測重現 submit_order 放行）。教訓不是再補一形：同行程內「先執行的
+ *   程式碼污染後面的檢查」補不完。**位元組釘落地為隔離行程**——
+ *   test/money-family-probes-integrity.test.js 只讀 helper 位元組、**完全不 import 它**
+ *   （node --test 每檔一個行程），本檔與 money-boundary 因此都不再自帶釘。
+ *   r4 的 canonical 快照層一併拆除（「類關閉」宣稱已撤回——被原型層變體推翻）。
  * r3 修訂（Codex #536 r3，2H1L 全收）：H1＝helper 是兩張考卷的共同失效點——
  *   兩張考卷各釘一份 helper 外的字面身分雜湊（劃界：釘防單點改弱與小 diff 偷渡，
  *   防不了連釘一起改的人——那層靠審查制度）；H2＝結構封閉補 Array.isArray 與
@@ -47,7 +50,6 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
 } from './helpers/money-family-probes.js';
@@ -107,19 +109,9 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
   }
 });
 
-// 字表 helper 的位元組釘（Codex #536 r3–r5 同族四輪 → William 2026-09-01 裁示）：
-// 值層面的釘每補一形就有下一形（刪詞／等量替換／實例 iterator／原型 iterator），
-// 改釘檔案位元組＝「只動 helper」這個方向的機械終點；劃界見 helper 標頭。
-const HELPER_BYTES_SHA256 = '87c0accf8b7ced02f813488587e57326e13ed9e43fc2dbec1887cb43db9f251c';
-
-test('字表 helper 的位元組釘：那個檔案動任何一個字元＝本考卷這裡轉紅', () => {
-  const actual = createHash('sha256')
-    .update(readFileSync(path.join(ROOT, 'test', 'helpers', 'money-family-probes.js')))
-    .digest('hex');
-  assert.equal(actual, HELPER_BYTES_SHA256,
-    '承重字表 helper 的檔案位元組與字面釘不符——改那個檔案（含註解）時，'
-    + '要有意識地同步重算本檔與 test/money-boundary.test.js 的兩顆釘（sha256 檔案位元組）。');
-})
+// 字表 helper 的完整性由**隔離行程**的 test/money-family-probes-integrity.test.js 把守
+// （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
+// 一律先於本檔程式碼執行；換行程才有終點。本檔因此不再自帶位元組釘）。
 
 // ---------- ② 身分互鎖（同步紀律；主承重在①） ----------
 
@@ -130,7 +122,8 @@ test('身分互鎖：Codex 副本的 matcher＋command 與 Claude 側「實際�
     (e.hooks ?? []).some((h) => h.type === 'command' && h.command === codexHook.command));
   assert.equal(twins.length, 1,
     '在 .claude/settings.json 找不到（或找到多組）matcher＋command 逐位相同的 PreToolUse hook——' +
-    '兩側不同步了。改任一側都必須同步另一側（家族網的正本與全套考題在 test/money-boundary.test.js）。');
+    '兩側不同步了。改任一側都必須同步另一側（字表正本＝test/helpers/money-family-probes.js，'
+    + 'Claude 側的同款全套考題在 test/money-boundary.test.js）。');
   // 互鎖對象必須是「真的會擋錢」的那組，不是恰好同 matcher 的旁觀 hook：
   assertDenies(codexHook.command,
     JSON.stringify({ tool_name: 'mcp__00000000-aaaa-bbbb-cccc-dddddddddddd__create_order_instruction' }),

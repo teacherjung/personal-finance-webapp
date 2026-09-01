@@ -73,25 +73,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 承重字表與探針清單＝test/helpers/money-family-probes.js（唯一住所；Codex #536 r2 H 抽出，
 // 讓 codex-money-hook.test.js 把完整矩陣直接跑在 Codex 副本上——不准在別處複抄）。
-import { createHash } from 'node:crypto';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
 } from './helpers/money-family-probes.js';
 
-// 字表 helper 的位元組釘（Codex #536 r3–r5 同族四輪 → William 2026-09-01 裁示）：
-// 值層面的釘每補一形就有下一形（刪詞／等量替換／實例 iterator／原型 iterator），
-// 改釘檔案位元組＝「只動 helper」這個方向的機械終點；劃界見 helper 標頭。
-const HELPER_BYTES_SHA256 = '87c0accf8b7ced02f813488587e57326e13ed9e43fc2dbec1887cb43db9f251c';
-
-test('字表 helper 的位元組釘：那個檔案動任何一個字元＝本考卷這裡轉紅', () => {
-  const actual = createHash('sha256')
-    .update(readFileSync(join(ROOT, 'test', 'helpers', 'money-family-probes.js')))
-    .digest('hex');
-  assert.equal(actual, HELPER_BYTES_SHA256,
-    '承重字表 helper 的檔案位元組與字面釘不符——改那個檔案（含註解）時，'
-    + '要有意識地同步重算本檔與 test/codex-money-hook.test.js 的兩顆釘（sha256 檔案位元組）。');
-});
+// 字表 helper 的完整性由**隔離行程**的 test/money-family-probes-integrity.test.js 把守
+// （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
+// 一律先於本檔程式碼執行；換行程才有終點。本檔因此不再自帶位元組釘）。
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
