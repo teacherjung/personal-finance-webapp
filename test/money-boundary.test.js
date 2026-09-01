@@ -80,6 +80,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
+  INPUT_HYGIENE_DENY, EXPECTED_INPUT_HYGIENE,
+  MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
+  MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
 } from './helpers/money-family-probes.js';
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
@@ -203,6 +206,39 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   for (const tool of ALLOWED_LOOKALIKES) {
     assert.equal(entriesBlocking(settings, tool).length, 0,
       `有 hook 組對規則 2 明文可用的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
+  }
+});
+
+
+test('v6 輸入衛生：Claude 側的 hook 指令也要在清乾淨之前擋下怪形狀（fail-closed）', () => {
+  const settings = loadSettings();
+  const hooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []);
+  assert.equal(INPUT_HYGIENE_DENY.length, EXPECTED_INPUT_HYGIENE, '輸入衛生探針被縮短了');
+  for (const [payload, why] of INPUT_HYGIENE_DENY) {
+    const ok = hooks.some((h) => {
+      if (h.type !== 'command' || !h.command) return false;
+      try {
+        const out = execFileSync('bash', ['-c', h.command],
+          { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
+        const d = JSON.parse(out).hookSpecificOutput;
+        return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+      } catch { return false; }
+    });
+    assert.ok(ok, `沒有任何 hook 對這種輸入回合規 deny：${why}`);
+  }
+});
+
+test('v6 姿態閘：Claude 側對已宣告的動錢連接器同樣白名單制', () => {
+  const settings = loadSettings();
+  assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY, '名單外探針被縮短了');
+  assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, '名單內探針被縮短了');
+  for (const t of MONEY_SERVER_DENY) {
+    assert.ok(entriesBlocking(settings, MONEY_SERVER + t).length >= 1,
+      `動錢連接器上的名單外工具 ${t} 沒有被擋——白名單制失效`);
+  }
+  for (const t of MONEY_SERVER_ALLOW) {
+    assert.equal(entriesBlocking(settings, MONEY_SERVER + t).length, 0,
+      `名單內的 ${t} 被誤攔——白名單漏列或姿態閘寫壞`);
   }
 });
 

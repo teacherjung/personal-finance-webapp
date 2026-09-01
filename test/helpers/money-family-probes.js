@@ -117,3 +117,69 @@ export const ALLOWED_LOOKALIKES = [
 // 兩個都是**字面數字**，改任何一張清單＝這裡要跟著手改，兩邊對得上才綠。
 export const EXPECTED_READ_VERBS_COUNT = 14;
 export const EXPECTED_ALLOWED_COUNT = 36;
+
+// ── 2026-09-02 v6：輸入衛生與姿態閘的探針（Claude／Codex 兩張考卷共用）──────────
+// 這兩批不是「工具名清單」而是**輸入形狀**與**連接器姿態**，所以另立匯出，
+// 不混進 FORBIDDEN_FAMILY（那張表的每一筆都必須是可直接餵的工具名）。
+
+/**
+ * 輸入衛生：v5 只擋「非 JSON／缺 tool_name／型別錯」，實測空字串、全空白、
+ * 前後空白、全形、零寬字元都會被當合法名走進家族網（Grok 2026-09-01 掃出、已實測重現）。
+ * v6 的修法是**宣告合法字元集**：工具名必須逐字符合 `[A-Za-z0-9_.-]`（1~200 字），
+ * 不合的一律擋。一行關掉兩個缺口——空字串／空白／全形／零寬／斜線／冒號／加號／超長
+ * 全都不符合宣告，於是「還沒想到的分隔符」整類消失，不必再教它認第七種。
+ * ⚠️ 這裡刻意**不**先做 NFKC／剝零寬／strip 再判斷：那樣寫過一版，實測是冗餘——
+ * 字元集這一層會先接住同樣的形狀，拿掉那三步考題不會紅（＝沒有考題撐著的層）。
+ * 少一層就少一個要維護、要解釋的東西；擋的效果一樣。
+ * 每一筆都是**原始 stdin payload 字串**（不是工具名），期望一律 deny。
+ */
+export const INPUT_HYGIENE_DENY = [
+  [JSON.stringify({ tool_name: '' }), '空字串'],
+  [JSON.stringify({ tool_name: '   ' }), '全空白'],
+  [JSON.stringify({ tool_name: '\t\n' }), '只有 tab 與換行'],
+  [JSON.stringify({ tool_name: 'mcp__x__place_order ' }), '尾隨空白（v5 實測放行）'],
+  [JSON.stringify({ tool_name: ' mcp__x__place_order' }), '前導空白'],
+  [JSON.stringify({ tool_name: 'mcp__x__place_order\t' }), '尾隨 tab'],
+  [JSON.stringify({ tool_name: 'ｍｃｐ＿＿ｘ＿＿ｐｌａｃｅ＿ｏｒｄｅｒ' }), '全形（NFKC 後才認得出）'],
+  [JSON.stringify({ tool_name: 'mcp__x__place\u200b_order' }), '字中零寬字元'],
+  [JSON.stringify({ tool_name: 'mcp__x__place/order' }), '斜線（非法字元集）'],
+  [JSON.stringify({ tool_name: 'mcp__x__place:order' }), '冒號'],
+  [JSON.stringify({ tool_name: 'mcp__x__place order' }), '空白分隔'],
+  [JSON.stringify({ tool_name: 'mcp__x__place+order' }), '加號'],
+  [JSON.stringify({ tool_name: `mcp__x__${'a'.repeat(300)}` }), '超長名（上限 200）'],
+  ['not json at all', '非 JSON'],
+  [JSON.stringify({ no_tool_name: 1 }), '缺 tool_name'],
+  [JSON.stringify({ tool_name: 12345 }), 'tool_name 不是字串'],
+];
+export const EXPECTED_INPUT_HYGIENE = 16;
+
+/**
+ * 姿態閘：已宣告會碰錢的連接器改成**白名單制**——名單外一律擋，不管工具叫什麼。
+ * 這關掉的是「靠名字猜」永遠關不掉的那一類：券商最常見的 `market_order`／`limit_order`
+ * 這種單側命名（v5 的動詞×名詞文法接不到）、以及任何還沒見過的新工具名。
+ * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
+ * 那時要回來更新 MONEY_SERVERS（AGENTS「錢的絕對邊界」規則 4 的通報義務接住這件事）。
+ */
+export const MONEY_SERVER = 'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__';
+
+/** 名單外＝一律擋。前八個是 v5 實測會放行的真實券商命名，後兩個是「沒見過的名字」。 */
+export const MONEY_SERVER_DENY = [
+  'market_order', 'limit_order', 'stop_order', 'bracket_order', 'oco_order',
+  'buy', 'sell', 'liquidate', 'place_orderv2', 'anything_they_add_next_year',
+  'create_order_instruction', 'delete_order_instruction',
+];
+export const EXPECTED_MONEY_SERVER_DENY = 12;
+
+/** 名單內＝照常放行（William 現用的唯讀查詢與明文允許的提醒／觀察清單）。 */
+export const MONEY_SERVER_ALLOW = [
+  'get_account_balances', 'get_account_orders', 'get_account_positions',
+  'get_account_summary', 'get_account_trades', 'get_alert', 'get_alerts',
+  'get_combo_identifier', 'get_company_connections', 'get_company_themes',
+  'get_option_data', 'get_option_parameters', 'get_order_instructions',
+  'get_pa_allocation', 'get_pa_performance_all_periods', 'get_price_history',
+  'get_price_snapshot', 'get_theme_details', 'get_watchlist', 'get_watchlists',
+  'search_contracts', 'search_futures', 'search_investment_topics', 'whats_new',
+  'provide_customer_feedback', 'create_alert', 'update_alert', 'delete_alert',
+  'set_alert_status', 'create_watchlist', 'edit_watchlist', 'delete_watchlist',
+];
+export const EXPECTED_MONEY_SERVER_ALLOW = 32;

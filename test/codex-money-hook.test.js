@@ -52,6 +52,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
+  INPUT_HYGIENE_DENY, EXPECTED_INPUT_HYGIENE,
+  MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
+  MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
 } from './helpers/money-family-probes.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -118,6 +121,26 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
 // 一律先於本檔程式碼執行。換行程擋掉的是那一形，不是終點——r6 已證明還有別的形；
 // 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
+
+
+test('v6 輸入衛生：清乾淨之前不進判準，怪形狀一律 fail-closed（直接考 Codex 副本）', () => {
+  assert.equal(INPUT_HYGIENE_DENY.length, EXPECTED_INPUT_HYGIENE, '輸入衛生探針被縮短了——數量釘要有意識地改');
+  for (const [payload, why] of INPUT_HYGIENE_DENY) {
+    assertDenies(codexHook.command, payload, `輸入衛生：${why}`);
+  }
+});
+
+test('v6 姿態閘：已宣告的動錢連接器採白名單制（名單外一律擋、名單內照常放行）', () => {
+  assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY, '名單外探針被縮短了');
+  assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, '名單內探針被縮短了');
+  for (const t of MONEY_SERVER_DENY) {
+    assertDenies(codexHook.command, JSON.stringify({ tool_name: MONEY_SERVER + t }),
+      `動錢連接器上的名單外工具 ${t}（不管它叫什麼名字）`);
+  }
+  for (const t of MONEY_SERVER_ALLOW) {
+    assertPasses(codexHook.command, MONEY_SERVER + t, '名單內的唯讀／提醒／觀察清單工具');
+  }
+});
 
 // ---------- ② 身分互鎖（同步紀律；主承重在①） ----------
 
