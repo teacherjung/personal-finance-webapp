@@ -12,7 +12,7 @@
  *      Codex 實際放行 submit_order——所以主承重是①，互鎖只守「不漂移」。
  *   ③ **行為煙霧測**：deny 斷言 Codex 0.145.0 真正的阻擋契約（hookSpecificOutput
  *      物件、hookEventName、permissionDecision、理由 trim 後非空），放行斷言
- *      stdout 全空＋跑完。只查 includes('"deny"') 的舊判準被 r1 突變打穿。
+ *      stdout trim 後全空＋跑完。只查 includes('"deny"') 的舊判準被 r1 突變打穿。
  *   ④ **結構封閉＋路徑絆線**：宣告式白名單（恰一事件／組／handler、欄位白名單）；
  *      全檔字串掃**常見**機器絕對路徑形狀——這是絆線不是安全閘（形狀列不完；
  *      互鎖只涵蓋 matcher＋command 兩個欄位，其餘靠審查看 diff——那是殘餘守備、
@@ -90,10 +90,14 @@ function assertDenies(command, stdinText, why) {
     `${why}：deny 理由是空的（或全空白）——被擋的一方要看得懂為什麼`);
 }
 
-/** 放行契約：stdout 全空（任何輸出都可能被解讀）＋跑完（execFileSync 非零會 throw）。 */
+/**
+ * 放行契約：stdout **trim 後**全空＋跑完（execFileSync 非零會 throw）。
+ * 為什麼是 trim 而不是嚴格空字串（Grok 掃第 4 條）：純空白對 Codex 的解析等同無輸出，
+ * 判準照實對齊實作，不寫比實作嚴的宣稱。
+ */
 function assertPasses(command, toolName, why) {
   const stdout = runHook(command, JSON.stringify({ tool_name: toolName }));
-  assert.equal(stdout.trim(), '', `${why}（${toolName}）：放行時 stdout 必須全空，拿到：${stdout.slice(0, 80)}`);
+  assert.equal(stdout.trim(), '', `${why}（${toolName}）：放行時 stdout 必須 trim 後全空，拿到：${stdout.slice(0, 80)}`);
 }
 
 // ---------- ① 全家族矩陣直接跑在 Codex 副本上（主承重） ----------
