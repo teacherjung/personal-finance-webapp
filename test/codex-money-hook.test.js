@@ -167,7 +167,7 @@ const PASS_SMOKE = [
 const EXPECTED_DENY_SMOKE = 11;
 const EXPECTED_PASS_SMOKE = 8;
 
-test('煙霧測：錢的形狀回合規 deny、唯讀與非錢全空放行、壞輸入 fail-closed', () => {
+test('煙霧測：錢的形狀回合規 deny、唯讀與非錢 trim 後全空放行、壞輸入 fail-closed', () => {
   assert.equal(DENY_SMOKE.length, EXPECTED_DENY_SMOKE, '必擋探針清單被縮短了——數量釘要跟著有意識地改');
   assert.equal(PASS_SMOKE.length, EXPECTED_PASS_SMOKE, '放行探針清單被縮短了——數量釘要跟著有意識地改');
   for (const [name, why] of DENY_SMOKE) {
