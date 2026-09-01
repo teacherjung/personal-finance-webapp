@@ -43,6 +43,28 @@ const XLSX_SELECTORS = [
       + '確實需要時請在 eslint.config.js 開例外並寫明理由。' },
 ];
 
+/** PDF 行程隔離的測試接縫：`setPdfChildScriptForTest` 只准考題碰。
+ *
+ *  ⚠️ **為什麼是 ESLint 而不是自己掃字串**（#538 的教訓，與 xlsx 那條同一個病）：
+ *     我先寫了一個逐行 regex 的架構考題，宣稱「正式程式碼加一個呼叫者就會轉紅」——
+ *     實測**別名 import（`import { setPdfChildScriptForTest as install } …`）、換行呼叫、
+ *     `.call`** 三種普通寫法全部照樣全綠。**用正規表示式解析一門語言，補到死也補不完**；
+ *     parser 看的是語法樹，這些寫法對它是同一件事。
+ *  ⚠️ 這裡刻意連**識別字本身**都禁（不是只禁「呼叫」的形狀）：取別名、存進變數、
+ *     `.call`／`.apply`、`m.setPdfChildScriptForTest(…)` 全都會用到這個名字。
+ *     字串形（`m['setPdfChildScriptForTest']`）另用 Literal 那條關掉。**列舉繞法補不完就關門。**
+ *  ⚠️ **具名匯出是給考題用的**：`test/pdf-isolate.test.js` 拿這份清單逐字比對，
+ *     才知道「剛剛那個錯是接縫護欄報的」。
+ *  豁免只有一個：`lib/pdf-isolate.js`（宣告處本身）。考題檔另有一組豁免（它們本來就要用）。 */
+export const SEAM_SELECTORS = [
+      { selector: "Identifier[name='setPdfChildScriptForTest']",
+        message: 'setPdfChildScriptForTest 是考題專用的接縫（換掉 PDF 子行程腳本）。'
+      + '正式程式碼一律不可以碰它——子行程腳本是行程隔離這道安全邊界的一部分，'
+      + '正式路徑必須永遠是 lib/pdf-isolate-child.js。' },
+      { selector: "Literal[value='setPdfChildScriptForTest']",
+        message: '用字串取 setPdfChildScriptForTest（算出來的成員存取）一樣不行——理由同上。' },
+];
+
 /** 進入點守衛：「這支是不是被直接執行」只准 `lib/is-main.js` 判斷。
  *  ⚠️ **具名匯出是給考題用的**：`test/entry-guard.test.js` 拿這份清單的 message 逐字比對，
  *     才知道「剛剛那個錯是進入點護欄報的」。之前它用關鍵字猜，猜漏了兩條。 */
@@ -154,20 +176,32 @@ export default [
       // 動態引入與 require——`no-restricted-imports` 不看這兩種，改用 AST 選擇器（一樣是 parser）
       'no-restricted-syntax': ['error',
         ...XLSX_SELECTORS,
-        // ⚠️ 進入點守衛接在同一個陣列裡——**不可以另開一組**（會被覆蓋，見檔頭常數的說明）
+        // ⚠️ 進入點守衛與接縫護欄都接在同一個陣列裡——**不可以另開一組**（會被覆蓋，見檔頭常數的說明）
         ...ENTRY_GUARD_SELECTORS,
+        ...SEAM_SELECTORS,
       ],
     }
   },
-  { // xlsx 收斂點的豁免檔：**進入點守衛照樣適用**
+  { // xlsx 收斂點的豁免檔：**進入點守衛與接縫護欄照樣適用**
     //    （這一組存在的唯一理由是「同名規則整組覆蓋」——只能重新宣告一份少了 xlsx 那幾條的）
-    files: ['lib/statement.js', 'test/**/*.js', 'test/**/*.mjs'],
+    //    ⚠️ 2026-08-29 從「statement 與考題同一組」拆開：考題**必須**能用接縫，
+    //    但 lib/statement.js 是正式程式碼，接縫對它照禁。同一組會讓兩者只能有同一份清單。
+    files: ['lib/statement.js'],
+    rules: { 'no-restricted-syntax': ['error', ...ENTRY_GUARD_SELECTORS, ...SEAM_SELECTORS] }
+  },
+  { // 考題：xlsx 與接縫都豁免（它們本來就要用），進入點守衛照樣適用
+    files: ['test/**/*.js', 'test/**/*.mjs'],
     rules: { 'no-restricted-syntax': ['error', ...ENTRY_GUARD_SELECTORS] }
   },
   { // 進入點守衛的唯一實作：它當然要碰 process.argv 與 import.meta.url
-    //    ⚠️ 只豁免進入點那幾條，**xlsx 護欄照舊適用**（整組關掉會順手開一個沒人要的洞）
+    //    ⚠️ 只豁免進入點那幾條，**xlsx 與接縫護欄照舊適用**（整組關掉會順手開一個沒人要的洞）
     files: ['lib/is-main.js'],
-    rules: { 'no-restricted-syntax': ['error', ...XLSX_SELECTORS] }
+    rules: { 'no-restricted-syntax': ['error', ...XLSX_SELECTORS, ...SEAM_SELECTORS] }
+  },
+  { // 接縫的宣告處本身——**唯一的正式程式碼豁免**
+    //    ⚠️ 只豁免接縫那兩條，xlsx 與進入點護欄照舊適用
+    files: ['lib/pdf-isolate.js'],
+    rules: { 'no-restricted-syntax': ['error', ...XLSX_SELECTORS, ...ENTRY_GUARD_SELECTORS] }
   },
   { // 後端／維護腳本／測試：Node 環境
     files: ['server.js', 'lib/**/*.js', 'scripts/**/*.js', 'test/**/*.js'],

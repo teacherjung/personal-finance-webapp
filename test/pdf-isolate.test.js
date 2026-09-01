@@ -131,8 +131,11 @@ const errOf = (p) => p.then(() => null, (/** @type {any} */ e) => e);
 
 // ⚠️ **集中還原，不靠每題自己記得**（Codex #538 r1 實測的缺口）：兩個測試接縫都是 module-global，
 //    而「漏還原」不會被下一題抓到——下一題只要自己也設了值，就把污染靜靜蓋過去
-//   （他刪掉某一題的還原，22 題照樣全綠）。所以還原集中在這裡，各題**不再各自 finally**；
-//    拿掉這個 hook 就會有題轉紅（突變驗過）。
+//   （他刪掉某一題的還原，22 題照樣全綠）。所以這裡是**共同兜底**：不管哪一題漏了、或中途
+//    斷言失敗提早離開，接縫都會被還原；拿掉這個 hook 就會有題轉紅（突變驗過）。
+// ⚠️ **不是「各題都不准有自己的 finally」**（Codex #538 r2：那句話與同檔現況不符）——
+//    炸彈題就有自己的 `finally { setPdfTimeoutForTest(null); }`。兜底與局部清理是兩件事，不衝突：
+//    局部清理讓「這一題自己的意圖」看得見，afterEach 保證**漏掉的那次不會污染下一題**。
 afterEach(() => { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); });
 
 // ============================================================================
@@ -347,6 +350,88 @@ test('`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一
     `子行程 heap 上限 ${PDF_CHILD_HEAP_MB}MB 不合理：太小會誤殺大帳單、太大就失去隔離的意義`);
 });
 
+test('架構｜接縫護欄必須還掛在 eslint.config.js 上（規則被拿掉＝lint 從此安靜全綠）', async () => {
+  const cfg = readFileSync(join(ROOT, 'eslint.config.js'), 'utf8');
+  const { SEAM_SELECTORS } = await import('../eslint.config.js');
+  assert.ok(SEAM_SELECTORS.length >= 2,
+    '接縫護欄的選擇器清單被縮短了——識別字與字串兩種形都要有，少一種就開一個門');
+  // ⚠️ flat config 的同名規則是**整組覆蓋不是合併**（eslint.config.js 檔頭有這條病歷）：
+  //    有人把接縫護欄另開一組，lint 會全綠、而護欄其實沒在跑。所以這裡驗它接在同一個陣列裡。
+  assert.match(cfg, /'no-restricted-syntax': \['error',[\s\S]*?\.\.\.SEAM_SELECTORS,[\s\S]*?\],/,
+    '接縫護欄沒有接在主組那個 no-restricted-syntax 陣列裡——同名規則會整組覆蓋，等於沒裝');
+  // 正式程式碼的豁免只准有一個：宣告處
+  const exempt = [...cfg.matchAll(/files:\s*\[([^\]]*)\][\s\S]{0,400}?'no-restricted-syntax'[^\n]*\n/g)]
+    .map((m) => m[1]).filter((f) => !/\.\.\.SEAM_SELECTORS/.test(f));
+  assert.ok(cfg.includes("files: ['lib/pdf-isolate.js']"),
+    '宣告處的豁免組不見了——那組沒了的話 lib/pdf-isolate.js 自己會被自己的護欄擋下（lint 紅）');
+  assert.ok(exempt.length > 0, '解析不到任何 no-restricted-syntax 組＝本題的解析方式過期了，請重寫');
+});
+
+test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下（regex 版曾漏掉三種普通寫法）', async () => {
+  // ⚠️ 這一題取代了原本自己寫 regex 逐行掃的架構題。那一版宣稱「加一個呼叫者就轉紅」，
+  //    但實測**別名 import／換行呼叫／`.call`** 三種都照樣全綠——同 xlsx 那條的教訓：
+  //    用正規表示式解析一門語言補不完，執法者要換成看語法樹的 ESLint。
+  //    本題的職責因此改成**盯著執法者真的會開火**（下面列舉的寫法只是證據，不是護欄本體）。
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const probeDir = join(ROOT, 'lib', '_seam_guard_probes');
+  const pubProbeDir = join(ROOT, 'public', '_seam_guard_probes');
+  const IMP = "import { setPdfChildScriptForTest } from '../pdf-isolate.js';\n";
+  const FORMS = [
+    ['直接呼叫', `${IMP}export function a() { setPdfChildScriptForTest('/tmp/x.js'); }\n`],
+    ['別名 import', "import { setPdfChildScriptForTest as install } from '../pdf-isolate.js';\n"
+      + "export function b() { install('/tmp/x.js'); }\n"],
+    ['換行呼叫', `${IMP}export function c() {\n  setPdfChildScriptForTest\n    ('/tmp/x.js');\n}\n`],
+    ['.call', `${IMP}export function d() { setPdfChildScriptForTest.call(null, '/tmp/x.js'); }\n`],
+    ['.apply', `${IMP}export function e() { setPdfChildScriptForTest.apply(null, ['/tmp/x.js']); }\n`],
+    ['存進變數再呼叫', `${IMP}const f = setPdfChildScriptForTest;\nexport function g() { f('/tmp/x.js'); }\n`],
+    ['namespace 引入＋成員存取', "import * as iso from '../pdf-isolate.js';\n"
+      + "export function h() { iso.setPdfChildScriptForTest('/tmp/x.js'); }\n"],
+    ['動態引入＋成員存取', "export async function i() {\n"
+      + "  const m = await import('../pdf-isolate.js');\n  m.setPdfChildScriptForTest('/tmp/x.js');\n}\n"],
+    ['字串形的成員存取', "export async function j() {\n"
+      + "  const m = await import('../pdf-isolate.js');\n  m['setPdfChildScriptForTest']('/tmp/x.js');\n}\n"],
+    ['re-export（把接縫轉手出去）', "export { setPdfChildScriptForTest } from '../pdf-isolate.js';\n"],
+  ];
+  try {
+    mkdirSync(probeDir, { recursive: true });
+    mkdirSync(pubProbeDir, { recursive: true });
+    const paths = FORMS.map(([name, src], k) => {
+      const f = join(probeDir, `p${k}.js`);
+      writeFileSync(f, src);
+      return [name, f, src];
+    });
+    // ⚠️ **前端也要有探針**：全部放 lib/ 的話，有人把護欄的 files 縮成只掃 lib/**，
+    //    這題仍然全綠、public/ 靜默失守（同 xlsx 那題踩過的坑）。
+    const pubFile = join(pubProbeDir, 'probe.js');
+    writeFileSync(pubFile, "import { setPdfChildScriptForTest } from '../../lib/pdf-isolate.js';\n"
+      + "export function k() { setPdfChildScriptForTest('/tmp/x.js'); }\n");
+    const byFile = new Map([...(await eslintSeamFindings(probeDir)), ...(await eslintSeamFindings(pubProbeDir))]);
+    for (const [name, f, src] of paths) {
+      assert.ok((byFile.get(f) || []).length > 0,
+        `「${name}」這種寫法沒有被擋下——它是合法 JS，正式程式碼可以照這樣換掉 PDF 子行程腳本。\n原始碼：\n${src}`);
+    }
+    assert.ok((byFile.get(pubFile) || []).length > 0,
+      'public/ 底下碰接縫沒有被擋下——護欄的 files 範圍被縮窄了');
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+    rmSync(pubProbeDir, { recursive: true, force: true });
+  }
+});
+
+/** 跑真的 eslint，只收接縫護欄報的那些。（一次掃一個目錄——一個樣本 spawn 一次太慢） @param {string} dir */
+async function eslintSeamFindings(dir) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const stdout = await run('npx', ['eslint', '--format', 'json', dir], { cwd: ROOT, maxBuffer: 16 * 1024 * 1024 })
+    .then((r) => r.stdout, (/** @type {any} */ e) => String(e?.stdout || '[]'));
+  const out = new Map();
+  for (const r of JSON.parse(stdout)) {
+    out.set(r.filePath, (r.messages || []).filter((m) => /setPdfChildScriptForTest/.test(String(m.message || ''))));
+  }
+  return out;
+}
+
 test('三個抽取器都真的呼叫了 extractPdfLines（架構題：不准有人繞過隔離層）', () => {
   for (const f of ['lib/statement.js', 'lib/bank-statement.js', 'lib/taishin-securities.js']) {
     const src = readFileSync(join(ROOT, f), 'utf8');
@@ -399,7 +484,9 @@ test('邊收邊數｜多個 chunk 累加，正常讀完也要 cancel（不留 st
   const r = await readPageTextCapped(/** @type {any} */ (page), 0, '測試檔');
   assert.equal(r.count, 60, '三個 chunk 要累加');
   assert.equal(r.items.length, 60);
-  assert.equal(page.state.cancelled, true, '正常讀完也要 cancel，否則 pdfjs 那邊的 stream 留著');
+  // ⚠️ 誠實劃界：真 pdfjs 的串流讀完之後已經關閉，依 WHATWG 規範 cancel() 不會再問來源
+  //    ＝那一次實質上是 no-op。本題（用替身）釘的是「收尾只有一條路」，不是「這次真的取消了什麼」。
+  assert.equal(page.state.cancelled, true, '正常讀完也要走同一條收尾（不留兩條路）');
 });
 
 test('邊收邊數｜跨頁累計：soFar 帶進來的數量算在同一個上限裡', async () => {
@@ -467,40 +554,110 @@ test('邊收邊數｜取消**失敗**時：原本的 400 不可以被蓋掉，�
   //    「你的帳單文字太多」那句就不見了。這是**保存型**考題：破壞保存機制（catch 改 rethrow）就轉紅。
   // ⚠️ 也順便釘住「出聲但不洩內容」：帳單內容含真實金額與帳號，日誌只能有錯誤訊息。
   const SECRET = 'A1234-機密店名-9876';
+  const delivered = { n: 0 };
   const stubborn = {
     streamTextContent() {
       let i = 0;
       return { getReader: () => ({
+        // ⚠️ 兩批：第一批**會被收進 `items`**（n 剛好等於上限），第二批才超標。
+        //    這樣「日誌印出 chunk」與「日誌印出 items」兩種洩法都在本題射程內
+        //   （只送一批的話 items 是空的，印 items 的洩法會從斷言底下溜過去——本題第一版就是這樣）。
+        //    soFar 帶到上限−1，所以兩個節點就夠，不必造 30 萬筆。
         async read() {
           i += 1;
-          return i > 1
-            ? { done: true, value: undefined }
-            : { done: false, value: { items: Array.from({ length: MAX_PDF_TEXT_ITEMS + 1 }, () => ({ str: SECRET })) } };
+          if (i > 2) return { done: true, value: undefined };
+          delivered.n += 1;
+          return { done: false, value: { items: [{ str: SECRET }] } };
         },
         // 帶了正確理由**還是**拒絕（pdfjs 未來改行為、或串流已經壞掉都可能這樣）
         async cancel() { throw new Error('串流已經壞掉'); },
       }) };
     },
   };
-  const logged = [];
-  const realError = console.error;
-  console.error = (/** @type {any[]} */ ...a) => { logged.push(a.map(String).join(' ')); };
+  // ⚠️ **不可以先 `String()` 再檢查**（Codex #538 r2 抓到的假綠）：`console.error(msg, items)` 這種
+  //    洩法會被 `String()` 壓成 `[object Object]`，機密就從斷言底下溜過去——他實測插入這一刀，
+  //    舊寫法照樣全綠。所以這裡**留原始參數**，再遞迴把所有字串挖出來看。
+  // ⚠️ **不是只攔 console.error**（自審 r3）：這一題宣告要守的是「**日誌**不可以有帳單內容」，
+  //    而日誌不只一個出口。改用 console.warn／log 或 process.stderr.write 印出節點，
+  //    只攔 error 的版本會照樣全綠——而且子行程的 stderr 會被父行程原樣記進日誌，
+  //    那正是這題要防的路。所以整排都攔下來。
+  /** @type {{via: string, args: any[]}[]} */
+  const loggedArgs = [];
+  /** @type {[any, string][]} */
+  const patched = [];
+  for (const name of /** @type {const} */ (['error', 'warn', 'log', 'info', 'debug'])) {
+    patched.push([console[name], name]);
+    console[name] = (/** @type {any[]} */ ...a) => { loggedArgs.push({ via: `console.${name}`, args: a }); };
+  }
+  const realStderr = process.stderr.write.bind(process.stderr);
+  const realStdout = process.stdout.write.bind(process.stdout);
+  process.stderr.write = (/** @type {any} */ ...a) => { loggedArgs.push({ via: 'stderr', args: a }); return true; };
+  process.stdout.write = (/** @type {any} */ ...a) => { loggedArgs.push({ via: 'stdout', args: a }); return true; };
   let err;
   try {
-    err = await errOf(readPageTextCapped(/** @type {any} */ (stubborn), 0, '測試檔'));
-  } finally { console.error = realError; }
+    err = await errOf(readPageTextCapped(/** @type {any} */ (stubborn), MAX_PDF_TEXT_ITEMS - 1, '測試檔'));
+  } finally {
+    for (const [fn, name] of patched) console[name] = fn;
+    process.stderr.write = realStderr;
+    process.stdout.write = realStdout;
+  }
+  const logged = loggedArgs.map((e) => `${e.via}: ${deepStrings(e.args).join(' | ')}`);
 
   assert.equal(err?.code, 'pdf_too_many_text_items',
     `取消失敗把原本的錯換掉了（實際 ${err?.code}）——使用者會看到一個他無法處理的錯誤`);
   assert.equal(err?.status, 400, '仍然是使用者層錯誤');
-  assert.ok(logged.some((m) => /取消 pdfjs 串流失敗/.test(m)),
+  assert.ok(logged.some((m) => /取消 pdfjs 串流沒有正常完成/.test(m)),
     '取消失敗要出聲——靜靜失效會讓「牆擋下了」變成「卡死」，而那正是本支在修的病');
   // ⚠️ 劃界要準（本題第一版自己踩到）：**我們手上的東西**（抽到的文字節點）一律不進日誌——
   //    那是帳單內容，含真實金額與帳號。至於例外訊息本身是 pdfjs 產生的，印它是診斷所需；
   //    這一題守的是前者：有人日後改成 `console.error(..., chunk)` 或把 items 帶進訊息就轉紅。
-  assert.ok(!logged.some((m) => m.includes(SECRET)),
-    '日誌出現了抽到的文字節點內容——帳單含真實金額與帳號，不可以進日誌');
+  assert.equal(delivered.n, 2,
+    '前提沒成立：第一批必須先被收進 items（否則「印出 items」那種洩法根本不在本題射程內，'
+    + '這一題會變成只驗「印出 chunk」——自審 r3 抓到的假前提）');
+  // ⚠️ **不可以只比對整串**（自審 r3）：實務上最常見的洩法是「印前幾個字當預覽」，
+  //    `items.map(it => it.str.slice(0, 8))` 會把 `A1234-機密` 印進日誌、而整串比對看不到。
+  //    改成比對每一個 6 字視窗：任何連續 6 個字外流就算數。
+  const windows = Array.from({ length: Math.max(0, SECRET.length - 5) }, (_, k) => SECRET.slice(k, k + 6));
+  const leaked = logged.find((m) => windows.some((w) => m.includes(w)));
+  assert.equal(leaked, undefined,
+    `日誌出現了抽到的文字節點內容（${String(leaked).slice(0, 120)}）——帳單含真實金額與帳號，不可以進日誌`);
 });
+
+/**
+ * 把一個結構裡**看得到的字串**盡量挖出來（給「日誌不可以有帳單內容」那題用）。
+ *
+ * ⚠️ 為什麼不用 `String(x)`／`JSON.stringify`／`util.inspect`（Codex #538 r2＋自審 r3）：
+ *    `String()` 把物件壓成 `[object Object]`＝洩漏溜過斷言；`JSON.stringify` 遇循環參照會丟錯；
+ *    `util.inspect` 有 `maxArrayLength`／`maxStringLength` 截斷，**被截掉的部分正好是洩漏最可能藏身處**。
+ * ⚠️ 自審 r3 補的三個容器（原本只走 `Object.values`，這三種都挖不到）：
+ *    `Map`／`Set`（`Object.values(new Map(...))` 回空陣列）、`Buffer`／TypedArray
+ *   （會被逐位元組拆成數字、字串永遠拼不回來）、`Symbol` 與非列舉的鍵（`{...err}` 看不到 `stack`／`cause`）。
+ * ⚠️ **誠實劃界**：這仍然不是「任意結構」的完備解（getter 會被讀到、但 Proxy 陷阱、WeakMap
+ *    這類容器仍看不到）。它守的是**實務上會發生的洩法**：把 chunk／items／Buffer／Error 丟進日誌。
+ * @param {any} v @param {Set<any>=} seen @returns {string[]}
+ */
+function deepStrings(v, seen = new Set()) {
+  if (typeof v === 'string') return [v];
+  if (typeof v === 'symbol') return [v.description || ''];
+  if (v === undefined || v === null) return [];
+  if (typeof v !== 'object') return [String(v)];
+  if (seen.has(v)) return [];
+  seen.add(v);
+  if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer) {
+    return [Buffer.from(v instanceof ArrayBuffer ? v : v.buffer, 0).toString('utf8')];
+  }
+  if (v instanceof Map) return [...v.entries()].flatMap(([k, val]) => [...deepStrings(k, seen), ...deepStrings(val, seen)]);
+  if (v instanceof Set) return [...v].flatMap((x) => deepStrings(x, seen));
+  /** @type {string[]} */
+  const out = [];
+  if (v instanceof Error) out.push(String(v.message), String(v.stack || ''));
+  // Reflect.ownKeys＝含 Symbol 鍵與非列舉屬性（Object.values 兩種都看不到）
+  for (const k of Reflect.ownKeys(v)) {
+    out.push(...deepStrings(k, seen));
+    try { out.push(...deepStrings(/** @type {any} */ (v)[k], seen)); } catch { /* getter 丟錯就跳過 */ }
+  }
+  return out;
+}
 
 test('邊收邊數｜**取消要真的生效**：超標之後 pdfjs 的 task.destroy() 必須回得來（本案的本體）', async () => {
   // ⚠️ 這一題是 2026-08-29 那個 bug 的正對面，**用真的 pdfjs**（上面那幾題都是替身）。
