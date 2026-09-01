@@ -102,8 +102,13 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
   const pins = opt.pins ?? { issuer: PINNED_ISSUER, clientId: PINNED_CLIENT_ID };
   const p = join(authDir, 'auth.json');
   if (!existsSync(p) || !lstatSync(p).isFile()) throw new Error(`沙箱專用 auth.json 不存在或不是 regular file：${p}`);
+  // ⚠️ **解析失敗的訊息不可以往外送**：Node 原生的 SyntaxError 會把輸入的前綴印進 message
+  //   （`Unexpected token ... "SYNTHET"...`），而這一段跑在 DLP 遮罩字典就緒**之前**、
+  //   呼叫端會把 message 接進公開摘要＝抄進 PR 描述（Codex #535 r8）。所以換成固定訊息。
   /** @type {Record<string, Record<string, unknown>>} */
-  const all = JSON.parse(readFileSync(p, 'utf8'));
+  let all;
+  try { all = JSON.parse(readFileSync(p, 'utf8')); }
+  catch { throw new Error('auth.json 不是合法 JSON（內容不回顯）——先在沙箱外 grok 登入一次'); }
   const entries = Object.entries(all);
   if (entries.length !== 1) throw new Error(`auth.json 應恰有一個登入項，實際 ${entries.length}`);
   const [key, cred] = entries[0];
@@ -111,17 +116,35 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
     if (typeof cred[need] !== 'string' || !cred[need]) throw new Error(`auth.json 缺 ${need}——不是 OIDC 登入？先在沙箱外 grok 登入一次`);
   }
   // r5 #2：issuer／client_id 必須等於釘住的——refresh_token 只會被送到這一個地方
-  if (cred.oidc_issuer !== pins.issuer) throw new Error(`auth.json 的 oidc_issuer「${cred.oidc_issuer}」不等於釘住的「${pins.issuer}」——不把 refresh_token 送去別處`);
+  // ⚠️ **不回顯實值**：這個訊息會被呼叫端推進 summary＝抄進公開的 PR 描述，而它發生在
+  //   DLP 遮罩字典就緒**之前**（Codex #535 r7 用合成值重現：退 2 但摘要逐字含那個值）。
+  //   釘住的那一個是公開常數、照印；不合法的那一個只講長度。
+  if (cred.oidc_issuer !== pins.issuer) throw new Error(`auth.json 的 oidc_issuer（長 ${String(cred.oidc_issuer).length}，內容不回顯）不等於釘住的「${pins.issuer}」——不把 refresh_token 送去別處`);
   if (cred.oidc_client_id !== pins.clientId) throw new Error(`auth.json 的 oidc_client_id 不等於釘住的值——不 refresh`);
+  // ⚠️ **不可以在這裡把 `expires_at` 原文往外送**（Codex #535 r9）：它只驗過「是非空字串」，
+  //   壞值會讓 `Date.parse` 回 NaN、走進 refresh 分支，那裡的 `log()` 原本把原文印出去——
+  //   而那條路是 `log` 不是 `fail → say`，只看 summary 的考題完全量不到。
+  //   先驗成合法時間；不合法就用固定訊息。
+  // ⚠️ 用**嚴格 ISO** 驗，不是 `Date.parse` 能不能解析（Codex #535 r10）：
+  //   `Date.parse` 會把括號裡的文字當註解吃掉——`2026-01-01 (任意文字)` 照樣回得出時間戳，
+  //   於是壞值通過檢查、原文又被下面那行印進 log。用同一個 `ISO` 常數（BOX_FIELDS 也用它）。
+  if (!ISO.test(String(cred.expires_at))) throw new Error('auth.json 的 expires_at 不是合法 ISO 時間（內容不回顯）——先在沙箱外 grok 登入一次');
   const expiresAt = Date.parse(String(cred.expires_at));
   let refreshed = false;
   let current = cred;
   if (!(expiresAt - now() > early)) {
-    log(`憑證 ${Number.isFinite(expiresAt) && expiresAt < now() ? '已過期' : '快到期'}（${cred.expires_at}），向 ${cred.oidc_issuer} refresh…`);
+    // ⚠️ 印**解析後正規化回來的**時間，不是檔裡的原文：即使上面那道 ISO 檢查日後被放寬，
+    //   這一行由構造也帶不出檔案裡的任意文字（Codex #535 r10 的反例就是靠原文出去的）。
+    // ⚠️ 誠實劃界：**這一半沒有考題撐著**——上面那道 ISO 檢查已經把髒值擋在外面，
+    //   所以把這裡改回印原文，全卷照樣綠。它是為了「上面那道檢查日後被放寬」而留的第二層。
+    log(`憑證 ${expiresAt < now() ? '已過期' : '快到期'}（${new Date(expiresAt).toISOString()}），向 ${cred.oidc_issuer} refresh…`);
     const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: String(cred.refresh_token), client_id: pins.clientId });
     const r = await f(`${pins.issuer}/oauth2/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });   // 用釘住的，不用檔裡的
     if (!r.ok) throw new Error(`refresh 失敗：HTTP ${r.status}——refresh_token 可能已失效，先在沙箱外 grok 登入一次、再把 ~/.grok/auth.json 抄到 ${authDir}`);
-    const j = /** @type {{ access_token?: string, refresh_token?: string, expires_in?: number }} */ (await r.json());
+    // 同上：回應解析失敗的原生訊息會帶出回應內容的前綴，而那裡可能是**還沒進字典的新值**
+    /** @type {{ access_token?: string, refresh_token?: string, expires_in?: number }} */ let j;
+    try { j = /** @type {typeof j} */ (await r.json()); }
+    catch { throw new Error('refresh 回應不是合法 JSON（內容不回顯）'); }
     if (!j.access_token || !j.expires_in) throw new Error('refresh 回應缺 access_token／expires_in');
     current = { ...cred, key: j.access_token, refresh_token: j.refresh_token ?? cred.refresh_token, expires_at: new Date(now() + j.expires_in * 1000).toISOString() };
     // 原子寫回：temp＋fsync＋rename；失敗時舊檔原樣（fsync：rename 只保證讀者看不到半份，不保證已落盤）

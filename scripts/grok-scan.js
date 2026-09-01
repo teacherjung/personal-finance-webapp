@@ -114,8 +114,114 @@ const Q = `(?:${escapeForms('"').map(reLit).join('|')})`;
  */
 export const BREACH_SHAPES = `flexToken${Q}\\s*:\\s*${Q}(?:(?!${Q}|\\\\n)[^"\\n]){8,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----[\\s\\\\]*[A-Za-z0-9+/=\\s\\\\]{32,}`;
 
+/**
+ * 破口形狀的命中**含位置**。位置是給事故指紋用的（要從同一份文字上切出上下文視窗）。
+ * @param {string} text
+ * @returns {{ hit: string, index: number }[]}
+ */
+export const shapeMatchesIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES, 'g'))].map((m) => ({ hit: m[0], index: m.index ?? 0 }));
+
 /** @param {string} text */
-export const shapeHitsIn = (text) => [...text.matchAll(new RegExp(BREACH_SHAPES, 'g'))].map((m) => m[0]);
+export const shapeHitsIn = (text) => shapeMatchesIn(text).map((m) => m.hit);
+
+/**
+ * 命中的**字元組成**（不含內容）。事故時寫進指紋包。
+ *
+ * 承重的欄位是 `maxB64Run`＝最長一段連續的 base64 字元，用來分辨程式自己承認的那個誤報族：
+ * 私鑰那條腿的字元類含 `\s` 與 `\\`，所以「標頭＋32 個空白」也算命中，而那種命中裡最長的
+ * b64 片段只有標頭裡的單字長度（個位數），真鑰匙的 body 是幾十個字元一行。
+ * ⚠️ 我第一版寫的是「`b64 === 0` 就證明不含鑰匙內容」——**那是錯的**：標頭本身的字母就是
+ * b64 字元，總數永遠不會是 0。所以承重的是「最長連續片段」，不是總數。
+ * ⚠️ 反向不成立：`maxB64Run` 大**不代表**是真外洩（真假鑰匙的 body 都是 base64）。
+ * 這一格只否證一個方向，不肯定另一個方向。
+ * @param {string} h
+ */
+export const hitProfile = (h) => {
+  const p = { b64: 0, ws: 0, backslash: 0, other: 0, maxB64Run: 0 };
+  let run = 0;
+  for (const c of h) {
+    if (/[A-Za-z0-9+/=]/.test(c)) { p.b64++; run++; if (run > p.maxB64Run) p.maxB64Run = run; continue; }
+    run = 0;
+    if (/\s/.test(c)) p.ws++;
+    else if (c === '\\') p.backslash++;
+    else p.other++;
+  }
+  return p;
+};
+
+/**
+ * 這條命中**最像**排除集合裡的哪一條（只回數字與來源標籤，不回內容）。
+ *
+ * 為什麼有用：假事故的典型長相是「同一份內容換了呈現」（中段截斷、包裝、轉義），
+ * 那種命中會跟排除集合裡某一條共用很長的前綴；真外洩則只共用標頭。
+ * ⚠️ **排除集合是空的時候這一格什麼都答不出來**（`prefixLen` 0、`source` null）——
+ * #534 就是這種情形（受掃樹裡一條字面假鑰都沒有）。這是它的射程，不是它壞了。
+ * @param {string} h
+ * @param {Iterable<string>} known
+ * @param {string} materials
+ */
+export const nearestKnown = (h, known, materials) => {
+  let best = { source: /** @type {string | null} */ (null), prefixLen: 0, suffixLen: 0 };
+  for (const k of known) {
+    let p = 0; while (p < h.length && p < k.length && h[p] === k[p]) p++;
+    let q = 0; while (q < h.length && q < k.length && h[h.length - 1 - q] === k[k.length - 1 - q]) q++;
+    if (p > best.prefixLen || (p === best.prefixLen && q > best.suffixLen)) best = { source: 'known', prefixLen: p, suffixLen: q };
+  }
+  // 材料那半：二分找「最長的、材料裡出現過的前綴」。材料是 MB 級，所以不做無界比對。
+  let lo = 0, hi = h.length;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (materials.includes(h.slice(0, mid))) lo = mid; else hi = mid - 1; }
+  return { ...best, inMaterialsPrefixLen: lo, hitLen: h.length };
+};
+
+/**
+ * 命中周圍的一小段上下文，**命中本身換成佔位符**（William 2026-08-31 裁示：留，但只留一小段）。
+ *
+ * 為什麼要留：#534 那次四條命中有兩條在 grok 的**回覆**裡，而回覆沒有「哪一條指令產生的」可以追、
+ * 重跑也補不回來（模型每次寫的字不一樣）。指紋（長度／雜湊／相似度）在那種情形下判不出真假；
+ * 旁邊那句話（「例如…這是我編的示範」vs 真的檔案內容）才判得出來。
+ * ⚠️ **誠實劃界——這一格會把盒外內容多留一份在磁碟上**：視窗裡若有我們**認得**的機密
+ * （DLP 針、本輪暗號）會被遮掉，但**認不得的擋不住**（別的服務的 token、別種格式的鑰匙）。
+ * 真破口時那一小段就是盒外讀到的東西。William 明示接受這個取捨；檔案是 0600、只在本機、不上 GitHub。
+ * ⚠️ 遮的**不只是自己那一條**：視窗裡若還有別的形狀命中（兩條靠得近時一定會互相入鏡），
+ *   那一條也要遮掉——否則 A 的視窗把 B 的原文完整帶出去，等於沒遮。
+ * ⚠️ **在原文上算區間，不是先切窗再替換**（Codex #535 r1／r2 連兩輪打在同一處）：
+ *   先切後替換的話，壓在視窗邊界上的機密／命中只會留下**半截**，字串比對就對不上了。
+ *   把視窗往外加寬也只是**把邊界往外移**、沒有把它關掉——新邊界上照樣切得到半截。
+ *   正解是：在**整份原文**上先把所有該遮的區間找出來，凡是**與視窗相交**的區間就整段換成佔位符
+ *   （即使它伸出視窗外），這樣任何邊界上都不會留下半截。
+ * @param {string} text 命中所在的那份文字（剝完行號記號的那一份——比對就是在它上面做的）
+ * @param {number} index 命中起點
+ * @param {number} len 命中長度
+ * @param {string[]} secrets 要在視窗裡遮掉的已知機密
+ * @param {number} [span] 前後各留幾個字
+ */
+export const redactWindow = (text, index, len, secrets, span = 200) => {
+  /** 該遮的區間（原文座標）：自己那一條、別的形狀命中、每一段已知機密的每一次出現 */
+  const marks = [{ start: index, end: index + len, label: `‹命中 ${len} 字，內容不留›` }];
+  for (const m of shapeMatchesIn(text)) {
+    if (m.index === index) continue;
+    marks.push({ start: m.index, end: m.index + m.hit.length, label: `‹另一條命中 ${m.hit.length} 字，內容不留›` });
+  }
+  for (const v of secrets) {
+    if (!v) continue;
+    // ⚠️ 每次前進 1 個字：機密自我重疊時要收下**每一個**起點，下面走訪時才會把它們接成一整段
+    //   （只收第一個的話，剩下的殘段本身不構成完整機密、永遠掃不到——Codex #535 r3）。
+    for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + 1)) marks.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
+  }
+  marks.sort((a, b) => a.start - b.start);
+  const lo = Math.max(0, index - span), hi = Math.min(text.length, index + len + span);
+  let out = '', pos = lo;
+  for (const mk of marks) {
+    if (mk.end <= pos) continue;        // 已經走過
+    if (mk.start >= hi) break;          // 整段在視窗之外
+    if (mk.start > pos) out += text.slice(pos, mk.start);
+    else if (out.endsWith(mk.label)) { pos = mk.end; continue; }   // 與前一段重疊＝同一段，別重複貼記號
+    out += mk.label;                    // 相交就整段換掉——即使它伸出視窗外，也不留半截
+    pos = mk.end;
+  }
+  if (pos < hi) out += text.slice(pos, hi);
+  return out;
+};
 
 /**
  * 剝掉讀檔工具插進內容裡的行號記號（`1→`、`10→`…；日誌是 JSONL，換行可能是 `\n` 或 `\\n`，所以前綴要一起認）。
@@ -391,11 +497,97 @@ export async function runScan(args, deps = {}) {
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
   const resultsRoot = deps.resultsRoot ?? join(homedir(), '.grok-scan-results');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
-  const log = deps.log ?? ((m) => console.log(m));
+  const rawLog = deps.log ?? ((m) => console.log(m));
+  /**
+   * ⚠️ **關門，不是列舉出口**（William 2026-09-01 裁示）。
+   *
+   * 本支前三輪都在做同一件事：發現「又一個沒遮到的出口」就補一個遮蔽——視窗、事故訊息、路徑欄位…
+   * Codex r1／r2／r3 每一輪都找得到下一個（自我重疊的機密、命中本身包住機密、深層路徑的錯誤訊息、
+   * 提示檔的檔名）。那是「列舉繞法補不完」的形狀。
+   *
+   * 所以改成單一關卡：**任何文字要進公開摘要、或要寫進事故檔，都先過這裡**。
+   * 之後再冒出什麼新出口（新的錯誤訊息、新的欄位）都不必各自記得遮——它們天生走不出去。
+   * ⚠️ 這道門擋的仍然只有**我們認得的**東西（本輪暗號、DLP 針、本輪的破口形狀）；
+   *   認不得的照樣出得去（別的服務的 token、別種格式的鑰匙）。門關的是「已知」那一半。
+   * ⚠️ 兩條照實寫出來的劃界（Grok 複審後掃 2026-09-01）：
+   *   ①**`launch.json` 不經這道門**——它是結構上的例外，欄位是白名單環境、佔位指令與雜湊；
+   *     不是現在在漏，但「凡寫到磁碟都過門」這句話對它不成立，別那樣讀。
+   *   ②表示清單只到**第二層**跳脫（`escapeForms` 的射程）。更深的包法兩邊都認不得，方向是漏報。
+   *     ⚠️ 所以凡是「先切一段文字、之後還會再被序列化一次」的地方，都要餵**同一份表示清單**，
+   *     不能只餵原文——否則進去時對不上、出來時又深一層，剛好從字典的兩端溜掉。
+   * @type {string[]}
+   */
+  let scrubSecrets = [];
+  /** DLP 針的**各種序列化表示**；偵測（`leaksIn`）與清洗共用這一份。組法見下面 needles 定稿處。 @type {string[]} */
+  let needleForms = [];
+  /**
+   * ⚠️ **算區間再合併，不是逐個替換**。逐個替換擋不住自我重疊的機密：
+   *   機密是 16 個 A、文字裡有 24 個 A 時，換掉第一個起點之後**剩下的 8 個 A 本身不構成完整機密**，
+   *   再怎麼往下找都找不到，那 8 個字就留在輸出裡（Codex #535 r3 的反例；我第一版「每次前進 1 個字」
+   *   同樣解決不了，因為問題不在起點漏掃，在**殘段**）。
+   *   合併重疊區間之後，24 個 A 會被當成一整段拿掉。
+   * @param {string} text
+   */
+  const scrubText = (text) => {
+    /** @type {{ start: number, end: number, label: string }[]} */ const spans = [];
+    for (const v of scrubSecrets) {
+      if (!v) continue;
+      for (let i = text.indexOf(v); i >= 0; i = text.indexOf(v, i + 1)) spans.push({ start: i, end: i + v.length, label: '‹已遮蔽›' });
+    }
+    for (const m of shapeMatchesIn(text)) spans.push({ start: m.index, end: m.index + m.hit.length, label: `‹命中 ${m.hit.length} 字，內容不留›` });
+    if (!spans.length) return text;
+    spans.sort((a, b) => a.start - b.start);
+    let out = '', pos = 0;
+    for (const sp of spans) {
+      if (sp.end <= pos) continue;             // 已被前一段吃掉
+      if (sp.start > pos) out += text.slice(pos, sp.start);
+      else if (out.endsWith(sp.label)) { pos = sp.end; continue; }   // 與前一段重疊＝同一段，別重複貼記號
+      out += sp.label;
+      pos = sp.end;
+    }
+    return out + text.slice(pos);
+  };
+  /**
+   * ⚠️ **先收起來、上膛後再放出去**（William 2026-09-01 裁示）。
+   *
+   * 前面幾輪一直在補「又一條在字典建好之前就把值送出去的路」：自己寫的訊息、Node 原生的
+   * `JSON.parse` 例外（會帶輸入前綴）、`Date.parse` 失敗後印出的原文…每補一條就冒出下一條，
+   * 那是「列舉繞法補不完」。改成用時間關門：**字典還沒建好之前，任何一句話都不送出去**，
+   * 先存著；字典一建好就整批洗過再放。連 Node 自己產生的訊息也一併洗到。
+   * ⚠️ 仍然關不住的一種（照實寫）：**在我們有能力讀出機密之前**就必須報的錯
+   *   （auth.json 本身壞掉、伺服器回來的新值）——那種只能靠「訊息不回顯內容」，
+   *   守它的是 `scripts/grok-auth-refresh.js` 那幾句固定訊息與對應的考題。
+   * ⚠️ **這道緩衝目前沒有考題撐著**：今天上膛前的每一句話都不含針（逐條看過 auth-refresh 的
+   *   每一個 throw 與 log），所以把緩衝拿掉全卷照樣綠。留著是為了讓**日後新增的訊息**
+   *   （含 Node 自己產生的）天生被洗到，不是因為量得到——照實寫，不要讀成「已經擋住什麼」。
+   * @type {{ text: string, toSummary: boolean }[]}
+   */
+  const pending = [];
+  let armed = false;
+  const emit = (/** @type {string} */ text, /** @type {boolean} */ toSummary) => {
+    if (!armed) { pending.push({ text, toSummary }); return; }
+    const t = scrubText(text);
+    rawLog(t);
+    if (toSummary) summary.push(t);
+  };
+  /** 盡力把字典建起來然後放行暫存的話；讀不出來也要放行（不能因為讀不到就把錯誤訊息吞掉）。 */
+  const ensureArmed = () => {
+    if (armed) return;
+    try {
+      const ns = authNeedles(JSON.parse(readFileSync(join(authDir, 'auth.json'), 'utf8')));
+      scrubSecrets = [...scrubSecrets, ...ns.flatMap((n) => escapeForms(n))];
+    } catch { /* 讀不出來＝這一刻不可能知道機密是什麼；上面的劃界就是講這種情形 */ }
+    armed = true;
+    for (const p of pending) { const t = scrubText(p.text); rawLog(t); if (p.toSummary) summary.push(t); }
+    pending.length = 0;
+  };
+  const log = (/** @type {string} */ m) => emit(m, false);
+  /** 進公開摘要的唯一入口（summary 會被抄進 PR 描述） */
+  const say = (/** @type {string} */ m) => emit(m, true);
   /** @type {string[]} */
   const summary = [];
   /** @param {string} why @returns {{ code: 2, summary: string[] }} */
-  const fail = (why) => { log(`⛔ ${why}`); summary.push(`⛔ ${why}`); return { code: 2, summary }; };
+  const fail = (why) => { ensureArmed(); say(`⛔ ${why}`); return { code: 2, summary }; };   // 任何一條退場路徑都先上膛再說話
 
   const { base, head, promptFile, outFile } = args;
   if (!/^[0-9a-f]{7,40}$/.test(base) || !/^[0-9a-f]{7,40}$/.test(head)) return fail('base／head 必須是寫死的 SHA（條款：不可用會移動的名稱）');
@@ -476,6 +668,14 @@ export async function runScan(args, deps = {}) {
       if (!st.isFile() || st.size > 64 * 1024) return failAndClean(`安裝樹的 auth.json 不是 regular file 或超過 64KB——不種`);
       writeFileSync(join(authDir, 'auth.json'), readFileSync(seed), { mode: 0o600 });
     }
+    ensureArmed();   // 這裡 auth.json 已經在了：先上膛再往下走，緩衝的話立刻放出去
+    // ⚠️ **這一段仍可能跑在字典就緒之前**（auth.json 讀不出來時 ensureArmed 建不起字典）（字典要等後面那段讀 auth.json 才有內容），
+    //   而這裡的錯誤會走 `fail → say` 進公開摘要＝抄進 PR 描述。所以這個階段的每一句訊息
+    //   **都不可以回顯 auth 的實值**（Codex #535 r7 用合成 issuer 重現過一次）。
+    //   ⚠️ 我一度想「把字典提前種起來」當第二層——**拿掉了**：逐條看過這個階段的所有訊息
+    //   （`scripts/grok-auth-refresh.js` 的 throw），沒有一句會帶出針的值（只印欄位名、長度、HTTP 狀態），
+    //   所以那層沒有任何可達情境、也沒有考題撐得住，只會多一個「字典有兩個地方在建」的漂移點。
+    //   守這件事的是題名關鍵字「門要在第一句話出去之前上膛」那一題。
     // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放白名單重建的版本＋本掃隨機假值；假值走 0600 檔給轉送器（不走 argv／env）
     try {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
@@ -518,8 +718,7 @@ export async function runScan(args, deps = {}) {
   // ── ② 金絲雀（fail-closed；用本掃的 port 跑，跟正式發射同一組參數）──
   {
     const { code, lines } = await (deps.runCanary ?? runCanary)(box, { relayPort });
-    for (const l of lines) log('  ' + l);
-    summary.push(...lines);
+    for (const l of lines) say('  ' + l);   // 摘要與 log 同一份、同一道門
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');
   }
 
@@ -537,7 +736,14 @@ export async function runScan(args, deps = {}) {
     const p = join(authDir, 'auth.json');
     if (!lstatSync(p).isFile()) throw new Error('不是 regular file');
     needles = authNeedles(JSON.parse(readFileSync(p, 'utf8')));
-  } catch (e) { return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${/** @type {Error} */ (e).message}——沒有針就不能證明沒外流，不掃`); }
+  // ⚠️ 這一格也在字典就緒**之前**（針就是這裡讀出來的）：不可以把 `e.message` 原樣往外送——
+  //   JSON 解析失敗時它會帶出檔案內容的前綴。只回錯誤的**類別**（SyntaxError／檔案系統錯誤碼）。
+  //   ⚠️ 這不是「走不到」（我一度那樣記，錯的）：`refreshSandboxAuth` 讀一次、這裡再讀一次，
+  //   中間隔著 manifest／版本／盒子／金絲雀／diff，**檔案可能被換掉**（另一個掃描、外部程序）。
+  //   守它的是題名關鍵字「兩次讀 auth 之間被換掉」那一題（用既有的 `afterGrokHomeAuthWrite` 鉤子
+  //   在兩次讀取之間換檔，穩定走到這裡）。
+    ensureArmed();   // 冪等；正常路徑早就上膛了，這裡是保險
+  } catch (e) { const x = /** @type {Error & { code?: string }} */ (e); return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${x.code ?? x.name}（內容不回顯）——沒有針就不能證明沒外流，不掃`); }
   {
     // 已在**給盒子的東西**裡出現的針偵測不了外流——給盒子的東西＝材料（指示＋diff）**＋ head 整棵已 commit 原始碼**
     //   （第四次正式掃描後的煙霧測試：空 diff、名字不在材料裡，但 AGENTS.md 裡有幾百次，grok 讀檔的 tool_result 就帶出來＝假事故）。
@@ -551,16 +757,31 @@ export async function runScan(args, deps = {}) {
         return g.status === 0;
       } finally { rmSync(pf, { force: true }); }
     };
+    // ⚠️ **判準與排除都用同一份表示清單**（Codex #535 r5）：
+    //   針裡有 `"`／反斜線／換行時，它在 JSONL 日誌與 JSON 回覆裡是**跳脫形**。
+    //   r4 我只把跳脫形加進「清洗字典」（出口那道門），卻沒加進 `leaksIn`（警報器）
+    //   ⇒ 跳脫形根本不算外洩、掃描直接退 0、`--out` 照寫、sessions 照存，那個表示還原得回原文。
+    //   門關好了但警報器是聾的，等於沒關。所以偵測與清洗一起改成吃 `escapeForms()` 的全部表示。
     /** @type {string[]} */ const given = [];
     try { for (const n of needles) if (materials.includes(n) || inTree(n)) given.push(n); }
     catch (e) { return failAndClean(`DLP：查針是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
     if (given.length) log(`（DLP：${given.length} 根針已在給盒子的材料／原始碼裡出現、不採用——長度 ${given.map((n) => n.length).join('/')}）`);
     needles = needles.filter((n) => !given.includes(n));
+    // ⚠️ 字典要含**各種序列化表示**，不是只有原文：事故檔是先 `JSON.stringify` 再過門的，
+    //   針裡只要有 `"`／反斜線／換行，序列化之後就不再逐字含原文 ⇒ 門命不中（Codex #535 r4 用
+    //   合成針 `SYNTHETIC-"QUOTE"-BACK\SLASH` 端到端重現）。escapeForms 就是 #534 那把同一階梯。
+    // 每根針展開成各種表示；**表示本來就在給盒子的東西裡就不採用**——否則 Grok 引用公開材料
+    // 會被誤判成外洩（與上面那道「針已在材料裡」同一個原則，只是套到表示層）。
+    try {
+      needleForms = needles.flatMap((n) => escapeForms(n)).filter((v) => !materials.includes(v) && !inTree(v));
+    } catch (e) { return failAndClean(`DLP：查表示是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
+    scrubSecrets = [...scrubSecrets, ...needleForms];
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
   // ── 掃描期間放著的金絲雀（第⑤步查它的暗號有沒有出現在日誌）──
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  scrubSecrets = [...scrubSecrets, ...escapeForms(liveSecret)];   // 暗號這一半（它比 DLP 針晚生）；同樣含轉義形
   // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
   // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
@@ -648,16 +869,72 @@ export async function runScan(args, deps = {}) {
   /** @type {ReturnType<typeof readSessionsOnce>} */ let snap;
   try { snap = readSessionsOnce(sessionsRoot); }
   catch (e) { return failAndClean(`驗屍：sessions 讀不完（${/** @type {Error} */ (e).message}）——超過上限＝不保存`); }
+  const leaksIn = (/** @type {string} */ text) => needleForms.some((v) => text.includes(v));
+  /**
+   * Grok 可控的字串（session 相對路徑、odd 的項目名）要先過濾再放進 summary／指紋包：
+   * 它可以用「檔名就是暗號」的方式，靠一個回聲把內容送進**公開的** PR 描述。
+   * ⚠️ 只擋得到我們認得的那兩族（暗號、本輪的破口形狀）；認不得的擋不住——方向與 `redactWindow` 同。
+   * ⚠️ 遮掉的路徑**連截斷雜湊都不留**：路徑短、熵低，12 碼 SHA 對一個已知候選清單就是可查表的
+   *   （Codex #535 r1）。留長度就夠回答「有幾個、多長」，那是這一格唯一該回答的事。
+   * ⚠️ 這兩個宣告刻意提到 odd 那道檢查**之前**：odd 也是一條事故路徑，它一樣要留指紋。
+   * @param {string} rp
+   */
+  const redactPath = (rp) => (rp.includes(liveSecret) || leaksIn(rp) || shapeHitsIn(rp).length
+    ? `‹路徑已遮蔽，長 ${rp.length}›` : rp);
+  /**
+   * 只在「這段內容裡沒有我們認得的機密」時才給雜湊。
+   * ⚠️ 為什麼要這道：整份內容的雜湊平常不可逆，但**內容本身就是一個低熵的已知機密**時
+   *   （例如回覆就只有一個 DLP 值），那個雜湊就是該值的完整 SHA-256＝可查表
+   *   （Codex #535 r1）。所以「兩族不留雜湊」這條約束要套到**整個指紋包**，不是只套在 `hits[]` 那幾格。
+   * @param {string} text
+   */
+  const safeSha = (text) => (text.includes(liveSecret) || leaksIn(text)
+    ? null : createHash('sha256').update(text).digest('hex'));
+
+  /**
+   * 寫事故指紋包。**寫不出來不改變結論**（事故就是事故），但要說出來——
+   * 「以為有證據」比明知沒有更糟。
+   * @param {Record<string, unknown>} payload
+   */
+  const writeIncident = (payload) => {
+    try {
+      if (!resultsDir) throw new Error('這一次沒有結果包目錄');
+      const to = join(resultsDir, 'incident.json');
+      // ⚠️ **整份序列化之後再過一次那道門**：這樣「哪一個欄位可能夾帶已知機密」就不必逐格記得
+      //   （提示檔路徑、錯誤訊息、之後新增的任何欄位都一樣）。佔位符不含引號與反斜線，JSON 仍然合法。
+      writeFileSync(to, scrubText(JSON.stringify({ note: '事故指紋包：不含任何命中值本身。整份寫出前會再過一次清洗（已知機密與破口形狀都換成佔位符）；認不得的擋不住。', ...payload }, null, 2)), { mode: 0o600 });
+      say(`事故指紋已寫入 ${to}（不含命中內容）`);
+    } catch (e) {
+      say(`⚠️ 事故指紋寫不出來（${/** @type {Error} */ (e).message}）——這一次沒有證據可查`);
+    }
+  };
+
   // r4 #1：任何非 regular file（symlink、裝置…）＝Grok 在自己的日誌區放了捷徑，父程序讀它就會替 Grok 跟到盒外。事故（code 1），不是「讀不清楚」。
-  if (snap.odd.length) { const m = `⚠️ 驗屍：sessions 裡有 ${snap.odd.length} 個非 regular file（symlink／特殊檔）——Grok 在日誌區放了捷徑，這是事故：${snap.odd.slice(0, 3).join('、')}`; log(m); summary.push(m); return { code: 1, summary }; }
+  if (snap.odd.length) {
+    const shown = snap.odd.slice(0, 3).map(redactPath);   // 項目名是 Grok 取的，會被回聲進公開的 PR 描述
+    const m = `⚠️ 驗屍：sessions 裡有 ${snap.odd.length} 個非 regular file（symlink／特殊檔）——Grok 在日誌區放了捷徑，這是事故：${shown.join('、')}`;
+    say(m);
+    writeIncident({
+      startedAt, endedAt, base, head, promptFile,
+      hits: snap.odd.map((rp) => ({ family: 'odd', where: redactPath(rp), len: rp.length })),
+      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: safeSha(buf.toString('utf8')) })),
+    });
+    return { code: 1, summary };
+  }
   if (!snap.files.size) return failAndClean('驗屍：找不到這次的 session 日誌（零 session）——沒有日誌＝證明不了它做了什麼');
   // 結果包：先把記憶體那份寫到盒外（父程序之後只讀這份；DLP 驗不了的非 UTF-8 不寫）；中途任何失敗都把它刪掉
   const resultsSessions = join(resultsDir, 'sessions');
   const dropResults = () => { try { rmSync(resultsSessions, { recursive: true, force: true }); } catch { /* 沒建 */ } };
-  let worst = 0;
+  /**
+   * 事故命中清單（取代舊的 `let worst = 0`）。留著結構是為了在 `return` 之前寫出指紋包——
+   * 舊寫法只留一個布林，於是「哪一族、在哪個檔、長什麼樣」全部隨函式返回一起蒸發。
+   * @type {{ family: 'live'|'shape'|'dlp'|'odd', where: string, len: number, charOffset?: number,
+   *          profile?: ReturnType<typeof hitProfile>, nearest?: ReturnType<typeof nearestKnown>,
+   *          sha256?: string, context?: string }[]}
+   */
+  const incidentHits = [];
   const dec = new TextDecoder('utf-8', { fatal: true });
   /** @type {string[]} */ const binaries = [];
-  const leaksIn = (/** @type {string} */ text) => needles.some((v) => text.includes(v));
   // 破口線索的命中若**已在材料裡**就不算（在輸入裡的字串偵測不了外流——跟 DLP 針同一個原則）：
   // #500 第一次正式掃描就誤中自己——受掃 diff 含破口考題的私鑰字面與這條正則的原文，grok 把材料寫進 prompt_0.txt，
   // 驗屍把「材料裡本來就有的」當「盒子外才有的」。活金絲雀的暗號是隨機的、永遠不在材料裡，所以它不受這條影響。
@@ -679,8 +956,8 @@ export async function runScan(args, deps = {}) {
   // 帶 `.` 會大量誤中、帶 `$` 反而找不到自己。正式路徑的暗號是 base36 所以碰不到，
   // 但這一格沒有理由留著那個 bug class（main 的舊寫法把它插進正則字串，同樣暴露）。
   const liveHitsIn = (/** @type {string} */ text) => {
-    /** @type {string[]} */ const out = [];
-    for (let i = text.indexOf(liveSecret); i >= 0; i = text.indexOf(liveSecret, i + liveSecret.length)) out.push(liveSecret);
+    /** @type {number[]} */ const out = [];
+    for (let i = text.indexOf(liveSecret); i >= 0; i = text.indexOf(liveSecret, i + liveSecret.length)) out.push(i);
     return out;
   };
   /** @type {Set<string>} */ const knownHits = new Set();
@@ -698,9 +975,15 @@ export async function runScan(args, deps = {}) {
    *     材料命中被截成前綴時仍會被排掉。要收它得另支評估，本支不動、照實寫出來。
    * ⚠️ 誠實劃界：日誌把內容切成跟樹不同邊界時（中段截斷、markdown 包裹…）樹那半對不上＝仍會誤報事故。
    */
+  // ⚠️ 回傳**帶位置**與**剝完記號的那份文字**：事故指紋要在同一份文字上切出上下文視窗
+  //    （比對就是在它上面做的，位置對得起來；原始位元組的位移對不上，不要拿它去切）。
   const breachHits = (/** @type {string} */ text) => {
     const t = stripLineMarkers(text);
-    return { live: liveHitsIn(t), shape: shapeHitsIn(t).filter((h) => !knownHits.has(h) && !materials.includes(h)) };
+    return {
+      stripped: t,
+      live: liveHitsIn(t).map((index) => ({ index })),   // liveHitsIn 回的就是字元位置；r1 這裡誤用了陣列序號
+      shape: shapeMatchesIn(t).filter((m) => !knownHits.has(m.hit) && !materials.includes(m.hit)),
+    };
   };
   // 事故訊息帶三個**不含內容**的欄位：哪一族、幾條、形狀命中的長度。
   // 為什麼要帶：退 1 不留 sessions ⇒ 事後沒有任何東西能分辨「真破口」與「又一次 #516 式假事故」，
@@ -711,25 +994,87 @@ export async function runScan(args, deps = {}) {
   //   而排除集合＝材料＋head 樹裡**讀得到的** blob（大檔跳過的不算）。**不可以寫成「不在 head 樹裡」**——
   //   暗號那族根本不查樹（考題就把暗號 commit 進 head、仍要報事故），超過單檔上限的 blob 也是
   //   「在樹裡但不在集合裡」。兩種情形原句都在說不成立的話（Codex #530 r5 抓到）。
-  const brief = (/** @type {{ live: string[], shape: string[] }} */ b) =>
-    `（暗號 ${b.live.length} 條、形狀 ${b.shape.length} 條；形狀長度 ${b.shape.map((h) => h.length).join('/') || '—'}；形狀那族＝剝完行號記號後仍不在本次排除集合裡）`;
+  const brief = (/** @type {{ live: unknown[], shape: { hit: string }[] }} */ b) =>
+    `（暗號 ${b.live.length} 條、形狀 ${b.shape.length} 條；形狀長度 ${b.shape.map((m) => m.hit.length).join('/') || '—'}；形狀那族＝剝完行號記號後仍不在本次排除集合裡）`;
+  /**
+   * 把一次 `breachHits` 的結果收進事故清單。
+   * 形狀族才留雜湊、字元組成、最近似排除項與上下文視窗（理由見 `redactWindow`／`nearestKnown`）；
+   * 暗號族只留位置——它的值是本輪現生的、由構造已知。
+   * @param {{ stripped: string, live: { index: number }[], shape: { hit: string, index: number }[] }} b
+   * @param {string} where
+   */
+  const collectBreach = (b, where) => {
+    for (const l of b.live) incidentHits.push({ family: 'live', where, len: liveSecret.length, charOffset: l.index });
+    for (const m of b.shape) {
+      // ⚠️ 形狀命中**本身包住已知機密**時（例如鍵值對的值就是一個 DLP 值），
+      //   它的雜湊就是「固定前綴＋低熵值」的雜湊＝可查表。這種就退回跟另外兩族同一格：只留位置。
+      if (m.hit.includes(liveSecret) || leaksIn(m.hit)) { incidentHits.push({ family: 'shape', where, len: m.hit.length, charOffset: m.index }); continue; }
+      incidentHits.push({
+        family: 'shape', where, len: m.hit.length, charOffset: m.index,
+        sha256: createHash('sha256').update(m.hit).digest('hex'),
+        profile: hitProfile(m.hit),
+        nearest: nearestKnown(m.hit, knownHits, materials),
+        // ⚠️ 這裡要餵**同一份表示清單**（`scrubSecrets`），不是原文（Grok 複審後掃 2026-09-01 抓到）：
+        //   日誌裡的針常常已經是跳脫形，只比對原文的話視窗不會把它標成要遮的區間；
+        //   接著整包再序列化一次，檔裡就變成更深一層，連最後那道門的字典也涵蓋不到。
+        //   同一支程式裡不可以有兩把尺——這正是 r4／r5 那條病的第三次變形。
+        context: redactWindow(b.stripped, m.index, m.hit.length, scrubSecrets),
+      });
+    }
+  };
+
+  /**
+   * 事故收尾：**先把指紋包寫出來，再回傳**。
+   *
+   * ⚠️ 舊寫法是 `if (worst) return { code: 1, summary }`，位置在寫結果包之前 ⇒ sessions 沒留、
+   *   `--out` 沒寫、盒子照清，事後只剩 summary 那幾個數字。#516／#530 兩次假事故是靠**重算**判掉的；
+   *   #534 連重算的材料都沒有（四條命中裡兩條在 grok 的回覆裡，而回覆不可重現），只能照前例推定。
+   *   這個函式要做的就是讓「下一次判得出來」。
+   * ⚠️ **不寫 sessions、不寫 `--out`、不留盒子**——那三件維持原樣。指紋包裡沒有任何一族的命中值本身。
+   */
+  const writeIncidentAndStop = () => {
+    const payload = {
+      startedAt, endedAt, base, head,
+      promptFile, materialsSha256: createHash('sha256').update(materials).digest('hex'),
+      replyLen: reply.length, replySha256: safeSha(reply),   // null＝回覆裡有已知機密，連雜湊都不給
+      treeKnown: { blobs: treeKnown.blobs, bytes: treeKnown.bytes, hits: treeKnown.hits.size, skippedBig: treeKnown.skippedBig },
+      knownHitsSize: knownHits.size,
+      needleCount: needles.length,
+      binaries: binaries.map(redactPath),
+      sessionFiles: [...snap.files].map(([rp, buf]) => ({ rp: redactPath(rp), bytes: buf.length, sha256: safeSha(buf.toString('utf8')) })),
+      hits: incidentHits,
+    };
+    writeIncident(payload);
+    return { code: /** @type {1} */ (1), summary };
+  };
+
   // 去機密（r4 #2）：Grok 讀得到盒內 auth.json（假值＋user_id／時間戳）、可以把任何東西寫進回覆／日誌——回覆會進 PR 描述、日誌會進結果包。
   // 拿真 auth.json 裡**沒給盒子**的每個值去比對每一份輸出；有＝事故（code 1）、不寫 --out、不留 sessions。
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
-  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; log(m); summary.push(m); worst = 1; }
+  // ⚠️ DLP 與暗號兩族**只記族別與位置，不記雜湊、不記上下文**：它們的命中值由構造已知
+  //    （就是 needles[i]／liveSecret），寫衍生物不增加任何判斷力，卻等於把它們的可查表表示留上磁碟。
+  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; say(m); incidentHits.push({ family: 'dlp', where: 'reply', len: 0 }); }
   // 回覆也跑破口線索（Grok 第一次正式掃描抓到：原本只掃 session 檔，盒外內容只寫進最終回覆就退 0 並寫 --out）
   {
     const b = breachHits(reply);
-    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; log(m); summary.push(m); worst = 1; }
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：grok 的回覆裡出現盒子外才有的內容——沙箱破了，這是事故；不寫 --out${brief(b)}`; say(m); collectBreach(b, 'reply'); }
   }
   for (const [rp, buf] of snap.files) {
+    // ⚠️ **檔名本身也是 Grok 寫的內容**：機密只出現在檔名、內容無害時，舊寫法一路走到成功路徑，
+    //    把原始檔名接進結果包落盤（Codex #535 r4 端到端重現）。所以名字跟內容用同一套判準。
+    {
+      const nb = breachHits(rp);
+      if (nb.live.length || nb.shape.length) { say(`⚠️ 驗屍：session 檔名 ${redactPath(rp)} 帶著盒子外才有的內容——沙箱破了，這是事故${brief(nb)}`); collectBreach(nb, redactPath(rp)); }
+      if (leaksIn(rp)) { say(`⚠️ 去機密：session 檔名 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+    }
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     const b = breachHits(text);
-    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${rp} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; log(m); summary.push(m); worst = 1; }
-    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${rp} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; log(m); summary.push(m); worst = 1; }
+    // ⚠️ 路徑是 Grok 取的，兩條訊息都會被抄進**公開的** PR 描述 ⇒ 回聲之前一律過同一把尺
+    if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${redactPath(rp)} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; say(m); collectBreach(b, redactPath(rp)); }
+    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; say(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
   }
-  if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => f.split('/').pop()).join('、')}）`);
-  if (worst) return { code: 1, summary };
+  if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => redactPath(f.split('/').pop() ?? f)).join('、')}）`);
+  if (incidentHits.length) return writeIncidentAndStop();
   for (const [rp, buf] of snap.files) {
     if (binaries.includes(rp)) continue;
     const to = join(resultsSessions, rp);
@@ -746,7 +1091,7 @@ export async function runScan(args, deps = {}) {
     const n = Object.values(a.calls).reduce((s, v) => s + v, 0);
     totalFootprints += n;
     log(`驗屍 session ${d.split('/').pop()}：工具足跡 ${n} 筆（盒子裡准跑）`);
-    summary.push(`足跡 ${n} 筆`);
+    say(`足跡 ${n} 筆`);
   }
   if (totalFootprints < GROK_HOME_MANIFEST.reviewSmoke.minToolFootprints) {
     dropResults();
@@ -755,7 +1100,7 @@ export async function runScan(args, deps = {}) {
   if (outFile) writeFileSync(outFile, reply);
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
-  summary.push(recipe);
+  say(recipe);
   return { code: 0, summary };
   } finally {
     // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
