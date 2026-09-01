@@ -52,7 +52,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
-  INPUT_HYGIENE_DENY, EXPECTED_INPUT_HYGIENE,
+  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
 } from './helpers/money-family-probes.js';
@@ -123,10 +123,25 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
 // 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
 
 
-test('v6 輸入衛生：清乾淨之前不進判準，怪形狀一律 fail-closed（直接考 Codex 副本）', () => {
-  assert.equal(INPUT_HYGIENE_DENY.length, EXPECTED_INPUT_HYGIENE, '輸入衛生探針被縮短了——數量釘要有意識地改');
-  for (const [payload, why] of INPUT_HYGIENE_DENY) {
+test('v6 輸入衛生：matcher 命中的怪形狀，handler 一律 fail-closed', () => {
+  assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了——數量釘要有意識地改');
+  for (const [payload, why] of IN_MATCHER_DENY) {
+    // 先確認 matcher 真的接得住，再驗 handler——r1 H1：繞過 matcher 直接餵 handler 會假綠。
+    let name;
+    try { name = JSON.parse(payload)?.tool_name; } catch { name = undefined; }
+    if (typeof name === 'string') {
+      assert.ok(new RegExp(codexGroup.matcher).test(name),
+        `這支探針的 matcher 不命中，不該放在 IN_MATCHER_DENY：${why}`);
+    }
     assertDenies(codexHook.command, payload, `輸入衛生：${why}`);
+  }
+});
+
+test('v6 射程劃界：matcher 篩不到的形狀＝hook 不會執行（不假裝它們被擋）', () => {
+  assert.equal(OUT_OF_MATCHER.length, EXPECTED_OUT_OF_MATCHER, '探針被縮短了');
+  for (const [name, why] of OUT_OF_MATCHER) {
+    assert.equal(new RegExp(codexGroup.matcher).test(name), false,
+      `${why}：這個形狀現在 matcher 命中了——它就落進 hook 射程，該移到 IN_MATCHER_DENY 並驗 handler 會擋`);
   }
 });
 

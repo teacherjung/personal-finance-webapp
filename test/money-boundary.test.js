@@ -80,7 +80,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
-  INPUT_HYGIENE_DENY, EXPECTED_INPUT_HYGIENE,
+  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
 } from './helpers/money-family-probes.js';
@@ -210,21 +210,37 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
 });
 
 
-test('v6 輸入衛生：Claude 側的 hook 指令也要在清乾淨之前擋下怪形狀（fail-closed）', () => {
+test('v6 輸入衛生：Claude 側也要 matcher 接得住＋handler 擋得下（成對驗證）', () => {
   const settings = loadSettings();
-  const hooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []);
-  assert.equal(INPUT_HYGIENE_DENY.length, EXPECTED_INPUT_HYGIENE, '輸入衛生探針被縮短了');
-  for (const [payload, why] of INPUT_HYGIENE_DENY) {
-    const ok = hooks.some((h) => {
-      if (h.type !== 'command' || !h.command) return false;
-      try {
-        const out = execFileSync('bash', ['-c', h.command],
-          { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
-        const d = JSON.parse(out).hookSpecificOutput;
-        return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
-      } catch { return false; }
+  assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了');
+  for (const [payload, why] of IN_MATCHER_DENY) {
+    let name;
+    try { name = JSON.parse(payload)?.tool_name; } catch { name = undefined; }
+    // r1 H1：只驗 handler 會假綠——matcher 不命中時整個 hook 不執行。兩者成對才算數。
+    const ok = (settings?.hooks?.PreToolUse ?? []).some((e) => {
+      if (typeof name === 'string' && !claudeMatcherHits(e.matcher, name)) return false;
+      return (e.hooks ?? []).some((h) => {
+        if (h.type !== 'command' || !h.command) return false;
+        try {
+          const out = execFileSync('bash', ['-c', h.command],
+            { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
+          const d = JSON.parse(out).hookSpecificOutput;
+          return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+        } catch { return false; }
+      });
     });
-    assert.ok(ok, `沒有任何 hook 對這種輸入回合規 deny：${why}`);
+    assert.ok(ok, `沒有「matcher 接得住＋handler 回合規 deny」的組：${why}`);
+  }
+});
+
+test('v6 射程劃界：Claude 側 matcher 同樣篩不到那些形狀（誠實記錄，不假裝擋了）', () => {
+  const settings = loadSettings();
+  assert.equal(OUT_OF_MATCHER.length, EXPECTED_OUT_OF_MATCHER, '探針被縮短了');
+  const family = (settings?.hooks?.PreToolUse ?? []).filter((e) => e.matcher === '^mcp__');
+  assert.ok(family.length >= 1, '找不到 matcher 恰為 ^mcp__ 的家族組');
+  for (const [name, why] of OUT_OF_MATCHER) {
+    assert.ok(family.every((e) => !claudeMatcherHits(e.matcher, name)),
+      `${why}：現在 matcher 命中了——該移到 IN_MATCHER_DENY 並驗 handler 會擋`);
   }
 });
 
