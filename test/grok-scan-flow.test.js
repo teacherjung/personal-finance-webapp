@@ -1459,6 +1459,39 @@ test('關門｜警報器也要認得跳脫形：三條成功出口（回覆／�
   }
 });
 
+test('關門｜上下文視窗要用同一份表示清單：已是跳脫形的針不可以從 context 還原得回來', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ Grok 複審後掃 2026-09-01 抓到的第四條出口：`redactWindow` 原本只餵**原文**針，
+  //    但日誌裡的針常常已經是跳脫形 ⇒ 視窗不會把它標成要遮的區間；接著整包再序列化一次，
+  //    檔裡變成更深一層，連最後那道門的字典也涵蓋不到，`hits[].context` 就帶著可還原的針。
+  //    事故照樣會判（所以不寫 --out、不留 sessions），但**證據包本身漏了**。
+  const REAL = 'SYNTHETIC-"QUOTE"-CONTEXT-0123456789';
+  // ⚠️ 要用**第二層**跳脫形（JSONL 裡再嵌一層 JSON 就是這一形）：
+  //    第一層的話，整包序列化之後剛好變成第二層、還在清洗字典的涵蓋範圍內，
+  //    最後那道門會接住 ⇒ 這一題就量不到「視窗只餵原文」這個病（我第一版就是這樣，突變沒轉紅）。
+  const [, ESC1, ESC] = escapeForms(REAL);
+  assert.ok(ESC !== ESC1 && ESC1 !== REAL, '這根針的三種表示沒有互異＝這一題量不到東西');
+  const planted = `${PEM_BEGIN('RSA')}\nMIIECTXWINDOW${'Z'.repeat(50)}\n`;
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  // 形狀命中旁邊就放那根針的跳脫形 ⇒ 它一定落在 context 的視窗裡
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `旁邊有 ${ESC} 然後 ${planted} 結束` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const { json, raw } = readIncident(iso.resultsRoot);
+  const shape = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'shape');
+  assert.ok(shape.length >= 1 && shape.some((/** @type {{context?: string}} */ h) => h.context), '沒有帶 context 的形狀命中＝這一題量不到東西');
+  // ⚠️ 斷言要看**parse 回來的語意值**，而且要比對**所有表示**：
+  //    漏出去的那一形在檔案裡是第三層，raw 只比對 0–2 層會漏掉它（我第一版就是這樣，突變沒轉紅）。
+  //    parse 一次之後它退回第二層，跟 escapeForms 的第三格對得上。
+  const forms = escapeForms(REAL);
+  const walk = (/** @type {unknown} */ v) => {
+    if (typeof v === 'string') for (const f of forms) assert.equal(v.includes(f), false, `parse 回來的欄位裡還留著針的某一種表示（長 ${f.length}）`);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(JSON.parse(raw));
+});
+
 test('關門｜不誤傷：某個表示本來就在給盒子的材料裡時，引用它不算外洩', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ 判準放寬到「各種表示」之後，反方向的風險是**誤報**：Grok 引用我們自己給它的材料就被判事故。

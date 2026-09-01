@@ -509,6 +509,12 @@ export async function runScan(args, deps = {}) {
    * 之後再冒出什麼新出口（新的錯誤訊息、新的欄位）都不必各自記得遮——它們天生走不出去。
    * ⚠️ 這道門擋的仍然只有**我們認得的**東西（本輪暗號、DLP 針、本輪的破口形狀）；
    *   認不得的照樣出得去（別的服務的 token、別種格式的鑰匙）。門關的是「已知」那一半。
+   * ⚠️ 兩條照實寫出來的劃界（Grok 複審後掃 2026-09-01）：
+   *   ①**`launch.json` 不經這道門**——它是結構上的例外，欄位是白名單環境、佔位指令與雜湊；
+   *     不是現在在漏，但「凡寫到磁碟都過門」這句話對它不成立，別那樣讀。
+   *   ②表示清單只到**第二層**跳脫（`escapeForms` 的射程）。更深的包法兩邊都認不得，方向是漏報。
+   *     ⚠️ 所以凡是「先切一段文字、之後還會再被序列化一次」的地方，都要餵**同一份表示清單**，
+   *     不能只餵原文——否則進去時對不上、出來時又深一層，剛好從字典的兩端溜掉。
    * @type {string[]}
    */
   let scrubSecrets = [];
@@ -959,7 +965,11 @@ export async function runScan(args, deps = {}) {
         sha256: createHash('sha256').update(m.hit).digest('hex'),
         profile: hitProfile(m.hit),
         nearest: nearestKnown(m.hit, knownHits, materials),
-        context: redactWindow(b.stripped, m.index, m.hit.length, [liveSecret, ...needles]),
+        // ⚠️ 這裡要餵**同一份表示清單**（`scrubSecrets`），不是原文（Grok 複審後掃 2026-09-01 抓到）：
+        //   日誌裡的針常常已經是跳脫形，只比對原文的話視窗不會把它標成要遮的區間；
+        //   接著整包再序列化一次，檔裡就變成更深一層，連最後那道門的字典也涵蓋不到。
+        //   同一支程式裡不可以有兩把尺——這正是 r4／r5 那條病的第三次變形。
+        context: redactWindow(b.stripped, m.index, m.hit.length, scrubSecrets),
       });
     }
   };
