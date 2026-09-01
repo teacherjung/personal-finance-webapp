@@ -1469,19 +1469,28 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
   //       Node 原生的 SyntaxError 會把輸入前綴印進 message，只擋自己寫的訊息是擋不到的。
   //    ⚠️ 斷言也要擋**前綴**，不是只擋完整值：洩漏出去的往往只是開頭幾個字。
   const EARLY = 'SYNTHETIC-EARLY-VALUE-SECRET-0123456789';
+  // ⚠️ 對照組：先證明**這個 runtime** 的原生解析訊息真的會帶出前綴，否則下面那一格就是空包彈。
+  try { JSON.parse(`{"broken": ${EARLY}}`); assert.fail('夾具竟然解析成功'); }
+  catch (e) { assert.ok(/** @type {Error} */ (e).message.includes(EARLY.slice(0, 8)), '這個 runtime 的原生訊息不含前綴＝壞 JSON 那一格量不到東西，換夾具'); }
   const repo = tinyRepo();
   for (const [label, auth, want] of /** @type {[string, string, RegExp][]} */ ([
     ['issuer 不合法', fakeAuth({ issuer: EARLY }), /不等於釘住的/],
     ['client_id 不合法', fakeAuth({ clientId: EARLY }), /oidc_client_id/],
     ['進盒欄位格式不對', fakeAuth({ extra: { user_id: EARLY } }), /格式不對|不等於釘住的|鍵名/],
     // 隱式：壞掉的 auth JSON ⇒ 原生 SyntaxError 會帶出內容前綴
-    ['auth.json 不是合法 JSON', `{"broken": "${EARLY}"`, /不是合法 JSON|讀不出來/],
+    // ⚠️ 夾具要用**未加引號的 token**：`{"a": "值"`（未閉合字串）那種在 Node v26 的原生訊息
+    //    只有 `Expected ',' or '}'`、**不含值**，考題會變成量不到東西的空包彈（Codex #535 r9 抓到）。
+    ['auth.json 不是合法 JSON', `{"broken": ${EARLY}}`, /不是合法 JSON|讀不出來/],
+    // 走 `log` 不走 `say` 的那條：expires_at 只驗過「是非空字串」，壞值原本會被原文印進 log
+    ['expires_at 不是合法時間', fakeAuth({ extra: { expires_at: EARLY } }), /expires_at|格式不對|不等於釘住的/],
   ])) {
     const iso = isolated();
     mkdirSync(iso.authDir, { recursive: true });
     writeFileSync(join(iso.authDir, 'auth.json'), auth);
-    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
-    const out = r.summary.join('\n');
+    // ⚠️ **連 raw log 一起收**：有些路徑走的是 `log` 不是 `fail → say`，只看 summary 量不到（Codex #535 r9）
+    const logs = /** @type {string[]} */ ([]);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...iso, log: (m) => logs.push(m), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    const out = [...r.summary, ...logs].join('\n');
     assert.equal(r.code, 2, `${label}：沒有 fail-closed：${out}`);
     assert.match(out, want, `${label}：走的不是預期那條路＝這一格量不到東西`);
     // 完整值的每一種表示都不准出現；**前綴也不准**（原生解析錯誤洩的就是前綴）
@@ -1496,12 +1505,36 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
     mkdirSync(iso.authDir, { recursive: true });
     writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ expiresInMs: -1000 }));   // 已過期 ⇒ 會去 refresh
     const badJson = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError(`Unexpected token 'S', "${NEW}" is not valid JSON`); } });
-    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, fetchImpl: badJson, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
-    const out = r.summary.join('\n');
+    const logs = /** @type {string[]} */ ([]);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...iso, log: (m) => logs.push(m), fetchImpl: badJson, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    const out = [...r.summary, ...logs].join('\n');
     assert.equal(r.code, 2, `refresh 回應壞掉時沒有 fail-closed：${out}`);
     assert.match(out, /不是合法 JSON|refresh/, '走的不是預期那條路＝這一格量不到東西');
     for (let n = 8; n <= NEW.length; n++) assert.equal(out.includes(NEW.slice(0, n)), false, `refresh 回應：公開摘要帶出了伺服器回來的新值的前 ${n} 個字`);
   }
+});
+
+test('關門｜兩次讀 auth 之間被換掉：DLP 來源那格也不可以回顯檔案內容', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 我原本把這一格記成「今天走不到」——**不成立**（Codex #535 r9）：
+  //    `refreshSandboxAuth` 讀一次、DLP 針那段再讀一次，中間隔著 manifest／版本／盒子／金絲雀／diff。
+  //    既有的 `afterGrokHomeAuthWrite` 鉤子就落在兩次讀取之間，測試可以在那裡把檔案換成壞的，
+  //    穩定走到那個 catch。所以那是**競態**、不是不可達，註解要照這樣寫。
+  const MID = 'SYNTHETIC-MIDSWAP-VALUE-0123456789';
+  try { JSON.parse(`{"broken": ${MID}}`); assert.fail('夾具竟然解析成功'); }
+  catch (e) { assert.ok(/** @type {Error} */ (e).message.includes(MID.slice(0, 8)), '這個 runtime 的原生訊息不含前綴＝這一題量不到東西'); }
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth());
+  const logs = /** @type {string[]} */ ([]);
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, {
+    ...iso, log: (m) => logs.push(m), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok'),
+    // 兩次讀取之間把檔案換成「原生訊息會帶出前綴」的壞 JSON
+    afterGrokHomeAuthWrite: () => writeFileSync(join(iso.authDir, 'auth.json'), `{"broken": ${MID}}`),
+  });
+  const out = [...r.summary, ...logs].join('\n');
+  assert.equal(r.code, 2, `DLP 來源壞掉時沒有 fail-closed：${out}`);
+  assert.match(out, /DLP 真相來源/, '走的不是那條路＝這一題量不到東西');
+  for (let n = 8; n <= MID.length; n++) assert.equal(out.includes(MID.slice(0, n)), false, `公開輸出帶出了檔案內容的前 ${n} 個字`);
 });
 
 test('關門｜上下文視窗要用同一份表示清單：已是跳脫形的針不可以從 context 還原得回來', async (t) => {

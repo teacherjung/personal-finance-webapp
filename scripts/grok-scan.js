@@ -547,13 +547,47 @@ export async function runScan(args, deps = {}) {
     }
     return out + text.slice(pos);
   };
-  const log = (/** @type {string} */ m) => rawLog(scrubText(m));
+  /**
+   * ⚠️ **先收起來、上膛後再放出去**（William 2026-09-01 裁示）。
+   *
+   * 前面幾輪一直在補「又一條在字典建好之前就把值送出去的路」：自己寫的訊息、Node 原生的
+   * `JSON.parse` 例外（會帶輸入前綴）、`Date.parse` 失敗後印出的原文…每補一條就冒出下一條，
+   * 那是「列舉繞法補不完」。改成用時間關門：**字典還沒建好之前，任何一句話都不送出去**，
+   * 先存著；字典一建好就整批洗過再放。連 Node 自己產生的訊息也一併洗到。
+   * ⚠️ 仍然關不住的一種（照實寫）：**在我們有能力讀出機密之前**就必須報的錯
+   *   （auth.json 本身壞掉、伺服器回來的新值）——那種只能靠「訊息不回顯內容」，
+   *   守它的是 `scripts/grok-auth-refresh.js` 那幾句固定訊息與對應的考題。
+   * ⚠️ **這道緩衝目前沒有考題撐著**：今天上膛前的每一句話都不含針（逐條看過 auth-refresh 的
+   *   每一個 throw 與 log），所以把緩衝拿掉全卷照樣綠。留著是為了讓**日後新增的訊息**
+   *   （含 Node 自己產生的）天生被洗到，不是因為量得到——照實寫，不要讀成「已經擋住什麼」。
+   * @type {{ text: string, toSummary: boolean }[]}
+   */
+  const pending = [];
+  let armed = false;
+  const emit = (/** @type {string} */ text, /** @type {boolean} */ toSummary) => {
+    if (!armed) { pending.push({ text, toSummary }); return; }
+    const t = scrubText(text);
+    rawLog(t);
+    if (toSummary) summary.push(t);
+  };
+  /** 盡力把字典建起來然後放行暫存的話；讀不出來也要放行（不能因為讀不到就把錯誤訊息吞掉）。 */
+  const ensureArmed = () => {
+    if (armed) return;
+    try {
+      const ns = authNeedles(JSON.parse(readFileSync(join(authDir, 'auth.json'), 'utf8')));
+      scrubSecrets = [...scrubSecrets, ...ns.flatMap((n) => escapeForms(n))];
+    } catch { /* 讀不出來＝這一刻不可能知道機密是什麼；上面的劃界就是講這種情形 */ }
+    armed = true;
+    for (const p of pending) { const t = scrubText(p.text); rawLog(t); if (p.toSummary) summary.push(t); }
+    pending.length = 0;
+  };
+  const log = (/** @type {string} */ m) => emit(m, false);
   /** 進公開摘要的唯一入口（summary 會被抄進 PR 描述） */
-  const say = (/** @type {string} */ m) => { const t = scrubText(m); rawLog(t); summary.push(t); };
+  const say = (/** @type {string} */ m) => emit(m, true);
   /** @type {string[]} */
   const summary = [];
   /** @param {string} why @returns {{ code: 2, summary: string[] }} */
-  const fail = (why) => { say(`⛔ ${why}`); return { code: 2, summary }; };
+  const fail = (why) => { ensureArmed(); say(`⛔ ${why}`); return { code: 2, summary }; };   // 任何一條退場路徑都先上膛再說話
 
   const { base, head, promptFile, outFile } = args;
   if (!/^[0-9a-f]{7,40}$/.test(base) || !/^[0-9a-f]{7,40}$/.test(head)) return fail('base／head 必須是寫死的 SHA（條款：不可用會移動的名稱）');
@@ -634,7 +668,8 @@ export async function runScan(args, deps = {}) {
       if (!st.isFile() || st.size > 64 * 1024) return failAndClean(`安裝樹的 auth.json 不是 regular file 或超過 64KB——不種`);
       writeFileSync(join(authDir, 'auth.json'), readFileSync(seed), { mode: 0o600 });
     }
-    // ⚠️ **這一段跑在 DLP 遮罩字典就緒之前**（字典要等後面那段讀 auth.json 才有內容），
+    ensureArmed();   // 這裡 auth.json 已經在了：先上膛再往下走，緩衝的話立刻放出去
+    // ⚠️ **這一段仍可能跑在字典就緒之前**（auth.json 讀不出來時 ensureArmed 建不起字典）（字典要等後面那段讀 auth.json 才有內容），
     //   而這裡的錯誤會走 `fail → say` 進公開摘要＝抄進 PR 描述。所以這個階段的每一句訊息
     //   **都不可以回顯 auth 的實值**（Codex #535 r7 用合成 issuer 重現過一次）。
     //   ⚠️ 我一度想「把字典提前種起來」當第二層——**拿掉了**：逐條看過這個階段的所有訊息
@@ -703,8 +738,11 @@ export async function runScan(args, deps = {}) {
     needles = authNeedles(JSON.parse(readFileSync(p, 'utf8')));
   // ⚠️ 這一格也在字典就緒**之前**（針就是這裡讀出來的）：不可以把 `e.message` 原樣往外送——
   //   JSON 解析失敗時它會帶出檔案內容的前綴。只回錯誤的**類別**（SyntaxError／檔案系統錯誤碼）。
-  //   ⚠️ 誠實劃界：**這一格今天走不到、也沒有考題釘著**——檔案壞掉的話 `refreshSandboxAuth` 會先擋下。
-  //   留著是因為它跟上面那兩處是同一條規矩（上膛前不回顯 `e.message`），不是因為量得到。
+  //   ⚠️ 這不是「走不到」（我一度那樣記，錯的）：`refreshSandboxAuth` 讀一次、這裡再讀一次，
+  //   中間隔著 manifest／版本／盒子／金絲雀／diff，**檔案可能被換掉**（另一個掃描、外部程序）。
+  //   守它的是題名關鍵字「兩次讀 auth 之間被換掉」那一題（用既有的 `afterGrokHomeAuthWrite` 鉤子
+  //   在兩次讀取之間換檔，穩定走到這裡）。
+    ensureArmed();   // 冪等；正常路徑早就上膛了，這裡是保險
   } catch (e) { const x = /** @type {Error & { code?: string }} */ (e); return failAndClean(`DLP 真相來源（${authDir}/auth.json）讀不出來：${x.code ?? x.name}（內容不回顯）——沒有針就不能證明沒外流，不掃`); }
   {
     // 已在**給盒子的東西**裡出現的針偵測不了外流——給盒子的東西＝材料（指示＋diff）**＋ head 整棵已 commit 原始碼**

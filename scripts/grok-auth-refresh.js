@@ -121,6 +121,11 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
   //   釘住的那一個是公開常數、照印；不合法的那一個只講長度。
   if (cred.oidc_issuer !== pins.issuer) throw new Error(`auth.json 的 oidc_issuer（長 ${String(cred.oidc_issuer).length}，內容不回顯）不等於釘住的「${pins.issuer}」——不把 refresh_token 送去別處`);
   if (cred.oidc_client_id !== pins.clientId) throw new Error(`auth.json 的 oidc_client_id 不等於釘住的值——不 refresh`);
+  // ⚠️ **不可以在這裡把 `expires_at` 原文往外送**（Codex #535 r9）：它只驗過「是非空字串」，
+  //   壞值會讓 `Date.parse` 回 NaN、走進 refresh 分支，那裡的 `log()` 原本把原文印出去——
+  //   而那條路是 `log` 不是 `fail → say`，只看 summary 的考題完全量不到。
+  //   先驗成合法時間；不合法就用固定訊息。
+  if (!Number.isFinite(Date.parse(String(cred.expires_at)))) throw new Error('auth.json 的 expires_at 不是合法時間（內容不回顯）——先在沙箱外 grok 登入一次');
   const expiresAt = Date.parse(String(cred.expires_at));
   let refreshed = false;
   let current = cred;
