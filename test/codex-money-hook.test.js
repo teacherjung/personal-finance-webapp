@@ -62,7 +62,8 @@ const codexGroup = codexFile?.hooks?.PreToolUse?.[0];
 const codexHook = codexGroup?.hooks?.[0];
 
 /**
- * 跑 command、餵 stdin，回 {status, stdout}。SIGKILL 同 money-boundary r2 minor：
+ * 跑 command、餵 stdin，**回 stdout 字串**；非零退出碼由 execFileSync 直接 throw
+ * （r8 L：原註解寫「回 {status, stdout}」與實作不符）。SIGKILL 同 money-boundary r2 minor：
  * SIGTERM 可被 handler 無視、拖過 timeout，SIGKILL 不行。
  */
 function runHook(command, stdinText) {
@@ -202,8 +203,10 @@ test('結構封閉：恰一事件、恰一組、恰一 handler、欄位白名單
 });
 
 test('絆線：全檔字串不含常見的機器絕對路徑形狀（列名式，列不完的形狀靠審查）', () => {
-  // r2 M：這是**絆線不是安全閘**——絕對路徑的寫法列不完（相對路徑、變數拼接更列不完），
-  // 完整保證靠「command 與 Claude 側互鎖＋兩側都過審查」，本絆線只抓常見拼法讓誤觸先紅。
+  // r2 M：這是**絆線不是安全閘**——絕對路徑的寫法列不完（相對路徑、變數拼接更列不完）。
+  // 互鎖只涵蓋 matcher＋command 兩個欄位，其餘漂移靠審查看 diff＝殘餘守備、不是完整保證
+  // （r8 M①：這裡原本寫「完整保證靠互鎖＋審查」，與檔頭互斥，已刪）。
+  // 本絆線只抓常見拼法讓誤觸先紅。
   const MACHINE_PATH = /\/(Users|home|root|private|Volumes|var|tmp|opt|etc)\/|[A-Za-z]:[\\/]|\\\\/;
   const paths = [];
   (function walk(node, at) {

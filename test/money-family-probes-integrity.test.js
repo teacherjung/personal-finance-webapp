@@ -8,8 +8,10 @@
  * 所以在這個行程裡 helper 的程式碼**從未執行**，改寫不了取樣器。
  *
  * ⚠️⚠️ **這是絆線，不是安全閘（照實劃界，別再往上加層）**。
- * 它擋得住的是「只動 helper 檔案」的一切形狀——那是實務上唯一會不小心發生的事：
- * 改了字表卻沒意識到兩張考卷的題目跟著變了。
+ * 它擋得住的是**未伴隨取樣環境／考題變更的位元組漂移**——那是實務上唯一會不小心
+ * 發生的事：改了字表卻沒意識到兩張考卷的題目跟著變了。
+ * （r8 M②：這句原本寫成「只動 helper 檔案的一切形狀」＝全稱保證，與下面那段
+ * 「擋不住能注入程式碼的人」互斥，已補回前提。）
  * 它擋不住「有辦法在這個行程裡執行任意程式碼」的人，因為 Node 裡那條路是開放的
  * （preload 注入、改 package.json 的 test 指令、改本檔、改環境變數…列不完）。
  * **不要為了堵那些再加機制**：Codex #536 r2–r6 連六輪換六形（刪詞／等量替換／
@@ -38,7 +40,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HELPER = path.join(ROOT, 'test', 'helpers', 'money-family-probes.js');
 
 // helper 檔案位元組的 sha256（William 2026-09-01 裁示的那顆釘）。
-const HELPER_BYTES_SHA256 = '71bcbfa50ebbbaf9958950e8dbe985f958ec0bdab4522e552b0b55c912276bc9';
+const HELPER_BYTES_SHA256 = 'bd04276fe84fa9bba69b6936623d70a15cd9b52606d0c32dee0d641cdddd659a';
 
 test('承重字表 helper 的位元組與釘相符（本行程不載入它，取樣不可能被它污染）', () => {
   const actual = createHash('sha256').update(readFileSync(HELPER)).digest('hex');
