@@ -37,7 +37,8 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 // ⚠️ 這裡與 .claude/settings.json 的指令必須同步改；2026-09-01（#536）起 .codex/hooks.json
 // 的指令也在同一條線上。⚠️ **機器實際鎖住的只有「Claude／Codex 兩份 command 逐位相同」**
 // （身分互鎖考題）；本檔與那兩份指令之間是**單向行為耦合**——指令少一個詞幹會讓探針轉紅，
-// 但指令裡多出來的語法或更窄的形態不必然有題目扣著（Grok #536 掃第 4 條實證，已補四支探針）。
+// 但指令裡多出來的語法或更窄的形態不必然有題目扣著（Claude 自審 2026-09-01 實證：
+// 把那些語法逐項收窄之後兩張考卷仍全綠；已補下面四支探針把它們扣住）。
 // 生產用的詞表住在 hook 指令裡、而且有兩份；本檔是**探針的**唯一住所，不是詞表的正本。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
@@ -71,9 +72,9 @@ export const FORBIDDEN_FAMILY = [
   'mcp__broker__get__place_order',
 ]);
 
-// Grok #536 複審後掃 第4條（屬實）：指令的正規式有四個語法**沒有探針承重**——
-// 把它們收窄之後兩張考卷仍全綠（逐項突變實測；`s?` 與 `withdraw(al)?` 則實測有承重＝那兩項誤報）。
-// 補上對應探針，讓每一段生產力都有題目扣著。
+// Claude 自審（2026-09-01）：指令的正規式有四個語法**沒有探針承重**——把它們逐項收窄之後
+// 兩張考卷仍全綠（突變實測）。補上對應探針，讓每一段生產力都有題目扣著。
+// （`s?` 由 `buyShares` 承接、`withdraw(al)?` 由 `request_withdrawal` 承接，本來就扣得住。）
 FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}placeorder`,             // 動詞×名詞之間的 `_?`＝分隔符可省略（連寫小寫）
   `${FAKE_UUID}place_new_order`,        // 動詞×名詞之間的 `\w*?`＝中間可夾字
