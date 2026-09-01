@@ -111,7 +111,10 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
     if (typeof cred[need] !== 'string' || !cred[need]) throw new Error(`auth.json 缺 ${need}——不是 OIDC 登入？先在沙箱外 grok 登入一次`);
   }
   // r5 #2：issuer／client_id 必須等於釘住的——refresh_token 只會被送到這一個地方
-  if (cred.oidc_issuer !== pins.issuer) throw new Error(`auth.json 的 oidc_issuer「${cred.oidc_issuer}」不等於釘住的「${pins.issuer}」——不把 refresh_token 送去別處`);
+  // ⚠️ **不回顯實值**：這個訊息會被呼叫端推進 summary＝抄進公開的 PR 描述，而它發生在
+  //   DLP 遮罩字典就緒**之前**（Codex #535 r7 用合成值重現：退 2 但摘要逐字含那個值）。
+  //   釘住的那一個是公開常數、照印；不合法的那一個只講長度。
+  if (cred.oidc_issuer !== pins.issuer) throw new Error(`auth.json 的 oidc_issuer（長 ${String(cred.oidc_issuer).length}，內容不回顯）不等於釘住的「${pins.issuer}」——不把 refresh_token 送去別處`);
   if (cred.oidc_client_id !== pins.clientId) throw new Error(`auth.json 的 oidc_client_id 不等於釘住的值——不 refresh`);
   const expiresAt = Date.parse(String(cred.expires_at));
   let refreshed = false;

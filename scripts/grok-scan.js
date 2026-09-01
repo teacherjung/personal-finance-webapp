@@ -634,6 +634,13 @@ export async function runScan(args, deps = {}) {
       if (!st.isFile() || st.size > 64 * 1024) return failAndClean(`安裝樹的 auth.json 不是 regular file 或超過 64KB——不種`);
       writeFileSync(join(authDir, 'auth.json'), readFileSync(seed), { mode: 0o600 });
     }
+    // ⚠️ **這一段跑在 DLP 遮罩字典就緒之前**（字典要等後面那段讀 auth.json 才有內容），
+    //   而這裡的錯誤會走 `fail → say` 進公開摘要＝抄進 PR 描述。所以這個階段的每一句訊息
+    //   **都不可以回顯 auth 的實值**（Codex #535 r7 用合成 issuer 重現過一次）。
+    //   ⚠️ 我一度想「把字典提前種起來」當第二層——**拿掉了**：逐條看過這個階段的所有訊息
+    //   （`scripts/grok-auth-refresh.js` 的 throw），沒有一句會帶出針的值（只印欄位名、長度、HTTP 狀態），
+    //   所以那層沒有任何可達情境、也沒有考題撐得住，只會多一個「字典有兩個地方在建」的漂移點。
+    //   守這件事的是題名關鍵字「門要在第一句話出去之前上膛」那一題。
     // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放白名單重建的版本＋本掃隨機假值；假值走 0600 檔給轉送器（不走 argv／env）
     try {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });

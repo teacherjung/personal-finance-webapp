@@ -1459,6 +1459,30 @@ test('關門｜警報器也要認得跳脫形：三條成功出口（回覆／�
   }
 });
 
+test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的錯誤訊息也不准帶出 auth 實值', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ Codex #535 r7：`scrubSecrets` 原本要等到 DLP 針那段（在後面很多行）才有內容，
+  //    但憑證 refresh 的錯誤訊息在那之前就會走 `fail → say` 進公開摘要 ⇒ fail-closed 擋得住掃描，
+  //    **擋不住那句話被抄進 PR 描述**。門有了但還沒上膛，等於沒有。
+  //    ⚠️ 守的是**整個階段**，不是單一那句話：這個階段每一條會走 `fail → say` 的錯誤路徑都考一次。
+  const EARLY = 'SYNTHETIC-EARLY-VALUE-SECRET-0123456789';
+  const repo = tinyRepo();
+  for (const [label, auth, want] of /** @type {[string, string, RegExp][]} */ ([
+    ['issuer 不合法', fakeAuth({ issuer: EARLY }), /不等於釘住的/],
+    ['client_id 不合法', fakeAuth({ clientId: EARLY }), /oidc_client_id/],
+    ['進盒欄位格式不對', fakeAuth({ extra: { user_id: EARLY } }), /格式不對|不等於釘住的|鍵名/],
+  ])) {
+    const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true });
+    writeFileSync(join(iso.authDir, 'auth.json'), auth);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    const out = r.summary.join('\n');
+    assert.equal(r.code, 2, `${label}：沒有 fail-closed：${out}`);
+    assert.match(out, want, `${label}：走的不是預期那條路＝這一格量不到東西`);
+    for (const form of escapeForms(EARLY)) assert.equal(out.includes(form), false, `${label}：公開摘要帶出了 auth 實值（長 ${form.length}）`);
+  }
+});
+
 test('關門｜上下文視窗要用同一份表示清單：已是跳脫形的針不可以從 context 還原得回來', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ Grok 複審後掃 2026-09-01 抓到的第四條出口：`redactWindow` 原本只餵**原文**針，
