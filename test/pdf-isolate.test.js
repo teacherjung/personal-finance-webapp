@@ -23,9 +23,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -139,6 +140,33 @@ test('內容串流炸彈：一頁的小 PDF 讓子行程卡住 → 父行程逾�
     assert.match(String(err.message), /太久|上限|正常的對帳單/, '訊息要讓使用者知道該做什麼');
     assert.ok(Date.now() - t0 >= 2_500, '必須是「等到逾時」才收回，不是子行程安靜死掉就當成攻擊');
   } finally { setPdfTimeoutForTest(null); }
+});
+
+test('子行程｜抽取進行中的**非同步例外**不可以讓它自己死掉（父行程的逾時是唯一判定）', async () => {
+  // ⚠️ 這一題來自 CI 上那支「時序 flaky」的真相（2026-09-02 追出來）：
+  //    失敗紀錄每次都一樣——`signal=null code=1 stderr=… ERR_INVALID_STATE: Controller is already closed`。
+  //    ＝子行程**不是被父行程 SIGKILL**，是 pdfjs／webstreams 非同步丟出的錯變成未捕捉例外，
+  //    子行程自己 code 1 死掉 ⇒ 父行程看到「沒有 stdout、又不是資源上限」⇒ 回 500
+  //    「伺服器暫時無法解析」。**同一份攻擊檔，使用者有時看到誠實的「太久」、有時看到「伺服器壞了」。**
+  //    那個競態只在 Linux 重現得出來，所以本題**不靠平台**：用 NODE_OPTIONS 注入一個在抽取進行中
+  //    才爆的非同步例外，複製同一個失敗特徵（實測 code=1 signal=null，與 CI 逐字相符）。
+  const dir = mkdtempSync(join(tmpdir(), 'boom-'));           // tmpdir 沒有空白，NODE_OPTIONS 才切得對
+  const pre = join(dir, 'boom.mjs');
+  writeFileSync(pre, "setTimeout(() => { throw new Error('ASYNC-BOOM-DURING-EXTRACT'); }, 150);\n");
+  const saved = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = `${saved ? saved + ' ' : ''}--import ${pathToFileURL(pre).href}`;
+  setPdfTimeoutForTest(2_000);
+  try {
+    const err = await errOf(parseStatement(bombPdf(3_000_000)));
+    assert.ok(err, '攻擊檔竟然通過了');
+    assert.equal(err.code, 'pdf_timeout',
+      `抽取中的非同步例外讓子行程自己死了（父行程只好回 500）——實際 ${err.code}；`
+      + '正確行為是留痕在 stderr、行程活著，讓父行程的逾時做唯一判定');
+    assert.equal(err.status, 400);
+  } finally {
+    setPdfTimeoutForTest(null);
+    if (saved === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved;
+  }
 });
 
 test('連打五次攻擊檔，父行程的記憶體不可以往上爬（沒有洩漏、也沒有累積）', async () => {
