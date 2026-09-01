@@ -22,14 +22,13 @@
  *   description 的「兩側一致」改機械維持、「回到未信任」修正為標 Modified 語意。
  * r2 修訂（Codex #536 r2，1H1M2L 全收）：H＝加①直接矩陣（互鎖代考洞，突變實證）；
  *   M＝路徑掃描擴形狀並照實降級為絆線；L＝理由判準加 trim；L＝PR 描述數字同步。
- * r5 修訂（Codex #536 r5，1H＋William 2026-09-01 裁示「位元組釘」）：
- *   同族第五形＝**改寫取樣器本身**（helper 靜態 import 先於本檔程式碼執行，可改寫
- *   readFileSync＋syncBuiltinESMExports 讓同行程的位元組釘取樣到舊內容而假綠，
- *   Codex 已實測重現 submit_order 放行）。教訓不是再補一形：同行程內「先執行的
- *   程式碼污染後面的檢查」補不完。**位元組釘落地為隔離行程**——
- *   test/money-family-probes-integrity.test.js 只讀 helper 位元組、**完全不 import 它**
- *   （node --test 每檔一個行程），本檔與 money-boundary 因此都不再自帶釘。
- *   r4 的 canonical 快照層一併拆除（「類關閉」宣稱已撤回——被原型層變體推翻）。
+ * r5／r6 修訂（Codex #536 r5 1H＋r6 中間發現；William 2026-09-01 裁示「位元組釘」）：
+ *   同族第五、六形＝**改寫取樣器**與**preload 注入**——同行程內「先執行的程式碼
+ *   污染後面的檢查」補不完。位元組釘落地為隔離行程
+ *   （test/money-family-probes-integrity.test.js，不 import helper），本檔與
+ *   money-boundary 都不再自帶釘；r4 的 canonical 快照層一併拆除、其「類關閉」宣稱撤回。
+ *   ⚠️ 該釘**照實定位為絆線**（擋「改了字表沒發現題目跟著變」，不擋能注入程式碼的人）
+ *   ——連六輪換六形之後停止加層，理由完整寫在那支考題的檔頭。
  * r3 修訂（Codex #536 r3，2H1L 全收）：H1＝helper 是兩張考卷的共同失效點——
  *   兩張考卷各釘一份 helper 外的字面身分雜湊（劃界：釘防單點改弱與小 diff 偷渡，
  *   防不了連釘一起改的人——那層靠審查制度）；H2＝結構封閉補 Array.isArray 與
