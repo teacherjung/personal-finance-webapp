@@ -6,9 +6,18 @@
 //     207 KB 的**一頁** PDF（內容串流解壓後 83MB）→ 行程死掉，峰值 704MB
 // 兩份都**結構完全合法**，既有的兩道牆（頁數、文字節點）都看到「正常」。
 //
-// ⚠️ **死法不只 OOM（2026-08-02 追出）**：更常見的是 pdfjs 卡死在解壓、promise 永不 settle
-//    ——子行程 1.4 秒 `code 0` 靜默退出、stdout/stderr 全空。舊敘述把兩種都寫成 OOM，
-//    害父行程把「沒有 stdout」當成「使用者的檔案太貴」。本檔的炸彈題現在驗的是 `pdf_timeout`。
+// ⚠️ **死法不只 OOM**：也可能是「跑不完」——子行程沒有輸出，父行程只好靠逾時收回。
+//
+// ⚠️ **這一段的成因被寫錯過兩次，第二次 2026-08-29 才追到底**（起因＝CI 間歇紅）：
+//    v1 全寫成 OOM；v2 寫成「pdfjs 卡死在解壓、promise 永不 settle」，於是炸彈題改驗 `pdf_timeout`
+//    ——**那個綠燈也是為了錯的理由**。真因是 `lib/parse-limits.js` 的取消少帶一個 `Error` 理由
+//   （pdfjs 會 assert 它），取消從沒生效、pdfjs 生產端永遠等下去＝**卡住是我們自己造成的**。
+//    修好之後炸彈由文字節點牆當場擋下（約 1.9 秒的乾淨 400），本檔的炸彈題因此改驗
+//    `pdf_too_many_text_items`；「逾時／提早死」那一族改用**行為確定的假子行程**測（見「一之二」節）。
+//
+// ⚠️ **本檔學到最貴的一課：替身比本尊寬鬆＝假綠。** 假的 pdfjs 頁面寫成 `async cancel() {…}`
+//   （不收參數、不驗理由），收下了真 pdfjs 會拒絕的呼叫，於是三題「邊收邊數」測的是一個
+//    不存在的世界，而 production 的取消一年來從沒生效過。**替身要照抄本尊會拒絕什麼。**
 //
 // 為什麼是隔離而不是再蓋一道牆：蓋牆就得自己先掃一遍 PDF 判斷「這份貴不貴」，
 // 而那正是今晚在 XLSX 上被打穿**四次**的模式——牆與解析器對格式的理解只要差一點
@@ -39,7 +48,8 @@ process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 3).toString('base64');
 const { parseStatement } = await import('../lib/statement.js');
 const { parseBankStatement } = await import('../lib/bank-statement.js');
 const { PDF_ISOLATE_KINDS, PDF_CHILD_HEAP_MB, PDF_QUEUE_MAX_DEPTH, setPdfTimeoutForTest,
-  resetPdfQueueForTest, pdfQueueDepthForTest, extractPdfLines, throughPdfQueueForTest } = await import('../lib/pdf-isolate.js');
+  setPdfChildScriptForTest, resetPdfQueueForTest, pdfQueueDepthForTest, extractPdfLines,
+  throughPdfQueueForTest } = await import('../lib/pdf-isolate.js');
 
 // ---------------------------------------------------------------------------
 // 手工造 PDF（同 test/pdf-limits-wiring.test.js 的手法：不進版控、造得出來就看得懂）
@@ -121,12 +131,16 @@ const errOf = (p) => p.then(() => null, (/** @type {any} */ e) => e);
 // 一、攻擊：子行程死掉，**父行程必須活著**
 // ============================================================================
 
-test('內容串流炸彈：一頁的小 PDF 讓子行程卡住 → 父行程逾時收回 400，而不是整個服務死掉', async () => {
-  // ⚠️ **這題的真相曾經被誤解**（2026-08-01 追出來）：炸彈**不是**讓子行程 OOM，而是讓
-  //    pdfjs 卡在解壓——那個 promise 永不 settle。舊版子行程的事件迴圈一空就 code 0 靜默結束、
-  //    什麼都不寫，父行程只看到「沒有 stdout」，於是把它當成「資源耗盡」。**綠燈是為了錯的理由**。
-  //    現在：子行程 keep-alive 不准安靜退出 → 父行程逾時 SIGKILL → 誠實的 pdf_timeout。
-  setPdfTimeoutForTest(3_000);
+test('內容串流炸彈：一頁的小 PDF **由文字節點牆當場擋下 400**，父行程活著', async () => {
+  // ⚠️ **這題的真相被誤解過兩次**（第二次 2026-08-29 追出）：
+  //    v1 以為炸彈讓子行程 OOM；v2 改寫成「pdfjs 卡在解壓、promise 永不 settle，靠父行程逾時收回」，
+  //    於是本題期待 `pdf_timeout`——**那個綠燈也是為了錯的理由**。真相是
+  //    `readPageTextCapped` 的 `reader.cancel()` 沒帶 Error 理由（pdfjs 會 assert 後拒絕、
+  //    `.catch()` 又把拒絕吞掉）⇒ 取消從沒生效 ⇒ `task.destroy()` 永不回來。
+  //    **卡住是我們自己造成的，不是 pdfjs 的脾氣。** 修好之後這顆炸彈由牆在約 1.9 秒當場擋下。
+  // ⚠️ 逾時在這裡只是**絆索**：牆若又失效，20 秒收場而不是 30 秒。它不該是本題的通過條件——
+  //    收到 `pdf_timeout` 就代表牆沒接住、只是被行程隔離兜住（那正是本題以前的樣子）。
+  setPdfTimeoutForTest(20_000);
   try {
     const data = bombPdf(3_000_000);
     assert.ok(data.length < 300 * 1024,
@@ -134,20 +148,23 @@ test('內容串流炸彈：一頁的小 PDF 讓子行程卡住 → 父行程逾�
     const t0 = Date.now();
     const err = await errOf(parseStatement(data));
     assert.ok(err, '攻擊檔竟然通過了');
-    assert.equal(err.code, 'pdf_timeout', '要誠實說是「卡太久」，不可假裝知道是資源耗盡');
+    assert.equal(err.code, 'pdf_too_many_text_items',
+      `要由文字節點牆當場擋下（實際 ${err.code}）——收到 pdf_timeout＝牆又沒接住、只是被行程隔離兜住`);
     assert.equal(err.status, 400, '這是使用者層錯誤（他的檔案太貴），不是 500');
-    assert.match(String(err.message), /太久|上限|正常的對帳單/, '訊息要讓使用者知道該做什麼');
-    assert.ok(Date.now() - t0 >= 2_500, '必須是「等到逾時」才收回，不是子行程安靜死掉就當成攻擊');
+    assert.match(String(err.message), /文字節點|正常的對帳單/, '訊息要讓使用者知道該做什麼');
+    // 實測：單獨跑約 1.7 秒、四顆同時跑約 3.9 秒。15 秒是「牆有沒有當場動作」的判準，不是效能目標。
+    assert.ok(Date.now() - t0 < 15_000, '牆要「當場」擋，不是等到逾時才收');
   } finally { setPdfTimeoutForTest(null); }
 });
 
 test('連打五次攻擊檔，父行程的記憶體不可以往上爬（沒有洩漏、也沒有累積）', async () => {
-  setPdfTimeoutForTest(1_500);
-  const data = bombPdf(2_000_000);
+  // ⚠️ 逾時要**寬鬆**：訂太緊會變成跟「牆多快擋下」競速（本題以前正是靠逾時才綠的）。
+  setPdfTimeoutForTest(20_000);
+  const data = bombPdf(310_000);   // 剛好超過 30 萬節點的最小攻擊檔（22KB、約 1.5 秒到達門檻）
   const before = process.memoryUsage().rss;
   for (let i = 0; i < 5; i++) {
     const err = await errOf(parseStatement(data));
-    assert.equal(err?.code, 'pdf_timeout', `第 ${i + 1} 次沒被擋下`);
+    assert.equal(err?.code, 'pdf_too_many_text_items', `第 ${i + 1} 次沒被擋下（實際 ${err?.code}）`);
   }
   setPdfTimeoutForTest(null);
   const grew = (process.memoryUsage().rss - before) / 1048576;
@@ -155,13 +172,89 @@ test('連打五次攻擊檔，父行程的記憶體不可以往上爬（沒有�
   assert.ok(grew < 60, `父行程在五次攻擊後長了 ${grew.toFixed(0)}MB——成本沒有被擋在子行程裡`);
 });
 
-test('三個抽取器都走同一層隔離（不是只修了信用卡那條）', async () => {
-  setPdfTimeoutForTest(1_500);
+// ============================================================================
+// 一之二、父行程對子行程死法的**歸類**（用行為確定的假子行程，不靠時間競速）
+//
+// ⚠️ 這三題取代了「餵一顆讓 pdfjs 卡住的 PDF」那種寫法。舊寫法在 CI 上失敗耗時
+//    2.91／2.98／3.02 秒、逾時 3.00 秒＝**餘裕 3%**，同一顆 commit 一次紅一次綠
+//   （2026-08-28〜09-01 共紅 10 場，指紋逐字相同）。假子行程的行為是確定的。
+// ============================================================================
+
+/** @param {string} name */
+const fakeChild = (name) => join(ROOT, 'test-doubles', name);
+
+test('歸類｜子行程**真的卡住** → 等到逾時才 SIGKILL、回誠實的 400 pdf_timeout', async () => {
+  setPdfChildScriptForTest(fakeChild('pdf-child-hang.js'));
+  setPdfTimeoutForTest(500);
   try {
-    const data = bombPdf(3_000_000);
-    const err = await errOf(parseBankStatement(data));
-    assert.equal(err?.code, 'pdf_timeout', '銀行對帳單那條沒接上隔離');
-  } finally { setPdfTimeoutForTest(null); }
+    const t0 = Date.now();
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.ok(err, '子行程卡住竟然還回了結果');
+    assert.equal(err.code, 'pdf_timeout', `卡住要說「卡太久」（實際 ${err.code}）`);
+    assert.equal(err.status, 400, '卡太久是使用者層錯誤（他的檔案太貴）');
+    assert.match(String(err.message), /太久|上限/, '訊息要讓使用者知道該做什麼');
+    assert.ok(Date.now() - t0 >= 500,
+      '必須是「等到逾時」才收回——提早回來代表它是被別的原因判掉的，不是真的等過');
+  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+});
+
+test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**絕不可以假裝成 400**', async () => {
+  // ⚠️ 這是 2026-08-28〜09-01 CI 那十場紅的真實形狀（pdfjs 的 ERR_INVALID_STATE 沒人接）。
+  //    當時本檔的炸彈題就是**因為收到 500 才紅的**——那個 500 是對的，紅的是題目寫錯了期待。
+  //    把 500 併進「可接受的結果」＝重新放行 #350 r2 修掉的那個病：
+  //    child 入口打錯、相依壞掉、程式例外一樣沒有 stdout，全判 400 會**責怪使用者、藏起我們的故障**。
+  setPdfChildScriptForTest(fakeChild('pdf-child-crash.js'));
+  setPdfTimeoutForTest(5_000);   // 給得很寬：本題要看的是「它自己死」，不是逾時
+  try {
+    const t0 = Date.now();
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.ok(err, '子行程炸了竟然還回了結果');
+    assert.equal(err.status, 500, `我們這邊的故障是 500（實際 ${err.status}）`);
+    assert.equal(err.code, 'pdf_isolate_child_failed', `實際 ${err.code}`);
+    assert.notEqual(err.code, 'pdf_timeout', '提早死不是「卡太久」——它根本沒等到逾時');
+    assert.notEqual(err.code, 'pdf_resource_exhausted', '也不可以猜成資源耗盡：我們並不知道它為什麼死');
+    assert.ok(!/太久|文字節點/.test(String(err.message)), '對外訊息不可以說成使用者的檔案有問題');
+    assert.ok(Date.now() - t0 < 4_000, '它是自己死的，不該等到逾時');
+  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+});
+
+test('歸類｜子行程**安靜退出（code 0、零輸出）** → 一樣是 500，不可以猜成資源耗盡', async () => {
+  // 這是 2026-08-01 看到、被誤診成「pdfjs 卡在解壓」的形狀（真因見 parse-limits 的 cancelStream）。
+  // 正式子行程掛 keep-alive 就是為了不長成這樣；父行程這一側則要**照實說不知道**。
+  setPdfChildScriptForTest(fakeChild('pdf-child-silent.js'));
+  setPdfTimeoutForTest(5_000);
+  try {
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.ok(err, '子行程什麼都沒回，竟然還當成成功');
+    assert.equal(err.status, 500, `沒有輸出＝我們不知道發生什麼事，只能是 500（實際 ${err.status}）`);
+    assert.equal(err.code, 'pdf_isolate_child_failed', `實際 ${err.code}`);
+  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
+});
+
+test('三個抽取器都走同一層隔離（不是只修了信用卡那條）', async () => {
+  // ⚠️ 換掉舊寫法的理由（2026-08-29）：舊版餵炸彈檔、等 `pdf_timeout`，證明力來自「pdfjs 會卡住」。
+  //    修好 cancel 之後炸彈由牆擋下，而**牆在兩種模式下都會動**（`readPageTextCapped` 在抽取器裡），
+  //    所以 `pdf_too_many_text_items` **證明不了走過子行程**。
+  //    改法：裝上「一定會卡住」的假子行程，餵一份**正常的小 PDF**——
+  //      ・有走隔離 ⇒ 假子行程卡住 ⇒ pdf_timeout
+  //      ・沒走隔離 ⇒ 它自己在行程內把這份正常 PDF 解析成功 ⇒ 本題紅
+  //    順帶補上證券那條（舊版只測了銀行）。
+  const { parseTaishinSecuritiesPdf } = await import('../lib/taishin-securities.js');
+  setPdfChildScriptForTest(fakeChild('pdf-child-hang.js'));
+  setPdfTimeoutForTest(500);
+  try {
+    /** @type {[string, (d: Uint8Array) => Promise<any>][]} */
+    const entries = [
+      ['信用卡帳單', parseStatement],
+      ['銀行對帳單', parseBankStatement],
+      ['證券對帳單', parseTaishinSecuritiesPdf],
+    ];
+    for (const [name, parse] of entries) {
+      const err = await errOf(parse(normalPdf()));
+      assert.equal(err?.code, 'pdf_timeout',
+        `${name}那條沒接上隔離——它自己在行程內解析了這份正常 PDF（實際 ${err?.code ?? '成功回傳'}）`);
+    }
+  } finally { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); }
 });
 
 // ============================================================================
@@ -262,7 +355,8 @@ const { readPageTextCapped, MAX_PDF_TEXT_ITEMS } = await import('../lib/parse-li
 /** 假的 pdfjs 頁面：用可控的 chunk 序列餵 streamTextContent，並記錄有沒有被 cancel。
  * @param {number[]} chunkSizes 每個 chunk 幾個節點 */
 function fakePage(chunkSizes) {
-  const state = { cancelled: false, delivered: 0 };
+  /** @type {{cancelled: boolean, delivered: number, reason: any}} */
+  const state = { cancelled: false, delivered: 0, reason: null };
   return {
     state,
     streamTextContent() {
@@ -276,7 +370,15 @@ function fakePage(chunkSizes) {
               state.delivered += n;
               return { done: false, value: { items: Array.from({ length: n }, (_, k) => ({ str: `x${k}` })) } };
             },
-            async cancel() { state.cancelled = true; },
+            // ⚠️ **替身要照抄本尊會「拒絕」什麼**（2026-08-29 的教訓）：這裡原本寫
+            //    `async cancel() { ... }`，不收參數、不驗理由——於是它收下了**真的 pdfjs 會拒絕**
+            //    的呼叫，三題「邊收邊數」測的是一個不存在的世界，而 production 的取消一年來從沒生效。
+            // ⚠️ 這裡刻意用 `throw` 而不是 `assert`：production 有 `.catch()`，
+            //    在替身裡斷言會被吞掉、考題照樣綠。讓它**拒絕**，現成的 `state.cancelled` 斷言才會轉紅。
+            async cancel(reason) {
+              if (!(reason instanceof Error)) throw new Error('cancel must have a valid reason');
+              state.cancelled = true; state.reason = reason;
+            },
           };
         },
       };
@@ -307,6 +409,8 @@ test('邊收邊數｜超標當場 cancel、**不把超標那批收下**（這才
   assert.equal(err.code, 'pdf_too_many_text_items');
   assert.equal(err.status, 400);
   assert.equal(page.state.cancelled, true, '超標要當場 cancel 上游，不能繼續讓它產生節點');
+  assert.ok(page.state.reason instanceof Error,
+    'cancel 一定要帶一個 Error 當理由——真的 pdfjs 會 assert 它、不帶就當場拒絕，取消等於沒發生（2026-08-29 實測：整條路會卡死到逾時）');
   assert.equal(page.state.delivered, half * 2 + 100,
     '只該讀到觸發超標的那個 chunk 就停——再多讀就不是「邊收邊數」了');
   // ⚠️ Codex r3 Low：上一版邊界題是**假綠**——把 `items.push` 移到檢查前它照樣通過，
@@ -323,7 +427,9 @@ test('邊收邊數｜超標當場 cancel、**不把超標那批收下**（這才
       let i = 0;
       return { getReader: () => ({
         async read() { return i >= chunks.length ? { done: true, value: undefined } : { done: false, value: { items: chunks[i++] } }; },
-        async cancel() {},
+        async cancel(/** @type {any} */ reason) {
+          if (!(reason instanceof Error)) throw new Error('cancel must have a valid reason');
+        },
       }) };
     },
   };
@@ -345,6 +451,28 @@ test('邊收邊數｜**改回 getTextContent 就會紅**：本題直接打 readP
   assert.equal(r.count, 2);
   assert.ok(typeof page.streamTextContent === 'function');
   assert.equal(page.state.cancelled, true);
+});
+
+test('邊收邊數｜**取消要真的生效**：超標之後 pdfjs 的 task.destroy() 必須回得來（本案的本體）', async () => {
+  // ⚠️ 這一題是 2026-08-29 那個 bug 的正對面，**用真的 pdfjs**（上面那幾題都是替身）。
+  //    `reader.cancel()` 少帶理由時：pdfjs 拒絕 → 它不知道消費端走了 → 生產端永遠等一個
+  //    不會排空的 sink → **`task.destroy()` 永不回來**（實測 40 秒仍未 resolve）。
+  //    帶了理由：cancel ok → destroy 2ms 完成。
+  //    端到端那題（炸彈題）證明不了這一點——未來有人把 destroy 拿掉，它照樣綠。
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task = getDocument({ data: bombPdf(310_000), verbosity: 0 });
+  const doc = await task.promise;
+  const page = await doc.getPage(1);
+  const err = await errOf(readPageTextCapped(page, 0, '測試檔'));
+  assert.equal(err?.code, 'pdf_too_many_text_items', `前提：這份檔要超標（實際 ${err?.code}）`);
+
+  const raced = await Promise.race([
+    task.destroy().then(() => 'ok', (/** @type {any} */ e) => `destroy 被拒：${e?.message}`),
+    new Promise((r) => setTimeout(() => r('卡住'), 10_000)),
+  ]);
+  assert.equal(raced, 'ok',
+    'task.destroy() 沒有在 10 秒內完成——代表取消沒有真的傳到 pdfjs，'
+    + '上游還在跑（HOSTED 會被逾時當成「解析太久」、LOCAL 則是那次請求永遠不結束）');
 });
 
 test('LOCAL 零改動契約｜不是 HOSTED 就**直接呼叫原函式、不 spawn**（Codex #350 r1：這條契約原本零考題）', async () => {
