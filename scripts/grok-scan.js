@@ -512,6 +512,8 @@ export async function runScan(args, deps = {}) {
    * @type {string[]}
    */
   let scrubSecrets = [];
+  /** DLP 針的**各種序列化表示**；偵測（`leaksIn`）與清洗共用這一份。組法見下面 needles 定稿處。 @type {string[]} */
+  let needleForms = [];
   /**
    * ⚠️ **算區間再合併，不是逐個替換**。逐個替換擋不住自我重疊的機密：
    *   機密是 16 個 A、文字裡有 24 個 A 時，換掉第一個起點之後**剩下的 8 個 A 本身不構成完整機密**，
@@ -700,6 +702,11 @@ export async function runScan(args, deps = {}) {
         return g.status === 0;
       } finally { rmSync(pf, { force: true }); }
     };
+    // ⚠️ **判準與排除都用同一份表示清單**（Codex #535 r5）：
+    //   針裡有 `"`／反斜線／換行時，它在 JSONL 日誌與 JSON 回覆裡是**跳脫形**。
+    //   r4 我只把跳脫形加進「清洗字典」（出口那道門），卻沒加進 `leaksIn`（警報器）
+    //   ⇒ 跳脫形根本不算外洩、掃描直接退 0、`--out` 照寫、sessions 照存，那個表示還原得回原文。
+    //   門關好了但警報器是聾的，等於沒關。所以偵測與清洗一起改成吃 `escapeForms()` 的全部表示。
     /** @type {string[]} */ const given = [];
     try { for (const n of needles) if (materials.includes(n) || inTree(n)) given.push(n); }
     catch (e) { return failAndClean(`DLP：查針是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
@@ -708,7 +715,12 @@ export async function runScan(args, deps = {}) {
     // ⚠️ 字典要含**各種序列化表示**，不是只有原文：事故檔是先 `JSON.stringify` 再過門的，
     //   針裡只要有 `"`／反斜線／換行，序列化之後就不再逐字含原文 ⇒ 門命不中（Codex #535 r4 用
     //   合成針 `SYNTHETIC-"QUOTE"-BACK\SLASH` 端到端重現）。escapeForms 就是 #534 那把同一階梯。
-    scrubSecrets = [...scrubSecrets, ...needles.flatMap((n) => escapeForms(n))];
+    // 每根針展開成各種表示；**表示本來就在給盒子的東西裡就不採用**——否則 Grok 引用公開材料
+    // 會被誤判成外洩（與上面那道「針已在材料裡」同一個原則，只是套到表示層）。
+    try {
+      needleForms = needles.flatMap((n) => escapeForms(n)).filter((v) => !materials.includes(v) && !inTree(v));
+    } catch (e) { return failAndClean(`DLP：查表示是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
+    scrubSecrets = [...scrubSecrets, ...needleForms];
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
@@ -802,7 +814,7 @@ export async function runScan(args, deps = {}) {
   /** @type {ReturnType<typeof readSessionsOnce>} */ let snap;
   try { snap = readSessionsOnce(sessionsRoot); }
   catch (e) { return failAndClean(`驗屍：sessions 讀不完（${/** @type {Error} */ (e).message}）——超過上限＝不保存`); }
-  const leaksIn = (/** @type {string} */ text) => needles.some((v) => text.includes(v));
+  const leaksIn = (/** @type {string} */ text) => needleForms.some((v) => text.includes(v));
   /**
    * Grok 可控的字串（session 相對路徑、odd 的項目名）要先過濾再放進 summary／指紋包：
    * 它可以用「檔名就是暗號」的方式，靠一個回聲把內容送進**公開的** PR 描述。

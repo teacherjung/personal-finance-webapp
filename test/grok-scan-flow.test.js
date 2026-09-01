@@ -1419,6 +1419,59 @@ test('關門｜事故檔整份寫出前要再過一次清洗：提示檔路徑�
   assert.equal(raw.includes(SECRET), false, '事故包裡有暗號原文');
 });
 
+test('關門｜警報器也要認得跳脫形：三條成功出口（回覆／內容／檔名）都必須退 1', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ Codex #535 r5：我 r4 只把跳脫形加進**清洗字典**（出口那道門），沒加進 `leaksIn`（警報器）
+  //    ⇒ 跳脫形根本不算外洩、掃描退 0、`--out` 照寫、sessions 照存，那個表示還原得回原文。
+  //    **門關好了但警報器是聾的，等於沒關。** 三條成功出口各考一次。
+  const REAL = 'SYNTHETIC-"QUOTE"-BACK\\SLASH-0123456789';
+  const [, ESC] = escapeForms(REAL);   // 日誌／回覆裡真正會出現的那一形
+  assert.notEqual(ESC, REAL, '這根針沒有跳脫形＝這一題量不到東西');
+  const repo = tinyRepo();
+
+  // 出口①：只在**回覆**裡放跳脫形
+  {
+    const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+    const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `輸出：${ESC}` })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 1, `回覆裡的跳脫形沒被當外洩：${r.summary.join('\n')}`);
+    assert.ok(!existsSync(out), '判事故了卻還是寫了 --out');
+  }
+  // 出口②：只在 session 檔的**內容**裡放跳脫形
+  {
+    const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+    const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf '%s\n' '{"type":"tool_started","x":"${ESC.replace(/'/g, "'\\''")}"}' > "$ws/fake-session/leak.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 1, `session 內容裡的跳脫形沒被當外洩：${r.summary.join('\n')}`);
+    assert.ok(!readdirSync(iso.resultsRoot, { recursive: true }).some((f) => String(f).includes('sessions/')), '判事故了卻還是留了 sessions');
+  }
+  // 出口③：只在 session 的**檔名**裡放跳脫形（檔名不能有 `/`，用不含斜線的那一形）
+  {
+    const iso = isolated();
+    mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+    const inst = fakeGrok();
+    writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `printf 'x\n' > "$ws/fake-session/${ESC.replace(/(["\\$`])/g, '\\$&')}.jsonl"; $1`));
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 1, `檔名裡的跳脫形沒被當外洩：${r.summary.join('\n')}`);
+  }
+});
+
+test('關門｜不誤傷：某個表示本來就在給盒子的材料裡時，引用它不算外洩', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 判準放寬到「各種表示」之後，反方向的風險是**誤報**：Grok 引用我們自己給它的材料就被判事故。
+  //    既有那道「針已在材料裡就不採用」要一起套到表示層，這一題釘住它。
+  const REAL = 'SYNTHETIC-"QUOTE"-IN-MATERIALS-0123456789';
+  const [, ESC] = escapeForms(REAL);
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
+  // 指示檔裡就有那個表示 ⇒ 它是「給盒子的東西」，Grok 抄回來不算外洩
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(`參考：${ESC}\n`) }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `我抄一次：${ESC}` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 0, `引用公開材料被誤判成外洩：${r.summary.join('\n')}`);
+});
+
 test('關門｜帶跳脫字元的機密：事故檔的**各種序列化表示**都不准留（parse 回來也要乾淨）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ Codex #535 r4：事故檔是先 JSON.stringify 再過門的，針裡有 `"`／反斜線時，
