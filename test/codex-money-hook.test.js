@@ -22,6 +22,11 @@
  *   description 的「兩側一致」改機械維持、「回到未信任」修正為標 Modified 語意。
  * r2 修訂（Codex #536 r2，1H1M2L 全收）：H＝加①直接矩陣（互鎖代考洞，突變實證）；
  *   M＝路徑掃描擴形狀並照實降級為絆線；L＝理由判準加 trim；L＝PR 描述數字同步。
+ * r5 修訂（Codex #536 r5 中間發現＋William 2026-09-01 裁示「位元組釘」）：
+ *   r4 的 canonical 快照「類關閉」宣稱被原型層 iterator 變體推翻（同族第四形）——
+ *   照審查輪數預算停損，裁示後改**位元組釘**（sha256 over helper 檔案位元組）、
+ *   拆掉 canonical 層：釘涵蓋「只動 helper」的一切形狀＝該方向的機械終點；
+ *   動考卷本身或連釘齊改＝審查制度守備（helper 標頭有完整劃界）。
  * r3 修訂（Codex #536 r3，2H1L 全收）：H1＝helper 是兩張考卷的共同失效點——
  *   兩張考卷各釘一份 helper 外的字面身分雜湊（劃界：釘防單點改弱與小 diff 偷渡，
  *   防不了連釘一起改的人——那層靠審查制度）；H2＝結構封閉補 Array.isArray 與
@@ -44,24 +49,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-  FORBIDDEN_TOOLS as RAW_FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT as RAW_FORBIDDEN_AFTER_RECONNECT,
-  FORBIDDEN_FAMILY as RAW_FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES as RAW_ALLOWED_LOOKALIKES,
-  FAMILY_VERBS as RAW_FAMILY_VERBS, FAMILY_NOUNS as RAW_FAMILY_NOUNS, FUND_KEYWORDS as RAW_FUND_KEYWORDS,
+  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
 } from './helpers/money-family-probes.js';
-
-// r4 H：身分釘與矩陣必須消費**同一份行為不可自訂的快照**——helper 匯出的陣列可以
-// 自訂 Symbol.iterator 讓「序列化視圖」與「迭代視圖」分家（JSON.stringify 走索引、
-// spread／for-of 走 iterator；Codex #536 r4 突變實證：釘綠、矩陣卻不再考 submit_order）。
-// JSON round-trip 恰一次、之後釘與矩陣都只吃這份平凡快照＝視圖分家這一**類**等價寫法
-// 整類關掉（快照是 JSON.parse 生的 plain array，沒有可自訂行為；單次讀取，Proxy 也
-// 沒有第二次說謊的機會）。
-const [
-  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS,
-  FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
-] = JSON.parse(JSON.stringify([
-  RAW_FORBIDDEN_TOOLS, RAW_FORBIDDEN_AFTER_RECONNECT, RAW_FAMILY_VERBS, RAW_FAMILY_NOUNS,
-  RAW_FUND_KEYWORDS, RAW_FORBIDDEN_FAMILY, RAW_ALLOWED_LOOKALIKES,
-]));
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const codexFile = JSON.parse(readFileSync(path.join(ROOT, '.codex', 'hooks.json'), 'utf8'));
@@ -118,18 +107,19 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
   }
 });
 
-// 禁止面字表的身分釘（r3 H1：helper 是兩張考卷的共同失效點——釘住題目本身，
-// 改 helper 必須同時改本檔與 money-boundary.test.js 的同款字面雜湊；劃界見 helper 標頭）。
-const FORBIDDEN_IDENTITY = 'da640bd852087ff3f171a3091238931f5932a34e5922db08c4a70978c6636373';
+// 字表 helper 的位元組釘（Codex #536 r3–r5 同族四輪 → William 2026-09-01 裁示）：
+// 值層面的釘每補一形就有下一形（刪詞／等量替換／實例 iterator／原型 iterator），
+// 改釘檔案位元組＝「只動 helper」這個方向的機械終點；劃界見 helper 標頭。
+const HELPER_BYTES_SHA256 = '87c0accf8b7ced02f813488587e57326e13ed9e43fc2dbec1887cb43db9f251c';
 
-test('禁止面字表的身分釘：helper 的題目被改＝本考卷這裡轉紅', () => {
-  const actual = createHash('sha256').update(JSON.stringify(
-    [FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FAMILY_VERBS, FAMILY_NOUNS, FUND_KEYWORDS, FORBIDDEN_FAMILY],
-  )).digest('hex');
-  assert.equal(actual, FORBIDDEN_IDENTITY,
-    '禁止面清單（helper）與本考卷的字面身分釘不符——增刪或改寫任何必擋探針時，'
-    + '要有意識地同步更新本檔與 test/money-boundary.test.js 的兩顆釘（跑 node 重算 sha256）。');
-});
+test('字表 helper 的位元組釘：那個檔案動任何一個字元＝本考卷這裡轉紅', () => {
+  const actual = createHash('sha256')
+    .update(readFileSync(path.join(ROOT, 'test', 'helpers', 'money-family-probes.js')))
+    .digest('hex');
+  assert.equal(actual, HELPER_BYTES_SHA256,
+    '承重字表 helper 的檔案位元組與字面釘不符——改那個檔案（含註解）時，'
+    + '要有意識地同步重算本檔與 test/money-boundary.test.js 的兩顆釘（sha256 檔案位元組）。');
+})
 
 // ---------- ② 身分互鎖（同步紀律；主承重在①） ----------
 
