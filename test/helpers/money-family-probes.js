@@ -35,7 +35,10 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 // 指令裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
 // 少任何一個出入金詞→「initiate_{詞}」轉紅；唯讀豁免名單少任何一個→對應放行探針轉紅。
 // ⚠️ 這裡與 .claude/settings.json 的指令必須同步改；2026-09-01（#536）起 .codex/hooks.json
-// 的指令也在同一條線上（三者一致才綠——身分互鎖考題釘 Claude／Codex 兩份 command 逐位相同）。
+// 的指令也在同一條線上。⚠️ **機器實際鎖住的只有「Claude／Codex 兩份 command 逐位相同」**
+// （身分互鎖考題）；本檔與那兩份指令之間是**單向行為耦合**——指令少一個詞幹會讓探針轉紅，
+// 但指令裡多出來的語法或更窄的形態不必然有題目扣著（Grok #536 掃第 4 條實證，已補四支探針）。
+// 生產用的詞表住在 hook 指令裡、而且有兩份；本檔是**探針的**唯一住所，不是詞表的正本。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
   'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
@@ -67,6 +70,16 @@ export const FORBIDDEN_FAMILY = [
   // 每個 __ 後綴都當候選工具查一次，任何候選命中家族網就攔。
   'mcp__broker__get__place_order',
 ]);
+
+// Grok #536 複審後掃 第4條（屬實）：指令的正規式有四個語法**沒有探針承重**——
+// 把它們收窄之後兩張考卷仍全綠（逐項突變實測；`s?` 與 `withdraw(al)?` 則實測有承重＝那兩項誤報）。
+// 補上對應探針，讓每一段生產力都有題目扣著。
+FORBIDDEN_FAMILY.push(
+  `${FAKE_UUID}placeorder`,             // 動詞×名詞之間的 `_?`＝分隔符可省略（連寫小寫）
+  `${FAKE_UUID}place_new_order`,        // 動詞×名詞之間的 `\w*?`＝中間可夾字
+  `${FAKE_UUID}initiate_remittance`,    // 出入金 `remit(tance)?` 的長形
+  `${FAKE_UUID}initiate_disbursement`,  // 出入金 `disburse(ment)?` 的長形
+);
 
 // 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。涵蓋 IBKR 現役唯讀＋提醒/觀察清單全家，
