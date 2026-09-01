@@ -125,12 +125,19 @@ export async function refreshSandboxAuth(authDir, opt = {}) {
   //   壞值會讓 `Date.parse` 回 NaN、走進 refresh 分支，那裡的 `log()` 原本把原文印出去——
   //   而那條路是 `log` 不是 `fail → say`，只看 summary 的考題完全量不到。
   //   先驗成合法時間；不合法就用固定訊息。
-  if (!Number.isFinite(Date.parse(String(cred.expires_at)))) throw new Error('auth.json 的 expires_at 不是合法時間（內容不回顯）——先在沙箱外 grok 登入一次');
+  // ⚠️ 用**嚴格 ISO** 驗，不是 `Date.parse` 能不能解析（Codex #535 r10）：
+  //   `Date.parse` 會把括號裡的文字當註解吃掉——`2026-01-01 (任意文字)` 照樣回得出時間戳，
+  //   於是壞值通過檢查、原文又被下面那行印進 log。用同一個 `ISO` 常數（BOX_FIELDS 也用它）。
+  if (!ISO.test(String(cred.expires_at))) throw new Error('auth.json 的 expires_at 不是合法 ISO 時間（內容不回顯）——先在沙箱外 grok 登入一次');
   const expiresAt = Date.parse(String(cred.expires_at));
   let refreshed = false;
   let current = cred;
   if (!(expiresAt - now() > early)) {
-    log(`憑證 ${Number.isFinite(expiresAt) && expiresAt < now() ? '已過期' : '快到期'}（${cred.expires_at}），向 ${cred.oidc_issuer} refresh…`);
+    // ⚠️ 印**解析後正規化回來的**時間，不是檔裡的原文：即使上面那道 ISO 檢查日後被放寬，
+    //   這一行由構造也帶不出檔案裡的任意文字（Codex #535 r10 的反例就是靠原文出去的）。
+    // ⚠️ 誠實劃界：**這一半沒有考題撐著**——上面那道 ISO 檢查已經把髒值擋在外面，
+    //   所以把這裡改回印原文，全卷照樣綠。它是為了「上面那道檢查日後被放寬」而留的第二層。
+    log(`憑證 ${expiresAt < now() ? '已過期' : '快到期'}（${new Date(expiresAt).toISOString()}），向 ${cred.oidc_issuer} refresh…`);
     const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: String(cred.refresh_token), client_id: pins.clientId });
     const r = await f(`${pins.issuer}/oauth2/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });   // 用釘住的，不用檔裡的
     if (!r.ok) throw new Error(`refresh 失敗：HTTP ${r.status}——refresh_token 可能已失效，先在沙箱外 grok 登入一次、再把 ~/.grok/auth.json 抄到 ${authDir}`);

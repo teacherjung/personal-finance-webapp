@@ -1469,7 +1469,10 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
   //       Node 原生的 SyntaxError 會把輸入前綴印進 message，只擋自己寫的訊息是擋不到的。
   //    ⚠️ 斷言也要擋**前綴**，不是只擋完整值：洩漏出去的往往只是開頭幾個字。
   const EARLY = 'SYNTHETIC-EARLY-VALUE-SECRET-0123456789';
-  // ⚠️ 對照組：先證明**這個 runtime** 的原生解析訊息真的會帶出前綴，否則下面那一格就是空包彈。
+  // ⚠️ 對照組（兩個）：
+  //   ①這個 runtime 的原生解析訊息真的會帶出前綴，否則壞 JSON 那一格是空包彈。
+  //   ②`Date.parse` 真的收得下帶括號註解的髒值，否則「Date.parse 收得下的髒值」那一格也是空包彈。
+  assert.ok(Number.isFinite(Date.parse(`2026-01-01 (${EARLY})`)), 'Date.parse 不收這一形＝那一格量不到東西，換夾具');
   try { JSON.parse(`{"broken": ${EARLY}}`); assert.fail('夾具竟然解析成功'); }
   catch (e) { assert.ok(/** @type {Error} */ (e).message.includes(EARLY.slice(0, 8)), '這個 runtime 的原生訊息不含前綴＝壞 JSON 那一格量不到東西，換夾具'); }
   const repo = tinyRepo();
@@ -1483,6 +1486,8 @@ test('關門｜門要在第一句話出去之前上膛：DLP 字典就緒前的�
     ['auth.json 不是合法 JSON', `{"broken": ${EARLY}}`, /不是合法 JSON|讀不出來/],
     // 走 `log` 不走 `say` 的那條：expires_at 只驗過「是非空字串」，壞值原本會被原文印進 log
     ['expires_at 不是合法時間', fakeAuth({ extra: { expires_at: EARLY } }), /expires_at|格式不對|不等於釘住的/],
+    // ⚠️ `Date.parse` 會把括號裡的文字當註解吃掉 ⇒ 只驗「解析得出時間」擋不住這一形（Codex #535 r10）
+    ['expires_at 是 Date.parse 收得下的髒值', fakeAuth({ extra: { expires_at: `2026-01-01 (${EARLY})` } }), /expires_at|格式不對|不等於釘住的/],
   ])) {
     const iso = isolated();
     mkdirSync(iso.authDir, { recursive: true });
