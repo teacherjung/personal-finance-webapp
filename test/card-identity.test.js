@@ -614,7 +614,7 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
 test('★cardIssuerBank／cardCertainlyNot｜代號優先、查不到才退回文字——一張卡只有一把尺', async () => {
   const { cardIssuerBank, cardCertainlyNot, issuerBank, issuerCertainlyNot } = await import('../lib/card-identity.js');
 
-  // ① 代號查得到 ⇒ 只看代號
+  // ① 代號**可用**（顯示名確認了它，或顯示名是空的）⇒ 身分由代號決定
   assert.equal(cardIssuerBank({ issuerId: 'taishin' }), '台新');
   assert.equal(cardIssuerBank({ issuerId: 'fubon-taipei' }), '富邦');
   assert.equal(cardIssuerBank({ issuerId: 'fubon-hk' }), '', '香港富邦沒有內建範本');

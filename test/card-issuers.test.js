@@ -342,10 +342,23 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
       const got = cardIssuerBank({ issuerId: o.id, issuer: shown });
       assert.ok(got === o.bank || got === '',
         `★代號「${o.id}」＋顯示名「${shown}」判成了「${got}」——有代號的卡不可以判成別家`);
-      // 同一格也釘住「確定不是別家」那一側：它只能回代號那一家自己的答案，或「證明不了」
-      const certainly = cardCertainlyNot({ issuerId: o.id, issuer: shown }, '台新');
-      assert.ok(certainly === false || o.bank !== '台新',
-        `★代號「${o.id}」＋顯示名「${shown}」竟然把自己判成「確定不是台新」`);
+      // 同一格也**逐家**釘住「確定不是別家」那一側。
+      // ⚠️ 第一版把目標銀行寫死成「台新」、斷言 `certainly === false || o.bank !== '台新'`
+      //    ——那對其餘 37 個代號**幾乎恆真**，富邦與無範本機構等於沒被檢查（Codex #547 r5）。
+      //    他的可落庫劇本：`{issuerId:'fubon-taipei', issuer:'中國信託銀行'}`（說不清楚）若被誤判成
+      //    「確定不是富邦」而出局，另一張正常富邦卡就成了唯一同行卡、富邦帳單自動歸過去。
+      //    改成照 `cardCode` 的三態逐家斷言，恆真的空間就沒了。
+      const state = cardCode({ issuerId: o.id, issuer: shown });
+      for (const b of OWN_ISSUERS.map(x => x.bank)) {
+        const certainly = cardCertainlyNot({ issuerId: o.id, issuer: shown }, b);
+        if (state.state === 'unconfirmed') {
+          assert.equal(certainly, false,
+            `★代號「${o.id}」＋顯示名「${shown}」是「說不清楚」，不可以被判成「確定不是 ${b}」而出局`);
+        } else if (state.state === 'ok') {
+          assert.equal(certainly, state.issuer.bank !== b,
+            `★代號「${o.id}」（${state.issuer.bank || '無範本'}）對 ${b} 的「確定不是」答錯了`);
+        }
+      }
     }
   }
   // 對照組：**確認得了**的四種都要照舊採信代號（否則這道檢查就是「一律不信代號」的恆真）
