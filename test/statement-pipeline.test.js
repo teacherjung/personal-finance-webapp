@@ -64,7 +64,7 @@ test('免選卡預覽（自動歸卡那條路）也要交出這兩個值', async
   assert.equal(r.statementDue, 46299);
 });
 
-test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動選、回候選；末四碼沒中但該銀行唯一一張→自動命中', async () => {
+test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動選、回候選；末四碼沒中且唯一同行卡登記另一組→衝突退手選', async () => {
   // 補發卡情境：兩張卡同末四碼。若回歸成「自動選第一張」＝帳單匯錯卡、跨卡去重失效、同筆消費重複計入分析。
   store.save({ ...store.emptyDb(), cards: [
     { id: 'c1', name: '台新舊卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' },
@@ -505,16 +505,49 @@ test('★J9b 對照：唯一同行卡「沒登記」末四碼 ⇒ 證明不了�
   // 判準取捨的理由攤在 previewAuto 的守門註解：沒登記＝只有單邊訊號、沒有東西可打架，
   // 與「帳單沒印末四碼」（J2b 的對照，那格也照舊自動）同一個證據狀態；反過來擋的代價
   // ＝一張沒登記末四碼的卡讓那家銀行每期帳單都退手選。
-  store.save({ ...store.emptyDb(),
-    cards: [{ id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' }] });
-  const b64 = Buffer.from(cjkPdf([
-    ['台新銀行 信用卡消費明細'],
-    ['卡號末四碼 5678'],
-    ['115/06/02', '115/06/04', '星巴克', '150'],
-  ])).toString('base64');
-  const r = await previewAuto(b64);
-  assert.equal(r.lastFour, '5678', '前提：帳單有印末四碼');
-  assert.equal(r.resolvedCard?.id, 'ts', '★卡沒登記末四碼＝證明不了衝突 ⇒ 照舊自動歸');
+  // ⚠️ 與 J9 的差異**只有 lastFour 一個變因**（Codex r1#3：對照組 id/name/PDF 全同，
+  //    對照才量得準）。「沒登記」的三種形狀＝缺欄／空字串／null，都算沒登記。
+  for (const [label, card] of /** @type {[string, any][]} */ ([
+    ['缺欄', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行' }],
+    ['空字串', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: '' }],
+    ['null', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: null }],
+  ])) {
+    store.save({ ...store.emptyDb(), cards: [card] });
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['卡號末四碼 5678'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.lastFour, '5678', `前提（${label}）：帳單有印末四碼`);
+    assert.equal(r.resolvedCard?.id, 'old', `★卡沒登記末四碼（${label}）＝證明不了衝突 ⇒ 照舊自動歸`);
+  }
+});
+
+test('★J9c 登記著「壞型別／壞值」的末四碼＝登記了另一組 ⇒ 一樣衝突退手選（Codex r1#1）', async () => {
+  // r1 實測抓到：原版守門用 truthiness 判「有沒有登記」，lastFour 存成 0／false 這類 falsy
+  // 壞值會被靜靜當成「沒登記」⇒ 壞資料重新拿回自動歸卡＝與本支要修的缺口同一種結果。
+  // 判準對齊 #520 的既有裁定「壞型別的答案＝字串化的答案」：String(0)='0'、String(false)='false'
+  // ——都是「另一組」；只有缺欄／null／空字串算沒登記。
+  for (const [label, lastFour] of /** @type {[string, any][]} */ ([
+    ['數字 0', 0],
+    ['布林 false', false],
+    ['字串形垃圾', '[object Object]'],
+  ])) {
+    store.save({ ...store.emptyDb(), cards: [
+      { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour }] });
+    // ★前提釘子（J8b 前例）：壞值真的原樣落庫直達，不是被櫃檯改寫——改寫了本題就不再是在考壞型別。
+    const back = store.load().cards.find((/** @type {any} */ c) => c.id === 'old');
+    assert.deepEqual(back.lastFour, lastFour, `★前提（${label}）：值原樣落庫`);
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['卡號末四碼 5678'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.resolvedCard, null, `★登記著${label}＝「另一組」 ⇒ 衝突退手選`);
+    assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['old'], `${label}：那張同行卡要進候選`);
+  }
 });
 // ⚠️ 第三格對照「帳單**沒印**末四碼＋卡**有登記** ⇒ 照舊自動」＝上面的 J2b（卡登記 9999、
 //    帳單無末四碼列、自動歸）——守門若被突變成「卡有登記就擋」，J2b 會紅，這裡不重抄一題。
