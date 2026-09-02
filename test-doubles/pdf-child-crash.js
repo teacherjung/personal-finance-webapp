@@ -1,7 +1,7 @@
 // @ts-check
 // 假子行程②：**提早死**——沒有任何 stdout，非同步丟出未捕捉的例外，`code 1` 收場。
 //
-// 這正是 2026-08-28〜09-01 CI 那三次紅的形狀（`ERR_INVALID_STATE: Controller is already closed`
+// 這正是 2026-08-28〜09-01 CI 那十場紅的形狀（`ERR_INVALID_STATE: Controller is already closed`
 // 從 pdfjs 的訊息回呼丟出來、沒人接）。
 // 用途：釘住「**子行程提早死＝500，不可以假裝成 400 使用者層錯誤**」。
 // ⚠️ 這條界線是本層最容易被弄壞的地方（#350 r2 的原始教訓）：把「沒有 stdout」一律當成
