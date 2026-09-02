@@ -51,6 +51,18 @@ import { squash } from '../lib/bank-statement.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
 
+/**
+ * 考題自己那一份**比對形**——刻意與正式的 `issuerNameKey` 分開寫（Codex #547 r7）。
+ *
+ * ⚠️ 「同一件事不要兩把尺」管的是**正式程式**；考題的 oracle 反過來：**共用正式那一份就等於
+ *    拿被測物驗被測物**。共用時，一個「把別家名稱折成這一家」的竄改會讓預期值跟著一起錯，
+ *    全組合迴圈照樣全綠——那正是本檔一路在修的「假綠」病型。
+ * ⚠️ 這一份要與 `issuerNameKey` 的**語意**相同（NFKC → 去空白 → 臺換台 → 小寫），
+ *    但**不可以 import 它**。下面有一題逐字比對兩者在一組樣本上的答案，避免它悄悄走鐘。
+ * @param {unknown} s
+ */
+const normKey = (s) => String(s ?? '').normalize('NFKC').replace(/\s+/g, '').replace(/臺/g, '台').toLowerCase();
+
 /** 「帳單抬頭」那把尺對這個字串的判定（`issuerBank` 的退路，也是本檔驗清單用的獨立第二把尺）。 */
 const byPattern = (/** @type {string} */ text) => {
   const hit = OWN_ISSUERS.filter(o => o.re.test(squash(text)));
@@ -350,8 +362,10 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
       // ★預期的三態**從清單原始資料獨立算出來**，不拿 `cardCode` 自己當 oracle
       //   （Codex #547 r6：原本用 `cardCode()` 決定預期，把 `fubon-taipei＋中國信託商業銀行`
       //   錯判成 `ok` 時整段仍全綠——那正是「考題沒在守它宣稱的東西」）。
-      const key = issuerNameKey(shown);
-      const claims = [o.name, ...(o.aka || [])].map(issuerNameKey);
+      //   ⚠️ 而且**連正規化也用考題自己那一份**（`normKey`，r7 的觀察）：共用正式的 `issuerNameKey`
+      //   時，「把別家名稱折成這一家」那種竄改會讓預期值跟著一起錯 ⇒ 迴圈照樣全綠。
+      const key = normKey(shown);
+      const claims = [o.name, ...(o.aka || [])].map(normKey);
       const expected = (key === '' || claims.includes(key)) ? 'ok' : 'unconfirmed';
       const state = cardCode({ issuerId: o.id, issuer: shown });
       assert.equal(state.state, expected,
@@ -428,6 +442,17 @@ test('★★代號｜只認**卡片自己身上**的欄位，而且字串化炸�
     assert.doesNotThrow(() => cardIssuerBank(weird), `cardIssuerBank(第 ${i} 個怪值) 不可丟例外`);
     assert.doesNotThrow(() => cardCertainlyNot(weird, '台新'), `cardCertainlyNot(第 ${i} 個怪值) 不可丟例外`);
   });
+});
+
+test('考題自己的比對形與正式的 `issuerNameKey` 語意相同（走鐘了要看得見）', () => {
+  // ⚠️ 這一題**不是**在驗 `issuerNameKey` 正確——它在驗「考題的 oracle 沒有悄悄與正式規則分岔」。
+  //    兩者刻意分開寫（見 `normKey` 檔頭），所以要有一題盯著它們在一組樣本上答案相同。
+  //    ⚠️ 一旦有人真的改了 `issuerNameKey` 的語意，這一題會紅——那時要**先想清楚該不該改**
+  //    （那是身分判準），再決定要不要同步 `normKey`；不可以反射性地把 `normKey` 抄成新的。
+  const SAMPLES = ['', '   ', '台新銀行', '臺新銀行', '台 新 銀 行', '富邦銀行（香港）', '富邦銀行(香港)',
+    'TAISHIN', 'taishin', 'ｔａｉｓｈｉｎ', '台🈟', 'HSBC', '某某會員俱樂部', '__other__',
+    ...CARD_ISSUERS.flatMap(o => [o.name, ...(o.aka || [])])];
+  for (const x of SAMPLES) assert.equal(normKey(x), issuerNameKey(x), `兩把尺對「${x}」答案不同`);
 });
 
 test('★代號｜正規化規則被動手腳時，有代號的卡最多只會「判不出來」，不會被指去別家', () => {
