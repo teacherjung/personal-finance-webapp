@@ -73,12 +73,16 @@ test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動�
   const r = await previewAuto(taishinXlsxB64());
   assert.equal(r.resolvedCard, null, '同末四碼多卡＝系統不可硬猜');
   assert.deepEqual(r.candidates.map((/** @type {any} */ c) => c.id).sort(), ['c1', 'c2'], '兩張都要進候選讓使用者選');
-  // 單卡銀行 fallback：帳單末四碼 1234 對不到 9999，但該銀行只有這一張 → 自動歸它
+  // ⚠️ 這裡原本釘著「帳單末四碼 1234 對不到 9999、但該銀行只有這一張 → 自動歸它」——
+  //    那正是 Grok 複審後掃 2026-08-28 抓到的缺口（帳單自己印的數字與卡片登記的數字明顯
+  //    衝突、卻照樣自動），已改成衝突退手選（守門與取捨＝previewAuto 的末四碼衝突註解；
+  //    主考題＝檔尾 J9 家族），本題後半跟著改口。
   store.save({ ...store.emptyDb(), cards: [
     { id: 'c9', name: '台新唯一卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' },
   ] });
   const r2 = await previewAuto(taishinXlsxB64());
-  assert.equal(r2.resolvedCard?.id, 'c9', '末四碼不合但該銀行僅此一張→自動歸卡');
+  assert.equal(r2.resolvedCard, null, '帳單印 1234、唯一同行卡登記 9999＝衝突 ⇒ 退手選');
+  assert.deepEqual(r2.candidates.map((/** @type {any} */ c) => c.id), ['c9'], '那張同行卡要進候選');
 });
 
 test('整條管線：解析 → 預覽 → 匯入 → 批次列表，四棒都要把值傳下去', async () => {
@@ -473,3 +477,44 @@ test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡
   assert.ok(r.resolvedCard, '★機構對得上就照舊自動歸卡（上一題不是「什麼都不歸」）');
   assert.equal(r.resolvedCard.id, 'tp');
 });
+
+// ── 末四碼衝突守門（Grok 複審後掃 #520 2026-08-28 抓到；base 就有的缺口）─────────────────
+// 帳單印了末四碼、庫裡沒有任何卡對得上時，原本不設 candidates、直接掉進「該銀行單卡自動歸」：
+// 台新帳單印 5678、庫裡唯一台新卡登記 1234 ⇒ 自動歸到 1234 那張——帳單自己印的數字與卡片
+// 明顯衝突。失敗劇本＝新辦同行第二張卡、還沒建進 app 就上傳新卡帳單 ⇒ 新卡消費全記到舊卡。
+// 與 J5 同哲學：訊號打架退手選。J5 釘的是「末四碼命中**別家**卡」，這裡釘「誰都沒命中、
+// 但唯一同行卡登記著另一組」。
+
+test('★J9 帳單印的末四碼庫裡誰都對不上、唯一同行卡登記著另一組 ⇒ 衝突退手選', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 5678'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
+  assert.equal(r.lastFour, '5678', '前提：末四碼讀得到、而且庫裡沒有任何卡是 5678');
+  assert.equal(r.resolvedCard, null, '★帳單印 5678、卡登記 1234＝兩個數字明顯衝突 ⇒ 不可自動歸');
+  assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['old'],
+    '候選＝那張同行卡（讓使用者自己確認，或想起要先把新卡建進 app）');
+});
+
+test('★J9b 對照：唯一同行卡「沒登記」末四碼 ⇒ 證明不了衝突，照舊自動歸（守門不是「整個不自動」）', async () => {
+  // 判準取捨的理由攤在 previewAuto 的守門註解：沒登記＝只有單邊訊號、沒有東西可打架，
+  // 與「帳單沒印末四碼」（J2b 的對照，那格也照舊自動）同一個證據狀態；反過來擋的代價
+  // ＝一張沒登記末四碼的卡讓那家銀行每期帳單都退手選。
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'ts', name: '台新卡', type: 'credit', issuer: '台新銀行' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 5678'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.lastFour, '5678', '前提：帳單有印末四碼');
+  assert.equal(r.resolvedCard?.id, 'ts', '★卡沒登記末四碼＝證明不了衝突 ⇒ 照舊自動歸');
+});
+// ⚠️ 第三格對照「帳單**沒印**末四碼＋卡**有登記** ⇒ 照舊自動」＝上面的 J2b（卡登記 9999、
+//    帳單無末四碼列、自動歸）——守門若被突變成「卡有登記就擋」，J2b 會紅，這裡不重抄一題。
