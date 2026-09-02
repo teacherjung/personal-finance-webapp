@@ -156,15 +156,16 @@ test('內容串流炸彈：一頁的小 PDF **由文字節點牆當場擋下 400
     const data = bombPdf(3_000_000);
     assert.ok(data.length < 300 * 1024,
       `攻擊檔要小得可笑才有說服力（實際 ${Math.round(data.length / 1024)}KB）——這就是「檔案大小預測不了成本」`);
-    const t0 = Date.now();
     const err = await errOf(parseStatement(data));
     assert.ok(err, '攻擊檔竟然通過了');
     assert.equal(err.code, 'pdf_too_many_text_items',
       `要由文字節點牆當場擋下（實際 ${err.code}）——收到 pdf_timeout＝牆又沒接住、只是被行程隔離兜住`);
     assert.equal(err.status, 400, '這是使用者層錯誤（他的檔案太貴），不是 500');
     assert.match(String(err.message), /文字節點|正常的對帳單/, '訊息要讓使用者知道該做什麼');
-    // 實測：單獨跑約 1.7 秒、四顆同時跑約 3.9 秒。15 秒是「牆有沒有當場動作」的判準，不是效能目標。
-    assert.ok(Date.now() - t0 < 15_000, '牆要「當場」擋，不是等到逾時才收');
+    // ⚠️ **這裡刻意沒有時間斷言**（Codex #538 r6 Medium）：我上一版寫了 `< 15_000`，
+    //    結果它自己在一次完整 `npm test` 裡以 20.19 秒轉紅、重跑又綠——**正是本支要消滅的那個病**
+    //   （同一顆 commit 一次紅一次綠），而且它量的其實是「整台機器跑全套時有多忙」。
+    //    「是牆擋的、不是逾時兜的」這件事由上面那條 `code` 斷言證明就夠了：逾時會是 `pdf_timeout`。
   } finally { setPdfTimeoutForTest(null); }
 });
 
@@ -496,9 +497,12 @@ test('架構｜**執行期**的門：不在測試行程呼叫接縫一定要丟�
     `正式行程裡呼叫接縫竟然成功了（${stdout.trim()}）——那表示子行程腳本在正式環境是可以被換掉的`);
 });
 
-test('架構｜執行期那道門：偽造的環境值、目錄外、符號連結、相對路徑改 cwd——逐項都要擋', async () => {
-  // ⚠️ Codex #538 r4/r5：這道門是**防誤用**的，不是安全邊界（環境變數誰都能設）。
-  //    它真正買到的是「呼叫得到也只能指到 test-doubles/ 裡的一般檔案」。
+test('架構｜執行期那道門：偽造環境值／目錄外／連結／目錄要擋；目錄內的一般檔要放行且釘住原檔', async () => {
+  // ⚠️ Codex #538 r4/r5/r6：這道門是**防誤用**的，不是安全邊界（環境變數誰都能設）。
+  //    它買到的是「**設定當下**，指到的必須是 test-doubles/ 裡的一般檔案，而且之後 spawn 的
+  //    就是那一個」。⚠️ 它**不防**驗完之後把檔案換掉（TOCTOU）、目錄內 hardlink 到外部、
+  //    或整個 test-doubles/ 根目錄被換成連結——那些都要有「能改 checkout」的同等權限，
+  //    而有那個權限的人本來就能直接改正式程式碼（r6 判定：不必再加固，照實寫下來即可）。
   //    r5 實證上一版擋不住：目錄內放一個指向 /bin/echo 的符號連結就過關了，
   //    而且驗的是算出來的絕對路徑、交給 spawn 的卻是原字串（相對路徑遇上 cwd 改變就對不上）。
   const { symlinkSync, writeFileSync, mkdirSync, rmSync } = await import('node:fs');
@@ -537,17 +541,22 @@ test('架構｜執行期那道門：偽造的環境值、目錄外、符號連�
     const probeDir = join(doubles, '_r5_probe_dir');
     mkdirSync(probeDir, { recursive: true });
     assert.throws(() => seam(probeDir), /一般檔案/, '目錄被當成子行程腳本收下了');
-    // ⑧ 目錄內的一般檔案要放行，而且**保存的是 canonical 路徑**（相對路徑改了 cwd 也還是同一個檔）
+    // ⑧ 目錄內的一般檔案要**放行**，而且保存的是 canonical 路徑——用行為證明，不是讀原始碼
+    //    ⚠️ 上一版在這裡讀 `lib/pdf-isolate.js` 再用 regex 找 `childScriptOverride = real;`
+    //    ——那是「斷言文字出現過」，留著那行當誘餌、實際 spawn 另一個相對路徑，題目照樣綠
+    //   （Codex #538 r6 Medium）。改成：用相對路徑設定 → 改回原本的 cwd → **真的跑一次解析**。
+    //    跑得到那支「會卡住」的假替身 ⇒ pdf_timeout（＝執行的是設定當下那個檔）；
+    //    若保存的是相對字串，從別的 cwd 去 spawn 會找不到檔案 ⇒ 500 pdf_isolate_child_failed。
     const cwd = process.cwd();
     try {
       process.chdir(doubles);
       assert.doesNotThrow(() => seam('./pdf-child-hang.js'), '目錄內的一般檔案（相對路徑）應該放行');
-      process.chdir(ROOT);
-      // cwd 換了之後，內部保存的必須仍是剛才那個檔案的絕對路徑
-      const src = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
-      assert.match(src, /childScriptOverride = real;/,
-        '保存的不是驗證過的 canonical 路徑——驗 A 跑 B，相對路徑遇到 cwd 改變就對不上');
     } finally { process.chdir(cwd); }
+    setPdfTimeoutForTest(500);
+    const viaRelative = await errOf(parseStatement(normalPdf()));
+    assert.equal(viaRelative?.code, 'pdf_timeout',
+      `改了 cwd 之後跑的不是原本那個檔（實際 ${viaRelative?.code}）——保存的不是驗證過的 canonical 路徑，`
+      + '就是「驗 A 跑 B」');
     assert.doesNotThrow(() => seam(null), '傳 null 還原不可以被路徑檢查擋下');
   } finally {
     rmSync(link, { force: true });
