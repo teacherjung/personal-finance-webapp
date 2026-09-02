@@ -1593,14 +1593,41 @@ test('假綠③｜per-share 判準：只有錯 unit 時必須 missing，不可�
 test('假綠④｜第一個 tag「存在但零可用列」必須退到下一個 tag（continue→break 的一字之差）', () => {
   // 複審實測：既有考題只蓋「概念不存在」；「概念存在但零可用列」的退路把 continue 改 break 也全綠
   // ——而那正是資本支出→自由現金流整族靜靜變 missing 的路徑。
+  // 夾具走到第 3 順位＝同時釘住「零列 continue」與「缺概念 continue」兩段，
+  // 也是 PaymentsForCapitalImprovements（2026-09-02 換入的真科目）唯一的接線考題。
   const result = parseMetricsFixture({
     PaymentsToAcquirePropertyPlantAndEquipment: { USD: [] },   // 概念在、零列
-    PaymentsForAdditionsToPropertyPlantAndEquipment: { USD: [durAnnual(2024, 700)] }
+    PaymentsForCapitalImprovements: { USD: [durAnnual(2024, 700)] }   // 第 2 順位缺概念、第 3 有值
   });
   const capex = result.metrics.capitalExpenditure;
   assert.equal(capex.status, 'available', '第一個 tag 零可用列＝要繼續試下一個，不是放棄');
-  assert.equal(capex.tag, 'PaymentsForAdditionsToPropertyPlantAndEquipment');
+  assert.equal(capex.tag, 'PaymentsForCapitalImprovements');
   assert.equal(capex.annual.at(-1).value, 700);
+});
+
+test('資本支出順位｜兩個真退路同時在場＝廣義購置（ProductiveAssets）先於改良支出', () => {
+  // 排序是語意優先序（契約「挑值」節）：CapitalImprovements 偏「改良既有資產」、口徑較窄，
+  // William 2026-09-02 裁示它只當最後退路。誰把這兩顆對調，這裡就紅。
+  const result = parseMetricsFixture({
+    PaymentsToAcquireProductiveAssets: { USD: [durAnnual(2024, 500)] },
+    PaymentsForCapitalImprovements: { USD: [durAnnual(2024, 300)] }
+  });
+  const capex = result.metrics.capitalExpenditure;
+  assert.equal(capex.status, 'available');
+  assert.equal(capex.tag, 'PaymentsToAcquireProductiveAssets');
+  assert.equal(capex.annual.at(-1).value, 500);
+});
+
+test('回購退路｜只申報「買回股權」合計的公司要能讀到（第 2 順位真科目的接線）', () => {
+  // 這一格原本放著查無此元素的假名＝退路從未啟動過、整欄靜靜留空。
+  // 本題釘的是「候選表裡真的有這一顆」：誰把它改名或拿掉，這裡就紅。
+  const result = parseMetricsFixture({
+    PaymentsForRepurchaseOfEquity: { USD: [durAnnual(2024, 1200)] }
+  });
+  const buyback = result.metrics.shareRepurchases;
+  assert.equal(buyback.status, 'available', '第 1 順位缺席＝要輪到合計科目，不是留空');
+  assert.equal(buyback.tag, 'PaymentsForRepurchaseOfEquity');
+  assert.equal(buyback.annual.at(-1).value, 1200);
 });
 
 test('假綠⑤｜revenue 缺席時 periods 的 fallback：表頭期間改由其他 duration 指標補', () => {
