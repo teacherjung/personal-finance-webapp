@@ -229,6 +229,8 @@ const QUOTE_ALLOWED = /^[\p{L}\p{N}\p{Zs}\t🤖｜：:（）()、，,；;。．.
  * 計數器數不到）。性質收口：整行含任何一個這族字元＝不可重述。
  */
 const HIDDEN_CP = /\p{Default_Ignorable_Code_Point}/u;
+/** 同一族的全域版——身分比對要把隱形字元剝掉再比（見 identityOk）。 */
+const HIDDEN_CP_G = /\p{Default_Ignorable_Code_Point}/gu;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -692,7 +694,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     //    r4 指出「壞行接近平台留言上限時，重述得把它逐字重印＝載體送不出去」——那是真的，
     //    但 r5 接著證明這條路補不完：估「最短合法載體」兩側都會判錯（optional 欄位、引文
     //    sha 位數都會變），而且**豁免自己的載體也可能超限**（來源字串極長時）。
-    //    停戰理由＝它防的是不會發生的事：真實案例（#540）的壞標頭第一行 929 字元，
+    //    停戰理由＝真實案例離那條線很遠、要撞上得刻意構造：#540 的壞標頭第一行 929 字元，
     //    離上限還有六萬多字元的餘裕；要撞上這條得刻意構造。
     //    ⚠️ 誠實劃界：**壞行長到連救濟載體都送不出時，這道閘沒有可行處方**——
     //    那是平台的長度限制、不是本閘判得出來的事，真的遇到就關掉重開 PR 或問 William。
@@ -702,7 +704,14 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
     const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
       && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
-    const identityOk = (/** @type {any} */ e) => !rid || (e.role === rid.role && e.source === rid.source);
+    // ⚠️ 身分比對要**剝掉隱形字元**（`Grok #543 掃第 6 條`）：隱形字元若長在壞行的**來源欄**，
+    //    三件事會同時成立——收件端必拒重述（整行含隱形字元）、資格判定正確判「引不動」而開放
+    //    豁免、但 rid.source 原樣帶著那顆零寬字；宣告者照肉眼看到的來源字串寫，identityOk 就
+    //    對不上 ⇒ 豁免也走不通 ⇒ 仍鎖死。**雜湊指認救的是引文腿，救不了身分腿**。
+    //    這裡把兩邊都剝一次＝收緊（讓肉眼相同的身分對得上），不放寬跨身分。
+    const stripHidden = (/** @type {string} */ t) => String(t || '').replace(HIDDEN_CP_G, '');
+    const identityOk = (/** @type {any} */ e) => !rid
+      || (stripHidden(e.role) === stripHidden(rid.role) && stripHidden(e.source) === stripHidden(rid.source));
     const exemptable = hasMark && !(rid && metaReadable && quotableAsRestate);
     const ex = !taker && exemptable && exempts.find((e) => matches(e) && identityOk(e) && e.idx > m.idx);
     // 對稱提示（同 early）：指認都對得上、卻出現在壞留言**之前**的豁免——不生效，但要出聲，

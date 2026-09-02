@@ -1230,6 +1230,42 @@ test('⭐ 劃界｜長度不在本閘的判準裡（William 2026-09-02 裁示，
   assert.doesNotMatch(problems.join('\n'), /這一則正是第②種/u, '長不等於引不動');
 });
 
+test('⭐ 死角｜sha 歧義的**四欄型上限**：引文有第二個指紋 → 重述接不了 → 可豁免', () => {
+  // `Grok #543 掃第 3 條`：既有的 sha 歧義題只釘「缺 sha 型＋ASCII 指紋」，
+  // 沒有釘 q4（四欄型）的 `<= 1` 上限——拿掉上限那一題仍綠，但那型會回到鎖死。
+  const first = '🤖 Codex｜來源：CLI（xhigh）｜審 `abc1234`｜r6｜結論：要求修改 deadbee';
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870052';
+  const body = `${first}\n\n略。`;
+  assert.ok(restateAllRefused(body, url, first), '前提：四欄型第二個指紋 ⇒ 正式重述必被拒');
+  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870052'))], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `四欄型 sha 歧義必須可豁免：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜sha 歧義的**全形指紋**（NFKC 才數得到）→ 重述接不了 → 可豁免', () => {
+  // `Grok #543 掃第 3 條`：資格側若少了 .normalize('NFKC')，全形指紋數不到 ⇒ 判成引得動 ⇒ 鎖死。
+  const first = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：要求修改 ｄｅａｄｂｅｅ';
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870053';
+  const body = `${first}\n\n略。`;
+  assert.ok(restateAllRefused(body, url, first), '前提：全形指紋 ⇒ 正式重述必被拒');
+  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870053'))], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `全形指紋必須可豁免：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜隱形字元長在**來源欄**：雜湊救引文腿，身分腿要靠剝隱形字元', () => {
+  // `Grok #543 掃第 6 條`：零寬字若長在來源欄，rid.source 會原樣帶著它，
+  // 宣告者照肉眼看到的來源字串寫就對不上 identityOk ⇒ 豁免也走不通 ⇒ 仍鎖死。
+  const first = '🤖 Codex｜來源：CLI（xhigh）\u200b｜審 `abc1234`｜r6｜結論：要求修改';
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870051';
+  const body = `${first}\n\n略。`;
+  // 宣告者用**乾淨的**來源字串（肉眼看到的那個）發豁免
+  const clean = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870051｜William 特准 2026-09-02｜原第一行雜湊：`
+    + `${createHash('sha256').update(first.trim(), 'utf8').digest('hex')}`;
+  const { problems } = verdictProblems([cu(body, url), c(clean)], HEAD, 'Codex');
+  assert.ok(!problems.some((p) => /標頭格式不合規/.test(p)),
+    `來源欄帶隱形字時，肉眼相同的身分必須對得上：${problems.join('｜')}`);
+});
+
 test('⭐ 死角｜引得動的壞行照舊不可豁免（資格沒有被放寬）', () => {
   const url = 'https://github.com/x/y/pull/9#issuecomment-5310870038';
   assert.equal(restateAllRefused(NOSHA_MAL, url, NOSHA_FIRST), false, '前提：這一行重述得動');
