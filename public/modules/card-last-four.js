@@ -19,3 +19,13 @@ export function cardLastFourText(v) {
   if (v == null || v === '') return '';
   try { return String(v); } catch { return ''; }
 }
+
+/** 顯示用後綴「（1234）」——預覽窗兩個卡片標籤的**行為本體**（Codex #541 r5：接線正則抓不住
+ *  等價拼法，守門要落在「真的被執行的函式」上，考題直接餵炸彈值）。沒登記／炸不出＝''。
+ *  @param {any} v 卡片的 lastFour 原值
+ *  @param {(s: string) => string} [escFn] HTML 端傳跳脫函式；純文字標籤（openForm 外殼自己 esc）不傳
+ *  @returns {string} */
+export function cardLastFourSuffix(v, escFn = (s) => s) {
+  const t = cardLastFourText(v);
+  return t ? `（${escFn(t)}）` : '';
+}
