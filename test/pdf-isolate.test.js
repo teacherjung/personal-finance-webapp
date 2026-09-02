@@ -14,7 +14,7 @@
 //    v1 全寫成 OOM；v2 寫成「pdfjs 卡死在解壓、promise 永不 settle」，於是炸彈題改驗 `pdf_timeout`
 //    ——**那個綠燈也是為了錯的理由**。真因是 `lib/parse-limits.js` 的取消少帶一個 `Error` 理由
 //   （pdfjs 會 assert 它），取消從沒生效、pdfjs 生產端永遠等下去＝**卡住是我們自己造成的**。
-//    修好之後炸彈由文字節點牆當場擋下（約 1.9 秒的乾淨 400），本檔的炸彈題因此改驗
+//    修好之後炸彈由文字節點牆當場擋下（一個乾淨的 400），本檔的炸彈題因此改驗
 //    `pdf_too_many_text_items`；「逾時／提早死」那一族改用**行為確定的假子行程**測（見「一之二」節）。
 //
 // ⚠️ **本檔學到最貴的一課：替身比本尊寬鬆＝假綠。** 假的 pdfjs 頁面寫成 `async cancel() {…}`
@@ -148,7 +148,7 @@ test('內容串流炸彈：一頁的小 PDF **由文字節點牆當場擋下 400
   //    於是本題期待 `pdf_timeout`——**那個綠燈也是為了錯的理由**。真相是
   //    `readPageTextCapped` 的 `reader.cancel()` 沒帶 Error 理由（pdfjs 會 assert 後拒絕、
   //    `.catch()` 又把拒絕吞掉）⇒ 取消從沒生效 ⇒ `task.destroy()` 永不回來。
-  //    **卡住是我們自己造成的，不是 pdfjs 的脾氣。** 修好之後這顆炸彈由牆在約 1.9 秒當場擋下。
+  //    **卡住是我們自己造成的，不是 pdfjs 的脾氣。** 修好之後這顆炸彈由牆當場擋下。
   // ⚠️ 逾時在這裡只是**絆索**：牆若又失效，20 秒收場而不是 30 秒。它不該是本題的通過條件——
   //    收到 `pdf_timeout` 就代表牆沒接住、只是被行程隔離兜住（那正是本題以前的樣子）。
   setPdfTimeoutForTest(20_000);
@@ -358,7 +358,11 @@ test('診斷｜父行程只收**白名單內**的代碼（子行程回什麼都�
   for (const c of [...'龘䶵鱻麤龗厵']) {
     assert.ok(!line.includes(c), `未知代碼裡的 PII 哨兵「${c}」進了日誌——白名單沒有真的在過濾`);
   }
-  assert.ok(!/pdf_flood_/.test(line), '超量的未知代碼進了日誌');
+  assert.ok(!/pdf_flood_/.test(line), '未知代碼進了日誌');
+  // ⚠️ 數量上限要真的量到（Grok 掃描 #1）：誘餌給了 12 個**合法**代碼，父行程最多只能記 8 個。
+  //    拿掉 `.slice(0, 8)` 這一行就會轉紅——子行程可以決定日誌長度，就是一個放大器。
+  assert.equal((line.match(/pdf_cancel_failed/g) || []).length, 8,
+    `合法代碼記了 ${(line.match(/pdf_cancel_failed/g) || []).length} 筆——數量上限沒有生效`);
   assert.ok(!/object|42|null/.test(line), '非字串的項目進了日誌');
   assert.ok(line.length < 200, `診斷那一行長 ${line.length} 字——子行程可以決定日誌長度就是一種放大器`);
 });
