@@ -96,6 +96,80 @@ test('IB 現金流｜設定的估算匯率是 0 或負數 → 落 skippedNoFx，
   assert.ok((ok.income?.dividends ?? 0) > 0, '合法估算要真的換出金額');
 });
 
+test('IB 現金流｜fxRateToBase 是 0 或負數 → 同缺匯率走階梯，不可乘成 0 元／負值還標「已計入」', () => {
+  // ⚠️ 病因：`Number.isFinite(0)` 是 true——0 不是匯率，是報表壞值。照乘的話 GBP 100 的股息
+  //    變 0 元、count++ ⇒ 畫面「已計入」、skippedNoFx=0 零提醒；負數更會把收入變成支出。
+  //    上一題釘的是空字串／null 那條路，這一題釘的是 #407 複審當時記錄在案的另一半：正值牆。
+  for (const bad of ['0', '-1.3']) {
+    const parsed = parseStatement(flexWithCash([
+      { type: 'Dividends', currency: 'GBP', amount: '100', fxRateToBase: bad },
+    ]), () => null);   // 設定也沒有估算匯率 ⇒ 唯一誠實的出路＝skippedNoFx
+    const inc = parsed.income;
+    assert.equal(inc?.dividends, 0, `fxRateToBase=${bad}：不可有金額進股息`);
+    assert.equal(inc?.count, 0, `fxRateToBase=${bad}：不可計入筆數（計入＝畫面說「已計入」）`);
+    assert.equal(inc?.skippedNoFx, 1,
+      `fxRateToBase=${bad} 應落「缺匯率」計數——乘 0 歸零／乘負變號都比「少一筆」更難察覺`);
+  }
+  // 反面（防「一律 skip」的過度修法）：壞 fx 只是失去第一格，階梯其餘格子要照走。
+  // ①壞 fx＋幣別是 USD ⇒ 掉到「USD 直通」那格，金額照原值計入。
+  const usd = parseStatement(flexWithCash([
+    { type: 'Dividends', currency: 'USD', amount: '100', fxRateToBase: '0' },
+  ]), () => null);
+  assert.equal(usd.income?.dividends, 100, '壞 fx 的 USD 列要走直通、不可被 skip');
+  assert.equal(usd.income?.skippedNoFx, 0);
+  assert.equal(usd.income?.count, 1);
+  // ②壞 fx＋非 USD＋設定有估算匯率 ⇒ 掉到估算那格並標註。
+  const est = parseStatement(flexWithCash([
+    { type: 'Dividends', currency: 'JPY', amount: '10000', fxRateToBase: '-2' },
+  ]), () => 0.0064);
+  assert.equal(est.income?.estimatedNoFx, 1, '壞 fx 的非 USD 列要走設定估算並標註');
+  assert.equal(est.income?.skippedNoFx, 0);
+  assert.ok((est.income?.dividends ?? 0) > 0, '估算要真的換出金額');
+});
+
+/** 合成一份「只有成交」的 Flex 回應（其餘區塊留空）。 @param {Record<string, any>[]} tradeRows */
+function flexWithTrades(tradeRows) {
+  return {
+    FlexQueryResponse: {
+      FlexStatements: {
+        FlexStatement: {
+          accountId: 'U-TEST',
+          AccountInformation: { currency: 'USD' },
+          Trades: { Trade: tradeRows },
+        },
+      },
+    },
+  };
+}
+
+test('IB 成交｜fxRateToBase 是 0 或負數 → pnlBase 記 null 歸 missing，不可把已實現損益歸零或變號', () => {
+  // ⚠️ 病因鏈：後端 `pnl * 0 = 0` 寫進 pnlBase，而前端 tradePnlBase 的階梯是「pnlBase 優先」
+  //   （portfolio-calculations.js 自己有 `> 0` 正值牆、卻排在 pnlBase 之後）⇒ 後端先塞 0，
+  //    前端的牆永遠輪不到——GBP 賣出的已實現損益靜靜消失（或變號）進交易摘要與 XIRR。
+  const bads = ['0', '-1.27'];
+  const parsed = parseStatement(flexWithTrades(bads.map(fx => ({
+    symbol: 'HSBA', tradeDate: '20260810', buySell: 'SELL', quantity: '-10',
+    tradePrice: '7', netCash: '70', fifoPnlRealized: '250', currency: 'GBP', fxRateToBase: fx,
+  }))), () => null);
+  assert.equal(parsed.trades.length, 2);
+  for (const [i, t] of parsed.trades.entries()) {
+    assert.equal(t.pnlBase, null,
+      `fxRateToBase=${bads[i]}：pnlBase 要 null（前端歸 missing 並標註），不可是 0／負值`);
+    assert.equal(t.fxRateToBase, null,
+      '壞匯率不可原樣入庫——前端階梯第二格讀它，要看到「缺」而不是 0');
+  }
+  // 反面：合法匯率照算；USD 列失去 fx 後走直通（pnlBase＝原損益）。
+  const ok = parseStatement(flexWithTrades([
+    { symbol: 'HSBA', tradeDate: '20260810', buySell: 'SELL', quantity: '-10',
+      tradePrice: '7', netCash: '70', fifoPnlRealized: '250', currency: 'GBP', fxRateToBase: '1.27' },
+    { symbol: 'VOO', tradeDate: '20260810', buySell: 'SELL', quantity: '-1',
+      tradePrice: '400', netCash: '400', fifoPnlRealized: '50', currency: 'USD', fxRateToBase: '0' },
+  ]), () => null);
+  assert.equal(ok.trades[0].pnlBase, 250 * 1.27, '合法匯率要真的換算，不可一律 null');
+  assert.equal(ok.trades[0].fxRateToBase, 1.27);
+  assert.equal(ok.trades[1].pnlBase, 50, '壞 fx 的 USD 列要走直通（pnlBase＝原損益）');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 二、Flex 取報表的錯誤處理：fail-closed 與 1019 白名單（lib/ib.js 三道）
 // ─────────────────────────────────────────────────────────────────────────────
