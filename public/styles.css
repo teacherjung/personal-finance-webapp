@@ -692,8 +692,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .subs-table tr.drag-before td { box-shadow: inset 0 2px 0 var(--accent); }
 .subs-table tr.drag-after td { box-shadow: inset 0 -2px 0 var(--accent); }
 .flag-on:hover { background: var(--accent-soft); }
-/* 續費時間線（一維座標）：相近續費會自動分層，避免標籤重疊 */
-.timeline { position: relative; height: 210px; min-width: 720px; margin: 10px 8px 4px; }
+/* 續費時間線（一維座標）：同日以群組卡收束，其餘相近續費再自動分層。 */
+.timeline { position: relative; height: 224px; min-width: 720px; margin: 10px 8px 4px; }
 .tl-axis { position: absolute; top: 98px; left: 7%; right: 7%; height: 2px; background: var(--line-2); border-radius: 2px; }
 .tl-point { position: absolute; top: 0; }
 .tl-dot { position: absolute; top: var(--dot-top); left: 0; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--line-2); }
@@ -704,6 +704,29 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .tl-amt { font-family: var(--serif); font-size: 12.5px; }
 .tl-day { font-size: 10px; color: var(--text-dim); }
 .tl-tick { position: absolute; top: 108px; transform: translateX(-50%); font-size: 10.5px; color: var(--text-dim); white-space: nowrap; }
+.tl-group-card {
+  width: 238px; padding: 7px 9px; text-align: left; background: var(--card);
+  border: 2px solid var(--frame); border-radius: 8px; box-shadow: 3px 3px 0 rgba(126, 101, 43, .16);
+}
+.tl-group-card.edge-right { transform: translateX(-94%); }
+.tl-group-card.edge-left { transform: translateX(-6%); }
+.tl-group-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 10.5px;
+}
+.tl-group-head strong { color: var(--accent-ink); }
+.tl-group-head b { flex: 0 0 auto; color: var(--text); font-family: var(--serif); font-size: 11px; }
+.tl-group-list { padding-top: 2px; }
+.tl-group-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-top: 2px; font-size: 10px; line-height: 1.25; }
+.tl-group-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-group-row b { font-family: var(--serif); font-size: 10px; font-weight: 600; }
+.tl-group-more { padding-top: 2px; color: var(--text-dim); font-size: 9.5px; text-align: right; }
+.tl-dot.grouped { width: 16px; height: 16px; background: var(--accent); }
+.tl-dot-count {
+  position: absolute; left: 9px; top: -10px; min-width: 16px; height: 16px;
+  display: grid; place-items: center; padding: 0 3px; color: var(--card); background: var(--text);
+  border: 2px solid var(--card); border-radius: 9px; font-size: 8px; font-weight: 700; line-height: 1;
+}
 /* 投資組合 */
 .region-rows { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
 .rrow { display: grid; grid-template-columns: 96px 1fr 170px; gap: 12px; align-items: center; font-size: 12.5px; }

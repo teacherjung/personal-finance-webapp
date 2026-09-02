@@ -463,25 +463,42 @@ function openCostDetailModal(subs, mk) {
 }
 
 // ---- 未來 30 天續費時間線：頁面卡片與列印報表共用的佈局演算法 ----
-// 上下交錯放標籤；同側水平距離 <14% 時自動換到下一層，避免重疊
-export function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH }) {
+// 同日先合成一個節點；否則再多的垂直層級也無法分開完全相同的 x 座標。
+export function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH, groupLabelH = labelH }) {
   const upcoming = subs.filter(s => subStatus(s) === 'active' && !isLifetimeSub(s))
     .map(s => ({ name: s.name, amount: Number(s.amount || 0), days: daysUntil(s.nextCharge), date: s.nextCharge, cat: s.category }))
     .filter(c => isFinite(c.days) && c.days >= 0 && c.days <= 30)
-    .sort((a, b) => a.days - b.days);
+    .sort((a, b) => a.days - b.days || String(a.date).localeCompare(String(b.date)));
+  const events = [];
+  for (const charge of upcoming) {
+    const previous = events.at(-1);
+    if (previous?.date === charge.date) {
+      previous.items.push(charge);
+      previous.amount += charge.amount;
+      previous.name = `${previous.items.length} 筆續費`;
+    } else {
+      events.push({ ...charge, items: [charge] });
+    }
+  }
+  const groupedDays = events.filter(event => event.items.length > 1).map(event => event.days);
   const axisY = 98, dotY = axisY - 6;
-  /** @type {{top:number[], bottom:number[]}} */
+  /** @type {{top:{left:number, grouped:boolean}[], bottom:{left:number, grouped:boolean}[]}} */
   const lastBySide = { top: [], bottom: [] };
-  const points = upcoming.map((c, i) => {
+  const points = events.map((c, i) => {
     const left = pos(c.days);
-    const side = i % 2 === 0 ? 'top' : 'bottom';
+    const grouped = c.items.length > 1;
+    const topHasNearbyGroup = grouped && lastBySide.top.some(last => last.grouped && left - last.left < 28);
+    const nearGroupedDay = !grouped && groupedDays.some(days => Math.abs(days - c.days) <= 8);
+    const side = grouped ? (topHasNearbyGroup ? 'bottom' : 'top') : (nearGroupedDay ? 'bottom' : (i % 2 === 0 ? 'top' : 'bottom'));
     const levels = side === 'top' ? topLevels : bottomLevels;
     let level = 0;
-    while (lastBySide[side][level] != null && left - lastBySide[side][level] < 14 && level < levels.length - 1) level++;
-    lastBySide[side][level] = left;
+    while (lastBySide[side][level] != null
+      && left - lastBySide[side][level].left < (grouped || lastBySide[side][level].grouped ? 24 : 14)
+      && level < levels.length - 1) level++;
+    lastBySide[side][level] = { left, grouped };
     const labelTop = levels[level];
-    const labelBottom = labelTop + labelH;
-    return { ...c, left, side, labelTop, dotY,
+    const labelBottom = labelTop + (grouped ? groupLabelH : labelH);
+    return { ...c, grouped, left, side, labelTop, dotY,
       lineTop: side === 'top' ? labelBottom : axisY,
       lineHeight: side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY) };
   });
@@ -492,7 +509,9 @@ export function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH }) {
 function chargeTimelineHtml(subs) {
   const PAD = 7;
   const pos = (d) => PAD + (Math.max(0, Math.min(30, d)) / 30) * (100 - PAD * 2);
-  const { upcoming, points } = timelinePoints(subs, { pos, topLevels: [10, 42], bottomLevels: [122, 154, 186], labelH: 42 });
+  const { upcoming, points } = timelinePoints(subs, {
+    pos, topLevels: [10, 42], bottomLevels: [122, 154, 186], labelH: 42, groupLabelH: 72
+  });
   const total = upcoming.reduce((t, c) => t + c.amount, 0);
   const ticks = [0, 10, 20, 30].map(d => `<div class="tl-tick" style="left:${pos(d).toFixed(2)}%">${d === 0 ? '今天' : '+' + d + '天'}</div>`).join('');
 
@@ -501,15 +520,23 @@ function chargeTimelineHtml(subs) {
       <p class="muted" style="font-size:12.5px;margin-top:6px">未來 30 天內沒有預定續費 🎉</p></div>`;
   }
 
-  const pointsHtml = points.map(p => `<div class="tl-point ${p.side}" style="left:${p.left.toFixed(2)}%;--label-top:${p.labelTop}px;--line-top:${p.lineTop}px;--line-height:${p.lineHeight}px;--dot-top:${p.dotY}px">
-      <div class="tl-label">
+  const pointsHtml = points.map(p => {
+    const visibleItems = p.items.slice(0, 3);
+    const hiddenCount = p.items.length - visibleItems.length;
+    const label = p.grouped ? `<div class="tl-label tl-group-card ${p.left >= 80 ? 'edge-right' : p.left <= 20 ? 'edge-left' : ''}">
+        <div class="tl-group-head"><strong>${p.days === 0 ? '今天' : p.days + ' 天後'} · ${p.items.length} 筆</strong><b>${fmtFee(p.amount)}</b></div>
+        <div class="tl-group-list">${visibleItems.map(item => `<div class="tl-group-row"><span>${esc(item.name)}</span><b>${fmtFee(item.amount)}</b></div>`).join('')}${hiddenCount ? `<div class="tl-group-more">另 ${hiddenCount} 筆</div>` : ''}</div>
+      </div>` : `<div class="tl-label">
         <div class="tl-name">${esc(p.name)}</div>
         <div class="tl-amt">（${fmtFee(p.amount)}）</div>
         <div class="tl-day">${p.days === 0 ? '今天' : p.days + ' 天後'}</div>
-      </div>
+      </div>`;
+    return `<div class="tl-point ${p.side} ${p.grouped ? 'grouped' : ''}" style="left:${p.left.toFixed(2)}%;--label-top:${p.labelTop}px;--line-top:${p.lineTop}px;--line-height:${p.lineHeight}px;--dot-top:${p.dotY}px">
+      ${label}
       <div class="tl-stem"></div>
-      <div class="tl-dot" style="background:${(Object.hasOwn(CAT_COLOR, p.cat) && CAT_COLOR[p.cat]) || CHART.gray}"></div>
-    </div>`).join('');
+      <div class="tl-dot ${p.grouped ? 'grouped' : ''}" ${p.grouped ? '' : `style="background:${(Object.hasOwn(CAT_COLOR, p.cat) && CAT_COLOR[p.cat]) || CHART.gray}"`}>${p.grouped ? `<span class="tl-dot-count">${p.items.length}</span>` : ''}</div>
+    </div>`;
+  }).join('');
   
 
   return `<div class="chart-card timeline-card">
