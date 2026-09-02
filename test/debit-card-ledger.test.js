@@ -53,6 +53,29 @@ test('登記：卡片型別枚舉有 debit、卡片表單選項也有（枚舉�
   assert.match(src, /value: 'debit', label: '簽帳金融卡'/, '表單選項要有簽帳金融卡（枚舉有、表單沒有＝那種卡選不到）');
 });
 
+test('★簽帳卡歸卡**只看 `issuer` 文字、不讀 `issuerId`**（documenting；卡片頁的升級提示不發給簽帳卡就是靠這個前提）', async () => {
+  // ⚠️ 這是**行為**題，不是掃原始碼（Codex #547 r1 第 2 條：字面掃描換個等價寫法就量不到）。
+  //    庫裡先放一張**代號正確、顯示名被改過**的簽帳卡：`issuerId:'taishin'` 但 `issuer:'台新 Richart'`。
+  //    `sameBank('台新 Richart','台新')` 是 false ⇒ 配不上 ⇒ 預覽會說「要新建一張」。
+  //    ⇒ 證明代號在這條路上一個結果都改不了，而**顯示名才是承重的那一個**。
+  // ⚠️ **這一題會在「簽帳卡開始讀 issuerId」那天轉紅**——那正是要的：接上了就要回來
+  //    重新決定 `public/modules/cards.js` 的 `issuerUpgradeNote` 要不要也提示簽帳卡。
+  await resetDb();
+  const db0 = await getDb();
+  db0.cards = [{ id: 'd1', type: 'debit', name: '我的台新 Richart', issuer: '台新 Richart', issuerId: 'taishin', lastFour: '8808' }];
+  await saveDb(db0);
+  const r = await previewBankStatement('QUJD', '', async () => debitParsed());
+  assert.deepEqual(r.cardLedger.cards.map((c) => [c.name, c.exists]), [['台新簽帳金融卡 8808', false]],
+    '★代號正確也配不上——那條路讀的是 issuer 文字');
+  // 對照組：把顯示名改回配得上的寫法（代號一個字沒動）⇒ 立刻配得上 ⇒ 證明變因真的是 issuer 文字
+  const db1 = await getDb();
+  db1.cards = [{ id: 'd1', type: 'debit', name: '我的台新卡', issuer: '台新銀行', issuerId: 'taishin', lastFour: '8808' }];
+  await saveDb(db1);
+  const r2 = await previewBankStatement('QUJD', '', async () => debitParsed());
+  assert.deepEqual(r2.cardLedger.cards.map((c) => [c.name, c.exists]), [['我的台新卡', true]],
+    '★改的只有 issuer 文字，結果就翻了');
+});
+
 test('★預覽：A 區兩筆會記到「台新簽帳金融卡 8808」（還沒有這張卡＝標會新建）；D 區刷卡列分類留空、轉帳列照常分類', async () => {
   await resetDb();
   const r = await previewBankStatement('QUJD', '', async () => debitParsed());

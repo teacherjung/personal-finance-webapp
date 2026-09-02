@@ -619,10 +619,17 @@ test('★cardIssuerBank／cardCertainlyNot｜代號優先、查不到才退回�
   assert.equal(cardIssuerBank({ issuerId: 'fubon-taipei' }), '富邦');
   assert.equal(cardIssuerBank({ issuerId: 'fubon-hk' }), '', '香港富邦沒有內建範本');
   assert.equal(cardIssuerBank({ issuerId: 'esun' }), '');
-  // ⚠️ **顯示字串完全不參與**——這幾格是本支唯一真正買到的東西
-  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk', issuer: '台北富邦銀行' }), '',
-    '★代號說香港、字串說台北 ⇒ 代號贏（不贏的話台北富邦的帳單會歸到香港卡）');
-  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '玉山銀行' }), '台新');
+  // ⚠️ 顯示字串**沒有指向別家**時（空白／清單認不得的自訂文字）⇒ 身分完全由代號決定
+  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk', issuer: '我的某某卡' }), '');
+  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '我的某某卡' }), '台新');
+  assert.equal(issuerBank('我的某某卡'), '', '對照：同一串字沒有代號時判不出任何機構');
+  // ⚠️ **兩欄互相矛盾 ⇒ 不採信代號、退回文字**（Codex #547 r1 第 1 條）：
+  //    無條件相信代號時，一張「畫面寫富邦、代號是台新」的卡會被判成「確定不是富邦」而出局，
+  //    於是另一張富邦卡成了唯一同行卡、帳單自動歸過去——而那張卡是**舊分頁只送 issuer** 造出來的。
+  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk', issuer: '台北富邦銀行' }), issuerBank('台北富邦銀行'),
+    '★矛盾 ⇒ 逐字等於 base 的答案');
+  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '玉山銀行' }), '',
+    '★畫面寫玉山的卡不可以因為代號寫台新就收台新的帳單');
 
   // ② 代號查不到（含空／非字串／不認得的字串）⇒ **視同沒有代號**，逐字等於文字那條路
   for (const badId of [undefined, null, '', 123, true, {}, ['taishin'], '沒這個代號', 'TAISHIN', ' taishin']) {
@@ -647,8 +654,10 @@ test('★cardIssuerBank／cardCertainlyNot｜代號優先、查不到才退回�
   // ④ 方向單向的證據：代號那條路**只可能**讓「確定別家」更容易成立，不會讓某張卡多拿到身分。
   //    ⚠️ 這是逐點列舉、不是全稱證明——真正的全稱不變量寫在 `cardCertainlyNot` 檔頭。
   assert.equal(cardCertainlyNot({ issuerId: 'fubon-hk', issuer: '富邦' }, '富邦'), true,
-    '★沒代號時「富邦」是歧義＝不確定＝擋；挑過清單之後就不必再擋了');
+    '★沒代號時「富邦」是歧義＝不確定＝擋；挑過清單之後就不必再擋了（歧義寫法含代號那一家＝不算矛盾）');
   assert.equal(issuerCertainlyNot('富邦', '富邦'), false, '對照：同一串字沒有代號時確實是「不確定」');
+  assert.equal(cardCertainlyNot({ issuerId: 'taishin', issuer: '台北富邦銀行' }, '富邦'), false,
+    '★兩欄矛盾的卡不可以被判成「確定不是富邦」而出局（J13 的單元版）');
 });
 
 test('★issuerCertainlyNot｜「確定是別家」的判準——分支②唯一性前提的純函式直測', async () => {

@@ -207,8 +207,12 @@ test('★J1 認不出機構（bank 空字串）時，不得有任何卡片算「
   assert.equal(cardMatchesBank({ issuer: '玉山銀行' }, '台新'), false);
   // 代號那條路（2026-09-02）：吃的是**卡片**，所以代號一樣要被看見
   assert.equal(cardMatchesBank({ issuerId: 'taishin' }, '台新'), true, '★只有代號、沒有顯示名也要認得出來');
-  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '台新銀行' }, '台新'), false,
-    '★代號說是玉山 ⇒ 顯示名寫台新也不算台新的卡（這一格就是本支的全部價值）');
+  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '我的某某卡' }, '台新'), false,
+    '★代號說是玉山 ⇒ 不算台新的卡（顯示名是清單認不得的自訂文字＝沒有反對證據，答案全由代號決定）');
+  assert.equal(cardMatchesBank({ issuerId: 'taishin', issuer: '我的某某卡' }, '台新'), true,
+    '★代號授予的身分是文字給不了的（同一串字沒有代號時判不出任何機構）');
+  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '台新銀行' }, '台新'), true,
+    '★兩欄矛盾 ⇒ 不採信代號、退回文字＝與 base 相同（J13 是它在錢的路徑上的端到端版）');
 });
 
 test('★J2 端到端：讀得到列但認不出機構的 PDF，即使只有一張卡也不准自動歸卡', async () => {
@@ -489,7 +493,11 @@ test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡
 //   以及**沒有代號的卡零回歸**（裁示的另一半）。
 
 test('★★J10 有代號的香港富邦卡不再擋住台北富邦的自動歸卡——代號讓「確定是別家」成立', async () => {
-  // 這是代號在**錢的路徑**上第一個看得見的差別。
+  // ⚠️ **誠實劃界（Codex #547 r1 之後補）**：這一組卡**表單產不出來**——挑「富邦銀行（香港）」會
+  //    同時把 `issuer` 寫成清單正式名稱，而那個名稱在 base 就判得出「不是台北富邦」了。
+  //    所以本題證明的是「代號真的接進了對卡決策樹、而且優先於文字」，**不是**「使用者今天會看到的差別」。
+  //    對表單產得出來的資料，代號今天**不改變任何行為**（價值是結構性的：身分不再從顯示字串推導，
+  //    所以清單改名／正規化規則被動手腳都影響不到它）——PR 說明曾把這一題寫成賣點，已改口。
   // 前提（先證明給自己看）：那個顯示字串在文字那條路上會被 `OWN_ISSUERS` 的**前綴**命中成「富邦」
   //   （樣式錨定在開頭、沒有結尾錨；`lib/card-identity.js` 的 OWN_ISSUERS 檔頭記著這個已知繞法）。
   const { issuerBank, cardIssuerBank } = await import('../lib/card-identity.js');
@@ -528,11 +536,13 @@ test('★J10b 對照：同一組卡**拿掉代號** ⇒ 照舊退手選（本支
   assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['hk', 'tp'], '兩張都要看得到');
 });
 
-test('★J11 代號在末四碼那條路上也說了算——顯示名寫台新、代號說玉山 ⇒ 不自動歸', async () => {
-  // 方向是**收緊**（本來會自動、現在退手選）。這種矛盾資料只可能來自手改／備份匯入，
-  // 但它是「代號優先」這條規則在錢的路徑上最直接的證據。
+test('★J11 代號在末四碼那條路上也算數——顯示名認不出、代號說是台新 ⇒ 照樣自動歸', async () => {
+  // ⚠️ **誠實劃界（Codex #547 r1 之後改寫）**：這一格是**放寬**（base 判不出、head 判得出），
+  //    而且**卡片表單產不出這種資料**——表單寫代號時一定同時把清單正式名稱寫進 `issuer`。
+  //    它只可能來自備份匯入／直打 API。留著它是因為它是「代號真的餵進了錢的路徑」最直接的證據，
+  //    但**不可以拿它當「使用者看得到的好處」**（那是 PR 說明曾經寫過、已經改掉的過度宣稱）。
   store.save({ ...store.emptyDb(),
-    cards: [{ id: 'weird', name: '代號說玉山的卡', type: 'credit', issuer: '台新銀行', issuerId: 'esun', lastFour: '1234' }] });
+    cards: [{ id: 'coded', name: '只有代號的卡', type: 'credit', issuer: '我的某某卡', issuerId: 'taishin', lastFour: '1234' }] });
   const b64 = Buffer.from(cjkPdf([
     ['台新銀行 信用卡帳單'],
     ['卡號末四碼 1234'],
@@ -541,7 +551,20 @@ test('★J11 代號在末四碼那條路上也說了算——顯示名寫台新�
   const r = await previewAuto(b64);
   assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
   assert.equal(r.lastFour, '1234', '前提：末四碼唯一命中那張卡');
-  assert.equal(r.resolvedCard, null, '★代號說它是玉山 ⇒ 機構對不上 ⇒ 只當候選');
+  assert.equal(r.resolvedCard?.id, 'coded', '★代號補上了文字給不了的身分 ⇒ 兩個訊號一致 ⇒ 自動歸');
+});
+
+test('★J11b 對照：同一張卡**拿掉代號** ⇒ 判不出機構、只當候選（證明變因真的是代號）', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'coded', name: '只有代號的卡', type: 'credit', issuer: '我的某某卡', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡帳單'],
+    ['卡號末四碼 1234'],
+    ['115/07/03', '115/07/05', '一般商店', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard, null, '★沒有代號 ⇒「我的某某卡」判不出機構 ⇒ 不自動歸');
+  assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['coded'], '末四碼命中 ⇒ 它是候選');
 });
 
 test('★J12 壞代號＝視同沒有代號、退回文字判準（零回歸；不是「一律擋」）', async () => {
@@ -557,6 +580,58 @@ test('★J12 壞代號＝視同沒有代號、退回文字判準（零回歸；�
     const r = await previewAuto(b64);
     assert.equal(r.resolvedCard?.id, 'only', `★代號 ${JSON.stringify(badId)} 查不到 ⇒ 退回「台新銀行」這串字 ⇒ 照舊自動歸`);
   }
+});
+
+test('★★J13 兩欄矛盾的卡（畫面寫富邦、代號是台新）不可以出局——那會讓帳單自動歸到別張卡（Codex #547 r1 第 1 條）', async () => {
+  // 病灶：`issuer` 與 `issuerId` 是同一個身分的兩半，但 PUT 是部分更新、repo 淺合併
+  //   ⇒ **只送 issuer 的寫入會留下前一次的代號**。升級後沒重新整理的舊分頁就是這樣送的。
+  //   無條件相信代號 ⇒ 卡 A 被判「確定不是富邦」而出局 ⇒ 卡 B 成了唯一同行卡 ⇒ 富邦帳單自動歸到 B。
+  //   **帳單若其實是 A 的，錢就記到 B 上了。**
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'a', name: '被舊分頁改壞的卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'taishin' },
+    { id: 'b', name: '正常的台北富邦卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'fubon-taipei' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
+  assert.ok(!r.lastFour, '前提：末四碼讀不出來 ⇒ 只能靠分支②「該銀行單卡」');
+  assert.equal(r.resolvedCard, null, '★兩欄矛盾＝不採信代號 ⇒ 兩張都算富邦 ⇒ 退手選（＝base 的行為）');
+  assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['a', 'b'], '★兩張都要看得到');
+});
+
+test('★J13b 對照：把卡 A 的兩欄改成**一致**（真的是台新卡）⇒ 分支②照舊自動歸到 B', async () => {
+  // 沒有這一題，J13 會被「乾脆一律不信代號」蒙混過去——那等於整支 PR 白做。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'a', name: '台新卡', type: 'credit', issuer: '台新銀行', issuerId: 'taishin' },
+    { id: 'b', name: '正常的台北富邦卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'fubon-taipei' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台北富邦銀行 信用卡帳單'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard?.id, 'b', '★兩欄一致的台新卡確定不是富邦 ⇒ 出局是對的 ⇒ 仍然自動歸');
+});
+
+test('★J14 代號那條路只作用在信用卡——簽帳金融卡不進 previewAuto（升級提示不發給它的前提之一）', async () => {
+  // ⚠️ 這是**行為**題，取代原本掃原始碼的正則（Codex #547 r1 第 2 條：正則數到了不相干的字串，
+  //    而且改個等價寫法就繞得過）。前提變了這題就會紅，正好提醒回來重新決定提示範圍。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'd', name: '台新簽帳金融卡 8808', type: 'debit', issuer: '台新銀行', issuerId: 'taishin', lastFour: '8808' },
+  ] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡帳單'],
+    ['卡號末四碼 8808'],
+    ['115/07/03', '115/07/05', '一般商店', '1,250'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
+  assert.equal(r.lastFour, '8808', '前提：末四碼讀得到，而那張簽帳卡正好登記同一組');
+  assert.equal(r.resolvedCard, null, '★簽帳卡根本不在候選族群裡（代號再正確也一樣）');
+  assert.deepEqual(r.candidates, [], '★連候選都不是——庫裡沒有任何信用卡');
 });
 
 // ── 末四碼衝突守門（Grok 複審後掃 #520 2026-08-28 抓到；base 就有的缺口）─────────────────

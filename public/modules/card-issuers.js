@@ -243,6 +243,46 @@ export function issuerById(id) {
 }
 
 /**
+ * 這張卡的**代號**算不算數——算數才回那一筆，否則回 `null`（＝視同沒有代號）。
+ *
+ * ## 為什麼代號不能無條件算數（Codex #547 r1 第 1 條，高、阻擋；我自己重現過）
+ *
+ * `card.issuer` 與 `card.issuerId` 是**同一個身分的兩半**，但櫃檯把它們當兩個獨立欄位收
+ * （`WRITABLE_FIELDS.cards` 兩欄都在、`PUT` 是部分更新、`lib/repo.js` 淺合併）
+ * ⇒ **只送 `issuer`、不送 `issuerId` 的寫入會留下前一次的代號**。
+ * ⚠️ 這**不是只有手改資料庫才做得到**：使用者升級後沒有重新整理的**舊分頁**跑的是舊版 `cards.js`，
+ *    它只送 `issuer` ⇒ 按一次儲存就產生矛盾的一張卡。
+ *
+ * 實測那一張卡有多危險（Codex 的重現，我逐格重跑過）：
+ *   卡 A `{issuer:'台北富邦銀行', issuerId:'taishin'}`（畫面寫富邦、代號是台新）、卡 B ＝正常的台北富邦卡。
+ *   無條件相信代號 ⇒ A 被判「確定不是富邦」而出局 ⇒ **B 成了唯一同行卡 ⇒ 富邦帳單自動歸到 B**。
+ *   base 只看字串，兩張都算富邦 ⇒ 退手選。**帳單若其實是 A 的，錢就記到 B 上了。**
+ *
+ * ## 判準：**顯示名指向別家就不採信代號**（⇒ 退回文字那條路＝與 base 逐字相同）
+ *
+ * ・`issuersNamed(card.issuer)` **有命中、但都不是代號那一家** ⇒ 兩欄互相矛盾 ⇒ 回 `null`。
+ * ・顯示名**空白**或**清單認不得**（自訂機構）⇒ 沒有反對證據 ⇒ 代號算數。
+ * ⚠️ 這裡用到 `issuersNamed`（也就是 `issuerNameKey`），看起來像把文字比對放回身分那條路——
+ *    **方向是單向的**：它只能把「有身分」變成「沒身分」，永遠不能授予身分。所以就算有人改壞
+ *    正規化規則，代價也只是多按幾次選卡，不會讓帳單自動歸到別張卡。這與檔頭那個洞的方向相反。
+ * ⚠️ **矛盾時退回文字、不是一律擋**：退回文字＝**回到 base 的行為**（上例的 A 照樣算富邦、兩張都在
+ *    族群裡 ⇒ 退手選），這比「整張卡判不出身分」溫和，也與「代號查不到＝視同沒有代號」同一條規則
+ *    ——一張卡永遠只有一把尺，而且矛盾與查不到走同一條退路，不是兩套。
+ *
+ * ⚠️ 住在這一支（不是 `lib/card-identity.js`）是因為**卡片表單也要用同一份**：
+ *    表單若還把矛盾的代號預選起來，使用者按個儲存就把矛盾寫死了。前端 import 不到 `lib/`，
+ *    所以判準本體放這裡、`lib` 那邊 import 過去——同一件事只有一個實作。
+ * @param {{ issuer?: unknown, issuerId?: unknown } | null | undefined} card
+ * @returns {CardIssuer | null}
+ */
+export function codedIssuer(card) {
+  const listed = issuerById(card?.issuerId);
+  if (!listed) return null;
+  const claimed = issuersNamed(card?.issuer);
+  return (claimed.length && !claimed.includes(listed)) ? null : listed;
+}
+
+/**
  * 卡片表單「發卡銀行 / 機構」下拉的選項。
  * 順序＝（未設定）→ 清單 → 其他（自行輸入）。「其他」擺最後：它是退路，不是預設。
  * ⚠️ **選項的 `value` 是代號、不是名字**（2026-09-02）：下拉送回來的就是要存進 `card.issuerId` 的值，
@@ -277,9 +317,14 @@ export function issuerOptions() {
  *    （`public/modules/form-options.js` 檔頭：帳戶型別被靜靜換掉、50 萬負債變 50 萬資產），
  *    規矩是**不可靜靜改掉使用者資料**。（`aka` 仍然有用：它讓那些既有寫法在 `issuerBank`
  *    那條路照樣認得出來。）
- * ⚠️ **不認得的代號會在儲存時被清掉**（第四種 round-trip，2026-09-02 新增）：它落到②，
- *    使用者按儲存就寫成「這一項的代號」或「沒有代號」。`issuer` 顯示字串原樣保留，
- *    被換掉的只有一個我們沒發過、也查不到東西的代號——留著它只會讓那張卡永遠判不出身分。
+ * ⚠️ **不認得的代號在儲存時會被換掉**（第四種 round-trip）：它落到②，使用者按儲存就寫成
+ *    「這一項的代號」或「沒有代號」。
+ *    ⚠️ 我第一版在這裡寫「`issuer` 顯示字串原樣保留」與「留著它會讓那張卡永遠判不出身分」，
+ *    **兩句都不對**（Codex #547 r1 第 4 條）：①顯示字串同樣照②的規則走，可能被收斂成清單正式寫法
+ *    （`{issuer:'臺新銀行', issuerId:'zzz'}` → `{issuer:'台新銀行', issuerId:'taishin'}`）；
+ *    ②不認得的代號**不會**讓卡片判不出身分——`cardIssuerBank` 對它「視同沒有代號」、退回文字判準，
+ *    所以一張「台新銀行」的卡照樣自動歸卡（`test/statement-pipeline.test.js` 的 J12 就是釘這件事）。
+ *    正確的逐條列名在下面 `resolveIssuerFields` 的檔頭。
  * @param {{ issuer?: unknown, issuerId?: unknown } | null | undefined} card
  * @returns {{ issuerPick: string, issuerOther: string }}
  */
@@ -287,7 +332,7 @@ export function issuerFormFields(card) {
   if (typeof card === 'string') {
     throw new TypeError('issuerFormFields 吃的是卡片物件（要 issuer 與 issuerId 兩欄），不是 issuer 字串');
   }
-  const byId = issuerById(card?.issuerId);
+  const byId = codedIssuer(card);   // ⚠️ 不是 issuerById——兩欄矛盾時不採信代號，見 codedIssuer 檔頭
   if (byId) return { issuerPick: byId.id, issuerOther: '' };
   const raw = String(card?.issuer ?? '');
   if (!raw.trim()) return { issuerPick: '', issuerOther: '' };
