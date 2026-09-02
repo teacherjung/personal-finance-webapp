@@ -344,12 +344,15 @@ test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真�
 
 // ───────────────────────────────── 接線與自報 ─────────────────────────────────
 
-test('⭐ 地圖自己要找得到：CLAUDE.md 與 AGENTS.md 都要指得回它', () => {
-  for (const from of ['CLAUDE.md', 'AGENTS.md']) {
+test('⭐ 地圖自己要找得到：三份正本都要指得回它', () => {
+  // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
+  //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
+  for (const from of CANON) {
     assert.ok(read(from).includes(MAP),
       `「${from}」沒有提到 ${MAP}。\n`
-      + '⚠️ 沒有人指路的地圖等於不存在——CLAUDE.md 是 Claude 每個 session 自動載入的入口、\n'
-      + '   AGENTS.md 是 Codex 的入口，兩邊都要指得回來。');
+      + '⚠️ 沒有人指路的地圖等於不存在。三份正本各自是不同讀者的入口\n'
+      + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人），\n'
+      + '   少一個入口，那群讀者就找不到它。');
   }
 });
 
