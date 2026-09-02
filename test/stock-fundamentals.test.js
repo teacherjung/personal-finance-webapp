@@ -1630,6 +1630,70 @@ test('回購退路｜只申報「買回股權」合計的公司要能讀到（�
   assert.equal(buyback.annual.at(-1).value, 1200);
 });
 
+test('回購補期｜合計科目可補普通股序列的較新缺期，但必須標 MIXED_TAG（Grok 掃描①②）', () => {
+  // 假名時代這條補期路徑從未跑過；換真科目＝第一次打開。這一題把「接得上」與
+  // 「接上必有混合來源警示」一起釘住——把 shareRepurchases 改成 first-tag 禁接力，這裡就紅。
+  const result = parseMetricsFixture({
+    PaymentsForRepurchaseOfCommonStock: { USD: [durAnnual(2023, 800)] },
+    PaymentsForRepurchaseOfEquity: { USD: [durAnnual(2024, 1500)] }
+  });
+  const buyback = result.metrics.shareRepurchases;
+  assert.deepEqual(
+    buyback.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2023-12-31', 800, 'PaymentsForRepurchaseOfCommonStock'],
+      ['2024-12-31', 1500, 'PaymentsForRepurchaseOfEquity']
+    ],
+    '無重疊的新期由低順位補上＝newer-periods 的既定行為'
+  );
+  assert.equal(
+    result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'shareRepurchases'),
+    true,
+    '跨 tag 接力沒警示＝寬窄口徑靜靜混在同一欄'
+  );
+});
+
+test('回購衝突｜同期重疊值差超過 0.1%＝整顆合計科目拒收，連它的新期一起（Grok 掃描②）', () => {
+  // Dover／Ford 型在回購這一格的專屬版：沒有這題時，把衝突檢查整段拿掉回購也不會紅。
+  const result = parseMetricsFixture({
+    PaymentsForRepurchaseOfCommonStock: { USD: [durAnnual(2023, 1000)] },
+    PaymentsForRepurchaseOfEquity: { USD: [durAnnual(2023, 1500), durAnnual(2024, 1600)] }
+  });
+  const buyback = result.metrics.shareRepurchases;
+  assert.deepEqual(
+    buyback.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [['2023-12-31', 1000, 'PaymentsForRepurchaseOfCommonStock']],
+    '重疊期實質衝突＝低順位整顆拒收，2024 不可各自接上'
+  );
+  assert.equal(
+    result.warnings.some(item => (
+      item.code === 'TAG_OVERLAP_CONFLICT' && item.metric === 'shareRepurchases'
+    )),
+    true,
+    '被拒來源的缺期落在最近五年＝必須發衝突警示'
+  );
+});
+
+test('資本支出補期｜改良支出可補 PPE 序列的較新缺期，但必須標 MIXED_TAG（Grok 掃描①）', () => {
+  // CBRE 題釘的是 PPE↔ProductiveAssets；CapitalImprovements 這顆新退路的補期路徑要自己的題。
+  const result = parseMetricsFixture({
+    PaymentsToAcquirePropertyPlantAndEquipment: { USD: [durAnnual(2023, 400)] },
+    PaymentsForCapitalImprovements: { USD: [durAnnual(2024, 250)] }
+  });
+  const capex = result.metrics.capitalExpenditure;
+  assert.deepEqual(
+    capex.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
+    [
+      ['2023-12-31', 400, 'PaymentsToAcquirePropertyPlantAndEquipment'],
+      ['2024-12-31', 250, 'PaymentsForCapitalImprovements']
+    ]
+  );
+  assert.equal(
+    result.warnings.some(item => item.code === 'MIXED_TAG' && item.metric === 'capitalExpenditure'),
+    true
+  );
+});
+
 test('回購順位｜兩顆同期並存＝普通股回購先於合計（Codex r1：實查 CY2024 有 15 家同報、9 家值不同）', () => {
   // 與資本支出順位題對稱：順位是語意優先序，對調兩顆會直接改這些公司的畫面金額。
   const result = parseMetricsFixture({
