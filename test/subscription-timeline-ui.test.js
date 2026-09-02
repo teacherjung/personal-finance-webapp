@@ -35,15 +35,47 @@ function sampleSubscriptions() {
   ];
 }
 
+const pageLayout = {
+  pos: days => 7 + days / 30 * 86,
+  topLevels: [8, 46],
+  bottomLevels: [122],
+  labelH: 42,
+  groupLabelH: 82,
+  labelSpan: 13,
+  groupLabelSpan: 34,
+  edgeAware: true,
+  bottomStep: 46,
+};
+
+function overlap(a, b) {
+  return a.labelLeft < b.labelRight + 1 && a.labelRight > b.labelLeft - 1
+    && a.labelTop < b.labelTop + b.labelHeight + 4
+    && a.labelTop + a.labelHeight > b.labelTop - 4;
+}
+
+function stemHitsLabel(point, label) {
+  const stemBottom = point.lineTop + point.lineHeight;
+  return point.left > label.labelLeft && point.left < label.labelRight
+    && point.lineTop < label.labelTop + label.labelHeight
+    && stemBottom > label.labelTop;
+}
+
+function assertClear(points) {
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      assert.equal(overlap(points[i], points[j]), false,
+        `${points[i].name} 不可與 ${points[j].name} 重疊`);
+      assert.equal(stemHitsLabel(points[i], points[j]), false,
+        `${points[i].name} 的連線不可穿過 ${points[j].name}`);
+      assert.equal(stemHitsLabel(points[j], points[i]), false,
+        `${points[j].name} 的連線不可穿過 ${points[i].name}`);
+    }
+  }
+}
+
 test('續費時間線：同一天三筆合成一個節點，保留逐筆內容與正確合計', () => {
   const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
-  const result = timelinePoints(sampleSubscriptions(), {
-    pos: days => days,
-    topLevels: [10, 42],
-    bottomLevels: [122, 154, 186],
-    labelH: 42,
-    groupLabelH: 72,
-  });
+  const result = timelinePoints(sampleSubscriptions(), pageLayout);
 
   assert.equal(result.upcoming.length, 6, '合計仍須使用原本六筆續費，不能因分組少算');
   assert.equal(result.points.length, 4, '同日三筆只佔一個時間點');
@@ -58,12 +90,7 @@ test('續費時間線：同一天三筆合成一個節點，保留逐筆內容�
 
 test('續費時間線：單筆日期維持原本標籤資料，不被誤包成群組', () => {
   const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
-  const result = timelinePoints([sampleSubscriptions()[0]], {
-    pos: days => days,
-    topLevels: [10, 42],
-    bottomLevels: [122, 154, 186],
-    labelH: 42,
-  });
+  const result = timelinePoints([sampleSubscriptions()[0]], pageLayout);
 
   assert.equal(result.points.length, 1);
   assert.equal(result.points[0].grouped, false);
@@ -72,12 +99,48 @@ test('續費時間線：單筆日期維持原本標籤資料，不被誤包成�
   assert.equal(result.points[0].items.length, 1);
 });
 
+test('續費時間線：邊緣雙群組與鄰近單筆依矩形錯開，不靠天數猜距離', () => {
+  const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
+  const rows = [
+    { name: 'A1', amount: 100, nextCharge: 'day-2', category: '工具' },
+    { name: 'A2', amount: 200, nextCharge: 'day-2', category: '工具' },
+    { name: 'B1', amount: 300, nextCharge: 'day-12', category: '工具' },
+    { name: 'B2', amount: 400, nextCharge: 'day-12', category: '工具' },
+    { name: '附近單筆', amount: 500, nextCharge: 'day-13', category: '工具' },
+  ];
+  const result = timelinePoints(rows, pageLayout);
+
+  assertClear(result.points);
+  assert.ok(result.points.some(point => point.grouped && point.side === 'bottom'), '第二張群組卡須讓到下方');
+  assert.equal(result.points.find(point => point.name === '附近單筆')?.lineHeight, 0,
+    '上下都被卡片封住時，連線須隱藏而非穿過金額');
+});
+
+test('續費時間線：四筆以上維持固定卡高，新增下層時容器跟著增高', () => {
+  const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
+  const rows = [
+    ...['A', 'B', 'C', 'D'].map((name, index) => ({ name, amount: 100 + index, nextCharge: 'day-2', category: '工具' })),
+    { name: 'E1', amount: 500, nextCharge: 'day-12', category: '工具' },
+    { name: 'E2', amount: 600, nextCharge: 'day-12', category: '工具' },
+    { name: '附近單筆', amount: 700, nextCharge: 'day-13', category: '工具' },
+  ];
+  const result = timelinePoints(rows, pageLayout);
+  const bottom = result.points.filter(point => point.side === 'bottom');
+  const deepest = Math.max(...bottom.map(point => point.labelTop + point.labelHeight));
+
+  assert.equal(result.points.find(point => point.days === 2)?.labelHeight, 82);
+  assert.ok(result.timelineHeight >= deepest + 14, '最深標籤下方須保留空間');
+  assert.ok(result.timelineHeight > 224, '需要額外層級時不得塞回固定高度');
+});
+
 test('續費時間線：頁面使用群組卡、筆數徽章與右緣防溢位樣式', () => {
   const source = read('public/modules/subscriptions.js');
   const css = read('public/styles.css');
   assert.match(source, /class="tl-label tl-group-card/);
-  assert.match(source, /p\.items\.slice\(0, 3\)/);
+  assert.match(source, /p\.items\.slice\(0, p\.items\.length > 3 \? 2 : 3\)/);
   assert.match(source, /class="tl-dot-count">\$\{p\.items\.length\}<\/span>/);
+  assert.match(source, /--timeline-height:\$\{timelineHeight\}px/);
   assert.match(css, /\.tl-group-card\.edge-right \{ transform: translateX\(-94%\); \}/);
+  assert.match(css, /height: 82px;/);
   assert.match(css, /\.tl-dot-count \{/);
 });

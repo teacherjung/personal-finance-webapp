@@ -463,8 +463,12 @@ function openCostDetailModal(subs, mk) {
 }
 
 // ---- 未來 30 天續費時間線：頁面卡片與列印報表共用的佈局演算法 ----
-// 同日先合成一個節點；否則再多的垂直層級也無法分開完全相同的 x 座標。
-export function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH, groupLabelH = labelH }) {
+// 同日先合成一個節點；卡片再用實際佔位矩形分層，邊緣位移也納入碰撞判斷。
+export function timelinePoints(subs, {
+  pos, topLevels, bottomLevels, labelH, groupLabelH = labelH,
+  labelSpan = 14, groupLabelSpan = labelSpan, edgeAware = false,
+  bottomStep = labelH + 6,
+}) {
   const upcoming = subs.filter(s => subStatus(s) === 'active' && !isLifetimeSub(s))
     .map(s => ({ name: s.name, amount: Number(s.amount || 0), days: daysUntil(s.nextCharge), date: s.nextCharge, cat: s.category }))
     .filter(c => isFinite(c.days) && c.days >= 0 && c.days <= 30)
@@ -480,37 +484,95 @@ export function timelinePoints(subs, { pos, topLevels, bottomLevels, labelH, gro
       events.push({ ...charge, items: [charge] });
     }
   }
-  const groupedDays = events.filter(event => event.items.length > 1).map(event => event.days);
   const axisY = 98, dotY = axisY - 6;
-  /** @type {{top:{left:number, grouped:boolean}[], bottom:{left:number, grouped:boolean}[]}} */
-  const lastBySide = { top: [], bottom: [] };
-  const points = events.map((c, i) => {
+  const bases = events.map((c, index) => {
     const left = pos(c.days);
     const grouped = c.items.length > 1;
-    const topHasNearbyGroup = grouped && lastBySide.top.some(last => last.grouped && left - last.left < 28);
-    const nearGroupedDay = !grouped && groupedDays.some(days => Math.abs(days - c.days) <= 8);
-    const side = grouped ? (topHasNearbyGroup ? 'bottom' : 'top') : (nearGroupedDay ? 'bottom' : (i % 2 === 0 ? 'top' : 'bottom'));
-    const levels = side === 'top' ? topLevels : bottomLevels;
-    let level = 0;
-    while (lastBySide[side][level] != null
-      && left - lastBySide[side][level].left < (grouped || lastBySide[side][level].grouped ? 24 : 14)
-      && level < levels.length - 1) level++;
-    lastBySide[side][level] = { left, grouped };
-    const labelTop = levels[level];
-    const labelBottom = labelTop + (grouped ? groupLabelH : labelH);
-    return { ...c, grouped, left, side, labelTop, dotY,
-      lineTop: side === 'top' ? labelBottom : axisY,
-      lineHeight: side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY) };
+    const span = grouped ? groupLabelSpan : labelSpan;
+    const anchor = grouped && edgeAware ? (left >= 80 ? .94 : left <= 20 ? .06 : .5) : .5;
+    return {
+      ...c, index, grouped, left,
+      labelLeft: left - span * anchor,
+      labelRight: left + span * (1 - anchor),
+      labelHeight: grouped ? groupLabelH : labelH,
+    };
   });
-  return { upcoming, points };
+
+  /** @type {{top:any[], bottom:any[]}} */
+  const placed = { top: [], bottom: [] };
+  const fits = (side, point, top, { newStem = true } = {}) => {
+    const bottom = top + point.labelHeight;
+    const stemTop = side === 'top' ? bottom : axisY;
+    const stemBottom = side === 'top' ? dotY : top;
+    return !placed[side].some(rect => {
+      const labelsMeet = point.labelLeft < rect.right + 1 && point.labelRight > rect.left - 1
+        && top < rect.bottom + 4 && bottom > rect.top - 4;
+      if (labelsMeet) return true;
+      const newStemHitsLabel = point.left > rect.left && point.left < rect.right
+        && stemTop < rect.bottom && stemBottom > rect.top;
+      const oldStemHitsLabel = rect.stemX > point.labelLeft && rect.stemX < point.labelRight
+        && rect.stemTop < bottom && rect.stemBottom > top;
+      return oldStemHitsLabel || (newStem && newStemHitsLabel);
+    });
+  };
+  const layouts = new Map();
+  const put = (side, point, labelTop, hideStem = false) => {
+    placed[side].push({
+      left: point.labelLeft, right: point.labelRight,
+      top: labelTop, bottom: labelTop + point.labelHeight,
+      stemX: point.left,
+      stemTop: hideStem ? 0 : (side === 'top' ? labelTop + point.labelHeight : axisY),
+      stemBottom: hideStem ? 0 : (side === 'top' ? dotY : labelTop),
+    });
+    layouts.set(point.index, { side, labelTop, hideStem });
+  };
+
+  // 群組卡先選位，單筆再繞開；否則較晚出現的群組會把已放好的單筆蓋住。
+  const layoutOrder = [...bases].sort((a, b) => Number(b.grouped) - Number(a.grouped) || a.index - b.index);
+  for (const point of layoutOrder) {
+    const preferTop = point.grouped || point.index % 2 === 0;
+    const topCandidates = point.grouped && groupLabelH > labelH ? topLevels.slice(0, 1) : topLevels;
+    const findTop = () => topCandidates.find(candidate => fits('top', point, candidate));
+    const findBottom = (newStem = true) => {
+      const attempts = Math.max(8, bases.length * 2);
+      for (let candidateIndex = 0; candidateIndex < attempts; candidateIndex++) {
+        const listed = bottomLevels[candidateIndex];
+        const candidate = listed != null
+          ? listed
+          : (bottomLevels.at(-1) ?? axisY + 24) + (candidateIndex - bottomLevels.length + 1) * bottomStep;
+        if (fits('bottom', point, candidate, { newStem })) return candidate;
+      }
+      return undefined;
+    };
+    const firstTop = preferTop ? findTop() : undefined;
+    if (firstTop != null) { put('top', point, firstTop); continue; }
+    const bottom = findBottom();
+    if (bottom != null) { put('bottom', point, bottom); continue; }
+    const alternateTop = preferTop ? undefined : findTop();
+    if (alternateTop != null) { put('top', point, alternateTop); continue; }
+
+    // 極端密集資料可能沒有直線可穿出的空隙；隱藏該線比讓它穿過金額卡更容易辨識。
+    put('bottom', point, findBottom(false) ?? (bottomLevels[0] ?? axisY + 24), true);
+  }
+
+  const points = bases.map(point => {
+    const { side, labelTop, hideStem } = layouts.get(point.index);
+    const labelBottom = labelTop + point.labelHeight;
+    return { ...point, side, labelTop, dotY,
+      lineTop: side === 'top' ? labelBottom : axisY,
+      lineHeight: hideStem ? 0 : (side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY)) };
+  });
+  const timelineHeight = Math.max(224, ...placed.bottom.map(rect => rect.bottom + 14));
+  return { upcoming, points, timelineHeight };
 }
 
 // 續費時間線卡片（頁面版）
 function chargeTimelineHtml(subs) {
   const PAD = 7;
   const pos = (d) => PAD + (Math.max(0, Math.min(30, d)) / 30) * (100 - PAD * 2);
-  const { upcoming, points } = timelinePoints(subs, {
-    pos, topLevels: [10, 42], bottomLevels: [122, 154, 186], labelH: 42, groupLabelH: 72
+  const { upcoming, points, timelineHeight } = timelinePoints(subs, {
+    pos, topLevels: [8, 46], bottomLevels: [122], labelH: 42, groupLabelH: 82,
+    labelSpan: 13, groupLabelSpan: 34, edgeAware: true, bottomStep: 46,
   });
   const total = upcoming.reduce((t, c) => t + c.amount, 0);
   const ticks = [0, 10, 20, 30].map(d => `<div class="tl-tick" style="left:${pos(d).toFixed(2)}%">${d === 0 ? '今天' : '+' + d + '天'}</div>`).join('');
@@ -521,7 +583,7 @@ function chargeTimelineHtml(subs) {
   }
 
   const pointsHtml = points.map(p => {
-    const visibleItems = p.items.slice(0, 3);
+    const visibleItems = p.items.slice(0, p.items.length > 3 ? 2 : 3);
     const hiddenCount = p.items.length - visibleItems.length;
     const label = p.grouped ? `<div class="tl-label tl-group-card ${p.left >= 80 ? 'edge-right' : p.left <= 20 ? 'edge-left' : ''}">
         <div class="tl-group-head"><strong>${p.days === 0 ? '今天' : p.days + ' 天後'} · ${p.items.length} 筆</strong><b>${fmtFee(p.amount)}</b></div>
@@ -541,7 +603,7 @@ function chargeTimelineHtml(subs) {
 
   return `<div class="chart-card timeline-card">
     <h3>續費時間線 <span class="stat-sub" style="font-weight:400;margin:0">（合計 <b>${money(total)}</b>）</span></h3>
-    <div class="timeline">
+    <div class="timeline" style="--timeline-height:${timelineHeight}px">
       <div class="tl-axis"></div>
       ${pointsHtml}
       ${ticks}

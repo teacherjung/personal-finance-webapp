@@ -693,7 +693,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .subs-table tr.drag-after td { box-shadow: inset 0 -2px 0 var(--accent); }
 .flag-on:hover { background: var(--accent-soft); }
 /* 續費時間線（一維座標）：同日以群組卡收束，其餘相近續費再自動分層。 */
-.timeline { position: relative; height: 224px; min-width: 720px; margin: 10px 8px 4px; }
+.timeline { position: relative; height: var(--timeline-height, 224px); min-width: 720px; margin: 10px 8px 4px; }
 .tl-axis { position: absolute; top: 98px; left: 7%; right: 7%; height: 2px; background: var(--line-2); border-radius: 2px; }
 .tl-point { position: absolute; top: 0; }
 .tl-dot { position: absolute; top: var(--dot-top); left: 0; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--line-2); }
@@ -705,7 +705,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .tl-day { font-size: 10px; color: var(--text-dim); }
 .tl-tick { position: absolute; top: 108px; transform: translateX(-50%); font-size: 10.5px; color: var(--text-dim); white-space: nowrap; }
 .tl-group-card {
-  width: 238px; padding: 7px 9px; text-align: left; background: var(--card);
+  box-sizing: border-box; width: 238px; height: 82px; padding: 7px 9px; overflow: hidden;
+  text-align: left; background: var(--card);
   border: 2px solid var(--frame); border-radius: 8px; box-shadow: 3px 3px 0 rgba(126, 101, 43, .16);
 }
 .tl-group-card.edge-right { transform: translateX(-94%); }
