@@ -50,8 +50,9 @@
 // - **驗不到**站外那一條（`../teaching-videos/AGENTS.md`）：別的 repo、不保證在這台機器上。
 // - 「選錄，不對帳」那張表**刻意不驗**：它列的不是閘，沒有可對帳的自報來源。
 // - 閘表對的是**合併步驟裡實際會跑的那一組**（與 `collab-invariant-docs` 共用 `gatesRunInMergeSteps()`）；
-//   兜底則寬到「腳本裡**提到** `MERGE_GATE` 就要真的在那一組裡」。兩者**都只認 `MERGE_GATE` 這個名字**——
-//   改用別的 export 名開一道閘，這裡看不到。
+//   兜底則寬到「`scripts/` 遞迴底下的 `.js`／`.mjs`／`.cjs` 只要**提到** `MERGE_GATE`，就要真的在那一組裡」。
+//   **副檔名以外的檔案不掃**（`.ts`、`.sh`、無副檔名的可執行檔都不在內），
+//   而且兩者**都只認 `MERGE_GATE` 這個名字**——改用別的 export 名開一道閘，這裡看不到。
 // - **驗不到** Markdown 的容器與表格結構（見上一節逐條列的那幾發）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -322,7 +323,7 @@ test('⭐ 「合併步驟專用的閘」那張表＝合併步驟裡實際會跑�
   }
 });
 
-test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的檔案，都要真的出現在合併步驟裡（幽靈閘兜底）', () => {
+test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真的出現在合併步驟裡（幽靈閘兜底）', () => {
   const running = new Set(gatesRunInMergeSteps());
   for (const f of scriptFiles()) {
     if (!read(f).includes('MERGE_GATE')) continue;

@@ -112,7 +112,7 @@
 | 堆疊 | [scripts/check-pr-merge-gate.js](scripts/check-pr-merge-gate.js) |
 | 跨 PR 試合併 | [scripts/check-cross-pr-merge.js](scripts/check-cross-pr-merge.js) |
 
-⚠️ 兜底：`scripts/` 底下（**遞迴**，含 `.mjs`／`.cjs`）任何**提到** `MERGE_GATE` 的檔案，
+⚠️ 兜底：`scripts/` 底下（**遞迴**）每一支 `.js`／`.mjs`／`.cjs` 只要**提到** `MERGE_GATE`，
 都必須真的出現在合併步驟裡，否則轉紅——不留「自報自己是閘、卻永遠不會跑」的東西。
 ⚠️ 反查認的指令形狀窄：`node scripts/<名>.js <N>`（第一層、`.js`）。子目錄或別的副檔名
 **即使真的寫進合併步驟也抓不到**；那時兜底會轉紅，逼人回來處理。
