@@ -487,7 +487,7 @@ test('SEC 解析｜衍生指標的官方輸入必須保留全部申報來源欄�
   assert.equal(official.tag, 'OperatingIncomeLoss');
 });
 
-test('currentDebt 契約｜總額／短借／一年內長債只有一份定義；noncurrentDebt 用官方真的有的元素名', () => {
+test('currentDebt 契約｜總額／短借／一年內長債只有一份定義；noncurrentDebt 釘住兩顆候選與順序', () => {
   const currentDebt = /** @type {any} */ (SEC_METRIC_CANDIDATES.currentDebt);
   assert.deepEqual(currentDebt.currentDebtSources, {
     total: ['DebtCurrent'],
