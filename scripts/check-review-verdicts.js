@@ -167,7 +167,9 @@ const QUOTED_HEAD_NOSHA = /^[^\S\n]*(?:\*\*|__)?[^\S\n]*🤖\s*([A-Za-z]+)｜來
  *   危險字元不重印進生效行；雜湊行本身純 hex、不受引文守則影響。
  * ・**資格與正式重述同一套身分語意**（#477 r2 High①——不可用「前綴正則有沒有 match」代替）：
  *   ①第一行必含 🤖（防前言行鑰匙）②身分合法（canonical 角色＋非空來源）且 metadata 可讀
- *   ＝重述家族、禁豁免 ③身分合法但 metadata 讀不出（輪次打壞、sha 非 hex——重述結構上接不了）
+ *   **且那一行引得動**＝重述家族、禁豁免 ③身分合法但**重述接不了**（metadata 讀不出——輪次打壞、
+ *   sha 非 hex；或那一行實際引不動——引文含白名單外字元／隱形字元／sha 歧義，判準見迴圈裡的
+ *   `quotableAsRestate`，`Codex #543 r1 High` 逼出來的等價性收口）
  *   ＝**只有同一身分**可豁免（同身分紀律不因 metadata 壞掉而放寬）④身分讀不出＝任何合規標頭可豁免。
  * ・誠實劃界＝與整道閘相同：「William 特准」是自我宣告、閘不驗 William 本人（這支防的是
  *   打錯字鎖死，不防惡意——惡意者本來就能偽造整個合規標頭）；日期讓 William 事後可抽查對帳。
@@ -659,19 +661,28 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     // match」代替——那在兩個方向都會分類錯：Codeex／空來源被誤判成「身分讀得出」＝三級全接不了
     // 而永久鎖死；合法身分＋輪次打壞被誤判成「讀不出」＝被別人越級豁免）：
     // ①第一行必含 🤖（防前言行鑰匙＝事後編輯續命）
-    // ②rid（canonical 角色＋非空來源）且 metadata 可讀＝重述家族、禁豁免
-    // ③rid 可讀但 metadata 讀不出（重述結構上接不了）＝**只有同一身分**可豁免
+    // ②rid（canonical 角色＋非空來源）、metadata 可讀**且那一行引得動**＝重述家族、禁豁免
+    // ③rid 可讀但**重述接不了**（metadata 讀不出，或引不動＝白名單／隱形字元／sha 歧義）
+    //   ＝**只有同一身分**可豁免
     // ④rid 讀不出＝任何合規標頭可豁免（原階梯③）。
     const hasMark = /🤖/u.test(m.key);
     const rid = restatableIdentity(m.key);
     const metaReadable = !!(QUOTED_HEAD.exec(m.key) || QUOTED_HEAD_NOSHA.exec(m.key));
-    // 「重述接不接得上」不只看身分與 metadata 讀不讀得出，還要看**這一行引不引得動**
-    // ——引文守則（白名單／隱形字元／反引號配對）與收件端同一套，這裡照抄判定，
-    // 否則資格判定與實際可行性脫節＝死角（#540 實測：sha 欄空白＝被判「走缺 sha 例外
-    // 重述」而禁豁免，但那則第一行含 `*`「」＝ 等白名單外字元、重述收件端一定拒收，
-    // 兩條路互相排斥、PR 永久鎖死）。
-    const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key)
-      && (m.key.split('`').length - 1) % 2 === 0;
+    // 「重述接不接得上」不只看身分與 metadata 讀不讀得出，還要看**這一行實際引不引得動**
+    // ——否則資格判定與可行性脫節＝死角（#540 實測：sha 欄空白＝被判「走缺 sha 例外重述」
+    // 而禁豁免，但那則第一行含 `*`「」＝ 等白名單外字元、重述收件端一定拒收，兩條路互斥、
+    // PR 永久鎖死）。⚠️ 判準只收**重述者自己改不掉**的性質（`Codex #543 r1 High` 兩個方向都打過）：
+    //   ・引文白名單、隱形字元：壞行自帶，改不掉 ⇒ 納入。
+    //   ・**反引號配對：不納入**——收件端數的是整條重述行，而 RESTATE 自報 sha 的左右反引號
+    //     各自 optional（0／1／2 個都合規），重述者永遠湊得出偶數 ⇒ 它從來不是障礙。
+    //     r1 版把它當障礙＝誤放寬豁免資格。
+    //   ・**sha 歧義：要納入**（r1 版漏抄，那型仍兩路互鎖）：四欄型引文最多一個 sha 長相的字、
+    //     缺 sha 型必須零個，數法與收件端同一套（NFKC 副本、先拆反引號）。
+    const q4Key = QUOTED_HEAD.exec(m.key);
+    const qnKey = q4Key ? null : QUOTED_HEAD_NOSHA.exec(m.key);
+    const shaLikeInKey = ((m.key.normalize('NFKC').replace(/`/gu, '')).match(QUOTED_SHA_LIKE) || []).length;
+    const shaUnambiguous = q4Key ? shaLikeInKey <= 1 : (qnKey ? shaLikeInKey === 0 : false);
+    const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key) && shaUnambiguous;
     const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
     const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
       && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
