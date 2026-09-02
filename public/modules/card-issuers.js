@@ -319,8 +319,12 @@ const ownProp = (o, k) => (o != null && Object.prototype.hasOwnProperty.call(o, 
  *    （理由見 `lib/schema.js`）⇒ `{toString:null}` 這族「連 `String()` 都炸」的值可經櫃檯**原樣落庫**。
  *    Codex #547 r3 實測：對它裸跑 `String()` 會丟 `TypeError`，**一張壞卡就炸掉整份帳單預覽**。
  *    這與 `public/modules/card-last-four.js` 是同一個病、同一種解（#541 為 `lastFour` 做過一次）。
- * ⚠️ **這會讓一種行為與 base 不同**（本支唯一的零回歸例外，照實記）：base 對這族值是丟 500
- *    炸掉預覽，head 是「認不出這張卡是哪一家」⇒ 退成請使用者選。安全方向，且與 #541 同一個裁定。
+ * ⚠️ **這會讓一種行為與 base 不同**（照實記）：base 對這族值是丟 500 炸掉預覽，
+ *    head 是「認不出這張卡是哪一家」⇒ 退成請使用者選。安全方向，且與 #541 同一個裁定。
+ * ⚠️ **「唯一的例外」這句要限定射程**（Codex #547 r4）：它只在「**經 JSON／CRUD／備份落得了庫**
+ *    的資料形狀」這個範圍內成立。若把射程放大到任何 JS 值，`ownProp` 忽略原型鏈上的欄位
+ *    本身就是**第二項**與 base 不同的行為（base 讀得到原型上的 `issuer`／`issuerId`）——
+ *    那一項同樣是收緊、同樣安全，但不可以被那句「唯一」蓋掉。
  * @param {unknown} v @returns {string|null}
  */
 const issuerText = (v) => { try { return String(v ?? ''); } catch { return null; } };
