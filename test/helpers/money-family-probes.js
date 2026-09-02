@@ -184,7 +184,17 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
  * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
  * 那時要回來更新 MONEY_SERVERS（AGENTS「錢的絕對邊界」規則 4 的通報義務接住這件事）。
+ * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
+ * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
  */
+
+/** 名單外＝一律擋，且 UUID 不在第一段時也要擋（多段前綴探針）。 */
+export const MONEY_SERVER_MULTISEG_DENY = [
+  ['mcp__prefix__deda1d5d-1ccc-4551-9617-156b9658d236__market_order', 'UUID 在第二段'],
+  ['mcp__a__deda1d5d-1ccc-4551-9617-156b9658d236__limit_order', 'UUID 在第二段（短前綴）'],
+  ['mcp__x__deda1d5d-1ccc-4551-9617-156b9658d236__buy', '單獨動詞＋多段前綴'],
+];
+export const EXPECTED_MONEY_SERVER_MULTISEG_DENY = 3;
 export const MONEY_SERVER = 'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__';
 
 /** 名單外＝一律擋。含 v5 實測會放行的真實券商命名、沒見過的新名、以及同形碰撞。 */

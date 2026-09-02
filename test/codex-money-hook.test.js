@@ -56,6 +56,7 @@ import {
   OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
+  MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
 } from './helpers/money-family-probes.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -160,6 +161,35 @@ test('v6 姿態閘：已宣告的動錢連接器採白名單制（名單外一�
   }
   for (const t of MONEY_SERVER_ALLOW) {
     assertPasses(codexHook.command, MONEY_SERVER + t, '名單內的唯讀／提醒／觀察清單工具');
+  }
+});
+
+
+test('v6 姿態閘：白名單是精確集合（指令裡的 ALLOW 與探針逐項相等，多一個少一個都紅）', () => {
+  // Grok #540 掃第 2 條：只驗「這些擋、那些放」時，指令裡的 ALLOW 可以是探針的**超集**——
+  // 少了會紅、多了仍綠，於是「32 個精確身分」這句話機器並沒有在守。改成集合相等。
+  const m = codexHook.command.match(/ALLOW = \(([\s\S]*?)\)\n/);
+  assert.ok(m, '在 hook 指令裡找不到 ALLOW 清單——白名單的形狀變了，這題要跟著改');
+  const inCommand = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  assert.deepEqual([...inCommand].sort(), [...MONEY_SERVER_ALLOW].sort(),
+    '指令裡的白名單與探針清單不是同一個集合——多列＝悄悄放行，少列＝誤攔');
+});
+
+test('v6 姿態閘：雙保險真的存在（白名單誤放建單工具時，家族網仍擋得住）', () => {
+  // Grok #540 掃第 2 條後半：對現行 32 個名字，「名單內再走家族網」是空轉的
+  // （那些名字家族網本來就不擋），所以原本的題面證明不了雙保險。
+  // 這裡直接構造「ALLOW 誤含建單工具」的變體指令來驗——這才是雙保險唯一會派上用場的情境。
+  const bad = codexHook.command.replace('"provide_customer_feedback",',
+    '"provide_customer_feedback", "create_order_instruction",');
+  assert.notEqual(bad, codexHook.command, '變體沒有生效——錨點文字變了，這題要跟著改');
+  assertDenies(bad, JSON.stringify({ tool_name: `${MONEY_SERVER}create_order_instruction` }),
+    '白名單誤放建單工具時，家族網必須兜底');
+});
+
+test('v6 姿態閘：UUID 不在第一段時也要擋（多段前綴）', () => {
+  assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
+    assertDenies(codexHook.command, JSON.stringify({ tool_name: name }), `多段前綴：${why}`);
   }
 });
 

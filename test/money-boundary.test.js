@@ -84,6 +84,7 @@ import {
   OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
+  MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
 } from './helpers/money-family-probes.js';
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
@@ -249,6 +250,15 @@ test('v6 壞輸入：Claude 側同樣只驗得到 handler 的 fail-closed（誠�
   assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY, '探針被縮短了');
   for (const [payload, why] of HANDLER_ONLY_DENY) {
     assert.ok(handlerDenies(settings, payload), `沒有 handler 對這種壞輸入回合規 deny：${why}`);
+  }
+});
+
+
+test('v6 姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一段）', () => {
+  const settings = loadSettings();
+  assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
+    assert.ok(entriesBlocking(settings, name).length >= 1, `多段前綴沒被擋：${why}`);
   }
 });
 
