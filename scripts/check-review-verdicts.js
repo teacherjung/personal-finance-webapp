@@ -229,6 +229,9 @@ const QUOTE_ALLOWED = /^[\p{L}\p{N}\p{Zs}\t🤖｜：:（）()、，,；;。．.
  * 計數器數不到）。性質收口：整行含任何一個這族字元＝不可重述。
  */
 const HIDDEN_CP = /\p{Default_Ignorable_Code_Point}/u;
+/** GitHub 單則留言的長度上限（`Codex #543 r4`）——超過就送不出去＝那則壞行的重述路實際上不存在。
+ *  ⚠️ 這是**平台**的數字，不是本閘的判準；平台改它，這裡與考題要一起改。 */
+const COMMENT_MAX = 65536;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -688,7 +691,20 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const qnKey = q4Key ? null : QUOTED_HEAD_NOSHA.exec(m.key);
     const shaLikeInKey = ((m.key.normalize('NFKC').replace(/`/gu, '')).match(QUOTED_SHA_LIKE) || []).length;
     const shaUnambiguous = q4Key ? shaLikeInKey <= 1 : (qnKey ? shaLikeInKey === 0 : false);
-    const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key) && shaUnambiguous;
+    // ⚠️ 第五種接不了：語法上引得動，但**留言送不出去**（`Codex #543 r4`）。重述必須把壞行
+    //    逐字重印一次，載體＝合規標頭＋重述行＋引文；壞行接近平台上限時，載體必然超限。
+    //    這裡用**最短可能的載體**估：sha 取 7 位、輪次取 1 位、結論取最短的「通過」、
+    //    自報 sha 的反引號省略（RESTATE 兩邊各 optional）。算得出比實際更小 ⇒ 只在
+    //    「連最短寫法都塞不下」時才判為接不了＝fail-closed 方向正確（不會誤放寬豁免）。
+    //    ⚠️ 誠實劃界：`COMMENT_MAX` 是 GitHub 現行的留言長度上限，**平台改它這裡要跟著改**；
+    //    而豁免的雜湊變體只要一百多字元，永遠塞得下——這正是它能接手這一類的原因。
+    const idForCarrier = rid || { role: 'Codex', source: 'CLI' };
+    const minCarrier = `🤖 ${idForCarrier.role}｜來源：${idForCarrier.source}｜審 \`abc1234\`｜r1｜結論：通過\n`
+      + `重述 r1｜審 abc1234｜結論：通過｜原第一行：「${m.key}」`;
+    const restateFits = [...minCarrier].length <= COMMENT_MAX
+      && Buffer.byteLength(minCarrier, 'utf8') <= COMMENT_MAX;
+    const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key)
+      && shaUnambiguous && restateFits;
     const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
     const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
       && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
@@ -719,7 +735,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         + '    ↳ 修復：**同一位審查者**在新留言（帶合規標頭）加一行'
         + '「重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「＜逐字引用壞掉那行＞」」（規則見腳本 RESTATE 一節；'
         + 'sha 欄空白、其餘三欄讀得出的壞行走**缺 sha 例外**＝重述行自報版本）。\n'
-        + '    ↳ 連角色／來源／輪次都讀不出的型＝重述救不了：經 **William 特准**後，帶合規標頭的留言'
+        + '    ↳ **身分讀不出**的型（角色不在合法名單、或來源空白——其餘欄位讀不讀得出都一樣，'
+        + '因為重述要求引文裡的身分等於重述者，身分讀不出就對不上）＝重述救不了：'
+        + '經 **William 特准**後，**任一合規身分**都可以在帶合規標頭的留言'
         + '收件區加一行「豁免留言 <留言編號>｜William 特准 <YYYY-MM-DD>｜原第一行：「＜逐字引用＞」」'
         + '（引文含隱形／損壞字元被守則拒收時，改用「原第一行雜湊：<該行**去頭尾空白後**的 SHA-256>」指認）。\n'
         + '    ↳ 身分讀得出、但**重述接不了**的型＝**僅同一身分**可豁免（同上格式）'

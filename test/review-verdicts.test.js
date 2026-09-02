@@ -1190,8 +1190,14 @@ test('⭐ 死角｜三類引不動的壞行，閘給的**處方**要指向同身
   //   `rid &&` 那一半（少了它，這種行會被誤貼成第②種、被叫去做「同身分」豁免，
   //   但它的實際資格是「任一合規身分可豁免」，根本沒有同一身分可用）。
   const noRole = '🤖 Codeex｜來源：CLI｜審 `abc1234`｜r6｜結論：需修改後再審 **x**';
-  notLabelled(`${noRole}\n\n略。`, 'https://github.com/x/y/pull/9#issuecomment-5310870045',
-    '身分讀不出但 metadata 讀得出、引文出界的壞行');
+  const noRoleUrl = 'https://github.com/x/y/pull/9#issuecomment-5310870045';
+  notLabelled(`${noRole}\n\n略。`, noRoleUrl, '身分讀不出但 metadata 讀得出、引文出界的壞行');
+  // `Codex #543 r4`：只驗「沒被貼錯標籤」不夠——還要驗它**拿到的處方本身可走通**。
+  // 這一型的實際資格是「任一合規身分經 William 特准後豁免」，處方必須明講那件事，
+  // 而且不可以只描述成「連角色／來源／輪次都讀不出」（本例只有角色讀不出）。
+  const noRoleMsg = verdictProblems([cu(`${noRole}\n\n略。`, noRoleUrl)], HEAD, 'Codex').problems.join('\n');
+  assert.match(noRoleMsg, /\*\*身分讀不出\*\*的型/u, '處方要點名「身分讀不出」這一族，不是只講四欄全壞');
+  assert.match(noRoleMsg, /任一合規身分/u, '處方要明講這一型不受同身分紀律限制');
 });
 
 test('⭐ 死角｜反引號落單**不是**障礙：重述行可用單邊反引號湊偶數 → 仍不可豁免', () => {
@@ -1204,6 +1210,28 @@ test('⭐ 死角｜反引號落單**不是**障礙：重述行可用單邊反引
   const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870042'))], HEAD, 'Codex');
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
     `重述得動的壞行必須維持「走重述」的資格判定、不可豁免：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜第五種：重述留言會超過平台長度上限（送不出去）→ 同一身分可豁免', () => {
+  // `Codex #543 r4`：語法上引得動、但把壞行逐字重印一次就超過 GitHub 的 65,536 上限 ⇒
+  // 重述那條路實際上不存在；而豁免的雜湊變體只要一百多字元，永遠塞得下。
+  const pad = 'x'.repeat(65_400);   // x 不是 hex：避免填充字自己被當成 sha 長相的字
+  const first = `🤖 Codex｜來源：CLI（xhigh）｜審 \`abc1234\`｜r6｜結論：需修改後再審 ${pad}`;
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870046';
+  const body = `${first}\n\n略。`;
+  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870046'))], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `超長壞行必須可由同一身分豁免：${problems.join('｜').slice(0, 200)}`);
+});
+
+test('⭐ 死角｜長度邊界的對照組：塞得下的長壞行仍走重述、不可豁免', () => {
+  // 邊界另一側：同樣很長、但最短載體還塞得下 ⇒ 重述可行 ⇒ 資格不該放寬。
+  const pad = 'x'.repeat(60_000);   // 同上
+  const first = `🤖 Codex｜來源：CLI（xhigh）｜審 \`abc1234\`｜r6｜結論：需修改後再審 ${pad}`;
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870047';
+  const body = `${first}\n\n略。`;
+  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870047'))], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    '塞得下的長壞行必須維持「走重述」的資格判定');
 });
 
 test('⭐ 死角｜引得動的壞行照舊不可豁免（資格沒有被放寬）', () => {
