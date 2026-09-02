@@ -422,9 +422,15 @@ test('⭐ 地圖自己要找得到：三份正本的前言各要有一行指定�
       `「${from}」的指路行之前有未閉合的 HTML 註解，它會被吞掉、讀者看不到。\n`
       + '⚠️ 這個平衡檢查只看指路行**之前**那幾行（指路在前言，前面沒幾行）——\n'
       + '   所以正文後段合法討論 `<!--` 這個字串不會被誤傷。');
-    // 也不可以落在 code fence 內
-    assert.equal(lines.slice(0, at).filter((l) => /^\s{0,3}(```|~~~)/.test(l)).length % 2, 0,
-      `「${from}」的指路行落在 code fence 內（前面的圍欄數是奇數），讀者看到的是程式碼不是連結。`);
+    // 也不可以落在 code fence 內。
+    // ⚠️ **圍欄要先剝掉 blockquote 前綴再認**：`REVIEW-AND-MERGE.md` 的圍欄全都寫成 `> ```bash`，
+    //    只認行首的 ``` 會**完全看不到它們** ⇒ 把指路行塞進引言區那個 bash 圍欄裡，考題照樣全綠
+    //    （實測過）。剝法與 `test/helpers/merge-gates.js` 取合併步驟時同一套。
+    const fencesBefore = lines.slice(0, at)
+      .filter((l) => /^\s{0,3}(```|~~~)/.test(l.replace(/^\s*>[ \t]?/, ''))).length;
+    assert.equal(fencesBefore % 2, 0,
+      `「${from}」的指路行落在 code fence 內（前面的圍欄數是奇數），讀者看到的是程式碼不是連結。\n`
+      + '⚠️ 圍欄有沒有 `> ` 前綴都算。');
 
     for (const word of POINTER_WORDS) {
       assert.ok(line.includes(word),
