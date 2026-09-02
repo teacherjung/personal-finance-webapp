@@ -149,11 +149,15 @@ test('內容串流炸彈：一頁的小 PDF **由文字節點牆當場擋下 400
   //    `readPageTextCapped` 的 `reader.cancel()` 沒帶 Error 理由（pdfjs 會 assert 後拒絕、
   //    `.catch()` 又把拒絕吞掉）⇒ 取消從沒生效 ⇒ `task.destroy()` 永不回來。
   //    **卡住是我們自己造成的，不是 pdfjs 的脾氣。** 修好之後這顆炸彈由牆當場擋下。
-  // ⚠️ 逾時在這裡只是**絆索**：牆若又失效，20 秒收場而不是 30 秒。它不該是本題的通過條件——
-  //    收到 `pdf_timeout` 就代表牆沒接住、只是被行程隔離兜住（那正是本題以前的樣子）。
-  setPdfTimeoutForTest(20_000);
+  // ⚠️ **逾時在這裡只是絆索，不是通過條件**，而且**刻意設得遠高於觀測分布**（Codex #538 r9）：
+  //    我先設 3 秒（餘裕 3%）→ CI 間歇紅；改 20 秒 → 跑全套時 22.76 秒才擋下、絆索先響又紅一次。
+  //    **只要絆索參與競速，它就是本支修過三次的那個病。** 現在：①攻擊檔換成剛好超標的最小版
+  //   （22KB，工作量比 3M 版小得多）②絆索 120 秒＝遠離任何觀測值。
+  //    代價誠實記錄：牆若真的又失效成「卡住」，本題會等到 120 秒才紅（慢，但**不會忽紅忽綠**）；
+  //    而那種回歸有另一題會在幾秒內抓到（「取消要真的生效」——行程內直打，不經子行程）。
+  setPdfTimeoutForTest(120_000);
   try {
-    const data = bombPdf(3_000_000);
+    const data = bombPdf(310_000);
     assert.ok(data.length < 300 * 1024,
       `攻擊檔要小得可笑才有說服力（實際 ${Math.round(data.length / 1024)}KB）——這就是「檔案大小預測不了成本」`);
     const err = await errOf(parseStatement(data));
@@ -170,9 +174,10 @@ test('內容串流炸彈：一頁的小 PDF **由文字節點牆當場擋下 400
 });
 
 test('連打五次攻擊檔，父行程的記憶體不可以往上爬（沒有洩漏、也沒有累積）', async () => {
-  // ⚠️ 逾時要**寬鬆**：訂太緊會變成跟「牆多快擋下」競速（本題以前正是靠逾時才綠的）。
-  setPdfTimeoutForTest(20_000);
-  const data = bombPdf(310_000);   // 剛好超過 30 萬節點的最小攻擊檔（22KB、約 1.5 秒到達門檻）
+  // ⚠️ 逾時要**寬鬆**：訂太緊會變成跟「牆多快擋下」競速（本題以前正是靠逾時才綠的；
+  //    20 秒也不夠——跑全套時實測 22.76 秒，見炸彈題的註解）。
+  setPdfTimeoutForTest(120_000);
+  const data = bombPdf(310_000);   // 剛好超過 30 萬節點的最小攻擊檔（22KB）
   const before = process.memoryUsage().rss;
   for (let i = 0; i < 5; i++) {
     const err = await errOf(parseStatement(data));
@@ -317,7 +322,7 @@ test('診斷｜**真的**子行程跑真的攻擊檔，非空診斷要一路到�
   const logged = [];
   const real = console.error;
   console.error = (/** @type {any[]} */ ...a) => { logged.push(a.map(String).join(' ')); };
-  setPdfTimeoutForTest(20_000);
+  setPdfTimeoutForTest(120_000);   // 同上：絆索遠離觀測分布，不參與競速
   let err;
   try {
     err = await errOf(parseStatement(bombPdf(310_000)));
@@ -875,7 +880,7 @@ test('邊收邊數｜**取消要真的生效**：超標之後 pdfjs 的 task.des
   // ⚠️ 這一題是 2026-08-29 那個 bug 的正對面，**用真的 pdfjs**（上面那幾題都是替身）。
   //    `reader.cancel()` 少帶理由時：pdfjs 拒絕 → 它不知道消費端走了 → 生產端永遠等一個
   //    不會排空的 sink → **`task.destroy()` 永不回來**（實測 40 秒仍未 resolve）。
-  //    帶了理由：cancel ok → destroy 2ms 完成。
+  //    帶了理由：cancel ok → destroy **立刻**完成（本題斷言的是「10 秒內 resolve」，不是某個毫秒數）。
   //    端到端那題（炸彈題）證明不了這一點——未來有人把 destroy 拿掉，它照樣綠。
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const task = getDocument({ data: bombPdf(310_000), verbosity: 0 });
