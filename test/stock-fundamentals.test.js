@@ -1630,6 +1630,18 @@ test('回購退路｜只申報「買回股權」合計的公司要能讀到（�
   assert.equal(buyback.annual.at(-1).value, 1200);
 });
 
+test('回購順位｜兩顆同期並存＝普通股回購先於合計（Codex r1：實查 CY2024 有 15 家同報、9 家值不同）', () => {
+  // 與資本支出順位題對稱：順位是語意優先序，對調兩顆會直接改這些公司的畫面金額。
+  const result = parseMetricsFixture({
+    PaymentsForRepurchaseOfCommonStock: { USD: [durAnnual(2024, 900)] },
+    PaymentsForRepurchaseOfEquity: { USD: [durAnnual(2024, 1500)] }
+  });
+  const buyback = result.metrics.shareRepurchases;
+  assert.equal(buyback.status, 'available');
+  assert.equal(buyback.tag, 'PaymentsForRepurchaseOfCommonStock');
+  assert.equal(buyback.annual.at(-1).value, 900);
+});
+
 test('假綠⑤｜revenue 缺席時 periods 的 fallback：表頭期間改由其他 duration 指標補', () => {
   // 複審實測：periodSummary 的兩段 fallback 整段刪掉 → 全綠（fixture 永遠有 revenue）。
   const result = parseMetricsFixture({
