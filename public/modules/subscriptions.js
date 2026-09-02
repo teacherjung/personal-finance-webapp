@@ -467,7 +467,7 @@ function openCostDetailModal(subs, mk) {
 export function timelinePoints(subs, {
   pos, topLevels, bottomLevels, labelH, groupLabelH = labelH,
   labelSpan = 14, groupLabelSpan = labelSpan, edgeAware = false,
-  bottomStep = labelH + 6,
+  groupBadgeSpan = 0, bottomStep = labelH + 6, minHeight = 224,
 }) {
   const upcoming = subs.filter(s => subStatus(s) === 'active' && !isLifetimeSub(s))
     .map(s => ({ name: s.name, amount: Number(s.amount || 0), days: daysUntil(s.nextCharge), date: s.nextCharge, cat: s.category }))
@@ -493,7 +493,7 @@ export function timelinePoints(subs, {
     return {
       ...c, index, grouped, left,
       labelLeft: left - span * anchor,
-      labelRight: left + span * (1 - anchor),
+      labelRight: left + span * (1 - anchor) + (grouped ? groupBadgeSpan : 0),
       labelHeight: grouped ? groupLabelH : labelH,
     };
   });
@@ -562,7 +562,7 @@ export function timelinePoints(subs, {
       lineTop: side === 'top' ? labelBottom : axisY,
       lineHeight: hideStem ? 0 : (side === 'top' ? Math.max(0, dotY - labelBottom) : Math.max(0, labelTop - axisY)) };
   });
-  const timelineHeight = Math.max(224, ...placed.bottom.map(rect => rect.bottom + 14));
+  const timelineHeight = Math.max(minHeight, ...placed.bottom.map(rect => rect.bottom + 14));
   return { upcoming, points, timelineHeight };
 }
 
@@ -572,7 +572,7 @@ function chargeTimelineHtml(subs) {
   const pos = (d) => PAD + (Math.max(0, Math.min(30, d)) / 30) * (100 - PAD * 2);
   const { upcoming, points, timelineHeight } = timelinePoints(subs, {
     pos, topLevels: [8, 46], bottomLevels: [122], labelH: 42, groupLabelH: 82,
-    labelSpan: 13, groupLabelSpan: 34, edgeAware: true, bottomStep: 46,
+    labelSpan: 13, groupLabelSpan: 34, edgeAware: true, groupBadgeSpan: 3, bottomStep: 46,
   });
   const total = upcoming.reduce((t, c) => t + c.amount, 0);
   const ticks = [0, 10, 20, 30].map(d => `<div class="tl-tick" style="left:${pos(d).toFixed(2)}%">${d === 0 ? '今天' : '+' + d + '天'}</div>`).join('');

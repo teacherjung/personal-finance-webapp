@@ -92,9 +92,9 @@ function reportBreakdown(subs, mk) {
 
 // 續費時間線（列印報表版，佈局與頁面卡片共用 timelinePoints）
 function reportTimeline(subs) {
-  const { upcoming, points } = timelinePoints(subs, {
+  const { upcoming, points, timelineHeight } = timelinePoints(subs, {
     pos: (d) => Math.max(5, Math.min(95, 5 + d / 30 * 90)),
-    topLevels: [12, 44], bottomLevels: [122, 154, 186], labelH: 40
+    topLevels: [12, 44], bottomLevels: [122, 154, 186], labelH: 40, minHeight: 210
   });
   if (!upcoming.length) return `<section><h2>未來 30 天續費時間線</h2><p class="muted">未來 30 天沒有預定續費。</p></section>`;
   const pointsHtml = points.map(p => `<div class="report-tl-point ${p.side}" style="left:${p.left.toFixed(2)}%;--label-top:${p.labelTop}px;--line-top:${p.lineTop}px;--line-height:${p.lineHeight}px;--dot-top:${p.dotY}px">
@@ -107,7 +107,7 @@ function reportTimeline(subs) {
       <i style="background:${(Object.hasOwn(CAT_COLOR, p.cat) && CAT_COLOR[p.cat]) || CHART.gray}"></i>
     </div>`).join('');
   return `<section><h2>未來 30 天續費時間線</h2>
-    <div class="report-timeline">
+    <div class="report-timeline" style="--report-timeline-height:${timelineHeight}px">
       <div class="report-tl-axis"></div>
       <div class="report-tl-tick start">今天</div>
       <div class="report-tl-tick end">+30 天</div>
@@ -192,12 +192,12 @@ export function printSubscriptionReport(subs, curMk, nextMk) {
       .report-legend div { display: grid; grid-template-columns: 10px 1fr auto auto; gap: 7px; align-items: center; }
       .report-legend i { width: 10px; height: 10px; border-radius: 2px; }
       .subsection-title { margin-top: 16px; }
-      .report-timeline { position: relative; height: 210px; margin: 8px 4px 2px; }
+      .report-timeline { position: relative; height: var(--report-timeline-height, 210px); margin: 8px 4px 2px; }
       .report-tl-axis { position: absolute; left: 5%; right: 5%; top: 98px; height: 2px; background: #ded8cc; border-radius: 2px; }
       .report-tl-tick { position: absolute; top: 108px; font-size: 10px; color: #8a887f; }
       .report-tl-tick.start { left: 5%; transform: translateX(-50%); }
       .report-tl-tick.end { right: 5%; transform: translateX(50%); }
-      .report-tl-point { position: absolute; top: 0; height: 210px; }
+      .report-tl-point { position: absolute; top: 0; height: var(--report-timeline-height, 210px); }
       .report-tl-point i { position: absolute; left: 0; top: var(--dot-top); transform: translateX(-50%); width: 13px; height: 13px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #cfc7ba; }
       .report-tl-point em { position: absolute; left: 0; top: var(--line-top); height: var(--line-height); width: 1px; background: #ded8cc; transform: translateX(-50%); }
       .report-tl-label { position: absolute; left: 0; width: 96px; transform: translateX(-50%); text-align: center; line-height: 1.25; }

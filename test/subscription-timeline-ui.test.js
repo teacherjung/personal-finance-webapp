@@ -43,6 +43,7 @@ const pageLayout = {
   groupLabelH: 82,
   labelSpan: 13,
   groupLabelSpan: 34,
+  groupBadgeSpan: 3,
   edgeAware: true,
   bottomStep: 46,
 };
@@ -133,12 +134,48 @@ test('續費時間線：四筆以上維持固定卡高，新增下層時容器�
   assert.ok(result.timelineHeight > 224, '需要額外層級時不得塞回固定高度');
 });
 
+test('續費時間線：群組筆數徽章納入右側避讓範圍', () => {
+  const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
+  const withBadge = timelinePoints(sampleSubscriptions(), pageLayout);
+  const withoutBadge = timelinePoints(sampleSubscriptions(), { ...pageLayout, groupBadgeSpan: 0 });
+  const grouped = withBadge.points.find(point => point.days === 28);
+  const groupedWithoutBadge = withoutBadge.points.find(point => point.days === 28);
+
+  assert.equal(grouped.labelRight, groupedWithoutBadge.labelRight + pageLayout.groupBadgeSpan,
+    '群組右界須包含筆數徽章，附近標籤才會避開');
+  assertClear(withBadge.points);
+});
+
+test('續費時間線：列印版依最深標籤增高，不覆蓋下一個區塊', () => {
+  const timelinePoints = loadTimelinePoints(read('public/modules/subscriptions.js'));
+  const reportLayout = {
+    pos: days => Math.max(5, Math.min(95, 5 + days / 30 * 90)),
+    topLevels: [12, 44], bottomLevels: [122, 154, 186], labelH: 40, minHeight: 210,
+  };
+  const sparse = timelinePoints([sampleSubscriptions()[0]], reportLayout);
+  const rows = Array.from({ length: 8 }, (_, day) => ({
+    name: `服務 ${day + 1}`, amount: 100 + day, nextCharge: `day-${day + 10}`, category: '工具'
+  }));
+  const result = timelinePoints(rows, reportLayout);
+  const deepest = Math.max(...result.points.filter(point => point.side === 'bottom')
+    .map(point => point.labelTop + point.labelHeight));
+
+  assert.equal(sparse.timelineHeight, 210, '疏鬆的列印時間線維持原本高度');
+  assert.ok(result.timelineHeight >= deepest + 14);
+  assert.ok(result.timelineHeight > 210, '密集列印時間線須比固定底高更高');
+
+  const report = read('public/modules/subscriptions-report.js');
+  assert.match(report, /--report-timeline-height:\$\{timelineHeight\}px/);
+  assert.match(report, /height: var\(--report-timeline-height, 210px\)/);
+});
+
 test('續費時間線：頁面使用群組卡、筆數徽章與右緣防溢位樣式', () => {
   const source = read('public/modules/subscriptions.js');
   const css = read('public/styles.css');
   assert.match(source, /class="tl-label tl-group-card/);
   assert.match(source, /p\.items\.slice\(0, p\.items\.length > 3 \? 2 : 3\)/);
   assert.match(source, /class="tl-dot-count">\$\{p\.items\.length\}<\/span>/);
+  assert.match(source, /groupBadgeSpan: 3/);
   assert.match(source, /--timeline-height:\$\{timelineHeight\}px/);
   assert.match(css, /\.tl-group-card\.edge-right \{ transform: translateX\(-94%\); \}/);
   assert.match(css, /height: 82px;/);
