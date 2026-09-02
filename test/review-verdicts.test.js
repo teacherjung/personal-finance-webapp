@@ -1251,19 +1251,30 @@ test('⭐ 死角｜sha 歧義的**全形指紋**（NFKC 才數得到）→ 重�
   assert.deepEqual(problems, [], `全形指紋必須可豁免：${problems.join('｜')}`);
 });
 
-test('⭐ 死角｜隱形字元長在**來源欄**：雜湊救引文腿，身分腿要靠剝隱形字元', () => {
-  // `Grok #543 掃第 6 條`：零寬字若長在來源欄，rid.source 會原樣帶著它，
-  // 宣告者照肉眼看到的來源字串寫就對不上 identityOk ⇒ 豁免也走不通 ⇒ 仍鎖死。
+test('⭐ 劃界｜隱形字元長在**來源欄**：兩條救濟路都不通（本支不動身分語意）', () => {
+  // `Grok #543 掃第 6 條`指出的真實死角，`Codex #543 r7` 糾正了處置方向：
+  // 發射者一度在 identityOk 剝掉隱形字元、自認「收緊」——實際上是**放寬**（主流程視為
+  // 兩個身分的東西，在豁免腿被併成一個）。已撤回；這一題改成釘住那個決定：
+  // **來源欄帶隱形字時，同身分豁免對不上＝仍鎖死**，那是身分語意的問題、不在本支射程。
   const first = '🤖 Codex｜來源：CLI（xhigh）\u200b｜審 `abc1234`｜r6｜結論：要求修改';
   const url = 'https://github.com/x/y/pull/9#issuecomment-5310870051';
-  const body = `${first}\n\n略。`;
-  // 宣告者用**乾淨的**來源字串（肉眼看到的那個）發豁免
   const clean = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
     + `豁免留言 5310870051｜William 特准 2026-09-02｜原第一行雜湊：`
     + `${createHash('sha256').update(first.trim(), 'utf8').digest('hex')}`;
-  const { problems } = verdictProblems([cu(body, url), c(clean)], HEAD, 'Codex');
-  assert.ok(!problems.some((p) => /標頭格式不合規/.test(p)),
-    `來源欄帶隱形字時，肉眼相同的身分必須對得上：${problems.join('｜')}`);
+  const { problems } = verdictProblems([cu(`${first}\n\n略。`, url), c(clean)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    '肉眼相同但來源欄帶隱形字＝不同身分，豁免不可以對上（那會放寬同身分紀律）');
+});
+
+test('⭐ 死角｜sha 歧義的**拆碎指紋**（拆反引號才黏得回來）→ 走豁免路徑的行為回歸', () => {
+  // `Codex #543 r7 Medium②`：原本只驗「收件端會拒」，沒有提交豁免 ⇒ 資格側那一腿沒承重。
+  // 這一題真的走豁免：拿掉資格側的 .replace(/`/gu,'') 就會讓它回到鎖死。
+  const first = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：要求修改 `dead``beef1`';
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870054';
+  const body = `${first}\n\n略。`;
+  assert.ok(restateAllRefused(body, url, first), '前提：拆碎的指紋黏回去 ⇒ 正式重述必被拒');
+  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870054'))], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `拆碎指紋的壞行必須可豁免：${problems.join('｜')}`);
 });
 
 test('⭐ 死角｜引得動的壞行照舊不可豁免（資格沒有被放寬）', () => {
