@@ -165,8 +165,12 @@ test('續費時間線：列印版依最深標籤增高，不覆蓋下一個區�
   assert.ok(result.timelineHeight > 210, '密集列印時間線須比固定底高更高');
 
   const report = read('public/modules/subscriptions-report.js');
+  assert.match(report, /labelH: 40, minHeight: 210/);
   assert.match(report, /--report-timeline-height:\$\{timelineHeight\}px/);
-  assert.match(report, /height: var\(--report-timeline-height, 210px\)/);
+  assert.match(report, /\.report-timeline \{[^}]*height: var\(--report-timeline-height, 210px\)/s,
+    '列印時間線容器須接上動態高度');
+  assert.match(report, /\.report-tl-point \{[^}]*height: var\(--report-timeline-height, 210px\)/s,
+    '列印時間點須與容器使用同一高度');
 });
 
 test('續費時間線：頁面使用群組卡、筆數徽章與右緣防溢位樣式', () => {
@@ -177,6 +181,7 @@ test('續費時間線：頁面使用群組卡、筆數徽章與右緣防溢位�
   assert.match(source, /class="tl-dot-count">\$\{p\.items\.length\}<\/span>/);
   assert.match(source, /groupBadgeSpan: 3/);
   assert.match(source, /--timeline-height:\$\{timelineHeight\}px/);
+  assert.match(css, /\.timeline \{[^}]*height: var\(--timeline-height, 224px\)/s);
   assert.match(css, /\.tl-group-card\.edge-right \{ transform: translateX\(-94%\); \}/);
   assert.match(css, /height: 82px;/);
   assert.match(css, /\.tl-dot-count \{/);
