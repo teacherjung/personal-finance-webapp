@@ -170,7 +170,9 @@ test('v6 姿態閘：白名單是精確集合（AST 取值：恰一次字面綁�
   // Grok #540 掃第 2 條前半：只驗「這些擋、那些放」時，指令裡的 ALLOW 可以是探針的超集。
   // Codex #540 r4 M1：改用正規式抽第一段 tuple 仍會假綠——在後面再綁一次 ALLOW
   //   （第二個 Assign／AugAssign／迴圈綁定）就繞過去了。改用 python AST：
-  //   要求 ALLOW **恰被綁定一次、且是純字串字面 tuple**，任何非字面寫法一律轉紅。
+  //   Codex #540 r5／r7：列舉綁定形式補不完（AnnAssign→match capture→except as→函式名…），
+  //   判準已改成**數名字**——ALLOW 在整棵 AST 的每個欄位裡恰好出現兩次（一次賦值、一次讀取），
+  //   外加單獨擋 wildcard import。新語法形式出現時判準自動涵蓋。
   const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
   assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
   const out = execFileSync('python3', [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
