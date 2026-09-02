@@ -575,7 +575,10 @@ test('runScan｜r5 #3：假 grok 留一個背景 writer（stdio 關閉、主程�
   assert.notEqual(r.code, 2, r.summary.join('\n'));
   // 盒子已清，bg.pid 拿不到了——改用 ps 找那個 while 迴圈：盒子路徑出現在任何活程序的命令列＝還活著
   const box = (logs.find((l) => l.startsWith('盒子：')) || '').slice('盒子：'.length);
-  const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
+  const ps = execFileSync('/bin/ps', ['-axo', 'command'],
+    // ⚠️ maxBuffer 要放大：平行跑的 xlsx 隔離考題會起一個命令列夾著大段 base64 的子行程，
+    //    `ps -axo command` 的輸出因此可以衝破預設的 1MB ⇒ ENOBUFS ⇒ 本題間歇紅（與受測邏輯無關）。
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   assert.ok(!ps.includes(box), `runScan 回來後還有程序帶著盒子路徑在跑：${ps.split('\n').filter((l) => l.includes(box)).join(' | ').slice(0, 200)}`);
 });
 
@@ -1177,7 +1180,10 @@ test('runScan｜父程序收到 SIGTERM（呼叫它的工具逾時）→ 緊急�
   assert.deepEqual(readdirSync(iso.resultsRoot), [], '緊急收尾還留下只有 launch.json 的結果目錄');
   assert.equal((livesDuring ?? []).filter((n) => n.startsWith('.grok-live-canary-')).length, 1, `掃描中金絲雀沒建在注入的根目錄（實際內容：${JSON.stringify(livesDuring)}）——liveRoot 沒接上，下一行的斷言會變空包彈`);
   assert.deepEqual(readdirSync(iso.liveRoot), [], '活金絲雀目錄沒清');
-  const ps = execFileSync('/bin/ps', ['-axo', 'command'], { encoding: 'utf8' });
+  const ps = execFileSync('/bin/ps', ['-axo', 'command'],
+    // ⚠️ maxBuffer 要放大：平行跑的 xlsx 隔離考題會起一個命令列夾著大段 base64 的子行程，
+    //    `ps -axo command` 的輸出因此可以衝破預設的 1MB ⇒ ENOBUFS ⇒ 本題間歇紅（與受測邏輯無關）。
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   assert.ok(!ps.includes(box), 'grok 群組還活著');
 });
 
