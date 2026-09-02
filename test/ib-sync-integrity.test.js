@@ -142,7 +142,7 @@ function flexWithTrades(tradeRows) {
   };
 }
 
-test('IB 成交｜fxRateToBase 是 0 或負數 → pnlBase 記 null 歸 missing，不可把已實現損益歸零或變號', () => {
+test('IB 成交｜fxRateToBase 是 0 或負數 → 匯率欄正規化成 null，pnlBase 照階梯（非 USD 才 null、USD 仍直通），不可歸零或變號', () => {
   // ⚠️ 病因鏈：後端 `pnl * 0 = 0` 寫進 pnlBase，而前端 tradePnlBase 的階梯是「pnlBase 優先」
   //   （portfolio-calculations.js 自己有 `> 0` 正值牆、卻排在 pnlBase 之後）⇒ 後端先塞 0，
   //    前端的牆永遠輪不到——GBP 賣出的已實現損益靜靜消失（或變號）進交易摘要與 XIRR。
