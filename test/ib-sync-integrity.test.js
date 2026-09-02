@@ -99,7 +99,8 @@ test('IB 現金流｜設定的估算匯率是 0 或負數 → 落 skippedNoFx，
 test('IB 現金流｜fxRateToBase 是 0 或負數 → 同缺匯率走階梯，不可乘成 0 元／負值還標「已計入」', () => {
   // ⚠️ 病因：`Number.isFinite(0)` 是 true——0 不是匯率，是報表壞值。照乘的話 GBP 100 的股息
   //    變 0 元、count++ ⇒ 畫面「已計入」、skippedNoFx=0 零提醒；負數更會把收入變成支出。
-  //    上一題釘的是空字串／null 那條路，這一題釘的是 #407 複審當時記錄在案的另一半：正值牆。
+  //    同檔題名關鍵字「fxRateToBase 是空字串／null」那題釘的是另一條路，
+  //    這一題釘的是 #407 複審當時記錄在案的另一半：正值牆。
   for (const bad of ['0', '-1.3']) {
     const parsed = parseStatement(flexWithCash([
       { type: 'Dividends', currency: 'GBP', amount: '100', fxRateToBase: bad },
