@@ -55,9 +55,10 @@ const XLSX_SELECTORS = [
  *     字串形（`m['setPdfChildScriptForTest']`）另用 Literal 那條關掉。**列舉繞法補不完就關門。**
  *  ⚠️ **具名匯出是給考題用的**：`test/pdf-isolate.test.js` 拿這份清單逐字比對，
  *     才知道「剛剛那個錯是接縫護欄報的」。
- *  目前的豁免：`lib/pdf-isolate.js`（宣告處本身）與考題檔（它們本來就要用）。
- *  ⚠️ **這是現況、不是保證**（Codex #538 r4 Low）：沒有考題盯著「不准再多一個豁免」。
- *  真正關門的那一層在 `lib/pdf-isolate.js` 的 `setPdfChildScriptForTest`（執行期）。 */
+ *  豁免的原則（不列清單——清單會漂，鐵則 10）：**宣告處本身**與**考題檔**必須能用它，其餘一律禁。
+ *  ⚠️ 這一條規則是**早期警告**，不是門：算出來的成員存取（模板字串、字串相加）它看不見。
+ *  執行期那道檢查（`lib/pdf-isolate.js` 的 `setPdfChildScriptForTest`）才是把破壞面關起來的地方，
+ *  而它自己也只是**防誤用**——完整的劃界寫在那個函式的註解裡，這裡不重抄。 */
 export const SEAM_SELECTORS = [
       { selector: "Identifier[name='setPdfChildScriptForTest']",
         message: 'setPdfChildScriptForTest 是考題專用的接縫（換掉 PDF 子行程腳本）。'

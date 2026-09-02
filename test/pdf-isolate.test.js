@@ -496,20 +496,65 @@ test('架構｜**執行期**的門：不在測試行程呼叫接縫一定要丟�
     `正式行程裡呼叫接縫竟然成功了（${stdout.trim()}）——那表示子行程腳本在正式環境是可以被換掉的`);
 });
 
-test('架構｜執行期那道門：**偽造的環境值**與 test-doubles 以外的路徑都要被拒', async () => {
-  // ⚠️ Codex #538 r4 Medium：上一版接受任何非空 `NODE_TEST_CONTEXT`＝設個環境變數就開門。
-  //    現在只認 Node 測試執行器已知的值，而且**只准換成 test-doubles/ 底下的檔案**——
-  //    後者才是這道門真正買到的東西：就算被繞過，破壞面也關在我們自己的假替身裡。
+test('架構｜執行期那道門：偽造的環境值、目錄外、符號連結、相對路徑改 cwd——逐項都要擋', async () => {
+  // ⚠️ Codex #538 r4/r5：這道門是**防誤用**的，不是安全邊界（環境變數誰都能設）。
+  //    它真正買到的是「呼叫得到也只能指到 test-doubles/ 裡的一般檔案」。
+  //    r5 實證上一版擋不住：目錄內放一個指向 /bin/echo 的符號連結就過關了，
+  //    而且驗的是算出來的絕對路徑、交給 spawn 的卻是原字串（相對路徑遇上 cwd 改變就對不上）。
+  const { symlinkSync, writeFileSync, mkdirSync, rmSync } = await import('node:fs');
   const { setPdfChildScriptForTest: seam } = await import('../lib/pdf-isolate.js');
-  const saved = process.env.NODE_TEST_CONTEXT;
+  const doubles = join(ROOT, 'test-doubles');
+  const link = join(doubles, '_r5_probe_link.js');
+  const sibling = join(ROOT, 'test-doubles-evil');
   try {
-    process.env.NODE_TEST_CONTEXT = 'not-a-real-test-context';
-    assert.throws(() => seam(fakeChild('pdf-child-hang.js')), /只能在 Node 測試執行器/,
-      '偽造的環境值被放行了——那等於「設個環境變數就開門」');
-  } finally { process.env.NODE_TEST_CONTEXT = saved; }
-  assert.throws(() => seam('/tmp/evil-child.js'), /test-doubles/,
-    'test-doubles 以外的腳本被放行了——破壞面就不再被關在假替身裡');
-  assert.doesNotThrow(() => seam(null), '傳 null 還原不可以被路徑檢查擋下');
+    // ① 偽造的環境值
+    const saved = process.env.NODE_TEST_CONTEXT;
+    try {
+      process.env.NODE_TEST_CONTEXT = 'not-a-real-test-context';
+      assert.throws(() => seam(fakeChild('pdf-child-hang.js')), /只能在 Node 測試執行器/,
+        '偽造的環境值被放行了——那等於「設個環境變數就開門」');
+    } finally { process.env.NODE_TEST_CONTEXT = saved; }
+
+    // ② 目錄外的絕對路徑
+    assert.throws(() => seam('/bin/echo'), /test-doubles/, '目錄外的腳本被放行了');
+    // ③ 不存在的檔案
+    assert.throws(() => seam(join(doubles, '_不存在_.js')), /找不到子行程腳本|test-doubles/,
+      '不存在的檔案要給看得懂的錯，不是原始的 ENOENT');
+    // ④ `..` 跳出去
+    assert.throws(() => seam(join(doubles, '..', 'lib', 'pdf-isolate-child.js')), /test-doubles/,
+      '用 .. 跳出目錄被放行了');
+    // ⑤ 前綴相同的**兄弟目錄**（test-doubles-evil/）
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, 'x.js'), '// probe\n');
+    assert.throws(() => seam(join(sibling, 'x.js')), /test-doubles/,
+      '前綴相同的兄弟目錄被放行了（字串前綴比對的經典洞）');
+    // ⑥ **目錄內的符號連結指到外面**（r5 實證的那一個）
+    rmSync(link, { force: true });
+    symlinkSync('/bin/echo', link);
+    assert.throws(() => seam(link), /test-doubles|一般檔案/,
+      '目錄內的符號連結指到 /bin/echo 竟然被接受——真實路徑沒有被走到底');
+    // ⑦ 目錄本身（或指向目錄的連結）不是一般檔案——spawn 一個目錄只會得到看不懂的錯
+    const probeDir = join(doubles, '_r5_probe_dir');
+    mkdirSync(probeDir, { recursive: true });
+    assert.throws(() => seam(probeDir), /一般檔案/, '目錄被當成子行程腳本收下了');
+    // ⑧ 目錄內的一般檔案要放行，而且**保存的是 canonical 路徑**（相對路徑改了 cwd 也還是同一個檔）
+    const cwd = process.cwd();
+    try {
+      process.chdir(doubles);
+      assert.doesNotThrow(() => seam('./pdf-child-hang.js'), '目錄內的一般檔案（相對路徑）應該放行');
+      process.chdir(ROOT);
+      // cwd 換了之後，內部保存的必須仍是剛才那個檔案的絕對路徑
+      const src = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
+      assert.match(src, /childScriptOverride = real;/,
+        '保存的不是驗證過的 canonical 路徑——驗 A 跑 B，相對路徑遇到 cwd 改變就對不上');
+    } finally { process.chdir(cwd); }
+    assert.doesNotThrow(() => seam(null), '傳 null 還原不可以被路徑檢查擋下');
+  } finally {
+    rmSync(link, { force: true });
+    rmSync(sibling, { recursive: true, force: true });
+    rmSync(join(doubles, '_r5_probe_dir'), { recursive: true, force: true });
+    seam(null);
+  }
 });
 
 test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下（regex 版曾漏掉三種普通寫法）', async () => {
@@ -701,7 +746,9 @@ test('邊收邊數｜取消**失敗**時：原本的 400 不可以被蓋掉，�
   // ⚠️ **哨兵用罕見字、比對用字元級**（Codex #538 r3 Medium）：上一版比對「連續 6 字」，
   //    把內容切成 5 字以下的片段再印就整批溜過去（帳號與金額切碎了一樣是洩漏）。
   //    改成：哨兵的每一個字都是診斷文字不可能出現的罕見字 ⇒ **任何一個字出現在日誌就算洩漏**，
-  //    不管它被切成幾段。這是「關門」而不是「列舉繞法」。
+  //    不管它被切成幾段。⚠️ **它只關掉「原文字元切片」這一種繞法**（Codex #538 r5 Low）：
+  //    轉成 base64／hex／雜湊再印一樣看不到——那條界線寫在 `lib/parse-limits.js` 的 cancelStream，
+  //    這裡不宣稱無限定的關門。
   const SECRET = '龘䶵鱻麤龗厵';
   const delivered = { n: 0 };
   const stubborn = {
