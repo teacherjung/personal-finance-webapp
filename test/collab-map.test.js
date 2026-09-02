@@ -49,13 +49,16 @@
 // - **驗不到**地圖收得夠不夠全——它本來就宣告自己是選錄。
 // - **驗不到**站外那一條（`../teaching-videos/AGENTS.md`）：別的 repo、不保證在這台機器上。
 // - 「選錄，不對帳」那張表**刻意不驗**：它列的不是閘，沒有可對帳的自報來源。
-// - 閘的對帳與兜底**只認 `MERGE_GATE` 這個名字**：改用別的 export 名開一道閘，這裡看不到。
+// - 閘表對的是**合併步驟裡實際會跑的那一組**（與 `collab-invariant-docs` 共用 `gatesRunInMergeSteps()`）；
+//   兜底則寬到「腳本裡**提到** `MERGE_GATE` 就要真的在那一組裡」。兩者**都只認 `MERGE_GATE` 這個名字**——
+//   改用別的 export 名開一道閘，這裡看不到。
 // - **驗不到** Markdown 的容器與表格結構（見上一節逐條列的那幾發）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -184,7 +187,6 @@ function scriptFiles(/** @type {string} */ dir = 'scripts') {
   return out;
 }
 
-const isCheckScript = (/** @type {string} */ p) => /(^|\/)check-[^/]*\.(js|mjs|cjs)$/.test(p);
 
 // ───────────────────────── 解析器自己的對照斷言（防上面每一題空掃而綠）─────────────────────────
 
@@ -267,23 +269,32 @@ test('⭐ 三份正本都要在地圖的射程裡（否則它導的是別的東�
 // ───────────────────────────────── 閘的對帳 ─────────────────────────────────
 
 /**
- * 合併前真的會擋人的閘＝**腳本自報**（`export const MERGE_GATE`），不是誰手寫的名單。
- * ⚠️ 抄 `test/collab-invariant-docs.test.js` 的教訓（`Codex #385 r9`）：手寫名單自己會漂。
+ * 這張表要對帳的是**合併步驟裡實際會跑的閘**，不是「有沒有自報」。
+ *
+ * ⚠️ 為什麼不是自報（`Codex #545 r6`）：自報只代表那支腳本**宣稱**自己是閘。
+ * 他做了兩發突變——`scripts/check-ghost-gate.mjs` 與 `scripts/gates/check-ghost-gate.js`，
+ * 都只自報、**沒有接進 `REVIEW-AND-MERGE.md` 的合併步驟**，各補一列地圖之後全綠。
+ * 那就是這一節最想避免的東西：地圖上掛著一道**永遠不會跑**的閘。
+ * ⇒ 判準改成跟合併程序同一個集合：`gatesRunInMergeSteps()`（正本在 test/helpers/merge-gates.js，
+ * 與 `test/collab-invariant-docs.test.js` **共用同一份**——各寫一份就是兩份會漂的複本）。
+ *
  * @returns {Promise<{file: string, name: string}[]>}
  */
-async function selfDeclaredGates() {
+async function gatesToList() {
   const gates = [];
-  for (const f of scriptFiles().filter(isCheckScript)) {
+  for (const f of gatesRunInMergeSteps()) {
     const mod = await import(pathToFileURL(join(ROOT, f)).href);
-    if (mod.MERGE_GATE) gates.push({ file: f, name: String(mod.MERGE_GATE.name) });
+    assert.ok(mod.MERGE_GATE,
+      `${f} 寫進了合併步驟卻沒有自報 MERGE_GATE——名字無從對帳。（盤點的正本＝test/collab-invariant-docs.test.js）`);
+    gates.push({ file: f, name: String(mod.MERGE_GATE.name) });
   }
   return gates;
 }
 
-test('⭐ 「合併步驟專用的閘」那張表要跟腳本自報的 MERGE_GATE 逐一對帳（名字也要對）', async () => {
-  const gates = await selfDeclaredGates();
+test('⭐ 「合併步驟專用的閘」那張表＝合併步驟裡實際會跑的那幾支，逐一對帳（名字也要對）', async () => {
+  const gates = await gatesToList();
   assert.ok(gates.length > 0,
-    '一支自報 MERGE_GATE 的閘都找不到——不是閘沒了，就是這個列舉壞了（壞了的話這題就是空包彈）。');
+    '合併步驟裡一支閘都抽不到——不是閘沒了，就是那個反查壞了（壞了的話這題就是空包彈）。');
   const rows = strictRows(sectionLines(read(MAP).split('\n'), GATE_HEADING),
     GATE_TABLE_HEAD, GATE_ROW, '合併步驟專用的閘', true);
   /** @type {Map<string, string>} 腳本路徑 → 地圖左欄寫的閘名 */
@@ -300,24 +311,28 @@ test('⭐ 「合併步驟專用的閘」那張表要跟腳本自報的 MERGE_GAT
   }
   for (const { file, name } of gates) {
     assert.ok(listed.has(file),
-      `${MAP} 的閘表格漏了「${file}」，但它自報是合併閘。\n`
+      `${MAP} 的閘表格漏了「${file}」，但合併步驟裡實際會跑它。\n`
       + '⚠️ 讀者會照那張表推論「表上沒有＝沒有機器在管」——漏一道就是給錯的安全感。');
     assert.equal(listed.get(file), name,
       `${MAP} 把「${file}」的閘名寫成「${listed.get(file)}」，自報的名字卻是「${name}」。左欄要照抄自報的名字。`);
   }
   for (const [file] of listed) {
     assert.ok(gates.some((g) => g.file === file),
-      `${MAP} 的閘表格列了「${file}」，但它並沒有自報 MERGE_GATE。表上多一道＝同樣是假的安全感。`);
+      `${MAP} 的閘表格列了「${file}」，但合併步驟裡根本不會跑它（幽靈閘）。表上多一道＝同樣是假的安全感。`);
   }
 });
 
-test('⭐ scripts/ 遞迴底下非 check-* 的 js/mjs/cjs 不准提到 MERGE_GATE（對帳只認 check-*，這條兜底）', () => {
-  for (const f of scriptFiles().filter((p) => !isCheckScript(p))) {
-    assert.ok(!read(f).includes('MERGE_GATE'),
-      `${f} 提到 MERGE_GATE，但對帳只掃 check-* ⇒ 它不會被對帳到。\n`
-      + '⚠️ 這裡刻意寬到「提到就紅」：`export const MERGE_GATE`、`export { MERGE_GATE }`、\n'
-      + '   放進子目錄……拼法列舉不完，所以認名字不認寫法。\n'
-      + '   要嘛把它改名成 check-*，要嘛放寬對帳範圍——不要留一道「表上看不到、也沒人對帳」的閘。');
+test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的檔案，都要真的出現在合併步驟裡（幽靈閘兜底）', () => {
+  const running = new Set(gatesRunInMergeSteps());
+  for (const f of scriptFiles()) {
+    if (!read(f).includes('MERGE_GATE')) continue;
+    assert.ok(running.has(f),
+      `${f} 提到 MERGE_GATE，但它**不在合併步驟實際會跑的那一組**裡。\n`
+      + '⚠️ 這就是幽靈閘：自報自己是閘、卻永遠不會被執行。留著它，地圖與盤點都會給錯的安全感。\n'
+      + '   要嘛把它寫進 REVIEW-AND-MERGE.md 合併步驟的標準指令行（`node scripts/<名>.js <N>`，\n'
+      + '   限第一層、限 .js——那是 gatesRunInMergeSteps() 刻意的窄射程），要嘛不要自報 MERGE_GATE。\n'
+      + '⚠️ 這裡刻意寬到「提到就算」：`export const`／`export { }`／子目錄／.mjs／.cjs 拼法列舉不完，\n'
+      + '   所以認名字不認寫法。');
   }
 });
 
