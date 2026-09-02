@@ -505,11 +505,15 @@ test('架構｜執行期那道門：偽造環境值／目錄外／連結／目�
   //    而有那個權限的人本來就能直接改正式程式碼（r6 判定：不必再加固，照實寫下來即可）。
   //    r5 實證上一版擋不住：目錄內放一個指向 /bin/echo 的符號連結就過關了，
   //    而且驗的是算出來的絕對路徑、交給 spawn 的卻是原字串（相對路徑遇上 cwd 改變就對不上）。
-  const { symlinkSync, writeFileSync, mkdirSync, rmSync } = await import('node:fs');
+  // ⚠️ **只准碰自己建的路徑**（Codex #538 r7 Medium）：上一版用固定名稱建了五個路徑再遞迴刪掉，
+  //    他實測預先放辨識檔進去 → 兩題都顯示通過、**五個檔案全被刪掉**。`npm test` 是 push 前必跑的，
+  //    考題把開發者未追蹤的檔案清掉是「工具自己破壞工作樹」。改用 mkdtemp 取唯一目錄。
+  const { symlinkSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
   const { setPdfChildScriptForTest: seam } = await import('../lib/pdf-isolate.js');
   const doubles = join(ROOT, 'test-doubles');
-  const link = join(doubles, '_r5_probe_link.js');
-  const sibling = join(ROOT, 'test-doubles-evil');
+  const probeDir = mkdtempSync(join(doubles, '_probe_'));      // test-doubles/ 內的唯一目錄
+  const link = join(probeDir, 'link.js');
+  const sibling = mkdtempSync(join(ROOT, 'test-doubles-evil-'));   // 前綴相同的兄弟目錄（唯一名）
   try {
     // ① 偽造的環境值
     const saved = process.env.NODE_TEST_CONTEXT;
@@ -527,19 +531,15 @@ test('架構｜執行期那道門：偽造環境值／目錄外／連結／目�
     // ④ `..` 跳出去
     assert.throws(() => seam(join(doubles, '..', 'lib', 'pdf-isolate-child.js')), /test-doubles/,
       '用 .. 跳出目錄被放行了');
-    // ⑤ 前綴相同的**兄弟目錄**（test-doubles-evil/）
-    mkdirSync(sibling, { recursive: true });
+    // ⑤ 前綴相同的**兄弟目錄**（test-doubles-evil-XXXX/）
     writeFileSync(join(sibling, 'x.js'), '// probe\n');
     assert.throws(() => seam(join(sibling, 'x.js')), /test-doubles/,
       '前綴相同的兄弟目錄被放行了（字串前綴比對的經典洞）');
     // ⑥ **目錄內的符號連結指到外面**（r5 實證的那一個）
-    rmSync(link, { force: true });
     symlinkSync('/bin/echo', link);
     assert.throws(() => seam(link), /test-doubles|一般檔案/,
       '目錄內的符號連結指到 /bin/echo 竟然被接受——真實路徑沒有被走到底');
     // ⑦ 目錄本身（或指向目錄的連結）不是一般檔案——spawn 一個目錄只會得到看不懂的錯
-    const probeDir = join(doubles, '_r5_probe_dir');
-    mkdirSync(probeDir, { recursive: true });
     assert.throws(() => seam(probeDir), /一般檔案/, '目錄被當成子行程腳本收下了');
     // ⑧ 目錄內的一般檔案要**放行**，而且保存的是 canonical 路徑——用行為證明，不是讀原始碼
     //    ⚠️ 上一版在這裡讀 `lib/pdf-isolate.js` 再用 regex 找 `childScriptOverride = real;`
@@ -559,9 +559,9 @@ test('架構｜執行期那道門：偽造環境值／目錄外／連結／目�
       + '就是「驗 A 跑 B」');
     assert.doesNotThrow(() => seam(null), '傳 null 還原不可以被路徑檢查擋下');
   } finally {
-    rmSync(link, { force: true });
+    // 只刪本題自己建的那兩個唯一目錄（mkdtemp 保證不會撞到別人的東西）
+    rmSync(probeDir, { recursive: true, force: true });
     rmSync(sibling, { recursive: true, force: true });
-    rmSync(join(doubles, '_r5_probe_dir'), { recursive: true, force: true });
     seam(null);
   }
 });
@@ -571,9 +571,10 @@ test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下�
   //    但實測**別名 import／換行呼叫／`.call`** 三種都照樣全綠——同 xlsx 那條的教訓：
   //    用正規表示式解析一門語言補不完，執法者要換成看語法樹的 ESLint。
   //    本題的職責因此改成**盯著執法者真的會開火**（下面列舉的寫法只是證據，不是護欄本體）。
-  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
-  const probeDir = join(ROOT, 'lib', '_seam_guard_probes');
-  const pubProbeDir = join(ROOT, 'public', '_seam_guard_probes');
+  // ⚠️ 同上（r7 Medium）：唯一目錄、只刪自己建的
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const probeDir = mkdtempSync(join(ROOT, 'lib', '_seam_probe_'));
+  const pubProbeDir = mkdtempSync(join(ROOT, 'public', '_seam_probe_'));
   const IMP = "import { setPdfChildScriptForTest } from '../pdf-isolate.js';\n";
   const FORMS = [
     ['直接呼叫', `${IMP}export function a() { setPdfChildScriptForTest('/tmp/x.js'); }\n`],
@@ -592,8 +593,6 @@ test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下�
     ['re-export（把接縫轉手出去）', "export { setPdfChildScriptForTest } from '../pdf-isolate.js';\n"],
   ];
   try {
-    mkdirSync(probeDir, { recursive: true });
-    mkdirSync(pubProbeDir, { recursive: true });
     const paths = FORMS.map(([name, src], k) => {
       const f = join(probeDir, `p${k}.js`);
       writeFileSync(f, src);
