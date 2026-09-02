@@ -86,24 +86,24 @@ test('IB Flex 解析：持倉、現金流與多幣別成交損益維持同一口
 // `securityTrades` 早就做到「缺 Currency 不猜 USD」，但持股／現金流／ibTrades 三條舊路沒跟上：
 // Flex Query 少勾一個 Currency 欄，GBP 100 的股息就被當成 USD 100 加總（少算 27%），
 // 而且 skippedNoFx 是 0＝畫面一個字都不會提。這正是專案自己禁止的「默默算錯」。
-test('IB 解析｜現金交易缺幣別：有 fxRateToBase 照算；連匯率也沒有＝跳過並計入 skippedNoCurrency', () => {
+test('IB 解析｜現金交易缺幣別：有「正的」fxRateToBase 照算；連有效匯率也沒有＝跳過並計入 skippedNoCurrency', () => {
   const parsed = parseStatement({
     FlexQueryResponse: { FlexStatements: { FlexStatement: {
       accountId: 'U-SYNTH',
       CashTransactions: { CashTransaction: [
-        { type: 'Dividends', amount: '100', fxRateToBase: '1.27' },   // 缺幣別但有匯率 → 照算（換算正確）
-        { type: 'Dividends', amount: '100' },                          // 缺幣別又缺匯率 → 不猜
+        { type: 'Dividends', amount: '100', fxRateToBase: '1.27' },   // 缺幣別但有「正的」匯率 → 照算（換算正確；0／負數不算數，見 ib-sync-integrity）
+        { type: 'Dividends', amount: '100' },                          // 缺幣別又沒有有效匯率 → 不猜
         { type: 'Broker Interest Received', currency: 'USD', amount: '5' },
       ] },
     } } },
   }, () => null);
-  assert.equal(parsed.income.dividends, 127, '有 fxRateToBase 就照算——那條路與幣別無關');
-  assert.equal(parsed.income.skippedNoCurrency, 1, '缺幣別又缺匯率＝跳過，不可以當成 USD 100 加總');
+  assert.equal(parsed.income.dividends, 127, '有「正的」fxRateToBase 就照算——那條路與幣別無關（0／負數＝壞值，另有專題）');
+  assert.equal(parsed.income.skippedNoCurrency, 1, '缺幣別又沒有有效匯率＝跳過，不可以當成 USD 100 加總');
   assert.equal(parsed.income.skippedNoFx, 0, '這是「缺幣別」不是「缺匯率」，兩種病要分開計數才修得對地方');
   assert.equal(parsed.income.interestReceived, 5, '正常的列不受影響');
 });
 
-test('IB 解析｜成交紀錄缺幣別：currency 留空、pnlBase 為 null（不當 USD 直通進 XIRR）', () => {
+test('IB 解析｜成交紀錄缺幣別且沒有有效匯率：currency 留空、pnlBase 為 null（不當 USD 直通進 XIRR）；有正匯率仍照算', () => {
   const parsed = parseStatement({
     FlexQueryResponse: { FlexStatements: { FlexStatement: {
       accountId: 'U-SYNTH',
@@ -114,8 +114,8 @@ test('IB 解析｜成交紀錄缺幣別：currency 留空、pnlBase 為 null（�
     } } },
   }, () => null);
   assert.equal(parsed.trades[0].currency, '', '不知道就說不知道');
-  assert.equal(parsed.trades[0].pnlBase, null, '缺幣別又缺匯率＝算不出基準損益，不可以拿原值冒充');
-  assert.equal(parsed.trades[1].pnlBase, 38.1, '有匯率照算（30 × 1.27）');
+  assert.equal(parsed.trades[0].pnlBase, null, '缺幣別又沒有有效匯率＝算不出基準損益，不可以拿原值冒充');
+  assert.equal(parsed.trades[1].pnlBase, 38.1, '有「正的」匯率照算（30 × 1.27）——缺幣別不擋這條路');
 });
 
 test('IB 解析｜持股缺幣別在 parse 層就是空字串（USD 預設只發生在同步寫入，已一併修掉）', () => {
