@@ -334,8 +334,18 @@ export function issuerFormFields(card) {
  *     ⚠️ 2026-09-02 起這一格**同時補上代號**（`issuerId`）——那是本支的升級路徑：既有的
  *     「台新銀行」卡打開按儲存就從此走代號那條路。身分不變（本來就判成台新），只是不再靠文字算。
  *   ・**整串空白** ＝ 清成 `''`（本函式這一格）。
- *   ・**不認得的代號** ＝ 代號清成 `''`（`issuer` 顯示字串不動），見 `issuerFormFields`。
- * 每一條都由 `test/card-issuers.test.js` 的 round-trip 題釘住。
+ * ⚠️ **上面三條的前提是「這張卡沒有（可用的）代號」**——預審 2026-09-02 抓到我把這份清單寫成了窮舉，
+ *    漏了代號在場時的那一格，而且把「不認得的代號」那一格寫錯了。照實補：
+ *   ・**代號查得到** ⇒ `issuerFormFields` 第一分支直接勝出，儲存時 `issuer` 被寫成**該代號的正式名稱**。
+ *     資料一致時這只是「同一家換個字形」；**資料不一致時它會把顯示名換成另一家**
+ *     （`{issuer:'玉山銀行', issuerId:'taishin'}` → 存成 `issuer:'台新銀行'`）。
+ *     ⚠️ 那不是 bug，是「代號才是身分」的直接後果——顯示名跟著身分走，才不會有一張卡寫著甲、算成乙。
+ *     這種不一致只有備份匯入／直打 API 產得出來（表單兩欄一起寫，不可能拆開）。
+ *   ・**不認得的代號** ⇒ 視同沒有代號、落回上面三條，所以**兩半都不是「原樣不動」**：
+ *     代號會被寫成「這一項的代號」或 `''`，而 `issuer` 同時照上面三條處理
+ *     （`{issuer:'臺新銀行', issuerId:'zzz'}` → `{issuer:'台新銀行', issuerId:'taishin'}`）。
+ * 每一條都由 `test/card-issuers.test.js` 的 round-trip 題釘住——⚠️ 這句 2026-09-02 之前是假的
+ * （那一題的 helper 只餵 `{issuer: x}`、從不餵 `issuerId`），已補上帶代號的 round-trip 題。
  * @param {unknown} selected 下拉的值（代號／`''`／`ISSUER_OTHER`）
  * @param {unknown} custom 自訂文字框
  * @returns {{ issuer: string, issuerId: string }}
