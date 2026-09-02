@@ -348,26 +348,29 @@ test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真�
  * 三份正本各自那**一行**指路的**指定形狀**。
  *
  * ⚠️ 為什麼是「指定的一行」，不是在整份檔案裡找字串（`Codex #548 r2`）：
- * 我上一版先剝 HTML 註解與 ``` 區塊、再找 `](COLLAB-MAP.md)`——那是在自造一台簡化 markdown
- * 解析器，而它擋不住的東西我逐發實測過：**未閉合的註解**（後半份檔案被吞掉、考題照樣全綠）、
- * 四個反引號外框包三個反引號、`~~~` 圍欄完全沒剝。同一族陷阱在
- * `test/grok-scan-docs.test.js` 與 `test/safety-docs-freshness.test.js` 都已有前例與處方。
- * ⇒ 改成**窄而可證**：三份入口各自在前言放一行固定形狀的指路，考題只認那一行。
- * 沒有 markdown 解析，只有「這一行長不長成那個樣子」。
+ * 先剝 HTML 註解與 ``` 區塊、再找連結，等於自造一台簡化 markdown 解析器，而它擋不住
+ * 未閉合註解、四反引號外框、`~~~` 圍欄——都實測過仍全綠。
+ * ⇒ 改成**窄而可證**：只認 raw 行的形狀。沒有 markdown 解析。
+ *
+ * ⚠️ 前導只准「行首」或「`> `」（`Codex #548 r3`）：原本寫 `^>?\s*`，於是**四個空白的縮排**
+ * 也放行——GFM 會把那一行渲染成 `<pre><code>`、根本不是連結，考題卻仍全綠。
  */
-const POINTER_LINE = /^>?\s*\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-MAP\.md\)\*\*（.+）。$/;
+const POINTER_LINE = /^(?:> )?\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-MAP\.md\)\*\*（.+）。$/;
 
 /** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
 const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
 
-test('⭐ 指路行的判準自己要先會動：反面句、缺免責詞、被註解包住都不算', () => {
+test('⭐ 指路行的判準自己要先會動：不合形狀的寫法都要被擋掉', () => {
   const good = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它**只指路、不是正本、無規則效力**）。';
   assert.ok(POINTER_LINE.test(good), '合法的指路行竟然比對不到。');
+  assert.ok(POINTER_LINE.test(`> ${good}`), 'blockquote 版本應該算數。');
   assert.ok(POINTER_WORDS.every((w) => good.includes(w)), 'fixture 自己就少了免責詞。');
 
   const bad = {
     '可點的反面句': '不要去看 [COLLAB-MAP.md](COLLAB-MAP.md)，它不是正本，已經廢棄。',
     '被單行註解包住': `<!-- ${good} -->`,
+    '註解夾在連結中間（剝掉才拼得出連結）': '**規矩住在哪＝[COLLAB-MAP.md]<!-- x -->(COLLAB-MAP.md)**（路由表）。',
+    '四個空白縮排（GFM 會渲染成 code block）': `    ${good}`,
     '只有連結沒有指定形狀': '見 [COLLAB-MAP.md](COLLAB-MAP.md)。',
     '連結指到別的檔': '**規矩住在哪＝[COLLAB-MAP.md](OTHER.md)**（路由表）。',
   };
@@ -379,39 +382,55 @@ test('⭐ 指路行的判準自己要先會動：反面句、缺免責詞、被�
     '缺免責詞的那一行要靠 POINTER_WORDS 擋，不是靠形狀。');
 });
 
-test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路', () => {
+test('⭐ 地圖自己要找得到：三份正本的前言各要有一行指定形狀的指路', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
   //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到這三份」與「這三份要指回地圖」
   //    的開關——**一個開關關掉兩張網**。有人把某一份從 CANON 拿掉，兩題會一起失去那份的覆蓋而照樣全綠。
   //    這裡不為此加機制（`CANON` 沒有獨立的真相來源可反查），照實記在這裡。
+  //
+  // ⚠️ **這一題保證的是「那一行長對了、在前言、讀者看得到」**，不是「那句話的意思對」。
+  //    `Codex #548 r3` 實證：把括號內容改成「這句『只指路、不是正本、無規則效力』都是錯的；
+  //    其實地圖才是正本」，形狀與三個詞都還在 ⇒ 照樣綠。語意要靠人讀，這裡不宣稱擋得住。
   for (const from of CANON) {
-    const raw = read(from);
-    // ①先剝成對的註解，再**拒絕任何殘留的註解標記**——未閉合／巢狀註解會吞掉後半份檔案，
-    //   那時「找得到那一行」等於在讀讀者看不到的內容（處方同 test/safety-docs-freshness.test.js）。
-    const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
-    for (const mark of ['<!--', '-->']) {
-      assert.ok(!stripped.includes(mark),
-        `「${from}」有未閉合或巢狀的 HTML 註解（殘留 \`${mark}\`）。\n`
-        + '⚠️ 這裡 fail-closed：註解沒收好，後面的內容讀者看不到，任何「找得到」都不算數。');
-    }
-    const lines = stripped.split('\n');
-    const hits = lines.filter((l) => POINTER_LINE.test(l));
-    assert.equal(hits.length, 1,
-      `「${from}」的指路行有 ${hits.length} 行，必須剛好一行。\n`
+    const lines = read(from).split('\n');
+
+    // 「前言」＝第一個 `## ` 標題之前。找不到任何 `## ` 就 fail-closed——
+    // 沒有邊界可界定時，不可以退成「整份檔案都算前言」（那等於這一格沒在檢查）。
+    const firstH2 = lines.findIndex((l) => /^## /.test(l));
+    assert.ok(firstH2 > 0, `「${from}」找不到任何 \`## \` 標題，「前言」的邊界無從界定。這裡 fail-closed。`);
+
+    const at = lines.findIndex((l) => POINTER_LINE.test(l));
+    const hits = lines.filter((l) => POINTER_LINE.test(l)).length;
+    assert.equal(hits, 1,
+      `「${from}」的指路行有 ${hits} 行，必須剛好一行。\n`
       + '⚠️ 沒有人指路的地圖等於不存在。三份正本各自是不同讀者的入口\n'
       + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人）。\n'
-      + '⚠️ 只寫檔名、只放連結、寫成「不要去看它」這類反面句，都不合指定形狀——**那些都不算指路**。');
-    // ②那一行不可以躲在 code fence 裡：要求它出現在全檔第一個圍欄之前
-    const fence = lines.findIndex((l) => /^\s{0,3}(```|~~~)/.test(l));
-    const at = lines.findIndex((l) => POINTER_LINE.test(l));
-    assert.ok(fence === -1 || at < fence,
-      `「${from}」的指路行出現在第一個 code fence 之後——可能被圍欄包住而讀者看不到。指路要放在前言。`);
+      + '⚠️ 只寫檔名、只放連結、縮排四格、把註解夾在連結中間，都不合指定形狀。');
+    assert.ok(at < firstH2,
+      `「${from}」的指路行在第一個 \`## \` 標題之後。指路要放在**前言**，讀者一開檔就看得到。`);
+
+    const line = lines[at];
+    for (const mark of ['<!--', '-->']) {
+      assert.ok(!line.includes(mark),
+        `「${from}」的指路行自己含有 \`${mark}\`。\n`
+        + '⚠️ 不可以用「把註解刪掉之後才拼得出來的連結」證明指路——GFM 渲染出來的是字面文字，不是連結。');
+    }
+    // 指路行**之前**的註解標記必須成對：未閉合的註解會把它整段吞掉。
+    const before = lines.slice(0, at).join('\n');
+    assert.equal((before.match(/<!--/g) || []).length, (before.match(/-->/g) || []).length,
+      `「${from}」的指路行之前有未閉合的 HTML 註解，它會被吞掉、讀者看不到。\n`
+      + '⚠️ 這個平衡檢查只看指路行**之前**那幾行（指路在前言，前面沒幾行）——\n'
+      + '   所以正文後段合法討論 `<!--` 這個字串不會被誤傷。');
+    // 也不可以落在 code fence 內
+    assert.equal(lines.slice(0, at).filter((l) => /^\s{0,3}(```|~~~)/.test(l)).length % 2, 0,
+      `「${from}」的指路行落在 code fence 內（前面的圍欄數是奇數），讀者看到的是程式碼不是連結。`);
+
     for (const word of POINTER_WORDS) {
-      assert.ok(hits[0].includes(word),
+      assert.ok(line.includes(word),
         `「${from}」的指路行沒有寫明「${word}」。\n`
         + '⚠️ 這張表是路由表，讀者若把它當權威索引，就會拿一份刻意不完整的摘要去代替正本。\n'
-        + '⚠️ 誠實劃界：這只鎖那幾個詞在同一行，**鎖不住整句話的意思**。');
+        + '⚠️ 誠實劃界：這只鎖那幾個詞出現在同一行，**鎖不住整句話的意思**。');
     }
   }
 });
