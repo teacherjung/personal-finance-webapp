@@ -345,46 +345,74 @@ test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真�
 // ───────────────────────────────── 接線與自報 ─────────────────────────────────
 
 /**
- * 去掉 HTML 註解與 ``` 圍起來的區塊之後的內文。
+ * 三份正本各自那**一行**指路的**指定形狀**。
  *
- * ⚠️ 「指路」要在**讀者看得見、點得到**的地方。原本只驗 `includes('COLLAB-MAP.md')`，
- * `Grok #548 掃` 指出那是弱斷言，我逐發實測屬實——下列全部仍綠：
- * 把整則引言換成 `<!-- COLLAB-MAP.md -->`、埋進檔尾的 code fence、
- * 改成純文字的反面句「不要去看 COLLAB-MAP.md，那份已經廢棄」。
- * ⇒ 改成要求**可見的 markdown 連結**。fence 的判斷是逐行看 ``` 開關，
- *    不是真的 markdown 解析器（同本檔既有的射程劃界）。
- * @param {string} text
+ * ⚠️ 為什麼是「指定的一行」，不是在整份檔案裡找字串（`Codex #548 r2`）：
+ * 我上一版先剝 HTML 註解與 ``` 區塊、再找 `](COLLAB-MAP.md)`——那是在自造一台簡化 markdown
+ * 解析器，而它擋不住的東西我逐發實測過：**未閉合的註解**（後半份檔案被吞掉、考題照樣全綠）、
+ * 四個反引號外框包三個反引號、`~~~` 圍欄完全沒剝。同一族陷阱在
+ * `test/grok-scan-docs.test.js` 與 `test/safety-docs-freshness.test.js` 都已有前例與處方。
+ * ⇒ 改成**窄而可證**：三份入口各自在前言放一行固定形狀的指路，考題只認那一行。
+ * 沒有 markdown 解析，只有「這一行長不長成那個樣子」。
  */
-function visibleText(text) {
-  /** @type {string[]} */
-  const out = [];
-  let inFence = false;
-  for (const line of text.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
-    if (/^\s{0,3}```/.test(line)) { inFence = !inFence; continue; }
-    if (!inFence) out.push(line);
-  }
-  return out.join('\n');
-}
+const POINTER_LINE = /^>?\s*\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-MAP\.md\)\*\*（.+）。$/;
 
-test('⭐ 地圖自己要找得到：三份正本都要用看得見的連結指得回它，並帶著「不是正本」那句劃界', () => {
+/** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
+const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
+
+test('⭐ 指路行的判準自己要先會動：反面句、缺免責詞、被註解包住都不算', () => {
+  const good = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它**只指路、不是正本、無規則效力**）。';
+  assert.ok(POINTER_LINE.test(good), '合法的指路行竟然比對不到。');
+  assert.ok(POINTER_WORDS.every((w) => good.includes(w)), 'fixture 自己就少了免責詞。');
+
+  const bad = {
+    '可點的反面句': '不要去看 [COLLAB-MAP.md](COLLAB-MAP.md)，它不是正本，已經廢棄。',
+    '被單行註解包住': `<!-- ${good} -->`,
+    '只有連結沒有指定形狀': '見 [COLLAB-MAP.md](COLLAB-MAP.md)。',
+    '連結指到別的檔': '**規矩住在哪＝[COLLAB-MAP.md](OTHER.md)**（路由表）。',
+  };
+  for (const [name, line] of Object.entries(bad)) {
+    assert.ok(!POINTER_LINE.test(line), `「${name}」不該被當成合法的指路行。`);
+  }
+  const missing = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它只指路）。';
+  assert.ok(POINTER_LINE.test(missing) && !POINTER_WORDS.every((w) => missing.includes(w)),
+    '缺免責詞的那一行要靠 POINTER_WORDS 擋，不是靠形狀。');
+});
+
+test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
   //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到這三份」與「這三份要指回地圖」
   //    的開關——**一個開關關掉兩張網**。有人把某一份從 CANON 拿掉，兩題會一起失去那份的覆蓋而照樣全綠。
   //    這裡不為此加機制（`CANON` 沒有獨立的真相來源可反查），照實記在這裡。
   for (const from of CANON) {
-    const visible = visibleText(read(from));
-    assert.ok(visible.includes(`](${MAP})`),
-      `「${from}」沒有用**看得見的 markdown 連結**指回 ${MAP}。\n`
+    const raw = read(from);
+    // ①先剝成對的註解，再**拒絕任何殘留的註解標記**——未閉合／巢狀註解會吞掉後半份檔案，
+    //   那時「找得到那一行」等於在讀讀者看不到的內容（處方同 test/safety-docs-freshness.test.js）。
+    const stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
+    for (const mark of ['<!--', '-->']) {
+      assert.ok(!stripped.includes(mark),
+        `「${from}」有未閉合或巢狀的 HTML 註解（殘留 \`${mark}\`）。\n`
+        + '⚠️ 這裡 fail-closed：註解沒收好，後面的內容讀者看不到，任何「找得到」都不算數。');
+    }
+    const lines = stripped.split('\n');
+    const hits = lines.filter((l) => POINTER_LINE.test(l));
+    assert.equal(hits.length, 1,
+      `「${from}」的指路行有 ${hits.length} 行，必須剛好一行。\n`
       + '⚠️ 沒有人指路的地圖等於不存在。三份正本各自是不同讀者的入口\n'
-      + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人），\n'
-      + '   少一個入口，那群讀者就找不到它。\n'
-      + '⚠️ 只在 HTML 註解裡、只在 code fence 裡、或只寫檔名不做成連結，都不算——那是讀者點不到的。');
-    assert.ok(visible.includes('不是正本'),
-      `「${from}」指回 ${MAP} 時，沒有寫明它**不是正本**。\n`
-      + '⚠️ 這張表是路由表，讀者若把它當權威索引，就會拿一份刻意不完整的摘要去代替正本。\n'
-      + '⚠️ 誠實劃界：這只鎖「那四個字還在」，**鎖不住整句話的意思**——\n'
-      + '   把連結留著、說明改寫成別的意思，這一題照樣綠。');
+      + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人）。\n'
+      + '⚠️ 只寫檔名、只放連結、寫成「不要去看它」這類反面句，都不合指定形狀——**那些都不算指路**。');
+    // ②那一行不可以躲在 code fence 裡：要求它出現在全檔第一個圍欄之前
+    const fence = lines.findIndex((l) => /^\s{0,3}(```|~~~)/.test(l));
+    const at = lines.findIndex((l) => POINTER_LINE.test(l));
+    assert.ok(fence === -1 || at < fence,
+      `「${from}」的指路行出現在第一個 code fence 之後——可能被圍欄包住而讀者看不到。指路要放在前言。`);
+    for (const word of POINTER_WORDS) {
+      assert.ok(hits[0].includes(word),
+        `「${from}」的指路行沒有寫明「${word}」。\n`
+        + '⚠️ 這張表是路由表，讀者若把它當權威索引，就會拿一份刻意不完整的摘要去代替正本。\n'
+        + '⚠️ 誠實劃界：這只鎖那幾個詞在同一行，**鎖不住整句話的意思**。');
+    }
   }
 });
 
