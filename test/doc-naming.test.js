@@ -102,6 +102,7 @@ const DOCS = {
   'REVIEW-AND-MERGE.md': { readers: 'all', title: '審查與合併程序' },   // 檔名英文、標題中文：意思一致（同 PROJECT.md）
   'PROJECT.md': { readers: 'all', title: '個人理財中心（榮祥森）— 專案共同記憶' },
   'README.md': { readers: 'all', title: '個人理財中心' },
+  'COLLAB-MAP.md': { readers: 'all', title: '協作規矩地圖' },   // 純路由表：只有地址、沒有規則內容（見 test/collab-map.test.js 的誠實劃界）
 };
 
 test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是工具規定的檔名）', () => {
