@@ -268,6 +268,72 @@ test('三個抽取器都走同一層隔離（不是只修了信用卡那條）',
   }
 });
 
+test('診斷｜子行程回報的**封閉代碼**要進父行程日誌（HOSTED 唯一的出聲管道）', async () => {
+  // ⚠️ Codex #538 r3 High：取消失敗時「原本的 400 照樣回得去」⇒ 父行程走 parsed 4xx 分支、
+  //    完全不看子行程 stderr ⇒ 在 HOSTED（最需要聽見的那個環境）是**靜默**的。
+  //    修法＝封閉代碼隨 JSON 帶回來、父行程照代碼記日誌（不轉印 stderr——那會把帳單內容帶進日誌）。
+  const logged = [];
+  const real = console.error;
+  console.error = (/** @type {any[]} */ ...a) => { logged.push(a.map(String).join(' ')); };
+  setPdfChildScriptForTest(fakeChild('pdf-child-diag.js'));
+  setPdfTimeoutForTest(5_000);
+  let err;
+  try {
+    err = await errOf(parseStatement(normalPdf()));
+  } finally { console.error = real; }
+  assert.equal(err?.code, 'pdf_too_many_text_items', '前提：這支假子行程回的是使用者層 400');
+  assert.ok(logged.some((m) => /子行程診斷/.test(m) && m.includes('pdf_cancel_failed')),
+    `取消失敗的診斷沒有進父行程日誌（實際：${JSON.stringify(logged).slice(0, 200)}）`
+    + '——那正是本支在修的「靜靜失效」的另一種形狀');
+});
+
+test('診斷｜**真的**子行程回傳的 JSON 要帶 diag 欄位（成功與失敗兩條路都要）', async () => {
+  // ⚠️ 上面兩題用的是假子行程，證明不了「正式子行程真的會帶」——拿掉 `diag: await takeDiag()`
+  //    那兩題照樣全綠（實測）。這一題直接跑正式子行程、看它吐出來的原始 JSON。
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  /** @param {Uint8Array} pdf */
+  const runChild = async (pdf) => {
+    const child = run(process.execPath, [join(ROOT, 'lib/pdf-isolate-child.js'), 'statement'],
+      { env: { ...process.env, NOTEASY_HOSTED: '1' }, maxBuffer: 32 * 1024 * 1024 });
+    child.child.stdin?.end(`${JSON.stringify({ password: '' })}\n${Buffer.from(pdf).toString('base64')}`);
+    return JSON.parse((await child).stdout);
+  };
+  const ok = await runChild(normalPdf());
+  assert.equal(ok.ok, true, '前提：正常 PDF 這條路要走得通');
+  assert.ok(Array.isArray(ok.diag), '成功那條路沒有帶 diag 欄位——父行程就永遠收不到診斷');
+  const bad = await runChild(new Uint8Array([0x25, 0x50, 0x44, 0x46]));   // 只有 "%PDF"
+  assert.equal(bad.ok, false, '前提：畸形 PDF 這條路要失敗');
+  assert.ok(Array.isArray(bad.diag), '失敗那條路沒有帶 diag 欄位——取消失敗剛好都走這條');
+});
+
+test('診斷｜父行程只收**白名單內**的代碼（子行程回什麼都不能決定日誌長什麼樣）', async () => {
+  const { PARSE_DIAG } = await import('../lib/parse-limits.js');
+  assert.ok(Object.values(PARSE_DIAG).includes('pdf_cancel_failed'),
+    '封閉集合的單一真相不見了——父行程的白名單是照它建的');
+  const src = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
+  assert.match(src, /KNOWN_DIAG\.has\(/,
+    '父行程沒有用白名單過濾診斷代碼——子行程若被攻擊或出錯，日誌內容就由它決定了');
+  assert.ok(!/console\.error\([^)]*\berr\b[^)]*\)/.test(src.replace(/stderr=\$\{[^}]*\}/g, '')),
+    '父行程把子行程的 stderr 整段轉印了——那會把 PDF 內容（金額、帳號）帶進日誌');
+});
+
+test('連打五次**逾時**：反覆 SIGKILL 收回子行程之後，父行程記憶體不可以往上爬', async () => {
+  // ⚠️ Codex #538 r3 Medium：main 的記憶體題原本五次都走 timeout／SIGKILL，我改成走文字節點牆
+  //    之後，**反覆強制收回**那條路就沒人測了（那是「未經裁決的既有保證弱化」）。
+  //    牆那一題保留（在上面），這一題把 SIGKILL 那條補回來，用行為確定的假子行程、不靠 pdfjs 脾氣。
+  setPdfChildScriptForTest(fakeChild('pdf-child-hang.js'));
+  setPdfTimeoutForTest(400);
+  const before = process.memoryUsage().rss;
+  for (let i = 0; i < 5; i++) {
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.equal(err?.code, 'pdf_timeout', `第 ${i + 1} 次沒有走到逾時（實際 ${err?.code}）`);
+  }
+  const grew = (process.memoryUsage().rss - before) / 1048576;
+  assert.ok(grew < 60, `父行程在五次逾時收回後長了 ${grew.toFixed(0)}MB——被 SIGKILL 的子行程沒有被清乾淨`);
+});
+
 // ============================================================================
 // 二、正確性：隔了一層行程，結果與錯誤都要**原味**過得來
 // ============================================================================
@@ -360,11 +426,31 @@ test('架構｜接縫護欄必須還掛在 eslint.config.js 上（規則被拿�
   assert.match(cfg, /'no-restricted-syntax': \['error',[\s\S]*?\.\.\.SEAM_SELECTORS,[\s\S]*?\],/,
     '接縫護欄沒有接在主組那個 no-restricted-syntax 陣列裡——同名規則會整組覆蓋，等於沒裝');
   // 正式程式碼的豁免只准有一個：宣告處
-  const exempt = [...cfg.matchAll(/files:\s*\[([^\]]*)\][\s\S]{0,400}?'no-restricted-syntax'[^\n]*\n/g)]
-    .map((m) => m[1]).filter((f) => !/\.\.\.SEAM_SELECTORS/.test(f));
   assert.ok(cfg.includes("files: ['lib/pdf-isolate.js']"),
     '宣告處的豁免組不見了——那組沒了的話 lib/pdf-isolate.js 自己會被自己的護欄擋下（lint 紅）');
-  assert.ok(exempt.length > 0, '解析不到任何 no-restricted-syntax 組＝本題的解析方式過期了，請重寫');
+  // ⚠️ 這題**不宣稱**「正式碼豁免只有一個」（Codex #538 r3：上一版那樣寫，但它算出來的東西
+  //    根本沒證明這件事）。真正關門的是執行期那道（下一題），本題只負責「執法者還掛著」。
+});
+
+test('架構｜**執行期**的門：不在測試行程呼叫接縫一定要丟錯（ESLint 擋不住算出來的成員存取）', async () => {
+  // ⚠️ 這一題是 Codex #538 r3 High 的收法。靜態規則有天花板：
+  //    `m[`模板字串`](…)` 與 `m['setPdfChild' + 'ScriptForTest'](…)` 都是合法 JS，ESLint 零錯。
+  //    ⇒ 門改放在執行期：不在測試行程就丟錯，**不管用什麼語法呼叫**。
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  // 刻意用「算出來的成員存取」呼叫＝ESLint 擋不住的那一種，證明第二層真的接得住
+  const code = 'const m = await import(process.argv[1]);'
+    + " const name = 'setPdfChild' + 'ScriptForTest';"
+    + " try { m[name]('/tmp/evil.js'); console.log('NO_THROW'); }"
+    + " catch (e) { console.log('THREW:' + e.message.slice(0, 30)); }";
+  // ⚠️ 一定要把 NODE_TEST_CONTEXT 拿掉：本題自己就跑在測試行程裡，不清掉等於在測自己
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const { stdout } = await run(process.execPath,
+    ['--input-type=module', '-e', code, join(ROOT, 'lib/pdf-isolate.js')], { env });
+  assert.match(stdout, /^THREW:/,
+    `正式行程裡呼叫接縫竟然成功了（${stdout.trim()}）——那表示子行程腳本在正式環境是可以被換掉的`);
 });
 
 test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下（regex 版曾漏掉三種普通寫法）', async () => {
@@ -553,7 +639,11 @@ test('邊收邊數｜取消**失敗**時：原本的 400 不可以被蓋掉，�
   //    而 `finally` 正是最容易把原錯換掉的地方——真正到使用者眼前的會變成一個看不懂的錯，
   //    「你的帳單文字太多」那句就不見了。這是**保存型**考題：破壞保存機制（catch 改 rethrow）就轉紅。
   // ⚠️ 也順便釘住「出聲但不洩內容」：帳單內容含真實金額與帳號，日誌只能有錯誤訊息。
-  const SECRET = 'A1234-機密店名-9876';
+  // ⚠️ **哨兵用罕見字、比對用字元級**（Codex #538 r3 Medium）：上一版比對「連續 6 字」，
+  //    把內容切成 5 字以下的片段再印就整批溜過去（帳號與金額切碎了一樣是洩漏）。
+  //    改成：哨兵的每一個字都是診斷文字不可能出現的罕見字 ⇒ **任何一個字出現在日誌就算洩漏**，
+  //    不管它被切成幾段。這是「關門」而不是「列舉繞法」。
+  const SECRET = '龘䶵鱻麤龗厵';
   const delivered = { n: 0 };
   const stubborn = {
     streamTextContent() {
@@ -611,16 +701,18 @@ test('邊收邊數｜取消**失敗**時：原本的 400 不可以被蓋掉，�
   // ⚠️ 劃界要準（本題第一版自己踩到）：**我們手上的東西**（抽到的文字節點）一律不進日誌——
   //    那是帳單內容，含真實金額與帳號。至於例外訊息本身是 pdfjs 產生的，印它是診斷所需；
   //    這一題守的是前者：有人日後改成 `console.error(..., chunk)` 或把 items 帶進訊息就轉紅。
+  const { drainParseDiag, PARSE_DIAG } = await import('../lib/parse-limits.js');
+  assert.deepEqual(drainParseDiag(), [PARSE_DIAG.CANCEL_FAILED],
+    '取消失敗沒有留下封閉診斷代碼——HOSTED 的子行程 stderr 不會進父行程日誌，'
+    + '這個代碼是它唯一的出聲管道（Codex #538 r3 High）');
   assert.equal(delivered.n, 2,
     '前提沒成立：第一批必須先被收進 items（否則「印出 items」那種洩法根本不在本題射程內，'
     + '這一題會變成只驗「印出 chunk」——自審 r3 抓到的假前提）');
-  // ⚠️ **不可以只比對整串**（自審 r3）：實務上最常見的洩法是「印前幾個字當預覽」，
-  //    `items.map(it => it.str.slice(0, 8))` 會把 `A1234-機密` 印進日誌、而整串比對看不到。
-  //    改成比對每一個 6 字視窗：任何連續 6 個字外流就算數。
-  const windows = Array.from({ length: Math.max(0, SECRET.length - 5) }, (_, k) => SECRET.slice(k, k + 6));
-  const leaked = logged.find((m) => windows.some((w) => m.includes(w)));
+  const chars = [...SECRET];
+  const leaked = logged.find((m) => chars.some((c) => m.includes(c)));
   assert.equal(leaked, undefined,
-    `日誌出現了抽到的文字節點內容（${String(leaked).slice(0, 120)}）——帳單含真實金額與帳號，不可以進日誌`);
+    `日誌出現了抽到的文字節點內容（${String(leaked).slice(0, 120)}）——帳單含真實金額與帳號，`
+    + '一個字都不可以進日誌（切成片段、包進容器、只印預覽都算）');
 });
 
 /**
