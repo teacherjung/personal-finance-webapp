@@ -29,7 +29,10 @@
 //   - 把真錨點改名、把 `**錨點**` 搬到**毫不相關的章節**底下——它只問「某處有沒有」，不問在哪一章。
 //   - 拿掉路由表的表頭與分隔列、在第一格塞兩個連結、在閘區塊加 markdown 註腳——版面約定不等於考題。
 //
-//   會紅（＝看得到）：在路由列**尾端**多一欄、在**路由區塊**裡放 fence（含 fence 內的假標題）。
+//   會紅（＝看得到，同樣不宣稱列完）：在路由列**尾端**多一欄、在**路由區塊**裡放 fence
+//   （含 fence 內的假標題）、把受稽核的節標題改名或弄成重複、閘表把同一支腳本列兩次。
+//
+//   ⚠️ 上面兩欄都是**量過的例子，不是完整清單**——沒有人能列完 markdown 的寫法。
 //
 // 要擋這些，得換成真的 GFM 解析、或改成「由結構化資料生成整份地圖」。
 // **William 2026-09-02 裁定：不做**——理由是這道護欄在防的是**自然的腐爛**
@@ -148,7 +151,7 @@ function routes() {
  *
  * ⚠️ `r1` 用整檔 `includes`：真標題改名、別處還留著同一串字就照樣綠。
  * ⚠️ `r2` 的行首標籤子句沒有限定形狀：把 `### 三方協作框架…` 降成普通的 `三方協作框架…` 行，
- *    `startsWith(anchor)` 仍放行。⇒ 現在那一句要求**整行剛好是 `節名：`**——
+ *    `startsWith(anchor)` 仍放行。⇒ 該子句改為要求**整行剛好是 `節名：`**——
  *    限定形狀是為了讓「降級成普通內文行」過不了。收這一種是因為 `REVIEW-AND-MERGE.md`
  *    有 `你的角色（唯讀審查者）：` 這種沒有標題的行首標籤；不宣稱全 repo 沒有別的形狀。
  *
@@ -165,19 +168,23 @@ function anchorIsStructural(fileText, anchor) {
   return false;
 }
 
-/** `scripts/` **遞迴**底下的所有 .js（相對 ROOT 的路徑）。 */
+/**
+ * `scripts/` **遞迴**底下的所有 JS 檔（相對 ROOT 的路徑）。
+ * ⚠️ 副檔名要含 `.mjs`／`.cjs`：只收 `.js` 的話，一支標準 ESM 的 `verify-extra-gate.mjs`
+ *    自報 `MERGE_GATE` 也不會被看到（`Codex #545 r5` 實證）。
+ */
 function scriptFiles(/** @type {string} */ dir = 'scripts') {
   /** @type {string[]} */
   const out = [];
   for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
     const p = `${dir}/${e.name}`;
     if (e.isDirectory()) out.push(...scriptFiles(p));
-    else if (e.name.endsWith('.js')) out.push(p);
+    else if (/\.(js|mjs|cjs)$/.test(e.name)) out.push(p);
   }
   return out;
 }
 
-const isCheckScript = (/** @type {string} */ p) => /(^|\/)check-[^/]*\.js$/.test(p);
+const isCheckScript = (/** @type {string} */ p) => /(^|\/)check-[^/]*\.(js|mjs|cjs)$/.test(p);
 
 // ───────────────────────── 解析器自己的對照斷言（防上面每一題空掃而綠）─────────────────────────
 
@@ -241,7 +248,7 @@ test('⭐ 地圖每一列指到的檔案都還在', () => {
   }
 });
 
-test('⭐ 地圖每一列引的節名，都還落在該檔的標題或行首粗體標籤上', () => {
+test('⭐ 地圖每一列引的節名，都還落在該檔的標題／行首粗體標籤／整行「節名：」上', () => {
   for (const { file, anchor, question } of routes()) {
     assert.ok(anchorIsStructural(read(file), anchor),
       `${MAP} 的「${question}」叫人去讀「${file}」的「${anchor}」，\n`
@@ -283,6 +290,12 @@ test('⭐ 「合併步驟專用的閘」那張表要跟腳本自報的 MERGE_GAT
   const listed = new Map();
   for (const m of rows) {
     assert.equal(m[2], m[3], `${MAP} 的閘列「${m[1]}」顯示名與實際路徑不符（「${m[2]}」vs「${m[3]}」）。`);
+    // ⚠️ 先拒絕重複路徑，`set` 才是「逐一對帳」（`Codex #545 r5`）：
+    //    原本直接 set，於是「錯名的那一列＋後面正確的那一列」會被後者覆寫、整題照樣綠。
+    //    這是**列的基數**盲點，不是另一種 markdown 寫法。
+    assert.ok(!listed.has(m[3]),
+      `${MAP} 的閘表格把「${m[3]}」列了不只一次。一支腳本只能有一列——`
+      + '重複的話，後面那一列會蓋掉前面那一列，錯的名字就檢查不出來。');
     listed.set(m[3], m[1]);
   }
   for (const { file, name } of gates) {
@@ -298,10 +311,10 @@ test('⭐ 「合併步驟專用的閘」那張表要跟腳本自報的 MERGE_GAT
   }
 });
 
-test('⭐ scripts/ 遞迴底下非 check-*.js 的檔案不准提到 MERGE_GATE（對帳只認 check-*，這條兜底）', () => {
+test('⭐ scripts/ 遞迴底下非 check-* 的 js/mjs/cjs 不准提到 MERGE_GATE（對帳只認 check-*，這條兜底）', () => {
   for (const f of scriptFiles().filter((p) => !isCheckScript(p))) {
     assert.ok(!read(f).includes('MERGE_GATE'),
-      `${f} 提到 MERGE_GATE，但對帳只掃 check-*.js ⇒ 它不會被對帳到。\n`
+      `${f} 提到 MERGE_GATE，但對帳只掃 check-* ⇒ 它不會被對帳到。\n`
       + '⚠️ 這裡刻意寬到「提到就紅」：`export const MERGE_GATE`、`export { MERGE_GATE }`、\n'
       + '   放進子目錄……拼法列舉不完，所以認名字不認寫法。\n'
       + '   要嘛把它改名成 check-*，要嘛放寬對帳範圍——不要留一道「表上看不到、也沒人對帳」的閘。');
@@ -314,7 +327,7 @@ test('⭐ 地圖自己要找得到：CLAUDE.md 與 AGENTS.md 都要指得回它'
   for (const from of ['CLAUDE.md', 'AGENTS.md']) {
     assert.ok(read(from).includes(MAP),
       `「${from}」沒有提到 ${MAP}。\n`
-      + '⚠️ 沒有人指路的地圖等於不存在——CLAUDE.md 是 Claude 每個 session 唯一保證讀到的入口，\n'
+      + '⚠️ 沒有人指路的地圖等於不存在——CLAUDE.md 是 Claude 每個 session 自動載入的入口、\n'
       + '   AGENTS.md 是 Codex 的入口，兩邊都要指得回來。');
   }
 });
