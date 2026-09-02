@@ -40,28 +40,49 @@ test('cardLastFourSuffix｜標籤後綴的行為本體：炸彈不炸、esc 有�
     '炸彈值連 escFn 都不會碰（先安全字串化、空就短路）');
 });
 
-test('接線｜transactions-import.js 的 .lastFour 點取值全掃（不限變數名）：卡側只准餵 cardLastFourSuffix', () => {
+// 行級掃描的共用刀（掃真檔＋探針都用同一把——刀自己也要被考，見下面的探針題）：
+// 每一行先摘掉兩種安全形，殘留 `.lastFour`＝違規。
+// ①**唯一獲摘除的安全呼叫形＝「單純識別字受詞的直接引數」**：`cardLastFourSuffix(x.lastFour)`
+//   或 `cardLastFourSuffix(x.lastFour, esc)`（第二引數不得含括號）。⚠️ 刻意只認這一種形
+//  （Codex r6：上一版用 `[^)]*` 摘整段呼叫，`cardLastFourSuffix(String(c.lastFour))` 的第一個
+//   右括號在 `.lastFour` 之後、不安全取值被一起摘掉＝fail-open——而那種寫法在進 helper **之前**
+//   就先炸了）。巢狀呼叫、複合受詞（`cards[0].lastFour`）一律不摘＝紅，紅了來讀這段再決定。
+// ②r.／curR. 的取值（預覽回應＝parsed 側，後端已正規化成字串|null，安全）。
+// ⚠️ 誠實劃界：抓得住所有「點取值」寫法（不限受詞拼法）；抓不住 bracket 取值（c['lastFour']）
+//   與解構（const {lastFour} = c）——本檔目前一種都沒有，出現就該在複審被問「為什麼要繞」。
+const stripSafeLastFour = (/** @type {string} */ line) => line
+  .replace(/cardLastFourSuffix\(\s*[A-Za-z_$][\w$]*\.lastFour\s*(?:,[^()]*)?\)/g, '')
+  .replace(/\b(r|curR)\.lastFour/g, '');
+const lastFourViolations = (/** @type {string} */ src) =>
+  src.split('\n').filter(l => stripSafeLastFour(l).includes('.lastFour'));
+
+test('接線｜transactions-import.js 的 .lastFour 點取值全掃（不限變數名）：卡側只准直接餵 cardLastFourSuffix', () => {
   // ⚠️ 先去註解再掃（cashflow-bank-upload r5 阻擋②同款）：把接線改成註解＝沒接、掃字面會假綠。
-  // 掃法（Codex r5 重做）：不釘拼法「c.lastFour」，改掃**每一個** `.lastFour` 點取值、不限受詞——
-  // 受詞名單制：r／curR＝伺服器預覽回應（parsed 側，後端已正規化成字串|null，安全）；其餘一律
-  // 必須是 cardLastFourSuffix(...) 的引數（卡側原始資料）。改名／新增別名＝紅，紅了來讀這段再決定。
-  // ⚠️ 誠實劃界：抓得住所有「點取值」寫法；抓不住 bracket 取值（c['lastFour']）與解構
-  //（const {lastFour} = c）——那兩種寫法本檔目前一個都沒有，出現就該在複審被問「為什麼要繞」。
   const raw = readFileSync(join(ROOT, 'public/modules/transactions-import.js'), 'utf8');
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1')).join('\n');
   assert.ok(/import \{ cardLastFourSuffix \} from '\.\/card-last-four\.js'/.test(src), '★要 import 行為本體');
-  // 行級掃描（受詞正則抓不住 cards[0].lastFour 這種非識別字受詞——一開始就用行級、不釘拼法）：
-  // 每一行先摘掉兩種安全形——①cardLastFourSuffix(…) 整段呼叫（引數裡的取值＝卡側走安全網）
-  // ②r.／curR. 的取值（預覽回應＝parsed 側，後端已正規化成字串|null）——摘完行內不得殘留
-  // `.lastFour`。方向 fail-closed：新受詞、新拼法、巢狀括號讓摘除失手＝紅，紅了來讀這段再決定。
-  // ⚠️ 誠實劃界：同一行同時有安全呼叫與另一個裸取值、bracket 取值 c['lastFour']、解構
-  //（const {lastFour} = c）不在射程——本檔目前一種都沒有，出現就該在複審被問「為什麼要繞」。
-  const lines = src.split('\n').filter(l => l.includes('.lastFour'));
-  assert.ok(lines.length > 0, '前提：檔案裡真的有 .lastFour 取值（全刪光＝本題失去對象，回來重寫）');
-  for (const line of lines) {
-    const stripped = line.replace(/cardLastFourSuffix\([^)]*\)/g, '').replace(/\b(r|curR)\.lastFour/g, '');
-    assert.ok(!stripped.includes('.lastFour'),
-      `★裸 .lastFour 取值（卡側只准餵 cardLastFourSuffix，預覽回應側只認 r／curR）：${line.trim()}`);
+  assert.ok(src.split('\n').some(l => l.includes('.lastFour')), '前提：檔案裡真的有 .lastFour 取值（全刪光＝本題失去對象，回來重寫）');
+  assert.deepEqual(lastFourViolations(src), [],
+    '★裸 .lastFour 取值（卡側只准當 cardLastFourSuffix 的直接引數，預覽回應側只認 r／curR）');
+});
+
+test('接線掃描的刀自己也要被考：已知危險形必紅、安全形必綠（Codex r6——上一版對巢狀呼叫 fail-open）', () => {
+  for (const [why, bad] of [
+    ['r5 的等價拼法（受詞不是 c）', 'const t = String(cards[0].lastFour);'],
+    ['裸插值＝隱式 String()', 'label: c.name + (c.lastFour ? `（${c.lastFour}）` : "")'],
+    ['r6 的巢狀呼叫：進 helper 之前 String() 就先炸', 'x = cardLastFourSuffix(String(c.lastFour));'],
+    ['複合受詞的直接引數＝刻意 fail-closed 交複審（摘除只認單純識別字受詞）', 'x = cardLastFourSuffix(cards[0].lastFour);'],
+    ['同一行安全呼叫＋另一個裸取值', 'a = cardLastFourSuffix(c.lastFour); b = d.lastFour;'],
+  ]) {
+    assert.equal(lastFourViolations(bad).length, 1, `★必紅：${why}`);
+  }
+  for (const [why, ok] of [
+    ['正式線現形①', 'label: c.name + cardLastFourSuffix(c.lastFour)'],
+    ['正式線現形②（HTML 端帶 esc）', '`${esc(c.name)}${cardLastFourSuffix(c.lastFour, esc)}`'],
+    ['預覽回應側（parsed，後端已正規化）', 'const d = r.lastFour ? `（${r.lastFour}）` : "";'],
+    ['預覽回應側（curR）', 'curR.lastFour ? 1 : 2'],
+  ]) {
+    assert.deepEqual(lastFourViolations(ok), [], `不得誤殺：${why}`);
   }
 });
 
