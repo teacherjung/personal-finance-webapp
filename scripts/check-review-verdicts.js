@@ -665,11 +665,18 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const hasMark = /🤖/u.test(m.key);
     const rid = restatableIdentity(m.key);
     const metaReadable = !!(QUOTED_HEAD.exec(m.key) || QUOTED_HEAD_NOSHA.exec(m.key));
+    // 「重述接不接得上」不只看身分與 metadata 讀不讀得出，還要看**這一行引不引得動**
+    // ——引文守則（白名單／隱形字元／反引號配對）與收件端同一套，這裡照抄判定，
+    // 否則資格判定與實際可行性脫節＝死角（#540 實測：sha 欄空白＝被判「走缺 sha 例外
+    // 重述」而禁豁免，但那則第一行含 `*`「」＝ 等白名單外字元、重述收件端一定拒收，
+    // 兩條路互相排斥、PR 永久鎖死）。
+    const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key)
+      && (m.key.split('`').length - 1) % 2 === 0;
     const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
     const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
       && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
     const identityOk = (/** @type {any} */ e) => !rid || (e.role === rid.role && e.source === rid.source);
-    const exemptable = hasMark && !(rid && metaReadable);
+    const exemptable = hasMark && !(rid && metaReadable && quotableAsRestate);
     const ex = !taker && exemptable && exempts.find((e) => matches(e) && identityOk(e) && e.idx > m.idx);
     // 對稱提示（同 early）：指認都對得上、卻出現在壞留言**之前**的豁免——不生效，但要出聲，
     // 不然排錯的人會以為宣告沒被吃到、重複發錯格式的豁免。
@@ -688,7 +695,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         + (early ? '    ⚠️ 有一行引文對得上的重述，但它出現在這則壞留言**之前**（重述不可以預先授權未來的壞留言）。\n' : '')
         + (earlyEx ? '    ⚠️ 有一行引文與編號都對得上的豁免宣告，但它出現在這則壞留言**之前**（豁免不可以預先授權未來的壞留言）。\n' : '')
         + (ineligFamily ? '    ⚠️ 有一行指認對得上的豁免宣告，但這則壞行**不符合豁免資格**——'
-          + '身分與 metadata 都讀得出＝走同身分重述（sha 欄空白型＝缺 sha 例外），'
+          + '身分與 metadata 都讀得出、**且這一行引得動**＝走同身分重述（sha 欄空白型＝缺 sha 例外），'
           + '或第一行不含 🤖（豁免的鑰匙必須是壞標頭本行）。\n' : '')
         + (wrongIdent ? `    ⚠️ 有一行指認對得上的豁免宣告，但這則壞行**身分讀得出**（${/** @type {any} */ (rid).role}（${/** @type {any} */ (rid).source}））`
           + '＝只有**同一身分**可豁免（同身分紀律不因 metadata 壞掉而放寬），宣告者不是它。\n' : '')

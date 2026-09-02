@@ -1101,6 +1101,67 @@ test('⭐ 豁免｜三重指認齊備＋宣告在壞留言之後 → 阻擋中�
   assert.ok(warnings.some((w) => /已被\*\*豁免\*\*.*William 特准 2026-08-17/.test(w)), warnings.join('｜'));
 });
 
+// ── 引不動的壞行＝重述接不了，該讓豁免接手（#540 實測的死角）──────────────────
+// 死角長相：身分與 metadata 都讀得出（走「缺 sha 例外」重述），但那一行含引文白名單外的
+// 字元 ⇒ 重述收件端一定拒收。舊版資格判定只看「讀不讀得出」、不看「引不引得動」，
+// 於是兩條路互相排斥、那支 PR 永久鎖死（真實案例：Codex 的 shell 引號吃掉反引號與換行，
+// 整則擠成一行、`審` 欄空白，行內含 `*`「」＝ 等字元）。
+const UNQUOTABLE_FIRST = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審 **Medium** 「x」＝y';
+const UNQUOTABLE_URL = 'https://github.com/x/y/pull/9#issuecomment-5503978179';
+
+test('⭐ 死角｜身分讀得出但引文出界（重述接不了）→ 同一身分可豁免', () => {
+  const hash = createHash('sha256').update(UNQUOTABLE_FIRST.trim(), 'utf8').digest('hex');
+  const exempt = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5503978179｜William 特准 2026-09-02｜原第一行雜湊：${hash}`;
+  const { problems, warnings } = verdictProblems(
+    [cu(`${UNQUOTABLE_FIRST}\n\n略。`, UNQUOTABLE_URL), c(exempt)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `引不動的壞行必須可由同一身分豁免：${problems.join('｜')}`);
+  assert.ok(warnings.some((w) => /已被\*\*豁免\*\*/.test(w)), warnings.join('｜'));
+});
+
+test('⭐ 死角｜壞行含隱形字元（重述整行會被拒）→ 同一身分可豁免', () => {
+  // 收件端拒收「整行含 Unicode 預設不顯示碼位」的重述行；壞行帶著它就嵌不進任何合規重述。
+  const first = `🤖 Codex｜來源：CLI（xhigh）｜審 \`abc1234\`｜r6｜結論：需修改後再審\u115f`;
+  const hash = createHash('sha256').update(first.trim(), 'utf8').digest('hex');
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870041';
+  const exempt = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870041｜William 特准 2026-09-02｜原第一行雜湊：${hash}`;
+  const { problems } = verdictProblems([cu(`${first}\n\n略。`, url), c(exempt)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `含隱形字元的壞行必須可豁免：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜壞行的反引號落單（重述整行配不成對）→ 同一身分可豁免', () => {
+  // 收件端要求重述行的反引號成對；壞行帶奇數個，嵌進去就永遠配不成對。
+  const first = '🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審 `落單';
+  const hash = createHash('sha256').update(first.trim(), 'utf8').digest('hex');
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870042';
+  const exempt = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870042｜William 特准 2026-09-02｜原第一行雜湊：${hash}`;
+  const { problems } = verdictProblems([cu(`${first}\n\n略。`, url), c(exempt)], HEAD, 'Codex');
+  assert.deepEqual(problems, [], `反引號落單的壞行必須可豁免：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜引得動的壞行照舊不可豁免（資格沒有被放寬）', () => {
+  // 對照組：同樣是「身分讀得出＋sha 欄空白」，但這一行**引得動** ⇒ 仍該走重述、不可豁免。
+  const hash = createHash('sha256').update(NOSHA_FIRST.trim(), 'utf8').digest('hex');
+  const exempt = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n`
+    + `豁免留言 5310870038｜William 特准 2026-09-02｜原第一行雜湊：${hash}`;
+  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870038';
+  const { problems } = verdictProblems([cu(NOSHA_MAL, url), c(exempt)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `引得動的壞行必須維持「走重述」的資格判定：${problems.join('｜')}`);
+});
+
+test('⭐ 死角｜引不動也不能被**別人**豁免（同身分紀律不因此放寬）', () => {
+  const hash = createHash('sha256').update(UNQUOTABLE_FIRST.trim(), 'utf8').digest('hex');
+  const byClaude = `${head('Claude', '桌面', HEAD, 7, '通過')}\n`
+    + `豁免留言 5503978179｜William 特准 2026-09-02｜原第一行雜湊：${hash}`;
+  const { problems } = verdictProblems(
+    [cu(`${UNQUOTABLE_FIRST}\n\n略。`, UNQUOTABLE_URL), c(byClaude)], HEAD, 'Codex');
+  assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
+    `別人不可以替 Codex 豁免：${problems.join('｜')}`);
+});
+
 test('⭐ 豁免｜留言編號對不上 → 不生效、維持阻擋', () => {
   const { problems } = verdictProblems(
     [cu(`${UNFIX_FIRST}\n\n略。`, 'https://github.com/x/y/pull/9#issuecomment-9999999'), c(EXEMPT_OK)],
