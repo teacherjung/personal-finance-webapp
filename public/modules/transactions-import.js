@@ -9,6 +9,7 @@
 //（renderTransactions／expenseParents／setMonthFilter）皆為呼叫時取用。
 import { api, byId, money, esc, monthKey, openForm, confirmDelete, toast, currentNavSeq, watchModalRoot } from '../app.js';
 import { icon } from './icons.js';
+import { cardLastFourSuffix } from './card-last-four.js';   // 卡側末四碼標籤的行為本體：{toString:null} 炸彈值炸不出＝不顯示（Codex #541 r4/r5）
 import { fileToBase64 } from './file-util.js';
 import { openModalShell } from './modal-shell.js';
 import { renderTransactions, expenseParents, setMonthFilter } from './transactions.js';
@@ -179,7 +180,9 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
     size: 'sm',
     fields: [
       { key: 'cardId', label: `${detail}，系統無法確定是哪張卡，請選：`, type: 'select',
-        options: pick.map(c => ({ value: c.id, label: c.name + (c.lastFour ? `（${c.lastFour}）` : '') })) }
+        // 卡側末四碼過安全網（Codex #541 r4）：pick 的 fallback＝/api/cards 原始資料，
+        // {toString:null} 這族裸插值會讓選卡窗整個 TypeError——伺服器回應安全了、這裡也要。
+        options: pick.map(c => ({ value: c.id, label: c.name + cardLastFourSuffix(c.lastFour) })) }
     ],
     onSubmit: async (data, /** @type {any} */ ctx) => {
       // 沿用使用者輸入的密碼（r1#3）：後端 previewForCard 會把它排在池最前；不帶＝沒勾記住時又失敗
@@ -219,7 +222,8 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
   };
   const catSelHtml = (i, cat, sub) => `<select data-cat="${i}" data-autocat="${esc(cat)}" data-autosub="${esc(sub || '')}">${expenseParents().map(c =>
     `<option value="${esc(c)}" ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
-  const cardOpts = () => cards.map(c => `<option value="${esc(c.id)}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${c.lastFour ? `（${esc(String(c.lastFour))}）` : ''}</option>`).join('');
+  // 卡側末四碼過安全網（Codex #541 r4：cards＝/api/cards 原始資料，裸 String() 對炸彈值丟 TypeError）
+  const cardOpts = () => cards.map(c => `<option value="${esc(c.id)}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${cardLastFourSuffix(c.lastFour, esc)}</option>`).join('');
 
   const doImport = async () => {
     const picked = [];

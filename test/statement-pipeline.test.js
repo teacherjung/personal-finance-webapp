@@ -64,7 +64,7 @@ test('免選卡預覽（自動歸卡那條路）也要交出這兩個值', async
   assert.equal(r.statementDue, 46299);
 });
 
-test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動選、回候選；末四碼沒中但該銀行唯一一張→自動命中', async () => {
+test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動選、回候選；末四碼沒中且唯一同行卡登記另一組→衝突退手選', async () => {
   // 補發卡情境：兩張卡同末四碼。若回歸成「自動選第一張」＝帳單匯錯卡、跨卡去重失效、同筆消費重複計入分析。
   store.save({ ...store.emptyDb(), cards: [
     { id: 'c1', name: '台新舊卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' },
@@ -73,12 +73,16 @@ test('對卡判定（階段三缺口 M4）：同末四碼兩張卡→不自動�
   const r = await previewAuto(taishinXlsxB64());
   assert.equal(r.resolvedCard, null, '同末四碼多卡＝系統不可硬猜');
   assert.deepEqual(r.candidates.map((/** @type {any} */ c) => c.id).sort(), ['c1', 'c2'], '兩張都要進候選讓使用者選');
-  // 單卡銀行 fallback：帳單末四碼 1234 對不到 9999，但該銀行只有這一張 → 自動歸它
+  // ⚠️ 這裡原本釘著「帳單末四碼 1234 對不到 9999、但該銀行只有這一張 → 自動歸它」——
+  //    那正是 Grok 複審後掃 2026-08-28 抓到的缺口（帳單自己印的數字與卡片登記的數字明顯
+  //    衝突、卻照樣自動），已改成衝突退手選（守門與取捨＝previewAuto 的末四碼衝突註解；
+  //    主考題＝題名關鍵字「帳單印的末四碼庫裡誰都對不上」一族），本題後半跟著改口。
   store.save({ ...store.emptyDb(), cards: [
     { id: 'c9', name: '台新唯一卡', type: 'credit', issuer: '台新銀行', lastFour: '9999' },
   ] });
   const r2 = await previewAuto(taishinXlsxB64());
-  assert.equal(r2.resolvedCard?.id, 'c9', '末四碼不合但該銀行僅此一張→自動歸卡');
+  assert.equal(r2.resolvedCard, null, '帳單印 1234、唯一同行卡登記 9999＝衝突 ⇒ 退手選');
+  assert.deepEqual(r2.candidates.map((/** @type {any} */ c) => c.id), ['c9'], '那張同行卡要進候選');
 });
 
 test('整條管線：解析 → 預覽 → 匯入 → 批次列表，四棒都要把值傳下去', async () => {
@@ -473,3 +477,133 @@ test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡
   assert.ok(r.resolvedCard, '★機構對得上就照舊自動歸卡（上一題不是「什麼都不歸」）');
   assert.equal(r.resolvedCard.id, 'tp');
 });
+
+// ── 末四碼衝突守門（Grok 複審後掃 #520 2026-08-28 抓到；base 就有的缺口）─────────────────
+// 帳單印了末四碼、庫裡沒有任何卡對得上時，原本不設 candidates、直接掉進「該銀行單卡自動歸」：
+// 台新帳單印 5678、庫裡唯一台新卡登記 1234 ⇒ 自動歸到 1234 那張——帳單自己印的數字與卡片
+// 明顯衝突。失敗劇本＝新辦同行第二張卡、還沒建進 app 就上傳新卡帳單 ⇒ 新卡消費全記到舊卡。
+// 與 J5 同哲學：訊號打架退手選。J5 釘的是「末四碼命中**別家**卡」，這裡釘「誰都沒命中、
+// 但唯一同行卡登記著另一組」。
+
+test('★J9 帳單印的末四碼庫裡誰都對不上、唯一同行卡登記著另一組 ⇒ 衝突退手選', async () => {
+  store.save({ ...store.emptyDb(),
+    cards: [{ id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: '1234' }] });
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 5678'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
+  assert.equal(r.lastFour, '5678', '前提：末四碼讀得到、而且庫裡沒有任何卡是 5678');
+  assert.equal(r.resolvedCard, null, '★帳單印 5678、卡登記 1234＝兩個數字明顯衝突 ⇒ 不可自動歸');
+  assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['old'],
+    '候選＝那張同行卡（讓使用者自己確認，或想起要先把新卡建進 app）');
+});
+
+test('★J9b 對照：唯一同行卡「沒登記」末四碼 ⇒ 證明不了衝突，照舊自動歸（守門不是「整個不自動」）', async () => {
+  // 判準取捨的理由攤在 previewAuto 的守門註解：沒登記＝只有單邊訊號、沒有東西可打架，
+  // 與「帳單沒印末四碼」（題名關鍵字「照舊自動歸卡（沒有被誤殺）」那格，也照舊自動）
+  // 同一個證據狀態；反過來擋的代價＝一張沒登記末四碼的卡讓那家銀行每期帳單都退手選。
+  // ⚠️ 與題名關鍵字「帳單印的末四碼庫裡誰都對不上」那題的差異**只有 lastFour 一個變因**
+  //    （Codex r1#3：對照組 id/name/PDF 全同，對照才量得準）。
+  //    「沒登記」的三種形狀＝缺欄／空字串／null，都算沒登記。
+  for (const [label, card] of /** @type {[string, any][]} */ ([
+    ['缺欄', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行' }],
+    ['空字串', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: '' }],
+    ['null', { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: null }],
+  ])) {
+    store.save({ ...store.emptyDb(), cards: [card] });
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['卡號末四碼 5678'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.lastFour, '5678', `前提（${label}）：帳單有印末四碼`);
+    assert.equal(r.resolvedCard?.id, 'old', `★卡沒登記末四碼（${label}）＝證明不了衝突 ⇒ 照舊自動歸`);
+  }
+});
+
+test('★J9c 登記著「壞型別／壞值」的末四碼＝登記了另一組 ⇒ 一樣衝突退手選（Codex r1#1）', async () => {
+  // r1 實測抓到：原版守門用 truthiness 判「有沒有登記」，lastFour 存成 0／false 這類 falsy
+  // 壞值會被靜靜當成「沒登記」⇒ 壞資料重新拿回自動歸卡＝與本支要修的缺口同一種結果。
+  // 判準對齊 #520 的既有裁定「壞型別的答案＝字串化的答案」：String(0)='0'、String(false)='false'
+  // ——都是「另一組」；只有缺欄／null／空字串算沒登記。
+  // ⚠️ 陣列殼兩格（Codex r2#1 實測）：String([])＝String([''])＝''——「有沒有登記」若用字串化
+  //    來判，這兩格會被當「沒登記」溜回自動歸卡；判準改成精確空字串比對後它們算「登記著壞值」。
+  for (const [label, lastFour] of /** @type {[string, any][]} */ ([
+    ['數字 0', 0],
+    ['布林 false', false],
+    ['字串形垃圾', '[object Object]'],
+    ['空陣列', []],
+    ['裝著空字串的陣列', ['']],
+  ])) {
+    store.save({ ...store.emptyDb(), cards: [
+      { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour }] });
+    // ★前提釘子（題名關鍵字「真物件經櫃檯直達」那題的前例）：壞值真的原樣落庫直達，
+    //   不是被櫃檯改寫——改寫了本題就不再是在考壞型別。
+    const back = store.load().cards.find((/** @type {any} */ c) => c.id === 'old');
+    assert.deepEqual(back.lastFour, lastFour, `★前提（${label}）：值原樣落庫`);
+    const b64 = Buffer.from(cjkPdf([
+      ['台新銀行 信用卡消費明細'],
+      ['卡號末四碼 5678'],
+      ['115/06/02', '115/06/04', '星巴克', '150'],
+    ])).toString('base64');
+    const r = await previewAuto(b64);
+    assert.equal(r.resolvedCard, null, `★登記著${label}＝「另一組」 ⇒ 衝突退手選`);
+    assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['old'], `${label}：那張同行卡要進候選`);
+  }
+});
+test('★J9d 連 String() 都炸的末四碼（{toString:null} 這族）不炸預覽——算登記著壞值，照樣走守門', async () => {
+  // Codex r3#1 實測：cards.lastFour 在 CRUD 白名單、FIELD_SCHEMA 沒有它的型別收斂 ⇒
+  // {toString:null} 可經櫃檯原樣落庫；對它 String() 丟 TypeError ⇒ 一張壞卡炸掉整份帳單
+  // 預覽（500），根本走不到守門。修法＝字串化包安全網（lastFourText）：炸不出＝比不上任何
+  // 訊號；「有沒有登記」判準不做原始值轉換、天然不炸 ⇒ 這族值＝登記著壞值。
+  const toxic = JSON.parse('{"toString":null}');
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: toxic }] });
+  const back = store.load().cards.find((/** @type {any} */ c) => c.id === 'old');
+  assert.deepEqual(back.lastFour, toxic, '★前提：炸彈值原樣落庫（不是被櫃檯改寫）');
+  // 情境一：帳單印了末四碼 ⇒ 登記著壞值＝「另一組」＝衝突退手選（且回應不炸）
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 5678'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard, null, '★炸彈值＝登記著壞值 ⇒ 衝突退手選（而不是 500）');
+  assert.equal(r.candidates?.[0]?.id, 'old', '那張同行卡要進候選');
+  assert.equal(r.candidates?.[0]?.lastFour, null,
+    '★回應裡的卡側末四碼只當顯示、炸不出字串＝null——原樣塞進 JSON 等於把炸彈轉嫁給前端模板字串');
+  // 情境二：帳單沒印末四碼 ⇒ 單邊訊號、沒東西可打架 ⇒ 照舊自動（顯示欄同樣安全）
+  const b64b = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r2 = await previewAuto(b64b);
+  assert.equal(r2.resolvedCard?.id, 'old', '帳單沒印末四碼 ⇒ 炸彈卡照舊自動歸（衝突證明不了）');
+  assert.equal(r2.resolvedCard?.lastFour, null, '★自動歸的回應顯示欄也要安全字串化');
+});
+
+test('★J9e documenting：登記 ["5678"] 而帳單印 5678 ⇒ 字串化相等＝分支①照樣自動命中', async () => {
+  // #520 既有裁定「壞型別的答案＝字串化的答案」的正向面（Codex r3#2：契約寫了這句卻沒有
+  // 考題釘住——把 hit 突變成嚴格相等全套照綠）。String(["5678"])＝"5678"＝與帳單相等 ⇒
+  // 走分支①自動，不因「形狀壞」退手選；顯示欄回攤平後的字串。
+  store.save({ ...store.emptyDb(), cards: [
+    { id: 'old', name: '舊台新卡', type: 'credit', issuer: '台新銀行', lastFour: /** @type {any} */ (['5678']) }] });
+  const back = store.load().cards.find((/** @type {any} */ c) => c.id === 'old');
+  assert.deepEqual(back.lastFour, ['5678'], '★前提：陣列值原樣落庫');
+  const b64 = Buffer.from(cjkPdf([
+    ['台新銀行 信用卡消費明細'],
+    ['卡號末四碼 5678'],
+    ['115/06/02', '115/06/04', '星巴克', '150'],
+  ])).toString('base64');
+  const r = await previewAuto(b64);
+  assert.equal(r.resolvedCard?.id, 'old', '★字串化相等＝末四碼命中＋同行 ⇒ 分支①自動');
+  assert.equal(r.resolvedCard?.lastFour, '5678', '顯示欄＝攤平後的字串');
+});
+
+// ⚠️ 第三格對照「帳單**沒印**末四碼＋卡**有登記** ⇒ 照舊自動」＝上面題名關鍵字
+//    「照舊自動歸卡（沒有被誤殺）」那題（卡登記 9999、帳單無末四碼列、自動歸）——
+//    守門若被突變成「卡有登記就擋」，那題會紅，這裡不重抄一題。
