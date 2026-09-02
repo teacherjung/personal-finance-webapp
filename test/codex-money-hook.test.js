@@ -52,7 +52,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
-  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
+  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, HANDLER_ONLY_DENY, EXPECTED_HANDLER_ONLY_DENY,
+  OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
 } from './helpers/money-family-probes.js';
@@ -123,17 +124,22 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
 // 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
 
 
-test('v6 輸入衛生：matcher 命中的怪形狀，handler 一律 fail-closed', () => {
+test('v6 輸入衛生：matcher 命中的怪形狀，成對驗證（matcher 接得住 ∧ handler 擋得下）', () => {
   assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了——數量釘要有意識地改');
   for (const [payload, why] of IN_MATCHER_DENY) {
-    // 先確認 matcher 真的接得住，再驗 handler——r1 H1：繞過 matcher 直接餵 handler 會假綠。
-    let name;
-    try { name = JSON.parse(payload)?.tool_name; } catch { name = undefined; }
-    if (typeof name === 'string') {
-      assert.ok(new RegExp(codexGroup.matcher).test(name),
-        `這支探針的 matcher 不命中，不該放在 IN_MATCHER_DENY：${why}`);
-    }
+    const name = JSON.parse(payload).tool_name;
+    assert.equal(typeof name, 'string', `這批每一支都必須有字串工具名，否則屬於 HANDLER_ONLY_DENY：${why}`);
+    // r1 H1：只驗 handler 會假綠——matcher 不命中時整個 hook 不執行。兩者成對才算數。
+    assert.ok(new RegExp(codexGroup.matcher).test(name), `matcher 不命中，不該放在這批：${why}`);
     assertDenies(codexHook.command, payload, `輸入衛生：${why}`);
+  }
+});
+
+test('v6 壞輸入：沒有工具名可比 matcher，只驗 handler 自己的 fail-closed', () => {
+  // r2 M1：這三支原本混在上一題裡、群組名宣稱「端到端」——超出實際證明力，已拆開誠實標示。
+  assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY, '探針被縮短了');
+  for (const [payload, why] of HANDLER_ONLY_DENY) {
+    assertDenies(codexHook.command, payload, `壞輸入 fail-closed（僅 handler 層）：${why}`);
   }
 });
 

@@ -131,13 +131,17 @@ export const EXPECTED_ALLOWED_COUNT = 36;
  * ⚠️ 這裡刻意**不**先做 NFKC／剝零寬／strip 再判斷：那樣寫過一版，實測是冗餘——
  * 字元集這一層會先接住同樣的形狀，拿掉那三步考題不會紅（＝沒有考題撐著的層）。
  *
- * ⚠️⚠️ **下面兩批的差別是「hook 到底會不會被叫起來」（Codex #540 r1 H1）**：
+ * ⚠️⚠️ **下面三批的差別是「這一支到底證明了什麼」（Codex #540 r1 H1、r2 M1）**：
  * hook 有 matcher（`^mcp__`），**matcher 不命中就整個 hook 不執行**。所以：
- *   - `IN_MATCHER_DENY`＝matcher 命中、handler 必須擋 ⇒ 這批才是**端到端保證**。
- *   - `OUT_OF_MATCHER`＝matcher 根本篩掉 ⇒ 這批**不是 hook 擋的**。
+ *   - `IN_MATCHER_DENY`＝工具名是字串且 matcher 命中 ⇒ 考卷**成對驗證**
+ *     （matcher 接得住 ∧ handler 回合規 deny）＝真正的端到端保證。
+ *   - `HANDLER_ONLY_DENY`＝輸入本身壞掉（不是 JSON／沒有 tool_name／型別不對），
+ *     **沒有工具名可以拿去比 matcher**，所以考卷只驗得到 handler 的 fail-closed。
+ *     ⚠️ r2 之前這三支混在 IN_MATCHER_DENY 裡、群組名與註解都宣稱「端到端」——
+ *     那超出考題的實際證明力，已拆開。
+ *   - `OUT_OF_MATCHER`＝matcher 根本篩掉 ⇒ **不是 hook 擋的**。
  *     它們也不是有效的 MCP 工具名（規格不允許空白／全形），呼叫本身就不會成立；
  *     本檔把它們留著是為了**釘住這個事實**，不是為了假裝 hook 擋了它們。
- *     ⚠️ r1 之前的版本把兩批混在一起、又繞過 matcher 直接餵 handler ⇒ 全綠但保證不實。
  */
 export const IN_MATCHER_DENY = [
   [JSON.stringify({ tool_name: 'mcp__x__noop\n' }), '結尾換行（r1 H1：python 的 $ 會吃掉它，已改用 \\Z）'],
@@ -150,11 +154,16 @@ export const IN_MATCHER_DENY = [
   [JSON.stringify({ tool_name: 'mcp__x__place+order' }), '加號'],
   [JSON.stringify({ tool_name: 'mcp__x__place\u200b_order' }), '字中零寬字元'],
   [JSON.stringify({ tool_name: `mcp__x__${'a'.repeat(300)}` }), '超長名（上限 200）'],
-  ['not json at all', '非 JSON（handler 自己的 fail-closed）'],
-  [JSON.stringify({ no_tool_name: 1 }), '缺 tool_name（同上）'],
-  [JSON.stringify({ tool_name: 12345 }), 'tool_name 不是字串（同上）'],
 ];
-export const EXPECTED_IN_MATCHER_DENY = 13;
+export const EXPECTED_IN_MATCHER_DENY = 10;
+
+/** 輸入壞到沒有工具名可比 matcher——只驗得到 handler 自己的 fail-closed。 */
+export const HANDLER_ONLY_DENY = [
+  ['not json at all', '非 JSON'],
+  [JSON.stringify({ no_tool_name: 1 }), '缺 tool_name'],
+  [JSON.stringify({ tool_name: 12345 }), 'tool_name 不是字串'],
+];
+export const EXPECTED_HANDLER_ONLY_DENY = 3;
 
 /** matcher（`^mcp__`）篩不到的形狀——hook 不會執行；它們也不是有效的 MCP 工具名。 */
 export const OUT_OF_MATCHER = [
