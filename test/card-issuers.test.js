@@ -593,6 +593,19 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   assert.notEqual(run({ type: 'credit', issuer: '台新銀行' }), '');
   // ⑥壞代號＝視同沒有代號 ⇒ 照樣提示（那張卡確實還沒升級完）
   assert.notEqual(run({ issuerId: '沒這個代號', issuer: '台新銀行' }), '');
+
+  // ⑦★**提示不可以承諾「現在照舊會自動」**（自審 2026-09-02 抓到的過度宣稱）：
+  //   同一句話也會印在**沒有內建範本**的機構上，那些卡的帳單從來沒有自動過。
+  const noTemplate = CARD_ISSUERS.find(o => o.bank === '' && (o.aka || []).length === 0);
+  assert.ok(noTemplate, '前提：清單上有沒有內建範本的機構');
+  assert.equal(cardIssuerBank({ issuer: noTemplate.name }), '',
+    `前提：「${noTemplate.name}」掛不上內建範本＝它的帳單本來就不會自動歸`);
+  const noTemplateNote = run({ issuer: noTemplate.name });
+  assert.notEqual(noTemplateNote, '', `前提：「${noTemplate.name}」這種卡確實會看到提示`);
+  for (const banned of ['照舊會自動', '一樣會自動', '照樣會自動']) {
+    assert.equal(noTemplateNote.includes(banned), false,
+      `★提示對「${noTemplate.name}」說「${banned}」＝對使用者的錢說假話（它從來沒有自動過）`);
+  }
 });
 
 test('★升級提示｜有接到卡片面板上，而且機構名有跳脫', () => {
