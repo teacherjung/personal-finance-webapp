@@ -207,12 +207,13 @@ test('★J1 認不出機構（bank 空字串）時，不得有任何卡片算「
   assert.equal(cardMatchesBank({ issuer: '玉山銀行' }, '台新'), false);
   // 代號那條路（2026-09-02）：吃的是**卡片**，所以代號一樣要被看見
   assert.equal(cardMatchesBank({ issuerId: 'taishin' }, '台新'), true, '★只有代號、沒有顯示名也要認得出來');
-  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '我的某某卡' }, '台新'), false,
-    '★代號說是玉山 ⇒ 不算台新的卡（顯示名是清單認不得的自訂文字＝沒有反對證據，答案全由代號決定）');
-  assert.equal(cardMatchesBank({ issuerId: 'taishin', issuer: '我的某某卡' }, '台新'), true,
-    '★代號授予的身分是文字給不了的（同一串字沒有代號時判不出任何機構）');
-  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '台新銀行' }, '台新'), true,
-    '★兩欄矛盾 ⇒ 不採信代號、退回文字＝與 base 相同（J13 是它在錢的路徑上的端到端版）');
+  assert.equal(cardMatchesBank({ issuerId: 'taishin', issuer: '台新銀行' }, '台新'), true, '兩欄一致');
+  assert.equal(cardMatchesBank({ issuerId: 'fubon-taipei', issuer: '富邦' }, '富邦'), true,
+    '★歧義寫法配上代號＝說得清楚（文字那條路判不出來）');
+  assert.equal(cardMatchesBank({ issuerId: 'taishin', issuer: '我的某某卡' }, '台新'), false,
+    '★顯示名沒有確認代號 ⇒ 說不清楚，不可以算成台新的卡');
+  assert.equal(cardMatchesBank({ issuerId: 'esun', issuer: '台新銀行' }, '台新'), false,
+    '★也不可以退回文字去算成台新（r2 第 3 條：退回文字會讓顯示名指定另一家）');
 });
 
 test('★J2 端到端：讀得到列但認不出機構的 PDF，即使只有一張卡也不准自動歸卡', async () => {
@@ -492,20 +493,14 @@ test('★J6b 對照：同一份帳單配**台北富邦**卡時仍然自動歸卡
 //   本節釘的是「有代號的卡走查表、一個字都不比」這件事真的接上了對卡那條路，
 //   以及**沒有代號的卡零回歸**（裁示的另一半）。
 
-test('★★J10 有代號的香港富邦卡不再擋住台北富邦的自動歸卡——代號讓「確定是別家」成立', async () => {
-  // ⚠️ **誠實劃界（Codex #547 r1 之後補）**：這一組卡**表單產不出來**——挑「富邦銀行（香港）」會
-  //    同時把 `issuer` 寫成清單正式名稱，而那個名稱在 base 就判得出「不是台北富邦」了。
-  //    所以本題證明的是「代號真的接進了對卡決策樹、而且優先於文字」，**不是**「使用者今天會看到的差別」。
-  //    對表單產得出來的資料，代號今天**不改變任何行為**（價值是結構性的：身分不再從顯示字串推導，
-  //    所以清單改名／正規化規則被動手腳都影響不到它）——PR 說明曾把這一題寫成賣點，已改口。
-  // 前提（先證明給自己看）：那個顯示字串在文字那條路上會被 `OWN_ISSUERS` 的**前綴**命中成「富邦」
-  //   （樣式錨定在開頭、沒有結尾錨；`lib/card-identity.js` 的 OWN_ISSUERS 檔頭記著這個已知繞法）。
-  const { issuerBank, cardIssuerBank } = await import('../lib/card-identity.js');
-  assert.equal(issuerBank('台北富邦銀行（香港）'), '富邦', '前提：文字那條路會把這個字串誤判成台北富邦');
-  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk', issuer: '台北富邦銀行（香港）' }), '',
-    '前提：代號那條路不吃字串 ⇒ 這張卡是香港富邦、沒有內建範本');
+test('★★J10 歧義寫法配上代號 ⇒ 那張卡確定出局，正確那張恢復自動歸卡', async () => {
+  // 這是代號在錢的路徑上**真正買到**的那一格：「富邦」被兩家宣稱，文字那條路只能說「不確定」
+  //   ⇒ 那張卡卡住整個富邦的單卡自動歸（#520 的 J7 就是這個情境）。配上代號就說得清楚了。
+  // ⚠️ **誠實劃界**：這組卡**表單產不出來**——挑「富邦銀行（香港）」會同時把 `issuer` 寫成清單正式
+  //    名稱，而那個名稱在 base 就判得出「不是台北富邦」。所以本題證明的是「代號真的接進了決策樹」，
+  //    **不是**使用者今天會看到的差別（對表單產得出來的資料，代號今天不改變任何行為）。
   store.save({ ...store.emptyDb(), cards: [
-    { id: 'hk', name: '香港富邦卡', type: 'credit', issuer: '台北富邦銀行（香港）', issuerId: 'fubon-hk' },
+    { id: 'hk', name: '香港富邦卡（舊寫法＋已挑過清單）', type: 'credit', issuer: '富邦', issuerId: 'fubon-hk' },
     { id: 'tp', name: '台北富邦卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'fubon-taipei' },
   ] });
   const b64 = Buffer.from(cjkPdf([
@@ -515,55 +510,47 @@ test('★★J10 有代號的香港富邦卡不再擋住台北富邦的自動歸�
   const r = await previewAuto(b64);
   assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
   assert.ok(!r.lastFour, '前提：末四碼讀不出來 ⇒ 只能靠分支②「該銀行單卡」');
-  assert.equal(r.resolvedCard?.id, 'tp',
-    '★代號說香港卡確定不是台北富邦 ⇒ 族群只剩一張、其餘都確定別家 ⇒ 自動歸到正確那張');
+  assert.equal(r.resolvedCard?.id, 'tp', '★代號說那張是香港富邦 ⇒ 確定別家、出局 ⇒ 只剩一張 ⇒ 自動歸對');
 });
 
-test('★J10b 對照：同一組卡**拿掉代號** ⇒ 照舊退手選（本支沒有關掉文字那條路上的洞）', async () => {
-  // 沒有這一題，J10 會被「乾脆放寬到什麼都自動」蒙混過去；有了它，「代號才是那個變因」才成立。
-  // ⚠️ 它同時是**誠實劃界的考題**：那個前綴誤判的洞對沒有代號的卡仍然開著，
-  //    所以這裡的正確答案是「退手選」（兩張都算富邦 ⇒ 不是單卡），不是「自動歸到 tp」。
+test('★J10b 對照：只把那張卡的**代號拿掉** ⇒ 「富邦」變回歧義 ⇒ 退手選（證明變因就是代號）', async () => {
   store.save({ ...store.emptyDb(), cards: [
-    { id: 'hk', name: '香港富邦卡', type: 'credit', issuer: '台北富邦銀行（香港）' },
-    { id: 'tp', name: '台北富邦卡', type: 'credit', issuer: '台北富邦銀行' },
+    { id: 'hk', name: '香港富邦卡（只有舊寫法）', type: 'credit', issuer: '富邦' },
+    { id: 'tp', name: '台北富邦卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'fubon-taipei' },
   ] });
   const b64 = Buffer.from(cjkPdf([
     ['台北富邦銀行 信用卡帳單'],
     ['115/07/03', '一般商店', '115/07/05', '1,250'],
   ])).toString('base64');
   const r = await previewAuto(b64);
-  assert.equal(r.resolvedCard, null, '★沒有代號＝照舊走文字＝兩張都被算成富邦 ⇒ 請使用者選');
+  assert.equal(r.resolvedCard, null, '★沒有代號 ⇒ 「富邦」說不定就是台北富邦 ⇒ 不自動歸（#520 J7 的行為）');
   assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['hk', 'tp'], '兩張都要看得到');
 });
 
-test('★J11 代號在末四碼那條路上也算數——顯示名認不出、代號說是台新 ⇒ 照樣自動歸', async () => {
-  // ⚠️ **誠實劃界（Codex #547 r1 之後改寫）**：這一格是**放寬**（base 判不出、head 判得出），
-  //    而且**卡片表單產不出這種資料**——表單寫代號時一定同時把清單正式名稱寫進 `issuer`。
-  //    它只可能來自備份匯入／直打 API。留著它是因為它是「代號真的餵進了錢的路徑」最直接的證據，
-  //    但**不可以拿它當「使用者看得到的好處」**（那是 PR 說明曾經寫過、已經改掉的過度宣稱）。
+test('★J11 代號在末四碼那條路上也算數——歧義顯示名配上代號 ⇒ 兩個訊號一致 ⇒ 自動歸', async () => {
   store.save({ ...store.emptyDb(),
-    cards: [{ id: 'coded', name: '只有代號的卡', type: 'credit', issuer: '我的某某卡', issuerId: 'taishin', lastFour: '1234' }] });
+    cards: [{ id: 'coded', name: '舊寫法＋已挑過清單的富邦卡', type: 'credit', issuer: '富邦', issuerId: 'fubon-taipei', lastFour: '1234' }] });
   const b64 = Buffer.from(cjkPdf([
-    ['台新銀行 信用卡帳單'],
+    ['台北富邦銀行 信用卡帳單'],
     ['卡號末四碼 1234'],
-    ['115/07/03', '115/07/05', '一般商店', '1,250'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
   ])).toString('base64');
   const r = await previewAuto(b64);
-  assert.equal(r.bank, '台新', '前提：帳單認得出是台新');
+  assert.equal(r.bank, '富邦', '前提：帳單認得出是台北富邦');
   assert.equal(r.lastFour, '1234', '前提：末四碼唯一命中那張卡');
-  assert.equal(r.resolvedCard?.id, 'coded', '★代號補上了文字給不了的身分 ⇒ 兩個訊號一致 ⇒ 自動歸');
+  assert.equal(r.resolvedCard?.id, 'coded', '★代號把歧義的顯示名說清楚了 ⇒ 機構對得上 ⇒ 自動歸');
 });
 
-test('★J11b 對照：同一張卡**拿掉代號** ⇒ 判不出機構、只當候選（證明變因真的是代號）', async () => {
+test('★J11b 對照：同一張卡**拿掉代號** ⇒ 「富邦」判不出身分 ⇒ 只當候選（證明變因真的是代號）', async () => {
   store.save({ ...store.emptyDb(),
-    cards: [{ id: 'coded', name: '只有代號的卡', type: 'credit', issuer: '我的某某卡', lastFour: '1234' }] });
+    cards: [{ id: 'coded', name: '只有舊寫法的富邦卡', type: 'credit', issuer: '富邦', lastFour: '1234' }] });
   const b64 = Buffer.from(cjkPdf([
-    ['台新銀行 信用卡帳單'],
+    ['台北富邦銀行 信用卡帳單'],
     ['卡號末四碼 1234'],
-    ['115/07/03', '115/07/05', '一般商店', '1,250'],
+    ['115/07/03', '一般商店', '115/07/05', '1,250'],
   ])).toString('base64');
   const r = await previewAuto(b64);
-  assert.equal(r.resolvedCard, null, '★沒有代號 ⇒「我的某某卡」判不出機構 ⇒ 不自動歸');
+  assert.equal(r.resolvedCard, null, '★沒有代號 ⇒「富邦」判不出機構 ⇒ 不自動歸（分支①要求機構對得上）');
   assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['coded'], '末四碼命中 ⇒ 它是候選');
 });
 
@@ -602,10 +589,13 @@ test('★★J13 兩欄矛盾的卡（畫面寫富邦、代號是台新）不可�
   assert.deepEqual((r.candidates || []).map((/** @type {any} */ c) => c.id), ['a', 'b'], '★兩張都要看得到');
 });
 
-test('★J13b 對照：把卡 A 的兩欄改成**一致**（真的是台新卡）⇒ 分支②照舊自動歸到 B', async () => {
-  // 沒有這一題，J13 會被「乾脆一律不信代號」蒙混過去——那等於整支 PR 白做。
+test('★J13b 對照：卡 A 換成**代號真的在做事**的一張（歧義寫法＋代號）⇒ 分支②自動歸到 B', async () => {
+  // ⚠️ 這一題 Codex #547 r2 第 2 條抓到過：第一版的卡 A 是「台新銀行＋taishin」，**光靠文字**
+  //    就足以得到同樣答案 ⇒ 把 `cardCode` 整支改成永遠不採信代號，它照樣綠＝量不到變因。
+  //    換成「富邦＋fubon-hk」：文字說歧義（＝不確定＝擋），代號說香港富邦（＝確定別家＝放行），
+  //    兩者答案相反 ⇒ 這一題現在真的由代號決定。
   store.save({ ...store.emptyDb(), cards: [
-    { id: 'a', name: '台新卡', type: 'credit', issuer: '台新銀行', issuerId: 'taishin' },
+    { id: 'a', name: '香港富邦卡（舊寫法＋已挑過清單）', type: 'credit', issuer: '富邦', issuerId: 'fubon-hk' },
     { id: 'b', name: '正常的台北富邦卡', type: 'credit', issuer: '台北富邦銀行', issuerId: 'fubon-taipei' },
   ] });
   const b64 = Buffer.from(cjkPdf([
@@ -613,7 +603,7 @@ test('★J13b 對照：把卡 A 的兩欄改成**一致**（真的是台新卡�
     ['115/07/03', '一般商店', '115/07/05', '1,250'],
   ])).toString('base64');
   const r = await previewAuto(b64);
-  assert.equal(r.resolvedCard?.id, 'b', '★兩欄一致的台新卡確定不是富邦 ⇒ 出局是對的 ⇒ 仍然自動歸');
+  assert.equal(r.resolvedCard?.id, 'b', '★代號讓卡 A 確定出局 ⇒ 仍然自動歸（J13 不是「一律不自動」）');
 });
 
 test('★J14 代號那條路只作用在信用卡——簽帳金融卡不進 previewAuto（升級提示不發給它的前提之一）', async () => {

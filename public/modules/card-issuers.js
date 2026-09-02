@@ -243,43 +243,52 @@ export function issuerById(id) {
 }
 
 /**
- * 這張卡的**代號**算不算數——算數才回那一筆，否則回 `null`（＝視同沒有代號）。
+ * 這張卡的**代號**能不能用——三態，呼叫端三條路各自不同（`state` 刻意不壓成 boolean）。
  *
- * ## 為什麼代號不能無條件算數（Codex #547 r1 第 1 條，高、阻擋；我自己重現過）
+ * - `{ state: 'none' }`＝沒有可解析的代號（缺席／空／非字串／不認得）⇒ 呼叫端**退回文字判準**。
+ * - `{ state: 'ok', issuer }`＝代號可用 ⇒ 身分就是它。
+ * - `{ state: 'unconfirmed' }`＝**有代號、但顯示名沒有確認它** ⇒ **說不清楚**：
+ *   既不採信代號，**也不退回文字**（退回文字＝讓顯示名去指定另一家，那正是下面要擋的事）。
  *
- * `card.issuer` 與 `card.issuerId` 是**同一個身分的兩半**，但櫃檯把它們當兩個獨立欄位收
- * （`WRITABLE_FIELDS.cards` 兩欄都在、`PUT` 是部分更新、`lib/repo.js` 淺合併）
- * ⇒ **只送 `issuer`、不送 `issuerId` 的寫入會留下前一次的代號**。
- * ⚠️ 這**不是只有手改資料庫才做得到**：使用者升級後沒有重新整理的**舊分頁**跑的是舊版 `cards.js`，
- *    它只送 `issuer` ⇒ 按一次儲存就產生矛盾的一張卡。
+ * ## 為什麼要有這一層（Codex #547 r1 第 1 條與 r2 第 1／3 條，兩輪都是高、阻擋）
  *
- * 實測那一張卡有多危險（Codex 的重現，我逐格重跑過）：
- *   卡 A `{issuer:'台北富邦銀行', issuerId:'taishin'}`（畫面寫富邦、代號是台新）、卡 B ＝正常的台北富邦卡。
- *   無條件相信代號 ⇒ A 被判「確定不是富邦」而出局 ⇒ **B 成了唯一同行卡 ⇒ 富邦帳單自動歸到 B**。
- *   base 只看字串，兩張都算富邦 ⇒ 退手選。**帳單若其實是 A 的，錢就記到 B 上了。**
+ * `card.issuer` 與 `card.issuerId` 是**同一個身分的兩半**，但櫃檯把它們當兩個欄位收
+ * （`PUT` 是部分更新、`lib/repo.js` 淺合併）⇒ 兩欄可以走散。走散的卡有兩種危害，**方向相反**：
+ *   ・**r1**：`{issuer:'台北富邦銀行', issuerId:'taishin'}`（升級後沒重新整理的**舊分頁**只送 `issuer`
+ *     就會造出來）。無條件相信代號 ⇒ 這張卡被判「確定不是富邦」而出局 ⇒ 另一張富邦卡成了
+ *     唯一同行卡 ⇒ **富邦帳單自動歸到它**。
+ *   ・**r2**：`{issuer:'美國運通', issuerId:'taishin'}`（POST／PUT 同時送兩欄、備份匯入都做得到）。
+ *     r1 的修法只否決「清單認得、但認成別家」的顯示名，**清單認不得的另一家被當成「沒有反對證據」**
+ *     ⇒ 代號照樣算數 ⇒ Codex 端到端重現：唯一候選卡畫面寫著「美國運通」，台新帳單自動歸過去。
  *
- * ## 判準：**顯示名指向別家就不採信代號**（⇒ 退回文字那條路＝與 base 逐字相同）
+ * ## 判準：**顯示名必須確認代號那一家**（空白＝沒有東西可以牴觸）
  *
- * ・`issuersNamed(card.issuer)` **有命中、但都不是代號那一家** ⇒ 兩欄互相矛盾 ⇒ 回 `null`。
- * ・顯示名**空白**或**清單認不得**（自訂機構）⇒ 沒有反對證據 ⇒ 代號算數。
- * ⚠️ 這裡用到 `issuersNamed`（也就是 `issuerNameKey`），看起來像把文字比對放回身分那條路——
- *    **方向是單向的**：它只能把「有身分」變成「沒身分」，永遠不能授予身分。所以就算有人改壞
- *    正規化規則，代價也只是多按幾次選卡，不會讓帳單自動歸到別張卡。這與檔頭那個洞的方向相反。
- * ⚠️ **矛盾時退回文字、不是一律擋**：退回文字＝**回到 base 的行為**（上例的 A 照樣算富邦、兩張都在
- *    族群裡 ⇒ 退手選），這比「整張卡判不出身分」溫和，也與「代號查不到＝視同沒有代號」同一條規則
- *    ——一張卡永遠只有一把尺，而且矛盾與查不到走同一條退路，不是兩套。
+ * ・顯示名是空白 ⇒ `ok`（沒有相反證據）。
+ * ・`issuersNamed(顯示名)` **包含代號那一家** ⇒ `ok`（正式名稱、別名、以及「富邦」這種歧義寫法
+ *   含它在內都算確認——歧義寫法配上代號正是清單化要達成的消歧）。
+ * ・其餘（清單認得但認成別家／清單根本認不得的字）⇒ `unconfirmed`。
  *
- * ⚠️ 住在這一支（不是 `lib/card-identity.js`）是因為**卡片表單也要用同一份**：
- *    表單若還把矛盾的代號預選起來，使用者按個儲存就把矛盾寫死了。前端 import 不到 `lib/`，
+ * ⚠️ **`unconfirmed` 刻意不退回文字**（r1 的修法就是退回文字，被 r2 第 3 條打穿）：退回文字會讓
+ *    「畫面寫甲、代號寫乙」的卡最後被判成**甲**，於是「有效代號的卡不受顯示字串影響」這句宣稱為假
+ *    ——Codex 實測：把 `issuerNameKey` 改壞讓 `HSBC` 抹成台新，`{issuerId:'esun', issuer:'HSBC'}`
+ *    就被歸成台新，而全卷 37 題照樣綠。改成 `unconfirmed` 之後，這句話變成**真的**：
+ *
+ *    > **有代號的卡，只會判成「它自己那一家」或「判不出來」，不可能判成別家。**
+ *
+ *    （`test/card-issuers.test.js` 有一題對清單 × 一組刁鑽顯示名做全組合檢查釘住它。）
+ *    代價＝那張卡退成手選，而它本來就是一張說不清楚的卡；**這是安全方向**。
+ * ⚠️ **只影響有代號的卡**：`state:'none'` 一路退回文字判準 ⇒ 沒有代號的舊卡零回歸（J12）。
+ * ⚠️ 住在這一支（不是 `lib/card-identity.js`）是因為**卡片表單也要用同一份**：表單若把
+ *    說不清楚的代號預選起來，使用者按個儲存就把它寫死了。前端 import 不到 `lib/`，
  *    所以判準本體放這裡、`lib` 那邊 import 過去——同一件事只有一個實作。
  * @param {{ issuer?: unknown, issuerId?: unknown } | null | undefined} card
- * @returns {CardIssuer | null}
+ * @returns {{ state: 'none' } | { state: 'ok', issuer: CardIssuer } | { state: 'unconfirmed' }}
  */
-export function codedIssuer(card) {
+export function cardCode(card) {
   const listed = issuerById(card?.issuerId);
-  if (!listed) return null;
-  const claimed = issuersNamed(card?.issuer);
-  return (claimed.length && !claimed.includes(listed)) ? null : listed;
+  if (!listed) return { state: 'none' };
+  if (String(card?.issuer ?? '').trim() === '') return { state: 'ok', issuer: listed };
+  return issuersNamed(card?.issuer).includes(listed) ? { state: 'ok', issuer: listed } : { state: 'unconfirmed' };
 }
 
 /**
@@ -332,8 +341,10 @@ export function issuerFormFields(card) {
   if (typeof card === 'string') {
     throw new TypeError('issuerFormFields 吃的是卡片物件（要 issuer 與 issuerId 兩欄），不是 issuer 字串');
   }
-  const byId = codedIssuer(card);   // ⚠️ 不是 issuerById——兩欄矛盾時不採信代號，見 codedIssuer 檔頭
-  if (byId) return { issuerPick: byId.id, issuerOther: '' };
+  // ⚠️ 只有代號**可用**時才預選它（`cardCode` 檔頭）：說不清楚的卡要落回文字那條路，
+  //    讓使用者看到畫面上的那個名字、自己挑一次——按儲存就把兩欄修成一致（自我修復）。
+  const code = cardCode(card);
+  if (code.state === 'ok') return { issuerPick: code.issuer.id, issuerOther: '' };
   const raw = String(card?.issuer ?? '');
   if (!raw.trim()) return { issuerPick: '', issuerOther: '' };
   const key = issuerNameKey(raw);

@@ -239,60 +239,74 @@ test('★代號｜查表逐字相等，不吃正規化——代號那條路不�
   assert.equal(issuerById(String(['taishin'])), CARD_ISSUERS[0], '對照：字串化之後才查得到＝所以差別真的在 typeof 那一行（不是恆假）');
 });
 
-test('★代號｜清單上每一家挑下去，卡片版判準都要給出它宣告的那一家（顯示字串不參與推導）', () => {
+test('★代號｜清單上每一家挑下去，卡片版判準都要給出它宣告的那一家', () => {
   for (const o of CARD_ISSUERS) {
     assert.equal(cardIssuerBank({ issuerId: o.id }), o.bank, `代號「${o.id}」判出來的不是 ${o.bank || '（無範本）'}`);
-    // 顯示字串是清單認不得的自訂文字（＝沒有反對證據）⇒ 答案完全由代號決定
-    assert.equal(cardIssuerBank({ issuerId: o.id, issuer: '我的某某卡' }), o.bank,
-      `★代號「${o.id}」的答案被 issuer 字串影響了——那就等於沒改`);
+    assert.equal(cardIssuerBank({ issuerId: o.id, issuer: o.name }), o.bank, '顯示名＝正式名稱（表單寫出來的形狀）');
+    for (const a of o.aka || []) {
+      assert.equal(cardIssuerBank({ issuerId: o.id, issuer: a }), o.bank, `別名「${a}」也要算「確認了代號」`);
+    }
   }
-  // ★代號授予的身分是文字給不了的：同一串自訂文字，沒有代號就判不出來
-  assert.equal(issuerBank('我的某某卡'), '', '前提：這串字本身判不出任何機構');
-  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '我的某某卡' }), '台新');
+  // ★代號真正買到的東西：**歧義的顯示名被消歧**。單看文字判不出來，配上代號就說得清楚。
+  assert.equal(issuerBank('富邦'), '', '前提：「富邦」被兩家宣稱 ⇒ 文字那條路不猜');
+  assert.equal(cardIssuerBank({ issuer: '富邦', issuerId: 'fubon-taipei' }), '富邦', '★代號說是台北富邦 ⇒ 說得清楚了');
+  assert.equal(cardIssuerBank({ issuer: '富邦', issuerId: 'fubon-hk' }), '', '★代號說是香港富邦 ⇒ 沒有內建範本');
+  assert.equal(cardCertainlyNot({ issuer: '富邦', issuerId: 'fubon-hk' }, '富邦'), true, '★而且確定不是台北富邦');
+  assert.equal(issuerCertainlyNot('富邦', '富邦'), false, '對照：沒有代號時「富邦」是「不確定」');
 });
 
-test('★★代號｜**兩欄互相矛盾就不採信代號**（Codex #547 r1 第 1 條，高、阻擋）', async () => {
-  const { codedIssuer } = await import('../public/modules/card-issuers.js');
-  // 病灶：`issuer` 與 `issuerId` 是同一個身分的兩半，但櫃檯當兩個欄位收、PUT 是部分更新
-  //   ⇒ **只送 issuer 的寫入會留下前一次的代號**（升級後沒重新整理的舊分頁就會這樣送）。
-  //   無條件相信代號 ⇒ 那張卡被判「確定不是富邦」而出局 ⇒ 另一張成了唯一同行卡 ⇒ 帳單自動歸到它。
-  const contradictory = { issuer: '台北富邦銀行', issuerId: 'taishin' };
-  assert.equal(codedIssuer(contradictory), null, '★顯示名指向別家 ⇒ 代號不算數');
-  assert.equal(cardIssuerBank(contradictory), issuerBank(contradictory.issuer),
-    '★退回文字那條路＝與 base 逐字相同（不是「整張卡判不出身分」）');
-  assert.equal(cardCertainlyNot(contradictory, '富邦'), false, '★不可以被判成「確定不是富邦」而出局');
-  // 方向：這道檢查只能把「有身分」變成「沒身分」，永遠不能授予身分
-  assert.equal(codedIssuer({ issuer: '玉山銀行', issuerId: 'taishin' }), null);
-  assert.equal(cardIssuerBank({ issuer: '玉山銀行', issuerId: 'taishin' }), '',
-    '★畫面寫玉山的卡，不可以因為代號寫台新就收台新的帳單');
-  // 對照組：**不矛盾**的三種都要照舊採信代號（否則這道檢查就是「一律不信代號」的恆真）
-  assert.deepEqual(codedIssuer({ issuer: '台新銀行', issuerId: 'taishin' }), CARD_ISSUERS[0], '正式名稱一致');
-  assert.deepEqual(codedIssuer({ issuer: '台新', issuerId: 'taishin' }), CARD_ISSUERS[0], '★別名也算一致');
-  assert.deepEqual(codedIssuer({ issuer: '', issuerId: 'taishin' }), CARD_ISSUERS[0], '沒有顯示名＝沒有反對證據');
-  assert.deepEqual(codedIssuer({ issuer: '我的某某卡', issuerId: 'taishin' }), CARD_ISSUERS[0], '清單認不得的自訂名＝沒有反對證據');
-  // 歧義寫法算不算反對證據？「富邦」被兩家宣稱、其中一家就是代號那一家 ⇒ 不算矛盾
-  assert.ok(codedIssuer({ issuer: '富邦', issuerId: 'fubon-hk' }), '★歧義寫法含代號那一家 ⇒ 不算反對');
-  assert.ok(codedIssuer({ issuer: '富邦', issuerId: 'fubon-taipei' }));
-  assert.equal(codedIssuer({ issuer: '富邦', issuerId: 'esun' }), null, '★歧義的兩家都不是代號那一家 ⇒ 矛盾');
+test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採信代號、也不退回文字（Codex #547 r1 第 1 條、r2 第 1／3 條）', async () => {
+  const { cardCode } = await import('../public/modules/card-issuers.js');
+  // 走散的卡有兩種，**危害方向相反**，所以退路不可以是「退回文字」：
+  //   r1：`{issuer:'台北富邦銀行', issuerId:'taishin'}`（舊分頁只送 issuer 就造得出來）
+  //       ——無條件相信代號 ⇒ 這張出局 ⇒ 另一張富邦卡成唯一同行卡 ⇒ 富邦帳單自動歸過去。
+  //   r2：`{issuer:'美國運通', issuerId:'taishin'}`（POST/PUT 兩欄一起送、備份匯入都做得到）
+  //       ——r1 的修法只否決「清單認得、但認成別家」，清單認不得的另一家被當成沒有反對證據
+  //         ⇒ 台新帳單自動歸到一張畫面寫著「美國運通」的卡（Codex 端到端重現過）。
+  for (const shown of ['台北富邦銀行', '美國運通', '兆豐國際商業銀行', '我的某某卡', '玉山銀行']) {
+    const card = { issuer: shown, issuerId: 'taishin' };
+    assert.deepEqual(cardCode(card), { state: 'unconfirmed' }, `「${shown}」沒有確認 taishin`);
+    assert.equal(cardIssuerBank(card), '', `★「${shown}」＋台新代號 ⇒ 判不出來（不可以判成台新，也不可以判成顯示名那一家）`);
+    assert.equal(cardCertainlyNot(card, '台新'), false, '★說不清楚＝證明不了是別家＝擋自動歸並進候選');
+    assert.equal(cardCertainlyNot(card, '富邦'), false);
+  }
+  // ★★**可證明的不變量**：有代號的卡，只會判成「它自己那一家」或「判不出來」，**不可能判成別家**。
+  //   這一格是 r2 第 3 條的正解——r1 的「退回文字」讓顯示名可以指定另一家，那句宣稱當時是假的
+  //   （Codex 把 `issuerNameKey` 改壞讓 HSBC 抹成台新，`{issuerId:'esun', issuer:'HSBC'}` 就被歸成台新）。
+  const NASTY = ['', '   ', '台新銀行', '台新', '臺新', '台 新', '富邦', '富邦銀行', '台北富邦銀行',
+    '富邦銀行（香港）', '台北富邦銀行（香港）', '美國運通', '玉山銀行', '某某會員俱樂部',
+    'HSBC', 'ｔａｉｓｈｉｎ', 'taishin', '__other__', '[object Object]'];
+  for (const o of CARD_ISSUERS) {
+    for (const shown of NASTY) {
+      const got = cardIssuerBank({ issuerId: o.id, issuer: shown });
+      assert.ok(got === o.bank || got === '',
+        `★代號「${o.id}」＋顯示名「${shown}」判成了「${got}」——有代號的卡不可以判成別家`);
+    }
+  }
+  // 對照組：**確認得了**的四種都要照舊採信代號（否則這道檢查就是「一律不信代號」的恆真）
+  assert.deepEqual(cardCode({ issuer: '台新銀行', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '正式名稱');
+  assert.deepEqual(cardCode({ issuer: '台新', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '★別名也算確認');
+  assert.deepEqual(cardCode({ issuer: '', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '空白＝沒有東西可以牴觸');
+  assert.deepEqual(cardCode({ issuer: '  ', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '整串空白同理');
+  assert.equal(cardCode({ issuer: '富邦', issuerId: 'fubon-hk' }).state, 'ok', '★歧義寫法含代號那一家＝確認（消歧正是清單的目的）');
+  assert.equal(cardCode({ issuer: '富邦', issuerId: 'esun' }).state, 'unconfirmed', '歧義的兩家都不是代號那一家 ⇒ 說不清楚');
+  // 沒有可解析的代號＝完全不走這條路（零回歸）
+  for (const badId of [undefined, null, '', 123, ['taishin'], {}, '沒這個代號', 'TAISHIN']) {
+    assert.deepEqual(cardCode({ issuer: '台新銀行', issuerId: badId }), { state: 'none' }, `代號 ${JSON.stringify(badId)} 不可解析`);
+    assert.equal(cardIssuerBank({ issuer: '台新銀行', issuerId: badId }), issuerBank('台新銀行'), '★逐字退回文字判準');
+  }
 });
 
-test('★代號｜有代號的卡繞開 `issuerNameKey`（本支唯一真正關掉的那條通道）', () => {
-  // Codex #520 r3#1 的實測：在正規化器裡加一條對映，整卷考題照樣綠、而 `issuerBank('HSBC')` 變成 '台新'。
-  // 代號那條路不經過正規化器 ⇒ 有代號的卡不受那種竄改影響。這一題用**行為**釘住這件事：
-  // 拿一個正規化後會撞到台新的字串當顯示名，只要代號說是別家，答案就必須是別家。
+test('★代號｜正規化規則被動手腳時，有代號的卡最多只會「判不出來」，不會被指去別家', () => {
+  // Codex #520 r3#1 的實測：在正規化器裡加一條對映，整卷考題照樣綠、`issuerBank('HSBC')` 變成 '台新'。
+  // 本支對**有代號的卡**關掉的就是這條路——但關法不是「不讀正規化器」（`cardCode` 仍用它做確認），
+  // 而是**結構上不可能指去別家**：確認得了 ⇒ 代號那一家；確認不了 ⇒ 判不出來。上一題的全組合檢查
+  // 已經把這件事釘住，這裡補「文字那條路照舊」的對照，免得有人以為整條路都關了。
   assert.equal(issuerBank('臺新'), '台新', '前提：文字那條路會把「臺新」判成台新');
-  // ★有代號、且顯示名沒有指向別家 ⇒ 身分完全由代號決定，`issuerNameKey` 推導不出這個答案
-  assert.equal(cardIssuerBank({ issuerId: 'esun', issuer: '我的某某卡' }), '');
-  assert.equal(cardCertainlyNot({ issuerId: 'esun', issuer: '我的某某卡' }, '台新'), true,
-    '★挑過清單就是有效證據——確定不是台新');
-  assert.equal(issuerCertainlyNot('我的某某卡', '台新'), false, '對照：同一串字沒有代號時證明不了');
-  // ⚠️ **誠實劃界（2026-09-02 補正）**：`issuerNameKey` **並沒有完全離開**身分那條路——
-  //    `codedIssuer` 用它做「兩欄矛盾嗎」的檢查。但那個用法是**單向**的：只能把有身分變成沒身分，
-  //    永遠不能授予身分。所以改壞正規化規則的代價是多按幾次選卡，不是帳單自動歸到別張卡。
-  assert.equal(cardIssuerBank({ issuerId: 'esun', issuer: '臺新' }), '台新',
-    '★矛盾 ⇒ 退回文字＝base 的答案（不是代號的答案，也不是「判不出」）');
-  // ⚠️ 誠實劃界：**沒有代號的卡照舊走正規化器**，那條通道對它們仍然開著（William 2026-09-02 裁示）。
-  assert.equal(cardIssuerBank({ issuer: '臺新' }), '台新', '★沒代號＝照舊走文字，本支刻意不改這一格');
+  assert.equal(cardIssuerBank({ issuerId: 'esun', issuer: '臺新' }), '',
+    '★代號說玉山、顯示名說台新 ⇒ 判不出來（**不是**台新——r1 的「退回文字」在這裡會答台新）');
+  assert.equal(cardIssuerBank({ issuer: '臺新' }), '台新',
+    '★沒有代號的卡照舊走正規化器，那條通道對它們仍然開著（William 2026-09-02 裁示，本支刻意不改）');
 });
 
 // ───────────────────────── ② 判準（清單 → issuerBank）─────────────────────────
@@ -343,21 +357,17 @@ test('表單｜正式寫法才預選；空值＝未設定（預選的值＝**代
   assert.deepEqual(issuerFormFields(null), { issuerPick: '', issuerOther: '' }, '新增卡片＝沒有卡片物件');
 });
 
-test('★表單｜代號算數時就只看代號；兩欄矛盾時退回文字（與判準側同一把尺）', () => {
+test('★表單｜代號**可用**時才預選它；說不清楚的卡落回文字（與判準側同一把尺）', () => {
   assert.deepEqual(issuerFormFields({ issuerId: 'fubon-hk', issuer: '富邦銀行（香港）' }), { issuerPick: 'fubon-hk', issuerOther: '' });
-  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '' }), { issuerPick: 'taishin', issuerOther: '' },
-    '★顯示字串空白＝沒有反對證據，代號說了算');
-  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '我的某某卡' }), { issuerPick: 'taishin', issuerOther: '' },
-    '★清單認不得的自訂名＝沒有反對證據');
-  // ★兩欄矛盾 ⇒ **不可以預選代號那一項**：預選會讓使用者按個儲存就把矛盾寫死。
-  //   落回文字那條路 ⇒ 預選「畫面上看到的那一家」⇒ 按儲存＝把代號修正成與顯示名一致（自我修復）。
+  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '台新' }), { issuerPick: 'taishin', issuerOther: '' }, '別名＝確認得了');
+  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '' }), { issuerPick: 'taishin', issuerOther: '' }, '空白＝沒有東西可以牴觸');
+  assert.deepEqual(issuerFormFields({ issuerId: 'fubon-hk', issuer: '富邦' }), { issuerPick: 'fubon-hk', issuerOther: '' }, '★歧義寫法配代號＝消歧');
+  // ★說不清楚 ⇒ **不可以預選代號那一項**（預選會讓使用者按個儲存就把它寫死）。
+  //   落回文字那條路 ⇒ 預選「畫面上看到的那一家」⇒ 按儲存＝把兩欄修成一致（自我修復）。
   assert.deepEqual(issuerFormFields({ issuerId: 'fubon-hk', issuer: '台新銀行' }), { issuerPick: 'taishin', issuerOther: '' },
-    '★矛盾時預選的是顯示名那一家，不是代號那一家');
-  // 查不到的代號＝視同沒有代號，退回字串那條路（不是「判不出、什麼都不選」）
-  for (const badId of ['沒這個代號', 'TAISHIN', ' taishin', 123, null, ['taishin'], {}]) {
-    assert.deepEqual(issuerFormFields({ issuerId: badId, issuer: '台新銀行' }), { issuerPick: 'taishin', issuerOther: '' },
-      `★代號 ${JSON.stringify(badId)} 查不到 ⇒ 退回字串，不可以整格空掉`);
-  }
+    '★預選的是顯示名那一家，不是代號那一家');
+  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '我的某某卡' }), { issuerPick: ISSUER_OTHER, issuerOther: '我的某某卡' },
+    '★清單認不得的顯示名 ⇒ 落到「其他」並原字帶進去（代號不被預選）');
 });
 
 test('★表單｜傳字串進 `issuerFormFields` 要當場丟例外（改名＋這道 typeof 是同一件事的兩半）', () => {
@@ -503,6 +513,11 @@ test('★櫃檯｜`issuerId` 真的存得進去（純函式全對、白名單漏
     '★沒送 issuer 的 PUT 不可以順手把代號清掉（那會讓每一次改名都降級一張卡）');
   assert.deepEqual(pickWritable('cards', { issuer: '台新銀行', issuerId: 'taishin' }).value,
     { issuer: '台新銀行', issuerId: 'taishin' }, '★兩欄都送＝正常表單，原樣收下');
+  // ★**只做一個方向**：反過來只送代號時**不可以**替使用者補一段他沒打過的顯示名
+  //   （Codex #547 r2 第 5 條：這句宣稱原本沒有考題撐著）。
+  const onlyCode = pickWritable('cards', { issuerId: 'taishin' }).value;
+  assert.deepEqual(onlyCode, { issuerId: 'taishin' },
+    '★只送代號 ⇒ 原樣收下、**不得多出 issuer**（櫃檯不替使用者編畫面文字；那個方向的安全由 cardCode 收口）');
 });
 
 // ───────────────────────── ④ 接線（讀原始碼）─────────────────────────
