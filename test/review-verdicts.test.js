@@ -1157,6 +1157,27 @@ test('⭐ 死角｜sha 歧義（缺 sha 型另有指紋）：正式重述全被�
   assert.deepEqual(problems, [], `sha 歧義的壞行必須可豁免：${problems.join('｜')}`);
 });
 
+test('⭐ 死角｜三類引不動的壞行，閘給的**處方**要指向同身分豁免（不是必然失敗的重述）', () => {
+  // `Codex #543 r2 Medium`：行為對了、處方還是舊的——操作者照錯誤訊息做仍會走回死角。
+  const cases = [
+    [UNQUOTABLE_FIRST, UNQUOTABLE_URL, '引文出界'],
+    ['🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審\u115f',
+      'https://github.com/x/y/pull/9#issuecomment-5310870041', '隱形字元'],
+    ['🤖 Codex｜來源：CLI（xhigh）｜審 ｜r6｜結論：需修改後再審 deadbee',
+      'https://github.com/x/y/pull/9#issuecomment-5310870043', 'sha 歧義'],
+  ];
+  for (const [first, url, why] of cases) {
+    const { problems } = verdictProblems([cu(`${first}\n\n略。`, url)], HEAD, 'Codex');
+    const msg = problems.join('\n');
+    assert.match(msg, /這一則正是第②種/u, `${why}：處方要點名它屬於「引不動」那一類`);
+    assert.match(msg, /不要再試重述.*豁免.*雜湊/su, `${why}：處方要直接指向同身分豁免＋雜湊指認`);
+  }
+  // 對照組：引得動的壞行**不可以**被貼上這個處方（不然等於教大家繞過重述）。
+  const ok = verdictProblems([cu(NOSHA_MAL, 'https://github.com/x/y/pull/9#issuecomment-5310870038')],
+    HEAD, 'Codex').problems.join('\n');
+  assert.doesNotMatch(ok, /這一則正是第②種/u, '引得動的壞行不該被指向豁免');
+});
+
 test('⭐ 死角｜反引號落單**不是**障礙：重述行可用單邊反引號湊偶數 → 仍不可豁免', () => {
   // `Codex #543 r1 High` 的誤放寬方向：r1 版把「壞行奇數個反引號」當成不可重述，
   // 但 RESTATE 自報 sha 的左右反引號各自 optional ⇒ 重述者永遠湊得出偶數。
