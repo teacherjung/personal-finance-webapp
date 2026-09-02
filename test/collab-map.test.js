@@ -9,6 +9,7 @@
 //   ①地圖裡每一個連結指到的檔案還在
 //   ②連結後面緊跟著「」的節名字串，在那個檔案裡還找得到
 //   ③地圖自己找得到（`CLAUDE.md`／`AGENTS.md` 都要指得回它）——沒人指的地圖等於不存在
+//   ④「規矩的手腳」那張表要涵蓋每一支**自報** `MERGE_GATE` 的閘——名單不手寫，跟腳本對帳
 //
 // ## 誠實劃界（重要，不要把這支當成「地圖是對的」的保證）
 //
@@ -21,9 +22,9 @@
 //   硬要求標題會逼地圖改指到比較粗的位置，那對讀者更差。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -101,6 +102,37 @@ test('⭐ 地圖自己要找得到：CLAUDE.md 與 AGENTS.md 都要指得回它'
       `「${from}」沒有提到 ${MAP}。\n`
       + '⚠️ 沒有人指路的地圖等於不存在——CLAUDE.md 是 Claude 每個 session 唯一保證讀到的入口，\n'
       + '   AGENTS.md 是 Codex 的入口，兩邊都要指得回來。');
+  }
+});
+
+/**
+ * 合併前真的會擋人的閘＝**腳本自報**（`export const MERGE_GATE`），不是誰手寫的名單。
+ *
+ * ⚠️ 這個做法是抄 `test/collab-invariant-docs.test.js` 的教訓（`Codex #385 r9`）：
+ * 那裡原本手寫三個閘名，第四道閘加進來之後**考題把舊名單當契約、全綠也看不見**。
+ * 地圖的「規矩的手腳」那一節同樣是一張名單，同樣會漂——所以這裡改成跟腳本自報對帳。
+ */
+async function selfDeclaredGates() {
+  const files = readdirSync(join(ROOT, 'scripts')).filter((f) => f.startsWith('check-') && f.endsWith('.js'));
+  /** @type {string[]} */
+  const gates = [];
+  for (const f of files) {
+    const mod = await import(pathToFileURL(join(ROOT, 'scripts', f)).href);
+    if (mod.MERGE_GATE) gates.push(`scripts/${f}`);
+  }
+  return gates;
+}
+
+test('⭐ 「規矩的手腳」要涵蓋每一支自報 MERGE_GATE 的閘（加了新閘沒列就轉紅）', async () => {
+  const gates = await selfDeclaredGates();
+  assert.ok(gates.length > 0,
+    '一支自報 MERGE_GATE 的閘都找不到——不是閘沒了，就是這個列舉壞了（壞了的話這題就是空包彈）。');
+  const text = read(MAP);
+  for (const g of gates) {
+    assert.ok(text.includes(g),
+      `${MAP} 的「規矩的手腳」漏了「${g}」，但它自報是合併閘。\n`
+      + '⚠️ 讀者會照那張表推論「表上沒有＝沒有機器在管」——漏一道就是給錯的安全感。\n'
+      + '   （名單刻意不手寫在考題裡：手寫的名單自己會漂，這正是 Codex #385 r9 的教訓。）');
   }
 });
 

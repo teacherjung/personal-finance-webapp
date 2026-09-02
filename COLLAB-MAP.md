@@ -73,6 +73,8 @@
 
 規則寫在文件裡，但**只有下面這些有東西在合併前擋人**。其餘全靠自律。
 
+下表的閘**不是手寫名單**：`test/collab-map.test.js` 拿它跟「腳本自己宣告的 `MERGE_GATE`」對帳，**日後加了新閘卻沒列進來，考題就會轉紅**。（下半部那幾支考題不在對帳範圍內——它們不是合併閘，是一般考題。）
+
 | 管什麼 | 誰在管 |
 |---|---|
 | PR 的協作欄位有沒有填（實作者／審查者／基準版本…） | [.github/pull_request_template.md](.github/pull_request_template.md)＋[scripts/check-pr-collab-fields.js](scripts/check-pr-collab-fields.js) |
