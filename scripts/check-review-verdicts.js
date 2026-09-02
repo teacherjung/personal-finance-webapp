@@ -574,7 +574,9 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       }
       // ⚠️ 合規的行也可能在**引文裡**夾隱形容器把下一行藏出畫面（r4 抓到 <!--、r5 抓到
       //    <details> 與 ![ ——黑名單補不完）。性質收口＝引文只准白名單字元＋反引號要配對；
-      //    出界＝那一則壞留言不可重述／豁免（fail-closed 劃界），同樣收件截止。
+      //    出界＝**這一行宣告不生效且收件截止**（fail-closed 劃界）。
+      //    ⚠️ 不是「那則壞留言沒救」（`Codex #543 r9 Low` 糾正，同 :218 那段）：
+      //    雜湊型豁免不含引文、quoteTxt 為空，本守則對它恆過，原壞留言仍可由合格身分豁免。
       const quoteM = shapeRestate ? RESTATE.exec(raw) : EXEMPT.exec(raw);
       const quoteTxt = (quoteM && quoteM[shapeRestate ? 4 : 3]) || '';   // 豁免的雜湊變體沒有引文＝空字串（守則對空字串恆過）
       if (HIDDEN_CP.test(raw)) {
