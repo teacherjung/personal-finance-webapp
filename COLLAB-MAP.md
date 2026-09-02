@@ -12,9 +12,9 @@
 
 - **它不完整，而且刻意不完整。** 下面只收「常被查」的問題。
   **表上沒有 ≠ 規矩不存在**——查不到就去翻正本本身的目錄，不要反推成「沒這條規定」。
-- **有機械保證的只有這些**（清單以 [test/collab-map.test.js](test/collab-map.test.js) 的題目為準，
-  這裡刻意不寫幾項——寫死的數字自己會漂）：「我想查⋯⋯」每一列指到的檔案還在、
-  引的節名還落在該檔的**標題或行首粗體標籤**上；「合併步驟專用的閘」那張表跟**腳本自報**的閘對帳。
+- **有些地方有機器盯著，有些沒有。** 哪些有＝以 [test/collab-map.test.js](test/collab-map.test.js)
+  的題目為準（這裡不列舉、也不寫幾項——摘要與數字都自己會漂）。大致上它盯的是**地址與版面**：
+  指到的檔案還在不在、節名還在不在該有的位置、閘表跟腳本自報的對不對得上。
 - **驗不到的**：那一節是不是還在講那件事（節名沒動、內容整段換掉，考題照樣綠）；
   本檔有沒有偷偷把規則判準抄進來（機器讀不出「這句是規則還是指路」——那條紀律只有人在守）；
   以及下面標明「選錄」的每一張表。
@@ -97,22 +97,23 @@
 | 堆疊 | [scripts/check-pr-merge-gate.js](scripts/check-pr-merge-gate.js) |
 | 跨 PR 試合併 | [scripts/check-cross-pr-merge.js](scripts/check-cross-pr-merge.js) |
 
-⚠️ 對帳只掃 `scripts/check-*.js`。**用別的檔名開頭的閘不在對帳範圍內**——
-考題另有一條兜底：`scripts/` 底下非 `check-` 開頭的檔案若自報 `MERGE_GATE`，會直接轉紅要求處理。
+⚠️ 對帳認的是 `check-*.js` 這個命名（`scripts/` 遞迴底下都算）。**換個檔名開頭的閘不會被對帳到**——
+所以考題另有一條兜底：`scripts/` 底下非 `check-` 開頭的檔案只要**提到** `MERGE_GATE` 就轉紅，
+逼人回來處理。⚠️ 這兩條都只認 `MERGE_GATE` 這個名字；有人改用別的名字開一道閘，這裡看不到。
 
 ### 其他也會擋人的（**選錄，不對帳，不完整**）
 
 | 管什麼 | 誰在管 |
 |---|---|
-| 型別、格式、考題三關（沒過就 push 不出去／CI 紅） | [scripts/git-hooks/pre-push](scripts/git-hooks/pre-push)＋[.github/workflows/ci.yml](.github/workflows/ci.yml) |
-| 三方共用的文件，名字不可以只掛一方 | [test/doc-naming.test.js](test/doc-naming.test.js) |
-| 合併步驟裡那幾道閘的名字有沒有被偷偷拿掉 | [test/collab-invariant-docs.test.js](test/collab-invariant-docs.test.js) |
-| Grok 掃描那個固定小標還在不在 | [test/grok-scan-docs.test.js](test/grok-scan-docs.test.js) |
+| 型別／格式／考題三關 | [scripts/git-hooks/pre-push](scripts/git-hooks/pre-push)＋[.github/workflows/ci.yml](.github/workflows/ci.yml) |
+| 文件命名 | [test/doc-naming.test.js](test/doc-naming.test.js) |
+| 合併閘名單 | [test/collab-invariant-docs.test.js](test/collab-invariant-docs.test.js) |
+| Grok 掃描紀錄 | [test/grok-scan-docs.test.js](test/grok-scan-docs.test.js) |
 
 ⚠️ 這一節是**選錄**：`npm test` 裡還有很多支考題，紅了同樣會擋合併（它們經由三關與 CI 生效）。
 不要把這張表當成「會擋人的東西的全集」。
 
-### 這些**沒有任何機器在看**
+### 這些**沒有任何機器在看**（例）
 
 Grok 複審後掃有沒有做、掃描與複審的先後時序、審查提示詞有沒有涵蓋固定維度——
 漏做不會有東西擋你，全靠自律。
