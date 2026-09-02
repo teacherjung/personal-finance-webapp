@@ -451,6 +451,8 @@ test('考題自己的比對形與正式的 `issuerNameKey` 語意相同（走鐘
   //    （那是身分判準），再決定要不要同步 `normKey`；不可以反射性地把 `normKey` 抄成新的。
   const SAMPLES = ['', '   ', '台新銀行', '臺新銀行', '台 新 銀 行', '富邦銀行（香港）', '富邦銀行(香港)',
     'TAISHIN', 'taishin', 'ｔａｉｓｈｉｎ', '台🈟', 'HSBC', '某某會員俱樂部', '__other__',
+    // 空白的各種等價類（Codex #547 r8 建議）：一般空格、tab、換行、NBSP、全形空白、零寬
+    '台新\t銀行', '台新\n銀行', '台新\u00a0銀行', '台新\u3000銀行', '\u00a0台新銀行\u3000', '台新\u200b銀行',
     ...CARD_ISSUERS.flatMap(o => [o.name, ...(o.aka || [])])];
   for (const x of SAMPLES) assert.equal(normKey(x), issuerNameKey(x), `兩把尺對「${x}」答案不同`);
 });
