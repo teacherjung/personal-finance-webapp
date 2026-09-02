@@ -680,6 +680,7 @@ const MANIFEST = {
       // 但抽取正規式原本不認 scripts/，所以三關會安靜全綠、只改這支工具的人不會被導來讀契約
       // （Codex #546 r1 Medium）。連帶把 scripts/ 加進上面兩處路徑正規式。
       'scripts/verify-us-gaap-tags.js',
+      'test/verify-us-gaap-tags.test.js',
     ],
   },
 };
