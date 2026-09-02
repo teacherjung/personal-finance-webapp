@@ -1212,26 +1212,22 @@ test('⭐ 死角｜反引號落單**不是**障礙：重述行可用單邊反引
     `重述得動的壞行必須維持「走重述」的資格判定、不可豁免：${problems.join('｜')}`);
 });
 
-test('⭐ 死角｜第五種：重述留言會超過平台長度上限（送不出去）→ 同一身分可豁免', () => {
-  // `Codex #543 r4`：語法上引得動、但把壞行逐字重印一次就超過 GitHub 的 65,536 上限 ⇒
-  // 重述那條路實際上不存在；而豁免的雜湊變體只要一百多字元，永遠塞得下。
-  const pad = 'x'.repeat(65_400);   // x 不是 hex：避免填充字自己被當成 sha 長相的字
+test('⭐ 劃界｜長度不在本閘的判準裡（William 2026-09-02 裁示，誠實記錄射程）', () => {
+  // `Codex #543 r4` 指出「壞行接近平台留言上限 ⇒ 重述載體送不出去」是真的；
+  // r5 接著證明這條路補不完（最短合法載體兩側都會估錯、豁免自己的載體也可能超限）。
+  // William 裁示拿掉長度判準、改成誠實劃界。這一題釘住那個決定：
+  // **超長的壞行走的是與一般壞行相同的分類**（本閘不因長度改變資格），
+  // 「連救濟載體都送不出」那一格由文件說明，不由程式假裝處理。
+  const pad = 'x'.repeat(65_400);
   const first = `🤖 Codex｜來源：CLI（xhigh）｜審 \`abc1234\`｜r6｜結論：需修改後再審 ${pad}`;
   const url = 'https://github.com/x/y/pull/9#issuecomment-5310870046';
-  const body = `${first}\n\n略。`;
-  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870046'))], HEAD, 'Codex');
-  assert.deepEqual(problems, [], `超長壞行必須可由同一身分豁免：${problems.join('｜').slice(0, 200)}`);
-});
-
-test('⭐ 死角｜長度邊界的對照組：塞得下的長壞行仍走重述、不可豁免', () => {
-  // 邊界另一側：同樣很長、但最短載體還塞得下 ⇒ 重述可行 ⇒ 資格不該放寬。
-  const pad = 'x'.repeat(60_000);   // 同上
-  const first = `🤖 Codex｜來源：CLI（xhigh）｜審 \`abc1234\`｜r6｜結論：需修改後再審 ${pad}`;
-  const url = 'https://github.com/x/y/pull/9#issuecomment-5310870047';
-  const body = `${first}\n\n略。`;
-  const { problems } = verdictProblems([cu(body, url), c(exemptLine(first, '5310870047'))], HEAD, 'Codex');
+  const { problems } = verdictProblems([cu(`${first}\n\n略。`, url), c(exemptLine(first, '5310870046'))],
+    HEAD, 'Codex');
+  // 這一行語法上引得動（純 x、無隱形字元、恰一個 sha）⇒ 分類仍是「走重述」⇒ 豁免不生效。
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)),
-    '塞得下的長壞行必須維持「走重述」的資格判定');
+    '長度不該改變資格分類——超長行與一般行走同一套判準');
+  // 而且不可以被貼上第②種的處方（它不是引不動，只是長）。
+  assert.doesNotMatch(problems.join('\n'), /這一則正是第②種/u, '長不等於引不動');
 });
 
 test('⭐ 死角｜引得動的壞行照舊不可豁免（資格沒有被放寬）', () => {

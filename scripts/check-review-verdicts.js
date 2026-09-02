@@ -229,9 +229,6 @@ const QUOTE_ALLOWED = /^[\p{L}\p{N}\p{Zs}\t🤖｜：:（）()、，,；;。．.
  * 計數器數不到）。性質收口：整行含任何一個這族字元＝不可重述。
  */
 const HIDDEN_CP = /\p{Default_Ignorable_Code_Point}/u;
-/** GitHub 單則留言的長度上限（`Codex #543 r4`）——超過就送不出去＝那則壞行的重述路實際上不存在。
- *  ⚠️ 這是**平台**的數字，不是本閘的判準；平台改它，這裡與考題要一起改。 */
-const COMMENT_MAX = 65536;
 /** 空白摺疊：**只用在身分（來源）比對**——與 headerOf 的 source 正規化同一個理由。
  *  ⚠️ 引文比對**不用它**（#418 r1 阻擋③）：引文是「逐字」，摺疊空白＝在 🤖 後多打一個空白
  *  也算引中，那就不是逐字了。引文只容許**頭尾**空白差異（trim），中間每一個空白都要一樣。 */
@@ -691,20 +688,17 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     const qnKey = q4Key ? null : QUOTED_HEAD_NOSHA.exec(m.key);
     const shaLikeInKey = ((m.key.normalize('NFKC').replace(/`/gu, '')).match(QUOTED_SHA_LIKE) || []).length;
     const shaUnambiguous = q4Key ? shaLikeInKey <= 1 : (qnKey ? shaLikeInKey === 0 : false);
-    // ⚠️ 第五種接不了：語法上引得動，但**留言送不出去**（`Codex #543 r4`）。重述必須把壞行
-    //    逐字重印一次，載體＝合規標頭＋重述行＋引文；壞行接近平台上限時，載體必然超限。
-    //    這裡用**最短可能的載體**估：sha 取 7 位、輪次取 1 位、結論取最短的「通過」、
-    //    自報 sha 的反引號省略（RESTATE 兩邊各 optional）。算得出比實際更小 ⇒ 只在
-    //    「連最短寫法都塞不下」時才判為接不了＝fail-closed 方向正確（不會誤放寬豁免）。
-    //    ⚠️ 誠實劃界：`COMMENT_MAX` 是 GitHub 現行的留言長度上限，**平台改它這裡要跟著改**；
-    //    而豁免的雜湊變體只要一百多字元，永遠塞得下——這正是它能接手這一類的原因。
-    const idForCarrier = rid || { role: 'Codex', source: 'CLI' };
-    const minCarrier = `🤖 ${idForCarrier.role}｜來源：${idForCarrier.source}｜審 \`abc1234\`｜r1｜結論：通過\n`
-      + `重述 r1｜審 abc1234｜結論：通過｜原第一行：「${m.key}」`;
-    const restateFits = [...minCarrier].length <= COMMENT_MAX
-      && Buffer.byteLength(minCarrier, 'utf8') <= COMMENT_MAX;
+    // ⚠️ **長度不納入判準**（William 2026-09-02 裁示；`Codex #543 r4/r5` 兩輪的教訓）：
+    //    r4 指出「壞行接近平台留言上限時，重述得把它逐字重印＝載體送不出去」——那是真的，
+    //    但 r5 接著證明這條路補不完：估「最短合法載體」兩側都會判錯（optional 欄位、引文
+    //    sha 位數都會變），而且**豁免自己的載體也可能超限**（來源字串極長時）。
+    //    停戰理由＝它防的是不會發生的事：真實案例（#540）的壞標頭第一行 929 字元，
+    //    離上限還有六萬多字元的餘裕；要撞上這條得刻意構造。
+    //    ⚠️ 誠實劃界：**壞行長到連救濟載體都送不出時，這道閘沒有可行處方**——
+    //    那是平台的長度限制、不是本閘判得出來的事，真的遇到就關掉重開 PR 或問 William。
+    //    寧可留這句話，也不要留一個自己會漂的長度估算（本 repo 的老教訓：誇大的保證比缺口更糟）。
     const quotableAsRestate = QUOTE_ALLOWED.test(m.key) && !HIDDEN_CP.test(m.key)
-      && shaUnambiguous && restateFits;
+      && shaUnambiguous;
     const keyHash = createHash('sha256').update(m.key, 'utf8').digest('hex');
     const matches = (/** @type {any} */ e) => m.id != null && e.id === m.id
       && ((e.key != null && e.key === m.key) || (e.keyHash != null && e.keyHash === keyHash));
