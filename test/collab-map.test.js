@@ -353,53 +353,66 @@ const POINTER_LINE = /^(?:> )?\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-M
 /** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
 const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
 
+/** 只給那一行用的唯一目的地——用它把 link token **綁回那一行**。 */
+const SENTINEL = 'COLLAB-MAP-POINTER-SENTINEL';
+
 /**
  * **那一行指路本身**，在整份文件的脈絡裡，有沒有變成一個真的連結 token。
  *
- * ⚠️ 為什麼不是拿渲染出來的 HTML 字串去比對（`Codex #548 r6`）：`marked` 明說**不做 sanitize**，
- * raw HTML 與註解會原樣留在輸出字串裡。於是把指路行包進 `<!-- -->`、再在同一個註解裡塞一個
- * `<a href="COLLAB-MAP.md">誘餌</a>`，字串比對就中了——但 GitHub 上那一段整個不會顯示。
- * 「拿掉指路行連結就消失」的差分也擋不住：在指路行前開 `<!--`、把 `-->` 藏進它的括號內容裡、
- * 後面另放一個真連結，拿掉指路行會讓註解不再閉合、後面那個連結也跟著消失 ⇒ 差分照樣成立。
+ * ⚠️ 為什麼不是比對渲染出來的 HTML 字串（`Codex #548 r6`）：`marked` 明說**不做 sanitize**，
+ * 註解與 raw HTML 會原樣留在輸出裡，於是註解內塞一個 `<a href="COLLAB-MAP.md">` 誘餌就騙得過。
+ * ⚠️ 為什麼不是「共同祖先的 raw 含指路行」（`Codex #548 r7`）：那只把範圍放大到祖先區塊，
+ * **沒有把 link 綁回那一行**。同一段裡用單顆反引號把指路行變成 code span、旁邊放一個誘餌連結，
+ * 誘餌就會被算到指路行頭上（GitHub 實際只把指路行渲染成 `<code>`）。
+ * ⇒ 改成**把那一行的目的地換成唯一 sentinel**，再找 `href === sentinel` 的 link token。
+ * 只有那一行可能產生它，歸屬因此是定義上的、不是推論的。
  *
- * ⇒ 改成問 tokenizer：**產生連結 token 的那個區塊，raw 裡有沒有含指路行本身**。
- * 被註解吞掉的內容只會變成一顆 `html` token，底下不會有任何 link token。
- *
- * @param {string} md 整份文件
- * @param {string} pointerText 指路行（去掉 blockquote 前綴後的字面）
+ * @param {string[]} lines 整份文件的每一行
+ * @param {number} at 指路行的索引
  */
-function pointerRendersAsLink(md, pointerText) {
+function pointerRendersAsLink(lines, at) {
+  const patched = lines.slice();
+  patched[at] = patched[at].replace(`](${MAP})`, `](${SENTINEL})`);
+  // ⚠️ 先確認真的改到——改不到的話下面必然回 false，會變成「永遠誤擋」的空包彈。
+  assert.notEqual(patched[at], lines[at], '指路行沒有可替換的連結目的地，sentinel 綁定失效。');
   let found = false;
-  /** @param {any[]|undefined} list @param {boolean} inPointerBlock */
-  const walk = (list, inPointerBlock) => {
+  /** @param {any[]|undefined} list */
+  const walk = (list) => {
     for (const tk of list || []) {
-      const here = inPointerBlock || (typeof tk.raw === 'string' && tk.raw.includes(pointerText));
-      if (here && tk.type === 'link' && tk.href === MAP) found = true;
-      walk(tk.tokens, here);
-      for (const item of tk.items || []) walk([item], here);
-      for (const row of tk.rows || []) for (const cell of row || []) walk(cell.tokens, here);
+      if (tk.type === 'link' && tk.href === SENTINEL) found = true;
+      walk(tk.tokens);
+      for (const item of tk.items || []) walk([item]);
+      // ⚠️ `header` 不可漏（`Codex #548 r7`）：漏走它會**誤擋**真的可點的表格連結。
+      for (const cell of tk.header || []) walk(cell.tokens);
+      for (const row of tk.rows || []) for (const cell of row || []) walk(cell.tokens);
     }
   };
-  walk(marked.lexer(md), false);
+  walk(marked.lexer(patched.join('\n')));
   return found;
 }
 
-/** 去掉 blockquote 前綴——`REVIEW-AND-MERGE.md` 的指路寫在引言裡。 */
-const bare = (/** @type {string} */ line) => line.replace(/^\s*>[ \t]?/, '');
-
-test('⭐ 渲染判準自己要先會動：藏起來的寫法都不算「有連結」', () => {
+test('⭐ 渲染判準自己要先會動：藏起來的不算、真的看得到的不可以誤擋', () => {
   const good = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它**只指路、不是正本、無規則效力**）。';
   assert.ok(POINTER_LINE.test(good) && POINTER_LINE.test(`> ${good}`), 'fixture 的指路行形狀就不對。');
   assert.ok(POINTER_WORDS.every((w) => good.includes(w)), 'fixture 自己就少了免責詞。');
-  assert.ok(pointerRendersAsLink(good, good), '正常的指路行應該要產生連結 token。');
-  assert.ok(pointerRendersAsLink(`> ${good}`, good), '寫在引言裡也應該算數。');
 
-  // ⚠️ 這幾種「字面在、連結不在」的寫法，正是前幾輪用字串比對怎麼補都補不完的那一族
-  //    （`Codex #548 r2`／`r3`／`r5`／`r6`）。改問 token 之後，它們自然全部不成立。
+  /** @param {string} md */
+  const check = (md) => {
+    const L = md.split('\n');
+    const i = L.findIndex((l) => l.includes(`](${MAP})`));
+    return i >= 0 && pointerRendersAsLink(L, i);   // 連可綁的連結都沒有＝本來就不算數
+  };
+
+  assert.ok(check(good), '正常的指路行應該算數。');
+  assert.ok(check(`> ${good}`), '寫在引言裡應該算數。');
+  // ⚠️ 表格 header 那發是**誤擋**方向（`Codex #548 r7`①）：漏走 header 會把真的可點連結判成沒有。
+  assert.ok(check(`${good}\n| --- |`), '表格 header 裡的連結是真的可點，不可以誤擋。');
+
   const hidden = {
     '單行 HTML 註解': `<!-- ${good} -->`,
-    '註解裡塞一個 raw <a> 誘餌': `<!--\n${good.replace('）。', ' <a href="COLLAB-MAP.md">誘餌</a>）。')}\n-->\n\n## H`,
-    '註解跨行包住': `<!--\n${good}\n-->\n\n## H`,
+    '註解裡另塞 raw <a> 誘餌': `<!--\n${good.replace('）。', ' <a href="COLLAB-MAP.md">誘餌</a>）。')}\n-->\n\n## H`,
+    '未閉合註解＋後面另放真連結': `<!--\n${good.replace('）。', '　-->）。')}\n\n另外參考 [COLLAB-MAP.md](COLLAB-MAP.md)。`,
+    'code span 包住＋旁邊放誘餌': `\`\n${good}\n\` [誘餌](COLLAB-MAP.md)\n\n## H`,
     '三反引號圍欄': `\`\`\`\n${good}\n\`\`\``,
     '四反引號外框包三反引號': `\`\`\`\`markdown\n\`\`\`\n${good}\n\`\`\`\n\`\`\`\``,
     '波浪號圍欄': `~~~\n${good}\n~~~`,
@@ -408,16 +421,11 @@ test('⭐ 渲染判準自己要先會動：藏起來的寫法都不算「有連�
     '註解夾在連結中間': '**規矩住在哪＝[COLLAB-MAP.md]<!-- x -->(COLLAB-MAP.md)**（路由表）。',
   };
   for (const [name, md] of Object.entries(hidden)) {
-    assert.ok(!pointerRendersAsLink(md, good), `「${name}」不該算成「指路行有變成連結」。`);
+    assert.ok(!check(md), `「${name}」不該算成「指路行有變成連結」。`);
   }
-
-  // ⚠️ 別處另有一個真連結，不可以被算到指路行頭上（r6 的第二發）
-  const decoyAfter = `<!--\n${good.replace('）。', '　-->）。')}\n\n另外參考 [COLLAB-MAP.md](COLLAB-MAP.md)。`;
-  assert.ok(!pointerRendersAsLink(decoyAfter, good),
-    '指路行被註解吞掉、只有別處的連結渲染得出來時，不該算數。');
 });
 
-test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路，而且渲染後真的是可點的連結', () => {
+test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路，而且它自己渲染成一個真的連結', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
   //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到這三份」與「這三份要指回地圖」
@@ -427,6 +435,12 @@ test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的�
   //    「讀者看得到一個可點的連結」，補了三輪都還有洞——註解、`~~~`、四反引號外框、縮排、
   //    引言裡的圍欄、把註解夾進連結中間。那是「列舉繞法補不完」的形狀。
   //    渲染器直接回答原本要問的問題：**渲染出來到底有沒有那個 `<a>`**。
+  //
+  // ⚠️ **這一題保證到哪裡**（`Codex #548 r7`③ 要求收窄）：那一行**形狀對**、**在第一個字面 `## ` 之前**、
+  //    而且**它自己**渲染成一個 link token。**它不保證「讀者一開檔就看得到」**——
+  //    把指路行放進預設收合的 `<details>`（仍在前言），上面每一條都成立，讀者卻要先展開才看得到。
+  //    實測確認擋不到。要守到那種程度就得再去追「哪些容器會遮住前言」，那是另一場列舉；
+  //    這裡選擇**把宣稱縮到實況**，不追。
   //
   // ⚠️ 仍然驗不到的：那句話的**意思**。把括號內容改成「這幾個詞都是錯的、地圖才是正本」，
   //    形狀、連結、三個詞都還在 ⇒ 照樣綠（`Codex #548 r3` 實證）。語意要靠人讀。
@@ -440,7 +454,7 @@ test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的�
 
     const at = lines.findIndex((l) => POINTER_LINE.test(l));
 
-    // 指路要在**前言**（第一個 `## ` 標題之前），讀者一開檔就看得到。
+    // 指路要在**前言**（第一個字面 `## ` 標題之前）——這是**位置**，不是可見性。
     // ⚠️ 這一條**不是**渲染問題——搬到檔尾照樣渲染成可點的連結，是**找不找得到**的問題。
     //    `^## ` 的判斷精確、不是近似，所以留著。找不到任何 `## ` 就 fail-closed：
     //    邊界無從界定時不可以退成「整份都算前言」（那等於這一格沒在檢查）。
@@ -456,13 +470,10 @@ test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的�
         + '⚠️ 誠實劃界：這只鎖那幾個詞出現在同一行，**鎖不住整句話的意思**。');
     }
 
-    // 在**整份文件的脈絡裡**，指路行自己要產生一個指向地圖的連結 token。
-    // ⚠️ 不是「渲染出來的字串裡有沒有 <a>」——marked 不 sanitize，註解裡的 raw HTML 會原樣留著。
-    //    也不是「拿掉它連結就消失」的差分——那個因果可以用未閉合的註解偽造（`Codex #548 r6`）。
-    assert.ok(pointerRendersAsLink(lines.join('\n'), bare(lines[at])),
-      `「${from}」的指路行沒有變成一個可點的連結。\n`
+    assert.ok(pointerRendersAsLink(lines, at),
+      `「${from}」的指路行沒有渲染成一個真的連結。\n`
       + '⚠️ 字面寫著檔名不算數——被註解吞掉、包在圍欄裡、四個空白縮排，讀者都點不到。\n'
-      + '⚠️ 檔案別處另有一個地圖連結也不算——那不是這一行。');
+      + '⚠️ 檔案別處另有一個地圖連結也不算：判準是把**這一行**的目的地換成唯一 sentinel 再找它。');
   }
 });
 
