@@ -22,7 +22,7 @@
 - **有些地方有機器盯著，有些沒有。** 哪些有＝以 [test/collab-map.test.js](test/collab-map.test.js)
   的題目為準（這裡不列舉、也不寫幾項——摘要與數字都自己會漂）。大致上它盯的是**地址與行的寫法**：
   指到的檔案還在不在、目標檔**某處**還找不找得到一行「長得像那個節名」（標題、行首粗體標籤，或整行就是 `節名：`）、
-  閘表跟腳本自報的對不對得上。⚠️ **只保證「某處找得到」**——不保證它還在原本那一章底下、
+  閘表跟**合併步驟裡實際會跑的那一組**對不對得上。⚠️ **只保證「某處找得到」**——不保證它還在原本那一章底下、
   也不保證階層或語意關係：把真標題改名、再把 `**節名**` 搬到完全無關的章節，考題照樣綠（實測）。
 - **那道檢查是行級的，看不懂 Markdown 結構**（William 2026-09-02 裁定的射程）：
   例如把閘表包進程式碼區塊、拿掉表頭、在儲存格裡插一個沒跳脫的 `|`、把錨點搬到別的章節——它都看不出來。
@@ -40,8 +40,6 @@
 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md) | **程序**：審查與合併實際怎麼跑 | 要送審、要合併、要跑閘的時候 |
 | [CLAUDE.md](CLAUDE.md) | **只有 Claude 需要的幾條**＋開工入口 | 每個 session 自動載入，不必特地翻 |
 
-兩份講到同一件事時：**AGENTS.md 是規則正本，REVIEW-AND-MERGE.md 是執行正本**。
-
 ## 我想查⋯⋯
 
 ### 誰能做什麼
@@ -51,7 +49,7 @@
 | 誰是誰、各自負責什麼、不負責什麼 | [AGENTS.md](AGENTS.md)「三方協作框架」 |
 | Codex 的三種模式：審查／代合併／實作 | [AGENTS.md](AGENTS.md)「三方協作框架」 |
 | Grok 能碰什麼、材料怎麼給、什麼時候掃 | [AGENTS.md](AGENTS.md)「Grok 的邊界」 |
-| 「不可自審」到底在講什麼 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「唯一要守的不變量」 |
+| 「不可自審」到底在講什麼 | [AGENTS.md](AGENTS.md)「協作的唯一不變量」 |
 | 合併是誰決定的、誰按鍵 | [AGENTS.md](AGENTS.md)「合併的決策與執行是兩件事」 |
 | 為什麼實作的人不能按自己的合併鍵 | [AGENTS.md](AGENTS.md)「實作者不按自己的合併鍵」 |
 | 審查意見要不要改、哪幾種一定要問 William | [AGENTS.md](AGENTS.md)「審查回饋處置」 |
@@ -63,12 +61,13 @@
 | 問題 | 去哪讀 |
 |---|---|
 | 合併要走哪些步驟、過哪幾道閘 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「合併也由 Codex 代執行」 |
-| 找問題→提修法→改→再審 的循環 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「五步驟審查循環」 |
+| 找問題→提修法→審修法→實作→審實作 的循環 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「五步驟審查循環」 |
 | 這支要走多重的流程（風險分級） | [AGENTS.md](AGENTS.md)「PR 分級」 |
 | PR 說明要填哪幾欄 | [.github/pull_request_template.md](.github/pull_request_template.md)「協作欄位」 |
 | 實際怎麼發起一輪審查 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「怎麼執行」 |
 | 發審查提示時那幾串一字不能改的機械字串 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「發審查提示」 |
-| 結論標頭寫壞了怎麼補救 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「已經漂掉的補救」 |
+| 結論標頭寫壞了怎麼補救 | [AGENTS.md](AGENTS.md)「重述＝壞標頭救濟的入口」 |
+| 來源字串被打成兩種寫法、變成兩個身分怎麼收 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「已經漂掉的補救」 |
 | 審查者的紀律、審查樹誰備誰收 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「你的角色（唯讀審查者）」 |
 | 不管作者叫我看什麼，都一定要跑的那幾條 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「固定維度」 |
 | 審查期間要不要掛草稿、CI 跑不跑 | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「省額度慣例」 |
@@ -112,12 +111,10 @@
 | 堆疊 | [scripts/check-pr-merge-gate.js](scripts/check-pr-merge-gate.js) |
 | 跨 PR 試合併 | [scripts/check-cross-pr-merge.js](scripts/check-cross-pr-merge.js) |
 
-⚠️ 兜底：`scripts/` 底下（**遞迴**）每一支 `.js`／`.mjs`／`.cjs` 只要**提到** `MERGE_GATE`，
-都必須真的出現在合併步驟裡，否則轉紅——不留「自報自己是閘、卻永遠不會跑」的東西。
-⚠️ 反查認的指令形狀窄：`node scripts/<名>.js <N>`（第一層、`.js`）。所以：
-放在子目錄的 `.js`／`.mjs`／`.cjs` 閘，**反查抓不到，但兜底掃得到**⇒ 轉紅、逼人回來處理；
-而 `.ts`／`.sh`／無副檔名的閘，**反查與兜底都看不到**——那種閘會完全隱形，這裡沒有網子。
-⚠️ 這幾條都只認 `MERGE_GATE` 這個名字；有人改用別的名字開一道閘，這裡看不到。
+⚠️ 另有一道兜底，防「自報自己是閘、卻永遠不會跑」的東西留在 `scripts/` 裡。
+**兩者認得到什麼、認不到什麼（副檔名、指令形狀、只認哪個名字、哪種閘會完全隱形），
+逐條寫在 `test/collab-map.test.js` 檔頭——這裡刻意不複述**：
+那是考題的判準，抄進路由表就是第二份會漂的複本（本檔唯一的紀律就是只給地址）。
 
 ### 其他也會擋人的（**選錄，不對帳，不完整**）
 
