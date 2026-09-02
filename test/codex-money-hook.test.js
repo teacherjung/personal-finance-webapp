@@ -173,6 +173,10 @@ test('v6 姿態閘：白名單是精確集合（AST 取值：恰一次字面綁�
   //   Codex #540 r5／r7：列舉綁定形式補不完（AnnAssign→match capture→except as→函式名…），
   //   判準已改成**數名字**——ALLOW 在整棵 AST 的每個欄位裡恰好出現兩次（一次賦值、一次讀取），
   //   外加單獨擋 wildcard import。新語法形式出現時判準自動涵蓋。
+  //   ⚠️ **射程止於「原始碼裡直接寫出 ALLOW」**（`Codex #540 r8` 收窄）：執行期用算出來的
+  //   名稱改寫同一個綁定（globals()["ALL"+"OW"]、setattr、exec／eval）AST 看不到——
+  //   **那一層靠審查制度守**（指令本體是受審內容、兩份逐位互鎖、改動必然出現在 diff 裡）。
+  //   下面那題把「直接寫出」的 15 種形式固化成負向考題。
   const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
   assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
   const out = execFileSync('python3', [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
@@ -181,6 +185,41 @@ test('v6 姿態閘：白名單是精確集合（AST 取值：恰一次字面綁�
   assert.equal(parsed.error, undefined, `白名單的形狀不合格：${parsed.error}`);
   assert.deepEqual([...parsed.items].sort(), [...MONEY_SERVER_ALLOW].sort(),
     '指令裡的白名單與探針清單不是同一個集合——多列＝悄悄放行，少列＝誤攔');
+});
+
+test('v6 姿態閘：白名單判準的**負向考題**——直接寫出 ALLOW 的綁定形式一律 fail-closed', () => {
+  // `Codex #540 r8`：r5／r7 驗過的繞法只留在 commit 訊息裡，考卷只有正例 ⇒ 判準退化不會紅。
+  // 這一題把它們固化：每一種「原始碼裡直接寫出 ALLOW」的綁定，helper 都必須回 error。
+  const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
+  assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
+  const ANCHOR = 'if name.startswith("mcp__"):';
+  assert.ok(m[1].includes(ANCHOR), '注入錨點不見了，這題要跟著改');
+  const readAllow = (/** @type {string} */ src) => JSON.parse(execFileSync('python3',
+    [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
+    { input: src, encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' }));
+  // 基準：未注入時抽得出白名單。
+  assert.equal(readAllow(m[1]).error, undefined, '基準：正常指令要抽得出白名單');
+  const forms = [
+    ['第二次 Assign', 'ALLOW = ALLOW + ("x",)'],
+    ['AugAssign', 'ALLOW += ("x",)'],
+    ['AnnAssign（帶型別註記）', 'ALLOW: tuple = ALLOW + ("x",)'],
+    ['walrus', 'if (ALLOW := ALLOW + ("x",)): pass'],
+    ['for 綁定', 'for ALLOW in [("x",)]: pass'],
+    ['with as', 'import contextlib\nwith contextlib.nullcontext() as ALLOW: pass'],
+    ['except as', 'try:\n    pass\nexcept Exception as ALLOW: pass'],
+    ['match capture', 'match ("x",):\n    case ALLOW: pass'],
+    ['comprehension 目標', 'x = [ALLOW for ALLOW in [1]]'],
+    ['函式名', 'def ALLOW(): pass'],
+    ['類別名', 'class ALLOW: pass'],
+    ['函式參數', 'def f(ALLOW=1): pass'],
+    ['import as', 'import os as ALLOW'],
+    ['wildcard import', 'from os import *'],
+    ['global 宣告', 'def f():\n    global ALLOW'],
+  ];
+  for (const [why, inject] of forms) {
+    const got = readAllow(m[1].replace(ANCHOR, `${inject}\n${ANCHOR}`));
+    assert.ok(got.error, `${why}：直接寫出 ALLOW 的綁定必須 fail-closed，卻抽出了 ${JSON.stringify(got.items?.length)} 項`);
+  }
 });
 
 test('v6 姿態閘：多段前綴下的名單內工具必須照常放行（反向對照組）', () => {

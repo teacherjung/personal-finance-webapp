@@ -1,7 +1,7 @@
-"""從 hook 指令的 python 原始碼取出 ALLOW 白名單的字面值（fail-closed）。
+"""從 hook 指令的 python 原始碼取出 ALLOW 白名單的**字面值**（fail-closed）。
 
-判準（Codex #540 r4→r7 三度收斂）：`ALLOW` 這個名字在整份原始碼裡**恰好只能出現兩次**
-——一次是那個字面 tuple 的賦值目標，一次是 `tool not in ALLOW` 的讀取。
+判準：`ALLOW` 這個名字在整份原始碼裡**恰好只能出現兩次**——一次是那個字面 tuple 的
+賦值目標，一次是 `tool not in ALLOW` 的讀取。
 
 ⚠️ 為什麼是「數名字」而不是「列舉綁定形式」（r5、r7 各被打穿一次的教訓）：
   r4 版列舉 Assign／AugAssign／for ⇒ 漏掉 AnnAssign（帶型別註記的再綁定）。
@@ -11,6 +11,17 @@
   凡是字串欄位的值等於 "ALLOW" 就計數——不管它是哪一種節點的哪一個欄位。
   這樣新的語法形式出現時，判準自動涵蓋（多一處綁定＝多一次出現＝計數不等於 2＝紅）。
   另外單獨擋 `from … import *`：它不含 "ALLOW" 字面，卻能把名字帶進來。
+
+⚠️⚠️ **誠實劃界——這支 helper 證明得了什麼、證明不了什麼**（`Codex #540 r8` 逼出來的收窄）：
+  ・**證明得了**：原始碼裡**直接寫出 `ALLOW` 這個名字**的每一種綁定形式都被擋
+    （靜態形式實測 28 種全紅：Assign／AnnAssign／AugAssign／walrus／for／with as／
+    except as／match capture／match star／comprehension／函式名／類別名／參數／
+    import as／wildcard import／global／nonlocal／type alias／type parameter…）。
+  ・**證明不了**：**執行期用算出來的名稱改寫同一個綁定**——`globals()["ALL"+"OW"] = …`、
+    `setattr(sys.modules[__name__], …)`、`exec`／`eval` 產生的賦值，AST 裡沒有 "ALLOW"
+    這個字面，這支看不到，而 handler 的執行期白名單確實會變。
+    ⚠️ **那一層靠審查制度守**（hook 指令本體是受審內容、兩份逐位互鎖、改動必然出現在 diff 裡），
+    不由本判準假裝處理——同 repo 的老規矩：列舉補不完就誠實劃界，誇大的保證比缺口更糟。
 
 輸出 JSON：{"items": [...]} 或 {"error": "..."}。
 """
