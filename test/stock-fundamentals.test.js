@@ -487,7 +487,7 @@ test('SEC 解析｜衍生指標的官方輸入必須保留全部申報來源欄�
   assert.equal(official.tag, 'OperatingIncomeLoss');
 });
 
-test('currentDebt 契約｜總額／短借／一年內長債只有一份定義，且本支不改 noncurrentDebt', () => {
+test('currentDebt 契約｜總額／短借／一年內長債只有一份定義；noncurrentDebt 釘住兩顆候選與順序', () => {
   const currentDebt = /** @type {any} */ (SEC_METRIC_CANDIDATES.currentDebt);
   assert.deepEqual(currentDebt.currentDebtSources, {
     total: ['DebtCurrent'],
@@ -504,9 +504,9 @@ test('currentDebt 契約｜總額／短借／一年內長債只有一份定義�
   );
   assert.ok(!currentDebt.tags.includes('LongTermDebtAndFinanceLeaseObligationsCurrent'));
   assert.deepEqual(SEC_METRIC_CANDIDATES.noncurrentDebt.tags, [
-    'LongTermDebtAndFinanceLeaseObligationsNoncurrent',
+    'LongTermDebtAndCapitalLeaseObligations',
     'LongTermDebtNoncurrent'
-  ], 'noncurrentDebt 的既有問題不在本支順手修改');
+  ], '非流動也是「含租賃的寬口徑」先於「不含租賃的窄口徑」，與 currentMaturity 同形');
 });
 
 test('currentDebt 單一來源｜只有短借或一年內長債時，整個官方 metric 與 fact 原樣保留', () => {
@@ -881,7 +881,7 @@ test('selectMetric｜高優先 tag 較舊時，較低優先 tag 補更新期間�
 
 test('selectMetric 保存型｜noncurrentDebt 維持整條 first-hit，不做跨 tag 逐期接力', () => {
   const result = parseMetricsFixture({
-    LongTermDebtAndFinanceLeaseObligationsNoncurrent: {
+    LongTermDebtAndCapitalLeaseObligations: {
       USD: [instAnnual(2023, 500), instAnnual(2024, 520)]
     },
     LongTermDebtNoncurrent: {
@@ -892,8 +892,8 @@ test('selectMetric 保存型｜noncurrentDebt 維持整條 first-hit，不做跨
   assert.deepEqual(
     result.metrics.noncurrentDebt.annual.map(fact => [fact.periodEnd, fact.value, fact.tag]),
     [
-      ['2023-12-31', 500, 'LongTermDebtAndFinanceLeaseObligationsNoncurrent'],
-      ['2024-12-31', 520, 'LongTermDebtAndFinanceLeaseObligationsNoncurrent']
+      ['2023-12-31', 500, 'LongTermDebtAndCapitalLeaseObligations'],
+      ['2024-12-31', 520, 'LongTermDebtAndCapitalLeaseObligations']
     ],
     '近義替代是整條序列退路，不得補舊期、補新期或混合租賃口徑'
   );
