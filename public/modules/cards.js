@@ -1,7 +1,7 @@
 // @ts-check
 import { api, view, byId, wan, money, esc, daysUntil, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
-import { issuerOptions, issuerFormFields, resolveIssuerFields, cardCode, issuersNamed, ISSUER_OTHER } from './card-issuers.js';
+import { issuerOptions, issuerFormFields, resolveIssuerFields, cardCode, cardIssuerText, issuersNamed, ISSUER_OTHER } from './card-issuers.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
 // 就地解釋（專案鐵則：懂了才不會把正常行為當成程式算錯的概念，一律在網頁上白話講，不可只寫在文件裡）。
@@ -35,7 +35,9 @@ const ISSUER_INFO_HTML = `
   改了下次匯入銀行帳單可能會多長出一張同末四碼的卡、消費紀錄從此分成兩半。
   這一點以前就是這樣，這次沒有一起修（要修得動到另一套比對規則，會影響帳戶餘額，得另外處理）。</p>
   <p><strong>那些還沒挑過的舊卡呢？</strong>照舊用文字認，<strong>行為跟以前完全一樣</strong>——
-  這次的改動不會讓任何一張卡突然變成要你手選。
+  升級當下庫裡的卡不會因為這次改動突然變成要你手選。
+  （唯一的例外是「發卡行和編號對不起來」的卡，那種只會從備份或程式介面匯進來，
+  而且那時候本來就該請你確認一次；那張卡上會出現提示。）
   只是那些卡片上會多一小塊提示，請你打開挑一次；挑完提示就消失。
   提示只在「清單裡真的有你那一家」時才出現——自己打的機構名（像某某會員俱樂部）不會被一直念。</p>
   <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>發卡行原本是文字時（正常操作存進去的都是），只有這幾種情況：
@@ -126,7 +128,12 @@ function issuerUpgradeNote(c) {
   if (code.state === 'unconfirmed') {
     return `<div class="card-issuer-upgrade"><span>要動一下</span><p>這張卡登記的發卡行和它記住的編號<strong>對不起來</strong>，程式認不出它是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，就修好了。</p></div>`;
   }
-  const named = issuersNamed(c.issuer);
+  // ⚠️ 走 `cardIssuerText` 而不是 `c.issuer`（Grok 複審後掃 2026-09-02）：`issuersNamed` 內部裸跑
+  //    `String()`，而 `cards.issuer` 收得到 `{toString:null}` 這族。卡片頁**今天**會更早死在
+  //    `esc(c.issuer)`（那是 base 既有、不在本支射程），但這是**本支新增的一條路徑**——
+  //    日後誰把 `esc` 收成安全網卻沒動這裡，這裡就會變成新的 500。新加的路自己要安全。
+  const shown = cardIssuerText(c);
+  const named = issuersNamed(shown);
   if (!named.length) return '';
   // 歧義的那些（今天＝「富邦」「富邦銀行」）現在就**已經**判不出身分＝帳單本來就要手選；
   // 其餘只是「還靠文字認」。兩種處境不同，話要分開講。
@@ -135,7 +142,7 @@ function issuerUpgradeNote(c) {
   //    **富邦銀行（香港）（`bank: ''`＝沒有範本）**——香港富邦真的發卡、那正是這份清單存在的理由，
   //    所以「照著挑」的人裡有一整類挑完**永遠不會自動對上**。能承諾的只有「程式從此分得出是哪一家」。
   return named.length > 1
-    ? `<div class="card-issuer-upgrade"><span>要動一下</span><p>「${esc(c.issuer)}」這個寫法有 ${named.length} 家在用，程式不會猜是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，程式就<strong>分得出這是哪一家</strong>了（帳單能不能自動記到這張卡是<strong>另一件事</strong>，要看程式讀不讀得懂那家的帳單格式）。</p></div>`
+    ? `<div class="card-issuer-upgrade"><span>要動一下</span><p>「${esc(shown)}」這個寫法有 ${named.length} 家在用，程式不會猜是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，程式就<strong>分得出這是哪一家</strong>了（帳單能不能自動記到這張卡是<strong>另一件事</strong>，要看程式讀不讀得懂那家的帳單格式）。</p></div>`
     // ⚠️ 這一句**刻意不說「現在照舊會自動」**（自審 2026-09-02 抓到的過度宣稱）：這個提示也會出現在
     //    沒有內建範本的機構上（遠東商銀、玉山…），那些卡的帳單本來就讀不動、從來沒有自動過——
     //    對他們說「照舊會自動」是對使用者的錢說假話。改成只講**這次挑選會改變什麼**（身分不再靠文字），

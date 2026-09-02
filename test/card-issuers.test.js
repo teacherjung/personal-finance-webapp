@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CARD_ISSUERS, SHARED_ISSUER_NAMES, ISSUER_OTHER, ISSUER_OTHER_LABEL, ISSUER_UNSET_LABEL,
-  issuerNameKey, issuersNamed, issuerById, cardCode, issuerOptions, issuerFormFields, resolveIssuerFields,
+  issuerNameKey, issuersNamed, issuerById, cardCode, cardIssuerText, issuerOptions, issuerFormFields, resolveIssuerFields,
 } from '../public/modules/card-issuers.js';
 import { OWN_ISSUERS, issuerBank, issuerCertainlyNot, cardIssuerBank, cardCertainlyNot } from '../lib/card-identity.js';
 import { squash } from '../lib/bank-statement.js';
@@ -328,6 +328,11 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
   // ★★**可證明的不變量**：有代號的卡，只會判成「它自己那一家」或「判不出來」，**不可能判成別家**。
   //   這一格是 r2 第 3 條的正解——r1 的「退回文字」讓顯示名可以指定另一家，那句宣稱當時是假的
   //   （Codex 把 `issuerNameKey` 改壞讓 HSBC 抹成台新，`{issuerId:'esun', issuer:'HSBC'}` 就被歸成台新）。
+  // ⚠️ **各部分守的東西不同，別搞混**（Grok 複審後掃 2026-09-02 對 `ae07225` 那版的觀察）：
+  //   ・上面那組**具名**斷言守的是「確認規則本身還在」（拿掉確認 ⇒ 它們紅）。
+  //   ・下面的**全組合迴圈**守的是「有代號的卡不會被指去第三家」，並在 r6 之後
+  //     **改用從清單原始資料獨立算的預期三態**（不再拿 `cardCode` 自己當 oracle）
+  //     ⇒ 現在「拿掉確認」也會在迴圈裡紅。兩者不是同一件事，缺一都會留下盲點。
   // ⚠️ 顯示名的集合＝**清單上每一個正式名稱與別名的笛卡兒積**＋一組刁鑽字串。
   //    Codex #547 r4 抓到第一版只放刁鑽字串：把 `cardIssuerBank` 突變成
   //    「`{issuerId:'esun', issuer:'中國信託銀行'}` 回台新」，兩卷 89 題照樣全綠——
@@ -342,21 +347,31 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
       const got = cardIssuerBank({ issuerId: o.id, issuer: shown });
       assert.ok(got === o.bank || got === '',
         `★代號「${o.id}」＋顯示名「${shown}」判成了「${got}」——有代號的卡不可以判成別家`);
+      // ★預期的三態**從清單原始資料獨立算出來**，不拿 `cardCode` 自己當 oracle
+      //   （Codex #547 r6：原本用 `cardCode()` 決定預期，把 `fubon-taipei＋中國信託商業銀行`
+      //   錯判成 `ok` 時整段仍全綠——那正是「考題沒在守它宣稱的東西」）。
+      const key = issuerNameKey(shown);
+      const claims = [o.name, ...(o.aka || [])].map(issuerNameKey);
+      const expected = (key === '' || claims.includes(key)) ? 'ok' : 'unconfirmed';
+      const state = cardCode({ issuerId: o.id, issuer: shown });
+      assert.equal(state.state, expected,
+        `★代號「${o.id}」＋顯示名「${shown}」的三態應為 ${expected}，實際是 ${state.state}`);
+      assert.notEqual(state.state, 'none', `★合法代號「${o.id}」不可以落到 none（那會整個跳過下面的逐家檢查）`);
       // 同一格也**逐家**釘住「確定不是別家」那一側。
       // ⚠️ 第一版把目標銀行寫死成「台新」、斷言 `certainly === false || o.bank !== '台新'`
       //    ——那對其餘 37 個代號**幾乎恆真**，富邦與無範本機構等於沒被檢查（Codex #547 r5）。
       //    他的可落庫劇本：`{issuerId:'fubon-taipei', issuer:'中國信託銀行'}`（說不清楚）若被誤判成
       //    「確定不是富邦」而出局，另一張正常富邦卡就成了唯一同行卡、富邦帳單自動歸過去。
-      //    改成照 `cardCode` 的三態逐家斷言，恆真的空間就沒了。
-      const state = cardCode({ issuerId: o.id, issuer: shown });
+      //    改成照三態逐家斷言。⚠️ 而三態的預期值**必須從清單原始資料獨立算**，不可以拿被測函式
+      //    自己當 oracle（r6 抓到第一版就是那樣寫的）。
       for (const b of OWN_ISSUERS.map(x => x.bank)) {
         const certainly = cardCertainlyNot({ issuerId: o.id, issuer: shown }, b);
-        if (state.state === 'unconfirmed') {
+        if (expected === 'unconfirmed') {
           assert.equal(certainly, false,
             `★代號「${o.id}」＋顯示名「${shown}」是「說不清楚」，不可以被判成「確定不是 ${b}」而出局`);
-        } else if (state.state === 'ok') {
-          assert.equal(certainly, state.issuer.bank !== b,
-            `★代號「${o.id}」（${state.issuer.bank || '無範本'}）對 ${b} 的「確定不是」答錯了`);
+        } else {
+          assert.equal(certainly, o.bank !== b,
+            `★代號「${o.id}」（${o.bank || '無範本'}）對 ${b} 的「確定不是」答錯了`);
         }
       }
     }
@@ -365,6 +380,12 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
   assert.deepEqual(cardCode({ issuer: '台新銀行', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '正式名稱');
   assert.deepEqual(cardCode({ issuer: '台新', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '★別名也算確認');
   assert.deepEqual(cardCode({ issuer: '', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '空白＝沒有東西可以牴觸');
+  // ★★這一格在錢的路徑上是**放寬**，照實釘住（Grok 複審後掃 2026-09-02）：
+  //   「發卡行沒填」的卡改動前一定擋住所有銀行的單卡自動歸；寫上可解析代號之後它會出局。
+  //   判定可接受（資料自己宣告的身分、不是猜的），但**必須有考題**，不可以默默發生。
+  assert.equal(cardCertainlyNot({ issuer: '' }, '富邦'), false, '前提：發卡行沒填的卡，改動前擋住富邦的單卡自動歸');
+  assert.equal(cardCertainlyNot({ issuer: '', issuerId: 'esun' }, '富邦'), true,
+    '★只送代號、沒送顯示名 ⇒ 確定不是富邦 ⇒ 不再擋（表單產不出這種資料，只有 API／備份匯入會）');
   assert.deepEqual(cardCode({ issuer: '  ', issuerId: 'taishin' }), { state: 'ok', issuer: CARD_ISSUERS[0] }, '整串空白同理');
   assert.equal(cardCode({ issuer: '富邦', issuerId: 'fubon-hk' }).state, 'ok', '★歧義寫法含代號那一家＝確認（消歧正是清單的目的）');
   assert.equal(cardCode({ issuer: '富邦', issuerId: 'esun' }).state, 'unconfirmed', '歧義的兩家都不是代號那一家 ⇒ 說不清楚');
@@ -777,8 +798,8 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   const end = src.indexOf('\n}\n', start);
   assert.ok(end > start, '找不到 issuerUpgradeNote 的結尾');
   const body = src.slice(src.indexOf('{', start) + 1, end);
-  const note = new Function('c', 'esc', 'cardCode', 'issuersNamed', body).bind(null);
-  const run = (/** @type {any} */ c) => note(c, (/** @type {string} */ x) => String(x), cardCode, issuersNamed);
+  const note = new Function('c', 'esc', 'cardCode', 'cardIssuerText', 'issuersNamed', body).bind(null);
+  const run = (/** @type {any} */ c) => note(c, (/** @type {string} */ x) => String(x), cardCode, cardIssuerText, issuersNamed);
 
   // ①**代號可用** ⇒ 升級完了，不再提示（提示清得掉，這是它不會變成嘮叨的理由）
   assert.equal(run({ issuerId: 'taishin', issuer: '台新銀行' }), '');
@@ -804,7 +825,7 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   //    今天清單上唯一的歧義寫法就是被 2 家宣稱（預審 2026-09-02 實測：把 `${named.length}` 寫死成
   //    `2`，全卷零題轉紅）。改成**注入一個回三筆的替身**，一行就把它釘住。
   const fake3 = () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
-  const injected = note({ issuer: '富邦' }, (/** @type {string} */ x) => String(x), cardCode, fake3);
+  const injected = note({ issuer: '富邦' }, (/** @type {string} */ x) => String(x), cardCode, cardIssuerText, fake3);
   assert.match(injected, /3 家/, '★家數寫死的話這裡會印 2——它必須跟著 issuersNamed 的筆數走');
   assert.equal(cardIssuerBank({ issuer: '富邦' }), '', '★前提：這張卡今天確實判不出身分（否則上面那句話是假的）');
   // ④**清單裡沒有這個寫法** ⇒ 不提示（挑下去只能選「其他」，提示了也清不掉＝永遠的嘮叨）
@@ -815,6 +836,11 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   assert.notEqual(run({ type: 'credit', issuer: '台新銀行' }), '');
   assert.notEqual(run({ issuer: '台新銀行' }), '', 'type 缺席＝信用卡');
   assert.equal(run({ type: 'membership', issuer: '台新銀行' }), '', '會員卡沒有帳單要歸');
+  // ★本支新增的這條路徑自己要安全（Grok 複審後掃 2026-09-02）：`issuersNamed` 裸跑 `String()`，
+  //   而 `cards.issuer` 收得到 `{toString:null}` 這族。卡片頁今天會更早死在 `esc(c.issuer)`
+  //   （base 既有、不在本支射程），但**新加的路不可以自己再開一個洞**。
+  assert.doesNotThrow(() => run({ issuer: { toString: null, valueOf: null } }), '★炸彈顯示名不可以炸掉提示');
+  assert.equal(run({ issuer: { toString: null, valueOf: null } }), '', '炸不出字串＝清單認不得＝不提示');
   assert.equal(run({ type: 'debit', issuer: '台新' }), '',
     '★簽帳金融卡不提示：它有帳單要歸，但**那條路不讀代號** ⇒ 挑清單一個結果都改不了（見下面的前提斷言）');
   // ⚠️ 「為什麼簽帳卡不提示」的前提**用行為題釘**，不在這裡掃原始碼（Codex #547 r1 第 2 條：
