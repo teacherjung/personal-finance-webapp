@@ -1172,10 +1172,26 @@ test('⭐ 死角｜三類引不動的壞行，閘給的**處方**要指向同身
     assert.match(msg, /這一則正是第②種/u, `${why}：處方要點名它屬於「引不動」那一類`);
     assert.match(msg, /不要再試重述.*豁免.*雜湊/su, `${why}：處方要直接指向同身分豁免＋雜湊指認`);
   }
-  // 對照組：引得動的壞行**不可以**被貼上這個處方（不然等於教大家繞過重述）。
-  const ok = verdictProblems([cu(NOSHA_MAL, 'https://github.com/x/y/pull/9#issuecomment-5310870038')],
-    HEAD, 'Codex').problems.join('\n');
-  assert.doesNotMatch(ok, /這一則正是第②種/u, '引得動的壞行不該被指向豁免');
+  // 對照組（`Codex #543 r3`：處方的**反向邊界**——第②種的標籤不可以貼到相鄰的三類上）：
+  /** @param {string} body @param {string} url @param {string} why */
+  const notLabelled = (body, url, why) => {
+    const msg = verdictProblems([cu(body, url)], HEAD, 'Codex').problems.join('\n');
+    assert.doesNotMatch(msg, /這一則正是第②種/u, `${why}：不該被貼上第②種的處方`);
+  };
+  // ①引得動的（走重述）
+  notLabelled(NOSHA_MAL, 'https://github.com/x/y/pull/9#issuecomment-5310870038', '引得動的壞行');
+  // ②連身分都讀不出的（任一合規身分可豁免，沒有「同一身分」可言）
+  notLabelled(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL, '身分讀不出的壞行');
+  // ③身分讀得出、但 metadata 讀不出的（那是第①種：輪次或 sha 欄損壞）
+  const badMeta = '🤖 Codex｜來源：CLI（xhigh）｜審 `zzzz`｜r｜結論：需修改後再審';
+  notLabelled(`${badMeta}\n\n略。`, 'https://github.com/x/y/pull/9#issuecomment-5310870044',
+    '身分讀得出但 metadata 讀不出的壞行');
+  // ④**只缺身分**的：角色不合法（Codeex）但四欄齊全、引文也出界——這一格專門守住條件裡
+  //   `rid &&` 那一半（少了它，這種行會被誤貼成第②種、被叫去做「同身分」豁免，
+  //   但它的實際資格是「任一合規身分可豁免」，根本沒有同一身分可用）。
+  const noRole = '🤖 Codeex｜來源：CLI｜審 `abc1234`｜r6｜結論：需修改後再審 **x**';
+  notLabelled(`${noRole}\n\n略。`, 'https://github.com/x/y/pull/9#issuecomment-5310870045',
+    '身分讀不出但 metadata 讀得出、引文出界的壞行');
 });
 
 test('⭐ 死角｜反引號落單**不是**障礙：重述行可用單邊反引號湊偶數 → 仍不可豁免', () => {
