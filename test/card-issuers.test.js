@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CARD_ISSUERS, SHARED_ISSUER_NAMES, ISSUER_OTHER, ISSUER_OTHER_LABEL, ISSUER_UNSET_LABEL,
-  issuerNameKey, issuersNamed, issuerById, issuerOptions, issuerFormFields, resolveIssuerFields,
+  issuerNameKey, issuersNamed, issuerById, cardCode, issuerOptions, issuerFormFields, resolveIssuerFields,
 } from '../public/modules/card-issuers.js';
 import { OWN_ISSUERS, issuerBank, issuerCertainlyNot, cardIssuerBank, cardCertainlyNot } from '../lib/card-identity.js';
 import { squash } from '../lib/bank-statement.js';
@@ -201,17 +201,68 @@ test('清單｜比對形吃得下全形／空白／臺台／大小寫', () => {
  * 逼人先來這裡改、順便想一下「資料庫裡已經有這個代號的卡怎麼辦」。
  * ⚠️ 新增一家銀行時**要**改這一份（那是刻意的摩擦，不是壞掉）。
  */
-const ISSUER_IDS = [
-  'taishin', 'fubon-taipei', 'fubon-hk', 'cathay-united', 'ctbc', 'esun', 'sinopac', 'union',
-  'far-eastern', 'dbs-tw', 'hsbc-tw', 'sc-tw', 'citi-tw', 'mega', 'first', 'hua-nan', 'chang-hwa',
-  'yuanta', 'kgi', 'shin-kong', 'entie', 'o-bank', 'bank-of-taiwan', 'tcb', 'land-bank', 'scsb',
-  'tbb', 'taichung', 'bok', 'sunny', 'panhsin', 'cota', 'rising', 'hwatai', 'jih-sun',
-  'rakuten-tw', 'next-bank', 'line-bank',
+const ISSUER_BINDINGS = [
+  { id: 'taishin', name: '台新銀行', bank: '台新' },
+  { id: 'fubon-taipei', name: '台北富邦銀行', bank: '富邦' },
+  { id: 'fubon-hk', name: '富邦銀行（香港）', bank: '' },
+  { id: 'cathay-united', name: '國泰世華銀行', bank: '' },
+  { id: 'ctbc', name: '中國信託銀行', bank: '' },
+  { id: 'esun', name: '玉山銀行', bank: '' },
+  { id: 'sinopac', name: '永豐銀行', bank: '' },
+  { id: 'union', name: '聯邦銀行', bank: '' },
+  { id: 'far-eastern', name: '遠東商銀', bank: '' },
+  { id: 'dbs-tw', name: '星展銀行（台灣）', bank: '' },
+  { id: 'hsbc-tw', name: '匯豐銀行（台灣）', bank: '' },
+  { id: 'sc-tw', name: '渣打銀行（台灣）', bank: '' },
+  { id: 'citi-tw', name: '花旗銀行（台灣）', bank: '' },
+  { id: 'mega', name: '兆豐銀行', bank: '' },
+  { id: 'first', name: '第一銀行', bank: '' },
+  { id: 'hua-nan', name: '華南銀行', bank: '' },
+  { id: 'chang-hwa', name: '彰化銀行', bank: '' },
+  { id: 'yuanta', name: '元大銀行', bank: '' },
+  { id: 'kgi', name: '凱基銀行', bank: '' },
+  { id: 'shin-kong', name: '新光銀行', bank: '' },
+  { id: 'entie', name: '安泰銀行', bank: '' },
+  { id: 'o-bank', name: '王道銀行', bank: '' },
+  { id: 'bank-of-taiwan', name: '台灣銀行', bank: '' },
+  { id: 'tcb', name: '合作金庫銀行', bank: '' },
+  { id: 'land-bank', name: '土地銀行', bank: '' },
+  { id: 'scsb', name: '上海商業儲蓄銀行', bank: '' },
+  { id: 'tbb', name: '台灣企銀', bank: '' },
+  { id: 'taichung', name: '台中銀行', bank: '' },
+  { id: 'bok', name: '高雄銀行', bank: '' },
+  { id: 'sunny', name: '陽信銀行', bank: '' },
+  { id: 'panhsin', name: '板信銀行', bank: '' },
+  { id: 'cota', name: '三信商業銀行', bank: '' },
+  { id: 'rising', name: '瑞興銀行', bank: '' },
+  { id: 'hwatai', name: '華泰銀行', bank: '' },
+  { id: 'jih-sun', name: '日盛銀行', bank: '' },
+  { id: 'rakuten-tw', name: '樂天國際商業銀行', bank: '' },
+  { id: 'next-bank', name: '將來銀行', bank: '' },
+  { id: 'line-bank', name: '連線商業銀行', bank: '' },
 ];
 
-test('★代號｜整組代號是精確集合——刪一個或改一個字母都要紅（它是會落進資料庫的持久值）', () => {
-  assert.deepEqual(CARD_ISSUERS.map(o => o.id), ISSUER_IDS,
-    '★代號（含順序）與宣告的那一份對不上：新增一家要先來這一題把代號寫上去；**改名或刪除既有代號＝資料庫裡那些卡查不到身分**，不可以順手做');
+test('★代號｜整組**代號→法人**的綁定是精確集合（不只代號序列——換名字也要紅）', () => {
+  // ⚠️ Codex #547 r3 第 2 條實測：只釘代號序列時，把 `cathay-united` 與 `ctbc` 的**正式名稱互換**、
+  //    代號與順序完全不動，四卷 166 題照樣全綠 ⇒ 那等於「既有代號被重新綁到另一個法人」而沒人發現，
+  //    資料庫裡那些卡的身分會靜靜換一家。所以釘的是**綁定**，不是序列。
+  assert.deepEqual(CARD_ISSUERS.map(o => ({ id: o.id, name: o.name, bank: o.bank })), ISSUER_BINDINGS,
+    '★代號→（正式名稱, 內建範本）的綁定與宣告對不上。新增一家＝在下面補一列；'
+    + '**改名**＝除了改這裡，還必須把舊正式名稱留進該筆的 `aka`（否則既有卡片會從 ok 掉進 unconfirmed）；'
+    + '**刪除或重用代號**＝資料庫裡那些卡查不到身分，不可以做。');
+});
+
+test('★代號｜清單改名時，舊卡不可以靜靜失去身分——舊名要留在 `aka`', () => {
+  // Codex #547 r3 第 2 條的第二半：正常表單存出的 `{issuerId:'taishin', issuer:'台新銀行'}`，
+  // 若日後只改清單名稱、沒把舊名留進 `aka`，會從 `ok/台新` 變成 `unconfirmed/''`。
+  // 這一題把「舊名留在 aka」這個紀律變成可執行的示範：改名後只要舊名在 aka，既有卡片照舊是 ok。
+  const renamed = { id: 'taishin', name: '台新國際商業銀行', bank: '台新', aka: ['台新', '台新銀行'] };
+  const legacyCard = { issuerId: 'taishin', issuer: '台新銀行' };
+  const claimed = [renamed.name, ...renamed.aka].some(n => issuerNameKey(n) === issuerNameKey(legacyCard.issuer));
+  assert.ok(claimed, '★改名後舊正式名稱必須仍被那一筆宣稱，既有卡片才不會掉進 unconfirmed');
+  // 對照：舊名沒留在 aka 就會失去身分（這就是上面那條紀律存在的理由）
+  const renamedBad = { id: 'taishin', name: '台新國際商業銀行', bank: '台新', aka: ['台新'] };
+  assert.equal([renamedBad.name, ...renamedBad.aka].some(n => issuerNameKey(n) === issuerNameKey(legacyCard.issuer)), false);
 });
 
 test('★代號｜形狀紀律：不重複、非空、只用小寫 ASCII 與連字號', () => {
@@ -295,6 +346,40 @@ test('★★代號｜**顯示名沒有確認代號＝說不清楚**，既不採�
     assert.deepEqual(cardCode({ issuer: '台新銀行', issuerId: badId }), { state: 'none' }, `代號 ${JSON.stringify(badId)} 不可解析`);
     assert.equal(cardIssuerBank({ issuer: '台新銀行', issuerId: badId }), issuerBank('台新銀行'), '★逐字退回文字判準');
   }
+});
+
+test('★★代號｜只認**卡片自己身上**的欄位，而且字串化炸不出來時 fail-closed（Codex #547 r3 第 1 條）', async () => {
+  const { cardCode, cardIssuerText } = await import('../public/modules/card-issuers.js');
+  // ①**原型鏈上的代號不算**：`Object.create({issuerId:'taishin'})` 這種形狀（原型污染、
+  //   JSON 的 `__proto__` 都做得到）原本會讓一張**自己沒有代號**的卡憑空取得身分。
+  const viaProto = Object.create({ issuerId: 'taishin', issuer: '台新銀行' });
+  assert.deepEqual(cardCode(viaProto), { state: 'none' }, '★原型上的 issuerId 不算代號');
+  assert.equal(cardIssuerBank(viaProto), '', '★連顯示名也只讀自己身上的 ⇒ 兩欄同一把尺');
+  assert.equal(cardIssuerText(viaProto), '', '原型上的 issuer 不算顯示名');
+  // 對照：同樣的值放在卡片**自己身上**就照舊算數（否則上面那格是「一律不認」的恆真）
+  assert.deepEqual(cardCode({ issuerId: 'taishin', issuer: '台新銀行' }), { state: 'ok', issuer: CARD_ISSUERS[0] });
+  // ②**連 `String()` 都炸的顯示名**（`{toString:null}` 這族——`cards.issuer` 沒有型別收斂，
+  //   可經 CRUD 與備份匯入原樣落庫）不可以炸掉整份帳單預覽，而且要 fail-closed 成「說不清楚」。
+  const bomb = { toString: null, valueOf: null };
+  assert.throws(() => String(bomb), TypeError, '前提：這族值裸跑 String() 真的會炸');
+  assert.deepEqual(cardCode({ issuerId: 'taishin', issuer: bomb }), { state: 'unconfirmed' },
+    '★證明不了顯示名確認了代號 ⇒ 說不清楚（不可以當成「空的」而放行代號）');
+  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: bomb }), '');
+  assert.equal(cardCertainlyNot({ issuerId: 'taishin', issuer: bomb }, '台新'), false, '★說不清楚＝擋自動歸');
+  // ③沒有代號的那條路同樣不可以炸（本支唯一的零回歸例外，照實記：base 是丟 TypeError 炸掉預覽）
+  assert.doesNotThrow(() => cardIssuerBank({ issuer: bomb }));
+  assert.equal(cardIssuerBank({ issuer: bomb }), '', '★炸不出字串＝認不出機構 ⇒ 退成請使用者選');
+  assert.doesNotThrow(() => cardCertainlyNot({ issuer: bomb }, '台新'));
+  assert.doesNotThrow(() => issuerFormFields({ issuer: bomb, issuerId: 'taishin' }), '表單也不可以被炸掉');
+  // ④非物件的卡片值不可以炸
+  // ⚠️ 訊息用序號而不是 `String(weird)`——`Object.create(null)` 連 `String()` 都炸，
+  //    第一版就是被自己的錯誤訊息炸掉的（這一題自己踩了它要測的那個坑）。
+  const weirds = [null, undefined, 'card', 123, true, Object.create(null), Object.create({})];
+  weirds.forEach((weird, i) => {
+    assert.doesNotThrow(() => cardCode(weird), `cardCode(第 ${i} 個怪值) 不可丟例外`);
+    assert.doesNotThrow(() => cardIssuerBank(weird), `cardIssuerBank(第 ${i} 個怪值) 不可丟例外`);
+    assert.doesNotThrow(() => cardCertainlyNot(weird, '台新'), `cardCertainlyNot(第 ${i} 個怪值) 不可丟例外`);
+  });
 });
 
 test('★代號｜正規化規則被動手腳時，有代號的卡最多只會「判不出來」，不會被指去別家', () => {
@@ -665,12 +750,19 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   const end = src.indexOf('\n}\n', start);
   assert.ok(end > start, '找不到 issuerUpgradeNote 的結尾');
   const body = src.slice(src.indexOf('{', start) + 1, end);
-  const note = new Function('c', 'esc', 'issuerById', 'issuersNamed', body)
-    .bind(null);
-  const run = (/** @type {any} */ c) => note(c, (/** @type {string} */ x) => String(x), issuerById, issuersNamed);
+  const note = new Function('c', 'esc', 'cardCode', 'issuersNamed', body).bind(null);
+  const run = (/** @type {any} */ c) => note(c, (/** @type {string} */ x) => String(x), cardCode, issuersNamed);
 
-  // ①**已經有代號** ⇒ 升級完了，不再提示（提示清得掉，這是它不會變成嘮叨的理由）
+  // ①**代號可用** ⇒ 升級完了，不再提示（提示清得掉，這是它不會變成嘮叨的理由）
   assert.equal(run({ issuerId: 'taishin', issuer: '台新銀行' }), '');
+  assert.equal(run({ issuerId: 'taishin', issuer: '台新' }), '', '別名也算升級完了');
+  // ①b★**說不清楚的卡也要提示**（Codex #547 r3 第 2 條）：第一版只問「查不查得到代號」，
+  //    於是這種卡**既失去自動歸卡、又看不到修復入口**；清單日後改名就會把正常舊卡推進這一格。
+  const unconfirmed = run({ issuerId: 'taishin', issuer: '台北富邦銀行' });
+  assert.match(unconfirmed, /對不起來/, '★兩欄對不起來要講出來');
+  assert.match(unconfirmed, /現在要你自己選/, '★而且要說清楚現在的後果');
+  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '台北富邦銀行' }), '', '前提：這張卡現在真的判不出身分');
+  assert.notEqual(run({ issuerId: 'taishin', issuer: '我的某某卡' }), '', '★清單認不得的顯示名也是說不清楚，照樣要提示');
   // ②**清單認得這個寫法、但還沒有代號** ⇒ 提示（今天照舊會自動，所以講的是「可以更保險」）
   const legacy = run({ issuer: '台新銀行' });
   assert.match(legacy, /card-issuer-upgrade/);
@@ -685,7 +777,7 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   //    今天清單上唯一的歧義寫法就是被 2 家宣稱（預審 2026-09-02 實測：把 `${named.length}` 寫死成
   //    `2`，全卷零題轉紅）。改成**注入一個回三筆的替身**，一行就把它釘住。
   const fake3 = () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
-  const injected = note({ issuer: '富邦' }, (/** @type {string} */ x) => String(x), issuerById, fake3);
+  const injected = note({ issuer: '富邦' }, (/** @type {string} */ x) => String(x), cardCode, fake3);
   assert.match(injected, /3 家/, '★家數寫死的話這裡會印 2——它必須跟著 issuersNamed 的筆數走');
   assert.equal(cardIssuerBank({ issuer: '富邦' }), '', '★前提：這張卡今天確實判不出身分（否則上面那句話是假的）');
   // ④**清單裡沒有這個寫法** ⇒ 不提示（挑下去只能選「其他」，提示了也清不掉＝永遠的嘮叨）
@@ -703,8 +795,9 @@ test('★升級提示｜只在「挑下去真的有終點」時出現，挑完�
   //      ・`test/statement-pipeline.test.js` 的 **J14**＝簽帳卡不進 `previewAuto` 的族群（代號那條路）
   //      ・`test/debit-card-ledger.test.js` 的 **★簽帳卡歸卡只看 issuer 文字**＝真的跑一次配對流程
   //    那兩題在「簽帳卡開始讀代號」那天會轉紅，正好提醒回來重新決定提示範圍。
-  // ⑥壞代號＝視同沒有代號 ⇒ 照樣提示（那張卡確實還沒升級完）
+  // ⑥壞代號＝視同沒有代號 ⇒ 落回下面的判準（清單認得這個寫法 ⇒ 提示）
   assert.notEqual(run({ issuerId: '沒這個代號', issuer: '台新銀行' }), '');
+  assert.equal(run({ issuerId: '沒這個代號', issuer: '某某會員俱樂部' }), '', '壞代號＋清單認不得的名字＝挑下去沒有終點，不提示');
 
   // ⑦★**提示不可以承諾「現在照舊會自動」**（自審 2026-09-02 抓到的過度宣稱）：
   //   同一句話也會印在**沒有內建範本**的機構上，那些卡的帳單從來沒有自動過。

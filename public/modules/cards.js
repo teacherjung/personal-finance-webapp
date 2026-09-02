@@ -1,7 +1,7 @@
 // @ts-check
 import { api, view, byId, wan, money, esc, daysUntil, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
-import { issuerOptions, issuerFormFields, resolveIssuerFields, issuerById, issuersNamed, ISSUER_OTHER } from './card-issuers.js';
+import { issuerOptions, issuerFormFields, resolveIssuerFields, cardCode, issuersNamed, ISSUER_OTHER } from './card-issuers.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
 // 就地解釋（專案鐵則：懂了才不會把正常行為當成程式算錯的概念，一律在網頁上白話講，不可只寫在文件裡）。
@@ -27,9 +27,9 @@ const ISSUER_INFO_HTML = `
   <p><strong>挑清單還多做了一件事：把「是哪一家」記成一個固定編號。</strong>
   以前程式是拿你填的那串字去認銀行，所以字改了、寫法不一樣，認出來的結果就可能跟著變。
   從清單挑過之後，這張卡記住的是一個<strong>不會變的編號</strong>，名字主要拿來顯示給你看。
-  好處是：<strong>就算清單上的寫法以後改了</strong>（例如某家銀行改名），這張卡的身分也不會跟著跑掉。
-  而且挑過之後，程式只會把它認成<strong>你挑的那一家</strong>、或是<strong>認不出來請你選</strong>，
-  <strong>不會認成別家</strong>。</p>
+  好處是：挑過之後，程式只會把它認成<strong>你挑的那一家</strong>、或是<strong>認不出來請你選</strong>，
+  <strong>不會認成別家</strong>——就算以後清單上的寫法調整了，最壞也只是變成「認不出來、請你選一次」，
+  不會把帳單記到別張卡上。（真的變成認不出來時，那張卡上會出現提示請你挑一次。）</p>
   <p>⚠️ <strong>這件事目前只做到信用卡</strong>。簽帳金融卡（刷卡直接從帳戶扣的那種）走的是另一條路，
   那條路現在還是<strong>只看你填的名字</strong>——所以簽帳金融卡請不要隨意改發卡行的字，
   改了下次匯入銀行帳單可能會多長出一張同末四碼的卡、消費紀錄從此分成兩半。
@@ -118,7 +118,14 @@ function expiryMeta(expiry) {
  */
 function issuerUpgradeNote(c) {
   if ((c.type || 'credit') !== 'credit') return '';
-  if (issuerById(c.issuerId)) return '';
+  const code = cardCode(c);
+  if (code.state === 'ok') return '';   // 升級完了
+  // ⚠️ **說不清楚的卡也要提示**（Codex #547 r3 第 2 條）：第一版只問「查不查得到代號」，
+  //    於是「登記的發卡行與記住的編號對不起來」的卡**既失去自動歸卡、又看不到修復入口**
+  //    ——而清單日後改名（舊名沒進 `aka`）就會把正常的舊卡推進這一格。挑一次清單就修好了。
+  if (code.state === 'unconfirmed') {
+    return `<div class="card-issuer-upgrade"><span>要動一下</span><p>這張卡登記的發卡行和它記住的編號<strong>對不起來</strong>，程式認不出它是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，就修好了。</p></div>`;
+  }
   const named = issuersNamed(c.issuer);
   if (!named.length) return '';
   // 歧義的那些（今天＝「富邦」「富邦銀行」）現在就**已經**判不出身分＝帳單本來就要手選；

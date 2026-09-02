@@ -18,8 +18,11 @@
 // ## 機構代號 `id`（2026-09-02，William 裁示「照舊自動＋提示升級」）
 //
 // #520 讓使用者從清單挑，但**存進 DB 的仍然是顯示用的名字字串**，身分照樣靠文字比對算出來。
-// 本支多存一個 `card.issuerId`＝**這一筆的代號**，於是「這張卡是哪一家」對**有代號的卡**變成查表，
-// 一個字元都不比。`card.issuer` 降級成顯示字串。
+// 本支多存一個 `card.issuerId`＝**這一筆的代號**，於是「這張卡是哪一家」對**有代號的卡**以代號為準。
+// ⚠️ **不是「一個字元都不比」**（那句是本支第一版寫的，被 Codex #547 r1／r2 兩輪打穿後撤回）：
+//    顯示名仍有**確認**的角色（判準與理由＝`cardCode` 檔頭），但它只能**確認或不確認**，
+//    不能參與「是哪一家」的推導 ⇒ **有代號的卡只會判成它自己那一家或判不出來，不可能判成別家**。
+//    `card.issuer` 因此是「顯示＋確認」，不是純顯示。
 //
 // ⚠️ **`id` 是會落進資料庫的持久值，不是給人看的縮寫**：它一旦發出去就**永遠不可以改名或刪除**
 //    （改了＝那些卡的代號查不到東西 ⇒ 退回文字那條路 ⇒ 身分可能就此不同）。所以它刻意寫成
@@ -45,7 +48,10 @@
 //    ①讓**既有的自由文字**（使用者早就填好的「台新」「台北富邦」）仍然對得上內建範本；
 //    ②**兩家以上都自稱同一個寫法時，那個寫法就不判身分**（見 `issuersNamed`）——歧義是
 //    **從資料算出來的**，不是另外手寫一張「歧義清單」（手寫的那張自己會漂）。
-// ⚠️ **`aka` 只服務沒有代號的卡**：有代號就直接查表，`aka` 一個字都不會被讀到。
+// ⚠️ **`aka` 兩條路都會被讀到**：沒有代號的卡靠它認出機構；**有代號的卡也靠它做「顯示名確認了代號嗎」
+//    的判定**（`cardCode` 走 `issuersNamed`，而 `issuersNamed` 讀 `aka`）——所以既有卡片的
+//    `issuer:'台新'` 配上 `issuerId:'taishin'` 才算得上「確認」。⚠️ 這句 2026-09-02 改口過：
+//    原本寫「有代號就直接查表、`aka` 一個字都不會被讀到」，Codex #547 r3 第 3 條抓到它與實作相反。
 // ⚠️ **只寫「會改變結果」的別名**。⚠️ **誠實劃界：這一條大部分靠人，不是靠機器**——
 //    工作流對抗驗證 2026-08-28 實測：替 `bank: ''` 的機構（清單絕大多數——有內建範本的只有兩家）補純裝飾別名
 //    （`aka: ['國泰','Cathay','HSBC']`），**全卷一題都不紅**。兩道集合閘各自只看一側：
@@ -285,10 +291,47 @@ export function issuerById(id) {
  * @returns {{ state: 'none' } | { state: 'ok', issuer: CardIssuer } | { state: 'unconfirmed' }}
  */
 export function cardCode(card) {
-  const listed = issuerById(card?.issuerId);
+  const listed = issuerById(ownProp(card, 'issuerId'));
   if (!listed) return { state: 'none' };
-  if (String(card?.issuer ?? '').trim() === '') return { state: 'ok', issuer: listed };
-  return issuersNamed(card?.issuer).includes(listed) ? { state: 'ok', issuer: listed } : { state: 'unconfirmed' };
+  const shown = issuerText(ownProp(card, 'issuer'));
+  if (shown === null) return { state: 'unconfirmed' };   // 字串化都炸得出來＝證明不了確認 ⇒ fail-closed
+  if (shown.trim() === '') return { state: 'ok', issuer: listed };
+  return issuersNamed(shown).includes(listed) ? { state: 'ok', issuer: listed } : { state: 'unconfirmed' };
+}
+
+/**
+ * **只讀卡片自己身上的欄位**——原型鏈上的不算（Codex #547 r3 第 1 條）。
+ *
+ * ⚠️ 沒有這一道，`Object.create({ issuerId: 'taishin' })` 這種形狀會讓一張**自己沒有代號**的卡
+ *    憑空取得機構身分（實測 `cardCode` 回 `ok`、`cardIssuerBank` 回「台新」）。原型污染要製造它
+ *    只需要把 `issuerId` 掛上 `Object.prototype`；JSON 裡的 `__proto__` 是另一條常見來源。
+ * ⚠️ `issuer` 與 `issuerId` **都**走這一道：兩欄一個讀自己、一個讀原型＝同一件事兩把尺。
+ * @param {unknown} o @param {string} k
+ */
+const ownProp = (o, k) => (o != null && Object.prototype.hasOwnProperty.call(o, k) ? /** @type {any} */ (o)[k] : undefined);
+
+/**
+ * 顯示名的**安全字串化**——炸不出來回 `null`。
+ *
+ * ⚠️ **`null`（炸不出）與 `''`（空的）刻意分得開**，因為兩者的處置**相反**：空字串＝「沒有東西
+ *    可以牴觸代號」⇒ `ok`；炸不出＝「證明不了顯示名確認了代號」⇒ `unconfirmed`（fail-closed）。
+ * ⚠️ 為什麼需要它：`cards.issuer` 在 CRUD 白名單、`FIELD_SCHEMA` 刻意不收斂型別
+ *    （理由見 `lib/schema.js`）⇒ `{toString:null}` 這族「連 `String()` 都炸」的值可經櫃檯**原樣落庫**。
+ *    Codex #547 r3 實測：對它裸跑 `String()` 會丟 `TypeError`，**一張壞卡就炸掉整份帳單預覽**。
+ *    這與 `public/modules/card-last-four.js` 是同一個病、同一種解（#541 為 `lastFour` 做過一次）。
+ * ⚠️ **這會讓一種行為與 base 不同**（本支唯一的零回歸例外，照實記）：base 對這族值是丟 500
+ *    炸掉預覽，head 是「認不出這張卡是哪一家」⇒ 退成請使用者選。安全方向，且與 #541 同一個裁定。
+ * @param {unknown} v @returns {string|null}
+ */
+const issuerText = (v) => { try { return String(v ?? ''); } catch { return null; } };
+
+/**
+ * 顯示名的安全字串化（給 `lib/card-identity.js` 的文字退路用——**兩條路同一把尺**）。
+ * 炸不出＝`''`＝認不出任何機構（不是丟例外）。
+ * @param {unknown} card @returns {string}
+ */
+export function cardIssuerText(card) {
+  return issuerText(ownProp(card, 'issuer')) ?? '';
 }
 
 /**
@@ -345,7 +388,9 @@ export function issuerFormFields(card) {
   //    讓使用者看到畫面上的那個名字、自己挑一次——按儲存就把兩欄修成一致（自我修復）。
   const code = cardCode(card);
   if (code.state === 'ok') return { issuerPick: code.issuer.id, issuerOther: '' };
-  const raw = String(card?.issuer ?? '');
+  // ⚠️ 與判準側同一把尺：只讀卡片自己身上的 `issuer`，而且字串化炸不出來時當成空
+  //    （`{toString:null}` 這族會讓裸的 `String()` 丟 TypeError＝整張表單開不起來；Codex #547 r3 第 1 條）。
+  const raw = cardIssuerText(card);
   if (!raw.trim()) return { issuerPick: '', issuerOther: '' };
   const key = issuerNameKey(raw);
   const listed = CARD_ISSUERS.find(o => issuerNameKey(o.name) === key);
@@ -392,11 +437,13 @@ export function issuerFormFields(card) {
  *   ・**整串空白** ＝ 清成 `''`（本函式這一格）。
  * ⚠️ **上面三條的前提是「這張卡沒有（可用的）代號」**——預審 2026-09-02 抓到我把這份清單寫成了窮舉，
  *    漏了代號在場時的那一格，而且把「不認得的代號」那一格寫錯了。照實補：
- *   ・**代號查得到** ⇒ `issuerFormFields` 第一分支直接勝出，儲存時 `issuer` 被寫成**該代號的正式名稱**。
- *     資料一致時這只是「同一家換個字形」；**資料不一致時它會把顯示名換成另一家**
- *     （`{issuer:'玉山銀行', issuerId:'taishin'}` → 存成 `issuer:'台新銀行'`）。
- *     ⚠️ 那不是 bug，是「代號才是身分」的直接後果——顯示名跟著身分走，才不會有一張卡寫著甲、算成乙。
- *     這種不一致只有備份匯入／直打 API 產得出來（表單兩欄一起寫，不可能拆開）。
+ *   ・**代號可用**（`cardCode` 回 `ok`：顯示名確認了它，或顯示名是空的）⇒ 儲存時 `issuer` 被寫成
+ *     **該代號的正式名稱**。既然顯示名已經確認過是同一家，這只是「同一家換個字形」。
+ *   ・**代號說不清楚**（`unconfirmed`：顯示名沒有確認它）⇒ 落回上面三條，於是按儲存＝
+ *     **把代號修正成顯示名那一家**（`{issuer:'玉山銀行', issuerId:'taishin'}` → `{issuer:'玉山銀行', issuerId:'esun'}`）。
+ *     ⚠️ **方向是「代號跟著畫面走」，不是「畫面跟著代號走」**（2026-09-02 r2 起改成這樣）：
+ *     這種不一致最常見的來源是「舊分頁只送了 `issuer`」，那時**使用者看到的、要的就是顯示名那一家**；
+ *     反過來改會讓一張畫面寫著甲的卡靜靜變成乙。
  *   ・**不認得的代號** ⇒ 視同沒有代號、落回上面三條，所以**兩半都不是「原樣不動」**：
  *     代號會被寫成「這一項的代號」或 `''`，而 `issuer` 同時照上面三條處理
  *     （`{issuer:'臺新銀行', issuerId:'zzz'}` → `{issuer:'台新銀行', issuerId:'taishin'}`）。
