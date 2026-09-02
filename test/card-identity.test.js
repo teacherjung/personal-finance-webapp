@@ -611,6 +611,46 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
   assert.equal(issuerBank('富邦銀行'), '', '★香港富邦官方也自稱「富邦銀行」⇒ 同樣不猜');
 });
 
+test('★cardIssuerBank／cardCertainlyNot｜代號優先、查不到才退回文字——一張卡只有一把尺', async () => {
+  const { cardIssuerBank, cardCertainlyNot, issuerBank, issuerCertainlyNot } = await import('../lib/card-identity.js');
+
+  // ① 代號查得到 ⇒ 只看代號
+  assert.equal(cardIssuerBank({ issuerId: 'taishin' }), '台新');
+  assert.equal(cardIssuerBank({ issuerId: 'fubon-taipei' }), '富邦');
+  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk' }), '', '香港富邦沒有內建範本');
+  assert.equal(cardIssuerBank({ issuerId: 'esun' }), '');
+  // ⚠️ **顯示字串完全不參與**——這幾格是本支唯一真正買到的東西
+  assert.equal(cardIssuerBank({ issuerId: 'fubon-hk', issuer: '台北富邦銀行' }), '',
+    '★代號說香港、字串說台北 ⇒ 代號贏（不贏的話台北富邦的帳單會歸到香港卡）');
+  assert.equal(cardIssuerBank({ issuerId: 'taishin', issuer: '玉山銀行' }), '台新');
+
+  // ② 代號查不到（含空／非字串／不認得的字串）⇒ **視同沒有代號**，逐字等於文字那條路
+  for (const badId of [undefined, null, '', 123, true, {}, ['taishin'], '沒這個代號', 'TAISHIN', ' taishin']) {
+    for (const text of ['台新銀行', '台新', '富邦', '玉山銀行', '某某會員俱樂部', '', null]) {
+      assert.equal(cardIssuerBank({ issuerId: badId, issuer: text }), issuerBank(text),
+        `★代號 ${JSON.stringify(badId)} ＋「${text}」必須與文字那條路逐字相同（零回歸）`);
+      assert.equal(cardCertainlyNot({ issuerId: badId, issuer: text }, '台新'), issuerCertainlyNot(text, '台新'),
+        `★「確定別家」也要逐字相同`);
+    }
+  }
+  assert.equal(cardIssuerBank(null), '', '沒有卡片物件也不可以炸');
+  assert.equal(cardIssuerBank(undefined), '');
+
+  // ③ cardCertainlyNot：挑過清單＝有效證據（含 bank:'' 的無範本機構）
+  assert.equal(cardCertainlyNot({ issuerId: 'esun' }, '台新'), true, '★挑了玉山＝確定不是台新，不該擋台新的自動歸');
+  assert.equal(cardCertainlyNot({ issuerId: 'fubon-hk' }, '富邦'), true, '★挑了香港富邦＝確定不是台北富邦（整條路的目的地）');
+  assert.equal(cardCertainlyNot({ issuerId: 'fubon-taipei' }, '富邦'), false, '挑了台北富邦＝就是這家，談不上「確定不是」');
+  assert.equal(cardCertainlyNot({ issuerId: 'taishin' }, '台新'), false);
+  assert.equal(cardCertainlyNot({ issuerId: 'taishin' }, ''), false, 'bank 空＝沒有「這一家」可言（防呆）');
+  assert.equal(cardCertainlyNot(null, '台新'), false);
+
+  // ④ 方向單向的證據：代號那條路**只可能**讓「確定別家」更容易成立，不會讓某張卡多拿到身分。
+  //    ⚠️ 這是逐點列舉、不是全稱證明——真正的全稱不變量寫在 `cardCertainlyNot` 檔頭。
+  assert.equal(cardCertainlyNot({ issuerId: 'fubon-hk', issuer: '富邦' }, '富邦'), true,
+    '★沒代號時「富邦」是歧義＝不確定＝擋；挑過清單之後就不必再擋了');
+  assert.equal(issuerCertainlyNot('富邦', '富邦'), false, '對照：同一串字沒有代號時確實是「不確定」');
+});
+
 test('★issuerCertainlyNot｜「確定是別家」的判準——分支②唯一性前提的純函式直測', async () => {
   const { issuerCertainlyNot } = await import('../lib/card-identity.js');
   // 確定別家（可以出局、不擋自動歸）：清單唯一宣稱者不是這家（含 bank:'' 的無範本機構）、樣式判得出是別家

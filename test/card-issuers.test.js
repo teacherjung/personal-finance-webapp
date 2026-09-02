@@ -7,11 +7,20 @@
 // 所以「把香港卡的發卡行填成精確的『富邦』」是合理且可達的輸入。判成台北富邦＝台北富邦的帳單
 // 自動歸到香港卡上（**錢記到錯的卡**）。清單把歧義消在**輸入的當下**。
 //
-// 三類題目，各自守不同的東西：
+// 2026-09-02 再加一層：**機構代號** `card.issuerId`。清單解決了「輸入的當下不歧義」，但**存進 DB 的
+// 仍然是顯示字串**、身分照樣靠文字算 ⇒ 名字改了、比對規則被動手腳，身分就會跟著漂。代號讓
+// 「這張卡是哪一家」對**有代號的卡**變成查表。⚠️ William 裁示「照舊自動＋提示升級」：
+// **沒有代號的卡照舊走文字、照舊自動歸卡**（零回歸），所以本卷同時要釘住那一半沒有被改壞。
+//
+// 四類題目，各自守不同的東西：
 //   ①**資料紀律**（清單本身）：名字兩兩不同、`bank` 不可亂填、新增一家不可以碰巧撞上內建範本。
-//   ②**行為**（純函式）：既有資料打開表單不會被靜靜改掉、送出時兩欄合回一欄。
-//   ③**接線**（讀原始碼）：`public/modules/cards.js` 真的用了這三個函式——純函式全對、但沒接上去，
-//     使用者看到的還是舊的自由文字框。
+//   ①b**代號紀律**：代號是會落進使用者資料庫的**持久值**——整組釘成精確集合（改名／刪除都要紅）、
+//     形狀限定、查表逐字相等（不吃 `issuerNameKey`，否則等於在代號那條路上再開一個文字入口）。
+//   ②**行為**（純函式）：既有資料打開表單不會被靜靜改掉、送出時合回**要存的兩欄**、代號優先於字串、
+//     查不到的代號退回文字（零回歸）。
+//   ③**接線**（讀原始碼＋真櫃檯）：`public/modules/cards.js` 真的用了這些函式、升級提示真的渲染出來，
+//     而且 `issuerId` 真的過得了櫃檯（`pickWritable`）——純函式全對、但沒接上去或被白名單剝掉，
+//     使用者那邊一個字都沒變。
 //
 // ## ⚠️ 誠實劃界
 //
@@ -33,9 +42,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CARD_ISSUERS, SHARED_ISSUER_NAMES, ISSUER_OTHER, ISSUER_OTHER_LABEL, ISSUER_UNSET_LABEL,
-  issuerNameKey, issuersNamed, issuerOptions, issuerFormValues, resolveIssuerInput,
+  issuerNameKey, issuersNamed, issuerById, issuerOptions, issuerFormFields, resolveIssuerFields,
 } from '../public/modules/card-issuers.js';
-import { OWN_ISSUERS, issuerBank } from '../lib/card-identity.js';
+import { OWN_ISSUERS, issuerBank, cardIssuerBank, cardCertainlyNot } from '../lib/card-identity.js';
 import { squash } from '../lib/bank-statement.js';
 
 // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
@@ -181,6 +190,77 @@ test('清單｜比對形吃得下全形／空白／臺台／大小寫', () => {
   assert.equal(issuerNameKey('TAISHIN'), issuerNameKey('taishin'));
 });
 
+// ───────────────────────── ①b 代號紀律（2026-09-02）─────────────────────────
+
+/**
+ * **代號的精確集合**——這是持久資料的棘輪。
+ *
+ * 為什麼要抄一份在考題裡（而不是從 `CARD_ISSUERS` 推導）：`card.issuerId` 會**落進使用者的資料庫**，
+ * 一個代號發出去就永遠不可以改名或刪除——改了＝那些卡查不到東西、退回文字那條路、身分可能就此不同。
+ * 從清單推導的話，刪一家、改一個字母全都照樣綠；抄成精確集合，動一個字就轉紅，
+ * 逼人先來這裡改、順便想一下「資料庫裡已經有這個代號的卡怎麼辦」。
+ * ⚠️ 新增一家銀行時**要**改這一份（那是刻意的摩擦，不是壞掉）。
+ */
+const ISSUER_IDS = [
+  'taishin', 'fubon-taipei', 'fubon-hk', 'cathay-united', 'ctbc', 'esun', 'sinopac', 'union',
+  'far-eastern', 'dbs-tw', 'hsbc-tw', 'sc-tw', 'citi-tw', 'mega', 'first', 'hua-nan', 'chang-hwa',
+  'yuanta', 'kgi', 'shin-kong', 'entie', 'o-bank', 'bank-of-taiwan', 'tcb', 'land-bank', 'scsb',
+  'tbb', 'taichung', 'bok', 'sunny', 'panhsin', 'cota', 'rising', 'hwatai', 'jih-sun',
+  'rakuten-tw', 'next-bank', 'line-bank',
+];
+
+test('★代號｜整組代號是精確集合——刪一個或改一個字母都要紅（它是會落進資料庫的持久值）', () => {
+  assert.deepEqual(CARD_ISSUERS.map(o => o.id), ISSUER_IDS,
+    '★代號（含順序）與宣告的那一份對不上：新增一家要先來這一題把代號寫上去；**改名或刪除既有代號＝資料庫裡那些卡查不到身分**，不可以順手做');
+});
+
+test('★代號｜形狀紀律：不重複、非空、只用小寫 ASCII 與連字號', () => {
+  const seen = new Set();
+  for (const o of CARD_ISSUERS) {
+    assert.match(o.id, /^[a-z][a-z0-9-]*[a-z0-9]$/, `代號「${o.id}」形狀不合（只准小寫 ASCII 字母、數字、連字號，且不以連字號起訖）`);
+    assert.equal(seen.has(o.id), false, `代號重複：${o.id}`);
+    seen.add(o.id);
+  }
+  // ⚠️ 代號刻意**不是**中文名字的音譯保證，也不宣稱是官方英文縮寫——它只需要唯一且不變。
+  //    所以這裡不驗「代號要對得上名字」（那種題目會逼人為了讓題目綠而改持久資料）。
+});
+
+test('★代號｜查表逐字相等，不吃正規化——代號那條路不可以長出第二個入口', () => {
+  assert.equal(issuerById('taishin')?.name, '台新銀行');
+  assert.equal(issuerById('fubon-hk')?.name, '富邦銀行（香港）');
+  // 這幾個在 `issuerNameKey` 底下都會被抹成同一把；代號查表必須全部不認
+  for (const near of ['TAISHIN', 'Taishin', ' taishin', 'taishin ', 'ｔａｉｓｈｉｎ', 'tai shin']) {
+    assert.equal(issuerById(near), null, `★「${near}」不是我們發出去的代號，不可以查得到`);
+  }
+  // 非字串一律不是代號（與 `issuer` 那一欄「字串化後再判」的裁定刻意不同，理由見 issuerById 檔頭）
+  for (const bad of [null, undefined, 123, true, {}, ['taishin'], '']) {
+    assert.equal(issuerById(bad), null, `★${JSON.stringify(bad)} 不可以被當成代號`);
+  }
+  assert.equal(issuerById(String(['taishin'])), CARD_ISSUERS[0], '對照：字串化之後才查得到＝所以差別真的在 typeof 那一行（不是恆假）');
+});
+
+test('★代號｜清單上每一家挑下去，卡片版判準都要給出它宣告的那一家（而且不看 issuer 字串）', () => {
+  for (const o of CARD_ISSUERS) {
+    assert.equal(cardIssuerBank({ issuerId: o.id }), o.bank, `代號「${o.id}」判出來的不是 ${o.bank || '（無範本）'}`);
+    // 顯示字串故意寫成別家，答案不可以跟著跑
+    assert.equal(cardIssuerBank({ issuerId: o.id, issuer: '台新銀行' }), o.bank,
+      `★代號「${o.id}」的答案被 issuer 字串影響了——那就等於沒改`);
+  }
+});
+
+test('★代號｜有代號的卡繞開 `issuerNameKey`（本支唯一真正關掉的那條通道）', () => {
+  // Codex #520 r3#1 的實測：在正規化器裡加一條對映，整卷考題照樣綠、而 `issuerBank('HSBC')` 變成 '台新'。
+  // 代號那條路不經過正規化器 ⇒ 有代號的卡不受那種竄改影響。這一題用**行為**釘住這件事：
+  // 拿一個正規化後會撞到台新的字串當顯示名，只要代號說是別家，答案就必須是別家。
+  assert.equal(issuerBank('臺新'), '台新', '前提：文字那條路會把「臺新」判成台新');
+  assert.equal(cardIssuerBank({ issuerId: 'esun', issuer: '臺新' }), '',
+    '★代號說是玉山 ⇒ 不可以因為顯示字串長得像台新就判成台新');
+  assert.equal(cardCertainlyNot({ issuerId: 'esun', issuer: '臺新' }, '台新'), true,
+    '★而且要算「確定不是台新」——挑過清單就是有效證據');
+  // ⚠️ 誠實劃界：**沒有代號的卡照舊走正規化器**，那條通道對它們仍然開著（William 2026-09-02 裁示）。
+  assert.equal(cardIssuerBank({ issuer: '臺新' }), '台新', '★沒代號＝照舊走文字，本支刻意不改這一格');
+});
+
 // ───────────────────────── ② 判準（清單 → issuerBank）─────────────────────────
 
 test('★判準｜清單上的每一項挑下去，`issuerBank` 都要給出它宣告的那一家', () => {
@@ -210,42 +290,74 @@ test('★表單｜既有的自由文字一律落到「其他」並原字帶進�
   // 這個 repo 的前例：帳戶型別因為「現值不在選項裡」被瀏覽器選成第一項，
   // 使用者只改個名字按儲存，50 萬負債變 50 萬資產（見 public/modules/form-options.js 檔頭）。
   for (const legacy of ['台新', '富邦', '台北富邦', '某某會員俱樂部', '台新國際商業銀行股份有限公司']) {
-    const v = issuerFormValues(legacy);
-    assert.equal(v.issuer, ISSUER_OTHER, `「${legacy}」不該被預選成清單上的某一項`);
+    const v = issuerFormFields({ issuer: legacy });
+    assert.equal(v.issuerPick, ISSUER_OTHER, `「${legacy}」不該被預選成清單上的某一項`);
     assert.equal(v.issuerOther, legacy, `「${legacy}」要原字帶進自訂欄`);
   }
 });
 
-test('表單｜正式寫法才預選；空值＝未設定', () => {
-  assert.deepEqual(issuerFormValues('台新銀行'), { issuer: '台新銀行', issuerOther: '' });
-  assert.deepEqual(issuerFormValues('富邦銀行（香港）'), { issuer: '富邦銀行（香港）', issuerOther: '' });
+test('表單｜正式寫法才預選；空值＝未設定（預選的值＝**代號**，不是名字）', () => {
+  assert.deepEqual(issuerFormFields({ issuer: '台新銀行' }), { issuerPick: 'taishin', issuerOther: '' });
+  assert.deepEqual(issuerFormFields({ issuer: '富邦銀行（香港）' }), { issuerPick: 'fubon-hk', issuerOther: '' });
   // William 三張真卡填的是「台新銀行」「台北富邦銀行」「遠東商銀」——三個都在清單上，打開表單就預選好
   for (const real of ['台新銀行', '台北富邦銀行', '遠東商銀']) {
-    assert.deepEqual(issuerFormValues(real), { issuer: real, issuerOther: '' }, `既有卡片「${real}」要直接對上清單`);
+    const entry = CARD_ISSUERS.find(o => o.name === real);
+    assert.deepEqual(issuerFormFields({ issuer: real }), { issuerPick: entry.id, issuerOther: '' }, `既有卡片「${real}」要直接對上清單`);
   }
-  assert.deepEqual(issuerFormValues('臺新銀行 '), { issuer: '台新銀行', issuerOther: '' }, '同一個名字換個字形／多個空白＝同一項');
-  for (const empty of ['', '   ', null, undefined]) assert.deepEqual(issuerFormValues(empty), { issuer: '', issuerOther: '' });
+  assert.deepEqual(issuerFormFields({ issuer: '臺新銀行 ' }), { issuerPick: 'taishin', issuerOther: '' }, '同一個名字換個字形／多個空白＝同一項');
+  for (const empty of ['', '   ', null, undefined]) assert.deepEqual(issuerFormFields({ issuer: empty }), { issuerPick: '', issuerOther: '' });
+  assert.deepEqual(issuerFormFields(null), { issuerPick: '', issuerOther: '' }, '新增卡片＝沒有卡片物件');
 });
 
-test('表單｜送出時兩欄合回一欄', () => {
-  assert.equal(resolveIssuerInput('台新銀行', ''), '台新銀行');
-  assert.equal(resolveIssuerInput('台新銀行', '殘留的舊字'), '台新銀行', '★沒選「其他」就無視自訂欄（它隱藏時仍會被送出）');
-  assert.equal(resolveIssuerInput(ISSUER_OTHER, '  某某銀行 '), '  某某銀行 ',
-    '★自訂文字不 trim（Codex #520 r1#1：無條件 trim 會讓既有值在「什麼都不改」的儲存裡被靜靜改掉）');
-  assert.equal(resolveIssuerInput(ISSUER_OTHER, ''), '', '選了其他卻留白＝未設定');
-  assert.equal(resolveIssuerInput(ISSUER_OTHER, '   '), '', '★整串空白視同沒填（否則卡片頁會判成「有填」印出一串看不見的空白）');
-  assert.equal(resolveIssuerInput('', ''), '');
+test('★表單｜有代號就只看代號——`issuer` 字串一個字都不影響預選', () => {
+  // 這是本支的核心：代號在的時候，顯示字串怎麼寫都不動搖身分。
+  assert.deepEqual(issuerFormFields({ issuerId: 'fubon-hk', issuer: '富邦銀行（香港）' }), { issuerPick: 'fubon-hk', issuerOther: '' });
+  assert.deepEqual(issuerFormFields({ issuerId: 'fubon-hk', issuer: '台新銀行' }), { issuerPick: 'fubon-hk', issuerOther: '' },
+    '★字串與代號互相矛盾時，代號說了算（矛盾只可能來自手改資料／備份匯入）');
+  assert.deepEqual(issuerFormFields({ issuerId: 'taishin', issuer: '' }), { issuerPick: 'taishin', issuerOther: '' },
+    '★顯示字串空白也不影響——代號才是身分');
+  // 查不到的代號＝視同沒有代號，退回字串那條路（不是「判不出、什麼都不選」）
+  for (const badId of ['沒這個代號', 'TAISHIN', ' taishin', 123, null, ['taishin'], {}]) {
+    assert.deepEqual(issuerFormFields({ issuerId: badId, issuer: '台新銀行' }), { issuerPick: 'taishin', issuerOther: '' },
+      `★代號 ${JSON.stringify(badId)} 查不到 ⇒ 退回字串，不可以整格空掉`);
+  }
 });
 
-test('★表單｜字串 issuer 打開表單、什麼都不改就儲存＝只有三種行為：原字保存／正式名稱收斂／純空白清空（非字串另有第四條，見 resolveIssuerInput 檔內）', () => {
-  const roundTrip = (/** @type {string} */ x) => { const v = issuerFormValues(x); return resolveIssuerInput(v.issuer, v.issuerOther); };
+test('★表單｜傳字串進 `issuerFormFields` 要當場丟例外（改名＋這道 typeof 是同一件事的兩半）', () => {
+  // 改名（`issuerFormValues` → `issuerFormFields`）擋的是**沒跟上的舊呼叫端**；
+  // 這道 typeof 擋的是**新寫的呼叫端手滑傳 `c.issuer`**——那會靜靜回一組空值，
+  // 使用者按個儲存就把發卡行清空，而清空之後那張卡連「不確定」都算不上。
+  assert.throws(() => issuerFormFields('台新銀行'), TypeError);
+  assert.throws(() => issuerFormFields(''), TypeError, '空字串也是字串——同樣是傳錯東西');
+});
+
+test('表單｜送出時兩欄合回**要存的兩欄**（顯示名＋代號）', () => {
+  assert.deepEqual(resolveIssuerFields('taishin', ''), { issuer: '台新銀行', issuerId: 'taishin' });
+  assert.deepEqual(resolveIssuerFields('taishin', '殘留的舊字'), { issuer: '台新銀行', issuerId: 'taishin' },
+    '★沒選「其他」就無視自訂欄（它隱藏時仍會被送出）');
+  assert.deepEqual(resolveIssuerFields(ISSUER_OTHER, '  某某銀行 '), { issuer: '  某某銀行 ', issuerId: '' },
+    '★自訂文字不 trim（Codex #520 r1#1：無條件 trim 會讓既有值在「什麼都不改」的儲存裡被靜靜改掉）；★自訂＝發不出代號');
+  assert.deepEqual(resolveIssuerFields(ISSUER_OTHER, ''), { issuer: '', issuerId: '' }, '選了其他卻留白＝未設定');
+  assert.deepEqual(resolveIssuerFields(ISSUER_OTHER, '   '), { issuer: '', issuerId: '' },
+    '★整串空白視同沒填（否則卡片頁會判成「有填」印出一串看不見的空白）');
+  assert.deepEqual(resolveIssuerFields('', ''), { issuer: '', issuerId: '' });
+  assert.deepEqual(resolveIssuerFields('不是清單上的值', ''), { issuer: '不是清單上的值', issuerId: '' },
+    '★下拉送回不認得的值（form-options 保留清單外現值那條路）⇒ 字保留、不可憑空發代號');
+  // 清單上每一項挑下去，兩欄都要對得起來（不是只驗兩三個樣本）
+  for (const o of CARD_ISSUERS) {
+    assert.deepEqual(resolveIssuerFields(o.id, ''), { issuer: o.name, issuerId: o.id }, `挑「${o.name}」存錯了`);
+  }
+});
+
+test('★表單｜字串 issuer 打開表單、什麼都不改就儲存＝只有三種行為：原字保存／正式名稱收斂／純空白清空（另有兩條見 resolveIssuerFields 檔內）', () => {
+  const roundTrip = (/** @type {string} */ x) => { const v = issuerFormFields({ issuer: x }); return resolveIssuerFields(v.issuerPick, v.issuerOther).issuer; };
   // ①**原字保存**：自訂值與別名一個字元都不動（含頭尾空白——r1#1 實測第一版會靜靜 trim 掉）
   for (const x of ['', '台新', '富邦', '台新銀行', '富邦銀行（香港）', '遠東商銀', '某某會員俱樂部',
     ' 某某會員俱樂部 ', '富邦 ', ' 台新']) {
     assert.equal(roundTrip(x), x, `「${x}」被表單改掉了`);
   }
   // ⚠️ **會動到既有值的只有下面兩格**（Codex #520 r2#3／r3#2：這裡曾有三句各自寫「唯一」、互相打架）。
-  //    正本＝`card-issuers.js` 的 `resolveIssuerInput` 檔內那份逐條列名，本題只負責把它們釘成行為。
+  //    正本＝`card-issuers.js` 的 `resolveIssuerFields` 檔內那份逐條列名，本題只負責把它們釘成行為。
   // ②**整串空白 → 空字串**：兩者在畫面與行為上本來就等價（都顯示「未設定」、都不參與歸卡）
   assert.equal(roundTrip('   '), '', '★純空白視同未設定——這一格刻意不 round-trip');
   // ③**正式名稱的另一種字形 → 收斂成清單寫法**（要使用者按下儲存才會發生，而且必須還是同一家）
@@ -259,13 +371,16 @@ test('★表單｜字串 issuer 打開表單、什麼都不改就儲存＝只有
   }
 });
 
-test('表單｜下拉選項＝（未設定）在最前、其他在最後，值不重複', () => {
+test('表單｜下拉選項＝（未設定）在最前、其他在最後；值是**代號**、標籤才是名字', () => {
   const opts = issuerOptions();
   assert.deepEqual(opts[0], { value: '', label: ISSUER_UNSET_LABEL });
   assert.deepEqual(opts[opts.length - 1], { value: ISSUER_OTHER, label: ISSUER_OTHER_LABEL });
   assert.equal(opts.length, CARD_ISSUERS.length + 2);
   assert.equal(new Set(opts.map(o => o.value)).size, opts.length, '選項的值不可重複（重複＝挑不到其中一項）');
+  assert.deepEqual(opts.slice(1, -1), CARD_ISSUERS.map(o => ({ value: o.id, label: o.name })),
+    '★選項的值＝代號、標籤＝名字，順序照清單（值放名字＝送回來的還要再翻譯一次，那一步會走鐘）');
   assert.equal(issuersNamed(ISSUER_OTHER).length, 0, '★「其他」的哨兵值不可以是任何一家的名字或別名');
+  assert.equal(issuerById(ISSUER_OTHER), null, '★「其他」的哨兵值也不可以是任何一家的代號');
 });
 
 test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分（#520 r3#2 加過型別牆、r4#1 撤回）', async () => {
@@ -278,7 +393,8 @@ test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分
   for (const bad of [{ unexpected: true }, 123, true, {}, ['台北富邦銀行', '玉山']]) {
     // ①不崩：讀取端一律 `String()` 包好，這是這個欄位今天安全的**唯一**理由
     assert.doesNotThrow(() => issuerBank(bad), `issuerBank(${JSON.stringify(bad)}) 不可丟例外`);
-    assert.doesNotThrow(() => issuerFormValues(bad));
+    assert.doesNotThrow(() => issuerFormFields({ issuer: bad }));
+    assert.doesNotThrow(() => cardIssuerBank({ issuer: bad }), '卡片版同樣不可丟例外');
     // ②不多給身分：壞型別的答案 **等於** 它字串化之後的答案（兩邊走同一個 String()）
     assert.equal(issuerBank(bad), issuerBank(String(bad)), '★壞型別不可以走到與字串化不同的答案');
   }
@@ -286,6 +402,22 @@ test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分
   //    這與使用者直接打那串字同義（base 也是這樣），所以不是本支的洞；但不寫下來就會變成假保證。
   assert.equal(issuerBank(['台新']), '台新', '★String(["台新"]) === "台新" ⇒ 判得出來，這是既有行為');
   assert.equal(issuerBank({ unexpected: true }), '', '對照：物件字串化成 [object Object] ⇒ 判不出來');
+});
+
+test('★櫃檯｜`issuerId` 真的存得進去（純函式全對、白名單漏了它＝代號永遠寫不進資料庫）', async () => {
+  const { pickWritable } = await import('../lib/schema.js');
+  // ⚠️ 打的是**正式的**櫃檯函式，不是斷言 `WRITABLE_FIELDS.cards` 的形狀——後者是「護欄自己證明
+  //    自己有在跑」那種假護欄（這個 repo 記過）。要釘就釘行為：送進去、看它有沒有活著出來。
+  const picked = pickWritable('cards', { name: '台新卡', issuer: '台新銀行', issuerId: 'taishin' });
+  assert.deepEqual(picked.errors, [], '不可以有欄位被判成非法');
+  assert.equal(picked.value.issuerId, 'taishin', '★代號被櫃檯剝掉＝這支 PR 在真實流程裡完全沒生效');
+  assert.equal(picked.value.issuer, '台新銀行', '顯示名照舊要存得進去');
+  // 清空代號（挑「其他」時送空字串）也要送得進去，否則舊代號會被 PUT 的部分合併永遠留著
+  assert.equal(pickWritable('cards', { issuerId: '' }).value.issuerId, '', '★空字串＝清掉代號，不可以被當「沒送」丟掉');
+  // 對照：白名單外的表單自用欄位確實會被剝掉（證明上面那兩格不是「什麼都收」的恆真）
+  const junk = pickWritable('cards', { issuerPick: 'taishin', issuerOther: '某某銀行' });
+  assert.equal('issuerPick' in junk.value, false, '★表單自用欄位不可以進資料庫');
+  assert.equal('issuerOther' in junk.value, false);
 });
 
 // ───────────────────────── ④ 接線（讀原始碼）─────────────────────────
@@ -297,12 +429,16 @@ test('★型別｜非字串 issuer 的容忍界線——不崩、不多給身分
  */
 function assertPicklistWiring(src) {
   assert.match(src, /import \{[^}]*issuerOptions[^}]*\} from '\.\/card-issuers\.js';/);
-  assert.match(src, /\{ key: 'issuer', label: '發卡銀行 \/ 機構', type: 'select', options: issuerOptions\(\) \}/,
+  assert.match(src, /\{ key: 'issuerPick', label: '發卡銀行 \/ 機構', type: 'select', options: issuerOptions\(\) \}/,
     '★發卡行必須是 select＋清單，不可以是自由文字框');
   assert.match(src, /\{ key: 'issuerOther',[^\n]*type: 'text'/, '★清單以外的機構要填得進去（其他＝自行輸入）');
-  assert.match(src, /values: c \? \{[^\n]*\.\.\.issuerFormValues\(c\.issuer\)/, '★編輯既有卡片時要把現值餵回表單');
-  assert.match(src, /data\.issuer = resolveIssuerInput\(data\.issuer, data\.issuerOther\); delete data\.issuerOther;/,
-    '★送出前要合併兩欄，而且 issuerOther 不是 schema 欄位、不可以送到後端');
+  assert.match(src, /values: c \? \{[^\n]*\.\.\.issuerFormFields\(c\)/, '★編輯既有卡片時要把**整張卡**餵回表單（只餵 c.issuer 會漏掉代號）');
+  assert.match(src, /const picked = resolveIssuerFields\(data\.issuerPick, data\.issuerOther\);/,
+    '★送出前要由同一支函式算出兩欄');
+  assert.match(src, /data\.issuer = picked\.issuer; data\.issuerId = picked\.issuerId;/,
+    '★兩欄都要存——只存 issuer 就等於這支 PR 沒做（代號永遠不會被寫進去）');
+  assert.match(src, /delete data\.issuerPick; delete data\.issuerOther;/,
+    '★issuerPick／issuerOther 不是 schema 欄位、不可以送到後端');
   assert.match(src, /cell\.hidden = sel\.value !== ISSUER_OTHER/, '★自訂欄只在選了「其他」時出現');
 }
 
@@ -386,23 +522,23 @@ test('★真 DOM｜「其他」的文字框只在選了其他時出現，切換�
   /** 重建 `openForm` 對這兩格欄位產出的 DOM（欄位包在一個 div 裡，select 用同一支選項產生器）。 */
   const build = (/** @type {string} */ issuerValue) => {
     const dom = new JSDOM(`<!doctype html><body><div class="modal-bg"><div class="modal-sm"><form><div class="form-grid">
-      <div><label>發卡銀行 / 機構</label><select id="f_issuer">${selectOptionsHtml(issuerOptions(), issuerValue)}</select></div>
+      <div><label>發卡銀行 / 機構</label><select id="f_issuerPick">${selectOptionsHtml(issuerOptions(), issuerValue)}</select></div>
       <div><label>其他發卡銀行 / 機構名稱</label><input id="f_issuerOther" type="text" value="" /></div>
     </div></form></div></div></body>`);
     const root = dom.window.document.body;
-    return { dom, root, sel: root.querySelector('#f_issuer'), cell: root.querySelector('#f_issuerOther').closest('div') };
+    return { dom, root, sel: root.querySelector('#f_issuerPick'), cell: root.querySelector('#f_issuerOther').closest('div') };
   };
 
   // ①清單上的正式寫法 ⇒ 自訂欄收起來
   {
-    const { root, sel, cell } = build(issuerFormValues('台新銀行').issuer);
+    const { root, sel, cell } = build(issuerFormFields({ issuer: '台新銀行' }).issuerPick);
     runOnMount(root, ISSUER_OTHER);
-    assert.equal(sel.value, '台新銀行', '前提：下拉選中清單上那一項');
+    assert.equal(sel.value, 'taishin', '前提：下拉選中清單上那一項（值＝代號）');
     assert.equal(cell.hidden, true, '★挑了清單上的銀行，「其他」的文字框不該出現');
   }
   // ②既有自由文字（落到「其他」）⇒ 自訂欄要看得見，否則使用者看不到自己現在填的是什麼
   {
-    const { root, sel, cell } = build(issuerFormValues('富邦').issuer);
+    const { root, sel, cell } = build(issuerFormFields({ issuer: '富邦' }).issuerPick);
     runOnMount(root, ISSUER_OTHER);
     assert.equal(sel.value, ISSUER_OTHER, '前提：既有自由文字落到「其他」');
     assert.equal(cell.hidden, false, '★落到「其他」時文字框必須看得見');
@@ -415,10 +551,58 @@ test('★真 DOM｜「其他」的文字框只在選了其他時出現，切換�
     sel.value = ISSUER_OTHER;
     sel.dispatchEvent(new dom.window.Event('change'));
     assert.equal(cell.hidden, false, '★切到「其他」要即時打開');
-    sel.value = '台北富邦銀行';
+    sel.value = 'fubon-taipei';
     sel.dispatchEvent(new dom.window.Event('change'));
     assert.equal(cell.hidden, true, '★切回清單上的銀行要即時收起來');
   }
+});
+
+test('★升級提示｜只在「挑下去真的有終點」時出現，挑完就消失（跑的是正式 `issuerUpgradeNote` 程式碼）', () => {
+  const src = read('public/modules/cards.js');
+  // 取出**正式的**函式本體（同 onMount 那題的做法）——改壞它這一題就會紅
+  const start = src.indexOf('function issuerUpgradeNote(c) {');
+  assert.ok(start >= 0, '找不到 issuerUpgradeNote（改名了就要更新這一題）');
+  const end = src.indexOf('\n}\n', start);
+  assert.ok(end > start, '找不到 issuerUpgradeNote 的結尾');
+  const body = src.slice(src.indexOf('{', start) + 1, end);
+  const note = new Function('c', 'esc', 'issuerById', 'issuersNamed', body)
+    .bind(null);
+  const run = (/** @type {any} */ c) => note(c, (/** @type {string} */ x) => String(x), issuerById, issuersNamed);
+
+  // ①**已經有代號** ⇒ 升級完了，不再提示（提示清得掉，這是它不會變成嘮叨的理由）
+  assert.equal(run({ issuerId: 'taishin', issuer: '台新銀行' }), '');
+  // ②**清單認得這個寫法、但還沒有代號** ⇒ 提示（今天照舊會自動，所以講的是「可以更保險」）
+  const legacy = run({ issuer: '台新銀行' });
+  assert.match(legacy, /card-issuer-upgrade/);
+  assert.match(legacy, /可以更保險/);
+  assert.equal(/要動一下/.test(legacy), false, '★不是歧義卡，不可以說得像現在壞掉了');
+  assert.equal(run({ issuer: '台新' }), legacy, '★別名也要提示——那正是清單化之前最常見的寫法');
+  // ③**歧義寫法** ⇒ 這張卡**現在就**判不出身分＝帳單已經要手選，話要講重一點
+  const ambiguous = run({ issuer: '富邦' });
+  assert.match(ambiguous, /要動一下/);
+  assert.match(ambiguous, /2 家/, '★家數是算出來的，不是寫死的');
+  assert.match(ambiguous, /現在要你自己選/);
+  assert.equal(cardIssuerBank({ issuer: '富邦' }), '', '★前提：這張卡今天確實判不出身分（否則上面那句話是假的）');
+  // ④**清單裡沒有這個寫法** ⇒ 不提示（挑下去只能選「其他」，提示了也清不掉＝永遠的嘮叨）
+  for (const x of ['某某會員俱樂部', '台新國際商業銀行股份有限公司', '', '   ', null, undefined]) {
+    assert.equal(run({ issuer: x }), '', `★「${x}」挑下去沒有終點，不可以提示`);
+  }
+  // ⑤**會員卡** ⇒ 不提示（發卡機構常常是商店；而且會員卡沒有帳單要歸，代號一個結果都改不了）
+  assert.equal(run({ type: 'membership', issuer: '台新銀行' }), '');
+  assert.notEqual(run({ type: 'debit', issuer: '台新銀行' }), '', '★簽帳金融卡要提示（它有帳單要歸）');
+  assert.notEqual(run({ type: 'credit', issuer: '台新銀行' }), '');
+  // ⑥壞代號＝視同沒有代號 ⇒ 照樣提示（那張卡確實還沒升級完）
+  assert.notEqual(run({ issuerId: '沒這個代號', issuer: '台新銀行' }), '');
+});
+
+test('★升級提示｜有接到卡片面板上，而且機構名有跳脫', () => {
+  const src = read('public/modules/cards.js');
+  assert.match(src, /\$\{issuerUpgradeNote\(c\)\}/, '★算出來卻沒渲染＝使用者永遠看不到，等於沒做');
+  // ⚠️ 誠實劃界：`esc(c.issuer)` 今天**沒有可達的惡意輸入**——那一格只在「寫法被兩家宣稱」時才印，
+  //    而被宣稱的寫法只有「富邦」「富邦銀行」兩個（`issuerNameKey` 抹平之後仍要相等，塞得進標籤的
+  //    字元都會讓它對不上）。所以這是防禦性的，不是修一個活著的洞——但缺了它，日後多一個共用寫法
+  //    就會變成活的。這一題只釘「有呼叫 esc」，不宣稱它擋下過什麼。
+  assert.match(src, /esc\(c\.issuer\)/, '★提示裡的機構名要過 esc');
 });
 
 // ───────────────────────── ⑤ 突變：拿掉守門會不會紅 ─────────────────────────
@@ -437,9 +621,13 @@ test('★突變｜接線題與文案題拿掉守門會紅（跑的是**同一份
   assert.notEqual(broken, src, '突變目標必須存在');
   assert.throws(() => assertPicklistWiring(broken), '★改回自由文字框，接線判準要紅');
   // 接線②：拿掉兩欄合併
-  const noMerge = src.replace('data.issuer = resolveIssuerInput(data.issuer, data.issuerOther); delete data.issuerOther;', '');
+  const noMerge = src.replace('data.issuer = picked.issuer; data.issuerId = picked.issuerId;', 'data.issuer = picked.issuer;');
   assert.notEqual(noMerge, src, '突變目標必須存在');
-  assert.throws(() => assertPicklistWiring(noMerge), '★拿掉合併，接線判準要紅');
+  assert.throws(() => assertPicklistWiring(noMerge), '★只存顯示名、不存代號，接線判準要紅（那等於整支 PR 沒做）');
+  // 接線③：把整張卡改回只餵 `c.issuer`（代號在 values 這一步就被漏掉，表單看起來完全正常）
+  const strFed = src.replace('...issuerFormFields(c),', '...issuerFormFields(c.issuer),');
+  assert.notEqual(strFed, src, '突變目標必須存在');
+  assert.throws(() => assertPicklistWiring(strFed), '★只餵 c.issuer，接線判準要紅');
   // 文案①：把「挑清單≠自動認卡」那句改掉
   const noBoundary = src.replace('不等於帳單一定會自動對上', '一定會自動對上');
   assert.notEqual(noBoundary, src, '突變目標必須存在');

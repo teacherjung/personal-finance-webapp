@@ -15,16 +15,37 @@
 // 結構解＝**讓使用者從清單裡挑一個法人**，而不是自己打字。挑「台北富邦銀行」與挑「富邦銀行（香港）」
 // 是兩個不同的選項，歧義在**輸入的當下**就消掉了——這是打字消不掉的。
 //
+// ## 機構代號 `id`（2026-09-02，William 裁示「照舊自動＋提示升級」）
+//
+// #520 讓使用者從清單挑，但**存進 DB 的仍然是顯示用的名字字串**，身分照樣靠文字比對算出來。
+// 本支多存一個 `card.issuerId`＝**這一筆的代號**，於是「這張卡是哪一家」對**有代號的卡**變成查表，
+// 一個字元都不比。`card.issuer` 降級成顯示字串。
+//
+// ⚠️ **`id` 是會落進資料庫的持久值，不是給人看的縮寫**：它一旦發出去就**永遠不可以改名或刪除**
+//    （改了＝那些卡的代號查不到東西 ⇒ 退回文字那條路 ⇒ 身分可能就此不同）。所以它刻意寫成
+//    不帶語意包袱的 ASCII 短碼，**不宣稱**是任何一家的官方英文名或官方縮寫——它只需要唯一且不變。
+//    `test/card-issuers.test.js` 有一題把**整組代號當精確集合**釘住：刪一個或改一個字都會轉紅，
+//    新增一家要先去那一題把代號寫上去（那是刻意的摩擦——這是持久資料，不該順手加）。
+//
+// ⚠️ **代號沒有讓文字那條路消失**（William 2026-09-02 裁示的射程，誠實劃界）：
+//    沒有代號的卡（清單化之前的舊卡、選「其他」自己打的機構、銀行匯入自動建的簽帳金融卡）
+//    **照舊走文字比對**、照舊可以自動歸卡。所以文字那條路的兩個已知洞
+//    （①改 `issuerNameKey` 可以偷偷授予身分 ②`OWN_ISSUERS` 沒有結尾錨，「台北富邦銀行（香港）」
+//    前綴命中成富邦）**對沒有代號的卡仍然存在**。本支關掉的是**有代號的那些卡**，
+//    不是整條路——要整條關掉＝「只認代號」，那會讓每一張還沒重挑過的卡退成手選，是另案。
+//
 // ## 資料形狀
 //
-// 每一筆＝**一個法人**：`name`（存進 `card.issuer` 的正式寫法，也是清單上顯示的字）、
-// `bank`（對應到哪一支內建範本；`''`＝我們沒有它的範本）、`aka`（同一個法人的其他寫法）。
+// 每一筆＝**一個法人**：`id`（存進 `card.issuerId` 的代號，見上）、`name`（存進 `card.issuer` 的正式
+// 寫法，也是清單上顯示的字）、`bank`（對應到哪一支內建範本；`''`＝我們沒有它的範本）、
+// `aka`（同一個法人的其他寫法）。
 //
 // ⚠️ **`aka` 不是別名對照表**（`lib/bank-alias.js` 刻意不留那種表，理由見它的檔頭：把「寫法不同」
 //    壓成「同一家」的通用規則，會在共用品牌的不同法人上撞成同一個字串）。這裡的 `aka` 只做兩件事：
 //    ①讓**既有的自由文字**（使用者早就填好的「台新」「台北富邦」）仍然對得上內建範本；
 //    ②**兩家以上都自稱同一個寫法時，那個寫法就不判身分**（見 `issuersNamed`）——歧義是
 //    **從資料算出來的**，不是另外手寫一張「歧義清單」（手寫的那張自己會漂）。
+// ⚠️ **`aka` 只服務沒有代號的卡**：有代號就直接查表，`aka` 一個字都不會被讀到。
 // ⚠️ **只寫「會改變結果」的別名**。⚠️ **誠實劃界：這一條大部分靠人，不是靠機器**——
 //    工作流對抗驗證 2026-08-28 實測：替 `bank: ''` 的機構（清單絕大多數——有內建範本的只有兩家）補純裝飾別名
 //    （`aka: ['國泰','Cathay','HSBC']`），**全卷一題都不紅**。兩道集合閘各自只看一側：
@@ -49,23 +70,25 @@
 //   會先丟 `card_unrecognized`，**根本走不到選卡窗**——批二（#528）起這個錯誤會改開
 //   「請 AI 讀一次」的入口（`shouldOfferAi`）；AI 讀成功、過驗算閘之後才會回到選卡窗。
 //   列進來只為了①清單挑得到 ②把「這個寫法被誰宣稱過」記下來，好算出歧義。
+// - **代號不會讓那些沒有範本的機構突然讀得懂帳單**：`issuerId: 'esun'` 只是說「這張卡是玉山發的」，
+//   它讓玉山卡**確定不是台新**（不再擋台新的自動歸），但玉山自己的帳單照樣沒有內建範本。
 // - **這份清單不進 `lib/bank-alias.js` 的身分尺**：那把尺管的是「去重鍵／帳戶機構戳／定存鍵」，
 //   撞了會**餘額蓋到別家帳戶、真交易被當重複吞掉**（不可逆）。它今天只認得台新，
 //   要讓第二家進去是**另案裁決**。本支只影響「信用卡帳單要歸到哪張卡」，**刻意不碰那條路**。
 //   ⇒ 代價：簽帳金融卡那條路（`lib/services/bank-import.js` 用 `sameBank` 比對 `card.issuer`）
-//   對非台新機構仍然要求**兩邊字面正規化後相等**。從清單挑正式名之後若與帳單印的寫法不同，
-//   那條路照舊配不上（＝既有行為，不是本支弄壞的；本支也不宣稱修好了它）。
+//   對非台新機構仍然要求**兩邊字面正規化後相等**，而且**它讀的是 `issuer` 字串、不讀 `issuerId`**
+//   （代號沒有修好它、也不宣稱修好；那條路上自動建的卡因此也不帶代號）。
 // - **這裡不驗「這家銀行今天還存不存在」**：合併／改名過的機構（日盛、花旗台灣消金）仍留在清單上，
 //   因為使用者手上的舊卡與舊帳單還在。留著的代價是清單長一點，拿掉的代價是那些卡填不了名字。
 
 /** 「其他（自行輸入）」那一項的選項值。
- * ⚠️ 它只在 `resolveIssuerInput` 的 **selected 欄**當分流哨兵（「等於它＝改讀自訂欄」）；
+ * ⚠️ 它只在 `resolveIssuerFields` 的 **selected 欄**當分流哨兵（「等於它＝改讀自訂欄」）；
  *    **custom 欄可以合法地是同一個字串**——使用者在自訂欄真的打 `__other__` 就會存 `__other__`
- *    （`resolveIssuerInput(ISSUER_OTHER, ISSUER_OTHER) === '__other__'`，Codex #520 r5#3 實測），
+ *    （`resolveIssuerFields(ISSUER_OTHER, ISSUER_OTHER).issuer === '__other__'`，Codex #520 r5#3 實測），
  *    CRUD／備份匯入也送得進來。⚠️ 所以**不要**把這個常數說成「永遠不會被存進 `card.issuer`」——
  *    我寫過那句、被推翻了。存進去之後它與一般自由文字同路——**有考題撐著的**是：round-trip 原字不動、
  *    `issuersNamed('__other__')` 查不到 ⇒ 不參與歸卡（`test/card-issuers.test.js` 的下拉選項題斷言
- *    哨兵不是任何一家的名字或別名）。「全 repo 沒有別處拿存下來的值與哨兵比對」是**清點時的現況**，
+ *    哨兵不是任何一家的名字、別名或**代號**）。「全 repo 沒有別處拿存下來的值與哨兵比對」是**清點時的現況**，
  *    沒有考題撐——日後誰新增那種比對，這句話不會替你轉紅。 */
 export const ISSUER_OTHER = '__other__';
 /** 「其他（自行輸入）」的選項文字。 */
@@ -73,11 +96,12 @@ export const ISSUER_OTHER_LABEL = '其他（自行輸入）';
 /** 「（未設定）」那一項的選項文字——發卡行不是必填欄。 */
 export const ISSUER_UNSET_LABEL = '（未設定）';
 
-/** @typedef {{ name: string, bank: string, aka?: string[] }} CardIssuer */
+/** @typedef {{ id: string, name: string, bank: string, aka?: string[] }} CardIssuer */
 
 /**
  * 發卡機構清單。**順序＝清單上的順序**（常見的排前面，不排字母序——使用者找的是自己那一家）。
  *
+ * ⚠️ **`id` 是持久資料、永不改名**（理由與精確集合閘見檔頭）。
  * ⚠️ **`bank` 只有兩個非空值**（`'台新'`／`'富邦'`），因為內建範本只有這兩支。要新增第三支範本才會有
  *    第三個值——`test/card-issuers.test.js` 有一題機械檢查「每一筆的 `bank` 都對得上
  *    `lib/card-identity.js` 的 `OWN_ISSUERS`／`issuerBank`」，所以在這裡亂填 `bank` 會轉紅。
@@ -85,6 +109,8 @@ export const ISSUER_UNSET_LABEL = '（未設定）';
  *    照實記下來；`issuersNamed` 會因此回兩筆 ⇒ `issuerBank` 判「歧義、不猜」。
  *    ⚠️ 不可以為了「讓既有的『富邦』卡繼續自動歸卡」把其中一邊的宣稱刪掉：刪掉就是**回去猜**，
  *    而猜錯的代價是錢記到香港那張卡上。不認的代價只是使用者多按一次選卡。
+ *    ⚠️ **代號沒有讓這個歧義消失，它是繞過歧義**：`issuerId: 'fubon-taipei'` 說得清楚是哪一家，
+ *    但只有**重新挑過清單**的卡才有代號；`issuer` 還是「富邦」兩個字的舊卡照舊判不出身分。
  * @type {readonly CardIssuer[]}
  */
 export const CARD_ISSUERS = Object.freeze([
@@ -93,50 +119,50 @@ export const CARD_ISSUERS = Object.freeze([
   // 都直接命中樣式），只有裸的短名對不上——而既有卡片與 repo 既有考題就是這樣填的。
   // ⚠️ 這裡曾寫「**唯一**要靠 aka 收的寫法」——與下面「台北富邦」那一筆自相矛盾（工作流 2026-08-28）：
   //    裸的「台北富邦」同樣對不上樣式、同樣只能靠 aka 收。要靠 aka 收的短名是**兩個**，不是一個。
-  { name: '台新銀行', bank: '台新', aka: ['台新'] },
+  { id: 'taishin', name: '台新銀行', bank: '台新', aka: ['台新'] },
   // 「台北富邦」＝樣式要求「台北富邦…銀行」，裸的四個字對不上；「富邦」「富邦銀行」＝台北富邦官方沿革
   // 記載的簡稱，**同時也被下面那家宣稱** ⇒ 這兩個寫法從此判不出身分（那正是本支要的結果）。
-  { name: '台北富邦銀行', bank: '富邦', aka: ['台北富邦', '富邦', '富邦銀行'] },
+  { id: 'fubon-taipei', name: '台北富邦銀行', bank: '富邦', aka: ['台北富邦', '富邦', '富邦銀行'] },
   // ── 消歧用的那一筆：同集團、不同法人 ──
   // ⚠️ 這一筆是本支的主角。它與上面那一筆**共用「富邦」「富邦銀行」兩個寫法**，所以那兩個寫法從此
   //    判不出身分（歧義）；挑清單上這一項或上面那一項，才是說得清楚的輸入。
-  { name: '富邦銀行（香港）', bank: '', aka: ['富邦', '富邦銀行'] },
+  { id: 'fubon-hk', name: '富邦銀行（香港）', bank: '', aka: ['富邦', '富邦銀行'] },
   // ── 其餘台灣常見發卡機構（`bank: ''`＝沒有內建範本，只提供清單挑選）──
-  { name: '國泰世華銀行', bank: '', aka: [] },
-  { name: '中國信託銀行', bank: '', aka: [] },
-  { name: '玉山銀行', bank: '', aka: [] },
-  { name: '永豐銀行', bank: '', aka: [] },
-  { name: '聯邦銀行', bank: '', aka: [] },
-  { name: '遠東商銀', bank: '', aka: [] },
-  { name: '星展銀行（台灣）', bank: '', aka: [] },
-  { name: '匯豐銀行（台灣）', bank: '', aka: [] },
-  { name: '渣打銀行（台灣）', bank: '', aka: [] },
-  { name: '花旗銀行（台灣）', bank: '', aka: [] },
-  { name: '兆豐銀行', bank: '', aka: [] },
-  { name: '第一銀行', bank: '', aka: [] },
-  { name: '華南銀行', bank: '', aka: [] },
-  { name: '彰化銀行', bank: '', aka: [] },
-  { name: '元大銀行', bank: '', aka: [] },
-  { name: '凱基銀行', bank: '', aka: [] },
-  { name: '新光銀行', bank: '', aka: [] },
-  { name: '安泰銀行', bank: '', aka: [] },
-  { name: '王道銀行', bank: '', aka: [] },
-  { name: '台灣銀行', bank: '', aka: [] },
-  { name: '合作金庫銀行', bank: '', aka: [] },
-  { name: '土地銀行', bank: '', aka: [] },
-  { name: '上海商業儲蓄銀行', bank: '', aka: [] },
-  { name: '台灣企銀', bank: '', aka: [] },
-  { name: '台中銀行', bank: '', aka: [] },
-  { name: '高雄銀行', bank: '', aka: [] },
-  { name: '陽信銀行', bank: '', aka: [] },
-  { name: '板信銀行', bank: '', aka: [] },
-  { name: '三信商業銀行', bank: '', aka: [] },
-  { name: '瑞興銀行', bank: '', aka: [] },
-  { name: '華泰銀行', bank: '', aka: [] },
-  { name: '日盛銀行', bank: '', aka: [] },
-  { name: '樂天國際商業銀行', bank: '', aka: [] },
-  { name: '將來銀行', bank: '', aka: [] },
-  { name: '連線商業銀行', bank: '', aka: [] },
+  { id: 'cathay-united', name: '國泰世華銀行', bank: '', aka: [] },
+  { id: 'ctbc', name: '中國信託銀行', bank: '', aka: [] },
+  { id: 'esun', name: '玉山銀行', bank: '', aka: [] },
+  { id: 'sinopac', name: '永豐銀行', bank: '', aka: [] },
+  { id: 'union', name: '聯邦銀行', bank: '', aka: [] },
+  { id: 'far-eastern', name: '遠東商銀', bank: '', aka: [] },
+  { id: 'dbs-tw', name: '星展銀行（台灣）', bank: '', aka: [] },
+  { id: 'hsbc-tw', name: '匯豐銀行（台灣）', bank: '', aka: [] },
+  { id: 'sc-tw', name: '渣打銀行（台灣）', bank: '', aka: [] },
+  { id: 'citi-tw', name: '花旗銀行（台灣）', bank: '', aka: [] },
+  { id: 'mega', name: '兆豐銀行', bank: '', aka: [] },
+  { id: 'first', name: '第一銀行', bank: '', aka: [] },
+  { id: 'hua-nan', name: '華南銀行', bank: '', aka: [] },
+  { id: 'chang-hwa', name: '彰化銀行', bank: '', aka: [] },
+  { id: 'yuanta', name: '元大銀行', bank: '', aka: [] },
+  { id: 'kgi', name: '凱基銀行', bank: '', aka: [] },
+  { id: 'shin-kong', name: '新光銀行', bank: '', aka: [] },
+  { id: 'entie', name: '安泰銀行', bank: '', aka: [] },
+  { id: 'o-bank', name: '王道銀行', bank: '', aka: [] },
+  { id: 'bank-of-taiwan', name: '台灣銀行', bank: '', aka: [] },
+  { id: 'tcb', name: '合作金庫銀行', bank: '', aka: [] },
+  { id: 'land-bank', name: '土地銀行', bank: '', aka: [] },
+  { id: 'scsb', name: '上海商業儲蓄銀行', bank: '', aka: [] },
+  { id: 'tbb', name: '台灣企銀', bank: '', aka: [] },
+  { id: 'taichung', name: '台中銀行', bank: '', aka: [] },
+  { id: 'bok', name: '高雄銀行', bank: '', aka: [] },
+  { id: 'sunny', name: '陽信銀行', bank: '', aka: [] },
+  { id: 'panhsin', name: '板信銀行', bank: '', aka: [] },
+  { id: 'cota', name: '三信商業銀行', bank: '', aka: [] },
+  { id: 'rising', name: '瑞興銀行', bank: '', aka: [] },
+  { id: 'hwatai', name: '華泰銀行', bank: '', aka: [] },
+  { id: 'jih-sun', name: '日盛銀行', bank: '', aka: [] },
+  { id: 'rakuten-tw', name: '樂天國際商業銀行', bank: '', aka: [] },
+  { id: 'next-bank', name: '將來銀行', bank: '', aka: [] },
+  { id: 'line-bank', name: '連線商業銀行', bank: '', aka: [] },
 ]);
 
 /**
@@ -164,16 +190,18 @@ export const SHARED_ISSUER_NAMES = Object.freeze([
  *    「台新銀行 」（尾巴一個空白）靜靜掉進「其他」。
  * ⚠️ 這是**放寬**：正規化後相等的字串會被當成同一家 ⇒ 更多字串對得上 `bank` 非空的那兩家
  *    ⇒ 自動歸卡的面積變大。所以 `aka` 一律**只寫那個法人真的自稱過的寫法**，不加推測的變體。
+ * ⚠️ **代號那條路一個字都不過這裡**（見 `issuerById`：代號是我們自己發的機器值，逐字相等）。
  *
- * ## ⚠️ 這一支是「誰有資格當台新／富邦」的**真正入口**（Codex #520 r3#1）
+ * ## ⚠️ 這一支是「誰有資格當台新／富邦」的**真正入口**（Codex #520 r3#1）——**對沒有代號的卡**
  *
  * `test/card-issuers.test.js` 的兩道集合閘管的是**清單資料**（宣告過的寫法與共用組），
  * 它們**管不到這裡**：在這個函式裡多加一條對映（例如把 `hsbc` 抹成 `台新`），
  * 那兩題與整卷考題都照樣綠，而 `issuerBank('HSBC')` 會變成 `'台新'`（Codex 實測）。
  * ⇒ **改這個函式等於改身分判準**，要當成錢類改動看待；等價類造成的行為差異由
  *   `test/card-identity.test.js` 的「相對 base 的行為改變逐項釘住」那一題列名。
- * ⇒ 要在結構上關掉這條路，字串本身辦不到——得改存穩定的機構代號（只有從清單挑的代號才授予身分）。
- *   **William 2026-08-28 裁示：本支只把話講準，代號另開一張卡。**
+ * ⇒ 2026-09-02 起，**有 `issuerId` 的卡走不到這裡**（`cardIssuerBank` 查表就回來了）⇒ 這條通道
+ *   對它們關上了。但**沒有代號的卡照舊走這裡**（William 裁示「照舊自動＋提示升級」），
+ *   所以這一段**不是歷史**——它今天仍然承重。要整條關掉＝「只認代號」，那是另案。
  * @param {unknown} s
  */
 export const issuerNameKey = (s) => String(s ?? '').normalize('NFKC').replace(/\s+/g, '').replace(/臺/g, '台').toLowerCase();
@@ -185,6 +213,7 @@ export const issuerNameKey = (s) => String(s ?? '').normalize('NFKC').replace(/\
  * `2` 以上＝**歧義**（「富邦」「富邦銀行」今天就是這種）。
  * ⚠️ 刻意回**陣列**而不是「一家或 null」：把歧義壓成 null，呼叫端就分不出「沒這個寫法」與
  *    「兩家都叫這個」——而這兩件事的正確處置不同（前者可以退回樣式比對，後者不可以）。
+ * ⚠️ 它**只認名字與別名，不認代號**——`issuersNamed('taishin')` 是 0 筆。代號查表走 `issuerById`。
  * @param {unknown} text @returns {CardIssuer[]}
  */
 export function issuersNamed(text) {
@@ -194,42 +223,93 @@ export function issuersNamed(text) {
 }
 
 /**
+ * 代號查表——**身分的新入口**（2026-09-02）。
+ *
+ * ⚠️ **逐字相等，刻意不過 `issuerNameKey`**：代號是我們自己發出去的機器值，不是使用者打的字，
+ *    所以沒有「全形／空白／臺台」要抹平的問題。過了正規化反而會開一條新通道
+ *    （`'TAISHIN '` 或 `'ｔａｉｓｈｉｎ'` 憑空取得身分），而那正是本支要關掉的東西。
+ * ⚠️ **非字串一律當作沒有代號**（`typeof` 硬判，不 `String()`）：`issuerId` 從來不是使用者手打的欄位，
+ *    它只由表單從清單寫入 ⇒ 非字串代表資料是別的路徑塞進來的、不是我們發的代號。
+ *    ⚠️ 這與 `issuer` 那一欄的既有裁定（#520：「壞型別的答案＝它字串化之後的答案」）**刻意不同**，
+ *    因為兩欄的來源不同：`issuer` 是使用者打的字（字串化＝照他打的字面判，合理），
+ *    `issuerId` 是機器值（字串化＝替一個我們沒發過的東西編出身分，不合理）。這不是走鐘、是有理由的分岔。
+ * ⚠️ **查不到就是查不到，不會落回文字**——落回是呼叫端（`cardIssuerBank`）的事，而且它落回的是
+ *    「這張卡視同沒有代號」，不是「代號與文字兩把尺比一比」。同一張卡永遠只有一把尺。
+ * @param {unknown} id @returns {CardIssuer|null}
+ */
+export function issuerById(id) {
+  if (typeof id !== 'string' || id === '') return null;
+  return CARD_ISSUERS.find(o => o.id === id) || null;
+}
+
+/**
  * 卡片表單「發卡銀行 / 機構」下拉的選項。
  * 順序＝（未設定）→ 清單 → 其他（自行輸入）。「其他」擺最後：它是退路，不是預設。
+ * ⚠️ **選項的 `value` 是代號、不是名字**（2026-09-02）：下拉送回來的就是要存進 `card.issuerId` 的值，
+ *    中間不再有「名字 → 代號」的翻譯步驟（多一步翻譯＝多一個會走鐘的地方）。
+ *    顯示給人看的 `label` 才是名字。
  * @returns {{ value: string, label: string }[]}
  */
 export function issuerOptions() {
   return [
     { value: '', label: ISSUER_UNSET_LABEL },
-    ...CARD_ISSUERS.map(o => ({ value: o.name, label: o.name })),
+    ...CARD_ISSUERS.map(o => ({ value: o.id, label: o.name })),
     { value: ISSUER_OTHER, label: ISSUER_OTHER_LABEL },
   ];
 }
 
 /**
- * 這張卡現在的 `issuer`，在表單裡要**顯示成哪一個選項＋哪一段自訂文字**。
+ * 這張卡打開表單時，發卡行那兩欄要**顯示成什麼**（下拉挑哪一項＋自訂文字框填什麼）。
  *
- * ⚠️ **只有正規化後等於清單上的 `name` 才預選那一項**——`aka` 命中**刻意不預選**。
- *    理由：預選會讓使用者只是打開表單改個別的欄位按儲存，`issuer` 就從「台新」被靜靜改寫成
- *    「台新銀行」。這個 repo 有專門的前例（`public/modules/form-options.js` 檔頭：帳戶型別被靜靜
- *    換掉、50 萬負債變 50 萬資產），規矩是**不可靜靜改掉使用者資料**。
- *    所以既有的自由文字一律落到「其他」並**原字**填進文字框——看得到、改不改由使用者決定。
- *    （`aka` 仍然有用：它讓那些既有寫法在 `issuerBank` 那條路照樣認得出來，見本檔開頭。）
- * ⚠️ `name` 命中時值會被寫成清單上的正式寫法（例：「臺新銀行」→「台新銀行」）——那是同一家的
- *    同一個名字換個字形，而且要使用者按下儲存才會發生。
- * @param {unknown} issuer @returns {{ issuer: string, issuerOther: string }}
+ * ⚠️ 吃的是**卡片物件**（要 `issuerId` 與 `issuer` 兩欄），不是 `issuer` 字串。
+ *    傳字串進來會丟例外——這一支 2026-09-02 從 `issuerFormValues(issuer)` 改名而來，
+ *    改名是為了讓沒跟上的呼叫端**當場炸掉**而不是靜靜回一組空值（那會讓使用者按個儲存就把發卡行清空）。
+ *    留這道 `typeof` 是為了擋「新寫的呼叫端手滑傳 `c.issuer`」——改名擋不到那一種。
+ *
+ * 判準（由上而下，第一個命中就回）：
+ *   ①**代號查得到** ⇒ 預選那一項。這是有代號的卡唯一走的路，`issuer` 字串一個字都不看。
+ *   ②代號查不到（沒有／空／非字串／不認得的代號）⇒ **視同沒有代號**，照 #520 的字串判準走：
+ *     ・正規化後等於清單上的 `name` ⇒ 預選那一項。
+ *     ・其餘（別名、自訂文字）⇒ 落到「其他」並**原字**填進文字框。
+ *
+ * ⚠️ **`aka` 命中刻意不預選**（#520 起的規矩）：預選會讓使用者只是打開表單改個別的欄位按儲存，
+ *    `issuer` 就從「台新」被靜靜改寫成「台新銀行」。這個 repo 有專門的前例
+ *    （`public/modules/form-options.js` 檔頭：帳戶型別被靜靜換掉、50 萬負債變 50 萬資產），
+ *    規矩是**不可靜靜改掉使用者資料**。（`aka` 仍然有用：它讓那些既有寫法在 `issuerBank`
+ *    那條路照樣認得出來。）
+ * ⚠️ **不認得的代號會在儲存時被清掉**（第四種 round-trip，2026-09-02 新增）：它落到②，
+ *    使用者按儲存就寫成「這一項的代號」或「沒有代號」。`issuer` 顯示字串原樣保留，
+ *    被換掉的只有一個我們沒發過、也查不到東西的代號——留著它只會讓那張卡永遠判不出身分。
+ * @param {{ issuer?: unknown, issuerId?: unknown } | null | undefined} card
+ * @returns {{ issuerPick: string, issuerOther: string }}
  */
-export function issuerFormValues(issuer) {
-  const raw = String(issuer ?? '');
-  if (!raw.trim()) return { issuer: '', issuerOther: '' };
+export function issuerFormFields(card) {
+  if (typeof card === 'string') {
+    throw new TypeError('issuerFormFields 吃的是卡片物件（要 issuer 與 issuerId 兩欄），不是 issuer 字串');
+  }
+  const byId = issuerById(card?.issuerId);
+  if (byId) return { issuerPick: byId.id, issuerOther: '' };
+  const raw = String(card?.issuer ?? '');
+  if (!raw.trim()) return { issuerPick: '', issuerOther: '' };
   const key = issuerNameKey(raw);
   const listed = CARD_ISSUERS.find(o => issuerNameKey(o.name) === key);
-  return listed ? { issuer: listed.name, issuerOther: '' } : { issuer: ISSUER_OTHER, issuerOther: raw };
+  return listed ? { issuerPick: listed.id, issuerOther: '' } : { issuerPick: ISSUER_OTHER, issuerOther: raw };
 }
 
 /**
- * 表單送出時把兩個欄位合回一個 `card.issuer`。
- * 選了「其他」就用文字框的字；否則用選項的值（`''`＝未設定）。
+ * 表單送出時把兩個欄位合回**要存的兩欄**：`{ issuer, issuerId }`。
+ *
+ * ⚠️ 這一支 2026-09-02 從 `resolveIssuerInput` 改名、回傳從字串改成物件。**改名是刻意的**：
+ *    沒跟上的呼叫端會丟 `is not a function` 當場炸掉，而不是把一個物件塞進 `data.issuer`、
+ *    存成 `"[object Object]"`（那條路上是錢——發卡行決定帳單歸哪張卡）。
+ *
+ * 判準：
+ *   ・選了「其他」⇒ `issuer` 用文字框的字、`issuerId` 空（自訂機構不在清單上，沒有代號可發）。
+ *   ・選了清單上的某一項（`value` ＝代號）⇒ `issuer` 寫**清單上的正式名稱**、`issuerId` 寫該代號。
+ *   ・選了「（未設定）」⇒ 兩欄都空。
+ *   ・下拉送回一個**不認得的值**（正常操作走不到；`form-options.js` 保留清單外現值的機制、
+ *     或日後有人改壞選項才會發生）⇒ `issuer` 原樣保留那個字、`issuerId` 空——保留使用者看得到的字，
+ *     不憑空發一個代號。
  *
  * ⚠️ **自訂文字刻意不 `trim()`**（Codex #520 r1#1）：第一版無條件 trim，於是既有的
  *    `card.issuer = ' 某某會員俱樂部 '` 打開表單、**什麼都不改按儲存**就被存成去掉空白的版本
@@ -239,25 +319,34 @@ export function issuerFormValues(issuer) {
  * ⚠️ **本函式唯一的例外＝整串都是空白**：那視同「沒填」（回 `''`）。不這樣做的話卡片頁的
  *    `c.issuer || '未設定'` 會判成「有填」而印出一串看不見的空白。
  *
- * ## ⚠️ 誠實劃界：「原字保存」到底保證到哪裡（Codex #520 r2#3／r3#2／r4#1）
+ * ## ⚠️ 誠實劃界：「原字保存」到底保證到哪裡（Codex #520 r2#3／r3#2／r4#1，2026-09-02 補第四條）
  *
  * 我原本在這裡寫「這是這支唯一還會動到既有值的路徑」——**那句不準**。
  * ⚠️ **前提：`card.issuer` 本來就是字串。** 非字串的舊值（可經 CRUD 與備份匯入進來——
- *    `lib/schema.js` 那一格寫了為什麼刻意不加型別驗證）會在 `issuerFormValues` 被 `String()` 定型，
- *    使用者一按儲存就寫成 `"[object Object]"` 之類——那是**第四條**、而且是不可逆的。
+ *    `lib/schema.js` 那一格寫了為什麼刻意不加型別驗證）會在 `issuerFormFields` 被 `String()` 定型，
+ *    使用者一按儲存就寫成 `"[object Object]"` 之類——那是**第五條**、而且是不可逆的。
  *    本支**刻意不擋**（擋的代價是升級前有壞值的人整個寫不進去，理由見 `lib/schema.js`）。
- * 在 `issuer` 是字串的前提下，既有值會不會變要看它落在哪一格（三種都要按下儲存才會發生）：
+ * 在 `issuer` 是字串的前提下，既有值會不會變要看它落在哪一格（每一種都要按下儲存才會發生）：
  *   ・**自訂值／別名**（落到「其他」的那些）＝**原字保存**，一個字元都不動。
- *   ・**正規化後等於清單正式名稱**的（`issuerFormValues` 的 `name` 命中）＝存回**清單上的正式寫法**：
+ *   ・**正規化後等於清單正式名稱**的（`issuerFormFields` 的 `name` 命中）＝存回**清單上的正式寫法**：
  *     「臺新銀行」→「台新銀行」、「台 新 銀 行」→「台新銀行」、「富邦銀行(香港)」→「富邦銀行（香港）」。
  *     那是同一家的同一個名字換個字形（`issuerNameKey` 判定），**刻意保留**——清單的價值就是收斂寫法。
+ *     ⚠️ 2026-09-02 起這一格**同時補上代號**（`issuerId`）——那是本支的升級路徑：既有的
+ *     「台新銀行」卡打開按儲存就從此走代號那條路。身分不變（本來就判成台新），只是不再靠文字算。
  *   ・**整串空白** ＝ 清成 `''`（本函式這一格）。
- * 三條都由 `test/card-issuers.test.js` 的 round-trip 題釘住。
- * @param {unknown} selected @param {unknown} custom @returns {string}
+ *   ・**不認得的代號** ＝ 代號清成 `''`（`issuer` 顯示字串不動），見 `issuerFormFields`。
+ * 每一條都由 `test/card-issuers.test.js` 的 round-trip 題釘住。
+ * @param {unknown} selected 下拉的值（代號／`''`／`ISSUER_OTHER`）
+ * @param {unknown} custom 自訂文字框
+ * @returns {{ issuer: string, issuerId: string }}
  */
-export function resolveIssuerInput(selected, custom) {
+export function resolveIssuerFields(selected, custom) {
   const sel = String(selected ?? '');
-  if (sel !== ISSUER_OTHER) return sel;
-  const text = String(custom ?? '');
-  return text.trim() === '' ? '' : text;
+  if (sel === ISSUER_OTHER) {
+    const text = String(custom ?? '');
+    return { issuer: text.trim() === '' ? '' : text, issuerId: '' };
+  }
+  if (sel === '') return { issuer: '', issuerId: '' };
+  const listed = issuerById(sel);
+  return listed ? { issuer: listed.name, issuerId: listed.id } : { issuer: sel, issuerId: '' };
 }

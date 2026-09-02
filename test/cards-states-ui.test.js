@@ -68,9 +68,11 @@ function assertStateWiring(source) {
   assert.match(source, /cardNoticeHtml\(notice\)/);
   assert.match(source, /function rerenderCardsAfterSave\(seq, message\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;/);
   assert.match(source, /querySelectorAll\('\[data-add-type\]'\)[\s\S]*openCardForm\(null, \{ defaultType: b\.dataset\.addType \}\)/);
-  // 發卡行清單化（2026-08-28）之後這一行多了 `...issuerFormValues(...)`：兩條路都要過它，
+  // 發卡行清單化（2026-08-28）之後這一行多了 `...issuerFormFields(...)`：兩條路都要過它，
   // 否則編輯既有卡片時下拉會落到第一項、按儲存就把發卡行靜靜改掉（form-options.js 檔頭那個坑）。
-  assert.match(source, /values: c \? \{ \.\.\.c, \.\.\.issuerFormValues\(c\.issuer\), expiry:[^\n]+\} : \{ type: defaultType, \.\.\.issuerFormValues\(''\) \}/);
+  // ⚠️ 2026-09-02 起餵的是**整張卡**（`issuerFormFields(c)`）不是 `c.issuer`——機構代號在卡片物件上，
+  //    只餵字串會讓有代號的卡在表單裡退回文字判準、按儲存就把代號洗掉。
+  assert.match(source, /values: c \? \{ \.\.\.c, \.\.\.issuerFormFields\(c\), expiry:[^\n]+\} : \{ type: defaultType, \.\.\.issuerFormFields\(null\) \}/);
   assert.match(source, /await api\('\/cards\/' \+ c\.id, \{ method: 'DELETE' \}\);\s*cardNotice = '卡片已刪除';/);
   assert.match(source, /const message = c \? '卡片資料已更新' : `\$\{TYPE_LABEL\[data\.type\] \|\| '卡片'\}已新增`;/);
 }
