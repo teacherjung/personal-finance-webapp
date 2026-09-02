@@ -344,15 +344,47 @@ test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真�
 
 // ───────────────────────────────── 接線與自報 ─────────────────────────────────
 
-test('⭐ 地圖自己要找得到：三份正本都要指得回它', () => {
+/**
+ * 去掉 HTML 註解與 ``` 圍起來的區塊之後的內文。
+ *
+ * ⚠️ 「指路」要在**讀者看得見、點得到**的地方。原本只驗 `includes('COLLAB-MAP.md')`，
+ * `Grok #548 掃` 指出那是弱斷言，我逐發實測屬實——下列全部仍綠：
+ * 把整則引言換成 `<!-- COLLAB-MAP.md -->`、埋進檔尾的 code fence、
+ * 改成純文字的反面句「不要去看 COLLAB-MAP.md，那份已經廢棄」。
+ * ⇒ 改成要求**可見的 markdown 連結**。fence 的判斷是逐行看 ``` 開關，
+ *    不是真的 markdown 解析器（同本檔既有的射程劃界）。
+ * @param {string} text
+ */
+function visibleText(text) {
+  /** @type {string[]} */
+  const out = [];
+  let inFence = false;
+  for (const line of text.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+    if (/^\s{0,3}```/.test(line)) { inFence = !inFence; continue; }
+    if (!inFence) out.push(line);
+  }
+  return out.join('\n');
+}
+
+test('⭐ 地圖自己要找得到：三份正本都要用看得見的連結指得回它，並帶著「不是正本」那句劃界', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
+  //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到這三份」與「這三份要指回地圖」
+  //    的開關——**一個開關關掉兩張網**。有人把某一份從 CANON 拿掉，兩題會一起失去那份的覆蓋而照樣全綠。
+  //    這裡不為此加機制（`CANON` 沒有獨立的真相來源可反查），照實記在這裡。
   for (const from of CANON) {
-    assert.ok(read(from).includes(MAP),
-      `「${from}」沒有提到 ${MAP}。\n`
+    const visible = visibleText(read(from));
+    assert.ok(visible.includes(`](${MAP})`),
+      `「${from}」沒有用**看得見的 markdown 連結**指回 ${MAP}。\n`
       + '⚠️ 沒有人指路的地圖等於不存在。三份正本各自是不同讀者的入口\n'
       + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人），\n'
-      + '   少一個入口，那群讀者就找不到它。');
+      + '   少一個入口，那群讀者就找不到它。\n'
+      + '⚠️ 只在 HTML 註解裡、只在 code fence 裡、或只寫檔名不做成連結，都不算——那是讀者點不到的。');
+    assert.ok(visible.includes('不是正本'),
+      `「${from}」指回 ${MAP} 時，沒有寫明它**不是正本**。\n`
+      + '⚠️ 這張表是路由表，讀者若把它當權威索引，就會拿一份刻意不完整的摘要去代替正本。\n'
+      + '⚠️ 誠實劃界：這只鎖「那四個字還在」，**鎖不住整句話的意思**——\n'
+      + '   把連結留著、說明改寫成別的意思，這一題照樣綠。');
   }
 });
 
