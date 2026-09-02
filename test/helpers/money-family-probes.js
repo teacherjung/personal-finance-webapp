@@ -179,7 +179,9 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 姿態閘：已宣告會碰錢的連接器改成**白名單制**——名單外一律擋，不管工具叫什麼。
  * 這關掉的是「靠名字猜」永遠關不掉的那一類：券商最常見的 `market_order`／`limit_order`
  * 這種單側命名（v5 的動詞×名詞文法接不到）、以及任何還沒見過的新工具名。
- * ⚠️ 名單是 **32 個精確的工具身分**，比對前**不做任何正規化**（Codex #540 r1 H2：
+ * ⚠️ 名單是**一組精確的工具身分**（**這裡刻意不寫幾個**——寫死的數字自己會漂；
+ * 考題用 python AST 取出指令裡 `ALLOW` 的字面值、要求它**恰被綁定一次且是純字串 tuple**，
+ * 再與下面的清單比對集合相等），比對前**不做任何正規化**（Codex #540 r1 H2：
  * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
  * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
@@ -195,6 +197,17 @@ export const MONEY_SERVER_MULTISEG_DENY = [
   ['mcp__x__deda1d5d-1ccc-4551-9617-156b9658d236__buy', '單獨動詞＋多段前綴'],
 ];
 export const EXPECTED_MONEY_SERVER_MULTISEG_DENY = 3;
+
+/**
+ * 多段前綴的**反向對照組**（Codex #540 r4 M2）：只有「多段前綴要擋」的探針時，
+ * 把實作退化成「UUID 不在第一段就一律 deny」，三支擋的探針與標準前綴的放行題都仍全綠。
+ * 這一批鎖住那個副作用——多段前綴下的名單內工具必須照常放行。
+ */
+export const MONEY_SERVER_MULTISEG_ALLOW = [
+  ['mcp__prefix__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_balances', 'UUID 在第二段＋名單內唯讀'],
+  ['mcp__a__deda1d5d-1ccc-4551-9617-156b9658d236__create_alert', 'UUID 在第二段＋名單內提醒'],
+];
+export const EXPECTED_MONEY_SERVER_MULTISEG_ALLOW = 2;
 export const MONEY_SERVER = 'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__';
 
 /** 名單外＝一律擋。含 v5 實測會放行的真實券商命名、沒見過的新名、以及同形碰撞。 */

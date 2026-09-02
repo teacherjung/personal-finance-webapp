@@ -85,6 +85,7 @@ import {
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
+  MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
@@ -259,6 +260,11 @@ test('v6 姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一�
   assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
   for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
     assert.ok(entriesBlocking(settings, name).length >= 1, `多段前綴沒被擋：${why}`);
+  }
+  // r4 M2 的反向對照：多段前綴下的名單內工具不可被誤攔。
+  assert.equal(MONEY_SERVER_MULTISEG_ALLOW.length, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_ALLOW) {
+    assert.equal(entriesBlocking(settings, name).length, 0, `多段前綴＋名單內被誤攔：${why}`);
   }
 });
 

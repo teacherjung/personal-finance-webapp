@@ -57,6 +57,7 @@ import {
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
   MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
+  MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -165,18 +166,31 @@ test('v6 姿態閘：已宣告的動錢連接器採白名單制（名單外一�
 });
 
 
-test('v6 姿態閘：白名單是精確集合（指令裡的 ALLOW 與探針逐項相等，多一個少一個都紅）', () => {
-  // Grok #540 掃第 2 條：只驗「這些擋、那些放」時，指令裡的 ALLOW 可以是探針的**超集**——
-  // 少了會紅、多了仍綠，於是「32 個精確身分」這句話機器並沒有在守。改成集合相等。
-  const m = codexHook.command.match(/ALLOW = \(([\s\S]*?)\)\n/);
-  assert.ok(m, '在 hook 指令裡找不到 ALLOW 清單——白名單的形狀變了，這題要跟著改');
-  const inCommand = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-  assert.deepEqual([...inCommand].sort(), [...MONEY_SERVER_ALLOW].sort(),
+test('v6 姿態閘：白名單是精確集合（AST 取值：恰一次字面綁定，且與探針集合相等）', () => {
+  // Grok #540 掃第 2 條前半：只驗「這些擋、那些放」時，指令裡的 ALLOW 可以是探針的超集。
+  // Codex #540 r4 M1：改用正規式抽第一段 tuple 仍會假綠——在後面再綁一次 ALLOW
+  //   （第二個 Assign／AugAssign／迴圈綁定）就繞過去了。改用 python AST：
+  //   要求 ALLOW **恰被綁定一次、且是純字串字面 tuple**，任何非字面寫法一律轉紅。
+  const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
+  assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
+  const out = execFileSync('python3', [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
+    { input: m[1], encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' });
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.error, undefined, `白名單的形狀不合格：${parsed.error}`);
+  assert.deepEqual([...parsed.items].sort(), [...MONEY_SERVER_ALLOW].sort(),
     '指令裡的白名單與探針清單不是同一個集合——多列＝悄悄放行，少列＝誤攔');
 });
 
+test('v6 姿態閘：多段前綴下的名單內工具必須照常放行（反向對照組）', () => {
+  // r4 M2：只有「多段前綴要擋」的探針時，把實作退化成「UUID 不在第一段就一律 deny」不會紅。
+  assert.equal(MONEY_SERVER_MULTISEG_ALLOW.length, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_ALLOW) {
+    assertPasses(codexHook.command, name, `多段前綴＋名單內：${why}`);
+  }
+});
+
 test('v6 姿態閘：雙保險真的存在（白名單誤放建單工具時，家族網仍擋得住）', () => {
-  // Grok #540 掃第 2 條後半：對現行 32 個名字，「名單內再走家族網」是空轉的
+  // Grok #540 掃第 3 條（雙保險那半）：對現行 32 個名字，「名單內再走家族網」是空轉的
   // （那些名字家族網本來就不擋），所以原本的題面證明不了雙保險。
   // 這裡直接構造「ALLOW 誤含建單工具」的變體指令來驗——這才是雙保險唯一會派上用場的情境。
   const bad = codexHook.command.replace('"provide_customer_feedback",',
