@@ -35,6 +35,8 @@ const { parseWithRecipe, recipeReproduces, RECIPE_FORMAT_VERSION } = await impor
 const { normalizeAiBank, aiAnswersAgree } = await import('../lib/ai-parse.js');
 const { previewBankTxForDb, importBankTxToDb, assertBankReconciled, previewBankStatement } = await import('../lib/services/bank-import.js');
 
+const { cpuMs } = await import('./helpers/cpu-ms.js');
+
 const L = (/** @type {number} */ y, /** @type {any[]} */ pairs) => ({ y, cells: pairs.map((p) => (p.length === 3 ? { x: p[0], w: p[1], s: p[2] } : { x: p[0], s: p[1] })) });
 const MULTI = '900300****363';   // 合成：同一個遮罩帳號同時掛 JPY 與 USD（真帳單就是這個形狀）
 const SOLO = '900100****3301';
@@ -501,16 +503,12 @@ test('★300 筆 note() 與一次 finalize() 都在數量級內（Codex #517 r12
   const keys = (/** @type {number} */ n) => Array.from({ length: n }, (_, i) => `9001${String(i).padStart(4, '0')}****${String(i).padStart(4, '0')}`);
   // ★把兩段時間**分開量**：note() 那段必須是線性的（每筆重算的壞法會讓它變成整個建表的成本）
   const t = makeCurrencyTable();
-  const t0 = Date.now();
-  keys(300).forEach((k, i) => t.note(k, i % 2 ? 'TWD' : 'USD'));
-  const noteMs = Date.now() - t0;
-  const t1 = Date.now();
-  t.finalize();
-  const finalizeMs = Date.now() - t1;
+  const noteMs = cpuMs(() => keys(300).forEach((k, i) => t.note(k, i % 2 ? 'TWD' : 'USD')));
+  const finalizeMs = cpuMs(() => t.finalize());
   // 門檻刻意寬鬆（不同機器差很多）：這題守的是**數量級**，不是效能調校。
   //   每筆重算的壞法在本機是 8.38 秒、且那 8 秒會落在 note() 那一段。
-  assert.ok(noteMs < 500, `★300 筆 note() 在數量級內（實測 ${noteMs}ms；每筆重算的壞法會把 8 秒落在這一段）`);
-  assert.ok(finalizeMs < 2000, `★finalize() 的 Θ(n²) 在數量級內（實測 ${finalizeMs}ms）`);
+  assert.ok(noteMs < 500, `★300 筆 note() 在數量級內（實測 CPU ${noteMs.toFixed(0)}ms；每筆重算的壞法會把 8 秒落在這一段）`);
+  assert.ok(finalizeMs < 2000, `★finalize() 的 Θ(n²) 在數量級內（實測 CPU ${finalizeMs.toFixed(0)}ms）`);
 });
 
 test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／**單鍵長度**（r13：500 個 1KB 帳號卡 14.3 秒；r14：兩個 4,702 字元、合計 9,404<10,000 的合法鍵卡 6 秒後丟 RangeError＝連 fail-closed 都沒做到）', () => {
@@ -543,10 +541,9 @@ test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／*
   assert.equal(k1.length + k2.length, 9404, '總長 9,404 < 10,000＝總字元那道擋不住它（這正是 r14 的重點）');
   assert.ok([k1, k2].every((k) => /^\d+\*{2,}\d+$/.test(k)), '★素材是**合法**遮罩帳號（過得了 isMaskedAccount，不是靠壞資料擋掉的）');
   long.note(k1, 'TWD'); long.note(k2, 'USD');
-  const t0 = Date.now();
-  assert.throws(() => long.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
-    '★單鍵超長＝拒收，而且是**帶 code 的 fail-closed**（原本是 RangeError 崩潰＝沒有 code/status）');
-  assert.ok(Date.now() - t0 < 500, '★而且要**立刻**擋下（原本卡 6 秒才崩）');
+  const rejectMs = cpuMs(() => assert.throws(() => long.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
+    '★單鍵超長＝拒收，而且是**帶 code 的 fail-closed**（原本是 RangeError 崩潰＝沒有 code/status）'));
+  assert.ok(rejectMs < 500, `★而且要**立刻**擋下（實測 CPU ${rejectMs.toFixed(0)}ms；原本卡 6 秒才崩）`);
 });
 
 test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #517 r15：我上一版的「最壞情形」素材是假的——`i % 40` 讓 156 列其實只有 40 個不同的鍵；換成真正不同的鍵之後 finalize 4,106ms＋hasMixedTwd 1,009ms＝5,115ms 照樣過關）', () => {
@@ -560,18 +557,15 @@ test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #
   assert.equal(new Set(Array.from({ length: 156 }, (_, i) => key(i))).size, 156, '★素材真的是 156 個不同的鍵（上一版只有 40 個＝量錯了東西）');
   assert.ok(Array.from({ length: 156 }, (_, i) => key(i)).every((k) => k.length === MAX_ACCOUNT_KEY_LEN && /^\d+\*{2,}\d+$/.test(k)), '★而且都是**合法**遮罩、都剛好 64 字元（三道長度上限全都擋不住它）');
   // ★關鍵：這組素材通過所有長度／數量上限，只有計算量記帳擋得住
-  const t0 = Date.now();
-  assert.throws(() => build(156).finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
-    '★超出計算量預算＝fail-closed 成同一個對外碼（不是沒有 code 的崩潰）');
-  const ms = Date.now() - t0;
-  assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停（實測 ${ms}ms；沒有記帳的版本是 5,115ms）`);
+  const ms = cpuMs(() => assert.throws(() => build(156).finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
+    '★超出計算量預算＝fail-closed 成同一個對外碼（不是沒有 code 的崩潰）'));
+  assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停（實測 CPU ${ms.toFixed(0)}ms；沒有記帳的版本是 5,115ms）`);
   assert.equal(MAX_COMPARE_STATES, 2_000_000, '預算是寫死的常數（依實測選，見 bank-statement.js 的說明）');
   // ★真實規模完全不受影響
   const real = makeCurrencyTable();
   for (let i = 0; i < 20; i++) real.note(`9001${String(i).padStart(2, '0')}****${String(i).padStart(4, '0')}`, i % 3 ? 'TWD' : 'USD');
-  const t1 = Date.now();
-  assert.doesNotThrow(() => real.finalize(), '★真實規模（20 個帳號 × 14 字元）照常通過');
-  assert.ok(Date.now() - t1 < 200, '★而且是毫秒等級');
+  const realMs = cpuMs(() => assert.doesNotThrow(() => real.finalize(), '★真實規模（20 個帳號 × 14 字元）照常通過'));
+  assert.ok(realMs < 200, `★而且是毫秒等級（實測 CPU ${realMs.toFixed(0)}ms）`);
 });
 
 test('★等價印法在三條路各自的實際行為（行為驗證，不是掃原始碼有沒有 finalize 這幾個字）：模板與 AI 塌成哨兵、配方**先**塌成哨兵、之後明細段的身分重疊守衛才拒解', () => {
