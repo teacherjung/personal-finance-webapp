@@ -344,21 +344,19 @@ test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真�
 
 // ───────────────────────────────── 接線與自報 ─────────────────────────────────
 
-/**
- * `CANON` 各份文件那**一行**指路的**指定形狀**（長同一個樣子，人才找得到、才好比對）。
- */
+/** `CANON` 各份文件那一行的**指定形狀**。 */
 const POINTER_LINE = /^(?:> )?\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-MAP\.md\)\*\*（.+）。$/;
 
-/** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
+/** 那一行必須含有的詞。 */
 const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
 
-test('⭐ 指路行的判準自己要先會動：不合形狀的寫法都要被擋掉', () => {
+test('⭐ POINTER_LINE／POINTER_WORDS 的對照斷言（合法與不合法各一組）', () => {
   const good = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它**只指路、不是正本、無規則效力**）。';
   assert.ok(POINTER_LINE.test(good) && POINTER_LINE.test(`> ${good}`), '合法的指路行（含引言版）竟然比對不到。');
   assert.ok(POINTER_WORDS.every((w) => good.includes(w)), 'fixture 自己就少了免責詞。');
 
   const bad = {
-    '可點的反面句': '不要去看 [COLLAB-MAP.md](COLLAB-MAP.md)，它不是正本，已經廢棄。',
+    '含連結但不合形狀': '不要去看 [COLLAB-MAP.md](COLLAB-MAP.md)，它不是正本，已經廢棄。',
     '被單行註解包住': `<!-- ${good} -->`,
     '註解夾在連結中間': '**規矩住在哪＝[COLLAB-MAP.md]<!-- x -->(COLLAB-MAP.md)**（路由表）。',
     '四個空白縮排': `    ${good}`,
@@ -373,7 +371,7 @@ test('⭐ 指路行的判準自己要先會動：不合形狀的寫法都要被�
     '缺免責詞的那一行要靠 POINTER_WORDS 擋，不是靠形狀。');
 });
 
-test('⭐ 地圖自己要找得到：CANON 的每一份各要有一行指定形狀的指路', () => {
+test('⭐ CANON 各份：恰一行符合 POINTER_LINE、索引小於首個 ^## 、且含 POINTER_WORDS', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
   //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到它們」與「它們要指回地圖」
@@ -404,29 +402,23 @@ test('⭐ 地圖自己要找得到：CANON 的每一份各要有一行指定形�
     const lines = read(from).split('\n');
     const hits = lines.filter((l) => POINTER_LINE.test(l)).length;
     assert.equal(hits, 1,
-      `「${from}」的指路行有 ${hits} 行，必須剛好一行。\n`
-      + '⚠️ 沒有人指路的地圖等於不存在。CANON 各份是不同讀者的入口\n'
-      + '   （CLAUDE.md＝Claude 每個 session 自動載入、AGENTS.md＝Codex、REVIEW-AND-MERGE.md＝正在審查或合併的人）。');
+      `「${from}」符合 POINTER_LINE 的行有 ${hits} 行，必須剛好一行。\n`
+      + '⚠️ 合法形狀＝`POINTER_LINE`（見同檔定義）。');
 
     const at = lines.findIndex((l) => POINTER_LINE.test(l));
 
-    // 指路要在**前言**（第一個字面 `## ` 標題之前）——這是**位置**，不是可見性。
-    // ⚠️ 這一條**不是**渲染問題——搬到檔尾照樣渲染成可點的連結，是**找不找得到**的問題。
-    //    `^## ` 的判斷精確、不是近似，所以留著。找不到任何 `## ` 就 fail-closed：
-    //    邊界無從界定時不可以退成「整份都算前言」（那等於這一格沒在檢查）。
+    // 索引要小於該檔第一個 `^## ` 的索引。找不到任何 `^## ` 就 fail-closed。
     const firstH2 = lines.findIndex((l) => /^## /.test(l));
     // ⚠️ 兩種死因要分開報（`Codex #548 r10`）：原本一句 `firstH2 > 0` 把「完全沒有 `## `」
     //    和「`## ` 就在第 1 行」混成同一則訊息，後者會被誤報成「找不到任何 `## ` 標題」＝與事實相反。
     assert.notEqual(firstH2, -1,
-      `「${from}」找不到任何 \`## \` 標題，「前言」的邊界無從界定。這裡 fail-closed。`);
+      `「${from}」沒有任何 \`^## \` 行，索引比較無從進行。fail-closed。`);
     assert.ok(at < firstH2,
-      `「${from}」的指路行不在前言：它在第 ${at + 1} 行，而第一個 \`## \` 標題在第 ${firstH2 + 1} 行。`);
+      `「${from}」符合 POINTER_LINE 的行在第 ${at + 1} 行，不小於第一個 \`^## \` 的第 ${firstH2 + 1} 行。`);
 
     for (const word of POINTER_WORDS) {
       assert.ok(lines[at].includes(word),
-        `「${from}」的指路行沒有寫明「${word}」。\n`
-        + '⚠️ 讀者若把路由表當權威索引，就會拿一份刻意不完整的摘要去代替正本。\n'
-        + '⚠️ 誠實劃界：這只鎖那幾個詞出現在同一行，**鎖不住整句話的意思**。');
+        `「${from}」符合 POINTER_LINE 的那一行不含「${word}」（POINTER_WORDS 要求全部出現在同一行）。`);
     }
 
   }
