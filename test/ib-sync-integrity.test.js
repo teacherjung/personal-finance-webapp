@@ -111,7 +111,7 @@ test('IB 現金流｜fxRateToBase 是 0 或負數 → 同缺匯率走階梯，�
     assert.equal(inc?.skippedNoFx, 1,
       `fxRateToBase=${bad} 應落「缺匯率」計數——乘 0 歸零／乘負變號都比「少一筆」更難察覺`);
   }
-  // 反面（防「一律 skip」的過度修法）：壞 fx 只是失去第一格，階梯其餘格子要照走。
+  // 反面（防「一律 skip」的過度修法）：壞 fx 只是失去「報表 fxRateToBase」這個來源，USD 直通與設定估算仍照走。
   // ①壞 fx＋幣別是 USD ⇒ 掉到「USD 直通」那格，金額照原值計入。
   const usd = parseStatement(flexWithCash([
     { type: 'Dividends', currency: 'USD', amount: '100', fxRateToBase: '0' },
@@ -157,7 +157,7 @@ test('IB 成交｜fxRateToBase 是 0 或負數 → 匯率欄正規化成 null，
     assert.equal(t.pnlBase, null,
       `fxRateToBase=${bads[i]}：pnlBase 要 null（前端歸 missing 並標註），不可是 0／負值`);
     assert.equal(t.fxRateToBase, null,
-      '壞匯率不可原樣入庫——前端階梯第二格讀它，要看到「缺」而不是 0');
+      '壞匯率不可原樣入庫——前端 tradePnlBase() 的 fxRateToBase 分支讀它，要看到「缺」而不是 0');
   }
   // 反面：合法匯率照算；USD 列失去 fx 後走直通（pnlBase＝原損益）。
   const ok = parseStatement(flexWithTrades([
