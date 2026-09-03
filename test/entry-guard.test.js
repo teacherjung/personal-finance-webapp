@@ -283,3 +283,18 @@ for (const { 名稱, code } of LEGIT) {
       + '⚠️ 誤擋比漏抓更貴——它會逼人把護欄整個關掉。');
   });
 }
+
+// 第二輪稽核第二批 2B：檔頭「刻意不 try/catch」那句的釘子（2026-09-02 稽核：包上 try/catch 回 false 沒有任何一題會紅）。
+test('2B｜lib/is-main.js：進入點路徑解析不了（不存在）→ 大聲炸、非零退出，不可靜靜回 false', () => {
+  withSymlinkedTemp((dir) => {
+    const script = join(dir, 'probe.mjs');
+    writeFileSync(script,
+      `import { isMainModule } from ${JSON.stringify(moduleUrl('lib/is-main.js'))};\n`
+      + `process.argv[1] = ${JSON.stringify(join(dir, 'ghost-does-not-exist.mjs'))};\n`
+      + `console.log(isMainModule(import.meta.url) ? 'MAIN' : 'NOT-MAIN');\n`);
+    const r = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+    assert.notEqual(r.status, 0, `解析不了進入點卻退出 0（stdout=${r.stdout.trim()}）＝靜靜不執行，正是本檔要根治的病`);
+    assert.match(r.stderr, /ENOENT/, '要看得到原因（堆疊），不是吞掉');
+    assert.ok(!/MAIN/.test(r.stdout), '不可以印出任何判斷結果（MAIN／NOT-MAIN 都不行）');
+  });
+});

@@ -892,3 +892,26 @@ test('帳單末四碼｜「末四碼」那條**更優先**的規則同樣不可�
   assert.equal(extractLastFour('卡號末4碼：5678'), '5678', '「末4碼：5678」照抓');
   assert.equal(extractLastFour('信用卡末四碼 1234 帳單'), '1234', '後面接非數字文字不受影響');
 });
+
+// ============================================================================
+// 第二輪稽核第二批 2B：server.js 的 `app.set('trust proxy', 1)`（2026-09-02 稽核：整行拿掉沒有任何一題會紅）。
+// 沒掛的話 req.ip 永遠是代理的 IP ⇒「每 IP 限制」退化成「全站共用一份額度」，正當使用者被一起擋。
+// ============================================================================
+
+test('2B｜HOSTED 掛了 trust proxy=1：兩個不同的 X-Forwarded-For 各自一份登入額度（漏掛＝全站共用一份）', async () => {
+  assert.equal(app.get('trust proxy'), 1, 'HOSTED 必須「只信任一層代理」——不無條件相信整串 X-Forwarded-For');
+  resetRateLimitsForTest();
+  try {
+    const { RATE_LIMITS } = await import('../server.js');
+    const login = RATE_LIMITS.find(r => r.probe.path === '/api/auth/login');
+    assert.ok(login, '登入類限速不在表上');
+    const hit = (/** @type {string} */ ip) => fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, 'X-Forwarded-For': ip }, body: '{}',
+    });
+    let saw429 = false;
+    for (let i = 0; i < login.max + 5 && !saw429; i++) saw429 = (await hit('203.0.113.1')).status === 429;
+    assert.ok(saw429, '對照：A 這個 IP 打滿額度要被擋（否則下面 B 通過什麼都不證明）');
+    assert.notEqual((await hit('203.0.113.2')).status, 429,
+      'B 是另一個客戶端 IP：A 打滿不可以吃掉 B 的額度（會吃掉＝req.ip 讀到的是代理 IP＝trust proxy 沒掛）');
+  } finally { resetRateLimitsForTest(); }
+});
