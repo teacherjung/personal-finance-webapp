@@ -563,8 +563,9 @@ test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #
   // ★關鍵：這組素材通過所有長度／數量上限，只有計算量記帳擋得住
   const ms = cpuMs(() => assert.throws(() => build(156).finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
     '★超出計算量預算＝fail-closed 成同一個對外碼（不是沒有 code 的崩潰）'));
-  // ⚠️ 這道時間斷言是第二道：拿掉預算會先被上面的 assert.throws 抓到（Codex #552 r1 實測，約 2.9 秒後報未拒收）；
-  //   它守的是「有拒收、但拒收前先算了很久」。5,115ms 是牆上時鐘的歷史值；量的是 CPU 工作量、不是牆上延遲。
+  // ⚠️ 拿掉預算＝`finalize()` 不再丟 `bank_too_many_accounts`，會先被 `assert.throws(… e.code === 'bank_too_many_accounts')` 那句
+  //   行為斷言抓到（Codex #552 r1 實測，約 2.9 秒後報未拒收）；這句時間斷言守的是「有拒收、但拒收前先算了很久」。
+  //   5,115ms 是牆上時鐘的歷史值；量的是 CPU 工作量、不是牆上延遲。
   assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停、CPU 工作量封頂（實測 CPU ${ms.toFixed(0)}ms；沒有記帳的版本牆上時鐘 5,115ms）`);
   assert.equal(MAX_COMPARE_STATES, 2_000_000, '預算是寫死的常數（依實測選，見 bank-statement.js 的說明）');
   // ★真實規模完全不受影響
