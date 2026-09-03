@@ -1,7 +1,7 @@
 // @ts-check
 import { api, view, byId, wan, money, esc, daysUntil, openForm, openInfo, confirmDelete, toast, currentRouteSeq } from '../app.js';
 import { icon } from './icons.js';
-import { issuerOptions, issuerFormValues, resolveIssuerInput, ISSUER_OTHER } from './card-issuers.js';
+import { issuerOptions, issuerFormFields, resolveIssuerFields, cardCode, cardIssuerText, issuersNamed, ISSUER_OTHER } from './card-issuers.js';
 
 const NETWORKS = ['VISA', 'Mastercard', 'JCB', '銀聯', '美國運通', '—'];
 // 就地解釋（專案鐵則：懂了才不會把正常行為當成程式算錯的概念，一律在網頁上白話講，不可只寫在文件裡）。
@@ -24,13 +24,35 @@ const ISSUER_INFO_HTML = `
   <p><strong>清單裡沒有你的銀行怎麼辦？</strong>選最下面的「其他（自行輸入）」再自己打，跟以前一樣。
   自己打的名字，程式會先用舊的方式盡量認（像「台新國際商業銀行股份有限公司」還是認得出台新）；
   認不出來就會請你自己選是哪一張卡，多按一下而已。</p>
-  <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>發卡行原本是文字時（正常操作存進去的都是），只有三種情況：
+  <p><strong>挑清單還多做了一件事：把「是哪一家」記成一個固定編號。</strong>
+  以前程式是拿你填的那串字去認銀行，所以字改了、寫法不一樣，認出來的結果就可能跟著變。
+  從清單挑過之後，這張卡記住的是一個<strong>不會變的編號</strong>，名字主要拿來顯示給你看。
+  好處是：挑過之後，程式判斷「這張卡是哪一家」時，只會得到<strong>你挑的那一家</strong>，
+  或是<strong>認不出來、請你選</strong>——<strong>不會把它當成別家銀行</strong>。
+  就算以後清單上的寫法調整了，最壞也只是變成「認不出來、請你選一次」（那時這張卡上會出現提示請你挑一次）。
+  ⚠️ 這句話保證的是<strong>「不會認錯是哪一家銀行」</strong>，不是「帳單一定不會記錯卡」——
+  歸到哪一張卡還要看末四碼等其他線索，那是另一件事。</p>
+  <p>⚠️ <strong>這件事目前只做到信用卡</strong>。簽帳金融卡（刷卡直接從帳戶扣的那種）走的是另一條路，
+  那條路現在還是<strong>只看你填的名字</strong>——所以簽帳金融卡請不要隨意改發卡行的字，
+  改了下次匯入銀行帳單可能會多長出一張同末四碼的卡、消費紀錄從此分成兩半。
+  這一點以前就是這樣，這次沒有一起修（要修得動到另一套比對規則，會影響帳戶餘額，得另外處理）。</p>
+  <p><strong>那些還沒挑過的舊卡呢？</strong>照舊用文字認，<strong>行為跟以前完全一樣</strong>——
+  升級當下庫裡的卡不會因為這次改動突然變成要你手選。
+  （唯一的例外是「發卡行和編號對不起來」的卡，那種只會從備份或程式介面匯進來，
+  而且那時候本來就該請你確認一次；那張卡上會出現提示。）
+  只是那些卡片上會多一小塊提示，請你打開挑一次；挑完提示就消失。
+  提示只在「清單裡真的有你那一家」時才出現——自己打的機構名（像某某會員俱樂部）不會被一直念。</p>
+  <p><strong>本來就填好的卡片，打開表單、什麼都不改就儲存，會怎樣？</strong>發卡行原本是文字時（正常操作存進去的都是），只有這幾種情況：
   自己打的名字<strong>原字留著</strong>；名字剛好是清單上同一家的另一種寫法
-  （像「臺新銀行」之於「台新銀行」）會被寫成清單上的那一種——同一家，換個字形；
-  整格都是空白會被清成「未設定」。除這三種之外不會動你的字。</p>
+  （像「臺新銀行」之於「台新銀行」）會被寫成清單上的那一種——同一家，換個字形，<strong>並且順便補上那個編號</strong>；
+  整格都是空白會被清成「未設定」。除這幾種之外不會動你的字。</p>
   <p>另外有一種舊寫法要請你動一下：發卡行只填「<strong>富邦</strong>」兩個字的卡。
   以前程式會當它是台北富邦，現在改成不猜了（因為它也可能是香港富邦），所以那張卡的帳單會變成要你自己選。
-  打開那張卡、從清單挑「台北富邦銀行」或「富邦銀行（香港）」，就恢復自動對上。</p>
+  打開那張卡、從清單挑「台北富邦銀行」或「富邦銀行（香港）」，程式就<strong>分得出這是哪一家</strong>了。
+  （挑<strong>台北富邦銀行</strong>：台北富邦的帳單就能自動對上這張卡。
+  挑<strong>富邦銀行（香港）</strong>：程式從此知道「台北富邦的帳單不是它的」，所以不會誤記到它上面；
+  至於香港富邦自己寄來的帳單，程式目前<strong>讀不懂那個格式</strong>——那種情況會停下來告訴你讀不動，
+  不會跳出選卡，跟上面說的一樣。）</p>
 `;
 const TYPE_LABEL = { credit: '信用卡', membership: '會員卡', debit: '簽帳金融卡' };
 // 簽帳金融卡（Stage 5b）：刷卡直接從存款帳戶扣，**沒有結帳日、繳款日、年費**；它存在的理由是讓金融卡帳單的
@@ -65,6 +87,69 @@ function expiryMeta(expiry) {
   if (days < 0) return { text: '已到期', tone: 'danger' };
   if (days <= 60) return { text: `${days} 天後到期`, tone: 'warning' };
   return { text: `有效至 ${month}`, tone: 'neutral' };
+}
+
+/**
+ * 這張卡要不要提示「發卡行還是文字寫法，挑一下清單」——回空字串＝不提示。
+ *
+ * William 2026-09-02 裁示「照舊自動＋提示升級」：舊卡照舊能自動歸卡（判準退回文字那條路），
+ * 但畫面上要有一個看得到的入口，否則沒有人會知道該去挑。
+ *
+ * ⚠️ **只在「挑下去真的有終點」時才提示**，否則這句話會變成永遠清不掉的嘮叨，
+ *    更糟的是變成**對使用者的錢說假話**（叫他去做一件不會改變任何結果的事）：
+ *   ・已經有代號 ⇒ 升級完了，不提示。
+ *   ・**清單裡沒有任何一家自稱這個寫法** ⇒ 挑下去只能選「其他」，而「其他」本來就發不出代號
+ *     ⇒ 提示了也清不掉（例：「某某會員俱樂部」、「台新國際商業銀行股份有限公司」）。不提示。
+ *   ・**只提示信用卡**（`type` 缺席＝信用卡）。另外兩種都不提示，理由**不同**：
+ *     ・**會員卡**＝沒有帳單要歸，代號一個結果都改不了。
+ *     ・**簽帳金融卡**＝有帳單要歸，但**那條路今天不讀代號**（預審 2026-09-02 抓到，三個視角各自獨立
+ *       發現、九票零駁倒）：`lib/services/statement-import.js` 的兩個入口都先
+ *       `filter(c => (c.type || 'credit') === 'credit')`，簽帳卡整批被濾掉；簽帳卡唯一會被歸帳單的
+ *       地方是 `lib/services/bank-import.js` 的 `(!c.issuer || sameBank(String(c.issuer), bank))`
+ *       ——`grep -c issuerId lib/services/bank-import.js` ＝ **0**。
+ *       ⚠️ 所以對簽帳卡而言，「挑清單」不但沒有終點，方向還是**反的**：那條路上真正承重的
+ *       就是 `issuer` 顯示字串（實測 `sameBank('台新 Richart', '台新') === false` ⇒ 把自動建的
+ *       簽帳卡改名成「台新 Richart」，下一期銀行帳單會**另外新建一張同末四碼的簽帳卡**、
+ *       帳本從此分家）。**那是 base 既有行為、本支一個字都沒動 `bank-import.js`**，
+ *       但本支第一版的提示文案對它宣稱了相反的事（「不管顯示的名字怎麼改都不會影響帳單歸到哪一張卡」）
+ *       ——那正是這個 repo 的鐵則要擋的形狀。要讓簽帳卡也走代號＝另案（要動 `bank-alias` 那把尺，
+ *       撞了會蓋掉別家餘額，契約寫明是另案裁決）。
+ * ⚠️ **誠實劃界**：判準用的是 `issuersNamed`（清單的名稱與別名），**不是**「這張卡現在判不判得出
+ *   身分」。所以「台新國際商業銀行股份有限公司」這種**靠樣式**才認得出來的寫法**不會**被提示到，
+ *   即使它挑清單也有終點——前端 import 不到 `lib/card-identity.js` 的樣式那條路，這裡不重抄一份
+ *   （抄一份＝同一件事兩把尺，這個 repo 反覆踩過）。提示是入口，不是覆蓋率保證。
+ * @param {any} c
+ */
+function issuerUpgradeNote(c) {
+  if ((c.type || 'credit') !== 'credit') return '';
+  const code = cardCode(c);
+  if (code.state === 'ok') return '';   // 升級完了
+  // ⚠️ **說不清楚的卡也要提示**（Codex #547 r3 第 2 條）：第一版只問「查不查得到代號」，
+  //    於是「登記的發卡行與記住的編號對不起來」的卡**既失去自動歸卡、又看不到修復入口**
+  //    ——而清單日後改名（舊名沒進 `aka`）就會把正常的舊卡推進這一格。挑一次清單就修好了。
+  if (code.state === 'unconfirmed') {
+    return `<div class="card-issuer-upgrade"><span>要動一下</span><p>這張卡登記的發卡行和它記住的編號<strong>對不起來</strong>，程式認不出它是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，就修好了。</p></div>`;
+  }
+  // ⚠️ 走 `cardIssuerText` 而不是 `c.issuer`（Grok 複審後掃 2026-09-02）：`issuersNamed` 內部裸跑
+  //    `String()`，而 `cards.issuer` 收得到 `{toString:null}` 這族。卡片頁**今天**會更早死在
+  //    `esc(c.issuer)`（那是 base 既有、不在本支射程），但這是**本支新增的一條路徑**——
+  //    日後誰把 `esc` 收成安全網卻沒動這裡，這裡就會變成新的 500。新加的路自己要安全。
+  const shown = cardIssuerText(c);
+  const named = issuersNamed(shown);
+  if (!named.length) return '';
+  // 歧義的那些（今天＝「富邦」「富邦銀行」）現在就**已經**判不出身分＝帳單本來就要手選；
+  // 其餘只是「還靠文字認」。兩種處境不同，話要分開講。
+  // ⚠️ **兩支都不可以承諾「（恢復）自動對上」**（預審 2026-09-02：e09dced 只修了下面那一支）：
+  //    歧義今天唯一的實例是「富邦」「富邦銀行」，而它的兩個選項是台北富邦（有內建範本）與
+  //    **富邦銀行（香港）（`bank: ''`＝沒有範本）**——香港富邦真的發卡、那正是這份清單存在的理由，
+  //    所以「照著挑」的人裡有一整類挑完**永遠不會自動對上**。能承諾的只有「程式從此分得出是哪一家」。
+  return named.length > 1
+    ? `<div class="card-issuer-upgrade"><span>要動一下</span><p>「${esc(shown)}」這個寫法有 ${named.length} 家在用，程式不會猜是哪一家——<strong>這張卡的帳單現在要你自己選</strong>。打開這張卡、從清單挑一次，程式就<strong>分得出這是哪一家</strong>了（帳單能不能自動記到這張卡是<strong>另一件事</strong>，要看程式讀不讀得懂那家的帳單格式）。</p></div>`
+    // ⚠️ 這一句**刻意不說「現在照舊會自動」**（自審 2026-09-02 抓到的過度宣稱）：這個提示也會出現在
+    //    沒有內建範本的機構上（遠東商銀、玉山…），那些卡的帳單本來就讀不動、從來沒有自動過——
+    //    對他們說「照舊會自動」是對使用者的錢說假話。改成只講**這次挑選會改變什麼**（身分不再靠文字），
+    //    以及**不會改變什麼**（現在的行為）。
+    : `<div class="card-issuer-upgrade"><span>可以更保險</span><p>發卡行還是文字寫法。打開這張卡、從清單挑一次同一家，這張卡的身分就<strong>不再靠文字認</strong>——現在的行為不會變，但挑過之後，程式只會把它認成<strong>你挑的那一家</strong>、或是<strong>認不出來請你選</strong>，不會認成別家。</p></div>`;
 }
 
 function cardNoticeHtml(message) {
@@ -234,6 +319,8 @@ function cardPanel(c) {
       ${facts.map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}
     </div>
 
+    ${issuerUpgradeNote(c)}
+
     <div class="card-expiry-row">
       <span class="card-expiry-tag ${expiry.tone}">${icon('history', 14)}${esc(expiry.text)}</span>
     </div>
@@ -257,9 +344,13 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
       // 發卡行＝**清單＋其他（自行輸入）**（2026-08-28）：自由文字本身無法消歧——香港富邦與台北富邦
       // 官方都自稱「富邦銀行」，填得再精確也分不出是哪一家，而分錯的代價是帳單自動歸到錯的卡。
       // 清單以外的機構（會員卡的發卡商店、清單漏掉的銀行）走「其他」，行為與清單化之前的自由文字相同。
-      { key: 'issuer', label: '發卡銀行 / 機構', type: 'select', options: issuerOptions() },
+      // ⚠️ **欄位鍵是 `issuerPick`、不是 `issuer`**（2026-09-02）：這個下拉送回來的值是**機構代號**
+      // （`issuerOptions()` 的 `value`），不是要存進 `card.issuer` 的名字。刻意分兩個名字，
+      // 免得有人看到 `data.issuer` 就以為那是顯示字串、直接存進去（那會把代號當名字存）。
+      // 送出時由 `resolveIssuerFields` 一次算出 `issuer`（顯示名）與 `issuerId`（代號）兩欄。
+      { key: 'issuerPick', label: '發卡銀行 / 機構', type: 'select', options: issuerOptions() },
       // 只在選了「其他」時顯示（onMount 切換）。⚠️ 隱藏時它仍然會被送出，所以合併規則一律走
-      // `resolveIssuerInput`：沒選「其他」就無視這一欄，不會把舊的自訂字偷偷寫回去。
+      // `resolveIssuerFields`：沒選「其他」就無視這一欄，不會把舊的自訂字偷偷寫回去。
       { key: 'issuerOther', label: '其他發卡銀行 / 機構名稱', type: 'text', placeholder: '例：某某銀行、某某會員俱樂部' },
       { key: 'network', label: '卡片類別（信用卡）', type: 'select', options: NETWORKS, default: 'Mastercard' },
       { key: 'lastFour', label: '末四碼', type: 'text', placeholder: '1234' },
@@ -278,11 +369,11 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
     // 機密不預填（自主體檢）：GET /api/cards 已剝掉 pdfPassword，編輯時本來就沒有值可填
     // 發卡行拆成兩欄餵進表單：清單上有這個正式寫法就預選它，其餘（既有自由文字、自訂機構）
     // 一律落到「其他」並**原字**填進文字框——不可趁使用者打開表單就把 issuer 靜靜改寫（見 card-issuers.js）。
-    values: c ? { ...c, ...issuerFormValues(c.issuer), expiry: (c.expiry || '').slice(0, 7) } : { type: defaultType, ...issuerFormValues('') },
+    values: c ? { ...c, ...issuerFormFields(c), expiry: (c.expiry || '').slice(0, 7) } : { type: defaultType, ...issuerFormFields(null) },
     onMount: (root) => {
       // 「其他（自行輸入）」的文字框只在選了「其他」時出現。⚠️ 用 hidden 屬性（`.form-grid` 沒有
       // 覆寫 display 的規則，UA 預設的 `[hidden]{display:none}` 就把這一格從格線裡拿掉）。
-      const sel = /** @type {HTMLSelectElement|null} */ (root.querySelector('#f_issuer'));
+      const sel = /** @type {HTMLSelectElement|null} */ (root.querySelector('#f_issuerPick'));
       const other = /** @type {HTMLInputElement|null} */ (root.querySelector('#f_issuerOther'));
       const cell = /** @type {HTMLElement|null} */ (other?.closest('div') || null);
       if (!sel || !other || !cell) return;
@@ -291,7 +382,11 @@ function openCardForm(c, { defaultType = 'credit' } = {}) {
       sync();
     },
     onSubmit: async (data) => {
-      data.issuer = resolveIssuerInput(data.issuer, data.issuerOther); delete data.issuerOther;   // 非 schema 欄位，送出前合併並移除
+      // 下拉送回來的是代號 ⇒ 一次算出要存的兩欄。⚠️ `issuerPick`／`issuerOther` 都是表單自用、
+      // 不是 schema 欄位，送出前一定要刪掉（留著會被櫃檯的白名單濾掉，但那是靠別人幫我們收尾）。
+      const picked = resolveIssuerFields(data.issuerPick, data.issuerOther);
+      data.issuer = picked.issuer; data.issuerId = picked.issuerId;
+      delete data.issuerPick; delete data.issuerOther;
       const clearPw = data.clearPdfPassword; delete data.clearPdfPassword;   // 非 schema 欄位，送出前移除
       // 勾「清除」→ 明確送空字串清空（後端接受 '' ＝清除）；否則留空＝不變更（PUT 部分合併保留舊密碼）
       if (c && clearPw) data.pdfPassword = '';
