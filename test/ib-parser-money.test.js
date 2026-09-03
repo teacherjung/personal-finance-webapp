@@ -97,7 +97,7 @@ test('IB 解析｜現金交易缺幣別：有「正的」fxRateToBase 照算；�
       ] },
     } } },
   }, () => null);
-  assert.equal(parsed.income.dividends, 127, '有「正的」fxRateToBase 就照算——那條路與幣別無關（0／負數＝壞值）');
+  assert.equal(parsed.income.dividends, 127, '有「正的」fxRateToBase 就照算——fxRateToBase 分支與幣別無關（0／負數＝壞值）');
   assert.equal(parsed.income.skippedNoCurrency, 1, '缺幣別又沒有有效匯率＝跳過，不可以當成 USD 100 加總');
   assert.equal(parsed.income.skippedNoFx, 0, '這是「缺幣別」不是「缺匯率」，兩種病要分開計數才修得對地方');
   assert.equal(parsed.income.interestReceived, 5, '正常的列不受影響');
@@ -115,7 +115,7 @@ test('IB 解析｜成交紀錄缺幣別且沒有有效匯率：currency 留空�
   }, () => null);
   assert.equal(parsed.trades[0].currency, '', '不知道就說不知道');
   assert.equal(parsed.trades[0].pnlBase, null, '缺幣別又沒有有效匯率＝算不出基準損益，不可以拿原值冒充');
-  assert.equal(parsed.trades[1].pnlBase, 38.1, '有「正的」匯率照算（30 × 1.27）——缺幣別不擋這條路');
+  assert.equal(parsed.trades[1].pnlBase, 38.1, '有「正的」匯率照算（30 × 1.27）——缺幣別不擋 fxRateToBase 分支');
 });
 
 test('IB 解析｜持股缺幣別在 parse 層就是空字串（USD 預設只發生在同步寫入，已一併修掉）', () => {
