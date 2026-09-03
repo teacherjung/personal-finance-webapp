@@ -101,7 +101,7 @@ export function regionExposure(rows) {
  * 幣別底層曝險：00719B/00720B 歸美元、黃金獨立一列、現金含負融資。
  * @param {ExposureRow[]} rows
  * @param {ExposureAccount[]|undefined} accounts
- * @param {Record<string, number>} fx
+ * @param {Record<string, number|null>} fx
  * @returns {Record<string, CurrencyExposure>}
  */
 export function fxExposure(rows, accounts, fx) {
@@ -128,7 +128,9 @@ export function fxExposure(rows, accounts, fx) {
     // 幣別曝險會把房貸當「+690 萬現金曝險」，方向整個反掉（自主體檢實測）
     if (LIABILITY_TYPES.has(a.type || '') && bal > 0) bal = -bal;
     const cur = a.currency || 'TWD';
-    bucket(cur).cashTwd += bal * (fx[cur] || 1);
+    const rate = cur === 'TWD' ? 1 : (Object.hasOwn(fx, cur) ? fx[cur] : null);   // 台幣不需要匯率
+    if (!(typeof rate === 'number' && rate > 0)) continue;   // 缺匯率＝不計入（乙；與 portfolio-model／後端同口徑）
+    bucket(cur).cashTwd += bal * rate;
   }
   for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;
   return byCur;

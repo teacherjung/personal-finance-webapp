@@ -79,3 +79,13 @@ test('XIRR 區塊｜成功、負報酬、未滿一年、估算與失敗原因都
   assert.doesNotMatch(failed, /<img /);
   assert.match(XIRR_INFO_HTML, /資金加權年化報酬/);
 });
+
+test('乙｜missingFxNoteHtml：有缺匯率才出現、講幾筆與哪些幣別、附「為什麼不算進去」的說明鈕；沒有就是空字串', async () => {
+  const { missingFxNoteHtml } = await import('../public/modules/portfolio-overview.js');
+  assert.equal(missingFxNoteHtml([]), '');
+  assert.equal(missingFxNoteHtml(/** @type {any} */ (undefined)), '');
+  const html = missingFxNoteHtml([{ currency: 'GBP', count: 2 }, { currency: 'JPY', count: 1 }]);
+  assert.match(html, /3 筆外幣資產（GBP、JPY）沒有匯率/, '筆數要加總、幣別要列出');
+  assert.match(html, /更新報價/, '要告訴人怎麼補');
+  assert.match(html, /data-info="missingFx"/, '說明鈕走投資頁既有的 data-info 綁定');
+});

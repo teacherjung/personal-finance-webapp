@@ -62,7 +62,7 @@
 
 **改這裡**：**淨值日線 `dailyValues`**（D0，每日洞察引擎的地基；使用者定 2026-07-19）
 
-**記得同步這裡**：`lib/services/snapshot.js recordDailyValue()` 是**唯一寫入口**（開 app 的 `POST /api/snapshot/auto` 每次都呼叫）。與月快照的關鍵差別＝**同日覆寫、跨日累積**（月快照是同月覆蓋，手上永遠只有每月一個點，連「今天 vs 昨天」都算不出來）；**月快照跳過不代表日線跳過**——同日資產有變動時日線要跟得上，所以 `takeSnapshotIfDue` 先寫日線再判月快照。欄位＝`date`(YYYY-MM-DD 主鍵，**必填**)/`netWorth`/`assets`/`liabilities`/`pfCost`/`pfValue`/**`usdTwd`＋`gbpTwd`＋`jpyTwd`**（支援的外幣匯率都留底才分得出「淨值變動」是資產本身動了還是匯率動了——系統支援 USD/GBP/JPY 三種外幣，只留美元等於解讀不了另外兩種；Codex r3#10）。`date` 用新的 **`datereq`** 型別（`monthreq` 的日級雙胞胎：空值/壞格式都當壞資料拒絕）＋進 `REQUIRED_FIELDS`——壞 date 會讓差異引擎的排序與「找最接近的既有日」錯亂，比沒資料更糟。集合列在 `READONLY_COLLECTIONS`（前端唯讀、`GET /api/dailyValues` 自動生效，無 CRUD 寫入）。一天一行永久保留（一年 365 行，SQLite 無壓力）。改欄位時同步 `lib/types.js` 的 `DailyValue`＋`lib/store.js emptyDb()`＋`data/seed.json`＋`test/daily-values.test.js`
+**記得同步這裡**：`lib/services/snapshot.js recordDailyValue()` 是**唯一寫入口**（開 app 的 `POST /api/snapshot/auto` 每次都呼叫）。與月快照的關鍵差別＝**同日覆寫、跨日累積**（月快照是同月覆蓋，手上永遠只有每月一個點，連「今天 vs 昨天」都算不出來）；**月快照跳過不代表日線跳過**——同日資產有變動時日線要跟得上，所以 `takeSnapshotIfDue` 先寫日線再判月快照。欄位＝`date`(YYYY-MM-DD 主鍵，**必填**)/`netWorth`/`assets`/`liabilities`/`pfCost`/`pfValue`/**`usdTwd`＋`gbpTwd`＋`jpyTwd`**（支援的外幣匯率都留底才分得出「淨值變動」是資產本身動了還是匯率動了——系統支援 USD/GBP/JPY 三種外幣，只留美元等於解讀不了另外兩種；Codex r3#10）。**`gbpTwd`／`jpyTwd` 缺匯率記 `null`（「乙」口徑，2026-09-03）；更早的列缺值寫 0——讀的人把 0 與 null 都當「缺」**，欄位規則允許 null、櫃檯不可剝掉。`date` 用新的 **`datereq`** 型別（`monthreq` 的日級雙胞胎：空值/壞格式都當壞資料拒絕）＋進 `REQUIRED_FIELDS`——壞 date 會讓差異引擎的排序與「找最接近的既有日」錯亂，比沒資料更糟。集合列在 `READONLY_COLLECTIONS`（前端唯讀、`GET /api/dailyValues` 自動生效，無 CRUD 寫入）。一天一行永久保留（一年 365 行，SQLite 無壓力）。改欄位時同步 `lib/types.js` 的 `DailyValue`＋`lib/store.js emptyDb()`＋`data/seed.json`＋`test/daily-values.test.js`
 
 ## 共用彈窗契約
 

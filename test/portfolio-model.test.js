@@ -100,3 +100,23 @@ test('投資模型｜帳戶資料暫時缺席時沿用舊頁面的空陣列退�
   assert.equal(model.goldAll, 0);
   assert.equal(model.leverage, 1);
 });
+
+// 「乙」（William 2026-09-03 裁）：GBP／JPY 沒設匯率＝缺匯率，不計入並標註；與後端 computeAssets／computeIb 同口徑（parity 題在 test/derive.test.js）。
+test('乙｜buildPortfolioModel：GBP 持股與 GBP 現金沒設匯率 → 金額記 0＋fxMissing、不進 total／cashV、missingFx 各計一筆；設了就照算', async () => {
+  const { buildPortfolioModel: build } = await import('../public/modules/portfolio-model.js');
+  const holdings = /** @type {any} */ ([
+    { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
+    { id: 'g', symbol: 'ISF', currency: 'GBP', quantity: 5, price: 8, avgCost: 7, source: 'manual' },
+  ]);
+  const accounts = /** @type {any} */ ([{ id: 'c', type: 'cash', class: '現金', currency: 'GBP', balance: 100 }]);
+  const m = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32 }));
+  const g = m.rows.find(r => r.id === 'g');
+  assert.ok(g && g.fxMissing === true && g.valueTwd === 0 && g.costTwd === 0, '缺匯率的持股要標 fxMissing、金額 0');
+  assert.equal(m.total, 10 * 100 * 32, 'total 只含有匯率的持股');
+  assert.equal(m.cashV, 0, '缺匯率的現金不進 cashV');
+  assert.deepEqual(m.missingFx, [{ currency: 'GBP', count: 2 }], '持股一筆＋現金一筆');
+  const ok = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } }));
+  assert.equal(ok.total, 10 * 100 * 32 + 5 * 8 * 40, '對照：設了匯率就照算');
+  assert.equal(ok.cashV, 100 * 40);
+  assert.deepEqual(ok.missingFx, []);
+});

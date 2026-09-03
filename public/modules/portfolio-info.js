@@ -18,6 +18,11 @@ export function totalValueInfoHtml(values, formatters) {
 /**
  * @param {{ stock:number, equity:number, country:number, china:number, lev:number, maint:number }} caps
  */
+/** 缺匯率說明（乙）：總覽的「為什麼？」與投資頁的「為什麼不算進去？」共用同一份文案（文案由 William 審改）。 */
+export const MISSING_FX_INFO_TITLE = '有外幣資產沒有匯率';
+export const MISSING_FX_INFO_HTML = `<p>英鎊、日圓兌台幣的匯率，是在<b>投資頁按「更新報價」</b>時抓回來的。還沒有匯率之前，這些外幣帳戶與持股<b>不會算進淨資產、槓桿與配置</b>——畫面上的數字因此比實際少。</p>
+<p>以前系統會先用一個猜的匯率把它們算進去；現在不猜：<b>看得見的「少算」勝過默默算錯</b>。到投資頁按一次「更新報價」，匯率補上後這些資產就會回到數字裡。</p>`;
+
 export function disciplineInfoHtml(caps) {
   return `
     <p><b>口徑</b>：所有上限以「<b>% 淨資產</b>」衡量（不是投組市值——有融資時淨資產較小，規則自動更嚴格）。國家曝險採<b>穿透</b>計算：ETF 內含成分（如 EIMI 裡的中國、台灣）都拆進對應國家一起計。</p>

@@ -29,10 +29,7 @@
     },
     "fxHigh": 32,
     "fxLow": 28,
-    "fxTwd": {
-      "GBP": 40.8,
-      "JPY": 0.215
-    },
+    "fxTwd": {},
     "taishinSecPdfPassword": "",
     "aiAskBeforeSend": false,
     "aiApiKey": "",

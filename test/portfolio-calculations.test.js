@@ -10,13 +10,15 @@ import {
   xirrRate
 } from '../public/modules/portfolio-calculations.js';
 
-test('投資計算｜匯率表保留設定值與既有預設值', () => {
+test('投資計算｜匯率表保留設定值；沒設的 GBP／JPY 是 null（缺匯率，乙）、非正數也當沒設', () => {
   assert.deepEqual(fxTable({ usdTwd: 31.5, fxTwd: { GBP: 42 } }), {
     TWD: 1,
     USD: 31.5,
     GBP: 42,
-    JPY: 0.215
+    JPY: null
   });
+  assert.equal(fxTable({ fxTwd: { GBP: 0, JPY: -1 } }).GBP, null, '0 不是匯率');
+  assert.equal(fxTable({ fxTwd: { GBP: 0, JPY: -1 } }).JPY, null, '負數不是匯率');
 });
 
 test('投資計算｜持股成本優先用均價乘股數，舊資料退回總成本', () => {

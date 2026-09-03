@@ -66,7 +66,7 @@ export async function renderPortfolio() {
     fx, rows, total, totalCost, totalPnl,
     bondV, goldV, eqV, ibValTwd, loanTwd, netEquity, leverage,
     goldAll, cashV, allBase, stockRows, bondRows, goldRows,
-    cashAccounts, goldAccounts, regionMap
+    cashAccounts, goldAccounts, regionMap, missingFx
   } = buildPortfolioModel(holdings, accounts, settings);
   usdRate = fx.USD;
   const {
@@ -127,7 +127,7 @@ export async function renderPortfolio() {
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
-    ${portfolioSummaryHtml({ total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap: CAPS.lev }, { formatMoney: MONEY })}
+    ${portfolioSummaryHtml({ total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap: CAPS.lev, missingFx }, { formatMoney: MONEY })}
 
     ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd, visualFormatters())}
     ${fxSection(rows, accounts, fx, visualFormatters())}

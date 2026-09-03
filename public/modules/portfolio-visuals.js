@@ -99,7 +99,7 @@ const fxParts = (value, formatMoney) => [['股票', value.stockTwd], ['債券', 
   .map(([label, amount]) => `${label} ${formatMoney(amount)}`)
   .join(' ＋ ');
 
-/** @param {VisualRow[]} rows @param {VisualAccount[]|undefined} accounts @param {Record<string, number>} fx @param {VisualFormatters} formatters */
+/** @param {VisualRow[]} rows @param {VisualAccount[]|undefined} accounts @param {Record<string, number|null>} fx @param {VisualFormatters} formatters */
 export function fxSection(rows, accounts, fx, formatters) {
   const { escapeHtml: esc, formatMoney, formatPercent: fmtPct } = formatters;
   const byCurrency = fxExposure(rows, accounts, fx);

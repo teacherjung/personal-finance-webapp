@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
 import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml, rewardInfoHtml } from './monthly-review-card.js';
 import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
+import { MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML } from './portfolio-info.js';   // 缺匯率說明（乙）與投資頁共用同一份
 import {
   dashboardCashflowSeries,
   dashboardGuideState,
@@ -312,6 +313,7 @@ export async function renderDashboard() {
           <span>資產 <b>${wan(s.assets)}</b></span>
           <span>負債 <b>${wan(s.liabilities)}</b></span>
           <span class="${warnCount ? 'needs-attention' : 'steady'}">${warnCount ? `${warnCount} 項紀律需注意` : '目前紀律正常'}</span>
+          ${missingFxFactHtml(s.missingFx)}
           <span id="dhLastSeen"></span>
         </div>
       </div>
@@ -365,10 +367,24 @@ export async function renderDashboard() {
   drawTrend(snapshots);
   drawCashflowTrend(cashflowRows);
   wireGoalTrackingInfo();
+  wireMissingFxInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
   // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
+}
+
+/** 缺匯率就地標註（乙）：外幣資產沒匯率＝不算進淨資產，要讓人一眼看到「少算了幾筆」與怎麼補。 @param {any} missingFx */
+function missingFxFactHtml(missingFx) {
+  if (!Array.isArray(missingFx) || !missingFx.length) return '';
+  const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
+  const curs = missingFx.map(m => esc(String(m?.currency || ''))).join('、');
+  return `<span class="needs-attention">${n} 筆外幣資產（${curs}）沒有匯率、未計入 <button type="button" class="info-link" id="missingFxInfo">為什麼？</button></span>`;
+}
+
+function wireMissingFxInfo() {
+  const el = byId('missingFxInfo');
+  if (el) el.onclick = () => openInfo(MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML, { size: 'sm' });
 }
 
 function wireGoalTrackingInfo() {
