@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms, hitProfile, nearestKnown, redactWindow } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
@@ -62,7 +62,7 @@ function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o
   writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
   // firstCommitFiles：進**第一顆 commit**＝在 base 之前 ⇒ 在 head 樹裡、不在 base..head 的 diff 裡。
   // 預設不傳：把鑰匙形狀塞進共用夾具會讓每一題的樹都帶著它，反而遮蔽別的題。
-  for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) writeFileSync(join(d, name), body);
+  for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) { mkdirSync(dirname(join(d, name)), { recursive: true }); writeFileSync(join(d, name), body); }   // 可放巢狀路徑（如 data/store.db）
   git(['add', 'a.txt', 'tree-only.txt', ...Object.keys(o.firstCommitFiles ?? {})]);
   git(['commit', '-q', '-m', 'one']);
   const head = git(['rev-parse', 'HEAD']).trim();
@@ -1737,4 +1737,14 @@ test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-resu
     // ⚠️ 檔名清單證明不了「沒有把命中內容寫上磁碟」——逐檔掃內容才算。本例的命中就是暗號本身。
     for (const f of readdirSync(dir)) assert.equal(readFileSync(join(dir, f), 'utf8').includes('LIVE-CANARY-X-0123456789'), false, `${f} 裡有命中內容`);
   }
+});
+
+// ── 盒子禁區檢查要有考題（2026-09-02 第二輪稽核第 3 條）：哪天 .gitignore 漏一條、或有人 git add -f 把 store.db
+//    收進 commit，git archive 就會把它帶進盒子；那道最後檢查若被改壞不會有任何考題叫——Grok 就在盒裡讀到完整帳務資料庫。
+test('runScan｜git archive 帶出 data/store.db → 盒子禁區檢查退 2、明說是哪個檔（不是散文）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // 建盒子用 APFS clone，只在 macOS 考得到
+  const repo = tinyRepo({ firstCommitFiles: { 'data/store.db': 'NOT-A-REAL-DB-JUST-A-MARKER\n' } });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
+  assert.equal(r.code, 2, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /盒子裡出現不該有的檔：data\/store\.db/);
 });
