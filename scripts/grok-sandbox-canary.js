@@ -220,7 +220,7 @@ export async function runCanary(box, opt = {}) {
         const ctl = spawnSync(gh, ['--version'], { encoding: 'utf8', timeout: 10_000 });
         if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 brew 裝的非依賴工具（gh 在沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
         else {
-          const r = runInSandbox(box, [gh, '--version'], { relayPort });
+          const r = runInSandbox(box, [gh, '--version'], { relayPort, profile });
           const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !(r.stdout || '').includes('gh version');
           lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 brew 裝的非依賴工具（gh；process-exec 限路徑）`);
           if (!blocked) dead++;
@@ -233,7 +233,7 @@ export async function runCanary(box, opt = {}) {
       const ctl = spawnSync('/usr/local/bin/node', ['--version'], { encoding: 'utf8', timeout: 10_000 });
       if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 /usr/local/bin/node（沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
       else {
-        const r = runInSandbox(box, ['/usr/local/bin/node', '--version'], { relayPort });
+        const r = runInSandbox(box, ['/usr/local/bin/node', '--version'], { relayPort, profile });
         const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !/^v\d/.test(r.stdout || '');
         lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 /usr/local/bin/node（process-exec 拒 /usr/local）`);
         if (!blocked) dead++;
@@ -279,7 +279,7 @@ export async function runCanary(box, opt = {}) {
       const prev = { ...process.env };
       Object.assign(process.env, sentinels);
       let r;
-      try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
+      try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort, profile }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
       finally { for (const k of Object.keys(sentinels)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
       const leak = Object.values(sentinels).some((v) => (r.stdout || '').includes(v));
       lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（放 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);

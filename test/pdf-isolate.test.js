@@ -50,7 +50,7 @@ process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 3).toString('base64');
 const { parseStatement } = await import('../lib/statement.js');
 const { parseBankStatement } = await import('../lib/bank-statement.js');
 const { PDF_ISOLATE_KINDS, PDF_CHILD_HEAP_MB, PDF_QUEUE_MAX_DEPTH, setPdfTimeoutForTest,
-  setPdfChildScriptForTest, setPdfResultLimitForTest, resetPdfQueueForTest, pdfQueueDepthForTest, extractPdfLines,
+  setPdfChildScriptForTest, resetPdfQueueForTest, pdfQueueDepthForTest, extractPdfLines, MAX_RESULT_BYTES,
   throughPdfQueueForTest } = await import('../lib/pdf-isolate.js');
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ const errOf = (p) => p.then(() => null, (/** @type {any} */ e) => e);
 // ⚠️ **不是「各題都不准有自己的 finally」**（Codex #538 r2：那句話與同檔現況不符）——
 //    炸彈題就有自己的 `finally { setPdfTimeoutForTest(null); }`。兜底與局部清理是兩件事，不衝突：
 //    局部清理讓「這一題自己的意圖」看得見，afterEach 保證**漏掉的那次不會污染下一題**。
-afterEach(() => { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); setPdfResultLimitForTest(null); });
+afterEach(() => { setPdfTimeoutForTest(null); setPdfChildScriptForTest(null); });
 
 // ============================================================================
 // 一、攻擊：子行程死掉，**父行程必須活著**
@@ -1015,32 +1015,39 @@ test('錯誤契約｜子行程「沒帶 status 的例外」＝我們的問題（
 // 四、回傳量炸彈：抽取結果太大要**當場**擋下，不是等逾時、更不是等 OOM
 // ============================================================================
 
-test('回傳量炸彈｜子行程不停往 stdout 灌 → 超過上限當場 SIGKILL、回 400 pdf_result_too_large（不是等逾時）', async () => {
+test('回傳量炸彈｜正式上限是有限且合理的數字（範圍絆線：改成 Infinity 或 10GB 會先撞到這裡）', () => {
+  // Codex #551 r1 High：只考「縮小的門檻」擋不住把常數改成無限大。這條釘住常數本身；下一題灌到它的真值。
+  assert.ok(Number.isFinite(MAX_RESULT_BYTES) && MAX_RESULT_BYTES > 0, 'MAX_RESULT_BYTES 必須是有限正數');
+  assert.ok(MAX_RESULT_BYTES >= 8 * 1024 * 1024, '訂太小會擋掉 200 頁的正常對帳單（幾 MB）');
+  assert.ok(MAX_RESULT_BYTES <= 256 * 1024 * 1024, 'Render 512MB 減掉 app 底噪與子行程 heap 之後，父行程留不下更多');
+});
+
+test('回傳量炸彈｜子行程不停灌 stdout 直到**真的**超過 MAX_RESULT_BYTES → 當場 SIGKILL、400 pdf_result_too_large（不是等逾時）', async () => {
   // 2026-09-02 第二輪稽核第 2 條：這道牆拆了 1487 題照樣全綠。真的漏掉時，壓縮炸彈解開後上百 MB
-  // 灌回主行程＝容器 OOM 重啟＝**所有人**當下的操作一起斷線。這題只縮小門檻（接縫），走的是正式那條路。
+  // 灌回主行程＝容器 OOM 重啟＝**所有人**當下的操作一起斷線。
+  // 這題**不縮門檻**——假子行程以約 32MB/s 灌，實測約 2 秒踩到 64MB；牆若被拆（常數改成 Infinity），
+  // 這題會一路等到 20 秒逾時才紅（code 變成 pdf_timeout），不會靜靜過。
   setPdfChildScriptForTest(fakeChild('pdf-child-flood.js'));
-  setPdfResultLimitForTest(256 * 1024);   // 256KB 就算超標（正式值 64MB，考題不灌那麼多）
-  setPdfTimeoutForTest(10_000);           // 逾時放遠：若牆沒作用，這題會走到 pdf_timeout 而紅，不會靜靜過
+  setPdfTimeoutForTest(20_000);
   const t0 = Date.now();
   const err = await errOf(parseStatement(normalPdf()));
   const took = Date.now() - t0;
   assert.ok(err, '回傳量爆掉竟然還當成成功');
   assert.equal(err.status, 400, `太大＝使用者的檔有問題，是 400（實際 ${err.status}）`);
   assert.equal(err.code, 'pdf_result_too_large', `要誠實說是「內容太多」，不可混成逾時或資源耗盡（實際 ${err.code}）`);
-  assert.ok(took < 8_000, `牆要在超標當下就殺，不可拖到逾時（花了 ${took}ms）`);
+  assert.ok(took < 15_000, `牆要在超標當下就殺，不可拖到逾時（花了 ${took}ms）`);
 });
 
-test('回傳量炸彈｜對照組：門檻沒縮小時，同一顆假子行程**不會**被判 too_large（證明上一題紅綠靠的是門檻，不是別的）', async () => {
+test('回傳量炸彈｜對照組：同一顆子行程在 0.8 秒內灌不到上限 → 走逾時（400 pdf_timeout），不是 too_large', async () => {
   // 沒有這一題，上一題若因為別的原因回 400（例如子行程自己炸），也會看起來像「牆有作用」。
-  // 同一顆假子行程、只差門檻：正式 64MB 在 0.8 秒內灌不到 ⇒ 逾時被殺時 stdout 已有一堆 x（非 JSON）
-  // ⇒ 父行程走「輸出壞掉」那條路（500 pdf_isolate_bad_output），**不是** 400 pdf_result_too_large。
-  // ⚠️ 附帶觀察（不在本題範圍）：逾時但已有部分輸出時，現行歸類是 bad_output 而不是 pdf_timeout——
-  //    逾時才是更真的原因；這是既有行為，這裡只釘「門檻沒縮就不是 too_large」。
+  // 兩臂只差逾時長短：0.8 秒約灌 25MB < 64MB ⇒ 不該判太大；而逾時時 stdout 已有半截垃圾——
+  // 逾時要優先於「輸出壞掉」（Codex #551 r1 Medium，本支一併修正歸類：逾時才是真原因）。
+  // 附帶：牆若被改成 1MB 之類太小的值，這一臂會反過來判 too_large 而紅（兩端都釘）。
   setPdfChildScriptForTest(fakeChild('pdf-child-flood.js'));
   setPdfTimeoutForTest(800);
   const err = await errOf(parseStatement(normalPdf()));
   assert.ok(err);
-  assert.notEqual(err.code, 'pdf_result_too_large', '門檻沒縮小卻判 too_large＝門檻鉤子沒還原或牆判準壞了');
-  assert.equal(err.code, 'pdf_isolate_bad_output', `同一顆子行程在正式門檻下應是「輸出壞掉」（實際 ${err.code}）`);
-  assert.equal(err.status, 500);
+  assert.notEqual(err.code, 'pdf_result_too_large', '沒灌到上限卻判 too_large＝牆的判準壞了或上限被調太小');
+  assert.equal(err.code, 'pdf_timeout', `逾時且已有部分輸出＝逾時才是真原因（實際 ${err.code}）`);
+  assert.equal(err.status, 400);
 });
