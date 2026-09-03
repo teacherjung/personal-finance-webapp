@@ -1,8 +1,9 @@
 // @ts-check
 // 投資組合頁的純資料模型：把 API 原始資料換算成畫面共用的台幣金額與資產分組。
 
-import { fxTable, holdingCost } from './portfolio-calculations.js';
+import { fxTable, fxFor, holdingCost } from './portfolio-calculations.js';
 import { compOf, regionExposure } from './portfolio-exposure.js';
+import { LIABILITY_TYPES } from './accounts-model.js';   // 負債型帳戶白名單（缺匯率的負債要另計：方向最危險）
 
 /** @typedef {{ symbol?: string, layer?: string, currency?: string, price?: number|string, quantity?: number|string, avgCost?: number|string, cost?: number|string, source?: string }} ModelHolding */
 /** @typedef {{ name?: string, type?: string, class?: string, currency?: string, balance?: number|string, ibCashCur?: string }} ModelAccount */
@@ -17,12 +18,20 @@ import { compOf, regionExposure } from './portfolio-exposure.js';
 export function buildPortfolioModel(holdings, accounts, settings) {
   const fx = fxTable(settings);
   const accountRows = accounts || [];
+  /** 缺匯率累計（乙）：[{currency, count, liabilities}]，順序＝首次出現；與後端 computeAssets.missingFx 同形狀。只登記真的有曝險的列。 @type {Map<string, {count:number, liabilities:number}>} */
+  const missingMap = new Map();
+  const noteMissing = (/** @type {string} */ cur, liability = false) => {
+    const v = missingMap.get(cur) || { count: 0, liabilities: 0 };
+    v.count += 1; if (liability) v.liabilities += 1; missingMap.set(cur, v);
+  };
   const rows = holdings.map(h => {
-    // 缺 currency 預設台幣，與後端 derive 的持股口徑一致。
-    const rate = fx[h.currency || 'TWD'] || 1;
+    // 缺 currency 預設台幣，與後端 derive 的持股口徑一致；缺匯率＝市值／成本記 0 並帶 fxMissing（不進總數）。
+    const f = fxFor(fx, h.currency);
+    if (f.missing && Number(h.quantity || 0) !== 0) noteMissing(f.cur);   // 零股數不算曝險
+    const rate = f.missing ? 0 : f.rate;
     const valueTwd = Number(h.price || 0) * Number(h.quantity || 0) * rate;
     const costTwd = holdingCost(h) * rate;
-    return { ...h, valueTwd, costTwd, pnlTwd: valueTwd - costTwd };
+    return { ...h, valueTwd, costTwd, pnlTwd: valueTwd - costTwd, fxMissing: f.missing };
   });
   const total = rows.reduce((sum, row) => sum + row.valueTwd, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.costTwd, 0);
@@ -31,7 +40,12 @@ export function buildPortfolioModel(holdings, accounts, settings) {
   const bondV = rows.filter(row => compOf(row).type === 'bond').reduce((sum, row) => sum + row.valueTwd, 0);
   const goldV = rows.filter(row => compOf(row).type === 'gold').reduce((sum, row) => sum + row.valueTwd, 0);
   const eqV = total - bondV - goldV;
-  const accTwd = (account) => Number(account.balance || 0) * (fx[account.currency || 'TWD'] || 1);
+  // 帳戶缺匯率只登記一次（accTwd 在下面會被叫好幾次：現金／黃金／融資各算一遍）
+  for (const account of accountRows) {
+    const f = fxFor(fx, account.currency); const bal = Number(account.balance || 0);
+    if (f.missing && bal !== 0) noteMissing(f.cur, LIABILITY_TYPES.has(account.type || '') || bal < 0);   // 零餘額不算曝險；負債另計
+  }
+  const accTwd = (account) => { const f = fxFor(fx, account.currency); return f.missing ? 0 : Number(account.balance || 0) * f.rate; };
 
   // IB 融資優先採官方摘要；缺摘要才退回 IB 持股與 ibCashCur 帳戶自行換算。
   const eqIb = settings.ib?.lastEquity;
@@ -92,6 +106,7 @@ export function buildPortfolioModel(holdings, accounts, settings) {
     goldRows,
     cashAccounts,
     goldAccounts,
-    regionMap: regionExposure(rows)
+    regionMap: regionExposure(rows),
+    missingFx: [...missingMap].map(([currency, v]) => ({ currency, count: v.count, liabilities: v.liabilities }))
   };
 }

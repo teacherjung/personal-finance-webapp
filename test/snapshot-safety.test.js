@@ -8,7 +8,7 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { rmSync, readFileSync } from 'node:fs';
 
 const TEST_STORE = join(tmpdir(), `finance-snapsafe-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
@@ -108,15 +108,15 @@ test('日線留下三種匯率，事後才分得出「資產漲了」還是「�
   assert.equal(row?.jpyTwd, 0.215);
 });
 
-test('沒設定的幣別記 0，不可寫進 undefined 讓櫃檯剝掉', async () => {
+test('沒設定的幣別記 null（缺匯率，乙），鍵要在——不可寫進 undefined 讓櫃檯剝掉、也不可退回記 0', async () => {
   const db = store.load();
   db.settings = { ...db.settings, usdTwd: 32, fxTwd: {} };
   store.save(db);
   const row = await recordDailyValue();
-  assert.equal(row?.gbpTwd, 0);
-  assert.equal(row?.jpyTwd, 0);
+  assert.ok(row && Object.hasOwn(row, 'gbpTwd') && row.gbpTwd === null, `gbpTwd 要是 null（實際 ${String(row?.gbpTwd)}）`);
+  assert.ok(row && Object.hasOwn(row, 'jpyTwd') && row.jpyTwd === null, `jpyTwd 要是 null（實際 ${String(row?.jpyTwd)}）`);
   const saved = (store.load().dailyValues || [])[0];
-  assert.equal(saved.gbpTwd, 0, '存進資料庫後也要在（型別是 number，undefined 會被剝掉）');
+  assert.ok(Object.hasOwn(saved, 'gbpTwd') && saved.gbpTwd === null, '存進資料庫後鍵也要在、值是 null（櫃檯不可把 null 剝成 undefined）');
 });
 
 // ---------- 階段三缺口 H2：日線的時鐘倒退護欄（r3#8 只考了月快照與手動按鈕，日線這條沒人考過） ----------
@@ -133,4 +133,12 @@ test('日線時鐘倒退護欄：資料庫已有「明天」的日線 → 今天
   assert.equal(dv.length, 1, '一列不增');
   assert.equal(dv[0].date, tomorrow());
   assert.equal(dv[0].netWorth, 777, '既有的較新紀錄一字未動');
+});
+
+test('乙｜emptyDb() 與種子不再預填 GBP／JPY 匯率（沒設＝缺匯率，不是 40.8／0.215）', () => {
+  assert.deepEqual(store.emptyDb().settings.fxTwd, {}, 'emptyDb 的 fxTwd 要是空的');
+  const seed = JSON.parse(readFileSync(new URL('../data/seed.json', import.meta.url), 'utf8'));
+  assert.deepEqual(seed.settings.fxTwd, {}, 'seed.json 的 fxTwd 要是空的');
+  const db = store.load(); db.settings = { ...db.settings, fxTwd: {} }; store.save(db);   // 先把同檔前面題留下的匯率清掉
+  assert.equal(store.load().settings.fxTwd?.GBP, undefined, 'load() 走 mergeSettingsDefaults 之後仍不可把猜值灌回來');
 });
