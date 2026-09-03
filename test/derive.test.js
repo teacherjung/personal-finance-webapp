@@ -199,7 +199,7 @@ test('乙｜buildSummary 帶 missingFx；提醒 fx-missing 在缺匯率時出現
   assert.equal(ok.reminders.find(x => x.key === 'fx-missing'), undefined, '對照：有匯率就不該有這則提醒');
 });
 
-test('乙｜前後端同口徑：同一份資料，後端 computeAssets 與前端 buildPortfolioModel 對缺匯率的 GBP 都不計入、都列 missingFx；設了匯率兩邊金額相同', async () => {
+test('乙｜前後端同口徑（持股側）：同一份持股，後端 computeIb 與前端 buildPortfolioModel 對缺匯率的 GBP 都不計入、missingFx 相同；設了匯率兩邊總市值相同', async () => {
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
   const holdings = [
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
@@ -238,4 +238,26 @@ test('乙｜零餘額帳戶／零股數持股缺匯率不算「有曝險」：mi
   assert.equal(buildSummary(db).reminders.find(x => x.key === 'fx-missing'), undefined, '不該提醒');
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
   assert.deepEqual(buildPortfolioModel(db.holdings, db.accounts, db.settings).missingFx, [], '前端同口徑');
+});
+
+test('乙｜前後端同口徑（帳戶側）：同一份持股＋帳戶（負餘額現金＋正餘額負債型＋資產），後端 computeAssets 與前端 buildPortfolioModel 的 missingFx 逐欄相同（含 liabilities）', async () => {
+  const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
+  const holdings = /** @type {any} */ ([
+    { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
+    { id: 'g', symbol: 'ISF', currency: 'GBP', quantity: 5, price: 8, avgCost: 7, source: 'manual' },
+  ]);
+  const accounts = /** @type {any} */ ([
+    { id: 'gbpCash', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: -50 },
+    { id: 'gbpLoan', type: 'loan', currency: 'GBP', balance: 1000 },
+    { id: 'gbpAsset', type: 'cash', class: '現金', currency: 'GBP', balance: 20 },
+    { id: 'gbpZero', type: 'cash', class: '現金', currency: 'GBP', balance: 0 },
+  ]);
+  const settings = { usdTwd: 32 };
+  const be = computeAssets(/** @type {any} */ ({ settings, holdings, accounts })).missingFx;
+  const fe = buildPortfolioModel(holdings, accounts, /** @type {any} */ (settings)).missingFx;
+  assert.deepEqual(be, [{ currency: 'GBP', count: 4, liabilities: 2 }], '後端：持股 1＋帳戶 3（零餘額不算），其中負餘額現金與正餘額 loan 是負債');
+  assert.deepEqual(fe, be, '前端要與後端逐欄相同（count 與 liabilities）——前端把 liabilities 記成 0 這裡會紅');
+  const okBe = computeAssets(/** @type {any} */ ({ settings: { usdTwd: 32, fxTwd: { GBP: 40 } }, holdings, accounts })).missingFx;
+  const okFe = buildPortfolioModel(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } })).missingFx;
+  assert.deepEqual(okBe, []); assert.deepEqual(okFe, []);
 });

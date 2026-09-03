@@ -29,7 +29,7 @@ export function portfolioHeaderHtml(viewCurrency) {
 
 /**
  * 頁首三張摘要卡。
- * @param {{total:number,totalCost:number,totalPnl:number,eqV:number,bondV:number,cashV:number,goldAll:number,allBase:number,leverage:number,netEquity:number,loanTwd:number,levCap:number,missingFx?:{currency:string,count:number}[]}} data
+ * @param {{total:number,totalCost:number,totalPnl:number,eqV:number,bondV:number,cashV:number,goldAll:number,allBase:number,leverage:number,netEquity:number,loanTwd:number,levCap:number,missingFx?:{currency:string,count:number,liabilities?:number}[]}} data
  * @param {{formatMoney:(value:number)=>string, escapeHtml:(value:any)=>string}} formatters
  */
 export function portfolioSummaryHtml(data, formatters) {

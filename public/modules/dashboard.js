@@ -374,7 +374,7 @@ export async function renderDashboard() {
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
 }
 
-/** 缺匯率就地標註（乙）：外幣資產沒匯率＝不算進淨資產，要讓人一眼看到「少算了幾筆」與怎麼補。 @param {any} missingFx */
+/** 缺匯率就地標註（乙）：外幣部位沒匯率＝不算進淨資產，要讓人一眼看到幾筆、方向（資產缺＝淨值被低估；負債缺＝負債與槓桿被低估、淨值被高估）與怎麼補。 @param {any} missingFx */
 function missingFxFactHtml(missingFx) {
   if (!Array.isArray(missingFx) || !missingFx.length) return '';
   const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
