@@ -1593,8 +1593,8 @@ test('假綠③｜per-share 判準：只有錯 unit 時必須 missing，不可�
 test('假綠④｜第一個 tag「存在但零可用列」必須退到下一個 tag（continue→break 的一字之差）', () => {
   // 複審實測：既有考題只蓋「概念不存在」；「概念存在但零可用列」的退路把 continue 改 break 也全綠
   // ——而那正是資本支出→自由現金流整族靜靜變 missing 的路徑。
-  // 夾具走到第 3 順位＝同時釘住「零列 continue」與「缺概念 continue」兩段，
-  // 也是 PaymentsForCapitalImprovements（2026-09-02 換入的真科目）唯一的接線考題。
+  // 夾具走到第 3 順位＝本題守的是「零列 continue」與「缺概念 continue」兩段；
+  // 新科目的跨 tag 補期與混合來源警示由「資本支出補期」那題守。
   const result = parseMetricsFixture({
     PaymentsToAcquirePropertyPlantAndEquipment: { USD: [] },   // 概念在、零列
     PaymentsForCapitalImprovements: { USD: [durAnnual(2024, 700)] }   // 第 2 順位缺概念、第 3 有值
