@@ -213,7 +213,7 @@ test('乙｜前後端同口徑（持股側）：同一份持股，後端 compute
   }
 });
 
-test('乙｜缺匯率的負債（GBP 負現金／負債型帳戶）：不計入、missingFx 標 liabilities，提醒升 danger 並講明負債／融資／槓桿被低估、淨值被高估', () => {
+test('乙｜缺匯率的負債（GBP 負現金／負債型帳戶）：不計入、missingFx 標 liabilities，提醒升 danger 並講明負債被低估、淨值可能被高估（槓桿只用條件句講）', () => {
   const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings: [{ id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' }], accounts: [
     { id: 'gbpCash', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: -50 },
     { id: 'gbpLoan', type: 'loan', currency: 'GBP', balance: 1000 },
