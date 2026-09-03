@@ -80,6 +80,7 @@
 |---|---|
 | 我該在哪個目錄開工（主目錄／實作樹／審查樹） | [AGENTS.md](AGENTS.md)「協作流程」 |
 | 堆疊 PR 怎麼合、同時開多支要注意什麼 | [AGENTS.md](AGENTS.md)「協作流程」 |
+| 同時可以開幾支 PR | [AGENTS.md](AGENTS.md)「同時最多 2 支」 |
 | 我要改的檔案別人也在改，怎麼先講好 | [AGENTS.md](AGENTS.md)「共享檔案預約」 |
 | 已經跟在途 PR 重疊了怎麼辦 | [AGENTS.md](AGENTS.md)「重疊 PR 讓道」 |
 | 一支 PR 上有好幾個審查者、分不出誰是誰 | [AGENTS.md](AGENTS.md)「審查者，而且分辨不出來」 |

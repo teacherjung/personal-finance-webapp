@@ -64,6 +64,7 @@
 **協作流程**
 - AGENTS.md＝技術單一真相，新慣例必須寫進去（Codex 看不到 Claude 的 memory）。
 - **一步一 PR、三關全綠（test／typecheck／lint）、轉 ready 送審前對抗式自審**（開工第一步＝先開 Draft PR）；合併＝**William 裁決**，執行原則「**實作者不按自己的合併鍵**」＝由審查者執行（Codex↔Claude 對稱常設授權；William 隨時可自行執行或個案指定），一律走 REVIEW-AND-MERGE.md 合併步驟（見 `REVIEW-AND-MERGE.md`；**這裡不寫幾步——步驟會加，寫死的數字會漂**）（含堆疊閘；**決策與執行的完整規則在 AGENTS.md「協作流程」，本檔不另存副本**）；改後端要重啟。
+- **同時開著的 PR 最多 2 支**（William 2026-09-03 拍板，草稿也算）——規則與配套在 AGENTS.md「同時最多 2 支」，本檔不另存副本。
 - 驗證會寫入的功能：**絕不碰真實資料**——瀏覽器只走唯讀或隔離 DB＋合成資料；正確性靠隔離 DB 的 node --test。
 - 教學影片：成片走 YouTube 嵌入（影片不進 git）、示範截圖一律合成資料。**（本條的正本自 2026-08-25 起在 教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`）；此處保留是因為它同時約束本 repo 的學習專區實作。）**
 - **投資頁拆分停止線**（AGENTS.md）：`portfolio.js` 剩下的是資料載入、頁面協調、圖表生命週期等合理職責，**不應再為了縮短行數硬拆**；其他大檔拆不拆看職責分析、不看行數。
