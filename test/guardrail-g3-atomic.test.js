@@ -159,3 +159,16 @@ test('applyLearnedBankToDb 是純的：改傳入的 db 物件、但不自己 sav
   assert.equal(db.transactions.find(t => t.id === 'in1').note, '家教費', '傳入 db 被改');
   assert.equal((await getDb()).transactions.find(t => t.id === 'in1').note, '進帳', '未落檔：磁碟上仍是原 note');
 });
+
+
+// 第二輪稽核第二批 2A：applyAll 的「truthy 但不是 true」那一格——G3 既有題考的是正牌 true 與完全不帶，這一格靠這題釘
+test('2A｜PUT applyAll 送 "false"／1／"true"／{}（truthy 但不是 true）→ 不傳播：回應無 applied、同鑰匙另一筆分類不動', async () => {
+  for (const bad of ['false', 1, 'true', {}]) {
+    await reset([stmtTx('a', '2026-07-01', '星巴克信義店'), stmtTx('b', '2026-07-02', '星巴克南京店')]);
+    const r = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: '星巴克信義店', applyAll: bad })).json();
+    assert.equal(r.applied, undefined, `applyAll=${JSON.stringify(bad)} 不可觸發傳播（只有正牌 true 才算）：${JSON.stringify(r)}`);
+    const other = (await getDb()).transactions.find(t => t.id === 'b');
+    assert.equal(other.category, '其他', `applyAll=${JSON.stringify(bad)} 讓同店另一筆被改了`);
+    assert.equal((await getDb()).transactions.find(t => t.id === 'a').category, '交通', '本筆本身要改到');
+  }
+});

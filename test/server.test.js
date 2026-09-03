@@ -16,7 +16,9 @@ const { app } = await import('../server.js');
 // stmtRef/storeKey/source/importBatch/importedAt 是服務層擁有的欄位、已退出 CRUD 白名單（Codex r11）：
 // 考題要種「帳單交易」假資料時，以服務層身分走 repo 直寫（同 importRows，不經 pickWritable；
 // 型別仍由櫃檯 sanitizeDbForWrite 驗）。絕不可為了種資料把白名單加回去。
-const { addItem } = await import('../lib/repo.js');
+const { addItem, getDb, saveDb } = await import('../lib/repo.js');
+const { cjkPdf } = await import('./helpers/build-pdf.js');
+const { userRulesFingerprint } = await import('../lib/store-rules.js');
 const seedTx = (fields) => addItem('transactions', fields);
 const server = app.listen(0, '127.0.0.1');   // 0＝隨機空埠，不會撞到 4321
 await once(server, 'listening');
@@ -1357,4 +1359,116 @@ test('⭐ 模式端點｜LOCAL 回 {hosted:false}，而且**只有這一個鍵**
     '⚠️ 只准一個鍵：契約寫明「不可以養成什麼都能問的雜物間」（docs/contracts/cloud-security.md'
     + '「匯出前告知的模式分流」）。多回版本／設定／路徑就是把環境細節送給瀏覽器');
   assert.equal(typeof body.hosted, 'boolean', '必須是布林——字串 "false" 在前端會被當成「不是 true」而走保守文案，但那是巧合不是設計');
+});
+
+
+// ============================================================================
+// 第二輪稽核第二批 2A：收件窗口的存檔守門（2026-09-02 稽核 lib/routes/ 的真破口）：少帶或亂帶一個欄位就會把資料改掉。
+// 這裡逐道釘住「壞請求被拒、資料一字不動」；每題自己快照／還原整份 DB（含 id），不讓題序決定結果。
+// ============================================================================
+
+test('2A｜POST /api/income-categories 缺 tree／tree 不是物件 → 400，不把收入分類抹成預設', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+  const seeded = await POST('/income-categories', { tree: { 我的收入: ['薪水A', '獎金B'], 其他: ['其他收入'] } });
+  assert.equal(seeded.status, 200);
+  const before = await GET('/income-categories');
+  assert.ok(before['我的收入'], '夾具：自訂大類要先種進去');
+  for (const bad of [{}, { tree: null }, { tree: [] }, { tree: 'oops' }]) {
+    const res = await POST('/income-categories', bad);
+    assert.equal(res.status, 400, `${JSON.stringify(bad)} 要 400`);
+  }
+  const after = await GET('/income-categories');
+  assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort(), '壞請求不可把收入分類抹成預設');
+  assert.deepEqual(after['我的收入'], before['我的收入'], '自訂大類的子分類要原封不動');
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
+});
+
+test('2A｜POST /api/transfer-subcategories 缺 subs／subs 不是陣列 → 400，自訂清單原封不動（不可默默復原成內建三筆）', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+  const custom = [{ label: '我的內轉出', role: 'out' }, { label: '我的內轉入', role: 'in' }, { label: '自訂項X' }];
+  assert.equal((await POST('/transfer-subcategories', { subs: custom })).status, 200);
+  const before = await GET('/transfer-subcategories');
+  assert.ok(before.some(x => x.label === '自訂項X'), '夾具：自訂清單要先種進去');
+  for (const bad of [{}, { subs: 'oops' }, { subs: null }, { subs: { label: 'x' } }]) {
+    assert.equal((await POST('/transfer-subcategories', bad)).status, 400, `${JSON.stringify(bad)} 要 400`);
+  }
+  assert.deepEqual(await GET('/transfer-subcategories'), before, '壞請求不可把自訂清單換成預設（整個物件逐筆相同，含 role）');
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
+});
+
+test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批裡壞一筆 → 400，既有目標整筆相同、含 id（不留半殘目標）', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+    assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200);
+    const before = await GET('/assetTargets');   // 整個陣列（含 id）——只比 class/pct 擋不住「回 400 但偷換 id」（Codex r2）
+    for (const bad of [[{ targetPct: 50 }], [{ class: '', targetPct: 30 }], [{ class: '股票', targetPct: 60 }, { targetPct: 40 }], [{ class: 7, targetPct: 10 }]]) {
+      assert.equal((await POST('/assetTargets/replace', { targets: bad })).status, 400, `${JSON.stringify(bad)} 要 400`);
+      assert.deepEqual(await GET('/assetTargets'), before, `${JSON.stringify(bad)}：壞一筆＝整批拒、原目標整筆相同（含 id）`);
+    }
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
+});
+
+test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true（"false"／1／"true"）→ 400，且學習表與 note 一個字都沒動', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+  const learnedBefore = await GET('/learned'); const txBefore = (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
+  for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }]) {
+    assert.equal((await POST('/statement/normalize-branches', bad)).status, 400, `${JSON.stringify(bad)} 要 400（只有正牌 true 才是確認）`);
+  }
+  assert.deepEqual(await GET('/learned'), learnedBefore, '被擋下的呼叫不可動到學習表');
+  assert.deepEqual((await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
+});
+
+test('2A｜useAi 不是正牌 true（"false"／1／{}）→ 兩條 preview 走模板路的原錯誤，不進 AI 路（否則只差一把鑰匙就外送＝扣錢）', async () => {
+  // 要一份 pdfjs 開得起來、但不是任何帳單的 PDF（結構不合法的 PDF 會停在「無法開啟」、走不到模板判斷）
+  const b64 = Buffer.from(cjkPdf([['2026/07/01', '這不是任何一種對帳單', '123']])).toString('base64');
+  // ⚠️ 這題絕不可真的外送（Codex #553 r1 High）：①強制 aiApiKey 為空並斷言；②攔下所有非本機的 fetch——
+  //    突變成 !!useAi 時走到 AI 路只會安全地紅在 ai_no_key／絆線，不會把合成 PDF 送去 Anthropic 扣費。
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  const realFetch = globalThis.fetch;
+  try {
+    { const db = await getDb(); db.settings = { ...db.settings, aiApiKey: '' }; await saveDb(db); }
+    assert.equal((await getDb()).settings.aiApiKey, '', '前提：測試庫的 aiApiKey 必須是空的');
+    globalThis.fetch = (/** @type {any} */ url, /** @type {any} */ init) => {
+      if (new URL(String(url)).origin !== new URL(base).origin) throw new Error(`考題絆線：這題只准打本題的 server（${String(url)}）`);
+      return realFetch(url, init);
+    };
+  for (const bad of ['false', 1, {}, 'true']) {
+    const bank = await (await POST('/bank-statement/preview', { data: b64, useAi: bad })).json();
+    assert.notEqual(bank.code, 'ai_no_key', `銀行 preview useAi=${JSON.stringify(bad)} 進了 AI 路（回 ai_no_key）`);
+    assert.equal(bank.code, 'bank_unrecognized', `銀行 preview 應是模板路原錯誤（實際 ${bank.code}）`);
+    const card = await (await POST('/statement/preview', { data: b64, useAi: bad })).json();
+    assert.notEqual(card.code, 'ai_no_key', `信用卡 preview useAi=${JSON.stringify(bad)} 進了 AI 路（回 ai_no_key）`);
+    assert.equal(card.code, 'card_unrecognized', `信用卡 preview 應是模板路原錯誤（實際 ${card.code}）`);
+  }
+  } finally { globalThis.fetch = realFetch; await saveDb(snapshot); await getDb(); }
+});
+
+test('2A｜POST /statement/normalize-auto：會併學習表時不帶 force → needsConfirmation 且不套用；force:true 才套用併成一把', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+    const db = await getDb();
+    db.transactions = [
+      { id: 'na1', date: '2026-07-01', type: 'expense', category: '飲食', subcategory: '零食', amount: 1, note: '鮮芋仙林口店', storeKey: '鮮芋仙林口店', source: 'stmt', stmtRef: 'c1|2026-07-01|1|鮮芋仙林口店' },
+      { id: 'na2', date: '2026-07-02', type: 'expense', category: '娛樂', subcategory: '電影', amount: 1, note: '鮮芋仙新店店', storeKey: '鮮芋仙新店店', source: 'stmt', stmtRef: 'c1|2026-07-02|1|鮮芋仙新店店' }];
+    db.learnedCategories = { '鮮芋仙林口店': { category: '飲食', subcategory: '零食' }, '鮮芋仙新店店': { category: '娛樂', subcategory: '電影' } };
+    db.settings = { ...db.settings, storeRules: { chains: ['鮮芋仙'], canon: [], brand: [], rename: [], parkExempt: [] } };
+    delete db.settings.storeRulesHash;   // 清掉「同版規則只跑一次」的指紋（鍵名＝lib/services/statement-import.js 的 storeRulesHash）
+    await saveDb(db);
+    const r1 = await (await POST('/statement/normalize-auto', {})).json();
+    assert.equal(r1.ran, false, `不帶 force 不可套用（實際 ${JSON.stringify(r1)}）`);
+    assert.equal(r1.needsConfirmation, true, '會動到學習表 ⇒ 要停下來問');
+    assert.deepEqual(Object.keys(await GET('/learned')).sort(), ['鮮芋仙新店店', '鮮芋仙林口店'].sort(), '沒確認前兩把鑰匙都要在');
+    // 這條路由對 force 做 `!!`（truthy 就算確認），與 normalize-branches／applyAll 的嚴格 `=== true` 不一致；
+    //    本題不改行為、只釘「不帶 force 不可套用」與「true 才套用」，收不收緊另案裁。
+    const r2 = await (await POST('/statement/normalize-auto', { force: true })).json();
+    assert.equal(r2.ran, true, '使用者按了確認才套用');
+    assert.deepEqual(Object.keys(await GET('/learned')), ['鮮芋仙'], '確認後併成一把');
+  } finally {
+    await saveDb(snapshot); await getDb();   // getDb 走 readDb→syncRules：把模組級規則槽同步回還原後的磁碟狀態
+    assert.ok(!userRulesFingerprint().includes('鮮芋仙'), '還原不完整：規則槽仍含本題夾具（會污染同檔後面的題）');
+  }
 });
