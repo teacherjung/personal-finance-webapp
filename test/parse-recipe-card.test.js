@@ -408,7 +408,7 @@ test('套用｜r16：金額錨自身的三個洞——豁免夾帶／怪形金�
   // r17#2：長輸入不得二次方回溯（3 萬字元舊判準牆上時鐘實測兩秒級；線性判準毫秒級——門檻放很寬防機器快慢）
   const longCell = LINES().map((l) => l);
   longCell.splice(10, 0, [`${'1'.repeat(50000)}X`]);
-  //   ⚠️ 量 CPU 工作量、不量牆上時鐘（交換與劃界見 test/helpers/cpu-ms.js）：門檻沒動、量尺換了——
+  //   ⚠️ 量 CPU 工作量、不量牆上時鐘（交換與劃界見 test/helpers/cpu-ms.js）：
   //   夾心正則的壞法在這 5 萬字元上 CPU 實測 4,240ms（Codex #552 r1 獨立量到 3,957ms），對 1,500ms 是近三倍距離；
   //   這道斷言證明的是「不會二次方回溯」，不是「X 毫秒內收工」（同步等待它量不到）。
   const longMs = cpuMs(() => assert.equal(parseCardWithRecipe(longCell, /** @type {any} */ (GOOD())).transactions.length, 3, '數字堆＋非集字元＝不是金額形＝雜訊'));
