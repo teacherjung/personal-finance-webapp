@@ -67,7 +67,9 @@ export const BOX_ROOT = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
  * 在沙箱裡跑一條指令。cwd 預設＝盒子（考題從家目錄底下的工作樹跑時，沙箱裡的程式連「目前目錄」都讀不到）。
  * @param {string} box
  * @param {string[]} argv 指令與參數（絕對路徑）
- * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, relayPort?: number }} [opt]
+ * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, relayPort?: number, profile?: string }} [opt]
+ *   `profile`＝沙箱設定檔路徑，預設 PROFILE。**只給考題用**：拿一份故意寬鬆的設定證明金絲雀真的會叫
+ *   （2026-09-02 第二輪稽核第 1 條：計分器與退出碼映射原本零考題＝沙箱失效仍報「可以掃」）。正式掃描不傳。
  */
 export function runInSandbox(box, argv, opt = {}) {
   // ⚠️ 傳給沙箱的路徑一律先 realpath：sandbox-exec 比對的是**解析後**路徑，
@@ -76,7 +78,7 @@ export function runInSandbox(box, argv, opt = {}) {
   mkdirSync(join(boxReal, 'tmp'), { recursive: true });
   mkdirSync(join(boxReal, 'grok-home'), { recursive: true });
   return spawnSync('/usr/bin/sandbox-exec', [
-    '-f', PROFILE,
+    '-f', opt.profile ?? PROFILE,
     '-D', `SCAN_DIR=${boxReal}`,
     '-D', `RELAY_PORT=${opt.relayPort ?? RELAY_PORT}`,
     ...argv,
@@ -99,13 +101,15 @@ export function isBlocked(r, secret) {
 /**
  * 能力探測：這台機器、這個環境，沙箱**套得上**嗎？套不上＝退 2，不是「擋住」。
  * @param {string} box
+ * @param {{ profile?: string }} [opt] 考題用的替代設定檔（見 runInSandbox）
  */
-export function canApplySandbox(box) {
+export function canApplySandbox(box, opt = {}) {
+  const profile = opt.profile ?? PROFILE;
   if (process.platform !== 'darwin') return { ok: false, why: '非 macOS：沒有 sandbox-exec' };
   if (!existsSync('/usr/bin/sandbox-exec')) return { ok: false, why: '找不到 /usr/bin/sandbox-exec' };
-  if (!existsSync(PROFILE)) return { ok: false, why: `找不到沙箱設定檔 ${PROFILE}` };
+  if (!existsSync(profile)) return { ok: false, why: `找不到沙箱設定檔 ${profile}` };
   if (!box || !existsSync(box)) return { ok: false, why: `盒子不存在：${box}` };
-  const r = runInSandbox(box, ['/bin/echo', 'APPLY-OK']);
+  const r = runInSandbox(box, ['/bin/echo', 'APPLY-OK'], { profile });
   if (r.status !== 0 || !(r.stdout || '').includes('APPLY-OK')) {
     return { ok: false, why: `沙箱 apply 不了（status ${r.status}：${(r.stderr || '').trim().slice(0, 100)}）——巢狀沙箱環境會這樣` };
   }
@@ -115,13 +119,15 @@ export function canApplySandbox(box) {
 /**
  * 跑完整金絲雀。回傳 { code, lines }——lines 是逐條結果（給 PR 描述貼）。
  * @param {string} box
- * @param {{ relayPort?: number }} [opt] 正式掃描傳本掃的隨機 port——金絲雀跟發射用同一組沙箱參數
+ * @param {{ relayPort?: number, profile?: string }} [opt] 正式掃描傳本掃的隨機 port——金絲雀跟發射用同一組沙箱參數；
+ *   `profile` 只給考題（見 runInSandbox）
  */
 export async function runCanary(box, opt = {}) {
   const relayPort = opt.relayPort ?? RELAY_PORT;
+  const profile = opt.profile ?? PROFILE;
   /** @type {string[]} */
   const lines = [];
-  const cap = canApplySandbox(box);
+  const cap = canApplySandbox(box, { profile });
   if (!cap.ok) return { code: 2, lines: [`⛔ ${cap.why}（fail-closed，不掃）`] };
 
   const home = homedir();
@@ -168,14 +174,14 @@ export async function runCanary(box, opt = {}) {
 
   let dead = 0;
   const mustFail = (/** @type {string} */ label, /** @type {string[]} */ argv) => {
-    const r = runInSandbox(box, argv, { relayPort });
+    const r = runInSandbox(box, argv, { relayPort, profile });
     const blocked = isBlocked(r, secret);
     const why = r.status === null ? `（status null：${r.error?.message || r.signal || '?'}）` : r.status === 71 ? '（status 71＝沙箱沒套上）' : '';
     lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜${label}${why}`);
     if (!blocked) dead++;
   };
   const mustPass = (/** @type {string} */ label, /** @type {string[]} */ argv, /** @type {string} */ expect) => {
-    const r = runInSandbox(box, argv, { relayPort });
+    const r = runInSandbox(box, argv, { relayPort, profile });
     const ok = r.status === 0 && (r.stdout || '').includes(expect);
     lines.push(`${ok ? '✅ 通過' : '❌ 誤殺'}｜${label}${ok ? '' : `（status ${r.status}：${(r.stderr || '').trim().slice(0, 80)}）`}`);
     if (!ok) dead++;
@@ -214,7 +220,7 @@ export async function runCanary(box, opt = {}) {
         const ctl = spawnSync(gh, ['--version'], { encoding: 'utf8', timeout: 10_000 });
         if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 brew 裝的非依賴工具（gh 在沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
         else {
-          const r = runInSandbox(box, [gh, '--version'], { relayPort });
+          const r = runInSandbox(box, [gh, '--version'], { relayPort, profile });
           const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !(r.stdout || '').includes('gh version');
           lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 brew 裝的非依賴工具（gh；process-exec 限路徑）`);
           if (!blocked) dead++;
@@ -227,7 +233,7 @@ export async function runCanary(box, opt = {}) {
       const ctl = spawnSync('/usr/local/bin/node', ['--version'], { encoding: 'utf8', timeout: 10_000 });
       if (ctl.status !== 0) { lines.push('⛔ 對照組不活｜執行 /usr/local/bin/node（沙箱外跑不起來）——這隻測不出，fail-closed'); dead += 1000; }
       else {
-        const r = runInSandbox(box, ['/usr/local/bin/node', '--version'], { relayPort });
+        const r = runInSandbox(box, ['/usr/local/bin/node', '--version'], { relayPort, profile });
         const blocked = r.status === 71 && /execvp\(\).*Operation not permitted/.test(r.stderr || '') && !/^v\d/.test(r.stdout || '');
         lines.push(`${blocked ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜執行 /usr/local/bin/node（process-exec 拒 /usr/local）`);
         if (!blocked) dead++;
@@ -273,7 +279,7 @@ export async function runCanary(box, opt = {}) {
       const prev = { ...process.env };
       Object.assign(process.env, sentinels);
       let r;
-      try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
+      try { r = runInSandbox(box, ['/usr/bin/env'], { relayPort, profile }); }   // 不傳 env＝走 sandboxEnv() 的白名單——哨兵必須被擋在外面
       finally { for (const k of Object.keys(sentinels)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
       const leak = Object.values(sentinels).some((v) => (r.stdout || '').includes(v));
       lines.push(`${!leak && r.status === 0 ? '🔴 擋住' : '🟢 活著（沙箱是假的）'}｜環境變數白名單（放 ${Object.keys(sentinels).length} 個哨兵到呼叫者 env，盒內 env 不得出現）`);
@@ -303,7 +309,9 @@ export async function runCanary(box, opt = {}) {
     // 真 ~/.grok 的寫入探針路徑帶 secret、確認過原本不存在——沙箱是假的時它會留下，也只刪這個唯一名
     rmSync(join(home, '.grok', `w-${secret}`), { force: true });
   }
-  return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines };
+  // `dead` 一起回：考題用它斷言「每一隻標成活著的探針都有計分」——只看總 code 會被別的探針的分數遮住
+  // （Codex #551 r2 High：通用計分器被拿掉時，gh／node 兩支直接探針自己的 dead++ 仍把 code 撐在 1）。
+  return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines, dead };
 }
 
 if (isMainModule(import.meta.url)) {

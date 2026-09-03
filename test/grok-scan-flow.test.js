@@ -11,17 +11,18 @@
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms, hitProfile, nearestKnown, redactWindow } from '../scripts/grok-scan.js';
-import { canApplySandbox, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
+import { canApplySandbox, BOX_ROOT, PROFILE } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { PINNED_ISSUER, PINNED_CLIENT_ID, DUMMY_BEARER_PREFIX, authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
 const SKIP_AFTER_CANARY = '金絲雀之後的路徑只在套得上沙箱的 macOS 考得到（這台套不上；金絲雀自己會退 2＝fail-closed）';
 
@@ -62,7 +63,7 @@ function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o
   writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
   // firstCommitFiles：進**第一顆 commit**＝在 base 之前 ⇒ 在 head 樹裡、不在 base..head 的 diff 裡。
   // 預設不傳：把鑰匙形狀塞進共用夾具會讓每一題的樹都帶著它，反而遮蔽別的題。
-  for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) writeFileSync(join(d, name), body);
+  for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) { mkdirSync(dirname(join(d, name)), { recursive: true }); writeFileSync(join(d, name), body); }   // 可放巢狀路徑（如 data/store.db）
   git(['add', 'a.txt', 'tree-only.txt', ...Object.keys(o.firstCommitFiles ?? {})]);
   git(['commit', '-q', '-m', 'one']);
   const head = git(['rev-parse', 'HEAD']).trim();
@@ -1737,4 +1738,59 @@ test('runScan｜Grok 掃描抓到：沒掃成（退 2）不在 ~/.grok-scan-resu
     // ⚠️ 檔名清單證明不了「沒有把命中內容寫上磁碟」——逐檔掃內容才算。本例的命中就是暗號本身。
     for (const f of readdirSync(dir)) assert.equal(readFileSync(join(dir, f), 'utf8').includes('LIVE-CANARY-X-0123456789'), false, `${f} 裡有命中內容`);
   }
+});
+
+// ── 盒子禁區檢查要有考題（2026-09-02 第二輪稽核第 3 條）：哪天 .gitignore 漏一條、或有人 git add -f 把 store.db
+//    收進 commit，git archive 就會把它帶進盒子；那道最後檢查若被改壞不會有任何考題叫——Grok 就在盒裡讀到完整帳務資料庫。
+test('runScan｜git archive 帶出 data/store.db → 盒子禁區檢查退 2、明說是哪個檔（不是散文）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // 建盒子用 APFS clone，只在 macOS 考得到
+  const repo = tinyRepo({ firstCommitFiles: { 'data/store.db': 'NOT-A-REAL-DB-JUST-A-MARKER\n' } });
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
+  assert.equal(r.code, 2, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /盒子裡出現不該有的檔：data\/store\.db/);
+});
+
+// ── 正式掃描用的沙箱設定＝寫死的 PROFILE（Codex #551 r4：字串比對題被等價寫法繞過 ⇒ 改成行為證據）──
+test('runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀不收 profile（行為證據：記錄實際收到的選項＋launch.json 的實際 argv＋盒內真的讀不到盒外）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ① 假金絲雀把它實際收到的選項記下來——不管正式碼用什麼寫法組選項，傳進來的值騙不了人
+  /** @type {any[]} */ const seen = [];
+  const recordingCanary = async (/** @type {string} */ _box, /** @type {any} */ opt) => { seen.push({ ...(opt ?? {}) }); return { code: 0, lines: ['（記錄型假金絲雀）'] }; };
+  // ② 假 grok 在盒內試讀「盒外」的標記檔（/private/tmp 底下另一個目錄＝正式設定的禁區）；讀到就印出來、讀不到印 BLOCKED
+  const probeDir = keep(mkdtempSync(join(BOX_ROOT, 'grok-flow-probe-')));
+  const marker = join(probeDir, 'marker.txt'); const secret = `OUTSIDE-MARKER-${randomUUID()}`; writeFileSync(marker, secret + '\n');
+  const inst = fakeGrok();
+  const bin = join(inst, 'bin', 'grok'); const origScript = readFileSync(bin, 'utf8');
+  assert.ok(origScript.includes('# REPLY-LINE'), 'fakeGrok 的回覆行標記不見了，這題的注入點失效');
+  // ⚠️ 正向對照（Codex #551 r5）：同一條指令、同一個目標，先在沙箱外跑一次，必須讀到標記——
+  //    否則路徑打錯、cat 起不來、權限先壞掉，盒內的「失敗」都會被誤當成沙箱擋住。
+  const control = spawnSync('/bin/cat', [marker], { encoding: 'utf8' });
+  assert.equal(control.status, 0, `對照組：沙箱外 cat 標記檔失敗（status ${control.status}：${(control.stderr || '').trim()}）`);
+  assert.ok(control.stdout.includes(secret), '對照組：沙箱外必須讀得到標記內容');
+  // 盒內失敗時把 cat 的錯誤訊息帶回來：要的是 Seatbelt 的「Operation not permitted」，不是「No such file」
+  writeFileSync(bin, origScript.replace(/^printf '%s' .*# REPLY-LINE$/m,
+    `if out=$(/bin/cat "${marker}" 2>&1); then printf 'PROBE-READ-OK:%s' "$out"; else printf 'PROBE-BLOCKED:%s' "$out"; fi # REPLY-LINE`));
+  const iso = { ...isolated(), runCanary: recordingCanary };
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'fake-out-'))), 'reply.txt');
+  const repo = tinyRepo();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst) });
+  assert.equal(r.code, 0, r.summary.join('\n'));
+  // 金絲雀：不得收到 profile 這個鍵（連 undefined 都不行——鍵存在＝正式路徑有人在組這個選項）
+  assert.equal(seen.length, 1, '正式掃描應恰好叫金絲雀一次');
+  assert.ok(!Object.hasOwn(seen[0], 'profile'), `正式掃描把 profile 傳給了金絲雀：${JSON.stringify(seen[0])}`);
+  // 真 grok 發射：實際用的 argv 記在結果包的 launch.json；-f 後面必須是 repo 那份 grok-sandbox.sb
+  const packs = readdirSync(iso.resultsRoot); assert.equal(packs.length, 1, '應恰好留一個結果包');
+  const launch = JSON.parse(readFileSync(join(iso.resultsRoot, packs[0], 'launch.json'), 'utf8'));
+  assert.equal(launch.sbArgv?.[0], '-f', `launch.json 的 sbArgv 形狀變了：${JSON.stringify(launch.sbArgv)}`);
+  assert.equal(realpathSync(String(launch.sbArgv[1])), realpathSync(PROFILE), `真 grok 發射用的不是寫死的 PROFILE：${launch.sbArgv[1]}`);
+  // 而且那份設定真的關得住：盒內的假 grok 讀不到盒外的標記
+  const reply = readFileSync(out, 'utf8');
+  assert.ok(reply.startsWith('PROBE-BLOCKED:'), `盒內探針沒回報被擋：${reply.slice(0, 120)}`);
+  assert.match(reply, /Operation not permitted|Permission denied/, `失敗原因必須是沙箱拒絕，不是別的（實際：${reply.slice(0, 160)}）`);
+  assert.ok(!reply.includes(secret), '盒內讀到了盒外的標記＝實際套的沙箱設定比正式的鬆');
+  // ③ 剝掉註解後的結構釘子：組 sbArgv 那一句不得看環境變數／參數（env ?? PROFILE 這種寫法在 env 沒設時行為一樣，行為題量不到）
+  const src = readFileSync(join(ROOT, 'scripts', 'grok-scan.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const m = /const sbArgv = \[([\s\S]*?)\];/.exec(src); assert.ok(m, 'grok-scan.js 找不到 const sbArgv = [...]');
+  assert.match(m[1], /^\s*'-f',\s*PROFILE\s*,/, `sbArgv 的第一對必須是 '-f', PROFILE：${m[1].trim().slice(0, 80)}`);
+  assert.ok(!/process\.env|\benv\b|argv|\?\?/.test(m[1]), `sbArgv 不得由環境變數／參數／退路決定：${m[1].trim().slice(0, 120)}`);
 });

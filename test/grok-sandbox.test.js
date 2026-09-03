@@ -11,6 +11,8 @@
 // ・突變實測（2026-08-22）：拿掉「家目錄全拒」→ 4 隻活；拿掉「網路全拒」→ 1 隻活；整檔換成 allow default → 5 隻活。
 //   金絲雀自己的兩個假紅也記在這裡：①status 為 null（被殺）曾被當成「擋住」；②探針用 -I 在沙箱外本來就失敗。
 //   兩個都修了——金絲雀要先證明自己會叫，才能拿來證明圍欄。
+// ・紅燈本身的突變實測（2026-09-03，第二輪稽核第 1 條）：拿掉 mustFail 的 dead++ → 「金絲雀會叫」題紅；
+//   退出碼映射把 1 改成 0 → 同題紅；套不上時不再 fail-closed（回 0）→ 「fail-closed」題紅。用的是可注入的寬鬆／壞掉設定檔。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
@@ -206,3 +208,47 @@ test('金絲雀自己｜isBlocked：status 為 null（被殺／ENOBUFS／逾時�
   assert.equal(isBlocked({ status: null, stdout: '' }, 'SECRET'), false, 'status null 被當成擋住＝金絲雀被殺時會假報「沙箱有效」');
   assert.equal(isBlocked({ status: null, stdout: null }, 'SECRET'), false);
 });
+
+// ============================================================================
+// 紅燈自己也要有考題（2026-09-02 第二輪稽核第 1 條）：金絲雀的計分器與退出碼映射原本零考題——
+// 沙箱靜靜失效時它仍回 0、仍印「可以掃」，Grok 就在沒有圍欄的情況下發射。
+// 做法＝把沙箱設定檔做成可注入，拿一份**故意寬鬆**的設定跑同一支金絲雀：它必須叫（退 1）；
+// 拿一份**套不上**的設定：它必須 fail-closed（退 2），不是「擋住」也不是 0。
+// ============================================================================
+
+test('沙箱｜金絲雀會叫：換成「全部放行」的設定檔 ⇒ 退出碼 1、至少一隻「活著」（計分器不是散文）', async (t) => {
+  if (!CAN_SANDBOX) { t.skip(SKIP); return; }
+  const box = tmpBox();
+  const loose = join(box, 'loose.sb');
+  writeFileSync(loose, '(version 1)\n(allow default)\n');
+  try {
+    const { code, lines, dead } = await runCanary(box, { profile: loose });
+    assert.equal(code, 1, '寬鬆設定下金絲雀竟然沒叫：\n' + lines.join('\n'));
+    const alive = lines.filter((l) => l.includes('🟢 活著')).length;
+    assert.ok(alive >= 1, '要有至少一隻被標成「活著」：\n' + lines.join('\n'));
+    // ⚠️ 只看總 code 不夠（Codex #551 r2 High）：gh／node 兩支直接探針各自會 dead++，拿掉**通用**計分器
+    //    （mustFail 的 dead++）總分仍是 1。所以釘「每一隻活著都有計分」：dead 必須等於活著的隻數
+    //    （對照組不活的 +1000 這條路在寬鬆設定下走不到——它們在沙箱外本來就活）。
+    assert.ok(!lines.some((l) => l.startsWith('⛔')), '寬鬆設定下不該有對照組不活：\n' + lines.join('\n'));
+    assert.equal(dead, alive, `活著 ${alive} 隻但只計了 ${dead} 分——有探針的活著沒被計分`);
+    // 對照：同一個盒子換回正式設定檔要是 0——證明差別只在設定檔（不是盒子壞了）
+    const ctl = await runCanary(box);
+    assert.equal(ctl.code, 0, '同一個盒子用正式設定檔應全擋住：\n' + ctl.lines.join('\n'));
+  } finally { rmSync(box, { recursive: true, force: true }); }
+});
+
+test('沙箱｜金絲雀 fail-closed：設定檔套不上（語法壞掉）⇒ 退出碼 2、第一行是 ⛔（不是 0、也不算「擋住」）', async (t) => {
+  if (!CAN_SANDBOX) { t.skip(SKIP); return; }
+  const box = tmpBox();
+  const bad = join(box, 'bad.sb');
+  writeFileSync(bad, '(version 1)\n(this is not a sandbox profile\n');
+  try {
+    const { code, lines } = await runCanary(box, { profile: bad });
+    assert.equal(code, 2, '套不上的設定檔必須退 2（fail-closed）：\n' + lines.join('\n'));
+    assert.ok(lines[0]?.startsWith('⛔'), '第一行要說明為什麼不掃：' + lines[0]);
+  } finally { rmSync(box, { recursive: true, force: true }); }
+});
+
+// 「正式掃描不傳 profile、真 grok 發射用寫死的 PROFILE」＝行為題，住 test/grok-scan-flow.test.js 的
+// 「runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀不收 profile」那題（跨檔引用刻意不帶記號——路標閘只驗同檔）。
+// Codex #551 r4：字串比對的版本被兩種等價寫法繞過（選項先存變數／env ?? PROFILE 加註解），所以換成行為證據。
