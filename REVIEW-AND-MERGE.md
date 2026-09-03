@@ -1,5 +1,7 @@
 # 審查與合併程序（Claude／Codex／William 共用）
 
+> **規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：協作規矩分住本檔／`AGENTS.md`／`CLAUDE.md` ，哪一條在哪一節去那張表查。它**只指路、不是正本、無規則效力，而且刻意不完整**——衝突時以正本為準）。
+
 > **這份檔案原本叫 `CODEX-REVIEW.md`，2026-08-03 改名。**
 > 理由是 William 的一句話：「為什麼 Claude 要照一份叫 Codex 的檔案做事？這樣很奇怪。」
 > 他問得對——這份檔案裡**只有一小部分是 Codex 專屬的**：
