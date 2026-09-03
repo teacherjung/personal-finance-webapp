@@ -65,7 +65,6 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
-import { marked } from 'marked';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -353,81 +352,28 @@ const POINTER_LINE = /^(?:> )?\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-M
 /** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
 const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
 
-/** 只給那一行用的目的地——用它把渲染出來的 `<a>` **綁回那一行**。 */
-const SENTINEL = 'COLLAB-MAP-POINTER-SENTINEL';
-
-/**
- * **那一行指路本身**，在整份文件的脈絡裡，有沒有**渲染出**一個指向地圖的 `<a>`。
- *
- * 做法：把**那一行**的目的地換成 sentinel，整份丟給 `marked` 渲染，
- * 再看輸出裡有沒有 `href="<sentinel>"`。
- *
- * ⚠️ 為什麼問**輸出**、不問 token 樹（`Codex #548 r8`）：token 存在不等於會渲染成連結。
- * 把指路行包成圖片的 alt 文字（`![⋯指路行⋯](cover.png)`），image token 底下確實有 link token，
- * 但 alt 只會變成純文字，輸出裡沒有任何 `<a>`。走 token 樹會**走過頭**，補欄位也補不完
- * （漏走＝誤擋、走過頭＝假綠，兩邊都踩過）。⇒ 不走了，直接問渲染結果。
- *
- * ⚠️ 為什麼問輸出仍然安全（這是 `Codex #548 r6` 當初的疑慮）：`marked` 不 sanitize，
- * 註解裡的 raw HTML 會原樣留著——但那些誘餌的 href 是 `COLLAB-MAP.md`，**不是 sentinel**。
- * sentinel 只可能由**被替換的那一行**產生，所以歸屬是定義上的。
- *
- * ⚠️ 前提是 sentinel **真的不碰撞**（`Codex #548 r8`②）：原文件若自己就含有那個字串
- * （例如有人先放一個 `[誘餌](COLLAB-MAP-POINTER-SENTINEL)`），歸屬證明就失效 ⇒ 這裡 fail-closed。
- *
- * @param {string[]} lines 整份文件的每一行
- * @param {number} at 指路行的索引
- */
-function pointerRendersAsLink(lines, at) {
-  const doc = lines.join('\n');
-  assert.ok(!doc.includes(SENTINEL),
-    `這份文件本身就含有 sentinel「${SENTINEL}」，無法證明渲染出來的連結來自指路行。這裡 fail-closed。`);
-  const patched = lines.slice();
-  patched[at] = patched[at].replace(`](${MAP})`, `](${SENTINEL})`);
-  // ⚠️ 先確認真的改到——改不到的話下面必然回 false，會變成「永遠誤擋」的空包彈。
-  assert.notEqual(patched[at], lines[at], '指路行沒有可替換的連結目的地，sentinel 綁定失效。');
-  return String(marked.parse(patched.join('\n'), { async: false })).includes(`href="${SENTINEL}"`);
-}
-
-test('⭐ 渲染判準自己要先會動：藏起來的不算、真的看得到的不可以誤擋', () => {
+test('⭐ 指路行的判準自己要先會動：不合形狀的寫法都要被擋掉', () => {
   const good = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它**只指路、不是正本、無規則效力**）。';
-  assert.ok(POINTER_LINE.test(good) && POINTER_LINE.test(`> ${good}`), 'fixture 的指路行形狀就不對。');
+  assert.ok(POINTER_LINE.test(good) && POINTER_LINE.test(`> ${good}`), '合法的指路行（含引言版）竟然比對不到。');
   assert.ok(POINTER_WORDS.every((w) => good.includes(w)), 'fixture 自己就少了免責詞。');
 
-  /** @param {string} md */
-  const check = (md) => {
-    const L = md.split('\n');
-    const i = L.findIndex((l) => l.includes(`](${MAP})`));
-    return i >= 0 && pointerRendersAsLink(L, i);   // 連可綁的連結都沒有＝本來就不算數
-  };
-
-  assert.ok(check(good), '正常的指路行應該算數。');
-  assert.ok(check(`> ${good}`), '寫在引言裡應該算數。');
-  // ⚠️ 表格 header 那發是**誤擋**方向（`Codex #548 r7`①）：漏走 header 會把真的可點連結判成沒有。
-  assert.ok(check(`${good}\n| --- |`), '表格 header 裡的連結是真的可點，不可以誤擋。');
-
-  const hidden = {
-    '單行 HTML 註解': `<!-- ${good} -->`,
-    '註解裡另塞 raw <a> 誘餌': `<!--\n${good.replace('）。', ' <a href="COLLAB-MAP.md">誘餌</a>）。')}\n-->\n\n## H`,
-    '未閉合註解＋後面另放真連結': `<!--\n${good.replace('）。', '　-->）。')}\n\n另外參考 [COLLAB-MAP.md](COLLAB-MAP.md)。`,
-    'code span 包住＋旁邊放誘餌': `\`\n${good}\n\` [誘餌](COLLAB-MAP.md)\n\n## H`,
-    '三反引號圍欄': `\`\`\`\n${good}\n\`\`\``,
-    '四反引號外框包三反引號': `\`\`\`\`markdown\n\`\`\`\n${good}\n\`\`\`\n\`\`\`\``,
-    '波浪號圍欄': `~~~\n${good}\n~~~`,
-    '四個空白縮排': `    ${good}`,
-    '引言裡的圍欄': `> \`\`\`bash\n> ${good}\n> \`\`\``,
+  const bad = {
+    '可點的反面句': '不要去看 [COLLAB-MAP.md](COLLAB-MAP.md)，它不是正本，已經廢棄。',
+    '被單行註解包住': `<!-- ${good} -->`,
     '註解夾在連結中間': '**規矩住在哪＝[COLLAB-MAP.md]<!-- x -->(COLLAB-MAP.md)**（路由表）。',
-    '包成圖片的 alt 文字（token 在、<a> 不在）': `![替代文字\n${good}\n](cover.png)\n\n## H`,
+    '四個空白縮排': `    ${good}`,
+    '只有連結沒有指定形狀': '見 [COLLAB-MAP.md](COLLAB-MAP.md)。',
+    '連結指到別的檔': '**規矩住在哪＝[COLLAB-MAP.md](OTHER.md)**（路由表）。',
   };
-  for (const [name, md] of Object.entries(hidden)) {
-    assert.ok(!check(md), `「${name}」不該算成「指路行有變成連結」。`);
+  for (const [name, line] of Object.entries(bad)) {
+    assert.ok(!POINTER_LINE.test(line), `「${name}」不該被當成合法的指路行。`);
   }
-
-  // sentinel 碰撞＝歸屬證明失效 ⇒ 必須 fail-closed（丟例外），不可以靜靜回 true
-  assert.throws(() => check(`[誘餌](${SENTINEL})\n\n${good}`),
-    '原文件已含 sentinel 時要 fail-closed，不可以讓別處的誘餌頂替。');
+  const missing = '**規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：它只指路）。';
+  assert.ok(POINTER_LINE.test(missing) && !POINTER_WORDS.every((w) => missing.includes(w)),
+    '缺免責詞的那一行要靠 POINTER_WORDS 擋，不是靠形狀。');
 });
 
-test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路，而且它自己渲染成一個真的連結', () => {
+test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路', () => {
   // ⚠️ 這裡刻意**沿用 CANON**、不另外手寫一份名單：手寫的第二份名單自己會漂
   //    （同 `test/collab-invariant-docs.test.js` 的 `Codex #385 r9` 教訓）。
   //    ⚠️ 誠實劃界（`Grok #548 掃`②）：`CANON` 同時當「地圖要導到這三份」與「這三份要指回地圖」
@@ -438,11 +384,18 @@ test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的�
   //    引言裡的圍欄、把註解夾進連結中間。那是「列舉繞法補不完」的形狀。
   //    渲染器直接回答原本要問的問題：**渲染出來到底有沒有那個 `<a>`**。
   //
-  // ⚠️ **這一題保證到哪裡**（`Codex #548 r7`③ 要求收窄）：那一行**形狀對**、**在第一個字面 `## ` 之前**、
-  //    而且**它自己**渲染成一個 link token。**它不保證「讀者一開檔就看得到」**——
-  //    把指路行放進預設收合的 `<details>`（仍在前言），上面每一條都成立，讀者卻要先展開才看得到。
-  //    實測確認擋不到。要守到那種程度就得再去追「哪些容器會遮住前言」，那是另一場列舉；
-  //    這裡選擇**把宣稱縮到實況**，不追。
+  // ⚠️ **這一題保證到哪裡**（William 2026-09-03 裁定的停損點）：只保證**那一行在、形狀對、
+  //    在第一個字面 `## ` 之前、而且自己寫明了那幾個免責詞**。
+  //    **它不證明那一行會渲染成一個可點的連結。** 把它包進 HTML 註解、``` 圍欄、`~~~`、
+  //    四反引號外框、引言裡的圍欄、四個空白縮排、圖片的 alt 文字、收合的 `<details>`——
+  //    這些寫法都會讓讀者點不到，而這一題**擋不到**（每一種都實測過）。
+  //
+  //    為什麼停在這裡：`Codex #548` r2→r9 連九輪，每一輪都找得到新的 markdown 寫法。
+  //    先後試過「剝註解與圍欄再比對字串」「認一行指定形狀」「走 marked 的 token 樹」
+  //    「問渲染出來的 HTML＋sentinel 綁定」——每一種都被下一輪繞過（最後一發是反斜線跳脫，
+  //    `marked` 會把 link destination 裡的跳脫解掉，於是「原文件不含 sentinel」的證明失效）。
+  //    這道護欄防的是**自然的腐爛**（有人刪掉那一行、檔案搬家、節被改名），
+  //    不是有人刻意用怪格式把它藏起來。⇒ 停損，並把宣稱縮到實況。
   //
   // ⚠️ 仍然驗不到的：那句話的**意思**。把括號內容改成「這幾個詞都是錯的、地圖才是正本」，
   //    形狀、連結、三個詞都還在 ⇒ 照樣綠（`Codex #548 r3` 實證）。語意要靠人讀。
@@ -472,10 +425,6 @@ test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的�
         + '⚠️ 誠實劃界：這只鎖那幾個詞出現在同一行，**鎖不住整句話的意思**。');
     }
 
-    assert.ok(pointerRendersAsLink(lines, at),
-      `「${from}」的指路行沒有渲染成一個真的連結。\n`
-      + '⚠️ 字面寫著檔名不算數——被註解吞掉、包在圍欄裡、四個空白縮排，讀者都點不到。\n'
-      + '⚠️ 檔案別處另有一個地圖連結也不算：判準是把**這一行**的目的地換成唯一 sentinel 再找它。');
   }
 });
 
