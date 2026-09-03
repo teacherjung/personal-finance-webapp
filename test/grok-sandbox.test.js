@@ -222,9 +222,15 @@ test('沙箱｜金絲雀會叫：換成「全部放行」的設定檔 ⇒ 退出
   const loose = join(box, 'loose.sb');
   writeFileSync(loose, '(version 1)\n(allow default)\n');
   try {
-    const { code, lines } = await runCanary(box, { profile: loose });
+    const { code, lines, dead } = await runCanary(box, { profile: loose });
     assert.equal(code, 1, '寬鬆設定下金絲雀竟然沒叫：\n' + lines.join('\n'));
-    assert.ok(lines.some((l) => l.includes('🟢 活著')), '要有至少一隻被標成「活著」：\n' + lines.join('\n'));
+    const alive = lines.filter((l) => l.includes('🟢 活著')).length;
+    assert.ok(alive >= 1, '要有至少一隻被標成「活著」：\n' + lines.join('\n'));
+    // ⚠️ 只看總 code 不夠（Codex #551 r2 High）：gh／node 兩支直接探針各自會 dead++，拿掉**通用**計分器
+    //    （mustFail 的 dead++）總分仍是 1。所以釘「每一隻活著都有計分」：dead 必須等於活著的隻數
+    //    （對照組不活的 +1000 這條路在寬鬆設定下走不到——它們在沙箱外本來就活）。
+    assert.ok(!lines.some((l) => l.startsWith('⛔')), '寬鬆設定下不該有對照組不活：\n' + lines.join('\n'));
+    assert.equal(dead, alive, `活著 ${alive} 隻但只計了 ${dead} 分——有探針的活著沒被計分`);
     // 對照：同一個盒子換回正式設定檔要是 0——證明差別只在設定檔（不是盒子壞了）
     const ctl = await runCanary(box);
     assert.equal(ctl.code, 0, '同一個盒子用正式設定檔應全擋住：\n' + ctl.lines.join('\n'));

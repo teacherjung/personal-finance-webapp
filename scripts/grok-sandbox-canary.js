@@ -309,7 +309,9 @@ export async function runCanary(box, opt = {}) {
     // 真 ~/.grok 的寫入探針路徑帶 secret、確認過原本不存在——沙箱是假的時它會留下，也只刪這個唯一名
     rmSync(join(home, '.grok', `w-${secret}`), { force: true });
   }
-  return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines };
+  // `dead` 一起回：考題用它斷言「每一隻標成活著的探針都有計分」——只看總 code 會被別的探針的分數遮住
+  // （Codex #551 r2 High：通用計分器被拿掉時，gh／node 兩支直接探針自己的 dead++ 仍把 code 撐在 1）。
+  return { code: dead >= 1000 ? 2 : dead ? 1 : 0, lines, dead };
 }
 
 if (isMainModule(import.meta.url)) {

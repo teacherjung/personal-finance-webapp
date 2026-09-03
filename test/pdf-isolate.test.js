@@ -1022,27 +1022,55 @@ test('回傳量炸彈｜正式上限是有限且合理的數字（範圍絆線�
   assert.ok(MAX_RESULT_BYTES <= 256 * 1024 * 1024, 'Render 512MB 減掉 app 底噪與子行程 heap 之後，父行程留不下更多');
 });
 
-test('回傳量炸彈｜子行程不停灌 stdout 直到**真的**超過 MAX_RESULT_BYTES → 當場 SIGKILL、400 pdf_result_too_large（不是等逾時）', async () => {
+test('回傳量炸彈｜多一 byte 就擋：子行程吐出 MAX_RESULT_BYTES+1 → 當場 SIGKILL、400 pdf_result_too_large（酬載綁同一個常數）', async () => {
   // 2026-09-02 第二輪稽核第 2 條：這道牆拆了 1487 題照樣全綠。真的漏掉時，壓縮炸彈解開後上百 MB
   // 灌回主行程＝容器 OOM 重啟＝**所有人**當下的操作一起斷線。
-  // 這題**不縮門檻**——假子行程以約 32MB/s 灌，實測約 2 秒踩到 64MB；牆若被拆（常數改成 Infinity），
-  // 這題會一路等到 20 秒逾時才紅（code 變成 pdf_timeout），不會靜靜過。
-  setPdfChildScriptForTest(fakeChild('pdf-child-flood.js'));
+  // 酬載大小由假子行程從 lib/pdf-isolate.js 匯入的同一個 MAX_RESULT_BYTES 算出（Codex #551 r2 High）：
+  // 正式比較式若不看這個常數（改成 300MB／Infinity），子行程會正常結束、父行程拿到非 JSON ⇒ bad_output ⇒ 紅。
+  setPdfChildScriptForTest(fakeChild('pdf-child-exact.js'));
   setPdfTimeoutForTest(20_000);
-  const t0 = Date.now();
-  const err = await errOf(parseStatement(normalPdf()));
-  const took = Date.now() - t0;
-  assert.ok(err, '回傳量爆掉竟然還當成成功');
-  assert.equal(err.status, 400, `太大＝使用者的檔有問題，是 400（實際 ${err.status}）`);
-  assert.equal(err.code, 'pdf_result_too_large', `要誠實說是「內容太多」，不可混成逾時或資源耗盡（實際 ${err.code}）`);
-  assert.ok(took < 15_000, `牆要在超標當下就殺，不可拖到逾時（花了 ${took}ms）`);
+  process.env.PDF_EXACT_DELTA = '+1';
+  try {
+    const t0 = Date.now();
+    const err = await errOf(parseStatement(normalPdf()));
+    const took = Date.now() - t0;
+    assert.ok(err, '回傳量爆掉竟然還當成成功');
+    assert.equal(err.code, 'pdf_result_too_large', `要誠實說是「內容太多」（實際 ${err.code}）——若是 bad_output，代表牆沒在 MAX_RESULT_BYTES 觸發`);
+    assert.equal(err.status, 400);
+    assert.ok(took < 15_000, `牆要在超標當下就殺，不可拖到逾時（花了 ${took}ms）`);
+  } finally { delete process.env.PDF_EXACT_DELTA; }
 });
 
-test('回傳量炸彈｜對照組：同一顆子行程在 0.8 秒內灌不到上限 → 走逾時（400 pdf_timeout），不是 too_large', async () => {
-  // 沒有這一題，上一題若因為別的原因回 400（例如子行程自己炸），也會看起來像「牆有作用」。
-  // 兩臂只差逾時長短：0.8 秒約灌 25MB < 64MB ⇒ 不該判太大；而逾時時 stdout 已有半截垃圾——
-  // 逾時要優先於「輸出壞掉」（Codex #551 r1 Medium，本支一併修正歸類：逾時才是真原因）。
-  // 附帶：牆若被改成 1MB 之類太小的值，這一臂會反過來判 too_large 而紅（兩端都釘）。
+test('回傳量炸彈｜數的是 bytes 不是字元：3-byte 字元湊到 MAX_RESULT_BYTES+1 bytes（字串長度只有 1/3）→ 仍必須擋', async () => {
+  // Codex #551 r2：`out.length` 數的是 JS 字串 code units；多位元組輸出會讓牆晚三倍才觸發。正式路徑改數 Buffer bytes。
+  // 純 ASCII 酬載量不出這個差（1 byte＝1 code unit），所以這一臂專門用多位元組字元。
+  setPdfChildScriptForTest(fakeChild('pdf-child-exact.js'));
+  setPdfTimeoutForTest(20_000);
+  process.env.PDF_EXACT_DELTA = '+1'; process.env.PDF_EXACT_MULTIBYTE = '1';
+  try {
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.ok(err);
+    assert.equal(err.code, 'pdf_result_too_large', `多位元組酬載超標卻沒擋（實際 ${err.code}）＝牆在數字元不是 bytes`);
+  } finally { delete process.env.PDF_EXACT_DELTA; delete process.env.PDF_EXACT_MULTIBYTE; }
+});
+
+test('回傳量炸彈｜少一 byte 就放：子行程吐出 MAX_RESULT_BYTES−1 → 不可判太大（牆被調小就紅）', async () => {
+  // 另一側：牆若被調小（32MB、1MB），這臂會判 too_large 而紅。兩臂夾住的是**正式比較式用的那個數**。
+  // 酬載是純 ASCII 垃圾 ⇒ 不是 JSON ⇒ 誠實答案是 500 pdf_isolate_bad_output（不是本題要釘的重點，順帶確認不誤判）。
+  setPdfChildScriptForTest(fakeChild('pdf-child-exact.js'));
+  setPdfTimeoutForTest(20_000);
+  process.env.PDF_EXACT_DELTA = '-1';
+  try {
+    const err = await errOf(parseStatement(normalPdf()));
+    assert.ok(err);
+    assert.notEqual(err.code, 'pdf_result_too_large', '差一 byte 沒超標卻判太大＝牆的門檻比常數小');
+    assert.equal(err.code, 'pdf_isolate_bad_output', `未超標的垃圾應是輸出壞掉（實際 ${err.code}）`);
+  } finally { delete process.env.PDF_EXACT_DELTA; }
+});
+
+test('回傳量炸彈｜逾時優先：子行程不停灌、0.8 秒內灌不到上限 → 400 pdf_timeout（不是 too_large、也不是 bad_output）', async () => {
+  // 逾時時 stdout 已有半截垃圾——逾時要優先於「輸出壞掉」（Codex #551 r1 Medium，本支修正歸類：逾時才是真原因）。
+  // 附帶：牆若被改成 1MB 之類太小的值，這一臂會反過來判 too_large 而紅。
   setPdfChildScriptForTest(fakeChild('pdf-child-flood.js'));
   setPdfTimeoutForTest(800);
   const err = await errOf(parseStatement(normalPdf()));
