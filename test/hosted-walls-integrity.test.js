@@ -21,7 +21,8 @@
 //
 // ⚠️ 誠實劃界：**本檔仍然做不到的事**（不要把它讀成比它更強的東西）
 //   ①`server.js` 的 `trust proxy`（關掉＝「每個 IP 各有額度」退化成全站共用一個額度）——
-//     要驗它得偽造代理鏈（X-Forwarded-For）＋逐 IP 數額度，本檔沒做。
+//     「不同 X-Forwarded-For 各自一份額度」那一側由本檔題名關鍵字「2B｜HOSTED 掛了 trust proxy=1」用真 HTTP 驗收；
+//     仍沒做的是另一側：偽造兩層代理鏈時「只信任一層、不無條件相信整串」。
 //   ②`lib/store-pg.js` 的未知鍵過濾與 `?? emptyFor(k)`（使用者能往 db 塞特殊名稱的鍵）——歸
 //     `test/hosted-store-pg.test.js` 的租戶 harness，本檔沒做。
 //   ③`lib/repo.js` 的 CAS 只重試一次、以及「找不到的資料不可白推進版本」——同上，本檔沒做。
@@ -891,4 +892,27 @@ test('帳單末四碼｜「末四碼」那條**更優先**的規則同樣不可�
   assert.equal(extractLastFour('末四碼 1234'), '1234', '「末四碼 1234」照抓');
   assert.equal(extractLastFour('卡號末4碼：5678'), '5678', '「末4碼：5678」照抓');
   assert.equal(extractLastFour('信用卡末四碼 1234 帳單'), '1234', '後面接非數字文字不受影響');
+});
+
+// ============================================================================
+// 第二輪稽核第二批 2B：server.js 的 `app.set('trust proxy', 1)`（2026-09-02 稽核：整行拿掉沒有任何一題會紅）。
+// 沒掛的話 req.ip 永遠是代理的 IP ⇒「每 IP 限制」退化成「全站共用一份額度」，正當使用者被一起擋。
+// ============================================================================
+
+test('2B｜HOSTED 掛了 trust proxy=1：兩個不同的 X-Forwarded-For 各自一份登入額度（漏掛＝全站共用一份）', async () => {
+  assert.equal(app.get('trust proxy'), 1, 'HOSTED 必須「只信任一層代理」——不無條件相信整串 X-Forwarded-For');
+  resetRateLimitsForTest();
+  try {
+    const { RATE_LIMITS } = await import('../server.js');
+    const login = RATE_LIMITS.find(r => r.probe.path === '/api/auth/login');
+    assert.ok(login, '登入類限速不在表上');
+    const hit = (/** @type {string} */ ip) => fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, 'X-Forwarded-For': ip }, body: '{}',
+    });
+    let saw429 = false;
+    for (let i = 0; i < login.max + 5 && !saw429; i++) saw429 = (await hit('203.0.113.1')).status === 429;
+    assert.ok(saw429, '對照：A 這個 IP 打滿額度要被擋（否則下面 B 通過什麼都不證明）');
+    assert.notEqual((await hit('203.0.113.2')).status, 429,
+      'B 是另一個客戶端 IP：A 打滿不可以吃掉 B 的額度（會吃掉＝req.ip 讀到的是代理 IP＝trust proxy 沒掛）');
+  } finally { resetRateLimitsForTest(); }
 });
