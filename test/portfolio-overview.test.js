@@ -92,6 +92,7 @@ test('乙｜missingFxNoteHtml：有缺匯率才出現、講幾筆與哪些幣別
   assert.match(html, /data-info="missingFx"/, '說明鈕走投資頁既有的 data-info 綁定');
   const liab = missingFxNoteHtml([{ currency: 'GBP', count: 2, liabilities: 1 }], esc);
   assert.match(liab, /1 筆是負債：負債被低估、淨值可能被高估/, '有負債缺匯率要講反方向，且「可能」不可省');
+  assert.ok(liab.includes('缺的若是 IB 融資的外幣負現金、且沒有 IB 官方淨值摘要而要自算槓桿時，槓桿也會被低估'), '投資頁註記的槓桿那句也只能用完整條件句講');
   const evil = missingFxNoteHtml([{ currency: '<img src=x onerror=alert(1)>', count: 1, liabilities: 0 }], esc);
   assert.ok(!evil.includes('<img'), '幣別是資料值，必須經 escape（XSS 鐵則）');
   assert.ok(evil.includes('&lt;img'), '要看得到被跳脫後的字樣');
