@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, rmSync, readFileSync,
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { runScan, SESSION_CAPS, EXPECTED_GROK_VERSION, GROK_HOME_MANIFEST, stripLineMarkers, shapeHitsIn, knownShapeHitsFromTree, escapeForms, hitProfile, nearestKnown, redactWindow } from '../scripts/grok-scan.js';
 import { canApplySandbox, BOX_ROOT, PROFILE } from '../scripts/grok-sandbox-canary.js';
 import { injectDirtyGitEnv, assertChildGitEnvCleanAsync } from './helpers/dirty-git-env.js';
@@ -1762,8 +1762,14 @@ test('runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀�
   const inst = fakeGrok();
   const bin = join(inst, 'bin', 'grok'); const origScript = readFileSync(bin, 'utf8');
   assert.ok(origScript.includes('# REPLY-LINE'), 'fakeGrok 的回覆行標記不見了，這題的注入點失效');
+  // ⚠️ 正向對照（Codex #551 r5）：同一條指令、同一個目標，先在沙箱外跑一次，必須讀到標記——
+  //    否則路徑打錯、cat 起不來、權限先壞掉，盒內的「失敗」都會被誤當成沙箱擋住。
+  const control = spawnSync('/bin/cat', [marker], { encoding: 'utf8' });
+  assert.equal(control.status, 0, `對照組：沙箱外 cat 標記檔失敗（status ${control.status}：${(control.stderr || '').trim()}）`);
+  assert.ok(control.stdout.includes(secret), '對照組：沙箱外必須讀得到標記內容');
+  // 盒內失敗時把 cat 的錯誤訊息帶回來：要的是 Seatbelt 的「Operation not permitted」，不是「No such file」
   writeFileSync(bin, origScript.replace(/^printf '%s' .*# REPLY-LINE$/m,
-    `if /bin/cat "${marker}" 2>/dev/null; then printf 'PROBE-READ-OK'; else printf 'PROBE-BLOCKED'; fi # REPLY-LINE`));
+    `if out=$(/bin/cat "${marker}" 2>&1); then printf 'PROBE-READ-OK:%s' "$out"; else printf 'PROBE-BLOCKED:%s' "$out"; fi # REPLY-LINE`));
   const iso = { ...isolated(), runCanary: recordingCanary };
   const out = join(keep(mkdtempSync(join(tmpdir(), 'fake-out-'))), 'reply.txt');
   const repo = tinyRepo();
@@ -1779,7 +1785,8 @@ test('runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀�
   assert.equal(realpathSync(String(launch.sbArgv[1])), realpathSync(PROFILE), `真 grok 發射用的不是寫死的 PROFILE：${launch.sbArgv[1]}`);
   // 而且那份設定真的關得住：盒內的假 grok 讀不到盒外的標記
   const reply = readFileSync(out, 'utf8');
-  assert.ok(reply.includes('PROBE-BLOCKED'), `盒內探針沒回報被擋：${reply.slice(0, 120)}`);
+  assert.ok(reply.startsWith('PROBE-BLOCKED:'), `盒內探針沒回報被擋：${reply.slice(0, 120)}`);
+  assert.match(reply, /Operation not permitted|Permission denied/, `失敗原因必須是沙箱拒絕，不是別的（實際：${reply.slice(0, 160)}）`);
   assert.ok(!reply.includes(secret), '盒內讀到了盒外的標記＝實際套的沙箱設定比正式的鬆');
   // ③ 剝掉註解後的結構釘子：組 sbArgv 那一句不得看環境變數／參數（env ?? PROFILE 這種寫法在 env 沒設時行為一樣，行為題量不到）
   const src = readFileSync(join(ROOT, 'scripts', 'grok-scan.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
