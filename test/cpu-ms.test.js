@@ -14,9 +14,16 @@
 //    比封頂值大的壞法壓成小數字，所以要有一個幾千毫秒的探針（3456.789ms）。⚠️ 誠實劃界：本題只證明那一點不失真，
 //    比它更高的區間不在射程（封頂值若高於那一點、或只在有限案例之外失真——例如 `% 4096` 回捲——本題抓不到；
 //    這是有限案例的結構上限，不再加案例去追，Codex #552 r5 亦判為不阻擋）。門檻與探針之間沒有機械互扣。
+// ⚠️ 真錶兩側都要釘（Grok #552 複審後掃第 2 條）：假錶只證明算式，證明不了**這台機器的 `process.cpuUsage()` 真的在走**
+//    ——若某個環境把它做成永遠回 0（虛擬化／seccomp 之類），假錶題綠、等待題綠（0 < 30）、五道門檻題也全綠
+//    ＝整族靜靜變空包彈。所以除了「等待量到接近 0」，還要有「固定的一段真工作量到明顯非 0」的對照組。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cpuMs } from './helpers/cpu-ms.js';
+
+/** 模組載入當下的原生 `process.cpuUsage`——還原檢查一律對它比，不對「本題開始時的值」比
+ *  （Grok #552 複審後掃第 3 條：對區域變數比的話，前一題漏還原時後面每一題都看不見）。 */
+const NATIVE_CPU_USAGE = process.cpuUsage;
 
 /**
  * 假錶：起點 `start`（微秒）；`burn()` 讓錶前進。
@@ -25,7 +32,6 @@ import { cpuMs } from './helpers/cpu-ms.js';
  * @returns {{ burn: (user: number, system: number) => void, restore: () => void, calls: (undefined | { user: number, system: number })[] }}
  */
 function fakeCpuClock(start) {
-  const real = process.cpuUsage;
   const now = { ...start };
   /** @type {(undefined | { user: number, system: number })[]} */ const calls = [];
   const fake = /** @type {any} */ ((/** @type {{ user: number, system: number } | undefined} */ prev) => {
@@ -33,11 +39,11 @@ function fakeCpuClock(start) {
     return prev ? { user: now.user - prev.user, system: now.system - prev.system } : { ...now };
   });
   process.cpuUsage = fake;
-  return { burn: (u, s) => { now.user += u; now.system += s; }, restore: () => { process.cpuUsage = real; }, calls };
+  return { burn: (u, s) => { now.user += u; now.system += s; }, restore: () => { process.cpuUsage = NATIVE_CPU_USAGE; }, calls };
 }
 
 test('★cpuMs 量的是 callback 期間 user＋system 的**差值**、單位毫秒、callback 真的被執行、3456.789ms 這一點不封頂', () => {
-  const real = process.cpuUsage;
+  assert.equal(process.cpuUsage, NATIVE_CPU_USAGE, '★開始前錶必須是原生的（不然是別題漏還原）');
   const clock = fakeCpuClock({ user: 12_345, system: 678 });
   try {
     // (user 增量, system 增量, 期望毫秒)。3,000,000＋456,789 那一組＝ 3456.789ms，守「幾千毫秒這一點不失真」（更高的區間不在射程）。
@@ -50,20 +56,27 @@ test('★cpuMs 量的是 callback 期間 user＋system 的**差值**、單位毫
       assert.equal(ms, expected, `★燒 ${u}+${s} 微秒 ＝ ${expected} 毫秒（差值、含 system、換算成毫秒、不封頂；固定回同一個數、拿起點當除數、讀絕對值都對不上每一組）`);
     }
   } finally { clock.restore(); }
-  assert.equal(process.cpuUsage, real, '★假錶一定被還原（不然這個行程裡後面的題都在用假錶）');
+  assert.equal(process.cpuUsage, NATIVE_CPU_USAGE, '★假錶一定還原成**原生**的錶（不然這個行程裡後面的題都在用假錶）');
 });
 
-test('★callback 丟出的例外原樣傳出（不吞、不換物件），假錶照樣還原', () => {
-  const real = process.cpuUsage;
+test('★callback 丟出的例外原樣傳出（不吞、不換物件），假錶照樣還原成原生的錶', () => {
+  assert.equal(process.cpuUsage, NATIVE_CPU_USAGE, '★開始前錶必須是原生的（不然是別題漏還原）');
   const clock = fakeCpuClock({ user: 4_321, system: 87 });
   const boom = new Error('boom');
   try {
     assert.throws(() => cpuMs(() => { throw boom; }), (e) => e === boom, '★同一個例外物件');
   } finally { clock.restore(); }
-  assert.equal(process.cpuUsage, real, '★假錶一定被還原');
+  assert.equal(process.cpuUsage, NATIVE_CPU_USAGE, '★假錶一定還原成原生的錶');
 });
 
-test('★劃界釘成行為：等待不算工作——`Atomics.wait` 60ms 的 CPU 時間接近 0（這正是它量不到 off-CPU 阻塞的意思）', () => {
-  const ms = cpuMs(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60));
-  assert.ok(ms < 30, `★等了 60ms 牆上時鐘，CPU 只該有系統呼叫的零頭（實測 CPU ${ms.toFixed(2)}ms）`);
+test('★真錶兩側：等待不算工作（`Atomics.wait` 60ms ⇒ CPU 接近 0）、固定的一段真工作必須量到明顯非 0', () => {
+  assert.equal(process.cpuUsage, NATIVE_CPU_USAGE, '★這題要量真錶（不然是別題漏還原）');
+  const waitMs = cpuMs(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60));
+  assert.ok(waitMs < 30, `★等了 60ms 牆上時鐘，CPU 只該有系統呼叫的零頭（實測 CPU ${waitMs.toFixed(2)}ms）`);
+  // 對照組：固定 3e7 次整數運算（結果要用到，免得被最佳化掉）。這台 Mac 實測 CPU 約 120ms；下限 5ms 留二十幾倍
+  //   給更快的機器與 Linux tick 級的計時解析度。真錶若是空操作，這句紅、上一族假錶題不會紅——這正是它存在的理由。
+  let x = 0;
+  const workMs = cpuMs(() => { for (let i = 0; i < 30_000_000; i++) x = (x + i * 7) % 1_000_003; });
+  assert.ok(x > 0, '對照組的結果真的被算出來（不是被最佳化掉的空迴圈）');
+  assert.ok(workMs >= 5, `★固定 3e7 次運算的 CPU 時間必須明顯非 0（實測 CPU ${workMs.toFixed(1)}ms）——這台機器的 process.cpuUsage() 真的在走`);
 });
