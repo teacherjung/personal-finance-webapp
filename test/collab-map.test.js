@@ -353,42 +353,39 @@ const POINTER_LINE = /^(?:> )?\*\*規矩住在哪＝\[COLLAB-MAP\.md\]\(COLLAB-M
 /** 指路那一行必須自己講明的幾件事（少一個，讀者就可能把路由表當權威索引）。 */
 const POINTER_WORDS = ['只指路', '不是正本', '無規則效力'];
 
-/** 只給那一行用的唯一目的地——用它把 link token **綁回那一行**。 */
+/** 只給那一行用的目的地——用它把渲染出來的 `<a>` **綁回那一行**。 */
 const SENTINEL = 'COLLAB-MAP-POINTER-SENTINEL';
 
 /**
- * **那一行指路本身**，在整份文件的脈絡裡，有沒有變成一個真的連結 token。
+ * **那一行指路本身**，在整份文件的脈絡裡，有沒有**渲染出**一個指向地圖的 `<a>`。
  *
- * ⚠️ 為什麼不是比對渲染出來的 HTML 字串（`Codex #548 r6`）：`marked` 明說**不做 sanitize**，
- * 註解與 raw HTML 會原樣留在輸出裡，於是註解內塞一個 `<a href="COLLAB-MAP.md">` 誘餌就騙得過。
- * ⚠️ 為什麼不是「共同祖先的 raw 含指路行」（`Codex #548 r7`）：那只把範圍放大到祖先區塊，
- * **沒有把 link 綁回那一行**。同一段裡用單顆反引號把指路行變成 code span、旁邊放一個誘餌連結，
- * 誘餌就會被算到指路行頭上（GitHub 實際只把指路行渲染成 `<code>`）。
- * ⇒ 改成**把那一行的目的地換成唯一 sentinel**，再找 `href === sentinel` 的 link token。
- * 只有那一行可能產生它，歸屬因此是定義上的、不是推論的。
+ * 做法：把**那一行**的目的地換成 sentinel，整份丟給 `marked` 渲染，
+ * 再看輸出裡有沒有 `href="<sentinel>"`。
+ *
+ * ⚠️ 為什麼問**輸出**、不問 token 樹（`Codex #548 r8`）：token 存在不等於會渲染成連結。
+ * 把指路行包成圖片的 alt 文字（`![⋯指路行⋯](cover.png)`），image token 底下確實有 link token，
+ * 但 alt 只會變成純文字，輸出裡沒有任何 `<a>`。走 token 樹會**走過頭**，補欄位也補不完
+ * （漏走＝誤擋、走過頭＝假綠，兩邊都踩過）。⇒ 不走了，直接問渲染結果。
+ *
+ * ⚠️ 為什麼問輸出仍然安全（這是 `Codex #548 r6` 當初的疑慮）：`marked` 不 sanitize，
+ * 註解裡的 raw HTML 會原樣留著——但那些誘餌的 href 是 `COLLAB-MAP.md`，**不是 sentinel**。
+ * sentinel 只可能由**被替換的那一行**產生，所以歸屬是定義上的。
+ *
+ * ⚠️ 前提是 sentinel **真的不碰撞**（`Codex #548 r8`②）：原文件若自己就含有那個字串
+ * （例如有人先放一個 `[誘餌](COLLAB-MAP-POINTER-SENTINEL)`），歸屬證明就失效 ⇒ 這裡 fail-closed。
  *
  * @param {string[]} lines 整份文件的每一行
  * @param {number} at 指路行的索引
  */
 function pointerRendersAsLink(lines, at) {
+  const doc = lines.join('\n');
+  assert.ok(!doc.includes(SENTINEL),
+    `這份文件本身就含有 sentinel「${SENTINEL}」，無法證明渲染出來的連結來自指路行。這裡 fail-closed。`);
   const patched = lines.slice();
   patched[at] = patched[at].replace(`](${MAP})`, `](${SENTINEL})`);
   // ⚠️ 先確認真的改到——改不到的話下面必然回 false，會變成「永遠誤擋」的空包彈。
   assert.notEqual(patched[at], lines[at], '指路行沒有可替換的連結目的地，sentinel 綁定失效。');
-  let found = false;
-  /** @param {any[]|undefined} list */
-  const walk = (list) => {
-    for (const tk of list || []) {
-      if (tk.type === 'link' && tk.href === SENTINEL) found = true;
-      walk(tk.tokens);
-      for (const item of tk.items || []) walk([item]);
-      // ⚠️ `header` 不可漏（`Codex #548 r7`）：漏走它會**誤擋**真的可點的表格連結。
-      for (const cell of tk.header || []) walk(cell.tokens);
-      for (const row of tk.rows || []) for (const cell of row || []) walk(cell.tokens);
-    }
-  };
-  walk(marked.lexer(patched.join('\n')));
-  return found;
+  return String(marked.parse(patched.join('\n'), { async: false })).includes(`href="${SENTINEL}"`);
 }
 
 test('⭐ 渲染判準自己要先會動：藏起來的不算、真的看得到的不可以誤擋', () => {
@@ -419,10 +416,15 @@ test('⭐ 渲染判準自己要先會動：藏起來的不算、真的看得到�
     '四個空白縮排': `    ${good}`,
     '引言裡的圍欄': `> \`\`\`bash\n> ${good}\n> \`\`\``,
     '註解夾在連結中間': '**規矩住在哪＝[COLLAB-MAP.md]<!-- x -->(COLLAB-MAP.md)**（路由表）。',
+    '包成圖片的 alt 文字（token 在、<a> 不在）': `![替代文字\n${good}\n](cover.png)\n\n## H`,
   };
   for (const [name, md] of Object.entries(hidden)) {
     assert.ok(!check(md), `「${name}」不該算成「指路行有變成連結」。`);
   }
+
+  // sentinel 碰撞＝歸屬證明失效 ⇒ 必須 fail-closed（丟例外），不可以靜靜回 true
+  assert.throws(() => check(`[誘餌](${SENTINEL})\n\n${good}`),
+    '原文件已含 sentinel 時要 fail-closed，不可以讓別處的誘餌頂替。');
 });
 
 test('⭐ 地圖自己要找得到：三份正本各要有一行指定形狀的指路，而且它自己渲染成一個真的連結', () => {
