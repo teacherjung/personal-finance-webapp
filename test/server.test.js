@@ -18,6 +18,7 @@ const { app } = await import('../server.js');
 // 型別仍由櫃檯 sanitizeDbForWrite 驗）。絕不可為了種資料把白名單加回去。
 const { addItem, getDb, saveDb } = await import('../lib/repo.js');
 const { cjkPdf } = await import('./helpers/build-pdf.js');
+const { userRulesFingerprint } = await import('../lib/store-rules.js');
 const seedTx = (fields) => addItem('transactions', fields);
 const server = app.listen(0, '127.0.0.1');   // 0＝隨機空埠，不會撞到 4321
 await once(server, 'listening');
@@ -1380,7 +1381,7 @@ test('2A｜POST /api/income-categories 缺 tree／tree 不是物件 → 400，�
   const after = await GET('/income-categories');
   assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort(), '壞請求不可把收入分類抹成預設');
   assert.deepEqual(after['我的收入'], before['我的收入'], '自訂大類的子分類要原封不動');
-  } finally { await saveDb(snapshot); }
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
 test('2A｜POST /api/transfer-subcategories 缺 subs／subs 不是陣列 → 400，自訂清單原封不動（不可默默復原成內建三筆）', async () => {
@@ -1394,7 +1395,7 @@ test('2A｜POST /api/transfer-subcategories 缺 subs／subs 不是陣列 → 400
     assert.equal((await POST('/transfer-subcategories', bad)).status, 400, `${JSON.stringify(bad)} 要 400`);
   }
   assert.deepEqual(await GET('/transfer-subcategories'), before, '壞請求不可把自訂清單換成預設（整個物件逐筆相同，含 role）');
-  } finally { await saveDb(snapshot); }
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
 test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批裡壞一筆 → 400，既有目標逐筆相同（不留半殘目標）', async () => {
@@ -1406,7 +1407,7 @@ test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批
       assert.equal((await POST('/assetTargets/replace', { targets: bad })).status, 400, `${JSON.stringify(bad)} 要 400`);
       assert.deepEqual((await GET('/assetTargets')).map(t => [t.class, t.targetPct]), before, `${JSON.stringify(bad)}：壞一筆＝整批拒、原目標逐筆相同`);
     }
-  } finally { await saveDb(snapshot); }
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
 test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true（"false"／1／"true"）→ 400，且學習表與 note 一個字都沒動', async () => {
@@ -1440,7 +1441,7 @@ test('2A｜useAi 不是正牌 true（"false"／1／{}）→ 兩條 preview 走�
     assert.notEqual(card.code, 'ai_no_key', `信用卡 preview useAi=${JSON.stringify(bad)} 進了 AI 路（回 ai_no_key）`);
     assert.equal(card.code, 'card_unrecognized', `信用卡 preview 應是模板路原錯誤（實際 ${card.code}）`);
   }
-  } finally { globalThis.fetch = realFetch; await saveDb(snapshot); }
+  } finally { globalThis.fetch = realFetch; await saveDb(snapshot); await getDb(); }
 });
 
 test('2A｜POST /statement/normalize-auto：會併學習表時不帶 force → needsConfirmation 且不套用；force:true 才套用併成一把', async () => {
@@ -1463,5 +1464,8 @@ test('2A｜POST /statement/normalize-auto：會併學習表時不帶 force → n
     const r2 = await (await POST('/statement/normalize-auto', { force: true })).json();
     assert.equal(r2.ran, true, '使用者按了確認才套用');
     assert.deepEqual(Object.keys(await GET('/learned')), ['鮮芋仙'], '確認後併成一把');
-  } finally { await saveDb(snapshot); }
+  } finally {
+    await saveDb(snapshot); await getDb();   // getDb 走 readDb→syncRules：把模組級規則槽同步回還原後的磁碟狀態
+    assert.ok(!userRulesFingerprint().includes('鮮芋仙'), '還原不完整：規則槽仍含本題夾具（會污染同檔後面的題）');
+  }
 });
