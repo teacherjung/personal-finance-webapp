@@ -2,8 +2,9 @@
 // 第二輪稽核第二批 2B：lib/store.js writeAll 的 ROLLBACK（2026-09-02 稽核：拿掉那一行沒有任何一題會紅）。
 //
 // 為什麼要用替身讓序列化炸：save() 之前一律過 sanitizeDbForWrite（mode:'throw'），資料形狀的錯到不了交易裡；
-// 交易裡唯一會炸的是「序列化」與 SQLite 本身。替身只在「序列化一個時間戳數字」時炸——那是 writeAll 交易
-// **最後一筆** meta（__dbUpdatedAt）的寫入，前面所有 KV 列都已經寫進交易了。沒有 ROLLBACK 的話：
+// 交易裡唯一會炸的是「序列化」與 SQLite 本身。替身只在「序列化一個時間戳數字」時炸——在本題受測的這次 save 裡，
+// 那是 writeAll 交易**最後一筆** meta（__dbUpdatedAt）的寫入，前面所有 KV 列都已經寫進交易了。
+// （開庫時的搬家 meta 也會序列化時間戳，但替身是在第一次 load/save 把開庫與搬家都做完之後才裝上的。）沒有 ROLLBACK 的話：
 // ① 交易掛著，同一條連線的下一次 load 會讀到未提交的新值；② 下一次 save 的 BEGIN 撞
 // 「cannot start a transaction within a transaction」。兩個都有斷言。
 import { test } from 'node:test';

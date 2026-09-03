@@ -615,7 +615,7 @@ test('成本護欄 C1｜被上限擋下的 take＝settings 版本不動（skip �
 // 表裡的列不一定是 app 寫的（psql 直塞、舊版殘留、惡意 __proto__）：只認 KV_KEYS，其餘不進記憶體、不進 versions。
 // ============================================================================
 
-test('2B｜loadKv：表裡混進不認識的鍵（含 __proto__）→ 記憶體 db 沒有那把鑰匙、versions 也沒有、認識的鍵照常讀', async () => {
+test('2B｜loadKv：表裡混進不認識的鍵（含 __proto__）→ 記憶體 db 沒有那把鑰匙、db 的原型仍是 Object.prototype、versions 也沒有、認識的鍵照常讀', async () => {
   const U = { id: 'user-unknown-key', email: 'k@x.com' };
   pg.seed(U.id, 'evil', { hi: 1 });
   pg.seed(U.id, '__proto__', { polluted: true });
@@ -625,7 +625,10 @@ test('2B｜loadKv：表裡混進不認識的鍵（含 __proto__）→ 記憶體 
     const { db, versions } = await loadKv();
     assert.ok(!Object.hasOwn(db, 'evil'), '不認識的鍵不可進記憶體 db');
     assert.ok(!Object.hasOwn(versions, 'evil') && !Object.hasOwn(versions, '__proto__'), 'versions 只認 KV_KEYS');
-    assert.equal(/** @type {any} */ ({}).polluted, undefined, 'Object.prototype 不可以被污染');
+    // ⚠️ `db['__proto__'] = row.data` 改的是 **db 自己的原型**、不是全域 Object.prototype（Codex #554 r1）：
+    //    只查 ({}).polluted 抓不到「只讓 __proto__ 進 db」那一刀，所以直接查 db 的原型。
+    assert.equal(Object.getPrototypeOf(db), Object.prototype, '__proto__ 列不可以變成 db 的原型');
+    assert.equal(/** @type {any} */ ({}).polluted, undefined, '全域 Object.prototype 也不可以被污染');
     assert.equal(db.settings.usdTwd, 30.5, '對照：認識的鍵照常讀進來（否則這題只是在考「什麼都沒讀」）');
   });
 });
