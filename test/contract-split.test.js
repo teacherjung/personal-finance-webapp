@@ -659,7 +659,6 @@ const MANIFEST = {
       'test/portfolio-calculations.test.js',
       'test/portfolio-editors.test.js',
       'test/portfolio-exposure.test.js',
-      'test/exposure-sync-integrity.test.js',   // 乙：前後端匯率口徑的同步點考題（investment-sec 契約點名）
       'test/portfolio-forms.test.js',
       'test/portfolio-model.test.js',
       'test/portfolio-research.test.js',

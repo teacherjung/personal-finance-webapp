@@ -127,7 +127,7 @@ export async function renderPortfolio() {
 
   view().innerHTML = `
     ${portfolioHeaderHtml(viewCur)}
-    ${portfolioSummaryHtml({ total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap: CAPS.lev, missingFx }, { formatMoney: MONEY })}
+    ${portfolioSummaryHtml({ total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap: CAPS.lev, missingFx }, { escapeHtml: esc, formatMoney: MONEY })}
 
     ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd, visualFormatters())}
     ${fxSection(rows, accounts, fx, visualFormatters())}

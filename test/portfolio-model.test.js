@@ -114,7 +114,7 @@ test('乙｜buildPortfolioModel：GBP 持股與 GBP 現金沒設匯率 → 金�
   assert.ok(g && g.fxMissing === true && g.valueTwd === 0 && g.costTwd === 0, '缺匯率的持股要標 fxMissing、金額 0');
   assert.equal(m.total, 10 * 100 * 32, 'total 只含有匯率的持股');
   assert.equal(m.cashV, 0, '缺匯率的現金不進 cashV');
-  assert.deepEqual(m.missingFx, [{ currency: 'GBP', count: 2 }], '持股一筆＋現金一筆');
+  assert.deepEqual(m.missingFx, [{ currency: 'GBP', count: 2, liabilities: 0 }], '持股一筆＋現金一筆（都是資產）');
   const ok = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } }));
   assert.equal(ok.total, 10 * 100 * 32 + 5 * 8 * 40, '對照：設了匯率就照算');
   assert.equal(ok.cashV, 100 * 40);

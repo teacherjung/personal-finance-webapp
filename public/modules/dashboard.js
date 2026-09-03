@@ -378,8 +378,10 @@ export async function renderDashboard() {
 function missingFxFactHtml(missingFx) {
   if (!Array.isArray(missingFx) || !missingFx.length) return '';
   const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
+  const liab = missingFx.reduce((sum, m) => sum + Number(m?.liabilities || 0), 0);
   const curs = missingFx.map(m => esc(String(m?.currency || ''))).join('、');
-  return `<span class="needs-attention">${n} 筆外幣資產（${curs}）沒有匯率、未計入 <button type="button" class="info-link" id="missingFxInfo">為什麼？</button></span>`;
+  const dir = liab > 0 ? `（其中 ${liab} 筆是負債：負債與槓桿被低估、淨值被高估）` : '（淨值被低估）';
+  return `<span class="needs-attention">${n} 筆外幣部位（${curs}）沒有匯率、未計入${dir} <button type="button" class="info-link" id="missingFxInfo">為什麼？</button></span>`;
 }
 
 function wireMissingFxInfo() {
