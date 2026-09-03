@@ -545,7 +545,7 @@ test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／*
   long.note(k1, 'TWD'); long.note(k2, 'USD');
   const rejectMs = cpuMs(() => assert.throws(() => long.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
     '★單鍵超長＝拒收，而且是**帶 code 的 fail-closed**（原本是 RangeError 崩潰＝沒有 code/status）'));
-  // ⚠️ 量的是 CPU 工作量、不是牆上延遲（交換與劃界見 test/helpers/cpu-ms.js）。誠實劃界（Grok #552 複審後掃第 4 條要求
+  // ⚠️ 量的是 CPU 工作量、不是牆上延遲（交換與劃界見 test/helpers/cpu-ms.js）。誠實劃界（Grok #552 複審後掃・距離證據那一條要求
   //   用新量尺重量）：r14 那 6 秒是**當時**的交集尺；#504 之後的 `acctPatternsIntersect` 對這組素材，拿掉單鍵守門也只花
   //   CPU 75ms、而且不丟例外——所以「拿掉守門」的鑑別靠 `assert.throws(… e.code === 'bank_too_many_accounts')`，
   //   這句時間斷言對那一刀沒有鑑別力；它守的只是「拒收本身不燒 CPU」（實測 0ms）。
@@ -567,7 +567,7 @@ test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #
     '★超出計算量預算＝fail-closed 成同一個對外碼（不是沒有 code 的崩潰）'));
   // ⚠️ 拿掉預算＝`finalize()` 不再丟 `bank_too_many_accounts`，會先被 `assert.throws(… e.code === 'bank_too_many_accounts')` 那句
   //   行為斷言抓到（Codex #552 r1 實測，約 2.9 秒後報未拒收）；這句時間斷言守的是「有拒收、但拒收前先算了很久」。
-  //   用新量尺重量（Grok #552 複審後掃第 4 條）：沒有預算的版本對這組素材 CPU 2,883ms，對 1,500ms 的門檻不到兩倍距離；
+  //   用新量尺重量（Grok #552 複審後掃・距離證據那一條）：沒有預算的版本對這組素材 CPU 2,883ms，對 1,500ms 的門檻不到兩倍距離；
   //   5,115ms 是牆上時鐘的歷史值（含當年另跑一趟的 hasMixedTwd）。量的是 CPU 工作量、不是牆上延遲。
   assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停、CPU 工作量封頂（實測 CPU ${ms.toFixed(0)}ms；沒有預算的版本 CPU 2,883ms）`);
   assert.equal(MAX_COMPARE_STATES, 2_000_000, '預算是寫死的常數（依實測選，見 bank-statement.js 的說明）');
