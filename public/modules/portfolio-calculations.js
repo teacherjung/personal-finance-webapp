@@ -3,7 +3,8 @@
 
 // 匯率表：與後端 lib/derive.js fxRates() 同口徑（同步點，考題釘住）。
 // 「乙」（William 2026-09-03 裁）：GBP／JPY 沒設（非正數）＝缺匯率＝ null，不再用猜的 40.8／0.215；
-// 消費端一律經 fxFor()：缺匯率的那筆不計入、並回報到 missingFx 讓頁面標註。USD 的 `|| 32` 不在乙的範圍。
+// buildPortfolioModel 的持股／帳戶換算經 fxFor()：缺匯率的那筆不計入、並回報到 missingFx 讓頁面標註；
+// portfolio-exposure.js 的現金曝險端沒有共用入口，是另行內嵌同一個「正數才算匯率」判準。USD 的 `|| 32` 不在乙的範圍。
 const posRate = (value) => { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : null; };
 export const fxTable = (settings) => ({
   TWD: 1,
