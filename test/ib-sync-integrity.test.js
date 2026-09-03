@@ -155,7 +155,7 @@ test('IB 成交｜fxRateToBase 是 0 或負數 → 匯率欄正規化成 null，
   assert.equal(parsed.trades.length, 2);
   for (const [i, t] of parsed.trades.entries()) {
     assert.equal(t.pnlBase, null,
-      `fxRateToBase=${bads[i]}：pnlBase 要 null（前端歸 missing 並標註），不可是 0／負值`);
+      `fxRateToBase=${bads[i]}：pnlBase 要 null（前端 tradePnlBase() 收到 null 才會走它自己的具名分支；0 會被當成合法損益），不可是 0／負值`);
     assert.equal(t.fxRateToBase, null,
       '壞匯率不可原樣入庫——前端 tradePnlBase() 的 fxRateToBase 分支讀它，要看到「缺」而不是 0');
   }
