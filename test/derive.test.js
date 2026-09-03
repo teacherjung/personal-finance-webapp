@@ -225,8 +225,9 @@ test('乙｜缺匯率的負債（GBP 負現金／負債型帳戶）：不計入�
   const r = buildSummary(db).reminders.find(x => x.key === 'fx-missing');
   assert.ok(r && r.level === 'danger', `有負債缺匯率＝danger（實際 ${JSON.stringify(r)}）`);
   assert.match(String(r?.title), /2 筆是負債/, '要講出幾筆負債');
-  assert.match(String(r?.title), /槓桿被低估/, '要講方向：槓桿被低估');
-  assert.match(String(r?.title), /淨值被高估/, '要講方向：淨值被高估');
+  assert.match(String(r?.title), /負債被低估/, '要講方向：負債被低估');
+  assert.match(String(r?.title), /淨值可能被高估/, '要講方向：淨值可能被高估（不可寫死「被高估」——資產也缺時推不出方向）');
+  assert.match(String(r?.detail), /槓桿也會被低估/, '槓桿那半句只能用條件句講（IB 有官方淨值時不成立）');
 });
 
 test('乙｜零餘額帳戶／零股數持股缺匯率不算「有曝險」：missingFx 空、不提醒（前後端同口徑）', async () => {

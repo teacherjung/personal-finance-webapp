@@ -374,13 +374,13 @@ export async function renderDashboard() {
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
 }
 
-/** 缺匯率就地標註（乙）：外幣部位沒匯率＝不算進淨資產，要讓人一眼看到幾筆、方向（資產缺＝淨值被低估；負債缺＝負債與槓桿被低估、淨值被高估）與怎麼補。 @param {any} missingFx */
+/** 缺匯率就地標註（乙）：外幣部位沒匯率＝不算進淨資產，要讓人一眼看到幾筆、方向（資產缺＝淨值被低估；負債缺＝負債被低估、淨值可能被高估）與怎麼補。 @param {any} missingFx */
 function missingFxFactHtml(missingFx) {
   if (!Array.isArray(missingFx) || !missingFx.length) return '';
   const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
   const liab = missingFx.reduce((sum, m) => sum + Number(m?.liabilities || 0), 0);
   const curs = missingFx.map(m => esc(String(m?.currency || ''))).join('、');
-  const dir = liab > 0 ? `（其中 ${liab} 筆是負債：負債與槓桿被低估、淨值被高估）` : '（淨值被低估）';
+  const dir = liab > 0 ? `（其中 ${liab} 筆是負債：負債被低估、淨值可能被高估）` : '（淨值被低估）';
   return `<span class="needs-attention">${n} 筆外幣部位（${curs}）沒有匯率、未計入${dir} <button type="button" class="info-link" id="missingFxInfo">為什麼？</button></span>`;
 }
 

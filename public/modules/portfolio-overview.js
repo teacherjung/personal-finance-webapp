@@ -48,7 +48,7 @@ export function portfolioSummaryHtml(data, formatters) {
 }
 
 /**
- * 缺匯率註記（乙）：外幣部位沒匯率＝不計入上面的數字，要就地講清楚方向（資產缺＝少算、負債缺＝負債與槓桿被低估）
+ * 缺匯率註記（乙）：外幣部位沒匯率＝不計入上面的數字，要就地講清楚方向（資產缺＝少算、負債缺＝負債被低估、淨值可能被高估）
  * 並告訴人怎麼補（按「更新報價」）。幣別是資料值，一律經 escapeHtml（XSS 鐵則：表外幣別也會走到這裡）。
  * @param {{currency:string, count:number, liabilities?:number}[]} missingFx
  * @param {(value:any)=>string} escapeHtml
@@ -58,7 +58,7 @@ export function missingFxNoteHtml(missingFx, escapeHtml) {
   const n = missingFx.reduce((sum, m) => sum + Number(m.count || 0), 0);
   const liab = missingFx.reduce((sum, m) => sum + Number(m.liabilities || 0), 0);
   const curs = missingFx.map(m => escapeHtml(String(m.currency))).join('、');
-  const dir = liab > 0 ? `其中 ${liab} 筆是負債：負債、融資與槓桿被低估、淨值被高估。` : '淨值因此被低估。';
+  const dir = liab > 0 ? `其中 ${liab} 筆是負債：負債被低估、淨值可能被高估（缺的若是 IB 融資的外幣負現金，槓桿也會被低估）。` : '淨值因此被低估。';
   return `<p class="${liab > 0 ? 'neg' : 'muted'} small" style="margin:-8px 0 16px">註：有 ${n} 筆外幣部位（${curs}）沒有匯率，未計入上列金額；${dir}按上方「更新報價」會自動抓匯率。<button type="button" class="info-link" data-info="missingFx">為什麼不算進去？</button></p>`;
 }
 

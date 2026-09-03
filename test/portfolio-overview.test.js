@@ -91,7 +91,7 @@ test('乙｜missingFxNoteHtml：有缺匯率才出現、講幾筆與哪些幣別
   assert.match(html, /更新報價/, '要告訴人怎麼補');
   assert.match(html, /data-info="missingFx"/, '說明鈕走投資頁既有的 data-info 綁定');
   const liab = missingFxNoteHtml([{ currency: 'GBP', count: 2, liabilities: 1 }], esc);
-  assert.match(liab, /1 筆是負債：負債、融資與槓桿被低估、淨值被高估/, '有負債缺匯率要講反方向');
+  assert.match(liab, /1 筆是負債：負債被低估、淨值可能被高估/, '有負債缺匯率要講反方向，且「可能」不可省');
   const evil = missingFxNoteHtml([{ currency: '<img src=x onerror=alert(1)>', count: 1, liabilities: 0 }], esc);
   assert.ok(!evil.includes('<img'), '幣別是資料值，必須經 escape（XSS 鐵則）');
   assert.ok(evil.includes('&lt;img'), '要看得到被跳脫後的字樣');
