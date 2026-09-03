@@ -506,9 +506,11 @@ test('★300 筆 note() 與一次 finalize() 都在數量級內（Codex #517 r12
   const noteMs = cpuMs(() => keys(300).forEach((k, i) => t.note(k, i % 2 ? 'TWD' : 'USD')));
   const finalizeMs = cpuMs(() => t.finalize());
   // 門檻刻意寬鬆（不同機器差很多）：這題守的是**數量級**，不是效能調校。
-  //   每筆重算的壞法在本機是 8.38 秒、且那 8 秒會落在 note() 那一段。
-  assert.ok(noteMs < 500, `★300 筆 note() 在數量級內（實測 CPU ${noteMs.toFixed(0)}ms；每筆重算的壞法會把 8 秒落在這一段）`);
-  assert.ok(finalizeMs < 2000, `★finalize() 的 Θ(n²) 在數量級內（實測 CPU ${finalizeMs.toFixed(0)}ms）`);
+  //   每筆重算的壞法：牆上時鐘 8.38 秒（r12 的歷史值）、換成 CPU 時間量是 10,148ms（Codex #552 r1 獨立量到 10,303ms），
+  //   而且那十秒會落在 note() 那一段——對 500ms 的門檻是二十倍距離。
+  //   ⚠️ 量的是 CPU 工作量、不是牆上延遲（交換與劃界見 test/helpers/cpu-ms.js）：塞進同步等待不會被這題抓到。
+  assert.ok(noteMs < 500, `★300 筆 note() 的 CPU 工作量在數量級內（實測 CPU ${noteMs.toFixed(0)}ms；每筆重算的壞法會把十秒落在這一段）`);
+  assert.ok(finalizeMs < 2000, `★finalize() 的 Θ(n²) 的 CPU 工作量在數量級內（實測 CPU ${finalizeMs.toFixed(0)}ms）`);
 });
 
 test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／**單鍵長度**（r13：500 個 1KB 帳號卡 14.3 秒；r14：兩個 4,702 字元、合計 9,404<10,000 的合法鍵卡 6 秒後丟 RangeError＝連 fail-closed 都沒做到）', () => {
@@ -543,7 +545,9 @@ test('★三道 fail-closed 上限：不同帳號鍵數／鍵的總字元數／*
   long.note(k1, 'TWD'); long.note(k2, 'USD');
   const rejectMs = cpuMs(() => assert.throws(() => long.finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
     '★單鍵超長＝拒收，而且是**帶 code 的 fail-closed**（原本是 RangeError 崩潰＝沒有 code/status）'));
-  assert.ok(rejectMs < 500, `★而且要**立刻**擋下（實測 CPU ${rejectMs.toFixed(0)}ms；原本卡 6 秒才崩）`);
+  // ⚠️ 量的是 CPU 工作量：「原本卡 6 秒才崩」那 6 秒是 DP 在算，所以用 CPU 時間一樣量得到；但這道斷言證明不了
+  //   「立刻」（牆上延遲）——拒收前若塞進同步等待，它不會紅（交換與劃界見 test/helpers/cpu-ms.js）。
+  assert.ok(rejectMs < 500, `★而且拒收本身不燒 CPU（實測 CPU ${rejectMs.toFixed(0)}ms；原本 DP 先算 6 秒才崩）`);
 });
 
 test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #517 r15：我上一版的「最壞情形」素材是假的——`i % 40` 讓 156 列其實只有 40 個不同的鍵；換成真正不同的鍵之後 finalize 4,106ms＋hasMixedTwd 1,009ms＝5,115ms 照樣過關）', () => {
@@ -559,13 +563,15 @@ test('★真正的界線是**計算量記帳**、不是長度或數量（Codex #
   // ★關鍵：這組素材通過所有長度／數量上限，只有計算量記帳擋得住
   const ms = cpuMs(() => assert.throws(() => build(156).finalize(), (/** @type {any} */ e) => e.code === 'bank_too_many_accounts',
     '★超出計算量預算＝fail-closed 成同一個對外碼（不是沒有 code 的崩潰）'));
-  assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停（實測 CPU ${ms.toFixed(0)}ms；沒有記帳的版本是 5,115ms）`);
+  // ⚠️ 這道時間斷言是第二道：拿掉預算會先被上面的 assert.throws 抓到（Codex #552 r1 實測，約 2.9 秒後報未拒收）；
+  //   它守的是「有拒收、但拒收前先算了很久」。5,115ms 是牆上時鐘的歷史值；量的是 CPU 工作量、不是牆上延遲。
+  assert.ok(ms < 1500, `★而且**上界與形狀無關**：預算用完就停、CPU 工作量封頂（實測 CPU ${ms.toFixed(0)}ms；沒有記帳的版本牆上時鐘 5,115ms）`);
   assert.equal(MAX_COMPARE_STATES, 2_000_000, '預算是寫死的常數（依實測選，見 bank-statement.js 的說明）');
   // ★真實規模完全不受影響
   const real = makeCurrencyTable();
   for (let i = 0; i < 20; i++) real.note(`9001${String(i).padStart(2, '0')}****${String(i).padStart(4, '0')}`, i % 3 ? 'TWD' : 'USD');
   const realMs = cpuMs(() => assert.doesNotThrow(() => real.finalize(), '★真實規模（20 個帳號 × 14 字元）照常通過'));
-  assert.ok(realMs < 200, `★而且是毫秒等級（實測 CPU ${realMs.toFixed(0)}ms）`);
+  assert.ok(realMs < 200, `★而且真實規模的 CPU 工作量是毫秒等級（實測 CPU ${realMs.toFixed(0)}ms；量的不是牆上延遲）`);
 });
 
 test('★等價印法在三條路各自的實際行為（行為驗證，不是掃原始碼有沒有 finalize 這幾個字）：模板與 AI 塌成哨兵、配方**先**塌成哨兵、之後明細段的身分重疊守衛才拒解', () => {
