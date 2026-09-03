@@ -17,13 +17,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runCanary, runInSandbox, isBlocked, canApplySandbox, PROFILE, BOX_ROOT } from '../scripts/grok-sandbox-canary.js';
 
 // ⚠️ 不是「darwin＋有 sandbox-exec」就能跑：巢狀沙箱環境（Codex 的審查樹）apply 會退 71——r2 版因此三關紅、
 //    而反面題把 71 當「禁區擋住」假綠（Codex r3 #1）。一律用能力探測決定 skip，反面題一律走 isBlocked()。
 const CAP = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-sandbox-cap-')); try { return canApplySandbox(d); } finally { rmSync(d, { recursive: true, force: true }); } })();
 const CAN_SANDBOX = CAP.ok;
+const SCRIPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
 const SKIP = `這台套不上沙箱：${CAP.why}（強制點在 scripts/grok-scan.js 的掃描前金絲雀，它會 fail-closed）`;
 
 /** 建一個最小盒子（在 /private/tmp，不在家目錄底下——沙箱設定放行的是盒子路徑）。 */
@@ -247,4 +249,16 @@ test('沙箱｜金絲雀 fail-closed：設定檔套不上（語法壞掉）⇒ �
     assert.equal(code, 2, '套不上的設定檔必須退 2（fail-closed）：\n' + lines.join('\n'));
     assert.ok(lines[0]?.startsWith('⛔'), '第一行要說明為什麼不掃：' + lines[0]);
   } finally { rmSync(box, { recursive: true, force: true }); }
+});
+
+test('沙箱｜接線：正式掃描（scripts/grok-scan.js）不傳 profile、真 grok 發射用寫死的 PROFILE（可注入設定檔只給考題）', () => {
+  // Grok #551 掃到：「正式掃描不傳」原本只是註解。這題用原始碼比對釘住——日後有人改成 profile: process.env.… 就紅。
+  const src = readFileSync(join(SCRIPTS_DIR, 'grok-scan.js'), 'utf8');
+  // 正式碼寫成 `(deps.runCanary ?? runCanary)(box, { relayPort })`（可注入假金絲雀），所以要吃 `runCanary)(box, …` 這個形狀
+  const calls = src.match(/runCanary\)?\(\s*box[^)]*\)/g) || [];
+  assert.ok(calls.length >= 1, 'grok-scan.js 要真的呼叫 runCanary');
+  for (const c of calls) assert.ok(!/profile/.test(c), `正式掃描的 runCanary 不可傳 profile：${c}`);
+  // 只看**傳給沙箱函式的選項**（不是整檔禁字——grok-scan.js 別處本來就有 profile 這個詞）
+  for (const c of src.match(/(runInSandbox|canApplySandbox)\)?\([^)]*\)/g) || []) assert.ok(!/\bprofile\b/.test(c), `正式掃描不可對沙箱函式傳 profile：${c}`);
+  assert.match(src, /'-f',\s*PROFILE\b/, '真 grok 發射必須用寫死的 PROFILE');
 });

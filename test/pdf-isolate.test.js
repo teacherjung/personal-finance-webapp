@@ -1054,6 +1054,20 @@ test('回傳量炸彈｜數的是 bytes 不是字元：3-byte 字元湊到 MAX_R
   } finally { delete process.env.PDF_EXACT_DELTA; delete process.env.PDF_EXACT_MULTIBYTE; }
 });
 
+test('回傳量炸彈｜kill 半邊：子行程不停灌、不會自己停 → 超標要**當場 SIGKILL**，在逾時之前回 too_large（Grok #551 掃到）', async () => {
+  // ±1 酬載那兩臂的子行程寫完就自己結束，把 child.kill('SIGKILL') 拆掉它們照樣綠——但壓縮炸彈不會自己停：
+  // 不殺的話 `out += b` 會一直加到逾時／OOM。這一臂用不會停的 flood 子行程：牆在 64MB 觸發後必須立刻殺、
+  // 整體在逾時（20 秒）之前就回來；kill 被拆掉 ⇒ 要等到 20 秒逾時才 close ⇒ 這裡紅。
+  setPdfChildScriptForTest(fakeChild('pdf-child-flood.js'));
+  setPdfTimeoutForTest(20_000);
+  const t0 = Date.now();
+  const err = await errOf(parseStatement(normalPdf()));
+  const took = Date.now() - t0;
+  assert.ok(err);
+  assert.equal(err.code, 'pdf_result_too_large', `不停灌的子行程超標要判太大（實際 ${err.code}）`);
+  assert.ok(took < 12_000, `牆觸發後必須當場 SIGKILL，不可拖到逾時（花了 ${took}ms；本機約 2.5 秒、CI 約 2.2 秒）`);
+});
+
 test('回傳量炸彈｜少一 byte 就放：子行程吐出 MAX_RESULT_BYTES−1 → 不可判太大（牆被調小就紅）', async () => {
   // 另一側：牆若被調小（32MB、1MB），這臂會判 too_large 而紅。兩臂夾住的是**正式比較式用的那個數**。
   // 酬載是純 ASCII 垃圾 ⇒ 不是 JSON ⇒ 誠實答案是 500 pdf_isolate_bad_output（不是本題要釘的重點，順帶確認不誤判）。
@@ -1078,4 +1092,5 @@ test('回傳量炸彈｜逾時優先：子行程不停灌、0.8 秒內灌不到�
   assert.notEqual(err.code, 'pdf_result_too_large', '沒灌到上限卻判 too_large＝牆的判準壞了或上限被調太小');
   assert.equal(err.code, 'pdf_timeout', `逾時且已有部分輸出＝逾時才是真原因（實際 ${err.code}）`);
   assert.equal(err.status, 400);
+  assert.match(String(err.cause), /partialOut=[1-9]\d*/, '題目前提：逾時時 stdout 真的已有半截輸出（沒有的話舊碼也回 pdf_timeout＝這題量不到歸類修正）');
 });
