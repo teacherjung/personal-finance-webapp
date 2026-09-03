@@ -1398,25 +1398,28 @@ test('2A｜POST /api/transfer-subcategories 缺 subs／subs 不是陣列 → 400
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
-test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批裡壞一筆 → 400，既有目標逐筆相同（不留半殘目標）', async () => {
+test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批裡壞一筆 → 400，既有目標整筆相同、含 id（不留半殘目標）', async () => {
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
     assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200);
-    const before = (await GET('/assetTargets')).map(t => [t.class, t.targetPct]);
+    const before = await GET('/assetTargets');   // 整個陣列（含 id）——只比 class/pct 擋不住「回 400 但偷換 id」（Codex r2）
     for (const bad of [[{ targetPct: 50 }], [{ class: '', targetPct: 30 }], [{ class: '股票', targetPct: 60 }, { targetPct: 40 }], [{ class: 7, targetPct: 10 }]]) {
       assert.equal((await POST('/assetTargets/replace', { targets: bad })).status, 400, `${JSON.stringify(bad)} 要 400`);
-      assert.deepEqual((await GET('/assetTargets')).map(t => [t.class, t.targetPct]), before, `${JSON.stringify(bad)}：壞一筆＝整批拒、原目標逐筆相同`);
+      assert.deepEqual(await GET('/assetTargets'), before, `${JSON.stringify(bad)}：壞一筆＝整批拒、原目標整筆相同（含 id）`);
     }
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
 test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true（"false"／1／"true"）→ 400，且學習表與 note 一個字都沒動', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
   const learnedBefore = await GET('/learned'); const txBefore = (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
   for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }]) {
     assert.equal((await POST('/statement/normalize-branches', bad)).status, 400, `${JSON.stringify(bad)} 要 400（只有正牌 true 才是確認）`);
   }
   assert.deepEqual(await GET('/learned'), learnedBefore, '被擋下的呼叫不可動到學習表');
   assert.deepEqual((await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
 test('2A｜useAi 不是正牌 true（"false"／1／{}）→ 兩條 preview 走模板路的原錯誤，不進 AI 路（否則只差一把鑰匙就外送＝扣錢）', async () => {
@@ -1430,7 +1433,7 @@ test('2A｜useAi 不是正牌 true（"false"／1／{}）→ 兩條 preview 走�
     { const db = await getDb(); db.settings = { ...db.settings, aiApiKey: '' }; await saveDb(db); }
     assert.equal((await getDb()).settings.aiApiKey, '', '前提：測試庫的 aiApiKey 必須是空的');
     globalThis.fetch = (/** @type {any} */ url, /** @type {any} */ init) => {
-      if (!/^http:\/\/127\.0\.0\.1:/.test(String(url))) throw new Error(`考題絆線：這題不准外連（${String(url)}）`);
+      if (new URL(String(url)).origin !== new URL(base).origin) throw new Error(`考題絆線：這題只准打本題的 server（${String(url)}）`);
       return realFetch(url, init);
     };
   for (const bad of ['false', 1, {}, 'true']) {
