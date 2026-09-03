@@ -21,9 +21,10 @@
 //
 // ⚠️ 誠實劃界：**本檔仍然做不到的事**（不要把它讀成比它更強的東西）
 //   ①`server.js` 的 `trust proxy`（關掉＝「每個 IP 各有額度」退化成全站共用一個額度）——
-//     要驗它得偽造代理鏈（X-Forwarded-For）＋逐 IP 數額度，本檔沒做。
+//     「不同 X-Forwarded-For 各自一份額度」那一側本檔末題（第二輪稽核 2B）已用真 HTTP 驗了；
+//     仍沒做的是另一側：偽造兩層代理鏈時「只信任一層、不無條件相信整串」。
 //   ②`lib/store-pg.js` 的未知鍵過濾與 `?? emptyFor(k)`（使用者能往 db 塞特殊名稱的鍵）——歸
-//     `test/hosted-store-pg.test.js` 的租戶 harness，本檔沒做。
+//     `test/hosted-store-pg.test.js` 的租戶 harness（未知鍵那半已在該檔補題），本檔沒做。
 //   ③`lib/repo.js` 的 CAS 只重試一次、以及「找不到的資料不可白推進版本」——同上，本檔沒做。
 //   ④body 上限的接線**只驗身分牆前那一道 parser**（`/api/auth` 前綴掛載的四條 POST 逐條驗）。
 //     帳單（15MB）與備份（50MB）兩個入口只在本檔被當「比較基準」用（證明登入入口嚴格更小），
