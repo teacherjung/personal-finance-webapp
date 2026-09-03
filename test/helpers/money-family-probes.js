@@ -117,3 +117,121 @@ export const ALLOWED_LOOKALIKES = [
 // 兩個都是**字面數字**，改任何一張清單＝這裡要跟著手改，兩邊對得上才綠。
 export const EXPECTED_READ_VERBS_COUNT = 14;
 export const EXPECTED_ALLOWED_COUNT = 36;
+
+
+// ── 2026-09-02 v6：輸入衛生與姿態閘的探針（Claude／Codex 兩張考卷共用）──────────
+// 這兩批不是「工具名清單」而是**輸入形狀**與**連接器姿態**，所以另立匯出，
+// 不混進 FORBIDDEN_FAMILY（那張表的每一筆都必須是可直接餵的工具名）。
+
+/**
+ * 輸入衛生：v5 只擋「非 JSON／缺 tool_name／型別錯」，實測前後空白、全形、零寬字元、
+ * `/` `:` 空白 `+` 分隔都會被當合法名走進家族網（外部掃描 2026-09-01 查出、已實測重現）。
+ * v6 的修法是**宣告合法字元集**：工具名必須逐字符合 `[A-Za-z0-9_.-]`（1~200 字），
+ * 不合的一律擋。一行關掉兩個缺口，「還沒想到的分隔符」整類消失。
+ * ⚠️ 這裡刻意**不**先做 NFKC／剝零寬／strip 再判斷：那樣寫過一版，實測是冗餘——
+ * 字元集這一層會先接住同樣的形狀，拿掉那三步考題不會紅（＝沒有考題撐著的層）。
+ *
+ * ⚠️⚠️ **下面三批的差別是「這一支到底證明了什麼」（Codex #540 r1 H1、r2 M1）**：
+ * hook 有 matcher（`^mcp__`），**matcher 不命中就整個 hook 不執行**。所以：
+ *   - `IN_MATCHER_DENY`＝工具名是字串且 matcher 命中 ⇒ 考卷**成對驗證**
+ *     （matcher 接得住 ∧ handler 回合規 deny）＝真正的端到端保證。
+ *   - `HANDLER_ONLY_DENY`＝輸入本身壞掉（不是 JSON／沒有 tool_name／型別不對），
+ *     **沒有工具名可以拿去比 matcher**，所以考卷只驗得到 handler 的 fail-closed。
+ *     ⚠️ r2 之前這三支混在 IN_MATCHER_DENY 裡、群組名與註解都宣稱「端到端」——
+ *     那超出考題的實際證明力，已拆開。
+ *   - `OUT_OF_MATCHER`＝matcher 根本篩掉 ⇒ **不是 hook 擋的**。
+ *     它們也不是有效的 MCP 工具名（規格不允許空白／全形），呼叫本身就不會成立；
+ *     本檔把它們留著是為了**釘住這個事實**，不是為了假裝 hook 擋了它們。
+ */
+export const IN_MATCHER_DENY = [
+  [JSON.stringify({ tool_name: 'mcp__x__noop\n' }), '結尾換行（r1 H1：python 的 $ 會吃掉它，已改用 \\Z）'],
+  [JSON.stringify({ tool_name: 'mcp__x__place_order\n' }), '結尾換行＋錢詞'],
+  [JSON.stringify({ tool_name: 'mcp__x__place_order ' }), '尾隨空白（v5 實測放行）'],
+  [JSON.stringify({ tool_name: 'mcp__x__place_order\t' }), '尾隨 tab'],
+  [JSON.stringify({ tool_name: 'mcp__x__place/order' }), '斜線'],
+  [JSON.stringify({ tool_name: 'mcp__x__place:order' }), '冒號'],
+  [JSON.stringify({ tool_name: 'mcp__x__place order' }), '空白分隔'],
+  [JSON.stringify({ tool_name: 'mcp__x__place+order' }), '加號'],
+  [JSON.stringify({ tool_name: 'mcp__x__place\u200b_order' }), '字中零寬字元'],
+  [JSON.stringify({ tool_name: `mcp__x__${'a'.repeat(300)}` }), '超長名（上限 200）'],
+];
+export const EXPECTED_IN_MATCHER_DENY = 10;
+
+/** 輸入壞到沒有工具名可比 matcher——只驗得到 handler 自己的 fail-closed。 */
+export const HANDLER_ONLY_DENY = [
+  ['not json at all', '非 JSON'],
+  [JSON.stringify({ no_tool_name: 1 }), '缺 tool_name'],
+  [JSON.stringify({ tool_name: 12345 }), 'tool_name 不是字串'],
+];
+export const EXPECTED_HANDLER_ONLY_DENY = 3;
+
+/** matcher（`^mcp__`）篩不到的形狀——hook 不會執行；它們也不是有效的 MCP 工具名。 */
+export const OUT_OF_MATCHER = [
+  ['', '空字串'],
+  ['   ', '全空白'],
+  ['\t\n', '只有 tab 與換行'],
+  [' mcp__x__place_order', '前導空白（前面不是 mcp__ 開頭）'],
+  ['ｍｃｐ＿＿ｘ＿＿ｐｌａｃｅ＿ｏｒｄｅｒ', '全形（整串都不是 ASCII）'],
+];
+export const EXPECTED_OUT_OF_MATCHER = 5;
+
+/**
+ * 姿態閘：已宣告會碰錢的連接器改成**白名單制**——名單外一律擋，不管工具叫什麼。
+ * 這關掉的是「靠名字猜」永遠關不掉的那一類：券商最常見的 `market_order`／`limit_order`
+ * 這種單側命名（v5 的動詞×名詞文法接不到）、以及任何還沒見過的新工具名。
+ * ⚠️ 名單是**一組精確的工具身分**（**這裡刻意不寫幾個**——寫死的數字自己會漂；
+ * 考題用 python AST 取出指令裡 `ALLOW` 的字面值、要求「ALLOW」這個名字在整棵 AST 裡
+ * 恰好出現兩次且右值是純字串 tuple，再與下面的清單比對集合相等。
+ * ⚠️ **那個判準只看得到「原始碼裡直接寫出 ALLOW」的綁定**——執行期用算出來的名稱改寫
+ * （`globals()["ALL"+"OW"]`、`setattr`、`exec`／`eval`）AST 看不到，**那一層靠審查制度守**，
+ * `Codex #540 r8` 逼出的收窄），比對前**不做任何正規化**（Codex #540 r1 H2：
+ * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
+ * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
+ * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
+ * 那時要回來更新 MONEY_SERVERS（AGENTS「錢的絕對邊界」規則 4 的通報義務接住這件事）。
+ * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
+ * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
+ */
+
+/** 名單外＝一律擋，且 UUID 不在第一段時也要擋（多段前綴探針）。 */
+export const MONEY_SERVER_MULTISEG_DENY = [
+  ['mcp__prefix__deda1d5d-1ccc-4551-9617-156b9658d236__market_order', 'UUID 在第二段'],
+  ['mcp__a__deda1d5d-1ccc-4551-9617-156b9658d236__limit_order', 'UUID 在第二段（短前綴）'],
+  ['mcp__x__deda1d5d-1ccc-4551-9617-156b9658d236__buy', '單獨動詞＋多段前綴'],
+];
+export const EXPECTED_MONEY_SERVER_MULTISEG_DENY = 3;
+
+/**
+ * 多段前綴的**反向對照組**（Codex #540 r4 M2）：只有「多段前綴要擋」的探針時，
+ * 把實作退化成「UUID 不在第一段就一律 deny」，三支擋的探針與標準前綴的放行題都仍全綠。
+ * 這一批鎖住那個副作用——多段前綴下的名單內工具必須照常放行。
+ */
+export const MONEY_SERVER_MULTISEG_ALLOW = [
+  ['mcp__prefix__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_balances', 'UUID 在第二段＋名單內唯讀'],
+  ['mcp__a__deda1d5d-1ccc-4551-9617-156b9658d236__create_alert', 'UUID 在第二段＋名單內提醒'],
+];
+export const EXPECTED_MONEY_SERVER_MULTISEG_ALLOW = 2;
+export const MONEY_SERVER = 'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__';
+
+/** 名單外＝一律擋。含 v5 實測會放行的真實券商命名、沒見過的新名、以及同形碰撞。 */
+export const MONEY_SERVER_DENY = [
+  'market_order', 'limit_order', 'stop_order', 'bracket_order', 'oco_order',
+  'buy', 'sell', 'liquidate', 'place_orderv2', 'anything_they_add_next_year',
+  'create_order_instruction', 'delete_order_instruction',
+  'GET_ACCOUNT_BALANCES', 'get-account-balances', 'get.account.balances', 'Get_Account_Balances',
+];
+export const EXPECTED_MONEY_SERVER_DENY = 16;
+
+/** 名單內＝照常放行（William 現用的唯讀查詢與明文允許的提醒／觀察清單）。 */
+export const MONEY_SERVER_ALLOW = [
+  'get_account_balances', 'get_account_orders', 'get_account_positions',
+  'get_account_summary', 'get_account_trades', 'get_alert', 'get_alerts',
+  'get_combo_identifier', 'get_company_connections', 'get_company_themes',
+  'get_option_data', 'get_option_parameters', 'get_order_instructions',
+  'get_pa_allocation', 'get_pa_performance_all_periods', 'get_price_history',
+  'get_price_snapshot', 'get_theme_details', 'get_watchlist', 'get_watchlists',
+  'search_contracts', 'search_futures', 'search_investment_topics', 'whats_new',
+  'provide_customer_feedback', 'create_alert', 'update_alert', 'delete_alert',
+  'set_alert_status', 'create_watchlist', 'edit_watchlist', 'delete_watchlist',
+];
+export const EXPECTED_MONEY_SERVER_ALLOW = 32;

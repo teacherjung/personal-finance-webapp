@@ -52,6 +52,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES,
+  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, HANDLER_ONLY_DENY, EXPECTED_HANDLER_ONLY_DENY,
+  OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
+  MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
+  MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
+  MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
+  MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -118,6 +124,129 @@ test('全家族矩陣直接跑在 Codex 副本的 command 上（r2 H：互鎖不
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
 // 一律先於本檔程式碼執行。換行程擋掉的是那一形，不是終點——r6 已證明還有別的形；
 // 該檔頭有完整劃界。本檔因此不再自帶位元組釘）。
+
+
+test('v6 輸入衛生：matcher 命中的怪形狀，成對驗證（matcher 接得住 ∧ handler 擋得下）', () => {
+  assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了——數量釘要有意識地改');
+  for (const [payload, why] of IN_MATCHER_DENY) {
+    const name = JSON.parse(payload).tool_name;
+    assert.equal(typeof name, 'string', `這批每一支都必須有字串工具名，否則屬於 HANDLER_ONLY_DENY：${why}`);
+    // r1 H1：只驗 handler 會假綠——matcher 不命中時整個 hook 不執行。兩者成對才算數。
+    assert.ok(new RegExp(codexGroup.matcher).test(name), `matcher 不命中，不該放在這批：${why}`);
+    assertDenies(codexHook.command, payload, `輸入衛生：${why}`);
+  }
+});
+
+test('v6 壞輸入：沒有工具名可比 matcher，只驗 handler 自己的 fail-closed', () => {
+  // r2 M1：這三支原本混在上一題裡、群組名宣稱「端到端」——超出實際證明力，已拆開誠實標示。
+  assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY, '探針被縮短了');
+  for (const [payload, why] of HANDLER_ONLY_DENY) {
+    assertDenies(codexHook.command, payload, `壞輸入 fail-closed（僅 handler 層）：${why}`);
+  }
+});
+
+test('v6 射程劃界：matcher 篩不到的形狀＝hook 不會執行（不假裝它們被擋）', () => {
+  assert.equal(OUT_OF_MATCHER.length, EXPECTED_OUT_OF_MATCHER, '探針被縮短了');
+  for (const [name, why] of OUT_OF_MATCHER) {
+    assert.equal(new RegExp(codexGroup.matcher).test(name), false,
+      `${why}：這個形狀現在 matcher 命中了——它就落進 hook 射程，該移到 IN_MATCHER_DENY 並驗 handler 會擋`);
+  }
+});
+
+test('v6 姿態閘：已宣告的動錢連接器採白名單制（名單外一律擋、名單內照常放行）', () => {
+  assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY, '名單外探針被縮短了');
+  assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, '名單內探針被縮短了');
+  for (const t of MONEY_SERVER_DENY) {
+    assertDenies(codexHook.command, JSON.stringify({ tool_name: MONEY_SERVER + t }),
+      `動錢連接器上的名單外工具 ${t}（不管它叫什麼名字）`);
+  }
+  for (const t of MONEY_SERVER_ALLOW) {
+    assertPasses(codexHook.command, MONEY_SERVER + t, '名單內的唯讀／提醒／觀察清單工具');
+  }
+});
+
+
+test('v6 姿態閘：白名單是精確集合（AST 取值：恰一次字面綁定，且與探針集合相等）', () => {
+  // Grok #540 掃第 2 條前半：只驗「這些擋、那些放」時，指令裡的 ALLOW 可以是探針的超集。
+  // Codex #540 r4 M1：改用正規式抽第一段 tuple 仍會假綠——在後面再綁一次 ALLOW
+  //   （第二個 Assign／AugAssign／迴圈綁定）就繞過去了。改用 python AST：
+  //   Codex #540 r5／r7：列舉綁定形式補不完（AnnAssign→match capture→except as→函式名…），
+  //   判準已改成**數名字**——ALLOW 在整棵 AST 的每個欄位裡恰好出現兩次（一次賦值、一次讀取），
+  //   外加單獨擋 wildcard import。新語法形式出現時判準自動涵蓋。
+  //   ⚠️ **射程止於「原始碼裡直接寫出 ALLOW」**（`Codex #540 r8` 收窄）：執行期用算出來的
+  //   名稱改寫同一個綁定（globals()["ALL"+"OW"]、setattr、exec／eval）AST 看不到——
+  //   **那一層靠審查制度守**（指令本體是受審內容、兩份逐位互鎖、改動必然出現在 diff 裡）。
+  //   下面那題把「直接寫出」的 15 種形式固化成負向考題。
+  const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
+  assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
+  const out = execFileSync('python3', [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
+    { input: m[1], encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' });
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.error, undefined, `白名單的形狀不合格：${parsed.error}`);
+  assert.deepEqual([...parsed.items].sort(), [...MONEY_SERVER_ALLOW].sort(),
+    '指令裡的白名單與探針清單不是同一個集合——多列＝悄悄放行，少列＝誤攔');
+});
+
+test('v6 姿態閘：白名單判準的**負向考題**——直接寫出 ALLOW 的綁定形式一律 fail-closed', () => {
+  // `Codex #540 r8`：r5／r7 驗過的繞法只留在 commit 訊息裡，考卷只有正例 ⇒ 判準退化不會紅。
+  // 這一題把它們固化：每一種「原始碼裡直接寫出 ALLOW」的綁定，helper 都必須回 error。
+  const m = codexHook.command.match(/^python3 -c '([\s\S]*)'$/);
+  assert.ok(m, 'hook 指令不是 `python3 -c \'…\'` 的形狀——這題的抽法要跟著改');
+  const ANCHOR = 'if name.startswith("mcp__"):';
+  assert.ok(m[1].includes(ANCHOR), '注入錨點不見了，這題要跟著改');
+  const readAllow = (/** @type {string} */ src) => JSON.parse(execFileSync('python3',
+    [path.join(ROOT, 'test', 'helpers', 'read-allow-list.py')],
+    { input: src, encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' }));
+  // 基準：未注入時抽得出白名單。
+  assert.equal(readAllow(m[1]).error, undefined, '基準：正常指令要抽得出白名單');
+  const forms = [
+    ['第二次 Assign', 'ALLOW = ALLOW + ("x",)'],
+    ['AugAssign', 'ALLOW += ("x",)'],
+    ['AnnAssign（帶型別註記）', 'ALLOW: tuple = ALLOW + ("x",)'],
+    ['walrus', 'if (ALLOW := ALLOW + ("x",)): pass'],
+    ['for 綁定', 'for ALLOW in [("x",)]: pass'],
+    ['with as', 'import contextlib\nwith contextlib.nullcontext() as ALLOW: pass'],
+    ['except as', 'try:\n    pass\nexcept Exception as ALLOW: pass'],
+    ['match capture', 'match ("x",):\n    case ALLOW: pass'],
+    ['comprehension 目標', 'x = [ALLOW for ALLOW in [1]]'],
+    ['函式名', 'def ALLOW(): pass'],
+    ['類別名', 'class ALLOW: pass'],
+    ['函式參數', 'def f(ALLOW=1): pass'],
+    ['import as', 'import os as ALLOW'],
+    ['wildcard import', 'from os import *'],
+    ['global 宣告', 'def f():\n    global ALLOW'],
+  ];
+  for (const [why, inject] of forms) {
+    const got = readAllow(m[1].replace(ANCHOR, `${inject}\n${ANCHOR}`));
+    assert.ok(got.error, `${why}：直接寫出 ALLOW 的綁定必須 fail-closed，卻抽出了 ${JSON.stringify(got.items?.length)} 項`);
+  }
+});
+
+test('v6 姿態閘：多段前綴下的名單內工具必須照常放行（反向對照組）', () => {
+  // r4 M2：只有「多段前綴要擋」的探針時，把實作退化成「UUID 不在第一段就一律 deny」不會紅。
+  assert.equal(MONEY_SERVER_MULTISEG_ALLOW.length, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_ALLOW) {
+    assertPasses(codexHook.command, name, `多段前綴＋名單內：${why}`);
+  }
+});
+
+test('v6 姿態閘：雙保險真的存在（白名單誤放建單工具時，家族網仍擋得住）', () => {
+  // Grok #540 掃第 3 條（雙保險那半）：對現行名單裡的名字，「名單內再走家族網」是空轉的
+  // （那些名字家族網本來就不擋），所以原本的題面證明不了雙保險。
+  // 這裡直接構造「ALLOW 誤含建單工具」的變體指令來驗——這才是雙保險唯一會派上用場的情境。
+  const bad = codexHook.command.replace('"provide_customer_feedback",',
+    '"provide_customer_feedback", "create_order_instruction",');
+  assert.notEqual(bad, codexHook.command, '變體沒有生效——錨點文字變了，這題要跟著改');
+  assertDenies(bad, JSON.stringify({ tool_name: `${MONEY_SERVER}create_order_instruction` }),
+    '白名單誤放建單工具時，家族網必須兜底');
+});
+
+test('v6 姿態閘：UUID 不在第一段時也要擋（多段前綴）', () => {
+  assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
+    assertDenies(codexHook.command, JSON.stringify({ tool_name: name }), `多段前綴：${why}`);
+  }
+});
 
 // ---------- ② 身分互鎖（同步紀律；主承重在①） ----------
 

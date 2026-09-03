@@ -80,6 +80,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
+  IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, HANDLER_ONLY_DENY, EXPECTED_HANDLER_ONLY_DENY,
+  OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
+  MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
+  MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
+  MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
+  MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
@@ -203,6 +209,87 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   for (const tool of ALLOWED_LOOKALIKES) {
     assert.equal(entriesBlocking(settings, tool).length, 0,
       `有 hook 組對規則 2 明文可用的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
+  }
+});
+
+
+function handlerDenies(settings, payload) {
+  return (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []).some((h) => {
+    if (h.type !== 'command' || !h.command) return false;
+    try {
+      const out = execFileSync('bash', ['-c', h.command],
+        { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
+      const d = JSON.parse(out).hookSpecificOutput;
+      return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+    } catch { return false; }
+  });
+}
+
+test('v6 輸入衛生：Claude 側成對驗證（matcher 接得住 ∧ handler 擋得下）', () => {
+  const settings = loadSettings();
+  assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了');
+  for (const [payload, why] of IN_MATCHER_DENY) {
+    const name = JSON.parse(payload).tool_name;
+    assert.equal(typeof name, 'string', `這批每一支都必須有字串工具名：${why}`);
+    // r1 H1：只驗 handler 會假綠——matcher 不命中時整個 hook 不執行。
+    const ok = (settings?.hooks?.PreToolUse ?? []).some((e) =>
+      claudeMatcherHits(e.matcher, name) && (e.hooks ?? []).some((h) => {
+        if (h.type !== 'command' || !h.command) return false;
+        try {
+          const out = execFileSync('bash', ['-c', h.command],
+            { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
+          const d = JSON.parse(out).hookSpecificOutput;
+          return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
+        } catch { return false; }
+      }));
+    assert.ok(ok, `沒有「matcher 接得住＋handler 回合規 deny」的組：${why}`);
+  }
+});
+
+test('v6 壞輸入：Claude 側同樣只驗得到 handler 的 fail-closed（誠實標示層級）', () => {
+  const settings = loadSettings();
+  assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY, '探針被縮短了');
+  for (const [payload, why] of HANDLER_ONLY_DENY) {
+    assert.ok(handlerDenies(settings, payload), `沒有 handler 對這種壞輸入回合規 deny：${why}`);
+  }
+});
+
+
+test('v6 姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一段）', () => {
+  const settings = loadSettings();
+  assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
+    assert.ok(entriesBlocking(settings, name).length >= 1, `多段前綴沒被擋：${why}`);
+  }
+  // r4 M2 的反向對照：多段前綴下的名單內工具不可被誤攔。
+  assert.equal(MONEY_SERVER_MULTISEG_ALLOW.length, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW, '探針被縮短了');
+  for (const [name, why] of MONEY_SERVER_MULTISEG_ALLOW) {
+    assert.equal(entriesBlocking(settings, name).length, 0, `多段前綴＋名單內被誤攔：${why}`);
+  }
+});
+
+test('v6 射程劃界：Claude 側 matcher 同樣篩不到那些形狀（誠實記錄，不假裝擋了）', () => {
+  const settings = loadSettings();
+  assert.equal(OUT_OF_MATCHER.length, EXPECTED_OUT_OF_MATCHER, '探針被縮短了');
+  const family = (settings?.hooks?.PreToolUse ?? []).filter((e) => e.matcher === '^mcp__');
+  assert.ok(family.length >= 1, '找不到 matcher 恰為 ^mcp__ 的家族組');
+  for (const [name, why] of OUT_OF_MATCHER) {
+    assert.ok(family.every((e) => !claudeMatcherHits(e.matcher, name)),
+      `${why}：現在 matcher 命中了——該移到 IN_MATCHER_DENY 並驗 handler 會擋`);
+  }
+});
+
+test('v6 姿態閘：Claude 側對已宣告的動錢連接器同樣白名單制', () => {
+  const settings = loadSettings();
+  assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY, '名單外探針被縮短了');
+  assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, '名單內探針被縮短了');
+  for (const t of MONEY_SERVER_DENY) {
+    assert.ok(entriesBlocking(settings, MONEY_SERVER + t).length >= 1,
+      `動錢連接器上的名單外工具 ${t} 沒有被擋——白名單制失效`);
+  }
+  for (const t of MONEY_SERVER_ALLOW) {
+    assert.equal(entriesBlocking(settings, MONEY_SERVER + t).length, 0,
+      `名單內的 ${t} 被誤攔——白名單漏列或姿態閘寫壞`);
   }
 });
 
