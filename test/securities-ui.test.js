@@ -220,5 +220,5 @@ test('nextSecSort：同欄再點＝反轉；換欄＝日期/數字欄預設降�
   assert.deepEqual(nextSecSort(s, 'quantity'), { key: 'quantity', dir: 'asc' }, '同欄再點：反轉');
   assert.deepEqual(nextSecSort(s, 'symbol'), { key: 'symbol', dir: 'asc' }, '換到文字欄：升冪');
   assert.deepEqual(nextSecSort(s, 'symbol'), { key: 'symbol', dir: 'desc' });
-  assert.deepEqual(nextSecSort(s, 'net'), { key: 'net', dir: 'desc' }, '換回數字欄：仍是降冪（不是沿用上一欄的方向）');
+  assert.deepEqual(nextSecSort(s, 'net'), { key: 'net', dir: 'desc' }, '換回數字欄：降冪（不沿用上一欄的方向）');
 });
