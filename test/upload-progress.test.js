@@ -422,8 +422,12 @@ test('apiStream 行為：非 200 帶 code；串流最後一行沒換行也要收
   });
   const g = /** @type {any} */ (globalThis);
   const storage = { getItem: () => null, setItem() {}, removeItem() {}, key: () => null, length: 0, clear() {} };
-  g.localStorage = storage; g.sessionStorage = storage; g.window = globalThis;
-  for (const k of ['document', 'location', 'history', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'Node', 'HTMLElement', 'Element', 'getComputedStyle', 'alert', 'confirm', 'scrollTo', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'Chart', 'innerWidth', 'innerHeight', 'screen']) if (!(k in g)) g[k] = mk();
+  // 用完要還原：記下原本就存在的全域（描述子）與本題新裝的鍵，finally 逐一復原／刪除——假 DOM 不可留給同行程的別題
+  /** @type {Record<string, PropertyDescriptor|undefined>} */ const prev = {};
+  /** @type {string[]} */ const added = [];
+  const install = (/** @type {string} */ k, /** @type {any} */ v) => { if (k in g) prev[k] = Object.getOwnPropertyDescriptor(g, k); else added.push(k); g[k] = v; };
+  install('localStorage', storage); install('sessionStorage', storage); install('window', globalThis);
+  for (const k of ['document', 'location', 'history', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'Node', 'HTMLElement', 'Element', 'getComputedStyle', 'alert', 'confirm', 'scrollTo', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'Chart', 'innerWidth', 'innerHeight', 'screen']) if (!(k in g)) install(k, mk());
   const realFetch = g.fetch;
   try {
     g.fetch = async () => ({ ok: false, status: 599, statusText: 'stub', json: async () => ({}), text: async () => '', body: null });
@@ -441,5 +445,10 @@ test('apiStream 行為：非 200 帶 code；串流最後一行沒換行也要收
     // ③error frame：訊息與 code 都是自有屬性（密碼窗靠 e.code 才跳得出來）
     g.fetch = async () => ({ ok: true, status: 200, body: bodyOf(['{"t":"error","error":"這份 PDF 有加密","code":"pdf_password"}\n']) });
     await assert.rejects(app.apiStream('/x', {}, () => {}), (/** @type {any} */ e) => e.message === '這份 PDF 有加密' && e.code === 'pdf_password');
-  } finally { g.fetch = realFetch; }
+  } finally {
+    g.fetch = realFetch;
+    for (const k of added) delete g[k];
+    for (const [k, d] of Object.entries(prev)) { if (d) Object.defineProperty(g, k, d); else delete g[k]; }
+  }
+  assert.ok(!('document' in globalThis) && !('window' in globalThis), '假 DOM 用完要拿掉（同行程的別題不可吃到）');
 });
