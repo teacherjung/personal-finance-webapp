@@ -52,13 +52,15 @@ import { isMainModule } from '../lib/is-main.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 /** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
-export const EXPECTED_GROK_VERSION = '1.0.3';
+export const EXPECTED_GROK_VERSION = '1.0.13';
 /**
  * 釘住執行檔本身（r4 #5：版本字串是被檢者自己印的，wrapper 印「grok 1.0.3」就過；而且 r3 版在**沙箱外**執行它）。
  * 流程：cp 真執行檔進盒子 → 對**盒內副本**算 sha256 → 不等於這個值＝不掃 → `--version` 在**沙箱內**對盒內副本跑。
  * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
+ * 1.0.13（2026-09-05，grok CLI 自動升版後 fail-closed 擋下 #563 的掃描）：`strings` 比對新舊執行檔——上游仍是
+ * cli-chat-proxy.grok.com/v1、沒有新的 grok.com 主機、/v1/responses 仍在；差異只在 x.ai 登入流程與遙測字串（沙箱只准 localhost、到不了）。
  */
-export const EXPECTED_GROK_SHA256 = '09deaf06804955ff2d6ccef2042af4031c659c47fd16eb3c72664a8f533832da';
+export const EXPECTED_GROK_SHA256 = '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80';
 export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
