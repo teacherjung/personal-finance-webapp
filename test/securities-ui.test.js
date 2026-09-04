@@ -206,7 +206,7 @@ test('S3r2#3：可能已出清 → 只提醒＋指路投資組合頁（A′：�
   assert.match(msg, /不會動持股/);
 });
 
-test('SEC_NUMERIC_SORT_KEYS：日期與數字欄的集合完整（換欄方向由「nextSecSort：同欄再點＝反轉」那題用行為守）', () => {
+test('SEC_NUMERIC_SORT_KEYS：日期與數字欄的集合完整（換欄方向由同檔題名關鍵字「nextSecSort：同欄再點＝反轉」那題用行為守）', () => {
   for (const k of ['tradeDate', 'settlementDate', 'quantity', 'price', 'grossAmount', 'fees', 'net']) {
     assert.ok(SEC_NUMERIC_SORT_KEYS.has(k), k);
   }

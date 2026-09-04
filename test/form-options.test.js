@@ -246,7 +246,7 @@ test('架構｜openForm 的下拉真的是這支純模組產的，而且餵進�
     `app.js 這幾行又自己拼選項了（應該交給 form-options.js）：\n${offenders.map(o => `${o.no}: ${o.line.trim()}`).join('\n')}`);
 });
 
-test('架構｜esc 的 re-export 接線（字面釘：只掃 app.js 的 import／export 字串；「同一個函式」由「app.js 匯出的 esc 就是 html-escape.js 的那一個函式」那題用行為守）', () => {
+test('架構｜esc 的 re-export 接線（字面釘：只掃 app.js 的 import／export 字串；「同一個函式」由同檔題名關鍵字「app.js 匯出的 esc 就是 html-escape.js 的那一個函式」那題用行為守）', () => {
   const raw = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
   const src = stripComments(raw);
   assert.match(src, /from\s*['"]\.\/modules\/html-escape\.js['"]/,
