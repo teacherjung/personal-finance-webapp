@@ -73,7 +73,7 @@ test('IB Flex 解析：持倉、現金流與多幣別成交損益維持同一口
     skippedNoCurrency: 0,
     estimatedNoFx: 1,
     estimatedCurrencies: ['JPY']
-  }, '外幣現金流依 IBKR 匯率、設定估算、缺匯率略過的順序換算');
+  }, '外幣現金流依 IBKR 匯率、設定或預設估算、估算器回 null（不支援的幣別）才略過的順序換算');
 
   assert.deepEqual(parsed.trades.map(t => ({ symbol: t.symbol, pnl: t.pnl, pnlBase: t.pnlBase })), [
     { symbol: 'AAPL', pnl: 50, pnlBase: 50 },

@@ -115,8 +115,9 @@ test('丙-2｜台幣報表：美元匯率是預設值 → IB 現金流與交易�
 test('丙-2｜報表交易摘要：GBP 賣出沒抓到匯率 → 註記「GBP 交易以預設匯率估算」（計入合計，不是「未計入」）', () => {
   const opts = { viewCurrency: 'TWD', generated: '2026-09-04', sortKey: 'value', sortDir: 'desc', layers, layerOrder, escapeHtml };
   const data = { ...baseData, fxSources: { USD: 'live' }, settings: { ...baseData.settings, usdTwd: 32, ib: {} },
-    ibTrades: [{ symbol: 'ISF', pnl: 10, currency: 'GBP', buySell: 'SELL', date: '20250101' }] };
+    ibTrades: [{ symbol: 'ISF', pnl: 1000, currency: 'GBP', buySell: 'SELL', date: '20250101' }] };   // 1000 GBP × 預設 40.8 ＝ 40,800 台幣
   const html = buildPortfolioReport(data, opts).html;
   assert.match(html, /GBP 交易以預設匯率估算/);
   assert.doesNotMatch(html, /GBP[^<]*未計入/);
+  assert.match(html, /已實現損益（FIFO）[\s\S]*?<b>\+(4\.1 萬|40,800 元)<\/b>/, '「計入合計」要有斷言撐：合計必須是 1000×40.8 換成台幣（Codex #557 r5）');
 });

@@ -96,7 +96,7 @@ test('IB 現金流｜設定的估算匯率是 0 或負數 → 落 skippedNoFx，
   assert.ok((ok.income?.dividends ?? 0) > 0, '合法估算要真的換出金額');
 });
 
-test('IB 現金流｜fxRateToBase 是 0 或負數 → 視同沒有報表匯率（USD 直通／設定估算／不計入分支），不可乘成 0 元／負值還標「已計入」', () => {
+test('IB 現金流｜fxRateToBase 是 0 或負數 → 視同沒有報表匯率（USD 直通／設定或預設估算／不計入分支），不可乘成 0 元／負值還標「已計入」', () => {
   // ⚠️ 病因：`Number.isFinite(0)` 是 true——0 不是匯率，是報表壞值。照乘的話 GBP 100 的股息
   //    變 0 元、count++ ⇒ 畫面「已計入」、skippedNoFx=0 零提醒；負數更會把收入變成支出。
   //    同檔題名關鍵字「fxRateToBase 是空字串／null」那題釘的是空字串／null，
@@ -111,7 +111,7 @@ test('IB 現金流｜fxRateToBase 是 0 或負數 → 視同沒有報表匯率�
     assert.equal(inc?.skippedNoFx, 1,
       `fxRateToBase=${bad} 應落「缺匯率」計數——乘 0 歸零／乘負變號都比「少一筆」更難察覺`);
   }
-  // 反面（防「一律 skip」的過度修法）：壞 fx 只是失去「報表 fxRateToBase」這個來源，USD 直通與設定估算仍照走。
+  // 反面（防「一律 skip」的過度修法）：壞 fx 只是失去「報表 fxRateToBase」這個來源，USD 直通與設定或預設估算仍照走。
   // ①壞 fx＋幣別是 USD ⇒ 走 USD 直通分支，金額照原值計入。
   const usd = parseStatement(flexWithCash([
     { type: 'Dividends', currency: 'USD', amount: '100', fxRateToBase: '0' },
@@ -123,7 +123,7 @@ test('IB 現金流｜fxRateToBase 是 0 或負數 → 視同沒有報表匯率�
   const est = parseStatement(flexWithCash([
     { type: 'Dividends', currency: 'JPY', amount: '10000', fxRateToBase: '-2' },
   ]), () => 0.0064);
-  assert.equal(est.income?.estimatedNoFx, 1, '壞 fx 的非 USD 列要走設定估算並標註');
+  assert.equal(est.income?.estimatedNoFx, 1, '壞 fx 的非 USD 列要走設定或預設估算並標註');
   assert.equal(est.income?.skippedNoFx, 0);
   assert.ok((est.income?.dividends ?? 0) > 0, '估算要真的換出金額');
 });
