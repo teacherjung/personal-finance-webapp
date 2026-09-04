@@ -1,16 +1,11 @@
-// 兩頁「錢的分堆」釘行為，不釘字面（第二輪稽核第 9 條，2026-09-02；批四 4A）：
-// 銀行收支頁（cashflow.js）只能吃現金流帳本、信用卡費頁（transactions.js）只能吃信用卡帳本——
-// 這正是 2026-07-20 三層重構（信用卡明細／收支現金流／帳戶餘額分家）要消滅的病：
-// 過濾一掉，銀行收支頁會把每一筆刷卡算進支出、下期繳卡費再算一次（同一筆錢計兩遍）；信用卡頁會把房租、薪資、繳卡費列進「本月消費」。
-// 稽核實測：原本守它的考題只有**字面釘**（assert.match 原始碼 `allRaw.filter(...)`）——把那行註解掉、旁邊補一行不過濾的，
-// 或保留字面再旁路（`…filter(…) && allRaw`），13 支相關考卷 214 題全綠。字面釘分不出「字還在」和「碼還活著」。
+// 兩頁「錢的分堆」＝頁面接線的行為考題：銀行收支頁（cashflow.js）只能吃現金流帳本、信用卡費頁（transactions.js）只能吃信用卡帳本
+// （判準單一真相＝categories.js isCardTx；分堆的語意見 AGENTS「兩本帳」節）。分堆一掉，銀行收支會把刷卡明細算進支出、
+// 下期繳卡費再算一次（同一筆錢計兩遍）；信用卡頁會把房租、薪資、繳卡費列進「本月消費」——這裡釘的是畫面上的數字，不是原始碼字串。
 //
-// 做法＝jsdom 給全域、fetch 假櫃檯餵固定資料、真的 import 整張 app.js 路由圖（開機序列跑完）→ 呼叫 render → 讀畫面上的數字。
-// 這樣釘得到的是「頁面真的有呼叫判準」，不是判準本身（判準 isCardTx 另有考題）。
-// 逐點突變過（每一刀本檔至少一題紅）：兩頁各 ①整行刪除 ②註解掉＋補 `const all = allRaw` ③保留字面旁路 `&& allRaw` ④反轉判準；
-// ⑤ categories.js 的 isCardTx 改成永遠 false。
-// 誠實劃界：期望值用畫面上的字串（`wan`／`money` 的格式），格式改版這裡要跟著改；jsdom 全域定在 globalThis 沒有清理，
-// 靠 node --test 每檔一個行程隔離，本檔不可與別的考題合檔。⚠️ test/debit-card-ledger.test.js 舊題名寫「transactions.js 載不進 node」——不成立，本檔就是反例。
+// 做法＝jsdom 給全域、fetch 假櫃檯餵固定資料、真的 import 整張 app.js 路由圖（開機序列跑完）→ 呼叫 render → 讀畫面。
+// 這樣釘得到「頁面真的有呼叫判準」；判準本身另有考題（categories）。
+// 誠實劃界：期望值是畫面字串（wan／money 的格式），格式改版這裡要跟著改；jsdom 全域定在 globalThis、沒有清理，
+// 靠 node --test 每檔一個行程隔離，本檔不可與別的考題合檔。
 /* global document */   // boot() 把 jsdom 的 document 定到 globalThis（node --test 每檔一個行程）
 import test from 'node:test';
 import assert from 'node:assert/strict';
