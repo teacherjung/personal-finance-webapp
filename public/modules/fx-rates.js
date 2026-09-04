@@ -6,7 +6,7 @@
 //   ② 真的沒有才用預設值 FX_DEFAULT_TWD——匯率波動通常不大、誤差可接受；**部位照常計入**，但畫面要標「用了預設匯率」
 //   ③ 不支援的幣別（表上沒有、也沒有預設）才無法換算＝不計入並標註（極少見：帳戶／持股表單只給四種幣別）
 // 這裡刻意沒有任何 `|| 1`：未知幣別不可被當成台幣。
-export const FX_DEFAULT_TWD = Object.freeze({ USD: 32, GBP: 40.8, JPY: 0.215 });
+export const FX_DEFAULT_TWD = Object.freeze({ USD: 31, GBP: 41, JPY: 0.2 });   // William 2026-09-04 裁：第一次用、又沒網路時用的值
 export const SUPPORTED_FX = Object.freeze(['USD', 'GBP', 'JPY']);
 
 /** 正數才算匯率（0／負數／NaN／字串垃圾都當「沒有」）。 @param {unknown} v */

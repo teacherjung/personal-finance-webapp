@@ -99,25 +99,27 @@ test('A4 報表｜報表沒有幣別欄的筆數要跟活動卡一樣出聲', ()
   assert.doesNotMatch(clean.html, /沒有幣別欄/, '沒有缺漏就不該出現註記');
 });
 
-test('丙-2｜台幣報表：美元匯率是預設值 → IB 現金流與交易摘要都標「台幣換算用的美元匯率是預設值」；抓到的不標；USD 報表不標', () => {
+test('丙-2｜台幣報表：美元匯率是預設值 → IB 現金流與交易摘要都標「台幣換算用的美元匯率是預設值」；抓到的不標；USD 報表不標', async () => {
   const opts = { viewCurrency: 'TWD', generated: '2026-09-04', sortKey: 'value', sortDir: 'desc', layers, layerOrder, escapeHtml };
-  const data = { ...baseData, fxSources: { USD: 'default', GBP: 'default', JPY: 'default' },
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
+  const data = { ...baseData, fx: { USD: FX_DEFAULT_TWD.USD, TWD: 1 }, fxSources: { USD: 'default', GBP: 'default', JPY: 'default' },
     settings: { ...baseData.settings, usdTwd: undefined, ib: { income: { dividends: 100, count: 1 } } },
     ibTrades: [{ symbol: 'A', pnl: 100, currency: 'USD', buySell: 'SELL', date: '20250101' }] };
   const html = buildPortfolioReport(data, opts).html;
-  assert.ok((html.match(/台幣換算用的美元匯率是預設值 32/g) || []).length >= 2, '現金流與交易摘要兩處都要標');
+  const note = new RegExp(`台幣換算用的美元匯率是預設值 ${FX_DEFAULT_TWD.USD}`, 'g');
+  assert.ok((html.match(note) || []).length >= 2, '現金流與交易摘要兩處都要標');
   const live = buildPortfolioReport({ ...data, fxSources: { USD: 'live' } }, opts).html;
-  assert.doesNotMatch(live, /預設值 32/);
+  assert.doesNotMatch(live, /預設值 \d/);
   const usdView = buildPortfolioReport(data, { ...opts, viewCurrency: 'USD' }).html;
-  assert.doesNotMatch(usdView, /預設值 32/, 'USD 報表不經台幣換算、不標');
+  assert.doesNotMatch(usdView, /預設值 \d/, 'USD 報表不經台幣換算、不標');
 });
 
 test('丙-2｜報表交易摘要：GBP 賣出沒抓到匯率 → 註記「GBP 交易以預設匯率估算」（計入合計，不是「未計入」）', () => {
   const opts = { viewCurrency: 'TWD', generated: '2026-09-04', sortKey: 'value', sortDir: 'desc', layers, layerOrder, escapeHtml };
   const data = { ...baseData, fxSources: { USD: 'live' }, settings: { ...baseData.settings, usdTwd: 32, ib: {} },
-    ibTrades: [{ symbol: 'ISF', pnl: 1000, currency: 'GBP', buySell: 'SELL', date: '20250101' }] };   // 1000 GBP × 預設 40.8 ＝ 40,800 台幣
+    ibTrades: [{ symbol: 'ISF', pnl: 1000, currency: 'GBP', buySell: 'SELL', date: '20250101' }] };   // 1000 GBP × 預設 41 ＝ 41,000 台幣
   const html = buildPortfolioReport(data, opts).html;
   assert.match(html, /GBP 交易以預設匯率估算/);
   assert.doesNotMatch(html, /GBP[^<]*未計入/);
-  assert.match(html, /已實現損益（FIFO）[\s\S]*?<b>\+(4\.1 萬|40,800 元)<\/b>/, '「計入合計」要有斷言撐：合計必須是 1000×40.8 換成台幣（Codex #557 r5）');
+  assert.match(html, /已實現損益（FIFO）[\s\S]*?<b>\+(4\.1 萬|41,000 元)<\/b>/, '「計入合計」要有斷言撐：合計必須是 1000×41 換成台幣（Codex #557 r5）');
 });

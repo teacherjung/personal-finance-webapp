@@ -94,7 +94,18 @@ test('日線：記錄了投組成本/市值與當日匯率（差異引擎與事�
   for (const f of ['netWorth', 'assets', 'liabilities', 'pfCost', 'pfValue', 'usdTwd']) {
     assert.equal(typeof (/** @type {any} */ (row)[f]), 'number', `${f} 必須是數字（壞型別會被櫃檯剝掉）`);
   }
-  assert.ok(row.usdTwd && row.usdTwd > 0, '匯率要有值（缺設定時沿用 derive 的預設 32）');
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
+  assert.equal((await getDb()).settings?.usdTwd, undefined, '夾具前提：emptyDb() 不預填 usdTwd（丙的契約）——這一題測的是「缺設定」');
+  assert.equal(row.usdTwd, FX_DEFAULT_TWD.USD, '缺設定時沿用 fx-rates 的預設值（不是別的數）');
+});
+
+test('日線：使用者設過匯率就記設定值，不是預設值', async () => {
+  seed(1000);
+  const db = await getDb();
+  db.settings = { ...(db.settings || {}), usdTwd: 33.5 };
+  await saveDb(db);
+  const row = await recordDailyValue();
+  assert.equal(row.usdTwd, 33.5, '有設定就用設定值');
 });
 
 test('日線：缺 date／壞 date 進不了櫃檯（date 是主鍵欄）', () => {

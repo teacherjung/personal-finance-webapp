@@ -85,8 +85,9 @@ test('丙｜fxNoteHtml：用預設匯率→講幾筆、什麼預設值、怎麼�
   const esc = (/** @type {any} */ v) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c);
   assert.equal(fxNoteHtml([], [], esc), '');
   assert.equal(fxNoteHtml(/** @type {any} */ (undefined), /** @type {any} */ (undefined), esc), '');
-  const d = fxNoteHtml([{ currency: 'GBP', count: 2, rate: 40.8 }, { currency: 'JPY', count: 1, rate: 0.215 }], [], esc);
-  assert.match(d, /3 筆外幣部位用的是預設匯率（GBP 40\.8、JPY 0\.215）/);
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
+  const d = fxNoteHtml([{ currency: 'GBP', count: 2, rate: FX_DEFAULT_TWD.GBP }, { currency: 'JPY', count: 1, rate: FX_DEFAULT_TWD.JPY }], [], esc);
+  assert.ok(d.includes(`3 筆外幣部位用的是預設匯率（GBP ${FX_DEFAULT_TWD.GBP}、JPY ${FX_DEFAULT_TWD.JPY}）`), '筆數要加總、幣別與預設值要列出（值＝fx-rates 常數）');
   assert.match(d, /更新報價/); assert.match(d, /data-info="fxDefault"/);
   assert.doesNotMatch(d, /未計入|不計入/, '預設匯率的部位是計入的');
   const m = fxNoteHtml([], [{ currency: 'EUR', count: 2, liabilities: 1 }], esc);
