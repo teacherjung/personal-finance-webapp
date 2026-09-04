@@ -24,7 +24,7 @@
 
 ## 信用卡費頁的兩種口徑
 
-**記得同步這裡**：**兩本帳的分堆＝頁面接線**：銀行收支頁 `cashflow.js` 只吃 `!isCardTx`、信用卡費頁 `transactions.js` 只吃 `isCardTx`（判準單一真相見 AGENTS「兩本帳」節）。守它的是**行為考題** `test/ledger-split-behavior.test.js`（jsdom 載整張 app.js 路由圖、fetch 假櫃檯餵固定九筆、讀畫面上的支出／本月消費／明細 id；兩頁各四種拿掉過濾的寫法＋判準改假都會紅）；`cashflow-forest-ui`／`transactions-forest-ui` 裡的字面釘只是第二道網（第二輪稽核 2026-09-02 第 9 條：字面釘分不出「字還在」和「碼還活著」）。
+**記得同步這裡**：**兩本帳的分堆＝頁面接線**：銀行收支頁 `cashflow.js` 只吃 `!isCardTx`、信用卡費頁 `transactions.js` 只吃 `isCardTx`（判準單一真相見 AGENTS「兩本帳」節）。守它的是**行為考題** `test/ledger-split-behavior.test.js`（jsdom 載整張 app.js 路由圖、fetch 假櫃檯餵固定資料、讀畫面上的支出／本月消費／明細 id）——釘的是**結果層**（兩頁畫面上的分堆結果；等價的頁面實作也會過）；判準呼叫的形狀由 `cashflow-forest-ui`／`transactions-forest-ui` 的字面釘守，字面釘分不出「字還在」和「碼還活著」，所以結果層另有一題。
 
 **改這裡**：信用卡費頁的兩種口徑（使用者定 2026-07-27）
 

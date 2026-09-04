@@ -863,7 +863,7 @@ test('★無批次的舊 D 列（批次制之前匯的）＝生命週期沒有�
   assert.equal((await getDb()).transactions.filter((t) => t.source === 'stmt').length, 0);
 });
 
-test('編輯窗的「帳戶／卡片」下拉收簽帳金融卡（#503 待辦 A2）：去註解形狀釘（載進 node 的做法見 test/ledger-split-behavior.test.js（jsdom）；這題仍是形狀釘＝弱考題，守的是拼字；行為由「保留現值 unshift」既有機制兜底）', () => {
+test('編輯窗的「帳戶／卡片」下拉收簽帳金融卡（#503 待辦 A2）：去註解形狀釘（只掃 transactions.js 的原始碼字串、沒有執行 unshift；載進 node 的做法見 test/ledger-split-behavior.test.js（jsdom）——這題守的是拼字）', () => {
   // 去註解再掃（鐵則 9：把判準字串放進註解就能矇混的考題＝假保證）
   const src = readFileSync(new URL('../public/modules/transactions.js', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
