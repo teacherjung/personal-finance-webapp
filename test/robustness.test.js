@@ -522,3 +522,26 @@ test('自主體檢｜編輯卡片密碼留空＝不變更：PUT 不帶 pdfPasswo
   assert.equal(c.name, '卡2改名');
   assert.equal(c.pdfPassword, 'B222222222', '留空不送＝後端部分合併保留舊密碼');
 });
+
+// 丙（William 2026-09-04）：預設匯率只住 fx-rates.js 的常數。這題走**真的** data/seed.json → 全新資料庫首次 load() 的路徑
+//（不是 emptyDb()），所以只在 seed.json 加回 usdTwd:32 也會紅（Codex #556 r2）。
+test('丙｜data/seed.json 不含 usdTwd；全新資料庫首次 load() 後 usdTwd 未設定、匯率由預設值 32 接手', () => {
+  const seed = JSON.parse(readFileSync(join(ROOT, 'data/seed.json'), 'utf8'));
+  assert.ok(!Object.hasOwn(seed.settings, 'usdTwd'), 'seed.json 的 settings 不可預填 usdTwd');
+  assert.deepEqual(seed.settings.fxTwd, {}, 'seed.json 的 fxTwd 也要是空的');
+  const dbPath = join(tmpdir(), `finance-seed-fx-${process.pid}.db`);
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { load } from ${JSON.stringify(STORE_URL)};
+      import { resolveFxTable } from ${JSON.stringify(FX_RATES_URL)};
+      const s = load().settings;   // 全新 STORE_FILE：這一步會從 data/seed.json 種庫
+      console.log(JSON.stringify({ usdTwd: s.usdTwd === undefined ? '__undefined__' : s.usdTwd, fxTwd: s.fxTwd, rate: resolveFxTable(s).rates.USD, src: resolveFxTable(s).sources.USD }));
+    `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
+    const r = JSON.parse(out.trim().split('\n').pop() || '{}');
+    assert.equal(r.usdTwd, '__undefined__', '首次 load() 後 usdTwd 不可被種子填成 32');
+    assert.deepEqual(r.fxTwd, {});
+    assert.equal(r.rate, 32); assert.equal(r.src, 'default', '要被標成「預設值」而不是「抓到的」');
+  } finally {
+    for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm']) { try { rmSync(f); } catch { /* 可能不存在 */ } }
+  }
+});

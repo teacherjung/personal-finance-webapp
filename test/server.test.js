@@ -1472,3 +1472,20 @@ test('2A｜POST /statement/normalize-auto：會併學習表時不帶 force → n
     assert.ok(!userRulesFingerprint().includes('鮮芋仙'), '還原不完整：規則槽仍含本題夾具（會污染同檔後面的題）');
   }
 });
+
+// 丙（William 2026-09-04）：美元匯率欄空白＝明確清除（送 null）。部分合併若只是省略欄位會留舊值＝假清除（Codex #556 r2）。
+test('丙｜設定頁清除美元匯率：先存 33 → 送 null → 讀回不是 33（未設定），/summary 對美元資產改標「用預設值 32」', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+    assert.equal((await PUT('/settings', { usdTwd: 33 })).status, 200);
+    assert.equal((await GET('/settings')).usdTwd, 33, '前提：先真的存進 33');
+    const r = await PUT('/settings', { usdTwd: null });
+    assert.equal(r.status, 200, 'null 是合法的「清除」');
+    const s = await GET('/settings');
+    assert.ok(s.usdTwd == null, `清除後不可留舊值 33（實際 ${s.usdTwd}）`);
+    { const db = await getDb(); db.holdings = []; db.accounts = [{ id: 'usd-probe', name: '美元現金', type: 'cash', class: '現金', currency: 'USD', balance: 10 }]; await saveDb(db); }   // 只留一筆美元資產（整庫已快照，finally 還原）
+    const sum = await GET('/summary');
+    assert.deepEqual(sum.defaultFx, [{ currency: 'USD', count: 1, rate: 32 }], '清除後美元資產要標「用了預設值 32」');
+    assert.equal(sum.assets, 320);
+  } finally { await saveDb(snapshot); await getDb(); }
+});

@@ -327,7 +327,7 @@ export async function renderSettings() {
   byId('saveEfund').onclick = () => saveSettings({ emergencyFundMonths: Number(val('emergencyFundMonths')) }, '已儲存');
   byId('saveAlloc').onclick = () => saveSettings({ allocationDriftPct: Number(val('allocationDriftPct')) }, '已儲存');
   byId('saveFxCash').onclick = () => saveSettings({
-    ...(val('usdTwd') === '' ? {} : { usdTwd: Number(val('usdTwd')) }),   // 空白＝保持未設定（送 0 會被 posnum 擋下）
+    usdTwd: val('usdTwd') === '' ? null : Number(val('usdTwd')),   // 空白＝明確清除（送 null；部分合併若省略會留舊值＝假清除）
     ibIdleCashAlert: Number(val('ibIdleCashAlert')),
     fxHigh: Number(val('fxHigh')),
     fxLow: Number(val('fxLow'))
