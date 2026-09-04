@@ -47,3 +47,16 @@ test('投資報價｜願望清單只收有效報價並四捨五入，不把缺�
   assert.deepEqual(plan.watchWrites, [{ id: 'ok', body: { lastPrice: 292 } }]);
   assert.equal(plan.skippedHoldings, 0);
 });
+
+// 丙（Codex #556 r3）：null 現在是合法的「清除美元匯率」，所以壞報價絕不可算成 NaN 再變 null 送出去。
+test('更新報價｜美元報價是壞值（非數字／0／負數）→ 不寫 usdTwd（省略該欄，不可變 null 清掉舊值）；同批的英鎊照寫、saveFx 仍為 true', async () => {
+  const { portfolioQuoteWritePlan: plan } = await import('../public/modules/portfolio-quotes.js');
+  for (const bad of ['not-a-rate', 0, -1, NaN, '']) {
+    const p = plan([], [], { fxTwd: { GBP: 40 } }, /** @type {any} */ ({ 'TWD=X': { price: bad, currency: '' }, 'GBPTWD=X': { price: 41, currency: '' } }));
+    assert.ok(!Object.hasOwn(p.fxBody, 'usdTwd'), `壞值 ${JSON.stringify(bad)} 不可出現在 fxBody（null 會清掉舊的美元匯率）`);
+    assert.equal(p.fxBody.fxTwd.GBP, 41, '英鎊照寫');
+    assert.equal(p.saveFx, true, '有任何一個匯率抓到就要存');
+  }
+  const ok = plan([], [], {}, /** @type {any} */ ({ 'TWD=X': { price: '31.5', currency: '' } }));
+  assert.equal(ok.fxBody.usdTwd, 31.5, '對照：數字字串照寫');
+});

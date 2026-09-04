@@ -222,3 +222,14 @@ test('匯率備援｜第一個管道只給美元 → 英鎊／日圓繼續問第
   assert.equal(q['GBPTWD=X'].source, 'currency-api');
   assert.ok(Math.abs(q['JPYTWD=X'].price - 0.2) < 1e-9);
 });
+
+test('開機自動刷新｜Yahoo 給的美元匯率是壞值（字串／0）→ 不寫回 usdTwd（保留舊值，不可變 NaN／null）；英鎊正常照寫', async () => {
+  await seedDb([], { usdTwd: 30.5, fxTwd: { GBP: 41 } });
+  const fetchImpl = makeFetch({ 'TWD=X': { price: 'oops', currency: '' }, 'GBPTWD=X': { price: 42, currency: '' }, 'JPYTWD=X': { price: 0, currency: '' } });
+  const r = await refreshQuotesIfStale({ fetchImpl, now: Date.parse('2026-09-04T00:00:00Z'), quoteTtlMs: 0 });
+  assert.equal(r.refreshed, true, '有抓到英鎊就算有更新');
+  const db = await getDb();
+  assert.equal(db.settings.usdTwd, 30.5, '壞的美元報價不可蓋掉舊值');
+  assert.equal(db.settings.fxTwd.GBP, 42, '英鎊照寫');
+  assert.equal(db.settings.fxTwd.JPY, undefined, '0 不是匯率、不寫');
+});

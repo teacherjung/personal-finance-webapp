@@ -1,6 +1,7 @@
 // @ts-check
 // 投資頁手動更新報價的純備料：整理 Yahoo 代號、匯率與逐筆寫回計畫，不碰 API 或 DOM。
 
+import { positiveRate } from './fx-rates.js';   // 正數才算匯率（丙）
 const FX_QUOTE_SYMBOLS = ['TWD=X', 'GBPTWD=X', 'JPYTWD=X'];
 
 /** @typedef {{ id?: string, quoteSymbol?: string, currency?: string }} QuoteHolding */
@@ -27,10 +28,12 @@ export function portfolioQuoteSymbols(holdings, watchlist) {
  */
 export function portfolioQuoteWritePlan(holdings, watchlist, settings, quotes) {
   const fxBody = {};
-  if (quotes['TWD=X']?.price) fxBody.usdTwd = Math.round(Number(quotes['TWD=X'].price) * 1000) / 1000;
+  // 只有「正數」才寫回（Codex #556 r3）：壞值算成 NaN → JSON 變 null → 現在 null 是合法的「清除」，會把好好的匯率清掉。
+  const usd = positiveRate(quotes['TWD=X']?.price), gbp = positiveRate(quotes['GBPTWD=X']?.price), jpy = positiveRate(quotes['JPYTWD=X']?.price);
+  if (usd) fxBody.usdTwd = Math.round(usd * 1000) / 1000;
   const fxTwd = { ...(settings.fxTwd || {}) };
-  if (quotes['GBPTWD=X']?.price) fxTwd.GBP = Math.round(Number(quotes['GBPTWD=X'].price) * 1000) / 1000;
-  if (quotes['JPYTWD=X']?.price) fxTwd.JPY = Math.round(Number(quotes['JPYTWD=X'].price) * 10000) / 10000;
+  if (gbp) fxTwd.GBP = Math.round(gbp * 1000) / 1000;
+  if (jpy) fxTwd.JPY = Math.round(jpy * 10000) / 10000;
   fxBody.fxTwd = fxTwd;
 
   const holdingWrites = [];
