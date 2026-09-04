@@ -122,3 +122,40 @@ test('交易摘要｜完全沒有幣別的交易列成「未知幣別」，不�
   assert.deepEqual(summary.missingCurrencies, ['未知幣別']);
   assert.ok(!summary.missingCurrencies.includes(''), '空字串會讓畫面出現孤零零的頓號');
 });
+
+// 丙-2（William 2026-09-04 裁）：交易損益／XIRR 的估算也用預設匯率並標註；只有不支援的幣別才 missing。
+test('丙-2｜tradePnlBase：GBP 沒抓到匯率 → 用預設 40.8 估（÷美元 32）、source=default；美元沒設也算 default；EUR 不支援才 missing', () => {
+  assert.deepEqual(tradePnlBase({ pnl: 100, currency: 'GBP' }, { usdTwd: 32 }), { base: 100 * 40.8 / 32, source: 'default', cur: 'GBP' });
+  assert.deepEqual(tradePnlBase({ pnl: 100, currency: 'GBP' }, { fxTwd: { GBP: 40 } }), { base: 100 * 40 / 32, source: 'default', cur: 'GBP' }, '分母美元是預設值 ⇒ 整筆算預設估算');
+  assert.deepEqual(tradePnlBase({ pnl: 100, currency: 'GBP' }, { usdTwd: 32, fxTwd: { GBP: 40 } }), { base: 125, source: 'estimated', cur: 'GBP' }, '對照：兩邊都抓到＝設定估算');
+  assert.deepEqual(tradePnlBase({ pnl: 3200, currency: 'TWD' }, {}), { base: 100, source: 'default', cur: 'TWD' }, '台幣交易只靠美元匯率；沒抓到＝預設 32');
+  assert.deepEqual(tradePnlBase({ pnl: 100, currency: 'EUR' }, {}), { base: 0, source: 'missing', cur: 'EUR' }, '不支援的幣別才是 missing');
+  assert.deepEqual(tradePnlBase({ pnl: 100, currency: '' }, {}), { base: 0, source: 'missing', cur: '' }, '缺幣別不可被當成台幣（fxFor 的預設台幣判準是帳戶／持股的，交易不可借用）');
+});
+
+test('丙-2｜tradeSummary：預設匯率估的幣別列在 defaultCurrencies（計入合計），與 estimated／missing 分開', () => {
+  const summary = tradeSummary([
+    { symbol: 'A', pnl: 100, currency: 'USD' },
+    { symbol: 'B', pnl: 32, currency: 'GBP' },          // 沒抓到 GBP ⇒ 預設 40.8/32
+    { symbol: 'C', pnl: -1000, currency: 'JPY' },       // 設了 JPY ⇒ estimated
+    { symbol: 'D', pnl: 500, currency: 'EUR' },         // 不支援 ⇒ missing
+  ], { usdTwd: 32, fxTwd: { JPY: 0.224 } });
+  assert.ok(Math.abs(summary.realized - (100 + 32 * 40.8 / 32 - 7)) < 1e-9, '預設匯率估的要計入合計');
+  assert.deepEqual(summary.defaultCurrencies, ['GBP']);
+  assert.deepEqual(summary.estimatedCurrencies, ['JPY']);
+  assert.deepEqual(summary.missingCurrencies, ['EUR']);
+});
+
+test('丙-2｜XIRR：預設匯率估的賣出損益要計入現金流、且 estimated 旗標為 true', () => {
+  // usd 參數＝USD→台幣乘數，這裡用 1 讓快照與損益同單位（金額大小要合理，否則 XIRR 會判「資料異常」）
+  const snaps = [{ month: '2025-01', value: 100, cost: 100 }, { month: '2025-06', value: 105, cost: 100 }];
+  const r = portfolioXirr(snaps, 100, 110, [
+    { buySell: 'SELL', pnl: 4, currency: 'GBP', date: '2025-11-01' },   // 沒抓到 GBP ⇒ 預設 40.8/32 估 ⇒ 5.1 USD
+  ], 1, parseLocalDateForTest, { usdTwd: 32 }, new Date(2026, 0, 15));
+  assert.equal(r.ok, true, `XIRR 要算得出來（${JSON.stringify(r)}）`); assert.ok(r.ok && r.estimated === true, '預設匯率估算也要標 estimated');
+  const none = portfolioXirr(snaps, 100, 110, [
+    { buySell: 'SELL', pnl: 4, currency: 'EUR', date: '2025-11-01' },
+  ], 1, parseLocalDateForTest, { usdTwd: 32 }, new Date(2026, 0, 15));
+  assert.ok(none.ok && none.estimated === false, '不支援的幣別跳過、不算估算');
+  assert.ok(r.ok && none.ok && r.rate !== none.rate, '對照：預設估的那筆真的進了現金流（兩個年化不同）');
+});

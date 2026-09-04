@@ -106,17 +106,17 @@ export function buildPortfolioReport(data, options) {
     <table><thead><tr><th class="num">股息（含替代股息）</th><th class="num">融資利息</th><th class="num">利息收入</th><th class="num">淨現金流</th></tr></thead>
     <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(income.interestPaid || 0) * rate)}</td>
     <td class="num">+${val((income.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
-    ${income.estimatedNoFx > 0 ? `<p class="muted">註：${income.estimatedNoFx} 筆${income.estimatedCurrencies?.length ? '（' + income.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
-    ${income.skippedNoFx > 0 ? `<p class="muted">註：${income.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
+    ${income.estimatedNoFx > 0 ? `<p class="muted">註：${income.estimatedNoFx} 筆${income.estimatedCurrencies?.length ? '（' + income.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定或預設匯率估算。</p>` : ''}
+    ${income.skippedNoFx > 0 ? `<p class="muted">註：${income.skippedNoFx} 筆現金交易的幣別系統不支援、無法換算，未計入上列金額。</p>` : ''}
     ${Number(income.skippedNoCurrency) > 0 ? `<p class="muted">註：${income.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額（請在 Flex Query 勾選 Currency 欄後重新同步）。</p>` : ''}</section>` : '';
 
   let tradesHtml = '';
   if (ibTrades && ibTrades.length) {
-    const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, missingCurrencies } = tradeSummary(ibTrades, settings);
+    const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, defaultCurrencies = [], missingCurrencies } = tradeSummary(ibTrades, settings);
     const buys = ibTrades.filter(trade => trade.buySell === 'BUY').length;
     const list = (items) => items.map(([symbol, pnl]) => `${esc(symbol)} ${pnl >= 0 ? '+' : '−'}${val(Math.abs(pnl) * rate)}`).join('、') || '—';
-    const note = ibkrCurrencies.length || estimatedCurrencies.length || missingCurrencies.length
-      ? `<p class="muted">${ibkrCurrencies.length ? '註解：換算匯率來自 IBKR。' : ''}${estimatedCurrencies.length ? `${estimatedCurrencies.map(esc).join('、')} 舊交易以目前設定匯率估算。` : ''}${missingCurrencies.length ? `${missingCurrencies.map(esc).join('、')} 交易因缺少匯率暫未計入。` : ''}</p>` : '';
+    const note = ibkrCurrencies.length || estimatedCurrencies.length || defaultCurrencies.length || missingCurrencies.length
+      ? `<p class="muted">${ibkrCurrencies.length ? '註解：換算匯率來自 IBKR。' : ''}${estimatedCurrencies.length ? `${estimatedCurrencies.map(esc).join('、')} 舊交易以目前設定匯率估算。` : ''}${defaultCurrencies.length ? `${defaultCurrencies.map(esc).join('、')} 交易以預設匯率估算（還沒抓到匯率）。` : ''}${missingCurrencies.length ? `${missingCurrencies.map(esc).join('、')} 是系統不支援的幣別，暫未計入。` : ''}</p>` : '';
     tradesHtml = `<section><h2>交易摘要 <span>共 ${ibTrades.length} 筆（買 ${buys}／賣 ${ibTrades.length - buys}）</span></h2>
       <table><thead><tr><th>已實現損益（FIFO）</th><th>獲利前三</th><th>虧損前三</th></tr></thead>
       <tbody><tr><td class="num"><b>${realized >= 0 ? '+' : '−'}${val(Math.abs(realized) * rate)}</b></td>

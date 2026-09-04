@@ -5,7 +5,7 @@
 export { resolveFxTable, fxFor, fxUsageTracker, FX_DEFAULT_TWD } from './fx-rates.js';
 /** 既有呼叫端只要匯率值：`{TWD:1, USD, GBP, JPY}`（沒抓到的幣別已填預設值）。 @param {any} settings */
 export const fxTable = (settings) => resolveFxTable(settings).rates;
-import { resolveFxTable } from './fx-rates.js';
+import { resolveFxTable, fxFor } from './fx-rates.js';
 
 // 成本＝均價 × 股數（舊資料退回總成本欄位）
 export const holdingCost = (h) => (h.avgCost != null && h.avgCost !== '')
@@ -20,7 +20,8 @@ export function marginCallDistance(ibValTwd, loanTwd, maintPct) {
 }
 
 // 交易已實現損益 → 基準幣別（USD）。優先序（AGENTS.md）：
-// pnlBase → fxRateToBase → USD 直通 → 設定匯率估算 → 缺匯率(0)。
+// pnlBase → fxRateToBase → USD 直通 → 設定匯率估算（source 'estimated'）→ 預設匯率估算（source 'default'；丙-2，William 2026-09-04 裁）
+// → 不支援的幣別才是 missing(0)。匯率表＝fx-rates.js 唯一實作（與資產換算同一份）。
 export function tradePnlBase(t, settings = {}) {
   const pnl = Number(t.pnl) || 0;
   // ⚠️ 缺幣別不冒充 USD（2026-07-28 修，與 lib/ib.js 的同步點）：空字串會一路落到最後的
@@ -31,22 +32,25 @@ export function tradePnlBase(t, settings = {}) {
   if (t.fxRateToBase != null && t.fxRateToBase !== '' && Number.isFinite(Number(t.fxRateToBase)) && Number(t.fxRateToBase) > 0)
     return { base: pnl * Number(t.fxRateToBase), source: cur === 'USD' ? 'usd' : 'ibkr', cur };
   if (cur === 'USD') return { base: pnl, source: 'usd', cur };
-  const usdTwd = Number(settings.usdTwd || 32);
-  const curTwd = cur === 'TWD' ? 1 : Number(settings.fxTwd?.[cur] || 0);
-  const rate = (curTwd > 0 && usdTwd > 0) ? curTwd / usdTwd : null;
-  if (rate) return { base: pnl * rate, source: 'estimated', cur };
-  return { base: 0, source: 'missing', cur };
+  if (!cur) return { base: 0, source: 'missing', cur };   // 缺幣別 ≠ 缺匯率：不可借 fxFor 的「缺 currency 預設台幣」判準（那是帳戶／持股的），交易缺幣別一律列「未知幣別」
+  const table = resolveFxTable(settings);
+  const f = fxFor(table, cur);
+  if (f.missing) return { base: 0, source: 'missing', cur };   // 不支援的幣別：無法換算
+  const usedDefault = f.source === 'default' || table.sources.USD === 'default';   // 分子或分母任一邊是預設值＝整筆算「預設匯率估算」
+  return { base: pnl * (f.rate / table.rates.USD), source: usedDefault ? 'default' : 'estimated', cur };
 }
 
 export function tradeSummary(trades, settings = {}) {
   const ibkr = new Set();
   const estimated = new Set();
+  const defaulted = new Set();   // 用預設匯率估的幣別（丙-2）：計入但要另外標
   const missing = new Set();
   const pnlBase = (t) => {
     const { base, source, cur } = tradePnlBase(t, settings);
     if (cur !== 'USD') {
       if (source === 'ibkr') ibkr.add(cur);
       else if (source === 'estimated') estimated.add(cur);
+      else if (source === 'default') defaulted.add(cur);
       // 缺幣別時 cur 是空字串——直接放進去畫面會出現一個空白的頓號（提示亮了卻沒說是什麼）。
       else if (source === 'missing') missing.add(cur || '未知幣別');
     }
@@ -62,6 +66,7 @@ export function tradeSummary(trades, settings = {}) {
     losers: sorted.filter(x => x[1] < 0).slice(-3).reverse(),
     ibkrCurrencies: [...ibkr],
     estimatedCurrencies: [...estimated],
+    defaultCurrencies: [...defaulted],
     missingCurrencies: [...missing]
   };
 }
@@ -98,7 +103,7 @@ export function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, parseLoc
     if (tr.buySell !== 'SELL') continue;
     const { base, source } = tradePnlBase(tr, settings);
     if (source === 'missing' || !base) continue;
-    if (source === 'estimated') estimated = true;
+    if (source === 'estimated' || source === 'default') estimated = true;   // 預設匯率估的也算「估算」（丙-2）
     const ds = String(tr.date || '');
     const d = parseLocalDate(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);   // 本地解析（XIRR 其他日期皆本地建構，口徑一致）
     if (isNaN(d.getTime()) || d <= t0) continue;

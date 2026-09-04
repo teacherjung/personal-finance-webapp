@@ -51,8 +51,8 @@ export function incomeActivityHtml(settings, options) {
       ${item(infoBtn('interestReceived', '利息收入'), inc.interestReceived || 0, 'pos')}
       ${item('淨現金流', net, net >= 0 ? 'pos' : 'neg')}
     </div>
-    ${Number(inc.estimatedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定匯率估算。</p>` : ''}
-    ${Number(inc.skippedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆非美元現金交易缺匯率、亦無設定匯率可估，未計入上列金額。</p>` : ''}
+    ${Number(inc.estimatedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.estimatedNoFx} 筆${inc.estimatedCurrencies?.length ? '（' + inc.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定或預設匯率估算。</p>` : ''}
+    ${Number(inc.skippedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆現金交易的幣別系統不支援、無法換算，未計入上列金額。</p>` : ''}
     ${Number(inc.skippedNoCurrency) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額。請到 IBKR 的 Flex Query 在 Cash Transactions 勾選 Currency 欄後重新同步。</p>` : ''}
   </div>`;
 }
@@ -78,7 +78,7 @@ export function tradesActivityHtml(trades, settings, options) {
   if (!trades || !trades.length) return '';
   const { escapeHtml: esc } = options;
   const inc = settings.ib?.income || {};
-  const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, missingCurrencies } = tradeSummary(trades, settings);
+  const { realized, winners, losers, ibkrCurrencies, estimatedCurrencies, defaultCurrencies = [], missingCurrencies } = tradeSummary(trades, settings);
   const li = (items) => items.length
     ? items.map(([symbol, pnl]) => `<div style="display:flex;justify-content:space-between;gap:14px"><span>${esc(symbol)}</span><b class="${pnl >= 0 ? 'pos' : 'neg'}">${tradeMoney(pnl, options)}</b></div>`).join('')
     : '<span class="muted">—</span>';
@@ -94,7 +94,8 @@ export function tradesActivityHtml(trades, settings, options) {
     </div>
     ${ibkrCurrencies.length ? `<p class="muted small" style="margin-top:10px">註解：換算匯率來自 IBKR</p>` : ''}
     ${estimatedCurrencies.length ? `<p class="muted small" style="margin-top:10px">提醒：${estimatedCurrencies.map(esc).join('、')} 舊交易缺少 IBKR 匯率欄位，已先用目前設定匯率估算；下次 IBKR 同步若有勾選 FX Rate to Base，會改用 IBKR 匯率。</p>` : ''}
-    ${missingCurrencies.length ? `<p class="neg small" style="margin-top:10px">提醒：${missingCurrencies.map(esc).join('、')} 交易缺少可用匯率，暫未計入已實現損益。</p>` : ''}
+    ${defaultCurrencies.length ? `<p class="muted small" style="margin-top:10px">提醒：${defaultCurrencies.map(esc).join('、')} 交易缺少 IBKR 匯率、也還沒抓到匯率，先用預設匯率估算（誤差通常不大）；抓到匯率後會自動改算。</p>` : ''}
+    ${missingCurrencies.length ? `<p class="neg small" style="margin-top:10px">提醒：${missingCurrencies.map(esc).join('、')} 是系統不支援的幣別，無法換算，暫未計入已實現損益。</p>` : ''}
     <p class="muted small" style="margin-top:10px">已實現＋未實現＋股息－利息，才是完整的投資成績。</p>
   </div>`;
 }
