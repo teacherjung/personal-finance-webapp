@@ -377,6 +377,7 @@ test('app.js 匯出的 esc 就是 html-escape.js 的那一個函式（行為：�
     const app = await import('../public/app.js');
     assert.equal(app.esc, esc, 'app.js 匯出的 esc 必須就是 html-escape.js 那一個函式物件——app.js 自己再長一份＝跳脫與純模組走散');
     assert.equal(app.esc('"><img src=x>'), '&quot;&gt;&lt;img src=x&gt;', '而且它真的會跳脫');
+    await new Promise((r) => setImmediate(r));   // 讓 app.js 開機序列對假 fetch 的鏈跑完，再拆假 DOM
   } finally {
     g.fetch = realFetch;
     for (const k of added) delete g[k];

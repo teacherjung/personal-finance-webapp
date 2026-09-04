@@ -233,7 +233,7 @@ test('串流｜不帶 stream 旗標的呼叫端行為零位移（字面釘：只
   assert.match(src, /return res\.json\(await previewBankStatement\(/, '★沒帶旗標＝照舊一發 JSON');
 });
 
-test('接線｜前端：四條路徑走單一出口、出口帶 stream:true、進度只在收到 frame 時寫（字面釘：只掃原始碼字串；出口唯一性由同檔題名關鍵字「cashflow.js 通往 /bank-statement/preview 的出口只有一個」那題守、apiStream 由同檔題名關鍵字「apiStream 行為」那題守）', () => {
+test('接線｜前端：四條路徑走單一出口、出口帶 stream:true、進度只在收到 frame 時寫（字面釘：只掃原始碼字串；出口唯一性由同檔題名關鍵字「通往 /bank-statement/preview 端點的字面只有一處」那題守、apiStream 由同檔題名關鍵字「apiStream 行為」那題守）', () => {
   const src = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
   assert.match(src, /apiStream\('\/bank-statement\/preview', \{ \.\.\.previewBody\(bodyArgs\), stream: true \}/, '★出口帶旗標');
   assert.match(src, /progressText\(f\); if \(t && setProgress\) setProgress\(t\)/, '★只有收到 frame 才寫字（沒有計時器）');
@@ -373,49 +373,52 @@ test('★三路一致（A4）：單讀、仲裁、僅存一讀、配方——每
 });
 
 // ---- 釘行為，不釘字串（為什麼：`throw Object.assign(new Error(msg), code ? …)` 這種正規式會同時命中 apiStream() 與 api() 裡長得一樣的 throw 行，分不出是哪一支在守＝釘錯行）：
-//      ①路由兩形態＝同一條服務層路徑（真起 server、不帶 data 在開 PDF 前就 400，零 PDF 子行程）②preview 路由兩枝傳同一份 opts（誠實劃界：仍是形狀題，範圍縮到該路由）
-//      ③cashflow.js 通往 preview 的出口只有一個 ④apiStream 本人：非 200 帶 code、最後一行沒換行也收得到、error frame 保住 code。
-test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON；stream:true＝NDJSON（階段 frame＋error frame 同一份錯誤）；stream:"true" 字串不算旗標', async () => {
+//      ①路由兩形態＝同一條服務層路徑（真起 server；不帶 data＝服務層 decode 就丟 400，read_db→open_pdf 兩個階段 frame 會先推、不進 pdf-isolate 子行程）②preview 路由兩枝傳同一份 opts（誠實劃界：原始碼形狀題，範圍縮到 preview 路由那一段）
+//      ③cashflow.js 通往 preview 端點的字面只有一處且在 apiStream 裡 ④apiStream 本人：非 200（不管有沒有 body）走 JSON 錯誤路且 code 是自有屬性、最後一行沒換行也收得到、error frame 保住 code。
+test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON；stream:true＝NDJSON（階段 frame 序列＋error frame＝同一句服務層錯誤）；stream:"true" 字串不算旗標', async () => {
+  await seedDb();
+  { const db = await getDb(); db.parseRecipes = []; await saveDb(db); }   // 同檔前題可能種了規則卡；有卡會多推配方階段，這題要的是乾淨的階段序列
   const { app } = await import('../server.js');
   const { once } = await import('node:events');
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${/** @type {any} */ (server.address()).port}/api`;
   const post = (/** @type {any} */ body) => fetch(base + '/bank-statement/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   try {
-    const plain = await post({});   // 沒有 data ⇒ 服務層在開 PDF 之前就丟 400（零 PDF 子行程、結果確定）
+    const plain = await post({});   // 沒有 data ⇒ 服務層 decode 就丟 400（不進 pdf-isolate 子行程、結果確定）
     assert.equal(plain.status, 400);
     const plainBody = await plain.json();
-    assert.ok(plainBody.error, 'JSON 形態要有 error');
+    assert.equal(plainBody.error, '沒有收到檔案內容', 'JSON 枝真的走進服務層：這句只住在 bank-import 的 decode');
     const str = await post({ stream: 'true' });
     assert.equal(str.status, 400, '字串 "true" 不是旗標：照舊一發 JSON 400');
     assert.deepEqual(await str.json(), plainBody, '兩次 JSON 形態的錯誤一字不差');
     const s = await post({ stream: true });
     assert.equal(s.status, 200, '串流形態一律 200、錯誤走 frame');
     const frames = (await s.text()).trim().split('\n').map((l) => JSON.parse(l));
-    assert.deepEqual(frames.slice(0, 2).map((f) => f.s), ['read_db', 'open_pdf'], '真的走了同一條服務層路徑（階段 frame 先出來）');
+    assert.deepEqual(frames.map((f) => (f.t === 'stage' ? `stage:${f.s}` : f.t)), ['stage:read_db', 'stage:open_pdf', 'error'], '整條階段序列：read_db→open_pdf→error，多一格少一格都不行（乾淨庫、無規則卡）');
     const last = frames[frames.length - 1];
-    assert.equal(last.t, 'error');
-    assert.equal(last.error, plainBody.error, '同一份錯誤訊息');
-    assert.equal(last.code, plainBody.code, '同一個 code 通道（都有或都沒有）');
-  } finally { /** @type {any} */ (server).closeAllConnections?.(); server.close(); }
+    assert.equal(last.error, plainBody.error, '同一句服務層錯誤');
+    // 缺檔這條錯本來就沒有 code——兩邊都不得憑空長出來；code 有值時的轉送由同檔題名關鍵字「錯誤走 error frame 並保住 code 通道」那題守
+    assert.ok(!('code' in plainBody) && !('code' in last), `缺檔錯誤不該帶 code：${JSON.stringify({ json: plainBody, frame: last })}`);
+  } finally { /** @type {any} */ (server).closeAllConnections?.(); server.close(); await once(server, 'close'); }
 });
 
-test('preview 路由：串流與非串流兩枝傳給服務層的 opts 是同一份（只多 onStage）——誠實劃界：這是原始碼形狀題（範圍縮到 preview 路由那一段裡找', () => {
+test('preview 路由：串流與非串流兩枝傳給服務層的 opts 是同一份（只多 onStage）——誠實劃界：這是原始碼形狀題（範圍縮到 preview 路由那一段裡找）', () => {
   const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
   const route = /statementRoutes\.post\('\/api\/bank-statement\/preview'[\s\S]*?\n\}\)\);/.exec(src)?.[0] || '';
   assert.ok(route, '找不到 preview 路由');
   assert.match(route, /previewBankStatement\(req\.body\.data, req\.body\.password, undefined, \{ \.\.\.opts, onStage \}\)/, '串流枝：opts 全帶＋onStage');
   assert.match(route, /previewBankStatement\(req\.body\.data, req\.body\.password, undefined, opts\)/, 'JSON 枝：同一份 opts');
+  assert.equal((route.match(/\bopts = \{/g) || []).length, 1, '路由那一段只建一份 opts（兩枝各建一份同名物件就分家了）');
 });
 
-test('cashflow.js 通往 /bank-statement/preview 的出口只有一個（四條路徑都得走它；多一條＝紅）', () => {
+test('cashflow.js 通往 /bank-statement/preview 端點的字面只有一處、且在 apiStream 裡（字串拼接與「有幾條路徑」不在此題）', () => {
   const src = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
-  const hits = [...src.matchAll(/['"]\/bank-statement\/preview['"]/g)].length;
-  assert.equal(hits, 1, `端點字串出現 ${hits} 次——第二條路就是繞過進度串流的旁門`);
-  assert.match(src, /apiStream\(\s*['"]\/bank-statement\/preview['"]/, '那唯一一次必須是 apiStream 的出口');
+  const hits = [...src.matchAll(/bank-statement\/preview/g)].length;   // 不管用什麼引號、有沒有 /api 前綴，端點字面只准出現一次
+  assert.equal(hits, 1, `端點字面出現 ${hits} 次——第二處就是繞過進度串流的旁門`);
+  assert.match(src, /apiStream\(\s*['"`]\/bank-statement\/preview['"`]/, '那唯一一處必須是 apiStream 的出口');
 });
 
-test('apiStream 行為：非 200 帶 code；串流最後一行沒換行也要收到；error frame 保住 code（釘的是 apiStream 本人，不看原始碼字串）', async () => {
+test('apiStream 行為：非 200（有沒有 body 都一樣）走 JSON 錯誤路且 code 是自有屬性；串流最後一行沒換行也要收到；error frame 保住 code（釘的是 apiStream 本人）', async () => {
   const mk = () => new Proxy(function () {}, {
     get: (t, k) => (k === Symbol.toPrimitive || k === 'toString' || k === 'valueOf') ? () => '' : k === Symbol.iterator ? function* () {} : k === 'then' ? undefined : k === 'length' ? 0 : mk(),
     apply: () => mk(), construct: () => mk(), set: () => true, has: () => true, deleteProperty: () => true,
@@ -436,7 +439,10 @@ test('apiStream 行為：非 200 帶 code；串流最後一行沒換行也要收
     const bodyOf = (/** @type {string[]} */ chunks) => ({ getReader: () => { let i = 0; return { read: async () => (i < chunks.length ? { value: enc.encode(chunks[i++]), done: false } : { value: undefined, done: true }) }; } });
     // ①非 200：訊息與 code 都要還原成自有屬性（限速／入場管制／413 那條路）
     g.fetch = async () => ({ ok: false, status: 429, statusText: 'Too Many Requests', json: async () => ({ error: '請稍後再試', code: 'rate_limited' }), body: null });
-    await assert.rejects(app.apiStream('/bank-statement/preview', { stream: true }, () => {}), (/** @type {any} */ e) => e.message === '請稍後再試' && e.code === 'rate_limited');
+    await assert.rejects(app.apiStream('/bank-statement/preview', { stream: true }, () => {}), (/** @type {any} */ e) => e.message === '請稍後再試' && Object.hasOwn(e, 'code') && e.code === 'rate_limited');
+    // ①'非 200 但有 body：仍走 JSON 錯誤路（不可因為有 body 就改讀 frame——限速／入場管制的回應可能帶 body）
+    g.fetch = async () => ({ ok: false, status: 429, statusText: 'Too Many Requests', json: async () => ({ error: '請稍後再試', code: 'rate_limited' }), body: bodyOf(['{"t":"done","r":{"ok":1}}\n']) });
+    await assert.rejects(app.apiStream('/x', {}, () => {}), (/** @type {any} */ e) => e.message === '請稍後再試' && e.code === 'rate_limited');
     // ②200 串流：半行拼回、最後一行沒有換行也要收（parser.end() 那一刀）
     g.fetch = async () => ({ ok: true, status: 200, body: bodyOf(['{"t":"stage","s":"read_', 'db"}\n{"t":"done","r":{"ok":1}}']) });
     /** @type {string[]} */ const seen = [];
@@ -444,7 +450,8 @@ test('apiStream 行為：非 200 帶 code；串流最後一行沒換行也要收
     assert.deepEqual(seen, ['read_db']);
     // ③error frame：訊息與 code 都是自有屬性（密碼窗靠 e.code 才跳得出來）
     g.fetch = async () => ({ ok: true, status: 200, body: bodyOf(['{"t":"error","error":"這份 PDF 有加密","code":"pdf_password"}\n']) });
-    await assert.rejects(app.apiStream('/x', {}, () => {}), (/** @type {any} */ e) => e.message === '這份 PDF 有加密' && e.code === 'pdf_password');
+    await assert.rejects(app.apiStream('/x', {}, () => {}), (/** @type {any} */ e) => e.message === '這份 PDF 有加密' && Object.hasOwn(e, 'code') && e.code === 'pdf_password');
+    await new Promise((r) => setImmediate(r));   // 讓 app.js 開機序列對假 fetch 的鏈跑完，再拆假 DOM（否則晚到的 document 讀取會變成沒接的例外）
   } finally {
     g.fetch = realFetch;
     for (const k of added) delete g[k];
