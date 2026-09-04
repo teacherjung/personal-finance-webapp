@@ -7,14 +7,14 @@ import { normalizePortfolioSymbol } from './portfolio-symbol.js';
 
 /** @typedef {{ symbol?:string, layer?:string, valueTwd?:number|string }} StateRow */
 /** @typedef {{ month:string, value?:number, cost?:number }} StateSnapshot */
-/** @typedef {{ qqqmMaxPct?:number|string, ibConcentrationPct?:number|string, equityCapPct?:number|string, countryCapPct?:number|string, chinaCapPct?:number|string, levCapPct?:number|string, ibMaintenancePct?:number|string }} StateSettings */
+/** @typedef {{ qqqmMaxPct?:number|string, ibConcentrationPct?:number|string, equityCapPct?:number|string, countryCapPct?:number|string, chinaCapPct?:number|string, levCapPct?:number|string, ibMaintenancePct?:number|string, usdTwd?:number|null, fxTwd?:Record<string,unknown> }} StateSettings */
 
 /**
  * @param {{
  *   rows:StateRow[], regionMap:Record<string,number>, equityValue:number,
  *   summary?:{netWorth?:number|string}, settings:StateSettings,
  *   snapshots:StateSnapshot[], totalCost:number, totalValue:number,
- *   ibTrades:Array<object>, usdRate:number,
+ *   ibTrades:Array<object>,
  *   parseLocalDate:(value:string)=>Date, layers:Record<string,unknown>, now?:Date
  * }} input
  */
@@ -42,8 +42,7 @@ export function buildPortfolioPageState(input) {
     input.totalCost,
     input.totalValue,
     input.ibTrades,
-    input.usdRate,
-    input.parseLocalDate,
+    input.parseLocalDate,   // 乘數與「是否預設」由 portfolioXirr 自己從 settings 解（同一張表；Codex #557 r2）
     input.settings,
     input.now
   );

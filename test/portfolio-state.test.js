@@ -34,7 +34,6 @@ test('投資頁狀態｜分層、QQQM 核心佔比與未知分層退路維持原
     totalCost: 170,
     totalValue: 195,
     ibTrades: [],
-    usdRate: 32,
     parseLocalDate,
     layers
   });
@@ -61,7 +60,6 @@ test('投資頁狀態｜沒有 CSPX／QQQM 或淨資產時回零且不凍結', (
     totalCost: 100,
     totalValue: 100,
     ibTrades: [],
-    usdRate: 32,
     parseLocalDate,
     layers
   });
@@ -85,7 +83,6 @@ test('投資頁狀態｜XIRR 原樣轉交快照、成本、市值與日期', () 
     totalCost: 100,
     totalValue: 110,
     ibTrades: [],
-    usdRate: 32,
     parseLocalDate,
     layers,
     now: new Date(2026, 0, 31)

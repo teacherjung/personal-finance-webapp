@@ -32,7 +32,7 @@ test('投資活動｜IB 現金流明說估算與略過筆數，幣別經消毒',
   } } }, twd);
 
   assert.match(html, /2 筆（GBP、&lt;JPY&gt;）/);
-  assert.match(html, /1 筆非美元現金交易缺匯率/);
+  assert.match(html, /1 筆現金交易的幣別系統不支援/);   // 丙-2：只有不支援的幣別才會被略過
   assert.doesNotMatch(html, /<JPY>/);
   assert.equal(INCOME_INFO.pil[0], '替代股息（Payment in Lieu）');
 });
@@ -68,7 +68,7 @@ test('投資活動｜交易摘要維持多幣別損益優先序、排名與匯�
   assert.match(html, /JPLOSS[\s\S]*−0\.2 K USD/);
   assert.match(html, /換算匯率來自 IBKR/);
   assert.match(html, /提醒：JPY 舊交易缺少 IBKR 匯率欄位/);
-  assert.match(html, /提醒：EUR 交易缺少可用匯率/);
+  assert.match(html, /提醒：EUR 是系統不支援的幣別/);   // 丙-2
 });
 
 test('投資活動｜無資料不渲染卡片，交易代號與幣別不會成為 HTML', () => {
@@ -82,4 +82,25 @@ test('投資活動｜無資料不渲染卡片，交易代號與幣別不會成�
   assert.doesNotMatch(html, /<img /);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;GBP&gt;/);
+});
+
+test('丙-2｜交易摘要註記：預設匯率估的幣別單獨一行（講「先用預設匯率估算」、不可講「未計入」），不支援的幣別另一行', () => {
+  const html = tradesActivityHtml([
+    { symbol: 'B', pnl: 32, currency: 'GBP', date: '20250101' },
+    { symbol: 'D', pnl: 500, currency: 'EUR', date: '20250101' },
+  ], { usdTwd: 32 }, { escapeHtml: (v) => String(v), viewCurrency: 'USD', usdRate: 32 });
+  assert.match(html, /GBP 交易缺少 IBKR 匯率、也還沒抓到匯率，先用預設匯率估算/);
+  assert.match(html, /EUR 是系統不支援的幣別/);
+  assert.doesNotMatch(html, /GBP[^<]*未計入/, '預設估的 GBP 是計入的');
+});
+
+test('丙-2｜台幣計價時，美元匯率是預設值 → IB 現金流與交易摘要都要標「台幣換算用的美元匯率是預設值」；抓到的不標；USD 計價不標', () => {
+  const income = { ib: { income: { dividends: 100, count: 1 } } };
+  const dflt = { escapeHtml, viewCurrency: 'TWD', usdRate: 32, usdRateSource: /** @type {'default'} */ ('default') };
+  assert.match(incomeActivityHtml(income, dflt), /台幣換算用的美元匯率是預設值 32/);
+  assert.match(tradesActivityHtml([{ symbol: 'A', pnl: 100, currency: 'USD', date: '20250101' }], { usdTwd: 32 }, dflt), /台幣換算用的美元匯率是預設值 32/);
+  const live = { ...dflt, usdRateSource: /** @type {'live'} */ ('live') };
+  assert.doesNotMatch(incomeActivityHtml(income, live), /預設值/);
+  const usdView = { ...dflt, viewCurrency: 'USD' };
+  assert.doesNotMatch(incomeActivityHtml(income, usdView), /預設值/, 'USD 計價不經台幣換算、不標');
 });
