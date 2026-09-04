@@ -94,11 +94,13 @@ test('丙-2｜交易摘要註記：預設匯率估的幣別單獨一行（講「
   assert.doesNotMatch(html, /GBP[^<]*未計入/, '預設估的 GBP 是計入的');
 });
 
-test('丙-2｜台幣計價時，美元匯率是預設值 → IB 現金流與交易摘要都要標「台幣換算用的美元匯率是預設值」；抓到的不標；USD 計價不標', () => {
+test('丙-2｜台幣計價時，美元匯率是預設值 → IB 現金流與交易摘要都要標「台幣換算用的美元匯率是預設值」；抓到的不標；USD 計價不標', async () => {
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
   const income = { ib: { income: { dividends: 100, count: 1 } } };
-  const dflt = { escapeHtml, viewCurrency: 'TWD', usdRate: 32, usdRateSource: /** @type {'default'} */ ('default') };
-  assert.match(incomeActivityHtml(income, dflt), /台幣換算用的美元匯率是預設值 32/);
-  assert.match(tradesActivityHtml([{ symbol: 'A', pnl: 100, currency: 'USD', date: '20250101' }], { usdTwd: 32 }, dflt), /台幣換算用的美元匯率是預設值 32/);
+  const dflt = { escapeHtml, viewCurrency: 'TWD', usdRate: FX_DEFAULT_TWD.USD, usdRateSource: /** @type {'default'} */ ('default') };
+  const note = new RegExp(`台幣換算用的美元匯率是預設值 ${FX_DEFAULT_TWD.USD}`);
+  assert.match(incomeActivityHtml(income, dflt), note);
+  assert.match(tradesActivityHtml([{ symbol: 'A', pnl: 100, currency: 'USD', date: '20250101' }], {}, dflt), note);
   const live = { ...dflt, usdRateSource: /** @type {'live'} */ ('live') };
   assert.doesNotMatch(incomeActivityHtml(income, live), /預設值/);
   const usdView = { ...dflt, viewCurrency: 'USD' };

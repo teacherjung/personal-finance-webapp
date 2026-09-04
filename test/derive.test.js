@@ -284,8 +284,8 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
   assert.deepEqual(be.missingFx, [{ currency: 'EUR', count: 2, liabilities: 1 }], '對照：EUR 兩筆不支援、其中 loan 是負債');
 });
 
-test('丙｜換匯區間提醒（fx-usd-high／low）只看「抓到的」美元匯率：沒抓到時預設 32 剛好等於 fxHigh 預設 32，不可假報「已達高點」', () => {
-  const dflt = buildSummary(/** @type {any} */ ({ settings: {}, accounts: [] })).reminders;
+test('丙｜換匯區間提醒（fx-usd-high／low）只看「抓到的」美元匯率：沒抓到時預設值落在門檻上也不可假報「已達高點」', () => {
+  const dflt = buildSummary(/** @type {any} */ ({ settings: { fxHigh: FX_DEFAULT_TWD.USD }, accounts: [] })).reminders;   // 門檻＝預設值：沒有守門就會 >= 而誤報
   assert.equal(dflt.find(r => r.key === 'fx-usd-high' || r.key === 'fx-usd-low'), undefined, '預設匯率不是市場匯率，不可觸發換匯區間提醒');
   const live = buildSummary(/** @type {any} */ ({ settings: { usdTwd: 33, fxHigh: 32, fxLow: 28 }, accounts: [] })).reminders;
   assert.ok(live.find(r => r.key === 'fx-usd-high'), '對照：抓到的 33 ≥ 32 要提醒');

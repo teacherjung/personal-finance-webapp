@@ -86,8 +86,9 @@ test('丙｜fxExposure：表上有的幣別（含預設值）照算；表上沒�
     { id: 'e', type: 'cash', currency: 'EUR', balance: 50 },
     { id: 't', type: 'cash', currency: 'TWD', balance: 7 },
   ]);
-  const ex = fxExp([], accounts, /** @type {any} */ ({ TWD: 1, USD: 32, GBP: 40.8, JPY: 0.215 }));
-  assert.equal(ex.GBP.cashTwd, 100 * 40.8, 'GBP 用表上的值（預設值也在表上）');
+  const { resolveFxTable, FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
+  const ex = fxExp([], accounts, resolveFxTable({}).rates);   // 沒設任何匯率＝表上都是預設值
+  assert.equal(ex.GBP.cashTwd, 100 * FX_DEFAULT_TWD.GBP, 'GBP 用表上的值（預設值也在表上）');
   assert.equal(ex.EUR?.cashTwd ?? 0, 0, '表上沒有的 EUR 不可算進去（以前 `|| 1` 會當台幣）');
   assert.equal(ex.TWD.cashTwd, 7);
 });
