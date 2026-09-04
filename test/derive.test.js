@@ -141,13 +141,14 @@ test('自主體檢｜淨值歸零：summary 不輸出 Infinity（equityWiped 旗
 import { FX_DEFAULT_TWD } from '../public/modules/fx-rates.js';
 import { readFileSync as readSrc } from 'node:fs';
 
-test('丙｜computeAssets：GBP 帳戶沒抓到匯率 → 用預設值 40.8 照常計入淨資產、defaultFx 標 GBP；抓到匯率 → 用即時值、defaultFx 空', () => {
+test('丙｜computeAssets：GBP 帳戶沒抓到匯率 → 用預設值 41 照常計入淨資產、defaultFx 標 GBP；抓到匯率 → 用即時值、defaultFx 空', () => {
   const base = { accounts: [
     { id: 't', type: 'cash', class: '現金', currency: 'TWD', balance: 1000 },
     { id: 'g', type: 'cash', class: '現金', currency: 'GBP', balance: 100 },
   ] };
   const dflt = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32 } }));
   assert.equal(dflt.netWorth, 1000 + 100 * FX_DEFAULT_TWD.GBP, '沒抓到匯率＝用預設值照算（不可排除）');
+  assert.equal(FX_DEFAULT_TWD.GBP, 41, 'William 2026-09-04 裁的預設值（改常數要連這裡一起改，避免默默漂）');
   assert.deepEqual(dflt.defaultFx, [{ currency: 'GBP', count: 1, rate: FX_DEFAULT_TWD.GBP }], '要標註哪個幣別、幾筆、用了什麼預設值');
   assert.deepEqual(dflt.missingFx, [], '支援的幣別不算「缺」');
   const live = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));
@@ -155,7 +156,7 @@ test('丙｜computeAssets：GBP 帳戶沒抓到匯率 → 用預設值 40.8 照�
   assert.deepEqual(live.defaultFx, [], '對照：沒有用預設值就不標');
 });
 
-test('丙｜所有外幣同一條規則：美元沒設 usdTwd 也是「用預設值 32 並標註」，與英鎊／日圓一致', () => {
+test('丙｜所有外幣同一條規則：美元沒設 usdTwd 也是「用預設值 31 並標註」，與英鎊／日圓一致', () => {
   const r = computeAssets(/** @type {any} */ ({ settings: {}, accounts: [
     { id: 'u', type: 'cash', class: '現金', currency: 'USD', balance: 10 },
     { id: 'j', type: 'cash', class: '現金', currency: 'JPY', balance: 1000 },
@@ -174,7 +175,7 @@ test('丙｜不支援的幣別（EUR）才無法換算：不計入、missingFx �
   assert.deepEqual(r.defaultFx, []);
 });
 
-test('丙｜computeIb：JPY 持股沒抓到匯率 → 用預設值 0.215 照算、position 帶 fxSource=default、defaultFx 標 JPY；抓到 → live', () => {
+test('丙｜computeIb：JPY 持股沒抓到匯率 → 用預設值 0.2 照算、position 帶 fxSource=default、defaultFx 標 JPY；抓到 → live', () => {
   const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings: [
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
     { id: 'j', symbol: '7203', currency: 'JPY', quantity: 100, price: 3000, avgCost: 2500, source: 'manual' },
@@ -208,7 +209,7 @@ test('丙｜buildSummary 帶 defaultFx；提醒 fx-default 是 info、講出預�
   assert.deepEqual(s.defaultFx, [{ currency: 'GBP', count: 1, rate: FX_DEFAULT_TWD.GBP }]);
   const r = s.reminders.find(x => x.key === 'fx-default');
   assert.ok(r && r.level === 'info', `用預設匯率只提示、不警告（實際 ${JSON.stringify(r)}）`);
-  assert.match(String(r?.title), /GBP 40\.8/, '要講出用了什麼預設值');
+  assert.match(String(r?.title), /GBP 41/, '要講出用了什麼預設值');
   assert.match(String(r?.detail), /更新報價/, '要告訴人怎麼抓即時匯率');
   assert.doesNotMatch(String(r?.title) + String(r?.detail), /未計入|不計入/, '預設匯率的部位是計入的，不可講成沒算');
   const live = buildSummary(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));

@@ -94,7 +94,7 @@ test('日線：記錄了投組成本/市值與當日匯率（差異引擎與事�
   for (const f of ['netWorth', 'assets', 'liabilities', 'pfCost', 'pfValue', 'usdTwd']) {
     assert.equal(typeof (/** @type {any} */ (row)[f]), 'number', `${f} 必須是數字（壞型別會被櫃檯剝掉）`);
   }
-  assert.ok(row.usdTwd && row.usdTwd > 0, '匯率要有值（缺設定時沿用 derive 的預設 32）');
+  assert.ok(row.usdTwd && row.usdTwd > 0, '匯率要有值（缺設定時沿用 fx-rates 的預設 31）');
 });
 
 test('日線：缺 date／壞 date 進不了櫃檯（date 是主鍵欄）', () => {

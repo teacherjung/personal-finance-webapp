@@ -102,7 +102,7 @@ test('投資模型｜帳戶資料暫時缺席時沿用舊頁面的空陣列退�
 });
 
 // 「丙」（William 2026-09-04 裁）：沒抓到匯率用預設值照算並標註；不支援的幣別才不計入。parity 題在 test/derive.test.js。
-test('丙｜buildPortfolioModel：GBP 持股與 GBP 現金沒抓到匯率 → 用預設值 40.8 照算、fxSource=default、defaultFx 各計一筆；EUR 帳戶不支援 → 不計入、missingFx', async () => {
+test('丙｜buildPortfolioModel：GBP 持股與 GBP 現金沒抓到匯率 → 用預設值 41 照算、fxSource=default、defaultFx 各計一筆；EUR 帳戶不支援 → 不計入、missingFx', async () => {
   const { buildPortfolioModel: build } = await import('../public/modules/portfolio-model.js');
   const holdings = /** @type {any} */ ([
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
@@ -111,10 +111,10 @@ test('丙｜buildPortfolioModel：GBP 持股與 GBP 現金沒抓到匯率 → �
   const accounts = /** @type {any} */ ([{ id: 'c', type: 'cash', class: '現金', currency: 'GBP', balance: 100 }, { id: 'e', type: 'cash', class: '現金', currency: 'EUR', balance: 30 }]);
   const m = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32 }));
   const g = m.rows.find(r => r.id === 'g');
-  assert.ok(g && g.fxSource === 'default' && g.valueTwd === 5 * 8 * 40.8, '預設匯率的持股照算並標 fxSource=default');
-  assert.equal(m.total, 10 * 100 * 32 + 5 * 8 * 40.8);
-  assert.equal(m.cashV, 100 * 40.8, 'GBP 現金用預設值；EUR 不支援不計入');
-  assert.deepEqual(m.defaultFx, [{ currency: 'GBP', count: 2, rate: 40.8 }]);
+  assert.ok(g && g.fxSource === 'default' && g.valueTwd === 5 * 8 * 41, '預設匯率的持股照算並標 fxSource=default');
+  assert.equal(m.total, 10 * 100 * 32 + 5 * 8 * 41);
+  assert.equal(m.cashV, 100 * 41, 'GBP 現金用預設值；EUR 不支援不計入');
+  assert.deepEqual(m.defaultFx, [{ currency: 'GBP', count: 2, rate: 41 }]);
   assert.deepEqual(m.missingFx, [{ currency: 'EUR', count: 1, liabilities: 0 }]);
   const ok = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } }));
   assert.equal(ok.total, 10 * 100 * 32 + 5 * 8 * 40, '對照：抓到匯率就用即時值');

@@ -129,7 +129,7 @@ test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝�
     `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
     assert.equal(r.usdTwd, '__undefined__', '壞的 usdTwd 應被剝除，而且種子不可再補 32（丙：預設值只住 fx-rates.js 的常數）');
-    assert.equal(r.rate, 32, '計算時由 fx-rates 的預設值 32 接手，不污染計算');
+    assert.equal(r.rate, 31, '計算時由 fx-rates 的預設值 31 接手，不污染計算');
   } finally {
     for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
   }
@@ -525,7 +525,7 @@ test('自主體檢｜編輯卡片密碼留空＝不變更：PUT 不帶 pdfPasswo
 
 // 丙（William 2026-09-04）：預設匯率只住 fx-rates.js 的常數。這題走**真的** data/seed.json → 全新資料庫首次 load() 的路徑
 //（不是 emptyDb()），所以只在 seed.json 加回 usdTwd:32 也會紅（Codex #556 r2）。
-test('丙｜data/seed.json 不含 usdTwd；全新資料庫首次 load() 後 usdTwd 未設定、匯率由預設值 32 接手', () => {
+test('丙｜data/seed.json 不含 usdTwd；全新資料庫首次 load() 後 usdTwd 未設定、匯率由預設值 31 接手', () => {
   const seed = JSON.parse(readFileSync(join(ROOT, 'data/seed.json'), 'utf8'));
   assert.ok(!Object.hasOwn(seed.settings, 'usdTwd'), 'seed.json 的 settings 不可預填 usdTwd');
   assert.deepEqual(seed.settings.fxTwd, {}, 'seed.json 的 fxTwd 也要是空的');
@@ -540,7 +540,7 @@ test('丙｜data/seed.json 不含 usdTwd；全新資料庫首次 load() 後 usdT
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
     assert.equal(r.usdTwd, '__undefined__', '首次 load() 後 usdTwd 不可被種子填成 32');
     assert.deepEqual(r.fxTwd, {});
-    assert.equal(r.rate, 32); assert.equal(r.src, 'default', '要被標成「預設值」而不是「抓到的」');
+    assert.equal(r.rate, 31); assert.equal(r.src, 'default', '要被標成「預設值」而不是「抓到的」');
   } finally {
     for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm']) { try { rmSync(f); } catch { /* 可能不存在 */ } }
   }

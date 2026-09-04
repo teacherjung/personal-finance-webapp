@@ -61,16 +61,16 @@ test('income 寫回：逐欄 r2 四捨五入、from/to 從 period 帶入；null 
   assert.equal(store.load().settings.ib.income, null, '缺席＝清空，不留過期舊值');
 });
 
-test('丙-2｜fxToBase：支援的幣別沒抓到匯率 → 用預設值估（GBP 40.8/32、JPY 0.215/32），不再回 null；不支援的 CHF 仍回 null', async () => {
+test('丙-2｜fxToBase：支援的幣別沒抓到匯率 → 用預設值估（GBP 41/32、JPY 0.2/32），不再回 null；不支援的 CHF 仍回 null', async () => {
   { const db = store.emptyDb(); db.settings = { ...db.settings, usdTwd: 32, fxTwd: {}, ib: { flexToken: 'test-token', flexQueryId: 'q1' } }; store.save(db); }
   /** @type {any} */ let captured = null;
   await syncIb(async (_t, _q, fxToBase) => { captured = fxToBase; return feed(); });
-  assert.ok(Math.abs(captured('GBP') - 40.8 / 32) < 1e-12, 'GBP 沒抓到 ⇒ 預設 40.8 ÷ 32');
-  assert.ok(Math.abs(captured('JPY') - 0.215 / 32) < 1e-12);
+  assert.ok(Math.abs(captured('GBP') - 41 / 32) < 1e-12, 'GBP 沒抓到 ⇒ 預設 41 ÷ 32');
+  assert.ok(Math.abs(captured('JPY') - 0.2 / 32) < 1e-12);
   assert.equal(captured('CHF'), null, '不支援的幣別才回 null');
 });
 
-test('丙-2｜真實 fxToBase＋parseStatement：GBP 股息缺 IBKR 匯率、也沒抓到 GBP 匯率 → 進 estimatedNoFx（用預設 40.8/32 估）而不是 skippedNoFx', async () => {
+test('丙-2｜真實 fxToBase＋parseStatement：GBP 股息缺 IBKR 匯率、也沒抓到 GBP 匯率 → 進 estimatedNoFx（用預設 41/32 估）而不是 skippedNoFx', async () => {
   const { parseStatement } = await import('../lib/ib.js');
   { const db = store.emptyDb(); db.settings = { ...db.settings, usdTwd: 32, fxTwd: {}, ib: { flexToken: 'test-token', flexQueryId: 'q1' } }; store.save(db); }
   /** @type {any} */ let captured = null;
@@ -81,5 +81,5 @@ test('丙-2｜真實 fxToBase＋parseStatement：GBP 股息缺 IBKR 匯率、也
   assert.equal(inc?.estimatedNoFx, 1, '沒抓到 GBP 匯率 ⇒ 用預設值估、計入 estimatedNoFx');
   assert.equal(inc?.skippedNoFx, 0, '不可再落 skippedNoFx');
   assert.deepEqual(inc?.estimatedCurrencies, ['GBP']);
-  assert.ok(Math.abs((inc?.dividends || 0) - 10 * 40.8 / 32) < 1e-9, `股息＝10 × 40.8 ÷ 32（實際 ${inc?.dividends}）`);
+  assert.ok(Math.abs((inc?.dividends || 0) - 10 * 41 / 32) < 1e-9, `股息＝10 × 41 ÷ 32（實際 ${inc?.dividends}）`);
 });

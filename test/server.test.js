@@ -1485,7 +1485,7 @@ test('丙｜設定頁清除美元匯率：先存 33 → 送 null → 讀回不�
     assert.ok(s.usdTwd == null, `清除後不可留舊值 33（實際 ${s.usdTwd}）`);
     { const db = await getDb(); db.holdings = []; db.accounts = [{ id: 'usd-probe', name: '美元現金', type: 'cash', class: '現金', currency: 'USD', balance: 10 }]; await saveDb(db); }   // 只留一筆美元資產（整庫已快照，finally 還原）
     const sum = await GET('/summary');
-    assert.deepEqual(sum.defaultFx, [{ currency: 'USD', count: 1, rate: 32 }], '清除後美元資產要標「用了預設值 32」');
-    assert.equal(sum.assets, 320);
+    assert.deepEqual(sum.defaultFx, [{ currency: 'USD', count: 1, rate: 31 }], '清除後美元資產要標「用了預設值 31」');
+    assert.equal(sum.assets, 310);
   } finally { await saveDb(snapshot); await getDb(); }
 });

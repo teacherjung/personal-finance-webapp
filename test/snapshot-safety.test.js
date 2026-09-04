@@ -108,7 +108,7 @@ test('日線留下三種匯率，事後才分得出「資產漲了」還是「�
   assert.equal(row?.jpyTwd, 0.215);
 });
 
-test('丙｜沒抓到匯率的幣別，日線記「實際採用」的預設值（GBP 40.8／JPY 0.215），不是 0 也不是 null；抓到就記即時值', async () => {
+test('丙｜沒抓到匯率的幣別，日線記「實際採用」的預設值（GBP 41／JPY 0.2），不是 0 也不是 null；抓到就記即時值', async () => {
   const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
   const db = store.load();
   db.settings = { ...db.settings, usdTwd: 32, fxTwd: {} };
@@ -155,6 +155,6 @@ test('丙｜種子不預填 usdTwd：走正式 load() 路徑的新資料庫，�
   const loaded = store.load();   // mergeSettingsDefaults 不可把 32 灌回來
   assert.equal(loaded.settings.usdTwd, undefined, 'load() 合併預設後 usdTwd 仍不可出現');
   const s = buildSummary(loaded);
-  assert.equal(s.assets, 10 * FX_DEFAULT_TWD.USD, '金額用預設值 32 照算');
+  assert.equal(s.assets, 10 * FX_DEFAULT_TWD.USD, '金額用預設值 31 照算');
   assert.deepEqual(s.defaultFx, [{ currency: 'USD', count: 1, rate: FX_DEFAULT_TWD.USD }], '而且要標「用了預設值」');
 });
