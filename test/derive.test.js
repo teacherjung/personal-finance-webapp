@@ -256,6 +256,9 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
     assert.deepEqual(findFxLiteralFallbacks(src, 'public/modules/portfolio-model.js'), [], 'portfolio-model.js 不可自己另算匯率（任何被數字字面量當退路的匯率算式都算；判準見 test/helpers/fx-literal-fallbacks.js）');
     assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /\bfxTwd\b\s*\??\.?\s*\[/, 'portfolio-model.js 不可直接翻 settings.fxTwd 的表（要經 resolveFxTable）'); }
   // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
+  // ⚠️ 分工（William 2026-09-04 裁示，#558 r3–r5 連三輪被新形狀戳穿之後）：**主網是 test/fx-sentinel.test.js 的哨兵匯率行為題**
+  //    （餵 12345／23456／34567，每一處換算都必須吃到它，寫死的數字會算錯而被抓）；這裡的結構題只當第二道網，
+  //    抓「有匯率卻不用、退路寫死」的死程式——它列舉形狀、列舉補不完，不再為新形狀加輪。
   // 射程刻意不含 portfolio-calculations.js 的 tradePnlBase：它（與 ib-sync fxToBase）自丙-2 起也走同一份 fx-rates.js（分母是 USD→TWD 的比值），由 test/portfolio-calculations.test.js／test/ib-fx-income.test.js 的行為題釘住，不用結構檢查。
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
     const src = readSrc(new URL(f, root), 'utf8');
@@ -302,6 +305,9 @@ test('丙｜「寫死匯率」判斷器本身：#558 r3 的假綠與假紅各留
     // r4 實測：複合條件把 31 藏在豁免後面（條件裡「出現」missing ≠ 條件「就是」missing）；兩支都是數字也不能放
     'const idleUsd = total / (fxFor(ratesLev, "USD").missing && ratesLev.rates.USD > 0 ? 0 : 31);',
     'const r = f.missing ? 0 : 31;', 'const r = f.missing || bad ? 0 : f.rate;', 'const r = f.missing ? f.rate : 31;',
+    // r5 實測：把 missing 包進呼叫／比較裡躲過「末端名字」；解析器的四個欄位在條件裡任何位置都算
+    'const idleUsd = total / (Boolean(fxFor(ratesLev, "USD").missing) ? 0 : 31);', 'const r = !!f.missing ? 0 : 31;',
+    "const r = f.source === 'unsupported' ? 0 : 31;", "const r = f['missing'] ? 0 : 31;", 'const r = [f].some((x) => x.missing) ? 0 : 41;',
   ]) assert.equal(hit(code).length, 1, `該抓沒抓：${code}`);
   // 不該抓的（都是三個真檔裡實際存在的形狀）：分批門檻、數量／餘額、動態鍵累加、乘積防呆、缺匯率不計入
   for (const code of [

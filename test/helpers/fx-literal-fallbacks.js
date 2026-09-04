@@ -15,9 +15,13 @@
 //   `ok ? bal * f.rate : 0`＝不命中（三元式只看條件與「本身就是一個匯率」的另一支；乘積不算）；
 //   `f.missing ? 0 : f.rate`／`!f.missing ? f.rate : 0`＝唯一豁免：條件**本身**是 `.missing` 旗標（複合條件如
 //   `f.missing && rates.USD > 0 ? 0 : 31` 不算）、數字支是 0、另一支不是數字字面量（`f.missing ? 0 : 31` 命中）。
+//   不豁免的三元式：條件子樹裡**任何地方**碰到解析器欄位 missing／source／cur／rate（`Boolean(f.missing) ? 0 : 31`、
+//   `f.source === 'unsupported' ? 0 : 31`）就命中——它在替「有沒有匯率」做決定，數字支就是寫死的匯率。
 // 射程之外（誠實劃界，考題 test/derive.test.js 有列）：`Math.max(rate, 31)`、if 賦值、
 //   先把數字存進變數再退路、三元式另一支是乘積——不長上面的形狀，抓不到。
 // 壞語法＝丟例外（TS 解析器不會自己丟，半棵樹會靜靜漏抓；這裡 fail-closed）。
+// ⚠️ 定位（William 2026-09-04 裁示）：這支是**第二道網**——主網是 test/fx-sentinel.test.js 的哨兵匯率行為題，
+//    任何真的會算錯金額的寫死匯率都由它抓；這裡只補「有匯率卻不用、退路寫死」的死程式，形狀列舉補不完就劃界、不再加輪。
 import ts from 'typescript';
 import { SUPPORTED_FX } from '../../public/modules/fx-rates.js';
 
@@ -88,6 +92,21 @@ function terminals(n, arith = false) {
   return t ? [t] : [];
 }
 
+const RESOLVER_FIELDS = new Set(['missing', 'source', 'cur', 'rate']);   // fxFor() 回傳物件的四個欄位
+
+/** 子樹裡任何一個 `.missing`／`['source']`… 存取（不看位置，呼叫參數、比較兩側都算）。 @param {ts.Node} root @returns {string|undefined} */
+function mentionsResolverField(root) {
+  /** @type {string|undefined} */ let found;
+  /** @param {ts.Node} n */
+  const walk = (n) => {
+    if (found) return;
+    if (ts.isPropertyAccessExpression(n) && RESOLVER_FIELDS.has(n.name.text)) { found = n.name.text; return; }
+    if (ts.isElementAccessExpression(n)) { const k = unwrap(n.argumentExpression); if ((ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k)) && RESOLVER_FIELDS.has(k.text)) { found = k.text; return; } }
+    ts.forEachChild(n, walk);
+  };
+  walk(root); return found;
+}
+
 /**
  * @param {string} src 原始碼
  * @param {string} [file] 檔名（只用在訊息）
@@ -119,8 +138,10 @@ export function findFxLiteralFallbacks(src, file = 'source.js') {
         && flag.name.text === 'missing' && (negated ? !zeroWhenTrue : zeroWhenTrue);
       if (!exempt) {
         const names = [node.condition, other].flatMap((n) => terminals(n));
-        // 兩支都是數字、條件又碰到 missing 旗標 ⇒ 非零那支就是寫死的匯率（`f.missing ? 0 : 31`）
-        const name = names.find((t) => FX_NAMES.has(t)) || (isNumber(other) && names.includes('missing') ? 'missing' : undefined);
+        // 條件裡**任何地方**碰到解析器的欄位（missing／source／cur／rate；含 `Boolean(f.missing)`、`!!f.missing`、
+        // `f.source === 'unsupported'` 這種包在呼叫或比較裡的）⇒ 這個三元式在替「有沒有匯率」做決定，數字支就是寫死的匯率
+        // （#558 r5 實測 `Boolean(f.missing) ? 0 : 31` 靠呼叫包裝躲過只看末端名字的判斷）。
+        const name = names.find((t) => FX_NAMES.has(t)) || mentionsResolverField(node.condition);
         if (name) hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, name, text: node.getText(sf).replace(/\s+/g, ' ') });
       }
     }

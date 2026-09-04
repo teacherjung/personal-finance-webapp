@@ -655,6 +655,7 @@ const MANIFEST = {
       'test/codex-r11.test.js',
       'test/derive-reminders.test.js',
       'test/derive.test.js',
+      'test/fx-sentinel.test.js',
       'test/heavy-admission.test.js', 'test/ib-parser-money.test.js', 'test/ib-sync-integrity.test.js',
       'test/insights.test.js', 'test/securities-sync.test.js',
       'test/portfolio-calculations.test.js',
