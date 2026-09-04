@@ -33,7 +33,7 @@ const fxParts = (v, fmt) => {
 
 /**
  * @param {{
- *   rows:ReportRow[], accounts:ReportAccount[], fx:Record<string,number>, settings:Record<string,any>, ibTrades:ReportRow[],
+ *   rows:ReportRow[], accounts:ReportAccount[], fx:Record<string,number>, fxSources?:Record<string,string>, settings:Record<string,any>, ibTrades:ReportRow[],
  *   total:number, totalCost:number, totalPnl:number, layerV:Record<string,number>, regionMap:Record<string,number>,
  *   eqV:number, bondV:number, goldAll:number, loanTwd:number, netEquity:number, leverage:number, capeInfo?:CapeInfo
  * }} data
@@ -43,11 +43,13 @@ const fxParts = (v, fmt) => {
  * }} options
  */
 export function buildPortfolioReport(data, options) {
-  const { rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
+  const { rows, accounts, fx, fxSources = {}, settings, ibTrades, total, totalCost, totalPnl,
     layerV, regionMap, eqV, bondV, goldAll, loanTwd, netEquity, leverage, capeInfo = null } = data;
   const { viewCurrency, generated, sortKey, sortDir, layers, layerOrder, escapeHtml: esc } = options;
   const rate = fx.USD;
   const isUS = viewCurrency === 'USD';
+  // 台幣報表用的美元匯率是預設值時要講（丙-2）
+  const defaultUsdNote = (!isUS && fxSources.USD === 'default') ? `<p class="muted">註：台幣換算用的美元匯率是預設值 ${rate}（還沒抓到即時匯率），數字會有一點誤差。</p>` : '';
   const val = (twd) => isUS
     ? Math.round(Number(twd || 0) / rate).toLocaleString('en-US') + ' USD'
     : Math.round(Number(twd || 0)).toLocaleString('en-US') + ' 元';
@@ -108,6 +110,7 @@ export function buildPortfolioReport(data, options) {
     <td class="num">+${val((income.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>
     ${income.estimatedNoFx > 0 ? `<p class="muted">註：${income.estimatedNoFx} 筆${income.estimatedCurrencies?.length ? '（' + income.estimatedCurrencies.map(esc).join('、') + '）' : ''}非美元現金交易缺 IBKR 匯率，以設定或預設匯率估算。</p>` : ''}
     ${income.skippedNoFx > 0 ? `<p class="muted">註：${income.skippedNoFx} 筆現金交易的幣別系統不支援、無法換算，未計入上列金額。</p>` : ''}
+    ${defaultUsdNote}
     ${Number(income.skippedNoCurrency) > 0 ? `<p class="muted">註：${income.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額（請在 Flex Query 勾選 Currency 欄後重新同步）。</p>` : ''}</section>` : '';
 
   let tradesHtml = '';
@@ -117,11 +120,12 @@ export function buildPortfolioReport(data, options) {
     const list = (items) => items.map(([symbol, pnl]) => `${esc(symbol)} ${pnl >= 0 ? '+' : '−'}${val(Math.abs(pnl) * rate)}`).join('、') || '—';
     const note = ibkrCurrencies.length || estimatedCurrencies.length || defaultCurrencies.length || missingCurrencies.length
       ? `<p class="muted">${ibkrCurrencies.length ? '註解：換算匯率來自 IBKR。' : ''}${estimatedCurrencies.length ? `${estimatedCurrencies.map(esc).join('、')} 舊交易以目前設定匯率估算。` : ''}${defaultCurrencies.length ? `${defaultCurrencies.map(esc).join('、')} 交易以預設匯率估算（還沒抓到匯率）。` : ''}${missingCurrencies.length ? `${missingCurrencies.map(esc).join('、')} 是系統不支援的幣別，暫未計入。` : ''}</p>` : '';
+    const tradesNote = note + defaultUsdNote;
     tradesHtml = `<section><h2>交易摘要 <span>共 ${ibTrades.length} 筆（買 ${buys}／賣 ${ibTrades.length - buys}）</span></h2>
       <table><thead><tr><th>已實現損益（FIFO）</th><th>獲利前三</th><th>虧損前三</th></tr></thead>
       <tbody><tr><td class="num"><b>${realized >= 0 ? '+' : '−'}${val(Math.abs(realized) * rate)}</b></td>
       <td>${list(winners)}</td>
-      <td>${list(losers)}</td></tr></tbody></table>${note}</section>`;
+      <td>${list(losers)}</td></tr></tbody></table>${tradesNote}</section>`;
   }
 
   const capeHtml = capeInfo

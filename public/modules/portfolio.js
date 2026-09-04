@@ -40,7 +40,9 @@ let usdRate = 32;
 let FREEZE = { symbols: new Set(), regions: new Set(), equity: false };
 const MONEY = (twd) => formatPortfolioMoney(twd, { viewCurrency: viewCur, usdRate });
 // app.js 與頁面模組互相 import；要到使用時才讀 esc，避免頂層循環 import 的 TDZ 白屏。
-const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate });
+/** @type {'live'|'default'} */
+let usdRateSource = 'default';   // 美元匯率是「抓到的」還是「預設值」（丙-2：台幣換算要標）
+const activityOptions = () => ({ escapeHtml: esc, viewCurrency: viewCur, usdRate, usdRateSource });
 const visualFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent });
 const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPercent });
 
@@ -66,16 +68,16 @@ export async function renderPortfolio() {
     fx, rows, total, totalCost, totalPnl,
     bondV, goldV, eqV, ibValTwd, loanTwd, netEquity, leverage,
     goldAll, cashV, allBase, stockRows, bondRows, goldRows,
-    cashAccounts, goldAccounts, regionMap, missingFx, defaultFx
+    cashAccounts, goldAccounts, regionMap, missingFx, defaultFx, fxSources
   } = buildPortfolioModel(holdings, accounts, settings);
-  usdRate = fx.USD;
+  usdRate = fx.USD; usdRateSource = fxSources?.USD === 'live' ? 'live' : 'default';
   const {
     layerValues: layerV, qqqmShare, qqqmMax, netWorth,
     caps: CAPS, freeze, xirr: xr
   } = buildPortfolioPageState({
     rows, regionMap, equityValue: eqV, summary, settings,
     snapshots: psnaps, totalCost, totalValue: total,
-    ibTrades, usdRate: fx.USD, parseLocalDate, layers: LAYERS
+    ibTrades, parseLocalDate, layers: LAYERS   // XIRR 的匯率由 settings 自己解（同一張表）
   });
   FREEZE = freeze;
   const editors = createPortfolioEditors({
@@ -150,7 +152,7 @@ export async function renderPortfolio() {
   byId('addHolding').onclick = () => editors.openHolding(null);
   byId('refreshQuotes').onclick = (e) => remoteActions.refreshQuotes(e.currentTarget, holdings, watchlist, settings);   // currentTarget＝按鈕本身（e.target 可能是內層圖示，disabled 會設錯對象，自主體檢）
   byId('printPortfolio').onclick = () => printPortfolioReport({
-    rows, accounts, fx, settings, ibTrades, total, totalCost, totalPnl,
+    rows, accounts, fx, fxSources, settings, ibTrades, total, totalCost, totalPnl,
     layerV, regionMap, eqV, bondV, goldAll,
     loanTwd, netEquity, leverage
   });

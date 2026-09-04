@@ -83,6 +83,7 @@ export function buildPortfolioModel(holdings, accounts, settings) {
 
   return {
     fx,
+    fxSources: table.sources,   // 各幣別是「抓到的」還是「預設值」（丙-2：台幣換算的標註用）
     rows,
     total,
     totalCost,
