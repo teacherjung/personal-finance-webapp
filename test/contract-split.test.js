@@ -547,6 +547,7 @@ const MANIFEST = {
       // P1b-2 前端（2026-08-12）：同意確認窗與設定頁鑰匙欄的判準/文案純函式＋考題（與雲端領域多重命中）
       'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
       'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
+      'test/ledger-split-behavior.test.js',   // 批四 4A：兩頁分堆的行為考題（jsdom 載整張路由圖）
       'test/ai-gate-interception.test.js',   // P1b-3 攔截率：故障注入量閘的條件攔截率，與計畫 §八 互扣
       // P2-1 配方快取（2026-08-15，格式 A 拍板）：配方純模組（驗證器/引擎/出生驗收）＋考題
       'test/ai-time-deposit.test.js', 'lib/recipe-birth.js', 'public/modules/recipe-birth-text.js', 'test/recipe-birth.test.js', 'lib/progress-stages.js', 'public/modules/progress-text.js', 'public/modules/ndjson-stream.js', 'test/upload-progress.test.js', 'lib/parse-recipe.js', 'test/parse-recipe.test.js', 'test/parse-recipe-store.test.js', 'test/parse-recipes-http.test.js', 'public/modules/parse-recipes-ui.js', 'lib/ai-budget.js', 'test/ai-budget.test.js', 'test/multi-currency-account.test.js', 'test/recipe-gen.test.js', 'test/ai-dual-read.test.js', 'test/ai-pipeline-interception.test.js', 'test/cd-split.test.js',
