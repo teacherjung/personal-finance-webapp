@@ -137,13 +137,36 @@ test('機密投影：taishinSecPdfPassword 絕不送前端、補 Set 布林', ()
   assert.equal(projectSettings({ usdTwd: 32 }).taishinSecPdfPasswordSet, false);
 });
 
-test('HTTP 煙霧：GET /api/securities 有掛載且唯讀排序；preview 缺檔 400', async () => {
+test('HTTP 煙霧：GET /api/securities 有掛載（回 trades 陣列）；preview 缺檔 400；GET /settings 不回密碼', async () => {
   const list = await (await fetch(base + '/securities')).json();
   assert.ok(Array.isArray(list.trades));
   const noFile = await fetch(base + '/securities/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(noFile.status, 400);
   const settings = await (await fetch(base + '/settings')).json();
   assert.equal(settings.taishinSecPdfPassword, undefined, 'GET /settings 不可回密碼');
+});
+
+// 第二輪稽核（2026-09-02）securities-import:140：上一題原本題名寫「唯讀排序」，斷言只有 Array.isArray——把路由的 .sort 拿掉
+// 或反向，14/14 仍綠。這題用資料釘：成交日新→舊、同日依 sourceRef 升冪（不是 id、不是入庫順序）；GET 不改庫。
+test('GET /api/securities：成交日新→舊、同日依 sourceRef 升冪（不是 id、不是入庫順序）；GET 不改庫（唯讀）', async () => {
+  const db = await getDb();
+  const keep = structuredClone(db.securityTrades || []);
+  const row = (/** @type {string} */ id, /** @type {string} */ tradeDate, /** @type {string} */ sourceRef) => ({
+    id, source: 'taishin', sourceRef, tradeDate, side: 'buy', cashDirection: 'out', quantity: 1, currency: 'TWD', symbol: 'SORT',
+    price: 10, grossAmount: 10, netSettlement: 10, sourceAccountId: 'ffffeeeedddd', sourceAccountLabel: '台新證券 …0100',
+    importBatch: 'ts-sort-x', importedAt: '2026-01-01T00:00:00Z' });
+  try {
+    // 故意亂序入庫；同日兩筆的 id 順序與 sourceRef 順序相反——證明次鍵是 sourceRef、不是 id 也不是入庫順序
+    // 同日兩筆：id 字母序 s-mid-a < s-mid-b，但 sourceRef 反過來（a 拿 ts|b、b 拿 ts|a）——次鍵若偷換成 id 或入庫順序，這題就紅
+    db.securityTrades = [row('s-old', '2026-02-01', 'ts|z'), row('s-mid-a', '2026-02-10', 'ts|b'), row('s-new', '2026-02-20', 'ts|z'), row('s-mid-b', '2026-02-10', 'ts|a')];
+    await saveDb(db);
+    const before = JSON.stringify((await getDb()).securityTrades);
+    const list = await (await fetch(base + '/securities')).json();
+    assert.deepEqual(list.trades.map((/** @type {any} */ t) => t.id), ['s-new', 's-mid-b', 's-mid-a', 's-old'], '成交日新→舊；同日依 sourceRef 升冪（不是 id 序、不是入庫序）');
+    assert.equal(JSON.stringify((await getDb()).securityTrades), before, 'GET 不可改庫（唯讀）');
+  } finally {
+    const db2 = await getDb(); db2.securityTrades = keep; await saveDb(db2);   // 還原，不影響後面的題
+  }
 });
 
 test('幣別牆：不支援幣別（EUR）在預覽就 fail-closed（否則會在寫入櫃檯被拒、毒死整批）', async () => {

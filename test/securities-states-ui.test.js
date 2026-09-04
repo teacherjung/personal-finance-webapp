@@ -97,6 +97,7 @@ function assertStateWiring(source) {
     assert.match(reset, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
+  assert.match(source, /nextSecSort\(listSort, el\.dataset\.sort \|\| 'tradeDate'\)/, '表頭排序要走 securities-view 的 nextSecSort（方向規則的行為題在 securities-ui）——這一行是接線字面釘');
   const sync = namedFunction(source, 'syncIbFromSecurities');
   assert.match(sync, /setSecuritiesSyncButtonsBusy\(true\);/);
   assert.match(sync, /const feedback = ibSyncFeedback\(result, moneyCur\);/);
@@ -105,8 +106,53 @@ function assertStateWiring(source) {
   assert.match(sync, /securitiesNotice = hasSyncWarning \? '' : 'IBKR 同步完成/);
   assert.match(sync, /securitiesNotice = hasSyncWarning[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) renderSecurities\(\);/);
   assert.match(sync, /catch \(err\)[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) setSecuritiesSyncButtonsBusy\(false\);/);
-  assert.match(namedFunction(source, 'openSecPreview'), /securitiesNotice = message;\s*renderSecurities\(\);/);
   assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
+}
+
+// 第二輪稽核（2026-09-02）securities-states-ui:108：原本對 openSecPreview 跑正則 `securitiesNotice = message;\s*renderSecurities();`
+// ——只釘「兩行相鄰存在」，守門條件反轉（`===`→`!==`）、訊息拿錯欄位（skippedDup 當匯入筆數）都仍綠。這裡真的呼叫它再按確認鈕。
+async function assertPreviewImportBehavior(source) {
+  const fn = namedFunction(source, 'openSecPreview');
+  const createHarness = ({ routeSeq, reject = null, out = { imported: 2, skippedDup: 1 } }) => {
+    const btn = { disabled: false, onclick: null };
+    const cancel = { onclick: null };
+    const toasts = []; let closes = 0; let renders = 0;
+    const openModalShell = () => ({ root: { querySelector: () => cancel }, close: () => { closes++; } });
+    const api = async () => { if (reject) throw reject; return out; };
+    const factory = Function('canImportPreview', 'openModalShell', 'previewBodyHtml', 'FMT', 'byId', 'currentRouteSeq', 'api', 'toast', 'renderSecurities', `
+      let securitiesNotice = '';
+      ${fn}
+      return { run: openSecPreview, state: () => ({ securitiesNotice }) };
+    `);
+    const instance = factory(() => true, openModalShell, () => '', {}, () => btn, () => routeSeq(), api,
+      (/** @type {string} */ m, /** @type {boolean} */ bad) => { toasts.push({ m, bad: !!bad }); }, () => { renders++; });
+    instance.run({ counts: { importable: 2 } }, 'b64', '');
+    assert.equal(typeof btn.onclick, 'function', '確認鈕要接上');
+    return { btn, toasts, instance, press: () => btn.onclick(), closes: () => closes, renders: () => renders };
+  };
+
+  const ok = createHarness({ routeSeq: () => 10 });
+  await ok.press();
+  assert.equal(ok.btn.disabled, true, '送出後按鈕保持鎖住（防雙擊）');
+  assert.equal(ok.closes(), 1, '成功要關窗');
+  assert.equal(ok.instance.state().securitiesNotice, '已匯入 2 筆證券交易（略過已存在 1 筆）', '通知逐字：匯入筆數是 imported、括號是 skippedDup');
+  assert.equal(ok.renders(), 1, '留在原頁要重畫一次');
+  assert.deepEqual(ok.toasts, [{ m: '已匯入 2 筆證券交易（略過已存在 1 筆）', bad: false }]);
+
+  let calls = 0;
+  const switched = createHarness({ routeSeq: () => (++calls === 1 ? 10 : 11) });
+  await switched.press();
+  assert.equal(switched.closes(), 1);
+  assert.equal(switched.renders(), 0, '等待匯入期間切走頁：不可蓋掉新頁');
+  assert.equal(switched.instance.state().securitiesNotice, '', '切走頁也不留通知給下一次');
+
+  const failed = createHarness({ routeSeq: () => 20, reject: new Error('密碼錯') });
+  await failed.press();
+  assert.equal(failed.btn.disabled, false, '失敗要解鎖按鈕讓人重試');
+  assert.equal(failed.closes(), 0, '失敗不關窗');
+  assert.equal(failed.renders(), 0);
+  assert.equal(failed.instance.state().securitiesNotice, '');
+  assert.deepEqual(failed.toasts, [{ m: '匯入失敗：密碼錯', bad: true }]);
 }
 
 async function assertSyncBehavior(source) {
@@ -193,6 +239,7 @@ test('證券交易狀態：載入、成功、錯誤、首次空白與篩選空�
 test('證券交易狀態：失敗可重試，兩種空白狀態與三種成功操作都有接線', async () => {
   const source = read('public/modules/securities.js');
   assertStateWiring(source);
+  await assertPreviewImportBehavior(source);
   await assertSyncBehavior(source);
 });
 

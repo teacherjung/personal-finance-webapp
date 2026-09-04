@@ -1242,3 +1242,30 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
     + '⚠️ **變少**＝有一筆欠帳還完了（或那個 import 被拿掉）：請把它從 UNDECLARED_IMPORTED 刪掉，\n'
     + '   否則清單會開始說謊。');
 });
+
+// 第二輪稽核（2026-09-02）contract-split：比例題只量「帶契約連結的索引列」的摘要格——把同一段契約內文貼在表格結束後的下一段（索引列一字未動）9/9 仍綠＝第二份副本、拆分等於沒發生。
+// 門檻校準：現況最長合法重疊 57 字（data-storage「資料存取單一櫃檯」那串函式名清單）；W=60、步長 10 ⇒ 連續 ≥69 字逐字相同一定被抓。
+test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（拆分不可被「表外貼全文」繞過）', () => {
+  const W = 60, STEP = 10;   // 連續 ≥ W+STEP−1 字逐字相同一定會被抓到；現況最長合法重疊 57 字（函式名清單），門檻要高過它
+  /** 與 visibleLen 同一套「畫面看得到的字」正規化，但回字串 @param {string} md */
+  const vis = (md) => String(md)
+    .replace(/!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)/gu, '')
+    .replace(/\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/gu, '$1')
+    .replace(/\[([^\]]*)\]\[[^\]]*\]/gu, '$1')
+    .replace(/^\[[^\]]+\]:.*$/gmu, '')
+    .replace(/[`*_~|]/gu, '')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u00AD]/gu, '')
+    .replace(/\s+/gu, ' ').trim();
+  const hay = vis(read('AGENTS.md').split('\n').filter((l) => !LINK_RE.test(l)).join('\n'));
+  for (const file of Object.keys(MANIFEST)) {
+    for (const s of sectionsOf(file)) {
+      const body = vis(s.body);
+      for (let i = 0; i + W <= body.length; i += STEP) {
+        const gram = body.slice(i, i + W);
+        assert.ok(!hay.includes(gram),
+          `${file}#${s.anchor} 的內文有連續 ${W} 字逐字出現在 AGENTS.md 的索引列以外：「${gram}」\n`
+          + '⚠️ 索引列的長度有比例護欄守著，但表格外面貼一段全文就是第二份副本——拆分等於沒發生。');
+      }
+    }
+  }
+});

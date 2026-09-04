@@ -138,6 +138,17 @@ const SORTERS = {
 /** 換欄時預設降冪（新／大在前）的欄位；其餘文字欄預設升冪。 */
 export const SEC_NUMERIC_SORT_KEYS = new Set(['tradeDate', 'settlementDate', 'quantity', 'price', 'grossAmount', 'fees', 'net']);
 
+/**
+ * 表頭點擊後的排序狀態（就地改 listSort 並回傳它）：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪。
+ * 抽成純函式是為了考題（第二輪稽核：換欄方向原本內嵌在頁面 onclick、零考題）；鍵集合與 tx-sort 不同，故住這裡。
+ * @param {{key: string, dir: string}} listSort（與 sortSecTrades 同形；dir 只會是 'asc'／'desc'）@param {string} key
+ */
+export function nextSecSort(listSort, key) {
+  if (listSort.key === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+  else { listSort.key = key; listSort.dir = SEC_NUMERIC_SORT_KEYS.has(key) ? 'desc' : 'asc'; }
+  return listSort;
+}
+
 // 第二鍵**固定**成交日新→舊＋代號＋id，不跟主鍵一起反轉（tx-sort 鐵則 Codex r8#2：
 // 把整個比較器乘 -1 會把第二鍵一起反轉，降冪時同值資料變舊→新）。
 const tieBreak = (/** @type {any} */ a, /** @type {any} */ b) =>
