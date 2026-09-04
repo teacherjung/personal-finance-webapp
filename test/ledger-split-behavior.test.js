@@ -18,18 +18,22 @@ const FIXTURE = [
   { id: 'c1', date: '2026-08-03', ledger: 'card', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 1200, account: '台新卡', note: '全聯', stmtRef: 'card1|2026-08-03|1200|全聯' },
   { id: 'c2', date: '2026-08-10', ledger: 'card', source: 'stmt', type: 'expense', category: '交通', subcategory: '加油', amount: 2000, account: '台新卡', note: '加油站', stmtRef: 'card1|2026-08-10|2000|加油站' },
   { id: 'c3', date: '2026-08-15', ledger: 'card', source: 'stmt', type: 'expense', category: '購物', subcategory: '', amount: 3000, account: '台新卡', note: 'PChome', stmtRef: 'card1|2026-08-15|3000|PChome' },
+  { id: 'c5', date: '2026-08-21', ledger: 'card', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 500, account: '現金', note: '手動記的刷卡（明確 card、無來源、帳戶不是卡）' },
   { id: 'c4', date: '2026-08-20', source: 'stmt', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 800, account: '台新卡', note: '舊卡消費', stmtRef: 'card1|2026-08-20|800|舊卡消費' },
   { id: 'b1', date: '2026-08-05', ledger: 'cashflow', source: 'bank', type: 'income', category: '工作', subcategory: '薪資', amount: 60000, account: '台新活存', note: '薪資轉入' },
   { id: 'b2', date: '2026-08-06', ledger: 'cashflow', source: 'bank', type: 'expense', category: '居住', subcategory: '房租', amount: 15000, account: '台新活存', note: '房租' },
-  { id: 'b3', date: '2026-08-12', ledger: 'cashflow', source: 'bank', type: 'expense', category: '', subcategory: '', amount: 7000, account: '台新活存', note: '信用卡款' },
+  { id: 'b3', date: '2026-08-12', ledger: 'cashflow', source: 'bank', type: 'expense', category: '', subcategory: '', amount: 6900, account: '台新活存', note: '信用卡款' },   // 刻意不等於本月消費 7,500
   { id: 'b4', date: '2026-08-18', ledger: 'cashflow', source: 'bank', type: 'transfer', category: '內轉', subcategory: '內轉出', amount: 20000, account: '台新活存', note: '轉帳 *1234' },
+  { id: 'b5', date: '2026-08-22', ledger: 'cashflow', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 4300, account: '台新卡', note: '明確 cashflow、但來源是帳單、帳戶是卡（等價分法會分錯的那一筆）' },
   { id: 'm1', date: '2026-08-25', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 1000, account: '現金', note: '聚餐' },
 ];
-const CARD_IDS = ['c1', 'c2', 'c3', 'c4'];
-const CASH_IDS = ['b1', 'b2', 'b3', 'b4', 'm1'];
-const CARD_SPEND = 1200 + 2000 + 3000 + 800;          // 7,000
-const BANK_EXPENSE = 15000 + 7000 + 1000;              // 23,000（房租＋繳卡費＋手動聚餐）
+const CARD_IDS = ['c1', 'c2', 'c3', 'c4', 'c5'];
+const CASH_IDS = ['b1', 'b2', 'b3', 'b4', 'b5', 'm1'];
+const CARD_SPEND = 1200 + 2000 + 3000 + 800 + 500;    // 7,500
+const BANK_EXPENSE = 15000 + 6900 + 4300 + 1000;       // 27,200（房租＋繳卡費＋b5＋手動聚餐）
 const BANK_INCOME = 60000;
+// 金額刻意挑成：任何一筆刷卡（最小 500）混進銀行支出、或任何一筆現金流少掉，萬元一位小數的字串都會變（2.7 萬 → 2.8／2.3／2.0…）；
+// 本月消費 7,500 不等於繳卡費 6,900——摘要數字單獨也有鑑別力，不只靠明細 id。
 
 const API = {
   '/api/transactions': FIXTURE,
@@ -60,11 +64,17 @@ async function boot() {
 const text = (sel) => document.querySelector(sel)?.textContent ?? null;
 const rowIds = () => [...document.querySelectorAll('tbody [data-edit]')].map(el => el.dataset.edit).sort();
 
-test('夾具對照：固定資料真的兩本帳都有、且兩半判準都踩到', () => {
-  assert.deepEqual(FIXTURE.filter(isCardTx).map(t => t.id), CARD_IDS);
-  assert.deepEqual(FIXTURE.filter(t => !isCardTx(t)).map(t => t.id), CASH_IDS);
+test('夾具對照（只餵判準、不碰頁面）：固定資料兩本帳都有、兩半判準都踩到、而「用來源／帳戶名分」這種等價分法會分錯', () => {
+  assert.deepEqual(FIXTURE.filter(isCardTx).map(t => t.id).sort(), CARD_IDS);
+  assert.deepEqual(FIXTURE.filter(t => !isCardTx(t)).map(t => t.id).sort(), CASH_IDS);
   assert.equal(FIXTURE.find(t => t.id === 'c4').ledger, undefined, 'c4＝缺 ledger 的舊卡匯入，靠 source:stmt 判成 card');
   assert.equal(FIXTURE.find(t => t.id === 'm1').source, undefined, 'm1＝缺 ledger 缺 source 的舊手動列，排除法歸 cashflow');
+  const c5 = FIXTURE.find(t => t.id === 'c5'), b5 = FIXTURE.find(t => t.id === 'b5');
+  assert.ok(c5.ledger === 'card' && c5.source === undefined && c5.account !== '台新卡', 'c5＝明確 card 但無來源、帳戶不是卡');
+  assert.ok(b5.ledger === 'cashflow' && b5.source === 'stmt' && b5.account === '台新卡', 'b5＝明確 cashflow 但來源是帳單、帳戶是卡');
+  // 等價分法（頁面若偷換成這些，分堆看起來也「合理」）在這份夾具下會分錯——所以它們過不了後面兩題
+  assert.notDeepEqual(FIXTURE.filter(t => t.source === 'stmt').map(t => t.id).sort(), CARD_IDS, '「來源是帳單匯入」不是官方判準');
+  assert.notDeepEqual(FIXTURE.filter(t => t.account === '台新卡').map(t => t.id).sort(), CARD_IDS, '「帳戶名是卡」不是官方判準');
   assert.ok(FIXTURE.every(t => t.date.startsWith(MONTH)));
 });
 
@@ -73,11 +83,11 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   const { renderCashflow } = await import('../public/modules/cashflow.js');
   await renderCashflow();
   assert.equal(document.querySelector('#monthSel').value, MONTH);
-  assert.equal(text('[data-kind="expense"] .stat'), '2.3 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋手動聚餐；刷卡明細混進來會變 3.0 萬`);
+  assert.equal(text('[data-kind="expense"] .stat'), '2.7 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋b5＋手動聚餐；任何一筆刷卡混進來就不是 2.7`);
   assert.equal(text('[data-kind="income"] .stat'), '6.0 萬', `收入＝wan(${BANK_INCOME})`);
-  assert.equal(text('[data-kind="net"] .stat'), '+3.7 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
-  assert.deepEqual(rowIds(), CASH_IDS, '明細＝五筆現金流；繳卡費 b3 留在這頁（它才是刷卡的現金流出）');
-  assert.match(text('.cashflow-ledger-title [aria-live]'), /^5 筆$/);
+  assert.equal(text('[data-kind="net"] .stat'), '+3.3 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
+  assert.deepEqual(rowIds(), CASH_IDS, '明細＝六筆現金流；繳卡費 b3 留在這頁（它才是刷卡的現金流出）、b5 雖然來源是帳單也在這頁');
+  assert.match(text('.cashflow-ledger-title [aria-live]'), /^6 筆$/);
 });
 
 test('信用卡費頁：本月消費只算信用卡帳本（含缺 ledger 的舊卡匯入），薪資／房租／繳卡費／內轉都不進來', async () => {
@@ -85,9 +95,9 @@ test('信用卡費頁：本月消費只算信用卡帳本（含缺 ledger 的舊
   const { renderTransactions } = await import('../public/modules/transactions.js');
   await renderTransactions();
   assert.equal(document.querySelector('#monthSel').value, MONTH);
-  assert.equal(text('[data-kind="spend"] .stat'), '7,000 元', `本月消費＝money(${CARD_SPEND})：四筆刷卡；現金流混進來會變 110,000 元`);
+  assert.equal(text('[data-kind="spend"] .stat'), '7,500 元', `本月消費＝money(${CARD_SPEND})：五筆刷卡（含無來源的 c5）；不等於繳卡費 6,900`);
   assert.equal(text('[data-kind="count"] .stat'), String(CARD_IDS.length));
-  assert.deepEqual(rowIds(), CARD_IDS, '明細＝四筆刷卡；繳卡費 b3 不在這頁（否則同一筆錢兩頁各算一次）');
+  assert.deepEqual(rowIds(), CARD_IDS, '明細＝五筆刷卡；繳卡費 b3 與來源是帳單的 b5 都不在這頁（否則同一筆錢兩頁各算一次）');
   const cats = [...document.querySelectorAll('.credit-category-label')].map(el => el.textContent.replace(/\s+/g, ''));
-  assert.deepEqual(cats, ['購物3,000元', '飲食2,000元', '交通2,000元']);
+  assert.deepEqual(cats, ['購物3,000元', '飲食2,500元', '交通2,000元']);
 });
