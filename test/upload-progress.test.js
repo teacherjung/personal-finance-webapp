@@ -372,7 +372,7 @@ test('★三路一致（A4）：單讀、仲裁、僅存一讀、配方——每
   assert.equal(/** @type {any} */ (agree.r).reconcile?.level, 'strong', '★雙讀一致同款：reconcile＝採納時當場重跑的裁決');
 });
 
-// ---- 釘行為，不釘字串（三題字面釘裡 `throw Object.assign(new Error(msg), code ? …)` 那條正規式在 apiStream() 與 api() 各有一行一模一樣＝釘錯行）：
+// ---- 釘行為，不釘字串（為什麼：`throw Object.assign(new Error(msg), code ? …)` 這種正規式會同時命中 apiStream() 與 api() 裡長得一樣的 throw 行，分不出是哪一支在守＝釘錯行）：
 //      ①路由兩形態＝同一條服務層路徑（真起 server、不帶 data 在開 PDF 前就 400，零 PDF 子行程）②preview 路由兩枝傳同一份 opts（誠實劃界：仍是形狀題，範圍縮到該路由）
 //      ③cashflow.js 通往 preview 的出口只有一個 ④apiStream 本人：非 200 帶 code、最後一行沒換行也收得到、error frame 保住 code。
 test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON；stream:true＝NDJSON（階段 frame＋error frame 同一份錯誤）；stream:"true" 字串不算旗標', async () => {
@@ -400,7 +400,7 @@ test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON�
   } finally { /** @type {any} */ (server).closeAllConnections?.(); server.close(); }
 });
 
-test('preview 路由：串流與非串流兩枝傳給服務層的 opts 是同一份（只多 onStage）——誠實劃界：仍是原始碼形狀題，但只在 preview 路由那一段裡找', () => {
+test('preview 路由：串流與非串流兩枝傳給服務層的 opts 是同一份（只多 onStage）——誠實劃界：這是原始碼形狀題（範圍縮到 preview 路由那一段裡找', () => {
   const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
   const route = /statementRoutes\.post\('\/api\/bank-statement\/preview'[\s\S]*?\n\}\)\);/.exec(src)?.[0] || '';
   assert.ok(route, '找不到 preview 路由');
