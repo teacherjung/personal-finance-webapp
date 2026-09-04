@@ -252,12 +252,12 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
   }
   { const src = readSrc(new URL('public/modules/portfolio-model.js', root), 'utf8');
     assert.match(src, /import \{[^}]*\bresolveFxTable\b[^}]*\} from '\.\/portfolio-calculations\.js'/, 'portfolio-model.js 的匯率表必須經 portfolio-calculations 轉口自 fx-rates.js');
-    assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /\|\| ?40\.8|\|\| ?0\.215|usdTwd \|\| ?32\b|fxTwd\?\.\[/, 'portfolio-model.js 不可自己另算匯率'); }
+    assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /(fxTwd|usdTwd|GBP|JPY)[^\n]*\|\| ?\d|fxTwd\?\.\[/, 'portfolio-model.js 不可自己另算匯率（任何 `|| 數字` 的匯率退路都算）'); }
   // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
   // 射程刻意不含 portfolio-calculations.js 的 tradePnlBase：它（與 ib-sync fxToBase）自丙-2 起也走同一份 fx-rates.js（分母是 USD→TWD 的比值），由 test/portfolio-calculations.test.js／test/ib-fx-income.test.js 的行為題釘住，不用結構檢查。
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
     const src = readSrc(new URL(f, root), 'utf8').replace(/\/\/[^\n]*/g, '');
-    assert.doesNotMatch(src, /\|\| ?40\.8|\|\| ?0\.215|usdTwd \|\| ?32\b/, `${f} 不可再有自己的預設匯率寫死在算式裡`);
+    assert.doesNotMatch(src, /(fxTwd|usdTwd|GBP|JPY)[^\n]*\|\| ?\d/, `${f} 不可再有自己的預設匯率寫死在算式裡（任何 \`|| 數字\` 的匯率退路都算，不只舊值 32／40.8／0.215）`);
   }
   assert.match(readSrc(new URL('public/modules/portfolio-calculations.js', root), 'utf8'), /export const fxTable = \(settings\) => resolveFxTable\(settings\)\.rates;/, '前端 fxTable 必須是 resolveFxTable 的投影，不可自己另算');
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
