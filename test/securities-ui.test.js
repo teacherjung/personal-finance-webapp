@@ -207,10 +207,8 @@ test('S3r2#3：可能已出清 → 只提醒＋指路投資組合頁（A′：�
 });
 
 test('SEC_NUMERIC_SORT_KEYS：日期與數字欄的集合完整（換欄方向由同檔題名關鍵字「nextSecSort：同欄再點＝反轉」那題用行為守）', () => {
-  for (const k of ['tradeDate', 'settlementDate', 'quantity', 'price', 'grossAmount', 'fees', 'net']) {
-    assert.ok(SEC_NUMERIC_SORT_KEYS.has(k), k);
-  }
-  assert.ok(!SEC_NUMERIC_SORT_KEYS.has('symbol'));
+  // 釘精確內容：多塞一個文字欄（symbol／source／account／side／currency）進去，換欄就會變成降冪
+  assert.deepEqual([...SEC_NUMERIC_SORT_KEYS].sort(), ['fees', 'grossAmount', 'net', 'price', 'quantity', 'settlementDate', 'tradeDate']);
 });
 
 // 換欄方向＝securities-view 的純函式 nextSecSort（內嵌在頁面 onclick 裡考不到，抽出來直測）；頁面接線由 securities-states-ui 的接線題釘。

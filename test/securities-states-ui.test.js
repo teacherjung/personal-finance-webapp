@@ -97,7 +97,7 @@ function assertStateWiring(source) {
     assert.match(reset, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
-  assert.match(source, /nextSecSort\(listSort, el\.dataset\.sort \|\| 'tradeDate'\)/, '表頭排序要走 securities-view 的 nextSecSort（方向規則的行為題在 securities-ui）——這一行是接線字面釘');
+  assert.match(source, /querySelectorAll\('th\.sortable'\)[\s\S]{0,300}?nextSecSort\(listSort, el\.dataset\.sort \|\| 'tradeDate'\);[\s\S]{0,160}?renderSecurities\(/, '表頭 th.sortable 的 onclick 那一段要呼叫 securities-view 的 nextSecSort 再重畫（方向規則的行為題在 securities-ui）——這是接線字面釘，範圍縮到那一段');
   const sync = namedFunction(source, 'syncIbFromSecurities');
   assert.match(sync, /setSecuritiesSyncButtonsBusy\(true\);/);
   assert.match(sync, /const feedback = ibSyncFeedback\(result, moneyCur\);/);
@@ -113,25 +113,35 @@ function assertStateWiring(source) {
 // （`===`→`!==`）或訊息拿錯欄位（skippedDup 當匯入筆數）。
 async function assertPreviewImportBehavior(source) {
   const fn = namedFunction(source, 'openSecPreview');
-  const createHarness = ({ routeSeq, reject = null, out = { imported: 2, skippedDup: 1 } }) => {
+  const { canImportPreview } = await import('../public/modules/securities-view.js');   // 真判準：blockers 空且 importable > 0
+  const createHarness = ({ routeSeq, reject = null, out = { imported: 2, skippedDup: 1 }, preview = { counts: { importable: 2 }, blockers: [] } }) => {
     const btn = { disabled: false, onclick: null };
     const cancel = { onclick: null };
-    const toasts = []; let closes = 0; let renders = 0;
-    const openModalShell = () => ({ root: { querySelector: () => cancel }, close: () => { closes++; } });
+    const toasts = []; let closes = 0; let renders = 0; let modalHtml = '';
+    // 假彈窗只記下 bodyHtml；byId('secDoImport') 只在彈窗 HTML 真的畫了那顆按鈕時才回按鈕——正式路徑沒畫按鈕（或 canImportPreview 接反）就接不上
+    const openModalShell = (/** @type {any} */ opts) => { modalHtml = String(opts?.bodyHtml || ''); return { root: { querySelector: () => cancel }, close: () => { closes++; } }; };
+    const byId = (/** @type {string} */ id) => (id === 'secDoImport' && modalHtml.includes('id="secDoImport"') ? btn : null);
     const api = async () => { if (reject) throw reject; return out; };
     const factory = Function('canImportPreview', 'openModalShell', 'previewBodyHtml', 'FMT', 'byId', 'currentRouteSeq', 'api', 'toast', 'renderSecurities', `
       let securitiesNotice = '';
       ${fn}
       return { run: openSecPreview, state: () => ({ securitiesNotice }) };
     `);
-    const instance = factory(() => true, openModalShell, () => '', {}, () => btn, () => routeSeq(), api,
+    const instance = factory(canImportPreview, openModalShell, () => '', {}, byId, () => routeSeq(), api,
       (/** @type {string} */ m, /** @type {boolean} */ bad) => { toasts.push({ m, bad: !!bad }); }, () => { renders++; });
-    instance.run({ counts: { importable: 2 } }, 'b64', '');
-    assert.equal(typeof btn.onclick, 'function', '確認鈕要接上');
-    return { btn, toasts, instance, press: () => btn.onclick(), closes: () => closes, renders: () => renders };
+    instance.run(preview, 'b64', '');
+    return { btn, toasts, instance, modalHtml: () => modalHtml, press: () => btn.onclick(), closes: () => closes, renders: () => renders };
   };
 
+  const blocked = createHarness({ routeSeq: () => 1, preview: { counts: { importable: 2 }, blockers: ['幣別不在系統支援範圍'] } });
+  assert.ok(!blocked.modalHtml().includes('id="secDoImport"'), '有 blocker＝不畫確認鈕');
+  assert.equal(blocked.btn.onclick, null, '沒畫按鈕就不接 onclick');
+  const zero = createHarness({ routeSeq: () => 1, preview: { counts: { importable: 0 }, blockers: [] } });
+  assert.ok(!zero.modalHtml().includes('id="secDoImport"'), '可匯入 0 筆＝不畫確認鈕');
+
   const ok = createHarness({ routeSeq: () => 10 });
+  assert.ok(ok.modalHtml().includes('確認匯入 2 筆'), '按鈕文字帶可匯入筆數');
+  assert.equal(typeof ok.btn.onclick, 'function', '畫了按鈕才接得上 onclick');
   await ok.press();
   assert.equal(ok.btn.disabled, true, '送出後按鈕保持鎖住（防雙擊）');
   assert.equal(ok.closes(), 1, '成功要關窗');

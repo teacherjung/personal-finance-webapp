@@ -305,7 +305,8 @@ const MAX_SUMMARY_RATIO = 0.6;
  * 它能說的只有：**已知的幾種撐分母手法算不進來**。要更準就得接真正的 Markdown 渲染器。
  * @param {string} md
  */
-function visibleLen(md) {
+/** 「畫面看得到的字」正規化（visibleLen 與表外副本題共用同一套） @param {string} md */
+function visibleText(md) {
   return String(md)
     // ⚠️ 目的地可以含**平衡括號**（`…/report(section)?utm=…` 是正常網址，Codex #384 r37）：
     //    只吃到第一個 `)` 的話，後面的查詢參數會被當成可見文字，分母又被撐大。
@@ -317,8 +318,10 @@ function visibleLen(md) {
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u00ad]/gu, '')
     .replace(/\u034f/gu, '')   // CGJ 單獨處理：放進字元類別會踩到 no-misleading-character-class
     .replace(/\s+/gu, ' ')
-    .trim().length;
+    .trim();
 }
+/** @param {string} md */
+function visibleLen(md) { return visibleText(md).length; }
 
 const BODY_LABEL = '**記得同步這裡**：';
 
@@ -1244,28 +1247,24 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
 });
 
 // 比例題只量帶契約連結的索引列；表格外面貼一段契約全文就是第二份副本、拆分等於沒發生——這題掃索引列以外的可見文字。
-// 門檻 W=60、步長 10（連續 ≥69 字逐字相同一定被抓）：要高過合法的重疊——函式名清單那種（設門檻時量到 57 字，2026-09-04）。
+// 索引列＝「表格列（以 | 開頭）且帶契約連結」，與 indexRows() 的認法一致；表外一行就算掛了契約連結也不是索引列。
+// 判準＝任何連續 W 字的逐字副本一定被抓（AGENTS 那邊建 W-gram 集合、契約內文逐字滑動）；W 要高過合法的重疊
+// （函式名清單那種；設門檻時量到 57 字，2026-09-04）。
 test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（拆分不可被「表外貼全文」繞過）', () => {
-  const W = 60, STEP = 10;   // 連續 ≥ W+STEP−1 字逐字相同一定會被抓到；門檻要高過合法的重疊（函式名清單那種；設門檻時量到 57 字，2026-09-04）
-  /** 與 visibleLen 同一套「畫面看得到的字」正規化，但回字串 @param {string} md */
-  const vis = (md) => String(md)
-    .replace(/!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)/gu, '')
-    .replace(/\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/gu, '$1')
-    .replace(/\[([^\]]*)\]\[[^\]]*\]/gu, '$1')
-    .replace(/^\[[^\]]+\]:.*$/gmu, '')
-    .replace(/[`*_~|]/gu, '')
-    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u00AD]/gu, '')
-    .replace(/\s+/gu, ' ').trim();
-  const hay = vis(read('AGENTS.md').split('\n').filter((l) => !LINK_RE.test(l)).join('\n'));
+  const W = 60;
+  const hay = visibleText(read('AGENTS.md').split('\n').filter((l) => !(l.startsWith('|') && LINK_RE.test(l))).join('\n'));
+  const grams = new Set();
+  for (let i = 0; i + W <= hay.length; i++) grams.add(hay.slice(i, i + W));
   for (const file of Object.keys(MANIFEST)) {
     for (const s of sectionsOf(file)) {
-      const body = vis(s.body);
-      for (let i = 0; i + W <= body.length; i += STEP) {
+      const body = visibleText(s.body);
+      for (let i = 0; i + W <= body.length; i++) {
         const gram = body.slice(i, i + W);
-        assert.ok(!hay.includes(gram),
+        assert.ok(!grams.has(gram),
           `${file}#${s.anchor} 的內文有連續 ${W} 字逐字出現在 AGENTS.md 的索引列以外：「${gram}」\n`
           + '⚠️ 索引列的長度有比例護欄守著，但表格外面貼一段全文就是第二份副本——拆分等於沒發生。');
       }
     }
   }
 });
+

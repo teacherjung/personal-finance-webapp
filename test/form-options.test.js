@@ -365,13 +365,22 @@ test('app.js 匯出的 esc 就是 html-escape.js 的那一個函式（行為：�
   });
   const g = /** @type {any} */ (globalThis);
   const storage = { getItem: () => null, setItem() {}, removeItem() {}, key: () => null, length: 0, clear() {} };
-  g.localStorage = storage; g.sessionStorage = storage; g.window = globalThis;
-  for (const k of ['document', 'location', 'history', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'Node', 'HTMLElement', 'Element', 'getComputedStyle', 'alert', 'confirm', 'scrollTo', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'Chart', 'innerWidth', 'innerHeight', 'screen']) if (!(k in g)) g[k] = mk();
+  // 用完要還原：記下原本就存在的全域（描述子）與本題新裝的鍵，finally 逐一復原／刪除——假 DOM 不可留給同行程的別題
+  /** @type {Record<string, PropertyDescriptor|undefined>} */ const prev = {};
+  /** @type {string[]} */ const added = [];
+  const install = (/** @type {string} */ k, /** @type {any} */ v) => { if (k in g) prev[k] = Object.getOwnPropertyDescriptor(g, k); else added.push(k); g[k] = v; };
+  install('localStorage', storage); install('sessionStorage', storage); install('window', globalThis);
+  for (const k of ['document', 'location', 'history', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'Node', 'HTMLElement', 'Element', 'getComputedStyle', 'alert', 'confirm', 'scrollTo', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'Chart', 'innerWidth', 'innerHeight', 'screen']) if (!(k in g)) install(k, mk());
   const realFetch = g.fetch;
   g.fetch = async () => ({ ok: false, status: 599, statusText: 'stub', json: async () => ({}), text: async () => '', body: null });
   try {
     const app = await import('../public/app.js');
     assert.equal(app.esc, esc, 'app.js 匯出的 esc 必須就是 html-escape.js 那一個函式物件——app.js 自己再長一份＝跳脫與純模組走散');
     assert.equal(app.esc('"><img src=x>'), '&quot;&gt;&lt;img src=x&gt;', '而且它真的會跳脫');
-  } finally { g.fetch = realFetch; }
+  } finally {
+    g.fetch = realFetch;
+    for (const k of added) delete g[k];
+    for (const [k, d] of Object.entries(prev)) { if (d) Object.defineProperty(g, k, d); else delete g[k]; }
+  }
+  assert.ok(!('document' in globalThis) && !('window' in globalThis), '假 DOM 用完要拿掉（同行程的別題不可吃到）');
 });
