@@ -13,7 +13,7 @@ import { JSDOM } from 'jsdom';
 import { isCardTx } from '../public/modules/categories.js';
 
 const MONTH = '2026-08';
-/** 固定資料：刷卡明細×3、舊卡匯入（缺 ledger）×1、薪資、房租、繳卡費、內轉、舊手動記帳（缺 ledger 缺 source）×1 */
+/** 固定資料：每一筆的 note 寫它是哪一種列；哪些筆算哪本帳由下面的夾具對照題斷言，這裡不另列清單（會漂） */
 const FIXTURE = [
   { id: 'c1', date: '2026-08-03', ledger: 'card', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 1200, account: '台新卡', note: '全聯', stmtRef: 'card1|2026-08-03|1200|全聯' },
   { id: 'c2', date: '2026-08-10', ledger: 'card', source: 'stmt', type: 'expense', category: '交通', subcategory: '加油', amount: 2000, account: '台新卡', note: '加油站', stmtRef: 'card1|2026-08-10|2000|加油站' },
@@ -32,8 +32,8 @@ const CASH_IDS = ['b1', 'b2', 'b3', 'b4', 'b5', 'm1'];
 const CARD_SPEND = 1200 + 2000 + 3000 + 800 + 500;    // 7,500
 const BANK_EXPENSE = 15000 + 6900 + 4300 + 1000;       // 27,200（房租＋繳卡費＋b5＋手動聚餐）
 const BANK_INCOME = 60000;
-// 金額刻意挑成：任何一筆刷卡（最小 500）混進銀行支出、或任何一筆現金流少掉，萬元一位小數的字串都會變（2.7 萬 → 2.8／2.3／2.0…）；
-// 本月消費 7,500 不等於繳卡費 6,900——摘要數字單獨也有鑑別力，不只靠明細 id。
+// 金額刻意挑成：任何一筆刷卡（最小 500）混進銀行支出、或任何一筆現金流「支出」漏掉，萬元一位小數的字串都會變；
+// 內轉本來就不進收支加總，它的去留由明細 id 釘。本月消費 7,500 不等於繳卡費 6,900——摘要數字單獨也有鑑別力。
 
 const API = {
   '/api/transactions': FIXTURE,
