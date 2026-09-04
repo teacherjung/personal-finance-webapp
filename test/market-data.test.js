@@ -233,3 +233,25 @@ test('開機自動刷新｜Yahoo 給的美元匯率是壞值（字串／0）→ 
   assert.equal(db.settings.fxTwd.GBP, 42, '英鎊照寫');
   assert.equal(db.settings.fxTwd.JPY, undefined, '0 不是匯率、不寫');
 });
+
+test('匯率備援｜Yahoo 回「非空但壞」的匯率（price:"oops"）→ 不算抓到、不快取，備援照樣啟動並補上（Codex #556 r4）', async () => {
+  let fallbackCalls = 0;
+  const fetchImpl = routeFetch([
+    [/chart\/TWD%3DX|chart\/TWD=X/, () => ({ json: async () => ({ chart: { result: [{ meta: { regularMarketPrice: 'oops', currency: '' } }] } }) })],
+    [/open\.er-api\.com/, () => { fallbackCalls++; return erApi({ TWD: 31.5, GBP: 0.75, JPY: 150 }); }],
+  ]);
+  const q = await getQuotes(['TWD=X', 'VOO'], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.price, 31.5, 'Yahoo 的壞值不可留下來，要退備援');
+  assert.equal(q['TWD=X']?.source, 'open.er-api.com');
+  assert.equal(fallbackCalls, 1, '備援要真的被叫到');
+});
+
+test('開機自動刷新｜Yahoo 給的美元匯率是有限大數（1e308）→ 四捨五入溢位不可寫回（保留舊值），也不可讓整次刷新因 schema 錯誤失敗', async () => {
+  await seedDb([], { usdTwd: 30.5, fxTwd: { GBP: 41 } });
+  const fetchImpl = makeFetch({ 'TWD=X': { price: 1e308, currency: '' }, 'GBPTWD=X': { price: 42, currency: '' } });
+  const r = await refreshQuotesIfStale({ fetchImpl, now: Date.parse('2026-09-04T00:00:00Z'), quoteTtlMs: 0 });
+  assert.equal(r.refreshed, true);
+  const db = await getDb();
+  assert.equal(db.settings.usdTwd, 30.5, '溢位的美元不可蓋掉舊值');
+  assert.equal(db.settings.fxTwd.GBP, 42);
+});

@@ -11,6 +11,12 @@ export const SUPPORTED_FX = Object.freeze(['USD', 'GBP', 'JPY']);
 
 /** 正數才算匯率（0／負數／NaN／字串垃圾都當「沒有」）。 @param {unknown} v */
 export const positiveRate = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+/**
+ * 四捨五入到 1/scale 之後**再驗一次**正數：有限正數乘上 scale 可能溢位成 Infinity、太小會捨成 0——
+ * 這兩種寫進 JSON 都會變 null／0 而把舊匯率清掉（Codex #556 r4）。回 null＝不要寫。
+ * @param {unknown} v @param {number} scale
+ */
+export const roundRate = (v, scale) => { const r = positiveRate(v); if (r == null) return null; const out = Math.round(r * scale) / scale; return Number.isFinite(out) && out > 0 ? out : null; };
 
 /**
  * @typedef {{ rates: Record<string, number>, sources: Record<string, 'live'|'default'> }} FxTable

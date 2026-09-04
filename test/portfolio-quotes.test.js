@@ -60,3 +60,12 @@ test('更新報價｜美元報價是壞值（非數字／0／負數）→ 不寫
   const ok = plan([], [], {}, /** @type {any} */ ({ 'TWD=X': { price: '31.5', currency: '' } }));
   assert.equal(ok.fxBody.usdTwd, 31.5, '對照：數字字串照寫');
 });
+
+test('更新報價｜有限正數四捨五入後溢位（1e308→Infinity）或捨成 0（1e-9）→ 一樣不寫（驗證要在四捨五入之後；Codex #556 r4）', async () => {
+  const { portfolioQuoteWritePlan: plan } = await import('../public/modules/portfolio-quotes.js');
+  for (const bad of [1e308, 1e-9]) {
+    const p = plan([], [], {}, /** @type {any} */ ({ 'TWD=X': { price: bad, currency: '' }, 'GBPTWD=X': { price: 41, currency: '' } }));
+    assert.ok(!Object.hasOwn(p.fxBody, 'usdTwd'), `${bad} 四捨五入後不是正數，不可寫（會變 null 清掉舊值）`);
+    assert.equal(p.fxBody.fxTwd.GBP, 41);
+  }
+});
