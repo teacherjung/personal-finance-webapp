@@ -146,8 +146,7 @@ test('HTTP 煙霧：GET /api/securities 有掛載（回 trades 陣列）；previ
   assert.equal(settings.taishinSecPdfPassword, undefined, 'GET /settings 不可回密碼');
 });
 
-// 第二輪稽核（2026-09-02）securities-import:140：上一題原本題名寫「唯讀排序」，斷言只有 Array.isArray——把路由的 .sort 拿掉
-// 或反向，14/14 仍綠。這題用資料釘：成交日新→舊、同日依 sourceRef 升冪（不是 id、不是入庫順序）；GET 不改庫。
+// 排序與唯讀要用資料釘（只看「是不是陣列」看不出排序有沒有在做）：成交日新→舊、同日依 sourceRef 升冪；GET 不改庫。
 test('GET /api/securities：成交日新→舊、同日依 sourceRef 升冪（不是 id、不是入庫順序）；GET 不改庫（唯讀）', async () => {
   const db = await getDb();
   const keep = structuredClone(db.securityTrades || []);

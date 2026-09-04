@@ -355,8 +355,8 @@ test('架構｜onMount 事後重建的分類／子類下拉都改走本模組（
   }
 });
 
-// 第二輪稽核（2026-09-02）form-options（跳脫）：上一題只比對 app.js 有 import／export 字串——app.js 改成 `import { esc as escShared }`
-// 再自長一份不跳脫的 esc 並 export，19/19 仍綠，全站 20 幾個從 app.js 拿 esc 的模組此時全都沒跳脫。這題用 DOM 假件把 app.js 載進 node、比同一物件。
+// 「同一份實作」要比同一物件：只比對 import／export 字串，app.js 若 import 成別名再自長一份不跳脫的 esc 並 export，字串看不出來，
+// 而全站從 app.js 拿 esc 的模組會一起失去跳脫。用 DOM 假件把 app.js 載進 node。
 test('app.js 匯出的 esc 就是 html-escape.js 的那一個函式（行為：同一物件、會跳脫；不看原始碼字串）', async () => {
   // DOM 假件：只為讓 app.js 模組頂層載得進來（hydrateIcons(document) 等）；不驗任何頁面行為
   const mk = () => new Proxy(function () {}, {

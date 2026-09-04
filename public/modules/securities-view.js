@@ -140,7 +140,7 @@ export const SEC_NUMERIC_SORT_KEYS = new Set(['tradeDate', 'settlementDate', 'qu
 
 /**
  * 表頭點擊後的排序狀態（就地改 listSort 並回傳它）：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪。
- * 抽成純函式是為了考題（第二輪稽核：換欄方向原本內嵌在頁面 onclick、零考題）；鍵集合與 tx-sort 不同，故住這裡。
+ * 抽成純函式是為了能直接考（內嵌在頁面 onclick 裡考不到）；鍵集合與 tx-sort 不同，故住這裡。
  * @param {{key: string, dir: string}} listSort（與 sortSecTrades 同形；dir 只會是 'asc'／'desc'）@param {string} key
  */
 export function nextSecSort(listSort, key) {

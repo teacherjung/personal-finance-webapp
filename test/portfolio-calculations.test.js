@@ -174,7 +174,7 @@ test('丙-2｜XIRR 的「含估算」旗標與乘數同一張表：美元匯率�
   assert.ok(half.ok && live.ok && half.rate !== live.rate, '乘數必須來自 settings（Codex r2：以前是另傳的參數，值與來源可分離）');
 });
 
-// 第二輪稽核（2026-09-02）portfolio-calculations:13 的補強（那題的空包彈已由 #556／#558 收掉；這裡把 USD 的垃圾值與三種預設值一次釘住）
+// USD 的垃圾值（0／字串）也走「沒抓到→預設值」；三種預設值一次釘住（改常數要連這裡一起改）
 test('fxTable：USD 給 0／字串垃圾也當「沒抓到」→ 預設值；三種幣別的預設值一次釘住', () => {
   assert.equal(fxTable({ usdTwd: 0 }).USD, 31, 'USD 0 不是匯率');
   assert.equal(fxTable({ usdTwd: 'abc' }).USD, 31, 'USD 垃圾字串不是匯率');

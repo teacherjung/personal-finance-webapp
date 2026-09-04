@@ -260,7 +260,7 @@ test('沙箱｜誤殺也計分：正式設定檔加一條「盒內不准寫」�
     assert.ok(killed >= 1, '盒內不准寫應至少誤殺一個正面案例：\n' + lines.join('\n'));
     assert.ok(!lines.some((l) => l.includes('🟢 活著')), '負面案例仍全擋住（差別只在正面那半）：\n' + lines.join('\n'));
     assert.equal(code, 1, '誤殺必須退 1（掃描會跑不動，不准當成「可以掃」）：\n' + lines.join('\n'));
-    // 第二輪稽核（2026-09-02）相鄰缺口：拿掉 mustPass 的 dead++（誤殺不計分）整檔仍綠——這裡釘「每一隻誤殺都有計分」
+    // 只看總 code 不夠（同「會叫」那題的理由）：誤殺若不計分，別隻撐著總分仍可能是 1——釘「每一隻誤殺都有計分」
     assert.equal(dead, killed, `誤殺 ${killed} 隻但只計了 ${dead} 分`);
   } finally { rmSync(box, { recursive: true, force: true }); }
 });

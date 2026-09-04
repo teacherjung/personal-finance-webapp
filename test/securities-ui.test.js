@@ -134,8 +134,7 @@ test('secRowHtml：使用者字串一律 esc；外幣手續費單獨標示不併
   assert.match(html, /&lt;b&gt;惡意&lt;\/b&gt;/);
   assert.match(html, /A&amp;B/);
   const gb = secRowHtml(mk({ currency: 'GBP', commission: 2.5, commissionCurrency: 'USD', tax: 0, otherFees: null }), 0, FMT);
-  // 第二輪稽核（2026-09-02）securities-ui：原本 `/>0</` 中的是展開明細裡的證交稅 `<b>0</b>`、`/—/` 中任何一個 —＝釘錯格；
-  // 費稅格併入外幣手續費、缺價畫成 0 都仍綠。改釘到格子本身。
+  // 釘到格子本身：`/>0</` 這種寬鬆比對會中到展開明細裡別的 0、`/—/` 會中任何一個 —，分不出「費稅格併入外幣手續費」或「缺價畫成 0」。
   assert.ok(gb.includes('<td class="num">0 <span class="muted">＋2.5 USD</span></td>'), '費稅合計格＝本幣費稅 0，外幣手續費另列在同格的小字（不併進數字）：\n' + gb);
   assert.ok(!gb.includes('<td class="num">2.5</td>'), '外幣手續費不可被當本幣費稅加總');
   // 缺價格/成交金額顯示 —（不是 0）；淨應收付缺值也是 —
@@ -214,8 +213,7 @@ test('SEC_NUMERIC_SORT_KEYS：日期與數字欄的集合完整（換欄方向�
   assert.ok(!SEC_NUMERIC_SORT_KEYS.has('symbol'));
 });
 
-// 第二輪稽核（2026-09-02）securities-ui：換欄方向原本內嵌在 securities.js 的表頭 onclick，全 repo 零考題（改成一律升冪仍全綠）。
-// 抽成純函式 nextSecSort 直測；頁面接線由 securities-states-ui 的接線題釘。
+// 換欄方向＝securities-view 的純函式 nextSecSort（內嵌在頁面 onclick 裡考不到，抽出來直測）；頁面接線由 securities-states-ui 的接線題釘。
 test('nextSecSort：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪', () => {
   const s = { key: 'tradeDate', dir: 'desc' };
   assert.deepEqual(nextSecSort(s, 'quantity'), { key: 'quantity', dir: 'desc' }, '換到數字欄：大的在前');

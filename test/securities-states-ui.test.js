@@ -109,8 +109,8 @@ function assertStateWiring(source) {
   assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
 }
 
-// 第二輪稽核（2026-09-02）securities-states-ui:108：原本對 openSecPreview 跑正則 `securitiesNotice = message;\s*renderSecurities();`
-// ——只釘「兩行相鄰存在」，守門條件反轉（`===`→`!==`）、訊息拿錯欄位（skippedDup 當匯入筆數）都仍綠。這裡真的呼叫它再按確認鈕。
+// openSecPreview 用行為釘（真的呼叫、按確認鈕），不用正則釘那兩行：正則只看得到「兩行相鄰存在」，分不出守門條件反轉
+// （`===`→`!==`）或訊息拿錯欄位（skippedDup 當匯入筆數）。
 async function assertPreviewImportBehavior(source) {
   const fn = namedFunction(source, 'openSecPreview');
   const createHarness = ({ routeSeq, reject = null, out = { imported: 2, skippedDup: 1 } }) => {
