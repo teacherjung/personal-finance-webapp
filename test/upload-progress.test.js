@@ -227,13 +227,13 @@ test('串流｜NDJSON 形狀：階段逐行、最後一行 done 帶結果；錯�
     '★code 必須跟著走（前端 e.code === "pdf_password" 才跳得出密碼窗）');
 });
 
-test('串流｜不帶 stream 旗標的呼叫端行為零位移（字面釘＝第二道網；兩形態的行為在「路由行為」那題）', () => {
+test('串流｜不帶 stream 旗標的呼叫端行為零位移（字面釘：只掃原始碼字串；兩形態的行為由「路由行為：同一路徑兩種形態」那題守）', () => {
   const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
   assert.match(src, /if \(req\.body\.stream === true\) return streamNdjson\(/, '★嚴格布林（跟 useAi 同款：字串 "true" 不算）');
   assert.match(src, /return res\.json\(await previewBankStatement\(/, '★沒帶旗標＝照舊一發 JSON');
 });
 
-test('接線｜前端：四條路徑走單一出口、出口帶 stream:true、進度只在收到 frame 時寫（字面釘＝第二道網；出口唯一性與 apiStream 的行為題在檔尾）', () => {
+test('接線｜前端：四條路徑走單一出口、出口帶 stream:true、進度只在收到 frame 時寫（字面釘：只掃原始碼字串；出口唯一性由「cashflow.js 通往 /bank-statement/preview 的出口只有一個」那題守、apiStream 由「apiStream 行為」那題守）', () => {
   const src = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
   assert.match(src, /apiStream\('\/bank-statement\/preview', \{ \.\.\.previewBody\(bodyArgs\), stream: true \}/, '★出口帶旗標');
   assert.match(src, /progressText\(f\); if \(t && setProgress\) setProgress\(t\)/, '★只有收到 frame 才寫字（沒有計時器）');
@@ -276,7 +276,7 @@ test('G6｜串流協議解讀（純模組直測）：半行/壞行/error 帶 cod
   assert.deepEqual(r2, { ok: true, result: 9 });
 });
 
-test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保住 code 自有屬性（字面釘＝第二道網；行為題在檔尾「apiStream 行為」）', () => {
+test('G6b｜app.js 的 apiStream 走那支純模組、且兩條錯誤路都保住 code 自有屬性（字面釘：只掃原始碼字串；行為由「apiStream 行為」那題守）', () => {
   const app = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
   assert.match(app, /import \{ makeNdjsonParser, reduceFrames, TRUNCATED \}/, '協議解讀集中在純模組（可直測）');
   assert.match(app, /const final = out \|\| TRUNCATED;/, '沒有終端 frame＝斷線結果（不假裝成功）');
