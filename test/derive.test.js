@@ -299,11 +299,14 @@ test('丙｜「寫死匯率」判斷器本身：#558 r3 的假綠與假紅各留
     'const u = s.usdTwd > 0 ? s.usdTwd : 31;', 'const u = ok ? fxFor(t, c).rate : 31;', 'const u = (s.usdTwd || s.legacyUsd) || 32;',
     "const g = fxTwd['GBP'] || 41;", 'const r = usdRate(s) || -31;', 'const r = f.missing ? 31 : f.rate;',
     'const z = bal * f.rate || 0;', 'const t = `${fmt(Math.abs(x) * ratesLev.rates.USD ||  31)}`;',   // 乘積的 NaN 防呆＝把缺匯率靜靜蓋掉
+    // r4 實測：複合條件把 31 藏在豁免後面（條件裡「出現」missing ≠ 條件「就是」missing）；兩支都是數字也不能放
+    'const idleUsd = total / (fxFor(ratesLev, "USD").missing && ratesLev.rates.USD > 0 ? 0 : 31);',
+    'const r = f.missing ? 0 : 31;', 'const r = f.missing || bad ? 0 : f.rate;', 'const r = f.missing ? f.rate : 31;',
   ]) assert.equal(hit(code).length, 1, `該抓沒抓：${code}`);
   // 不該抓的（都是三個真檔裡實際存在的形狀）：分批門檻、數量／餘額、動態鍵累加、乘積防呆、缺匯率不計入
   for (const code of [
     'const fxHigh = Number(s.fxHigh || 32);', 'const q = Number(h.quantity || 0);', 'const x = byClass[cls] || 0;',
-    'const v = f.missing ? 0 : Number(account.balance || 0) * f.rate;', 'const r = f.missing ? 0 : f.rate;',
+    'const v = f.missing ? 0 : Number(account.balance || 0) * f.rate;', 'const r = f.missing ? 0 : f.rate;', 'const r = !f.missing ? f.rate : 0;',
   ]) assert.deepEqual(hit(code), [], `誤殺：${code}`);
   // 射程之外（誠實劃界）：不長那三種形狀的寫法抓不到——這一題釘住「它不保證什麼」
   for (const code of ['const u = Math.max(s.usdTwd, 31);', 'let u = s.usdTwd; if (!u) u = 31;', 'const v = ok ? qty * f.rate : 0;']) assert.deepEqual(hit(code), [], `射程外卻命中：${code}`);

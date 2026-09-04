@@ -13,7 +13,8 @@
 //   所以 `t.GBP.count || 0` 末端是 `count`＝不命中；`s.fxHigh || 32`（分批門檻）＝不命中；
 //   `bal * f.rate || 0`＝命中（||／?? 的左邊連乘除一起看：乘積的 NaN 防呆會把缺匯率靜靜蓋成 0）；
 //   `ok ? bal * f.rate : 0`＝不命中（三元式只看條件與「本身就是一個匯率」的另一支；乘積不算）；
-//   `f.missing ? 0 : f.rate`＝唯一豁免（條件是解析器旗標 missing、數字是 0＝丙的「缺匯率不計入」）。
+//   `f.missing ? 0 : f.rate`／`!f.missing ? f.rate : 0`＝唯一豁免：條件**本身**是 `.missing` 旗標（複合條件如
+//   `f.missing && rates.USD > 0 ? 0 : 31` 不算）、數字支是 0、另一支不是數字字面量（`f.missing ? 0 : 31` 命中）。
 // 射程之外（誠實劃界，考題 test/derive.test.js 有列）：`Math.max(rate, 31)`、if 賦值、
 //   先把數字存進變數再退路、三元式另一支是乘積——不長上面的形狀，抓不到。
 // 壞語法＝丟例外（TS 解析器不會自己丟，半棵樹會靜靜漏抓；這裡 fail-closed）。
@@ -105,11 +106,23 @@ export function findFxLiteralFallbacks(src, file = 'source.js') {
   const visit = (node) => {
     if (ts.isBinaryExpression(node) && FALLBACK_OPS.has(node.operatorToken.kind) && isNumber(node.right)) report(node, [node.left], true);
     else if (ts.isConditionalExpression(node) && (isNumber(node.whenTrue) || isNumber(node.whenFalse))) {
-      const numeric = isNumber(node.whenTrue) ? node.whenTrue : node.whenFalse;
-      // 唯一豁免：`f.missing ? 0 : f.rate`——條件是解析器自己的旗標 missing、數字是 0＝丙契約的「缺匯率不計入」，
-      // 不是另一個預設匯率；`f.missing ? 31 : f.rate` 仍命中。
-      const skipMissing = unwrap(numeric).getText(sf) === '0' && terminals(node.condition).includes('missing');
-      if (!skipMissing) report(node, [node.condition, numeric === node.whenTrue ? node.whenFalse : node.whenTrue]);
+      const zeroWhenTrue = isNumber(node.whenTrue);
+      const numeric = zeroWhenTrue ? node.whenTrue : node.whenFalse;
+      const other = zeroWhenTrue ? node.whenFalse : node.whenTrue;
+      // 唯一豁免：`f.missing ? 0 : X`／`!f.missing ? X : 0`——條件**本身**就是解析器旗標 missing（不是「條件裡出現 missing」：
+      // #558 r4 實測 `f.missing && rates.USD > 0 ? 0 : 31` 靠複合條件把 31 藏掉）、數字是 0、X 不是數字字面量。
+      // 這是丙契約的「缺匯率不計入」，不是另一個預設匯率；`f.missing ? 31 : f.rate`、`f.missing ? 0 : 31` 仍命中。
+      const cond = unwrap(node.condition);
+      const negated = ts.isPrefixUnaryExpression(cond) && cond.operator === ts.SyntaxKind.ExclamationToken;
+      const flag = negated ? unwrap(cond.operand) : cond;
+      const exempt = unwrap(numeric).getText(sf) === '0' && !isNumber(other) && ts.isPropertyAccessExpression(flag)
+        && flag.name.text === 'missing' && (negated ? !zeroWhenTrue : zeroWhenTrue);
+      if (!exempt) {
+        const names = [node.condition, other].flatMap((n) => terminals(n));
+        // 兩支都是數字、條件又碰到 missing 旗標 ⇒ 非零那支就是寫死的匯率（`f.missing ? 0 : 31`）
+        const name = names.find((t) => FX_NAMES.has(t)) || (isNumber(other) && names.includes('missing') ? 'missing' : undefined);
+        if (name) hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, name, text: node.getText(sf).replace(/\s+/g, ' ') });
+      }
     }
     ts.forEachChild(node, visit);
   };
