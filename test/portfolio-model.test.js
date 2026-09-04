@@ -101,22 +101,22 @@ test('投資模型｜帳戶資料暫時缺席時沿用舊頁面的空陣列退�
   assert.equal(model.leverage, 1);
 });
 
-// 「乙」（William 2026-09-03 裁）：GBP／JPY 沒設匯率＝缺匯率，不計入並標註；與後端 computeAssets／computeIb 同口徑（parity 題在 test/derive.test.js）。
-test('乙｜buildPortfolioModel：GBP 持股與 GBP 現金沒設匯率 → 金額記 0＋fxMissing、不進 total／cashV、missingFx 各計一筆；設了就照算', async () => {
+// 「丙」（William 2026-09-04 裁）：沒抓到匯率用預設值照算並標註；不支援的幣別才不計入。parity 題在 test/derive.test.js。
+test('丙｜buildPortfolioModel：GBP 持股與 GBP 現金沒抓到匯率 → 用預設值 40.8 照算、fxSource=default、defaultFx 各計一筆；EUR 帳戶不支援 → 不計入、missingFx', async () => {
   const { buildPortfolioModel: build } = await import('../public/modules/portfolio-model.js');
   const holdings = /** @type {any} */ ([
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
     { id: 'g', symbol: 'ISF', currency: 'GBP', quantity: 5, price: 8, avgCost: 7, source: 'manual' },
   ]);
-  const accounts = /** @type {any} */ ([{ id: 'c', type: 'cash', class: '現金', currency: 'GBP', balance: 100 }]);
+  const accounts = /** @type {any} */ ([{ id: 'c', type: 'cash', class: '現金', currency: 'GBP', balance: 100 }, { id: 'e', type: 'cash', class: '現金', currency: 'EUR', balance: 30 }]);
   const m = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32 }));
   const g = m.rows.find(r => r.id === 'g');
-  assert.ok(g && g.fxMissing === true && g.valueTwd === 0 && g.costTwd === 0, '缺匯率的持股要標 fxMissing、金額 0');
-  assert.equal(m.total, 10 * 100 * 32, 'total 只含有匯率的持股');
-  assert.equal(m.cashV, 0, '缺匯率的現金不進 cashV');
-  assert.deepEqual(m.missingFx, [{ currency: 'GBP', count: 2, liabilities: 0 }], '持股一筆＋現金一筆（都是資產）');
+  assert.ok(g && g.fxSource === 'default' && g.valueTwd === 5 * 8 * 40.8, '預設匯率的持股照算並標 fxSource=default');
+  assert.equal(m.total, 10 * 100 * 32 + 5 * 8 * 40.8);
+  assert.equal(m.cashV, 100 * 40.8, 'GBP 現金用預設值；EUR 不支援不計入');
+  assert.deepEqual(m.defaultFx, [{ currency: 'GBP', count: 2, rate: 40.8 }]);
+  assert.deepEqual(m.missingFx, [{ currency: 'EUR', count: 1, liabilities: 0 }]);
   const ok = build(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } }));
-  assert.equal(ok.total, 10 * 100 * 32 + 5 * 8 * 40, '對照：設了匯率就照算');
-  assert.equal(ok.cashV, 100 * 40);
-  assert.deepEqual(ok.missingFx, []);
+  assert.equal(ok.total, 10 * 100 * 32 + 5 * 8 * 40, '對照：抓到匯率就用即時值');
+  assert.deepEqual(ok.defaultFx, []);
 });

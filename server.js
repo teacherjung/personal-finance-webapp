@@ -57,6 +57,7 @@ const tenantKeyOf = (req) => currentTenant()?.userId || ipKeyOf(req);
 export const OUTBOUND_ENDPOINTS = [
   { host: 'ndcdyn.interactivebrokers.com', why: 'IBKR Flex Web Service（拉整份報表）', paths: ['/api/ib/sync'] },
   { host: 'query1.finance.yahoo.com', why: '報價', paths: ['/api/quotes', '/api/quotes/refresh-auto'] },
+  { host: 'open.er-api.com + cdn.jsdelivr.net', why: '匯率備援（Yahoo 抓不到匯率時依序退；丙）', paths: ['/api/quotes', '/api/quotes/refresh-auto'] },
   { host: 'www.multpl.com', why: 'CAPE（席勒本益比）', paths: ['/api/cape'] },
   { host: 'fred.stlouisfed.org', why: '實質利率（FRED）', paths: ['/api/realyield'] },
   // 洞察引擎自己會呼叫 CAPE 與實質利率兩者，**而且會寫入資料庫**（更新書籤）。

@@ -129,7 +129,7 @@ export function fxExposure(rows, accounts, fx) {
     if (LIABILITY_TYPES.has(a.type || '') && bal > 0) bal = -bal;
     const cur = a.currency || 'TWD';
     const rate = cur === 'TWD' ? 1 : (Object.hasOwn(fx, cur) ? fx[cur] : null);   // 台幣不需要匯率
-    if (!(typeof rate === 'number' && rate > 0)) continue;   // 缺匯率＝不計入（乙；與 portfolio-model／後端同口徑）
+    if (!(typeof rate === 'number' && rate > 0)) continue;   // 不支援的幣別＝不計入（丙③）；預設匯率已在表裡、照算
     bucket(cur).cashTwd += bal * rate;
   }
   for (const c of Object.values(byCur)) c.netTwd = c.stockTwd + c.bondTwd + c.goldTwd + c.cashTwd;

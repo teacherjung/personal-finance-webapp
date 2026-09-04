@@ -123,7 +123,7 @@ export function fxSection(rows, accounts, fx, formatters) {
       </div>`;
       }).join('')}
     </div>
-    <p class="muted small" style="margin-top:10px">註解：換算匯率來自 Yahoo Finance</p>
+    <p class="muted small" style="margin-top:10px">註解：換算匯率＝上次抓到的（Yahoo，抓不到退備援 API）或預設值</p>
   </div>`;
 }
 

@@ -24,6 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * ⇒ 一律 `pathToFileURL()`＋`JSON.stringify()`：前者處理 `#`／`%`／空白／中文，後者處理引號。
  */
 const STORE_URL = pathToFileURL(join(ROOT, 'lib/store.js')).href;
+const FX_RATES_URL = pathToFileURL(join(ROOT, 'public/modules/fx-rates.js')).href;
 
 const store = await import('../lib/store.js');
 const { app } = await import('../server.js');
@@ -114,7 +115,7 @@ test('搬家重搬規則（Codex#8-1）：db 沒寫過→安全重搬；兩邊�
   }
 });
 
-test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝除補預設，不污染計算', () => {
+test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝除、不留字串；計算時由 fx-rates 的預設值接手（丙：種子不再補 32）', () => {
   const dbPath = join(tmpdir(), `finance-migbad-${process.pid}.db`);
   const jsonPath = dbPath.slice(0, -3) + '.json';
   const legacy = { ...store.emptyDb(), settings: { ...store.emptyDb().settings, usdTwd: 'oops' } };
@@ -122,10 +123,13 @@ test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝�
   try {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
       import { load } from ${JSON.stringify(STORE_URL)};
-      console.log(JSON.stringify({ usdTwd: load().settings.usdTwd }));
+      import { resolveFxTable } from ${JSON.stringify(FX_RATES_URL)};
+      const s = load().settings;
+      console.log(JSON.stringify({ usdTwd: s.usdTwd === undefined ? '__undefined__' : s.usdTwd, rate: resolveFxTable(s).rates.USD }));
     `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
-    assert.equal(r.usdTwd, 32, '壞的 usdTwd 應被剝除、由預設 32 接手（不可留字串）');
+    assert.equal(r.usdTwd, '__undefined__', '壞的 usdTwd 應被剝除，而且種子不可再補 32（丙：預設值只住 fx-rates.js 的常數）');
+    assert.equal(r.rate, 32, '計算時由 fx-rates 的預設值 32 接手，不污染計算');
   } finally {
     for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
   }
@@ -517,4 +521,27 @@ test('自主體檢｜編輯卡片密碼留空＝不變更：PUT 不帶 pdfPasswo
   const c = exp.cards.find(x => x.id === card.id);
   assert.equal(c.name, '卡2改名');
   assert.equal(c.pdfPassword, 'B222222222', '留空不送＝後端部分合併保留舊密碼');
+});
+
+// 丙（William 2026-09-04）：預設匯率只住 fx-rates.js 的常數。這題走**真的** data/seed.json → 全新資料庫首次 load() 的路徑
+//（不是 emptyDb()），所以只在 seed.json 加回 usdTwd:32 也會紅（Codex #556 r2）。
+test('丙｜data/seed.json 不含 usdTwd；全新資料庫首次 load() 後 usdTwd 未設定、匯率由預設值 32 接手', () => {
+  const seed = JSON.parse(readFileSync(join(ROOT, 'data/seed.json'), 'utf8'));
+  assert.ok(!Object.hasOwn(seed.settings, 'usdTwd'), 'seed.json 的 settings 不可預填 usdTwd');
+  assert.deepEqual(seed.settings.fxTwd, {}, 'seed.json 的 fxTwd 也要是空的');
+  const dbPath = join(tmpdir(), `finance-seed-fx-${process.pid}.db`);
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { load } from ${JSON.stringify(STORE_URL)};
+      import { resolveFxTable } from ${JSON.stringify(FX_RATES_URL)};
+      const s = load().settings;   // 全新 STORE_FILE：這一步會從 data/seed.json 種庫
+      console.log(JSON.stringify({ usdTwd: s.usdTwd === undefined ? '__undefined__' : s.usdTwd, fxTwd: s.fxTwd, rate: resolveFxTable(s).rates.USD, src: resolveFxTable(s).sources.USD }));
+    `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
+    const r = JSON.parse(out.trim().split('\n').pop() || '{}');
+    assert.equal(r.usdTwd, '__undefined__', '首次 load() 後 usdTwd 不可被種子填成 32');
+    assert.deepEqual(r.fxTwd, {});
+    assert.equal(r.rate, 32); assert.equal(r.src, 'default', '要被標成「預設值」而不是「抓到的」');
+  } finally {
+    for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm']) { try { rmSync(f); } catch { /* 可能不存在 */ } }
+  }
 });

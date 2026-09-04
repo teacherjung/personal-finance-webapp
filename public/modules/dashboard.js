@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { TIER_LABELS } from './signal-tiers.js';   // 估值檔位標籤（跳檔卡顯示「常態→加碼」用）
 import { MONTHLY_REVIEW_INFO, monthlyReviewCardHtml, monthlyReviewChartConfig, unmatchedRefundInfoHtml, rewardInfoHtml } from './monthly-review-card.js';
 import { GOAL_TRACKING_INFO, goalTrackingHtml } from './goal-tracking.js';
-import { MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML } from './portfolio-info.js';   // 缺匯率說明（乙）與投資頁共用同一份
+import { FX_INFO_TITLE, FX_INFO_HTML } from './portfolio-info.js';   // 匯率說明（丙）與投資頁共用同一份
 import {
   dashboardCashflowSeries,
   dashboardGuideState,
@@ -313,7 +313,7 @@ export async function renderDashboard() {
           <span>資產 <b>${wan(s.assets)}</b></span>
           <span>負債 <b>${wan(s.liabilities)}</b></span>
           <span class="${warnCount ? 'needs-attention' : 'steady'}">${warnCount ? `${warnCount} 項紀律需注意` : '目前紀律正常'}</span>
-          ${missingFxFactHtml(s.missingFx)}
+          ${fxFactHtml(s.defaultFx, s.missingFx)}
           <span id="dhLastSeen"></span>
         </div>
       </div>
@@ -367,26 +367,33 @@ export async function renderDashboard() {
   drawTrend(snapshots);
   drawCashflowTrend(cashflowRows);
   wireGoalTrackingInfo();
-  wireMissingFxInfo();
+  wireFxInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
   // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
 }
 
-/** 缺匯率就地標註（乙）：外幣部位沒匯率＝不算進淨資產，要讓人一眼看到幾筆、方向（資產缺＝淨值被低估；負債缺＝負債被低估、淨值可能被高估）與怎麼補。 @param {any} missingFx */
-function missingFxFactHtml(missingFx) {
-  if (!Array.isArray(missingFx) || !missingFx.length) return '';
-  const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
-  const liab = missingFx.reduce((sum, m) => sum + Number(m?.liabilities || 0), 0);
-  const curs = missingFx.map(m => esc(String(m?.currency || ''))).join('、');
-  const dir = liab > 0 ? `（其中 ${liab} 筆是負債：負債被低估、淨值可能被高估）` : '（淨值被低估）';
-  return `<span class="needs-attention">${n} 筆外幣部位（${curs}）沒有匯率、未計入${dir} <button type="button" class="info-link" id="missingFxInfo">為什麼？</button></span>`;
+/** 匯率就地標註（丙）：用了預設匯率＝照常計入、只提示；不支援的幣別＝無法換算、要講方向。 @param {any} defaultFx @param {any} missingFx */
+function fxFactHtml(defaultFx, missingFx) {
+  let html = '';
+  if (Array.isArray(defaultFx) && defaultFx.length) {
+    const n = defaultFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
+    const list = defaultFx.map(m => `${esc(String(m?.currency || ''))} ${esc(String(m?.rate ?? ''))}`).join('、');
+    html += `<span class="muted">${n} 筆外幣部位用預設匯率（${list}） <button type="button" class="info-link" id="fxInfo">為什麼？</button></span>`;
+  }
+  if (Array.isArray(missingFx) && missingFx.length) {
+    const n = missingFx.reduce((sum, m) => sum + Number(m?.count || 0), 0);
+    const liab = missingFx.reduce((sum, m) => sum + Number(m?.liabilities || 0), 0);
+    const curs = missingFx.map(m => esc(String(m?.currency || ''))).join('、');
+    html += `<span class="needs-attention">${n} 筆部位的幣別（${curs}）系統不支援、未計入${liab > 0 ? `（其中 ${liab} 筆是負債：負債被低估、淨值可能被高估）` : ''}</span>`;
+  }
+  return html;
 }
 
-function wireMissingFxInfo() {
-  const el = byId('missingFxInfo');
-  if (el) el.onclick = () => openInfo(MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML, { size: 'sm' });
+function wireFxInfo() {
+  const el = byId('fxInfo');
+  if (el) el.onclick = () => openInfo(FX_INFO_TITLE, FX_INFO_HTML, { size: 'sm' });
 }
 
 function wireGoalTrackingInfo() {

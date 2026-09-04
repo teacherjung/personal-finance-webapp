@@ -79,17 +79,15 @@ test('投資曝險｜現金依匯率換算且正數負債反向計入', () => {
   });
 });
 
-test('乙｜fxExposure：現金帳戶的幣別沒匯率（null／表上沒有）→ 不計入該幣別現金曝險；有匯率照算', async () => {
+test('丙｜fxExposure：表上有的幣別（含預設值）照算；表上沒有的幣別（EUR）不計入、不可當台幣', async () => {
   const { fxExposure: fxExp } = await import('../public/modules/portfolio-exposure.js');
   const accounts = /** @type {any} */ ([
     { id: 'g', type: 'cash', currency: 'GBP', balance: 100 },
     { id: 'e', type: 'cash', currency: 'EUR', balance: 50 },
     { id: 't', type: 'cash', currency: 'TWD', balance: 7 },
   ]);
-  const without = fxExp([], accounts, /** @type {any} */ ({ TWD: 1, USD: 32, GBP: null, JPY: null }));
-  assert.equal(without.GBP?.cashTwd ?? 0, 0, 'GBP 沒匯率不可算進去（以前 `|| 1` 會當台幣 100）');
-  assert.equal(without.EUR?.cashTwd ?? 0, 0, '表上沒有的 EUR 也算缺匯率，不可當台幣');
-  assert.equal(without.TWD.cashTwd, 7, '對照：台幣照算');
-  const withRate = fxExp([], accounts, /** @type {any} */ ({ TWD: 1, USD: 32, GBP: 40, JPY: null }));
-  assert.equal(withRate.GBP.cashTwd, 100 * 40, '對照：設了匯率就照算');
+  const ex = fxExp([], accounts, /** @type {any} */ ({ TWD: 1, USD: 32, GBP: 40.8, JPY: 0.215 }));
+  assert.equal(ex.GBP.cashTwd, 100 * 40.8, 'GBP 用表上的值（預設值也在表上）');
+  assert.equal(ex.EUR?.cashTwd ?? 0, 0, '表上沒有的 EUR 不可算進去（以前 `|| 1` 會當台幣）');
+  assert.equal(ex.TWD.cashTwd, 7);
 });
