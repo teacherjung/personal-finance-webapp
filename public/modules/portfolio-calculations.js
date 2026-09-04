@@ -77,13 +77,12 @@ export function tradeSummary(trades, settings = {}) {
  * @param {number} curCost
  * @param {number} curValue
  * @param {Array<object>|undefined} ibTrades
- * @param {number} usd
  * @param {(value: string) => Date} parseLocalDate
  * @param {object} [settings]
  * @param {Date} [now]
  * @returns {{ok: false, why: string}|{ok: true, rate: number, years: number, estimated: boolean}}
  */
-export function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, parseLocalDate, settings = {}, now = new Date()) {
+export function portfolioXirr(psnaps, curCost, curValue, ibTrades, parseLocalDate, settings = {}, now = new Date()) {
   if (!Array.isArray(psnaps) || !psnaps.length || !(curValue > 0)) return { ok: false, why: '需先記錄月快照' };
   const today = new Date(now.getTime()); today.setHours(0, 0, 0, 0);
   const eom = (mk) => {   // 快照時點以月底近似（本月快照則視為今天）
@@ -100,7 +99,11 @@ export function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, parseLoc
   // （tradePnlBase：pnlBase→fxRateToBase→USD→設定匯率估算→預設匯率估算），避免漏估外幣賣出讓年化偏低。
   // 「含估算」旗標（Codex #557 r1）：①只在那筆**真的進了現金流**之後才點（日期守門前點亮＝誤標）；
   // ②每筆 base 都要再乘 usd（USD→TWD）——美元匯率本身是預設值時，整條年化都算估算，連 USD 交易也是。
-  const usdIsDefault = resolveFxTable(settings).sources.USD === 'default';
+  // 乘數（USD→TWD）與「是否預設值」**同一張表、同一次解出**（Codex #557 r2）：以前乘數是呼叫端另傳的 usd 參數，
+  // 值與來源可以分離——考題用 usd=1 配 settings={} 也綠。現在呼叫端不能再傳別的乘數。
+  const fxTable = resolveFxTable(settings);
+  const usd = fxTable.rates.USD;
+  const usdIsDefault = fxTable.sources.USD === 'default';
   let estimated = false;
   for (const tr of ibTrades || []) {
     if (tr.buySell !== 'SELL') continue;

@@ -42,8 +42,7 @@ export function buildPortfolioPageState(input) {
     input.totalCost,
     input.totalValue,
     input.ibTrades,
-    input.usdRate,
-    input.parseLocalDate,
+    input.parseLocalDate,   // 乘數與「是否預設」由 portfolioXirr 自己從 settings 解（同一張表；Codex #557 r2）
     input.settings,
     input.now
   );
