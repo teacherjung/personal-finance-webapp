@@ -387,7 +387,7 @@ test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON�
     const plain = await post({});   // 沒有 data ⇒ 服務層 decode 就丟 400（不進 pdf-isolate 子行程、結果確定）
     assert.equal(plain.status, 400);
     const plainBody = await plain.json();
-    assert.equal(plainBody.error, '沒有收到檔案內容', 'JSON 枝的錯誤句＝服務層 decode 那句（「真的進服務層」由 NDJSON 枝的階段序列證明；路由那段不得自己回錯誤，由同檔題名關鍵字「不自己回錯誤」那題守）');
+    assert.equal(plainBody.error, '沒有收到檔案內容', 'JSON 枝的錯誤句＝服務層 decode 那句（「真的進服務層」由 NDJSON 枝的階段序列證明；路由那段的字面由同檔題名關鍵字「preview 路由那一段的原始碼字面」那題守）');
     const str = await post({ stream: 'true' });
     assert.equal(str.status, 400, '字串 "true" 不是旗標：照舊一發 JSON 400');
     assert.deepEqual(await str.json(), plainBody, '兩次 JSON 形態的錯誤一字不差');
@@ -402,15 +402,17 @@ test('路由行為：同一路徑兩種形態——不帶 stream＝一發 JSON�
   } finally { /** @type {any} */ (server).closeAllConnections?.(); server.close(); await once(server, 'close'); }
 });
 
-test('preview 路由那一段（形狀題）：只建一份 opts、兩枝傳同一個變數、中間不改它的欄位、不自己回錯誤（錯誤一律來自服務層，兩枝才會一致）——值對等要走到 AI／PDF 才觀察得到，不在此題', () => {
+test('preview 路由那一段的原始碼字面（去註解後）：`opts = {` 只出現一次、兩次呼叫的字面各一、沒有 `opts.<欄位> =`／`opts[`、沒有 `res.status(`／`res.json({`——字面釘；Object.assign／別名修改／抽到路由段外的 helper 都不在此題', () => {
   const src = readFileSync(join(ROOT, 'lib/routes/statement.js'), 'utf8');
-  const route = /statementRoutes\.post\('\/api\/bank-statement\/preview'[\s\S]*?\n\}\)\);/.exec(src)?.[0] || '';
+  // 鐵則 9：形狀題先去註解——註解裡出現禁用拼法不該假紅、放進註解也不該矇混
+  const noComments = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+  const route = /statementRoutes\.post\('\/api\/bank-statement\/preview'[\s\S]*?\n\}\)\);/.exec(noComments)?.[0] || '';
   assert.ok(route, '找不到 preview 路由');
   assert.match(route, /previewBankStatement\(req\.body\.data, req\.body\.password, undefined, \{ \.\.\.opts, onStage \}\)/, '串流枝：opts 全帶＋onStage');
   assert.match(route, /previewBankStatement\(req\.body\.data, req\.body\.password, undefined, opts\)/, 'JSON 枝：同一份 opts');
-  assert.equal((route.match(/\bopts = \{/g) || []).length, 1, '路由那一段只建一份 opts（兩枝各建一份同名物件就分家了）');
-  assert.doesNotMatch(route, /\bopts\s*\.\s*[A-Za-z_$][\w$]*\s*=[^=]|\bopts\s*\[/, '建好之後不得再改 opts 的欄位（例如串流枝偷關 useAi）——兩枝拿到的就不是同一份');
-  assert.doesNotMatch(route, /res\s*\.\s*status\s*\(|res\s*\.\s*json\s*\(\s*\{/, '路由那一段不得自己回錯誤或自造回應：錯誤一律來自服務層，JSON 枝才不會繞過 previewBankStatement');
+  assert.equal((route.match(/\bopts = \{/g) || []).length, 1, '字面：`opts = {` 只出現一次（兩枝各建一份同名物件這種寫法會多一次）');
+  assert.doesNotMatch(route, /\bopts\s*\.\s*[A-Za-z_$][\w$]*\s*=[^=]|\bopts\s*\[/, '字面：沒有 `opts.<欄位> =`／`opts[`（Object.assign(opts, …)、先取別名再改、在路由段外改——這些拼法不在此題）');
+  assert.doesNotMatch(route, /res\s*\.\s*status\s*\(|res\s*\.\s*json\s*\(\s*\{/, '字面：路由那一段沒有 `res.status(`／`res.json({`（抽成路由段外的 helper 去回錯誤這種寫法不在此題）');
 });
 
 test('cashflow.js 通往 /bank-statement/preview 端點的字面只有一處、且在 apiStream 裡（字串拼接與「有幾條路徑」不在此題）', () => {
