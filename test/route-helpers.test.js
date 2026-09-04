@@ -47,7 +47,7 @@ test('wrapRoute：async reject 與 sync throw 都接得住；成功路徑原樣�
   assert.deepEqual(res3.calls.json, { ok: true });
 });
 
-// ---- asyncRoute（core/crud 那批走全域中介的路由在用）與 wrapRoute 的 extra：為什麼要各釘一題——asyncRoute 若改成 sendRouteError
+// ---- asyncRoute（core/crud 那批走全域中介的路由在用）與 wrapRoute 的 extra 要用行為守：asyncRoute 若改成 sendRouteError
 //      會偷改整批路由的錯誤口徑；wrapRoute 丟掉 extra，ib 同步靠它的 {ok:false} 形狀就消失。
 test('asyncRoute：任何錯誤（含帶 status 的）一律交 next、res 不動——包裝不可順手改口徑；同步 throw 也接得住；成功原樣過', async () => {
   const e = Object.assign(new Error('缺 id'), { status: 400 });
