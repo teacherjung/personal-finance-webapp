@@ -243,12 +243,15 @@ test('丙｜零餘額帳戶／零股數持股不算曝險：defaultFx 與 missin
   assert.deepEqual(fe.defaultFx, []); assert.deepEqual(fe.missingFx, []);
 });
 
-test('丙｜前後端同一份實作：derive.js／snapshot.js／portfolio-calculations.js／portfolio-model.js 的匯率表都 import 自 fx-rates.js（結構檢查），且持股側與帳戶側數字逐欄相同', async () => {
+test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-calculations.js 直接 import fx-rates.js，portfolio-model.js 經 portfolio-calculations 轉口（結構檢查；交易損益與 IB 現金流的估算不在射程），且持股側與帳戶側數字逐欄相同', async () => {
   const root = new URL('../', import.meta.url);
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js', 'public/modules/portfolio-calculations.js']) {
     const src = readSrc(new URL(f, root), 'utf8');
     assert.match(src, /from '(\.\.\/)*(public\/modules\/)?(\.\/)?fx-rates\.js'/, `${f} 必須 import fx-rates.js（唯一實作），不可自己另寫一份匯率表`);
   }
+  { const src = readSrc(new URL('public/modules/portfolio-model.js', root), 'utf8');
+    assert.match(src, /import \{[^}]*\bresolveFxTable\b[^}]*\} from '\.\/portfolio-calculations\.js'/, 'portfolio-model.js 的匯率表必須經 portfolio-calculations 轉口自 fx-rates.js');
+    assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /\|\| ?40\.8|\|\| ?0\.215|usdTwd \|\| ?32\b|fxTwd\?\.\[/, 'portfolio-model.js 不可自己另算匯率'); }
   // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
   // ⚠️ 射程刻意不含 portfolio-calculations.js 的 tradePnlBase（交易損益／XIRR 的「設定估算」仍是它自己的口徑：缺匯率標 missing）——要不要一併改成用預設值，另案裁。
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
@@ -278,4 +281,11 @@ test('丙｜前後端同一份實作：derive.js／snapshot.js／portfolio-calcu
   const be = computeAssets(/** @type {any} */ ({ settings: { usdTwd: 32 }, holdings, accounts }));
   assert.deepEqual(be.defaultFx, [{ currency: 'GBP', count: 2, rate: FX_DEFAULT_TWD.GBP }], '對照：持股 1＋負現金 1 用預設值（零餘額不算）');
   assert.deepEqual(be.missingFx, [{ currency: 'EUR', count: 2, liabilities: 1 }], '對照：EUR 兩筆不支援、其中 loan 是負債');
+});
+
+test('丙｜換匯區間提醒（fx-usd-high／low）只看「抓到的」美元匯率：沒抓到時預設 32 剛好等於 fxHigh 預設 32，不可假報「已達高點」', () => {
+  const dflt = buildSummary(/** @type {any} */ ({ settings: {}, accounts: [] })).reminders;
+  assert.equal(dflt.find(r => r.key === 'fx-usd-high' || r.key === 'fx-usd-low'), undefined, '預設匯率不是市場匯率，不可觸發換匯區間提醒');
+  const live = buildSummary(/** @type {any} */ ({ settings: { usdTwd: 33, fxHigh: 32, fxLow: 28 }, accounts: [] })).reminders;
+  assert.ok(live.find(r => r.key === 'fx-usd-high'), '對照：抓到的 33 ≥ 32 要提醒');
 });

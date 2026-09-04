@@ -64,7 +64,7 @@ test('投資視覺｜幣別曝險維持底層資產拆解、負債方向與排�
   assert.match(html, /120 元 ＝ 股票 100 元 ＋ 現金 20 元/);
   assert.match(html, /20 元 ＝ 黃金 20 元/);
   assert.match(html, /rval neg[\s\S]*-55\.6%/);
-  assert.match(html, /註解：換算匯率來自 Yahoo Finance/);
+  assert.match(html, /註解：換算匯率＝上次抓到的（Yahoo，抓不到退備援 API）或預設值/);
 });
 
 test('投資視覺｜區域曝險依金額排序並維持中國、印度說明', () => {
