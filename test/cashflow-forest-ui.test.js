@@ -29,7 +29,7 @@ test('銀行收支期間：月份鍵轉成中文年月，壞值不硬猜', () =>
   assert.equal(cashflowPeriodLabel('本月'), '所選月份');
 });
 
-test('銀行收支接線：帳本判準、四個篩選與所有既有操作入口仍在', () => {
+test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的行為題在 test/ledger-split-behavior.test.js）：四個金流 chip、清單裡指定的元素 id、編輯／刪除屬性、摘要與空狀態文案各有一處', () => {
   const source = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
   assert.match(source, /allRaw\.filter\(t => !isCardTx\(t\)\)/);
   for (const flow of ['all', 'income', 'expense', 'transfer']) {

@@ -29,7 +29,7 @@ test('信用卡費摘要：先排除現金流，再依原消費月抵減配對�
   assert.deepEqual({ ...marByCat }, {}, '配對退款不算進退款月份的消費統計');
 });
 
-test('信用卡費接線：退款退路、月份、匯入、查帳與店家入口全部保留', () => {
+test('信用卡費接線（字面釘：只掃原始碼字串；分堆結果的行為題在 test/ledger-split-behavior.test.js）：退款退路、月份、匯入、查帳與店家入口的字串各有一處', () => {
   const source = readFileSync(join(ROOT, 'public/modules/transactions.js'), 'utf8');
   assert.match(source, /const all = allRaw\.filter\(isCardTx\)/);
   assert.match(source, /consumptionCategoryTotals\(rows, all, pairs, monthFilter, Boolean\(refundData\)\)/);

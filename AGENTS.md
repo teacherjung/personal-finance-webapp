@@ -34,7 +34,7 @@
 - **信用卡消費明細**（畫面名稱「信用卡費」；`ledger:'card'`，帳單匯入 `source:'stmt'` 自動蓋）：消費分析＋查帳用，**絕不進現金流加總**（那些消費的現金流出＝銀行帳本日後的「繳卡費」，兩邊都算就重複）。前端＝`public/modules/transactions.js`（頁面本體：列表/編輯/店家檔案）＋`public/modules/transactions-import.js`（帳單匯入工作流：上傳→預覽→匯入→批次管理；系統優化階段二①搬出，接縫＝transactions.js 的 renderTransactions/expenseParents/setMonthFilter）。
 - **收入支出／現金流**（畫面名稱「銀行收支」；`ledger:'cashflow'`，手動記帳＋銀行對帳單匯入）：**現金流真相**。前端＝`public/modules/cashflow.js`。
 
-⚠️**帳本判準單一真相＝`public/modules/categories.js` 的 `isCardTx(t)`**（後端經 `lib/derive.js` 以 `isCardLedger` 別名轉供，沒有前後端同步點）。用**排除法**：`ledger==='card'` 或（缺 ledger 且 `source==='stmt'`）＝card，其餘一律 cashflow——**缺 ledger 的舊資料/還原舊備份不掉帳**。讀現金流的地方（`derive.computeCashflow`、`cashflow.js` 月加總、店家檔案）都要 `isCardTx` 排除 card。
+⚠️**帳本判準單一真相＝`public/modules/categories.js` 的 `isCardTx(t)`**（後端經 `lib/derive.js` 以 `isCardLedger` 別名轉供，沒有前後端同步點）。用**排除法**：`ledger==='card'` 或（缺 ledger 且 `source==='stmt'`）＝card，其餘一律 cashflow——**缺 ledger 的舊資料/還原舊備份不掉帳**。讀現金流的地方（`derive.computeCashflow`、`cashflow.js` 月加總、店家檔案）都要 `isCardTx` 排除 card。 **兩頁畫面上的分堆結果＝行為考題 `test/ledger-split-behavior.test.js`**（jsdom 載整張路由圖、餵固定資料、讀畫面上的數字；釘的是結果層，判準呼叫的形狀由兩頁的字面釘題守——字面釘分不出「字還在」和「碼還活著」，所以結果層另有一題）。
 
 **三層分類（金流→分類→子分類）**：金流＝交易的 `type`（`income`/`expense`/**新增 `transfer`=內轉**，derive 只加總 income/expense，transfer 天然不進本月收入/支出）。**支出分類直接沿用 `expenseTree`（card 與 cashflow 共用一棵——`saveTree` remap 全部 expense 交易＝正確、不加 ledger 過濾，跨帳本連動是要的、統計才合得起來）**；**收入分類＝新的 `settings.incomeTree`**（`effectiveIncomeTree`/`saveIncomeTree`，`GET/POST /api/income-categories`，退路＝其他/其他收入，無別名機制——收入是手動選、沒有自動分類器）；內轉無分類樹（固定 內轉出/內轉入）。**繳卡費（stage 3 銀行匯入）category 留空**：計入現金流總額、但不進分類統計（卡明細已把那些消費分好類，重算會重複）。
 
