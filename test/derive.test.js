@@ -140,6 +140,7 @@ test('自主體檢｜淨值歸零：summary 不輸出 Infinity（equityWiped 旗
 // ============================================================================
 import { FX_DEFAULT_TWD } from '../public/modules/fx-rates.js';
 import { readFileSync as readSrc } from 'node:fs';
+import { findFxLiteralFallbacks } from './helpers/fx-literal-fallbacks.js';
 
 test('丙｜computeAssets：GBP 帳戶沒抓到匯率 → 用預設值 41 照常計入淨資產、defaultFx 標 GBP；抓到匯率 → 用即時值、defaultFx 空', () => {
   const base = { accounts: [
@@ -252,12 +253,13 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
   }
   { const src = readSrc(new URL('public/modules/portfolio-model.js', root), 'utf8');
     assert.match(src, /import \{[^}]*\bresolveFxTable\b[^}]*\} from '\.\/portfolio-calculations\.js'/, 'portfolio-model.js 的匯率表必須經 portfolio-calculations 轉口自 fx-rates.js');
-    assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /(fxTwd|usdTwd|GBP|JPY)[^\n]*\|\| ?\d|fxTwd\?\.\[/, 'portfolio-model.js 不可自己另算匯率（任何 `|| 數字` 的匯率退路都算）'); }
+    assert.deepEqual(findFxLiteralFallbacks(src, 'public/modules/portfolio-model.js'), [], 'portfolio-model.js 不可自己另算匯率（任何被數字字面量當退路的匯率算式都算；判準見 test/helpers/fx-literal-fallbacks.js）');
+    assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /\bfxTwd\b\s*\??\.?\s*\[/, 'portfolio-model.js 不可直接翻 settings.fxTwd 的表（要經 resolveFxTable）'); }
   // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
   // 射程刻意不含 portfolio-calculations.js 的 tradePnlBase：它（與 ib-sync fxToBase）自丙-2 起也走同一份 fx-rates.js（分母是 USD→TWD 的比值），由 test/portfolio-calculations.test.js／test/ib-fx-income.test.js 的行為題釘住，不用結構檢查。
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
-    const src = readSrc(new URL(f, root), 'utf8').replace(/\/\/[^\n]*/g, '');
-    assert.doesNotMatch(src, /(fxTwd|usdTwd|GBP|JPY)[^\n]*\|\| ?\d/, `${f} 不可再有自己的預設匯率寫死在算式裡（任何 \`|| 數字\` 的匯率退路都算，不只舊值 32／40.8／0.215）`);
+    const src = readSrc(new URL(f, root), 'utf8');
+    assert.deepEqual(findFxLiteralFallbacks(src, f), [], `${f} 不可再有自己的預設匯率寫死在算式裡（任何被數字字面量當退路的匯率算式都算，不只舊值 32／40.8／0.215；判準見 test/helpers/fx-literal-fallbacks.js）`);
   }
   assert.match(readSrc(new URL('public/modules/portfolio-calculations.js', root), 'utf8'), /export const fxTable = \(settings\) => resolveFxTable\(settings\)\.rates;/, '前端 fxTable 必須是 resolveFxTable 的投影，不可自己另算');
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
@@ -284,6 +286,30 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
   assert.deepEqual(be.missingFx, [{ currency: 'EUR', count: 2, liabilities: 1 }], '對照：EUR 兩筆不支援、其中 loan 是負債');
 });
 
+
+test('丙｜「寫死匯率」判斷器本身：#558 r3 的假綠與假紅各留一題，射程邊界也寫成題', () => {
+  const hit = (code) => findFxLiteralFallbacks(code, 'probe.js').map((h) => h.name);
+  // 假綠（r3 實測正規式抓不到）：名單沒 USD、兩個空白
+  assert.deepEqual(hit('const u = ratesLev.rates.USD ||  31;'), ['USD']);
+  // 假紅（r3 實測正規式誤殺）：GBP 筆數退路不是匯率
+  assert.deepEqual(hit('const n = t.defaultFx().GBP.count || 0;'), []);
+  // 其他該抓的形狀：??／動態鍵／包裝函式／三元式／鏈／字串鍵／呼叫／負數／給 missing 塞預設值
+  for (const code of [
+    'const u = s.usdTwd ?? 31;', 'const g = settings.fxTwd?.[cur] || 41;', 'const j = Number(s.fxTwd.JPY) || 0.2;',
+    'const u = s.usdTwd > 0 ? s.usdTwd : 31;', 'const u = ok ? fxFor(t, c).rate : 31;', 'const u = (s.usdTwd || s.legacyUsd) || 32;',
+    "const g = fxTwd['GBP'] || 41;", 'const r = usdRate(s) || -31;', 'const r = f.missing ? 31 : f.rate;',
+    'const z = bal * f.rate || 0;', 'const t = `${fmt(Math.abs(x) * ratesLev.rates.USD ||  31)}`;',   // 乘積的 NaN 防呆＝把缺匯率靜靜蓋掉
+  ]) assert.equal(hit(code).length, 1, `該抓沒抓：${code}`);
+  // 不該抓的（都是三個真檔裡實際存在的形狀）：分批門檻、數量／餘額、動態鍵累加、乘積防呆、缺匯率不計入
+  for (const code of [
+    'const fxHigh = Number(s.fxHigh || 32);', 'const q = Number(h.quantity || 0);', 'const x = byClass[cls] || 0;',
+    'const v = f.missing ? 0 : Number(account.balance || 0) * f.rate;', 'const r = f.missing ? 0 : f.rate;',
+  ]) assert.deepEqual(hit(code), [], `誤殺：${code}`);
+  // 射程之外（誠實劃界）：不長那三種形狀的寫法抓不到——這一題釘住「它不保證什麼」
+  for (const code of ['const u = Math.max(s.usdTwd, 31);', 'let u = s.usdTwd; if (!u) u = 31;', 'const v = ok ? qty * f.rate : 0;']) assert.deepEqual(hit(code), [], `射程外卻命中：${code}`);
+  // 壞語法要丟例外（TS 解析器不會自己丟；半棵樹會靜靜漏抓）
+  assert.throws(() => findFxLiteralFallbacks('const u = s.usdTwd || ;', 'bad.js'), /解析失敗/);
+});
 test('丙｜換匯區間提醒（fx-usd-high／low）只看「抓到的」美元匯率：沒抓到時預設值落在門檻上也不可假報「已達高點」', () => {
   const dflt = buildSummary(/** @type {any} */ ({ settings: { fxHigh: FX_DEFAULT_TWD.USD }, accounts: [] })).reminders;   // 門檻＝預設值：沒有守門就會 >= 而誤報
   assert.equal(dflt.find(r => r.key === 'fx-usd-high' || r.key === 'fx-usd-low'), undefined, '預設匯率不是市場匯率，不可觸發換匯區間提醒');
