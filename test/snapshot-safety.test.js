@@ -143,3 +143,18 @@ test('丙｜emptyDb() 與種子不預填 GBP／JPY 匯率（預設值住在 fx-r
   const db = store.load(); db.settings = { ...db.settings, fxTwd: {} }; store.save(db);   // 先把同檔前面題留下的匯率清掉
   assert.equal(store.load().settings.fxTwd?.GBP, undefined, 'load() 走 mergeSettingsDefaults 之後仍不可把猜值灌回來');
 });
+
+test('丙｜種子不預填 usdTwd：走正式 load() 路徑的新資料庫，美元資產也要標「用了預設值」（不可被種子的 32 冒充成抓到的）', async () => {
+  const { buildSummary } = await import('../lib/derive.js');
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
+  assert.equal(store.emptyDb().settings.usdTwd, undefined, 'emptyDb 不可預填 usdTwd');
+  const db = store.load();
+  delete db.settings.usdTwd;   // 同檔前面的題可能設過；清掉＝模擬從來沒抓到
+  db.accounts = [{ id: 'u', name: '美元現金', type: 'cash', class: '現金', currency: 'USD', balance: 10 }];
+  store.save(db);
+  const loaded = store.load();   // mergeSettingsDefaults 不可把 32 灌回來
+  assert.equal(loaded.settings.usdTwd, undefined, 'load() 合併預設後 usdTwd 仍不可出現');
+  const s = buildSummary(loaded);
+  assert.equal(s.assets, 10 * FX_DEFAULT_TWD.USD, '金額用預設值 32 照算');
+  assert.deepEqual(s.defaultFx, [{ currency: 'USD', count: 1, rate: FX_DEFAULT_TWD.USD }], '而且要標「用了預設值」');
+});

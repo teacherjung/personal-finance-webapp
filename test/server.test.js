@@ -376,7 +376,7 @@ test('匯率須為正數（Codex#6-4）：負匯率被剝、usdTwd≤0 被剝、
   await PUT('/settings', { fxTwd: { GBP: -1 }, usdTwd: -5 });
   const s = await GET('/settings');
   assert.notEqual(s.fxTwd?.GBP, -1, '負匯率不可寫入（會讓外幣資產變負）');
-  assert.ok(s.usdTwd > 0, 'usdTwd 必須為正');
+  assert.ok(s.usdTwd === undefined || s.usdTwd > 0, 'usdTwd 不可留 0／負：剝掉後可以是「未設定」（丙：預設值住 fx-rates.js 的常數，不再由種子補 32）');
   const sum = await GET('/summary');
   assert.ok(sum.netWorth === null || typeof sum.netWorth === 'number');
   await PUT('/settings', { usdTwd: before.usdTwd, fxTwd: before.fxTwd || {} });   // 還原

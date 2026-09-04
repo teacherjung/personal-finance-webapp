@@ -24,6 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * ⇒ 一律 `pathToFileURL()`＋`JSON.stringify()`：前者處理 `#`／`%`／空白／中文，後者處理引號。
  */
 const STORE_URL = pathToFileURL(join(ROOT, 'lib/store.js')).href;
+const FX_RATES_URL = pathToFileURL(join(ROOT, 'public/modules/fx-rates.js')).href;
 
 const store = await import('../lib/store.js');
 const { app } = await import('../server.js');
@@ -114,7 +115,7 @@ test('搬家重搬規則（Codex#8-1）：db 沒寫過→安全重搬；兩邊�
   }
 });
 
-test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝除補預設，不污染計算', () => {
+test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝除、不留字串；計算時由 fx-rates 的預設值接手（丙：種子不再補 32）', () => {
   const dbPath = join(tmpdir(), `finance-migbad-${process.pid}.db`);
   const jsonPath = dbPath.slice(0, -3) + '.json';
   const legacy = { ...store.emptyDb(), settings: { ...store.emptyDb().settings, usdTwd: 'oops' } };
@@ -122,10 +123,13 @@ test('搬家 settings 清理（Codex#8-2）：舊 json 的 usdTwd 壞值→剝�
   try {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
       import { load } from ${JSON.stringify(STORE_URL)};
-      console.log(JSON.stringify({ usdTwd: load().settings.usdTwd }));
+      import { resolveFxTable } from ${JSON.stringify(FX_RATES_URL)};
+      const s = load().settings;
+      console.log(JSON.stringify({ usdTwd: s.usdTwd === undefined ? '__undefined__' : s.usdTwd, rate: resolveFxTable(s).rates.USD }));
     `], { env: { ...process.env, STORE_FILE: dbPath }, encoding: 'utf8' });
     const r = JSON.parse(out.trim().split('\n').pop() || '{}');
-    assert.equal(r.usdTwd, 32, '壞的 usdTwd 應被剝除、由預設 32 接手（不可留字串）');
+    assert.equal(r.usdTwd, '__undefined__', '壞的 usdTwd 應被剝除，而且種子不可再補 32（丙：預設值只住 fx-rates.js 的常數）');
+    assert.equal(r.rate, 32, '計算時由 fx-rates 的預設值 32 接手，不污染計算');
   } finally {
     for (const f of [dbPath, dbPath + '.bak', dbPath + '-wal', dbPath + '-shm', jsonPath]) { try { rmSync(f); } catch { /* 可能不存在 */ } }
   }

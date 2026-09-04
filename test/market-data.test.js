@@ -202,3 +202,23 @@ test('匯率備援｜備援回的匯率是 0／負數／字串垃圾 → 不算�
   assert.equal(q['TWD=X']?.source, 'currency-api', 'er-api 的 TWD=-31.5 不可當匯率（負數是 truthy，只有正數判準擋得住）');
   assert.equal(q['TWD=X']?.price, 32);
 });
+
+test('逾時要包住讀 body：上游回了 headers 卻永遠不吐 body（json 永不 resolve）→ getQuotes 在逾時後照樣回來（null），不可讓開機序列無限等', async () => {
+  const hang = () => /** @type {any} */ ({ json: () => new Promise(() => {}), text: () => new Promise(() => {}) });
+  const fetchImpl = async () => hang();   // Yahoo 與兩個備援都卡住
+  const t0 = Date.now();
+  const q = await getQuotes(['TWD=X', 'VOO'], { fetchImpl, ttlMs: 0, timeoutMs: 10 });
+  const took = Date.now() - t0;
+  assert.equal(q['TWD=X'], null); assert.equal(q.VOO, null);
+  assert.ok(took < 2000, `三段逾時串起來也要在幾十毫秒內回來（實際 ${took}ms）`);
+});
+
+test('匯率備援｜第一個管道只給美元 → 英鎊／日圓繼續問第二個管道（逐代號續走，不因為有 TWD 就提前收工）', async () => {
+  const fetchImpl = routeFetch([[/open\.er-api\.com/, () => erApi({ TWD: 31.5 })], [/currency-api/, () => currencyApi({ twd: 32, gbp: 0.8, jpy: 160 })]]);
+  const q = await getQuotes([...FX_SYMBOLS], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.price, 31.5, '美元用第一個管道的');
+  assert.equal(q['TWD=X'].source, 'open.er-api.com');
+  assert.ok(Math.abs(q['GBPTWD=X'].price - 40) < 1e-9, '英鎊由第二個管道補（32÷0.8）');
+  assert.equal(q['GBPTWD=X'].source, 'currency-api');
+  assert.ok(Math.abs(q['JPYTWD=X'].price - 0.2) < 1e-9);
+});

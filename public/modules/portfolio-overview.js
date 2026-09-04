@@ -59,7 +59,7 @@ export function fxNoteHtml(defaultFx, missingFx, escapeHtml) {
   if (Array.isArray(defaultFx) && defaultFx.length) {
     const n = defaultFx.reduce((sum, m) => sum + Number(m.count || 0), 0);
     const list = defaultFx.map(m => `${escapeHtml(String(m.currency))} ${escapeHtml(String(m.rate))}`).join('、');
-    html += `<p class="muted small" style="margin:-8px 0 16px">註：有 ${n} 筆外幣部位用的是預設匯率（${list}），還沒抓到即時匯率——按上方「更新報價」再試；匯率波動通常不大，先用預設值算的誤差可接受。<button type="button" class="info-link" data-info="fxDefault">匯率從哪裡來？</button></p>`;
+    html += `<p class="muted small" style="margin:-8px 0 16px">註：有 ${n} 筆外幣部位用的是預設匯率（${list}），還沒抓到即時匯率——按上方「更新報價」再試（十分鐘內會沿用剛抓到的值）；匯率波動通常不大，先用預設值算的誤差可接受。<button type="button" class="info-link" data-info="fxDefault">匯率從哪裡來？</button></p>`;
   }
   if (Array.isArray(missingFx) && missingFx.length) {
     const n = missingFx.reduce((sum, m) => sum + Number(m.count || 0), 0);

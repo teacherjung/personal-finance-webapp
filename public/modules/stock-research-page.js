@@ -3,6 +3,7 @@
 // 本模組不 import app.js；所有 DOM/API 工具由 app.js 注入，避免循環 import 的 TDZ。
 
 import { buildPortfolioModel } from './portfolio-model.js';
+import { fxTable } from './portfolio-calculations.js';
 import { createPortfolioResearchActions } from './portfolio-research-actions.js';
 import { buildStockResearchModel, findStockResearch } from './stock-research-model.js';
 import {
@@ -172,7 +173,7 @@ export function createStockResearchPage(deps) {
       trades: arrayOrEmpty(securities.trades),
       quote,
       viewCurrency: deps.getViewCurrency(),
-      usdRate: settings.usdTwd,
+      usdRate: fxTable(settings).USD,   // 匯率表唯一實作（沒設也有預設值；丙）
       activeTab,
       fundamentals
     }, { esc: deps.esc });

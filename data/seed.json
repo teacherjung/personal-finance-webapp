@@ -1,7 +1,6 @@
 {
   "settings": {
     "currency": "TWD",
-    "usdTwd": 32,
     "emergencyFundMonths": 6,
     "allocationDriftPct": 5,
     "ibConcentrationPct": 5,
