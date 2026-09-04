@@ -17,7 +17,7 @@
 //   `f.missing && rates.USD > 0 ? 0 : 31` 不算）、數字支是 0、另一支不是數字字面量（`f.missing ? 0 : 31` 命中）。
 //   不豁免的三元式：條件子樹裡**任何地方**碰到解析器欄位 missing／source／cur／rate（`Boolean(f.missing) ? 0 : 31`、
 //   `f.source === 'unsupported' ? 0 : 31`）就命中——它在替「有沒有匯率」做決定，數字支就是寫死的匯率。
-// 射程之外（誠實劃界，考題 test/derive.test.js 有列）：`Math.max(rate, 31)`、if 賦值、
+// 射程之外（誠實劃界，考題 test/derive.test.js 有列；這些會算錯金額的由 test/fx-sentinel.test.js 兩組哨兵抓）：`Math.max(rate, 31)`、if 賦值、
 //   先把數字存進變數再退路、三元式另一支是乘積——不長上面的形狀，抓不到。
 // 壞語法＝丟例外（TS 解析器不會自己丟，半棵樹會靜靜漏抓；這裡 fail-closed）。
 // ⚠️ 定位（William 2026-09-04 裁示）：這支是**第二道網**——主網是 test/fx-sentinel.test.js 的哨兵匯率行為題，

@@ -257,7 +257,7 @@ test('丙｜資產換算同一份實作：derive.js／snapshot.js／portfolio-ca
     assert.doesNotMatch(src.replace(/\/\/[^\n]*/g, ''), /\bfxTwd\b\s*\??\.?\s*\[/, 'portfolio-model.js 不可直接翻 settings.fxTwd 的表（要經 resolveFxTable）'); }
   // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
   // ⚠️ 分工（William 2026-09-04 裁示，#558 r3–r5 連三輪被新形狀戳穿之後）：**主網是 test/fx-sentinel.test.js 的哨兵匯率行為題**
-  //    （餵 12345／23456／34567，每一處換算都必須吃到它，寫死的數字會算錯而被抓）；這裡的結構題只當第二道網，
+  //    （兩組哨兵、分別在每個預設值上方與下方，每一處換算都必須吃到它，寫死或夾制的數字會算錯而被抓）；這裡的結構題只當第二道網，
   //    抓「有匯率卻不用、退路寫死」的死程式——它列舉形狀、列舉補不完，不再為新形狀加輪。
   // 射程刻意不含 portfolio-calculations.js 的 tradePnlBase：它（與 ib-sync fxToBase）自丙-2 起也走同一份 fx-rates.js（分母是 USD→TWD 的比值），由 test/portfolio-calculations.test.js／test/ib-fx-income.test.js 的行為題釘住，不用結構檢查。
   for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
