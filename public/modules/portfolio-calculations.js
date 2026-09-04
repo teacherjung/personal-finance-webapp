@@ -1,28 +1,11 @@
 // @ts-check
 // 投資組合頁的純計算工具：不碰 DOM、API 或頁面狀態，方便獨立驗證金額口徑。
 
-// 匯率表：與後端 lib/derive.js fxRates() 同口徑（同步點，考題釘住）。
-// 「乙」（William 2026-09-03 裁）：GBP／JPY 沒設（非正數）＝缺匯率＝ null，不再用猜的 40.8／0.215；
-// buildPortfolioModel 的持股／帳戶換算經 fxFor()：缺匯率的那筆不計入、並回報到 missingFx 讓頁面標註；
-// portfolio-exposure.js 的現金曝險端沒有共用入口，是另行內嵌同一個「正數才算匯率」判準。USD 的 `|| 32` 不在乙的範圍。
-const posRate = (value) => { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : null; };
-export const fxTable = (settings) => ({
-  TWD: 1,
-  USD: Number(settings.usdTwd || 32),
-  GBP: posRate(settings.fxTwd?.GBP),
-  JPY: posRate(settings.fxTwd?.JPY)
-});
-/**
- * 一筆金額該用的匯率：缺 currency 預設台幣（既有判準）；表上沒有、或值是 null ＝ 缺匯率（missing）。
- * @param {Record<string, number|null>} fx @param {unknown} currency
- * @returns {{cur:string, rate:number, missing:false}|{cur:string, rate:null, missing:true}}
- */
-export function fxFor(fx, currency) {
-  const cur = String(currency || 'TWD').toUpperCase();
-  if (cur === 'TWD') return { cur, rate: 1, missing: false };   // 台幣本身不需要匯率
-  const rate = Object.hasOwn(fx, cur) ? fx[cur] : null;
-  return (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) ? { cur, rate, missing: false } : { cur, rate: null, missing: true };
-}
+// 匯率表＝./fx-rates.js 的唯一實作（後端 lib/derive.js 也 import 同一份；丙：上次抓到的 → 預設值，不支援的幣別才不計入）。
+export { resolveFxTable, fxFor, fxUsageTracker, FX_DEFAULT_TWD } from './fx-rates.js';
+/** 既有呼叫端只要匯率值：`{TWD:1, USD, GBP, JPY}`（沒抓到的幣別已填預設值）。 @param {any} settings */
+export const fxTable = (settings) => resolveFxTable(settings).rates;
+import { resolveFxTable } from './fx-rates.js';
 
 // 成本＝均價 × 股數（舊資料退回總成本欄位）
 export const holdingCost = (h) => (h.avgCost != null && h.avgCost !== '')

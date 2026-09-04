@@ -134,115 +134,128 @@ test('自主體檢｜淨值歸零：summary 不輸出 Infinity（equityWiped 旗
 });
 
 // ============================================================================
-// 「乙」（William 2026-09-03 裁）：GBP／JPY 沒設匯率＝缺匯率，不計入並標註；前後端同口徑。
-// 每題各釘一個消費端；突變＝把 fxRates 的 GBP 改回 `|| 40.8`、拿掉任一個 `continue`／fxMissing、拿掉提醒——各自有題會紅。
+// 「丙」（William 2026-09-04 裁，取代 09-03 的「乙」）：不管哪種外幣，缺匯率都同一條規則——上次抓到的 → 預設值（照常計入、標註）；
+// 只有不支援的幣別才無法換算（不計入、標註）。匯率表唯一實作＝public/modules/fx-rates.js（前後端共用）。
+// 突變逐點：預設值改掉／不登記 defaultFx／不支援幣別當台幣／提醒拿掉／日線記 0——各有題會紅。
 // ============================================================================
+import { FX_DEFAULT_TWD } from '../public/modules/fx-rates.js';
+import { readFileSync as readSrc } from 'node:fs';
 
-test('乙｜computeAssets：GBP 帳戶沒設匯率 → 不計入淨資產、missingFx 列出 GBP；設了匯率 → 照算、missingFx 空', () => {
+test('丙｜computeAssets：GBP 帳戶沒抓到匯率 → 用預設值 40.8 照常計入淨資產、defaultFx 標 GBP；抓到匯率 → 用即時值、defaultFx 空', () => {
   const base = { accounts: [
     { id: 't', type: 'cash', class: '現金', currency: 'TWD', balance: 1000 },
     { id: 'g', type: 'cash', class: '現金', currency: 'GBP', balance: 100 },
   ] };
-  const without = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32 } }));
-  assert.equal(without.netWorth, 1000, '沒匯率的 GBP 不可用猜的數算進去（以前會加 100×40.8）');
-  assert.deepEqual(without.missingFx, [{ currency: 'GBP', count: 1, liabilities: 0 }], '要標註少算了哪個幣別、幾筆（資產、不是負債）');
-  const withRate = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));
-  assert.equal(withRate.netWorth, 1000 + 100 * 40, '對照：設了匯率就照算');
-  assert.deepEqual(withRate.missingFx, [], '對照：沒有缺匯率就不標註');
+  const dflt = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32 } }));
+  assert.equal(dflt.netWorth, 1000 + 100 * FX_DEFAULT_TWD.GBP, '沒抓到匯率＝用預設值照算（不可排除）');
+  assert.deepEqual(dflt.defaultFx, [{ currency: 'GBP', count: 1, rate: FX_DEFAULT_TWD.GBP }], '要標註哪個幣別、幾筆、用了什麼預設值');
+  assert.deepEqual(dflt.missingFx, [], '支援的幣別不算「缺」');
+  const live = computeAssets(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));
+  assert.equal(live.netWorth, 1000 + 100 * 40, '對照：抓到匯率就用即時值');
+  assert.deepEqual(live.defaultFx, [], '對照：沒有用預設值就不標');
 });
 
-test('乙｜computeAssets：表上沒有的幣別（EUR）也算缺匯率——不再 `|| 1` 當台幣；缺 currency 仍預設台幣（既有判準）', () => {
+test('丙｜所有外幣同一條規則：美元沒設 usdTwd 也是「用預設值 32 並標註」，與英鎊／日圓一致', () => {
+  const r = computeAssets(/** @type {any} */ ({ settings: {}, accounts: [
+    { id: 'u', type: 'cash', class: '現金', currency: 'USD', balance: 10 },
+    { id: 'j', type: 'cash', class: '現金', currency: 'JPY', balance: 1000 },
+  ] }));
+  assert.equal(r.netWorth, 10 * FX_DEFAULT_TWD.USD + 1000 * FX_DEFAULT_TWD.JPY);
+  assert.deepEqual(r.defaultFx, [{ currency: 'USD', count: 1, rate: FX_DEFAULT_TWD.USD }, { currency: 'JPY', count: 1, rate: FX_DEFAULT_TWD.JPY }]);
+});
+
+test('丙｜不支援的幣別（EUR）才無法換算：不計入、missingFx 標註；不可再 `|| 1` 當台幣；缺 currency 仍預設台幣（既有判準）', () => {
   const r = computeAssets(/** @type {any} */ ({ settings: { usdTwd: 32 }, accounts: [
     { id: 'e', type: 'cash', class: '現金', currency: 'EUR', balance: 500 },
     { id: 'n', type: 'cash', class: '現金', balance: 7 },
   ] }));
   assert.equal(r.netWorth, 7, 'EUR 不可被當成台幣 500；缺 currency 的 7 元照舊當台幣');
   assert.deepEqual(r.missingFx, [{ currency: 'EUR', count: 1, liabilities: 0 }]);
+  assert.deepEqual(r.defaultFx, []);
 });
 
-test('乙｜computeIb：JPY 持股沒設匯率 → 市值／成本記 0、帶 fxMissing、不進 totalValue；missingFx 列出 JPY', () => {
+test('丙｜computeIb：JPY 持股沒抓到匯率 → 用預設值 0.215 照算、position 帶 fxSource=default、defaultFx 標 JPY；抓到 → live', () => {
   const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings: [
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
     { id: 'j', symbol: '7203', currency: 'JPY', quantity: 100, price: 3000, avgCost: 2500, source: 'manual' },
   ] });
   const ib = computeIb(db);
   const jp = ib.positions.find(p => p.id === 'j');
-  assert.ok(jp && jp.fxMissing === true && jp.marketValue === 0 && jp.costBasis === 0, '缺匯率的持股要標 fxMissing、金額 0');
-  assert.equal(ib.totalValue, 10 * 100 * 32, 'totalValue 只含有匯率的持股');
-  assert.deepEqual(ib.missingFx, [{ currency: 'JPY', count: 1, liabilities: 0 }]);
-  const withRate = computeIb({ ...db, settings: { usdTwd: 32, fxTwd: { JPY: 0.2 } } });
-  assert.equal(withRate.totalValue, 10 * 100 * 32 + 100 * 3000 * 0.2, '對照：設了匯率就照算');
-  assert.equal(withRate.positions.find(p => p.id === 'j')?.fxMissing, false);
+  assert.ok(jp && jp.fxSource === 'default' && jp.fxMissing === false, `預設匯率的持股要標 fxSource=default（實際 ${JSON.stringify({ s: jp?.fxSource, m: jp?.fxMissing })}）`);
+  assert.equal(ib.totalValue, 10 * 100 * 32 + 100 * 3000 * FX_DEFAULT_TWD.JPY, '預設匯率的持股照常進 totalValue');
+  assert.deepEqual(ib.defaultFx, [{ currency: 'JPY', count: 1, rate: FX_DEFAULT_TWD.JPY }]);
+  const live = computeIb({ ...db, settings: { usdTwd: 32, fxTwd: { JPY: 0.2 } } });
+  assert.equal(live.positions.find(p => p.id === 'j')?.fxSource, 'live');
+  assert.deepEqual(live.defaultFx, []);
 });
 
-test('乙｜computeLeverage：ibCashCur 的 GBP 負現金沒匯率 → 不計入融資（不是當台幣、也不是猜匯率）', () => {
+test('丙｜computeLeverage：ibCashCur 的 GBP 負現金沒抓到匯率 → 用預設值計入融資（不可排除、也不可當台幣）', () => {
   const holdings = [{ id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' }];
   const accounts = [
     { id: 'usd', type: 'cash', class: '現金', currency: 'USD', ibCashCur: 'USD', balance: -200 },
     { id: 'gbp', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: -50 },
   ];
-  const without = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings, accounts });
-  const lev = computeLeverage(without, computeIb(without));
-  assert.equal(lev.loan, 200 * 32, 'GBP 那筆沒匯率就不計入融資（以前會用猜的 40.8 加進來）');
-  const withRate = /** @type {any} */ ({ ...without, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } });
-  assert.equal(computeLeverage(withRate, computeIb(withRate)).loan, 200 * 32 + 50 * 40, '對照：設了匯率就照算');
+  const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings, accounts });
+  assert.equal(computeLeverage(db, computeIb(db)).loan, 200 * 32 + 50 * FX_DEFAULT_TWD.GBP, '負債用預設匯率照算（看得見的負債最重要）');
+  // 不支援的幣別（EUR）的負現金：無法換算 ⇒ 不計入融資（不可當台幣 `|| 1` 混進去）；它會由 computeAssets 的 missingFx 走 danger 提醒
+  const withEur = /** @type {any} */ ({ ...db, accounts: [...accounts, { id: 'eur', type: 'cash', class: '現金', currency: 'EUR', ibCashCur: 'EUR', balance: -50 }] });
+  assert.equal(computeLeverage(withEur, computeIb(withEur)).loan, 200 * 32 + 50 * FX_DEFAULT_TWD.GBP, 'EUR 負現金不可以 1:1 當台幣算進融資');
 });
 
-test('乙｜buildSummary 帶 missingFx；提醒 fx-missing 在缺匯率時出現（warn、講怎麼補）、有匯率時不出現', () => {
+test('丙｜buildSummary 帶 defaultFx；提醒 fx-default 是 info、講出預設值與怎麼抓即時匯率；抓到匯率就沒有這則', () => {
   const base = { accounts: [{ id: 'g', type: 'cash', class: '現金', currency: 'GBP', balance: 100 }] };
   const s = buildSummary(/** @type {any} */ ({ ...base, settings: { usdTwd: 32 } }));
-  assert.deepEqual(s.missingFx, [{ currency: 'GBP', count: 1, liabilities: 0 }], '總覽要拿得到缺匯率的清單才能就地標註');
-  const r = s.reminders.find(x => x.key === 'fx-missing');
-  assert.ok(r && r.level === 'warn' && /GBP/.test(r.title) && /低估/.test(r.title) && /更新報價/.test(r.detail), `只有資產缺匯率＝warn、要講「淨值被低估」並告訴人怎麼補（實際 ${JSON.stringify(r)}）`);
-  const ok = buildSummary(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));
-  assert.deepEqual(ok.missingFx, []);
-  assert.equal(ok.reminders.find(x => x.key === 'fx-missing'), undefined, '對照：有匯率就不該有這則提醒');
+  assert.deepEqual(s.defaultFx, [{ currency: 'GBP', count: 1, rate: FX_DEFAULT_TWD.GBP }]);
+  const r = s.reminders.find(x => x.key === 'fx-default');
+  assert.ok(r && r.level === 'info', `用預設匯率只提示、不警告（實際 ${JSON.stringify(r)}）`);
+  assert.match(String(r?.title), /GBP 40\.8/, '要講出用了什麼預設值');
+  assert.match(String(r?.detail), /更新報價/, '要告訴人怎麼抓即時匯率');
+  assert.doesNotMatch(String(r?.title) + String(r?.detail), /未計入|不計入/, '預設匯率的部位是計入的，不可講成沒算');
+  const live = buildSummary(/** @type {any} */ ({ ...base, settings: { usdTwd: 32, fxTwd: { GBP: 40 } } }));
+  assert.equal(live.reminders.find(x => x.key === 'fx-default'), undefined);
 });
 
-test('乙｜前後端同口徑（持股側）：同一份持股，後端 computeIb 與前端 buildPortfolioModel 對缺匯率的 GBP 都不計入、missingFx 相同；設了匯率兩邊總市值相同', async () => {
-  const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
-  const holdings = [
-    { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
-    { id: 'g', symbol: 'ISF', currency: 'GBP', quantity: 5, price: 8, avgCost: 7, source: 'manual' },
-  ];
-  for (const settings of [{ usdTwd: 32 }, { usdTwd: 32, fxTwd: { GBP: 40 } }]) {
-    const be = computeIb(/** @type {any} */ ({ settings, holdings }));
-    const fe = buildPortfolioModel(/** @type {any} */ (holdings), [], /** @type {any} */ (settings));
-    assert.equal(fe.total, be.totalValue, `設定 ${JSON.stringify(settings)}：前後端持股總市值要相同`);
-    assert.deepEqual(fe.missingFx, be.missingFx, `設定 ${JSON.stringify(settings)}：前後端 missingFx 要相同`);
-  }
-});
-
-test('乙｜缺匯率的負債（GBP 負現金／負債型帳戶）：不計入、missingFx 標 liabilities，提醒升 danger 並講明負債被低估、淨值可能被高估（槓桿只用條件句講）', () => {
-  const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, holdings: [{ id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' }], accounts: [
-    { id: 'gbpCash', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: -50 },
-    { id: 'gbpLoan', type: 'loan', currency: 'GBP', balance: 1000 },
-    { id: 'gbpAsset', type: 'cash', class: '現金', currency: 'GBP', balance: 20 },
+test('丙｜不支援的幣別：有負債 → fx-missing 升 danger 並講明「負債被低估、淨值可能被高估」；只有資產 → warn', () => {
+  const db = /** @type {any} */ ({ settings: { usdTwd: 32 }, accounts: [
+    { id: 'eurCash', type: 'cash', class: '現金', currency: 'EUR', balance: -50 },
+    { id: 'eurLoan', type: 'loan', currency: 'EUR', balance: 1000 },
+    { id: 'eurAsset', type: 'cash', class: '現金', currency: 'EUR', balance: 20 },
   ] });
   const a = computeAssets(db);
-  assert.equal(a.liabilities, 0, '缺匯率的負債不計入（乙口徑允許的退化——所以下面要用 danger 講出來）');
-  assert.deepEqual(a.missingFx, [{ currency: 'GBP', count: 3, liabilities: 2 }], '負現金與負債型帳戶都算負債，資產那筆不算');
+  assert.equal(a.liabilities, 0, '不支援的幣別無法換算（丙③）——所以要用 danger 講出來');
+  assert.deepEqual(a.missingFx, [{ currency: 'EUR', count: 3, liabilities: 2 }]);
   const r = buildSummary(db).reminders.find(x => x.key === 'fx-missing');
-  assert.ok(r && r.level === 'danger', `有負債缺匯率＝danger（實際 ${JSON.stringify(r)}）`);
-  assert.match(String(r?.title), /2 筆是負債/, '要講出幾筆負債');
-  assert.match(String(r?.title), /負債被低估/, '要講方向：負債被低估');
-  assert.match(String(r?.title), /淨值可能被高估/, '要講方向：淨值可能被高估（不可寫死「被高估」——資產也缺時推不出方向）');
-  assert.doesNotMatch(String(r?.title), /槓桿/, '標題不可無條件講槓桿（IB 有官方淨值摘要時槓桿根本不經缺匯率的路徑）');
-  assert.ok(String(r?.detail).includes('缺的若是 IB 融資的外幣負現金、且沒有 IB 官方淨值摘要而要自算槓桿時，槓桿也會被低估'), `槓桿只能用完整條件句講——條件少一半就不算（實際 detail：${r?.detail}）`);
+  assert.ok(r && r.level === 'danger', `有負債＝danger（實際 ${JSON.stringify(r)}）`);
+  assert.match(String(r?.title), /2 筆是負債/); assert.match(String(r?.title), /負債被低估/); assert.match(String(r?.title), /淨值可能被高估/);
+  const warn = buildSummary(/** @type {any} */ ({ settings: { usdTwd: 32 }, accounts: [{ id: 'e', type: 'cash', class: '現金', currency: 'EUR', balance: 20 }] })).reminders.find(x => x.key === 'fx-missing');
+  assert.equal(warn?.level, 'warn');
 });
 
-test('乙｜零餘額帳戶／零股數持股缺匯率不算「有曝險」：missingFx 空、不提醒（前後端同口徑）', async () => {
-  const db = /** @type {any} */ ({ settings: { usdTwd: 32 },
-    accounts: [{ id: 'g0', type: 'cash', class: '現金', currency: 'GBP', balance: 0 }],
+test('丙｜零餘額帳戶／零股數持股不算曝險：defaultFx 與 missingFx 都空、不提醒（前後端同口徑）', async () => {
+  const db = /** @type {any} */ ({ settings: {},
+    accounts: [{ id: 'g0', type: 'cash', class: '現金', currency: 'GBP', balance: 0 }, { id: 'e0', type: 'cash', class: '現金', currency: 'EUR', balance: 0 }],
     holdings: [{ id: 'j0', symbol: '7203', currency: 'JPY', quantity: 0, price: 3000, avgCost: 2500, source: 'manual' }] });
-  assert.deepEqual(computeAssets(db).missingFx, [], '沒有曝險就不該報缺匯率');
-  assert.deepEqual(computeIb(db).missingFx, []);
-  assert.equal(buildSummary(db).reminders.find(x => x.key === 'fx-missing'), undefined, '不該提醒');
+  assert.deepEqual(computeAssets(db).defaultFx, []); assert.deepEqual(computeAssets(db).missingFx, []);
+  assert.deepEqual(computeIb(db).defaultFx, []);
+  assert.equal(buildSummary(db).reminders.find(x => x.key === 'fx-default' || x.key === 'fx-missing'), undefined);
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
-  assert.deepEqual(buildPortfolioModel(db.holdings, db.accounts, db.settings).missingFx, [], '前端同口徑');
+  const fe = buildPortfolioModel(db.holdings, db.accounts, db.settings);
+  assert.deepEqual(fe.defaultFx, []); assert.deepEqual(fe.missingFx, []);
 });
 
-test('乙｜前後端同口徑（帳戶側）：同一份持股＋帳戶（負餘額現金＋正餘額負債型＋資產），後端 computeAssets 與前端 buildPortfolioModel 的 missingFx 逐欄相同（含 liabilities）', async () => {
+test('丙｜前後端同一份實作：derive.js／snapshot.js／portfolio-calculations.js／portfolio-model.js 的匯率表都 import 自 fx-rates.js（結構檢查），且持股側與帳戶側數字逐欄相同', async () => {
+  const root = new URL('../', import.meta.url);
+  for (const f of ['lib/derive.js', 'lib/services/snapshot.js', 'public/modules/portfolio-calculations.js']) {
+    const src = readSrc(new URL(f, root), 'utf8');
+    assert.match(src, /from '(\.\.\/)*(public\/modules\/)?(\.\/)?fx-rates\.js'/, `${f} 必須 import fx-rates.js（唯一實作），不可自己另寫一份匯率表`);
+  }
+  // 資產換算這一側不可再有自己的預設匯率寫死在算式裡（fxHigh／fxLow 的 32 是分批區門檻、不在此列）。
+  // ⚠️ 射程刻意不含 portfolio-calculations.js 的 tradePnlBase（交易損益／XIRR 的「設定估算」仍是它自己的口徑：缺匯率標 missing）——要不要一併改成用預設值，另案裁。
+  for (const f of ['lib/derive.js', 'lib/services/snapshot.js']) {
+    const src = readSrc(new URL(f, root), 'utf8').replace(/\/\/[^\n]*/g, '');
+    assert.doesNotMatch(src, /\|\| ?40\.8|\|\| ?0\.215|usdTwd \|\| ?32\b/, `${f} 不可再有自己的預設匯率寫死在算式裡`);
+  }
+  assert.match(readSrc(new URL('public/modules/portfolio-calculations.js', root), 'utf8'), /export const fxTable = \(settings\) => resolveFxTable\(settings\)\.rates;/, '前端 fxTable 必須是 resolveFxTable 的投影，不可自己另算');
   const { buildPortfolioModel } = await import('../public/modules/portfolio-model.js');
   const holdings = /** @type {any} */ ([
     { id: 'u', symbol: 'VT', currency: 'USD', quantity: 10, price: 100, avgCost: 90, source: 'ib' },
@@ -250,16 +263,19 @@ test('乙｜前後端同口徑（帳戶側）：同一份持股＋帳戶（負�
   ]);
   const accounts = /** @type {any} */ ([
     { id: 'gbpCash', type: 'cash', class: '現金', currency: 'GBP', ibCashCur: 'GBP', balance: -50 },
-    { id: 'gbpLoan', type: 'loan', currency: 'GBP', balance: 1000 },
-    { id: 'gbpAsset', type: 'cash', class: '現金', currency: 'GBP', balance: 20 },
+    { id: 'eurLoan', type: 'loan', currency: 'EUR', balance: 1000 },
+    { id: 'eurAsset', type: 'cash', class: '現金', currency: 'EUR', balance: 20 },
     { id: 'gbpZero', type: 'cash', class: '現金', currency: 'GBP', balance: 0 },
   ]);
-  const settings = { usdTwd: 32 };
-  const be = computeAssets(/** @type {any} */ ({ settings, holdings, accounts })).missingFx;
-  const fe = buildPortfolioModel(holdings, accounts, /** @type {any} */ (settings)).missingFx;
-  assert.deepEqual(be, [{ currency: 'GBP', count: 4, liabilities: 2 }], '後端：持股 1＋帳戶 3（零餘額不算），其中負餘額現金與正餘額 loan 是負債');
-  assert.deepEqual(fe, be, '前端要與後端逐欄相同（count 與 liabilities）——前端把 liabilities 記成 0 這裡會紅');
-  const okBe = computeAssets(/** @type {any} */ ({ settings: { usdTwd: 32, fxTwd: { GBP: 40 } }, holdings, accounts })).missingFx;
-  const okFe = buildPortfolioModel(holdings, accounts, /** @type {any} */ ({ usdTwd: 32, fxTwd: { GBP: 40 } })).missingFx;
-  assert.deepEqual(okBe, []); assert.deepEqual(okFe, []);
+  for (const settings of [{ usdTwd: 32 }, { usdTwd: 32, fxTwd: { GBP: 40 } }]) {
+    const beIb = computeIb(/** @type {any} */ ({ settings, holdings }));
+    const be = computeAssets(/** @type {any} */ ({ settings, holdings, accounts }));
+    const fe = buildPortfolioModel(holdings, accounts, /** @type {any} */ (settings));
+    assert.equal(fe.total, beIb.totalValue, `設定 ${JSON.stringify(settings)}：持股總市值前後端相同`);
+    assert.deepEqual(fe.defaultFx, be.defaultFx, `設定 ${JSON.stringify(settings)}：defaultFx 逐欄相同`);
+    assert.deepEqual(fe.missingFx, be.missingFx, `設定 ${JSON.stringify(settings)}：missingFx 逐欄相同（含 liabilities）`);
+  }
+  const be = computeAssets(/** @type {any} */ ({ settings: { usdTwd: 32 }, holdings, accounts }));
+  assert.deepEqual(be.defaultFx, [{ currency: 'GBP', count: 2, rate: FX_DEFAULT_TWD.GBP }], '對照：持股 1＋負現金 1 用預設值（零餘額不算）');
+  assert.deepEqual(be.missingFx, [{ currency: 'EUR', count: 2, liabilities: 1 }], '對照：EUR 兩筆不支援、其中 loan 是負債');
 });

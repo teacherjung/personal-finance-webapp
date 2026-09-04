@@ -29,11 +29,11 @@ export function portfolioHeaderHtml(viewCurrency) {
 
 /**
  * 頁首三張摘要卡。
- * @param {{total:number,totalCost:number,totalPnl:number,eqV:number,bondV:number,cashV:number,goldAll:number,allBase:number,leverage:number,netEquity:number,loanTwd:number,levCap:number,missingFx?:{currency:string,count:number,liabilities?:number}[]}} data
+ * @param {{total:number,totalCost:number,totalPnl:number,eqV:number,bondV:number,cashV:number,goldAll:number,allBase:number,leverage:number,netEquity:number,loanTwd:number,levCap:number,missingFx?:{currency:string,count:number,liabilities?:number}[],defaultFx?:{currency:string,count:number,rate:number}[]}} data
  * @param {{formatMoney:(value:number)=>string, escapeHtml:(value:any)=>string}} formatters
  */
 export function portfolioSummaryHtml(data, formatters) {
-  const { total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap, missingFx = [] } = data;
+  const { total, totalCost, totalPnl, eqV, bondV, cashV, goldAll, allBase, leverage, netEquity, loanTwd, levCap, missingFx = [], defaultFx = [] } = data;
   const money = formatters.formatMoney;
   const share = (value) => allBase ? Math.round(value / allBase * 100) : 0;
   return `<div class="cards">
@@ -44,22 +44,31 @@ export function portfolioSummaryHtml(data, formatters) {
     <div class="card"><h3>IB 融資槓桿</h3><div class="stat sm ${leverage > levCap ? 'neg' : ''}">${isFinite(leverage) ? leverage.toFixed(2) + ' 倍' : '⚠️ 淨值已為負'}</div>
       <div class="stat-sub">IB 淨值 ${money(netEquity)}｜<span class="neg" style="font-weight:700">IB 融資 ${money(loanTwd)}</span></div>
       <div class="mini-bar"><div style="width:${Math.min((leverage - 1) * 100, 100)}%;background:${leverage > levCap + 0.15 ? CHART.red : leverage > levCap ? CHART.orange : CHART.green}"></div></div></div>
-  </div>${missingFxNoteHtml(missingFx, formatters.escapeHtml)}`;
+  </div>${fxNoteHtml(defaultFx, missingFx, formatters.escapeHtml)}`;
 }
 
 /**
- * 缺匯率註記（乙）：外幣部位沒匯率＝不計入上面的數字，要就地講清楚方向（資產缺＝少算、負債缺＝負債被低估、淨值可能被高估）
- * 並告訴人怎麼補（按「更新報價」）。幣別是資料值，一律經 escapeHtml（XSS 鐵則：表外幣別也會走到這裡）。
+ * 匯率註記（丙）：①用了預設匯率的部位＝照常計入、只提示（誤差通常不大）並告訴人怎麼抓即時匯率；
+ * ②不支援的幣別＝無法換算、不計入，講清楚方向（負債被低估、淨值可能被高估）。幣別是資料值，一律經 escapeHtml。
+ * @param {{currency:string, count:number, rate:number}[]} defaultFx
  * @param {{currency:string, count:number, liabilities?:number}[]} missingFx
  * @param {(value:any)=>string} escapeHtml
  */
-export function missingFxNoteHtml(missingFx, escapeHtml) {
-  if (!Array.isArray(missingFx) || !missingFx.length) return '';
-  const n = missingFx.reduce((sum, m) => sum + Number(m.count || 0), 0);
-  const liab = missingFx.reduce((sum, m) => sum + Number(m.liabilities || 0), 0);
-  const curs = missingFx.map(m => escapeHtml(String(m.currency))).join('、');
-  const dir = liab > 0 ? `其中 ${liab} 筆是負債：負債被低估、淨值可能被高估（缺的若是 IB 融資的外幣負現金、且沒有 IB 官方淨值摘要而要自算槓桿時，槓桿也會被低估）。` : '淨值因此被低估。';
-  return `<p class="${liab > 0 ? 'neg' : 'muted'} small" style="margin:-8px 0 16px">註：有 ${n} 筆外幣部位（${curs}）沒有匯率，未計入上列金額；${dir}按上方「更新報價」會自動抓匯率。<button type="button" class="info-link" data-info="missingFx">為什麼不算進去？</button></p>`;
+export function fxNoteHtml(defaultFx, missingFx, escapeHtml) {
+  let html = '';
+  if (Array.isArray(defaultFx) && defaultFx.length) {
+    const n = defaultFx.reduce((sum, m) => sum + Number(m.count || 0), 0);
+    const list = defaultFx.map(m => `${escapeHtml(String(m.currency))} ${escapeHtml(String(m.rate))}`).join('、');
+    html += `<p class="muted small" style="margin:-8px 0 16px">註：有 ${n} 筆外幣部位用的是預設匯率（${list}），還沒抓到即時匯率——按上方「更新報價」再試；匯率波動通常不大，先用預設值算的誤差可接受。<button type="button" class="info-link" data-info="fxDefault">匯率從哪裡來？</button></p>`;
+  }
+  if (Array.isArray(missingFx) && missingFx.length) {
+    const n = missingFx.reduce((sum, m) => sum + Number(m.count || 0), 0);
+    const liab = missingFx.reduce((sum, m) => sum + Number(m.liabilities || 0), 0);
+    const curs = missingFx.map(m => escapeHtml(String(m.currency))).join('、');
+    const dir = liab > 0 ? `其中 ${liab} 筆是負債：負債被低估、淨值可能被高估。` : '';
+    html += `<p class="${liab > 0 ? 'neg' : 'muted'} small" style="margin:-8px 0 16px">註：有 ${n} 筆部位的幣別（${curs}）系統不支援、無法換算，未計入上列金額；${dir}請把該帳戶／持股改成 TWD／USD／GBP／JPY。</p>`;
+  }
+  return html;
 }
 
 export function valuationPlaceholdersHtml() {

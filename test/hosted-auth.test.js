@@ -502,7 +502,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   //（「只補 ALLOWED 不登記端點」從此必紅）；傳導不得有 hosts。
   const ALLOWED = new Map([
     ['lib/ib.js', { role: 'endpoint', hosts: ['ndcdyn.interactivebrokers.com'], paths: ['/api/ib/sync'], why: 'IBKR Flex（字面 fetch）' }],
-    ['lib/services/market-data.js', { role: 'endpoint', hosts: ['query1.finance.yahoo.com', 'www.multpl.com', 'fred.stlouisfed.org'], paths: ['/api/quotes', '/api/quotes/refresh-auto', '/api/cape', '/api/realyield'], why: 'Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）' }],
+    ['lib/services/market-data.js', { role: 'endpoint', hosts: ['query1.finance.yahoo.com', 'open.er-api.com', 'cdn.jsdelivr.net', 'www.multpl.com', 'fred.stlouisfed.org'], paths: ['/api/quotes', '/api/quotes/refresh-auto', '/api/cape', '/api/realyield'], why: 'Yahoo 報價／multpl CAPE／FRED 實質利率（fetchImpl 慣例）' }],
     ['lib/services/stock-fundamentals.js', { role: 'endpoint', hosts: ['www.sec.gov', 'data.sec.gov'], paths: ['/api/stock-fundamentals/:symbol/refresh'], why: 'SEC（fetchImpl 慣例＋globalThis.fetch 預設）' }],
     ['lib/services/insights.js', { role: 'conduit', paths: ['/api/insights'], why: '把 fetchImpl 傳進 market-data 的 getCape/getRealYield，自己不開新端點' }],
     ['lib/services/ib-sync.js', { role: 'conduit', why: '注入 fetchFlex（lib/ib.js），自己不開新端點' }],

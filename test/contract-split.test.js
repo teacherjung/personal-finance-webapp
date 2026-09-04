@@ -635,6 +635,7 @@ const MANIFEST = {
       'lib/stock-fundamentals.js',
       'public/app.js', 'public/modules/categories.js', 'public/modules/portfolio-activity.js', 'public/modules/portfolio-chart.js', 'public/modules/portfolio-details.js', 'public/modules/portfolio-format.js', 'public/modules/portfolio-ib-sync.js', 'public/modules/portfolio-info-actions.js', 'public/modules/portfolio-info.js', 'public/modules/portfolio-overview.js', 'public/modules/portfolio-quotes.js', 'public/modules/portfolio-remote-actions.js', 'public/modules/portfolio-report.js', 'public/modules/portfolio-research-actions.js', 'public/modules/portfolio-tables.js', 'public/modules/stock-research-model.js', 'public/modules/stock-research-page.js', 'public/modules/stock-research-score.js', 'public/modules/stock-research-view.js',
       'public/modules/portfolio-calculations.js',
+      'public/modules/fx-rates.js',   // 匯率表唯一實作（丙；前後端共用）
       'public/modules/portfolio-editors.js',
       'public/modules/portfolio-exposure.js',
       'public/modules/portfolio-forms.js',

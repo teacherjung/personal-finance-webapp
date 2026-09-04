@@ -144,3 +144,61 @@ test('refreshQuotesIfStale：報價期間的並發寫入不被 await 前的舊�
   assert.equal(after.holdings.find(h => h.symbol === 'VOO').price, 680, '報價仍有更新');
   assert.equal(after.settings.usdTwd, 32);
 });
+
+// ============================================================================
+// 匯率備援管道（丙，William 2026-09-04 裁「多管道降低缺匯率的機率」）：Yahoo 沒給的匯率代號 → open.er-api.com → currency-api。
+// 假 fetch 用 URL 路由（不打真外部）；ttlMs:0 讓每題都不吃模組快取。
+// ============================================================================
+/** @param {[RegExp, (url:string)=>any][]} handlers */
+const routeFetch = (handlers) => async (/** @type {string} */ url) => {
+  for (const [re, h] of handlers) if (re.test(String(url))) return h(String(url));
+  return /** @type {any} */ ({ json: async () => ({}) });   // 其餘（含 Yahoo 沒資料）＝空 JSON → null
+};
+const erApi = (/** @type {any} */ rates) => ({ json: async () => ({ result: 'success', base_code: 'USD', rates }) });
+const currencyApi = (/** @type {any} */ usd) => ({ json: async () => ({ date: '2026-09-03', usd }) });
+const { fetchFxFallback, FX_SYMBOLS } = await import('../lib/services/market-data.js');
+
+test('匯率備援｜Yahoo 三個匯率代號都沒資料 → 退到 open.er-api.com：USD 直接用、GBP／JPY 用 TWD÷該幣換算，帶 source', async () => {
+  const fetchImpl = routeFetch([[/open\.er-api\.com/, () => erApi({ TWD: 31.5, GBP: 0.75, JPY: 150 })]]);
+  const q = await getQuotes([...FX_SYMBOLS, 'VOO'], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.price, 31.5);
+  assert.ok(Math.abs(q['GBPTWD=X'].price - 42) < 1e-9, `GBP→TWD 應為 31.5÷0.75＝42（實際 ${q['GBPTWD=X']?.price}）`);
+  assert.ok(Math.abs(q['JPYTWD=X'].price - 0.21) < 1e-9, `JPY→TWD 應為 31.5÷150＝0.21（實際 ${q['JPYTWD=X']?.price}）`);
+  assert.equal(q['TWD=X'].source, 'open.er-api.com');
+  assert.equal(q.VOO, null, '對照：非匯率代號不走備援、仍是 null');
+});
+
+test('匯率備援｜open.er-api.com 也失敗（丟例外）→ 再退到 currency-api（小寫鍵）', async () => {
+  const fetchImpl = routeFetch([[/open\.er-api\.com/, () => { throw new Error('down'); }], [/currency-api/, () => currencyApi({ twd: 32, gbp: 0.8, jpy: 160 })]]);
+  const q = await getQuotes([...FX_SYMBOLS], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.price, 32);
+  assert.ok(Math.abs(q['GBPTWD=X'].price - 40) < 1e-9);
+  assert.ok(Math.abs(q['JPYTWD=X'].price - 0.2) < 1e-9);
+  assert.equal(q['JPYTWD=X'].source, 'currency-api');
+});
+
+test('匯率備援｜Yahoo 只給了美元 → 只補英鎊／日圓，美元保留 Yahoo 的值（不被備援蓋掉）', async () => {
+  const fetchImpl = routeFetch([[/chart\/TWD%3DX|chart\/TWD=X/, () => ({ json: async () => ({ chart: { result: [{ meta: { regularMarketPrice: 30.9, currency: '' } }] } }) })], [/open\.er-api\.com/, () => erApi({ TWD: 31.5, GBP: 0.75, JPY: 150 })]]);
+  const q = await getQuotes([...FX_SYMBOLS], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.price, 30.9, '美元要是 Yahoo 的 30.9，不是備援的 31.5');
+  assert.equal(q['TWD=X'].source, undefined, 'Yahoo 來的沒有 source 欄');
+  assert.ok(Math.abs(q['GBPTWD=X'].price - 42) < 1e-9, '英鎊由備援補上');
+});
+
+test('匯率備援｜每個管道都失敗 → 匯率仍是 null、fetchFxFallback 回空物件；refreshQuotesIfStale 不寫入、reason=no-data（保留舊匯率）', async () => {
+  const fetchImpl = routeFetch([[/open\.er-api\.com/, () => { throw new Error('down'); }], [/currency-api/, () => ({ json: async () => ({ result: 'error' }) })]]);
+  assert.deepEqual(Object.keys(await fetchFxFallback({ fetchImpl })), []);
+  await seedDb([], { usdTwd: 30.5, fxTwd: { GBP: 41 } });   // 不帶 quotesLastAt＝helper 會清掉（否則會被判 fresh）
+  const r = await refreshQuotesIfStale({ fetchImpl, now: Date.parse('2026-09-04T00:00:00Z'), quoteTtlMs: 0 });
+  assert.equal(r.reason, 'no-data');
+  const db = await getDb();
+  assert.equal(db.settings.usdTwd, 30.5, '全部失敗：沿用上次抓到的匯率');
+  assert.equal(db.settings.fxTwd?.GBP, 41);
+});
+
+test('匯率備援｜備援回的匯率是 0／負數／字串垃圾 → 不算抓到（positiveRate），退到下一個管道', async () => {
+  const fetchImpl = routeFetch([[/open\.er-api\.com/, () => erApi({ TWD: -31.5, GBP: 0, JPY: 'x' })], [/currency-api/, () => currencyApi({ twd: 32, gbp: 0.8, jpy: 160 })]]);
+  const q = await getQuotes([...FX_SYMBOLS], { fetchImpl, ttlMs: 0 });
+  assert.equal(q['TWD=X']?.source, 'currency-api', 'er-api 的 TWD=-31.5 不可當匯率（負數是 truthy，只有正數判準擋得住）');
+  assert.equal(q['TWD=X']?.price, 32);
+});

@@ -108,15 +108,16 @@ test('日線留下三種匯率，事後才分得出「資產漲了」還是「�
   assert.equal(row?.jpyTwd, 0.215);
 });
 
-test('沒設定的幣別記 null（缺匯率，乙），鍵要在——不可寫進 undefined 讓櫃檯剝掉、也不可退回記 0', async () => {
+test('丙｜沒抓到匯率的幣別，日線記「實際採用」的預設值（GBP 40.8／JPY 0.215），不是 0 也不是 null；抓到就記即時值', async () => {
+  const { FX_DEFAULT_TWD } = await import('../public/modules/fx-rates.js');
   const db = store.load();
   db.settings = { ...db.settings, usdTwd: 32, fxTwd: {} };
   store.save(db);
   const row = await recordDailyValue();
-  assert.ok(row && Object.hasOwn(row, 'gbpTwd') && row.gbpTwd === null, `gbpTwd 要是 null（實際 ${String(row?.gbpTwd)}）`);
-  assert.ok(row && Object.hasOwn(row, 'jpyTwd') && row.jpyTwd === null, `jpyTwd 要是 null（實際 ${String(row?.jpyTwd)}）`);
+  assert.equal(row?.gbpTwd, FX_DEFAULT_TWD.GBP, '沒抓到＝記預設值（那就是這天實際用來算淨值的匯率）');
+  assert.equal(row?.jpyTwd, FX_DEFAULT_TWD.JPY);
   const saved = (store.load().dailyValues || [])[0];
-  assert.ok(Object.hasOwn(saved, 'gbpTwd') && saved.gbpTwd === null, '存進資料庫後鍵也要在、值是 null（櫃檯不可把 null 剝成 undefined）');
+  assert.equal(saved.gbpTwd, FX_DEFAULT_TWD.GBP, '存進資料庫後也要在');
 });
 
 // ---------- 階段三缺口 H2：日線的時鐘倒退護欄（r3#8 只考了月快照與手動按鈕，日線這條沒人考過） ----------
@@ -135,7 +136,7 @@ test('日線時鐘倒退護欄：資料庫已有「明天」的日線 → 今天
   assert.equal(dv[0].netWorth, 777, '既有的較新紀錄一字未動');
 });
 
-test('乙｜emptyDb() 與種子不再預填 GBP／JPY 匯率（沒設＝缺匯率，不是 40.8／0.215）', () => {
+test('丙｜emptyDb() 與種子不預填 GBP／JPY 匯率（預設值住在 fx-rates.js 的常數，不進資料庫）', () => {
   assert.deepEqual(store.emptyDb().settings.fxTwd, {}, 'emptyDb 的 fxTwd 要是空的');
   const seed = JSON.parse(readFileSync(new URL('../data/seed.json', import.meta.url), 'utf8'));
   assert.deepEqual(seed.settings.fxTwd, {}, 'seed.json 的 fxTwd 要是空的');

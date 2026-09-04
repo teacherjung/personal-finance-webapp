@@ -3,7 +3,7 @@
 
 import { tradeSummary } from './portfolio-calculations.js';
 import { formatK, formatWan } from './portfolio-format.js';
-import { MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML } from './portfolio-info.js';   // 缺匯率說明（乙）與總覽共用同一份
+import { FX_INFO_TITLE, FX_INFO_HTML } from './portfolio-info.js';   // 匯率說明（丙）與總覽共用同一份
 
 /** @typedef {import('../../lib/types.js').Settings} Settings */
 /** @typedef {Record<string, any>} Trade */
@@ -59,7 +59,7 @@ export function incomeActivityHtml(settings, options) {
 
 // 現金流名詞說明（由頁面綁定 .info-link 開啟彈窗）。
 export const INCOME_INFO = {
-  missingFx: [MISSING_FX_INFO_TITLE, MISSING_FX_INFO_HTML],   // 投資頁摘要卡下方「為什麼不算進去？」（data-info="missingFx"）
+  fxDefault: [FX_INFO_TITLE, FX_INFO_HTML],   // 投資頁摘要卡下方「匯率從哪裡來？」（data-info="fxDefault"）
   pil: ['替代股息（Payment in Lieu）',
     '<p>當你持有的股票被券商的融資／借券機制借出時，你不會直接收到公司發的股息，而是收到一筆<b>等額的現金給付</b>來替代，這就是「替代股息」。</p><p>金額上與原本的股息相同，但<b>稅務處理可能不同</b>（例如不適用某些股利優惠稅率），報稅時要留意。</p>'],
   interestPaid: ['融資利息',
