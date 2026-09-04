@@ -111,3 +111,12 @@ test('丙-2｜台幣報表：美元匯率是預設值 → IB 現金流與交易�
   const usdView = buildPortfolioReport(data, { ...opts, viewCurrency: 'USD' }).html;
   assert.doesNotMatch(usdView, /預設值 32/, 'USD 報表不經台幣換算、不標');
 });
+
+test('丙-2｜報表交易摘要：GBP 賣出沒抓到匯率 → 註記「GBP 交易以預設匯率估算」（計入合計，不是「未計入」）', () => {
+  const opts = { viewCurrency: 'TWD', generated: '2026-09-04', sortKey: 'value', sortDir: 'desc', layers, layerOrder, escapeHtml };
+  const data = { ...baseData, fxSources: { USD: 'live' }, settings: { ...baseData.settings, usdTwd: 32, ib: {} },
+    ibTrades: [{ symbol: 'ISF', pnl: 10, currency: 'GBP', buySell: 'SELL', date: '20250101' }] };
+  const html = buildPortfolioReport(data, opts).html;
+  assert.match(html, /GBP 交易以預設匯率估算/);
+  assert.doesNotMatch(html, /GBP[^<]*未計入/);
+});
