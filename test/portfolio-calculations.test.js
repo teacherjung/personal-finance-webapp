@@ -159,3 +159,14 @@ test('丙-2｜XIRR：預設匯率估的賣出損益要計入現金流、且 esti
   assert.ok(none.ok && none.estimated === false, '不支援的幣別跳過、不算估算');
   assert.ok(r.ok && none.ok && r.rate !== none.rate, '對照：預設估的那筆真的進了現金流（兩個年化不同）');
 });
+
+test('丙-2｜XIRR 的「含估算」旗標：美元匯率是預設值時連 USD 賣出也算估算；沒進現金流（早於首筆快照）的預設換匯交易不可點亮；美元抓到時 USD 賣出不算估算', () => {
+  const snaps = [{ month: '2025-01', value: 100, cost: 100 }, { month: '2025-06', value: 105, cost: 100 }];
+  const usdSell = [{ buySell: 'SELL', pnl: 4, currency: 'USD', date: '2025-11-01' }];
+  const dflt = portfolioXirr(snaps, 100, 110, usdSell, 1, parseLocalDateForTest, {}, new Date(2026, 0, 15));
+  assert.ok(dflt.ok && dflt.estimated === true, '美元匯率沒抓到＝每筆現金流都乘預設值 ⇒ 要標估算（Codex #557 r1 漏標）');
+  const early = portfolioXirr(snaps, 100, 110, [{ buySell: 'SELL', pnl: 4, currency: 'GBP', date: '2024-06-01' }], 1, parseLocalDateForTest, { usdTwd: 32 }, new Date(2026, 0, 15));
+  assert.ok(early.ok && early.estimated === false, '早於首筆快照、沒進現金流的交易不可點亮旗標（r1 誤標）');
+  const live = portfolioXirr(snaps, 100, 110, usdSell, 1, parseLocalDateForTest, { usdTwd: 32 }, new Date(2026, 0, 15));
+  assert.ok(live.ok && live.estimated === false, '對照：美元抓到了、USD 賣出不是估算');
+});

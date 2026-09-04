@@ -97,17 +97,20 @@ export function portfolioXirr(psnaps, curCost, curValue, ibTrades, usd, parseLoc
   }
   const t0 = flows[0].t;
   // 賣出時投入額只減成本，已實現損益要另外補回現金流。換算與交易摘要同口徑
-  // （tradePnlBase：pnlBase→fxRateToBase→USD→設定匯率估算），避免漏估外幣賣出讓年化偏低。
+  // （tradePnlBase：pnlBase→fxRateToBase→USD→設定匯率估算→預設匯率估算），避免漏估外幣賣出讓年化偏低。
+  // 「含估算」旗標（Codex #557 r1）：①只在那筆**真的進了現金流**之後才點（日期守門前點亮＝誤標）；
+  // ②每筆 base 都要再乘 usd（USD→TWD）——美元匯率本身是預設值時，整條年化都算估算，連 USD 交易也是。
+  const usdIsDefault = resolveFxTable(settings).sources.USD === 'default';
   let estimated = false;
   for (const tr of ibTrades || []) {
     if (tr.buySell !== 'SELL') continue;
     const { base, source } = tradePnlBase(tr, settings);
     if (source === 'missing' || !base) continue;
-    if (source === 'estimated' || source === 'default') estimated = true;   // 預設匯率估的也算「估算」（丙-2）
     const ds = String(tr.date || '');
-    const d = parseLocalDate(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);   // 本地解析（XIRR 其他日期皆本地建構，口徑一致）
+    const d = parseLocalDate(/^\d{8}$/.test(ds) ? `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6)}` : ds);   // 本地解析（XIRR 其他日期都是本地時區）
     if (isNaN(d.getTime()) || d <= t0) continue;
     flows.push({ t: d > today ? today : d, v: base * usd });
+    if (source === 'estimated' || source === 'default' || usdIsDefault) estimated = true;
   }
   const lastCost = Number(psnaps[psnaps.length - 1].cost || 0);
   flows.push({ t: today, v: curValue - (curCost - lastCost) });   // 期末市值＋最後一筆快照之後的投入增量
