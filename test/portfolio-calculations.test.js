@@ -173,3 +173,10 @@ test('丙-2｜XIRR 的「含估算」旗標與乘數同一張表：美元匯率�
   const half = portfolioXirr(snaps, 100, 110, usdSell, parseLocalDateForTest, { usdTwd: 16 }, new Date(2026, 0, 15));
   assert.ok(half.ok && live.ok && half.rate !== live.rate, '乘數必須來自 settings（Codex r2：以前是另傳的參數，值與來源可分離）');
 });
+
+// USD 的垃圾值（0／字串）也走「沒抓到→預設值」；三種預設值一次釘住（改常數要連這裡一起改）
+test('fxTable：USD 給 0／字串垃圾也當「沒抓到」→ 預設值；三種幣別的預設值一次釘住', () => {
+  assert.equal(fxTable({ usdTwd: 0 }).USD, 31, 'USD 0 不是匯率');
+  assert.equal(fxTable({ usdTwd: 'abc' }).USD, 31, 'USD 垃圾字串不是匯率');
+  assert.deepEqual(fxTable({}), { TWD: 1, USD: 31, GBP: 41, JPY: 0.2 });
+});

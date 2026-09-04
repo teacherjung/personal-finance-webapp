@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, datePresetRange, filterSecTrades, sortSecTrades,
+  SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, nextSecSort, datePresetRange, filterSecTrades, sortSecTrades,
   rowFees, rowNetSigned, secSummarize, secSummaryHtml, secRowHtml, secTableHtml,
   previewBodyHtml, canImportPreview, localDate, localDateTime, missingHoldingsNotice,
 } from '../public/modules/securities-view.js';
@@ -134,11 +134,14 @@ test('secRowHtml：使用者字串一律 esc；外幣手續費單獨標示不併
   assert.match(html, /&lt;b&gt;惡意&lt;\/b&gt;/);
   assert.match(html, /A&amp;B/);
   const gb = secRowHtml(mk({ currency: 'GBP', commission: 2.5, commissionCurrency: 'USD', tax: 0, otherFees: null }), 0, FMT);
-  assert.match(gb, /＋2\.5 USD/);           // 外幣手續費另列
-  assert.match(gb, />0</);                  // 費稅合計欄不含它
-  // 缺價格/成交金額顯示 —（不是 0）
+  // 釘到格子本身：`/>0</` 這種寬鬆比對會中到展開明細裡別的 0、`/—/` 會中任何一個 —，分不出「費稅格併入外幣手續費」或「缺價畫成 0」。
+  assert.ok(gb.includes('<td class="num">0 <span class="muted">＋2.5 USD</span></td>'), '費稅合計格＝本幣費稅 0，外幣手續費另列在同格的小字（不併進數字）：\n' + gb);
+  assert.ok(!gb.includes('<td class="num">2.5</td>'), '外幣手續費不可被當本幣費稅加總');
+  // 缺價格/成交金額顯示 —（不是 0）；淨應收付缺值也是 —
   const missing = secRowHtml(mk({ price: null, grossAmount: null, netSettlement: null }), 0, FMT);
-  assert.match(missing, /—/);
+  assert.ok(missing.includes('<td class="num">—</td>\n    <td class="num">—</td>'), '價格與成交金額兩格相鄰都是 —：\n' + missing);
+  assert.ok(missing.includes('<td class="num ">—</td>'), '淨應收付缺值＝—（不帶正負 class）');
+  assert.ok(!missing.includes('<td class="num">0</td>'), '缺值不可畫成 0');
 });
 
 // ---------- 上傳預覽 ----------
@@ -203,9 +206,17 @@ test('S3r2#3：可能已出清 → 只提醒＋指路投資組合頁（A′：�
   assert.match(msg, /不會動持股/);
 });
 
-test('SEC_NUMERIC_SORT_KEYS：日期與數字欄換欄預設降冪的集合完整', () => {
-  for (const k of ['tradeDate', 'settlementDate', 'quantity', 'price', 'grossAmount', 'fees', 'net']) {
-    assert.ok(SEC_NUMERIC_SORT_KEYS.has(k), k);
-  }
-  assert.ok(!SEC_NUMERIC_SORT_KEYS.has('symbol'));
+test('SEC_NUMERIC_SORT_KEYS：日期與數字欄的集合完整（換欄方向由同檔題名關鍵字「nextSecSort：同欄再點＝反轉」那題用行為守）', () => {
+  // 釘精確內容：多塞一個文字欄（symbol／source／account／side／currency）進去，換欄就會變成降冪
+  assert.deepEqual([...SEC_NUMERIC_SORT_KEYS].sort(), ['fees', 'grossAmount', 'net', 'price', 'quantity', 'settlementDate', 'tradeDate']);
+});
+
+// 換欄方向＝securities-view 的純函式 nextSecSort（內嵌在頁面 onclick 裡考不到，抽出來直測）；頁面接線由 securities-states-ui 的接線題釘。
+test('nextSecSort：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪', () => {
+  const s = { key: 'tradeDate', dir: 'desc' };
+  assert.deepEqual(nextSecSort(s, 'quantity'), { key: 'quantity', dir: 'desc' }, '換到數字欄：大的在前');
+  assert.deepEqual(nextSecSort(s, 'quantity'), { key: 'quantity', dir: 'asc' }, '同欄再點：反轉');
+  assert.deepEqual(nextSecSort(s, 'symbol'), { key: 'symbol', dir: 'asc' }, '換到文字欄：升冪');
+  assert.deepEqual(nextSecSort(s, 'symbol'), { key: 'symbol', dir: 'desc' });
+  assert.deepEqual(nextSecSort(s, 'net'), { key: 'net', dir: 'desc' }, '換回數字欄：降冪（不沿用上一欄的方向）');
 });

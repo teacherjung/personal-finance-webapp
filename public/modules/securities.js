@@ -9,7 +9,7 @@ import { thBuilder } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { ibSyncFeedback } from './portfolio-ib-sync.js';
 import {
-  SECURITIES_INFO, SEC_NUMERIC_SORT_KEYS, datePresetRange, filterSecTrades, sortSecTrades,
+  SECURITIES_INFO, nextSecSort, datePresetRange, filterSecTrades, sortSecTrades,
   secSummarize, secSummaryHtml, secTableHtml, previewBodyHtml, canImportPreview,
   localDateTime, missingHoldingsNotice,
 } from './securities-view.js';
@@ -205,9 +205,7 @@ export async function renderSecurities({ showLoading = true } = {}) {
   search.onkeydown = (/** @type {any} */ e) => { if (e.key === 'Enter') { filters.q = e.target.value; renderSecurities({ showLoading: false }); } };
   // 表頭排序：同欄再點＝反轉；換欄＝日期/數字欄預設降冪（新/大在前）、文字欄升冪（鍵集合與 tx-sort 不同，故本地綁）
   view().querySelectorAll('th.sortable').forEach((/** @type {any} */ el) => el.onclick = () => {
-    const key = el.dataset.sort || 'tradeDate';
-    if (listSort.key === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
-    else { listSort.key = key; listSort.dir = SEC_NUMERIC_SORT_KEYS.has(key) ? 'desc' : 'asc'; }
+    nextSecSort(listSort, el.dataset.sort || 'tradeDate');   // 方向規則＝securities-view 的純函式（有考題）
     renderSecurities({ showLoading: false });
   });
   // 點列展開明細（點到列內按鈕/連結不觸發）

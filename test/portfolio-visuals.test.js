@@ -118,3 +118,36 @@ test('投資視覺｜持股圓環依市值排序、保留總額且代號不可�
   assert.match(html, />100 元<\/text>[\s\S]*>總市值<\/text>/);
   assert.doesNotMatch(html, /<img /);
 });
+
+// 逐列讀 rv-tag：跨列的 [\s\S]* 正規式只驗得到「超標列有凍結」，驗不到「上限內是 ✓」與邊界（等於上限不算超過）。
+test('紀律檢查：逐列判讀——在上限內顯示 ✓、剛好等於上限不算超過、只有超過才凍結／停借', () => {
+  // 淨值 200、金額與百分比刻意不同數：分得出「值÷淨值×100 再比上限」與「拿原值直接比上限」（淨值 100 時兩者同數、分不出）
+  const NET = 200;
+  const rows = [
+    { symbol: 'AAPL', layer: 'stock', valueTwd: 40 },   // 40/200＝20% > 5% → 凍結
+    { symbol: 'MSFT', layer: 'stock', valueTwd: 10 },   // 10/200＝5% = 5% → ✓（邊界；拿原值比會變凍結）
+    { symbol: 'NVDA', layer: 'stock', valueTwd: 4 },    // 4/200＝2% < 5% → ✓
+    { symbol: 'CSPX', layer: 'core', valueTwd: 120 }
+  ];
+  const caps = { equity: 90, stock: 5, china: 15, country: 15, lev: 1.3, maint: 25 };
+  const tagsOf = (html) => {
+    const cells = html.split('<div class="rrow cap-row">').slice(1);
+    return (label) => {
+      const r = cells.find((c) => c.includes(`<span class="nowrap">${label}</span>`));
+      assert.ok(r, `找不到「${label}」那一列`);
+      return (/rv-tag">([^<]*)</.exec(r) || [])[1];
+    };
+  };
+  const tag = tagsOf(disciplineSection(rows, { 美國: 120, 中國: 20 }, 174, NET, 1.2, caps, 200, 60, formatters));
+  assert.equal(tag('股票總曝險'), '✓', '174/200＝87% < 90% 不可凍結（拿原值 174 比 90 會變凍結）');
+  assert.equal(tag('AAPL'), '凍結', '20% > 5% 要凍結');
+  assert.equal(tag('MSFT'), '✓', '剛好等於上限（5% / 5%）不算超過');
+  assert.equal(tag('NVDA'), '✓', '2% < 5% 不可凍結');
+  assert.equal(tag('中國（穿透）'), '✓', '10% < 15% 不可凍結');
+  assert.equal(tag('IB 融資槓桿'), '✓', '1.2x < 1.3x 不可停借');
+  // 反向：同一份資料、把上限壓低／槓桿拉高 ⇒ 該列要翻成凍結／停借（證明判斷真的看 caps）
+  const tag2 = tagsOf(disciplineSection(rows, { 美國: 120, 中國: 20 }, 174, NET, 1.4, { ...caps, china: 5 }, 200, 60, formatters));
+  assert.equal(tag2('中國（穿透）'), '凍結', '10% > 5% 要凍結');
+  assert.equal(tag2('IB 融資槓桿'), '停借', '1.4x > 1.3x 要停借');
+  assert.equal(tag2('股票總曝險'), '✓', '沒動到的列不受影響');
+});

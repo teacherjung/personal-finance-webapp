@@ -246,7 +246,7 @@ test('架構｜openForm 的下拉真的是這支純模組產的，而且餵進�
     `app.js 這幾行又自己拼選項了（應該交給 form-options.js）：\n${offenders.map(o => `${o.no}: ${o.line.trim()}`).join('\n')}`);
 });
 
-test('架構｜esc 只有一份實作：app.js 原樣 re-export，純模組與頁面用的是同一個函式', () => {
+test('架構｜esc 的 re-export 接線（字面釘：只掃 app.js 的 import／export 字串；「同一個函式」由同檔題名關鍵字「app.js 匯出的 esc 就是 html-escape.js 的那一個函式」那題用行為守）', () => {
   const raw = readFileSync(join(ROOT, 'public/app.js'), 'utf8');
   const src = stripComments(raw);
   assert.match(src, /from\s*['"]\.\/modules\/html-escape\.js['"]/,
@@ -353,4 +353,34 @@ test('架構｜onMount 事後重建的分類／子類下拉都改走本模組（
       `${rel} 這幾行又自己拼一份「保留現值」的子類選項了（應該交給 form-options.js）：\n`
       + offenders.map(o => `${o.no}: ${o.line.trim()}`).join('\n'));
   }
+});
+
+// 「同一份實作」要比同一物件：只比對 import／export 字串，app.js 若 import 成別名再自長一份不跳脫的 esc 並 export，字串看不出來，
+// 而全站從 app.js 拿 esc 的模組會一起失去跳脫。用 DOM 假件把 app.js 載進 node。
+test('app.js 匯出的 esc 就是 html-escape.js 的那一個函式（行為：同一物件、會跳脫；不看原始碼字串）', async () => {
+  // DOM 假件：只為讓 app.js 模組頂層載得進來（hydrateIcons(document) 等）；不驗任何頁面行為
+  const mk = () => new Proxy(function () {}, {
+    get: (t, k) => (k === Symbol.toPrimitive || k === 'toString' || k === 'valueOf') ? () => '' : k === Symbol.iterator ? function* () {} : k === 'then' ? undefined : k === 'length' ? 0 : mk(),
+    apply: () => mk(), construct: () => mk(), set: () => true, has: () => true, deleteProperty: () => true,
+  });
+  const g = /** @type {any} */ (globalThis);
+  const storage = { getItem: () => null, setItem() {}, removeItem() {}, key: () => null, length: 0, clear() {} };
+  // 用完要還原：記下原本就存在的全域（描述子）與本題新裝的鍵，finally 逐一復原／刪除——假 DOM 不可留給同行程的別題
+  /** @type {Record<string, PropertyDescriptor|undefined>} */ const prev = {};
+  /** @type {string[]} */ const added = [];
+  const install = (/** @type {string} */ k, /** @type {any} */ v) => { if (k in g) prev[k] = Object.getOwnPropertyDescriptor(g, k); else added.push(k); g[k] = v; };
+  install('localStorage', storage); install('sessionStorage', storage); install('window', globalThis);
+  for (const k of ['document', 'location', 'history', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'Node', 'HTMLElement', 'Element', 'getComputedStyle', 'alert', 'confirm', 'scrollTo', 'addEventListener', 'removeEventListener', 'dispatchEvent', 'Chart', 'innerWidth', 'innerHeight', 'screen']) if (!(k in g)) install(k, mk());
+  const realFetch = g.fetch;
+  g.fetch = async () => ({ ok: false, status: 599, statusText: 'stub', json: async () => ({}), text: async () => '', body: null });
+  try {
+    const app = await import('../public/app.js');
+    assert.equal(app.esc, esc, 'app.js 匯出的 esc 必須就是 html-escape.js 那一個函式物件——app.js 自己再長一份＝跳脫與純模組走散');
+    assert.equal(app.esc('"><img src=x>'), '&quot;&gt;&lt;img src=x&gt;', '而且它真的會跳脫');
+  } finally {
+    g.fetch = realFetch;
+    for (const k of added) delete g[k];
+    for (const [k, d] of Object.entries(prev)) { if (d) Object.defineProperty(g, k, d); else delete g[k]; }
+  }
+  assert.ok(!('document' in globalThis) && !('window' in globalThis), '假 DOM 用完要拿掉（同行程的別題不可吃到）');
 });

@@ -249,6 +249,22 @@ test('沙箱｜金絲雀 fail-closed：設定檔套不上（語法壞掉）⇒ �
   } finally { rmSync(box, { recursive: true, force: true }); }
 });
 
+test('沙箱｜誤殺也計分：正式設定檔加一條「盒內不准寫」⇒ 正面案例被誤殺、退出碼 1、dead＝誤殺隻數（mustPass 那一半的計分器不是散文）', async (t) => {
+  if (!CAN_SANDBOX) { t.skip(SKIP); return; }
+  const box = tmpBox();
+  const strict = join(box, 'strict.sb');
+  writeFileSync(strict, readFileSync(PROFILE, 'utf8') + '\n(deny file-write* (subpath (param "SCAN_DIR")))\n');
+  try {
+    const { code, lines, dead } = await runCanary(box, { profile: strict });
+    const killed = lines.filter((l) => l.includes('❌ 誤殺')).length;
+    assert.ok(killed >= 1, '盒內不准寫應至少誤殺一個正面案例：\n' + lines.join('\n'));
+    assert.ok(!lines.some((l) => l.includes('🟢 活著')), '負面案例仍全擋住（差別只在正面那半）：\n' + lines.join('\n'));
+    assert.equal(code, 1, '誤殺必須退 1（掃描會跑不動，不准當成「可以掃」）：\n' + lines.join('\n'));
+    // 只看總 code 不夠（同「會叫」那題的理由）：誤殺若不計分，別隻撐著總分仍可能是 1——釘「每一隻誤殺都有計分」
+    assert.equal(dead, killed, `誤殺 ${killed} 隻但只計了 ${dead} 分`);
+  } finally { rmSync(box, { recursive: true, force: true }); }
+});
+
 // 「正式掃描不傳 profile、真 grok 發射用寫死的 PROFILE」＝行為題，住 test/grok-scan-flow.test.js 的
 // 「runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀不收 profile」那題（跨檔引用刻意不帶記號——路標閘只驗同檔）。
 // Codex #551 r4：字串比對的版本被兩種等價寫法繞過（選項先存變數／env ?? PROFILE 加註解），所以換成行為證據。
