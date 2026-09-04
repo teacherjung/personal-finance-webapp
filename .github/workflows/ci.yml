@@ -61,6 +61,10 @@ jobs:
           cache: npm
       - name: 安裝相依（含 typescript/@types 開發工具）
         run: npm ci
+      # 依賴安全通報（2026-09-05，Codex 體檢第 1 項）：只擋 high 以上——moderate 通報常是間接依賴的 DoS 類，
+      # 讓它們封住上線的路會擋到安全更新本身（與 dev-machine「探照燈不是門」同一個理由）；moderate 由 dev-machine 那個 job 全量印出來看。
+      - name: 依賴安全通報（high 以上才擋）
+        run: npm audit --audit-level=high
       - name: 校對（型別檢查）
         run: npm run typecheck
       - name: 格式糾察（lint）
@@ -79,4 +83,6 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
+      - name: 依賴安全通報（全量，探照燈：這個 job 不擋部署）
+        run: npm audit
       - run: npm test
