@@ -211,12 +211,12 @@ const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''
  *   mainLock?: Record<string, {version: string, optional?: boolean}>,
  *   mergeHookFails?: boolean, noIdentity?: boolean,
  *   hiddenOverride?: Record<string, {resolved?: string, integrity?: string}>, noHiddenLock?: boolean,
- *   staleOriginMain?: boolean,
+ *   staleOriginMain?: boolean, selfStale?: boolean,
  *   markGates?: boolean }} [opts]
  * @returns {{ dir: string, sha: string, shaB?: string, mainSha: string }}
  */
 function makeInitiatorRepo(opts = {}) {
-  const { nodeModules = 'none', conflictPair = false, lock = {}, installed = {}, otherLock, selfLock, mainLock, mergeHookFails = false, noIdentity = false, hiddenOverride = {}, noHiddenLock = false, staleOriginMain = false, markGates = false } = opts;
+  const { nodeModules = 'none', conflictPair = false, lock = {}, installed = {}, otherLock, selfLock, mainLock, mergeHookFails = false, noIdentity = false, hiddenOverride = {}, noHiddenLock = false, staleOriginMain = false, selfStale = false, markGates = false } = opts;
   let { scripts } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-initiator-'));
   const g = (/** @type {string[]} */ args) => {
@@ -298,9 +298,10 @@ function makeInitiatorRepo(opts = {}) {
     return { dir, sha, shaB, mainSha: g(['rev-parse', 'HEAD']) };
   }
   if (mainLock) {
+    // selfStale：本支也從舊 base 分岔（兩支都落後 main）；否則從新 main 分岔
+    const sha = selfStale ? addFileOnBranch('self-stale', 'self.txt') : '';
     const mainSha = commitLock(mainLock, 'main touches lock');
-    const sha = addFileOnBranch('self-fresh', 'self.txt');
-    return { dir, sha, shaB, mainSha };
+    return { dir, sha: sha || addFileOnBranch('self-fresh', 'self.txt'), shaB, mainSha };
   }
   if (shaB) return { dir, sha: g(['rev-parse', 'HEAD']), shaB, mainSha: g(['rev-parse', 'HEAD']) };
   if (nodeModules === 'file') writeFileSync(join(dir, 'node_modules'), '這不是目錄\n');
@@ -509,14 +510,14 @@ test('lockMismatches｜全部對得上 → 空；沒有 packages 表 → 一筆�
   assert.ok(m.every((x) => /無法核對/.test(x)));
 });
 
-test('⭐ lockMismatches｜lock 要的沒裝 → 對不上並點名套件；optional 的沒裝 → 不算（平台專屬二進位本來就只裝一個）', () => {
-  const lock = { packages: { '': {}, 'node_modules/req': { version: '1.0.0' }, 'node_modules/opt': { version: '3.0.0', optional: true } } };
+test('⭐ lockMismatches｜lock 要的沒裝 → 對不上並點名套件；他平台的 optional 沒裝 → 不算（平台專屬二進位本來就只裝自己那一個）', () => {
+  const lock = { packages: { '': {}, 'node_modules/req': { version: '1.0.0' }, 'node_modules/opt': { version: '3.0.0', optional: true, os: ['not-this-os'] } } };
   const m = lockMismatches(lock, () => null, null);
   assert.equal(m.length, 1, `只該有 req 一筆對不上，實得：${m.join(' / ')}`);
   assert.match(m[0], /node_modules\/req/);
   assert.match(m[0], /1\.0\.0/);
   assert.match(m[0], /沒有裝/);
-  assert.doesNotMatch(m.join(' '), /node_modules\/opt/, 'optional 沒裝也被算成對不上——本機 12 個 optional 有 10 個本來就沒裝，這樣每次都紅');
+  assert.doesNotMatch(m.join(' '), /node_modules\/opt/, '他平台的 optional 沒裝也被算成對不上——平台專屬二進位本來就只裝自己那一個，這樣每次都紅');
 });
 
 test('⭐ lockMismatches｜版本不同 → 對不上、兩個版本都要印；optional 但裝了且版本不同 → 照樣對不上', () => {
@@ -764,7 +765,7 @@ test('⭐ CLI｜git merge 失敗但不是文字衝突（hook 拒絕）→ exit 2
     nodeModules: 'dir', markGates: true, mergeHookFails: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
     // 只為了讓兩支分岔（真的要建 merge commit）：main 多一個沒裝的 optional 套件，lock 仍對得上
-    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true } },
+    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
   });
   try {
     const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -782,7 +783,7 @@ test('CLI｜對照組：兩支真的分岔、merge 要建 commit、fixture 沒�
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
-    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true } },
+    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
   });
   const emptyHome = mkdtempSync(join(tmpdir(), 'cross-pr-home-'));
   try {
@@ -818,7 +819,7 @@ test('CLI｜發起樹沒有隱藏 lock（node_modules/.package-lock.json）→ �
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true, noHiddenLock: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
-    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true } },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
   });
   try {
     const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -877,6 +878,74 @@ test('CLI｜對照組：gh 沒給 baseRefOid → 退回本機 origin/main 算側
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('⭐ CLI｜兩支都落後 main（合併後的 lock 是舊的、發起樹已是新的）→ 2，訊息要說「合併後的 lock 跟 main 的一樣：否」並指路 rebase，不是叫人重裝發起樹（Grok #566 掃 #3）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true, selfStale: true,
+    lock: { 'fx-dep': { version: '1.0.0' } },
+    installed: { 'fx-dep': '2.0.0' },            // 發起樹已經跟上 main 的新 lock
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否；合併後的 lock 跟 main 的一樣：否/);
+    assert.match(r.stderr, /兩支都落後 main/, '沒分出「落後 main」這種形狀——處置會叫人重裝發起樹，重裝完還是 2');
+    assert.match(r.stderr, /rebase/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI｜對照：發起樹沒跟上（合併後的 lock 跟 main 一樣、發起樹是舊的）→ 訊息「一樣：是」，處置指主目錄 npm install', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /合併後的 lock 跟 main 的一樣：是/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜合併後的 package.json 宣告了 lock 沒有的套件 → 2、三關沒跑（Grok #566 掃 #7：git 合出合法但少套件的 lock）', () => {
+  const { dir, sha, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+  });
+  try {
+    const g = (/** @type {string[]} */ args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } });
+    g(['checkout', '-q', '-b', 'declares']);
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    pkg.devDependencies = { marked: '^17.0.1' };     // 宣告了、lock 沒跟上（合併把 lock 的那一筆弄丟就是這個形狀）
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg));
+    g(['add', 'package.json']);
+    g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'declare dep']);
+    const shaD = String(g(['rev-parse', 'HEAD']).stdout).trim();
+    g(['checkout', '-q', 'main']);
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, shaD), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n——0＝package.json 宣告了、lock 沒有，核對掃不到它就進三關`);
+    assert.match(r.stderr, /marked.*沒有這一筆/);
+    assert.equal(existsSync(join(dir, 'gate-ran')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('RERUN_LIMITS｜常數本身要是一句有內容的限制句，正本裡那一句前面不可以是否定詞（Grok #566 掃 #5：includes 對空字串恆真、對「不只限」也真）', () => {
+  assert.ok(typeof RERUN_LIMITS === 'string' && RERUN_LIMITS.length >= 10, '常數被掏空，includes 對空字串恆真');
+  assert.match(RERUN_LIMITS, /只限.*一次/);
+  assert.match(RERUN_LIMITS, /第二次/);
+  const step = /** @type {string} */ (crossPrStepText(readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8')));
+  const i = step.indexOf(RERUN_LIMITS);
+  assert.ok(i >= 0);
+  const before = step.slice(Math.max(0, i - 3), i);
+  assert.doesNotMatch(before, /不|非|廢/, `正本的限制句被否定詞包住：「${before}${RERUN_LIMITS.slice(0, 6)}…」`);
 });
 
 test('failingTestNames｜撈 spec reporter 的 ✖ 題名：去 (ms)、去重、排除「✖ failing tests:」摘要行、有上限', () => {
@@ -1017,7 +1086,7 @@ test('CLI｜對照組：lock 要求的套件都裝著、版本相同 → 核對�
     lock: { 'fx-dep': { version: '1.0.0' } },
     installed: { 'fx-dep': '1.0.0' },
     // 另一支加了一個 optional 套件（沒裝）：lock 真的有差、但核對要放行——optional 那條判準走到端到端
-    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true } },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
   });
   try {
     const r = withFakeGh(
@@ -1185,8 +1254,33 @@ test('⭐ lockMismatches｜optional 只認布林 true：字串 "false"／數字�
   }
   const strictFalse = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: false } } }, () => null, null);
   assert.equal(strictFalse.length, 1); assert.match(strictFalse[0], /沒有裝/);
-  const strictTrue = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: true } } }, () => null, null);
+  const strictTrue = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: true, os: ['not-this-os'] } } }, () => null, null);
   assert.deepEqual(strictTrue, []);
+});
+
+test('⭐ lockMismatches｜optional 缺套件只在「這台本來就不該裝」（os／cpu 排除本機）時放行；本機該裝的 optional 缺了照樣對不上（Grok #566 掃 #1）', () => {
+  const missing = () => null;
+  const lock = (/** @type {object} */ extra) => ({ packages: { '': {}, 'node_modules/native': { version: '1.0.0', optional: true, ...extra } } });
+  const here = { platform: 'darwin', arch: 'arm64' };
+  assert.deepEqual(lockMismatches(lock({ os: ['linux'], cpu: ['x64'] }), missing, null, here), [], '他平台的 optional 缺了應放行');
+  assert.deepEqual(lockMismatches(lock({ os: ['!darwin'] }), missing, null, here), [], '排除本機的 optional 缺了應放行');
+  assert.equal(lockMismatches(lock({ os: ['darwin'], cpu: ['arm64'] }), missing, null, here).length, 1, '本機該裝的原生 optional 缺了卻放行');
+  assert.equal(lockMismatches(lock({}), missing, null, here).length, 1, '沒寫 os／cpu 的 optional（純 JS）缺了卻放行');
+  assert.equal(lockMismatches(lock({ os: ['darwin', 'linux'], cpu: ['!x64'] }), missing, null, here).length, 1);
+  assert.deepEqual(lockMismatches(lock({ os: ['darwin'], cpu: ['x64'] }), missing, null, here), [], 'cpu 不同的 optional 缺了應放行');
+  // 沒給 opts 時用本機的 platform／arch；os 清單裡非字串的項目略過
+  assert.deepEqual(lockMismatches(lock({ os: [`!${process.platform}`, 7] }), missing, null), []);
+});
+
+test('⭐ lockMismatches｜package.json 宣告的相依都要在 lock 的 packages 裡：git 三方合併可能合出合法 JSON 卻少了套件（Grok #566 掃 #7）', () => {
+  const installed = () => ({ name: 'a', version: '1.0.0' });
+  const lock = { packages: { '': {}, 'node_modules/a': { version: '1.0.0' } } };
+  assert.deepEqual(lockMismatches(lock, installed, null, { pkgJson: { dependencies: { a: '^1' } } }), []);
+  const m = lockMismatches(lock, installed, null, { pkgJson: { dependencies: { a: '^1' }, devDependencies: { marked: '^17' } } });
+  assert.equal(m.length, 1, `少了 marked 應一筆：${m.join(' / ')}`);
+  assert.match(m[0], /marked.*devDependencies.*沒有這一筆/);
+  assert.deepEqual(lockMismatches(lock, installed, null, { pkgJson: null }), [], 'pkgJson 沒給就不驗這條');
+  assert.deepEqual(lockMismatches(lock, installed, null, { pkgJson: { dependencies: 'x' } }), [], 'dependencies 不是物件就略過');
 });
 
 test('⭐ lockMismatches｜承重欄位有寫就要是對的型別：link:0／name:0／resolved:0／integrity:0／version:1 一律「無法核對」，不可以被當成沒寫而放行（#566 r6：閘會變鬆的例外）', () => {
