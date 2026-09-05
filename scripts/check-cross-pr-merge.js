@@ -61,11 +61,13 @@
 // 在途 PR 動了 `package-lock.json`（例：2026-09-02 #548 加 devDependency）時，三關其實是
 // 拿舊套件在跑——結果可能假紅、也可能假綠。所以合併之後先核對：lock 要求的每一個套件，
 // 已裝的版本對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
-// 核對的射程：只看「lock 要的有沒有裝、版本對不對」，**多裝的套件看不到**（拿掉相依的那支
-// 若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台專屬
-// 二進位本來就只裝自己那一個）。刻意不自動安裝：本機 npm 的 `ci` 會順著 symlink 逐項清掉
-// 主目錄的 node_modules（CLAUDE.md 的禁區）。處置寫在 verdict 的 lock 訊息裡（哪一側動了 lock
-// 決定該做什麼），這裡不重抄。
+// 核對的射程：只看「lock 要的有沒有裝、套件名對不對、版本對不對」，**多裝的套件看不到**（拿掉
+// 相依的那支若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台
+// 專屬二進位本來就只裝自己那一個）；workspace 連結（`link`）核對不了指向哪一版、lock 結構壞掉
+// （packages 不是物件、沒有根項目、項目不是物件）核對不了——這兩種一律當對不上（#566 r1 Codex
+// 用 link／alias／`packages: []` 三個反例證明「跳過」會假綠）。刻意不自動安裝：本機 npm 的 `ci`
+// 會順著 symlink 逐項清掉主目錄的 node_modules（CLAUDE.md 的禁區）。處置寫在 verdict 的 lock
+// 訊息裡（哪一側動了 lock 決定該做什麼），這裡不重抄。
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,6 +142,7 @@ export const CANT_RUN_CAUSES = [
   { kind: 'env', text: '發起樹的 node_modules 殘缺（空的、.bin 斷了）或 npm 不可用（#441 實際發生的形狀）' },
   { kind: 'cross-pr', text: '兩支合起來弄壞了 scripts 會呼叫的**追蹤檔案**（一支開始呼叫、另一支刪檔或拔執行位——#446 r2 的反例）' },
   { kind: 'self-exit', text: '測試或指令自己以 126／127 收場（#446 r3 的反例）' },
+  { kind: 'merge', text: '試合併本身失敗、但沒有留下未合併的檔案——不是兩支撞行：沒有 committer 身分、hook 拒絕、git 執行錯誤（#566 r1 Codex 在乾淨 Linux runner 實跑到）' },
 ];
 
 /**
@@ -194,6 +197,7 @@ export function verdict(results) {
         + '   ・對方那側「是」＝先合併那一支、發起樹裝好後再跑本閘。\n'
         + '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：在一棵**沒掛 symlink 的全新臨時樹**'
         + '（git worktree add 之後不掛連結）npm ci，在那裡手動跑三關，三關輸出與那棵樹的 lock sha 貼進 PR 留言。\n'
+        + '   ・兩側都「是」＝先合併對方那一支、發起樹裝好之後，本支仍要走上一條的手動路徑。\n'
         + '   ⚠️ 本閘造的臨時樹掛著 symlink，不可以在那裡裝；不要在掛著 symlink 的 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
         + (confirmed.length
           ? `\n   ⚠️ 上列另有**本輪已確定的阻擋**（${kinds.join('、')}）——那些不因本輪下不了定論而失效。`
@@ -205,10 +209,10 @@ export function verdict(results) {
     const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
     return {
       code: 2,
-      message: '跨 PR 試合併：**查不清楚——有三關「執行不起來」，這一輪下不了定論**\n'
+      message: '跨 PR 試合併：**查不清楚——有步驟「執行不起來」（試合併或三關），這一輪下不了定論**\n'
         + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
-        + '\n\n⚠️ 「執行不起來」（spawn 失敗如 ENOENT／EACCES、被訊號終止、或退出碼 126／127）'
-        + '＝**沒有取得可直接判讀的正常測試結果**，這裡不推定成因。實際出現過的可能至少有三種：\n'
+        + '\n\n⚠️ 「執行不起來」（spawn 失敗如 ENOENT／EACCES、被訊號終止、退出碼 126／127、或 git merge 失敗卻沒有未合併的檔案）'
+        + '＝**沒有取得可直接判讀的正常結果**，這裡不推定成因。實際出現過的可能至少有這幾種：\n'
         + CANT_RUN_CAUSES.map((c) => `   ・${c.text}`).join('\n') + '\n'
         + '   排查起點：從主目錄重跑一次這道閘作對照，再照上面的死因欄逐條查。'
         + (confirmed.length
@@ -347,39 +351,49 @@ export function cantRunSignal(err) {
  */
 
 /**
- * 合併後的 `package-lock.json` 要求的每一個套件，已裝的版本對不對得上。回對不上的清單（空＝對得上）。
+ * 合併後的 `package-lock.json` 要求的每一個套件，已裝的是不是同名同版。回對不上的清單（空＝對得上）。
  *
- * 判準三條，刻意不多：①lock 裡的每個套件（`packages` 表、根項目除外、`link` 除外）都要裝著、
- * 版本逐字相同；②`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，其餘的本來就不裝）；③沒有 `packages` 表（lockfileVersion 1／格式不對／根本不是物件）＝無法核對，
- * 也算對不上——fail-closed。**多裝的看不到**（劃界在檔頭）。
- * 純函式：檔案系統由呼叫端用 `installedVersion` 注入，考題直接餵資料。
+ * 判準，刻意只有這幾條：①`packages` 表要是物件、要有根項目 `""`、每個項目要是物件——否則無法核對，
+ * 算對不上（fail-closed；`packages: []`／`{}`／項目 `null` 都是 #566 r1 的反例）；②每個套件都要裝著、
+ * **名字**（alias 用 `name` 欄、否則取路徑最後一段）與版本逐字相同——同版號不同套件也算對不上；
+ * ③`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，其餘的本來就不裝）；④workspace 連結
+ * （`link: true`）核對不了 node_modules 裡那條連結指向哪一版（發起樹的連結指回發起樹，不是合併後的樹），
+ * 一律算對不上。**多裝的看不到**（劃界在檔頭）。
+ * 純函式：檔案系統由呼叫端用 `installed` 注入，考題直接餵資料。
  * @param {any} lock 解析後的 package-lock.json
- * @param {(key: string) => string | null} installedVersion 讀 `<key>/package.json` 的 version；不存在或讀不了回 null
+ * @param {(key: string) => {name: string, version: string} | null} installed 讀 `<key>/package.json` 的 name 與 version；不存在或讀不了回 null
  * @returns {string[]}
  */
-export function lockMismatches(lock, installedVersion) {
-  const packages = lock && typeof lock === 'object' ? lock.packages : undefined;
-  if (!packages || typeof packages !== 'object') {
-    return ['package-lock.json 沒有 packages 表（lockfileVersion 1、格式不對、或讀不到），無法核對'];
+export function lockMismatches(lock, installed) {
+  const packages = lock && typeof lock === 'object' && !Array.isArray(lock) ? lock.packages : undefined;
+  if (!packages || typeof packages !== 'object' || Array.isArray(packages) || !Object.prototype.hasOwnProperty.call(packages, '')) {
+    return ['package-lock.json 的 packages 表缺席、不是物件、或沒有根項目（lockfileVersion 1、格式不對、或讀不到），無法核對'];
   }
   const out = [];
   for (const [key, entry] of Object.entries(packages)) {
-    if (key === '' || !entry || typeof entry !== 'object' || entry.link) continue;
+    if (key === '') continue;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { out.push(`${key}：lock 項目不是物件，無法核對`); continue; }
+    if (entry.link) { out.push(`${key}：workspace 連結（link）核對不了指向哪一版，視為對不上`); continue; }
     const want = String(entry.version ?? '');
-    const have = installedVersion(key);
+    const wantName = (typeof entry.name === 'string' && entry.name) ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    const have = installed(key);
     if (have === null) {
-      if (!entry.optional) out.push(`${key}：lock 要 ${want}，沒有裝`);
+      if (!entry.optional) out.push(`${key}：lock 要 ${wantName}@${want}，沒有裝`);
       continue;
     }
-    if (have !== want) out.push(`${key}：lock 要 ${want}，裝的是 ${have}`);
+    if (have.name !== wantName) { out.push(`${key}：lock 要的是 ${wantName}，裝的是 ${have.name}（同版號也不算）`); continue; }
+    if (have.version !== want) out.push(`${key}：lock 要 ${want}，裝的是 ${have.version}`);
   }
   return out;
 }
 
-/** 從某棵樹讀 `<key>/package.json` 的 version（key 形如 `node_modules/a/node_modules/b`）。 @param {string} root */
-function installedVersionIn(root) {
+/** 從某棵樹讀 `<key>/package.json` 的 name 與 version（key 形如 `node_modules/a/node_modules/b`）。 @param {string} root */
+function installedIn(root) {
   return (/** @type {string} */ key) => {
-    try { return String(JSON.parse(readFileSync(join(root, key, 'package.json'), 'utf8')).version ?? ''); } catch { return null; }
+    try {
+      const pkg = JSON.parse(readFileSync(join(root, key, 'package.json'), 'utf8'));
+      return { name: String(pkg?.name ?? ''), version: String(pkg?.version ?? '') };
+    } catch { return null; }
   };
 }
 
@@ -396,9 +410,10 @@ function installedVersionIn(root) {
  * 指回主目錄，動到它會讓 William 的 app 起不來。所以拆的時候用 `unlinkSync`：
  * 它只刪得掉連結本身，如果哪天那裡變成真的目錄，它會直接失敗而不是遞迴刪除。
  * @param {string} repoRoot @param {string} baseSha @param {string} otherSha @param {number} otherNumber
+ * @param {string} [mainSha] base 分支（main）目前的 head——量「哪一側動了 lock」用（各支自己相對 main 的改動）
  * @returns {MergeTry}
  */
-function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
+function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
   const wt = mkdtempSync(join(tmpdir(), `cross-pr-${otherNumber}-`));
   try {
     runIn(['git', 'worktree', 'add', '--detach', '-q', wt, baseSha], repoRoot);
@@ -406,30 +421,45 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
     if (!existsSync(nm)) symlinkSync(join(repoRoot, 'node_modules'), nm);
     try {
       runIn(['git', 'merge', '--no-edit', '-q', otherSha], wt);
-    } catch {
-      return { number: otherNumber, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' };
+    } catch (e) {
+      // ⚠️ merge 失敗 ≠ 文字衝突：沒有 committer 身分、hook 拒絕、git 本身的錯也會失敗（#566 r1 Codex 在
+      //    乾淨 Linux runner 實跑到）。判準看**有沒有未合併的檔案**（git ls-files -u），不看退出碼；
+      //    沒有＝拿不到可信的合併結果，走 cantRun 整輪退 2，不冒充「合起來會壞」（那種可以重跑一次）。
+      let unmerged = '';
+      try { unmerged = runIn(['git', 'ls-files', '-u'], wt).trim(); } catch { unmerged = ''; }
+      if (unmerged) {
+        const files = [...new Set(unmerged.split('\n').map((l) => l.split('\t').pop()))].slice(0, 5).join('、');
+        return { number: otherNumber, ok: false, kind: 'conflict', why: `文字衝突，git merge 就過不去（${files}）` };
+      }
+      return {
+        number: otherNumber, ok: false, kind: 'cantRun',
+        why: `「試合併」執行不起來（git merge 失敗但沒有未合併的檔案——不是兩支撞行）：${redDetail(/** @type {any} */ (e))}`,
+      };
     }
     // ⚠️ 三關之前先核對 lock（劃界與理由在檔頭「它不會安裝套件」那段）：對不上就不進三關——
     //    進了也是拿舊套件跑，紅綠都不可信（考題用記號檔釘住「真的沒進」）。
-    //    哪一側動了 lock 一併印出來，**從兩支的共同祖先量**（merge-base→各自的 head）：兩顆 head 直接
-    //    比會把本支這側的變動算到對方頭上（預審實跑：#561 沒動 lock 也會被印成「是」）。
+    //    哪一側動了 lock 一併印出來，量的是**各支自己相對 main 的改動**（merge-base(main, head)→head，
+    //    跟 GitHub 顯示的 PR diff 同一個口徑）：兩顆 head 直接比、或只從兩支的共同祖先量，都會把
+    //    main 在分岔之間的變動算到某一支頭上（預審與 #566 r1 各實跑到一種）。main 的 head 由 gh 的
+    //    baseRefOid 給；本機沒有那顆物件時退回 origin/main，再沒有就印「查不到」。
     //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
     try { lock = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { lock = null; }
-    const mism = lockMismatches(lock, installedVersionIn(wt));
+    const mism = lockMismatches(lock, installedIn(wt));
     if (mism.length) {
       let selfTouched = '查不到'; let otherTouched = '查不到';
-      try {
-        const mb = runIn(['git', 'merge-base', baseSha, otherSha], wt).trim();
-        const touched = (/** @type {string} */ head) =>
-          (runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否');
-        selfTouched = touched(baseSha);
-        otherTouched = touched(otherSha);
-      } catch { /* 留「查不到」 */ }
+      const own = (/** @type {string} */ mainRef, /** @type {string} */ head) => {
+        const mb = runIn(['git', 'merge-base', mainRef, head], wt).trim();
+        return runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否';
+      };
+      for (const mainRef of [mainSha, 'origin/main']) {
+        if (!mainRef) continue;
+        try { selfTouched = own(mainRef, baseSha); otherTouched = own(mainRef, otherSha); break; } catch { /* 試下一個 */ }
+      }
       return {
         number: otherNumber, ok: false, kind: 'lock',
-        why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；從兩支的共同祖先量，本支那側動了 package-lock.json：${selfTouched}，#${otherNumber} 那側動了：${otherTouched}）：`
+        why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；各支相對 main 的改動：本支那側動了 package-lock.json：${selfTouched}，#${otherNumber} 那側動了：${otherTouched}）：`
           + mism.slice(0, 5).join('；') + (mism.length > 5 ? '；…' : ''),
       };
     }
@@ -481,7 +511,7 @@ export function main(argv) {
     // ⚠️ 這一句決定後面所有 worktree 操作**動到哪一個 repo**。繼承來的 `GIT_DIR` 會讓它回答
     //    別的 repo（git 有 GIT_DIR 時不看 cwd）⇒ 這道閘會跑去別棵樹上建立與移除工作樹。
     repoRoot = runIn(['git', 'rev-parse', '--show-toplevel'], process.cwd()).trim();
-    self = JSON.parse(gh(['pr', 'view', pr, '--json', 'number,headRefOid,baseRefName']));
+    self = JSON.parse(gh(['pr', 'view', pr, '--json', 'number,headRefOid,baseRefName,baseRefOid']));
     list = JSON.parse(gh(['pr', 'list', '--state', 'open', '--base', 'main',
       '--json', 'number,headRefOid,headRefName,baseRefName,isDraft', '--limit', '100']));
   } catch (e) {
@@ -513,7 +543,7 @@ export function main(argv) {
   const results = [];
   for (const o of others) {
     try {
-      results.push(tryMerge(repoRoot, self.headRefOid, o.headRefOid, o.number));
+      results.push(tryMerge(repoRoot, self.headRefOid, o.headRefOid, o.number, typeof self.baseRefOid === 'string' ? self.baseRefOid : undefined));
     } catch (e) {
       console.error(`跨 PR 試合併 PR #${pr}：建不出臨時工作區（${/** @type {any} */ (e)?.message}）。`);
       return 2;
