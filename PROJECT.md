@@ -6,7 +6,7 @@
 
 ## 目標
 
-- **為誰**：William（老師，無程式背景）的個人理財管理。**LOCAL 模式（日常使用）**：個人財務資料庫只存本機 `data/store.db`（SQLite）；**HOSTED 模式（多人上線，C6/C7 尚未收官）**：資料存 Supabase Postgres（RLS 租戶隔離、機密加密或剝除）。Yahoo Finance／IBKR 等外部服務只在明確功能需要時由後端連線。
+- **為誰**：William（老師，無程式背景）的個人理財管理。**LOCAL 模式（日常使用）**：個人財務資料庫只存本機 `data/store.db`（SQLite）；**HOSTED 模式（多人上線；C6 首次部署及對抗驗收完成，後續項與 C7 尚未完成）**：資料存 Supabase Postgres（RLS 租戶隔離、機密加密或剝除）。Yahoo Finance／IBKR 等外部服務只在明確功能需要時由後端連線。
 - **做什麼**：本機優先的理財 dashboard（Node + Express + vanilla JS，port 4321）——銀行收支、信用卡費、資產配置、投資組合、證券交易、訂閱／卡片／保險追蹤、每日洞察。
 - **北極星**：長期發展成「人生管理遊戲」（跨財務／健康／工作／學習等領域），理財只是第一塊；哲學＝簡單、實用、邊用邊學、漸進式深度。
 - **成功標準**：①數字要對（money-critical 正確性優先於一切）②看得懂（必懂概念一律在頁面上就地白話解釋）③資料主權清楚（LOCAL＝只存本機；HOSTED＝存 Supabase，機密加密存放或剝除）、機密不進瀏覽器④William 不需要懂程式就能用與維護。
@@ -17,7 +17,7 @@
 
 - **已上線主線**：收支三層分家、防撞護欄 G1–G5、每日洞察 D0–D4、月度回顧、目標追蹤、證券交易 S0–S3、投資頁拆分、系統優化階段一～四、個股研究頁 P1–P5、個股基本面 F1–F5——**完工表與戰史＝[docs/archive/PROJECT-完工紀錄.md](docs/archive/PROJECT-完工紀錄.md)（凍結）；之後的完工紀錄＝GitHub merged PR 清單**。
 - **開著的工作**：只以 GitHub open PR 清單為準，本檔不保存會過期的 PR 編號副本。#335 高風險複審四項已由後續 PR 全數收官。
-- **HOSTED 模式**：C1–C5 已上線，**C6 對抗驗收／C7 真人上線未收官**（`docs/多人上線-施工計畫.md`）；Supabase CPU 支援單等回音。
+- **HOSTED 模式**：C1–C5 已上線、C6 首次部署及對抗驗收完成；**per-user 配額、Cloudflare、上線監控等後續項與 C7（真實資料上線＋DNS）尚未完成**（狀態以 `docs/多人上線-施工計畫.md` 為準）；Supabase CPU 支援單等回音。
 - **教學影片**：分工 v4（2026-08-17，William 八題問答定稿）＝兩條產線：EPxx 正片線照舊（EP01 腳本仍待老師審）；新設**詞彙短片線**（500 詞、直式 ≤90 秒、複製聲不出臉），**工讀生二人組**承接製作與營運，生產看板＝Notion 財金詞彙庫。⚠️ **本線 2026-08-25 已分家獨立**：規則全文、EPxx 腳本與後續進度全部移至 教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`），本 repo 只留與 app 的交付契約（`docs/learning-hub-contract.md`）。
 
 測試現況：**以三關為準**（`npm test`＋typecheck＋lint；pre-push 與 GitHub Actions 都會跑）——本檔不記靜態題數，那個數字每支 PR 都在動、只會過期（2026-07-30 起）。
