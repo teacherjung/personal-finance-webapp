@@ -191,18 +191,23 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
 /**
  * 「這個例外是不是資源耗盡」的分類器（Codex #572 r2：Node 官方明說 `error.code` 才是跨版本穩定的識別，
  * message 任何版本都可能改；ERR_STRING_TOO_LONG 的 message 是「Cannot create a string longer than …」、
- * 字串裡根本沒有 code）。所以：①先看穩定的 code；②沒有 code 的 V8 RangeError 才用**收斂的 exact 字樣**
- * （Node 22 deps/v8 message-template 與 node_errors 的原文）；③其餘一律不算——寧可讓「不夠貴」的斷言把
- * 訊息印出來給人看，也不放行。fatal OOM（Reached heap limit…）是非零退出，由 `r.status !== 0` 那臂接住。
+ * 字串裡根本沒有 code）。所以：①先看穩定的 code（Node 22 實際可達的四個）；②**沒有 code、且 name 是 RangeError**
+ * 的例外才用**收斂的 exact 字樣**（Node 22 deps/v8 message-template 與 node_errors 的原文；Codex #572 r3：
+ * 不限制 name／code 的話，`{name:'Error'}` 或未知 code 撞同一句也會被放行）；③**負長度就能立即觸發的字樣不收**
+ * （`Invalid array buffer length`／`Invalid typed array length: …`＝ `new ArrayBuffer(-1)`、`new Uint16Array(-1)` 就有，
+ * Node 22 自己的 V8 考題就是這樣產生它們——便宜的參數 bug 會冒充「對照組真的很貴」）；④其餘一律不算——
+ * 寧可讓「不夠貴」的斷言把訊息印出來給人看，也不放行。fatal OOM（Reached heap limit…）是非零退出，
+ * 由 `r.status !== 0` 那臂接住。
  * @param {{ name?: string, code?: string, message?: string }} e
  */
 function isResourceExhaustion(e) {
   const code = String(e?.code || '');
-  if (['ERR_STRING_TOO_LONG', 'ERR_BUFFER_TOO_LARGE', 'ENOMEM'].includes(code)) return true;
+  if (['ERR_STRING_TOO_LONG', 'ERR_BUFFER_TOO_LARGE', 'ERR_MEMORY_ALLOCATION_FAILED', 'ENOMEM'].includes(code)) return true;
+  if (code || String(e?.name || '') !== 'RangeError') return false;   // message fallback 只給「無 code 的 RangeError」
   const msg = String(e?.message || '');
   return [
-    /^Invalid string length$/, /^Invalid array buffer length$/, /^Invalid array buffer max length$/,
-    /^Invalid typed array length: /, /^Array buffer allocation failed$/, /^Cannot allocate memory/,
+    /^Invalid string length$/, /^Invalid array buffer max length$/,
+    /^Array buffer allocation failed$/, /^Cannot allocate memory/,
     /^Cannot create a string longer than /, /^Cannot create a Buffer larger than /,
     /: Out of memory$/, /JavaScript heap out of memory/,
   ].some((re) => re.test(msg));
@@ -212,16 +217,20 @@ test('對照組的資源耗盡分類器：穩定 code 與收斂的 V8 字樣收�
   const yes = [
     { code: 'ERR_STRING_TOO_LONG', message: 'Cannot create a string longer than 0x1fffffe8 characters' },
     { code: 'ERR_BUFFER_TOO_LARGE', message: 'Cannot create a Buffer larger than 4294967296 bytes' },
+    { code: 'ERR_MEMORY_ALLOCATION_FAILED', message: 'Failed to allocate memory' },   // Node 22 node_buffer／string_bytes 會丟
     { code: 'ENOMEM', message: 'spawnSync: ENOMEM' },
     { name: 'RangeError', message: 'Invalid string length' },
-    { name: 'RangeError', message: 'Invalid array buffer length' },
-    { name: 'RangeError', message: 'Invalid typed array length: 4294967296' },
     { name: 'RangeError', message: 'Array buffer allocation failed' },
     { name: 'RangeError', message: 'WebAssembly.Memory(): Out of memory' },
-    { message: 'Reached heap limit Allocation failed - JavaScript heap out of memory' },
+    { name: 'RangeError', message: 'Reached heap limit Allocation failed - JavaScript heap out of memory' },
   ];
   const no = [
-    { name: 'RangeError', message: 'Invalid array length' },            // 語意歧義，刻意不放行
+    { name: 'RangeError', message: 'Invalid array length' },            // 負長度就有，證明不了耗盡
+    { name: 'RangeError', message: 'Invalid array buffer length' },     // new ArrayBuffer(-1) 就有（Node 22 V8 考題）
+    { name: 'RangeError', message: 'Invalid typed array length: -1' },  // new Uint16Array(-1) 就有
+    { name: 'Error', message: 'Invalid string length' },                // 錯類型：不是 RangeError 不收
+    { code: 'ERR_SOMETHING_ELSE', message: 'Invalid string length' },   // 未知 code 撞同一句：不收
+    { message: 'Reached heap limit Allocation failed - JavaScript heap out of memory' },   // 沒 name 沒 code：不收（真 fatal OOM 走非零退出那臂）
     { name: 'TypeError', message: 'Cannot read properties of undefined' },
     { name: 'Error', message: 'allocation strategy changed' },          // 舊正規式 `allocat` 會誤收的那種
     { code: 'ERR_INVALID_ARG_TYPE', message: 'The "path" argument must be of type string' },
