@@ -102,10 +102,11 @@ test('⭐ 每一條規則的級別逐條釘住：多一條規則、或把任何�
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
     ['C', 'lib/store.js'], ['C', 'server.js'], ['C', 'start.command'], ['C', '.node-version'], ['C', 'render.yaml'],
-    ['C', 'data/seed.json'], ['C', 'scripts/check-node-version.js'],
+    ['C', 'scripts/check-node-version.js'],
     ['D', 'public/app.js'], ['D', 'public-site/index.html'],
     ['P', 'prototype/forest-ui-lab/index.html'],
     ['E', 'test/x.test.js'], ['E', 'test-doubles/x.js'], ['E', 'docs/contracts/README.md'], ['E', 'AGENTS.md'], ['E', '.github/workflows/ci.yml'],
+    ['E', 'data/seed.json'],   // 只在空庫首次啟動時種進去，重啟驗不到（Grok #573 掃後）
     ['E', 'scripts/grok-scan.js'], ['E', 'scripts/grok-sandbox.sb'], ['E', 'scripts/git-hooks/pre-push'], ['E', 'eslint.config.js'], ['E', '.claude/launch.json'],
   ];
   assert.equal(RULE_SAMPLES.length, RULES.length, 'RULES 與 RULE_SAMPLES 條數不同——新增／刪除規則要同步這張表');
@@ -135,7 +136,8 @@ test('⭐ 回報級別的順序是固定的：同重的 D 與 P 不看路徑順�
 });
 
 test('⭐ D 級「重新整理就好」的前提：public/ 與 public-site/ 沒有 service worker——有人加了註冊，這題要紅、逼人改 D 的動作', () => {
-  const out = spawnSync('grep', ['-rl', '-e', 'serviceWorker', '-e', 'sw.js', join(ROOT, 'public'), join(ROOT, 'public-site')], { encoding: 'utf8' });
+  // -F：逐字比對，不然 `sw.js` 的 `.` 是任意字元、會誤中 swXjs 之類的子字串（Grok #573 掃後）
+  const out = spawnSync('grep', ['-rlF', '-e', 'serviceWorker', '-e', 'sw.js', join(ROOT, 'public'), join(ROOT, 'public-site')], { encoding: 'utf8' });
   assert.ok(out.status === 0 || out.status === 1, `grep 自己失敗了（${out.stderr}）——這題不能在掃不到目錄時靜靜通過`);
   const hits = out.stdout.split('\n').filter(Boolean);
   assert.deepEqual(hits, [], `前端出現 service worker 的跡象：${hits.join('、')}——「重新整理就好」不再成立，D 級的動作要改`);
@@ -149,6 +151,9 @@ test('⭐ gh 讀檔：分頁全拿（第 101 筆是 lib/ 也要算到）、改�
   assert.deepEqual(renamed.sort(), ['docs/x.md', 'lib/x.js']);
   assert.equal(classify(renamed).level, 'C', 'lib/ 被改名到 docs/ ＝ runtime 路徑被拿掉，也要當 C');
   assert.deepEqual(prFilesFromApi(JSON.stringify([[{ filename: 'docs/y.md', status: 'copied', previous_filename: 'docs/x.md' }]])).sort(), ['docs/x.md', 'docs/y.md']);
+  // previous_filename: null 當「沒有」——若哪天 API 對一般列也塞 null，不可以讓每支正常 PR 都退 2（Grok #573 掃後）；但 renamed 配 null 仍要丟
+  assert.deepEqual(prFilesFromApi(JSON.stringify([[{ filename: 'docs/y.md', status: 'modified', previous_filename: null }]])), ['docs/y.md']);
+  assert.throws(() => prFilesFromApi(JSON.stringify([[{ filename: 'docs/y.md', status: 'renamed', previous_filename: null }]])), /renamed 卻沒有/);
   const bad = {
     '{}': '外層不是陣列', '[{}]': '頁不是陣列', '[[{"path":"x","status":"modified"}]]': '缺 filename', '[[{"filename":"","status":"modified"}]]': 'filename 空',
     '[[{"filename":"lib/x.js"}]]': '缺 status', '[[{"filename":"docs/new.md","status":"renamed"}]]': 'renamed 沒有 previous_filename（舊路徑若是 lib/ 就漏了）',

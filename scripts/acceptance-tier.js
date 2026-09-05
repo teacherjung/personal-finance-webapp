@@ -42,12 +42,12 @@ import { gitEnv } from '../lib/git-env.js';
  */
 export const TIERS = /** @type {const} */ ({
   A: { name: '資料庫結構', action: '重啟套不上：照 docs/C6-部署與對抗審查-操作手冊.md 在 Supabase SQL Editor 重跑整份 db/supabase-schema.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。' },
-  B: { name: '相依套件', action: '先裝再重啟：桌面捷徑「重啟理財網頁」只在 pull 到動 package*.json 的版本時才自動 npm install；主目錄已是最新版（沒有 pull）就在主目錄手動 npm install；裝完做下一行 C 的動作（命中 B 時 C 一定連帶列出）。' },
+  B: { name: '相依套件', action: '先裝再重啟：桌面捷徑「重啟理財網頁.command」（住桌面、不在 repo）pull 到動 package*.json 的版本時會自動 npm install；走 repo 裡的 start.command（不 pull、只在沒有 node_modules 時裝）或主目錄已是最新版（沒有 pull 可做）就要在主目錄手動 npm install；裝完做下一行 C 的動作（命中 B 時 C 一定連帶列出）。' },
   C: { name: '要重啟＋走核心流程', action: 'William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。' },
   D: { name: '只動前端', action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },
   P: { name: '原型', action: 'prototype/ 不由 server.js 供應：要看就開原型自己的預覽，不重啟理財 App。' },
   E: { name: '不需驗收', action: '回報寫「不需驗收：只動了 …」。' },
-  F: { name: '工具安全設定', action: '不是重啟：.codex/hooks.json／.claude/settings.json 的 matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行（AGENTS「錢的絕對邊界」節 Codex 側那條）——William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份要手動同步；驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
+  F: { name: '工具安全設定', action: '不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse hook）——改它要同步 .codex/hooks.json 那份副本（成對驗會逼）、重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。兩者驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
 });
 
 /** @typedef {keyof typeof TIERS} Tier */
@@ -71,7 +71,6 @@ export const RULES = [
   ['C', /^start\.command$/],
   ['C', /^\.node-version$/],
   ['C', /^render\.yaml$/],
-  ['C', /^data\/seed\.json$/],
   ['C', /^scripts\/check-node-version\.js$/],          // start.command 每次啟動都跑它——壞了 App 起不來
   ['D', /^public\//],
   ['D', /^public-site\//],                             // HOSTED 公開站（server.js 用 express.static 供應）
@@ -81,6 +80,7 @@ export const RULES = [
   ['E', /^docs\//],
   ['E', /^[^/]+\.md$/],
   ['E', /^\.github\//],                                // 含 CI 設定：影響的是合併程序，由合併閘與 CI 自己驗
+  ['E', /^data\/seed\.json$/],                         // 只在空庫首次啟動時種進去（lib/store.js 的搬家／初始化），主目錄已有資料時重啟驗不到——重啟是白做；由讀它的考題守（Grok #573 掃後）
   // 只在合併程序／審查／驗證裡跑的腳本：**明確名單**，新腳本不會自動落到 E（會當未知→C，由改表的人核對它是不是啟動時會跑）
   ['E', /^scripts\/(check-ci-really-ran|check-cross-pr-merge|check-pr-collab-fields|check-pr-merge-gate|check-review-verdicts|check-worktree-integrity|audit-grok-scan|grok-scan|grok-relay|grok-auth-refresh|grok-sandbox-canary|sync-pr-base-version|c6-adversarial|acceptance-tier)\.js$/],
   ['E', /^scripts\/grok-sandbox\.sb$/],
@@ -138,7 +138,7 @@ export function prFilesFromApi(json, { expectEntries } = {}) {
     for (const f of page) {
       if (!f || typeof f !== 'object' || typeof f.filename !== 'string' || !f.filename) throw new Error('檔案物件缺 filename');
       if (typeof f.status !== 'string' || !f.status) throw new Error(`檔案物件缺 status：${f.filename}`);
-      const hasPrev = 'previous_filename' in f;
+      const hasPrev = f.previous_filename !== undefined && f.previous_filename !== null;   // null 當沒有（OpenAPI 寫 optional，不保證實務不塞 null）
       if (hasPrev && (typeof f.previous_filename !== 'string' || !f.previous_filename)) throw new Error(`previous_filename 不是非空字串：${f.filename}`);
       if (f.status === 'renamed' && !hasPrev) throw new Error(`renamed 卻沒有 previous_filename：${f.filename}`);
       entries += 1;
@@ -170,7 +170,7 @@ const SHAPE_MSG = 'origin 不是能逐字釘住的 owner/repo 網址（只收 ht
  * 佔位會被 GH_REPO 導向別的 repo（#573 r4）、沒明講站台會被 GH_HOST 導向別站（#573 r5），而 gitEnv() 只清 GIT_*。
  * **逐字白名單、不正規化**（#573 r6／r7）：一條寬鬆正規式會把 https 的 port 靜靜丟掉、把 scp 的數字路徑段吞成 port；
  * 改用 WHATWG URL 又會把 `%2e%2e`、`?x=1`、`#frag` 正規化掉——Git 送給遠端的是原文，我們卻查到另一個 slug 的同號 PR。
- * 所以：只有**原文**剛好長成 `scheme://[user@]host[:port]/owner/repo(.git)` 或 `[user@]host:owner/repo(.git)` 才收，
+ * 所以：只有**原文**剛好長成 `scheme://[user[:pass]@]host[:port]/owner/repo(.git)` 或 `[user@]host:owner/repo(.git)` 才收，
  * 其餘一律丟（退 2）、不猜；http(s) 明講**非預設** port＝API 也在那個 port、gh 的 --hostname 拒收冒號釘不住 → 也丟；
  * ssh:// 的 port 是 SSH 的、跟 API 端點無關 → 不看。錯誤訊息不含 origin 原文。
  * @param {string} [cwd]
