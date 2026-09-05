@@ -1,3 +1,4 @@
+// @ts-check
 // 估值訊號「檔位」單一真相（每日洞察引擎 D3 抽出；前後端共用，仿 categories.js 前例）。
 // 檔位：0 常態、1 加碼、2 重壓（越貴 tier 越低）。門檻依 [[investment-principles]]。
 // ⚠️ 純模組（不可 import app.js/theme.js 這類瀏覽器專用檔）：後端 lib/services/insights.js 也 import 這份算 ECY 跳檔。
