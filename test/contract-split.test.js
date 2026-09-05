@@ -328,8 +328,37 @@ const BODY_LABEL = '**記得同步這裡**：';
 
 /** repo 路徑的機械抽取正規式（README 小節的檔案行與契約內文共用同一支；認得到什麼、認不到什麼見 README 雲端與安全小節的備註）。 */
 const REPO_PATH = /(?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js|package(?:-lock)?\.json/;
-/** README 小節裡「一行一檔」的合法寫法：`- \`<完整路徑>\`` 開頭；備註句裡順口提到的路徑**不算**宣告。 */
-const FILE_LINE = new RegExp(`^- \`(${REPO_PATH.source})\``);
+/**
+ * README 小節裡「一行一檔」的合法寫法：`- \`<完整路徑>\`` 開頭，**而且整行只准這一個 repo 路徑 code span**——
+ * 後面只能接括號說明／〔標籤〕，裡面不得再出現 \`另一個路徑\`（Codex #567 r2 High①：沒有行尾錨、又只擷取第一個 match，
+ * `- \`data/seed.json\`、\`server.js\`` 畫面像一行宣告兩檔、考題只計第一檔）。備註行（`- 〔…`）裡順口提到的路徑仍不算宣告。
+ */
+const FILE_LINE_HEAD = new RegExp(`^- \`(${REPO_PATH.source})\`(.*)$`);
+const SECOND_PATH = new RegExp(`\`(?:${REPO_PATH.source})\``);
+const FILE_LINE = {
+  /** @param {string} l */ test: (l) => { const m = FILE_LINE_HEAD.exec(l); return !!m && !SECOND_PATH.test(m[2]); },
+  /** @param {string} l */ exec: (l) => { const m = FILE_LINE_HEAD.exec(l); return m && !SECOND_PATH.test(m[2]) ? m : null; },
+};
+
+/**
+ * 契約頁首的**完整**宣告形狀（Codex #567 r2 High②：只找「「X」節的責任檔案清單」這個片語，整行換成
+ * 「這不是本檔的適用檔案宣告，只是名詞例句：…」、連 README 連結一起拿掉，照樣綠）。
+ * 現在要的是**整行錨定**：引言區裡剛好一行長成 `> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單`
+ * 開頭；片語本身在整檔也只准出現這一次。回傳領域名，不合法就 assert。
+ * @param {string} text 契約檔全文 @param {string} file 只用來寫錯誤訊息
+ */
+function headerDeclaration(text, file) {
+  const firstH2 = text.search(/^## /mu);
+  const headerZone = firstH2 < 0 ? text : text.slice(0, firstH2);
+  const phrase = /「([^」]+)」節的責任檔案清單/gu;
+  assert.equal([...text.matchAll(phrase)].length, 1,
+    `${file} 裡「「X」節的責任檔案清單」必須整檔剛好出現 1 次（多一次＝內文誘餌）。`);
+  const anchored = headerZone.split('\n').filter((l) => /^> \*\*適用檔案清單＝\[README\.md\]\(README\.md\)「[^」]+」節的責任檔案清單/u.test(l));
+  assert.equal(anchored.length, 1,
+    `${file} 的引言區必須剛好有一行以 \`> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單\` 開頭（實得 ${anchored.length} 行）。\n`
+    + '⚠️ 片語出現在別的句子裡不算宣告（Codex #567 r2：名詞例句照樣綠）。');
+  return /「([^」]+)」節的責任檔案清單/u.exec(anchored[0])?.[1] ?? '';
+}
 
 /** 小節裡「備註」的合法寫法：`- 〔…` 開頭（不屬於任何單一檔案的句子逐字收在這裡；順口提到的路徑不算宣告）。 */
 const NOTE_LINE = /^- 〔/;
@@ -366,7 +395,7 @@ function domainSection(readme, domain) {
   for (const l of section) {
     if (l.trim() === '' || CONTRACT_LINE.test(l) || NOTE_HEAD.test(l) || FILE_LINE.test(l) || NOTE_LINE.test(l)) continue;
     assert.fail('README「' + domain + '」小節有一行不是合法形狀（空行／契約：／備註（…）：／「- `完整路徑`」／「- 〔…」）：\n  「' + l.slice(0, 80) + '」\n'
-      + '⚠️ 這是 fail-closed：任何看起來像宣告、卻不是「- `完整路徑`」的行（#### 標題、* 清單、縮排、全形反引號）都在這裡紅，不再靜靜不計。');
+      + '⚠️ 這是 fail-closed：任何看起來像宣告、卻不是「- `完整路徑`」的行（#### 標題、* 清單、縮排、全形反引號、一行塞第二個路徑 code span）都在這裡紅，不再靜靜不計。');
   }
   return section;
 }
@@ -1212,10 +1241,25 @@ test('⭐ 小節切法自己要先會動：合法的收；#### 標題、* 清單
     '兩行契約（第一行指錯、第二行誘餌）': ['### 甲', '契約：[b.md](b.md)', '契約：[a.md](a.md)', '- `lib/x.js`'],
     '契約行兩邊檔名不同': ['### 甲', '契約：[a.md](b.md)', '- `lib/x.js`'],
     '普通內文行（既不是宣告也不是備註）': ['### 甲', '契約：[a.md](a.md)', '這一行看起來像說明 `lib/x.js`'],
+    '一行塞兩個路徑 code span（Codex r2）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`、`server.js`（一行宣告兩檔）'],
+    '括號說明裡再藏一個路徑 code span': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（另見 `lib/y.js`）'],
   };
   for (const [name, lines] of Object.entries(bad)) {
     assert.throws(() => sectionFiles([...lines, '### 乙', '契約：[b.md](b.md)'].join('\n'), '甲'), `「${name}」應該要紅。`);
   }
+});
+
+test('⭐ 頁首宣告判準自己要先會動：整行錨定的收；名詞例句、拿掉 README 連結、片語出現兩次都要丟例外', () => {
+  const good = '# 契約：甲\n\n> 本檔是契約。\n> **適用檔案清單＝[README.md](README.md)「甲」節的責任檔案清單（單一真相）**——命中就必讀本檔。\n\n## 第一條\n內文。\n';
+  assert.equal(headerDeclaration(good, 'fixture'), '甲', '合法頁首要回傳領域名。');
+  const bad = {
+    '名詞例句（Codex r2）': good.replace(/^> \*\*適用檔案清單＝.*$/mu, '> 這不是本檔的適用檔案宣告，只是名詞例句：「甲」節的責任檔案清單。'),
+    '拿掉 README 連結': good.replace('[README.md](README.md)', 'README'),
+    '片語在內文再出現一次': good + '\n順帶一提「甲」節的責任檔案清單。\n',
+    '宣告掉到第一個 ## 之後': good.replace('> **適用檔案清單', '> 引言\n\n## 第零條\n> **適用檔案清單'),
+    '不是引用行（沒有 > ）': good.replace('> **適用檔案清單', '**適用檔案清單'),
+  };
+  for (const [name, text] of Object.entries(bad)) assert.throws(() => headerDeclaration(text, 'fixture'), `「${name}」應該要紅。`);
 });
 
 test('⭐ 拆分護欄｜README 各領域小節與 manifest 的 files 都要依路徑排序、不重複（一行一檔的理由就是這個）', () => {
@@ -1249,16 +1293,8 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路�
     // 2026-09-03 起責任檔案住在 README 的 `### <領域名>` 小節，頁首字樣從「路由表「X」列」改成「「X」節的責任檔案清單」。
     // ⚠️ 釘位＋唯一（Codex #567 r1 High③）：r1 版用未錨定正規式掃全文——把真頁首改成普通引用句、內文順帶出現
     //    「「前端功能」節的責任檔案清單」照樣綠。⇒ 只在**引言區**（第一個 `## ` 之前）找，而且整檔剛好一次。
-    const body = read(file);
-    const firstH2 = body.search(/^## /mu);
-    const headerZone = firstH2 < 0 ? body : body.slice(0, firstH2);
-    const allHits = [...body.matchAll(/「([^」]+)」節的責任檔案清單/gu)];
-    assert.equal(allHits.length, 1,
-      `${file} 裡「「X」節的責任檔案清單」出現 ${allHits.length} 次（必須剛好 1 次、且在頁首引言區——多一次＝內文誘餌）。`);
-    const declared = /「([^」]+)」節的責任檔案清單/u.exec(headerZone);
-    assert.ok(declared,
-      `${file} 的頁首沒有宣告它屬於 README 的哪一節（要寫成「「<領域名>」節的責任檔案清單」）。\n`
-      + '⚠️ 沒有這句話，契約與路由表就只能靠人記得對應——那正是這支 PR 在修的病。');
+    //    r2 再收：片語不夠，要**整行錨定**的宣告形狀（headerDeclaration，純函式、有探針題）。
+    const declared = [null, headerDeclaration(read(file), file)];
     const row = rows.find((l) => l.includes(`](${base})`));
     assert.ok(row, `README 路由表沒有指向 ${base} 的那一列`);
     // 小節自己也要指回同一份契約（否則「### 前端功能」底下寫著 `契約：[investment-sec.md]` 三邊照樣綠）。
@@ -1464,6 +1500,10 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
     + '   否則清單會開始說謊。');
 });
 
+// 比例題只量帶契約連結的索引列；表格外面貼一段契約全文就是第二份副本、拆分等於沒發生——這題掃索引列以外的可見文字。
+// 索引列＝「表格列（以 | 開頭）且帶契約連結」，與 indexRows() 的認法一致；表外一行就算掛了契約連結也不是索引列。
+// 判準＝任何連續 W 字的逐字副本一定被抓（AGENTS 那邊建 W-gram 集合、契約內文逐字滑動）；W 要高過合法的重疊
+// （函式名清單那種；設門檻時量到 57 字，2026-09-04）。
 test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（拆分不可被「表外貼全文」繞過）', () => {
   const W = 60;
   const hay = visibleText(read('AGENTS.md').split('\n').filter((l) => !(l.startsWith('|') && LINK_RE.test(l))).join('\n'));
@@ -1481,3 +1521,4 @@ test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（�
     }
   }
 });
+
