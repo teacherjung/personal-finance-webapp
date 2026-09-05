@@ -671,6 +671,7 @@ test('⭐ CLI｜本支那側動了 lock、另一支停在舊 base 沒動（#561 
     assert.match(r.stderr, /本支那側動了 package-lock\.json：是，#442 那側動了：否/,
       '另一支根本沒動 lock 卻被印成「是」——處置會叫人先去合併它，白繞一輪（預審在真 repo 上對 #561 實跑到的）');
     assert.match(r.stderr, /沒掛 symlink 的全新臨時樹/, '本支自己動了 lock 的處置沒指到「全新臨時樹 npm ci」');
+    assert.match(r.stderr, /從那棵樹重跑本閘、拿到退出碼 0/, '手動路徑沒有能進下一步的狀態——REVIEW 只認本閘的退出碼 0，手動跑三關產不出它（#566 r5）');
     assert.equal(existsSync(join(dir, 'gate-ran')), false, '對不上還是進了三關');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -946,6 +947,7 @@ test('⭐ 文件｜REVIEW-AND-MERGE.md 跨 PR 試合併那一步（規則正本�
   assert.ok(step.includes(RERUN_LIMITS), `正本那一步沒有逐字含限制句「${RERUN_LIMITS}」——訊息與正本會分岔`);
   assert.match(step, /不適用/, '正本沒寫 lock 對不上的退 2 不適用重跑');
   assert.match(step, /不會安裝套件/, '正本沒寫這道閘不會安裝套件——「重跑一次」會被拿去對付那種紅');
+  assert.match(step, /重跑本閘/, '正本的手動路徑沒寫「從乾淨樹重跑本閘拿 0」——照字面手動跑三關永遠進不了下一步（#566 r5）');
 });
 
 test('CLI｜對照組：lock 要求的套件都裝著、版本相同 → 核對放行，三關照跑（三關退 0 ⇒ exit 0）', () => {
@@ -1075,6 +1077,35 @@ test('裁決｜footer 也看 kind、不嗅 why：why 提到「文字衝突」的
   assert.match(v.message, /合起來測試紅/, '測試紅的說明不見了');
   assert.doesNotMatch(v.message, /GitHub 自己就看得到/,
     '「文字衝突」的說明被 why 的散文內容觸發——footer 的判準退回嗅字串（#446 r6 存活過的突變）');
+});
+
+test('⭐ 裁決｜ok 不是布林（例如字串 "false"）＝整輪查不清楚（2）：單獨、混綠、混真紅都一樣（#566 r5：truthiness 會把 "false" 當成綠而退 0）', () => {
+  const fake = /** @type {any} */ ({ number: 1, ok: 'false', why: 'bad', kind: 'cantRun' });
+  for (const results of [[fake], [{ number: 2, ok: true, why: '' }, fake], [fake, { number: 3, ok: false, kind: 'red', why: '紅' }]]) {
+    const v = verdict(results);
+    assert.equal(v.code, 2, `${JSON.stringify(results)} 應退 2，實得 ${v.code}——「false」字串被當成綠＝假綠`);
+    assert.match(v.message, /形狀不對/);
+    assert.doesNotMatch(v.message, /都是綠的/);
+  }
+  // 編號不是數字、整包不是陣列、項目不是物件——同一道形狀防線
+  assert.equal(verdict(/** @type {any} */ ([{ number: '1', ok: false, kind: 'red', why: '紅' }])).code, 2);
+  assert.equal(verdict(/** @type {any} */ (null)).code, 2);
+  assert.equal(verdict(/** @type {any} */ ([null])).code, 2);
+  // 對照：形狀正確的綠仍是 0
+  assert.equal(verdict([{ number: 1, ok: true, why: '' }]).code, 0);
+});
+
+test('⭐ lockMismatches｜optional 只認布林 true：字串 "false"／數字／物件都不能豁免缺套件（算無法核對）；optional: false 缺套件照樣對不上（#566 r5：閘會變鬆的例外）', () => {
+  for (const bad of ['false', 'true', 1, 0, {}, []]) {
+    const lock = { packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: bad } } };
+    const m = lockMismatches(lock, () => null, null);
+    assert.equal(m.length, 1, `optional=${JSON.stringify(bad)} 缺套件竟然放行或多報：${m.join(' / ')}`);
+    assert.match(m[0], /無法核對/, `optional=${JSON.stringify(bad)} 要報「無法核對」，實得 ${m[0]}`);
+  }
+  const strictFalse = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: false } } }, () => null, null);
+  assert.equal(strictFalse.length, 1); assert.match(strictFalse[0], /沒有裝/);
+  const strictTrue = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: true } } }, () => null, null);
+  assert.deepEqual(strictTrue, []);
 });
 
 test('裁決｜kind 缺席＝整輪查不清楚（2）：單獨、混 red、混 conflict、混 cantRun 四種都一樣（#446 r6／r7）', () => {

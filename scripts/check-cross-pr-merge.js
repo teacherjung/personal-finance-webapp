@@ -177,7 +177,19 @@ export const CANT_RUN_CAUSES = [
  * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun' | 'lock'}[]} results
  */
 export function verdict(results) {
-  const bad = results.filter((r) => !r.ok);
+  // ⚠️ 前置防線的第一道是**形狀**：ok 要是真正的布林（"false" 這種字串在 truthiness 下是「綠」——#566 r5 Codex
+  //    實跑 verdict([{ok: 'false', kind: 'cantRun'}]) 得到 0）；number 要是數字。形狀不對＝這一輪的資料不可信，整輪退 2。
+  const malformed = (Array.isArray(results) ? results : []).filter((r) => !r || typeof r !== 'object' || typeof r.ok !== 'boolean' || typeof r.number !== 'number');
+  if (!Array.isArray(results) || malformed.length) {
+    return {
+      code: 2,
+      message: '跨 PR 試合併：**查不清楚——有結果的形狀不對（ok 不是布林、或編號不是數字），這一輪的分類不可信**\n'
+        + (Array.isArray(results) ? results : []).map((r) => `  ・${JSON.stringify(r).slice(0, 200)}`).join('\n')
+        + '\n\n⚠️ 正式路徑（tryMerge）產出的每一筆 ok 都是布林——出現別的形狀＝有別的東西在餵結果、或程式被改壞。'
+        + 'fail-closed 擋下，先查結果是哪來的。',
+    };
+  }
+  const bad = results.filter((r) => r.ok === false);
   const unlabeled = bad.filter((r) => r.kind !== 'conflict' && r.kind !== 'red' && r.kind !== 'cantRun' && r.kind !== 'lock');
   if (unlabeled.length) {
     return {
@@ -201,8 +213,9 @@ export function verdict(results) {
         + '   ・兩側都「否」＝發起樹的套件本來就沒跟上 lock：發起樹是主目錄時，在**主目錄本身**跑 npm install'
         + '（主目錄不是 worktree、不在 CLAUDE.md 禁區；用 install 不用 ci，ci 會先整個刪掉 node_modules）後重跑本閘。\n'
         + '   ・對方那側「是」＝先合併那一支、發起樹裝好後再跑本閘。\n'
-        + '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：在一棵**沒掛 symlink 的全新臨時樹**'
-        + '（git worktree add 之後不掛連結）npm ci，在那裡手動跑三關，三關輸出與那棵樹的 lock sha 貼進 PR 留言。\n'
+        + '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：開一棵**沒掛 symlink 的全新臨時樹**'
+        + '（git worktree add 到本支 head 之後不掛連結）npm ci，然後**從那棵樹重跑本閘、拿到退出碼 0 才算數**'
+        + '（不是手動跑三關——REVIEW 的「退出碼 0 才可進下一步」只認本閘的 0）；PR 留言附那棵樹的路徑與 lock sha，用完收樹前確認 node_modules 是真目錄再刪。\n'
         + '   ・兩側都「是」＝先合併對方那一支、發起樹裝好之後，本支仍要走上一條的手動路徑。\n'
         + '   ・側別印「查不到」＝本機沒有 main 目前那顆 commit（沒 fetch）或 git 查不出來：先 git fetch origin main 再跑本閘；查不到不等於沒動。\n'
         + '   ⚠️ 本閘造的臨時樹掛著 symlink，不可以在那裡裝；不要在掛著 symlink 的 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
@@ -391,9 +404,12 @@ export function lockMismatches(lock, installed, hidden) {
     if (entry.link) { out.push(`${key}：workspace 連結（link）核對不了指向哪一版，視為對不上`); continue; }
     const want = String(entry.version ?? '');
     const wantName = (typeof entry.name === 'string' && entry.name) ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    // optional 只認真正的布林 true（"false" 字串、數字、物件在 truthiness 下都會被當成可豁免——#566 r5 Codex 的反例）；
+    // 有寫但不是布林＝lock 壞掉，無法核對。
+    if (entry.optional !== undefined && typeof entry.optional !== 'boolean') { out.push(`${key}：optional 欄不是布林（${JSON.stringify(entry.optional)}），無法核對`); continue; }
     const have = installed(key);
     if (have === null) {
-      if (!entry.optional) out.push(`${key}：lock 要 ${wantName}@${want}，沒有裝`);
+      if (entry.optional !== true) out.push(`${key}：lock 要 ${wantName}@${want}，沒有裝`);
       continue;
     }
     if (have.name !== wantName) { out.push(`${key}：lock 要的是 ${wantName}，裝的是 ${have.name}（同版號也不算）`); continue; }
