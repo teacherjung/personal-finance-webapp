@@ -220,6 +220,12 @@ test('⭐ originRepo｜釘不住的 origin 一律丟、不改查別的 endpoint�
     'ssh://git@github.com/acme/widgets.git?x=1': /逐字釘住/,
     'ssh://git@github.com/acme/widgets.git#frag': /逐字釘住/,
     'https://github.com/acme/wid%20gets.git': /逐字釘住/,
+    // #573 r8 High：這些在 Git 眼裡是別的 host／別的協定／壞掉的 URL，parser 不可以替它「修好」再查到別的 repo
+    ' https://github.com/acme/widgets.git': /逐字釘住/,          // 前置空白：Git 報 protocol ' https' is not supported
+    'https://user?tag@127.0.0.1/acme/widgets.git': /逐字釘住/,   // userinfo 混進 ?：Git 認的 host 是 user
+    'user:pass@127.0.0.1:acme/widgets.git': /逐字釘住/,          // scp 的 user 含冒號：Git 認的 host 是 user
+    'http://github.com/acme/widgets.git': /逐字釘住/,            // http 的 API 在 80，gh 固定打 443 ＝ 釘不住同一 endpoint
+    'https://github.com/acme/widgets.git//': /逐字釘住/,         // 只容許一個結尾斜線
   };
   for (const [url, re] of Object.entries(bad)) assert.throws(() => originOf(url), re, `${url} 應該丟`);
 });
@@ -238,6 +244,8 @@ test('⭐ CLI｜origin 釘不住 → 退 2、根本不去叫 gh（fail-closed �
     [`https://user:${SECRET}@ghe.example.com:8443/acme/widgets.git`, /非預設 port/],   // r6 High＋r7 High②
     ['https://github.com/evil/%2e%2e/acme/widgets.git', /逐字釘住/],                     // r7 High①：URL 正規化後會變成 acme/widgets 的同號 PR
     ['ssh://git@github.com/acme/widgets.git?x=1', /逐字釘住/],
+    [' https://github.com/acme/widgets.git', /逐字釘住/],                                 // r8 High①：不 trim
+    ['http://github.com/acme/widgets.git', /逐字釘住/],                                   // r8 High②：不收 http
   ]);
   for (const [origin, re] of cases) {
     const dir = fixtureRepo(origin);

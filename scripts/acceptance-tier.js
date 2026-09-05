@@ -28,6 +28,9 @@
 // 分級減少的是**不必要的重啟**；純 lib/ 的口徑變更人眼本來也走不到（匯率預設值、SEC 科目對應），那一塊靠
 // 考題與 CI 接，不因分級而多或少。表是路徑家族的判斷，不是行為證明——新家族出現時它會落到「要重啟」並被列出，
 // 由改表的那支 PR 補進去；`public/` 那一級「重新整理就好」的前提是沒有 service worker，那個前提由考題守著。
+// **origin 身分解析（originRepo）守的是「設錯／手滑／環境變數蓋掉」，不是對抗惡意 origin**：它用逐字白名單、寧可退 2 也不猜，
+// 但本機 origin 是自己設的——能改寫 origin 的人也能改寫這支腳本，所以這裡不是安全邊界，不再為更刁鑽的 origin 形狀加解析
+// （#573 r5–r8 同族四輪後封頂；再有就進待辦、以「退 2」為可接受結果）。
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
@@ -152,12 +155,15 @@ export function prFilesFromApi(json, { expectEntries } = {}) {
 
 /** 一段 owner 或 repo 名：只收字母、數字、`_`、`.`、`-`；另外 `.`／`..` 段在下面單獨擋。 */
 const SEG = '[A-Za-z0-9_.-]+';
-/** 網址形：`scheme://[userinfo@]host[:port]/owner/repo`——**逐字白名單**，含 %、?、#、多餘路徑段的一律不匹配。 */
-const URL_FORM = new RegExp(`^(https?|ssh|git)://(?:[^@/\\s]+@)?([A-Za-z0-9.-]+)(?::(\\d+))?/(${SEG})/(${SEG})$`);
-/** scp 形：`[user@]host:owner/repo`——冒號後一律是路徑、沒有 port 文法。 */
-const SCP_FORM = new RegExp(`^(?:[^@/\\s]+@)?([A-Za-z0-9.-]+):(${SEG})/(${SEG})$`);
+/** 使用者名（URL 的 userinfo 與 scp 的 user）：封閉文法，不讓 `?`／`#`／`%`／`:`／`@` 混進去改寫 URL 語意（#573 r8）。 */
+const USER = '[A-Za-z0-9._-]+';
+/** 網址形：`scheme://[user[:pass]@]host[:port]/owner/repo`——**逐字白名單**，含 %、?、#、多餘路徑段的一律不匹配。
+ *  只收 https／ssh／git://：`http://` 的 API 端點是 80，gh 固定打 443（--hostname 沒有 scheme）＝釘不住同一 endpoint → 不收。 */
+const URL_FORM = new RegExp(`^(https|ssh|git)://(?:${USER}(?::[A-Za-z0-9._~-]+)?@)?([A-Za-z0-9.-]+)(?::(\\d+))?/(${SEG})/(${SEG})$`);
+/** scp 形：`[user@]host:owner/repo`——冒號後一律是路徑、沒有 port 文法；user 不可含 `:`（`user:pass@host:o/r` 在 Git 眼裡 host 是 `user`）。 */
+const SCP_FORM = new RegExp(`^(?:${USER}@)?([A-Za-z0-9.-]+):(${SEG})/(${SEG})$`);
 /** 形狀不合時的訊息——**刻意不回聲 origin 原文**（https remote 常內嵌 PAT／密碼，印出來會帶進終端、紀錄與貼文；#573 r7 High②）。 */
-const SHAPE_MSG = 'origin 不是能逐字釘住的 owner/repo 網址（只收 https／http／ssh／git:// 或 scp 形、路徑剛好 owner/repo 兩段、不含 %／?／#／「.」「..」段；為了不帶出內嵌憑證，這裡不印 origin 原文）';
+const SHAPE_MSG = 'origin 不是能逐字釘住的 owner/repo 網址（只收 https／ssh／git:// 或 scp 形、路徑剛好 owner/repo 兩段、不含 %／?／#／「.」「..」段、不含前後空白；為了不帶出內嵌憑證，這裡不印 origin 原文）';
 
 /**
  * repo 身分（站台＋owner/repo）釘在目前目錄的 origin——不用 gh 的 `{owner}/{repo}` 佔位、也不省略站台：
@@ -171,15 +177,14 @@ const SHAPE_MSG = 'origin 不是能逐字釘住的 owner/repo 網址（只收 ht
  * @returns {{host: string, slug: string}}
  */
 export function originRepo(cwd = process.cwd()) {
-  const raw = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).trim();
-  const url = raw.replace(/\/+$/, '').replace(/\.git$/, '');
+  // 只剝 git 自己加的那一個換行；**不 trim**——前後空白也是原文的一部分（Git 對 `␠https://…` 會直接報協定不支援，我們不可以替它修好）。
+  const raw = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).replace(/\n$/, '');
+  const url = raw.replace(/\/$/, '').replace(/\.git$/, '');   // 只容許一個結尾斜線與一個 .git
   const m = url.match(URL_FORM);
   let host, port, owner, repo;
   if (m) {
     [, , host, port, owner, repo] = m;
-    const scheme = m[1];
-    const defaultPort = scheme === 'https' ? '443' : scheme === 'http' ? '80' : null;
-    if (port && /^https?$/.test(scheme) && port !== defaultPort) throw new Error(`origin 明講了非預設 port（${port}），gh 釘不住那個 endpoint、不改查預設 port 的同號 PR`);
+    if (port && m[1] === 'https' && port !== '443') throw new Error(`origin 明講了非預設 port（${port}），gh 釘不住那個 endpoint、不改查預設 port 的同號 PR`);
   } else {
     const s = url.match(SCP_FORM);
     if (!s) throw new Error(SHAPE_MSG);
