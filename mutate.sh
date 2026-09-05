@@ -560,12 +560,14 @@ p.write_text(s[:i]+re.sub(r"\[契約：[^\]]*\]", "[契約：這裡塞一整段�
 PY
 check 'BG. 整段原文塞進契約連結的 label' 紅
 
-mutate 'BH. 契約頁首指到別人的 README 列' <<'PY'
+mutate 'BH. 契約頁首指到別人的 README 節' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
-p.write_text(s.replace("路由表「前端功能」列","路由表「投資與 SEC」列",1), encoding="utf-8")
+a="「前端功能」節的責任檔案清單"   # 2026-09-03 起頁首字樣（#567）；舊的「路由表「前端功能」列」已不存在，替換前先 assert 免得 no-op（Codex #567 r3）
+assert s.count(a)==1
+p.write_text(s.replace(a,"「投資與 SEC」節的責任檔案清單",1), encoding="utf-8")
 PY
-check 'BH. 契約頁首指到別人的 README 列' 紅
+check 'BH. 契約頁首指到別人的 README 節' 紅
 
 # ── r37：表格狀態、括號網址、精確 domain、圖片連結、entity ──
 
@@ -602,7 +604,9 @@ check 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' 紅
 mutate 'BL. 契約頁首把領域名寫短（startsWith 會放過）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
-p.write_text(s.replace("路由表「前端功能」列","路由表「前端」列",1), encoding="utf-8")
+a="「前端功能」節的責任檔案清單"   # 同 BH：新頁首字樣、替換前 assert 恰一次
+assert s.count(a)==1
+p.write_text(s.replace(a,"「前端」節的責任檔案清單",1), encoding="utf-8")
 PY
 check 'BL. 契約頁首把領域名寫短（startsWith 會放過）' 紅
 
