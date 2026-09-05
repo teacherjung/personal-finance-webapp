@@ -183,6 +183,10 @@ const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''
  * 只加一個檔（演「main 在兩支分岔之間動了 lock、兩支都沒動」——#566 r1 Codex 點名的形狀）。
  * `mergeHookFails`：裝一個 pre-merge-commit hook 一律退 1——演「merge 失敗但不是文字衝突」。
  * `markGates`：三關指令改成「在發起樹寫一個記號檔 gate-ran 再退 0」——考題用它斷言三關到底跑了沒。
+ * 隱藏 lock：fixture 一律替 `installed` 寫一份 `node_modules/.package-lock.json`（來源與指紋預設跟 lock 同一套
+ * 假值：resolved＝`fixture://<name>/<version>`、integrity＝`sha512-<name>@<version>`）；`hiddenOverride` 可改某一筆
+ * （演「同名同版換了內容」）；`noHiddenLock` 不寫。
+ * `staleOriginMain`：在 fixture 裡建一個停在 base 的 `refs/remotes/origin/main`（演「本機 origin/main 過時」）。
  * 身分：fixture 用 `git config` 在 repo 內設 user.name／user.email——閘在臨時 worktree 裡 `git merge` 要建
  * merge commit，乾淨的 Linux runner 沒有全域身分（#566 r1 CI 紅的原因），repo 內設的 worktree 共用。
  * @param {{ nodeModules?: 'none'|'dir'|'file', scripts?: Record<string,string>, conflictPair?: boolean,
@@ -192,11 +196,13 @@ const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''
  *   selfLock?: Record<string, {version: string, optional?: boolean}>,
  *   mainLock?: Record<string, {version: string, optional?: boolean}>,
  *   mergeHookFails?: boolean, noIdentity?: boolean,
+ *   hiddenOverride?: Record<string, {resolved?: string, integrity?: string}>, noHiddenLock?: boolean,
+ *   staleOriginMain?: boolean,
  *   markGates?: boolean }} [opts]
  * @returns {{ dir: string, sha: string, shaB?: string, mainSha: string }}
  */
 function makeInitiatorRepo(opts = {}) {
-  const { nodeModules = 'none', conflictPair = false, lock = {}, installed = {}, otherLock, selfLock, mainLock, mergeHookFails = false, noIdentity = false, markGates = false } = opts;
+  const { nodeModules = 'none', conflictPair = false, lock = {}, installed = {}, otherLock, selfLock, mainLock, mergeHookFails = false, noIdentity = false, hiddenOverride = {}, noHiddenLock = false, staleOriginMain = false, markGates = false } = opts;
   let { scripts } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-initiator-'));
   const g = (/** @type {string[]} */ args) => {
@@ -223,10 +229,12 @@ function makeInitiatorRepo(opts = {}) {
     name: 'cross-pr-fixture', version: '0.0.0',
     scripts: scripts ?? { typecheck: 'cross-pr-fixture-no-such-cmd', lint: 'cross-pr-fixture-no-such-cmd', test: 'cross-pr-fixture-no-such-cmd' },
   }));
+  const prov = (/** @type {string} */ name, /** @type {string} */ version) =>
+    ({ resolved: `fixture://${name}/${version}`, integrity: `sha512-${name}@${version}` });
   const lockJson = (/** @type {Record<string, {version: string, optional?: boolean}>} */ pk) => JSON.stringify({
     name: 'cross-pr-fixture', version: '0.0.0', lockfileVersion: 3, requires: true,
     packages: { '': { name: 'cross-pr-fixture', version: '0.0.0' },
-      ...Object.fromEntries(Object.entries(pk).map(([k, v]) => [`node_modules/${k}`, v])) },
+      ...Object.fromEntries(Object.entries(pk).map(([k, v]) => [`node_modules/${k}`, { ...prov(k, v.version), ...v }])) },
   });
   if (lock !== null) writeFileSync(join(dir, 'package-lock.json'), lockJson(lock));
   g(['add', '.']);
@@ -236,6 +244,14 @@ function makeInitiatorRepo(opts = {}) {
     mkdirSync(join(dir, 'node_modules', name), { recursive: true });
     writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
   }
+  if (nodeModules === 'dir' && !noHiddenLock) {
+    writeFileSync(join(dir, 'node_modules', '.package-lock.json'), JSON.stringify({
+      name: 'cross-pr-fixture', version: '0.0.0', lockfileVersion: 3, requires: true,
+      packages: Object.fromEntries(Object.entries(installed).map(([name, version]) =>
+        [`node_modules/${name}`, { version, ...prov(name, version), ...(hiddenOverride[name] ?? {}) }])),
+    }));
+  }
+  if (staleOriginMain) g(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
   const commit = (/** @type {string} */ msg) =>
     g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', msg]);
   const commitLock = (/** @type {Record<string, {version: string, optional?: boolean}>} */ pk, /** @type {string} */ msg) => {
@@ -463,23 +479,25 @@ test('lockMismatches｜全部對得上 → 空；沒有 packages 表 → 一筆�
   const lock = { packages: { '': {}, 'node_modules/a': { version: '1.0.0' }, 'node_modules/a/node_modules/b': { version: '2.1.0' } } };
   const have = /** @type {Record<string,{name:string,version:string}>} */ ({
     'node_modules/a': { name: 'a', version: '1.0.0' }, 'node_modules/a/node_modules/b': { name: 'b', version: '2.1.0' } });
-  assert.deepEqual(lockMismatches(lock, (k) => have[k] ?? null), []);
+  assert.deepEqual(lockMismatches(lock, (k) => have[k] ?? null, null), []);
   for (const bad of [null, undefined, 'x', {}, { packages: null }, { lockfileVersion: 1, dependencies: {} },
-    { packages: [] }, { packages: {} }, { packages: { 'node_modules/a': { version: '1.0.0' } } }, [{ packages: { '': {} } }]]) {
-    const m = lockMismatches(bad, () => ({ name: 'a', version: '1.0.0' }));
+    { packages: [] }, { packages: {} }, { packages: { 'node_modules/a': { version: '1.0.0' } } }, [{ packages: { '': {} } }],
+    // 根項目在、但不是物件（#566 r2 反例：null／陣列／數字／字串）
+    { packages: { '': null } }, { packages: { '': [] } }, { packages: { '': 7 } }, { packages: { '': 'x' } }]) {
+    const m = lockMismatches(bad, () => ({ name: 'a', version: '1.0.0' }), null);
     assert.equal(m.length, 1, `${JSON.stringify(bad)} 應該回一筆「無法核對」，實得 ${m.length}：${m.join(' / ')}`);
     assert.match(m[0], /無法核對/);
   }
   // 項目不是物件（null／陣列）＝那一筆無法核對，不可以靜靜跳過（#566 r1 反例）
   const broken = { packages: { '': {}, 'node_modules/ok': { version: '1.0.0' }, 'node_modules/nul': null, 'node_modules/arr': ['1.0.0'] } };
-  const m = lockMismatches(broken, (k) => (k === 'node_modules/ok' ? { name: 'ok', version: '1.0.0' } : null));
+  const m = lockMismatches(broken, (k) => (k === 'node_modules/ok' ? { name: 'ok', version: '1.0.0' } : null), null);
   assert.equal(m.length, 2, `null 與陣列項目各要一筆，實得：${m.join(' / ')}`);
   assert.ok(m.every((x) => /無法核對/.test(x)));
 });
 
 test('⭐ lockMismatches｜lock 要的沒裝 → 對不上並點名套件；optional 的沒裝 → 不算（平台專屬二進位本來就只裝一個）', () => {
   const lock = { packages: { '': {}, 'node_modules/req': { version: '1.0.0' }, 'node_modules/opt': { version: '3.0.0', optional: true } } };
-  const m = lockMismatches(lock, () => null);
+  const m = lockMismatches(lock, () => null, null);
   assert.equal(m.length, 1, `只該有 req 一筆對不上，實得：${m.join(' / ')}`);
   assert.match(m[0], /node_modules\/req/);
   assert.match(m[0], /1\.0\.0/);
@@ -493,7 +511,7 @@ test('⭐ lockMismatches｜版本不同 → 對不上、兩個版本都要印；
     'node_modules/opt': { version: '3.0.0', optional: true } } };
   const have = /** @type {Record<string,{name:string,version:string}>} */ ({
     'node_modules/dep': { name: 'dep', version: '6.1.200' }, 'node_modules/opt': { name: 'opt', version: '2.9.0' } });
-  const m = lockMismatches(lock, (k) => have[k] ?? null);
+  const m = lockMismatches(lock, (k) => have[k] ?? null, null);
   assert.equal(m.length, 2, `應有 dep 與 opt 兩筆，實得：${m.join(' / ')}`);
   const dep = m.find((x) => x.includes('node_modules/dep'));
   assert.ok(dep && dep.includes('6.2.108') && dep.includes('6.1.200'), `dep 那筆要同時印 lock 版與已裝版：${dep}`);
@@ -512,11 +530,36 @@ test('⭐ lockMismatches｜同版號不同套件（alias）→ 對不上；works
     'node_modules/ws': { name: 'ws', version: '1.0.0' },
     'node_modules/@scope/pkg': { name: '@scope/pkg', version: '1.2.3' },
     'node_modules/a/node_modules/b': { name: 'b', version: '4.5.6' } });
-  const m = lockMismatches(lock, (k) => have[k] ?? null);
+  const m = lockMismatches(lock, (k) => have[k] ?? null, null);
   assert.ok(m.some((x) => x.includes('node_modules/tool') && x.includes('new-tool') && x.includes('old-tool')),
     `alias 同版號不同套件沒被抓到：${m.join(' / ')}`);
   assert.ok(m.some((x) => x.includes('node_modules/ws') && /link/.test(x)), `link 項目沒被當成對不上：${m.join(' / ')}`);
   assert.equal(m.length, 2, `scoped 或巢狀的名字被誤紅：${m.join(' / ')}`);
+});
+
+test('⭐ lockMismatches｜同名同版但內容指紋（integrity）或來源（resolved）跟實際裝的不同 → 對不上；隱藏 lock 讀不到／沒那一筆 → 核對不了也算對不上；lock 沒寫來源的項目不比（#566 r2 High）', () => {
+  const lock = { packages: { '': {},
+    'node_modules/a': { version: '1.0.0', resolved: 'https://cdn.example/a-1.0.0.tgz', integrity: 'sha512-AAA' },
+    'node_modules/b': { version: '2.0.0', resolved: 'https://registry/b-2.0.0.tgz', integrity: 'sha512-BBB' },
+    'node_modules/c': { version: '3.0.0' } } };
+  const installed = (/** @type {string} */ k) => ({ name: k.slice('node_modules/'.length), version: { 'node_modules/a': '1.0.0', 'node_modules/b': '2.0.0', 'node_modules/c': '3.0.0' }[k] ?? '' });
+  const good = { 'node_modules/a': { version: '1.0.0', resolved: 'https://cdn.example/a-1.0.0.tgz', integrity: 'sha512-AAA' },
+    'node_modules/b': { version: '2.0.0', resolved: 'https://registry/b-2.0.0.tgz', integrity: 'sha512-BBB' } };
+  assert.deepEqual(lockMismatches(lock, installed, good), [], '全部一致卻對不上');
+  const swapped = { ...good, 'node_modules/a': { ...good['node_modules/a'], integrity: 'sha512-ZZZ' } };
+  let m = lockMismatches(lock, installed, swapped);
+  assert.equal(m.length, 1, `integrity 不同要剛好一筆：${m.join(' / ')}`);
+  assert.match(m[0], /node_modules\/a.*integrity/);
+  const moved = { ...good, 'node_modules/b': { ...good['node_modules/b'], resolved: 'https://mirror/b-2.0.0.tgz' } };
+  m = lockMismatches(lock, installed, moved);
+  assert.equal(m.length, 1, `resolved 不同要剛好一筆：${m.join(' / ')}`);
+  assert.match(m[0], /node_modules\/b.*resolved/);
+  m = lockMismatches(lock, installed, null);
+  assert.equal(m.length, 1, `隱藏 lock 讀不到要合成一筆、不可以每個套件各一筆也不可以零筆：${m.join(' / ')}`);
+  assert.match(m[0], /\.package-lock\.json/);
+  m = lockMismatches(lock, installed, { 'node_modules/a': good['node_modules/a'] });
+  assert.equal(m.length, 1, `隱藏 lock 沒有 b 那一筆要對不上：${m.join(' / ')}`);
+  assert.match(m[0], /node_modules\/b.*沒有這一筆/);
 });
 
 test('⭐ 裁決｜任一筆 lock 對不上（kind: lock）→ 整輪 2；訊息要講「不適用重跑」、不可以說「合起來會壞」', () => {
@@ -693,6 +736,78 @@ test('CLI｜對照組：兩支真的分岔、merge 要建 commit、fixture 沒�
   }
 });
 
+test('⭐ CLI｜另一支把同名同版的套件換成另一份內容（lock 的 integrity 變了、已裝的沒變）→ exit 2、三關不可以跑（#566 r2 High：只比名字版本會假綠）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } },
+    installed: { 'fx-dep': '1.0.0' },
+    otherLock: { 'fx-dep': { version: '1.0.0', integrity: 'sha512-fx-dep@1.0.0-rebuilt' } },
+  });
+  try {
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n——0＝同名同版換內容被放行、拿舊內容跑三關`);
+    assert.match(r.stderr, /fx-dep.*integrity/);
+    assert.match(r.stderr, /#442 那側動了：是/);
+    assert.equal(existsSync(join(dir, 'gate-ran')), false, '對不上還是進了三關');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI｜發起樹沒有隱藏 lock（node_modules/.package-lock.json）→ 核對不了來源與指紋，exit 2（fail-closed）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true, noHiddenLock: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true } },
+  });
+  try {
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /\.package-lock\.json/);
+    assert.equal(existsSync(join(dir, 'gate-ran')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/main 又過時 → 側別印「查不到」並指路 fetch，不可以拿過時的 origin/main 算出錯的側別（#566 r2 Medium）', () => {
+  // 形狀：origin/main 停在 base；main 後來動了 lock；兩支都從新 main 分岔、都沒動 lock。
+  // 真相是「兩側都否、發起樹重裝」；拿過時的 origin/main 算會把 main 的 lock 變動算到兩支頭上（兩側都是）。
+  const { dir, sha, shaB } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true, staleOriginMain: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    const notFetched = '0123456789abcdef0123456789abcdef01234567';   // gh 看得到、本機沒有的那顆
+    const r = withFakeGh(SELF_VIEW(sha, notFetched), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /本支那側動了 package-lock\.json：查不到，#442 那側動了：查不到/,
+      '本機沒有 main 那顆 commit 卻還是答了是／否——多半是拿過時的 origin/main 算的，處置會指錯人');
+    assert.match(r.stderr, /git fetch origin main/, '「查不到」沒給處置');
+    assert.doesNotMatch(r.stderr, /那側動了：是/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI｜對照組：baseRefOid 本機沒有、但 origin/main 解析成同一顆 → 用它算側別（正確答兩側都否）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    // origin/main 指到 main 目前這顆（不過時）；gh 給的 OID 用短 sha 形狀模擬「rev-parse 得到同一顆」
+    spawnSync('git', ['update-ref', 'refs/remotes/origin/main', mainSha], { cwd: dir, env: { ...SANDBOX_ENV } });
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('failingTestNames｜撈 spec reporter 的 ✖ 題名：去 (ms)、去重、排除「✖ failing tests:」摘要行、有上限', () => {
   const out = [
     'ℹ tests 3', '✔ 好的 (1ms)', '✖ 量時間的那題 (12.3ms)', '  AssertionError: 超時', '✖ 第二題 (0.5ms)',
@@ -749,18 +864,52 @@ test('裁決｜lock 混輪的分類句要照輸入算：只混真紅不可以長
   assert.doesNotMatch(onlyConflict.message, /阻擋\*\*（[^）]*測試紅/, '沒有測試紅卻說有——分類句寫死了');
 });
 
+/**
+ * 規則正本的「可見文字」：剝 HTML 註解、剝 hidden／display:none 容器連同內容、剝其餘標籤、剝連結目的地
+ * （`[字](網址)` 只留字）。#566 r1／r2 Codex 各示範一種空包彈：常數塞進 `<!-- -->`、塞進 `<span hidden>`——
+ * 可見規則改成「兩次」照樣綠。射程：Markdown 在 GitHub 上會被看到的字；不處理 `<details>`（折疊仍是可見的）。
+ * @param {string} md
+ */
+function visibleText(md) {
+  return md
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<([a-z][a-z0-9-]*)\b[^>]*\b(?:hidden|display\s*:\s*none)[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\]\([^)]*\)/g, ']');
+}
+
+/** 合併步驟裡「跨 PR 試合併閘」那一步的可見文字：從該步的編號行起、到下一個編號步驟為止。 @param {string} md */
+function crossPrStepText(md) {
+  const lines = visibleText(md).split('\n');
+  const start = lines.findIndex((l) => /^> \d+\.\s/.test(l) && l.includes('跨 PR 試合併閘'));
+  if (start < 0) return null;
+  let end = lines.findIndex((l, i) => i > start && /^> \d+\.\s/.test(l));
+  if (end < 0) end = lines.length;
+  return lines.slice(start, end).join('\n');
+}
+
+test('文件釘住的 helper｜看的是可見文字：HTML 註解、hidden 容器、連結目的地裡的限制句都不算（#566 r1／r2 的空包彈形狀）', () => {
+  const rule = RERUN_LIMITS;
+  const base = `> 5. ⚠️ **跨 PR 試合併閘（機械執行）**：\n>    \`\`\`bash\n>    node scripts/check-cross-pr-merge.js <N>\n>    \`\`\`\n>    可以重跑一次，${rule}。\n> 6. 下一步`;
+  assert.ok(/** @type {string} */ (crossPrStepText(base)).includes(rule), '正常寫法要找得到');
+  const inComment = base.replace(rule, '可以重跑兩次') + `\n<!-- ${rule} -->`;
+  assert.ok(!/** @type {string} */ (crossPrStepText(inComment)).includes(rule), 'HTML 註解裡的限制句被當成可見規則');
+  const inHidden = base.replace(rule, `可以重跑兩次<span hidden>${rule}</span>`);
+  assert.ok(!/** @type {string} */ (crossPrStepText(inHidden)).includes(rule), 'hidden 容器裡的限制句被當成可見規則');
+  const inStyle = base.replace(rule, `可以重跑兩次<div style="display:none">${rule}</div>`);
+  assert.ok(!/** @type {string} */ (crossPrStepText(inStyle)).includes(rule), 'display:none 容器裡的限制句被當成可見規則');
+  const inLink = base.replace(rule, `[可以重跑兩次](https://x/${rule})`);
+  assert.ok(!/** @type {string} */ (crossPrStepText(inLink)).includes(rule), '連結目的地裡的限制句被當成可見規則');
+  const otherStep = `> 4. 別的步驟 ${rule}\n` + base.replace(rule, '可以重跑兩次');
+  assert.ok(!/** @type {string} */ (crossPrStepText(otherStep)).includes(rule), '別步驟的限制句被算進這一步');
+});
+
 test('⭐ 文件｜REVIEW-AND-MERGE.md 跨 PR 試合併那一步（規則正本）要逐字含同一串限制句，並寫明 lock 對不上的退 2 不適用重跑', () => {
   // 訊息那份被上面的題釘住；正本這份若漂成「兩次」或整段消失，操作者看到的是訊息與正本互相矛盾——
-  // 兩邊共用 RERUN_LIMITS 這一串，漂哪一邊都紅。
-  // 先剝掉 HTML 註解（#566 r1 Codex：把限制句塞進 <!-- --> 而可見文字改成「兩次」照樣綠），
-  // 再只看這道閘那一步（從指令行到下一個編號步驟為止）——slice 一段固定字數會掃到別步的字。
-  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const lines = doc.split('\n');
-  const start = lines.findIndex((l) => l.includes('node scripts/check-cross-pr-merge.js'));
-  assert.ok(start >= 0, '合併步驟裡找不到這道閘的指令行');
-  let end = lines.findIndex((l, i) => i > start && /^> \d+\./.test(l));
-  if (end < 0) end = lines.length;
-  const step = lines.slice(start, end).join('\n');
+  // 兩邊共用 RERUN_LIMITS 這一串，漂哪一邊都紅。可見文字的定義在 visibleText／crossPrStepText（有自己的題）。
+  const step = crossPrStepText(readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8'));
+  assert.ok(step !== null, '合併步驟裡找不到「跨 PR 試合併閘」那一步的編號行');
+  assert.ok(step.includes('node scripts/check-cross-pr-merge.js'), '那一步裡沒有這道閘的指令行');
   assert.ok(step.includes(RERUN_LIMITS), `正本那一步沒有逐字含限制句「${RERUN_LIMITS}」——訊息與正本會分岔`);
   assert.match(step, /不適用/, '正本沒寫 lock 對不上的退 2 不適用重跑');
   assert.match(step, /不會安裝套件/, '正本沒寫這道閘不會安裝套件——「重跑一次」會被拿去對付那種紅');
