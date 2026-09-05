@@ -35,7 +35,17 @@
 // 退出碼：0＝沒有其他 open PR，或每一支試合併之後三關都綠
 //         1＝有一支合起來會壞（文字衝突／測試紅）→ 停下來，先處理相容性
 //         2＝查不清楚（gh 失敗／不是 git repo／發起樹沒有可用的 node_modules／
+//             合併後的 package-lock.json 跟已裝的套件對不上／
 //             三關「執行不起來」（spawn 失敗／被訊號終止／126／127）／建不出臨時工作區）→ fail-closed
+//
+// ## 紅了怎麼辦（William 2026-09-03 裁示「紅了重跑一次再判」；2026-09-05 擴為常設）
+//
+// 這道閘量到的不只是相容性，還有機器忙不忙：量時間／記憶體的考題在多支審查併行時會假紅，
+// 而執行合併的人自己就是負載（2026-09-03 實測；#552 後多數計時題已改量 CPU 工作量，
+// 剩牆上時鐘語意的逾時題）。所以退出碼 1 時**先看死因欄是哪一題紅**，可以**重跑一次**，
+// 但**只限這一道閘、只限一次、第二次紅照擋**（照 1 處理，先讓兩支相容）。
+// 這條規則的正本在 REVIEW-AND-MERGE.md 跨 PR 試合併那一步；這裡只講它跟下一節的關係：
+// **lock 對不上那種退 2 不適用重跑**——重跑一百次結果都一樣。
 //
 // ## 誠實劃界
 //
@@ -49,8 +59,16 @@
 // （#446 r3 Codex 造出來）。所以這一族一律退 2「查不清楚」，只擋下來要人查；
 // node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，三關仍會以紅（1）收場——
 // 那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
+// **它不會安裝套件**：三關用發起樹已裝好的 `node_modules`（symlink 指回去，多半是主目錄那份）。
+// 在途 PR 動了 `package-lock.json`（例：2026-09-02 #548 加 devDependency）時，三關其實是
+// 拿舊套件在跑——結果可能假紅、也可能假綠。所以合併之後先核對：lock 要求的每一個套件，
+// 已裝的版本對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
+// 核對的射程：只看「lock 要的有沒有裝、版本對不對」，**多裝的套件看不到**（拿掉相依的那支
+// 若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台專屬
+// 二進位本來就只裝自己那一個）。刻意不自動 `npm ci`：本機 npm 的 `ci` 會順著 symlink 逐項
+// 清掉主目錄的 node_modules（CLAUDE.md 的禁區），要裝就由發射者在臨時樹自己來。
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isMainModule } from '../lib/is-main.js';
@@ -115,11 +133,14 @@ export const CANT_RUN_CAUSES = [
  * 前置防線：**不論跟誰混輪、或單獨出現，一律整輪退 2**——不冒充衝突、不冒充測試紅，
  * 也不讓「合起來會壞」（1）替它背書（#446 r7：舊版的保守分支只在混到 cantRun 時生效，
  * 單獨缺席仍以 1 收場、還被測試紅的 footer 籠罩）。
- * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun'}[]} results
+ * `kind: 'lock'`（合併後的 package-lock.json 跟已裝的套件對不上）也是 2：三關還沒跑、或跑了也是拿舊
+ * 套件在跑，同樣拿不到可信的判決；跟 cantRun 的差別是**成因已知、處置明確、重跑無效**，
+ * 所以訊息分開寫。
+ * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun' | 'lock'}[]} results
  */
 export function verdict(results) {
   const bad = results.filter((r) => !r.ok);
-  const unlabeled = bad.filter((r) => r.kind !== 'conflict' && r.kind !== 'red' && r.kind !== 'cantRun');
+  const unlabeled = bad.filter((r) => r.kind !== 'conflict' && r.kind !== 'red' && r.kind !== 'cantRun' && r.kind !== 'lock');
   if (unlabeled.length) {
     return {
       code: 2,
@@ -128,6 +149,23 @@ export function verdict(results) {
         + '\n\n⚠️ 正式路徑（tryMerge）的每一筆失敗都帶 kind（型別鎖著）——出現未標記＝'
         + '有別的東西在餵結果、或程式被改壞。不推定它是衝突、測試紅還是執行不起來，'
         + 'fail-closed 擋下，先查結果是哪來的。',
+    };
+  }
+  if (bad.some((r) => r.kind === 'lock')) {
+    const confirmed = bad.filter((r) => r.kind === 'conflict' || r.kind === 'red');
+    const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
+    return {
+      code: 2,
+      message: '跨 PR 試合併：**查不清楚——合併後的套件清單跟已裝的套件對不上，三關若照跑是拿舊套件當結果，這一輪不算數**\n'
+        + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
+        + '\n\n⚠️ 這種結果**重跑一百次都一樣，不適用「紅了重跑一次」**。'
+        + '三關要在跟合併後 package-lock.json 一致的套件上跑才算數：\n'
+        + '   ・先合併動了 lock 的那支，主目錄同步後（桌面捷徑重啟會裝套件）再跑本閘；或\n'
+        + '   ・發射者在臨時樹自己 npm ci 之後手動跑三關（本閘刻意不自動安裝——npm ci 會順著 symlink 清掉主目錄的 node_modules）。\n'
+        + '   ⚠️ 不要在任何 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
+        + (confirmed.length
+          ? `\n   ⚠️ 上列另有**本輪已確定的阻擋**（${kinds.join('、')}）——那些不因本輪下不了定論而失效。`
+          : ''),
     };
   }
   if (bad.some((r) => r.kind === 'cantRun')) {
@@ -168,7 +206,9 @@ export function verdict(results) {
       + (bad.some((r) => r.kind === 'red')
         ? '\n\n⚠️ **合起來測試紅**：這種 GitHub **不會**顯示——兩支各自的 CI 都是綠的、'
           + '也沒有檔案衝突，**合併第二支的當下 `main` 就紅了**。\n'
-          + '   通常是其中一支的護欄擋掉了另一支的內容。先讓兩支相容再合併。'
+          + '   通常是其中一支的護欄擋掉了另一支的內容。先讓兩支相容再合併。\n'
+          + '   先看死因欄是哪一題紅：量時間／記憶體的考題在機器忙時會假紅——'
+          + '可以重跑**一次**（只限本閘、只限一次、第二次紅照擋；規則正本在 REVIEW-AND-MERGE.md 跨 PR 試合併那一步）。'
         : ''),
   };
 }
@@ -271,8 +311,46 @@ export function cantRunSignal(err) {
  * 分類全靠它，從失敗出口拔掉或漏標＝校對（typecheck）當場紅，
  * 不會靜靜滑進 verdict 的「未標記」保守分支。
  * @typedef {{number: number, ok: true, why: string}
- *   | {number: number, ok: false, why: string, kind: 'conflict' | 'red' | 'cantRun'}} MergeTry
+ *   | {number: number, ok: false, why: string, kind: 'conflict' | 'red' | 'cantRun' | 'lock'}} MergeTry
  */
+
+/**
+ * 合併後的 `package-lock.json` 要求的每一個套件，已裝的版本對不對得上。回對不上的清單（空＝對得上）。
+ *
+ * 判準三條，刻意不多：①lock 裡的每個套件（`packages` 表、根項目除外、`link` 除外）都要裝著、
+ * 版本逐字相同；②`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，2026-09-05 本機實測 12 個 optional
+ * 有 10 個本來就沒裝）；③沒有 `packages` 表（lockfileVersion 1／格式不對／根本不是物件）＝無法核對，
+ * 也算對不上——fail-closed。**多裝的看不到**（劃界在檔頭）。
+ * 純函式：檔案系統由呼叫端用 `installedVersion` 注入，考題直接餵資料。
+ * @param {any} lock 解析後的 package-lock.json
+ * @param {(key: string) => string | null} installedVersion 讀 `<key>/package.json` 的 version；不存在或讀不了回 null
+ * @returns {string[]}
+ */
+export function lockMismatches(lock, installedVersion) {
+  const packages = lock && typeof lock === 'object' ? lock.packages : undefined;
+  if (!packages || typeof packages !== 'object') {
+    return ['package-lock.json 沒有 packages 表（lockfileVersion 1、格式不對、或讀不到），無法核對'];
+  }
+  const out = [];
+  for (const [key, entry] of Object.entries(packages)) {
+    if (key === '' || !entry || typeof entry !== 'object' || entry.link) continue;
+    const want = String(entry.version ?? '');
+    const have = installedVersion(key);
+    if (have === null) {
+      if (!entry.optional) out.push(`${key}：lock 要 ${want}，沒有裝`);
+      continue;
+    }
+    if (have !== want) out.push(`${key}：lock 要 ${want}，裝的是 ${have}`);
+  }
+  return out;
+}
+
+/** 從某棵樹讀 `<key>/package.json` 的 version（key 形如 `node_modules/a/node_modules/b`）。 @param {string} root */
+function installedVersionIn(root) {
+  return (/** @type {string} */ key) => {
+    try { return String(JSON.parse(readFileSync(join(root, key, 'package.json'), 'utf8')).version ?? ''); } catch { return null; }
+  };
+}
 
 /**
  * 在拋棄式的工作區裡把 `base` 與 `other` 合起來，跑三關。
@@ -299,6 +377,22 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
       runIn(['git', 'merge', '--no-edit', '-q', otherSha], wt);
     } catch {
       return { number: otherNumber, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' };
+    }
+    // ⚠️ 三關之前先核對 lock（劃界與理由在檔頭「它不會安裝套件」那段）：對不上就不進三關——
+    //    進了也是拿舊套件跑，紅綠都不可信。誰動了 lock 一併印出來（相對本支的 head 看 other 那支）：
+    //    「否」＝差異來自本支自己、或發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）。
+    const lockPath = join(wt, 'package-lock.json');
+    let lock = null;
+    try { lock = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { lock = null; }
+    const mism = lockMismatches(lock, installedVersionIn(wt));
+    if (mism.length) {
+      let otherTouched = '查不到';
+      try { otherTouched = runIn(['git', 'diff', '--name-only', baseSha, otherSha, '--', 'package-lock.json'], wt).trim() ? '是' : '否'; } catch { /* 留「查不到」 */ }
+      return {
+        number: otherNumber, ok: false, kind: 'lock',
+        why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；#${otherNumber} 相對本支動了 package-lock.json：${otherTouched}）：`
+          + mism.slice(0, 5).join('；') + (mism.length > 5 ? '；…' : ''),
+      };
     }
     for (const [label, script] of [['校對', 'typecheck'], ['糾察', 'lint'], ['考試', 'test']]) {
       try {
