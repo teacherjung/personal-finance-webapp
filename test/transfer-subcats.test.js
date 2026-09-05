@@ -93,7 +93,7 @@ test('cleanTransferSubs：空/全壞 → 回空陣列（**不補預設**）—�
   assert.deepEqual(cleanTransferSubs([]), []);
   assert.deepEqual(cleanTransferSubs('oops'), []);
   assert.deepEqual(cleanTransferSubs([{ label: '   ' }, { nope: 1 }, { label: '__proto__' }]), []);
-  assert.deepEqual(cleanTransferSubs([{ label: '轉出', role: 'out' }]), [{ label: '轉出', role: 'out' }], '對照組：合格的項目要留得下來（否則上面三行是空包彈）');
+  assert.deepEqual(cleanTransferSubs([{ label: '轉出', role: 'out' }]), [{ label: '轉出', role: 'out' }], '對照組：合格的項目要留得下來——判準若整個失效，清空那幾刀也會綠');
 });
 
 test('saveTransferSubs：清乾淨之後一項都不剩 → 擋下（400）且清單不動，不可以靜靜存成內建三筆', async () => {
@@ -104,7 +104,7 @@ test('saveTransferSubs：清乾淨之後一項都不剩 → 擋下（400）且�
   await assert.rejects(() => saveTransferSubs({ subs: [{ label: '  ' }, { nope: 1 }] }), (/** @type {any} */ e) => e.status === 400);
   assert.deepEqual(effectiveTransferSubs(await getDb()), [{ label: '我的轉出', role: 'out' }], '被擋下就一個字都不可以改');
   await saveTransferSubs({ subs: [{ label: '我的轉出', role: 'out' }, { label: '新的一項' }] });
-  assert.deepEqual(effectiveTransferSubs(await getDb()).map(x => x.label), ['我的轉出', '新的一項'], '對照組：合格清單要存得進去（否則上面兩刀是空包彈）');
+  assert.deepEqual(effectiveTransferSubs(await getDb()).map(x => x.label), ['我的轉出', '新的一項'], '對照組：合格清單要存得進去——擋空那幾刀若是因為整條路都不通，也會綠');
 });
 
 test('saveTransferSubs：保留字整組拒絕（400）', async () => {

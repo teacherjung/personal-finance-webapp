@@ -1391,7 +1391,8 @@ test('2A｜POST /api/transfer-subcategories 缺 subs／不是陣列／清乾淨�
   assert.equal((await POST('/transfer-subcategories', { subs: custom })).status, 200);
   const before = await GET('/transfer-subcategories');
   assert.ok(before.some(x => x.label === '自訂項X'), '夾具：自訂清單要先種進去');
-  // 空陣列與「每一項都不合格」原本會穿過這道擋（是合法陣列）→ 清乾淨後變空 → 靜靜存成內建三筆並回 200。
+  // 空陣列與「每一項都不合格」都是合法陣列，穿得過「不是陣列」那道擋；清乾淨之後會變空，
+  // 沒有第二道擋就會存成內建三筆並回 200（使用者按的是「儲存我這份清單」）。
   for (const bad of [{}, { subs: 'oops' }, { subs: null }, { subs: { label: 'x' } },
     { subs: [] }, { subs: [{ label: '   ' }, { nope: 1 }, { label: '__proto__' }] }]) {
     assert.equal((await POST('/transfer-subcategories', bad)).status, 400, `${JSON.stringify(bad)} 要 400`);

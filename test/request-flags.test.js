@@ -5,11 +5,15 @@
 // 都算打開。其中一個開關管的是「同一家店的其他筆一起改分類」——誤開會一次改到很多筆，而畫面只會回報成功。
 //
 // 守兩層，射程各自寫清楚：
-//   ①行為題：送「看起來像開、但不是 true」的值時，那個動作**真的沒發生**（五個點各一題：整批傳播、
-//     還原自動判斷、清品牌規則、清空全部略過、預覽）。
-//   ②形狀題：`lib/routes/` 底下，本族開關名一律只能用 `=== true`／`!== true` 讀；用解析器看語法樹，
-//     所以註解裡寫什麼都不算數。**射程邊界**：只認「`req.body`／`req.query` 直接取名」這一種寫法——
-//     先解構成區域變數再判斷，這道網看不到（新端點若那樣寫，靠行為題與複審擋）。
+//   ①行為題：每個開關各一題——送「看起來像開、但不是 true」的值時，那個動作**真的沒發生**；
+//     每題的對照組要證明送真正的 true 時那個動作**真的會發生**（只驗 HTTP 200 等於沒驗，見鐵則 9）。
+//   ②形狀題：`lib/routes/` 底下遞迴的每一支 `.js`，本族開關名只能用 `=== true`／`!== true` 讀；
+//     判定用解析器看語法樹，所以註解裡寫什麼都不算數（括號包住的等價寫法算合格）。
+//     **這道網只看寫法、不看語意**，兩個已知盲區寫在這裡，不要拿它當保證：
+//       ・控制流不看：`if (x !== true) 做事()` 形狀合格、意思卻相反——那種只有行為題抓得到。
+//       ・取值寫法只認「`req.body`／`req.query` 直接取名」：先解構成區域變數、用中括號取值、
+//         先存成別的變數再判斷，都看不到；新開關名沒加進名單也看不到（名單被拿掉既有名字這一種，
+//         由「跟 true 嚴格比的欄位一定要在名單裡」那一行反向對帳擋）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -77,14 +81,29 @@ test('整批改分類的開關：送 \'false\' 這種「像開但不是 true」�
 });
 
 test('還原自動判斷的開關：送 1 → 當成一般改名、因為沒給顯示名而擋下（資料不動）；送 true 才還原', async () => {
-  await seed();
+  /** 這題要看得到「還原」：先種一個自訂顯示名＋原文層學習規則，還原時它們要消失。 */
+  const seedRenamed = async () => {
+    await seed();
+    const db = await getDb();
+    for (const t of db.transactions) if (t.id === 'f1') t.note = '我取的名字';
+    db.learnedCategories = { ...db.learnedCategories, [A]: { name: '我取的名字', category: '飲食', subcategory: '咖啡' } };
+    await saveDb(db);
+    assert.ok((await GET('/learned'))[A], '前提：原文層那條學習規則要先種得進去，還原才有東西可以清');
+  };
+  /** @param {string} id */
+  const row = async (id) => (await GET('/db')).transactions.find((/** @type {any} */ t) => t.id === id);
+
+  await seedRenamed();
   const loose = await POST('/statement/rename-store', { orig: A, reset: 1 });
   assert.equal(loose.status, 400, '不是 true 就不是「還原」，而是一般改名——沒給顯示名要擋下來');
-  assert.equal((await GET('/db')).transactions.find((/** @type {any} */ t) => t.id === 'f1').category, '飲食',
-    '擋下來就不可以動到任何一筆');
+  assert.equal((await row('f1')).note, '我取的名字', '擋下來就不可以動到那一筆的顯示名');
+  assert.ok((await GET('/learned'))[A], '擋下來就不可以清掉原文層那條學習規則');
 
+  await seedRenamed();
   const strict = await POST('/statement/rename-store', { orig: A, reset: true });
-  assert.equal(strict.status, 200, '對照組：真的送 true 時要還原得成（否則上面那半是空包彈）');
+  assert.equal(strict.status, 200, '對照組：真的送 true 時要還原得成');
+  assert.equal((await row('f1')).note, '星巴克', '對照組：顯示名要換回自動判斷的名字（只驗狀態碼證明不了有做事）');
+  assert.ok(!(await GET('/learned'))[A], '對照組：原文層那條學習規則要被清掉');
 });
 
 test('清掉品牌規則的開關：送 1 → 品牌規則留著並回報給前端；送 true 才真的清掉', async () => {
@@ -111,40 +130,77 @@ test('清空全部略過的開關：送 \'x\' → 不清空（當成缺項目編
 });
 
 test('預覽的開關：送 1 → 不當成預覽（落到「維護端點要明確帶 force:true」那道擋）；送 true 才預覽', async () => {
-  await seed();
+  /** 這題要看得到「預覽算了東西」：身分鑰匙故意留成帳單原文（沒收斂成品牌），整理才會有得改。 */
+  const seedUnnormalized = async () => {
+    await seed();
+    const db = await getDb();
+    for (const t of db.transactions) { t.storeKey = t.id === 'f1' ? A : B; t.note = '我取的名字'; }
+    await saveDb(db);
+    assert.notEqual(A, storeKeyOf(A), '前提：原文與品牌鑰匙要不一樣，整理才有得算');
+  };
+  /** @returns {Promise<string[]>} */
+  const keys = async () => (await GET('/db')).transactions.map((/** @type {any} */ t) => t.storeKey);
+
+  await seedUnnormalized();
   const loose = await POST('/statement/normalize-branches', { dryRun: 1 });
   assert.equal(loose.status, 400, '不是 true 就不是預覽；這條維護後門不可以被「像開」的值打開');
+  assert.deepEqual(await keys(), [A, B], '被擋下就一個字都不可以改');
 
-  const strict = await POST('/statement/normalize-branches', { dryRun: true });
-  assert.equal(strict.status, 200, '對照組：真的送 true 時要預覽得到（否則上面那半是空包彈）');
+  await seedUnnormalized();
+  const res = await POST('/statement/normalize-branches', { dryRun: true });
+  assert.equal(res.status, 200, '對照組：真的送 true 時要預覽得到');
+  const strict = await res.json();
+  assert.ok(strict.keyChanged > 0 && strict.changes?.length > 0,
+    `對照組：預覽要真的算出東西來（實際 ${JSON.stringify(strict).slice(0, 120)}）——只驗狀態碼證明不了有做事`);
+  assert.deepEqual(await keys(), [A, B], '對照組：預覽就是不可以寫進去');
 });
 
 /** 本族開關名：新開關要加進來，這道網才看得到它。 */
 const FLAG_NAMES = ['force', 'dryRun', 'reset', 'clearAll', 'clearBrand', 'applyAll', 'stream', 'useAi'];
 
+/** `lib/routes/` 底下遞迴的每一支 .js（相對路徑）。 @param {URL} dir @param {string} [prefix] @returns {string[]} */
+function routeFiles(dir, prefix = '') {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) out.push(...routeFiles(new URL(e.name + '/', dir), prefix + e.name + '/'));
+    else if (e.name.endsWith('.js')) out.push(prefix + e.name);
+  }
+  return out;
+}
+
 test('形狀題：lib/routes 底下這一族開關一律 === true／!== true 讀（解析器判定，註解裡寫什麼都不算數）', () => {
   const dir = new URL('../lib/routes/', import.meta.url);
-  const files = readdirSync(dir).filter((f) => f.endsWith('.js'));
+  const files = routeFiles(dir);
   assert.ok(files.length >= 3, `路由目錄只掃到 ${files.length} 支檔案，掃描集合壞了`);
+  /** 括號不改變語意：`(x) === true` 與 `x === (true)` 都算嚴格。 @param {ts.Node} n */
+  const inner = (n) => { let x = n; while (ts.isParenthesizedExpression(x)) x = x.expression; return x; };
+  /** @param {ts.Node} n */
+  const outer = (n) => { let x = n; while (x.parent && ts.isParenthesizedExpression(x.parent)) x = x.parent; return x; };
   /** @type {string[]} */
   const loose = [];
-  let seen = 0;
+  /** @type {Record<string, number>} 每個開關名各被看到幾次——名單或掃描退化時抓得到 */
+  const seen = Object.fromEntries(FLAG_NAMES.map((n) => [n, 0]));
+  /** @type {Set<string>} 任何「拿 body 欄位跟 true 嚴格比」的欄位名（不看名單）——名單被拿掉一個名字時抓得到 */
+  const strictish = new Set();
   for (const f of files) {
     const src = readFileSync(new URL(f, dir), 'utf8');
     const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     /** @param {ts.Node} node */
     const walk = (node) => {
-      if (ts.isPropertyAccessExpression(node) && FLAG_NAMES.includes(node.name.text)) {
+      if (ts.isPropertyAccessExpression(node)) {
         const root = node.expression.getText(sf).replace(/\s/g, '');
         if (root === 'req.body' || root === 'req.query') {
-          seen++;
-          const p = node.parent;
+          const self = outer(node), p = self.parent;
           const strict = ts.isBinaryExpression(p)
             && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(p.operatorToken.kind)
-            && (p.left === node ? p.right : p.left).kind === ts.SyntaxKind.TrueKeyword;
-          if (!strict) {
-            const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-            loose.push(`${f}:${line + 1} ${node.getText(sf)}`);
+            && inner(p.left === self ? p.right : p.left).kind === ts.SyntaxKind.TrueKeyword;
+          if (strict) strictish.add(node.name.text);
+          if (FLAG_NAMES.includes(node.name.text)) {
+            seen[node.name.text]++;
+            if (!strict) {
+              const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+              loose.push(`${f}:${line + 1} ${node.getText(sf)}`);
+            }
           }
         }
       }
@@ -152,6 +208,14 @@ test('形狀題：lib/routes 底下這一族開關一律 === true／!== true 讀
     };
     walk(sf);
   }
-  assert.ok(seen >= 6, `只找到 ${seen} 個本族開關的讀取點——掃描或名單壞了，這題會靜靜變空包彈`);
-  assert.deepEqual(loose, [], '這些開關讀得太寬鬆（`!!x` 或直接當條件都算）：只有真正的 true 才可以算打開');
+  // 逐名檢查而不是看總數：總數夠大掩蓋得住「其中一個名字再也對不到」（改寫法、改端點、名單打錯字）。
+  assert.deepEqual(Object.entries(seen).filter(([, n]) => n === 0).map(([k]) => k), [],
+    '名單裡有開關名在路由裡一個讀取點都找不到——不是那個端點沒了（請一起改名單），就是它改成了這道網看不到的寫法');
+  // 反向對帳：跟 true 嚴格比的欄位就是開關，一定要在名單裡。名單被拿掉一個名字時，
+  // 逐名檢查看不到（它不再被掃），但那個讀取點還在原地 ⇒ 這一行會紅。
+  assert.deepEqual([...strictish].filter((k) => !FLAG_NAMES.includes(k)), [],
+    '路由裡有欄位在跟 true 嚴格比，卻不在名單裡——它是本族開關就加進 FLAG_NAMES，否則逐名那道網會漏看它');
+  assert.deepEqual(loose, [],
+    '這些讀取點的**寫法**不是嚴格比較（`!!x`、直接當條件都算）。⚠️ 這一題只看寫法：`if (x !== true) 做事()`'
+    + ' 這種形狀合格、意思相反的寫法它分不出來，那要靠同檔的行為題。');
 });
