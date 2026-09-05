@@ -36,7 +36,8 @@
 //         1＝有一支合起來會壞（文字衝突／測試紅）→ 停下來，先處理相容性
 //         2＝查不清楚（gh 失敗／不是 git repo／發起樹沒有可用的 node_modules／
 //             合併後的 package-lock.json 跟已裝的套件對不上／
-//             三關「執行不起來」（spawn 失敗／被訊號終止／126／127）／建不出臨時工作區）→ fail-closed
+//             試合併或三關「執行不起來」（git merge 失敗但沒有未合併檔案／spawn 失敗／被訊號終止／126／127）／
+//             建不出臨時工作區）→ fail-closed
 //
 // ## 紅了怎麼辦
 //
@@ -51,10 +52,11 @@
 // **擋不住**：兩支合起來語意上矛盾、但測試沒有覆蓋到的地方——那還是要人看。
 // 它也**不保證**合併之後 `main` 一定是綠的：它試的是「這兩支的 head」，
 // 而真正合併時 `main` 可能已經又前進了（那一段由 `strict` 與 CI 接手）。
-// 「執行不起來」（spawn 失敗／被訊號終止／126／127）＝**沒有取得可直接判讀的正常測試
-// 結果**，成因這裡不推定——實際出現過的至少有三種：環境（node_modules 殘缺——#441）、
-// 兩支合壞了 scripts 呼叫的追蹤檔案（#446 r2 Codex 造出來）、測試自己以 127 收場
-// （#446 r3 Codex 造出來）。所以這一族一律退 2「查不清楚」，只擋下來要人查；
+// 「執行不起來」＝**試合併或三關沒有取得可判讀的結果**：沒有合併判決（git merge 失敗、也沒留下未合併
+// 檔案——不確定是不是兩支撞行）或沒有測試判決（spawn 失敗／被訊號終止／126／127），成因這裡不推定
+// ——實際出現過的至少有四種：環境（node_modules 殘缺——#441）、兩支合壞了 scripts 呼叫的追蹤檔案
+// （#446 r2 Codex 造出來）、測試自己以 127 收場（#446 r3 Codex 造出來）、merge 本身失敗（#566 r1／r2）。
+// 所以這一族一律退 2「查不清楚」，只擋下來要人查；
 // node_modules 殘缺到「跑得起來但缺套件」的灰色地帶：lock 有列的缺套件會被下一段的 lock 核對先擋成 2；
 // lock 沒列的殘缺（.bin 斷了、套件內少檔）三關仍會以紅（1）收場——那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
 // **它不會安裝套件**：三關用發起樹已裝好的 `node_modules`（symlink 指回去，多半是主目錄那份）。
@@ -77,7 +79,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
 
@@ -139,7 +141,7 @@ export function othersToTry(list, self) {
  * （環境與非環境的成因必須同時存在），訊息再由它組出來。散文式的內文被實測過
  * 「把三種可能全改寫成環境歸因、保留關鍵字」照樣全綠（#446 r4）——關鍵字守不住語意，
  * 結構守得住。kind：'env'＝發起樹／執行環境的問題；'cross-pr'＝兩支合出來的破壞；
- * 'self-exit'＝受測內容自己以 126／127 收場。
+ * 'self-exit'＝受測內容自己以 126／127 收場；'merge'＝試合併本身失敗、沒有合併判決（#566 r1／r2）。
  * ⚠️ 誠實劃界：考題擋得住「改結構」（刪掉非環境成因、拔 kind、資料與訊息斷線），
  * **擋不住**「kind 留著、把 text 改寫到失真」——散文的真實性只能靠審查的人讀；
  * 往散文語意無限逼近的字串斷言＝過擬合，正當改寫時反而誤紅。
@@ -186,11 +188,11 @@ export function resultShapeProblems(results) {
  * ——`why` 裡包著測試自己的輸出，內容剛好出現「文字衝突」「紅了」字樣不代表它是那種
  * 死法（#446 r5 實測：真測試紅的錯誤文字提到「文字衝突」，嗅字串的版本把它分類成衝突）。
  *
- * `kind: 'cantRun'`（三關「執行不起來」）＝**拿不到可信的測試判決**，一律轉成退出碼 2
- * 「查不清楚」，不可以混進「合起來會壞」（1）——但也**不宣稱一定是環境**：126／127
- * 兩支各自全綠的 PR 也造得出來（見 `cantRunSignal` 檔頭）。只要有一筆 cantRun，
- * 整輪就以 2 收場（三關共用同一份發起樹的 node_modules，它若真的壞了，同輪其他結果
- * 的可信度也存疑）；同輪若另有已確定的阻擋（衝突／測試紅），訊息要照 kind 點名保留
+ * `kind: 'cantRun'`（試合併或三關「執行不起來」）＝**拿不到可信的合併判決或測試判決**，一律轉成
+ * 退出碼 2「查不清楚」，不可以混進「合起來會壞」（1）——但也**不宣稱一定是環境**：126／127
+ * 兩支各自全綠的 PR 也造得出來（見 `cantRunSignal` 檔頭）；merge 失敗沒留下未合併檔案也造得出來
+ * （#566 r1／r2）。只要有一筆 cantRun，整輪就以 2 收場（三關共用同一份發起樹的 node_modules、
+ * merge 走同一個 git——它們若真的壞了，同輪其他結果的可信度也存疑）；同輪若另有已確定的阻擋（衝突／測試紅），訊息要照 kind 點名保留
  * ——下不了定論的是 cantRun 那幾筆，不是整輪的事實。
  *
  * ⚠️ 型別的分工（#446 r6）：**產出端**（tryMerge）用 discriminated union 鎖
@@ -421,6 +423,10 @@ export function cantRunSignal(err) {
  * @param {any} hidden 隱藏 lock 的 packages 表（`node_modules/.package-lock.json`）；讀不到給 null
  * @returns {string[]}
  */
+/** lock 的套件路徑合法形狀：`node_modules/` 開頭、只有一般路徑段（不含 `.`／`..`／空段）、不含反斜線與空字元。 @param {string} key */
+const LOCK_KEY_OK = (key) => typeof key === 'string' && key.startsWith('node_modules/') && !/[\\\0]/.test(key)
+  && key.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+
 /** lock 項目的承重欄位與它們該有的型別（有寫才驗；沒寫走預設）。 */
 const LOCK_ENTRY_FIELDS = /** @type {const} */ ([['version', 'string'], ['name', 'string'], ['link', 'boolean'], ['optional', 'boolean'], ['resolved', 'string'], ['integrity', 'string']]);
 
@@ -435,6 +441,9 @@ export function lockMismatches(lock, installed, hidden) {
   for (const [key, entry] of Object.entries(packages)) {
     if (key === '') continue;
     if (!isObj(entry)) { out.push(`${key}：lock 項目不是物件，無法核對`); continue; }
+    // key 是拿去讀檔的路徑：必須是 `node_modules/…` 的相對路徑，不含 `..` 段、反斜線、空字元、絕對路徑——
+    // 否則 `..` 會逃出臨時樹、借樹外的 package.json 讓核對假綠（#566 r8 Codex 實作出來）。格式錯＝無法核對。
+    if (!LOCK_KEY_OK(key)) { out.push(`${key}：lock 的套件路徑不合法（不是 node_modules/… 相對路徑、或含 ..），無法核對`); continue; }
     // 承重欄位「有寫就要是對的型別」（#566 r5／r6 Codex：optional:'false'、link:0、name:0、resolved:0 在 truthiness 或
     // typeof 退路下都變成「沒寫」而放行）——型別錯＝lock 壞掉，無法核對；沒寫才走各自的預設。
     const typeBad = LOCK_ENTRY_FIELDS.filter(([f, t]) => entry[f] !== undefined && typeof entry[f] !== t).map(([f]) => f);
@@ -492,9 +501,13 @@ function resolveMainRef(wt, mainSha) {
 
 /** 從某棵樹讀 `<key>/package.json` 的 name 與 version（key 形如 `node_modules/a/node_modules/b`）。 @param {string} root */
 function installedIn(root) {
+  const fence = resolve(root) + sep;
   return (/** @type {string} */ key) => {
     try {
-      const pkg = JSON.parse(readFileSync(join(root, key, 'package.json'), 'utf8'));
+      // 第二層圍籬（第一層是 lockMismatches 的 key 格式驗）：解析後的路徑一定要還在樹內，逸出＝當沒裝
+      const file = resolve(root, key, 'package.json');
+      if (!file.startsWith(fence)) return null;
+      const pkg = JSON.parse(readFileSync(file, 'utf8'));
       return { name: String(pkg?.name ?? ''), version: String(pkg?.version ?? '') };
     } catch { return null; }
   };

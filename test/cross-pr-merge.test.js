@@ -562,6 +562,48 @@ test('⭐ lockMismatches｜同名同版但內容指紋（integrity）或來源�
   assert.match(m[0], /node_modules\/b.*沒有這一筆/);
 });
 
+test('⭐ lockMismatches｜套件路徑（key）不合法一律「無法核對」：含 ..、絕對路徑、不是 node_modules/ 開頭、反斜線、空字元（#566 r8：.. 會逃出臨時樹借外部 package.json 假綠）', () => {
+  const installed = () => ({ name: 'x', version: '1.0.0' });
+  for (const key of ['../../outside', 'node_modules/../../outside', '/abs/node_modules/x', 'lib/x', 'node_modules/a\\..\\b', 'node_modules/a\0b', 'node_modules//a', 'node_modules/./a']) {
+    const m = lockMismatches({ packages: { '': {}, [key]: { version: '1.0.0', name: 'x' } } }, installed, null);
+    assert.equal(m.length, 1, `${JSON.stringify(key)} 應該一筆「無法核對」，實得：${m.join(' / ')}`);
+    assert.match(m[0], /路徑不合法/);
+  }
+  assert.deepEqual(lockMismatches({ packages: { '': {}, 'node_modules/@s/p': { version: '1.0.0', name: '@s/p' }, 'node_modules/a/node_modules/b': { version: '1.0.0', name: 'b' } } },
+    (k) => ({ name: k.slice(k.lastIndexOf('node_modules/') + 13), version: '1.0.0' }), null), [], 'scoped 與巢狀的正常 key 被誤紅');
+});
+
+test('⭐ CLI｜lock 的套件路徑用 .. 指到臨時樹外的 package.json → exit 2、三關沒跑（#566 r8：正式接線也要擋，不只純函式）', () => {
+  // 樹外放一個 package.json（name/version 跟 lock 寫的一樣），lock 的 key 用 ../ 指過去——舊版會讀到它、回「對得上」、進三關
+  const outside = mkdtempSync(join(tmpdir(), 'cross-pr-outside-'));
+  writeFileSync(join(outside, 'package.json'), JSON.stringify({ name: 'escaped', version: '9.9.9' }));
+  const { dir, sha, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+  });
+  try {
+    // 另一支＝從 main 開分支、把 lock 換成帶逃逸 key 的版本
+    const lockPath = join(dir, 'package-lock.json');
+    const g = (/** @type {string[]} */ args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } });
+    g(['checkout', '-q', '-b', 'lock-escape']);
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+    const depth = dir.split('/').filter(Boolean).length + 3;   // 臨時樹在 tmpdir 底下，多爬幾層到根再走絕對路徑
+    lock.packages[`node_modules/${'../'.repeat(depth)}${outside.replace(/^\//, '')}`] = { version: '9.9.9', name: 'escaped' };
+    writeFileSync(lockPath, JSON.stringify(lock));
+    g(['add', 'package-lock.json']);
+    g(['-c', 'user.email=f@example.com', '-c', 'user.name=fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'escape']);
+    const shaEsc = String(g(['rev-parse', 'HEAD']).stdout).trim();
+    g(['checkout', '-q', 'main']);
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, shaEsc), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n——0＝lock 的 .. 逃出臨時樹、借樹外的 package.json 通過核對`);
+    assert.match(r.stderr, /路徑不合法/);
+    assert.equal(existsSync(join(dir, 'gate-ran')), false, '對不上還是進了三關');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('⭐ 裁決｜任一筆 lock 對不上（kind: lock）→ 整輪 2；訊息要講「不適用重跑」、不可以說「合起來會壞」', () => {
   const v = verdict([
     { number: 384, ok: true, why: '' },
