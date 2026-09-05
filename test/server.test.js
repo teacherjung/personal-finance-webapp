@@ -1465,14 +1465,14 @@ test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true → 40
     db.transactions = [{ id: 'nb1', date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市', amount: 55,
       note: '我取的名字', storeKey: '星巴克內湖店', source: 'stmt', stmtRef: 'c1|2026-07-08|55|星巴克內湖店', ledger: 'card' }];
     await saveDb(db); }
-  // 基線在**預覽之前**拍：預覽若哪天真的會寫入，下面那句「被擋下不可改寫」就會拿整理過的狀態當基線，
-  // 整段對照跟著失效——所以先存原始三元組，預覽之後再確認它逐字沒變。
+  // 基線在**預覽之前**拍成 primitive 三元組：預覽若哪天真的會寫入，整理後的實際值就對不上這條基線，
+  // 下面那句立刻紅；基線若改拍在預覽之後，同一個錯就會被吸收進基線裡、整段對照跟著失效。
   const triple = async () => (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
   const txBefore = await triple();
   assert.deepEqual(txBefore, [['nb1', '我取的名字', '星巴克內湖店']], `夾具：這一筆要是「還沒整理過」的形狀（實際 ${JSON.stringify(txBefore)}）`);
   const preview = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(preview.keyChanged >= 1, `夾具對照：這個當下要真的有東西可整理（實際 ${JSON.stringify(preview).slice(0, 160)}）`);
-  assert.deepEqual(await triple(), txBefore, '預覽不可以寫進去（寫了的話下面的基線就是整理過的狀態）');
+  assert.deepEqual(await triple(), txBefore, '預覽不可以寫進去（寫了的話這裡讀到的就是整理後的值，對不上預覽前的基線）');
 
   for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }, { force: null }]) {
     assert.equal((await POST('/statement/normalize-branches', bad)).status, 400, `${JSON.stringify(bad)} 要 400（只有正牌 true 才是確認）`);
