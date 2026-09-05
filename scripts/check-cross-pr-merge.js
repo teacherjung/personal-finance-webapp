@@ -450,7 +450,8 @@ export function lockMismatches(lock, installed, hidden) {
     if (typeBad.length) { out.push(`${key}：lock 項目的 ${typeBad.join('／')} 欄型別不對，無法核對`); continue; }
     if (entry.link === true) { out.push(`${key}：workspace 連結（link）核對不了指向哪一版，視為對不上`); continue; }
     const want = String(entry.version ?? '');
-    const wantName = entry.name ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    // name 有寫就用（空字串也算「有寫」——空字串跟已裝的名字對不上，是 lock 壞掉，不是「沒寫」）
+    const wantName = entry.name !== undefined ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
     const have = installed(key);
     if (have === null) {
       if (entry.optional !== true) out.push(`${key}：lock 要 ${wantName}@${want}，沒有裝`);
@@ -639,8 +640,14 @@ export function main(argv) {
     console.error(`跨 PR 試合併 PR #${pr}：查不清楚（${/** @type {any} */ (e)?.message}）——一律當成未通過。`);
     return 2;   // fail-closed
   }
-  if (!self?.headRefOid || !Array.isArray(list)) {
-    console.error(`跨 PR 試合併 PR #${pr}：gh 回傳的形狀不對——一律當成未通過。`);
+  // ⚠️ 清單每一筆的承重欄位都要在（number 正整數、headRefOid 非空字串、baseRefName 字串）：缺了 baseRefName
+  //    的那一筆會被 othersToTry 的 `=== 'main'` 靜靜濾掉，整輪變成「沒有其他 open PR」退 0（#566 r9 Codex 實跑）。
+  //    指令本身已用 --base main 查，缺欄位不能當成「證明它不是 main」——形狀不對一律 2。
+  const listBad = Array.isArray(list) ? list.filter((p) => !p || typeof p !== 'object'
+    || !(typeof p.number === 'number' && Number.isInteger(p.number) && p.number > 0)
+    || typeof p.headRefOid !== 'string' || !p.headRefOid || typeof p.baseRefName !== 'string') : [];
+  if (!self?.headRefOid || !Array.isArray(list) || listBad.length) {
+    console.error(`跨 PR 試合併 PR #${pr}：gh 回傳的形狀不對${listBad.length ? `（open PR 清單有 ${listBad.length} 筆缺承重欄位：number／headRefOid／baseRefName）` : ''}——一律當成未通過。`);
     return 2;
   }
   const others = othersToTry(list, Number(pr));

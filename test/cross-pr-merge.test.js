@@ -142,6 +142,20 @@ test('CLI｜gh 回傳不是 JSON → exit 2', () => {
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
 });
 
+test('⭐ CLI｜gh 的 open PR 清單有一筆缺 baseRefName（或 number／headRefOid 壞掉）→ exit 2，不可以被靜靜濾掉變成「沒有其他 open PR」退 0（#566 r9）', () => {
+  for (const broken of [
+    { number: 567, headRefOid: 'deadbeef', headRefName: 'other' },                       // 缺 baseRefName
+    { number: '567', headRefOid: 'deadbeef', headRefName: 'other', baseRefName: 'main' },  // number 不是數字
+    { number: 567, headRefOid: '', headRefName: 'other', baseRefName: 'main' },            // headRefOid 空
+    null,
+  ]) {
+    const r = withFakeGh(SELF, JSON.stringify([{ number: 385, headRefOid: 'aabbcc', headRefName: 'x', baseRefName: 'main' }, broken]));
+    assert.equal(r.status, 2, `${JSON.stringify(broken)}：預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}\n——0＝壞掉的那一筆被當成「不是 main」濾掉，整輪變成沒有其他 open PR`);
+    assert.match(r.stderr, /形狀不對/);
+    assert.doesNotMatch(r.stdout, /沒有其他 open PR/);
+  }
+});
+
 test('CLI｜gh 回傳形狀不對（缺 headRefOid）→ exit 2', () => {
   const r = withFakeGh(JSON.stringify({ number: 385 }), '[]');
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}`);
@@ -535,6 +549,9 @@ test('⭐ lockMismatches｜同版號不同套件（alias）→ 對不上；works
     `alias 同版號不同套件沒被抓到：${m.join(' / ')}`);
   assert.ok(m.some((x) => x.includes('node_modules/ws') && /link/.test(x)), `link 項目沒被當成對不上：${m.join(' / ')}`);
   assert.equal(m.length, 2, `scoped 或巢狀的名字被誤紅：${m.join(' / ')}`);
+  // name 是空字串＝有寫但壞掉，不可以退回路徑名而放行（#566 r9 的封頂族觀察，順手修：一行）
+  const empty = lockMismatches({ packages: { '': {}, 'node_modules/x': { name: '', version: '1.0.0' } } }, () => ({ name: 'x', version: '1.0.0' }), null);
+  assert.equal(empty.length, 1, `name:'' 應對不上：${empty.join(' / ')}`);
 });
 
 test('⭐ lockMismatches｜同名同版但內容指紋（integrity）或來源（resolved）在根 lock 與隱藏 lock 的中繼紀錄不同 → 對不上；隱藏 lock 讀不到／沒那一筆 → 核對不了也算對不上；lock 沒寫來源的項目不比（#566 r2 High）', () => {
