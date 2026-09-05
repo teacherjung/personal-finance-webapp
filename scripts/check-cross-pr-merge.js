@@ -38,14 +38,12 @@
 //             合併後的 package-lock.json 跟已裝的套件對不上／
 //             三關「執行不起來」（spawn 失敗／被訊號終止／126／127）／建不出臨時工作區）→ fail-closed
 //
-// ## 紅了怎麼辦（William 2026-09-03 裁示「紅了重跑一次再判」；2026-09-05 擴為常設）
+// ## 紅了怎麼辦
 //
-// 這道閘量到的不只是相容性，還有機器忙不忙：量時間／記憶體的考題在多支審查併行時會假紅，
-// 而執行合併的人自己就是負載（2026-09-03 實測；#552 後多數計時題已改量 CPU 工作量，
-// 剩牆上時鐘語意的逾時題）。所以退出碼 1 時**先看死因欄是哪一題紅**，可以**重跑一次**，
-// 但**只限這一道閘、只限一次、第二次紅照擋**（照 1 處理，先讓兩支相容）。
-// 這條規則的正本在 REVIEW-AND-MERGE.md 跨 PR 試合併那一步；這裡只講它跟下一節的關係：
-// **lock 對不上那種退 2 不適用重跑**——重跑一百次結果都一樣。
+// 這道閘量到的不只是相容性，還有機器忙不忙（量時間／記憶體的考題在多支審查併行時會假紅，
+// 而執行合併的人自己就是負載）。退出碼 1 可以重跑一次、附帶限制——規則正本在
+// REVIEW-AND-MERGE.md 跨 PR 試合併那一步，限制句與退出碼 1 的訊息共用 `RERUN_LIMITS` 這一串。
+// 這裡只講它跟下一節的關係：**lock 對不上那種退 2 不適用重跑**——重跑一百次結果都一樣。
 //
 // ## 誠實劃界
 //
@@ -65,8 +63,9 @@
 // 已裝的版本對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
 // 核對的射程：只看「lock 要的有沒有裝、版本對不對」，**多裝的套件看不到**（拿掉相依的那支
 // 若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台專屬
-// 二進位本來就只裝自己那一個）。刻意不自動 `npm ci`：本機 npm 的 `ci` 會順著 symlink 逐項
-// 清掉主目錄的 node_modules（CLAUDE.md 的禁區），要裝就由發射者在臨時樹自己來。
+// 二進位本來就只裝自己那一個）。刻意不自動安裝：本機 npm 的 `ci` 會順著 symlink 逐項清掉
+// 主目錄的 node_modules（CLAUDE.md 的禁區）。處置寫在 verdict 的 lock 訊息裡（哪一側動了 lock
+// 決定該做什麼），這裡不重抄。
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync, unlinkSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -82,6 +81,36 @@ export const MERGE_GATE = {
   name: '跨 PR 試合併',
   why: '兩支各自全綠不代表合起來全綠——一支的規則可能禁止另一支的內容',
 };
+
+/**
+ * 「紅了重跑一次」的限制句——退出碼 1 的訊息與 REVIEW-AND-MERGE.md 正本共用同一串，
+ * 考題釘兩邊都逐字含它：正本漂了、訊息漂了，都會紅。這一串本身不承載「幾個」——
+ * 它就是全部的限制；「重跑前先看是哪一題紅」是動作指示，不是第四個限制。
+ */
+export const RERUN_LIMITS = '只限這一道閘、只限一次、第二次紅照擋';
+
+/**
+ * 從「考試」那關的 stdout 撈出 spec reporter 的失敗題名（`✖ 題名 (…ms)` 那些行）。
+ * 為什麼要另外撈：`redDetail` 的視窗只留首行與末幾行，題名多半在中段——沒有它，
+ * 「重跑前先看是哪一題紅」照字面做不到（預審實跑證實）。排除「✖ failing tests:」那個
+ * 摘要標題、去重（spec reporter 會印兩次）、最多留幾條——條數是調校值不承重。
+ * @param {string | undefined} stdout
+ * @returns {string[]}
+ */
+export function failingTestNames(stdout) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(stdout || '').split('\n')) {
+    const line = raw.trim();
+    if (!/^✖ /.test(line) || /^✖ failing tests:/.test(line)) continue;
+    const name = line.replace(/^✖ /, '').replace(/\s*\(\d+(\.\d+)?ms\)$/, '');
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
 
 /**
  * 要拿來試合併的其他 PR。
@@ -159,10 +188,13 @@ export function verdict(results) {
       message: '跨 PR 試合併：**查不清楚——合併後的套件清單跟已裝的套件對不上，三關若照跑是拿舊套件當結果，這一輪不算數**\n'
         + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
         + '\n\n⚠️ 這種結果**重跑一百次都一樣，不適用「紅了重跑一次」**。'
-        + '三關要在跟合併後 package-lock.json 一致的套件上跑才算數：\n'
-        + '   ・先合併動了 lock 的那支，主目錄同步後（桌面捷徑重啟會裝套件）再跑本閘；或\n'
-        + '   ・發射者在臨時樹自己 npm ci 之後手動跑三關（本閘刻意不自動安裝——npm ci 會順著 symlink 清掉主目錄的 node_modules）。\n'
-        + '   ⚠️ 不要在任何 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
+        + '三關要在跟合併後 package-lock.json 一致的套件上跑才算數；先看上面「哪一側動了 lock」：\n'
+        + '   ・兩側都「否」＝發起樹的套件本來就沒跟上 lock：發起樹是主目錄時，在**主目錄本身**跑 npm install'
+        + '（主目錄不是 worktree、不在 CLAUDE.md 禁區；用 install 不用 ci，ci 會先整個刪掉 node_modules）後重跑本閘。\n'
+        + '   ・對方那側「是」＝先合併那一支、發起樹裝好後再跑本閘。\n'
+        + '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：在一棵**沒掛 symlink 的全新臨時樹**'
+        + '（git worktree add 之後不掛連結）npm ci，在那裡手動跑三關，三關輸出與那棵樹的 lock sha 貼進 PR 留言。\n'
+        + '   ⚠️ 本閘造的臨時樹掛著 symlink，不可以在那裡裝；不要在掛著 symlink 的 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
         + (confirmed.length
           ? `\n   ⚠️ 上列另有**本輪已確定的阻擋**（${kinds.join('、')}）——那些不因本輪下不了定論而失效。`
           : ''),
@@ -207,8 +239,8 @@ export function verdict(results) {
         ? '\n\n⚠️ **合起來測試紅**：這種 GitHub **不會**顯示——兩支各自的 CI 都是綠的、'
           + '也沒有檔案衝突，**合併第二支的當下 `main` 就紅了**。\n'
           + '   通常是其中一支的護欄擋掉了另一支的內容。先讓兩支相容再合併。\n'
-          + '   先看死因欄是哪一題紅：量時間／記憶體的考題在機器忙時會假紅——'
-          + '可以重跑**一次**（只限本閘、只限一次、第二次紅照擋；規則正本在 REVIEW-AND-MERGE.md 跨 PR 試合併那一步）。'
+          + '   量時間／記憶體的考題在機器忙時會假紅——先看上面「紅的考題」是不是那種題；'
+          + `可以重跑**一次**（${RERUN_LIMITS}；規則正本在 REVIEW-AND-MERGE.md 跨 PR 試合併那一步）。`
         : ''),
   };
 }
@@ -318,8 +350,7 @@ export function cantRunSignal(err) {
  * 合併後的 `package-lock.json` 要求的每一個套件，已裝的版本對不對得上。回對不上的清單（空＝對得上）。
  *
  * 判準三條，刻意不多：①lock 裡的每個套件（`packages` 表、根項目除外、`link` 除外）都要裝著、
- * 版本逐字相同；②`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，2026-09-05 本機實測 12 個 optional
- * 有 10 個本來就沒裝）；③沒有 `packages` 表（lockfileVersion 1／格式不對／根本不是物件）＝無法核對，
+ * 版本逐字相同；②`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，其餘的本來就不裝）；③沒有 `packages` 表（lockfileVersion 1／格式不對／根本不是物件）＝無法核對，
  * 也算對不上——fail-closed。**多裝的看不到**（劃界在檔頭）。
  * 純函式：檔案系統由呼叫端用 `installedVersion` 注入，考題直接餵資料。
  * @param {any} lock 解析後的 package-lock.json
@@ -379,18 +410,26 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
       return { number: otherNumber, ok: false, kind: 'conflict', why: '文字衝突，git merge 就過不去' };
     }
     // ⚠️ 三關之前先核對 lock（劃界與理由在檔頭「它不會安裝套件」那段）：對不上就不進三關——
-    //    進了也是拿舊套件跑，紅綠都不可信。誰動了 lock 一併印出來（相對本支的 head 看 other 那支）：
-    //    「否」＝差異來自本支自己、或發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）。
+    //    進了也是拿舊套件跑，紅綠都不可信（考題用記號檔釘住「真的沒進」）。
+    //    哪一側動了 lock 一併印出來，**從兩支的共同祖先量**（merge-base→各自的 head）：兩顆 head 直接
+    //    比會把本支這側的變動算到對方頭上（預審實跑：#561 沒動 lock 也會被印成「是」）。
+    //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
     try { lock = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { lock = null; }
     const mism = lockMismatches(lock, installedVersionIn(wt));
     if (mism.length) {
-      let otherTouched = '查不到';
-      try { otherTouched = runIn(['git', 'diff', '--name-only', baseSha, otherSha, '--', 'package-lock.json'], wt).trim() ? '是' : '否'; } catch { /* 留「查不到」 */ }
+      let selfTouched = '查不到'; let otherTouched = '查不到';
+      try {
+        const mb = runIn(['git', 'merge-base', baseSha, otherSha], wt).trim();
+        const touched = (/** @type {string} */ head) =>
+          (runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否');
+        selfTouched = touched(baseSha);
+        otherTouched = touched(otherSha);
+      } catch { /* 留「查不到」 */ }
       return {
         number: otherNumber, ok: false, kind: 'lock',
-        why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；#${otherNumber} 相對本支動了 package-lock.json：${otherTouched}）：`
+        why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；從兩支的共同祖先量，本支那側動了 package-lock.json：${selfTouched}，#${otherNumber} 那側動了：${otherTouched}）：`
           + mism.slice(0, 5).join('；') + (mism.length > 5 ? '；…' : ''),
       };
     }
@@ -408,7 +447,11 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber) {
             why: `「${label}」執行不起來（症狀：${sig}）：${redDetail(err)}`,
           };
         }
-        return { number: otherNumber, ok: false, kind: 'red', why: `合起來之後「${label}」紅了：${redDetail(err)}` };
+        const names = script === 'test' ? failingTestNames(err?.stdout) : [];
+        return {
+          number: otherNumber, ok: false, kind: 'red',
+          why: `合起來之後「${label}」紅了${names.length ? `（紅的考題：${names.join(' ／ ')}）` : ''}：${redDetail(err)}`,
+        };
       }
     }
     return { number: otherNumber, ok: true, why: '' };
