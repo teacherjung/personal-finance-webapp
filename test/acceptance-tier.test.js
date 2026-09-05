@@ -4,6 +4,10 @@
 // gh 讀檔的形狀（分頁、改名、檔數對不上、站台與 repo 身分釘在 origin、正式呼叫逐 token 釘旗標）、每個會 spawn 子行程的呼叫點各兩種 GIT_* 題、
 // 以及 D 級「重新整理就好」的前提（沒有 service worker）；路徑家族表本身對不對（哪些 scripts 啟動時會跑）
 // 靠改表的人核對 start.command／render.yaml，這裡只釘現況。
+// ⚠️ **沙盒的安全宣告**（鐵則 11）：`fixtureRepo()` 真的會跑 `git init`（2026-08-09 事故的兇器）。它一律：
+//    ① 只在 `mkdtempSync` 的暫存目錄裡跑；
+//    ② `env` 是**從零組**的 `SANDBOX_ENV`（只給 PATH／HOME），不是「process.env 減掉幾個 key」——所以不可能有任何 GIT_* 洩進去；
+//    ③ 檔尾有保險絲：跑過 fixture 之後回頭斷言真的 repo 還是健康的（`worktreeIntegrityProblems(ROOT)` 為空）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,10 +18,14 @@ import { fileURLToPath } from 'node:url';
 import { classify, report, tierOf, originRepo, RULES, TIERS, ORDER, prFilesFromApi } from '../scripts/acceptance-tier.js';
 import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
 import { gitEnv } from '../lib/git-env.js';
+import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/acceptance-tier.js');
+/** 沙盒專用環境：**從零組**，不是從 process.env 扣（見檔頭安全宣告）。 */
+const SANDBOX_ENV = { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' };
+const SECRET = 'SYNTHETIC_R7_SECRET_do_not_echo';
 const tiers = (/** @type {ReturnType<typeof classify>} */ r) => r.actions.map((a) => a.tier);
 /** gh 檔案物件的最小合法形狀（真 API 一定帶 status）。 @param {number} n @param {string} prefix */
 const page = (n, prefix) => Array.from({ length: n }, (_, i) => ({ filename: `${prefix}${i}.md`, status: 'modified' }));
@@ -168,11 +176,11 @@ test('⭐ CLI｜PR 自報 3001 筆、API 只回得了 3000 筆（第 3001 筆若
   withFakeGh({ view: 'null\n', api: thirtyPages }, ({ r }) => assert.equal(r.status, 2, 'gh 回的檔數不是整數也要退 2'));
 });
 
-/** 夾具 repo：只有 origin、沒有 commit（本題只看身分怎麼解）。 @param {string} url */
+/** 夾具 repo：只有 origin、沒有 commit（本題只看身分怎麼解）。⚠️ 會跑 `git init`——env 一律 SANDBOX_ENV（檔頭安全宣告）。 @param {string} url */
 function fixtureRepo(url) {
   const dir = mkdtempSync(join(tmpdir(), 'acc-origin-'));
   for (const args of [['init', '-q'], ['remote', 'add', 'origin', url]]) {
-    const g = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: gitEnv() });
+    const g = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: SANDBOX_ENV });
     assert.equal(g.status, 0, `夾具 git ${args.join(' ')} 失敗：${g.stderr}`);
   }
   return dir;
@@ -188,34 +196,59 @@ test('⭐ originRepo｜站台與 owner/repo 都從 origin 解（https／ssh／sc
   for (const url of ['https://github.com/acme/widgets.git', 'https://github.com/acme/widgets', 'https://github.com/acme/widgets.git/', 'git@github.com:acme/widgets.git',
     'ssh://git@github.com/acme/widgets.git', 'git://github.com/acme/widgets.git',
     'https://github.com:443/acme/widgets.git',      // 預設 port 明講＝同一個 endpoint
-    'ssh://git@github.com:22/acme/widgets.git']) {  // ssh 的 port 是 SSH 的、與 API 端點無關
-    assert.deepEqual(originOf(url), { host: 'github.com', slug: 'acme/widgets' }, url);
+    'ssh://git@github.com:22/acme/widgets.git',     // ssh 的 port 是 SSH 的、與 API 端點無關
+    `https://user:${SECRET}@github.com/acme/widgets.git`]) {   // 內嵌憑證：收、但絕不回聲（下面另有題）
+    assert.deepEqual(originOf(url), { host: 'github.com', slug: 'acme/widgets' }, url.replace(SECRET, '<secret>'));
   }
   assert.equal(originOf('https://ghe.example.com/acme/widgets.git').host, 'ghe.example.com', '企業站的 origin 就釘企業站，不偷換成 github.com');
   assert.throws(() => originRepo(tmpdir()), '不在 repo 裡要丟，不可以回一個猜的身分');
   assert.deepEqual(originRepo(ROOT), { host: 'github.com', slug: 'teacherjung/personal-finance-webapp' });
 });
 
-test('⭐ originRepo｜釘不住的 origin 一律丟、不改查別的 endpoint：https 明講非預設 port、scp 語法的數字路徑段、路徑不是兩段、協定不認得', () => {
+test('⭐ originRepo｜釘不住的 origin 一律丟、不改查別的 endpoint：https 非預設 port、scp 數字路徑段、路徑段數、協定、以及會被正規化的 %／?／#／. 段', () => {
   const bad = {
     'https://ghe.example.com:8443/acme/widgets.git': /非預設 port/,           // API 在 8443，gh --hostname 拒收冒號 → 不可改查 443 的同號 PR（#573 r6 High）
-    'git@host.example:22/acme/widgets.git': /不是 owner\/repo/,               // scp 語法冒號後是路徑：22 是路徑段，不是 port
-    'https://github.com/acme': /不是 owner\/repo/,
-    'https://github.com/a/b/c.git': /不是 owner\/repo/,
-    'ftp://github.com/acme/widgets.git': /協定不認得/,
-    'not a url at all': /解不出/,
+    'git@host.example:22/acme/widgets.git': /逐字釘住/,                       // scp 語法冒號後是路徑：22 是路徑段，不是 port
+    'https://github.com/acme': /逐字釘住/,
+    'https://github.com/a/b/c.git': /逐字釘住/,
+    'ftp://github.com/acme/widgets.git': /逐字釘住/,
+    'not a url at all': /逐字釘住/,
+    // #573 r7 High①：Git 送給遠端的是原文，WHATWG URL 卻會把這些正規化成別的 slug——不可以查到「另一個 repo 的同號 PR」
+    'https://github.com/evil/%2e%2e/acme/widgets.git': /逐字釘住/,
+    'https://github.com/acme/../widgets.git': /逐字釘住/,
+    'https://github.com/./widgets.git': /逐字釘住/,
+    'ssh://git@github.com/acme/widgets.git?x=1': /逐字釘住/,
+    'ssh://git@github.com/acme/widgets.git#frag': /逐字釘住/,
+    'https://github.com/acme/wid%20gets.git': /逐字釘住/,
   };
   for (const [url, re] of Object.entries(bad)) assert.throws(() => originOf(url), re, `${url} 應該丟`);
 });
 
-test('⭐ CLI｜origin 釘不住（https 帶非預設 port）→ 退 2、而且根本不去叫 gh（fail-closed 在前，不是查到別的 endpoint 才失敗）', () => {
-  const dir = fixtureRepo('https://ghe.example.com:8443/acme/widgets.git');
-  try {
-    withFakeGh({ view: '1\n', api: JSON.stringify([[{ filename: 'docs/x.md', status: 'modified' }]]), cwd: dir }, ({ r, calls }) => {
-      assert.equal(r.status, 2, `${r.stdout}${r.stderr}`); assert.match(r.stderr, /非預設 port/);
-      assert.deepEqual(calls, [], `origin 釘不住還是去叫了 gh：${JSON.stringify(calls)}`);
-    });
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+test('⭐ originRepo｜錯誤訊息不回聲 origin 原文（https remote 常內嵌 PAT／密碼——#573 r7 High②）', () => {
+  const url = `https://user:${SECRET}@ghe.example.com:8443/acme/widgets.git`;
+  assert.throws(() => originOf(url), (/** @type {Error} */ e) => {
+    assert.match(e.message, /非預設 port/);
+    assert.ok(!e.message.includes(SECRET) && !e.message.includes('ghe.example.com'), `訊息把 origin 原文（含憑證）帶出來了：${e.message.replace(SECRET, '<secret>')}`);
+    return true;
+  });
+});
+
+test('⭐ CLI｜origin 釘不住 → 退 2、根本不去叫 gh（fail-closed 在前）、stdout／stderr 都不含 origin 內嵌的憑證', () => {
+  const cases = /** @type {[string, RegExp][]} */ ([
+    [`https://user:${SECRET}@ghe.example.com:8443/acme/widgets.git`, /非預設 port/],   // r6 High＋r7 High②
+    ['https://github.com/evil/%2e%2e/acme/widgets.git', /逐字釘住/],                     // r7 High①：URL 正規化後會變成 acme/widgets 的同號 PR
+    ['ssh://git@github.com/acme/widgets.git?x=1', /逐字釘住/],
+  ]);
+  for (const [origin, re] of cases) {
+    const dir = fixtureRepo(origin);
+    try {
+      withFakeGh({ view: '1\n', api: JSON.stringify([[{ filename: 'docs/x.md', status: 'modified' }]]), cwd: dir }, ({ r, calls }) => {
+        assert.equal(r.status, 2, `${origin.replace(SECRET, '<secret>')}：${r.stdout}${r.stderr}`); assert.match(r.stderr, re);
+        assert.deepEqual(calls, [], `origin 釘不住還是去叫了 gh：${JSON.stringify(calls)}`);
+        assert.ok(!(r.stdout + r.stderr).includes(SECRET), '分級失敗把 origin 內嵌的憑證印到終端了');
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
 });
 
 test('⭐ CLI｜正式呼叫逐 token 釘旗標，站台與 repo 都明講：GH_REPO、GH_HOST 一起塞也導不走（否則別站／別 repo 的同號 PR 剛好是純文件就錯報 E）', () => {
@@ -347,4 +380,13 @@ test('⭐ 文件｜合併步驟「回報合併結果與驗收分級」那一步�
   const section = tpl.slice(tpl.indexOf('## 怎麼驗收'), tpl.indexOf('### Grok 複審後掃'));
   assert.match(section, /scripts\/acceptance-tier\.js/, 'PR 模板沒指到分級腳本');
   assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：|不需驗收/, 'PR 模板又在抄級名、分級表或算法（#573 r4／r5）——只准指路');
+});
+
+test('⭐ 保險絲：本檔的 fixture 跑過 git init，回頭確認**真的 repo** 沒有被寫成 bare（鐵則 11）', () => {
+  // `fixtureRepo()` 用的 SANDBOX_ENV 是從零組的，所以 GIT_* 洩不進去——但那是「現在的寫法」，不是保證。
+  // 有人把它改成「process.env 扣幾個」時，fixture 會安安靜靜把真的 repo 寫成 bare；這一題就是為那一天留的。
+  const dir = fixtureRepo('https://github.com/acme/widgets.git');
+  try {
+    assert.deepEqual(worktreeIntegrityProblems(ROOT), [], '⛔ 本檔的 fixture 把真的 repo 弄壞了。立刻檢查 SANDBOX_ENV 是不是被改成會帶 GIT_* 進去。');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

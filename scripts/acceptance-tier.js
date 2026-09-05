@@ -150,34 +150,43 @@ export function prFilesFromApi(json, { expectEntries } = {}) {
   return [...out];
 }
 
+/** 一段 owner 或 repo 名：只收字母、數字、`_`、`.`、`-`；另外 `.`／`..` 段在下面單獨擋。 */
+const SEG = '[A-Za-z0-9_.-]+';
+/** 網址形：`scheme://[userinfo@]host[:port]/owner/repo`——**逐字白名單**，含 %、?、#、多餘路徑段的一律不匹配。 */
+const URL_FORM = new RegExp(`^(https?|ssh|git)://(?:[^@/\\s]+@)?([A-Za-z0-9.-]+)(?::(\\d+))?/(${SEG})/(${SEG})$`);
+/** scp 形：`[user@]host:owner/repo`——冒號後一律是路徑、沒有 port 文法。 */
+const SCP_FORM = new RegExp(`^(?:[^@/\\s]+@)?([A-Za-z0-9.-]+):(${SEG})/(${SEG})$`);
+/** 形狀不合時的訊息——**刻意不回聲 origin 原文**（https remote 常內嵌 PAT／密碼，印出來會帶進終端、紀錄與貼文；#573 r7 High②）。 */
+const SHAPE_MSG = 'origin 不是能逐字釘住的 owner/repo 網址（只收 https／http／ssh／git:// 或 scp 形、路徑剛好 owner/repo 兩段、不含 %／?／#／「.」「..」段；為了不帶出內嵌憑證，這裡不印 origin 原文）';
+
 /**
  * repo 身分（站台＋owner/repo）釘在目前目錄的 origin——不用 gh 的 `{owner}/{repo}` 佔位、也不省略站台：
  * 佔位會被 GH_REPO 導向別的 repo（#573 r4）、沒明講站台會被 GH_HOST 導向別站（#573 r5），而 gitEnv() 只清 GIT_*。
- * **依寫法分開解**（#573 r6：一條正規式通吃會把 https 的 port 靜靜丟掉、把 scp 語法的數字路徑段吞成 port）：
- *   ・網址形（https／http／ssh／git://）用 URL 解：http(s) 明講**非預設 port**＝API 也在那個 port，gh 的 --hostname 拒收冒號、釘不住
- *     → 丟（退 2），不可以改查 443 上的同號 PR；ssh:// 的 port 是 SSH 的、跟 API 端點無關 → 不看。
- *   ・scp 形（`[user@]host:path`）冒號後**一律是路徑**、沒有 port 文法（`git@host:22/o/r` 的 22 是路徑段，不是 port → 路徑不成 owner/repo → 丟）。
- * 路徑去掉 .git 與首尾斜線後必須剛好是 owner/repo 兩段；其餘一律丟（不猜）。
+ * **逐字白名單、不正規化**（#573 r6／r7）：一條寬鬆正規式會把 https 的 port 靜靜丟掉、把 scp 的數字路徑段吞成 port；
+ * 改用 WHATWG URL 又會把 `%2e%2e`、`?x=1`、`#frag` 正規化掉——Git 送給遠端的是原文，我們卻查到另一個 slug 的同號 PR。
+ * 所以：只有**原文**剛好長成 `scheme://[user@]host[:port]/owner/repo(.git)` 或 `[user@]host:owner/repo(.git)` 才收，
+ * 其餘一律丟（退 2）、不猜；http(s) 明講**非預設** port＝API 也在那個 port、gh 的 --hostname 拒收冒號釘不住 → 也丟；
+ * ssh:// 的 port 是 SSH 的、跟 API 端點無關 → 不看。錯誤訊息不含 origin 原文。
  * @param {string} [cwd]
  * @returns {{host: string, slug: string}}
  */
 export function originRepo(cwd = process.cwd()) {
-  const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).trim();
-  let host, path;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
-    let u;
-    try { u = new URL(url); } catch { throw new Error(`origin 不是合法網址，釘不住 repo 身分：${url}`); }
-    if (!/^(https?|ssh|git):$/.test(u.protocol)) throw new Error(`origin 的協定不認得，釘不住 repo 身分：${url}`);
-    if (u.port && /^https?:$/.test(u.protocol)) throw new Error(`origin 明講了非預設 port（${u.port}），gh 釘不住那個 endpoint、不改查預設 port 的同號 PR：${url}`);
-    host = u.hostname; path = u.pathname;
+  const raw = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).trim();
+  const url = raw.replace(/\/+$/, '').replace(/\.git$/, '');
+  const m = url.match(URL_FORM);
+  let host, port, owner, repo;
+  if (m) {
+    [, , host, port, owner, repo] = m;
+    const scheme = m[1];
+    const defaultPort = scheme === 'https' ? '443' : scheme === 'http' ? '80' : null;
+    if (port && /^https?$/.test(scheme) && port !== defaultPort) throw new Error(`origin 明講了非預設 port（${port}），gh 釘不住那個 endpoint、不改查預設 port 的同號 PR`);
   } else {
-    const m = url.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/);
-    if (!m) throw new Error(`origin 解不出站台與 owner/repo，釘不住 repo 身分：${url}`);
-    host = m[1]; path = m[2];
+    const s = url.match(SCP_FORM);
+    if (!s) throw new Error(SHAPE_MSG);
+    [, host, owner, repo] = s;
   }
-  const segs = path.replace(/\/+$/, '').replace(/\.git$/, '').replace(/^\/+/, '').split('/');
-  if (!host || segs.length !== 2 || !segs.every((x) => /^[A-Za-z0-9._-]+$/.test(x))) throw new Error(`origin 的路徑不是 owner/repo 兩段，釘不住 repo 身分：${url}`);
-  return { host, slug: `${segs[0]}/${segs[1]}` };
+  if (owner === '.' || owner === '..' || repo === '.' || repo === '..') throw new Error(SHAPE_MSG);
+  return { host, slug: `${owner}/${repo}` };
 }
 
 /** 給合併步驟「回報合併結果與驗收分級」那一步照抄的報告。 @param {string[]} paths */
