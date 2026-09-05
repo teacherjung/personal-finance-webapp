@@ -27,6 +27,7 @@ import { injectDirtyGitEnv, DIRTY_GIT_ENV } from './helpers/dirty-git-env.js';
 import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const REAL_GIT = String(spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout).trim() || '/usr/bin/git';
 const SCRIPT = join(ROOT, 'scripts/check-cross-pr-merge.js');
 
 const pr = (/** @type {number} */ number, /** @type {any} */ extra = {}) => ({
@@ -96,9 +97,14 @@ test('自報｜這支要自報是合併閘，否則註冊表數不到它', () =>
 // ── 退出碼才是這支對外的介面：用假 gh 走完整入口 ──────────────
 
 /** 造一支假的 `gh`，讓腳本走真實路徑。 @param {string} viewJson @param {string} listJson */
-function withFakeGh(viewJson, listJson, { exitCode = 0, pr = '385', cwd = ROOT, env = process.env, mainSha = undefined } = {}) {
+function withFakeGh(viewJson, listJson, { exitCode = 0, pr = '385', cwd = ROOT, env = process.env, mainSha = undefined, fakeGit = undefined } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-gh-'));
   const gh = join(dir, 'gh');
+  // fakeGit：塞一支假 git 在同一個 PATH 目錄——只攔它指定的子指令，其餘 exec 真 git（`REAL_GIT` 由 which 找）
+  if (fakeGit) {
+    writeFileSync(join(dir, 'git'), fakeGit.replace('__REAL_GIT__', REAL_GIT));
+    chmodSync(join(dir, 'git'), 0o755);
+  }
   // 假 gh 的 `api repos/…/git/ref/heads/<base>`：回「main 目前的 head」。考題用 mainSha 選項給；沒給就拿 view JSON 裡
   // 的 baseRefOid 當假 api 的回值（舊考題的寫法；閘本身**不讀** baseRefOid——有一題專門證明）；兩者都沒有＝api 失敗（退出 1）。
   let apiSha;
@@ -135,7 +141,7 @@ test('CLI｜沒有其他 open PR → exit 0（不會白花時間去建工作區�
   assert.match(r.stdout, /沒有其他 open PR/);
 });
 
-test('⭐ CLI｜gh 失敗 → exit 2（fail-closed，「查不到」不等於「安全」）', () => {
+test('⭐ CLI｜gh pr view／pr list 失敗 → exit 2（fail-closed，「查不到」不等於「安全」；gh api 查 main head 失敗另有處理）', () => {
   const r = withFakeGh(SELF, '[]', { exitCode: 1 });
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
 });
@@ -155,6 +161,8 @@ test('⭐ CLI｜gh 的 open PR 清單有一筆缺 baseRefName（或 number／hea
     { number: 567, headRefOid: 'deadbeef', headRefName: 'other' },                       // 缺 baseRefName
     { number: '567', headRefOid: 'deadbeef', headRefName: 'other', baseRefName: 'main' },  // number 不是數字
     { number: 567, headRefOid: '', headRefName: 'other', baseRefName: 'main' },            // headRefOid 空
+    { number: 999, headRefOid: 'deadbeef', headRefName: 'other', baseRefName: '' },       // baseRefName 空字串（#566 r13）
+    { number: 999, headRefOid: 'deadbeef', headRefName: 'other', baseRefName: 'dev' },    // --base main 查出來的清單裡出現別的 base＝矛盾
     null,
   ]) {
     const r = withFakeGh(SELF, JSON.stringify([{ number: 385, headRefOid: 'aabbcc', headRefName: 'x', baseRefName: 'main' }, broken]));
@@ -840,7 +848,7 @@ test('CLI｜發起樹沒有隱藏 lock（node_modules/.package-lock.json）→ �
 });
 
 test('⭐ CLI｜gh api 查到的 main head 本機沒有那顆 commit、本機 origin/main 又過時 → 側別印「查不到」並指路 fetch，不可以拿過時的 origin/main 算出錯的側別（#566 r2 Medium）', () => {
-  // 形狀：origin/main 停在 base；main 後來動了 lock；兩支都從新 main 分岔、都沒動 lock。
+  // 形狀：origin/main 停在 base；main 後來動了 lock；另一支從舊 base 分岔、本支從新 main 分岔，兩支都沒動 lock。
   // 真相是「兩側都否、發起樹重裝」；拿過時的 origin/main 算會把 main 的 lock 變動算到兩支頭上（兩側都是）。
   const { dir, sha, shaB } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true, staleOriginMain: true,
@@ -849,7 +857,7 @@ test('⭐ CLI｜gh api 查到的 main head 本機沒有那顆 commit、本機 or
   });
   try {
     // r3 曾有第二個形狀（origin/main 的完整 sha 後面多一個字元，殺 r2 的前綴比對）；r11 起 main 的 head 由 gh api 取、
-    // 只收 40 碼 hex，非 hex 的值＝api 查不到＝退回 origin/main（另有對照題），那個形狀不再屬於「本機沒有那顆」。
+    // 只收 40 碼 hex，非 hex 的值＝api 查不到＝三格「查不到」（另有題），那個形狀不再屬於「本機沒有那顆」。
     for (const notFetched of [
       '0123456789abcdef0123456789abcdef01234567',   // gh 看得到、本機沒有的那顆
     ]) {
@@ -974,6 +982,44 @@ test('RERUN_LIMITS｜常數本身要是一句有內容的限制句，正本裡�
   assert.ok(i >= 0);
   const before = step.slice(Math.max(0, i - 3), i);
   assert.doesNotMatch(before, /不|非|廢/, `正本的限制句被否定詞包住：「${before}${RERUN_LIMITS.slice(0, 6)}…」`);
+});
+
+test('⭐ CLI｜算「跟 main 一樣嗎」的 git diff --quiet 自己失敗（128）→ 那一格「查不到」、處置只印「查不到」那條，不可以當成「不一樣」長出 rebase 處方（#566 r13）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    const fakeGit = '#!/bin/sh\nif [ "$1" = "diff" ] && [ "$2" = "--quiet" ]; then echo "fatal: 假 git 讓 diff --quiet 掛掉" >&2; exit 128; fi\nexec "__REAL_GIT__" "$@"\n';
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV }, fakeGit });
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /合併後的 lock 跟 main 的一樣：查不到/, 'diff 自己失敗（不是退出碼 1）被當成「不一樣」');
+    assert.doesNotMatch(r.stderr, /兩支都落後 main/, '查不到卻長出 rebase 處方——跟 r12 修掉的同一個病');
+    assert.doesNotMatch(r.stderr, /主目錄本身/, '查不到卻長出重裝處方');
+    assert.match(r.stderr, /gh auth status/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜處置只印對得上的那一條：另一支動了 lock → 只有「先合併那一支」，沒有重裝／rebase／手動路徑（純函式沒帶 hint 時才印全部）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'marked': { version: '17.0.1' } },
+  });
+  try {
+    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /先合併那一支/);
+    assert.doesNotMatch(r.stderr, /主目錄本身|兩支都落後 main|沒掛 symlink 的全新臨時樹|gh auth status/, '對不上的處置印了不相干的那幾條');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // 純函式：沒帶 hint 就全部印（既有單元題靠這個）
+  const v = verdict([{ number: 385, ok: false, kind: 'lock', why: '對不上（…）' }]);
+  for (const w of ['主目錄本身', '兩支都落後 main', '先合併那一支', '沒掛 symlink 的全新臨時樹', 'gh auth status']) assert.ok(v.message.includes(w), `沒帶 hint 時少印了「${w}」`);
 });
 
 test('failingTestNames｜撈 spec reporter 的 ✖ 題名：去 (ms)、去重、排除「✖ failing tests:」摘要行、有上限', () => {

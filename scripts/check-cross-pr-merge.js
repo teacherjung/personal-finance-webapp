@@ -34,7 +34,7 @@
 // 用法：node scripts/check-cross-pr-merge.js <PR 編號>
 // 退出碼：0＝沒有其他 open PR，或每一支試合併之後三關都綠
 //         1＝有一支合起來會壞（文字衝突／測試紅）→ 停下來，先處理相容性
-//         2＝查不清楚（gh 失敗／不是 git repo／發起樹沒有可用的 node_modules／
+//         2＝查不清楚（gh pr view／pr list 失敗或形狀不對（gh api 查 main 的 head 失敗只讓側別印「查不到」）／不是 git repo／發起樹沒有可用的 node_modules／
 //             合併後的 package-lock.json 跟已裝的套件對不上／
 //             試合併或三關「執行不起來」（git merge 失敗但沒有未合併檔案／spawn 失敗／被訊號終止／126／127）／
 //             建不出臨時工作區）→ fail-closed
@@ -205,7 +205,7 @@ export function resultShapeProblems(results) {
  * `kind: 'lock'`（合併後的 package-lock.json 跟已裝的套件對不上）也是 2：三關還沒跑、或跑了也是拿舊
  * 套件在跑，同樣拿不到可信的判決；跟 cantRun 的差別是**成因已知、處置明確、重跑無效**，
  * 所以訊息分開寫。
- * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun' | 'lock'}[]} results
+ * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun' | 'lock', lockHint?: LockHint}[]} results
  */
 export function verdict(results) {
   // ⚠️ 前置防線的第一道是**形狀**（射程＝普通 JSON／JS 值，不管 Proxy／getter）：整包是陣列、每筆是非陣列物件、
@@ -238,22 +238,28 @@ export function verdict(results) {
   if (bad.some((r) => r.kind === 'lock')) {
     const confirmed = bad.filter((r) => r.kind === 'conflict' || r.kind === 'red');
     const kinds = [...new Set(confirmed.map((r) => (r.kind === 'conflict' ? '文字衝突' : '跑得起來的測試紅')))];
+    // 處置只印對得上的：tryMerge 帶來的 lockHint 決定；沒有任何一筆帶 hint（純函式被直接餵）就印全部。
+    const hints = new Set(bad.filter((r) => r.kind === 'lock').map((r) => r.lockHint).filter(Boolean));
+    const want = (/** @type {LockHint} */ h) => hints.size === 0 || hints.has(h);
+    const REMEDY = /** @type {[LockHint, string][]} */ ([
+      ['reinstall', '   ・兩側都「否」且合併後的 lock 跟 main 的**一樣**＝發起樹的套件沒跟上 lock：發起樹是主目錄時，在**主目錄本身**跑 npm install'
+        + '（主目錄不是 worktree、不在 CLAUDE.md 禁區；用 install 不用 ci，ci 會先整個刪掉 node_modules）後重跑本閘。'],
+      ['rebase', '   ・兩側都「否」但合併後的 lock 跟 main 的**不一樣**＝兩支都落後 main（合併後的 lock 是舊的、發起樹是新的）：'
+        + '先讓兩支跟上 main（rebase）再跑本閘，重裝發起樹沒有用。'],
+      ['other', '   ・對方那側「是」＝先合併那一支、發起樹裝好後再跑本閘。'],
+      ['self', '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：開一棵**沒掛 symlink 的全新臨時樹**'
+        + '（git worktree add 到本支 head 之後不掛連結）npm ci，然後**從那棵樹重跑本閘、拿到退出碼 0 才算數**'
+        + '（不是手動跑三關——REVIEW 的「退出碼 0 才可進下一步」只認本閘的 0）；PR 留言附那棵樹的路徑與 lock sha，用完收樹前確認 node_modules 是真目錄再刪。'],
+      ['both', '   ・兩側都「是」＝先合併對方那一支、發起樹裝好之後，本支仍要走「本支那側是」的手動路徑（沒掛 symlink 的全新臨時樹 npm ci 後從那棵樹重跑本閘）。'],
+      ['unknown', '   ・側別印「查不到」＝gh api 查不到 main 目前的 head（gh 沒登入／沒網路）、本機沒有那顆 commit（沒 fetch）、或 git 查不出來：先 gh auth status、git fetch origin main 再跑本閘；查不到不等於沒動。'],
+    ]);
     return {
       code: 2,
       message: '跨 PR 試合併：**查不清楚——合併後的套件清單跟已裝的套件對不上，三關若照跑是拿舊套件當結果，這一輪不算數**\n'
         + bad.map((r) => `  ・#${r.number}：${r.why}`).join('\n')
         + '\n\n⚠️ 這種結果**重跑一百次都一樣，不適用「紅了重跑一次」**。'
         + '三關要在跟合併後 package-lock.json 一致的套件上跑才算數；先看上面「哪一側動了 lock」：\n'
-        + '   ・兩側都「否」且合併後的 lock 跟 main 的**一樣**＝發起樹的套件沒跟上 lock：發起樹是主目錄時，在**主目錄本身**跑 npm install'
-        + '（主目錄不是 worktree、不在 CLAUDE.md 禁區；用 install 不用 ci，ci 會先整個刪掉 node_modules）後重跑本閘。\n'
-        + '   ・兩側都「否」但合併後的 lock 跟 main 的**不一樣**＝兩支都落後 main（合併後的 lock 是舊的、發起樹是新的）：'
-        + '先讓兩支跟上 main（rebase）再跑本閘，重裝發起樹沒有用。\n'
-        + '   ・對方那側「是」＝先合併那一支、發起樹裝好後再跑本閘。\n'
-        + '   ・本支那側「是」（本支自己動了 lock）＝發起樹裝不到它：開一棵**沒掛 symlink 的全新臨時樹**'
-        + '（git worktree add 到本支 head 之後不掛連結）npm ci，然後**從那棵樹重跑本閘、拿到退出碼 0 才算數**'
-        + '（不是手動跑三關——REVIEW 的「退出碼 0 才可進下一步」只認本閘的 0）；PR 留言附那棵樹的路徑與 lock sha，用完收樹前確認 node_modules 是真目錄再刪。\n'
-        + '   ・兩側都「是」＝先合併對方那一支、發起樹裝好之後，本支仍要走上一條的手動路徑。\n'
-        + '   ・側別印「查不到」＝gh api 查不到 main 目前的 head（gh 沒登入／沒網路）、本機沒有那顆 commit（沒 fetch）、或 git 查不出來：先 gh auth status、git fetch origin main 再跑本閘；查不到不等於沒動。\n'
+        + REMEDY.filter(([h]) => want(h)).map(([, text]) => text).join('\n') + '\n'
         + '   ⚠️ 本閘造的臨時樹掛著 symlink，不可以在那裡裝；不要在掛著 symlink 的 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
         + (confirmed.length
           ? `\n   ⚠️ 上列另有**本輪已確定的阻擋**（${kinds.join('、')}）——那些不因本輪下不了定論而失效。`
@@ -403,7 +409,10 @@ export function cantRunSignal(err) {
  * 分類全靠它，從失敗出口拔掉或漏標＝校對（typecheck）當場紅，
  * 不會靜靜滑進 verdict 的「未標記」保守分支。
  * @typedef {{number: number, ok: true, why: string}
- *   | {number: number, ok: false, why: string, kind: 'conflict' | 'red' | 'cantRun' | 'lock'}} MergeTry
+ *   | {number: number, ok: false, why: string, kind: 'conflict' | 'red' | 'cantRun' | 'lock', lockHint?: LockHint}} MergeTry
+ */
+/** lock 對不上時的處置分流（tryMerge 算好帶給 verdict；verdict 收到沒帶 hint 的輸入就印全部處置）。
+ * @typedef {'reinstall' | 'rebase' | 'other' | 'self' | 'both' | 'unknown'} LockHint
  */
 
 /**
@@ -597,7 +606,8 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
     //    跟 GitHub 顯示的 PR diff 同一個口徑）：兩顆 head 直接比、或只從兩支的共同祖先量，都會把
     //    main 在分岔之間的變動算到某一支頭上（預審與 #566 r1 各實跑到一種）。main 的 head 由 gh 的
     //    gh api 查 refs/heads/<base> 給：本機有那顆 commit 才用、沒有就印「查不到」；api 查不到也印「查不到」（不退回 origin/main）。
-    //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
+    //    兩側都「否」有兩種歷史：合併後的 lock 跟 main 一樣＝發起樹沒跟上（重裝）；不一樣＝兩支都落後 main（先 rebase）——
+    //    由下面的 sameAsMain 分，處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
     try { lock = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { lock = null; }
@@ -617,10 +627,22 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
         try { selfTouched = own(mainRef, baseSha); otherTouched = own(mainRef, otherSha); } catch { selfTouched = '查不到'; otherTouched = '查不到'; }
         // 兩側都「否」有兩種相反的歷史（Grok #566 掃 #3）：發起樹沒跟上 lock、或兩支都落後 main（合併後的 lock 是舊的、
         // 發起樹是新的）——處置相反，所以再印「合併後的 lock 跟 main 的一不一樣」讓人分得出來。
-        try { runIn(['git', 'diff', '--quiet', mainRef, 'HEAD', '--', 'package-lock.json'], wt); sameAsMain = '是'; } catch { sameAsMain = '否'; }
+        try { runIn(['git', 'diff', '--quiet', mainRef, 'HEAD', '--', 'package-lock.json'], wt); sameAsMain = '是'; }
+        catch (e) {
+          // 只有退出碼 1 才是「真的有差」；128／spawn 失敗＝沒拿到判決，留「查不到」（#566 r13：一律當「否」會把查不到
+          // 的狀態指向 rebase 處方——跟 r12 修掉的「查不到卻給具體處置」同一個病）
+          sameAsMain = /** @type {any} */ (e)?.status === 1 ? '否' : '查不到';
+        }
       }
+      // 處置只印對得上的那一條：把判斷結果做成 hint 帶給 verdict（純函式輸入沒帶 hint 時 verdict 印全部）
+      const unknown = selfTouched === '查不到' || otherTouched === '查不到' || sameAsMain === '查不到';
+      const lockHint = unknown ? 'unknown'
+        : (selfTouched === '是' && otherTouched === '是') ? 'both'
+          : otherTouched === '是' ? 'other'
+            : selfTouched === '是' ? 'self'
+              : sameAsMain === '是' ? 'reinstall' : 'rebase';
       return {
-        number: otherNumber, ok: false, kind: 'lock',
+        number: otherNumber, ok: false, kind: 'lock', lockHint,
         why: `合併後的 package-lock.json 跟已裝的套件對不上（${mism.length} 處；各支相對 main 的改動：本支那側動了 package-lock.json：${selfTouched}，#${otherNumber} 那側動了：${otherTouched}；合併後的 lock 跟 main 的一樣：${sameAsMain}）：`
           + mism.slice(0, 5).join('；') + (mism.length > 5 ? '；…' : ''),
       };
@@ -685,9 +707,11 @@ export function main(argv) {
   //    指令本身已用 --base main 查，缺欄位不能當成「證明它不是 main」——形狀不對一律 2。
   const listBad = Array.isArray(list) ? list.filter((p) => !p || typeof p !== 'object'
     || !(typeof p.number === 'number' && Number.isInteger(p.number) && p.number > 0)
-    || typeof p.headRefOid !== 'string' || !p.headRefOid || typeof p.baseRefName !== 'string') : [];
+    || typeof p.headRefOid !== 'string' || !p.headRefOid || p.baseRefName !== 'main') : [];
+  // baseRefName 必須逐字是 'main'：清單本來就是 --base main 查的，出現空字串或別的值＝回應自相矛盾，不能當成
+  // 「證明它不是 main」讓 othersToTry 靜靜濾掉（#566 r9 抓到缺欄、r13 抓到值域）。
   if (!self?.headRefOid || !Array.isArray(list) || listBad.length) {
-    console.error(`跨 PR 試合併 PR #${pr}：gh 回傳的形狀不對${listBad.length ? `（open PR 清單有 ${listBad.length} 筆缺承重欄位：number／headRefOid／baseRefName）` : ''}——一律當成未通過。`);
+    console.error(`跨 PR 試合併 PR #${pr}：gh 回傳的形狀不對${listBad.length ? `（open PR 清單有 ${listBad.length} 筆承重欄位缺席或不合：number 正整數／headRefOid 非空／baseRefName 必須是 main）` : ''}——一律當成未通過。`);
     return 2;
   }
   // base 分支**目前**的 head：量「哪一側動了 lock」與「合併後的 lock 跟 main 一不一樣」用。
