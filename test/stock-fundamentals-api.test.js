@@ -725,6 +725,10 @@ test('佇列滿＝立即 503 請稍後再試（fail-fast），不無限排隊、
                       // 單一變數會被後來者蓋掉＝前者永遠懸掛、server.close 等不到（實際踩過）
   let signalEntered = () => {};
   const entered = new Promise((resolve) => { signalEntered = () => resolve(undefined); });
+  // ⚠️ release 要有 **latch** 語意（Codex #572 r1）：突變情境下 B 是在 client abort（10s）之後才進到掛住的 fetch，
+  //    那時 finally 的 for 已經跑完、它新 push 的 resolver 永遠沒人放＝只能等 60s service timeout。
+  //    所以 finally 先把 released 翻真；之後才登記的 waiter 直接放行。
+  let released = false;
   setStockFundamentalsOptionsForTest({
     userAgent: SEC_USER_AGENT,
     maxQueueDepth: 1,
@@ -732,7 +736,9 @@ test('佇列滿＝立即 503 請稍後再試（fail-fast），不無限排隊、
     logger: silentLogger,
     fetchImpl: (url) => {
       if (String(url).includes('company_tickers')) {
-        return new Promise((resolve) => { gates.push(() => resolve(jsonResponse(fixturePayload(String(url))))); signalEntered(); });
+        const value = jsonResponse(fixturePayload(String(url)));
+        if (released) return Promise.resolve(value);
+        return new Promise((resolve) => { gates.push(() => resolve(value)); signalEntered(); });
       }
       return Promise.resolve(jsonResponse(fixturePayload(String(url))));
     }
@@ -740,8 +746,8 @@ test('佇列滿＝立即 503 請稍後再試（fail-fast），不無限排隊、
   // A 先進佇列並掛住（深度=1）
   const pendingA = request('/api/stock-fundamentals/CAL/refresh', { method: 'POST' });
   // ⚠️ 等「A 的 fetch 真的被叫到」這個訊號，不是睡 50ms（2026-09-05 流程體檢：機器忙時 50ms 內 A 可能還沒進佇列，
-  //    B 就拿到名額＝假紅；訊號不隨負載漂）。
-  await entered;
+  //    B 就拿到名額＝假紅；訊號不隨負載漂）。受控失敗：A 若在叫到 fetch 之前就 settle（沒進佇列），這裡要紅、不能永遠等握手。
+  await Promise.race([entered, pendingA.then(async (r) => { throw new Error(`A 在叫到 fetch 之前就 settle 了（沒進佇列）：${r.status} ${await r.text()}`); })]);
   // B（不同代號＝不共享 in-flight）此刻進來：深度已滿 → 必須「立即」503，不是排到天荒地老
   try {
     const b = await request('/api/stock-fundamentals/FRUIT/refresh', {
@@ -755,6 +761,7 @@ test('佇列滿＝立即 503 請稍後再試（fail-fast），不無限排隊、
   } finally {
     // 收尾必須在 finally：斷言失敗（含突變紅）時也要放行「全部」懸掛的 fetch，
     // 否則 server.close 永遠等不到（gates 可能不只 A 的——突變情境下 B 也掛在這）
+    released = true;   // latch：之後才進來的 waiter 直接放行
     for (const release of gates) release();
     await pendingA.catch(() => undefined);
   }
@@ -795,12 +802,13 @@ test('單次 refresh 超過總時限＝branded sec_timeout 記入 lastError，�
 function makeGate() {
   /** @type {(() => void)[]} */
   const releases = [];
+  let released = false;   // latch（Codex #572 r1 同款）：releaseAll 之後才 hold 的也立即放行，突變情境不會多等 60s
   let signalEntered = () => {};
   const entered = new Promise((resolve) => { signalEntered = () => resolve(undefined); });
   return {
     entered,
-    hold: (value) => new Promise((resolve) => { releases.push(() => resolve(value)); signalEntered(); }),
-    releaseAll: () => { for (const r of releases) r(); }
+    hold: (value) => released ? Promise.resolve(value) : new Promise((resolve) => { releases.push(() => resolve(value)); signalEntered(); }),
+    releaseAll: () => { released = true; for (const r of releases) r(); }
   };
 }
 

@@ -152,7 +152,7 @@ function makeBombInChildProcess() {
 }
 
 /**
- * 對照組：在子行程裡走**沒有隔離**的路（直接呼叫 `readXlsxForIsolation`），回報它自己的 RSS 增量。
+ * 對照組：在子行程裡走**沒有隔離**的路（直接呼叫 `readXlsxForIsolation`），回報它自己的記憶體增量（RSS 與 V8 帳取大）。
  * 沒有這組，「父行程只長了 N MB」就只是一個孤零零的數字——說不定這份檔案本來就不貴。
  * 回傳 `{ grewMB }`；若那個行程直接被記憶體壓死，回 `{ died: true }`（那同樣證明代價是真的）。
  */
@@ -162,14 +162,17 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
     const data = new Uint8Array(Buffer.from(b64, 'base64'));
     import('${new URL('../lib/statement.js', import.meta.url).href}').then((m) => {
       // ⚠️ 2026-09-05 流程體檢：只量 RSS 增量會在機器記憶體吃緊時被 OS 回收壓小＝「對照組不夠貴」假紅。
-      //    改同時量 V8 自己記的帳（heapUsed＋external＋arrayBuffers；不受換頁影響），兩者取大。
+      //    改同時量 V8 自己記的帳（heapUsed＋external；不受換頁影響），兩者取大。
+      //    ⚠️ `arrayBuffers` **已包含在 `external` 裡**（Node 文件；Codex #572 r1：加進去會把 100MB 的 Buffer 記成 200MB，
+      //    足以讓不貴的檔案過 150MB 自檢），所以只留診斷欄、不進判準。
       const mu0 = process.memoryUsage();
-      const v8Of = (mu) => mu.heapUsed + mu.external + mu.arrayBuffers;
+      const v8Of = (mu) => mu.heapUsed + mu.external;
       m.readXlsxForIsolation(data);
       const mu1 = process.memoryUsage();
       process.stdout.write(JSON.stringify({
         grewMB: Math.max((mu1.rss - mu0.rss), (v8Of(mu1) - v8Of(mu0))) / 1048576,
         rssMB: (mu1.rss - mu0.rss) / 1048576, v8MB: (v8Of(mu1) - v8Of(mu0)) / 1048576,
+        arrayBuffersMB: (mu1.arrayBuffers - mu0.arrayBuffers) / 1048576,   // 診斷用，不進判準
       }));
     }).catch((e) => { process.stdout.write(JSON.stringify({ threw: String(e && e.message).slice(0, 120) })); });
   `;
@@ -179,7 +182,8 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
   try {
     const parsed = JSON.parse(String(r.stdout));
     // 解析到一半炸掉（字串長度上限／配置失敗）＝代價真的很貴，等同壓死；其他例外照實回報（讓斷言訊息看得到）
-    if (parsed.threw && /string length|allocat|memory|heap|Array buffer/i.test(parsed.threw)) return { died: true, threw: parsed.threw };
+    // 只認能明確歸因資源耗盡的訊息（Codex #572 r1：`allocat` 太寬）；其他例外照實回報，讓「不夠貴」的斷言訊息看得到原因
+    if (parsed.threw && /Invalid string length|Array buffer allocation failed|Cannot allocate memory|heap out of memory|ERR_STRING_TOO_LONG|ENOMEM/i.test(parsed.threw)) return { died: true, threw: parsed.threw };
     return parsed;
   } catch { return { died: true }; }
 }

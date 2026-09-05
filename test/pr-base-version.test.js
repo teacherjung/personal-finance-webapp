@@ -398,16 +398,17 @@ test('★repoSlug：https／ssh／scp／.git／大小寫／帶 port 都收斂到
 });
 
 test('★逾時是行為不是形狀：睡著的子行程在 50ms 就被 SIGKILL 收掉', () => {
-  // 把 timeout 拿掉的突變：子行程睡滿十秒後正常結束、這裡等不到丟錯 ⇒ 轉紅（上限十秒，不會掛住）。
-  // ⚠️ 2026-09-05 流程體檢：原本睡 1s、上界 900ms，機器忙時 spawn＋SIGKILL 的牆上時間也可能過 900ms＝假紅；
-  //    改成睡 10s、上界 5s——好路徑（幾十 ms）與突變路徑（10s）差 100 倍以上，負載吃不掉。
+  // 把 timeout 拿掉的突變：子行程睡滿 30 秒後正常結束、這裡等不到丟錯 ⇒ 轉紅（上限 30 秒，不會掛住）。
+  // ⚠️ 2026-09-05 流程體檢：原本睡 1s、上界 900ms，機器忙時 spawn＋SIGKILL 的牆上時間也可能過 900ms＝假紅。
+  //    設定＝睡 30s、上界 5s：壞路徑（沒逾時＝睡滿）一定 ≥ 30s，是上界的 6 倍——判別餘裕由這兩個設定值決定。
+  //    好路徑要多久是觀測值（本機幾十 ms），記憶體吃緊時 spawn 可能拖到秒級，5s 是給它的空間、不是保證。
   const t0 = Date.now();
   let err = null;
-  try { runWithTimeout(process.execPath, ['-e', 'setTimeout(() => {}, 10_000)'], 50); }
+  try { runWithTimeout(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], 50); }
   catch (e) { err = /** @type {any} */ (e); }
   assert.ok(err, '★沒有逾時保護——真掛住的 gh 會讓 push 無限等');
   assert.ok(err.code === 'ETIMEDOUT' || err.signal === 'SIGKILL', `要因逾時而死，實得 code=${err.code} signal=${err.signal}`);
-  assert.ok(Date.now() - t0 < 5_000, '逾時要在設定值附近觸發，不是等子行程自己結束（子行程要睡 10s）');
+  assert.ok(Date.now() - t0 < 5_000, '逾時要在設定值附近觸發，不是等子行程自己結束（子行程要睡 30s）');
 });
 
 test('★r1#3c 分支名取 remote-ref：push 本地名:遠端名 要查「遠端名」的 PR', () => {
