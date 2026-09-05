@@ -253,7 +253,7 @@ export function verdict(results) {
         + '（git worktree add 到本支 head 之後不掛連結）npm ci，然後**從那棵樹重跑本閘、拿到退出碼 0 才算數**'
         + '（不是手動跑三關——REVIEW 的「退出碼 0 才可進下一步」只認本閘的 0）；PR 留言附那棵樹的路徑與 lock sha，用完收樹前確認 node_modules 是真目錄再刪。\n'
         + '   ・兩側都「是」＝先合併對方那一支、發起樹裝好之後，本支仍要走上一條的手動路徑。\n'
-        + '   ・側別印「查不到」＝本機沒有 main 目前那顆 commit（沒 fetch）或 git 查不出來：先 git fetch origin main 再跑本閘；查不到不等於沒動。\n'
+        + '   ・側別印「查不到」＝gh api 查不到 main 目前的 head（gh 沒登入／沒網路）、本機沒有那顆 commit（沒 fetch）、或 git 查不出來：先 gh auth status、git fetch origin main 再跑本閘；查不到不等於沒動。\n'
         + '   ⚠️ 本閘造的臨時樹掛著 symlink，不可以在那裡裝；不要在掛著 symlink 的 worktree 裡動 node_modules（CLAUDE.md 的禁區）。'
         + (confirmed.length
           ? `\n   ⚠️ 上列另有**本輪已確定的阻擋**（${kinds.join('、')}）——那些不因本輪下不了定論而失效。`
@@ -420,6 +420,8 @@ export function cantRunSignal(err) {
  * 核對不了，算對不上；兩個欄位都沒寫（bundled 子套件常只有 version）就只比到名字版本。這一項擋的是
  * 「經 npm 換過的同名同版內容」（#566 r2 的反例）；**它不是磁碟內容的證明**（半途被殺的安裝、手動換內容，
  * 兩份 lock 都會留舊——#566 r3 的反例），劃界在檔頭。
+ * ⑥套件路徑（key）要是 `node_modules/…` 相對路徑、不含 `..`（#566 r8）；⑦承重欄位有寫就要是對的型別
+ * （`LOCK_ENTRY_FIELDS`，#566 r6）；⑧有給 package.json 時，它宣告的相依都要在 packages 裡（Grok #566 掃 #7）。
  * 純函式：檔案系統由呼叫端用 `installed` 與 `hidden` 注入，考題直接餵資料。
  * @param {any} lock 解析後的 package-lock.json
  * @param {(key: string) => {name: string, version: string} | null} installed 讀 `<key>/package.json` 的 name 與 version；不存在或讀不了回 null
@@ -507,18 +509,16 @@ function hiddenLockIn(root) {
 }
 
 /**
- * 量「哪一側動了 lock」要用的 main 參考點。回 null＝查不到。理由與順序寫在呼叫處。
+ * 量「哪一側動了 lock」要用的 main 參考點：gh api 查到的目前 head，而且本機要有那顆 commit。回 null＝查不到。
+ * ⚠️ **不退回 origin/main**：它可能過時，拿它算出來的側別與「跟 main 一不一樣」會讓退 2 的人走錯處置
+ * （#566 r12 Codex 實作：api 失敗＋origin/main 停在舊版＝錯印「一樣：是」、叫人重裝而不是 rebase）；r2 的教訓
+ * 是同一件事。查不到就老實印「查不到」，處置在訊息裡（先 fetch／查 gh 登入再跑）。
  * @param {string} wt @param {string} [mainSha]
  * @returns {string | null}
  */
 function resolveMainRef(wt, mainSha) {
   const has = (/** @type {string} */ ref) => { try { runIn(['git', 'cat-file', '-e', `${ref}^{commit}`], wt); return true; } catch { return false; } };
-  const originMain = () => { try { return runIn(['git', 'rev-parse', '--verify', 'origin/main^{commit}'], wt).trim(); } catch { return null; } };
-  // gh api 給了 main 目前的 head：本機有那顆 commit 才用；沒有＝查不到。**不拿 origin/main 替代**——ref 指得到的 commit
-  // 本機必然有，所以「那顆本機沒有、origin/main 卻是同一顆」不存在；前綴比對（r2 版）更會把
-  // 「完整 sha 多一個字元」這種壞值當成同一顆（#566 r3 Codex 實作出來）。
-  if (mainSha) return has(mainSha) ? mainSha : null;
-  return originMain();
+  return mainSha && has(mainSha) ? mainSha : null;
 }
 
 /**
@@ -596,7 +596,7 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
     //    哪一側動了 lock 一併印出來，量的是**各支自己相對 main 的改動**（merge-base(main, head)→head，
     //    跟 GitHub 顯示的 PR diff 同一個口徑）：兩顆 head 直接比、或只從兩支的共同祖先量，都會把
     //    main 在分岔之間的變動算到某一支頭上（預審與 #566 r1 各實跑到一種）。main 的 head 由 gh 的
-    //    gh api 查 refs/heads/<base> 給：本機有那顆 commit 才用、沒有就印「查不到」；gh api 查不到才退回 origin/main。
+    //    gh api 查 refs/heads/<base> 給：本機有那顆 commit 才用、沒有就印「查不到」；api 查不到也印「查不到」（不退回 origin/main）。
     //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
@@ -610,9 +610,8 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
         const mb = runIn(['git', 'merge-base', mainRef, head], wt).trim();
         return runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否';
       };
-      // main 的 head：gh api 查到的那顆本機有才用，沒有＝「查不到」（不拿可能過時的 origin/main 替代——#566 r2
-      //   Codex：那樣側別會答錯、處置指錯）；gh api 查不到才退回 origin/main（可能過時，訊息裡的側別因此只當線索）。
-      //   「查不到」的處置在訊息裡。
+      // main 的 head：gh api 查到的那顆本機有才用，否則「查不到」——不拿可能過時的 origin/main 替代（#566 r2／r12
+      //   Codex：那樣側別會答錯、處置指錯）。「查不到」的處置在訊息裡。
       const mainRef = resolveMainRef(wt, mainSha);
       if (mainRef) {
         try { selfTouched = own(mainRef, baseSha); otherTouched = own(mainRef, otherSha); } catch { selfTouched = '查不到'; otherTouched = '查不到'; }
@@ -693,7 +692,7 @@ export function main(argv) {
   }
   // base 分支**目前**的 head：量「哪一側動了 lock」與「合併後的 lock 跟 main 一不一樣」用。
   // ⚠️ 不能拿 pr view 的 baseRefOid——那是 PR 記錄的 base commit，main 前進後它不會跟著動（#566 r11 Codex 在 GitHub
-  //    實測：baseRefOid=729fd65 而 refs/heads/main 已是 9b3575e）。查不到（gh api 失敗）就留空，tryMerge 退回 origin/main。
+  //    實測：baseRefOid=729fd65 而 refs/heads/main 已是 9b3575e）。查不到（gh api 失敗）就留空，tryMerge 印「查不到」。
   let mainHead;
   try {
     const sha = gh(['api', `repos/{owner}/{repo}/git/ref/heads/${self.baseRefName}`, '--jq', '.object.sha']).trim();

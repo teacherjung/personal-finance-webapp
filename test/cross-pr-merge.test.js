@@ -490,7 +490,6 @@ test('⭐ CLI｜兩支真的文字衝突 → exit 1，衝突的說明照 kind �
 // ── 合併後 lock 核對（2026-09-02 #548 在途 PR 加 devDependency 讓整條佇列假紅；2026-09-05 William 裁示入冊） ──
 
 const OK_GATE = 'node -e "process.exit(0)"';
-/** 受審支的 gh pr view 回應：baseRefOid＝main 目前的 head（閘用它量「哪一側動了 lock」）。 */
 /** 受審支的 gh pr view 回應。第二個參數會被 withFakeGh 拿去當假 `gh api` 的 main head（閘不讀 baseRefOid 欄本身）。 */
 const SELF_VIEW = (/** @type {string} */ sha, /** @type {string} */ mainSha) =>
   JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main', baseRefOid: mainSha });
@@ -840,7 +839,7 @@ test('CLI｜發起樹沒有隱藏 lock（node_modules/.package-lock.json）→ �
   }
 });
 
-test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/main 又過時 → 側別印「查不到」並指路 fetch，不可以拿過時的 origin/main 算出錯的側別（#566 r2 Medium）', () => {
+test('⭐ CLI｜gh api 查到的 main head 本機沒有那顆 commit、本機 origin/main 又過時 → 側別印「查不到」並指路 fetch，不可以拿過時的 origin/main 算出錯的側別（#566 r2 Medium）', () => {
   // 形狀：origin/main 停在 base；main 後來動了 lock；兩支都從新 main 分岔、都沒動 lock。
   // 真相是「兩側都否、發起樹重裝」；拿過時的 origin/main 算會把 main 的 lock 變動算到兩支頭上（兩側都是）。
   const { dir, sha, shaB } = makeInitiatorRepo({
@@ -859,7 +858,7 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
       const r = withFakeGh(SELF_VIEW(sha, notFetched), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
       assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
       assert.match(r.stderr, /本支那側動了 package-lock\.json：查不到，#442 那側動了：查不到/,
-        `baseRefOid=${notFetched}：本機沒有 main 那顆 commit 卻還是答了是／否——多半是拿過時的 origin/main 算的，處置會指錯人`);
+        `api 回的 main=${notFetched}：本機沒有那顆 commit 卻還是答了是／否——多半是拿過時的 origin/main 算的，處置會指錯人`);
       assert.match(r.stderr, /git fetch origin main/, '「查不到」沒給處置');
       assert.doesNotMatch(r.stderr, /那側動了：是/);
     }
@@ -868,19 +867,23 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
   }
 });
 
-test('CLI｜對照組：gh api 查不到 main 的 head → 退回本機 origin/main 算側別（origin/main 是最新時答對：兩側都否）', () => {
-  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
-    nodeModules: 'dir', markGates: true,
-    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
+test('⭐ CLI｜gh api 查不到 main 的 head、本機 origin/main 又過時 → 三格都「查不到」、指路 gh auth／fetch；不可以拿過時的 origin/main 算出「跟 main 一樣：是」叫人重裝（#566 r12）', () => {
+  // 形狀：api 失敗；origin/main 停在舊 base（v1）；main 其實已是 v2；兩支 head 都停在 v1；發起樹已裝 v2。
+  // 拿 origin/main 算會答「一樣：是」→ 叫人重裝發起樹（重裝完還是 2）；正確是「查不到」。
+  const { dir, sha, shaB } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true, selfStale: true, staleOriginMain: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '2.0.0' },
     mainLock: { 'fx-dep': { version: '2.0.0' } },
   });
   try {
-    spawnSync('git', ['update-ref', 'refs/remotes/origin/main', mainSha], { cwd: dir, env: { ...SANDBOX_ENV } });
     const r = withFakeGh(
       JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),   // 沒有 baseRefOid、也沒給 mainSha ⇒ 假 api 退 1
       LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
     assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
-    assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否/);
+    assert.match(r.stderr, /本支那側動了 package-lock\.json：查不到，#442 那側動了：查不到；合併後的 lock 跟 main 的一樣：查不到/,
+      'api 失敗竟然還答得出側別——多半是拿過時的 origin/main 算的');
+    assert.doesNotMatch(r.stderr, /跟 main 的一樣：是/);
+    assert.match(r.stderr, /gh auth status/, '「查不到」的處置沒指到 gh 登入');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
