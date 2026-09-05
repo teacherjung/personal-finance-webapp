@@ -382,7 +382,9 @@ function headerDeclaration(text, file) {
 }
 
 /** 小節裡「備註」的合法寫法：`- 〔…` 開頭（不屬於任何單一檔案的句子逐字收在這裡；順口提到的路徑不算宣告）。 */
-const NOTE_LINE = /^- 〔/;
+const NOTE_LINE_HEAD = /^- (〔.*)$/;
+/** 備註行＝`- ` 之後**整段**是閉合的群組序列（Codex #567 r5：只看字首 `- 〔`，`- 〔說明〕 \`server.js\`` 把路徑放在群組外照樣綠——與檔案行尾段同一根因，同一把尺）。 */
+const NOTE_LINE = { /** @param {string} l */ test: (l) => { const m = NOTE_LINE_HEAD.exec(l); return !!m && tailIsGroupsOnly(m[1]); } };
 /** 小節裡「備註」的標題行。 */
 const NOTE_HEAD = /^備註（[^）]*）：$/;
 /** 小節第一個非空行必須是這個形狀：`契約：[x.md](x.md)`（兩邊同一個檔名）。 */
@@ -1270,6 +1272,8 @@ test('⭐ 小節切法自己要先會動：合法的收；#### 標題、* 清單
     '第二個 code span 不在 REPO_PATH 形狀裡（Codex r4）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js` `AGENTS.md`'],
     '群組之間夾了說明文字': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明）順帶一句〔標籤〕'],
     '括號沒閉合': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明'],
+    '備註行的群組外放路徑（Codex r5）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '- 〔補充說明〕 `server.js`'],
+    '備註行的群組沒閉合': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '- 〔補充說明'],
   };
   for (const [name, lines] of Object.entries(bad)) {
     assert.throws(() => sectionFiles([...lines, '### 乙', '契約：[b.md](b.md)'].join('\n'), '甲'), `「${name}」應該要紅。`);
@@ -1287,6 +1291,47 @@ test('⭐ 頁首宣告判準自己要先會動：整行錨定的收；名詞例�
     '不是引用行（沒有 > ）': good.replace('> **適用檔案清單', '**適用檔案清單'),
   };
   for (const [name, text] of Object.entries(bad)) assert.throws(() => headerDeclaration(text, 'fixture'), `「${name}」應該要紅。`);
+});
+
+/**
+ * 登記區的拓樸（Codex #567 r5）：只驗五個已知小節，等於沒封住「小節之外」——在兩個合法小節之間加 `### 額外責任`
+ * 再放一行檔案、或把檔案行放在第一個合法 `###` 之前，五題照樣綠。⇒ 兩條封口：①登記區（`## 各領域的責任檔案` 起）
+ * 裡的 `### ` 標題集合**精確等於** manifest 的 domains；②整份 README 裡任何**檔案形狀**的行（清單記號＋路徑 code span）
+ * 都必須落在其中一個合法小節裡。純函式，可探針。
+ * @param {string} readme @param {string[]} domains
+ */
+function registryTopology(readme, domains) {
+  const lines = readme.split('\n');
+  const start = lines.findIndex((l) => /^## 各領域的責任檔案/u.test(l));
+  assert.ok(start >= 0, 'README 找不到「## 各領域的責任檔案」登記區標題。');
+  const h3 = lines.slice(start + 1).filter((l) => l.startsWith('### ')).map((l) => l.slice(4));
+  assert.deepEqual(sorted(h3), sorted(domains),
+    `登記區的 ### 標題集合必須精確等於 manifest 的 domains。\n  多出來的：${h3.filter((d) => !domains.includes(d)).join('、') || '（無）'}\n  缺少的：${domains.filter((d) => !h3.includes(d)).join('、') || '（無）'}`);
+  const fileShaped = new RegExp(`^\\s*[-*+]\\s*\`(?:${REPO_PATH.source})\``, 'u');
+  let current = /** @type {string | null} */ (null);
+  lines.forEach((l, i) => {
+    if (l.startsWith('### ')) current = l.slice(4);
+    else if (/^#{1,2}\s/u.test(l)) current = null;
+    if (fileShaped.test(l) && (current === null || !domains.includes(current))) {
+      assert.fail(`README 第 ${i + 1} 行是檔案形狀的行，卻不在任何合法小節裡（所在：${current ?? '（小節之外）'}）：「${l.slice(0, 80)}」`);
+    }
+  });
+}
+
+test('⭐ 登記區拓樸自己要先會動：### 集合＝domains 才收；多一個小節、少一個小節、小節外的檔案行都要丟例外', () => {
+  const base = ['# 路由表', '', '## 各領域的責任檔案（一行一檔）', '', '### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '', '### 乙', '契約：[b.md](b.md)', '- `test/y.test.js`'];
+  assert.doesNotThrow(() => registryTopology(base.join('\n'), ['甲', '乙']));
+  const bad = {
+    '多一個未知小節（Codex r5）': [...base.slice(0, 8), '### 額外責任', '- `server.js`', '', ...base.slice(8)],
+    '少一個小節': base.slice(0, 8),
+    '第一個合法 ### 之前就有檔案行（Codex r5）': [...base.slice(0, 4), '- `server.js`', ...base.slice(4)],
+    '## 之下（小節外）的檔案行': [...base, '', '## 附錄', '* `lib/z.js`'],
+  };
+  for (const [name, lines] of Object.entries(bad)) assert.throws(() => registryTopology(lines.join('\n'), ['甲', '乙']), `「${name}」應該要紅。`);
+});
+
+test('⭐ 拆分護欄｜README 登記區拓樸：### 集合＝manifest domains，檔案形狀的行都在合法小節裡', () => {
+  registryTopology(read('docs/contracts/README.md'), Object.values(MANIFEST).map((m) => m.domain));
 });
 
 test('⭐ 拆分護欄｜README 各領域小節與 manifest 的 files 都要依路徑排序、不重複（一行一檔的理由就是這個）', () => {
