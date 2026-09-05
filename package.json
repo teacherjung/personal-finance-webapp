@@ -19,7 +19,7 @@
     "chart.js": "^4.5.1",
     "express": "^4.19.2",
     "fast-xml-parser": "^5.10.1",
-    "pdfjs-dist": "^6.1.200",
+    "pdfjs-dist": "^6.2.108",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
@@ -30,5 +30,8 @@
     "globals": "^17.7.0",
     "jsdom": "^30.0.1",
     "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

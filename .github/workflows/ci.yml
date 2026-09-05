@@ -1,4 +1,4 @@
-# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「校對（typecheck）＋糾察（lint）＋考試（test）」。
+# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「依賴通報（npm audit，只擋 high 以上）＋校對（typecheck）＋糾察（lint）＋考試（test）」。
 # PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（AGENTS.md 驗證要求的自動化版）。
 #
 # ⚠️ 兩個 job 是刻意的：
@@ -61,6 +61,10 @@ jobs:
           cache: npm
       - name: 安裝相依（含 typescript/@types 開發工具）
         run: npm ci
+      # 依賴安全通報（2026-09-05，Codex 體檢第 1 項）：只擋 high 以上——moderate 通報常是間接依賴的 DoS 類，
+      # 讓它們封住上線的路會擋到安全更新本身（與 dev-machine「探照燈不是門」同一個理由）；moderate 只印在 dev-machine 那個 job 的 log（沒有機器在看）。
+      - name: 依賴安全通報（high 以上才擋）
+        run: npm audit --audit-level=high
       - name: 校對（型別檢查）
         run: npm run typecheck
       - name: 格式糾察（lint）
@@ -80,3 +84,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # 全量 audit 放在考試之後、且步驟自己 continue-on-error（Grok #563：job 級 continue-on-error 只是讓 job 對外算過，
+      # 失敗的步驟之後的步驟仍會被跳過——放在 npm test 前面，一有 moderate 通報就等於 Node 26 那場考試沒考）。
+      # 它只印在這個 job 的 log 裡，沒有機器在看；要看得自己點開。
+      - name: 依賴安全通報（全量，只印不擋）
+        run: npm audit
+        continue-on-error: true
