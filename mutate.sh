@@ -563,7 +563,7 @@ check 'BG. 整段原文塞進契約連結的 label' 紅
 mutate 'BH. 契約頁首指到別人的 README 節' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
-a="「前端功能」節的責任檔案清單"   # 2026-09-03 起頁首字樣（#567）；舊的「路由表「前端功能」列」已不存在，替換前先 assert 免得 no-op（Codex #567 r3）
+a="「前端功能」節的責任檔案清單"   # 頁首字樣改名時未命中的 replace 會保留基準綠＝假紅判（Codex #567 r3），所以替換前 assert 唯一命中
 assert s.count(a)==1
 p.write_text(s.replace(a,"「投資與 SEC」節的責任檔案清單",1), encoding="utf-8")
 PY
@@ -604,7 +604,7 @@ check 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' 紅
 mutate 'BL. 契約頁首把領域名寫短（startsWith 會放過）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
-a="「前端功能」節的責任檔案清單"   # 同 BH：新頁首字樣、替換前 assert 恰一次
+a="「前端功能」節的責任檔案清單"   # 同 BH：替換前 assert 唯一命中，未命中就炸而不是靜靜 no-op
 assert s.count(a)==1
 p.write_text(s.replace(a,"「前端」節的責任檔案清單",1), encoding="utf-8")
 PY

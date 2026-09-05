@@ -335,15 +335,36 @@ const REPO_PATH = /(?:lib|public-site|public|test-doubles|test|data|db|\.github\
  */
 const FILE_LINE_HEAD = new RegExp(`^- \`(${REPO_PATH.source})\`(.*)$`);
 const SECOND_PATH = new RegExp(`\`(?:${REPO_PATH.source})\``);
+/**
+ * 檔案行的尾段（第一個路徑 code span 之後）**只准由 `（…）` 與 `〔…〕` 群組組成**（可巢狀；群組之間只准空白）。
+ * 理由（Codex #567 r4）：只擋「符合 REPO_PATH 的第二個 code span」擋不住行尾裸寫 `server.js`、或第二個
+ * `\`AGENTS.md\``（不在 REPO_PATH 形狀裡）——畫面上一行仍像兩個檔案。群組結構把「說明／標籤」與「第二個宣告」
+ * 用位置分開：群組**裡**提到別的檔名是說明（README 現有說明本來就會提到 `app.js` 這類 basename），群組**外**
+ * 除了空白什麼都不准。誠實劃界：群組裡的檔名提及不算宣告、也不擋——宣告永遠只有行首那一個 code span。
+ * @param {string} tail
+ */
+function tailIsGroupsOnly(tail) {
+  const CLOSE = /** @type {Record<string, string>} */ ({ '（': '）', '〔': '〕' });
+  /** @type {string[]} */ const stack = [];
+  for (const ch of tail) {
+    if (stack.length === 0) {
+      if (/\s/u.test(ch)) continue;
+      if (!(ch in CLOSE)) return false;
+      stack.push(CLOSE[ch]);
+    } else if (ch in CLOSE) stack.push(CLOSE[ch]);
+    else if (ch === stack[stack.length - 1]) stack.pop();
+  }
+  return stack.length === 0;
+}
 const FILE_LINE = {
-  /** @param {string} l */ test: (l) => { const m = FILE_LINE_HEAD.exec(l); return !!m && !SECOND_PATH.test(m[2]); },
-  /** @param {string} l */ exec: (l) => { const m = FILE_LINE_HEAD.exec(l); return m && !SECOND_PATH.test(m[2]) ? m : null; },
+  /** @param {string} l */ test: (l) => { const m = FILE_LINE_HEAD.exec(l); return !!m && !SECOND_PATH.test(m[2]) && tailIsGroupsOnly(m[2]); },
+  /** @param {string} l */ exec: (l) => { const m = FILE_LINE_HEAD.exec(l); return m && !SECOND_PATH.test(m[2]) && tailIsGroupsOnly(m[2]) ? m : null; },
 };
 
 /**
  * 契約頁首的**完整**宣告形狀（Codex #567 r2 High②：只找「「X」節的責任檔案清單」這個片語，整行換成
  * 「這不是本檔的適用檔案宣告，只是名詞例句：…」、連 README 連結一起拿掉，照樣綠）。
- * 現在要的是**整行錨定**：引言區裡剛好一行長成 `> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單`
+ * 判準＝**整行錨定**：引言區裡剛好一行長成 `> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單`
  * 開頭；片語本身在整檔也只准出現這一次。回傳領域名，不合法就 assert。
  * @param {string} text 契約檔全文 @param {string} file 只用來寫錯誤訊息
  */
@@ -374,9 +395,9 @@ const CONTRACT_LINE = /^契約：\[([^\]]+\.md)\]\(\1\)$/;
  *
  * ⚠️ **fail-closed 的形狀白名單（Codex #567 r1 High②／③）**：r1 版「到下一個任何層級標題為止」＋「只認 `- \`路徑\``」
  *    有兩個盲區——①小節裡插一個 `#### 額外宣告` 就把後面的宣告切出小節，②`* \`路徑\``／縮排的 `- \`路徑\``／
- *    全形反引號 這些「畫面上像宣告、考題卻不計」的寫法都靜靜綠。⇒ 現在小節裡**每一行**只准是下列形狀之一：
+ *    全形反引號 這些「畫面上像宣告、考題卻不計」的寫法都靜靜綠。⇒ 小節裡**每一行**只准是下列形狀之一：
  *    空行／`契約：[x.md](x.md)`（且必須是第一個非空行、整節剛好一次）／`備註（…）：`／`- \`完整路徑\``…／`- 〔…`。
- *    其餘一律紅——**看起來像宣告卻不是合法宣告**的行（任何 `#` 開頭、任何其他清單記號、縮排、全形反引號）不再是盲區。
+ *    其餘一律紅——**看起來像宣告卻不是合法宣告**的行（任何 `#` 開頭、任何其他清單記號、縮排、全形反引號）因此一律紅，不會靜靜不計。
  * @param {string} readme @param {string} domain
  */
 function domainSection(readme, domain) {
@@ -395,7 +416,7 @@ function domainSection(readme, domain) {
   for (const l of section) {
     if (l.trim() === '' || CONTRACT_LINE.test(l) || NOTE_HEAD.test(l) || FILE_LINE.test(l) || NOTE_LINE.test(l)) continue;
     assert.fail('README「' + domain + '」小節有一行不是合法形狀（空行／契約：／備註（…）：／「- `完整路徑`」／「- 〔…」）：\n  「' + l.slice(0, 80) + '」\n'
-      + '⚠️ 這是 fail-closed：任何看起來像宣告、卻不是「- `完整路徑`」的行（#### 標題、* 清單、縮排、全形反引號、一行塞第二個路徑 code span）都在這裡紅，不再靜靜不計。');
+      + '⚠️ 這是 fail-closed：任何看起來像宣告、卻不是「- `完整路徑`」的行（#### 標題、* 清單、縮排、全形反引號、一行塞第二個路徑 code span）都在這裡紅；沒有這道白名單，它們會靜靜不計。');
   }
   return section;
 }
@@ -1232,6 +1253,8 @@ test('拆分護欄｜README 領域小節的檔案集合＝manifest 的 files（�
 test('⭐ 小節切法自己要先會動：合法的收；#### 標題、* 清單、縮排、全形反引號、契約行誘餌都要丟例外', () => {
   const ok = ['### 甲', '', '契約：[a.md](a.md)', '', '- `lib/x.js`（說明）', '- `test/y.test.js`', '', '備註（不屬於單一檔案的句子）：', '- 〔順口一提 `lib/not-declared.js` 不算宣告〕', '', '### 乙', '契約：[b.md](b.md)'].join('\n');
   assert.deepEqual(sectionFiles(ok, '甲'), ['lib/x.js', 'test/y.test.js'], '合法小節要收，備註句裡的路徑不算宣告。');
+  const nested = ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（`esc` 的實作本體，`app.js` 原樣 re-export）〔#409 補宣告（彈窗下拉（通用））〕 〔第二個標籤〕', '### 乙', '契約：[b.md](b.md)'].join('\n');
+  assert.deepEqual(sectionFiles(nested, '甲'), ['lib/x.js'], '尾段由巢狀群組組成、群組裡提到 basename，是合法說明。');
   const bad = {
     '#### 四級標題把宣告切出小節': ['### 甲', '契約：[a.md](a.md)', '#### 額外宣告', '- `lib/x.js`'],
     '* 清單記號': ['### 甲', '契約：[a.md](a.md)', '* `lib/x.js`'],
@@ -1243,6 +1266,10 @@ test('⭐ 小節切法自己要先會動：合法的收；#### 標題、* 清單
     '普通內文行（既不是宣告也不是備註）': ['### 甲', '契約：[a.md](a.md)', '這一行看起來像說明 `lib/x.js`'],
     '一行塞兩個路徑 code span（Codex r2）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`、`server.js`（一行宣告兩檔）'],
     '括號說明裡再藏一個路徑 code span': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（另見 `lib/y.js`）'],
+    '行尾裸寫第二個檔名（Codex r4）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js` server.js'],
+    '第二個 code span 不在 REPO_PATH 形狀裡（Codex r4）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js` `AGENTS.md`'],
+    '群組之間夾了說明文字': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明）順帶一句〔標籤〕'],
+    '括號沒閉合': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明'],
   };
   for (const [name, lines] of Object.entries(bad)) {
     assert.throws(() => sectionFiles([...lines, '### 乙', '契約：[b.md](b.md)'].join('\n'), '甲'), `「${name}」應該要紅。`);
@@ -1267,7 +1294,7 @@ test('⭐ 拆分護欄｜README 各領域小節與 manifest 的 files 都要依�
   //    就撞在同一行 → 被迫 rebase → head 變 → 複審結論閘失效、重拿一張「通過」。
   //    一行一檔只解決「落在不同行」；**沒有排序**的話兩支都往清單尾巴加，還是同一個 hunk。
   //    所以排序是這一題真正守的東西：比較方式＝JS 字串的 `<`（與 `sorted()` 用的預設 `sort()` 同序）。
-  // ⚠️ 只驗「已經在清單裡的順序」；兩支 PR 加的檔案剛好相鄰時 git 仍會報衝突，這一題擋不了那種。
+  // ⚠️ 只驗「清單內的順序」；兩支 PR 加的檔案剛好相鄰時 git 仍會報衝突，這一題擋不了那種。
   const readme = read('docs/contracts/README.md');
   for (const [file, m] of Object.entries(MANIFEST)) {
     /** @type {[string, string[]][]} */
