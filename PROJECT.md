@@ -2,7 +2,7 @@
 
 > 本檔是給三方協作者（William／Claude／Codex）的**進度與決策快照**。
 > **技術慣例與鐵則的單一真相仍是 [AGENTS.md](AGENTS.md)**——兩者衝突時以 AGENTS.md 為準；本檔只回答「做到哪、拍板過什麼、下一步」（**「誰在做」＝GitHub open PR 清單**，2026-07-31 起）。
-> 最後更新：2026-08-25（教學影片線分家獨立到 教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`））。
+> 最後更新：以 git 紀錄為準（`git log -1 -- PROJECT.md`；手寫日期會停在最後一次有人記得改它的那天）。沿革：2026-08-25 教學影片線分家獨立到 教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`）。
 
 ## 目標
 

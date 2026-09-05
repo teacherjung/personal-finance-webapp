@@ -103,15 +103,18 @@ test('合併程序：AGENTS 三方協作框架那份「代合併步驟」也不�
   );
 });
 
-test('合併程序：PROJECT 的「勾 delete branch」不可寫成無條件', () => {
+test('合併程序：PROJECT 若提到「勾 delete branch」，每一處都要帶堆疊例外（目前一處都不提＝這題實際上是零掃，不是保證）', () => {
+  // ⚠️ 誠實劃界：PROJECT.md 現在不提 delete branch，這題會直接通過——它守的是「哪天有人把那句寫回來、卻漏了堆疊例外」，
+  //    不守「PROJECT.md 有沒有講合併」。每一處都驗（不是只驗第一處）。
   const project = read('PROJECT.md');
-  const idx = project.indexOf('delete branch');
-  if (idx === -1) return; // 那句被拿掉了也可以，這裡只擋「留著但沒有例外」
-  const near = project.slice(Math.max(0, idx - 200), idx + 400);
-  assert.ok(
-    near.includes('堆疊'),
-    'PROJECT.md 的合併寫法提到「勾 delete branch」卻沒提堆疊例外——三份文件必須一致，不然又是一次規則漂移'
-  );
+  const hits = [...project.matchAll(/delete branch/g)].map((m) => m.index ?? 0);
+  for (const idx of hits) {
+    const near = project.slice(Math.max(0, idx - 200), idx + 400);
+    assert.ok(
+      near.includes('堆疊'),
+      `PROJECT.md 第 ${project.slice(0, idx).split('\n').length} 行提到「勾 delete branch」卻沒提堆疊例外——三份文件必須一致，不然又是一次規則漂移`
+    );
+  }
 });
 
 test('合併步驟｜編號連續唯一＋具名引用指得到正確步驟（#466 r1 高③/r2#3：重編號做一半的守門）', () => {
