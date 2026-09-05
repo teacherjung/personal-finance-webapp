@@ -10,14 +10,14 @@ import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import ts from 'typescript';
 
 const ROOT = new URL('../', import.meta.url);
-/** jsconfig 的 include 只有兩種形狀：`dir/**\/*.js`（遞迴）與單一檔；別的形狀直接紅，不要靜靜跳過 */
+/** jsconfig 的 include：JS 條目只接受 `dir/**\/*.js`（遞迴）與單一 `.js`；`.d.ts` 條目略過；其餘形狀直接紅，不要靜靜跳過 */
 function includedJs() {
   const inc = /** @type {string[]} */ (JSON.parse(readFileSync(new URL('jsconfig.json', ROOT), 'utf8')).include);
   return inc.flatMap((pat) => {
     const m = /^([\w./-]+)\/\*\*\/\*\.js$/.exec(pat);
     if (m) return jsFiles(m[1] + '/');
     if (/^[\w./-]+\.js$/.test(pat)) { assert.ok(existsSync(new URL(pat, ROOT)), `jsconfig include 指到不存在的檔：${pat}`); return [pat]; }
-    if (pat.endsWith('.d.ts')) return [];   // 型別宣告檔不是 JS，TS 本來就檢查
+    if (pat.endsWith('.d.ts')) return [];   // 型別宣告檔不是本題守的 JS
     assert.fail(`jsconfig include 出現本題不會展開的形狀：${pat}——請補展開規則，不要讓它靜靜漏掃`);
   });
 }
