@@ -62,9 +62,12 @@
 // 拿舊套件在跑——結果可能假紅、也可能假綠。所以合併之後先核對：lock 要求的每一個套件，
 // 已裝的版本對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
 // 核對的射程：「lock 要的有沒有裝、套件名對不對、版本對不對、來源（resolved）與內容指紋（integrity）
-// 對不對」——後兩項靠 npm 自己寫的 `node_modules/.package-lock.json`（隱藏 lock，記錄實際裝進來的是哪一份；
-// 同名同版換內容的 tarball——#566 r2 Codex 用本機 tarball 實作出來——只有它看得出）；讀不到隱藏 lock＝
-// 核對不了來源與內容，算對不上。**多裝的套件看不到**（拿掉
+// 對不對」——後兩項對照 npm 自己寫的 `node_modules/.package-lock.json`（隱藏 lock＝npm 的安裝紀錄；
+// 經 npm 換過的同名同版 tarball——#566 r2 Codex 用本機 tarball 實作出來——它記得）；讀不到隱藏 lock＝
+// 核對不了來源與內容，算對不上。⚠️ **這整段核對的是中繼資料的一致，不是磁碟內容的證明**：
+// 半途被殺的 npm install（磁碟已換、兩份 lock 都留舊）、手動複製同名同版的套件內容——這些發起樹自己的
+// 完整性問題本閘看不到（#566 r3 Codex 實作出來），也不打算看：要證明內容就得在乾淨樹 `npm ci`
+// 物化整棵相依樹，那是手動路徑，不是本閘的射程。**多裝的套件看不到**（拿掉
 // 相依的那支若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台
 // 專屬二進位本來就只裝自己那一個）；workspace 連結（`link`）核對不了指向哪一版、lock 結構壞掉
 // （packages 不是物件、沒有根項目、項目不是物件）核對不了——這兩種一律當對不上（#566 r1 Codex
@@ -364,8 +367,10 @@ export function cantRunSignal(err) {
  * （`link: true`）核對不了 node_modules 裡那條連結指向哪一版（發起樹的連結指回發起樹，不是合併後的樹），
  * 一律算對不上。**多裝的看不到**（劃界在檔頭）。
  * ⑤同名同版還要**來源與內容指紋**相同：lock 項目有 `resolved`／`integrity` 時，對照 npm 寫在
- * `node_modules/.package-lock.json`（隱藏 lock）裡實際裝進來的那份；隱藏 lock 讀不到或沒那一筆＝核對不了，
- * 算對不上（同名同版換 tarball 內容——#566 r2 Codex 的反例——只有這一項看得出）。
+ * `node_modules/.package-lock.json`（隱藏 lock＝npm 的安裝紀錄）裡的那一筆；隱藏 lock 讀不到或沒那一筆＝
+ * 核對不了，算對不上；兩個欄位都沒寫（bundled 子套件常只有 version）就只比到名字版本。這一項擋的是
+ * 「經 npm 換過的同名同版內容」（#566 r2 的反例）；**它不是磁碟內容的證明**（半途被殺的安裝、手動換內容，
+ * 兩份 lock 都會留舊——#566 r3 的反例），劃界在檔頭。
  * 純函式：檔案系統由呼叫端用 `installed` 與 `hidden` 注入，考題直接餵資料。
  * @param {any} lock 解析後的 package-lock.json
  * @param {(key: string) => {name: string, version: string} | null} installed 讀 `<key>/package.json` 的 name 與 version；不存在或讀不了回 null
@@ -393,9 +398,9 @@ export function lockMismatches(lock, installed, hidden) {
     }
     if (have.name !== wantName) { out.push(`${key}：lock 要的是 ${wantName}，裝的是 ${have.name}（同版號也不算）`); continue; }
     if (have.version !== want) { out.push(`${key}：lock 要 ${want}，裝的是 ${have.version}`); continue; }
-    // 同名同版還不夠：來源（resolved）與內容指紋（integrity）要跟 npm 實際裝進來的那份一致——
-    // 隱藏 lock（node_modules/.package-lock.json）是唯一記著這件事的地方。lock 有寫才比；隱藏 lock 讀不到
-    // 或沒有這一筆＝核對不了，算對不上（同名同版換內容＝#566 r2 的反例）。
+    // 同名同版還不夠：來源（resolved）與內容指紋（integrity）要跟 npm 的安裝紀錄（隱藏 lock，
+    // node_modules/.package-lock.json）一致。lock 有寫才比；隱藏 lock 讀不到或沒有這一筆＝核對不了，
+    // 算對不上（經 npm 換過的同名同版內容＝#566 r2 的反例）。不是磁碟內容證明——劃界在檔頭。
     const wantsProvenance = typeof entry.resolved === 'string' || typeof entry.integrity === 'string';
     if (!wantsProvenance) continue;
     if (!isObj(hidden)) {
@@ -426,11 +431,10 @@ function hiddenLockIn(root) {
 function resolveMainRef(wt, mainSha) {
   const has = (/** @type {string} */ ref) => { try { runIn(['git', 'cat-file', '-e', `${ref}^{commit}`], wt); return true; } catch { return false; } };
   const originMain = () => { try { return runIn(['git', 'rev-parse', '--verify', 'origin/main^{commit}'], wt).trim(); } catch { return null; } };
-  if (mainSha) {
-    if (has(mainSha)) return mainSha;
-    const om = originMain();
-    return om && (om === mainSha || om.startsWith(mainSha) || mainSha.startsWith(om)) ? om : null;
-  }
+  // gh 給了 baseRefOid：本機有那顆 commit 才用；沒有＝查不到。**不拿 origin/main 替代**——ref 指得到的 commit
+  // 本機必然有，所以「baseRefOid 本機沒有、origin/main 卻是同一顆」不存在；前綴比對（r2 版）更會把
+  // 「完整 sha 多一個字元」這種壞值當成同一顆（#566 r3 Codex 實作出來）。
+  if (mainSha) return has(mainSha) ? mainSha : null;
   return originMain();
 }
 
@@ -502,9 +506,9 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
         const mb = runIn(['git', 'merge-base', mainRef, head], wt).trim();
         return runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否';
       };
-      // main 的 head：gh 給的 baseRefOid 本機有那顆 commit 才用；沒有時 origin/main **只在解析成同一顆時**才能替代
-      //   （#566 r2 Codex：本機 origin/main 過時＝側別答錯、處置指錯）；gh 沒給 OID 才退回 origin/main（可能過時，
-      //   訊息裡的側別因此只當線索）；都不行就「查不到」（訊息另有處置）。
+      // main 的 head：gh 給的 baseRefOid 本機有那顆 commit 才用，沒有＝「查不到」（不拿可能過時的 origin/main
+      //   替代——#566 r2 Codex：那樣側別會答錯、處置指錯）；gh 沒給 OID 才退回 origin/main（可能過時，訊息裡的
+      //   側別因此只當線索）。「查不到」的處置在訊息裡。
       const mainRef = resolveMainRef(wt, mainSha);
       if (mainRef) {
         try { selfTouched = own(mainRef, baseSha); otherTouched = own(mainRef, otherSha); } catch { selfTouched = '查不到'; otherTouched = '查不到'; }

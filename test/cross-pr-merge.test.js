@@ -779,28 +779,36 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
     mainLock: { 'fx-dep': { version: '2.0.0' } },
   });
   try {
-    const notFetched = '0123456789abcdef0123456789abcdef01234567';   // gh 看得到、本機沒有的那顆
-    const r = withFakeGh(SELF_VIEW(sha, notFetched), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
-    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
-    assert.match(r.stderr, /本支那側動了 package-lock\.json：查不到，#442 那側動了：查不到/,
-      '本機沒有 main 那顆 commit 卻還是答了是／否——多半是拿過時的 origin/main 算的，處置會指錯人');
-    assert.match(r.stderr, /git fetch origin main/, '「查不到」沒給處置');
-    assert.doesNotMatch(r.stderr, /那側動了：是/);
+    const originMain = String(spawnSync('git', ['rev-parse', 'origin/main'], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } }).stdout).trim();
+    for (const notFetched of [
+      '0123456789abcdef0123456789abcdef01234567',   // gh 看得到、本機沒有的那顆
+      `${originMain}0`,                            // #566 r3 Codex 的形狀：origin/main 的完整 sha 多一個字元——前綴比對會當成同一顆
+    ]) {
+      const probe = spawnSync('git', ['cat-file', '-e', `${notFetched}^{commit}`], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } });
+      assert.notEqual(probe.status, 0, `夾具失真：${notFetched} 本機竟然有，這題就沒走到「本機沒有」那條路`);
+      const r = withFakeGh(SELF_VIEW(sha, notFetched), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+      assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /本支那側動了 package-lock\.json：查不到，#442 那側動了：查不到/,
+        `baseRefOid=${notFetched}：本機沒有 main 那顆 commit 卻還是答了是／否——多半是拿過時的 origin/main 算的，處置會指錯人`);
+      assert.match(r.stderr, /git fetch origin main/, '「查不到」沒給處置');
+      assert.doesNotMatch(r.stderr, /那側動了：是/);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('CLI｜對照組：baseRefOid 本機沒有、但 origin/main 解析成同一顆 → 用它算側別（正確答兩側都否）', () => {
+test('CLI｜對照組：gh 沒給 baseRefOid → 退回本機 origin/main 算側別（origin/main 是最新時答對：兩側都否）', () => {
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
     mainLock: { 'fx-dep': { version: '2.0.0' } },
   });
   try {
-    // origin/main 指到 main 目前這顆（不過時）；gh 給的 OID 用短 sha 形狀模擬「rev-parse 得到同一顆」
     spawnSync('git', ['update-ref', 'refs/remotes/origin/main', mainSha], { cwd: dir, env: { ...SANDBOX_ENV } });
-    const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
+    const r = withFakeGh(
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),   // 沒有 baseRefOid
+      LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
     assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
     assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否/);
   } finally {
@@ -865,9 +873,12 @@ test('裁決｜lock 混輪的分類句要照輸入算：只混真紅不可以長
 });
 
 /**
- * 規則正本的「可見文字」：剝 HTML 註解、剝 hidden／display:none 容器連同內容、剝其餘標籤、剝連結目的地
- * （`[字](網址)` 只留字）。#566 r1／r2 Codex 各示範一種空包彈：常數塞進 `<!-- -->`、塞進 `<span hidden>`——
- * 可見規則改成「兩次」照樣綠。射程：Markdown 在 GitHub 上會被看到的字；不處理 `<details>`（折疊仍是可見的）。
+ * 規則正本的「可見文字」——**刻意只剝下面列出的形狀，不是 Markdown renderer**：HTML 註解、hidden／display:none
+ * 容器連同內容、其餘 HTML 標籤、fenced code 區塊（規則不會寫在指令框裡）、圖片（載得到圖時 alt 不顯示）、
+ * reference-style 連結定義行（`[label]: 網址`，不渲染）、inline 連結目的地（`[字](網址)` 只留字）。
+ * #566 r1／r2／r3 Codex 各示範一種空包彈（註解、`<span hidden>`、reference definition）。
+ * ⚠️ 誠實劃界（同族第三輪，射程在此封頂）：HTML entity、`<details>` 折疊、code span、多行標籤等其餘形狀
+ * **不處理**——這題守的是「正本那一步的可見句子裡逐字有限制句」，不是 GitHub 的渲染結果；再有新形狀進待辦。
  * @param {string} md
  */
 function visibleText(md) {
@@ -875,6 +886,9 @@ function visibleText(md) {
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<([a-z][a-z0-9-]*)\b[^>]*\b(?:hidden|display\s*:\s*none)[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<[^>]+>/g, '')
+    .replace(/^(?:> ?)*\s*```[\s\S]*?^(?:> ?)*\s*```[ \t]*$/gm, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/^(?:> ?)*\s*\[[^\]]+\]:\s.*$/gm, '')
     .replace(/\]\([^)]*\)/g, ']');
 }
 
@@ -902,14 +916,30 @@ test('文件釘住的 helper｜看的是可見文字：HTML 註解、hidden 容�
   assert.ok(!/** @type {string} */ (crossPrStepText(inLink)).includes(rule), '連結目的地裡的限制句被當成可見規則');
   const otherStep = `> 4. 別的步驟 ${rule}\n` + base.replace(rule, '可以重跑兩次');
   assert.ok(!/** @type {string} */ (crossPrStepText(otherStep)).includes(rule), '別步驟的限制句被算進這一步');
+  // #566 r3 Codex 的三種：reference-style 連結定義（不渲染）、圖片 alt（載圖時不顯示）、fenced code（指令框）
+  // 定義行要放在這一步裡面（下一個編號行之前），不然只是被「別步驟不算」擋掉、沒測到剝定義行
+  const refDef = base.replace(rule, '[可以重跑兩次][policy]').replace('> 6. 下一步', `>\n> [policy]: https://example.com/${rule}\n> 6. 下一步`);
+  assert.ok(!/** @type {string} */ (crossPrStepText(refDef)).includes(rule), 'reference definition 裡的限制句被當成可見規則');
+  const inImage = base.replace(rule, `可以重跑兩次 ![${rule}](https://example.com/x.png)`);
+  assert.ok(!/** @type {string} */ (crossPrStepText(inImage)).includes(rule), '圖片 alt 裡的限制句被當成可見規則');
+  const inFence = base.replace(`可以重跑一次，${rule}。`, `可以重跑兩次。\n>    \`\`\`text\n>    ${rule}\n>    \`\`\``);
+  assert.ok(!/** @type {string} */ (crossPrStepText(inFence)).includes(rule), 'fenced code 裡的限制句被當成可見規則');
+  // 對照：真的寫在正文裡、旁邊有連結與 code span，仍要找得到
+  const normal = base.replace(rule, `${rule}（見 [規則](https://example.com)、\`RERUN_LIMITS\`）`);
+  assert.ok(/** @type {string} */ (crossPrStepText(normal)).includes(rule), '正文裡的限制句反而找不到');
 });
 
 test('⭐ 文件｜REVIEW-AND-MERGE.md 跨 PR 試合併那一步（規則正本）要逐字含同一串限制句，並寫明 lock 對不上的退 2 不適用重跑', () => {
   // 訊息那份被上面的題釘住；正本這份若漂成「兩次」或整段消失，操作者看到的是訊息與正本互相矛盾——
   // 兩邊共用 RERUN_LIMITS 這一串，漂哪一邊都紅。可見文字的定義在 visibleText／crossPrStepText（有自己的題）。
-  const step = crossPrStepText(readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8'));
+  const raw = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  const step = crossPrStepText(raw);
   assert.ok(step !== null, '合併步驟裡找不到「跨 PR 試合併閘」那一步的編號行');
-  assert.ok(step.includes('node scripts/check-cross-pr-merge.js'), '那一步裡沒有這道閘的指令行');
+  // 指令行住在指令框裡（visibleText 會剝掉指令框），所以對原文驗：編號行之後、下一步之前要有那行
+  const rawLines = raw.split('\n');
+  const at = rawLines.findIndex((l) => /^> \d+\.\s/.test(l) && l.includes('跨 PR 試合併閘'));
+  const next = rawLines.findIndex((l, i) => i > at && /^> \d+\.\s/.test(l));
+  assert.ok(rawLines.slice(at, next < 0 ? undefined : next).some((l) => l.includes('node scripts/check-cross-pr-merge.js')), '那一步裡沒有這道閘的指令行');
   assert.ok(step.includes(RERUN_LIMITS), `正本那一步沒有逐字含限制句「${RERUN_LIMITS}」——訊息與正本會分岔`);
   assert.match(step, /不適用/, '正本沒寫 lock 對不上的退 2 不適用重跑');
   assert.match(step, /不會安裝套件/, '正本沒寫這道閘不會安裝套件——「重跑一次」會被拿去對付那種紅');
