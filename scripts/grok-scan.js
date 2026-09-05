@@ -52,13 +52,16 @@ import { isMainModule } from '../lib/is-main.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 /** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
-export const EXPECTED_GROK_VERSION = '1.0.3';
+export const EXPECTED_GROK_VERSION = '1.0.13';
 /**
  * 釘住執行檔本身（r4 #5：版本字串是被檢者自己印的，wrapper 印「grok 1.0.3」就過；而且 r3 版在**沙箱外**執行它）。
  * 流程：cp 真執行檔進盒子 → 對**盒內副本**算 sha256 → 不等於這個值＝不掃 → `--version` 在**沙箱內**對盒內副本跑。
  * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
+ * 1.0.13（2026-09-05，grok CLI 自動升版後 fail-closed 擋下 #563 的掃描）：升版手續＝`strings` 新舊執行檔比對上游主機／路徑，重驗紀錄在 PR #564。
+ * 本檔執行期只守兩件事：盒內副本的 sha256、沙箱內 --version 精確等於常數；執行檔多了什麼外連字串本檔不判讀——沙箱只准 localhost、
+ * 轉送器只轉白名單形狀。釘值本身由 test/grok-scan-flow.test.js 的獨立 fixture 釘住（改常數要連考題一起改）。
  */
-export const EXPECTED_GROK_SHA256 = '09deaf06804955ff2d6ccef2042af4031c659c47fd16eb3c72664a8f533832da';
+export const EXPECTED_GROK_SHA256 = '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80';
 export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];

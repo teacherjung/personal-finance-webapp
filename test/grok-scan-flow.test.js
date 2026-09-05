@@ -185,6 +185,13 @@ test('runScan｜grok 版本不符 → 2（條款：版本不同＝當未跑；�
   assert.match(r.summary.join('\n'), /版本不符/);
 });
 
+test('釘值｜EXPECTED_GROK_VERSION／EXPECTED_GROK_SHA256 是獨立寫死的 fixture（改常數要連這裡一起改；倒回舊版就紅）', async () => {
+  // 為什麼不從常數推：fake grok 的 --version 印的就是常數，那樣的題只證明「相對當下常數精確比對」，證明不了釘的是哪一版。
+  const { EXPECTED_GROK_SHA256 } = await import('../scripts/grok-scan.js');
+  assert.equal(EXPECTED_GROK_VERSION, '1.0.13', 'grok CLI 1.0.13（2026-09-05 重驗轉送器目的地後升的）');
+  assert.equal(EXPECTED_GROK_SHA256, '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80', 'grok-1.0.13-macos-aarch64 的 sha256');
+});
+
 test('runScan｜版本要**精確等於**，前綴不算（r2：wrapper 印 "grok 1.0.3-other" 就能過 startsWith）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // r4：--version 改在沙箱內跑
   const repo = tinyRepo();
