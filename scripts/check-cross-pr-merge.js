@@ -71,8 +71,8 @@
 // 完整性問題本閘看不到（#566 r3 Codex 實作出來），也不打算看：要證明內容就得在乾淨樹 `npm ci`
 // 物化整棵相依樹，那是手動路徑，不是本閘的射程。Node 實際載入誰也不看：多裝的頂層套件遮蔽巢狀的、
 // `.bin` 指向誰、`NODE_OPTIONS` 注入——這些都不在核對裡（Grok #566 掃 #2）。**多裝的套件看不到**（拿掉
-// 相依的那支若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；`optional` 的套件沒裝不算（平台
-// 專屬二進位本來就只裝自己那一個）；workspace 連結（`link`）核對不了指向哪一版、lock 結構壞掉
+// 相依的那支若程式仍引用它，這裡不會紅；CI 的 `npm ci` 會）；他平台的 `optional` 套件沒裝不算（os／cpu
+// 清單排除本機；本機該裝的缺了照樣對不上）；workspace 連結（`link`）核對不了指向哪一版、lock 結構壞掉
 // （packages 不是物件、沒有根項目、項目不是物件）核對不了——這兩種一律當對不上（#566 r1 Codex
 // 用 link／alias／`packages: []` 三個反例證明「跳過」會假綠）。刻意不自動安裝：本機 npm 的 `ci`
 // 會順著 symlink 逐項清掉主目錄的 node_modules（CLAUDE.md 的禁區）。處置寫在 verdict 的 lock
@@ -412,7 +412,7 @@ export function cantRunSignal(err) {
  * 判準，刻意只有這幾條：①`packages` 表要是物件、要有根項目 `""`、每個項目要是物件——否則無法核對，
  * 算對不上（fail-closed；`packages: []`／`{}`／項目 `null` 都是 #566 r1 的反例）；②每個套件都要裝著、
  * **名字**（alias 用 `name` 欄、否則取路徑最後一段）與版本逐字相同——同版號不同套件也算對不上；
- * ③`optional: true` 的沒裝不算（平台專屬二進位只裝自己那一個，其餘的本來就不裝）；④workspace 連結
+ * ③`optional: true` 的沒裝，只在 os／cpu 清單排除本機時不算（平台專屬二進位只裝自己那一個）；本機該裝的缺了照樣對不上；④workspace 連結
  * （`link: true`）核對不了 node_modules 裡那條連結指向哪一版（發起樹的連結指回發起樹，不是合併後的樹），
  * 一律算對不上。**多裝的看不到**（劃界在檔頭）。
  * ⑤同名同版還要**來源與內容指紋**相同：lock 項目有 `resolved`／`integrity` 時，對照 npm 寫在
@@ -514,21 +514,22 @@ function hiddenLockIn(root) {
 function resolveMainRef(wt, mainSha) {
   const has = (/** @type {string} */ ref) => { try { runIn(['git', 'cat-file', '-e', `${ref}^{commit}`], wt); return true; } catch { return false; } };
   const originMain = () => { try { return runIn(['git', 'rev-parse', '--verify', 'origin/main^{commit}'], wt).trim(); } catch { return null; } };
-  // gh 給了 baseRefOid：本機有那顆 commit 才用；沒有＝查不到。**不拿 origin/main 替代**——ref 指得到的 commit
-  // 本機必然有，所以「baseRefOid 本機沒有、origin/main 卻是同一顆」不存在；前綴比對（r2 版）更會把
+  // gh api 給了 main 目前的 head：本機有那顆 commit 才用；沒有＝查不到。**不拿 origin/main 替代**——ref 指得到的 commit
+  // 本機必然有，所以「那顆本機沒有、origin/main 卻是同一顆」不存在；前綴比對（r2 版）更會把
   // 「完整 sha 多一個字元」這種壞值當成同一顆（#566 r3 Codex 實作出來）。
   if (mainSha) return has(mainSha) ? mainSha : null;
   return originMain();
 }
 
 /**
- * npm 的 os／cpu 清單語意：沒寫或空＝都算；有寫＝正向項目要包含本機值、`!x` 排除。不是字串的項目略過。
+ * npm 的 os／cpu 清單語意（npm-install-checks 的 checkList）：沒寫或空＝都算；單一 `'any'`＝都算；有寫＝正向項目要包含本機值、`!x` 排除。不是字串的項目略過。
  * @param {unknown} list @param {string} value
  */
 function platformWanted(list, value) {
   if (!Array.isArray(list)) return true;
   const strs = list.filter((x) => typeof x === 'string');
   if (!strs.length) return true;
+  if (strs.length === 1 && strs[0] === 'any') return true;   // npm-install-checks：單一 'any'＝所有平台都要（#566 r11）
   const neg = strs.filter((x) => x.startsWith('!')).map((x) => x.slice(1));
   const pos = strs.filter((x) => !x.startsWith('!'));
   if (neg.includes(value)) return false;
@@ -562,7 +563,7 @@ function installedIn(root) {
  * 指回主目錄，動到它會讓 William 的 app 起不來。所以拆的時候用 `unlinkSync`：
  * 它只刪得掉連結本身，如果哪天那裡變成真的目錄，它會直接失敗而不是遞迴刪除。
  * @param {string} repoRoot @param {string} baseSha @param {string} otherSha @param {number} otherNumber
- * @param {string} [mainSha] base 分支（main）目前的 head——量「哪一側動了 lock」用（各支自己相對 main 的改動）
+ * @param {string} [mainSha] base 分支（main）**目前**的 head（gh api 查的，不是 pr view 的 baseRefOid）——量「哪一側動了 lock」用
  * @returns {MergeTry}
  */
 function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
@@ -595,7 +596,7 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
     //    哪一側動了 lock 一併印出來，量的是**各支自己相對 main 的改動**（merge-base(main, head)→head，
     //    跟 GitHub 顯示的 PR diff 同一個口徑）：兩顆 head 直接比、或只從兩支的共同祖先量，都會把
     //    main 在分岔之間的變動算到某一支頭上（預審與 #566 r1 各實跑到一種）。main 的 head 由 gh 的
-    //    baseRefOid 給：本機有那顆 commit 才用、沒有就印「查不到」；gh 沒給 OID 才退回 origin/main。
+    //    gh api 查 refs/heads/<base> 給：本機有那顆 commit 才用、沒有就印「查不到」；gh api 查不到才退回 origin/main。
     //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
@@ -609,9 +610,9 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
         const mb = runIn(['git', 'merge-base', mainRef, head], wt).trim();
         return runIn(['git', 'diff', '--name-only', mb, head, '--', 'package-lock.json'], wt).trim() ? '是' : '否';
       };
-      // main 的 head：gh 給的 baseRefOid 本機有那顆 commit 才用，沒有＝「查不到」（不拿可能過時的 origin/main
-      //   替代——#566 r2 Codex：那樣側別會答錯、處置指錯）；gh 沒給 OID 才退回 origin/main（可能過時，訊息裡的
-      //   側別因此只當線索）。「查不到」的處置在訊息裡。
+      // main 的 head：gh api 查到的那顆本機有才用，沒有＝「查不到」（不拿可能過時的 origin/main 替代——#566 r2
+      //   Codex：那樣側別會答錯、處置指錯）；gh api 查不到才退回 origin/main（可能過時，訊息裡的側別因此只當線索）。
+      //   「查不到」的處置在訊息裡。
       const mainRef = resolveMainRef(wt, mainSha);
       if (mainRef) {
         try { selfTouched = own(mainRef, baseSha); otherTouched = own(mainRef, otherSha); } catch { selfTouched = '查不到'; otherTouched = '查不到'; }
@@ -673,7 +674,7 @@ export function main(argv) {
     // ⚠️ 這一句決定後面所有 worktree 操作**動到哪一個 repo**。繼承來的 `GIT_DIR` 會讓它回答
     //    別的 repo（git 有 GIT_DIR 時不看 cwd）⇒ 這道閘會跑去別棵樹上建立與移除工作樹。
     repoRoot = runIn(['git', 'rev-parse', '--show-toplevel'], process.cwd()).trim();
-    self = JSON.parse(gh(['pr', 'view', pr, '--json', 'number,headRefOid,baseRefName,baseRefOid']));
+    self = JSON.parse(gh(['pr', 'view', pr, '--json', 'number,headRefOid,baseRefName']));
     list = JSON.parse(gh(['pr', 'list', '--state', 'open', '--base', 'main',
       '--json', 'number,headRefOid,headRefName,baseRefName,isDraft', '--limit', '100']));
   } catch (e) {
@@ -690,6 +691,14 @@ export function main(argv) {
     console.error(`跨 PR 試合併 PR #${pr}：gh 回傳的形狀不對${listBad.length ? `（open PR 清單有 ${listBad.length} 筆缺承重欄位：number／headRefOid／baseRefName）` : ''}——一律當成未通過。`);
     return 2;
   }
+  // base 分支**目前**的 head：量「哪一側動了 lock」與「合併後的 lock 跟 main 一不一樣」用。
+  // ⚠️ 不能拿 pr view 的 baseRefOid——那是 PR 記錄的 base commit，main 前進後它不會跟著動（#566 r11 Codex 在 GitHub
+  //    實測：baseRefOid=729fd65 而 refs/heads/main 已是 9b3575e）。查不到（gh api 失敗）就留空，tryMerge 退回 origin/main。
+  let mainHead;
+  try {
+    const sha = gh(['api', `repos/{owner}/{repo}/git/ref/heads/${self.baseRefName}`, '--jq', '.object.sha']).trim();
+    mainHead = /^[0-9a-f]{40}$/.test(sha) ? sha : undefined;
+  } catch { mainHead = undefined; }
   const others = othersToTry(list, Number(pr));
   // ⚠️ 試合併前先驗發起樹的 node_modules（2026-08-11 #441 實踩）：臨時工作區的
   //    node_modules 是 symlink 指回發起樹（見 tryMerge 檔頭），發起樹自己沒有
@@ -711,7 +720,7 @@ export function main(argv) {
   const results = [];
   for (const o of others) {
     try {
-      results.push(tryMerge(repoRoot, self.headRefOid, o.headRefOid, o.number, typeof self.baseRefOid === 'string' ? self.baseRefOid : undefined));
+      results.push(tryMerge(repoRoot, self.headRefOid, o.headRefOid, o.number, mainHead));
     } catch (e) {
       console.error(`跨 PR 試合併 PR #${pr}：建不出臨時工作區（${/** @type {any} */ (e)?.message}）。`);
       return 2;

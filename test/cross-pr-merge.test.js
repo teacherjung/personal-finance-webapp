@@ -96,14 +96,22 @@ test('自報｜這支要自報是合併閘，否則註冊表數不到它', () =>
 // ── 退出碼才是這支對外的介面：用假 gh 走完整入口 ──────────────
 
 /** 造一支假的 `gh`，讓腳本走真實路徑。 @param {string} viewJson @param {string} listJson */
-function withFakeGh(viewJson, listJson, { exitCode = 0, pr = '385', cwd = ROOT, env = process.env } = {}) {
+function withFakeGh(viewJson, listJson, { exitCode = 0, pr = '385', cwd = ROOT, env = process.env, mainSha = undefined } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cross-pr-gh-'));
   const gh = join(dir, 'gh');
+  // 假 gh 的 `api repos/…/git/ref/heads/<base>`：回「main 目前的 head」。考題用 mainSha 選項給；沒給就拿 view JSON 裡
+  // 的 baseRefOid 當假 api 的回值（舊考題的寫法；閘本身**不讀** baseRefOid——有一題專門證明）；兩者都沒有＝api 失敗（退出 1）。
+  let apiSha;
+  try { apiSha = mainSha ?? JSON.parse(viewJson).baseRefOid; } catch { apiSha = undefined; }
   writeFileSync(gh, `#!/bin/sh
 case "$1 $2" in
   "pr view") cat <<'JSON'\n${viewJson}\nJSON
   ;;
   "pr list") cat <<'JSON'\n${listJson}\nJSON
+  ;;
+esac
+case "$1" in
+  api) ${apiSha ? `echo "${apiSha}"; exit 0` : 'exit 1'}
   ;;
 esac
 exit ${exitCode}
@@ -483,6 +491,7 @@ test('⭐ CLI｜兩支真的文字衝突 → exit 1，衝突的說明照 kind �
 
 const OK_GATE = 'node -e "process.exit(0)"';
 /** 受審支的 gh pr view 回應：baseRefOid＝main 目前的 head（閘用它量「哪一側動了 lock」）。 */
+/** 受審支的 gh pr view 回應。第二個參數會被 withFakeGh 拿去當假 `gh api` 的 main head（閘不讀 baseRefOid 欄本身）。 */
 const SELF_VIEW = (/** @type {string} */ sha, /** @type {string} */ mainSha) =>
   JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main', baseRefOid: mainSha });
 const LOCK_OTHERS = (/** @type {string} */ sha, /** @type {string} */ shaB) => JSON.stringify([
@@ -840,13 +849,10 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
     mainLock: { 'fx-dep': { version: '2.0.0' } },
   });
   try {
-    const originMain = String(spawnSync('git', ['rev-parse', 'origin/main'], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } }).stdout).trim();
+    // r3 曾有第二個形狀（origin/main 的完整 sha 後面多一個字元，殺 r2 的前綴比對）；r11 起 main 的 head 由 gh api 取、
+    // 只收 40 碼 hex，非 hex 的值＝api 查不到＝退回 origin/main（另有對照題），那個形狀不再屬於「本機沒有那顆」。
     for (const notFetched of [
       '0123456789abcdef0123456789abcdef01234567',   // gh 看得到、本機沒有的那顆
-      // #566 r3 Codex 的形狀：origin/main 的完整 sha 後面多一個字元——前綴比對會當成同一顆。
-      // 多的字元刻意用非 hex：多一個 hex 字元（41 碼）在 CI 的 git 版本上竟解析得到（本機的 git 解析不到），
-      // 夾具會因版本不同而失真；非 hex 在任何版本都是「不是物件名」。
-      `${originMain}z`,
     ]) {
       const probe = spawnSync('git', ['cat-file', '-e', `${notFetched}^{commit}`], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } });
       assert.notEqual(probe.status, 0, `夾具失真：${notFetched} 本機竟然有，這題就沒走到「本機沒有」那條路`);
@@ -862,7 +868,7 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
   }
 });
 
-test('CLI｜對照組：gh 沒給 baseRefOid → 退回本機 origin/main 算側別（origin/main 是最新時答對：兩側都否）', () => {
+test('CLI｜對照組：gh api 查不到 main 的 head → 退回本機 origin/main 算側別（origin/main 是最新時答對：兩側都否）', () => {
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
@@ -871,7 +877,7 @@ test('CLI｜對照組：gh 沒給 baseRefOid → 退回本機 origin/main 算側
   try {
     spawnSync('git', ['update-ref', 'refs/remotes/origin/main', mainSha], { cwd: dir, env: { ...SANDBOX_ENV } });
     const r = withFakeGh(
-      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),   // 沒有 baseRefOid
+      JSON.stringify({ number: 441, headRefOid: sha, baseRefName: 'main' }),   // 沒有 baseRefOid、也沒給 mainSha ⇒ 假 api 退 1
       LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
     assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
     assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否/);
@@ -893,6 +899,25 @@ test('⭐ CLI｜兩支都落後 main（合併後的 lock 是舊的、發起樹�
     assert.match(r.stderr, /本支那側動了 package-lock\.json：否，#442 那側動了：否；合併後的 lock 跟 main 的一樣：否/);
     assert.match(r.stderr, /兩支都落後 main/, '沒分出「落後 main」這種形狀——處置會叫人重裝發起樹，重裝完還是 2');
     assert.match(r.stderr, /rebase/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ CLI｜pr view 的 baseRefOid 停在舊 base、main 其實已前進（GitHub 的真實形狀）→ 閘要用 gh api 查到的目前 main 算，答「跟 main 一樣：否」指路 rebase，不可以拿 baseRefOid 當 main（#566 r11）', () => {
+  const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
+    nodeModules: 'dir', markGates: true, selfStale: true,
+    lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '2.0.0' },
+    mainLock: { 'fx-dep': { version: '2.0.0' } },
+  });
+  try {
+    const oldBase = String(spawnSync('git', ['rev-parse', 'main~1'], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } }).stdout).trim();
+    assert.notEqual(oldBase, mainSha, '夾具失真：main 沒有前進');
+    const r = withFakeGh(SELF_VIEW(sha, oldBase), LOCK_OTHERS(sha, /** @type {string} */ (shaB)),
+      { pr: '441', cwd: dir, env: { ...SANDBOX_ENV }, mainSha });   // view 說 base 是舊的，api 說 main 是新的
+    assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /合併後的 lock 跟 main 的一樣：否/, '拿 pr view 的 baseRefOid 當 main＝跟舊 base 比、答「一樣：是」、叫人重裝發起樹——重裝完還是 2');
+    assert.match(r.stderr, /兩支都落後 main/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1094,7 +1119,7 @@ test('CLI｜對照組：lock 要求的套件都裝著、版本相同 → 核對�
       LOCK_OTHERS(sha, /** @type {string} */ (shaB)),
       { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } },
     );
-    assert.equal(r.status, 0, `預期 0，實得 ${r.status}\n${r.stdout}${r.stderr}\n——lock 對得上（optional 沒裝不算）就該進三關；擋下來＝把每一支都當成對不上`);
+    assert.equal(r.status, 0, `預期 0，實得 ${r.status}\n${r.stdout}${r.stderr}\n——lock 對得上（他平台的 optional 沒裝不算）就該進三關；擋下來＝把每一支都當成對不上`);
     assert.match(r.stdout, /合起來都是綠的/);
     assert.equal(existsSync(join(dir, 'gate-ran')), true, '記號檔不在＝三關根本沒跑；上面那幾題的「沒有記號」就是空包彈');
   } finally {
@@ -1270,6 +1295,10 @@ test('⭐ lockMismatches｜optional 缺套件只在「這台本來就不該裝�
   assert.deepEqual(lockMismatches(lock({ os: ['darwin'], cpu: ['x64'] }), missing, null, here), [], 'cpu 不同的 optional 缺了應放行');
   // 沒給 opts 時用本機的 platform／arch；os 清單裡非字串的項目略過
   assert.deepEqual(lockMismatches(lock({ os: [`!${process.platform}`, 7] }), missing, null), []);
+  // npm 的單一 'any'＝所有平台都要（#566 r11 Codex 對 npm-install-checks 的反例）
+  assert.equal(lockMismatches(lock({ os: ['any'] }), missing, null, here).length, 1, "os:['any'] 是「所有平台都要」，缺了卻放行");
+  assert.equal(lockMismatches(lock({ cpu: ['any'] }), missing, null, here).length, 1, "cpu:['any'] 同族");
+  assert.equal(lockMismatches(lock({ os: ['any'], cpu: ['x64'] }), missing, null, here).length, 0, 'cpu 排除本機時仍該放行');
 });
 
 test('⭐ lockMismatches｜package.json 宣告的相依都要在 lock 的 packages 裡：git 三方合併可能合出合法 JSON 卻少了套件（Grok #566 掃 #7）', () => {
