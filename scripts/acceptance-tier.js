@@ -9,16 +9,18 @@
 // 沿革與量到的數字在 PR #573 的說明，這裡只寫機制。
 //
 // ## 用法
-//   node scripts/acceptance-tier.js <PR 編號>            # 用 gh 分頁讀該 PR 動到的檔案（含改名前的舊路徑；repo 釘在 origin，環境變數蓋不掉）
+//   node scripts/acceptance-tier.js <PR 編號>            # 用 gh 分頁讀該 PR 動到的檔案（含改名前的舊路徑）
+//     ⚠️ repo **與站台**都釘在目前目錄的 origin（GH_REPO／GH_HOST 蓋不掉）；PR 編號＝origin 那個 repo 的編號——
+//        origin 若是 fork，查的就是 fork 上的同號 PR、不是上游，跑之前自己確認 origin 指誰。
 //   node scripts/acceptance-tier.js --paths a.js b.md   # 直接給路徑（考題與離線用）
 // 退出碼：0＝算出來了（印級別、命中、動作）；2＝算不出來（gh 失敗／回傳不是預期形狀／檔數對不上 PR 的檔數／沒有路徑）→ 老實說算不出來，不猜。
 // ⚠️ 這**不是合併閘**：它不擋任何事，只把「合併後該做什麼」算給執行者看；合併步驟「回報合併結果與驗收分級」那一步照它印的做。
 //
-// ## 兩條規矩（考題釘住）
+// ## 規矩（考題釘住）
 // 1. **動作累積**：同一支命中幾級就做幾級的動作（db/＋package-lock＋lib/ ＝ 套 SQL、裝相依、重啟走流程三件都做）；
 //    回報的「級別」寫最重的那級（同重時照 ORDER 的固定順序，不看路徑順序；只命中 F 就寫 F）。只取最重一級會把其他必要動作吃掉。
 //    命中 B（相依）一定連帶列出 C：裝完不重啟載不到新套件，B 的動作不可以停在「裝完」。
-// 2. **沒列到的路徑一律當「要重啟」**（fail-closed）並列出來——不確定就往重的算，不預設免驗。
+// 2. **沒列到的路徑一律當「要重啟」**（fail-closed，程式裡叫 unknown）並列出來——不確定就往重的算，不預設免驗。
 //    「沒列到」包含新目錄**與 scripts/ 裡沒點名的新腳本**（E 的腳本是明確名單，不是 check-* 這種寬鬆形狀——
 //    寬鬆形狀會把未來被啟動流程掛上的新腳本靜靜當成不需驗收）。
 //
@@ -53,7 +55,7 @@ export const ORDER = /** @type {Tier[]} */ (['A', 'B', 'C', 'D', 'P', 'E']);
 /**
  * 路徑家族表：**由上往下第一個命中的算**（所以啟動會跑的 scripts/check-node-version.js 排在「只在合併程序跑的明確名單」前面）。
  * 每一條的級別都由 test/acceptance-tier.test.js 的 RULE_SAMPLES 逐條釘住（多一條、換一級都會紅）。
- * 沒命中＝未知＝當 C（見檔頭第 2 條）。
+ * 沒命中＝未知＝當 C（見檔頭「沒列到的路徑一律當『要重啟』」）。
  * @type {[Tier, RegExp][]}
  */
 export const RULES = [
@@ -149,16 +151,17 @@ export function prFilesFromApi(json, { expectEntries } = {}) {
 }
 
 /**
- * repo 身分釘在目前目錄的 origin（owner/repo）——不用 gh 的 `{owner}/{repo}` 佔位，那個會被 GH_REPO 環境變數
- * 靜靜導向別的 repo（#573 r4 Codex 實測），而 gitEnv() 只清 GIT_*。origin 不是 GitHub 就丟。
+ * repo 身分（站台＋owner/repo）釘在目前目錄的 origin——不用 gh 的 `{owner}/{repo}` 佔位、也不省略站台：
+ * 佔位會被 GH_REPO 導向別的 repo（#573 r4）、沒明講站台會被 GH_HOST 導向別站（#573 r5），而 gitEnv() 只清 GIT_*。
+ * 收 https／ssh／scp 三種寫法；解不出來就丟（不猜）。
  * @param {string} [cwd]
- * @returns {string}
+ * @returns {{host: string, slug: string}}
  */
-export function repoSlug(cwd = process.cwd()) {
+export function originRepo(cwd = process.cwd()) {
   const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).trim();
-  const m = url.match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
-  if (!m) throw new Error(`origin 不是 GitHub 網址，釘不住 repo 身分：${url}`);
-  return `${m[1]}/${m[2]}`;
+  const m = url.match(/^(?:(?:https?|ssh|git):\/\/)?(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+  if (!m) throw new Error(`origin 解不出站台與 owner/repo，釘不住 repo 身分：${url}`);
+  return { host: m[1], slug: `${m[2]}/${m[3]}` };
 }
 
 /** 給合併步驟「回報合併結果與驗收分級」那一步照抄的報告。 @param {string[]} paths */
@@ -182,13 +185,13 @@ export function main(argv) {
   } else if (argv[0] && /^\d+$/.test(argv[0])) {
     // ⚠️ 不用 `gh pr view --json files`：它只給前 100 筆、改名只給新路徑（#573 r3 Codex 實測）。
     //    走 REST 的 pulls/<N>/files 分頁全拿，改名把 previous_filename 也算進去（舊的 runtime 路徑被拿掉也是 runtime 變更）；
-    //    再拿 PR 自報的檔數（changedFiles）對筆數——端點上限 3000 筆，對不上就退 2（#573 r4）。repo 一律明講，不靠 gh 猜。
+    //    再拿 PR 自報的檔數（changedFiles）對筆數——端點上限 3000 筆，對不上就退 2（#573 r4）。站台與 repo 一律明講，不靠 gh 猜。
     try {
-      const slug = repoSlug();
+      const { host, slug } = originRepo();
       const opts = { encoding: /** @type {const} */ ('utf8'), stdio: /** @type {const} */ ('pipe'), env: gitEnv(), maxBuffer: 1e8 };
-      const total = execFileSync('gh', ['pr', 'view', argv[0], '-R', slug, '--json', 'changedFiles', '--jq', '.changedFiles'], opts).trim();
+      const total = execFileSync('gh', ['pr', 'view', argv[0], '-R', `${host}/${slug}`, '--json', 'changedFiles', '--jq', '.changedFiles'], opts).trim();
       if (!/^\d+$/.test(total)) throw new Error(`gh 回的 PR 檔數不是整數：${JSON.stringify(total)}`);
-      const out = execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${slug}/pulls/${argv[0]}/files?per_page=100`], opts);
+      const out = execFileSync('gh', ['api', '--paginate', '--slurp', '--hostname', host, `repos/${slug}/pulls/${argv[0]}/files?per_page=100`], opts);
       paths = prFilesFromApi(out, { expectEntries: Number(total) });
     } catch (e) {
       console.error(`驗收分級：算不出來（gh 讀不到 PR #${argv[0]} 的檔案清單、回傳不是預期形狀、或檔數對不上：${/** @type {any} */ (e)?.message}）——不猜，先把 gh 弄好再跑。`);

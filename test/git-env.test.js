@@ -8,6 +8,7 @@
 //   ・`test/doc-naming.test.js`           ← `trackedFiles()`／`oldNameContexts()`
 //   ・`test/cross-pr-merge.test.js`       ← `scripts/check-cross-pr-merge.js` 的 `runIn()`
 //                                          ＋**會叫 `gh` 的閘**（不寫死幾支）（`gh` 會自己再去 spawn git）
+//   ・`test/acceptance-tier.test.js`      ← `scripts/acceptance-tier.js` 的 `originRepo()`＋它叫的 `gh`；考題自己的 `trackedFiles()`
 // ⚠️ 為什麼要分開：純函式對了，不代表有人在用它。本專案認過這個病型
 // （護欄什麼都沒做卻回報通過），所以兩層都要有題。
 // ⚠️ 而且每個呼叫端要**兩種**題（#463 r1 的教訓，射程對照表在 `test/helpers/dirty-git-env.js` 檔頭）：

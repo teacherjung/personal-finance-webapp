@@ -1,7 +1,7 @@
 // 合併後驗收分級（scripts/acceptance-tier.js）的行為題。
 // 為什麼要有：散文清單沒有考題會為它紅（把 public/ 移到不需驗收照樣全綠）——表住程式、這裡釘表。
-// 射程：釘的是「每一條規則的級別」（RULE_SAMPLES 逐條）、代表性路徑組合→級別與動作、兩條規矩（動作累積、未列到當 C）、
-// gh 讀檔的形狀（分頁、改名、檔數對不上、repo 身分釘在 origin）、兩個會 spawn 子行程的呼叫點各兩種 GIT_* 題、
+// 射程：釘的是「每一條規則的級別」（RULE_SAMPLES 逐條）、代表性路徑組合→級別與動作、規矩（動作累積、未列到當 C、B 連帶 C、只 F 寫 F）、
+// gh 讀檔的形狀（分頁、改名、檔數對不上、站台與 repo 身分釘在 origin、正式呼叫逐 token 釘旗標）、每個會 spawn 子行程的呼叫點各兩種 GIT_* 題、
 // 以及 D 級「重新整理就好」的前提（沒有 service worker）；路徑家族表本身對不對（哪些 scripts 啟動時會跑）
 // 靠改表的人核對 start.command／render.yaml，這裡只釘現況。
 import { test } from 'node:test';
@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, report, tierOf, repoSlug, RULES, TIERS, ORDER, prFilesFromApi } from '../scripts/acceptance-tier.js';
+import { classify, report, tierOf, originRepo, RULES, TIERS, ORDER, prFilesFromApi } from '../scripts/acceptance-tier.js';
 import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
 import { gitEnv } from '../lib/git-env.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
@@ -23,10 +23,13 @@ const tiers = (/** @type {ReturnType<typeof classify>} */ r) => r.actions.map((a
 const page = (n, prefix) => Array.from({ length: n }, (_, i) => ({ filename: `${prefix}${i}.md`, status: 'modified' }));
 
 /**
- * 假 gh：記下 argv 與看到的 GIT_*；`pr view` 回 view、`api` 回 api（沒給就 exit 1）。
+ * 假 gh：每次被叫到就把 argv **逐 token**（tab 分隔、一行一次呼叫）記下來、並記看到的 GIT_*。
+ * 回什麼**依旗標**決定，模擬真 gh 的契約：`pr view … --json changedFiles --jq .changedFiles` 才回 view；
+ * `api` 要同時帶 `--paginate` 與 `--slurp` 才回 api（真 gh 少了 --paginate 只給第一頁、少了 --slurp 外層不是頁陣列）——
+ * 少任何一個就 exit 1，所以正式碼掉旗標會紅（#573 r5）。
  * failOnGitEnv＝模擬真 gh 被髒 GIT_DIR 弄壞：環境裡只要有 GIT_* 就 exit 1（題①用）。
  * @param {{view?: string, api?: string, failOnGitEnv?: boolean, cwd?: string, env?: Record<string, string>}} o
- * @param {(x: {r: ReturnType<typeof spawnSync>, argv: string[], seen: string[]}) => void} fn
+ * @param {(x: {r: ReturnType<typeof spawnSync>, calls: string[][], seen: string[]}) => void} fn
  */
 function withFakeGh({ view, api, failOnGitEnv = false, cwd = ROOT, env = {} }, fn) {
   const dir = mkdtempSync(join(tmpdir(), 'acc-gh-'));
@@ -35,18 +38,24 @@ function withFakeGh({ view, api, failOnGitEnv = false, cwd = ROOT, env = {} }, f
     if (api !== undefined) writeFileSync(join(dir, 'api.json'), api);
     writeFileSync(join(dir, 'gh'), [
       '#!/bin/sh',
-      `printf '%s\\n' "$*" >> ${JSON.stringify(join(dir, 'argv.txt'))}`,
+      `{ for a in "$@"; do printf '%s\\t' "$a"; done; printf '\\n'; } >> ${JSON.stringify(join(dir, 'argv.txt'))}`,
       `{ echo CALLED; env | cut -d= -f1 | grep '^GIT_'; } >> ${JSON.stringify(join(dir, 'seen.txt'))}`,
       failOnGitEnv ? "if env | grep -q '^GIT_'; then exit 1; fi" : ':',
-      `if [ "$1" = pr ] && [ "$2" = view ] && [ -f ${JSON.stringify(join(dir, 'view.json'))} ]; then cat ${JSON.stringify(join(dir, 'view.json'))}; exit 0; fi`,
-      `if [ "$1" = api ] && [ -f ${JSON.stringify(join(dir, 'api.json'))} ]; then cat ${JSON.stringify(join(dir, 'api.json'))}; exit 0; fi`,
+      'has() { for a in "$@"; do [ "$a" = "$want" ] && return 0; done; return 1; }',
+      `if [ "$1" = pr ] && [ "$2" = view ] && [ -f ${JSON.stringify(join(dir, 'view.json'))} ]; then`,
+      '  want=--json; has "$@" || exit 1; want=changedFiles; has "$@" || exit 1; want=.changedFiles; has "$@" || exit 1',
+      `  cat ${JSON.stringify(join(dir, 'view.json'))}; exit 0; fi`,
+      `if [ "$1" = api ] && [ -f ${JSON.stringify(join(dir, 'api.json'))} ]; then`,
+      '  want=--paginate; has "$@" || exit 1; want=--slurp; has "$@" || exit 1',
+      `  cat ${JSON.stringify(join(dir, 'api.json'))}; exit 0; fi`,
       'exit 1',
       '',
     ].join('\n'));
     chmodSync(join(dir, 'gh'), 0o755);
     const r = spawnSync(process.execPath, [SCRIPT, '573'], { cwd, encoding: 'utf8', env: { ...process.env, ...env, PATH: `${dir}:${process.env.PATH}` } });
     const read = (/** @type {string} */ f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), 'utf8').split('\n').filter(Boolean) : []);
-    fn({ r, argv: read('argv.txt'), seen: read('seen.txt') });
+    const calls = read('argv.txt').map((l) => l.split('\t').filter(Boolean));
+    fn({ r, calls, seen: read('seen.txt') });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -159,22 +168,38 @@ test('⭐ CLI｜PR 自報 3001 筆、API 只回得了 3000 筆（第 3001 筆若
   withFakeGh({ view: 'null\n', api: thirtyPages }, ({ r }) => assert.equal(r.status, 2, 'gh 回的檔數不是整數也要退 2'));
 });
 
-test('⭐ CLI｜repo 身分釘在目前 origin，GH_REPO 蓋不掉（否則同號 PR 在別的 repo 剛好是純文件就錯報 E）', () => {
+/** 夾具 repo：只有 origin、沒有 commit（本題只看身分怎麼解）。 @param {string} url */
+function fixtureRepo(url) {
   const dir = mkdtempSync(join(tmpdir(), 'acc-origin-'));
+  for (const args of [['init', '-q'], ['remote', 'add', 'origin', url]]) {
+    const g = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: gitEnv() });
+    assert.equal(g.status, 0, `夾具 git ${args.join(' ')} 失敗：${g.stderr}`);
+  }
+  return dir;
+}
+
+test('⭐ originRepo｜站台與 owner/repo 都從 origin 解（https／ssh／scp 三種寫法），解不出來就丟、不猜', () => {
+  for (const url of ['https://github.com/acme/widgets.git', 'https://github.com/acme/widgets', 'git@github.com:acme/widgets.git', 'ssh://git@github.com/acme/widgets.git']) {
+    const dir = fixtureRepo(url);
+    try { assert.deepEqual(originRepo(dir), { host: 'github.com', slug: 'acme/widgets' }, url); } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const ghes = fixtureRepo('https://ghe.example.com/acme/widgets.git');
+  try { assert.equal(originRepo(ghes).host, 'ghe.example.com', '企業站的 origin 就釘企業站，不偷換成 github.com'); } finally { rmSync(ghes, { recursive: true, force: true }); }
+  assert.throws(() => originRepo(tmpdir()), '不在 repo 裡要丟，不可以回一個猜的身分');
+  assert.deepEqual(originRepo(ROOT), { host: 'github.com', slug: 'teacherjung/personal-finance-webapp' });
+});
+
+test('⭐ CLI｜正式呼叫逐 token 釘旗標，站台與 repo 都明講：GH_REPO、GH_HOST 一起塞也導不走（否則別站／別 repo 的同號 PR 剛好是純文件就錯報 E）', () => {
+  const dir = fixtureRepo('https://github.com/acme/widgets.git');
   try {
-    for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'https://github.com/acme/widgets.git']]) {
-      const g = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: gitEnv() });
-      assert.equal(g.status, 0, `夾具 git ${args.join(' ')} 失敗：${g.stderr}`);
-    }
-    assert.equal(repoSlug(dir), 'acme/widgets');
-    withFakeGh({ view: '1\n', api: JSON.stringify([[{ filename: 'lib/x.js', status: 'modified' }]]), cwd: dir, env: { GH_REPO: 'cli/cli' } }, ({ r, argv }) => {
+    withFakeGh({ view: '1\n', api: JSON.stringify([[{ filename: 'lib/x.js', status: 'modified' }]]), cwd: dir, env: { GH_REPO: 'cli/cli', GH_HOST: 'example.com' } }, ({ r, calls }) => {
       assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /驗收分級：C/);
-      assert.ok(argv.some((l) => /^pr view 573 -R acme\/widgets /.test(l)), `pr view 沒有明講 repo：${argv.join(' | ')}`);
-      assert.ok(argv.some((l) => /repos\/acme\/widgets\/pulls\/573\/files/.test(l)), `api 路徑沒有釘在 origin：${argv.join(' | ')}`);
-      assert.ok(!argv.some((l) => /cli\/cli|\{owner\}/.test(l)), `gh 被交給環境變數或佔位去猜 repo：${argv.join(' | ')}`);
+      assert.deepEqual(calls, [
+        ['pr', 'view', '573', '-R', 'github.com/acme/widgets', '--json', 'changedFiles', '--jq', '.changedFiles'],
+        ['api', '--paginate', '--slurp', '--hostname', 'github.com', 'repos/acme/widgets/pulls/573/files?per_page=100'],
+      ], '兩次呼叫的每一個 token 都要對：少 --paginate 只拿到第一頁、少 --slurp 形狀不對、少站台就被 GH_HOST 導走、-R 沒帶站台也一樣');
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
-  assert.throws(() => repoSlug(tmpdir()), '不在 repo 裡要丟，不可以回一個猜的 slug');
 });
 
 test('⭐ .codex/hooks.json → F（工具安全設定）：只動它時級別就是 F、動作只有 F（不是「E 不需驗收」＋F 的自相矛盾）；F＋E → E 且 F 動作一定印', () => {
@@ -222,7 +247,8 @@ test('現況對照：目前 repo 追蹤的每一個檔案都落在某一級（�
   assert.deepEqual(unknown, [], `這些追蹤檔案沒有級別（會被當 C）：${unknown.slice(0, 10).join('、')}`);
 });
 
-// ── 兩個會 spawn 子行程的呼叫點，各兩種 GIT_* 題（test/git-env.test.js 檔頭的規矩；射程對照在 test/helpers/dirty-git-env.js）──
+// ── 每一個會 spawn 子行程的呼叫點（考題的 trackedFiles()、正式碼的 originRepo() 與它叫的 gh），各兩種 GIT_* 題
+//    （test/git-env.test.js 檔頭的規矩；射程對照在 test/helpers/dirty-git-env.js）──
 test('⭐ trackedFiles｜題①：髒 GIT_* 環境下答案仍正確', () => {
   const restore = injectDirtyGitEnv();
   try {
@@ -232,6 +258,15 @@ test('⭐ trackedFiles｜題①：髒 GIT_* 環境下答案仍正確', () => {
 
 test('⭐ trackedFiles｜題②：假 git 直接看子行程環境，不可以有任何 GIT_*', () => {
   assertChildGitEnvClean(assert, 'acceptance-tier 考題的 trackedFiles()', () => trackedFiles());
+});
+
+test('⭐ originRepo｜題①：髒 GIT_* 環境下仍解出本 repo', () => {
+  const restore = injectDirtyGitEnv();
+  try { assert.equal(originRepo(ROOT).slug, 'teacherjung/personal-finance-webapp'); } finally { restore(); }
+});
+
+test('⭐ originRepo｜題②：假 git 直接看子行程環境，不可以有任何 GIT_*', () => {
+  assertChildGitEnvClean(assert, 'scripts/acceptance-tier.js 的 originRepo()', () => originRepo(ROOT));
 });
 
 test('⭐ 分級腳本交給 gh｜題①：髒 GIT_* 環境＋一支會被 GIT_* 弄壞的 gh → 仍 exit 0、級別正確', () => {
@@ -275,11 +310,12 @@ test('⭐ 文件｜合併步驟「回報合併結果與驗收分級」那一步�
   const end = lines.findIndex((l, i) => i > start && /^> \d+\.\s/.test(l));
   const step = lines.slice(start, end < 0 ? undefined : end).join('\n');
   assert.match(step, /scripts\/acceptance-tier\.js/, '那一步沒指到分級腳本——散文清單又會長回來');
-  assert.match(step, /動作累積|命中幾級就做幾級/, '那一步沒寫「動作累積」——只取最重一級會吃掉其他動作');
-  assert.match(step, /一律當「要重啟」|一律當 C/, '那一步沒寫未列到的路徑 fail-closed');
+  assert.match(step, /照它印的動作做/, '那一步要叫執行者照腳本印的做');
+  // 只指路、不抄副本：規矩與家族清單只住腳本（#573 r5——同一句先說只住腳本、接著又抄一遍＝第二份會漂的副本）
+  assert.doesNotMatch(step, /動作累積|最重|一律當|db\/|package-lock|命中幾級/, '那一步又在抄分級的算法或家族清單——只准指到腳本');
   assert.ok(!gatesRunInMergeSteps().some((g) => /acceptance-tier/.test(g)), '分級腳本被合併閘反查器抓到＝它被寫進 bash fence，會被要求自報閘名');
   const tpl = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8');
   const section = tpl.slice(tpl.indexOf('## 怎麼驗收'), tpl.indexOf('### Grok 複審後掃'));
   assert.match(section, /scripts\/acceptance-tier\.js/, 'PR 模板沒指到分級腳本');
-  assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：/, 'PR 模板又在抄第二份分級表或算法（#573 r4）——只准指路');
+  assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：|不需驗收/, 'PR 模板又在抄級名、分級表或算法（#573 r4／r5）——只准指路');
 });
