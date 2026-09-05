@@ -55,12 +55,12 @@
 // 結果**，成因這裡不推定——實際出現過的至少有三種：環境（node_modules 殘缺——#441）、
 // 兩支合壞了 scripts 呼叫的追蹤檔案（#446 r2 Codex 造出來）、測試自己以 127 收場
 // （#446 r3 Codex 造出來）。所以這一族一律退 2「查不清楚」，只擋下來要人查；
-// node_modules 殘缺到「跑得起來但缺套件」的灰色地帶，三關仍會以紅（1）收場——
-// 那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
+// node_modules 殘缺到「跑得起來但缺套件」的灰色地帶：lock 有列的缺套件會被下一段的 lock 核對先擋成 2；
+// lock 沒列的殘缺（.bin 斷了、套件內少檔）三關仍會以紅（1）收場——那時死因欄裡的 stderr 尾巴就是人工判讀的依據。
 // **它不會安裝套件**：三關用發起樹已裝好的 `node_modules`（symlink 指回去，多半是主目錄那份）。
 // 在途 PR 動了 `package-lock.json`（例：2026-09-02 #548 加 devDependency）時，三關其實是
 // 拿舊套件在跑——結果可能假紅、也可能假綠。所以合併之後先核對：lock 要求的每一個套件，
-// 已裝的版本對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
+// 已裝的名字、版本與安裝紀錄的來源／指紋對不對得上（`lockMismatches`）；對不上一律退 2 並明說，不進三關。
 // 核對的射程：「lock 要的有沒有裝、套件名對不對、版本對不對、來源（resolved）與內容指紋（integrity）
 // 對不對」——後兩項對照 npm 自己寫的 `node_modules/.package-lock.json`（隱藏 lock＝npm 的安裝紀錄；
 // 經 npm 換過的同名同版 tarball——#566 r2 Codex 用本機 tarball 實作出來——它記得）；讀不到隱藏 lock＝
@@ -152,6 +152,30 @@ export const CANT_RUN_CAUSES = [
 ];
 
 /**
+ * verdict 輸入的形狀檢查——回「哪一筆哪個欄壞了」的清單（空＝形狀正確）。只描述索引與欄名，不帶值。
+ * 判準：整包陣列；每筆非陣列物件；number 正整數；why 字串；ok 布林；ok:true 不得帶 kind（矛盾）；
+ * ok:false 的 kind 若有寫要是字串（合法值由 verdict 的下一道驗）。
+ * @param {unknown} results
+ * @returns {string[]}
+ */
+export function resultShapeProblems(results) {
+  if (!Array.isArray(results)) return ['整包不是陣列'];
+  const out = [];
+  results.forEach((r, i) => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) { out.push(`第 ${i} 筆：不是物件`); return; }
+    const x = /** @type {Record<string, unknown>} */ (r);
+    const bad = [];
+    if (!(typeof x.number === 'number' && Number.isInteger(x.number) && x.number > 0)) bad.push('number 不是正整數');
+    if (typeof x.ok !== 'boolean') bad.push('ok 不是布林');
+    if (typeof x.why !== 'string') bad.push('why 不是字串');
+    if (x.ok === true && x.kind !== undefined) bad.push('ok:true 卻帶 kind（矛盾）');
+    if (x.ok === false && x.kind !== undefined && typeof x.kind !== 'string') bad.push('kind 不是字串');
+    if (bad.length) out.push(`第 ${i} 筆：${bad.join('、')}`);
+  });
+  return out;
+}
+
+/**
  * 把每一支的試合併結果彙整成退出碼與訊息。
  *
  * ⚠️ 分類一律看**結構化的 `kind`**（tryMerge 在知道死法的當下標的），不嗅 `why` 的散文
@@ -177,15 +201,18 @@ export const CANT_RUN_CAUSES = [
  * @param {{number: number, ok: boolean, why: string, kind?: 'conflict' | 'red' | 'cantRun' | 'lock'}[]} results
  */
 export function verdict(results) {
-  // ⚠️ 前置防線的第一道是**形狀**：ok 要是真正的布林（"false" 這種字串在 truthiness 下是「綠」——#566 r5 Codex
-  //    實跑 verdict([{ok: 'false', kind: 'cantRun'}]) 得到 0）；number 要是數字。形狀不對＝這一輪的資料不可信，整輪退 2。
-  const malformed = (Array.isArray(results) ? results : []).filter((r) => !r || typeof r !== 'object' || typeof r.ok !== 'boolean' || typeof r.number !== 'number');
-  if (!Array.isArray(results) || malformed.length) {
+  // ⚠️ 前置防線的第一道是**形狀**（射程＝普通 JSON／JS 值，不管 Proxy／getter）：整包是陣列、每筆是非陣列物件、
+  //    number 是正整數、why 是字串、ok 是布林，而且 ok:true 不得帶失敗 kind、ok:false 的 kind 由下一道驗。
+  //    「false」字串在 truthiness 下是「綠」（#566 r5 Codex 實跑得到 0）、NaN 編號會印 #NaN、矛盾形狀會被宣告全綠
+  //    （r6）——形狀不對＝這一輪的資料不可信，整輪退 2。診斷只列索引與壞的欄名，**不回聲 payload**：這條分支的
+  //    敘事就是「有別的東西在餵結果」，把未知內容整包印出來是另一個洞。
+  const shapeProblems = resultShapeProblems(results);
+  if (shapeProblems.length) {
     return {
       code: 2,
-      message: '跨 PR 試合併：**查不清楚——有結果的形狀不對（ok 不是布林、或編號不是數字），這一輪的分類不可信**\n'
-        + (Array.isArray(results) ? results : []).map((r) => `  ・${JSON.stringify(r).slice(0, 200)}`).join('\n')
-        + '\n\n⚠️ 正式路徑（tryMerge）產出的每一筆 ok 都是布林——出現別的形狀＝有別的東西在餵結果、或程式被改壞。'
+      message: '跨 PR 試合併：**查不清楚——有結果的形狀不對，這一輪的分類不可信**\n'
+        + shapeProblems.map((p) => `  ・${p}`).join('\n')
+        + '\n\n⚠️ 正式路徑（tryMerge）產出的每一筆都是固定形狀——出現別的形狀＝有別的東西在餵結果、或程式被改壞。'
         + 'fail-closed 擋下，先查結果是哪來的。',
     };
   }
@@ -390,6 +417,9 @@ export function cantRunSignal(err) {
  * @param {any} hidden 隱藏 lock 的 packages 表（`node_modules/.package-lock.json`）；讀不到給 null
  * @returns {string[]}
  */
+/** lock 項目的承重欄位與它們該有的型別（有寫才驗；沒寫走預設）。 */
+const LOCK_ENTRY_FIELDS = /** @type {const} */ ([['version', 'string'], ['name', 'string'], ['link', 'boolean'], ['optional', 'boolean'], ['resolved', 'string'], ['integrity', 'string']]);
+
 export function lockMismatches(lock, installed, hidden) {
   const isObj = (/** @type {any} */ v) => !!v && typeof v === 'object' && !Array.isArray(v);
   const packages = isObj(lock) ? lock.packages : undefined;
@@ -401,12 +431,13 @@ export function lockMismatches(lock, installed, hidden) {
   for (const [key, entry] of Object.entries(packages)) {
     if (key === '') continue;
     if (!isObj(entry)) { out.push(`${key}：lock 項目不是物件，無法核對`); continue; }
-    if (entry.link) { out.push(`${key}：workspace 連結（link）核對不了指向哪一版，視為對不上`); continue; }
+    // 承重欄位「有寫就要是對的型別」（#566 r5／r6 Codex：optional:'false'、link:0、name:0、resolved:0 在 truthiness 或
+    // typeof 退路下都變成「沒寫」而放行）——型別錯＝lock 壞掉，無法核對；沒寫才走各自的預設。
+    const typeBad = LOCK_ENTRY_FIELDS.filter(([f, t]) => entry[f] !== undefined && typeof entry[f] !== t).map(([f]) => f);
+    if (typeBad.length) { out.push(`${key}：lock 項目的 ${typeBad.join('／')} 欄型別不對，無法核對`); continue; }
+    if (entry.link === true) { out.push(`${key}：workspace 連結（link）核對不了指向哪一版，視為對不上`); continue; }
     const want = String(entry.version ?? '');
-    const wantName = (typeof entry.name === 'string' && entry.name) ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
-    // optional 只認真正的布林 true（"false" 字串、數字、物件在 truthiness 下都會被當成可豁免——#566 r5 Codex 的反例）；
-    // 有寫但不是布林＝lock 壞掉，無法核對。
-    if (entry.optional !== undefined && typeof entry.optional !== 'boolean') { out.push(`${key}：optional 欄不是布林（${JSON.stringify(entry.optional)}），無法核對`); continue; }
+    const wantName = entry.name ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
     const have = installed(key);
     if (have === null) {
       if (entry.optional !== true) out.push(`${key}：lock 要 ${wantName}@${want}，沒有裝`);
@@ -425,6 +456,7 @@ export function lockMismatches(lock, installed, hidden) {
     }
     const h = hidden[key];
     if (!isObj(h)) { out.push(`${key}：隱藏 lock 沒有這一筆，核對不了來源與內容指紋`); continue; }
+    if ((h.resolved !== undefined && typeof h.resolved !== 'string') || (h.integrity !== undefined && typeof h.integrity !== 'string')) { out.push(`${key}：隱藏 lock 那一筆的 resolved／integrity 欄型別不對，無法核對`); continue; }
     if (typeof entry.integrity === 'string' && h.integrity !== entry.integrity) { out.push(`${key}：內容指紋（integrity）根 lock 與隱藏 lock 的中繼紀錄不同（同名同版換了內容、或安裝紀錄沒跟上）`); continue; }
     if (typeof entry.resolved === 'string' && h.resolved !== entry.resolved) out.push(`${key}：來源（resolved）根 lock 與隱藏 lock 的中繼紀錄不同：lock 要 ${entry.resolved}，隱藏 lock 記的是 ${h.resolved ?? '（未記錄）'}`);
   }

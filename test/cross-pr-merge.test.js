@@ -22,7 +22,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES, runIn, lockMismatches, RERUN_LIMITS, failingTestNames } from '../scripts/check-cross-pr-merge.js';
+import { othersToTry, verdict, MERGE_GATE, redDetail, cantRunSignal, CANT_RUN_CAUSES, runIn, lockMismatches, RERUN_LIMITS, failingTestNames, resultShapeProblems } from '../scripts/check-cross-pr-merge.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV } from './helpers/dirty-git-env.js';
 import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 
@@ -1091,8 +1091,23 @@ test('⭐ 裁決｜ok 不是布林（例如字串 "false"）＝整輪查不清�
   assert.equal(verdict(/** @type {any} */ ([{ number: '1', ok: false, kind: 'red', why: '紅' }])).code, 2);
   assert.equal(verdict(/** @type {any} */ (null)).code, 2);
   assert.equal(verdict(/** @type {any} */ ([null])).code, 2);
+  // #566 r6 的四種：[undefined] 不可以丟例外；ok:true 帶 kind 是矛盾；NaN 編號；未知欄位不可回聲
+  assert.equal(verdict(/** @type {any} */ ([undefined])).code, 2, '[undefined] 應退 2，不是丟 TypeError');
+  assert.equal(verdict(/** @type {any} */ ([{ number: 1, ok: true, why: '', kind: 'red' }])).code, 2, 'ok:true 卻帶失敗 kind＝矛盾，不可宣告全綠');
+  assert.equal(verdict(/** @type {any} */ ([{ number: NaN, ok: true, why: '' }])).code, 2, 'NaN 編號不是合法 PR 編號');
+  assert.equal(verdict(/** @type {any} */ ([{ number: 1.5, ok: true, why: '' }])).code, 2);
+  assert.equal(verdict(/** @type {any} */ ([{ number: 1, ok: true }])).code, 2, 'why 缺席也是形狀不對');
+  const leaky = verdict(/** @type {any} */ ([{ number: 1, ok: 'false', why: 'x', token: 'SECRET-SENTINEL' }]));
+  assert.equal(leaky.code, 2);
+  assert.doesNotMatch(leaky.message, /SECRET-SENTINEL/, '形狀防線把未知 payload 整包印出來——這條分支的敘事就是「有別的東西在餵結果」');
+  assert.match(leaky.message, /第 0 筆：.*ok 不是布林/, '診斷要指到哪一筆哪個欄');
+  // 循環物件、BigInt 也不可以讓診斷路徑丟例外
+  const cyc = /** @type {any} */ ({ number: 1, ok: 'x', why: '' }); cyc.self = cyc;
+  assert.equal(verdict([cyc]).code, 2);
+  assert.equal(verdict(/** @type {any} */ ([{ number: 1, ok: true, why: '', big: 10n }])).code, 0, '多餘欄位（型別正確）不算形狀不對——只驗承重欄');
   // 對照：形狀正確的綠仍是 0
   assert.equal(verdict([{ number: 1, ok: true, why: '' }]).code, 0);
+  assert.deepEqual(resultShapeProblems([{ number: 1, ok: false, why: '', kind: 'red' }]), []);
 });
 
 test('⭐ lockMismatches｜optional 只認布林 true：字串 "false"／數字／物件都不能豁免缺套件（算無法核對）；optional: false 缺套件照樣對不上（#566 r5：閘會變鬆的例外）', () => {
@@ -1106,6 +1121,25 @@ test('⭐ lockMismatches｜optional 只認布林 true：字串 "false"／數字�
   assert.equal(strictFalse.length, 1); assert.match(strictFalse[0], /沒有裝/);
   const strictTrue = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', optional: true } } }, () => null, null);
   assert.deepEqual(strictTrue, []);
+});
+
+test('⭐ lockMismatches｜承重欄位有寫就要是對的型別：link:0／name:0／resolved:0／integrity:0／version:1 一律「無法核對」，不可以被當成沒寫而放行（#566 r6：閘會變鬆的例外）', () => {
+  const installed = () => ({ name: 'a', version: '1.0.0' });
+  for (const entry of [
+    { version: '1.0.0', link: 0 }, { version: '1.0.0', link: 'true' },
+    { version: '1.0.0', name: 0 }, { version: '1.0.0', name: {} },
+    { version: '1.0.0', resolved: 0, integrity: 0 }, { version: '1.0.0', resolved: 'x', integrity: [] },
+    { version: 1 }, { version: null },
+  ]) {
+    const m = lockMismatches({ packages: { '': {}, 'node_modules/a': entry } }, installed, { 'node_modules/a': { version: '1.0.0', resolved: 'x', integrity: 'y' } });
+    assert.equal(m.length, 1, `${JSON.stringify(entry)} 應該一筆「無法核對」，實得：${m.join(' / ')}`);
+    assert.match(m[0], /型別不對|無法核對/);
+  }
+  // 隱藏 lock 那一筆的 resolved／integrity 型別錯也一樣
+  const hb = lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', resolved: 'x', integrity: 'y' } } }, installed, { 'node_modules/a': { version: '1.0.0', resolved: 0, integrity: 'y' } });
+  assert.equal(hb.length, 1); assert.match(hb[0], /隱藏 lock.*型別不對/);
+  // 對照：欄位都是對的型別 → 空
+  assert.deepEqual(lockMismatches({ packages: { '': {}, 'node_modules/a': { version: '1.0.0', name: 'a', link: false, optional: false, resolved: 'x', integrity: 'y' } } }, installed, { 'node_modules/a': { version: '1.0.0', resolved: 'x', integrity: 'y' } }), []);
 });
 
 test('裁決｜kind 缺席＝整輪查不清楚（2）：單獨、混 red、混 conflict、混 cantRun 四種都一樣（#446 r6／r7）', () => {
