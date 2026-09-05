@@ -842,6 +842,7 @@ test('headers 到了但 body 還掛著＝名額仍被占用（第二個 refresh 
   /** @type {ReadableStreamDefaultController|null} */
   let bodyCtrl = null;
   let tickerCalls = 0;
+  let released = false;   // latch（Codex #572 r2）：突變情境下 B 在 10s abort 後才輪到 fetch、會建新的掛住 body，那時清理已跑完＝等 60s
   let signalEntered = () => {};
   const entered = new Promise((resolve) => { signalEntered = () => resolve(undefined); });
   setStockFundamentalsOptionsForTest({
@@ -849,6 +850,7 @@ test('headers 到了但 body 還掛著＝名額仍被占用（第二個 refresh 
     fetchImpl: async (url) => {
       if (String(url).includes('company_tickers')) {
         tickerCalls += 1;
+        if (released) return jsonResponse(fixturePayload(String(url)));   // 清理之後才輪到的，直接給完整回應
         const body = new ReadableStream({ start(c) { bodyCtrl = c; signalEntered(); } });
         return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
@@ -862,6 +864,7 @@ test('headers 到了但 body 還掛著＝名額仍被占用（第二個 refresh 
     assert.equal(b.status, 503, await b.text());
     assert.equal(tickerCalls, 1, 'body 還掛著就發出第二個 fetch＝深度提早釋放');
   } finally {
+    released = true;   // latch：先翻，之後才輪到的 fetch 不再掛 body
     const c = /** @type {any} */ (bodyCtrl);
     if (c) { c.enqueue(new TextEncoder().encode(JSON.stringify(fixture.tickerIndex))); c.close(); }
     await pendingA.catch(() => undefined);

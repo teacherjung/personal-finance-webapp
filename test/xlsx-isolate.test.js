@@ -161,10 +161,11 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
     const b64 = process.argv[1];
     const data = new Uint8Array(Buffer.from(b64, 'base64'));
     import('${new URL('../lib/statement.js', import.meta.url).href}').then((m) => {
-      // ⚠️ 2026-09-05 流程體檢：只量 RSS 增量會在機器記憶體吃緊時被 OS 回收壓小＝「對照組不夠貴」假紅。
+      // 2026-09-05 流程體檢：只量 RSS 增量會在機器記憶體吃緊時被 OS 回收壓小＝「對照組不夠貴」假紅。
       //    改同時量 V8 自己記的帳（heapUsed＋external；不受換頁影響），兩者取大。
-      //    ⚠️ `arrayBuffers` **已包含在 `external` 裡**（Node 文件；Codex #572 r1：加進去會把 100MB 的 Buffer 記成 200MB，
+      //    arrayBuffers 已包含在 external 裡（Node 文件；Codex #572 r1：加進去會把 100MB 的 Buffer 記成 200MB，
       //    足以讓不貴的檔案過 150MB 自檢），所以只留診斷欄、不進判準。
+      //    （這段在模板字串裡，註解不可以用反引號——Codex #572 r2：一個反引號就讓整支考題 SyntaxError）
       const mu0 = process.memoryUsage();
       const v8Of = (mu) => mu.heapUsed + mu.external;
       m.readXlsxForIsolation(data);
@@ -174,19 +175,61 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
         rssMB: (mu1.rss - mu0.rss) / 1048576, v8MB: (v8Of(mu1) - v8Of(mu0)) / 1048576,
         arrayBuffersMB: (mu1.arrayBuffers - mu0.arrayBuffers) / 1048576,   // 診斷用，不進判準
       }));
-    }).catch((e) => { process.stdout.write(JSON.stringify({ threw: String(e && e.message).slice(0, 120) })); });
+    }).catch((e) => { process.stdout.write(JSON.stringify({ threw: { name: String(e && e.name), code: String((e && e.code) || ''), message: String(e && e.message).slice(0, 160) } })); });
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '--max-old-space-size=3072', '-e', src,
     Buffer.from(data).toString('base64')], { maxBuffer: 8 * 1024 * 1024, timeout: 120_000 });
   if (r.status !== 0 || !r.stdout?.length) return { died: true };
   try {
     const parsed = JSON.parse(String(r.stdout));
-    // 解析到一半炸掉（字串長度上限／配置失敗）＝代價真的很貴，等同壓死；其他例外照實回報（讓斷言訊息看得到）
-    // 只認能明確歸因資源耗盡的訊息（Codex #572 r1：`allocat` 太寬）；其他例外照實回報，讓「不夠貴」的斷言訊息看得到原因
-    if (parsed.threw && /Invalid string length|Array buffer allocation failed|Cannot allocate memory|heap out of memory|ERR_STRING_TOO_LONG|ENOMEM/i.test(parsed.threw)) return { died: true, threw: parsed.threw };
+    // 解析到一半炸掉＝代價真的很貴，等同壓死；分類器見 isResourceExhaustion（code 優先，訊息只收斂的 exact 字樣）
+    if (parsed.threw && isResourceExhaustion(parsed.threw)) return { died: true, threw: parsed.threw };
     return parsed;
   } catch { return { died: true }; }
 }
+
+/**
+ * 「這個例外是不是資源耗盡」的分類器（Codex #572 r2：Node 官方明說 `error.code` 才是跨版本穩定的識別，
+ * message 任何版本都可能改；ERR_STRING_TOO_LONG 的 message 是「Cannot create a string longer than …」、
+ * 字串裡根本沒有 code）。所以：①先看穩定的 code；②沒有 code 的 V8 RangeError 才用**收斂的 exact 字樣**
+ * （Node 22 deps/v8 message-template 與 node_errors 的原文）；③其餘一律不算——寧可讓「不夠貴」的斷言把
+ * 訊息印出來給人看，也不放行。fatal OOM（Reached heap limit…）是非零退出，由 `r.status !== 0` 那臂接住。
+ * @param {{ name?: string, code?: string, message?: string }} e
+ */
+function isResourceExhaustion(e) {
+  const code = String(e?.code || '');
+  if (['ERR_STRING_TOO_LONG', 'ERR_BUFFER_TOO_LARGE', 'ENOMEM'].includes(code)) return true;
+  const msg = String(e?.message || '');
+  return [
+    /^Invalid string length$/, /^Invalid array buffer length$/, /^Invalid array buffer max length$/,
+    /^Invalid typed array length: /, /^Array buffer allocation failed$/, /^Cannot allocate memory/,
+    /^Cannot create a string longer than /, /^Cannot create a Buffer larger than /,
+    /: Out of memory$/, /JavaScript heap out of memory/,
+  ].some((re) => re.test(msg));
+}
+
+test('對照組的資源耗盡分類器：穩定 code 與收斂的 V8 字樣收；其他例外不放行（固定輸入輸出）', () => {
+  const yes = [
+    { code: 'ERR_STRING_TOO_LONG', message: 'Cannot create a string longer than 0x1fffffe8 characters' },
+    { code: 'ERR_BUFFER_TOO_LARGE', message: 'Cannot create a Buffer larger than 4294967296 bytes' },
+    { code: 'ENOMEM', message: 'spawnSync: ENOMEM' },
+    { name: 'RangeError', message: 'Invalid string length' },
+    { name: 'RangeError', message: 'Invalid array buffer length' },
+    { name: 'RangeError', message: 'Invalid typed array length: 4294967296' },
+    { name: 'RangeError', message: 'Array buffer allocation failed' },
+    { name: 'RangeError', message: 'WebAssembly.Memory(): Out of memory' },
+    { message: 'Reached heap limit Allocation failed - JavaScript heap out of memory' },
+  ];
+  const no = [
+    { name: 'RangeError', message: 'Invalid array length' },            // 語意歧義，刻意不放行
+    { name: 'TypeError', message: 'Cannot read properties of undefined' },
+    { name: 'Error', message: 'allocation strategy changed' },          // 舊正規式 `allocat` 會誤收的那種
+    { code: 'ERR_INVALID_ARG_TYPE', message: 'The "path" argument must be of type string' },
+    { message: '' }, {},
+  ];
+  for (const e of yes) assert.ok(isResourceExhaustion(e), `該收卻沒收：${JSON.stringify(e)}`);
+  for (const e of no) assert.ok(!isResourceExhaustion(e), `不該收卻收了：${JSON.stringify(e)}`);
+});
 
 test('攻擊｜解壓後極大的合法 XLSX → 子行程被收掉、父行程活著（400、不是整個服務死掉）', async () => {
   setPdfTimeoutForTest(8_000);
