@@ -1,13 +1,17 @@
 // @ts-check
 // 請求旗標一律嚴格（William 2026-09-05 裁示）：body 送來的開關，只有**真正的 `true`** 才算「打開」。
 //
-// 為什麼要有這一份：同一族開關原本三種口徑（`!!x`／`x === true`／`if (x)`），寬鬆那幾個連字串 'false'
-// 都算打開。其中一個開關管的是「同一家店的其他筆一起改分類」——誤開會一次改到很多筆，而畫面只會回報成功。
+// 為什麼要有這一份：這一族開關容易長出三種口徑（`!!x`／`x === true`／直接拿來當條件），寬鬆的那兩種
+// 連字串 'false' 都算打開。其中一個開關管的是「同一家店的其他筆一起改分類」——誤開會一次改到很多筆，
+// 而畫面只會回報成功。
 //
 // 守兩層，射程各自寫清楚：
-//   ①行為題：每個開關各一題——送「看起來像開、但不是 true」的值時，那個動作**真的沒發生**；
-//     每題的對照組要證明送真正的 true 時那個動作**真的會發生**（只驗 HTTP 200 等於沒驗，見鐵則 9）。
-//   ②形狀題：`lib/routes/` 底下遞迴的每一支 `.js`，本族開關名只能用 `=== true`／`!== true` 讀；
+//   ①行為題：這一份守五個開關（整批傳播、還原自動判斷、清品牌規則、清空全部略過、預覽），各一題——
+//     送「看起來像開、但不是 true」的值時，那個動作**真的沒發生**；對照組要證明送真正的 true 時
+//     那個動作**真的會發生**（只驗 HTTP 200 等於沒驗，見鐵則 9）。名單裡其餘的名字在這一份**只有形狀題**
+//     看得到寫法、沒有行為題。
+//   ②形狀題：`lib/routes/` 底下遞迴的每一支 `.js`，名單裡的開關名**在這道網看得到的那些寫法裡**
+//     只能用 `=== true`／`!== true`；
 //     判定用解析器看語法樹，所以註解裡寫什麼都不算數（括號包住的等價寫法算合格）。
 //     **這道網只看寫法、不看語意**，兩個已知盲區寫在這裡，不要拿它當保證：
 //       ・控制流不看：`if (x !== true) 做事()` 形狀合格、意思卻相反——那種只有行為題抓得到。
@@ -18,7 +22,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync, readFileSync, readdirSync } from 'node:fs';
+import { rmSync, readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import ts from 'typescript';
 
@@ -155,6 +159,18 @@ test('預覽的開關：送 1 → 不當成預覽（落到「維護端點要明�
   assert.deepEqual(await keys(), [A, B], '對照組：預覽就是不可以寫進去');
 });
 
+test('掃描集合的遞迴：子目錄裡的 .js 也要進得來（路由目錄哪天長出子資料夾，形狀題不可以漏看）', () => {
+  const box = mkdtempSync(join(tmpdir(), 'route-scan-'));
+  try {
+    mkdirSync(join(box, '子資料夾'), { recursive: true });
+    writeFileSync(join(box, '頂層.js'), '');
+    writeFileSync(join(box, '子資料夾', '底下.js'), '');
+    writeFileSync(join(box, '子資料夾', '不是程式.txt'), '');
+    assert.deepEqual(routeFiles(new URL('file://' + box + '/')).sort(), ['子資料夾/底下.js', '頂層.js'],
+      '子目錄裡的 .js 要進得來、非 .js 要排除');
+  } finally { rmSync(box, { recursive: true, force: true }); }
+});
+
 /** 本族開關名：新開關要加進來，這道網才看得到它。 */
 const FLAG_NAMES = ['force', 'dryRun', 'reset', 'clearAll', 'clearBrand', 'applyAll', 'stream', 'useAi'];
 
@@ -171,7 +187,13 @@ function routeFiles(dir, prefix = '') {
 test('形狀題：lib/routes 底下這一族開關一律 === true／!== true 讀（解析器判定，註解裡寫什麼都不算數）', () => {
   const dir = new URL('../lib/routes/', import.meta.url);
   const files = routeFiles(dir);
-  assert.ok(files.length >= 3, `路由目錄只掃到 ${files.length} 支檔案，掃描集合壞了`);
+  // 用另一套機制（Node 自己的遞迴列目錄）算同一份集合來對帳——漏掉檔案時，逐名與反向對帳
+  // 都還是綠的（漏掉的檔根本沒被讀），只有這一行會紅。
+  // ⚠️ 這個路由目錄現在是平的（沒有子目錄），所以這一行今天證明不了「遞迴有在遞」；
+  //    遞迴本身由下面那題用臨時目錄直接驗。
+  assert.deepEqual(files.slice().sort(),
+    readdirSync(dir, { recursive: true }).map(String).filter((f) => f.endsWith('.js')).sort(),
+    '手寫遞迴掃到的檔案集合與 Node 自己列出來的不一樣——有檔案沒被掃到');
   /** 括號不改變語意：`(x) === true` 與 `x === (true)` 都算嚴格。 @param {ts.Node} n */
   const inner = (n) => { let x = n; while (ts.isParenthesizedExpression(x)) x = x.expression; return x; };
   /** @param {ts.Node} n */
