@@ -21,7 +21,7 @@
 // 下面的 `MANIFEST` 是**手寫的真相**：每份契約有哪些規則、哪些責任檔。判準全部改成**精確集合相等**：
 //   ・契約檔裡的標題集合 **==** `rules ∪ exempt`（多一個少一個都紅——刪 marker 沒有用）
 //   ・`rules` 與 AGENTS 索引列 **雙向一一對應**（拆掉索引＝紅；索引指到不存在的規則＝紅）
-//   ・README 路由列的檔案集合 **==** `files`（精確路徑，不接受 basename 子字串）
+//   ・README 領域小節的檔案集合 **==** `files`（精確路徑，不接受 basename 子字串）
 //   ・契約內文提到的 repo 路徑 **⊆** `files`（新提到一個檔就強迫更新 manifest）
 //
 // 代價說清楚：manifest 是一份要手動維護的副本。但它的**每一種走樣都會紅**，
@@ -34,9 +34,14 @@
 // 細部劃界都已降到「已知手法」，檔頭卻還寫著無條件的「擋得住」——**讀的人只會看到檔頭**。
 //
 // **完整保證**（判準與資料精確相等，沒有近似）：
-//   ・拆掉索引列或 marker、索引與 manifest 對不上、路由表漏檔或用短檔名冒充
+//   ・拆掉索引列或 marker、索引與 manifest 對不上、領域小節漏檔或用短檔名冒充
 //   ・契約標題的形式（層級／縮排／Setext／組合符／NFC／重複 anchor）
-//   ・manifest／README 第一格／契約頁首三邊的領域名**精確相等**
+//   ・manifest／README 第一格／契約頁首三邊的領域名**精確相等**（README 的 `### <領域名>` 小節也整行精確相等）
+//   ・README 各領域小節與 `files` 都**一行一檔、依路徑排序、不重複**（2026-09-03 起）——動機是兩支 PR 同時加檔時落在不同行，
+//     但**合併行為沒有考題**（相鄰插入點仍會衝突，README 已知邊界有寫）；這裡保證的只有結構——
+//     「一行一檔」是**結構定義**：宣告＝行首那一個 repo 路徑 code span；檔案行與備註行的尾段只准由（…）／〔…〕群組組成；
+//     小節每一行都要落在形狀白名單裡；登記區的 `###` 集合＝manifest domains、檔案形狀的行只准在合法小節（Codex #567 r1–r5 逐輪封口）。
+//     ⚠️ 劃界：群組**裡**提到別的檔名（`app.js` 這類 basename）算說明、不算宣告、也不擋——README 逐字搬來的說明本來就會提到。
 //
 // **只擋得住「已知手法」**（是近似，不是渲染器保證）：
 //   ・索引長回原文——`visibleLen()` 只算得掉已知的撐分母手法（見它自己的劃界）
@@ -325,11 +330,113 @@ function visibleLen(md) { return visibleText(md).length; }
 
 const BODY_LABEL = '**記得同步這裡**：';
 
+/** repo 路徑的機械抽取正規式（README 小節的檔案行與契約內文共用同一支；認得到什麼、認不到什麼見 README 雲端與安全小節的備註）。 */
+const REPO_PATH = /(?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js|package(?:-lock)?\.json/;
+/**
+ * README 小節裡「一行一檔」的合法寫法：`- \`<完整路徑>\`` 開頭，**而且整行只准這一個 repo 路徑 code span**——
+ * 後面只能接括號說明／〔標籤〕，裡面不得再出現 \`另一個路徑\`（Codex #567 r2 High①：沒有行尾錨、又只擷取第一個 match，
+ * `- \`data/seed.json\`、\`server.js\`` 畫面像一行宣告兩檔、考題只計第一檔）。備註行（`- 〔…`）裡順口提到的路徑仍不算宣告。
+ */
+const FILE_LINE_HEAD = new RegExp(`^- \`(${REPO_PATH.source})\`(.*)$`);
+const SECOND_PATH = new RegExp(`\`(?:${REPO_PATH.source})\``);
+/**
+ * 檔案行的尾段（第一個路徑 code span 之後）**只准由 `（…）` 與 `〔…〕` 群組組成**（可巢狀；群組之間只准空白）。
+ * 理由（Codex #567 r4）：只擋「符合 REPO_PATH 的第二個 code span」擋不住行尾裸寫 `server.js`、或第二個
+ * `\`AGENTS.md\``（不在 REPO_PATH 形狀裡）——畫面上一行仍像兩個檔案。群組結構把「說明／標籤」與「第二個宣告」
+ * 用位置分開：群組**裡**提到別的檔名是說明（README 現有說明本來就會提到 `app.js` 這類 basename），群組**外**
+ * 除了空白什麼都不准。誠實劃界：群組裡的檔名提及不算宣告、也不擋——宣告永遠只有行首那一個 code span。
+ * @param {string} tail
+ */
+function tailIsGroupsOnly(tail) {
+  const CLOSE = /** @type {Record<string, string>} */ ({ '（': '）', '〔': '〕' });
+  /** @type {string[]} */ const stack = [];
+  for (const ch of tail) {
+    if (stack.length === 0) {
+      if (/\s/u.test(ch)) continue;
+      if (!(ch in CLOSE)) return false;
+      stack.push(CLOSE[ch]);
+    } else if (ch in CLOSE) stack.push(CLOSE[ch]);
+    else if (ch === stack[stack.length - 1]) stack.pop();
+  }
+  return stack.length === 0;
+}
+const FILE_LINE = {
+  /** @param {string} l */ test: (l) => { const m = FILE_LINE_HEAD.exec(l); return !!m && !SECOND_PATH.test(m[2]) && tailIsGroupsOnly(m[2]); },
+  /** @param {string} l */ exec: (l) => { const m = FILE_LINE_HEAD.exec(l); return m && !SECOND_PATH.test(m[2]) && tailIsGroupsOnly(m[2]) ? m : null; },
+};
+
+/**
+ * 契約頁首的**完整**宣告形狀（Codex #567 r2 High②：只找「「X」節的責任檔案清單」這個片語，整行換成
+ * 「這不是本檔的適用檔案宣告，只是名詞例句：…」、連 README 連結一起拿掉，照樣綠）。
+ * 判準＝**整行錨定**：引言區裡剛好一行長成 `> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單`
+ * 開頭；片語本身在整檔也只准出現這一次。回傳領域名，不合法就 assert。
+ * @param {string} text 契約檔全文 @param {string} file 只用來寫錯誤訊息
+ */
+function headerDeclaration(text, file) {
+  const firstH2 = text.search(/^## /mu);
+  const headerZone = firstH2 < 0 ? text : text.slice(0, firstH2);
+  const phrase = /「([^」]+)」節的責任檔案清單/gu;
+  assert.equal([...text.matchAll(phrase)].length, 1,
+    `${file} 裡「「X」節的責任檔案清單」必須整檔剛好出現 1 次（多一次＝內文誘餌）。`);
+  const anchored = headerZone.split('\n').filter((l) => /^> \*\*適用檔案清單＝\[README\.md\]\(README\.md\)「[^」]+」節的責任檔案清單/u.test(l));
+  assert.equal(anchored.length, 1,
+    `${file} 的引言區必須剛好有一行以 \`> **適用檔案清單＝[README.md](README.md)「<領域名>」節的責任檔案清單\` 開頭（實得 ${anchored.length} 行）。\n`
+    + '⚠️ 片語出現在別的句子裡不算宣告（Codex #567 r2：名詞例句照樣綠）。');
+  return /「([^」]+)」節的責任檔案清單/u.exec(anchored[0])?.[1] ?? '';
+}
+
+/** 小節裡「備註」的合法寫法：`- 〔…` 開頭（不屬於任何單一檔案的句子逐字收在這裡；順口提到的路徑不算宣告）。 */
+const NOTE_LINE_HEAD = /^- (〔.*)$/;
+/** 備註行＝`- ` 之後**整段**是閉合的群組序列（Codex #567 r5：只看字首 `- 〔`，`- 〔說明〕 \`server.js\`` 把路徑放在群組外照樣綠——與檔案行尾段同一根因，同一把尺）。 */
+const NOTE_LINE = { /** @param {string} l */ test: (l) => { const m = NOTE_LINE_HEAD.exec(l); return !!m && tailIsGroupsOnly(m[1]); } };
+/** 小節裡「備註」的標題行。 */
+const NOTE_HEAD = /^備註（[^）]*）：$/;
+/** 小節第一個非空行必須是這個形狀：`契約：[x.md](x.md)`（兩邊同一個檔名）。 */
+const CONTRACT_LINE = /^契約：\[([^\]]+\.md)\]\(\1\)$/;
+
+/**
+ * README 某個領域的小節（`### <領域名>` 那一行到下一個 `##`／`###` 標題之前）。
+ * **剛好一個**（0＝那個領域的責任檔案沒人會被導到；2 以上＝讀的人照到哪一節是碰運氣——
+ * 與路由列「剛好一列」同一個理由，Codex #384 r5）。
+ *
+ * ⚠️ **fail-closed 的形狀白名單（Codex #567 r1 High②／③）**：r1 版「到下一個任何層級標題為止」＋「只認 `- \`路徑\``」
+ *    有兩個盲區——①小節裡插一個 `#### 額外宣告` 就把後面的宣告切出小節，②`* \`路徑\``／縮排的 `- \`路徑\``／
+ *    全形反引號 這些「畫面上像宣告、考題卻不計」的寫法都靜靜綠。⇒ 小節裡**每一行**只准是下列形狀之一：
+ *    空行／`契約：[x.md](x.md)`（且必須是第一個非空行、整節剛好一次）／`備註（…）：`／`- \`完整路徑\``…／`- 〔…`。
+ *    其餘一律紅——**看起來像宣告卻不是合法宣告**的行（任何 `#` 開頭、任何其他清單記號、縮排、全形反引號）因此一律紅，不會靜靜不計。
+ * @param {string} readme @param {string} domain
+ */
+function domainSection(readme, domain) {
+  const lines = readme.split('\n');
+  const heads = lines.map((l, i) => (l === `### ${domain}` ? i : -1)).filter((i) => i >= 0);
+  assert.equal(heads.length, 1,
+    `docs/contracts/README.md 的「### ${domain}」小節出現 ${heads.length} 次（必須剛好 1 次；標題要**整行剛好**是這串字，不接受後綴）。`);
+  const rest = lines.slice(heads[0] + 1);
+  const end = rest.findIndex((l) => /^#{2,3}\s/.test(l));
+  const section = end < 0 ? rest : rest.slice(0, end);
+  const firstText = section.find((l) => l.trim() !== '');
+  assert.ok(firstText !== undefined && CONTRACT_LINE.test(firstText),
+    `README「${domain}」小節的第一個非空行必須是 \`契約：[x.md](x.md)\`，實得：「${String(firstText).slice(0, 60)}」`);
+  assert.equal(section.filter((l) => /^契約：/.test(l)).length, 1,
+    `README「${domain}」小節的 \`契約：\` 行必須剛好一行（多一行＝誘餌：第一行指錯、後面補一行對的照樣綠）。`);
+  for (const l of section) {
+    if (l.trim() === '' || CONTRACT_LINE.test(l) || NOTE_HEAD.test(l) || FILE_LINE.test(l) || NOTE_LINE.test(l)) continue;
+    assert.fail('README「' + domain + '」小節有一行不是合法形狀（空行／契約：／備註（…）：／「- `完整路徑`」／「- 〔…」）：\n  「' + l.slice(0, 80) + '」\n'
+      + '⚠️ 這是 fail-closed：任何看起來像宣告、卻不是「- `完整路徑`」的行（#### 標題、* 清單、縮排、全形反引號、一行塞第二個路徑 code span）都在這裡紅；沒有這道白名單，它們會靜靜不計。');
+  }
+  return section;
+}
+
+/** 該領域小節宣告的檔案（照檔案裡的順序，不去重——排序題要看得到重複）。 @param {string} readme @param {string} domain */
+function sectionFiles(readme, domain) {
+  return domainSection(readme, domain).map((l) => FILE_LINE.exec(l)?.[1]).filter((p) => p !== undefined);
+}
+
 /**
  * **宣告的真相**（不是從文字推導的）。
  * - `rules`：每一條規則的標題原文。**每一條都必須有一列 AGENTS 索引指過來。**
  * - `exempt`：確定不是獨立規則的小節，必須逐一寫理由。
- * - `files`：這個領域**宣告的**責任檔清單（README 路由列必須剛好是這一組）。
+ * - `files`：這個領域**宣告的**責任檔清單（README 該領域小節必須剛好是這一組）。
  *   ⚠️ **它是下限，不是窮舉**（Codex #384 r29 逼出來的誠實劃界）：
  *   這道護欄只能驗「已宣告的集合彼此一致」，**驗不出人漏宣告了哪些檔案**。
  *   r27 我照 Codex 的清單補了 21 支、它 r29 又找到 64 支，而且明講「我撤回 r27 的判斷，那次抽查範圍不足」。
@@ -356,17 +463,15 @@ const MANIFEST = {
     exempt: [],
     files: [
       'data/seed.json',
+      'db/supabase-schema.sql',
       'lib/bank-statement.js',
       'lib/crypto-secrets.js',
-      // P1b-2：AI 鑰匙（settings.aiApiKey）的設定頁寫入路徑與文案（機密不回顯、模式分流告知）
-      'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
       'lib/hosted.js',
       'lib/http-body.js',
       'lib/ib.js',
       'lib/parse-limits.js',
       'lib/pdf-isolate-child.js',
       'lib/pdf-isolate.js',
-      'db/supabase-schema.sql',
       'lib/rate-limit.js',
       'lib/routes/auth.js',
       'lib/routes/core.js',
@@ -379,16 +484,20 @@ const MANIFEST = {
       'lib/taishin-securities.js',
       'lib/tenant.js',
       'package-lock.json',
+      'public/modules/ai-consent.js',   // P1b-2
+      'public/modules/ai-key-settings.js',   // P1b-2
       'public/modules/assets.js',
       'public/modules/backup-export.js',
       'public/modules/cards.js',
       'public/modules/cashflow-model.js',
       'public/modules/cashflow.js',
-      'public/modules/transactions-import.js',   // P0.5：信用卡上傳密碼窗＝/api/mode 第三個消費者
       'public/modules/settings.js',
       'public/modules/toast-timing.js',
+      'public/modules/transactions-import.js',   // P0.5：信用卡上傳密碼窗＝/api/mode 第三個消費者
       'server.js',
       'test-doubles/fake-supabase.js',
+      'test/ai-consent.test.js',   // P1b-2
+      'test/ai-key-settings.test.js',   // P1b-2
       'test/backup-export.test.js',
       'test/cashflow-bank-upload.test.js',
       'test/deploy-config.test.js',
@@ -467,9 +576,8 @@ const MANIFEST = {
     ],
     exempt: [],
     files: [
-      'lib/derive.js', 'data/seed.json',
-      'test/ai-consent.test.js',   // 固定動作列（.sticky-actions）的考題住這裡＝與收支／雲端多重命中
-
+      'data/seed.json',
+      'lib/derive.js',
       'lib/repo.js',
       'lib/routes/core.js',
       'lib/routes/crud.js',
@@ -480,17 +588,37 @@ const MANIFEST = {
       'lib/services/snapshot.js',
       'lib/services/subscriptions.js',
       'lib/store.js',
-      'lib/types.js', 'test/daily-values.test.js',
+      'lib/types.js',
       'public/app.js',
+      'public/modules/assets.js',
       'public/modules/backup-export.js',
+      'public/modules/cards.js',
+      'public/modules/cashflow.js',
       'public/modules/dashboard.js',
-      'public/modules/monthly-review-card.js', 'public/modules/modal-shell.js', 'public/modules/modal-ownership.js', 'test/modal-ownership.test.js', 'public/modules/goal-tracking.js', 'public/modules/settings.js', 'public/modules/assets.js', 'public/modules/cards.js', 'public/modules/cashflow.js', 'public/modules/history.js', 'public/modules/insurance.js', 'public/modules/portfolio.js', 'public/modules/securities.js', 'public/modules/transactions.js', 'public/modules/settings-store-rules.js', 'public/modules/transactions-import.js', 'test/snapshot-safety.test.js', 'test/goal-tracking.test.js', 'test/goal-tracking-ui.test.js',
+      'public/modules/form-options.js',   // #409 補宣告
+      'public/modules/goal-tracking.js',
+      'public/modules/history.js',
+      'public/modules/html-escape.js',   // #409 補宣告
+      'public/modules/insurance.js',
+      'public/modules/modal-ownership.js',
+      'public/modules/modal-shell.js',
+      'public/modules/monthly-review-card.js',
+      'public/modules/portfolio.js',
+      'public/modules/securities.js',
+      'public/modules/settings-store-rules.js',
+      'public/modules/settings.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
       'public/modules/toast-timing.js',
-      // #409 補宣告：彈窗下拉的通用保留機制（form-options 與收支多重命中）＋ esc 的實作本體
-      'public/modules/form-options.js', 'public/modules/html-escape.js',
+      'public/modules/transactions-import.js',
+      'public/modules/transactions.js',
+      'test/ai-consent.test.js',   // 固定動作列（.sticky-actions）的考題住這裡＝與收支／雲端多重命中
+      'test/daily-values.test.js',
+      'test/goal-tracking-ui.test.js',
+      'test/goal-tracking.test.js',
+      'test/modal-ownership.test.js',
       'test/server.test.js',
+      'test/snapshot-safety.test.js',
       'test/subscriptions-model.test.js',
     ],
   },
@@ -531,74 +659,112 @@ const MANIFEST = {
     exempt: [],
     files: [
       'data/seed.json',
-      'lib/bank-statement.js', 'test/bank-statement.test.js', 'test/taishin-debit.test.js',
-      'test/card-identity.test.js', 'test/helpers/build-pdf.js',
-      'test/ai-parse-card.test.js', 'test/ai-card-pipeline.test.js', 'test/parse-recipe-card.test.js',
-      'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
-      'lib/bank-alias.js', 'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
-      'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
-      'test/debit-card-ledger.test.js',   // Stage 5b：簽帳金融卡明細一份帳單兩種明細（A 區→卡片帳本、D 區刷卡列留空）
-      'test/debit-card-ledger-http.test.js',   // Stage 5b：兩本帳互為條件的單筆 DELETE 守門（走正式 HTTP）
-      // P0 匯入對帳閘（2026-08-11）：三級對帳閘純函式＋考題
-      'lib/statement-reconcile.js', 'test/statement-reconcile.test.js',
-      // P0 前端子項：預覽窗對帳說明（兩頁共用翻譯）＋考題
-      'public/modules/reconcile-summary.js', 'test/reconcile-summary.test.js',
-      // P0.5 匯入密碼池：LOCAL 考題＋錯誤 code 通道＋密碼窗文案住所＋池上限常數（與雲端領域多重命中）
-      'test/statement-password-pool.test.js', 'lib/routes/route-helpers.js', 'public/modules/cashflow-model.js', 'lib/statement-password-policy.js',
-      // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）：純模組（答案卷/驗收）＋傳輸（唯一 fetch 檔，入外連登記閘）＋考題（假引擎）
-      'lib/ai-parse.js', 'lib/ai-transport.js', 'lib/ai-confirm-ticket.js', 'test/ai-parse.test.js', 'test/ai-account-mask.test.js',
-      // P1b-2 前端（2026-08-12）：同意確認窗與設定頁鑰匙欄的判準/文案純函式＋考題（與雲端領域多重命中）
-      'public/modules/ai-consent.js', 'public/modules/ai-key-settings.js', 'test/ai-consent.test.js', 'test/ai-key-settings.test.js',
-      'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
-      'test/ledger-split-behavior.test.js',   // 批四 4A：兩頁分堆的行為考題（jsdom 載整張路由圖）
-      'test/ai-gate-interception.test.js',   // P1b-3 攔截率：故障注入量閘的條件攔截率，與計畫 §八 互扣
-      // P2-1 配方快取（2026-08-15，格式 A 拍板）：配方純模組（驗證器/引擎/出生驗收）＋考題
-      'test/ai-time-deposit.test.js', 'lib/recipe-birth.js', 'public/modules/recipe-birth-text.js', 'test/recipe-birth.test.js', 'lib/progress-stages.js', 'public/modules/progress-text.js', 'public/modules/ndjson-stream.js', 'test/upload-progress.test.js', 'lib/parse-recipe.js', 'test/parse-recipe.test.js', 'test/parse-recipe-store.test.js', 'test/parse-recipes-http.test.js', 'public/modules/parse-recipes-ui.js', 'lib/ai-budget.js', 'test/ai-budget.test.js', 'test/multi-currency-account.test.js', 'test/recipe-gen.test.js', 'test/ai-dual-read.test.js', 'test/ai-pipeline-interception.test.js', 'test/cd-split.test.js',
+      'lib/ai-budget.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'lib/ai-confirm-ticket.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
+      'lib/ai-parse-card.js',
+      'lib/ai-parse.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
+      'lib/ai-transport.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
+      'lib/bank-alias.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
+      'lib/bank-statement.js',
+      'lib/card-identity.js',
       'lib/derive.js',
+      'lib/parse-recipe-card.js',
+      'lib/parse-recipe.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'lib/pdf-isolate.js',
+      'lib/progress-stages.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'lib/recipe-birth.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'lib/repo.js',
       'lib/routes/core.js',
       'lib/routes/crud.js',
+      'lib/routes/route-helpers.js',   // P0.5 匯入密碼池
       'lib/routes/statement.js',
-      'lib/schema.js', 'lib/secret-fields.js', 'public/modules/assets.js', 'public/modules/accounts-model.js', 'lib/types.js', 'test/server.test.js', 'test/statement.test.js', 'test/codex-r10.test.js',
+      'lib/schema.js',
+      'lib/secret-fields.js',
       'lib/services/bank-import.js',
-      'lib/services/ib-sync.js',                 // #454：IB 現金帳戶那行小字的資料來源（只寫 balance、不寫 balanceAsOf）
-      'test/ib-cash-freshness.test.js',          // #454 r1：用真的 syncIb 釘住那句文案的前提
-      'test/bank-accounts-asof-ui.test.js',      // #454：餘額旁小字的整族護欄（r13 待辦補登記）
-      'test/bank-preview-layout.test.js',        // #455：預覽窗「說明區在最下面」的排版考題（跑真樣板驗順序）
-      'test/skip-similar-import.test.js',       // 跳過疑似重複（William 2026-08-14）：勾選＝同判準跳過＋嚴格布林三層
-      'test/note-naming.test.js',               // 名詞統一（William 2026-08-14；r1 事實修正）：預覽與收支頁統一「收支說明」＋誠實 ⓘ
       'lib/services/categories.js',
       'lib/services/health-check.js',
+      'lib/services/ib-sync.js',   // #454：IB 現金帳戶那行小字的資料來源（只寫 balance、不寫 balanceAsOf）
       'lib/services/learning.js',
       'lib/services/statement-import.js',
       'lib/services/store-rules.js',
-      'lib/card-identity.js',
-      'lib/ai-parse-card.js', 'lib/parse-recipe-card.js',
-      // 發卡行可選清單（2026-08-28）：卡片表單與 card-identity 的 issuerBank 共用同一份機構清單
-      'public/modules/card-issuers.js', 'test/card-issuers.test.js',
-      'public/modules/card-last-four.js', 'test/card-last-four.test.js',
-      'public/modules/cards.js',   // 發卡行下拉的接線與文案（多領域命中：前端／雲端也點名它）
+      'lib/statement-password-policy.js',   // P0.5 匯入密碼池
+      'lib/statement-reconcile.js',   // P0 匯入對帳閘（2026-08-11）
       'lib/statement.js',
       'lib/store-rules.js',
       'lib/store.js',
       'lib/taishin-securities.js',
+      'lib/types.js',
       'public/app.js',
+      'public/modules/accounts-model.js',
+      'public/modules/ai-consent.js',   // P1b-2 前端（2026-08-12）
+      'public/modules/ai-key-settings.js',   // P1b-2 前端（2026-08-12）
+      'public/modules/assets.js',
+      'public/modules/card-issuers.js',   // 發卡行可選清單（2026-08-28）
+      'public/modules/card-last-four.js',
+      'public/modules/cards.js',   // 發卡行下拉的接線與文案（多領域命中：前端／雲端也點名它）
+      'public/modules/cashflow-model.js',   // P0.5 匯入密碼池
       'public/modules/cashflow.js',
       'public/modules/categories.js',
+      'public/modules/form-options.js',   // #409 補宣告
+      'public/modules/ndjson-stream.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'public/modules/parse-recipes-ui.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'public/modules/progress-text.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'public/modules/recipe-birth-text.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'public/modules/reconcile-summary.js',   // P0 前端子項
       'public/modules/refund-attribution.js',
       'public/modules/settings-store-rules.js',
       'public/modules/settings.js',
       'public/modules/transactions-import.js',
       'public/modules/transactions.js',
-      // #409 補宣告：收支的分類／子類下拉也走這一份（與前端多重命中）
-      'public/modules/form-options.js',
+      'test/ai-account-mask.test.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
+      'test/ai-budget.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/ai-card-pipeline.test.js',
+      'test/ai-consent.test.js',   // P1b-2 前端（2026-08-12）
+      'test/ai-dual-read.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/ai-gate-interception.test.js',   // P1b-3 攔截率：故障注入量閘的條件攔截率，與計畫 §八 互扣
+      'test/ai-key-settings.test.js',   // P1b-2 前端（2026-08-12）
+      'test/ai-parse-card.test.js',
+      'test/ai-parse.test.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
+      'test/ai-pipeline-interception.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/ai-time-deposit.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/bank-accounts-asof-ui.test.js',   // #454：餘額旁小字的整族護欄（r13 待辦補登記）
+      'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
+      'test/bank-preview-layout.test.js',   // #455：預覽窗「說明區在最下面」的排版考題（跑真樣板驗順序）
+      'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
+      'test/bank-statement.test.js',
+      'test/card-identity.test.js',
+      'test/card-issuers.test.js',   // 發卡行可選清單（2026-08-28）
+      'test/card-last-four.test.js',
+      'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
+      'test/cd-split.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/codex-r10.test.js',
+      'test/debit-card-ledger-http.test.js',   // Stage 5b：兩本帳互為條件的單筆 DELETE 守門（走正式 HTTP）
+      'test/debit-card-ledger.test.js',   // Stage 5b：簽帳金融卡明細一份帳單兩種明細（A 區→卡片帳本、D 區刷卡列留空）
+      'test/helpers/build-pdf.js',
+      'test/ib-cash-freshness.test.js',   // #454 r1：用真的 syncIb 釘住那句文案的前提
+      'test/ledger-split-behavior.test.js',   // 批四 4A：兩頁分堆的行為考題（jsdom 載整張路由圖）
+      'test/multi-currency-account.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/note-naming.test.js',   // 名詞統一（William 2026-08-14；r1 事實修正）：預覽與收支頁統一「收支說明」＋誠實 ⓘ
+      'test/parse-recipe-card.test.js',
+      'test/parse-recipe-store.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/parse-recipe.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/parse-recipes-http.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/recipe-birth.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/recipe-gen.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
+      'test/reconcile-summary.test.js',   // P0 前端子項
       'test/refund-attribution.test.js',
       'test/refund-pairing-aggregate.test.js',
-      // 回饋（點數折抵）＝負數列第三格：安全網刻意不排除回饋，那條保存型考題住這裡
-      'test/reminder-thresholds.test.js',
+      'test/reminder-thresholds.test.js',   // 回饋（點數折抵）＝負數列第三格
+      'test/server.test.js',
+      'test/skip-similar-import.test.js',   // 跳過疑似重複（William 2026-08-14）：勾選＝同判準跳過＋嚴格布林三層
+      'test/statement-password-pool.test.js',   // P0.5 匯入密碼池
       'test/statement-pipeline.test.js',
+      'test/statement-reconcile.test.js',   // P0 匯入對帳閘（2026-08-11）
+      'test/statement.test.js',
       'test/store-rules.test.js',
+      'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
+      'test/taishin-debit.test.js',
+      'test/upload-progress.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
     ],
   },
   'docs/contracts/investment-sec.md': {
@@ -626,63 +792,118 @@ const MANIFEST = {
     files: [
       'lib/derive.js',
       'lib/heavy-admission.js',
-      'lib/http-body.js', 'lib/ib.js',
+      'lib/http-body.js',
+      'lib/ib.js',
       'lib/parse-limits.js',
       'lib/pdf-isolate-child.js',
       'lib/routes/auth.js',
       'lib/routes/core.js',
-      'lib/routes/market.js', 'lib/services/ib-sync.js', 'test/ib-cash-freshness.test.js', 'lib/services/securities-import.js', 'lib/secret-fields.js', 'lib/services/security-trades.js', 'lib/routes/securities.js', 'public/modules/securities.js', 'public/modules/securities-view.js', 'lib/types.js', 'lib/store.js', 'lib/taishin-securities.js', 'test/security-trades.test.js', 'test/securities-contract.test.js', 'test/securities-import.test.js', 'test/securities-migration.test.js', 'test/securities-preview-projection.test.js', 'test/securities-ui.test.js', 'test/taishin-securities.test.js', 'test/portfolio-activity.test.js', 'test/portfolio-chart.test.js', 'test/portfolio-details.test.js', 'test/portfolio-format.test.js', 'test/portfolio-ib-sync.test.js', 'test/portfolio-info-actions.test.js', 'test/portfolio-info.test.js', 'test/portfolio-overview.test.js', 'test/portfolio-quotes.test.js', 'test/portfolio-remote-actions.test.js', 'test/portfolio-report.test.js', 'test/portfolio-research-actions.test.js', 'test/portfolio-tables.test.js', 'test/stock-research-model.test.js', 'test/stock-research-page.test.js', 'test/stock-research-score.test.js', 'test/stock-research-view.test.js',
+      'lib/routes/market.js',
+      'lib/routes/securities.js',
       'lib/schema.js',
+      'lib/secret-fields.js',
+      'lib/services/ib-sync.js',
       'lib/services/insights.js',
       'lib/services/market-data.js',
+      'lib/services/securities-import.js',
+      'lib/services/security-trades.js',
       'lib/services/stock-fundamentals.js',
       'lib/stock-fundamentals.js',
-      'public/app.js', 'public/modules/categories.js', 'public/modules/portfolio-activity.js', 'public/modules/portfolio-chart.js', 'public/modules/portfolio-details.js', 'public/modules/portfolio-format.js', 'public/modules/portfolio-ib-sync.js', 'public/modules/portfolio-info-actions.js', 'public/modules/portfolio-info.js', 'public/modules/portfolio-overview.js', 'public/modules/portfolio-quotes.js', 'public/modules/portfolio-remote-actions.js', 'public/modules/portfolio-report.js', 'public/modules/portfolio-research-actions.js', 'public/modules/portfolio-tables.js', 'public/modules/stock-research-model.js', 'public/modules/stock-research-page.js', 'public/modules/stock-research-score.js', 'public/modules/stock-research-view.js',
-      'public/modules/portfolio-calculations.js',
+      'lib/store.js',
+      'lib/taishin-securities.js',
+      'lib/types.js',
+      'public/app.js',
+      'public/modules/accounts-model.js',   // #409 補宣告
+      'public/modules/categories.js',
       'public/modules/fx-rates.js',   // 匯率表唯一實作（丙；前後端共用）
+      'public/modules/portfolio-activity.js',
+      'public/modules/portfolio-calculations.js',
+      'public/modules/portfolio-chart.js',
+      'public/modules/portfolio-details.js',
       'public/modules/portfolio-editors.js',
       'public/modules/portfolio-exposure.js',
+      'public/modules/portfolio-format.js',
       'public/modules/portfolio-forms.js',
+      'public/modules/portfolio-ib-sync.js',
+      'public/modules/portfolio-info-actions.js',
+      'public/modules/portfolio-info.js',
       'public/modules/portfolio-model.js',
+      'public/modules/portfolio-overview.js',
+      'public/modules/portfolio-quotes.js',
+      'public/modules/portfolio-remote-actions.js',
+      'public/modules/portfolio-report.js',
+      'public/modules/portfolio-research-actions.js',
       'public/modules/portfolio-research.js',
       'public/modules/portfolio-risk.js',
       'public/modules/portfolio-state.js',
       'public/modules/portfolio-symbol.js',
+      'public/modules/portfolio-tables.js',
       'public/modules/portfolio-valuation-actions.js',
       'public/modules/portfolio-valuation.js',
       'public/modules/portfolio-visuals.js',
       'public/modules/portfolio.js',
+      'public/modules/securities-view.js',
+      'public/modules/securities.js',
       'public/modules/signal-tiers.js',
       'public/modules/stock-research-fundamentals.js',
       'public/modules/stock-research-method.js',
+      'public/modules/stock-research-model.js',
+      'public/modules/stock-research-page.js',
+      'public/modules/stock-research-score.js',
+      'public/modules/stock-research-view.js',
       'server.js',
       'test/codex-r11.test.js',
       'test/derive-reminders.test.js',
       'test/derive.test.js',
       'test/fx-sentinel.test.js',
-      'test/heavy-admission.test.js', 'test/ib-parser-money.test.js', 'test/ib-sync-integrity.test.js',
-      'test/insights.test.js', 'test/securities-sync.test.js',
+      'test/heavy-admission.test.js',
+      'test/ib-cash-freshness.test.js',
+      'test/ib-parser-money.test.js',
+      'test/ib-sync-integrity.test.js',
+      'test/insights.test.js',
+      'test/parse-limits.test.js',
+      'test/portfolio-activity.test.js',
       'test/portfolio-calculations.test.js',
+      'test/portfolio-chart.test.js',
+      'test/portfolio-details.test.js',
       'test/portfolio-editors.test.js',
       'test/portfolio-exposure.test.js',
+      'test/portfolio-format.test.js',
       'test/portfolio-forms.test.js',
+      'test/portfolio-ib-sync.test.js',
+      'test/portfolio-info-actions.test.js',
+      'test/portfolio-info.test.js',
       'test/portfolio-model.test.js',
+      'test/portfolio-overview.test.js',
+      'test/portfolio-quotes.test.js',
+      'test/portfolio-remote-actions.test.js',
+      'test/portfolio-report.test.js',
+      'test/portfolio-research-actions.test.js',
       'test/portfolio-research.test.js',
       'test/portfolio-risk.test.js',
       'test/portfolio-state.test.js',
+      'test/portfolio-tables.test.js',
       'test/portfolio-valuation-actions.test.js',
       'test/portfolio-valuation.test.js',
       'test/portfolio-visuals.test.js',
-      'test/parse-limits.test.js',
+      'test/securities-contract.test.js',
+      'test/securities-import.test.js',
+      'test/securities-migration.test.js',
+      'test/securities-preview-projection.test.js',
+      'test/securities-sync.test.js',
+      'test/securities-ui.test.js',
+      'test/security-trades.test.js',
       'test/server.test.js',
       'test/signal-tiers.test.js',
       'test/stock-fundamentals-api.test.js',
       'test/stock-fundamentals.test.js',
       'test/stock-research-fundamentals.test.js',
       'test/stock-research-method.test.js',
-      // #409 補宣告：fxExposure 讀 accounts-model 的 LIABILITY_TYPES（收支那一列早就寫「與投資多重命中」，
-      // 硬規則②要求被命中的每一個領域都要點名它）
-      'public/modules/accounts-model.js',
+      'test/stock-research-model.test.js',
+      'test/stock-research-page.test.js',
+      'test/stock-research-score.test.js',
+      'test/stock-research-view.test.js',
+      'test/taishin-securities.test.js',
     ],
   },
 };
@@ -996,7 +1217,7 @@ test('拆分護欄｜索引的摘要必須明顯比契約內文短（否則拆�
   }
 });
 
-test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精確路徑，不接受冒充）', () => {
+test('拆分護欄｜README 領域小節的檔案集合＝manifest 的 files（精確路徑，不接受冒充）', () => {
   // ⚠️ r2 的假綠：原本用 basename 子字串比對，`lib/store-rules.js` 可以替
   //    缺掉的 `lib/services/store-rules.js` 冒充過關。現在只認**完整路徑**的精確集合相等。
   const readme = read('docs/contracts/README.md');
@@ -1016,25 +1237,128 @@ test('拆分護欄｜README 路由列的檔案集合＝manifest 的 files（精�
     // ⚠️ **剛好一列**（Codex #384 r5 High）：原本用 `rows.find()` 只驗第一列，
     //    於是在正確列後面再加一條「同一份契約、沒有任何責任檔」的矛盾路由，六題照樣全綠。
     //    路由表有兩列指向同一份契約時，讀的人會照到哪一列是碰運氣。
+    //    2026-09-03 改成一行一檔之後，路由列只剩「領域／範圍／契約檔」三格、責任檔案搬進
+    //    `### <領域名>` 小節——「剛好一列」照守（它是三邊判準的那一邊），檔案集合改從小節抽。
     const matched = rows.filter((r) => targetsOf(r).includes(normalize(file)));
     assert.equal(matched.length, 1,
       `${file} 在 README 路由表對應到 ${matched.length} 列（必須剛好 1 列）。\n`
       + '0 列＝那個領域的規則沒人會被導到；2 列以上＝讀的人照到哪一列是碰運氣。');
-    const row = matched[0];
-    const listed = [...row.matchAll(/`((?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js|package(?:-lock)?\.json)`/g)]
-      .map((x) => x[1]);
+    const listed = sectionFiles(readme, m.domain);
     assert.deepEqual(sorted([...new Set(listed)]), sorted(m.files),
-      `${base} 的路由列與 manifest 的 files 不一致。\n`
+      `${base} 的 README「${m.domain}」小節與 manifest 的 files 不一致。\n`
       + '⚠️ README 硬規則①：已拆領域的檔案清單＝**宣告的責任集合**（下限，不是窮舉）。\n'
-      + `  路由列有、manifest 沒有：${listed.filter((f) => !m.files.includes(f)).join('、') || '（無）'}\n`
-      + `  manifest 有、路由列沒有：${m.files.filter((f) => !listed.includes(f)).join('、') || '（無）'}`);
+      + `  小節有、manifest 沒有：${listed.filter((f) => !m.files.includes(f)).join('、') || '（無）'}\n`
+      + `  manifest 有、小節沒有：${m.files.filter((f) => !listed.includes(f)).join('、') || '（無）'}`);
     for (const f of m.files) {
       assert.ok(existsSync(join(ROOT, f)), `${base} 的 files 列了不存在的檔案 ${f}`);
     }
   }
 });
 
-test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路由列（三邊的第三邊）', () => {
+
+test('⭐ 小節切法自己要先會動：合法的收；#### 標題、* 清單、縮排、全形反引號、契約行誘餌都要丟例外', () => {
+  const ok = ['### 甲', '', '契約：[a.md](a.md)', '', '- `lib/x.js`（說明）', '- `test/y.test.js`', '', '備註（不屬於單一檔案的句子）：', '- 〔順口一提 `lib/not-declared.js` 不算宣告〕', '', '### 乙', '契約：[b.md](b.md)'].join('\n');
+  assert.deepEqual(sectionFiles(ok, '甲'), ['lib/x.js', 'test/y.test.js'], '合法小節要收，備註句裡的路徑不算宣告。');
+  const nested = ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（`esc` 的實作本體，`app.js` 原樣 re-export）〔#409 補宣告（彈窗下拉（通用））〕 〔第二個標籤〕', '### 乙', '契約：[b.md](b.md)'].join('\n');
+  assert.deepEqual(sectionFiles(nested, '甲'), ['lib/x.js'], '尾段由巢狀群組組成、群組裡提到 basename，是合法說明。');
+  const bad = {
+    '#### 四級標題把宣告切出小節': ['### 甲', '契約：[a.md](a.md)', '#### 額外宣告', '- `lib/x.js`'],
+    '* 清單記號': ['### 甲', '契約：[a.md](a.md)', '* `lib/x.js`'],
+    '縮排的清單': ['### 甲', '契約：[a.md](a.md)', '  - `lib/x.js`'],
+    '全形反引號': ['### 甲', '契約：[a.md](a.md)', '- ｀lib/x.js｀'],
+    '契約行不是第一個非空行': ['### 甲', '- `lib/x.js`', '契約：[a.md](a.md)'],
+    '兩行契約（第一行指錯、第二行誘餌）': ['### 甲', '契約：[b.md](b.md)', '契約：[a.md](a.md)', '- `lib/x.js`'],
+    '契約行兩邊檔名不同': ['### 甲', '契約：[a.md](b.md)', '- `lib/x.js`'],
+    '普通內文行（既不是宣告也不是備註）': ['### 甲', '契約：[a.md](a.md)', '這一行看起來像說明 `lib/x.js`'],
+    '一行塞兩個路徑 code span（Codex r2）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`、`server.js`（一行宣告兩檔）'],
+    '括號說明裡再藏一個路徑 code span': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（另見 `lib/y.js`）'],
+    '行尾裸寫第二個檔名（Codex r4）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js` server.js'],
+    '第二個 code span 不在 REPO_PATH 形狀裡（Codex r4）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js` `AGENTS.md`'],
+    '群組之間夾了說明文字': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明）順帶一句〔標籤〕'],
+    '括號沒閉合': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`（說明'],
+    '備註行的群組外放路徑（Codex r5）': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '- 〔補充說明〕 `server.js`'],
+    '備註行的群組沒閉合': ['### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '- 〔補充說明'],
+  };
+  for (const [name, lines] of Object.entries(bad)) {
+    assert.throws(() => sectionFiles([...lines, '### 乙', '契約：[b.md](b.md)'].join('\n'), '甲'), `「${name}」應該要紅。`);
+  }
+});
+
+test('⭐ 頁首宣告判準自己要先會動：整行錨定的收；名詞例句、拿掉 README 連結、片語出現兩次都要丟例外', () => {
+  const good = '# 契約：甲\n\n> 本檔是契約。\n> **適用檔案清單＝[README.md](README.md)「甲」節的責任檔案清單（單一真相）**——命中就必讀本檔。\n\n## 第一條\n內文。\n';
+  assert.equal(headerDeclaration(good, 'fixture'), '甲', '合法頁首要回傳領域名。');
+  const bad = {
+    '名詞例句（Codex r2）': good.replace(/^> \*\*適用檔案清單＝.*$/mu, '> 這不是本檔的適用檔案宣告，只是名詞例句：「甲」節的責任檔案清單。'),
+    '拿掉 README 連結': good.replace('[README.md](README.md)', 'README'),
+    '片語在內文再出現一次': good + '\n順帶一提「甲」節的責任檔案清單。\n',
+    '宣告掉到第一個 ## 之後': good.replace('> **適用檔案清單', '> 引言\n\n## 第零條\n> **適用檔案清單'),
+    '不是引用行（沒有 > ）': good.replace('> **適用檔案清單', '**適用檔案清單'),
+  };
+  for (const [name, text] of Object.entries(bad)) assert.throws(() => headerDeclaration(text, 'fixture'), `「${name}」應該要紅。`);
+});
+
+/**
+ * 登記區的拓樸（Codex #567 r5）：只驗五個已知小節，等於沒封住「小節之外」——在兩個合法小節之間加 `### 額外責任`
+ * 再放一行檔案、或把檔案行放在第一個合法 `###` 之前，五題照樣綠。⇒ 兩條封口：①登記區（`## 各領域的責任檔案` 起）
+ * 裡的 `### ` 標題集合**精確等於** manifest 的 domains；②整份 README 裡任何**檔案形狀**的行（清單記號＋路徑 code span）
+ * 都必須落在其中一個合法小節裡。純函式，可探針。
+ * @param {string} readme @param {string[]} domains
+ */
+function registryTopology(readme, domains) {
+  const lines = readme.split('\n');
+  const start = lines.findIndex((l) => /^## 各領域的責任檔案/u.test(l));
+  assert.ok(start >= 0, 'README 找不到「## 各領域的責任檔案」登記區標題。');
+  const h3 = lines.slice(start + 1).filter((l) => l.startsWith('### ')).map((l) => l.slice(4));
+  assert.deepEqual(sorted(h3), sorted(domains),
+    `登記區的 ### 標題集合必須精確等於 manifest 的 domains。\n  多出來的：${h3.filter((d) => !domains.includes(d)).join('、') || '（無）'}\n  缺少的：${domains.filter((d) => !h3.includes(d)).join('、') || '（無）'}`);
+  const fileShaped = new RegExp(`^\\s*[-*+]\\s*\`(?:${REPO_PATH.source})\``, 'u');
+  let current = /** @type {string | null} */ (null);
+  lines.forEach((l, i) => {
+    if (l.startsWith('### ')) current = l.slice(4);
+    else if (/^#{1,2}\s/u.test(l)) current = null;
+    if (fileShaped.test(l) && (current === null || !domains.includes(current))) {
+      assert.fail(`README 第 ${i + 1} 行是檔案形狀的行，卻不在任何合法小節裡（所在：${current ?? '（小節之外）'}）：「${l.slice(0, 80)}」`);
+    }
+  });
+}
+
+test('⭐ 登記區拓樸自己要先會動：### 集合＝domains 才收；多一個小節、少一個小節、小節外的檔案行都要丟例外', () => {
+  const base = ['# 路由表', '', '## 各領域的責任檔案（一行一檔）', '', '### 甲', '契約：[a.md](a.md)', '- `lib/x.js`', '', '### 乙', '契約：[b.md](b.md)', '- `test/y.test.js`'];
+  assert.doesNotThrow(() => registryTopology(base.join('\n'), ['甲', '乙']));
+  const bad = {
+    '多一個未知小節（Codex r5）': [...base.slice(0, 8), '### 額外責任', '- `server.js`', '', ...base.slice(8)],
+    '少一個小節': base.slice(0, 8),
+    '第一個合法 ### 之前就有檔案行（Codex r5）': [...base.slice(0, 4), '- `server.js`', ...base.slice(4)],
+    '## 之下（小節外）的檔案行': [...base, '', '## 附錄', '* `lib/z.js`'],
+  };
+  for (const [name, lines] of Object.entries(bad)) assert.throws(() => registryTopology(lines.join('\n'), ['甲', '乙']), `「${name}」應該要紅。`);
+});
+
+test('⭐ 拆分護欄｜README 登記區拓樸：### 集合＝manifest domains，檔案形狀的行都在合法小節裡', () => {
+  registryTopology(read('docs/contracts/README.md'), Object.values(MANIFEST).map((m) => m.domain));
+});
+
+test('⭐ 拆分護欄｜README 各領域小節與 manifest 的 files 都要依路徑排序、不重複（一行一檔的理由就是這個）', () => {
+  // 2026-09-03（流程體檢）：以前整個領域的責任檔案擠在路由表**同一格**，兩支 PR 各加一個檔案
+  //    就撞在同一行 → 被迫 rebase → head 變 → 複審結論閘失效、重拿一張「通過」。
+  //    一行一檔只解決「落在不同行」；**沒有排序**的話兩支都往清單尾巴加，還是同一個 hunk。
+  //    所以排序是這一題真正守的東西：比較方式＝JS 字串的 `<`（與 `sorted()` 用的預設 `sort()` 同序）。
+  // ⚠️ 只驗「清單內的順序」；兩支 PR 加的檔案剛好相鄰時 git 仍會報衝突，這一題擋不了那種。
+  const readme = read('docs/contracts/README.md');
+  for (const [file, m] of Object.entries(MANIFEST)) {
+    /** @type {[string, string[]][]} */
+    const both = [[`README「${m.domain}」小節`, sectionFiles(readme, m.domain)], [`${file} 的 manifest files`, m.files]];
+    for (const [name, arr] of both) {
+      const dup = arr.filter((p, i) => arr.indexOf(p) !== i);
+      assert.deepEqual(dup, [], `${name} 有重複：${dup.join('、')}`);
+      const bad = arr.findIndex((p, i) => i > 0 && !(arr[i - 1] < p));
+      assert.equal(bad, -1, bad < 0 ? '' : `${name} 沒有依路徑排序：「${arr[bad - 1]}」後面接著「${arr[bad]}」。\n`
+        + '請照 JS 字串順序（`[...files].sort()`）排好——這正是兩支 PR 同時加檔不撞行的前提。');
+    }
+  }
+});
+
+test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 節（三邊的第三邊）', () => {
   // ⚠️ Codex #384 r35 ④：manifest ↔ README 的集合相等一直有守，但**契約檔這第三邊沒人驗**。
   //    它把「前端功能」契約的頁首改成「適用檔案清單＝README『投資與 SEC』列」，7/7 全綠——
   //    也就是三份契約可以互相指錯，而三邊一致的承諾其實只成立兩邊。
@@ -1042,12 +1366,18 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 路�
   const rows = readme.split('\n').filter((l) => l.startsWith('|'));
   for (const file of Object.keys(MANIFEST)) {
     const base = file.replace('docs/contracts/', '');
-    const declared = /路由表「([^」]+)」列/u.exec(read(file));
-    assert.ok(declared,
-      `${file} 的頁首沒有宣告它屬於 README 的哪一列（要寫成「路由表「<領域名>」列」）。\n`
-      + '⚠️ 沒有這句話，契約與路由表就只能靠人記得對應——那正是這支 PR 在修的病。');
+    // 2026-09-03 起責任檔案住在 README 的 `### <領域名>` 小節，頁首字樣從「路由表「X」列」改成「「X」節的責任檔案清單」。
+    // ⚠️ 釘位＋唯一（Codex #567 r1 High③）：r1 版用未錨定正規式掃全文——把真頁首改成普通引用句、內文順帶出現
+    //    「「前端功能」節的責任檔案清單」照樣綠。⇒ 只在**引言區**（第一個 `## ` 之前）找，而且整檔剛好一次。
+    //    r2 再收：片語不夠，要**整行錨定**的宣告形狀（headerDeclaration，純函式、有探針題）。
+    const declared = [null, headerDeclaration(read(file), file)];
     const row = rows.find((l) => l.includes(`](${base})`));
     assert.ok(row, `README 路由表沒有指向 ${base} 的那一列`);
+    // 小節自己也要指回同一份契約（否則「### 前端功能」底下寫著 `契約：[investment-sec.md]` 三邊照樣綠）。
+    const section = domainSection(readme, MANIFEST[file].domain);
+    // domainSection 已保證第一個非空行是 `契約：[x](x)` 且整節剛好一行；這裡驗它指的是**這一份**。
+    assert.ok(section.includes(`契約：[${base}](${base})`),
+      `README「${MANIFEST[file].domain}」小節少了 \`契約：[${base}](${base})\` 這一行（小節與路由列要指向同一份契約）。`);
     // ⚠️ **精確相等，不是 startsWith**（Codex #384 r37）：把頁首「前端功能」改成「前端」
     //    照樣過——**題目寫「精確」而實作是前綴比對**，那本身就是一句不誠實的話。
     //    canonical 名稱宣告在 manifest，三邊都精確對它。
@@ -1134,7 +1464,7 @@ function stripComments(src) {
  * **已經被某個宣告過的正式程式 import 進來，但自己還沒有進任何契約 `files` 的模組**——存量清單。
  *
  * 這不是豁免名單，是**今天的欠帳**：每一項都代表「某份契約的責任集合裡有一個檔案靠它幹活，
- * 而讀那份契約的人不會被導到它」。清單裡的東西可以慢慢還（挑一個歸進某個領域，同時改 README 路由列
+ * 而讀那份契約的人不會被導到它」。清單裡的東西可以慢慢還（挑一個歸進某個領域，同時改 README 該領域小節
  * 與 manifest，然後從這裡刪掉）；**不可以默默變長**——變長就是又發生一次「兩邊一起漏列」。
  *
  * ⚠️ 為什麼不是「一次全部歸戶」：這批檔案該落在哪個領域是**人的判斷**（`icons.js` 與 `theme.js`
@@ -1162,7 +1492,7 @@ const UNDECLARED_IMPORTED = [
 test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自己也要被宣告（關掉「兩邊一起漏列」的盲區）', () => {
   // ## 這一題補的是 #409 r6（2026-08-06）Codex 指出的盲區
   //
-  // 上面那兩題（README 路由列 == manifest 的 files、契約內文提到的路徑 ⊆ files）比的都是
+  // 上面那兩題（README 領域小節 == manifest 的 files、契約內文提到的路徑 ⊆ files）比的都是
   // **兩邊已經宣告的集合**。所以「README 與 manifest **一起**漏掉同一個檔案」是完全靜的——
   // 而本支 PR 就是這樣漏的：`public/modules/form-options.js` 與 `public/modules/html-escape.js`
   // 從 `public/app.js` 裡切出來、`app.js`／`settings.js`／`cashflow.js`／`transactions.js`
@@ -1240,7 +1570,7 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
     '「已宣告的正式程式 import 進來、自己卻沒被任何契約宣告」的集合變了。\n'
     + `實得：\n${detail || '  （空）'}\n`
     + '⚠️ **變多**＝又發生一次「README 與 manifest 一起漏列」（那正是這一題存在的理由）：\n'
-    + '   請把新模組加進某份契約的 files **並同步 README 路由列**；真的還不決定歸屬，\n'
+    + '   請把新模組加進某份契約的 files **並同步 README 該領域小節**；真的還不決定歸屬，\n'
     + '   就把它明確寫進 UNDECLARED_IMPORTED（那是刻意的、看得見的欠帳，不是沉默）。\n'
     + '⚠️ **變少**＝有一筆欠帳還完了（或那個 import 被拿掉）：請把它從 UNDECLARED_IMPORTED 刪掉，\n'
     + '   否則清單會開始說謊。');
