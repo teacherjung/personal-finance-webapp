@@ -161,17 +161,21 @@ export const CANT_RUN_CAUSES = [
 export function resultShapeProblems(results) {
   if (!Array.isArray(results)) return ['整包不是陣列'];
   const out = [];
-  results.forEach((r, i) => {
-    if (!r || typeof r !== 'object' || Array.isArray(r)) { out.push(`第 ${i} 筆：不是物件`); return; }
+  // ⚠️ 用索引走完每一格、不用 forEach：稀疏陣列的空槽 forEach 會跳過（#566 r7 Codex：verdict(Array(1)) 退 0）；
+  //    「帶不帶 kind」看 own property，不看值是不是 undefined（顯式 kind: undefined 也是帶了）。
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (!r || typeof r !== 'object' || Array.isArray(r)) { out.push(`第 ${i} 筆：不是物件`); continue; }
     const x = /** @type {Record<string, unknown>} */ (r);
+    const hasKind = Object.prototype.hasOwnProperty.call(x, 'kind');
     const bad = [];
     if (!(typeof x.number === 'number' && Number.isInteger(x.number) && x.number > 0)) bad.push('number 不是正整數');
     if (typeof x.ok !== 'boolean') bad.push('ok 不是布林');
     if (typeof x.why !== 'string') bad.push('why 不是字串');
-    if (x.ok === true && x.kind !== undefined) bad.push('ok:true 卻帶 kind（矛盾）');
-    if (x.ok === false && x.kind !== undefined && typeof x.kind !== 'string') bad.push('kind 不是字串');
+    if (x.ok === true && hasKind) bad.push('ok:true 卻帶 kind（矛盾）');
+    if (x.ok === false && hasKind && typeof x.kind !== 'string') bad.push('kind 不是字串');
     if (bad.length) out.push(`第 ${i} 筆：${bad.join('、')}`);
-  });
+  }
   return out;
 }
 

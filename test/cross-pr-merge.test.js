@@ -1105,6 +1105,13 @@ test('⭐ 裁決｜ok 不是布林（例如字串 "false"）＝整輪查不清�
   const cyc = /** @type {any} */ ({ number: 1, ok: 'x', why: '' }); cyc.self = cyc;
   assert.equal(verdict([cyc]).code, 2);
   assert.equal(verdict(/** @type {any} */ ([{ number: 1, ok: true, why: '', big: 10n }])).code, 0, '多餘欄位（型別正確）不算形狀不對——只驗承重欄');
+  // #566 r7 的兩種：稀疏陣列的空槽（forEach 會跳過）、顯式 kind: undefined（own property 存在＝帶了）
+  assert.equal(verdict(/** @type {any} */ (Array(1))).code, 2, '稀疏陣列的空槽被跳過＝一筆沒驗就宣告全綠');
+  const holed = /** @type {any[]} */ ([{ number: 1, ok: true, why: '' }]);
+  holed[2] = { number: 2, ok: true, why: '' };   // 第 1 格是空槽
+  assert.equal(verdict(holed).code, 2, '中間的空槽被跳過');
+  assert.equal(verdict(/** @type {any} */ ([{ number: 566, ok: true, why: 'green', kind: undefined }])).code, 2, '顯式 kind: undefined 也是帶了 kind——ok:true 帶 kind 是矛盾');
+  assert.equal(verdict(/** @type {any} */ ([{ number: 566, ok: false, why: 'x', kind: undefined }])).code, 2, 'ok:false 帶 kind: undefined＝kind 不是字串');
   // 對照：形狀正確的綠仍是 0
   assert.equal(verdict([{ number: 1, ok: true, why: '' }]).code, 0);
   assert.deepEqual(resultShapeProblems([{ number: 1, ok: false, why: '', kind: 'red' }]), []);
