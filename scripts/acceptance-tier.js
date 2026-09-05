@@ -153,15 +153,31 @@ export function prFilesFromApi(json, { expectEntries } = {}) {
 /**
  * repo 身分（站台＋owner/repo）釘在目前目錄的 origin——不用 gh 的 `{owner}/{repo}` 佔位、也不省略站台：
  * 佔位會被 GH_REPO 導向別的 repo（#573 r4）、沒明講站台會被 GH_HOST 導向別站（#573 r5），而 gitEnv() 只清 GIT_*。
- * 收 https／ssh／scp 三種寫法；解不出來就丟（不猜）。
+ * **依寫法分開解**（#573 r6：一條正規式通吃會把 https 的 port 靜靜丟掉、把 scp 語法的數字路徑段吞成 port）：
+ *   ・網址形（https／http／ssh／git://）用 URL 解：http(s) 明講**非預設 port**＝API 也在那個 port，gh 的 --hostname 拒收冒號、釘不住
+ *     → 丟（退 2），不可以改查 443 上的同號 PR；ssh:// 的 port 是 SSH 的、跟 API 端點無關 → 不看。
+ *   ・scp 形（`[user@]host:path`）冒號後**一律是路徑**、沒有 port 文法（`git@host:22/o/r` 的 22 是路徑段，不是 port → 路徑不成 owner/repo → 丟）。
+ * 路徑去掉 .git 與首尾斜線後必須剛好是 owner/repo 兩段；其餘一律丟（不猜）。
  * @param {string} [cwd]
  * @returns {{host: string, slug: string}}
  */
 export function originRepo(cwd = process.cwd()) {
   const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: 'pipe', env: gitEnv() }).trim();
-  const m = url.match(/^(?:(?:https?|ssh|git):\/\/)?(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
-  if (!m) throw new Error(`origin 解不出站台與 owner/repo，釘不住 repo 身分：${url}`);
-  return { host: m[1], slug: `${m[2]}/${m[3]}` };
+  let host, path;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    let u;
+    try { u = new URL(url); } catch { throw new Error(`origin 不是合法網址，釘不住 repo 身分：${url}`); }
+    if (!/^(https?|ssh|git):$/.test(u.protocol)) throw new Error(`origin 的協定不認得，釘不住 repo 身分：${url}`);
+    if (u.port && /^https?:$/.test(u.protocol)) throw new Error(`origin 明講了非預設 port（${u.port}），gh 釘不住那個 endpoint、不改查預設 port 的同號 PR：${url}`);
+    host = u.hostname; path = u.pathname;
+  } else {
+    const m = url.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/);
+    if (!m) throw new Error(`origin 解不出站台與 owner/repo，釘不住 repo 身分：${url}`);
+    host = m[1]; path = m[2];
+  }
+  const segs = path.replace(/\/+$/, '').replace(/\.git$/, '').replace(/^\/+/, '').split('/');
+  if (!host || segs.length !== 2 || !segs.every((x) => /^[A-Za-z0-9._-]+$/.test(x))) throw new Error(`origin 的路徑不是 owner/repo 兩段，釘不住 repo 身分：${url}`);
+  return { host, slug: `${segs[0]}/${segs[1]}` };
 }
 
 /** 給合併步驟「回報合併結果與驗收分級」那一步照抄的報告。 @param {string[]} paths */

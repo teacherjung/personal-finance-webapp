@@ -178,15 +178,44 @@ function fixtureRepo(url) {
   return dir;
 }
 
-test('⭐ originRepo｜站台與 owner/repo 都從 origin 解（https／ssh／scp 三種寫法），解不出來就丟、不猜', () => {
-  for (const url of ['https://github.com/acme/widgets.git', 'https://github.com/acme/widgets', 'git@github.com:acme/widgets.git', 'ssh://git@github.com/acme/widgets.git']) {
-    const dir = fixtureRepo(url);
-    try { assert.deepEqual(originRepo(dir), { host: 'github.com', slug: 'acme/widgets' }, url); } finally { rmSync(dir, { recursive: true, force: true }); }
+/** @param {string} url */
+function originOf(url) {
+  const dir = fixtureRepo(url);
+  try { return originRepo(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('⭐ originRepo｜站台與 owner/repo 都從 origin 解（https／ssh／scp／git://），解不出來就丟、不猜', () => {
+  for (const url of ['https://github.com/acme/widgets.git', 'https://github.com/acme/widgets', 'https://github.com/acme/widgets.git/', 'git@github.com:acme/widgets.git',
+    'ssh://git@github.com/acme/widgets.git', 'git://github.com/acme/widgets.git',
+    'https://github.com:443/acme/widgets.git',      // 預設 port 明講＝同一個 endpoint
+    'ssh://git@github.com:22/acme/widgets.git']) {  // ssh 的 port 是 SSH 的、與 API 端點無關
+    assert.deepEqual(originOf(url), { host: 'github.com', slug: 'acme/widgets' }, url);
   }
-  const ghes = fixtureRepo('https://ghe.example.com/acme/widgets.git');
-  try { assert.equal(originRepo(ghes).host, 'ghe.example.com', '企業站的 origin 就釘企業站，不偷換成 github.com'); } finally { rmSync(ghes, { recursive: true, force: true }); }
+  assert.equal(originOf('https://ghe.example.com/acme/widgets.git').host, 'ghe.example.com', '企業站的 origin 就釘企業站，不偷換成 github.com');
   assert.throws(() => originRepo(tmpdir()), '不在 repo 裡要丟，不可以回一個猜的身分');
   assert.deepEqual(originRepo(ROOT), { host: 'github.com', slug: 'teacherjung/personal-finance-webapp' });
+});
+
+test('⭐ originRepo｜釘不住的 origin 一律丟、不改查別的 endpoint：https 明講非預設 port、scp 語法的數字路徑段、路徑不是兩段、協定不認得', () => {
+  const bad = {
+    'https://ghe.example.com:8443/acme/widgets.git': /非預設 port/,           // API 在 8443，gh --hostname 拒收冒號 → 不可改查 443 的同號 PR（#573 r6 High）
+    'git@host.example:22/acme/widgets.git': /不是 owner\/repo/,               // scp 語法冒號後是路徑：22 是路徑段，不是 port
+    'https://github.com/acme': /不是 owner\/repo/,
+    'https://github.com/a/b/c.git': /不是 owner\/repo/,
+    'ftp://github.com/acme/widgets.git': /協定不認得/,
+    'not a url at all': /解不出/,
+  };
+  for (const [url, re] of Object.entries(bad)) assert.throws(() => originOf(url), re, `${url} 應該丟`);
+});
+
+test('⭐ CLI｜origin 釘不住（https 帶非預設 port）→ 退 2、而且根本不去叫 gh（fail-closed 在前，不是查到別的 endpoint 才失敗）', () => {
+  const dir = fixtureRepo('https://ghe.example.com:8443/acme/widgets.git');
+  try {
+    withFakeGh({ view: '1\n', api: JSON.stringify([[{ filename: 'docs/x.md', status: 'modified' }]]), cwd: dir }, ({ r, calls }) => {
+      assert.equal(r.status, 2, `${r.stdout}${r.stderr}`); assert.match(r.stderr, /非預設 port/);
+      assert.deepEqual(calls, [], `origin 釘不住還是去叫了 gh：${JSON.stringify(calls)}`);
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('⭐ CLI｜正式呼叫逐 token 釘旗標，站台與 repo 都明講：GH_REPO、GH_HOST 一起塞也導不走（否則別站／別 repo 的同號 PR 剛好是純文件就錯報 E）', () => {
