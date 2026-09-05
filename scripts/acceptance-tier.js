@@ -4,46 +4,49 @@
 //
 // ## 這支在解什麼
 //
-// 合併之後要不要請 William 重啟 App 走一遍核心流程，原本三處寫法互相矛盾（AGENTS 寫每支都要、合併步驟
-// 早有分級、「標準全流程」又說只有高風險才實測）。體檢量到最近兩個 20 支的窗口各有 8／11 支完全沒動 app，
-// 卻名義上要他重啟 20 次。分級的**正本住這裡**（路徑家族表 RULES＋每一級的動作 TIERS），不住散文——
-// 第 8 步的散文清單在 #573 r2 被 Codex 用「把 public/ 移到不需驗收」的突變證明沒有任何考題會紅；
-// 表住程式、考題釘表，漂了就紅。
+// 合併之後要不要請 William 重啟 App 走一遍核心流程，看的是這支 PR 動到哪些路徑家族。分級的**正本住這裡**
+// （路徑家族表 RULES＋每一級的動作 TIERS），不住散文：散文清單沒有考題會為它紅，表住程式、考題釘表，漂了就紅。
+// 沿革與量到的數字在 PR #573 的說明，這裡只寫機制。
 //
 // ## 用法
-//   node scripts/acceptance-tier.js <PR 編號>            # 用 gh 讀該 PR 動到的檔案
+//   node scripts/acceptance-tier.js <PR 編號>            # 用 gh 分頁讀該 PR 動到的檔案（含改名前的舊路徑）
 //   node scripts/acceptance-tier.js --paths a.js b.md   # 直接給路徑（考題與離線用）
-// 退出碼：0＝算出來了（印級別、命中、動作）；2＝算不出來（gh 失敗／沒有路徑）→ 老實說算不出來，不猜。
-// ⚠️ 這**不是合併閘**：它不擋任何事，只把「合併後該做什麼」算給執行者看；合併步驟第 8 步照它印的做。
+// 退出碼：0＝算出來了（印級別、命中、動作）；2＝算不出來（gh 失敗／回傳不是預期形狀／沒有路徑）→ 老實說算不出來，不猜。
+// ⚠️ 這**不是合併閘**：它不擋任何事，只把「合併後該做什麼」算給執行者看；合併步驟「回報合併結果與驗收分級」那一步照它印的做。
 //
 // ## 兩條規矩（考題釘住）
 // 1. **動作累積**：同一支命中幾級就做幾級的動作（db/＋package-lock＋lib/ ＝ 套 SQL、裝相依、重啟走流程三件都做）；
-//    回報的「級別」寫最重的那級。只取最重一級會把其他必要動作吃掉（#573 r2 High①）。
-// 2. **沒列到的路徑一律當「要重啟」**（fail-closed）並列出來——不確定就往重的算，不預設免驗（#573 r1 High②）。
+//    回報的「級別」寫最重的那級（同重時照 ORDER 的固定順序，不看路徑順序）。只取最重一級會把其他必要動作吃掉。
+// 2. **沒列到的路徑一律當「要重啟」**（fail-closed）並列出來——不確定就往重的算，不預設免驗。
+//    「沒列到」包含新目錄**與 scripts/ 裡沒點名的新腳本**（E 的腳本是明確名單，不是 check-* 這種寬鬆形狀——
+//    寬鬆形狀會把未來被啟動流程掛上的新腳本靜靜當成不需驗收）。
 //
 // ## 誠實劃界
 // 分級減少的是**不必要的重啟**；純 lib/ 的口徑變更人眼本來也走不到（匯率預設值、SEC 科目對應），那一塊靠
 // 考題與 CI 接，不因分級而多或少。表是路徑家族的判斷，不是行為證明——新家族出現時它會落到「要重啟」並被列出，
-// 由改表的那支 PR 補進去。
+// 由改表的那支 PR 補進去；`public/` 那一級「重新整理就好」的前提是沒有 service worker，那個前提由考題守著。
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
 
 /**
- * 每一級的名字、輕重（rank 越大越重；回報取最重）、與合併後該做的動作。
+ * 每一級的名字與合併後該做的動作。輕重與同重時的先後由 ORDER 決定（固定順序，不看路徑順序）。
  * F 是**橫向**的（工具安全設定）：不參與「最重」比較，但動作一定要印——它跟重啟無關，重啟修不好它。
  */
 export const TIERS = /** @type {const} */ ({
-  A: { name: '資料庫結構', rank: 5, action: '重啟套不上：照 docs/C6-部署與對抗審查-操作手冊.md 在 Supabase SQL Editor 重跑整份 db/supabase-schema.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。' },
-  B: { name: '相依套件', rank: 4, action: '先裝再重啟：桌面捷徑「重啟理財網頁」只在 pull 到動 package*.json 的版本時才自動 npm install；主目錄已是最新版（沒有 pull）就在主目錄手動 npm install；裝完做 C。' },
-  C: { name: '要重啟＋走核心流程', rank: 3, action: 'William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。' },
-  D: { name: '只動前端', rank: 2, action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },
-  P: { name: '原型', rank: 2, action: 'prototype/ 不由 server.js 供應：要看就開原型自己的預覽，不重啟理財 App。' },
-  E: { name: '不需驗收', rank: 1, action: '回報寫「不需驗收：只動了 …」。' },
-  F: { name: '工具安全設定', rank: 0, action: '不是重啟：.codex/hooks.json／.claude/settings.json 的 matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行（AGENTS「錢的絕對邊界」節 Codex 側那條）——William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份要手動同步；驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
+  A: { name: '資料庫結構', action: '重啟套不上：照 docs/C6-部署與對抗審查-操作手冊.md 在 Supabase SQL Editor 重跑整份 db/supabase-schema.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。' },
+  B: { name: '相依套件', action: '先裝再重啟：桌面捷徑「重啟理財網頁」只在 pull 到動 package*.json 的版本時才自動 npm install；主目錄已是最新版（沒有 pull）就在主目錄手動 npm install；裝完做 C。' },
+  C: { name: '要重啟＋走核心流程', action: 'William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。' },
+  D: { name: '只動前端', action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },
+  P: { name: '原型', action: 'prototype/ 不由 server.js 供應：要看就開原型自己的預覽，不重啟理財 App。' },
+  E: { name: '不需驗收', action: '回報寫「不需驗收：只動了 …」。' },
+  F: { name: '工具安全設定', action: '不是重啟：.codex/hooks.json／.claude/settings.json 的 matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行（AGENTS「錢的絕對邊界」節 Codex 側那條）——William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份要手動同步；驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
 });
 
 /** @typedef {keyof typeof TIERS} Tier */
+
+/** 回報級別的固定順序（最重在前；同重的 D／P 也照這個順序，不看 gh 回傳的路徑順序）；F 橫向不在內。 */
+export const ORDER = /** @type {Tier[]} */ (['A', 'B', 'C', 'D', 'P', 'E']);
 
 /**
  * 路徑家族表：**由上往下第一個命中的算**（所以啟動會跑的 scripts/check-node-version.js 排在「只在合併程序跑的 check-*」前面）。
@@ -70,11 +73,12 @@ export const RULES = [
   ['E', /^docs\//],
   ['E', /^[^/]+\.md$/],
   ['E', /^\.github\//],                                // 含 CI 設定：影響的是合併程序，由合併閘與 CI 自己驗
-  ['E', /^scripts\/(check-[^/]+\.js|grok-[^/]+|audit-[^/]+\.js|sync-pr-base-version\.js|c6-adversarial\.js)$/],   // 只在合併程序／審查／驗證裡跑的
+  // 只在合併程序／審查／驗證裡跑的腳本：**明確名單**，新腳本不會自動落到 E（會當未知→C，由改表的人核對它是不是啟動時會跑）
+  ['E', /^scripts\/(check-ci-really-ran|check-cross-pr-merge|check-pr-collab-fields|check-pr-merge-gate|check-review-verdicts|check-worktree-integrity|audit-grok-scan|grok-scan|grok-relay|grok-auth-refresh|grok-sandbox-canary|sync-pr-base-version|c6-adversarial|acceptance-tier)\.js$/],
+  ['E', /^scripts\/grok-sandbox\.sb$/],
   ['E', /^scripts\/git-hooks\//],
   ['E', /^(eslint\.config\.js|jsconfig\.json|mutate\.sh|\.gitignore)$/],
   ['E', /^\.claude\/launch\.json$/],
-  ['E', /^scripts\/acceptance-tier\.js$/],             // 本支自己：只影響這份報告怎麼算
 ];
 
 /**
@@ -96,15 +100,35 @@ export function classify(paths) {
   const unknown = hits.filter((h) => !h.known).map((h) => h.path);
   const present = new Set(hits.map((h) => h.tier));
   const toolSecurity = present.has('F');
-  const ranked = /** @type {Tier[]} */ ([...present].filter((t) => t !== 'F')).sort((a, b) => TIERS[b].rank - TIERS[a].rank);
-  const level = ranked[0] ?? 'E';
-  const order = /** @type {Tier[]} */ (['F', 'A', 'B', 'C', 'D', 'P']);
+  const level = ORDER.find((t) => present.has(t)) ?? 'E';
+  const order = /** @type {Tier[]} */ (['F', ...ORDER.filter((t) => t !== 'E')]);
   const actions = order.filter((t) => present.has(t)).map((t) => ({ tier: t, action: TIERS[t].action }));
   if (!actions.some((a) => a.tier !== 'F')) actions.push({ tier: 'E', action: TIERS.E.action });
   return { level, hits, unknown, actions, toolSecurity };
 }
 
-/** 給合併步驟第 8 步照抄的報告。 @param {string[]} paths */
+/**
+ * 把 `gh api --paginate --slurp repos/…/pulls/N/files` 的輸出（頁的陣列、每頁是檔案物件陣列）轉成路徑清單：
+ * filename 一定收，rename 的 previous_filename 也收（去重）。形狀不對就丟——由 main 轉成退出碼 2。
+ * @param {string} json
+ * @returns {string[]}
+ */
+export function prFilesFromApi(json) {
+  const pages = JSON.parse(json);
+  if (!Array.isArray(pages)) throw new Error('gh api 回傳不是陣列');
+  const out = new Set();
+  for (const page of pages) {
+    if (!Array.isArray(page)) throw new Error('gh api 的頁不是陣列');
+    for (const f of page) {
+      if (!f || typeof f !== 'object' || typeof f.filename !== 'string' || !f.filename) throw new Error('檔案物件缺 filename');
+      out.add(f.filename);
+      if (typeof f.previous_filename === 'string' && f.previous_filename) out.add(f.previous_filename);
+    }
+  }
+  return [...out];
+}
+
+/** 給合併步驟「回報合併結果與驗收分級」那一步照抄的報告。 @param {string[]} paths */
 export function report(paths) {
   const r = classify(paths);
   const lines = [
@@ -123,11 +147,14 @@ export function main(argv) {
   if (argv[0] === '--paths') {
     paths = argv.slice(1);
   } else if (argv[0] && /^\d+$/.test(argv[0])) {
+    // ⚠️ 不用 `gh pr view --json files`：它只給前 100 筆、改名只給新路徑（#573 r3 Codex 實測）。
+    //    走 REST 的 pulls/<N>/files 分頁全拿，改名把 previous_filename 也算進去（舊的 runtime 路徑被拿掉也是 runtime 變更）。
     try {
-      const out = execFileSync('gh', ['pr', 'view', argv[0], '--json', 'files', '--jq', '.files[].path'], { encoding: 'utf8', stdio: 'pipe', env: gitEnv() });
-      paths = out.split('\n').map((s) => s.trim()).filter(Boolean);
+      const out = execFileSync('gh', ['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${argv[0]}/files?per_page=100`],
+        { encoding: 'utf8', stdio: 'pipe', env: gitEnv(), maxBuffer: 1e8 });
+      paths = prFilesFromApi(out);
     } catch (e) {
-      console.error(`驗收分級：算不出來（gh 讀不到 PR #${argv[0]} 的檔案清單：${/** @type {any} */ (e)?.message}）——不猜，先把 gh 弄好再跑。`);
+      console.error(`驗收分級：算不出來（gh 讀不到 PR #${argv[0]} 的檔案清單、或回傳不是預期形狀：${/** @type {any} */ (e)?.message}）——不猜，先把 gh 弄好再跑。`);
       return 2;
     }
   } else {
