@@ -214,6 +214,7 @@
 | 驗證入櫃檯 B3 | store.save() 唯一寫入口、每次寫入過 sanitizeDbForWrite（非法值 throw）；新寫入路徑結構上繞不過——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#驗證入櫃檯-b3) |
 | 日期月份真實日曆判準 | isRealMonth／isRealDate 四型共用一套不可各寫；只驗長相會讓 2026-13 默默算錯；服務層手動輸入同判準；收緊是刻意的勿放寬——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#日期與月份的真實日曆判準) |
 | 必填欄位與跨欄不變式 | REQUIRED_FIELDS／ROW_RULES 三個強制點（CRUD 400／匯入整份 400／櫃檯 throw）；strip 對壞必填整筆濾除不可只刪欄位；新主鍵欄補進 REQUIRED_FIELDS——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#必填欄位機制與跨欄不變式) |
+| **請求旗標一律嚴格**（`lib/routes/` 讀 body 的開關） | 只有 `=== true`／`!== true` 算「打開」——`!!x` 與直接拿來當條件的寫法連字串 `'false'` 都算開，而「同店一起改」這種開關誤開會一次改到很多筆（William 2026-09-05 裁）。行為與形狀兩層考題在 `test/request-flags.test.js`；**新增開關名要一起加進那支的名單**，否則形狀那道網看不到它 |
 | 測試隔離慣例 B0 | 測試一律 STORE_FILE 指暫存 .db、絕不碰真實 data/；server.js export app、只有直接執行才 listen——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#測試隔離慣例-b0) |
 | PDF 逐列抽取器（pdfjs → 帶座標的列） | 三份刻意分工勿合併（信用卡丟座標／銀行保留 x+y／證券 x+y＋跨頁）＋各自的合成座標考題——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#pdf-逐列抽取器) |
 | **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`；**簽帳金融卡明細一份帳單兩種明細**（A 區刷卡消費→自動建簽帳卡、走信用卡帳單同一條路進卡片帳本；D 區刷卡列分類留空＝錢不算兩次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |

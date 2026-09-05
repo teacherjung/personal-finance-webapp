@@ -1384,17 +1384,23 @@ test('2A｜POST /api/income-categories 缺 tree／tree 不是物件 → 400，�
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
-test('2A｜POST /api/transfer-subcategories 缺 subs／subs 不是陣列 → 400，自訂清單原封不動（不可默默復原成內建三筆）', async () => {
+test('2A｜POST /api/transfer-subcategories 缺 subs／不是陣列／清乾淨之後一項都不剩 → 400，自訂清單原封不動（不可默默復原成內建三筆）', async () => {
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
   const custom = [{ label: '我的內轉出', role: 'out' }, { label: '我的內轉入', role: 'in' }, { label: '自訂項X' }];
   assert.equal((await POST('/transfer-subcategories', { subs: custom })).status, 200);
   const before = await GET('/transfer-subcategories');
   assert.ok(before.some(x => x.label === '自訂項X'), '夾具：自訂清單要先種進去');
-  for (const bad of [{}, { subs: 'oops' }, { subs: null }, { subs: { label: 'x' } }]) {
+  // 空陣列與「每一項都不合格」原本會穿過這道擋（是合法陣列）→ 清乾淨後變空 → 靜靜存成內建三筆並回 200。
+  for (const bad of [{}, { subs: 'oops' }, { subs: null }, { subs: { label: 'x' } },
+    { subs: [] }, { subs: [{ label: '   ' }, { nope: 1 }, { label: '__proto__' }] }]) {
     assert.equal((await POST('/transfer-subcategories', bad)).status, 400, `${JSON.stringify(bad)} 要 400`);
   }
   assert.deepEqual(await GET('/transfer-subcategories'), before, '壞請求不可把自訂清單換成預設（整個物件逐筆相同，含 role）');
+  // 訊息要講得出「為什麼沒存成」：服務層那道網丟出來的錯會被全域中介換成泛用訊息，
+  // 所以這條路自己先擋、自己回話。拿掉路由層那道擋 ⇒ 這一行紅（狀態碼仍是 400，看不出差別）。
+  const emptyMsg = (await (await POST('/transfer-subcategories', { subs: [] })).json()).error;
+  assert.match(emptyMsg, /沒有任何可用的內轉分類名稱/, `清單清完是空的要講清楚為什麼（實際「${emptyMsg}」）`);
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
@@ -1462,8 +1468,12 @@ test('2A｜POST /statement/normalize-auto：會併學習表時不帶 force → n
     assert.equal(r1.ran, false, `不帶 force 不可套用（實際 ${JSON.stringify(r1)}）`);
     assert.equal(r1.needsConfirmation, true, '會動到學習表 ⇒ 要停下來問');
     assert.deepEqual(Object.keys(await GET('/learned')).sort(), ['鮮芋仙新店店', '鮮芋仙林口店'].sort(), '沒確認前兩把鑰匙都要在');
-    // 這條路由對 force 做 `!!`（truthy 就算確認），與 normalize-branches／applyAll 的嚴格 `=== true` 不一致；
-    //    本題不改行為、只釘「不帶 force 不可套用」與「true 才套用」，收不收緊另案裁。
+    // 「像開但不是 true」的值不算確認（William 2026-09-05 裁示：body 送來的開關只有真正的 true 算打開）。
+    //    這裡守的是**這條路**：套用會合併學習表，是刪掉規則也救不回來的動作。
+    const rLoose = await (await POST('/statement/normalize-auto', { force: 1 })).json();
+    assert.equal(rLoose.ran, false, `force: 1 不是確認，不可套用（實際 ${JSON.stringify(rLoose)}）`);
+    assert.equal(rLoose.needsConfirmation, true, 'force: 1 之後仍要停在「等確認」');
+    assert.deepEqual(Object.keys(await GET('/learned')).sort(), ['鮮芋仙新店店', '鮮芋仙林口店'].sort(), 'force: 1 之後兩把鑰匙都還要在');
     const r2 = await (await POST('/statement/normalize-auto', { force: true })).json();
     assert.equal(r2.ran, true, '使用者按了確認才套用');
     assert.deepEqual(Object.keys(await GET('/learned')), ['鮮芋仙'], '確認後併成一把');

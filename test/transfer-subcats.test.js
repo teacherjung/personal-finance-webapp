@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 const TEST_STORE = join(tmpdir(), `finance-transfer-${process.pid}.db`);
 process.env.STORE_FILE = TEST_STORE;
 
-const { sanitizeTransferSubs } = await import('../lib/schema.js');
+const { sanitizeTransferSubs, cleanTransferSubs } = await import('../lib/schema.js');
 const { effectiveTransferSubs, conformTransferSub, saveTransferSubs } = await import('../lib/services/categories.js');
 const { importBankTxToDb } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
@@ -89,6 +89,24 @@ test('saveTransferSubs：改名（角色＋自訂）連動既有內轉交易；�
   assert.equal(after.find(t => t.id === 'e1').subcategory, '外食');      // 支出不受影響
   assert.ok(r.changedTx >= 3);
 });
+test('cleanTransferSubs：空/全壞 → 回空陣列（**不補預設**）——「清完什麼都不剩」與「他要預設那三項」要分得出來', () => {
+  assert.deepEqual(cleanTransferSubs([]), []);
+  assert.deepEqual(cleanTransferSubs('oops'), []);
+  assert.deepEqual(cleanTransferSubs([{ label: '   ' }, { nope: 1 }, { label: '__proto__' }]), []);
+  assert.deepEqual(cleanTransferSubs([{ label: '轉出', role: 'out' }]), [{ label: '轉出', role: 'out' }], '對照組：合格的項目要留得下來（否則上面三行是空包彈）');
+});
+
+test('saveTransferSubs：清乾淨之後一項都不剩 → 擋下（400）且清單不動，不可以靜靜存成內建三筆', async () => {
+  const db = await getDb();
+  db.transferSubs = [{ label: '我的轉出', role: 'out' }];
+  await saveDb(db);
+  await assert.rejects(() => saveTransferSubs({ subs: [] }), (/** @type {any} */ e) => e.status === 400);
+  await assert.rejects(() => saveTransferSubs({ subs: [{ label: '  ' }, { nope: 1 }] }), (/** @type {any} */ e) => e.status === 400);
+  assert.deepEqual(effectiveTransferSubs(await getDb()), [{ label: '我的轉出', role: 'out' }], '被擋下就一個字都不可以改');
+  await saveTransferSubs({ subs: [{ label: '我的轉出', role: 'out' }, { label: '新的一項' }] });
+  assert.deepEqual(effectiveTransferSubs(await getDb()).map(x => x.label), ['我的轉出', '新的一項'], '對照組：合格清單要存得進去（否則上面兩刀是空包彈）');
+});
+
 test('saveTransferSubs：保留字整組拒絕（400）', async () => {
   await assert.rejects(() => saveTransferSubs({ subs: [{ label: '__proto__' }] }), /保留字/);
   await assert.rejects(() => saveTransferSubs({ subs: [{ label: 'x' }], renames: [{ from: 'a', to: '__proto__' }] }), /保留字/);
