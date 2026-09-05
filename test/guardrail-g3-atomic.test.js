@@ -162,13 +162,22 @@ test('applyLearnedBankToDb 是純的：改傳入的 db 物件、但不自己 sav
 
 
 // 第二輪稽核第二批 2A：applyAll 的「truthy 但不是 true」那一格——G3 既有題考的是正牌 true 與完全不帶，這一格靠這題釘
-test('2A｜PUT applyAll 送 "false"／1／"true"／{}（truthy 但不是 true）→ 不傳播：回應無 applied、同鑰匙另一筆分類不動', async () => {
-  for (const bad of ['false', 1, 'true', {}]) {
-    await reset([stmtTx('a', '2026-07-01', '星巴克信義店'), stmtTx('b', '2026-07-02', '星巴克南京店')]);
-    const r = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: '星巴克信義店', applyAll: bad })).json();
+/** 這一題的兩個帳單原文：不同分店、同一把品牌鑰匙（傳播看得看不到，全靠這個前提）。 */
+const SB_A = '星巴克信義店', SB_B = '星巴克南京店';
+test('2A｜PUT applyAll 送「truthy 但不是 true」的值 → 不傳播：回應無 applied、同鑰匙另一筆分類不動（同夾具送正牌 true 要傳播得到）', async () => {
+  assert.equal(storeKeyOf(SB_A), storeKeyOf(SB_B), '前提：這兩個原文要收斂成同一把品牌鑰匙，否則「有沒有傳播」根本觀察不到');
+  for (const bad of ['false', 1, 'true', {}, []]) {
+    await reset([stmtTx('a', '2026-07-01', SB_A), stmtTx('b', '2026-07-02', SB_B)]);
+    const r = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: SB_A, applyAll: bad })).json();
     assert.equal(r.applied, undefined, `applyAll=${JSON.stringify(bad)} 不可觸發傳播（只有正牌 true 才算）：${JSON.stringify(r)}`);
     const other = (await getDb()).transactions.find(t => t.id === 'b');
     assert.equal(other.category, '其他', `applyAll=${JSON.stringify(bad)} 讓同店另一筆被改了`);
     assert.equal((await getDb()).transactions.find(t => t.id === 'a').category, '交通', '本筆本身要改到');
   }
+  // 對照組：逐字相同的夾具與 body，只把 applyAll 換成正牌 true——證明那幾個壞值量到的「沒傳播」
+  // 不是因為這條路根本不會傳播（那樣的話把判定改成任何值都算開，這題也不會紅）。
+  await reset([stmtTx('a', '2026-07-01', SB_A), stmtTx('b', '2026-07-02', SB_B)]);
+  const ok = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: SB_A, applyAll: true })).json();
+  assert.ok(ok.applied && ok.applied.changed >= 1, `對照組：正牌 true 要傳播得到（實際 ${JSON.stringify(ok)}）`);
+  assert.equal((await getDb()).transactions.find(t => t.id === 'b').category, '交通', '對照組：同鑰匙另一筆要跟著改');
 });

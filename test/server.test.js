@@ -937,7 +937,10 @@ test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選�
   for (const id of [t1.id, t2.id]) await DELETE_(`/transactions/${id}`);
 });
 
-test('第一帖｜規則更新後自動整理：同一版規則只跑一次、有變動才寫檔', async () => {
+// ⚠️ 射程：「有變動時真的落了磁碟」這一半守得到（讀回來的那筆若沒被持久化，下面比 note／鑰匙那兩句就紅）。
+//    守不到的是另一半——「零變動時不可以寫檔」：這條路回的是 ran 與規則指紋，兩個欄位都看不到「這一次有沒有寫」，
+//    要釘那一格得另外找觀測點（例如寫入前種一個真實寫入不可能產生的哨兵值再看它有沒有被蓋掉）。
+test('第一帖｜規則更新後自動整理：沒記過指紋就跑一次並真的套用、同一版規則不重跑', async () => {
   // 先塞一筆待整理的舊資料（規則升級後名字會變）
   const tx = await seedTx({ date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '超市',
     amount: 33, note: '統一超商-德權', storeKey: '統一超商-德權', source: 'stmt' });
@@ -948,7 +951,7 @@ test('第一帖｜規則更新後自動整理：同一版規則只跑一次、�
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '統一超商（德權）', '自動整理真的有套用（使用者不必記得按套用）');
   assert.equal(after.storeKey, '統一超商', '鑰匙同步對齊到品牌層');
-  // 第二次：同一版規則 → 不重跑（否則每次開 app 都白洗一次 .bak）
+  // 第二次：同一版規則 → 不重跑
   const r2 = await (await POST('/statement/normalize-auto', {})).json();
   assert.equal(r2.ran, false, '同一版規則只跑一次');
   assert.equal(r2.rulesHash, r1.rulesHash);
@@ -1405,27 +1408,84 @@ test('2A｜POST /api/transfer-subcategories 缺 subs／不是陣列／清乾淨�
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
-test('2A｜資產配置目標整批取代：缺類別名稱／空字串／整批裡壞一筆 → 400，既有目標整筆相同、含 id（不留半殘目標）', async () => {
+test('2A｜資產配置目標整批取代：類別名稱不是非空字串／百分比不是數字／整批裡壞一筆 → 400，既有目標整筆相同、含 id（不留半殘目標）', async () => {
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
     assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200);
     const before = await GET('/assetTargets');   // 整個陣列（含 id）——只比 class/pct 擋不住「回 400 但偷換 id」（Codex r2）
-    for (const bad of [[{ targetPct: 50 }], [{ class: '', targetPct: 30 }], [{ class: '股票', targetPct: 60 }, { targetPct: 40 }], [{ class: 7, targetPct: 10 }]]) {
+    // 夾具對照：沒有這一行，「原目標整筆相同」可能是在比兩個空陣列（種子那步若失效就整題失去意義）。
+    assert.equal(before.length, 2, `夾具：要先種得進兩筆目標（實際 ${JSON.stringify(before)}）`);
+    for (const bad of [[{ targetPct: 50 }], [{ class: '', targetPct: 30 }], [{ class: '股票', targetPct: 60 }, { targetPct: 40 }], [{ class: 7, targetPct: 10 }],
+      [{ class: null, targetPct: 30 }], [{ class: '現金', targetPct: 50 }, { class: null, targetPct: 30 }],
+      [{ class: '股票', targetPct: null }], [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: null }]]) {
       assert.equal((await POST('/assetTargets/replace', { targets: bad })).status, 400, `${JSON.stringify(bad)} 要 400`);
       assert.deepEqual(await GET('/assetTargets'), before, `${JSON.stringify(bad)}：壞一筆＝整批拒、原目標整筆相同（含 id）`);
     }
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
-test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true（"false"／1／"true"）→ 400，且學習表與 note 一個字都沒動', async () => {
+test('2A｜資產配置目標整批取代：請求裡完全沒有 targets 這個欄位 → 400，既有目標一筆都沒被清空', async () => {
+  // 題名關鍵字「類別名稱不是非空字串」那題送的都是「targets 是陣列、裡面壞掉」；這一格是**連欄位都沒有**。
+  // 為什麼要單獨守：最像真的手滑是在讀取那一行順手補預設值（`req.body?.targets ?? []`），
+  // 那會讓空請求變成「用空清單整批取代」＝把設好的目標清光還回 200，而那一題的壞值全都躲得過這一刀。
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
-  const learnedBefore = await GET('/learned'); const txBefore = (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
-  for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }]) {
+    assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200,
+      '夾具：合法請求要存得進去（也順便證明這條端點是通的，下面的 400 才有意義）');
+    const before = await GET('/assetTargets');
+    assert.equal(before.length, 2, `夾具：要先種得進兩筆目標（實際 ${JSON.stringify(before)}）`);
+    for (const bad of [{}, { rows: [] }, { targets: null }]) {
+      const r = await POST('/assetTargets/replace', bad);
+      assert.equal(r.status, 400, `${JSON.stringify(bad)} 要 400`);
+      assert.match(String((await r.json()).error), /targets/, `${JSON.stringify(bad)}：訊息要指出缺的是哪個欄位`);
+      assert.deepEqual(await GET('/assetTargets'), before, `${JSON.stringify(bad)}：既有目標一個字都不可以動（含 id）`);
+    }
+  } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
+});
+
+test('2A｜資產配置目標的百分比是數字字串：轉成真數字存進去（擋的是「不是數字」，不是「不是 number 型別」）', async () => {
+  // 與題名關鍵字「請求裡完全沒有 targets 這個欄位」那題成對：那邊釘「壞值要擋」，這裡釘「合法值不可被誤擋」——
+  // 只有負面斷言時，把判準收成「一律拒收」也會全綠，那會讓任何以字串形式送進來的百分比一律存不進去。
+  // ⚠️ 取的值刻意跟種子不同：讀到的若是先前就存在的那一列，這題會在「回了成功卻沒真的寫入」時假綠。
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+    assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200, '夾具：先種一組數字型別的目標');
+    assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '黃金', targetPct: '7' }] })).status, 200,
+      '數字字串是合法輸入（寫入櫃檯會轉型），不可以被擋下來');
+    const rows = await GET('/assetTargets');
+    assert.deepEqual(rows.map((/** @type {any} */ t) => [t.class, t.targetPct]), [['黃金', 7]],
+      `整批取代要真的落地（只剩這一列、字串轉成真數字），實際 ${JSON.stringify(rows)}——存成字串的話之後的加總與偏離都會算錯`);
+    assert.strictEqual(rows[0].targetPct, 7, '要是真的數字，不是長得像數字的字串');
+  } finally { await saveDb(snapshot); await getDb(); }
+});
+
+test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true → 400，且顯示名／身分鑰匙一個字都沒動（同一份夾具送正牌 true 要真的整理得動）', async () => {
+  const snapshot = JSON.parse(JSON.stringify(await getDb()));
+  try {
+  // 夾具：一筆「還沒整理過」的帳單交易——身分鑰匙故意留成帳單原文（沒收斂成品牌）。
+  // 沒有它，「一個字都沒動」是恆真句：庫裡本來就沒東西可整理，把那道擋整行刪掉這題照樣綠。
+  { const db = await getDb();
+    db.transactions = [{ id: 'nb1', date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市', amount: 55,
+      note: '我取的名字', storeKey: '星巴克內湖店', source: 'stmt', stmtRef: 'c1|2026-07-08|55|星巴克內湖店', ledger: 'card' }];
+    await saveDb(db); }
+  // 基線在**預覽之前**拍成 primitive 三元組：預覽若哪天真的會寫入，整理後的實際值就對不上這條基線，
+  // 緊接的狀態對照立刻紅；基線若改拍在操作之後，同一個錯就會被吸收進基線裡、整段對照跟著失效。
+  const triple = async () => (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
+  const txBefore = await triple();
+  assert.deepEqual(txBefore, [['nb1', '我取的名字', '星巴克內湖店']], `夾具：這一筆要是「還沒整理過」的形狀（實際 ${JSON.stringify(txBefore)}）`);
+  const preview = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
+  assert.ok(preview.keyChanged >= 1, `夾具對照：這個當下要真的有東西可整理（實際 ${JSON.stringify(preview).slice(0, 160)}）`);
+  assert.deepEqual(await triple(), txBefore, '預覽不可以寫進去（寫了的話這裡讀到的就是整理後的值，對不上預覽前的基線）');
+
+  for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }, { force: null }]) {
     assert.equal((await POST('/statement/normalize-branches', bad)).status, 400, `${JSON.stringify(bad)} 要 400（只有正牌 true 才是確認）`);
   }
-  assert.deepEqual(await GET('/learned'), learnedBefore, '被擋下的呼叫不可動到學習表');
-  assert.deepEqual((await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
+  assert.deepEqual(await triple(), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
+
+  // 行為對照：同一份夾具送正牌 true，狀態要真的改變——證明上面那句「沒動」量的不是「這條路本來就不會動」。
+  assert.equal((await POST('/statement/normalize-branches', { force: true })).status, 200, '對照組：正牌 true 要套用得成');
+  const after = (await GET('/transactions')).find(t => t.id === 'nb1');
+  assert.equal(after.storeKey, '星巴克', `對照組：身分鑰匙要被收斂成品牌（實際 ${JSON.stringify(after.storeKey)}）`);
   } finally { await saveDb(snapshot); await getDb(); }   // getDb 走 readDb→syncRules：規則槽跟著磁碟一起還原
 });
 
