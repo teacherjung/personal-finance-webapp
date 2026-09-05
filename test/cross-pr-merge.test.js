@@ -765,7 +765,7 @@ test('⭐ CLI｜git merge 失敗但不是文字衝突（hook 拒絕）→ exit 2
     nodeModules: 'dir', markGates: true, mergeHookFails: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
     // 只為了讓兩支分岔（真的要建 merge commit）：main 多一個沒裝的 optional 套件，lock 仍對得上
-    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
+    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-other-os': { version: '9.9.9', optional: true, os: ['an-os-no-runner-has'] } },
   });
   try {
     const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -783,7 +783,7 @@ test('CLI｜對照組：兩支真的分岔、merge 要建 commit、fixture 沒�
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
-    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
+    mainLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-other-os': { version: '9.9.9', optional: true, os: ['an-os-no-runner-has'] } },
   });
   const emptyHome = mkdtempSync(join(tmpdir(), 'cross-pr-home-'));
   try {
@@ -819,7 +819,7 @@ test('CLI｜發起樹沒有隱藏 lock（node_modules/.package-lock.json）→ �
   const { dir, sha, shaB, mainSha } = makeInitiatorRepo({
     nodeModules: 'dir', markGates: true, noHiddenLock: true,
     lock: { 'fx-dep': { version: '1.0.0' } }, installed: { 'fx-dep': '1.0.0' },
-    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-other-os': { version: '9.9.9', optional: true, os: ['an-os-no-runner-has'] } },
   });
   try {
     const r = withFakeGh(SELF_VIEW(sha, mainSha), LOCK_OTHERS(sha, /** @type {string} */ (shaB)), { pr: '441', cwd: dir, env: { ...SANDBOX_ENV } });
@@ -1086,7 +1086,7 @@ test('CLI｜對照組：lock 要求的套件都裝著、版本相同 → 核對�
     lock: { 'fx-dep': { version: '1.0.0' } },
     installed: { 'fx-dep': '1.0.0' },
     // 另一支加了一個 optional 套件（沒裝）：lock 真的有差、但核對要放行——optional 那條判準走到端到端
-    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-linux': { version: '9.9.9', optional: true, os: ['linux'] } },
+    otherLock: { 'fx-dep': { version: '1.0.0' }, 'only-on-other-os': { version: '9.9.9', optional: true, os: ['an-os-no-runner-has'] } },
   });
   try {
     const r = withFakeGh(
