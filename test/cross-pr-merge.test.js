@@ -537,7 +537,7 @@ test('⭐ lockMismatches｜同版號不同套件（alias）→ 對不上；works
   assert.equal(m.length, 2, `scoped 或巢狀的名字被誤紅：${m.join(' / ')}`);
 });
 
-test('⭐ lockMismatches｜同名同版但內容指紋（integrity）或來源（resolved）跟實際裝的不同 → 對不上；隱藏 lock 讀不到／沒那一筆 → 核對不了也算對不上；lock 沒寫來源的項目不比（#566 r2 High）', () => {
+test('⭐ lockMismatches｜同名同版但內容指紋（integrity）或來源（resolved）在根 lock 與隱藏 lock 的中繼紀錄不同 → 對不上；隱藏 lock 讀不到／沒那一筆 → 核對不了也算對不上；lock 沒寫來源的項目不比（#566 r2 High）', () => {
   const lock = { packages: { '': {},
     'node_modules/a': { version: '1.0.0', resolved: 'https://cdn.example/a-1.0.0.tgz', integrity: 'sha512-AAA' },
     'node_modules/b': { version: '2.0.0', resolved: 'https://registry/b-2.0.0.tgz', integrity: 'sha512-BBB' },

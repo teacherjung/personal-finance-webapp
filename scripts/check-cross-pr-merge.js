@@ -409,13 +409,13 @@ export function lockMismatches(lock, installed, hidden) {
     }
     const h = hidden[key];
     if (!isObj(h)) { out.push(`${key}：隱藏 lock 沒有這一筆，核對不了來源與內容指紋`); continue; }
-    if (typeof entry.integrity === 'string' && h.integrity !== entry.integrity) { out.push(`${key}：內容指紋（integrity）跟實際裝的不同（同名同版換了內容）`); continue; }
-    if (typeof entry.resolved === 'string' && h.resolved !== entry.resolved) out.push(`${key}：來源（resolved）跟實際裝的不同：lock 要 ${entry.resolved}，裝的來自 ${h.resolved ?? '（未記錄）'}`);
+    if (typeof entry.integrity === 'string' && h.integrity !== entry.integrity) { out.push(`${key}：內容指紋（integrity）根 lock 與隱藏 lock 的中繼紀錄不同（同名同版換了內容、或安裝紀錄沒跟上）`); continue; }
+    if (typeof entry.resolved === 'string' && h.resolved !== entry.resolved) out.push(`${key}：來源（resolved）根 lock 與隱藏 lock 的中繼紀錄不同：lock 要 ${entry.resolved}，隱藏 lock 記的是 ${h.resolved ?? '（未記錄）'}`);
   }
   return out;
 }
 
-/** 讀某棵樹 `node_modules/.package-lock.json` 的 packages 表（npm 記錄實際裝進來的來源與指紋）；讀不到回 null。 @param {string} root */
+/** 讀某棵樹 `node_modules/.package-lock.json` 的 packages 表（npm 的安裝紀錄：它上次裝的來源與指紋——中繼紀錄，不是磁碟內容證明）；讀不到回 null。 @param {string} root */
 function hiddenLockIn(root) {
   try {
     const h = JSON.parse(readFileSync(join(root, 'node_modules', '.package-lock.json'), 'utf8'));
@@ -494,7 +494,7 @@ function tryMerge(repoRoot, baseSha, otherSha, otherNumber, mainSha) {
     //    哪一側動了 lock 一併印出來，量的是**各支自己相對 main 的改動**（merge-base(main, head)→head，
     //    跟 GitHub 顯示的 PR diff 同一個口徑）：兩顆 head 直接比、或只從兩支的共同祖先量，都會把
     //    main 在分岔之間的變動算到某一支頭上（預審與 #566 r1 各實跑到一種）。main 的 head 由 gh 的
-    //    baseRefOid 給；本機沒有那顆物件時退回 origin/main，再沒有就印「查不到」。
+    //    baseRefOid 給：本機有那顆 commit 才用、沒有就印「查不到」；gh 沒給 OID 才退回 origin/main。
     //    兩側都「否」＝發起樹的套件本來就沒跟上 lock（主目錄還沒重裝）；處置寫在 verdict 的訊息裡。
     const lockPath = join(wt, 'package-lock.json');
     let lock = null;
