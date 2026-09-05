@@ -155,16 +155,12 @@
 >    「實作者不按自己的合併鍵」事後**完全無法查證**。有了 trailer，
 >    `git log --format='%h %s%n  %(trailers:key=Reviewed-By,key=Merged-By)'` 一行就能抽查。
 > 7. 確認遠端分支已刪除。
-> 8. 回報**合併結果**與**驗收分級**（本步是分級的**正本**，AGENTS「合併後五分鐘檢查」那條指回這裡、不另抄清單；William 2026-09-06 體檢第 5 題裁示分級，落點＝#573 裡他的留言）。
->    先列本支動到的路徑，**由上往下對、取最重的一級**（伴隨的考題／文件不改變級別；**沒被列到的路徑一律當 C 級**——不確定就當要重啟，fail-closed）：
->    - **A 資料庫結構**：`db/`（`supabase-schema.sql`）——**重啟套不上**：照 `docs/C6-部署與對抗審查-操作手冊.md` 在 Supabase SQL Editor 重跑整份 SQL（冪等），再照那份手冊驗；本機 LOCAL 模式不受影響。
->    - **B 相依套件**：`package.json`／`package-lock.json`——**先裝再重啟**：桌面捷徑「重啟理財網頁」只在 pull 到動 `package*.json` 的版本時自動 `npm install`；主目錄已是最新版（沒有 pull）就要在主目錄手動 `npm install`；裝完走 C。
->    - **C 要重啟＋走核心流程**：`lib/`、`server.js`、`start.command`、`.node-version`、`render.yaml`、`data/seed.json`、`scripts/` 裡啟動或部署會執行的（例：`scripts/check-node-version.js`，`start.command` 每次啟動都跑它），以及**任何沒列在 D／E 的路徑**——William 重啟 App、以實際操作走完最核心的一條流程（＝PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。
->    - **D 只動前端**：`public/`（理財 app）、`public-site/`（HOSTED 公開站）——重新整理頁面、看一眼那三句寫的畫面即可，不必重啟（沒有 service worker，`express.static` 直接供應）。
->    - **E 不需驗收**：`test/`、`docs/`、根目錄 `*.md`、`.github/`（含 CI 設定——它影響的是合併程序，由合併閘與 CI 自己驗）、只在合併程序或審查裡跑的腳本（`scripts/check-*.js`、`scripts/grok-*`、`scripts/audit-*`、`scripts/git-hooks/`）——回報寫「不需驗收：只動了 …」。
->    ⚠️ 誠實劃界：分級減少的是**不必要的重啟**；純 `lib/` 的口徑變更人眼本來也走不到（例：匯率預設值、SEC 科目對應），那一塊靠考題與 CI 接，不因分級而多或少。這張表是路徑家族的判斷、不是機械閘——所以沒列到的一律往重的算。
->
-> ⚠️ Codex 合併前**不可**自行修改程式（審查者角色不變）；發現問題就回報給 Claude 修。
+> 8. 回報**合併結果**與**驗收分級**（William 2026-09-06 體檢第 5 題裁示分級，落點＝#573 裡他的留言）：
+>    跑 `node scripts/acceptance-tier.js <N>`（**不是閘**，是算級別用的；路徑家族表與每一級的動作**只住那支腳本**，
+>    `test/acceptance-tier.test.js` 釘住），**照它印的動作做、回報它印的級別**。規矩兩條：①**動作累積**——同支命中幾級就做幾級
+>    （例：`db/`＋`package-lock.json`＋`lib/` ＝ 套 SQL、裝相依、重啟走流程三件都做），回報寫最重的那級；②**沒列到的路徑一律當「要重啟」**
+>    （fail-closed，腳本會把它們列出來；真的不必重啟就改表補考題）。AGENTS「合併後五分鐘檢查」那條指回本步、不抄清單。
+>    ⚠️ 誠實劃界：分級減少的是**不必要的重啟**；純 `lib/` 的口徑變更人眼本來也走不到（例：匯率預設值、SEC 科目對應），那一塊靠考題與 CI 接，不因分級而多或少。
 
 ---
 
