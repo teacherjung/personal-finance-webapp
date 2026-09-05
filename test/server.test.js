@@ -937,8 +937,9 @@ test('Codex#4｜還原自動判斷：同品牌共用規則會被回報，可選�
   for (const id of [t1.id, t2.id]) await DELETE_(`/transactions/${id}`);
 });
 
-// ⚠️ 題名只宣稱斷言撐得住的兩件事。「這一次有沒有落磁碟」不在射程內：這條路回的是 ran 與規則指紋，
-//    兩個欄位都看不到寫檔，要守那件事得另外找得到觀測點（讀回磁碟或種哨兵值），不是這一題能給的保證。
+// ⚠️ 射程：「有變動時真的落了磁碟」這一半守得到（讀回來的那筆若沒被持久化，下面比 note／鑰匙那兩句就紅）。
+//    守不到的是另一半——「零變動時不可以寫檔」：這條路回的是 ran 與規則指紋，兩個欄位都看不到「這一次有沒有寫」，
+//    要釘那一格得另外找觀測點（例如寫入前種一個真實寫入不可能產生的哨兵值再看它有沒有被蓋掉）。
 test('第一帖｜規則更新後自動整理：沒記過指紋就跑一次並真的套用、同一版規則不重跑', async () => {
   // 先塞一筆待整理的舊資料（規則升級後名字會變）
   const tx = await seedTx({ date: '2026-07-27', type: 'expense', category: '飲食', subcategory: '超市',
@@ -1424,9 +1425,9 @@ test('2A｜資產配置目標整批取代：類別名稱不是非空字串／百
 });
 
 test('2A｜資產配置目標整批取代：請求裡完全沒有 targets 這個欄位 → 400，既有目標一筆都沒被清空', async () => {
-  // 既有那題送的都是「targets 是陣列、裡面壞掉」；這一格是**連欄位都沒有**。
+  // 題名關鍵字「類別名稱不是非空字串」那題送的都是「targets 是陣列、裡面壞掉」；這一格是**連欄位都沒有**。
   // 為什麼要單獨守：最像真的手滑是在讀取那一行順手補預設值（`req.body?.targets ?? []`），
-  // 那會讓空請求變成「用空清單整批取代」＝把設好的目標清光還回 200，而上面那題的壞值全都躲得過這一刀。
+  // 那會讓空請求變成「用空清單整批取代」＝把設好的目標清光還回 200，而那一題的壞值全都躲得過這一刀。
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
     assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: 60 }, { class: '債券', targetPct: 40 }] })).status, 200,
@@ -1443,16 +1444,15 @@ test('2A｜資產配置目標整批取代：請求裡完全沒有 targets 這個
 });
 
 test('2A｜資產配置目標的百分比是數字字串：轉成真數字存進去（擋的是「不是數字」，不是「不是 number 型別」）', async () => {
-  // 與上一題成對：那題釘「壞值要擋」，這題釘「合法值不可被誤擋」——只有負面斷言時，
-  // 把判準收成「一律拒收」也會全綠，而那會讓表單送出的字串全部存不進去。
+  // 與題名關鍵字「請求裡完全沒有 targets 這個欄位」那題成對：那邊釘「壞值要擋」，這裡釘「合法值不可被誤擋」——
+  // 只有負面斷言時，把判準收成「一律拒收」也會全綠，而那會讓表單送出的字串全部存不進去。
   const snapshot = JSON.parse(JSON.stringify(await getDb()));
   try {
     assert.equal((await POST('/assetTargets/replace', { targets: [{ class: '股票', targetPct: '60' }, { class: '債券', targetPct: 40 }] })).status, 200,
       '數字字串是合法輸入（寫入櫃檯會轉型），不可以被擋下來');
     const rows = await GET('/assetTargets');
     const eq = rows.find((/** @type {any} */ t) => t.class === '股票');
-    assert.strictEqual(eq.targetPct, 60, `字串要轉成真數字才落地（實際 ${JSON.stringify(eq.targetPct)}）`);
-    assert.equal(typeof eq.targetPct, 'number', '存的是字串的話，之後的加總與偏離都會算錯');
+    assert.strictEqual(eq.targetPct, 60, `字串要轉成真數字才落地（實際 ${JSON.stringify(eq.targetPct)}）——存成字串的話之後的加總與偏離都會算錯`);
   } finally { await saveDb(snapshot); await getDb(); }
 });
 
@@ -1465,14 +1465,19 @@ test('2A｜POST /statement/normalize-branches 的 force 不是正牌 true → 40
     db.transactions = [{ id: 'nb1', date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市', amount: 55,
       note: '我取的名字', storeKey: '星巴克內湖店', source: 'stmt', stmtRef: 'c1|2026-07-08|55|星巴克內湖店', ledger: 'card' }];
     await saveDb(db); }
+  // 基線在**預覽之前**拍：預覽若哪天真的會寫入，下面那句「被擋下不可改寫」就會拿整理過的狀態當基線，
+  // 整段對照跟著失效——所以先存原始三元組，預覽之後再確認它逐字沒變。
+  const triple = async () => (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
+  const txBefore = await triple();
+  assert.deepEqual(txBefore, [['nb1', '我取的名字', '星巴克內湖店']], `夾具：這一筆要是「還沒整理過」的形狀（實際 ${JSON.stringify(txBefore)}）`);
   const preview = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(preview.keyChanged >= 1, `夾具對照：這個當下要真的有東西可整理（實際 ${JSON.stringify(preview).slice(0, 160)}）`);
+  assert.deepEqual(await triple(), txBefore, '預覽不可以寫進去（寫了的話下面的基線就是整理過的狀態）');
 
-  const txBefore = (await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]);
   for (const bad of [{ force: 'false' }, { force: 1 }, { force: 'true' }, { force: {} }, { force: null }]) {
     assert.equal((await POST('/statement/normalize-branches', bad)).status, 400, `${JSON.stringify(bad)} 要 400（只有正牌 true 才是確認）`);
   }
-  assert.deepEqual((await GET('/transactions')).map(t => [t.id, t.note, t.storeKey]), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
+  assert.deepEqual(await triple(), txBefore, '被擋下的呼叫不可改寫 note／storeKey');
 
   // 行為對照：同一份夾具送正牌 true，狀態要真的改變——證明上面那句「沒動」量的不是「這條路本來就不會動」。
   assert.equal((await POST('/statement/normalize-branches', { force: true })).status, 200, '對照組：正牌 true 要套用得成');
