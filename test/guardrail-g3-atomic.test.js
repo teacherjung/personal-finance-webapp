@@ -174,7 +174,7 @@ test('2A｜PUT applyAll 送「truthy 但不是 true」的值 → 不傳播：回
     assert.equal(other.category, '其他', `applyAll=${JSON.stringify(bad)} 讓同店另一筆被改了`);
     assert.equal((await getDb()).transactions.find(t => t.id === 'a').category, '交通', '本筆本身要改到');
   }
-  // 對照組：逐字相同的夾具與 body，只把 applyAll 換成正牌 true——證明上面那幾圈的「沒傳播」
+  // 對照組：逐字相同的夾具與 body，只把 applyAll 換成正牌 true——證明那幾個壞值量到的「沒傳播」
   // 不是因為這條路根本不會傳播（那樣的話把判定改成任何值都算開，這題也不會紅）。
   await reset([stmtTx('a', '2026-07-01', SB_A), stmtTx('b', '2026-07-02', SB_B)]);
   const ok = await (await PUT('/transactions/a', { category: '交通', subcategory: '停車費', note: SB_A, applyAll: true })).json();
