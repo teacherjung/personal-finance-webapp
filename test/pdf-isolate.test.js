@@ -221,7 +221,10 @@ test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**
   //    把 500 併進「可接受的結果」＝重新放行 #350 r2 修掉的那個病：
   //    child 入口打錯、相依壞掉、程式例外一樣沒有 stdout，全判 400 會**責怪使用者、藏起我們的故障**。
   setPdfChildScriptForTest(fakeChild('pdf-child-crash.js'));
-  setPdfTimeoutForTest(5_000);   // 給得很寬：本題要看的是「它自己死」，不是逾時
+  setPdfTimeoutForTest(30_000);   // 給得很寬：本題要看的是「它自己死」，不是逾時
+  // ⚠️ 2026-09-05 流程體檢：原本逾時 5s、上界 4s，機器忙時 spawn＋死掉的牆上時間可能超過 4s＝假紅。
+  //    「沒等到逾時」由下面的 code 斷言證明；時間上界只是「不是靠逾時收回」的第二道證據，
+  //    所以把逾時拉到 30s、上界 20s——好路徑（幾百 ms）與逾時路徑（30s）之間留 100 倍，負載吃不掉。
   {
     const t0 = Date.now();
     const err = await errOf(parseStatement(normalPdf()));
@@ -231,7 +234,7 @@ test('歸類｜子行程**提早死（未捕捉例外、code 1）** → 500，**
     assert.notEqual(err.code, 'pdf_timeout', '提早死不是「卡太久」——它根本沒等到逾時');
     assert.notEqual(err.code, 'pdf_resource_exhausted', '也不可以猜成資源耗盡：我們並不知道它為什麼死');
     assert.ok(!/太久|文字節點/.test(String(err.message)), '對外訊息不可以說成使用者的檔案有問題');
-    assert.ok(Date.now() - t0 < 4_000, '它是自己死的，不該等到逾時');
+    assert.ok(Date.now() - t0 < 20_000, '它是自己死的，不該等到逾時（逾時是 30s）');
   }
 });
 

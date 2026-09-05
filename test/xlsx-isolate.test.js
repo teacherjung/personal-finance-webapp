@@ -161,15 +161,27 @@ function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
     const b64 = process.argv[1];
     const data = new Uint8Array(Buffer.from(b64, 'base64'));
     import('${new URL('../lib/statement.js', import.meta.url).href}').then((m) => {
-      const before = process.memoryUsage().rss;
+      // ⚠️ 2026-09-05 流程體檢：只量 RSS 增量會在機器記憶體吃緊時被 OS 回收壓小＝「對照組不夠貴」假紅。
+      //    改同時量 V8 自己記的帳（heapUsed＋external＋arrayBuffers；不受換頁影響），兩者取大。
+      const mu0 = process.memoryUsage();
+      const v8Of = (mu) => mu.heapUsed + mu.external + mu.arrayBuffers;
       m.readXlsxForIsolation(data);
-      process.stdout.write(JSON.stringify({ grewMB: (process.memoryUsage().rss - before) / 1048576 }));
+      const mu1 = process.memoryUsage();
+      process.stdout.write(JSON.stringify({
+        grewMB: Math.max((mu1.rss - mu0.rss), (v8Of(mu1) - v8Of(mu0))) / 1048576,
+        rssMB: (mu1.rss - mu0.rss) / 1048576, v8MB: (v8Of(mu1) - v8Of(mu0)) / 1048576,
+      }));
     }).catch((e) => { process.stdout.write(JSON.stringify({ threw: String(e && e.message).slice(0, 120) })); });
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '--max-old-space-size=3072', '-e', src,
     Buffer.from(data).toString('base64')], { maxBuffer: 8 * 1024 * 1024, timeout: 120_000 });
   if (r.status !== 0 || !r.stdout?.length) return { died: true };
-  try { return JSON.parse(String(r.stdout)); } catch { return { died: true }; }
+  try {
+    const parsed = JSON.parse(String(r.stdout));
+    // 解析到一半炸掉（字串長度上限／配置失敗）＝代價真的很貴，等同壓死；其他例外照實回報（讓斷言訊息看得到）
+    if (parsed.threw && /string length|allocat|memory|heap|Array buffer/i.test(parsed.threw)) return { died: true, threw: parsed.threw };
+    return parsed;
+  } catch { return { died: true }; }
 }
 
 test('攻擊｜解壓後極大的合法 XLSX → 子行程被收掉、父行程活著（400、不是整個服務死掉）', async () => {
