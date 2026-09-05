@@ -14,7 +14,7 @@
 //
 // ## r6 收窄（Codex r6 #5：「替任何 DUMMY 前綴、任何 method／path 背書」＝confused deputy，且能力可跨掃描重用）
 // ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃離開來的程序拿公開前綴等不到下一掃的真 token。
-// ・只轉 grok 1.0.3 實際會打的 method＋path（ALLOWED_REQUESTS，2026-08-23 用記錄型 proxy 實測抄下來的）；
+// ・只轉 grok 1.0.13 實際會打的 method＋path（ALLOWED_REQUESTS，2026-08-23 用 1.0.3 記錄型 proxy 實測抄來；1.0.13 於 2026-09-05 #563 真掃全部命中、零拒收下來的）；
 //   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。每次拒絕寫一行 REFUSED_PREFIX 到 stderr，
 //   grok-scan.js 讀到非 TOLERATED_REFUSALS 的拒絕＝該掃退 2——「升版多打新端點＝掃不成（吵）」由這條承重，
 //   不是由 grok 自己的退出碼（r7：grok 收到 403 照常退 0，靠它就是靜默降級）。
