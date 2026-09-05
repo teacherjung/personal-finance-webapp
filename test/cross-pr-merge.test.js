@@ -782,7 +782,10 @@ test('⭐ CLI｜gh 給的 baseRefOid 本機沒有那顆 commit、本機 origin/m
     const originMain = String(spawnSync('git', ['rev-parse', 'origin/main'], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } }).stdout).trim();
     for (const notFetched of [
       '0123456789abcdef0123456789abcdef01234567',   // gh 看得到、本機沒有的那顆
-      `${originMain}0`,                            // #566 r3 Codex 的形狀：origin/main 的完整 sha 多一個字元——前綴比對會當成同一顆
+      // #566 r3 Codex 的形狀：origin/main 的完整 sha 後面多一個字元——前綴比對會當成同一顆。
+      // 多的字元刻意用非 hex：多一個 hex 字元（41 碼）在 CI 的 git 版本上竟解析得到（本機的 git 解析不到），
+      // 夾具會因版本不同而失真；非 hex 在任何版本都是「不是物件名」。
+      `${originMain}z`,
     ]) {
       const probe = spawnSync('git', ['cat-file', '-e', `${notFetched}^{commit}`], { cwd: dir, encoding: 'utf8', env: { ...SANDBOX_ENV } });
       assert.notEqual(probe.status, 0, `夾具失真：${notFetched} 本機竟然有，這題就沒走到「本機沒有」那條路`);
