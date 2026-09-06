@@ -599,6 +599,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['AGENTS.md', '④「明確指派／指名／特准」型授權', 1],   // ④ 指派型授權
     ['AGENTS.md', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', 1],   // ⑤ 驗收點頭
     ['AGENTS.md', '⑥事故通報 ⑦', 1],   // ⑥ 事故通報
+    ['CLAUDE.md', '三天', 0],   // 時限數字只住 AGENTS 正本一處（Grok #577 掃後）
+    ['REVIEW-AND-MERGE.md', '三天', 0],
     ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
     ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
@@ -633,7 +635,7 @@ test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要�
   // 題名關鍵字「工作區方案（實作常設／審查拋棄）」那題只在整份檔案計次——把整顆逐字搬到「### 審查分工的沿革」底下，次數不變、規則卻已經失效（固定維度 2 的「文字存在、結構失效」假綠）。
   const agents = read('AGENTS.md');
   const ruleStart = agents.indexOf('**審查回饋處置（');
-  const blockStart = agents.indexOf('  **問法與逾時預設（');
+  const blockStart = agents.indexOf('- **問法與逾時預設（');
   const historyStart = agents.indexOf('### 審查分工的沿革');
   assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
   assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
@@ -654,6 +656,7 @@ test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要�
     '④「明確指派／指名／特准」型授權', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', '⑥事故通報 ⑦', '⑦**本顆自己的射程、時限與例外清單**',
     '沒有「時限內沒回就當綠」', '**Claude 對「先做」的解讀**', '題目本文中他未反對的前提', '**❓ 貼出後不可編輯**', '不准寫「William 拍板／裁示」',
     '**❓ 未結且影響本支＝本支不合**', '**整則留言不得出現 🤖**',   // 待裁流程與合併授權的接縫、留痕留言與壞標頭閘的接縫（#577 r4）
+    '不為了起算時鐘開新 PR', '逾時暫定**不進**', '建立時間相差 ≥ 時限',   // Grok #577 掃後
   ]) {
     assert.equal(block.split(line).length - 1, 1, `承重句「${line}」不在那顆裡（或不只一次）——在檔案別處出現不算`);
   }
