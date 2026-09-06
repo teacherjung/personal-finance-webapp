@@ -581,6 +581,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   const count = (hay, needle) => hay.split(needle).length - 1;
   const PINS = [
     ['AGENTS.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
+    ['AGENTS.md', '一句白話問題＋最多三個選項＋我建議的預設＋時限', 1],   // 第 6 題：問法正本只住一處
+    ['CLAUDE.md', '「問法與逾時預設」那顆', 1],
     ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
     ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
