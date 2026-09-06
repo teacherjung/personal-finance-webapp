@@ -67,8 +67,21 @@ const TIMEOUT = /^## ⏳ 逾時暫定（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 // 引號內**允許再有引號**（他的原話常常引到別人的話：真語料裡就有「…回 **「1. a. 做／2.「先做」含不含合併：含…」**」）。
 // 所以中間用貪婪的 `.+` 收到那一行最後一組 `」**`，不是 `[^」]+`——後者會被巢狀的 `」` 卡住，
 // 把真的裁示判成形狀不合，反而讓已經回過的問題又冒回「還沒回」（實跑真語料抓到的）。
-const RULING_QUOTE = /^原話（對話中，Claude 轉述）：.*\*\*「.+」\*\*/mu;
+const RULING_QUOTE = /^原話（對話中，Claude 轉述）：.*\*\*「.+」\*\*/u;
 const TIMEOUT_PHRASE = /^William 未裁、隨時可翻案/mu;
+
+/**
+ * 標頭那一行之後的**第一個可見段落**（規則正本寫的是「內文第一段」）。
+ * 只用 `^…/m` 在整則裡找的話，可見處放一段回答**別題**的原話、真正要關的網址藏在別處，也照樣算數。
+ * @param {string} vis 已剝掉不可見內容的整則
+ */
+function firstParagraph(vis) {
+  const lines = vis.split('\n').slice(1);
+  const start = lines.findIndex((l) => l.trim() !== '');
+  if (start < 0) return '';
+  const end = lines.findIndex((l, i) => i > start && l.trim() === '');
+  return lines.slice(start, end < 0 ? undefined : end).join('\n');
+}
 
 /** 標頭上的日期要是真的存在的日子（2026-99-99 不算）。 @param {RegExpMatchArray|null} m */
 function realDate(m) {
@@ -88,6 +101,31 @@ const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
 //   這裡選擇認它為收尾，代價是刻意寫成 `<網址>)…` 的內容裝得出「引到」——那一條靠複審的人看，不是靠這支擋。
 const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]';
 
+/**
+ * **只留畫面上看得見的內容**。GitHub 不會渲染圍欄程式碼區塊的內文與 HTML 註解，
+ * 而規則要的是「查得證的留痕」：人翻留言時看不到的東西，不可以拿去關掉問題（#579 r4 High①）。
+ * 兩條路各自吃到不同的一半，寫清楚免得高估它：
+ * ・**配對網址**——不剝的話，把待裁網址藏進註解就能關掉真的還沒回的問題（突變實測會紅）。
+ * ・**裁示的原話**——擋「藏起來的原話」其實是靠下面 `firstParagraph` 那個「標頭後第一個可見段落」
+ *   的錨點（藏起來的東西不可能是段落開頭）；剝在這條路上防的是**反過來的假紅**：
+ *   原話上面擋著一則註解或一段圍欄時，不剝就會把一則完全合規的裁示判成形狀不合。
+ * ⚠️ 誠實劃界：行內程式碼（單反引號）**保留**——那在畫面上看得見（只是換個字體），
+ *   藏不了東西。這裡剝的只有「畫面上完全不顯示」的兩種；別的隱藏花招（例如白字、
+ *   `<details>` 摺起來）沒剝，那要靠人看留言時發現。
+ * @param {unknown} body @returns {string}
+ */
+export function visible(body) {
+  const withoutComments = String(body ?? '').replace(/<!--[\s\S]*?-->/g, '\n');
+  const out = []; let fence = null;
+  for (const line of withoutComments.split('\n')) {
+    const m = /^ {0,3}(```+|~~~+)/.exec(line);
+    if (fence === null && m) { fence = m[1][0]; out.push(''); continue; }
+    if (fence !== null) { if (m && m[1][0] === fence) fence = null; out.push(''); continue; }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 /** @param {unknown} body 留言內文 @returns {string} 第一行，去掉行尾 \r 與看不見的 U+FE0F */
 export function firstLine(body) {
   return String(body ?? '').split('\n')[0].replace(/\r$/, '').replace(/️/gu, '');
@@ -104,13 +142,15 @@ export function shapeOf(c) {
   const line = firstLine(c?.body);
   // 規則明定這三種留言**整則不得出現 🤖**（複審聯集閘會把含 🤖 的非合規留言當壞標頭）。
   // 含 🤖 的一律不算有效的留痕留言——長得像就進「形狀不合」讓人看見，不可以拿去關掉問題。
+  // ⚠️ 🤖 這一項看的是**整則原文**（閘也是看整則），其餘欄位一律只看**畫面上看得見的部分**。
   const body = String(c?.body ?? '');
+  const vis = visible(body);
   const botMark = body.includes('🤖');
   if (!botMark) {
     if (realDate(line.match(ASK))) return 'ask';
     // 裁示與逾時暫定還要有內文那一欄：第一行對、內文卻沒有他的原話（或沒說「William 未裁」），不是一則有效的留痕留言。
-    if (realDate(line.match(RULING)) && RULING_QUOTE.test(body)) return 'ruling';
-    if (realDate(line.match(TIMEOUT)) && TIMEOUT_PHRASE.test(body)) return 'timeout';
+    if (realDate(line.match(RULING)) && RULING_QUOTE.test(firstParagraph(vis))) return 'ruling';
+    if (realDate(line.match(TIMEOUT)) && TIMEOUT_PHRASE.test(vis)) return 'timeout';
   }
   return NEAR.test(line) ? 'near' : null;
 }
@@ -157,7 +197,11 @@ export function classify(comments, nowMs) {
     // ⚠️ 這裡用的是**正向的收尾字集**（URL_END），不是「不可以接哪些字」的黑名單——
     //   黑名單漏一個就誤關，`@` 就是這樣漏掉的（#579 r3 High②，`@` 是 fragment 的合法字元）。
     const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=${URL_END}|$)`);
-    const hits = closers.filter((x) => cited.test(String(x.c?.body ?? '')) && Date.parse(x.c.created_at) > askAt);
+    // 只在**看得見的**內容裡找那個網址（藏在 HTML 註解或圍欄裡的不算——#579 r4 High①）。
+    // 另外把 Markdown 的強調符號拿掉：`**<網址>**` 是常見的可見寫法，`*` 又是 fragment 的合法字元，
+    // 不能把它當通用收尾（會誤關），但可以在**可見層**先把包裝符號剝掉再比（#579 r4 待辦⑤）。
+    const hits = closers.filter((x) => cited.test(visible(x.c?.body).replace(/\*+/g, ''))
+      && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;
     const item = {
@@ -241,8 +285,15 @@ export function flatten(json) {
   for (const page of pages) {
     if (!Array.isArray(page)) throw new Error('gh api 的頁不是陣列');
     for (const c of page) {
-      for (const k of ['id', 'body', 'created_at', 'updated_at', 'html_url', 'author_association']) {
-        if (c == null || typeof c !== 'object' || c[k] === undefined || c[k] === null) throw new Error(`留言缺欄位 ${k}`);
+      // ⚠️ 只驗「不是 null」不夠：`body: {}` 這種壞回應會一路走到底、印出一句「還沒回的問題：沒有」，
+      //    看起來跟「掃完了、真的沒有」一模一樣（#579 r4 Medium②）。所以逐欄驗**型別**，壞了就丟。
+      if (c == null || typeof c !== 'object') throw new Error('留言不是物件');
+      for (const k of ['body', 'html_url', 'author_association']) {
+        if (typeof c[k] !== 'string') throw new Error(`留言欄位 ${k} 不是字串（拿到 ${typeof c[k]}）`);
+      }
+      if (typeof c.id !== 'number' && typeof c.id !== 'string') throw new Error('留言欄位 id 不是數字或字串');
+      for (const k of ['created_at', 'updated_at']) {
+        if (typeof c[k] !== 'string' || Number.isNaN(Date.parse(c[k]))) throw new Error(`留言欄位 ${k} 不是讀得出來的時間`);
       }
       out.push(c);
     }
@@ -258,7 +309,7 @@ export function expectedTotal(json) {
   for (const page of pages) {
     if (!Array.isArray(page)) throw new Error('gh api 的頁不是陣列（issues）');
     for (const it of page) {
-      if (!it || typeof it !== 'object' || !Number.isInteger(it.comments)) throw new Error('issue 缺 comments 筆數');
+      if (!it || typeof it !== 'object' || !Number.isInteger(it.comments) || it.comments < 0) throw new Error('issue 的 comments 筆數不是非負整數');
       n += it.comments;
     }
   }
@@ -274,9 +325,11 @@ const USAGE = [
 
 /** @param {string[]} argv @param {{now?: number}} [opts] */
 export function main(argv, opts = {}) {
+  // 參數要**剛好**是 `--all` 或 `--pr <數字>`。多打一個就忽略掉的話，`--all --bogus` 會照樣連網跑完、退 0，
+  // 跟檔頭寫的「參數不認得＝退 2」對不上（#579 r4 Low④）。
   let only = null;
-  if (argv[0] === '--pr' && /^\d+$/.test(argv[1] ?? '')) only = Number(argv[1]);
-  else if (argv[0] !== '--all') { console.error(USAGE); return 2; }
+  if (argv.length === 2 && argv[0] === '--pr' && /^\d+$/.test(argv[1])) only = Number(argv[1]);
+  else if (!(argv.length === 1 && argv[0] === '--all')) { console.error(USAGE); return 2; }
   try {
     const { host, slug } = originRepo();
     const run = (/** @type {string} */ path) => execFileSync('gh',

@@ -134,7 +134,16 @@ test('⭐ 逾時暫定要寫正本那一整句：只寫「William 未裁」半�
   const a = ask({ id: 1 });
   const half = c({ id: 2, at: T0 + 5 * 86400e3, body: `## ⏳ 逾時暫定（2026-09-06）：同一句問題\nWilliam 未裁\n❓ 留言：${urlOf(1)}` });
   assert.equal(shapeOf(half), 'near', '正本寫的是「William 未裁、隨時可翻案」——半句代表那則沒照形狀寫');
-  assert.equal(classify([a, half], T0 + 6 * 86400e3).pending.length, 1, '半句的那則不可以把問題移出「還沒回」');
+  // 藏起來的那一句同樣不算（跟裁示的原話同一條規矩，#579 r4 High①）
+  const hidden = c({ id: 5, at: T0 + 5 * 86400e3,
+    body: `## ⏳ 逾時暫定（2026-09-06）：同一句問題\n\n<!-- William 未裁、隨時可翻案 -->\n❓ 留言：${urlOf(1)}` });
+  assert.equal(shapeOf(hidden), 'near', 'HTML 註解裡的那一句畫面上看不到，不算留痕');
+  const fencedT = c({ id: 6, at: T0 + 5 * 86400e3,
+    body: `## ⏳ 逾時暫定（2026-09-06）：同一句問題\n\n\`\`\`\nWilliam 未裁、隨時可翻案\n\`\`\`\n❓ 留言：${urlOf(1)}` });
+  assert.equal(shapeOf(fencedT), 'near', '圍欄裡的那一句畫面上看不到，不算留痕');
+  for (const bad of [half, hidden, fencedT]) {
+    assert.equal(classify([a, bad], T0 + 6 * 86400e3).pending.length, 1, '沒照形狀寫的 ⏳ 不可以把問題移出「還沒回」');
+  }
   assert.equal(shapeOf(timeout({ id: 3, cites: urlOf(1) })), 'timeout', '對照組：整句寫齊的仍算數');
   assert.equal(classify([a, timeout({ id: 4, at: T0 + 5 * 86400e3, cites: urlOf(1) })], T0 + 6 * 86400e3).provisional.length, 1,
     '對照組：整句寫齊的會進「逾時暫定」那一段（不是「已結」）');
@@ -213,14 +222,86 @@ test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在
   assert.equal(TIMEOUT_HOURS, 72);
 });
 
-test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天」，這裡就必須是 72 小時', () => {
+test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天＝連續 72 小時」，這裡就必須是 72', () => {
   // 沒有這一題的話，William 哪天把三天改成五天，AGENTS 改了、工具照舊按 72 小時印「已經超過時限」，全卷還是綠的。
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-  const m = agents.match(/時限＝\*\*(.)天\*\*/);
-  assert.ok(m, 'AGENTS 的「時限＝**N 天**」找不到——規則正本改寫法了，這題與工具的常數要一起改');
-  const days = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7 }[m[1]];
-  assert.ok(days, `讀不出天數：${m[1]}`);
-  assert.equal(TIMEOUT_HOURS, days * 24, `規則正本寫 ${m[1]} 天、工具卻用 ${TIMEOUT_HOURS} 小時`);
+  // ⚠️ 這一題自己被騙過一次（#579 r4 Medium③）：原本在**整份 AGENTS** 取第一個命中，
+  //   於是把可見正本改成五天、在前面加一行 HTML 註解寫「時限＝**三天**」，工具留 72 小時、全卷照樣綠。
+  //   所以改成三件事：①先剝掉 HTML 註解（畫面上看不到的不算正本）②只在「審查回饋處置」那一節裡找
+  //   ③要求**剛好一處**，而且正本自己寫的「N 天」與「連續 M 小時」要先對得上。
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const from = agents.indexOf('**審查回饋處置（');
+  const to = agents.indexOf('\n**界線表（', from);
+  assert.ok(from >= 0 && to > from, '找不到「審查回饋處置」那一節（到「界線表」為止）——正本搬家了，這題要跟著改');
+  const hits = [...agents.slice(from, to).matchAll(/時限＝\*\*(.)天\*\*＝連續 (\d+) 小時/gu)];
+  assert.equal(hits.length, 1, `那一節裡「時限＝**N天**＝連續 M 小時」命中 ${hits.length} 處（要剛好 1 處）`);
+  const [, cn, hours] = hits[0];
+  const days = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7 }[cn];
+  assert.ok(days, `讀不出天數：${cn}`);
+  assert.equal(Number(hours), days * 24, `正本自己就對不上：寫 ${cn} 天，卻又寫連續 ${hours} 小時`);
+  assert.equal(TIMEOUT_HOURS, days * 24, `規則正本寫 ${cn} 天、工具卻用 ${TIMEOUT_HOURS} 小時`);
+});
+
+test('⭐ 藏起來的東西不算數：原話或網址放在圍欄／HTML 註解裡，關不掉問題（#579 r4 High①）', () => {
+  const a = ask({ id: 1 });
+  const fenced = c({ id: 2, at: T0 + 60e3, body: '## ⚖️ William 裁示（2026-09-02）：答覆\n\n```\n原話（對話中，Claude 轉述）：**「假的」**\n```\n'
+    + `關的是 ${urlOf(1)}` });
+  assert.ok(String(fenced.body).includes('原話（對話中，Claude 轉述）'), '對照斷言：原話那串字真的在原文裡，只是藏在圍欄裡');
+  assert.equal(shapeOf(fenced), 'near', '圍欄裡的原話畫面上看不到，不算一段留痕');
+  const commented = c({ id: 3, at: T0 + 60e3, body: '## ⚖️ William 裁示（2026-09-02）：答覆\n\n<!-- 原話（對話中，Claude 轉述）：**「假的」** -->\n'
+    + `關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(commented), 'near', 'HTML 註解裡的原話畫面上看不到，不算一段留痕');
+  // 反過來：原話看得見（但回答的是別題），真正要關的網址藏在 HTML 註解裡
+  const hiddenUrl = c({ id: 4, at: T0 + 60e3, body: '## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n'
+    + `<!-- ${urlOf(1)} -->` });
+  assert.equal(shapeOf(hiddenUrl), 'ruling', '這一則本身是合規的裁示（只是它沒有可見地引到那一題）');
+  for (const bad of [fenced, commented, hiddenUrl]) {
+    assert.equal(classify([a, bad], T0 + 4 * 86400e3).pending.length, 1, '藏起來的內容不可以關掉問題');
+  }
+});
+
+test('⭐ 原話要在標頭後的**第一個可見段落**：可見處放一段回答別題的原話，關不掉這一題', () => {
+  const a = ask({ id: 1 });
+  const late = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n這一段先講背景，關的是 ${urlOf(1)}\n\n原話（對話中，Claude 轉述）：**「好」**` });
+  assert.equal(shapeOf(late), 'near', '規則正本寫的是「內文第一段」，原話跑到第二段之後就不是那個形狀');
+  assert.equal(classify([a, late], T0 + 4 * 86400e3).pending.length, 1);
+  // 對照組：第一段就是原話的照樣算數
+  assert.equal(shapeOf(ruling({ id: 3, cites: urlOf(1) })), 'ruling');
+});
+
+test('⭐ 原話前面擋著一段不可見內容，仍要認得（剝掉之後它才是第一個可見段落）', () => {
+  // 「第一段」講的是**畫面上**的第一段。上面放一則 HTML 註解或一段圍欄，讀的人根本看不到，
+  // 不剝掉就會把一則完全合規的裁示判成形狀不合——那會讓已經回過的問題冒回「還沒回」。
+  const a = ask({ id: 1 });
+  const afterComment = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n<!-- 給下一個人的備註 -->\n\n原話（對話中，Claude 轉述）：**「好」**\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(afterComment), 'ruling', '註解在畫面上不顯示，它後面那一段才是第一段');
+  const afterFence = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n\u0060\u0060\u0060\n附上當時的指令\n\u0060\u0060\u0060\n\n原話（對話中，Claude 轉述）：**「好」**\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(afterFence), 'ruling', '圍欄裡的內文不是「第一段」，它後面那一段才是');
+  for (const good of [afterComment, afterFence]) {
+    assert.equal(classify([a, good], T0 + 4 * 86400e3).closed.length, 1, '合規的裁示要關得掉');
+  }
+});
+
+test('⭐ 行內程式碼是看得見的，不可以跟著剝掉（剝過頭＝合規的留痕被判成形狀不合）', () => {
+  const a = ask({ id: 1 });
+  const inlineCode = c({ id: 2, at: T0 + 60e3,
+    body: '## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「照 `--all` 那個做法」**\n'
+      + `關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(inlineCode), 'ruling', '單反引號在畫面上看得見（只是換字體），藏不了東西');
+  assert.equal(classify([a, inlineCode], T0 + 4 * 86400e3).closed.length, 1);
+});
+
+test('⭐ 粗體包起來的裸網址算引到（可見層先剝包裝符號，不是把 `*` 當通用收尾）', () => {
+  // `*` 是 fragment 的合法字元，當通用收尾會誤關；但 `**<網址>**` 是常見的可見寫法，
+  // 判成「沒引到」會讓已經回過的問題冒回「還沒回」（#579 r4 待辦⑤）。
+  const a = ask({ id: 1 });
+  const bold = ruling({ id: 2, at: T0 + 60e3, cites: `**${urlOf(1)}**` });
+  assert.equal(classify([a, bold], T0 + 4 * 86400e3).closed.length, 1);
+  // 對照組：`*` 沒有變成通用收尾——網址後面接 `*oops` 仍然不算引到
+  const ext = ruling({ id: 3, at: T0 + 120e3, cites: `${urlOf(1)}*oops` });
+  assert.equal(classify([a, ext], T0 + 4 * 86400e3).pending.length, 1, '`*` 不是收尾字，後面還接著字就是另一個位置');
 });
 
 test('⭐ 被編輯過的問題＝沒起算：不算天數、不標逾時，改印「要另貼一則新的」', () => {
@@ -393,6 +474,49 @@ test('⭐ CLI｜無參數＝印用法、退 2，而且一次都不連網', () =>
     assert.equal(r.status, 2);
     assert.match(r.stderr, /用法/);
     assert.deepEqual(seen, [], '無參數不可以打 API');
+  });
+});
+
+test('⭐ CLI｜多打一個參數也是「不認得」：退 2、不連網（#579 r4 Low④）', () => {
+  // 只看前兩個 token 的話，`--all --bogus` 會照樣連網跑完退 0，跟檔頭寫的「參數不認得＝退 2」對不上。
+  for (const args of [['--all', '--bogus'], ['--pr', '579', '--all'], ['--pr'], ['--pr', '5x'], ['--All']]) {
+    withFakeGh({ issues: ISSUES(1), comments: pages([]), args }, ({ r, seen }) => {
+      assert.equal(r.status, 2, `「${args.join(' ')}」要退 2`);
+      assert.match(r.stderr, /用法/);
+      assert.deepEqual(seen, [], `「${args.join(' ')}」不可以打 API`);
+    });
+  }
+  // 對照組：剛好那兩種寫法照樣跑得完（不然上面那一排是把工具收死了）
+  withFakeGh({ issues: ISSUES(0), comments: pages([]), args: ['--all'] }, ({ r }) => assert.equal(r.status, 0));
+  withFakeGh({ issues: ISSUES(0), comments: pages([]), args: ['--pr', '579'] }, ({ r }) => assert.equal(r.status, 0));
+});
+
+test('⭐ CLI｜欄位型別不對＝算不出來，不可以印成「沒有還沒回的」（#579 r4 Medium②）', () => {
+  // `body: {}` 這種壞回應原本一路走到底，印出「掃了 1 則」「還沒回的問題：沒有」——
+  // 跟「掃完了、真的沒有」長得一模一樣，正是這支最貴的失敗。
+  const bad = [
+    ['body 不是字串', { body: {} }],
+    ['html_url 不是字串', { html_url: 123 }],
+    ['author_association 不是字串', { author_association: null }],
+    ['created_at 讀不出時間', { created_at: '不是時間' }],
+    ['updated_at 讀不出時間', { updated_at: '' }],
+  ];
+  for (const [name, patch] of bad) {
+    const one = { ...c({ id: 1, body: '## ❓ 待裁（2026-09-01）：問題？\n選項…' }), ...patch };
+    withFakeGh({ issues: ISSUES(1), comments: JSON.stringify([[one]]) }, ({ r }) => {
+      assert.equal(r.status, 2, `${name} 要退 2`);
+      assert.doesNotMatch(r.stdout, /還沒回的問題/, `${name}：算不出來時 stdout 不可以有清單`);
+    });
+  }
+  // 對照組：同一則沒有壞掉時真的跑得完（證明上面紅的是型別，不是夾具本身壞了）
+  withFakeGh({ issues: ISSUES(1), comments: JSON.stringify([[c({ id: 1, body: '## ❓ 待裁（2026-09-01）：問題？\n選項…' })]]) },
+    ({ r }) => { assert.equal(r.status, 0); assert.match(r.stdout, /還沒回的問題：1 則/); });
+});
+
+test('⭐ CLI｜GitHub 自報的筆數是負數＝壞回應，不可以拿去對帳', () => {
+  withFakeGh({ issues: JSON.stringify([[{ comments: -3 }]]), comments: pages([]) }, ({ r }) => {
+    assert.equal(r.status, 2);
+    assert.doesNotMatch(r.stdout, /還沒回的問題/);
   });
 });
 
