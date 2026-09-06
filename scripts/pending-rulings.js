@@ -144,7 +144,10 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  * @param {unknown} body @returns {string}
  */
 export function visible(body) {
-  const lines = String(body ?? '').replace(/\r\n?/g, '\n').split('\n');
+  // 佔位符用的私用區字元**先從輸入裡拿掉**，不然留言可以自己打那兩個字，
+  // 還原時就把註解裡的行內程式碼（含藏起來的網址）合成回可見層（#579 r9 High②）。
+  // 它們在 GitHub 上只是無意義的字，拿掉不影響任何合法內容。
+  const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[\uE000\uE001]/g, '').split('\n');
   /** @type {{ch: string, len: number}|null} */
   let open = null;
   const unfenced = lines.map((line) => {
@@ -160,8 +163,8 @@ export function visible(body) {
   /** @type {string[]} */
   const spans = [];
   // 佔位符用**私有使用區**的兩個字（\uE000／\uE001）：Markdown 裡不會出現，
-  // 也不是控制字元（控制字元進正規式會被 lint 擋）。留言裡真的打了那兩個字也不影響——
-  // 還原時只認我們自己編出來的號碼。
+  // 也不是控制字元（控制字元進正規式會被 lint 擋）。**輸入裡原有的那兩個字已在上面拿掉**——
+  // 不拿掉的話，留言自己打那兩個字就能把註解裡的內容合成回可見層（#579 r9 High②）。
   const guarded = unfenced.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
@@ -212,6 +215,29 @@ export function shapeOf(c) {
   return NEAR.test(line) ? 'near' : null;
 }
 
+/** `[文字](…)` 的 destination（可帶 `<>`；title 在第一個空白之後）。 */
+const LINK_DEST = /\]\(\s*(<[^<>]*>|[^\s)]*)/g;
+/** `<…>` 角括號自動連結。 */
+const ANGLE = /<([^<>\s]+)>/g;
+const unwrap = (/** @type {string} */ d) => (d.startsWith('<') && d.endsWith('>') ? d.slice(1, -1) : d);
+
+/**
+ * 這段**可見文字**有沒有引到那個網址。做法見呼叫處的註解：
+ * 被分隔符界定的 destination 逐字比，其餘才走裸網址的邊界規則。
+ * @param {string} text 已剝成可見內容的文字
+ * @param {string} url 要找的留言網址
+ * @param {RegExp} bareUrl 裸網址的比對式（含右邊界）
+ */
+export function citesUrl(text, url, bareUrl) {
+  const delimited = [
+    ...[...text.matchAll(LINK_DEST)].map((m) => unwrap(m[1])),
+    ...[...text.matchAll(ANGLE)].map((m) => m[1]),
+  ];
+  if (delimited.some((d) => d === url)) return true;
+  const rest = text.replace(LINK_DEST, ']( ').replace(ANGLE, ' ');
+  return bareUrl.test(rest);
+}
+
 /** 第一行全形冒號之後那一段＝問題原句；取不到就原樣回整行（不猜、不補）。 @param {unknown} body */
 export function titleOf(body) {
   const line = firstLine(body);
@@ -253,20 +279,18 @@ export function classify(comments, nowMs) {
     // 右邊界要卡的是「網址還沒結束」：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）。
     // ⚠️ 這裡用的是**正向的收尾字集**（URL_END），不是「不可以接哪些字」的黑名單——
     //   黑名單漏一個就誤關，`@` 就是這樣漏掉的（#579 r3 High②，`@` 是 fragment 的合法字元）。
-    // **只認兩種引法**，各自有各自的收尾規則。這是刻意收窄，不是又一次放寬——
-    // 前七輪都在猜「GitHub 會怎麼渲染這一段」，而那條路每一輪都同時生出誤關與漏認（#579 r1〜r8）。
-    // 這裡改成：**枚舉我自己會用的兩種寫法**，各給一條在本地就判得準的規則，其餘一律不認。
-    //  ①**明寫連結** `[文字](<網址>)`：destination 由括號界定，裡面的 `~ . ,` 都**屬於網址**，
-    //    所以要求網址後面**緊接** `)`。`[另一個位置](<網址>~)` 指的是別的位置，不算（#579 r8 High①）。
-    //  ②**裸網址**：GFM 的自動連結會把**結尾的 `?!.,:*_~`** 當標點修掉，所以允許那幾個字再接收尾字。
-    //    前面是不是 `(` 決定它是不是①——是的話這條不適用，免得用①的規則去套②的語意。
-    // ⚠️ 誠實劃界：**其餘引法一律不認**（參考式 `[文字][名稱]`、HTML `<a href>`、把網址拆行……）。
+    // **只認兩種引法**，而且**不靠猜上下文**（上一版用單字元 lookbehind 猜「前面是不是 `(`」，
+    // 於是 `[文字]( 網址~)`、`[文字](<網址~>)`、`<網址~>` 三種合法寫法都繞過去，把別的位置算成這一則
+    // ——#579 r9 High①）。改成先把**被界定的 destination 整段抽出來逐字比**，剩下的才算裸網址：
+    //  ①**被界定的**：`[文字](…)` 的 destination（可帶 `<>`，title 在空白之後）與 `<…>` 角括號自動連結。
+    //    這兩種的網址由分隔符界定，所以判準是**逐字相等**——完全不做邊界猜測。
+    //  ②**裸網址**：把①那些整段挖掉之後才比。GFM 的自動連結會把結尾的 `?!.,:*_~` 當標點修掉，
+    //    所以允許那幾個字再接收尾字。
+    // ⚠️ 誠實劃界：**其餘引法一律不認**（參考式 `[文字][名稱]`、HTML `<a href>`、把網址拆行）。
     //   認不得＝問題留在「還沒回」＝我再問他一次，安全方向。**貼 ⚖️／⏳ 時就用這兩種寫法之一。**
     const RAW = String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const explicitLink = new RegExp(`\\]\\(\\s*${RAW}\\s*\\)`);
-    const bareUrl = new RegExp(`(?<!\\()${RAW}[?!.,:*_~]{0,3}(?=${URL_END}|$)`);
-    const cited = { test: (/** @type {string} */ t) => explicitLink.test(t) || bareUrl.test(t) };
-    // 只在**看得見的**內容裡找那個網址（藏在 HTML 註解或圍欄裡的不算——#579 r4 High①）。
+    const bareUrl = new RegExp(`${RAW}[?!.,:*_~]{0,3}(?=${URL_END}|$)`);
+    const cited = { test: (/** @type {string} */ t) => citesUrl(t, ask.html_url, bareUrl) };
     const hits = closers.filter((x) => cited.test(visible(x.c?.body)) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;

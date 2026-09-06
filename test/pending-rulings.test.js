@@ -379,6 +379,44 @@ test('⭐ 只認兩種引法：明寫連結要緊接 `)`，裸網址才吃 GFM �
   }
 });
 
+test('⭐ 被界定的 destination 一律逐字比：留空白、角括號、角括號自動連結都不可以繞過（#579 r9 High①）', () => {
+  // 上一版用單字元 lookbehind 猜「前面是不是 `(`」，這三種合法寫法都讓網址前一個字變成空白或 `<`。
+  const a = ask({ id: 1 });
+  const cases = [
+    ['destination 前面留空白', `[文字]( ${urlOf(1)}~)`],
+    ['destination 用角括號', `[文字](<${urlOf(1)}~>)`],
+    ['角括號自動連結', `<${urlOf(1)}~>`],
+    ['destination 帶 title', `[文字](${urlOf(1)}~ "說明")`],
+  ];
+  for (const [name, cite] of cases) {
+    const cmt = ruling({ id: 2, at: T0 + 60e3, cites: cite });
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1,
+      `${name}：網址尾端多一個 ~ ＝另一個位置，不算引到`);
+  }
+  // 對照組：同樣三種寫法指到**正確**的網址時要算引到（不然這一收就把常見寫法收死了）
+  const good = [
+    ['destination 前面留空白', `[文字]( ${urlOf(1)} )`],
+    ['destination 用角括號', `[文字](<${urlOf(1)}>)`],
+    ['角括號自動連結', `<${urlOf(1)}>`],
+    ['destination 帶 title', `[文字](${urlOf(1)} "說明")`],
+  ];
+  for (const [name, cite] of good) {
+    const cmt = ruling({ id: 3, at: T0 + 120e3, cites: cite });
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).closed.length, 1, `${name}：指對了就算引到`);
+  }
+});
+
+test('⭐ 佔位符不可以被留言的內容撞到：自己打私用區字元也合不出隱藏的網址（#579 r9 High②）', () => {
+  // 反例：註解裡放一個行內程式碼（內容＝網址加一個尾端空白），註解外放 literal U+E000 0 U+E001。
+  // GitHub 只顯示那三個怪字元、完全沒有網址；還原時若不先清掉，就會把註解裡的網址合成回可見層。
+  const a = ask({ id: 1 });
+  const collide = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `<!-- ${BT}${urlOf(1)} ${BT} -->\n\u{E000}0\u{E001}` });
+  assert.ok(String(collide.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在 HTML 註解中');
+  assert.equal(classify([a, collide], T0 + 4 * 86400e3).pending.length, 1, '註解裡的網址不可以被佔位符合成回可見層');
+});
+
 test('⭐ 星號只在網址**結尾**才算包裝，絕不改寫網址本身（#579 r7 High②）', () => {
   // 上一版對整段文字全域刪 `*`，於是 `…#issuecomment-*1` 被抹成 `…#issuecomment-1`＝另一則的網址，
   // GitHub 實際渲染出的連結指向 `issuecomment-*1`，卻被判成引到這一題 ⇒ 真的還沒回被誤關。
