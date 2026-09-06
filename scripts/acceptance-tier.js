@@ -81,8 +81,8 @@ export const RULES = [
   ['E', /^[^/]+\.md$/],
   ['E', /^\.github\//],                                // 含 CI 設定：影響的是合併程序，由合併閘與 CI 自己驗
   ['E', /^data\/seed\.json$/],                         // 只在空庫首次啟動時種進去（lib/store.js 的搬家／初始化），主目錄已有資料時重啟驗不到——重啟是白做；由讀它的考題守（Grok #573 掃後）
-  // 只在合併程序／審查／驗證裡跑的腳本：**明確名單**，新腳本不會自動落到 E（會當未知→C，由改表的人核對它是不是啟動時會跑）
-  ['E', /^scripts\/(check-ci-really-ran|check-cross-pr-merge|check-pr-collab-fields|check-pr-merge-gate|check-review-verdicts|check-worktree-integrity|audit-grok-scan|grok-scan|grok-relay|grok-auth-refresh|grok-sandbox-canary|sync-pr-base-version|c6-adversarial|acceptance-tier)\.js$/],
+  // 只在合併程序／審查／驗證裡跑的腳本（含開工時人工跑的）：**明確名單**，新腳本不會自動落到 E（會當未知→C，由改表的人核對它是不是啟動時會跑）
+  ['E', /^scripts\/(check-ci-really-ran|check-cross-pr-merge|check-pr-collab-fields|check-pr-merge-gate|check-review-verdicts|check-worktree-integrity|audit-grok-scan|grok-scan|grok-relay|grok-auth-refresh|grok-sandbox-canary|sync-pr-base-version|c6-adversarial|acceptance-tier|pending-rulings)\.js$/],
   ['E', /^scripts\/grok-sandbox\.sb$/],
   ['E', /^scripts\/git-hooks\//],
   ['E', /^(eslint\.config\.js|jsconfig\.json|mutate\.sh|\.gitignore)$/],
