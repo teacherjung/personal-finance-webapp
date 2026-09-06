@@ -127,7 +127,10 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  * ②**行內程式碼**先收起來：它在畫面上看得見（只是換字體），不可以被下一步吃掉——
  *   `` `<!--照做-->` `` 是合法的可見寫法（#579 r5 High①的反方向）。只認同一行內的；
  *   跨行的那種就讓它照③被當成註解剝掉（偏向「看不到」）。
- * ③**HTML 註解**整段剝掉。
+ * ③**HTML 註解**整段剝掉。**沒關門的 `<!--` 一路吃到結尾**——GitHub 就是那樣渲染的，
+ *   只認成對的話會少剝，把藏在裡面的網址放回可見層（#579 r6 High①）。
+ * ④**Markdown 的參考定義行**（`[名稱]: 網址`）剝掉：那一行本身**從來不會顯示**，
+ *   用到或沒用到都一樣，所以兩個方向都安全（#579 r6 待辦④）。
  *
  * ⚠️ 誠實劃界：別的隱藏花招（白字、`<details>` 摺起來、圖片的替代文字）沒剝，
  *   那要靠人翻留言時發現；本函式不宣稱認得全部。
@@ -153,7 +156,12 @@ export function visible(body) {
   // 也不是控制字元（控制字元進正規式會被 lint 擋）。留言裡真的打了那兩個字也不影響——
   // 還原時只認我們自己編出來的號碼。
   const guarded = unfenced.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
-  return guarded.replace(/<!--[\s\S]*?-->/g, '\n')
+  const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
+  const dangling = paired.indexOf('<!--');
+  const noComments = dangling < 0 ? paired : paired.slice(0, dangling);
+  return noComments.split('\n')
+    .map((l) => (/^ {0,3}\[[^\]]*\]:\s*\S/.test(l) ? '' : l))
+    .join('\n')
     .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
 }
 

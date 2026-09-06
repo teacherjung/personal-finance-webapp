@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
+import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, visible, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
 import { tierOf } from '../scripts/acceptance-tier.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
@@ -229,7 +229,9 @@ test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天＝
   //   於是把可見正本改成五天、在前面加一行 HTML 註解寫「時限＝**三天**」，工具留 72 小時、全卷照樣綠。
   //   所以改成三件事：①先剝掉 HTML 註解（畫面上看不到的不算正本）②只在「審查回饋處置」那一節裡找
   //   ③要求**剛好一處**，而且正本自己寫的「N 天」與「連續 M 小時」要先對得上。
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  // ⚠️ 這裡**共用工具那支 `visible()`**，不自己再寫一份剝除：兩份會漂，而且我這份原本只認成對的
+  //    `<!--…-->`，於是在正本前面插一個**沒關門**的 `<!--`（GitHub 會把後文整段隱藏）就能騙過（#579 r6 Medium③）。
+  const agents = visible(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
   const from = agents.indexOf('**審查回饋處置（');
   const to = agents.indexOf('\n**界線表（', from);
   assert.ok(from >= 0 && to > from, '找不到「審查回饋處置」那一節（到「界線表」為止）——正本搬家了，這題要跟著改');
@@ -290,15 +292,50 @@ test('⭐ 圍欄要記長度：四個反引號開門，內文那行 ```js 不是
   // 於是「第一段是回答別題的合法原話＋圍欄裡藏著這一題的網址」就能關掉這一題。
   const a = ask({ id: 1 });
   const F4 = BT.repeat(4); const F3 = BT.repeat(3);
-  const sneaky = c({ id: 2, at: T0 + 60e3,
-    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F4}\n${F3}js\n${urlOf(1)}\n${F4}\n` });
-  assert.equal(shapeOf(sneaky), 'ruling', '這一則本身是合規的裁示（只是它沒有可見地引到這一題）');
-  assert.ok(String(sneaky.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在四反引號的圍欄中');
-  assert.equal(classify([a, sneaky], T0 + 4 * 86400e3).pending.length, 1, '圍欄裡的網址畫面上看不到，關不掉問題');
+  // ⚠️ 兩個條件要**各自**有鑑別力的夾具：混在一起（短圍欄又帶資訊字串）的話，
+  //    把長度記憶拿掉仍然會被「資訊字串」擋住而全綠——那題就證明不了長度（#579 r6 Medium②）。
+  // 夾具甲＝只考「較短」：關門行是純三反引號、後面什麼都沒有。
+  const shorter = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F4}\n${F3}\n${urlOf(1)}\n${F4}\n` });
+  // 夾具乙＝只考「關門行後面不能有東西」：同樣長度，但帶資訊字串。
+  const withInfo = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F3}\n${F3}js\n${urlOf(1)}\n${F3}\n` });
+  for (const [name, cmt] of [['較短的關門行', shorter], ['帶資訊字串的關門行', withInfo]]) {
+    assert.equal(shapeOf(cmt), 'ruling', `${name}：這一則本身是合規的裁示（只是它沒有可見地引到這一題）`);
+    assert.ok(String(cmt.body).includes(urlOf(1)), `${name}：對照斷言——網址真的在原文裡，只是關在圍欄中`);
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1, `${name}：圍欄裡的網址畫面上看不到，關不掉問題`);
+  }
   // 對照組：真的關門了，後面的網址就看得見、就算引到
-  const closed = c({ id: 3, at: T0 + 60e3,
+  const closed = c({ id: 4, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F4}\n範例\n${F4}\n關的是 ${urlOf(1)}` });
   assert.equal(classify([a, closed], T0 + 4 * 86400e3).closed.length, 1, '圍欄關門之後的內容是看得見的');
+});
+
+test('⭐ 沒關門的 HTML 註解一路吃到結尾：藏在裡面的網址關不掉問題（#579 r6 High①）', () => {
+  // GitHub 就是這樣渲染的——`<!--` 之後到文末都不顯示。只認成對的 `<!--…-->` 就是「少剝」，
+  // 而少剝正是這支最貴的失敗（真的還沒回被判成已結）。
+  const a = ask({ id: 1 });
+  const unclosed = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n<!--\n${urlOf(1)}\n` });
+  assert.equal(shapeOf(unclosed), 'ruling', '這一則本身是合規的裁示（只是它沒有可見地引到這一題）');
+  assert.ok(String(unclosed.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在沒關門的註解後面');
+  assert.equal(classify([a, unclosed], T0 + 4 * 86400e3).pending.length, 1, '沒關門的註解之後都看不見，關不掉問題');
+  // 對照組：註解有關門，後面的網址就看得見
+  const closedC = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n<!-- 備註 -->\n關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, closedC], T0 + 4 * 86400e3).closed.length, 1, '註解關門之後的內容是看得見的');
+});
+
+test('⭐ Markdown 的參考定義行從來不會顯示：藏在那裡的網址關不掉問題（#579 r6 待辦④）', () => {
+  const a = ask({ id: 1 });
+  const refDef = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]: ${urlOf(1)}` });
+  assert.ok(String(refDef.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是寫成參考定義');
+  assert.equal(classify([a, refDef], T0 + 4 * 86400e3).pending.length, 1, '參考定義那一行不會顯示，關不掉問題');
+  // 對照組：長得像但不是參考定義（行首不是 `[名稱]:`）的照樣看得見
+  const looksLike = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n見 [背景] ${urlOf(1)}` });
+  assert.equal(classify([a, looksLike], T0 + 4 * 86400e3).closed.length, 1, '正常行文裡的網址照樣算引到');
 });
 
 test('⭐ 行內程式碼裡的註解語法不算註解（`` `<!--照做-->` `` 是畫面上看得見的寫法，#579 r5 High①反方向）', () => {
