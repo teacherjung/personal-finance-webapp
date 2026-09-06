@@ -593,6 +593,12 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['AGENTS.md', '題目本文中他未反對的前提', 1],
     ['AGENTS.md', '**❓ 貼出後不可編輯**', 1],
     ['AGENTS.md', '不准寫「William 拍板／裁示」', 1],
+    // 永遠等他的五類各自獨立釘一句（#577 r2：只釘總標籤與③⑦時，其餘五類同時消失考題仍綠）
+    ['AGENTS.md', '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', 1],   // ① 錢的絕對邊界
+    ['AGENTS.md', '②**金額口徑**——射程＝下方界線表那一列', 1],   // ② 金額口徑
+    ['AGENTS.md', '④「明確指派／指名／特准」型授權', 1],   // ④ 指派型授權
+    ['AGENTS.md', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', 1],   // ⑤ 驗收點頭
+    ['AGENTS.md', '⑥事故通報 ⑦', 1],   // ⑥ 事故通報
     ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
     ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
