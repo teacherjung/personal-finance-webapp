@@ -119,7 +119,7 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  * 少剝一點才會讓真的還沒回的問題被靜靜關掉（那是這支最貴的失敗）。
  * 所以這裡不追求跟 GitHub 逐字一致，只要求**不可能少剝**。
  *
- * 三步，順序有意義：
+ * 以下步驟，順序有意義（**刻意不寫步數**——寫死的數字自己會漂，鐵則 10）：
  * ①**圍欄**（行為單位）：記開門的字元**與長度**；關門行要同種字元、**長度不短於開門**、
  *   而且後面只能有空白（資訊字串只准出現在開門行）。只記字元種類的話，四個反引號開門、
  *   內文一行 ```js 會被誤當關門，後面的內容就被放回可見層（#579 r5 High①）。
@@ -234,8 +234,41 @@ export function citesUrl(text, url, bareUrl) {
     ...[...text.matchAll(ANGLE)].map((m) => m[1]),
   ];
   if (delimited.some((d) => d === url)) return true;
-  const rest = text.replace(LINK_DEST, ']( ').replace(ANGLE, ' ');
-  return bareUrl.test(rest);
+  return bareUrl.test(stripInlineLinks(text).replace(ANGLE, ' '));
+}
+
+/**
+ * 把 `](…)` 的 destination **整段**挖掉（圖片 `![x](…)` 是同一個 token，一起涵蓋）。
+ *
+ * ⚠️ 用正規式抓到第一個 `)` 或空白就停是不夠的：巢狀括號 `](a(b)c網址)`、跳脫的 `\)`、
+ * 以及 title 裡剛好出現待裁網址 `](a (網址))`，都會把裡面的網址漏回裸網址那條規則，
+ * 於是**指向別處的複合 destination 被算成引到這一則**（#579 r10 High①）。
+ * 所以這裡用**括號配對**掃過去（`\` 之後那個字直接跳過），把整段換成一個空白。
+ * ⚠️ 找不到相對應的 `)` 時，**從那裡到結尾全部丟掉**——保守方向：頂多讓某個引用認不得，
+ * 問題就留在「還沒回」；反過來留著才會誤關。
+ * @param {string} text
+ */
+function stripInlineLinks(text) {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const k = text.indexOf('](', i);
+    if (k < 0) { out += text.slice(i); break; }
+    out += `${text.slice(i, k + 2)} `;
+    let j = k + 2;
+    let depth = 1;
+    while (j < text.length && depth > 0) {
+      const ch = text[j];
+      if (ch === '\\') { j += 2; continue; }
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      j += 1;
+    }
+    if (depth > 0) break;          // 沒關門＝到結尾都當作被吃掉
+    out += ')';
+    i = j;
+  }
+  return out;
 }
 
 /** 第一行全形冒號之後那一段＝問題原句；取不到就原樣回整行（不猜、不補）。 @param {unknown} body */

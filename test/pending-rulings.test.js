@@ -406,6 +406,37 @@ test('⭐ 被界定的 destination 一律逐字比：留空白、角括號、角
   }
 });
 
+test('⭐ destination 要整段挖掉：巢狀括號、跳脫的 `\\)`、圖片、title 裡的網址都不算引到（#579 r10 High①）', () => {
+  // 抓到第一個 `)` 或空白就停的話，這些合法連結的**內部**網址會漏回裸網址那條規則，
+  // 於是指向別處的複合 destination 被算成引到這一則。
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  const cases = [
+    ['巢狀括號', `[x](https://example.com(foo)${U})`],
+    ['跳脫的 )', `[x](https://example.com\\)${U})`],
+    ['圖片', `![x](https://example.com(foo)${U})`],
+    ['title 裡剛好有那個網址', `[x](https://example.com (${U}))`],
+  ];
+  for (const [name, cite] of cases) {
+    const cmt = ruling({ id: 2, at: T0 + 60e3, cites: cite });
+    assert.ok(String(cmt.body).includes(U), `${name}：對照斷言——網址真的在原文裡`);
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1,
+      `${name}：真正的連結指向別處，不算引到這一題`);
+  }
+  // 對照組：同樣有括號但 destination 就是那個網址時，照樣算引到
+  const good = ruling({ id: 3, at: T0 + 120e3, cites: `見 [這則待裁](${U}) （附註）` });
+  assert.equal(classify([a, good], T0 + 4 * 86400e3).closed.length, 1, '指對了就算引到');
+  // 對照組：連結後面另外寫一個裸網址，那個裸的照樣算引到
+  const both = ruling({ id: 4, at: T0 + 180e3, cites: `[別的](https://example.com/x) 關的是 ${U}` });
+  assert.equal(classify([a, both], T0 + 4 * 86400e3).closed.length, 1, '挖掉 destination 不可以把後面的裸網址一起吃掉');
+  // `](` 沒有相對應的 `)`：從那裡到結尾全部丟掉。這是**刻意的保守方向**——
+  // Markdown 其實會把它當普通文字、後面那個裸網址在畫面上看得見，所以這是明知的漏認；
+  // 代價是問題留在「還沒回」（我再問一次），換來「不可能少剝」那個保證不被破。
+  const unclosedParen = ruling({ id: 5, at: T0 + 240e3, cites: `[壞掉的連結]( 關的是 ${U}` });
+  assert.equal(classify([a, unclosedParen], T0 + 4 * 86400e3).pending.length, 1,
+    '`](` 沒關門就從那裡丟到結尾——寧可認不得，也不要誤關');
+});
+
 test('⭐ 佔位符不可以被留言的內容撞到：自己打私用區字元也合不出隱藏的網址（#579 r9 High②）', () => {
   // 反例：註解裡放一個行內程式碼（內容＝網址加一個尾端空白），註解外放 literal U+E000 0 U+E001。
   // GitHub 只顯示那三個怪字元、完全沒有網址；還原時若不先清掉，就會把註解裡的網址合成回可見層。
