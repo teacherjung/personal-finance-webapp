@@ -429,12 +429,35 @@ test('⭐ destination 要整段挖掉：巢狀括號、跳脫的 `\\)`、圖片�
   // 對照組：連結後面另外寫一個裸網址，那個裸的照樣算引到
   const both = ruling({ id: 4, at: T0 + 180e3, cites: `[別的](https://example.com/x) 關的是 ${U}` });
   assert.equal(classify([a, both], T0 + 4 * 86400e3).closed.length, 1, '挖掉 destination 不可以把後面的裸網址一起吃掉');
-  // `](` 沒有相對應的 `)`：從那裡到結尾全部丟掉。這是**刻意的保守方向**——
-  // Markdown 其實會把它當普通文字、後面那個裸網址在畫面上看得見，所以這是明知的漏認；
-  // 代價是問題留在「還沒回」（我再問一次），換來「不可能少剝」那個保證不被破。
+  // `](` 解析不出一個完整的 inline link 時，那就**不是連結**——GitHub 也是把它當普通文字，
+  // 後面那個裸網址照樣渲染成可點的連結。所以照原文放行、該認就認（r10 那一版丟到結尾＝漏認，#579 r11 High②）。
   const unclosedParen = ruling({ id: 5, at: T0 + 240e3, cites: `[壞掉的連結]( 關的是 ${U}` });
-  assert.equal(classify([a, unclosedParen], T0 + 4 * 86400e3).pending.length, 1,
-    '`](` 沒關門就從那裡丟到結尾——寧可認不得，也不要誤關');
+  assert.equal(classify([a, unclosedParen], T0 + 4 * 86400e3).closed.length, 1,
+    '解析不出連結＝那是普通文字，後面的裸網址照樣算引到');
+  // 行內程式碼裡的 `](` 更不是連結開門，不可以吃掉後面正常的引用（#579 r11 High②）
+  const inCode = ruling({ id: 6, at: T0 + 300e3, cites: `語法片段 ${BT}arr](x${BT}；關的是 ${U}` });
+  assert.equal(classify([a, inCode], T0 + 4 * 86400e3).closed.length, 1,
+    '行內程式碼裡的 `](` 只是文字，後面的裸網址照樣算引到');
+});
+
+test('⭐ title 裡的網址不算引到：引號式 title 可以寫 `)` 與 `<網址>`（#579 r11 High①）', () => {
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  const cases = [
+    ['title 裡有 ) 和網址', `[x](https://example.com "說明 ) ${U} 附註")`],
+    ['title 裡有角括號網址', `[x](https://example.com "背景 <${U}> 補充")`],
+    ['單引號 title', `[x](https://example.com '說明 ${U}')`],
+    ['括號式 title', `[x](https://example.com (說明 ${U}))`],
+  ];
+  for (const [name, cite] of cases) {
+    const cmt = ruling({ id: 2, at: T0 + 60e3, cites: cite });
+    assert.ok(String(cmt.body).includes(U), `${name}：對照斷言——網址真的在原文裡`);
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1,
+      `${name}：連結指向別處、網址只在 title 屬性裡，不算引到`);
+  }
+  // 對照組：title 存在、但 destination 就是那個網址時照樣算引到
+  const good = ruling({ id: 3, at: T0 + 120e3, cites: `[這則待裁](${U} "說明")` });
+  assert.equal(classify([a, good], T0 + 4 * 86400e3).closed.length, 1, 'destination 指對了就算引到');
 });
 
 test('⭐ 佔位符不可以被留言的內容撞到：自己打私用區字元也合不出隱藏的網址（#579 r9 High②）', () => {
@@ -790,11 +813,19 @@ test('⭐ GIT_* 題②｜originRepo：假 git 直接看子行程環境', () => {
 test('⭐ 這支不是閘：合併步驟一個字都不提它（反查器看不到 --all／--pr 這種形狀，所以直接掃）', () => {
   // test/helpers/merge-gates.js 的反查器只認 `node scripts/x.js <N>`，這支的兩種呼叫形狀它都看不到，
   // 所以「不在閘名單裡」那種寫法對這支永遠不會紅——改成直接檢查合併步驟沒提到它。
+  // ⚠️ 起點原本釘在第一個 `> 1.`，而真正的合併程序從上面那段前言就開始了——
+  //    在「下列步驟缺一不可」之後、`> 1.` 之前插一句「先跑這支、非零就停止合併」，
+  //    工具已經進門而這題照樣綠（#579 r11 Medium③）。改成釘在**前言那一行**。
   const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
   const lines = doc.split('\n');
-  const start = lines.findIndex((l) => /^> 1\.\s/.test(l));
+  const PREAMBLE = '下列步驟**（步數刻意不寫死';
+  const heads = lines.reduce((/** @type {number[]} */ acc, l, i) => (l.includes(PREAMBLE) ? [...acc, i] : acc), []);
+  assert.equal(heads.length, 1, `合併程序的前言「${PREAMBLE}…」要剛好出現一次（找到 ${heads.length} 處）——措辭改了就來改這裡`);
+  const start = heads[0];
+  const firstStep = lines.findIndex((l, i) => i > start && /^> 1\.\s/.test(l));
+  assert.ok(firstStep > start, '前言後面要接著第一步 `> 1.`——中間被插了東西或順序變了');
   const end = lines.findIndex((l, i) => i > start && /^確認遠端分支已刪除|^## /.test(l));
-  assert.ok(start >= 0, '找不到合併步驟');
+  assert.ok(end > start, '找不到合併步驟的結尾錨點');
   assert.doesNotMatch(lines.slice(start, end < 0 ? undefined : end).join('\n'), /pending-rulings/,
     '合併步驟提到這支＝它變成流程的一環（pre-push 那種「非零就擋」的地方會讓退出碼 2 變成擋人）');
 });

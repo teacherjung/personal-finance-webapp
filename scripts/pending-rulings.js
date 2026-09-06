@@ -215,60 +215,110 @@ export function shapeOf(c) {
   return NEAR.test(line) ? 'near' : null;
 }
 
-/** `[文字](…)` 的 destination（可帶 `<>`；title 在第一個空白之後）。 */
-const LINK_DEST = /\]\(\s*(<[^<>]*>|[^\s)]*)/g;
-/** `<…>` 角括號自動連結。 */
+/** `<…>` 角括號自動連結（**只在 inline link 之外**才算）。 */
 const ANGLE = /<([^<>\s]+)>/g;
-const unwrap = (/** @type {string} */ d) => (d.startsWith('<') && d.endsWith('>') ? d.slice(1, -1) : d);
 
 /**
- * 這段**可見文字**有沒有引到那個網址。做法見呼叫處的註解：
- * 被分隔符界定的 destination 逐字比，其餘才走裸網址的邊界規則。
+ * 解析 `](` 之後的 inline link 尾巴：destination、可選的 title、關門的 `)`。
+ * 解析不出來就回 null＝那不是一個 inline link（GitHub 也會把它當普通文字），呼叫端照原文放行。
+ * @param {string} text @param {number} start `](` 之後的位置
+ * @returns {{dest: string, end: number}|null}
+ */
+function parseLinkTail(text, start) {
+  let j = start;
+  const skip = () => { while (j < text.length && /\s/.test(text[j])) j += 1; };
+  skip();
+  let dest = '';
+  if (text[j] === '<') {
+    const close = text.indexOf('>', j + 1);
+    if (close < 0) return null;
+    dest = text.slice(j + 1, close);
+    j = close + 1;
+  } else {
+    let depth = 0;
+    while (j < text.length) {
+      const ch = text[j];
+      if (ch === '\\') { dest += text[j + 1] ?? ''; j += 2; continue; }
+      if (/\s/.test(ch)) break;
+      if (ch === '(') depth += 1;
+      else if (ch === ')') { if (depth === 0) break; depth -= 1; }
+      dest += ch;
+      j += 1;
+    }
+  }
+  skip();
+  // 可選的 title：`"…"`／`'…'`／`(…)`。title 裡什麼都可以寫，包括 `)` 與 `<網址>`——
+  // 不追蹤引號狀態的話，title 裡的 `)` 會被當成外層關門，後半段就漏回裸網址那條規則（#579 r11 High①）。
+  const quote = text[j];
+  if (quote === '"' || quote === "'" || quote === '(') {
+    const closer = quote === '(' ? ')' : quote;
+    j += 1;
+    let done = false;
+    while (j < text.length) {
+      if (text[j] === '\\') { j += 2; continue; }
+      if (text[j] === closer) { j += 1; done = true; break; }
+      j += 1;
+    }
+    if (!done) return null;
+    skip();
+  }
+  if (text[j] !== ')') return null;
+  return { dest, end: j + 1 };
+}
+
+/**
+ * 走過整段可見文字一次，分出 **inline link 的 destination** 與**其餘文字**。
+ *
+ * ⚠️ 為什麼要一個 tokenizer，而不是幾條各寫各的正規式：前幾輪就是那樣，於是
+ * ①行內程式碼裡的 `](` 被當成連結開門，把後面正常的引用一起吃掉（#579 r11 High②）
+ * ②`<…>` 在剝 inline link 之前就全域掃，把 title 裡的 `<網址>` 當成自動連結（#579 r11 High①）。
+ * 走一次、狀態自己帶著，這兩種就不可能發生。
+ * @param {string} text @returns {{outside: string, dests: string[]}}
+ */
+function tokenizeLinks(text) {
+  let outside = '';
+  /** @type {string[]} */
+  const dests = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    // 行內程式碼：整段照抄，裡面的 `](` 不是連結開門。
+    // ⚠️ 誠實記一筆：**今天沒有考題撐得住這一段**——`parseLinkTail` 夠嚴，
+    //   湊不出「程式碼裡的 `](` 真的解析成連結、還吃掉後面的引用」的例子（拿掉這段，全卷仍綠＝等價突變）。
+    //   留著是因為它表達的是正確的意圖，而且下一次放寬 `parseLinkTail` 時它就會開始有用；
+    //   但不要把它寫成「有守住」。
+    if (ch === '`') {
+      const run = /^`+/.exec(text.slice(i))?.[0] ?? '`';
+      const close = text.indexOf(run, i + run.length);
+      const end = close < 0 ? text.length : close + run.length;
+      outside += text.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === ']' && text[i + 1] === '(') {
+      const parsed = parseLinkTail(text, i + 2);
+      if (parsed) { outside += '] '; dests.push(parsed.dest); i = parsed.end; continue; }
+    }
+    outside += ch;
+    i += 1;
+  }
+  return { outside, dests };
+}
+
+/**
+ * 這段**可見文字**有沒有引到那個網址。
+ * 被分隔符界定的（inline link 的 destination、`<…>` 自動連結）判準是**逐字相等**，
+ * 完全不做邊界猜測；其餘文字才走裸網址的邊界規則。
  * @param {string} text 已剝成可見內容的文字
  * @param {string} url 要找的留言網址
  * @param {RegExp} bareUrl 裸網址的比對式（含右邊界）
  */
 export function citesUrl(text, url, bareUrl) {
-  const delimited = [
-    ...[...text.matchAll(LINK_DEST)].map((m) => unwrap(m[1])),
-    ...[...text.matchAll(ANGLE)].map((m) => m[1]),
-  ];
-  if (delimited.some((d) => d === url)) return true;
-  return bareUrl.test(stripInlineLinks(text).replace(ANGLE, ' '));
-}
-
-/**
- * 把 `](…)` 的 destination **整段**挖掉（圖片 `![x](…)` 是同一個 token，一起涵蓋）。
- *
- * ⚠️ 用正規式抓到第一個 `)` 或空白就停是不夠的：巢狀括號 `](a(b)c網址)`、跳脫的 `\)`、
- * 以及 title 裡剛好出現待裁網址 `](a (網址))`，都會把裡面的網址漏回裸網址那條規則，
- * 於是**指向別處的複合 destination 被算成引到這一則**（#579 r10 High①）。
- * 所以這裡用**括號配對**掃過去（`\` 之後那個字直接跳過），把整段換成一個空白。
- * ⚠️ 找不到相對應的 `)` 時，**從那裡到結尾全部丟掉**——保守方向：頂多讓某個引用認不得，
- * 問題就留在「還沒回」；反過來留著才會誤關。
- * @param {string} text
- */
-function stripInlineLinks(text) {
-  let out = '';
-  let i = 0;
-  for (;;) {
-    const k = text.indexOf('](', i);
-    if (k < 0) { out += text.slice(i); break; }
-    out += `${text.slice(i, k + 2)} `;
-    let j = k + 2;
-    let depth = 1;
-    while (j < text.length && depth > 0) {
-      const ch = text[j];
-      if (ch === '\\') { j += 2; continue; }
-      if (ch === '(') depth += 1;
-      else if (ch === ')') depth -= 1;
-      j += 1;
-    }
-    if (depth > 0) break;          // 沒關門＝到結尾都當作被吃掉
-    out += ')';
-    i = j;
-  }
-  return out;
+  const { outside, dests } = tokenizeLinks(text);
+  if (dests.includes(url)) return true;
+  const angles = [...outside.matchAll(ANGLE)].map((m) => m[1]);
+  if (angles.includes(url)) return true;
+  return bareUrl.test(outside.replace(ANGLE, ' '));
 }
 
 /** 第一行全形冒號之後那一段＝問題原句；取不到就原樣回整行（不猜、不補）。 @param {unknown} body */
