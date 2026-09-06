@@ -44,10 +44,22 @@ export const TIMEOUT_HOURS = 72;
 // 三種留痕留言的第一行。規則正本要求的是**完整形狀**：`## <記號> <名稱>（YYYY-MM-DD）：〈標題〉`。
 // 只驗前綴會把「## ⚖️ William 裁示oops」這種規則上無效的留言當成有效的裁示，反過來把活著的問題吞掉（#579 r1 High①）。
 // ⚖️ 是 U+2696＋看不見的 U+FE0F，比對前先剝掉，手打時掉了那個字元也認得。
-const DATED = '（\\d{4}-\\d{2}-\\d{2}）：\\S';
-const ASK = new RegExp(`^##[ \t]+❓[ \t]*待裁${DATED}`, 'u');
-const RULING = new RegExp(`^##[ \t]+⚖[ \t]*William 裁示${DATED}`, 'u');
-const TIMEOUT = new RegExp(`^##[ \t]+⏳[ \t]*逾時暫定${DATED}`, 'u');
+// 記號與名稱之間、`## ` 之後都是**單一半形空白**（規則正本的寫法），日期還要是真的存在的日子——
+// 寫寬一點（`[ \t]*`、只驗數字長相）就會把 `## ⚖William 裁示（2026-99-99）：…` 當成有效裁示（#579 r2 High①）。
+const ASK = /^## ❓ 待裁（(\d{4})-(\d{2})-(\d{2})）：\S/u;
+const RULING = /^## ⚖ William 裁示（(\d{4})-(\d{2})-(\d{2})）：\S/u;
+const TIMEOUT = /^## ⏳ 逾時暫定（(\d{4})-(\d{2})-(\d{2})）：\S/u;
+/** 內文非有不可的欄位（規則正本要求的形狀；缺了就不是一則有效的裁示／逾時暫定）。 */
+const RULING_BODY = '原話（對話中，Claude 轉述）';
+const TIMEOUT_BODY = 'William 未裁';
+
+/** 標頭上的日期要是真的存在的日子（2026-99-99 不算）。 @param {RegExpMatchArray|null} m */
+function realDate(m) {
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
 /** 長得像標頭、但不合規式的：列出來說「我沒算進去」，不要靜靜丟掉（真的發生過——有一則裁示少了 `## ⚖️ ` 前綴）。 */
 const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
 
@@ -67,11 +79,13 @@ export function shapeOf(c) {
   const line = firstLine(c?.body);
   // 規則明定這三種留言**整則不得出現 🤖**（複審聯集閘會把含 🤖 的非合規留言當壞標頭）。
   // 含 🤖 的一律不算有效的留痕留言——長得像就進「形狀不合」讓人看見，不可以拿去關掉問題。
-  const botMark = String(c?.body ?? '').includes('🤖');
+  const body = String(c?.body ?? '');
+  const botMark = body.includes('🤖');
   if (!botMark) {
-    if (ASK.test(line)) return 'ask';
-    if (RULING.test(line)) return 'ruling';
-    if (TIMEOUT.test(line)) return 'timeout';
+    if (realDate(line.match(ASK))) return 'ask';
+    // 裁示與逾時暫定還要有內文那一欄：第一行對、內文卻沒有他的原話（或沒說「William 未裁」），不是一則有效的留痕留言。
+    if (realDate(line.match(RULING)) && body.includes(RULING_BODY)) return 'ruling';
+    if (realDate(line.match(TIMEOUT)) && body.includes(TIMEOUT_BODY)) return 'timeout';
   }
   return NEAR.test(line) ? 'near' : null;
 }
@@ -101,9 +115,9 @@ export function classify(comments, nowMs) {
   const near = shaped
     .filter((x) => x.shape === 'near' || (x.shape !== null && !owner(x.c)))
     .map((x) => ({
-      url: x.c?.html_url, line: firstLine(x.c?.body).slice(0, 80),
+      url: x.c?.html_url, number: numberOf(x.c?.html_url), line: firstLine(x.c?.body).slice(0, 80),
       why: x.shape === 'near'
-        ? (String(x.c?.body ?? '').includes('🤖') ? '整則出現 🤖——規則明定這三種留言不可以有（會被複審那道閘當成壞標頭）' : '第一行長得像標頭、但不合規定的完整寫法（要有 `（日期）：標題`）')
+        ? (String(x.c?.body ?? '').includes('🤖') ? '整則出現 🤖——規則明定這三種留言不可以有（會被複審那道閘當成壞標頭）' : '第一行或內文不合規定的完整寫法（第一行要是 `## <記號> <名稱>（真的日期）：標題`，裁示要有他的原話那一段）')
         : '第一行合規、但不是 repo 擁有者貼的',
     }));
   const asks = shaped.filter((x) => x.shape === 'ask' && owner(x.c)).map((x) => x.c);
@@ -114,8 +128,9 @@ export function classify(comments, nowMs) {
     const askAt = Date.parse(ask.created_at);
     if (Number.isNaN(askAt)) throw new Error(`留言 ${ask.id} 的建立時間讀不出來：${ask.created_at}`);
     // 規則要的是「引了那一則留言的**網址**」：只搜尾巴的 `#issuecomment-<id>` 的話，隨手打一段裸片段就能關題（#579 r1 High②）。
-    // 右邊界照樣要卡：…302 不可以被 …3020 命中。
-    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`);
+    // 右邊界要卡的是「網址還沒結束」的字：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）；
+    // 收尾的空白、`)`、`]`、逗號句號與全形標點都算網址結束，照樣認得。
+    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9A-Za-z_%~:/?#=&+.\\-])`);
     const hits = closers.filter((x) => cited.test(String(x.c?.body ?? '')) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;
@@ -164,6 +179,7 @@ export function render(r, meta) {
   const only = meta.only ?? null;
   const pick = (/** @type {any[]} */ xs) => (only === null ? xs : xs.filter((x) => x.number === only));
   const pending = pick(r.pending); const provisional = pick(r.provisional); const closed = pick(r.closed);
+  const near = pick(r.near);   // 「形狀不合」也要套同一個過濾，否則 --pr 的標頭說只印那一支、下面卻列出整庫（#579 r2 Medium③）
   const out = [
     `待裁清單：${meta.host} / ${meta.slug}${only === null ? '（掃全 repo）' : `（掃全 repo，只印貼在 #${only} 的）`}`,
     `掃了 ${r.scanned} 則留言（GitHub 自報 ${meta.expected} 則）。這不是閘，不擋任何事。`,
@@ -177,9 +193,9 @@ export function render(r, meta) {
   }
   out.push('', closed.length ? `我判定已結的：${closed.length} 則（配對連結在下面，配錯了看得出來）` : '我判定已結的：沒有',
     ...closed.map((x, i) => one(x, i + 1)));
-  if (r.near.length) {
-    out.push('', `形狀不合、我沒算進去的：${r.near.length} 則（第一行像標頭但不合規定，或不是 repo 擁有者貼的）`,
-      ...r.near.map((x, i) => `${i + 1}. ${x.line}\n   ${x.why}\n   看這裡：${x.url}`));
+  if (near.length) {
+    out.push('', `形狀不合、我沒算進去的：${near.length} 則（第一行或內文不合規定，或不是 repo 擁有者貼的）`,
+      ...near.map((x, i) => `${i + 1}. ${x.line}\n   ${x.why}\n   看這裡：${x.url}`));
   }
   out.push('', '可不可以照預設先做，照 AGENTS.md「審查回饋處置」那一節自己判——這支不判。',
     '只看得到一般留言；貼在程式碼行內的審查留言看不到。',

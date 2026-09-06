@@ -30,8 +30,8 @@ function c({ id, body, at = T0, edited = false, pr = 100, assoc = 'OWNER' }) {
 }
 const urlOf = (/** @type {number} */ id, /** @type {number} */ pr = 100) => `https://github.com/o/r/pull/${pr}#issuecomment-${id}`;
 const ask = (/** @type {any} */ o) => c({ body: `## ❓ 待裁（2026-09-01）：${o.q ?? '要不要做這件事？'}\n選項…`, ...o });
-const ruling = (/** @type {any} */ o) => c({ body: `## ⚖️ William 裁示（2026-09-02）：答覆\n關的是 ${o.cites ?? ''}`, ...o });
-const timeout = (/** @type {any} */ o) => c({ body: `## ⏳ 逾時暫定（2026-09-04）：同一句問題\n❓ 留言：${o.cites ?? ''}`, ...o });
+const ruling = (/** @type {any} */ o) => c({ body: `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，Claude 轉述）：**「好」**\n關的是 ${o.cites ?? ''}`, ...o });
+const timeout = (/** @type {any} */ o) => c({ body: `## ⏳ 逾時暫定（2026-09-04）：同一句問題\nWilliam 未裁、隨時可翻案\n❓ 留言：${o.cites ?? ''}`, ...o });
 
 test('沒有任何裁示留言 → 那則問題列在「還沒回」', () => {
   const r = classify([ask({ id: 1 })], T0 + 3600e3);
@@ -70,6 +70,12 @@ test('⭐ 要引的是**留言網址**，不是裸的片段：只寫 #issuecomme
   const other = ruling({ id: 3, at: T0 + 120e3, cites: 'https://github.com/o/r/pull/999#issuecomment-1' });
   assert.equal(classify([a, bare], T0 + 4 * 86400e3).pending.length, 1, '裸片段關不掉');
   assert.equal(classify([a, other], T0 + 4 * 86400e3).pending.length, 1, '別支 PR 的同號片段也關不掉');
+  const longer = ruling({ id: 5, at: T0 + 180e3, cites: `${urlOf(1)}oops` });
+  assert.equal(classify([a, longer], T0 + 4 * 86400e3).pending.length, 1, '網址後面還接著字＝那是另一個位置，不算引到（#579 r2 High②）');
+  for (const tail of [' ', ')', '］', '。', '，', '\n']) {
+    const term = ruling({ id: 6, at: T0 + 240e3, cites: `${urlOf(1)}${tail}後面` });
+    assert.equal(classify([a, term], T0 + 4 * 86400e3).closed.length, 1, `網址後面接「${tail.trim() || '空白'}」＝網址結束了，要算引到`);
+  }
   assert.equal(classify([a, ruling({ id: 4, at: T0 + 60e3, cites: urlOf(1) })], T0 + 4 * 86400e3).closed.length, 1, '對照組：引完整網址才關得掉');
 });
 
@@ -106,7 +112,35 @@ test('⭐ ⚖️ 的看不見字元：帶 U+FE0F（現實中全部都是這種�
   const without = '## ⚖ William 裁示（2026-09-02）：答覆';
   assert.notDeepEqual([...withVS].map((ch) => ch.codePointAt(0)), [...without].map((ch) => ch.codePointAt(0)),
     '對照斷言：兩個標頭的字元序列真的不同（差一個看不見的 U+FE0F），這題才有意義');
-  for (const head of [withVS, without]) assert.equal(shapeOf({ body: `${head}\n略` }), 'ruling', head);
+  for (const head of [withVS, without]) assert.equal(shapeOf({ body: `${head}\n原話（對話中，Claude 轉述）：**「好」**` }), 'ruling', head);
+});
+
+test('⭐ 標頭要**逐字**的形狀：空白少一個、日期不是真的日子，都不算有效裁示（#579 r2 High①）', () => {
+  const a = ask({ id: 1 });
+  const bad = [
+    ['## ⚖William 裁示（2026-09-02）：答覆', '記號與名稱之間少一個空白'],
+    ['## ⚖️  William 裁示（2026-09-02）：答覆', '多一個空白'],
+    ['## ⚖️ William 裁示（2026-99-99）：答覆', '日期不是真的日子'],
+    ['## ⚖️ William 裁示（2026-09-02）：', '標題是空的'],
+  ];
+  for (const [head, why] of bad) {
+    const fake = c({ id: 2, at: T0 + 60e3, body: `${head}\n原話（對話中，Claude 轉述）：**「好」**\n${urlOf(1)}` });
+    const r = classify([a, fake], T0 + 4 * 86400e3);
+    assert.equal(r.pending.length, 1, `${why}：不可以關掉問題`);
+    assert.equal(r.near.length, 1, `${why}：要列進「形狀不合」讓人看見`);
+  }
+  const ok = c({ id: 3, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，Claude 轉述）：**「好」**\n${urlOf(1)}` });
+  assert.equal(classify([a, ok], T0 + 4 * 86400e3).closed.length, 1, '對照組：逐字合規的才關得掉');
+});
+
+test('⭐ 內文也要有規則要求的那一欄：裁示沒有他的原話那一段、逾時暫定沒寫「William 未裁」，都不算數', () => {
+  const a = ask({ id: 1 });
+  const noQuote = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n只是上下文\n${urlOf(1)}` });
+  assert.equal(classify([a, noQuote], T0 + 4 * 86400e3).pending.length, 1, '沒有原話那一段＝不是一則有效的裁示');
+  const noPhrase = c({ id: 3, at: T0 + 4 * 86400e3, body: `## ⏳ 逾時暫定（2026-09-04）：同一句問題\n${urlOf(1)}` });
+  const r = classify([a, noPhrase], T0 + 5 * 86400e3);
+  assert.equal(r.pending.length, 1, '沒寫「William 未裁」＝不是一則有效的逾時暫定');
+  assert.equal(r.provisional.length, 0);
 });
 
 test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在時刻由參數注入，不看牆上時鐘）', () => {
@@ -311,6 +345,15 @@ test('⭐ CLI｜--pr 一樣掃全庫：別支的裁示照樣關得掉，別支�
     assert.match(r.stdout, /我判定已結的：1 則/);
     assert.doesNotMatch(r.stdout, /issuecomment-3/, '別支的問題不可以混進來');
   });
+});
+
+test('⭐ --pr 也要過濾「形狀不合」：標頭說只印那一支，下面就不可以列出別支的（#579 r2 Medium③）', () => {
+  const mine = c({ id: 1, pr: 577, body: 'William 裁示（沒有前綴）：本支的' });
+  const others = c({ id: 2, pr: 500, body: 'William 裁示（沒有前綴）：別支的' });
+  const out = render(classify([mine, others], T0), { host: 'github.com', slug: 'o/r', expected: 2, only: 577, seen: true });
+  assert.match(out, /形狀不合、我沒算進去的：1 則/);
+  assert.match(out, /本支的/);
+  assert.doesNotMatch(out, /別支的/);
 });
 
 test('⭐ CLI｜--pr 編號打錯（那一支一則留言都沒有）要看得出來，不可以跟「全部已結」長得一樣', () => {
