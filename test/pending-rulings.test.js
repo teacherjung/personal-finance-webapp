@@ -18,6 +18,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/pending-rulings.js');
 const T0 = Date.parse('2026-09-01T00:00:00Z');
 const iso = (/** @type {number} */ ms) => new Date(ms).toISOString();
+const BT = '\u0060';   // 反引號：寫成字面值會跟樣板字串打架
 
 /** 一則留言夾具。預設是 repo 擁有者貼的（三種留痕留言都必須是）。 */
 function c({ id, body, at = T0, edited = false, pr = 100, assoc = 'OWNER' }) {
@@ -282,6 +283,56 @@ test('⭐ 原話前面擋著一段不可見內容，仍要認得（剝掉之後�
   for (const good of [afterComment, afterFence]) {
     assert.equal(classify([a, good], T0 + 4 * 86400e3).closed.length, 1, '合規的裁示要關得掉');
   }
+});
+
+test('⭐ 圍欄要記長度：四個反引號開門，內文那行 ```js 不是關門（#579 r5 High①）', () => {
+  // 只記字元種類的話，內文那行會被誤當關門，後面仍在圍欄裡的待裁網址就被放回可見層，
+  // 於是「第一段是回答別題的合法原話＋圍欄裡藏著這一題的網址」就能關掉這一題。
+  const a = ask({ id: 1 });
+  const F4 = BT.repeat(4); const F3 = BT.repeat(3);
+  const sneaky = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F4}\n${F3}js\n${urlOf(1)}\n${F4}\n` });
+  assert.equal(shapeOf(sneaky), 'ruling', '這一則本身是合規的裁示（只是它沒有可見地引到這一題）');
+  assert.ok(String(sneaky.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在四反引號的圍欄中');
+  assert.equal(classify([a, sneaky], T0 + 4 * 86400e3).pending.length, 1, '圍欄裡的網址畫面上看不到，關不掉問題');
+  // 對照組：真的關門了，後面的網址就看得見、就算引到
+  const closed = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${F4}\n範例\n${F4}\n關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, closed], T0 + 4 * 86400e3).closed.length, 1, '圍欄關門之後的內容是看得見的');
+});
+
+test('⭐ 行內程式碼裡的註解語法不算註解（`` `<!--照做-->` `` 是畫面上看得見的寫法，#579 r5 High①反方向）', () => {
+  const a = ask({ id: 1 });
+  const inlineComment = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「${BT}<!--照做-->${BT}」**\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(inlineComment), 'ruling', '行內程式碼在畫面上看得見，不可以被註解剝除吃掉');
+  assert.equal(classify([a, inlineComment], T0 + 4 * 86400e3).closed.length, 1);
+});
+
+test('⭐ 註解從標頭那一行的行尾開門：藏在裡面的假原話不可以關掉問題（#579 r5 High③）', () => {
+  // 這一刀證明「藏起來的原話靠第一段的錨點就擋住了」那句話是錯的：
+  // 註解在標頭行尾開門，剝掉之前，藏在註解裡的那行「原話…」剛好就是標頭後的第一段。
+  const a = ask({ id: 1 });
+  const trick = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆 <!--\n原話（對話中，Claude 轉述）：**「假的」**\n-->\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(trick), 'near', '藏在註解裡的原話不算數，不管它排在第幾段');
+  assert.equal(classify([a, trick], T0 + 4 * 86400e3).pending.length, 1, '真的還沒回的問題不可以被它關掉');
+});
+
+test('⭐ 🤖 的判準跟複審聯集閘同一份：照 AGENTS 教的用 `>` 引用 Codex 的發現，裁示仍然有效（#579 r5 High②）', () => {
+  // AGENTS 明教「引 Codex 的發現一律放 `>` 引用或反引號」；自己寫 body.includes('🤖') 比正本嚴，
+  // 照做的裁示會被判成形狀不合，已經裁過的問題就冒回「還沒回」。
+  const a = ask({ id: 1 });
+  const quoted = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n> 🤖 Codex 的發現（去掉標頭）\n\n關的是 ${urlOf(1)}` });
+  assert.ok(String(quoted.body).includes('🤖'), '對照斷言：原文真的有那個記號，只是放在引用裡');
+  assert.equal(shapeOf(quoted), 'ruling', '引用裡的記號閘自己也不算，這支不可以比正本嚴');
+  assert.equal(classify([a, quoted], T0 + 4 * 86400e3).closed.length, 1);
+  // 對照組：裸的記號照樣不算數（不是把這條放掉）
+  const bare = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n🤖 Codex\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(bare), 'near', '裸的 🤖 仍然讓整則不算數');
+  assert.equal(classify([a, bare], T0 + 4 * 86400e3).pending.length, 1);
 });
 
 test('⭐ 行內程式碼是看得見的，不可以跟著剝掉（剝過頭＝合規的留痕被判成形狀不合）', () => {

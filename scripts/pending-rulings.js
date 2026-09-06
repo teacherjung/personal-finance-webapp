@@ -45,6 +45,8 @@
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
+// 🤖 的有效內容判準只有一份正本＝複審聯集閘那一支（AGENTS「留痕」講的就是那道閘怎麼看）。
+import { hasBotMark } from './check-review-verdicts.js';
 import { originRepo } from './acceptance-tier.js';
 
 /** 時限：正本＝`AGENTS.md`「問法與逾時預設」那顆的「時限＝三天」。三天＝連續 72 小時（那顆自己定義的算法）。 */
@@ -104,26 +106,55 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
 /**
  * **只留畫面上看得見的內容**。GitHub 不會渲染圍欄程式碼區塊的內文與 HTML 註解，
  * 而規則要的是「查得證的留痕」：人翻留言時看不到的東西，不可以拿去關掉問題（#579 r4 High①）。
- * 兩條路各自吃到不同的一半，寫清楚免得高估它：
- * ・**配對網址**——不剝的話，把待裁網址藏進註解就能關掉真的還沒回的問題（突變實測會紅）。
- * ・**裁示的原話**——擋「藏起來的原話」其實是靠下面 `firstParagraph` 那個「標頭後第一個可見段落」
- *   的錨點（藏起來的東西不可能是段落開頭）；剝在這條路上防的是**反過來的假紅**：
- *   原話上面擋著一則註解或一段圍欄時，不剝就會把一則完全合規的裁示判成形狀不合。
- * ⚠️ 誠實劃界：行內程式碼（單反引號）**保留**——那在畫面上看得見（只是換個字體），
- *   藏不了東西。這裡剝的只有「畫面上完全不顯示」的兩種；別的隱藏花招（例如白字、
- *   `<details>` 摺起來）沒剝，那要靠人看留言時發現。
+ *
+ * 兩條路都靠它，而且**兩個方向都會出事**（上一版寫成「原話那條路只防假紅」，那句話撐不住——#579 r5 High③）：
+ * ・**配對網址**——不剝的話，把待裁網址藏進註解就能關掉真的還沒回的問題。
+ * ・**裁示的原話**——①**誤關**：在標頭那一行的**行尾**開 `<!--`、下一行放假的原話再關掉註解，
+ *   不剝的話那一行剛好就是「標頭後的第一段」，會被當成有效裁示 ②**假紅**：原話上面擋著一則註解
+ *   或一段圍欄時，不剝就會把完全合規的裁示判成形狀不合。
+ *   下面 `firstParagraph` 的錨點只擋得住「藏起來的東西不在段落開頭」那一種，擋不住①。
+ *
+ * ⚠️ **判不出來就當它「看不到」**——這是本函式唯一的偏向，也是它能收斂的原因：
+ * 多剝一點只會讓某則留痕不被認得 ⇒ 問題**留在「還沒回」** ⇒ 我再問他一次（煩，但安全）；
+ * 少剝一點才會讓真的還沒回的問題被靜靜關掉（那是這支最貴的失敗）。
+ * 所以這裡不追求跟 GitHub 逐字一致，只要求**不可能少剝**。
+ *
+ * 三步，順序有意義：
+ * ①**圍欄**（行為單位）：記開門的字元**與長度**；關門行要同種字元、**長度不短於開門**、
+ *   而且後面只能有空白（資訊字串只准出現在開門行）。只記字元種類的話，四個反引號開門、
+ *   內文一行 ```js 會被誤當關門，後面的內容就被放回可見層（#579 r5 High①）。
+ *   沒關門的圍欄＝到結尾都算看不見（偏向「看不到」）。
+ * ②**行內程式碼**先收起來：它在畫面上看得見（只是換字體），不可以被下一步吃掉——
+ *   `` `<!--照做-->` `` 是合法的可見寫法（#579 r5 High①的反方向）。只認同一行內的；
+ *   跨行的那種就讓它照③被當成註解剝掉（偏向「看不到」）。
+ * ③**HTML 註解**整段剝掉。
+ *
+ * ⚠️ 誠實劃界：別的隱藏花招（白字、`<details>` 摺起來、圖片的替代文字）沒剝，
+ *   那要靠人翻留言時發現；本函式不宣稱認得全部。
  * @param {unknown} body @returns {string}
  */
 export function visible(body) {
-  const withoutComments = String(body ?? '').replace(/<!--[\s\S]*?-->/g, '\n');
-  const out = []; let fence = null;
-  for (const line of withoutComments.split('\n')) {
-    const m = /^ {0,3}(```+|~~~+)/.exec(line);
-    if (fence === null && m) { fence = m[1][0]; out.push(''); continue; }
-    if (fence !== null) { if (m && m[1][0] === fence) fence = null; out.push(''); continue; }
-    out.push(line);
-  }
-  return out.join('\n');
+  const lines = String(body ?? '').replace(/\r\n?/g, '\n').split('\n');
+  /** @type {{ch: string, len: number}|null} */
+  let open = null;
+  const unfenced = lines.map((line) => {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open === null) {
+      if (!m) return line;
+      open = { ch: m[1][0], len: m[1].length };
+      return '';
+    }
+    if (m && m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null;
+    return '';
+  }).join('\n');
+  /** @type {string[]} */
+  const spans = [];
+  // 佔位符用**私有使用區**的兩個字（\uE000／\uE001）：Markdown 裡不會出現，
+  // 也不是控制字元（控制字元進正規式會被 lint 擋）。留言裡真的打了那兩個字也不影響——
+  // 還原時只認我們自己編出來的號碼。
+  const guarded = unfenced.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
+  return guarded.replace(/<!--[\s\S]*?-->/g, '\n')
+    .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
 }
 
 /** @param {unknown} body 留言內文 @returns {string} 第一行，去掉行尾 \r 與看不見的 U+FE0F */
@@ -145,7 +176,11 @@ export function shapeOf(c) {
   // ⚠️ 🤖 這一項看的是**整則原文**（閘也是看整則），其餘欄位一律只看**畫面上看得見的部分**。
   const body = String(c?.body ?? '');
   const vis = visible(body);
-  const botMark = body.includes('🤖');
+  // 🤖 的判準**不自己另立一套**：AGENTS 那條規矩講的是「複審聯集閘會怎麼看」，
+  // 所以直接用那道閘的同一支函式（它剝 fence、`>` 引用與行內反引號之後才掃）。
+  // 自己寫 `body.includes('🤖')` 比正本嚴：AGENTS 明教「引 Codex 的發現一律放 `>` 引用或反引號」，
+  // 照做的裁示會被判成形狀不合，已經裁過的問題就冒回「還沒回」（#579 r5 High②）。
+  const botMark = hasBotMark(body);
   if (!botMark) {
     if (realDate(line.match(ASK))) return 'ask';
     // 裁示與逾時暫定還要有內文那一欄：第一行對、內文卻沒有他的原話（或沒說「William 未裁」），不是一則有效的留痕留言。
