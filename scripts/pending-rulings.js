@@ -129,8 +129,13 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   跨行的那種就讓它照③被當成註解剝掉（偏向「看不到」）。
  * ③**HTML 註解**整段剝掉。**沒關門的 `<!--` 一路吃到結尾**——GitHub 就是那樣渲染的，
  *   只認成對的話會少剝，把藏在裡面的網址放回可見層（#579 r6 High①）。
- * ④**Markdown 的參考定義行**（`[名稱]: 網址`）剝掉：那一行本身**從來不會顯示**，
- *   用到或沒用到都一樣，所以兩個方向都安全（#579 r6 待辦④）。
+ * ④**Markdown 的參考定義**（`[名稱]: 網址`）整個剝掉，**含它換行放網址的那種**——
+ *   GFM 允許標籤與網址之間換一行，只剝第一行就會把網址留在可見層，那是「少剝」（#579 r7 High①）。
+ *   ⚠️ 這裡有一個**明知的代價**：定義**被用到**時（`[文字][名稱]`）GitHub 會渲染成真的連結，
+ *   而這裡把定義剝掉、也不去解析 `[名稱]`，所以**用參考式寫的引用認不得** ⇒ 已經回過的問題
+ *   會留在「還沒回」。那是安全方向，換來不必在這裡實作 GFM 的參考解析。
+ *   （上一版寫「用到或沒用到都一樣、兩個方向都安全」——那句話是錯的，#579 r7 打掉。）
+ *   ⇒ **貼 ⚖️／⏳ 時請直接寫完整網址**，不要只用參考式連結。
  *
  * ⚠️ 誠實劃界：別的隱藏花招（白字、`<details>` 摺起來、圖片的替代文字）沒剝，
  *   那要靠人翻留言時發現；本函式不宣稱認得全部。
@@ -159,9 +164,15 @@ export function visible(body) {
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
   const noComments = dangling < 0 ? paired : paired.slice(0, dangling);
-  return noComments.split('\n')
-    .map((l) => (/^ {0,3}\[[^\]]*\]:\s*\S/.test(l) ? '' : l))
-    .join('\n')
+  const lines2 = noComments.split('\n');
+  const kept = lines2.map((l, i) => {
+    const here = /^ {0,3}\[[^\]]*\]:(.*)$/.exec(l);
+    if (here) return '';                               // 標籤行本身
+    // 標籤行的網址換到下一行（GFM 允許一次換行）：上一行是標籤行且冒號後只有空白 ⇒ 這一行是網址
+    const prev = i > 0 ? /^ {0,3}\[[^\]]*\]:(.*)$/.exec(lines2[i - 1]) : null;
+    return prev && prev[1].trim() === '' ? '' : l;
+  });
+  return kept.join('\n')
     .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
 }
 
@@ -239,12 +250,14 @@ export function classify(comments, nowMs) {
     // 右邊界要卡的是「網址還沒結束」：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）。
     // ⚠️ 這裡用的是**正向的收尾字集**（URL_END），不是「不可以接哪些字」的黑名單——
     //   黑名單漏一個就誤關，`@` 就是這樣漏掉的（#579 r3 High②，`@` 是 fragment 的合法字元）。
-    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=${URL_END}|$)`);
+    // `**<網址>**` 這種包裝算引到，但**絕不改寫網址本身**：上一版是對整段文字 `.replace(/\*+/g, '')`，
+    // 於是 `…#issuecomment-*1` 被抹成 `…#issuecomment-1`＝另一則的網址，真的還沒回被誤關（#579 r7 High②）。
+    // 正解只要動右邊界：GFM 的自動連結明定**結尾的 `*_~` 這類標點不算網址的一部分**，
+    // 所以網址後面允許最多三個強調符號，再接收尾字。開頭的 `**` 根本不影響比對（它在網址前面）。
+    // 這樣 `<網址>*oops` 仍然不算（星號後面接著字，沒有收尾），星號夾在網址中間也比不到。
+    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[*_~]{0,3}(?=${URL_END}|$)`);
     // 只在**看得見的**內容裡找那個網址（藏在 HTML 註解或圍欄裡的不算——#579 r4 High①）。
-    // 另外把 Markdown 的強調符號拿掉：`**<網址>**` 是常見的可見寫法，`*` 又是 fragment 的合法字元，
-    // 不能把它當通用收尾（會誤關），但可以在**可見層**先把包裝符號剝掉再比（#579 r4 待辦⑤）。
-    const hits = closers.filter((x) => cited.test(visible(x.c?.body).replace(/\*+/g, ''))
-      && Date.parse(x.c.created_at) > askAt);
+    const hits = closers.filter((x) => cited.test(visible(x.c?.body)) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;
     const item = {

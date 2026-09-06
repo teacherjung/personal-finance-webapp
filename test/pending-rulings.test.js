@@ -332,10 +332,37 @@ test('⭐ Markdown 的參考定義行從來不會顯示：藏在那裡的網址�
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]: ${urlOf(1)}` });
   assert.ok(String(refDef.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是寫成參考定義');
   assert.equal(classify([a, refDef], T0 + 4 * 86400e3).pending.length, 1, '參考定義那一行不會顯示，關不掉問題');
+  // GFM 允許標籤與網址之間換一行——只剝第一行就會把網址留在可見層（#579 r7 High①）
+  const twoLine = c({ id: 4, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]:\n    ${urlOf(1)}` });
+  assert.ok(String(twoLine.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是寫成換行的參考定義');
+  assert.equal(classify([a, twoLine], T0 + 4 * 86400e3).pending.length, 1, '換行的參考定義也不會顯示，關不掉問題');
   // 對照組：長得像但不是參考定義（行首不是 `[名稱]:`）的照樣看得見
   const looksLike = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n見 [背景] ${urlOf(1)}` });
   assert.equal(classify([a, looksLike], T0 + 4 * 86400e3).closed.length, 1, '正常行文裡的網址照樣算引到');
+  // 對照組：參考定義的**下下行**不受影響（只吃緊接的那一行）
+  const afterDef = c({ id: 5, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]: https://example.com/x\n關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, afterDef], T0 + 4 * 86400e3).closed.length, 1, '參考定義的下一行是正常內文，不可以跟著剝掉');
+});
+
+test('⭐ 星號只在網址**結尾**才算包裝，絕不改寫網址本身（#579 r7 High②）', () => {
+  // 上一版對整段文字全域刪 `*`，於是 `…#issuecomment-*1` 被抹成 `…#issuecomment-1`＝另一則的網址，
+  // GitHub 實際渲染出的連結指向 `issuecomment-*1`，卻被判成引到這一題 ⇒ 真的還沒回被誤關。
+  const a = ask({ id: 1 });
+  const inner = ruling({ id: 2, at: T0 + 60e3, cites: 'https://github.com/o/r/pull/100#issuecomment-*1' });
+  assert.equal(classify([a, inner], T0 + 4 * 86400e3).pending.length, 1, '星號夾在網址中間＝那是另一個位置，不算引到');
+  const innerMid = ruling({ id: 3, at: T0 + 120e3, cites: 'https://github.com/o/r/pull/1*00#issuecomment-1' });
+  assert.equal(classify([a, innerMid], T0 + 4 * 86400e3).pending.length, 1, '星號夾在網址中間（前段）一樣不算');
+  // 對照組：包起來的寫法仍然算引到（不然這一收就把常見寫法收死了）——
+  // GFM 的自動連結明定結尾的 `*_~` 不算網址的一部分，所以只要動右邊界就夠，開頭的星號本來就不影響比對。
+  for (const wrap of ['*', '**', '***']) {
+    const bold = ruling({ id: 4, at: T0 + 180e3, cites: `${wrap}${urlOf(1)}${wrap}` });
+    assert.equal(classify([a, bold], T0 + 4 * 86400e3).closed.length, 1, `外層 ${wrap} 包起來的網址算引到`);
+  }
+  const plain = ruling({ id: 5, at: T0 + 240e3, cites: `關的是 ${urlOf(1)} 。` });
+  assert.equal(classify([a, plain], T0 + 4 * 86400e3).closed.length, 1, '對照組：沒包裝的照樣算引到');
 });
 
 test('⭐ 行內程式碼裡的註解語法不算註解（`` `<!--照做-->` `` 是畫面上看得見的寫法，#579 r5 High①反方向）', () => {
