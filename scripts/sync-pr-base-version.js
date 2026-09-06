@@ -152,7 +152,7 @@ export const GH_TIMEOUT_MS = 15_000;
 /**
  * 帶逾時的同步執行。⚠️ 抽成匯出函式是為了**讓逾時測得到**（Codex #519 r2#4：
  * 「只有形狀保證」不夠——考題用一支睡著的子行程配 50ms 逾時直測 ETIMEDOUT＋SIGKILL，
- * 把 timeout 拿掉那顆突變會在一秒內因「沒有丟錯」轉紅，不依賴網路也不會永久掛住）。
+ * 把 timeout 拿掉那顆突變會等子行程睡滿（考題設 30 秒）後因「沒有丟錯」轉紅，不依賴網路也不會永久掛住）。
  * @param {string} file @param {string[]} args @param {number} [timeoutMs]
  * @returns {string}
  */

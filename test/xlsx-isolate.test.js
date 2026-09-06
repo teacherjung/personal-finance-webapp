@@ -152,25 +152,127 @@ function makeBombInChildProcess() {
 }
 
 /**
- * 對照組：在子行程裡走**沒有隔離**的路（直接呼叫 `readXlsxForIsolation`），回報它自己的 RSS 增量。
+ * 對照組：在子行程裡走**沒有隔離**的路（直接呼叫 `readXlsxForIsolation`），回報它自己的記憶體增量（RSS 與 V8 帳取大）。
  * 沒有這組，「父行程只長了 N MB」就只是一個孤零零的數字——說不定這份檔案本來就不貴。
  * 回傳 `{ grewMB }`；若那個行程直接被記憶體壓死，回 `{ died: true }`（那同樣證明代價是真的）。
  */
-function measureWithoutIsolation(/** @type {Uint8Array} */ data) {
+function measureWithoutIsolation(/** @type {Uint8Array} */ data, moduleHref = new URL('../lib/statement.js', import.meta.url).href) {
   const src = `
     const b64 = process.argv[1];
     const data = new Uint8Array(Buffer.from(b64, 'base64'));
-    import('${new URL('../lib/statement.js', import.meta.url).href}').then((m) => {
-      const before = process.memoryUsage().rss;
+    import(${JSON.stringify(moduleHref)}).then((m) => {
+      // 2026-09-05 流程體檢：只量 RSS 增量會在機器記憶體吃緊時被 OS 回收壓小＝「對照組不夠貴」假紅。
+      //    改同時量 V8 自己記的帳（heapUsed＋external；不受換頁影響），兩者取大。
+      //    arrayBuffers 已包含在 external 裡（Node 文件；Codex #572 r1：加進去會把 100MB 的 Buffer 記成 200MB，
+      //    足以讓不貴的檔案過 150MB 自檢），所以只留診斷欄、不進判準。
+      //    （這段在模板字串裡，註解不可以用反引號——Codex #572 r2：一個反引號就讓整支考題 SyntaxError）
+      const mu0 = process.memoryUsage();
+      const v8Of = (mu) => mu.heapUsed + mu.external;
       m.readXlsxForIsolation(data);
-      process.stdout.write(JSON.stringify({ grewMB: (process.memoryUsage().rss - before) / 1048576 }));
-    }).catch((e) => { process.stdout.write(JSON.stringify({ threw: String(e && e.message).slice(0, 120) })); });
+      const mu1 = process.memoryUsage();
+      process.stdout.write(JSON.stringify({
+        grewMB: Math.max((mu1.rss - mu0.rss), (v8Of(mu1) - v8Of(mu0))) / 1048576,
+        rssMB: (mu1.rss - mu0.rss) / 1048576, v8MB: (v8Of(mu1) - v8Of(mu0)) / 1048576,
+        arrayBuffersMB: (mu1.arrayBuffers - mu0.arrayBuffers) / 1048576,   // 診斷用，不進判準
+      }));
+    }).catch((e) => {
+      // 序列化**有界的 cause 鏈**（最多 5 層）：正式的 readXlsxForIsolation 會把 XLSX.read 的例外包成外層 Error、
+      // 原例外只留在 cause（Codex #572 r4）；只看外層＝資源耗盡永遠看不到。
+      const chain = []; let cur = e;
+      for (let i = 0; i < 5 && cur && typeof cur === 'object'; i += 1) {
+        chain.push({ name: String(cur.name || ''), code: String(cur.code || ''), message: String(cur.message || '').slice(0, 160) });
+        cur = cur.cause;
+      }
+      process.stdout.write(JSON.stringify({ threw: chain }));
+    });
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '--max-old-space-size=3072', '-e', src,
     Buffer.from(data).toString('base64')], { maxBuffer: 8 * 1024 * 1024, timeout: 120_000 });
   if (r.status !== 0 || !r.stdout?.length) return { died: true };
-  try { return JSON.parse(String(r.stdout)); } catch { return { died: true }; }
+  try {
+    const parsed = JSON.parse(String(r.stdout));
+    // 解析到一半炸掉＝代價真的很貴，等同壓死；分類器見 isResourceExhaustion（看整條 cause 鏈；code 優先，訊息只收斂的 exact 字樣）
+    if (parsed.threw && isResourceExhaustion(parsed.threw)) return { died: true, threw: parsed.threw };
+    return parsed;
+  } catch { return { died: true }; }
 }
+
+/**
+ * 「這個例外是不是資源耗盡」的分類器（Codex #572 r2：Node 官方明說 `error.code` 才是跨版本穩定的識別，
+ * message 任何版本都可能改；ERR_STRING_TOO_LONG 的 message 是「Cannot create a string longer than …」、
+ * 字串裡根本沒有 code）。所以：①先看穩定的 code（Node 22 實際可達的四個）；②**沒有 code、且 name 是 RangeError**
+ * 的例外才用**收斂的 exact 字樣**——而且只收 V8 message-template 裡**沒有便宜觸發法**的那三句
+ * （`Invalid string length`／`Array buffer allocation failed`／`…: Out of memory`；Codex #572 r4 逐一對官方落點）：
+ * `Invalid array buffer length`／`Invalid typed array length`／`Invalid array buffer max length` 用 `new ArrayBuffer(-1)`、
+ * `new ArrayBuffer(2, {maxByteLength: 1})` 就能立即觸發，便宜的參數 bug 會冒充「對照組真的很貴」，不收；
+ * `Cannot create a string longer than…`／`Cannot create a Buffer larger than…` 在 Node 官方形狀是**帶 code 的 Error**，
+ * 由 code 那一臂接、不進 fallback；`Cannot allocate memory` 找不到 Node 22 的無 code RangeError 落點，不收。
+ * ③其餘一律不算——寧可讓「不夠貴」的斷言把訊息印出來給人看，也不放行。fatal OOM（Reached heap limit…）
+ * 是非零退出，由 `r.status !== 0` 那臂接住。
+ * ④**看整條 cause 鏈**：正式的 readXlsxForIsolation 把 XLSX.read 的例外包成外層 Error、原例外只在 cause，
+ * 只看外層＝最吃記憶體那一段的耗盡永遠看不到（Codex #572 r4）；鏈由子行程序列化、最多 5 層。
+ * @param {{ name?: string, code?: string, message?: string }} e
+ */
+function isResourceExhaustionOne(e) {
+  const code = String(e?.code || '');
+  if (['ERR_STRING_TOO_LONG', 'ERR_BUFFER_TOO_LARGE', 'ERR_MEMORY_ALLOCATION_FAILED', 'ENOMEM'].includes(code)) return true;
+  if (code || String(e?.name || '') !== 'RangeError') return false;   // message fallback 只給「無 code 的 RangeError」
+  const msg = String(e?.message || '');
+  return [/^Invalid string length$/, /^Array buffer allocation failed$/, /: Out of memory$/].some((re) => re.test(msg));
+}
+/** 任一層命中就算（鏈是陣列；為了相容也接受單一物件）。 @param {unknown} threw */
+function isResourceExhaustion(threw) {
+  const chain = Array.isArray(threw) ? threw : [threw];
+  return chain.some((e) => isResourceExhaustionOne(/** @type {any} */ (e)));
+}
+
+test('對照組的資源耗盡分類器：穩定 code 與收斂的 V8 字樣收；其他例外不放行（固定輸入輸出）', () => {
+  const yes = [
+    { code: 'ERR_STRING_TOO_LONG', message: 'Cannot create a string longer than 0x1fffffe8 characters' },
+    { code: 'ERR_BUFFER_TOO_LARGE', message: 'Cannot create a Buffer larger than 4294967296 bytes' },
+    { code: 'ERR_MEMORY_ALLOCATION_FAILED', message: 'Failed to allocate memory' },   // Node 22 node_buffer／string_bytes 會丟
+    { code: 'ENOMEM', message: 'spawnSync: ENOMEM' },
+    { name: 'RangeError', message: 'Invalid string length' },
+    { name: 'RangeError', message: 'Array buffer allocation failed' },
+    { name: 'RangeError', message: 'WebAssembly.Memory(): Out of memory' },
+    // cause 鏈：外層是正式 wrapper 的泛用 Error、原例外在第二層（Codex #572 r4 的接線探針形狀）
+    [{ name: 'Error', code: '', message: 'generic wrapper' }, { name: 'RangeError', code: '', message: 'Invalid string length' }],
+    [{ name: 'Error', code: '', message: 'wrap' }, { name: 'Error', code: 'ERR_MEMORY_ALLOCATION_FAILED', message: 'Failed to allocate memory' }],
+  ];
+  const no = [
+    { name: 'RangeError', message: 'Invalid array length' },            // 負長度就有，證明不了耗盡
+    { name: 'RangeError', message: 'Invalid array buffer length' },     // new ArrayBuffer(-1) 就有（Node 22 V8 考題）
+    { name: 'RangeError', message: 'Invalid typed array length: -1' },  // new Uint16Array(-1) 就有
+    { name: 'RangeError', message: 'Invalid array buffer max length' }, // new ArrayBuffer(2, {maxByteLength: 1}) 就有（Codex r4 實跑）
+    { name: 'RangeError', message: 'Cannot allocate memory' },          // 找不到 Node 22 的無 code RangeError 落點
+    { name: 'RangeError', message: 'Cannot create a string longer than 0x1fffffe8 characters' },   // 官方形狀是帶 code 的 Error，無 code 不收
+    { name: 'RangeError', message: 'Reached heap limit Allocation failed - JavaScript heap out of memory' },   // fatal OOM 走非零退出那臂
+    { name: 'Error', message: 'Invalid string length' },                // 錯類型：不是 RangeError 不收
+    { code: 'ERR_SOMETHING_ELSE', message: 'Invalid string length' },   // 未知 code 撞同一句：不收
+    { name: 'TypeError', message: 'Cannot read properties of undefined' },
+    { name: 'Error', message: 'allocation strategy changed' },          // 舊正規式 `allocat` 會誤收的那種
+    { code: 'ERR_INVALID_ARG_TYPE', message: 'The "path" argument must be of type string' },
+    [{ name: 'Error', code: '', message: 'generic wrapper' }, { name: 'TypeError', code: '', message: 'x is not a function' }],   // 鏈裡沒有耗盡
+    { message: '' }, {}, [],
+  ];
+  for (const e of yes) assert.ok(isResourceExhaustion(e), `該收卻沒收：${JSON.stringify(e)}`);
+  for (const e of no) assert.ok(!isResourceExhaustion(e), `不該收卻收了：${JSON.stringify(e)}`);
+});
+
+test('對照組的接線：走真的 measureWithoutIsolation，wrapper 把耗盡包在 cause 裡也要被判成壓死（Codex #572 r4 探針）', () => {
+  // 用 data: URL 當模組來源（不加新檔、不動正式 lib）：形狀照正式 readXlsxForIsolation 的 wrapper——外層泛用 Error、原例外在 cause。
+  const wrapped = 'data:text/javascript,' + encodeURIComponent(
+    "export function readXlsxForIsolation() { throw new Error('generic wrapper', { cause: new RangeError('Invalid string length') }); }");
+  const r = measureWithoutIsolation(new Uint8Array([0]), wrapped);
+  assert.equal(r.died, true, `包在 cause 裡的耗盡沒被判成壓死：${JSON.stringify(r)}`);
+  assert.ok(Array.isArray(r.threw) && r.threw.length === 2 && r.threw[1].message === 'Invalid string length', `cause 鏈沒序列化到：${JSON.stringify(r.threw)}`);
+  // 對照：鏈裡沒有耗盡＝照實回報、不算壓死（讓「不夠貴」的斷言把訊息印出來）
+  const plain = 'data:text/javascript,' + encodeURIComponent(
+    "export function readXlsxForIsolation() { throw new Error('generic wrapper', { cause: new TypeError('x is not a function') }); }");
+  const r2 = measureWithoutIsolation(new Uint8Array([0]), plain);
+  assert.notEqual(r2.died, true, `不是耗盡卻被判成壓死：${JSON.stringify(r2)}`);
+  assert.ok(Array.isArray(r2.threw) && r2.threw[1].name === 'TypeError', JSON.stringify(r2));
+});
 
 test('攻擊｜解壓後極大的合法 XLSX → 子行程被收掉、父行程活著（400、不是整個服務死掉）', async () => {
   setPdfTimeoutForTest(8_000);
