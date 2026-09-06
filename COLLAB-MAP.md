@@ -92,7 +92,8 @@
 
 | 問題 | 去哪讀 |
 |---|---|
-| 對 William 回報要講什麼、講多少 | [CLAUDE.md](CLAUDE.md)「只有 Claude 需要知道的幾條」 |
+| 對 William 回報講多少、六段怎麼排 | [CLAUDE.md](CLAUDE.md)「只有 Claude 需要知道的幾條」 |
+| 審查結果回報給 William 要講什麼（摘要＋連結、原文他問才貼） | [REVIEW-AND-MERGE.md](REVIEW-AND-MERGE.md)「使用方式」 |
 | 開工前一定要先做的那幾件 | [CLAUDE.md](CLAUDE.md)「開工前」 |
 
 ## 規矩的手腳：哪些是機器在管的
