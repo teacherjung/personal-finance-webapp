@@ -629,6 +629,28 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   }
 });
 
+test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要在「審查回饋處置」節裡、「界線表」之前，而且承重句都在那顆裡（逐字搬到沿革節＝規則降成沿革，要紅；#577 r3）', () => {
+  // 上一題只在整份檔案計次——把整顆逐字搬到「### 審查分工的沿革」底下，次數不變、規則卻已經失效（固定維度 2 的「文字存在、結構失效」假綠）。
+  const agents = read('AGENTS.md');
+  const ruleStart = agents.indexOf('**審查回饋處置（');
+  const blockStart = agents.indexOf('  **問法與逾時預設（');
+  const historyStart = agents.indexOf('### 審查分工的沿革');
+  assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
+  assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
+  assert.doesNotMatch(agents.slice(ruleStart, blockStart), /\n##+ /, '「審查回饋處置」到那顆之間不可以隔著任何標題——那顆必須還在同一節');
+  const blockEnd = agents.indexOf('\n**界線表（', blockStart);
+  assert.ok(blockEnd > blockStart, '那顆之後要接著「界線表」（同一節的下一顆）');
+  const block = agents.slice(blockStart, blockEnd);
+  for (const line of [
+    '一句白話問題＋最多三個選項＋我建議的預設＋時限', '時限＝**三天**', '不套逾時預設、永遠等他的',
+    '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', '②**金額口徑**——射程＝下方界線表那一列', '③**任何會讓閘變鬆的事**',
+    '④「明確指派／指名／特准」型授權', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', '⑥事故通報 ⑦', '⑦**本顆自己的射程、時限與例外清單**',
+    '沒有「時限內沒回就當綠」', '**Claude 對「先做」的解讀**', '題目本文中他未反對的前提', '**❓ 貼出後不可編輯**', '不准寫「William 拍板／裁示」',
+  ]) {
+    assert.equal(block.split(line).length - 1, 1, `承重句「${line}」不在那顆裡（或不只一次）——在檔案別處出現不算`);
+  }
+});
+
 // ⚠️ 為什麼要有這一題：鐵則 10（註解寫「為什麼」不寫「現在是」）是 #417 燒掉七輪換來的，
 //    而它守的東西**沒有機械閘**（「這句註解會不會過期」機器判不出來）。沒有本題的話，
 //    這條規矩就是一段可以被任何人靜靜刪掉的散文——本專案已認過的病型：護欄什麼都沒做卻回報通過。
