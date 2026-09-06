@@ -637,11 +637,17 @@ test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要�
   const historyStart = agents.indexOf('### 審查分工的沿革');
   assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
   assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
-  assert.doesNotMatch(agents.slice(ruleStart, blockStart), /\n#{1,6} /, '「審查回饋處置」到那顆之間不可以隔著任何層級的標題（含 H1）——那顆必須還在同一節');
+  // CommonMark 的標題不只「行首 # 加空白」：ATX 可有 0～3 個前導空白、井號後可接空白／tab／行尾；Setext 是段落下一行的 = 或 - 底線（#577 r5）。
+  const hasMarkdownHeading = (/** @type {string} */ text) => {
+    const lines = text.split('\n');
+    return lines.some((line, i) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
+      || (i > 0 && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && lines[i - 1].trim() !== ''));
+  };
+  assert.ok(!hasMarkdownHeading(agents.slice(ruleStart, blockStart)), '「審查回饋處置」到那顆之間不可以隔著任何形狀的標題（ATX 含前導空白、Setext 底線）——那顆必須還在同一節');
   const blockEnd = agents.indexOf('\n**界線表（', blockStart);
   assert.ok(blockEnd > blockStart, '那顆之後要接著「界線表」（同一節的下一顆）');
   const block = agents.slice(blockStart, blockEnd);
-  assert.doesNotMatch(block, /\n#{1,6} /, '那顆到「界線表」之間也不可以插進任何層級的標題（#577 r4：插一個假標題就把章節關係切斷）');
+  assert.ok(!hasMarkdownHeading(block), '那顆到「界線表」之間也不可以插進任何形狀的標題（#577 r4／r5：插一個假標題就把章節關係切斷、把「永遠等他」的例外切出正本）');
   for (const line of [
     '一句白話問題＋最多三個選項＋我建議的預設＋時限', '時限＝**三天**', '不套逾時預設、永遠等他的',
     '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', '②**金額口徑**——射程＝下方界線表那一列', '③**任何會讓閘變鬆的事**',
