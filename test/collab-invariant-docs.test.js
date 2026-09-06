@@ -570,7 +570,7 @@ test('分支保護文件要記下「enforce_admins 必須開」與它的理由',
     + '等於我們每天的每一次操作都在繞過，規則零強制力。實測當場打臉過（兩個空 commit 直接進 main）。');
 });
 
-test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出現次數（改任何一份複本都會紅）', () => {
+test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出現次數（改任何一份複本都會紅）＋第 6 題「問法與逾時預設」的承重句', () => {
   // 三代被打穿史：v1 關鍵字→覆寫假綠＋誤擋（r2）；v2/v3 解析式→位置顛倒／逃逸／重複-b／
   // 分號注入／續行覆寫（r3/r4，劃界：解析追不上變體空間）；v4 白名單→r5 抓「只驗存在」：
   // 同一句活兩處、改壞一處由另一處滿足 includes ⇒ v5 改**出現次數精確比對**。
@@ -581,6 +581,28 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   const count = (hay, needle) => hay.split(needle).length - 1;
   const PINS = [
     ['AGENTS.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
+    ['AGENTS.md', '一句白話問題＋最多三個選項＋我建議的預設＋時限', 1],   // 第 6 題：問法正本只住一處
+    ['CLAUDE.md', '「問法與逾時預設」那顆', 1],
+    // 第 6 題最危險的邊界：一條「沉默就能導致實作甚至合併」的授權，下面每一句消失都要紅（#577 r1 Medium③）
+    ['AGENTS.md', '時限＝**三天**', 1],
+    ['AGENTS.md', '不套逾時預設、永遠等他的', 1],
+    ['AGENTS.md', '③**任何會讓閘變鬆的事**', 1],
+    ['AGENTS.md', '沒有「時限內沒回就當綠」', 1],
+    ['AGENTS.md', '⑦**本顆自己的射程、時限與例外清單**', 1],
+    ['AGENTS.md', '**Claude 對「先做」的解讀**', 1],
+    ['AGENTS.md', '題目本文中他未反對的前提', 1],
+    ['AGENTS.md', '**❓ 貼出後不可編輯**', 1],
+    ['AGENTS.md', '不准寫「William 拍板／裁示」', 1],
+    // 永遠等他的五類各自獨立釘一句（#577 r2：只釘總標籤與③⑦時，其餘五類同時消失考題仍綠）
+    ['AGENTS.md', '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', 1],   // ① 錢的絕對邊界
+    ['AGENTS.md', '②**金額口徑**——射程＝下方界線表那一列', 1],   // ② 金額口徑
+    ['AGENTS.md', '④「明確指派／指名／特准」型授權', 1],   // ④ 指派型授權
+    ['AGENTS.md', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', 1],   // ⑤ 驗收點頭
+    ['AGENTS.md', '⑥事故通報 ⑦', 1],   // ⑥ 事故通報
+    ['AGENTS.md', '裁前暫按保守那邊：逾時後做到 PR 開好、審過，合併等他', 1],   // #577 r7：待他裁前不可改回「逾時直接合併」
+    ['AGENTS.md', '裁前暫按保守那邊：這兩類逾時也等他', 1],   // #577 r7：待他裁前不可把判準／架構套回逾時
+    ['CLAUDE.md', '三天', 0],   // 時限數字只住 AGENTS 正本一處（Grok #577 掃後）
+    ['REVIEW-AND-MERGE.md', '三天', 0],
     ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
     ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
@@ -608,6 +630,38 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     assert.equal(got, expected,
       `${file} 的白名單句「${pin}」出現 ${got} 次（規定 ${expected}）——`
       + '要改指令或承重句，先來改本考題的句庫與次數（變更必經考題）');
+  }
+});
+
+test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要在「審查回饋處置」節裡、「界線表」之前，而且承重句都在那顆裡（逐字搬到沿革節＝規則降成沿革，要紅；#577 r3）', () => {
+  // 題名關鍵字「工作區方案（實作常設／審查拋棄）」那題只在整份檔案計次——把整顆逐字搬到「### 審查分工的沿革」底下，次數不變、規則卻已經失效（固定維度 2 的「文字存在、結構失效」假綠）。
+  const agents = read('AGENTS.md');
+  const ruleStart = agents.indexOf('**審查回饋處置（');
+  const blockStart = agents.indexOf('- **問法與逾時預設（');
+  const historyStart = agents.indexOf('### 審查分工的沿革');
+  assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
+  assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
+  // CommonMark 的標題不只「行首 # 加空白」：ATX 可有 0～3 個前導空白、井號後可接空白／tab／行尾；Setext 是段落下一行的 = 或 - 底線（#577 r5）。
+  const hasMarkdownHeading = (/** @type {string} */ text) => {
+    const lines = text.split('\n');
+    return lines.some((line, i) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
+      || (i > 0 && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && lines[i - 1].trim() !== ''));
+  };
+  assert.ok(!hasMarkdownHeading(agents.slice(ruleStart, blockStart)), '「審查回饋處置」到那顆之間不可以隔著任何形狀的標題（ATX 含前導空白、Setext 底線）——那顆必須還在同一節');
+  const blockEnd = agents.indexOf('\n**界線表（', blockStart);
+  assert.ok(blockEnd > blockStart, '那顆之後要接著「界線表」（同一節的下一顆）');
+  const block = agents.slice(blockStart, blockEnd);
+  assert.ok(!hasMarkdownHeading(block), '那顆到「界線表」之間也不可以插進任何形狀的標題（#577 r4／r5：插一個假標題就把章節關係切斷、把「永遠等他」的例外切出正本）');
+  for (const line of [
+    '一句白話問題＋最多三個選項＋我建議的預設＋時限', '時限＝**三天**', '不套逾時預設、永遠等他的',
+    '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', '②**金額口徑**——射程＝下方界線表那一列', '③**任何會讓閘變鬆的事**',
+    '④「明確指派／指名／特准」型授權', '⑤畫面驗收與「他點頭」——不是問句，沒有預設可套', '⑥事故通報 ⑦', '⑦**本顆自己的射程、時限與例外清單**',
+    '沒有「時限內沒回就當綠」', '**Claude 對「先做」的解讀**', '題目本文中他未反對的前提', '**❓ 貼出後不可編輯**', '不准寫「William 拍板／裁示」',
+    '**❓ 未結且影響本支＝本支不合**', '**整則留言不得出現 🤖**',   // 待裁流程與合併授權的接縫、留痕留言與壞標頭閘的接縫（#577 r4）
+    '不為了起算時鐘開新 PR', '逾時暫定**不進**', '建立時間相差 ≥ 時限',   // Grok #577 掃後
+    '裁前暫按保守那邊：逾時後做到 PR 開好、審過，合併等他', '裁前暫按保守那邊：這兩類逾時也等他',   // 第⑦類兩題待他裁前的保守結果（#577 r7 High）
+  ]) {
+    assert.equal(block.split(line).length - 1, 1, `承重句「${line}」不在那顆裡（或不只一次）——在檔案別處出現不算`);
   }
 });
 
