@@ -136,6 +136,8 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   會留在「還沒回」。那是安全方向，換來不必在這裡實作 GFM 的參考解析。
  *   （上一版寫「用到或沒用到都一樣、兩個方向都安全」——那句話是錯的，#579 r7 打掉。）
  *   ⇒ **貼 ⚖️／⏳ 時請直接寫完整網址**，不要只用參考式連結。
+ *   剝的範圍是**標籤行之後一路到空行**：GFM 的定義可以換行放網址、再換一行放 title，
+ *   逐條去湊那個文法就是在寫剖析器，漏一行就是少剝（#579 r8 High②）。吃到空行是多剝的方向。
  *
  * ⚠️ 誠實劃界：別的隱藏花招（白字、`<details>` 摺起來、圖片的替代文字）沒剝，
  *   那要靠人翻留言時發現；本函式不宣稱認得全部。
@@ -164,13 +166,14 @@ export function visible(body) {
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
   const noComments = dangling < 0 ? paired : paired.slice(0, dangling);
-  const lines2 = noComments.split('\n');
-  const kept = lines2.map((l, i) => {
-    const here = /^ {0,3}\[[^\]]*\]:(.*)$/.exec(l);
-    if (here) return '';                               // 標籤行本身
-    // 標籤行的網址換到下一行（GFM 允許一次換行）：上一行是標籤行且冒號後只有空白 ⇒ 這一行是網址
-    const prev = i > 0 ? /^ {0,3}\[[^\]]*\]:(.*)$/.exec(lines2[i - 1]) : null;
-    return prev && prev[1].trim() === '' ? '' : l;
+  // 參考定義：標籤行之後**一路吃到空行**。GFM 允許網址換行、後面還可以再接一行 title
+  // （`[q]:` ／ 網址 ／ "說明"），逐條去湊那個文法就是在寫剖析器，而漏掉一行就是「少剝」（#579 r8 High②）。
+  // 吃到空行是**多剝**的方向：頂多讓緊貼在定義下面、沒空行隔開的一句話認不得 ⇒ 問題留在「還沒回」。
+  let inDef = false;
+  const kept = noComments.split('\n').map((l) => {
+    if (/^ {0,3}\[[^\]]*\]:/.test(l)) { inDef = true; return ''; }
+    if (inDef) { if (l.trim() === '') { inDef = false; return l; } return ''; }
+    return l;
   });
   return kept.join('\n')
     .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
@@ -250,12 +253,19 @@ export function classify(comments, nowMs) {
     // 右邊界要卡的是「網址還沒結束」：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）。
     // ⚠️ 這裡用的是**正向的收尾字集**（URL_END），不是「不可以接哪些字」的黑名單——
     //   黑名單漏一個就誤關，`@` 就是這樣漏掉的（#579 r3 High②，`@` 是 fragment 的合法字元）。
-    // `**<網址>**` 這種包裝算引到，但**絕不改寫網址本身**：上一版是對整段文字 `.replace(/\*+/g, '')`，
-    // 於是 `…#issuecomment-*1` 被抹成 `…#issuecomment-1`＝另一則的網址，真的還沒回被誤關（#579 r7 High②）。
-    // 正解只要動右邊界：GFM 的自動連結明定**結尾的 `*_~` 這類標點不算網址的一部分**，
-    // 所以網址後面允許最多三個強調符號，再接收尾字。開頭的 `**` 根本不影響比對（它在網址前面）。
-    // 這樣 `<網址>*oops` 仍然不算（星號後面接著字，沒有收尾），星號夾在網址中間也比不到。
-    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[*_~]{0,3}(?=${URL_END}|$)`);
+    // **只認兩種引法**，各自有各自的收尾規則。這是刻意收窄，不是又一次放寬——
+    // 前七輪都在猜「GitHub 會怎麼渲染這一段」，而那條路每一輪都同時生出誤關與漏認（#579 r1〜r8）。
+    // 這裡改成：**枚舉我自己會用的兩種寫法**，各給一條在本地就判得準的規則，其餘一律不認。
+    //  ①**明寫連結** `[文字](<網址>)`：destination 由括號界定，裡面的 `~ . ,` 都**屬於網址**，
+    //    所以要求網址後面**緊接** `)`。`[另一個位置](<網址>~)` 指的是別的位置，不算（#579 r8 High①）。
+    //  ②**裸網址**：GFM 的自動連結會把**結尾的 `?!.,:*_~`** 當標點修掉，所以允許那幾個字再接收尾字。
+    //    前面是不是 `(` 決定它是不是①——是的話這條不適用，免得用①的規則去套②的語意。
+    // ⚠️ 誠實劃界：**其餘引法一律不認**（參考式 `[文字][名稱]`、HTML `<a href>`、把網址拆行……）。
+    //   認不得＝問題留在「還沒回」＝我再問他一次，安全方向。**貼 ⚖️／⏳ 時就用這兩種寫法之一。**
+    const RAW = String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const explicitLink = new RegExp(`\\]\\(\\s*${RAW}\\s*\\)`);
+    const bareUrl = new RegExp(`(?<!\\()${RAW}[?!.,:*_~]{0,3}(?=${URL_END}|$)`);
+    const cited = { test: (/** @type {string} */ t) => explicitLink.test(t) || bareUrl.test(t) };
     // 只在**看得見的**內容裡找那個網址（藏在 HTML 註解或圍欄裡的不算——#579 r4 High①）。
     const hits = closers.filter((x) => cited.test(visible(x.c?.body)) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;

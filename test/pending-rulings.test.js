@@ -341,10 +341,42 @@ test('⭐ Markdown 的參考定義行從來不會顯示：藏在那裡的網址�
   const looksLike = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n見 [背景] ${urlOf(1)}` });
   assert.equal(classify([a, looksLike], T0 + 4 * 86400e3).closed.length, 1, '正常行文裡的網址照樣算引到');
-  // 對照組：參考定義的**下下行**不受影響（只吃緊接的那一行）
-  const afterDef = c({ id: 5, at: T0 + 60e3,
+  // 參考定義吃到**空行**為止（GFM 的定義可以換行放網址、再換一行放 title，逐條去湊那個文法就是在寫剖析器）。
+  // 這是**多剝**的方向，代價寫成考題：沒有空行隔開、緊貼在定義下面的那句話會被當成看不見。
+  const glued = c({ id: 5, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]: https://example.com/x\n關的是 ${urlOf(1)}` });
-  assert.equal(classify([a, afterDef], T0 + 4 * 86400e3).closed.length, 1, '參考定義的下一行是正常內文，不可以跟著剝掉');
+  assert.equal(classify([a, glued], T0 + 4 * 86400e3).pending.length, 1,
+    '緊貼在參考定義下面（沒有空行）的內容一律當看不見——多剝的方向，代價是這一則認不得');
+  // 對照組：空行隔開之後就是正常內文，照樣看得見
+  const separated = c({ id: 6, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[背景]: https://example.com/x\n\n關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, separated], T0 + 4 * 86400e3).closed.length, 1, '空行之後是正常內文，不可以跟著剝掉');
+  // 定義的 title 另起一行也要吃掉（漏掉就是少剝＝誤關）
+  const withTitle = c({ id: 7, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[q]:\n  ${urlOf(1)}\n  "說明"` });
+  assert.equal(classify([a, withTitle], T0 + 4 * 86400e3).pending.length, 1, '定義的網址與 title 都不會顯示，關不掉問題');
+});
+
+test('⭐ 只認兩種引法：明寫連結要緊接 `)`，裸網址才吃 GFM 的結尾標點（#579 r8 High①）', () => {
+  const a = ask({ id: 1 });
+  // ① 明寫連結：destination 由括號界定，裡面的 `~` 屬於網址 ⇒ 那是**別的位置**，不算引到
+  const tilde = ruling({ id: 2, at: T0 + 60e3, cites: `[另一個位置](${urlOf(1)}~)` });
+  assert.equal(classify([a, tilde], T0 + 4 * 86400e3).pending.length, 1, '明寫連結的網址結尾多一個 `~`＝另一個位置');
+  const comma = ruling({ id: 3, at: T0 + 120e3, cites: `[另一個位置](${urlOf(1)},x)` });
+  assert.equal(classify([a, comma], T0 + 4 * 86400e3).pending.length, 1, '明寫連結裡的 `,` 也屬於網址');
+  // 對照組：明寫連結指到**正確**的網址就算引到
+  const ok = ruling({ id: 4, at: T0 + 180e3, cites: `見 [這則待裁](${urlOf(1)})` });
+  assert.equal(classify([a, ok], T0 + 4 * 86400e3).closed.length, 1, '明寫連結指對了就算引到');
+  // ② 裸網址：GFM 的自動連結會把結尾的 ?!.,:*_~ 當標點修掉
+  for (const tail of ['.', '，', '!', '?', ':', '~', '*', '。']) {
+    const bare = ruling({ id: 5, at: T0 + 240e3, cites: `關的是 ${urlOf(1)}${tail}` });
+    assert.equal(classify([a, bare], T0 + 4 * 86400e3).closed.length, 1, `裸網址後面接「${tail}」照樣算引到`);
+  }
+  // 裸網址後面接著字仍然不算（那是另一個位置）
+  for (const tail of ['~oops', '.5', '@x', 'oops']) {
+    const ext = ruling({ id: 6, at: T0 + 300e3, cites: `關的是 ${urlOf(1)}${tail}` });
+    assert.equal(classify([a, ext], T0 + 4 * 86400e3).pending.length, 1, `裸網址後面接「${tail}」＝另一個位置`);
+  }
 });
 
 test('⭐ 星號只在網址**結尾**才算包裝，絕不改寫網址本身（#579 r7 High②）', () => {
