@@ -41,10 +41,13 @@ import { originRepo } from './acceptance-tier.js';
 /** 時限：正本＝`AGENTS.md`「問法與逾時預設」那顆的「時限＝三天」。三天＝連續 72 小時（那顆自己定義的算法）。 */
 export const TIMEOUT_HOURS = 72;
 
-/** 三種留痕留言的第一行。⚖️ 是 U+2696＋看不見的 U+FE0F，比對前先剝掉，手打時掉了那個字元也認得。 */
-const ASK = /^##[ \t]+❓[ \t]*待裁/u;
-const RULING = /^##[ \t]+⚖[ \t]*William 裁示/u;
-const TIMEOUT = /^##[ \t]+⏳[ \t]*逾時暫定/u;
+// 三種留痕留言的第一行。規則正本要求的是**完整形狀**：`## <記號> <名稱>（YYYY-MM-DD）：〈標題〉`。
+// 只驗前綴會把「## ⚖️ William 裁示oops」這種規則上無效的留言當成有效的裁示，反過來把活著的問題吞掉（#579 r1 High①）。
+// ⚖️ 是 U+2696＋看不見的 U+FE0F，比對前先剝掉，手打時掉了那個字元也認得。
+const DATED = '（\\d{4}-\\d{2}-\\d{2}）：\\S';
+const ASK = new RegExp(`^##[ \t]+❓[ \t]*待裁${DATED}`, 'u');
+const RULING = new RegExp(`^##[ \t]+⚖[ \t]*William 裁示${DATED}`, 'u');
+const TIMEOUT = new RegExp(`^##[ \t]+⏳[ \t]*逾時暫定${DATED}`, 'u');
 /** 長得像標頭、但不合規式的：列出來說「我沒算進去」，不要靜靜丟掉（真的發生過——有一則裁示少了 `## ⚖️ ` 前綴）。 */
 const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
 
@@ -62,9 +65,14 @@ export function firstLine(body) {
  */
 export function shapeOf(c) {
   const line = firstLine(c?.body);
-  if (ASK.test(line)) return 'ask';
-  if (RULING.test(line)) return 'ruling';
-  if (TIMEOUT.test(line)) return 'timeout';
+  // 規則明定這三種留言**整則不得出現 🤖**（複審聯集閘會把含 🤖 的非合規留言當壞標頭）。
+  // 含 🤖 的一律不算有效的留痕留言——長得像就進「形狀不合」讓人看見，不可以拿去關掉問題。
+  const botMark = String(c?.body ?? '').includes('🤖');
+  if (!botMark) {
+    if (ASK.test(line)) return 'ask';
+    if (RULING.test(line)) return 'ruling';
+    if (TIMEOUT.test(line)) return 'timeout';
+  }
   return NEAR.test(line) ? 'near' : null;
 }
 
@@ -94,7 +102,9 @@ export function classify(comments, nowMs) {
     .filter((x) => x.shape === 'near' || (x.shape !== null && !owner(x.c)))
     .map((x) => ({
       url: x.c?.html_url, line: firstLine(x.c?.body).slice(0, 80),
-      why: x.shape === 'near' ? '第一行長得像標頭、但不合規定的寫法' : '第一行合規、但不是 repo 擁有者貼的',
+      why: x.shape === 'near'
+        ? (String(x.c?.body ?? '').includes('🤖') ? '整則出現 🤖——規則明定這三種留言不可以有（會被複審那道閘當成壞標頭）' : '第一行長得像標頭、但不合規定的完整寫法（要有 `（日期）：標題`）')
+        : '第一行合規、但不是 repo 擁有者貼的',
     }));
   const asks = shaped.filter((x) => x.shape === 'ask' && owner(x.c)).map((x) => x.c);
   const closers = shaped.filter((x) => (x.shape === 'ruling' || x.shape === 'timeout') && owner(x.c))
@@ -103,8 +113,9 @@ export function classify(comments, nowMs) {
   for (const ask of asks) {
     const askAt = Date.parse(ask.created_at);
     if (Number.isNaN(askAt)) throw new Error(`留言 ${ask.id} 的建立時間讀不出來：${ask.created_at}`);
-    // 引用比對要卡右邊界：5558522302 是 55585223020 的前綴，不卡的話尾巴多一位也會被當成同一則。
-    const cited = new RegExp(`#issuecomment-${ask.id}(?![0-9])`);
+    // 規則要的是「引了那一則留言的**網址**」：只搜尾巴的 `#issuecomment-<id>` 的話，隨手打一段裸片段就能關題（#579 r1 High②）。
+    // 右邊界照樣要卡：…302 不可以被 …3020 命中。
+    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`);
     const hits = closers.filter((x) => cited.test(String(x.c?.body ?? '')) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;

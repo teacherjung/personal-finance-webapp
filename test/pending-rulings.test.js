@@ -28,6 +28,7 @@ function c({ id, body, at = T0, edited = false, pr = 100, assoc = 'OWNER' }) {
     issue_url: `https://api.github.com/repos/o/r/issues/${pr}`,
   };
 }
+const urlOf = (/** @type {number} */ id, /** @type {number} */ pr = 100) => `https://github.com/o/r/pull/${pr}#issuecomment-${id}`;
 const ask = (/** @type {any} */ o) => c({ body: `## ❓ 待裁（2026-09-01）：${o.q ?? '要不要做這件事？'}\n選項…`, ...o });
 const ruling = (/** @type {any} */ o) => c({ body: `## ⚖️ William 裁示（2026-09-02）：答覆\n關的是 ${o.cites ?? ''}`, ...o });
 const timeout = (/** @type {any} */ o) => c({ body: `## ⏳ 逾時暫定（2026-09-04）：同一句問題\n❓ 留言：${o.cites ?? ''}`, ...o });
@@ -42,7 +43,7 @@ test('沒有任何裁示留言 → 那則問題列在「還沒回」', () => {
 test('⭐ 跨 PR 才關得掉：問題貼在 A 支、裁示貼在 B 支並引了它的網址 → 已結（只看同一支會永遠關不掉）', () => {
   // 真語料：#577 的兩則 ❓ 是被 #578 上那則 ⚖️ 關掉的。
   const a = ask({ id: 1, pr: 577 });
-  const b = ruling({ id: 2, pr: 578, at: T0 + 7200e3, cites: '#issuecomment-1' });
+  const b = ruling({ id: 2, pr: 578, at: T0 + 7200e3, cites: urlOf(1, 577) });
   const r = classify([a, b], T0 + 3 * 86400e3);
   assert.deepEqual(r.pending, []);
   assert.equal(r.closed.length, 1);
@@ -50,17 +51,46 @@ test('⭐ 跨 PR 才關得掉：問題貼在 A 支、裁示貼在 B 支並引了
 });
 
 test('⭐ 裁示早於問題不算關：同一支上先有一則答別題的裁示、之後才貼問題 → 仍未結', () => {
-  const old = ruling({ id: 1, at: T0 - 86400e3, cites: '#issuecomment-2' });
+  const old = ruling({ id: 1, at: T0 - 86400e3, cites: urlOf(2) });
   const a = ask({ id: 2 });
   const r = classify([old, a], T0 + 3600e3);
   assert.equal(r.pending.length, 1, '較早的裁示不可能在回答還沒問的問題');
 });
 
-test('⭐ 引用編號要卡右邊界：引 #issuecomment-10 不算關掉 1（先證明沒卡邊界的寫法真的會中）', () => {
+test('⭐ 引用要卡右邊界：引第 10 則的網址不算關掉第 1 則（先證明沒卡邊界的寫法真的會中）', () => {
   const a = ask({ id: 1 });
-  const b = ruling({ id: 2, at: T0 + 60e3, cites: '#issuecomment-10' });
-  assert.ok(String(b.body).includes('#issuecomment-1'), '對照斷言：沒卡右邊界的 includes 真的會命中，這題才有意義');
+  const b = ruling({ id: 2, at: T0 + 60e3, cites: urlOf(10) });
+  assert.ok(String(b.body).includes(urlOf(1)), '對照斷言：沒卡右邊界的 includes 真的會命中，這題才有意義');
   assert.equal(classify([a, b], T0 + 3600e3).pending.length, 1);
+});
+
+test('⭐ 要引的是**留言網址**，不是裸的片段：只寫 #issuecomment-1、或寫別則的網址，都不算關掉（#579 r1 High②）', () => {
+  const a = ask({ id: 1 });
+  const bare = ruling({ id: 2, at: T0 + 60e3, cites: '只是文字 #issuecomment-1' });
+  const other = ruling({ id: 3, at: T0 + 120e3, cites: 'https://github.com/o/r/pull/999#issuecomment-1' });
+  assert.equal(classify([a, bare], T0 + 4 * 86400e3).pending.length, 1, '裸片段關不掉');
+  assert.equal(classify([a, other], T0 + 4 * 86400e3).pending.length, 1, '別支 PR 的同號片段也關不掉');
+  assert.equal(classify([a, ruling({ id: 4, at: T0 + 60e3, cites: urlOf(1) })], T0 + 4 * 86400e3).closed.length, 1, '對照組：引完整網址才關得掉');
+});
+
+test('⭐ 標頭形狀要完整：`## ⚖️ William 裁示oops` 這種規則上無效的留言不可以關掉問題，而且要進「形狀不合」（#579 r1 High①）', () => {
+  const a = ask({ id: 1 });
+  const fake = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示oops\n${urlOf(1)}` });
+  const r = classify([a, fake], T0 + 4 * 86400e3);
+  assert.equal(r.pending.length, 1, '缺「（日期）：標題」的裁示留言不是有效裁示');
+  assert.equal(r.near.length, 1);
+  assert.match(r.near[0].why, /完整寫法/);
+});
+
+test('⭐ 整則出現 🤖 的留痕留言一律不算數（規則明定不可以有；複審那道閘會把它當壞標頭）', () => {
+  const a = ask({ id: 1 });
+  const botRuling = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n引 🤖 Codex 的發現\n${urlOf(1)}` });
+  const r = classify([a, botRuling], T0 + 4 * 86400e3);
+  assert.equal(r.pending.length, 1, '含 🤖 的裁示留言不可以關掉問題');
+  assert.equal(r.near.length, 1);
+  assert.match(r.near[0].why, /🤖/);
+  const botAsk = c({ id: 3, body: '## ❓ 待裁（2026-09-01）：內文有 🤖 Codex 的問題' });
+  assert.deepEqual(classify([botAsk], T0).pending, [], '含 🤖 的問題本身也不算一則有效的待裁');
 });
 
 test('⭐ 只認第一行：被引用的標頭、內文第三行的標頭、複審留言裡的三種記號，都不算一則', () => {
@@ -119,7 +149,7 @@ test('⭐ 配不到但後面有裁示留言＝中間態：仍列在「還沒回�
 
 test('⭐ 逾時暫定不算已結：那一類正是「他還沒回、我先照預設做了」，另開一段列出來', () => {
   const a = ask({ id: 1 });
-  const t = timeout({ id: 2, at: T0 + 4 * 86400e3, cites: '#issuecomment-1' });
+  const t = timeout({ id: 2, at: T0 + 4 * 86400e3, cites: urlOf(1) });
   const r = classify([a, t], T0 + 5 * 86400e3);
   assert.deepEqual(r.pending, []);
   assert.deepEqual(r.closed, []);
@@ -130,7 +160,7 @@ test('⭐ 逾時暫定不算已結：那一類正是「他還沒回、我先照�
 test('⭐ 只有 repo 擁有者貼的才算：外人貼的裁示留言關不掉問題，而且會被列進「形狀不合」讓人看見', () => {
   // repo 是公開的，任何人都能貼一則第一行合規的留言；配對若不看作者，一則活著的問題會被靜靜吞掉。
   const a = ask({ id: 1 });
-  const outsider = ruling({ id: 2, at: T0 + 3600e3, cites: '#issuecomment-1', assoc: 'NONE' });
+  const outsider = ruling({ id: 2, at: T0 + 3600e3, cites: urlOf(1), assoc: 'NONE' });
   const r = classify([a, outsider], T0 + 4 * 86400e3);
   assert.equal(r.pending.length, 1);
   assert.equal(r.near.length, 1);
@@ -139,7 +169,7 @@ test('⭐ 只有 repo 擁有者貼的才算：外人貼的裁示留言關不掉�
 
 test('⭐ 已結的一定印出來（附配對連結）：「沒有還沒回的」必須是看得到證據的結論，不是沉默', () => {
   const a = ask({ id: 1 });
-  const b = ruling({ id: 2, at: T0 + 3600e3, cites: '#issuecomment-1' });
+  const b = ruling({ id: 2, at: T0 + 3600e3, cites: urlOf(1) });
   const out = render(classify([a, b], T0 + 4 * 86400e3), { host: 'github.com', slug: 'o/r', expected: 2 });
   assert.match(out, /還沒回的問題：沒有/);
   assert.match(out, /我判定已結的：1 則/);
@@ -170,13 +200,15 @@ test('⭐ 排序：放最久的排最前', () => {
   assert.deepEqual(classify([newer, older], T0 + 5 * 86400e3).pending.map((x) => x.id), [1, 2]);
 });
 
-test('⭐ 天數不看日曆日，所以時區換了答案不變（先證明日曆日寫法真的會因時區而不同）', () => {
-  const at = T0 + 20 * 3600e3;           // UTC 9/1 20:00＝台北 9/2 04:00（日曆日已經跨過去了）
-  const now = at + 77 * 3600e3;          // 77 小時後：不是 24 的倍數，日曆日寫法在兩個時區會給出不同天數
+test('⭐ 逾時是兩個時間點相減、不是日曆日：跨了三個日曆日但只過 52 小時 → 不算逾時（日曆日寫法會誤標）', () => {
+  const at = T0 + 20 * 3600e3;           // UTC 9/1 20:00
+  const now = T0 + 3 * 86400e3;          // UTC 9/4 00:00：日曆日差 3 天，實際只過 52 小時
   const calDays = (/** @type {number} */ t, /** @type {number} */ offsetH) => Math.floor((t + offsetH * 3600e3) / 86400e3);
-  assert.notEqual(calDays(now, 0) - calDays(at, 0), calDays(now, 8) - calDays(at, 8),
-    '對照斷言：這組夾具用日曆日相減，UTC 與 +08:00 真的會給出不同天數——這題才有鑑別力');
-  assert.equal(classify([ask({ id: 1, at })], now).pending[0].hours, 77, '我們用的是兩個時間點相減，跟時區無關');
+  assert.equal(calDays(now, 0) - calDays(at, 0), 3, '對照斷言：日曆日寫法會說「3 天」＝已達時限，這題才有鑑別力');
+  assert.equal(calDays(now, 8) - calDays(at, 8), 2, '對照斷言：同一組夾具換個時區，日曆日寫法連答案都不一樣');
+  const r = classify([ask({ id: 1, at })], now);
+  assert.equal(r.pending[0].hours, 52);
+  assert.equal(r.pending[0].overdue, false, '只過 52 小時就標逾時＝規則上不存在的期限');
 });
 
 test('形狀驗證：頁不是陣列、留言缺欄位，一律丟（不拿殘缺清單下結論）', () => {
@@ -271,7 +303,7 @@ test('⭐ CLI｜無參數＝印用法、退 2，而且一次都不連網', () =>
 
 test('⭐ CLI｜--pr 一樣掃全庫：別支的裁示照樣關得掉，別支的問題不會混進來', () => {
   const a = ask({ id: 1, pr: 577 });
-  const b = ruling({ id: 2, pr: 578, at: T0 + 3600e3, cites: '#issuecomment-1' });
+  const b = ruling({ id: 2, pr: 578, at: T0 + 3600e3, cites: urlOf(1, 577) });
   const other = ask({ id: 3, pr: 500 });
   withFakeGh({ issues: ISSUES(3), comments: pages([a, b, other]), args: ['--pr', '577'] }, ({ r }) => {
     assert.equal(r.status, 0, r.stderr);
@@ -321,6 +353,15 @@ test('⭐ 這支不是閘：合併步驟一個字都不提它（反查器看不�
   assert.ok(start >= 0, '找不到合併步驟');
   assert.doesNotMatch(lines.slice(start, end < 0 ? undefined : end).join('\n'), /pending-rulings/,
     '合併步驟提到這支＝它變成流程的一環（pre-push 那種「非零就擋」的地方會讓退出碼 2 變成擋人）');
+});
+
+test('⭐ 這支不是閘（第二半）：CI 設定與 pre-push 也不可以叫它——那兩處是「非零就擋」，接進去它就變成閘', () => {
+  // 檔頭寫「不是閘靠的是沒有人把它接進 pre-push／CI／合併步驟」；只掃合併步驟的話，接進 CI 照樣全綠（#579 r1 Medium④）。
+  const files = ['.github/workflows/ci.yml', '.github/workflows/collab-fields.yml', 'scripts/git-hooks/pre-push'];
+  for (const f of files) {
+    assert.doesNotMatch(readFileSync(join(ROOT, f), 'utf8'), /pending-rulings/,
+      `${f} 叫了這支＝它變成一道會因為沒有網路或沒有權杖而擋人的閘（那兩處都是非零就擋）`);
+  }
 });
 
 test('⭐ 驗收分級：這支是不需驗收那一級（新腳本沒進名單會被當未知→要重啟）', () => {
