@@ -10,7 +10,11 @@
 //
 // ⚠️ **這不是閘**：它不擋任何事、不自報閘名、不寫任何留言、不判「可不可以照預設先做」（那七類例外住 AGENTS 正本，
 // 這裡照著判就會變成第二份規則書）。**「不是閘」靠的是「沒有人把它接進 pre-push／CI／合併步驟」，不是靠退出碼**——
-// `scripts/git-hooks/pre-push` 的每一關都是「非零就擋」，所以任何退出碼接進去都會擋人。考題釘住合併步驟不提這支。
+// `scripts/git-hooks/pre-push` 的每一關都是「非零就擋」，所以任何退出碼接進去都會擋人。
+// 考題釘住的接線有三種：合併步驟、`.github/workflows/` 每一份、`pre-push`，**外加 `package.json` 的 script 別名**
+// （直接掃字面的話，加一個別名再讓 CI 只寫 `npm run <別名>`，工具就已經進門而考題全綠——#579 r3 Medium③）。
+// ⚠️ 誠實劃界：釘得住的是**這三處的直接字面**與**經過 npm script 別名的一層轉手**（別名鏈會一路追）。
+//   別的轉手方式（某個 shell 腳本裡呼叫它、外部 action、有人手動接進別的自動化）**釘不住**，靠複審的人看。
 //
 // ## 用法
 //   node scripts/pending-rulings.js --all        # 掃全 repo，列出還沒回的
@@ -33,6 +37,11 @@
 // ・**編輯痕跡用的是 `updated_at ≠ created_at`**，而 `REVIEW-AND-MERGE.md` 要審查者核對的是 GraphQL 的
 //   `includesCreatedEdit`／`lastEditedAt`——兩個訊號在本 repo 的樣本上一致，但不是同一個欄位，輸出裡有寫明。
 // ・**時限的數字**在 `AGENTS.md` 那顆是正本，這裡的常數由考題綁回去；改那裡要一起改這裡。
+// ・**留痕留言的內文只驗到「非有不可的那一欄」**：❓ 驗第一行的完整形狀（記號／名稱／真日期／標題），
+//   ⚖️ 另驗「原話那一段」的段落形狀，⏳ 另驗「William 未裁、隨時可翻案」那一句。
+//   規則正本還要求 ❓ 寫出選項／建議預設／類別／時限，⏳ 寫出授權依據／逾時判定／照哪個預設做了什麼——
+//   **這幾欄這支沒有驗**（缺了照樣算數）。沒驗的原因是它們沒有固定字串形狀，猜著驗會開始長成第二份規則書；
+//   缺欄不會讓問題被誤判成已結（那只看第一行＋上面那兩欄），但也不要拿這支當「留痕寫齊了」的證明。
 import { execFileSync } from 'node:child_process';
 import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
@@ -49,9 +58,17 @@ export const TIMEOUT_HOURS = 72;
 const ASK = /^## ❓ 待裁（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 const RULING = /^## ⚖ William 裁示（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 const TIMEOUT = /^## ⏳ 逾時暫定（(\d{4})-(\d{2})-(\d{2})）：\S/u;
-/** 內文非有不可的欄位（規則正本要求的形狀；缺了就不是一則有效的裁示／逾時暫定）。 */
-const RULING_BODY = '原話（對話中，Claude 轉述）';
-const TIMEOUT_BODY = 'William 未裁';
+// 內文非有不可的欄位（規則正本要求的形狀；缺了就不是一則有效的裁示／逾時暫定）。
+// ⚠️ 只驗「欄名這串字出現過」會被否定句冒充：一則寫「這裡**沒有**原話（對話中，Claude 轉述）那一段」的
+//   留言照樣算數，真的還沒回的問題就被靜靜關掉（#579 r3 High①）。所以驗的是**段落形狀**：
+//   欄名要在某一行的**行首**，同一行還要有粗體引號 `**「…」**` 且引號裡有字——那是規則正本寫的形狀。
+// ⚠️ 誠實劃界：這驗得出「有沒有一段長得像逐字引述」，驗不出「引號裡那句話是不是他真的說的」。
+//   後者沒有任何機器判得出來，靠複審的人看；本工具不宣稱擋得住偽造內容。
+// 引號內**允許再有引號**（他的原話常常引到別人的話：真語料裡就有「…回 **「1. a. 做／2.「先做」含不含合併：含…」**」）。
+// 所以中間用貪婪的 `.+` 收到那一行最後一組 `」**`，不是 `[^」]+`——後者會被巢狀的 `」` 卡住，
+// 把真的裁示判成形狀不合，反而讓已經回過的問題又冒回「還沒回」（實跑真語料抓到的）。
+const RULING_QUOTE = /^原話（對話中，Claude 轉述）：.*\*\*「.+」\*\*/mu;
+const TIMEOUT_PHRASE = /^William 未裁、隨時可翻案/mu;
 
 /** 標頭上的日期要是真的存在的日子（2026-99-99 不算）。 @param {RegExpMatchArray|null} m */
 function realDate(m) {
@@ -62,6 +79,14 @@ function realDate(m) {
 }
 /** 長得像標頭、但不合規式的：列出來說「我沒算進去」，不要靜靜丟掉（真的發生過——有一則裁示少了 `## ⚖️ ` 前綴）。 */
 const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
+
+// 引用網址的**右邊界**：網址後面必須是文字結束、或這裡列的收尾字之一，才算「引到那一則」。
+// 為什麼是正向列舉：反過來列「不可以接哪些字」是黑名單，漏一個就把還沒回的問題誤判成已結。
+// 那為什麼不直接照 RFC 3986 的 fragment 合法字集取反？因為那個字集含 `)`、`,`、`.`，
+// 而真實資料裡最常見的引法就是 Markdown 連結 `[文字](網址)`——照它會把現有的配對全部判成沒引到。
+// ⚠️ 誠實劃界：`)` 兩邊都合法（Markdown 連結的收尾，也是 fragment 的合法字元），形狀上分不開。
+//   這裡選擇認它為收尾，代價是刻意寫成 `<網址>)…` 的內容裝得出「引到」——那一條靠複審的人看，不是靠這支擋。
+const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]';
 
 /** @param {unknown} body 留言內文 @returns {string} 第一行，去掉行尾 \r 與看不見的 U+FE0F */
 export function firstLine(body) {
@@ -84,8 +109,8 @@ export function shapeOf(c) {
   if (!botMark) {
     if (realDate(line.match(ASK))) return 'ask';
     // 裁示與逾時暫定還要有內文那一欄：第一行對、內文卻沒有他的原話（或沒說「William 未裁」），不是一則有效的留痕留言。
-    if (realDate(line.match(RULING)) && body.includes(RULING_BODY)) return 'ruling';
-    if (realDate(line.match(TIMEOUT)) && body.includes(TIMEOUT_BODY)) return 'timeout';
+    if (realDate(line.match(RULING)) && RULING_QUOTE.test(body)) return 'ruling';
+    if (realDate(line.match(TIMEOUT)) && TIMEOUT_PHRASE.test(body)) return 'timeout';
   }
   return NEAR.test(line) ? 'near' : null;
 }
@@ -128,9 +153,10 @@ export function classify(comments, nowMs) {
     const askAt = Date.parse(ask.created_at);
     if (Number.isNaN(askAt)) throw new Error(`留言 ${ask.id} 的建立時間讀不出來：${ask.created_at}`);
     // 規則要的是「引了那一則留言的**網址**」：只搜尾巴的 `#issuecomment-<id>` 的話，隨手打一段裸片段就能關題（#579 r1 High②）。
-    // 右邊界要卡的是「網址還沒結束」的字：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）；
-    // 收尾的空白、`)`、`]`、逗號句號與全形標點都算網址結束，照樣認得。
-    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9A-Za-z_%~:/?#=&+.\\-])`);
+    // 右邊界要卡的是「網址還沒結束」：…302 不可以被 …3020 命中，`<網址>oops` 也不算（#579 r2 High②）。
+    // ⚠️ 這裡用的是**正向的收尾字集**（URL_END），不是「不可以接哪些字」的黑名單——
+    //   黑名單漏一個就誤關，`@` 就是這樣漏掉的（#579 r3 High②，`@` 是 fragment 的合法字元）。
+    const cited = new RegExp(`${String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=${URL_END}|$)`);
     const hits = closers.filter((x) => cited.test(String(x.c?.body ?? '')) && Date.parse(x.c.created_at) > askAt);
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;

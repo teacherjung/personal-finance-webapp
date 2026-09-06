@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,11 +72,72 @@ test('⭐ 要引的是**留言網址**，不是裸的片段：只寫 #issuecomme
   assert.equal(classify([a, other], T0 + 4 * 86400e3).pending.length, 1, '別支 PR 的同號片段也關不掉');
   const longer = ruling({ id: 5, at: T0 + 180e3, cites: `${urlOf(1)}oops` });
   assert.equal(classify([a, longer], T0 + 4 * 86400e3).pending.length, 1, '網址後面還接著字＝那是另一個位置，不算引到（#579 r2 High②）');
+  // 黑名單漏掉的字：`@` 是 fragment 的合法字元，`<網址>@oops` 指向的是另一個位置（#579 r3 High②）。
+  // 這一排全是「當年沒列進黑名單、卻能延長網址」的字——正向收尾字集要一次全擋掉。
+  for (const tail of ['@', '&', '$', '+', '=', "'", '*', '(', '~', '%', '!', '?', ':', '/', ';', ',', '.']) {
+    const ext = ruling({ id: 7, at: T0 + 300e3, cites: `${urlOf(1)}${tail}oops` });
+    assert.equal(classify([a, ext], T0 + 4 * 86400e3).pending.length, 1,
+      `網址後面接「${tail}」還是網址的一部分，那是另一個位置，不可以算引到`);
+  }
   for (const tail of [' ', ')', '］', '。', '，', '\n']) {
     const term = ruling({ id: 6, at: T0 + 240e3, cites: `${urlOf(1)}${tail}後面` });
     assert.equal(classify([a, term], T0 + 4 * 86400e3).closed.length, 1, `網址後面接「${tail.trim() || '空白'}」＝網址結束了，要算引到`);
   }
   assert.equal(classify([a, ruling({ id: 4, at: T0 + 60e3, cites: urlOf(1) })], T0 + 4 * 86400e3).closed.length, 1, '對照組：引完整網址才關得掉');
+});
+
+test('⭐ 裁示要有**真的一段原話**：只把欄名寫進否定句，不可以關掉問題（#579 r3 High①）', () => {
+  const a = ask({ id: 1 });
+  // 反例逐字取自 Codex 的實測：第一行完全合規、內文把欄名寫在否定句裡，舊判準（includes 欄名）會回 ruling。
+  const fake = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n這裡沒有原話（對話中，Claude 轉述）那一段，只是拿問題當上下文：${urlOf(1)}` });
+  assert.ok(String(fake.body).includes('原話（對話中，Claude 轉述）'),
+    '對照斷言：這則留言真的含有那串欄名，所以舊的 includes 判準真的會中——這題才有意義');
+  assert.equal(shapeOf(fake), 'near', '欄名出現在否定句裡＝沒有那一段，要進「形狀不合」讓人看見');
+  const r = classify([a, fake], T0 + 4 * 86400e3);
+  assert.equal(r.pending.length, 1, '真的還沒回的問題不可以被它關掉');
+  assert.equal(r.closed.length, 0);
+});
+
+test('⭐ 裁示的原話那一段要有逐字引文：欄名在行首、卻沒有粗體引號裡的話，不算', () => {
+  const a = ask({ id: 1 });
+  const noQuote = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，Claude 轉述）：他同意了。\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(noQuote), 'near', '沒有 **「逐字」** 那一段＝規則要的形狀沒寫到');
+  const empty = c({ id: 3, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，Claude 轉述）：**「」**\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(empty), 'near', '引號裡空的也不算');
+  const indented = c({ id: 4, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：答覆\n附註裡提到原話（對話中，Claude 轉述）：**「好」**\n關的是 ${urlOf(1)}` });
+  assert.equal(shapeOf(indented), 'near', '欄名不在行首＝那是散文在講這條規則，不是留痕的那一段');
+  for (const bad of [noQuote, empty, indented]) {
+    assert.equal(classify([a, bad], T0 + 4 * 86400e3).pending.length, 1, '形狀沒寫到的留言不可以關掉問題（不是只有 shapeOf 要對）');
+  }
+  // 對照組：規則正本要的形狀（真語料就是這樣寫的）照樣認得，不然這一收就把工具收死了
+  assert.equal(shapeOf(ruling({ id: 5, cites: urlOf(1) })), 'ruling', '對照組：合規的裁示留言仍算數');
+  assert.equal(classify([a, ruling({ id: 6, at: T0 + 60e3, cites: urlOf(1) })], T0 + 4 * 86400e3).closed.length, 1, '對照組：合規的關得掉');
+});
+
+test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可以把真的裁示判成形狀不合', () => {
+  // 這一題是實跑真語料抓到的回歸：#578 那則 ⚖️ 的原話是「…回 **「1. a. 做／2.「先做」含不含合併：含…」**」，
+  // 中間巢狀的 `」` 會讓「引號裡不准有引號」的寫法整條配不到，已經回過的兩題就又冒回「還沒回」。
+  const a = ask({ id: 1, pr: 577 });
+  const nested = c({
+    id: 2, pr: 578, at: T0 + 7200e3,
+    body: '## ⚖️ William 裁示（2026-09-02）：逾時預設的兩個解讀\n'
+      + '原話（對話中，Claude 轉述）：他先問「判準跟架構是什麼？」，聽完解釋後回 **「1. a. 做／2.「先做」含不含合併：含／3. 判準與架構適用」**。\n'
+      + `Claude 的附註：關的是 ${urlOf(1, 577)}`,
+  });
+  assert.equal(shapeOf(nested), 'ruling', '原話裡引到別人的話是常態，不可以因此判成形狀不合');
+  const r = classify([a, nested], T0 + 4 * 86400e3);
+  assert.deepEqual(r.pending, [], '真的已經回過的題目不可以又冒回「還沒回」');
+  assert.equal(r.closed.length, 1);
+});
+
+test('⭐ 逾時暫定要寫正本那一整句：只寫「William 未裁」半句不算', () => {
+  const a = ask({ id: 1 });
+  const half = c({ id: 2, at: T0 + 5 * 86400e3, body: `## ⏳ 逾時暫定（2026-09-06）：同一句問題\nWilliam 未裁\n❓ 留言：${urlOf(1)}` });
+  assert.equal(shapeOf(half), 'near', '正本寫的是「William 未裁、隨時可翻案」——半句代表那則沒照形狀寫');
+  assert.equal(classify([a, half], T0 + 6 * 86400e3).pending.length, 1, '半句的那則不可以把問題移出「還沒回」');
+  assert.equal(shapeOf(timeout({ id: 3, cites: urlOf(1) })), 'timeout', '對照組：整句寫齊的仍算數');
+  assert.equal(classify([a, timeout({ id: 4, at: T0 + 5 * 86400e3, cites: urlOf(1) })], T0 + 6 * 86400e3).provisional.length, 1,
+    '對照組：整句寫齊的會進「逾時暫定」那一段（不是「已結」）');
 });
 
 test('⭐ 標頭形狀要完整：`## ⚖️ William 裁示oops` 這種規則上無效的留言不可以關掉問題，而且要進「形狀不合」（#579 r1 High①）', () => {
@@ -400,11 +461,52 @@ test('⭐ 這支不是閘：合併步驟一個字都不提它（反查器看不�
 
 test('⭐ 這支不是閘（第二半）：CI 設定與 pre-push 也不可以叫它——那兩處是「非零就擋」，接進去它就變成閘', () => {
   // 檔頭寫「不是閘靠的是沒有人把它接進 pre-push／CI／合併步驟」；只掃合併步驟的話，接進 CI 照樣全綠（#579 r1 Medium④）。
-  const files = ['.github/workflows/ci.yml', '.github/workflows/collab-fields.yml', 'scripts/git-hooks/pre-push'];
-  for (const f of files) {
+  // ⚠️ 只掃兩份寫死的 workflow 也不夠：新增一份 workflow 就繞過去了，所以掃整個目錄。
+  const dir = join(ROOT, '.github/workflows');
+  const workflows = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join('.github/workflows', f));
+  assert.ok(workflows.length >= 2, '掃不到 workflow＝這題變空包彈（目錄名或副檔名改了？）');
+  for (const f of [...workflows, 'scripts/git-hooks/pre-push']) {
     assert.doesNotMatch(readFileSync(join(ROOT, f), 'utf8'), /pending-rulings/,
       `${f} 叫了這支＝它變成一道會因為沒有網路或沒有權杖而擋人的閘（那兩處都是非零就擋）`);
   }
+});
+
+test('⭐ 這支不是閘（第三半）：`package.json` 也不可以給它一個 script 別名——那是繞過字面掃描的一層轉手（#579 r3 Medium③）', () => {
+  // Codex 實測：加 `"opening-reminders": "node scripts/pending-rulings.js --all"`、CI 只寫 `npm run opening-reminders`，
+  // 工具已經進門（沒網路／沒權杖就擋人），而只掃字面的兩題全綠。
+  // 這裡直接釘住上游：**package.json 裡沒有任何 script（含經過 `npm run` 轉手的鏈）跑得到這支**。
+  // 這樣就不必去猜 CI 會怎麼叫它，也不會因為別人改用別的呼叫寫法而失效。
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const scripts = /** @type {Record<string, string>} */ (pkg.scripts ?? {});
+  const reaching = new Set(Object.keys(scripts).filter((k) => /pending-rulings/.test(scripts[k])));
+  // 別名鏈：`a` 只寫 `npm run b`、`b` 才跑工具，也要一路追出來
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, cmd] of Object.entries(scripts)) {
+      if (reaching.has(name)) continue;
+      for (const m of String(cmd).matchAll(/(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)/g)) {
+        if (reaching.has(m[1])) { reaching.add(name); grew = true; break; }
+      }
+    }
+  }
+  assert.deepEqual([...reaching], [],
+    'package.json 有 script 跑得到這支——CI 或 pre-push 只要寫 `npm run <別名>` 就把它變成閘，而字面掃描看不到');
+});
+
+test('⭐ 護欄本身：別名鏈追得到（不然上一題是空包彈）', () => {
+  // 上一題在現行樹上永遠是空集合＝看不出它有沒有在做事。這裡拿假的 package.json 逼它走完那段追蹤。
+  const scripts = { deep: 'node scripts/pending-rulings.js --all', mid: 'npm run deep', top: 'npm run mid', other: 'node scripts/acceptance-tier.js 1' };
+  const reaching = new Set(Object.keys(scripts).filter((k) => /pending-rulings/.test(scripts[/** @type {keyof typeof scripts} */ (k)])));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, cmd] of Object.entries(scripts)) {
+      if (reaching.has(name)) continue;
+      for (const m of String(cmd).matchAll(/(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)/g)) {
+        if (reaching.has(m[1])) { reaching.add(name); grew = true; break; }
+      }
+    }
+  }
+  assert.deepEqual([...reaching].sort(), ['deep', 'mid', 'top'], '兩層轉手的別名都要追得到，不相干的 script 不可以被拖下水');
 });
 
 test('⭐ 驗收分級：這支是不需驗收那一級（新腳本沒進名單會被當未知→要重啟）', () => {
