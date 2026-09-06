@@ -890,7 +890,7 @@ test('排隊等待者在總時限到點就得到 504，不必等輪到隊頭', a
     const elapsed = Date.now() - startedAt;
     assert.equal(b.status, 504, await b.text());          // r3：直接斷言狀態碼
     assert.ok(elapsed >= 300, `不可提早回應（下界）：實際 ${elapsed}ms`);
-    // ⚠️ 「不是等隊頭」改成**因果**斷言，不量上界（2026-09-05 流程體檢：原本 `elapsed < 2000` 是牆上時鐘，
+    // ⚠️ 「不是等隊頭」改成**因果**斷言，不量上界（2026-09-05 流程體檢：改之前（main@ae66225 的版本）`elapsed < 2000` 是牆上時鐘，
     //    機器忙時事件迴圈被拖就假紅）。隊頭 A 被 gate 掛到 finally 才放：B 回來時 A 還沒 settle＝B 沒等隊頭。
     assert.equal(aSettled, false, 'B 回來時隊頭 A 已經 settle＝B 是等到隊頭放行才回的，不是總時限到點');
   } finally {
@@ -948,7 +948,7 @@ test('已開始讀 body 時到期：abort 必須真的發生，且名額要還�
 
 test('每次 retry 都要用「當下剩餘預算」重夾 abort timer（不得沿用第一次算的值）', async () => {
   // Codex #361 r3 突變②：沿用第一次的 effTimeoutMs → 800ms 預算被拖成約 1,304ms。
-  // ⚠️ 2026-09-05 流程體檢：原本靠真時鐘量 800 vs 1,304（門檻 1,100），機器忙時好路徑也會被拖過門檻＝假紅。
+  // ⚠️ 2026-09-05 流程體檢：改之前（main@ae66225 的版本）靠真時鐘量 800 vs 1,304（門檻 1,100），機器忙時好路徑也會被拖過門檻＝假紅。
   //    改用可注入的 now／sleep：backoff 那一睡不睡真時間、只把時鐘推進 500ms，於是第二輪的剩餘預算只剩 50ms——
   //    重夾＝abort timer 約 50ms 真時間就到；沿用第一次的值＝要等 550ms。好壞差 10 倍，門檻放在中間偏寬（300ms）。
   let calls = 0;
