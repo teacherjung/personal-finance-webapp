@@ -475,6 +475,21 @@ test('⭐ 重述｜同一位審查者逐字重述自己的壞標頭 → 不再�
   assert.ok(warnings.some((w) => /重述行接管/.test(w)), '要留一句可稽核的警告，說明壞留言被誰接管');
 });
 
+test('⭐ 重述｜「本輪提了幾條」那種條數行要排在重述／豁免行之後：先寫條數＝收件區關掉、重述不生效（#576 r1 Medium①）', () => {
+  // 規則書「怎麼執行」與「發審查提示」要求審查者在第二行以後自報條數；閘的位置規則是「標頭後第一個不是重述／豁免的
+  // 非空行就截止收件」——兩者的接縫＝條數行必須排在救濟行之後。這一題釘住那個接縫，規則書的順序句指回這裡。
+  const restate = `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
+  const countFirst = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n本輪提了 0 條。\n\n${restate}`;
+  const bad = verdictProblems([c(MAL), c(countFirst)], HEAD, 'Codex');
+  assert.ok(bad.problems.some((p) => /標頭格式不合規/.test(p)), `條數行排在重述前＝收件截止、壞標頭照擋：${bad.problems.join('｜')}`);
+  const restateFirst = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n${restate}\n\n本輪提了 0 條。`;
+  const ok = verdictProblems([c(MAL), c(restateFirst)], HEAD, 'Codex');
+  assert.deepEqual(ok.problems, [], ok.problems.join('｜'));
+  // 條數行本身對聯集零影響：沒有 🤖、不像重述／豁免，閘不會把它當任何欄位讀
+  const plain = verdictProblems([c(`${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n本輪提了 3 條。`)], HEAD, 'Codex');
+  assert.deepEqual(plain.problems, []);
+});
+
 test('⭐ 重述｜別人不能替我重述（引文裡的角色來源 ≠ 重述者 → 無效）', () => {
   // 危險情境：實作者替審查者「重述」，把審查者一則打壞的阻擋靜靜洗掉。
   const byClaude = `${head('Claude', '桌面', HEAD, 7, '通過')}\n`
