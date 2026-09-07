@@ -166,7 +166,9 @@ export const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempS
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，
- * 這裡蓋到的是舊名、新名照樣流進去 ⇒ 題名關鍵字「不注入 liveRoot」那題會直接紅，不會靜靜放行。
+ * 這裡蓋到的是舊名、新名照樣流進去 ⇒ `test/grok-scan-flow-incident.test.js` 裡那題（題名含「不注入 liveRoot」）
+ * 會直接紅，不會靜靜放行。⚠️ 這裡刻意**不用**題名關鍵字的路標形狀：那個形狀只在**同一支檔案**裡找目標，
+ * 拆檔之後目標在別支 ⇒ 寫成路標反而會被判成「指不到東西」（#581 r1 P2）。
  */
 export const isolatedRealHome = () => ({ ...isolated(), liveRoot: undefined });
 /** 假 grok 的 sha256（r4：runScan 對盒內副本驗 hash；考題要把假 grok 自己的 hash 傳進去） */

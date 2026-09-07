@@ -381,8 +381,17 @@ test('考題檔｜這一族**每一支**源碼都不留破口形狀的字面（�
   const family = readdirSync(dir).filter((f) => /^grok-scan-flow-.*\.test\.js$/.test(f)).map((f) => join('test', f));
   family.push(join('test/helpers', 'grok-scan-flow-fixtures.js'));
   // 空包彈保險絲：檔名規則哪天改了（或整族被搬走），這一題不可以靜靜變成掃 0 個檔案。
-  assert.ok(family.length >= 6, `掃不到這一族的考題檔（只找到 ${family.length} 個）——檔名規則改了？這一題要跟著改`);
-  assert.ok(family.some((f) => f.endsWith('grok-scan-flow-breach.test.js')), '連本檔都掃不到＝檔名規則對不上');
+  // ⚠️ **驗的是成員身分、不是數量**（#581 r1）：只驗「至少幾個」的話，把某一支改名到前綴之外、
+  //    同時另外多一支符合前綴的檔案，數量還是夠，而那支被改名的檔就沒人看管了。
+  //    ⇒ 五支同族的名字寫死在這裡：要拆分或改名，**必先來改這一行**（變更必經考題）。
+  const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction']
+    .map((k) => `test/grok-scan-flow-${k}.test.js`)
+    .concat('test/helpers/grok-scan-flow-fixtures.js');
+  for (const want of EXPECTED) {
+    assert.ok(family.includes(want), `這一族少了 ${want}——改名或拆分了？這一題要跟著改（不然那一支從此沒人掃）`);
+  }
+  assert.deepEqual(family.slice().sort(), EXPECTED.slice().sort(),
+    '掃到的檔案集合跟寫死的名單對不上——多一支符合前綴的檔案也要來這裡登記，不然它可能是用來湊數的');
   for (const rel of family) {
     const src = readFileSync(join(ROOT, rel), 'utf8');
     assert.deepEqual(shapeHitsIn(src), [], `${rel} 源碼含破口形狀命中——Grok 讀到它就可能判假事故`);

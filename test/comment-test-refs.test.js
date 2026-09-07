@@ -150,10 +150,19 @@ export function scanControl(sources) {
   return problems;
 }
 
-/** 本檔掃的考題檔清單（`test/` 第一層的 `*.test.js`）。 */
+/**
+ * 本檔掃的檔案清單＝`test/` 第一層的 `*.test.js` **＋ `test/helpers/` 的每一支 `.js`**。
+ * ⚠️ helpers 那一半是 2026-09-08 補的（#581 r1 P2）：把一支考題檔的共用部分抽到 `test/helpers/` 之後，
+ *    它就整個離開了本檔的射程——控制字元檢查與路標檢查**同時**失效，而全卷仍綠（Codex 實測：
+ *    同一個 NUL 加在第一層考題檔會紅，加在 helpers 裡不會）。**搬走的程式碼要把守它的網一起帶著走。**
+ */
 const testFiles = () => readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.js')).sort();
+const helperFiles = () => readdirSync(join(ROOT, 'test/helpers')).filter((f) => f.endsWith('.js')).sort();
 /** 讀成 `scanRefs`／`scanControl` 吃的形狀。 */
-const realSources = () => testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') }));
+const realSources = () => [
+  ...testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') })),
+  ...helperFiles().map((f) => ({ name: `test/helpers/${f}`, source: readFileSync(join(ROOT, 'test/helpers', f), 'utf8') })),
+];
 
 // ── 純函式的題（fixture 由本題自己控制）──────────────────────────────
 test('⭐ 路標指不到東西要抓出來', () => {
