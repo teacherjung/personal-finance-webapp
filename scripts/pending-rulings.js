@@ -162,75 +162,67 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
 export function visible(body) {
   // 佔位符用的私用區字元**先從輸入裡拿掉**，不然留言可以自己打那兩個字，
   // 還原時就把註解裡的行內程式碼（含藏起來的網址）合成回可見層（#579 r9 High②）。
-  // 它們在 GitHub 上只是無意義的字，拿掉不影響任何合法內容。
-  const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[\uE000\uE001]/g, '').split('\n');
-  // 圍欄可以住在 `>` 引言裡——而 AGENTS 正是**明文要求**引 Codex 的發現要用 `>`（或反引號）。
-  // 只認行首直接出現的反引號，那種日常寫法裡的範例網址就會留在可見層，被當成引用（#579 r13 High）。
-  // 所以先剝掉引言前綴再判圍欄；關門要在**同一層**引言深度（深度不同就不關門＝繼續當看不見，保守方向）。
+  const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[]/g, '').split('\n');
+  // 引言前綴：圍欄、清單、縮排程式碼全都可能住在 `>` 裡（AGENTS 明文要求引 Codex 的發現用 `>`）。
   const QUOTE = /^(?: {0,3}>)+ ?/;
   const depthOf = (/** @type {string} */ l) => (l.match(/^(?: {0,3}>)+/)?.[0].match(/>/g) ?? []).length;
-  /** @type {{ch: string, len: number, depth: number}|null} */
-  let open = null;
-  const unfenced = lines.map((line) => {
-    const bare = line.replace(QUOTE, '');
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(bare);
-    if (open === null) {
-      if (!m) return line;
-      open = { ch: m[1][0], len: m[1].length, depth: depthOf(line) };
-      return '';
-    }
-    if (m && m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '' && depthOf(line) === open.depth) {
-      open = null;
-    }
-    return '';
-  }).join('\n');
-  // **縮排式程式碼區塊**（前面空一行、然後整段縮排四格以上）：GitHub 一樣渲染成 `<pre><code>`，
-  // 而複審留言裡貼範例最常用的就是這個寫法（#579 r15 High）。空行不結束區塊，縮排少於四格的
-  // 非空行才結束；`>` 引言前綴要先剝掉再量縮排（r16 High①）。
-  // ⚠️ **清單項底下的續行不算程式碼**——那是 GFM 的正常寫法、本 repo 也實際在用（r16 High②），
-  // 所以下面記住清單項的內容縮排欄位，清單裡要**再縮四格**才算程式碼。
+
+  // ⚠️ **圍欄、清單、縮排程式碼要在同一趟裡判**，不能分成兩趟：
+  //   圍欄的縮排要相對於它所在的清單層級（巢狀清單裡的圍欄縮排八格也是圍欄），
+  //   而清單標記又不能把圍欄裡的 `- ` 當成清單（#579 r19 High：分兩趟時，四格縮排的
+  //   第二層清單沒被認出來，於是它裡面的圍欄也沒被認出來，範例網址就留在可見層）。
+  /** @type {{ch: string, len: number, base: number, quote: number}|null} */
+  let fence = null;
+  /** 每一層清單的**內容縮排欄位**（由外而內）。 @type {number[]} */
+  const listStack = [];
   let inIndented = false;
-  /** 已開啟的縮排區塊當初用的門檻——清單裡開的區塊門檻比較深，結束時要用**同一個**門檻判，
-   *  退回固定四格會把後面正常的清單段落一起吞掉（#579 r18 High）。 */
   let codeThreshold = 4;
   let prevBlank = true;
-  /** 清單項的內容縮排欄位；不在清單裡時是 null。⚠️ 縮排區塊結束時**不要**清掉它——
-   *  區塊結束之後往往還在同一個清單項裡，清掉會讓下一段又被當成新的程式碼區塊。 */
-  let listIndent = null;
-  const undented = unfenced.split('\n').map((line) => {
-    // 引言裡的縮排式程式碼也要看得穿：不先剝引言前綴的話，`>` 後面的四格縮排量不到（#579 r16 High①）
+  const stripped = lines.map((line) => {
     const bare = line.replace(QUOTE, '');
     const blank = bare.trim() === '';
-    const indent = /^[ \t]*/.exec(bare)?.[0].replace(/\t/g, '    ').length ?? 0;
+    const indent = (/^[ \t]*/.exec(bare)?.[0] ?? '').replace(/\t/g, '    ').length;
+    const content = bare.trimStart();
+    if (fence) {
+      // 關門要同種字元、長度不短於開門、後面只能有空白，而且縮排相對於開門那層 ≤3。
+      const m = /^(`{3,}|~{3,})(.*)$/.exec(content);
+      if (m && m[1][0] === fence.ch && m[1].length >= fence.len && m[2].trim() === ''
+        && indent - fence.base <= 3 && depthOf(line) === fence.quote) fence = null;
+      return '';
+    }
     if (inIndented) {
       if (blank || indent >= codeThreshold) return '';
       inIndented = false;            // 區塊結束——這一行照一般規則重新判（可能是清單續行）
     }
     if (blank) { prevBlank = true; return line; }
-    // 清單項：記下它的**內容縮排欄位**。清單項底下的續行縮排四格是 GFM 的正常寫法
-    // （`- 關的是：` ／ 空行 ／ 四格縮排放網址），把它當程式碼剝掉會讓真的已結冒回未回
-    // ——而且這是本 repo 實際在用的寫法（#579 r16 High②，前例＝#569 的合併回報）。
-    const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(bare);
-    if (marker) { listIndent = marker[0].length; prevBlank = false; return line; }
-    if (listIndent !== null && indent < listIndent) listIndent = null;   // 縮排退回去＝清單結束
-    // 清單裡面要再縮四格才算程式碼；不在清單裡就是一般的四格門檻。
-    const codeIndent = listIndent === null ? 4 : listIndent + 4;
-    if (prevBlank && indent >= codeIndent) { inIndented = true; codeThreshold = codeIndent; return ''; }
+    // 縮排退回去＝內層清單結束（一層一層退）
+    while (listStack.length > 0 && indent < listStack[listStack.length - 1]) listStack.pop();
+    const base = listStack.length > 0 ? listStack[listStack.length - 1] : 0;
+    const rel = indent - base;
+    const fenceOpen = rel <= 3 ? /^(`{3,}|~{3,})/.exec(content) : null;
+    if (fenceOpen) {
+      fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length, base, quote: depthOf(line) };
+      return '';
+    }
+    // 清單標記：縮排相對於目前這一層 ≤3 才算。清單項底下的續行是正常寫法，不是程式碼
+    // （`- 關的是：` ／ 空行 ／ 縮排放網址，本 repo 實際在用——#579 r16 High②，前例＝#569）。
+    const marker = rel <= 3 ? /^(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(content) : null;
+    if (marker) { listStack.push(indent + marker[0].length); prevBlank = false; return line; }
+    // 程式碼的門檻是**目前這一層的內容縮排再加四格**；開啟時記住它，結束時用同一個判
+    // （退回固定四格會把後面同一項底下的正常段落一起吞掉——#579 r18 High）。
+    if (prevBlank && indent >= base + 4) { inIndented = true; codeThreshold = base + 4; return ''; }
     prevBlank = false;
     return line;
   }).join('\n');
+
   /** @type {string[]} */
   const spans = [];
-  // 佔位符用**私有使用區**的兩個字（\uE000／\uE001）：Markdown 裡不會出現，
-  // 也不是控制字元（控制字元進正規式會被 lint 擋）。**輸入裡原有的那兩個字已在上面拿掉**——
-  // 不拿掉的話，留言自己打那兩個字就能把註解裡的內容合成回可見層（#579 r9 High②）。
-  const guarded = undented.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
+  // 佔位符用**私有使用區**的兩個字（／）：Markdown 裡不會出現，
+  // 也不是控制字元（控制字元進正規式會被 lint 擋）。**輸入裡原有的那兩個字已在上面拿掉**。
+  const guarded = stripped.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `${spans.push(m) - 1}`);
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
   const noComments = dangling < 0 ? paired : paired.slice(0, dangling);
-  // 參考定義：標籤行之後**一路吃到空行**。GFM 允許網址換行、後面還可以再接一行 title
-  // （`[q]:` ／ 網址 ／ "說明"），逐條去湊那個文法就是在寫剖析器，而漏掉一行就是「少剝」（#579 r8 High②）。
-  // 吃到空行是**多剝**的方向：頂多讓緊貼在定義下面、沒空行隔開的一句話認不得 ⇒ 問題留在「還沒回」。
   // 標籤：`[` 之後可以有跳脫的 `]`；`[…` 這一行沒收起來的，當作標籤跨行（保守）。
   const DEF_LINE = /^ {0,3}\[(?:[^\]\\]|\\.)*\]:/;
   const DEF_OPEN = /^ {0,3}\[(?:[^\]\\]|\\.)*$/;
@@ -241,7 +233,7 @@ export function visible(body) {
     return l;
   });
   return kept.join('\n')
-    .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
+    .replace(/(\d+)/g, (whole, i) => spans[Number(i)] ?? whole);
 }
 
 /** @param {unknown} body 留言內文 @returns {string} 第一行，去掉行尾 \r 與看不見的 U+FE0F */

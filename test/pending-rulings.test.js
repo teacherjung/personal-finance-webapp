@@ -346,6 +346,20 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `- 實測輸出：\n\n      command output\n\n    關的是 ${urlOf(1)}\n` });
   assert.equal(classify([a, afterListCode], T0 + 4 * 86400e3).closed.length, 1,
     '清單裡的程式碼結束後，同一項底下的段落是正常內容，網址算引到');
+  // 巢狀清單：第二層用四格縮排，它裡面的圍欄縮排八格也還是圍欄（#579 r19 High）
+  const F3 = BT.repeat(3);
+  const nested = c({ id: 10, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `- outer\n    - 工具輸出：\n        ${F3}text\n        ${urlOf(1)}\n        ${F3}\n` });
+  assert.ok(String(nested.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在第二層清單的圍欄中');
+  assert.equal(classify([a, nested], T0 + 4 * 86400e3).pending.length, 1,
+    '巢狀清單裡的圍欄還是圍欄，裡面的網址關不掉問題');
+  // 反方向：第二層清單底下的續行不是程式碼（門檻要相對於那一層）
+  const nestedCont = c({ id: 11, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `- outer\n    - 關的是：\n\n        ${urlOf(1)}\n` });
+  assert.equal(classify([a, nestedCont], T0 + 4 * 86400e3).closed.length, 1,
+    '第二層清單底下的續行是正常段落，網址算引到');
   // 對照組：清單裡**再縮四格**才是程式碼
   const listCode = c({ id: 8, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
