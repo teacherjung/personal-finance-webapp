@@ -419,6 +419,33 @@ test('⭐ 引用只認頂層：有引言前綴或行首有縮排的一律不算�
   }
 });
 
+test('⭐ 參考定義要在「只認頂層」之前剝：縮排一格的標籤＋下一行頂層網址不算引用（#579 r23 High①）', () => {
+  const a = ask({ id: 1 });
+  const cmt = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + ` [背景]:\n${urlOf(1)}\n` });
+  assert.ok(String(cmt.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是它是參考定義的網址那一行');
+  assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1,
+    '參考定義整段都不顯示，換行放的網址一樣不算引用');
+});
+
+test('⭐ 清單標記後面開的圍欄也要認：它的關門不可以被當成新的開門（#579 r23 High②）', () => {
+  // `- ~~~text` 沒被認成開門的話，它的關門 `  ~~~` 反而被當成新的開門，
+  // 後面**可見**的引用就整段被吃掉 ⇒ 真的已結冒回未回。
+  const a = ask({ id: 1 });
+  const T = '~'.repeat(3);
+  const cmt = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `- ${T}text\n  sample\n  ${T}\n\n關的是 ${urlOf(1)}\n` });
+  assert.equal(classify([a, cmt], T0 + 4 * 86400e3).closed.length, 1,
+    '圍欄關掉之後，後面頂層的引用照樣算引到');
+  // 對照組：圍欄**裡面**的網址仍然不算引用
+  const inside = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `- ${T}text\n${urlOf(1)}\n  ${T}\n` });
+  assert.equal(classify([a, inside], T0 + 4 * 86400e3).pending.length, 1, '圍欄裡的網址關不掉問題');
+});
+
 test('⭐ 縮排一格的圍欄／註解開門也要算開門（#579 r22 High①）', () => {
   // 「縮排就當看不見」會把縮排一格的**開門行**整行丟掉，於是那道圍欄從來沒開過，
   // 裡面縮排零格的網址反而被當成可見 ⇒ 真的未回被判已結。
