@@ -345,6 +345,11 @@ test('⭐ 配不到任何一題的結尾留言要單獨印出來：這是「他�
   const out = render(r, { host: 'github.com', slug: 'o/r', expected: 3 });
   assert.match(out, /配不到任何一題的結尾留言：1 則/);
   assert.match(out, /裁示：「其實要做」/, '要印出它的標題與連結，讓人自己看');
+  assert.match(out, new RegExp(`配不到任何一題[\\s\\S]*${urlOf(3).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    '要印出那則留言的網址（不然「有一則配不上」等於沒說）');
+  // ⚠️ 這一段**不可以**套 `--pr` 過濾：漏掉的正是別支那些（#582 r8 Low④）
+  const filtered = render(r, { host: 'github.com', slug: 'o/r', expected: 3, only: 999, seen: false });
+  assert.match(filtered, /配不到任何一題的結尾留言：1 則/, '只印某一支時，孤兒段照樣要全部印出來');
   // 對照組：正常配上的裁示不算孤兒（否則整份報告會被噪音淹掉）
   const okr = ruling({ id: 4, at: T0 + 180e3, cites: urlOf(1) });
   assert.equal(classify([a, okr], T0 + 4 * 86400e3).orphans.length, 0);
