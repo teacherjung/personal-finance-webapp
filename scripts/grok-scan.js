@@ -59,7 +59,7 @@ export const EXPECTED_GROK_VERSION = '1.0.13';
  * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
  * 1.0.13（2026-09-05，grok CLI 自動升版後 fail-closed 擋下 #563 的掃描）：升版手續＝`strings` 新舊執行檔比對上游主機／路徑，重驗紀錄在 PR #564。
  * 本檔執行期只守兩件事：盒內副本的 sha256、沙箱內 --version 精確等於常數；執行檔多了什麼外連字串本檔不判讀——沙箱只准 localhost、
- * 轉送器只轉白名單形狀。釘值本身由 test/grok-scan-flow.test.js 的獨立 fixture 釘住（改常數要連考題一起改）。
+ * 轉送器只轉白名單形狀。釘值本身由 test/grok-scan-flow-preflight.test.js 的獨立 fixture 釘住（改常數要連考題一起改）。
  */
 export const EXPECTED_GROK_SHA256 = '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80';
 export { RELAY_PORT };
@@ -786,7 +786,7 @@ export async function runScan(args, deps = {}) {
   const liveSecret = deps.liveSecret ?? `LIVE-CANARY-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   scrubSecrets = [...scrubSecrets, ...escapeForms(liveSecret)];   // 暗號這一半（它比 DLP 針晚生）；同樣含轉義形
   // 根目錄可注入（見 ScanDeps.liveRoot）：**預設仍是真家目錄**——金絲雀要放在「真機密真的住的地方」才有意義。
-  // 預設值有考題釘著（test/grok-scan-flow.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
+  // 預設值有考題釘著（test/grok-scan-flow-incident.test.js 裡不注入 liveRoot 的那一題：不注入、用每輪隨機暗號
   // 在真家目錄認出自己那一個）；把這一行的 `?? homedir()` 改掉它會紅。
   // ⚠️ 誠實劃界——那一題**只**守 runScan 的預設值，守不到兩件事：
   //    ①它看的是「這次 runScan 在真家目錄留下幾個帶本輪暗號的目錄」＝**不涵蓋這次沒執行到的建立點**

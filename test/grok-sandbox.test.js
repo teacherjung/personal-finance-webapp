@@ -265,6 +265,6 @@ test('沙箱｜誤殺也計分：正式設定檔加一條「盒內不准寫」�
   } finally { rmSync(box, { recursive: true, force: true }); }
 });
 
-// 「正式掃描不傳 profile、真 grok 發射用寫死的 PROFILE」＝行為題，住 test/grok-scan-flow.test.js 的
+// 「正式掃描不傳 profile、真 grok 發射用寫死的 PROFILE」＝行為題，住 test/grok-scan-flow-redaction.test.js 的
 // 「runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀不收 profile」那題（跨檔引用刻意不帶記號——路標閘只驗同檔）。
 // Codex #551 r4：字串比對的版本被兩種等價寫法繞過（選項先存變數／env ?? PROFILE 加註解），所以換成行為證據。

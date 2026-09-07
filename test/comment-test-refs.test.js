@@ -42,7 +42,10 @@
 //   ・**不驗內容對不對**：只驗「指得到」，不驗「指對地方」。
 //   ・**記號與左引號之間最多折一次行**（續行要帶 `//` 或 `*`）。隔著空行寫的路標**不算路標**
 //     ——保守的那一邊：寧可不認，也不要把記號和很遠的一個引號配起來。那種寫法不會被檢查。
-//   ・只掃 `test/` 底下第一層的 `*.test.js`（跟 `test/entry-guard.test.js` 掃 `scripts/` 同作法）。
+//   ・掃 `test/` 底下第一層的 `*.test.js` **＋ `test/helpers/` 第一層的每一支 `.js`**
+//     （跟 `test/entry-guard.test.js` 掃 `scripts/` 同作法）。helpers 那一半是 2026-09-08 補的：
+//     把考題的共用部分抽到子目錄之後，它就整個離開射程、控制字元與路標兩道檢查同時無聲失效。
+//     ⚠️ 更深的層級（`test/helpers/x/y.js`）仍不在射程裡。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -150,10 +153,19 @@ export function scanControl(sources) {
   return problems;
 }
 
-/** 本檔掃的考題檔清單（`test/` 第一層的 `*.test.js`）。 */
+/**
+ * 本檔掃的檔案清單＝`test/` 第一層的 `*.test.js` **＋ `test/helpers/` 的每一支 `.js`**。
+ * ⚠️ helpers 那一半是 2026-09-08 補的（#581 r1 P2）：把一支考題檔的共用部分抽到 `test/helpers/` 之後，
+ *    它就整個離開了本檔的射程——控制字元檢查與路標檢查**同時**失效，而全卷仍綠（Codex 實測：
+ *    同一個 NUL 加在第一層考題檔會紅，加在 helpers 裡不會）。**搬走的程式碼要把守它的網一起帶著走。**
+ */
 const testFiles = () => readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.js')).sort();
+const helperFiles = () => readdirSync(join(ROOT, 'test/helpers')).filter((f) => f.endsWith('.js')).sort();
 /** 讀成 `scanRefs`／`scanControl` 吃的形狀。 */
-const realSources = () => testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') }));
+const realSources = () => [
+  ...testFiles().map((f) => ({ name: `test/${f}`, source: readFileSync(join(ROOT, 'test', f), 'utf8') })),
+  ...helperFiles().map((f) => ({ name: `test/helpers/${f}`, source: readFileSync(join(ROOT, 'test/helpers', f), 'utf8') })),
+];
 
 // ── 純函式的題（fixture 由本題自己控制）──────────────────────────────
 test('⭐ 路標指不到東西要抓出來', () => {
