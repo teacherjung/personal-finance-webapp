@@ -686,7 +686,9 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //        而 #578 r9〜r12 的八條 High 全部出在那兩種上，沒有一條跟 ATX 有關）
   //     ⑥**行中開啟的 raw HTML 容器**（`<div>`／`<span>` 在本節前開、本節後才關——不是標題，鏈看不到）
   //     ⑦**用 HTML entity 寫出來的字**（`&#x4F5C;&#x5EE2;` 在畫面上就是「作廢」，但絆線數的是字面字元）
-  //     ⑧離本節更遠的散文。
+  //     ⑧**容器裡的 ATX**（`- #### …`／`> #### …`）——它其實會渲染成標題，但**容器裡的標題只能
+  //       重新分配那個容器內部的內容**，而本節不在任何容器裡，所以它換不走本節的爸爸（#578 r13）
+  //     ⑨離本節更遠的散文。
   //   ⇒ 這一族**到此封頂**：再出現新形狀一律進待辦，不再往外補。理由不是它們不重要，是九輪的實證顯示
   //     「猜 GitHub 會怎麼渲染」這條路不會收斂，而每補一格都同時帶進假紅的風險。
   // ⚠️ 但**不要把「擋不到」讀成「沒人在看」**：這九刀**每一刀都是複審抓到的**，機械閘一刀都沒抓到。
@@ -794,10 +796,13 @@ test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要�
   assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
   assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
   // CommonMark 的標題不只「行首 # 加空白」：ATX 可有 0～3 個前導空白、井號後可接空白／tab／行尾；Setext 是段落下一行的 = 或 - 底線（#577 r5）。
+  // ⚠️ **標題的判準全檔只有一份**＝`test/helpers/markdown-heading.js`（William 2026-09-07 裁：只認 ATX）。
+  //   這裡原本另外寫了一份（還認 Setext），於是同一個檔案裡有兩套互相矛盾的「什麼算標題」，
+  //   而那一份的 Setext 判斷會對正常編修假紅（#578 r13 High①）。改成共用同一支。
   const hasMarkdownHeading = (/** @type {string} */ text) => {
     const lines = text.split('\n');
-    return lines.some((line, i) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
-      || (i > 0 && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && lines[i - 1].trim() !== ''));
+    const hidden = hiddenMap(lines);
+    return lines.some((_, i) => headingAt(lines, i, hidden) > 0);
   };
   assert.ok(!hasMarkdownHeading(agents.slice(ruleStart, blockStart)), '「審查回饋處置」到那顆之間不可以隔著任何形狀的標題（ATX 含前導空白、Setext 底線）——那顆必須還在同一節');
   const blockEnd = agents.indexOf('\n**界線表（', blockStart);

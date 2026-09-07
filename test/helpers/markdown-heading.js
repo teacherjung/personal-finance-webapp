@@ -11,7 +11,7 @@
 // 而實測專案五份規則文件（AGENTS／REVIEW-AND-MERGE／CLAUDE／PROJECT／COLLAB-MAP）裡
 // **ATX 標題 53 個、Setext 0 個、raw HTML 標題 0 個**。也就是說後兩種偵測沒擋到任何我們
 // 實際會寫的東西，卻是每一個假紅與漏判的來源——而假紅會擋住正常的文件編修，是天天在付的代價。
-// 要正確判斷那兩種，等於要在測試裡實作整套 CommonMark 行內規則；十二輪的實證是那條路不會收斂。
+// 要正確判斷那兩種，等於要在測試裡實作整套 CommonMark 行內規則；#578 從 r5 起每一輪都證明那條路不會收斂。
 //
 // ⚠️ **這不是 Markdown 剖析器，也不打算變成**。它防的是「整理文件時手滑，把安全契約那一節
 // 收進一個新的小節」——用戶是未來的自己人，不是攻擊者（沒有任何東西釘住那道考題本身要存在，
@@ -19,47 +19,64 @@
 // ⚠️ 代價照實寫：**刻意用 Setext 或 raw HTML 標題**的人繞得過去。那不是漏掉，是上面那筆裁示的內容。
 
 /**
- * 哪幾行「不算數」——圍欄程式碼區塊、縮排式程式碼區塊、跨行的 HTML 註解。
- * 這三種裡面的 `#` 在 GitHub 上都不會變成標題，當成標題就是假紅。
+ * 哪幾行「不算數」——**成對的**圍欄程式碼區塊、**成對的**跨行 HTML 註解。
+ * 這兩種裡面的 `#` 在 GitHub 上不會變成標題，當成標題就是假紅。
+ *
+ * ⚠️ **只有成對的才算**：落單的開門記號**不吃掉後面的內容**。這是刻意的 fail-closed——
+ * 舊寫法一遇到 ``` 就翻轉狀態，於是文件裡多一個落單的圍欄記號，**它後面所有的標題偵測就整片靜音**
+ * （實測：落單 ``` 之後插 `#### 以下整節已作廢`，判成 0＝靜靜放過）。那是「靜靜通過」型的失敗，
+ * 比誤擋貴得多；落單記號造成的誤擋是紅的、看得見、當場能改。
+ *
+ * ⚠️ **刻意不處理縮排式程式碼區塊**：ATX 標題最多三格前導空白，四格以上的行本來就不可能是 ATX，
+ * 所以那條規則對本判準是 no-op——寫了等於一句沒有考題撐得住的保證（鐵則 10）。
+ * 縮排式程式碼裡的 Setext／raw HTML 標題本來就已經在「擋不到」清單裡。
  * @param {string[]} lines
  */
 export function hiddenMap(lines) {
   const hidden = lines.map(() => false);
-  /** @type {{ch: string, len: number}|null} */
-  let fence = null;
-  let inComment = false;
-  let inIndented = false;
-  let prevBlank = true;
-  lines.forEach((line, i) => {
-    if (inComment) {
-      hidden[i] = true;
-      if (line.includes('-->')) inComment = false;
-      return;
+  const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+  let i = 0;
+  while (i < lines.length) {
+    const open = FENCE.exec(lines[i]);
+    // 反引號圍欄的**資訊字串不得含反引號**（GFM），`` ```lang`bad `` 不是開門（#578 r13 High③）。
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      // 關門要同種字元、長度不短於開門、後面只能有空白（資訊字串只准出現在開門行）。
+      // 只看「有沒有三個反引號」的話，外層四反引號包內層三反引號這種「展示一段圍欄」的正常寫法
+      // 會被內層提早關掉（#578 r12）。
+      let j = i + 1;
+      while (j < lines.length) {
+        const close = FENCE.exec(lines[j]);
+        if (close && close[1][0] === open[1][0] && close[1].length >= open[1].length && close[2].trim() === '') break;
+        j += 1;
+      }
+      if (j < lines.length) {
+        for (let k = i; k <= j; k += 1) hidden[k] = true;
+        i = j + 1;
+        continue;
+      }
     }
-    // 圍欄：關門要**同種字元、長度不短於開門**、後面只能有空白。只看「有沒有三個反引號」的話，
-    // 外層四反引號包內層三反引號這種正常的「展示一段 fence」寫法會被內層提早關掉（#578 r12）。
-    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence) {
-      hidden[i] = true;
-      if (marker && marker[1][0] === fence.ch && marker[1].length >= fence.len && marker[2].trim() === '') fence = null;
-      return;
+    // 行內程式碼裡的 `<!--` 只是文字（`維護語法：\`<!--\`` 是正常寫法），不可以拿來開門（#578 r13 High③）
+    const noCode = lines[i].replace(/(`+)(?:(?!\1)[^\n])+?\1/g, '');
+    const at = noCode.indexOf('<!--');
+    if (at >= 0 && !noCode.slice(at).includes('-->')) {
+      let j = i + 1;
+      while (j < lines.length && !lines[j].includes('-->')) j += 1;
+      if (j < lines.length) {
+        // 開門那一行本身不標：`<!--` 前面的內容照樣會渲染。
+        for (let k = i + 1; k <= j; k += 1) hidden[k] = true;
+        i = j + 1;
+        continue;
+      }
     }
-    if (marker) { fence = { ch: marker[1][0], len: marker[1].length }; hidden[i] = true; return; }
-    const blank = line.trim() === '';
-    const indent = (/^[ \t]*/.exec(line)?.[0] ?? '').replace(/\t/g, '    ').length;
-    if (inIndented) {
-      if (blank || indent >= 4) { hidden[i] = true; return; }
-      inIndented = false;
-    }
-    if (!blank && prevBlank && indent >= 4) { inIndented = true; hidden[i] = true; return; }
-    if (line.includes('<!--') && !line.includes('-->')) { inComment = true; hidden[i] = true; return; }
-    prevBlank = blank;
-  });
+    i += 1;
+  }
   return hidden;
 }
 
 /**
  * 第 i 行開啟的 ATX 標題層級；不是 ATX 標題回 0。
+ * ⚠️ 井號後面一定要接空白、tab 或行尾——`#348（2026-08-02 合併）…` 這種「井號緊接數字」
+ * 是 AGENTS.md 的真實內文（而且就坐在鏈最嚴格的那一段裡），少了這個條件就是當場假紅。
  * @param {string[]} arr @param {number} i @param {boolean[]} [hidden] `hiddenMap(arr)` 的結果；省略＝不看程式碼與註解
  */
 export function headingAt(arr, i, hidden) {
