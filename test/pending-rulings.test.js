@@ -419,6 +419,24 @@ test('⭐ 引用只認頂層：有引言前綴或行首有縮排的一律不算�
   }
 });
 
+test('⭐ 縮排一格的圍欄／註解開門也要算開門（#579 r22 High①）', () => {
+  // 「縮排就當看不見」會把縮排一格的**開門行**整行丟掉，於是那道圍欄從來沒開過，
+  // 裡面縮排零格的網址反而被當成可見 ⇒ 真的未回被判已結。
+  const a = ask({ id: 1 });
+  const F = BT.repeat(3);
+  const indentedFence = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + ` ${F}\n${urlOf(1)}\n ${F}\n` });
+  assert.ok(String(indentedFence.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡');
+  assert.equal(classify([a, indentedFence], T0 + 4 * 86400e3).pending.length, 1,
+    '縮排一格的圍欄仍是圍欄，裡面的網址關不掉問題');
+  const indentedComment = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + ` <!--\n${urlOf(1)}\n-->\n` });
+  assert.equal(classify([a, indentedComment], T0 + 4 * 86400e3).pending.length, 1,
+    '縮排一格的註解開門仍是開門，裡面的網址關不掉問題');
+});
+
 test('⭐ `>` 引言裡的圍欄也要剝：引 Codex 發現時貼的範例網址不算引用（#579 r13 High）', () => {
   // AGENTS 明文要求引 Codex 的發現要放 `>` 引言或反引號，所以這是**日常寫法**，不是刁鑽角落。
   const a = ask({ id: 1 });
