@@ -91,7 +91,9 @@ const TIMEOUT_PHRASE = /^William 未裁、隨時可翻案/mu;
 //   「關掉的是哪一支 PR」「跟哪一則重複」這種**足以推翻這次撤回**的具體依據。只印類別的話，
 //   `撤回理由：題目依附的東西沒了（但其實那支 PR 還開著，只是我覺得不重要了）` 會被印成
 //   「理由：題目依附的東西沒了」——安全網剛好把唯一能戳破它的那半句丟掉。
-const WITHDRAW_REASON = /^撤回理由：((題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)(?:（[^\n]*）)?)[ \t]*$/mu;
+// ⚠️ 括號**必填、而且裡面要有字**（Grok #582 掃後 4）：正本寫「括號裡要寫具體依據」，
+//   而上一版讓「沒括號」與「空括號」都算數 ⇒ 規則書說謊。收緊的方向（撤回更難成立）不必問 William。
+const WITHDRAW_REASON = /^撤回理由：((題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)（(?=[^）\n]*[^\s）])[^）\n]+）)[ \t]*$/mu;
 /**
  * 撤回一定要自報「這不是他的答覆」——不寫就不算數（不准把撤回寫成他回過了）。
  * ⚠️ **整行相符**，不是前綴：只比對前綴的話， 也算數（同 WITHDRAW_REASON 的病）。
@@ -119,7 +121,10 @@ function realDate(m) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 /** 長得像標頭、但不合規式的：列出來說「我沒算進去」，不要靜靜丟掉（真的發生過——有一則裁示少了 `## ⚖️ ` 前綴）。 */
-const NEAR = /❓|⚖|⏳|🚫|待裁|William 裁示|逾時暫定|撤回/u;
+// ⚠️ 這裡收**記號**與**規則正本寫死的那幾個詞組**，不收「撤回」這種日常詞（實跑真語料：加了它之後，
+//   複審留言裡一句「②徽章撤回…」「上一則我撤回」都被撈進「形狀不合」＝噪音把真訊號淹掉）。
+//   壞掉的撤回留言第一行一定帶 🚫，靠記號就抓得到。
+const NEAR = /❓|⚖|⏳|🚫|待裁|William 裁示|逾時暫定/u;
 
 // 引用網址的**右邊界**：網址後面必須是文字結束、或這裡列的收尾字之一，才算「引到那一則」。
 // 為什麼是正向列舉：反過來列「不可以接哪些字」是黑名單，漏一個就把還沒回的問題誤判成已結。
@@ -420,7 +425,7 @@ export function numberOf(htmlUrl) {
  * 把攤平後的留言分成四堆。時間**注入**（不讀牆上時鐘），否則機器一忙就假紅、也釘不住 71:59／72:00 的邊界。
  * @param {any[]} comments
  * @param {number} nowMs
- * @returns {{pending: any[], provisional: any[], closed: any[], withdrawn: any[], near: any[], scanned: number}}
+ * @returns {{pending: any[], provisional: any[], closed: any[], withdrawn: any[], orphans: any[], near: any[], scanned: number}}
  */
 export function classify(comments, nowMs) {
   const owner = (/** @type {any} */ c) => c?.author_association === 'OWNER';
@@ -481,10 +486,25 @@ export function classify(comments, nowMs) {
     else if (hits.some((x) => x.kind === 'withdraw')) withdrawn.push(item);
     else provisional.push(item);
   }
+  // ⚠️ **配不到任何一題的裁示留言**（Grok #582 掃後 1）：這是「他其實回了、我卻看不見」唯一算得出來的訊號。
+  //    情境：他貼了 ⚖️ 但網址沒寫在最外層（或根本沒引），而那一題剛好已經被我撤回或逾時暫定 ⇒
+  //    題目不在「還沒回」、每一題的 unlinkedLater 也不會開（那一格只在完全沒配到時才開），
+  //    於是整份報告看不到他回過。⇒ 改成**全域**列出來：不猜它屬於哪一題，只說「有這些我配不上」。
+  // ⚠️ 判準收窄成「**原文裡出現過某一題的網址、卻配不上**」（實跑真語料：不收窄的話會撈出十幾則
+  //    「他主動下的裁示、本來就沒有對應的 ❓」——那些不是漏配，噪音會把真訊號淹掉）。
+  //    這樣抓到的就只有「他想引、卻沒引在最外層」那一種，正是這一段存在的理由。
+  const orphans = closers
+    .filter((x) => asks.some((a) => String(x.c?.body ?? '').includes(String(a.html_url))))
+    .filter((x) => !asks.some((a) => {
+      const RAW2 = String(a.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return citesUrl(visible(x.c?.body), a.html_url, new RegExp(`${RAW2}[?!.,:*_~]{0,3}(?=${URL_END}|$)`));
+    }))
+    .map((x) => ({ kind: x.kind, url: x.c.html_url, title: titleOf(x.c.body), createdAt: x.c.created_at }))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const byOld = (/** @type {any} */ a, /** @type {any} */ b) => Date.parse(a.createdAt) - Date.parse(b.createdAt);
   return {
     pending: pending.sort(byOld), provisional: provisional.sort(byOld), closed: closed.sort(byOld),
-    withdrawn: withdrawn.sort(byOld), near, scanned: comments.length,
+    withdrawn: withdrawn.sort(byOld), orphans, near, scanned: comments.length,
   };
 }
 
@@ -538,8 +558,20 @@ export function render(r, meta) {
     ...closed.map((x, i) => one(x, i + 1)));
   // ⚠️ 撤回**一定要印**（有幾則就印幾則，沒有也要說「沒有」）：這是三種結局裡唯一由我單方面發動的，
   //    而機器判不出「我撤得對不對」。安全網做在**輸出**上——把我撤掉的題目連理由一起攤在他眼前。
+  // ⚠️ 只印某一支時要說「別支還有幾則」（Grok #582 掃後 2）：否則畫面上的「沒有」跟「從來沒撤回過」
+  //    長得一模一樣——那正是這一段自己在防的那種謊。
+  const hiddenWithdrawn = (r.withdrawn ?? []).length - withdrawn.length;
   out.push('', withdrawn.length ? `我撤回的、他沒回過：${withdrawn.length} 則（理由與連結在下面；要我重問就說一聲）` : '我撤回的、他沒回過：沒有',
+    ...(hiddenWithdrawn > 0 ? [`   （另有 ${hiddenWithdrawn} 則貼在別支，這裡沒印——拿掉 --pr 才看得到全部）`] : []),
     ...withdrawn.map((x, i) => one(x, i + 1)));
+  // ⚠️ **配不到任何一題的裁示／逾時／撤回留言**：這是「他其實回了、我卻看不見」唯一算得出來的訊號
+  //    （他貼了 ⚖️ 但網址沒寫在最外層，而那一題剛好已被我撤回或逾時暫定 ⇒ 兩段都不會提到它）。
+  //    不猜它屬於哪一題——只把它攤出來讓人自己看。**不套 --pr 過濾**：漏掉的正是別支那些。
+  const orphans = r.orphans ?? [];
+  if (orphans.length) {
+    out.push('', `配不到任何一題的結尾留言：${orphans.length} 則（他可能回了、但網址沒寫在最外層 ⇒ 我配不上）`,
+      ...orphans.map((x, i) => `${i + 1}. ${{ ruling: '裁示', timeout: '逾時暫定', withdraw: '撤回' }[x.kind] ?? x.kind}：「${x.title}」\n   ${x.url}`));
+  }
   if (near.length) {
     out.push('', `形狀不合、我沒算進去的：${near.length} 則（第一行或內文不合規定，或不是 repo 擁有者貼的）`,
       ...near.map((x, i) => `${i + 1}. ${x.line}\n   ${x.why}\n   看這裡：${x.url}`));

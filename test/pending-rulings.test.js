@@ -317,6 +317,50 @@ test('⭐ 撤回也要照「引用寫在最外層」那條判準：藏在引言�
   assert.equal(classify([a, quoted], T0 + 4 * 86400e3).pending.length, 1, '引言裡的引用不在頂層＝認不得（跟 ⚖️／⏳ 同一把尺）');
 });
 
+test('⭐ 括號必填、而且裡面要有字：正本說「括號裡要寫具體依據」，沒依據的撤回就不算數（Grok #582 掃後 4）', () => {
+  const a = ask({ id: 1 });
+  const H = '## 🚫 撤回（2026-09-02）：要不要做這件事？';
+  const P = 'Claude 撤回、William 未回；他隨時可以要我重問';
+  for (const [reason, why] of [
+    ['撤回理由：題目依附的東西沒了', '沒有括號'],
+    ['撤回理由：題目依附的東西沒了（）', '空括號'],
+    ['撤回理由：題目依附的東西沒了（　）', '括號裡只有全形空白'],
+  ]) {
+    const w = c({ id: 2, at: T0 + 60e3, body: `${H}\n\n${reason}\n\n${P}\n\n${urlOf(1)}` });
+    assert.equal(classify([a, w], T0 + 4 * 86400e3).pending.length, 1, `${why}：不算數（正本要求寫具體依據）`);
+  }
+});
+
+test('⭐ 配不到任何一題的結尾留言要單獨印出來：這是「他其實回了、我卻看不見」唯一算得出來的訊號（Grok #582 掃後 1）', () => {
+  // 情境：他貼了 ⚖️ 但網址只寫在引言裡（配不上），而那一題剛好已經被我撤回 ⇒
+  // 題目不在「還沒回」、每一題的 unlinkedLater 也不會開（那一格只在完全沒配到時才開），整份報告看不到他回過。
+  const a = ask({ id: 1 });
+  const w = withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) });
+  const hidden = c({ id: 3, at: T0 + 120e3,
+    body: `## ⚖️ William 裁示（2026-09-03）：其實要做\n\n原話（對話中，Claude 轉述）：**「要做」**\n\n> 關的是 ${urlOf(1)}` });
+  const r = classify([a, w, hidden], T0 + 4 * 86400e3);
+  assert.equal(r.withdrawn.length, 1, '題目確實落在撤回堆（這正是危險的地方）');
+  assert.equal(r.orphans.length, 1, '那則配不上的裁示要被算出來');
+  assert.equal(r.orphans[0].kind, 'ruling');
+  const out = render(r, { host: 'github.com', slug: 'o/r', expected: 3 });
+  assert.match(out, /配不到任何一題的結尾留言：1 則/);
+  assert.match(out, /裁示：「其實要做」/, '要印出它的標題與連結，讓人自己看');
+  // 對照組：正常配上的裁示不算孤兒（否則整份報告會被噪音淹掉）
+  const okr = ruling({ id: 4, at: T0 + 180e3, cites: urlOf(1) });
+  assert.equal(classify([a, okr], T0 + 4 * 86400e3).orphans.length, 0);
+});
+
+test('⭐ 只印某一支時，別支的撤回要說「還有幾則沒印」：否則「沒有」跟「從來沒撤回過」長得一樣（Grok #582 掃後 2）', () => {
+  const a = ask({ id: 1, pr: 101 });
+  const w = withdraw({ id: 2, at: T0 + 60e3, pr: 101, cites: urlOf(1, 101) });
+  const r = classify([a, w], T0 + 3600e3);
+  const out = render(r, { host: 'github.com', slug: 'o/r', expected: 2, only: 100, seen: true });
+  assert.match(out, /我撤回的、他沒回過：沒有/);
+  assert.match(out, /另有 1 則貼在別支，這裡沒印/, '不可以讓「沒有」看起來像「從來沒撤回過」');
+  // 對照組：掃全庫時不出現那一行
+  assert.doesNotMatch(render(r, { host: 'github.com', slug: 'o/r', expected: 2 }), /另有 \d+ 則貼在別支/);
+});
+
 test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩句固定字樣，工具要逐字認得', () => {
   // 沒有這一題的話，正本改了用詞、工具照舊認舊字樣，全卷還是綠的（同模板題與時限題的病型）。
   // ⚠️ 三種理由、欄名、自報句**一律從正本抽**，不可以寫死在考題裡（#582 r1 Medium②）：
@@ -342,7 +386,7 @@ test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩
   //    而**「哪一段才是現行值」本來就不是機器從散文判得出來的**。再補一層只會生出第五種。
   //    ⇒ 那一半歸**複審的眼睛**，而且它看得到：那一整節被 `test/collab-invariant-docs.test.js` **逐字釘住**，
   //      正本改一個字就一定出現在 diff 裡、一定有人要改那份釘本。這不是缺口沒補，是分工。
-  //    ⇒ 本題不再宣稱「封閉」。下面那道字眼絆線只買最便宜的那一刀，**擋不住換句話說**，照實寫在它自己那裡。
+  //    ⇒ 本題不再宣稱「封閉」。（曾經加過一道字眼絆線想多買一層，後來整條拿掉了——理由寫在下面。）
   const headHit = one(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu, '🚫 的第一行模板');
   const from = /** @type {number} */ (headHit.index);
   const stop = section.indexOf('。', from);
