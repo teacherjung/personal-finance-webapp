@@ -26,12 +26,14 @@
 > #384 走 47 輪、#385 走 14 輪，每輪都先問一次是純粹的來回）②**每批 PR 合併進 `main` 後**的例行審查（2026-07-27 原始授權）。指令：
 >
 > ```bash
-> codex exec -m gpt-5.6-sol -c model_reasoning_effort='"xhigh"' \
+> codex exec -m gpt-6-astra -c model_reasoning_effort='"xhigh"' \
 >   -s workspace-write -c sandbox_workspace_write.network_access=true \
 >   -C "/private/tmp/codex-review-pr<N>" "請讀 REVIEW-AND-MERGE.md 並照它執行審查"
 > ```
 >
-> - **審查模型＝`gpt-5.6-sol` ＋ `model_reasoning_effort=xhigh`（William 定 2026-07-27）**：設定寫在**指令上**，
+> - **審查模型＝`gpt-6-astra` ＋ `model_reasoning_effort=xhigh`**（模型 William 2026-09-07 裁，原話逐字
+>   「從下一次發射開始，請你用-m但換 gpt-6-astra」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5574063644 ；
+>   effort 與「寫在指令上」是 2026-07-27 定的）：設定寫在**指令上**，
 >   **不動 `~/.codex/config.toml` 的全域預設**（改全域會連帶改掉 William 自己的互動式 Codex，超出「調整審查」的範圍）。
 >   為什麼升級：實測有效——升級後的第一次全面重審，在**先前多輪審查都跑過的同一份 `main@272ec9a`** 上
 >   找出 5 項可重現問題（4 High／1 Medium，含一項「備份檔的任意 `id` 造成持久型 XSS」）。
@@ -212,8 +214,6 @@ XLSX 的牆設計連續被打穿**四次**（相信宣告值 → 相信宣告 0 
 **指定這輪的對抗目標**、**每輪對帳條數**（William 2026-09-06 協作系統體檢第 4 題選 a 的條件，落點見「使用方式」的回報那條）：提示詞裡寫「上一輪你提了 k 條，逐條處置（四態＝三選一＋待裁，值見「使用方式」的回報那條；跟標頭「結論」的三選一是兩套字、不可互填）各是哪幾條」請 Codex 對帳，並請他這一輪在結論留言**第二行以後**自報「本輪提了幾條」、且**把完整發現清單貼成結論留言、不留只在終端的版本**；⚠️ 順序：需要重述／豁免行時那些救濟行**先緊跟標頭**（中間只准空行），條數行與完整清單排在它們之後——先寫條數會把收件區關掉、救濟行不生效（`scripts/check-review-verdicts.js` 的位置規則，`test/review-verdicts.test.js` 釘住）——對的是「k 條發現 ↔ k 條處置」，不是「k 條都修」（值不值得改照 AGENTS「審查回饋處置」）；這個數字**不是標頭欄位、閘不讀它**（寫進第一行會變成標頭寫壞、要走「發審查提示」節的補救程序）、**核對待裁留言**（本支有 ❓／⏳ 留言時：請審查者核對留言、逾時判定、授權連結、以及 ❓ 有沒有被編輯過（`includesCreatedEdit`／`lastEditedAt`）——規則＝AGENTS「問法與逾時預設」那顆）；**外加下一節的機械欄位規格**（角色／三個結論／來源＝查表照抄、
 不是客製的；sha 與輪次本來就在客製那幾件裡）。
 指令格式見本檔開頭的「使用方式」。
-
-**引用網址必須寫在留言最外層才算數**（行首不縮排、不放進引言）——William 2026-09-07 裁，原話逐字「a」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5570875993 。寫進清單、引言或縮排區塊裡的引用，開工前那支待裁清單工具認不得（那題會留在「還沒回」，不會誤判成已結）。⚠️ 這裡刻意不寫它的檔名——「合併手冊一個字都不提它」是那支工具「不是閘」的保存考題。
 
 - **複審通過後、轉正式前（Grok 複審後掃常設；發射紀律，非合併閘）**：協作欄位「實作者」＝
   Claude 的支，**Codex 給出「通過」之後、`gh pr ready` 轉正式之前**，把該版本的 diff（**`base..head` 兩顆都寫死 SHA**）抽給 Grok 掃一遍（**每支只掃這一次**），

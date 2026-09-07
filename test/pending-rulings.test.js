@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, visible, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
+import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
 import { tierOf } from '../scripts/acceptance-tier.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
@@ -245,7 +245,9 @@ test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在
 //     同名錨點、舊模板與假的「界線表」，用 indexOf 切段就切到假的那段）。
 //  ② 那一節必須是**平文字**：引言、圍欄、原始 HTML、四格縮排、參考定義／註腳、刪除線、圖片、連結標題、
 //     HTML 實體——任何一種出現，本題直接紅、請人來看，**不試著剝它**（2026-09-07 量過：這幾種在那一節都是 0）。
-//     支援的寫法＝頂層粗體行、`- ` 清單、2 格續行、普通 `[文字](網址)` 連結、行內程式碼。
+//     支援的寫法＝頂層粗體行、`- ` 清單、2 格續行、普通 `[文字](網址)` 連結，以及**內容本身沒踩到上面那幾種的**行內程式碼。
+//     ⚠️ 它掃的是**原文**、不解析行內程式碼（#579 r29 Low②）：反引號裡寫 `<tag>`、`~~x~~`、`&amp;` 照樣報紅——
+//     「改用反引號包起來」不是通用解法。
 //     ⚠️ `<https://…>` 自動連結與四格續行在 GitHub 上是普通排版，這裡仍會紅（#579 r28 Low）——那是
 //     「不熟的排版請人看」的維護代價，不是正本漂移：要放行就來改 NOT_PLAIN，不是改正本。
 // ⚠️ 誠實劃界：這是漂移絆線（防「改了正本忘了改工具」），不是安全閘。有 commit 權的人蓄意在同一節裡放一份
@@ -281,7 +283,7 @@ function reviewSectionOf(/** @type {string} */ agentsText) {
   assert.ok(to > from, '「界線表」要在「審查回饋處置」之後（同一節的下一顆）');
   const section = text.slice(from, to);
   for (const [re, what] of NOT_PLAIN) {
-    assert.doesNotMatch(section, re, `「審查回饋處置」那一節出現了${what}——本題只認平文字（頂層粗體行／- 清單／2 格續行／普通 [文字](網址) 連結／行內程式碼），不剝它。若只是普通排版改寫（例：<https://…> 自動連結、四格續行），改成上述寫法或來改 NOT_PLAIN；若不是，先請人看那是不是一份會被當成正本的複本`);
+    assert.doesNotMatch(section, re, `「審查回饋處置」那一節出現了${what}——本題只認平文字（頂層粗體行／- 清單／2 格續行／普通 [文字](網址) 連結／內容沒踩到這幾種的行內程式碼——它掃原文、不解析反引號），不剝它。若只是普通排版改寫（例：<https://…> 自動連結、四格續行），改成上述寫法或來改 NOT_PLAIN；若不是，先請人看那是不是一份會被當成正本的複本`);
   }
   return section;
 }
@@ -303,20 +305,19 @@ function bindTemplates(/** @type {string} */ agentsText) {
 }
 
 /**
- * 手冊「怎麼執行」那一節裡「引用寫在最外層」那一句。這一句本身住在頂層，所以用**工具自己的 visible()** 量：
- * 規則說「引用要寫在最外層才算數」，規則那一句自己也用同一把尺——包進註解／引言／圍欄／縮排都不算（#579 r27 Medium）。
- * 只有一份定義（工具的），考題不另寫一份剝除。
+ * 「引用網址要寫在留言最外層才算數」那一句。**正本住在 AGENTS「留痕」那一顆**（2026-09-08 從合併手冊搬過來：
+ * 它講的是 ⚖️／⏳ 留言的形狀，那是 AGENTS 的地盤，寫 ⚖️ 的人不會去翻合併手冊）。搬家時**沒有留第二份**——
+ * 同一句活兩處就會漂（本專案認過的病型）。量尺跟另外三題共用 reviewSectionOf()：剝註解、錨點唯一、那一節平文字。
+ * 落點要在**同一句**裡（第一個「。」之前），不是同一行——那一顆是一整段長文，同一行幾乎沒有約束力。
  */
-function bindManualRule(/** @type {string} */ manualText) {
-  const lines = visible(manualText).split('\n');
-  const heads = lines.flatMap((l, i) => (/^### 怎麼執行/.test(l) ? [i] : []));
-  assert.equal(heads.length, 1, `「### 怎麼執行」在可見層要剛好一處（現在 ${heads.length} 處）——手冊改寫法了，這題要跟著改`);
-  const end = lines.findIndex((l, i) => i > heads[0] && /^#{1,3} /.test(l));
-  const section = lines.slice(heads[0], end < 0 ? undefined : end);
-  const hits = section.filter((l) => /^\*\*引用網址必須寫在留言最外層才算數\*\*/.test(l));
-  assert.equal(hits.length, 1, `「怎麼執行」那一節的可見層裡，正本那一句（行首粗體）命中 ${hits.length} 處（要剛好 1 處）——包進註解／引言／圍欄／縮排都不算`);
-  assert.match(hits[0], /issuecomment-5570875993/, '那一句要在同一行附 William 裁示的落點網址');
-  return hits[0];
+function bindCitationRule(/** @type {string} */ agentsText) {
+  const section = reviewSectionOf(agentsText);
+  const ANCHOR = /\*\*引用 ❓ 網址必須寫在留言最外層才算數\*\*/gu;
+  const hits = [...section.matchAll(ANCHOR)];
+  assert.equal(hits.length, 1, `「審查回饋處置」那一節裡，正本那一句命中 ${hits.length} 處（要剛好 1 處）——規則搬家或被複製了，工具與這題要一起看`);
+  assert.match(section, /\*\*引用 ❓ 網址必須寫在留言最外層才算數\*\*[^。]*issuecomment-5570875993/u,
+    '那一句要在同一句裡附 William 裁示的落點網址（放到下一句去就等於沒有落點）');
+  return section.slice(/** @type {number} */ (hits[0].index));
 }
 
 test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 那一節抽出模板、填真日期，工具要認得；改模板一個字就不認', () => {
@@ -357,28 +358,25 @@ test('⭐ 綁回正本那題自己要有保存題：r26／r27 兩種騙法餵進
   assert.throws(() => bindTemplates(base.slice(0, i) + base.slice(j + 1)), /⚖️ 的第一行模板命中 0 處/, '正本把模板刪掉 → 紅');
 });
 
-test('⭐ 「引用寫在最外層」這條判準綁回它的正本（REVIEW-AND-MERGE「怎麼執行」那一節），而且要附落點', () => {
-  // 這條判準不在 AGENTS「問法與逾時預設」那顆裡（那顆已被 #578 釘住），它住在合併手冊的核對清單。
-  // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。量尺見 bindManualRule()。
-  bindManualRule(readDoc('REVIEW-AND-MERGE.md'));
+test('⭐ 「引用寫在最外層」這條判準綁回它的正本（AGENTS「留痕」那一顆），而且要附落點', () => {
+  // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。量尺見 bindCitationRule()。
+  bindCitationRule(readDoc('AGENTS.md'));
 });
 
-test('⭐ 手冊那句的綁定也要有保存題：包進註解、放進圍欄／引言／縮排、多一份、落點拿掉，都要紅（#579 r27 Medium）', () => {
-  const real = readDoc('REVIEW-AND-MERGE.md');
-  const line = bindManualRule(real);   // 對照組：真手冊要過
-  assert.equal(real.split(line).length - 1, 1, '對照斷言：那一句在真檔裡逐字只出現一次（夾具靠它定位）');
-  assert.equal(real.split('### 怎麼執行').length - 1, 1, '對照斷言：那個標題在真檔裡只出現一次');
-  const without = real.replace(line, '');
-  assert.throws(() => bindManualRule(without), /命中 0 處/, '整句刪掉 → 紅');
-  const put = (/** @type {string} */ ghost) => without.replace('### 怎麼執行', `### 怎麼執行\n\n${ghost}`);   // 放回同一節，但藏起來
-  assert.throws(() => bindManualRule(put('```\n' + line + '\n```')), /命中 0 處/, '圍欄裡的那一句是程式碼範例，不算正本');
-  assert.throws(() => bindManualRule(put('> ' + line)), /命中 0 處/, '引言裡 → 紅');
-  assert.throws(() => bindManualRule(put('  ' + line)), /命中 0 處/, '縮排 → 紅');
-  assert.throws(() => bindManualRule(put(`<!-- ${line} -->`)), /命中 0 處/, 'HTML 註解裡 → 紅');
-  // r27 原招：真句包進 HTML 註解、舊句放進同一節的圍欄範例——舊題只剝註解、不剝圍欄，仍「剛好一處」
-  assert.throws(() => bindManualRule(real.replace(line, `<!-- ${line} -->`).replace('### 怎麼執行', '### 怎麼執行\n\n```\n' + line + '\n```')), /命中 0 處/, 'r27：註解＋圍欄 → 紅');
-  assert.throws(() => bindManualRule(real.replace(line, `${line}\n\n${line}`)), /命中 2 處/, '兩份 → 紅（哪一份是正本說不清）');
-  assert.throws(() => bindManualRule(real.replace(line, line.replace('issuecomment-5570875993', 'issuecomment-0'))), /落點/, '落點拿掉 → 紅');
+test('⭐ 那一句的綁定也要有保存題：刪掉、包進註解、搬到節外、多一份、落點拿掉，都要紅', () => {
+  const real = stripComments(readDoc('AGENTS.md'));
+  const line = bindCitationRule(real);   // 對照組：真正本要過
+  const SENT = line.slice(0, line.indexOf('。') + 1);
+  assert.equal(real.split(SENT).length - 1, 1, '對照斷言：那一句在真檔裡逐字只出現一次（夾具靠它定位）');
+  assert.throws(() => bindCitationRule(real.replace(SENT, '')), /命中 0 處/, '整句刪掉 → 紅');
+  assert.throws(() => bindCitationRule(real.replace(SENT, `<!-- ${SENT} -->`)), /命中 0 處/, '包進 HTML 註解（畫面上看不到）→ 紅');
+  // 搬到那一節**外面**（檔尾）：正本那一顆裡沒有它就是沒有，別處長得一樣不算
+  assert.throws(() => bindCitationRule(`${real.replace(SENT, '')}\n\n${SENT}\n`), /命中 0 處/, '搬到節外 → 紅');
+  assert.throws(() => bindCitationRule(real.replace(SENT, SENT + SENT)), /命中 2 處/, '兩份 → 紅（哪一份是正本說不清）');
+  assert.throws(() => bindCitationRule(real.replace('issuecomment-5570875993', 'issuecomment-0')), /落點/, '落點拿掉 → 紅');
+  // 落點被推到下一句去（同一行、但已經不是同一句）也不算
+  assert.throws(() => bindCitationRule(real.replace(SENT, SENT.replace(/落點＝\S+ 。/u, '。') + '落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5570875993 。')),
+    /落點/, '落點推到下一句 → 紅');
 });
 
 test('⭐ 多筆配對照時間排，不照 API 回傳順序：最早引到它的那則排第一（Grok #579 掃後 2）', () => {
@@ -649,15 +647,16 @@ test('⭐ `>` 引言裡的東西一律不在頂層：引 Codex 發現時貼在�
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n> 關的是 ${urlOf(1)}` });
   assert.equal(classify([a, plainQuote], T0 + 4 * 86400e3).pending.length, 1,
     '引言裡的引用不在頂層＝認不得（安全方向）。AGENTS 要求用 `>` 引的是「Codex 的發現」，不是引用網址本身');
-  // 引言裡開的圍欄、接一行頂層的同款記號：GitHub 會因為引言結束而收掉那道圍欄，後面的網址看得見。
-  // 這裡的機制**不是**追蹤引言深度（visible() 沒有那個狀態）：引言行整行不看、連裡面的圍欄記號一起丟，
-  // 所以頂層那一行 ``` 反而是**新開門**，網址落在它後面＝在圍欄裡＝認不得。明知的漏認、安全方向：
-  // 問題留在「還沒回」，我再問他一次。（上一版把這寫成「深度保護」，跟實作不符——#579 r28 Medium。）
+  // 引言裡開一道圍欄、下一行用頂層的同款記號：本工具的機制**不是**追蹤引言深度（visible() 沒有那個狀態），
+  // 而是引言行整行不看、連裡面的圍欄記號一起丟，所以頂層那一行 ``` 是**新開門**，網址落在它後面＝在圍欄裡＝認不得。
+  // ⚠️ 這一刀**不是漏認**：Codex 把同一段原文逐字送進 GitHub 的 Markdown API 實測，那個網址在 GitHub 上
+  //    也落在一個 `<pre><code>` 裡、根本不是連結（#579 r29 Low①；上一版寫「明知的漏認、我再問他一次」＝
+  //    低估了現有行為，r28 之前更寫成「深度保護」＝跟實作不符）。⇒ 這裡是**正確排除程式碼範例**。
   const topFenceAfterQuote = c({ id: 4, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `> ${F}\n> 範例\n${F}\n關的是 ${urlOf(1)}` });
   assert.equal(classify([a, topFenceAfterQuote], T0 + 4 * 86400e3).pending.length, 1,
-    '頂層那一行 ``` 是新開門，後面的網址在圍欄裡＝認不得（安全方向）');
+    '頂層那一行 ``` 是新開門，後面的網址在圍欄裡＝認不得（GitHub 也是這樣渲染，這是正確排除、不是漏認）');
   // 對照組：把頂層那一行 ``` 拿掉，引言行照樣整行不看、網址回到頂層＝算引到——證明剛才藏住網址的是那道新開的圍欄，不是引言
   const noTopFence = c({ id: 5, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
