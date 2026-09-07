@@ -239,12 +239,18 @@ test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在
 
 test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 留痕段抽出模板、填真日期，工具要認得；改模板一個字就不認', () => {
   // 三條正則與考題夾具原本都是寫死的；正本改了第一行用詞，工具與考題可以一起留在舊形狀上全綠（Grok #579 掃後 3②）。
-  // ⚠️ 讀**原文**、不過 visible()：留痕那一段在 AGENTS 裡是縮排的清單續行，「只認頂層」會把它整段丟掉。
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  // ⚠️ 「綁回正本」三件事缺一不可（#579 r26 Medium：只在整份原始檔找字串，正本改掉時檔頭一則 HTML 註解
+  //    留著舊模板就騙綠）：①先剝 HTML 註解 ②只在「審查回饋處置」那一節裡找（到「界線表」為止）③要求剛好一處。
+  //    不過 visible()（留痕那一段是縮排的清單續行，「只認頂層」會整段丟掉），只剝註解。
+  const agentsAll = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const from = agentsAll.indexOf('**審查回饋處置（');
+  const to = agentsAll.indexOf('\n**界線表（', from);
+  assert.ok(from >= 0 && to > from, '找不到「審查回饋處置」那一節——正本搬家了，這題要跟著改');
+  const agents = agentsAll.slice(from, to);
   const tpl = (/** @type {string} */ mark) => {
-    const m = agents.match(new RegExp('`(## ' + mark + '[^`]*（YYYY-MM-DD）：)[^`]*`', 'u'));
-    assert.ok(m, `AGENTS 留痕段找不到 ${mark} 的第一行模板——正本改寫法了，這題與工具要一起改`);
-    return m[1].replace('YYYY-MM-DD', '2026-09-02');
+    const hits = [...agents.matchAll(new RegExp('`(## ' + mark + '[^`]*（YYYY-MM-DD）：)[^`]*`', 'gu'))];
+    assert.equal(hits.length, 1, `那一節裡 ${mark} 的第一行模板命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，這題與工具要一起改`);
+    return hits[0][1].replace('YYYY-MM-DD', '2026-09-02');
   };
   const mk = (/** @type {string} */ first, /** @type {string} */ rest) => c({ id: 9, body: `${first}標題\n\n${rest}` });
   assert.equal(shapeOf(mk(tpl('❓'), '選項…')), 'ask');
@@ -257,8 +263,15 @@ test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 留痕段抽�
 test('⭐ 「引用寫在最外層」這條判準綁回它的正本（REVIEW-AND-MERGE 核對清單），而且要附落點', () => {
   // 這條判準不在 AGENTS「問法與逾時預設」那顆裡（那顆已被 #578 逐字釘住），它住在合併手冊的核對清單。
   // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。
-  const manual = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.match(manual, /引用網址必須寫在留言最外層才算數/, '正本那一句不見了');
+  // 同樣三件事：剝註解、切到「### 怎麼執行」那一節（到下一個標題為止）、剛好一處（#579 r26 Medium）。
+  const manualAll = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const mLines = manualAll.split('\n');
+  const start = mLines.findIndex((l) => /^### 怎麼執行/.test(l));
+  assert.ok(start >= 0, '找不到「### 怎麼執行」那一節——手冊改寫法了，這題要跟著改');
+  const end = mLines.findIndex((l, i) => i > start && /^#{1,3} /.test(l));
+  const manual = mLines.slice(start, end < 0 ? undefined : end).join('\n');
+  const hits = manual.match(/引用網址必須寫在留言最外層才算數/g) ?? [];
+  assert.equal(hits.length, 1, `「怎麼執行」那一節裡正本那一句命中 ${hits.length} 處（要剛好 1 處）`);
   assert.match(manual, /引用網址必須寫在留言最外層才算數[^\n]*issuecomment-5570875993/, '那一句要附 William 裁示的落點網址');
 });
 
@@ -973,7 +986,7 @@ test('⭐ CLI｜兩次呼叫逐 token 釘住（少任一旗標真 gh 的行為�
 test('⭐ CLI｜撈到的比 GitHub 自報的少＝被截斷 → 退 2、不印清單（不拿殘缺清單印一句「沒有還沒回的」）', () => {
   withFakeGh({ issues: ISSUES(99), comments: pages([ask({ id: 1 })]) }, ({ r }) => {
     assert.equal(r.status, 2, r.stdout);
-    assert.match(r.stderr, /清單不完整/);
+    assert.match(r.stderr, /筆數不一致/);
     assert.doesNotMatch(r.stdout, /還沒回的問題/);
   });
 });
@@ -984,6 +997,8 @@ test('⭐ CLI｜撈到的比 GitHub 自報的**多**也是壞回應 → 退 2、
   withFakeGh({ issues: ISSUES(1), comments: JSON.stringify([two]) }, ({ r }) => {
     assert.equal(r.status, 2, '多於自報＝壞回應，要退 2');
     assert.doesNotMatch(r.stdout, /還沒回的問題/, '算不出來時 stdout 不可以有清單');
+    assert.match(r.stderr, /筆數不一致[^\n]*撈到 2[^\n]*自報 1/, '診斷文案要中性（不是「只撈到」），並印出兩個數字');
+    assert.doesNotMatch(r.stderr, /只撈到|殘缺/, '多於自報時不可以說「只撈到／殘缺」，那是語意顛倒（#579 r26 Low）');
   });
 });
 

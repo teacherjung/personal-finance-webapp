@@ -25,7 +25,7 @@
 //
 // ## 退出碼
 //   0＝算出來了（含「掃完了、沒有還沒回的」——那也是答案）
-//   2＝算不出來（參數不認得／repo 身分釘不住／gh 失敗或逾時／回傳形狀不對／筆數比 GitHub 自報的少／時間解析不出來）
+//   2＝算不出來（參數不認得／repo 身分釘不住／gh 失敗或逾時／回傳形狀不對／筆數與 GitHub 自報的不一致（多或少都算）／時間解析不出來）
 //      算不出來時 stdout 不印任何清單，只在 stderr 說原因。刻意不設 1：那個碼讀起來像「檢查沒過」。
 //
 // ## 誠實劃界
@@ -563,13 +563,13 @@ export function main(argv, opts = {}) {
     const run = (/** @type {string} */ path) => execFileSync('gh',
       ['api', '--paginate', '--slurp', '--hostname', host, path],
       { encoding: 'utf8', stdio: 'pipe', env: gitEnv(), maxBuffer: 1e8, timeout: 120_000, killSignal: 'SIGKILL' });
-    // 先問 GitHub 有幾則（issues 端點自報），再撈留言：撈到的比自報的少＝被截斷＝算不出來。
+    // 先問 GitHub 有幾則（issues 端點自報），再撈留言：兩邊筆數對不上（少＝截斷；多＝重複頁或不同資料窗）＝算不出來。
     const expected = expectedTotal(run(`repos/${slug}/issues?state=all&per_page=100`));
     const comments = flatten(run(`repos/${slug}/issues/comments?per_page=100`));
     // ⚠️ 兩個方向都丟：撈到的**多於**自報也是壞回應（重複頁、兩邊不同窗）。只擋「少於」的話，
     //    自報被低估而剛好對上長度，成功路會一路走到底印「沒有還沒回的」（Grok #579 掃後 1B）。
     if (comments.length !== expected) {
-      throw new Error(`留言只撈到 ${comments.length} 則、GitHub 自報 ${expected} 則——清單不完整，不拿殘缺的清單下結論`);
+      throw new Error(`留言筆數不一致：撈到 ${comments.length} 則、GitHub 自報 ${expected} 則（截斷、重複頁或資料窗不一致）——不拿對不上的清單印「沒有還沒回的」`);
     }
     const now = opts.now ?? Date.now();
     const seen = only === null || comments.some((c) => numberOf(c.html_url) === only);
