@@ -114,10 +114,18 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   或一段圍欄時，不剝就會把完全合規的裁示判成形狀不合。
  *   下面 `firstParagraph` 的錨點只擋得住「藏起來的東西不在段落開頭」那一種，擋不住①。
  *
- * ⚠️ **判不出來就當它「看不到」**——這是本函式唯一的偏向，也是它能收斂的原因：
- * 多剝一點只會讓某則留痕不被認得 ⇒ 問題**留在「還沒回」** ⇒ 我再問他一次（煩，但安全）；
- * 少剝一點才會讓真的還沒回的問題被靜靜關掉（那是這支最貴的失敗）。
- * 所以這裡不追求跟 GitHub 逐字一致，只要求**不可能少剝**。
+ * ⚠️ **判不出來就當它「看不到」**——這是本函式的偏向：多剝一點只會讓某則留痕不被認得 ⇒ 問題
+ * **留在「還沒回」** ⇒ 我再問他一次（煩，但安全）；少剝一點才會讓真的還沒回的問題被靜靜關掉。
+ *
+ * ⚠️ **這裡防的是意外，不是刻意隱藏——射程就到這裡，不要再往上宣稱。**
+ * 上一版寫「只要求**不可能少剝**」，那是一句**做不到的絕對保證**：要做到它，等於要在測試裡
+ * 完整實作 GFM（跳脫序列、參考定義標籤的換行、HTML 實體、反引號 run 的前綴…），
+ * 而那條路 #579 r1〜r12 已經證明不會收斂——每補一輪，下一輪就在更深的文法角落再中一刀。
+ * 真正的射程是：**這支不是閘、不擋任何事，貼這三種留言的只有 repo 擁有者這一個帳號**
+ * （William 本人、Claude、Codex 都從那個帳號貼）。所以它要擋的是**手滑**——例如裁示裡順手
+ * 引了別題的網址、或把範例貼進圍欄——不是「有人刻意把網址藏進畸形的跳脫序列讓某一題消失」。
+ * 後面那種它擋不住，也**不宣稱**擋得住（#579 r12：那正是「撐不住的保證」被打的地方）。
+ * 常見寫法要判得準；刁鑽的合法 GFM 判不準時**一律偏向「看不到」**，最壞就是多問他一次。
  *
  * 以下步驟，順序有意義（**刻意不寫步數**——寫死的數字自己會漂，鐵則 10）：
  * ①**圍欄**（行為單位）：記開門的字元**與長度**；關門行要同種字元、**長度不短於開門**、
@@ -138,6 +146,8 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   ⇒ **貼 ⚖️／⏳ 時請直接寫完整網址**，不要只用參考式連結。
  *   剝的範圍是**標籤行之後一路到空行**：GFM 的定義可以換行放網址、再換一行放 title，
  *   逐條去湊那個文法就是在寫剖析器，漏一行就是少剝（#579 r8 High②）。吃到空行是多剝的方向。
+ *   標籤本身**可以含跳脫的 `]`、也可以跨行**（`[lab\]]:` ／ `[lab⏎el]:`）——只認單行、未跳脫的
+ *   話會少剝（#579 r12 High②）。所以「行首 `[` 而這一行沒有收起來」也算定義的開頭（保守）。
  *
  * ⚠️ 誠實劃界：別的隱藏花招（白字、`<details>` 摺起來、圖片的替代文字）沒剝，
  *   那要靠人翻留言時發現；本函式不宣稱認得全部。
@@ -172,9 +182,12 @@ export function visible(body) {
   // 參考定義：標籤行之後**一路吃到空行**。GFM 允許網址換行、後面還可以再接一行 title
   // （`[q]:` ／ 網址 ／ "說明"），逐條去湊那個文法就是在寫剖析器，而漏掉一行就是「少剝」（#579 r8 High②）。
   // 吃到空行是**多剝**的方向：頂多讓緊貼在定義下面、沒空行隔開的一句話認不得 ⇒ 問題留在「還沒回」。
+  // 標籤：`[` 之後可以有跳脫的 `]`；`[…` 這一行沒收起來的，當作標籤跨行（保守）。
+  const DEF_LINE = /^ {0,3}\[(?:[^\]\\]|\\.)*\]:/;
+  const DEF_OPEN = /^ {0,3}\[(?:[^\]\\]|\\.)*$/;
   let inDef = false;
   const kept = noComments.split('\n').map((l) => {
-    if (/^ {0,3}\[[^\]]*\]:/.test(l)) { inDef = true; return ''; }
+    if (DEF_LINE.test(l) || DEF_OPEN.test(l)) { inDef = true; return ''; }
     if (inDef) { if (l.trim() === '') { inDef = false; return l; } return ''; }
     return l;
   });
@@ -215,6 +228,9 @@ export function shapeOf(c) {
   return NEAR.test(line) ? 'near' : null;
 }
 
+/** GFM 只讓這些字受反斜線跳脫（ASCII 標點）；其餘字元前面的反斜線是字面字元。 */
+const ASCII_PUNCT = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/;
+
 /** `<…>` 角括號自動連結（**只在 inline link 之外**才算）。 */
 const ANGLE = /<([^<>\s]+)>/g;
 
@@ -226,19 +242,43 @@ const ANGLE = /<([^<>\s]+)>/g;
  */
 function parseLinkTail(text, start) {
   let j = start;
-  const skip = () => { while (j < text.length && /\s/.test(text[j])) j += 1; };
-  skip();
+  // 空白可以跨一次換行，但**不可以跨空行**——空行之後 GFM 就判這個連結不成立，
+  // 我卻還在往下吃，會把後面正常可見的引用當成 title 挖掉（#579 r12 High③）。
+  const skip = () => {
+    let newlines = 0;
+    while (j < text.length && /\s/.test(text[j])) {
+      if (text[j] === '\n') { newlines += 1; if (newlines >= 2) return false; }
+      j += 1;
+    }
+    return true;
+  };
+  if (!skip()) return null;
   let dest = '';
   if (text[j] === '<') {
-    const close = text.indexOf('>', j + 1);
-    if (close < 0) return null;
-    dest = text.slice(j + 1, close);
-    j = close + 1;
+    // 角括號 destination：`\>` 是跳脫的 `>`，不是關門。只用第一個 `>` 關門會把後半段
+    // 留回可見層，於是別人的網址被當成這一則（#579 r12 High①）。
+    let k = j + 1;
+    let closed = false;
+    while (k < text.length) {
+      const ch = text[k];
+      if (ch === '\\' && ASCII_PUNCT.test(text[k + 1] ?? '')) { dest += text[k + 1]; k += 2; continue; }
+      if (ch === '\n' || ch === '<') return null;   // GFM：這兩種都讓角括號 destination 不成立
+      if (ch === '>') { closed = true; k += 1; break; }
+      dest += ch;
+      k += 1;
+    }
+    if (!closed) return null;
+    j = k;
   } else {
     let depth = 0;
     while (j < text.length) {
       const ch = text[j];
-      if (ch === '\\') { dest += text[j + 1] ?? ''; j += 2; continue; }
+      // GFM **只有 ASCII 標點**受反斜線跳脫：`\1` 裡的反斜線是字面字元，不可以吞掉。
+      // 無條件去跳脫會讓 `…#issuecomment-\1` 剛好變成目標網址（#579 r12 High①）。
+      if (ch === '\\') {
+        if (ASCII_PUNCT.test(text[j + 1] ?? '')) { dest += text[j + 1]; j += 2; continue; }
+        dest += ch; j += 1; continue;
+      }
       if (/\s/.test(ch)) break;
       if (ch === '(') depth += 1;
       else if (ch === ')') { if (depth === 0) break; depth -= 1; }
@@ -246,7 +286,7 @@ function parseLinkTail(text, start) {
       j += 1;
     }
   }
-  skip();
+  if (!skip()) return null;
   // 可選的 title：`"…"`／`'…'`／`(…)`。title 裡什麼都可以寫，包括 `)` 與 `<網址>`——
   // 不追蹤引號狀態的話，title 裡的 `)` 會被當成外層關門，後半段就漏回裸網址那條規則（#579 r11 High①）。
   const quote = text[j];
@@ -254,13 +294,15 @@ function parseLinkTail(text, start) {
     const closer = quote === '(' ? ')' : quote;
     j += 1;
     let done = false;
+    let blank = 0;
     while (j < text.length) {
       if (text[j] === '\\') { j += 2; continue; }
+      if (text[j] === '\n') { blank += 1; if (blank >= 2) return null; } else if (!/\s/.test(text[j])) blank = 0;
       if (text[j] === closer) { j += 1; done = true; break; }
       j += 1;
     }
     if (!done) return null;
-    skip();
+    if (!skip()) return null;
   }
   if (text[j] !== ')') return null;
   return { dest, end: j + 1 };
@@ -283,10 +325,9 @@ function tokenizeLinks(text) {
   while (i < text.length) {
     const ch = text[i];
     // 行內程式碼：整段照抄，裡面的 `](` 不是連結開門。
-    // ⚠️ 誠實記一筆：**今天沒有考題撐得住這一段**——`parseLinkTail` 夠嚴，
-    //   湊不出「程式碼裡的 `](` 真的解析成連結、還吃掉後面的引用」的例子（拿掉這段，全卷仍綠＝等價突變）。
-    //   留著是因為它表達的是正確的意圖，而且下一次放寬 `parseLinkTail` 時它就會開始有用；
-    //   但不要把它寫成「有守住」。
+    // ⚠️ 上一版這裡老實寫著「今天沒有考題撐得住這一段」——Codex 把反例湊出來了（#579 r12 High④）：
+    //   `` `arr](` "背景 <網址> ") `` 會讓程式碼裡的 `](` 配上外面的引號，被當成一個有 title 的連結，
+    //   把外面**正常可見**的網址整段吃掉。那個夾具已經進考題，拿掉這一段就會紅。
     if (ch === '`') {
       const run = /^`+/.exec(text.slice(i))?.[0] ?? '`';
       const close = text.indexOf(run, i + run.length);
@@ -295,7 +336,12 @@ function tokenizeLinks(text) {
       i = end;
       continue;
     }
-    if (ch === ']' && text[i + 1] === '(') {
+    // 跳脫的 `\]` 不是連結開門——`\[x\](…)` 在 GitHub 是**展示語法用的普通文字**，
+    // 當成連結會把後面正常可見的引用當 title 挖掉（#579 r12 High③）。
+    // 反斜線數量是奇數＝這個 `]` 被跳脫了。
+    let slashes = 0;
+    while (slashes < i && text[i - 1 - slashes] === '\\') slashes += 1;
+    if (ch === ']' && text[i + 1] === '(' && slashes % 2 === 0) {
       const parsed = parseLinkTail(text, i + 2);
       if (parsed) { outside += '] '; dests.push(parsed.dest); i = parsed.end; continue; }
     }

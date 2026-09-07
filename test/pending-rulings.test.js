@@ -19,6 +19,7 @@ const SCRIPT = join(ROOT, 'scripts/pending-rulings.js');
 const T0 = Date.parse('2026-09-01T00:00:00Z');
 const iso = (/** @type {number} */ ms) => new Date(ms).toISOString();
 const BT = '\u0060';   // 反引號：寫成字面值會跟樣板字串打架
+const BS = '\u005c';   // 反斜線：寫成字面值在樣板字串裡太容易數錯
 
 /** 一則留言夾具。預設是 repo 擁有者貼的（三種留痕留言都必須是）。 */
 function c({ id, body, at = T0, edited = false, pr = 100, assoc = 'OWNER' }) {
@@ -460,6 +461,56 @@ test('⭐ title 裡的網址不算引到：引號式 title 可以寫 `)` 與 `<�
   assert.equal(classify([a, good], T0 + 4 * 86400e3).closed.length, 1, 'destination 指對了就算引到');
 });
 
+test('⭐ GFM 的跳脫要照規矩解：角括號裡的 `\\>` 不是關門、`\\1` 的反斜線是字面字元（#579 r12 High①）', () => {
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  // 角括號 destination：`\>` 是跳脫的 `>`。只用第一個 `>` 關門，後半段就漏回可見層被當成引到。
+  const angleEscape = ruling({ id: 2, at: T0 + 60e3, cites: `[x](<https://example.com/${BS}>${U}>)` });
+  assert.equal(classify([a, angleEscape], T0 + 4 * 86400e3).pending.length, 1,
+    '真正的連結指向別處（那個 `>` 是網址的一部分），不算引到');
+  // GFM 只有 ASCII 標點受跳脫：`\1` 的反斜線是字面字元，無條件去跳脫會剛好變成目標網址。
+  const digitEscape = ruling({ id: 3, at: T0 + 120e3, cites: `[x](${U.slice(0, -1)}${BS}1)` });
+  assert.equal(classify([a, digitEscape], T0 + 4 * 86400e3).pending.length, 1,
+    '`\\1` 不是跳脫序列，那條網址跟這一題的不一樣');
+  // 對照組：ASCII 標點的跳脫**要**去掉（不然就變成反方向的漏認）
+  const punctEscape = ruling({ id: 4, at: T0 + 180e3, cites: `[x](${U.replace('#', `${BS}#`)})` });
+  assert.equal(classify([a, punctEscape], T0 + 4 * 86400e3).closed.length, 1,
+    '`\\#` 是合法的跳脫，去掉之後就是這一題的網址');
+});
+
+test('⭐ 參考定義的標籤可以含跳脫的 `]`、也可以跨行（#579 r12 High②）', () => {
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  const escaped = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[lab${BS}]]: <${U}>` });
+  assert.ok(String(escaped.body).includes(U), '對照斷言：網址真的在原文裡');
+  assert.equal(classify([a, escaped], T0 + 4 * 86400e3).pending.length, 1, '標籤裡跳脫的 `]` 仍然是參考定義，不會顯示');
+  const multiline = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「好」**\n\n[lab\nel]: <${U}>` });
+  assert.equal(classify([a, multiline], T0 + 4 * 86400e3).pending.length, 1, '標籤跨行的參考定義一樣不會顯示');
+});
+
+test('⭐ 展示語法用的寫法不是連結：跳脫的 `\\[x\\](…)` 與跨空行的 title 不可以吞掉可見的引用（#579 r12 High③）', () => {
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  const shown = ruling({ id: 2, at: T0 + 60e3, cites: `${BS}[x${BS}](https://example.com "background <${U}> here")` });
+  assert.equal(classify([a, shown], T0 + 4 * 86400e3).closed.length, 1,
+    '跳脫的中括號＝普通文字，後面那個網址在畫面上看得見、算引到');
+  const acrossBlank = ruling({ id: 3, at: T0 + 120e3, cites: `[x](https://example.com\n\n"background <${U}> here")` });
+  assert.equal(classify([a, acrossBlank], T0 + 4 * 86400e3).closed.length, 1,
+    '空行之後連結已經不成立，不可以跨段把後面的網址當 title 吃掉');
+});
+
+test('⭐ 行內程式碼裡的 `](` 不是連結開門（這一題把上一版「沒有考題撐得住」那句自白補實了；#579 r12 High④）', () => {
+  // 上一版註解老實寫「湊不出反例」，Codex 湊出來了：程式碼裡的 `](` 加上外面的引號，
+  // 會被當成一個有 title 的連結，把外面正常可見的網址整段吃掉。
+  const a = ask({ id: 1 });
+  const U = urlOf(1);
+  const inCode = ruling({ id: 2, at: T0 + 60e3, cites: `${BT}arr](${BT} "背景 <${U}> ")` });
+  assert.equal(classify([a, inCode], T0 + 4 * 86400e3).closed.length, 1,
+    '`arr](` 在畫面上是程式碼字樣，後面的網址正常顯示、算引到');
+});
+
 test('⭐ 佔位符不可以被留言的內容撞到：自己打私用區字元也合不出隱藏的網址（#579 r9 High②）', () => {
   // 反例：註解裡放一個行內程式碼（內容＝網址加一個尾端空白），註解外放 literal U+E000 0 U+E001。
   // GitHub 只顯示那三個怪字元、完全沒有網址；還原時若不先清掉，就會把註解裡的網址合成回可見層。
@@ -823,7 +874,8 @@ test('⭐ 這支不是閘：合併步驟一個字都不提它（反查器看不�
   assert.equal(heads.length, 1, `合併程序的前言「${PREAMBLE}…」要剛好出現一次（找到 ${heads.length} 處）——措辭改了就來改這裡`);
   const start = heads[0];
   const firstStep = lines.findIndex((l, i) => i > start && /^> 1\.\s/.test(l));
-  assert.ok(firstStep > start, '前言後面要接著第一步 `> 1.`——中間被插了東西或順序變了');
+  assert.equal(firstStep, start + 1,
+    '前言與第一步 `> 1.` 之間插了東西——考題只掃到那之後的話，插在中間的接線就看不到（#579 r12 待辦⑥：原本只驗前後順序，等於沒驗相鄰）');
   const end = lines.findIndex((l, i) => i > start && /^確認遠端分支已刪除|^## /.test(l));
   assert.ok(end > start, '找不到合併步驟的結尾錨點');
   assert.doesNotMatch(lines.slice(start, end < 0 ? undefined : end).join('\n'), /pending-rulings/,
