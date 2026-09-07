@@ -360,6 +360,24 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `- outer\n    - 關的是：\n\n        ${urlOf(1)}\n` });
   assert.equal(classify([a, nestedCont], T0 + 4 * 86400e3).closed.length, 1,
     '第二層清單底下的續行是正常段落，網址算引到');
+  // 清單裡的引言是新的容器，裡面的縮排從它自己算起（#579 r20 High）
+  const quoteInList = c({ id: 12, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `- 先列背景\n\n  >     ${urlOf(1)}\n` });
+  assert.ok(String(quoteInList.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在清單裡的引言程式碼中');
+  assert.equal(classify([a, quoteInList], T0 + 4 * 86400e3).pending.length, 1,
+    '清單裡的引言程式碼還是程式碼，關不掉問題');
+  // 對照組：清單裡的引言**一般文字**照樣看得見
+  const quoteText = c({ id: 13, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `- 先列背景\n\n  > 關的是 ${urlOf(1)}\n` });
+  assert.equal(classify([a, quoteText], T0 + 4 * 86400e3).closed.length, 1, '清單裡的引言一般文字看得見，算引到');
+  // 清單標記同一行就開圍欄（`- ```text`）也要認出來
+  const inlineFence = c({ id: 14, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `- ${BT.repeat(3)}text\n  ${urlOf(1)}\n  ${BT.repeat(3)}\n` });
+  assert.equal(classify([a, inlineFence], T0 + 4 * 86400e3).pending.length, 1,
+    '清單標記同行開的圍欄也是圍欄，裡面的網址關不掉問題');
   // 對照組：清單裡**再縮四格**才是程式碼
   const listCode = c({ id: 8, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`

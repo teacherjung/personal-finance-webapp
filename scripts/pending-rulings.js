@@ -195,9 +195,14 @@ export function visible(body) {
       inIndented = false;            // 區塊結束——這一行照一般規則重新判（可能是清單續行）
     }
     if (blank) { prevBlank = true; return line; }
-    // 縮排退回去＝內層清單結束（一層一層退）
-    while (listStack.length > 0 && indent < listStack[listStack.length - 1]) listStack.pop();
-    const base = listStack.length > 0 ? listStack[listStack.length - 1] : 0;
+    // ⚠️ **引言是一個新的容器，裡面的縮排從它自己算起**。沿用外層清單的座標，就會把
+    // 「清單項 ／ 空行 ／ `  >     網址`」這種正常寫法裡的引言程式碼算成沒縮夠（#579 r20 High）。
+    const quoted = QUOTE.test(line);
+    if (!quoted) {
+      // 縮排退回去＝內層清單結束（一層一層退）
+      while (listStack.length > 0 && indent < listStack[listStack.length - 1]) listStack.pop();
+    }
+    const base = quoted || listStack.length === 0 ? 0 : listStack[listStack.length - 1];
     const rel = indent - base;
     const fenceOpen = rel <= 3 ? /^(`{3,}|~{3,})/.exec(content) : null;
     if (fenceOpen) {
@@ -207,7 +212,17 @@ export function visible(body) {
     // 清單標記：縮排相對於目前這一層 ≤3 才算。清單項底下的續行是正常寫法，不是程式碼
     // （`- 關的是：` ／ 空行 ／ 縮排放網址，本 repo 實際在用——#579 r16 High②，前例＝#569）。
     const marker = rel <= 3 ? /^(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(content) : null;
-    if (marker) { listStack.push(indent + marker[0].length); prevBlank = false; return line; }
+    if (marker) {
+      if (!quoted) listStack.push(indent + marker[0].length);
+      // 清單標記**同一行**後面就開圍欄（`- ```text`）也要認出來，不然圍欄裡的網址會被拿去關題。
+      const inline = /^(`{3,}|~{3,})/.exec(content.slice(marker[0].length));
+      if (inline && !(inline[1][0] === '`' && content.slice(marker[0].length + inline[1].length).includes('`'))) {
+        fence = { ch: inline[1][0], len: inline[1].length, base: indent + marker[0].length, quote: depthOf(line) };
+        return '';
+      }
+      prevBlank = false;
+      return line;
+    }
     // 程式碼的門檻是**目前這一層的內容縮排再加四格**；開啟時記住它，結束時用同一個判
     // （退回固定四格會把後面同一項底下的正常段落一起吞掉——#579 r18 High）。
     if (prevBlank && indent >= base + 4) { inIndented = true; codeThreshold = base + 4; return ''; }
