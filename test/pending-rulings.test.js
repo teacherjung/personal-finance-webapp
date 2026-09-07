@@ -339,6 +339,13 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `- 關的是：\n\n    ${urlOf(1)}\n` });
   assert.equal(classify([a, listCont], T0 + 4 * 86400e3).closed.length, 1,
     '清單項底下的四格續行是正常段落，網址看得見、算引到');
+  // 清單裡的程式碼區塊**結束之後**，同一個清單項底下的正常段落要留著
+  //（結束門檻退回固定四格的話，會把它一起吞掉 ⇒ 真的已結冒回未回，#579 r18 High）
+  const afterListCode = c({ id: 9, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `- 實測輸出：\n\n      command output\n\n    關的是 ${urlOf(1)}\n` });
+  assert.equal(classify([a, afterListCode], T0 + 4 * 86400e3).closed.length, 1,
+    '清單裡的程式碼結束後，同一項底下的段落是正常內容，網址算引到');
   // 對照組：清單裡**再縮四格**才是程式碼
   const listCode = c({ id: 8, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`

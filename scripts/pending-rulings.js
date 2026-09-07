@@ -190,35 +190,33 @@ export function visible(body) {
   // ⚠️ **清單項底下的續行不算程式碼**——那是 GFM 的正常寫法、本 repo 也實際在用（r16 High②），
   // 所以下面記住清單項的內容縮排欄位，清單裡要**再縮四格**才算程式碼。
   let inIndented = false;
+  /** 已開啟的縮排區塊當初用的門檻——清單裡開的區塊門檻比較深，結束時要用**同一個**門檻判，
+   *  退回固定四格會把後面正常的清單段落一起吞掉（#579 r18 High）。 */
+  let codeThreshold = 4;
   let prevBlank = true;
-  /** 清單項的內容縮排欄位；不在清單裡時是 null。 */
+  /** 清單項的內容縮排欄位；不在清單裡時是 null。⚠️ 縮排區塊結束時**不要**清掉它——
+   *  區塊結束之後往往還在同一個清單項裡，清掉會讓下一段又被當成新的程式碼區塊。 */
   let listIndent = null;
   const undented = unfenced.split('\n').map((line) => {
-    // 引言裡的縮排式程式碼也要看得穿（fenced 那一段已經這樣做，這裡漏了＝少剝，#579 r16 High①）
+    // 引言裡的縮排式程式碼也要看得穿：不先剝引言前綴的話，`>` 後面的四格縮排量不到（#579 r16 High①）
     const bare = line.replace(QUOTE, '');
     const blank = bare.trim() === '';
     const indent = /^[ \t]*/.exec(bare)?.[0].replace(/\t/g, '    ').length ?? 0;
     if (inIndented) {
-      if (blank || indent >= 4) return '';
-      inIndented = false;
-      prevBlank = false;
-      listIndent = null;
-      return line;
+      if (blank || indent >= codeThreshold) return '';
+      inIndented = false;            // 區塊結束——這一行照一般規則重新判（可能是清單續行）
     }
+    if (blank) { prevBlank = true; return line; }
     // 清單項：記下它的**內容縮排欄位**。清單項底下的續行縮排四格是 GFM 的正常寫法
     // （`- 關的是：` ／ 空行 ／ 四格縮排放網址），把它當程式碼剝掉會讓真的已結冒回未回
     // ——而且這是本 repo 實際在用的寫法（#579 r16 High②，前例＝#569 的合併回報）。
-    const marker = /^( {0,3})(?:[-*+]|\d{1,9}[.)])([ \t]+)/.exec(bare);
-    if (marker) {
-      listIndent = marker[1].length + (marker[0].length - marker[1].length);
-      prevBlank = false;
-      return line;
-    }
-    if (!blank && listIndent !== null && indent < listIndent) listIndent = null;   // 縮排退回去＝清單結束
+    const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(bare);
+    if (marker) { listIndent = marker[0].length; prevBlank = false; return line; }
+    if (listIndent !== null && indent < listIndent) listIndent = null;   // 縮排退回去＝清單結束
     // 清單裡面要再縮四格才算程式碼；不在清單裡就是一般的四格門檻。
     const codeIndent = listIndent === null ? 4 : listIndent + 4;
-    if (prevBlank && !blank && indent >= codeIndent) { inIndented = true; return ''; }
-    prevBlank = blank;
+    if (prevBlank && indent >= codeIndent) { inIndented = true; codeThreshold = codeIndent; return ''; }
+    prevBlank = false;
     return line;
   }).join('\n');
   /** @type {string[]} */
