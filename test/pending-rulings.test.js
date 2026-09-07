@@ -328,12 +328,26 @@ test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩
     assert.equal(hits.length, 1, `那一節裡「${what}」命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，工具與這題要一起改`);
     return hits[0];
   };
-  const head = one(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu, '🚫 的第一行模板')[1];
-  const field = one(/內文＝`(撤回理由：)`/gu, '撤回理由的欄名')[1];
-  const listRaw = one(/內文＝`撤回理由：` 加上\*\*三種之一\*\*（([^）]+)）/gu, '三種理由那一組')[1];
+  // ⚠️ **抽取的錨點是「🚫 那一行模板」，不是欄名本身**（#582 r2 Medium①）：上一版拿 `內文＝\`撤回理由：\`` 當
+  //    搜尋條件，等於把「要抽的值」寫進了搜尋條件裡——正本把欄名改掉、同一節留一句「沿革：舊版寫…（已停用）」，
+  //    抽取器就去抽那份停用範例，工具照舊認舊字樣，全卷仍綠。改成：先定位**唯一**的模板，只在**它到句號為止**
+  //    那一段裡抽；停用範例不含模板 ⇒ 抽不到它；若它連模板也抄一份 ⇒ 模板的「剛好一處」先紅。
+  const headHit = one(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu, '🚫 的第一行模板');
+  const head = headHit[1];
+  const from = /** @type {number} */ (headHit.index);
+  const stop = section.indexOf('。', from);
+  assert.ok(stop > from, '找不到那一句的句號——正本改寫法了，這題要跟著改');
+  const rule = section.slice(from, stop + 1);
+  const inRule = (/** @type {RegExp} */ re, /** @type {string} */ what) => {
+    const hits = [...rule.matchAll(re)];
+    assert.equal(hits.length, 1, `撤回那一句裡「${what}」命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，工具與這題要一起改`);
+    return hits[0];
+  };
+  const field = inRule(/內文＝`([^`]+)`/gu, '欄名')[1];
+  const listRaw = inRule(/加上\*\*三種之一\*\*（([^）]+)）/gu, '三種理由那一組')[1];
   const reasons = listRaw.split('／').map((x) => x.replace(/`/g, '').trim());
   assert.equal(reasons.length, 3, `正本列的理由抽出 ${reasons.length} 個（規則寫「三種之一」）——正本或這題要改`);
-  const phrase = one(/自報一句 `([^`]+)`/gu, '自報那一句')[1];
+  const phrase = inRule(/自報一句 `([^`]+)`/gu, '自報那一句')[1];
   const mk = (/** @type {string} */ reason, /** @type {string} */ f = field, /** @type {string} */ ph = phrase) => c({ id: 9,
     body: `${head.replace('YYYY-MM-DD', '2026-09-02')}標題\n\n${f}${reason}（原因）\n\n${ph}\n\n${urlOf(1)}` });
   for (const reason of reasons) {
