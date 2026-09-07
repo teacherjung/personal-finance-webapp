@@ -326,6 +326,25 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `實測兩刀：\n\n    第一刀\n\n    ${urlOf(1)}\n\n以上。` });
   assert.equal(classify([a, withBlank], T0 + 4 * 86400e3).pending.length, 1,
     '區塊中間的空行不結束區塊，後面那段仍是程式碼');
+  // `>` 引言裡的縮排式程式碼也要剝（跟圍欄同樣要看得穿引言前綴，#579 r16 High①）
+  const quotedIndent = c({ id: 6, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `> 引用 Codex 的輸出：\n>\n>     ${urlOf(1)}\n` });
+  assert.equal(classify([a, quotedIndent], T0 + 4 * 86400e3).pending.length, 1,
+    '引言裡的縮排式程式碼也是程式碼範例，關不掉問題');
+  // ⚠️ 清單項底下的四格續行**不是**程式碼：那是 GFM 的正常寫法，而且本 repo 實際在用
+  //    （#579 r16 High②，前例＝#569 的合併回報）。當成程式碼剝掉會讓真的已結冒回未回。
+  const listCont = c({ id: 7, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `- 關的是：\n\n    ${urlOf(1)}\n` });
+  assert.equal(classify([a, listCont], T0 + 4 * 86400e3).closed.length, 1,
+    '清單項底下的四格續行是正常段落，網址看得見、算引到');
+  // 對照組：清單裡**再縮四格**才是程式碼
+  const listCode = c({ id: 8, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `- 實測輸出：\n\n      ${urlOf(1)}\n` });
+  assert.equal(classify([a, listCode], T0 + 4 * 86400e3).pending.length, 1,
+    '清單裡再縮四格＝程式碼區塊，關不掉問題');
   // 對照組：只縮排兩格不是程式碼，照樣看得見
   const twoSpace = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n  關的是 ${urlOf(1)}` });

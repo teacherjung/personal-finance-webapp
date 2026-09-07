@@ -135,7 +135,9 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   關門要在同一層引言深度，深度不同就不關門（#579 r13 High）。
  *   沒關門的圍欄＝到結尾都算看不見（偏向「看不到」）。
  * ①-2 **縮排式程式碼區塊**（空一行之後整段縮排四格以上）：GitHub 一樣渲染成 `<pre><code>`，
- *   而複審留言貼範例最常用的就是這個寫法（#579 r15 High）。清單續行那種縮排照樣當程式碼剝——多剝的方向。
+ *   而複審留言貼範例最常用的就是這個寫法（#579 r15 High）。跟圍欄一樣要**看得穿 `>` 引言前綴**（r16 High①）。
+ *   ⚠️ **清單項底下的續行不算程式碼**：`- 關的是：` ／ 空行 ／ 四格縮排放網址是 GFM 的正常寫法，
+ *   而且本 repo 實際在用（r16 High②）。所以記下清單項的內容縮排欄位，清單裡要再縮四格才算程式碼。
  * ②**行內程式碼**先收起來：它在畫面上看得見（只是換字體），不可以被下一步吃掉——
  *   `` `<!--照做-->` `` 是合法的可見寫法（#579 r5 High①的反方向）。只認同一行內的；
  *   跨行的那種就讓它照③被當成註解剝掉（偏向「看不到」）。
@@ -188,16 +190,33 @@ export function visible(body) {
   // 多剝的方向（那種寫法裡的網址會認不得 ⇒ 問題留在「還沒回」）。
   let inIndented = false;
   let prevBlank = true;
+  /** 清單項的內容縮排欄位；不在清單裡時是 null。 */
+  let listIndent = null;
   const undented = unfenced.split('\n').map((line) => {
-    const blank = line.trim() === '';
-    const indented = /^(?: {4}|\t)/.test(line);
+    // 引言裡的縮排式程式碼也要看得穿（fenced 那一段已經這樣做，這裡漏了＝少剝，#579 r16 High①）
+    const bare = line.replace(QUOTE, '');
+    const blank = bare.trim() === '';
+    const indent = /^[ \t]*/.exec(bare)?.[0].replace(/\t/g, '    ').length ?? 0;
     if (inIndented) {
-      if (blank || indented) return '';
+      if (blank || indent >= 4) return '';
       inIndented = false;
+      prevBlank = false;
+      listIndent = null;
+      return line;
+    }
+    // 清單項：記下它的**內容縮排欄位**。清單項底下的續行縮排四格是 GFM 的正常寫法
+    // （`- 關的是：` ／ 空行 ／ 四格縮排放網址），把它當程式碼剝掉會讓真的已結冒回未回
+    // ——而且這是本 repo 實際在用的寫法（#579 r16 High②，前例＝#569 的合併回報）。
+    const marker = /^( {0,3})(?:[-*+]|\d{1,9}[.)])([ \t]+)/.exec(bare);
+    if (marker) {
+      listIndent = marker[1].length + (marker[0].length - marker[1].length);
       prevBlank = false;
       return line;
     }
-    if (prevBlank && indented && !blank) { inIndented = true; return ''; }
+    if (!blank && listIndent !== null && indent < listIndent) listIndent = null;   // 縮排退回去＝清單結束
+    // 清單裡面要再縮四格才算程式碼；不在清單裡就是一般的四格門檻。
+    const codeIndent = listIndent === null ? 4 : listIndent + 4;
+    if (prevBlank && !blank && indent >= codeIndent) { inIndented = true; return ''; }
     prevBlank = blank;
     return line;
   }).join('\n');
