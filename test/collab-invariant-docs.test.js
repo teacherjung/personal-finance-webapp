@@ -15,7 +15,7 @@
 // （`scripts/check-pr-collab-fields.js`），本檔也把那支腳本的判斷釘住。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hiddenMap, headingAt } from './helpers/markdown-heading.js';
+import { headingAt } from './helpers/markdown-heading.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -662,7 +662,7 @@ test('⭐ 作廢字眼絆線：規則書裡「作廢／廢止」的次數釘成�
 });
 
 test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」那行到界線表整張表的末尾，一行不差）＋**整條祖先標題鏈**逐字——節內插一句「以下作廢」、往界線表插一列作廢、改擁有標題自己的後半、或在鏈上任何一段插標題把整節收進作廢小節，都會紅', () => {
-  // 這一族被連續打穿過好幾輪，每一輪的修法都只把釘的邊界往外挪一格，下一刀就站到新邊界外面：
+  // 這一族被反覆打穿，每一輪的修法都只把釘的邊界往外挪一格，下一刀就站到新邊界外面：
   //   數子字串（#578 r1）→ 比一小段（r2）→ 切掉左前綴（r3）→ 只釘規則那一顆（Grok 掃後：末尾補一句、參考定義）
   //   → 釘那一顆＋前後緊鄰（r5：節內更前面插一顆「以下作廢」的同層項目、把界線表那行的後半改成作廢宣告）
   //   → 釘整節（r6：界線表那行與它的表格之間插一句可見的粗體作廢句；本節前面插 `#### 以下整節已作廢`）
@@ -689,6 +689,11 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //     ⑧**容器裡的 ATX**（`- #### …`／`> #### …`）——它其實會渲染成標題，但**容器裡的標題只能
   //       重新分配那個容器內部的內容**，而本節不在任何容器裡，所以它換不走本節的爸爸（#578 r13）
   //     ⑨離本節更遠的散文。
+  //   **反方向（可能假紅，一併照實列）**：判準**刻意不做隱藏區掃描**，所以圍欄或 HTML 註解裡
+  //     長得像 ATX 的行會被當成標題。理由與量測在 `test/helpers/markdown-heading.js` 的檔頭：
+  //     那些例外規則在這份檔案的整部歷史上守到的量是 0，卻是幾乎每一條 High 的來源
+  //     （「看起來像隱藏區、其實不是」與「落單記號讓後面整片靜音」）。**假紅是紅的、看得見、
+  //     一行就能修；靜靜放過不是。** 清單續行裡縮排 1〜3 格的 ATX 同理（歷史 0 次）。
   //   ⇒ 這一族**到此封頂**：再出現新形狀一律進待辦，不再往外補。理由不是它們不重要，是九輪的實證顯示
   //     「猜 GitHub 會怎麼渲染」這條路不會收斂，而每補一格都同時帶進假紅的風險。
   // ⚠️ 但**不要把「擋不到」讀成「沒人在看」**：這九刀**每一刀都是複審抓到的**，機械閘一刀都沒抓到。
@@ -750,7 +755,6 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //   寫在 `test/helpers/markdown-heading.js` 的檔頭；那支另有一張正反例表直接釘住判準。
   // 判準本體抽到 `test/helpers/markdown-heading.js`，那裡有一張正反例表直接釘住它
   //   （#578 r11 Low⑤：原本那幾條修正沒有任何固定夾具守著，退回去也不會有考題叫）。
-  const hidden = hiddenMap(lines);
   const CHAIN = [
     '# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書',
     '## 協作流程',
@@ -763,7 +767,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
       + '⚠️ 改了這一行的任何一個字（含在括號裡補一句「以下已作廢」）都會讓這題紅——那正是要擋的（#578 r7）。');
     return hits[0];
   });
-  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i, hidden) > 0),
+  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i) > 0),
     '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，本節的歸屬就不是原來那一條鏈了');
   at.forEach((idx, k) => {
     const last = k + 1 === at.length;
@@ -775,7 +779,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
     // ⇒ 最後一段是特例：本節是那個 H3 的**直屬內文**，所以那一段裡**任何**標題都會把本節切出去（r6 的 `####` 就是）。
     const forbidUpTo = last ? 6 : k + 1;
     for (let i = idx + 1; i < next; i += 1) {
-      const level = headingAt(lines, i, hidden);
+      const level = headingAt(lines, i);
       assert.ok(level === 0 || level > forbidUpTo,
         `第 ${i + 1} 行插了一個 H${level} 標題（「${lines[i].slice(0, 40)}」），`
         + `它會讓「${CHAIN[k].replace(/^#+ /, '').slice(0, 18)}」的小節在那裡結束——`
@@ -795,20 +799,17 @@ test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要�
   const historyStart = agents.indexOf('### 審查分工的沿革');
   assert.ok(ruleStart >= 0 && blockStart >= 0 && historyStart >= 0, '三個定位字串都要在');
   assert.ok(ruleStart < blockStart && blockStart < historyStart, '那顆不在「審查回饋處置」與沿革節之間＝被搬走了');
-  // CommonMark 的標題不只「行首 # 加空白」：ATX 可有 0～3 個前導空白、井號後可接空白／tab／行尾；Setext 是段落下一行的 = 或 - 底線（#577 r5）。
   // ⚠️ **標題的判準全檔只有一份**＝`test/helpers/markdown-heading.js`（William 2026-09-07 裁：只認 ATX）。
-  //   這裡原本另外寫了一份（還認 Setext），於是同一個檔案裡有兩套互相矛盾的「什麼算標題」，
-  //   而那一份的 Setext 判斷會對正常編修假紅（#578 r13 High①）。改成共用同一支。
+  //   這裡原本另外寫了一份（還認 Setext），兩套定義互相矛盾、而且那一份會對正常編修假紅（#578 r13 High①）。
   const hasMarkdownHeading = (/** @type {string} */ text) => {
     const lines = text.split('\n');
-    const hidden = hiddenMap(lines);
-    return lines.some((_, i) => headingAt(lines, i, hidden) > 0);
+    return lines.some((_, i) => headingAt(lines, i) > 0);
   };
-  assert.ok(!hasMarkdownHeading(agents.slice(ruleStart, blockStart)), '「審查回饋處置」到那顆之間不可以隔著任何形狀的標題（ATX 含前導空白、Setext 底線）——那顆必須還在同一節');
+  assert.ok(!hasMarkdownHeading(agents.slice(ruleStart, blockStart)), '「審查回饋處置」到那顆之間不可以隔著 ATX 標題——那顆必須還在同一節（判準只認 ATX，見 markdown-heading helper 的誠實劃界）');
   const blockEnd = agents.indexOf('\n**界線表（', blockStart);
   assert.ok(blockEnd > blockStart, '那顆之後要接著「界線表」（同一節的下一顆）');
   const block = agents.slice(blockStart, blockEnd);
-  assert.ok(!hasMarkdownHeading(block), '那顆到「界線表」之間也不可以插進任何形狀的標題（#577 r4／r5：插一個假標題就把章節關係切斷、把「永遠等他」的例外切出正本）');
+  assert.ok(!hasMarkdownHeading(block), '那顆到「界線表」之間也不可以插進 ATX 標題（#577 r4／r5：插一個假標題就把章節關係切斷、把「永遠等他」的例外切出正本）');
   for (const line of [
     '一句白話問題＋最多三個選項＋我建議的預設＋時限', '時限＝**三天**', '不套逾時預設、永遠等他的',
     '①「錢的絕對邊界」整節（含規則 4 的通報：沒回也不得試用）', '②**金額口徑**——射程＝下方界線表那一列', '③**任何會讓閘變鬆的事**',
