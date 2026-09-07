@@ -246,7 +246,8 @@ test('⭐ 撤回：合規的一則把題目移到「我撤回的」那一堆，�
   assert.equal(r.provisional.length, 0, '撤回也不是逾時暫定');
   assert.equal(r.withdrawn.length, 1);
   assert.equal(r.withdrawn[0].closedBy[0].kind, 'withdraw');
-  assert.equal(r.withdrawn[0].closedBy[0].reason, '題目依附的東西沒了', '理由要帶出來（報告要印它）');
+  assert.equal(r.withdrawn[0].closedBy[0].reason, '題目依附的東西沒了（那支 PR 關了）',
+    '理由要帶出**整行**（類別＋括號裡的具體依據）——括號那半才是他用來推翻這次撤回的材料（#582 r1 Medium①）');
 });
 
 test('⭐ 撤回一定要印出來，而且要印理由：這是唯一由我單方面發動的結局，安全網在輸出上', () => {
@@ -254,8 +255,14 @@ test('⭐ 撤回一定要印出來，而且要印理由：這是唯一由我單�
   const r = classify([a, withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) })], T0 + 3600e3);
   const out = render(r, { host: 'github.com', slug: 'o/r', expected: 2 });
   assert.match(out, /我撤回的、他沒回過：1 則/);
-  assert.match(out, /要不要做這件事？[\s\S]*我撤回：「要不要做這件事？」（理由：題目依附的東西沒了）/,
-    '題目、理由要印在一起——他要能一眼看出我撤了什麼、憑什麼撤');
+  assert.match(out, /要不要做這件事？[\s\S]*我撤回：「要不要做這件事？」（理由：題目依附的東西沒了（那支 PR 關了））/,
+    '題目、理由要印在一起，而且理由要含括號裡的具體依據——他要能一眼看出我撤了什麼、憑什麼撤');
+  // ⚠️ 這一刀是 #582 r1 Medium① 的保存題：只印類別的話，下面這種「類別對、括號裡自己招了」的撤回會被印得無懈可擊
+  const sneaky = c({ id: 3, at: T0 + 60e3,
+    body: `## 🚫 撤回（2026-09-02）：要不要做這件事？\n\n撤回理由：題目依附的東西沒了（但其實那支 PR 還開著，只是我覺得不重要了）\n\n`
+      + `Claude 撤回、William 未回；他隨時可以要我重問\n\n${urlOf(1)}` });
+  const out2 = render(classify([a, sneaky], T0 + 3600e3), { host: 'github.com', slug: 'o/r', expected: 2 });
+  assert.match(out2, /但其實那支 PR 還開著，只是我覺得不重要了/, '括號裡那半不可以被丟掉——那是唯一能戳破這次撤回的字');
   // 一則都沒有的時候也要出聲「沒有」：整段消失跟「沒有撤回過」看起來一樣
   const none = render(classify([a], T0 + 3600e3), { host: 'github.com', slug: 'o/r', expected: 1 });
   assert.match(none, /我撤回的、他沒回過：沒有/);
@@ -312,20 +319,32 @@ test('⭐ 撤回也要照「引用寫在最外層」那條判準：藏在引言�
 
 test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩句固定字樣，工具要逐字認得', () => {
   // 沒有這一題的話，正本改了用詞、工具照舊認舊字樣，全卷還是綠的（同模板題與時限題的病型）。
+  // ⚠️ 三種理由、欄名、自報句**一律從正本抽**，不可以寫死在考題裡（#582 r1 Medium②）：
+  //    寫死的話 `section.includes(舊字串)` 只證明「舊字串還在那一節出現過」，證明不了它仍是正本列的那一組——
+  //    正本把理由改成別的詞、或把欄名換掉，工具照舊認舊字樣，這一題還是綠的。
   const section = reviewSectionOf(readDoc('AGENTS.md'));
-  const tpl = [...section.matchAll(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu)];
-  assert.equal(tpl.length, 1, `那一節裡 🚫 的第一行模板命中 ${tpl.length} 處（要剛好 1 處）`);
-  const mk = (/** @type {string} */ reason) => c({ id: 9,
-    body: `${tpl[0][1].replace('YYYY-MM-DD', '2026-09-02')}標題\n\n撤回理由：${reason}（原因）\n\nClaude 撤回、William 未回；他隨時可以要我重問\n\n${urlOf(1)}` });
-  for (const reason of ['題目依附的東西沒了', '問題本身問錯了', '跟另一則 ❓ 重複']) {
-    assert.ok(section.includes(reason), `正本那一節裡找不到理由「${reason}」——正本改寫法了，工具與這題要一起改`);
+  const one = (/** @type {RegExp} */ re, /** @type {string} */ what) => {
+    const hits = [...section.matchAll(re)];
+    assert.equal(hits.length, 1, `那一節裡「${what}」命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，工具與這題要一起改`);
+    return hits[0];
+  };
+  const head = one(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu, '🚫 的第一行模板')[1];
+  const field = one(/內文＝`(撤回理由：)`/gu, '撤回理由的欄名')[1];
+  const listRaw = one(/內文＝`撤回理由：` 加上\*\*三種之一\*\*（([^）]+)）/gu, '三種理由那一組')[1];
+  const reasons = listRaw.split('／').map((x) => x.replace(/`/g, '').trim());
+  assert.equal(reasons.length, 3, `正本列的理由抽出 ${reasons.length} 個（規則寫「三種之一」）——正本或這題要改`);
+  const phrase = one(/自報一句 `([^`]+)`/gu, '自報那一句')[1];
+  const mk = (/** @type {string} */ reason, /** @type {string} */ f = field, /** @type {string} */ ph = phrase) => c({ id: 9,
+    body: `${head.replace('YYYY-MM-DD', '2026-09-02')}標題\n\n${f}${reason}（原因）\n\n${ph}\n\n${urlOf(1)}` });
+  for (const reason of reasons) {
     assert.equal(shapeOf(mk(reason)), 'withdraw', `工具不認正本列的理由：${reason}`);
   }
-  for (const phrase of ['Claude 撤回、William 未回；他隨時可以要我重問', '他的話比我的撤回大']) {
-    assert.ok(section.includes(phrase), `正本那一節裡找不到「${phrase}」`);
-  }
-  // 對照：理由改一個字，工具就不認——證明綁的是正本那幾個字，不是任何長得像的東西
-  assert.equal(shapeOf(mk('題目依附的東西沒了了')), 'near');
+  // 對照組：正本那幾個字各改一處，工具就不認——證明綁的是正本，不是任何長得像的東西
+  assert.equal(shapeOf(mk(`${reasons[0]}了`)), 'near', '理由多一個字就不認');
+  assert.equal(shapeOf(mk(reasons[0], '撤回依據：')), 'near', '欄名換掉就不認');
+  assert.equal(shapeOf(mk(reasons[0], field, `${phrase}吧`)), 'near', '自報那一句改掉就不認');
+  // 權力順序那一句也要在正本裡（工具的分堆照它做）
+  assert.ok(section.includes('他的話比我的撤回大'), '正本那一節裡找不到「他的話比我的撤回大」');
 });
 
 test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在時刻由參數注入，不看牆上時鐘）', () => {
