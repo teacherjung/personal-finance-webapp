@@ -63,6 +63,9 @@ export const TIMEOUT_HOURS = 72;
 const ASK = /^## ❓ 待裁（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 const RULING = /^## ⚖ William 裁示（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 const TIMEOUT = /^## ⏳ 逾時暫定（(\d{4})-(\d{2})-(\d{2})）：\S/u;
+// 第三種結局（William 2026-09-08 裁，原話逐字「補「這題不用問了」這種收法」）：題目已經沒有對象可以回答時，
+// 由 Claude 撤回。**這是三種結局裡唯一由 Claude 單方面發動的**，所以形狀卡得比另外兩種緊（見 WITHDRAW_REASON）。
+const WITHDRAW = /^## 🚫 撤回（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 // 內文非有不可的欄位（規則正本要求的形狀；缺了就不是一則有效的裁示／逾時暫定）。
 // ⚠️ 只驗「欄名這串字出現過」會被否定句冒充：一則寫「這裡**沒有**原話（對話中，Claude 轉述）那一段」的
 //   留言照樣算數，真的還沒回的問題就被靜靜關掉（#579 r3 High①）。所以驗的是**段落形狀**：
@@ -74,6 +77,19 @@ const TIMEOUT = /^## ⏳ 逾時暫定（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 // 把真的裁示判成形狀不合，反而讓已經回過的問題又冒回「還沒回」（實跑真語料抓到的）。
 const RULING_QUOTE = /^原話（對話中，Claude 轉述）：.*\*\*「.+」\*\*/u;
 const TIMEOUT_PHRASE = /^William 未裁、隨時可翻案/mu;
+/**
+ * 撤回的內文欄位。**理由只認三種**，而且要寫在行首。
+ * ⚠️ 為什麼要枚舉：另外兩種結局的發動者是 William（他回了）或時鐘（時限到了），撤回的發動者是 Claude 自己——
+ *   「我自己決定不問了」正是這種收法最危險的用法。枚舉逼我在三種**客觀可查**的理由裡挑一個，
+ *   挑不出來就不是撤回，該去問他（規則正本寫在 AGENTS「留痕」那一顆）。
+ * ⚠️ 誠實劃界：這驗得出「有沒有挑一種」，驗不出「挑的那一種是不是真的」。真正的網在**輸出**上——
+ *   撤回的題目一律印在清單裡、附理由與連結，讓 William 一眼看得到我撤了什麼（安全網做在輸出上，不做在判斷裡）。
+ */
+// ⚠️ 類別後面**只准接 `（` 或行尾**：只比對前綴的話，`撤回理由：題目依附的東西沒了但其實還在`
+//   也算數，而報告會照樣印出「理由：題目依附的東西沒了」——印的跟留言裡寫的不一樣，安全網就失效了。
+const WITHDRAW_REASON = /^撤回理由：(題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)(?:（|\s*$)/mu;
+/** 撤回一定要自報「這不是他的答覆」——不寫就不算數（不准把撤回寫成他回過了）。 */
+const WITHDRAW_PHRASE = /^Claude 撤回、William 未回；他隨時可以要我重問/mu;
 
 /**
  * 標頭那一行之後的**第一個可見段落**（規則正本寫的是「內文第一段」）。
@@ -96,7 +112,7 @@ function realDate(m) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 /** 長得像標頭、但不合規式的：列出來說「我沒算進去」，不要靜靜丟掉（真的發生過——有一則裁示少了 `## ⚖️ ` 前綴）。 */
-const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
+const NEAR = /❓|⚖|⏳|🚫|待裁|William 裁示|逾時暫定|撤回/u;
 
 // 引用網址的**右邊界**：網址後面必須是文字結束、或這裡列的收尾字之一，才算「引到那一則」。
 // 為什麼是正向列舉：反過來列「不可以接哪些字」是黑名單，漏一個就把還沒回的問題誤判成已結。
@@ -217,7 +233,7 @@ export function firstLine(body) {
  * （每支動到這個慣例的 PR 都會再生一批），用 `body.includes` 會把它們全撈進來。
  * 也不接受 `> ` 或 `- ` 前綴——引用別人的標頭不是一則新的。
  * @param {{body?: unknown}} c
- * @returns {'ask'|'ruling'|'timeout'|'near'|null}
+ * @returns {'ask'|'ruling'|'timeout'|'withdraw'|'near'|null}
  */
 export function shapeOf(c) {
   const line = firstLine(c?.body);
@@ -236,6 +252,7 @@ export function shapeOf(c) {
     // 裁示與逾時暫定還要有內文那一欄：第一行對、內文卻沒有他的原話（或沒說「William 未裁」），不是一則有效的留痕留言。
     if (realDate(line.match(RULING)) && RULING_QUOTE.test(firstParagraph(vis))) return 'ruling';
     if (realDate(line.match(TIMEOUT)) && TIMEOUT_PHRASE.test(vis)) return 'timeout';
+    if (realDate(line.match(WITHDRAW)) && WITHDRAW_REASON.test(vis) && WITHDRAW_PHRASE.test(vis)) return 'withdraw';
   }
   return NEAR.test(line) ? 'near' : null;
 }
@@ -396,7 +413,7 @@ export function numberOf(htmlUrl) {
  * 把攤平後的留言分成四堆。時間**注入**（不讀牆上時鐘），否則機器一忙就假紅、也釘不住 71:59／72:00 的邊界。
  * @param {any[]} comments
  * @param {number} nowMs
- * @returns {{pending: any[], provisional: any[], closed: any[], near: any[], scanned: number}}
+ * @returns {{pending: any[], provisional: any[], closed: any[], withdrawn: any[], near: any[], scanned: number}}
  */
 export function classify(comments, nowMs) {
   const owner = (/** @type {any} */ c) => c?.author_association === 'OWNER';
@@ -410,9 +427,9 @@ export function classify(comments, nowMs) {
         : '第一行合規、但不是 repo 擁有者貼的',
     }));
   const asks = shaped.filter((x) => x.shape === 'ask' && owner(x.c)).map((x) => x.c);
-  const closers = shaped.filter((x) => (x.shape === 'ruling' || x.shape === 'timeout') && owner(x.c))
-    .map((x) => ({ c: x.c, kind: /** @type {'ruling'|'timeout'} */ (x.shape) }));
-  const pending = []; const provisional = []; const closed = [];
+  const closers = shaped.filter((x) => (x.shape === 'ruling' || x.shape === 'timeout' || x.shape === 'withdraw') && owner(x.c))
+    .map((x) => ({ c: x.c, kind: /** @type {'ruling'|'timeout'|'withdraw'} */ (x.shape) }));
+  const pending = []; const provisional = []; const closed = []; const withdrawn = [];
   for (const ask of asks) {
     const askAt = Date.parse(ask.created_at);
     if (Number.isNaN(askAt)) throw new Error(`留言 ${ask.id} 的建立時間讀不出來：${ask.created_at}`);
@@ -444,14 +461,24 @@ export function classify(comments, nowMs) {
       unlinkedLater: hits.length === 0 && closers.some((x) => Date.parse(x.c.created_at) > askAt),
       // 帶上關掉它的那則留言的**標題**：配錯時「問題是 A、裁示標題卻是 B」一眼就看得出來——
       // 這比在可見層上再補二十輪排版判斷更能防「誤關」（#579 r24 之後的做法）。
-      closedBy: hits.map((x) => ({ kind: x.kind, url: x.c.html_url, title: titleOf(x.c.body) })),
+      // 撤回還要帶**理由**：光印標題看不出我是照哪一種客觀情況撤的（安全網做在輸出上）。
+      closedBy: hits.map((x) => ({
+        kind: x.kind, url: x.c.html_url, title: titleOf(x.c.body),
+        reason: x.kind === 'withdraw' ? (visible(x.c.body).match(WITHDRAW_REASON)?.[1] ?? null) : null,
+      })),
     };
+    // 優先序：**他的話最大**。有 ⚖️ 就是已結，即使我後來（或先前）撤回過——他要回答一題我撤掉的，
+    // 只要貼一則 ⚖️ 就把它拿回來，不必先撤銷我的撤回（Claude 的動作不可以擋住 William 的話）。
     if (hits.length === 0) pending.push(item);
-    else if (hits.every((x) => x.kind === 'timeout')) provisional.push(item);
-    else closed.push(item);
+    else if (hits.some((x) => x.kind === 'ruling')) closed.push(item);
+    else if (hits.some((x) => x.kind === 'withdraw')) withdrawn.push(item);
+    else provisional.push(item);
   }
   const byOld = (/** @type {any} */ a, /** @type {any} */ b) => Date.parse(a.createdAt) - Date.parse(b.createdAt);
-  return { pending: pending.sort(byOld), provisional: provisional.sort(byOld), closed: closed.sort(byOld), near, scanned: comments.length };
+  return {
+    pending: pending.sort(byOld), provisional: provisional.sort(byOld), closed: closed.sort(byOld),
+    withdrawn: withdrawn.sort(byOld), near, scanned: comments.length,
+  };
 }
 
 /** 「放了 X 天 Y 小時」。 @param {number} hours */
@@ -470,7 +497,8 @@ function one(item, i) {
   lines.push(`   看這裡：${item.url}`);
   if (item.unlinkedLater) lines.push('   ⚠️ 後面有裁示留言沒有引用這一則的網址，我不能替你配對——請自己看一眼');
   for (const c of item.closedBy) {
-    lines.push(`   ${c.kind === 'timeout' ? '已逾時暫定' : '已裁'}：「${c.title}」`);
+    const label = { timeout: '已逾時暫定', withdraw: '我撤回', ruling: '已裁' }[c.kind] ?? '已裁';
+    lines.push(`   ${label}：「${c.title}」${c.reason ? `（理由：${c.reason}）` : ''}`);
     lines.push(`   　　${c.url}`);
   }
   return lines.join('\n');
@@ -486,6 +514,7 @@ export function render(r, meta) {
   const only = meta.only ?? null;
   const pick = (/** @type {any[]} */ xs) => (only === null ? xs : xs.filter((x) => x.number === only));
   const pending = pick(r.pending); const provisional = pick(r.provisional); const closed = pick(r.closed);
+  const withdrawn = pick(r.withdrawn ?? []);
   const near = pick(r.near);   // 「形狀不合」也要套同一個過濾，否則 --pr 的標頭說只印那一支、下面卻列出整庫（#579 r2 Medium③）
   const out = [
     `待裁清單：${meta.host} / ${meta.slug}${only === null ? '（掃全 repo）' : `（掃全 repo，只印貼在 #${only} 的）`}`,
@@ -500,6 +529,10 @@ export function render(r, meta) {
   }
   out.push('', closed.length ? `我判定已結的：${closed.length} 則（配對連結在下面，配錯了看得出來）` : '我判定已結的：沒有',
     ...closed.map((x, i) => one(x, i + 1)));
+  // ⚠️ 撤回**一定要印**（有幾則就印幾則，沒有也要說「沒有」）：這是三種結局裡唯一由我單方面發動的，
+  //    而機器判不出「我撤得對不對」。安全網做在**輸出**上——把我撤掉的題目連理由一起攤在他眼前。
+  out.push('', withdrawn.length ? `我撤回的、他沒回過：${withdrawn.length} 則（理由與連結在下面；要我重問就說一聲）` : '我撤回的、他沒回過：沒有',
+    ...withdrawn.map((x, i) => one(x, i + 1)));
   if (near.length) {
     out.push('', `形狀不合、我沒算進去的：${near.length} 則（第一行或內文不合規定，或不是 repo 擁有者貼的）`,
       ...near.map((x, i) => `${i + 1}. ${x.line}\n   ${x.why}\n   看這裡：${x.url}`));
