@@ -237,42 +237,145 @@ test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在
   assert.equal(TIMEOUT_HOURS, 72);
 });
 
-test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 留痕段抽出模板、填真日期，工具要認得；改模板一個字就不認', () => {
-  // 三條正則與考題夾具原本都是寫死的；正本改了第一行用詞，工具與考題可以一起留在舊形狀上全綠（Grok #579 掃後 3②）。
-  // ⚠️ 「綁回正本」三件事缺一不可（#579 r26 Medium：只在整份原始檔找字串，正本改掉時檔頭一則 HTML 註解
-  //    留著舊模板就騙綠）：①先剝 HTML 註解 ②只在「審查回饋處置」那一節裡找（到「界線表」為止）③要求剛好一處。
-  //    不過 visible()（留痕那一段是縮排的清單續行，「只認頂層」會整段丟掉），只剝註解。
-  const agentsAll = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const from = agentsAll.indexOf('**審查回饋處置（');
-  const to = agentsAll.indexOf('\n**界線表（', from);
-  assert.ok(from >= 0 && to > from, '找不到「審查回饋處置」那一節——正本搬家了，這題要跟著改');
-  const agents = agentsAll.slice(from, to);
-  const tpl = (/** @type {string} */ mark) => {
-    const hits = [...agents.matchAll(new RegExp('`(## ' + mark + '[^`]*（YYYY-MM-DD）：)[^`]*`', 'gu'))];
-    assert.equal(hits.length, 1, `那一節裡 ${mark} 的第一行模板命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，這題與工具要一起改`);
-    return hits[0][1].replace('YYYY-MM-DD', '2026-09-02');
+// ── 綁回正本（下面幾題共用）─────────────────────────────────────────────────────
+// 「審查回饋處置」那一節：模板住在 2 格縮排的清單續行裡，工具的 visible()（只認頂層）會把那一行整個丟掉，
+// 所以抽模板不能拿它來用；但也**不再自己寫一份「剝引言／剝圍欄／剝……」**——那是跑步機（#578 r1〜r7、
+// #579 r22〜r27 各踩過：每一輪都有下一種 CommonMark 藏法）。改成兩件事把門關上：
+//  ① 兩個錨點都要是**行首粗體**、剝掉註解後**全檔各剛好一處**（#579 r27 Medium：在正本前放一段引言，裡面帶
+//     同名錨點、舊模板與假的「界線表」，用 indexOf 切段就切到假的那段）。
+//  ② 那一節必須是**平文字**：引言、圍欄、原始 HTML、四格縮排、參考定義／註腳、刪除線、圖片、連結標題、
+//     HTML 實體——任何一種出現，本題直接紅、請人來看，**不試著剝它**（2026-09-07 量過：這幾種在那一節都是 0）。
+// ⚠️ 誠實劃界：這是漂移絆線（防「改了正本忘了改工具」），不是安全閘。有 commit 權的人蓄意在同一節裡放一份
+//    長得一樣的假模板、又用上面沒列到的藏法，本題擋不住——那歸審查制度，不歸考題。
+// ⚠️ 註解要剝：畫面上看不到的不算正本；**沒關門的 `<!--` 一路吃到結尾**（GitHub 就是那樣渲染；#579 r6 Medium③）。
+//    剝的時候用空字串接起來、不是換行：`foo<!--x-->**錨點` 在畫面上是同一行的中段，不可以被剝成行首。
+const readDoc = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
+const stripComments = (/** @type {string} */ text) =>
+  text.replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '').replace(/<!--[\s\S]*$/, '');
+/** @type {[RegExp, string][]} */
+const NOT_PLAIN = [
+  [/^ {0,3}>/m, '引言（>）'],
+  [/^ {0,3}(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:`{3,}|~{3,})/m, '圍欄（``` 或 ~~~）'],
+  [/^(?: {4,}|[ \t]*\t)[ \t]*\S/m, '四格以上縮排（或 tab）'],
+  [/^ {0,3}\[[^\]]*\]:/m, '參考定義或註腳（[x]: …）'],
+  [/<[A-Za-z/!?]/, '原始 HTML（<標籤>）'],
+  [/~~/, '刪除線（~~）'],
+  [/!\[/, '圖片（![…]）'],
+  [/\]\([^)]*[ \t]["'(]/, '連結標題（](網址 "…")）'],
+  [/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/i, 'HTML 實體（&#…;）'],
+];
+
+/** AGENTS「審查回饋處置」那一節（到「界線表」為止）：錨點唯一、內容是平文字，否則丟 AssertionError。 */
+function reviewSectionOf(/** @type {string} */ agentsText) {
+  const text = stripComments(agentsText);
+  const anchor = (/** @type {RegExp} */ re, /** @type {string} */ name) => {
+    const hits = [...text.matchAll(re)];
+    assert.equal(hits.length, 1, `錨點「${name}」要是行首粗體、剝掉註解後全檔剛好一處（現在 ${hits.length} 處）——正本搬家了、或別處多了一份長得一樣的，先來看本題`);
+    return /** @type {number} */ (hits[0].index);
   };
-  const mk = (/** @type {string} */ first, /** @type {string} */ rest) => c({ id: 9, body: `${first}標題\n\n${rest}` });
-  assert.equal(shapeOf(mk(tpl('❓'), '選項…')), 'ask');
-  assert.equal(shapeOf(mk(tpl('⚖️'), '原話（對話中，Claude 轉述）：**「好」**')), 'ruling');
-  assert.equal(shapeOf(mk(tpl('⏳'), 'William 未裁、隨時可翻案')), 'timeout');
+  const from = anchor(/^\*\*審查回饋處置（/gmu, '**審查回饋處置（');
+  const to = anchor(/^\*\*界線表（/gmu, '**界線表（');
+  assert.ok(to > from, '「界線表」要在「審查回饋處置」之後（同一節的下一顆）');
+  const section = text.slice(from, to);
+  for (const [re, what] of NOT_PLAIN) {
+    assert.doesNotMatch(section, re, `「審查回饋處置」那一節出現了${what}——本題只認平文字、不剝它：先請人看那是不是一份會被當成正本的複本，再決定考題怎麼改`);
+  }
+  return section;
+}
+
+/** 三種留痕留言的第一行模板（含 YYYY-MM-DD 佔位）：從正本那一節抽、各剛好一處，而且工具要認得。 */
+function bindTemplates(/** @type {string} */ agentsText) {
+  const section = reviewSectionOf(agentsText);
+  const tpl = (/** @type {string} */ mark) => {
+    const hits = [...section.matchAll(new RegExp('`(## ' + mark + '[^`]*（YYYY-MM-DD）：)[^`]*`', 'gu'))];
+    assert.equal(hits.length, 1, `那一節裡 ${mark} 的第一行模板命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，這題與工具要一起改`);
+    return hits[0][1];
+  };
+  const out = { ask: tpl('❓'), ruling: tpl('⚖️'), timeout: tpl('⏳') };
+  const mk = (/** @type {string} */ first, /** @type {string} */ rest) => c({ id: 9, body: `${first.replace('YYYY-MM-DD', '2026-09-02')}標題\n\n${rest}` });
+  assert.equal(shapeOf(mk(out.ask, '選項…')), 'ask', `工具不認正本的 ❓ 模板：${out.ask}`);
+  assert.equal(shapeOf(mk(out.ruling, '原話（對話中，Claude 轉述）：**「好」**')), 'ruling', `工具不認正本的 ⚖️ 模板：${out.ruling}`);
+  assert.equal(shapeOf(mk(out.timeout, 'William 未裁、隨時可翻案')), 'timeout', `工具不認正本的 ⏳ 模板：${out.timeout}`);
+  return out;
+}
+
+/**
+ * 手冊「怎麼執行」那一節裡「引用寫在最外層」那一句。這一句本身住在頂層，所以用**工具自己的 visible()** 量：
+ * 規則說「引用要寫在最外層才算數」，規則那一句自己也用同一把尺——包進註解／引言／圍欄／縮排都不算（#579 r27 Medium）。
+ * 只有一份定義（工具的），考題不另寫一份剝除。
+ */
+function bindManualRule(/** @type {string} */ manualText) {
+  const lines = visible(manualText).split('\n');
+  const heads = lines.flatMap((l, i) => (/^### 怎麼執行/.test(l) ? [i] : []));
+  assert.equal(heads.length, 1, `「### 怎麼執行」在可見層要剛好一處（現在 ${heads.length} 處）——手冊改寫法了，這題要跟著改`);
+  const end = lines.findIndex((l, i) => i > heads[0] && /^#{1,3} /.test(l));
+  const section = lines.slice(heads[0], end < 0 ? undefined : end);
+  const hits = section.filter((l) => /^\*\*引用網址必須寫在留言最外層才算數\*\*/.test(l));
+  assert.equal(hits.length, 1, `「怎麼執行」那一節的可見層裡，正本那一句（行首粗體）命中 ${hits.length} 處（要剛好 1 處）——包進註解／引言／圍欄／縮排都不算`);
+  assert.match(hits[0], /issuecomment-5570875993/, '那一句要在同一行附 William 裁示的落點網址');
+  return hits[0];
+}
+
+test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 那一節抽出模板、填真日期，工具要認得；改模板一個字就不認', () => {
+  // 三條正則與考題夾具原本都是寫死的；正本改了第一行用詞，工具與考題可以一起留在舊形狀上全綠（Grok #579 掃後 3②）。
+  const t = bindTemplates(readDoc('AGENTS.md'));
   // 對照：模板改一個字（名稱多一個字），工具就不認——證明綁的是正本那一句，不是任何長得像的東西
-  assert.equal(shapeOf(mk(tpl('⚖️').replace('裁示', '裁示了'), '原話（對話中，Claude 轉述）：**「好」**')), 'near');
+  const fake = c({ id: 9, body: `${t.ruling.replace('YYYY-MM-DD', '2026-09-02').replace('裁示', '裁示了')}標題\n\n原話（對話中，Claude 轉述）：**「好」**` });
+  assert.equal(shapeOf(fake), 'near');
 });
 
-test('⭐ 「引用寫在最外層」這條判準綁回它的正本（REVIEW-AND-MERGE 核對清單），而且要附落點', () => {
-  // 這條判準不在 AGENTS「問法與逾時預設」那顆裡（那顆已被 #578 逐字釘住），它住在合併手冊的核對清單。
-  // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。
-  // 同樣三件事：剝註解、切到「### 怎麼執行」那一節（到下一個標題為止）、剛好一處（#579 r26 Medium）。
-  const manualAll = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const mLines = manualAll.split('\n');
-  const start = mLines.findIndex((l) => /^### 怎麼執行/.test(l));
-  assert.ok(start >= 0, '找不到「### 怎麼執行」那一節——手冊改寫法了，這題要跟著改');
-  const end = mLines.findIndex((l, i) => i > start && /^#{1,3} /.test(l));
-  const manual = mLines.slice(start, end < 0 ? undefined : end).join('\n');
-  const hits = manual.match(/引用網址必須寫在留言最外層才算數/g) ?? [];
-  assert.equal(hits.length, 1, `「怎麼執行」那一節裡正本那一句命中 ${hits.length} 處（要剛好 1 處）`);
-  assert.match(manual, /引用網址必須寫在留言最外層才算數[^\n]*issuecomment-5570875993/, '那一句要附 William 裁示的落點網址');
+test('⭐ 綁回正本那題自己要有保存題：r26／r27 兩種騙法餵進去都要紅，不是只在真檔上綠（#579 r27 Medium）', () => {
+  const base = stripComments(readDoc('AGENTS.md'));
+  const t = bindTemplates(base);   // 對照組：真正本要過
+  const cell = '`' + t.ruling;     // 正本那一格的開頭：`## ⚖️ William 裁示（YYYY-MM-DD）：
+  assert.equal(base.split(cell).length - 1, 1, '對照斷言：⚖️ 模板在真檔裡只出現一次（下面的夾具靠這個定位）');
+  const section = reviewSectionOf(base);
+  assert.ok(base.includes(section), '對照斷言：那一節是真檔的逐字切片（夾具靠它拼鬼影）');
+  // 正本改了用詞（多一個「了」，仍抽得到）、工具沒跟上 → 要紅。這是本題存在的全部理由。
+  const rewritten = base.replace(cell, cell.replace('裁示', '裁示了'));
+  assert.throws(() => bindTemplates(rewritten), /工具不認正本的 ⚖️ 模板/, '沒有鬼影：正本改了、工具沒改 → 紅');
+  // r26：舊模板留在檔頭的 HTML 註解裡（畫面上看不到）
+  assert.throws(() => bindTemplates(`<!--\n${section}\n-->\n${rewritten}`), /工具不認正本的 ⚖️ 模板/, 'r26：註解裡的舊模板不算正本');
+  // r27：正本前放一段標成「已停用存查」的引言，裡面帶同名錨點、舊模板與假的「界線表」
+  const quoted = section.split('\n').map((l) => `> ${l}`).join('\n');
+  assert.throws(() => bindTemplates(`> ⚠️ 已停用存查\n${quoted}\n> **界線表（舊）**\n\n${rewritten}`), /工具不認正本的 ⚖️ 模板/,
+    'r27：引言裡的錨點不是行首粗體，切段切不到它；抽到的是真正本，而真正本已改');
+  // 同一招不加引言（頂層第二份同名錨點）→ 錨點不唯一
+  assert.throws(() => bindTemplates(`${section}\n**界線表（舊）**\n\n${rewritten}`), /錨點「\*\*審查回饋處置（」[^\n]*剛好一處/, '頂層第二份同名錨點 → 紅');
+  // 舊模板塞進那一節裡的圍欄／引言／原始 HTML／刪除線 → 那一節不再是平文字，不剝、直接紅
+  const inject = (/** @type {string} */ ghost) => rewritten.replace('\n**界線表（', `\n${ghost}\n**界線表（`);
+  assert.throws(() => bindTemplates(inject('```\n' + cell + '`\n```')), /出現了圍欄/, '節內圍欄 → 紅');
+  assert.throws(() => bindTemplates(inject('> ' + cell + '`')), /出現了引言/, '節內引言 → 紅');
+  assert.throws(() => bindTemplates(inject('<details>' + cell + '`</details>')), /出現了原始 HTML/, '節內原始 HTML → 紅');
+  assert.throws(() => bindTemplates(inject('~~' + cell + '`~~')), /出現了刪除線/, '節內刪除線 → 紅');
+  // 整格刪掉 → 命中 0
+  const i = base.indexOf(cell);
+  const j = base.indexOf('`', i + 1);
+  assert.throws(() => bindTemplates(base.slice(0, i) + base.slice(j + 1)), /⚖️ 的第一行模板命中 0 處/, '正本把模板刪掉 → 紅');
+});
+
+test('⭐ 「引用寫在最外層」這條判準綁回它的正本（REVIEW-AND-MERGE「怎麼執行」那一節），而且要附落點', () => {
+  // 這條判準不在 AGENTS「問法與逾時預設」那顆裡（那顆已被 #578 釘住），它住在合併手冊的核對清單。
+  // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。量尺見 bindManualRule()。
+  bindManualRule(readDoc('REVIEW-AND-MERGE.md'));
+});
+
+test('⭐ 手冊那句的綁定也要有保存題：包進註解、放進圍欄／引言／縮排、多一份、落點拿掉，都要紅（#579 r27 Medium）', () => {
+  const real = readDoc('REVIEW-AND-MERGE.md');
+  const line = bindManualRule(real);   // 對照組：真手冊要過
+  assert.equal(real.split(line).length - 1, 1, '對照斷言：那一句在真檔裡逐字只出現一次（夾具靠它定位）');
+  assert.equal(real.split('### 怎麼執行').length - 1, 1, '對照斷言：那個標題在真檔裡只出現一次');
+  const without = real.replace(line, '');
+  assert.throws(() => bindManualRule(without), /命中 0 處/, '整句刪掉 → 紅');
+  const put = (/** @type {string} */ ghost) => without.replace('### 怎麼執行', `### 怎麼執行\n\n${ghost}`);   // 放回同一節，但藏起來
+  assert.throws(() => bindManualRule(put('```\n' + line + '\n```')), /命中 0 處/, '圍欄裡的那一句是程式碼範例，不算正本');
+  assert.throws(() => bindManualRule(put('> ' + line)), /命中 0 處/, '引言裡 → 紅');
+  assert.throws(() => bindManualRule(put('  ' + line)), /命中 0 處/, '縮排 → 紅');
+  assert.throws(() => bindManualRule(put(`<!-- ${line} -->`)), /命中 0 處/, 'HTML 註解裡 → 紅');
+  // r27 原招：真句包進 HTML 註解、舊句放進同一節的圍欄範例——舊題只剝註解、不剝圍欄，仍「剛好一處」
+  assert.throws(() => bindManualRule(real.replace(line, `<!-- ${line} -->`).replace('### 怎麼執行', '### 怎麼執行\n\n```\n' + line + '\n```')), /命中 0 處/, 'r27：註解＋圍欄 → 紅');
+  assert.throws(() => bindManualRule(real.replace(line, `${line}\n\n${line}`)), /命中 2 處/, '兩份 → 紅（哪一份是正本說不清）');
+  assert.throws(() => bindManualRule(real.replace(line, line.replace('issuecomment-5570875993', 'issuecomment-0'))), /落點/, '落點拿掉 → 紅');
 });
 
 test('⭐ 多筆配對照時間排，不照 API 回傳順序：最早引到它的那則排第一（Grok #579 掃後 2）', () => {
@@ -295,17 +398,12 @@ test('⭐ 已結的安全網是「印出來給人看」，不是機器判斷：�
 
 test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天＝連續 72 小時」，這裡就必須是 72', () => {
   // 沒有這一題的話，William 哪天把三天改成五天，AGENTS 改了、工具照舊按 72 小時印「已經超過時限」，全卷還是綠的。
-  // ⚠️ 這一題自己被騙過一次（#579 r4 Medium③）：原本在**整份 AGENTS** 取第一個命中，
-  //   於是把可見正本改成五天、在前面加一行 HTML 註解寫「時限＝**三天**」，工具留 72 小時、全卷照樣綠。
-  //   所以改成三件事：①先剝掉 HTML 註解（畫面上看不到的不算正本）②只在「審查回饋處置」那一節裡找
-  //   ③要求**剛好一處**，而且正本自己寫的「N 天」與「連續 M 小時」要先對得上。
-  // ⚠️ 這裡**共用工具那支 `visible()`**，不自己再寫一份剝除：兩份會漂，而且我這份原本只認成對的
-  //    `<!--…-->`，於是在正本前面插一個**沒關門**的 `<!--`（GitHub 會把後文整段隱藏）就能騙過（#579 r6 Medium③）。
-  const agents = visible(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
-  const from = agents.indexOf('**審查回饋處置（');
-  const to = agents.indexOf('\n**界線表（', from);
-  assert.ok(from >= 0 && to > from, '找不到「審查回饋處置」那一節（到「界線表」為止）——正本搬家了，這題要跟著改');
-  const hits = [...agents.slice(from, to).matchAll(/時限＝\*\*(.)天\*\*＝連續 (\d+) 小時/gu)];
+  // ⚠️ 這一題自己被騙過兩次：原本在**整份 AGENTS** 取第一個命中，在前面加一行 HTML 註解寫「時限＝**三天**」
+  //   就騙得過（#579 r4 Medium③）；改成只剝成對的 `<!--…-->` 之後，插一個**沒關門**的 `<!--` 又騙得過
+  //   （#579 r6 Medium③）。現在跟模板那題共用 reviewSectionOf()：剝註解（含沒關門的）、錨點唯一、那一節平文字、
+  //   而且正本自己寫的「N 天」與「連續 M 小時」要先對得上。
+  const section = reviewSectionOf(readDoc('AGENTS.md'));
+  const hits = [...section.matchAll(/時限＝\*\*(.)天\*\*＝連續 (\d+) 小時/gu)];
   assert.equal(hits.length, 1, `那一節裡「時限＝**N天**＝連續 M 小時」命中 ${hits.length} 處（要剛好 1 處）`);
   const [, cn, hours] = hits[0];
   const days = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7 }[cn];
