@@ -155,7 +155,7 @@ test('⭐ 逾時暫定要寫正本那一整句：只寫「William 未裁」半�
   assert.equal(shapeOf(hidden), 'near', 'HTML 註解裡的那一句畫面上看不到，不算留痕');
   const fencedT = c({ id: 6, at: T0 + 5 * 86400e3,
     body: `## ⏳ 逾時暫定（2026-09-06）：同一句問題\n\n\`\`\`\nWilliam 未裁、隨時可翻案\n\`\`\`\n❓ 留言：${urlOf(1)}` });
-  assert.equal(shapeOf(fencedT), 'near', '圍欄裡的那一句畫面上看不到，不算留痕');
+  assert.equal(shapeOf(fencedT), 'near', '圍欄裡的那一句是程式碼範例（看得見，但不是正文），不算留痕');
   for (const bad of [half, hidden, fencedT]) {
     assert.equal(classify([a, bad], T0 + 6 * 86400e3).pending.length, 1, '沒照形狀寫的 ⏳ 不可以把問題移出「還沒回」');
   }
@@ -237,6 +237,49 @@ test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在
   assert.equal(TIMEOUT_HOURS, 72);
 });
 
+test('⭐ 三種第一行的形狀綁回規則正本：從 AGENTS 留痕段抽出模板、填真日期，工具要認得；改模板一個字就不認', () => {
+  // 三條正則與考題夾具原本都是寫死的；正本改了第一行用詞，工具與考題可以一起留在舊形狀上全綠（Grok #579 掃後 3②）。
+  // ⚠️ 讀**原文**、不過 visible()：留痕那一段在 AGENTS 裡是縮排的清單續行，「只認頂層」會把它整段丟掉。
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  const tpl = (/** @type {string} */ mark) => {
+    const m = agents.match(new RegExp('`(## ' + mark + '[^`]*（YYYY-MM-DD）：)[^`]*`', 'u'));
+    assert.ok(m, `AGENTS 留痕段找不到 ${mark} 的第一行模板——正本改寫法了，這題與工具要一起改`);
+    return m[1].replace('YYYY-MM-DD', '2026-09-02');
+  };
+  const mk = (/** @type {string} */ first, /** @type {string} */ rest) => c({ id: 9, body: `${first}標題\n\n${rest}` });
+  assert.equal(shapeOf(mk(tpl('❓'), '選項…')), 'ask');
+  assert.equal(shapeOf(mk(tpl('⚖️'), '原話（對話中，Claude 轉述）：**「好」**')), 'ruling');
+  assert.equal(shapeOf(mk(tpl('⏳'), 'William 未裁、隨時可翻案')), 'timeout');
+  // 對照：模板改一個字（名稱多一個字），工具就不認——證明綁的是正本那一句，不是任何長得像的東西
+  assert.equal(shapeOf(mk(tpl('⚖️').replace('裁示', '裁示了'), '原話（對話中，Claude 轉述）：**「好」**')), 'near');
+});
+
+test('⭐ 「引用寫在最外層」這條判準綁回它的正本（REVIEW-AND-MERGE 核對清單），而且要附落點', () => {
+  // 這條判準不在 AGENTS「問法與逾時預設」那顆裡（那顆已被 #578 逐字釘住），它住在合併手冊的核對清單。
+  // 工具的行為與正本要綁在一起：正本那一句消失，這題紅（Grok #579 掃後 3①、5）。
+  const manual = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
+  assert.match(manual, /引用網址必須寫在留言最外層才算數/, '正本那一句不見了');
+  assert.match(manual, /引用網址必須寫在留言最外層才算數[^\n]*issuecomment-5570875993/, '那一句要附 William 裁示的落點網址');
+});
+
+test('⭐ 多筆配對照時間排，不照 API 回傳順序：最早引到它的那則排第一（Grok #579 掃後 2）', () => {
+  const a = ask({ id: 1 });
+  const later = ruling({ id: 3, at: T0 + 7200e3, cites: urlOf(1) });
+  const earlier = ruling({ id: 2, at: T0 + 3600e3, cites: urlOf(1) });
+  const r = classify([a, later, earlier], T0 + 86400e3);   // 故意把較晚的放前面
+  assert.deepEqual(r.closed[0].closedBy.map((x) => x.url), [earlier.html_url, later.html_url], '配對順序要照建立時間');
+});
+
+test('⭐ 已結的安全網是「印出來給人看」，不是機器判斷：裁示標題跟問題對不上時，題目仍在已結（不是還沒回）', () => {
+  // 這一題釘的是**誠實的行為**：配錯不會被機器擋下，只會顯示在「已結」段讓人看見（Grok #579 掃後 2）。
+  const a = ask({ id: 1, q: '要不要做這件事？' });
+  const generic = c({ id: 2, at: T0 + 60e3, body: `## ⚖️ William 裁示（2026-09-02）：另一件完全無關的事\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${urlOf(1)}` });
+  const r = classify([a, generic], T0 + 3600e3);
+  assert.equal(r.pending.length, 0); assert.equal(r.closed.length, 1);
+  assert.match(render(r, { host: 'github.com', slug: 'o/r', expected: 2 }), /要不要做這件事？[\s\S]*已裁：「另一件完全無關的事」/,
+    '對不上的標題要跟問題印在一起，讓人一眼看出配錯');
+});
+
 test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天＝連續 72 小時」，這裡就必須是 72', () => {
   // 沒有這一題的話，William 哪天把三天改成五天，AGENTS 改了、工具照舊按 72 小時印「已經超過時限」，全卷還是綠的。
   // ⚠️ 這一題自己被騙過一次（#579 r4 Medium③）：原本在**整份 AGENTS** 取第一個命中，
@@ -263,7 +306,7 @@ test('⭐ 藏起來的東西不算數：原話或網址放在圍欄／HTML 註�
   const fenced = c({ id: 2, at: T0 + 60e3, body: '## ⚖️ William 裁示（2026-09-02）：答覆\n\n```\n原話（對話中，Claude 轉述）：**「假的」**\n```\n'
     + `關的是 ${urlOf(1)}` });
   assert.ok(String(fenced.body).includes('原話（對話中，Claude 轉述）'), '對照斷言：原話那串字真的在原文裡，只是藏在圍欄裡');
-  assert.equal(shapeOf(fenced), 'near', '圍欄裡的原話畫面上看不到，不算一段留痕');
+  assert.equal(shapeOf(fenced), 'near', '圍欄裡的原話是程式碼範例（看得見，但不是正文），不算一段留痕');
   const commented = c({ id: 3, at: T0 + 60e3, body: '## ⚖️ William 裁示（2026-09-02）：答覆\n\n<!-- 原話（對話中，Claude 轉述）：**「假的」** -->\n'
     + `關的是 ${urlOf(1)}` });
   assert.equal(shapeOf(commented), 'near', 'HTML 註解裡的原話畫面上看不到，不算一段留痕');
@@ -287,7 +330,7 @@ test('⭐ 原話要在標頭後的**第一個可見段落**：可見處放一段
 });
 
 test('⭐ 原話前面擋著一段不可見內容，仍要認得（剝掉之後它才是第一個可見段落）', () => {
-  // 「第一段」講的是**畫面上**的第一段。上面放一則 HTML 註解或一段圍欄，讀的人根本看不到，
+  // 「第一段」講的是**正文**的第一段。上面放一則 HTML 註解（真的不顯示）或一段圍欄（顯示成程式碼、不是正文），
   // 不剝掉就會把一則完全合規的裁示判成形狀不合——那會讓已經回過的問題冒回「還沒回」。
   const a = ask({ id: 1 });
   const afterComment = c({ id: 2, at: T0 + 60e3,
@@ -317,7 +360,7 @@ test('⭐ 圍欄要記長度：四個反引號開門，內文那行 ```js 不是
   for (const [name, cmt] of [['較短的關門行', shorter], ['帶資訊字串的關門行', withInfo]]) {
     assert.equal(shapeOf(cmt), 'ruling', `${name}：這一則本身是合規的裁示（只是它沒有可見地引到這一題）`);
     assert.ok(String(cmt.body).includes(urlOf(1)), `${name}：對照斷言——網址真的在原文裡，只是關在圍欄中`);
-    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1, `${name}：圍欄裡的網址畫面上看不到，關不掉問題`);
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1, `${name}：圍欄裡的網址是程式碼範例、不是可點的引用，關不掉問題`);
   }
   // 對照組：真的關門了，後面的網址就看得見、就算引到
   const closed = c({ id: 4, at: T0 + 60e3,
@@ -345,15 +388,14 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `> 引用 Codex 的輸出：\n>\n>     ${urlOf(1)}\n` });
   assert.equal(classify([a, quotedIndent], T0 + 4 * 86400e3).pending.length, 1,
     '引言裡的縮排式程式碼也是程式碼範例，關不掉問題');
-  // ⚠️ 清單項底下的四格續行**不是**程式碼：那是 GFM 的正常寫法，而且本 repo 實際在用
-  //    （#579 r16 High②，前例＝#569 的合併回報）。當成程式碼剝掉會讓真的已結冒回未回。
+  // 清單項底下的續行：GFM 把它當正文，但本支**只認頂層**（William 2026-09-07 裁），所以認不得——
+  //    後果是留在「還沒回」（安全方向），不是誤關。這一題釘的是新判準，不是舊的容器解析。
   const listCont = c({ id: 7, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 關的是：\n\n    ${urlOf(1)}\n` });
   assert.equal(classify([a, listCont], T0 + 4 * 86400e3).pending.length, 1,
     '清單項底下的續行不在頂層＝引用認不得（安全方向：問題留在「還沒回」，不會誤關）');
-  // 清單裡的程式碼區塊**結束之後**，同一個清單項底下的正常段落要留著
-  //（結束門檻退回固定四格的話，會把它一起吞掉 ⇒ 真的已結冒回未回，#579 r18 High）
+  // 清單裡的程式碼區塊結束之後的段落：同樣不在頂層、認不得（安全方向）。舊的容器解析已刪，這裡釘的是新判準。
   const afterListCode = c({ id: 9, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 實測輸出：\n\n      command output\n\n    關的是 ${urlOf(1)}\n` });
@@ -380,7 +422,7 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
   assert.ok(String(quoteInList.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在清單裡的引言程式碼中');
   assert.equal(classify([a, quoteInList], T0 + 4 * 86400e3).pending.length, 1,
     '清單裡的引言程式碼還是程式碼，關不掉問題');
-  // 對照組：清單裡的引言**一般文字**照樣看得見
+  // 清單裡的引言一般文字：GitHub 看得見，但不在頂層、認不得（安全方向）
   const quoteText = c({ id: 13, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 先列背景\n\n  > 關的是 ${urlOf(1)}\n` });
@@ -398,7 +440,7 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
       + `- 實測輸出：\n\n      ${urlOf(1)}\n` });
   assert.equal(classify([a, listCode], T0 + 4 * 86400e3).pending.length, 1,
     '清單裡再縮四格＝程式碼區塊，關不掉問題');
-  // 對照組：只縮排兩格不是程式碼，照樣看得見
+  // 縮排兩格：GitHub 當正文，但不在頂層、認不得（門檻是零縮排）
   const twoSpace = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n  關的是 ${urlOf(1)}` });
   assert.equal(classify([a, twoSpace], T0 + 4 * 86400e3).pending.length, 1,
@@ -411,7 +453,8 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
 });
 
 test('⭐ 引用只認頂層：有引言前綴或行首有縮排的一律不算（#579 r21 之後的判準）', () => {
-  // 量過真語料才這樣收：全庫 15 則留痕型留言、3 則含引用網址，**全部寫在頂層零縮排**。
+  // 量過真語料才這樣收（量法＝掃全庫第一行合規的 ❓／⚖️／⏳、看含引用網址的那些網址寫在第幾層）：
+  //    量的時候含引用網址的每一則都寫在頂層零縮排。筆數會長，這裡記量法與結論，不記數字。
   // 這個方向只會讓引用更難被認得（問題留在「還沒回」），不可能造成誤關。
   const a = ask({ id: 1 });
   assert.equal(classify([a, ruling({ id: 2, at: T0 + 60e3, cites: `關的是 ${urlOf(1)}` })], T0 + 4 * 86400e3).closed.length, 1,
@@ -935,6 +978,15 @@ test('⭐ CLI｜撈到的比 GitHub 自報的少＝被截斷 → 退 2、不印�
   });
 });
 
+test('⭐ CLI｜撈到的比 GitHub 自報的**多**也是壞回應 → 退 2、不印清單（對帳兩個方向都 fail-closed）', () => {
+  // 只擋「少於」的話，自報被低估而剛好對上長度，成功路會走完印「沒有還沒回的」（Grok #579 掃後 1B）。
+  const two = [c({ id: 1, body: '## ❓ 待裁（2026-09-01）：問題？\n選項…' }), c({ id: 2, body: '普通留言' })];
+  withFakeGh({ issues: ISSUES(1), comments: JSON.stringify([two]) }, ({ r }) => {
+    assert.equal(r.status, 2, '多於自報＝壞回應，要退 2');
+    assert.doesNotMatch(r.stdout, /還沒回的問題/, '算不出來時 stdout 不可以有清單');
+  });
+});
+
 test('⭐ CLI｜「掃完了、沒有還沒回的」與「算不出來」不可以長得一樣', () => {
   let ok = ''; let bad = '';
   withFakeGh({ issues: ISSUES(0), comments: pages([]) }, ({ r }) => { ok = r.stdout; assert.equal(r.status, 0); });
@@ -1076,42 +1128,50 @@ test('⭐ 這支不是閘（第二半）：CI 設定與 pre-push 也不可以叫
   }
 });
 
+/**
+ * `package.json` 裡哪些 script **跑得到**這支（含經 `npm run` 轉手的別名鏈，一路追）。
+ * ⚠️ 抽成一份給兩題共用：原本兩題各自複製一份迴圈，「護欄本身」那題證明的是它自己那份、
+ *    不是真正在對帳的那份——兩份可以各改各的而全綠（Grok #579 掃後 4）。
+ * @param {Record<string, string>} scripts
+ */
+function reachingScripts(scripts) {
+  const reaching = new Set(Object.keys(scripts).filter((k) => /pending-rulings/.test(scripts[k])));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, cmd] of Object.entries(scripts)) {
+      if (reaching.has(name)) continue;
+      for (const m of String(cmd).matchAll(/(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)/g)) {
+        if (reaching.has(m[1])) { reaching.add(name); grew = true; break; }
+      }
+    }
+  }
+  return [...reaching].sort();
+}
+
 test('⭐ 這支不是閘（第三半）：`package.json` 也不可以給它一個 script 別名——那是繞過字面掃描的一層轉手（#579 r3 Medium③）', () => {
   // Codex 實測：加 `"opening-reminders": "node scripts/pending-rulings.js --all"`、CI 只寫 `npm run opening-reminders`，
   // 工具已經進門（沒網路／沒權杖就擋人），而只掃字面的兩題全綠。
   // 這裡直接釘住上游：**package.json 裡沒有任何 script（含經過 `npm run` 轉手的鏈）跑得到這支**。
-  // 這樣就不必去猜 CI 會怎麼叫它，也不會因為別人改用別的呼叫寫法而失效。
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  const scripts = /** @type {Record<string, string>} */ (pkg.scripts ?? {});
-  const reaching = new Set(Object.keys(scripts).filter((k) => /pending-rulings/.test(scripts[k])));
-  // 別名鏈：`a` 只寫 `npm run b`、`b` 才跑工具，也要一路追出來
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const [name, cmd] of Object.entries(scripts)) {
-      if (reaching.has(name)) continue;
-      for (const m of String(cmd).matchAll(/(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)/g)) {
-        if (reaching.has(m[1])) { reaching.add(name); grew = true; break; }
-      }
-    }
-  }
-  assert.deepEqual([...reaching], [],
+  assert.deepEqual(reachingScripts(/** @type {Record<string, string>} */ (pkg.scripts ?? {})), [],
     'package.json 有 script 跑得到這支——CI 或 pre-push 只要寫 `npm run <別名>` 就把它變成閘，而字面掃描看不到');
 });
 
-test('⭐ 護欄本身：別名鏈追得到（不然上一題是空包彈）', () => {
-  // 上一題在現行樹上永遠是空集合＝看不出它有沒有在做事。這裡拿假的 package.json 逼它走完那段追蹤。
-  const scripts = { deep: 'node scripts/pending-rulings.js --all', mid: 'npm run deep', top: 'npm run mid', other: 'node scripts/acceptance-tier.js 1' };
-  const reaching = new Set(Object.keys(scripts).filter((k) => /pending-rulings/.test(scripts[/** @type {keyof typeof scripts} */ (k)])));
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const [name, cmd] of Object.entries(scripts)) {
-      if (reaching.has(name)) continue;
-      for (const m of String(cmd).matchAll(/(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)/g)) {
-        if (reaching.has(m[1])) { reaching.add(name); grew = true; break; }
-      }
-    }
+test('⭐ 護欄本身：別名鏈追得到（跑的是上一題**同一份**函式，不是複製品）', () => {
+  // 上一題在現行樹上永遠是空集合＝看不出它有沒有在做事。這裡拿假的 package.json 逼**同一份函式**走完追蹤。
+  assert.deepEqual(reachingScripts({ deep: 'node scripts/pending-rulings.js --all', mid: 'npm run deep', top: 'npm run mid', other: 'node scripts/acceptance-tier.js 1' }),
+    ['deep', 'mid', 'top'], '兩層轉手的別名都要追得到，不相干的 script 不可以被拖下水');
+  assert.deepEqual(reachingScripts({ a: 'npm run b', b: 'echo hi' }), [], '跟這支無關的鏈不可以誤報');
+});
+
+test('⭐ 這支不是閘（第四半）：合併閘的腳本本身也不可以呼叫它（手冊沒寫檔名 ≠ 閘腳本沒接）', () => {
+  // 合併步驟那題只掃手冊；真正會跑的是 scripts/check-*.js。字面掃描要連它們一起看（Grok #579 掃後 4）。
+  const gates = readdirSync(join(ROOT, 'scripts')).filter((f) => /^check-.*\.js$/.test(f));
+  assert.ok(gates.length >= 3, '找不到合併閘腳本＝這題變空包彈（命名改了？）');
+  for (const f of gates) {
+    assert.doesNotMatch(readFileSync(join(ROOT, 'scripts', f), 'utf8'), /pending-rulings/,
+      `scripts/${f} 呼叫了這支＝它變成一道閘的一部分`);
   }
-  assert.deepEqual([...reaching].sort(), ['deep', 'mid', 'top'], '兩層轉手的別名都要追得到，不相干的 script 不可以被拖下水');
 });
 
 test('⭐ 驗收分級：這支是不需驗收那一級（新腳本沒進名單會被當未知→要重啟）', () => {

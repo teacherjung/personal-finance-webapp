@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @ts-check
-// **待裁清單**：把「我問了 William、他還沒回」的問題列出來（William 2026-09-06 裁示要做，原話逐字「1. a. 做」）。
+// **待裁清單**：把「我問了 William、他還沒回」的問題列出來（William 2026-09-06 裁示要做，原話逐字「1. a. 做」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5560311732 ）。
 //
 // ## 這支在解什麼
 //
@@ -33,6 +33,9 @@
 // ・**「已結」是推導不是事實**：判準＝有一則**較晚**的裁示／逾時暫定留言、由 repo 擁有者貼、且內文引了那一則的留言網址。
 //   引了網址不等於在回答它（可能只是拿它當上下文），所以已結的**一定印出來**、附配對連結，讓錯的配對看得見——
 //   不由這支替他把題目吞掉。配不到的一律留在「還沒回」那一段。
+// ・**筆數對得上、集合卻不對**這支看不出來：對帳只比「撈到幾則」與「GitHub 自報幾則」，兩邊被截成同一個長度
+//   的不同窗（或自報本身被低估）時，成功路會走完並印「沒有還沒回的」。這是 API 端的失敗，本支沒有第二個來源可對，
+//   只能兩個方向都 fail-closed（多於或少於自報一律退 2）並在這裡照實寫（Grok #579 掃後 1B）。
 // ・**逾時暫定不算已結**：那一類正是「他還沒回、而我先照預設做了」，另開一段列出來（他隨時可翻案）。
 // ・**編輯痕跡用的是 `updated_at ≠ created_at`**，而 `REVIEW-AND-MERGE.md` 要審查者核對的是 GraphQL 的
 //   `includesCreatedEdit`／`lastEditedAt`——兩個訊號在本 repo 的樣本上一致，但不是同一個欄位，輸出裡有寫明。
@@ -165,7 +168,9 @@ export function visible(body) {
     return l;
   });
 
-  // 只認頂層＋圍欄追蹤（William 2026-09-07 裁：引用網址必須寫在留言最外層才算數）。
+  // 只認頂層＋圍欄追蹤。「引用網址必須寫在留言最外層才算數」＝William 2026-09-07 裁，原話逐字「a」，
+  // 落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5570875993 ；
+  // 這條規則住在 REVIEW-AND-MERGE.md「核對待裁留言」那一條（考題綁回去），本檔只是實作。
   const QUOTE = /^ {0,3}>/;
   // 開門可縮排 0〜3 格，也可以緊接在清單標記後面（`- ~~~text`）。
   const OPEN = /^ {0,3}(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})(.*)$/;
@@ -418,7 +423,8 @@ export function classify(comments, nowMs) {
     const RAW = String(ask.html_url).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const bareUrl = new RegExp(`${RAW}[?!.,:*_~]{0,3}(?=${URL_END}|$)`);
     const cited = { test: (/** @type {string} */ t) => citesUrl(t, ask.html_url, bareUrl) };
-    const hits = closers.filter((x) => cited.test(visible(x.c?.body)) && Date.parse(x.c.created_at) > askAt);
+    const hits = closers.filter((x) => cited.test(visible(x.c?.body)) && Date.parse(x.c.created_at) > askAt)
+      .sort((x, y) => Date.parse(x.c.created_at) - Date.parse(y.c.created_at));   // 配對照時間排，不照 API 回傳順序（Grok 掃後 2）
     const edited = ask.updated_at !== ask.created_at;
     const hours = (nowMs - askAt) / 3.6e6;
     const item = {
@@ -560,7 +566,9 @@ export function main(argv, opts = {}) {
     // 先問 GitHub 有幾則（issues 端點自報），再撈留言：撈到的比自報的少＝被截斷＝算不出來。
     const expected = expectedTotal(run(`repos/${slug}/issues?state=all&per_page=100`));
     const comments = flatten(run(`repos/${slug}/issues/comments?per_page=100`));
-    if (comments.length < expected) {
+    // ⚠️ 兩個方向都丟：撈到的**多於**自報也是壞回應（重複頁、兩邊不同窗）。只擋「少於」的話，
+    //    自報被低估而剛好對上長度，成功路會一路走到底印「沒有還沒回的」（Grok #579 掃後 1B）。
+    if (comments.length !== expected) {
       throw new Error(`留言只撈到 ${comments.length} 則、GitHub 自報 ${expected} 則——清單不完整，不拿殘缺的清單下結論`);
     }
     const now = opts.now ?? Date.now();
