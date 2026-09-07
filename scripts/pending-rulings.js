@@ -134,6 +134,8 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  *   **圍欄可以住在 `>` 引言裡**（AGENTS 明文要求引 Codex 的發現就用 `>`），所以先剝引言前綴再判；
  *   關門要在同一層引言深度，深度不同就不關門（#579 r13 High）。
  *   沒關門的圍欄＝到結尾都算看不見（偏向「看不到」）。
+ * ①-2 **縮排式程式碼區塊**（空一行之後整段縮排四格以上）：GitHub 一樣渲染成 `<pre><code>`，
+ *   而複審留言貼範例最常用的就是這個寫法（#579 r15 High）。清單續行那種縮排照樣當程式碼剝——多剝的方向。
  * ②**行內程式碼**先收起來：它在畫面上看得見（只是換字體），不可以被下一步吃掉——
  *   `` `<!--照做-->` `` 是合法的可見寫法（#579 r5 High①的反方向）。只認同一行內的；
  *   跨行的那種就讓它照③被當成註解剝掉（偏向「看不到」）。
@@ -180,12 +182,31 @@ export function visible(body) {
     }
     return '';
   }).join('\n');
+  // **縮排式程式碼區塊**（前面空一行、然後整段縮排四格以上）：GitHub 一樣渲染成 `<pre><code>`，
+  // 而複審留言裡貼範例最常用的就是這個寫法（#579 r15 High）。空行不結束區塊，縮排少於四格的
+  // 非空行才結束。⚠️ 清單項底下縮排四格的續行在 CommonMark 裡**不是**程式碼，這裡照樣當程式碼剝掉——
+  // 多剝的方向（那種寫法裡的網址會認不得 ⇒ 問題留在「還沒回」）。
+  let inIndented = false;
+  let prevBlank = true;
+  const undented = unfenced.split('\n').map((line) => {
+    const blank = line.trim() === '';
+    const indented = /^(?: {4}|\t)/.test(line);
+    if (inIndented) {
+      if (blank || indented) return '';
+      inIndented = false;
+      prevBlank = false;
+      return line;
+    }
+    if (prevBlank && indented && !blank) { inIndented = true; return ''; }
+    prevBlank = blank;
+    return line;
+  }).join('\n');
   /** @type {string[]} */
   const spans = [];
   // 佔位符用**私有使用區**的兩個字（\uE000／\uE001）：Markdown 裡不會出現，
   // 也不是控制字元（控制字元進正規式會被 lint 擋）。**輸入裡原有的那兩個字已在上面拿掉**——
   // 不拿掉的話，留言自己打那兩個字就能把註解裡的內容合成回可見層（#579 r9 High②）。
-  const guarded = unfenced.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
+  const guarded = undented.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
   const noComments = dangling < 0 ? paired : paired.slice(0, dangling);

@@ -312,6 +312,30 @@ test('⭐ 圍欄要記長度：四個反引號開門，內文那行 ```js 不是
   assert.equal(classify([a, closed], T0 + 4 * 86400e3).closed.length, 1, '圍欄關門之後的內容是看得見的');
 });
 
+test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常用這個寫法（#579 r15 High）', () => {
+  const a = ask({ id: 1 });
+  const indented = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `我在獨立 fixture 實測：\n\n    ${urlOf(1)}\n\n以上。` });
+  assert.ok(String(indented.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是縮排成了程式碼');
+  assert.equal(classify([a, indented], T0 + 4 * 86400e3).pending.length, 1,
+    '縮排四格＝畫面上是程式碼範例，不是引用，關不掉問題');
+  // 區塊中間的**空行不結束區塊**（複審留言貼多段範例時就長這樣）
+  const withBlank = c({ id: 5, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `實測兩刀：\n\n    第一刀\n\n    ${urlOf(1)}\n\n以上。` });
+  assert.equal(classify([a, withBlank], T0 + 4 * 86400e3).pending.length, 1,
+    '區塊中間的空行不結束區塊，後面那段仍是程式碼');
+  // 對照組：只縮排兩格不是程式碼，照樣看得見
+  const twoSpace = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n  關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, twoSpace], T0 + 4 * 86400e3).closed.length, 1, '縮排兩格是一般段落，算引到');
+  // 對照組：前面沒有空行時，縮排不會開啟程式碼區塊
+  const noBlank = c({ id: 4, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n    關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, noBlank], T0 + 4 * 86400e3).closed.length, 1, '前面沒空行＝那是同一段的續行，不是程式碼');
+});
+
 test('⭐ `>` 引言裡的圍欄也要剝：引 Codex 發現時貼的範例網址不算引用（#579 r13 High）', () => {
   // AGENTS 明文要求引 Codex 的發現要放 `>` 引言或反引號，所以這是**日常寫法**，不是刁鑽角落。
   const a = ask({ id: 1 });
