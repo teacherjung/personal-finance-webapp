@@ -168,9 +168,9 @@ export function visible(body) {
     return l;
   });
 
-  // 只認頂層＋圍欄追蹤。「引用網址必須寫在留言最外層才算數」＝William 2026-09-07 裁，原話逐字「a」，
-  // 落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5570875993 ；
-  // 這條規則住在 REVIEW-AND-MERGE.md「核對待裁留言」那一條（考題綁回去），本檔只是實作。
+  // 只認頂層＋圍欄追蹤。**判準正本＝`AGENTS.md`「審查回饋處置」節「問法與逾時預設」那一顆的「留痕」段**
+  // （William 2026-09-07 裁，落點寫在正本那一句裡；考題＝`test/pending-rulings.test.js` 的 bindCitationRule() 綁回去）。
+  // ⚠️ 這裡**刻意不重抄規則文字**：抄一份就是第二份，兩份會漂（2026-09-08 搬家時這裡就是那第二份）。
   const QUOTE = /^ {0,3}>/;
   // 開門可縮排 0〜3 格，也可以緊接在清單標記後面（`- ~~~text`）。
   const OPEN = /^ {0,3}(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})(.*)$/;

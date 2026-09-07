@@ -306,8 +306,10 @@ function bindTemplates(/** @type {string} */ agentsText) {
 
 /**
  * 「引用網址要寫在留言最外層才算數」那一句。**正本住在 AGENTS「留痕」那一顆**（2026-09-08 從合併手冊搬過來：
- * 它講的是 ⚖️／⏳ 留言的形狀，那是 AGENTS 的地盤，寫 ⚖️ 的人不會去翻合併手冊）。搬家時**沒有留第二份**——
- * 同一句活兩處就會漂（本專案認過的病型）。量尺跟另外三題共用 reviewSectionOf()：剝註解、錨點唯一、那一節平文字。
+ * 它講的是 ⚖️／⏳ 留言的形狀，那是 AGENTS 的地盤，寫 ⚖️ 的人不會去翻合併手冊）。
+ * 「只有一份」不是靠這一題守的（它只量 AGENTS 那一節之內）：**合併手冊與 CLAUDE.md 的零次釘**在
+ * `test/collab-invariant-docs.test.js` 的 PINS 句庫裡，那兩支才是擋第二份搬回去的網。
+ * 量尺跟這一節的模板題、時限題共用 reviewSectionOf()：剝註解、錨點唯一、那一節平文字。
  * 落點要在**同一句**裡（第一個「。」之前），不是同一行——那一顆是一整段長文，同一行幾乎沒有約束力。
  */
 function bindCitationRule(/** @type {string} */ agentsText) {
