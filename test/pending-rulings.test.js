@@ -312,6 +312,30 @@ test('⭐ 圍欄要記長度：四個反引號開門，內文那行 ```js 不是
   assert.equal(classify([a, closed], T0 + 4 * 86400e3).closed.length, 1, '圍欄關門之後的內容是看得見的');
 });
 
+test('⭐ `>` 引言裡的圍欄也要剝：引 Codex 發現時貼的範例網址不算引用（#579 r13 High）', () => {
+  // AGENTS 明文要求引 Codex 的發現要放 `>` 引言或反引號，所以這是**日常寫法**，不是刁鑽角落。
+  const a = ask({ id: 1 });
+  const F = BT.repeat(3);
+  const quoted = c({ id: 2, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
+      + `> 引用 Codex 發現裡的範例：\n> ${F}md\n> ${urlOf(1)}\n> ${F}\n` });
+  assert.ok(String(quoted.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡，只是關在引言裡的圍欄中');
+  assert.equal(classify([a, quoted], T0 + 4 * 86400e3).pending.length, 1,
+    '引言裡的圍欄在畫面上是程式碼範例，不是引用，關不掉問題');
+  // 對照組：同樣寫在引言裡、但**不在圍欄內**的網址是看得見的，算引到
+  const plainQuote = c({ id: 3, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n> 關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, plainQuote], T0 + 4 * 86400e3).closed.length, 1, '引言裡的一般文字看得見，算引到');
+  // 關門要在**同一層**引言深度。引言裡開的圍欄、拿一行頂層的同款記號來關——GitHub 其實會因為
+  // 引言結束而收掉圍欄、後面的網址看得見；這裡**刻意不關門**（深度不同就繼續當看不見）。
+  // 那是明知的漏認、安全方向：問題留在「還沒回」，我再問他一次。
+  const depthMismatch = c({ id: 4, at: T0 + 60e3,
+    body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
+      + `> ${F}\n> 範例\n${F}\n關的是 ${urlOf(1)}` });
+  assert.equal(classify([a, depthMismatch], T0 + 4 * 86400e3).pending.length, 1,
+    '引言裡開的圍欄不被頂層的記號關掉——寧可多剝，也不要少剝');
+});
+
 test('⭐ 沒關門的 HTML 註解一路吃到結尾：藏在裡面的網址關不掉問題（#579 r6 High①）', () => {
   // GitHub 就是這樣渲染的——`<!--` 之後到文末都不顯示。只認成對的 `<!--…-->` 就是「少剝」，
   // 而少剝正是這支最貴的失敗（真的還沒回被判成已結）。

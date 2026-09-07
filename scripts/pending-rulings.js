@@ -131,6 +131,8 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
  * ①**圍欄**（行為單位）：記開門的字元**與長度**；關門行要同種字元、**長度不短於開門**、
  *   而且後面只能有空白（資訊字串只准出現在開門行）。只記字元種類的話，四個反引號開門、
  *   內文一行 ```js 會被誤當關門，後面的內容就被放回可見層（#579 r5 High①）。
+ *   **圍欄可以住在 `>` 引言裡**（AGENTS 明文要求引 Codex 的發現就用 `>`），所以先剝引言前綴再判；
+ *   關門要在同一層引言深度，深度不同就不關門（#579 r13 High）。
  *   沒關門的圍欄＝到結尾都算看不見（偏向「看不到」）。
  * ②**行內程式碼**先收起來：它在畫面上看得見（只是換字體），不可以被下一步吃掉——
  *   `` `<!--照做-->` `` 是合法的可見寫法（#579 r5 High①的反方向）。只認同一行內的；
@@ -158,16 +160,24 @@ export function visible(body) {
   // 還原時就把註解裡的行內程式碼（含藏起來的網址）合成回可見層（#579 r9 High②）。
   // 它們在 GitHub 上只是無意義的字，拿掉不影響任何合法內容。
   const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[\uE000\uE001]/g, '').split('\n');
-  /** @type {{ch: string, len: number}|null} */
+  // 圍欄可以住在 `>` 引言裡——而 AGENTS 正是**明文要求**引 Codex 的發現要用 `>`（或反引號）。
+  // 只認行首直接出現的反引號，那種日常寫法裡的範例網址就會留在可見層，被當成引用（#579 r13 High）。
+  // 所以先剝掉引言前綴再判圍欄；關門要在**同一層**引言深度（深度不同就不關門＝繼續當看不見，保守方向）。
+  const QUOTE = /^(?: {0,3}>)+ ?/;
+  const depthOf = (/** @type {string} */ l) => (l.match(/^(?: {0,3}>)+/)?.[0].match(/>/g) ?? []).length;
+  /** @type {{ch: string, len: number, depth: number}|null} */
   let open = null;
   const unfenced = lines.map((line) => {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const bare = line.replace(QUOTE, '');
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(bare);
     if (open === null) {
       if (!m) return line;
-      open = { ch: m[1][0], len: m[1].length };
+      open = { ch: m[1][0], len: m[1].length, depth: depthOf(line) };
       return '';
     }
-    if (m && m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null;
+    if (m && m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '' && depthOf(line) === open.depth) {
+      open = null;
+    }
     return '';
   }).join('\n');
   /** @type {string[]} */
