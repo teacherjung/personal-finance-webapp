@@ -177,6 +177,12 @@ export function visible(body) {
   const CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
   /** @type {{ch: string, len: number}|null} */
   let fence = null;
+  // 引言的**懶續行**（lazy continuation）：`> 關的是` 的下一行即使零縮排、沒有 `>`，GFM 仍把它算進同一段引言，
+  // GitHub 也真的渲染在 <blockquote> 裡（2026-09-08 用 GitHub 的 Markdown API 實測）。只看行首前綴的話，
+  // 那一行會被當成頂層 ⇒ **引用 Codex 的發現時貼到的網址可能靜靜關掉一則還沒回的問題**（Grok #580 掃後 1）。
+  // 這裡不實作段落延續，只做**保守的多剝**：緊接在引言行後面、中間沒有空行的非空行，一律也當看不見。
+  // 代價＝那種寫法的引用認不得（問題留在「還沒回」，安全方向）；換來的是契約句「放進引言不算」變成真的。
+  let afterQuote = false;
   const kept = noDefs.map((line) => {
     if (fence) {
       const close = CLOSE.exec(line);
@@ -189,7 +195,10 @@ export function visible(body) {
       return '';
     }
     const indent = (/^[ \t]*/.exec(line)?.[0] ?? '').replace(/\t/g, '    ').length;
-    if (QUOTE.test(line) || indent > 0) return '';
+    if (QUOTE.test(line)) { afterQuote = true; return ''; }
+    if (line.trim() === '') { afterQuote = false; return line; }
+    if (afterQuote) return '';                      // 引言的懶續行：GitHub 渲染在引言裡，不是最外層
+    if (indent > 0) return '';
     return line;
   });
 
