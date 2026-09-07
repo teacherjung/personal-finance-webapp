@@ -1,102 +1,69 @@
 // @ts-check
 // **判一行是不是「會讓後面的內容換一個爸爸」的標題**——給 `test/collab-invariant-docs.test.js`
-// 的祖先標題鏈用。抽成獨立檔案的理由：#578 r11 Low⑤ 指出那幾條修正沒有任何固定夾具守著，
-// 退回去也不會有考題叫。抽出來之後就能用一張正反例表直接釘住它（見同名的 .test.js）。
+// 的祖先標題鏈用。抽成獨立檔案是為了能用一張正反例表直接釘住它（見同名的 .test.js）。
 //
-// ⚠️ **這不是 Markdown 剖析器，也不打算變成**。它要防的是「整理文件時手滑，把本節收進新的小節」，
-// 用戶是未來的自己人，不是攻擊者（沒有任何東西釘住那道考題本身要存在，有寫入權的人直接刪它更省事）。
-// 所以判準往「**寧可漏判，不要誤擋**」那一邊倒：誤擋會讓正常編修文件被卡住，是每天都會付的代價；
-// 漏判的那些形狀寫在 collab-invariant-docs 那題開頭的「擋不到」清單裡，由複審的眼睛接。
-
-/** 水平分隔線：`***`／`---`／`___`（≥3 個，中間可夾空白）。 @param {string} l */
-export const isThematicBreak = (l) => /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(l);
-
-/** GFM 的表格分隔列：每一格都是 `:?-+:?`，而且整行有 `|`（沒有 `|` 的 `---` 是水平線）。 @param {string} l */
-export const isDelimRow = (l) => l.includes('|')
-  && l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').every((x) => /^ *:?-+:? *$/.test(x));
-
-/**
- * 第 j 行是不是某個表格的一部分。往上走找分隔列；**分隔列自己上面要有表頭列**，
- * 否則那不是表格——`--- | ---` 開頭、上面沒有表頭時，GitHub 會把後面的 `---` 當成 Setext 標題
- * 而不是水平線（#578 r11 High③：少了這個條件會靜默放過一個真的 H2）。
- * @param {string[]} arr @param {number} j
- */
-export function inPipeTable(arr, j) {
-  for (let k = j; k >= 0 && arr[k].trim() !== '' && arr[k].includes('|'); k -= 1) {
-    if (isDelimRow(arr[k])) return k > 0 && arr[k - 1].trim() !== '' && arr[k - 1].includes('|');
-  }
-  return false;
-}
+// ## 只認 ATX（William 2026-09-07 裁，原話逐字「照你新講的做」，落點＝#578 裡他的留言）
+//
+// 這裡**只偵測 ATX 標題**（`## 標題`）。Setext（下一行畫 `---`）與 raw HTML `<h1>`～`<h6>`
+// **明講擋不到**，由「⭐ 作廢字眼絆線」那一題接住有寫「作廢／廢止」的那些。
+//
+// 為什麼這樣切：#578 r9〜r12 一共八條 High 全部出在後兩種寫法上，**沒有一條跟 ATX 有關**；
+// 而實測專案五份規則文件（AGENTS／REVIEW-AND-MERGE／CLAUDE／PROJECT／COLLAB-MAP）裡
+// **ATX 標題 53 個、Setext 0 個、raw HTML 標題 0 個**。也就是說後兩種偵測沒擋到任何我們
+// 實際會寫的東西，卻是每一個假紅與漏判的來源——而假紅會擋住正常的文件編修，是天天在付的代價。
+// 要正確判斷那兩種，等於要在測試裡實作整套 CommonMark 行內規則；十二輪的實證是那條路不會收斂。
+//
+// ⚠️ **這不是 Markdown 剖析器，也不打算變成**。它防的是「整理文件時手滑，把安全契約那一節
+// 收進一個新的小節」——用戶是未來的自己人，不是攻擊者（沒有任何東西釘住那道考題本身要存在，
+// 有寫入權的人直接刪掉它更省事）。手滑最可能產生的正是 ATX。
+// ⚠️ 代價照實寫：**刻意用 Setext 或 raw HTML 標題**的人繞得過去。那不是漏掉，是上面那筆裁示的內容。
 
 /**
- * 每一行有沒有被**行內程式碼**（單一組反引號，可跨行）碰到。
- * 只看同一行的反引號不夠：`` ` `` 開在上一行、`</h4>` 在中間那行、`` ` `` 收在下一行時，
- * 中間那行自己乾乾淨淨，卻仍在 `<code>` 裡（#578 r11 High②）。
- * ⚠️ 圍欄的內容先清成空行再算，免得圍欄的反引號跟行內的混在一起。
- * @param {string[]} lines @param {boolean[]} fenced
+ * 哪幾行「不算數」——圍欄程式碼區塊、縮排式程式碼區塊、跨行的 HTML 註解。
+ * 這三種裡面的 `#` 在 GitHub 上都不會變成標題，當成標題就是假紅。
+ * @param {string[]} lines
  */
-export function codeSpanMap(lines, fenced) {
-  const safe = lines.map((l, i) => (fenced[i] ? '' : l));
-  const text = safe.join('\n');
-  const touched = lines.map(() => false);
-  const starts = [0];
-  for (const l of safe) starts.push(starts[starts.length - 1] + l.length + 1);
-  const lineOf = (/** @type {number} */ pos) => {
-    let k = 0;
-    while (k + 1 < starts.length && starts[k + 1] <= pos) k += 1;
-    return k;
-  };
-  for (const m of text.matchAll(/(`+)(?:(?!\1)[\s\S])+?\1/g)) {
-    const from = lineOf(m.index ?? 0);
-    const to = lineOf((m.index ?? 0) + m[0].length - 1);
-    for (let k = from; k <= to; k += 1) touched[k] = true;
-  }
-  return touched;
-}
-
-/** 每一行是不是在圍欄程式碼區塊裡（含圍欄那兩行本身）。 @param {string[]} lines */
-export function fenceMap(lines) {
-  let open = false;
-  return lines.map((l) => {
-    const marker = /^ {0,3}(?:```|~~~)/.test(l);
-    if (marker) { open = !open; return true; }
-    return open;
+export function hiddenMap(lines) {
+  const hidden = lines.map(() => false);
+  /** @type {{ch: string, len: number}|null} */
+  let fence = null;
+  let inComment = false;
+  let inIndented = false;
+  let prevBlank = true;
+  lines.forEach((line, i) => {
+    if (inComment) {
+      hidden[i] = true;
+      if (line.includes('-->')) inComment = false;
+      return;
+    }
+    // 圍欄：關門要**同種字元、長度不短於開門**、後面只能有空白。只看「有沒有三個反引號」的話，
+    // 外層四反引號包內層三反引號這種正常的「展示一段 fence」寫法會被內層提早關掉（#578 r12）。
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      hidden[i] = true;
+      if (marker && marker[1][0] === fence.ch && marker[1].length >= fence.len && marker[2].trim() === '') fence = null;
+      return;
+    }
+    if (marker) { fence = { ch: marker[1][0], len: marker[1].length }; hidden[i] = true; return; }
+    const blank = line.trim() === '';
+    const indent = (/^[ \t]*/.exec(line)?.[0] ?? '').replace(/\t/g, '    ').length;
+    if (inIndented) {
+      if (blank || indent >= 4) { hidden[i] = true; return; }
+      inIndented = false;
+    }
+    if (!blank && prevBlank && indent >= 4) { inIndented = true; hidden[i] = true; return; }
+    if (line.includes('<!--') && !line.includes('-->')) { inComment = true; hidden[i] = true; return; }
+    prevBlank = blank;
   });
+  return hidden;
 }
 
 /**
- * 第 i 行開啟的標題層級；不是標題回 0。
- * 認三種寫法：ATX、Setext、**同一行內**的 raw HTML `<h1>`～`<h6>`。
- *
- * ⚠️ **含反引號或反斜線的行一律不看 raw HTML**。理由是誤擋的代價：
- * `` ``<h4>只是程式碼</h4>`` ``（行內程式碼）與 `\<h4>只是程式碼\</h4>`（跳脫）在 GitHub 都只是普通文字，
- * 而正確判斷它們要跟著實作 CommonMark 的行內規則——那條路 #578 r8〜r11 已經證明會一直生出假紅。
- * 代價（列在「擋不到」清單裡）：真的想插一個 `<h4>` 的人，只要在同一行別處放一個反引號就能躲過。
- * 那是刻意寫成的**對抗方向射程外**，不是漏掉。
- * @param {string[]} arr @param {number} i @param {boolean[]} [fenced] `fenceMap(arr)` 的結果；省略＝不看圍欄
- * @param {boolean[]} [inCode] `codeSpanMap(arr, fenced)` 的結果；省略＝只看同一行的反引號
+ * 第 i 行開啟的 ATX 標題層級；不是 ATX 標題回 0。
+ * @param {string[]} arr @param {number} i @param {boolean[]} [hidden] `hiddenMap(arr)` 的結果；省略＝不看程式碼與註解
  */
-export function headingAt(arr, i, fenced, inCode) {
-  if (fenced && fenced[i]) return 0;
-  const line = arr[i];
-  const atx = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(line);
-  if (atx) return atx[1].length;
-  if (!line.includes('`') && !line.includes('\\') && !(inCode && inCode[i])) {
-    // 標籤名後面必須是空白、`/` 或 `>`，不然 `<h4@example.com>` 這種 email 自動連結會被當成 H4。
-    const html = [...line.matchAll(/<h([1-6])(?=[\s/>])[^>]*>/gi)].map((x) => Number(x[1]));
-    if (html.length > 0) return Math.min(...html);
-  }
-  // Setext：只有**段落**的下一行畫 = 或 - 才是標題。
-  if (i === 0 || !/^ {0,3}(?:=+|-+)[ \t]*$/.test(line)) return 0;
-  const prev = arr[i - 1];
-  const notParagraph = prev.trim() === ''
-    || /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/.test(prev)   // 清單項
-    || /^ {0,3}>/.test(prev)                                   // 引用
-    || /^ {0,3}\|/.test(prev)                                  // 前導 `|` 的表格列
-    || inPipeTable(arr, i - 1)                                 // 沒有前導 `|` 的表格列
-    || /^ {0,3}(?:```|~~~)/.test(prev)                         // 圍欄
-    || isThematicBreak(prev)                                   // 前一行自己就是水平線
-    || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(prev);                  // 標題
-  if (notParagraph) return 0;
-  return line.trimStart().startsWith('=') ? 1 : 2;
+export function headingAt(arr, i, hidden) {
+  if (hidden && hidden[i]) return 0;
+  const m = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(arr[i]);
+  return m ? m[1].length : 0;
 }

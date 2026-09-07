@@ -15,7 +15,7 @@
 // （`scripts/check-pr-collab-fields.js`），本檔也把那支腳本的判斷釘住。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fenceMap, codeSpanMap, headingAt } from './helpers/markdown-heading.js';
+import { hiddenMap, headingAt } from './helpers/markdown-heading.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -676,15 +676,16 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //   上一版寫著「ATX／Setext／raw HTML 三種是**完整集合**」「這一項是**封閉**的論證」——那兩句撐不住，
   //   #578 r9 各用一刀打掉：跨行的 `<h4\n class="x">`（單行正規式抓不到）、`<blockquote>` 把整節包起來（**完全不經過標題**）。
   //   撐不住的保證比缺口更糟，所以改成逐條寫清楚：
-  //   **擋得到**：節內任何一個字改動／往界線表插一列或改一列／節前插 `####`／擁有標題**上面**插 `##`／
-  //     改擁有標題自己的括號後半／檔頭上面再插一個 H1／同一行內的 raw HTML 標題（含大寫、帶屬性）。
+  //   **擋得到**：節內任何一個字改動／往界線表插一列或改一列／節前插 `#### …`／擁有標題**上面**插 `## …`／
+  //     改擁有標題自己的括號後半／檔頭上面再插一個 `# …`。（標題只認 ATX，見下。）
   //   **擋不到**（實測全綠，照實列）：①界線表正下方插一句可見的粗體「以上整節已作廢」（**兄弟段落**，
-  //     不是祖先容器，所以連換 Markdown 解析器也擋不到；這一種由下面的絆線接，但只接**字面**那兩個字）
-  //     ②`<details><summary>已作廢</summary>` 把整節收摺 ③`<blockquote>` 把整節包起來 ④跨行的 raw HTML 標題
-  //     ⑤**行中開啟的 raw HTML 容器**（`<div>`／`<span>` 在本節前開、本節後才關——不是標題，鏈看不到；#578 r10）
-  //     ⑥**用 HTML entity 寫出來的字**（`&#x4F5C;&#x5EE2;` 在畫面上就是「作廢」，但絆線數的是字面字元；同上）
-  //     ⑦**同一行裡另外放一個反引號或反斜線的 raw HTML 標題**——判準刻意不看那種行（見
-  //       `test/helpers/markdown-heading.js`：那是為了不誤擋「展示語法」的正常寫法，代價寫在那裡）
+  //     不是祖先容器，所以連換 Markdown 解析器也擋不到；這一種由「⭐ 作廢字眼絆線」接，但只接**字面**那兩個字）
+  //     ②`<details><summary>已作廢</summary>` 把整節收摺 ③`<blockquote>` 把整節包起來
+  //     ④**Setext 標題**（下一行畫 `---`）與 ⑤**raw HTML `<hN>` 標題**——**William 2026-09-07 裁示明講擋不到**
+  //       （原話逐字「照你新講的做」，落點＝#578 裡他的留言；依據＝這五份文件裡 ATX 53 個、那兩種各 0 個，
+  //        而 #578 r9〜r12 的八條 High 全部出在那兩種上，沒有一條跟 ATX 有關）
+  //     ⑥**行中開啟的 raw HTML 容器**（`<div>`／`<span>` 在本節前開、本節後才關——不是標題，鏈看不到）
+  //     ⑦**用 HTML entity 寫出來的字**（`&#x4F5C;&#x5EE2;` 在畫面上就是「作廢」，但絆線數的是字面字元）
   //     ⑧離本節更遠的散文。
   //   ⇒ 這一族**到此封頂**：再出現新形狀一律進待辦，不再往外補。理由不是它們不重要，是九輪的實證顯示
   //     「猜 GitHub 會怎麼渲染」這條路不會收斂，而每補一格都同時帶進假紅的風險。
@@ -743,14 +744,11 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //   每一段都要求：那一行**逐字**相符、而且它與下一層之間**不得有同層或更高層的標題**。
   // ⚠️ 這條鏈擋的是「用**標題**把本節換一個爸爸」。它**不是**封閉的論證——不經過標題的容器
   //   （`<blockquote>`、`<details>`）與兄弟段落都繞得過去（#578 r7／r9 實測）。完整射程見本題開頭那份清單。
-  // 這裡認三種標題寫法：ATX（`# …`）、Setext（段落下一行畫 = 或 -）、**同一行內**的 raw HTML `<h1>`～`<h6>`。
-  //   第三種是 #578 r8 補的：`前文 <h4>以下整節已作廢</h4>` 寫在行中間，GitHub 官方 API 實測輸出
-  //   `<p>前文 </p><h4>…</h4>`，而全域那道 raw HTML 護欄刻意只擋行首，兩邊都漏。
-  //   ⚠️ **跨行的起始標籤（`<h4\n class="x">`）抓不到**——那已列在本題開頭的「擋不到」清單裡，不再追。
+  // **標題只認 ATX**（William 2026-09-07 裁）。Setext 與 raw HTML `<hN>` 明講擋不到，理由與代價
+  //   寫在 `test/helpers/markdown-heading.js` 的檔頭；那支另有一張正反例表直接釘住判準。
   // 判準本體抽到 `test/helpers/markdown-heading.js`，那裡有一張正反例表直接釘住它
   //   （#578 r11 Low⑤：原本那幾條修正沒有任何固定夾具守著，退回去也不會有考題叫）。
-  const fenced = fenceMap(lines);
-  const inCode = codeSpanMap(lines, fenced);
+  const hidden = hiddenMap(lines);
   const CHAIN = [
     '# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書',
     '## 協作流程',
@@ -763,7 +761,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
       + '⚠️ 改了這一行的任何一個字（含在括號裡補一句「以下已作廢」）都會讓這題紅——那正是要擋的（#578 r7）。');
     return hits[0];
   });
-  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i, fenced, inCode) > 0),
+  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i, hidden) > 0),
     '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，本節的歸屬就不是原來那一條鏈了');
   at.forEach((idx, k) => {
     const last = k + 1 === at.length;
@@ -775,7 +773,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
     // ⇒ 最後一段是特例：本節是那個 H3 的**直屬內文**，所以那一段裡**任何**標題都會把本節切出去（r6 的 `####` 就是）。
     const forbidUpTo = last ? 6 : k + 1;
     for (let i = idx + 1; i < next; i += 1) {
-      const level = headingAt(lines, i, fenced, inCode);
+      const level = headingAt(lines, i, hidden);
       assert.ok(level === 0 || level > forbidUpTo,
         `第 ${i + 1} 行插了一個 H${level} 標題（「${lines[i].slice(0, 40)}」），`
         + `它會讓「${CHAIN[k].replace(/^#+ /, '').slice(0, 18)}」的小節在那裡結束——`
