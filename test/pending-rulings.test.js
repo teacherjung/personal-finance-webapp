@@ -329,6 +329,18 @@ test('⭐ 括號必填、而且裡面要有字：正本說「括號裡要寫具�
     const w = c({ id: 2, at: T0 + 60e3, body: `${H}\n\n${reason}\n\n${P}\n\n${urlOf(1)}` });
     assert.equal(classify([a, w], T0 + 4 * 86400e3).pending.length, 1, `${why}：不算數（正本要求寫具體依據）`);
   }
+  // ⭐ 正向：**說明本身可以帶括號**（引 PR 標題或功能名時本來就會有），整行只要以 `）` 收尾就算數。
+  //    #582 r8：上一版禁掉內層 `）`，把這種正常的依據一起擋掉了——所以這一刀要留著。
+  const inner = '撤回理由：題目依附的東西沒了（那支 PR「補（第三種）收法」關了）';
+  const ok = c({ id: 3, at: T0 + 60e3, body: `${H}\n\n${inner}\n\n${P}\n\n${urlOf(1)}` });
+  const r = classify([a, ok], T0 + 3600e3);
+  assert.equal(r.withdrawn.length, 1, '說明帶內層括號的撤回要算數');
+  assert.equal(r.withdrawn[0].closedBy[0].reason, '題目依附的東西沒了（那支 PR「補（第三種）收法」關了）',
+    '理由要帶到**最後一個**右括號為止，不可以在內層括號就停住');
+  // ⭐ 行尾邊界：括號之後還有字就不算數（不然「（說明）其實我只是不想問了」也會被印成乾淨的理由）
+  const trailing = c({ id: 4, at: T0 + 60e3,
+    body: `${H}\n\n撤回理由：題目依附的東西沒了（那支關了）其實我只是不想問了\n\n${P}\n\n${urlOf(1)}` });
+  assert.equal(classify([a, trailing], T0 + 4 * 86400e3).pending.length, 1, '括號後面還有字＝不算數');
 });
 
 test('⭐ 配不到任何一題的結尾留言要單獨印出來：這是「他其實回了、我卻看不見」唯一算得出來的訊號（Grok #582 掃後 1）', () => {
