@@ -104,7 +104,9 @@ const NEAR = /❓|⚖|⏳|待裁|William 裁示|逾時暫定/u;
 const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]';
 
 /**
- * **只留畫面上看得見的內容**。GitHub 不會渲染圍欄程式碼區塊的內文與 HTML 註解，
+ * **只留會被當成正文解析的內容**。圍欄裡的東西 GitHub **會**渲染（成程式碼字樣、看得見），
+ * 但那是範例不是引用、網址也不會變成可點的連結；HTML 註解與參考定義才是真的不顯示。
+ * （上一版寫成「圍欄內容不會渲染／看不見」，那是事實錯誤——#579 r24 Medium。）
  * 而規則要的是「查得證的留痕」：人翻留言時看不到的東西，不可以拿去關掉問題（#579 r4 High①）。
  *
  * 兩條路都靠它，而且**兩個方向都會出事**（上一版寫成「原話那條路只防假紅」，那句話撐不住——#579 r5 High③）：
@@ -425,7 +427,9 @@ export function classify(comments, nowMs) {
       overdue: !edited && hours >= TIMEOUT_HOURS, future: hours < 0,
       // 配不到、但全庫有較晚的裁示留言＝中間態：留在清單裡、說我配不出來（找的範圍與配對一致，跨 PR）
       unlinkedLater: hits.length === 0 && closers.some((x) => Date.parse(x.c.created_at) > askAt),
-      closedBy: hits.map((x) => ({ kind: x.kind, url: x.c.html_url })),
+      // 帶上關掉它的那則留言的**標題**：配錯時「問題是 A、裁示標題卻是 B」一眼就看得出來——
+      // 這比在可見層上再補二十輪排版判斷更能防「誤關」（#579 r24 之後的做法）。
+      closedBy: hits.map((x) => ({ kind: x.kind, url: x.c.html_url, title: titleOf(x.c.body) })),
     };
     if (hits.length === 0) pending.push(item);
     else if (hits.every((x) => x.kind === 'timeout')) provisional.push(item);
@@ -450,7 +454,10 @@ function one(item, i) {
   if (item.number !== null) lines.push(`   貼在 #${item.number}`);
   lines.push(`   看這裡：${item.url}`);
   if (item.unlinkedLater) lines.push('   ⚠️ 後面有裁示留言沒有引用這一則的網址，我不能替你配對——請自己看一眼');
-  for (const c of item.closedBy) lines.push(`   ${c.kind === 'timeout' ? '已逾時暫定' : '已裁'}：${c.url}`);
+  for (const c of item.closedBy) {
+    lines.push(`   ${c.kind === 'timeout' ? '已逾時暫定' : '已裁'}：「${c.title}」`);
+    lines.push(`   　　${c.url}`);
+  }
   return lines.join('\n');
 }
 
