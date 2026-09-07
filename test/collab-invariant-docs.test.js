@@ -15,6 +15,7 @@
 // （`scripts/check-pr-collab-fields.js`），本檔也把那支腳本的判斷釘住。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { fenceMap, codeSpanMap, headingAt } from './helpers/markdown-heading.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -630,8 +631,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   }
 });
 
-// ⚠️ 為什麼要有這一題：上面那道結構考題擋的是「用標題把本節換一個爸爸」，
-//    但**最便宜的一刀是兄弟段落**——在界線表正下方寫一句可見的粗體「以上整節已作廢」。
+// ⚠️ 為什麼要有這一題：「⭐ 逾時預設那一顆」那道結構考題擋的是「用標題把本節換一個爸爸」，
+//    而它**最便宜的漏洞是兄弟段落**——在界線表正下方寫一句可見的粗體「以上整節已作廢」。
 //    那一刀不經過標題、也不是祖先容器，所以結構掃描擋不到，**換一個 Markdown 解析器也擋不到**
 //    （它在 DOM 上是兄弟，不是祖先）。#578 r6／r9 各實測過一次，全綠。
 //    ⇒ 換一條軸：**不看結構，只數字眼**。把「作廢／廢止」在規則書裡的出現次數釘成定值，
@@ -648,7 +649,7 @@ test('⭐ 作廢字眼絆線：規則書裡「作廢／廢止」的次數釘成�
   // ⚠️ 誤叫的代價很低而且看得見：正常編修真的多寫一次「作廢」時，就是回來把數字加一，
   //   那一行改動會出現在 diff 裡讓複審看到——這正是絆線該有的樣子。
   //   刻意只收這兩個詞：同族的「失效／舊制／舊版」在本檔出現得更頻繁，收進來只會把誤叫變多、
-  //   而它們擋得到的形狀上面那道結構考題已經擋住了。
+  //   而它們擋得到的形狀「⭐ 逾時預設那一顆」那道結構考題已經擋住了。
   const agents = read('AGENTS.md');
   const count = (/** @type {string} */ hay, /** @type {string} */ needle) => hay.split(needle).length - 1;
   for (const [word, expected] of [['作廢', 11], ['廢止', 5]]) {
@@ -681,14 +682,16 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //     ②`<details><summary>已作廢</summary>` 把整節收摺 ③`<blockquote>` 把整節包起來 ④跨行的 raw HTML 標題
   //     ⑤**行中開啟的 raw HTML 容器**（`<div>`／`<span>` 在本節前開、本節後才關——不是標題，鏈看不到；#578 r10）
   //     ⑥**用 HTML entity 寫出來的字**（`&#x4F5C;&#x5EE2;` 在畫面上就是「作廢」，但絆線數的是字面字元；同上）
-  //     ⑦離本節更遠的散文。
+  //     ⑦**同一行裡另外放一個反引號或反斜線的 raw HTML 標題**——判準刻意不看那種行（見
+  //       `test/helpers/markdown-heading.js`：那是為了不誤擋「展示語法」的正常寫法，代價寫在那裡）
+  //     ⑧離本節更遠的散文。
   //   ⇒ 這一族**到此封頂**：再出現新形狀一律進待辦，不再往外補。理由不是它們不重要，是九輪的實證顯示
   //     「猜 GitHub 會怎麼渲染」這條路不會收斂，而每補一格都同時帶進假紅的風險。
   // ⚠️ 但**不要把「擋不到」讀成「沒人在看」**：這九刀**每一刀都是複審抓到的**，機械閘一刀都沒抓到。
   //   真正在守這件事的是複審者的眼睛；本題守的是它看不到的那一半——**用標題換爸爸**那一類在 diff 裡
   //   只會顯示不相干的前後文，安全契約一個字都不出現，人最容易滑過去。這正是它值得留著的理由。
   //   ⇒ 上一版寫「文件層級的整份作廢要靠人在 diff 裡看見」——方向講反了，一併改口。
-  // ⚠️ 另一半的網在下面那道**作廢字眼絆線**（不看結構、只數字眼），專接①②③這種兄弟散文。
+  // ⚠️ 另一半的網在「⭐ 作廢字眼絆線」那一題（不看結構、只數字眼），專接①②③這種兄弟散文。
   // 代價：這一節的任何一個字改動都要回來改這裡。這一節是安全契約（誰拍板／值不值得改／怎麼問與沒回怎麼辦），那正是要的。
   // 歸屬：William 2026-09-06 的兩項裁示（「先做」含合進 main、判準與架構都在射程內；落點＝#578 裡他的留言）
   //   寫在「問法與逾時預設」那一顆的前兩行；正本裡「弱化會進三關／CI 的考題通過條件仍屬③」那一句寫明它是 Claude 的劃界、不是他的話。
@@ -743,53 +746,10 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //   第三種是 #578 r8 補的：`前文 <h4>以下整節已作廢</h4>` 寫在行中間，GitHub 官方 API 實測輸出
   //   `<p>前文 </p><h4>…</h4>`，而全域那道 raw HTML 護欄刻意只擋行首，兩邊都漏。
   //   ⚠️ **跨行的起始標籤（`<h4\n class="x">`）抓不到**——那已列在本題開頭的「擋不到」清單裡，不再追。
-  // ⚠️ 圍欄與行內程式碼裡的不算（那不會渲染成標題）——先剝掉再看，否則文件裡正常拿 `<h4>` 當例子就假紅。
-  const fenced = lines.reduce((/** @type {boolean[]} */ acc, l, i) => {
-    const prev = i > 0 && acc[i - 1];
-    return [...acc, /^ {0,3}(?:```|~~~)/.test(l) ? !prev : prev];
-  }, []);
-  const inFence = (/** @type {number} */ i) => fenced[i] || /^ {0,3}(?:```|~~~)/.test(lines[i]);
-  // GFM 的表格分隔列：每一格都是 `:?-+:?`，而且整行有 `|`（沒有 `|` 的 `---` 是水平線，不是分隔列）。
-  const isDelimRow = (/** @type {string} */ l) => l.includes('|')
-    && l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').every((x) => /^ *:?-+:? *$/.test(x));
-  // 前一行是不是表格的一部分：往上走，只要中間有一列是分隔列就是。
-  // ⚠️ GFM 的表格列**可以沒有前導 `|`**（`a | b` ／ `--- | ---`），只看行首會把表格後面那條合法的水平線
-  //   誤判成 Setext 標題（#578 r8 High②，GitHub 官方 API 實測渲染成 `<table>…</table><hr>`）。
-  const inPipeTable = (/** @type {string[]} */ arr, /** @type {number} */ j) => {
-    for (let k = j; k >= 0 && arr[k].trim() !== '' && arr[k].includes('|'); k -= 1) {
-      if (isDelimRow(arr[k])) return true;
-    }
-    return false;
-  };
-  const headingAt = (/** @type {string[]} */ arr, /** @type {number} */ i) => {
-    if (arr === lines && inFence(i)) return 0;
-    const m = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(arr[i]);
-    if (m) return m[1].length;
-    // 行內程式碼要認**反引號的長度**：`` `x` `` 這種雙反引號寫法用單反引號的式子會把中間切錯，
-    // 於是 ``<h4>只是程式碼</h4>`` 這種正常的「展示語法」被當成真的標題（#578 r9／r10 假紅）。
-    const noCode = arr[i].replace(/(`+)(?:(?!\1)[^\n])+?\1/g, '');
-    // `\b` 在 `4@` 之間也成立，於是 `<h4@example.com>` 這種 email 自動連結被當成 H4（同上）。
-    // 標籤名後面必須是空白、`/` 或 `>` 才是標題。
-    const html = [...noCode.matchAll(/<h([1-6])(?=[\s/>])[^>]*>/gi)].map((x) => Number(x[1]));
-    if (html.length > 0) return Math.min(...html);
-    // Setext：只有**段落**的下一行畫 = 或 - 才是標題。前一行是清單項、引用、表格列、圍欄或標題時，
-    // 那條 `---` 是水平分隔線（GitHub 實測渲染成 <hr>）——當成標題會假紅（#578 r7 Low）。
-    if (i === 0 || !/^ {0,3}(?:=+|-+)[ \t]*$/.test(arr[i])) return 0;
-    const prev = arr[i - 1];
-    // 水平分隔線：`***`／`---`／`___`（≥3 個，中間可夾空白）。前一行**自己就是水平線**時，
-    // 這一行的 `---` 也是水平線、不是 Setext 標題——相鄰兩條水平線是正常寫法（#578 r9／r10 假紅）。
-    const isThematicBreak = (/** @type {string} */ l) => /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(l);
-    const notParagraph = prev.trim() === ''
-      || /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/.test(prev)   // 清單項
-      || /^ {0,3}>/.test(prev)                                   // 引用
-      || /^ {0,3}\|/.test(prev)                                  // 前導 `|` 的表格列
-      || inPipeTable(arr, i - 1)                                 // 沒有前導 `|` 的表格列
-      || /^ {0,3}(?:```|~~~)/.test(prev)                         // 圍欄
-      || isThematicBreak(prev)                                   // 前一行自己就是水平線
-      || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(prev);                  // 標題
-    if (notParagraph) return 0;
-    return arr[i].trimStart().startsWith('=') ? 1 : 2;
-  };
+  // 判準本體抽到 `test/helpers/markdown-heading.js`，那裡有一張正反例表直接釘住它
+  //   （#578 r11 Low⑤：原本那幾條修正沒有任何固定夾具守著，退回去也不會有考題叫）。
+  const fenced = fenceMap(lines);
+  const inCode = codeSpanMap(lines, fenced);
   const CHAIN = [
     '# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書',
     '## 協作流程',
@@ -802,7 +762,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
       + '⚠️ 改了這一行的任何一個字（含在括號裡補一句「以下已作廢」）都會讓這題紅——那正是要擋的（#578 r7）。');
     return hits[0];
   });
-  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i) > 0),
+  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i, fenced, inCode) > 0),
     '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，本節的歸屬就不是原來那一條鏈了');
   at.forEach((idx, k) => {
     const last = k + 1 === at.length;
@@ -814,7 +774,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
     // ⇒ 最後一段是特例：本節是那個 H3 的**直屬內文**，所以那一段裡**任何**標題都會把本節切出去（r6 的 `####` 就是）。
     const forbidUpTo = last ? 6 : k + 1;
     for (let i = idx + 1; i < next; i += 1) {
-      const level = headingAt(lines, i);
+      const level = headingAt(lines, i, fenced, inCode);
       assert.ok(level === 0 || level > forbidUpTo,
         `第 ${i + 1} 行插了一個 H${level} 標題（「${lines[i].slice(0, 40)}」），`
         + `它會讓「${CHAIN[k].replace(/^#+ /, '').slice(0, 18)}」的小節在那裡結束——`
