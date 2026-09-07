@@ -377,9 +377,11 @@ test('考題檔｜這一族**每一支**源碼都不留破口形狀的字面（�
   //   ③掃描讀的是**已 commit** 的 blob，這一題讀的是工作區的檔；未 commit 的改動兩邊會不一致。
   // ⚠️ 2026-09-08 拆檔之後，這一題**不可以再只看自己那一支**（`import.meta.url`）：同族拆成五支＋一支共用夾具，
   //    只看自己等於其餘五支從此無人看管——那正是「靜靜通過」。改成掃**整族**（檔名前綴 + 共用夾具）。
-  const dir = join(ROOT, 'test');
-  const family = readdirSync(dir).filter((f) => /^grok-scan-flow-.*\.test\.js$/.test(f)).map((f) => join('test', f));
-  family.push(join('test/helpers', 'grok-scan-flow-fixtures.js'));
+  // 兩半都用**列舉**，不硬編碼單一路徑：夾具那半原本只寫死一支，再抽第二支共用夾具就會靜靜漏掉（Grok #581 掃後 1、3）。
+  const family = [
+    ...readdirSync(join(ROOT, 'test')).filter((f) => /^grok-scan-flow-.*\.test\.js$/.test(f)).map((f) => join('test', f)),
+    ...readdirSync(join(ROOT, 'test/helpers')).filter((f) => /^grok-scan-flow-.*\.js$/.test(f)).map((f) => join('test/helpers', f)),
+  ];
   // 空包彈保險絲：檔名規則哪天改了（或整族被搬走），這一題不可以靜靜變成掃 0 個檔案。
   // ⚠️ **驗的是成員身分、不是數量**（#581 r1）：只驗「至少幾個」的話，把某一支改名到前綴之外、
   //    同時另外多一支符合前綴的檔案，數量還是夠，而那支被改名的檔就沒人看管了。
@@ -387,6 +389,10 @@ test('考題檔｜這一族**每一支**源碼都不留破口形狀的字面（�
   const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction']
     .map((k) => `test/grok-scan-flow-${k}.test.js`)
     .concat('test/helpers/grok-scan-flow-fixtures.js');
+  // ⚠️ **照實劃界（Grok #581 掃後 3）**：這個集合是「檔名走 `grok-scan-flow-` 前綴的那些」。
+  //    把危險字面放進一支**不走這個前綴**的新檔（無論在 test/ 或 test/helpers/），列舉看不到、名單也沒有它，
+  //    兩邊仍然相等 ⇒ 這一題不會叫。它擋的是「前綴下少一支或多一支」，不是「任何檔案都掃得到」。
+  //    真正的全樹那條靠掃描器自己的記帳行（會列出「來自 <檔>×<n>」）——**看得見，不是擋得住**。
   for (const want of EXPECTED) {
     assert.ok(family.includes(want), `這一族少了 ${want}——改名或拆分了？這一題要跟著改（不然那一支從此沒人掃）`);
   }

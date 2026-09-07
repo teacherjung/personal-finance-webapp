@@ -42,7 +42,10 @@
 //   ・**不驗內容對不對**：只驗「指得到」，不驗「指對地方」。
 //   ・**記號與左引號之間最多折一次行**（續行要帶 `//` 或 `*`）。隔著空行寫的路標**不算路標**
 //     ——保守的那一邊：寧可不認，也不要把記號和很遠的一個引號配起來。那種寫法不會被檢查。
-//   ・只掃 `test/` 底下第一層的 `*.test.js`（跟 `test/entry-guard.test.js` 掃 `scripts/` 同作法）。
+//   ・掃 `test/` 底下第一層的 `*.test.js` **＋ `test/helpers/` 第一層的每一支 `.js`**
+//     （跟 `test/entry-guard.test.js` 掃 `scripts/` 同作法）。helpers 那一半是 2026-09-08 補的：
+//     把考題的共用部分抽到子目錄之後，它就整個離開射程、控制字元與路標兩道檢查同時無聲失效。
+//     ⚠️ 更深的層級（`test/helpers/x/y.js`）仍不在射程裡。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';

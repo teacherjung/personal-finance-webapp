@@ -4,7 +4,9 @@
 // 為什麼要拆：原本 84 題全擠在一支檔案裡，而 `node --test` 是**一個檔案一個子行程**——
 // 那一支自己就跑掉整卷一大半的牆上時間，而且沒有辦法平行。拆成同族五支之後，
 // 它們可以同時跑（實測數字寫在拆分那支 PR 的說明裡；這裡不寫數字，數字會漂）。
-// 拆的只有「題目住在哪一個檔案」：**沒有任何一題的內容被改動**。
+// 拆的只有「題目住在哪一個檔案」：除了下面這個**已揭露的例外**，沒有任何一題的內容被改動——
+// 「這一族每一支源碼都不留破口形狀的字面」那一題原本只讀自己那一檔（`import.meta.url`），拆完之後
+// 其餘幾支就沒人看管，所以改成掃整族。（Codex 用語法樹逐題比對確認過其餘 83 題程式相同。）
 //
 // 原始檔頭的說明（照抄，射程沒變）：
 // grok-scan.js 主流程的行為考題（2026-08-22，Codex #496 r1：「沒有任何考題執行 grok-scan.js 的控制流，只有路徑字串」）。
@@ -30,6 +32,10 @@ import { PINNED_ISSUER, PINNED_CLIENT_ID } from '../../scripts/grok-auth-refresh
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');   // 本檔在 test/helpers/ ⇒ 要往上兩層才是 repo 根
 export const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
+// ⚠️ **探測失敗要出聲**（Grok #581 掃後 2）：`t.skip()` 在執行器裡算「通過」，所以能力探測若在高並行下
+//    偶發失敗，這一支檔的沙箱題會整批安靜跳過、畫面上看起來全綠。拆成同族五支之後探測會做五次＝
+//    偶發的機會變成五倍，所以這裡把它印到 stderr：跳過仍然發生（那是刻意的平台劃界），但不再無聲。
+if (!SANDBOX_OK) console.error(`⚠️ grok-scan-flow 夾具：這個行程套不上沙箱，本檔沙箱之後的題會整批跳過（跳過＝不等於通過）`);
 export const SKIP_AFTER_CANARY = '金絲雀之後的路徑只在套得上沙箱的 macOS 考得到（這台套不上；金絲雀自己會退 2＝fail-closed）';
 
 /** 沙盒專用環境：**從零組**，不是從 process.env 扣（鐵則 11；Codex r2 抓到 r1 版是 `{...process.env, GIT_DIR: undefined}`——
@@ -149,7 +155,8 @@ export function cleanupTempRoots() {
  * 為什麼非換掉不可：真的那一支是**全機共用資源的使用者**（搶系統唯一那份剪貼簿、在幾個共用位置開誘餌目錄）。
  * ⚠️ 規格與代價（秒數、探針數、位置清單）只寫在 `scripts/grok-scan.js` 的 `runCanary` 那格 JSDoc——
  *   這裡刻意不複述：同一組會漂的數字有兩個家，日後一定只改到一邊。
- * ⚠️ 沙箱**是不是真的有效**由題名關鍵字「金絲雀」那一族在 `test/grok-sandbox.test.js` 證明，不是本檔——
+ * ⚠️ 沙箱**是不是真的有效**由 `test/grok-sandbox.test.js` 那一族證明，不是本檔（**刻意不用路標形狀**：
+ *   那道閘只在同一支檔案裡找目標，跨檔寫成路標＝它會被本檔自己的散文餵飽、看起來綠其實沒在驗；Grok #581 掃後 1）——
  *   本檔用假的 ⇒ 這裡不對沙箱有效性提供任何證據，那是刻意的分工。
  * @param {0|1|2} [code]
  * @param {string[]} [lines] 有題把「金絲雀印出第一行」當時序鉤子，那種題就地傳自己要的行，別讓預設值偷偷去滿足它
@@ -158,7 +165,8 @@ export const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）
 /**
  * 每題獨立的沙箱 auth 目錄、結果根與活金絲雀根（絕不碰真的 ~/.grok-sandbox-auth／~/.grok-scan-results／家目錄），
  * **並注入上面那個假金絲雀**——所以凡是用 `isolated()` 的題都走不到真的第②步；要考「不注入時走哪一支」，
- * 得自己把 `runCanary` 這一格拿掉（見題名關鍵字「不注入」那題）。
+ * 得自己把 `runCanary` 這一格拿掉（`test/grok-scan-flow-credentials.test.js` 裡題名帶「不注入」的那一題；
+ * 同樣**刻意不用路標形狀**，理由同上）。
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
