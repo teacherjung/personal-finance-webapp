@@ -162,83 +162,54 @@ const URL_END = '[\\s)\\]>|｜）］｝〉》」』】，。、；：！？…]'
 export function visible(body) {
   // 佔位符用的私用區字元**先從輸入裡拿掉**，不然留言可以自己打那兩個字，
   // 還原時就把註解裡的行內程式碼（含藏起來的網址）合成回可見層（#579 r9 High②）。
-  const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[]/g, '').split('\n');
-  // 引言前綴：圍欄、清單、縮排程式碼全都可能住在 `>` 裡（AGENTS 明文要求引 Codex 的發現用 `>`）。
-  const QUOTE = /^(?: {0,3}>)+ ?/;
-  const depthOf = (/** @type {string} */ l) => (l.match(/^(?: {0,3}>)+/)?.[0].match(/>/g) ?? []).length;
+  const lines = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[\uE000\uE001]/g, '').split('\n');
 
-  // ⚠️ **圍欄、清單、縮排程式碼要在同一趟裡判**，不能分成兩趟：
-  //   圍欄的縮排要相對於它所在的清單層級（巢狀清單裡的圍欄縮排八格也是圍欄），
-  //   而清單標記又不能把圍欄裡的 `- ` 當成清單（#579 r19 High：分兩趟時，四格縮排的
-  //   第二層清單沒被認出來，於是它裡面的圍欄也沒被認出來，範例網址就留在可見層）。
-  /** @type {{ch: string, len: number, base: number, quote: number}|null} */
+  // ## 只認**頂層**的內容（#579 r21 之後改的做法）
+  //
+  // 這支從 r15 到 r21 連五輪都在同一件事上中刀：容器座標（巢狀清單、清單裡的引言、引言裡的清單、
+  // 引言的縮排門檻、離開區塊時的門檻…）。每修一種就冒出下一種，因為那等於在測試裡實作 CommonMark
+  // 的容器解析。所以去量了真語料再決定：
+  //
+  //   全庫 1558 則留言裡，第一行合規的 ❓／⚖️／⏳ 共 **15 則**；其中含引用網址的 **3 則，
+  //   網址全部寫在頂層**——**一層縮排 0 則、兩層以上 0 則**。
+  //
+  // ⇒ 那整套容器機器，是在替「從來沒有人寫過的位置」判可見性。改成：**只認頂層**——
+  //   有引言前綴、或**行首有任何縮排**的行，一律當看不見。這只會讓引用**更難**被認得
+  //   （問題留在「還沒回」＝我再問他一次），不可能造成誤關——最貴的那個方向被結構性地擋掉了。
+  //   門檻取「縮排零格」而不是「四格」，是因為清單標記那一行本身就能開圍欄（`- ```text`
+  //   之後的內容縮排只有兩格，四格門檻擋不到）。零格門檻連這種都涵蓋，而且不必知道自己在第幾層。
+  //
+  // ⚠️ 誠實劃界：**引用網址請寫在頂層**。寫進清單、引言或縮排區塊裡的引用認不得。
+  //   AGENTS 要求用 `>` 引用的是「Codex 的發現」，不是引用網址本身，所以這條不牴觸那個規定。
+  const QUOTE = /^ {0,3}>/;
+  /** @type {{ch: string, len: number}|null} */
   let fence = null;
-  /** 每一層清單的**內容縮排欄位**（由外而內）。 @type {number[]} */
-  const listStack = [];
-  let inIndented = false;
-  let codeThreshold = 4;
-  let prevBlank = true;
-  const stripped = lines.map((line) => {
-    const bare = line.replace(QUOTE, '');
-    const blank = bare.trim() === '';
-    const indent = (/^[ \t]*/.exec(bare)?.[0] ?? '').replace(/\t/g, '    ').length;
-    const content = bare.trimStart();
+  const topLevel = lines.map((line) => {
+    const indent = (/^[ \t]*/.exec(line)?.[0] ?? '').replace(/\t/g, '    ').length;
     if (fence) {
-      // 關門要同種字元、長度不短於開門、後面只能有空白，而且縮排相對於開門那層 ≤3。
-      const m = /^(`{3,}|~{3,})(.*)$/.exec(content);
-      if (m && m[1][0] === fence.ch && m[1].length >= fence.len && m[2].trim() === ''
-        && indent - fence.base <= 3 && depthOf(line) === fence.quote) fence = null;
+      const close = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len && close[2].trim() === '') fence = null;
       return '';
     }
-    if (inIndented) {
-      if (blank || indent >= codeThreshold) return '';
-      inIndented = false;            // 區塊結束——這一行照一般規則重新判（可能是清單續行）
-    }
-    if (blank) { prevBlank = true; return line; }
-    // ⚠️ **引言是一個新的容器，裡面的縮排從它自己算起**。沿用外層清單的座標，就會把
-    // 「清單項 ／ 空行 ／ `  >     網址`」這種正常寫法裡的引言程式碼算成沒縮夠（#579 r20 High）。
-    const quoted = QUOTE.test(line);
-    if (!quoted) {
-      // 縮排退回去＝內層清單結束（一層一層退）
-      while (listStack.length > 0 && indent < listStack[listStack.length - 1]) listStack.pop();
-    }
-    const base = quoted || listStack.length === 0 ? 0 : listStack[listStack.length - 1];
-    const rel = indent - base;
-    const fenceOpen = rel <= 3 ? /^(`{3,}|~{3,})/.exec(content) : null;
-    if (fenceOpen) {
-      fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length, base, quote: depthOf(line) };
+    if (QUOTE.test(line) || indent > 0) return '';
+    // 頂層圍欄：關門要同種字元、長度不短於開門、後面只能有空白（資訊字串只准在開門行）。
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      fence = { ch: open[1][0], len: open[1].length };
       return '';
     }
-    // 清單標記：縮排相對於目前這一層 ≤3 才算。清單項底下的續行是正常寫法，不是程式碼
-    // （`- 關的是：` ／ 空行 ／ 縮排放網址，本 repo 實際在用——#579 r16 High②，前例＝#569）。
-    const marker = rel <= 3 ? /^(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(content) : null;
-    if (marker) {
-      if (!quoted) listStack.push(indent + marker[0].length);
-      // 清單標記**同一行**後面就開圍欄（`- ```text`）也要認出來，不然圍欄裡的網址會被拿去關題。
-      const inline = /^(`{3,}|~{3,})/.exec(content.slice(marker[0].length));
-      if (inline && !(inline[1][0] === '`' && content.slice(marker[0].length + inline[1].length).includes('`'))) {
-        fence = { ch: inline[1][0], len: inline[1].length, base: indent + marker[0].length, quote: depthOf(line) };
-        return '';
-      }
-      prevBlank = false;
-      return line;
-    }
-    // 程式碼的門檻是**目前這一層的內容縮排再加四格**；開啟時記住它，結束時用同一個判
-    // （退回固定四格會把後面同一項底下的正常段落一起吞掉——#579 r18 High）。
-    if (prevBlank && indent >= base + 4) { inIndented = true; codeThreshold = base + 4; return ''; }
-    prevBlank = false;
     return line;
   }).join('\n');
 
   /** @type {string[]} */
   const spans = [];
-  // 佔位符用**私有使用區**的兩個字（／）：Markdown 裡不會出現，
+  // 佔位符用**私有使用區**的兩個字（`\uE000`／`\uE001`）：Markdown 裡不會出現，
   // 也不是控制字元（控制字元進正規式會被 lint 擋）。**輸入裡原有的那兩個字已在上面拿掉**。
-  const guarded = stripped.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `${spans.push(m) - 1}`);
+  const guarded = topLevel.replace(/(`+)(?:(?!\1)[^\n])+?\1/g, (m) => `\uE000${spans.push(m) - 1}\uE001`);
   const paired = guarded.replace(/<!--[\s\S]*?-->/g, '\n');
   const dangling = paired.indexOf('<!--');
   const noComments = dangling < 0 ? paired : paired.slice(0, dangling);
-  // 標籤：`[` 之後可以有跳脫的 `]`；`[…` 這一行沒收起來的，當作標籤跨行（保守）。
+  // 參考定義的標籤：`[` 之後可以有跳脫的 `]`；`[…` 這一行沒收起來的，當作標籤跨行（保守）。
   const DEF_LINE = /^ {0,3}\[(?:[^\]\\]|\\.)*\]:/;
   const DEF_OPEN = /^ {0,3}\[(?:[^\]\\]|\\.)*$/;
   let inDef = false;
@@ -248,7 +219,7 @@ export function visible(body) {
     return l;
   });
   return kept.join('\n')
-    .replace(/(\d+)/g, (whole, i) => spans[Number(i)] ?? whole);
+    .replace(/\uE000(\d+)\uE001/g, (whole, i) => spans[Number(i)] ?? whole);
 }
 
 /** @param {unknown} body 留言內文 @returns {string} 第一行，去掉行尾 \r 與看不見的 U+FE0F */

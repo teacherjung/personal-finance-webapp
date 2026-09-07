@@ -337,15 +337,15 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
   const listCont = c({ id: 7, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 關的是：\n\n    ${urlOf(1)}\n` });
-  assert.equal(classify([a, listCont], T0 + 4 * 86400e3).closed.length, 1,
-    '清單項底下的四格續行是正常段落，網址看得見、算引到');
+  assert.equal(classify([a, listCont], T0 + 4 * 86400e3).pending.length, 1,
+    '清單項底下的續行不在頂層＝引用認不得（安全方向：問題留在「還沒回」，不會誤關）');
   // 清單裡的程式碼區塊**結束之後**，同一個清單項底下的正常段落要留著
   //（結束門檻退回固定四格的話，會把它一起吞掉 ⇒ 真的已結冒回未回，#579 r18 High）
   const afterListCode = c({ id: 9, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 實測輸出：\n\n      command output\n\n    關的是 ${urlOf(1)}\n` });
-  assert.equal(classify([a, afterListCode], T0 + 4 * 86400e3).closed.length, 1,
-    '清單裡的程式碼結束後，同一項底下的段落是正常內容，網址算引到');
+  assert.equal(classify([a, afterListCode], T0 + 4 * 86400e3).pending.length, 1,
+    '清單裡的內容一律不在頂層＝認不得（安全方向）');
   // 巢狀清單：第二層用四格縮排，它裡面的圍欄縮排八格也還是圍欄（#579 r19 High）
   const F3 = BT.repeat(3);
   const nested = c({ id: 10, at: T0 + 60e3,
@@ -358,8 +358,8 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
   const nestedCont = c({ id: 11, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- outer\n    - 關的是：\n\n        ${urlOf(1)}\n` });
-  assert.equal(classify([a, nestedCont], T0 + 4 * 86400e3).closed.length, 1,
-    '第二層清單底下的續行是正常段落，網址算引到');
+  assert.equal(classify([a, nestedCont], T0 + 4 * 86400e3).pending.length, 1,
+    '巢狀清單裡的內容一律不在頂層＝認不得（安全方向）');
   // 清單裡的引言是新的容器，裡面的縮排從它自己算起（#579 r20 High）
   const quoteInList = c({ id: 12, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
@@ -371,7 +371,8 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
   const quoteText = c({ id: 13, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n`
       + `- 先列背景\n\n  > 關的是 ${urlOf(1)}\n` });
-  assert.equal(classify([a, quoteText], T0 + 4 * 86400e3).closed.length, 1, '清單裡的引言一般文字看得見，算引到');
+  assert.equal(classify([a, quoteText], T0 + 4 * 86400e3).pending.length, 1,
+    '清單裡的引言更不在頂層＝認不得（安全方向）');
   // 清單標記同一行就開圍欄（`- ```text`）也要認出來
   const inlineFence = c({ id: 14, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆別題\n\n原話（對話中，Claude 轉述）：**「答的是別題」**\n\n`
@@ -387,11 +388,35 @@ test('⭐ 縮排四格的程式碼區塊也要剝：複審留言貼範例最常�
   // 對照組：只縮排兩格不是程式碼，照樣看得見
   const twoSpace = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n  關的是 ${urlOf(1)}` });
-  assert.equal(classify([a, twoSpace], T0 + 4 * 86400e3).closed.length, 1, '縮排兩格是一般段落，算引到');
+  assert.equal(classify([a, twoSpace], T0 + 4 * 86400e3).pending.length, 1,
+    '縮排兩格也不在頂層＝認不得（門檻是「縮排零格」，安全方向）');
   // 對照組：前面沒有空行時，縮排不會開啟程式碼區塊
   const noBlank = c({ id: 4, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n    關的是 ${urlOf(1)}` });
-  assert.equal(classify([a, noBlank], T0 + 4 * 86400e3).closed.length, 1, '前面沒空行＝那是同一段的續行，不是程式碼');
+  assert.equal(classify([a, noBlank], T0 + 4 * 86400e3).pending.length, 1,
+    '不管前面有沒有空行，縮排四格就不在頂層＝認不得（判準已收成「只認頂層」）');
+});
+
+test('⭐ 引用只認頂層：有引言前綴或行首有縮排的一律不算（#579 r21 之後的判準）', () => {
+  // 量過真語料才這樣收：全庫 15 則留痕型留言、3 則含引用網址，**全部寫在頂層零縮排**。
+  // 這個方向只會讓引用更難被認得（問題留在「還沒回」），不可能造成誤關。
+  const a = ask({ id: 1 });
+  assert.equal(classify([a, ruling({ id: 2, at: T0 + 60e3, cites: `關的是 ${urlOf(1)}` })], T0 + 4 * 86400e3).closed.length, 1,
+    '頂層零縮排＝算引到');
+  assert.equal(classify([a, ruling({ id: 3, at: T0 + 60e3, cites: `- 關的是 ${urlOf(1)}` })], T0 + 4 * 86400e3).closed.length, 1,
+    '清單標記那一行本身也在頂層＝算引到');
+  // ⚠️ 這裡不能用 ruling() 夾具：它會在網址前面補「關的是 」，縮排就被吃掉了。
+  const body = (/** @type {string} */ line) =>
+    `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n${line}`;
+  for (const [name, line] of [
+    ['縮排一格', ` 關的是 ${urlOf(1)}`],
+    ['縮排四格', `    關的是 ${urlOf(1)}`],
+    ['引言', `> 關的是 ${urlOf(1)}`],
+  ]) {
+    const cmt = c({ id: 4, at: T0 + 120e3, body: body(/** @type {string} */ (line)) });
+    assert.ok(String(cmt.body).includes(urlOf(1)), `${name}：對照斷言——網址真的在原文裡`);
+    assert.equal(classify([a, cmt], T0 + 4 * 86400e3).pending.length, 1, `${name}：不在頂層＝認不得`);
+  }
 });
 
 test('⭐ `>` 引言裡的圍欄也要剝：引 Codex 發現時貼的範例網址不算引用（#579 r13 High）', () => {
@@ -407,7 +432,8 @@ test('⭐ `>` 引言裡的圍欄也要剝：引 Codex 發現時貼的範例網�
   // 對照組：同樣寫在引言裡、但**不在圍欄內**的網址是看得見的，算引到
   const plainQuote = c({ id: 3, at: T0 + 60e3,
     body: `## ⚖️ William 裁示（2026-09-02）：答覆\n\n原話（對話中，Claude 轉述）：**「好」**\n\n> 關的是 ${urlOf(1)}` });
-  assert.equal(classify([a, plainQuote], T0 + 4 * 86400e3).closed.length, 1, '引言裡的一般文字看得見，算引到');
+  assert.equal(classify([a, plainQuote], T0 + 4 * 86400e3).pending.length, 1,
+    '引言裡的引用不在頂層＝認不得（安全方向）。AGENTS 要求用 `>` 引的是「Codex 的發現」，不是引用網址本身');
   // 關門要在**同一層**引言深度。引言裡開的圍欄、拿一行頂層的同款記號來關——GitHub 其實會因為
   // 引言結束而收掉圍欄、後面的網址看得見；這裡**刻意不關門**（深度不同就繼續當看不見）。
   // 那是明知的漏認、安全方向：問題留在「還沒回」，我再問他一次。
