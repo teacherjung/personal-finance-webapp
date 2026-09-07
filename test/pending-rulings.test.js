@@ -885,25 +885,17 @@ test('⭐ GIT_* 題②｜originRepo：假 git 直接看子行程環境', () => {
   } finally { restore(); }
 });
 
-test('⭐ 這支不是閘：合併步驟一個字都不提它（反查器看不到 --all／--pr 這種形狀，所以直接掃）', () => {
+test('⭐ 這支不是閘：**整份合併手冊**一個字都不提它（不是只掃「合併步驟」那一段）', () => {
   // test/helpers/merge-gates.js 的反查器只認 `node scripts/x.js <N>`，這支的兩種呼叫形狀它都看不到，
-  // 所以「不在閘名單裡」那種寫法對這支永遠不會紅——改成直接檢查合併步驟沒提到它。
-  // ⚠️ 起點原本釘在第一個 `> 1.`，而真正的合併程序從上面那段前言就開始了——
-  //    在「下列步驟缺一不可」之後、`> 1.` 之前插一句「先跑這支、非零就停止合併」，
-  //    工具已經進門而這題照樣綠（#579 r11 Medium③）。改成釘在**前言那一行**。
+  // 所以「不在閘名單裡」那種寫法對這支永遠不會紅——改成直接掃文件。
+  // ⚠️ **起點不要再釘了**：r11 釘在第一個 `> 1.`（前面插一行就繞過）、r12 改釘在前言那一行
+  //   （前言**之前**插一行又繞過）。每釘一次就多一個「前面」。所以改成掃**整份檔案**——
+  //   `REVIEW-AND-MERGE.md` 是合併手冊，這支不該出現在裡面的任何位置，這句話才是封閉的。
+  //   代價：哪天真的想在手冊裡提到它（例如寫「這支**不是**合併步驟的一環」），就要回來改這題。
+  //   那個代價是對的：那正是「把它寫進合併手冊」這件事該有的摩擦。
   const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  const lines = doc.split('\n');
-  const PREAMBLE = '下列步驟**（步數刻意不寫死';
-  const heads = lines.reduce((/** @type {number[]} */ acc, l, i) => (l.includes(PREAMBLE) ? [...acc, i] : acc), []);
-  assert.equal(heads.length, 1, `合併程序的前言「${PREAMBLE}…」要剛好出現一次（找到 ${heads.length} 處）——措辭改了就來改這裡`);
-  const start = heads[0];
-  const firstStep = lines.findIndex((l, i) => i > start && /^> 1\.\s/.test(l));
-  assert.equal(firstStep, start + 1,
-    '前言與第一步 `> 1.` 之間插了東西——考題只掃到那之後的話，插在中間的接線就看不到（#579 r12 待辦⑥：原本只驗前後順序，等於沒驗相鄰）');
-  const end = lines.findIndex((l, i) => i > start && /^確認遠端分支已刪除|^## /.test(l));
-  assert.ok(end > start, '找不到合併步驟的結尾錨點');
-  assert.doesNotMatch(lines.slice(start, end < 0 ? undefined : end).join('\n'), /pending-rulings/,
-    '合併步驟提到這支＝它變成流程的一環（pre-push 那種「非零就擋」的地方會讓退出碼 2 變成擋人）');
+  assert.doesNotMatch(doc, /pending-rulings/,
+    '合併手冊提到這支＝它變成流程的一環（pre-push 那種「非零就擋」的地方會讓退出碼 2 變成擋人）');
 });
 
 test('⭐ 這支不是閘（第二半）：CI 設定與 pre-push 也不可以叫它——那兩處是「非零就擋」，接進去它就變成閘', () => {
