@@ -82,26 +82,24 @@ test('2026-07-10 那節過期的「審查分工」不可以再出現（它擺在
 
 // ── PR 協作欄位的機械閘 ──────────────────────────────────────
 
-test('⭐ PR 模板的欄位集合＝REQUIRED_FIELDS（**雙向**：多一個少一個都紅）', () => {
-  // ⚠️ 上一版只驗單向（REQUIRED_FIELDS ⊆ 模板）：從腳本拿掉一欄、模板留著那一行，這一題照樣綠
-  //    ——於是模板上會留一個「填了也沒人看」的欄位，而下一個人不知道它已經不算數。
-  // ⚠️ **先剝 HTML 註解再定位**（#583 r1 Medium②）：上一版在**沒剝註解**的原文裡找標題、又拿第一個
-  //    `<!--` 當段落終點，於是「把標題藏進註解」「把欄位行藏進註解」兩種突變都能繞過去。
-  //    這跟閘自己的 `fieldValue()` 是同一個道理：模板的填寫說明本來就住在註解裡。
+test('⭐ PR 模板的協作欄位區段＝REQUIRED_FIELDS 逐行逐字（多一行少一行、順序不同都紅）', () => {
+  // ⚠️ **不要再手寫第二份欄位行的解析器**（#583 r1→r2→r3 連三輪：先是只認一種寫法而漏算，
+  //    放寬之後換成欄名含 `_` 又漏算，再放寬就連「請注意：…」這種說明也被當成欄位＝假紅）。
+  //    「哪一行是欄位、哪一行是說明」本來就不是用一條正規式判得準的。改成**逐行逐字比對**：
+  //    那一段**只准**有 REQUIRED_FIELDS 那幾行、順序也要一樣。模板本來就是這樣長的
+  //    （所有填寫說明都住在 HTML 註解裡），所以這不是新規定，是把現況釘住。
+  // ⚠️ 誠實劃界：這守的是「repo 裡的模板」。它管不到「某個人在自己的 PR 說明裡多寫幾行」——
+  //    那由閘自己判（多的行它不讀），本題不宣稱擋得住。
   const tpl = read('.github/pull_request_template.md').replace(/<!--[\s\S]*?-->/g, '');
   const lines = tpl.split('\n');
   const at = lines.findIndex((l) => /^##\s*協作欄位\s*$/u.test(l));
   assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
   const next = lines.findIndex((l, i) => i > at && /^#{1,6}\s/u.test(l));
-  const section = lines.slice(at, next < 0 ? undefined : next).join('\n');
-  // ⚠️ **要認得閘認得的每一種寫法**（#583 r2 Medium／鐵則 9：形狀考題不能只認一種）：上一版只數
-  //    `- **欄名**：`，於是模板多一行 `* **意外欄位**：` 或 `- 意外欄位：` 就靜默漏算——而那兩種
-  //    `fieldValue()` 都讀得到，等於模板上多了一個「填了也沒人看」的欄位而這一題全綠。
-  //    這裡的形狀刻意跟閘的 `fieldValue()` 同一族：可有項目符號或有序清單、欄名可被 `**`／`__` 包住。
-  const FIELD_LINE = /^[^\S\n]*(?:(?:[-*+]|\d+[.)])[^\S\n]*)?(?:\*\*|__)?([^*_:：\n]+?)(?:\*\*|__)?[^\S\n]*[:：]/gmu;
-  const inTemplate = [...section.matchAll(FIELD_LINE)].map((m) => m[1].trim());
-  assert.deepEqual(inTemplate.slice().sort(), REQUIRED_FIELDS.slice().sort(),
-    `模板的欄位集合跟 REQUIRED_FIELDS 對不上——多一個或少一個都要來改這一題。\n  模板：${inTemplate.join('、')}\n  腳本：${REQUIRED_FIELDS.join('、')}`);
+  const body = lines.slice(at + 1, next < 0 ? undefined : next).filter((l) => l.trim() !== '');
+  assert.deepEqual(body, REQUIRED_FIELDS.map((f) => `- **${f}**：`),
+    '模板的「協作欄位」區段跟 REQUIRED_FIELDS 對不上（多一行、少一行、順序不同、寫法不同都會紅）。\n'
+    + '  ⚠️ 要在那一段寫說明，請寫進 HTML 註解裡——模板的填寫說明本來就都在註解裡，'
+    + '可見區只放欄位行；註解會先被剝掉，不影響這一題。');
 });
 
 test('⭐ 欄位定位｜八種常見寫法都讀得到同一個值（合法裝飾不可誤擋、註解裡的同名字串不算）', () => {
