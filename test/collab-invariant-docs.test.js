@@ -17,7 +17,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { headingAt } from './helpers/markdown-heading.js';
 import { ruleItemRange } from './helpers/agents-rule-item.js';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -418,59 +419,6 @@ test('欄位閘｜混用文字系統 fail-closed，但純中文註記不可誤�
 const GATE_WF = '.github/workflows/collab-fields.yml';
 const WF_DIR = '.github/workflows';
 
-/**
- * 迷你 YAML 讀取器——**只夠讀我們自己寫的 workflow**（無 anchor、無多行純量、無引號逃逸）。
- * 本專案零執行時相依，不裝 YAML 套件；而這裡需要的是「把形狀讀出來」，不是通用剖析。
- *
- * ⚠️ **為什麼非得讀出整個形狀**（r2 的教訓）：r2 版只鎖 `run:` 那一行與 `continue-on-error`，
- * Codex 立刻示範了五種「閘根本沒跑、考題卻 30/30 全綠」的寫法——
- * job 加 `if: ${{ false }}`／step 加 `if: ${{ false }}`／`needs:` 一個會失敗的前置 job／
- * 自訂 `shell` 在外層吞退出碼／更早的 step 用 `actions/github-script` 把腳本覆寫成 `process.exit(0)`。
- * （被 skip 的 job，GitHub 對 required check 回報的是 **Success**。）
- *
- * **列舉這些寫法補不完**——xlsx 護欄已經證明過列舉會連漏三輪。
- * 所以改成**關門**：解析成物件，整個形狀 `deepEqual` 一份預期值。多一個 key、少一個 key、
- * 多一個 step、step 換順序，全部紅。要改這道閘的形狀＝**必須刻意改考題**。
- * @param {string} text
- */
-// ⚠️ 這支只用 `\n` 切行，看不見別的換行字元；守住這件事的是
-//    題名關鍵字「workflow 的空白只准 SPACE」那一題（在**本檔後面**），不是這裡。
-function parseYaml(text) {
-  // ⚠️ **空行與註解的判定只認 SPACE 與 TAB**（YAML 的分隔空白就這兩個；#586 r1 High）。
-  //    用 JS 的 `\s` 會多認 NBSP／全形空白等——那些在 YAML 眼裡**不是**分隔空白，
-  //    於是 `<NBSP># || true` 這種行 YAML 當成上一個 `run:` 純量的**續行**，這裡卻當成註解整行丟掉。
-  const lines = text.split('\n').filter((l) => !/^[ \t]*$/u.test(l) && !/^[ \t]*#/u.test(l));
-  let i = 0;
-  const indentOf = (/** @type {string} */ l) => (/^ */.exec(l) || [''])[0].length;
-
-  /** @param {number} indent @returns {any} */
-  function block(indent) {
-    if (/^\s*-\s/.test(lines[i])) {
-      const out = [];
-      while (i < lines.length && indentOf(lines[i]) === indent && /^\s*-\s/.test(lines[i])) {
-        const rest = (/^\s*-\s*(.*)$/.exec(lines[i]) || ['', ''])[1];
-        lines[i] = ' '.repeat(indent + 2) + rest;
-        out.push(block(indent + 2));
-      }
-      return out;
-    }
-    /** @type {Record<string, any>} */
-    const out = {};
-    while (i < lines.length && indentOf(lines[i]) === indent && !/^\s*-\s/.test(lines[i])) {
-      const m = /^\s*([^:]+):\s*(.*)$/.exec(lines[i]);
-      assert.ok(m, `workflow 有這支迷你讀取器看不懂的一行（請改回單純的 key: value）：${lines[i]}`);
-      const key = m[1].trim();
-      const val = m[2].trim();
-      i += 1;
-      if (val !== '') { out[key] = val; continue; }
-      out[key] = (i < lines.length && indentOf(lines[i]) > indent) ? block(indentOf(lines[i])) : null;
-    }
-    return out;
-  }
-  const doc = block(0);
-  assert.equal(i, lines.length, `workflow 沒被完整讀完（停在第 ${i + 1} 行）：${lines[i]}`);
-  return doc;
-}
 
 /**
  * 這道閘唯一合法的**整份 workflow** 形狀。改它＝刻意的決定，不是順手。
@@ -490,26 +438,54 @@ function parseYaml(text) {
  * ⚠️ `types` 刻意比對**原始的 flow sequence 字串**：寫成 `types: opened, edited, …`
  * （沒有方括號的純量）是合法 YAML 但語意不同，這樣比對就擋得住（r3 的 Low）。
  */
-const EXPECTED_WORKFLOW = {
-  name: '協作欄位',
-  on: { pull_request: { types: '[opened, edited, reopened, synchronize]' } },
-  jobs: {
-    'collab-fields': {
-      name: '協作欄位（實作者 ≠ 獨立審查者）',
-      'runs-on': 'ubuntu-latest',
-      permissions: { contents: 'read', 'pull-requests': 'read' },
-      steps: [
-        { uses: 'actions/checkout@v4' },
-        { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
-        {
-          name: '協作欄位閘（必填欄位齊全＋實作者 ≠ 獨立審查者）',
-          env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
-          run: 'node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
-        },
-      ],
-    },
-  },
-};
+const GATE_WF_LINES = [
+  '# 協作欄位閘（雲端門）：擋「實作者＝獨立審查者」與必填欄位沒填齊的 PR。',
+  '#',
+  '# ⚠️ **為什麼自己一個檔案、不併進 ci.yml**（Codex #382 r1 抓到的 High）：',
+  '#   觸發條件不一樣。ci.yml 的三關看的是**程式碼**（commit 一動才需要重跑）；',
+  '#   這道閘看的是**PR 說明**——而 GitHub 的 `pull_request:` 預設事件是',
+  '#   `opened / synchronize / reopened`，**不含 `edited`**。',
+  '#   後果很具體：先用填齊的欄位開 PR 拿到綠燈 → 再編輯說明把欄位刪掉／把實作者',
+  '#   與審查者改成同一人 → **commit SHA 沒變、workflow 不重跑、綠燈還在**',
+  '#   ⇒ 分支保護照樣放行。反方向也一樣痛：紅燈後補好說明，不會自動轉綠。',
+  '#   所以這裡必須明寫 `types:` 加上 `edited`。',
+  '#   而 ci.yml **刻意不加 `edited`**——改幾個字的說明不該重跑 1300+ 題兩輪。',
+  '#',
+  '# ⚠️ job 的 `name:` 是分支保護 required check 的比對字串（**逐字**）。',
+  '#    改這裡就要同步改 GitHub 設定與 docs/GitHub分支保護-設定與驗證.md，',
+  '#    否則 GitHub 會一直等一個永遠不會出現的 check ＝**永遠卡住合併**。',
+  'name: 協作欄位',
+  '',
+  'on:',
+  '  pull_request:',
+  '    types: [opened, edited, reopened, synchronize]',
+  '',
+  'jobs:',
+  '  collab-fields:',
+  '    name: 協作欄位（實作者 ≠ 獨立審查者）',
+  '    runs-on: ubuntu-latest',
+  '    # ⚠️ **必須明寫 pull-requests: read**（2026-08-02 第一次上工就踩到）：',
+  '    #    預設的 GITHUB_TOKEN 讀不到 PR 內容，`gh pr view` 會回',
+  '    #    `Resource not accessible by integration (repository.pullRequest)`，',
+  '    #    腳本 fail-closed 判「查不清楚」→ 退出碼 2 → 每一支 PR 都紅。',
+  '    #    （fail-closed 本身是對的：查不到不等於安全。錯的是沒給權限。）',
+  '    permissions:',
+  '      contents: read',
+  '      pull-requests: read',
+  '    steps:',
+  '      - uses: actions/checkout@v4',
+  '      - uses: actions/setup-node@v4',
+  '        with:',
+  '          node-version-file: .node-version',
+  '      - name: 協作欄位閘（必填欄位齊全＋實作者 ≠ 獨立審查者）',
+  '        env:',
+  '          # gh CLI 在 runner 上已預裝；它讀 GH_TOKEN 才查得到 PR 說明',
+  '          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
+  '        # ⚠️ 這一行**不可以**接 `|| true`／`; true`，也不可以在 job 上加',
+  '        #    `continue-on-error`——那會讓閘永遠放行，而考題原本看不出來',
+  '        #    （#382 r1 實測：加了 `|| true`，28/28 全綠）。現在有考題盯著。',
+  '        run: node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
+];
 
 /**
  * workflow 檔裡第一個「不准出現」的字元；沒有就回 null。**只准 SPACE、TAB、LF。**
@@ -574,9 +550,17 @@ function scanWorkflowChars(sources) {
 }
 
 /** @returns {{ name: string, source: string }[]} */
-const workflowSources = () => readdirSync(join(ROOT, WF_DIR))
+/**
+ * 列出一個目錄裡的 workflow 檔並讀進來。
+ * ⚠️ **收 `dir` 參數是為了讓誘餌題走完整條路**（#586 r2 Medium）：誘餌原本是在讀完檔之後才
+ *    加進陣列，所以只驗得到「掃描→判準」，驗不到「列檔→讀檔」。把 `source:` 換成檔名、
+ *    只讀首行、或讀進來先抹掉違規字元，三種退化原本都全綠。
+ * @param {string} dir @param {string} label 訊息裡顯示的路徑前綴
+ * @returns {{ name: string, source: string }[]}
+ */
+const workflowSources = (dir = join(ROOT, WF_DIR), label = WF_DIR) => readdirSync(dir)
   .filter((x) => /\.ya?ml$/.test(x))
-  .map((f) => ({ name: `${WF_DIR}/${f}`, source: read(`${WF_DIR}/${f}`) }));
+  .map((f) => ({ name: `${label}/${f}`, source: readFileSync(join(dir, f), 'utf8') }));
 
 test('⭐ workflow 的空白只准 SPACE／TAB／LF：其餘換行與空白字元會讓形狀比對整行看不見', () => {
   const sources = workflowSources();
@@ -596,13 +580,22 @@ test('⭐ workflow 的空白只准 SPACE／TAB／LF：其餘換行與空白字�
     + '    真的需要那個字元當內容，請用 YAML 的跳脫寫法，不要讓它裸著出現。');
 });
 
-test('⭐ 掃描真的有跑：塞一個誘餌來源就要被抓出來', () => {
-  // ⚠️ 沒有這一題的話，把上面那個 `scanWorkflowChars(...)` 換成 `[]`、或把判準改成永遠回 null，
-  //    整支考題檔照樣全綠——那就是「什麼都沒檢查卻回報通過」（#586 r1 Medium 實測）。
-  const decoy = { name: 'decoy.yml', source: `name: x\n  run: y${String.fromCharCode(0xa0)}# || true\n` };
-  const problems = scanWorkflowChars([...workflowSources(), decoy]);
-  assert.equal(problems.length, 1, `誘餌沒被抓到（或誤抓了真檔）：${problems.join('') || '（零命中）'}`);
-  assert.match(problems[0], /^ {2}decoy\.yml:2 有 U\+00A0$/u, `誘餌的檔名／行號／碼位要報對：${problems[0]}`);
+test('⭐ 列檔→讀檔→掃描整條路都有跑：暫存目錄裡放一支含違規字元的檔，必須被抓出來', () => {
+  // ⚠️ **誘餌一定要從「目錄」開始**（#586 r2 Medium）：原本是讀完檔之後才把誘餌塞進陣列，
+  //    於是只證明得了「掃描→判準」。實測把 `source:` 換成檔名、只讀首行、或讀進來先抹掉
+  //    違規字元，三種退化都能讓誘餌照樣通過——那就是「什麼都沒檢查卻回報通過」。
+  const dir = mkdtempSync(join(tmpdir(), 'wf-probe-'));
+  try {
+    // ⚠️ 暫存目錄開在系統的 tmp、**不開在 repo 裡**：開在 repo 裡會被別的掃描器數到（併發假紅）。
+    writeFileSync(join(dir, 'bad.yml'), `name: x\n# probe${String.fromCharCode(0x0d)}continue-on-error: true\n`);
+    writeFileSync(join(dir, 'good.yml'), 'name: y\n  run: z\n');
+    writeFileSync(join(dir, 'ignored.txt'), `not a workflow${String.fromCharCode(0x0d)}\n`);
+    const problems = scanWorkflowChars(workflowSources(dir, 'probe'));
+    assert.deepEqual(problems, ['  probe/bad.yml:2 有 U+000D'],
+      `列檔／讀檔／掃描這條路上有一段沒做事（或把不是 workflow 的檔也掃了）：${problems.join('') || '（零命中）'}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('⭐ 判準本身：整個家族都要拒收、位置要報對、正常內容要放行', () => {
@@ -639,9 +632,20 @@ test('⭐ 判準本身：整個家族都要拒收、位置要報對、正常內�
   assert.equal(firstBadWorkflowChar(`${'x'.repeat(9000)}\r`)?.at, 9000, '晚位置的違規字元漏掃了');
 });
 
-test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列舉繞法）', () => {
-  assert.deepEqual(parseYaml(read(GATE_WF)), EXPECTED_WORKFLOW,
-    `${GATE_WF} 的形狀變了。這道閘只認一種合法形狀，因為「讓它看起來有跑、實際沒跑」的寫法列舉不完：\n`
+test('協作欄位閘｜整份 workflow 逐行逐字釘死（關門，不是列舉繞法）', () => {
+  // ⚠️ **為什麼是逐行逐字、不是解析後比對形狀**（#586 r2 Medium）：
+  //    原本用同檔一支迷你 YAML 讀取器解析再比對。但那支讀取器**不是 YAML**，兩邊只要有一處
+  //    認定不同，檔案的真實語意就跑出比對的射程。實測到的分岔至少四種：冒號後不留空白
+  //    （`- uses:actions/checkout@v4` 真 YAML 讀成一個字串、它讀成一組 key/value）、縮排裡的 TAB、
+  //    清單記號後多一個空白而後續行不動、重複的 key。**補一種就會冒出下一種**，
+  //    而它每一種的後果都一樣：那道**平台強制的必要檢查**的實際內容不在比對範圍裡。
+  //    ⇒ 改成不解析：**這個檔案必須逐行等於下面釘死的那幾行**。任何差異都會紅。
+  // ⚠️ **代價（刻意接受）**：以後要改這道閘，一定要同時改 `GATE_WF_LINES`＝**一定會有人看一眼**。
+  //    那正是本題要的；原本那句「要改這道閘請連同期望值一起改，那是刻意的動作」意思沒變。
+  const actual = read(GATE_WF).split('\n');
+  assert.equal(actual.pop(), '', `${GATE_WF} 必須以換行結尾`);
+  assert.deepEqual(actual, GATE_WF_LINES,
+    `${GATE_WF} 的內容變了。這道閘只認一種寫法，因為「讓它看起來有跑、實際沒跑」的寫法列舉不完：\n`
     + '  ・job 或 step 加 `if: ${{ false }}`（被 skip 的 job 在 required check 上回報 **Success**）\n'
     + '  ・`needs:` 一個會失敗的前置 job\n'
     + '  ・step 自訂 `shell`、或**根層 `defaults.run.shell`** 在外層吞掉退出碼\n'
@@ -649,7 +653,7 @@ test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列�
     + '  ・`run:` 尾端接 `|| true`\n'
     + '⚠️ `types` 少了 `edited` 也會在這裡紅——`pull_request:` 預設事件**不含 edited**，\n'
     + '   少了它就能「欄位填齊拿綠燈 → 編輯說明撤掉欄位 → commit 沒變、綠燈還在」。\n'
-    + '要改這道閘，請連同 EXPECTED_WORKFLOW 一起改——那是刻意的動作。');
+    + '要改這道閘，請連同 `GATE_WF_LINES` 一起改——那是刻意的動作。');
 });
 
 
