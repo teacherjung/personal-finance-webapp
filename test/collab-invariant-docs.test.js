@@ -542,14 +542,20 @@ function firstBadWorkflowChar(text) {
 function scanWorkflowChars(sources) {
   /** @type {string[]} */
   const problems = [];
+  /** ⚠️ **`scanned` 一定要在迴圈裡累積**（#586 r4 Medium）：上一版是從輸入陣列 `map` 出來的，
+   *  於是「讀進來了、但送進迴圈前被切掉」或「迴圈自己 `slice` 掉前面幾筆」都照樣回報成掃過。
+   *  記錄要來自**實際處理過的那一筆**，才擋得住那段接縫。
+   *  @type {string[]} */
+  const scanned = [];
   for (const { name, source } of sources) {
+    scanned.push(name);
     const hit = firstBadWorkflowChar(source);
     if (hit) {
       problems.push(`  ${name}:${source.slice(0, hit.at).split('\n').length} 有 `
         + `U+${hit.code.toString(16).padStart(4, '0').toUpperCase()}`);
     }
   }
-  return problems;
+  return { problems, scanned: scanned.sort() };
 }
 
 /**
@@ -565,7 +571,8 @@ const workflowSources = (dir = join(ROOT, WF_DIR), label = WF_DIR) => readdirSyn
  * **正式入口**：一律掃真的 workflow 目錄；`extra` 是額外要一起掃的目錄。
  * ⚠️ **真檢查與誘餌題共用這一支**（#586 r3 Medium①）：上一版把誘餌搬去只掃暫存目錄，
  *    結果「真目錄那一條呼叫」被切成 `[]` 時誘餌照樣通過——兩條呼叫各自獨立，誰斷了另一邊都不知道。
- *    共用同一支之後，這支被掏空、或真來源被漏掉，誘餌題就會叫。
+ *    共用同一支、且 `scanned` 由**實際處理過的每一筆**累積之後，這支被掏空、真來源被漏掉、
+ *    或在送進掃描迴圈前後被 `slice` 掉，誘餌題都會叫（#586 r3／r4 逐刀驗過）。
  * @param {[string, string][]} extra @returns {string[]}
  */
 const scanWorkflows = (extra = []) => {
@@ -575,7 +582,8 @@ const scanWorkflows = (extra = []) => {
   ];
   // ⚠️ **連「掃了哪些檔」也回報**（#586 r3 Medium①）：只回報「找到幾個問題」的話，
   //    把真來源整組漏掉也是「零個問題」＝零個問題，兩邊都綠。掃了誰要能被斷言。
-  return { problems: scanWorkflowChars(sources), scanned: sources.map((x) => x.name).sort() };
+  //    ⚠️ 那份名單由 `scanWorkflowChars` **在迴圈裡**累積，不是從這裡的輸入 map 出來（#586 r4）。
+  return scanWorkflowChars(sources);
 };
 
 /** 真 workflow 一定要在被掃的名單裡（每一題都斷言，漏掉整組會在這裡紅）。 */
@@ -628,6 +636,8 @@ test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓�
     writeFileSync(join(dir, 'c-good.yml'), 'name: fine\n  run: ok\n');
     writeFileSync(join(dir, 'd-ignored.txt'), `not a workflow${CR}\n`);
     writeFileSync(join(dir, 'e-probe.yaml.txt'), `also not one${CR}\n`);
+    // ⚠️ 沒有副檔名：把過濾正則裡的 `\.` 寫成 `.`（萬用字元）就會把它誤算成 workflow（#586 r4 Low）
+    writeFileSync(join(dir, 'f-probe-yaml'), `no extension${CR}\n`);
     const { problems, scanned } = scanWorkflows([[dir, 'probe']]);
     assert.deepEqual(scanned, [...REAL_WF_NAMES, 'probe/a-bad.yml', 'probe/b-late.yaml',
       'probe/c-good.yml', 'probe/zz-last.yml'].sort(),
