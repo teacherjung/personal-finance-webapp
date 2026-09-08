@@ -490,8 +490,12 @@ const GATE_WF_LINES = [
 /**
  * workflow 檔裡第一個「不准出現」的字元；沒有就回 null。**只准 SPACE、TAB、LF。**
  *
- * ⚠️ **為什麼**：同檔那道形狀比對用 `text.split('\n')` 切行、又把「以 `#` 開頭的行」整行丟掉。
- *    只要讓它「看不見」一段內容，那道**平台強制的必要檢查**就會被靜音。兩條實測過的路：
+ * ⚠️ **這一條現在守的是什麼**：`collab-fields.yml` 已改成**逐行逐字**比對，所以對它而言這條是
+ *    **額外的格式政策**（本 repo 只收 LF）；對**其他 workflow**（例如 `ci.yml`）而言，這條是它們
+ *    僅有的字元集合防線。
+ * ⚠️ **舊版病史（判準的由來，不是現行原因）**：本條出生時，那道比對是先用一支迷你讀取器解析——
+ *    它用 `text.split('\n')` 切行、又把「以 `#` 開頭的行」整行丟掉。只要讓它「看不見」一段內容，
+ *    那段就不在比對範圍裡。兩條實測過的路（**兩個實測都在本機**，沒有在 GitHub 上驗過服務端解析器）：
  *    ①**換行類**（CR／NEL／LS／PS）：比對只認 LF。把它們夾在一行註解裡、後面接
  *      `continue-on-error: true` ⇒ 比對只看到一行註解、整行丟掉，**四種都靜靜通過**（2026-09-09）。
  *    ②**YAML 不認的空白**（NBSP／全形空白／各種 EN・EM SPACE）：JS 的 `\s` 認它們、YAML 只認
@@ -532,8 +536,7 @@ function firstBadWorkflowChar(text) {
 }
 
 /**
- * 掃一組來源，回報「不該出現的字元」。**純函式**——這樣才能用誘餌證明掃描真的有跑
- * （#586 r1 Medium：原本直接讀檔比對，把呼叫改成 `const hit = null` 整個接線失效也全綠）。
+ * 掃一組來源，回報「不該出現的字元」。**純函式。**
  * @param {{ name: string, source: string }[]} sources @returns {string[]}
  */
 function scanWorkflowChars(sources) {
@@ -549,12 +552,8 @@ function scanWorkflowChars(sources) {
   return problems;
 }
 
-/** @returns {{ name: string, source: string }[]} */
 /**
  * 列出一個目錄裡的 workflow 檔並讀進來。
- * ⚠️ **收 `dir` 參數是為了讓誘餌題走完整條路**（#586 r2 Medium）：誘餌原本是在讀完檔之後才
- *    加進陣列，所以只驗得到「掃描→判準」，驗不到「列檔→讀檔」。把 `source:` 換成檔名、
- *    只讀首行、或讀進來先抹掉違規字元，三種退化原本都全綠。
  * @param {string} dir @param {string} label 訊息裡顯示的路徑前綴
  * @returns {{ name: string, source: string }[]}
  */
@@ -562,37 +561,82 @@ const workflowSources = (dir = join(ROOT, WF_DIR), label = WF_DIR) => readdirSyn
   .filter((x) => /\.ya?ml$/.test(x))
   .map((f) => ({ name: `${label}/${f}`, source: readFileSync(join(dir, f), 'utf8') }));
 
-test('⭐ workflow 的空白只准 SPACE／TAB／LF：其餘換行與空白字元會讓形狀比對整行看不見', () => {
+/**
+ * **正式入口**：一律掃真的 workflow 目錄；`extra` 是額外要一起掃的目錄。
+ * ⚠️ **真檢查與誘餌題共用這一支**（#586 r3 Medium①）：上一版把誘餌搬去只掃暫存目錄，
+ *    結果「真目錄那一條呼叫」被切成 `[]` 時誘餌照樣通過——兩條呼叫各自獨立，誰斷了另一邊都不知道。
+ *    共用同一支之後，這支被掏空、或真來源被漏掉，誘餌題就會叫。
+ * @param {[string, string][]} extra @returns {string[]}
+ */
+const scanWorkflows = (extra = []) => {
+  const sources = [
+    ...workflowSources(),
+    ...extra.flatMap(([dir, label]) => workflowSources(dir, label)),
+  ];
+  // ⚠️ **連「掃了哪些檔」也回報**（#586 r3 Medium①）：只回報「找到幾個問題」的話，
+  //    把真來源整組漏掉也是「零個問題」＝零個問題，兩邊都綠。掃了誰要能被斷言。
+  return { problems: scanWorkflowChars(sources), scanned: sources.map((x) => x.name).sort() };
+};
+
+/** 真 workflow 一定要在被掃的名單裡（每一題都斷言，漏掉整組會在這裡紅）。 */
+const REAL_WF_NAMES = [`${WF_DIR}/ci.yml`, `${WF_DIR}/collab-fields.yml`];
+
+test('⭐ workflow 的檔案清單與內容要原樣讀進來（漏檔、截斷、只讀首行都要紅）', () => {
+  // ⚠️ 為什麼要單獨釘這一層（#586 r3 Medium②）：只斷言「掃出零個問題」的話，
+  //    列檔或讀檔少讀了什麼**也是零個問題**。所以這裡直接釘「列到哪些檔」與「讀進來的內容
+  //    等於檔案本身」。新增一支 workflow 要同時改這裡＝那是刻意的動作。
   const sources = workflowSources();
-  assert.ok(sources.length >= 2, `只列到 ${sources.length} 支 workflow，列舉大概壞了`);
-  assert.deepEqual(scanWorkflowChars(sources), [],
+  assert.deepEqual(sources.map((x) => x.name).sort(),
+    [`${WF_DIR}/ci.yml`, `${WF_DIR}/collab-fields.yml`],
+    'workflow 的檔案清單跟釘住的不一樣（新增／改名／被過濾掉了）');
+  for (const { name, source } of sources) {
+    assert.equal(source, read(name), `${name} 沒有被原樣讀進來（截斷或只讀首行都會落在這裡）`);
+  }
+});
+
+test('⭐ workflow 的空白只准 SPACE／TAB／LF', () => {
+  const { problems, scanned } = scanWorkflows();
+  assert.deepEqual(scanned, REAL_WF_NAMES, '真的 workflow 沒有全部進到被掃的名單裡');
+  assert.deepEqual(problems, [],
     'workflow 裡出現不該有的字元（位置見上）。\n'
-    + '⚠️ 這不是潔癖，是兩個實測過的洞：\n'
-    + '  ①**換行類**（CR／NEL／LS／PS）：形狀比對用 LF 切行，看不見它們；夾在一行註解裡就能\n'
-    + '    多塞一行設定而比對全綠（2026-09-09 四種都實測靜靜通過）。\n'
-    + '  ②**YAML 不認的空白**（NBSP／全形空白／各種 EN・EM SPACE）：JS 的 `\\s` 認它們、YAML 不認，\n'
-    + '    所以 `<NBSP># || true` 在 YAML 眼裡是上一個 `run:` 的**續行**，比對卻當成註解整行丟掉\n'
-    + '    ——#586 r1 High，獨立審查者用真的 YAML 解析器＋真的腳本驗到「注入版 exit 0」＝那道\n'
-    + '    **平台強制的必要檢查**被靜音。\n'
+    + '⚠️ 這不是潔癖，是兩個實測過的情形——**兩個實測都在本機**（本機 YAML 解析器＋本機 shell），\n'
+    + '   **沒有在 GitHub 上驗過服務端解析器**：\n'
+    + '  ①**換行類**（CR／NEL／LS／PS）：曾經的比對用 LF 切行，看不見它們。\n'
+    + '  ②**YAML 不認的空白**（NBSP／全形空白／各種 EN・EM SPACE）：JS 的 `\\s` 認它們、YAML 只認\n'
+    + '    SPACE 與 TAB，所以那種行在 YAML 是上一個純量的**續行**，當時的比對卻當註解丟掉。\n'
+    + '    #586 r1：獨立審查者用本機 YAML 解析器＋本機 shell 驗到「該版本的腳本回傳 0」。\n'
+    + '⚠️ **這一題現在守的是什麼**：`collab-fields.yml` 已經改成**逐行逐字**比對，所以對它而言\n'
+    + '   這條是**額外的格式政策**（本 repo 只收 LF）；對**其他 workflow**（例如 `ci.yml`）而言，\n'
+    + '   這條是它們僅有的字元集合防線。\n'
     + '⚠️ **處置分兩種，別一律說「改成 LF」**：\n'
     + '  ・**行尾**是 CRLF ⇒ 在編輯器把行尾轉成 LF（CRLF 本身是合法 YAML，是本 repo 只收 LF）。\n'
     + '  ・**其餘**（意外貼進來的控制字元、NBSP、全形空白）⇒ **刪掉或換成普通空白**；\n'
-    + '    真的需要那個字元當內容，請用 YAML 的跳脫寫法，不要讓它裸著出現。');
+    + '    真的需要那個字元當內容，請用 YAML 的跳脫寫法。');
 });
 
-test('⭐ 列檔→讀檔→掃描整條路都有跑：暫存目錄裡放一支含違規字元的檔，必須被抓出來', () => {
-  // ⚠️ **誘餌一定要從「目錄」開始**（#586 r2 Medium）：原本是讀完檔之後才把誘餌塞進陣列，
-  //    於是只證明得了「掃描→判準」。實測把 `source:` 換成檔名、只讀首行、或讀進來先抹掉
-  //    違規字元，三種退化都能讓誘餌照樣通過——那就是「什麼都沒檢查卻回報通過」。
+test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓到，近似副檔名不可誤抓', () => {
+  // ⚠️ 這一題與上一題**走同一支 `scanWorkflows`**，所以正式入口被掏空時這裡也會紅。
+  // ⚠️ 涵蓋 #586 r3 Medium② 點名的四種退化：只認 `.yml`（漏 `.yaml`）、列檔被截斷、
+  //    讀檔被截斷（違規字元在後段）、過濾正則掉了尾端 `$`（誤抓 `.yaml.txt`）。
   const dir = mkdtempSync(join(tmpdir(), 'wf-probe-'));
   try {
-    // ⚠️ 暫存目錄開在系統的 tmp、**不開在 repo 裡**：開在 repo 裡會被別的掃描器數到（併發假紅）。
-    writeFileSync(join(dir, 'bad.yml'), `name: x\n# probe${String.fromCharCode(0x0d)}continue-on-error: true\n`);
-    writeFileSync(join(dir, 'good.yml'), 'name: y\n  run: z\n');
-    writeFileSync(join(dir, 'ignored.txt'), `not a workflow${String.fromCharCode(0x0d)}\n`);
-    const problems = scanWorkflowChars(workflowSources(dir, 'probe'));
-    assert.deepEqual(problems, ['  probe/bad.yml:2 有 U+000D'],
-      `列檔／讀檔／掃描這條路上有一段沒做事（或把不是 workflow 的檔也掃了）：${problems.join('') || '（零命中）'}`);
+    // ⚠️ 暫存目錄開在系統 tmp、**不開在 repo 裡**：開在 repo 裡會被別的掃描器數到（併發假紅）。
+    const CR = String.fromCharCode(0x0d);
+    writeFileSync(join(dir, 'a-bad.yml'), `name: x\n# probe${CR}continue-on-error: true\n`);
+    writeFileSync(join(dir, 'b-late.yaml'), `name: y\n${'# filler\n'.repeat(40)}tail${CR}\n`);
+    writeFileSync(join(dir, 'zz-last.yml'), `name: z\nrun: ok${CR}\n`);
+    writeFileSync(join(dir, 'c-good.yml'), 'name: fine\n  run: ok\n');
+    writeFileSync(join(dir, 'd-ignored.txt'), `not a workflow${CR}\n`);
+    writeFileSync(join(dir, 'e-probe.yaml.txt'), `also not one${CR}\n`);
+    const { problems, scanned } = scanWorkflows([[dir, 'probe']]);
+    assert.deepEqual(scanned, [...REAL_WF_NAMES, 'probe/a-bad.yml', 'probe/b-late.yaml',
+      'probe/c-good.yml', 'probe/zz-last.yml'].sort(),
+      '被掃的名單不對：真 workflow 漏掉了，或把不是 workflow 的檔也列進來');
+    assert.deepEqual(problems.sort(), [
+      '  probe/a-bad.yml:2 有 U+000D',
+      '  probe/b-late.yaml:42 有 U+000D',
+      '  probe/zz-last.yml:2 有 U+000D',
+    ], '列檔／讀檔／掃描這條路上有一段沒做事');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -638,10 +682,12 @@ test('協作欄位閘｜整份 workflow 逐行逐字釘死（關門，不是列�
   //    認定不同，檔案的真實語意就跑出比對的射程。實測到的分岔至少四種：冒號後不留空白
   //    （`- uses:actions/checkout@v4` 真 YAML 讀成一個字串、它讀成一組 key/value）、縮排裡的 TAB、
   //    清單記號後多一個空白而後續行不動、重複的 key。**補一種就會冒出下一種**，
-  //    而它每一種的後果都一樣：那道**平台強制的必要檢查**的實際內容不在比對範圍裡。
+  //    而它每一種的後果都一樣：這個檔案的實際內容有一部分不在比對範圍裡。
+  //    （它提供的是一道平台強制的必要檢查；下游會不會照那段內容執行，本機證不了。）
   //    ⇒ 改成不解析：**這個檔案必須逐行等於下面釘死的那幾行**。任何差異都會紅。
-  // ⚠️ **代價（刻意接受）**：以後要改這道閘，一定要同時改 `GATE_WF_LINES`＝**一定會有人看一眼**。
-  //    那正是本題要的；原本那句「要改這道閘請連同期望值一起改，那是刻意的動作」意思沒變。
+  // ⚠️ **代價（刻意接受）**：以後動到那個檔案的任何一個字元（含加一行註解）都會紅，
+  //    要同時更新 `GATE_WF_LINES`。⚠️ 這只保證**那次改動會在 diff 上留下痕跡、且不能靜靜發生**；
+  //    **保證不了有人真的看過**（那要靠複審）——#586 r3 點名，原本寫「一定會有人看一眼」是誇大。
   const actual = read(GATE_WF).split('\n');
   assert.equal(actual.pop(), '', `${GATE_WF} 必須以換行結尾`);
   assert.deepEqual(actual, GATE_WF_LINES,
@@ -1105,7 +1151,8 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
   //    ⇒ 改成**白名單**：這一條的內容必須逐行等於下面釘死的那幾行。任何夾帶都會改變行的內容＝紅。
   //    這也是第 6 題那一題（題名關鍵字「問法與逾時預設」）用的封閉做法。
   // ⚠️ **代價（刻意接受，照實列）**：**改動這一條已經被釘住的任何一個字元**（改字、改縮排），
-  //    或**新增會被條界收進來的非空內容**，都會紅，要同時更新下面的 `RULE_12`＝**一定會有人看一眼**。
+  //    或**新增會被條界收進來的非空內容**，都會紅，要同時更新下面的 `RULE_12`。
+  //    ⚠️ 這只保證那次改動**會在 diff 上留下痕跡、不能靜靜發生**，**保證不了有人真的看過**（#586 r3）。
   //    ⚠️ 反過來說**不是無條件的**：在末行之後追加零縮排或 tab 起頭的散文，條界會早切、比對照樣過
   //    ——那是檔頭已經寫明的例外（#585 r10／r11），不要在這裡又寫成無條件保證。
   //    這正是保存題要的。⚠️ 其中「整條多縮排一格」在 #585 r2 曾被列為要修掉的假紅、r3 也修掉了；
