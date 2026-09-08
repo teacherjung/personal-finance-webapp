@@ -680,6 +680,37 @@ test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓�
   }
 });
 
+test('⭐ 位置 × 家族全掃：違規字元插在**每一個位置**，走完整條路都要回報得一模一樣', () => {
+  // ⚠️ **為什麼要有這一題（#586 r1〜r6 的收斂點）**：前六輪每一輪都是「誘餌少了某一種形狀」——
+  //    位置 0、檔尾沒換行、超過 8 KiB、不是 CR、碼位大於 U+00FF…**形狀是無窮的，列不完**。
+  //    所以這裡不再加形狀，改成**把位置掃完**：拿一份乾淨的小 workflow，把一個違規字元插進
+  //    **每一個可能的位置**（含最前面與最後面），每次都走**正式入口**（列檔→讀檔→掃描→回報），
+  //    斷言問題清單逐字相符。位置整片掃完之後，「某個位置被切掉」這一族就關門了。
+  // ⚠️ 家族用代表字元各一個就夠：**哪些碼位算違規**已經由題名關鍵字「整個家族都要拒收」那一題
+  //    逐碼位釘死；這一題釘的是**位置與整條路**，兩題射程不同、不重複。
+  const base = 'name: probe\n# comment\nrun: ok\n';
+  const FAMILIES = [0x00, 0x0d, 0x7f, 0x85, 0xa0, 0x2003, 0x2028, 0xfeff];
+  const dir = mkdtempSync(join(tmpdir(), 'wf-sweep-'));
+  try {
+    for (const code of FAMILIES) {
+      const label = `U+${code.toString(16).padStart(4, '0').toUpperCase()}`;
+      for (let at = 0; at <= base.length; at += 1) {
+        const text = base.slice(0, at) + String.fromCharCode(code) + base.slice(at);
+        writeFileSync(join(dir, 'probe.yml'), text);
+        const { problems, scanned } = scanWorkflows([[dir, 'sweep']]);
+        const line = text.slice(0, at).split('\n').length;
+        assert.deepEqual(problems, [`  sweep/probe.yml:${line} 有 ${label}`],
+          `${label} 插在第 ${at} 個位置（第 ${line} 行）沒有被原樣回報——`
+          + '這條路上有一段把它切掉、換掉或濾掉了');
+        assert.ok(scanned.includes('sweep/probe.yml') && scanned.length === REAL_WF_NAMES.length + 1,
+          `${label} 插在第 ${at} 個位置時，被掃的名單不對：${scanned.join('｜')}`);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('⭐ 判準本身：整個家族都要拒收、位置要報對、正常內容要放行', () => {
   const ok = 'name: x\n  run: y\t# 註解\n中文與 emoji 🚦 都正常\n';
   assert.equal(firstBadWorkflowChar(ok), null, 'SPACE／TAB／LF／一般文字被誤擋了');
