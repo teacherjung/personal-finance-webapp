@@ -30,8 +30,7 @@
  *      （`Atomics.wait` 60ms 連量二十次，CPU 最大 0.29ms）。本函式只保證「別的行程搶走的時間不算進來」，
  *      不保證數字穩定——所以門檻要與壞法留倍數距離，不能貼著自然值設。
  *    ・**只適用 CPU 密集的同步工作**。等 timer、等 I/O、等子行程那類「必須在 X 毫秒內回應」的題
- *      （例：`test/stock-fundamentals-api.test.js` 的佇列總時限、`test/pdf-isolate.test.js` 的「自己死的不該等到逾時」、
- *      `test/pr-base-version.test.js` 的子行程逾時）量的本來就是牆上時鐘，換成本函式只會量到零頭——
+ *      （例：`test/stock-fundamentals-api.test.js` 的佇列總時限、`test/pdf-isolate.test.js` 的「自己死的不該等到逾時」）量的本來就是牆上時鐘，換成本函式只會量到零頭——
  *      那些題在壓力下的間歇紅要另外處理，不在本函式射程。
  * @param {() => void} fn 同步工作；回傳它消耗的 CPU 毫秒（fn 丟出的例外原樣傳出，不吞）
  */

@@ -625,11 +625,9 @@ test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光�
       'npm run lint',
       'npm test',
       'node scripts/check-worktree-integrity.js',
-      'node scripts/sync-pr-base-version.js',
-    ], 'pre-push 的關卡順序不對。⚠️ **基準版本對齊必須排在最後**：'
-      + '被擋下來的 push 不該先把 PR 欄位推進去（那會讓說明指著一顆沒上去的 commit）。'
-      + '它不是閘、不擋 push，接線行為題在 test/pr-base-version.test.js。⚠️ **考試之後那一次體檢是關鍵**：'
-      + '考題各跑各的子行程，「哪一支考題把 repo 弄壞」只有在跑完之後量才看得到。');
+    ], 'pre-push 的關卡順序不對。⚠️ **考試之後那一次工作樹體檢是關鍵**：'
+      + '考題各跑各的子行程、`node --test` 的檔案順序也不保證，'
+      + '「哪一支考題把 repo 弄壞」只有在跑完之後量才看得到。');
 
     for (const line of readFileSync(log, 'utf8').trim().split('\n')) {
       const parts = line.split('::');

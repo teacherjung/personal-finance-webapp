@@ -1,10 +1,10 @@
-# 協作欄位閘（雲端門）：擋「實作者＝獨立審查者」與五欄沒填齊的 PR。
+# 協作欄位閘（雲端門）：擋「實作者＝獨立審查者」與必填欄位沒填齊的 PR。
 #
 # ⚠️ **為什麼自己一個檔案、不併進 ci.yml**（Codex #382 r1 抓到的 High）：
 #   觸發條件不一樣。ci.yml 的三關看的是**程式碼**（commit 一動才需要重跑）；
 #   這道閘看的是**PR 說明**——而 GitHub 的 `pull_request:` 預設事件是
 #   `opened / synchronize / reopened`，**不含 `edited`**。
-#   後果很具體：先用合法五欄開 PR 拿到綠燈 → 再編輯說明把欄位刪掉／把實作者
+#   後果很具體：先用填齊的欄位開 PR 拿到綠燈 → 再編輯說明把欄位刪掉／把實作者
 #   與審查者改成同一人 → **commit SHA 沒變、workflow 不重跑、綠燈還在**
 #   ⇒ 分支保護照樣放行。反方向也一樣痛：紅燈後補好說明，不會自動轉綠。
 #   所以這裡必須明寫 `types:` 加上 `edited`。
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-      - name: 協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）
+      - name: 協作欄位閘（必填欄位齊全＋實作者 ≠ 獨立審查者）
         env:
           # gh CLI 在 runner 上已預裝；它讀 GH_TOKEN 才查得到 PR 說明
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
