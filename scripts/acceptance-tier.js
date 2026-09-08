@@ -56,7 +56,7 @@ export const TIERS = /** @type {const} */ ({
 export const ORDER = /** @type {Tier[]} */ (['A', 'B', 'C', 'D', 'P', 'E']);
 
 /**
- * 路徑家族表：**由上往下第一個命中的算**（所以啟動會跑的 scripts/check-node-version.js 排在「只在合併程序跑的明確名單」前面）。
+ * 路徑家族表：**由上往下第一個命中的算**（所以啟動會跑的 scripts/check-node-version.js 排在「不碰畫面的明確名單」前面）。
  * 每一條的級別都由 test/acceptance-tier.test.js 的 RULE_SAMPLES 逐條釘住（多一條、換一級都會紅）。
  * 沒命中＝未知＝當 C（見檔頭「沒列到的路徑一律當『要重啟』」）。
  * @type {[Tier, RegExp][]}

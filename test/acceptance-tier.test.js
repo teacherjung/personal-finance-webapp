@@ -118,7 +118,7 @@ test('⭐ 每一條規則的級別逐條釘住：多一條規則、或把任何�
   assert.equal(tierOf('package.json').tier, 'B');
 });
 
-test('⭐ 啟動會跑的 scripts/check-node-version.js → C；只在合併程序跑的 scripts/check-review-verdicts.js → E；scripts/ 裡沒點名的新腳本 → 未知（當 C），不因為叫 check-* 就免驗', () => {
+test('⭐ 啟動會跑的 scripts/check-node-version.js → C；不碰畫面的 scripts/check-review-verdicts.js（2026-09-08 起雲端也會跑，分級不變） → E；scripts/ 裡沒點名的新腳本 → 未知（當 C），不因為叫 check-* 就免驗', () => {
   assert.equal(tierOf('scripts/check-node-version.js').tier, 'C', 'start.command 每次啟動都跑它，壞了 App 起不來');
   assert.equal(tierOf('scripts/check-review-verdicts.js').tier, 'E');
   assert.equal(tierOf('scripts/grok-scan.js').tier, 'E');

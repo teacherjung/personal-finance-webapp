@@ -33,7 +33,7 @@
 | └ Dismiss stale reviews | ⬜ 關 | ✅ |
 | Require status checks to pass | ✅ 開 | ✅ |
 | └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 獨立審查者）` | ✅ 兩個都在（2026-08-05 API 覆核） |
-| └ ⚠️ **跑但不必過**的 check | `複審結論（看得見｜不擋合併）`、`開發機的 Node（最新版，前瞻｜不擋部署）` | 這兩個**不在** `contexts` 裡，紅了也不擋合併——列在這裡只是為了「job 名稱跨 workflow 唯一」那道考題要對得上 |
+| └ ⚠️ **跑但不必過**的 check | `複審結論（看得見｜不擋合併）`、`開發機的 Node（最新版，前瞻｜不擋部署）` | ⚠️ **這一列不是 2026-08-02 那次唯讀實讀的欄位**（那次只讀 `contexts`）——它記的是「repo 裡有、但刻意沒加進 `contexts`」的 job，列在這裡是為了「job 名稱跨 workflow 唯一」那道考題要對得上。要確認平台現況請重讀 `contexts` |
 | └ **Require branches to be up to date**（`strict`） | ⬜ **關** | ✅ 已與 B 節設計意圖一致（2026-08-05 API 覆核） |
 | Require linear history | ✅ 開 | ✅ |
 | Require conversation resolution | ✅ 開 | ✅ |
@@ -164,6 +164,7 @@ Settings → Branches → 編輯 `main` 的規則：
 
 - `.github/workflows/ci.yml` — 兩個程式碼 job（含為什麼 dev-machine 不當門）
 - `.github/workflows/collab-fields.yml` — 協作欄位閘的 job（**刻意分開一個檔**：
+- `.github/workflows/review-verdict.yml` — 複審結論的 job（2026-09-08 新增）。⚠️ **刻意不在 `contexts` 裡**：它跑、會紅、看得見，但不擋合併。
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
 - `scripts/check-pr-collab-fields.js` — 協作欄位閘（CI 與人工合併程序**跑同一支**）
 - `scripts/check-pr-merge-gate.js` — 堆疊閘（本機執行，未進 CI）
