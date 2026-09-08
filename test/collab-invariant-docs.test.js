@@ -434,9 +434,12 @@ const WF_DIR = '.github/workflows';
  * @param {string} text
  */
 // ⚠️ 這支只用 `\n` 切行，看不見別的換行字元；守住這件事的是
-//    題名關鍵字「workflow 只准用 LF 換行」那一題（同檔上方），不是這裡。
+//    題名關鍵字「workflow 的空白只准 SPACE」那一題（在**本檔後面**），不是這裡。
 function parseYaml(text) {
-  const lines = text.split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
+  // ⚠️ **空行與註解的判定只認 SPACE 與 TAB**（YAML 的分隔空白就這兩個；#586 r1 High）。
+  //    用 JS 的 `\s` 會多認 NBSP／全形空白等——那些在 YAML 眼裡**不是**分隔空白，
+  //    於是 `<NBSP># || true` 這種行 YAML 當成上一個 `run:` 純量的**續行**，這裡卻當成註解整行丟掉。
+  const lines = text.split('\n').filter((l) => !/^[ \t]*$/u.test(l) && !/^[ \t]*#/u.test(l));
   let i = 0;
   const indentOf = (/** @type {string} */ l) => (/^ */.exec(l) || [''])[0].length;
 
@@ -509,21 +512,29 @@ const EXPECTED_WORKFLOW = {
 };
 
 /**
- * workflow 檔裡第一個「不准出現」的字元；沒有就回 null。
+ * workflow 檔裡第一個「不准出現」的字元；沒有就回 null。**只准 SPACE、TAB、LF。**
  *
- * ⚠️ **只准 LF 當換行**。為什麼要有這一條（2026-09-09 實測，原本要在 #584 收、那支被撤回）：
- *    上面那道形狀比對用 `text.split('\n')` 切行，**看不見別的換行字元**；而它又把
- *    「以 `#` 開頭的行」整行丟掉。兩者合起來就是一個洞：
- *    把 `<CR>`／NEL／LS／PS 夾在一行**註解**裡，後面接一行 `continue-on-error: true`，
- *    這支讀取器只看到一行註解、整行丟掉 ⇒ **形狀比對全綠**，而檔案裡確實多了一行設定。
- *    四種字元我都實測過：**四種都讓護欄靜靜通過**。
+ * ⚠️ **為什麼**：同檔那道形狀比對用 `text.split('\n')` 切行、又把「以 `#` 開頭的行」整行丟掉。
+ *    只要讓它「看不見」一段內容，那道**平台強制的必要檢查**就會被靜音。兩條實測過的路：
+ *    ①**換行類**（CR／NEL／LS／PS）：比對只認 LF。把它們夾在一行註解裡、後面接
+ *      `continue-on-error: true` ⇒ 比對只看到一行註解、整行丟掉，**四種都靜靜通過**（2026-09-09）。
+ *    ②**YAML 不認的空白**（NBSP／全形空白／各種 EN・EM SPACE）：JS 的 `\s` 認它們、YAML 只認
+ *      SPACE 與 TAB。所以 `<NBSP># || true` 在 YAML 眼裡是上一個 `run:` 純量的**續行**，
+ *      比對卻把它當註解丟掉——#586 r1 High：獨立審查者用真的 YAML 解析器＋真的腳本驗到
+ *      **注入版 exit 0**（本機路徑；沒有在 GitHub 上推攻擊 workflow，也沒量服務端解析器）。
  * ⚠️ **不去猜下游怎麼解析，直接拒收**（這是本條的核心）：CR 在 YAML 規格裡就是換行；
  *    NEL／LS／PS 在 YAML 1.1 是換行、1.2 拿掉了，而**我沒有量過 GitHub Actions 用的是哪一版**
  *    （本機沒有 YAML 解析器可驗）。「不知道下游怎麼解讀」的正確反應是**拒收輸入**，不是猜。
- * ⚠️ 允許的只有 TAB 與 LF。其餘 C0、DEL、C1（含 NEL）、LS、PS 一律拒收——**關門，不是列舉繞法**。
+ * ⚠️ **「只准這三個空白」用 JS 自己的 Unicode 空白定義（`\s`）表達，不是我列一張表**——列舉補不完。
+ *    另外一律拒收 C0、DEL、C1、LS、PS。**關門，不是列舉繞法。**
+ * ⚠️ **照實說代價**：這條會拒收 **CRLF 行尾**，而 CRLF 本身是合法 YAML——本 repo 只收 LF，
+ *    所以那是**本 repo 的格式限制**、不是 YAML 錯。踩到時處置分兩種，**別一律說「改成 LF」**：
+ *    行尾問題＝在編輯器轉行尾；其餘（意外貼進來的控制字元、NBSP、全形空白）＝刪掉或換成普通空白，
+ *    真的要那個字元當內容就用 YAML 的跳脫寫法。**「正常編輯不會產生這些字元」是假話**
+ *    （Windows／某些編輯器很容易存成 CRLF），#586 r1 點名，已改口。
  * ⚠️ 這跟 `test/comment-test-refs.test.js` 的控制字元掃描器**不是同一把尺**（⚠️ 那支在**別的檔案**，
  *    所以這裡點檔名、不用「題名關鍵字」記號——那個記號的機械閘只認同檔的題名，我先寫錯過一次、被它擋下）：
- *    那一組掃的是考題檔、而且**放行 CR**（一般文字檔有 CRLF 很正常），也不管 LS／PS（那兩個不是控制字元）。
+ *    那一組掃的是考題檔、而且**放行 CR**（一般文字檔有 CRLF 很正常），也不管 LS／PS 與各種空白。
  *    workflow 這裡必須更嚴，所以另立一把。
  *
  * @param {string} text @returns {{ at: number, code: number } | null}
@@ -531,42 +542,101 @@ const EXPECTED_WORKFLOW = {
 function firstBadWorkflowChar(text) {
   for (let i = 0; i < text.length; i += 1) {
     const code = text.charCodeAt(i);
-    if (code === 0x09 || code === 0x0a) continue;   // TAB 與 LF 是僅有的兩個例外
-    const bad = code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)
+    const ch = text[i];
+    if (ch === ' ' || ch === '\t' || ch === '\n') continue;   // 僅有的三個例外
+    // ⚠️ **只准這三個空白**。判準借 JS 自己的 Unicode 空白定義（`\s`），不是我列一張表——
+    //    列舉補不完。YAML 的分隔空白只有 SPACE 與 TAB，所以 NBSP、全形空白、各種 EN／EM SPACE
+    //    在 YAML 眼裡都**不是**空白；而 JS 的 `\s` 認它們，兩邊一分岔就是 #586 r1 那個 High。
+    const bad = /\s/u.test(ch)
+      || code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)
       || code === 0x2028 || code === 0x2029;
     if (bad) return { at: i, code };
   }
   return null;
 }
 
-test('⭐ workflow 只准用 LF 換行：夾帶 CR／NEL／LS／PS 會讓形狀比對整行看不見（實測四種都靜靜通過）', () => {
-  for (const f of readdirSync(join(ROOT, WF_DIR)).filter((x) => /\.ya?ml$/.test(x))) {
-    const rel = `${WF_DIR}/${f}`;
-    const hit = firstBadWorkflowChar(read(rel));
-    assert.equal(hit, null, hit === null ? '' :
-      `${rel} 第 ${read(rel).slice(0, hit.at).split('\n').length} 行附近有 `
-      + `U+${hit.code.toString(16).padStart(4, '0').toUpperCase()}——workflow 只准用 LF 換行。\n`
-      + '⚠️ 這不是潔癖：題名關鍵字「整份 workflow 只認一種形狀」那道比對用 LF 切行、又把註解整行丟掉，\n'
-      + '   所以夾在註解裡的第二行設定它**完全看不見**（2026-09-09 四種字元實測，四種都靜靜通過），\n'
-      + '   而協作欄位閘是**平台強制的必要檢查**——被靜音等於那道門形同虛設。\n'
-      + '   正常編輯不會產生這些字元；真的需要時請改成 LF。');
+/**
+ * 掃一組來源，回報「不該出現的字元」。**純函式**——這樣才能用誘餌證明掃描真的有跑
+ * （#586 r1 Medium：原本直接讀檔比對，把呼叫改成 `const hit = null` 整個接線失效也全綠）。
+ * @param {{ name: string, source: string }[]} sources @returns {string[]}
+ */
+function scanWorkflowChars(sources) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const { name, source } of sources) {
+    const hit = firstBadWorkflowChar(source);
+    if (hit) {
+      problems.push(`  ${name}:${source.slice(0, hit.at).split('\n').length} 有 `
+        + `U+${hit.code.toString(16).padStart(4, '0').toUpperCase()}`);
+    }
   }
+  return problems;
+}
+
+/** @returns {{ name: string, source: string }[]} */
+const workflowSources = () => readdirSync(join(ROOT, WF_DIR))
+  .filter((x) => /\.ya?ml$/.test(x))
+  .map((f) => ({ name: `${WF_DIR}/${f}`, source: read(`${WF_DIR}/${f}`) }));
+
+test('⭐ workflow 的空白只准 SPACE／TAB／LF：其餘換行與空白字元會讓形狀比對整行看不見', () => {
+  const sources = workflowSources();
+  assert.ok(sources.length >= 2, `只列到 ${sources.length} 支 workflow，列舉大概壞了`);
+  assert.deepEqual(scanWorkflowChars(sources), [],
+    'workflow 裡出現不該有的字元（位置見上）。\n'
+    + '⚠️ 這不是潔癖，是兩個實測過的洞：\n'
+    + '  ①**換行類**（CR／NEL／LS／PS）：形狀比對用 LF 切行，看不見它們；夾在一行註解裡就能\n'
+    + '    多塞一行設定而比對全綠（2026-09-09 四種都實測靜靜通過）。\n'
+    + '  ②**YAML 不認的空白**（NBSP／全形空白／各種 EN・EM SPACE）：JS 的 `\\s` 認它們、YAML 不認，\n'
+    + '    所以 `<NBSP># || true` 在 YAML 眼裡是上一個 `run:` 的**續行**，比對卻當成註解整行丟掉\n'
+    + '    ——#586 r1 High，獨立審查者用真的 YAML 解析器＋真的腳本驗到「注入版 exit 0」＝那道\n'
+    + '    **平台強制的必要檢查**被靜音。\n'
+    + '⚠️ **處置分兩種，別一律說「改成 LF」**：\n'
+    + '  ・**行尾**是 CRLF ⇒ 在編輯器把行尾轉成 LF（CRLF 本身是合法 YAML，是本 repo 只收 LF）。\n'
+    + '  ・**其餘**（意外貼進來的控制字元、NBSP、全形空白）⇒ **刪掉或換成普通空白**；\n'
+    + '    真的需要那個字元當內容，請用 YAML 的跳脫寫法，不要讓它裸著出現。');
 });
 
-test('⭐「只准 LF」這條判準本身：五種夾帶字元都要拒收，正常內容要放行', () => {
-  // ⚠️ 沒有這張表的話，把上面那個函式改成 `return null` 也不會有任何考題轉紅。
+test('⭐ 掃描真的有跑：塞一個誘餌來源就要被抓出來', () => {
+  // ⚠️ 沒有這一題的話，把上面那個 `scanWorkflowChars(...)` 換成 `[]`、或把判準改成永遠回 null，
+  //    整支考題檔照樣全綠——那就是「什麼都沒檢查卻回報通過」（#586 r1 Medium 實測）。
+  const decoy = { name: 'decoy.yml', source: `name: x\n  run: y${String.fromCharCode(0xa0)}# || true\n` };
+  const problems = scanWorkflowChars([...workflowSources(), decoy]);
+  assert.equal(problems.length, 1, `誘餌沒被抓到（或誤抓了真檔）：${problems.join('') || '（零命中）'}`);
+  assert.match(problems[0], /^ {2}decoy\.yml:2 有 U\+00A0$/u, `誘餌的檔名／行號／碼位要報對：${problems[0]}`);
+});
+
+test('⭐ 判準本身：整個家族都要拒收、位置要報對、正常內容要放行', () => {
   const ok = 'name: x\n  run: y\t# 註解\n中文與 emoji 🚦 都正常\n';
-  assert.equal(firstBadWorkflowChar(ok), null, 'TAB／LF／一般文字被誤擋了');
+  assert.equal(firstBadWorkflowChar(ok), null, 'SPACE／TAB／LF／一般文字被誤擋了');
+
+  // ── 逐一點名的（每一個都是實測過或規格上的夾帶路徑）
   for (const [label, code] of /** @type {[string, number][]} */ ([
     ['CR U+000D', 0x0d], ['NEL U+0085', 0x85], ['LS U+2028', 0x2028], ['PS U+2029', 0x2029],
+    ['NBSP U+00A0', 0xa0], ['EM SPACE U+2003', 0x2003], ['IDEOGRAPHIC SPACE U+3000', 0x3000],
     ['NUL U+0000', 0x00], ['VT U+000B', 0x0b], ['FF U+000C', 0x0c], ['DEL U+007F', 0x7f],
+    ['ZWNBSP U+FEFF', 0xfeff],
   ])) {
-    const text = `# 註解${String.fromCharCode(code)}continue-on-error: true\n`;
-    const hit = firstBadWorkflowChar(text);
+    const hit = firstBadWorkflowChar(`# 註解${String.fromCharCode(code)}continue-on-error: true\n`);
     assert.ok(hit && hit.code === code, `${label} 沒有被拒收——那就是夾帶進來的那條路`);
   }
-  // U+00A0 是不斷行空格、不是換行：它不該被這條擋（誤擋會卡住正常編輯）
-  assert.equal(firstBadWorkflowChar('name: a b\n'), null, 'U+00A0 不是換行字元，不該擋');
+
+  // ── **整個家族**，不是只有點名的那幾個（#586 r1 Medium：把區間改成只判 0x85 也全綠）
+  for (const [label, codes] of /** @type {[string, number[]][]} */ ([
+    ['C0（0x00–0x1F，扣掉 TAB／LF）', [...Array(0x20).keys()].filter((c) => c !== 0x09 && c !== 0x0a)],
+    ['C1（0x80–0x9F，含兩端）', [...Array(0x20).keys()].map((c) => c + 0x80)],
+    ['Unicode 空白分隔（含兩端與中間）', [0x1680, 0x2000, 0x2005, 0x200a, 0x202f, 0x205f]],
+  ])) {
+    for (const code of codes) {
+      const hit = firstBadWorkflowChar(`a${String.fromCharCode(code)}b`);
+      assert.ok(hit && hit.code === code, `${label} 裡的 U+${code.toString(16).toUpperCase()} 沒被拒收`);
+    }
+  }
+
+  // ── 位置要對，而且**最後一個字元**也要掃到（把迴圈寫成 length - 1 就會漏）
+  assert.deepEqual(firstBadWorkflowChar('ab\r'), { at: 2, code: 0x0d }, '檔尾的違規字元漏掃了');
+  assert.deepEqual(firstBadWorkflowChar(`ab${String.fromCharCode(0xa0)}cd`), { at: 2, code: 0xa0 },
+    '回報的位置不對——訊息會指到錯的行');
+  assert.equal(firstBadWorkflowChar(`${'x'.repeat(9000)}\r`)?.at, 9000, '晚位置的違規字元漏掃了');
 });
 
 test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列舉繞法）', () => {
