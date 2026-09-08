@@ -627,7 +627,8 @@ test('⭐ workflow 的空白只准 SPACE／TAB／LF', () => {
 });
 
 test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓到，近似副檔名不可誤抓', () => {
-  // ⚠️ 這一題與上一題**走同一支 `scanWorkflows`**，所以正式入口被掏空時這裡也會紅。
+  // ⚠️ 這一題與題名關鍵字「workflow 的空白只准 SPACE」那一題**走同一支 `scanWorkflows`**，
+  //    所以正式入口被掏空時這裡也會紅。
   // ⚠️ 涵蓋 #586 r3 Medium② 點名的四種退化：只認 `.yml`（漏 `.yaml`）、列檔被截斷、
   //    讀檔被截斷（違規字元在後段）、過濾正則掉了尾端 `$`（誤抓 `.yaml.txt`）。
   const dir = mkdtempSync(join(tmpdir(), 'wf-probe-'));
@@ -653,10 +654,16 @@ test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓�
     // ⚠️ 大寫副檔名：本 repo 的政策是**只收小寫** `.yml`／`.yaml`；過濾正則加上 `i` 旗標
     //    就會把它列進來（#586 r5 Low）。它含違規字元，所以誤收會讓問題清單多一筆。
     writeFileSync(join(dir, 'j-UPPER.YAML'), `name: j\n# upper${CR}\n`);
+    // ⚠️ 違規字元在**第 0 個位置**（檔案第一個字元）：判準迴圈從 1 開始、送判準前 `slice(1)`、
+    //    或把命中判成 `if (hit?.at)`（位置 0 是 falsy）都會漏掉它。碼位同時 **> U+00FF**，
+    //    所以「只回報 U+00FF 以內」「把非 Latin-1 換成空白」「只認已出現過的碼位」也一起釘住。
+    writeFileSync(join(dir, 'k-bom.yml'), `${String.fromCharCode(0xfeff)}name: k\n`);
+    // ⚠️ 另一個 > U+00FF 的違規字元，而且**不在第 0 個位置**（跟上一支分開釘，失敗訊息才看得出是哪一種）
+    writeFileSync(join(dir, 'l-wide.yml'), `name: l\n# probe${String.fromCharCode(0x2003)}\n`);
     const { problems, scanned } = scanWorkflows([[dir, 'probe']]);
     assert.deepEqual(scanned, [...REAL_WF_NAMES, 'probe/a-bad.yml', 'probe/b-late.yaml',
       'probe/c-good.yml', 'probe/g-eof.yml', 'probe/h-far.yml', 'probe/i-nbsp.yml',
-      'probe/zz-last.yml'].sort(),
+      'probe/k-bom.yml', 'probe/l-wide.yml', 'probe/zz-last.yml'].sort(),
       '被掃的名單不對：真 workflow 漏掉了，或把不是 workflow 的檔也列進來');
     assert.deepEqual(problems.sort(), [
       '  probe/a-bad.yml:2 有 U+000D',
@@ -664,6 +671,8 @@ test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓�
       '  probe/g-eof.yml:2 有 U+000D',
       '  probe/h-far.yml:2 有 U+00A0',
       '  probe/i-nbsp.yml:2 有 U+00A0',
+      '  probe/k-bom.yml:1 有 U+FEFF',
+      '  probe/l-wide.yml:2 有 U+2003',
       '  probe/zz-last.yml:2 有 U+000D',
     ], '列檔／讀檔／掃描這條路上有一段沒做事（或把命中結果過濾掉了）');
   } finally {
@@ -713,7 +722,7 @@ test('協作欄位閘｜整份 workflow 逐行逐字釘死（關門，不是列�
   //    清單記號後多一個空白而後續行不動、重複的 key。**補一種就會冒出下一種**，
   //    而它每一種的後果都一樣：這個檔案的實際內容有一部分不在比對範圍裡。
   //    （它提供的是一道平台強制的必要檢查；下游會不會照那段內容執行，本機證不了。）
-  //    ⇒ 改成不解析：**這個檔案必須逐行等於下面釘死的那幾行**。任何差異都會紅。
+  //    ⇒ 改成不解析：**這個檔案必須逐行等於 `GATE_WF_LINES` 釘死的那幾行**。任何差異都會紅。
   // ⚠️ **代價（刻意接受）**：以後動到那個檔案的任何一個字元（含加一行註解）都會紅，
   //    要同時更新 `GATE_WF_LINES`。⚠️ 這只保證**那次改動會在 diff 上留下痕跡、且不能靜靜發生**；
   //    **保證不了有人真的看過**（那要靠複審）——#586 r3 點名，原本寫「一定會有人看一眼」是誇大。
