@@ -433,7 +433,10 @@ const WF_DIR = '.github/workflows';
  * @param {string} text
  */
 function parseYaml(text) {
-  const lines = text.split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
+  // ⚠️ **先把 CR／CRLF 正規化成 LF**（#584 r1 Medium①）：單獨的 `\r` 也是 YAML 合法的換行，
+  //    而只用 `split('\n')` 的話，`# probe\rdefaults:\r  run:\r    shell: …` 整段會被當成一行註解丟掉
+  //    ⇒ 真 YAML 解析器讀得到那個 `defaults.run.shell`（可以把腳本整個吞掉），本題卻全綠。
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
   let i = 0;
   const indentOf = (/** @type {string} */ l) => (/^ */.exec(l) || [''])[0].length;
 
@@ -550,6 +553,23 @@ test('⭐ 複審結論（雲端看得見版）｜整份 workflow 只認一種形
   //    也證明不了它**沒有**被加進必要檢查（那是 GitHub 設定，不在 repo 裡；由分支保護文件記錄）。
   assert.deepEqual(parseYaml(read(VERDICT_WF)), EXPECTED_VERDICT_WORKFLOW,
     `${VERDICT_WF} 的形狀變了。要改請連同 EXPECTED_VERDICT_WORKFLOW 一起改——那是刻意的動作。`);
+});
+
+test('⭐ 形狀護欄｜單獨的 CR 也是換行：夾帶 `defaults.run.shell` 或 job 級 `if` 都要被看見（#584 r1 Medium①）', () => {
+  // ⚠️ 這一題釘的是**解析器自己**，不是某一份 workflow：`\r` 是 YAML 合法的換行，但只 split `\n` 的話
+  //    「`# probe` ＋ CR ＋ 真正的設定」整段會被當成一行註解丟掉——真 YAML 解析器讀得到，我們的護欄看不到。
+  //    後果：那道 workflow 可以被 `defaults.run.shell` 整個吞掉退出碼、或被 job 級 `if: false` 跳過，
+  //    而形狀題全綠（被 skip 的 job 在 required check 上還會回報 Success）。
+  const base = read(VERDICT_WF);
+  for (const [smuggled, why] of /** @type {[string, string][]} */ ([
+    ["# probe\rdefaults:\r  run:\r    shell: bash -c 'exit 0' -- {0}\n", '根層 defaults.run.shell 吞掉退出碼'],
+    ['# probe\r    if: false\n', 'job 級 if 讓它被 skip'],
+  ])) {
+    const mutated = base.replace('jobs:', `${smuggled}jobs:`);
+    assert.notEqual(mutated, base, `夾具沒改到（${why}）`);
+    assert.notDeepEqual(parseYaml(mutated), EXPECTED_VERDICT_WORKFLOW,
+      `用單獨的 CR 夾帶「${why}」沒有被看見——形狀護欄等於被繞過去了`);
+  }
 });
 
 test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', () => {

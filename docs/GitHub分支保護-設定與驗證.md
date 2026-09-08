@@ -68,7 +68,7 @@
 | Require a pull request before merging | ✅ 開 | 不准直接推 main |
 | └ Require approvals | ⬜ **關**（暫時） | 單一身分下開了＝誰都合不了。分身分之後再開 |
 | Require status checks to pass before merging | ✅ 開 | CI 沒綠不准合併 |
-| └ 必過的 check | `上線用的 Node（.node-version）`<br>`協作欄位（實作者 ≠ 獨立審查者）` | ⚠️ **`開發機的 Node（最新版，前瞻｜不擋部署）` 刻意不列**——它是探照燈不是門（見 `.github/workflows/ci.yml` 檔頭）。列了它，下一個大版本 Node 出狀況時連安全更新都上不去 |<br>⚠️ **`複審結論（看得見｜不擋合併）` 也刻意不加**（William 2026-09-08 裁，選項 a）：那道閘在一支 PR 的大半輩子本來就是紅的（「還沒人審」跟「審過沒通過」在它眼裡一樣），而天天亮紅燈的護欄人會學會無視。先讓它在雲端跑一段時間、量出到底多吵，再決定要不要上鎖。
+| └ 必過的 check | `上線用的 Node（.node-version）`<br>`協作欄位（實作者 ≠ 獨立審查者）` | ⚠️ **`開發機的 Node（最新版，前瞻｜不擋部署）` 刻意不列**——它是探照燈不是門（見 `.github/workflows/ci.yml` 檔頭）。列了它，下一個大版本 Node 出狀況時連安全更新都上不去<br><br>⚠️ **`複審結論（看得見｜不擋合併）` 也刻意不加**（William 2026-09-08 裁，選項 a）：那道閘在一支 PR 的大半輩子本來就是紅的（「還沒人審」跟「審過沒通過」在它眼裡一樣），而天天亮紅燈的護欄人會學會無視。先讓它在雲端跑一段時間、量出到底多吵，再決定要不要上鎖。 |
 | └ Require branches to be up to date | ⬜ 關 | 會強迫每支 PR 合併前 rebase，堆疊 PR 時很痛 |
 | Require linear history | ✅ 開 | 一律 squash（本專案慣例），禁 merge commit |
 | Require conversation resolution | ✅ 開 | 審查留言沒回完不准合併 |
