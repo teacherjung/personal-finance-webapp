@@ -536,8 +536,11 @@ function firstBadWorkflowChar(text) {
 }
 
 /**
- * 掃一組來源，回報「不該出現的字元」。**純函式。**
- * @param {{ name: string, source: string }[]} sources @returns {string[]}
+ * 掃一組來源，回報「不該出現的字元」**與「實際掃過哪些檔」**。**純函式。**
+ * ⚠️ 回傳形狀是物件、不是陣列——#586 r5 抓到這裡的 JSDoc 還寫著 `string[]`。
+ *    `jsconfig.json` 沒有把 `test/` 納入型別檢查，所以這種錯**不會被三關的 typecheck 叫**。
+ * @param {{ name: string, source: string }[]} sources
+ * @returns {{ problems: string[], scanned: string[] }}
  */
 function scanWorkflowChars(sources) {
   /** @type {string[]} */
@@ -573,7 +576,8 @@ const workflowSources = (dir = join(ROOT, WF_DIR), label = WF_DIR) => readdirSyn
  *    結果「真目錄那一條呼叫」被切成 `[]` 時誘餌照樣通過——兩條呼叫各自獨立，誰斷了另一邊都不知道。
  *    共用同一支、且 `scanned` 由**實際處理過的每一筆**累積之後，這支被掏空、真來源被漏掉、
  *    或在送進掃描迴圈前後被 `slice` 掉，誘餌題都會叫（#586 r3／r4 逐刀驗過）。
- * @param {[string, string][]} extra @returns {string[]}
+ * @param {[string, string][]} extra
+ * @returns {{ problems: string[], scanned: string[] }}
  */
 const scanWorkflows = (extra = []) => {
   const sources = [
@@ -638,15 +642,30 @@ test('⭐ 列檔→讀檔→掃描整條路：暫存目錄裡的違規檔要抓�
     writeFileSync(join(dir, 'e-probe.yaml.txt'), `also not one${CR}\n`);
     // ⚠️ 沒有副檔名：把過濾正則裡的 `\.` 寫成 `.`（萬用字元）就會把它誤算成 workflow（#586 r4 Low）
     writeFileSync(join(dir, 'f-probe-yaml'), `no extension${CR}\n`);
+    // ── 下面三支是 #586 r5 點名的「讀進來之後、送進判準之前」那段接縫，每支各釘一種退化 ──
+    const NBSP = String.fromCharCode(0xa0);
+    // ⚠️ 違規字元是**整個檔案的最後一個字元、後面沒有換行**：`source.slice(0, -1)` 會漏掉它
+    writeFileSync(join(dir, 'g-eof.yml'), `name: g\n# probe${CR}`);
+    // ⚠️ 違規字元在**很後面**（超過 8 KiB）：任何 `slice(0, 8192)` 之類的截斷都會漏掉它
+    writeFileSync(join(dir, 'h-far.yml'), `name: h\n# ${'x'.repeat(9000)}${NBSP}\n`);
+    // ⚠️ 違規字元**不是 CR**：只回報 CR 的過濾、或送判準前把 NBSP 換成普通空白，都會漏掉它
+    writeFileSync(join(dir, 'i-nbsp.yml'), `name: i\n# note${NBSP}\n`);
+    // ⚠️ 大寫副檔名：本 repo 的政策是**只收小寫** `.yml`／`.yaml`；過濾正則加上 `i` 旗標
+    //    就會把它列進來（#586 r5 Low）。它含違規字元，所以誤收會讓問題清單多一筆。
+    writeFileSync(join(dir, 'j-UPPER.YAML'), `name: j\n# upper${CR}\n`);
     const { problems, scanned } = scanWorkflows([[dir, 'probe']]);
     assert.deepEqual(scanned, [...REAL_WF_NAMES, 'probe/a-bad.yml', 'probe/b-late.yaml',
-      'probe/c-good.yml', 'probe/zz-last.yml'].sort(),
+      'probe/c-good.yml', 'probe/g-eof.yml', 'probe/h-far.yml', 'probe/i-nbsp.yml',
+      'probe/zz-last.yml'].sort(),
       '被掃的名單不對：真 workflow 漏掉了，或把不是 workflow 的檔也列進來');
     assert.deepEqual(problems.sort(), [
       '  probe/a-bad.yml:2 有 U+000D',
       '  probe/b-late.yaml:42 有 U+000D',
+      '  probe/g-eof.yml:2 有 U+000D',
+      '  probe/h-far.yml:2 有 U+00A0',
+      '  probe/i-nbsp.yml:2 有 U+00A0',
       '  probe/zz-last.yml:2 有 U+000D',
-    ], '列檔／讀檔／掃描這條路上有一段沒做事');
+    ], '列檔／讀檔／掃描這條路上有一段沒做事（或把命中結果過濾掉了）');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
