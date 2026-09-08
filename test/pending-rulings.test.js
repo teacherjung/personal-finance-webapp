@@ -228,6 +228,216 @@ test('⭐ 內文也要有規則要求的那一欄：裁示沒有他的原話那�
   assert.equal(r.provisional.length, 0);
 });
 
+// ── 第三種結局：撤回（William 2026-09-08 裁，原話逐字「補「這題不用問了」這種收法」）─────────
+// ⚠️ 這一族的每一題都在守同一件事：**撤回是唯一由 Claude 單方面發動的結局**，所以它的形狀要卡得比
+//    另外兩種緊，而且撤掉的題目一定要印出來給 William 看。機器判不出「我撤得對不對」——
+//    安全網做在**輸出**上，不做在判斷裡（這支工具已經學過的一課）。
+const withdraw = (/** @type {any} */ o) => c({
+  body: `## 🚫 撤回（2026-09-02）：${o.q ?? '要不要做這件事？'}\n\n撤回理由：${o.why ?? '題目依附的東西沒了'}（${o.detail ?? '那支 PR 關了'}）\n\n`
+    + `Claude 撤回、William 未回；他隨時可以要我重問\n\n${o.cites ?? ''}`,
+  ...o,
+});
+
+test('⭐ 撤回：合規的一則把題目移到「我撤回的」那一堆，不是「還沒回」也不是「已結」', () => {
+  const a = ask({ id: 1 });
+  const r = classify([a, withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) })], T0 + 4 * 86400e3);
+  assert.equal(r.pending.length, 0);
+  assert.equal(r.closed.length, 0, '撤回不是「他回了」——不可以混進已結');
+  assert.equal(r.provisional.length, 0, '撤回也不是逾時暫定');
+  assert.equal(r.withdrawn.length, 1);
+  assert.equal(r.withdrawn[0].closedBy[0].kind, 'withdraw');
+  assert.equal(r.withdrawn[0].closedBy[0].reason, '題目依附的東西沒了（那支 PR 關了）',
+    '理由要帶出**整行**（類別＋括號裡的具體依據）——括號那半才是他用來推翻這次撤回的材料（#582 r1 Medium①）');
+});
+
+test('⭐ 撤回一定要印出來，而且要印理由：這是唯一由我單方面發動的結局，安全網在輸出上', () => {
+  const a = ask({ id: 1, q: '要不要做這件事？' });
+  const r = classify([a, withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) })], T0 + 3600e3);
+  const out = render(r, { host: 'github.com', slug: 'o/r', expected: 2 });
+  assert.match(out, /我撤回的、他沒回過：1 則/);
+  assert.match(out, /要不要做這件事？[\s\S]*我撤回：「要不要做這件事？」（理由：題目依附的東西沒了（那支 PR 關了））/,
+    '題目、理由要印在一起，而且理由要含括號裡的具體依據——他要能一眼看出我撤了什麼、憑什麼撤');
+  // ⚠️ 這一刀是 #582 r1 Medium① 的保存題：只印類別的話，下面這種「類別對、括號裡自己招了」的撤回會被印得無懈可擊
+  const sneaky = c({ id: 3, at: T0 + 60e3,
+    body: `## 🚫 撤回（2026-09-02）：要不要做這件事？\n\n撤回理由：題目依附的東西沒了（但其實那支 PR 還開著，只是我覺得不重要了）\n\n`
+      + `Claude 撤回、William 未回；他隨時可以要我重問\n\n${urlOf(1)}` });
+  const out2 = render(classify([a, sneaky], T0 + 3600e3), { host: 'github.com', slug: 'o/r', expected: 2 });
+  assert.match(out2, /但其實那支 PR 還開著，只是我覺得不重要了/, '括號裡那半不可以被丟掉——那是唯一能戳破這次撤回的字');
+  // 一則都沒有的時候也要出聲「沒有」：整段消失跟「沒有撤回過」看起來一樣
+  const none = render(classify([a], T0 + 3600e3), { host: 'github.com', slug: 'o/r', expected: 1 });
+  assert.match(none, /我撤回的、他沒回過：沒有/);
+});
+
+test('⭐ 撤回的形狀卡得比另外兩種緊：三種理由以外的、少了自報那一句的，都不算數', () => {
+  const a = ask({ id: 1 });
+  const bad = [
+    ['撤回理由：我自己決定不問了（等太久）', '「我自己決定了」正是這種收法最危險的用法'],
+    ['撤回理由：不重要了', '沒有挑三種客觀理由裡的任何一種'],
+    ['撤回理由：題目依附的東西沒了但其實還在', '前綴對、但不是三種之一（要行首整串相符）'],
+  ];
+  for (const [reason, why] of bad) {
+    const w = c({ id: 2, at: T0 + 60e3,
+      body: `## 🚫 撤回（2026-09-02）：要不要做這件事？\n\n${reason}\n\nClaude 撤回、William 未回；他隨時可以要我重問\n\n${urlOf(1)}` });
+    const r = classify([a, w], T0 + 4 * 86400e3);
+    assert.equal(r.pending.length, 1, `${why}：不可以關掉問題`);
+    assert.equal(r.near.length, 1, `${why}：要列進「形狀不合」讓人看見`);
+  }
+  // 少了「這不是他回的」那一句：不算數（不准把撤回寫得像他回過了）
+  const noPhrase = c({ id: 3, at: T0 + 60e3,
+    body: `## 🚫 撤回（2026-09-02）：要不要做這件事？\n\n撤回理由：題目依附的東西沒了（那支 PR 關了）\n\n${urlOf(1)}` });
+  assert.equal(classify([a, noPhrase], T0 + 4 * 86400e3).pending.length, 1, '沒自報「Claude 撤回、William 未回」＝不算數');
+  // 日期不是真的日子、記號與名稱之間多一個空白：跟另外兩種同一套嚴格度
+  for (const head of ['## 🚫 撤回（2026-99-99）：要不要做這件事？', '## 🚫  撤回（2026-09-02）：要不要做這件事？']) {
+    const w = c({ id: 4, at: T0 + 60e3,
+      body: `${head}\n\n撤回理由：題目依附的東西沒了（那支 PR 關了）\n\nClaude 撤回、William 未回；他隨時可以要我重問\n\n${urlOf(1)}` });
+    assert.equal(classify([a, w], T0 + 4 * 86400e3).pending.length, 1, `標頭不合規（${head.slice(0, 14)}…）不可以關掉問題`);
+  }
+});
+
+test('⭐ 他的話比我的撤回大：我撤回過的題目，他後來貼一則 ⚖️ 就是已結', () => {
+  // 這一題釘的是**權力順序**：Claude 的動作不可以擋住 William 的話。他要回一題我撤掉的，
+  // 只要照常貼 ⚖️，不必先叫我撤銷撤回。
+  const a = ask({ id: 1 });
+  const w = withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) });
+  const later = ruling({ id: 3, at: T0 + 120e3, cites: urlOf(1) });
+  const r = classify([a, w, later], T0 + 4 * 86400e3);
+  assert.equal(r.closed.length, 1, '他回了就是已結');
+  assert.equal(r.withdrawn.length, 0, '不可以同時掛在兩堆');
+  // 反方向：先裁示、我後來又撤回（不該發生，但真的發生時仍以他的話為準）
+  const r2 = classify([a, ruling({ id: 4, at: T0 + 60e3, cites: urlOf(1) }), withdraw({ id: 5, at: T0 + 120e3, cites: urlOf(1) })], T0 + 4 * 86400e3);
+  assert.equal(r2.closed.length, 1); assert.equal(r2.withdrawn.length, 0);
+});
+
+test('⭐ 撤回也要照「引用寫在最外層」那條判準：藏在引言或圍欄裡的網址關不掉問題', () => {
+  const a = ask({ id: 1 });
+  const quoted = c({ id: 2, at: T0 + 60e3,
+    body: `## 🚫 撤回（2026-09-02）：要不要做這件事？\n\n撤回理由：題目依附的東西沒了（那支 PR 關了）\n\n`
+      + `Claude 撤回、William 未回；他隨時可以要我重問\n\n> 關的是 ${urlOf(1)}` });
+  assert.ok(String(quoted.body).includes(urlOf(1)), '對照斷言：網址真的在原文裡');
+  assert.equal(classify([a, quoted], T0 + 4 * 86400e3).pending.length, 1, '引言裡的引用不在頂層＝認不得（跟 ⚖️／⏳ 同一把尺）');
+});
+
+test('⭐ 括號必填、而且裡面要有字：正本說「括號裡要寫具體依據」，沒依據的撤回就不算數（Grok #582 掃後 4）', () => {
+  const a = ask({ id: 1 });
+  const H = '## 🚫 撤回（2026-09-02）：要不要做這件事？';
+  const P = 'Claude 撤回、William 未回；他隨時可以要我重問';
+  for (const [reason, why] of [
+    ['撤回理由：題目依附的東西沒了', '沒有括號'],
+    ['撤回理由：題目依附的東西沒了（）', '空括號'],
+    ['撤回理由：題目依附的東西沒了（　）', '括號裡只有全形空白'],
+  ]) {
+    const w = c({ id: 2, at: T0 + 60e3, body: `${H}\n\n${reason}\n\n${P}\n\n${urlOf(1)}` });
+    assert.equal(classify([a, w], T0 + 4 * 86400e3).pending.length, 1, `${why}：不算數（正本要求寫具體依據）`);
+  }
+  // ⭐ 正向：**說明本身可以帶括號**（引 PR 標題或功能名時本來就會有），整行只要以 `）` 收尾就算數。
+  //    #582 r8：上一版禁掉內層 `）`，把這種正常的依據一起擋掉了——所以這一刀要留著。
+  const inner = '撤回理由：題目依附的東西沒了（那支 PR「補（第三種）收法」關了）';
+  const ok = c({ id: 3, at: T0 + 60e3, body: `${H}\n\n${inner}\n\n${P}\n\n${urlOf(1)}` });
+  const r = classify([a, ok], T0 + 3600e3);
+  assert.equal(r.withdrawn.length, 1, '說明帶內層括號的撤回要算數');
+  assert.equal(r.withdrawn[0].closedBy[0].reason, '題目依附的東西沒了（那支 PR「補（第三種）收法」關了）',
+    '理由要帶到**最後一個**右括號為止，不可以在內層括號就停住');
+  // ⭐ 行尾邊界：括號之後還有字就不算數（不然「（說明）其實我只是不想問了」也會被印成乾淨的理由）
+  const trailing = c({ id: 4, at: T0 + 60e3,
+    body: `${H}\n\n撤回理由：題目依附的東西沒了（那支關了）其實我只是不想問了\n\n${P}\n\n${urlOf(1)}` });
+  assert.equal(classify([a, trailing], T0 + 4 * 86400e3).pending.length, 1, '括號後面還有字＝不算數');
+});
+
+test('⭐ 配不到任何一題的結尾留言要單獨印出來：這是「他其實回了、我卻看不見」唯一算得出來的訊號（Grok #582 掃後 1）', () => {
+  // 情境：他貼了 ⚖️ 但網址只寫在引言裡（配不上），而那一題剛好已經被我撤回 ⇒
+  // 題目不在「還沒回」、每一題的 unlinkedLater 也不會開（那一格只在完全沒配到時才開），整份報告看不到他回過。
+  const a = ask({ id: 1 });
+  const w = withdraw({ id: 2, at: T0 + 60e3, cites: urlOf(1) });
+  const hidden = c({ id: 3, at: T0 + 120e3,
+    body: `## ⚖️ William 裁示（2026-09-03）：其實要做\n\n原話（對話中，Claude 轉述）：**「要做」**\n\n> 關的是 ${urlOf(1)}` });
+  const r = classify([a, w, hidden], T0 + 4 * 86400e3);
+  assert.equal(r.withdrawn.length, 1, '題目確實落在撤回堆（這正是危險的地方）');
+  assert.equal(r.orphans.length, 1, '那則配不上的裁示要被算出來');
+  assert.equal(r.orphans[0].kind, 'ruling');
+  const out = render(r, { host: 'github.com', slug: 'o/r', expected: 3 });
+  assert.match(out, /配不到任何一題的結尾留言：1 則/);
+  assert.match(out, /裁示：「其實要做」/, '要印出它的標題與連結，讓人自己看');
+  assert.match(out, new RegExp(`配不到任何一題[\\s\\S]*${urlOf(3).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    '要印出那則留言的網址（不然「有一則配不上」等於沒說）');
+  // ⚠️ 這一段**不可以**套 `--pr` 過濾：漏掉的正是別支那些（#582 r8 Low④）
+  const filtered = render(r, { host: 'github.com', slug: 'o/r', expected: 3, only: 999, seen: false });
+  assert.match(filtered, /配不到任何一題的結尾留言：1 則/, '只印某一支時，孤兒段照樣要全部印出來');
+  // 對照組：正常配上的裁示不算孤兒（否則整份報告會被噪音淹掉）
+  const okr = ruling({ id: 4, at: T0 + 180e3, cites: urlOf(1) });
+  assert.equal(classify([a, okr], T0 + 4 * 86400e3).orphans.length, 0);
+});
+
+test('⭐ 只印某一支時，別支的撤回要說「還有幾則沒印」：否則「沒有」跟「從來沒撤回過」長得一樣（Grok #582 掃後 2）', () => {
+  const a = ask({ id: 1, pr: 101 });
+  const w = withdraw({ id: 2, at: T0 + 60e3, pr: 101, cites: urlOf(1, 101) });
+  const r = classify([a, w], T0 + 3600e3);
+  const out = render(r, { host: 'github.com', slug: 'o/r', expected: 2, only: 100, seen: true });
+  assert.match(out, /我撤回的、他沒回過：沒有/);
+  assert.match(out, /另有 1 則貼在別支，這裡沒印/, '不可以讓「沒有」看起來像「從來沒撤回過」');
+  // 對照組：掃全庫時不出現那一行
+  assert.doesNotMatch(render(r, { host: 'github.com', slug: 'o/r', expected: 2 }), /另有 \d+ 則貼在別支/);
+});
+
+test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩句固定字樣，工具要逐字認得', () => {
+  // 沒有這一題的話，正本改了用詞、工具照舊認舊字樣，全卷還是綠的（同模板題與時限題的病型）。
+  // ⚠️ 三種理由、欄名、自報句**一律從正本抽**，不可以寫死在考題裡（#582 r1 Medium②）：
+  //    寫死的話 `section.includes(舊字串)` 只證明「舊字串還在那一節出現過」，證明不了它仍是正本列的那一組——
+  //    正本把理由改成別的詞、或把欄名換掉，工具照舊認舊字樣，這一題還是綠的。
+  const section = reviewSectionOf(readDoc('AGENTS.md'));
+  const one = (/** @type {RegExp} */ re, /** @type {string} */ what) => {
+    const hits = [...section.matchAll(re)];
+    assert.equal(hits.length, 1, `那一節裡「${what}」命中 ${hits.length} 處（要剛好 1 處）——正本改寫法了，工具與這題要一起改`);
+    return hits[0];
+  };
+  // ⚠️ **抽取的錨點是「🚫 那一行模板」，不是欄名本身**（#582 r2 Medium①）：上一版拿 `內文＝\`撤回理由：\`` 當
+  //    搜尋條件，等於把「要抽的值」寫進了搜尋條件裡——正本把欄名改掉、同一節留一句「沿革：舊版寫…（已停用）」，
+  //    抽取器就去抽那份停用範例，工具照舊認舊字樣，全卷仍綠。改成：先定位**唯一**的模板，只在**它到句號為止**
+  //    那一段裡抽；停用範例不含模板 ⇒ 抽不到它；若它連模板也抄一份 ⇒ 模板的「剛好一處」先紅。
+  // ⚠️ **抽取看「位置」，不看散文**：那一句裡的反引號段落固定 6 段、順序固定——
+  //      ① 第一行模板 ② 欄名 ③④⑤ 三種理由 ⑥ 自報句。段數一變就紅。
+  //
+  // ⚠️ **誠實劃界（#582 r1〜r4 連四輪換來的，別再把它寫成封閉論證）**：
+  //    這一題守得住的是**普通的漂移**——有人改寫了正本那一句、卻沒回頭改工具（段數變了、或抽出來的值工具不認）。
+  //    它**守不住**「改了正本、同時留一份長得像舊規則的範例」：r1 的硬編碼、r2 的錨點含被抽的值、
+  //    r3 的散文字樣、r4 的「新值寫成普通文字、舊值留在反引號裡」——四種都是同一件事的變形，
+  //    而**「哪一段才是現行值」本來就不是機器從散文判得出來的**。再補一層只會生出第五種。
+  //    ⇒ 那一半歸**複審的眼睛**，而且它看得到：那一整節被 `test/collab-invariant-docs.test.js` **逐字釘住**，
+  //      正本改一個字就一定出現在 diff 裡、一定有人要改那份釘本。這不是缺口沒補，是分工。
+  //    ⇒ 本題不再宣稱「封閉」。（曾經加過一道字眼絆線想多買一層，後來整條拿掉了——理由寫在下面。）
+  const headHit = one(/`(## 🚫 撤回（YYYY-MM-DD）：)[^`]*`/gu, '🚫 的第一行模板');
+  const from = /** @type {number} */ (headHit.index);
+  const stop = section.indexOf('。', from);
+  assert.ok(stop > from, '找不到那一句的句號——正本改寫法了，這題要跟著改');
+  const rule = section.slice(from, stop + 1);
+  const runs = [...rule.matchAll(/`([^`]+)`/gu)].map((m) => m[1]);
+  assert.equal(runs.length, 6,
+    `撤回那一句裡的反引號段落有 ${runs.length} 段（規定剛好 6：模板／欄名／三種理由／自報句）——`
+    + '正本改寫法了（或多塞了一段範例），工具與這題要一起看：不要在這一句裡放帶反引號的舉例或沿革。');
+  // ⚠️ **這裡曾經有一條「沿革字眼」絆線，2026-09-08 當支拿掉了——不要再加回來**（#582 r4→r5→r6）：
+  //    它想擋的是「正本留一份舊範例、抽取器抽到它」。加了之後**每一輪都在刪詞**：
+  //    r5 刪掉 `請勿使用`（「括號裡要寫具體依據，請勿使用空泛理由」是現行要求），
+  //    r6 又要刪 `舊版`（「勿只貼舊版截圖」講的是證據、不是規則沿革）。
+  //    詞表這條路補不完，而**每多一個詞就多一片會誤擋正常規則散文的面**——那正是本專案認過的
+  //    「列舉繞法補不完就關門」。⇒ 關門的方式是**照實劃界**（見上面那段），不是再刪一個詞。
+  //    要防舊範例，正確的位置是複審的眼睛：那一整節被逐字釘住，正本改一個字就一定在 diff 裡。
+  const [tplRun, field, ...rest] = runs;
+  const reasons = rest.slice(0, 3);
+  const phrase = rest[3];
+  assert.match(tplRun, /^## 🚫 撤回（YYYY-MM-DD）：/u, '第 1 段要是第一行模板');
+  const head = tplRun.replace(/〈[^〉]*〉$/u, '');
+  const mk = (/** @type {string} */ reason, /** @type {string} */ f = field, /** @type {string} */ ph = phrase) => c({ id: 9,
+    body: `${head.replace('YYYY-MM-DD', '2026-09-02')}標題\n\n${f}${reason}（原因）\n\n${ph}\n\n${urlOf(1)}` });
+  for (const reason of reasons) {
+    assert.equal(shapeOf(mk(reason)), 'withdraw', `工具不認正本列的理由：${reason}`);
+  }
+  // 對照組：正本那幾個字各改一處，工具就不認——證明綁的是正本，不是任何長得像的東西
+  assert.equal(shapeOf(mk(`${reasons[0]}了`)), 'near', '理由多一個字就不認');
+  assert.equal(shapeOf(mk(reasons[0], '撤回依據：')), 'near', '欄名換掉就不認');
+  assert.equal(shapeOf(mk(reasons[0], field, `${phrase}吧`)), 'near', '自報那一句改掉就不認');
+  // 權力順序那一句也要在正本裡（工具的分堆照它做）
+  assert.ok(section.includes('他的話比我的撤回大'), '正本那一節裡找不到「他的話比我的撤回大」');
+});
+
 test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在時刻由參數注入，不看牆上時鐘）', () => {
   const at = T0;
   const before = classify([ask({ id: 1, at })], at + (71 * 60 + 59) * 60e3);
