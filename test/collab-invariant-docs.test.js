@@ -94,7 +94,14 @@ test('⭐ PR 模板的協作欄位區段＝REQUIRED_FIELDS 逐行逐字（多一
   const lines = tpl.split('\n');
   const at = lines.findIndex((l) => /^##\s*協作欄位\s*$/u.test(l));
   assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
-  const next = lines.findIndex((l, i) => i > at && /^#{1,6}\s/u.test(l));
+  // ⚠️ **章節的結尾是「同級或更高級」的標題，不是任何標題**（#583 r4）：上一版遇到任何 `#` 就停，
+  //    於是在那一段裡開一個 `### 子標題` 再往下放欄位，子節整段被切掉、根本沒進比對。
+  //    子節仍然屬於這一節，所以它的內容也要被比到。
+  const level = /^(#{1,6})/u.exec(lines[at])?.[1].length ?? 2;
+  const next = lines.findIndex((l, i) => {
+    const m = /^(#{1,6})\s/u.exec(l);
+    return i > at && m !== null && m[1].length <= level;
+  });
   const body = lines.slice(at + 1, next < 0 ? undefined : next).filter((l) => l.trim() !== '');
   assert.deepEqual(body, REQUIRED_FIELDS.map((f) => `- **${f}**：`),
     '模板的「協作欄位」區段跟 REQUIRED_FIELDS 對不上（多一行、少一行、順序不同、寫法不同都會紅）。\n'
