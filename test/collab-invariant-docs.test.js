@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { headingAt } from './helpers/markdown-heading.js';
+import { ruleItemRange } from './helpers/agents-rule-item.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -862,9 +863,16 @@ test('鐵則 10「註解寫為什麼、不寫現在是」不可被靜靜刪掉�
 //    「### 審查分工的沿革」底下、或在它前面插一個「### 沿革（已不再適用）」，本檔照樣 35/35 綠——
 //    規則已經降成沿革，考題卻說沒事。這是本專案認過的病型「文字存在、結構失效」
 //    （同族＝題名關鍵字「問法與逾時預設」那題，#577 r3／r4／r5 連三輪）。
-//    ⇒ 所以這一題釘的是**位置**：它要在正式的「鐵則」節裡、承重句要在它自己那一條之內、
+//    ⇒ 所以這一題釘的是**結構位置**：它要在正式的「鐵則」節裡、承重句要在它自己那一條之內、
 //      指路要在真正的「UI 現行慣例」節裡。
-//    本題**不**證明任何人真的照做（那要靠複審與 William 驗收）——誠實劃界，不是缺口。
+// ⚠️ **誠實劃界——照實列，這一段不是「所有語意漏洞都在射程外」的免死金牌**（#585 r2 明確提醒）。
+//    擋得到：整條被搬走或被切進別的小節、承重句被抽掉或搬去隔壁那一條、指路離開「UI 現行慣例」節。
+//    **擋不到（都是 r2 實測全綠的）**：在第 11 條末尾或第 12 條標題行尾補一句散文說「以下僅供歷史參考」；
+//      用 Setext 或行首 `<hN>` 造一個「歷史紀錄」標題（判準只認 ATX，理由見 markdown-heading 的檔頭）；
+//      把第 12 條的**內文**包進一層「僅為歷史紀錄」的巢狀清單。這三種在畫面上都讀得成「已作廢」。
+//      接住它們的是別的東西：寫了「作廢／廢止」字面的由題名關鍵字「作廢字眼絆線」那題接，
+//      行首 raw HTML 由既有的 HTML 禁令接（r2 實測交叉組會紅），其餘靠複審的眼睛。
+//    本題也**不**證明任何人真的照做（那要靠複審與 William 驗收）。
 test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要留在正式鐵則區、承重句在它自己那一條裡（搬成沿革要紅；William 2026-07-22 定、2026-09-08 獨立）', () => {
   const agents = read('AGENTS.md');
   const lines = agents.split('\n');
@@ -883,12 +891,18 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
   assert.equal(h1, lines.findIndex((_, i) => headingAt(lines, i) > 0),
     '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，「鐵則」節的歸屬就不是原來那一條鏈了');
 
-  const hits12 = lines.reduce((/** @type {number[]} */ acc, l, i) => (
-    /^12\. \*\*必須懂的概念要在網頁上就地白話解釋\*\*/u.test(l) ? [...acc, i] : acc), []);
-  assert.equal(hits12.length, 1,
-    'AGENTS.md 少了鐵則 12 的標題句、或它出現不只一次（或編號變了）。它 2026-09-08 才從鐵則 7 的後半'
-    + '獨立出來——獨立的理由就是「躲在空樁後半會被當成一起搬走了」，所以它需要一個自己的號碼與這一題。');
-  const item12 = hits12[0];
+  // ⚠️ 「第 12 條從哪裡到哪裡」一律問 `ruleItemRange()`（判準＝CommonMark 的內容欄，正反例表在
+  //    `test/agents-rule-item.test.js`）。**不要在這裡自己寫一條「下一條長什麼樣」的正規式**——
+  //    第一版就是那樣寫的，#585 r2 用四種合法寫法（一格空白／點號後 tab／三格縮排／`13)`）全部打穿。
+  const range12 = ruleItemRange(lines, 12);
+  assert.equal(range12.hits, 1,
+    `AGENTS.md 的鐵則清單裡「12.」出現 ${range12.hits} 次（要剛好 1 次）。`
+    + '它 2026-09-08 才從鐵則 7 的後半獨立出來——獨立的理由就是「躲在空樁後半會被當成一起搬走了」，'
+    + '所以它需要一個自己的號碼與這一題。');
+  const item12 = range12.start;
+  assert.match(lines[item12], /^ {0,3}12\. \*\*必須懂的概念要在網頁上就地白話解釋\*\*/u,
+    `AGENTS.md 第 ${item12 + 1} 行的第 12 條標題句被改了（現在是「${lines[item12].slice(0, 40)}」）——`
+    + '這一條的號碼被別的規則佔走，或標題句被改寫了。');
   assert.ok(h1 < rules && rules < item12 && item12 < ui,
     '鐵則 12 不在「鐵則」節與「UI 現行慣例」節之間＝它被搬走了（逐字搬到沿革節也算，那是規則降成沿革）');
 
@@ -910,8 +924,7 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
       + '這時把那一行改成粗體即可（理由見 test/helpers/markdown-heading.js 的檔頭）。');
   }
   // ③ 承重句要在**第 12 條自己那一段**裡——在檔案別處出現不算（會被下一條或別節借去充數）
-  const nextItem = lines.findIndex((l, i) => i > item12 && /^\d+(?:\.\d+)?\. /u.test(l));
-  const blockEnd = nextItem === -1 ? ui : Math.min(nextItem, ui);
+  const blockEnd = Math.min(range12.end, ui);
   const block = lines.slice(item12, blockEnd).join('\n');
   assert.ok(!lines.slice(item12, blockEnd).some((_, i) => headingAt(lines, item12 + i) > 0 && i > 0),
     '第 12 條自己那一段裡插了 ATX 標題——後半會被切出去，承重句就不在同一條規則裡了');
