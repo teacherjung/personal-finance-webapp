@@ -157,12 +157,13 @@ test('⭐ 找不到、或找到不只一個，一律回報 hits（呼叫端要�
   assert.equal(ruleItemRange(['12.5 這是版本號'], 12).hits, 0);
 });
 
-test('⭐ 已知的假紅（刻意留著，方向安全）：懶續行與 tab 縮排會被當成邊界', () => {
+test('⭐ 懶續行與 tab 縮排的行會被當成邊界（早切）——這是行為，不是「方向一定安全」的保證', () => {
   const lazy = ['12. **標題**', '這一行沒有縮排，GFM 會把它當成同一段的續行', '## 尾'];
   const r1 = ruleItemRange(lazy, 12);
   assert.ok(!lazy.slice(r1.start, r1.end).join('\n').includes('續行'),
-    '懶續行算在外面＝可能假紅。這是刻意的：反過來做（把不縮排的行都收進來）換到的是靜靜放過。'
-    + '踩到時把那一行縮排四格即可（AGENTS.md 的鐵則內文一向縮排四格）。');
+    '懶續行算在外面。踩到時把那一行縮排四格即可（AGENTS.md 的鐵則內文一向縮排四格）。'
+    + '⚠️ 這只是這支 helper 的行為：接到保存題之後，「改動既有被釘住的行」會紅，'
+    + '但「在白名單之後追加」反而會綠——早切不等於方向安全，見檔頭那條劃界（#585 r8／r10）。');
   const tabbed = ['12. **標題**', '\t這一行用 tab 縮排', '## 尾'];
   const r2 = ruleItemRange(tabbed, 12);
   assert.ok(!tabbed.slice(r2.start, r2.end).join('\n').includes('tab 縮排'), '同上：這裡只數空白');
