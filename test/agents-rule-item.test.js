@@ -135,10 +135,17 @@ test('⭐ 空行的定義照 CommonMark：只有空格與 tab 算空行（全形
   assert.equal(stillInside(''), true, '真的空行不可以結束清單項');
   assert.equal(stillInside('   '), true, '只有空格的行是空行（CommonMark），不可以結束清單項');
   assert.equal(stillInside('\t'), true, '只有 tab 的行是空行（CommonMark），不可以結束清單項');
+  assert.equal(stillInside(' \t '), true,
+    '空格與 tab **混用**的行仍是空行——寫成 `/^(?: *|\\t*)$/` 這種「要嘛全空格要嘛全 tab」'
+    + '就會漏掉它（#585 r4 Low）');
   assert.equal(stillInside('　'), false,
     '只含全形空白的行**不是**空行——它是縮排 0 的內容，必須結束這一條（#585 r3 Medium 那一刀）');
-  assert.equal(stillInside(' '), false,
+  assert.equal(stillInside('\u00a0'), false,
     '只含 NBSP 的行**不是**空行——同上（r3 實測與全形空白同樣落在清單外）');
+  // ⚠️ 下面兩顆是「把字元集合往外放一格」的探針：`/^[ \\t\\f]*$/`、`/^[ \\t\\u2003]*$/`
+  //    都能通過上面那幾顆，卻重開「其他空白被略過」的假綠方向（#585 r4 Low）。
+  assert.equal(stillInside('\f'), false, '換頁字元不是 CommonMark 的空行字元——不可以被略過');
+  assert.equal(stillInside('\u2003'), false, 'em space（U+2003）不是 CommonMark 的空行字元——不可以被略過');
 });
 
 test('⭐ 找不到、或找到不只一個，一律回報 hits（呼叫端要自己出訊息，不可以默默拿 -1 去切）', () => {
