@@ -85,11 +85,16 @@ test('2026-07-10 那節過期的「審查分工」不可以再出現（它擺在
 test('⭐ PR 模板的欄位集合＝REQUIRED_FIELDS（**雙向**：多一個少一個都紅）', () => {
   // ⚠️ 上一版只驗單向（REQUIRED_FIELDS ⊆ 模板）：從腳本拿掉一欄、模板留著那一行，這一題照樣綠
   //    ——於是模板上會留一個「填了也沒人看」的欄位，而下一個人不知道它已經不算數。
-  const tpl = read('.github/pull_request_template.md');
-  const section = tpl.slice(tpl.indexOf('## 協作欄位'));
-  const end = section.indexOf('<!--');
-  const inTemplate = [...section.slice(0, end < 0 ? undefined : end)
-    .matchAll(/^-\s*\*\*([^*]+)\*\*\s*[:：]/gmu)].map((m) => m[1].trim());
+  // ⚠️ **先剝 HTML 註解再定位**（#583 r1 Medium②）：上一版在**沒剝註解**的原文裡找標題、又拿第一個
+  //    `<!--` 當段落終點，於是「把標題藏進註解」「把欄位行藏進註解」兩種突變都能繞過去。
+  //    這跟閘自己的 `fieldValue()` 是同一個道理：模板的填寫說明本來就住在註解裡。
+  const tpl = read('.github/pull_request_template.md').replace(/<!--[\s\S]*?-->/g, '');
+  const lines = tpl.split('\n');
+  const at = lines.findIndex((l) => /^##\s*協作欄位\s*$/u.test(l));
+  assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
+  const next = lines.findIndex((l, i) => i > at && /^#{1,6}\s/u.test(l));
+  const section = lines.slice(at, next < 0 ? undefined : next).join('\n');
+  const inTemplate = [...section.matchAll(/^-\s*\*\*([^*]+)\*\*\s*[:：]/gmu)].map((m) => m[1].trim());
   assert.deepEqual(inTemplate.slice().sort(), REQUIRED_FIELDS.slice().sort(),
     `模板的欄位集合跟 REQUIRED_FIELDS 對不上——多一個或少一個都要來改這一題。\n  模板：${inTemplate.join('、')}\n  腳本：${REQUIRED_FIELDS.join('、')}`);
 });
