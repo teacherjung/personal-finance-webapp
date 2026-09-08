@@ -13,7 +13,7 @@
 // 兩者都沒有的話，唯一不變量（沒有任何一份產出由寫它的人放行）就只是一句話。
 //
 // 用法：node scripts/check-pr-collab-fields.js <PR 編號>
-// 退出碼：0＝五欄齊全、且實作者 ≠ 獨立審查者
+// 退出碼：0＝必填欄位齊全、且實作者 ≠ 獨立審查者
 //         1＝缺欄位或實作者自審 → 停下來補齊，不要合併
 //         2＝查不清楚（gh 失敗／回傳不是 JSON／形狀不符）→ **fail-closed**
 //            「查不到」不等於「安全」——這是 check-pr-merge-gate.js 學到的教訓：
@@ -31,13 +31,17 @@ import { gitEnv } from '../lib/git-env.js';
  * 文件仍寫三道，考題全綠看不見），改成從散文反查又被證明可繞（lazy continuation、
  * 檔名含數字、乾脆不寫進步驟）。**真相放在閘自己身上**，加一支就一定被數到。
  */
-export const MERGE_GATE = { name: '協作欄位', why: 'PR 說明五欄齊全且實作者 ≠ 獨立審查者' };
+export const MERGE_GATE = { name: '協作欄位', why: 'PR 說明必填欄位齊全且實作者 ≠ 獨立審查者' };
 
-/** 五個必填欄位。**這份清單是單一真相**——模板與 AGENTS.md 的文件分工表都照它。 */
+/**
+ * 必填欄位。**這份清單是單一真相**——模板與 AGENTS.md 的文件分工表都照它，考題雙向對帳。
+ * ⚠️ 2026-09-08 拿掉「基準版本」（William 裁，原話逐字「拿掉」）：那一欄要求填目前的 head，
+ *   但**擋不到任何一種「拿舊結論合併」**——真值表跑過：兩個危險格（結論釘在舊 head）複審聯集閘兩格都擋，
+ *   這一欄唯一單獨擋到的是「欄位舊、結論新」那個**安全**格（純文書紅）。它八次紅裡沒有一次是真問題。
+ */
 export const REQUIRED_FIELDS = [
   '實作者',
   '獨立審查者',
-  '基準版本',
   '預計修改的共享檔案',
   '這支若完全失敗，最糟失去什麼',
 ];
@@ -59,9 +63,9 @@ export function fieldValue(body, field) {
   // 形如：`- **實作者**：Claude` ／ `**實作者**: Claude` ／ `實作者：Claude`
   // ⚠️ 冒號後只准吃**水平空白**（`[^\\S\\n]`），不可用 `\\s`——`\\s` 會吃掉換行，
   //    於是「欄位留空」會抓到**下一行**的內容，空模板看起來像「每一欄都填了」。
-  //    實測：本檔的考題抓到這個 bug——空模板只被判 2 條問題，而不是五欄皆缺。
+  //    實測：本檔的考題抓到這個 bug——空模板只被判 2 條問題，而不是每一欄都缺。
   // ⚠️ **必須錨定在行首**（Codex #379 r2 High①）：不錨定的話 `- **非實作者**：Claude`
-  //    也會命中——整份 PR 說明可以一個真欄位都沒有，卻被判「五欄齊全」＝機械閘 fail-open。
+  //    也會命中——整份 PR 說明可以一個真欄位都沒有，卻被判「欄位齊全」＝機械閘 fail-open。
   //    允許的形狀：行首可有 `-`／`*` 項目符號與空白，欄名可被 `**`／`__` 包住，然後才是冒號。
   const esc = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // 欄名含「，」等字元，仍統一跳脫
   //   ⚠️ 也接受有序清單 `1. **實作者**：`（Codex #379 r3 記錄項）——**噪音型誤擋會讓人乾脆繞過這道閘**，
@@ -169,53 +173,16 @@ export function problemsOf(body) {
   return problems;
 }
 
-/** @param {string} pr @returns {{ body: string, head: string }} */
+/** @param {string} pr @returns {{ body: string }} */
 function fetchPr(pr) {
   // ⚠️ **`env: gitEnv()` 不可省**（AGENTS.md 鐵則 11；#463 r1 High）：`gh` 會**自己再去 spawn git**
   //    ——實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>` 回 `failed to run git: fatal: not a git repository`。
   //    繼承來的 GIT_DIR 指到另一個**有效** repo 時，這道閘會去讀**那個** repo 的 PR 與留言，
   //    而輸出看起來完全正常。行為題＝test/cross-pr-merge.test.js「會叫 gh 的閘」那題（#526 起不寫死幾支）。
-  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body,headRefOid'], { encoding: 'utf8', env: gitEnv() });
+  const out = execFileSync('gh', ['pr', 'view', pr, '--json', 'body'], { encoding: 'utf8', env: gitEnv() });
   const parsed = JSON.parse(out);
   if (!parsed || typeof parsed.body !== 'string') throw new Error('gh 回傳的形狀不對');
-  if (typeof parsed.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(parsed.headRefOid)) {
-    throw new Error('gh 沒有回傳合法的 headRefOid');
-  }
-  return { body: parsed.body, head: parsed.headRefOid };
-}
-
-/**
- * 「基準版本」必須釘住**目前的 head**。
- *
- * ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫這個欄位是「審查要釘住的 commit，
- * 分支被推過之後審查結論就失效了」，但閘只檢查它非空——於是最常見的路徑
- * （**審完 A、作者再推 B**，完全不必是惡意）就讓「已審查」這件事變成過期的宣稱。
- * 這正是這道閘存在的理由的核心：**規則靠記憶維持，就會斷**。
- * @param {string} body @param {string} head @returns {string[]}
- */
-export function staleBaseProblems(body, head) {
-  const raw = fieldValue(body, '基準版本').replace(/[`*_\s]/g, '');
-  // ⚠️ **抓「每一個」候選、而且要求全部都對**（Codex #382 r5 Medium）。
-  //    第一版只抓第一段十六進位，於是：
-  //      ・`d6c4fbd / f76d12b` 通過，反過來寫卻被拒——**結果取決於排列順序**
-  //      ・`[d6c4fbd](…/commit/f76d12b)` 通過——顯示值更新、連結還指著舊 commit，
-  //        這是**很常見的手滑**，正是這個欄位要防的東西
-  //      ・40 碼後面再多一個十六進位字元也通過（那根本不是合法 SHA）
-  //    判準改成：取**極大**的十六進位段（兩端都不是十六進位字元），長度 7–40 才算候選；
-  //    候選一個都沒有＝紅，任何一個不是目前 head 的前綴＝紅。
-  //    這與 #381 那支考題收斂到的判準是同一條：**「每一個都要對」，不是「有一個對」。**
-  const runs = (raw.match(/[0-9a-fA-F]+/g) || []).filter((r) => r.length >= 7);
-  const candidates = runs.filter((r) => r.length <= 40);
-  if (!runs.length) {
-    return [`「基準版本」讀不出 commit SHA（實得「${raw || '（空白）'}」）——至少要 7 碼十六進位`];
-  }
-  const bad = runs.filter((r) => r.length > 40 || !head.startsWith(r.toLowerCase()));
-  if (bad.length) {
-    return [`「基準版本」裡的 ${bad.map((b) => b.slice(0, 41)).join('、')} 不是這支 PR 目前的 head（${head.slice(0, 7)}）。\n`
-      + '    分支被推過之後，先前的審查結論就不再適用——請把欄位（**含連結網址**）改成目前的 head 再合併。'];
-  }
-  if (!candidates.length) return [`「基準版本」讀不出合法的 commit SHA（實得「${raw}」）`];
-  return [];
+  return { body: parsed.body };
 }
 
 /** @param {string[]} argv */
@@ -225,16 +192,16 @@ export function main(argv) {
     console.error('用法：node scripts/check-pr-collab-fields.js <PR 編號>');
     return 2;
   }
-  /** @type {{ body: string, head: string }} */ let pull;
+  /** @type {{ body: string }} */ let pull;
   try { pull = fetchPr(pr); }
   catch (e) {
     // fail-closed：查不到不等於安全
     console.error(`協作欄位閘 PR #${pr}：查不清楚（${/** @type {any} */ (e)?.message}）——一律當成未通過。`);
     return 2;
   }
-  const problems = [...problemsOf(pull.body), ...staleBaseProblems(pull.body, pull.head)];
+  const problems = problemsOf(pull.body);
   if (problems.length === 0) {
-    console.log(`協作欄位閘 PR #${pr}：五欄齊全、實作者 ≠ 獨立審查者、基準版本＝目前 head。可繼續合併程序。`);
+    console.log(`協作欄位閘 PR #${pr}：必填欄位齊全、實作者 ≠ 獨立審查者。可繼續合併程序。`);
     return 0;
   }
   console.error(`協作欄位閘 PR #${pr}：**未通過**\n` + problems.map((p) => `  ・${p}`).join('\n')

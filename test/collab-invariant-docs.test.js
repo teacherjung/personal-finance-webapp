@@ -20,7 +20,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { problemsOf, fieldValue, canonicalRole, staleBaseProblems, REQUIRED_FIELDS }
+import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
 import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
 
@@ -82,19 +82,58 @@ test('2026-07-10 那節過期的「審查分工」不可以再出現（它擺在
 
 // ── PR 協作欄位的機械閘 ──────────────────────────────────────
 
-test('PR 模板存在，且五個必填欄位都在裡面', () => {
-  const tpl = read('.github/pull_request_template.md');
-  for (const f of REQUIRED_FIELDS) {
-    assert.ok(tpl.includes(f), `PR 模板少了必填欄位「${f}」——模板與腳本的清單走散了`);
+test('⭐ PR 模板的協作欄位區段＝REQUIRED_FIELDS 逐行逐字（多一行少一行、順序不同都紅）', () => {
+  // ⚠️ **不要再手寫第二份欄位行的解析器**（#583 r1→r2→r3 連三輪：先是只認一種寫法而漏算，
+  //    放寬之後換成欄名含 `_` 又漏算，再放寬就連「請注意：…」這種說明也被當成欄位＝假紅）。
+  //    「哪一行是欄位、哪一行是說明」本來就不是用一條正規式判得準的。改成**逐行逐字比對**：
+  //    那一段**只准**有 REQUIRED_FIELDS 那幾行、順序也要一樣。模板本來就是這樣長的
+  //    （所有填寫說明都住在 HTML 註解裡），所以這不是新規定，是把現況釘住。
+  // ⚠️ 誠實劃界：這守的是「repo 裡的模板」。它管不到「某個人在自己的 PR 說明裡多寫幾行」——
+  //    那由閘自己判（多的行它不讀），本題不宣稱擋得住。
+  const tpl = read('.github/pull_request_template.md').replace(/<!--[\s\S]*?-->/g, '');
+  const lines = tpl.split('\n');
+  // ⚠️ **「這一行是不是標題」一律用 `headingAt()`，不要自己再寫一條正規式**（#583 r5 Low：
+  //    自寫的那條要求井號在第 0 欄，於是下一節的標題只要縮排一格就不算標題、被當成本節的內容）。
+  //    那支 helper 是 #578 為同一件事抽出來的單一真相（ATX 可有 0〜3 格前導空白）。
+  const at = lines.findIndex((l, i) => headingAt(lines, i) === 2 && /協作欄位\s*$/u.test(l));
+  assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
+  // ⚠️ **章節的結尾是「同級或更高級」的標題，不是任何標題**（#583 r4）：上一版遇到任何 `#` 就停，
+  //    於是在那一段裡開一個 `### 子標題` 再往下放欄位，子節整段被切掉、根本沒進比對。
+  const level = headingAt(lines, at);
+  const next = lines.findIndex((l, i) => {
+    const lv = headingAt(lines, i);
+    return i > at && lv > 0 && lv <= level;
+  });
+  const body = lines.slice(at + 1, next < 0 ? undefined : next).filter((l) => l.trim() !== '');
+  assert.deepEqual(body, REQUIRED_FIELDS.map((f) => `- **${f}**：`),
+    '模板的「協作欄位」區段跟 REQUIRED_FIELDS 對不上（多一行、少一行、順序不同、寫法不同都會紅）。\n'
+    + '  ⚠️ 要在那一段寫說明，請寫進 HTML 註解裡——模板的填寫說明本來就都在註解裡，'
+    + '可見區只放欄位行；註解會先被剝掉，不影響這一題。');
+});
+
+test('⭐ 欄位定位｜八種常見寫法都讀得到同一個值（合法裝飾不可誤擋、註解裡的同名字串不算）', () => {
+  // ⚠️ 這一族原本只住在一支 2026-09-08 被刪掉的考題檔裡（那支專驗一個已經拿掉的欄位）。
+  //    搬過來換成「實作者」再釘一次：`fieldValue()` 的三個分支（項目符號／粗體包住／有序清單）
+  //    是**實作者與獨立審查者兩欄共用的**，沒有它，那兩欄從此會被靜靜誤擋而沒人發現。
+  for (const [body, want, why] of /** @type {[string, string, string][]} */ ([
+    ['- **實作者**：Claude', 'Claude', '模板的標準寫法'],
+    ['* __實作者__: Claude', 'Claude', '另一種項目符號＋底線粗體＋半形冒號'],
+    ['1. **實作者**：`Claude`', '`Claude`', '有序清單（反引號原樣留著，值由呼叫端自己正規化）'],
+    ['2) 實作者：Claude', 'Claude', '有序清單的另一種括號、欄名不加粗'],
+    ['實作者：**Claude**', 'Claude', '行首直接寫欄名（值外層的粗體記號會被剝掉，反引號不會——照實釘住現行行為）'],
+    ['  - **實作者** ：  Claude  ', 'Claude', '前後空白與全形冒號前的空白都要吃掉'],
+    ['<!--\n- **實作者**：例如 Claude 或 Codex\n-->\n- **實作者**：Codex', 'Codex', 'HTML 註解裡的同名字串不算（模板原封不動送出去要能被擋）'],
+    ['- **實作者**：', '', '欄位留空＝空字串（⚠️ 這一格只有一行，抓不到「冒號後改吃換行」那種突變——那由空模板那一題守）'],
+  ])) {
+    assert.equal(fieldValue(body, '實作者'), want, `${why}\n說明：\n${body}`);
   }
 });
 
-test('欄位閘｜五欄齊全且實作者 ≠ 審查者 → 通過', () => {
+test('欄位閘｜必填欄位齊全且實作者 ≠ 審查者 → 通過', () => {
   const body = [
     '## 協作欄位', '',
     '- **實作者**：Claude',
     '- **獨立審查者**：Codex',
-    '- **基準版本**：`abc1234`',
     '- **預計修改的共享檔案**：AGENTS.md',
     '- **這支若完全失敗，最糟失去什麼**：文件回到今天早上的樣子',
   ].join('\n');
@@ -107,14 +146,13 @@ test('欄位閘｜**模板原封不動送出去必須不通過**（填寫說明�
   const tpl = read('.github/pull_request_template.md');
   const problems = problemsOf(tpl);
   assert.ok(problems.length >= REQUIRED_FIELDS.length,
-    `空模板應該被判五欄皆缺，實得 ${problems.length} 條：${problems.join('；')}`);
+    `空模板應該被判每一欄皆缺，實得 ${problems.length} 條：${problems.join('；')}`);
 });
 
 test('欄位閘｜實作者與審查者是同一個人 → 不通過（這是它存在的全部理由）', () => {
   const body = [
     '- **實作者**：Codex',
     '- **獨立審查者**：Codex',
-    '- **基準版本**：abc1234',
     '- **預計修改的共享檔案**：無',
     '- **這支若完全失敗，最糟失去什麼**：無',
   ].join('\n');
@@ -126,7 +164,7 @@ test('欄位閘｜實作者與審查者是同一個人 → 不通過（這是它
 test('欄位閘｜缺任何一欄都要被點名（不是只看有沒有欄位名）', () => {
   const body = ['- **實作者**：Claude', '- **獨立審查者**：Codex'].join('\n');
   const problems = problemsOf(body);
-  for (const f of ['基準版本', '預計修改的共享檔案', '這支若完全失敗，最糟失去什麼']) {
+  for (const f of ['預計修改的共享檔案', '這支若完全失敗，最糟失去什麼']) {
     assert.ok(problems.some((p) => p.includes(f)), `沒有點名缺少的「${f}」`);
   }
 });
@@ -135,7 +173,6 @@ test('欄位閘｜角色寫成看不懂的字串要被點名（避免「已填�
   const body = [
     '- **實作者**：某人',
     '- **獨立審查者**：Codex',
-    '- **基準版本**：abc1234',
     '- **預計修改的共享檔案**：無',
     '- **這支若完全失敗，最糟失去什麼**：無',
   ].join('\n');
@@ -148,66 +185,12 @@ test('欄位抽取｜HTML 註解裡的同名字串不算數', () => {
     '註解沒有被剝掉——註解裡的值會蓋過真正填的值');
 });
 
-// ── 基準版本必須釘住目前 head（Codex #382 r4）──────────────────
-
-const HEAD = 'f76d12b20cc55f6f608ce043051e2fa4a969cffe';
-/** @param {string} sha */
-const bodyWithBase = (sha) => [
-  '- **實作者**：Claude',
-  '- **獨立審查者**：Codex',
-  `- **基準版本**：\`${sha}\``,
-  '- **預計修改的共享檔案**：無',
-  '- **這支若完全失敗，最糟失去什麼**：無',
-].join('\n');
-
-test('欄位閘｜基準版本對得上目前 head → 通過', () => {
-  assert.deepEqual(staleBaseProblems(bodyWithBase('f76d12b'), HEAD), []);
-  assert.deepEqual(staleBaseProblems(bodyWithBase(HEAD), HEAD), [], '寫完整 40 碼也要算對');
-});
-
-test('欄位閘｜**審完之後又推了新 commit** → 不通過（這個欄位存在的全部理由）', () => {
-  // ⚠️ 這一條在 #382 r4 之前是**擺著好看的**：模板明寫它是「審查要釘住的 commit，
-  //    分支被推過之後審查結論就失效了」，但閘只檢查非空。
-  //    最常見的路徑（審完 A、作者再推 B，完全不必是惡意）就讓「已審查」變成過期的宣稱。
-  const problems = staleBaseProblems(bodyWithBase('4cbef24'), HEAD);
-  assert.ok(problems.length > 0, '基準版本是舊 SHA 卻通過了——那這個欄位等於裝飾');
-  assert.match(problems[0], /目前的 head/);
-});
-
-test('欄位閘｜基準版本裡**每一個** SHA 都要是目前 head（順序不該影響結果）', () => {
-  // ⚠️ Codex #382 r5：第一版只抓第一段十六進位。
-  //    `d6c4fbd / f76d12b` 通過、反過來寫卻被拒 ⇒ 結果取決於排列順序，那不是判準。
-  for (const v of ['f76d12b / d6c4fbd', 'd6c4fbd / f76d12b']) {
-    assert.ok(staleBaseProblems(bodyWithBase(v).replace(/`/g, ''), HEAD).length > 0,
-      `「${v}」混了舊 SHA 卻通過了`);
-  }
-});
-
-test('欄位閘｜顯示值更新、連結還指著舊 commit → 不通過（很常見的手滑）', () => {
-  const link = '[d6c4fbd](https://github.com/x/y/commit/f76d12b20cc55f6f608ce043051e2fa4a969cffe)';
-  assert.ok(staleBaseProblems(bodyWithBase(link).replace(/`/g, ''), HEAD).length > 0,
-    '連結指著舊 commit 卻通過了——這正是這個欄位要防的東西');
-});
-
-test('欄位閘｜不是合法 SHA 的長十六進位串 → 不通過', () => {
-  assert.ok(staleBaseProblems(bodyWithBase(HEAD + 'a').replace(/`/g, ''), HEAD).length > 0,
-    '41 碼十六進位（不是合法 SHA）卻通過了');
-});
-
-test('欄位閘｜基準版本填了看不出 SHA 的東西 → 不通過（不猜）', () => {
-  for (const junk of ['（待補）', 'main', '最新版', '']) {
-    assert.ok(staleBaseProblems(bodyWithBase(junk).replace(/`/g, ''), HEAD).length > 0,
-      `基準版本填「${junk}」被放行了`);
-  }
-});
-
 // ── 角色解析不可 fail-open（Codex #379 r1 High①）─────────────────
 
 /** @param {string} impl @param {string} rev */
 const bodyWith = (impl, rev) => [
   `- **實作者**：${impl}`,
   `- **獨立審查者**：${rev}`,
-  '- **基準版本**：abc1234',
   '- **預計修改的共享檔案**：無',
   '- **這支若完全失敗，最糟失去什麼**：無',
 ].join('\n');
@@ -348,7 +331,7 @@ test('AGENTS.md 不可以再有「重述合併步驟」的摘要（重述的摘�
 
 test('欄位閘｜**假欄位名不可以冒充真欄位**（`非實作者` 也曾被判成「實作者」）', () => {
   // ⚠️ Codex #379 r2 High①：欄位抽取沒有錨定在行首，於是整份 PR 說明一個真欄位都沒有，
-  //    卻被判「五欄齊全」＝機械閘 fail-open。
+  //    卻被判「欄位齊全」＝機械閘 fail-open。
   const fake = REQUIRED_FIELDS.map((f) => `- **非${f}**：Claude`).join('\n');
   const problems = problemsOf(fake);
   assert.ok(problems.length >= REQUIRED_FIELDS.length,
@@ -513,7 +496,7 @@ const EXPECTED_WORKFLOW = {
         { uses: 'actions/checkout@v4' },
         { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
         {
-          name: '協作欄位閘（五欄齊全＋實作者 ≠ 獨立審查者）',
+          name: '協作欄位閘（必填欄位齊全＋實作者 ≠ 獨立審查者）',
           env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
           run: 'node scripts/check-pr-collab-fields.js ${{ github.event.pull_request.number }}',
         },
@@ -531,7 +514,7 @@ test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列�
     + '  ・更早的 step 用 `actions/github-script` 把腳本覆寫成 `process.exit(0)`\n'
     + '  ・`run:` 尾端接 `|| true`\n'
     + '⚠️ `types` 少了 `edited` 也會在這裡紅——`pull_request:` 預設事件**不含 edited**，\n'
-    + '   少了它就能「合法五欄拿綠燈 → 編輯說明撤掉欄位 → commit 沒變、綠燈還在」。\n'
+    + '   少了它就能「欄位填齊拿綠燈 → 編輯說明撤掉欄位 → commit 沒變、綠燈還在」。\n'
     + '要改這道閘，請連同 EXPECTED_WORKFLOW 一起改——那是刻意的動作。');
 });
 
