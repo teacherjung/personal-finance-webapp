@@ -65,16 +65,80 @@ test('⭐ 正常編修不可以被切掉：縮排四格以上的內容仍屬於�
   assert.ok(!block.includes('下一節'), '零縮排的標題必須結束清單項');
 });
 
-test('⭐ 內容欄跟著記號寬度走（不是寫死四格）', () => {
-  const wide = ['9.  **記號後兩格空白**', '', '   這一行縮排三格＝小於內容欄，結束它', '    這一行不算'];
-  assert.equal(ruleItemRange(wide, 9).col, 4, '`9.` ＋兩格空白＝內容欄第 4 欄');
-  const long = ['123. **三位數編號**', '', '     內容欄是第 5 欄', '## 尾'];
-  const r = ruleItemRange(long, 123);
-  assert.equal(r.col, 5, '`123. ` 的內容欄是第 5 欄');
-  assert.ok(long.slice(r.start, r.end).join('\n').includes('內容欄是第 5 欄'));
-  // 記號後空白多於四格：CommonMark 只算一格
-  const loose = ['7.      **空白很多**', '', '   縮排三格仍在條內（內容欄第 3 欄）', '## 尾'];
-  assert.equal(ruleItemRange(loose, 7).col, 3);
+test('⭐ 內容欄跟著記號寬度走（不是寫死四格）——用**切界結果**證明，不是只看它自報的 col', () => {
+  // ⚠️ 這一題原本只斷言 `.col` 的自報值。#585 r3 Low 實測：把 helper 的 `indent < col` 改成
+  //    `indent < 4`（寫死四格），整張表照樣全綠——因為沒有任何一顆夾具的答案會因此改變。
+  //    ⇒ 下面每一顆都讓「用 col 切」與「寫死 4 切」給出**不同**答案，並斷言邊界兩側的內容。
+  /** @param {string[]} lines @param {number} n */
+  const inside = (lines, n) => {
+    const r = ruleItemRange(lines, n);
+    assert.equal(r.hits, 1, '夾具自己壞了：目標項要剛好找到一次');
+    return { r, text: lines.slice(r.start, r.end).join('\n') };
+  };
+
+  // 內容欄 5：縮排四格的行必須在**外**（寫死四格的話會被留在裡面）
+  const col5 = [
+    '123. **三位數編號**',
+    '',
+    '     這一行縮排五格＝在條內',
+    '    這一行縮排四格＝已經在條外',
+    '## 尾',
+  ];
+  const a = inside(col5, 123);
+  assert.equal(a.r.col, 5, '`123. ` 的內容欄是第 5 欄');
+  assert.ok(a.text.includes('縮排五格＝在條內'), '五格的續行被切掉了＝假紅');
+  assert.ok(!a.text.includes('縮排四格＝已經在條外'),
+    '縮排四格的行被留在條內＝切界其實寫死了四格、沒有用 col（#585 r3 Low）');
+  assert.equal(a.r.end, 3, '邊界應該落在那一行「縮排四格」上');
+
+  // 內容欄 3：縮排三格的行必須在**內**（寫死四格的話會被切掉）
+  const col3 = [
+    '7.      **記號後空白多於四格＝內容欄只算一格**',
+    '',
+    '   這一行縮排三格＝仍在條內',
+    '  這一行縮排兩格＝已經在條外',
+    '## 尾',
+  ];
+  const b = inside(col3, 7);
+  assert.equal(b.r.col, 3);
+  assert.ok(b.text.includes('縮排三格＝仍在條內'),
+    '縮排三格的行被切掉＝切界寫死了四格、沒有用 col（#585 r3 Low）');
+  assert.ok(!b.text.includes('縮排兩格＝已經在條外'), '縮排兩格的行留在條內＝邊界沒收好');
+
+  // 目標項自己縮排 1〜3 格（CommonMark 允許）：內容欄跟著往右移
+  const shifted = [
+    '## 鐵則',
+    ' 12. **整條多縮排一格（r2 列的假紅，現在要是正例）**',
+    '',
+    '     這一行縮排五格＝在條內',
+    '    這一行縮排四格＝已經在條外',
+    '## 尾',
+  ];
+  const c = inside(shifted, 12);
+  assert.equal(c.r.start, 1, '縮排一格的 `12.` 要定位得到');
+  assert.equal(c.r.col, 5, '記號前縮排一格＝內容欄跟著變成第 5 欄');
+  assert.ok(c.text.includes('縮排五格＝在條內'));
+  assert.ok(!c.text.includes('縮排四格＝已經在條外'), '記號前的縮排沒有被算進內容欄');
+});
+
+test('⭐ 空行的定義照 CommonMark：只有空格與 tab 算空行（全形空白／NBSP 是內容，會結束這一條）', () => {
+  // ⚠️ #585 r3 Medium：原本用 `trim() === ''`，它把只含全形空白（U+3000）或 NBSP 的行也當空行。
+  //    那種行在 CommonMark 眼裡**有內容**、縮排 0 ⇒ 它就是邊界；略過它就會把條外的字算進條內。
+  //    獨立審查者實測：插一行全形空白，再把承重句放在它後面的四格縮排行，考題全綠，
+  //    而 GitHub 渲染出來那句話根本不在第 12 條的 `<li>` 裡。
+  /** @param {string} spacer */
+  const stillInside = (spacer) => {
+    const lines = ['12. **標題**', '', spacer, '', '    承重句在這裡。', '## 尾'];
+    const r = ruleItemRange(lines, 12);
+    return lines.slice(r.start, r.end).join('\n').includes('承重句在這裡');
+  };
+  assert.equal(stillInside(''), true, '真的空行不可以結束清單項');
+  assert.equal(stillInside('   '), true, '只有空格的行是空行（CommonMark），不可以結束清單項');
+  assert.equal(stillInside('\t'), true, '只有 tab 的行是空行（CommonMark），不可以結束清單項');
+  assert.equal(stillInside('　'), false,
+    '只含全形空白的行**不是**空行——它是縮排 0 的內容，必須結束這一條（#585 r3 Medium 那一刀）');
+  assert.equal(stillInside(' '), false,
+    '只含 NBSP 的行**不是**空行——同上（r3 實測與全形空白同樣落在清單外）');
 });
 
 test('⭐ 找不到、或找到不只一個，一律回報 hits（呼叫端要自己出訊息，不可以默默拿 -1 去切）', () => {

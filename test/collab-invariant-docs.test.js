@@ -798,7 +798,8 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   });
   const section = SECTION.join('\n');
   assert.doesNotMatch(section, /<!--|-->/, '這一節裡出現 HTML 註解——規則不可以被藏成不可見內容');
-  assert.doesNotMatch(section, /^ {0,3}\[[^\]]+\]:\s/mu, '這一節裡出現 Markdown 參考定義——那在畫面上不顯示，藏得下一句否定');
+  assert.doesNotMatch(section, /^ *\[[^\]]+\]:\s/mu, '這一節裡出現 Markdown 參考定義——那在畫面上不顯示，藏得下一句否定'
+    + '（#585 r3 Medium：原本只收行首 0〜3 格，而清單項內容至少縮排四格＝正好躲過；AGENTS.md 沒有任何合法的參考定義，所以不限縮排）');
 });
 
 test('⭐ 第 6 題正本在正式位置：「問法與逾時預設」那顆要在「審查回饋處置」節裡、「界線表」之前，而且承重句都在那顆裡（逐字搬到沿革節＝規則降成沿革，要紅；#577 r3）', () => {
@@ -929,7 +930,9 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
   assert.ok(!lines.slice(item12, blockEnd).some((_, i) => headingAt(lines, item12 + i) > 0 && i > 0),
     '第 12 條自己那一段裡插了 ATX 標題——後半會被切出去，承重句就不在同一條規則裡了');
   assert.doesNotMatch(block, /<!--|-->/u, '第 12 條裡出現 HTML 註解——規則不可以被藏成不可見內容');
-  assert.doesNotMatch(block, /^ {0,3}\[[^\]]+\]:\s/mu, '第 12 條裡出現 Markdown 參考定義——那在畫面上不顯示，藏得下一句否定');
+  assert.doesNotMatch(block, /^ *\[[^\]]+\]:\s/mu, '第 12 條裡出現 Markdown 參考定義——那在畫面上不顯示，藏得下一句否定'
+    + '（#585 r3 Medium 實測：四格縮排的 `[x]: /unused "…"` 可以把三個承重片段全部藏進去，'
+    + '渲染後連 textContent 都找不到，考題卻全綠——因為條界要求縮排 ≥ 四格、禁令卻只收 0〜3 格）');
   // ⚠️ 只斷言標題會假綠：把三個承重部分抽掉、只留標題，規矩就空了
   //    （同族＝題名關鍵字「註解寫為什麼、不寫現在是」那題）
   for (const [part, why] of /** @type {[string, string][]} */ ([

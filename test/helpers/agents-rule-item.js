@@ -57,7 +57,10 @@ export function ruleItemRange(lines, n) {
 
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (lines[i].trim() === '') continue;          // 空行不結束清單項
+    // ⚠️ **空行的定義照 CommonMark：只有空格與 tab**（#585 r3 Medium）。用 `trim()` 會把
+    //    只含全形空白（U+3000）或 NBSP 的行也當成空行——那種行在 CommonMark 眼裡是**有內容**的、
+    //    縮排 0 ⇒ 它就是邊界。略過它＝繼續收後面的四格縮排行＝**把條外的字算進條內**（實測假綠）。
+    if (/^[ \t]*$/u.test(lines[i])) continue;   // 空行不結束清單項
     if (indentOf(lines[i]) < col) { end = i; break; }
   }
   return { hits: 1, start, end, col };
