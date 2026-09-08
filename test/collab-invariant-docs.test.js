@@ -433,10 +433,21 @@ const WF_DIR = '.github/workflows';
  * @param {string} text
  */
 function parseYaml(text) {
-  // ⚠️ **先把 CR／CRLF 正規化成 LF**（#584 r1 Medium①）：單獨的 `\r` 也是 YAML 合法的換行，
-  //    而只用 `split('\n')` 的話，`# probe\rdefaults:\r  run:\r    shell: …` 整段會被當成一行註解丟掉
-  //    ⇒ 真 YAML 解析器讀得到那個 `defaults.run.shell`（可以把腳本整個吞掉），本題卻全綠。
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
+  // ⚠️ **只准 LF 換行，看到別的換行字元一律拒解析**（#584 r1／r2：先是 `\r`，再來是 NEL／LS／PS）。
+  //    病根是這支只 `split('\n')`，而真 YAML 解析器把那些字元也當換行 ⇒
+  //    `# probe<那個字元>defaults:<…>shell: bash -c 'exit 0' -- {0}` 整段會被我們當成一行註解丟掉，
+  //    真解析器卻讀得到一個能把腳本整個吞掉的 shell，而形狀題全綠。
+  //    ⚠️ **不再往「多支援一種換行」走**（那是列舉、補不完）：改成**判不出來就停**——
+  //    我們自己的 workflow 從來只有 LF，出現別的就是有人在夾帶，或是編輯器換了行尾；
+  //    兩種都該停下來讓人看，而不是猜。
+  const WEIRD_BREAK = /[\r\u0085\u2028\u2029\v\f]/;
+  if (WEIRD_BREAK.test(text)) {
+    throw new Error('這份 workflow 含有 LF 以外的換行字元（CR／NEL／LS／PS／VT／FF）。'
+      + '本解析器只認 LF，遇到別的一律停下來——因為真 YAML 解析器會把它當換行，'
+      + '而我們會把它後面的內容當成同一行的註解丟掉（那正是「看起來有跑、其實沒跑」的夾帶手法）。'
+      + '請把檔案的換行改成 LF 再跑。');
+  }
+  const lines = text.split('\n').filter((l) => l.trim() && !/^\s*#/.test(l));
   let i = 0;
   const indentOf = (/** @type {string} */ l) => (/^ */.exec(l) || [''])[0].length;
 
@@ -555,21 +566,27 @@ test('⭐ 複審結論（雲端看得見版）｜整份 workflow 只認一種形
     `${VERDICT_WF} 的形狀變了。要改請連同 EXPECTED_VERDICT_WORKFLOW 一起改——那是刻意的動作。`);
 });
 
-test('⭐ 形狀護欄｜單獨的 CR 也是換行：夾帶 `defaults.run.shell` 或 job 級 `if` 都要被看見（#584 r1 Medium①）', () => {
-  // ⚠️ 這一題釘的是**解析器自己**，不是某一份 workflow：`\r` 是 YAML 合法的換行，但只 split `\n` 的話
-  //    「`# probe` ＋ CR ＋ 真正的設定」整段會被當成一行註解丟掉——真 YAML 解析器讀得到，我們的護欄看不到。
-  //    後果：那道 workflow 可以被 `defaults.run.shell` 整個吞掉退出碼、或被 job 級 `if: false` 跳過，
-  //    而形狀題全綠（被 skip 的 job 在 required check 上還會回報 Success）。
+test('⭐ 形狀護欄｜LF 以外的換行一律拒解析：CR／NEL／LS／PS 都不可以拿來夾帶（#584 r1・r2）', () => {
+  // ⚠️ 這一題釘的是**解析器自己**，不是某一份 workflow。真 YAML 解析器把這些字元都當換行，
+  //    而我們只 split LF ⇒ 「`# probe` ＋ 那個字元 ＋ 真正的設定」整段會被當成一行註解丟掉。
+  //    後果：那道 workflow 可以被根層 `defaults.run.shell` 整個吞掉退出碼、或被 **job 級** `if: false`
+  //    跳過（被 skip 的 job 在 required check 上還會回報 Success），而形狀題全綠。
+  // ⚠️ 處置是**拒解析**，不是多支援一種換行（列舉補不完）。誠實劃界：它擋的是「我們讀不到、
+  //    真解析器讀得到」這一類；它證明不了「YAML 沒有別的我們沒想到的表達方式」。
   const base = read(VERDICT_WF);
-  for (const [smuggled, why] of /** @type {[string, string][]} */ ([
-    ["# probe\rdefaults:\r  run:\r    shell: bash -c 'exit 0' -- {0}\n", '根層 defaults.run.shell 吞掉退出碼'],
-    ['# probe\r    if: false\n', 'job 級 if 讓它被 skip'],
-  ])) {
-    const mutated = base.replace('jobs:', `${smuggled}jobs:`);
-    assert.notEqual(mutated, base, `夾具沒改到（${why}）`);
-    assert.notDeepEqual(parseYaml(mutated), EXPECTED_VERDICT_WORKFLOW,
-      `用單獨的 CR 夾帶「${why}」沒有被看見——形狀護欄等於被繞過去了`);
+  for (const ch of ['\r', '\u0085', '\u2028', '\u2029']) {
+    // ① 根層：夾在 `jobs:` 之前
+    const rootMutant = base.replace('jobs:', `# probe${ch}defaults:${ch}  run:${ch}    shell: bash -c 'exit 0' -- {0}\njobs:`);
+    // ② **job 內**：夾在 `runs-on` 之前（#584 r2 Low：上一版兩例都插在根層，第二例其實落在 on.pull_request 底下）
+    const jobMutant = base.replace('    runs-on: ubuntu-latest', `# probe${ch}    if: false\n    runs-on: ubuntu-latest`);
+    for (const [mutated, why] of /** @type {[string, string][]} */ ([[rootMutant, '根層 defaults.run.shell'], [jobMutant, 'job 級 if: false']])) {
+      assert.notEqual(mutated, base, `夾具沒改到（${why}／U+${ch.codePointAt(0)?.toString(16).toUpperCase().padStart(4, '0')}）`);
+      assert.throws(() => parseYaml(mutated), /只認 LF/,
+        `用 U+${ch.codePointAt(0)?.toString(16).toUpperCase().padStart(4, '0')} 夾帶「${why}」沒有被擋下來`);
+    }
   }
+  // 對照組：真檔案（只有 LF）解析得動，而且就是預期的形狀
+  assert.deepEqual(parseYaml(base), EXPECTED_VERDICT_WORKFLOW, '對照斷言：沒有夾帶時要解析得動');
 });
 
 test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', () => {
