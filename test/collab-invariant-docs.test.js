@@ -858,22 +858,80 @@ test('鐵則 10「註解寫為什麼、不寫現在是」不可被靜靜刪掉�
 // ⚠️ 為什麼要有這一題：鐵則 12 是 2026-09-08 從鐵則 7 的**後半**獨立出來的——而它會被獨立出來，
 //    正是因為它躲在一個開頭寫著「已改列下方…」的**空樁**裡，讀的人很容易以為整條都搬走了。
 //    獨立之後如果沒有東西釘著，下一次整理清單的人照樣可能把它跟樁一起收掉。
-//    ⇒ 本題的射程只有一件事：**那一條還在 AGENTS.md 上，而且三個承重部分都沒被抽掉**。
+// ⚠️ **只斷言「這幾句話在檔案裡」是不夠的**（#585 r1 Medium，Codex 實測）：把整條逐字搬到
+//    「### 審查分工的沿革」底下、或在它前面插一個「### 沿革（已不再適用）」，本檔照樣 35/35 綠——
+//    規則已經降成沿革，考題卻說沒事。這是本專案認過的病型「文字存在、結構失效」
+//    （同族＝題名關鍵字「問法與逾時預設」那題，#577 r3／r4／r5 連三輪）。
+//    ⇒ 所以這一題釘的是**位置**：它要在正式的「鐵則」節裡、承重句要在它自己那一條之內、
+//      指路要在真正的「UI 現行慣例」節裡。
 //    本題**不**證明任何人真的照做（那要靠複審與 William 驗收）——誠實劃界，不是缺口。
-test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」不可被靜靜刪掉（William 2026-07-22 定、2026-09-08 獨立）', () => {
+test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要留在正式鐵則區、承重句在它自己那一條裡（搬成沿革要紅；William 2026-07-22 定、2026-09-08 獨立）', () => {
   const agents = read('AGENTS.md');
-  assert.ok(/^12\. \*\*必須懂的概念要在網頁上就地白話解釋\*\*/mu.test(agents),
-    'AGENTS.md 少了鐵則 12 的標題句（或編號變了）。它 2026-09-08 才從鐵則 7 的後半獨立出來——'
-    + '獨立的理由就是「躲在空樁後半會被當成一起搬走了」，所以它需要一個自己的號碼與這一題。');
-  // ⚠️ 只斷言標題會假綠：把三個承重部分抽掉、只留標題，規矩就空了（同鐵則 10 那題的病型）
+  const lines = agents.split('\n');
+  // ⚠️ **「這一行是不是標題」一律用 `headingAt()`**（判準只認 ATX，正反例表在 test/helpers/markdown-heading.js）。
+  //    這裡不要再手寫第二條正規式——同檔已經因為那個踩過（#583 r5 Low、#578 r13 High①）。
+  const once = (/** @type {string} */ canon) => {
+    const hits = lines.reduce((/** @type {number[]} */ acc, l, i) => (l === canon ? [...acc, i] : acc), []);
+    assert.equal(hits.length, 1,
+      `AGENTS.md 裡「${canon.slice(0, 30)}…」出現 ${hits.length} 次（要剛好 1 次、逐字）——`
+      + '改掉這一行的任何一個字（含在括號裡補一句「以下已作廢」）都會讓這題紅，那正是要擋的。');
+    return hits[0];
+  };
+  const h1 = once('# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書');
+  const rules = once('## 鐵則（違反會壞事）');
+  const ui = once('## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）');
+  assert.equal(h1, lines.findIndex((_, i) => headingAt(lines, i) > 0),
+    '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，「鐵則」節的歸屬就不是原來那一條鏈了');
+
+  const hits12 = lines.reduce((/** @type {number[]} */ acc, l, i) => (
+    /^12\. \*\*必須懂的概念要在網頁上就地白話解釋\*\*/u.test(l) ? [...acc, i] : acc), []);
+  assert.equal(hits12.length, 1,
+    'AGENTS.md 少了鐵則 12 的標題句、或它出現不只一次（或編號變了）。它 2026-09-08 才從鐵則 7 的後半'
+    + '獨立出來——獨立的理由就是「躲在空樁後半會被當成一起搬走了」，所以它需要一個自己的號碼與這一題。');
+  const item12 = hits12[0];
+  assert.ok(h1 < rules && rules < item12 && item12 < ui,
+    '鐵則 12 不在「鐵則」節與「UI 現行慣例」節之間＝它被搬走了（逐字搬到沿革節也算，那是規則降成沿革）');
+
+  // ① 檔頭 H1 到「鐵則」那一行之間，不可以再有 H1——有的話「鐵則」整節就換了爸爸（可以是一個作廢小節）
+  for (let i = h1 + 1; i < rules; i += 1) {
+    const level = headingAt(lines, i);
+    assert.ok(level === 0 || level > 1,
+      `第 ${i + 1} 行插了一個 H${level}（「${lines[i].slice(0, 40)}」），它會讓「鐵則」節改掛在它底下`);
+  }
+  // ② 「鐵則」那一行到第 12 條之間，**任何**標題都不行——那正是 Codex 實測用的那一刀
+  //    （在第 12 條前面插「### 沿革（已不再適用）」，第 12 條就被切進沿革小節裡了）
+  for (let i = rules + 1; i < item12; i += 1) {
+    const level = headingAt(lines, i);
+    assert.equal(level, 0,
+      `第 ${i + 1} 行插了一個 H${level} 標題（「${lines[i].slice(0, 40)}」），`
+      + '它會讓第 12 條落進那個小節、不再是「鐵則」節的直屬內容——'
+      + '整條一字未動也照樣能在畫面上把它收進作廢／沿革區（#585 r1 Medium 實測）。'
+      + '⚠️ **已知的假紅**：清單項底下縮排 1〜3 格的標題其實在清單容器裡，'
+      + '這時把那一行改成粗體即可（理由見 test/helpers/markdown-heading.js 的檔頭）。');
+  }
+  // ③ 承重句要在**第 12 條自己那一段**裡——在檔案別處出現不算（會被下一條或別節借去充數）
+  const nextItem = lines.findIndex((l, i) => i > item12 && /^\d+(?:\.\d+)?\. /u.test(l));
+  const blockEnd = nextItem === -1 ? ui : Math.min(nextItem, ui);
+  const block = lines.slice(item12, blockEnd).join('\n');
+  assert.ok(!lines.slice(item12, blockEnd).some((_, i) => headingAt(lines, item12 + i) > 0 && i > 0),
+    '第 12 條自己那一段裡插了 ATX 標題——後半會被切出去，承重句就不在同一條規則裡了');
+  assert.doesNotMatch(block, /<!--|-->/u, '第 12 條裡出現 HTML 註解——規則不可以被藏成不可見內容');
+  assert.doesNotMatch(block, /^ {0,3}\[[^\]]+\]:\s/mu, '第 12 條裡出現 Markdown 參考定義——那在畫面上不顯示，藏得下一句否定');
+  // ⚠️ 只斷言標題會假綠：把三個承重部分抽掉、只留標題，規矩就空了
+  //    （同族＝題名關鍵字「註解寫為什麼、不寫現在是」那題）
   for (const [part, why] of /** @type {[string, string][]} */ ([
     ['懂了才不會把正常數字當算錯', '判準：哪一種概念非解釋不可'],
     ['解釋本身不可省', '機制與樣式可以換，但解釋不可省——少了這句就會被讀成「有做就好」'],
     ['文案 Claude 起草、William 審改', '誰寫、誰審；少了它會變成「Claude 自己說了算」'],
   ])) {
-    assert.ok(agents.includes(part), `AGENTS.md 鐵則 12 少了「${part}」（${why}）`);
+    assert.equal(block.split(part).length - 1, 1,
+      `AGENTS.md 鐵則 12 那一條裡少了「${part}」（${why}），或它在那一條裡出現不只一次——`
+      + '在檔案別處出現不算：那正是「文字還在、規則已經被搬走」的假綠。');
   }
-  // 它是鐵則、不隨「UI 現行慣例」那一節放寬——那一節自己要指得到它
-  assert.match(agents, /就地白話解釋是\*\*鐵則 12\*\*[^\n]*不隨本節放寬/u,
-    '「UI 現行慣例」那一節的第 5 點要指到鐵則 12（它原本指的是鐵則 7 的後半，2026-09-08 已獨立）');
+  // ④ 指路要在**真正的**「UI 現行慣例」節裡（那一節是可以偏離的預設值，這一條不隨它放寬）
+  const uiEnd = lines.findIndex((_, i) => i > ui && headingAt(lines, i) > 0 && headingAt(lines, i) <= 2);
+  const uiSection = lines.slice(ui, uiEnd === -1 ? lines.length : uiEnd).join('\n');
+  assert.match(uiSection, /就地白話解釋是\*\*鐵則 12\*\*[^\n]*不隨本節放寬/u,
+    '「UI 現行慣例」那一節裡找不到指向鐵則 12 的第 5 點（它原本指的是鐵則 7 的後半，2026-09-08 已獨立）——'
+    + '⚠️ 指路搬到那一節外面也算沒有：那一節自己要指得到它，才擋得住「這一條隨本節一起放寬」的誤讀。');
 });
