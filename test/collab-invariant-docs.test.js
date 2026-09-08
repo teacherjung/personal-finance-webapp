@@ -94,7 +94,12 @@ test('⭐ PR 模板的欄位集合＝REQUIRED_FIELDS（**雙向**：多一個少
   assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
   const next = lines.findIndex((l, i) => i > at && /^#{1,6}\s/u.test(l));
   const section = lines.slice(at, next < 0 ? undefined : next).join('\n');
-  const inTemplate = [...section.matchAll(/^-\s*\*\*([^*]+)\*\*\s*[:：]/gmu)].map((m) => m[1].trim());
+  // ⚠️ **要認得閘認得的每一種寫法**（#583 r2 Medium／鐵則 9：形狀考題不能只認一種）：上一版只數
+  //    `- **欄名**：`，於是模板多一行 `* **意外欄位**：` 或 `- 意外欄位：` 就靜默漏算——而那兩種
+  //    `fieldValue()` 都讀得到，等於模板上多了一個「填了也沒人看」的欄位而這一題全綠。
+  //    這裡的形狀刻意跟閘的 `fieldValue()` 同一族：可有項目符號或有序清單、欄名可被 `**`／`__` 包住。
+  const FIELD_LINE = /^[^\S\n]*(?:(?:[-*+]|\d+[.)])[^\S\n]*)?(?:\*\*|__)?([^*_:：\n]+?)(?:\*\*|__)?[^\S\n]*[:：]/gmu;
+  const inTemplate = [...section.matchAll(FIELD_LINE)].map((m) => m[1].trim());
   assert.deepEqual(inTemplate.slice().sort(), REQUIRED_FIELDS.slice().sort(),
     `模板的欄位集合跟 REQUIRED_FIELDS 對不上——多一個或少一個都要來改這一題。\n  模板：${inTemplate.join('、')}\n  腳本：${REQUIRED_FIELDS.join('、')}`);
 });
