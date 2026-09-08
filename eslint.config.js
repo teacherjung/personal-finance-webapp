@@ -206,6 +206,21 @@ export default [
     files: ['lib/pdf-isolate.js'],
     rules: { 'no-restricted-syntax': ['error', ...XLSX_SELECTORS, ...ENTRY_GUARD_SELECTORS] }
   },
+  { // 考題檔：禁止隱式轉數字（`+x`）——只在這裡開，產線檔照舊可以用
+    //  ⚠️ **為什麼**：#585 用腳本改一則斷言訊息時留下一個多餘的 `+`，
+    //     `… + + '它 2026-09-08 才從…'` 被當成一元加號，那一段訊息變成 `NaN`。
+    //     **斷言訊息平常就會被算出來，但只在失敗時顯示**——全綠的測試不看訊息，
+    //     所以型別檢查、lint、考題三關全過，它躲了兩輪才被獨立審查者讀出來。
+    //  ⚠️ **為什麼只開在 `test/`**：`lib/derive.js` 與 `public/app.js` 各有三處
+    //     `+m[1]` 這種**合法且刻意**的數字轉換（實測），全域開會逼著改產線檔。
+    //     考題檔全樹零使用，所以這裡開起來成本是零。（#585 r9 指出可以這樣限定範圍——
+    //     我原本寫「必須動產線檔」是錯的。）
+    //  射程誠實話：`number: true` 攔的是**部分**隱式數字轉換——本案誤寫的一元 `+` 在內，
+    //     `1 * '…'`／`'…' - 0` 也在內；但 `+42`、`+Number('…')` 不報（#585 r10 逐項實測）。
+    //     它**完全不看訊息內容對不對**：少一個引號、模板字串打錯，它一樣看不見。
+    files: ['test/**/*.js', 'test/**/*.mjs'],
+    rules: { 'no-implicit-coercion': ['error', { boolean: false, string: false, number: true }] }
+  },
   { // 後端／維護腳本／測試：Node 環境
     files: ['server.js', 'lib/**/*.js', 'scripts/**/*.js', 'test/**/*.js'],
     languageOptions: { globals: globals.node }
