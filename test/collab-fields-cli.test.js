@@ -69,6 +69,16 @@ test('⭐ CLI｜模板原封不動送出去 → exit 1（填寫說明都在 HTML
   assert.equal(r.status, 1, `空模板被判成「欄位齊全」＝這道閘等於沒有。實得 ${r.status}\n${r.stdout}`);
 });
 
+test('⭐ CLI｜gh 退 0 但回傳的形狀不對 → exit **2**（不是把它當成「沒填欄位」退 1）', () => {
+  // ⚠️ 這一條與「查詢非零」共用同一個失敗出口，但**語意不同**：形狀壞掉是「查不清楚」，
+  //    退 1 會被讀成「作者沒填」。仿的那一支（review-verdicts-cli）有這一格，上一版漏了（Grok #583 掃後 3）。
+  for (const [bad, why] of [['null', '回傳 null'], ['{}', '缺 body'], ['{"body": 42}', 'body 不是字串'], ['不是 JSON', '根本不是 JSON']]) {
+    const r = withFakeGh(bad);
+    assert.equal(r.status, 2, `${why}：預期 2，實得 ${r.status}\n${r.stderr}`);
+    assert.match(r.stderr, /查不清楚/);
+  }
+});
+
 test('⭐ CLI｜gh 查不到（非零退出）→ exit **2**（fail-closed：查不到不等於安全）', () => {
   const r = withFakeGh('', { exitCode: 1 });
   assert.equal(r.status, 2, `預期 2，實得 ${r.status}\n${r.stderr}`);
