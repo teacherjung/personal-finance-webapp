@@ -92,15 +92,17 @@ test('⭐ PR 模板的協作欄位區段＝REQUIRED_FIELDS 逐行逐字（多一
   //    那由閘自己判（多的行它不讀），本題不宣稱擋得住。
   const tpl = read('.github/pull_request_template.md').replace(/<!--[\s\S]*?-->/g, '');
   const lines = tpl.split('\n');
-  const at = lines.findIndex((l) => /^##\s*協作欄位\s*$/u.test(l));
+  // ⚠️ **「這一行是不是標題」一律用 `headingAt()`，不要自己再寫一條正規式**（#583 r5 Low：
+  //    自寫的那條要求井號在第 0 欄，於是下一節的標題只要縮排一格就不算標題、被當成本節的內容）。
+  //    那支 helper 是 #578 為同一件事抽出來的單一真相（ATX 可有 0〜3 格前導空白）。
+  const at = lines.findIndex((l, i) => headingAt(lines, i) === 2 && /協作欄位\s*$/u.test(l));
   assert.ok(at >= 0, 'PR 模板裡找不到可見的「## 協作欄位」標題——模板改寫法了，這一題要跟著改');
   // ⚠️ **章節的結尾是「同級或更高級」的標題，不是任何標題**（#583 r4）：上一版遇到任何 `#` 就停，
   //    於是在那一段裡開一個 `### 子標題` 再往下放欄位，子節整段被切掉、根本沒進比對。
-  //    子節仍然屬於這一節，所以它的內容也要被比到。
-  const level = /^(#{1,6})/u.exec(lines[at])?.[1].length ?? 2;
+  const level = headingAt(lines, at);
   const next = lines.findIndex((l, i) => {
-    const m = /^(#{1,6})\s/u.exec(l);
-    return i > at && m !== null && m[1].length <= level;
+    const lv = headingAt(lines, i);
+    return i > at && lv > 0 && lv <= level;
   });
   const body = lines.slice(at + 1, next < 0 ? undefined : next).filter((l) => l.trim() !== '');
   assert.deepEqual(body, REQUIRED_FIELDS.map((f) => `- **${f}**：`),
