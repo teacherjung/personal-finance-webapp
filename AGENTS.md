@@ -73,7 +73,7 @@
 4. 〔已搬走〕色彩分工 → 見下方「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。
 5. 〔已搬走〕金額格式 → 見下方「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。
 6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「全部頁面 reload 無錯」把關（頁數以 app.js ROUTES 為準，不寫死數字），型別檢查主力放資料邏輯）。`portfolio-valuation.js` 的 `fxGaugeHtml`＝**刻意休眠停放**（有固定輸入輸出考題、目前未插入頁面），非死碼、勿刪。
-7. 〔已搬走〕UI 慣例 → 見下方「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。⚠️ 原本掛在這一條後半、**現在仍然有效**的那半條，2026-09-08 已獨立成**鐵則 12**（就地白話解釋）——William 裁、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/584#issuecomment-5581991626 。
+7. 〔已搬走〕UI 慣例 → 見下方「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。原本掛在這一條後半的那半條＝**鐵則 12**（就地白話解釋），2026-09-08 獨立出去——William 裁、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/584#issuecomment-5581991626 。
 8. **repo 櫃檯是 async 的（C4a，2026-07-27；C4b Postgres 的前置）**——規矩如下：
    ①**呼叫必 `await`**：`getDb`/`saveDb`/`getCollection`/`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`getSettings`/`updateSettings` 全回 Promise（轉供的 `uid`/`emptyDb`/`backupNow`/`normalizeLedger` 仍同步）。最陰的漏法＝`res.json(service())` 忘了 await——**不炸、默默回 `{}`**；tsc 只抓得到「讀屬性」的漏，寫入 fire-and-forget 要靠自查。
    ②**Express handler 一律包 `wrapRoute`（statement/ib 慣例：帶 status 錯回原味 JSON）或 `asyncRoute`（core/crud/securities 慣例：一切交全域錯誤中介）**——Express 4 不接 async handler 的 rejection，裸的 async handler 拋錯＝unhandled rejection、請求掛死。兩個包裝器語意不同，別混用（會改變既有錯誤口徑）。
