@@ -519,6 +519,39 @@ test('協作欄位閘｜整份 workflow 只認一種形狀（關門，不是列�
 });
 
 
+const VERDICT_WF = '.github/workflows/review-verdict.yml';
+const EXPECTED_VERDICT_WORKFLOW = {
+  name: '複審結論',
+  on: { pull_request: { types: '[opened, edited, reopened, synchronize]' } },
+  jobs: {
+    'review-verdict': {
+      name: '複審結論（看得見｜不擋合併）',
+      'runs-on': 'ubuntu-latest',
+      permissions: { contents: 'read', 'pull-requests': 'read' },
+      steps: [
+        { uses: 'actions/checkout@v4' },
+        { uses: 'actions/setup-node@v4', with: { 'node-version-file': '.node-version' } },
+        {
+          name: '複審結論閘（有人對目前 head 說「通過」且沒有未撤銷的阻擋）',
+          env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' },
+          run: 'node scripts/check-review-verdicts.js ${{ github.event.pull_request.number }}',
+        },
+      ],
+    },
+  },
+};
+
+test('⭐ 複審結論（雲端看得見版）｜整份 workflow 只認一種形狀（同協作欄位那道的關門作法）', () => {
+  // ⚠️ 它**不是**必要檢查（刻意的，William 2026-09-08 裁選 a），但形狀照樣要釘：
+  //    這一支存在的全部理由是「漏跑會留下痕跡」，而 `|| true`／`if: ${{ false }}`／
+  //    `continue-on-error` 任何一種都會讓它變成「每次都綠、什麼都沒跑」＝比沒有它更糟
+  //    （本專案認過的病：靜靜通過最危險）。列舉繞法補不完，所以整個形狀 deepEqual。
+  // ⚠️ 誠實劃界：這一題證明的是「那個 job 的形狀沒被動手腳」，證明不了「GitHub 真的跑了它」，
+  //    也證明不了它**沒有**被加進必要檢查（那是 GitHub 設定，不在 repo 裡；由分支保護文件記錄）。
+  assert.deepEqual(parseYaml(read(VERDICT_WF)), EXPECTED_VERDICT_WORKFLOW,
+    `${VERDICT_WF} 的形狀變了。要改請連同 EXPECTED_VERDICT_WORKFLOW 一起改——那是刻意的動作。`);
+});
+
 test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', () => {
   // ⚠️ 這題防兩個會「永遠卡住合併」的坑：
   //    ①required check 按**名稱字串**比對——改了 name 沒改分支保護＝等一個永遠不會出現的 check。

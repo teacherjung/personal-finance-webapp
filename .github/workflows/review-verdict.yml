@@ -1,0 +1,41 @@
+# 複審結論（雲端「看得見」版）：把「這一顆 head 有沒有人審過並說通過」自動跑出來。
+#
+# ⚠️ **這一支刻意不是必要檢查**（William 2026-09-08 裁，選項 a）。它跑、它會紅、紅的原因看得見，
+#    但**不擋合併**——分支保護的 required contexts 沒有它，加進去要另外改設定（那是 William 的動作）。
+#    為什麼先這樣：這道閘在一支 PR 的大半輩子本來就是紅的（「還沒人審」跟「審過沒通過」在它眼裡一樣），
+#    而**天天亮紅燈的護欄，人會學會無視它**——那是本專案已經認過的病。先讓它跑一段時間量出到底多吵、
+#    會不會誤判，再決定要不要上鎖。
+#
+# ⚠️ **紅了不代表不能合併**：合併的把關仍在合併步驟裡實跑同一支腳本（那才是決定放不放行的地方）。
+#    這一支買到的是「漏跑會留下痕跡」——今天漏跑是完全無聲的。
+#
+# ⚠️ 為什麼不併進 ci.yml：跟 collab-fields.yml 同一個理由——這道閘看的是**留言**，
+#    而 `pull_request:` 的預設事件不含 `edited`；留言變動雖然不觸發 workflow，
+#    但 head 一動（synchronize）就必須重判，且改 PR 說明會換掉「指定審查者」也要重判。
+#
+# ⚠️ job 的 `name:` 跨 workflow 必須唯一，而且要逐字寫進 docs/GitHub分支保護-設定與驗證.md
+#    （考題會對帳）。⚠️ **名字裡刻意寫明「不擋合併」**：required 與否只看 GitHub 設定，
+#    看不出來的人會以為它是門。
+
+name: 複審結論
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  review-verdict:
+    name: 複審結論（看得見｜不擋合併）
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: 複審結論閘（有人對目前 head 說「通過」且沒有未撤銷的阻擋）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-review-verdicts.js ${{ github.event.pull_request.number }}
