@@ -1,19 +1,22 @@
 // @ts-check
-// **合併步驟裡「實際被執行」的閘**——從 `REVIEW-AND-MERGE.md` 的合併步驟區塊反查。
+// **合併步驟區塊裡「以標準指令登記」的閘**——從 `REVIEW-AND-MERGE.md` 的合併步驟區塊反查。
+// ⚠️ 本檔與引用它的考題所說的「登記」＝那一行標準指令寫在合併步驟的 bash fence 裡；
+//    **登記 ≠ 執行**——不證明有人執行過、也不證明執行了會擋（#587 r5 反例：把一支既有閘的
+//    標準指令包進一個永遠不會走到的分支裡，盤點、兜底、地圖對帳三題照樣全綠）。
 //
 // 這一份原本住在 `test/collab-invariant-docs.test.js` 裡。`Codex #545 r6` 指出
 // `test/collab-map.test.js` 需要**同一個集合**（地圖的「合併步驟專用的閘」若改用「有沒有自報」
 // 當判準，一支自報卻沒接進合併步驟的**幽靈閘**就會被要求列進地圖＝製造假的安全感）。
 // 兩處各寫一份就是兩份會漂的複本，所以搬出來共用。
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * 合併步驟區塊裡**實際被執行**的閘。
+ * 合併步驟區塊裡**以標準指令登記**的閘（「登記」的定義與反例見檔頭）。
  *
  * ⚠️ **只認 bash fence 裡逐字相符的指令行**（Codex #385 r12 High①）：
  * 原本用子字串比對，於是 `# node scripts/check-x.js <N>`（整行註解掉）也算「有跑」——
@@ -24,8 +27,19 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * 註解、前綴、非標準拼法一律不算——要進程序就寫成標準那一行。
  *
  * ⚠️ **射程**：路徑形狀限 `scripts/<名>.js`（第一層、`.js`）。子目錄或 `.mjs`／`.cjs`
- * 即使真的寫進合併步驟也抓不到——那是這個判準刻意的窄，不是漏。呼叫端要自己 fail-closed
- * （`collab-map.test.js` 的兜底題就是：自報卻不在本集合裡＝紅）。
+ * 即使真的寫進合併步驟也抓不到——那是這個判準刻意的窄，不是漏。
+ * ⚠️ 所以引用本函式時**不要說「證明某支閘真的會被執行」**：它證的是「**那一行標準指令有沒有寫在
+ * 合併步驟的 bash fence 裡**」，不是有人執行過、也不是執行了會擋。呼叫端要自己 fail-closed
+ * （`collab-invariant-docs.test.js` 的**幽靈閘兜底**題就是：提到 `MERGE_GATE` 卻不在本集合裡＝紅。
+ * ⚠️ 那一題 2026-09-09 從 `collab-map.test.js` 搬過來——它守的是「自報是閘的檔案有沒有登記進合併步驟」，跟路由表無關，
+ * 不該跟著一張隨時可能退役的索引表走。
+ * ⚠️ **逐字相同的只有三樣**（#587 r4 收窄）：`scriptFiles()` 的函式本體、原有那條「原文提到就算」
+ * 的文字標記判斷、以及 `running.has(f)` 這個條件。**整題不是逐字未改**——它多了非空與既有閘
+ * 覆蓋的地板，原本 `assert.ok` 的失敗訊息也改寫過；
+ * 變的是**兩件周邊的事**（Grok #587 掃後照實補）：倉庫根從「共用一個」變成兩處各自推算
+ * ——所以那一題加了 fail-closed 的地板；列檔從私有函式變成公開出口，以後有人在這裡替它加過濾，
+ * 它會**默默繼承**。⚠️ 但**不是完全沒有門檻**（#587 r3 更正）：過濾若濾掉任何一支
+ * 「已登記的閘」，那道地板就會叫；濾掉的若是**別的**檔案，地板看不出來）。
  *
  * @returns {string[]}
  */
@@ -49,4 +63,23 @@ export function gatesRunInMergeSteps() {
     if (m2) gates.push(m2[1]);
   }
   return [...new Set(gates)];
+}
+
+/**
+ * `scripts/` **遞迴**底下的所有 JS 檔（相對 repo 根目錄的路徑）。
+ * ⚠️ 副檔名要含 `.mjs`／`.cjs`：只收 `.js` 的話，一支標準 ESM 的 `verify-extra-gate.mjs`
+ *    自報 `MERGE_GATE` 也不會被看到（`Codex #545 r5` 實證）。
+ * ⚠️ 這一支 2026-09-09 從 `test/collab-map.test.js` 搬過來，跟著它唯一的消費者
+ *    （幽靈閘兜底題）走——它盤點的是腳本，不是路由表。
+ * @param {string} dir @returns {string[]}
+ */
+export function scriptFiles(dir = 'scripts') {
+  /** @type {string[]} */
+  const out = [];
+  for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) out.push(...scriptFiles(p));
+    else if (/\.(js|mjs|cjs)$/.test(e.name)) out.push(p);
+  }
+  return out;
 }
