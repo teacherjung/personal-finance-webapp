@@ -274,7 +274,7 @@ test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過
   );
   assert.ok(
     pointer.includes('通過'),
-    '合併步驟的指路句沒寫出「通過」——只寫「轉正式之前」時，把「Codex 通過之後、」刪掉這道考題不會紅'
+    '合併步驟的指路句沒寫出「通過」——只寫「轉正式之前」時，把「通過之後、」那半句刪掉這道考題不會紅（當時字面「Codex 通過之後、」，2026-09-09 起是「獨立審查者通過之後、」）'
       + '（2026-08-21 Codex r13 實測），而「通過已留在紀錄上」正是本條存在的唯一理由'
   );
 
@@ -300,7 +300,7 @@ test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過
   };
   const CURRENT_DIRECTIVES = [
     ['AGENTS 複審後掃條', one('AGENTS.md', '- **複審後掃（')],
-    ['CLAUDE.md 入口句', one('CLAUDE.md', '- **你實作的 PR：')],
+    ['CLAUDE.md 入口句', one('CLAUDE.md', '- **每一支 PR，')],
     ['REVIEW 最短可執行版開頭兩行', shortVersion(visible(rm)).split('\n').slice(0, 2).join('\n')],
     ['合併步驟指路句', pointer],
     // ⚠️ 第五處：「省額度慣例」那條不是沿革，它直接規定「通過 → 先做 Grok → ready」。
@@ -314,6 +314,15 @@ test('Grok 複審後掃｜時機：AGENTS 正本與 REVIEW 最短版把「通過
     ['AGENTS 角色分工 Grok 列',
       one('AGENTS.md', '| Grok |')],
   ];
+  // ⚠️ 射程（誰的支要掃）也釘住（William 2026-09-09 裁「Grok 掃要對稱」）：此前三處條文明寫
+  //    「Claude 實作的支」、指路句以「Codex 通過」暗示；改成對稱之後，只要有一處被改回單邊、其餘不動，時機那幾題照樣全綠。
+  //    這裡只釘**直接規定時機的四處**（省額度慣例條與角色表那列本來就不寫射程）；
+  //    認的是「不論」這個詞——換成別的說法會紅，紅了就來改這裡，不要拿掉。
+  for (const [where, text] of CURRENT_DIRECTIVES.slice(0, 4)) {
+    assert.ok(text.includes('不論'),
+      `${where}沒有寫「不論」（實作者是誰都要掃）——2026-09-09 起 Grok 複審後掃對稱適用，`
+        + '只有一處寫回「Claude 實作的支」就會讓兩種射程並存');
+  }
   for (const [where, text] of CURRENT_DIRECTIVES) {
     for (const old of OLD_TIMINGS) {
       assert.ok(

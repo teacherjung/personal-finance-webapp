@@ -34,7 +34,7 @@
 //   另加 lsof 掃蕩（best-effort，找 cwd／txt 在盒內的程序殺掉並記數）。
 // ・資源上限是 ulimit（單檔 64MB、程序數＝啟動時同 uid 程序數＋256、CPU 1800 秒）＋父程序讀 sessions 的上限；
 //   **沒有總磁碟配額**（/private/tmp 沒有 quota）——盒內程式寫很多個 64MB 檔仍能塞滿磁碟，那會讓本掃退 2，不會讓它拿到什麼。
-// ・本腳本不決定掃描時機（條款：Codex 通過之後、gh pr ready 之前）；它只負責「掃的時候有圍欄」。
+// ・本腳本不決定掃描時機（條款：獨立審查者通過之後、gh pr ready 之前，不論誰實作——2026-09-09 起對稱）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
