@@ -17,6 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { headingAt } from './helpers/markdown-heading.js';
 import { ruleItemRange } from './helpers/agents-rule-item.js';
+import ts from 'typescript';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -577,7 +578,9 @@ const workflowSources = (dir = join(ROOT, WF_DIR), label = WF_DIR) => readdirSyn
  *    或在送進掃描迴圈前後被 `slice` 掉，誘餌題都會叫（#586 r3／r4 逐刀驗過）。
  * ⚠️ **照實劃界（Grok #586 掃後點名）**：`scanned` 記的是「**進了迴圈**」，不是「判準看完了這份內容」；
  *    而且真 workflow 平常是乾淨的——所以「只對真檔跳過判準、照樣掃暫存樣本」這種改法**不會**被叫。
- *    擋那一族的是題名關鍵字「位置 × 家族全掃」那一題（它讓每個位置都必須原樣回報）。
+ *    ⚠️ **這一族目前沒有東西擋**（#586 r9 Low 更正：我原本寫「位置 × 家族全掃那一題擋得到」，
+ *    那是錯的——矩陣的違規字元只種在暫存樣本裡，真檔被特判跳過時它照樣綠）。
+ *    「位置 × 家族全掃」守的是**固定暫存樣本經共用路徑的回報**，不是「真檔有沒有被判準看過」。
  * @param {[string, string][]} extra
  * @returns {{ problems: string[], scanned: string[] }}
  */
@@ -751,17 +754,37 @@ test('⭐ 判準本身：整個家族都要拒收、位置要報對、正常內�
   assert.equal(firstBadWorkflowChar(`${'x'.repeat(9000)}\r`)?.at, 9000, '晚位置的違規字元漏掃了');
 });
 
-test('⭐ 逐行複本不可以摺成恒真：`GATE_WF_LINES` 必須是手寫的字串字面量', () => {
-  // ⚠️ Grok #586 掃後點名的一條**新風險**：常數的內容現在跟檔案一模一樣，所以把它改成
+test('⭐ 逐行複本不可以摺成恒真：`GATE_WF_LINES` 的**宣告**必須是字串字面量陣列', () => {
+  // ⚠️ Grok #586 掃後點名的新風險：常數的內容現在跟檔案一模一樣，所以把它改成
   //    `read(GATE_WF).split('\n')` 只要一步——斷言變成「檔案等於自己」＝恒真，
-  //    而題名、註解、失敗訊息**通通還寫著「釘死」**。那正是本專案認過最糟的一型：
-  //    什麼都沒檢查卻回報通過。舊的結構比對沒有這麼便宜的摺法，所以這是換釘法之後**新開的**門。
-  const selfSrc = read('test/collab-invariant-docs.test.js');
-  const block = /\nconst GATE_WF_LINES = \[\n((?: {2}'(?:[^'\\]|\\.)*',\n)+)\];\n/u.exec(selfSrc);
-  assert.ok(block, '`GATE_WF_LINES` 不再是「一行一個字串字面量」的陣列——'
-    + '它被改成從檔案（或別處）算出來的了嗎？那樣斷言會變成恒真。');
-  assert.equal(block[1].trimEnd().split('\n').length, GATE_WF_LINES.length,
-    '常數的字面量行數與實際元素數對不上（有元素不是直接寫在那個陣列裡）');
+  //    而題名、註解、失敗訊息**通通還寫著「釘死」**。那是本專案認過最糟的一型。
+  // ⚠️ **用解析器看語法樹，不用正規式**（#558 r3 立的規矩；#586 r9 又證了一次）：
+  //    第一版用正規式掃原始碼，只證明得了「這串陣列文字在檔案裡出現過」。獨立審查者三種寫法全綠——
+  //    ①把舊陣列包進 `/* */`、真宣告改成讀檔 ②真宣告搬去 helper 再 import 回來、舊陣列留在註解
+  //    ③舊陣列留在多行樣板字串裡。**文字出現過 ≠ 它就是那個宣告**（固定維度 2 要求排除的正是這個）。
+  const src = read('test/collab-invariant-docs.test.js');
+  const sf = ts.createSourceFile('t.js', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  // ⚠️ TS 解析器對壞語法不丟例外（會給半棵樹、靜靜漏抓）——這裡 fail-closed。
+  assert.equal(/** @type {any} */ (sf).parseDiagnostics?.length ?? 0, 0,
+    '本檔解析不出乾淨的語法樹；解析器會給半棵樹，這一題就形同虛設');
+  /** @type {import('typescript').VariableDeclaration[]} */
+  const decls = [];
+  const walk = (/** @type {import('typescript').Node} */ n) => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'GATE_WF_LINES') decls.push(n);
+    n.forEachChild(walk);
+  };
+  sf.forEachChild(walk);
+  assert.equal(decls.length, 1,
+    `本檔裡名為 GATE_WF_LINES 的宣告有 ${decls.length} 個（要剛好 1 個）。`
+    + '⚠️ 0 個＝它被搬到別的檔案再 import 回來——那樣這一題就管不到它了，請把宣告留在本檔。');
+  const init = decls[0].initializer;
+  assert.ok(init && ts.isArrayLiteralExpression(init),
+    'GATE_WF_LINES 的宣告不是「一個陣列字面量」——它被改成從檔案（或別處）算出來的了嗎？'
+    + '那樣「檔案逐行等於這個陣列」就變成恒真。');
+  assert.ok(init.elements.length > 0 && init.elements.every((e) => ts.isStringLiteral(e)),
+    'GATE_WF_LINES 陣列裡有元素不是字串字面量（樣板字串、變數、展開、呼叫都算）');
+  assert.equal(init.elements.length, GATE_WF_LINES.length,
+    '語法樹數到的元素數與實際陣列長度對不上');
 });
 
 test('協作欄位閘｜整份 workflow 逐行逐字釘死（擋「被靜靜改掉」，不擋「連常數一起改」）', () => {
