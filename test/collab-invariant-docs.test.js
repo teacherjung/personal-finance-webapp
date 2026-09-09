@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
 import { gatesRunInMergeSteps, scriptFiles } from './helpers/merge-gates.js';
+import { visible } from './helpers/markdown-visible.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -1422,25 +1423,45 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
 });
 
 // ⚠️ **兩份文件可以單邊消失**（Grok #591 掃出）：`AGENTS.md` 那句自評條說「程序那份的固定維度
-//    有一條在核它」，但那一列**沒有任何考題守著**——有人把它刪掉，規則書照樣宣稱有人在核，
-//    而題名關鍵字「第 6 題正本在正式位置」那一族只釘規則書自己。
-//    ⇒ 這題把兩份綁在一起：規則書指過去，程序那份就必須真的有那一列。
-//    ⚠️ **它只驗「那一列還在」**：驗不到審查者真的跑、也驗不到自評內容有沒有更新——
-//       那兩件事本來就沒有機器在看（規則書該段已照實劃界，本題不冒充補上）。
-test('⭐ 規則書說「固定維度有一條在核七輪自評」，程序那份就要真的有那一列（兩份不可單邊消失）', () => {
-  const agents = read('AGENTS.md');
-  const CLAIM = '`REVIEW-AND-MERGE.md`「固定維度」那節有一條，要它在受審輪次 ≥ 8 時逐一核對每個應貼輪次有沒有對應的自評留言';
-  assert.ok(agents.includes(CLAIM),
-    `AGENTS.md 的自評條不再指向程序那份的固定維度（找不到：「${CLAIM}」）。\n`
-    + '⚠️ 改寫那句沒問題，但**這一題要跟著改**——否則下一次它被改成別的宣稱時，這題還在守一句沒人在說的話。');
-  const rm = read('REVIEW-AND-MERGE.md');
-  const ROW = '| 9 | **七輪自評有沒有跟上** |';
-  assert.ok(rm.split('\n').some((l) => l.startsWith(ROW)),
-    `REVIEW-AND-MERGE.md 的「固定維度」表裡找不到以「${ROW}」開頭的那一列，`
+//    有一條在核它」，但那一列**沒有任何考題守著**——有人把它刪掉，規則書照樣宣稱有人在核。
+//    ⇒ 這題把兩份綁在一起：規則書指過去，程序那份的**那一節裡**就必須真的有那一列。
+//
+// ⚠️ **判準刻意只認一個記號**（Codex #591 r2 兩條 Medium 換來的）：認的是那一列裡有沒有提到
+//    自評留言的固定開頭。**不認列名、不認欄位排版、不認格數**——r2 實測：把列名改寫、
+//    多一格空白、表頭與資料列一起換欄，原本那版全部假紅，而那些改動都沒有把核對義務拿掉。
+//
+// ⚠️ **章節邊界用 `headingAt()` 真的切**，不用「距離節首幾個字」那種上限（那是原本那版的兩個洞：
+//    把整列搬進**相鄰**的下一節仍然綠＝假綠；只是在表格前面多寫幾行說明就超過上限＝假紅）。
+//    節的範圍＝那行二級標題起、到下一個**同級或更高級**標題止；找不到唯一一個二級「固定維度」就紅
+//    （所以把整節降成三級塞進別節底下也會紅）。
+//
+// ⚠️ **看得見才算**：整段先過 `visible()`（HTML 註解與 fenced code block 剝掉）——r2 實測原本那版
+//    把整列包進註解或圍欄仍然綠。射程＝那支 helper 檔頭寫的那四條 fence 判準＋HTML 註解，
+//    **縮排式程式碼區塊看不出來**，不假裝守得住。
+//
+// ⚠️ **它證不到的**（照實列）：審查者有沒有真的跑那一條、自評內容有沒有更新、那一列的「具體要做的事」
+//    有沒有被改成別的意思——只要記號還在那一節的表格列裡，這題就是綠的。那幾件事本來就沒有機器在看
+//    （規則書該段已照實劃界，本題不冒充補上）。
+test('⭐ 規則書說「固定維度有一條在核七輪自評」，程序那份的那一節裡就要真的有那一列（兩份不可單邊消失）', () => {
+  const MARK = '🧭 自評';
+  assert.ok(read('AGENTS.md').includes('「固定維度」那節有一條'),
+    'AGENTS.md 的自評條不再指向程序那份的固定維度（找不到「「固定維度」那節有一條」）。\n'
+    + '⚠️ 改寫那句沒問題，但**這一題要跟著改**——否則它會繼續守一句沒人在說的話。');
+  const lines = visible(read('REVIEW-AND-MERGE.md')).split('\n');
+  const heads = lines
+    .map((l, i) => (headingAt(lines, i) === 2 && l.includes('固定維度') ? i : -1))
+    .filter((i) => i !== -1);
+  assert.equal(heads.length, 1,
+    `REVIEW-AND-MERGE.md 裡二級標題「固定維度」有 ${heads.length} 個（要恰好 1）。\n`
+    + '⚠️ 0 個＝那一節被改名、降級（塞進別節底下）或整節不見了；2 個以上＝有副本，這題會分不出守哪一個。');
+  let end = heads[0] + 1;
+  while (end < lines.length && !(headingAt(lines, end) > 0 && headingAt(lines, end) <= 2)) end += 1;
+  const section = lines.slice(heads[0], end);
+  const hit = section.filter((l) => l.trimStart().startsWith('|') && l.includes(MARK));
+  assert.ok(hit.length > 0,
+    `REVIEW-AND-MERGE.md「固定維度」那一節裡，沒有任何一列表格提到「${MARK}」，`
     + '但 AGENTS.md 的自評條正在告訴讀者「審查者在核它」。\n'
-    + '⚠️ 兩份任一邊要拿掉，另一邊要一起改——只拿掉一邊＝規則書在說一件已經不存在的事。');
-  const section = rm.slice(rm.indexOf('## 固定維度'));
-  assert.ok(section.indexOf(ROW) > 0 && section.indexOf(ROW) < 4000,
-    '那一列不在「固定維度」那一節裡（可能被搬到別節或搬到檔尾）——它必須留在那節，'
-    + '因為「無論作者的重點清單寫了什麼，這幾條一律要跑」這句效力來自那一節本身。');
+    + '⚠️ 三種情形長這樣：那一列被刪、被搬出這一節、或被包進 HTML 註解／圍欄（看不見的不算）。\n'
+    + '⚠️ 兩份任一邊要拿掉，另一邊要一起改——只拿掉一邊＝規則書在說一件已經不存在的事。\n'
+    + `   目前這一節有 ${section.length} 行、其中 ${section.filter((l) => l.trimStart().startsWith('|')).length} 行是表格列。`);
 });
