@@ -55,4 +55,3 @@ export function visible(/** @type {string} */ md) {
   }
   return out.join('\n');
 }
-
