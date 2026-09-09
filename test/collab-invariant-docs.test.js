@@ -25,7 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { problemsOf, fieldValue, canonicalRole, REQUIRED_FIELDS }
   from '../scripts/check-pr-collab-fields.js';
-import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
+import { gatesRunInMergeSteps, scriptFiles } from './helpers/merge-gates.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
@@ -300,6 +300,28 @@ test('⭐ 每一道自報的合併閘，都必須出現在合併步驟與 AGENTS
         + '   那正是這一節在修的病），但**每一道守門的名字必須在**，否則指標等於沒有內容。\n'
         + `   目前自報的閘：${names.join('、')}`);
     }
+  }
+});
+
+// ⚠️ **上面那題的窄射程留下一條縫，下面這題補它**（2026-09-09 從 `test/collab-map.test.js` 搬來）。
+//    `selfDeclaredGates()` 只 import `scripts/` **第一層**、**`check-` 開頭**、**`.js`** 的檔，
+//    所以「子目錄裡的」「`.mjs`／`.cjs`」「不叫 check-* 的」自報閘，它**根本看不到**——
+//    看不到就不會出現在雙向集合的任何一邊，兩邊照樣相等、照樣全綠。
+// ⚠️ **為什麼搬過來**：它守的是「自稱是閘的東西會不會真的跑」，跟協作規矩路由表**一點關係都沒有**，
+//    卻寄居在那張表的考題檔裡。William 2026-09-09 裁示保留路由表但把這題搬走，
+//    理由是：真正值錢的護欄不該跟一張隨時可能退役的索引表綁在一起。**判斷邏輯一字未改。**
+
+test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真的出現在合併步驟裡（幽靈閘兜底）', () => {
+  const running = new Set(gatesRunInMergeSteps());
+  for (const f of scriptFiles()) {
+    if (!read(f).includes('MERGE_GATE')) continue;
+    assert.ok(running.has(f),
+      `${f} 提到 MERGE_GATE，但它**不在合併步驟實際會跑的那一組**裡。\n`
+      + '⚠️ 這就是幽靈閘：自報自己是閘、卻永遠不會被執行。留著它，地圖與盤點都會給錯的安全感。\n'
+      + '   要嘛把它寫進 REVIEW-AND-MERGE.md 合併步驟的標準指令行（`node scripts/<名>.js <N>`，\n'
+      + '   限第一層、限 .js——那是 gatesRunInMergeSteps() 刻意的窄射程），要嘛不要自報 MERGE_GATE。\n'
+      + '⚠️ 這裡刻意寬到「提到就算」：`export const`／`export { }`／子目錄／.mjs／.cjs 拼法列舉不完，\n'
+      + '   所以認名字不認寫法。');
   }
 });
 

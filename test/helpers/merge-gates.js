@@ -6,7 +6,7 @@
 // 當判準，一支自報卻沒接進合併步驟的**幽靈閘**就會被要求列進地圖＝製造假的安全感）。
 // 兩處各寫一份就是兩份會漂的複本，所以搬出來共用。
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,7 +25,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  *
  * ⚠️ **射程**：路徑形狀限 `scripts/<名>.js`（第一層、`.js`）。子目錄或 `.mjs`／`.cjs`
  * 即使真的寫進合併步驟也抓不到——那是這個判準刻意的窄，不是漏。呼叫端要自己 fail-closed
- * （`collab-map.test.js` 的兜底題就是：自報卻不在本集合裡＝紅）。
+ * （`collab-invariant-docs.test.js` 的**幽靈閘兜底**題就是：提到 `MERGE_GATE` 卻不在本集合裡＝紅。
+ * ⚠️ 那一題 2026-09-09 從 `collab-map.test.js` 搬過來——它守的是「閘會不會跑」，跟路由表無關，
+ * 不該跟著一張隨時可能退役的索引表走。判斷邏輯一字未改）。
  *
  * @returns {string[]}
  */
@@ -49,4 +51,23 @@ export function gatesRunInMergeSteps() {
     if (m2) gates.push(m2[1]);
   }
   return [...new Set(gates)];
+}
+
+/**
+ * `scripts/` **遞迴**底下的所有 JS 檔（相對 repo 根目錄的路徑）。
+ * ⚠️ 副檔名要含 `.mjs`／`.cjs`：只收 `.js` 的話，一支標準 ESM 的 `verify-extra-gate.mjs`
+ *    自報 `MERGE_GATE` 也不會被看到（`Codex #545 r5` 實證）。
+ * ⚠️ 這一支 2026-09-09 從 `test/collab-map.test.js` 搬過來，跟著它唯一的消費者
+ *    （幽靈閘兜底題）走——它盤點的是腳本，不是路由表。
+ * @param {string} dir @returns {string[]}
+ */
+export function scriptFiles(dir = 'scripts') {
+  /** @type {string[]} */
+  const out = [];
+  for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) out.push(...scriptFiles(p));
+    else if (/\.(js|mjs|cjs)$/.test(e.name)) out.push(p);
+  }
+  return out;
 }

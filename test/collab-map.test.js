@@ -54,14 +54,15 @@
 // - **驗不到**地圖收得夠不夠全——它本來就宣告自己是選錄。
 // - **驗不到**站外那一條（`../teaching-videos/AGENTS.md`）：別的 repo、不保證在這台機器上。
 // - 「選錄，不對帳」那張表**刻意不驗**：它列的不是閘，沒有可對帳的自報來源。
-// - 閘表對的是**合併步驟裡實際會跑的那一組**（與 `collab-invariant-docs` 共用 `gatesRunInMergeSteps()`）；
-//   兜底則寬到「`scripts/` 遞迴底下的 `.js`／`.mjs`／`.cjs` 只要**提到** `MERGE_GATE`，就要真的在那一組裡」。
-//   **副檔名以外的檔案不掃**（`.ts`、`.sh`、無副檔名的可執行檔都不在內），
-//   而且兩者**都只認 `MERGE_GATE` 這個名字**——改用別的 export 名開一道閘，這裡看不到。
+// - 閘表對的是**合併步驟裡實際會跑的那一組**（與 `collab-invariant-docs` 共用 `gatesRunInMergeSteps()`）。
+// - ⚠️ **「幽靈閘兜底」那一題 2026-09-09 搬去 `test/collab-invariant-docs.test.js` 了**
+//   （William 裁示：它守的是「閘會不會跑」，跟路由表無關，不該跟著一張隨時可能退役的索引表走）。
+//   本檔只剩「地圖的閘表 ↔ 合併步驟」這一邊的對帳；「有東西自報是閘卻不會跑」由那邊接。
+//   兩邊**都只認 `MERGE_GATE` 這個名字**——改用別的 export 名開一道閘，兩邊都看不到。
 // - **驗不到** Markdown 的容器與表格結構（見上一節逐條列的那幾發）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
@@ -177,21 +178,6 @@ function anchorIsStructural(fileText, anchor) {
   return false;
 }
 
-/**
- * `scripts/` **遞迴**底下的所有 JS 檔（相對 ROOT 的路徑）。
- * ⚠️ 副檔名要含 `.mjs`／`.cjs`：只收 `.js` 的話，一支標準 ESM 的 `verify-extra-gate.mjs`
- *    自報 `MERGE_GATE` 也不會被看到（`Codex #545 r5` 實證）。
- */
-function scriptFiles(/** @type {string} */ dir = 'scripts') {
-  /** @type {string[]} */
-  const out = [];
-  for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
-    const p = `${dir}/${e.name}`;
-    if (e.isDirectory()) out.push(...scriptFiles(p));
-    else if (/\.(js|mjs|cjs)$/.test(e.name)) out.push(p);
-  }
-  return out;
-}
 
 
 // ───────────────────────── 解析器自己的對照斷言（防上面每一題空掃而綠）─────────────────────────
@@ -328,19 +314,6 @@ test('⭐ 「合併步驟專用的閘」那張表＝合併步驟裡實際會跑�
   }
 });
 
-test('⭐ scripts/ 底下每一支提到 MERGE_GATE 的 js/mjs/cjs，都要真的出現在合併步驟裡（幽靈閘兜底）', () => {
-  const running = new Set(gatesRunInMergeSteps());
-  for (const f of scriptFiles()) {
-    if (!read(f).includes('MERGE_GATE')) continue;
-    assert.ok(running.has(f),
-      `${f} 提到 MERGE_GATE，但它**不在合併步驟實際會跑的那一組**裡。\n`
-      + '⚠️ 這就是幽靈閘：自報自己是閘、卻永遠不會被執行。留著它，地圖與盤點都會給錯的安全感。\n'
-      + '   要嘛把它寫進 REVIEW-AND-MERGE.md 合併步驟的標準指令行（`node scripts/<名>.js <N>`，\n'
-      + '   限第一層、限 .js——那是 gatesRunInMergeSteps() 刻意的窄射程），要嘛不要自報 MERGE_GATE。\n'
-      + '⚠️ 這裡刻意寬到「提到就算」：`export const`／`export { }`／子目錄／.mjs／.cjs 拼法列舉不完，\n'
-      + '   所以認名字不認寫法。');
-  }
-});
 
 // ───────────────────────────────── 接線與自報 ─────────────────────────────────
 
