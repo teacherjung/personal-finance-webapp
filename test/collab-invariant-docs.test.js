@@ -56,110 +56,89 @@ test('五步驟循環的第⑤步不可以寫死「Codex」（模式③下會變
     + 'William 指派 Codex 實作時（模式③）就變成 Codex 複審自己的產出＝違反唯一不變量');
 });
 
-// ⚠️ **Markdown 表格的儲存格不可以用 `split('|')` 直接取**（Codex #596 r1 Medium 實測兩種錯法）：
-//    GFM 允許在格內用 `\|` 寫出一個豎線字元，那一格就會被 `split` 多切一刀 ⇒ 假紅與假綠各一。
-//    ⇒ 這裡自己切：只在**沒有被反斜線跳脫**的 `|` 上切，再去掉首尾那兩個空格子。
-/** @param {string} row 一整列 Markdown 表格（含首尾的 `|`） */
-function cellsOf(row) {
-  /** @type {string[]} */ const cells = [];
-  let cur = '';
-  for (let i = 0; i < row.length; i += 1) {
-    const ch = row[i];
-    if (ch === '\\' && row[i + 1] === '|') { cur += '|'; i += 1; continue; }   // 跳脫的豎線＝格內文字
-    if (ch === '|') { cells.push(cur); cur = ''; continue; }
-    cur += ch;
-  }
-  cells.push(cur);
-  if (cells.length && cells[0].trim() === '') cells.shift();
-  if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
-  return cells.map((c) => c.trim());
+// ⚠️ **這一題的做法 2026-09-10 換成「逐字釘住整塊」（William 裁「1. 乙」，落點＝#596 那則 ⚖️）**。
+//    之前四輪各換一種做法守「那句話還在那張表的那一格裡」：找關鍵字（r1）→ 切豎線取欄（r1）→ 綁表＋整條逐字比對（r2）
+//    → 自己讀 GFM 表格文法（r3／r4）。第四輪被「表頭前四個空白」「分隔列裡一個不換行空白」打穿：GitHub 渲染成**零張表**，
+//    考題照樣全綠。**根因＝我在手寫一個 Markdown 解析器**——那條路 2026-08-03 走過（`test/contract-split.test.js:74-84`，
+//    連五輪、其中一輪的洞就是「`trim()` 連 NBSP 都吃掉」），當時的結論逐字是「要嘛寫一個真正的 parser，要嘛不要走」。
+//    ⇒ 換一個容易回答的問題：**不問「它會怎麼呈現」，問「有沒有人動過這幾行」**。跟本檔「審查回饋處置」那一節同一套做法。
+// ⚠️ **射程逐條寫死（每一種都實跑過突變）**：
+//    **擋得住**＝手伸進這 11 行的任何改法：整句被刪／少一個動詞／語意改寫／外層再否定／整句進註解／禁令搬到別欄／
+//      表頭欄數或欄序改動／分隔列被刪或寫壞／**表頭前加空白、分隔列放 NBSP**（r4 那兩招）／資料列前插空行／
+//      那一列被搬走／**在表格正下方接一列**（CI 列與尾端空行都釘在裡面，所以會紅）／擁有標題被改／用標題換爸爸。
+//    **擋不住**（實測全綠，照實列）：①**在這 11 行之外**把整張表用 HTML 註解包起來——這一種由全卷另一道接
+//      （`test/contract-split.test.js` 禁止 AGENTS 出現 HTML 註解）②**在尾端空行之後另建一張影子表**或另起一段
+//      否定句（兄弟段落，不經過標題也不在這 11 行裡）③在旁邊用白話宣告「以上作廢」——由「⭐ 作廢字眼絆線」接，
+//      但它只認字面那兩個字。**這三種兩個選項（裝解析器／逐字釘）都擋不住**，真正在看的是複審的眼睛。
+//    ⚠️ **這是文字守門、不是語意守門**，也**不是身分守門**：兩道機械閘驗得到「PR 自報的角色不同」與「自報為指定
+//      審查者的那一位對目前 head 有通過」，驗不了身分、也沒有東西在看實際按合併鍵的是誰（#596 r2 用假 gh 實測）。
+// ⚠️ **代價量過**：這一塊 48 天內改過 12 次＝約每四天要回來同步一次陣列；既有那個釘 32 行的先例四天內被迫同步 9 次、
+//    143 顆 commit 從沒紅過（沒假紅、也沒抓到過東西——它的產出是「動一個字不可能靜靜發生」，本題同理）。
+const ROLE_TABLE = [
+    '**角色分工（含「不負責」邊界）**：',
+    '',
+    '| 角色 | 主要責任 | 不負責 |',
+    '|---|---|---|',
+    '| William | 產品決定、需求優先序、畫面驗收、合併裁決；**審查回饋的例外**（清單刻意不複述在這裡——見「審查回饋處置」） | 不需判斷程式實作細節；**一般的審查回饋修不修不必問他**（2026-08-14 起由**在磨的那一方（＝這一支的實作者）**判斷；⚠️ 2026-09-10 對稱化前這裡寫死 Claude） |',
+    '| Claude | **被 William 明確指派時實作**（⚠️ 他**習慣**指派 Claude，但「習慣」不是「預設授權」——**空檔≠自動啟動**，與 Codex 那一列同一條；2026-09-10 補，此前這一格只寫「主要實作」、沒有任何指派的限定詞，是全專案最鬆的一份）、考題、PR、自審、技術文件更新；**複審 Codex 實作的 PR 並代執行合併**（2026-07-30 對稱常設授權）；**判斷審查回饋修不修——⚠️ 只在他自己是這一支的實作者時**（2026-08-14 立、2026-09-10 改成「在磨的那一方」；Codex 實作的支換成 Codex 判斷；例外見「審查回饋處置」） | 不自行推翻已拍板的產品規則；**不複審、不放行自己實作的支**；**「審查回饋處置」列的例外一律不自行拍板**——那些即使是 Codex 提的也要問 William（清單刻意不複述在這裡：漏抄一條就等於多給自己一塊權限；問了他沒回怎麼辦＝該節「問法與逾時預設」那顆——**等他**；⚠️ 2026-09-10 之前這裡寫「那是暫定、不是拍板」，時限拿掉之後**沒有「暫定」這條路**了，Codex #595 r2 Medium 抓到） |',
+    '| Codex | 獨立複審、對抗測試、同步點檢查、風險分析；**被 William 明確指派時實作**（模式③；⚠️ 兩邊的實作都要他指派，他習慣指派 Claude） | **三模式邊界（見下）以外的一切**——尤其不得把審查／代合併權限自行膨脹成實作權限；**不複審、不放行自己實作的支** |',
+    '| Grok | 教學線「外部記者」三職：腳本查核／每集開工時的選題雷達／就地解釋文案的零基礎讀者測試；程式線＝**複審後掃（常設；2026-08-16 畢業、2026-08-18 由「預審」改序為複審通過後才掃）**＋**唯讀顧問（個案）**（完整邊界＝「Grok 的邊界」節） | 一切實作、正式複審與合併執行；**沙箱條款落地前不進任何 repo 樹**（主目錄／實作樹／審查樹——一律材料制，見該節）；X 輿情不得用於投資決策線 |',
+    '| 工讀生×2（教學線，人類；2026-08-17 入列） | 教學影片的**製作與營運**：詞彙短片量產線（圖卡／配音合成／剪輯／品檢／YouTube 上架／頻道數據）＋EPxx 正片線的剪輯與上架＋生產看板（Notion 財金詞彙庫）維護（完整邊界與治理＝教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`） 的 `AGENTS.md`「治理」節，此處不重抄——**該線 2026-08-25 已分家獨立，規矩層不在本 repo**） | 一切程式實作、正式複審與合併；**不進 repo、無 GitHub 權限**（**與本 repo 的接點一律經 `docs/learning-hub-contract.md`**——它涵蓋 EPxx 與詞彙短片兩條產線，不只詞彙牆 metadata；2026-08-25 分家後這句原本仍寫舊的窄射程，`Grok 掃 #3` 抓到）；不接觸真實財務資料（`data/store.db`）與券商帳號憑證；語音合成與分身生成有閘（判準全文＝該檔「治理」節，**此處刻意不重抄**——重抄過一次就漂成較鬆的一份，`Codex #487 r2 High②`）；分身素材僅 EPxx |',
+    '| CI | 型別、格式、考題的自動守門 | 不判斷產品是否好用、金額口徑是否符合使用者的意思 |',
+    '',
+];
+/** 三方協作框架那個 H3 底下的直屬內文共用同一條祖先鏈（「審查回饋處置」那一節也是）。 */
+const ANCESTOR_CHAIN = [
+  '# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書',
+  '## 協作流程',
+  '### 三方協作框架（William 2026-07-24 裁決定稿；Codex 起草＋Claude 三處修訂＝流程分級適用／預約表內容校正／低風險仍過三關。本節已**整併**同日稍早的裁決補則，為唯一版本）',
+];
+/** 逐字釘一整塊＋錨點唯一＋祖先標題鏈。回傳區塊起點行號（給後面的斷言用）。 */
+function pinBlock(/** @type {string[]} */ lines, /** @type {string[]} */ block, /** @type {string} */ name) {
+  const first = lines.findIndex((l) => l === block[0]);
+  assert.ok(first >= 0, `找不到逐字相同的「${name}」第一行：\n  ${block[0].slice(0, 60)}…`);
+  assert.equal(lines.filter((l) => l === block[0]).length, 1, `「${name}」的第一行出現不只一次`);
+  block.forEach((canon, k) => {
+    assert.equal(lines[first + k], canon,
+      `「${name}」的第 ${k + 1} 行對不上（多一行、少一行、或改了字）：\n  預期：${canon.slice(0, 60)}…\n  實得：${String(lines[first + k]).slice(0, 60)}…\n`
+      + '⚠️ 這一塊任何位置插字、加一列、改表頭、前面加空白，都會讓這題紅——要改條文，先來改這裡（變更必經考題）。');
+  });
+  const at = ANCESTOR_CHAIN.map((canon, k) => {
+    const hits = lines.reduce((/** @type {number[]} */ acc, l, i) => (l === canon ? [...acc, i] : acc), []);
+    assert.equal(hits.length, 1, `祖先標題鏈第 ${k + 1} 層在檔案裡出現 ${hits.length} 次（要剛好 1 次，逐字）：\n  ${canon.slice(0, 60)}…`);
+    return hits[0];
+  });
+  assert.equal(at[0], lines.findIndex((_, i) => headingAt(lines, i) > 0), '檔頭那個 H1 不是全檔第一個標題');
+  at.forEach((idx, k) => {
+    const last = k + 1 === at.length;
+    const next = last ? first : at[k + 1];
+    assert.ok(idx < next, `祖先標題鏈第 ${k + 1} 層跑到下一層後面去了＝「${name}」已經不屬於它`);
+    const forbidUpTo = last ? 6 : k + 1;
+    for (let i = idx + 1; i < next; i += 1) {
+      const level = headingAt(lines, i);
+      assert.ok(level === 0 || level > forbidUpTo,
+        `第 ${i + 1} 行插了一個 H${level} 標題（「${lines[i].slice(0, 40)}」），它會把「${name}」切到別的小節去`);
+    }
+  });
+  const text = block.join('\n');
+  assert.doesNotMatch(text, /<!--|-->/, `「${name}」裡出現 HTML 註解——規則不可以被藏成不可見內容`);
+  assert.doesNotMatch(text, /^ *\[[^\]]+\]:\s/mu, `「${name}」裡出現 Markdown 參考定義——那在畫面上不顯示`);
+  return first;
 }
-/** 表頭格允許加粗（GFM 合法、GitHub 渲染一樣）——只剝最外層的一對 `**`，其餘不動。 */
-const unbold = (/** @type {string} */ s) => (/^\*\*[^*]+\*\*$/.test(s) ? s.slice(2, -2).trim() : s);
 
-// ⚠️ **這裡讀的是 GFM 的「表格文法」本身，不是列舉繞法**（Codex #596 r2／r3 連兩輪打穿列舉式的檢查）：
-//    一個表格區塊＝①表頭列 ②**緊接著**的分隔列（每一格只能是 `:?-+:?`）③之後**連續**的資料列，
-//    遇到第一個不是資料列的行（空行、標題、散文）就結束。這是封閉的定義，不必再補第 N 種寫法。
-//    r3 實測、被這個定義一次收掉的三種：**刪掉分隔列**（GitHub 渲染成零張表，而舊檢查照過）、
-//    **在同一段裡另建第二張表**（舊檢查只夾文字區段、抓得到那一份）、**在資料列前插一個空行**
-//    （渲染後那幾列已經不是表格資料列）。
-/** @param {string[]} lines @param {number} start 從這一行開始讀一個表格區塊；讀不到回 null */
-function tableAt(lines, start) {
-  const isRow = (/** @type {string} */ l) => (l ?? '').trimStart().startsWith('|');
-  if (!isRow(lines[start]) || !isRow(lines[start + 1])) return null;
-  const header = cellsOf(lines[start]).map(unbold);
-  const delim = cellsOf(lines[start + 1]);
-  if (delim.length !== header.length) return null;
-  if (!delim.every((c) => /^:?-+:?$/.test(c))) return null;   // 不是合法分隔列＝這裡根本沒有表格
-  /** @type {string[]} */ const body = [];
-  for (let i = start + 2; i < lines.length && isRow(lines[i]); i += 1) body.push(lines[i]);
-  return { header, body };
-}
-
-test('角色表：Claude 那一列要寫明「複審 Codex 實作」，兩邊的「不放行自己實作的支」都要留在那張表的那一格', () => {
-  // ⚠️ **先剝掉看不見的東西**（Codex #596 r1 Medium）：整句包進 HTML 註解，畫面上等於沒有這條禁令。
-  //    ⚠️ **代價**（r2 Low 實測）：先剝註解會**改變分欄**——在欄位分隔符前插一個 `<!-- | -->`，
-  //    GitHub 渲染出的第三欄其實只剩 `-->`，而這一題剝掉之後仍切得出三格。
-  //    **那個洞由全卷另一道兜底**：`test/contract-split.test.js` 禁止 AGENTS 出現 HTML 註解。
-  //    **所以本題對「原始 Markdown 的分欄正確」是有依賴的，不是自己證得到。**
-  const lines = visible(read('AGENTS.md')).split('\n');
-  // ⚠️ **要綁到那張權威表**（r2 Medium）：整份 `find()` 的話，另建一張表放同樣的列也會過。
-  const OWNER = '**角色分工（含「不負責」邊界）**：';
-  const at = lines.findIndex((l) => l.trimStart().startsWith(OWNER));
-  assert.ok(at >= 0, `找不到角色表的擁有標題「${OWNER}」——搬家了或改寫了，這題要跟著改`);
-  assert.equal(lines.filter((l) => l.trimStart().startsWith(OWNER)).length, 1, '那個擁有標題出現不只一次');
-  // 擁有標題底下**跳過空行**之後，必須馬上就是那張表（中間插標題或散文＝夾不到，紅）
-  let head = at + 1;
-  while (head < lines.length && lines[head].trim() === '') head += 1;
-  const table = tableAt(lines, head);
-  assert.ok(table, `擁有標題底下沒有接著一張合法的 Markdown 表格（第 ${head + 1} 行起）——`
-    + '中間插了標題或散文、分隔列不合文法、或表格被搬走了。⚠️ 分隔列不合文法時 GitHub 會渲染成**零張表**');
-  assert.deepEqual(table.header, ['角色', '主要責任', '不負責'],
-    `角色表的表頭不是「角色／主要責任／不負責」三欄——欄數或欄序一改，資料列裡的禁令就會被渲染到表外。實得：${table.header.join(' / ')}`);
-
-  const rowOf = (/** @type {string} */ who) => table.body.find((l) => cellsOf(l)[0] === who) || '';
-  const claudeCells = cellsOf(rowOf('Claude'));
-  const codexCells = cellsOf(rowOf('Codex'));
-  for (const [who, cells] of /** @type {[string, string[]][]} */ ([['Claude', claudeCells], ['Codex', codexCells]])) {
-    assert.equal(cells.length, 3,
-      `角色表的 ${who} 那一列不在這張表的資料列裡，或切出 ${cells.length} 格（要 3 格）——`
-      + '被搬到別張表、被空行切斷、或格式改了。這是對照斷言：抓錯列的話下面幾條就是在驗別的東西');
-  }
-  // ⚠️ **只斷言「這一列有『複審』兩個字」會假綠**（2026-08-02 突變實測）：
-  //    同一列的「不負責」欄有「**不**複審自己實作的支」，否定句照樣命中。要看的是**主要責任那一格**。
-  const claudeDuty = claudeCells[1];
-  assert.ok(/複審\s*Codex\s*實作/.test(claudeDuty),
-    '角色表的 Claude「主要責任」欄沒有「複審 Codex 實作」。這張表是新人與新 AI 第一眼看的權威表——'
-    + '照舊表理解，Claude 只會實作、Codex 只會審查，遇到 Codex 開的 PR 會不知道該做什麼，'
-    + `最省事的做法就是直接合併。實得責任欄：${claudeDuty.slice(0, 140)}`);
-
-  // ⚠️ **兩邊都要守，而且要守「整條」**（2026-09-10 補與收緊；Codex #596 r1 打穿了子字串版）：
-  //    r1 實測四種躲得掉：①少了「不放行」②「不複審，但可以放行…」③外層再包一句「無須遵守…」
-  //    ④整句包進 HTML 註解。⇒ 改成**整條逐字比對**：那一格用「；」切，必須有一條**逐字等於**下面這句。
+test('角色表：整塊逐字釘住（擁有標題→CI 列→尾端空行），兩邊的「不放行自己實作的支」都在陣列裡', () => {
+  const lines = read('AGENTS.md').split('\n');
+  pinBlock(lines, ROLE_TABLE, '角色分工表');
+  // ⚠️ 下面兩條看的是**陣列本身**：逐字釘住之後，能靜靜改壞那句話的人只剩「來同步陣列的那個人」。
+  //    這兩條讓「同步時順手把那半句拿掉」也會紅——它們守的是陣列，不是文件（文件由上面那道守）。
+  const rowOf = (/** @type {string} */ who) => ROLE_TABLE.find((l) => l.startsWith(`| ${who} |`)) || '';
+  assert.ok(/複審\s*Codex\s*實作/.test(rowOf('Claude')),
+    '角色表的 Claude 那一列沒有「複審 Codex 實作」——這張表是新人第一眼看的權威表，照舊表理解會不知道 Codex 開的 PR 該誰審');
   const CLAUSE = '**不複審、不放行自己實作的支**';
-  for (const [who, cells] of /** @type {[string, string[]][]} */ ([['Claude', claudeCells], ['Codex', codexCells]])) {
-    const items = cells[2].split('；').map((s) => s.trim());
-    assert.ok(items.includes(CLAUSE),
-      `角色表 ${who} 的「不負責」欄裡，找不到逐字等於「${CLAUSE}」的那一條。\n`
-      + '⚠️ 這一題只認**整條逐字相等**（用「；」切）——少一個動詞、外面再包一層否定、或改寫成同義句，都會紅。\n'
-      + '那句話是唯一不變量在這張權威表上的落點：刪掉之後，照這張表理解的人會以為自己可以放行自己寫的東西。\n'
-      + `實得「不負責」欄：${cells[2].slice(0, 200)}`);
+  for (const who of ['Claude', 'Codex']) {
+    assert.ok(rowOf(who).includes(`；${CLAUSE}`),
+      `角色表 ${who} 那一列裡找不到「；${CLAUSE}」——那是唯一不變量在權威表上的落點，同步陣列時不可以順手拿掉`);
   }
-  // ⚠️ **這一題守得住什麼、守不住什麼，逐條寫死（r1／r2／r3 四輪換來的，不要再寫「完整可見」）**：
-  //    **守得住**（每一種都實際跑過突變、確認轉紅）：整句被刪／少一個動詞／語意被改寫／外層再包一層否定／
-  //      整句進 HTML 註解／禁令被搬到別欄／表頭欄數或欄序被改／**分隔列被刪或寫壞**／
-  //      **那一列被搬到同節的第二張表**／**資料列前被插一個空行**／擁有標題與表格之間被插標題或散文。
-  //    **守不住**（已知限制，留在這裡）：
-  //      ①**藏在行內屬性裡**——`[普通說明](網址 "；…；")` 或 `<span title="；…；">普通說明</span>`：
-  //        分號切片仍有一條逐字相等，畫面上只看得到「普通說明」。那要真正的 Markdown／HTML 解析器才驗得到，
-  //        **本題不做**（共用的 `visible()` 只剝註解與圍欄）。
-  //      ②**原始 Markdown 的分欄**：見本題開頭那段，靠全卷「AGENTS 不准有 HTML 註解」兜底。
-  //    ⚠️ **這是文字守門，不是語意守門**：它保證的是「那句話以那個形狀，出現在那張表的那一列那一格裡」。
-  //    ⚠️ **執行面靠的是別的東西，而且那個也有界線**（r2 Medium 用假 gh 餵兩支正式程式實測）：
-  //      兩道機械閘驗得到的是「**PR 自報的**實作者 ≠ 自報的獨立審查者」與「**自報為**指定審查者的那一位
-  //      對目前 head 有合規通過」。**它們驗不了身分**（同一個人用審查者角色自報一則通過，兩閘照樣綠），
-  //      **也沒有任何東西在看實際按合併鍵的是誰**。那一半靠角色紀律——
-  //      `REVIEW-AND-MERGE.md`「實作模式」節本來就寫著「session 的實際來源仍然是自報的，機器驗不了」。
 });
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {
@@ -1249,11 +1228,7 @@ test('⭐ 逾時預設那一顆：**整節逐字**（從「審查回饋處置」
   //   寫在 `test/helpers/markdown-heading.js` 的檔頭；那支另有一張正反例表直接釘住判準。
   // 判準本體抽到 `test/helpers/markdown-heading.js`，那裡有一張正反例表直接釘住它
   //   （#578 r11 Low⑤：原本那幾條修正沒有任何固定夾具守著，退回去也不會有考題叫）。
-  const CHAIN = [
-    '# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書',
-    '## 協作流程',
-    '### 三方協作框架（William 2026-07-24 裁決定稿；Codex 起草＋Claude 三處修訂＝流程分級適用／預約表內容校正／低風險仍過三關。本節已**整併**同日稍早的裁決補則，為唯一版本）',
-  ];
+  const CHAIN = ANCESTOR_CHAIN;   // 與角色分工表共用同一條鏈（同一個 H3 的直屬內文）
   const at = CHAIN.map((canon, k) => {
     const hits = lines.reduce((/** @type {number[]} */ acc, l, i) => (l === canon ? [...acc, i] : acc), []);
     assert.equal(hits.length, 1,
