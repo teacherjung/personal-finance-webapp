@@ -81,8 +81,31 @@ function cellsOf(row) {
 test('角色表：Claude 那一列要寫明「複審 Codex 實作」，而兩邊的「不放行自己實作的支」都要完整可見', () => {
   // ⚠️ **先剝掉看不見的東西**（Codex #596 r1 Medium）：把整句包進 HTML 註解，畫面上等於沒有這條禁令，
   //    而只掃原文的話照樣命中。`visible()` 會剝掉 HTML 註解與圍欄。
+  //    ⚠️ **代價寫在這裡**（Codex #596 r2 Low 實測）：先剝註解會**改變分欄**——在真正的欄位分隔符前面插一個
+  //    `<!-- | -->`，GitHub 渲染出來的第三欄其實只剩 `-->`、禁令被推出表外，而這一題剝掉之後仍切成三格、全綠。
+  //    **這個洞由全卷另一道兜底**：`test/contract-split.test.js` 的讀取護欄禁止 AGENTS 出現 HTML 註解
+  //    （同一個插入跑全卷是 3 失敗）。**所以本題對「原始 Markdown 的分欄正確」是有依賴的，不是自己證得到。**
   const agents = visible(read('AGENTS.md'));
-  const rowOf = (/** @type {string} */ who) => agents.split('\n').find((l) => l.startsWith(`| ${who} |`)) || '';
+  const lines = agents.split('\n');
+  // ⚠️ **要綁到那張權威表，不能整份 find**（Codex #596 r2 Medium）：把原列刪掉、另建一張「歷史範例」表放同樣的列，
+  //    整份 find 會抓到那一份、照樣全綠。⇒ 從擁有標題往下夾一段，只在那張表裡找。
+  const OWNER = '**角色分工（含「不負責」邊界）**：';
+  const at = lines.findIndex((l) => l.trimStart().startsWith(OWNER));
+  assert.ok(at >= 0, `找不到角色表的擁有標題「${OWNER}」——搬家了或改寫了，這題要跟著改`);
+  assert.equal(lines.filter((l) => l.trimStart().startsWith(OWNER)).length, 1, '那個擁有標題出現不只一次');
+  let end = at + 1;
+  while (end < lines.length && !(lines[end].trimStart().startsWith('**') && lines[end].trim().endsWith('：'))) end += 1;
+  const table = lines.slice(at, end);
+  // ⚠️ **表頭也要驗**（Codex #596 r2 Medium 實測）：把表頭與分隔列縮成兩欄、資料列一個字不動，
+  //    GitHub 只渲染兩欄、兩邊的禁令都不見了，而只驗資料列格數的話照樣全綠。互換第 2、3 個表頭同理。
+  const header = table.find((l) => l.startsWith('| 角色'));
+  assert.ok(header, '角色表裡找不到表頭那一列（`| 角色 …`）');
+  assert.deepEqual(cellsOf(String(header)), ['角色', '主要責任', '不負責'],
+    `角色表的表頭不是「角色／主要責任／不負責」三欄——欄數或欄序一改，資料列裡的禁令就會被渲染到表外。實得：${cellsOf(String(header)).join(' / ')}`);
+  const sep = table[table.indexOf(String(header)) + 1] ?? '';
+  assert.equal(cellsOf(sep).length, 3, `表頭底下的分隔列不是三欄（實得 ${cellsOf(sep).length}）——GitHub 以它決定渲染幾欄`);
+
+  const rowOf = (/** @type {string} */ who) => table.find((l) => l.startsWith(`| ${who} |`)) || '';
   const claudeCells = cellsOf(rowOf('Claude'));
   const codexCells = cellsOf(rowOf('Codex'));
   // 對照斷言：真的切成了「角色／主要責任／不負責」三格（切錯的話下面兩個斷言就是在驗別的東西）
@@ -105,15 +128,7 @@ test('角色表：Claude 那一列要寫明「複審 Codex 實作」，而兩邊
   //    ・補上之後第一版用子字串比對，Codex #596 r1 實測**四種都躲得掉**：
   //      ①只寫「不複審自己實作的支」（少了「不放行」）②「不複審，但可以放行自己實作的支」（語意反過來）
   //      ③「無須遵守『不複審、不放行自己實作的支』」（外層再否定一次）④整句包進 HTML 註解。
-  //    ⇒ 改成**整條比對**：那一格用「；」切成幾條，其中**必須有一條逐字等於**下面這句。
-  //      ①②③ 都會讓那一條不再逐字相等（②③ 連「；」都沒有，整格會變成一條）；④ 由 `visible()` 先剝掉。
-  // ⚠️ **照實劃界（不要再寫成「守住了唯一不變量」）**：
-  //    ・這是**文字守門**，不是語意守門。它要求的是「這一格裡有一條逐字寫著這句話」。
-  //      **支援的句型就這一種**：那句話自己是一條、用「；」跟前後隔開。
-  //      別種寫法（換成同義句、拆成兩條、改用別的分隔符）會**假紅**——那是刻意的，改寫法就回來改這裡。
-  //    ・**真正在執行這條不變量的是機械閘**（`scripts/check-pr-collab-fields.js` 驗實作者 ≠ 獨立審查者、
-  //      `scripts/check-review-verdicts.js` 驗指定審查者對現在這一版給過「通過」）。
-  //      這一題守的只是「那句話還在這張權威表上、而且完整可見」。
+  //    ⇒ 改成**整條逐字比對**：那一格用「；」切成幾條，其中**必須有一條逐字等於**下面這句。
   const CLAUSE = '**不複審、不放行自己實作的支**';
   for (const [who, cells] of /** @type {[string, string[]][]} */ ([['Claude', claudeCells], ['Codex', codexCells]])) {
     const items = cells[2].split('；').map((s) => s.trim());
@@ -123,6 +138,21 @@ test('角色表：Claude 那一列要寫明「複審 Codex 實作」，而兩邊
       + '那句話是唯一不變量在這張權威表上的落點：刪掉之後，照這張表理解的人會以為自己可以放行自己寫的東西。\n'
       + `實得「不負責」欄：${cells[2].slice(0, 200)}`);
   }
+  // ⚠️ **這一題到底守得住什麼，逐條寫死（Codex #596 r1／r2 三輪換來的，不要再寫成「完整可見」）**：
+  //    **守得住**：整句被刪、少一個動詞、語意被改寫、外層再包一層否定、整句進 HTML 註解、
+  //      禁令被搬到別欄、實作樹那句改回只寫一邊、表頭欄數或欄序被改、那一列被搬到別張表。
+  //    **守不住**（r2 實測，都留在這裡當已知限制）：
+  //      ①**藏在行內屬性裡**——把整格換成 `[普通說明](網址 "；…；")` 或 `<span title="；…；">普通說明</span>`，
+  //        分號切片仍有一條逐字相等，但畫面上只看得到「普通說明」。這需要真正的 Markdown／HTML 解析才驗得到，
+  //        **本題不做**（共用的 `visible()` 只剝註解與圍欄，不是解析器）。
+  //      ②**原始 Markdown 的分欄**：見本題開頭那段——先剝註解會改變分欄，那個洞靠全卷「AGENTS 不准有 HTML 註解」兜底。
+  //    ⚠️ **這是文字守門，不是語意守門**：它只保證「那句話以那個形狀，出現在那張表的那一格裡」。
+  //    ⚠️ **執行面靠的是別的東西，而且那個也有界線**（Codex #596 r2 Medium 收窄）：
+  //      兩道機械閘（`check-pr-collab-fields.js`／`check-review-verdicts.js`）驗得到的是
+  //      「**PR 自報的**實作者 ≠ 自報的獨立審查者」與「**自報為**指定審查者的那一位對目前 head 有合規通過」。
+  //      **它們驗不了身分**：同一個人用審查者的角色自報一則通過，兩道閘照樣是綠的（r2 用假 gh 餵兩支正式 CLI 實測）；
+  //      **也沒有任何東西在看「實際按合併鍵的是誰」**。那一半靠的是角色紀律，不是機器——
+  //      `REVIEW-AND-MERGE.md`「實作模式」節本來就寫著「session 的實際來源仍然是自報的，機器驗不了」。
 });
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {
