@@ -71,6 +71,14 @@ test('角色表要寫明 Claude 也複審 Codex 的實作（2026-07-30 起的常
   const codexNo = codexRow.split('|')[3] || '';   // 同理：要看「不負責」那一格，不是整列
   assert.ok(/不複審[^|]*自己實作/.test(codexNo),
     `角色表 Codex 的「不負責」欄沒寫明「不複審自己實作的支」。實得：${codexNo.slice(0, 160)}`);
+  // ⚠️ **這一道以前只守了一半**（2026-09-10 補；三模式表改成角色中立時發現的）：
+  //    Claude 那一列的「不負責」欄**本來就寫著**「不複審、不放行自己實作的支」，跟 Codex 那一列一字不差——
+  //    但**沒有任何東西在釘它**。那半句被刪掉，全卷不會有東西叫，而它守的正是唯一不變量。
+  //    ⚠️ 這一道與上面那一道是**同一件事的兩側**，所以寫在同一題裡、用同樣的取欄位方式。
+  const claudeNo = claudeRow.split('|')[3] || '';
+  assert.ok(/不複審[^|]*自己實作/.test(claudeNo),
+    '角色表 Claude 的「不負責」欄沒寫明「不複審、不放行自己實作的支」——那是唯一不變量在這張權威表上的落點，'
+    + `刪掉之後照舊表理解的人會以為自己可以放行自己寫的東西。實得：${claudeNo.slice(0, 160)}`);
 });
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {
@@ -986,7 +994,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
     ['AGENTS.md', '釘住受審 commit', 2],
     ['AGENTS.md', '在該 PR 的拋棄式審查樹工作、不 checkout 任何分支', 1],
-    ['AGENTS.md', '在**常設 `-codex` 實作樹**走分支與 PR', 1],
+    // ⚠️ 2026-09-10 三模式表改成角色中立（William 裁「我選乙」）：實作樹那句不再點名 Codex 一邊。
+    ['AGENTS.md', '在**自己那棵常設實作樹**走分支與 PR', 1],
     ['REVIEW-AND-MERGE.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
     ['REVIEW-AND-MERGE.md', '`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>`', 1],
     ['REVIEW-AND-MERGE.md', '-C "/private/tmp/codex-review-pr<N>"', 1],
