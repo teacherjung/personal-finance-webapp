@@ -150,9 +150,21 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
 //    Codex 實作的支由它自己直接問他、自己貼 ⚖️、自己署名。原本 `RULING_QUOTE` 逐字只認「Claude 轉述」，
 //    於是 Codex 如實署名會被判成形狀不合＝**已經回過的問題永遠留在「還沒回」**；照舊格式填則是假紀錄。
 //    ⚠️ 這題釘的是「三個合法角色都收、不合法的不收」——**合法名單不抄在這裡**，直接用那支閘匯出的 `ROLES`。
-test('⭐ ⚖️ 的原話欄：三個合法角色署名都算數，冒出來的第四個名字不算', () => {
+// ⚠️ **樣板要從規則書抽、不要自己重打**（Codex #594 r2 換來的）：上一版這裡自己寫了一份沒有粗體的
+//    原話欄，剛好過；而規則書當時給的樣板在角色外面包了粗體，照它填**三個角色全部被判成形狀不合**。
+//    ⇒ 這題直接讀 `AGENTS.md` 那一句樣板、把佔位符換掉再餵進去，文件與解析器一漂就紅。
+//    ⚠️ 它證不到的：轉述的內容是不是真的、署名的是不是本人——那兩件沒有機器在看。
+test('⭐ ⚖️ 的原話欄：規則書給的樣板要真的解析得過（三個合法角色都收、冒出來的第四個不收）', () => {
+  const tpl = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8')
+    .split('\n').find((l) => l.includes('原話（對話中，') && l.includes('轉述）：'));
+  assert.ok(tpl, 'AGENTS.md 找不到「原話（對話中，…轉述）：」那句樣板——樣板改寫了就來改這題');
+  const m = /原話（對話中，(.+?) 轉述）：(\S*「[^」]*」\S*)/u.exec(String(tpl));
+  assert.ok(m, `抽不出樣板的兩個欄位：${String(tpl).slice(0, 80)}`);
+  const [, rolePart, quotePart] = m;
+  assert.ok(!rolePart.includes('*'),
+    `樣板把角色包在粗體裡（${rolePart}）——解析器只收沒有粗體的角色名，照這個樣板填會被判成形狀不合`);
   const quote = (/** @type {string} */ role) =>
-    `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，${role} 轉述）：**「好」**\n關的是 ${urlOf(1)}`;
+    `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，${role} 轉述）：${quotePart.replace('逐字', '好')}\n關的是 ${urlOf(1)}`;
   for (const role of ROLES) {
     const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: quote(role) })], T0 + 3600e3);
     assert.equal(r.pending.length, 0, `以「${role} 轉述」署名的裁示應該算數，卻還留在待裁`);
