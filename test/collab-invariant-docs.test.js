@@ -56,29 +56,73 @@ test('五步驟循環的第⑤步不可以寫死「Codex」（模式③下會變
     + 'William 指派 Codex 實作時（模式③）就變成 Codex 複審自己的產出＝違反唯一不變量');
 });
 
-test('角色表要寫明 Claude 也複審 Codex 的實作（2026-07-30 起的常態，原本表上沒有）', () => {
-  const agents = read('AGENTS.md');
-  const claudeRow = agents.split('\n').find((l) => l.startsWith('| Claude |')) || '';
+// ⚠️ **Markdown 表格的儲存格不可以用 `split('|')` 直接取**（Codex #596 r1 Medium 實測兩種錯法）：
+//    GFM 允許在格內用 `\|` 寫出一個豎線字元，那一格就會被 `split` 多切一刀 ⇒
+//    ①**假紅**：只在第二欄尾端加一段含 `\|` 的補註，GitHub 照樣渲染成三欄、禁令也還在原格，考題卻紅。
+//    ②**假綠**：把禁令搬到第二欄、前面墊一個 `\| `，GitHub 渲染確認禁令只在「主要責任」欄，考題卻綠。
+//    ⇒ 這裡自己切：只在**沒有被反斜線跳脫**的 `|` 上切，再去掉首尾那兩個空格子。
+/** @param {string} row 一整列 Markdown 表格（含首尾的 `|`） */
+function cellsOf(row) {
+  /** @type {string[]} */ const cells = [];
+  let cur = '';
+  for (let i = 0; i < row.length; i += 1) {
+    const ch = row[i];
+    if (ch === '\\' && row[i + 1] === '|') { cur += '|'; i += 1; continue; }   // 跳脫的豎線＝格內文字
+    if (ch === '|') { cells.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  cells.push(cur);
+  // 首尾的 `|` 各切出一個空字串，去掉它們；其餘每格去空白
+  if (cells.length && cells[0].trim() === '') cells.shift();
+  if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+test('角色表：Claude 那一列要寫明「複審 Codex 實作」，而兩邊的「不放行自己實作的支」都要完整可見', () => {
+  // ⚠️ **先剝掉看不見的東西**（Codex #596 r1 Medium）：把整句包進 HTML 註解，畫面上等於沒有這條禁令，
+  //    而只掃原文的話照樣命中。`visible()` 會剝掉 HTML 註解與圍欄。
+  const agents = visible(read('AGENTS.md'));
+  const rowOf = (/** @type {string} */ who) => agents.split('\n').find((l) => l.startsWith(`| ${who} |`)) || '';
+  const claudeCells = cellsOf(rowOf('Claude'));
+  const codexCells = cellsOf(rowOf('Codex'));
+  // 對照斷言：真的切成了「角色／主要責任／不負責」三格（切錯的話下面兩個斷言就是在驗別的東西）
+  for (const [who, cells] of /** @type {[string, string[]][]} */ ([['Claude', claudeCells], ['Codex', codexCells]])) {
+    assert.equal(cells.length, 3,
+      `角色表 ${who} 那一列切出 ${cells.length} 格（要 3 格：角色／主要責任／不負責）——`
+      + '格式改了，或這支切法要跟著改。這是對照斷言：切錯的話下面幾條就是在驗別的東西');
+    assert.equal(cells[0], who, `第 1 格應該是角色名，實得「${cells[0]}」`);
+  }
   // ⚠️ **只斷言「這一列有『複審』兩個字」會假綠**（2026-08-02 突變實測）：
-  //    同一列的「不負責」欄有「**不**複審自己實作的支」，否定句照樣命中。
-  //    要看的是**主要責任那一格**（第 2 欄），而且要求是完整的正面敘述。
-  const claudeDuty = claudeRow.split('|')[2] || '';
+  //    同一列的「不負責」欄有「**不**複審自己實作的支」，否定句照樣命中。要看的是**主要責任那一格**。
+  const claudeDuty = claudeCells[1];
   assert.ok(/複審\s*Codex\s*實作/.test(claudeDuty),
     '角色表的 Claude「主要責任」欄沒有「複審 Codex 實作」。這張表是新人與新 AI 第一眼看的權威表——'
     + '照舊表理解，Claude 只會實作、Codex 只會審查，遇到 Codex 開的 PR 會不知道該做什麼，'
     + `最省事的做法就是直接合併。實得責任欄：${claudeDuty.slice(0, 140)}`);
-  const codexRow = agents.split('\n').find((l) => l.startsWith('| Codex |')) || '';
-  const codexNo = codexRow.split('|')[3] || '';   // 同理：要看「不負責」那一格，不是整列
-  assert.ok(/不複審[^|]*自己實作/.test(codexNo),
-    `角色表 Codex 的「不負責」欄沒寫明「不複審自己實作的支」。實得：${codexNo.slice(0, 160)}`);
-  // ⚠️ **這一道以前只守了一半**（2026-09-10 補；三模式表改成角色中立時發現的）：
-  //    Claude 那一列的「不負責」欄**本來就寫著**「不複審、不放行自己實作的支」，跟 Codex 那一列一字不差——
-  //    但**沒有任何東西在釘它**。那半句被刪掉，全卷不會有東西叫，而它守的正是唯一不變量。
-  //    ⚠️ 這一道與上面那一道是**同一件事的兩側**，所以寫在同一題裡、用同樣的取欄位方式。
-  const claudeNo = claudeRow.split('|')[3] || '';
-  assert.ok(/不複審[^|]*自己實作/.test(claudeNo),
-    '角色表 Claude 的「不負責」欄沒寫明「不複審、不放行自己實作的支」——那是唯一不變量在這張權威表上的落點，'
-    + `刪掉之後照舊表理解的人會以為自己可以放行自己寫的東西。實得：${claudeNo.slice(0, 160)}`);
+
+  // ⚠️ **兩邊都要守，而且要守「整條」**（2026-09-10 補與收緊）：
+  //    ・以前 Claude 那一側**根本沒有東西在釘**——那半句刪掉全卷不會叫，而它守的正是唯一不變量。
+  //    ・補上之後第一版用子字串比對，Codex #596 r1 實測**四種都躲得掉**：
+  //      ①只寫「不複審自己實作的支」（少了「不放行」）②「不複審，但可以放行自己實作的支」（語意反過來）
+  //      ③「無須遵守『不複審、不放行自己實作的支』」（外層再否定一次）④整句包進 HTML 註解。
+  //    ⇒ 改成**整條比對**：那一格用「；」切成幾條，其中**必須有一條逐字等於**下面這句。
+  //      ①②③ 都會讓那一條不再逐字相等（②③ 連「；」都沒有，整格會變成一條）；④ 由 `visible()` 先剝掉。
+  // ⚠️ **照實劃界（不要再寫成「守住了唯一不變量」）**：
+  //    ・這是**文字守門**，不是語意守門。它要求的是「這一格裡有一條逐字寫著這句話」。
+  //      **支援的句型就這一種**：那句話自己是一條、用「；」跟前後隔開。
+  //      別種寫法（換成同義句、拆成兩條、改用別的分隔符）會**假紅**——那是刻意的，改寫法就回來改這裡。
+  //    ・**真正在執行這條不變量的是機械閘**（`scripts/check-pr-collab-fields.js` 驗實作者 ≠ 獨立審查者、
+  //      `scripts/check-review-verdicts.js` 驗指定審查者對現在這一版給過「通過」）。
+  //      這一題守的只是「那句話還在這張權威表上、而且完整可見」。
+  const CLAUSE = '**不複審、不放行自己實作的支**';
+  for (const [who, cells] of /** @type {[string, string[]][]} */ ([['Claude', claudeCells], ['Codex', codexCells]])) {
+    const items = cells[2].split('；').map((s) => s.trim());
+    assert.ok(items.includes(CLAUSE),
+      `角色表 ${who} 的「不負責」欄裡，找不到逐字等於「${CLAUSE}」的那一條。\n`
+      + '⚠️ 這一題只認**整條逐字相等**（用「；」切）——少一個動詞、外面再包一層否定、或改寫成同義句，都會紅。\n'
+      + '那句話是唯一不變量在這張權威表上的落點：刪掉之後，照這張表理解的人會以為自己可以放行自己寫的東西。\n'
+      + `實得「不負責」欄：${cells[2].slice(0, 200)}`);
+  }
 });
 
 test('兩份規則書要互相指得到（指標死掉＝又變成兩份各說各話）', () => {

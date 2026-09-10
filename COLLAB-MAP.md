@@ -46,7 +46,7 @@
 | 問題 | 去哪讀 |
 |---|---|
 | 誰是誰、各自負責什麼、不負責什麼 | [AGENTS.md](AGENTS.md)「三方協作框架」 |
-| Codex 的三種模式：審查／代合併／實作 | [AGENTS.md](AGENTS.md)「三方協作框架」 |
+| 三模式邊界（兩邊共用）：審查／代合併／實作 | [AGENTS.md](AGENTS.md)「三方協作框架」 |
 | Grok 能碰什麼、材料怎麼給、什麼時候掃 | [AGENTS.md](AGENTS.md)「Grok 的邊界」 |
 | 「不可自審」到底在講什麼 | [AGENTS.md](AGENTS.md)「協作的唯一不變量」 |
 | 合併是誰決定的、誰按鍵 | [AGENTS.md](AGENTS.md)「合併的決策與執行是兩件事」 |
