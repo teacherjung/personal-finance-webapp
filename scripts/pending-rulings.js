@@ -51,6 +51,7 @@ import { gitEnv } from '../lib/git-env.js';
 // 🤖 的有效內容判準只有一份正本＝複審聯集閘那一支（AGENTS「留痕」講的就是那道閘怎麼看）。
 import { hasBotMark } from './check-review-verdicts.js';
 import { originRepo } from './acceptance-tier.js';
+import { ROLES } from './check-pr-collab-fields.js';
 
 /** 時限：正本＝`AGENTS.md`「問法與逾時預設」那顆的「時限＝三天」。三天＝連續 72 小時（那顆自己定義的算法）。 */
 export const TIMEOUT_HOURS = 72;
@@ -75,7 +76,11 @@ const WITHDRAW = /^## 🚫 撤回（(\d{4})-(\d{2})-(\d{2})）：\S/u;
 // 引號內**允許再有引號**（他的原話常常引到別人的話：真語料裡就有「…回 **「1. a. 做／2.「先做」含不含合併：含…」**」）。
 // 所以中間用貪婪的 `.+` 收到那一行最後一組 `」**`，不是 `[^」]+`——後者會被巢狀的 `」` 卡住，
 // 把真的裁示判成形狀不合，反而讓已經回過的問題又冒回「還沒回」（實跑真語料抓到的）。
-const RULING_QUOTE = /^原話（對話中，Claude 轉述）：.*\*\*「.+」\*\*/u;
+// ⚠️ **轉述者不寫死**（2026-09-10 #594 r1 Medium）：William 也用 Codex 桌面派工，Codex 實作的支由
+// 它自己直接問他、也由它貼 ⚖️。原本這裡逐字只認「Claude 轉述」，於是 Codex 如實署名會被判成形狀不合＝
+// 已經回過的問題永遠留在「還沒回」；照舊格式填則是假稱 Claude 轉述。⇒ 收合法角色即可。
+// ⚠️ 合法角色的單一真相＝`scripts/check-pr-collab-fields.js` 的 `ROLES`，這裡**不抄名單**、直接 import。
+const RULING_QUOTE = new RegExp(`^原話（對話中，(?:${ROLES.join('|')}) 轉述）：.*\\*\\*「.+」\\*\\*`, 'u');
 const TIMEOUT_PHRASE = /^William 未裁、隨時可翻案/mu;
 /**
  * 撤回的內文欄位。**理由只認三種**，而且要寫在行首。

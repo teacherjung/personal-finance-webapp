@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
 import { tierOf } from '../scripts/acceptance-tier.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
+import { ROLES } from '../scripts/check-pr-collab-fields.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'scripts/pending-rulings.js');
@@ -143,6 +144,23 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
   const r = classify([a, nested], T0 + 4 * 86400e3);
   assert.deepEqual(r.pending, [], '真的已經回過的題目不可以又冒回「還沒回」');
   assert.equal(r.closed.length, 1);
+});
+
+// ⚠️ **轉述者不是只有 Claude**（2026-09-10 #594 r1 Medium 換來的）：William 也用 Codex 桌面派工，
+//    Codex 實作的支由它自己直接問他、自己貼 ⚖️、自己署名。原本 `RULING_QUOTE` 逐字只認「Claude 轉述」，
+//    於是 Codex 如實署名會被判成形狀不合＝**已經回過的問題永遠留在「還沒回」**；照舊格式填則是假紀錄。
+//    ⚠️ 這題釘的是「三個合法角色都收、不合法的不收」——**合法名單不抄在這裡**，直接用那支閘匯出的 `ROLES`。
+test('⭐ ⚖️ 的原話欄：三個合法角色署名都算數，冒出來的第四個名字不算', () => {
+  const quote = (/** @type {string} */ role) =>
+    `## ⚖️ William 裁示（2026-09-02）：答覆\n原話（對話中，${role} 轉述）：**「好」**\n關的是 ${urlOf(1)}`;
+  for (const role of ROLES) {
+    const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: quote(role) })], T0 + 3600e3);
+    assert.equal(r.pending.length, 0, `以「${role} 轉述」署名的裁示應該算數，卻還留在待裁`);
+    assert.equal(r.closed.length, 1, `以「${role} 轉述」署名的裁示沒有被算成已結`);
+  }
+  const bad = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: quote('Grok') })], T0 + 3600e3);
+  assert.equal(bad.pending.length, 1,
+    '「Grok 轉述」不在合法角色裡（Grok 不進 repo、不貼裁示），不該被收成有效的裁示');
 });
 
 test('⭐ 逾時暫定要寫正本那一整句：只寫「William 未裁」半句不算', () => {
