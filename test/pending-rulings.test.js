@@ -149,7 +149,6 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
 // ⚠️ **轉述者不是只有 Claude**（2026-09-10 #594 r1 Medium 換來的）：William 也用 Codex 桌面派工，
 //    Codex 實作的支由它自己直接問他、自己貼 ⚖️、自己署名。原本 `RULING_QUOTE` 逐字只認「Claude 轉述」，
 //    於是 Codex 如實署名會被判成形狀不合＝**已經回過的問題永遠留在「還沒回」**；照舊格式填則是假紀錄。
-//    ⚠️ 這題釘的是「三個合法角色都收、不合法的不收」——**合法名單不抄在這裡**，直接用那支閘匯出的 `ROLES`。
 // ⚠️ **樣板整行照抄，連前後都不准自己補**（Codex #594 r2〜r4 連三輪換來的，同一道題被抓三次假綠）：
 //    r2：規則書那時把角色包在粗體裡、解析器只收沒粗體的 ⇒ 照樣板填全部形狀不合；而我當時的題是
 //        **自己重打一份沒有粗體的樣本**，所以照樣綠。
@@ -163,8 +162,17 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
 //      前面多一個字、多一個引用符號、整行被包起來，全都會跟著餵進去 ⇒ 紅。
 //    r5：我在**整份檔案**找標籤 ⇒ 節外註解裡留一份舊標籤＋好樣板就會被驗到那一份，正文改壞完全沒看。
 //        ⇒ 這一版只在**正本那一節**裡找（沿用本檔既有的 `reviewSectionOf()`，它會剝註解、夾範圍）。
+// ⚠️ **Grok #594 複審後掃補的三件，全部照實寫在這裡**：
+//    ①**正例綁的是「PR 協作欄位的合法角色」那份名單，不是「誰可以轉述裁示」**——沒有第二份名單，
+//      而且**刻意不另立**（另立＝第二份會漂的複本，這個專案被同一種漂移咬過很多次）。代價：欄位名單
+//      多一個名字，解析器與這題的正例迴圈會**一起**收下，不必有人決定「這個名字可以關待裁題」。
+//    ②反例不再只釘一個名字，改成**補集抽樣**：名單以外的一批寫法一律不可以被收下（仍是抽樣、不是證明）。
+//    ③註解裡講的那幾種突變（前面多一個字、多一個引用符號、整行被包起來），這一版**自己造**了，
+//      不再只是「從正本推論」。
 //    ⚠️ 它證不到的：轉述的內容是不是真的、署名的是不是本人——那兩件沒有機器在看。
-test('⭐ ⚖️ 的原話欄：規則書那一行樣板整行照抄、只換佔位符，三個合法角色都要解析得過', () => {
+//    ⚠️ **這題比真人寬**：它把樣板的**行首縮排剝掉**再餵（那是規則書裡的 markdown 續行）。人若從原始檔
+//      連前面的空白一起抄進留言，解析器會拒、這題卻仍綠。方向是刻意的（寧可考題不比真人鬆），代價照實寫。
+test('⭐ ⚖️ 的原話欄：規則書那一行樣板整行照抄、只換佔位符；合法角色都收，名單以外一律不收', () => {
   const LABEL = '**⚖️ 原話欄樣板（逐字照填）**：';
   // ⚠️ **只在正本那一節裡找**（Codex #594 r5 抓到的第四種假綠）：上一版掃**整份** AGENTS 原文，
   //    所以檔案別處（例如節外的 HTML 註解）留一份舊標籤＋好樣板，就會被驗到那一份，
@@ -176,19 +184,79 @@ test('⭐ ⚖️ 的原話欄：規則書那一行樣板整行照抄、只換佔
     `「審查回饋處置」那一節裡「${LABEL}」這個標籤有 ${at.length} 行（要恰好 1）——`
     + '標籤改寫、被複製、或整個樣板被搬出那一節了，這題要跟著改');
   const tpl = String(lines[at[0] + 1] ?? '').trimStart();   // ⚠️ 只剝行首縮排，其餘一個字元都不動
-  assert.ok(tpl.includes('<轉述者>') && tpl.includes('逐字'),
-    `標籤下一行不是樣板（少了佔位符），實際讀到：${tpl.slice(0, 80)}`);
-  const bodyOf = (/** @type {string} */ role) =>
-    `## ⚖️ William 裁示（2026-09-02）：答覆\n${tpl.replace('<轉述者>', role).replace('逐字', '好')}\n關的是 ${urlOf(1)}`;
-  for (const role of ROLES) {
-    const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: bodyOf(role) })], T0 + 3600e3);
-    assert.equal(r.pending.length, 0,
-      `照規則書那一行樣板填「${role}」，這則裁示卻沒被收下（樣板與解析器對不上）。餵進去的是：${bodyOf(role).split('\n')[1]}`);
-    assert.equal(r.closed.length, 1, `照樣板填「${role}」的裁示沒有被算成已結`);
+  // ⚠️ **佔位符要「恰好一個」**（Grok #594 複審後掃②）：上一版只問「這一行有沒有出現這兩個子字串」，
+  //    而 `replace()` 只換第一次命中 ⇒ 樣板裡若多寫一個同樣的字，換的可能不是該換的那一處，題照樣綠。
+  for (const ph of ['<轉述者>', '逐字']) {
+    assert.equal(tpl.split(ph).length - 1, 1,
+      `樣板那一行的佔位符「${ph}」不是恰好一個——換的位置就不確定了，這題要跟著改。實際讀到：${tpl}`);
   }
-  const bad = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: bodyOf('Grok') })], T0 + 3600e3);
-  assert.equal(bad.pending.length, 1,
-    '「Grok 轉述」不在合法角色裡（Grok 不進 repo、不貼裁示），不該被收成有效的裁示');
+  const fill = (/** @type {string} */ who) => tpl.replace('<轉述者>', who).replace('逐字', '好');
+  const closes = (/** @type {string} */ quoteLine) => {
+    const body = `## ⚖️ William 裁示（2026-09-02）：答覆\n${quoteLine}\n關的是 ${urlOf(1)}`;
+    const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body })], T0 + 3600e3);
+    return r.pending.length === 0 && r.closed.length === 1;
+  };
+  for (const role of ROLES) {
+    assert.ok(closes(fill(role)),
+      `照規則書那一行樣板填「${role}」，這則裁示卻沒被收下（樣板與解析器對不上）。餵進去的是：${fill(role)}`);
+  }
+  // 補集抽樣：名單以外的寫法一律不收。⚠️ 這是抽樣，不是「除了這些以外都收」的證明。
+  for (const outsider of ['Grok', 'grok', 'claude', 'CLAUDE', 'Claude 與 Codex', 'William 本人', '獨立審查者', '']) {
+    assert.ok(!ROLES.includes(outsider), `測試資料寫錯：「${outsider}」其實在合法名單裡`);
+    assert.ok(!closes(fill(outsider)),
+      `「${outsider} 轉述」不在合法角色名單裡，不該被收成有效的裁示`);
+  }
+  // 註解裡講的突變，這裡自己造（Grok #594 複審後掃③）：照這幾種填其實結不了案，題必須跟著紅。
+  for (const [what, line] of /** @type {[string, string][]} */ ([
+    ['整行前面多一個字', `我${fill('Claude')}`],
+    ['整行前面多一個引用符號', `> ${fill('Claude')}`],
+    ['整行被粗體包起來', `**${fill('Claude')}**`],
+    ['整行被反引號包起來', `${BT}${fill('Claude')}${BT}`],
+    ['角色被粗體包起來', tpl.replace('<轉述者>', '**Claude**').replace('逐字', '好')],
+    ['角色後面多一格空白', tpl.replace('<轉述者>', 'Claude ').replace('逐字', '好')],
+  ])) {
+    assert.ok(!closes(line), `「${what}」照規則書那一行填其實結不了案，這題卻把它收下了：${line}`);
+  }
+});
+
+// ⚠️ **撤回也要對稱**（2026-09-10 Grok #594 複審後掃）：發問與貼 ⚖️ 在同一支 PR 裡已經改成兩邊都做得到，
+//    撤回的自報句卻還逐字只認「Claude 撤回」 ⇒ Codex 實作的支只剩兩條路：**假稱是 Claude 撤的**（假紀錄），
+//    或**撤了不算數**（那題永遠掛在「還沒回」）。兩種都比「讓撤回變寬」更像紀錄在說謊。
+// ⚠️ 這題跟上面那道同一種做法：**自報句的樣板從規則書正本那一節裡撈**（反引號包住的那一段），
+//    不在這裡重打一份；重打過的樣本正是 #594 r2〜r4 連三輪的假綠來源。
+//    ⚠️ 它證不到的：撤回的理由是不是真的、署名的是不是本人（三方共用同一個 GitHub 帳號）。
+test('⭐ 🚫 撤回的自報句：規則書那一段樣板照抄、只換撤回者；合法角色都收，名單以外一律不收', () => {
+  const section = reviewSectionOf(readDoc('AGENTS.md'));
+  const hits = [...section.matchAll(/`(<撤回者> 撤回、[^`]+)`/gu)];
+  assert.equal(hits.length, 1,
+    `「審查回饋處置」那一節裡「\`<撤回者> 撤回、…\`」這段樣板有 ${hits.length} 處（要恰好 1）——`
+    + '樣板改寫、被複製、或搬出那一節了，這題要跟著改');
+  const tpl = hits[0][1];
+  assert.equal(tpl.split('<撤回者>').length - 1, 1, `樣板裡「<撤回者>」不是恰好一個：${tpl}`);
+  const head = '## 🚫 撤回（2026-09-02）：要不要做這件事？';
+  const reason = '撤回理由：題目依附的東西沒了（#100 已經關掉了）';
+  const withdraws = (/** @type {string} */ phraseLine) => {
+    const body = `${head}\n\n${reason}\n\n${phraseLine}\n\n${urlOf(1)}`;
+    const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body })], T0 + 3600e3);
+    return r.withdrawn?.length === 1;
+  };
+  for (const role of ROLES) {
+    assert.ok(withdraws(tpl.replace('<撤回者>', role)),
+      `照規則書那一段樣板填「${role}」，這則撤回卻沒算數（樣板與解析器對不上）：${tpl.replace('<撤回者>', role)}`);
+  }
+  for (const outsider of ['Grok', 'claude', 'Claude 與 Codex', '']) {
+    assert.ok(!ROLES.includes(outsider), `測試資料寫錯：「${outsider}」其實在合法名單裡`);
+    assert.ok(!withdraws(tpl.replace('<撤回者>', outsider)),
+      `「${outsider} 撤回」不在合法角色名單裡，不該算數`);
+  }
+  const one = tpl.replace('<撤回者>', 'Codex');
+  for (const [what, line] of /** @type {[string, string][]} */ ([
+    ['整行前面多一個字', `我${one}`],
+    ['整行後面多一個字', `${one}。`],
+    ['整行被粗體包起來', `**${one}**`],
+  ])) {
+    assert.ok(!withdraws(line), `「${what}」照規則書填其實不算數，這題卻收下了：${line}`);
+  }
 });
 
 test('⭐ 逾時暫定要寫正本那一整句：只寫「William 未裁」半句不算', () => {
@@ -275,7 +343,8 @@ test('⭐ 內文也要有規則要求的那一欄：裁示沒有他的原話那�
 });
 
 // ── 第三種結局：撤回（William 2026-09-08 裁，原話逐字「補「這題不用問了」這種收法」）─────────
-// ⚠️ 這一族的每一題都在守同一件事：**撤回是唯一由 Claude 單方面發動的結局**，所以它的形狀要卡得比
+// ⚠️ 這一族的每一題都在守同一件事：**撤回是唯一由發問的那一方單方面發動的結局**（2026-09-10 起自報句
+//    收合法角色，不再寫死 Claude——上面那道「🚫 撤回的自報句」在守樣板與解析器對得上），所以它的形狀要卡得比
 //    另外兩種緊，而且撤掉的題目一定要印出來給 William 看。機器判不出「我撤得對不對」——
 //    安全網做在**輸出**上，不做在判斷裡（這支工具已經學過的一課）。
 const withdraw = (/** @type {any} */ o) => c({
@@ -469,9 +538,16 @@ test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩
   const [tplRun, field, ...rest] = runs;
   const reasons = rest.slice(0, 3);
   const phrase = rest[3];
+  // ⚠️ **自報句 2026-09-10 起帶一個佔位符**（Grok #594 複審後掃換來的）：撤回原本逐字寫死 Claude，
+  //    而發問與貼 ⚖️ 已經改成兩邊都做得到 ⇒ Codex 實作的支只剩「假稱是 Claude 撤的」或「撤了不算數」。
+  //    正本那一段仍是**唯一來源**，這裡只把一個合法角色填進去再餵；佔位符不在就代表正本改寫法了，這題要跟著改。
+  const WHO = '<撤回者>';
+  assert.equal(phrase.split(WHO).length - 1, 1,
+    `自報句裡「${WHO}」不是恰好一個——正本改寫法了，工具與這題要一起改：${phrase}`);
+  const said = phrase.replace(WHO, ROLES[0]);
   assert.match(tplRun, /^## 🚫 撤回（YYYY-MM-DD）：/u, '第 1 段要是第一行模板');
   const head = tplRun.replace(/〈[^〉]*〉$/u, '');
-  const mk = (/** @type {string} */ reason, /** @type {string} */ f = field, /** @type {string} */ ph = phrase) => c({ id: 9,
+  const mk = (/** @type {string} */ reason, /** @type {string} */ f = field, /** @type {string} */ ph = said) => c({ id: 9,
     body: `${head.replace('YYYY-MM-DD', '2026-09-02')}標題\n\n${f}${reason}（原因）\n\n${ph}\n\n${urlOf(1)}` });
   for (const reason of reasons) {
     assert.equal(shapeOf(mk(reason)), 'withdraw', `工具不認正本列的理由：${reason}`);
@@ -479,7 +555,9 @@ test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩
   // 對照組：正本那幾個字各改一處，工具就不認——證明綁的是正本，不是任何長得像的東西
   assert.equal(shapeOf(mk(`${reasons[0]}了`)), 'near', '理由多一個字就不認');
   assert.equal(shapeOf(mk(reasons[0], '撤回依據：')), 'near', '欄名換掉就不認');
-  assert.equal(shapeOf(mk(reasons[0], field, `${phrase}吧`)), 'near', '自報那一句改掉就不認');
+  assert.equal(shapeOf(mk(reasons[0], field, `${said}吧`)), 'near', '自報那一句改掉就不認');
+  assert.equal(shapeOf(mk(reasons[0], field, phrase)), 'near',
+    '佔位符沒換成角色就不該算數（照抄 `<撤回者>` 三個字不是有效的撤回）');
   // 權力順序那一句也要在正本裡（工具的分堆照它做）
   assert.ok(section.includes('他的話比我的撤回大'), '正本那一節裡找不到「他的話比我的撤回大」');
 });
