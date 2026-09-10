@@ -161,14 +161,21 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
 //    ⇒ 這一版**不再從內容裡找切點**：規則書把樣板放在自己的一行、上面一行是固定標籤；這題只做一件事——
 //      **找到標籤的下一行、整行照抄**（只剝行首縮排，那是 markdown 續行），換掉兩個佔位符，送進正式解析器。
 //      前面多一個字、多一個引用符號、整行被包起來，全都會跟著餵進去 ⇒ 紅。
+//    r5：我在**整份檔案**找標籤 ⇒ 節外註解裡留一份舊標籤＋好樣板就會被驗到那一份，正文改壞完全沒看。
+//        ⇒ 這一版只在**正本那一節**裡找（沿用本檔既有的 `reviewSectionOf()`，它會剝註解、夾範圍）。
 //    ⚠️ 它證不到的：轉述的內容是不是真的、署名的是不是本人——那兩件沒有機器在看。
 test('⭐ ⚖️ 的原話欄：規則書那一行樣板整行照抄、只換佔位符，三個合法角色都要解析得過', () => {
   const LABEL = '**⚖️ 原話欄樣板（逐字照填）**：';
-  const lines = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').split('\n');
+  // ⚠️ **只在正本那一節裡找**（Codex #594 r5 抓到的第四種假綠）：上一版掃**整份** AGENTS 原文，
+  //    所以檔案別處（例如節外的 HTML 註解）留一份舊標籤＋好樣板，就會被驗到那一份，
+  //    正文改成別的標籤＋壞樣板反而完全沒被看；照正文填其實結不了案。
+  //    ⇒ 沿用本檔既有的 `reviewSectionOf()`（它會剝掉註解、把範圍夾在正本那一節裡）。
+  const lines = reviewSectionOf(readDoc('AGENTS.md')).split('\n');
   const at = lines.map((l, i) => (l.trimStart().startsWith(LABEL) ? i : -1)).filter((i) => i !== -1);
   assert.equal(at.length, 1,
-    `AGENTS.md 裡「${LABEL}」這個標籤有 ${at.length} 行（要恰好 1）——標籤改寫或被複製了，這題要跟著改`);
-  const tpl = lines[at[0] + 1].trimStart();   // ⚠️ 只剝行首縮排，其餘一個字元都不動
+    `「審查回饋處置」那一節裡「${LABEL}」這個標籤有 ${at.length} 行（要恰好 1）——`
+    + '標籤改寫、被複製、或整個樣板被搬出那一節了，這題要跟著改');
+  const tpl = String(lines[at[0] + 1] ?? '').trimStart();   // ⚠️ 只剝行首縮排，其餘一個字元都不動
   assert.ok(tpl.includes('<轉述者>') && tpl.includes('逐字'),
     `標籤下一行不是樣板（少了佔位符），實際讀到：${tpl.slice(0, 80)}`);
   const bodyOf = (/** @type {string} */ role) =>
