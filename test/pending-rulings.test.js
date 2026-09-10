@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf, TIMEOUT_HOURS } from '../scripts/pending-rulings.js';
+import { classify, render, flatten, expectedTotal, shapeOf, firstLine, titleOf, numberOf } from '../scripts/pending-rulings.js';
 import { tierOf } from '../scripts/acceptance-tier.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 import { ROLES } from '../scripts/check-pr-collab-fields.js';
@@ -567,13 +567,23 @@ test('⭐ 撤回的規則綁回正本：AGENTS 那一顆寫的三種理由與兩
   assert.ok(section.includes('他的話比我的撤回大'), '正本那一節裡找不到「他的話比我的撤回大」');
 });
 
-test('⭐ 時限邊界：71 小時 59 分未逾時、72 小時整逾時（現在時刻由參數注入，不看牆上時鐘）', () => {
+// ⚠️ **這一題取代了原本的「時限邊界：71 小時 59 分未逾時、72 小時整逾時」**（2026-09-10）：
+//    William 裁「a＝拿掉時限，問了就等我」，理由是設時限等於多一件我要留意的事。
+//    ⇒ 沒有時限就沒有「超過」可言：`overdue` 這個欄位、`TIMEOUT_HOURS` 這個常數都刪了。
+//    ⚠️ 這一題守的是**不要偷偷長回來**：哪天有人把逾時邏輯加回去（不論叫什麼名字），
+//      「放很久的題目仍然只是還沒回」這件事會先紅。
+test('⭐ 拿掉時限之後：放多久都只是「還沒回」，不標逾時、也不再有 overdue 欄位', () => {
   const at = T0;
-  const before = classify([ask({ id: 1, at })], at + (71 * 60 + 59) * 60e3);
-  const after = classify([ask({ id: 1, at })], at + 72 * 3600e3);
-  assert.equal(before.pending[0].overdue, false);
-  assert.equal(after.pending[0].overdue, true);
-  assert.equal(TIMEOUT_HOURS, 72);
+  for (const days of [1, 3, 30, 365]) {
+    const r = classify([ask({ id: 1, at })], at + days * 86400e3);
+    assert.equal(r.pending.length, 1, `放了 ${days} 天，那一題仍然只是「還沒回」`);
+    assert.equal(r.provisional.length, 0, `放了 ${days} 天不可以自己變成「照預設先做」`);
+    assert.ok(!('overdue' in r.pending[0]),
+      `放了 ${days} 天卻多出 overdue 欄位——時限已經拿掉了，這個欄位不該回來`);
+    const out = render(r, { host: 'github.com', slug: 'o/r', expected: 1 });
+    assert.doesNotMatch(out, /超過時限/u, `放了 ${days} 天不可以印「已經超過時限」`);
+    assert.match(out, /放了 /u, '「放了多久」照印——那是事實，不是判決');
+  }
 });
 
 // ── 綁回正本（下面幾題共用）─────────────────────────────────────────────────────
@@ -742,20 +752,29 @@ test('⭐ 已結的安全網是「印出來給人看」，不是機器判斷：�
     '對不上的標題要跟問題印在一起，讓人一眼看出配錯');
 });
 
-test('⭐ 時限常數綁回規則正本：AGENTS 那顆寫「時限＝三天＝連續 72 小時」，這裡就必須是 72', () => {
-  // 沒有這一題的話，William 哪天把三天改成五天，AGENTS 改了、工具照舊按 72 小時印「已經超過時限」，全卷還是綠的。
-  // ⚠️ 這一題自己被騙過兩次：原本在**整份 AGENTS** 取第一個命中，在前面加一行 HTML 註解寫「時限＝**三天**」
-  //   就騙得過（#579 r4 Medium③）；改成只剝成對的 `<!--…-->` 之後，插一個**沒關門**的 `<!--` 又騙得過
-  //   （#579 r6 Medium③）。現在跟模板那題共用 reviewSectionOf()：剝註解（含沒關門的）、錨點唯一、那一節平文字、
-  //   而且正本自己寫的「N 天」與「連續 M 小時」要先對得上。
+// ⚠️ **這一題取代了原本的「時限常數綁回規則正本」**（2026-09-10 拿掉時限）。
+//    舊那題守的是「AGENTS 寫幾天、工具就要用幾小時」；現在兩邊都沒有天數了，改成守**兩邊一起沒有**：
+//    規則正本要明寫「沒有時限」，工具裡不可以再出現時限常數或逾時欄位。
+//    ⚠️ 為什麼要兩邊一起守：只守文件的話，工具偷偷加回逾時邏輯不會紅；只守程式的話，
+//      文件被改回「三天」而工具沒跟上，就會變成規則說有、機器不算——那正是這支工具存在的理由。
+//    ⚠️ 它證不到的：**沿革段落裡照樣寫得出「三天」「72 小時」那些字**（那是刻意保留的紀錄）。
+//      所以這題釘的是「現行那句話在不在」與「程式裡的機件在不在」，不是「這一節不准出現數字」。
+test('⭐ 「沒有時限」要兩邊一起成立：規則正本明寫、工具裡也沒有時限常數或逾時欄位', () => {
   const section = reviewSectionOf(readDoc('AGENTS.md'));
-  const hits = [...section.matchAll(/時限＝\*\*(.)天\*\*＝連續 (\d+) 小時/gu)];
-  assert.equal(hits.length, 1, `那一節裡「時限＝**N天**＝連續 M 小時」命中 ${hits.length} 處（要剛好 1 處）`);
-  const [, cn, hours] = hits[0];
-  const days = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7 }[cn];
-  assert.ok(days, `讀不出天數：${cn}`);
-  assert.equal(Number(hours), days * 24, `正本自己就對不上：寫 ${cn} 天，卻又寫連續 ${hours} 小時`);
-  assert.equal(TIMEOUT_HOURS, days * 24, `規則正本寫 ${cn} 天、工具卻用 ${TIMEOUT_HOURS} 小時`);
+  assert.equal(section.split('沒有時限、也沒有逾時預設——問了就等他').length - 1, 1,
+    '「審查回饋處置」那一節裡找不到現行那句「沒有時限、也沒有逾時預設——問了就等他」（要剛好一處）'
+    + '——時限被改回去了、或這句話被搬走了，工具與這題要一起改');
+  const src = readFileSync(SCRIPT, 'utf8');
+  for (const [re, what] of /** @type {[RegExp, string][]} */ ([
+    [/export const TIMEOUT_HOURS/u, '匯出的時限常數 TIMEOUT_HOURS'],
+    [/overdue:/u, '算逾時的 overdue 欄位'],
+    // ⚠️ **這裡刻意只釘「程式形狀」，不釘字串**：字串型的檢查會被自己的註解咬到（第一版就踩了——
+    //    我在工具裡寫「以前會標成…」的沿革註解，這一題就紅了）。
+    //    「報告上不可以印出逾時判決」那一半由上面那道行為題守（它看的是 render() 的實際輸出）。
+  ])) {
+    assert.doesNotMatch(src, re, `工具裡又出現了${what}——時限已經拿掉了（William 2026-09-10 裁）；`
+      + '要加回來得先有他的新裁示，並且回來改這一題');
+  }
 });
 
 test('⭐ 藏起來的東西不算數：原話或網址放在圍欄／HTML 註解裡，關不掉問題（#579 r4 High①）', () => {
@@ -1323,7 +1342,6 @@ test('⭐ 被編輯過的問題＝沒起算：不算天數、不標逾時，改�
   const r = classify([ask({ id: 1, edited: true })], T0 + 10 * 86400e3);
   assert.equal(r.pending[0].edited, true);
   assert.equal(r.pending[0].hours, null);
-  assert.equal(r.pending[0].overdue, false);
   const out = render(r, { host: 'github.com', slug: 'o/r', expected: 1 });
   assert.match(out, /不算起算/);
   assert.doesNotMatch(out, /放了 \d+ 天/, '沒起算就不可以印出一個規則上不存在的期限');
@@ -1345,7 +1363,9 @@ test('⭐ 逾時暫定不算已結：那一類正是「他還沒回、我先照�
   assert.deepEqual(r.pending, []);
   assert.deepEqual(r.closed, []);
   assert.equal(r.provisional.length, 1);
-  assert.match(render(r, { host: 'github.com', slug: 'o/r', expected: 2 }), /已照預設先做、他還沒裁/);
+  // ⚠️ 2026-09-10 拿掉時限之後這一段改了標題：新的寫法明說「舊制」「不再有新的」（William 裁「問了就等我」）。
+  //    這一段**不可以刪掉**——刪了的話，舊的 ⏳ 關掉的那些題目會整批冒回「還沒回」。
+  assert.match(render(r, { host: 'github.com', slug: 'o/r', expected: 2 }), /舊制照預設先做過、他還沒裁/);
 });
 
 test('⭐ 只有 repo 擁有者貼的才算：外人貼的裁示留言關不掉問題，而且會被列進「形狀不合」讓人看見', () => {
@@ -1398,8 +1418,7 @@ test('⭐ 逾時是兩個時間點相減、不是日曆日：跨了三個日曆�
   assert.equal(calDays(now, 0) - calDays(at, 0), 3, '對照斷言：日曆日寫法會說「3 天」＝已達時限，這題才有鑑別力');
   assert.equal(calDays(now, 8) - calDays(at, 8), 2, '對照斷言：同一組夾具換個時區，日曆日寫法連答案都不一樣');
   const r = classify([ask({ id: 1, at })], now);
-  assert.equal(r.pending[0].hours, 52);
-  assert.equal(r.pending[0].overdue, false, '只過 52 小時就標逾時＝規則上不存在的期限');
+  assert.equal(r.pending[0].hours, 52, '算的是實際小時數，不是日曆日差');
 });
 
 test('形狀驗證：頁不是陣列、留言缺欄位，一律丟（不拿殘缺清單下結論）', () => {
