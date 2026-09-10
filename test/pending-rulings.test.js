@@ -150,33 +150,33 @@ test('⭐ 原話裡可以再有引號（真語料形狀）：巢狀「」不可�
 //    Codex 實作的支由它自己直接問他、自己貼 ⚖️、自己署名。原本 `RULING_QUOTE` 逐字只認「Claude 轉述」，
 //    於是 Codex 如實署名會被判成形狀不合＝**已經回過的問題永遠留在「還沒回」**；照舊格式填則是假紀錄。
 //    ⚠️ 這題釘的是「三個合法角色都收、不合法的不收」——**合法名單不抄在這裡**，直接用那支閘匯出的 `ROLES`。
-// ⚠️ **樣板要從規則書「逐字照抄」，不是抽出來再重打**（Codex #594 r2／r3 連兩輪換來的）：
-//    r2 抓到規則書那時把角色包在粗體裡、解析器卻只收沒有粗體的——照樣板填會全部形狀不合，
-//    而我當時加的題是**自己重打一份沒有粗體的樣本**，所以照樣綠。
-//    r3 又抓到我「修好」的版本仍然假綠：我只把抽出的角色欄拿去檢查有沒有 `*`，**餵進解析器的
-//    仍是自己重打的固定前綴** ⇒ 換成底線粗體、反引號、角色後多一格空白，全部照樣綠。
-//    ⇒ 這一版**整段樣板逐字切下來**（從「原話（對話中，」到第一個 `」**` 為止），只把兩個佔位符
-//    換掉，其餘一個字元都不動，再送進正式解析器。文件那一段長什麼樣，餵進去的就長什麼樣。
+// ⚠️ **樣板整行照抄，連前後都不准自己補**（Codex #594 r2〜r4 連三輪換來的，同一道題被抓三次假綠）：
+//    r2：規則書那時把角色包在粗體裡、解析器只收沒粗體的 ⇒ 照樣板填全部形狀不合；而我當時的題是
+//        **自己重打一份沒有粗體的樣本**，所以照樣綠。
+//    r3：我改成「抽出角色欄、檢查有沒有 `*`」——**餵進解析器的仍是我自己重打的前綴** ⇒ 底線粗體、
+//        反引號、角色後多一格空白全部照樣綠。
+//    r4：我改成「從『原話（對話中，』切到第一個『」**』」——**切點在樣板內部**，於是樣板**前面**多一個字
+//        （或多一個 `> `、被整段包粗體）照樣綠，而照那樣填其實結不了案；反過來，樣板裡若先寫一個
+//        例子引文，切點會提早、變成假紅。
+//    ⇒ 這一版**不再從內容裡找切點**：規則書把樣板放在自己的一行、上面一行是固定標籤；這題只做一件事——
+//      **找到標籤的下一行、整行照抄**（只剝行首縮排，那是 markdown 續行），換掉兩個佔位符，送進正式解析器。
+//      前面多一個字、多一個引用符號、整行被包起來，全都會跟著餵進去 ⇒ 紅。
 //    ⚠️ 它證不到的：轉述的內容是不是真的、署名的是不是本人——那兩件沒有機器在看。
-test('⭐ ⚖️ 的原話欄：把規則書那段樣板逐字照抄、只換佔位符，三個合法角色都要解析得過', () => {
-  const HEAD = '原話（對話中，';
-  const TAIL = '」**';
-  const line = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8')
-    .split('\n').find((l) => l.includes(HEAD) && l.includes('<轉述者>'));
-  assert.ok(line, `AGENTS.md 找不到含「${HEAD}」與「<轉述者>」的那一行樣板——樣板改寫了就來改這題`);
-  const from = String(line).indexOf(HEAD);
-  const to = String(line).indexOf(TAIL, from);
-  assert.ok(to > from,
-    `切不出完整樣板（找不到結尾「${TAIL}」）：${String(line).slice(from, from + 80)}`);
-  const tpl = String(line).slice(from, to + TAIL.length);   // ⚠️ 逐字，不重打
+test('⭐ ⚖️ 的原話欄：規則書那一行樣板整行照抄、只換佔位符，三個合法角色都要解析得過', () => {
+  const LABEL = '**⚖️ 原話欄樣板（逐字照填）**：';
+  const lines = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').split('\n');
+  const at = lines.map((l, i) => (l.trimStart().startsWith(LABEL) ? i : -1)).filter((i) => i !== -1);
+  assert.equal(at.length, 1,
+    `AGENTS.md 裡「${LABEL}」這個標籤有 ${at.length} 行（要恰好 1）——標籤改寫或被複製了，這題要跟著改`);
+  const tpl = lines[at[0] + 1].trimStart();   // ⚠️ 只剝行首縮排，其餘一個字元都不動
   assert.ok(tpl.includes('<轉述者>') && tpl.includes('逐字'),
-    `樣板少了佔位符，切出來的是：${tpl}`);
+    `標籤下一行不是樣板（少了佔位符），實際讀到：${tpl.slice(0, 80)}`);
   const bodyOf = (/** @type {string} */ role) =>
     `## ⚖️ William 裁示（2026-09-02）：答覆\n${tpl.replace('<轉述者>', role).replace('逐字', '好')}\n關的是 ${urlOf(1)}`;
   for (const role of ROLES) {
     const r = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: bodyOf(role) })], T0 + 3600e3);
     assert.equal(r.pending.length, 0,
-      `照規則書的樣板填「${role}」，這則裁示卻沒被收下（樣板與解析器對不上）。餵進去的是：${bodyOf(role).split('\n')[1]}`);
+      `照規則書那一行樣板填「${role}」，這則裁示卻沒被收下（樣板與解析器對不上）。餵進去的是：${bodyOf(role).split('\n')[1]}`);
     assert.equal(r.closed.length, 1, `照樣板填「${role}」的裁示沒有被算成已結`);
   }
   const bad = classify([ask({ id: 1 }), c({ id: 2, at: T0 + 60e3, body: bodyOf('Grok') })], T0 + 3600e3);
