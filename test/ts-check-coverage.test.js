@@ -12,10 +12,12 @@
 //   它也**不代表**這些檔真的被 `tsc` 跑過（那是 `npm run typecheck` 本身的事）；它只釘「設定算出來的集合」與「檔頭指令」兩件。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
+import { gitEnv } from '../lib/git-env.js';
 
 const ROOT = new URL('../', import.meta.url);
 const ROOT_DIR = fileURLToPath(ROOT);
@@ -28,15 +30,16 @@ function programFiles() {
   assert.deepEqual(parsed.errors.map((e) => ts.flattenDiagnosticMessageText(e.messageText, '\n')), [], 'jsconfig.json 解析有錯——TypeScript 自己都算不出集合，這題不能假裝算得出來');
   return parsed.fileNames.map((f) => path.relative(ROOT_DIR, f).split(path.sep).join('/'));
 }
-/** 磁碟上 `dir` 底下的每一支 .js（不進 node_modules）——拿來對照「設定算出來的集合」有沒有靜靜縮水 @param {string} dir @returns {string[]} */
-function diskJs(dir) {
-  const out = [];
-  for (const name of readdirSync(new URL(dir, ROOT))) {
-    const rel = `${dir}${name}`;
-    if (statSync(new URL(rel, ROOT)).isDirectory()) { if (name !== 'node_modules') out.push(...diskJs(rel + '/')); }
-    else if (name.endsWith('.js')) out.push(rel);
-  }
-  return out;
+/** git 追蹤中的每一支 .js（`--cached`：不含未 commit 的新檔、也不含別的考題暫時寫進來的探針）——拿來對照「設定算出來的集合」有沒有靜靜縮水。
+ *  ⚠️ **`env: gitEnv()` 不可省**（理由同 test/hosted-store-pg.test.js 的 libFiles：`GIT_DIR` 被繼承時清單會是別棵樹的）。
+ *  為什麼只看已追蹤、不走磁碟：TypeScript 算集合時讀的是磁碟，整卷並行時別的考題**跑到一半寫進 lib/ 的暫存探針**
+ *  （例：xlsx 護欄那題的 `lib/_xlsx_guard_probes/p*.js`）也會被算進集合、又沒有 `// @ts-check` ⇒ 這題偶爾假紅
+ *  （2026-09-11 實踩：pre-push 整卷紅、單獨跑綠）。**兩邊都只認追蹤中的檔**，探針來去都不影響。
+ *  代價照實記：還沒 commit 的新 .js 少了標記，這題要等它被 commit 才看得到——pre-push 跑在 commit 之後，推上去之前一定看得到；
+ *  `tsc` 本身照樣會讀磁碟上的每一支，那不是這題的射程。 */
+function trackedJs() {
+  const out = execFileSync('git', ['ls-files', '--cached', '-z'], { encoding: 'utf8', cwd: ROOT_DIR, env: gitEnv() });
+  return new Set(out.split('\0').filter((f) => f.endsWith('.js')));
 }
 /** TypeScript 對這份原始碼的判定：有生效的 `// @ts-check` 指令才是 true（`@ts-nocheck`、註解裡提到、程式碼之後才出現都不算） @param {string} src */
 function tsCheckEnabled(src) {
@@ -45,15 +48,17 @@ function tsCheckEnabled(src) {
 }
 
 test('型別檢查射程：TypeScript 對 jsconfig 算出來的每一支 .js（lib／public／scripts／test-doubles／prototype 遞迴＋server.js）都有 TypeScript 認得的 // @ts-check（逐檔 opt-in 的另一半：沒人數就會漂）', () => {
-  const files = programFiles().filter((f) => f.endsWith('.js'));
-  // 集合有沒有靜靜縮水：這幾個目錄在磁碟上的每一支 .js 都要在 TypeScript 算出來的集合裡——
+  const tracked = trackedJs();
+  // 集合＝TypeScript 對 jsconfig 算出來的 .js ∩ git 追蹤中的 .js（見 trackedJs 的說明）
+  const files = programFiles().filter((f) => f.endsWith('.js') && tracked.has(f));
+  // 集合有沒有靜靜縮水：這幾個目錄底下追蹤中的每一支 .js 都要在 TypeScript 算出來的集合裡——
   // include 被拿掉、遞迴 glob 換成單一檔、另加 exclude，都會在這裡紅（Grok #598 掃：「換成單一檔」「另加 exclude」這兩種舊版假綠；「拿掉 include」舊版本來就紅——Codex r5 抓到上一版用序數指錯）。
   // test-doubles／prototype 2026-09-11 起納入（12 支、0 錯；William 裁「甲」；test/ 刻意不在，理由見 AGENTS「型別檢查」節）。
   for (const dir of ['lib/', 'public/', 'scripts/', 'test-doubles/', 'prototype/']) {
-    const onDisk = diskJs(dir);
-    assert.ok(onDisk.length > 0, `${dir} 底下在磁碟上找不到任何 .js——目錄搬了或路徑打錯，這題的對照組空了`);
+    const onDisk = [...tracked].filter((f) => f.startsWith(dir));
+    assert.ok(onDisk.length > 0, `${dir} 底下 git 追蹤中找不到任何 .js——目錄搬了或路徑打錯，這題的對照組空了`);
     const dropped = onDisk.filter((f) => !files.includes(f));
-    assert.deepEqual(dropped, [], `這些檔在磁碟上、卻不在 TypeScript 對 jsconfig 算出來的集合裡（include 被縮、或加了 exclude）——三關的型別檢查不會**直接**開它們（被別的檔 import 進來的另計；本題守的是「必須直接納入」這條政策）`);
+    assert.deepEqual(dropped, [], `這些檔 git 追蹤中、卻不在 TypeScript 對 jsconfig 算出來的集合裡（include 被縮、或加了 exclude）——三關的型別檢查不會**直接**開它們（被別的檔 import 進來的另計；本題守的是「必須直接納入」這條政策）`);
   }
   assert.ok(files.includes('server.js'), 'jsconfig include 的單一檔 server.js 要在集合裡');
   const missing = files.filter((f) => !tsCheckEnabled(readFileSync(new URL(f, ROOT), 'utf8')));
