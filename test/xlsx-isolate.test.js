@@ -328,7 +328,7 @@ test('LOCAL 零改動｜不是 HOSTED 就直接在行程內讀（連 spawn 的 2
  *    只有真正在用的那台會紅：**最糟的一種紅**（擋住 push，而且看起來像程式壞了）。
  *    `--others` 是刻意的：違規的**新檔在 `git add` 之前**就要被抓到，否則護欄會在最需要它的那一刻失效。
  *    同一寫法見 `test/hosted-store-pg.test.js` 的 `libFiles`。
- * @returns {string[]}
+ * @returns {Promise<string[]>}
  */
 async function productionFiles() {
   const { execFileSync } = await import('node:child_process');
