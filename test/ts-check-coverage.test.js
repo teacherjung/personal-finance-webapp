@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
 import { gitEnv } from '../lib/git-env.js';
+import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const ROOT = new URL('../', import.meta.url);
 const ROOT_DIR = fileURLToPath(ROOT);
@@ -35,8 +36,10 @@ function programFiles() {
  *  為什麼只看已追蹤、不走磁碟：TypeScript 算集合時讀的是磁碟，整卷並行時別的考題**跑到一半寫進 lib/ 的暫存探針**
  *  （例：xlsx 護欄那題的 `lib/_xlsx_guard_probes/p*.js`）也會被算進集合、又沒有 `// @ts-check` ⇒ 這題偶爾假紅
  *  （2026-09-11 實踩：pre-push 整卷紅、單獨跑綠）。**兩邊都只認追蹤中的檔**，探針來去都不影響。
- *  代價照實記：還沒 commit 的新 .js 少了標記，這題要等它被 commit 才看得到——pre-push 跑在 commit 之後，推上去之前一定看得到；
- *  `tsc` 本身照樣會讀磁碟上的每一支，那不是這題的射程。 */
+ *  代價照實記：`--cached` 讀的是 **git index**——還沒 `git add` 的新 .js 少了標記，這題看不到；`git add` 之後就看得到（含已 add 未 commit）。
+ *  從乾淨工作樹推送時，已 commit 的新檔都在 index，pre-push 抓得到；但這題讀的是 index 的路徑集合＋磁碟內容，不是待推 commit 的內容
+ *  （Codex #600 r1 收窄：上一版寫成「等 commit 才看得到」）。`tsc` 本身照樣會讀磁碟上的每一支，那不是這題的射程。
+ *  ⚠️ 這個呼叫點走 `gitEnv()`——鐵則 11 要的兩種行為題在本檔下方（拿掉 `env:` 那一行、或退化成只刪 `GIT_DIR`，都要紅）。 */
 function trackedJs() {
   const out = execFileSync('git', ['ls-files', '--cached', '-z'], { encoding: 'utf8', cwd: ROOT_DIR, env: gitEnv() });
   return new Set(out.split('\0').filter((f) => f.endsWith('.js')));
@@ -72,4 +75,23 @@ test('判定器對照：真指令（第一行／shebang 後／區塊註解後／
   for (const src of ['// 請在別的檔案加 // @ts-check\nconst a = 1;\n', '/* // @ts-check */\nconst a = 1;\n', 'const a = 1; // @ts-check\n', 'const a = 1;\n// @ts-check\n', '// @ts-nocheck\nconst a = 1;\n']) {
     assert.equal(tsCheckEnabled(src), false, `不該算卻算了：${JSON.stringify(src)}`);
   }
+});
+
+test('⭐ trackedJs() 的清單不可被繼承的 GIT_* 帶去別棵樹（拿掉 env: gitEnv() 要紅）', () => {
+  // ⚠️ 這一題是**代理指標**（射程對照表在 test/helpers/dirty-git-env.js 檔頭）：注入的 `GIT_DIR` 是實測唯一四種呼叫形狀通吃的變數，
+  //    它證明真實情境（從連結工作樹 push 時 hook 環境帶著 GIT_DIR）下清單沒被帶偏；**擋不住**退化成只刪 GIT_DIR 的列名版——那由下一題守。
+  const restore = injectDirtyGitEnv();
+  try {
+    const files = trackedJs();
+    for (const must of ['server.js', 'test-doubles/fake-supabase.js', 'prototype/forest-ui-lab/forest-ui.js']) {
+      assert.ok(files.has(must), `注入髒 GIT_* 之後清單裡沒有 ${must} 了＝環境沒被隔離，這題會拿別棵樹（或空清單）當對照組`);
+    }
+    assert.ok(files.size > 100, `注入髒 GIT_* 之後只剩 ${files.size} 支＝隔離失效`);
+  } finally {
+    restore();
+  }
+});
+
+test('⭐ trackedJs() 交給 git 的環境裡不可以有任何 GIT_*（直接斷言，不靠代理指標）', () => {
+  assertChildGitEnvClean(assert, 'ts-check-coverage 的 trackedJs()', () => trackedJs());
 });
