@@ -4,6 +4,7 @@
 //   ・`test/worktree-integrity.test.js`   ← 體檢腳本 `scripts/check-worktree-integrity.js`
 //   ・`test/xlsx-isolate.test.js`         ← `productionFiles()`
 //   ・`test/hosted-store-pg.test.js`      ← `libFiles()`
+//   ・`test/ts-check-coverage.test.js`    ← `trackedJs()`（型別檢查射程的對照組；#600 起）
 //   ・`test/hosted-auth.test.js`          ← `trackedFiles()`（secret 掃描的清單）
 //   ・`test/doc-naming.test.js`           ← `trackedFiles()`／`oldNameContexts()`
 //   ・`test/cross-pr-merge.test.js`       ← `scripts/check-cross-pr-merge.js` 的 `runIn()`
