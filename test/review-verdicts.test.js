@@ -85,7 +85,7 @@ test('⭐ 聯集｜**同一輪**出現相反結論 → fail-closed（不是最�
   const b = c(head('Claude', who, HEAD.slice(0, 7), 2, '通過'));
   for (const order of [[a, b], [b, a]]) {
     const { problems } = verdictProblems(order, HEAD);
-    assert.ok(problems.some((p) => /同一輪/.test(p)), `同輪衝突被放行了（順序 ${order === a ? 'ab' : 'ba'}）`);
+    assert.ok(problems.some((p) => /同一輪/.test(p)), `同輪衝突被放行了（順序 ${order[0] === a ? 'ab' : 'ba'}）`);
   }
 });
 

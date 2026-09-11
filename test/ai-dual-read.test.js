@@ -72,7 +72,7 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     transactions: [{ acctSuffix: '1234', acctMasked: '900200****1234', date: '2026-07-01', summary: '超商繳費', direction: 'out', amount: 100, balance: 4900, note: '水電' }],
   });
   assert.deepEqual(aiAnswersAgree(base(), base()), { agree: true, diffs: [], textVariance: [] });
-  for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
+  for (const [patch, label] of /** @type {[((p:any)=>void), string][]} */ ([
     [(p) => { p.referenceDate = null; }, '現值參考日'],
     [(p) => { p.accountCurrency['900200****1234'] = 'USD'; }, '帳戶幣別表'],
     [(p) => { p.accounts[0].balance = 9; }, '帳戶餘額組成'],
@@ -93,7 +93,7 @@ test('比對器｜錢欄位逐欄承重：每一個比對欄改壞都要 disagre
     assert.ok(!r.diffs.some((d) => /999|4900|5500|900200/.test(d)), 'diffs 絕不帶數值（機密紀律）');
   }
   // P2-4b（William 2026-08-17 裁示「移出機構名＋備註」＝真帳單第一課）：寫法差異＝建議面、不觸發
-  for (const [patch, label] of /** @type {[（(p:any)=>void）, string][]} */ ([
+  for (const [patch, label] of /** @type {[((p:any)=>void), string][]} */ ([
     [(p) => { p.bank = '台新國際商業銀行'; }, '機構名'],
     [(p) => { p.transactions[0].note = '瓦斯'; }, '第 1 筆交易的備註'],
     [(p) => { p.transactions[0].acctMasked = '****1234'; }, '帳號印法'],

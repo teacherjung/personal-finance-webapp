@@ -37,10 +37,11 @@ function tsCheckEnabled(src) {
   return sf.checkJsDirective?.enabled === true;
 }
 
-test('型別檢查射程：jsconfig include 到的每一支 .js（lib／public／scripts 遞迴＋server.js）都有 TypeScript 認得的 // @ts-check（逐檔 opt-in 的另一半：沒人數就會漂）', () => {
+test('型別檢查射程：jsconfig include 到的每一支 .js（lib／public／scripts／test-doubles／prototype 遞迴＋server.js）都有 TypeScript 認得的 // @ts-check（逐檔 opt-in 的另一半：沒人數就會漂）', () => {
   const files = includedJs();
   // 掃描本身的對照：遞迴真的有走進子目錄、單一檔 include 真的有進來（只數總量擋不住「忘了遞迴」）
-  for (const must of ['lib/routes/', 'lib/services/', 'public/modules/']) assert.ok(files.some((f) => f.startsWith(must)), `掃描沒走進 ${must}`);
+  // test-doubles／prototype 2026-09-11 起納入（12 支、0 錯）——這兩條 include 被拿掉，這裡要紅（William 裁「甲」；test/ 刻意不在，理由見 AGENTS「型別檢查」節）
+  for (const must of ['lib/routes/', 'lib/services/', 'public/modules/', 'test-doubles/', 'prototype/forest-ui-lab/']) assert.ok(files.some((f) => f.startsWith(must)), `掃描沒走進 ${must}`);
   assert.ok(files.includes('server.js'), 'jsconfig include 的單一檔 server.js 要在集合裡');
   const missing = files.filter((f) => !tsCheckEnabled(readFileSync(new URL(f, ROOT), 'utf8')));
   assert.deepEqual(missing, [], '這些檔 TypeScript 不會檢查（三關的型別檢查根本沒看它們）——請在第一行程式碼之前加獨立一行 // @ts-check');
