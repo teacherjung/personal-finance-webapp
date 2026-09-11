@@ -1,5 +1,5 @@
 {
-  "//": "零建置的 TypeScript 抓錯：不 build、不改副檔名。checkJs=false＝只檢查有 `// @ts-check` 的檔案（逐檔 opt-in）。編輯器(VS Code)會自動套用；CI/本機可跑 `npx -y --package typescript -- tsc -p jsconfig.json` 當守門。⚠️ test/ 刻意不在 include 裡（2026-09-11 William 裁；理由與量過的代價在 AGENTS「型別檢查」節）：考題檔檔頭寫的 `// @ts-check` 只有編輯器在看，`npm run typecheck` 不會開它們。test-doubles/ 與 prototype/ 從同一天起納入。",
+  "//": "零建置的 TypeScript 抓錯：不 build、不改副檔名。checkJs=false＝只檢查有 `// @ts-check` 的檔案（逐檔 opt-in）。編輯器(VS Code)會自動套用；CI/本機可跑 `npx -y --package typescript -- tsc -p jsconfig.json` 當守門。⚠️ test/ 刻意不在 include 裡（2026-09-11 William 裁；理由與量過的代價在 AGENTS「型別檢查」節）：考題檔檔頭寫的 `// @ts-check` 只有編輯器在看——`npm run typecheck` 不會直接開它們（今天也沒有任何 include 內的檔 import 它們；哪天有人 import 了，那一支就會被順帶查——量法與理由在 AGENTS）。test-doubles/ 與 prototype/ 從同一天起納入。",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": false,
