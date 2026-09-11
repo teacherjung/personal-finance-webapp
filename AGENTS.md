@@ -4,6 +4,8 @@
 
 **規矩住在哪＝[COLLAB-MAP.md](COLLAB-MAP.md)**（路由表：協作規矩分住本檔／`REVIEW-AND-MERGE.md`／`CLAUDE.md` ，哪一條在哪一節去那張表查。它**只指路、不是正本、無規則效力，而且刻意不完整**——衝突時以本檔為準）。
 
+**協作規矩已凍結**：正本＝[PROJECT.md](PROJECT.md)「重要決定→協作流程」最後一條；動協作規矩之前先讀那一條，行為判準與歸因都在那裡、本行不複述。
+
 ## 專案概觀
 
 本機優先（隱私第一）的個人理財網頁。**runtime 零建置**：改完存檔即生效，前端沒有 bundler/transpiler、不引入前端 npm 相依。**開發工具（devDependencies）為刻意引入**：typescript/@types（校對）、eslint（糾察）——只在開發/CI 使用、不影響 app 執行；新增 runtime 相依採「謹慎地裝」原則（要有明確理由，2026-07-13 使用者拍板放寬）。
