@@ -33,3 +33,4 @@ npm start
 
 ## 技術
 Node + Express（後端）＋ 原生 JS SPA ＋ Chart.js（前端），零建置步驟、相依套件極少，方便長期維護。
+測試用 Node 內建的測試工具（`npm test`），不需要另外安裝測試框架。
