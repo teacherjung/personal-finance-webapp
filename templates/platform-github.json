@@ -1,0 +1,120 @@
+{
+  "_說明": "GitHub 的平台介面翻譯範例。不是正本，是給使用這套架構的專案抄過去填進 settings.json 的 platform.operations 的起點。2026-09-13 對真倉庫實跑過：七個唯讀動作全通、兩道閘各一次正面與五次反面判斷都正確。",
+  "_注意": [
+    "指令要在該倉庫的目錄底下跑（gh 會讀本機的 git 遠端當預設）；但每一條指令都用 {project} 釘倉庫，所以就算目錄不對、或環境變數想改寫，問的還是設定裡那一個。",
+    "這套架構的記號有四個：{change}、{sha}、{branch} 是各動作的參數，{project}（設定的 platform.project＝擁有者/倉庫名）是全域記號；都會被換成真值。不要用 gh 自己的 {owner}/{repo} 佔位——那個會被 GH_REPO 改寫成別的倉庫（r2 High①）。",
+    "clearEnv 那兩個變數（GH_REPO、GH_HOST）要抄進 settings.json 的 platform.clearEnv，執行器問平台前會清掉它們；GH_TOKEN 是認證用的，不在清單上、會留著。",
+    "會分頁的動作（openChanges、comments、allComments、changedFiles、checks）用 --paginate，每頁各印一個陣列；這套架構收這種寫法。但『頁數有沒有收齊』是這條指令自己的責任，架構驗不到。openChanges 用會分頁的端點而不是 pr list --limit：--limit 是筆數上限，超過就靜靜截斷（r1 Medium⑥）。",
+    "markReady 與 merge 會真的動到平台，填之前先確認那是你要的行為（例如合併方式、要不要刪分支）。",
+    "2026-09-13 對真倉庫實跑過七個唯讀動作（r3 之後含 change 那一條的修正）。",
+    "合併指令另外抄進 settings.json 的 mergeCommand（tools/merge.js 全綠之後按的是這一條，不是 operations.merge）。它多認兩個記號：{reviewer}＝變更說明「獨立審查者」欄那一位、{merger}＝跑 node tools/merge.js <編號> --merger <識別值> 時自報的那一位；帶 --body 才留得下誰審誰合（規矩 H5；平台上的合併者永遠是共用的那個帳號，這兩行是事後唯一查得到的痕跡）。{sha}＝按鍵前核過的版本，帶 --match-head-commit 平台才會替你擋最後一刻被推上來的新版本。",
+    "requiredChecks 的 app_id：平台用 -1（或不給）表示「任何來源都算」，翻譯成 null；寫成 `if .app_id then` 的話 -1 會被當成一個叫「-1」的產生者，真考卷閘每一支都查不到場次、退 2（搬家前準備；原專案的翻譯就是這樣處理的）。"
+  ],
+  "operations": {
+    "change": [
+      "gh",
+      "pr",
+      "view",
+      "{change}",
+      "-R",
+      "{project}",
+      "--json",
+      "number,title,body,baseRefName,headRefName,headRefOid,state,isDraft,isCrossRepository,autoMergeRequest,changedFiles,author",
+      "--jq",
+      "{id:(.number|tostring),title:.title,body:.body,baseBranch:.baseRefName,headBranch:.headRefName,headSha:.headRefOid,state:.state,isDraft:.isDraft,isCrossRepo:.isCrossRepository,autoMergeOn:(.autoMergeRequest!=null),changedFileCount:(.changedFiles|tostring),author:.author.login}"
+    ],
+    "openChanges": [
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{project}/pulls?state=open&per_page=100",
+      "--jq",
+      "[.[]|{id:(.number|tostring),baseBranch:.base.ref,headBranch:.head.ref,headSha:.head.sha,isDraft:.draft,author:.user.login}]"
+    ],
+    "comments": [
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{project}/issues/{change}/comments?per_page=100",
+      "--jq",
+      "[.[]|{id:(.id|tostring),author:.user.login,body:.body,createdAt:.created_at}]"
+    ],
+    "allComments": [
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{project}/issues/comments?per_page=100",
+      "--jq",
+      "[.[]|{id:(.id|tostring),author:.user.login,body:.body,createdAt:.created_at,change:(.issue_url|split(\"/\")|last)}]"
+    ],
+    "changedFiles": [
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{project}/pulls/{change}/files?per_page=100",
+      "--jq",
+      "[.[]|{path:.filename,status:.status,previousPath:(.previous_filename // null)}]"
+    ],
+    "checks": [
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{project}/commits/{sha}/check-runs?per_page=100",
+      "--jq",
+      "[.check_runs[]|{name:.name,status:.status,conclusion:.conclusion,completedAt:.completed_at,producer:(if .app then (.app.id|tostring) else null end)}]"
+    ],
+    "requiredChecks": [
+      "gh",
+      "api",
+      "repos/{project}/branches/{branch}/protection/required_status_checks",
+      "--jq",
+      "[.checks[]|{name:.context,producer:(if (.app_id // -1) < 0 then null else (.app_id|tostring) end)}]"
+    ],
+    "branchSha": [
+      "gh",
+      "api",
+      "repos/{project}/git/ref/heads/{branch}",
+      "--jq",
+      "{sha:.object.sha}"
+    ],
+    "markReady": [
+      "gh",
+      "pr",
+      "ready",
+      "{change}",
+      "-R",
+      "{project}"
+    ],
+    "merge": [
+      "gh",
+      "pr",
+      "merge",
+      "{change}",
+      "-R",
+      "{project}",
+      "--squash",
+      "--delete-branch"
+    ]
+  },
+  "clearEnv": [
+    "GH_REPO",
+    "GH_HOST"
+  ],
+  "project": "未設定",
+  "mergeCommand": {
+    "command": "gh",
+    "args": [
+      "pr",
+      "merge",
+      "{change}",
+      "-R",
+      "{project}",
+      "--squash",
+      "--delete-branch",
+      "--match-head-commit",
+      "{sha}",
+      "--body",
+      "Reviewed-By: {reviewer}\nMerged-By: {merger}"
+    ]
+  }
+}

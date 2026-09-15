@@ -1,0 +1,24 @@
+# 協作欄位閘的雲端版範本（規矩 E1）——GitHub Actions 版。放到專案的 .github/workflows/collab-fields.yml。
+# 為什麼自己一個檔：它看的是變更說明不是程式碼，所以要訂閱 edited 事件（改說明把欄位刪掉、版本沒動，不重跑就綠燈還在）；
+# 三關那份刻意不訂 edited（改幾個字不該重跑整套考題）。
+# job 名是平台「必過檢查」的比對字串，逐字；改了要同步改平台設定。這一行不可以接 || true，也不可以 continue-on-error。
+name: 協作欄位
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+jobs:
+  collab-fields:
+    name: 協作欄位（實作者 ≠ 獨立審查者）
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: 協作欄位閘
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/gates/check-collab-fields.js ${{ github.event.pull_request.number }}

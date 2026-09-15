@@ -1,0 +1,30 @@
+# 雲端三關範本（規矩 E3）——GitHub Actions 版。放到專案的 .github/workflows/ci.yml。
+# 三關命令的正本在 settings.json（tools/run-checks.js 讀它），這裡不抄。
+# 要在平台上把 job 名設成「必過檢查」而且對管理員一樣生效，否則退化成靠自覺（真考卷閘會讀這個名單）。
+# 草稿也跑：不跑的代價是本機都在同一種作業系統，只有雲端才壞的東西會到轉正式那天才第一次現形。
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: 三關
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+      - name: 三關（照 settings.json 登記的順序）
+        run: node tools/run-checks.js
+
+  # ── 專案自己的雲端檢查放在這下面（三關以外的）──
+  # 搬家時，把專案原本雲端設定裡、這份範本沒有的 job 原樣搬過來——例如相依套件的安全通報、另一個版本的執行環境。
+  # ⚠️ 漏搬不會有任何東西變紅：那一道會靜靜消失，原本會被它擋下的變更照樣合進去（搬家驗屋 09-13 在原專案查到兩道）。
+  # 會擋合併或部署的，搬過來之後一樣要在平台上設成必過檢查。

@@ -1,0 +1,16 @@
+{
+  "description": "禁區攔截器的 Codex 側接線範例（規矩 B1）——專案層裝法。放到專案的 .codex/hooks.json，並在 Codex 介面對這個檔案按過「信任」才會執行（檔案在不等於鎖有效：未信任時一聲不吭地放行）。跟全域層裝法（templates/hook-codex-global.json）二擇一；兩層都裝＝同一支判斷跑兩次，沒有多擋什麼。鉤子在 session 當下所在的目錄執行，所以路徑從版本控制的根目錄算——算之前先清掉 GIT_ 那一族環境變數（規矩 E4：不清的話，環境裡指向別的倉庫就會讀到那個倉庫的清單）；找不到根、找不到檔、起不來，一律轉成退 2（Codex 官方文件認的擋法只有兩種：標準輸出印出拒絕形狀、或退 2 加錯誤輸出；起不來時退的是別的碼，文件沒說會擋）。⚠️ 這一層拒絕時靠標準輸出的拒絕形狀：鉤子若在會往標準輸出印字的登入 shell 裡跑，形狀會被弄壞（全域層那份因此改成拒絕一律退 2）。判斷只有一份＝tools/forbidden-tools.js，跟 Claude 側呼叫同一支。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(for v in $(env | sed -n 's/^\\(GIT_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$v\"; done; git rev-parse --show-toplevel)\" && node \"$root/tools/forbidden-tools.js\" || { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }"
+          }
+        ]
+      }
+    ]
+  }
+}

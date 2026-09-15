@@ -1,0 +1,7 @@
+#!/bin/sh
+# 推送前鉤子範本（規矩 E2）。啟用（每個複本一次）：git config core.hooksPath <放這支的目錄>
+# 它只做兩件事：清掉 GIT_ 那一族環境變數（從連結工作樹推送時 git 會塞 GIT_DIR 進來，原專案因此把倉庫寫成裸倉庫），
+# 然後把三關交給 tools/run-checks.js（三關命令的正本在 settings.json，這裡不抄）。緊急跳過：git push --no-verify（不建議）。
+for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
+unset _gitvar
+node tools/run-checks.js || exit 1

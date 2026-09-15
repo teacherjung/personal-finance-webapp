@@ -47,7 +47,7 @@ export const TIERS = /** @type {const} */ ({
   D: { name: '只動前端', action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },
   P: { name: '原型', action: 'prototype/ 不由 server.js 供應：要看就開原型自己的預覽，不重啟理財 App。' },
   E: { name: '不需驗收', action: '回報寫「不需驗收：只動了 …」。' },
-  F: { name: '工具安全設定', action: '不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse hook）——改它要同步 .codex/hooks.json 那份副本（成對驗會逼）、重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。兩者驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
+  F: { name: '工具安全設定', action: '不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse hook）——改它要同步 .codex/hooks.json 那份副本（成對驗會逼）、重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。兩者驗＝test/codex-money-hook 的身分互鎖與成對驗。｜協作套件那幾份（settings.json、tools/forbidden-tools.js、tools/settings-data.js、tools/guard-copy.js、tools/package.json、templates/hook-*.json）：搬家第 3 步接上鉤子之前不影響任何攔截；接上之後，settings.json 只有 forbidden 那一塊或攔截器程式有動才要做——Claude 側開新對話；Codex 全域層照套件 README「搬進一個專案」第 3 步重抽固定複本、換組、William 重按信任（不重抽＝Codex 照舊清單判，沒有機器提醒）。' },
 });
 
 /** @typedef {keyof typeof TIERS} Tier */
@@ -64,6 +64,11 @@ export const ORDER = /** @type {Tier[]} */ (['A', 'B', 'C', 'D', 'P', 'E']);
 export const RULES = [
   ['F', /^\.codex\/hooks\.json$/],
   ['F', /^\.claude\/settings\.json$/],
+  // 協作套件（搬家第 2 步）的禁區清單與攔截器那幾份：跟上面兩份同一級（William 2026-09-15 裁示：搬家施工計畫第 3 題 a），排在 ^tools\/ 前面
+  ['F', /^settings\.json$/],
+  ['F', /^tools\/(forbidden-tools|settings-data|guard-copy)\.js$/],
+  ['F', /^tools\/package\.json$/],
+  ['F', /^templates\/hook-(claude|codex|codex-global)\.json$/],
   ['A', /^db\//],
   ['B', /^package(-lock)?\.json$/],
   ['C', /^lib\//],
@@ -87,6 +92,11 @@ export const RULES = [
   ['E', /^scripts\/git-hooks\//],
   ['E', /^(eslint\.config\.js|jsconfig\.json|mutate\.sh|\.gitignore)$/],
   ['E', /^\.claude\/launch\.json$/],
+  // 協作套件（搬家第 2 步）其餘的工具、考題、範本與本文來源：不需驗收（同上 3a；RULES.md 等根目錄 .md 已由上面那條涵蓋）
+  ['E', /^tools\//],
+  ['E', /^tests\//],
+  ['E', /^templates\//],
+  ['E', /^rules\.json$/],
 ];
 
 /**
