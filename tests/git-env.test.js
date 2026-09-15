@@ -48,7 +48,7 @@ function snapshot(dir) {
 
 test('整份考卷帶著指向誘餌倉庫的 GIT_DIR 跑：全綠，而且誘餌一個位元組都沒變', { skip: process.env.KIT_NESTED_SUITE === '1' ? '巢狀整卷裡不再巢狀' : false }, () => {
   // 原專案事故的機制：推送前鉤子從連結工作樹跑考題，git 把 GIT_DIR 放進環境；考題裡的 git init／git config
-  // 沒清環境，就寫進真倉庫（案例簿 bare-repo-incident）。這裡把真倉庫換成誘餌。
+  // 沒清環境，就寫進真倉庫（套件倉庫的案例簿 bare-repo-incident；公開紀錄＝personal-finance-webapp #435）。這裡把真倉庫換成誘餌。
   const files = fs.readdirSync(__dirname).filter((f) => f.endsWith('.test.js') && f !== path.basename(__filename)).sort();
   assert.ok(files.length >= 20, `只找到 ${files.length} 支考題：這一題自己的前提變了`);
   const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'git-decoy-'));

@@ -8,8 +8,8 @@
 //
 // 守得到的：兩份宣告在、寫的是 commonjs；在 type:module 的父目錄底下，攔截器照樣印拒絕、合併指令照樣
 //   回用法、考題照樣跑完全綠；對照組（同一個環境拿掉宣告）真的會崩——先證明這個環境真的會產生要防的現象。
-// ⚠️ 守不到的：風格檢查（lint）不看 package.json，要在專案自己的 lint 設定另外說（README「搬進一個專案」）；
-//   專案的型別檢查要不要涵蓋套件檔；Node 22（本機是較新的版本，沒在 22 跑過）。
+// ⚠️ 守不到的：風格檢查（lint）不看 package.json，要在專案自己的 lint 設定另外說（套件倉庫 README「搬進一個專案」；README 不跟著搬進專案）；
+//   專案的型別檢查要不要涵蓋套件檔；Node 22：套件倉庫本身沒有 Node 22 的執行環境（本機是較新的版本），搬進 personal-finance-webapp 之後在它的雲端 Node 22.23.1 跑過全綠（2026-09-15），別的專案要在自己的 Node 版本上跑一次。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');

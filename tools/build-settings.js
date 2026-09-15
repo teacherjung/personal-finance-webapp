@@ -35,7 +35,7 @@ function plain(value, what, { allowEmpty = false } = {}) {
 /**
  * 一條指令（argv 陣列）排成說明書裡的一行。含空白、引號、反斜線、換行或空字串的那一格用 JSON 字串寫，
  * 換行就變成看得見的 \n——說明書那一格不能真的換行，但指令本身可以（搬家修正 r1 B1：合併範本的 --body
- * 要兩行，原本整條 join 起來送進「不准換行」的欄位，照 README 抄完設定產生器就停在那裡）。
+ * 要兩行，原本整條 join 起來送進「不准換行」的欄位，照套件倉庫的 README 抄完設定產生器就停在那裡）。
  * 只是顯示：執行用的永遠是 settings.json 裡的陣列本身。
  */
 function argvText(argv) {
