@@ -22,8 +22,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { cli, probeRun, plantCanaries, sweepCanaries, runCommand, isBlocked, expandZone, minimalEnv, MANIFEST_SUFFIX, UNSET, NONE } = require('../tools/scan-probe.js');
-const { runInCopy } = require('./helpers/kit-copy.js');
+const { spawnSync } = require('node:child_process');
+const { MACHINE, cli, probeRun, plantCanaries, sweepCanaries, runCommand, isBlocked, expandZone, minimalEnv, MANIFEST_SUFFIX, UNSET, NONE } = require('../tools/scan-probe.js');
+const { runInCopy, unfilled } = require('./helpers/kit-copy.js');
+const { gitEnv } = require('../tools/git-env.js');
 
 
 const FAKE = path.join(__dirname, 'helpers', 'fake-isolation.js');
@@ -288,7 +290,7 @@ test('預設執行器：指令起不來＝status null（呼叫端當測不出）
 });
 
 test('指令入口：例外收成退 2，訊息不帶路徑；真的跑一遍指令不會放行', () => {
-  const boom = cli({ settings: { get scanner() { throw Object.assign(new Error('/Users/someone/secret'), { code: 'EBOOM' }); } } });
+  const boom = cli({ settings: { machines: [{ name: MACHINE, state: '已啟用' }], get scanner() { throw Object.assign(new Error('/Users/someone/secret'), { code: 'EBOOM' }); } } });
   assert.equal(boom.code, 2);
   assert.match(boom.lines.join('\n'), /EBOOM/u);
   assert.ok(!boom.lines.join('\n').includes('/Users/someone'), '例外訊息不可以帶路徑');
@@ -407,4 +409,128 @@ test('前綴裡的 {projectRoot} 換成專案根目錄：隔離設定檔住在�
     fs.rmSync(boxRoot, { recursive: true, force: true });
     fs.rmSync(noRoot, { recursive: true, force: true });
   }
+});
+
+test('指令入口：專案沒把這台機器登記已啟用就不跑——試探與埋都什麼都不做；收照樣能收（搬家第 2 步 Grok 複審後掃）', () => {
+  const zone = tempZone();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-canary-out-'));
+  try {
+    const iso = { provider: '專案自建', wrap: [process.execPath, FAKE, '{box}'], boxRoot: UNSET, forbidden: [zone] };
+    const withState = (machines) => ({ machines, scanner: { isolation: iso } });
+    const cases = [
+      ['登記已安裝未啟用', [{ name: MACHINE, state: '已安裝未啟用' }]],
+      ['登記未移植', [{ name: MACHINE, state: '未移植' }]],
+      ['沒有這一列', [{ name: '掃描前試探', state: '已啟用' }]],
+      ['這一列重複', [{ name: MACHINE, state: '已啟用' }, { name: MACHINE, state: '已啟用' }]],
+      ['沒有機器表', undefined],
+    ];
+    for (const [why, machines] of cases) {
+      const out = path.join(work, 'x.txt');
+      for (const argv of [[], ['--plant', out]]) {
+        // 試探會在禁區埋了又收（最後看是空的），所以另外用假執行器數「有沒有動手跑盒內指令」
+        const { run, calls } = fakeRunner(() => ({}));
+        const r = cli({ settings: withState(machines), run }, argv);
+        assert.equal(calls.length, 0, `${why}（${argv.join(' ') || '試探'}）：一個盒內指令都不可以跑`);
+        assert.equal(r.code, 2, `${why}（${argv.join(' ') || '試探'}）：要拒絕`);
+        assert.match(r.lines.join('\n'), /掃描前試探/u, `${why}：訊息要講是哪一台`);
+        assert.deepEqual(fs.readdirSync(zone), [], `${why}（${argv.join(' ') || '試探'}）：禁區裡什麼都不可以有`);
+        assert.ok(!fs.existsSync(out), `${why}：不可以留下清單檔`);
+      }
+    }
+    // 對照組：同一份設定登記已啟用，跨過閘、開始執行探針；埋真的會動手（證明上面的「什麼都沒做」是這一道擋的）
+    const live = fakeRunner(() => ({ status: 1, stdout: '', stderr: 'Operation not permitted' }));
+    cli({ settings: withState([{ name: MACHINE, state: '已啟用' }]), run: live.run }, []);
+    assert.ok(live.calls.length > 0, '對照組：已啟用時跨過閘、開始執行探針（至少叫了一次指令；這個假執行器讓盒外對照不活，所以沒走到盒內那一步）');
+    const planted = cli({ settings: withState([{ name: MACHINE, state: '已啟用' }]) }, ['--plant', path.join(work, 'ok.txt')]);
+    assert.equal(planted.code, 0, planted.lines.join('\n'));
+    assert.equal(fs.readdirSync(zone).filter((n) => n.startsWith('.scan-canary-')).length, 1, '對照組：已啟用就真的埋了');
+    // 收不擋：機器改成未啟用之後，已經埋的照樣收得回來
+    const swept = cli({ settings: withState([{ name: MACHINE, state: '已安裝未啟用' }]) }, ['--sweep', path.join(work, 'ok.txt')]);
+    assert.equal(swept.code, 0, swept.lines.join('\n'));
+    assert.deepEqual(fs.readdirSync(zone), [], '收完禁區是空的');
+    // 名字要跟設定的機器表那一列一字不差（改名時兩邊一起改）
+    assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'settings.json'), 'utf8')).machines.filter((m) => m.name === MACHINE).length, 1, '本倉庫設定的機器表要剛好有這一列');
+  } finally {
+    for (const d of [zone, work]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('真的跑一遍指令（讀複本自己的 settings.json）：機器未啟用＝試探與埋都不碰禁區；已啟用＝真的會碰（接鉤子前批預審）', () => {
+  const zone = tempZone();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-canary-out-'));
+  const PAST = new Date('2001-02-03T04:05:06Z');
+  try {
+    const settingsFor = (state) => {
+      const s = unfilled();
+      const row = s.machines.find((m) => m.name === MACHINE);
+      assert.ok(row, '前提：空白設定裡有這一列');
+      row.state = state;
+      s.scanner.isolation = { provider: '專案自建', wrap: [process.execPath, FAKE, '{box}'], boxRoot: UNSET, forbidden: [zone] };
+      return s;
+    };
+    const out = path.join(work, 'live.txt');
+    for (const argv of [[], ['--plant', out]]) {
+      fs.utimesSync(zone, PAST, PAST);
+      const r = runInCopy('tools/scan-probe.js', argv, { settings: settingsFor('已安裝未啟用') });
+      assert.equal(r.status, 2, `未啟用（${argv.join(' ') || '試探'}）：${r.stdout}`);
+      assert.match(r.stdout, /掃描前試探/u);
+      assert.equal(fs.statSync(zone).mtimeMs, PAST.getTime(), `未啟用（${argv.join(' ') || '試探'}）：禁區一次都不可以被寫（埋了又收也算）`);
+      assert.ok(!fs.existsSync(out), '未啟用：不可以留下清單檔');
+    }
+    // 對照組：同一份設定改成已啟用，試探與埋真的會碰禁區（證明上面的「沒被寫」是這一道擋的，不是這個環境寫不進去）
+    fs.utimesSync(zone, PAST, PAST);
+    const probe = runInCopy('tools/scan-probe.js', [], { settings: settingsFor('已啟用') });
+    assert.notEqual(fs.statSync(zone).mtimeMs, PAST.getTime(), `對照組：已啟用時試探真的在禁區埋過（${probe.stdout}）`);
+    const planted = runInCopy('tools/scan-probe.js', ['--plant', out], { settings: settingsFor('已啟用') });
+    assert.equal(planted.status, 0, planted.stdout);
+    assert.equal(fs.readdirSync(zone).filter((n) => n.startsWith('.scan-canary-')).length, 1, '對照組：已啟用就真的埋了');
+    assert.equal(sweepCanaries({ outFile: out }).code, 0);
+  } finally {
+    for (const d of [zone, work]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('收：只刪絕對路徑、名字 .scan-canary- 開頭、真的是目錄的；相對路徑、名字不對、一般檔案、連結一律不碰、算收不掉', () => {
+  const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scan-canary-out-')));
+  try {
+    const sweepVia = (entries, cwd = work) => {
+      const out = path.join(work, `list-${Math.random().toString(36).slice(2)}.txt`);
+      fs.writeFileSync(out, 'x\n');
+      fs.writeFileSync(`${out}${MANIFEST_SUFFIX}`, `${entries.join('\n')}\n`);
+      // 從固定的工作目錄起子行程跑指令入口（相對路徑要有一個確定的起點，才考得到「相對路徑不刪」）
+      const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'scan-probe.js'), '--sweep', out], { cwd, encoding: 'utf8', env: gitEnv() });
+      return r;
+    };
+    // 相對路徑：真的存在、名字也對，照樣不刪
+    const relDir = path.join(work, 'relative', '.scan-canary-keep');
+    fs.mkdirSync(relDir, { recursive: true });
+    fs.writeFileSync(path.join(relDir, 'important.txt'), 'x');
+    const rel = sweepVia(['relative/.scan-canary-keep']);
+    assert.equal(rel.status, 2, rel.stdout);
+    assert.ok(fs.existsSync(path.join(relDir, 'important.txt')), '相對路徑不可以刪（就算名字對、也真的存在）');
+    // 名字不對的絕對路徑
+    const keep = path.join(work, 'not-a-canary-project-data');
+    fs.mkdirSync(keep);
+    fs.writeFileSync(path.join(keep, 'important.txt'), 'x');
+    assert.equal(sweepVia([keep]).status, 2);
+    assert.ok(fs.existsSync(path.join(keep, 'important.txt')), '名字不是 .scan-canary- 開頭的不可以刪');
+    // 名字對但不是目錄：一般檔案、連結
+    const plainFile = path.join(work, '.scan-canary-ordinary-file');
+    fs.writeFileSync(plainFile, 'x');
+    assert.equal(sweepVia([plainFile]).status, 2);
+    assert.ok(fs.existsSync(plainFile), '一般檔案不可以刪');
+    const linkTarget = path.join(work, 'link-target');
+    fs.mkdirSync(linkTarget);
+    fs.writeFileSync(path.join(linkTarget, 'important.txt'), 'x');
+    const link = path.join(work, '.scan-canary-link');
+    fs.symlinkSync(linkTarget, link);
+    assert.equal(sweepVia([link]).status, 2);
+    assert.ok(fs.lstatSync(link).isSymbolicLink() && fs.existsSync(path.join(linkTarget, 'important.txt')), '連結不可以刪、連結指到的東西也不可以動');
+    // 對照組：合法的絕對路徑目錄照樣收掉、退 0；已經不在的不算失敗
+    const canary = path.join(work, '.scan-canary-abc');
+    fs.mkdirSync(canary);
+    const ok = sweepVia([canary, path.join(work, '.scan-canary-already-gone')]);
+    assert.equal(ok.status, 0, ok.stdout);
+    assert.ok(!fs.existsSync(canary), '對照組：名字對、絕對路徑、真的是目錄＝收掉');
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
 });

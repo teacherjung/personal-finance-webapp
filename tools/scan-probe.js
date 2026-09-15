@@ -6,7 +6,7 @@
 //
 // 它做什麼：在每個登記的禁區各埋一個假機密，從盒內用「確定會嘗試」的程式（cat、sh）去讀、去寫。
 // 任一個讀得到或寫得進＝隔離是假的，不掃（退 1）。連試探自己都做不成＝也不掃（退 2）。
-// 為什麼隔離是誰提供的都要試探：案例簿 tool-lock-flag-silently-failed——工具自己的限制旗標默默失效，
+// 為什麼隔離是誰提供的都要試探：套件倉庫的案例簿 tool-lock-flag-silently-failed——工具自己的限制旗標默默失效，
 // 「廠商說有」不等於「真的有」；而掃描器讀的材料是不可信的輸入，模型再乖也擋不住材料裡夾帶的指令。
 // 用 cat／sh 而不用掃描器本身去試：掃描器會「選擇」不做，那不是圍欄。
 //
@@ -29,6 +29,13 @@
 // 值也從不輸出（刻意的），所以接不到掃描那一段。--plant 埋一批新的並把值寫進一個清單檔給比對用，
 // --sweep 收掉。整條鏈：試探（退 0 才往下走）→ 埋 → 掃 → 比對 → 收。
 // ⚠️ 清單檔裡就是那些值，不要貼進掃描紀錄；收的那一步一定要跑。
+//
+// ## 指令入口只在專案把這台機器登記「已啟用」時才動手
+//
+// 試探與埋都會照設定的**真實**禁區放假機密。專案把套件搬進來、還沒決定用它的時候，有人照 MACHINES.md
+// 的「已就位」去跑（那一欄描述的是套件倉庫），就會在真家目錄埋東西（搬家第 2 步 Grok 複審後掃第 1 條）。
+// 所以指令入口先看設定機器表裡這一列：沒有、不是剛好一列、或登記不是「已啟用」＝拒絕、什麼都不做（退 2）。
+// 收（--sweep）不擋：它只刪清單檔上記的那些，擋了反而收不回來。考題直接呼叫 probeRun／plantCanaries 並自帶設定，不經過這一道。
 'use strict';
 const fs = require('node:fs');
 const os = require('node:os');
@@ -38,6 +45,16 @@ const { spawnSync } = require('node:child_process');
 const { read: readSettings } = require('./build-settings.js');
 
 const UNSET = '未設定';
+/** 這支在專案機器表裡的那一列（名字跟 settings.json 一字不差）。 */
+const MACHINE = '掃描前試探（禁區各埋一個假機密，從盒內試讀試寫；隔離本身由專案設定指定誰提供）';
+
+/** 專案沒把這台機器登記已啟用＝回原因；已啟用＝null。 */
+function notEnabled(settings) {
+  const rows = settings && Array.isArray(settings.machines) ? settings.machines.filter((m) => m && m.name === MACHINE) : [];
+  if (rows.length !== 1) return `設定的機器表裡「掃描前試探」要剛好一列（現在 ${rows.length} 列）`;
+  if (rows[0].state !== '已啟用') return `這個專案把「掃描前試探」登記成「${rows[0].state}」：還沒啟用就不跑（它會照設定的真實禁區埋假機密）`;
+  return null;
+}
 const NONE = '無';
 const READER = '/bin/cat';
 const SHELL = '/bin/sh';
@@ -250,6 +267,13 @@ function sweepCanaries({ outFile } = {}) {
   catch (e) { return { code: 2, lines: [`收不掉：清單檔讀不到（${e.code || '讀取失敗'}）——埋在哪不知道，請自己去禁區找 .scan-canary-* 目錄。`] }; }
   let failed = 0;
   for (const dir of dirs) {
+    // 只刪符合命名條件的：絕對路徑、名字以 .scan-canary- 開頭、真的是目錄（不是連結或一般檔案）。清單檔被改過或寫錯時，別的東西一律不碰、算收不掉
+    // （這只是命名與型別條件，證明不了「確實是這一次埋的」）
+    // （這個動作在機器未啟用時也跑，安全只能靠這一道；接鉤子前批預審）
+    if (!path.isAbsolute(dir) || !path.basename(dir).startsWith('.scan-canary-')) { failed += 1; continue; }
+    let st;
+    try { st = fs.lstatSync(dir); } catch (e) { if (e.code !== 'ENOENT') failed += 1; continue; }   // 已經不在＝不必收
+    if (!st.isDirectory()) { failed += 1; continue; }   // 這支埋的一律是目錄：一般檔案、連結一律不碰
     try { fs.rmSync(dir, { recursive: true, force: true }); }
     catch { failed += 1; }
   }
@@ -266,11 +290,14 @@ function sweepCanaries({ outFile } = {}) {
 function cli(opts = {}, argv = []) {
   const arg = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
   try {
-    const plant = arg('--plant');
-    if (plant) return plantCanaries({ ...opts, outFile: plant });
     const sweep = arg('--sweep');
-    if (sweep) return sweepCanaries({ ...opts, outFile: sweep });
-    return probeRun(opts);
+    if (sweep) return sweepCanaries({ ...opts, outFile: sweep });   // 收不擋：只刪清單檔上記的、絕對路徑、名字 .scan-canary- 開頭而且真的是目錄的
+    const settings = opts.settings || readSettings();
+    const off = notEnabled(settings);
+    if (off) return { code: 2, lines: [`${off}。要用它，先在 settings.json 把那一列改成已啟用、重產設定說明，再跑。`] };
+    const plant = arg('--plant');
+    if (plant) return plantCanaries({ ...opts, settings, outFile: plant });
+    return probeRun({ ...opts, settings });
   } catch (e) {
     return { code: 2, lines: [`試探做不成（${(e && e.code) || '未預期的錯誤'}）：不掃。`] };
   }
@@ -282,4 +309,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { cli, probeRun, plantCanaries, sweepCanaries, runCommand, isBlocked, expandZone, minimalEnv, MANIFEST_SUFFIX, UNSET, NONE };
+module.exports = { MACHINE, notEnabled, cli, probeRun, plantCanaries, sweepCanaries, runCommand, isBlocked, expandZone, minimalEnv, MANIFEST_SUFFIX, UNSET, NONE };

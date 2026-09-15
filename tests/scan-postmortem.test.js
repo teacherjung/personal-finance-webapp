@@ -139,14 +139,16 @@ test('讀不到、讀不進的輸出算驗不了，而且名字先遮蔽；不�
   assert.equal(clean.code, 2, '讀不進＝驗不到＝不能說乾淨');
 });
 
-test('收集器遇到讀不到的檔與進不去的目錄：照實記成驗不了，不丟例外', () => {
+// ⚠️ 以 root 身分跑時，權限 000 的檔與目錄照樣讀得到，這一題證明不了什麼：跳過並寫明原因（不是靜靜通過）
+const ROOT_USER = typeof process.getuid === 'function' && process.getuid() === 0;
+test('收集器遇到讀不到的檔與進不去的目錄：照實記成驗不了，不丟例外', { skip: ROOT_USER ? '以 root 跑：權限 000 擋不住 root，造不出「讀不到」' : false }, () => {
   const dir = tempDir();
+  const locked = path.join(dir, 'locked.jsonl');
+  const lockedDir = path.join(dir, 'lockeddir');
   try {
     fs.writeFileSync(path.join(dir, 'ok.jsonl'), '{}\n');
-    const locked = path.join(dir, 'locked.jsonl');
     fs.writeFileSync(locked, 'x\n');
     fs.chmodSync(locked, 0o000);
-    const lockedDir = path.join(dir, 'lockeddir');
     fs.mkdirSync(lockedDir);
     fs.writeFileSync(path.join(lockedDir, 'inner.jsonl'), 'x\n');
     fs.chmodSync(lockedDir, 0o000);
@@ -155,9 +157,11 @@ test('收集器遇到讀不到的檔與進不去的目錄：照實記成驗不�
     assert.equal(out.over, '');
     assert.ok(out.outputs.some((o) => o.where === 'locked.jsonl' && o.unreadable), '讀不到的檔要記成驗不了');
     assert.ok(out.outputs.some((o) => o.where === 'lockeddir' && o.unreadable), '進不去的目錄要記成驗不了');
-    fs.chmodSync(locked, 0o600);
-    fs.chmodSync(lockedDir, 0o700);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    // 權限先還原再刪：斷言中途失敗時，刪 000 的目錄會丟 EACCES、蓋掉原本的失敗訊息
+    for (const p of [locked, lockedDir]) { try { fs.chmodSync(p, 0o700); } catch { /* 還沒建 */ } }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('指令入口：缺參數、機密檔讀不到、回覆讀不到、日誌收不起來，都退 2 且不印路徑', () => {
@@ -200,7 +204,8 @@ test('指令入口：回覆與日誌都真的進了比對（任一邊漏掉就�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('真的跑一遍指令：日誌區有一個「檔名就是機密、而且讀不到」的檔，退 2 且兩個輸出流都不帶機密', () => {
+// ⚠️ 以 root 跑時那個檔讀得到，「讀不到」這一半沒考到；「檔名本身就是機密＝命中＝退 1」那一半照樣有考
+test('真的跑一遍指令：日誌區有一個「檔名就是機密、而且讀不到」的檔，退 1（事故）且兩個輸出流都不帶機密', () => {
   const dir = tempDir();
   try {
     const secrets = path.join(dir, 'secrets.txt');
@@ -210,8 +215,8 @@ test('真的跑一遍指令：日誌區有一個「檔名就是機密、而且�
     const trap = path.join(logs, `${SECRET}.jsonl`);
     fs.writeFileSync(trap, 'harmless\n');
     fs.chmodSync(trap, 0o000);
-    const r = spawnSync(process.execPath, [TOOL, '--secrets', secrets, '--logs', logs], { encoding: 'utf8' });
-    fs.chmodSync(trap, 0o600);
+    let r;
+    try { r = spawnSync(process.execPath, [TOOL, '--secrets', secrets, '--logs', logs], { encoding: 'utf8' }); } finally { fs.chmodSync(trap, 0o600); }
     const both = `${r.stdout || ''}${r.stderr || ''}`;
     assert.notEqual(r.status, null, '不可以被訊號殺掉');
     assert.ok(!both.includes(SECRET), `機密不可以出現在任何輸出流：\n${both}`);
