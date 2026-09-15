@@ -103,6 +103,10 @@ const DOCS = {
   'PROJECT.md': { readers: 'all', title: '個人理財中心（榮祥森）— 專案共同記憶' },
   'README.md': { readers: 'all', title: '個人理財中心' },
   'COLLAB-MAP.md': { readers: 'all', title: '協作規矩地圖' },   // 路由表；它自己的射程與劃界＝test/collab-map.test.js 檔頭
+  // 協作套件 ai-collab-kit 的三份根目錄文件（搬家第 2 步放進來；切換日之前不生效，正本仍是 AGENTS／REVIEW-AND-MERGE）
+  'RULES.md': { readers: 'all', title: '協作規矩本文' },
+  'MACHINES.md': { readers: 'all', title: '機器索引' },
+  'PROJECT-SETTINGS.md': { readers: 'all', title: '專案設定' },
 };
 
 test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是工具規定的檔名）', () => {

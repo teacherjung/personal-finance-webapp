@@ -47,7 +47,7 @@ export const TIERS = /** @type {const} */ ({
   D: { name: '只動前端', action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },
   P: { name: '原型', action: 'prototype/ 不由 server.js 供應：要看就開原型自己的預覽，不重啟理財 App。' },
   E: { name: '不需驗收', action: '回報寫「不需驗收：只動了 …」。' },
-  F: { name: '工具安全設定', action: '不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse hook）——改它要同步 .codex/hooks.json 那份副本（成對驗會逼）、重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。兩者驗＝test/codex-money-hook 的身分互鎖與成對驗。' },
+  F: { name: '工具安全設定', action: '不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse hook）——改它要同步 .codex/hooks.json 那份副本（成對驗會逼）、重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。兩者驗＝test/codex-money-hook 的身分互鎖與成對驗。｜協作套件那幾份：搬家第 3 步接上鉤子之前不影響任何攔截。接上之後分兩類——①執行時會讀的（settings.json 的 forbidden 那一塊、tools/forbidden-tools.js、tools/settings-data.js、tools/package.json）：Claude 側鉤子每次呼叫都重讀那棵樹的這幾份，改檔（含沒提交的改動、切分支）下一次工具呼叫就生效；Codex 全域層讀的是固定複本，要在合併後的主幹上跑 node tools/guard-copy.js 重抽、關掉所有 Codex 視窗、在原位置換上新印出的那一組、William 重按信任、叫清單上刻意放的那個無害測試工具（搬家第 3 步照第 8 題 a 另外加進 forbidden.deny、跟錢無關的名字；在那之前清單上沒有這種工具）確認被這一組拒絕——絕不可以拿清單上會動到錢的工具來試，最後才刪舊複本。②只在安裝時用的（templates/hook-claude.json、templates/hook-codex.json、templates/hook-codex-global.json、tools/guard-copy.js）：已裝好的鉤子不會重讀它們——範本的指令有改，就要把新指令換進已安裝的那一份（Claude 側＝專案 .claude/settings.json 那一組、改完開新對話；Codex 專案層＝.codex/hooks.json、重按信任；Codex 全域層＝照①重抽並換組、重按信任）；只改 tools/guard-copy.js 而範本沒改，已安裝的不受影響，下次抽複本才用到。不做＝繼續跑舊指令或舊清單，沒有機器提醒。步驟與目的地規則＝tools/guard-copy.js 檔頭與 templates/hook-codex-global.json 的說明。' },
 });
 
 /** @typedef {keyof typeof TIERS} Tier */
@@ -64,6 +64,11 @@ export const ORDER = /** @type {Tier[]} */ (['A', 'B', 'C', 'D', 'P', 'E']);
 export const RULES = [
   ['F', /^\.codex\/hooks\.json$/],
   ['F', /^\.claude\/settings\.json$/],
+  // 協作套件（搬家第 2 步）的禁區清單與攔截器那幾份：跟上面兩份同一級（William 2026-09-15 裁示：搬家施工計畫第 3 題 a），排在 ^tools\/ 前面
+  ['F', /^settings\.json$/],
+  ['F', /^tools\/(forbidden-tools|settings-data|guard-copy)\.js$/],
+  ['F', /^tools\/package\.json$/],
+  ['F', /^templates\/hook-(claude|codex|codex-global)\.json$/],
   ['A', /^db\//],
   ['B', /^package(-lock)?\.json$/],
   ['C', /^lib\//],
@@ -87,6 +92,11 @@ export const RULES = [
   ['E', /^scripts\/git-hooks\//],
   ['E', /^(eslint\.config\.js|jsconfig\.json|mutate\.sh|\.gitignore)$/],
   ['E', /^\.claude\/launch\.json$/],
+  // 協作套件（搬家第 2 步）其餘的工具、考題、範本與本文來源：不需驗收（同上 3a；RULES.md 等根目錄 .md 已由上面那條涵蓋）
+  ['E', /^tools\//],
+  ['E', /^tests\//],
+  ['E', /^templates\//],
+  ['E', /^rules\.json$/],
 ];
 
 /**

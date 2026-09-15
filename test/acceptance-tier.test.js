@@ -99,6 +99,7 @@ test('⭐ 每一條規則的級別逐條釘住：多一條規則、或把任何�
   /** 與 RULES **同序**，每條一個代表路徑；新增規則就得在這裡補一行（長度對不上就紅）。 @type {[string, string][]} */
   const RULE_SAMPLES = [
     ['F', '.codex/hooks.json'], ['F', '.claude/settings.json'],
+    ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'], ['F', 'tools/package.json'], ['F', 'templates/hook-codex-global.json'],   // 協作套件（搬家第 2 步）
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
     ['C', 'lib/store.js'], ['C', 'server.js'], ['C', 'start.command'], ['C', '.node-version'], ['C', 'render.yaml'],
@@ -108,6 +109,7 @@ test('⭐ 每一條規則的級別逐條釘住：多一條規則、或把任何�
     ['E', 'test/x.test.js'], ['E', 'test-doubles/x.js'], ['E', 'docs/contracts/README.md'], ['E', 'AGENTS.md'], ['E', '.github/workflows/ci.yml'],
     ['E', 'data/seed.json'],   // 只在空庫首次啟動時種進去，重啟驗不到（Grok #573 掃後）
     ['E', 'scripts/grok-scan.js'], ['E', 'scripts/grok-sandbox.sb'], ['E', 'scripts/git-hooks/pre-push'], ['E', 'eslint.config.js'], ['E', '.claude/launch.json'],
+    ['E', 'tools/merge.js'], ['E', 'tests/merge.test.js'], ['E', 'templates/pre-push'], ['E', 'rules.json'],   // 協作套件（搬家第 2 步）
   ];
   assert.equal(RULE_SAMPLES.length, RULES.length, 'RULES 與 RULE_SAMPLES 條數不同——新增／刪除規則要同步這張表');
   RULE_SAMPLES.forEach(([tier, sample], i) => {

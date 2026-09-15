@@ -1,0 +1,4 @@
+{
+  "description": "套件的考題是 CommonJS。專案根目錄若宣告 type:module，這一份讓 tests/ 底下照 CommonJS 載入；搬家時連它一起搬，不可以刪（tests/placement.test.js）。",
+  "type": "commonjs"
+}

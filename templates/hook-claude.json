@@ -1,0 +1,19 @@
+{
+  "_說明": "禁區攔截器的 Claude 側接線範例（規矩 B1）。放到專案的 .claude/settings.json；判斷只有一份＝tools/forbidden-tools.js，這裡不抄判斷。deny 那一格填逐字禁止的工具名（跟 settings.json 的 forbidden.deny 同一份，這裡只是平台自己的第二道）。鉤子在 AI 當下所在的目錄執行、不一定是專案根目錄，所以路徑用平台給的專案根變數；而兩家 AI 都只把「退 2」或「印出拒絕」當成擋，攔截器起不來（找不到檔、沒有 node、載入就崩）時退的是別的碼＝放行，所以指令尾巴把起不來一律轉成退 2。沒啟用的那一方等於沒有。",
+  "permissions": {
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/tools/forbidden-tools.js\" || { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }"
+          }
+        ]
+      }
+    ]
+  }
+}
