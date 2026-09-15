@@ -734,7 +734,7 @@ function assertCopyBoundaries(copy, doc) {
 
 test('★文案｜不可承諾程式撐不住的事（Codex #520 r1#2／r2#2／r2#4）', () => {
   const src = read('public/modules/cards.js');
-  const doc = read('docs/帳單匯入與分類-運作說明.md');
+  const doc = read('docs/statement-import-and-categorization.md');
   const copy = src.slice(src.indexOf('const ISSUER_INFO_HTML'), src.indexOf('const TYPE_LABEL'));
 
   // ①「挑了清單就會自動認卡」是假的：清單絕大多數機構沒有內建範本 ⇒ 挑了也掛不上機構身分。
@@ -927,7 +927,7 @@ test('★突變｜接線題與文案題拿掉守門會紅（跑的是**同一份
   // ⚠️ 突變後的內容必須餵**原題用的那份**判準函式、斷言它 throw——把 regex／字串抄一份
   //    再自己斷言是**自我證明**：判準走散時，突變題斷言的是過期副本，不是原題會不會紅。
   const src = read('public/modules/cards.js');
-  const doc = read('docs/帳單匯入與分類-運作說明.md');
+  const doc = read('docs/statement-import-and-categorization.md');
   const copyOf = (/** @type {string} */ s2) => s2.slice(s2.indexOf('const ISSUER_INFO_HTML'), s2.indexOf('const TYPE_LABEL'));
   // 基準：未突變時兩份判準都要綠（否則下面的 throws 是恆真）
   assertPicklistWiring(src);

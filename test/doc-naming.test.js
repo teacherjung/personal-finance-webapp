@@ -185,28 +185,9 @@ test('⭐ 改名之後不可以有死連結（比對命中處的上下文，不�
  * ⚠️ 逐一列出，不是「`docs/` 底下放行」——那樣新增 `docs/新規格.md` 也會過（Codex #387 r2 High②）。
  * 要改名得同步更新本名單與每一個實際引用處（引用自己 grep，別靠印象——凍結名單只有一部分
  * 被 AGENTS 引用，mutate.sh 也不是每份契約都引用；誰有實際引用就同步誰，#399 三檔改名即一例）。
+ * 2026-09-15：原本 19 份全部改成英文名，名單清空（William 裁示：協作套件搬家施工計畫第 1 題選 a）。
  */
-const LEGACY_NON_ASCII_PATHS = [
-  'docs/C6-部署與對抗審查-操作手冊.md',
-  'docs/GitHub分支保護-設定與驗證.md',
-  'docs/archive/PROJECT-完工紀錄.md',
-  'docs/archive/個股研究頁-P1-交接.md',
-  'docs/archive/月度回顧-施工計畫.md',
-  'docs/archive/目標追蹤-施工計畫.md',
-  'docs/archive/證券交易-設計藍圖.md',
-  'docs/archive/階段B-骨架改建-施工計畫.md',
-  'docs/個股基本面研究-施工計畫.md',
-  'docs/個股研究頁-施工計畫.md',
-  'docs/個股研究頁-裁決與審查回覆.md',
-  'docs/功能候選清單.md',
-  'docs/多人上線-施工計畫.md',
-  'docs/安全與健壯性-待辦地圖.md',
-  'docs/帳單匯入與分類-運作說明.md',
-  'docs/文案審稿-雲端版的九句假話.md',
-  'docs/每日洞察引擎-施工計畫.md',
-  'docs/測試覆蓋率地圖.md',
-  'docs/系統優化-施工計畫.md',
-];
+const LEGACY_NON_ASCII_PATHS = [];
 
 test('⭐ 檔名一律用英文（William 2026-08-03 定）——既有名單凍結，只出不進', () => {
   // ⚠️ 上一版只掃根目錄與 `test/`，於是新增 `docs/新的規格.md`、`lib/中文.js`、

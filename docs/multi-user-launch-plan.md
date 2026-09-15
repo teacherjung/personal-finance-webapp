@@ -18,7 +18,7 @@
 | ⑦ | 四處「只存這台電腦」文案 | **仍在等 William 審稿**（Claude 起草）。其中「伺服器啟動訊息」那一處已在 PR #344 修掉（不是 UI、不需審稿） | 待辦 |
 
 > **狀態（2026-08-05 更新）：C0 裁決完成；C1／C2／C3／C4a／C4b／C5 已上線；C6 首次部署與對抗驗收已完成**
-> （2026-07-29 William 實跑 https://noteasy-wp1j.onrender.com，九組考題 16 題全過、0 失敗，含直打真 Supabase REST 驗 RLS；紀錄見 `docs/C6-部署與對抗審查-操作手冊.md`）。
+> （2026-07-29 William 實跑 https://noteasy-wp1j.onrender.com，九組考題 16 題全過、0 失敗，含直打真 Supabase REST 驗 RLS；紀錄見 `docs/c6-deploy-and-adversarial-review-runbook.md`）。
 > **未收官的是後續項**：per-user KV 配額、Cloudflare、Render Starter、上線監控，以及 **C7（真實資料上線＋DNS）**。（npm audit 進 CI 已於 2026-09-05 收掉）
 > `NOTEASY_HOSTED` 沒設＝LOCAL＝你的 Mac 現狀，這些改動一行都影響不到。
 > 定稿架構（William 2026-07-27 拍板）：**Render 託管＋Supabase Auth＋GoDaddy DNS（noteasy.com.tw）＋邀請制註冊**。

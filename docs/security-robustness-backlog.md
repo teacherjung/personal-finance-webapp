@@ -47,7 +47,7 @@
 - ⚠️ **上面整節（開機快照／每天一顆／保留 30 天）只適用 LOCAL**：
   `dailyBackupIfDue()` 在 HOSTED **刻意什麼都不做**（Render 的檔案系統是暫時性的，
   備份寫完就隨下次部署消失＝假的安全帶）。**HOSTED 的備份在資料庫層**——
-  Supabase Pro 的 `Daily backups` ＋7 天保留（見多人上線-施工計畫 裁決①②）。
+  Supabase Pro 的 `Daily backups` ＋7 天保留（見 multi-user-launch-plan.md 裁決①②）。
 
 ## 🟢 多人化項目：HOSTED 已上線（2026-08-02 校正，原本整節掛在 🔴）
 
@@ -109,7 +109,7 @@
 它只涵蓋「自我體檢那一輪列出來的項目」。多人上線那條線還有一批殘餘缺口
 ——per-user KV 容量配額、Cloudflare、Render Starter、上線監控、四處「只存這台電腦」文案待審，
 以及 C7（真實資料上線＋DNS）——
-**完整清單在 [多人上線-施工計畫](多人上線-施工計畫.md)：狀態列「未收官的是後續項」那一段，加上「已拍板裁決速查」表裡標「待辦」的列**，不在這裡。
+**完整清單在 [multi-user-launch-plan](multi-user-launch-plan.md)：狀態列「未收官的是後續項」那一段，加上「已拍板裁決速查」表裡標「待辦」的列**，不在這裡。
 
 > ✅ 完成紀錄（2026-09-05，PR #563）：`npm audit` 已進 CI——required job 擋 high 以上、探照燈 job 全量只印；從上面的殘餘缺口列移除。
-> ✅ 校正紀錄（2026-09-05，PR #568）：「真環境的 RLS／session／CSRF／DoS 驗收」＝C6 首次部署及對抗驗收，2026-07-29 已完成（紀錄見 [C6-部署與對抗審查-操作手冊](C6-部署與對抗審查-操作手冊.md) 的首次驗收紀錄）；從上面的殘餘缺口列移除。
+> ✅ 校正紀錄（2026-09-05，PR #568）：「真環境的 RLS／session／CSRF／DoS 驗收」＝C6 首次部署及對抗驗收，2026-07-29 已完成（紀錄見 [c6-deploy-and-adversarial-review-runbook](c6-deploy-and-adversarial-review-runbook.md) 的首次驗收紀錄）；從上面的殘餘缺口列移除。

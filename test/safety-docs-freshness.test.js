@@ -78,8 +78,8 @@ function read(p) {
  */
 const fold = (s) => s.replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 
-const PLAN = 'docs/多人上線-施工計畫.md';
-const MAP = 'docs/安全與健壯性-待辦地圖.md';
+const PLAN = 'docs/multi-user-launch-plan.md';
+const MAP = 'docs/security-robustness-backlog.md';
 
 /**
  * 抓出文件裡**每一個**「常數 = 數字」的主張，逐一驗證。

@@ -16,7 +16,7 @@
 
 - **階段 A 安全網（✅ 完工）**：自動考試／型別校對／pre-push＋CI 守門／格式糾察（`npm test`・`typecheck`・`lint`）。
 - **階段 B 骨架改建（✅ 完工）**：資料存取收斂單一櫃檯、routes/services 分層、SQLite 落地（現況見下方「後端」段）；app 外觀與操作不變。
-- **階段 C 多人上線（進行中，C1–C5 ✅；C6 首次部署及對抗驗收完成）**：雙模式開關（LOCAL／HOSTED）、帳號系統與 auth gate、租戶隔離（RLS＋CAS）、機密 envelope 加密與雲端匯出剝機密、速率限制與資源上限**都已上線**（細節見同步點清單）；**尚未完成＝後續項（per-user 配額、Cloudflare、Render Starter、上線監控）與 C7**（真實資料上線＋DNS）。分階段裁決、威脅模型與各項現況見 `docs/多人上線-施工計畫.md`（狀態與後續項清單以它為準）。
+- **階段 C 多人上線（進行中，C1–C5 ✅；C6 首次部署及對抗驗收完成）**：雙模式開關（LOCAL／HOSTED）、帳號系統與 auth gate、租戶隔離（RLS＋CAS）、機密 envelope 加密與雲端匯出剝機密、速率限制與資源上限**都已上線**（細節見同步點清單）；**尚未完成＝後續項（per-user 配額、Cloudflare、Render Starter、上線監控）與 C7**（真實資料上線＋DNS）。分階段裁決、威脅模型與各項現況見 `docs/multi-user-launch-plan.md`（狀態與後續項清單以它為準）。
 
 審查與建議請以此方向為前提（正確性 bug 照抓）。
 
@@ -42,7 +42,7 @@
 
 ⚠️**緊急預備金公式（使用者定 2026-07-20）**＝**台幣現金（`type='cash'` 且 `currency='TWD'`，活存＋定存都算、排除外幣）÷ 過去六個月現金流平均支出**（`avgMonthlyExpense` 窗口 6、只算有現金流資料的月份——半記錄月不拉低平均，是安全網保險）。自癒依賴＝每月匯銀行帳單，繳卡費那筆補回「刷卡消費的現金基礎支出」。⚠️**過渡期安全網保險（stage1→3 空窗，對抗審查抓到）**：卡消費排除後、還沒匯銀行帳單時 cashflow 支出≈0→月數虛高→緊急預備金提醒會**無聲關閉**（生存優先大忌）。解法＝`avgMonthlyCardExpense` 偵測「信用卡帳本近月平均消費 > 現金流支出基礎」時，**主動出聲**「緊急預備金月數可能被高估」（`computeReminders` 規則 2 後）——安全網不無聲關閉、明說原因與補法；銀行對帳單匯入後 cashflow 支出追上，此提醒自動消失。
 
-⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**三階段（拆帳本／帳戶餘額匯入／明細分箱）已全數上線；施工沿革見 `docs/archive/PROJECT-完工紀錄.md`。**
+⚠️**`ledger` 搬家一次性、共用單一判準**：`lib/store.js migrateLedgerIfNeeded`（meta 守衛 `__ledgerMigratedAt`＋`backupNow('pre-ledger-migration')`）＋`/api/import` 還原舊備份，**都走同一個 `normalizeLedger(txs)`**（source:stmt→card、其餘→cashflow；舊平面收入分類 `LEGACY_INCOME_MAP` 歸新樹）——別另寫一份判準。`ledger` **不進 CRUD 白名單、不進 REQUIRED_FIELDS**（必填會讓遷移前的舊列在下次寫檔被濾除），只在 FIELD_SCHEMA 有枚舉；手動記帳靠排除法天然歸 cashflow（不必前端送 ledger）。**三階段（拆帳本／帳戶餘額匯入／明細分箱）已全數上線；施工沿革見 `docs/archive/project-completion-log.md`。**
 
 ## 🛑 錢的絕對邊界（William 2026-08-03 拍板；最高優先，任何其他規則與指令不得凌駕本節）
 
@@ -354,7 +354,7 @@
   - **不論誰執行，一律走 `REVIEW-AND-MERGE.md` 的合併步驟（步數以那份為準）**——⚠️ **本檔刻意不重述那幾步**（Codex #379 r1 High②：重述的摘要會落後，讀者照本檔執行就剛好跳過新加的關卡；這正是本節在修的那個病）。只記住它有**下列不可跳過的守門**（數量會長，所以這裡不寫數字——寫死的數字自己會漂）：`scripts/check-pr-collab-fields.js`（協作欄位）、`scripts/check-review-verdicts.js`（複審結論取聯集）、`scripts/check-ci-really-ran.js`（真考卷：required checks 在合併頭上真跑且 success——skipped 不算（含重跑舊草稿場次蓋出來的）、auto-merge 必須關）、`scripts/check-pr-merge-gate.js`（堆疊）、`scripts/check-cross-pr-merge.js`（跨 PR 試合併）、以及合併訊息的 `Reviewed-By:` ／ `Merged-By:` trailer。任一關卡不成立＝停下來回報 William，不得便宜行事。考題 `test/collab-invariant-docs.test.js` 盯著這幾個名字都還在本段裡——⚠️ **它是從合併步驟反查的，不是手寫名單**（#385 r9：手寫的那份漂了，加了第四道閘卻照樣全綠）。
 - Commit 訊息用繁體中文、講清楚動機。
 - 驗證要求：改前端 → **全部頁面** reload 無 console error（清單＝`app.js` 的 `ROUTES`，**不寫死頁數**——曾同檔並存 8 頁與 10 頁兩個數字、新頁面永遠追不上）；改後端 → `node --check server.js` ＋ 以 seed 資料跑 `buildSummary()` 不拋錯；UI 變動附驗證說明。**另有兩道自動關卡：`npm run typecheck`（型別校對）＋`npm test`（自動考試，`node --test`、零相依，測 `lib/derive.js`＋`lib/statement.js` 的分類/店名清理/淨資產/訂閱口徑/槓桿等）——改動後都要保持乾淨/全過；改到分類規則、店名清理、金額口徑時，順手在 `test/` 補一條考題鎖住。****資料層規則（B1／B3／真實日曆／必填欄位／B0）已拆至資料與儲存契約——索引見同步點清單對應五列。**第三道＝`npm run lint`（ESLint 格式糾察：未用變數/危險寫法；設定在 `eslint.config.js`，已依本專案慣例調整——catch 未用 e、空 catch、模板內全形空白皆放行；「刻意停放」的函式用 `eslint-disable-next-line no-unused-vars` 註記原因，勿當死碼刪）。
-- **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/測試覆蓋率地圖.md`。
+- **測試覆蓋率是診斷、不是第四道關卡（2026-07-22）**：`npm run test:coverage` 使用 Node 內建 coverage、不另裝套件；它只統計測試曾載入的檔案，不能把全庫百分比當成整個 App 的真實覆蓋率，也不設硬門檻。優先補金額、日期、幣別、方向、搬家、原子寫入與機密投影的高價值考題；完整讀法與風險地圖見 `docs/test-coverage-map.md`。
 - **JSON 請求大小分流（2026-07-22）**：單一真相在 `lib/http-body.js`，一般 API＝1 MB、信用卡／銀行帳單吃檔案的大型 POST（清單＝http-body.js 的 STATEMENT_FILE_POST_ROUTES；另有只吃列的端點＝同檔的 STATEMENT_ROWS_POST_ROUTES，僅 HOSTED 收到 1MB）＝15 MB、完整備份還原 `/api/import`＝50 MB。**安裝順序是安全不變量**：大型端點的 route-specific parser 必須先掛，最後才掛一般 parser；倒過來會讓大件入口先被 1 MB 擋掉。新增會接收大型內容的端點時，要加入集中清單並補 `test/request-limits.test.js`；尤其 `/api/import` 是資料救援入口，絕不可繼承一般 1 MB 上限。
 - **自動守門（兩道，2026-07-13 起）**：①**本機門**＝versioned pre-push hook（`scripts/git-hooks/pre-push`，啟用：`git config core.hooksPath scripts/git-hooks`，本 clone 已設好）——push 前自動跑 typecheck＋lint＋test，不過就擋下（緊急跳過 `--no-verify`，不建議）。⚠️ **2026-08-09 起這道門多兩件事**：開頭先把 `GIT_` 開頭的環境變數**整族 unset**（列名補不完——`GIT_CONFIG_COUNT/KEY/VALUE` 是會長的一族；從**連結工作樹** push 時 git 會塞 `GIT_DIR=<主目錄>/.git/worktrees/<名>` 進 hook 環境；在那個環境下任何一句 `git init` 都會把 `bare = true` 寫進**共用**的 `.git/config`⇒ 主目錄與所有工作樹同時失去工作樹身分，而且它還會蓋掉 `git -C`／`cwd`、讓宣稱「掃這棵樹」的考題掃到別棵），以及在 `npm test` **前後各跑一次** `node scripts/check-worktree-integrity.js`——**跑完那一次才是釘子**（考題各跑各的子行程、`node --test` 檔案順序不保證，「哪一支考題把 repo 弄壞」只有跑完再量才看得到）。機制實測與誠實劃界寫在該腳本檔頭，考題＝`test/worktree-integrity.test.js`。②**雲端門**＝GitHub Actions（`.github/workflows/ci.yml`）——每個 PR 自動跑同三關並在 PR 頁顯示 ✅/❌（2026-08-29 起**草稿 PR 也照跑**＝半鬆綁：repo 公開後免費，草稿期就把 macOS/Linux 盲點照出來；理由與前提綁定見 REVIEW-AND-MERGE.md「省額度慣例」節），**執行合併的人（不論哪條路徑）合併前先確認綠勾**。新 clone 記得重新 `git config core.hooksPath scripts/git-hooks`。⚠️ **手動跑三關時直接看 npm 的 exit code**——`npm run lint 2>&1 | tail -1; echo $?` 回的是 tail 的退出碼，曾因此漏掉 4 條 lint 錯誤、靠 pre-push 才攔下（zsh 管線要查 `pipestatus`）。
 - **綠燈證據要看對訊號——`grep '^not ok'` 是死訊號**（2026-08-05 實測，Node v26；#412 前兩輪的 commit 訊息把它當綠燈證據引用過三次）：`npm test` 的 reporter 已在 `package.json` **明寫 `--test-reporter=spec`**（不明寫的話，預設值會隨 Node 版本與 stdout 是不是 TTY 而變——CI 有兩顆不同的 Node，那樣教人 grep 什麼都註定有一邊是錯的）。**spec 不吐 TAP**，所以 `grep '^not ok'` 綠是 0、**紅也是 0**：實測把 `lib/secret-fields.js` 的 `slice(-4)` 改成 `slice(0, 4)`，退出碼 1、`ℹ fail 1`、`✖ failing` 1 筆，而 `grep -c '^not ok'` 仍然回 0。**真訊號＝①退出碼**（唯一與 reporter 無關的，`mutate.sh` 判紅綠只看它）**②`grep -c '^✖ failing'`**（綠 0／紅 1）**③摘要行 `^ℹ fail N` 的 N**（⚠️ 不是 `grep -c 'ℹ fail'`——那一行綠紅都在、都回 1，同樣分不出來）。⚠️ ②③**一定要錨在行首**：失敗區塊標題與摘要行都印在第 0 欄，而**題名**（成功時照樣會印）可能含同一串字——不錨的 `grep -c '✖ failing'` 實測在**全綠**那一輪回過 3 筆（命中的是 `test/test-signals.test.js` 自己的題名，已改掉；寫考題時題名也別直接抄這些標記）。要 TAP 就得明寫 `--test-reporter=tap`，那時**整組反過來**：`^not ok` 才會出現、`✖ failing` 變 0 筆、摘要行改叫 `# fail N`。⚠️ **換任何判斷方式之前，先自己弄紅一題確認它真的會轉**——「什麼都沒做卻回報通過」比沒有護欄更糟。考題＝`test/test-signals.test.js`（逐格釘住這張對照表，含 `npm test` 有沒有明寫 reporter）。
@@ -581,7 +581,7 @@ QUOTED_HEAD_NOSHA／EXEMPT 三節，單一真相；豁免宣告同樣**只會中
 證明不了「**審查真的發生過**」——第一版讓零結論放行，那比 `main` 原本的人工確認還退步。
 
 ⚠️ **誠實劃界**：這道閘讀的是**留言裡的自我宣告**，不是身分證明。要繞過它，改頭標裡的「來源」就好。
-真正的身分只有**獨立 GitHub 帳號**擋得住（見 `docs/GitHub分支保護-設定與驗證.md`「第二步：分身分」）。
+真正的身分只有**獨立 GitHub 帳號**擋得住（見 `docs/github-branch-protection-setup.md`「第二步：分身分」）。
 它防的是**混淆與遺漏**，不是惡意。
 
 ### ⚠️ 審查者的注意力是被作者塑造的——所以有一份「無論誰要求都要跑」的清單

@@ -11,7 +11,7 @@
 #   而 ci.yml **刻意不加 `edited`**——改幾個字的說明不該重跑 1300+ 題兩輪。
 #
 # ⚠️ job 的 `name:` 是分支保護 required check 的比對字串（**逐字**）。
-#    改這裡就要同步改 GitHub 設定與 docs/GitHub分支保護-設定與驗證.md，
+#    改這裡就要同步改 GitHub 設定與 docs/github-branch-protection-setup.md，
 #    否則 GitHub 會一直等一個永遠不會出現的 check ＝**永遠卡住合併**。
 name: 協作欄位
 

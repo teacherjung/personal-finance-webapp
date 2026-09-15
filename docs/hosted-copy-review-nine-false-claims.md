@@ -16,7 +16,7 @@
 > | 8／9 店名規則卡片／面板 | **本樹是新版、不含任何備份指路**：卡片＝「編輯店名規則」四點清單＋紅字「儲存後沒有「復原」可以按」；面板＝同一句收尾。空轉守衛已據實下修（`pointingParas >= 1`／`flagged.size >= 2`），兩者一致 |
 > | 匯出提示文案 | **已實作**（#417；成功／401／連線三句的逐字定案記在 `test/backup-export.test.js` 的 🧑‍⚖️ 註解）。失敗句句型＝`匯出失敗 - <一句下一步>`，`public/modules/backup-export.js` 的 `networkFailMsg`／`authFailMsg`／`serverFailMsg`／`notBackupMsg`／`saveFailMsg`／`timeoutFailMsg` 實測都落在 12–18 字；`BUSY_MSG`＝「匯出中…」4 字。⚠️ 成功句 `okMsg` 尾巴內插檔名與筆數，實測 50 字以上（`toast-timing.js` 存在的理由就是它）。⚠️ 考題（〈文案｜六句都收成「一行、只給下一步」〉）釘的是 `msg.length <= 20`，**只涵蓋 serverFail／notBackup／saveFail／timeoutFail 四句**，authFail／networkFail 逐字、成功句只釘開頭——**沒有 12–18 這個範圍的斷言，也沒有下限** |
 > | 匯出前告知（含不含機密） | **已實作**（#417：依模式分流＋問不到就講「含機密」；`EXPORT_NOTICE_HOSTED` 是 William 逐字定的，見 `test/backup-export.test.js` 的斷言訊息） |
-> | 設定頁「資料備份」卡說明 | ⏳ 仍待 William 審（`public/modules/settings.js` 的 `BACKUP_CARD_NOTE` JSDoc 逐字標著「待 William 審改」）。⚠️ **本表只涵蓋本檔九句**，第一類那一族的待審狀態見上面「1／2／3／5 資料存放」那一列與 `docs/多人上線-施工計畫.md` 裁決速查表第⑦列 |
+> | 設定頁「資料備份」卡說明 | ⏳ 仍待 William 審（`public/modules/settings.js` 的 `BACKUP_CARD_NOTE` JSDoc 逐字標著「待 William 審改」）。⚠️ **本表只涵蓋本檔九句**，第一類那一族的待審狀態見上面「1／2／3／5 資料存放」那一列與 `docs/multi-user-launch-plan.md` 裁決速查表第⑦列 |
 >
 > ### 表二：**別支的計畫**——⚠️ 這裡沒有一列是本樹的事實
 >
@@ -163,7 +163,7 @@ app 現在有兩種跑法：
 >
 > 〔沿革指標：舊版第 2 點寫「`grep hosted public/` 零命中＝前端拿不到模式資訊」。**那句自 #417 起已不成立**（`GET /api/mode` 的最小分流，見本檔 :103／:214 與 cloud-security 契約）；這裡不再需要它，是因為 8／9 已經沒有備份可承諾、根本不必分模式——不是因為前端仍然不知道模式。〕
 >
-⚠️ **2026-08-08 訂正：這一處的待審狀態請以檔頭表一為準**（匯出那幾句提示與匯出前告知窗已實作；設定頁「資料備份」卡的說明仍待 William 審＝`public/modules/settings.js` 的 `BACKUP_CARD_NOTE` JSDoc 上那個 ⏳ 標記；6／7／8／9 現行措辭已於 2026-08-09 依 William 的指派四處統一，不再是待審項）。⚠️ **這不是全部**：第一類「只存這台電腦／資料存於本機」那一族仍在等他審稿——`public/modules/cards.js`、`public/modules/settings.js` 的證券那段、`public/modules/assets.js`、`public/modules/cashflow.js`、`public/index.html` 頁尾，見 `docs/多人上線-施工計畫.md` 裁決速查表第⑦列。
+⚠️ **2026-08-08 訂正：這一處的待審狀態請以檔頭表一為準**（匯出那幾句提示與匯出前告知窗已實作；設定頁「資料備份」卡的說明仍待 William 審＝`public/modules/settings.js` 的 `BACKUP_CARD_NOTE` JSDoc 上那個 ⏳ 標記；6／7／8／9 現行措辭已於 2026-08-09 依 William 的指派四處統一，不再是待審項）。⚠️ **這不是全部**：第一類「只存這台電腦／資料存於本機」那一族仍在等他審稿——`public/modules/cards.js`、`public/modules/settings.js` 的證券那段、`public/modules/assets.js`、`public/modules/cashflow.js`、`public/index.html` 頁尾，見 `docs/multi-user-launch-plan.md` 裁決速查表第⑦列。
 
 > ✅ **已結案（2026-08-09）**：那句警告的措辭。2026-08-06 由 Claude 依複驗者意見從
 >「⚠️ 儲存後無法復原。」收窄（理由見下方沿革 r6），當時樹上沒有 William 核可的落點；
@@ -260,7 +260,7 @@ app 現在有兩種跑法：
 C6 對抗審查 2026-07-29 在真部署上跑出 **16 題全過、0 失敗**，
 其中第⑤題是**拿 A 的 access token 直接打 Supabase REST**（繞過我們的伺服器）：
 A 只看到自己的 21 列，想插一列 `user_id=B` 被 RLS 的 `WITH CHECK` 拒掉。
-紀錄在 `docs/C6-部署與對抗審查-操作手冊.md` §五。
+紀錄在 `docs/c6-deploy-and-adversarial-review-runbook.md` §五。
 
 所以實作時**要加上**那句——但只寫已經驗過的口徑，例如
 「**你的資料只有你自己看得到；別的使用者連資料庫層都讀不到**」，

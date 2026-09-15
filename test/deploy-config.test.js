@@ -78,11 +78,11 @@ test('render.yaml：SEC User-Agent 由部署環境提供，不把聯絡資訊硬
   const yaml = uncommented(read('render.yaml'));
   assert.match(yaml, /-\s*key:\s*SEC_USER_AGENT\s*\n\s*sync:\s*false/,
     'SEC 自動請求要有可聯絡 User-Agent；實際值由 Render 環境設定，不可漏掉或寫死在程式');
-  assert.match(read('docs/C6-部署與對抗審查-操作手冊.md'), /NotEasy hsiangsenjung@gmail\.com/,
+  assert.match(read('docs/c6-deploy-and-adversarial-review-runbook.md'), /NotEasy hsiangsenjung@gmail\.com/,
     '部署手冊要留下 William 拍板的正式值，避免上線時再猜一次');
   // 產品名稱一律 `NotEasy`（不是 Noteasy／noteasy）——大小寫錯了在畫面上很醒目，
   // 而 SEC 拿這串當「這是誰的程式」的識別，寫錯等於對外自報錯名字。
-  assert.doesNotMatch(read('docs/C6-部署與對抗審查-操作手冊.md'), /\bNoteasy\b/,
+  assert.doesNotMatch(read('docs/c6-deploy-and-adversarial-review-runbook.md'), /\bNoteasy\b/,
     '產品名稱是 NotEasy，不是 Noteasy');
 });
 
@@ -107,7 +107,7 @@ test('xlsx 從原廠 CDN 裝，而且 lockfile 有 integrity 指紋（別「順�
   //    改回去＝把兩個已修好的漏洞加回來。
   const pkg = JSON.parse(read('package.json'));
   assert.match(pkg.dependencies.xlsx, /^https:\/\/cdn\.sheetjs\.com\/xlsx-\d+\.\d+\.\d+\//,
-    'xlsx 必須指向 SheetJS 官方 CDN 的 tarball（見 docs/多人上線-施工計畫.md 裁決速查表③）');
+    'xlsx 必須指向 SheetJS 官方 CDN 的 tarball（見 docs/multi-user-launch-plan.md 裁決速查表③）');
 
   const lock = JSON.parse(read('package-lock.json'));
   const entry = Object.entries(lock.packages || {}).find(([k]) => k.endsWith('node_modules/xlsx'));
@@ -135,7 +135,7 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
     'ci.yml 的生效設定又出現 draft（草稿跳過？）——省錢的理由已隨 repo 公開消失，而「草稿不考」'
       + '的代價實測過：本機三關全在 macOS，Linux 才壞的東西要到轉 ready 才現形、每修一條'
       + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
-      + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/GitHub分支保護-設定與驗證.md 一起改'
+      + ' REVIEW-AND-MERGE.md「省額度慣例」節與 docs/github-branch-protection-setup.md 一起改'
       + '——別留兩種相反答案並存。');
   // ⚠️ 本題的身分＝**防「不小心加回去」的絆線，不是防惡意 YAML 的安全閘**（Codex #526
   //    r1 中①→r2 中① 兩輪釐清出來的劃界）：安全不變量「能合併的 head 一定跑過真考卷」

@@ -41,7 +41,7 @@ import { gitEnv } from '../lib/git-env.js';
  * 每一級的動作都要能**獨立照做**：不可以寫「做某某級」而不把那一級列出來（B 連帶 C 由 classify 保證）。
  */
 export const TIERS = /** @type {const} */ ({
-  A: { name: '資料庫結構', action: '重啟套不上：照 docs/C6-部署與對抗審查-操作手冊.md 在 Supabase SQL Editor 重跑整份 db/supabase-schema.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。' },
+  A: { name: '資料庫結構', action: '重啟套不上：照 docs/c6-deploy-and-adversarial-review-runbook.md 在 Supabase SQL Editor 重跑整份 db/supabase-schema.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。' },
   B: { name: '相依套件', action: '先裝再重啟：桌面捷徑「重啟理財網頁.command」（住桌面、不在 repo）pull 到動 package*.json 的版本時會自動 npm install；走 repo 裡的 start.command（不 pull、只在沒有 node_modules 時裝）或主目錄已是最新版（沒有 pull 可做）就要在主目錄手動 npm install；裝完做下一行 C 的動作（命中 B 時 C 一定連帶列出）。' },
   C: { name: '要重啟＋走核心流程', action: 'William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。' },
   D: { name: '只動前端', action: '重新整理頁面、看一眼「怎麼驗收」三句寫的畫面即可，不必重啟（沒有 service worker，express.static 直接供應）。' },

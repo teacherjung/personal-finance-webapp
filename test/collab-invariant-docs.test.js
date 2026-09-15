@@ -619,7 +619,7 @@ const GATE_WF_LINES = [
   '#   而 ci.yml **刻意不加 `edited`**——改幾個字的說明不該重跑 1300+ 題兩輪。',
   '#',
   '# ⚠️ job 的 `name:` 是分支保護 required check 的比對字串（**逐字**）。',
-  '#    改這裡就要同步改 GitHub 設定與 docs/GitHub分支保護-設定與驗證.md，',
+  '#    改這裡就要同步改 GitHub 設定與 docs/github-branch-protection-setup.md，',
   '#    否則 GitHub 會一直等一個永遠不會出現的 check ＝**永遠卡住合併**。',
   'name: 協作欄位',
   '',
@@ -1003,7 +1003,7 @@ test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', 
   // ⚠️ 這題防兩個會「永遠卡住合併」的坑：
   //    ①required check 按**名稱字串**比對——改了 name 沒改分支保護＝等一個永遠不會出現的 check。
   //    ②GitHub 要求 required job name 在所有 workflow 之間唯一，否則有歧義（Codex #382 r2 Low）。
-  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  const doc = read('docs/github-branch-protection-setup.md');
   // ⚠️ **這裡刻意不解析 YAML**（Codex #382 r4 Low；那支迷你讀取器已於 #586 刪除）：它只夠讀我們自己寫的
   //    `collab-fields.yml`（不支援 `run: |` 多行純量、anchor…）。拿它去掃**所有** workflow，
   //    等於哪天有人在無關的 workflow 寫了一個 `run: |`，整套測試就紅——
@@ -1026,7 +1026,7 @@ test('分支保護｜job 名稱跨 workflow 唯一，且與文件逐字相同', 
 });
 
 test('分支保護文件要記下「enforce_admins 必須開」與它的理由', () => {
-  const doc = read('docs/GitHub分支保護-設定與驗證.md');
+  const doc = read('docs/github-branch-protection-setup.md');
   assert.ok(doc.includes('enforce_admins'), '文件沒提 enforce_admins');
   assert.ok(/逃生門.*強制力|強制力.*逃生門/.test(doc),
     '文件沒記下那一課：**單一身分下，逃生門與強制力是同一個開關**。\n'
