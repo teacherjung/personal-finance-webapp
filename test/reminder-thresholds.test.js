@@ -1422,7 +1422,7 @@ test('訂閱｜停用當天不算使用中：後端 subActive 與前端 subStatu
  *       這棵樹上做得到。repo 自己備著手段——`.claude/launch.json` 的 `finance-test`（`STORE_FILE`
  *       指暫存 .db ＋獨立 PORT，不碰 `data/`）；同樣手法在本樹實測過，server 起得來、
  *       `/`＋`/api/summary`＋`/app.js` 皆 200（200 不等於零 console error，**逐頁 reload 那段是工、
- *       不是關著的門**），`docs/每日洞察引擎-施工計畫.md` 也記著曾用它跑完整輪零 console error。
+ *       不是關著的門**），`docs/daily-insights-engine-plan.md` 也記著曾用它跑完整輪零 console error。
  *       所以這裡劃的是**範圍界、不是能力界**：真要搬，補足那輪驗證再動共用核心即可。
  */
 function loadFrontendSubStatus() {

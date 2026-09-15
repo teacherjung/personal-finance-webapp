@@ -7,9 +7,9 @@
 
 | 檔案 | 完成證據（合併 PR） | 現行真相在哪 |
 |---|---|---|
-| [階段B-骨架改建-施工計畫.md](階段B-骨架改建-施工計畫.md) | B0–B3 全上線（詳見檔內頁首） | AGENTS.md「現況」與後端分層描述 |
-| [證券交易-設計藍圖.md](證券交易-設計藍圖.md) | #236（S0）／#242（藍圖修訂）／#244・#246・#247・#248・#250（S1–S3＋r1–r5） | 證券交易頁實際程式＋AGENTS.md 同步點 |
-| [個股研究頁-P1-交接.md](個股研究頁-P1-交接.md) | P1–P5＝#268／#271／#277／#281／#283 | [../個股研究頁-施工計畫.md](../個股研究頁-施工計畫.md)（F 系列仍進行中，留在 docs/） |
-| [目標追蹤-施工計畫.md](目標追蹤-施工計畫.md) | 計畫 #237；P1–P3＝#238／#240／#241 | lib/derive.js（computeGoalTracking）＋goal-tracking.js |
-| [月度回顧-施工計畫.md](月度回顧-施工計畫.md) | P0–P2＝#230／#231／#232；加強 #235 | monthly-review-card.js＋AGENTS.md 同步點 |
-| [PROJECT-完工紀錄.md](PROJECT-完工紀錄.md) | PROJECT.md D3 瘦身搬出的完工表與戰史（凍結於 2026-07-31；之後的完工紀錄＝GitHub merged PR 清單） | [../../PROJECT.md](../../PROJECT.md)（現在進行式） |
+| [phase-b-skeleton-rebuild-plan.md](phase-b-skeleton-rebuild-plan.md) | B0–B3 全上線（詳見檔內頁首） | AGENTS.md「現況」與後端分層描述 |
+| [securities-trading-blueprint.md](securities-trading-blueprint.md) | #236（S0）／#242（藍圖修訂）／#244・#246・#247・#248・#250（S1–S3＋r1–r5） | 證券交易頁實際程式＋AGENTS.md 同步點 |
+| [stock-research-page-p1-handoff.md](stock-research-page-p1-handoff.md) | P1–P5＝#268／#271／#277／#281／#283 | [../stock-research-page-plan.md](../stock-research-page-plan.md)（F 系列仍進行中，留在 docs/） |
+| [goal-tracking-plan.md](goal-tracking-plan.md) | 計畫 #237；P1–P3＝#238／#240／#241 | lib/derive.js（computeGoalTracking）＋goal-tracking.js |
+| [monthly-review-plan.md](monthly-review-plan.md) | P0–P2＝#230／#231／#232；加強 #235 | monthly-review-card.js＋AGENTS.md 同步點 |
+| [project-completion-log.md](project-completion-log.md) | PROJECT.md D3 瘦身搬出的完工表與戰史（凍結於 2026-07-31；之後的完工紀錄＝GitHub merged PR 清單） | [../../PROJECT.md](../../PROJECT.md)（現在進行式） |

@@ -4,7 +4,7 @@
 # 之後每次 push 到 main、**且 GitHub CI 綠了**才自動部署（`autoDeployTrigger: checksPass`）。
 #
 # ⚠️ **這個檔不含任何祕密**。五個 `sync: false` 的變數要在 Render 後台手動填一次
-#（Blueprint 部署時會逐一問你），填法見 `docs/C6-部署與對抗審查-操作手冊.md`。
+#（Blueprint 部署時會逐一問你），填法見 `docs/c6-deploy-and-adversarial-review-runbook.md`。
 services:
   - type: web
     name: noteasy
@@ -65,6 +65,6 @@ services:
       - key: NOTEASY_MASTER_KEY
         sync: false
       # SEC 自動請求的識別資訊，格式「產品名稱 可收信聯絡信箱」。
-      # 正式值見 docs/C6-部署與對抗審查-操作手冊.md。
+      # 正式值見 docs/c6-deploy-and-adversarial-review-runbook.md。
       - key: SEC_USER_AGENT
         sync: false
