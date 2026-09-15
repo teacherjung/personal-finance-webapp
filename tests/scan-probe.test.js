@@ -534,3 +534,83 @@ test('收：只刪絕對路徑、名字 .scan-canary- 開頭、真的是目錄�
     assert.ok(!fs.existsSync(canary), '對照組：名字對、絕對路徑、真的是目錄＝收掉');
   } finally { fs.rmSync(work, { recursive: true, force: true }); }
 });
+
+test('埋與收接得起來、而且只收自己真實位置上的：禁區寫成相對路徑＝試探與埋都拒絕、零寫入；禁區經過連結別名＝照樣收得回來；清單上帶尾端斜線或經過連結的路徑一律不刪（#606 r1）', () => {
+  const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scan-canary-round-')));
+  const PAST = new Date('2001-02-03T04:05:06Z');
+  try {
+    const realZone = path.join(work, 'real-zone');
+    fs.mkdirSync(realZone);
+    const alias = path.join(work, 'alias-zone');
+    fs.symlinkSync(realZone, alias);
+    const settingsFor = (forbidden) => {
+      const st = unfilled();
+      st.machines.find((m) => m.name === MACHINE).state = '已啟用';
+      st.scanner.isolation = { provider: '專案自建', wrap: [process.execPath, FAKE, '{box}'], boxRoot: UNSET, forbidden };
+      return st;
+    };
+    const tool = path.join(__dirname, '..', 'tools', 'scan-probe.js');
+    const inCopy = (argv, settings) => runInCopy('tools/scan-probe.js', argv, { settings });
+
+    // 相對禁區：從固定目錄起跑，那個目錄一次都不可以被寫
+    const cwdDir = path.join(work, 'cwd');
+    fs.mkdirSync(path.join(cwdDir, 'zone'), { recursive: true });
+    for (const argv of [[], ['--plant', path.join(work, 'rel.txt')]]) {
+      fs.utimesSync(path.join(cwdDir, 'zone'), PAST, PAST);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-copy-rel-'));
+      try {
+        fs.cpSync(path.join(__dirname, '..', 'tools'), path.join(dir, 'tools'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settingsFor(['zone'])));
+        const r = spawnSync(process.execPath, [path.join(dir, 'tools', 'scan-probe.js'), ...argv], { cwd: cwdDir, encoding: 'utf8', env: gitEnv() });
+        assert.equal(r.status, 2, `相對禁區（${argv.join(' ') || '試探'}）：${r.stdout}`);
+        assert.match(r.stdout, /不是絕對路徑/u);
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      assert.equal(fs.statSync(path.join(cwdDir, 'zone')).mtimeMs, PAST.getTime(), `相對禁區（${argv.join(' ') || '試探'}）：一次都不可以寫進去`);
+      assert.ok(!fs.existsSync(path.join(work, 'rel.txt')), '相對禁區：不可以留下清單檔');
+    }
+
+    // 經過連結別名的禁區：埋記下真實位置，收得回來
+    const out = path.join(work, 'alias.txt');
+    const planted = inCopy(['--plant', out], settingsFor([alias]));
+    assert.equal(planted.status, 0, planted.stdout);
+    const recorded = fs.readFileSync(`${out}${MANIFEST_SUFFIX}`, 'utf8').trim();
+    assert.ok(recorded.startsWith(`${realZone}${path.sep}.scan-canary-`), `清單記的是解開連結後的真實位置：${recorded}`);
+    const swept = spawnSync(process.execPath, [tool, '--sweep', out], { cwd: work, encoding: 'utf8', env: gitEnv() });
+    assert.equal(swept.status, 0, swept.stdout);
+    assert.deepEqual(fs.readdirSync(realZone), [], '埋的東西收乾淨');
+
+    // 清單被改成奇怪的寫法：一律不刪（哨兵檔要還在），而且收不掉時位置清單留著
+    const target = path.join(work, 'important-directory');
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'sentinel'), 'x');
+    const link = path.join(work, '.scan-canary-link');
+    fs.symlinkSync(target, link);
+    const realCanary = path.join(realZone, '.scan-canary-real');
+    fs.mkdirSync(realCanary);
+    fs.writeFileSync(path.join(realCanary, 'canary.txt'), 'x');
+    const sweepWith = (entries) => {
+      const f = path.join(work, `odd-${Math.random().toString(36).slice(2)}.txt`);
+      fs.writeFileSync(f, 'x\n');
+      fs.writeFileSync(`${f}${MANIFEST_SUFFIX}`, `${entries.join('\n')}\n`);
+      const r = spawnSync(process.execPath, [tool, '--sweep', f], { cwd: work, encoding: 'utf8', env: gitEnv() });
+      return { r, manifestKept: fs.existsSync(`${f}${MANIFEST_SUFFIX}`) };
+    };
+    for (const [why, entry] of [
+      ['連結加尾端斜線', `${link}/`],
+      ['連結加兩個尾端斜線', `${link}//`],
+      ['經過連結別名的父目錄', path.join(alias, '.scan-canary-real')],
+      ['真的目錄但帶尾端斜線', `${realCanary}/`],
+    ]) {
+      const { r, manifestKept } = sweepWith([entry]);
+      assert.equal(r.status, 2, `${why}：要算收不掉（${r.stdout}）`);
+      assert.ok(fs.existsSync(path.join(target, 'sentinel')), `${why}：連結指到的目錄不可以被刪`);
+      assert.ok(fs.existsSync(path.join(realCanary, 'canary.txt')), `${why}：不是一字不差的路徑不可以刪`);
+      assert.ok(manifestKept, `${why}：收不掉時位置清單要留著`);
+    }
+    // 對照組：一字不差的真實位置照樣收
+    const { r: ok, manifestKept } = sweepWith([realCanary]);
+    assert.equal(ok.status, 0, ok.stdout);
+    assert.ok(!fs.existsSync(realCanary), '對照組：一字不差的真實位置收掉');
+    assert.ok(!manifestKept, '對照組：全部收掉時位置清單刪掉');
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
+});

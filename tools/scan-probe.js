@@ -83,6 +83,14 @@ function expandZone(zone, home) {
 }
 
 /**
+ * 禁區展開之後一律要是絕對路徑：相對路徑會照「當下在哪個目錄執行」變成不同的地方，埋下去的東西之後也收不回來
+ * （personal-finance-webapp #606 r1）。回第一個不合格的原字串；都合格回 null。在任何寫入之前檢查。
+ */
+function relativeZone(zones, home) {
+  return zones.find((zone) => !path.isAbsolute(expandZone(zone, home))) || null;
+}
+
+/**
  * 「這一次讀取算不算擋住」——唯一的判斷。擋住＝退出碼是非 0 的數字，且輸出裡沒有假機密。
  * status 為 null 不算擋住，那是探針自己壞了（呼叫端另計成「測不出」）。
  */
@@ -112,6 +120,11 @@ function probeRun({ settings = readSettings(), run = runCommand, home = os.homed
   const zones = Array.isArray(iso.forbidden) ? iso.forbidden.filter((x) => typeof x === 'string' && x.trim()) : [];
   if (!zones.length) {
     say('禁區清單是空的：什麼都沒試就說隔離有效，比沒有試探更危險，不掃。');
+    return { code: 2, lines };
+  }
+  const rel = relativeZone(zones, home);
+  if (rel) {
+    say(`禁區「${rel}」不是絕對路徑（也不是 ~ 開頭）：會隨執行位置變成別的地方，試探不了，不掃。`);
     return { code: 2, lines };
   }
 
@@ -235,11 +248,14 @@ function plantCanaries({ settings = readSettings(), home = os.homedir(), outFile
   const zones = Array.isArray(iso.forbidden) ? iso.forbidden.filter((x) => typeof x === 'string' && x.trim()) : [];
   if (!outFile) return { code: 2, lines: ['沒給清單檔的位置：不知道要把值寫到哪裡給比對用。'] };
   if (!zones.length) return { code: 2, lines: ['禁區清單是空的：沒有地方可埋，掃後比對就沒有鐵證可比。'] };
+  const rel = relativeZone(zones, home);
+  if (rel) return { code: 2, lines: [`禁區「${rel}」不是絕對路徑（也不是 ~ 開頭）：埋下去之後會收不回來，不埋。`] };
   const planted = [];
   const secrets = [];
   try {
     for (const zone of zones) {
-      const dir = fs.mkdtempSync(path.join(expandZone(zone, home), '.scan-canary-'));
+      // 記下真正的位置（解開連結、別名之後的絕對路徑）：收的時候只認跟這個一字不差的路徑
+      const dir = fs.realpathSync(fs.mkdtempSync(path.join(expandZone(zone, home), '.scan-canary-')));
       const secret = `LIVE-CANARY-${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`;
       const file = path.join(dir, 'canary.txt');
       fs.writeFileSync(file, `${secret}\n`, { mode: 0o600 });
@@ -267,19 +283,22 @@ function sweepCanaries({ outFile } = {}) {
   catch (e) { return { code: 2, lines: [`收不掉：清單檔讀不到（${e.code || '讀取失敗'}）——埋在哪不知道，請自己去禁區找 .scan-canary-* 目錄。`] }; }
   let failed = 0;
   for (const dir of dirs) {
-    // 只刪符合命名條件的：絕對路徑、名字以 .scan-canary- 開頭、真的是目錄（不是連結或一般檔案）。清單檔被改過或寫錯時，別的東西一律不碰、算收不掉
-    // （這只是命名與型別條件，證明不了「確實是這一次埋的」）
-    // （這個動作在機器未啟用時也跑，安全只能靠這一道；接鉤子前批預審）
-    if (!path.isAbsolute(dir) || !path.basename(dir).startsWith('.scan-canary-')) { failed += 1; continue; }
-    let st;
-    try { st = fs.lstatSync(dir); } catch (e) { if (e.code !== 'ENOENT') failed += 1; continue; }   // 已經不在＝不必收
-    if (!st.isDirectory()) { failed += 1; continue; }   // 這支埋的一律是目錄：一般檔案、連結一律不碰
+    // 只刪「就是埋的時候記下的那種路徑」：清單上的字串必須跟它真正的位置一字不差（絕對路徑、沒有尾端斜線、
+    // 任何一段都不是連結——埋的時候記的就是解開後的真實位置），名字以 .scan-canary- 開頭，而且真的是目錄。
+    // 不是一條條列舉「相對路徑、尾端斜線、連結」各擋一次（那樣補不完；#606 r1 的尾端斜線就是例子），而是量「它是不是自己的真實位置」這一件事。
+    // 清單檔被改過或寫錯時，別的東西一律不碰、算收不掉。⚠️ 這仍證明不了「確實是這一次埋的」，也擋不住檢查與刪除之間被換掉。
+    // （這個動作在機器未啟用時也跑，安全只能靠這一道。）
+    if (!path.basename(dir).startsWith('.scan-canary-')) { failed += 1; continue; }
+    let real;
+    try { real = fs.realpathSync(dir); } catch (e) { if (e.code !== 'ENOENT') failed += 1; continue; }   // 已經不在＝不必收
+    if (real !== dir || !fs.lstatSync(dir).isDirectory()) { failed += 1; continue; }
     try { fs.rmSync(dir, { recursive: true, force: true }); }
     catch { failed += 1; }
   }
+  fs.rmSync(outFile, { force: true });   // 值檔一律刪（比對已經做完）
+  // 有收不掉的就留下位置清單（只有路徑、沒有值）給人對照或修好後重試；全部收掉才刪
+  if (failed) return { code: 2, lines: [`有 ${failed} 個假機密收不掉：位置清單留著（${path.basename(manifest)}），請對照清單自己去禁區找 .scan-canary-* 目錄刪掉。`] };
   fs.rmSync(manifest, { force: true });
-  fs.rmSync(outFile, { force: true });
-  if (failed) return { code: 2, lines: [`有 ${failed} 個假機密收不掉：請自己去禁區找 .scan-canary-* 目錄刪掉。`] };
   return { code: 0, lines: [`收掉 ${dirs.length} 個假機密，清單檔也刪了。`] };
 }
 
@@ -291,7 +310,7 @@ function cli(opts = {}, argv = []) {
   const arg = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
   try {
     const sweep = arg('--sweep');
-    if (sweep) return sweepCanaries({ ...opts, outFile: sweep });   // 收不擋：只刪清單檔上記的、絕對路徑、名字 .scan-canary- 開頭而且真的是目錄的
+    if (sweep) return sweepCanaries({ ...opts, outFile: sweep });   // 收不擋：只刪清單上跟自己真實位置一字不差、名字 .scan-canary- 開頭、真的是目錄的
     const settings = opts.settings || readSettings();
     const off = notEnabled(settings);
     if (off) return { code: 2, lines: [`${off}。要用它，先在 settings.json 把那一列改成已啟用、重產設定說明，再跑。`] };
