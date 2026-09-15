@@ -229,7 +229,7 @@ export default [
     files: ['public/**/*.js'],
     languageOptions: { globals: { ...globals.browser, Chart: 'readonly' } }
   },
-  { // 協作套件 ai-collab-kit 的工具與考題（搬家第 2 步放進來；照套件 README「搬進一個專案」第 2 步）：CommonJS＋Node 環境
+  { // 協作套件 ai-collab-kit 的工具與考題（搬家第 2 步放進來；照 ai-collab-kit 的安裝說明）：CommonJS＋Node 環境
     files: ['tools/**/*.js', 'tests/**/*.js'],
     languageOptions: { sourceType: 'commonjs', globals: globals.node }
   }
