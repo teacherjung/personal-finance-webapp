@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "guard_canary": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "root=\"$(for v in $(env | sed -n 's/^\\(GIT_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$v\"; done; git rev-parse --show-toplevel)\" && exec node \"$root/tools/canary-server.js\""
+      ]
+    }
+  }
+}
