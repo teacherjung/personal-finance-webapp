@@ -1,5 +1,6 @@
 [
   "acceptance-tier.test.js",
+  "canary-server.test.js",
   "casebook.test.js",
   "check-checks-really-ran.test.js",
   "check-collab-fields.test.js",

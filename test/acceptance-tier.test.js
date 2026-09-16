@@ -100,6 +100,7 @@ test('⭐ 每一條規則的級別逐條釘住：多一條規則、或把任何�
   const RULE_SAMPLES = [
     ['F', '.codex/hooks.json'], ['F', '.claude/settings.json'],
     ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'], ['F', 'tools/package.json'], ['F', 'templates/hook-codex-global.json'],   // 協作套件（搬家第 2 步）
+    ['F', '.mcp.json'], ['F', 'tools/canary-server.js'],   // 測試鈕（搬家第 3 步）
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
     ['C', 'lib/store.js'], ['C', 'server.js'], ['C', 'start.command'], ['C', '.node-version'], ['C', 'render.yaml'],
