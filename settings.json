@@ -44,7 +44,7 @@
   {
    "item": "禁區工具與能力清單（含攔截器安裝在哪一方）",
    "rules": "B1",
-   "where": "（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS.md／REVIEW-AND-MERGE.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings.json 為準。）規則正本＝AGENTS.md「🛑 錢的絕對邊界」節（William 2026-08-03 拍板）；攔截器裝在哪幾層、各層怎麼驗＝同一節的機械層說明；專案內的攔截器＝.claude/settings.json 與 .codex/hooks.json（進版控），家目錄與平台層的設定不在 repo、也不寫在這裡。清單現況：專案 .claude/settings.json 的 PreToolUse 自搬家第 3 步 B 支起有兩組並存——python v6 那組讀寫死在它指令本體裡的詞表與白名單；套件那組讀根目錄 settings.json 的 forbidden（改檔、切分支下一次工具呼叫就生效）。兩組對共用字表的判定一致（各有考題單獨跑整張字表）；測試鈕 mcp__guard_canary__ping 只在 forbidden 上。其他層怎麼讀清單不寫在這裡。"
+   "where": "（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS.md／REVIEW-AND-MERGE.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings.json 為準。）規則正本＝AGENTS.md「🛑 錢的絕對邊界」節（William 2026-08-03 拍板）；攔截器裝在哪幾層、各層怎麼驗＝同一節的機械層說明；專案內的攔截器＝.claude/settings.json 與 .codex/hooks.json（進版控），家目錄與平台層的設定不在 repo、也不寫在這裡。清單現況：專案 .claude/settings.json 的 PreToolUse 自搬家第 3 步 B 支起有兩組並存——python v6 那組讀寫死在它指令本體裡的詞表與白名單；套件那組讀根目錄 settings.json 的 forbidden（改檔、切分支下一次工具呼叫就生效）。兩組對共用字表的判定一致（各有考題單獨跑整張字表）；測試鈕 mcp__guard_canary__ping 只在 forbidden 上。Codex 全域層讀的是 tools/guard-copy.js 從已合併版本抽出、放在倉庫外的固定複本（哪個版本＝重抽時的合併紀錄），登記與信任不在 repo。其他層怎麼讀清單不寫在這裡。"
   },
   {
    "item": "真實資料檔清單",
@@ -323,7 +323,7 @@
   "tiers": [
    {
     "id": "F（工具安全設定）",
-    "action": "不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse 的兩組：python v6 那組、套件那組）——**只有 v6 那組**的 matcher 或指令一改，才要同步 .codex/hooks.json 那份副本（成對驗會逼；那份只准一組、放的是 v6）；**套件那組只在 Claude 側、不可以同步進 .codex/hooks.json**，照下面②的做法處理；不論改哪一組都要重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。v6 那組與它的副本驗＝test/codex-money-hook 的身分互鎖與成對驗；套件那組驗＝test/money-kit-hook。｜協作套件那幾份：Claude 側自搬家第 3 步 B 支起已接上（跟 v6 並存）；還沒接上的那一側不受影響。分三類——①執行時會讀的（settings.json 的 forbidden 那一塊、tools/forbidden-tools.js、tools/settings-data.js、tools/package.json）：Claude 側鉤子每次呼叫都重讀那棵樹的這幾份，改檔（含沒提交的改動、切分支）下一次工具呼叫就生效；Codex 全域層（裝上之後）讀的是固定複本，要在合併後的主幹上跑 node tools/guard-copy.js 重抽、關掉所有 Codex 視窗、在原位置換上新印出的那一組、William 重按信任、叫清單上刻意放的那個無害測試工具（＝mcp__guard_canary__ping，本體 tools/canary-server.js，照第 8 題 a 永久留在 forbidden.deny：它真的存在、就算真的執行了也不會碰到禁區、不會造成任何改變，**而且不是禁區連接器（forbidden.servers）上的工具——那上面的每一支，連唯讀的查詢、提醒、觀察清單，都不可以拿來試**；驗收只准用它，不可以拿任何別的工具代替），要看到這一組的拒絕理由（含「在拒絕清單上」）——任何會碰到禁區的真工具（包括禁區連接器上的每一支），不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用那個無害測試工具，最後才刪舊複本。②只在安裝時用的（templates/hook-claude.json、templates/hook-codex.json、templates/hook-codex-global.json、tools/guard-copy.js）：已裝好的鉤子不會重讀它們——範本的指令有改，就要把新指令換進已安裝的那一份（Claude 側＝專案 .claude/settings.json 的**套件那組**（不是 v6 那組）、改完開新對話；Codex 專案層＝本專案沒有裝套件的這一份（Codex 照搬家第 6 題 a 走全域層；.codex/hooks.json 是 v6 的副本，照前面那句處理），這個範本改了不用換；Codex 全域層（裝上之後）＝照①重抽並換組、重按信任）；只改 tools/guard-copy.js 而範本沒改，已安裝的不受影響，下次抽複本才用到。不做＝繼續跑舊指令或舊清單，沒有機器提醒。③測試鈕（tools/canary-server.js、.mcp.json）：本體或登記一改，Claude 側要開新對話、Codex 側（登記了之後）要關掉所有視窗再開，然後再叫一次測試鈕——要看到**那一組**的拒絕理由（含「在拒絕清單上」）才算數；**看到 pong 不算通過**：在已經接上的那一側（Claude 側自搬家第 3 步 B 支起）看到 pong＝那一組沒載入或沒在跑，要停下來查；只有還沒接上攔截器的那一側，回 pong 才是預期（對照組，證明它真的在、真的無害）（它是驗收攔截器的唯一合法方式，壞了等於沒有驗收工具；裝法＝templates/canary-install.md）。步驟與目的地規則＝tools/guard-copy.js 檔頭與 templates/hook-codex-global.json 的說明。"
+    "action": "不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：.codex/hooks.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 /hooks 對該檔重新按「信任」，家目錄那份手動同步；.claude/settings.json＝Claude Code 權限層正本（permissions.deny＋PreToolUse 的兩組：python v6 那組、套件那組）——**只有 v6 那組**的 matcher 或指令一改，才要同步 .codex/hooks.json 那份副本（成對驗會逼；那份只准一組、放的是 v6）；**套件那組只在 Claude 側、不可以同步進 .codex/hooks.json**，照下面②的做法處理；不論改哪一組都要重開 Claude Code session 讓新設定載入、並確認家目錄 ~/.claude/settings.json 的 deny 仍在。v6 那組與它的副本驗＝test/codex-money-hook 的身分互鎖與成對驗；套件那組驗＝test/money-kit-hook。｜協作套件那幾份（Claude 側與 Codex 全域層各跟原本的 v6 並存；哪一天接上、驗過＝看 PROJECT.md 與機器表的日期，這段只寫長期有效的步驟）：分三類——①執行時會讀的（settings.json 的 forbidden 那一塊、tools/forbidden-tools.js、tools/settings-data.js、tools/package.json）：Claude 側鉤子每次呼叫都重讀那棵樹的這幾份，改檔（含沒提交的改動、切分支）下一次工具呼叫就生效；Codex 全域層讀的是固定複本，要在合併後的主幹上跑 node tools/guard-copy.js 重抽、關掉所有 Codex 視窗、在原位置換上新印出的那一組、William 重按信任、叫清單上刻意放的那個無害測試工具（＝mcp__guard_canary__ping，本體 tools/canary-server.js，照第 8 題 a 永久留在 forbidden.deny：它真的存在、就算真的執行了也不會碰到禁區、不會造成任何改變，**而且不是禁區連接器（forbidden.servers）上的工具——那上面的每一支，連唯讀的查詢、提醒、觀察清單，都不可以拿來試**；驗收只准用它，不可以拿任何別的工具代替），要看到這一組的拒絕理由（含「在拒絕清單上」）——任何會碰到禁區的真工具（包括禁區連接器上的每一支），不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用那個無害測試工具，最後才刪舊複本。②只在安裝時用的（templates/hook-claude.json、templates/hook-codex.json、templates/hook-codex-global.json、tools/guard-copy.js）：已裝好的鉤子不會重讀它們——範本的指令有改，就要把新指令換進已安裝的那一份（Claude 側＝專案 .claude/settings.json 的**套件那組**（不是 v6 那組）、改完開新對話；Codex 專案層＝本專案沒有裝套件的這一份（Codex 照搬家第 6 題 a 走全域層；.codex/hooks.json 是 v6 的副本，照前面那句處理），這個範本改了不用換；Codex 全域層＝照①重抽並換組、重按信任）；只改 tools/guard-copy.js 而範本沒改，已安裝的不受影響，下次抽複本才用到。不做＝繼續跑舊指令或舊清單，沒有機器提醒。③測試鈕（tools/canary-server.js、.mcp.json）：本體或登記一改，Claude 側要開新對話、Codex 側要關掉所有視窗再開，然後再叫一次測試鈕——要看到**那一組**的拒絕理由（含「在拒絕清單上」）才算數；**看到 pong 不算通過**：在已經接上的那一側看到 pong＝那一組沒載入或沒在跑，要停下來查（哪一側接上了看 PROJECT.md）；只有還沒接上攔截器的那一側，回 pong 才是預期（對照組，證明它真的在、真的無害）（它是驗收攔截器的唯一合法方式，壞了等於沒有驗收工具；裝法＝templates/canary-install.md）。步驟與目的地規則＝tools/guard-copy.js 檔頭與 templates/hook-codex-global.json 的說明。"
    },
    {
     "id": "A（資料庫結構）",
@@ -640,8 +640,8 @@
   {
    "name": "禁區攔截器（判斷一份，兩家 AI 的鉤子都呼叫它）",
    "rules": "B1",
-   "state": "已安裝未啟用",
-   "verified": ""
+   "state": "已啟用",
+   "verified": "2026-09-17"
   },
   {
    "name": "忽略清單一致考題（登記的每一份忽略檔跟生效的樣式一字不差）",
