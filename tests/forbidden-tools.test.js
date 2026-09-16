@@ -13,7 +13,8 @@
 //   ⑧連接器名含 __ 也比得到（r1 High④）；order__create 跟 order_create 是同一個字；
 //   ⑨規則要合各欄位的文法：含空白、非法字元的規則不可能匹配合法工具名，留著只會把「有規則」判成真（r2 High②）＝拒絕。
 // ⚠️ 守不到的：只認工具名不看參數；詞表沒列到的動詞或名詞擋不住；沒啟用的那一方等於沒有；
-//   ⑫是用 /bin/sh 模擬鉤子，**沒有在真的 Claude Code／Codex session 裡掛上去驗過**；鉤子逾時兩家都不擋。
+//   ⑫是用 /bin/sh 模擬鉤子，**這裡不證明真的 Claude Code／Codex session 有載入、有照做**（要由使用專案用測試鈕驗；
+//     第一個使用專案 2026-09-16／17 兩家都驗過擋得住，放行面在 Codex 真對話還沒直接量）；鉤子逾時兩家都不擋。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
