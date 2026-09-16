@@ -7,7 +7,7 @@
 //   ⑥三份接線範本（Claude、Codex 專案層、Codex 全域層）都只呼叫同一支判斷（不抄判斷＝不會漂）；指令入口：壞輸入也拒絕、放行不印；
 //   ⑩連接器在名字的任何一段都認得（多一層前綴照樣白名單制；邊界要真的是邊界）；
 //   ⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣擋；
-//   ⑫接線範本真的跑一遍：從子目錄、別的專案起照樣判；找不到檔、沒有 node、載入就崩、專案根沒給＝退 2 帶錯誤輸出
+//   ⑫接線範本真的跑一遍：從子目錄、別的專案起照樣判；找不到檔、沒有 node、載入就崩、Git 找不到工作樹根、清環境用的 env／sed 不在＝退 2 帶錯誤輸出
 //     （Codex 全域層這裡只守「範本原樣＝退 2」；複本、指紋、真的跑一遍在 tests/guard-copy.test.js）。
 //   ⑦只填名字、沒有任何有效規則＝拒絕（r1 High③）；清單欄位型別錯＝拒絕；
 //   ⑧連接器名含 __ 也比得到（r1 High④）；order__create 跟 order_create 是同一個字；
@@ -180,8 +180,10 @@ test('⑫接線範本真的跑一遍：不管從哪個目錄起、起不來一�
     // 載入就崩的那一份：根目錄宣告 type:module、工具目錄的宣告拿掉
     fs.writeFileSync(path.join(broken, 'package.json'), JSON.stringify({ type: 'module' }));
     fs.rmSync(path.join(broken, 'tools', 'package.json'));
-    const git = spawnSync('git', ['init', '-q'], { cwd: proj, env: gitEnv(), encoding: 'utf8' });
-    assert.equal(git.status, 0, `前提：暫存專案要是版本控制目錄（${git.stderr}）`);
+    for (const dir of [proj, broken]) {
+      const git = spawnSync('git', ['init', '-q'], { cwd: dir, env: gitEnv(), encoding: 'utf8' });
+      assert.equal(git.status, 0, `前提：暫存專案要是版本控制目錄（${git.stderr}）`);
+    }
     const notRepo = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: elsewhere, env: gitEnv(), encoding: 'utf8' });
     assert.notEqual(notRepo.status, 0, '前提：另一個目錄不在任何版本控制目錄裡');
 
@@ -200,28 +202,44 @@ test('⑫接線範本真的跑一遍：不管從哪個目錄起、起不來一�
     };
     const subdir = path.join(proj, 'tools');
 
-    const claude = cmd('hook-claude.json');
-    denies(sh(claude, { cwd: subdir, env: { CLAUDE_PROJECT_DIR: proj } }), 'Claude：從子目錄起');
-    const allowed = sh(claude, { cwd: subdir, env: { CLAUDE_PROJECT_DIR: proj }, tool: 'mcp__broker-x__get_watchlist' });
-    assert.deepEqual([allowed.status, allowed.stdout], [0, ''], '對照組：該放行的照樣放行（尾巴不可以把放行變成擋）');
-    blocks(sh(claude, { cwd: subdir, env: { CLAUDE_PROJECT_DIR: elsewhere } }), 'Claude：專案根底下沒有攔截器');
-    blocks(sh(claude, { cwd: subdir }), 'Claude：專案根變數沒給');
-    blocks(sh(claude, { cwd: subdir, env: { CLAUDE_PROJECT_DIR: proj, PATH: elsewhere } }), 'Claude：找不到 node');
-    blocks(sh(claude, { cwd: broken, env: { CLAUDE_PROJECT_DIR: broken } }), 'Claude：攔截器載入就崩');
-
-    const codex = cmd('hook-codex.json');
-    denies(sh(codex, { cwd: subdir }), 'Codex 專案層：從子目錄起');
     // 環境裡的 GIT_DIR 指向另一個清單很鬆的倉庫：找根目錄前沒清的話會讀到它的清單而放行（搬家修正 r1 T5）
     const loose = path.join(scratch, 'loose');
     fs.cpSync(path.join(__dirname, '..', 'tools'), path.join(loose, 'tools'), { recursive: true });
     fs.writeFileSync(path.join(loose, 'settings.json'), JSON.stringify({ forbidden: { name: '錢', deny: ['mcp__z__only'] } }));
     assert.equal(spawnSync('git', ['init', '-q'], { cwd: loose, env: gitEnv(), encoding: 'utf8' }).status, 0);
     const looseEnv = { GIT_DIR: path.join(loose, '.git'), GIT_WORK_TREE: loose };
-    const viaLoose = sh(codex.replace(/^root="\$\(.*?git rev-parse/u, 'root="$(git rev-parse'), { cwd: subdir, env: looseEnv });
-    assert.deepEqual([viaLoose.status, viaLoose.stdout], [0, ''], '對照組：不清環境的寫法真的會讀到鬆的清單而放行');
-    denies(sh(codex, { cwd: subdir, env: looseEnv }), 'Codex 專案層：環境指向別的倉庫也照自己的清單判');
-    blocks(sh(codex, { cwd: elsewhere }), 'Codex 專案層：不在版本控制目錄裡');
-    blocks(sh(codex, { cwd: subdir, env: { PATH: elsewhere } }), 'Codex 專案層：找不到 node 與 git');
+    const withoutClearing = (command) => command.replace(/^root="\$\(.*?git rev-parse/u, 'root="$(git rev-parse');
+    /** 只放 node、git、env、sed 四支（少一支就不放）的 PATH：其他一概找不到。 */
+    const binWithout = (missing) => {
+      const bin = fs.mkdtempSync(path.join(scratch, 'bin-'));
+      for (const tool of ['node', 'git', 'env', 'sed']) {
+        if (tool === missing) continue;
+        const real = tool === 'node' ? process.execPath : spawnSync('/bin/sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim();
+        assert.ok(real, `前提：找得到 ${tool}`);
+        fs.symlinkSync(real, path.join(bin, tool));
+      }
+      return bin;
+    };
+
+    // Claude 側與 Codex 專案層現在是同一招（問版本控制根目錄）：平台給的專案目錄變數跟著「從哪個目錄開 Claude」走
+    //（2026-09-16 實測從子目錄開＝指到子目錄），所以這裡刻意**不給**那個變數、也給一個指到別處的，結果都要一樣
+    for (const [f, who] of [['hook-claude.json', 'Claude'], ['hook-codex.json', 'Codex 專案層']]) {
+      const command = cmd(f);
+      denies(sh(command, { cwd: subdir }), `${who}：從子目錄起`);
+      denies(sh(command, { cwd: subdir, env: { CLAUDE_PROJECT_DIR: elsewhere } }), `${who}：平台的專案目錄變數指到別處也不理它`);
+      const allowed = sh(command, { cwd: subdir, tool: 'mcp__broker-x__get_watchlist' });
+      assert.deepEqual([allowed.status, allowed.stdout], [0, ''], `${who} 對照組：該放行的照樣放行（尾巴不可以把放行變成擋）`);
+      const viaLoose = sh(withoutClearing(command), { cwd: subdir, env: looseEnv });
+      assert.deepEqual([viaLoose.status, viaLoose.stdout], [0, ''], `${who} 對照組：不清環境的寫法真的會讀到鬆的清單而放行`);
+      denies(sh(command, { cwd: subdir, env: looseEnv }), `${who}：環境指向別的倉庫也照自己的清單判`);
+      blocks(sh(command, { cwd: elsewhere }), `${who}：不在版本控制目錄裡`);
+      blocks(sh(command, { cwd: subdir, env: { PATH: elsewhere } }), `${who}：找不到 node 與 git`);
+      // 清環境用的 env／sed 不在、但 node 與 git 都在：清不掉就不可以往下問根目錄（不然環境指向別的倉庫時會讀到它的清單而放行）
+      blocks(sh(command, { cwd: subdir, env: { PATH: binWithout('env'), ...looseEnv } }), `${who}：沒有 env`);
+      blocks(sh(command, { cwd: subdir, env: { PATH: binWithout('sed'), ...looseEnv } }), `${who}：沒有 sed`);
+      denies(sh(command, { cwd: subdir, env: { PATH: binWithout(null), ...looseEnv } }), `${who} 對照組：四支工具都在、環境指向別的倉庫也照自己的清單判`);
+      blocks(sh(command, { cwd: broken }), `${who}：攔截器載入就崩`);
+    }
 
     // 全域層讀固定複本、指令裡寫死指紋（裁示 6a＋7b）：真的跑一遍的題在 tests/guard-copy.test.js；這裡只守範本原樣＝擋
     const global = cmd('hook-codex-global.json');
