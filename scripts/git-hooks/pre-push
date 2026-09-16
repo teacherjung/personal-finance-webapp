@@ -1,5 +1,5 @@
 #!/bin/sh
-# 自動守門（本機門）：git push 之前自動跑「體檢→校對→糾察→考試→複檢」，任一不過就擋下 push。
+# 自動守門（本機門）：git push 之前自動跑「體檢→三關（協作套件 tools/run-checks.js：校對→糾察→考試）→複檢」，任一不過就擋下 push。
 # 啟用方式（每個 clone 一次）：git config core.hooksPath scripts/git-hooks
 # 緊急跳過（不建議）：git push --no-verify
 #
@@ -16,17 +16,17 @@
 #    ⚠️ **按 `GIT_` 前綴整族清、不列名**（#435 r1 High②；同教訓＝#433 r14：精確列名補不完——
 #       GIT_CONFIG_PARAMETERS 與 GIT_CONFIG_COUNT/KEY_n/VALUE_n 是 `git -c` 會生出來、會長的一族，
 #       另有 GIT_EXEC_PATH 等）。JS 那邊的同語意實作＝lib/git-env.js 的 gitEnv()（AGENTS.md 鐵則 11）；
-#       ⚠️ 這一行 sh 是**另一份實作**，那支的考題守不到它——本行由下面點名的考題直接跑 hook 驗。
+#       ⚠️ 這一行 sh 是**另一份實作**（跟套件範本 templates/pre-push 那一行逐字相同），那支的考題守不到它——本行由下面點名的考題直接跑 hook 驗。
 #       GITHUB_* 不是 GIT_ 前綴、不受影響。
 #       test/worktree-integrity.test.js 會實際跑這支 hook、驗注入的（含未列名的）GIT_* 全被清掉。
 for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
 unset _gitvar
 
-echo "🚧 自動守門：工作樹體檢→校對→糾察→考試→工作樹複檢，全過才放行 push…"
+echo "🚧 自動守門：工作樹體檢→三關（套件執行器：校對→糾察→考試）→工作樹複檢，全過才放行 push…"
 node scripts/check-worktree-integrity.js || { echo "❌ 工作樹體檢沒過（push 之前就已經壞了）。照上面的訊息還原再推。"; exit 1; }
-npm run typecheck || { echo "❌ 校對（typecheck）沒過，push 已擋下。修好再推。"; exit 1; }
-npm run lint || { echo "❌ 糾察（lint）沒過，push 已擋下。修好再推。"; exit 1; }
-npm test || { echo "❌ 考試（test）沒過，push 已擋下。修好再推。"; exit 1; }
+# 三關改由協作套件的執行器跑（搬家第 4 步，2026-09-17）：三關命令的正本只有一份＝settings.json 的 checks.commands，
+# 這裡跟雲端 ci.yml 都呼叫它、不各抄一遍。退 1＝有一關紅或跑完樹壞了、退 2＝三關沒登記／不在工作樹裡／起不來——非零一律擋。
+node tools/run-checks.js || { echo "❌ 三關沒過（套件執行器退出碼非零），push 已擋下。照上面的訊息修好再推。"; exit 1; }
 # ⚠️ 考試**之後**再驗一次，這一行才是真正的釘子：考題檔案各跑各的子行程、`node --test` 的檔案
 #    順序也不保證，所以「某支考題把整個 repo 弄成 bare」這件事，體檢自己那一支**不保證**會在
 #    同一次執行裡抓到。放在這裡就跑得掉——考試前是好的、跑完不是了，push 就出不去。

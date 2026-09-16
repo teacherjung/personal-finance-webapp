@@ -164,3 +164,65 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
     'pull_request 的 types 變了——草稿期照跑靠 opened/synchronize 事件，'
       + 'ready_for_review 是「萬一沒跑成，轉正式補考一次」的保險；動這行要連同上一題的前提一起想');
 });
+
+// ---- 搬家第 4 步（2026-09-17）：三關改由協作套件的執行器跑；原本沒有任何題釘「換掉之後 audit 與探照燈還在」 ----
+
+/**
+ * 取 ci.yml 裡某個 job 的整段（從 `  <name>:` 到下一個兩格縮排的 job 鍵為止）。
+ * ⚠️ 只看 job 是不夠的（Codex #610 r1 T1）：從整份 yml 收 `run:` 只證明指令「出現在某個 job」，
+ * 把執行器或 audit 搬去 continue-on-error 的探照燈 job，整份 yml 仍有那一行＝考題照樣綠。
+ * 必過的是 deploy-runtime（分支保護點名的那個 job 名），所以下面幾題只在它的段落裡找。
+ * @param {string} yaml @param {string} name
+ */
+const jobBlock = (yaml, name) => {
+  const at = yaml.indexOf(`\n  ${name}:`);
+  assert.ok(at !== -1, `ci.yml 少了 ${name} 那個 job`);
+  const rest = yaml.slice(at + 1);
+  const next = rest.slice(1).search(/\n {2}[A-Za-z][\w-]*:/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+};
+/** 一個 yml 段落裡的 `run:` 生效行，照出現順序；`- run: …` 與 `- name: …`＋換行 `run: …` 兩種寫法都算（先剝掉清單項的 `- `）。 @param {string} yaml */
+const runLines = (yaml) => yaml.split('\n')
+  .map((l) => l.replace(/^\s*-\s*/, '').trim()).filter((l) => l.startsWith('run:'));
+
+test('CI：上線用的 Node 那個 job（deploy-runtime）的三關由套件執行器跑（node tools/run-checks.js），不再各抄一遍', () => {
+  const yaml = uncommented(read('.github/workflows/ci.yml'));
+  const deploy = runLines(jobBlock(yaml, 'deploy-runtime'));
+  assert.ok(deploy.some((l) => /^run:\s*node tools\/run-checks\.js$/.test(l)),
+    'deploy-runtime（必過的那個 job）的生效行裡沒有 `run: node tools/run-checks.js`——三關命令的正本只有一份（settings.json 的 checks），雲端要呼叫執行器、不自己抄；'
+      + '搬去 dev-machine 也不算（那個 job continue-on-error，紅了不擋部署）');
+  // Grok #610 複審後掃 1：搬去探照燈 job 會擋，但在 deploy-runtime 自己（job 級或三關那一步）加 continue-on-error 效果一樣——
+  // 三關紅了 GitHub 照報成功、必過檢查照樣綠。舊路的三個獨立步驟也一樣沒人釘；換執行器後正本只剩一份，這裡順手釘住。
+  assert.doesNotMatch(jobBlock(yaml, 'deploy-runtime'), /continue-on-error/,
+    'deploy-runtime 段落裡出現 continue-on-error——必過的 job（或它的三關那一步）不可以「紅了照過」，否則分支保護點名的檢查只是裝飾');
+  const copies = runLines(yaml).filter((l) => /^run:\s*npm (run (typecheck|lint)|test)$/.test(l));
+  // dev-machine 那個 job 刻意自己跑 npm test（它是最新版 Node 的探照燈、不走登記），所以這裡只准剩它那一行
+  assert.deepEqual(copies, ['run: npm test'],
+    'ci.yml 生效行裡三關又被各抄一遍（typecheck／lint／test 直接寫在 yml）——那會跟 settings.json 的登記漂開');
+});
+
+test('CI：換成套件執行器之後，依賴安全通報（npm audit，high 以上才擋）那一步還在 deploy-runtime、而且排在三關前面', () => {
+  const deploy = runLines(jobBlock(uncommented(read('.github/workflows/ci.yml')), 'deploy-runtime'));
+  const audit = deploy.findIndex((l) => /^run:\s*npm audit --audit-level=high$/.test(l));
+  const checks = deploy.findIndex((l) => /^run:\s*node tools\/run-checks\.js$/.test(l));
+  assert.ok(audit !== -1,
+    'deploy-runtime 的生效行裡少了 `npm audit --audit-level=high`——套件的三關範本沒有這一道，換執行器時漏搬不會有任何東西變紅（套件 README 第 5 步點名的坑）；'
+      + '搬去 dev-machine 也不算（那個 job 只印不擋）');
+  assert.ok(checks !== -1 && audit < checks,
+    'deploy-runtime 裡 audit 要排在三關（node tools/run-checks.js）前面——先擋掉 high 以上的依賴通報，再花一分半跑考卷');
+});
+
+test('CI：dev-machine 探照燈 job 還在、而且仍是 continue-on-error（不擋部署）', () => {
+  // 只看 dev-machine 自己的段落（Grok #610 複審後掃 2：切到檔尾的話，後面任何一個 job 的四格 continue-on-error 都能替它過關）
+  const job = jobBlock(uncommented(read('.github/workflows/ci.yml')), 'dev-machine');
+  assert.match(job, /^ {4}continue-on-error: true$/m, 'dev-machine 的 job 級 continue-on-error: true 不見了——它是探照燈不是門，紅了不該封住部署');
+});
+
+// Grok #610 複審後掃 3：正本收成一份之後，沒有任何題釘「這一份仍是校對→糾察→考試」——舊路把三行寫死在鉤子與 yml，
+// 改掉任一行實跑 pre-push 的序列題就紅；新路只要 checks.commands 被改成一支立刻成功的指令，執行器退 0、鉤子與雲端都放行。
+// 套件的執行器考題自己劃界「守不到三關命令本身對不對」（tests/run-checks.test.js 檔頭），所以由使用專案這裡釘。
+test('三關登記：settings.json 的 checks.commands 仍是 校對（typecheck）→糾察（lint）→考試（test）三道、順序不變', () => {
+  const { checks } = JSON.parse(read('settings.json'));
+  assert.deepEqual(checks.commands, [['npm', 'run', 'typecheck'], ['npm', 'run', 'lint'], ['npm', 'test']],
+    'checks.commands 變了——它是本機推送前鉤子與雲端上線 job 共用的唯一正本，少一道或換順序＝兩邊同時少跑；真要改，連本題與 AGENTS「自動守門」那段一起改');
+});
