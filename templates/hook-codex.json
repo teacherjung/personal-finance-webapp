@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"$(for v in $(env | sed -n 's/^\\(GIT_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$v\"; done; git rev-parse --show-toplevel)\" && node \"$root/tools/forbidden-tools.js\" || { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }"
+            "command": "root=\"$(command -v env >/dev/null && command -v sed >/dev/null || exit 2; for v in $(env | sed -n 's/^\\(GIT_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$v\"; done; git rev-parse --show-toplevel)\" && node \"$root/tools/forbidden-tools.js\" || { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }"
           }
         ]
       }

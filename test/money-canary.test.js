@@ -20,9 +20,10 @@
  *     清單沒有重複（改清單時不可以把它們順手弄掉或蓋掉）。
  *
  * ⚠️ 誠實劃界：這支考題證明的是**清單與登記寫對了**，不是「有任何一層真的在擋」。
- *   A 支合併時本專案還沒有任何鉤子讀套件那份清單，所以那時叫這個工具會成功回 pong——
- *   那是刻意的對照組。真正的「被擋」要等 B 支把套件那一組鉤子接上 `.claude/settings.json`，
- *   而且**只有在真的 Claude／Codex session 裡按一次**才算數（那一步是人做的，機器證明不了）。
+ *   A 支（#607）合併時還沒有任何鉤子讀套件那份清單，William 叫它成功回 pong＝對照組成立；
+ *   B 支把套件那一組鉤子接上 `.claude/settings.json`（跟 python v6 並存），同一個叫法要變成被擋——
+ *   接線本身由 `test/money-kit-hook.test.js` 用 shell 模擬考，但**只有在真的 Claude／Codex session 裡按一次**
+ *   才算數（那一步是人做的，機器證明不了）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
