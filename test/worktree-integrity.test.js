@@ -558,9 +558,11 @@ test('⭐ 體檢交給 git 的環境裡不可以有任何 GIT_*（直接斷言�
  * 「名字＋參數＋當下還看得到哪些 GIT_*」記進 log，然後成功退出。
  * `checkFailsAt`（1-based）：node 跑到體檢腳本的第 N 次呼叫**起**改成失敗——
  * 給 fail-closed 兩題用；不給＝永遠成功。
+ * `runChecksExit`：node 跑到套件三關執行器 tools/run-checks.js 時改成退這個碼（1＝有一關紅、2＝起不來／沒登記）；
+ * 不給＝退 0。搬家第 4 步起三關由它跑，鉤子只看它的退出碼。
  *
  * @param {string} dir
- * @param {{ checkFailsAt?: number }} [opts]
+ * @param {{ checkFailsAt?: number, runChecksExit?: number }} [opts]
  * @returns {{ bin: string, log: string }}
  */
 function makeHookStubs(dir, opts = {}) {
@@ -569,6 +571,7 @@ function makeHookStubs(dir, opts = {}) {
   const log = join(dir, 'calls.log');
   const count = join(dir, 'check-count');
   const failsAt = opts.checkFailsAt ?? 0;
+  const runChecksExit = opts.runChecksExit ?? 0;
   for (const name of ['node', 'npm']) {
     const stub = join(bin, name);
     writeFileSync(stub,
@@ -579,6 +582,7 @@ function makeHookStubs(dir, opts = {}) {
           + `  n=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > ${JSON.stringify(count)}\n`
           + `  if [ ${failsAt} -gt 0 ] && [ "$n" -ge ${failsAt} ]; then echo "體檢炸了（stub 第 $n 次）" >&2; exit 1; fi\n`
           + 'esac\n'
+          + `case "$*" in *run-checks*) [ ${runChecksExit} -gt 0 ] && { echo "三關執行器（stub）退 ${runChecksExit}" >&2; exit ${runChecksExit}; }; esac\n`
         : '')
       + 'exit 0\n');
     chmodSync(stub, 0o755);
@@ -621,9 +625,7 @@ test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光�
 
     assert.deepEqual(callNames(log), [
       'node scripts/check-worktree-integrity.js',
-      'npm run typecheck',
-      'npm run lint',
-      'npm test',
+      'node tools/run-checks.js',
       'node scripts/check-worktree-integrity.js',
     ], 'pre-push 的關卡順序不對。⚠️ **考試之後那一次工作樹體檢是關鍵**：'
       + '考題各跑各的子行程、`node --test` 的檔案順序也不保證，'
@@ -658,13 +660,30 @@ test('⭐ fail-closed①：考試「之後」那次體檢失敗，push 必須被
       + '考題還全綠，正是 #435 r1 Medium⑤ 用突變示範的洞。');
     assert.deepEqual(callNames(log), [
       'node scripts/check-worktree-integrity.js',
-      'npm run typecheck',
-      'npm run lint',
-      'npm test',
+      'node tools/run-checks.js',
       'node scripts/check-worktree-integrity.js',
-    ], '擋下的位置不對：應該是五關都跑了、倒在最後那一次體檢。');
+    ], '擋下的位置不對：應該是三道都跑了、倒在最後那一次體檢。');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('⭐ fail-closed③：三關執行器退 1（有一關紅）或退 2（起不來／沒登記）都要擋，而且複檢不跑（搬家第 4 步）', () => {
+  // ⚠️ 退 2 是「查不清楚」不是「全過」：套件的執行器對「三關沒登記、不在工作樹裡、指令起不來」退 2；
+  //    鉤子只看非零。這題釘的是「兩種非零都擋」——把鉤子那一行寫成只擋退 1，退 2 就會靜靜放行。
+  for (const code of [1, 2]) {
+    const dir = mkdtempSync(join(tmpdir(), `prepush-checks-${code}-`));
+    try {
+      const { bin, log } = makeHookStubs(dir, { runChecksExit: code });
+      const r = runPrePush(bin);
+      assert.notEqual(r.status, 0, `三關執行器退 ${code}，pre-push 卻放行了 push`);
+      assert.deepEqual(callNames(log), [
+        'node scripts/check-worktree-integrity.js',
+        'node tools/run-checks.js',
+      ], `三關執行器退 ${code} 之後不該再跑複檢（壞掉的三關結果沒有複檢的意義）`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 

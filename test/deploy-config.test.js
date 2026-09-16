@@ -164,3 +164,32 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
     'pull_request 的 types 變了——草稿期照跑靠 opened/synchronize 事件，'
       + 'ready_for_review 是「萬一沒跑成，轉正式補考一次」的保險；動這行要連同上一題的前提一起想');
 });
+
+// ---- 搬家第 4 步（2026-09-17）：三關改由協作套件的執行器跑；原本沒有任何題釘「換掉之後 audit 與探照燈還在」 ----
+
+test('CI：上線用的 Node 那個 job 的三關由套件執行器跑（node tools/run-checks.js），不再各抄一遍', () => {
+  // 步驟寫法有兩種：`- run: …`（沒名字）與 `- name: …` 換行 `run: …`（有名字）——都算，先把清單項的 `- ` 剝掉再看
+  const runs = uncommented(read('.github/workflows/ci.yml')).split('\n')
+    .map((l) => l.replace(/^\s*-\s*/, '').trim()).filter((l) => l.startsWith('run:'));
+  assert.ok(runs.some((l) => /^run:\s*node tools\/run-checks\.js$/.test(l)),
+    'ci.yml 生效行裡沒有 `run: node tools/run-checks.js`——三關命令的正本只有一份（settings.json 的 checks），雲端要呼叫執行器、不自己抄');
+  const copies = runs.filter((l) => /^run:\s*npm (run (typecheck|lint)|test)$/.test(l));
+  // dev-machine 那個 job 刻意自己跑 npm test（它是最新版 Node 的探照燈、不走登記），所以這裡只准剩它那一行
+  assert.deepEqual(copies, ['run: npm test'],
+    'ci.yml 生效行裡三關又被各抄一遍（typecheck／lint／test 直接寫在 yml）——那會跟 settings.json 的登記漂開');
+});
+
+test('CI：換成套件執行器之後，依賴安全通報（npm audit，high 以上才擋）那一步還在', () => {
+  const runs = uncommented(read('.github/workflows/ci.yml')).split('\n')
+    .map((l) => l.replace(/^\s*-\s*/, '').trim()).filter((l) => l.startsWith('run:'));
+  assert.ok(runs.some((l) => /^run:\s*npm audit --audit-level=high$/.test(l)),
+    'ci.yml 生效行裡少了 `npm audit --audit-level=high`——套件的三關範本沒有這一道，換執行器時漏搬不會有任何東西變紅（套件 README 第 5 步點名的坑）');
+});
+
+test('CI：dev-machine 探照燈 job 還在、而且仍是 continue-on-error（不擋部署）', () => {
+  const yaml = uncommented(read('.github/workflows/ci.yml'));
+  const at = yaml.indexOf('\n  dev-machine:');
+  assert.ok(at !== -1, 'ci.yml 少了 dev-machine 那個 job（最新版 Node 的探照燈）');
+  const job = yaml.slice(at);
+  assert.match(job, /\n {4}continue-on-error: true\n/, 'dev-machine 的 job 級 continue-on-error: true 不見了——它是探照燈不是門，紅了不該封住部署');
+});

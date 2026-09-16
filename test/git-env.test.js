@@ -18,8 +18,9 @@
 //      把清法退化成「只刪 `GIT_DIR`」的列名版仍會全綠（**我自己做過一次這種假綠**）。
 //    ②「子行程實際收到什麼」＝**直接斷言**，未來冒出沒人見過的家族也涵蓋得到。
 //
-// **例外：shell 那兩份的題就在本檔下半部**（`scripts/git-hooks/pre-push`、`mutate.sh`）。
-// 它們不經過 Node ⇒ `gitEnv()` 完全管不到，是**另外兩份實作**；放在這裡是為了讓「這條規矩
+// **例外：shell 那幾份的題就在本檔下半部**（`scripts/git-hooks/pre-push`、`mutate.sh`、協作套件的
+// `templates/pre-push`——搬家第 4 步起本機鉤子照範本呼叫套件的三關執行器，範本那一行也算一份）。
+// 它們不經過 Node ⇒ `gitEnv()` 完全管不到，是**另外幾份實作**；放在這裡是為了讓「這條規矩
 // 一共有幾份實作」一眼看得完。⚠️ pre-push 另有一題**真的跑一次整支 hook**
 // （在 `test/worktree-integrity.test.js`），那一題管的是關卡順序與 fail-closed，射程不同。
 import test from 'node:test';
@@ -58,14 +59,15 @@ test('HOME 刻意留著（誠實劃界：清了也關不起來，見 lib/git-env
   assert.equal(gitEnv({ HOME: '/Users/x' }).HOME, '/Users/x');
 });
 
-// ── shell 那兩份 ─────────────────────────────────────────────────────────────
-// ⚠️ `gitEnv()` 管不到 shell：`scripts/git-hooks/pre-push` 與 `mutate.sh` 各自有一行同語意的
-//    `unset` 迴圈（hook 由 git 直接執行、mutate.sh 是 zsh 腳本，兩者都不經過 Node）。
-//    ⇒ 那兩行是**另外兩份實作**，必須自己有題，否則「清乾淨了」在 shell 那半邊是沒人證明的。
+// ── shell 那幾份 ─────────────────────────────────────────────────────────────
+// ⚠️ `gitEnv()` 管不到 shell：`scripts/git-hooks/pre-push`、`mutate.sh`、套件範本 `templates/pre-push`
+//    各自有一行同語意的 `unset` 迴圈（hook 由 git 直接執行、mutate.sh 是 zsh 腳本，都不經過 Node）。
+//    ⇒ 那幾行是**另外幾份實作**，必須自己有題，否則「清乾淨了」在 shell 那半邊是沒人證明的。
 /** @type {{rel: string, why: string}[]} */
 const SHELL_COPIES = [
-  { rel: 'scripts/git-hooks/pre-push', why: 'git 直接執行它，而且它會跑 npm test（整套考題的環境從這裡來）' },
+  { rel: 'scripts/git-hooks/pre-push', why: 'git 直接執行它，而且它會跑套件的三關執行器（整套考題的環境從這裡來）' },
   { rel: 'mutate.sh', why: '它的每一道保護都建立在 git status 上——量錯樹＝防假綠的工具自己假綠' },
+  { rel: 'templates/pre-push', why: '套件的範本：本機鉤子照它呼叫執行器，那一行跟鉤子的要逐字相同（搬家第 4 步）' },
 ];
 
 /** 從 shell 檔裡取出那一行 unset 迴圈。@param {string} rel */
@@ -125,13 +127,15 @@ for (const { rel, why } of SHELL_COPIES) {
   });
 }
 
-test('shell 的兩份清法逐字相同（防兩邊各改各的）', () => {
-  // ⚠️ 誠實劃界：這是**字面比對**，射程只到「兩行有沒有漂開」。
-  //    「真的清得掉」由上面兩題各自用跑的驗，這裡不重複宣稱。
-  const [a, b] = SHELL_COPIES.map((c) => unsetLineOf(c.rel));
-  assert.equal(a, b,
-    `${SHELL_COPIES[0].rel} 與 ${SHELL_COPIES[1].rel} 的清法不一致了。\n`
-    + '兩邊各改各的＝其中一邊會停在舊語意，而它照樣看起來有在清。');
+test('shell 的幾份清法逐字相同（防各改各的）', () => {
+  // ⚠️ 誠實劃界：這是**字面比對**，射程只到「那幾行有沒有漂開」。
+  //    「真的清得掉」由上面各題用跑的驗，這裡不重複宣稱。
+  const lines = SHELL_COPIES.map((c) => ({ rel: c.rel, line: unsetLineOf(c.rel) }));
+  for (const { rel, line } of lines.slice(1)) {
+    assert.equal(line, lines[0].line,
+      `${lines[0].rel} 與 ${rel} 的清法不一致了。\n`
+      + '各改各的＝其中一邊會停在舊語意，而它照樣看起來有在清。');
+  }
 });
 
 test('⭐ mutate.sh 必須先清 GIT_*、才輪到它的 git status 檢查', () => {

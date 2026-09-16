@@ -1,4 +1,4 @@
-# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「依賴通報（npm audit，只擋 high 以上）＋校對（typecheck）＋糾察（lint）＋考試（test）」。
+# 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「依賴通報（npm audit，只擋 high 以上）＋三關（校對 typecheck→糾察 lint→考試 test，由協作套件的 tools/run-checks.js 照 settings.json 登記的順序跑）」。
 # PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（AGENTS.md 驗證要求的自動化版）。
 #
 # ⚠️ 兩個 job 是刻意的：
@@ -65,12 +65,11 @@ jobs:
       # 讓它們封住上線的路會擋到安全更新本身（與 dev-machine「探照燈不是門」同一個理由）；moderate 只印在 dev-machine 那個 job 的 log（沒有機器在看）。
       - name: 依賴安全通報（high 以上才擋）
         run: npm audit --audit-level=high
-      - name: 校對（型別檢查）
-        run: npm run typecheck
-      - name: 格式糾察（lint）
-        run: npm run lint
-      - name: 考試（自動測試）
-        run: npm test
+      # 三關改由協作套件的執行器跑（搬家第 4 步，2026-09-17）：三關命令的正本只有一份＝settings.json 的 checks.commands，
+      # 這裡跟本機推送前鉤子都呼叫 tools/run-checks.js、不各抄一遍（兩份會漂）。它照登記順序跑
+      # typecheck→lint→test，任一非零就停；跑前跑後另驗這棵樹還是不是工作樹、倉庫設定有沒有被改。
+      - name: 三關（照 settings.json 登記的順序：校對→糾察→考試）
+        run: node tools/run-checks.js
 
   dev-machine:
     name: 開發機的 Node（最新版，前瞻｜不擋部署）
