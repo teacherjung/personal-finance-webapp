@@ -11,7 +11,7 @@
 1. **先查 [docs/contracts/README.md](docs/contracts/README.md) 的路由表**——你要動的檔案落在哪個領域，就去讀那份契約。AGENTS.md 很大（大小刻意不寫死——寫死的數字自己會漂），「動手前先讀完」實際上做不到；路由表就是為此存在的。⚠️ AGENTS 的**全域段落**（錢的絕對邊界／鐵則）與 RULES.md 全文**不分任務一律適用、不經路由**。
 2. **接手一段時間沒碰的工作**：先看 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
 3. **要合併 PR**：在**釘住受審版本的樹的根目錄**跑 `node tools/merge.js <編號> --merger <識別值>`（RULES H1；它逐一跑 `settings.json` 登記為已啟用的閘、任一非零就停——閘的清單以 `settings.json` 的 gates 為準，**不憑印象**）；合併地點、退非零怎麼辦、合併後分級＝AGENTS「本專案協作附則」合併段。
-4. **開工前也跑一次** `node scripts/pending-rulings.js --all`——看有沒有「問了 William、他還沒回」的問題放在那裡（RULES D1、I2：**不是閘、不擋任何事**；問了就等他、沒有時限；留痕形狀＝AGENTS「本專案協作附則」的「審查回饋處置」那一顆）。第 6 步換成套件的待裁清單工具之前先用這支。
+4. **開工前也跑一次** `node tools/pending-rulings.js`（不收參數、掃整個專案的留言）——看有沒有「問了 William、他還沒回」的問題放在那裡（RULES D1、I2：**不是閘、不擋任何事**；問了就等他、沒有時限；留痕形狀＝`templates/ruling-record.md`，本專案的值在 AGENTS「本專案協作附則」的「審查回饋處置」那一顆）。
 
 ## 只有 Claude 需要知道的幾條
 
