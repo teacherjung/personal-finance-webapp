@@ -18,22 +18,37 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const settings = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
 const STACKED = 'tools/gates/check-stacked.js';
 
-test('合併指令帶 --delete-branch 時，堆疊閘（tools/gates/check-stacked.js）必須登記為已啟用', () => {
-  const args = settings.mergeCommand?.args ?? [];
-  assert.ok(Array.isArray(args) && args.length > 0, 'settings.json 的 mergeCommand.args 要是非空陣列——合併指令沒登記，tools/merge.js 會退 2');
-  const stacked = settings.gates.filter((g) => Array.isArray(g.args) && g.args.includes(STACKED));
-  assert.equal(stacked.length, 1, `settings.json 的 gates 裡 ${STACKED} 要恰好登記一筆（現在 ${stacked.length} 筆）`);
-  if (args.includes('--delete-branch')) {
-    assert.equal(stacked[0].state, '已啟用',
-      `合併指令帶 --delete-branch，但堆疊閘登記成「${stacked[0].state}」——tools/merge.js 不看旗標、只跑已啟用的閘，`
-        + '刪底支的分支會把疊在上面的 PR 連帶關成已合併（2026-07-10 #3/#5）。要嘛翻成已啟用、要嘛把 --delete-branch 拿掉，兩者同支改');
+/**
+ * 兩題共用的判斷（Codex #611 r1 中②：對照題原本只斷言自己剛設的值、沒跑判斷式）。
+ * 回 null＝一致；回字串＝哪裡不一致。
+ * @param {{ mergeCommand?: { args?: string[] }, gates: { args?: string[], state?: string }[] }} s
+ */
+function problemOf(s) {
+  const args = s.mergeCommand?.args ?? [];
+  if (!Array.isArray(args) || args.length === 0) return 'settings.json 的 mergeCommand.args 要是非空陣列——合併指令沒登記，tools/merge.js 會退 2';
+  const stacked = s.gates.filter((g) => Array.isArray(g.args) && g.args.includes(STACKED));
+  if (stacked.length !== 1) return `settings.json 的 gates 裡 ${STACKED} 要恰好登記一筆（現在 ${stacked.length} 筆）`;
+  if (args.includes('--delete-branch') && stacked[0].state !== '已啟用') {
+    return `合併指令帶 --delete-branch，但堆疊閘登記成「${stacked[0].state}」——tools/merge.js 不看旗標、只跑已啟用的閘，`
+      + '刪底支的分支會把疊在上面的 PR 連帶關成已合併（2026-07-10 #3/#5）。要嘛翻成已啟用、要嘛把 --delete-branch 拿掉，兩者同支改';
   }
+  return null;
+}
+
+test('合併指令帶 --delete-branch 時，堆疊閘（tools/gates/check-stacked.js）必須登記為已啟用', () => {
+  assert.equal(problemOf(settings), null);
 });
 
-test('對照：把堆疊閘改回未啟用（其餘不動），上一題的判斷式要紅', () => {
-  // 不改真檔、只對同一段判斷式餵改過的物件——證明綁的是「已啟用」這個值，不是任何長得像的東西（RULES E8）
+test('對照：把堆疊閘改回未啟用（其餘不動），同一個判斷要報問題；拿掉 --delete-branch 就不報', () => {
+  // 餵改過的物件給**同一個**判斷（不是自己斷言自己剛設的值）——證明綁的是「已啟用」這個值與那個旗標（RULES E8）
   const fake = structuredClone(settings);
   const g = fake.gates.find((x) => x.args.includes(STACKED));
   g.state = '已安裝未啟用';
-  assert.ok(fake.mergeCommand.args.includes('--delete-branch') && g.state !== '已啟用', '突變沒有改到判斷式看的那個值');
+  assert.match(String(problemOf(fake)), /已啟用/, '堆疊閘停用了，判斷卻沒報——判斷式被掏空');
+  const noFlag = structuredClone(fake);
+  noFlag.mergeCommand.args = noFlag.mergeCommand.args.filter((a) => a !== '--delete-branch');
+  assert.equal(problemOf(noFlag), null, '沒有 --delete-branch 時堆疊閘停用不該被本題咬（那是別題的事）');
+  const none = structuredClone(settings);
+  none.gates = none.gates.filter((x) => !x.args.includes(STACKED));
+  assert.match(String(problemOf(none)), /恰好登記一筆/, '堆疊閘沒登記要報');
 });

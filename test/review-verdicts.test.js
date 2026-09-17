@@ -155,6 +155,8 @@ test('合併程序真的把聯集閘登記成一道（settings.json 的 gates；
   const gate = gates.find((g) => Array.isArray(g.args) && g.args.includes('tools/gates/check-review-verdicts.js'));
   assert.ok(gate, 'settings.json 的 gates 沒有登記 tools/gates/check-review-verdicts.js——執行器不會跑聯集閘，規則會退回「靠記性」');
   assert.equal(gate.command, 'node', '聯集閘登記的指令不是 node——執行器起不了它');
+  // 執行器只跑 state === '已啟用' 的閘（tools/merge.js）：登記了但停用＝一樣不會跑（Codex #611 r1 中①，停用實測 136 題仍綠）
+  assert.equal(gate.state, '已啟用', '聯集閘登記成「' + gate.state + '」——執行器只跑已啟用的閘，正式審查會被靜靜漏跑');
   assert.ok(existsSync(join(ROOT, 'tools/gates/check-review-verdicts.js')), '登記的閘檔不存在＝登記了也跑不到');
   // 登記的規矩條號要指回結論標頭那兩條（RULES F4、F5）——閘與規矩對不上，讀登記表的人會找錯條
   assert.match(String(gate.rules || ''), /F4/, '聯集閘的登記沒有指回 RULES F4（標頭形狀）');

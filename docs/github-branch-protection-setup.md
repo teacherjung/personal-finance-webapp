@@ -164,8 +164,8 @@ Settings → Branches → 編輯 `main` 的規則：
 - `.github/workflows/ci.yml` — 兩個程式碼 job（含為什麼 dev-machine 不當門）
 - `.github/workflows/collab-fields.yml` — 協作欄位閘的 job（**刻意分開一個檔**：
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
-- `scripts/check-pr-collab-fields.js` — 協作欄位閘（CI 與人工合併程序**跑同一支**）
-- `scripts/check-pr-merge-gate.js` — 堆疊閘（本機執行，未進 CI）
+- `tools/gates/check-collab-fields.js` — 協作欄位閘（RULES E1；CI 與 `tools/merge.js` **跑同一支**；舊的 `scripts/check-pr-collab-fields.js` 第 7 步退役、已不在合併路徑上）
+- `tools/gates/check-stacked.js` — 堆疊閘（RULES H2；由 `tools/merge.js` 執行、未進 CI）
 - `tools/gates/check-checks-really-ran.js` — 真考卷閘（RULES H3；由 `tools/merge.js` 執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
 - `tools/merge.js`＋`settings.json` 的 gates — 合併程序（RULES H1〜H4）
 - `RULES.md` A 節 — 唯一不變量與角色分工
