@@ -139,7 +139,7 @@
 | \^\[\^\/\]\+\\\.md\$ | E（不需驗收） |
 | \^\\\.github\/ | E（不需驗收） |
 | \^data\/seed\\\.json\$ | E（不需驗收） |
-| \^scripts\/\(check\-ci\-really\-ran\|check\-cross\-pr\-merge\|check\-pr\-collab\-fields\|check\-pr\-merge\-gate\|check\-review\-verdicts\|check\-worktree\-integrity\|audit\-grok\-scan\|grok\-scan\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|c6\-adversarial\)\\\.js\$ | E（不需驗收） |
+| \^scripts\/\(check\-ci\-really\-ran\|check\-cross\-pr\-merge\|check\-pr\-collab\-fields\|check\-pr\-merge\-gate\|check\-review\-verdicts\|check\-worktree\-integrity\|audit\-grok\-scan\|grok\-scan\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|c6\-adversarial\|acceptance\-tier\|pending\-rulings\)\\\.js\$ | E（不需驗收） |
 | \^scripts\/grok\-sandbox\\\.sb\$ | E（不需驗收） |
 | \^scripts\/git\-hooks\/ | E（不需驗收） |
 | \^\(eslint\\\.config\\\.js\|jsconfig\\\.json\|mutate\\\.sh\|\\\.gitignore\)\$ | E（不需驗收） |
