@@ -83,9 +83,21 @@ test('⭐ 級別順序照 William 裁示：F（工具安全設定）排第一（
   const de = classify(['public/x.js', 'AGENTS.md'], table);
   assert.equal(de.level, tierId('D'));
   assert.deepEqual(de.actions.map((a) => a.tier), [tierId('D'), tierId('E')]);
-  const E = settings.acceptance.tiers.find((t) => t.id === tierId('E')).action;
-  assert.match(E, /其他級|別級|不算/, 'E 的動作文字要自己說「同支另有其他級時這一行不算」——套件會把 E 也印出來，靠這句話避免被誤讀成不必驗收');
+  // E 的動作文字要有**逐字**那一句條件句（Codex #613 r4 Medium①：只找關鍵字，「不算數」反轉成「也算數」照樣綠）——釘 D＋E 結果裡那條 E 動作
+  const eInDE = de.actions.find((a) => a.tier === tierId('E'));
+  assert.ok(eInDE, 'D＋E 的結果裡沒有 E 那條動作');
+  assert.equal(eActionProblem(eInDE.action), null, eActionProblem(eInDE.action) ?? '');
+  // 保存：反轉、刪句都要被這條判準抓到（判準是同一個函式，不是另抄一份）
+  assert.ok(eActionProblem(eInDE.action.replace('這一行不算數', '這一行也算數')), '「不算數」反轉成「也算數」沒被抓到');
+  assert.ok(eActionProblem(eInDE.action.replace(`${E_CLAUSE}；`, '')), '整句刪掉沒被抓到');
 });
+
+/** E 級動作文字裡那句「另有其他級時這一行不算」的逐字契約（有限、明確的文字契約，不判語意）。 */
+const E_CLAUSE = '同支若另列了其他級的動作，照那些做、這一行不算數';
+/** @param {string} action */
+function eActionProblem(action) {
+  return action.includes(E_CLAUSE) ? null : `E 的動作文字少了逐字那一句「${E_CLAUSE}」——套件會把 E 也印出來，靠這句避免被誤讀成不必驗收；實際：${action}`;
+}
 
 /** 追蹤檔清單：走 gitEnv()、先驗子行程成功再解析（git 讀不到 repo 時不可以把空輸出當成「零檔案」而全綠——#573 r3）。 */
 function trackedFiles() {
@@ -161,15 +173,40 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.doesNotMatch([settings.checks?.prepareWorktree ?? []].flat().join(' '), /pending-rulings|acceptance-tier/, 'settings.json 的 checks.prepareWorktree 叫了它＝跨變更試合併閘備樹時會跑它');
 });
 
-test('⭐ 文件｜CLAUDE.md 開工步驟指的是套件的待裁清單工具、而且不帶參數（套件收到任何參數＝退 2；舊的 --all 與 scripts/ 路徑改回去，開工儀式會當場失敗）', () => {
-  const claude = read('CLAUDE.md');
-  const step = claude.split('\n').filter((l) => /pending-rulings/.test(l));
-  assert.ok(step.length >= 1, 'CLAUDE.md 沒有任何一行提到待裁清單工具——開工步驟被拿掉了？');
-  assert.ok(step.some((l) => l.includes('`node tools/pending-rulings.js`')), `CLAUDE.md 要寫出跑法 \`node tools/pending-rulings.js\`（不帶參數），實際：${step.join(' / ')}`);
-  for (const l of step) {
-    assert.doesNotMatch(l, /scripts\/pending-rulings/, `CLAUDE.md 還指到已刪的舊工具：${l}`);
-    assert.doesNotMatch(l, /pending-rulings\.js\s+-{1,2}\w/, `CLAUDE.md 叫待裁清單工具時帶了參數（套件不收、會退 2）：${l}`);
+/**
+ * CLAUDE.md「開工前」那一節的編號步驟裡，要有一步叫套件的待裁清單工具、不帶參數、不指舊路徑。
+ * 讀的是**有效文字**（visible() 剝掉 HTML 註解與圍欄）、只看那一節的編號步驟——Codex #613 r4 Low②：讀原文的話，整步藏進註解仍全綠。
+ * @param {string} text
+ * @returns {string | null} 問題（null＝合格）
+ */
+function claudeStartupStepProblem(text) {
+  const lines = visible(text).split('\n');
+  const from = lines.findIndex((l) => /^## 開工前\s*$/.test(l));
+  if (from < 0) return 'CLAUDE.md（剝掉註解與圍欄後）找不到標題行「## 開工前」';
+  const next = lines.findIndex((l, i) => i > from && /^## /.test(l));
+  const steps = lines.slice(from + 1, next < 0 ? lines.length : next).filter((l) => /^\d+\.\s/.test(l));
+  if (steps.length < 3) return `「開工前」那一節（剝掉註解與圍欄後）只剩 ${steps.length} 個編號步驟——步驟被藏起來或搬走了`;
+  const hit = steps.filter((l) => /pending-rulings/.test(l));
+  if (!hit.length) return '「開工前」的編號步驟裡沒有一步提到待裁清單工具（藏進註解、圍欄或搬出那一節都算沒有）';
+  if (!hit.some((l) => l.includes('`node tools/pending-rulings.js`'))) return `要寫出跑法 \`node tools/pending-rulings.js\`（不帶參數），實際：${hit.join(' / ')}`;
+  for (const l of lines) {
+    if (/scripts\/pending-rulings/.test(l)) return `CLAUDE.md 還指到已刪的舊工具：${l}`;
+    if (/pending-rulings\.js\s+-{1,2}\w/.test(l)) return `CLAUDE.md 叫待裁清單工具時帶了參數（套件不收、會退 2）：${l}`;
   }
+  return null;
+}
+
+test('⭐ 文件｜CLAUDE.md「開工前」的編號步驟裡叫的是套件的待裁清單工具、不帶參數、不指舊路徑；讀有效文字（藏進註解不算）', () => {
+  const claude = read('CLAUDE.md');
+  assert.equal(claudeStartupStepProblem(claude), null, claudeStartupStepProblem(claude) ?? '');
+  // 保存：同一個判準要抓得到這幾種改法（不是另抄一份）
+  const stepLine = visible(claude).split('\n').find((l) => /^\d+\.\s/.test(l) && /pending-rulings/.test(l)) ?? '';
+  assert.ok(stepLine && claude.includes(stepLine), '對照斷言：那一步在真檔裡逐字找得到（下面的夾具靠它定位）');
+  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, `<!--\n${stepLine}\n-->`)), '整步藏進 HTML 註解沒被抓到（r4 Low②）');
+  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, `\`\`\`\n${stepLine}\n\`\`\``)), '整步放進圍欄沒被抓到');
+  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, '')), '整步刪掉沒被抓到');
+  assert.ok(claudeStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node tools/pending-rulings.js --all`')), '帶回 --all 沒被抓到');
+  assert.ok(claudeStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node scripts/pending-rulings.js`')), '改指舊路徑沒被抓到');
 });
 
 test('⭐ 文件｜AGENTS 附則寫出分級的跑法、只指路不抄分級表；PR 範本「怎麼驗收」只指路、固定小標只認真正的標題行', () => {
