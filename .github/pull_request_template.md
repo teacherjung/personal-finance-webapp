@@ -18,13 +18,13 @@
 
 ## 怎麼驗收
 
-<!-- 給 William 的三句白話：①開哪一頁 ②做什麼 ③看到什麼算對。級別與動作不要自己算：跑 `node scripts/acceptance-tier.js <PR 編號>`、照它印的寫（RULES H6；第 6 步之前仍用這支腳本）。 -->
+<給 William 的三句白話：①開哪一頁 ②做什麼 ③看到什麼算對。級別與動作不要自己算：跑 `node scripts/acceptance-tier.js <PR 編號>`、照它印的寫（RULES H6；第 6 步之前仍用這支腳本）>
 
 ### 複審後掃
 
 _待補——照 templates/scan-record.md 填；這行還在＝還沒填。_
 
 <!--
-時機與規格＝RULES G1〜G4 與 templates/scan-record.md：獨立審查者第一次「通過」之後、轉正式之前，由掃描發射者（settings.json 的 scanner）掃一次；修完再拿到通過不重掃；沒掃成寫「未執行：<原因>」。
+時機與規格＝RULES G1〜G4 與 templates/scan-record.md（這裡不抄）；掃描發射者＝settings.json 的 scanner。
 小標字串 `### 複審後掃` 是固定的 grep 鍵（2026-09-17 切換日起用套件的小標；之前的支用「### Grok 複審後掃」，歷史不改）。
 -->

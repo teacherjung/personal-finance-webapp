@@ -401,13 +401,18 @@ test('⭐ 文件｜AGENTS 附則要寫出這支的跑法、只指路不抄分級
     assert.doesNotMatch([g.command, ...(g.args ?? [])].join(' '), /acceptance-tier/,
       `分級腳本被登記成閘「${g.name}」——它只算不擋，接進合併指令就變成閘`);
   }
-  const tpl = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8');
-  const from = tpl.indexOf('## 怎麼驗收');
-  const to = tpl.indexOf('### 複審後掃');
-  // ⚠️ 兩個索引都先驗：indexOf 回 -1 時 slice 會靜靜切出空字串，下面的斷言就失真
+  // 固定小標只認**真正的標題行**：先剝掉 HTML 註解與圍欄，再逐行找 /^### 複審後掃\s*$/——
+  //   註解裡同名的字串不算（Codex #611 r2 Medium：舊題剝過、接手題用 indexOf 漏了，真標題改名而註解留著同字串仍全綠）。
+  const tpl = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^```[^\n]*\n[\s\S]*?^```[^\n]*$/gm, '');
+  const lines = tpl.split('\n');
+  const from = lines.findIndex((l) => /^## 怎麼驗收\s*$/.test(l));
+  const to = lines.findIndex((l) => /^### 複審後掃\s*$/.test(l));
+  // ⚠️ 兩個索引都先驗：找不到時 slice 會靜靜切出空字串，下面的斷言就失真
   //   （切換日小標從「### Grok 複審後掃」改名時，這裡沒驗的話就是一題靜靜通過的空包彈）。
-  assert.ok(from >= 0 && to > from, `PR 模板找不到「## 怎麼驗收」（${from}）或它後面的「### 複審後掃」（${to}）`);
-  const section = tpl.slice(from, to);
+  assert.ok(from >= 0 && to > from, `PR 模板（剝掉註解與圍欄後）找不到標題行「## 怎麼驗收」（${from}）或它後面的「### 複審後掃」（${to}）`);
+  const section = lines.slice(from, to).join('\n');
   assert.match(section, /scripts\/acceptance-tier\.js/, 'PR 模板沒指到分級腳本');
   assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：|不需驗收/, 'PR 模板又在抄級名、分級表或算法（#573 r4／r5）——只准指路');
 });
