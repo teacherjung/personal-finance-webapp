@@ -251,7 +251,7 @@ if (isMainModule(import.meta.url)) {
       worst = Math.max(worst, r.code === 1 ? 3 : r.code);   // 越界最重（3>2），最後折回 1
     }
     const code = worst === 3 ? 1 : /** @type {0|2} */ (worst);
-    if (code === 1) console.log('→ 有工具足跡。走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因（不擋合併）');
+    if (code === 1) console.log('→ 有工具足跡。走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱＝該掃作廢、照 templates/scan-record.md（RULES G3）在 PR 描述記一行原因（不擋合併）');
     else if (code === 2) console.log('→ 有 session 查不清楚＝fail-closed 當越界處理');
     process.exit(code);
   } else if (args[0] && args[0] !== '--workspace') {
@@ -263,7 +263,7 @@ if (isMainModule(import.meta.url)) {
   const r = auditSessionDir(target);
   const id = target.split('/').filter(Boolean).pop();
   if (r.code === 0) console.log(`驗屍 ✅ 乾淨（session ${id}；可解析行 ${r.parsed}、零工具足跡）`);
-  else if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱（舊制）＝該掃作廢、照 AGENTS「Grok 的邊界」條款在 PR 描述記一行原因`);
+  else if (r.code === 1) console.log(`驗屍 🔧 有工具足跡（session ${id}）：${Object.entries(r.calls).map(([k, v]) => `${k}×${v}`).join('、')}\n→ 走沙箱（scripts/grok-scan.js）＝正常、不作廢；未走沙箱（舊制）＝該掃作廢、照 templates/scan-record.md（RULES G3）在 PR 描述記一行原因`);
   else console.log(`驗屍 ⚠️ 查不清楚（session ${id}）：${r.why}\n→ fail-closed：證明不了它做了什麼，當「沒掃成」處理`);
   process.exit(r.code);
 }

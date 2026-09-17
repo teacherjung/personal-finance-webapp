@@ -8,7 +8,7 @@
 
 變更說明的「實作者」「獨立審查者」兩欄、結論標頭與自評的角色格，填的是這裡的識別值，不是職稱。
 
-值域：現階段只准純拉丁字母：結論標頭與重述的正則只收 A 到 Z 的字母，協作欄位閘收得寬，兩道機器值域不同——要放寬就得標頭、重述、欄位閘整族一起改。
+值域：現階段只准純拉丁字母：結論標頭的正則只收 A 到 Z 的字母，協作欄位閘收得寬，兩道機器值域不同——要放寬就得標頭、欄位閘整族一起改。
 
 | 參與者 | 識別值 | 貼文帳號 |
 |---|---|---|
@@ -32,24 +32,24 @@
 
 | 項目 | 規矩 | 位置 |
 |---|---|---|
-| 禁區工具與能力清單（含攔截器安裝在哪一方） | B1 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）規則正本＝AGENTS\.md「🛑 錢的絕對邊界」節（William 2026\-08\-03 拍板）；攔截器裝在哪幾層、各層怎麼驗＝同一節的機械層說明；專案內的攔截器＝\.claude\/settings\.json 與 \.codex\/hooks\.json（進版控），家目錄與平台層的設定不在 repo、也不寫在這裡。清單現況：專案 \.claude\/settings\.json 的 PreToolUse 自搬家第 3 步 B 支起有兩組並存——python v6 那組讀寫死在它指令本體裡的詞表與白名單；套件那組讀根目錄 settings\.json 的 forbidden（改檔、切分支下一次工具呼叫就生效）。兩組對共用字表的判定一致（各有考題單獨跑整張字表）；測試鈕 mcp\_\_guard\_canary\_\_ping 只在 forbidden 上。Codex 全域層讀的是 tools\/guard\-copy\.js 從已合併版本抽出、放在倉庫外的固定複本（哪個版本＝重抽時的合併紀錄），登記與信任不在 repo。其他層怎麼讀清單不寫在這裡。 |
-| 真實資料檔清單 | B4 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）AGENTS\.md 鐵則「敏感資料絕不進版控」那一條（列 data\/store\.json、\*\.bak、data\/\*backup\*）＋ \.gitignore 開頭「個人實際資料與憑證」那一節（最完整的一份）；scripts\/grok\-scan\.js 建盒子後的禁區檢查另帶一份（多 \.env、\.env\.local）——三份不一致、尚無單一正本 |
-| 忽略清單、檢查豁免允許清單 | E7 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）忽略＝\.gitignore 與 prototype\/forest\-ui\-lab\/\.gitignore（兩份的生效樣式都由 settings\.json 的 ignoreLists 登記、套件的 tests\/ignore\-lists\.test\.js 逐字比對——搬家第 2 步起在本專案三關裡跑；根目錄那份另由 test\/no\-hiding\-places\.test\.js 的 ALLOWED\_GITIGNORE 再釘一份。所以改任何一份忽略檔，要同一支改 ignoreLists、ALLOWED\_GITIGNORE（根目錄那份時），並跑 node tools\/build\-settings\.js）；檢查豁免＝eslint\.config\.js 的兩組 ignores（全域一組＋xlsx 引入限制那組；test\/no\-hiding\-places\.test\.js 的 ALLOWED\_ESLINT\_IGNORES 以 import 讀實際值釘住）；型別檢查射程＝jsconfig\.json 的 include（test\/ 刻意不在；test\/ts\-check\-coverage\.test\.js 只釘 lib、public、scripts、test\-doubles、prototype 五個目錄與 server\.js 必須直接納入，不釘還排除了什麼）；版控外的 \.git\/info\/exclude 不在射程 |
-| 路標考題掃描的目錄範圍 | K3 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）test\/comment\-test\-refs\.test\.js：掃 test\/ 第一層的 \*\.test\.js 與 test\/helpers\/ 第一層的 \.js，更深的子目錄不在射程（套件的 tests\/signposts\.test\.js 目錄寫死 tests\/、不讀這一格） |
-| 三關的實際命令、執行環境版本、稽核等級（或唯一設定檔位置） | E2、E3 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）搬家第 4 步（2026\-09\-17）起＝settings\.json 的 checks 是三關命令的正本：本機門 scripts\/git\-hooks\/pre\-push 與雲端 \.github\/workflows\/ci\.yml「上線用的 Node（\.node\-version）」job 都呼叫 tools\/run\-checks\.js（鉤子前後另跑 scripts\/check\-worktree\-integrity\.js，到搬家完工驗收前兩支一起跑＝第 13 題 a）；試合併閘 scripts\/check\-cross\-pr\-merge\.js 仍自己呼叫 package\.json 的 scripts（第 7 步退役）；執行環境版本＝\.node\-version（CI 與 Render 部署同讀；package\.json 的 engines 是 start\.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci\.yml 上線用 Node 那個 job 的 npm audit \-\-audit\-level\=high（只在雲端跑） |
-| 必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單） | E3、H3 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）正本在 GitHub：main 分支保護的 required\_status\_checks（唯讀重讀：gh api repos\/teacherjung\/personal\-finance\-webapp\/branches\/main\/protection）；紀錄與驗證入口＝docs\/github\-branch\-protection\-setup\.md；檢查名逐字對應 \.github\/workflows\/ci\.yml 與 \.github\/workflows\/collab\-fields\.yml 的 job 名 |
-| 合併步驟登記正本（閘登記對帳題讀它） | H1 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）現行＝REVIEW\-AND\-MERGE\.md 以「合併也由 Codex 代執行」起頭的引用段、到其後第一條 \-\-\- 為止的合併步驟清單（bash 圍欄裡逐字的標準指令行＝登記；各閘腳本 export 的 MERGE\_GATE＝自報；對帳考題＝test\/collab\-invariant\-docs\.test\.js，集合由 test\/helpers\/merge\-gates\.js 反查）；換成套件的合併指令後＝settings\.json 的 gates |
-| 合併前必做的驗收依據 | A5 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）AGENTS\.md 協作流程「合併的決策與執行是兩件事」的常設授權那一條（高風險與新功能照「PR 分級」的標準全流程，William 實測驗收後才合；分級看 PR 說明的「最糟失去什麼」欄）＋每支 PR 說明「怎麼驗收」的三句白話（開哪一頁、做什麼、看到什麼算對；同一節的級別與動作屬合併後驗收分級＝H6 那一格，不是這一格）（\.github\/pull\_request\_template\.md） |
-| 合併後驗收分級與動作的正本（路徑家族表＋各級動作） | H6 | （搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）settings\.json 的 acceptance（切換前的正本＝scripts\/acceptance\-tier\.js 的 RULES 與 TIERS；RULES 每條的級別由 test\/acceptance\-tier\.test\.js 的 RULE\_SAMPLES 逐條釘住，TIERS 的動作文字考題只驗長度） |
+| 禁區工具與能力清單（含攔截器安裝在哪一方） | B1 | 規則正本＝AGENTS\.md「🛑 錢的絕對邊界」節（William 2026\-08\-03 拍板）；攔截器裝在哪幾層、各層怎麼驗＝同一節的機械層說明；專案內的攔截器＝\.claude\/settings\.json 與 \.codex\/hooks\.json（進版控），家目錄與平台層的設定不在 repo、也不寫在這裡。清單現況：專案 \.claude\/settings\.json 的 PreToolUse 自搬家第 3 步 B 支起有兩組並存——python v6 那組讀寫死在它指令本體裡的詞表與白名單；套件那組讀根目錄 settings\.json 的 forbidden（改檔、切分支下一次工具呼叫就生效）。兩組對共用字表的判定一致（各有考題單獨跑整張字表）；測試鈕 mcp\_\_guard\_canary\_\_ping 只在 forbidden 上。Codex 全域層讀的是 tools\/guard\-copy\.js 從已合併版本抽出、放在倉庫外的固定複本（哪個版本＝重抽時的合併紀錄），登記與信任不在 repo。其他層怎麼讀清單不寫在這裡。 |
+| 真實資料檔清單 | B4 | AGENTS\.md 鐵則「敏感資料絕不進版控」那一條（列 data\/store\.json、\*\.bak、data\/\*backup\*）＋ \.gitignore 開頭「個人實際資料與憑證」那一節（最完整的一份）；scripts\/grok\-scan\.js 建盒子後的禁區檢查另帶一份（多 \.env、\.env\.local）——三份不一致、尚無單一正本 |
+| 忽略清單、檢查豁免允許清單 | E7 | 忽略＝\.gitignore 與 prototype\/forest\-ui\-lab\/\.gitignore（兩份的生效樣式都由 settings\.json 的 ignoreLists 登記、套件的 tests\/ignore\-lists\.test\.js 逐字比對——搬家第 2 步起在本專案三關裡跑；根目錄那份另由 test\/no\-hiding\-places\.test\.js 的 ALLOWED\_GITIGNORE 再釘一份。所以改任何一份忽略檔，要同一支改 ignoreLists、ALLOWED\_GITIGNORE（根目錄那份時），並跑 node tools\/build\-settings\.js）；檢查豁免＝eslint\.config\.js 的兩組 ignores（全域一組＋xlsx 引入限制那組；test\/no\-hiding\-places\.test\.js 的 ALLOWED\_ESLINT\_IGNORES 以 import 讀實際值釘住）；型別檢查射程＝jsconfig\.json 的 include（test\/ 刻意不在；test\/ts\-check\-coverage\.test\.js 只釘 lib、public、scripts、test\-doubles、prototype 五個目錄與 server\.js 必須直接納入，不釘還排除了什麼）；版控外的 \.git\/info\/exclude 不在射程 |
+| 路標考題掃描的目錄範圍 | K3 | test\/comment\-test\-refs\.test\.js：掃 test\/ 第一層的 \*\.test\.js 與 test\/helpers\/ 第一層的 \.js，更深的子目錄不在射程（套件的 tests\/signposts\.test\.js 目錄寫死 tests\/、不讀這一格） |
+| 三關的實際命令、執行環境版本、稽核等級（或唯一設定檔位置） | E2、E3 | 搬家第 4 步（2026\-09\-17）起＝settings\.json 的 checks 是三關命令的正本：本機門 scripts\/git\-hooks\/pre\-push 與雲端 \.github\/workflows\/ci\.yml「上線用的 Node（\.node\-version）」job 都呼叫 tools\/run\-checks\.js（鉤子前後另跑 scripts\/check\-worktree\-integrity\.js，到搬家完工驗收前兩支一起跑＝第 13 題 a）；試合併閘 scripts\/check\-cross\-pr\-merge\.js 仍自己呼叫 package\.json 的 scripts（第 7 步退役）；執行環境版本＝\.node\-version（CI 與 Render 部署同讀；package\.json 的 engines 是 start\.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci\.yml 上線用 Node 那個 job 的 npm audit \-\-audit\-level\=high（只在雲端跑） |
+| 必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單） | E3、H3 | 正本在 GitHub：main 分支保護的 required\_status\_checks（唯讀重讀：gh api repos\/teacherjung\/personal\-finance\-webapp\/branches\/main\/protection）；紀錄與驗證入口＝docs\/github\-branch\-protection\-setup\.md；檢查名逐字對應 \.github\/workflows\/ci\.yml 與 \.github\/workflows\/collab\-fields\.yml 的 job 名 |
+| 合併步驟登記正本（閘登記對帳題讀它） | H1 | settings\.json 的 gates（登記；每筆＝name／rules／command／args／state）；各閘腳本＝tools\/gates\/\*\.js；對帳考題＝tests\/settings\.test\.js（磁碟上的閘 vs 登記的閘）；合併指令 tools\/merge\.js 只跑登記為已啟用的閘、任一非零就停。切換日（2026\-09\-17）之前＝舊程序文件的合併步驟清單＋scripts\/check\-\*\.js 自報的 MERGE\_GATE；舊閘腳本第 7 步退役，退役前不在任何合併路徑上 |
+| 合併前必做的驗收依據 | A5 | 本檔 mergeAuthorization 那一格（高風險與新功能照 AGENTS\.md「PR 分級與契約」節的標準全流程，William 實測驗收後才合；分級看 PR 說明的「最糟失去什麼」欄）＋每支 PR 說明「怎麼驗收」的三句白話（開哪一頁、做什麼、看到什麼算對；同一節的級別與動作屬合併後驗收分級＝H6 那一格，不是這一格）（\.github\/pull\_request\_template\.md） |
+| 合併後驗收分級與動作的正本（路徑家族表＋各級動作） | H6 | settings\.json 的 acceptance（切換前的正本＝scripts\/acceptance\-tier\.js 的 RULES 與 TIERS；RULES 每條的級別由 test\/acceptance\-tier\.test\.js 的 RULE\_SAMPLES 逐條釘住，TIERS 的動作文字考題只驗長度） |
 
 主幹分支名（原閘寫死 main，規矩 H2、H3、H4）：main
 
 ## 四、掃描發射者（規矩 A1、G4）
 
-- 掃描器：（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）Grok CLI（xAI）：一律經 node scripts\/grok\-scan\.js \-\-base \<sha\> \-\-head \<sha\> \-\-prompt \<指示檔\> \-\-out \<回覆檔\> 發射（REVIEW\-AND\-MERGE\.md「怎麼執行」節那一行）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本（沒有掃描器＝每支的掃描紀錄寫「未執行：本專案無掃描器」，由下面指定的那一方記錄並轉正式）
-- 誰指派、登記在哪：（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）掃描發射者＝起得了掃描器的那一方（William 2026\-09\-11 裁「甲」改成角色寫法）；定義在 AGENTS\.md 三模式邊界表下的「表外的具名例外」與「Grok 的邊界」節，現況登記在該例外正下方那一行（刻意不釘）；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail\-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William
-- 兩方都起得了時：（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）本專案沒有：今天只有一方起得了掃描器，平手規則刻意不預寫（AGENTS\.md「表外的具名例外」）；出現兩方都起得了時要補一條——由誰定沒有寫明（「Grok 的邊界」節只規定換現況要先實測、再問 William）
-- 沒有合格者時，誰記錄未執行、誰轉正式：（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）本專案沒有另立：掃不成一律由掃描發射者（現況 Claude）在變更說明固定小標「\#\#\# Grok 複審後掃」下逐字寫「未執行：\<原因\>」、不擋合併，轉正式也由掃描發射者做；「沒有任何一方起得了」這個情形本專案沒有條文（未裁）
+- 掃描器：Grok CLI（xAI）：一律經 node scripts\/grok\-scan\.js \-\-base \<sha\> \-\-head \<sha\> \-\-prompt \<指示檔\> \-\-out \<回覆檔\> 發射（呼叫紀律與三個失效條件＝scripts\/grok\-scan\.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本（沒有掃描器＝每支的掃描紀錄寫「未執行：本專案無掃描器」，由下面指定的那一方記錄並轉正式）
+- 誰指派、登記在哪：掃描發射者＝起得了掃描器的那一方（William 2026\-09\-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail\-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William
+- 兩方都起得了時：本專案沒有：今天只有一方起得了掃描器，平手規則刻意不預寫（本格即正本）；出現兩方都起得了時要補一條——由誰定沒有寫明（換現況要先實測、再問 William，見 assignedBy）
+- 沒有合格者時，誰記錄未執行、誰轉正式：本專案沒有另立：掃不成一律由掃描發射者（現況 Claude）在變更說明固定小標「\#\#\# 複審後掃」下逐字寫「未執行：\<原因\>」、不擋合併，轉正式也由掃描發射者做；「沒有任何一方起得了」這個情形本專案沒有條文（未裁）
 
 隔離（規矩 G2；裁示者 2026-09-12 裁「丙」：隔離本身不在套件裡，由這裡指定誰提供；套件只帶掃前試探與掃後比對兩支小工具）：
 
@@ -160,11 +160,11 @@
 
 | 順序 | 閘 | 規矩 | 指令 | 狀態 |
 |---|---|---|---|---|
-| 1 | 協作欄位（四欄齊全、實作者不等於獨立審查者） | A2、E1 | node tools\/gates\/check\-collab\-fields\.js | 已安裝未啟用 |
-| 2 | 複審結論聯集（有沒有未撤銷的阻擋、有沒有對目前版本的通過） | A2、F4、F5 | node tools\/gates\/check\-review\-verdicts\.js | 已安裝未啟用 |
-| 3 | 真考卷（必要檢查最新場次真的跑過且成功） | H3 | node tools\/gates\/check\-checks\-really\-ran\.js | 已安裝未啟用 |
-| 4 | 堆疊（底是主幹、上面沒有疊別支） | H2 | node tools\/gates\/check\-stacked\.js | 已安裝未啟用 |
-| 5 | 跨變更試合併（與每支以主幹為底的開著變更真合起來跑三關） | H4 | node tools\/gates\/check\-cross\-merge\.js | 已安裝未啟用 |
+| 1 | 協作欄位（四欄齊全、實作者不等於獨立審查者） | A2、E1 | node tools\/gates\/check\-collab\-fields\.js | 已啟用 |
+| 2 | 複審結論聯集（有沒有未撤銷的阻擋、有沒有對目前版本的通過） | A2、F4、F5 | node tools\/gates\/check\-review\-verdicts\.js | 已啟用 |
+| 3 | 真考卷（必要檢查最新場次真的跑過且成功） | H3 | node tools\/gates\/check\-checks\-really\-ran\.js | 已啟用 |
+| 4 | 堆疊（底是主幹、上面沒有疊別支） | H2 | node tools\/gates\/check\-stacked\.js | 已啟用 |
+| 5 | 跨變更試合併（與每支以主幹為底的開著變更真合起來跑三關） | H4 | node tools\/gates\/check\-cross\-merge\.js | 已啟用 |
 
 全綠之後執行的合併指令：gh pr merge \{change\} \-R \{project\} \-\-squash \-\-delete\-branch \-\-match\-head\-commit \{sha\} \-\-body \"Reviewed\-By\: \{reviewer\}\\nMerged\-By\: \{merger\}\"
 
@@ -174,16 +174,16 @@
 
 ## 十一、合併預授權（規矩 A5）
 
-（搬家期間：切換日（搬家第 5 步）之前，以現行規矩為準＝AGENTS\.md／REVIEW\-AND\-MERGE\.md 及它們指定的正本；這一格只是抄錄、不當依據；切換日之後以 settings\.json 為準。）有，常設（裁示者 William 2026\-08\-13 口頭拍板；2026\-09\-05 在協作系統體檢第 1 題回「a」確認整條——含 08\-13 那句與對稱適用，落點＝personal\-finance\-webapp \#571 那則裁示留言（Claude 轉述他在對話中的回答）；正本＝該專案 AGENTS\.md「合併的決策與執行是兩件事」那條底下的常設授權子項）：Claude 實作的支由 Codex 留下合規「通過」、Codex 實作的支由 Claude 複審通過，且變更說明的「\#\#\# Grok 複審後掃」小標已填（逐條判定完、或逐字「未執行：原因」，未執行不擋合併）＝視同裁示者於送審時已預先決定「要合、而且閘綠了就合」，由審過這支的那一方照合併步驟合併、不必再問；其中「Codex 實作的支也要小標已填」那半句是 Claude 的操作化、現在生效，不是裁示者原話，也不在 09\-05 確認整條的範圍（裁示者 2026\-09\-09 只裁「掃要對稱」）；裁示者隨時可收回，也可對個案說先不要合；不改變審查回饋處置的停問規則、錢的絕對邊界，也不改變高風險與新功能支依標準全流程要先由裁示者實測驗收、驗收前不合。預授權不取代 A5 列的其餘條件。
+有，常設（裁示者 William 2026\-08\-13 口頭拍板；2026\-09\-05 在協作系統體檢第 1 題回「a」確認整條——含 08\-13 那句與對稱適用，落點＝personal\-finance\-webapp \#571 那則裁示留言（Claude 轉述他在對話中的回答）；本格即正本）：Claude 實作的支由 Codex 留下合規「通過」、Codex 實作的支由 Claude 複審通過，且變更說明的「\#\#\# 複審後掃」小標已填（逐條判定完、或逐字「未執行：原因」，未執行不擋合併）＝視同裁示者於送審時已預先決定「要合、而且閘綠了就合」，由審過這支的那一方照登記的閘與合併指令合併、不必再問；其中「Codex 實作的支也要小標已填」那半句是 Claude 的操作化、現在生效，不是裁示者原話，也不在 09\-05 確認整條的範圍（裁示者 2026\-09\-09 只裁「掃要對稱」）；裁示者隨時可收回，也可對個案說先不要合；不改變審查回饋處置的停問規則、錢的絕對邊界，也不改變高風險與新功能支依標準全流程要先由裁示者實測驗收、驗收前不合。預授權不取代 A5 列的其餘條件。
 
 ## 十二、機器啟用狀態（逐支登記；「已啟用」以外的一律當靠自覺）
 
 | 機器 | 規矩 | 狀態 | 驗過的日期 |
 |---|---|---|---|
-| 平台介面（閘與待裁清單問平台的十個動作，答案形狀不合就不放行） | E5、H1 | 已安裝未啟用 |  |
-| 合併指令（依序跑完登記的閘，任一道紅就停） | H1 | 已安裝未啟用 |  |
-| 協作欄位閘（四欄齊全、實作者不等於獨立審查者） | A2、E1 | 已安裝未啟用 |  |
-| 結論聯集閘（阻擋各自撤銷、放行只認指定那一位對目前版本的通過） | F4、F5 | 已安裝未啟用 |  |
+| 平台介面（閘與待裁清單問平台的十個動作，答案形狀不合就不放行） | E5、H1 | 已啟用 | 2026\-09\-14 |
+| 合併指令（依序跑完登記的閘，任一道紅就停） | H1 | 已啟用 | 2026\-09\-14 |
+| 協作欄位閘（四欄齊全、實作者不等於獨立審查者） | A2、E1 | 已啟用 | 2026\-09\-14 |
+| 結論聯集閘（阻擋各自撤銷、放行只認指定那一位對目前版本的通過） | F4、F5 | 已啟用 | 2026\-09\-14 |
 | 禁區攔截器（判斷一份，兩家 AI 的鉤子都呼叫它） | B1 | 已啟用 | 2026\-09\-17 |
 | 忽略清單一致考題（登記的每一份忽略檔跟生效的樣式一字不差） | B4、E7 | 已啟用 | 2026\-09\-15 |
 | 推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作樹） | E2 | 已啟用 |  |
@@ -194,9 +194,9 @@
 | 掃描前試探（禁區各埋一個假機密，從盒內試讀試寫；隔離本身由專案設定指定誰提供） | G2 | 已安裝未啟用 |  |
 | 掃描後比對（假機密與未給盒子的真值不得出現在回覆、日誌、檔名） | G2 | 已安裝未啟用 |  |
 | 合併閘登記對帳題（磁碟上的閘 vs 設定登記的閘） | H1 | 已啟用 | 2026\-09\-15 |
-| 堆疊閘（底必須是主幹、不可以有別支疊在上面） | H2 | 已安裝未啟用 |  |
-| 真考卷閘（必過檢查在那顆版本上真的跑過且成功） | H3 | 已安裝未啟用 |  |
-| 跨變更試合併閘（與每支以主幹為底的開著變更真合起來跑三關） | H4 | 已安裝未啟用 |  |
+| 堆疊閘（底必須是主幹、不可以有別支疊在上面） | H2 | 已啟用 | 2026\-09\-14 |
+| 真考卷閘（必過檢查在那顆版本上真的跑過且成功） | H3 | 已啟用 | 2026\-09\-14 |
+| 跨變更試合併閘（與每支以主幹為底的開著變更真合起來跑三關） | H4 | 已啟用 | 2026\-09\-14 |
 | 驗收分級工具（路徑家族表住設定；只算不擋） | H6 | 已安裝未啟用 |  |
 | 本文長度考題 | K2 | 已啟用 | 2026\-09\-15 |
 | 案例簿考題＋索引產生器 | K1、K2 | 未移植 |  |

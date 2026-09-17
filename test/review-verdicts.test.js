@@ -7,7 +7,7 @@
 // 危險的不是有兩份，是**看起來一樣有效而結論相反**，於是「最後一則說通過」等於放行。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,35 +142,44 @@ test('聯集｜**兩個角色**各自的阻擋要各自解除', () => {
   assert.ok(problems.some((p) => /Codex/.test(p)), `Codex 那條應該還在，實得：${problems.join('｜')}`);
 });
 
-// ── 文件真的叫人跑這支腳本（不然規則又只活在腳本裡）─────────────
+// ── 合併程序真的會跑聯集閘（不然規則又只活在腳本裡）─────────────
+// 2026-09-17 切換日起，合併由協作套件的執行器 `tools/merge.js` 跑：閘的清單＝根目錄 `settings.json`
+// 的 `gates`，執行器逐道跑完（照登記順序）才送 `mergeCommand`。所以「聯集閘要在合併鍵之前」這一半
+// 由執行器保證，不再從程序文件的 fenced code 反查（切換前這一題讀的那份程序文件已隨切換日拿掉）。
+// ⚠️ 套件裡跑的是 `tools/gates/check-review-verdicts.js`；本檔釘的 `scripts/check-review-verdicts.js`
+//    是舊閘，第 5 步刻意留著、第 7 步退役——行為題照留，這一題只看「套件那一道有沒有登記」。
 
-test('合併程序真的把聯集閘寫成一步（不是只在別處提到它）', () => {
-  // ⚠️ 判準比照 test/merge-procedure-docs.test.js：**指令必須出現在剝掉 HTML 註解後的 fenced code**
-  //    ——「文件某處提到這支腳本」不算數（#353 r1 的考題就是被「把指令搬進 HTML 註解」繞過的）。
-  // ⚠️ **先截出「合併步驟」那個 blockquote 區塊再看**（Codex #385 r2 Medium；步數不寫死——加了閘就會變）：
-  //    掃整份文件的所有 fenced code 的話，把指令從步驟 2 刪掉、搬到檔頭的啟動範例，考題照樣過。
-  //    判準比照 test/merge-procedure-docs.test.js。
-  const whole = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const start = whole.indexOf('合併也由 Codex 代執行');
-  assert.ok(start > 0, 'REVIEW-AND-MERGE.md 找不到「合併步驟」那個區塊');
-  const md = whole.slice(start, whole.indexOf('\n---', start));
-  const fenced = [...md.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]).join('\n');
-  assert.match(fenced, /node scripts\/check-review-verdicts\.js/,
-    'REVIEW-AND-MERGE.md 的合併步驟沒有真的叫人跑聯集閘——規則會退回「靠記性」');
-  // 順序也是契約：聯集閘要在 `gh pr merge` 之前
-  assert.ok(md.indexOf('check-review-verdicts.js') < md.indexOf('gh pr merge'),
-    '聯集閘出現在 `gh pr merge` 之後＝合併完才檢查，等於沒有');
+test('合併程序真的把聯集閘登記成一道（settings.json 的 gates；順序由執行器保證）', () => {
+  const settings = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
+  const gates = Array.isArray(settings.gates) ? settings.gates : [];
+  const gate = gates.find((g) => Array.isArray(g.args) && g.args.includes('tools/gates/check-review-verdicts.js'));
+  assert.ok(gate, 'settings.json 的 gates 沒有登記 tools/gates/check-review-verdicts.js——執行器不會跑聯集閘，規則會退回「靠記性」');
+  assert.equal(gate.command, 'node', '聯集閘登記的指令不是 node——執行器起不了它');
+  assert.ok(existsSync(join(ROOT, 'tools/gates/check-review-verdicts.js')), '登記的閘檔不存在＝登記了也跑不到');
+  // 登記的規矩條號要指回結論標頭那兩條（RULES F4、F5）——閘與規矩對不上，讀登記表的人會找錯條
+  assert.match(String(gate.rules || ''), /F4/, '聯集閘的登記沒有指回 RULES F4（標頭形狀）');
+  assert.match(String(gate.rules || ''), /F5/, '聯集閘的登記沒有指回 RULES F5（各自解除、放行只認指定那一位）');
+  // 合併指令本身要登記著（沒有 mergeCommand 的話執行器停在閘後、不會合併——那時「閘在合併前」是空話）
+  assert.ok(settings.mergeCommand && settings.mergeCommand.command, 'settings.json 沒有登記 mergeCommand');
 });
 
-test('AGENTS.md 要寫下「取聯集，不取最後一則」與自報來歷的格式', () => {
+test('套件範本與規矩本文要寫下「各自解除」與自報來歷的格式（切換日起改綁 templates/verdict-header.md 與 RULES F4／F5）', () => {
   // ⚠️ **剝掉 HTML 註解再比對**（Codex #385 r1 Medium⑤）：
   //    不剝的話，把整段規則包進 `<!-- -->` 就能讓「文件寫了」變成假的——
   //    而這支 PR 自己新增的固定維度第 2 條講的就是這件事，我在自己的考題裡違反了它。
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  assert.ok(agents.includes('取聯集，不取最後一則'),
-    'AGENTS.md 找不到聯集規則的原句——只寫在腳本裡＝讀 AGENTS 的人不會知道');
-  assert.match(agents, /🤖 <角色>｜來源：/,
-    'AGENTS.md 沒有寫出來歷標頭的逐字格式，寫的人只能猜');
+  // 切換前這一題讀 AGENTS.md 的「取聯集，不取最後一則」原句與 `🤖 <角色>｜來源：` 格式行；那一節已隨
+  // 切換日拿掉，正本改成套件範本（標頭行逐字）＋RULES F4／F5（規矩），AGENTS 附則只指路。
+  const strip = (/** @type {string} */ s) => s.replace(/<!--[\s\S]*?-->/g, '');
+  const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
+  assert.ok(tmpl.includes('🤖 <角色識別值>｜來源：<來源字串>｜審 `<短版本碼>`｜r<輪次>｜結論：<通過｜需修改後再審｜不可合併>'),
+    'templates/verdict-header.md 沒有寫出來歷標頭的逐字格式行（含 🤖、全形｜、反引號版本碼、三選一），寫的人只能猜');
+  assert.ok(tmpl.includes('各自解除'), 'templates/verdict-header.md 找不到「各自解除」——聯集規則只寫在腳本裡＝讀範本的人不會知道');
+  const rules = strip(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
+  assert.match(rules, /^- F4 .*機器標頭/mu, 'RULES F4 沒有寫「結論留言第一行是機器標頭」');
+  assert.match(rules, /^- F5 .*各自解除/mu, 'RULES F5 沒有寫「每位審查者的阻擋各自解除」——那正是「取聯集、不取最後一則」的規矩版');
+  const agents = strip(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
+  assert.ok(agents.includes('templates/verdict-header.md'),
+    'AGENTS.md 沒有指向 templates/verdict-header.md——只讀 AGENTS 的人找不到標頭格式');
 });
 
 // ── 回歸鎖：r1／r2 修過的每一條都要有考題盯著（Codex #385 r2 Medium）─────────
@@ -306,15 +315,18 @@ test('結論行｜「講述用」的前綴不可以被當成結論', () => {
   }
 });
 
-test('AGENTS｜委任那段不可以自相矛盾（同一條規則的兩半要一致）', () => {
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const i = agents.indexOf('委任關係：只影響');
-  assert.ok(i > 0, 'AGENTS.md 找不到委任那節');
-  const block = agents.slice(i, i + 1400);
-  assert.ok(/放行只認 PR 說明指定的那一位獨立審查者/.test(block),
-    '委任那節沒寫清楚「放行只認指定的那一位」');
-  assert.ok(!/也\*\*不構成放行\*\*/.test(block),
-    '委任那節又出現「也不構成放行」——與前文矛盾，讀者無法判斷哪句才是規則');
+test('範本與規矩｜「放行只認指定的那一位」在兩處要一致、不可自相矛盾（切換日起改綁 templates/verdict-header.md 與 RULES F5）', () => {
+  // 切換前這一題讀規則書裡講委任關係的那段（同一條規則的兩半曾經一句「放行只認指定那一位」、
+  // 一句「也不構成放行」互相打架）；那一節 2026-09-17 已隨切換日拿掉。現在同一條規則住兩處：範本第 9 行與 RULES F5，
+  // 兩處都要有「放行只認…指定的那一位」，而且不可以再冒出反句。
+  const strip = (/** @type {string} */ s) => s.replace(/<!--[\s\S]*?-->/g, '');
+  const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
+  const rules = strip(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
+  for (const [name, text] of [['templates/verdict-header.md', tmpl], ['RULES.md', rules]]) {
+    assert.ok(/放行只認變更說明指定的那一位/.test(text), `${name} 沒寫清楚「放行只認變更說明指定的那一位」`);
+    assert.ok(!/也\*\*不構成放行\*\*/.test(text),
+      `${name} 出現「也不構成放行」——與「放行只認指定那一位」矛盾，讀者無法判斷哪句才是規則`);
+  }
 });
 
 // ── r5 的誤擋回歸鎖：這些是**我們每天在寫的句子**（Codex #385 r5 High）────
@@ -476,7 +488,8 @@ test('⭐ 重述｜同一位審查者逐字重述自己的壞標頭 → 不再�
 });
 
 test('⭐ 重述｜「本輪提了幾條」那種條數行要排在重述行之後：先寫條數＝收件區關掉、重述不生效（#576 r1 Medium①）', () => {
-  // 規則書「怎麼執行」與「發審查提示」要求審查者在第二行以後自報條數；閘的位置規則是「標頭後第一個不是重述／豁免的
+  // 套件範本 templates/verdict-header.md 第 7 行要求審查者「第二行起」自報條數（切換前＝舊程序文件「怎麼執行」與
+  // 「發審查提示」兩節，2026-09-17 隨切換日拿掉）；閘的位置規則是「標頭後第一個不是重述／豁免的
   // 非空行就截止收件」——兩者的接縫＝條數行必須排在救濟行之後。這一題釘重述那半；豁免那半在下面「豁免｜條數行」那題。
   const restate = `重述 r6｜審 \`abc1234\`｜結論：需修改後再審｜原第一行：「${MAL_FIRST}」`;
   const countFirst = `${head('Codex', 'CLI（xhigh）', HEAD, 7, '通過')}\n本輪提了 0 條。\n\n${restate}`;
@@ -564,10 +577,18 @@ test('重述｜寫在 code fence 或引用裡的重述行不算（範例不是�
   assert.ok(problems.some((p) => /標頭格式不合規/.test(p)), 'fence 裡的範例不可以真的清除壞標頭');
 });
 
-test('AGENTS.md 要寫下重述行的逐字格式（機制只活在腳本裡＝寫壞標頭的人不知道怎麼自救）', () => {
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  assert.ok(agents.includes('重述 r<輪次>｜審'), 'AGENTS.md 找不到重述行的逐字格式');
-  assert.ok(agents.includes('造不出放行票'), 'AGENTS.md 要寫明重述沒有裁決權（造不出放行票、清不掉合規阻擋）——不然會被當成第二條放行通道');
+test('重述行的逐字格式與「造不出放行票」住在舊閘自己的註解裡（文件半邊 2026-09-17 隨切換日拿掉、舊閘第 7 步退役）', () => {
+  // 切換前這一題讀 AGENTS.md：重述行的逐字格式與「造不出放行票」那句要寫在規則書裡，寫壞標頭的人才知道怎麼自救。
+  // 重述是舊閘的機制——套件把三級救濟收成「作廢上一則」一行（templates/verdict-header.md 第 8 行），範本裡沒有重述行，
+  // 文件正本沒有新家。舊閘第 5 步留著、第 7 步退役，所以這一題改釘腳本自己的 RESTATE 註解：格式行與「造不出放行票」
+  // 至少要跟機制住在同一支檔裡，不然照著壞標頭訊息走到 RESTATE 一節的人拿不到可照抄的格式。
+  const src = readFileSync(join(ROOT, 'scripts/check-review-verdicts.js'), 'utf8');
+  assert.ok(src.includes('重述 r<輪次>｜審 `<短 sha>`｜結論：<三選一>｜原第一行：「<壞掉那則的第一行，逐字引用>」'),
+    '腳本 RESTATE 一節找不到重述行的逐字格式（訊息叫人「規則見腳本 RESTATE 一節」，那裡就得有可照抄的一行）');
+  assert.ok(src.includes('造不出放行票'),
+    '腳本要寫明重述沒有裁決權（造不出放行票、清不掉合規阻擋）——不然會被當成第二條放行通道');
+  // 機制本身（正則）也要跟格式行同形：格式行寫「重述 r<輪次>｜審 …｜結論：…｜原第一行：「…」」，正則要吃得下它
+  assert.match(src, /const RESTATE = \/\^ \{0,3\}重述\\s\*r\(\\d\+\)｜審/u, 'RESTATE 正則的開頭與格式行對不上');
 });
 
 test('⭐ 重述｜四反引號 fence、縮排 code、引用的 lazy continuation——範例都不可以生效（#418 r1①）', () => {
@@ -855,9 +876,11 @@ test('來源相似｜提醒要把補救講清楚（補發、兩個身分都要�
   // ⚠️ r2 又抓到一顆：只斷言「輪次要大於」的話，把承重的「**自己**」偷換成別的字照樣全綠
   //    （Codex #456 r2 Medium③ 實測把「最高輪次」改成「最低輪次」，89 題全綠）。
   //    ⇒ 這一句**整句逐字**斷言，因為每個字都承重（各自／自己／最高）。
+  // ⚠️ 指路那一格 2026-09-17 隨切換日改指 PROJECT-SETTINGS.md 的來源字串標準表（舊程序文件已拿掉）；
+  //    腳本 :783 那句訊息與這裡同支改，改一邊不改另一邊就紅。
   for (const must of ['現況列出的每一個身分', '輪次要大於「那個身分自己」現有的最高輪次',
     '全部都要再跟一次', '下一支 PR',
-    '不要用編輯舊留言的方式修', 'REVIEW-AND-MERGE.md']) {
+    '不要用編輯舊留言的方式修', 'PROJECT-SETTINGS.md', 'templates/verdict-header.md']) {
     assert.ok(w.includes(must), `相似提醒少了「${must}」：${w}`);
   }
   // ⚠️ 處方**不可以**寫死身分數量（Codex #456 r4 Medium①：三個別名時只補兩個照樣紅）
@@ -894,6 +917,7 @@ test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補
   ]) assert.equal(sourceLookalike(a, b), null, `「${a}」與「${b}」的判定與劃界不符`);
   // ⚠️ r4 起這幾句住在**腳本註解**裡，不在操作手冊（審查者的實務判斷：手冊細到現場記不住，
   //    Unicode 細節與例示搬進腳本，手冊只留「不會合併身分、會漏報也會多嘴」一句）。
+  //    手冊那半 2026-09-17 隨切換日拿掉（舊程序文件已不在、舊閘第 7 步退役），本題只剩腳本註解這半。
   const src = readFileSync(join(ROOT, 'scripts/check-review-verdicts.js'), 'utf8');
   assert.ok(src.includes('也不互相包含 ⇒ **不提醒**'),
     '劃界要寫成**演算法邊界**（性質），不是「抓不到的有 N 族」那種列舉——列舉已經被打穿兩次');
@@ -905,9 +929,6 @@ test('⭐ 來源相似｜劃界要講**性質**，不可以列清單（列舉補
   assert.ok(src.includes('UTF-16'),
     '`LOOSE_MIN` 比的是 JS length＝UTF-16 編碼單位，不是 Unicode 字元數——不精確的宣稱就是失真');
   assert.ok(src.includes('例示（不是清單）'), '例子要標明是例示，不然下一個人又會當成完整清單');
-  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(doc.includes('**會漏報、也會多嘴**'),
-    '操作手冊至少要留「提醒會漏報也會誤報」這一句，不然現場會把它當成保證');
 });
 
 test('⭐ 來源相似｜印出來的**理由**要把正規化三步都講到（不然大小寫漂移時會說錯原因）', () => {
@@ -1010,55 +1031,49 @@ test('⭐ 補救之後 head 再前進：兩個身分**都**要再跟一次（別
   assert.deepEqual(bothFollow.problems, [], `兩個身分都跟上就該全清：${bothFollow.problems.join('｜')}`);
 });
 
-test('REVIEW-AND-MERGE.md 要有標準來源字串表與「補發、不可編輯舊留言」的補救程序', () => {
+test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本的「作廢上一則」救法要站著（切換日起改綁套件登記與範本）', () => {
   // ⚠️ 誠實劃界：文件題只證明「規則寫在該寫的地方、沒有被靜靜刪掉」，
   //    證明不了任何人真的照著打字（那要靠審查與上面那道相似提醒）。
   //    但機制只活在腳本裡＝打字漂掉的人**不知道該用哪個字串、也不知道怎麼救**，
   //    #453 兩次被擋就是這樣來的。
-  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(doc.includes('### ⚠️ 發審查提示：**標頭的機械字串每輪都要逐字給**'),
-    'REVIEW-AND-MERGE.md 找不到「發審查提示」那一節');
-  // #479 r10/r11：發射提示把角色寫成「獨立審查者」，兩則真審查留言被判讀不出身分、
-  // 只能動用 William 特准豁免——節名原本數死「兩組」，數到的兩組給好給滿還是漏了角色。
-  // 節裡要有可整行照抄的標頭格式（發射者憑印象拼標頭＝角色欄就是這樣寫歪的）……
-  assert.ok(doc.includes('🤖 <角色>｜來源：<來源字串>｜審 `<短 sha>`｜r<輪次>｜結論：<三選一>'),
-    '發審查提示少了可照抄的標頭格式行（含 🤖、全形｜、反引號 sha）');
-  // ……角色名單只指路不抄表（抄一份就是會漂的複本；單一真相＝check-pr-collab-fields.js 的 ROLES）……
-  assert.ok(doc.includes('`scripts/check-pr-collab-fields.js` 的 `ROLES`'),
-    '發審查提示少了角色名單的指路——角色也是機械查表，發射者不知道去哪查就會自己編一個');
-  // ……並且把「職稱不是角色」講死（「獨立審查者」正是 #479 實際寫歪成的樣子）。
-  assert.ok(doc.includes('「獨立審查者」「複審者」都不是角色'),
-    '發審查提示少了「角色欄答的是審查者是誰、不是職稱」那句——#479 的壞法會重演');
-  // ⚠️ **斷言整列，不是斷言那個字串**：第一版只寫 `doc.includes('`codex CLI`')`，
-  //    把整列從表格刪掉照樣全綠——因為同一串字在下面那條「不要留一個沒後綴的 `codex CLI`」
-  //    裡也出現過，includes 被別處滿足了（本專案認過的病型：同一句活兩處、改壞一處看不見）。
-  //    突變當場抓到（M6），這裡改成整列比對。
-  for (const row of [
-    '| 本機 `codex` CLI 起的審查 session | `codex CLI` |',
-    '| Claude Code CLI 起的審查 session | `Claude CLI` |',
-    '| Codex 桌面 session | `Codex 桌面` |',
-    '| Claude 桌面 session | `Claude 桌面` |',
-    '| William 本人（畫面驗收／產品裁決） | `William 本人` |',
-  ]) assert.ok(doc.includes(row), `標準來源字串表少了這一列：${row}\n（沒有建議值，每個人就會自己編一個）`);
-  assert.ok(doc.includes('跨輪次一字不改'), '少了「同一個工具跨輪次不可改寫法」那條');
-  assert.ok(doc.includes('通過`／`需修改後再審`／`不可合併'),
-    '發審查提示要**逐字**列出三個合規結論字串（沒列出來的那次，五支 PR 全被壞標頭鎖死）');
-  assert.ok(doc.includes('#### 已經漂掉的補救：**用補發，不可以編輯舊留言**'),
-    '少了補救程序那一節的標題（正解＝補發一則新結論，不是改舊的）');
-  // r4 Medium①：判準的單位是**身分**，不是寫死的「兩個」（三個別名時只補兩個照樣紅）
-  assert.ok(doc.includes('判準的單位是**身分**'),
-    '補救程序把身分數量寫死了——第三個別名／重述產生的身分／換掉的審查角色都要收');
-  // r1 阻擋＋r2 精確化：閘只認「更新的輪次」，而且是**每個身分各自**算
-  assert.ok(doc.includes('輪次要大於「那個身分自己」現有的最高輪次'),
-    '補救程序少了輪次那條——照原輪次補發撤銷不掉，而規則是每個身分各自算');
-  // r3 阻擋①：別名在本 PR 內永久存在，head 再動就全部要跟——不寫這條，照舊版做會被重新鎖住
-  assert.ok(doc.includes('本 PR 內所有已經出現過的身分都要跟著 head；新 PR 起只用標準來源'),
-    '補救程序少了「別名在本 PR 內永久存在」的心智模型——照舊版做，下次推 commit 會再被鎖住');
-  assert.ok(doc.includes('不可以編輯舊的結論留言'),
-    '少了補救程序的禁令——編輯舊留言會把稽核軌跡洗掉，事後查不出當初寫了什麼');
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-  assert.ok(agents.includes('「來源」是機械身分'),
-    'AGENTS.md 少了指路的那一句（規則只寫在操作手冊裡，讀規則書的人看不到）');
+  // 切換前這一題讀舊程序文件的「發審查提示」節（標頭格式行、角色名單指路、來源字串表、「補發、不可編輯舊留言」
+  // 的補救程序）與 AGENTS 的「來源是機械身分」指路句；那份文件與那一節 2026-09-17 隨切換日拿掉。
+  // 現在的家：機器讀的來源清單＝根目錄 settings.json 的 sources；人讀的同一張表＝PROJECT-SETTINGS.md
+  // 「來源字串標準表」；標頭格式、來源欄的寫作義務、各自解除、壞標頭的救法＝templates/verdict-header.md。
+  const settings = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
+  const sources = Array.isArray(settings.sources) ? settings.sources : [];
+  // ⚠️ **斷言整筆（工具＋字串），不是只斷言那個字串**：切換前第一版只寫 `doc.includes('`codex CLI`')`，
+  //    把整列刪掉照樣全綠——同一串字在別處也出現過，includes 被別處滿足了（本專案認過的病型：
+  //    同一句活兩處、改壞一處看不見；突變 M6 當場抓到）。這裡比對的是 settings.json 裡的整筆。
+  const want = [
+    ['本機 codex CLI 起的審查 session', 'codex CLI'],
+    ['Claude Code CLI 起的審查 session', 'Claude CLI'],
+    ['Codex 桌面 session', 'Codex 桌面'],
+    ['Claude 桌面 session', 'Claude 桌面'],
+    ['William 本人（畫面驗收／產品裁決）', 'William 本人'],
+  ];
+  assert.deepEqual(sources.map((s) => [s.tool, s.string]), want,
+    'settings.json 的 sources 與標準來源字串表對不上（少一筆、多一筆、或字串被改）\n（沒有建議值，每個人就會自己編一個；改了要連 PROJECT-SETTINGS.md 那張表一起改）');
+  // 人讀的那張表要跟機器清單逐筆同字（同一張表活兩處＝會漂；這裡把兩處釘在一起）
+  const ps = readFileSync(join(ROOT, 'PROJECT-SETTINGS.md'), 'utf8');
+  for (const [tool, string] of want) {
+    assert.ok(ps.includes(`| ${tool} | ${string} |`),
+      `PROJECT-SETTINGS.md 的來源字串標準表少了這一列（或與 settings.json 不同字）：| ${tool} | ${string} |`);
+  }
+  const tmpl = readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8');
+  // 可整行照抄的標頭格式行（發射者憑印象拼標頭＝角色欄就是這樣寫歪的：#479 r10/r11 把角色寫成「獨立審查者」）
+  assert.ok(tmpl.includes('🤖 <角色識別值>｜來源：<來源字串>｜審 `<短版本碼>`｜r<輪次>｜結論：<通過｜需修改後再審｜不可合併>'),
+    '範本少了可照抄的標頭格式行（含 🤖、全形｜、反引號版本碼、**逐字**三個合規結論字串——沒列出來的那次，五支 PR 全被壞標頭鎖死）');
+  // 來源欄的寫作義務：從標準表挑、跨輪次一字不改、不含會變的東西；它是機械身分的一半
+  assert.ok(tmpl.includes('來源字串是機械身分'), '範本少了「來源字串是機械身分」那句——打字漂掉的人不會知道自己變成了另一位審查者');
+  assert.ok(tmpl.includes('PROJECT-SETTINGS.md'), '範本沒有指到 PROJECT-SETTINGS.md 的標準表——來源字串沒有建議值，每個人就會自己編一個');
+  assert.ok(tmpl.includes('跨輪次一字不改'), '範本少了「同一個工具跨輪次不可改寫法」那條');
+  // 壞標頭的救法：套件把舊閘的三級救濟收成「作廢上一則」一行（範本第 8 行）——普通補發救不了壞標頭，這句要在
+  assert.ok(tmpl.includes('作廢上一則：<那則留言的編號>'), '範本少了「作廢上一則」那行的逐字格式——標頭寫壞的人不知道怎麼自救');
+  assert.ok(tmpl.includes('壞留言原地保留'), '範本少了「壞留言原地保留」——會有人照舊例去刪留言、洗掉稽核軌跡');
+  // 各自解除：同一身分、更高輪次、對目前受審版本——這正是「照原輪次補發撤銷不掉」與「每個身分各自算」的規矩版
+  assert.ok(tmpl.includes('各自解除：同一身分、更高輪次'),
+    '範本少了「各自解除：同一身分、更高輪次」——照原輪次補發撤銷不掉，而規則是每個身分各自算');
 });
 
 // ── 缺 sha 例外＋豁免宣告（2026-08-17 William 裁「兩個都做」；實例＝#475 sha 欄空白、#461 讀不出型）──
@@ -1467,14 +1482,19 @@ test('⭐ 缺sha例外｜成對反引號切碎的指紋照樣算指紋（拆掉�
   assert.ok(warnings.some((w) => /全行零個/.test(w)), warnings.join('｜'));
 });
 
-test('⭐ 文件｜救濟階梯與「不再刪留言」要在兩份文件都站著（指路不漂）', () => {
-  const review = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(/救濟階梯/.test(review), 'REVIEW-AND-MERGE 少了救濟階梯——執行者只會看到舊處方');
-  assert.ok(/不再刪留言/.test(review), 'REVIEW-AND-MERGE 少了「不再刪留言」——會有人照舊例去刪');
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-  assert.ok(/缺 sha 例外/.test(agents) && /豁免宣告/.test(agents),
-    'AGENTS 還在講「唯一救濟」＝只讀規則書的人拿到過期處方');
-  assert.ok(!/重述＝壞標頭的唯一救濟/.test(agents), '「唯一救濟」這句必須退場（已有三級階梯）');
+test('⭐ 提示｜救濟階梯三級與「不再刪留言」要在閘的處方裡站著（文件半邊 2026-09-17 隨切換日拿掉、舊閘第 7 步退役）', () => {
+  // 切換前這一題釘兩份文件：程序文件要有「救濟階梯」「不再刪留言」，AGENTS 要講到「缺 sha 例外」「豁免宣告」
+  // 而不再說「重述＝唯一救濟」。舊閘的三級救濟在套件裡已收成「作廢上一則」一行（templates/verdict-header.md
+  // 第 8 行），文件正本沒有新家——文件半邊拆掉，只留腳本訊息的半邊：執行者看到的處方本身要把三級都教到，
+  // 而且要說「不再刪留言」（#461／#475 靠 William 特准刪留言收場，刪除傷稽核、存檔還把 🤖 抄成新毒丸）。
+  const { problems } = verdictProblems([cu(`${UNFIX_FIRST}\n\n略。`, UNFIX_URL)], HEAD, 'Codex');
+  const msg = String(problems.find((p) => /標頭格式不合規/.test(p)) || '');
+  assert.ok(msg, problems.join('｜'));
+  assert.ok(/重述 r<n>｜審 `sha`｜結論：三選一｜原第一行：「/.test(msg), '處方少了第一級（重述行的格式）——執行者只會看到舊處方');
+  assert.ok(/缺 sha 例外/.test(msg), '處方少了第二級（缺 sha 例外）');
+  assert.ok(/豁免留言 <留言編號>｜William 特准 <YYYY-MM-DD>｜原第一行：「/.test(msg), '處方少了第三級（豁免宣告的格式）');
+  assert.ok(/不再刪留言/.test(msg), '處方少了「不再刪留言」——會有人照舊例去刪');
+  assert.ok(!/唯一救濟/.test(msg), '處方不可以再說「唯一救濟」（已有三級階梯）');
 });
 
 // ── #477 r2 回饋：資格與正式身分同語意（雙向）＋雜湊指認救「引不出來」的行 ──────
@@ -1547,20 +1567,19 @@ test('⭐ 雜湊指認｜U+FFFD 壞行 → 用雜湊豁免救得動；雜湊錯�
   assert.ok(ko.problems.some((p) => /標頭格式不合規/.test(p)), `雜湊錯一位必須維持阻擋：${ko.problems.join('｜')}`);
 });
 
-test('⭐ 文件與提示｜雜湊指認要走得通：閘的修復提示與 REVIEW 階梯都要教它', () => {
+test('⭐ 提示｜雜湊指認要走得通：閘的修復提示要教它（文件半邊 2026-09-17 隨切換日拿掉、舊閘第 7 步退役）', () => {
   // r3 Medium：VS16／U+FFFD 正是因逐字引文被拒才需要雜湊路徑，但提示只教逐字引用＝照做必失敗。
+  // 切換前這一題還釘程序文件的階梯（雜湊指認、trim 口徑、「僅同一身分可豁免」那一級）與 AGENTS 階梯的同身分級；
+  // 那兩處已隨切換日拿掉、套件把三級收成「作廢上一則」一行——只留腳本訊息這半，並把「僅同一身分」那級釘死
+  // （切換前這裡寫成 /僅同一身分/ || /同一身分/，右肢是左肢的超集＝左肢從沒承重）。
   const vs16First = '\u{1F916}\u{FE0F} 完全讀不出的壞行';
   const { problems } = verdictProblems([cu(`${vs16First}\n\n略。`, UNFIX_URL)], HEAD, 'Codex');
   const blocked = problems.find((p) => /標頭格式不合規/.test(p));
   assert.ok(blocked, problems.join('｜'));
   assert.ok(/原第一行雜湊/.test(String(blocked)), '修復提示必須教雜湊指認，否則照提示操作會反覆失敗');
   assert.ok(/去頭尾空白後/.test(String(blocked)), '提示必須講清楚雜湊算在 trim 後的字串上——教「該行」會算出解不了鎖的雜湊');
-  assert.ok(/僅同一身分/.test(String(blocked)) || /同一身分/.test(String(blocked)),
-    '提示必須教「身分可讀＋metadata 壞＝限同身分豁免」那一級');
-  const review = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  assert.ok(/原第一行雜湊/.test(review), 'REVIEW 階梯必須教雜湊指認');
-  assert.ok(/去頭尾空白後/.test(review) && /僅同一身分可豁免/.test(review),
-    'REVIEW 階梯必須教 trim 口徑與同身分豁免那一級');
+  assert.ok(/僅同一身分/.test(String(blocked)),
+    '提示必須教「身分可讀＋metadata 壞＝**僅同一身分**可豁免」那一級（只讀處方的人不知道這條路）');
 });
 
 test('⭐ 雜湊口徑（行為）｜第一行帶頭尾空白 → 雜湊算在 trim 後字串才解得了鎖', () => {
@@ -1574,9 +1593,4 @@ test('⭐ 雜湊口徑（行為）｜第一行帶頭尾空白 → 雜湊算在 t
     [cu(`${messyFirst}\n\n略。`, UNFIX_URL), c(exempt)], HEAD, 'Codex');
   assert.ok(!problems.some((p) => /標頭格式不合規/.test(p)), `trim 後雜湊必須解得了鎖：${problems.join('｜')}`);
   assert.ok(warnings.some((w) => /已被\*\*豁免\*\*/.test(w)), warnings.join('｜'));
-});
-
-test('⭐ 文件｜AGENTS 階梯要教到「僅同一身分可豁免」那一級', () => {
-  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-  assert.ok(/僅同一身分可豁免/.test(agents), 'AGENTS 階梯漏了同身分級＝只讀規則書的人不知道這條路');
 });

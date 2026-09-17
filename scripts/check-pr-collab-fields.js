@@ -24,8 +24,8 @@ import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
 
 /**
- * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
- * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
+ * **這支是合併程序的一道機械閘**——切換日（2026-09-17）之前由舊的閘盤點題靠這個標記反查閘數（那題已隨舊程序文件刪除）；切換後合併程序＝settings.json 的 gates 登記＋tools/merge.js，登記對帳＝tests/settings.test.js，本腳本不在合併路徑上、第 7 步退役——這個標記從此只剩歷史用途。（原句：
+ * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。）
  *
  * ⚠️ 別把清單手寫在考題裡（Codex #385 r9／r10）：手寫的漂過一次（加了第四道閘、
  * 文件仍寫三道，考題全綠看不見），改成從散文反查又被證明可繞（lazy continuation、
@@ -205,7 +205,7 @@ export function main(argv) {
     return 0;
   }
   console.error(`協作欄位閘 PR #${pr}：**未通過**\n` + problems.map((p) => `  ・${p}`).join('\n')
-    + '\n\n請照 .github/pull_request_template.md 補齊再合併（規則見 AGENTS.md 三方協作框架節）。');
+    + '\n\n請照 .github/pull_request_template.md 補齊再合併（規則見 RULES.md A2、E1）。');
   return 1;
 }
 

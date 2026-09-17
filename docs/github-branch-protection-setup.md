@@ -127,7 +127,7 @@ Settings → Branches → 編輯 `main` 的規則：
 
 ⚠️ **check 名稱必須跟 workflow 裡的 `name:` 完全一致**——改了 job 名稱，
 分支保護那邊會變成「等一個永遠不會出現的 check」而**永遠卡住合併**。改名時兩邊要一起改。
-（`test/collab-invariant-docs.test.js` 有考題盯著兩邊字串一致。）
+（`test/branch-protection-docs.test.js` 有考題盯著兩邊字串一致。）
 
 ⚠️ 這個 check 之所以能取代 `Require approvals` 的**部分**功能，是因為它在**平台層**擋
 「實作者＝獨立審查者」，而且不需要第二個帳號。**但它擋的是 PR 說明寫了誰，
@@ -166,21 +166,20 @@ Settings → Branches → 編輯 `main` 的規則：
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
 - `scripts/check-pr-collab-fields.js` — 協作欄位閘（CI 與人工合併程序**跑同一支**）
 - `scripts/check-pr-merge-gate.js` — 堆疊閘（本機執行，未進 CI）
-- `scripts/check-ci-really-ran.js` — 真考卷閘（本機執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
-- `REVIEW-AND-MERGE.md` — 合併步驟
-- `AGENTS.md`「三方協作框架」節 — 唯一不變量與角色分工
+- `tools/gates/check-checks-really-ran.js` — 真考卷閘（RULES H3；由 `tools/merge.js` 執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
+- `tools/merge.js`＋`settings.json` 的 gates — 合併程序（RULES H1〜H4）
+- `RULES.md` A 節 — 唯一不變量與角色分工
 
 ## 草稿期 skipped 與 required checks（2026-08-15 立；2026-08-29 半鬆綁後 skipped＝異常）
 
 2026-08-15〜08-29 ci.yml 曾對草稿 PR 以 job 級 `if` 跳過（省額度）：那段期間檢查顯示 **skipped**、
 分支保護視同滿足＝設計內。**2026-08-29 半鬆綁後草稿也照跑**（repo 公開＝免費；理由與前提綁定
-＝REVIEW-AND-MERGE.md「省額度慣例」節）——**現在看到 skipped＝異常**（多半是 Re-run 舊草稿時代
+＝RULES E3：草稿也跑）——**現在看到 skipped＝異常**（多半是 Re-run 舊草稿時代
 的場次沿用凍結 payload 蓋出來的），而分支保護仍會把它視同滿足（GitHub 的語意、改不動），
-所以不變量仍由**第二層**收口＝合併步驟的真考卷閘 `scripts/check-ci-really-ran.js`（required checks
+所以不變量仍由**第二層**收口＝合併程序的真考卷閘 `tools/gates/check-checks-really-ran.js`（required checks
 必須真 success、auto-merge 必須關）。
 另兩點：①Actions 帳務爆掉時 run 仍建立並以 failure 收場（2026-08-15 實測、job 0 steps；repo 轉回
 私有才可能再遇到）＝不會留 skipped 綠燈頂著 ②**協作欄位閘從頭到尾不曾跳過**——它的形狀被
-test/collab-invariant-docs.test.js「只認一種形狀」焊死（job 級 if 正是列名繞法），守自審自合底線。
-若未來要把 draft 跳過**加回來**、或動 `ready_for_review` 觸發——先回來讀這節與 REVIEW-AND-MERGE.md
-「省額度慣例」節，並讓 test/deploy-config.test.js「CI 對草稿也要跑」的考題跟著改；**別留兩種相反
+test/workflow-files.test.js「與 templates/ 逐字相等」焊死（安裝版必須逐字等於套件範本；job 級 if 正是列名繞法），守自審自合底線。
+若未來要把 draft 跳過**加回來**、或動 `ready_for_review` 觸發——先回來讀這節與 RULES E3，並讓 test/deploy-config.test.js「CI 對草稿也要跑」的考題跟著改；**別留兩種相反
 答案並存**（本節 2026-08-29 就是被預審抓到殘留才改的——絆線寫了、踩了、沒回來，考題才是真的）。

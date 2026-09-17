@@ -20,7 +20,7 @@ data/*backup*
 node_modules
 
 # 產生的檔案
-# 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 REVIEW-AND-MERGE.md）
+# 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 AGENTS.md「驗證與三關」節「沒用到的程式直接刪」）
 .codex-reviews/
 tmp/
 output/
