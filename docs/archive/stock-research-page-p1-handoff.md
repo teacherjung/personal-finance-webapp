@@ -50,7 +50,7 @@ test/stock-research-score.test.js
 - **占比組裝（M7）**：分母 `netWorth` 來自 `GET /api/summary`；分子每檔市值靠 `holdings` ＋ `portfolio-risk.js` 的 `stockExposureBySymbol`／`portfolioFreeze` 組（**不在 /api/summary 裡**）。P1 只寫純函式接口、把資料流寫清楚即可，實際串接留 P4。
 - **代號正規化**：沿用 `portfolio-symbol.js` 的 `normalizePortfolioSymbol`（找 research、比對持股、日後 P2 防重複都用同一把尺）。
 
-## 工作程序（協作框架 v4，見 AGENTS.md「三方協作框架」節）
+## 工作程序（協作框架 v4＝開工當時的版本；2026-09-17 起現行協作規矩＝根目錄 RULES.md，本節只當歷史讀）
 
 - 一步一 PR、三關全綠（`npm run typecheck` ＋ `npm run lint` ＋ `npm test`）、轉 ready 送審前對抗式自審（開工第一步＝先開 Draft PR，2026-07-31 起；money-adjacent 路徑先假設哪裡會壞再驗；可疑處用隔離 `STORE_FILE` 的 `node --test` 重現）。
 - **P1 ＝新功能，走標準全流程**：Codex 實作的新功能 PR ＝ **Claude 複審後 William 才合併**（與 Claude 高風險 PR 由 Codex 複審對稱）。開 PR 後貼給 William 轉 Claude。

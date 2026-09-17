@@ -416,7 +416,7 @@
 
 - 同時開著的變更上限＝RULES C2；重疊就讓道＝D3（讓道留言的固定字樣：「本支讓道中、上游＝#N」／「本支放棄」——沒有機器讀它，是給人查的）。本檔是一張大表、人人往裡面加字：兩支同時改到它，合併第一支之後其餘必衝突，開變更時就要說「合併第一個之後我要 rebase 其餘的」。
 - 堆疊＝RULES H2；堆疊閘＝`settings.json` gates 登記的 `tools/gates/check-stacked.js`（2026-07-10 #3/#5 被 `--delete-branch` 連帶關閉、2026-07-28 #309/#311/#312 各自合進自己的 base——兩次事故是這道閘存在的理由；本專案的合併指令帶 `--delete-branch`，所以這道閘必須是已啟用，考題釘著）。
-- 合併的決策永遠是 William（RULES A4、A5）；常設授權的值＝`settings.json` 的 mergeAuthorization。William 本人隨時可直接執行（GitHub「Squash and merge」）；個案明確指示（如「把 #338 合了」）可指定任何人執行該支。合併指令＝`node tools/merge.js <編號> --merger <按鍵那一方的識別值>`（RULES H1；它只跑 `settings.json` gates 裡已啟用的閘、任一非零就停），要在**釘住受審版本的樹的根目錄**跑——主目錄永遠停在 main、它的登記不跟著分支走；合併指令回非零時先查那支的狀態、不重跑（在連結工作樹裡 `--delete-branch` 可能合併成功、刪遠端分支失敗、退 1），合併後確認遠端分支已刪。
+- 合併的決策永遠是 William（本專案的值；常設授權＝`settings.json` 的 mergeAuthorization）；按鍵由審過這支的那一方、不按自己的、預授權的前提＝RULES A4、A5。William 本人隨時可直接執行（GitHub「Squash and merge」）；個案明確指示（如「把 #338 合了」）可指定任何人執行該支。合併指令＝`node tools/merge.js <編號> --merger <按鍵那一方的識別值>`（RULES H1；它只跑 `settings.json` gates 裡已啟用的閘、任一非零就停），要在**釘住受審版本的樹的根目錄**跑——主目錄永遠停在 main、它的登記不跟著分支走；合併指令回非零時先查那支的狀態、不重跑（在連結工作樹裡 `--delete-branch` 可能合併成功、刪遠端分支失敗、退 1），合併後確認遠端分支已刪。
 - 合併後的驗收分級暫仍跑 `node scripts/acceptance-tier.js <編號>`、照它印的做（RULES H6；第 6 步換成套件工具）。
 - 代合併（RULES A3）只合「**對方**實作、自己審過」的支：對方＝Claude／Codex 這兩位 AI 中的另一位，第三者＝這兩位以外的任何人（含 William、Grok、工讀生）——所以 William 自己實作的支，兩邊都不代合併。
 
