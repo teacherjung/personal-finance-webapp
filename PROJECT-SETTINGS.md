@@ -40,7 +40,7 @@
 | 必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單） | E3、H3 | 正本在 GitHub：main 分支保護的 required\_status\_checks（唯讀重讀：gh api repos\/teacherjung\/personal\-finance\-webapp\/branches\/main\/protection）；紀錄與驗證入口＝docs\/github\-branch\-protection\-setup\.md；檢查名逐字對應 \.github\/workflows\/ci\.yml 與 \.github\/workflows\/collab\-fields\.yml 的 job 名 |
 | 合併步驟登記正本（閘登記對帳題讀它） | H1 | settings\.json 的 gates（登記；每筆＝name／rules／command／args／state）；各閘腳本＝tools\/gates\/\*\.js；對帳考題＝tests\/settings\.test\.js（磁碟上的閘 vs 登記的閘）；合併指令 tools\/merge\.js 只跑登記為已啟用的閘、任一非零就停。切換日（2026\-09\-17）之前＝舊程序文件的合併步驟清單＋scripts\/check\-\*\.js 自報的 MERGE\_GATE；舊閘腳本第 7 步退役，退役前不在任何合併路徑上 |
 | 合併前必做的驗收依據 | A5 | 本檔 mergeAuthorization 那一格（高風險與新功能照 AGENTS\.md「PR 分級與契約」節的標準全流程，William 實測驗收後才合；分級看 PR 說明的「最糟失去什麼」欄）＋每支 PR 說明「怎麼驗收」的三句白話（開哪一頁、做什麼、看到什麼算對；同一節的級別與動作屬合併後驗收分級＝H6 那一格，不是這一格）（\.github\/pull\_request\_template\.md） |
-| 合併後驗收分級與動作的正本（路徑家族表＋各級動作） | H6 | settings\.json 的 acceptance（切換前的正本＝scripts\/acceptance\-tier\.js 的 RULES 與 TIERS；RULES 每條的級別由 test\/acceptance\-tier\.test\.js 的 RULE\_SAMPLES 逐條釘住，TIERS 的動作文字考題只驗長度） |
+| 合併後驗收分級與動作的正本（路徑家族表＋各級動作） | H6 | settings\.json 的 acceptance（路徑家族表＋每一級的動作；由 tools\/acceptance\-tier\.js 讀、合併後跑；每條家族的級別由 test\/acceptance\-table\.test\.js 逐條釘住、F 排第一照 William 2026\-09\-15 搬家第 3 題 a；第 6 步 2026\-09\-17 起，舊的 scripts\/acceptance\-tier\.js 已退役） |
 
 主幹分支名（原閘寫死 main，規矩 H2、H3、H4）：main
 
@@ -104,7 +104,7 @@
 
 | 級別（從最重到最輕） | 動作 |
 |---|---|
-| F（工具安全設定） | 不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：\.codex\/hooks\.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 \/hooks 對該檔重新按「信任」，家目錄那份手動同步；\.claude\/settings\.json＝Claude Code 權限層正本（permissions\.deny＋PreToolUse 的兩組：python v6 那組、套件那組）——\*\*只有 v6 那組\*\*的 matcher 或指令一改，才要同步 \.codex\/hooks\.json 那份副本（成對驗會逼；那份只准一組、放的是 v6）；\*\*套件那組只在 Claude 側、不可以同步進 \.codex\/hooks\.json\*\*，照下面②的做法處理；不論改哪一組都要重開 Claude Code session 讓新設定載入、並確認家目錄 \~\/\.claude\/settings\.json 的 deny 仍在。v6 那組與它的副本驗＝test\/codex\-money\-hook 的身分互鎖與成對驗；套件那組驗＝test\/money\-kit\-hook。｜協作套件那幾份（哪一側接上了、跟舊那組並存到哪一天、驗過沒有＝看 PROJECT\.md 與機器表的日期，這段只寫長期有效的步驟）：分三類——①執行時會讀的（settings\.json 的 forbidden 那一塊、tools\/forbidden\-tools\.js、tools\/settings\-data\.js、tools\/package\.json）：Claude 側鉤子每次呼叫都重讀那棵樹的這幾份，改檔（含沒提交的改動、切分支）下一次工具呼叫就生效；Codex 全域層讀的是固定複本，要在合併後的主幹上跑 node tools\/guard\-copy\.js 重抽、關掉所有 Codex 視窗、在原位置換上新印出的那一組、William 重按信任、叫清單上刻意放的那個無害測試工具（＝mcp\_\_guard\_canary\_\_ping，本體 tools\/canary\-server\.js，照第 8 題 a 永久留在 forbidden\.deny：它真的存在、就算真的執行了也不會碰到禁區、不會造成任何改變，\*\*而且不是禁區連接器（forbidden\.servers）上的工具——那上面的每一支，連唯讀的查詢、提醒、觀察清單，都不可以拿來試\*\*；驗收只准用它，不可以拿任何別的工具代替），要看到這一組的拒絕理由（含「在拒絕清單上」）——任何會碰到禁區的真工具（包括禁區連接器上的每一支），不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用那個無害測試工具，最後才刪舊複本。②只在安裝時用的（templates\/hook\-claude\.json、templates\/hook\-codex\.json、templates\/hook\-codex\-global\.json、tools\/guard\-copy\.js）：已裝好的鉤子不會重讀它們——範本的指令有改，就要把新指令換進\*\*已經裝了那份範本的地方\*\*（哪一側裝了哪一份＝看 PROJECT\.md 搬家那一段，這裡不寫；沒裝的範本改了＝沒有東西要換）：hook\-claude\.json 裝在專案 \.claude\/settings\.json 的\*\*套件那組\*\*（不是 v6 那組），換完開新對話；hook\-codex\.json 是 Codex 專案層那份——只要成對驗還要求 \.codex\/hooks\.json 只放 v6 那一組（前面那句），它就沒有裝在本專案、改了沒有東西要換，哪天要裝＝先改成對驗與前面那句、再換進去、William 重按信任；hook\-codex\-global\.json＝照①重抽並換組、重按信任。只改 tools\/guard\-copy\.js 而範本沒改，已安裝的不受影響，下次抽複本才用到。不做＝繼續跑舊指令或舊清單，沒有機器提醒。③測試鈕（tools\/canary\-server\.js、\.mcp\.json）：本體或登記一改，Claude 側要開新對話、Codex 側要關掉所有視窗再開，然後再叫一次測試鈕——要看到\*\*那一組\*\*的拒絕理由（含「在拒絕清單上」）才算數；\*\*看到 pong 一律不算通過\*\*：任一側看到 pong＝那一組沒載入或沒在跑，停下來查、回報，不改設定（它是驗收攔截器的唯一合法方式，壞了等於沒有驗收工具；裝法＝templates\/canary\-install\.md）。步驟與目的地規則＝tools\/guard\-copy\.js 檔頭與 templates\/hook\-codex\-global\.json 的說明。 |
+| F（工具安全設定） | 不是重啟，兩個檔各有各的動作（AGENTS「錢的絕對邊界」節機械層）：\.codex\/hooks\.json＝Codex 側副本——matcher 或指令一改，Codex 的信任雜湊就失效、hook 標成 Modified 並停止執行，William 要在 Codex 介面 \/hooks 對該檔重新按「信任」，家目錄那份手動同步；\.claude\/settings\.json＝Claude Code 權限層正本（permissions\.deny＋PreToolUse 的兩組：python v6 那組、套件那組）——\*\*只有 v6 那組\*\*的 matcher 或指令一改，才要同步 \.codex\/hooks\.json 那份副本（成對驗會逼；那份只准一組、放的是 v6）；\*\*套件那組只在 Claude 側、不可以同步進 \.codex\/hooks\.json\*\*，照下面②的做法處理；不論改哪一組都要重開 Claude Code session 讓新設定載入、並確認家目錄 \~\/\.claude\/settings\.json 的 deny 仍在。v6 那組與它的副本驗＝test\/codex\-money\-hook 的身分互鎖與成對驗；套件那組驗＝test\/money\-kit\-hook。｜協作套件那幾份（哪一側接上了、跟舊那組並存到哪一天、驗過沒有＝看 PROJECT\.md 與機器表的日期，這段只寫長期有效的步驟）：分三類——①執行時會讀的（settings\.json 的 forbidden 那一塊、tools\/forbidden\-tools\.js、tools\/settings\-data\.js、tools\/package\.json）：Claude 側鉤子每次呼叫都重讀那棵樹的這幾份，改檔（含沒提交的改動、切分支）下一次工具呼叫就生效；Codex 全域層讀的是固定複本，要在合併後的主幹上跑 node tools\/guard\-copy\.js 重抽、關掉所有 Codex 視窗、在原位置換上新印出的那一組（\~\/\.codex\/hooks\.json 那一行沒動＝信任雜湊不變、不必重按；只有動到 hooks\.json 本身才要 William 重按信任）、叫清單上刻意放的那個無害測試工具（＝mcp\_\_guard\_canary\_\_ping，本體 tools\/canary\-server\.js，照第 8 題 a 永久留在 forbidden\.deny：它真的存在、就算真的執行了也不會碰到禁區、不會造成任何改變，\*\*而且不是禁區連接器（forbidden\.servers）上的工具——那上面的每一支，連唯讀的查詢、提醒、觀察清單，都不可以拿來試\*\*；驗收只准用它，不可以拿任何別的工具代替），要看到這一組的拒絕理由（含「在拒絕清單上」）——任何會碰到禁區的真工具（包括禁區連接器上的每一支），不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用那個無害測試工具，最後才刪舊複本。②只在安裝時用的（templates\/hook\-claude\.json、templates\/hook\-codex\.json、templates\/hook\-codex\-global\.json、tools\/guard\-copy\.js）：已裝好的鉤子不會重讀它們——範本的指令有改，就要把新指令換進\*\*已經裝了那份範本的地方\*\*（哪一側裝了哪一份＝看 PROJECT\.md 搬家那一段，這裡不寫；沒裝的範本改了＝沒有東西要換）：hook\-claude\.json 裝在專案 \.claude\/settings\.json 的\*\*套件那組\*\*（不是 v6 那組），換完開新對話；hook\-codex\.json 是 Codex 專案層那份——只要成對驗還要求 \.codex\/hooks\.json 只放 v6 那一組（前面那句），它就沒有裝在本專案、改了沒有東西要換，哪天要裝＝先改成對驗與前面那句、再換進去、William 重按信任；hook\-codex\-global\.json＝照①重抽並換組、重按信任。只改 tools\/guard\-copy\.js 而範本沒改，已安裝的不受影響，下次抽複本才用到。不做＝繼續跑舊指令或舊清單，沒有機器提醒。③測試鈕（tools\/canary\-server\.js、\.mcp\.json）：本體或登記一改，Claude 側要開新對話、Codex 側要關掉所有視窗再開，然後再叫一次測試鈕——要看到\*\*那一組\*\*的拒絕理由（含「在拒絕清單上」）才算數；\*\*看到 pong 一律不算通過\*\*：任一側看到 pong＝那一組沒載入或沒在跑，停下來查、回報，不改設定（它是驗收攔截器的唯一合法方式，壞了等於沒有驗收工具；裝法＝templates\/canary\-install\.md）。步驟與目的地規則＝tools\/guard\-copy\.js 檔頭與 templates\/hook\-codex\-global\.json 的說明。 |
 | A（資料庫結構） | 重啟套不上：照 docs\/c6\-deploy\-and\-adversarial\-review\-runbook\.md 在 Supabase SQL Editor 重跑整份 db\/supabase\-schema\.sql（冪等），再照那份手冊驗；同支若也命中 C，本機 LOCAL 照 C 做。 |
 | B（相依套件） | 先裝再重啟：桌面捷徑「重啟理財網頁\.command」（住桌面、不在 repo）pull 到動 package\*\.json 的版本時會自動 npm install；走 repo 裡的 start\.command（不 pull、只在沒有 node\_modules 時裝）或主目錄已是最新版（沒有 pull 可做）就要在主目錄手動 npm install；裝完不可以停在這裡，接著照做：William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。 |
 | C（要重啟＋走核心流程） | William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。 |
@@ -186,7 +186,7 @@
 | 結論聯集閘（阻擋各自撤銷、放行只認指定那一位對目前版本的通過） | F4、F5 | 已啟用 | 2026\-09\-14 |
 | 禁區攔截器（判斷一份，兩家 AI 的鉤子都呼叫它） | B1 | 已啟用 | 2026\-09\-17 |
 | 忽略清單一致考題（登記的每一份忽略檔跟生效的樣式一字不差） | B4、E7 | 已啟用 | 2026\-09\-15 |
-| 推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作樹） | E2 | 已啟用 |  |
+| 推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作樹） | E2 | 已啟用 | 2026\-09\-17 |
 | 雲端三關與協作欄位閘的範本 | E3 | 已啟用 | 2026\-09\-17 |
 | 清版本控制環境變數的共用實作（GIT\_ 前綴整族清） | E4 | 已啟用 | 2026\-09\-15 |
 | 閘的退出路徑與進入點行為題（每一道閘的考題各有「真的跑一遍指令」與「問不到＝退 2」） | E5 | 已啟用 | 2026\-09\-15 |
@@ -197,10 +197,10 @@
 | 堆疊閘（底必須是主幹、不可以有別支疊在上面） | H2 | 已啟用 | 2026\-09\-14 |
 | 真考卷閘（必過檢查在那顆版本上真的跑過且成功） | H3 | 已啟用 | 2026\-09\-14 |
 | 跨變更試合併閘（與每支以主幹為底的開著變更真合起來跑三關） | H4 | 已啟用 | 2026\-09\-14 |
-| 驗收分級工具（路徑家族表住設定；只算不擋） | H6 | 已安裝未啟用 |  |
+| 驗收分級工具（路徑家族表住設定；只算不擋） | H6 | 已啟用 | 2026\-09\-17 |
 | 本文長度考題 | K2 | 已啟用 | 2026\-09\-15 |
 | 案例簿考題＋索引產生器 | K1、K2 | 未移植 |  |
 | 專案設定產生器 | K1 | 已啟用 | 2026\-09\-15 |
 | 範本存在與固定小標考題 | E1、G3 | 已啟用 | 2026\-09\-15 |
 | 路標考題（帶記號的引號路標要指得到） | K3 | 已啟用 | 2026\-09\-15 |
-| 待裁清單工具（掃整個專案的留言；只列不擋） | D1 | 已安裝未啟用 |  |
+| 待裁清單工具（掃整個專案的留言；只列不擋） | D1 | 已啟用 | 2026\-09\-17 |

@@ -18,7 +18,7 @@
 
 ## 怎麼驗收
 
-<給 William 的三句白話：①開哪一頁 ②做什麼 ③看到什麼算對。級別與動作不要自己算：跑 `node scripts/acceptance-tier.js <PR 編號>`、照它印的寫（RULES H6；第 6 步之前仍用這支腳本）>
+<給 William 的三句白話：①開哪一頁 ②做什麼 ③看到什麼算對。級別與動作不要自己算：跑 `node tools/acceptance-tier.js <PR 編號>`、照它印的寫（RULES H6）>
 
 ### 複審後掃
 
