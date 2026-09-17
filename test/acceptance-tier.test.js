@@ -15,6 +15,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { visible } from './helpers/markdown-visible.js';
 import { classify, report, tierOf, originRepo, RULES, TIERS, ORDER, prFilesFromApi } from '../scripts/acceptance-tier.js';
 import { gitEnv } from '../lib/git-env.js';
 import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
@@ -401,11 +402,10 @@ test('⭐ 文件｜AGENTS 附則要寫出這支的跑法、只指路不抄分級
     assert.doesNotMatch([g.command, ...(g.args ?? [])].join(' '), /acceptance-tier/,
       `分級腳本被登記成閘「${g.name}」——它只算不擋，接進合併指令就變成閘`);
   }
-  // 固定小標只認**真正的標題行**：先剝掉 HTML 註解與圍欄，再逐行找 /^### 複審後掃\s*$/——
-  //   註解裡同名的字串不算（Codex #611 r2 Medium：舊題剝過、接手題用 indexOf 漏了，真標題改名而註解留著同字串仍全綠）。
-  const tpl = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/^```[^\n]*\n[\s\S]*?^```[^\n]*$/gm, '');
+  // 固定小標只認**真正的標題行**：先用 test/helpers/markdown-visible.js 的 visible() 剝掉 HTML 註解與圍欄（狀態機：反引號／波浪線、
+  //   開框前最多三格空白、同款且不短於開框長度的收框——切換日前固定小標那題用的就是它），再逐行找 /^### 複審後掃\s*$/。
+  //   註解或圍欄裡同名的字串不算（Codex #611 r2／r3：接手題先用 indexOf、後用只認欄首三反引號的正則，都留了活口——~~~ 圍欄、縮排圍欄、長框包短框）。
+  const tpl = visible(readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8'));
   const lines = tpl.split('\n');
   const from = lines.findIndex((l) => /^## 怎麼驗收\s*$/.test(l));
   const to = lines.findIndex((l) => /^### 複審後掃\s*$/.test(l));
