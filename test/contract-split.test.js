@@ -126,7 +126,8 @@ function read(p) {
   //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
   //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
   //    ⚠️ 這裡判的是**行首**。契約檔另有更嚴的一刀（連行「中」的 `<` 都不准，見 assertHeadingForm）——
-  //    AGENTS.md 刻意不吃那一刀：它要寫 `🤖 <角色>｜來源：<哪個 session>` 這種格式範例，
+  //    AGENTS.md 刻意不吃那一刀：它合法地在行中寫 `<路徑>`／`<N>` 這種角括號佔位（切換日前還寫著結論標頭
+  //    `🤖 <角色>｜來源：…` 的格式範例，那個範例現在住 templates/verdict-header.md），
   //    而它的 anchor 零消費者、索引列又是考題直接讀原始文字，藏不掉東西。
   //    （r21 我把嚴格版裝在這裡，當場擋掉 #385 那段範例——兩支各自全綠、試合併才紅。
   //      跟 r15 同一個錯：**門裝到不承重的地方，就只剩下誤擋**。）
@@ -140,8 +141,8 @@ function read(p) {
   //    r24 的版本就是這樣讓 `<details>` 溜進去的。所以判準直接看原始文字。
   //
   //    代價：AGENTS.md 只擋**會把內容藏起來**的那兩個元素，不是通用的 raw HTML 禁令。
-  //    理由是它合法地引用外部語法（`<Z/>` 是 XBRL、`<CorporateAction>` 是 IB Flex、
-  //    `<callout icon=` 是 Notion），把那些改掉是失真。**這條界線寫在這裡，不要以為它擋得更多。**
+  //    理由是它合法地用角括號當佔位（`<編號>`、`<N>`、`<受審commit>`），
+  //    也曾引用外部語法（XBRL／IB Flex／Notion 的標籤，切換日前的舊文），把那些改掉是失真。**這條界線寫在這裡，不要以為它擋得更多。**
   const hider = raw.split('\n').findIndex((l) => /<\/?(?:details|summary)\b/iu.test(l));
   assert.equal(hider, -1,
     `${p}:${hider + 1} 出現 \`<details>\` 或 \`<summary>\`。\n`

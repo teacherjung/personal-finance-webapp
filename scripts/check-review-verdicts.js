@@ -39,8 +39,8 @@ import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
 
 /**
- * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
- * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
+ * **這支是合併程序的一道機械閘**——切換日（2026-09-17）之前由舊的閘盤點題靠這個標記反查閘數（那題已隨舊程序文件刪除）；切換後合併程序＝settings.json 的 gates 登記＋tools/merge.js，登記對帳＝tests/settings.test.js，本腳本不在合併路徑上、第 7 步退役——這個標記從此只剩歷史用途。（原句：
+ * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。）
  *
  * ⚠️ 別把清單手寫在考題裡（Codex #385 r9／r10）：手寫的漂過一次（加了第四道閘、
  * 文件仍寫三道，考題全綠看不見），改成從散文反查又被證明可繞（lazy continuation、
@@ -291,10 +291,11 @@ const LOOSE_MIN = 3;
  *   例示（不是清單）：`CLI` vs `第二輪複審`／`codex CLI (…, xhigh)` vs `codex CLI (…, medium)`
  *   ／`本機 codex CLI` vs `桌面 codex CLI`／`codex CLI xhigh` vs `xhigh codex CLI`
  *   ／`codex CLI xhigh` vs `codex CLl xhigh`／`桌面` vs `桌面版`。
- *   第二例正是文件禁止「把 effort 寫進來源」要防的漂法——**規矩比提醒可靠**。
+ *   第二例正是範本禁止「把推理強度寫進來源」要防的漂法（`templates/verdict-header.md` 來源字串那條）
+ *   ——**規矩比提醒可靠**。
  * ・反方向會多嘴一次：真的有兩個 session、名字剛好一個包住另一個（`codex CLI` 與
  *   `codex CLI 版面`）會被點名。代價是一句提醒，處方是取兩個不互相包含的名字
- *   （標準字串表＝`REVIEW-AND-MERGE.md`「發審查提示」節）。
+ *   （標準字串表＝`PROJECT-SETTINGS.md`「來源字串標準表」；機器讀的同一份＝根目錄 `settings.json` 的 `sources`）。
  * @param {string} a @param {string} b
  * @returns {string|null}
  */
@@ -501,8 +502,10 @@ function stripFencesLoose(md) {
  * 同一個審查者身分＝`角色 + 來源`（不是只有角色：兩個 Claude session 是兩個審查者）。
  *
  * ⚠️ **所以來源字串是機械身分，不是描述文字**——同一個審查工具跨輪次改寫法（多一個前綴、
- * 換成全形括號）就會被拆成兩位（2026-08-14 #453）。標準字串表與補救程序＝
- * `REVIEW-AND-MERGE.md`「發審查提示」節；長得像的兩個來源由 `sourceLookalike()` 出聲提醒。
+ * 換成全形括號）就會被拆成兩位（2026-08-14 #453）。標準字串表＝`PROJECT-SETTINGS.md`
+ * 「來源字串標準表」（機器讀的同一份＝根目錄 `settings.json` 的 `sources`）；來源欄的寫作義務與
+ * 「各自解除」的規矩＝`templates/verdict-header.md`（RULES F4／F5）；長得像的兩個來源由
+ * `sourceLookalike()` 出聲提醒。
  *
  * @param {{body: string}[]} comments
  * @param {string} head
@@ -710,7 +713,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
     //    重述、資格判定正確判「引不動」而開放豁免，但 `rid.source` 原樣帶著那顆零寬字，
     //    宣告者照肉眼看到的字串寫就對不上 ⇒ 豁免也走不通。發射者一度在這裡剝掉隱形字元，
     //    並自認是「收緊」——**那是錯的**：本閘的機器身分定義是「角色＋來源，來源只摺疊空白」
-    //    （見 headerOf 與 REVIEW-AND-MERGE 的來源字串節），其餘字元差異就是不同身分。
+    //    （見 headerOf 與 `templates/verdict-header.md` 來源字串那條），其餘字元差異就是不同身分。
     //    只在這一腿改寫定義 ⇒ 主流程視為兩個身分的東西，在豁免路徑被併成一個＝**放寬**，
     //    而且與契約不一致（r7 兩條路徑重播實證）。已撤回。
     //    ⚠️ **誠實劃界（記待辦，不在本支射程）**：來源欄帶隱形字元的壞行，兩條救濟路目前都不通
@@ -780,7 +783,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
         + '（照原輪次補發撤銷不掉——同輪相反結論＝照樣阻擋、同輪同結論＝不取代舊 sha）。\n'
         + '    ⚠️ **這些身分在這支 PR 裡會一直存在**（留言歷史刪不掉）：之後 head 每動一次，'
         + '**全部都要再跟一次**；「只用固定的那一個字串」是**下一支 PR** 才開始'
-        + '（標準字串表與補救程序＝REVIEW-AND-MERGE.md「發審查提示」節）。\n'
+        + '（標準字串表＝PROJECT-SETTINGS.md「來源字串標準表」；來源欄的規矩＝templates/verdict-header.md）。\n'
         + '    ⛔ **不要用編輯舊留言的方式修**——改審查紀錄會洗掉稽核軌跡。');
     }
   }
@@ -812,7 +815,7 @@ export function verdictProblems(comments, head, reviewerRole = null) {
       : `沒有${reviewerRole ? `「${reviewerRole}」` : '任何一位審查者'}對目前的 head（${head.slice(0, 7)}）`
         + '下過「通過」的正式結論。\n'
         + '    ⚠️ 協作欄位閘只證明「有人被寫成審查者」，證明不了「審查真的發生過」。\n'
-        + '    請獨立審查者用來歷標頭給出結論（格式見 AGENTS.md「一支 PR 上可能有好幾個審查者」節）。');
+        + '    請獨立審查者用來歷標頭給出結論（格式見 templates/verdict-header.md；規矩＝RULES F4）。');
   }
   for (const h of Object.values(latest)) {
     if (!h.blocking) continue;

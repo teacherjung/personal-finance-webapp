@@ -15,8 +15,8 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { visible } from './helpers/markdown-visible.js';
 import { classify, report, tierOf, originRepo, RULES, TIERS, ORDER, prFilesFromApi } from '../scripts/acceptance-tier.js';
-import { gatesRunInMergeSteps } from './helpers/merge-gates.js';
 import { gitEnv } from '../lib/git-env.js';
 import { worktreeIntegrityProblems } from '../scripts/check-worktree-integrity.js';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
@@ -379,21 +379,40 @@ test('CLI｜--paths 給路徑 → exit 0 印報告；gh 失敗 → exit 2、不�
   assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' }).status, 2);
 });
 
-test('⭐ 文件｜合併步驟「回報合併結果與驗收分級」那一步要指到這支腳本，而且它不可以被合併閘反查器當成閘（不寫在 bash fence 裡、不自報閘名）；PR 模板只指路、不抄任何一級', () => {
-  // 用步驟**名字**找，不用序號：步驟插入後序號會漂，具名引用不會（merge-procedure-docs 的規矩）
-  const doc = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  const lines = doc.split('\n');
-  const start = lines.findIndex((l) => /^> \d+\.\s/.test(l) && /回報\*\*合併結果\*\*與\*\*驗收分級\*\*/.test(l));
-  assert.ok(start >= 0, '找不到「回報合併結果與驗收分級」那一步');
-  const end = lines.findIndex((l, i) => i > start && /^> \d+\.\s/.test(l));
-  const step = lines.slice(start, end < 0 ? undefined : end).join('\n');
-  assert.match(step, /scripts\/acceptance-tier\.js/, '那一步沒指到分級腳本——散文清單又會長回來');
-  assert.match(step, /照它印的動作做/, '那一步要叫執行者照腳本印的做');
+test('⭐ 文件｜AGENTS 附則要寫出這支的跑法、只指路不抄分級表；它不在 settings.json 登記的閘裡（分級不是閘，RULES H6）；PR 模板只指路、不抄任何一級', () => {
+  // 2026-09-17 切換日前這題讀的是合併手冊（REVIEW-AND-MERGE.md，已刪）的「回報合併結果與驗收分級」那一步。
+  // 合併程序現在住 AGENTS.md「本專案協作附則」（合併段那一條指到這支）＋ settings.json 的 gates（合併指令只跑登記在這裡的閘）。
+  // 附則掃**從它的 H2 到檔尾整節**，不釘某一條在第幾行（釘起點的跑步機＝同檔 pending-rulings 那題的教訓）。
+  const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
+  const at = agents.indexOf('\n## 本專案協作附則');
+  assert.ok(at >= 0, '找不到 AGENTS.md「本專案協作附則」那一節——這題變空包彈');
+  const mentions = agents.slice(at + 1).split('\n').filter((l) => /scripts\/acceptance-tier\.js/.test(l));
+  assert.ok(mentions.length > 0, '附則沒指到分級腳本——散文清單又會長回來');
+  assert.ok(mentions.some((l) => l.includes('`node scripts/acceptance-tier.js <編號>`')),
+    '附則要寫出跑法 `node scripts/acceptance-tier.js <編號>`（RULES H6），不是只提檔名');
+  assert.ok(mentions.some((l) => /照它印的做/.test(l)), '附則要叫執行者照腳本印的做');
   // 只指路、不抄副本：規矩與家族清單只住腳本（#573 r5——同一句先說只住腳本、接著又抄一遍＝第二份會漂的副本）
-  assert.doesNotMatch(step, /動作累積|最重|一律當|db\/|package-lock|命中幾級/, '那一步又在抄分級的算法或家族清單——只准指到腳本');
-  assert.ok(!gatesRunInMergeSteps().some((g) => /acceptance-tier/.test(g)), '分級腳本被合併閘反查器抓到＝它被寫進 bash fence，會被要求自報閘名');
-  const tpl = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8');
-  const section = tpl.slice(tpl.indexOf('## 怎麼驗收'), tpl.indexOf('### Grok 複審後掃'));
+  for (const l of mentions) {
+    assert.doesNotMatch(l, /動作累積|最重|一律當|db\/|package-lock|命中幾級/, '附則提到分級腳本的那一行又在抄分級的算法或家族清單——只准指到腳本');
+  }
+  // 分級不是閘（RULES H6）：合併指令只跑 settings.json gates 登記的閘，這支不可以被登記進去
+  const { gates } = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
+  assert.ok(Array.isArray(gates) && gates.length > 0, 'settings.json 沒有 gates＝這一半變空包彈');
+  for (const g of gates) {
+    assert.doesNotMatch([g.command, ...(g.args ?? [])].join(' '), /acceptance-tier/,
+      `分級腳本被登記成閘「${g.name}」——它只算不擋，接進合併指令就變成閘`);
+  }
+  // 固定小標只認**真正的標題行**：先用 test/helpers/markdown-visible.js 的 visible() 剝掉 HTML 註解與圍欄（狀態機：反引號／波浪線、
+  //   開框前最多三格空白、同款且不短於開框長度的收框——切換日前固定小標那題用的就是它），再逐行找 /^### 複審後掃\s*$/。
+  //   註解或圍欄裡同名的字串不算（Codex #611 r2／r3：接手題先用 indexOf、後用只認欄首三反引號的正則，都留了活口——~~~ 圍欄、縮排圍欄、長框包短框）。
+  const tpl = visible(readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8'));
+  const lines = tpl.split('\n');
+  const from = lines.findIndex((l) => /^## 怎麼驗收\s*$/.test(l));
+  const to = lines.findIndex((l) => /^### 複審後掃\s*$/.test(l));
+  // ⚠️ 兩個索引都先驗：找不到時 slice 會靜靜切出空字串，下面的斷言就失真
+  //   （切換日小標從「### Grok 複審後掃」改名時，這裡沒驗的話就是一題靜靜通過的空包彈）。
+  assert.ok(from >= 0 && to > from, `PR 模板（剝掉註解與圍欄後）找不到標題行「## 怎麼驗收」（${from}）或它後面的「### 複審後掃」（${to}）`);
+  const section = lines.slice(from, to).join('\n');
   assert.match(section, /scripts\/acceptance-tier\.js/, 'PR 模板沒指到分級腳本');
   assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：|不需驗收/, 'PR 模板又在抄級名、分級表或算法（#573 r4／r5）——只准指路');
 });

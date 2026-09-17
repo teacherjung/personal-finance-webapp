@@ -14,7 +14,7 @@
 //        origin 若是 fork，查的就是 fork 上的同號 PR、不是上游，跑之前自己確認 origin 指誰。
 //   node scripts/acceptance-tier.js --paths a.js b.md   # 直接給路徑（考題與離線用）
 // 退出碼：0＝算出來了（印級別、命中、動作）；2＝算不出來（gh 失敗／回傳不是預期形狀／檔數對不上 PR 的檔數／沒有路徑）→ 老實說算不出來，不猜。
-// ⚠️ 這**不是合併閘**：它不擋任何事，只把「合併後該做什麼」算給執行者看；合併步驟「回報合併結果與驗收分級」那一步照它印的做。
+// ⚠️ 這**不是合併閘**：它不擋任何事，只把「合併後該做什麼」算給執行者看；合併後的驗收照它印的做（RULES H6；AGENTS「本專案協作附則」合併段那一條）。
 //
 // ## 規矩（考題釘住）
 // 1. **動作累積**：同一支命中幾級就做幾級的動作（db/＋package-lock＋lib/ ＝ 套 SQL、裝相依、重啟走流程三件都做）；
@@ -207,7 +207,7 @@ export function originRepo(cwd = process.cwd()) {
   return { host, slug: `${owner}/${repo}` };
 }
 
-/** 給合併步驟「回報合併結果與驗收分級」那一步照抄的報告。 @param {string[]} paths */
+/** 給合併後的驗收（RULES H6；AGENTS「本專案協作附則」合併段）照抄的報告。 @param {string[]} paths */
 export function report(paths) {
   const r = classify(paths);
   const lines = [

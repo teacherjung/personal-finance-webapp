@@ -99,11 +99,10 @@ const DOCS = {
     //    它掛 Claude 的名字是**正確的**——它本來就只給 Claude 讀。
     toolFixedName: true,
   },
-  'REVIEW-AND-MERGE.md': { readers: 'all', title: '審查與合併程序' },   // 檔名英文、標題中文：意思一致（同 PROJECT.md）
   'PROJECT.md': { readers: 'all', title: '個人理財中心（榮祥森）— 專案共同記憶' },
   'README.md': { readers: 'all', title: '個人理財中心' },
-  'COLLAB-MAP.md': { readers: 'all', title: '協作規矩地圖' },   // 路由表；它自己的射程與劃界＝test/collab-map.test.js 檔頭
-  // 協作套件 ai-collab-kit 的三份根目錄文件（搬家第 2 步放進來；切換日之前不生效，正本仍是 AGENTS／REVIEW-AND-MERGE）
+  // 協作套件 ai-collab-kit 的三份根目錄文件（搬家第 2 步放進來；2026-09-17 切換日起生效：協作規矩正本＝RULES.md，
+  // AGENTS.md 只留本專案附則；舊的 REVIEW-AND-MERGE.md／COLLAB-MAP.md 同日刪除）
   'RULES.md': { readers: 'all', title: '協作規矩本文' },
   'MACHINES.md': { readers: 'all', title: '機器索引' },
   'PROJECT-SETTINGS.md': { readers: 'all', title: '專案設定' },
@@ -161,9 +160,6 @@ test('DOCS 必須涵蓋每一份根目錄文件（新增一份就要在這裡宣
  * ⚠️ 用窗格不用整行，是因為語料 fixture 那一行是 5KB 的 JSON——整行比對不可讀也不可維護。
  */
 const HISTORICAL_CONTEXTS = {
-  'REVIEW-AND-MERGE.md': [
-    '> **這份檔案原本叫 `⟨舊名⟩.md`，2026-08-03 改名。**',
-  ],
   'test/doc-naming.test.js': [
     '// 合併程序寫在一份叫 `⟨舊名⟩.md` 的檔案裡，而 `AGENTS.md` 有 13 處',
     '+ \'⚠️ 起因：合併步驟原本寫在 `⟨舊名⟩.md`，而 AGENTS.md 有 13 處叫**任何人*',

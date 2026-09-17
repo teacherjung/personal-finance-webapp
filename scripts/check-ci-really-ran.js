@@ -28,8 +28,8 @@ import { isMainModule } from '../lib/is-main.js';
 import { gitEnv } from '../lib/git-env.js';
 
 /**
- * **這支是合併程序的一道機械閘**——`test/collab-invariant-docs.test.js` 靠這個標記
- * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。
+ * **這支是合併程序的一道機械閘**——切換日（2026-09-17）之前由舊的閘盤點題靠這個標記反查閘數（那題已隨舊程序文件刪除）；切換後合併程序＝settings.json 的 gates 登記＋tools/merge.js，登記對帳＝tests/settings.test.js，本腳本不在合併路徑上、第 7 步退役——這個標記從此只剩歷史用途。（原句：
+ * 反查「現在到底有幾道閘」，再要求文件把每一道都點名得出來。）
  */
 export const MERGE_GATE = { name: '真考卷', why: '合併頭的 required checks 必須真的跑過且成功——skipped/cancelled 不算，auto-merge 必須關閉' };
 

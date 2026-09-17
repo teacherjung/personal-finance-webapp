@@ -671,7 +671,8 @@ test('裁決｜退出碼 1 的「合起來測試紅」footer 要指路「重跑�
   assert.match(v.message, /重跑\*\*一次\*\*/, '真紅的訊息沒提「可以重跑一次」——看的人只能憑記憶找 William 09-03 的裁示');
   assert.ok(v.message.includes(RERUN_LIMITS), '重跑的限制沒逐字帶——沒有限制的重跑＝fail-closed 閘的逃生口');
   assert.match(v.message, /紅的考題/, '沒叫人先看是哪一題紅，「重跑一次」會被用在確定性的紅上');
-  assert.match(v.message, /REVIEW-AND-MERGE\.md/, '沒指回規則正本');
+  assert.match(v.message, /RULES\.md H4/, '沒指回規矩正本（RULES.md H4「紅了只准重跑一次」）');
+  assert.match(v.message, /settings\.json gates 的「跨變更試合併」/, '沒指到套件那一道閘的登記——2026-09-17 起舊文件裡那一步不存在，看的人要知道去哪查');
 });
 
 test('⭐ CLI｜另一支動了 package-lock.json、要求的版本沒裝 → exit 2 並點名套件與「動了 lock：是」；三關不可以跑（拿舊套件跑出來的紅綠都不算數）', () => {
@@ -973,15 +974,18 @@ test('⭐ CLI｜合併後的 package.json 宣告了 lock 沒有的套件 → 2�
   }
 });
 
-test('RERUN_LIMITS｜常數本身要是一句有內容的限制句，正本裡那一句前面不可以是否定詞（Grok #566 掃 #5：includes 對空字串恆真、對「不只限」也真）', () => {
+test('RERUN_LIMITS｜常數本身要是一句有內容的限制句，訊息裡那一句前面不可以是否定詞（Grok #566 掃 #5：includes 對空字串恆真、對「不只限」也真）', () => {
+  // 2026-09-17 搬家第 5 步起，這一串的正本只在腳本（規矩本身＝RULES.md H4「紅了只准重跑一次」，那裡沒有這一串；
+  // 舊文件裡的第二份已刪、沒有別份可對）。所以「前面不可以是否定詞」改量退出碼 1 的訊息：includes 對「不只限…」也真。
   assert.ok(typeof RERUN_LIMITS === 'string' && RERUN_LIMITS.length >= 10, '常數被掏空，includes 對空字串恆真');
   assert.match(RERUN_LIMITS, /只限.*一次/);
   assert.match(RERUN_LIMITS, /第二次/);
-  const step = /** @type {string} */ (crossPrStepText(readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8')));
-  const i = step.indexOf(RERUN_LIMITS);
-  assert.ok(i >= 0);
-  const before = step.slice(Math.max(0, i - 3), i);
-  assert.doesNotMatch(before, /不|非|廢/, `正本的限制句被否定詞包住：「${before}${RERUN_LIMITS.slice(0, 6)}…」`);
+  assert.doesNotMatch(RERUN_LIMITS, /^(?:不|非|廢)/, '常數自己以否定詞開頭——/只限.*一次/ 對「不只限一次」也真');
+  const msg = verdict([{ number: 385, ok: false, kind: 'red', why: '合起來之後「考試」紅了：斷言炸了' }]).message;
+  const i = msg.indexOf(RERUN_LIMITS);
+  assert.ok(i >= 0, '退出碼 1 的訊息沒逐字帶限制句');
+  const before = msg.slice(Math.max(0, i - 3), i);
+  assert.doesNotMatch(before, /不|非|廢/, `訊息裡的限制句被否定詞包住：「${before}${RERUN_LIMITS.slice(0, 6)}…」`);
 });
 
 test('⭐ CLI｜算「跟 main 一樣嗎」的 git diff --quiet 自己失敗（128）→ 那一格「查不到」、處置只印「查不到」那條，不可以當成「不一樣」長出 rebase 處方（#566 r13）', () => {
@@ -1076,80 +1080,6 @@ test('裁決｜lock 混輪的分類句要照輸入算：只混真紅不可以長
   assert.equal(onlyConflict.code, 2);
   assert.match(onlyConflict.message, /本輪已確定的阻擋\*\*（文字衝突）/);
   assert.doesNotMatch(onlyConflict.message, /阻擋\*\*（[^）]*測試紅/, '沒有測試紅卻說有——分類句寫死了');
-});
-
-/**
- * 規則正本的「可見文字」——**刻意只剝下面列出的形狀，不是 Markdown renderer**：HTML 註解、hidden／display:none
- * 容器連同內容、其餘 HTML 標籤、fenced code 區塊（規則不會寫在指令框裡）、圖片（載得到圖時 alt 不顯示）、
- * reference-style 連結定義行（`[label]: 網址`，不渲染）、inline 連結目的地（`[字](網址)` 只留字）。
- * #566 r1／r2／r3 Codex 各示範一種空包彈（註解、`<span hidden>`、reference definition）。
- * ⚠️ 誠實劃界（同族第三輪，射程在此封頂）：HTML entity、`<details>` 折疊、code span、多行標籤等其餘形狀
- * **不處理**——這題守的是「正本那一步的可見句子裡逐字有限制句」，不是 GitHub 的渲染結果；再有新形狀進待辦。
- * @param {string} md
- */
-function visibleText(md) {
-  return md
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<([a-z][a-z0-9-]*)\b[^>]*\b(?:hidden|display\s*:\s*none)[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/^(?:> ?)*\s*```[\s\S]*?^(?:> ?)*\s*```[ \t]*$/gm, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/^(?:> ?)*\s*\[[^\]]+\]:\s.*$/gm, '')
-    .replace(/\]\([^)]*\)/g, ']');
-}
-
-/** 合併步驟裡「跨 PR 試合併閘」那一步的可見文字：從該步的編號行起、到下一個編號步驟為止。 @param {string} md */
-function crossPrStepText(md) {
-  const lines = visibleText(md).split('\n');
-  const start = lines.findIndex((l) => /^> \d+\.\s/.test(l) && l.includes('跨 PR 試合併閘'));
-  if (start < 0) return null;
-  let end = lines.findIndex((l, i) => i > start && /^> \d+\.\s/.test(l));
-  if (end < 0) end = lines.length;
-  return lines.slice(start, end).join('\n');
-}
-
-test('文件釘住的 helper｜看的是可見文字：HTML 註解、hidden 容器、連結目的地裡的限制句都不算（#566 r1／r2 的空包彈形狀）', () => {
-  const rule = RERUN_LIMITS;
-  const base = `> 5. ⚠️ **跨 PR 試合併閘（機械執行）**：\n>    \`\`\`bash\n>    node scripts/check-cross-pr-merge.js <N>\n>    \`\`\`\n>    可以重跑一次，${rule}。\n> 6. 下一步`;
-  assert.ok(/** @type {string} */ (crossPrStepText(base)).includes(rule), '正常寫法要找得到');
-  const inComment = base.replace(rule, '可以重跑兩次') + `\n<!-- ${rule} -->`;
-  assert.ok(!/** @type {string} */ (crossPrStepText(inComment)).includes(rule), 'HTML 註解裡的限制句被當成可見規則');
-  const inHidden = base.replace(rule, `可以重跑兩次<span hidden>${rule}</span>`);
-  assert.ok(!/** @type {string} */ (crossPrStepText(inHidden)).includes(rule), 'hidden 容器裡的限制句被當成可見規則');
-  const inStyle = base.replace(rule, `可以重跑兩次<div style="display:none">${rule}</div>`);
-  assert.ok(!/** @type {string} */ (crossPrStepText(inStyle)).includes(rule), 'display:none 容器裡的限制句被當成可見規則');
-  const inLink = base.replace(rule, `[可以重跑兩次](https://x/${rule})`);
-  assert.ok(!/** @type {string} */ (crossPrStepText(inLink)).includes(rule), '連結目的地裡的限制句被當成可見規則');
-  const otherStep = `> 4. 別的步驟 ${rule}\n` + base.replace(rule, '可以重跑兩次');
-  assert.ok(!/** @type {string} */ (crossPrStepText(otherStep)).includes(rule), '別步驟的限制句被算進這一步');
-  // #566 r3 Codex 的三種：reference-style 連結定義（不渲染）、圖片 alt（載圖時不顯示）、fenced code（指令框）
-  // 定義行要放在這一步裡面（下一個編號行之前），不然只是被「別步驟不算」擋掉、沒測到剝定義行
-  const refDef = base.replace(rule, '[可以重跑兩次][policy]').replace('> 6. 下一步', `>\n> [policy]: https://example.com/${rule}\n> 6. 下一步`);
-  assert.ok(!/** @type {string} */ (crossPrStepText(refDef)).includes(rule), 'reference definition 裡的限制句被當成可見規則');
-  const inImage = base.replace(rule, `可以重跑兩次 ![${rule}](https://example.com/x.png)`);
-  assert.ok(!/** @type {string} */ (crossPrStepText(inImage)).includes(rule), '圖片 alt 裡的限制句被當成可見規則');
-  const inFence = base.replace(`可以重跑一次，${rule}。`, `可以重跑兩次。\n>    \`\`\`text\n>    ${rule}\n>    \`\`\``);
-  assert.ok(!/** @type {string} */ (crossPrStepText(inFence)).includes(rule), 'fenced code 裡的限制句被當成可見規則');
-  // 對照：真的寫在正文裡、旁邊有連結與 code span，仍要找得到
-  const normal = base.replace(rule, `${rule}（見 [規則](https://example.com)、\`RERUN_LIMITS\`）`);
-  assert.ok(/** @type {string} */ (crossPrStepText(normal)).includes(rule), '正文裡的限制句反而找不到');
-});
-
-test('⭐ 文件｜REVIEW-AND-MERGE.md 跨 PR 試合併那一步（規則正本）要逐字含同一串限制句，並寫明 lock 對不上的退 2 不適用重跑', () => {
-  // 訊息那份被上面的題釘住；正本這份若漂成「兩次」或整段消失，操作者看到的是訊息與正本互相矛盾——
-  // 兩邊共用 RERUN_LIMITS 這一串，漂哪一邊都紅。可見文字的定義在 visibleText／crossPrStepText（有自己的題）。
-  const raw = readFileSync(join(ROOT, 'REVIEW-AND-MERGE.md'), 'utf8');
-  const step = crossPrStepText(raw);
-  assert.ok(step !== null, '合併步驟裡找不到「跨 PR 試合併閘」那一步的編號行');
-  // 指令行住在指令框裡（visibleText 會剝掉指令框），所以對原文驗：編號行之後、下一步之前要有那行
-  const rawLines = raw.split('\n');
-  const at = rawLines.findIndex((l) => /^> \d+\.\s/.test(l) && l.includes('跨 PR 試合併閘'));
-  const next = rawLines.findIndex((l, i) => i > at && /^> \d+\.\s/.test(l));
-  assert.ok(rawLines.slice(at, next < 0 ? undefined : next).some((l) => l.includes('node scripts/check-cross-pr-merge.js')), '那一步裡沒有這道閘的指令行');
-  assert.ok(step.includes(RERUN_LIMITS), `正本那一步沒有逐字含限制句「${RERUN_LIMITS}」——訊息與正本會分岔`);
-  assert.match(step, /不適用/, '正本沒寫 lock 對不上的退 2 不適用重跑');
-  assert.match(step, /不會安裝套件/, '正本沒寫這道閘不會安裝套件——「重跑一次」會被拿去對付那種紅');
-  assert.match(step, /重跑本閘/, '正本的手動路徑沒寫「從乾淨樹重跑本閘拿 0」——照字面手動跑三關永遠進不了下一步（#566 r5）');
 });
 
 test('CLI｜對照組：lock 要求的套件都裝著、版本相同 → 核對放行，三關照跑（三關退 0 ⇒ exit 0）', () => {
