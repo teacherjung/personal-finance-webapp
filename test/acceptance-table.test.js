@@ -79,6 +79,12 @@ test('⭐ 級別順序照 William 裁示：F（工具安全設定）排第一（
   assert.equal(fe.level, tierId('F')); assert.deepEqual(fe.actions.map((a) => a.tier), [tierId('F'), tierId('E')]);
   const dp = classify(['public/x.js', 'prototype/x.html'], table);
   assert.equal(dp.level, tierId('D'), '同重的 D 與 P 照表的順序，不看路徑順序');
+  // D＋E：級別 D，兩級的動作都印（套件不像舊腳本只列 D；E 的動作文字自己說「另有其他級就當這行不算」——Grok #613 掃後列出的差異，照實釘）
+  const de = classify(['public/x.js', 'AGENTS.md'], table);
+  assert.equal(de.level, tierId('D'));
+  assert.deepEqual(de.actions.map((a) => a.tier), [tierId('D'), tierId('E')]);
+  const E = settings.acceptance.tiers.find((t) => t.id === tierId('E')).action;
+  assert.match(E, /其他級|別級|不算/, 'E 的動作文字要自己說「同支另有其他級時這一行不算」——套件會把 E 也印出來，靠這句話避免被誤讀成不必驗收');
 });
 
 /** 追蹤檔清單：走 gitEnv()、先驗子行程成功再解析（git 讀不到 repo 時不可以把空輸出當成「零檔案」而全綠——#573 r3）。 */
@@ -144,6 +150,25 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.deepEqual(reachingScripts(/** @type {Record<string, string>} */ (pkg.scripts ?? {})), [], 'package.json 有 script 跑得到這兩支——CI 或 pre-push 只要寫 `npm run <別名>` 就把它變成閘，而字面掃描看不到');
   for (const g of settings.gates) {
     assert.doesNotMatch([g.command, ...(g.args ?? [])].join(' '), /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
+  }
+  // 三關真正執行的是 settings.json 的 checks.commands（鉤子與 CI 都只呼叫 tools/run-checks.js，字面上永遠掃不到）——
+  // 把工具加進這裡，推送前與雲端就會跑它、沒網路或沒權杖退 2＝變成閘（Grok #613 掃後①）
+  const commands = settings.checks?.commands;
+  assert.ok(Array.isArray(commands) && commands.length >= 3, 'settings.json 的 checks.commands 不是至少三關的清單——這題變空包彈（三關搬家了？）');
+  for (const cmd of commands) {
+    assert.doesNotMatch([cmd].flat().join(' '), /pending-rulings|acceptance-tier/, `settings.json 的 checks.commands 有一關叫了它（${[cmd].flat().join(' ')}）＝推送前鉤子與 CI 都會跑它、退出碼 2 變成擋人`);
+  }
+  assert.doesNotMatch([settings.checks?.prepareWorktree ?? []].flat().join(' '), /pending-rulings|acceptance-tier/, 'settings.json 的 checks.prepareWorktree 叫了它＝跨變更試合併閘備樹時會跑它');
+});
+
+test('⭐ 文件｜CLAUDE.md 開工步驟指的是套件的待裁清單工具、而且不帶參數（套件收到任何參數＝退 2；舊的 --all 與 scripts/ 路徑改回去，開工儀式會當場失敗）', () => {
+  const claude = read('CLAUDE.md');
+  const step = claude.split('\n').filter((l) => /pending-rulings/.test(l));
+  assert.ok(step.length >= 1, 'CLAUDE.md 沒有任何一行提到待裁清單工具——開工步驟被拿掉了？');
+  assert.ok(step.some((l) => l.includes('`node tools/pending-rulings.js`')), `CLAUDE.md 要寫出跑法 \`node tools/pending-rulings.js\`（不帶參數），實際：${step.join(' / ')}`);
+  for (const l of step) {
+    assert.doesNotMatch(l, /scripts\/pending-rulings/, `CLAUDE.md 還指到已刪的舊工具：${l}`);
+    assert.doesNotMatch(l, /pending-rulings\.js\s+-{1,2}\w/, `CLAUDE.md 叫待裁清單工具時帶了參數（套件不收、會退 2）：${l}`);
   }
 });
 
