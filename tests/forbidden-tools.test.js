@@ -4,11 +4,11 @@
 //   ①輸入拿不到工具名、工具名不合法＝拒絕；②禁區清單沒設＝拒絕（裝了卻沒填比沒裝更危險）；
 //   ③動禁區的連接器採白名單制；④逐字拒絕清單；⑤家族網（動詞名詞、名詞動詞、額外樣式），
 //     唯讀前綴跳過；駝峰、點、連字號都正規化；連接器前綴不同、工具名相同一起擋；
-//   ⑥三份接線範本（Claude、Codex 專案層、Codex 全域層）都只呼叫同一支判斷（不抄判斷＝不會漂）；指令入口：壞輸入也拒絕、放行不印；
+//   ⑥四份接線範本（Claude 活讀、Claude 釘指紋、Codex 專案層、Codex 全域層）都只呼叫同一支判斷（不抄判斷＝不會漂）；指令入口：壞輸入也拒絕、放行不印；
 //   ⑩連接器在名字的任何一段都認得（多一層前綴照樣白名單制；邊界要真的是邊界）；
 //   ⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣擋；
 //   ⑫接線範本真的跑一遍：從子目錄、別的專案起照樣判；找不到檔、沒有 node、載入就崩、Git 找不到工作樹根、清環境用的 env／sed 不在＝退 2 帶錯誤輸出
-//     （Codex 全域層這裡只守「範本原樣＝退 2」；複本、指紋、真的跑一遍在 tests/guard-copy.test.js）。
+//     （Codex 全域層與 Claude 釘指紋這裡只守「範本原樣＝退 2」；複本、指紋、真的跑一遍在 tests/guard-copy.test.js、tests/guard-copy-claude.test.js）。
 //   ⑦只填名字、沒有任何有效規則＝拒絕（r1 High③）；清單欄位型別錯＝拒絕；
 //   ⑧連接器名含 __ 也比得到（r1 High④）；order__create 跟 order_create 是同一個字；
 //   ⑨規則要合各欄位的文法：含空白、非法字元的規則不可能匹配合法工具名，留著只會把「有規則」判成真（r2 High②）＝拒絕。
@@ -26,7 +26,7 @@ const { decide, normalize, cli } = require('../tools/forbidden-tools.js');
 const { gitEnv } = require('../tools/git-env.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
 
-const HOOK_TEMPLATES = ['hook-claude.json', 'hook-codex.json', 'hook-codex-global.json'];
+const HOOK_TEMPLATES = ['hook-claude.json', 'hook-claude-pinned.json', 'hook-codex.json', 'hook-codex-global.json'];
 const FAIL_CLOSED_TAIL = "|| { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }";
 const FORBIDDEN = {
   name: '錢', servers: ['broker-x'], allowlist: ['get_account_balances', 'get_watchlist', 'create_alert'],
@@ -151,7 +151,7 @@ test('⑤連接器前綴不同、工具名相同也一起擋（尾段逐一試�
   assert.equal(decide('mcp__vendor__get__create_order', FORBIDDEN).deny, true, '中段的唯讀字不可以替尾段脫罪');
 });
 
-test('⑥三份接線範本都只呼叫同一支判斷，範本裡不抄判斷；起不來的尾巴一致', () => {
+test('⑥四份接線範本都只呼叫同一支判斷，範本裡不抄判斷；起不來的尾巴一致', () => {
   for (const f of HOOK_TEMPLATES) {
     const doc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'templates', f), 'utf8'));
     const cmds = doc.hooks.PreToolUse.flatMap((h) => h.hooks.map((x) => x.command));
@@ -161,6 +161,9 @@ test('⑥三份接線範本都只呼叫同一支判斷，範本裡不抄判斷�
     assert.equal(cmds[0].split(FAIL_CLOSED_TAIL).length, 2, `${f} 要剛好一個把起不來轉成退 2 的尾巴`);
     if (f !== 'hook-codex-global.json') assert.ok(cmds[0].endsWith(FAIL_CLOSED_TAIL), `${f} 的尾巴要把起不來轉成退 2`);
     assert.ok(!JSON.stringify(doc).includes('python3'), `${f} 不可以自己抄一份判斷`);
+    // PreToolUse 以外的鉤子（Claude 釘指紋那份另帶一組設定變更攔截）不可以碰判斷：判斷只在工具被呼叫的那一刻跑
+    const others = Object.entries(doc.hooks).filter(([event]) => event !== 'PreToolUse').flatMap(([, groups]) => groups.flatMap((h) => h.hooks.map((x) => x.command)));
+    for (const c of others) assert.ok(!c.includes('forbidden-tools'), `${f} 的其他鉤子不可以呼叫判斷`);
   }
 });
 
@@ -248,6 +251,15 @@ test('⑫接線範本真的跑一遍：不管從哪個目錄起、起不來一�
     const raw = sh(global, { cwd: elsewhere });
     assert.deepEqual([raw.status, raw.stdout], [2, ''], `Codex 全域層：佔位沒換＝退 2（${raw.stderr}）`);
     assert.match(raw.stderr, /指紋對不上/u, 'Codex 全域層：退 2 要帶錯誤輸出');
+
+    // Claude 側釘指紋裝法同一招（只寫指紋、複本的位置從 HOME 算）：真的跑一遍的題在 tests/guard-copy-claude.test.js；這裡只守範本原樣＝擋。
+    // HOME 指到空的暫存目錄：不可以去看真的家目錄
+    const pinned = cmd('hook-claude-pinned.json');
+    for (const ph of ['{files}', '{fingerprint}']) assert.equal(pinned.split(ph).length, 2, `Claude 釘指紋要剛好留一個 ${ph} 給 tools/guard-copy.js 填`);
+    assert.ok(!pinned.includes('{copyDir}'), 'Claude 釘指紋那一行跨機器共用：不可以有複本路徑的佔位');
+    const rawPinned = sh(pinned, { cwd: subdir, env: { HOME: elsewhere } });
+    assert.deepEqual([rawPinned.status, rawPinned.stdout], [2, ''], `Claude 釘指紋：佔位沒換＝退 2（${rawPinned.stderr}）`);
+    assert.match(rawPinned.stderr, /指紋對不上/u, 'Claude 釘指紋：退 2 要帶錯誤輸出');
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
