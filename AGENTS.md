@@ -153,7 +153,7 @@
       列舉繞法補不完就要關門。射程與**刻意不清 `HOME`／`PATH` 的理由**寫在 `lib/git-env.js`。
     - **考題裡不要 `git init`**（那正是事故的兇器）。真的需要沙盒 repo：環境一律**從零組**
       （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
-      ——落點見 `test/worktree-integrity.test.js` 的沙盒節（會叫 gh 的閘那一族 2026-09-18 第 7 步隨舊閘退役，切換日起由套件執行器統一守：套件 `tests/platform.test.js`、`tests/run-checks.test.js`）。
+      ——落點見 `test/worktree-integrity.test.js` 的沙盒節（舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役；套件考題用的是 E4 的扣法、不是本條的範例）。
     - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push` 與 `mutate.sh` 不經過 Node，
       `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
       它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。

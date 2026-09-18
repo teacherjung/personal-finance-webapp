@@ -34,7 +34,7 @@ const TEMPLATE = '.github/pull_request_template.md';
 const esc = (/** @type {string} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /**
  * 「這一行是不是某個欄位的欄位行」：行首可有項目符號與水平空白、欄名可被粗體記號包住、然後才是冒號。
- * 跟兩道閘的 `fieldValue()` 同一個形狀，但只看「是不是欄位行」、不取值。
+ * 跟套件閘的 `fieldValue()` 同一個形狀，但只看「是不是欄位行」、不取值。
  * ⚠️ 要錨在行首：範本第二欄的佔位字「不可與實作者相同」也含「實作者」，用子字串數會把它算成第二個欄位行。
  */
 const fieldLineRe = (/** @type {string} */ field) =>
@@ -56,7 +56,7 @@ test('⭐ PR 範本的四個欄位行各恰一次，而且都在第一個特殊�
     const hits = all.map((l, i) => (re.test(l) ? i : -1)).filter((i) => i >= 0);
     assert.equal(hits.length, 1,
       `範本裡「${f}」的欄位行有 ${hits.length} 行（要剛好 1 行；行號 ${hits.map((i) => i + 1).join('、') || '無'}）——`
-      + '多一行＝兩道閘會各讀到不同的一行，少一行＝機器讀不到那一欄');
+      + '多一行＝閘讀到的可能不是你以為的那一行，少一行＝機器讀不到那一欄');
     assert.ok(hits[0] < leading.length,
       `範本裡「${f}」的欄位行在第 ${hits[0] + 1} 行，但機器讀到第 ${stopAt} 行就停了（那一行是特殊行）。\n`
       + '  四欄要留在說明最上面、前面不要放任何引用／圍欄／表格／HTML 註解——套件閘只讀那一段。');
@@ -64,7 +64,7 @@ test('⭐ PR 範本的四個欄位行各恰一次，而且都在第一個特殊�
 });
 
 test('套件閘｜模板原封不動送出去也必須不通過；角括號換成合法值就要通過（角色取自 settings.json）', () => {
-  // ⚠️ 兩道閘的讀法不同（舊閘剝 HTML 註解；套件閘只讀第一個特殊行之前），所以範本要各餵一次。
+  // ⚠️ 套件閘只讀第一個特殊行之前（舊閘剝整份 HTML 註解再掃的讀法 2026-09-18 第 7 步隨舊閘退役），範本要真的餵它一次。
   //    角色名單不寫死：`rolesOf(settings).usable`＝settings.json 的 participants 裡純拉丁字母的識別值。
   const { usable } = rolesOf(JSON.parse(read('settings.json')));
   assert.ok(usable.length >= 2,
