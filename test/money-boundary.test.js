@@ -2,9 +2,11 @@
  * 「錢的絕對邊界」考題（2026-08-03，William 拍板當日落地；r1／r2 修訂見下）
  *
  * 守什麼：AGENTS.md「🛑 錢的絕對邊界」節（William 原文）與 `.claude/settings.json`
- * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook——2026-09-18 第 8 步起那一組是呼叫套件
- * tools/forbidden-tools.js 的 node 指令，詞表在根目錄 settings.json 的 forbidden；早期是 hook 指令裡的正則、後來是 python）
- * 不被靜靜退掉；hook 層不因改寫而漏擋或誤傷。
+ * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook）不被靜靜退掉；hook 層不因改寫而漏擋或誤傷。
+ * hook 那一組的沿革：早期是 hook 指令裡的正則、後來是 python（詞表寫死在指令本體）；2026-09-16〜09-18 起是呼叫套件
+ * tools/forbidden-tools.js、每次重讀那棵樹的 settings.json（活讀那一行）；**2026-09-19（Claude 側釘指紋第 2 支）起＝釘指紋那一行**：
+ * 指令裡只寫指紋，判斷讀倉庫外的固定複本 `$HOME/.local/share/ai-collab-kit/guard/<指紋>`（裡面是 tools/forbidden-tools.js 等三支
+ * ＋只留 forbidden 那一塊的 settings.json；每台機器由人跑 `node tools/guard-copy.js --claude` 補）。
  *
  * 病因（為什麼要機械層）：IBKR 連接器的 create_order_instruction 能把整張委託
  * （買/賣、代號、數量、價格、效期）填好、存成待送出的委託指示——差一鍵送出就是真單。
@@ -36,9 +38,14 @@
  *   - William 機器 user 層 `~/.claude/settings.json` 另有 v5 同款封鎖——不在 repo，
  *     本考題看不到、也不假裝看得到（第 8 步拆舊層時未重驗）。
  *   - 2026-09-16〜09-18 兩組並存（python v6＋套件那組），2026-09-18 第 8 步拆掉 python 那組：下面 r2〜v4 的沿革講的是
- *     python 那組的判準演進，判斷現在只有一份＝套件的 tools/forbidden-tools.js（讀根目錄 settings.json 的 forbidden），
- *     同款判準都在裡面。探針自第 8 步起是**三態**（deny／allow／起不來）並帶工作目錄：套件那組先問 git 根目錄，
- *     沒帶 cwd 會起不來；舊的兩態探針把非零退出一律算成 false，放行面「零組擋」會把起不來當放行（施工地圖 3c）。
+ *     python 那組的判準演進，判斷現在只有一份＝套件的 tools/forbidden-tools.js（清單＝根目錄 settings.json 的 forbidden），
+ *     同款判準都在裡面。探針自第 8 步起是**三態**（deny／allow／起不來）：舊的兩態探針把非零退出一律算成 false，
+ *     放行面「零組擋」會把起不來當放行（施工地圖 3c）。
+ *   - **2026-09-19 起探針的 HOME 一律指到本檔自己開的暫存家**（`test/helpers/pinned-home.js`）：裡面用**這棵樹當下的四個檔**
+ *     造一份複本、造完驗它的指紋等於 tools/guard-copy.js 對這棵樹算的指紋（不等＝叫到它的那一題紅）。所以本檔驗的是
+ *     「這棵樹的清單裝進那一行之後」擋該擋、放該放；CI 上真的家目錄沒有複本，本檔也不讀寫真的家目錄。
+ *     William 機器上那一份（`--claude` 從已合併版本抽的）有沒有、是不是同一個指紋，只有在真的對話按測試鈕量得到；
+ *     `.claude/settings.json` 那兩組有沒有逐字等於「範本＋這棵樹的指紋」＝test/money-kit-hook.test.js ①。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
  *     會漏接——第二層 hook（家族網那一層）只認工具名、不認 UUID，正是補這個洞；
  *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
@@ -71,7 +78,7 @@
  *   - SIGKILL 殺的是直接子行程（bash）；handler 若刻意生出「抓住 stdout 的孤兒孫行程」
  *     理論上仍能拖延考題（repo 內的 handler 是受審的 echo 一行，這條寫著防未來）。
  */
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -92,6 +99,7 @@ import {
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
   MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
+import { makePinnedHome, removeHome } from './helpers/pinned-home.js';
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
@@ -102,15 +110,25 @@ function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
 }
 
+/**
+ * 探針的 HOME（2026-09-19 起）：釘指紋那一行讀 $HOME/.local/share/ai-collab-kit/guard/<指紋>。第一次用到才造；
+ * 造不出來（寫法漂了＝指紋對不上）＝丟 AssertionError、叫到它的那一題紅（下一題再試一次）。本檔跑完刪掉。
+ * @type {{ home: string } | null}
+ */
+let pinned = null;
+const pinnedHome = () => (pinned ??= makePinnedHome(ROOT)).home;
+after(() => { if (pinned) removeHome(pinned.home); });
+
 const probeCache = new Map();
 
 /**
  * 三態行為探針（第 8 步起）：這個 handler 收到這份輸入時回什麼？
  *   'deny'＝退 0＋stdout 是合規 deny；'allow'＝退 0＋stdout 空；'other'＝退 0 但輸出不是合規 deny（平台會當沒說話）；
- *   退非零＝**起不來**（套件那組找不到 node／檔時退 2 帶 stderr）——直接 assert.fail，不算成任一面：
+ *   退非零＝**起不來**（釘指紋那一行：複本不在或指紋對不上、找不到 node、載入就崩，都退 2 帶 stderr）——直接 assert.fail，不算成任一面：
  *   舊版把非零一律 catch 成 false，放行面「零組擋」會把起不來當放行。
  * 逐名探測（Codex #392 r2）：不可拿一個名字的結果代表整個 entry——「看輸入決定」的 handler 可以對 create 說 deny、對 delete 說 allow。
- * 一律帶 cwd＝ROOT：套件那組先清 GIT_ 再問版本控制根目錄，在樹外起會起不來。
+ * HOME 一律指到本檔的暫存家（pinnedHome）；cwd＝ROOT 照舊——釘指紋那一行先 cd 進複本、不看當下目錄
+ *（從子目錄、從樹外起照擋＝test/money-kit-hook.test.js ③）。
  * @param {{ type?: string, command?: string }} hook
  * @param {string} payload 標準輸入原樣（壞輸入那幾筆不是合法 JSON）
  */
@@ -119,7 +137,7 @@ function probe(hook, payload) {
   const key = JSON.stringify([hook.command, payload]);
   if (probeCache.has(key)) return probeCache.get(key);
   const r = spawnSync('bash', ['-c', hook.command], {
-    cwd: ROOT, input: payload, encoding: 'utf8', timeout: 8000,
+    cwd: ROOT, env: { ...process.env, HOME: pinnedHome() }, input: payload, encoding: 'utf8', timeout: 8000,
     killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
   });
   if (r.status !== 0) {
