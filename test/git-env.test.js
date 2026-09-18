@@ -7,8 +7,10 @@
 //   ・`test/ts-check-coverage.test.js`    ← `trackedJs()`（型別檢查射程的對照組；#600 起）
 //   ・`test/hosted-auth.test.js`          ← `trackedFiles()`（secret 掃描的清單）
 //   ・`test/doc-naming.test.js`           ← `trackedFiles()`／`oldNameContexts()`
-//   ・`test/cross-pr-merge.test.js`       ← `scripts/check-cross-pr-merge.js` 的 `runIn()`
-//                                          ＋**會叫 `gh` 的閘**（不寫死幾支）（`gh` 會自己再去 spawn git）
+//   ・`test/checks-prepare-worktree.test.js` ← settings.json 的 checks.prepareWorktree 那句（exec npm，npm 可能再 spawn git）
+//   ・`test/kit-executor-git-env.test.js`    ← 套件共用執行器 `tools/platform.js` 的 `runCommand()`（所有閘問 gh 都走它；題②＝任何 GIT_* 都不得漏）
+//   （會叫 `gh` 的閘那一族 2026-09-18 第 7 步隨舊閘退役；切換日起由套件執行器統一清環境、套件考題守：
+//    `tests/platform.test.js`、`tests/run-checks.test.js`、`tests/merge.test.js`、`tests/check-cross-merge.test.js`）
 //   ・`test/acceptance-table.test.js`     ← 考題自己的 `trackedFiles()`（分級與待裁清單兩支工具 2026-09-17 起換成套件的，它們叫平台走 tools/platform.js，考題在套件那邊）
 // ⚠️ 為什麼要分開：純函式對了，不代表有人在用它。本專案認過這個病型
 // （護欄什麼都沒做卻回報通過），所以兩層都要有題。

@@ -153,7 +153,7 @@ Settings → Branches → 編輯 `main` 的規則：
 ## 之後的第二步：分身分（尚未做）
 
 給 Codex（或審查方）一個**獨立的非 admin GitHub 帳號**之後，才能開 `Require approvals`——
-那條「作者不能核准自己的 PR」是 GitHub 天生強制的，比 `scripts/check-pr-collab-fields.js` 強：
+那條「作者不能核准自己的 PR」是 GitHub 天生強制的，比 `tools/gates/check-collab-fields.js` 強：
 腳本檢查的是「PR 說明寫了誰」，平台檢查的是「實際上是誰按的」。
 
 代價：多一個帳號、多一組金鑰、兩個 CLI 要各認不同身分。
@@ -164,9 +164,11 @@ Settings → Branches → 編輯 `main` 的規則：
 - `.github/workflows/ci.yml` — 兩個程式碼 job（含為什麼 dev-machine 不當門）
 - `.github/workflows/collab-fields.yml` — 協作欄位閘的 job（**刻意分開一個檔**：
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
-- `tools/gates/check-collab-fields.js` — 協作欄位閘（RULES E1；CI 與 `tools/merge.js` **跑同一支**；舊的 `scripts/check-pr-collab-fields.js` 第 7 步退役、已不在合併路徑上）
+- `tools/gates/check-collab-fields.js` — 協作欄位閘（RULES E1；CI 與 `tools/merge.js` **跑同一支**；舊的 `scripts/check-pr-collab-fields.js` 已於 2026-09-18 搬家第 7 步刪除）
 - `tools/gates/check-stacked.js` — 堆疊閘（RULES H2；由 `tools/merge.js` 執行、未進 CI）
 - `tools/gates/check-checks-really-ran.js` — 真考卷閘（RULES H3；由 `tools/merge.js` 執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
+- `tools/gates/check-review-verdicts.js` — 複審結論聯集閘（RULES F4、F5；由 `tools/merge.js` 執行、未進 CI）
+- `tools/gates/check-cross-merge.js` — 跨變更試合併閘（RULES H4；由 `tools/merge.js` 執行、未進 CI；備臨時樹那句＝`settings.json` 的 checks.prepareWorktree）
 - `tools/merge.js`＋`settings.json` 的 gates — 合併程序（RULES H1〜H4）
 - `RULES.md` A 節 — 唯一不變量與角色分工
 

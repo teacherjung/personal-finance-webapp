@@ -153,7 +153,7 @@
       列舉繞法補不完就要關門。射程與**刻意不清 `HOME`／`PATH` 的理由**寫在 `lib/git-env.js`。
     - **考題裡不要 `git init`**（那正是事故的兇器）。真的需要沙盒 repo：環境一律**從零組**
       （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
-      ——落點見 `test/worktree-integrity.test.js` 與 `test/cross-pr-merge.test.js` 的沙盒節。
+      ——落點見 `test/worktree-integrity.test.js` 的沙盒節（舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役；套件考題用的是 E4 的扣法、不是本條的範例）。
     - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push` 與 `mutate.sh` 不經過 Node，
       `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
       它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。
@@ -389,7 +389,7 @@
 
 ## 本專案協作附則（只寫本專案的值；協作規矩正本＝根目錄 `RULES.md`，這裡一律用條號指回、不複述）
 
-> 2026-09-17（搬家第 5 步）起，本專案的協作規矩正本＝`RULES.md`（套件本文，由 `rules.json` 產生、不手改），機器登記與專案值＝`settings.json`（人讀的產物＝`PROJECT-SETTINGS.md`），範本＝`templates/`（套件產物、本專案不改也不加檔），每條規矩有哪台機器守＝`MACHINES.md`。本節只放**只有本專案才有的值**：路徑、指令列、人名與現況，以及還沒換到套件工具之前要留給舊工具認的形狀。技術規則（錢的絕對邊界、鐵則、投資語意、同步點）仍在本檔上方各節。
+> 2026-09-17（搬家第 5 步）起，本專案的協作規矩正本＝`RULES.md`（套件本文，由 `rules.json` 產生、不手改），機器登記與專案值＝`settings.json`（人讀的產物＝`PROJECT-SETTINGS.md`），範本＝`templates/`（套件產物、本專案不改也不加檔），每條規矩有哪台機器守＝`MACHINES.md`。本節只放**只有本專案才有的值**：路徑、指令列、人名與現況。技術規則（錢的絕對邊界、鐵則、投資語意、同步點）仍在本檔上方各節。
 
 ### 工作目錄與樹（RULES D2、F1）
 

@@ -165,9 +165,6 @@ const HISTORICAL_CONTEXTS = {
     '+ \'⚠️ 起因：合併步驟原本寫在 `⟨舊名⟩.md`，而 AGENTS.md 有 13 處叫**任何人*',
     '\'提到舊檔名 ⟨舊名⟩.md 的**位置**與宣告的不一致。\\n\'',
   ],
-  'test/fixtures/review-verdict-corpus.json': [
-    'eck-review-verdicts.js:29` 與 `⟨舊名⟩.md:44` 仍寫「1＝有未回應阻擋」，但現在零正式通過、',
-  ],
 };
 
 test('⭐ 改名之後不可以有死連結（比對命中處的上下文，不靠副檔名白名單）', () => {

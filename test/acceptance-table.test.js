@@ -60,7 +60,10 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.equal(tierOf('package.json').tier, tierId('B'));
   // E 的腳本必須是明確名單：scripts/ 裡沒點名的新腳本＝沒列到（當 unknownTier）——寬鬆的 check-* 會把未來被啟動流程掛上的新腳本靜靜當成不需驗收（#573 r3）
   assert.equal(tierOf('scripts/check-node-version.js').tier, tierId('C'), 'start.command 每次啟動都跑它，壞了 App 起不來');
-  assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'));
+  // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘）：分級工具把變更裡
+  // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級（例如搬家完工驗收後），
+  // 才可以清掉；清掉時連這一行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
+  assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 
@@ -132,6 +135,9 @@ test('⭐ D 級「重新整理就好」的前提：public/ 與 public-site/ 沒�
   assert.deepEqual(hits, [], `前端出現 service worker 的跡象：${hits.join('、')}——「重新整理就好」不再成立，D 級的動作要改`);
 });
 
+/** 2026-09-18 搬家第 7 步刪掉的五支舊合併閘：合併路徑（工作流、鉤子、執行器、閘本體、package script、登記的閘）不得再叫它們。 */
+const RETIRED_GATES = /scripts\/check-(?:ci-really-ran|cross-pr-merge|pr-collab-fields|pr-merge-gate|review-verdicts)\b/;
+
 /**
  * `package.json` 裡哪些 script **跑得到**這兩支（含經 `npm run` 轉手的別名鏈，一路追）——只掃字面的話，
  * 加一個別名再在 CI 寫 `npm run <別名>` 就把工具變成閘（#579 r3 Medium③）。
@@ -155,13 +161,26 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   const dir = join(ROOT, '.github/workflows');
   const workflows = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join('.github/workflows', f));
   assert.ok(workflows.length >= 2, '掃不到 workflow＝這題變空包彈（目錄名或副檔名改了？）');
-  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js']) {
-    assert.doesNotMatch(read(f), /pending-rulings|acceptance-tier/, `${f} 叫了待裁清單或分級工具＝它變成一道會因為沒有網路或沒有權杖而擋人的閘`);
+  // 閘本體（tools/gates/*.js）與執行器也在射程內（第 7 步補：手冊沒寫檔名 ≠ 閘腳本沒接）；同一組檔案也不得再叫第 7 步刪掉的五支舊閘
+  // 正向對照：正規式真的認得五個舊名字、而且不會誤中套件閘與體檢腳本（寫壞就整組 doesNotMatch 永遠綠）
+  for (const old of ['ci-really-ran', 'cross-pr-merge', 'pr-collab-fields', 'pr-merge-gate', 'review-verdicts']) {
+    assert.match(`node scripts/check-${old}.js 1`, RETIRED_GATES, `RETIRED_GATES 認不得 scripts/check-${old}.js——正規式寫壞了`);
+  }
+  for (const keep of ['node tools/gates/check-review-verdicts.js 1', 'node scripts/check-worktree-integrity.js']) assert.doesNotMatch(keep, RETIRED_GATES, `RETIRED_GATES 誤中了還活著的 ${keep}`);
+  const gateFiles = readdirSync(join(ROOT, 'tools/gates')).filter((f) => f.endsWith('.js')).map((f) => join('tools/gates', f));
+  assert.ok(gateFiles.length >= 5, `tools/gates 只列到 ${gateFiles.length} 支——掃不到閘本體，這題變空包彈`);
+  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles]) {
+    const txt = read(f);
+    assert.doesNotMatch(txt, /pending-rulings|acceptance-tier/, `${f} 叫了待裁清單或分級工具＝它變成一道會因為沒有網路或沒有權杖而擋人的閘`);
+    assert.doesNotMatch(txt, RETIRED_GATES, `${f} 還在叫 2026-09-18 第 7 步刪掉的舊閘腳本（切換日起合併路徑只有 tools/gates）`);
   }
   const pkg = JSON.parse(read('package.json'));
   assert.deepEqual(reachingScripts(/** @type {Record<string, string>} */ (pkg.scripts ?? {})), [], 'package.json 有 script 跑得到這兩支——CI 或 pre-push 只要寫 `npm run <別名>` 就把它變成閘，而字面掃描看不到');
+  assert.doesNotMatch(JSON.stringify(pkg.scripts ?? {}), RETIRED_GATES, 'package.json 的 script 還在叫第 7 步刪掉的舊閘');
   for (const g of settings.gates) {
-    assert.doesNotMatch([g.command, ...(g.args ?? [])].join(' '), /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
+    const line = [g.command, ...(g.args ?? [])].join(' ');
+    assert.doesNotMatch(line, /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
+    assert.doesNotMatch(line, RETIRED_GATES, `settings.json 登記的閘「${g.name}」指到第 7 步刪掉的舊閘＝合併指令會起不了它`);
   }
   // 三關真正執行的是 settings.json 的 checks.commands（鉤子與 CI 都只呼叫 tools/run-checks.js，字面上永遠掃不到）——
   // 把工具加進這裡，推送前與雲端就會跑它、沒網路或沒權杖退 2＝變成閘（Grok #613 掃後①）
@@ -169,8 +188,11 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.ok(Array.isArray(commands) && commands.length >= 3, 'settings.json 的 checks.commands 不是至少三關的清單——這題變空包彈（三關搬家了？）');
   for (const cmd of commands) {
     assert.doesNotMatch([cmd].flat().join(' '), /pending-rulings|acceptance-tier/, `settings.json 的 checks.commands 有一關叫了它（${[cmd].flat().join(' ')}）＝推送前鉤子與 CI 都會跑它、退出碼 2 變成擋人`);
+    assert.doesNotMatch([cmd].flat().join(' '), RETIRED_GATES, `settings.json 的 checks.commands 有一關叫了第 7 步刪掉的舊閘（${[cmd].flat().join(' ')}）`);
   }
-  assert.doesNotMatch([settings.checks?.prepareWorktree ?? []].flat().join(' '), /pending-rulings|acceptance-tier/, 'settings.json 的 checks.prepareWorktree 叫了它＝跨變更試合併閘備樹時會跑它');
+  const prep = [settings.checks?.prepareWorktree ?? []].flat().join(' ');
+  assert.doesNotMatch(prep, /pending-rulings|acceptance-tier/, 'settings.json 的 checks.prepareWorktree 叫了它＝跨變更試合併閘備樹時會跑它');
+  assert.doesNotMatch(prep, RETIRED_GATES, 'settings.json 的 checks.prepareWorktree 叫了第 7 步刪掉的舊閘');
 });
 
 /**
