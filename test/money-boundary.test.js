@@ -3,7 +3,7 @@
  *
  * 守什麼：AGENTS.md「🛑 錢的絕對邊界」節（William 原文）與 `.claude/settings.json`
  * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook）不被靜靜退掉；hook 層不因改寫而漏擋或誤傷。
- * hook 那一組的沿革：早期是 hook 指令裡的正則、後來是 python（詞表寫死在指令本體）；2026-09-16〜09-18 起是呼叫套件
+ * hook 那一組的沿革：早期是 hook 指令裡的正則、後來是 python（詞表寫死在指令本體）；2026-09-16〜09-19 是呼叫套件
  * tools/forbidden-tools.js、每次重讀那棵樹的 settings.json（活讀那一行）；**2026-09-19（Claude 側釘指紋第 2 支）起＝釘指紋那一行**：
  * 指令裡只寫指紋，判斷讀倉庫外的固定複本 `$HOME/.local/share/ai-collab-kit/guard/<指紋>`（裡面是 tools/forbidden-tools.js 等三支
  * ＋只留 forbidden 那一塊的 settings.json；每台機器由人跑 `node tools/guard-copy.js --claude` 補）。
