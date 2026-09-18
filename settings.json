@@ -352,6 +352,10 @@
   ],
   "families": [
    {
+    "pattern": "^\\.codex/hooks\\.json$",
+    "tier": "F（工具安全設定）"
+   },
+   {
     "pattern": "^\\.claude/settings\\.json$",
     "tier": "F（工具安全設定）"
    },

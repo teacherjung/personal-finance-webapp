@@ -114,6 +114,7 @@
 
 | 路徑家族（正規式） | 級別 |
 |---|---|
+| \^\\\.codex\/hooks\\\.json\$ | F（工具安全設定） |
 | \^\\\.claude\/settings\\\.json\$ | F（工具安全設定） |
 | \^settings\\\.json\$ | F（工具安全設定） |
 | \^tools\/\(forbidden\-tools\|settings\-data\|guard\-copy\)\\\.js\$ | F（工具安全設定） |

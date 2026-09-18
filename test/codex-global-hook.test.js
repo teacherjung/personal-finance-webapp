@@ -16,8 +16,12 @@
  *     白名單集合＝探針的 MONEY_SERVER_ALLOW（JSON 逐字集合，多列少列都紅）；白名單誤放建單工具時**家族網**仍擋（變因只留家族網：
  *     逐字拒絕清單清空、servers 留著），對照組＝名單內、家族網接不到的仍放行。
  *
- * 環境：印出來的指令用 `env -i PATH=… node` 起攔截器，環境本來就清空；那一截由套件 tests/guard-copy.test.js 的 envonly 題守，
- * 這裡不另出「髒 GIT_*」題（考題自己起 shell 時已走 gitEnv()，髒環境到不了指令＝那種題永遠綠，不留）。
+ * 環境：印出來的指令用 `env -i PATH=… node` 起攔截器，環境本來就清空；那一截由套件 tests/guard-copy.test.js 的「⑥環境變數夾帶的程式
+ * 進不來（NODE_OPTIONS）」題守（envonly 那一段測的是找不到 node 退 2，不是清環境），這裡不另出「髒 GIT_*」題
+ * （考題自己起 shell 時已走 gitEnv()，髒環境到不了指令＝那種題永遠綠，不留）。
+ *
+ * ⚠️ 安全宣告（AGENTS 鐵則 11）：本檔會 `git init` 一個暫存倉庫（在 os.tmpdir() 底下、跑完刪掉），沙盒環境**從零組**——只給 PATH／HOME
+ *    加提交身分的 GIT_AUTHOR_*／GIT_COMMITTER_*，不是 process.env 扣掉幾個；不碰任何真倉庫、不讀寫家目錄設定。
  *
  * ⚠️ 誠實劃界——這支考題證明不了的事：
  *   - **Codex 會不會真的執行家目錄那一組**：要 William 在 Codex 介面（/hooks）按過「信任」才會跑，信任狀態在 ~/.codex/config.toml、
@@ -47,11 +51,12 @@ const CANARY = 'mcp__guard_canary__ping';
 const HARMLESS = 'mcp__other__get_widget';
 const MISMATCH = /指紋對不上/u;
 
-const base = gitEnv();
-delete base.NODE_TEST_CONTEXT;
-const git = (/** @type {string} */ cwd, /** @type {string[]} */ ...args) => spawnSync('git', args, {
-  cwd, encoding: 'utf8', env: { ...base, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' },
+/** 沙盒 git 的環境從零組（鐵則 11）：只給 PATH／HOME 與提交身分；不是 process.env 扣掉幾個。 */
+const SANDBOX_ENV = Object.freeze({
+  PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '',
+  GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x',
 });
+const git = (/** @type {string} */ cwd, /** @type {string[]} */ ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...SANDBOX_ENV } });
 
 /**
  * 從這棵樹造暫存來源倉庫：攔截器會讀的四檔＋範本＋settings.json 只留 forbidden（跟 guard-copy 抽複本時一樣），提交一顆、當成已合併。

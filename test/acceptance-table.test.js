@@ -36,7 +36,7 @@ test('分級表讀得起來（套件對「有一筆壞就整張不算」：這�
 test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把任何一條換到別級（例：render.yaml C→E），這題要紅', () => {
   /** 與 settings.acceptance.families **同序**，每條一個代表路徑；新增家族就得在這裡補一行（長度對不上就紅）。 @type {[string, string][]} */
   const FAMILY_SAMPLES = [
-    ['F', '.claude/settings.json'], ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'],
+    ['F', '.codex/hooks.json'], ['F', '.claude/settings.json'], ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'],
     ['F', 'tools/package.json'], ['F', 'templates/hook-codex-global.json'], ['F', '.mcp.json'], ['F', 'tools/canary-server.js'],
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
@@ -64,6 +64,8 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級（例如搬家完工驗收後），
   // 才可以清掉；清掉時連這一行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
   assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
+  // 同一個道理，F 也一樣：第 8 步刪了 Codex 專案層副本，家族留著、刪它的那一支才會印 F 而不是 C（Codex #615 r1 R1）
+  assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 
