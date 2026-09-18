@@ -27,13 +27,17 @@
  *     執行期靠 Claude Code 權限系統（deny）與 hook 去攔；本考題防的是那些設定與條文
  *     **被靜靜刪掉或改弱**（規則消失比規則被違反更難察覺）。
  *   - `.claude/settings.json` 只約束 Claude Code；**Codex CLI 不讀這個檔**。
- *     Codex 側自 2026-09-01（PR #536）起另有 `.codex/hooks.json`＝同款封鎖的專案層副本，
- *     但那是**條件式**的：要 William 在 Codex 介面按過「信任」才會執行，
- *     信任狀態存在 `~/.codex/config.toml`、**不在 repo**＝本考題看不到、也不假裝看得到
- *     （未信任時 Codex 會一聲不吭地跳過）。所以約束 Codex 仍以 AGENTS.md 條文
- *     （每次開工必讀）＋審查制度為主，那道 hook 是信任之後才加上的一層。
- *   - William 機器 user 層 `~/.claude/settings.json` 另有同款封鎖——不在 repo，
- *     本考題看不到、也不假裝看得到。
+ *     Codex 側 2026-09-01（PR #536）〜09-18 曾有 `.codex/hooks.json`＝同款封鎖的專案層副本；2026-09-17 起走家目錄
+ *     全域層（讀 tools/guard-copy.js 抽的固定複本，考題＝test/codex-global-hook.test.js），專案層副本 2026-09-18
+ *     搬家第 8 步刪除。那一層是**條件式**的：要 William 在 Codex 介面按過「信任」才會執行，信任狀態存在
+ *     `~/.codex/config.toml`、**不在 repo**＝本考題看不到、也不假裝看得到（未信任時 Codex 會一聲不吭地跳過）。
+ *     所以約束 Codex 仍以 AGENTS.md 條文（每次開工必讀）＋審查制度為主，那道 hook 是信任之後才加上的一層。
+ *   - William 機器 user 層 `~/.claude/settings.json` 另有 v5 同款封鎖——不在 repo，
+ *     本考題看不到、也不假裝看得到（第 8 步拆舊層時未重驗）。
+ *   - 2026-09-16〜09-18 兩組並存（python v6＋套件那組），2026-09-18 第 8 步拆掉 python 那組：下面 r2〜v4 的沿革講的是
+ *     python 那組的判準演進，判斷現在只有一份＝套件的 tools/forbidden-tools.js（讀根目錄 settings.json 的 forbidden），
+ *     同款判準都在裡面。探針自第 8 步起是**三態**（deny／allow／起不來）並帶工作目錄：套件那組先問 git 根目錄，
+ *     沒帶 cwd 會起不來；舊的兩態探針把非零退出一律算成 false，放行面「零組擋」會把起不來當放行（施工地圖 3c）。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
  *     會漏接——第二層 hook 正則只認工具名、不認 UUID，正是補這個洞；
  *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
@@ -69,14 +73,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 承重字表與探針清單＝test/helpers/money-family-probes.js（唯一住所；Codex #536 r2 H 抽出，
-// 讓 codex-money-hook.test.js 把完整矩陣直接跑在 Codex 副本上——不准在別處複抄）。
+// 讓 Codex 側的考題（現在＝codex-global-hook.test.js）把完整矩陣直接跑在同一份清單上——不准在別處複抄）。
 import {
   FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
   ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
@@ -100,33 +104,38 @@ function loadSettings() {
 const probeCache = new Map();
 
 /**
- * 行為探測：這個 handler 收到「這個工具名」時，是不是回合規的 deny？
- * 逐名探測（Codex #392 r2）：不可拿一個名字的結果代表整個 entry——
- * 「看輸入決定」的 handler 可以對 create 說 deny、對 delete 說 allow。
+ * 三態行為探針（第 8 步起）：這個 handler 收到這份輸入時回什麼？
+ *   'deny'＝退 0＋stdout 是合規 deny；'allow'＝退 0＋stdout 空；'other'＝退 0 但輸出不是合規 deny（平台會當沒說話）；
+ *   退非零＝**起不來**（套件那組找不到 node／檔時退 2 帶 stderr）——直接 assert.fail，不算成任一面：
+ *   舊版把非零一律 catch 成 false，放行面「零組擋」會把起不來當放行。
+ * 逐名探測（Codex #392 r2）：不可拿一個名字的結果代表整個 entry——「看輸入決定」的 handler 可以對 create 說 deny、對 delete 說 allow。
+ * 一律帶 cwd＝ROOT：套件那組先清 GIT_ 再問版本控制根目錄，在樹外起會起不來。
  * @param {{ type?: string, command?: string }} hook
- * @param {string} toolName
+ * @param {string} payload 標準輸入原樣（壞輸入那幾筆不是合法 JSON）
  */
-function denyProbe(hook, toolName) {
-  if (!hook || hook.type !== 'command' || !hook.command) return false;
-  const key = JSON.stringify([hook.command, toolName]);
-  const cached = probeCache.get(key);
-  if (cached !== undefined) return cached;
-  let ok = false;
-  try {
-    const out = execFileSync('bash', ['-c', hook.command], {
-      input: JSON.stringify({ tool_name: toolName, tool_input: {} }),
-      encoding: 'utf8',
-      timeout: 5000,
-      killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
-    });
-    const d = JSON.parse(out).hookSpecificOutput;
-    ok = d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
-  } catch {
-    // 跑不動、輸出不是 JSON——ok 維持 false（fail-closed：不計數）
+function probe(hook, payload) {
+  if (!hook || hook.type !== 'command' || !hook.command) return 'skip';
+  const key = JSON.stringify([hook.command, payload]);
+  if (probeCache.has(key)) return probeCache.get(key);
+  const r = spawnSync('bash', ['-c', hook.command], {
+    cwd: ROOT, input: payload, encoding: 'utf8', timeout: 8000,
+    killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
+  });
+  if (r.status !== 0) {
+    assert.fail(`鉤子起不來（退出碼 ${r.status}）：${String(r.stderr).slice(0, 200)}——這不是放行也不是擋，考題不可以把它算成任一面`);
   }
-  probeCache.set(key, ok);
-  return ok;
+  let state = 'other';
+  if (String(r.stdout).trim() === '') state = 'allow';
+  else {
+    try {
+      const d = JSON.parse(r.stdout).hookSpecificOutput;
+      if (d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse') state = 'deny';
+    } catch { /* 不是 JSON＝other */ }
+  }
+  probeCache.set(key, state);
+  return state;
 }
+const denyProbe = (hook, toolName) => probe(hook, JSON.stringify({ tool_name: toolName, tool_input: {} })) === 'deny';
 
 /**
  * 對「這個工具名」而言的封鎖組：matcher 接得住這個名字，且至少一個 handler
@@ -214,18 +223,10 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
 
 
 function handlerDenies(settings, payload) {
-  return (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []).some((h) => {
-    if (h.type !== 'command' || !h.command) return false;
-    try {
-      const out = execFileSync('bash', ['-c', h.command],
-        { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
-      const d = JSON.parse(out).hookSpecificOutput;
-      return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
-    } catch { return false; }
-  });
+  return (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []).some((h) => probe(h, payload) === 'deny');
 }
 
-test('v6 輸入衛生：Claude 側成對驗證（matcher 接得住 ∧ handler 擋得下）', () => {
+test('輸入衛生：Claude 側成對驗證（matcher 接得住 ∧ handler 擋得下）', () => {
   const settings = loadSettings();
   assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY, '探針被縮短了');
   for (const [payload, why] of IN_MATCHER_DENY) {
@@ -233,20 +234,12 @@ test('v6 輸入衛生：Claude 側成對驗證（matcher 接得住 ∧ handler �
     assert.equal(typeof name, 'string', `這批每一支都必須有字串工具名：${why}`);
     // r1 H1：只驗 handler 會假綠——matcher 不命中時整個 hook 不執行。
     const ok = (settings?.hooks?.PreToolUse ?? []).some((e) =>
-      claudeMatcherHits(e.matcher, name) && (e.hooks ?? []).some((h) => {
-        if (h.type !== 'command' || !h.command) return false;
-        try {
-          const out = execFileSync('bash', ['-c', h.command],
-            { input: payload, encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
-          const d = JSON.parse(out).hookSpecificOutput;
-          return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
-        } catch { return false; }
-      }));
+      claudeMatcherHits(e.matcher, name) && (e.hooks ?? []).some((h) => probe(h, payload) === 'deny'));
     assert.ok(ok, `沒有「matcher 接得住＋handler 回合規 deny」的組：${why}`);
   }
 });
 
-test('v6 壞輸入：Claude 側同樣只驗得到 handler 的 fail-closed（誠實標示層級）', () => {
+test('壞輸入：Claude 側同樣只驗得到 handler 的 fail-closed（誠實標示層級）', () => {
   const settings = loadSettings();
   assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY, '探針被縮短了');
   for (const [payload, why] of HANDLER_ONLY_DENY) {
@@ -255,7 +248,7 @@ test('v6 壞輸入：Claude 側同樣只驗得到 handler 的 fail-closed（誠�
 });
 
 
-test('v6 姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一段）', () => {
+test('姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一段）', () => {
   const settings = loadSettings();
   assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY, '探針被縮短了');
   for (const [name, why] of MONEY_SERVER_MULTISEG_DENY) {
@@ -268,7 +261,7 @@ test('v6 姿態閘：Claude 側對多段前綴同樣要擋（UUID 不在第一�
   }
 });
 
-test('v6 射程劃界：Claude 側 matcher 同樣篩不到那些形狀（誠實記錄，不假裝擋了）', () => {
+test('射程劃界：Claude 側 matcher 同樣篩不到那些形狀（誠實記錄，不假裝擋了）', () => {
   const settings = loadSettings();
   assert.equal(OUT_OF_MATCHER.length, EXPECTED_OUT_OF_MATCHER, '探針被縮短了');
   const family = (settings?.hooks?.PreToolUse ?? []).filter((e) => e.matcher === '^mcp__');
@@ -279,7 +272,7 @@ test('v6 射程劃界：Claude 側 matcher 同樣篩不到那些形狀（誠實�
   }
 });
 
-test('v6 姿態閘：Claude 側對已宣告的動錢連接器同樣白名單制', () => {
+test('姿態閘：Claude 側對已宣告的動錢連接器同樣白名單制', () => {
   const settings = loadSettings();
   assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY, '名單外探針被縮短了');
   assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, '名單內探針被縮短了');
@@ -321,14 +314,7 @@ test('hook 指令：頂層欄位結構化解析——巢狀同名鍵不可覆蓋
   const settings = loadSettings();
   const hooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? []);
   assert.ok(hooks.length > 0, '找不到任何 PreToolUse handler。');
-  const rawProbe = (hook, raw) => {
-    try {
-      const out = execFileSync('bash', ['-c', hook.command],
-        { input: raw, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
-      const d = JSON.parse(out).hookSpecificOutput;
-      return d?.permissionDecision === 'deny' && d?.hookEventName === 'PreToolUse';
-    } catch { return false; }
-  };
+  const rawProbe = (hook, raw) => probe(hook, raw) === 'deny';
   const cases = [
     // r2 H① 原樣重放：tool_input 夾同名鍵，貪婪文字抽取會抓到 noop 而放行真下單名
     [JSON.stringify({ tool_name: FORBIDDEN_FAMILY[0], tool_input: { tool_name: 'noop' } }),

@@ -36,7 +36,7 @@ test('分級表讀得起來（套件對「有一筆壞就整張不算」：這�
 test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把任何一條換到別級（例：render.yaml C→E），這題要紅', () => {
   /** 與 settings.acceptance.families **同序**，每條一個代表路徑；新增家族就得在這裡補一行（長度對不上就紅）。 @type {[string, string][]} */
   const FAMILY_SAMPLES = [
-    ['F', '.codex/hooks.json'], ['F', '.claude/settings.json'], ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'],
+    ['F', '.claude/settings.json'], ['F', 'settings.json'], ['F', 'tools/forbidden-tools.js'],
     ['F', 'tools/package.json'], ['F', 'templates/hook-codex-global.json'], ['F', '.mcp.json'], ['F', 'tools/canary-server.js'],
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
@@ -76,7 +76,7 @@ test('⭐ 級別順序照 William 裁示：F（工具安全設定）排第一（
   const C = settings.acceptance.tiers.find((t) => t.id === tierId('C')).action;
   assert.ok(B.includes(C), 'B（相依套件）的動作沒有含 C 的全文——套件只印命中那幾級的動作，「裝完做 C」不可以是沒展開的指示（#573 r4）');
   // F 單獨命中＝級別 F、動作只有 F；F＋E＝級別 F（第一行）、E 的動作也印
-  const f = classify(['.codex/hooks.json'], table);
+  const f = classify(['settings.json'], table);
   assert.equal(f.level, tierId('F')); assert.deepEqual(f.actions.map((a) => a.tier), [tierId('F')]);
   const fe = classify(['.claude/settings.json', 'AGENTS.md'], table);
   assert.equal(fe.level, tierId('F')); assert.deepEqual(fe.actions.map((a) => a.tier), [tierId('F'), tierId('E')]);

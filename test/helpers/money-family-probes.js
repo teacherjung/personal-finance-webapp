@@ -1,10 +1,11 @@
 /**
  * 錢的家族攔截——承重字表與探針清單的**唯一住所**（2026-09-01 自 money-boundary.test.js 抽出）
  *
- * 為什麼抽出來（Codex #536 r2 H）：Codex 側副本 .codex/hooks.json 的考題需要把
+ * 為什麼抽出來（Codex #536 r2 H）：當時 Codex 側副本 .codex/hooks.json 的考題需要把
  * **完整家族矩陣直接跑在自己讀出的 command 上**——只靠「與 Claude 側逐位相同」的
  * 互鎖，會被「另一組保留完整 command 的 hook 代考」（兩側同步弱化＋Claude 側加一組
- * 原版，兩支考題都綠、實際上 submit_order 放行——r2 突變實證）。
+ * 原版，兩支考題都綠、實際上 submit_order 放行——r2 突變實證）。2026-09-18 第 8 步起判斷只有一份
+ * （套件的 tools/forbidden-tools.js），Codex 側考題＝test/codex-global-hook.test.js，仍餵這同一張矩陣。
  * ⚠️ 共用＝**共同失效點**：改這裡的字表，兩張考卷的題目跟著變。
  * 為此有一道**絆線**：`test/money-family-probes-integrity.test.js` 只讀本檔的位元組、
  * 比對 sha256，**完全不 import 本檔**（node --test 每檔一個行程）。
@@ -31,15 +32,14 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 ];
 
 // 家族攔截（William 2026-08-04 指示擴編；r2 改為 per-branch 生成——Codex #404 r1 M②）：
-// 下面四張清單是 hook 指令裡家族正則的**承重字表複本**，考題用它們機械生成探針：
-// 指令裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
+// 下面四張清單是家族網詞表的**承重字表複本**，考題用它們機械生成探針：
+// 清單裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
 // 少任何一個出入金詞→「initiate_{詞}」轉紅；唯讀豁免名單少任何一個→對應放行探針轉紅。
-// ⚠️ 這裡與 .claude/settings.json 的指令必須同步改；2026-09-01（#536）起 .codex/hooks.json
-// 的指令也在同一條線上。⚠️ **機器實際鎖住的只有「Claude／Codex 兩份 command 逐位相同」**
-// （身分互鎖考題）；本檔與那兩份指令之間是**單向行為耦合**——指令少一個詞幹會讓探針轉紅，
-// 但指令裡多出來的語法或更窄的形態不必然有題目扣著（Claude 自審 2026-09-01 實證：
+// ⚠️ 詞表正本（2026-09-18 第 8 步起只有一份）＝根目錄 settings.json 的 forbidden（verbs／nouns／readPrefixes／patterns），
+// 判斷＝套件的 tools/forbidden-tools.js；本檔與那份清單之間是**單向行為耦合**——清單少一個詞幹會讓探針轉紅，
+// 但判斷程式裡多出來的語法或更窄的形態不必然有題目扣著（Claude 自審 2026-09-01 實證：
 // 把那些語法逐項收窄之後兩張考卷仍全綠；已補下面四支探針把它們扣住）。
-// 生產用的詞表住在 hook 指令裡、而且有兩份；本檔是**探針的**唯一住所，不是詞表的正本。
+// 本檔是**探針的**唯一住所，不是詞表的正本。（09-01〜09-18 詞表曾住在 python 指令裡、而且有兩份，靠身分互鎖考題鎖同步。）
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
   'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
@@ -144,7 +144,7 @@ export const EXPECTED_ALLOWED_COUNT = 36;
  *     本檔把它們留著是為了**釘住這個事實**，不是為了假裝 hook 擋了它們。
  */
 export const IN_MATCHER_DENY = [
-  [JSON.stringify({ tool_name: 'mcp__x__noop\n' }), '結尾換行（r1 H1：python 的 $ 會吃掉它，已改用 \\Z）'],
+  [JSON.stringify({ tool_name: 'mcp__x__noop\n' }), '結尾換行（r1 H1：舊 python 那組的 $ 會吃掉它、當時改用 \\Z；套件那組用逐字合法字元集判）'],
   [JSON.stringify({ tool_name: 'mcp__x__place_order\n' }), '結尾換行＋錢詞'],
   [JSON.stringify({ tool_name: 'mcp__x__place_order ' }), '尾隨空白（v5 實測放行）'],
   [JSON.stringify({ tool_name: 'mcp__x__place_order\t' }), '尾隨 tab'],
@@ -180,11 +180,9 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 這關掉的是「靠名字猜」永遠關不掉的那一類：券商最常見的 `market_order`／`limit_order`
  * 這種單側命名（v5 的動詞×名詞文法接不到）、以及任何還沒見過的新工具名。
  * ⚠️ 名單是**一組精確的工具身分**（**這裡刻意不寫幾個**——寫死的數字自己會漂；
- * 考題用 python AST 取出指令裡 `ALLOW` 的字面值、要求「ALLOW」這個名字在整棵 AST 裡
- * 恰好出現兩次且右值是純字串 tuple，再與下面的清單比對集合相等。
- * ⚠️ **那個判準只看得到「原始碼裡直接寫出 ALLOW」的綁定**——執行期用算出來的名稱改寫
- * （`globals()["ALL"+"OW"]`、`setattr`、`exec`／`eval`）AST 看不到，**那一層靠審查制度守**，
- * `Codex #540 r8` 逼出的收窄），比對前**不做任何正規化**（Codex #540 r1 H2：
+ * 正本＝根目錄 settings.json 的 forbidden.allowlist（JSON 陣列），考題直接比對它與下面的清單集合相等
+ * ——比舊制用 python AST 抽指令裡的 `ALLOW` 更緊：JSON 沒有綁定形式可以繞（09-01〜09-18 那套 AST 判準與 15 種負向形式
+ * 隨 python 那組退役），比對前**不做任何正規化**（Codex #540 r1 H2：
  * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
  * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
