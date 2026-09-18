@@ -42,9 +42,12 @@ const { COPY_FILES, CLAUDE_BASE, fingerprintDir, treeFingerprint } = guardCopy;
  * 考卷語境的提示（兩支呼叫的考題共用這一句）：跑那一行時 HOME＝makePinnedHome() 造的家、錯誤輸出卻是「指紋對不上」那一句，
  * 在考卷裡的意思是 `.claude/settings.json` 那一行沒跟著重印（家是照這棵樹當下四個檔造的、那一行找的是舊指紋）——
  * 那一句本身叫人「原句轉給裁示者」是寫給真的對話的，考卷裡照這一句處理。失敗訊息裡原句照印、另外接這一句。
+ * 前提是 HOME 真的帶進了子行程：HOME 沒帶進去（CI 或外層 HOME 是空的）時一樣印「指紋對不上」，而等式題①是綠的——
+ * 所以這一句後半補了這個分辨法（內部核對量到：拿掉 HOME、外層是空的，9 題紅、9 則都接這一句，①是綠的）。
  */
 export const PIN_MISMATCH_HINT = '——考題的暫存家是照這棵樹當下四個檔造的；這裡對不上＝.claude/settings.json 那一行沒跟著重印，'
-  + '先看 money-kit-hook ①、照手續重跑 --claude-line；這不是要轉給裁示者的那種情況';
+  + '先看 money-kit-hook ①、照手續重跑 --claude-line；這不是要轉給裁示者的那種情況'
+  + '（money-kit-hook ① 是綠的卻紅在這裡＝不是沒重印：先看探針／runRaw 有沒有把 HOME 帶進子行程——就是「探針真的把 HOME 帶進子行程」那一題守的那件事）';
 /** 錯誤輸出含「指紋對不上」＝回 PIN_MISMATCH_HINT，否則空字串。只給 HOME＝makePinnedHome() 造的家的那幾發用。 */
 export const pinMismatchHint = (/** @type {unknown} */ stderr) => (/指紋對不上/u.test(String(stderr)) ? PIN_MISMATCH_HINT : '');
 
