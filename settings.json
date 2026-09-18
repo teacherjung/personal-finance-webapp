@@ -64,7 +64,7 @@
   {
    "item": "三關的實際命令、執行環境版本、稽核等級（或唯一設定檔位置）",
    "rules": "E2、E3",
-   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（鉤子前後另跑 scripts/check-worktree-integrity.js，到搬家完工驗收前兩支一起跑＝第 13 題 a）；試合併閘 scripts/check-cross-pr-merge.js 仍自己呼叫 package.json 的 scripts（第 7 步退役）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
+   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（鉤子前後另跑 scripts/check-worktree-integrity.js：William 2026-09-18 裁搬家第 13 題 a＝兩支一起跑到搬家完工驗收、再拿掉本專案那支，落點＝{{RULING13}}）；跨變更試合併閘＝tools/gates/check-cross-merge.js：在臨時樹先跑 checks.prepareWorktree（npm ci；臨時樹已有 node_modules 就退 3、不跑）再跑同一份 checks.commands（舊的 scripts/check-cross-pr-merge.js 已於 2026-09-18 搬家第 7 步刪除）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
   },
   {
    "item": "必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單）",
@@ -74,7 +74,7 @@
   {
    "item": "合併步驟登記正本（閘登記對帳題讀它）",
    "rules": "H1",
-   "where": "settings.json 的 gates（登記；每筆＝name／rules／command／args／state）；各閘腳本＝tools/gates/*.js；對帳考題＝tests/settings.test.js（磁碟上的閘 vs 登記的閘）；合併指令 tools/merge.js 只跑登記為已啟用的閘、任一非零就停。切換日（2026-09-17）之前＝舊程序文件的合併步驟清單＋scripts/check-*.js 自報的 MERGE_GATE；舊閘腳本第 7 步退役，退役前不在任何合併路徑上"
+   "where": "settings.json 的 gates（登記；每筆＝name／rules／command／args／state）；各閘腳本＝tools/gates/*.js；對帳考題＝tests/settings.test.js（磁碟上的閘 vs 登記的閘）；合併指令 tools/merge.js 只跑登記為已啟用的閘、任一非零就停。切換日（2026-09-17）之前＝舊程序文件的合併步驟清單＋scripts/check-*.js 自報的 MERGE_GATE；舊閘腳本已於 2026-09-18 搬家第 7 步（{{PR7}}）刪除；切換日到刪除之間不在任何合併路徑上"
   },
   {
    "item": "合併前必做的驗收依據",
