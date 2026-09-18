@@ -2,7 +2,8 @@
  * 「錢的絕對邊界」考題（2026-08-03，William 拍板當日落地；r1／r2 修訂見下）
  *
  * 守什麼：AGENTS.md「🛑 錢的絕對邊界」節（William 原文）與 `.claude/settings.json`
- * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook 正則）
+ * 的兩層機械封鎖（permissions.deny 精確點名＋PreToolUse deny hook——2026-09-18 第 8 步起那一組是呼叫套件
+ * tools/forbidden-tools.js 的 node 指令，詞表在根目錄 settings.json 的 forbidden；早期是 hook 指令裡的正則、後來是 python）
  * 不被靜靜退掉；hook 層不因改寫而漏擋或誤傷。
  *
  * 病因（為什麼要機械層）：IBKR 連接器的 create_order_instruction 能把整張委託
@@ -39,7 +40,7 @@
  *     同款判準都在裡面。探針自第 8 步起是**三態**（deny／allow／起不來）並帶工作目錄：套件那組先問 git 根目錄，
  *     沒帶 cwd 會起不來；舊的兩態探針把非零退出一律算成 false，放行面「零組擋」會把起不來當放行（施工地圖 3c）。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
- *     會漏接——第二層 hook 正則只認工具名、不認 UUID，正是補這個洞；
+ *     會漏接——第二層 hook（家族網那一層）只認工具名、不認 UUID，正是補這個洞；
  *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
  *   - 正則自 2026-08-04 起擴編為**家族攔截**（William 指示「所有轉帳相關詞都進攔截器」）：
  *     動詞×名詞鎖（place/submit/cancel…×order/trade/position…）＋出入金關鍵詞

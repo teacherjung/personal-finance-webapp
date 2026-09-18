@@ -14,7 +14,10 @@
  *   ③整張家族矩陣（`test/helpers/money-family-probes.js`，位元組由另一支考題釘）**兩路都跑**：真的餵印出來的指令（每一個名字
  *     一次 sh＋node；舊題「完整矩陣直接餵 command、誰都不能代考」那一格照留），再餵複本裡那份清單的行程內 `decide()` 對照；
  *     白名單集合＝探針的 MONEY_SERVER_ALLOW（JSON 逐字集合，多列少列都紅）；白名單誤放建單工具時**家族網**仍擋（變因只留家族網：
- *     逐字拒絕清單清空、servers 留著），對照組＝名單內、家族網接不到的仍放行。
+ *     逐字拒絕清單清空、servers 留著）——**壞清單真的寫進來源倉庫、抽第二份複本、用印出來的指令再跑一次**（不只行程內 decide()），
+ *     對照組＝名單內、家族網接不到的仍放行。
+ *   ⚠️ 劃界：暫存倉庫把 origin/<主幹> 指到同一顆 HEAD，所以 build() 的「只 git show、不讀工作樹」「必須已合併」在這裡恆真；
+ *     那兩條由套件 tests/guard-copy.test.js ①（提交後再改工作樹）與 ⑧（本機多一顆沒推的提交要拒）守，本題不假裝在守。
  *
  * 環境：印出來的指令用 `env -i PATH=… node` 起攔截器，環境本來就清空；那一截由套件 tests/guard-copy.test.js 的「⑥環境變數夾帶的程式
  * 進不來（NODE_OPTIONS）」題守（envonly 那一段測的是找不到 node 退 2，不是清環境），這裡不另出「髒 GIT_*」題
@@ -60,17 +63,19 @@ const git = (/** @type {string} */ cwd, /** @type {string[]} */ ...args) => spaw
 
 /**
  * 從這棵樹造暫存來源倉庫：攔截器會讀的四檔＋範本＋settings.json 只留 forbidden（跟 guard-copy 抽複本時一樣），提交一顆、當成已合併。
- * 讀的是**工作樹當下的檔**（含沒提交的改動），不是 origin/main。
+ * 讀的是**工作樹當下的檔**（含沒提交的改動），不是 origin/main。editForbidden 可以在寫進去之前改壞清單（雙保險那題用）。
  * @param {string} scratch
+ * @param {(f: any) => any} [editForbidden]
  */
-function sourceRepo(scratch) {
+function sourceRepo(scratch, editForbidden) {
   const src = mkdtempSync(join(scratch, 'src-'));
   mkdirSync(join(src, 'tools'));
   for (const rel of ['tools/forbidden-tools.js', 'tools/settings-data.js', 'tools/package.json', 'tools/git-env.js']) {
     cpSync(join(ROOT, rel), join(src, rel));
   }
   cpSync(join(ROOT, 'templates'), join(src, 'templates'), { recursive: true });
-  const { forbidden, mainBranch } = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
+  const { forbidden: real, mainBranch } = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
+  const forbidden = editForbidden ? editForbidden(real) : real;
   writeFileSync(join(src, 'settings.json'), JSON.stringify({ participants: [], mainBranch, forbidden, gates: [] }, null, 2));
   for (const args of [['init', '-q'], ['add', '-A'], ['commit', '-qm', 'src'], ['update-ref', `refs/remotes/origin/${mainBranch}`, 'HEAD']]) {
     const r = git(src, ...args);
@@ -114,11 +119,14 @@ const PASS_SMOKE = [
 const EXPECTED_DENY_SMOKE = 11;
 const EXPECTED_PASS_SMOKE = 8;
 
-/** @param {(ctx: { copyDir: string, command: string, forbidden: any, copyForbidden: any }) => void} fn */
-function withCopy(fn) {
+/**
+ * @param {(ctx: { copyDir: string, command: string, forbidden: any, copyForbidden: any }) => void} fn
+ * @param {(f: any) => any} [editForbidden] 寫進來源倉庫之前改清單（雙保險那題用；其他題用真清單）
+ */
+function withCopy(fn, editForbidden) {
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'pfw-codex-global-')));
   try {
-    const { src, forbidden } = sourceRepo(scratch);
+    const { src, forbidden } = sourceRepo(scratch, editForbidden);
     // home 指到暫存區：「複本不可放在家目錄 .codex／.claude 底下」那條檢查不依賴真家目錄
     const { copyDir, group, failure } = build({ from: 'HEAD', to: join(scratch, 'copy'), root: src, home: scratch, allowTemp: true });
     assert.equal(failure, null, `guard-copy 自我試跑沒過：${failure}`);
@@ -180,15 +188,21 @@ test('③整張家族矩陣直接餵印出來的指令（每個名字一次 sh�
   for (const name of mustAllow) assert.equal(decide(name, copyForbidden).deny, false, `複本裡的清單誤擋「${name}」：${decide(name, copyForbidden).why}`);
 }));
 
-test('③白名單是精確集合（JSON 逐字＝探針清單）；白名單誤放建單工具時**家族網**仍擋（變因只留家族網）', () => withCopy(({ copyForbidden }) => {
+test('③白名單是精確集合（JSON 逐字＝探針清單）', () => withCopy(({ copyForbidden }) => {
   // 白名單集合：JSON 陣列逐字比（比舊制的 python AST 抽值更緊——沒有綁定形式可以繞）
   assert.deepEqual([...copyForbidden.allowlist].sort(), [...MONEY_SERVER_ALLOW].sort(), 'forbidden.allowlist 與探針清單不是同一個集合——多列＝悄悄放行，少列＝誤攔');
-  // 雙保險：逐字拒絕清單清空（不然擋它的是那一層、量不到家族網）、servers 留著、白名單誤放建單工具→家族網要兜底、理由要指名家族網
-  const bad = { ...copyForbidden, deny: [], allowlist: [...copyForbidden.allowlist, 'create_order_instruction'] };
-  const d = decide(`${MONEY_SERVER}create_order_instruction`, bad);
-  assert.equal(d.deny, true, '白名單誤放建單工具時，家族網必須兜底');
-  assert.match(String(d.why), /家族網/u, `擋它的要是家族網（不是別層）：${d.why}`);
-  // 對照組：同一份壞清單裡，名單內、家族網接不到的仍放行（證明上面不是「什麼都擋」）
-  assert.equal(decide(`${MONEY_SERVER}get_watchlist`, bad).deny, false, '對照組：名單內且家族網接不到的名字要放行');
-  assert.ok(copyForbidden.allowlist.includes('get_watchlist'), '對照斷言：對照組用的名字真的在白名單上');
+  assert.ok(copyForbidden.allowlist.includes('get_watchlist'), '對照斷言：下面雙保險那題的對照組名字真的在白名單上');
 }));
+
+/** 雙保險用的壞清單：逐字拒絕清單清空（不然擋它的是那一層、量不到家族網）、servers 留著、白名單誤放建單工具。 */
+const breakAllowlist = (/** @type {any} */ f) => ({ ...f, deny: [], allowlist: [...f.allowlist, 'create_order_instruction'] });
+
+test('③雙保險：白名單誤放建單工具時**家族網**仍擋——壞清單寫進來源倉庫、抽複本、用印出來的指令真跑（不只行程內 decide()）', () => withCopy(({ command, copyForbidden }) => {
+  assert.ok(copyForbidden.allowlist.includes('create_order_instruction') && copyForbidden.deny.length === 0, '對照斷言：這份複本裝的真的是壞清單');
+  const reason = denies(hook(command, asTool(`${MONEY_SERVER}create_order_instruction`)), '白名單誤放建單工具時，家族網必須兜底（真跑指令）');
+  assert.match(reason, /家族網/u, `擋它的要是家族網（不是別層）：${reason}`);
+  const d = decide(`${MONEY_SERVER}create_order_instruction`, copyForbidden);
+  assert.equal(d.deny, true); assert.match(String(d.why), /家族網/u, `行程內對照也要是家族網：${d.why}`);
+  // 對照組：同一份壞清單裡，名單內、家族網接不到的仍放行（證明上面不是「什麼都擋」）
+  allows(hook(command, asTool(`${MONEY_SERVER}get_watchlist`)), '對照組：名單內且家族網接不到的名字要放行（真跑指令）');
+}, breakAllowlist));
