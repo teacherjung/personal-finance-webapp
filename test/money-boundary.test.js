@@ -44,6 +44,8 @@
  *   - **2026-09-19 起探針的 HOME 一律指到本檔自己開的暫存家**（`test/helpers/pinned-home.js`）：裡面用**這棵樹當下的四個檔**
  *     造一份複本、造完驗它的指紋等於 tools/guard-copy.js 對這棵樹算的指紋（不等＝叫到它的那一題紅）。所以本檔驗的是
  *     「這棵樹的清單裝進那一行之後」擋該擋、放該放；CI 上真的家目錄沒有複本，本檔也不讀寫真的家目錄。
+ *     「探針真的把 HOME 帶進子行程」由一題對照守（同一個 probe 指到空的暫存家＝要起不來）：漏帶在任何機器上都紅；
+ *     但紅之前那幾發已經用考卷自己的 HOME 跑過（在補過複本的機器上＝讀過真的那一份，只讀不寫）——這一題擋的是「漏帶還綠」，不是那一次讀。
  *     William 機器上那一份（`--claude` 從已合併版本抽的）有沒有、是不是同一個指紋，只有在真的對話按測試鈕量得到；
  *     `.claude/settings.json` 那兩組有沒有逐字等於「範本＋這棵樹的指紋」＝test/money-kit-hook.test.js ①。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
@@ -99,7 +101,12 @@ import {
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
   MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
-import { makePinnedHome, removeHome } from './helpers/pinned-home.js';
+import { makePinnedHome, makeEmptyHome, removeHome } from './helpers/pinned-home.js';
+import claudePin from '../tools/claude-pin.js';
+
+const { PINNED_MARK } = claudePin;
+/** 釘指紋那一行在「複本不在／被改過」時印的那一句裡的字樣。 */
+const MISMATCH = /指紋對不上/u;
 
 // 字表 helper 的位元組絆線在**隔離行程**的 test/money-family-probes-integrity.test.js
 // （Codex #536 r5：同行程內的釘可被 helper 自己改寫取樣器而假綠——ESM 靜態 import
@@ -127,17 +134,19 @@ const probeCache = new Map();
  *   退非零＝**起不來**（釘指紋那一行：複本不在或指紋對不上、找不到 node、載入就崩，都退 2 帶 stderr）——直接 assert.fail，不算成任一面：
  *   舊版把非零一律 catch 成 false，放行面「零組擋」會把起不來當放行。
  * 逐名探測（Codex #392 r2）：不可拿一個名字的結果代表整個 entry——「看輸入決定」的 handler 可以對 create 說 deny、對 delete 說 allow。
- * HOME 一律指到本檔的暫存家（pinnedHome）；cwd＝ROOT 照舊——釘指紋那一行先 cd 進複本、不看當下目錄
- *（從子目錄、從樹外起照擋＝test/money-kit-hook.test.js ③）。
+ * HOME 預設指到本檔的暫存家（pinnedHome）；只有「探針真的把 HOME 帶進去」那一題另外給一個空的暫存家。
+ * cwd＝ROOT 照舊——釘指紋那一行先 cd 進複本、不看當下目錄（從子目錄、從樹外起照擋＝test/money-kit-hook.test.js ③）。
  * @param {{ type?: string, command?: string }} hook
  * @param {string} payload 標準輸入原樣（壞輸入那幾筆不是合法 JSON）
+ * @param {string} [home] 子行程的 HOME；沒給＝本檔的暫存家
  */
-function probe(hook, payload) {
+function probe(hook, payload, home) {
   if (!hook || hook.type !== 'command' || !hook.command) return 'skip';
-  const key = JSON.stringify([hook.command, payload]);
+  const h = home ?? pinnedHome();
+  const key = JSON.stringify([hook.command, payload, h]);
   if (probeCache.has(key)) return probeCache.get(key);
   const r = spawnSync('bash', ['-c', hook.command], {
-    cwd: ROOT, env: { ...process.env, HOME: pinnedHome() }, input: payload, encoding: 'utf8', timeout: 8000,
+    cwd: ROOT, env: { ...process.env, HOME: h }, input: payload, encoding: 'utf8', timeout: 8000,
     killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
   });
   if (r.status !== 0) {
@@ -344,6 +353,30 @@ test('hook 指令：頂層欄位結構化解析——巢狀同名鍵不可覆蓋
   for (const [raw, msg] of cases) {
     assert.ok(hooks.some((h) => rawProbe(h, raw)), msg);
   }
+});
+
+test('探針真的把 HOME 帶進子行程：同一個 probe 指到空的暫存家＝起不來、「指紋對不上」（對照：指回本檔的暫存家＝照清單判）', () => {
+  // 漏帶 HOME＝子行程沿用考卷自己的 HOME：在補過複本的機器上照樣全綠（還會去讀真的家目錄），上面那幾題看不出來；
+  // 這一題讓漏帶在任何機器上都紅——外層 HOME 有沒有複本，空的暫存家這一發都拿不到「起不來」以外的結果才對
+  const settings = loadSettings();
+  const pinnedHooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? [])
+    .filter((h) => h?.type === 'command' && typeof h.command === 'string' && h.command.includes(PINNED_MARK));
+  assert.ok(pinnedHooks.length >= 1, '找不到釘指紋那一行（指令提到固定複本位置的那一組）：test/money-kit-hook.test.js ① 會說是哪裡不對');
+  const payload = JSON.stringify({ tool_name: 'mcp__other__get_widget', tool_input: {} });
+  const empty = makeEmptyHome();
+  try {
+    for (const hook of pinnedHooks) {
+      let outcome;
+      try { outcome = `沒有起不來：探針回「${probe(hook, payload, empty)}」`; } catch (e) { outcome = String(e instanceof Error ? e.message : e); }
+      assert.match(outcome, /鉤子起不來（退出碼 2）/u,
+        `HOME 指到空的暫存家，探針要走「起不來」那一條（${outcome.slice(0, 160)}）——沒走到＝探針沒把 HOME 帶進子行程（沿用了考卷自己的 HOME）`);
+      assert.match(outcome, MISMATCH, '起不來的原因要是「指紋對不上」（空的家裡沒有複本）');
+    }
+  } finally {
+    removeHome(empty);
+  }
+  // 對照：同一份輸入、HOME 指回本檔的暫存家＝照清單判（無害工具放行）——上面的起不來是家裡沒有複本，不是那一行壞了
+  for (const hook of pinnedHooks) assert.equal(probe(hook, payload), 'allow', '對照組：HOME 指回有複本的暫存家，無害工具放行');
 });
 
 test('兩層互相涵蓋：deny 點名的每一支工具，hook 層對它也是實跑回 deny', () => {

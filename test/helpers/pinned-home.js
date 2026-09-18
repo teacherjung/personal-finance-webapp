@@ -20,9 +20,16 @@
 //   ・這一份是從**工作樹**造的（含沒提交的改動），不是 `--claude` 從已合併版本抽的那一份；
 //     證明的是「這棵樹的清單裝進那一行之後擋該擋、放該放」。William 機器上那一份有沒有、是不是同一個指紋，
 //     只有在真的對話按測試鈕量得到。
-//   ・跑那一行時 HOME 要由呼叫的考題自己放進子行程的環境（這裡只造家、不起子行程）。漏給＝沿用考卷自己的 HOME：
-//     在補過複本的機器上會讀到真的那一份而照樣綠（看不出漏給）；只有 CI、或外層把 HOME 指到空目錄的跑法會「指紋對不上」而紅。
-//     所以兩支呼叫的考題都只在一處起子行程、那一處一律放 HOME（test/money-kit-hook.test.js 的 run() 漏給 home 就當場丟錯）。
+//   ・跑那一行時 HOME 要由呼叫的考題自己放進子行程的環境（這裡只造家、不起子行程，**這一支自己什麼都擋不住**）。
+//     漏帶＝子行程沿用考卷自己的 HOME：在補過複本的機器上會讀到真的那一份而照樣綠；只有 CI、或外層 HOME 是空目錄的跑法
+//     會「指紋對不上」而紅。擋得住什麼（都在呼叫的考題裡，不在這裡）：
+//       ・test/money-kit-hook.test.js：runRaw() 沒給 home 參數＝當場丟錯（擋「忘了傳」）；子行程的環境裡把 HOME 拿掉＝
+//         外層有對得上的複本時紅在③「暫存家裡沒有複本」那一題，外層沒有時每一題實跑那一行的都紅；
+//       ・test/money-boundary.test.js：「探針真的把 HOME 帶進子行程」那一題用空的暫存家叫同一個 probe()、要起不來——
+//         拿掉 HOME 在外層有對得上的複本時紅在這一題，外層沒有時連同其餘探針題一起紅。
+//       （2026-09-19 兩種外層各跑一次量過。）
+//     擋不住的：紅之前那幾發已經用考卷自己的 HOME 跑過（補過複本的機器上＝讀過真的那一份，只讀不寫）；
+//     不經過這兩處（runRaw／probe）另起子行程跑那一行的新寫法，沒有任何一題看得到。
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, chmodSync, readdirSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
