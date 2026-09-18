@@ -101,7 +101,7 @@ import {
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY,
   MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
-import { makePinnedHome, makeEmptyHome, removeHome } from './helpers/pinned-home.js';
+import { makePinnedHome, makeEmptyHome, removeHome, pinMismatchHint } from './helpers/pinned-home.js';
 import claudePin from '../tools/claude-pin.js';
 
 const { PINNED_MARK } = claudePin;
@@ -150,7 +150,9 @@ function probe(hook, payload, home) {
     killSignal: 'SIGKILL', // Codex #392 r2 minor：SIGTERM 可被無視，SIGKILL 不行
   });
   if (r.status !== 0) {
-    assert.fail(`鉤子起不來（退出碼 ${r.status}）：${String(r.stderr).slice(0, 200)}——這不是放行也不是擋，考題不可以把它算成任一面`);
+    // HOME＝本檔的暫存家卻「指紋對不上」＝那一行沒跟著重印：原句照印，另外接考卷語境的那一句（空的暫存家那一題不接）
+    const hint = h === pinned?.home ? pinMismatchHint(r.stderr) : '';
+    assert.fail(`鉤子起不來（退出碼 ${r.status}）：${String(r.stderr).slice(0, 200)}——這不是放行也不是擋，考題不可以把它算成任一面${hint}`);
   }
   let state = 'other';
   if (String(r.stdout).trim() === '') state = 'allow';

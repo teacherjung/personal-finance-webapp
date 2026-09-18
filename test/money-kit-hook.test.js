@@ -36,6 +36,9 @@
  *     按一次測試鈕才算數（預期：被擋、理由含「在拒絕清單上」；看到「…（指紋對不上）」＝這台機器還沒補複本）。
  *   ・複本是考題用**工作樹**造的，不是 `--claude` 從已合併版本抽的那一份；本檔不讀寫真的家目錄（CI 上那裡也沒有複本）。
  *   ・平台給鉤子的環境變數，本檔只模擬 HOME 與 CLAUDE_PROJECT_DIR 兩個（其餘沿用考卷自己的環境）。
+ *   ・改了那四個檔卻沒重印那一行：紅的是 ①（等式），以及⓪②與③裡實跑那一行的題——那幾題的錯誤輸出是那一行印的「指紋對不上」
+ *     那一句（它叫人原句轉給裁示者，是寫給真的對話的）；在考卷裡它的意思是那一行沒跟著重印，失敗訊息另外接一句提示
+ *     （test/helpers/pinned-home.js 的 PIN_MISMATCH_HINT）。
  *   ・ConfigChange 這裡只證明那一條指令退 2。平台上它擋不擋：2026-09-18 在 2.1.275 量過一次（只量了專案設定檔這個來源、
  *     那一組是對話中途裝上的）；裝上時的驗收要再量一次；之後沒有任何例行動作重量它（測試鈕只走 PreToolUse 那一行）。
  *   ・鉤子的環境被塞變數（SHELLOPTS、匯入的 shell 函式、PATH）這一類擋不住、那一行裡關不完，ConfigChange 那一條一樣——
@@ -58,7 +61,7 @@ import {
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY, MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY, MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
 } from './helpers/money-family-probes.js';
-import { makePinnedHome, makeEmptyHome, removeHome } from './helpers/pinned-home.js';
+import { makePinnedHome, makeEmptyHome, removeHome, pinMismatchHint } from './helpers/pinned-home.js';
 
 const { claudeLine } = guardCopy;
 const { claudePinStatus, PINNED_MARK } = claudePin;
@@ -112,8 +115,10 @@ const cmdOf = (group) => {
   assert.ok(group, '設定檔裡找不到釘指紋那一組（指令提到固定複本位置的那一組）：①會說是哪裡不對');
   return group.hooks[0].command;
 };
+// denyReason／allows 的每一個呼叫點跑的都是 HOME＝本檔有複本的暫存家（空的家那一題走 mismatch()）：
+// 錯誤輸出含「指紋對不上」＝那一行沒跟著重印，原句照印、另外接考卷語境的那一句（pinMismatchHint）
 const denyReason = (r, why) => {
-  assert.equal(r.status, 0, `${why}：退出碼 ${r.status}（${String(r.stderr).slice(0, 200)}）`);
+  assert.equal(r.status, 0, `${why}：退出碼 ${r.status}（${String(r.stderr).slice(0, 200)}）${pinMismatchHint(r.stderr)}`);
   let d;
   try { d = JSON.parse(r.stdout).hookSpecificOutput; } catch { assert.fail(`${why}：標準輸出不是拒絕形狀（「${String(r.stdout).slice(0, 120)}」；空的＝放行了）`); }
   assert.ok(d && typeof d === 'object', `${why}：標準輸出沒有 hookSpecificOutput（「${String(r.stdout).slice(0, 120)}」）`);
@@ -122,7 +127,7 @@ const denyReason = (r, why) => {
   return d.permissionDecisionReason;
 };
 const allows = (r, why) => assert.deepEqual([r.status, r.stdout.trim()], [0, ''],
-  `${why}：該放行的沒放行（退 ${r.status}；標準輸出「${String(r.stdout).slice(0, 120)}」；錯誤輸出「${String(r.stderr).slice(0, 200)}」）`);
+  `${why}：該放行的沒放行（退 ${r.status}；標準輸出「${String(r.stdout).slice(0, 120)}」；錯誤輸出「${String(r.stderr).slice(0, 200)}」）${pinMismatchHint(r.stderr)}`);
 /** 複本不在／指紋對不上那一條路：退 2、標準輸出空的、錯誤輸出是那一句、兩個輸出都不含 64 碼十六進位。 */
 const mismatch = (r, why) => {
   assert.equal(r.status, 2, `${why}：要退 2（拿到 ${r.status}；${String(r.stdout).slice(0, 120)}｜${String(r.stderr).slice(0, 200)}）`);
