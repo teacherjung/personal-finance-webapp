@@ -24,6 +24,10 @@
  *   B 支把套件那一組鉤子接上 `.claude/settings.json`（09-16〜09-18 跟 python v6 並存，第 8 步拆掉 v6），同一個叫法要變成被擋——
  *   接線本身由 `test/money-kit-hook.test.js` 用 shell 模擬考，但**只有在真的 Claude／Codex session 裡按一次**
  *   才算數（那一步是人做的，機器證明不了）。
+ *   2026-09-19 起 Claude 側那一組是釘指紋那一行、Codex 側是全域層：兩側都讀倉庫外的固定複本、不讀這棵樹——
+ *   這支考的「真清單」要等合併、每台機器補過複本（Codex 另要重按信任）之後，才是兩側那一行實際在用的那一份；
+ *   改清單那一支合併之後、這台機器補複本之前按測試鈕，Claude 側看到的是「…（指紋對不上）」那一句
+ *   （改清單的手續＝AGENTS「錢的絕對邊界」節機械層）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
