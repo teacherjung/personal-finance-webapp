@@ -66,6 +66,7 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
   // 同一個道理，F 也一樣：第 8 步刪了 Codex 專案層副本，家族留著、刪它的那一支才會印 F 而不是 C（Codex #615 r1 R1）
   assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');
+  assert.equal(tierOf('templates/hook-claude-pinned.json').tier, tierId('F'), 'Claude 側釘指紋那份範本（2026-09-19 從套件同步進來）要歸 F：它的指令就是換上之後那一行');
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 

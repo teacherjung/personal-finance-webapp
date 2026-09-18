@@ -1,0 +1,27 @@
+{
+  "_說明": "禁區攔截器的 Claude 側接線範例（規矩 B1）——釘指紋裝法，跟活讀那份（templates/hook-claude.json）二擇一。**不要手填**：在專案裡跑 node tools/guard-copy.js --claude-line，它讀這棵樹的四個檔（settings.json 只算 forbidden 那一塊、tools/forbidden-tools.js、tools/package.json、tools/settings-data.js）算出指紋，印出換好 {files}、{fingerprint} 的兩組，放進專案的 .claude/settings.json（PreToolUse 那一組換掉原本的攔截器那一組；這個說明鍵不要抄；專案原有的 permissions.deny 不動，它的說明見活讀那份範本）。PreToolUse 那一行不看當下在哪個目錄、不碰 git，也不含任何一台機器的路徑（它進版控、跨機器共用）：判斷一律讀 $HOME/.local/share/ai-collab-kit/guard/<指紋> 這一份固定複本——node tools/guard-copy.js --claude 從已合併進主幹的版本抽、試跑過才落地，每台機器各補一次。那一行先 cd 進複本，再查裡面只有那四個檔（一般檔、各小於 1 MiB）與 tools 目錄（多一個檔、有任何連結或具名管道之類不是一般檔的東西、不小於 1 MiB 的檔、查不了裡面有什麼都不行），查到任何東西就不算指紋、直接退 2（不會卡在具名管道或極大的檔上而拖到平台逾時：官方鉤子文件寫 PreToolUse 的指令鉤子逾時不擋）；這一道查的是複本**裡面**（cd 進去之後的內容、連結、多出來的東西、大小），看不到 <指紋> 那一層本身——那一層換成指向內容相同目錄的連結，那一行照用（內容仍要對上指紋，換不成弱清單：tests/guard-copy-claude.test.js ⑯），那一層是連結由 --claude（認「自洽」時）與 --retire 拒絕，查乾淨了才用 /usr/bin/shasum 自己算四個檔的指紋、用 case 比（shasum 與 find 都寫絕對路徑、包在清空的環境裡：shasum 是 perl 腳本，環境變數能讓它印出任意字串）：複本不在（這台機器沒補、HOME 沒給或指到別處）、少檔、多了東西、被改過一個位元組、佔位沒換、有連結或查不了＝退 2，所有 mcp__ 工具都被擋（看得見的失敗）；對了才用清空環境、帶 --preserve-symlinks 兩旗標的 node 跑複本裡的攔截器，起不來同樣退 2（前提：在 /bin/sh（POSIX 模式；2026-09-18 量到鉤子的 $0 是 /bin/sh）下、而且環境沒被塞 SHELLOPTS 之類的變數，見下面⚠️）。攔截器說拒絕＝標準輸出印拒絕形狀、退 0（第一個使用專案 2026-09-16 起在真對話量過有擋的那條路；退 2＋錯誤輸出 2026-09-18 也量過有擋）。所以樹裡的清單被改、切到別的分支、走進別棵樹都沒有用（照複本判）。改了那四個檔卻沒有重印那一行＝那一行照舊指紋找到舊複本、靜靜照舊清單判（收緊不生效、沒有訊號）；唯一會紅的是等式題（tests/claude-pin.test.js；使用專案要有那一題而且不能跳過）。「全擋」只在那一行在同一支變更裡換了、這台機器還沒補那一份複本的前提下成立。⚠️ 鉤子的環境被塞變數（SHELLOPTS、匯入的 shell 函式、PATH）這一類擋不住，那一行裡關不完，**ConfigChange 那一條一樣擋不住**（SHELLOPTS=noexec＝退 0：tests/guard-copy-claude.test.js ⑪）——這一類在場時，這裡說的「退 2」「全擋」都不成立：SHELLOPTS=noexec＝整行不執行、退 0；匯入的函式換得掉 cd、echo（換成 exit 0＝退 0＝放行）；PATH 決定跑哪一支 node。那一行做到的只有：指紋比對用 case（保留字；匯入名為 [ 的函式影響不到它：⑩）、設定變更攔截只剩 exit 2（在 /bin/sh（POSIX 模式；2026-09-18 量到鉤子的 $0 是 /bin/sh）下，匯入名為 exit 的函式換不掉這個特殊內建：⑩；非 POSIX 模式的 bash 換得掉：⑪；官方鉤子文件寫 shell 欄位預設「bash」，跟量到的 /bin/sh 不一樣，這個落差見 MACHINES.md B1 守不到欄），NODE_OPTIONS 與 PERL5OPT 兩個量過進不來。ConfigChange 那一組是設定變更攔截：2026-09-18 在 Claude Code 2.1.275（桌面版）量到對話中往專案 .claude/settings.json 多加一條鉤子同回合就生效，所以另外掛這一組、退 2（前提：在 /bin/sh（POSIX 模式；2026-09-18 量到鉤子的 $0 是 /bin/sh）下、而且環境沒被塞 SHELLOPTS 之類的變數，見上面⚠️）。那一條只有 exit 2、沒有訊息句：量到擋下時那個對話裡的 AI 沒有收到任何提示文字，官方鉤子文件（ConfigChange decision control 段，2026-09-19 讀）也寫這個事件擋下時不對人也不對 AI 顯示訊息（不論用 reason 還是退 2 的錯誤輸出）——印了也沒有人看得到；在 /bin/sh（POSIX 模式；2026-09-18 量到鉤子的 $0 是 /bin/sh）下、而且環境沒被塞 SHELLOPTS 之類的變數時，exit 是特殊內建、匯入的函式換不掉它（⑩；非 POSIX 模式的 bash 換得掉：⑪）。只量了 project_settings 這一個來源，量的時候這一組是對話中途裝上的；量到的只有這些：退 2＝那一次改動不被那個對話載入；磁碟上的檔照樣改得進去；那個對話裡的 AI 沒有收到任何提示文字（使用者畫面上有沒有，那一場沒記）；裝上它的那一次改動本身沒有觸發它。本機設定檔（.claude/settings.local.json）與使用者層兩個來源沒量——matcher 刻意不掛 local_settings（推論、沒量：若跟專案設定檔同一個行為，平台自己寫進那個檔的「以後不要再問」會在那個對話裡不生效）。平台上它擋不擋，2026-09-18 在 2.1.275 量過一次；裝上時的驗收要再量一次（套件沒有寫怎麼量；照裝與換的順序做的驗收（按測試鈕）量不到它）；之後沒有例行動作重量它（測試鈕只走 PreToolUse 那一行）。裝了這一組之後，合法的設定改動（例如拉了新版）要關掉對話重開才載入。不要用檔案管理程式打開複本目錄：它可能在裡面放東西（例如 .DS_Store；沒量），放了＝那一行全擋（看得見）；補救＝看過之後把那個目錄整個移走（mv）再跑 --claude（--retire 不收多了東西的目錄）。⚠️ 複本不是鎖：內容定址的目錄，誰照同一個算法都造得出自洽的一份；它擋的是漂移與誤改。裝與換的順序、其餘誠實劃界＝tools/guard-copy.js 檔頭。驗收只准用禁區清單上刻意放的無害測試工具（裝法見 templates/canary-install.md），要看到拒絕理由含「在拒絕清單上」才算數；任何會動到禁區的真工具，不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "fp='{fingerprint}'; guard_seen=; cd \"$HOME/.local/share/ai-collab-kit/guard/$fp\" >/dev/null 2>&1 && guard_odd=\"$(/usr/bin/env -i /usr/bin/find . ! -path . ! \\( -path ./tools -type d \\) ! \\( -path ./settings.json -type f -size -1048576c \\) ! \\( -path './tools/*' -type f -size -1048576c \\( -name forbidden-tools.js -o -name package.json -o -name settings-data.js \\) \\) 2>/dev/null)\" && case \"$guard_odd\" in \"\") guard_sum=\"$(/usr/bin/env -i /usr/bin/shasum -a 256 {files} 2>/dev/null | /usr/bin/env -i /usr/bin/shasum -a 256)\" && guard_seen=\"|$guard_sum\";; esac; case \"$guard_seen\" in \"|$fp  -\") ;; *) echo '禁區攔截器的固定複本不在這台機器上、被改過、裡面多了東西（連結、不是一般檔的東西、不小於 1 MiB 的檔也算；或查不了裡面有什麼）、或佔位沒換（指紋對不上）：一律當成拒絕。不要手工造複本、不要自己改那一行，原句轉給裁示者（補複本的順序在 tools/guard-copy.js 檔頭）' >&2; exit 2;; esac; /usr/bin/env -i PATH=\"$PATH\" node --preserve-symlinks --preserve-symlinks-main tools/forbidden-tools.js || { echo '禁區攔截器起不來（找不到檔、沒有 node、載入就崩）：一律當成拒絕' >&2; exit 2; }"
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "matcher": "project_settings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exit 2"
+          }
+        ]
+      }
+    ]
+  }
+}
