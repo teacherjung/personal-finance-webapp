@@ -74,7 +74,7 @@ test('①PreToolUse 剛好一組、逐字等於套件範本（第 8 步起：pyt
   assert.ok(existsSync(path.join(ROOT, 'tools', 'forbidden-tools.js')), '套件的判斷程式不在：這組會退 2 全擋');
 });
 
-test('⓪共用字表的整張矩陣只餵套件那組：該擋的都擋、該放的都放、壞輸入也擋（不借 v6 的結果）', () => {
+test('⓪共用字表的整張矩陣只餵套件那組：該擋的都擋、該放的都放、壞輸入也擋', () => {
   // 數量釘：字表被縮短了要有意識地改（跟既有兩卷同一套）
   assert.equal(ALLOWED_LOOKALIKES.length, EXPECTED_ALLOWED_COUNT);
   assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY);
@@ -92,7 +92,7 @@ test('⓪共用字表的整張矩陣只餵套件那組：該擋的都擋、該�
   const mustAllow = [...ALLOWED_LOOKALIKES, ...MONEY_SERVER_ALLOW.map((t) => MONEY_SERVER + t), ...MONEY_SERVER_MULTISEG_ALLOW.map(([name]) => name)];
   for (const name of mustDeny) {
     assert.ok(matcher.test(name), `字表裡該擋的「${name}」不在 matcher 射程內：這題的前提要重看`);
-    denyReason(run(kitGroup, name), `套件那組沒擋「${name}」（既有考卷只要求至少一組擋，v6 會替它遮掉這一筆）`);
+    denyReason(run(kitGroup, name), `套件那組沒擋「${name}」（並存期 v6 會替它遮掉這一筆；現在剛好一組，這題自己算數）`);
   }
   for (const name of mustAllow) allows(run(kitGroup, name), `套件那組誤擋「${name}」`);
   // 壞輸入：matcher 接得住、但工具名不合法（結尾換行之類）＝要擋；根本不是 JSON＝也要擋（fail-closed）
