@@ -19,10 +19,13 @@
  *   ②**理由形狀**：測試鈕 `mcp__guard_canary__ping` 被擋、理由開頭是「錢的絕對邊界：」、含「在拒絕清單上」——
  *     安裝順序認這句，William 在真的對話裡看到它就知道是這一組擋的；真下單工具也擋、無害工具放行。
  *   ③釘指紋那一行的性質：
- *     ・不看當下目錄：從專案子目錄、從樹外起、平台的專案目錄變數指到別處，照樣擋（該放的照樣放）；
+ *     ・不看當下目錄、不理平台的專案目錄變數（CLAUDE_PROJECT_DIR）：從專案子目錄、從樹外起，照樣擋；那個變數指到一棵**真的存在、
+ *       清單改弱**的樹（對照：活讀那一行在那棵樹裡真的放行），照樣擋；兩種情況該放的都照樣放；
  *     ・暫存家裡**沒有複本**（＝這台機器還沒補）：每一個名字（該擋的、該放的、測試鈕）與壞輸入都退 2、標準輸出空的、
  *       錯誤輸出是「指紋對不上」那一句、兩個輸出都不含 64 碼十六進位（不把指紋遞給 AI 去手改那一行）；
- *     ・**核心宣稱**：工作樹的 settings.json 把 forbidden 改弱、複本沒變＝照複本擋。對照組＝活讀那一行在**同一棵**改弱的樹上真的放行
+ *     ・**核心宣稱**：工作樹的 settings.json 把 forbidden 改弱、複本沒變＝照複本擋。當下目錄與平台的專案目錄變數**都**指到
+ *       那棵改弱的樹（真的 Claude 會把那個變數設成專案根；兩行都帶，活讀那一行不讀它、問的是版本控制根目錄）。
+ *       對照組＝活讀那一行在**同一棵**改弱的樹上真的放行
  *       （同一棵樹改弱之前活讀那一行擋＝這棵暫存樹真的是一棵能用的樹；兩次之間只差 forbidden 那一塊）；
  *     ・找不到 node＝退 2、「起不來」那一句（shasum、find、env 都寫絕對路徑，指紋照樣驗得過）；
  *     ・ConfigChange 那一條實跑：/bin/sh 與 /bin/bash 的 -c 都退 2、兩個輸出都空的。
@@ -32,6 +35,7 @@
  *     **不是真的 Claude session**。設定有沒有被載入、這台機器真的家目錄裡有沒有那一行要的那一份複本，只有 William 在真的對話裡
  *     按一次測試鈕才算數（預期：被擋、理由含「在拒絕清單上」；看到「…（指紋對不上）」＝這台機器還沒補複本）。
  *   ・複本是考題用**工作樹**造的，不是 `--claude` 從已合併版本抽的那一份；本檔不讀寫真的家目錄（CI 上那裡也沒有複本）。
+ *   ・平台給鉤子的環境變數，本檔只模擬 HOME 與 CLAUDE_PROJECT_DIR 兩個（其餘沿用考卷自己的環境）。
  *   ・ConfigChange 這裡只證明那一條指令退 2。平台上它擋不擋：2026-09-18 在 2.1.275 量過一次（只量了專案設定檔這個來源、
  *     那一組是對話中途裝上的）；裝上時的驗收要再量一次；之後沒有任何例行動作重量它（測試鈕只走 PreToolUse 那一行）。
  *   ・鉤子的環境被塞變數（SHELLOPTS、匯入的 shell 函式、PATH）這一類擋不住、那一行裡關不完，ConfigChange 那一條一樣——
@@ -87,11 +91,15 @@ after(() => {
 /**
  * 照鉤子的起法跑一條指令：/bin/sh -c（量到平台用 /bin/sh 起），標準輸入原樣給（壞輸入那幾筆不是合法 JSON，所以這一層不包 JSON）。
  * **home 一定要明講**（漏給＝當場丟錯）：沿用考卷自己的 HOME 的話，在補過複本的機器上會讀到真的那一份。
+ * 平台的專案目錄變數 CLAUDE_PROJECT_DIR **由呼叫端決定**：沒給 projectDir＝刪掉（考卷自己的環境若帶著它，不讓它混進來）；
+ * 要測它的地方明給（真的 Claude 會把它設成專案根＝③那棵改弱的樹）。只有這一處決定：env 裡不准另外放它。
  */
-function runRaw(command, stdinText, { home, cwd = ROOT, env = {}, shell = '/bin/sh' } = {}) {
+function runRaw(command, stdinText, { home, cwd = ROOT, env = {}, shell = '/bin/sh', projectDir } = {}) {
   if (typeof home !== 'string') throw new Error('考題漏給 home：跑那一行一定要把 HOME 指到考題自己開的暫存家');
+  if (Object.hasOwn(env, 'CLAUDE_PROJECT_DIR')) throw new Error('平台的專案目錄變數用 projectDir 給（只有一處決定）');
   const clean = { ...process.env };
   delete clean.CLAUDE_PROJECT_DIR;
+  if (typeof projectDir === 'string') clean.CLAUDE_PROJECT_DIR = projectDir;
   // 用絕對路徑起 shell：③會把 PATH 指到不存在的地方（模擬找不到 node），shell 自己不能因此起不來
   return spawnSync(shell, ['-c', command], {
     cwd, env: { ...clean, HOME: home, ...env }, input: stdinText, encoding: 'utf8', timeout: 20_000, killSignal: 'SIGKILL',
@@ -180,14 +188,48 @@ test('②理由形狀：測試鈕被擋、理由開頭「錢的絕對邊界：�
   allows(run(cmd, HARMLESS), '對照組：這一組不是全擋');
 });
 
-test('③不看當下目錄：從專案子目錄、從樹外起、平台的專案目錄變數指到別處，照樣擋；找不到 node＝退 2「起不來」', () => {
+/** 弱清單：只剩一條無關的逐字規則（清單不是空的＝攔截器不會因為「沒有有效規則」而全擋），連接器、白名單、家族網全拿掉。 */
+const weaken = (forbidden) => ({ name: forbidden.name, deny: ['mcp__z__only'] });
+
+/**
+ * 一棵暫存替身樹：攔截器跑起來會讀的三支＋整份 settings.json（照原樣＝嚴格清單），git init（活讀那一行要問版本控制根目錄）。
+ * 環境從零組（鐵則 11：不是 process.env 扣掉幾個）；HOME 指到這個暫存目錄，git 不讀真的家目錄設定。
+ * 回 { tree, weakenNow }：weakenNow() 把這棵樹工作樹的 forbidden 改弱（沒提交；複本不動）、回弱清單——兩次之間只差這一塊。
+ */
+function makeTree() {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'pfw-weak-tree-')));
+  scratch.push(dir);
+  const tree = path.join(dir, 'tree');
+  mkdirSync(path.join(tree, 'tools'), { recursive: true });
+  for (const rel of ['tools/forbidden-tools.js', 'tools/settings-data.js', 'tools/package.json']) cpSync(path.join(ROOT, rel), path.join(tree, rel));
+  const whole = JSON.parse(read('settings.json'));
+  const settingsFile = path.join(tree, 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify(whole, null, 2));
+  const init = spawnSync('git', ['init', '-q'], { cwd: tree, env: { PATH: process.env.PATH ?? '', HOME: dir }, encoding: 'utf8' });
+  assert.equal(init.status, 0, `git init 失敗：${init.stderr}`);
+  const weakenNow = () => {
+    const weak = weaken(whole.forbidden);
+    writeFileSync(settingsFile, JSON.stringify({ ...whole, forbidden: weak }, null, 2));
+    for (const name of [CANARY, FORBIDDEN_TOOLS[0]]) assert.equal(decide(name, weak).deny, false, `前提：弱清單真的放行「${name}」（${decide(name, weak).why}）`);
+    return weak;
+  };
+  return { tree, weakenNow };
+}
+
+test('③不看當下目錄、不理平台的專案目錄變數：從專案子目錄、從樹外起，那個變數指到一棵清單改弱的樹，照樣擋、該放的照樣放；找不到 node＝退 2「起不來」', () => {
   const cmd = cmdOf(pinnedGroup);
+  // 一棵真的存在、清單改弱的樹（真的 Claude 會把專案目錄變數設成專案根）。對照：活讀那一行在這棵樹裡真的放行＝它真的是弱的
+  const { tree, weakenNow } = makeTree();
+  weakenNow();
+  allows(run(LIVE.hooks[0].command, CANARY, { cwd: tree, projectDir: tree }), '前提：這棵樹的清單真的改弱了（活讀那一行在裡面放行測試鈕）');
   const subdir = path.join(ROOT, 'test');
   const outside = realpathSync(tmpdir());
   for (const cwd of [subdir, outside]) {
-    denyReason(run(cmd, CANARY, { cwd }), `從 ${cwd === subdir ? '專案子目錄' : '樹外'}起也要擋`);
-    denyReason(run(cmd, CANARY, { cwd, env: { CLAUDE_PROJECT_DIR: '/nonexistent' } }), '平台的專案目錄變數指到別處也不理它');
-    allows(run(cmd, HARMLESS, { cwd }), `從 ${cwd === subdir ? '專案子目錄' : '樹外'}起，該放行的照樣放行`);
+    const where = cwd === subdir ? '專案子目錄' : '樹外';
+    denyReason(run(cmd, CANARY, { cwd }), `從${where}起也要擋`);
+    denyReason(run(cmd, CANARY, { cwd, projectDir: tree }), `從${where}起、平台的專案目錄變數指到清單改弱的樹，照樣擋（不理這個變數）`);
+    allows(run(cmd, HARMLESS, { cwd }), `從${where}起，該放行的照樣放行`);
+    allows(run(cmd, HARMLESS, { cwd, projectDir: tree }), `從${where}起、專案目錄變數指到改弱的樹，該放行的照樣放行`);
   }
   const noNode = run(cmd, CANARY, { env: { PATH: '/nonexistent' } });
   assert.equal(noNode.status, 2, `找不到 node 要退 2（拿到 ${noNode.status}）`);
@@ -211,25 +253,13 @@ test('③暫存家裡沒有複本（這台機器還沒補）：每一個名字�
   }
 });
 
-/** 弱清單：只剩一條無關的逐字規則（清單不是空的＝攔截器不會因為「沒有有效規則」而全擋），連接器、白名單、家族網全拿掉。 */
-const weaken = (forbidden) => ({ name: forbidden.name, deny: ['mcp__z__only'] });
-
-test('③核心宣稱：工作樹的 settings.json 把 forbidden 改弱、複本沒變＝照複本擋（對照組：活讀那一行在同一棵改弱的樹上真的放行）', () => {
+test('③核心宣稱：工作樹的 settings.json 把 forbidden 改弱、複本沒變＝照複本擋（當下目錄與平台的專案目錄變數都指到那棵樹；對照組：活讀那一行在同一棵改弱的樹上真的放行）', () => {
   const cmd = cmdOf(pinnedGroup);
   const live = LIVE.hooks[0].command;
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'pfw-weak-tree-')));
-  scratch.push(dir);
-  // 這棵樹的替身：攔截器跑起來會讀的三支＋整份 settings.json（照原樣），git init（活讀那一行要問版本控制根目錄）。
-  // 環境從零組（鐵則 11：不是 process.env 扣掉幾個）；HOME 指到這個暫存目錄，git 不讀真的家目錄設定
-  const tree = path.join(dir, 'tree');
-  mkdirSync(path.join(tree, 'tools'), { recursive: true });
-  for (const rel of ['tools/forbidden-tools.js', 'tools/settings-data.js', 'tools/package.json']) cpSync(path.join(ROOT, rel), path.join(tree, rel));
-  const whole = JSON.parse(read('settings.json'));
-  const settingsFile = path.join(tree, 'settings.json');
-  writeFileSync(settingsFile, JSON.stringify(whole, null, 2));
-  const init = spawnSync('git', ['init', '-q'], { cwd: tree, env: { PATH: process.env.PATH ?? '', HOME: dir }, encoding: 'utf8' });
-  assert.equal(init.status, 0, `git init 失敗：${init.stderr}`);
-  const inTree = (command, name) => run(command, name, { cwd: path.join(tree, 'tools') });
+  // 這棵樹的替身（makeTree）。兩行都從樹裡起、專案目錄變數都指到樹根（真的 Claude 會把它設成專案根）：
+  // 活讀那一行不讀這個變數（問的是版本控制根目錄），所以對照組的前提不變
+  const { tree, weakenNow } = makeTree();
+  const inTree = (command, name) => run(command, name, { cwd: path.join(tree, 'tools'), projectDir: tree });
   const targets = [CANARY, FORBIDDEN_TOOLS[0]];
 
   // 前提：改弱之前，活讀那一行在這棵替身樹上照嚴格清單擋（這棵樹真的能用）；釘指紋那一行也擋
@@ -237,10 +267,8 @@ test('③核心宣稱：工作樹的 settings.json 把 forbidden 改弱、複本
     denyReason(inTree(live, name), `前提：嚴格清單下活讀那一行擋「${name}」`);
     denyReason(inTree(cmd, name), `前提：嚴格清單下釘指紋那一行擋「${name}」`);
   }
-  // 工作樹把 forbidden 改弱（沒提交；複本不動）——兩次之間只差這一塊
-  const weak = weaken(whole.forbidden);
-  writeFileSync(settingsFile, JSON.stringify({ ...whole, forbidden: weak }, null, 2));
-  for (const name of targets) assert.equal(decide(name, weak).deny, false, `前提：弱清單真的放行「${name}」（${decide(name, weak).why}）`);
+  // 工作樹把 forbidden 改弱（沒提交；複本不動）——兩次之間只差這一塊（weakenNow 自己驗弱清單真的放行 targets）
+  weakenNow();
   for (const name of targets) {
     allows(inTree(live, name), `對照組：工作樹改弱，活讀那一行真的放行「${name}」`);
     denyReason(inTree(cmd, name), `工作樹改弱：釘指紋那一行照複本擋「${name}」`);
