@@ -106,12 +106,15 @@ const cmdOf = (group) => {
 };
 const denyReason = (r, why) => {
   assert.equal(r.status, 0, `${why}：退出碼 ${r.status}（${String(r.stderr).slice(0, 200)}）`);
-  const d = JSON.parse(r.stdout).hookSpecificOutput;
+  let d;
+  try { d = JSON.parse(r.stdout).hookSpecificOutput; } catch { assert.fail(`${why}：標準輸出不是拒絕形狀（「${String(r.stdout).slice(0, 120)}」；空的＝放行了）`); }
+  assert.ok(d && typeof d === 'object', `${why}：標準輸出沒有 hookSpecificOutput（「${String(r.stdout).slice(0, 120)}」）`);
   assert.equal(d.permissionDecision, 'deny', why);
   assert.equal(d.hookEventName, 'PreToolUse', why);
   return d.permissionDecisionReason;
 };
-const allows = (r, why) => assert.deepEqual([r.status, r.stdout.trim()], [0, ''], `${why}：該放行的沒放行（退 ${r.status}；${String(r.stderr).slice(0, 200)}）`);
+const allows = (r, why) => assert.deepEqual([r.status, r.stdout.trim()], [0, ''],
+  `${why}：該放行的沒放行（退 ${r.status}；標準輸出「${String(r.stdout).slice(0, 120)}」；錯誤輸出「${String(r.stderr).slice(0, 200)}」）`);
 /** 複本不在／指紋對不上那一條路：退 2、標準輸出空的、錯誤輸出是那一句、兩個輸出都不含 64 碼十六進位。 */
 const mismatch = (r, why) => {
   assert.equal(r.status, 2, `${why}：要退 2（拿到 ${r.status}；${String(r.stdout).slice(0, 120)}｜${String(r.stderr).slice(0, 200)}）`);
