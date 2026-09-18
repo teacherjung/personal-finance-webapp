@@ -21,7 +21,7 @@
  *
  * ⚠️ 誠實劃界：這支考題證明的是**清單與登記寫對了**，不是「有任何一層真的在擋」。
  *   A 支（#607）合併時還沒有任何鉤子讀套件那份清單，William 叫它成功回 pong＝對照組成立；
- *   B 支把套件那一組鉤子接上 `.claude/settings.json`（跟 python v6 並存），同一個叫法要變成被擋——
+ *   B 支把套件那一組鉤子接上 `.claude/settings.json`（09-16〜09-18 跟 python v6 並存，第 8 步拆掉 v6），同一個叫法要變成被擋——
  *   接線本身由 `test/money-kit-hook.test.js` 用 shell 模擬考，但**只有在真的 Claude／Codex session 裡按一次**
  *   才算數（那一步是人做的，機器證明不了）。
  */

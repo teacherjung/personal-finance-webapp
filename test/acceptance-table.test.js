@@ -64,6 +64,8 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級（例如搬家完工驗收後），
   // 才可以清掉；清掉時連這一行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
   assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
+  // 同一個道理，F 也一樣：第 8 步刪了 Codex 專案層副本，家族留著、刪它的那一支才會印 F 而不是 C（Codex #615 r1 R1）
+  assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 
@@ -76,7 +78,7 @@ test('⭐ 級別順序照 William 裁示：F（工具安全設定）排第一（
   const C = settings.acceptance.tiers.find((t) => t.id === tierId('C')).action;
   assert.ok(B.includes(C), 'B（相依套件）的動作沒有含 C 的全文——套件只印命中那幾級的動作，「裝完做 C」不可以是沒展開的指示（#573 r4）');
   // F 單獨命中＝級別 F、動作只有 F；F＋E＝級別 F（第一行）、E 的動作也印
-  const f = classify(['.codex/hooks.json'], table);
+  const f = classify(['settings.json'], table);
   assert.equal(f.level, tierId('F')); assert.deepEqual(f.actions.map((a) => a.tier), [tierId('F')]);
   const fe = classify(['.claude/settings.json', 'AGENTS.md'], table);
   assert.equal(fe.level, tierId('F')); assert.deepEqual(fe.actions.map((a) => a.tier), [tierId('F'), tierId('E')]);
