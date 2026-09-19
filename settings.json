@@ -64,7 +64,7 @@
   {
    "item": "三關的實際命令、執行環境版本、稽核等級（或唯一設定檔位置）",
    "rules": "E2、E3",
-   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（鉤子前後另跑 scripts/check-worktree-integrity.js：William 2026-09-18 裁搬家第 13 題 a＝兩支一起跑到搬家完工驗收、再拿掉本專案那支，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/614#issuecomment-5724981414）；跨變更試合併閘＝tools/gates/check-cross-merge.js：在臨時樹先跑 checks.prepareWorktree（npm ci；臨時樹已有 node_modules 就退 3、不跑）再跑同一份 checks.commands（舊的 scripts/check-cross-pr-merge.js 已於 2026-09-18 搬家第 7 步刪除）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
+   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（鉤子前後另跑 scripts/check-worktree-integrity.js：William 2026-09-18 裁搬家第 13 題 a＝兩支一起跑到搬家完工驗收、再拿掉本專案那支，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/614#issuecomment-5724981414；2026-09-19 再裁 a＝先不拿：套件那支補上這支擋得住、它原本放行的四種壞法，本專案登記 checks.mainWorktree＝一般工作樹、checks.indexAnchors＝那支的 REQUIRED_TRACKED〔test/kit-check-registration.test.js 釘〕，同步之後在暫存倉庫把同一批壞法各造一次、兩支結果一致才拿〔結果一致＝照套件 ai-collab-kit issue #6 本文事先寫好的期待表：兩支不是逐一等價，表上登記的差異（這支多擋的，例如共用 core.bare=true 而每棵樹連主目錄都覆寫 false、store.git 裸儲存庫；套件守不到的，例如 --separate-git-dir 布局）之外逐列相同；跑出表上沒有的差異＝不拿〕，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/617#issuecomment-5739129893）；跨變更試合併閘＝tools/gates/check-cross-merge.js：在臨時樹先跑 checks.prepareWorktree（npm ci；臨時樹已有 node_modules 就退 3、不跑）再跑同一份 checks.commands（舊的 scripts/check-cross-pr-merge.js 已於 2026-09-18 搬家第 7 步刪除）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
   },
   {
    "item": "必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單）",
@@ -547,6 +547,12 @@
     "npm",
     "test"
    ]
+  ],
+  "mainWorktree": "一般工作樹",
+  "indexAnchors": [
+   "package.json",
+   "AGENTS.md",
+   "server.js"
   ]
  },
  "gates": [

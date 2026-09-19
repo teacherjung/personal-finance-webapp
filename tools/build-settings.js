@@ -115,6 +115,11 @@ function build(data) {
     const argv = Array.isArray(cmd) ? cmd : [String(cmd)];
     out.push(`  ${i + 1}. ${plain(argvText(argv), `第 ${i + 1} 條三關指令`)}`);
   });
+  // 兩個選填登記只排版、不驗值域（三關執行器跑的時候才驗，寫錯＝退 2）
+  const mainWt = checks.mainWorktree === undefined ? '未設定' : checks.mainWorktree;
+  const anchors = checks.indexAnchors === undefined ? ['未設定'] : checks.indexAnchors;
+  out.push(`- 主目錄布局（只有三關執行器看；填「一般工作樹」＝從連結工作樹跑三關時，前後各問一次主目錄有沒有被判成裸倉庫、打不打得開；未設定＝不問）：${plain(mainWt, '主目錄布局')}`);
+  out.push(`- 索引錨點（只有三關執行器看；填一串從根目錄算起的檔案路徑＝每一個都要在跑三關那棵樹的索引裡，前後各驗一次；未設定＝不驗）：${plain(Array.isArray(anchors) ? anchors.join('、') : anchors, '索引錨點')}`);
   out.push('', '## 七、禁區（規矩 B1；攔截器的判斷讀這裡，程式裡不寫任何禁區的名字）', '');
   const fb = data.forbidden || {};
   const joinList = (xs) => (Array.isArray(xs) && xs.length ? xs.join('、') : '（空）');
