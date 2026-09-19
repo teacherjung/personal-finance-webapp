@@ -60,10 +60,13 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.equal(tierOf('package.json').tier, tierId('B'));
   // E 的腳本必須是明確名單：scripts/ 裡沒點名的新腳本＝沒列到（當 unknownTier）——寬鬆的 check-* 會把未來被啟動流程掛上的新腳本靜靜當成不需驗收（#573 r3）
   assert.equal(tierOf('scripts/check-node-version.js').tier, tierId('C'), 'start.command 每次啟動都跑它，壞了 App 起不來');
-  // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘）：分級工具把變更裡
-  // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級（例如搬家完工驗收後），
-  // 才可以清掉；清掉時連這一行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
+  // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘、
+  // 2026-09-20 刪本專案那支工作樹體檢 check-worktree-integrity）：分級工具把變更裡
+  // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級
+  // （最後一支＝刪工作樹體檢那一支：它合併、算完分級之後），才可以清掉；清掉時連下面兩行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
+  // 兩個名字各釘一行：家族樣式是一串「或」，只釘一個的話，單獨拿掉另一個照樣綠。
   assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
+  assert.equal(tierOf('scripts/check-worktree-integrity.js').tier, tierId('E'), '已刪的工作樹體檢路徑要仍歸 E（刪它的那一支才不會落到 C）');
   // 同一個道理，F 也一樣：第 8 步刪了 Codex 專案層副本，家族留著、刪它的那一支才會印 F 而不是 C（Codex #615 r1 R1）
   assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');
   assert.equal(tierOf('templates/hook-claude-pinned.json').tier, tierId('F'), 'Claude 側釘指紋那份範本（2026-09-19 從套件同步進來）要歸 F：它的指令就是換上之後那一行');
@@ -165,11 +168,12 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   const workflows = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join('.github/workflows', f));
   assert.ok(workflows.length >= 2, '掃不到 workflow＝這題變空包彈（目錄名或副檔名改了？）');
   // 閘本體（tools/gates/*.js）與執行器也在射程內（第 7 步補：手冊沒寫檔名 ≠ 閘腳本沒接）；同一組檔案也不得再叫第 7 步刪掉的五支舊閘
-  // 正向對照：正規式真的認得五個舊名字、而且不會誤中套件閘與體檢腳本（寫壞就整組 doesNotMatch 永遠綠）
+  // 正向對照：正規式真的認得五個舊名字、而且不會誤中套件閘與還活著的 scripts/check-* 腳本（寫壞就整組 doesNotMatch 永遠綠；
+  // check-node-version 是 start.command 每次啟動都叫的那支）
   for (const old of ['ci-really-ran', 'cross-pr-merge', 'pr-collab-fields', 'pr-merge-gate', 'review-verdicts']) {
     assert.match(`node scripts/check-${old}.js 1`, RETIRED_GATES, `RETIRED_GATES 認不得 scripts/check-${old}.js——正規式寫壞了`);
   }
-  for (const keep of ['node tools/gates/check-review-verdicts.js 1', 'node scripts/check-worktree-integrity.js']) assert.doesNotMatch(keep, RETIRED_GATES, `RETIRED_GATES 誤中了還活著的 ${keep}`);
+  for (const keep of ['node tools/gates/check-review-verdicts.js 1', 'node scripts/check-node-version.js']) assert.doesNotMatch(keep, RETIRED_GATES, `RETIRED_GATES 誤中了還活著的 ${keep}`);
   const gateFiles = readdirSync(join(ROOT, 'tools/gates')).filter((f) => f.endsWith('.js')).map((f) => join('tools/gates', f));
   assert.ok(gateFiles.length >= 5, `tools/gates 只列到 ${gateFiles.length} 支——掃不到閘本體，這題變空包彈`);
   for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles]) {
