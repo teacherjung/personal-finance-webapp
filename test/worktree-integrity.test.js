@@ -84,8 +84,9 @@ const bareSeenFrom = (repo, wt) => ({
 
 /**
  * 真的 repo 的保險絲（事故重現那一題跑之前、跑完各問一次）：回 null＝健康，否則回一句說哪裡不對。問兩件事：
- * ① 套件執行器的 `treeState`（它自己清掉 GIT_ 那一族）：這棵樹還是不是工作樹、根目錄是不是這裡、索引在不在
- *    ——跟推送前三關前後驗的是同一套判準。
+ * ① 套件執行器的 `treeState`（它自己清掉 GIT_ 那一族）：這棵樹還是不是工作樹、根目錄是不是這裡、索引在不在。
+ *    這裡不帶本專案的登記（主目錄布局、索引錨點），也不比設定指紋——推送前的三關執行器另外會做那兩件；
+ *    這裡只要它看這棵樹的生效值，所以被這棵樹自己的覆寫藏起來的共用層它看不到，要靠 ②。
  * ② 直接問 git「倉庫共用的那一份設定裡的 core.bare」（`--local`＝只讀共用的 config，從連結工作樹問也一樣；
  *    走 sgit 那份從零組的環境）：某棵樹自己的 config.worktree 覆寫了 core.bare 時，從那棵樹看生效值照樣健康、
  *    ①看不出來，別的樹（含主目錄）卻全部打不開（docs/bare-repo-incident.md「故障還會藏起來」那段）。
@@ -108,37 +109,46 @@ test('⭐ 事故的原地重現：GIT_DIR 指向連結工作樹時跑 git init�
     `跑這一題之前，真的 repo 就已經不健康了（不是這一題弄的）：${before}\n`
     + '（先還原，再照 docs/bare-repo-incident.md 查是誰寫的。）');
 
-  withSandbox(({ repo, wt, wtGitDir, sharedConfig }) => {
-    const tmp = mkdtempSync(join(tmpdir(), 'innocent-cwd-'));
-    try {
-      assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'false', wt: 'false' },
-        '沙盒剛造好，git 就說它是裸倉庫了＝這一題後面驗的東西沒有意義');
+  let sandboxError = null;
+  try {
+    withSandbox(({ repo, wt, wtGitDir, sharedConfig }) => {
+      const tmp = mkdtempSync(join(tmpdir(), 'innocent-cwd-'));
+      try {
+        assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'false', wt: 'false' },
+          '沙盒剛造好，git 就說它是裸倉庫了＝這一題後面驗的東西沒有意義');
 
-      // 這就是那把兇器：cwd 明明指在一個完全無關的暫存目錄，但有 GIT_DIR 時 git 不看 cwd。
-      sgit(['init', '-q'], { cwd: tmp, env: { GIT_DIR: wtGitDir } });
+        // 這就是那把兇器：cwd 明明指在一個完全無關的暫存目錄，但有 GIT_DIR 時 git 不看 cwd。
+        sgit(['init', '-q'], { cwd: tmp, env: { GIT_DIR: wtGitDir } });
 
-      assert.match(readFileSync(sharedConfig, 'utf8'), /^\s*bare\s*=\s*true$/m,
-        '共用 .git/config 沒有變成 bare=true ⇒ 這一題已經不是在重現 2026-08-09 的事故了。\n'
-        + '（git 版本換了？先確認機制還在，再決定要不要改題目——不要直接刪。）');
-      // 直接問 git（不靠任何體檢）：主目錄與連結工作樹一起失去工作樹身分＝事故當天 43 棵一起中的樣子
-      assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'true', wt: 'true' },
-        '共用設定寫進 bare=true 之後，git 從主目錄或連結工作樹看卻不是裸倉庫'
-        + '⇒ 這版 git 讀共用設定的方式變了，docs/bare-repo-incident.md「為什麼會一起中」那段要重看。');
+        assert.match(readFileSync(sharedConfig, 'utf8'), /^\s*bare\s*=\s*true$/m,
+          '共用 .git/config 沒有變成 bare=true ⇒ 這一題已經不是在重現 2026-08-09 的事故了。\n'
+          + '（git 版本換了？先確認機制還在，再決定要不要改題目——不要直接刪。）');
+        // 直接問 git（不靠任何體檢）：主目錄與連結工作樹一起失去工作樹身分＝事故當天 43 棵一起中的樣子
+        assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'true', wt: 'true' },
+          '共用設定寫進 bare=true 之後，git 從主目錄或連結工作樹看卻不是裸倉庫'
+          + '⇒ 這版 git 讀共用設定的方式變了，docs/bare-repo-incident.md「為什麼會一起中」那段要重看。');
 
-      // 還原：損害就只是共用設定那一格——把它改回 false，兩棵樹都要活回來
-      sgit(['config', '--file', sharedConfig, '--replace-all', 'core.bare', 'false'], { cwd: tmp });
-      assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'false', wt: 'false' },
-        '共用設定的 core.bare 改回 false 了，沙盒卻沒活回來＝兇器弄壞的不只那一格，'
-        + 'docs/bare-repo-incident.md 的機制描述要重看。');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+        // 還原：損害就只是共用設定那一格——把它改回 false，兩棵樹都要活回來
+        sgit(['config', '--file', sharedConfig, '--replace-all', 'core.bare', 'false'], { cwd: tmp });
+        assert.deepEqual(bareSeenFrom(repo, wt), { repo: 'false', wt: 'false' },
+          '共用設定的 core.bare 改回 false 了，沙盒卻沒活回來＝兇器弄壞的不只那一格，'
+          + 'docs/bare-repo-incident.md 的機制描述要重看。');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  } catch (e) {
+    sandboxError = e;
+  }
 
   // ⚠️ 上面真的跑了 git init。回頭確認它沒有波及本尊——這一段就是本檔自己的保險絲。
+  //   不管沙盒那一段有沒有中途丟錯都要跑（沙盒一進場就 git init：環境被改壞時，錯可能先從沙盒丟出來，
+  //   但真的 repo 已經中了——那時要看到的是這一句，不是沙盒的錯）。
   const after = realRepoProblem();
   assert.equal(after, null,
-    `⛔ 這一題的 fixture 把**真的 repo** 弄壞了（${after}）。立刻檢查 SANDBOX_ENV 是不是被改成會帶 GIT_* 進去。`);
+    `⛔ 這一題的 fixture 把**真的 repo** 弄壞了（${after}）。立刻檢查 SANDBOX_ENV 是不是被改成會帶 GIT_* 進去。`
+    + (sandboxError ? `\n（沙盒那一段也丟了錯：${sandboxError.message}）` : ''));
+  if (sandboxError) throw sandboxError;
 });
 
 /**
