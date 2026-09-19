@@ -169,7 +169,7 @@
       ②**直接斷言子行程收到什麼**（假 `git` 放進 `PATH` 讀它實際看到的環境）——這一種才關得起門，
       未來冒出沒人見過的家族也涵蓋得到。兩種的射程對照表在 `test/helpers/dirty-git-env.js` 檔頭。
       純函式與兩份 shell 的題在 `test/git-env.test.js`，它的檔頭列出各呼叫點的題落在哪一支。
-    - 事故的完整病理與證據鏈在 `scripts/check-worktree-integrity.js` 檔頭（單一真相，勿重抄）。
+    - 事故的完整病理與證據鏈在 `docs/bare-repo-incident.md`（單一真相，勿重抄）。
 12. **必須懂的概念要在網頁上就地白話解釋**（William 定 2026-07-22，兩級制拍板時明確留下的例外）：
     「懂了才不會把正常數字當算錯」的概念**必須在網頁上就地白話解釋**——用 `.info-link`＋`openInfo`
     或未來任何等效機制（機制與樣式可實驗，**解釋本身不可省**）；文案 Claude 起草、William 審改。
@@ -424,7 +424,7 @@
 
 ### 自動守門的現況（RULES E2、E3、E4）
 
-- 本機門＝`scripts/git-hooks/pre-push`：開頭把 `GIT_` 開頭的環境變數整族清掉（2026-08-09 從連結工作樹推送時 `GIT_DIR` 讓考題裡的 `git init` 把共用設定寫成 bare 的事故；機制與劃界寫在鉤子與 `scripts/check-worktree-integrity.js` 檔頭）→ `node scripts/check-worktree-integrity.js` → `node tools/run-checks.js`（三關＝`settings.json` 的 checks，順序校對→糾察→考試）→ 再體檢一次。⚠️ **這台機器的 `core.hooksPath` 寫的是主目錄的絕對路徑**：每棵工作樹推送時跑的都是主目錄那一份，主目錄要用桌面捷徑更新才拿到新版；新 clone 要自己 `git config core.hooksPath scripts/git-hooks`（相對路徑時每棵樹跑自己那一份）。緊急跳過 `--no-verify`，不建議。
+- 本機門＝`scripts/git-hooks/pre-push`：開頭把 `GIT_` 開頭的環境變數整族清掉（2026-08-09 從連結工作樹推送時 `GIT_DIR` 讓考題裡的 `git init` 把共用設定寫成 bare 的事故；病理與證據鏈＝`docs/bare-repo-incident.md`）→ `node tools/run-checks.js`（三關＝`settings.json` 的 checks，順序校對→糾察→考試；三關前後的工作樹檢查也在執行器裡：這棵樹還是不是工作樹、倉庫設定前後有沒有被改，外加本專案登記的主目錄布局與索引錨點〔`checks.mainWorktree`、`checks.indexAnchors`〕，守得到與守不到＝`MACHINES.md` E2、E3 那一列）；非零一律擋。⚠️ **這台機器的 `core.hooksPath` 寫的是主目錄的絕對路徑**：每棵工作樹推送時跑的都是主目錄那一份，主目錄要用桌面捷徑更新才拿到新版；新 clone 要自己 `git config core.hooksPath scripts/git-hooks`（相對路徑時每棵樹跑自己那一份）。緊急跳過 `--no-verify`，不建議。
 - 雲端門＝`.github/workflows/ci.yml`（同三關，草稿也跑）；協作欄位閘＝`.github/workflows/collab-fields.yml`，內容逐字等於 `templates/collab-fields-github.yml`（考題釘著）。
 - 手動跑三關直接看 npm 的 exit code——`npm run lint 2>&1 | tail -1; echo $?` 回的是 tail 的退出碼（zsh 管線要查 `pipestatus`），曾因此漏掉 4 條 lint 錯誤。
 

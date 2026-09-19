@@ -1,10 +1,10 @@
 #!/bin/sh
-# 自動守門（本機門）：git push 之前自動跑「體檢→三關（協作套件 tools/run-checks.js：校對→糾察→考試）→複檢」，任一不過就擋下 push。
+# 自動守門（本機門）：git push 之前自動跑三關（協作套件 tools/run-checks.js：校對→糾察→考試；三關前後的工作樹檢查也在它裡面），任一不過就擋下 push。
 # 啟用方式（每個 clone 一次）：git config core.hooksPath scripts/git-hooks
 # 緊急跳過（不建議）：git push --no-verify
 #
-# ⚠️ 第一件事不是 echo 而是 unset，理由是 2026-08-09 的事故（機制詳見
-#    scripts/check-worktree-integrity.js 的檔頭）：
+# ⚠️ 第一件事不是 echo 而是 unset，理由是 2026-08-09 的事故（病理與證據鏈詳見
+#    docs/bare-repo-incident.md）：
 #    從**連結工作樹** push 時，git 會把 GIT_DIR=<主目錄>/.git/worktrees/<名> 塞進 hook 的環境
 #    （從主目錄 push 則不會——所以這件事只在 worktree 上發生，平常完全看不出來）。它有兩個後果：
 #    ① 在這個環境下只要有人跑 `git init`（就算 cwd 明明指在 /var/folders 的暫存目錄也一樣，
@@ -22,13 +22,11 @@
 for _gitvar in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_gitvar"; done
 unset _gitvar
 
-echo "🚧 自動守門：工作樹體檢→三關（套件執行器：校對→糾察→考試）→工作樹複檢，全過才放行 push…"
-node scripts/check-worktree-integrity.js || { echo "❌ 工作樹體檢沒過（push 之前就已經壞了）。照上面的訊息還原再推。"; exit 1; }
+echo "🚧 自動守門：三關（套件執行器：校對→糾察→考試，三關前後它自己驗工作樹），全過才放行 push…"
 # 三關改由協作套件的執行器跑（搬家第 4 步，2026-09-17）：三關命令的正本只有一份＝settings.json 的 checks.commands，
 # 這裡跟雲端 ci.yml 都呼叫它、不各抄一遍。退 1＝有一關紅或跑完樹壞了、退 2＝三關沒登記／不在工作樹裡／起不來——非零一律擋。
+# 三關前後的工作樹檢查在執行器裡：跑之前與跑完各驗一次這棵樹還是不是工作樹、倉庫設定有沒有被改，外加本專案登記的
+# 主目錄布局與索引錨點（settings.json 的 checks.mainWorktree、checks.indexAnchors）；驗什麼、守不到什麼＝tools/run-checks.js 檔頭。
+# 為什麼跑完還要驗：考題各跑各的子行程、順序不保證，「哪一支考題把 repo 弄壞」只有跑完再驗才看得到（有一關紅就已經擋下，執行器那一次不驗）。
 node tools/run-checks.js || { echo "❌ 三關沒過（套件執行器退出碼非零），push 已擋下。照上面的訊息修好再推。"; exit 1; }
-# ⚠️ 考試**之後**再驗一次，這一行才是真正的釘子：考題檔案各跑各的子行程、`node --test` 的檔案
-#    順序也不保證，所以「某支考題把整個 repo 弄成 bare」這件事，體檢自己那一支**不保證**會在
-#    同一次執行裡抓到。放在這裡就跑得掉——考試前是好的、跑完不是了，push 就出不去。
-node scripts/check-worktree-integrity.js || { echo "❌ 考試把工作樹弄壞了（考試前是好的、跑完就不是了）。照訊息還原，並查是哪一支考題做的。"; exit 1; }
 echo "✅ 守門通過，放行 push。"

@@ -2,8 +2,9 @@
 //
 // 事故當天 `.git/config` 被寫進 `bare = true`，主目錄與 42 棵連結工作樹**同時**失效
 // （`git status`／`add`／`commit` 全回 `fatal: this operation must be run in a work tree`）。
-// 病因分析與實測結果寫在 `scripts/check-worktree-integrity.js` 的檔頭，這裡不重抄一份
-// （抄兩份就會漂）。本檔只負責一件事：**證明那支體檢真的會轉紅**。
+// 病因分析與實測結果寫在 `docs/bare-repo-incident.md`，這裡不重抄一份
+// （抄兩份就會漂）。本檔兩組題：**證明那支體檢（`scripts/check-worktree-integrity.js`）真的會轉紅**，
+// 以及檔尾實跑推送前鉤子 `scripts/git-hooks/pre-push` 的幾題（`GIT_*` 清光、只叫三關執行器、非零就擋）。
 //
 // ⚠️ 本檔的寫法＝**行為題**：造一棵真的壞掉的 repo 餵進去、實跑 hook、照訊息把還原指令
 //    丟給真的 shell——因為「考題只掃原始碼字樣，實作換掉了照樣全綠」是本專案認過的病型
@@ -95,7 +96,7 @@ test('⭐ 這一棵 checkout 現在是健康的工作樹（這就是那道閘本
   assert.deepEqual(problems, [],
     '這棵樹的工作樹身分有問題：\n'
     + problems.map((p) => `[${p.id}] ${p.message}`).join('\n')
-    + '\n（還原完之後請照 scripts/check-worktree-integrity.js 檔頭查是誰寫的。）');
+    + '\n（還原完之後請照 docs/bare-repo-incident.md 查是誰寫的。）');
 });
 
 test('⭐ 事故的原地重現：GIT_DIR 指向連結工作樹時跑 git init，共用 config 當場變 bare', () => {
@@ -556,21 +557,19 @@ test('⭐ 體檢交給 git 的環境裡不可以有任何 GIT_*（直接斷言�
 /**
  * 造一組假的 node／npm 放進 PATH 給 pre-push 用：每次被叫到都把
  * 「名字＋參數＋當下還看得到哪些 GIT_*」記進 log，然後成功退出。
- * `checkFailsAt`（1-based）：node 跑到體檢腳本的第 N 次呼叫**起**改成失敗——
- * 給 fail-closed 兩題用；不給＝永遠成功。
- * `runChecksExit`：node 跑到套件三關執行器 tools/run-checks.js 時改成退這個碼（1＝有一關紅、2＝起不來／沒登記）；
- * 不給＝退 0。搬家第 4 步起三關由它跑，鉤子只看它的退出碼。
+ * `runChecksExit`：node 跑到套件三關執行器 tools/run-checks.js 時改成退這個碼（1＝有一關紅或跑完樹壞了、
+ * 2＝起不來／沒登記／三關前就壞了）；不給＝退 0。搬家第 4 步起三關由它跑，鉤子只看它的退出碼。
+ * ⚠️ 假 node 不管被叫去跑什麼都照樣記一筆、退 0——鉤子若多叫了任何東西（例如本專案那支工作樹體檢），
+ *    紀錄就多一行，題名關鍵字「真的跑一次 pre-push」那題的呼叫清單轉紅。
  *
  * @param {string} dir
- * @param {{ checkFailsAt?: number, runChecksExit?: number }} [opts]
+ * @param {{ runChecksExit?: number }} [opts]
  * @returns {{ bin: string, log: string }}
  */
 function makeHookStubs(dir, opts = {}) {
   const bin = join(dir, 'bin');
   mkdirSync(bin);
   const log = join(dir, 'calls.log');
-  const count = join(dir, 'check-count');
-  const failsAt = opts.checkFailsAt ?? 0;
   const runChecksExit = opts.runChecksExit ?? 0;
   for (const name of ['node', 'npm']) {
     const stub = join(bin, name);
@@ -578,11 +577,7 @@ function makeHookStubs(dir, opts = {}) {
       '#!/bin/sh\n'
       + `{ printf '%s %s :: ' "${name}" "$*"; env | grep '^GIT_' | cut -d= -f1 | tr '\\n' ' '; printf ':: gh=%s' "\${GITHUB_TOKEN:-MISSING}"; echo; } >> ${JSON.stringify(log)}\n`
       + (name === 'node'
-        ? 'case "$*" in *check-worktree-integrity*)\n'
-          + `  n=$(cat ${JSON.stringify(count)} 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > ${JSON.stringify(count)}\n`
-          + `  if [ ${failsAt} -gt 0 ] && [ "$n" -ge ${failsAt} ]; then echo "體檢炸了（stub 第 $n 次）" >&2; exit 1; fi\n`
-          + 'esac\n'
-          + `case "$*" in *run-checks*) [ ${runChecksExit} -gt 0 ] && { echo "三關執行器（stub）退 ${runChecksExit}" >&2; exit ${runChecksExit}; }; esac\n`
+        ? `case "$*" in *run-checks*) [ ${runChecksExit} -gt 0 ] && { echo "三關執行器（stub）退 ${runChecksExit}" >&2; exit ${runChecksExit}; }; esac\n`
         : '')
       + 'exit 0\n');
     chmodSync(stub, 0o755);
@@ -616,20 +611,22 @@ function runPrePush(bin) {
 const callNames = (log) => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean)
   .map((line) => line.split('::')[0].trim());
 
-test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光，考試前後各驗一次工作樹', () => {
+test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光，清完只叫一次三關執行器', () => {
   const dir = mkdtempSync(join(tmpdir(), 'prepush-'));
   try {
     const { bin, log } = makeHookStubs(dir);
     const r = runPrePush(bin);
     assert.equal(r.status, 0, `pre-push 在全部關卡都成功的情況下退出碼是 ${r.status}：\n${r.stdout}${r.stderr}`);
 
-    assert.deepEqual(callNames(log), [
-      'node scripts/check-worktree-integrity.js',
-      'node tools/run-checks.js',
-      'node scripts/check-worktree-integrity.js',
-    ], 'pre-push 的關卡順序不對。⚠️ **考試之後那一次工作樹體檢是關鍵**：'
-      + '考題各跑各的子行程、`node --test` 的檔案順序也不保證，'
-      + '「哪一支考題把 repo 弄壞」只有在跑完之後量才看得到。');
+    const calls = callNames(log);
+    assert.ok(!calls.some((c) => c.includes('check-worktree-integrity')),
+      `pre-push 還在叫本專案那支工作樹體檢：${JSON.stringify(calls)}\n`
+      + '⇒ William 2026-09-20 裁 a 把它從鉤子拿掉、只留套件的三關執行器'
+      + '（https://github.com/teacherjung/personal-finance-webapp/pull/622#issuecomment-5743466843 ）；要接回去先問他。');
+    assert.deepEqual(calls, ['node tools/run-checks.js'],
+      'pre-push 的呼叫不對：清完 GIT_* 之後只叫套件的三關執行器一次。三關前後的工作樹檢查在執行器裡'
+      + '（考題各跑各的子行程、順序不保證，「哪一支考題把 repo 弄壞」只有跑完再驗才看得到；'
+      + '執行器那一段由套件的 tests/run-checks.test.js 守）。');
 
     for (const line of readFileSync(log, 'utf8').trim().split('\n')) {
       const parts = line.split('::');
@@ -649,26 +646,7 @@ test('⭐ 真的跑一次 pre-push：GIT_*（含沒列過名的）必須清光�
   }
 });
 
-test('⭐ fail-closed①：考試「之後」那次體檢失敗，push 必須被擋（那一行不是裝飾）', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'prepush-post-'));
-  try {
-    // 第一次體檢過、三關全過、**第二次體檢炸**——正是「考試把樹弄壞了」的劇本。
-    const { bin, log } = makeHookStubs(dir, { checkFailsAt: 2 });
-    const r = runPrePush(bin);
-    assert.notEqual(r.status, 0,
-      '第二次體檢已經失敗，pre-push 卻放行了 push——fail-closed 一行退化成裝飾，'
-      + '考題還全綠，正是 #435 r1 Medium⑤ 用突變示範的洞。');
-    assert.deepEqual(callNames(log), [
-      'node scripts/check-worktree-integrity.js',
-      'node tools/run-checks.js',
-      'node scripts/check-worktree-integrity.js',
-    ], '擋下的位置不對：應該是三道都跑了、倒在最後那一次體檢。');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('⭐ fail-closed③：三關執行器退 1（有一關紅）或退 2（起不來／沒登記）都要擋，而且複檢不跑（搬家第 4 步）', () => {
+test('⭐ fail-closed：三關執行器退 1（有一關紅或跑完樹壞了）或退 2（起不來／沒登記／三關前就壞了）都要擋（搬家第 4 步）', () => {
   // ⚠️ 退 2 是「查不清楚」不是「全過」：套件的執行器對「三關沒登記、不在工作樹裡、指令起不來」退 2；
   //    鉤子只看非零。這題釘的是「兩種非零都擋」——把鉤子那一行寫成只擋退 1，退 2 就會靜靜放行。
   for (const code of [1, 2]) {
@@ -677,25 +655,10 @@ test('⭐ fail-closed③：三關執行器退 1（有一關紅）或退 2（起�
       const { bin, log } = makeHookStubs(dir, { runChecksExit: code });
       const r = runPrePush(bin);
       assert.notEqual(r.status, 0, `三關執行器退 ${code}，pre-push 卻放行了 push`);
-      assert.deepEqual(callNames(log), [
-        'node scripts/check-worktree-integrity.js',
-        'node tools/run-checks.js',
-      ], `三關執行器退 ${code} 之後不該再跑複檢（壞掉的三關結果沒有複檢的意義）`);
+      assert.deepEqual(callNames(log), ['node tools/run-checks.js'],
+        `三關執行器退 ${code} 的這一趟，鉤子只該叫過它一次（前後都不該有別的關卡）`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }
-});
-
-test('⭐ fail-closed②：考試「之前」那次體檢失敗＝立刻擋下，三關一關都不准跑', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'prepush-pre-'));
-  try {
-    const { bin, log } = makeHookStubs(dir, { checkFailsAt: 1 });
-    const r = runPrePush(bin);
-    assert.notEqual(r.status, 0, 'push 之前就已經壞了還放行——這道門白裝了。');
-    assert.deepEqual(callNames(log), ['node scripts/check-worktree-integrity.js'],
-      '體檢已經報壞，後面的關卡卻還在跑——壞掉的樹上跑出來的三關結果本身不可信。');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
 });
