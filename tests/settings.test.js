@@ -226,6 +226,8 @@ test('⑨考題用的空白設定跟 settings.json 形狀一致，而且對外�
   assert.deepEqual(u.scanner.isolation.forbidden, [], '空白設定不可以登記任何禁區（複本裡跑試探才不會去埋）');
   assert.equal(u.mergeCommand.command, UNSET);
   assert.deepEqual(u.checks.commands, [[UNSET]]);
+  assert.equal(u.checks.mainWorktree, UNSET, '主目錄布局要沒登記（三關執行器照舊放行、全綠那一行說沒驗）');
+  assert.deepEqual(u.checks.indexAnchors, [UNSET], '索引錨點要沒登記');
   for (const p of u.participants) assert.equal(p.id, UNSET, `身分「${p.role}」要沒填`);
 });
 
