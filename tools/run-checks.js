@@ -227,7 +227,7 @@ function treeBare(git, cwd) {
     const linked = commonDir !== null && samePath(path.dirname(path.dirname(own)), path.join(commonDir, 'worktrees')) === true;
     (commonIsDotGit || linked ? fixable : gated).push(own);
   }
-  return { state: 'bare', origins: bareOrigins(cwd), fixable, gated };
+  return { state: 'bare', origins: bareOrigins(cwd), fixable, gated, commonDir: commonIsDotGit ? commonDir : null };
 }
 
 /**
@@ -481,6 +481,13 @@ const AFTER_INDEX_UNCHECKED = '三關跑完之後這棵樹的索引檔不見了�
 /** git 打不開時為什麼不給還原：成因各在不同的檔，要定位就得自己解讀 Git 的設定與倉庫布局。 */
 const NO_RESTORE = '  這裡只印 Git 的原話、不給還原指令：如果有東西壞了，要從 Git 的原話找出是哪一個檔（替你找就得自己解讀 Git 的設定規則與倉庫布局，這支不做）。Git 原話裡若附了建議的指令，這裡沒有驗過。';
 const TREE_BARE_REMINDER = '  先看這個目錄底下原本有沒有專案的檔：本來就是裸儲存庫的話不要照做（三關要在工作樹裡跑）。';
+/**
+ * 共用目錄名叫 .git 時那句提醒要指名 .git 的上一層：從連結工作樹跑時「這個目錄」是工作樹、本來就有專案的檔，
+ * 提醒會指向「可以照做」；要看的是 .git 的上一層——一般 checkout 的主目錄有專案的檔，proj/.git 那種裸儲存庫的上一層沒有（PFW #622 複審後掃）。
+ */
+const treeBareReminder = (commonDir) => (commonDir
+  ? `  先看 ${shq(path.dirname(commonDir))} 底下原本有沒有專案的檔（.git 的上一層，不一定是你現在站的這棵樹）：本來就是裸儲存庫的話不要照做（三關要在工作樹裡跑）。`
+  : TREE_BARE_REMINDER);
 /** 這棵樹被判成裸倉庫、三關前、一行還原都不給的時候的開頭（不說「先還原再推」：後面說的是為什麼不給）。 */
 const BEFORE_BARE_NO_FIX = '這棵樹在跑三關之前就被 Git 判成裸倉庫了（沒有工作樹）：三關要在工作樹裡跑，不放行。';
 const MAIN_BARE_REMINDER = '  先看主目錄底下原本有沒有專案的檔：本來就是裸儲存庫的話不要照做，這份登記不適用這台（見 MACHINES.md 的 E2、E3 那一列）。';
@@ -499,7 +506,7 @@ function explain(st, before, prior) {
   const orOther = '（或是不是同一段時間有別的工作階段在動）';
   if (st.state === 'head-gone') return headGoneLines(st);
   if (st.state === 'bare') {
-    const rest = bareRestoreLines(st, before ? TREE_BARE_REMINDER : null);
+    const rest = bareRestoreLines(st, before ? treeBareReminder(st.commonDir) : null);
     const fixes = rest.some((l) => l.startsWith('git '));
     return [before ? (fixes ? BEFORE.bare : BEFORE_BARE_NO_FIX) : AFTER_BROKEN, ...rest];
   }

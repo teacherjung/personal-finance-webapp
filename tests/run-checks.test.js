@@ -591,6 +591,22 @@ test('⑩主目錄布局（登記了 checks.mainWorktree 才驗）：主目錄�
     const warn = rp.lines.findIndex((l) => /本來就是裸儲存庫的話不要照做/u.test(l));
     const fix = rp.lines.findIndex((l) => l.startsWith('git '));
     assert.ok(warn !== -1 && fix !== -1 && warn < fix, `「不適用這台」那句要在還原指令之前：${rp.lines.join('\n')}`);
+    // 7b. 同一種 proj/.git 裸儲存庫、但開了 extensions.worktreeConfig 而沒把 core.bare 挪進主目錄的 config.worktree：連結樹自己也被判成裸的
+    //   （Git 的說明叫人這時把 core.bare 挪走）。從連結樹跑（沒登記也擋）：共用目錄名叫 .git＝給還原，但三關前那句提醒要指名 .git 的上一層
+    //   （proj2，底下沒有專案的檔），不可以說「這個目錄」——那是工作樹，本來就有專案的檔，提醒會指向可以照做（PFW #622 複審後掃）。
+    const proj2 = path.join(root, 'proj2');
+    g(root, 'clone', '-q', '--bare', healthy.main, path.join(proj2, '.git'));
+    g(path.join(proj2, '.git'), 'config', 'extensions.worktreeConfig', 'true');
+    g(path.join(proj2, '.git'), 'worktree', 'add', '-q', '--detach', path.join(proj2, 'wt'));
+    assert.equal(g(path.join(proj2, 'wt'), 'rev-parse', '--is-bare-repository'), 'true', '前提：連結樹自己被判成裸的');
+    assert.ok(fs.readdirSync(proj2).every((n) => n === '.git' || n === 'wt'), `前提：.git 的上一層沒有專案的檔：${fs.readdirSync(proj2)}`);
+    const r7b = runChecks({ settings: loose, cwd: path.join(proj2, 'wt') });
+    assert.equal(r7b.code, 2, r7b.lines.join('\n'));
+    const warn7b = r7b.lines.findIndex((l) => /本來就是裸儲存庫的話不要照做/u.test(l));
+    const fix7b = r7b.lines.findIndex((l) => l.startsWith('git '));
+    assert.ok(warn7b !== -1 && fix7b !== -1 && warn7b < fix7b, `提醒要在還原指令之前：${r7b.lines.join('\n')}`);
+    assert.match(r7b.lines[warn7b], /先看 '.*\/proj2' 底下/u, `提醒指名 .git 的上一層：${r7b.lines[warn7b]}`);
+    assert.doesNotMatch(r7b.lines[warn7b], /先看這個目錄/u, '不說「這個目錄」（那是工作樹）');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(away, { recursive: true, force: true });
