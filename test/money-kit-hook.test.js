@@ -40,7 +40,8 @@
  *     那一句（它叫人原句轉給裁示者，是寫給真的對話的）；在考卷裡它的意思是那一行沒跟著重印，失敗訊息另外接一句提示
  *     （test/helpers/pinned-home.js 的 PIN_MISMATCH_HINT）。
  *   ・ConfigChange 這裡只證明那一條指令退 2。平台上它擋不擋：2026-09-18 在 2.1.275 量過一次（只量了專案設定檔這個來源、
- *     那一組是對話中途裝上的）；裝上時的驗收要再量一次；之後沒有任何例行動作重量它（測試鈕只走 PreToolUse 那一行）。
+ *     那一組是對話中途裝上的）；裝上時（2026-09-19）又量了一次，結果記在 PROJECT.md「Claude 側釘指紋第 2 支的合併與驗收」
+ *     那一段；之後沒有任何例行動作重量它（測試鈕只走 PreToolUse 那一行）。
  *   ・鉤子的環境被塞變數（SHELLOPTS、匯入的 shell 函式、PATH）這一類擋不住、那一行裡關不完，ConfigChange 那一條一樣——
  *     照實的對照在套件的 tests/guard-copy-claude.test.js ⑪；本機設定檔 `.claude/settings.local.json` 的絆線在套件的
  *     tests/claude-pin.test.js ③（只在本機工作樹跑考卷的那一次看得到，不是閘）。
