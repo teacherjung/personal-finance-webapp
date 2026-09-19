@@ -1,7 +1,6 @@
 // @ts-check
 // `lib/git-env.js` 的考題。**這一支只守純函式本身**；「每一個呼叫端真的走了它」是**行為題**，
 // 貼在各自那一支（拿掉 `env:` 那一行，對應的行為題必須紅）：
-//   ・`test/worktree-integrity.test.js`   ← 體檢腳本 `scripts/check-worktree-integrity.js`
 //   ・`test/xlsx-isolate.test.js`         ← `productionFiles()`
 //   ・`test/hosted-store-pg.test.js`      ← `libFiles()`
 //   ・`test/ts-check-coverage.test.js`    ← `trackedJs()`（型別檢查射程的對照組；#600 起）
