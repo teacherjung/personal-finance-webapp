@@ -2,50 +2,15 @@
 // @ts-check
 // 「整個 repo 靜靜失去工作樹身分」的體檢（2026-08-09 事故）。
 //
-// ## 那天發生什麼
+// 事故的病理與證據鏈＝`docs/bare-repo-incident.md`（單一真相，這裡不重抄——抄兩份就會漂）。
+// 本檔只負責把壞掉的狀態驗出來。
 //
-// 01:28，主目錄的 `.git/config` 被寫進 `bare = true`。壞掉的不是一棵樹，是**主目錄與當時
-// 42 棵連結工作樹一起**：`git status`／`add`／`commit`／`rev-parse --show-toplevel` 全部回
-// `fatal: this operation must be run in a work tree`，`git worktree list` 把主目錄標成 `(bare)`。
+// ⚠️ **誠實劃界①：這是絆線，不是預防。** 考題檔案彼此獨立、`node --test` 的檔案順序不保證，
+//    所以「某支考題把 repo 弄壞」這件事，本檔**不保證在同一次執行裡當場抓到**。推送前「跑完再驗一次」
+//    不在本檔：`scripts/git-hooks/pre-push` 只叫套件的 `tools/run-checks.js`，由它在三關前後驗
+//    （`test/worktree-integrity.test.js` 實跑那支鉤子、釘它只叫執行器）。
 //
-// 為什麼會一起中：`core.bare` 存在**共用的** `.git/config`。這個 repo 的
-// `extensions.worktreeConfig` 是開著的，但當時只有 3 棵樹有自己的 `config.worktree`，
-// 而那 3 份**都沒有覆寫 `core.bare`** ⇒ 43 棵樹全部讀同一個值。
-//
-// ## 怎麼會被寫進去（沙盒實測，2026-08-09；肇因見下面的誠實劃界）
-//
-// `git init` 只要在**環境變數 `GIT_DIR` 指向某棵連結工作樹的 gitdir**（`.git/worktrees/<名>`）
-// 之下執行，就會把 `bare = true` 寫進**共用** config——就算你已經好好把 `cwd` 指到
-// `/var/folders/...` 的暫存目錄也一樣，因為有 `GIT_DIR` 時 git 根本不看 cwd。
-// 原因是 git 猜「這是不是 bare repo」時只看 `GIT_DIR` 的**路徑長相**：結尾是 `.git` 就猜「不是」，
-// 其餘一律猜「是」，而 `.git/worktrees/<名>` 的結尾不是 `.git`。實測三種情形：
-//
-//   ・沒有 `GIT_DIR`                      → 安全（在暫存目錄開新 repo，跟主 repo 無關）
-//   ・`GIT_DIR=<主目錄>/.git`             → 安全（結尾是 `.git`，猜「不是 bare」）
-//   ・`GIT_DIR=<主目錄>/.git/worktrees/X` → ☠️ 共用 `.git/config` 當場變成 `bare = true`
-//
-// 而 `GIT_DIR` 不需要有人手動設：**git 自己會放進 hook 的環境**。實測從連結工作樹
-// push／commit 時，`pre-push`／`pre-commit` 都拿得到 `GIT_DIR=<主目錄>/.git/worktrees/<名>`
-// （從主目錄操作時則沒有）。本專案的 `pre-push` 會跑 `npm test` ⇒ **從任何一棵 worktree push，
-// 整套考題都是在那個環境下跑的**。同一個 `GIT_DIR` 還有第二個副作用：它會蓋掉
-// `git -C <路徑>` 與 `execFileSync(..., { cwd })`，讓「掃這棵樹」的考題其實掃到別棵。
-//
-// ⚠️ **誠實劃界①（2026-08-10 更正）：肇因已有高度吻合的證據鏈，但沒有當場的行程目擊。**
-//    本檔第一版這裡寫「查過 PR #433 的 11 個 commit，沒有任何一處 `git init`、已排除」——那是
-//    **誤判**：程式裡寫的是 `git('init', '-q')` 輔助函式呼叫，拿字面「git init」去掃掃不到
-//    （掃描器說謊的老病型）。#435 r1 提出、並經獨立重現的直接證據：
-//      ・`4ab8e0b` 與 `0c0b176`（#433 過程 commit）的 test/test-path-decoding.test.js 各有一處
-//        `git('init', '-q')`；兩顆 commit 時間 01:28:33／10:34:07，與兩次事故（01:28／10:34:27）
-//        分秒貼合；#433 的 squash 訊息（`7c573f2`）亦記載那顆 fixture 曾污染主 repo。
-//    所以「上面的機制」不只是重現得出來——它就是證據指向的肇因鏈（fixture 的 git init ×
-//    hook 環境的 GIT_DIR）。本檔職責不變：把壞掉的狀態驗出來，並讓 `pre-push` 把 `GIT_*`
-//    整族清掉、不再把那個前提條件交給考題。
-//
-// ⚠️ **誠實劃界②：這是絆線，不是預防。** 考題檔案彼此獨立、`node --test` 的檔案順序不保證，
-//    所以「某支考題把 repo 弄壞」這件事，本檔**不保證在同一次執行裡當場抓到**——真正釘住它的是
-//    `scripts/git-hooks/pre-push`：那裡在 `npm test` **之後**再跑一次本檔，考試把樹弄壞就推不出去。
-//
-// ⚠️ **誠實劃界③：本檔驗「你指給它的那一棵樹」＋共用 config 那一層的原始值。**
+// ⚠️ **誠實劃界②：本檔驗「你指給它的那一棵樹」＋共用 config 那一層的原始值。**
 //    共用層（`core.bare`）**指名直讀檔案**、不吃 effective 值——不然某棵樹自己的
 //    `config.worktree` 覆寫會把共用層的壞掩住（#435 r1 Medium③實測）。所以共用層的壞，
 //    驗一棵就看得到；但「**別棵**樹自己的 `config.worktree` 被寫壞」仍只有在那棵樹裡跑
@@ -320,7 +285,7 @@ export function worktreeIntegrityProblems(repoDir, opts = {}) {
           ? `  還原：git config --file ${shq(bare.file)} --replace-all core.bare false\n`
           : '  ⚠️ 定位不到承載檔（值可能來自環境或 blob）——不給猜的還原指令，'
             + `先自查：git -C ${shq(repoDir)} config --show-origin --get core.bare\n`)
-        + '  ⚠️ 還原之前先看一眼是誰寫的：檔頭記著有直接證據的機制'
+        + '  ⚠️ 還原之前先看一眼是誰寫的：docs/bare-repo-incident.md 記著有直接證據的機制'
         + '（GIT_DIR 指向 .git/worktrees/<名> 時跑 git init）。',
     });
   }
