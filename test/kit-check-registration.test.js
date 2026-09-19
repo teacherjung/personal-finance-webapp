@@ -4,6 +4,7 @@
 // 為什麼要有這一題：套件的執行器本身允許這兩格寫「未設定」或拿掉（＝不驗、照舊放行，只在全綠那一行說哪幾項沒驗）。
 //   本專案登記它們，是為了讓套件那支也擋住本專案那支工作樹體檢（scripts/check-worktree-integrity.js）擋得住的四種壞法
 //   （William 2026-09-19 裁 a：https://github.com/teacherjung/personal-finance-webapp/pull/617#issuecomment-5739129893 ）。
+//   兩支不是逐一等價：差異照套件 ai-collab-kit issue #6 本文事先寫好的期待表（這支多擋的幾種、套件守不到的幾種）。
 //   這一題直接釘住本專案必須登記的值。套件的設定考題（tests/settings.test.js）只驗形狀與產物一致：連同產物（PROJECT-SETTINGS.md）
 //   一起改回「未設定」時它照樣綠（2026-09-19 #621 r1 實測；只改 settings.json 不重產的話，產物一致那一題會紅），擋得住的是這一題。
 // 錨點跟那支工作樹體檢的 REQUIRED_TRACKED 逐項相同：兩支一起跑的期間兩邊不會漂；拿掉那一支時改成釘字面清單。
