@@ -43,7 +43,10 @@
 //     不給指令；沒拿到 Git 的回答（目錄不存在、三關中途被刪掉）＝印 Node 的錯誤代碼、不冒稱是 Git 說的；
 //     三關後索引那一句跑之前 HEAD 解析不到就不說「跑之前是好的」；
 //   ⑭git ls-files 印 2 MiB（假 git）的健康倉庫＝0（原本收全部輸出＝判成索引讀不了），失敗照樣擋、印 Git 的原話（最多三行）；
-//     git 失敗卻什麼都沒印、被訊號殺掉＝照樣擋、照實說；
+//     git 失敗卻什麼都沒印、被訊號殺掉＝照樣擋、照實說；問「索引整份是不是空的」那一次的輸出上限**很小**
+//     （另起一個行程、在載入受審模組之前把 spawnSync 包一層，錄下那一次呼叫用的上限與回傳：上限要比樣本的 1536 位元組小、
+//     回傳要是 ENOBUFS。對照組＝同一支假 git 配 1 MiB 上限＝沒有 error、整份收得到。
+//     ⚠️ 粒度只到樣本那個數字：上限改成 1536 以上才紅，1025〜1535 照樣綠）；
 //   ⑮設定指紋的兩支 git 帶著髒 GIT_DIR／GIT_WORK_TREE 照樣讀這棵樹的設定（三關中途改了共用設定或這棵樹自己的 config.worktree＝1）。
 // ⚠️ 守不到的：三關命令本身對不對；鉤子有沒有被啟用（每個複本要自己設）；雲端有沒有設成必過檢查；
 //   兩個登記本身守不到的形狀（tools/run-checks.js 的 mainProblem、anchorProblem 註解與 MACHINES.md 的 E2、E3 那一列）。
@@ -1397,7 +1400,16 @@ test('⑭追蹤檔很多的健康倉庫不會因為 git ls-files 的輸出太多
     g(repo, 'add', '.');
     g(repo, 'commit', '-q', '-m', 'base');
     // PATH 最前面放一支假 git，只接管「git ls-files」與「git ls-files -z」（不帶其他參數）：照 KIT_FAKE_LS 印 2 MiB 退 0、
-    // 什麼都不印退 1、印五行錯誤退 128、被訊號殺掉（自己 kill -TERM），或（probe）只在 ls-files -z 那一次記一行開始、印 2 MiB、再記一行印完；其餘一律交給真的 git
+    // 什麼都不印退 1、印五行錯誤退 128、被訊號殺掉（自己 kill -TERM），或（probe）只在 ls-files -z 那一次記一行開始、印 2 MiB、再記一行印完，
+    // 或（probe-small）同樣只在 ls-files -z 那一次，但只印 PROBE_SMALL_BYTES 位元組；其餘一律交給真的 git
+    /**
+     * 「問索引整份是不是空的」那一發要印幾位元組：比 EMPTY_PROBE_BUFFER（1024）多一點，用來證明那個上限真的很小。
+     * ⚠️ 射程只到這個數字：現在的樣本證的是「印 1536 位元組會超過上限」，**不是精確釘死 1024**——
+     *   把上限改成 1025〜1535 之間的任何值，這一題照樣綠。改這個數字（尤其改大）就要重跑那三種上限突變
+     *   （EMPTY_PROBE_BUFFER 改成 4096、64 KiB、1 MiB 各一次，都要紅），不然粒度會靜靜變粗：
+     *   2026-09-20 量過，只把這個數字改成 131072、整份考卷照樣全綠（對照組的預期長度跟著同一個常數變）。
+     */
+    const PROBE_SMALL_BYTES = 1536;
     const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
     const fakeBin = path.join(root, 'fake-bin-ls');
     fs.mkdirSync(fakeBin);
@@ -1411,6 +1423,7 @@ test('⑭追蹤檔很多的健康倉庫不會因為 git ls-files 的輸出太多
       '    loud) for i in 1 2 3 4 5; do echo "fatal: injected $i" >&2; done; exit 128;;',
       '    killed) kill -TERM $$;;',
       `    probe) if [ "$*" = "ls-files -z" ]; then echo probe-start >> "$KIT_FAKE_LOG"; '${process.execPath}' -e 'process.stdout.write("x".repeat(2 * 1024 * 1024))'; echo probe-done >> "$KIT_FAKE_LOG"; fi; exit 0;;`,
+      `    probe-small) if [ "$*" = "ls-files -z" ]; then '${process.execPath}' -e 'process.stdout.write("x".repeat(${PROBE_SMALL_BYTES}))'; fi; exit 0;;`,
       '  esac',
       'fi',
       `exec '${realGit}' "$@"`,
@@ -1438,12 +1451,18 @@ test('⑭追蹤檔很多的健康倉庫不會因為 git ls-files 的輸出太多
     assert.equal(ghost.code, 2, ghost.lines.join('\n'));
     assert.match(ghost.lines[0], /登記的全部不見/u, ghost.lines[0]);
     assert.doesNotMatch(ghost.lines[0], /整份/u, `輸出超過上限＝索引裡有東西：${ghost.lines[0]}`);
-    // 問「整份是不是空的」那一次：只在登記的錨點全部不見時才問，而且輸出上限很小（超過就被 Node 停掉、不收完）。
-    // 假 git 的 probe 模式只接管那一次（ls-files -z），開始與印完各記一行：被停掉＝沒有「印完」那一行
+    // 問「整份是不是空的」那一次：只在登記的錨點全部不見時才問，而且輸出上限很小。
+    // 量到的（macOS、Node v26.0.0）：一支子行程印的東西超過 maxBuffer 時，spawnSync 用 SIGTERM 把它殺掉——
+    //   結果的 signal 是 'SIGTERM'、status 是 null、error.code 是 'ENOBUFS'（訊息「spawnSync <檔> ENOBUFS」）；
+    //   它仍然等那支子行程收場，只是不等子行程把原定的事做完（子行程印完後還睡兩秒時，spawnSync 65〜88 毫秒就回來了）。
+    //   回到手上的 stdout 也不是剛好上限，是跨過上限那一刻已經讀進來的那一塊（上限 1024：印 2048 收到 2048、印 2 MiB 收到 65536）。
+    //   沒超過上限時沒有 error、status 是子行程自己的退出碼、輸出整份收完。所以這支的判斷寫成「有 error 就不說整份是空的」。
+    // 假 git 的 probe 模式只接管那一次（ls-files -z），開始與印完各記一行；它印 2 MiB＝管線塞滿就卡住，
+    //   沒有把輸出收走的人它就走不到「印完」那一行（卡住的是寫，不是靠時間賽跑）
     const fakeLog = path.join(root, 'fake-ls.log');
-    const probeRun = (anchors) => {
+    const probeRun = (anchors, mode = 'probe') => {
       fs.rmSync(fakeLog, { force: true });
-      const r = withFake('probe', () => runChecks({ settings: withKeys({ indexAnchors: anchors }), cwd: repo }));
+      const r = withFake(mode, () => runChecks({ settings: withKeys({ indexAnchors: anchors }), cwd: repo }));
       return { r, log: fs.existsSync(fakeLog) ? fs.readFileSync(fakeLog, 'utf8') : '' };
     };
     const partial = probeRun(['anchor.txt', 'ghost.txt']);
@@ -1452,7 +1471,51 @@ test('⑭追蹤檔很多的健康倉庫不會因為 git ls-files 的輸出太多
     const all = probeRun(['ghost.txt']);
     assert.equal(all.r.code, 2, all.r.lines.join('\n'));
     assert.match(all.log, /probe-start/u, `錨點全部不見：問一次（假 git 的紀錄：${JSON.stringify(all.log)}）`);
-    assert.doesNotMatch(all.log, /probe-done/u, '那一次的輸出超過上限就被停掉、沒有收完 2 MiB');
+    assert.doesNotMatch(all.log, /probe-done/u, '那一次的輸出超過上限就被殺掉、沒有收完 2 MiB');
+    // 那個上限**很小**這件事本身（Codex #7 r2 低①；量法照 #8 r1 阻擋①改寫）：上面那一發印 2 MiB，
+    // 上限被改成 1 MiB 照樣超過、照樣綠，所以「很小」沒有被釘住。
+    // 怎麼量：另起一個行程，在**載入受審模組之前**先把 spawnSync 包一層，錄下那一次「git ls-files -z」用的上限與回傳，
+    //   再原樣委派給真的那一支（不改受審程式、不改判斷）。證據是回傳本身（上限是多少、有沒有 ENOBUFS）。
+    //   ⚠️ 原本的寫法是「假 git 印完後記一行『印完』，被殺掉就記不到」，那量的是收輸出的父行程與子行程誰先跑到，
+    //   不是有沒有超過上限——#8 r1 對考題行程送三秒 SIGSTOP，連三次都在 1024 這個正常值下假紅。
+    const spyFile = path.join(root, 'probe-spy.js');
+    fs.writeFileSync(spyFile, [
+      "'use strict';",
+      'const cp = require(\'node:child_process\');',
+      'const fs = require(\'node:fs\');',
+      'const real = cp.spawnSync;',
+      'const calls = [];',
+      'cp.spawnSync = function spy(...a) {',
+      '  const r = real(...a);',
+      "  if (String(a[0]) === 'git' && Array.isArray(a[1]) && a[1].join(' ') === 'ls-files -z') {",
+      '    calls.push({ maxBuffer: a[2] && a[2].maxBuffer, status: r.status, signal: r.signal,',
+      "      errorCode: r.error ? r.error.code : null, stdoutLength: typeof r.stdout === 'string' ? r.stdout.length : null });",
+      '  }',
+      '  return r;',
+      '};',
+      'const { runChecks } = require(process.argv[2]);   // 包好之後才載入受審模組（它在載入時就把 spawnSync 取走）',
+      'const out = runChecks({ settings: JSON.parse(process.argv[3]), cwd: process.argv[4] });',
+      'fs.writeFileSync(process.argv[5], JSON.stringify({ code: out.code, lines: out.lines, calls }));',
+      '',
+    ].join('\n'));
+    const spyOut = path.join(root, 'probe-spy.json');
+    const spied = withFake('probe-small', () => {
+      fs.rmSync(spyOut, { force: true });
+      const settings = JSON.stringify(withKeys({ indexAnchors: ['ghost.txt'] }));
+      const r = spawnSync(process.execPath, [spyFile, path.join(ROOT, 'tools', 'run-checks.js'), settings, repo, spyOut], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `包一層的那個行程要正常結束：${r.stderr}`);
+      return JSON.parse(fs.readFileSync(spyOut, 'utf8'));
+    });
+    assert.equal(spied.code, 2, spied.lines.join('\n'));
+    assert.equal(spied.calls.length, 1, `錨點全部不見：問「整份是不是空的」剛好一次（錄到 ${JSON.stringify(spied.calls)}）`);
+    const probeCall = spied.calls[0];
+    assert.ok(probeCall.maxBuffer < PROBE_SMALL_BYTES, `那一次的上限要比這一發印的 ${PROBE_SMALL_BYTES} 位元組小（錄到 ${probeCall.maxBuffer}）`);
+    assert.equal(probeCall.errorCode, 'ENOBUFS', `所以那一次真的撞到上限（錄到 ${JSON.stringify(probeCall)}）`);
+    // 對照組（不是空包彈）：同一支假 git，只把上限換成 1 MiB＝沒有撞到上限、整份 PROBE_SMALL_BYTES 都收得到。
+    // 證明上面那一發的 ENOBUFS 是上限很小造成的，而且這個樣本真的有印那麼多
+    const roomy = withFake('probe-small', () => spawnSync('git', ['ls-files', '-z'], { cwd: repo, encoding: 'utf8', env: gitEnv(), stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024 }));
+    assert.deepEqual([roomy.status, roomy.error ? roomy.error.code : null, roomy.stdout.length], [0, null, PROBE_SMALL_BYTES],
+      `對照組：上限換成 1 MiB＝沒有 error、真的收到 ${PROBE_SMALL_BYTES} 位元組`);
     // 不收輸出不等於不看退出碼：ls-files 失敗照樣擋
     const quiet = withFake('quiet', () => runChecks({ settings: withKeys({}), cwd: repo }));
     assert.equal(quiet.code, 2, quiet.lines.join('\n'));

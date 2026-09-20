@@ -57,7 +57,7 @@ const FULL_NAME = 'mcp__guard_canary__ping';
 const PROSE_MENTIONS = [['templates/canary-install.md', 2], ['tools/guard-copy.js', 2], ['templates/hook-codex-global.json', 1], ['MACHINES.md', 2]];
 /** 伺服器的位元組釘（改了本體就要重算；重算的人要負責看過改了什麼）：
  *  node -e "console.log(require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync('tools/canary-server.js')).digest('hex'))" */
-const SERVER_BYTES_SHA256 = '6d614f2c59b4d558ab9b8475d96a7b932ed92fd19d9bba79119ee0f60d9de92b';
+const SERVER_BYTES_SHA256 = '6c74b251a7172bebd38e22ba8be3c0463facd84375b6eaeb7cb2744f66491a5d';
 
 const hello = (protocolVersion, id = 1) => ({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion, capabilities: {}, clientInfo: { name: 'kit-test', version: '1' } } });
 const HELLO = hello('2025-06-18');
