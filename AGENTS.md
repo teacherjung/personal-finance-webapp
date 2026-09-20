@@ -157,8 +157,9 @@
       （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
       ——落點見 `test/worktree-integrity.test.js` 的沙盒節（舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役；套件考題用的是 E4 的扣法、不是本條的範例）。
     - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push`、`mutate.sh` 與協作套件的範本
-      `templates/pre-push`（本機鉤子照它呼叫三關執行器，那一行要跟鉤子逐字相同）都不經過 Node，
-      `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
+      `templates/pre-push`（本機鉤子照它呼叫三關執行器）都不經過 Node，`gitEnv()` 管不到它們，
+      各自有一行同語意的 `unset` 迴圈——**三份的那一行逐字相同**，有題釘著（呼叫執行器的那一行
+      兩份不同，不在那一題射程內）。⚠️ `mutate.sh` 尤其要緊——
       它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。
     - **`gh` 也在射程內**：它會自己再去 spawn git（實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>`
       回 `failed to run git: fatal: not a git repository`）。指到另一個**有效** repo 時，
