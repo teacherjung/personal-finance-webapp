@@ -46,7 +46,10 @@ args = ["<專案根目錄的絕對路徑>/tools/canary-server.js"]
 
 `settings.json` 的 `forbidden.deny` 加上 `mcp__guard_canary__ping`，**永久留著**（每次改清單、換複本、重按信任都要再按一次這顆鈕）。
 
-⚠️ **不要**把它加進 AI 平台自己的拒絕清單（例如 Claude 的 `permissions.deny`）：那一層在鉤子之前就擋掉，按下去量到的是平台、不是攔截器。
+⚠️ **不要**把它加進 AI 平台自己的拒絕清單（Claude Code 的 `permissions.deny`；**這一條只講 Claude Code**，別的平台沒去核過）：設定檔裡針對外接工具的拒絕規則**只能寫光名字**（帶括號的那種會被整條跳過），而光名字的效果是**那顆工具在規則存在的期間不可呼叫**——官方權限文件逐字（2026-09-21 讀）：「A bare tool name like Bash removes the tool from Claude's context entirely, so Claude never sees it.」。所以放進去的後果不是「按下去量到的是平台、不是攔截器」，是**根本按不到**。
+（這裡說「不可呼叫」而不是「所有清單上的定義都消失」，是因為官方快取那一頁另寫：已經在進行中的對話與工具搜尋可能仍留著定義。要的結論一樣——按不到就驗不到攔截器。）
+
+⚠️ **受管設定層（系統那一層）更不可以放**：那一層的規則在的期間這顆鈕一樣不可呼叫，而且**要管理員把那個檔改掉或刪掉才恢復**。那一層的裝法、驗收與守不到＝[managed-deny-install.md](managed-deny-install.md)。
 
 ⚠️ 原本已經有別的攔截層並存時，這個名字要**只有新那一層擋得住**：別的層的清單裡不要有它。這樣看到拒絕才代表新那一層在跑。
 
