@@ -156,7 +156,8 @@
     - **考題裡不要 `git init`**（那正是事故的兇器）。真的需要沙盒 repo：環境一律**從零組**
       （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
       ——落點見 `test/worktree-integrity.test.js` 的沙盒節（舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役；套件考題用的是 E4 的扣法、不是本條的範例）。
-    - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push` 與 `mutate.sh` 不經過 Node，
+    - **shell 那半邊是另外的實作**：`scripts/git-hooks/pre-push`、`mutate.sh` 與協作套件的範本
+      `templates/pre-push`（本機鉤子照它呼叫三關執行器，那一行要跟鉤子逐字相同）都不經過 Node，
       `gitEnv()` 管不到它們，各自有一行同語意的 `unset` 迴圈。⚠️ `mutate.sh` 尤其要緊——
       它的每一道保護都建立在 `git status` 上，量錯樹就是**防假綠的工具自己假綠**。
     - **`gh` 也在射程內**：它會自己再去 spawn git（實測 `env GIT_DIR=<不存在的路徑> gh pr view <N>`
@@ -168,7 +169,7 @@
       「只刪 `GIT_DIR`」的列名版仍會全綠（**我自己做過一次這種假綠**）。
       ②**直接斷言子行程收到什麼**（假 `git` 放進 `PATH` 讀它實際看到的環境）——這一種才關得起門，
       未來冒出沒人見過的家族也涵蓋得到。兩種的射程對照表在 `test/helpers/dirty-git-env.js` 檔頭。
-      純函式與兩份 shell 的題在 `test/git-env.test.js`，它的檔頭列出各呼叫點的題落在哪一支。
+      純函式與上面那三份 shell 的題在 `test/git-env.test.js`，它的檔頭列出各呼叫點的題落在哪一支。
     - 事故的完整病理與證據鏈在 `docs/bare-repo-incident.md`（單一真相，勿重抄）。
 12. **必須懂的概念要在網頁上就地白話解釋**（William 定 2026-07-22，兩級制拍板時明確留下的例外）：
     「懂了才不會把正常數字當算錯」的概念**必須在網頁上就地白話解釋**——用 `.info-link`＋`openInfo`
