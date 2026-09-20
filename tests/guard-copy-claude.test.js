@@ -58,6 +58,8 @@
 //   ⑱（覆蓋缺口 M03）不給 --from＝抽設定登記的主幹：主幹叫 trunk＝抽 origin/trunk（誘餌 origin/main 指到比較舊的一顆）。
 //   ⑲（覆蓋缺口 M05）大小上限的邊界：剛好上限＝那一行退 2、copyProblem 不收；少 1 位元組＝都收（兩邊同一個邊界：收＝小於上限）；
 //     對照組＝那一行的上限往外推一格，剛好上限的照用。
+//   ⑳（Codex #7 r2 低）拒絕形狀**同時**有兩個問題時，說的是檢查順序在前面那一個（相鄰的四對各一發；先驗兩個問題真的都在）：
+//     ⑮每一發只有一個問題，所以那幾道檢查換順序不會有題紅。
 //   ⑩⑪匯入函式與 SHELLOPTS 那幾段只在 /bin/sh 是 bash 的機器跑，不是就跳過並寫明（⑪的 /bin/bash 那一發只看有沒有 /bin/bash）；⑦的 PERL5OPT 那一段只在 /usr/bin/shasum 是 perl 腳本時跑；
 //   ⑫只在這台機器的登入 shell 真的讀假家的 .profile 時跑（先用對照組驗），不是就跳過並寫明；「撤不掉」那一段以 root 跑時不跑（改權限擋不住 root）。
 //   ⑤的 CDPATH 對照組：/bin/sh 不是 bash、而且 cd 用 CDPATH 時沒印字的機器上不跑（留一句診斷；正面那一發照跑）。
@@ -1121,5 +1123,65 @@ test('⑲大小上限的邊界（覆蓋缺口 M05）：settings.json、tools 底
     const wider = at.cmd.split(LIMIT).join(WIDER);
     assert.equal(wider.split(WIDER).length, 3, '前提：那一行的兩處上限都換到了');
     allows(hook(wider, { home: at.home }), `對照組：${rel} 剛好上限，上限往外推一格的寫法照用`);
+  }
+}));
+
+test('⑳拒絕形狀同時有兩個問題時，說的是檢查順序在前面那一個（最上層的鍵 → hookEventName → permissionDecision → permissionDecisionReason → hookSpecificOutput 裡多出來的鍵）', () => withScratch((scratch) => {
+  // 為什麼要釘：⑮每一發只造一個問題，所以把 claudeDenyProblem() 裡那幾道檢查換順序（例如把「內層多出來的鍵」
+  // 那一段搬到最前面）不會有任何一題紅。這一支每一發同時造**相鄰的兩個**問題，順序被換掉就會說成後面那一句。
+  // 每一發：改來源的 tools/forbidden-tools.js（兩處）→ 先用那份來源自己的 hookOutput 驗「兩個問題真的都在」
+  // （不是空包彈）→ 重抽複本、試跑沒過，訊息只說前面那一句、不說後面那一句。
+  const TOP_KEY = ['return JSON.stringify({\n', 'return JSON.stringify({\n    continue: true,\n'];
+  const EVENT = ["hookEventName: 'PreToolUse',", "hookEventName: 'PostToolUse',"];
+  const DECISION = ["permissionDecision: 'deny',", "permissionDecision: 'ask',"];
+  const REASON = ['permissionDecisionReason: `', "permissionDecisionReason: '' && `"];
+  const INNER = ["permissionDecision: 'deny',", "permissionDecision: 'deny',\n      additionalContext: 'x',"];
+  const PAIRS = [
+    {
+      why: '最上層多一個鍵＋hookEventName 不對', edits: [TOP_KEY, EVENT],
+      both: (d) => assert.deepEqual([Object.keys(d).sort(), d.hookSpecificOutput.hookEventName], [['continue', 'hookSpecificOutput'], 'PostToolUse']),
+      says: /最上層要剛好只有 hookSpecificOutput/u, notSays: /hookEventName 不是 PreToolUse/u,
+    },
+    {
+      why: 'hookEventName 不對＋permissionDecision 不是 deny', edits: [EVENT, DECISION],
+      both: (d) => assert.deepEqual([d.hookSpecificOutput.hookEventName, d.hookSpecificOutput.permissionDecision], ['PostToolUse', 'ask']),
+      says: /hookEventName 不是 PreToolUse/u, notSays: /permissionDecision 不是 deny/u,
+    },
+    {
+      why: 'permissionDecision 不是 deny＋理由是空字串', edits: [DECISION, REASON],
+      both: (d) => assert.deepEqual([d.hookSpecificOutput.permissionDecision, d.hookSpecificOutput.permissionDecisionReason], ['ask', '']),
+      says: /permissionDecision 不是 deny/u, notSays: /permissionDecisionReason 不是非空字串/u,
+    },
+    {
+      why: '理由是空字串＋內層多一個鍵', edits: [INNER, REASON],
+      both: (d) => assert.deepEqual([d.hookSpecificOutput.permissionDecisionReason, d.hookSpecificOutput.additionalContext], ['', 'x']),
+      says: /permissionDecisionReason 不是非空字串/u, notSays: /hookSpecificOutput 裡要剛好只有/u,
+    },
+  ];
+  for (const p of PAIRS) {
+    const src = sourceRepo(scratch, editFile('tools/forbidden-tools.js', (c) => {
+      let out = c;
+      for (const [from, to] of p.edits) {
+        assert.equal(out.split(from).length, 2, `${p.why}：前提：攔截器裡剛好有一處「${from.trim()}」`);
+        out = out.split(from).join(to);   // 不用 String.replace：替換字串裡的 $ 會被當成特殊寫法吃掉
+      }
+      return out;
+    }));
+    // 不是空包彈：那份來源印出來的拒絕，兩個問題真的都在（叫它自己的 hookOutput，不必先落地）。
+    // 用子行程叫、不把那份改過的攔截器載進這支考題：①跟這一族的紀律一致（試跑那條路也是只跑指令、
+    // 不把複本裡的程式載進來）②每一發都是乾淨的 require 快取，不會被上一發的載入結果影響
+    // ③使用專案的 lint 禁止「require 的模組名不是字面量」（它是 xlsx 收斂點護欄的一部分），
+    //   在這裡寫動態 require 會讓同步過去的那一支紅。
+    const said = spawnSync(process.execPath,
+      ['-e', 'process.stdout.write(require(process.argv[1]).hookOutput("試跑", "測試禁區"))',
+        path.join(src, 'tools', 'forbidden-tools.js')],
+      { encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(said.status, 0, `${p.why}：叫那份來源的 hookOutput 應該要成功（${said.stderr}）`);
+    p.both(JSON.parse(said.stdout));
+    const r = buildClaude({ from: 'HEAD', root: src, home: fakeHome(scratch), allowTemp: true });
+    assert.match(r.failure || '', /照清單該擋的假名沒有一個被擋下/u, `${p.why}：試跑要沒過（${r.failure}）`);
+    assert.match(r.failure, p.says, `${p.why}：要說前面那一句（${r.failure}）`);
+    assert.doesNotMatch(r.failure, p.notSays, `${p.why}：不可以說後面那一句——檢查順序被換掉了（${r.failure}）`);
+    assert.ok(!fs.existsSync(r.copyDir), `${p.why}：試跑沒過不可以落地`);
   }
 }));
