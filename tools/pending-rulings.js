@@ -30,6 +30,8 @@ const ASK = /^## ❓ 待裁（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW = /^## 🚫 撤回（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW_REASON = /^撤回理由：(題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)（[^\n）]*\S[^\n）]*）[ \t]*$/mu;
 const NEAR = /❓|⚖|🚫|待裁|裁示|撤回/u;
+/** 疑似那一欄逐則印幾則（其餘收成一行，總數與最早日期照印）；理由見 render()。 */
+const NEAR_SHOWN = 8;
 
 const realDate = (s) => { const m = DATE.exec(s); if (!m) return false; const d = new Date(`${s}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; };
 const { leadingText, stopNote } = require('./markdown-effective.js');
@@ -143,8 +145,24 @@ function render({ open, ruled, withdrawn, near }) {
   lines.push(`已撤回：${withdrawn.length} 則`);
   for (const { ask: q, by } of withdrawn) lines.push(`  ・${q.title}｜問：${where(q)}｜撤：${by.date}，${where(by)}`);
   if (near.length) {
-    lines.push(`疑似（長得像留痕但不採計）：${near.length} 則`);
-    for (const n of near) lines.push(`  ・${where(n)}：${n.why}——「${firstLine(n.body).slice(0, 60)}」`);
+    // 這一欄的用途是「**今天**寫壞的那一則要被看見」（寫壞＝配不到題，那一題會一直掛在還沒回，
+    // 而貼的人以為早就回完了）。所以照時間**新到舊**排、只逐則印最近 NEAR_SHOWN 則，其餘收成一行——
+    // 照留言原本的順序印時最舊的在最上面，今天那一則排在最後，這一欄等於失效（第一個使用專案真語料 38 則）。
+    // 為什麼不是「哪一天換範本之前算舊的」（裁示者 2026-09-20 裁 a）：那要在每個專案的設定多一格切換日，
+    // 每個使用專案都得補、補之前它自己的考卷會紅，而且那個日期本身是要維護的事實。這裡只用新舊排序，
+    // **不宣稱**分得出「換範本以前的」與「今天寫錯的」。
+    // ⚠️ **守不到（r1 第 1 條量到的，不要再寫成別的）**：收起來的那些只交代「有幾則、最早哪一天」，
+    //   **不保證內容變壞看得出來**——排序用的是留言的**建立**時間，事後把一則舊留言編輯成寫壞的裁示紀錄，
+    //   它不會因為今天被編輯而排到前面；審查者實測那種情形整份輸出**逐字相同**（連總數與最早日期都沒變），
+    //   而且疑似一增一減也會互相抵銷。所以「靠總數變動察覺」是假的，不要這樣宣稱。
+    const day = (c) => (Number.isFinite(at(c)) ? new Date(at(c)).toISOString().slice(0, 10) : '時間讀不出來');
+    const sorted = [...near].sort((a, b) => at(b) - at(a));
+    const shown = sorted.slice(0, NEAR_SHOWN);
+    const rest = sorted.slice(NEAR_SHOWN);
+    lines.push(`疑似（長得像留痕但不採計）：${near.length} 則${rest.length ? `，以下列最近 ${shown.length} 則` : ''}`);
+    for (const n of shown) lines.push(`  ・${day(n)}｜${where(n)}：${n.why}——「${firstLine(n.body).slice(0, 60)}」`);
+    // 收合那一行**不說「更早」**（r1 第 2 條）：同一秒的留言可能剛好跨過上限，第 NEAR_SHOWN+1 則其實與前面同時。
+    if (rest.length) lines.push(`  ・另有 ${rest.length} 則（最早 ${day(rest[rest.length - 1])}），不逐則列`);
   }
   return lines;
 }
