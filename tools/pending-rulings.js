@@ -30,6 +30,8 @@ const ASK = /^## ❓ 待裁（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW = /^## 🚫 撤回（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW_REASON = /^撤回理由：(題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)（[^\n）]*\S[^\n）]*）[ \t]*$/mu;
 const NEAR = /❓|⚖|🚫|待裁|裁示|撤回/u;
+/** 疑似那一欄逐則印幾則（其餘收成一行，總數與最早日期照印）；理由見 render()。 */
+const NEAR_SHOWN = 8;
 
 const realDate = (s) => { const m = DATE.exec(s); if (!m) return false; const d = new Date(`${s}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; };
 const { leadingText, stopNote } = require('./markdown-effective.js');
@@ -130,6 +132,10 @@ function evaluate(comments, decider) {
   for (const x of [...rulings, ...withdraws]) {
     if (!matchesAny(x) && stopNote(x.body)) near.push({ ...x, why: `沒有配到任何比它早的問題${stopNote(x.body)}` });
   }
+  // 疑似是分兩輪蒐集的（上面那一輪照時間、這一輪接在尾巴），所以 near 裡的位置**不是**平台給的順序。
+  // 印法在同一秒時要靠平台順序決定誰後到，所以在這裡把平台給的原始位置帶上（判斷完全不看它）。
+  const posOf = new Map(comments.map((c, i) => [c.id, i]));
+  for (const n of near) n.pos = posOf.has(n.id) ? posOf.get(n.id) : -1;
   return { open, ruled, withdrawn, near };
 }
 
@@ -143,8 +149,40 @@ function render({ open, ruled, withdrawn, near }) {
   lines.push(`已撤回：${withdrawn.length} 則`);
   for (const { ask: q, by } of withdrawn) lines.push(`  ・${q.title}｜問：${where(q)}｜撤：${by.date}，${where(by)}`);
   if (near.length) {
-    lines.push(`疑似（長得像留痕但不採計）：${near.length} 則`);
-    for (const n of near) lines.push(`  ・${where(n)}：${n.why}——「${firstLine(n.body).slice(0, 60)}」`);
+    // 這一欄的用途是「**今天**寫壞的那一則要被看見」（寫壞＝配不到題，那一題會一直掛在還沒回，
+    // 而貼的人以為早就回完了）。所以照時間**新到舊**排、只逐則印最近 NEAR_SHOWN 則，其餘收成一行——
+    // 照留言原本的順序印時最舊的在最上面，今天那一則排在最後，這一欄等於失效（第一個使用專案真語料 38 則）。
+    // 為什麼不是「哪一天換範本之前算舊的」（裁示者 2026-09-20 裁 a）：那要在每個專案的設定多一格切換日，
+    // 每個使用專案都得補、補之前它自己的考卷會紅，而且那個日期本身是要維護的事實。這裡只用新舊排序，
+    // **不宣稱**分得出「換範本以前的」與「今天寫錯的」。
+    // ⚠️ **守不到（照實寫，不要擴大也不要縮小）**：收起來的那些只交代「有幾則、最早哪一天」，
+    //   ①排序用留言的**建立**時間、事後編輯不改它 ⇒ 一則舊留言被編輯成寫壞的裁示紀錄，整份輸出**可能
+    //     逐字相同**（連總數與最早日期都沒變）——審查者實測過兩種：它本來就在疑似裡又排不進最近幾則
+    //     （被收起來），以及它**有**逐則列出、但改的是逐則那一行印不到的地方（逐則只印日期、位置、
+    //     原因、第一行前 60 字——原話改一個字、內文改一段，都看不出來）。
+    //     反過來也不是必然：本來是合格的裁示／合格的 ❓／普通留言時，編輯之後還沒回、已裁或疑似的
+    //     數字會變，輸出就不一樣；「疑似一增一減抵銷總數」是**另一種**情形（兩則對沖）。
+    //     所以「靠總數變動察覺」是假的，不要這樣宣稱。
+    //     ⚠️ 同一秒時，把一則從第一輪疑似改成第二輪疑似（或反過來）會換掉它在平台順序裡的相對位置嗎？
+    //     不會——決勝鍵讀的是**平台給的原始位置**（evaluate 帶上來的 pos），不是它在 near 裡的位置。
+    //   ②「要被看見」**不等於**「一定在最上面」：只要還有更新的疑似，今天那一則就排在它們後面；
+    //     更新的超過 NEAR_SHOWN 則時，今天那一則一樣會被收進那一行。
+    //   ③同一秒：下面用「平台給的順序在後面的算後到」當決勝鍵（GitHub 的留言照建立時間遞增給）
+    //     ——那是**推論不是保證**，平台改順序就不成立。
+    //   ④每一則前面與收合行的日期都是 **UTC 日**（排序比的是瞬間值、不受影響）：台北 00:00〜07:59
+    //     貼的會印成前一天。這樣印是為了讓輸出不跟著機器時區跑，考題才釘得住。
+    const day = (c) => (Number.isFinite(at(c)) ? new Date(at(c)).toISOString().slice(0, 10) : '時間讀不出來');
+    // 新到舊；同一秒時「平台給的原始順序在後面的」排前面（守不到③），不然剛貼的那一則會被擠進收合行。
+    // ⚠️ 用 evaluate 帶上來的 `pos`（＝平台原始位置），**不可以**用它在 near 裡的位置：疑似是分兩輪蒐集的，
+    //   第二輪那一族接在尾巴，拿 near 的位置當決勝鍵會把剛貼的那一則擠出清單（#628 複審後掃 r3 的回歸）。
+    const posOf = (x) => (Number.isFinite(x.pos) ? x.pos : -1);
+    const sorted = [...near].sort((a, b) => (at(b) - at(a)) || (posOf(b) - posOf(a)));
+    const shown = sorted.slice(0, NEAR_SHOWN);
+    const rest = sorted.slice(NEAR_SHOWN);
+    lines.push(`疑似（長得像留痕但不採計）：${near.length} 則${rest.length ? `，以下列最近 ${shown.length} 則` : ''}`);
+    for (const n of shown) lines.push(`  ・${day(n)}｜${where(n)}：${n.why}——「${firstLine(n.body).slice(0, 60)}」`);
+    // 收合那一行**不說「更早」**（r1 第 2 條）：同一秒的留言可能剛好跨過上限，第 NEAR_SHOWN+1 則其實與前面同時。
+    if (rest.length) lines.push(`  ・另有 ${rest.length} 則（最早 ${day(rest[rest.length - 1])}），不逐則列`);
   }
   return lines;
 }
