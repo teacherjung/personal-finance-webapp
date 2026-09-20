@@ -210,6 +210,18 @@ test('CI：換成套件執行器之後，依賴安全通報（npm audit，high �
       + '搬去 dev-machine 也不算（那個 job 只印不擋）');
   assert.ok(checks !== -1 && audit < checks,
     'deploy-runtime 裡 audit 要排在三關（node tools/run-checks.js）前面——先擋掉 high 以上的依賴通報，再花一分半跑考卷');
+  // 2026-09-20（William 裁 a）：這個 job 的 npm 要先換成 11。理由是量到的——Node 22.23.1 隨附的 npm 10.9.8
+  // 在 bulk 那一次失敗時會退回 /-/npm/v1/security/audits/quick，而那條管道正在退役、回 400 就讓這一步紅
+  // （#624 r1 那一場的日誌）。npm 11 的 audit-report.js 沒有 quick 那一段。拿掉這一步不會有任何別的題紅，所以釘在這裡。
+  const upgrade = deploy.findIndex((l) => /^run:\s*npm i -g npm@11$/.test(l));
+  assert.ok(upgrade !== -1,
+    'deploy-runtime 的生效行裡少了 `npm i -g npm@11`——少了它，這個 job 用的是 Node 22 隨附的 npm 10.9.8，'
+      + 'bulk 一失敗就會退回正在退役的 quick 端點、整步紅（修法不是把 audit 改成忽略失敗）');
+  assert.ok(upgrade < audit,
+    '`npm i -g npm@11` 要排在 npm audit 前面（也在 npm ci 前面），不然那兩步用的還是舊的 npm');
+  const install = deploy.findIndex((l) => /^run:\s*npm ci$/.test(l));
+  assert.ok(install !== -1 && upgrade < install,
+    '`npm i -g npm@11` 也要排在 `npm ci` 前面——npm ci 自己也會做一次依賴通報，排在後面的話那一次仍走舊的 npm');
 });
 
 test('CI：dev-machine 探照燈 job 還在、而且仍是 continue-on-error（不擋部署）', () => {
