@@ -59,6 +59,27 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      # 這個 job 的 npm 換成 11（2026-09-20，William 裁 a）：**不是**為了新功能，是為了不再掉進 npm 官方要退役的那條查詢管道。
+      #   量到的機制（#624 r1 那一場的日誌 job 105938031538，Node 22.23.1 隨附 npm 10.9.8）：npm 先 POST
+      #   /-/npm/v1/security/advisories/bulk，**那一次失敗時會自己退回** /-/npm/v1/security/audits/quick
+      #   （@npmcli/arborist 的 audit-report.js：bulk 的 catch 裡直接打 quick），而 quick 回
+      #   「This endpoint is being retired」＋400 Invalid package tree ⇒ `npm audit` 退 1 ⇒ 必要檢查紅、三關整個被跳過。
+      #   npm 11 的同一支檔已經**沒有 quick 那一段**（只有 bulk），所以 bulk 偶爾失敗時不會再變成「打到要退役的端點」。
+      #   ⚠️ 這一步刻意排在 npm ci 前面：npm ci 自己也會做一次通報（同一場日誌裡它也印了那句退役通知），換在前面兩步才都走 bulk。
+      #   **釘死一顆、不用 11 或 latest**（複審後掃第 2 條）：`npm@11` 是浮動的——之後某一顆 11.x 若把「bulk 失敗」改成退 0、
+      #     或 --audit-level 的口徑變寬，這個倉庫一個字都不用改、考題全綠、擋會靜靜變鬆。上線的 Node 本來就釘死在 .node-version，
+      #     審計器跟著同一個規矩：要換版本就要有人看過 changelog、在一支變更裡換（下面那一題釘住兩處版本要一致）。
+      #   「bulk 自己失敗時照樣紅」是量到的、不是推論（複審後掃第 1 條要求的證據）：Codex 在 #626 r1 用隔離的假 registry
+      #     讓 bulk 回 400，npm 10.9.8 的請求序列是 bulk→quick、11.19.1 只有 bulk，**兩版最後都退 1**（macOS、Node 26）。
+      #     沒量到的照實說：npm 11 在 Node 22.23.1 上「逼 bulk 失敗」這一場沒跑過（本機沒有 Node 22）。
+      #   誠實劃界：這只拿掉「退回舊管道」那一條路，不承諾解決 bulk 自己的故障——那時這一步該紅（不可以改成忽略失敗）。
+      - name: 把這個 job 的 npm 換成釘住的那一顆（不再退回要退役的舊查詢管道）
+        run: npm i -g npm@11.19.1
+      # 複審後掃第 3 條：上一步退 0 只代表那一行指令成功，**不代表 PATH 上的 npm 換掉了**（全域 prefix 跟
+      #   setup-node 給的 prefix 不一致時，會裝到另一個目錄而當步仍綠，後面兩步照樣用 Node 22 隨附的 10.9.8）。
+      #   所以這裡直接問「現在 PATH 上的 npm 是誰」，對不上就紅——它是這支修法唯一的執行期證據。
+      - name: 確認 PATH 上的 npm 真的換成釘住的那一顆
+        run: test "$(npm -v)" = "11.19.1"
       - name: 安裝相依（含 typescript/@types 開發工具）
         run: npm ci
       # 依賴安全通報（2026-09-05，Codex 體檢第 1 項）：只擋 high 以上——moderate 通報常是間接依賴的 DoS 類，

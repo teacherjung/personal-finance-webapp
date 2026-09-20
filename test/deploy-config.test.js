@@ -210,6 +210,34 @@ test('CI：換成套件執行器之後，依賴安全通報（npm audit，high �
       + '搬去 dev-machine 也不算（那個 job 只印不擋）');
   assert.ok(checks !== -1 && audit < checks,
     'deploy-runtime 裡 audit 要排在三關（node tools/run-checks.js）前面——先擋掉 high 以上的依賴通報，再花一分半跑考卷');
+  // 2026-09-20（William 裁 a）：這個 job 的 npm 要先換成釘住的那一顆。理由是量到的——Node 22.23.1 隨附的 npm 10.9.8
+  // 在 bulk 那一次失敗時會退回 /-/npm/v1/security/audits/quick，而那條管道正在退役、回 400 就讓這一步紅
+  // （#624 r1 那一場的日誌）。npm 11 的 audit-report.js 沒有 quick 那一段。拿掉這一步不會有任何別的題紅，所以釘在這裡。
+  // ⚠️ 釘死一顆、不收浮動寫法（複審後掃第 2 條）：`npm@11`／`npm@latest` 之下，某一顆 11.x 把判定改寬，
+  //    這個倉庫一個字都不用改、考題全綠、擋會靜靜變鬆。審計器跟上線的 Node 同一個規矩＝版本釘死在檔案裡。
+  const PIN = /^run:\s*npm i -g npm@(\d+\.\d+\.\d+)$/;
+  const upgrade = deploy.findIndex((l) => PIN.test(l));
+  assert.ok(upgrade !== -1,
+    'deploy-runtime 的生效行裡少了 `npm i -g npm@<釘死的版本>`——少了它，這個 job 用的是 Node 22 隨附的 npm 10.9.8，'
+      + 'bulk 一失敗就會退回正在退役的 quick 端點、整步紅；版本也不可以寫成 npm@11 或 npm@latest 這種浮動的'
+      + '（那等於審計器換版本沒有人看過，判定變寬時沒有任何東西會紅）。修法不是把 audit 改成忽略失敗');
+  const pinned = PIN.exec(deploy[upgrade])[1];
+  assert.ok(upgrade < audit,
+    '換 npm 那一步要排在 npm audit 前面（也在 npm ci 前面），不然那兩步用的還是舊的 npm');
+  const install = deploy.findIndex((l) => /^run:\s*npm ci$/.test(l));
+  assert.ok(install !== -1 && upgrade < install,
+    '換 npm 那一步也要排在 `npm ci` 前面——npm ci 自己也會做一次依賴通報，排在後面的話那一次仍走舊的 npm');
+  // 複審後掃第 3 條：上一步退 0 不代表 PATH 上的 npm 真的換掉了（裝到別的 global prefix 時當步仍綠）。
+  // 那一句 test 是這支修法在雲端唯一的執行期證據，而且它比對的版本要跟裝的那一顆逐字相同。
+  const verify = deploy.findIndex((l) => /^run:\s*test "\$\(npm -v\)" = "(\d+\.\d+\.\d+)"$/.test(l));
+  assert.ok(verify !== -1,
+    'deploy-runtime 少了「確認 PATH 上的 npm 真的換成釘住的那一顆」那一步（`test "$(npm -v)" = "<版本>"`）——'
+      + '沒有它，npm 裝到別的目錄時整個 job 照樣綠，而 audit 用的還是會退回舊管道的那一顆');
+  assert.equal(/^run:\s*test "\$\(npm -v\)" = "(\d+\.\d+\.\d+)"$/.exec(deploy[verify])[1], pinned,
+    `確認那一步比對的版本（${/"(\d+\.\d+\.\d+)"$/.exec(deploy[verify])[1]}）跟裝的那一顆（${pinned}）不一樣——`
+      + '兩處只改一處時，這個 job 會在確認那一步紅，但紅的原因會被誤讀成「npm 沒換成功」');
+  assert.ok(upgrade < verify && verify < install,
+    '確認那一步要緊接在換 npm 之後、而且仍在 `npm ci` 前面（先確認換好了，再讓後面幾步去用它）');
 });
 
 test('CI：dev-machine 探照燈 job 還在、而且仍是 continue-on-error（不擋部署）', () => {
