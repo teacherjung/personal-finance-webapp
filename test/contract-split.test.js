@@ -462,7 +462,7 @@ const MANIFEST = {
     exempt: [],
     /** ⚠️ 這一份的**觸發方式跟前五份不同**：README 硬規則③要求「不分領域一律讀」。
      *  下面這份 files 照實登記。⚠️ **不要寫「一律」**：既有抽取式只認「副檔名後緊接反引號」的寫法，
-     *  像 `lib/store.js emptyDb()` 這種一格塞路徑＋識別字的就抽不到（#633 r1 抓到兩個漏網）；
+     *  像 `lib/store.js emptyDb()` 這種一格塞路徑＋識別字的就抽不到（#633 r1 抓到兩個、複審後掃又抓到第三個）；
      *  15 題綠**不能**證明沒有漏登記，只能證明抽得到的那些都登記了。
      *  它的作用是**額外**的路徑路由，不是取代硬規則③。 */
     files: [
@@ -480,6 +480,7 @@ const MANIFEST = {
       'test/exposure-sync-integrity.test.js',
       'test/input-guard.test.js',
       'test/request-flags.test.js',
+      'test/server.test.js',
     ],
   },
   'docs/contracts/cloud-security.md': {
