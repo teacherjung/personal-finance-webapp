@@ -459,6 +459,11 @@ test('★ 容許判斷｜呼叫**正式**的 isToleratedRefusal：只有「形�
   for (const t of ['shape GET /v1/bundle/archive', 'shape GET /v1/subagents/bundle', 'shape GET /']) {
     assert.ok(TOLERATED_REFUSALS.includes(t), `容許清單少了 ${t}`);
   }
+  // ★ 這兩發才是「決定權在**原因碼**、不在括號裡那句話」的證據（#635 r3 #1）。
+  //   上面那些反例**同時**換了原因碼與診斷文字，所以它們分不出是哪一個在做決定——
+  //   審查者做了一個「跳過前三欄、只比對診斷文字」的突變，上面全部照樣綠。這兩發會紅。
+  assert.equal(isToleratedRefusal('shape GET / (診斷文字隨便寫都不該影響判斷)'), true, '括號裡那句話不該參與判斷');
+  assert.equal(isToleratedRefusal('bad-target GET / (形狀不在白名單：GET /)'), false, '診斷文字對了也不算——決定權在原因碼');
 });
 
 test('★ rejectReason｜解析不了的 request-target **不可以**退化成合法的根路徑（原因碼要分得開）', () => {
@@ -486,8 +491,9 @@ test('★ r1 #1 端到端｜被容許的只有「真的根路徑」：解析不�
   // ⚠️ **這一題射程到哪為止**（#635 r2 #2）：三臂改的是 request-target，原因碼與診斷文字會**一起**變，
   //    所以它是「輸入→退出碼」的回歸題，**不是**「同一個輸入、只改原因碼」的對照。
   //    審查者實測過：把正式的 isToleratedRefusal 改成完全不看原因碼、只比對括號內的診斷文字，
-  //    這一題**仍然全過**。守原因碼那件事由上面那兩題純函式題負責，不要把這題講成它證明了原因碼。
-  //    這一題能講的只有：兩個反例退 2、真的根路徑退 0 並留下拒絕記錄。
+  //    這一題**仍然全過**。**這一題能講的只有**：兩個反例退 2、真的根路徑退 0 並留下拒絕記錄。
+  //    「決定權在原因碼」那件事由上面那題的**最後兩發斷言**負責——那兩發是我自己跑過同一個突變
+  //    （正式綠／突變紅）之後才敢這樣寫的；其餘反例同時換了原因碼與診斷文字，分不出是哪一個在決定。
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
   const bearer = 'sed -n \'s/.*"key":"\\([^"]*\\)".*/\\1/p\' "$GROK_HOME/auth.json"';
