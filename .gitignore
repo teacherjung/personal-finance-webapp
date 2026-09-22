@@ -47,3 +47,6 @@ output/
 /skills-lock.json
 /meeting.sh
 /meeting_0724_1414.md
+
+# grok 升版助手寫檔時的同目錄暫存檔（正常情況下自己會清掉；清不掉時它會印出位置）
+*.grok-bump-tmp

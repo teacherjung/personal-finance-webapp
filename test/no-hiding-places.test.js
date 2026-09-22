@@ -60,6 +60,10 @@ const ALLOWED_GITIGNORE = [
   '/skills-lock.json',                  // 同上
   '/meeting.sh',                        // William 個人的檔案（他明說不收）
   '/meeting_0724_1414.md',              // 同上
+  // 工具產生的：`scripts/grok-bump.js` 寫檔時的同目錄暫存檔（先寫暫存、再 rename 蓋過去，
+  // 所以目標不會被寫到一半）。正常路徑上它一定被清掉；清不掉時那支會印出殘留位置。
+  // 這一行是為了**不讓它被 git add 收進去**——不是拿來藏我們自己寫的程式（#636 r3 #5）。
+  '*.grok-bump-tmp',
 ];
 
 /**
