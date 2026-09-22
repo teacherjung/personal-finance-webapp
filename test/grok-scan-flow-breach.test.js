@@ -483,6 +483,11 @@ test('★ r1 #1 端到端｜被容許的只有「真的根路徑」：解析不�
   //    兩者的拒絕行都印成 `GET /`（前者因為 `new URL()` 拋錯退化成 '/'、後者因為 query 被剝掉），
   //    舊的容許判斷只看 method＋path，**兩次都退 0**——該吵的沒吵。
   //    現在容許判斷比對**原因碼**，所以這兩種都回到退 2。
+  // ⚠️ **這一題射程到哪為止**（#635 r2 #2）：三臂改的是 request-target，原因碼與診斷文字會**一起**變，
+  //    所以它是「輸入→退出碼」的回歸題，**不是**「同一個輸入、只改原因碼」的對照。
+  //    審查者實測過：把正式的 isToleratedRefusal 改成完全不看原因碼、只比對括號內的診斷文字，
+  //    這一題**仍然全過**。守原因碼那件事由上面那兩題純函式題負責，不要把這題講成它證明了原因碼。
+  //    這一題能講的只有：兩個反例退 2、真的根路徑退 0 並留下拒絕記錄。
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
   const bearer = 'sed -n \'s/.*"key":"\\([^"]*\\)".*/\\1/p\' "$GROK_HOME/auth.json"';
@@ -490,7 +495,7 @@ test('★ r1 #1 端到端｜被容許的只有「真的根路徑」：解析不�
     // 名稱, 盒內要跑的 curl 參數（base 用 GROK_CLI_CHAT_PROXY_BASE_URL 去掉 /v1）, 期望退出碼
     ['解析不了的 request-target', `--request-target "http://x:bad/other" "\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}/"`, 2],
     ['超長 query（剝掉之後也印成 /）', `"\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}/?$(printf 'a%.0s' $(seq 2100))"`, 2],
-    ['真的根路徑（對照組：這個才是刻意擋的）', `"\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}/"`, 0],
+    ['真的根路徑（這個才是刻意擋的）', `"\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}/"`, 0],
   ]);
   for (const [label, curlArgs, want] of cases) {
     const iso = isolated(); const inst = fakeGrok();
