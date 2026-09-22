@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOX_ROOT, PROFILE } from '../scripts/grok-sandbox-canary.js';
-import { escapeForms, hitProfile, nearestKnown, redactWindow, runScan, shapeHitsIn } from '../scripts/grok-scan.js';
+import { KNOWN_MODELS, MODEL_WALK_MAX_NODES, escapeForms, hitProfile, modelFieldText, modelsUsedIn, nearestKnown, redactWindow, runScan, shapeHitsIn } from '../scripts/grok-scan.js';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -428,4 +428,224 @@ test('runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀�
   const m = /const sbArgv = \[([\s\S]*?)\];/.exec(src); assert.ok(m, 'grok-scan.js 找不到 const sbArgv = [...]');
   assert.match(m[1], /^\s*'-f',\s*PROFILE\s*,/, `sbArgv 的第一對必須是 '-f', PROFILE：${m[1].trim().slice(0, 80)}`);
   assert.ok(!/process\.env|\benv\b|argv|\?\?/.test(m[1]), `sbArgv 不得由環境變數／參數／退路決定：${m[1].trim().slice(0, 120)}`);
+});
+
+// ── 模型留痕（William 2026-09-22 裁「甲」）────────────────────────────────────
+// 為什麼在**這一支**：模型名是沙箱裡的程序寫進日誌的，而它會被抄進配方聲明→**公開的** PR 描述。
+// 也就是說它跟本檔其他幾題是同一件事：任何 Grok 寫的字出去之前要先過尺。
+// r1 四條、r2 兩條全部落在這一族，所以每一條各有自己的題。
+
+const bufs = (/** @type {Record<string, string>} */ o) =>
+  new Map(Object.entries(o).map(([k, v]) => [k, Buffer.from(v, 'utf8')]));
+
+test('模型留痕｜從 session 日誌讀 model_id、去重排序（真日誌形狀）', () => {
+  const r = modelsUsedIn(bufs({
+    'a/updates.jsonl': '{"x":1,"model_id":"grok-4.7-build","y":2}\n{"a":{"b":{"model_id":"grok-4.7"}}}\n',
+    'a/summary.json': '{"modelUsage":[{"model_id":"grok-4.7-build"}]}',   // 整檔 JSON＋陣列巢狀，重複的只算一次
+  }));
+  assert.deepEqual(r, { models: ['grok-4.7', 'grok-4.7-build'], rejected: 0, incomplete: 0 });
+});
+
+test('★ r2 #1｜關門不是列舉出口：只印認得的那幾個，**拆段加前綴**的身分值也進不來', () => {
+  // ⚠️ 這一題是本支最重的一條。r1 我加了形狀白名單（`^grok-…`），審查者就把合成 user_id
+  //    拆成兩段、各加前綴——兩段都合形狀、都不是 auth 原文的子字串，拿掉前綴就拼得回原值。
+  //    列舉變形補不完，所以改成封閉字彙表。**這一題要守的是做法，不是那兩個特定字串。**
+  const secret = '0ed1fd135d154f019a1e2d9cb2f1f111';   // 合成身分值去掉連字號
+  const halves = [`grok-${secret.slice(0, 16)}`, `grok-${secret.slice(16)}`];
+  const r = modelsUsedIn(bufs({
+    'a/updates.jsonl': halves.map((h) => `{"model_id":${JSON.stringify(h)}}`).join('\n') + '\n{"model_id":"grok-4.7"}\n',
+  }));
+  assert.deepEqual(r.models, ['grok-4.7'], '只有清單上的值能印出來');
+  assert.equal(r.rejected, 2);
+  const printed = JSON.stringify(r);
+  for (const h of halves) assert.ok(!printed.includes(h), `拆段的身分值漏出去了：${h.slice(0, 10)}…`);
+  assert.ok(!printed.includes(secret.slice(0, 16)), '連片段都不可以出現');
+  // 另一半：**任何**沒見過的字串都進不來，即使它長得再像模型名
+  assert.deepEqual(
+    modelsUsedIn(bufs({ 'a/x.jsonl': '{"model_id":"grok-4.8"}\n{"model_id":"grok-4.7-build"}\n' })),
+    { models: ['grok-4.7-build'], rejected: 1, incomplete: 0 },
+    '上游出新模型時**那個名字不會被印出來**——由人看過結果包再加進清單，不是自動放行。'
+    + '⚠️ 不要寫成「會寫查不出來」：這個夾具同時有已知的那個，公開投影是 '
+    + '「grok-4.7-build；另有不在清單上的 model_id」，不含「查不出來」（r5 #1）',
+  );
+});
+
+test('★ r2 #2｜一行沒走完就**整行丟掉**（不可以留半行結果、也不可以假裝算完了）', () => {
+  // ⚠️ 原本用遞迴＋直接改外層累加器：爆堆疊被 catch 之後「前半行的模型留著、後半行的鍵沒算到」，
+  //    而註解卻寫「跳過這一行」＋「完整計數」——兩句都是假話（審查者用 15000 層的合法 JSON 重現）。
+  const big = JSON.stringify({ model_id: 'grok-4.7', deep: new Array(MODEL_WALK_MAX_NODES + 10).fill(0), tail: { model_id: 42 } });
+  assert.deepEqual(
+    modelsUsedIn(bufs({ 'a/updates.jsonl': big + '\n' })),
+    { models: [], rejected: 0, incomplete: 1 },
+    '沒走完＝整行不採用：前面那個合法模型也不可以留下',
+  );
+  // 對照組：同樣的形狀、節點數在上限內 ⇒ 正常走完，兩個鍵都算到（證明這一題量到的是「走不完」這個變因）
+  const small = JSON.stringify({ model_id: 'grok-4.7', deep: new Array(10).fill(0), tail: { model_id: 42 } });
+  assert.deepEqual(
+    modelsUsedIn(bufs({ 'a/updates.jsonl': small + '\n' })),
+    { models: ['grok-4.7'], rejected: 1, incomplete: 0 },
+  );
+});
+
+test('r1 #2｜受掃材料裡的**範例**不算「這次用的模型」（grok 會把材料寫進 prompt_0.txt）', () => {
+  const material = '這是受掃材料，裡面剛好有一行 {"model_id":"grok-4.7"} 的原文';
+  const r = modelsUsedIn(bufs({
+    's/prompt_0.txt': material,                                     // .txt＝不是模型紀錄，整個略過
+    'a/prompt_context.json': JSON.stringify({ prompt: material }),  // 材料被存成**某個鍵的字串值**＝不會再被當 JSON 解析
+    'a/prompt_history.jsonl': JSON.stringify({ content: material }) + '\n',
+  }));
+  assert.deepEqual(r, { models: [], rejected: 0, incomplete: 0 }, '材料裡的範例連「被拒」都不該算——它根本不是一筆 model_id');
+});
+
+test('r1 #4｜rejected 數的是「有 model_id 但不在清單上」，非字串的值也要算（不然計數說假話）', () => {
+  const r = modelsUsedIn(bufs({ 'a/updates.jsonl': '{"model_id":42}\n{"model_id":true}\n{"model_id":null}\n{"model_id":{"x":1}}\n{"model_id":["grok-4.7"]}\n' }));
+  assert.deepEqual(r, { models: [], rejected: 5, incomplete: 0 }, '五筆都有 model_id、五筆都不能印');
+});
+
+test('模型留痕｜不合的值一個字都不寫出來（它是 Grok 寫的，配方聲明會進公開 PR 描述）', () => {
+  const NASTY = 'x\u0000; rm -rf / #' + 'A'.repeat(80);
+  const r = modelsUsedIn(bufs({
+    'a/updates.jsonl': `{"model_id":${JSON.stringify(NASTY)}}\n{"model_id":"Grok-4.7"}\n{"model_id":"claude-4"}\n{"model_id":"grok-4.7"}\n`,
+  }));
+  assert.deepEqual(r.models, ['grok-4.7']);
+  assert.equal(r.rejected, 3);
+  const printed = JSON.stringify(r);
+  for (const leak of ['rm -rf', 'Grok-4.7', 'claude-4', 'AAAA']) assert.ok(!printed.includes(leak), `被拒的值漏出去了：${leak}`);
+});
+
+test('模型留痕｜讀不到就是讀不到（不編、不猜、也不擋）', () => {
+  const none = { models: [], rejected: 0, incomplete: 0 };
+  assert.deepEqual(modelsUsedIn(bufs({ 'a/updates.jsonl': '{"type":"tool_started"}\n' })), none);
+  assert.deepEqual(modelsUsedIn(new Map()), none);
+  assert.deepEqual(modelsUsedIn(bufs({ 'a/x.jsonl': '這不是 JSON\n{壞行\n' })), none, '壞行＝不是模型紀錄，不算讀不完整、也不丟例外');
+  assert.deepEqual(modelsUsedIn(new Map([['a/x.json', Buffer.from([0xff, 0xfe, 0xff])]])), none, '非 UTF-8 跳過、不丟例外');
+});
+
+test('模型留痕｜端到端：真的跑一遍，認得的印出來、不認得的寫查不出來且一個字都不漏', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // 為什麼要端到端：函式對了不等於那一行真的印得出來（模板題只證明模板長對）。
+  {
+    const repo = tinyRepo();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ model: 'grok-4.7-build' })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    assert.match(r.summary.join('\n'), /｜模型=grok-4\.7-build｜/, '配方聲明沒帶回這次用的模型');
+  }
+  {
+    const EVIL = randomUUID();   // 不在清單上；形狀那一版曾經放它過
+    const repo = tinyRepo();
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ model: EVIL })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'), '不認得的模型**不可以**變成閘');
+    const everything = r.summary.join('\n') + '\n' + logs.join('\n');
+    assert.match(everything, /｜模型=查不出來；另有不在清單上的 model_id｜/);
+    assert.ok(!everything.includes(EVIL), '不在清單上的值漏進了會被抄進公開 PR 描述的文字裡');
+  }
+});
+
+test('模型留痕｜配方聲明那一行真的帶「模型=」（不是只有函式會算）', () => {
+  const src = readFileSync(join(ROOT, 'scripts', 'grok-scan.js'), 'utf8');
+  const m = /const recipe = `([^`]*)`;/.exec(src);
+  assert.ok(m, 'grok-scan.js 找不到 const recipe = `...`');
+  assert.match(m[1], /｜模型=\$\{modelField\}｜/, '配方聲明少了模型那一格——紀錄範本抄的就是這一行');
+  assert.match(src, /const modelField = modelFieldText\(/, '公開欄沒有走那支值域寫死的函式＝r3 #1 又開回來');
+});
+
+// ── r3：公開欄的**值域**（不是值的形狀）────────────────────────────────────────
+// r1 形狀、r2 拆段、r3 用計數編碼——前兩輪我都在問「這個字串安不安全」，
+// 第三輪審查者換了座標軸：**這一格能載多少由對方控制的資訊**。
+// 所以這兩題守的不是某個字串，是「公開欄只能從一張寫死的有限清單裡挑一個」。
+
+/** 依序產生所有子集（保持原順序＝已排序，對得上 models.sort() 的輸出） */
+const subsetsOf = (/** @type {readonly string[]} */ a) =>
+  a.reduce((/** @type {string[][]} */ acc, x) => acc.concat(acc.map((s) => [...s, x])), [[]]);
+
+test('★ r3 #1｜公開欄是有限值域的投影：日誌控制不了它裡面的任何數字', () => {
+  // 審查者的反例：盒內程序讀自己的 auth.json、取 user_id 末四碼 f111、轉十進位 61713，
+  // 再寫出那麼多行 {"model_id":0}；舊版公開欄就印出 61713 ⇒ 轉回十六進位就是 f111。
+  assert.equal(
+    modelFieldText({ models: [], rejected: 1, incomplete: 0 }),
+    modelFieldText({ models: [], rejected: 61713, incomplete: 0 }),
+    'rejected 的大小不可以影響公開欄一個字',
+  );
+  assert.equal(
+    modelFieldText({ models: ['grok-4.7'], rejected: 0, incomplete: 1 }),
+    modelFieldText({ models: ['grok-4.7'], rejected: 0, incomplete: 15 }),
+    'incomplete 的大小同樣不可以影響公開欄一個字',
+  );
+
+  // 值域列舉：所有 (KNOWN_MODELS 的子集 × rejected 有無 × incomplete 有無)
+  /** @type {Set<string>} */ const domain = new Set();
+  for (const sub of subsetsOf(KNOWN_MODELS)) for (const r of [0, 1]) for (const i of [0, 1]) domain.add(modelFieldText({ models: sub, rejected: r, incomplete: i }));
+  assert.equal(domain.size, 2 ** KNOWN_MODELS.length * 4, `值域應該是 2^${KNOWN_MODELS.length}×2×2 種`);
+
+  // 任意大小的計數都只能落在那張表裡（這一題紅＝有數字又漏進公開欄了）
+  for (const r of [0, 1, 2, 7, 61713, 1_000_000]) {
+    for (const i of [0, 1, 15, 9999]) {
+      for (const sub of [[], ['grok-4.7'], [...KNOWN_MODELS]]) {
+        const out = modelFieldText({ models: sub, rejected: r, incomplete: i });
+        assert.ok(domain.has(out), `公開欄跑出值域外的字串：${out}`);
+        assert.ok(!/[0-9]/.test(out.replace(/grok-[\d.]+(-build)?/g, '')), `公開欄出現了模型名以外的數字：${out}`);
+      }
+    }
+  }
+});
+
+test('★ r3 #2｜「查不出來」不可以反推成「日誌裡沒有 model_id」', () => {
+  // 超限那些行**整行丟掉**，而它們每一行開頭都可能有 model_id ⇒ 空集合只代表
+  // 「完整採用的紀錄裡沒有可列出的模型」，不是「原始日誌沒有那個鍵」。
+  const t = modelFieldText({ models: [], rejected: 0, incomplete: 3 });
+  assert.equal(t, '查不出來；有紀錄讀不完整、整行不採用');
+  assert.ok(!t.includes('沒有'), '不可以宣稱日誌裡沒有 model_id');
+  assert.ok(!modelFieldText({ models: [], rejected: 0, incomplete: 0 }).includes('沒有'), '即使零旗標也不可以宣稱');
+});
+
+test('★ r3｜端到端：計數不同、公開欄逐字相同（真的跑沙箱，經過公開字串組裝）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // ⚠️ 純函式相同不等於整條路相同——審查者的反例就是**跑完整流程**才看得到的。
+  const field = async (/** @type {number} */ n) => {
+    const repo = tinyRepo();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { ...quiet, ...isolated(), repo: repo.dir, relayScript: fakeRelay('ok'),
+        ...withGrok(fakeGrok({ sessionLines: new Array(n).fill('{"model_id":0}') })) });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    return /｜模型=([^｜]*)｜/.exec(r.summary.join('\n'))?.[1];
+  };
+  const [one, many] = [await field(1), await field(7)];
+  assert.equal(one, '查不出來；另有不在清單上的 model_id');
+  assert.equal(many, one, '被拒的筆數漏進了公開欄＝審查者那條編碼通道還開著');
+});
+
+test('★ r3｜端到端：超限那一行整行丟掉，公開欄照實說「讀不完整」而不說「沒有」', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const over = JSON.stringify({ model_id: 'grok-4.7', deep: new Array(MODEL_WALK_MAX_NODES + 10).fill(0) });
+  const repo = tinyRepo();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+    { ...quiet, ...isolated(), repo: repo.dir, relayScript: fakeRelay('ok'), ...withGrok(fakeGrok({ sessionLines: [over] })) });
+  assert.equal(r.code, 0, r.summary.join('\n'));
+  assert.match(r.summary.join('\n'), /｜模型=查不出來；有紀錄讀不完整、整行不採用｜/);
+});
+
+test('★ r4｜公開欄**診斷不出原因**：三種不同的來源給出逐字相同的字串（所以不可以宣稱旗標分得出來）', () => {
+  // r4 #2：我在 PR 寫過「後面兩個旗標會告訴你是哪一種」——假的。
+  // 這一題把那句話釘成它的反面：不同原因**本來就**收斂成同一個公開字串，
+  // 要診斷只能去私有的結果包看。這是值域被壓小的**必然代價**，不是 bug。
+  const outs = [
+    bufs({}),                                                   // 空日誌
+    bufs({ 'a/updates.jsonl': '{"type":"tool_started"}\n' }),   // 有紀錄、沒有 model_id
+    bufs({ 'a/updates.jsonl': '這不是 JSON\n' }),                // 壞行
+    bufs({ 's/prompt_0.txt': '{"model_id":"grok-4.7"}' }),       // 只有材料（副檔名不對）
+  ].map((f) => modelFieldText(modelsUsedIn(f)));
+  assert.deepEqual(new Set(outs), new Set(['查不出來']), `四種來源應該收斂成同一個字串，實際：${JSON.stringify(outs)}`);
+});
+
+test('★ r4｜已知與未知**並存**時不是「查不出來」——別再把它寫成必然結果', () => {
+  // r4 #2：程式註解與 PR 都寫過「讀到不認得的就寫查不出來」「每次上游換模型會先寫查不出來」，
+  // 兩句在混合情境下都不成立。
+  const mixed = modelFieldText(modelsUsedIn(bufs({
+    'a/updates.jsonl': '{"model_id":"grok-4.7"}\n{"model_id":"grok-4.8"}\n',
+  })));
+  assert.equal(mixed, 'grok-4.7；另有不在清單上的 model_id');
+  assert.ok(!mixed.includes('查不出來'), '混合情境不會出現「查不出來」');
 });

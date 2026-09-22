@@ -23,7 +23,7 @@
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
 //
 // ## 三個失效條件（判成「當未跑／不掃」的，一律在變更說明固定小標下逐字寫「未執行：<原因>」，不擋合併）
-//   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05 重驗相同（PR #564），升版要重驗。
+//   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05（PR #564）與 1.0.40 於 2026-09-22 各重驗相同，升版要重驗。
 //   ・金絲雀非 0＝不掃（取代舊的「驗屍非 0＝該掃作廢」：驗屍現在記足跡、查破口，破口＝沙箱破了＝事故，不只是作廢）。
 //   ・缺掃描時序一行＝當未跑（整條「複審後掃」的推論靠先後：獨立審查者「通過」之後才掃；先後沒記＝這一遍不成立）。
 //
@@ -60,16 +60,24 @@ import { isMainModule } from '../lib/is-main.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 /** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
-export const EXPECTED_GROK_VERSION = '1.0.13';
+export const EXPECTED_GROK_VERSION = '1.0.40';
 /**
  * 釘住執行檔本身（r4 #5：版本字串是被檢者自己印的，wrapper 印「grok 1.0.3」就過；而且 r3 版在**沙箱外**執行它）。
  * 流程：cp 真執行檔進盒子 → 對**盒內副本**算 sha256 → 不等於這個值＝不掃 → `--version` 在**沙箱內**對盒內副本跑。
  * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
  * 1.0.13（2026-09-05，grok CLI 自動升版後 fail-closed 擋下 #563 的掃描）：升版手續＝`strings` 新舊執行檔比對上游主機／路徑，重驗紀錄在 PR #564。
+ * 1.0.40（2026-09-22，同樣是自動升版後 fail-closed 擋下——這次擋在下一支開工之前）：
+ *   **靜態檢查未見需修改的字串差異**——覆寫用的環境變數 `GROK_CLI_CHAT_PROXY_BASE_URL`、目的地
+ *   `cli-chat-proxy.grok.com`、`GROK_FLAGS` 那三個旗標，在新舊執行檔裡都在、出現次數相同。
+ *   ⚠️ **1.0.40 的執行相容性未驗證**（r1 #3：字串在不在，證明不了覆寫仍然有效、旗標語意沒變、
+ *   協定與回應處理仍相容）。本支的立場是**沿用現有的封閉限制**：`ALLOWED_REQUESTS` 那張表是照 1.0.3
+ *   實測寫的、1.0.13 與 1.0.40 都沒重抄，表外的請求由轉送器回 403、掃描退 2——
+ *   ⚠️ 但 `TOLERATED_REFUSALS` 是刻意的例外，所以**不可以**把它讀成「所有表外都會退 2」。
+ *   完整的相容性重驗（記錄型 proxy 實測）是另一件事，不在本支。
  * 本檔執行期只守兩件事：盒內副本的 sha256、沙箱內 --version 精確等於常數；執行檔多了什麼外連字串本檔不判讀——沙箱只准 localhost、
  * 轉送器只轉白名單形狀。釘值本身由 test/grok-scan-flow-preflight.test.js 的獨立 fixture 釘住（改常數要連考題一起改）。
  */
-export const EXPECTED_GROK_SHA256 = '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80';
+export const EXPECTED_GROK_SHA256 = '3f2aef9618191a2c60d18a5044fa462c9c77bdc4187b02ed716b0394e8d4fef2';
 export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
@@ -442,6 +450,139 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
   };
   if (existsSync(root)) walk(root, '', 0);
   return { files, odd, total };
+}
+
+/**
+ * 公開的模型欄**只印這張表上的值**——不是「看起來安全的字串」。
+ *
+ * r1 #1 我先加了形狀白名單（擋掉 UUID），r2 #1 審查者就把合成 `user_id` **拆成兩段、各加 `grok-` 前綴**：
+ * 兩段都合形狀、都不是盒內 auth 原文的子字串，於是整個身分值分兩格被抄進公開處，拿掉前綴就拼得回來。
+ * 他用正式 `runScan` 端到端重現（code 0、兩段都在 summary 與 log 裡）。
+ *
+ * **變形列舉不完**——這正是 William 2026-09-01 對本檔裁的「**關門，不是列舉出口**」（見 runScan 內那段）。
+ * 所以不再問「這個字串安不安全」，改問「**它是不是我們認得的那幾個之一**」。
+ *
+ * 上游出新模型時，那個名字**不會**出現在公開欄；有沒有出現「另有不在清單上的 model_id」這個
+ * **固定旗標**，要看那筆紀錄有沒有被完整採用。⚠️ 公開欄**不印任何由日誌決定的數字**，
+ * 精確的次數只能從**私有的結果包**重算（r3 #1：我原本寫「計數是數字，不洩漏任何內容」，
+ * 審查者用筆數把身分片段編碼送出來就打穿了；有限狀態**仍能載資訊**，射程見 modelFieldText）。
+ * 要補上去的做法：去**私有的結果包**看實際的名字（結果包路徑印在配方聲明裡），
+ * 確認之後把它加進這張表——跟釘執行檔版本同一個節奏：**預設不認得，由人看過才放行**。
+ */
+export const KNOWN_MODELS = Object.freeze([
+  'grok-4.6', 'grok-4.6-build',   // 2026-09-05〜2026-09-21 實際用的（本機結果包實測）
+  'grok-4.7', 'grok-4.7-build',   // 2026-09-21 傍晚起（同上）
+]);
+
+/** 會被當成模型紀錄來解析的檔名（r1 #2：材料與提示文字**不算**紀錄）。 */
+const MODEL_LOG_EXT = Object.freeze(['.json', '.jsonl']);
+/** 每一行的節點上限。超過＝這一行**讀不完整**（不是事故）——見 modelsUsedIn 對 r2 #2 的說明。 */
+export const MODEL_WALK_MAX_NODES = 100_000;
+
+/**
+ * 這次實際用的模型名，從 session 日誌**解析出來的物件**裡取 `model_id`（掃描器**不指定模型**——
+ * `GROK_FLAGS` 沒有 `-m`，用的是上游當下的預設；上游換了模型我們這邊不會有任何動靜）。
+ * 只是留痕、**不是閘**：讀不到、讀到不認得的、讀不完整——都只是換一個**值域寫死**的字串，
+ * 不擋掃描、不改退出碼。⚠️ 不要寫成「讀到不認得的就寫查不出來」：**已知與未知並存**時，
+ * 公開欄印的是已知的那幾個再加旗標（例如 `grok-4.7；另有不在清單上的 model_id`），不含「查不出來」。
+ *
+ * ⚠️ **只回聲 KNOWN_MODELS 上的值**（見上）。不合的**不寫它長什麼樣**；本函式仍回傳一個計數，
+ *    但那個數字**不進公開欄**（見 modelFieldText），只給程式內部與私有產物用。
+ * ⚠️ **讀結構、不讀文字**（r1 #2）：原本用正規式掃全部檔案的原文，於是**受掃材料裡的範例**
+ *    （grok 會把材料寫進 `prompt_0.txt`，見下方 #500 那段）也被當成「這次用的模型」。
+ *    現在只看 `.json`／`.jsonl`、解析成物件後取**鍵名為 `model_id` 的值**；材料即使被存成
+ *    某個鍵的字串值，字串內容不會再被當 JSON 解析。
+ * ⚠️ **逐行原子**（r2 #2）：原本用遞迴、而且直接改外層的累加器，於是極深巢狀爆堆疊被 catch 之後
+ *    **前半行的結果留著、後半行的鍵沒算到**——「跳過這一行」與「完整計數」兩句都成了假話
+ *    （審查者用 15000 層的合法 JSON 重現）。現在改成**明確堆疊的迭代走訪**（不會爆堆疊）＋
+ *    節點上限；一行沒走完就**整行丟掉**並計入 `incomplete`，公開欄出現的是「有紀錄讀不完整、
+ *    整行不採用」這個**固定旗標**（**不是**那個數字，r3 #1）——
+ *    「沒讀完」是要說出來的事，不是默默當成讀完。
+ * ⚠️ 誠實劃界：只認 `model_id` 這一個鍵、只認那兩種副檔名。日誌換鍵名或換檔名就讀不到
+ *    （那些紀錄就不會對這一格有任何貢獻），**不會**因此判錯或漏掉任何安全檢查；
+ *    DLP 與破口比對走的是別的路、不受本函式影響。
+ *    本函式也**不是**去機密器、**不是**日誌真偽的認證：它只管自己這一格印不印，
+ *    不保證別處的產物（私有的結果包仍保存原始位元組）沒有身分值。
+ * @param {Map<string, Buffer>} files readSessionsOnce 讀到的那一份副本
+ * @returns {{ models: string[], rejected: number, incomplete: number }}
+ *   models＝去重後排序（只會是 KNOWN_MODELS 的子集）；
+ *   rejected＝**在完整解析且完整走訪、被採用的那些紀錄裡**，有 `model_id` 但不在表上的次數
+ *     （r3 #2：超限那一行整行丟掉，它裡面的拒收值**刻意不計**——那是原子性的代價，不是全日誌的完整計數）；
+ *   incomplete＝沒走完而整行丟掉的行數（壞 JSON／非 UTF-8 **不算**，那是既有的明示契約）。
+ *   ⚠️ 這兩個數字**不進公開欄**（見 modelFieldText）：它們由未信任程序控制、數字本身就能載內容。
+ */
+export function modelsUsedIn(files) {
+  /** @type {Set<string>} */ const models = new Set();
+  let rejected = 0, incomplete = 0;
+  const dec = new TextDecoder('utf-8', { fatal: true });
+  /**
+   * 走一行。**先收在本地**，走完才交給呼叫端合併——沒走完就什麼都不交（整行丟掉）。
+   * @param {unknown} root
+   * @returns {{ found: string[], rejected: number, ok: boolean }}
+   */
+  const walkLine = (root) => {
+    /** @type {string[]} */ const found = [];
+    let rej = 0, seen = 0;
+    /** @type {unknown[]} */ const stack = [root];
+    while (stack.length) {
+      if (++seen > MODEL_WALK_MAX_NODES) return { found, rejected: rej, ok: false };
+      const v = stack.pop();
+      if (Array.isArray(v)) { for (const x of v) stack.push(x); continue; }
+      if (!v || typeof v !== 'object') continue;
+      for (const [k, val] of Object.entries(v)) {
+        if (k === 'model_id') { if (typeof val === 'string' && KNOWN_MODELS.includes(val)) found.push(val); else rej++; }
+        stack.push(val);
+      }
+    }
+    return { found, rejected: rej, ok: true };
+  };
+  for (const [rp, buf] of files) {
+    if (!MODEL_LOG_EXT.some((e) => rp.endsWith(e))) continue;
+    /** @type {string} */ let text;
+    try { text = dec.decode(buf); } catch { continue; }   // 非 UTF-8＝讀不了；不是事故（事故由別處判）
+    for (const line of rp.endsWith('.jsonl') ? text.split('\n') : [text]) {
+      if (!line.trim()) continue;
+      /** @type {ReturnType<typeof walkLine>} */ let r;
+      // 壞行＝不是模型紀錄（可讀性由 auditSessionDir 另外判），不計 incomplete；
+      // 「解析得出來但走不完」才是讀不完整。
+      try { r = walkLine(JSON.parse(line)); } catch { continue; }
+      if (!r.ok) { incomplete++; continue; }   // 整行丟掉：不收它的 found，也不收它的 rejected
+      for (const m of r.found) models.add(m);
+      rejected += r.rejected;
+    }
+  }
+  return { models: [...models].sort(), rejected, incomplete };
+}
+/**
+ * 公開欄那一格的字串。**這是整個公開投影的唯一出口**，所以它的值域是**事先寫死、可以列舉的**。
+ *
+ * r3 #1：我上一版把「名字這一格安全」的保證**擴張成「整個欄位安全」**，還寫了一句
+ * 「計數是數字，不洩漏任何內容」——一句沒有任何量測撐著的全稱否定。審查者端到端打穿它：
+ * 讓盒內的假 Grok 讀自己的 auth.json、取 `user_id` 末四碼 `f111`、轉成十進位 `61713`，
+ * 再寫出**那麼多行** `{"model_id":0}`；公開欄於是印出 `61713`，轉回十六進位就是 `f111`。
+ * `incomplete` 同樣可控（他另跑一次，公開欄印 15）。
+ *
+ * **所以這裡不印任何由日誌決定的數字。** 這一格只能是：
+ *   `KNOWN_MODELS` 的子集（排序後以`＋`相連）或「查不出來」，再乘上兩個固定旗標的有無。
+ * ⇒ 值域大小＝2^n × 2 × 2（n＝KNOWN_MODELS 的長度）。**這是上限，不是零。**
+ *
+ * ⚠️ 誠實劃界（不要再寫成「不洩漏任何內容」）：
+ *  ・這一格仍由**未信任日誌的自報**決定——盒內程序可以挑要不要寫、寫哪一個已知名字，
+ *    所以它**不是**零資訊通道，只是被壓到上面那個可列舉的上限。
+ *  ・它也**不是**「這次真的用了哪個模型」的認證：日誌說什麼就是什麼。
+ *  ・精確的數字仍算得出來，但只留在**私有的結果包**（sessions 副本原樣保存，路徑印在配方聲明裡）；
+ *    要診斷就去那裡算，不從公開欄讀。
+ * @param {{ models: string[], rejected: number, incomplete: number }} mu
+ * @returns {string}
+ */
+export function modelFieldText(mu) {
+  // ⚠️ 「查不出來」**不可以**再接「日誌裡沒有 model_id」那種理由句（r3 #2）：空集合只代表
+  //    「完整採用的紀錄裡沒有可列出的模型」，反推不出原始日誌沒有那個鍵——超限被整行丟掉的那些
+  //    每一行開頭都可能有 model_id。理由交給下面兩個旗標講，它們各自只說自己知道的事。
+  const bits = [mu.models.length ? mu.models.join('＋') : '查不出來'];
+  if (mu.rejected) bits.push('另有不在清單上的 model_id');
+  if (mu.incomplete) bits.push('有紀錄讀不完整、整行不採用');
+  return bits.join('；');
 }
 
 /**
@@ -1109,7 +1250,11 @@ export async function runScan(args, deps = {}) {
     return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
   if (outFile) writeFileSync(outFile, reply);
-  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
+  // 模型留痕（William 2026-09-22 裁「甲」）：掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
+  // 而紀錄裡看不出來。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
+  // 值域寫死的字串，不擋掃描、不改退出碼。
+  const modelField = modelFieldText(modelsUsedIn(snap.files));   // 值域寫死、不含任何由日誌決定的數字（見該函式）
+  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelField}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   return { code: 0, summary };
