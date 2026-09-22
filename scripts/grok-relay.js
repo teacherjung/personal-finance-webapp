@@ -156,8 +156,11 @@ export function safeLine(text) {
 export function clipPath(path) { return path.slice(0, 200); }
 
 /**
- * 拒絕的**穩定原因碼**。容許清單比對的是它，不是那句給人看的話（#635 r1 #1）——
- * 「給人看的話」會因為上面那個 fallback 而在兩種完全不同的情況下長得一模一樣。
+ * 拒絕的**穩定原因碼**。容許清單比對的是它，不是那句給人看的話（#635 r1 #1）。
+ * ⚠️ 理由要寫準（r7 #2）：**不是**「給人看的話會長得一模一樣」——實測兩句不同
+ * （壞目標是「request-target 解析不了」、根路徑是「形狀不在白名單：GET /」）。
+ * 真正的理由是：**那句話由請求內容拼出來、而且會隨版本改寫**；碼是固定常數，只能是下面那幾個。
+ * 兩種情況真正撞在一起的是**路徑欄**（fallback 與正規化都會生出 `/`），所以決定不能靠它。
  */
 export const REFUSE_CODES = Object.freeze({
   BAD_TARGET: 'bad-target',       // request-target 解析不了（**絕不可與合法路徑混同**）

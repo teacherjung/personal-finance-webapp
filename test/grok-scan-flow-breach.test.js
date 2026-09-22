@@ -537,7 +537,7 @@ test('★ r1 #1 端到端｜解析不了的目標與超長 query 讓整遍掃描
   //    審查者實測過：把正式的 isToleratedRefusal 改成完全不看原因碼、只比對括號內的診斷文字，
   //    這一題**仍然全過**。**這一題能講的只有**：兩個反例退 2、真的根路徑退 0 並留下拒絕記錄。
   //    ⚠️ 不要在這裡寫「由某某題守住原因碼」——r4 那兩發「原因碼／診斷文字」對照斷言
-  //    **在 r5 換成新介面時已經刪掉了**（歷史紀錄在 PR #635 的 r4 處置留言）。現在守決定權的是
+  //    **在 r5 換成新介面時已經刪掉了**（歷史：r3 處置留言提出、r4 審查實測、`cbb8e43` 的 diff 刪除）。現在守決定權的是
   //    上面那題對 `isTolerated()` 的正反例（含 query 的鑰匙、absolute-form 自己的碼）。
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
