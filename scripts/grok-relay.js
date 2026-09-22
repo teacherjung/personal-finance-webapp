@@ -96,7 +96,8 @@ export const REFUSED_PREFIX = '[relay] refused: ';
  * absolute-form 的表外請求也不在（它走 `absolute-form` 這個碼）。
  * 同一個路徑因為**別的原因**被拒（`bad-target`／`path-too-long`／`auth`）**不在容許範圍**——
  * #635 r1 #1 就是栽在這裡：`GET http://x:bad/other` 解析不了會退化成 `/`，舊版比對只看 method＋path，
- * 於是那條異常被當成已審過的例外吃掉。比對走 `isToleratedRefusal()`（本檔唯一實作，考題直接呼叫它）。
+ * 於是那條異常被當成已審過的例外吃掉。**決定點是 `isTolerated()`**（吃結構化原值，本檔唯一實作，考題直接呼叫它）；
+ * `isToleratedRefusal()` 只是掃描腳本讀那一行時看第一欄，不重算。
  */
 export const TOLERATED_REFUSALS = Object.freeze(['shape GET /v1/bundle/archive', 'shape GET /v1/subagents/bundle', 'shape GET /']);
 /** 拒絕次數上限：超過＝轉送器自己退出（退出碼 3）→ grok-scan 看到轉送器死＝退 2。否則盒內程式可以用無限個被拒請求灌爆 stderr。 */
@@ -119,7 +120,7 @@ const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-au
  * `http://evil/a/b/../../` 的 pathname 就是 `/`，跟真的根路徑分不出來。所以 absolute-form 的
  * **表外請求**另給一個碼，永遠不在容許範圍。
  * ⚠️ 射程講明：`path` **是**容許判斷的一部分（含 query，見 `isTolerated()`）——**不可以**說它「只拿來給人看」。
- * 只拿來給人看的是**印進拒絕行的那一串**（`safeForLine()` 清洗過的版本）。
+ * 只拿來給人看的是**印進拒絕行的那一整行**（`safeLine()` 清洗過的版本）。
  * @param {string} [url]
  * @returns {{ path: string, bad: boolean, absolute: boolean }}
  */
@@ -131,15 +132,23 @@ function requestPath(url) {
 }
 
 /**
- * 印進拒絕行的路徑。⚠️ **只留可見 ASCII，其餘一律轉成 `%XX`**（含空白、換行、控制字元、非 ASCII）。
- * 路徑是**盒內程序控制的**：不清乾淨，空白會把欄位切歪、換行會把一行變成好幾行，
- * 甚至能在 stderr 裡**偽造出整行假的拒絕紀錄**（Grok 複審後掃 #1③④ 指出）。
- * ⚠️ 這個值**只給人看**——容許判斷走 `isTolerated()`，吃的是結構化的原值，不是這一串。
- * @param {string} path
+ * 寫進 stderr 的那**一整行**的清洗。⚠️ **整行過濾，不是逐欄過濾**——
+ * #635 r5 #2：上一版只清洗了 `path`，而 `why` 裡還帶著**原始的** pathname／method，
+ * 於是一個含換行的 request-target 照樣能在 stderr 裡**偽造出一整行假的「已容許」紀錄**
+ * （審查者拿真的 request callback 攔 stderr 重現過）。逐欄清洗就是在列舉出口。
+ *
+ * 規則：**所有控制字元（含 CR／LF／TAB）一律轉成 `%XX`**，空白保留——
+ * 決定只看第一欄（見 `isToleratedRefusal`），欄位裡有空白不影響它；會出事的只有換行。
+ * ⚠️ 這個值**只給人看**：容許判斷走 `isTolerated()`，吃的是結構化原值，不是這一串。
+ * @param {string} text
  */
-export function safeForLine(path) {
-  return path.slice(0, 200).replace(/[^\x21-\x7e]/g, (c) => '%' + c.codePointAt(0)?.toString(16).toUpperCase().padStart(2, '0'));
+export function safeLine(text) {
+  // eslint-disable-next-line no-control-regex -- 這裡就是要抓控制字元：CR／LF 會被拿來偽造整行拒絕紀錄（#635 r5 #2）
+  return text.replace(/[\u0000-\u001f\u007f]/g, (c) => '%' + (c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(2, '0'));
 }
+
+/** 印進拒絕行的路徑長度上限（只截斷，清洗由 `safeLine` 對整行做）。 @param {string} path */
+export function clipPath(path) { return path.slice(0, 200); }
 
 /**
  * 拒絕的**穩定原因碼**。容許清單比對的是它，不是那句給人看的話（#635 r1 #1）——
@@ -255,12 +264,14 @@ const server = http.createServer((req, res) => {
   if (rej) {
     // r7（Codex）：拒絕不能靜靜發生——grok 收到 403 多半照常退 0（實測 bundle/archive），掃描就會靜默降級。
     // 每一次拒絕都寫一行固定格式到 stderr，grok-scan.js 讀它：除了 TOLERATED_REFUSALS 裡刻意擋的，任何拒絕＝該掃退 2（吵）。
-    // ⚠️ 第一欄是**穩定原因碼**（#635 r1 #1）：容許判斷比對前三欄（碼／method／path）逐字相等，
-    //    給人看的那句話放在括號裡、**不參與判斷**——它在兩種完全不同的情況下會長得一模一樣。
+    // ⚠️ **第一欄是判決**（`tolerated`／`BLOCKING`，#635 r5）：決定在這裡下、由 `isTolerated()` 吃結構化原值算，
+    //    掃描腳本只讀那一欄、不重算。第二欄起是原因碼／method／path，括號裡是給人看的那句話——
+    //    **都不參與判斷**（r5 #1／#2：從印出來的字回推，會被前綴、空白、換行、query 各種切歪）。
     const rejMethod = String(req.method || '').toUpperCase();
     const rejPath = requestPath(req.url).path;   // **含 query**：`/?x` 與 `/` 不是同一把鑰匙
     const verdict = isTolerated(rej.code, rejMethod, rejPath) ? REFUSAL_TOLERATED : REFUSAL_BLOCKING;
-    process.stderr.write(`${REFUSED_PREFIX}${verdict} ${rej.code} ${rejMethod} ${safeForLine(rejPath)} (${rej.why})\n`);
+    // ⚠️ 先把整行組出來，**整行**過濾一次再寫（r5 #2：逐欄清洗漏掉了 `why` 裡的原始 pathname）。
+    process.stderr.write(REFUSED_PREFIX + safeLine(`${verdict} ${rej.code} ${rejMethod} ${clipPath(rejPath)} (${rej.why})`) + '\n');
     res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`relay: refused (${rej.why})`); req.resume();
     if (++refusals >= MAX_REFUSALS) { process.stderr.write(`[relay] 拒絕次數達 ${MAX_REFUSALS}，轉送器退出\n`); process.exit(3); }
     return;

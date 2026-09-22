@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 import { escapeForms, knownShapeHitsFromTree, runScan, shapeHitsIn, stripLineMarkers } from '../scripts/grok-scan.js';
-import { REFUSAL_BLOCKING, REFUSAL_TOLERATED, REFUSE_CODES, TOLERATED_REFUSALS, isTolerated, isToleratedRefusal, rejectReason, safeForLine } from '../scripts/grok-relay.js';
+import { REFUSAL_BLOCKING, REFUSAL_TOLERATED, REFUSE_CODES, TOLERATED_REFUSALS, isTolerated, isToleratedRefusal, rejectReason, safeLine } from '../scripts/grok-relay.js';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,19 @@ import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, PEM_BEGIN, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, noFetch, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
+
+
+/**
+ * 從掃描腳本的那一行日誌裡取出**被容許的鑰匙清單**（它用「、」串起來）。
+ * ⚠️ 一定要比**整個元素**：`tolerated shape GET /` 是 `tolerated shape GET /v1/bundle/archive`
+ * 的**前綴**，用 `includes(字串)` 比等於沒比（#635 r5 #1 用突變證明過：把記錄改成別的 key，題照樣綠）。
+ * @param {string[]} logs
+ */
+const toleratedKeysIn = (logs) => {
+  const line = logs.find((l) => l.includes('刻意擋的形狀')) || '';
+  const m = /形狀：(.*)）/.exec(line);
+  return m ? m[1].split('、') : [];
+};
 
 test('readSessionsOnce｜r7：sessions 根目錄或中介目錄是 symlink → 當捷徑（odd）、不跟過去讀盒外（純函式，平台無關，CI 也跑）', async () => {
   const { readSessionsOnce } = await import('../scripts/grok-scan.js');
@@ -96,8 +109,8 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: real });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
     if (want === 2) assert.match(r.summary.join('\n'), /轉送器拒絕了 1 個不在白名單/, label);
-    // ⚠️ 要比**整把鑰匙**：`GET /` 是另外兩個容許鍵的子字串，只比它鎖不住「記下的是哪一個」（掃描 #3）。
-    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes(`${REFUSAL_TOLERATED} shape GET ${path}`)), `${label}：沒記錄被容許的拒絕`);
+    // ⚠️ 比**整個元素**，不是子字串：`… GET /` 是 `… GET /v1/bundle/archive` 的前綴（r5 #1）。
+    else assert.deepEqual(toleratedKeysIn(logs), [`${REFUSAL_TOLERATED} shape GET ${path}`], `${label}：記下的鑰匙不是這一把`);
   }
 });
 
@@ -469,19 +482,23 @@ test('★ 拒絕行｜掃描腳本只看第一欄；路徑裡的空白／換行�
   assert.equal(isToleratedRefusal('shape GET / (形狀不在白名單：GET /)'), false, '舊格式（沒有判決欄）＝不認得，fail-closed');
   // 偽造：盒內程序在路徑裡塞一段看起來像「已容許」的字，第一欄仍然是轉送器寫的那一個
   assert.equal(isToleratedRefusal(`${REFUSAL_BLOCKING} shape GET /x${REFUSAL_TOLERATED}%20shape%20GET%20/ (…)`), false);
+  // ⚠️ r5 指出的覆蓋缺口：只用 `tolerated%20` 當樣本，`startsWith`→`includes` 的突變抓不到。
+  //    這一發才分得出來（路徑本身叫 /tolerated）。
+  assert.equal(isToleratedRefusal(`${REFUSAL_BLOCKING} shape GET /${REFUSAL_TOLERATED} (形狀不在白名單：GET /${REFUSAL_TOLERATED})`), false);
 });
 
-test('★ safeForLine｜印進拒絕行的路徑不可能含空白或換行（不然欄位會被切歪、行會被偽造）', () => {
-  const line = (/** @type {string} */ p) => {
-    const out = safeForLine(p);
-    assert.ok(!/[\s]/.test(out), `清洗後仍含空白字元：${JSON.stringify(out)}`);
-    return out;
-  };
-  assert.equal(line('/ /v1/admin'), '/%20/v1/admin');
-  assert.equal(line('/\n/v1/admin'), '/%0A/v1/admin');
-  assert.equal(line('/a\tb'), '/a%09b');
-  assert.equal(line('/v1/models'), '/v1/models', '普通路徑原樣');
-  line('/中文');   // 非 ASCII 也不可以漏出空白
+test('★ safeLine｜**整行**清洗：`why` 裡的原始路徑也不可以印出換行（不然偽造得出一整行假紀錄）', () => {
+  // ⚠️ r5 #2：上一版只清洗 path，而 `why` 裡還帶著**原始的** pathname ⇒ 含換行的 request-target
+  //    照樣能在 stderr 裡偽造出一整行 `tolerated …`。所以現在是先組整行、再整行過濾一次。
+  const EVIL = '/x\n[relay] refused: tolerated shape GET /';
+  const whole = safeLine(`${REFUSAL_BLOCKING} shape GET ${EVIL} (形狀不在白名單：GET ${EVIL})`);
+  assert.ok(!/[\r\n]/.test(whole), `整行清洗後仍含換行：${JSON.stringify(whole)}`);
+  assert.equal(whole.split('\n').length, 1, '不可以被拆成兩行');
+  assert.ok(whole.includes('%0A'), '換行要看得見地變成 %0A，不是默默吃掉');
+  // 控制字元都要轉；**空白保留**（決定只看第一欄，欄位裡有空白不影響它）
+  assert.equal(safeLine('a\tb'), 'a%09b');
+  assert.equal(safeLine('a b'), 'a b', '空白不必動');
+  assert.equal(safeLine('/v1/models'), '/v1/models', '普通字串原樣');
 });
 
 test('★ rejectReason｜五個原因碼分得開（absolute-form 是這一輪新加的）', () => {
@@ -511,8 +528,9 @@ test('★ r1 #1 端到端｜解析不了的目標與超長 query 讓整遍掃描
   //    所以它是「輸入→退出碼」的回歸題，**不是**「同一個輸入、只改原因碼」的對照。
   //    審查者實測過：把正式的 isToleratedRefusal 改成完全不看原因碼、只比對括號內的診斷文字，
   //    這一題**仍然全過**。**這一題能講的只有**：兩個反例退 2、真的根路徑退 0 並留下拒絕記錄。
-  //    「決定權在原因碼」那件事由上面那題的**最後兩發斷言**負責——那兩發是我自己跑過同一個突變
-  //    （正式綠／突變紅）之後才敢這樣寫的；其餘反例同時換了原因碼與診斷文字，分不出是哪一個在決定。
+  //    ⚠️ 不要在這裡寫「由某某題守住原因碼」——r4 那兩發「原因碼／診斷文字」對照斷言
+  //    **在 r5 換成新介面時已經刪掉了**（歷史紀錄在 PR #635 的 r4 處置留言）。現在守決定權的是
+  //    上面那題對 `isTolerated()` 的正反例（含 query 的鑰匙、absolute-form 自己的碼）。
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
   const bearer = 'sed -n \'s/.*"key":"\\([^"]*\\)".*/\\1/p\' "$GROK_HOME/auth.json"';
@@ -531,6 +549,6 @@ test('★ r1 #1 端到端｜解析不了的目標與超長 query 讓整遍掃描
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: real });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
     if (want === 2) assert.match(r.summary.join('\n'), /轉送器拒絕了 1 個不在白名單/, label);
-    else assert.ok(logs.some((l) => l.includes(`${REFUSAL_TOLERATED} shape GET /`)), `${label}：沒記錄「被容許的那一個是根路徑」`);
+    else assert.deepEqual(toleratedKeysIn(logs), [`${REFUSAL_TOLERATED} shape GET /`], `${label}：記下的鑰匙不是根路徑那一把`);
   }
 });
