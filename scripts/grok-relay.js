@@ -137,14 +137,19 @@ function requestPath(url) {
  * 於是一個含換行的 request-target 照樣能在 stderr 裡**偽造出一整行假的「已容許」紀錄**
  * （審查者拿真的 request callback 攔 stderr 重現過）。逐欄清洗就是在列舉出口。
  *
- * 規則：**所有控制字元（含 CR／LF／TAB）一律轉成 `%XX`**，空白保留——
- * 決定只看第一欄（見 `isToleratedRefusal`），欄位裡有空白不影響它；會出事的只有換行。
+ * **轉成 `%` 加上碼位的十六進位**（至少兩位；U+2028 會變成 `%2028`，**不是**標準的百分比編碼，這是給人看的字串不是 URL）。
+ * **實際涵蓋的範圍（逐一寫出來，不寫「所有控制字元」）**：C0（U+0000–U+001F）、DEL（U+007F）、
+ * C1（U+0080–U+009F，含 NEL U+0085）、以及 U+2028／U+2029 這兩個分行符。**空白保留**——
+ * 決定只看第一欄（見 `isToleratedRefusal`），欄位裡有空白不影響它。
+ * ⚠️ 射程講明（#635 r6 #2）：上一版只涵蓋 C0＋DEL，我卻寫成「所有控制字元」——NEL 原樣留著，
+ * 審查者量給我看。**但他同時說明：`grok-scan.js` 用 LF 切行，所以那些字元當時並沒有讓掃描被繞過**；
+ * 錯的是那句話，不是行為。這一版把範圍擴大到上面那幾類＝**縱深**，不是在修一個已證實的繞法。
  * ⚠️ 這個值**只給人看**：容許判斷走 `isTolerated()`，吃的是結構化原值，不是這一串。
  * @param {string} text
  */
 export function safeLine(text) {
   // eslint-disable-next-line no-control-regex -- 這裡就是要抓控制字元：CR／LF 會被拿來偽造整行拒絕紀錄（#635 r5 #2）
-  return text.replace(/[\u0000-\u001f\u007f]/g, (c) => '%' + (c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(2, '0'));
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => '%' + (c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(2, '0'));
 }
 
 /** 印進拒絕行的路徑長度上限（只截斷，清洗由 `safeLine` 對整行做）。 @param {string} path */

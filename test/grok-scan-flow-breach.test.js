@@ -495,10 +495,18 @@ test('★ safeLine｜**整行**清洗：`why` 裡的原始路徑也不可以印�
   assert.ok(!/[\r\n]/.test(whole), `整行清洗後仍含換行：${JSON.stringify(whole)}`);
   assert.equal(whole.split('\n').length, 1, '不可以被拆成兩行');
   assert.ok(whole.includes('%0A'), '換行要看得見地變成 %0A，不是默默吃掉');
-  // 控制字元都要轉；**空白保留**（決定只看第一欄，欄位裡有空白不影響它）
-  assert.equal(safeLine('a\tb'), 'a%09b');
-  assert.equal(safeLine('a b'), 'a b', '空白不必動');
-  assert.equal(safeLine('/v1/models'), '/v1/models', '普通字串原樣');
+  // ⚠️ 涵蓋範圍**逐一釘住**（r6 #2：上一版只涵蓋 C0＋DEL，我卻寫成「所有控制字元」）。
+  const C = String.fromCharCode;
+  for (const [name, code, want] of /** @type {[string, number, string][]} */ ([
+    ['TAB', 9, 'a%09b'], ['LF', 10, 'a%0Ab'], ['CR', 13, 'a%0Db'],
+    ['DEL', 0x7f, 'a%7Fb'], ['NEL（C1）', 0x85, 'a%85b'],
+    ['U+2028 分行符', 0x2028, 'a%2028b'], ['U+2029 分段符', 0x2029, 'a%2029b'],
+  ])) assert.equal(safeLine('a' + C(code) + 'b'), want, name);
+  // **該留的要留**：空白、中文、已經是百分比編碼的字串、可見標點
+  assert.equal(safeLine('a b'), 'a b', '空白不必動——決定只看第一欄');
+  assert.equal(safeLine('/' + C(0x4e2d) + C(0x6587) + '/x'), '/' + C(0x4e2d) + C(0x6587) + '/x', '中文不可以被吃掉');
+  assert.equal(safeLine('/a%20b'), '/a%20b', '已編碼的字串不可以被二次處理');
+  assert.equal(safeLine('/v1/models?x=1&y=~'), '/v1/models?x=1&y=~', '普通路徑原樣');
 });
 
 test('★ rejectReason｜五個原因碼分得開（absolute-form 是這一輪新加的）', () => {
