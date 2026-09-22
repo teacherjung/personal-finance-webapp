@@ -464,7 +464,9 @@ test('★ r2 #1｜關門不是列舉出口：只印認得的那幾個，**拆段
   assert.deepEqual(
     modelsUsedIn(bufs({ 'a/x.jsonl': '{"model_id":"grok-4.8"}\n{"model_id":"grok-4.7-build"}\n' })),
     { models: ['grok-4.7-build'], rejected: 1, incomplete: 0 },
-    '上游出新模型時應該寫查不出來、由人看過結果包再加進清單——不是自動放行',
+    '上游出新模型時**那個名字不會被印出來**——由人看過結果包再加進清單，不是自動放行。'
+    + '⚠️ 不要寫成「會寫查不出來」：這個夾具同時有已知的那個，公開投影是 '
+    + '「grok-4.7-build；另有不在清單上的 model_id」，不含「查不出來」（r5 #1）',
   );
 });
 
