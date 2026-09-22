@@ -446,6 +446,38 @@ function sectionFiles(readme, domain) {
  *   真正的窮舉要另拆 PR 用別的方法做（例如從 import 圖反查）。
  */
 const MANIFEST = {
+  'docs/contracts/shared-foundation.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '共用底層',
+    rules: [
+      '請求旗標一律嚴格',
+      '異常輸入防線',
+      'COMPOSITION 穿透表的兩份複本',
+      'LIABILITY_TYPES 的三份複本',
+      'IB 同步 DEFAULT_LAYER 新增代號',
+      'settings 新增欄位',
+      '集合新增欄位（表單加新欄）',
+      '跨 await 的寫入安全',
+    ],
+    exempt: [],
+    /** ⚠️ 這一份的**觸發方式跟前五份不同**：README 硬規則③要求「不分領域一律讀」。
+     *  下面這份 files 仍然要照實登記（契約內文提到的路徑一律要在這裡，那道網不能關），
+     *  它的作用是**額外**的路徑路由，不是取代硬規則③。 */
+    files: [
+      'data/seed.json',
+      'lib/derive.js',
+      'lib/schema.js',
+      'lib/services/ib-sync.js',
+      'lib/store-rules.js',
+      'lib/types.js',
+      'public/modules/accounts-model.js',
+      'public/modules/form-options.js',
+      'public/modules/portfolio-exposure.js',
+      'test/exposure-sync-integrity.test.js',
+      'test/input-guard.test.js',
+      'test/request-flags.test.js',
+    ],
+  },
   'docs/contracts/cloud-security.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '雲端與安全',
