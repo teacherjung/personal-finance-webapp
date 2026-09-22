@@ -446,6 +446,43 @@ function sectionFiles(readme, domain) {
  *   真正的窮舉要另拆 PR 用別的方法做（例如從 import 圖反查）。
  */
 const MANIFEST = {
+  'docs/contracts/shared-foundation.md': {
+    /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
+    domain: '共用底層',
+    rules: [
+      '請求旗標一律嚴格',
+      '異常輸入防線',
+      'COMPOSITION 穿透表的兩份複本',
+      'LIABILITY_TYPES 的三份複本',
+      'IB 同步 DEFAULT_LAYER 新增代號',
+      'settings 新增欄位',
+      '集合新增欄位（表單加新欄）',
+      '跨 await 的寫入安全',
+    ],
+    exempt: [],
+    /** ⚠️ 這一份的**觸發方式跟前五份不同**：README 硬規則③要求「不分領域一律讀」。
+     *  下面這份 files 照實登記。⚠️ **不要寫「一律」**：既有抽取式只認「副檔名後緊接反引號」的寫法，
+     *  像 `lib/store.js emptyDb()` 這種一格塞路徑＋識別字的就抽不到（#633 r1 抓到兩個、複審後掃又抓到第三個）；
+     *  15 題綠**不能**證明沒有漏登記，只能證明抽得到的那些都登記了。
+     *  它的作用是**額外**的路徑路由，不是取代硬規則③。 */
+    files: [
+      'data/seed.json',
+      'lib/derive.js',
+      'lib/schema.js',
+      'lib/services/ib-sync.js',
+      'lib/services/market-data.js',
+      'lib/store-rules.js',
+      'lib/store.js',
+      'lib/types.js',
+      'public/modules/accounts-model.js',
+      'public/modules/form-options.js',
+      'public/modules/portfolio-exposure.js',
+      'test/exposure-sync-integrity.test.js',
+      'test/input-guard.test.js',
+      'test/request-flags.test.js',
+      'test/server.test.js',
+    ],
+  },
   'docs/contracts/cloud-security.md': {
     /** 三邊（manifest／README 第一格／契約頁首）都要精確對這個名字。 */
     domain: '雲端與安全',
