@@ -54,7 +54,7 @@ import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-san
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles } from './grok-auth-refresh.js';
-import { REFUSED_PREFIX, TOLERATED_REFUSALS } from './grok-relay.js';
+import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1010,7 +1010,7 @@ export async function runScan(args, deps = {}) {
   //   不靠 grok 的退出碼（它收到 403 照常退 0）。
   {
     const refused = relayErr.split('\n').filter((l) => l.startsWith(REFUSED_PREFIX)).map((l) => l.slice(REFUSED_PREFIX.length));
-    const bad = refused.filter((l) => !TOLERATED_REFUSALS.some((t) => l.startsWith(t + ' ')));
+    const bad = refused.filter((l) => !isToleratedRefusal(l));   // 唯一實作在 grok-relay.js（#635 r1 #2：考題自己抄一份＝改壞正式那支也不知道）
     if (bad.length) return failAndClean(`轉送器拒絕了 ${bad.length} 個不在白名單的請求（白名單漏記＝靜默降級，不掃）：${bad.slice(0, 3).join('；')}`);
     if (refused.length) log(`（轉送器拒絕了 ${refused.length} 個刻意擋的形狀：${[...new Set(refused.map((l) => l.split(' (')[0]))].join('、')}）`);
   }

@@ -16,7 +16,8 @@
 // ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃離開來的程序拿公開前綴等不到下一掃的真 token。
 // ・只轉 ALLOWED_REQUESTS 表上的 method＋path（表是 2026-08-23 用 grok 1.0.3 記錄型 proxy 實測抄的；1.0.13、1.0.40 都沒重抄——打出表外一律 403；**除了 TOLERATED_REFUSALS 上那幾個**，其餘會讓該掃退 2，由考題釘；一兩輪真掃零拒收只證明那幾輪沒打出表外下來的）；
 //   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。每次拒絕寫一行 REFUSED_PREFIX 到 stderr，
-//   grok-scan.js 讀到非 TOLERATED_REFUSALS 的拒絕＝該掃退 2——「升版多打新端點＝掃不成（吵）」由這條承重，
+//   grok-scan.js 拿 isToleratedRefusal() 判（本檔唯一實作，比對**原因碼**＋method＋path，逐字相等）；
+//   不是刻意擋的那幾個＝該掃退 2——「升版多打新端點＝掃不成（吵）」由這條承重，
 //   不是由 grok 自己的退出碼（r7：grok 收到 403 照常退 0，靠它就是靜默降級）。
 // ・Authorization 不等於假值（含缺、含自編）＝403 不轉——不替盒內程式自編的 bearer 背書，也不讓它拿別的 token 借道。
 // ・上限：每個轉送器生命週期 MAX_REQUESTS 個請求、同時 MAX_INFLIGHT 個、每個 body ≤ MAX_BODY bytes；超過＝503／413、不轉。
@@ -86,10 +87,12 @@ export const REFUSED_PREFIX = '[relay] refused: ';
  * ⚠️ 誠實劃界：我們**不知道** `GET /` 對上游是什麼意思（沒有記錄型 proxy 實測，只知道擋掉不影響作答）；
  * 這裡宣稱的只有「擋它不影響這一次的掃描結果」，不是「它無害」——正因為不知道，才選擇繼續擋。
  *
- * ⚠️ 比對法是 `l.startsWith(t + ' ')`（見 `grok-scan.js`），所以 `'GET /'` **只**容許根路徑那一行
- * （`GET / (…)`），`GET /v1/whatever (…)` 不會被它吃掉——有考題釘住這個錨點。
+ * ⚠️ 每一筆都帶**原因碼**（`shape`）：容許的只有「形狀不在白名單」這個原因下的那幾個路徑。
+ * 同一個路徑因為**別的原因**被拒（`bad-target`／`path-too-long`／`auth`）**不在容許範圍**——
+ * #635 r1 #1 就是栽在這裡：`GET http://x:bad/other` 解析不了會退化成 `/`，舊版比對只看 method＋path，
+ * 於是那條異常被當成已審過的例外吃掉。比對走 `isToleratedRefusal()`（本檔唯一實作，考題直接呼叫它）。
  */
-export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive', 'GET /v1/subagents/bundle', 'GET /']);
+export const TOLERATED_REFUSALS = Object.freeze(['shape GET /v1/bundle/archive', 'shape GET /v1/subagents/bundle', 'shape GET /']);
 /** 拒絕次數上限：超過＝轉送器自己退出（退出碼 3）→ grok-scan 看到轉送器死＝退 2。否則盒內程式可以用無限個被拒請求灌爆 stderr。 */
 export const MAX_REFUSALS = 100;
 export const MAX_REQUESTS = 2000;          // 一次掃描的上限（實測一輪問答約 10 個請求）
@@ -102,10 +105,41 @@ const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-au
  * 請求的 path（absolute-form `GET http://other-host/x` 只留 path——不然 path 本身就能帶走整個 URL）
  * @param {string | undefined} url
  */
+/**
+ * request-target → 路徑。⚠️ **解析失敗不可以退化成 `/`**（#635 r1 #1）：`GET http://x:bad/other` 這種
+ * Node 的 HTTP parser 收得下、`new URL()` 卻拋錯的形狀，舊版 catch 把它變成 `/`，於是它的拒絕行
+ * 跟**真正的根路徑逐字相同**，被容許清單一起吃掉（審查者用真沙箱端到端重現：本來該退 2 的兩種
+ * 異常都變成退 0）。改成回傳 `{ path, bad }`：`bad` 那條走自己的原因碼，`path` 只拿來給人看、
+ * **不參與容許判斷**。
+ * @param {string} [url]
+ * @returns {{ path: string, bad: boolean }}
+ */
 function requestPath(url) {
-  let path = url || '/';
-  try { if (/^[a-z]+:\/\//i.test(path)) path = new URL(path).pathname + new URL(path).search; } catch { path = '/'; }
-  return path;
+  const raw = url || '/';
+  if (!/^[a-z]+:\/\//i.test(raw)) return { path: raw, bad: false };
+  try { const u = new URL(raw); return { path: u.pathname + u.search, bad: false }; }
+  catch { return { path: '/', bad: true }; }
+}
+
+/**
+ * 拒絕的**穩定原因碼**。容許清單比對的是它，不是那句給人看的話（#635 r1 #1）——
+ * 「給人看的話」會因為上面那個 fallback 而在兩種完全不同的情況下長得一模一樣。
+ */
+export const REFUSE_CODES = Object.freeze({
+  BAD_TARGET: 'bad-target',       // request-target 解析不了（**絕不可與合法路徑混同**）
+  PATH_TOO_LONG: 'path-too-long', // 超過 MAX_PATH
+  SHAPE: 'shape',                 // method＋path 不在 ALLOWED_REQUESTS
+  AUTH: 'auth',                   // Authorization 不等於本掃的假值
+});
+
+/**
+ * 容許判斷的**唯一實作**（#635 r1 #2：原本考題自己抄了一份 `startsWith`，正式那支改壞它也不知道）。
+ * 比對的是拒絕行的**前三個欄位**（`<原因碼> <METHOD> <path>`）**逐字相等**——不是前綴，
+ * 所以 `shape GET /` 吃不掉 `shape GET /v1/x`，也吃不掉 `bad-target GET /` 與 `path-too-long GET /`。
+ * @param {string} line 已經去掉 REFUSED_PREFIX 的那一行
+ */
+export function isToleratedRefusal(line) {
+  return TOLERATED_REFUSALS.includes(line.split(' ').slice(0, 3).join(' '));
 }
 
 /**
@@ -115,14 +149,15 @@ function requestPath(url) {
  * @param {string} [dummyBearer] broker 模式下盒內那個假值；沒給＝不啟用 broker（純轉送，Authorization 原樣過）
  */
 export function rejectReason(req, dummyBearer) {
-  const path = requestPath(req.url);
-  if (path.length > MAX_PATH) return 'path 太長';
+  const { path, bad } = requestPath(req.url);
+  if (bad) return { code: REFUSE_CODES.BAD_TARGET, why: 'request-target 解析不了' };
+  if (path.length > MAX_PATH) return { code: REFUSE_CODES.PATH_TOO_LONG, why: 'path 太長' };
   const pathname = path.split('?')[0];
   const method = String(req.method || '').toUpperCase();
-  if (!ALLOWED_REQUESTS.some((a) => a.method === method && a.path.test(pathname))) return `形狀不在白名單：${method} ${pathname}`;
+  if (!ALLOWED_REQUESTS.some((a) => a.method === method && a.path.test(pathname))) return { code: REFUSE_CODES.SHAPE, why: `形狀不在白名單：${method} ${pathname}` };
   if (dummyBearer !== undefined) {
     const auth = req.headers.authorization;
-    if (auth !== `Bearer ${dummyBearer}`) return 'Authorization 不是本掃的假值（缺、自編、或上一掃的）';
+    if (auth !== `Bearer ${dummyBearer}`) return { code: REFUSE_CODES.AUTH, why: 'Authorization 不是本掃的假值（缺、自編、或上一掃的）' };
   }
   return null;
 }
@@ -141,7 +176,8 @@ export function upstreamOptions(req, realBearer) {
   }
   headers.host = UPSTREAM_HOST;
   if (realBearer) headers.authorization = `Bearer ${realBearer}`;
-  return { host: UPSTREAM_HOST, port: 443, method: req.method, path: requestPath(req.url), headers, timeout: 300_000 };
+  // 走到這裡代表已過 rejectReason（`bad` 的在那裡就被擋掉了）；這裡仍只取 path 欄，不替解析失敗兜底。
+  return { host: UPSTREAM_HOST, port: 443, method: req.method, path: requestPath(req.url).path, headers, timeout: 300_000 };
 }
 
 /**
@@ -170,12 +206,14 @@ if (opt.authDir) {
 let served = 0, inflight = 0, refusals = 0;
 const server = http.createServer((req, res) => {
   if (req.method === 'CONNECT') { res.writeHead(405); res.end('relay: CONNECT not supported'); return; }
-  const why = rejectReason(req, dummyBearer);
-  if (why) {
+  const rej = rejectReason(req, dummyBearer);
+  if (rej) {
     // r7（Codex）：拒絕不能靜靜發生——grok 收到 403 多半照常退 0（實測 bundle/archive），掃描就會靜默降級。
     // 每一次拒絕都寫一行固定格式到 stderr，grok-scan.js 讀它：除了 TOLERATED_REFUSALS 裡刻意擋的，任何拒絕＝該掃退 2（吵）。
-    process.stderr.write(`${REFUSED_PREFIX}${String(req.method || '').toUpperCase()} ${requestPath(req.url).split('?')[0].slice(0, 200)} (${why})\n`);
-    res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`relay: refused (${why})`); req.resume();
+    // ⚠️ 第一欄是**穩定原因碼**（#635 r1 #1）：容許判斷比對前三欄（碼／method／path）逐字相等，
+    //    給人看的那句話放在括號裡、**不參與判斷**——它在兩種完全不同的情況下會長得一模一樣。
+    process.stderr.write(`${REFUSED_PREFIX}${rej.code} ${String(req.method || '').toUpperCase()} ${requestPath(req.url).path.split('?')[0].slice(0, 200)} (${rej.why})\n`);
+    res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`relay: refused (${rej.why})`); req.resume();
     if (++refusals >= MAX_REFUSALS) { process.stderr.write(`[relay] 拒絕次數達 ${MAX_REFUSALS}，轉送器退出\n`); process.exit(3); }
     return;
   }
