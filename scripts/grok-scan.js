@@ -453,60 +453,77 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
 }
 
 /**
- * 可以回聲出去的模型名形狀。**釘住廠牌前綴 `grok-`**，不是泛用的「小寫字母數字」——
- * r1 #1：36 字元的小寫 UUID 完全合格，而盒內 auth 本來就看得到 `user_id`
- * （`grok-auth-refresh.js` 的 authNeedles 刻意把給盒子的值排除在 DLP 之外），
- * 於是「形狀安全」把一個身分值送進了公開的配方聲明。審查者用合成 user_id 端到端重現過。
- * ⚠️ 代價講明：上游哪天出一個不叫 `grok-…` 的模型，這裡會寫「查不出來」。那是**安全的壞法**
- *    （少一格留痕，不是多一條出口），而且看得見——不是靜靜漏掉。
+ * 公開的模型欄**只印這張表上的值**——不是「看起來安全的字串」。
+ *
+ * r1 #1 我先加了形狀白名單（擋掉 UUID），r2 #1 審查者就把合成 `user_id` **拆成兩段、各加 `grok-` 前綴**：
+ * 兩段都合形狀、都不是盒內 auth 原文的子字串，於是整個身分值分兩格被抄進公開處，拿掉前綴就拼得回來。
+ * 他用正式 `runScan` 端到端重現（code 0、兩段都在 summary 與 log 裡）。
+ *
+ * **變形列舉不完**——這正是 William 2026-09-01 對本檔裁的「**關門，不是列舉出口**」（見 runScan 內那段）。
+ * 所以不再問「這個字串安不安全」，改問「**它是不是我們認得的那幾個之一**」。
+ *
+ * 上游出新模型時這一格會寫「查不出來」＋一個計數（計數是數字，不洩漏任何內容）。
+ * 要補上去的做法：去**私有的結果包**看實際的名字（結果包路徑印在配方聲明裡），
+ * 確認之後把它加進這張表——跟釘執行檔版本同一個節奏：**預設不認得，由人看過才放行**。
  */
-export const MODEL_ID_SHAPE = /^grok-[a-z0-9][a-z0-9.-]{0,31}$/;
+export const KNOWN_MODELS = Object.freeze([
+  'grok-4.6', 'grok-4.6-build',   // 2026-09-05〜2026-09-21 實際用的（本機結果包實測）
+  'grok-4.7', 'grok-4.7-build',   // 2026-09-21 傍晚起（同上）
+]);
 
 /** 會被當成模型紀錄來解析的檔名（r1 #2：材料與提示文字**不算**紀錄）。 */
 const MODEL_LOG_EXT = Object.freeze(['.json', '.jsonl']);
+/** 每一行的節點上限。超過＝這一行**讀不完整**（不是事故）——見 modelsUsedIn 對 r2 #2 的說明。 */
+export const MODEL_WALK_MAX_NODES = 100_000;
 
 /**
  * 這次實際用的模型名，從 session 日誌**解析出來的物件**裡取 `model_id`（掃描器**不指定模型**——
  * `GROK_FLAGS` 沒有 `-m`，用的是上游當下的預設；上游換了模型我們這邊不會有任何動靜）。
- * 只是留痕、**不是閘**：讀不到就寫「查不出來」，不擋掃描、不改退出碼。
+ * 只是留痕、**不是閘**：讀不到、或讀到不認得的，都只是寫「查不出來」，不擋掃描、不改退出碼。
  *
+ * ⚠️ **只回聲 KNOWN_MODELS 上的值**（見上）。不合的**不寫它長什麼樣**，只留一個計數。
  * ⚠️ **讀結構、不讀文字**（r1 #2）：原本用正規式掃全部檔案的原文，於是**受掃材料裡的範例**
- *    （grok 會把材料寫進 `prompt_0.txt`，見下方 #500 那段）也被當成「這次用的模型」——
- *    審查者把本支的考題原文放進去就重現了。現在只看 `.json`／`.jsonl`、解析成物件後取
- *    **鍵名為 `model_id` 的值**；材料即使被存成某個鍵的字串值，字串內容不會再被當 JSON 解析。
- * ⚠️ 值是**沙箱裡的程序寫的**，而配方聲明會被逐字抄進**公開的** PR 描述 ⇒ 回聲之前過兩道：
- *    ①形狀白名單（見 MODEL_ID_SHAPE）②`denyText`——盒子看得到的 auth 原文；候選值只要出現在裡面就不回聲。
- *    不合格的一律不回聲、**也不寫它長什麼樣**，只留一個計數。
- * ⚠️ 第②道的射程要講清楚：**今天它走不到**。盒內 auth 的每一欄都被別處各自釘死——`oidc_issuer`／
- *    `oidc_client_id` 是釘住的常數、`user_id` 被驗成 UUID、`key` 是大寫開頭的假值、兩個時間戳是 ISO 格式、
- *    `auth_mode` 是 `oidc`——沒有一個長得出 `grok-…`，所以①就把路封死了。第②道留著是**縱深**：
- *    哪天①放寬、或盒內白名單多一欄，它才是那時唯一擋得住的東西。
- *    我試著替它寫端到端的題，**寫不出來**（要構造就得先破壞上面那些釘值，那變成在考別的閘），
- *    所以它目前**只有單元題**撐著——這裡寫明，不要把它讀成「已端到端驗過」。
- * ⚠️ `rejected` 的定義＝**鍵名是 `model_id`、但值不能回聲的次數**，含非字串的值（`42`／`true`／物件）。
- *    （r1 #4：舊版只數正規式撈得到的字串，`{"model_id":42}` 會被算成「沒有 model_id」＝計數說假話。）
- * ⚠️ 誠實劃界：只認 `model_id` 這一個鍵、只認上面那兩種副檔名。日誌換鍵名或換檔名就讀不到
+ *    （grok 會把材料寫進 `prompt_0.txt`，見下方 #500 那段）也被當成「這次用的模型」。
+ *    現在只看 `.json`／`.jsonl`、解析成物件後取**鍵名為 `model_id` 的值**；材料即使被存成
+ *    某個鍵的字串值，字串內容不會再被當 JSON 解析。
+ * ⚠️ **逐行原子**（r2 #2）：原本用遞迴、而且直接改外層的累加器，於是極深巢狀爆堆疊被 catch 之後
+ *    **前半行的結果留著、後半行的鍵沒算到**——「跳過這一行」與「完整計數」兩句都成了假話
+ *    （審查者用 15000 層的合法 JSON 重現）。現在改成**明確堆疊的迭代走訪**（不會爆堆疊）＋
+ *    節點上限；一行沒走完就**整行丟掉**並計入 `incomplete`，那個數字會印在公開欄裡——
+ *    「沒讀完」是要說出來的事，不是默默當成讀完。
+ * ⚠️ 誠實劃界：只認 `model_id` 這一個鍵、只認那兩種副檔名。日誌換鍵名或換檔名就讀不到
  *    （寫「查不出來」），**不會**因此判錯或漏掉任何安全檢查；DLP 與破口比對走的是別的路、不受本函式影響。
- *    本函式也**不是**去機密器：它只管自己這一格要不要回聲，不保證別處的產物沒有身分值。
+ *    本函式也**不是**去機密器、**不是**日誌真偽的認證：它只管自己這一格印不印，
+ *    不保證別處的產物（私有的結果包仍保存原始位元組）沒有身分值。
  * @param {Map<string, Buffer>} files readSessionsOnce 讀到的那一份副本
- * @param {string} [denyText] 盒內 auth.json 的原文；候選值出現在裡面就不回聲
- * @returns {{ models: string[], rejected: number }} models＝去重後排序；rejected＝有 model_id 但不能回聲的次數
+ * @returns {{ models: string[], rejected: number, incomplete: number }}
+ *   models＝去重後排序（只會是 KNOWN_MODELS 的子集）；rejected＝有 `model_id` 但不在表上的次數；
+ *   incomplete＝沒走完而整行丟掉的行數
  */
-export function modelsUsedIn(files, denyText = '') {
+export function modelsUsedIn(files) {
   /** @type {Set<string>} */ const models = new Set();
-  let rejected = 0;
+  let rejected = 0, incomplete = 0;
   const dec = new TextDecoder('utf-8', { fatal: true });
-  /** @param {unknown} v 逐層走解析後的物件，只收鍵名 model_id 的值 */
-  const walk = (v) => {
-    if (Array.isArray(v)) { for (const x of v) walk(x); return; }
-    if (!v || typeof v !== 'object') return;
-    for (const [k, val] of Object.entries(v)) {
-      if (k === 'model_id') {
-        if (typeof val === 'string' && MODEL_ID_SHAPE.test(val) && !(denyText && denyText.includes(val))) models.add(val);
-        else rejected++;   // 非字串、形狀不合、或盒子看得到的身分值——都不回聲
+  /**
+   * 走一行。**先收在本地**，走完才交給呼叫端合併——沒走完就什麼都不交（整行丟掉）。
+   * @param {unknown} root
+   * @returns {{ found: string[], rejected: number, ok: boolean }}
+   */
+  const walkLine = (root) => {
+    /** @type {string[]} */ const found = [];
+    let rej = 0, seen = 0;
+    /** @type {unknown[]} */ const stack = [root];
+    while (stack.length) {
+      if (++seen > MODEL_WALK_MAX_NODES) return { found, rejected: rej, ok: false };
+      const v = stack.pop();
+      if (Array.isArray(v)) { for (const x of v) stack.push(x); continue; }
+      if (!v || typeof v !== 'object') continue;
+      for (const [k, val] of Object.entries(v)) {
+        if (k === 'model_id') { if (typeof val === 'string' && KNOWN_MODELS.includes(val)) found.push(val); else rej++; }
+        stack.push(val);
       }
-      walk(val);
     }
+    return { found, rejected: rej, ok: true };
   };
   for (const [rp, buf] of files) {
     if (!MODEL_LOG_EXT.some((e) => rp.endsWith(e))) continue;
@@ -514,12 +531,16 @@ export function modelsUsedIn(files, denyText = '') {
     try { text = dec.decode(buf); } catch { continue; }   // 非 UTF-8＝讀不了；不是事故（事故由別處判）
     for (const line of rp.endsWith('.jsonl') ? text.split('\n') : [text]) {
       if (!line.trim()) continue;
-      // catch 同時包住 parse 與 walk：壞行＝不是模型紀錄，極深巢狀讓遞迴爆堆疊時也一樣跳過這一行。
-      // 兩者都往「這一格寫查不出來」倒，不會改退出碼、不會吃掉別的檢查（可讀性由 auditSessionDir 另外判）。
-      try { walk(JSON.parse(line)); } catch { /* 見上 */ }
+      /** @type {ReturnType<typeof walkLine>} */ let r;
+      // 壞行＝不是模型紀錄（可讀性由 auditSessionDir 另外判），不計 incomplete；
+      // 「解析得出來但走不完」才是讀不完整。
+      try { r = walkLine(JSON.parse(line)); } catch { continue; }
+      if (!r.ok) { incomplete++; continue; }   // 整行丟掉：不收它的 found，也不收它的 rejected
+      for (const m of r.found) models.add(m);
+      rejected += r.rejected;
     }
   }
-  return { models: [...models].sort(), rejected };
+  return { models: [...models].sort(), rejected, incomplete };
 }
 
 /**
@@ -732,9 +753,6 @@ export async function runScan(args, deps = {}) {
   // r6：sessions 不再「cleanup 時從盒子複製」——成功路徑在 DLP 之後把**記憶體裡那份**寫進結果包（單趟讀），cleanup 只刪盒子。
   const grokHome = join(box, 'grok-home');
   const sessionsRoot = join(grokHome, 'sessions');
-  /** 盒子看得到的 auth 原文（含 user_id 等身分值）。模型那一格回聲前拿它當拒絕名單——
-   *  r1 #1：這些值**不在** DLP 的針裡（它們是刻意給盒子的），所以只有這裡擋得住。 */
-  let boxAuthText = '';
   resultsDir = join(resultsRoot, `${head.slice(0, 7)}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
   dummyFile = join(authDir, `dummy-bearer.${process.pid}`);
@@ -771,8 +789,7 @@ export async function runScan(args, deps = {}) {
     // 父程序 refresh（沙箱外、可信程式、不是 grok）；盒內只放白名單重建的版本＋本掃隨機假值；假值走 0600 檔給轉送器（不走 argv／env）
     try {
       const a = await refreshSandboxAuth(authDir, { fetchImpl: deps.fetchImpl, log });
-      boxAuthText = JSON.stringify(a.forBox);
-      writeFileSync(join(grokHome, 'auth.json'), boxAuthText, { mode: 0o600 });
+      writeFileSync(join(grokHome, 'auth.json'), JSON.stringify(a.forBox), { mode: 0o600 });
       writeFileSync(dummyFile, a.dummyBearer + '\n', { mode: 0o600 });
       deps.afterGrokHomeAuthWrite?.(grokHome);
     } catch (e) { return failAndClean(`憑證 refresh 失敗：${/** @type {Error} */ (e).message}`); }
@@ -1193,12 +1210,15 @@ export async function runScan(args, deps = {}) {
   if (outFile) writeFileSync(outFile, reply);
   // 模型留痕（William 2026-09-22 裁「甲」）：掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
   // 而紀錄裡看不出來。這一格只是**留痕不是閘**：讀不到就寫「查不出來」，不擋掃描。
-  const mu = modelsUsedIn(snap.files, boxAuthText);
-  // ⚠️ 原因只寫「不能回聲」，不細分是形狀不合、非字串、還是命中盒內身分值——
+  const mu = modelsUsedIn(snap.files);
+  // ⚠️ 只印數字與「不在已知清單裡」，不細分是哪一種、更不寫值長什麼樣——
   //    細分等於對著公開處描述那個值，而擋它就是為了不描述它。
-  const modelText = mu.models.length
-    ? mu.models.join('＋') + (mu.rejected ? `（另有 ${mu.rejected} 個 model_id 不能回聲）` : '')
-    : `查不出來（${mu.rejected ? `${mu.rejected} 個 model_id 不能回聲` : '日誌的 .json／.jsonl 裡沒有 model_id'}）`;
+  //    「讀不完整」也要印出來：沒讀完是要說出來的事，不是默默當成讀完（r2 #2）。
+  const modelBits = [mu.models.length
+    ? mu.models.join('＋') + (mu.rejected ? `（另有 ${mu.rejected} 個 model_id 不在已知清單裡）` : '')
+    : `查不出來（${mu.rejected ? `${mu.rejected} 個 model_id 不在已知清單裡；實際的名字看結果包` : '日誌的 .json／.jsonl 裡沒有 model_id'}）`];
+  if (mu.incomplete) modelBits.push(`另有 ${mu.incomplete} 行讀不完整、整行不採用`);
+  const modelText = modelBits.join('；');
   const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
