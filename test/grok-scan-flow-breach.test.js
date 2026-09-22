@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 import { escapeForms, knownShapeHitsFromTree, runScan, shapeHitsIn, stripLineMarkers } from '../scripts/grok-scan.js';
-import { REFUSE_CODES, TOLERATED_REFUSALS, isToleratedRefusal, rejectReason } from '../scripts/grok-relay.js';
+import { REFUSAL_BLOCKING, REFUSAL_TOLERATED, REFUSE_CODES, TOLERATED_REFUSALS, isTolerated, isToleratedRefusal, rejectReason, safeForLine } from '../scripts/grok-relay.js';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -96,7 +96,8 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: real });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
     if (want === 2) assert.match(r.summary.join('\n'), /轉送器拒絕了 1 個不在白名單/, label);
-    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes(`GET ${path}`)), `${label}：沒記錄被容許的拒絕`);
+    // ⚠️ 要比**整把鑰匙**：`GET /` 是另外兩個容許鍵的子字串，只比它鎖不住「記下的是哪一個」（掃描 #3）。
+    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀') && l.includes(`${REFUSAL_TOLERATED} shape GET ${path}`)), `${label}：沒記錄被容許的拒絕`);
   }
 });
 
@@ -438,56 +439,74 @@ test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台�
   assert.equal(shapeHitsIn(stripLineMarkers(keyWithMarker)).length, 1, '剝完仍抓不到＝靜默漏放沒被修掉');
 });
 
-test('★ 容許判斷｜呼叫**正式**的 isToleratedRefusal：只有「形狀不在白名單」那個原因下的那幾個路徑算刻意擋的', () => {
-  // ⚠️ 這一題**不可以**自己抄一份比對式（#635 r1 #2：原版抄了一份 startsWith，
-  //    正式那支改壞它也照樣綠）。它呼叫的就是 grok-scan.js 走的那一支。
-  assert.equal(isToleratedRefusal('shape GET / (形狀不在白名單：GET /)'), true, '根路徑那一行要被容許');
-  assert.equal(isToleratedRefusal('shape GET /v1/bundle/archive (形狀不在白名單：GET /v1/bundle/archive)'), true);
-  for (const l of [
-    // ★ r1 #1 打穿我的那兩種：同樣印成 `GET /`，但原因不同 ⇒ **不可以**被容許
-    'bad-target GET / (request-target 解析不了)',
-    'path-too-long GET / (path 太長)',
-    // 同路徑、別的原因
-    'auth GET /v1/models (Authorization 不是本掃的假值（缺、自編、或上一掃的）)',
-    // 前綴不可以吃掉整族
-    'shape GET /v1/not-in-allowlist (形狀不在白名單：GET /v1/not-in-allowlist)',
-    'shape GET /v1/bundle (形狀不在白名單：GET /v1/bundle)',
-    'shape GET /anything (形狀不在白名單：GET /anything)',
-    'shape POST / (形狀不在白名單：POST /)',
-    'GET / (形狀不在白名單：GET /)',   // 舊格式（沒有原因碼）＝不認得，fail-closed
-  ]) assert.equal(isToleratedRefusal(l), false, `這一行不該被容許：${l}`);
+test('★ 容許判斷｜吃**結構化原值**，不從印出來的那行字回推（Grok 複審後掃 #1）', () => {
+  // ⚠️ 這一題呼叫的就是轉送器與掃描腳本走的那一支，**不可以**自己抄一份（#635 r1 #2）。
+  assert.equal(isTolerated(REFUSE_CODES.SHAPE, 'GET', '/'), true, '真的根路徑要被容許');
+  assert.equal(isTolerated(REFUSE_CODES.SHAPE, 'GET', '/v1/bundle/archive'), true);
+  assert.equal(isTolerated(REFUSE_CODES.SHAPE, 'GET', '/v1/subagents/bundle'), true, '三個容許值都要走判斷函式，不可以只檢查常數裡有那串字（掃描 #3）');
+  // ★ 掃描 #1③：query 是鑰匙的一部分——`/?probe=新端點` 不是 `/`
+  assert.equal(isTolerated(REFUSE_CODES.SHAPE, 'GET', '/?probe=new-endpoint'), false, 'query 被剝掉就等於放行新端點');
+  assert.equal(isTolerated(REFUSE_CODES.SHAPE, 'GET', '/v1/bundle/archive?dl=1'), false);
+  // ★ 掃描 #1①：absolute-form 的表外請求有自己的碼，永遠不在容許範圍
+  assert.equal(isTolerated(REFUSE_CODES.ABSOLUTE_FORM, 'GET', '/'), false, 'absolute-form 正規化成 / 也不算');
+  // 別的原因碼、別的路徑、別的 method
+  for (const [c, m, p] of [
+    [REFUSE_CODES.BAD_TARGET, 'GET', '/'], [REFUSE_CODES.PATH_TOO_LONG, 'GET', '/'],
+    [REFUSE_CODES.AUTH, 'GET', '/v1/models'], [REFUSE_CODES.SHAPE, 'POST', '/'],
+    [REFUSE_CODES.SHAPE, 'GET', '/v1/not-in-allowlist'], [REFUSE_CODES.SHAPE, 'GET', '/v1/bundle'],
+    [REFUSE_CODES.SHAPE, 'GET', '/ /v1/admin'],   // ★ 掃描 #1③：含空白的路徑不可以命中 `/`
+  ]) assert.equal(isTolerated(c, m, p), false, `不該容許：${c} ${m} ${p}`);
   for (const t of ['shape GET /v1/bundle/archive', 'shape GET /v1/subagents/bundle', 'shape GET /']) {
     assert.ok(TOLERATED_REFUSALS.includes(t), `容許清單少了 ${t}`);
   }
-  // ★ 這兩發才是「決定權在**原因碼**、不在括號裡那句話」的證據（#635 r3 #1）。
-  //   上面那些反例**同時**換了原因碼與診斷文字，所以它們分不出是哪一個在做決定——
-  //   審查者做了一個「跳過前三欄、只比對診斷文字」的突變，上面全部照樣綠。這兩發會紅。
-  assert.equal(isToleratedRefusal('shape GET / (診斷文字隨便寫都不該影響判斷)'), true, '括號裡那句話不該參與判斷');
-  assert.equal(isToleratedRefusal('bad-target GET / (形狀不在白名單：GET /)'), false, '診斷文字對了也不算——決定權在原因碼');
 });
 
-test('★ rejectReason｜解析不了的 request-target **不可以**退化成合法的根路徑（原因碼要分得開）', () => {
-  // ⚠️ 這是 r1 #1 的根因：舊版 catch 把 `new URL()` 拋錯的目標改成 '/'，
-  //    於是它的拒絕行跟真正的根路徑**逐字相同**。改成整行相等也救不了——要從原因碼分。
+test('★ 拒絕行｜掃描腳本只看第一欄；路徑裡的空白／換行進不了那一欄', () => {
+  // ⚠️ 掃描 #1③④：前一版是把整行切成欄位再回推，於是盒內程序只要在路徑裡塞空白或換行，
+  //    就能把欄位切歪、甚至偽造出整行假的拒絕紀錄。現在決定寫在第一欄，由轉送器下。
+  assert.equal(isToleratedRefusal(`${REFUSAL_TOLERATED} shape GET / (形狀不在白名單：GET /)`), true);
+  assert.equal(isToleratedRefusal(`${REFUSAL_BLOCKING} shape GET /?probe (形狀不在白名單：GET /)`), false);
+  assert.equal(isToleratedRefusal('shape GET / (形狀不在白名單：GET /)'), false, '舊格式（沒有判決欄）＝不認得，fail-closed');
+  // 偽造：盒內程序在路徑裡塞一段看起來像「已容許」的字，第一欄仍然是轉送器寫的那一個
+  assert.equal(isToleratedRefusal(`${REFUSAL_BLOCKING} shape GET /x${REFUSAL_TOLERATED}%20shape%20GET%20/ (…)`), false);
+});
+
+test('★ safeForLine｜印進拒絕行的路徑不可能含空白或換行（不然欄位會被切歪、行會被偽造）', () => {
+  const line = (/** @type {string} */ p) => {
+    const out = safeForLine(p);
+    assert.ok(!/[\s]/.test(out), `清洗後仍含空白字元：${JSON.stringify(out)}`);
+    return out;
+  };
+  assert.equal(line('/ /v1/admin'), '/%20/v1/admin');
+  assert.equal(line('/\n/v1/admin'), '/%0A/v1/admin');
+  assert.equal(line('/a\tb'), '/a%09b');
+  assert.equal(line('/v1/models'), '/v1/models', '普通路徑原樣');
+  line('/中文');   // 非 ASCII 也不可以漏出空白
+});
+
+test('★ rejectReason｜五個原因碼分得開（absolute-form 是這一輪新加的）', () => {
   const auth = (/** @type {string} */ n) => ({ headers: { authorization: `Bearer ${n}` } });
   for (const url of ['http://x:bad/other', 'http://[', 'http://%']) {
-    const r = rejectReason({ method: 'GET', url, ...auth('n') }, 'n');
-    assert.equal(r?.code, REFUSE_CODES.BAD_TARGET, `${url} 應該判成 bad-target，實際：${JSON.stringify(r)}`);
+    assert.equal(rejectReason({ method: 'GET', url, ...auth('n') }, 'n')?.code, REFUSE_CODES.BAD_TARGET, url);
   }
-  // 真正的根路徑＝shape；超長 query＝path-too-long（去掉 query 之後也是印成 `/`，但原因不同）
+  // ★ 掃描 #1①：這些 new URL() 會成功、pathname 正規化成 / 或成容許清單上的路徑
+  for (const url of ['http://evil.example', 'http://evil.example/foo/..', 'http://user:pass@evil/',
+    'http://evil/foo/bar/../../v1/bundle/archive', 'http://evil/not-root/../../v1/subagents/bundle']) {
+    assert.equal(rejectReason({ method: 'GET', url, ...auth('n') }, 'n')?.code, REFUSE_CODES.ABSOLUTE_FORM, url);
+  }
   assert.equal(rejectReason({ method: 'GET', url: '/', ...auth('n') }, 'n')?.code, REFUSE_CODES.SHAPE);
   assert.equal(rejectReason({ method: 'GET', url: '/?' + 'a'.repeat(2100), ...auth('n') }, 'n')?.code, REFUSE_CODES.PATH_TOO_LONG);
-  // 白名單內＋假值對 ⇒ 准
   assert.equal(rejectReason({ method: 'GET', url: '/v1/models', ...auth('n') }, 'n'), null);
   assert.equal(rejectReason({ method: 'GET', url: '/v1/models', ...auth('WRONG') }, 'n')?.code, REFUSE_CODES.AUTH);
 });
 
-test('★ r1 #1 端到端｜被容許的只有「真的根路徑」：解析不了的目標與超長 query 仍讓整遍掃描退 2', async (t) => {
+test('★ r1 #1 端到端｜解析不了的目標與超長 query 讓整遍掃描退 2；真的根路徑退 0 並記下那一把鑰匙', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // ⚠️ 這一題是本支最重那條的證據。審查者 r1 用這兩種形狀打穿了第一版：
   //    兩者的拒絕行都印成 `GET /`（前者因為 `new URL()` 拋錯退化成 '/'、後者因為 query 被剝掉），
-  //    舊的容許判斷只看 method＋path，**兩次都退 0**——該吵的沒吵。
-  //    現在容許判斷比對**原因碼**，所以這兩種都回到退 2。
+  //    舊的容許判斷只看 method＋path，**兩次都退 0**——該吵的沒吵。現在兩種都回到退 2。
+  //    ⚠️ **不要在這裡寫「因為比對了原因碼」**（掃描 #3）：三臂改的是 request-target，
+  //    原因碼與診斷文字會一起變，這一題分不出是哪一個在決定。
   // ⚠️ **這一題射程到哪為止**（#635 r2 #2）：三臂改的是 request-target，原因碼與診斷文字會**一起**變，
   //    所以它是「輸入→退出碼」的回歸題，**不是**「同一個輸入、只改原因碼」的對照。
   //    審查者實測過：把正式的 isToleratedRefusal 改成完全不看原因碼、只比對括號內的診斷文字，
@@ -512,6 +531,6 @@ test('★ r1 #1 端到端｜被容許的只有「真的根路徑」：解析不�
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { log: (m) => logs.push(m), ...iso, repo: repo.dir, ...withGrok(inst), relayScript: real });
     assert.equal(r.code, want, `${label}：${r.summary.join('\n')}`);
     if (want === 2) assert.match(r.summary.join('\n'), /轉送器拒絕了 1 個不在白名單/, label);
-    else assert.ok(logs.some((l) => l.includes('刻意擋的形狀')), `${label}：沒記錄被容許的拒絕`);
+    else assert.ok(logs.some((l) => l.includes(`${REFUSAL_TOLERATED} shape GET /`)), `${label}：沒記錄「被容許的那一個是根路徑」`);
   }
 });

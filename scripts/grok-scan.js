@@ -1010,7 +1010,9 @@ export async function runScan(args, deps = {}) {
   //   不靠 grok 的退出碼（它收到 403 照常退 0）。
   {
     const refused = relayErr.split('\n').filter((l) => l.startsWith(REFUSED_PREFIX)).map((l) => l.slice(REFUSED_PREFIX.length));
-    const bad = refused.filter((l) => !isToleratedRefusal(l));   // 唯一實作在 grok-relay.js（#635 r1 #2：考題自己抄一份＝改壞正式那支也不知道）
+    // 只看拒絕行的**第一欄**：決定是轉送器在拿得到結構化原值時下的，這裡不重算
+    // （Grok 複審後掃 #1③④：路徑由盒內控制，回推欄位會被空白／換行／query 切歪，還能偽造假行）。
+    const bad = refused.filter((l) => !isToleratedRefusal(l));
     if (bad.length) return failAndClean(`轉送器拒絕了 ${bad.length} 個不在白名單的請求（白名單漏記＝靜默降級，不掃）：${bad.slice(0, 3).join('；')}`);
     if (refused.length) log(`（轉送器拒絕了 ${refused.length} 個刻意擋的形狀：${[...new Set(refused.map((l) => l.split(' (')[0]))].join('、')}）`);
   }
