@@ -624,3 +624,26 @@ test('★ r3｜端到端：超限那一行整行丟掉，公開欄照實說「�
   assert.equal(r.code, 0, r.summary.join('\n'));
   assert.match(r.summary.join('\n'), /｜模型=查不出來；有紀錄讀不完整、整行不採用｜/);
 });
+
+test('★ r4｜公開欄**診斷不出原因**：三種不同的來源給出逐字相同的字串（所以不可以宣稱旗標分得出來）', () => {
+  // r4 #2：我在 PR 寫過「後面兩個旗標會告訴你是哪一種」——假的。
+  // 這一題把那句話釘成它的反面：不同原因**本來就**收斂成同一個公開字串，
+  // 要診斷只能去私有的結果包看。這是值域被壓小的**必然代價**，不是 bug。
+  const outs = [
+    bufs({}),                                                   // 空日誌
+    bufs({ 'a/updates.jsonl': '{"type":"tool_started"}\n' }),   // 有紀錄、沒有 model_id
+    bufs({ 'a/updates.jsonl': '這不是 JSON\n' }),                // 壞行
+    bufs({ 's/prompt_0.txt': '{"model_id":"grok-4.7"}' }),       // 只有材料（副檔名不對）
+  ].map((f) => modelFieldText(modelsUsedIn(f)));
+  assert.deepEqual(new Set(outs), new Set(['查不出來']), `四種來源應該收斂成同一個字串，實際：${JSON.stringify(outs)}`);
+});
+
+test('★ r4｜已知與未知**並存**時不是「查不出來」——別再把它寫成必然結果', () => {
+  // r4 #2：程式註解與 PR 都寫過「讀到不認得的就寫查不出來」「每次上游換模型會先寫查不出來」，
+  // 兩句在混合情境下都不成立。
+  const mixed = modelFieldText(modelsUsedIn(bufs({
+    'a/updates.jsonl': '{"model_id":"grok-4.7"}\n{"model_id":"grok-4.8"}\n',
+  })));
+  assert.equal(mixed, 'grok-4.7；另有不在清單上的 model_id');
+  assert.ok(!mixed.includes('查不出來'), '混合情境不會出現「查不出來」');
+});
