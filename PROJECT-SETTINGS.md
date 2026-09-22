@@ -46,7 +46,7 @@
 
 ## 四、掃描發射者（規矩 A1、G4）
 
-- 掃描器：Grok CLI（xAI）：一律經 node scripts\/grok\-scan\.js \-\-base \<sha\> \-\-head \<sha\> \-\-prompt \<指示檔\> \-\-out \<回覆檔\> 發射（呼叫紀律與三個失效條件＝scripts\/grok\-scan\.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本（沒有掃描器＝每支的掃描紀錄寫「未執行：本專案無掃描器」，由下面指定的那一方記錄並轉正式）
+- 掃描器：Grok CLI（xAI）：一律經 node scripts\/grok\-scan\.js \-\-base \<sha\> \-\-head \<sha\> \-\-prompt \<指示檔\> \-\-out \<回覆檔\> 發射（呼叫紀律與三個失效條件＝scripts\/grok\-scan\.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本；grok 自己會升版（裁示者 2026\-09\-22 裁「auto\_update 維持開著」），升版＝在倉庫根目錄跑 \`npm run grok\:bump\`（重驗必要字串→改釘值與考題 fixture；不 commit、不 push；重驗不過就退 2 不寫），細節與劃界＝\`scripts\/grok\-bump\.js\` 檔頭（沒有掃描器＝每支的掃描紀錄寫「未執行：本專案無掃描器」，由下面指定的那一方記錄並轉正式）
 - 誰指派、登記在哪：掃描發射者＝起得了掃描器的那一方（William 2026\-09\-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail\-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William
 - 兩方都起得了時：本專案沒有：今天只有一方起得了掃描器，平手規則刻意不預寫（本格即正本）；出現兩方都起得了時要補一條——由誰定沒有寫明（換現況要先實測、再問 William，見 assignedBy）
 - 沒有合格者時，誰記錄未執行、誰轉正式：本專案沒有另立：掃不成一律由掃描發射者（現況 Claude）在變更說明固定小標「\#\#\# 複審後掃」下逐字寫「未執行：\<原因\>」、不擋合併，轉正式也由掃描發射者做；「沒有任何一方起得了」這個情形本專案沒有條文（未裁）
@@ -141,7 +141,7 @@
 | \^\[\^\/\]\+\\\.md\$ | E（不需驗收） |
 | \^\\\.github\/ | E（不需驗收） |
 | \^data\/seed\\\.json\$ | E（不需驗收） |
-| \^scripts\/\(check\-ci\-really\-ran\|check\-cross\-pr\-merge\|check\-pr\-collab\-fields\|check\-pr\-merge\-gate\|check\-review\-verdicts\|check\-worktree\-integrity\|audit\-grok\-scan\|grok\-scan\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|c6\-adversarial\|acceptance\-tier\|pending\-rulings\)\\\.js\$ | E（不需驗收） |
+| \^scripts\/\(check\-ci\-really\-ran\|check\-cross\-pr\-merge\|check\-pr\-collab\-fields\|check\-pr\-merge\-gate\|check\-review\-verdicts\|check\-worktree\-integrity\|audit\-grok\-scan\|grok\-scan\|grok\-bump\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|c6\-adversarial\|acceptance\-tier\|pending\-rulings\)\\\.js\$ | E（不需驗收） |
 | \^scripts\/grok\-sandbox\\\.sb\$ | E（不需驗收） |
 | \^scripts\/git\-hooks\/ | E（不需驗收） |
 | \^\(eslint\\\.config\\\.js\|jsconfig\\\.json\|mutate\\\.sh\|\\\.gitignore\)\$ | E（不需驗收） |
@@ -155,7 +155,7 @@
 
 ## 九、忽略清單登記（規矩 B4、E7；考題比對每一份的生效樣式）
 
-- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\.codex\-reviews\/、tmp\/、output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md
+- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\.codex\-reviews\/、tmp\/、output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md、\*\.grok\-bump\-tmp
 - prototype\/forest\-ui\-lab\/\.gitignore：assets\/\*\.png、assets\/\*\.jpg
 
 ## 十、合併步驟登記（規矩 H1；合併指令照這個順序跑，任一道紅就停）
