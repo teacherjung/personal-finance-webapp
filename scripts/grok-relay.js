@@ -14,7 +14,7 @@
 //
 // ## r6 收窄（Codex r6 #5：「替任何 DUMMY 前綴、任何 method／path 背書」＝confused deputy，且能力可跨掃描重用）
 // ・假值**每掃隨機**、比對**精確相等**，不是前綴——上一掃離開來的程序拿公開前綴等不到下一掃的真 token。
-// ・只轉 ALLOWED_REQUESTS 表上的 method＋path（表是 2026-08-23 用 grok 1.0.3 記錄型 proxy 實測抄的；1.0.13、1.0.40 都沒重抄——打出表外＝403＋掃描退 2，由考題釘；一兩輪真掃零拒收只證明那幾輪沒打出表外下來的）；
+// ・只轉 ALLOWED_REQUESTS 表上的 method＋path（表是 2026-08-23 用 grok 1.0.3 記錄型 proxy 實測抄的；1.0.13、1.0.40 都沒重抄——打出表外一律 403；**除了 TOLERATED_REFUSALS 上那幾個**，其餘會讓該掃退 2，由考題釘；一兩輪真掃零拒收只證明那幾輪沒打出表外下來的）；
 //   其他形狀一律 403、**不轉**（轉送器不是通用 proxy）。每次拒絕寫一行 REFUSED_PREFIX 到 stderr，
 //   grok-scan.js 讀到非 TOLERATED_REFUSALS 的拒絕＝該掃退 2——「升版多打新端點＝掃不成（吵）」由這條承重，
 //   不是由 grok 自己的退出碼（r7：grok 收到 403 照常退 0，靠它就是靜默降級）。
@@ -55,9 +55,12 @@ const UPSTREAM_HOST = 'cli-chat-proxy.grok.com';
 /** 盒內假 token 的固定前綴——後面接每掃隨機的 nonce；轉送器比對的是**整個值**，前綴只是讓人一眼認出它是假的 */
 export const DUMMY_BEARER_PREFIX = 'DUMMY-SCAN-TOKEN-';
 /**
- * grok 1.0.3 實際會打的形狀（1.0.13、1.0.40 都沒重抄；打出表外＝403＋掃描退 2）（2026-08-23 記錄型 proxy 實測：-p 模式、跑 bash 與讀檔工具各一次）。
- * 刻意**不放** GET /v1/bundle/archive 與 GET /v1/subagents/bundle（下載可執行 bundle——釘了執行檔雜湊卻放行遠端換程式碼就自相矛盾；
- * 實測擋掉 grok 照常回答；它們在 TOLERATED_REFUSALS 裡＝拒絕不讓掃描失敗）。path 只比 pathname，query 原樣過（上限見 MAX_PATH）。
+ * grok 1.0.3 實際會打的形狀（1.0.13、1.0.40 都沒重抄；打出表外一律 403，**除了 TOLERATED_REFUSALS 上那幾個**其餘讓該掃退 2）
+ * （2026-08-23 記錄型 proxy 實測：-p 模式、跑 bash 與讀檔工具各一次）。
+ * 刻意**不放**（三個，都在 TOLERATED_REFUSALS 裡＝繼續擋、但拒絕不讓掃描失敗）：
+ *   ・GET /v1/bundle/archive、GET /v1/subagents/bundle——下載可執行 bundle；釘了執行檔雜湊卻放行遠端換程式碼就自相矛盾。
+ *   ・GET /——1.0.40 才開始打的根路徑（#634 的掃描被自己的拒絕閘擋下來才發現）。
+ * 三個都**實測擋掉 grok 照常回答**。path 只比 pathname，query 原樣過（上限見 MAX_PATH）。
  */
 export const ALLOWED_REQUESTS = Object.freeze([
   { method: 'GET', path: /^\/v1\/models$/ },
@@ -72,10 +75,21 @@ export const ALLOWED_REQUESTS = Object.freeze([
 export const REFUSED_PREFIX = '[relay] refused: ';
 /**
  * 刻意擋、且實測 grok 照常回答的形狀——只有這些拒絕不讓掃描失敗。
- * 兩個都是「下載可執行 bundle」：釘了執行檔雜湊卻放行遠端換碼自相矛盾。subagents/bundle 是 #500 第一次正式掃描（2026-08-23）
+ * 前兩個是「下載可執行 bundle」：釘了執行檔雜湊卻放行遠端換碼自相矛盾。subagents/bundle 是 #500 第一次正式掃描（2026-08-23）
  * 被自己的拒絕閘擋下來才發現的——`--no-subagents` 下 grok 仍會去拿；那次掃描照設計退 2、輸出丟棄，這裡補上後重掃。
+ *
+ * `GET /` 是**同一個劇本第二次**：#634 把執行檔釘值升到 1.0.40 之後，那支的複審後掃就被自己的拒絕閘擋下來
+ * （2026-09-22T08:31:55.571Z〜08:58:07.149Z，腳本印「轉送器拒絕了 1 個不在白名單的請求…GET /」，退 2、不寫 `--out`）。
+ * ⚠️ **刻意放進容許、而不是放進 `ALLOWED_REQUESTS`**：進容許＝**繼續擋它**，只是不再讓它弄垮整遍掃描；
+ * 進白名單＝真的放它出去，等於為了讓掃描能跑而新開一個出口。證據撐得住前者：那次掃描裡
+ * **`GET /` 被擋掉之後 grok 仍退 0、回覆 3396 字**（它要用的端點都在白名單上，被擋的是這個像健康檢查的根路徑）。
+ * ⚠️ 誠實劃界：我們**不知道** `GET /` 對上游是什麼意思（沒有記錄型 proxy 實測，只知道擋掉不影響作答）；
+ * 這裡宣稱的只有「擋它不影響這一次的掃描結果」，不是「它無害」——正因為不知道，才選擇繼續擋。
+ *
+ * ⚠️ 比對法是 `l.startsWith(t + ' ')`（見 `grok-scan.js`），所以 `'GET /'` **只**容許根路徑那一行
+ * （`GET / (…)`），`GET /v1/whatever (…)` 不會被它吃掉——有考題釘住這個錨點。
  */
-export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive', 'GET /v1/subagents/bundle']);
+export const TOLERATED_REFUSALS = Object.freeze(['GET /v1/bundle/archive', 'GET /v1/subagents/bundle', 'GET /']);
 /** 拒絕次數上限：超過＝轉送器自己退出（退出碼 3）→ grok-scan 看到轉送器死＝退 2。否則盒內程式可以用無限個被拒請求灌爆 stderr。 */
 export const MAX_REFUSALS = 100;
 export const MAX_REQUESTS = 2000;          // 一次掃描的上限（實測一輪問答約 10 個請求）

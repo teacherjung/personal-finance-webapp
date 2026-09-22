@@ -7,6 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 import { escapeForms, knownShapeHitsFromTree, runScan, shapeHitsIn, stripLineMarkers } from '../scripts/grok-scan.js';
+import { TOLERATED_REFUSALS } from '../scripts/grok-relay.js';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,7 +88,7 @@ test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 �
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();
   const real = fileURLToPath(new URL('../scripts/grok-relay.js', import.meta.url));
-  for (const [label, path, want] of /** @type {[string, string, 0|2][]} */ ([['白名單外', '/v1/not-in-allowlist', 2], ['刻意擋的', '/v1/bundle/archive', 0], ['刻意擋的（subagents）', '/v1/subagents/bundle', 0]])) {
+  for (const [label, path, want] of /** @type {[string, string, 0|2][]} */ ([['白名單外', '/v1/not-in-allowlist', 2], ['刻意擋的', '/v1/bundle/archive', 0], ['刻意擋的（subagents）', '/v1/subagents/bundle', 0], ['刻意擋的（根路徑，#634 掃描被它擋下來才發現）', '/', 0]])) {
     const iso = isolated(); const inst = fakeGrok();
     // 假 grok 用盒內 curl 打本掃轉送器（port 從 env 來）；grok 自己仍退 0
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `/usr/bin/curl -s -o /dev/null -m 5 "\${GROK_CLI_CHAT_PROXY_BASE_URL%/v1}${path}" -H "Authorization: Bearer $(sed -n 's/.*"key":"\\([^"]*\\)".*/\\1/p' "$GROK_HOME/auth.json")"; $1`));
@@ -435,4 +436,22 @@ test('stripLineMarkers｜剝掉讀檔工具的行號記號（純函式，平台�
   const keyWithMarker = `${PEM_BEGIN('RSA')}\n10→${'MIIEREALKEYBODY' + 'A'.repeat(50)}`;
   assert.equal(shapeHitsIn(keyWithMarker).length, 0, '前提變了：帶記號時本來就抓得到，這題的理由要重寫');
   assert.equal(shapeHitsIn(stripLineMarkers(keyWithMarker)).length, 1, '剝完仍抓不到＝靜默漏放沒被修掉');
+});
+
+test('★ 容許清單的錨點｜`GET /` 只容許根路徑那一行，不可以把整族 `GET /…` 一起吃掉', () => {
+  // ⚠️ 這一題守的是**比對法的錨點**，不是清單內容。比對是 `l.startsWith(t + ' ')`
+  //    （grok-scan.js 讀轉送器 stderr 的那一段）。少了那個空白，`'GET /'` 會變成
+  //    「所有 GET 都容許」＝白名單漏記從此靜默降級，而且全卷照樣綠。
+  const bad = (/** @type {string} */ l) => !TOLERATED_REFUSALS.some((t) => l.startsWith(t + ' '));
+  assert.equal(bad('GET / (形狀不在白名單：GET /)'), false, '根路徑那一行要被容許');
+  for (const l of [
+    'GET /v1/not-in-allowlist (形狀不在白名單：GET /v1/not-in-allowlist)',
+    'GET /v1/bundle (形狀不在白名單：GET /v1/bundle)',
+    'GET /anything (形狀不在白名單：GET /anything)',
+    'POST / (形狀不在白名單：POST /)',
+  ]) assert.equal(bad(l), true, `這一行不該被容許：${l}`);
+  // 既有的兩個也要還在（有人把清單整個換掉時這裡會紅）
+  for (const t of ['GET /v1/bundle/archive', 'GET /v1/subagents/bundle', 'GET /']) {
+    assert.ok(TOLERATED_REFUSALS.includes(t), `容許清單少了 ${t}`);
+  }
 });
