@@ -461,14 +461,18 @@ const MANIFEST = {
     ],
     exempt: [],
     /** ⚠️ 這一份的**觸發方式跟前五份不同**：README 硬規則③要求「不分領域一律讀」。
-     *  下面這份 files 仍然要照實登記（契約內文提到的路徑一律要在這裡，那道網不能關），
+     *  下面這份 files 照實登記。⚠️ **不要寫「一律」**：既有抽取式只認「副檔名後緊接反引號」的寫法，
+     *  像 `lib/store.js emptyDb()` 這種一格塞路徑＋識別字的就抽不到（#633 r1 抓到兩個漏網）；
+     *  15 題綠**不能**證明沒有漏登記，只能證明抽得到的那些都登記了。
      *  它的作用是**額外**的路徑路由，不是取代硬規則③。 */
     files: [
       'data/seed.json',
       'lib/derive.js',
       'lib/schema.js',
       'lib/services/ib-sync.js',
+      'lib/services/market-data.js',
       'lib/store-rules.js',
+      'lib/store.js',
       'lib/types.js',
       'public/modules/accounts-model.js',
       'public/modules/form-options.js',
