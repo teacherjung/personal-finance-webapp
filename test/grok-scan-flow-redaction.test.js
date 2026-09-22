@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOX_ROOT, PROFILE } from '../scripts/grok-sandbox-canary.js';
-import { escapeForms, hitProfile, nearestKnown, redactWindow, runScan, shapeHitsIn } from '../scripts/grok-scan.js';
+import { escapeForms, hitProfile, modelsUsedIn, nearestKnown, redactWindow, runScan, shapeHitsIn } from '../scripts/grok-scan.js';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -428,4 +428,71 @@ test('runScan｜正式掃描用的沙箱設定＝寫死的 PROFILE、金絲雀�
   const m = /const sbArgv = \[([\s\S]*?)\];/.exec(src); assert.ok(m, 'grok-scan.js 找不到 const sbArgv = [...]');
   assert.match(m[1], /^\s*'-f',\s*PROFILE\s*,/, `sbArgv 的第一對必須是 '-f', PROFILE：${m[1].trim().slice(0, 80)}`);
   assert.ok(!/process\.env|\benv\b|argv|\?\?/.test(m[1]), `sbArgv 不得由環境變數／參數／退路決定：${m[1].trim().slice(0, 120)}`);
+});
+
+// ── 模型留痕（William 2026-09-22 裁「甲」）────────────────────────────────────
+// 為什麼在**這一支**：模型名是沙箱裡的程序寫進日誌的，而它會被抄進配方聲明→**公開的** PR 描述。
+// 也就是說它跟本檔其他幾題是同一件事：任何 Grok 寫的字出去之前要先過尺。
+
+const bufs = (/** @type {Record<string, string>} */ o) =>
+  new Map(Object.entries(o).map(([k, v]) => [k, Buffer.from(v, 'utf8')]));
+
+test('模型留痕｜從 session 日誌讀 model_id、去重排序（真日誌形狀）', () => {
+  const r = modelsUsedIn(bufs({
+    'a/updates.jsonl': '{"x":1,"model_id":"grok-4.7-build","y":2}\n{"model_id":"grok-4.7"}\n',
+    'a/chat_history.jsonl': '{"model_id":"grok-4.7-build"}\n',   // 重複的只算一次
+  }));
+  assert.deepEqual(r.models, ['grok-4.7', 'grok-4.7-build']);
+  assert.equal(r.rejected, 0);
+});
+
+test('模型留痕｜形狀不合的值**不回聲**，而且不把它長什麼樣寫出來（它是 Grok 寫的，配方聲明會進公開 PR 描述）', () => {
+  const NASTY = 'x\u0000; rm -rf / #' + 'A'.repeat(80);   // 過長＋控制字元＋指令形狀
+  const r = modelsUsedIn(bufs({
+    'a/updates.jsonl': `{"model_id":${JSON.stringify(NASTY)}}\n{"model_id":"Grok-4.7"}\n{"model_id":"-leading-dash"}\n{"model_id":"grok-4.7"}\n`,
+  }));
+  assert.deepEqual(r.models, ['grok-4.7'], '只有合形狀的那一個回聲');
+  assert.equal(r.rejected, 3, '大寫、開頭是連字號、含控制字元且過長——三個都不合');
+  // ⚠️ 真正要守的：回傳值裡**沒有任何一個字元**來自被拒的值（只有一個計數）。
+  const printed = JSON.stringify(r);
+  assert.ok(!printed.includes('rm -rf'), '被拒的值不可以從回傳值漏出去');
+  assert.ok(!printed.includes('Grok-4.7'), '被拒的值不可以從回傳值漏出去');
+  assert.ok(!printed.includes('AAAA'), '被拒的值不可以從回傳值漏出去');
+});
+
+test('模型留痕｜讀不到就是讀不到（不編、不猜、也不擋）', () => {
+  assert.deepEqual(modelsUsedIn(bufs({ 'a/updates.jsonl': '{"type":"tool_started"}\n' })), { models: [], rejected: 0 });
+  assert.deepEqual(modelsUsedIn(new Map()), { models: [], rejected: 0 });
+  // 非 UTF-8 的檔跳過、不丟例外（事故判定走別的路，不歸這支管）
+  assert.deepEqual(modelsUsedIn(new Map([['a/x.bin', Buffer.from([0xff, 0xfe, 0xff])]])), { models: [], rejected: 0 });
+});
+
+test('模型留痕｜端到端：真的跑一遍，配方聲明帶回那次用的模型；形狀不合的那次寫「查不出來」且一個字都不回聲', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  // 為什麼要端到端：函式對了不等於那一行真的印得出來（本支自己的模板題只證明模板長對）。
+  {
+    const repo = tinyRepo();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ model: 'grok-9.9-fake' })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    assert.match(r.summary.join('\n'), /｜模型=grok-9\.9-fake｜/, '配方聲明沒帶回這次用的模型');
+  }
+  {
+    const EVIL = 'EVIL-MODEL-' + randomUUID();   // 大寫＝形狀不合；不含單引號，假 grok 那一行不會被切壞
+    const repo = tinyRepo();
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ model: EVIL })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    const everything = r.summary.join('\n') + '\n' + logs.join('\n');
+    assert.match(everything, /｜模型=查不出來（1 個值形狀不合、不回聲）｜/);
+    assert.ok(!everything.includes(EVIL), '形狀不合的模型名漏進了會被抄進公開 PR 描述的文字裡');
+  }
+});
+
+test('模型留痕｜配方聲明那一行真的帶「模型=」（不是只有函式會算）', () => {
+  const src = readFileSync(join(ROOT, 'scripts', 'grok-scan.js'), 'utf8');
+  const m = /const recipe = `([^`]*)`;/.exec(src);
+  assert.ok(m, 'grok-scan.js 找不到 const recipe = `...`');
+  assert.match(m[1], /｜模型=\$\{modelText\}｜/, '配方聲明少了模型那一格——紀錄範本抄的就是這一行');
 });

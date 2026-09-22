@@ -97,12 +97,19 @@ export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> 
  *   原本只跳脫單引號，於是帶 `"` 的回覆會被 shell 切成好幾個字、`printf '%s'` 只印第一個。
  *   那是**靜靜壞掉**：考題照樣綠，但它根本沒測到想測的東西（2026-09-01 寫「命中含機密」那題時踩到）。
  */
-export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean }} */ o = {}) {
+export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
+  // ⚠️ `model` 是塞進 shell **單引號**字串裡的 JSON，所以帶 `'` 的值會把那一行切壞（靜靜壞掉＝題照樣綠）。
+  //    不在這裡想辦法跳脫——呼叫端只給不含單引號的值，違反就當場丟。
+  if (o.model?.includes("'")) throw new Error('fakeGrok 的 model 不可以含單引號（會切壞假 grok 的那一行 shell）');
+  const modelField = o.model ? `,"model_id":"${o.model}"` : '';
+  const logLine = o.noToolFootprint
+    ? `{"type":"assistant","content":"x"${modelField}}`
+    : `{"type":"tool_started","tool_name":"run_terminal_command"${modelField}}`;
   const session = o.noSession ? '' : `
-ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '${o.noToolFootprint ? '{"type":"assistant","content":"x"}' : '{"type":"tool_started","tool_name":"run_terminal_command"}'}\n' > "$ws/fake-session/updates.jsonl"`;
+ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '${logLine}\n' > "$ws/fake-session/updates.jsonl"`;
   writeFileSync(p, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
 printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE

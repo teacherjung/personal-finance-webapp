@@ -23,7 +23,7 @@
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
 //
 // ## 三個失效條件（判成「當未跑／不掃」的，一律在變更說明固定小標下逐字寫「未執行：<原因>」，不擋合併）
-//   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05 重驗相同（PR #564），升版要重驗。
+//   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05（PR #564）與 1.0.40 於 2026-09-22 各重驗相同，升版要重驗。
 //   ・金絲雀非 0＝不掃（取代舊的「驗屍非 0＝該掃作廢」：驗屍現在記足跡、查破口，破口＝沙箱破了＝事故，不只是作廢）。
 //   ・缺掃描時序一行＝當未跑（整條「複審後掃」的推論靠先後：獨立審查者「通過」之後才掃；先後沒記＝這一遍不成立）。
 //
@@ -60,16 +60,20 @@ import { isMainModule } from '../lib/is-main.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 /** 轉送器的目的地是從這個版本的執行檔 strings 出來的；版本不同＝當未跑（條款）。**精確比對**，不用前綴（r2：前綴讓 wrapper 印一行就過） */
-export const EXPECTED_GROK_VERSION = '1.0.13';
+export const EXPECTED_GROK_VERSION = '1.0.40';
 /**
  * 釘住執行檔本身（r4 #5：版本字串是被檢者自己印的，wrapper 印「grok 1.0.3」就過；而且 r3 版在**沙箱外**執行它）。
  * 流程：cp 真執行檔進盒子 → 對**盒內副本**算 sha256 → 不等於這個值＝不掃 → `--version` 在**沙箱內**對盒內副本跑。
  * 沒有任何未驗的 grok 在沙箱外執行過。升版＝改這行＋重驗轉送器目的地。
  * 1.0.13（2026-09-05，grok CLI 自動升版後 fail-closed 擋下 #563 的掃描）：升版手續＝`strings` 新舊執行檔比對上游主機／路徑，重驗紀錄在 PR #564。
+ * 1.0.40（2026-09-22，同樣是自動升版後 fail-closed 擋下——這次擋在下一支開工之前）：重驗結果＝覆寫用的環境變數
+ *   `GROK_CLI_CHAT_PROXY_BASE_URL` 與目的地 `cli-chat-proxy.grok.com`，以及 `GROK_FLAGS` 那三個旗標，
+ *   在新舊執行檔的 `strings` 裡**都在、出現次數相同**，轉送器不必改。⚠️ 這次跨 27 個版本，`ALLOWED_REQUESTS` 那張表是照 1.0.3 實測寫的、**沒有對 1.0.40 重測**——
+ *   新版若打出表外的形狀，轉送器回 403、掃描退 2（fail-closed），不會靜靜放行。
  * 本檔執行期只守兩件事：盒內副本的 sha256、沙箱內 --version 精確等於常數；執行檔多了什麼外連字串本檔不判讀——沙箱只准 localhost、
  * 轉送器只轉白名單形狀。釘值本身由 test/grok-scan-flow-preflight.test.js 的獨立 fixture 釘住（改常數要連考題一起改）。
  */
-export const EXPECTED_GROK_SHA256 = '8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80';
+export const EXPECTED_GROK_SHA256 = '3f2aef9618191a2c60d18a5044fa462c9c77bdc4187b02ed716b0394e8d4fef2';
 export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
@@ -442,6 +446,38 @@ export function readSessionsOnce(root, caps = SESSION_CAPS) {
   };
   if (existsSync(root)) walk(root, '', 0);
   return { files, odd, total };
+}
+
+/** 可以回聲出去的模型名形狀：小寫字母／數字／`.`／`-`，開頭是字母或數字，最長 40。理由見 modelsUsedIn。 */
+export const MODEL_ID_SHAPE = /^[a-z0-9][a-z0-9.-]{0,39}$/;
+
+/**
+ * 這次實際用的模型名，從 session 日誌的 `"model_id"` 欄位讀（掃描器**不指定模型**——
+ * `GROK_FLAGS` 沒有 `-m`，用的是上游當下的預設；上游換了模型我們這邊不會有任何動靜）。
+ * 只是留痕、**不是閘**：讀不到就寫「查不出來」，不擋掃描、不改退出碼。
+ *
+ * ⚠️ 值是**沙箱裡的程序寫的**，而配方聲明會被逐字抄進**公開的** PR 描述 ⇒ 回聲之前過形狀白名單
+ *    （小寫字母／數字／`.`／`-`，開頭是字母或數字，最長 40）。不合形狀的一律不回聲、也不列出它長什麼樣
+ *    ——列出來等於把它寫的東西照樣抄進公開處，那正是這道尺要擋的事。
+ * ⚠️ 長度上限放在**形狀**裡、不放在比對式裡：放在比對式（原本寫 `[^"]{1,64}`）會讓過長的值
+ *    連 `rejected` 都不加一＝被靜靜略過，計數就成了假話（本支自己的考題抓到的）。
+ * ⚠️ 誠實劃界：只讀 `"model_id"` 這一個鍵。日誌若改用別的鍵名記模型，這裡會讀不到（寫「查不出來」），
+ *    **不會**因此判錯或漏掉任何安全檢查；DLP 與破口比對走的是別的路、不受本函式影響。
+ * @param {Map<string, Buffer>} files readSessionsOnce 讀到的那一份副本
+ * @returns {{ models: string[], rejected: number }} models＝去重後排序；rejected＝有值但形狀不合的次數
+ */
+export function modelsUsedIn(files) {
+  /** @type {Set<string>} */ const models = new Set();
+  let rejected = 0;
+  const dec = new TextDecoder('utf-8', { fatal: true });
+  for (const buf of files.values()) {
+    /** @type {string} */ let text;
+    try { text = dec.decode(buf); } catch { continue; }   // 非 UTF-8＝讀不了；不是事故（事故由別處判）
+    for (const m of text.matchAll(/"model_id"\s*:\s*"([^"]*)"/g)) {
+      if (MODEL_ID_SHAPE.test(m[1])) models.add(m[1]); else rejected++;
+    }
+  }
+  return { models: [...models].sort(), rejected };
 }
 
 /**
@@ -1109,7 +1145,13 @@ export async function runScan(args, deps = {}) {
     return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
   if (outFile) writeFileSync(outFile, reply);
-  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜掃描起訖=${startedAt}→${endedAt}`;
+  // 模型留痕（William 2026-09-22 裁「甲」）：掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
+  // 而紀錄裡看不出來。這一格只是**留痕不是閘**：讀不到就寫「查不出來」，不擋掃描。
+  const mu = modelsUsedIn(snap.files);
+  const modelText = mu.models.length
+    ? mu.models.join('＋') + (mu.rejected ? `（另有 ${mu.rejected} 個值形狀不合、不回聲）` : '')
+    : `查不出來（${mu.rejected ? `${mu.rejected} 個值形狀不合、不回聲` : 'session 日誌裡沒有 model_id'}）`;
+  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelText}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   return { code: 0, summary };
