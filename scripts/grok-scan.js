@@ -497,8 +497,11 @@ export const MODEL_WALK_MAX_NODES = 100_000;
  *    不保證別處的產物（私有的結果包仍保存原始位元組）沒有身分值。
  * @param {Map<string, Buffer>} files readSessionsOnce 讀到的那一份副本
  * @returns {{ models: string[], rejected: number, incomplete: number }}
- *   models＝去重後排序（只會是 KNOWN_MODELS 的子集）；rejected＝有 `model_id` 但不在表上的次數；
- *   incomplete＝沒走完而整行丟掉的行數
+ *   models＝去重後排序（只會是 KNOWN_MODELS 的子集）；
+ *   rejected＝**在完整解析且完整走訪、被採用的那些紀錄裡**，有 `model_id` 但不在表上的次數
+ *     （r3 #2：超限那一行整行丟掉，它裡面的拒收值**刻意不計**——那是原子性的代價，不是全日誌的完整計數）；
+ *   incomplete＝沒走完而整行丟掉的行數（壞 JSON／非 UTF-8 **不算**，那是既有的明示契約）。
+ *   ⚠️ 這兩個數字**不進公開欄**（見 modelFieldText）：它們由未信任程序控制、數字本身就能載內容。
  */
 export function modelsUsedIn(files) {
   /** @type {Set<string>} */ const models = new Set();
@@ -541,6 +544,37 @@ export function modelsUsedIn(files) {
     }
   }
   return { models: [...models].sort(), rejected, incomplete };
+}
+/**
+ * 公開欄那一格的字串。**這是整個公開投影的唯一出口**，所以它的值域是**事先寫死、可以列舉的**。
+ *
+ * r3 #1：我上一版把「名字這一格安全」的保證**擴張成「整個欄位安全」**，還寫了一句
+ * 「計數是數字，不洩漏任何內容」——一句沒有任何量測撐著的全稱否定。審查者端到端打穿它：
+ * 讓盒內的假 Grok 讀自己的 auth.json、取 `user_id` 末四碼 `f111`、轉成十進位 `61713`，
+ * 再寫出**那麼多行** `{"model_id":0}`；公開欄於是印出 `61713`，轉回十六進位就是 `f111`。
+ * `incomplete` 同樣可控（他另跑一次，公開欄印 15）。
+ *
+ * **所以這裡不印任何由日誌決定的數字。** 這一格只能是：
+ *   `KNOWN_MODELS` 的子集（排序後以`＋`相連）或「查不出來」，再乘上兩個固定旗標的有無。
+ * ⇒ 值域大小＝2^n × 2 × 2（n＝KNOWN_MODELS 的長度）。**這是上限，不是零。**
+ *
+ * ⚠️ 誠實劃界（不要再寫成「不洩漏任何內容」）：
+ *  ・這一格仍由**未信任日誌的自報**決定——盒內程序可以挑要不要寫、寫哪一個已知名字，
+ *    所以它**不是**零資訊通道，只是被壓到上面那個可列舉的上限。
+ *  ・它也**不是**「這次真的用了哪個模型」的認證：日誌說什麼就是什麼。
+ *  ・精確的數字仍算得出來，但只留在**私有的結果包**（sessions 副本原樣保存，路徑印在配方聲明裡）；
+ *    要診斷就去那裡算，不從公開欄讀。
+ * @param {{ models: string[], rejected: number, incomplete: number }} mu
+ * @returns {string}
+ */
+export function modelFieldText(mu) {
+  // ⚠️ 「查不出來」**不可以**再接「日誌裡沒有 model_id」那種理由句（r3 #2）：空集合只代表
+  //    「完整採用的紀錄裡沒有可列出的模型」，反推不出原始日誌沒有那個鍵——超限被整行丟掉的那些
+  //    每一行開頭都可能有 model_id。理由交給下面兩個旗標講，它們各自只說自己知道的事。
+  const bits = [mu.models.length ? mu.models.join('＋') : '查不出來'];
+  if (mu.rejected) bits.push('另有不在清單上的 model_id');
+  if (mu.incomplete) bits.push('有紀錄讀不完整、整行不採用');
+  return bits.join('；');
 }
 
 /**
@@ -1210,16 +1244,8 @@ export async function runScan(args, deps = {}) {
   if (outFile) writeFileSync(outFile, reply);
   // 模型留痕（William 2026-09-22 裁「甲」）：掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
   // 而紀錄裡看不出來。這一格只是**留痕不是閘**：讀不到就寫「查不出來」，不擋掃描。
-  const mu = modelsUsedIn(snap.files);
-  // ⚠️ 只印數字與「不在已知清單裡」，不細分是哪一種、更不寫值長什麼樣——
-  //    細分等於對著公開處描述那個值，而擋它就是為了不描述它。
-  //    「讀不完整」也要印出來：沒讀完是要說出來的事，不是默默當成讀完（r2 #2）。
-  const modelBits = [mu.models.length
-    ? mu.models.join('＋') + (mu.rejected ? `（另有 ${mu.rejected} 個 model_id 不在已知清單裡）` : '')
-    : `查不出來（${mu.rejected ? `${mu.rejected} 個 model_id 不在已知清單裡；實際的名字看結果包` : '日誌的 .json／.jsonl 裡沒有 model_id'}）`];
-  if (mu.incomplete) modelBits.push(`另有 ${mu.incomplete} 行讀不完整、整行不採用`);
-  const modelText = modelBits.join('；');
-  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelText}｜掃描起訖=${startedAt}→${endedAt}`;
+  const modelField = modelFieldText(modelsUsedIn(snap.files));   // 值域寫死、不含任何由日誌決定的數字（見該函式）
+  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelField}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   return { code: 0, summary };

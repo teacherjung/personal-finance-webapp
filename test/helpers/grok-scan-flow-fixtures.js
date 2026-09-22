@@ -97,7 +97,7 @@ export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> 
  *   原本只跳脫單引號，於是帶 `"` 的回覆會被 shell 切成好幾個字、`printf '%s'` 只印第一個。
  *   那是**靜靜壞掉**：考題照樣綠，但它根本沒測到想測的東西（2026-09-01 寫「命中含機密」那題時踩到）。
  */
-export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string }} */ o = {}) {
+export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string, sessionLines?: string[] }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
@@ -108,8 +108,12 @@ export function fakeGrok(/** @type {{ version?: string, status?: number, reply?:
   const logLine = o.noToolFootprint
     ? `{"type":"assistant","content":"x"${modelField}}`
     : `{"type":"tool_started","tool_name":"run_terminal_command"${modelField}}`;
+  // `sessionLines`＝**接在預設那一行後面**的額外日誌行（預設那行是工具足跡，拿掉驗屍會退 2）。
+  // 同樣是塞進 shell 單引號字串，所以同樣不准含單引號。
+  for (const l of o.sessionLines ?? []) if (l.includes("'")) throw new Error('fakeGrok 的 sessionLines 不可以含單引號');
+  const body = [logLine, ...(o.sessionLines ?? [])].join('\n') + '\n';
   const session = o.noSession ? '' : `
-ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '${logLine}\n' > "$ws/fake-session/updates.jsonl"`;
+ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '%s' '${body}' > "$ws/fake-session/updates.jsonl"`;
   writeFileSync(p, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
 printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE
