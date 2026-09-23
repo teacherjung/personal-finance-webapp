@@ -89,9 +89,11 @@
 - `public/modules/settings.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/subscriptions-model.js`（重繪／`parseLocalDate`）
 - `public/modules/subscriptions.js`（重繪／`parseLocalDate`）
+- `public/modules/theme.js`（圖表色單一真相——多個前端模組共用；#638 從「被 import 但沒歸戶」的欠帳清單歸進本領域）
 - `public/modules/toast-timing.js`（提示停留時間照字數給——#417）
 - `public/modules/transactions-import.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/transactions.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
+- `public/styles.css`（`.cb-ok`／`.cb-over` 寫死與 `theme.js` 同色的 hex——CSS 無法 import JS）
 - `test/ai-consent.test.js`（`openInfo({actionsHtml})` 的固定動作列考題——**與收支、雲端多重命中**）〔籃C 補搬點名檔〕
 - `test/daily-values.test.js`
 - `test/goal-tracking-ui.test.js`（頁面模組＝**與各自領域多重命中**）〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕

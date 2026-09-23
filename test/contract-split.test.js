@@ -611,6 +611,7 @@ const MANIFEST = {
       '時鐘倒退保護',
       '淨值日線 dailyValues',
       '共用彈窗契約',
+      '圖表色與 CSS 狀態色',
     ],
     exempt: [],
     files: [
@@ -647,9 +648,11 @@ const MANIFEST = {
       'public/modules/settings.js',
       'public/modules/subscriptions-model.js',
       'public/modules/subscriptions.js',
+      'public/modules/theme.js',
       'public/modules/toast-timing.js',
       'public/modules/transactions-import.js',
       'public/modules/transactions.js',
+      'public/styles.css',
       'test/ai-consent.test.js',   // 固定動作列（.sticky-actions）的考題住這裡＝與收支／雲端多重命中
       'test/daily-values.test.js',
       'test/goal-tracking-ui.test.js',
@@ -1506,9 +1509,12 @@ function stripComments(src) {
  * 而讀那份契約的人不會被導到它」。清單裡的東西可以慢慢還（挑一個歸進某個領域，同時改 README 該領域小節
  * 與 manifest，然後從這裡刪掉）；**不可以默默變長**——變長就是又發生一次「兩邊一起漏列」。
  *
- * ⚠️ 為什麼不是「一次全部歸戶」：這批檔案該落在哪個領域是**人的判斷**（`icons.js` 與 `theme.js`
+ * ⚠️ 為什麼不是「一次全部歸戶」：這批檔案該落在哪個領域是**人的判斷**（`icons.js`
  * 被十幾個頁面模組共用、`safe-map.js` 是後端共用底層），逐一決定要一支專門的 PR；
  * #409 是「彈窗下拉不可靜靜改資料」那一支，把整批檔案的歸屬順手決定掉會讓真正的改動看不見。
+ * ⚠️ `theme.js` 原本也列在這段舉例裡，**#638 已經把它歸進前端功能**（那一支搬的正是
+ * 「圖表色與 CSS 狀態色」那條規則，`theme.js` 就是它的承重點）——**還一筆就要從這段說明裡拿掉一筆**，
+ * 否則這段會一直拿已經還掉的帳當「為什麼不還」的理由。
  */
 const UNDECLARED_IMPORTED = [
   'lib/is-main.js',                          // ← server.js（「被直接執行還是被 import」判斷）
@@ -1523,7 +1529,6 @@ const UNDECLARED_IMPORTED = [
   'public/modules/rebalance.js',             // ← assets.js
   'public/modules/settings-store-table.js',  // ← settings.js
   'public/modules/subscriptions-report.js',  // ← subscriptions.js
-  'public/modules/theme.js',                 // ← 十一個模組（圖表色單一真相，AGENTS 地雷 2 點名）
   'public/modules/tx-sort.js',               // ← settings.js／cashflow.js／securities.js／transactions.js
   'public/modules/workspace-tabs.js',        // ← stock-research-view.js（#415 森林頁籤引入；歸屬待定，合併 main 時入帳 2026-08-06）
 ];

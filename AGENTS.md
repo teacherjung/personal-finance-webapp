@@ -299,7 +299,7 @@
 | 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | 前後端三處攤提口徑一致＋RECORD_START 單一真相＋勿改回 active 過濾加總——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#訂閱本月攤提) |
 | 訂閱狀態（使用中/即將停用/已停用） | 前端 subStatus ↔ 後端 subActive 口徑一致（項數才不打架）——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#訂閱狀態) |
 | YYYY-MM-DD 日期解析 | 一律本地時區拆日期；new Date(字串) 會當 UTC、以西時區差一天——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#yyyy-mm-dd-日期解析) |
-| `theme.js` 的 CHART.green/red | styles.css .cb-ok/.cb-over 寫死同色 hex（CSS 無法 import JS）；改色要兩邊一起改 |
+| **圖表色與 CSS 狀態色**（`theme.js` 的 `CHART.green/red`） | ——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#圖表色與-css-狀態色) |
 | settings 新增欄位 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#settings-新增欄位) |
 | 集合新增欄位（表單加新欄） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#集合新增欄位表單加新欄) |
 | **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#跨-await-的寫入安全) |
