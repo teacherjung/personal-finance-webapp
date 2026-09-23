@@ -84,6 +84,12 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
 **記得同步這裡**：`portfolio-exposure.js` `COMPANY_WEIGHTS`（前十大成分近似權重，持股公司 Top 20 用）＋`COMPOSITION` 區域表（前端 exposure 與後端 derive 兩檔案）。**例外（刻意）**：XUSE/EXUS 只做區域穿透、不列 COMPANY_WEIGHTS（成分極分散，前十大各僅 1–2%）
 
+## 台幣掛牌美債 ETF 清單
+
+**改這裡**：`portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B）
+
+**記得同步這裡**：新增同類 ETF 時要補進清單
+
 ## IB 槓桿與斷頭距離
 
 **改這裡**：IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback）

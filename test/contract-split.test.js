@@ -816,6 +816,7 @@ const MANIFEST = {
       'SEC 全站佇列護欄',
       '重型工作名額（heavy admission）與 SEC 的關係',
       '新增 ETF 持股',
+      '台幣掛牌美債 ETF 清單',
       'IB 槓桿與斷頭距離',
       '投資代號與原則上限',
       '估值訊號門檻檔位',

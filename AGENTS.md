@@ -285,7 +285,7 @@
 | 淨值目標與到達速度 | 後端單一真相＝`lib/derive.js computeGoalTracking`、前端不可重算；兩把尺只看最近六個已結束月、至少三個月份、取中位數；達標走 `goal-reached` 報喜——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值目標與到達速度) |
 | `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#composition-穿透表的兩份複本) |
 | `public/modules/accounts-model.js` 的 `LIABILITY_TYPES`（前端單一真相：`fxExposure`、帳戶表單的型別選項、資產頁的負債紅字都讀它） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#liability_types-的三份複本) |
-| `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | 新增同類 ETF 時要補進清單 |
+| **台幣掛牌美債 ETF 清單**（`portfolio-exposure.js` 的 `fxExposure`） | ——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#台幣掛牌美債-etf-清單) |
 | 新增 ETF 持股 | COMPANY_WEIGHTS＋兩份 COMPOSITION 都要補；XUSE/EXUS 刻意只做區域穿透——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#新增-etf-持股) |
 | `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#ib-同步-default_layer-新增代號) |
 | IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端 computeLeverage ↔ 前端兩檔一致；mcDist：無借款＝100、有借款持股歸零＝0，兩情境不可混——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#ib-槓桿與斷頭距離) |
