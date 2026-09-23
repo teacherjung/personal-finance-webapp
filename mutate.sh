@@ -339,7 +339,7 @@ mutate 'AI. 隱形 reference definition 灌大內文' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
-# GitHub 一個字都不顯示，卻算進長度 ⇒ 灌大內文讓比例檢查失效
+# GitHub 一個字都不顯示，卻算進長度 ⇒ 契約「寫了一堆、畫面上沒有」（#639 前的理由是灌大內文讓比例門失效，那道門已刪）
 pad="[guard-padding]: # (" + "隱形"*400 + ")\n\n"
 p.write_text(s[:i]+pad+s[i:], encoding="utf-8")
 PY
@@ -587,7 +587,7 @@ p.write_text(s[:i]+"_ _ _\n"+s[i:], encoding="utf-8")
 PY
 check 'BJ. 用帶空白的分隔線 _ _ _ 中斷表格' 紅
 
-mutate 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' <<'PY'
+mutate 'BK. 括號型來源網址＋把整段內文貼回索引' <<'PY'
 import pathlib,re
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
@@ -599,7 +599,7 @@ k=t.index("| 月度回顧總覽卡 |"); e=t.index("\n", k)
 m=re.search(r"——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)", t[k:e])
 q.write_text(t[:k]+"| 月度回顧總覽卡 | "+body.replace("\n"," ").strip()+" "+m.group(0)+" |"+t[e:], encoding="utf-8")
 PY
-check 'BK. 括號型來源網址撐大分母＋摘要貼回全部內文' 紅
+check 'BK. 括號型來源網址＋把整段內文貼回索引' 紅
 
 mutate 'BL. 契約頁首把領域名寫短（startsWith 會放過）' <<'PY'
 import pathlib
@@ -618,13 +618,13 @@ p.write_text(s[:i]+s[i:j].replace("[契約：","![契約：",1)+s[j:], encoding=
 PY
 check 'BM. 契約連結改成圖片形式' 紅
 
-mutate 'BN. 契約 body 塞 HTML entity 撐大分母' <<'PY'
+mutate 'BN. 契約 body 塞 HTML entity（原始碼有、畫面沒有）' <<'PY'
 import pathlib
 p=pathlib.Path("docs/contracts/frontend-features.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 訂閱續費日自動推進")
 p.write_text(s[:i]+"&ZeroWidthSpace;"*60+"\n\n"+s[i:], encoding="utf-8")
 PY
-check 'BN. 契約 body 塞 HTML entity 撐大分母' 紅
+check 'BN. 契約 body 塞 HTML entity（原始碼有、畫面沒有）' 紅
 
 mutate 'BO. README 第一格加括號後綴（前綴比對會放過）' <<'PY'
 import pathlib
