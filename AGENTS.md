@@ -87,7 +87,7 @@
    ③**「getDb→改→saveDb」之間不可夾外部 IO await**（fetch/fs/timer）：LOCAL 下櫃檯呼叫只隔 microtask、Node 清空 microtask queue 前不會處理下一個請求，所以讀改寫鏈對其他請求不可分割（`test/repo-async.test.js` 用 HTTP 並發釘死）；一夾真 IO 就打開 stale-overwrite 窗口（先例＝syncIb r3#1／refreshQuotesIfStale r13#1 的「先抓完外部資料、才 getDb 寫」模式，照抄它）。同一個請求內也**不可 `Promise.all` 兩條寫入鏈**（兩者都會先讀舊快照、後寫蓋前寫）——寫入一律序列 await。
    ④**`updateItem` 的 `beforeSave` 必須是同步函式**（在讀寫之間對記憶體 db 動手；C4b 的 CAS 依賴此假設——衝突重試會**整段重跑**，所以 beforeSave 必須「對新讀出來的 db 重跑一次也對」，不可有外部副作用）。`effectiveTree`/`effectiveIncomeTree`/`effectiveTransferSubs` 已改**純函式、db 必填**——漏傳不再有預設值可躲（以前 `db = getDb()` 預設參數會拿到 Promise、默默退回內建樹）。
    ⑤**HOSTED 的並行安全 CAS**＝完整規則已拆至資料與儲存契約；索引見同步點清單「HOSTED 並行安全 CAS」列。
-   ⑥**本機檔案操作一律經櫃檯**＝完整規則已拆至資料與儲存契約；索引見同步點清單「本機檔案操作經櫃檯」列。
+   ⑥**本機檔案操作一律經櫃檯**＝完整規則已拆至資料與儲存契約；索引見同步點清單「本機檔案操作一律經櫃檯」列。
 
 9. **突變測試的判準分兩型——用錯型會把真考題誤判成假的，也會把假考題放過**
    （2026-07-29 定；Claude 與 Codex 各用錯過一次，Codex 已撤回原結論並協助定案）。
@@ -239,94 +239,94 @@
 
 | 改這裡 | 記得同步這裡 |
 |---|---|
-| SEC 官方指標候選 tag／`selectMetric`（`lib/stock-fundamentals.js`） | 同期依候選語意優先；各 tag 完整歷史先判口徑、最後才裁五年，任一年度／季度重疊衝突就拒絕整個低順位 tag；一般重疊差異 >0.1% 禁止接續，只有受限的百萬位申報進位例外；舊洞只有兩來源至少兩期完全同值才補；先由第一個可用 tag 鎖單一 unit，禁止取最大值或相加；`currentDebt` 各來源群與 `noncurrentDebt` 保留整條 first-hit；row-level taxonomy/tag 保留，`MIXED_TAG`／unit／YTD 只看實際輸出，衝突只警告可能進入輸出的缺期；F5 與 CAGR 等真正跨期比較 fail-closed，逐期比率保留 inputs；CBRE／Comcast／Verizon＋JNJ／AAPL／Alphabet／Dover 型必跑——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#sec-官方指標挑值) |
-| **SEC 最新單季逐列期間**（`periods.latestQuarterBasis:'per-metric'`） | 各指標保留自己的最新合法單季，不把整欄假裝成同一季；截止日不齊發 `QUARTER_PERIOD_MISMATCH`——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#最新單季逐列期間) |
-| **SEC 單一回應資源上限**（`lib/parse-limits.js` 的 `MAX_SEC_RESPONSE_BYTES`） | 程式執行的預設上限以該常數為準（本表不抄現值——抄了就會漂；契約與考題另有量測理由與固定斷言）；服務只引用常數、不另抄數字。調整前重測 512MiB 容器底噪、完整解析峰值與重型名額——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#sec-單一回應資源上限) |
-| SEC `currentDebt`（`lib/stock-fundamentals.js`） | 逐期間總額優先（DebtCurrent）；相加要 label 或數值證明排除父子重疊、否則保守不加；單源期間原樣保留；tag 單一真相 currentDebtSources；Dover／Amazon／Microsoft 三型考題必跑——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#sec-currentdebt-流動債務) |
-| `lib/repo.js` 介面（加函式／改簽名） | 新函式一律 async、呼叫端全 await＋handler 包 wrapRoute/asyncRoute；寫入走 mutate()、讀取走 readDb()；repo-async 與 hosted-store-pg 考題仍綠——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#repo-介面的新增與修改) |
-| **kv 的鍵**（`lib/store.js` 的 `KV_KEYS`／`KV_MAP_KEYS`；`emptyDb()` 加頂層欄位時） | 三處一起：兩份常數＋types typedef，漏了永遠寫不進 db 且不報錯；store-pg 必須 import、不可自己抄一份——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#kv-的鍵) |
-| **HOSTED 資料層**（`lib/store-pg.js`／`db/supabase-schema.sql`／RLS 政策） | 正式 SQL 與測試替身＝同一份語意兩種寫法：kv_save 的 CAS 改了、fake-supabase 的 saveAs 同步改；政策形狀有靜態考題；改完 SQL 去 Supabase Dashboard 重跑——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#hosted-資料層與測試替身) |
-| HOSTED 並行安全 CAS | 櫃檯經 mutate 的寫入函式撞版本＝重讀重做重寫、呼叫端無感；getDb…saveDb 丟 409 不假裝重試；整包覆蓋只有 /api/import 一個入口且必帶同一次讀取的 from，缺＝throw kv_no_version；currentVersions 已移除勿加回——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#hosted-並行安全-cas) |
-| 本機檔案操作經櫃檯 | backupNow／snapshotTo／dataDir 一律經櫃檯；HOSTED 下 backupNow 回 false、另兩支 throw——否則憑空建出種了 seed 的假備份——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#本機檔案操作一律經櫃檯) |
-| 資料存取單一櫃檯 B1 | 讀寫一律走 lib/repo.js、除它自己誰都不 import lib/store.js；附帶效果用 updateItem 的 beforeSave 同次寫檔——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#資料存取單一櫃檯-b1) |
-| 驗證入櫃檯 B3 | store.save() 唯一寫入口、每次寫入過 sanitizeDbForWrite（非法值 throw）；新寫入路徑結構上繞不過——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#驗證入櫃檯-b3) |
-| 日期月份真實日曆判準 | isRealMonth／isRealDate 四型共用一套不可各寫；只驗長相會讓 2026-13 默默算錯；服務層手動輸入同判準；收緊是刻意的勿放寬——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#日期與月份的真實日曆判準) |
-| 必填欄位與跨欄不變式 | REQUIRED_FIELDS／ROW_RULES 三個強制點（CRUD 400／匯入整份 400／櫃檯 throw）；strip 對壞必填整筆濾除不可只刪欄位；新主鍵欄補進 REQUIRED_FIELDS——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#必填欄位機制與跨欄不變式) |
-| **請求旗標一律嚴格**（`lib/routes/` 讀 body 的開關） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#請求旗標一律嚴格) |
-| 測試隔離慣例 B0 | 測試一律 STORE_FILE 指暫存 .db、絕不碰真實 data/；server.js export app、只有直接執行才 listen——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#測試隔離慣例-b0) |
-| PDF 逐列抽取器（pdfjs → 帶座標的列） | 三份刻意分工勿合併（信用卡丟座標／銀行保留 x+y／證券 x+y＋跨頁）＋各自的合成座標考題——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#pdf-逐列抽取器) |
-| **銀行對帳單解析與分箱**（`lib/bank-statement.js`） | 與信用卡解析完全分開；合成座標列考題、假帳號末碼鐵則；stage 2 概要（外幣取原幣）＋stage 3 明細分箱（內轉／劃撥判全文／繳卡費空分類…）；寫 cashflow 帳本、去重鍵 `bankRef`；**簽帳金融卡明細一份帳單兩種明細**（A 區刷卡消費→自動建簽帳卡、走信用卡帳單同一條路進卡片帳本；D 區刷卡列分類留空＝錢不算兩次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
-| **帳戶完整帳號與餘額匯入**（`accountNo`＝PII） | GET 只回 `accountNoSet`＋`accountNoLast4`；末碼＋幣別比對、現值參考日較新才覆蓋（**讀不到／壞日期＝只跳過更新餘額，交易照樣匯入**——不覆蓋餘額、不寫 balanceAsOf、不新建帳戶；模板與 AI 兩條路共用，2026-08-13）、自動建帳戶不設 ibCashCur；密碼解析時只在記憶體、**預設用完即丟，勾記住才依機密規則儲存**（P0.5，見「匯入密碼池」節）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
-| **帳單原文取法**（`origFromStmtRef`／`stmtOrig`） | 一律走這兩個取用器（會剝去重序號）；不要各頁手寫 split 取原文——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文取法-origfromstmtref) |
-| **匯入對帳閘**（`lib/statement-reconcile.js`，P0 2026-08-11） | 強＝銀行餘額鏈＋真末筆對概要（**只驗台幣帳戶**＝射程對齊匯入；首筆未驗＝誠實計數）、中＝摘要等式擋下＋明細對總額分路（模板影子／AI 慣例閘擋下，#529）、弱＝沒數字可對；不一致＝整份 400、缺數字＝skip 降級放行；卡閘只在預覽（importRows 不重解析）；★6：AI 路線（P1）弱閘不准匯入——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入對帳閘) |
-| **匯入密碼池**（P0.5 2026-08-11） | 先自動試所有已存密碼（''→各卡→記住的）、全敗才問＋「記住」勾選預設不勾；儲存＝settings 單一 JSON 字串機密（四條路自動接軌、投影只回數量）；機器判準 `code:'pdf_password'` 跳密碼窗；apply 自己重跑池、密碼絕不回前端——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#匯入密碼池) |
-| **AI 解析路線 P1b**（P1b-1 2026-08-12，★3 拍板＝Anthropic） | 雙檔分工（ai-parse 純模組／ai-transport 唯一外連檔＝入外連登記閘；服務層不可 import ai-transport、真引擎由 statement.js 路由組裝注入）；四道規矩＝HOSTED 停止線寫死→useAi AI 要求旗標→settings.aiApiKey 機密欄→★6 AI 只收強閘；模型階梯 Sonnet→閘紅升 Opus 一次＋接地檢查與合計欄交叉驗證（裁示⑥⑧）；引擎交原始答案、服務層自驗收；**確認票**＝preview 發票、apply 憑票寫入同一份答案不重跑模型（AI 非確定性）；**前端（P1b-2）**＝認不出版面＝預設**直接送**（`aiAskBeforeSend` 開關可改回每次問，2026-08-13 拍板）、`useAi` 嚴格布林、票只活在單次預覽閉包、AI 入口＝封閉列舉認不得碼（銀行＋信用卡批二；對帳閘紅無 code 走不到）、設定頁鑰匙欄不回顯；**帳號遮罩（2026-08-23）**＝AI 照原樣抄、程式改成半形星（只折全形）、沒遮不動、看不出末碼才拒收——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#ai-解析路線-p1b) |
-| **配方快取 P2**（P2-1 純模組 2026-08-15；格式 A 拍板） | 配方＝純資料規則卡：零正則（字面文字＋枚舉）、零帳單內容機械驗證（NFKC＋squash 後數字總量 ≥4 拒收、禁遮罩星號與分段直線）、幾何機關在引擎不在配方（bank-statement.js 同源泛化＋等價考題）、出生把關三關＝零內容驗證＋對照出生帳單（錨點非交易內文）＋重現 AI 答案才存；失敗碼 `recipe_parse_failed`（≠bank_unrecognized）；版本可回滾（細部已拍板＝留 1 版現行＋上一版/回滾自動/先舊版後 AI）、佇列留 P3；**儲存/接線 P2-2 已落地（2026-08-15）**＝先試配方（零元不需 useAi）→失靈退上一版→全敗輪 AI、配方也發確認票（所見即所得）、apply 原子計數（連 5 畢業/互換/疑似過期）、**P2-3 產配方＋P2-4 雙讀已落地（2026-08-16）**＝apply 成功後 Opus 生成（出生三關/重生/A6 份）＋新版式雙讀與 Fable 仲裁（預設開、至多 4 發）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#配方快取-p2) |
-| 信用卡負數交易的繳款／退款判斷 | 單一真相 `isCardPayment`；後端必須重判、不信前端；退款候選保留負號與 `refundOf`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#信用卡負數交易的繳款與退款判斷) |
-| 月度回顧的消費口徑與退款配對 | 配對本體＝`derive.js pairRefunds`（唯一實作，兩頁共用）；抵減順序、消費視角口徑、**配對身分不是 storeKey**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#月度回顧的消費口徑與退款配對) |
-| 信用卡費頁的兩種口徑（使用者定 2026-07-27） | 上半消費歸屬／下半帳面原貌**刻意並存**（加總不相等不是 bug）；配對一律向後端拿、兩端標記純呈現不寫回資料——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#信用卡費頁的兩種口徑) |
-| 每日滾動備份（階段四 A，2026-07-27 上線） | 新的備份路徑走 snapshotTo；既有例外（backupOnce 與搬家函式各有自己的 VACUUM→rename）與劃界以 store.js 的 snapshotTo 檔頭註解為準——**別寫「大家都共用它」**；每日一顆保留 30 天；失敗不擋 app、只累積警告（連 3 次升 danger、絕不誤報）；清理只認日期樣式檔名；狀態欄位服務層擁有——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#每日滾動備份) |
-| 異常輸入防線（階段四 B，2026-07-27 上線） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#異常輸入防線) |
-| **機密投影與匯出的兩種模式**（鐵則 1 後半拆出） | 投影要套在所有回應、含 POST/PUT 寫入端；唯一例外 /api/export 兩種模式刻意相反（LOCAL 完整含機密／HOSTED 剝除、含 accountNo）；「留空＝不變更」保留、另給明確清除入口——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#機密投影與匯出的兩種模式) |
-| **匯出前告知的模式分流**（William 2026-08-08 授權的最小例外） | 機密流向的畫面告知兩種模式講不同話（匯出告知＋銀行上傳密碼欄） ⇒ `GET /api/mode` 只回 `{hosted:boolean}`、留在 auth gate 後、不得擴張成其他環境資訊；前端問不到／形狀不合法一律往安全的方向錯（哪句算安全依畫面而定），問模式也要有等待上限——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#匯出前告知的模式分流) |
-| 雙模式與帳號系統（C2，2026-07-27 上線） | 開關只認 NOTEASY_HOSTED=1、缺環境變數啟動即 throw；LOCAL 分支零改動；Auth 用 @supabase/ssr 不自寫 token、cookie Secure 無條件；CSRF＝Origin 白名單；authGate 驗 /finance＋全部 /api/*、fail-closed 當未登入；只宣稱 401、不宣稱租戶隔離——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#雙模式與帳號系統) |
-| **機密欄位**（新增一個「不可外流」的欄位時） | 先分辨兩張清單：要加密的走 mapSecrets（加密/解密/匯出剝除/匯入不採用四條路全從它出發），刻意不加密的走 mapBackupOnlyPii；路徑當加密 AAD 必須穩定唯一；投影仍要各自更新——加密管 at-rest、投影管不送瀏覽器——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#機密欄位與-mapsecrets) |
-| **只剝不加密的 PII**（第二張清單，2026-07-29 建立） | 目前只有 accounts 的 accountNo；新增時四處一起接（清單本體/匯出剝除/匯入對稱保存/瀏覽器投影），漏了匯入保存＝匯出再匯入把值洗成空字串還回 200；回填只准三條件同時成立——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#只剝不加密的-pii-mapbackuponlypii) |
-| 機密加密（C5，2026-07-27 上線） | NOTEASY_MASTER_KEY 進 fail-fast 清單；AES-256-GCM、AAD＝使用者id｜欄位路徑；解不開＝回空字串＋警告不炸掉，但絕不可把密文蓋掉（租戶槽登記＋寫回原密文）；LOCAL 維持明文——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#機密加密與解不開的寫回保護) |
-| 解析器資源上限＋slowloris 逾時（可用性第一層，2026-07-28 上線） | 單一真相＝lib/parse-limits.js；上傳大小限制不夠，PDF 頁數與文字節點逐頁累加、IB XML 12MB＋元素 50 萬兩道牆缺一不可；超標一律 400 絕不靜默截斷、兩種模式都套；PDF 與 XLSX 在 HOSTED 走子行程隔離；xlsx 只准 lib/statement.js import——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#解析器資源上限與行程隔離) |
-| **SEC 全站佇列護欄（2026-07-30，#335 複審 dos 條）** | 深度上限 16＋**SEC 網路管線**總預算 60s（誠實範圍不含本機解析與快取寫入；兩模式都套）；硬期限只准在「未開始執行」時 race；守門收斂成一道＋逐呼叫點補題、期限參數必填 number——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#sec-全站佇列護欄) |
-| `lib/heavy-admission.js`（`HEAVY_ADMISSION_MAX_INFLIGHT`／`HEAVY_ROUTES`／`withHeavySlot`） | SEC refresh 在進佇列**之前**還要先過共用的重型名額——只讀佇列那條會漏掉這個外層；兩層取捨不同、別互相照抄——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#重型工作名額heavy-admission與-sec-的關係) |
-| 速率限制（可用性第一層，2026-07-28 上線） | 記憶體內固定窗口、時鐘可注入；只在 HOSTED 掛（LOCAL 有反向考題）；路徑表單一真相＝server.js 的 RATE_LIMITS（pre-gate 按 IP／post-gate 按帳號）；超限 429＋Retry-After 不 throw；HOSTED 必設 trust proxy=1 且源站不可直達——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#速率限制) |
-| 租戶隔離與雲端資料層（C4b，2026-07-27 上線） | 身分交棒點＝authGate 之後 runWithTenant 包住 next；資料層絕不從請求參數拿 user_id、沒 context 就 throw；隔離只靠 RLS、service_role 不碰 kv；新租戶不種 seed；請求範圍狀態一律進 lib/tenant.js 的 context、不開模組級槽——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#租戶隔離與請求範圍狀態) |
-| 部署設定（`render.yaml`＋CI，2026-07-28 對齊） | Node 版號只准寫 .node-version 一處；autoDeployTrigger 用 checksPass、CI 不可加 paths 過濾；renderSubdomainPolicy 必須明寫（與 trust proxy 同一件事的兩半）；靜態考題只證明 repo 寫得對、證明不了後台照著跑——完整契約 → [契約：雲端與安全](docs/contracts/cloud-security.md#部署設定與版號單一真相) |
-| 月度回顧總覽卡 | 純呈現層分工（前端不得重算）＋切月 route/序號與 aria-busy 守則——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#月度回顧總覽卡) |
-| **async render 與路由序號 guard**（Codex r10#6） | render 進場先取 seq、await 完動任何 DOM 前再驗；表單儲存後重畫先確認原路由；遞迴重載同樣 guard——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#async-render-與路由序號-guard) |
-| **共用彈窗契約**（modal-shell.js） | 只共用尺寸、標題列、關閉按鈕、背景與基本關閉行為；送出、預覽、返回、非同步狀態與重畫由各功能自負——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#共用彈窗契約) |
-| 淨值目標與到達速度 | 後端單一真相＝`lib/derive.js computeGoalTracking`、前端不可重算；兩把尺只看最近六個已結束月、至少三個月份、取中位數；達標走 `goal-reached` 報喜——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值目標與到達速度) |
-| `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#composition-穿透表的兩份複本) |
-| `public/modules/accounts-model.js` 的 `LIABILITY_TYPES`（前端單一真相：`fxExposure`、帳戶表單的型別選項、資產頁的負債紅字都讀它） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#liability_types-的三份複本) |
-| **台幣掛牌美債 ETF 清單**（`portfolio-exposure.js` 的 `fxExposure`） | ——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#台幣掛牌美債-etf-清單) |
-| 新增 ETF 持股 | COMPANY_WEIGHTS＋兩份 COMPOSITION 都要補；XUSE/EXUS 刻意只做區域穿透——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#新增-etf-持股) |
-| `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#ib-同步-default_layer-新增代號) |
-| IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | 後端 computeLeverage ↔ 前端兩檔一致；mcDist：無借款＝100、有借款持股歸零＝0，兩情境不可混——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#ib-槓桿與斷頭距離) |
-| **投資頁前端模組分工**（portfolio-* 家族） | 純模組層座位表、工作流模組、拆分停止線、portfolio-format 顯示單一真相、個股研究頁模組組與兩個入口——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#投資頁前端模組分工) |
-| **IB 現金幣別歸零**（`syncIb`） | 只在 Cash Report 確實有各幣別明細列時歸零；BASE_SUMMARY 彙總列＝合法報表（原子取代＋`cashFromSummary`）；多 statement 整包 400；現金旗標前端必 toast（名單以契約與 portfolio-ib-sync.js 為準）——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#ib-現金幣別歸零) |
-| **多幣別損益**（缺幣別≠缺匯率） | 換算優先序只治缺匯率；缺幣別一律不猜、分開計數回報（`skippedNoCurrency`）、新持股不入庫；`tradePnlBase` 兩處同口徑——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#多幣別損益) |
-| **XIRR 資金加權年化**（台幣） | 現金流＝月快照＋IB 已實現損益逐筆＋今日市值；賣出只用 Δcost 會漏已實現損益；異常先懷疑快照——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#xirr-資金加權年化) |
-| **securityTrades 欄位所有權與去重** | IB 同步雙寫（upsert by sourceRef、永不刪）＋台新匯入；identifier-first 去重鍵、指紋對帳 `reconcileFingerprintRows`、幣別牆含 `commissionCurrency`、buy→out／sell→in 跨欄不變式——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#securitytrades-欄位所有權與去重) |
-| 投資代號與投資原則上限／凍結加碼 | 代號一律 normalizePortfolioSymbol＋同代號彙總；上限設 0＝零容忍；不可把 0 當成未設定而回退預設值；編輯持股把代號／身分**改成**已凍結標的（即使股數沒增加）也要警告——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#投資代號與原則上限) |
-| **訂閱續費日自動推進**（使用者定 2026-07-26） | 開 app 自動推進過期續費日：判準／月底錨點／不推清單／只動日期不動金額／推後重繪——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#訂閱續費日自動推進) |
-| 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | 前後端三處攤提口徑一致＋RECORD_START 單一真相＋勿改回 active 過濾加總——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#訂閱本月攤提) |
-| 訂閱狀態（使用中/即將停用/已停用） | 前端 subStatus ↔ 後端 subActive 口徑一致（項數才不打架）——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#訂閱狀態) |
-| YYYY-MM-DD 日期解析 | 一律本地時區拆日期；new Date(字串) 會當 UTC、以西時區差一天——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#yyyy-mm-dd-日期解析) |
-| **圖表色與 CSS 狀態色**（`theme.js` 的 `CHART.green/red`） | ——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#圖表色與-css-狀態色) |
-| settings 新增欄位 | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#settings-新增欄位) |
-| 集合新增欄位（表單加新欄） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#集合新增欄位表單加新欄) |
-| **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | ——完整契約 → [契約：共用底層](docs/contracts/shared-foundation.md#跨-await-的寫入安全) |
-| **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | 不可竄改的 `dir`、方向護欄與來源優先序、內轉子分類用角色重播（不可字面比對）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#銀行收支真學習的方向與內轉子分類) |
-| **帳單原文（摘要／備註）分兩欄留底**（Stage 2，使用者定 2026-08-22） | `note` 是顯示用的組合結果、改了就回不到原文；原文另存 `bankSummary`／`bankNote`（服務層寫、非 CRUD），顯示層走 `bankRawText`＝有欄讀欄、舊列才反解 `bankRef`（**不回填**）；去重鍵與學習鑰匙格式沒動——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單原文摘要與備註分兩欄留底) |
-| **機構名正規化與祖父比對形**（Stage 4，2026-08-22） | 機構名進去重鍵／機構戳／定存鍵三處；入口唯一＝`stmtBank`→`canonicalBank`，**身分尺只認得台新**（其他機構只去公司型態字＝兩種寫法並存、寧可漏合併）；既有資料**不改**、比對時兩邊正規化（`sameBank`／`canonRef`／`canonCdKey`）；疑似重複提醒另用寬鬆尺 `looseBankKey`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#機構名正規化與祖父比對形) |
-| **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | 一次寫檔全有或全無；純函式 worker＋`PUT applyAll` 原子入口，標準端點只留相容薄殼——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#同類同店一起改是單一原子指令) |
-| **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | 觸發＝停車費子類的**現名身分**、非字面；`parkSub` 整批算一次傳入；呼叫點見契約；與 strip 反向對稱——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |
-| **帳戶顯示名 denormalized 到 `transactions.account`**（使用者定 2026-07-21「改一次、處處同步」） | 銀行交易靠 `bankRef` 遮罩帳號比對現名、手動記帳走舊名→新名；reconcile 的落點見契約——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳戶顯示名-denormalized-到交易) |
-| **時鐘倒退保護**（Codex r3#8，中） | 現在比資料庫最新一天早＝不寫；自動流程安靜略過、手動按鈕 throw 400；`nowLocal()` 整個流程只擷取一次——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#時鐘倒退保護) |
-| **淨值日線 `dailyValues`**（D0） | `recordDailyValue()` 唯一寫入口；同日覆寫、跨日累積（月快照跳過不代表日線跳過）；支援的外幣匯率都留底（外幣＝`schema.js` 的 `CURRENCIES` 扣掉本幣 TWD；實際留底哪幾欄見 snapshot.js）；`date` 用 datereq 必填、READONLY——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#淨值日線-dailyvalues) |
-| 估值訊號門檻／檔位（**程式單一真相＝`public/modules/signal-tiers.js`**，D3 抽出） | 單一真相 signal-tiers.js、前後端都 import；改門檻要同步白話文件＋SIGNALS_INFO_HTML——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#估值訊號門檻檔位) |
-| **每日洞察引擎書籤 `insightState`＋差異引擎**（D3，2026-07-22） | 唯一寫入口 getInsights（讀取有寫檔副作用）／同顧慮同 key 鐵律／註冊五件套 `KV_KEYS`＋`KV_MAP_KEYS`＋schema＋`emptyDb`＋types——完整契約 → [契約：前端功能](docs/contracts/frontend-features.md#每日洞察引擎書籤-insightstate) |
-| `settings.signals`（美股自動、區域四市場每月手動） | 只在投組頁「更新區域數值」表單編輯；美股 ECY 自動算、不手動——完整契約 → [契約：投資與 SEC](docs/contracts/investment-sec.md#settings-signals) |
-| 支出分類（兩層：分類/子類，**使用者可自訂** 2026-07） | 生效樹＝`settings.expenseTree`＋`effectiveTree(db)`；改名連動與別名、刪除歸「其他/未分類」（強制保留的退路）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#支出分類兩層與使用者自訂) |
-| `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | 三層先中先贏：特殊指定→店家/關鍵字→**場所保底排表尾**（具體店家 > 場所）；重複判定鍵＝`stmtRef`——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#category_rules-關鍵字順序) |
-| 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX；PDF 再依**文件內容**判富邦/台新） | 銀行由**文件內容**判斷不看選的卡；富邦/台新 PDF＋台新 XLSX（HOSTED 走子行程）；`finalize()` 共用；`statementMonth` 只掃表頭——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單多銀行與多格式解析) |
-| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | 只加在顯示名（`note`）**絕不進 `storeKey`**；只加在「自動名」，使用者取過的名字逐字保留；各呼叫端（具名清單見契約、處數不寫死；契約記載已漂過一次）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
-| **使用者自訂店名規則 `settings.storeRules`**（第三帖「規則自助化」，使用者定 2026-07-19） | 純資料非正規表示式（使用者只填純文字）；每種規則排在同類內建規則**前面**；寫入端嚴格、櫃檯端寬鬆——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#使用者自訂店名規則-storerules) |
-| **「規則入櫃檯」**（第三帖）：`lib/repo.js` 每次讀取都把 `settings.storeRules` 餵給 `store-rules.js` 的模組級單例 | `repo.js` 每次讀取都經 `loadSynced()` 餵規則進純函式模組；預覽要講兩種不可逆變更；預覽失敗不可繼續儲存——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則入櫃檯) |
-| 規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據） | 內建規則雜湊＋使用者規則**每次重算**；`normalizeIfRulesChanged` 必須**先 `getDb()` 再算指紋**——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#規則指紋-storeruleshash) |
-| 店名規則的 API 與 UI | 四個端點（讀／全庫影響預覽／存檔即套用／孤兒學習條目）＋設定頁編輯器；預覽返回不可用 innerHTML 還原——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#店名規則的-api-與-ui) |
-| **不可逆整批操作「刻意沒有」操作前備份**（William 2026-08-08 裁決） | 店名規則與開 app 自動整理**不做** `pre-rules`／`pre-normalize` 備份、不擋、不問；畫面只寫「儲存後沒有『復原』可以按」，不承諾自動還原檔。救援＝每日滾動備份 30 天＋使用者自己按的「匯出備份」。⚠️ **看到「不可逆卻沒備份」想補的人先讀裁決**（`lib/services/backup.js` 檔中註解）——那是拿掉的、不是漏掉的，`test/vault-and-backup-integrity.test.js` 有一題釘著——完整契約 → [契約：資料與儲存](docs/contracts/data-storage.md#不可逆整批操作刻意沒有操作前備份) |
-| 帳單上傳「免選卡」自動歸卡（`POST /api/statement/preview`） | 逐卡試密碼→判銀行末四碼→對卡決策樹三段；認不出一律退回請使用者選；pdfjs detach ArrayBuffer 的坑——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單上傳免選卡自動歸卡) |
-| 帳單匯入批次／事後整批改卡片 | `importBatch` 批次代號；整批改卡＝重寫 `stmtRef` 卡片前綴；**`stmtRef` 一律由伺服器端重算**（偽造會繞過去重）——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單匯入批次與事後整批改卡片) |
-| 帳單「自動學習」店名＋分類（`db.learnedCategories`＝{ `storeKey`(cleanStore後原名) → {category?,subcategory?,name?} }） | key＝`storeKey`（品牌層）；**分類記品牌層、顯示名記原文級**；品牌層永不留 `name`，且「不留」的手段是搬家不是刪除——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#帳單自動學習店名與分類) |
-| **店家消費檔案**（收支列表點店名開彈窗；使用者定 2026-07-18） | 純前端 `openStoreProfile`；聚合口徑＝`storeKey`（品牌層合併）；三層內容；`fmtNT`「358 NT」僅此彈窗——完整契約 → [契約：收支記帳與匯入](docs/contracts/income-expense.md#店家消費檔案) |
+| SEC 官方指標候選 tag 與 `selectMetric`（`lib/stock-fundamentals.js`） | ——完整契約 → [契約：投資與 SEC・SEC 官方指標挑值](docs/contracts/investment-sec.md#sec-官方指標挑值) |
+| SEC 最新單季逐列期間（`periods.latestQuarterBasis:'per-metric'`） | ——完整契約 → [契約：投資與 SEC・最新單季逐列期間](docs/contracts/investment-sec.md#最新單季逐列期間) |
+| `lib/parse-limits.js` 的 `MAX_SEC_RESPONSE_BYTES` | ——完整契約 → [契約：投資與 SEC・SEC 單一回應資源上限](docs/contracts/investment-sec.md#sec-單一回應資源上限) |
+| SEC `currentDebt`（`lib/stock-fundamentals.js`） | ——完整契約 → [契約：投資與 SEC・SEC currentDebt 流動債務](docs/contracts/investment-sec.md#sec-currentdebt-流動債務) |
+| `lib/repo.js` 介面（加函式／改簽名） | ——完整契約 → [契約：資料與儲存・repo 介面的新增與修改](docs/contracts/data-storage.md#repo-介面的新增與修改) |
+| **kv 的鍵**（`lib/store.js` 的 `KV_KEYS`／`KV_MAP_KEYS`；`emptyDb()` 加頂層欄位時） | ——完整契約 → [契約：資料與儲存・kv 的鍵](docs/contracts/data-storage.md#kv-的鍵) |
+| **HOSTED 資料層**（`lib/store-pg.js`／`db/supabase-schema.sql`／RLS 政策） | ——完整契約 → [契約：資料與儲存・HOSTED 資料層與測試替身](docs/contracts/data-storage.md#hosted-資料層與測試替身) |
+| **HOSTED 的並行安全＝compare-and-swap（C4b，契約 P1-5）** | ——完整契約 → [契約：資料與儲存・HOSTED 並行安全 CAS](docs/contracts/data-storage.md#hosted-並行安全-cas) |
+| 本機檔案操作一律經櫃檯（`backupNow`/`snapshotTo`/`dataDir`，維持同步簽名） | ——完整契約 → [契約：資料與儲存・本機檔案操作一律經櫃檯](docs/contracts/data-storage.md#本機檔案操作一律經櫃檯) |
+| **資料存取單一櫃檯（B1）** | ——完整契約 → [契約：資料與儲存・資料存取單一櫃檯 B1](docs/contracts/data-storage.md#資料存取單一櫃檯-b1) |
+| **驗證入櫃檯（B3）** | ——完整契約 → [契約：資料與儲存・驗證入櫃檯 B3](docs/contracts/data-storage.md#驗證入櫃檯-b3) |
+| **日期／月份走「真實日曆」判準（`isRealMonth`／`isRealDate`，Codex r3#9）** | ——完整契約 → [契約：資料與儲存・日期與月份的真實日曆判準](docs/contracts/data-storage.md#日期與月份的真實日曆判準) |
+| **必填欄位機制（`REQUIRED_FIELDS`，哪些集合、哪些欄一律以 `lib/schema.js` 的 `REQUIRED_FIELDS` 為準——本檔曾凍結一份清單、實際已漂＝改 schema 的人看不到這裡（教材句自己也不寫數字——寫了就是下一個會漂的）；`securityTrades` 的查帳合約欄全列必填，含核心金額 price/grossAmount/netSettlement）**；跨欄位不變式走 **`ROW_RULES`**（同三個強制點；清單以 schema.js 的 ROW_RULES 為準——例：securityTrades 的 buy→out／sell→in） | ——完整契約 → [契約：資料與儲存・必填欄位機制與跨欄不變式](docs/contracts/data-storage.md#必填欄位機制與跨欄不變式) |
+| **請求旗標一律嚴格**（`lib/routes/` 讀 body 的開關） | ——完整契約 → [契約：共用底層・請求旗標一律嚴格](docs/contracts/shared-foundation.md#請求旗標一律嚴格) |
+| **測試隔離慣例（B0）** | ——完整契約 → [契約：資料與儲存・測試隔離慣例 B0](docs/contracts/data-storage.md#測試隔離慣例-b0) |
+| PDF 逐列抽取器（pdfjs → 帶座標的列） | ——完整契約 → [契約：收支記帳與匯入・PDF 逐列抽取器](docs/contracts/income-expense.md#pdf-逐列抽取器) |
+| **銀行對帳單解析器＝`lib/bank-statement.js`**（與信用卡解析完全分開） | ——完整契約 → [契約：收支記帳與匯入・銀行對帳單解析與分箱](docs/contracts/income-expense.md#銀行對帳單解析與分箱) |
+| **帳戶 `accountNo`（完整帳號，PII）與餘額匯入** | ——完整契約 → [契約：收支記帳與匯入・帳戶完整帳號與餘額匯入](docs/contracts/income-expense.md#帳戶完整帳號與餘額匯入) |
+| **帳單原文取法**（後端 `origFromStmtRef`／前端 `stmtOrig`） | ——完整契約 → [契約：收支記帳與匯入・帳單原文取法 origFromStmtRef](docs/contracts/income-expense.md#帳單原文取法-origfromstmtref) |
+| **匯入對帳閘（強／中／弱三級）＝`lib/statement-reconcile.js`**（P0，2026-08-11；施工計畫＝docs/parser-generalization-plan.md §四、#437 定案） | ——完整契約 → [契約：收支記帳與匯入・匯入對帳閘](docs/contracts/income-expense.md#匯入對帳閘) |
+| **匯入密碼池（P0.5，使用者 2026-08-11 拍板：銀行與信用卡匯入密碼一致化）** | ——完整契約 → [契約：收支記帳與匯入・匯入密碼池](docs/contracts/income-expense.md#匯入密碼池) |
+| **AI 解析路線（銀行對帳單「認不得」的 fallback；★3 拍板 2026-08-12＝Anthropic）** | ——完整契約 → [契約：收支記帳與匯入・AI 解析路線 P1b](docs/contracts/income-expense.md#ai-解析路線-p1b) |
+| **配方快取（AI 讀一次→留純資料翻譯規則卡→同版面 app 內解；★4＋格式 A 拍板，施工計畫 §五 P2）** | ——完整契約 → [契約：收支記帳與匯入・配方快取 P2](docs/contracts/income-expense.md#配方快取-p2) |
+| 信用卡負數交易的繳款／退款判斷 | ——完整契約 → [契約：收支記帳與匯入・信用卡負數交易的繳款與退款判斷](docs/contracts/income-expense.md#信用卡負數交易的繳款與退款判斷) |
+| 月度回顧的消費口徑與退款配對 | ——完整契約 → [契約：收支記帳與匯入・月度回顧的消費口徑與退款配對](docs/contracts/income-expense.md#月度回顧的消費口徑與退款配對) |
+| 信用卡費頁的兩種口徑（使用者定 2026-07-27） | ——完整契約 → [契約：收支記帳與匯入・信用卡費頁的兩種口徑](docs/contracts/income-expense.md#信用卡費頁的兩種口徑) |
+| 每日滾動備份（階段四 A，2026-07-27 上線） | ——完整契約 → [契約：資料與儲存・每日滾動備份](docs/contracts/data-storage.md#每日滾動備份) |
+| 異常輸入防線（階段四 B，2026-07-27 上線） | ——完整契約 → [契約：共用底層・異常輸入防線](docs/contracts/shared-foundation.md#異常輸入防線) |
+| **機密投影與匯出的兩種模式**（鐵則 1 後半拆出；容器規則前半仍在鐵則 1） | ——完整契約 → [契約：雲端與安全・機密投影與匯出的兩種模式](docs/contracts/cloud-security.md#機密投影與匯出的兩種模式) |
+| 畫面要照模式講機密流向時——匯出告知「檔案含不含機密」、銀行對帳單上傳的密碼欄講「密碼會不會離開這台電腦」（端點＝`GET /api/mode`）。 | ——完整契約 → [契約：雲端與安全・匯出前告知的模式分流](docs/contracts/cloud-security.md#匯出前告知的模式分流) |
+| 雙模式與帳號系統（C2，2026-07-27 上線） | ——完整契約 → [契約：雲端與安全・雙模式與帳號系統](docs/contracts/cloud-security.md#雙模式與帳號系統) |
+| **機密欄位**（新增一個「不可外流」的欄位時） | ——完整契約 → [契約：雲端與安全・機密欄位與 mapSecrets](docs/contracts/cloud-security.md#機密欄位與-mapsecrets) |
+| **只剝不加密的 PII**（第二張清單，2026-07-29 建立） | ——完整契約 → [契約：雲端與安全・只剝不加密的 PII mapBackupOnlyPii](docs/contracts/cloud-security.md#只剝不加密的-pii-mapbackuponlypii) |
+| 機密加密（C5，2026-07-27 上線） | ——完整契約 → [契約：雲端與安全・機密加密與解不開的寫回保護](docs/contracts/cloud-security.md#機密加密與解不開的寫回保護) |
+| 解析器資源上限＋slowloris 逾時（可用性第一層，2026-07-28 上線） | ——完整契約 → [契約：雲端與安全・解析器資源上限與行程隔離](docs/contracts/cloud-security.md#解析器資源上限與行程隔離) |
+| **SEC 全站佇列護欄（2026-07-30，#335 複審 dos 條）** | ——完整契約 → [契約：投資與 SEC・SEC 全站佇列護欄](docs/contracts/investment-sec.md#sec-全站佇列護欄) |
+| `lib/heavy-admission.js`（`HEAVY_ADMISSION_MAX_INFLIGHT`／`HEAVY_ROUTES`／`withHeavySlot`） | ——完整契約 → [契約：投資與 SEC・重型工作名額（heavy admission）與 SEC 的關係](docs/contracts/investment-sec.md#重型工作名額heavy-admission與-sec-的關係) |
+| 速率限制（可用性第一層，2026-07-28 上線） | ——完整契約 → [契約：雲端與安全・速率限制](docs/contracts/cloud-security.md#速率限制) |
+| 租戶隔離與雲端資料層（C4b，2026-07-27 上線） | ——完整契約 → [契約：雲端與安全・租戶隔離與請求範圍狀態](docs/contracts/cloud-security.md#租戶隔離與請求範圍狀態) |
+| 部署設定（`render.yaml`＋CI，2026-07-28 對齊） | ——完整契約 → [契約：雲端與安全・部署設定與版號單一真相](docs/contracts/cloud-security.md#部署設定與版號單一真相) |
+| 月度回顧總覽卡 | ——完整契約 → [契約：前端功能・月度回顧總覽卡](docs/contracts/frontend-features.md#月度回顧總覽卡) |
+| **async render 寫 `#view` 前要 guard 序號**（Codex r10#6） | ——完整契約 → [契約：前端功能・async render 與路由序號 guard](docs/contracts/frontend-features.md#async-render-與路由序號-guard) |
+| **共用彈窗契約**（modal-shell.js 的邊界） | ——完整契約 → [契約：前端功能・共用彈窗契約](docs/contracts/frontend-features.md#共用彈窗契約) |
+| 淨值目標與到達速度 | ——完整契約 → [契約：前端功能・淨值目標與到達速度](docs/contracts/frontend-features.md#淨值目標與到達速度) |
+| `public/modules/portfolio-exposure.js` 的 `COMPOSITION` 穿透表 | ——完整契約 → [契約：共用底層・COMPOSITION 穿透表的兩份複本](docs/contracts/shared-foundation.md#composition-穿透表的兩份複本) |
+| `public/modules/accounts-model.js` 的 `LIABILITY_TYPES`（前端單一真相：`fxExposure`、帳戶表單的型別選項、資產頁的負債紅字都讀它） | ——完整契約 → [契約：共用底層・LIABILITY_TYPES 的三份複本](docs/contracts/shared-foundation.md#liability_types-的三份複本) |
+| `portfolio-exposure.js` `fxExposure` 寫死的台幣掛牌美債 ETF 清單（00719B/00720B） | ——完整契約 → [契約：投資與 SEC・台幣掛牌美債 ETF 清單](docs/contracts/investment-sec.md#台幣掛牌美債-etf-清單) |
+| 新增 ETF 持股 | ——完整契約 → [契約：投資與 SEC・新增 ETF 持股](docs/contracts/investment-sec.md#新增-etf-持股) |
+| `lib/services/ib-sync.js` `DEFAULT_LAYER` 新增代號 | ——完整契約 → [契約：共用底層・IB 同步 DEFAULT_LAYER 新增代號](docs/contracts/shared-foundation.md#ib-同步-default_layer-新增代號) |
+| IB 槓桿＋斷頭距離公式（lastEquity 優先、自算 fallback） | ——完整契約 → [契約：投資與 SEC・IB 槓桿與斷頭距離](docs/contracts/investment-sec.md#ib-槓桿與斷頭距離) |
+| 投資頁前端模組（`portfolio-*.js` 家族的座位表、工作流、停止線與格式單一真相） | ——完整契約 → [契約：投資與 SEC・投資頁前端模組分工](docs/contracts/investment-sec.md#投資頁前端模組分工) |
+| **IB 現金幣別歸零**（Codex r4#3） | ——完整契約 → [契約：投資與 SEC・IB 現金幣別歸零](docs/contracts/investment-sec.md#ib-現金幣別歸零) |
+| **多幣別損益**（缺幣別與缺匯率是兩種病） | ——完整契約 → [契約：投資與 SEC・多幣別損益](docs/contracts/investment-sec.md#多幣別損益) |
+| **XIRR（資金加權年化，台幣）** | ——完整契約 → [契約：投資與 SEC・XIRR 資金加權年化](docs/contracts/investment-sec.md#xirr-資金加權年化) |
+| `securityTrades`（READONLY，前端只 GET） | ——完整契約 → [契約：投資與 SEC・securityTrades 欄位所有權與去重](docs/contracts/investment-sec.md#securitytrades-欄位所有權與去重) |
+| 投資代號與投資原則上限／凍結加碼 | ——完整契約 → [契約：投資與 SEC・投資代號與原則上限](docs/contracts/investment-sec.md#投資代號與原則上限) |
+| **訂閱續費日自動推進**（使用者定 2026-07-26） | ——完整契約 → [契約：前端功能・訂閱續費日自動推進](docs/contracts/frontend-features.md#訂閱續費日自動推進) |
+| 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | ——完整契約 → [契約：前端功能・訂閱本月攤提](docs/contracts/frontend-features.md#訂閱本月攤提) |
+| 訂閱狀態（使用中/即將停用/已停用） | ——完整契約 → [契約：前端功能・訂閱狀態](docs/contracts/frontend-features.md#訂閱狀態) |
+| YYYY-MM-DD 日期解析 | ——完整契約 → [契約：前端功能・YYYY-MM-DD 日期解析](docs/contracts/frontend-features.md#yyyy-mm-dd-日期解析) |
+| `theme.js` 的 CHART.green/red | ——完整契約 → [契約：前端功能・圖表色與 CSS 狀態色](docs/contracts/frontend-features.md#圖表色與-css-狀態色) |
+| settings 新增欄位 | ——完整契約 → [契約：共用底層・settings 新增欄位](docs/contracts/shared-foundation.md#settings-新增欄位) |
+| 集合新增欄位（表單加新欄） | ——完整契約 → [契約：共用底層・集合新增欄位（表單加新欄）](docs/contracts/shared-foundation.md#集合新增欄位表單加新欄) |
+| **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | ——完整契約 → [契約：共用底層・跨 await 的寫入安全](docs/contracts/shared-foundation.md#跨-await-的寫入安全) |
+| **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | ——完整契約 → [契約：收支記帳與匯入・銀行收支真學習的方向與內轉子分類](docs/contracts/income-expense.md#銀行收支真學習的方向與內轉子分類) |
+| **銀行交易的帳單原文＝ `bankSummary`／`bankNote` 兩欄**（Stage 2，使用者定 2026-08-22） | ——完整契約 → [契約：收支記帳與匯入・帳單原文摘要與備註分兩欄留底](docs/contracts/income-expense.md#帳單原文摘要與備註分兩欄留底) |
+| **機構名＝`lib/bank-alias.js` 的正規短名**（Stage 4，使用者 2026-08-20 排定「機構名別名對照表：台新／台新銀行／TAISHIN → 同一代碼」） | ——完整契約 → [契約：收支記帳與匯入・機構名正規化與祖父比對形](docs/contracts/income-expense.md#機構名正規化與祖父比對形) |
+| **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | ——完整契約 → [契約：收支記帳與匯入・同類同店一起改是單一原子指令](docs/contracts/income-expense.md#同類同店一起改是單一原子指令) |
+| **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | ——完整契約 → [契約：收支記帳與匯入・停車費顯示包裝的觸發](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |
+| **帳戶顯示名 denormalized 到 `transactions.account`**（使用者定 2026-07-21「改一次、處處同步」） | ——完整契約 → [契約：收支記帳與匯入・帳戶顯示名 denormalized 到交易](docs/contracts/income-expense.md#帳戶顯示名-denormalized-到交易) |
+| **時鐘倒退保護**（Codex r3#8，中） | ——完整契約 → [契約：前端功能・時鐘倒退保護](docs/contracts/frontend-features.md#時鐘倒退保護) |
+| **淨值日線 `dailyValues`**（D0，每日洞察引擎的地基；使用者定 2026-07-19） | ——完整契約 → [契約：前端功能・淨值日線 dailyValues](docs/contracts/frontend-features.md#淨值日線-dailyvalues) |
+| 估值訊號門檻／檔位（**程式單一真相＝`public/modules/signal-tiers.js`**，D3 抽出） | ——完整契約 → [契約：投資與 SEC・估值訊號門檻檔位](docs/contracts/investment-sec.md#估值訊號門檻檔位) |
+| **每日洞察引擎書籤 `insightState`＋差異引擎**（D3，2026-07-22） | ——完整契約 → [契約：前端功能・每日洞察引擎書籤 insightState](docs/contracts/frontend-features.md#每日洞察引擎書籤-insightstate) |
+| `settings.signals`（美股自動、區域四市場每月手動） | ——完整契約 → [契約：投資與 SEC・settings-signals](docs/contracts/investment-sec.md#settings-signals) |
+| 支出分類（兩層：分類/子類，**使用者可自訂** 2026-07） | ——完整契約 → [契約：收支記帳與匯入・支出分類兩層與使用者自訂](docs/contracts/income-expense.md#支出分類兩層與使用者自訂) |
+| `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | ——完整契約 → [契約：收支記帳與匯入・CATEGORY_RULES 關鍵字順序](docs/contracts/income-expense.md#category_rules-關鍵字順序) |
+| 帳單多銀行/多格式（`parseStatement` 依位元組偵測 PDF/XLSX；PDF 再依**文件內容**判富邦/台新） | ——完整契約 → [契約：收支記帳與匯入・帳單多銀行與多格式解析](docs/contracts/income-expense.md#帳單多銀行與多格式解析) |
+| **顯示標記 `applyDisplayLabels(name, {desc, subcategory})`**（使用者定 2026-07-18） | ——完整契約 → [契約：收支記帳與匯入・顯示標記 applyDisplayLabels](docs/contracts/income-expense.md#顯示標記-applydisplaylabels) |
+| **使用者自訂店名規則 `settings.storeRules`**（第三帖「規則自助化」，使用者定 2026-07-19） | ——完整契約 → [契約：收支記帳與匯入・使用者自訂店名規則 storeRules](docs/contracts/income-expense.md#使用者自訂店名規則-storerules) |
+| **「規則入櫃檯」**（第三帖）：`lib/repo.js` 每次讀取都把 `settings.storeRules` 餵給 `store-rules.js` 的模組級單例 | ——完整契約 → [契約：收支記帳與匯入・規則入櫃檯](docs/contracts/income-expense.md#規則入櫃檯) |
+| 規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據） | ——完整契約 → [契約：收支記帳與匯入・規則指紋 storeRulesHash](docs/contracts/income-expense.md#規則指紋-storeruleshash) |
+| 店名規則的 API 與 UI | ——完整契約 → [契約：收支記帳與匯入・店名規則的 API 與 UI](docs/contracts/income-expense.md#店名規則的-api-與-ui) |
+| **不可逆整批操作「刻意沒有」操作前備份**（William 2026-08-08 裁決） | ——完整契約 → [契約：資料與儲存・不可逆整批操作刻意沒有操作前備份](docs/contracts/data-storage.md#不可逆整批操作刻意沒有操作前備份) |
+| 帳單上傳「免選卡」自動歸卡（`POST /api/statement/preview`） | ——完整契約 → [契約：收支記帳與匯入・帳單上傳免選卡自動歸卡](docs/contracts/income-expense.md#帳單上傳免選卡自動歸卡) |
+| 帳單匯入批次／事後整批改卡片 | ——完整契約 → [契約：收支記帳與匯入・帳單匯入批次與事後整批改卡片](docs/contracts/income-expense.md#帳單匯入批次與事後整批改卡片) |
+| 帳單「自動學習」店名＋分類（`db.learnedCategories`＝{ `storeKey`(cleanStore後原名) → {category?,subcategory?,name?} }） | ——完整契約 → [契約：收支記帳與匯入・帳單自動學習店名與分類](docs/contracts/income-expense.md#帳單自動學習店名與分類) |
+| **店家消費檔案**（收支列表點店名開彈窗；使用者定 2026-07-18） | ——完整契約 → [契約：收支記帳與匯入・店家消費檔案](docs/contracts/income-expense.md#店家消費檔案) |
 
 ## ⚠️ 欄位所有權（護欄 G5，2026-07-22；防「PUT 挾帶假值劫持服務資料」）
 
