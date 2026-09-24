@@ -186,7 +186,10 @@ test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連�
   assert.equal(decide('mcp__other__place_order_now', FORBIDDEN).deny, true, '逐字在清單上');
   assert.equal(decide('mcp__other__harmless_looking_tool', FORBIDDEN).deny, true, '逐字在清單上，家族網抓不到它——只有逐字清單擋得住');
   assert.equal(decide('mcp__other__harmless_looking_tool_v2', FORBIDDEN).deny, false, '逐字就是逐字，不做前綴比對');
-  // ⚠️ 唯讀前綴只認**開頭**：中段或尾段出現 get 不可以替前面的動詞名詞脫罪（突變驗過：不錨定開頭的話這一個會被放行）
+  // ⚠️ 唯讀前綴只認**開頭**：中段或尾段出現 get 不可以替前面的動詞名詞脫罪。
+  // ⚠️ **原本這裡寫「突變驗過：不錨定開頭的話這一個會被放行」——2026-09-24 收緊之後那句已失效**
+  //    （#641 r2 #1 抓到）：這一行現在根本不吃家族網豁免，把 `readRe` 的 `^` 拿掉，這一題照樣 pass。
+  //    真正守「唯讀前綴不替動作名脫罪」的是下面的 ⑫。這一行留著只是「唯讀字在後面不算唯讀」的例子。
   assert.equal(decide('mcp__any__create_order_get_confirmation', FORBIDDEN).deny, true, '唯讀字在後面不算唯讀');
   for (const t of ['mcp__any__create_order', 'mcp__any__order_create', 'mcp__any__placeOrder', 'mcp__any__submit-trade', 'mcp__any__sell.stock', 'mcp__any__cancel_open_position', 'mcp__any__transfer_funds', 'mcp__any__withdraw_cash']) {
     assert.equal(decide(t, FORBIDDEN).deny, true, `${t} 應該被擋`);
