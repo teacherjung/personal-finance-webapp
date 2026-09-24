@@ -50,3 +50,8 @@ output/
 
 # grok 升版助手寫檔時的同目錄暫存檔（正常情況下自己會清掉；清不掉時它會印出位置）
 *.grok-bump-tmp
+
+# xlsx 護欄那一題的探針目錄（`test/xlsx-isolate.test.js`；它**必須**寫在 lib/ 與 public/ 底下，
+# 否則護欄範圍被縮窄時那一題看不出來）。正常路徑上開頭與 finally 各清一次；
+# 測試被硬砍時會殘留——這一行是為了**不讓它被 git add 收進去**。
+_xlsx_guard_probes/

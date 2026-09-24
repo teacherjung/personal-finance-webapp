@@ -452,6 +452,15 @@ test('架構｜二十六種合法的引入寫法都要被 lint 擋下（列舉�
     ["default specifier 寫法", "import { default as mod } from 'node:module';\n"
       + "const X = mod.createRequire(import.meta.url)('xlsx');\nconsole.log(X);\n"],
   ];
+  // ⚠️ **開頭也清一次**（不是只在 finally）：這些探針**必須**寫在 `lib/` 與 `public/` 底下
+  //    （理由見下面 Codex #374 r4 Low 那段），所以測試被**硬砍**（SIGKILL、關掉終端機）時
+  //    就會留在工作樹裡。留下來的後果：`npm run lint` 會紅——而且紅得**像是有人真的在 lib/
+  //    引入 xlsx**，下一個人得先看懂這是殘骸才敢刪。#639 之後有人（我）連撞兩次才發現。
+  //    ⚠️ 開頭清一次 ⇒ **下一次跑測試就自己好了**；`.gitignore` 那一行 ⇒ **殘骸收不進 commit**。
+  //    ⚠️ 但**殘骸存在時 lint 照樣會紅**，那是對的（`lib/` 底下真的有檔案在引入 xlsx）——
+  //    這兩道只保證「自己會好」與「不會被提交」，**不保證你在硬砍之後、還沒重跑測試之前 lint 是綠的**。
+  rmSync(probeDir, { recursive: true, force: true });
+  rmSync(publicProbeDir, { recursive: true, force: true });
   try {
     mkdirSync(probeDir, { recursive: true });
     mkdirSync(publicProbeDir, { recursive: true });

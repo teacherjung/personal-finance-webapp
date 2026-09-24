@@ -64,6 +64,12 @@ const ALLOWED_GITIGNORE = [
   // 所以目標不會被寫到一半）。正常路徑上它一定被清掉；清不掉時那支會印出殘留位置。
   // 這一行是為了**不讓它被 git add 收進去**——不是拿來藏我們自己寫的程式（#636 r3 #5）。
   '*.grok-bump-tmp',
+  // 考題產生的：`test/xlsx-isolate.test.js` 的探針目錄。它**必須**寫在 `lib/` 與 `public/` 底下
+  // ——那一題就是要證明 xlsx 護欄的範圍涵蓋前端，全寫在 lib/ 底下的話護欄被縮窄也看不出來
+  // （該題註解裡 Codex #374 r4 Low 寫著理由）。正常路徑上開頭與 finally 各清一次；
+  // 測試被硬砍（SIGKILL）時會殘留，這一行是為了**不讓殘骸被 git add 收進去**。
+  // ⚠️ **不可以同時加進 ESLint 的 ignores**——那一題正是要 ESLint 去掃這些探針，忽略掉就永遠全綠。
+  '_xlsx_guard_probes/',
 ];
 
 /**
