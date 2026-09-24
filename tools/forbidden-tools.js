@@ -111,12 +111,34 @@ function decide(toolName, forbidden) {
   const readRe = readPrefixes.length ? new RegExp(`^(?:${readPrefixes.map(esc).join('|')})_`, 'u') : null;
   for (const c of cands) {
     const t = normalize(c);
-    if (readRe && readRe.test(t)) continue;
+    // ⚠️ **唯讀前綴不再無條件跳過**（全庫護欄稽核實測到的破口，2026-09-24）。
+    //    原本這一行是 `if (readRe && readRe.test(t)) continue;`：只要名字以 get_／list_／view_／
+    //    export_… 開頭，**整張家族網連同下面的額外樣式一起跳過**。實測（直接呼叫本函式、帶對照組）：
+    //      對照 `create_order`／`place_trade` → 擋住 ✅
+    //      `view_create_order`／`get_place_order`／`list_submit_trade`／`export_cancel_order` → **全部放行** ❌
+    //    那正好就是上面連接器那段答應的「雙保險」該接住、卻接不住的東西。
+    // ⚠️ **為什麼可以直接收緊、不必列舉**：唯讀前綴原本唯一的作用，就是放掉「命中家族網或額外樣式」
+    //    的名字——而那正是危險的那一類；沒命中的名字本來就放行，不需要它替誰脫罪。
+    //    實測誤擋面：那個券商連接器實際登記的 32 支工具（`get_account_orders`、`get_order_instructions`、
+    //    `get_price_history` 這些）**一支都沒有**從放行變成擋下；本檔考題明文要求放行的
+    //    `get_order`／`list_positions`／`search_stocks`／`view_trade_history` 也全部不受影響。
+    // ⚠️ 所以 `readPrefixes` 現在**只剩訊息用途**（告訴踩到的人「有唯讀前綴也不算數」）。
+    //    要不要把這個概念整個拿掉＝**動判準，留給裁示者裁**，本支刻意不動。
+    const 讀名 = readRe ? readRe.test(t) : false;
+    const 但書 = 讀名 ? '；唯讀前綴不替它脫罪' : '';
+    // ⚠️ **只拆家族網那一半，額外樣式那一半保留豁免**——這是量出來的，不是挑的：
+    //    `patterns` **刻意很寬**（第一條是「名字裡出現 transfer／withdraw／deposit… 就算」），
+    //    唯讀前綴本來就是它的洩壓閥；把閥一起拆掉會誤擋 `get_transfer_log` 這種真的唯讀工具
+    //    （本倉庫 `test/money-kit-hook.test.js` 的矩陣明文要求它放行，我第一版就是在這裡被它抓到）。
+    //    家族網相反：它是**動詞＋名詞**的精確比對，不需要閥。
+    // ⚠️ **仍然守不住的**（照實寫，不是保證）：只命中寬樣式、沒命中家族網的「唯讀前綴＋動作」名字，
+    //    例如 `download_transfer_funds`、`read_withdraw_cash`，**現在仍然放行**。
+    //    要收它＝把 `patterns` 拆成「精確的」與「寬的」兩類、只讓寬的吃豁免＝**動判準，留給裁示者裁**。
     if (verb && noun) {
-      if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}）` };
-      if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}）` };
+      if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
+      if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
     }
-    for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
+    if (!讀名) for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
   }
   return { deny: false };
 }

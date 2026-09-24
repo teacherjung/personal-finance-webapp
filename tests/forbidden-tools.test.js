@@ -127,6 +127,40 @@ test('⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣�
   assert.equal(decide('mcp__broker-x__create_order_instruction', misfilled).deny, true, '名單上有它，家族網還是要擋');
   assert.equal(decide('mcp__prefix__broker-x__create_order_instruction', misfilled).deny, true, '多一層前綴也一樣');
   assert.equal(decide('mcp__broker-x__get_watchlist', misfilled).deny, false, '對照組：名單內、家族網接不到的照常放行');
+  // ⚠️ **這一顆是「雙保險」真正該接住的那一種**（2026-09-24 全庫護欄稽核抓到）：
+  //    原本家族網對「唯讀前綴開頭」的名字**無條件跳過**，所以誤填進唯讀名單的 `view_create_order`
+  //    一路放行——上面那句「雙保險」對它是假的。舊版這一行會紅。
+  const 誤填唯讀開頭 = { ...FORBIDDEN, allowlist: [...FORBIDDEN.allowlist, 'view_create_order'] };
+  assert.equal(decide('mcp__broker-x__view_create_order', 誤填唯讀開頭).deny, true,
+    '唯讀前綴開頭也一樣：名單誤填了它，家族網要接住');
+});
+
+test('⑫唯讀前綴不替「動作名」脫罪：命中家族網或額外樣式就擋（2026-09-24 稽核破口）', () => {
+  // ## 這一題在防什麼
+  // 家族網原本第一行就是「名字以唯讀前綴開頭 ⇒ `continue`」，**連額外樣式那一道也一起跳過**。
+  // 於是 `view_create_order` 這種「查詢的皮、下單的骨」完全不受檢查。
+  // ⚠️ 這一題自己就是那個破口的絆線：把那個無條件 `continue` 放回去，下面每一發都會紅。
+  for (const t of ['view_create_order', 'get_place_trade', 'list_cancel_position', 'search_submit_stock',
+    'view_order_create']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：唯讀前綴不可以替動作名脫罪`);
+  }
+  // ⚠️ **只拆家族網那一半，額外樣式那一半仍吃豁免——這是射程，不是保證，所以用斷言釘住**：
+  //    `patterns` 刻意很寬（本檔夾具是「名字裡出現 withdraw／deposit 就算」），唯讀前綴是它的洩壓閥；
+  //    拆掉閥會誤擋 `get_transfer_log` 這種真的唯讀工具（`test/money-kit-hook.test.js` 的矩陣明文要它放行，
+  //    我第一版就是在那裡被抓到）。代價＝下面這兩種**現在仍然放行**，照實釘下來，哪天改了這兩行會紅。
+  for (const t of ['search_withdraw', 'get_deposit']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false,
+      `${t}：只命中寬樣式、沒命中家族網 ⇒ 目前仍放行（要收它＝拆 patterns 成精確／寬兩類＝動判準，待裁）`);
+  }
+  assert.equal(decide('mcp__any__withdraw', FORBIDDEN).deny, true, '對照：沒有唯讀前綴時，寬樣式照擋');
+  // ⚠️ **對照組（沒有這幾發，上面那七發證明不了「不是全部都擋」）**：真正的唯讀名字仍要放行，
+  //    否則這一題可以靠「把所有唯讀前綴的東西都擋掉」作弊通過。
+  for (const t of ['get_order', 'list_positions', 'search_stocks', 'view_trade_history', 'get_account_balances']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false, `${t}：真的唯讀工具不可以被誤擋`);
+  }
+  // 訊息要說得出「有唯讀前綴、但不算數」，否則踩到的人看不懂為什麼一個 get_ 開頭的東西被擋
+  assert.match(decide('mcp__any__view_create_order', FORBIDDEN).why, /唯讀前綴不替它脫罪/u);
+  assert.doesNotMatch(decide('mcp__any__create_order', FORBIDDEN).why, /唯讀前綴/u, '沒有唯讀前綴的不要多印那句');
 });
 
 test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連字號正規化', () => {
