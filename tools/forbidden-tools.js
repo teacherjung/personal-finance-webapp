@@ -119,29 +119,47 @@ function decide(toolName, forbidden) {
     //      `view_create_order`／`get_place_order`／`list_submit_trade`／`export_cancel_order` → **全部放行** ❌
     //    那正好就是上面連接器那段答應的「雙保險」該接住、卻接不住的東西。
     // ⚠️ **這是「偏安全、願意付誤擋代價」的取捨，不是「零代價」**（#641 r1 #3 更正我上一版的說法）。
-    //    我上一版寫「家族網是精確比對、不需要閥」——**那句話是錯的，而且是事後合理化**：
-    //    動詞表有 25 個（含 `open`／`close`／`buy`／`sell`），而比對用的是 `_?\\w*?` 不是完整 token，
-    //    所以 `close` 會吃到 `closed`、`open` 會把「未平倉」讀成「開倉動作」。
+    //    我上一版寫「家族網是精確比對、不需要閥」——**那句話是錯的，而且是事後合理化**。
+    //    誤擋有**兩個不同的來源，不可以算成同一個**（Grok 複審後掃 #3 更正我把兩者混在一起）：
+    //      ㈠ **動詞表裡有 `open`／`close`／`buy`／`sell` 這種「既是動作也是狀態」的字** ⇒
+    //         `list_open_positions`（未平倉）被讀成「開倉動作」。這與比對是不是完整 token **無關**：
+    //         改成完整 token `(^|_)open_position(s)(_|$)` 一樣命中。
+    //      ㈡ **比對用 `_?\\w*?` 不是完整 token** ⇒ `close` 吃到 `closed`：
+    //         `get_closed_positions` 是靠這一點命中的，完整 token 版本**不會**命中。
     // ⚠️ **本支新造出來的拒絕面（審查者找到、我逐一複驗過；主幹放行、本版拒絕）**：
     //      `list_open_positions`（列出未平倉部位）、`get_closed_positions`（查已平倉部位）、
     //      `get_create_order_status`（查委託建立狀態）、`view_order_create_history`（查建立歷史）。
     //    這幾個都是**合理的唯讀名字**。踩到了就照既定裁示流程處理，不要在這裡自己開洞。
-    // ⚠️ 量到的另一半（別把代價說得比實際大）：那個券商連接器**實際登記的 32 支**工具一支都沒改判；
+    // ⚠️ 量到的另一半（別把代價說得比實際大）：那個券商連接器的**唯讀白名單 32 筆**逐支比過、判決都沒翻
+    //    （⚠️ 掃描 #3 更正：32 是**白名單的長度**，不是「該連接器實際登記的全部工具」——
+    //     `deny` 裡另有同一個連接器的 2 支下單工具全名，所以倉庫自己點名的至少 34 個）；
     //    本檔考題明文要求放行的 `get_order`／`list_positions`／`search_stocks`／`view_trade_history` 也不受影響。
     //    審查者另以正式詞表組出 33,250 個變體：26,600 個由放行變拒絕、**0 個由拒絕變放行**
     //    （那是那個枚舉集合的結果，不是「所有名字」的證明）。
     const 讀名 = readRe ? readRe.test(t) : false;
     const 但書 = 讀名 ? '；唯讀前綴不替它脫罪' : '';
-    // ⚠️ **只拆家族網那一半，額外樣式那一半保留豁免**（下面 `if (!讀名)` 那一行就是保留的地方）：
-    //    `patterns` **刻意很寬**（第一條是「名字裡出現 transfer／withdraw／deposit… 就算」），
-    //    唯讀前綴是它的洩壓閥；把閥一起拆掉會誤擋 `get_transfer_log` 這種真的唯讀工具
-    //    （`test/money-kit-hook.test.js` 的矩陣明文要求它放行，我第一版就是在這裡被它抓到）。
-    // ⚠️ 所以 `readPrefixes` **仍然在判斷上有作用**（不是只影響訊息——把它清空，
-    //    `read_withdraw_cash` 就會從放行變成拒絕，實測過）。要不要拆 `patterns`、
-    //    或整個拿掉 `readPrefixes`＝**動判準，留給裁示者裁**，本支刻意不動。
-    // ⚠️ **仍然守不住的**（照實寫，不是保證）：只命中寬樣式、沒命中家族網的「唯讀前綴＋動作」名字，
-    //    例如 `download_transfer_funds`、`read_withdraw_cash`，**現在仍然放行**。
-    //    要收它＝把 `patterns` 拆成「精確的」與「寬的」兩類、只讓寬的吃豁免＝**動判準，留給裁示者裁**。
+    // ⚠️ **只拆家族網那兩道；下面 `if (!讀名)` 是額外樣式仍然吃豁免的地方**。
+    //    留著它的理由：`patterns` 第一條認的是**單獨成詞**的 transfer／withdraw／deposit… 這一類字
+    //    （⚠️ 掃描 #1 更正：它**要詞界**，不是「名字裡出現就算」——`get_transferable`、
+    //     `get_withdrawing`、`wiretransfer` 對它都不中），而 `get_transfer_log`（讀轉帳紀錄、真的唯讀）
+    //    會中；把閥一起拆掉就誤擋它（`test/money-kit-hook.test.js` 的矩陣明文要它放行，
+    //    我第一版就是在這裡被它抓到）。
+    // ⚠️ `readPrefixes` **仍然在判斷上有作用**（不是只影響訊息——清空它，
+    //    `read_withdraw_cash` 由放行變拒絕，實測過）。
+    // ⚠️ **仍然守不住的——這一段我上一版寫錯了，照實重寫**（掃描 #2）：
+    //    我原本寫成「只命中**寬**樣式的才漏」。**錯：五條額外樣式全部被前綴跳過，含精確的那幾條。**
+    //    實測仍然放行（未宣告連接器、直接呼叫本函式）：
+    //      `get_send_money`／`get_send_cash`（第二條 `(move|send)_(fund|money|cash…)` 接得到，被跳過；
+    //        對照 `get_send_funds` **會**被家族網擋，因為 `fund` 在名詞表裡）
+    //      `get_move_funds`／`view_convert_currency`／`list_swap_crypto`
+    //        （`move`／`convert`／`swap` 不在動詞表、只活在第二三條 ⇒ 家族網接不到）
+    //      `download_transfer_funds`／`read_withdraw_cash`（第一條）
+    // ⚠️ **另一個劃界缺口（掃描補的）**：名字在**已宣告那個連接器**上時白名單仍會擋；
+    //    但把 `get_send_money`／`view_convert_currency`／`download_transfer_funds` 這種**誤填進白名單**
+    //    之後就放行——上面那段答應的「雙保險」對它們仍然不存在（對 `view_create_order` 這種
+    //    命中家族網的才存在）。
+    //    要收它＝把 `patterns` 拆成「要詞界的寬條」與「動詞＋錢名詞的精確條」、只讓寬條吃豁免
+    //    ＝**動判準，留給裁示者裁**，本支不動。
     if (verb && noun) {
       if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
       if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };

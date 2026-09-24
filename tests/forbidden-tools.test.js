@@ -149,15 +149,21 @@ test('⑫唯讀前綴不替「動作名」脫罪：命中**家族網**就擋（�
   // ⚠️ **它們證明的是「這一版是這樣」，不證明「這樣是安全的」**（#641 r1 #4）。
   //    將來裁准收緊時，**應該同步改掉這幾行**——不可以拿「考題紅了」當理由拒絕安全修正。
   //
-  // 現況 A：額外樣式那一道仍吃唯讀前綴豁免。`patterns` 刻意很寬（本檔夾具是「出現 withdraw／deposit
-  //   就算」），唯讀前綴是它的洩壓閥；拆掉閥會誤擋 `get_transfer_log` 這種真的唯讀工具
-  //   （`test/money-kit-hook.test.js` 的矩陣明文要它放行，我第一版就是在那裡被抓到）。
-  //   ⚠️ 本檔夾具把 `transfer` 列為**動詞**、正式設定**沒有** ⇒ 兩邊不可互換當證據（#641 r1 #4）。
+  // 現況 A：額外樣式那一道仍吃唯讀前綴豁免。
+  //   ⚠️ **本檔夾具的樣式是 `(^|_)(withdraw|deposit)(_|$)`——它要詞界**，不是「出現就算」
+  //      （掃描 #1 更正我上一版的寫法：`withdrawal`／`get_withdrawing`／`prewithdraw`
+  //       就算清空唯讀前綴也仍然放行）。
+  //   ⚠️ **「拆掉閥會誤擋 `get_transfer_log`」那句話是正式設定的後果，不是本夾具的**
+  //      （掃描 #1 抓到我又把兩份設定混在一起）：本夾具把 `transfer` 列為**動詞**、
+  //      樣式裡也沒有 `transfer` ⇒ 清空 `readPrefixes` 之後 `get_transfer_log` 在這裡**仍然放行**。
+  //      正式設定才有那一條，`test/money-kit-hook.test.js` 的矩陣也在那邊要求它放行。
   for (const t of ['search_withdraw', 'get_deposit']) {
     assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false,
-      `${t}：只命中寬樣式、沒命中家族網 ⇒ **目前**仍放行（現況，非安全保證；要收＝拆 patterns＝動判準，待裁）`);
+      `${t}：命中本夾具的額外樣式、沒命中家族網 ⇒ **目前**仍放行（現況，非安全保證；要收＝拆 patterns＝動判準，待裁）`);
   }
-  assert.equal(decide('mcp__any__withdraw', FORBIDDEN).deny, true, '對照：沒有唯讀前綴時，寬樣式照擋');
+  assert.equal(decide('mcp__any__withdraw', FORBIDDEN).deny, true, '對照：沒有唯讀前綴時，額外樣式照擋');
+  assert.equal(decide('mcp__any__get_withdrawing', { ...FORBIDDEN, readPrefixes: [] }).deny, false,
+    '對照（掃描 #1）：樣式要詞界——`get_withdrawing` 連清空唯讀前綴都不中，所以它不是靠豁免才放行的');
 
   // 現況 B：**本支新造出來的拒絕面**（#641 r1 #3 找到、我逐一複驗；主幹放行、本版拒絕）。
   //   這幾個都是**合理的唯讀名字**，被擋是本支偏安全的取捨要付的代價，不是「零代價」。
