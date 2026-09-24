@@ -127,7 +127,7 @@ function build(data) {
   out.push(`- 會動到禁區的連接器（白名單制）：${plain(joinList(fb.servers), '禁區連接器')}`);
   out.push(`- 那些連接器上准用的唯讀工具：${plain(joinList(fb.allowlist), '唯讀名單')}`);
   out.push(`- 逐字拒絕的工具名：${plain(joinList(fb.deny), '拒絕清單')}`);
-  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（**只影響訊息**，命中家族網或額外樣式時不再豁免；2026-09-24 稽核）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}`);
+  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（**只豁免額外樣式那一道**，不豁免動詞名詞那兩道；2026-09-24 收緊）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}`);
   out.push(`- 額外樣式：${plain(joinList(fb.patterns), '額外樣式')}`);
   out.push('', '## 八、合併後驗收分級（規矩 H6；分級工具讀這裡，只算不擋）', '');
   const acc = data.acceptance || {};
