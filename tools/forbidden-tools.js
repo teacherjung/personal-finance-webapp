@@ -16,9 +16,8 @@
 //     不只開頭那一段）；在唯讀名單上也不直接放行，照樣走下面的家族網（雙保險）；
 //   ④工具名逐字在拒絕清單上＝拒絕；
 //   ⑤家族網：工具名正規化（駝峰拆底線、點與連字號換底線、轉小寫）後，動詞接名詞、或名詞接動詞、
-//     或額外樣式命中＝拒絕。⚠️ **唯讀前綴（get／list／search 那一類）只豁免 `patterns` 那一張表**
-//     （2026-09-24 兩次收緊）：①不豁免動詞名詞那兩道（之前豁免 ⇒ `view_create_order` 一路放行）
-//     ②不豁免 `patternsReadSafe`＝「動作字緊接錢名詞」的精確片語（裁示者裁庚 ⇒ `get_send_money` 一路放行）。
+//     或額外樣式命中＝拒絕。⚠️ **哪一道吃唯讀前綴的豁免、代價與射程＝下面「兩張樣式表」那一段**
+//     （本檔內也只留一份：這幾行刻意不重述，r4 #2 抓到我在這裡把「裁庚**之前**才會放行」寫成了現在式）。
 //   其餘放行（不印任何東西）。
 //
 // 誠實劃界：只認工具名，不看參數；家族網是列舉的詞表，沒列到的動詞或名詞擋不住（詞表由專案維護）；
@@ -63,6 +62,71 @@ function listField(f, key) {
 }
 
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * ## 兩張樣式表：唯讀前綴豁免的範圍與代價（**正本**）
+ *
+ * ⚠️ **這一段是這個機制唯一的現在式描述。別處（`AGENTS.md`、考題檔頭、題名、產生器、
+ *    PR 說明、`test/money-boundary.test.js`）一律只用題名關鍵字「兩張樣式表」指到這裡，
+ *    不准重述**——理由見下面「為什麼只留一份」。
+ *
+ * ### 現在的規則
+ *
+ * 三道判斷，差別只有「唯讀前綴（`get_`／`list_`／`view_`／`export_`… ＝ `readPrefixes`）
+ * 擋不擋得住它」：
+ *
+ * | 判斷 | 唯讀前綴 |
+ * |---|---|
+ * | 家族網（動詞＋名詞、名詞＋動詞） | **不豁免** |
+ * | `patternsReadSafe` | **不豁免** |
+ * | `patterns` | **豁免**（有前綴就整張不跑） |
+ *
+ * ### 為什麼兩張表這樣分
+ *
+ * `patterns` 留的是**會誤傷真唯讀工具**的兩條：①單獨成詞的 transfer／withdraw／deposit…
+ * （要詞界；`get_transfer_log`＝讀轉帳紀錄會中它，所以需要那個閥）②寬版
+ * `(convert|exchange|swap)_\w*?<錢名詞>`——它把 `exchange` 當動作，而本領域 `exchange`
+ * 幾乎都是名詞（**交易所**、ETF 的 exchange **traded** fund），尾巴沒詞界、通配符還跨底線。
+ *
+ * ### 代價：這是「偏安全、願意付誤擋」的取捨，**不是零代價**
+ *
+ * `patternsReadSafe` 一律生效 ⇒ 下列**合理的唯讀名字現在會被擋**（主幹放行、本版拒絕，逐一實測）：
+ * `list_open_positions`、`get_closed_positions`、`get_create_order_status`、
+ * `view_order_create_history`、`get_convert_currency_rate`、`get_send_money_status`、
+ * `list_swap_crypto_quotes`。**踩到了照既定裁示流程處理，不要在這裡自己開洞。**
+ *
+ * 誤擋有**兩個不同來源，不可以算成同一個**：㈠動詞表裡有 `open`／`close`／`buy`／`sell`
+ * 這種「既是動作也是狀態」的字（`list_open_positions` 屬這一類，跟比對是否完整 token 無關）
+ * ㈡比對用 `_?\w*?` 不是完整 token（`close` 吃到 `closed`，`get_closed_positions` 屬這一類）。
+ *
+ * ### 射程：**守不住的**（照實寫，不是保證）
+ *
+ * 只命中 `patterns`、又帶唯讀前綴的名字仍然放行：`download_transfer_funds`、
+ * `read_withdraw_cash`。已宣告連接器上的白名單仍會擋它們，但**誤填進白名單之後就放行**
+ * ——上面連接器那段答應的「雙保險」對它們不存在（對命中家族網的 `view_create_order` 才存在）。
+ *
+ * ⚠️ `patternsReadSafe` **不是**「全部都是動作緊接錢名詞」：搬進去的原第 4、5 條仍有
+ * `_?\w*?securit[a-z]*` 與反向的「名詞→動詞」式（`get_preview_cached_securities_status`、
+ * `get_securities_preview_status` 都命中）。只有新加的 `(convert|swap)_<錢名詞>` 那一條要相鄰。
+ *
+ * ### 為什麼只留一份（方法，不是感想）
+ *
+ * 這個機制在 #641 改過兩次行為。前四輪複審＋一次掃描，**每一輪都有一條發現是
+ * 「我改了行為、舊的說明還用現在式留在原地」**——因為同一句話被我寫在九個地方。
+ * 靠「每次改完重 grep 一次」擋不住（實測漏了兩批）。所以照 RULES K1／K3 收成一份正本、
+ * 其餘只指路；由 `tests/forbidden-tools.test.js` 的「⑭ 只有一份」那一題釘住。
+ * ⚠️ 那一題是**絆線不是保證**：它認的是機制字的共現，換句話說重述它抓不到。
+ *
+ * ### 沿革（**已失效，過去式，不要照這裡判斷**）
+ *
+ * ・2026-09-24 之前：唯讀前綴**無條件跳過家族網與五條額外樣式** ⇒ `view_create_order`
+ *   這種「查詢的皮、下單的骨」一路放行；連接器那段答應的「雙保險」對它是假的。
+ * ・同日第一次收緊：只拆家族網那兩道，五條額外樣式仍整張豁免 ⇒ `get_send_money`、
+ *   `get_move_funds`、`view_convert_currency`、`list_swap_crypto` 當時仍放行。
+ * ・同日第二次收緊（裁示者裁庚）：拆成上面那兩張表。
+ * ・我當時寫過而**已被推翻**的兩句：「家族網是精確比對、不需要閥」（事後合理化）、
+ *   「只命中寬樣式的才漏」（錯：五條全部被跳過，含精確的那幾條）。
+ */
 
 /**
  * 純判斷層。回 { deny: true, why } 或 { deny: false }。
@@ -116,71 +180,14 @@ function decide(toolName, forbidden) {
   const readRe = readPrefixes.length ? new RegExp(`^(?:${readPrefixes.map(esc).join('|')})_`, 'u') : null;
   for (const c of cands) {
     const t = normalize(c);
-    // ⚠️ **唯讀前綴不再無條件跳過**（全庫護欄稽核實測到的破口，2026-09-24）。
-    //    原本這一行是 `if (readRe && readRe.test(t)) continue;`：只要名字以 get_／list_／view_／
-    //    export_… 開頭，**整張家族網連同下面的額外樣式一起跳過**。實測（直接呼叫本函式、帶對照組）：
-    //      對照 `create_order`／`place_trade` → 擋住 ✅
-    //      `view_create_order`／`get_place_order`／`list_submit_trade`／`export_cancel_order` → **全部放行** ❌
-    //    那正好就是上面連接器那段答應的「雙保險」該接住、卻接不住的東西。
-    // ⚠️ **這是「偏安全、願意付誤擋代價」的取捨，不是「零代價」**（#641 r1 #3 更正我上一版的說法）。
-    //    我上一版寫「家族網是精確比對、不需要閥」——**那句話是錯的，而且是事後合理化**。
-    //    誤擋有**兩個不同的來源，不可以算成同一個**（Grok 複審後掃 #3 更正我把兩者混在一起）：
-    //      ㈠ **動詞表裡有 `open`／`close`／`buy`／`sell` 這種「既是動作也是狀態」的字** ⇒
-    //         `list_open_positions`（未平倉）被讀成「開倉動作」。這與比對是不是完整 token **無關**：
-    //         改成完整 token `(^|_)open_position(s)(_|$)` 一樣命中。
-    //      ㈡ **比對用 `_?\\w*?` 不是完整 token** ⇒ `close` 吃到 `closed`：
-    //         `get_closed_positions` 是靠這一點命中的，完整 token 版本**不會**命中。
-    // ⚠️ **本支新造出來的拒絕面（審查者找到、我逐一複驗過；主幹放行、本版拒絕）**：
-    //      `list_open_positions`（列出未平倉部位）、`get_closed_positions`（查已平倉部位）、
-    //      `get_create_order_status`（查委託建立狀態）、`view_order_create_history`（查建立歷史）。
-    //    這幾個都是**合理的唯讀名字**。踩到了就照既定裁示流程處理，不要在這裡自己開洞。
-    // ⚠️ 量到的另一半（別把代價說得比實際大）：那個券商連接器的**唯讀白名單 32 筆**逐支比過、判決都沒翻
-    //    （⚠️ 掃描 #3 更正：32 是**白名單的長度**，不是「該連接器實際登記的全部工具」——
-    //     `deny` 裡另有同一個連接器的 2 支下單工具全名，所以倉庫自己點名的至少 34 個）；
-    //    本檔考題明文要求放行的 `get_order`／`list_positions`／`search_stocks`／`view_trade_history` 也不受影響。
-    //    審查者另以正式詞表組出 33,250 個變體：26,600 個由放行變拒絕、**0 個由拒絕變放行**
-    //    （那是那個枚舉集合的結果，不是「所有名字」的證明）。
+    // 判準、代價、射程、沿革的正本＝上面「**兩張樣式表**」那一段。**這裡不重述。**
     const 讀名 = readRe ? readRe.test(t) : false;
     const 但書 = 讀名 ? '；唯讀前綴不替它脫罪' : '';
-    // ⚠️ **只拆家族網那兩道；下面 `if (!讀名)` 是額外樣式仍然吃豁免的地方**。
-    //    留著它的理由：`patterns` 第一條認的是**單獨成詞**的 transfer／withdraw／deposit… 這一類字
-    //    （⚠️ 掃描 #1 更正：它**要詞界**，不是「名字裡出現就算」——`get_transferable`、
-    //     `get_withdrawing`、`wiretransfer` 對它都不中），而 `get_transfer_log`（讀轉帳紀錄、真的唯讀）
-    //    會中；把閥一起拆掉就誤擋它（`test/money-kit-hook.test.js` 的矩陣明文要它放行，
-    //    我第一版就是在這裡被它抓到）。
-    // ⚠️ `readPrefixes` **仍然在判斷上有作用**（不是只影響訊息——清空它，
-    //    `read_withdraw_cash` 由放行變拒絕，實測過）。
-    // ⚠️ **仍然守不住的——這一段我上一版寫錯了，照實重寫**（掃描 #2）：
-    //    我原本寫成「只命中**寬**樣式的才漏」。**錯：五條額外樣式全部被前綴跳過，含精確的那幾條。**
-    //    實測仍然放行（未宣告連接器、直接呼叫本函式）：
-    //      `get_send_money`／`get_send_cash`（第二條 `(move|send)_(fund|money|cash…)` 接得到，被跳過；
-    //        對照 `get_send_funds` **會**被家族網擋，因為 `fund` 在名詞表裡）
-    //      `get_move_funds`／`view_convert_currency`／`list_swap_crypto`
-    //        （`move`／`convert`／`swap` 不在動詞表、只活在第二三條 ⇒ 家族網接不到）
-    //      `download_transfer_funds`／`read_withdraw_cash`（第一條）
-    // ⚠️ **另一個劃界缺口（掃描補的）**：名字在**已宣告那個連接器**上時白名單仍會擋；
-    //    但把 `get_send_money`／`view_convert_currency`／`download_transfer_funds` 這種**誤填進白名單**
-    //    之後就放行——上面那段答應的「雙保險」對它們仍然不存在（對 `view_create_order` 這種
-    //    命中家族網的才存在）。
-    //    要收它＝把 `patterns` 拆成「要詞界的寬條」與「動詞＋錢名詞的精確條」、只讓寬條吃豁免
-    //    ＝**動判準，留給裁示者裁**，本支不動。
     if (verb && noun) {
       if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
       if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
     }
-    // ⚠️ **兩張樣式表，差別只有「唯讀前綴擋不擋得住它」**（2026-09-24 裁示者裁庚）：
-    //   `patternsReadSafe`＝**一律跑**（連唯讀前綴也擋）。放這裡的是「動作字**緊接**錢名詞」的精確片語。
-    //   `patterns`＝**只在沒有唯讀前綴時跑**。留在這裡的是會誤傷唯讀工具的兩條：
-    //     ①單獨成詞的 transfer／withdraw／deposit… （`get_transfer_log` 靠它才不被誤擋）
-    //     ②寬版的 `(convert|exchange|swap)_\\w*?<錢名詞>`——它把 `exchange` 當動作，
-    //       而本領域 `exchange` 幾乎都是名詞（**交易所**、ETF 的 exchange **traded** fund），
-    //       又沒有詞界、通配符還跨底線 ⇒ 會誤擋整族唯讀工具
-    //       （實測：`list_exchange_traded_funds`、`get_exchange_fundamentals`（`fundamentals` 裡夾著 `fund`）、
-    //        `get_exchange_calendar_and_stock_holidays`；而縮寫 `get_etfs`／`list_etfs` 放行
-    //        ⇒ 觸發條件只是「有沒有把 ETF 拼成全稱」，不是任何風險訊號）。
-    // ⚠️ **這個切法在結構上不可能變鬆**：沒有唯讀前綴時跑的是**兩張表的聯集**（⊇ 原本那五條）；
-    //    有唯讀前綴時原本**一條都不跑**、現在跑 `patternsReadSafe` ⇒ 兩邊都只可能更嚴。
-    //    （枚舉 14,336 個名字複驗：變鬆 0、多擋 644；倉庫自己的 36 支「必須放行」清單誤擋 0。）
+    // ⚠️ 這兩行的差別（`patternsReadSafe` 一律跑、`patterns` 只在沒有唯讀前綴時跑）＝見「兩張樣式表」。
     for (const re of patternsReadSafe) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}${但書}）` };
     if (!讀名) for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
   }
