@@ -16,8 +16,9 @@
 //     不只開頭那一段）；在唯讀名單上也不直接放行，照樣走下面的家族網（雙保險）；
 //   ④工具名逐字在拒絕清單上＝拒絕；
 //   ⑤家族網：工具名正規化（駝峰拆底線、點與連字號換底線、轉小寫）後，動詞接名詞、或名詞接動詞、
-//     或額外樣式命中＝拒絕。⚠️ **唯讀前綴（get／list／search 那一類）只豁免「額外樣式」那一道，
-//     不豁免動詞名詞那兩道**（2026-09-24 收緊；之前是兩道一起豁免，`view_create_order` 因此一路放行）。
+//     或額外樣式命中＝拒絕。⚠️ **唯讀前綴（get／list／search 那一類）只豁免 `patterns` 那一張表**
+//     （2026-09-24 兩次收緊）：①不豁免動詞名詞那兩道（之前豁免 ⇒ `view_create_order` 一路放行）
+//     ②不豁免 `patternsReadSafe`＝「動作字緊接錢名詞」的精確片語（裁示者裁庚 ⇒ `get_send_money` 一路放行）。
 //   其餘放行（不印任何東西）。
 //
 // 誠實劃界：只認工具名，不看參數；家族網是列舉的詞表，沒列到的動詞或名詞擋不住（詞表由專案維護）；
@@ -46,6 +47,7 @@ const GRAMMAR = {
   nouns: /^[a-z0-9]+(?:_[a-z0-9]+)*$/u,
   readPrefixes: /^[a-z0-9]+$/u,
   patterns: /^\S+$/u,                    // 正規式另外試編譯
+  patternsReadSafe: /^\S+$/u,           // 同上；**連唯讀前綴也擋**的那一組（2026-09-24 裁庚）
 };
 
 /**
@@ -73,18 +75,20 @@ function decide(toolName, forbidden) {
   const f = forbidden && typeof forbidden === 'object' ? forbidden : {};
   if (!f.name || f.name === UNSET) return { deny: true, why: '專案設定裡的禁區清單還沒填：裝了攔截器卻沒填清單，一律拒絕' };
   const lists = {};
-  for (const key of ['servers', 'allowlist', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns']) {
+  for (const key of ['servers', 'allowlist', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe']) {
     lists[key] = listField(f, key);
     if (lists[key] === null) return { deny: true, why: `專案設定裡禁區清單的「${key}」不是字串陣列、或有一項不合文法（空白、非法字元）：設定壞掉，一律拒絕` };
   }
   const { servers, verbs, nouns, readPrefixes } = lists;
   const allow = new Set(lists.allowlist);
   const deny = new Set(lists.deny);
-  let patterns;
+  let patterns, patternsReadSafe;
   try { patterns = lists.patterns.map((p) => new RegExp(p, 'u')); }
   catch { return { deny: true, why: '專案設定裡禁區清單的額外樣式不是合法的正規式：設定壞掉，一律拒絕' }; }
+  try { patternsReadSafe = lists.patternsReadSafe.map((p) => new RegExp(p, 'u')); }
+  catch { return { deny: true, why: '專案設定裡禁區清單的「連唯讀前綴也擋」樣式不是合法的正規式：設定壞掉，一律拒絕' }; }
   // 只填名字、沒有任何一條有效規則＝跟沒填一樣（r1 High③：原本只看 name，其餘全空就全部放行）
-  const hasRule = servers.length || deny.size || (verbs.length && nouns.length) || patterns.length;
+  const hasRule = servers.length || deny.size || (verbs.length && nouns.length) || patterns.length || patternsReadSafe.length;
   if (!hasRule) return { deny: true, why: `禁區「${f.name}」沒有任何一條有效規則（連接器、拒絕清單、家族網、額外樣式都是空的）：裝了攔截器卻沒有規則，一律拒絕` };
 
   if (deny.has(toolName)) return { deny: true, why: `工具「${toolName}」在拒絕清單上` };
@@ -164,6 +168,20 @@ function decide(toolName, forbidden) {
       if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
       if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
     }
+    // ⚠️ **兩張樣式表，差別只有「唯讀前綴擋不擋得住它」**（2026-09-24 裁示者裁庚）：
+    //   `patternsReadSafe`＝**一律跑**（連唯讀前綴也擋）。放這裡的是「動作字**緊接**錢名詞」的精確片語。
+    //   `patterns`＝**只在沒有唯讀前綴時跑**。留在這裡的是會誤傷唯讀工具的兩條：
+    //     ①單獨成詞的 transfer／withdraw／deposit… （`get_transfer_log` 靠它才不被誤擋）
+    //     ②寬版的 `(convert|exchange|swap)_\\w*?<錢名詞>`——它把 `exchange` 當動作，
+    //       而本領域 `exchange` 幾乎都是名詞（**交易所**、ETF 的 exchange **traded** fund），
+    //       又沒有詞界、通配符還跨底線 ⇒ 會誤擋整族唯讀工具
+    //       （實測：`list_exchange_traded_funds`、`get_exchange_fundamentals`（`fundamentals` 裡夾著 `fund`）、
+    //        `get_exchange_calendar_and_stock_holidays`；而縮寫 `get_etfs`／`list_etfs` 放行
+    //        ⇒ 觸發條件只是「有沒有把 ETF 拼成全稱」，不是任何風險訊號）。
+    // ⚠️ **這個切法在結構上不可能變鬆**：沒有唯讀前綴時跑的是**兩張表的聯集**（⊇ 原本那五條）；
+    //    有唯讀前綴時原本**一條都不跑**、現在跑 `patternsReadSafe` ⇒ 兩邊都只可能更嚴。
+    //    （枚舉 14,336 個名字複驗：變鬆 0、多擋 644；倉庫自己的 36 支「必須放行」清單誤擋 0。）
+    for (const re of patternsReadSafe) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}${但書}）` };
     if (!讀名) for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
   }
   return { deny: false };

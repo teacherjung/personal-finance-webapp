@@ -37,6 +37,8 @@ const FORBIDDEN = {
   nouns: ['order', 'trade', 'position', 'stock', 'fund'],
   readPrefixes: ['get', 'list', 'search', 'view'],
   patterns: ['(^|_)(withdraw|deposit)(_|$)'],
+  // 「連唯讀前綴也擋」的那一組（裁示者 2026-09-24 裁庚）：動作字**緊接**錢名詞的精確片語。
+  patternsReadSafe: ['(^|_)(convert|swap)_(fund|money|cash|crypto)s?(_|$)'],
 };
 
 test('①輸入不合法＝拒絕；②清單沒設＝拒絕', () => {
@@ -206,6 +208,43 @@ test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連�
   assert.equal(normalize('placeOrderNow'), 'place_order_now');
   assert.equal(normalize('HTTPOrder'), 'http_order');
   assert.equal(normalize('a.b-c'), 'a_b_c');
+});
+
+test('⑬兩張樣式表：`patternsReadSafe` 連唯讀前綴也擋，`patterns` 只在沒有前綴時擋（裁示者 2026-09-24 裁庚）', () => {
+  // ## 為什麼要兩張表
+  // 原本只有一張 `patterns`，而唯讀前綴把**整張**跳過。於是 `get_send_money`、`get_move_funds`、
+  // `view_convert_currency` 這種「查詢的皮、動錢的骨」一路放行（Grok 複審後掃 #2 抓到）。
+  // 但那張表裡**有兩條不能一律生效**：①單獨成詞的 transfer／withdraw… （`get_transfer_log` 靠閥才不被誤擋）
+  // ②寬版的 `(convert|exchange|swap)_\w*?<錢名詞>`——它把 `exchange` 當動作，而本領域 `exchange`
+  // 幾乎都是名詞（**交易所**、ETF 的 exchange **traded** fund），又沒詞界、通配符還跨底線。
+  // ⇒ 拆成兩張：精確的搬進 `patternsReadSafe`（一律跑），寬的留在 `patterns`（只在沒前綴時跑）。
+  //
+  // ⚠️ **這一題也是「不可能變鬆」那個結構性質的絆線**（見下面第三段）。
+
+  // ①有唯讀前綴時，`patternsReadSafe` 仍然擋
+  for (const t of ['get_convert_funds', 'view_swap_crypto', 'list_convert_money', 'download_swap_cash']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：patternsReadSafe 連唯讀前綴也要擋`);
+  }
+  // ②有唯讀前綴時，`patterns`（寬的）仍然豁免——那是 `get_transfer_log` 不被誤擋的原因
+  for (const t of ['search_withdraw', 'get_deposit']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false, `${t}：patterns 那一張仍吃豁免（現況，見上面 ⑫）`);
+  }
+  // ③**沒有唯讀前綴時，兩張表的聯集一律生效**——這是「不可能變鬆」的那一半：
+  //   拆表之前那五條全部無條件生效，拆完之後沒有前綴的路徑跑的是聯集 ⊇ 原本五條。
+  for (const t of ['withdraw', 'deposit', 'convert_funds', 'swap_crypto']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：沒有唯讀前綴 ⇒ 兩張表都要生效`);
+  }
+  // ④**空的新表不可以讓判斷變寬**（相容性：別處的夾具沒填這一欄）
+  const 沒填 = { ...FORBIDDEN };
+  delete 沒填.patternsReadSafe;
+  assert.equal(decide('mcp__any__get_convert_funds', 沒填).deny, false, '沒填新表＝回到舊行為（前綴豁免），不是報錯');
+  assert.equal(decide('mcp__any__convert_funds', 沒填).deny, false, '沒填新表時 convert_funds 不在舊 patterns 裡 ⇒ 放行（對照組，證明上面那發不是碰巧）');
+  // ⑤新表壞掉＝設定壞掉＝拒絕（fail-closed，跟舊表同一個口徑）
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['('] }).deny, true, '新表是壞正規式＝拒絕');
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 'not-an-array' }).deny, true, '新表不是陣列＝拒絕');
+  // ⑥只填新表也算「有規則」（不可以因為舊表空了就當成沒設清單）
+  assert.equal(decide('mcp__any__convert_funds',
+    { name: '錢', patternsReadSafe: ['(^|_)convert_funds(_|$)'] }).deny, true, '只有新表也要生效');
 });
 
 test('⑤連接器前綴不同、工具名相同也一起擋（尾段逐一試）', () => {

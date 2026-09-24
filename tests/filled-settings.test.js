@@ -58,7 +58,7 @@ function fakeFilled({ log, box, zones }) {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),
   };
-  s.forbidden = { name: '錢', servers: ['broker-x'], allowlist: ['get_watchlist'], deny: ['mcp__o__x'], verbs: ['create', 'place'], nouns: ['order'], readPrefixes: ['get'], patterns: [] };
+  s.forbidden = { name: '錢', servers: ['broker-x'], allowlist: ['get_watchlist'], deny: ['mcp__o__x'], verbs: ['create', 'place'], nouns: ['order'], readPrefixes: ['get'], patterns: [], patternsReadSafe: [] };
   s.acceptance = { tiers: [{ id: '重', action: '重啟' }, { id: '輕', action: '看一眼' }], families: [{ pattern: '^lib/', tier: '重' }, { pattern: '^docs/', tier: '輕' }], unknownTier: '重' };
   s.checks = { prepareWorktree: recorder(log, 'prepare'), commands: [recorder(log, 'check')], mainWorktree: '一般工作樹', indexAnchors: ['README.md'] };   // 準備指令也填成有動作的（r1 T1：填「無」＝這一格沒考到）；兩個選填登記也填成登記了的樣子
   s.gates = s.gates.map((g) => ({ ...g, state: '已啟用' }));
