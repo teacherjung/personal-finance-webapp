@@ -155,7 +155,7 @@
 
 ## 九、忽略清單登記（規矩 B4、E7；考題比對每一份的生效樣式）
 
-- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\.codex\-reviews\/、tmp\/、output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md、\*\.grok\-bump\-tmp
+- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\.codex\-reviews\/、tmp\/、output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md、\*\.grok\-bump\-tmp、\/lib\/\_xlsx\_guard\_probes\/、\/public\/\_xlsx\_guard\_probes\/
 - prototype\/forest\-ui\-lab\/\.gitignore：assets\/\*\.png、assets\/\*\.jpg
 
 ## 十、合併步驟登記（規矩 H1；合併指令照這個順序跑，任一道紅就停）

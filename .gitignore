@@ -50,3 +50,12 @@ output/
 
 # grok 升版助手寫檔時的同目錄暫存檔（正常情況下自己會清掉；清不掉時它會印出位置）
 *.grok-bump-tmp
+
+# xlsx 護欄那一題的探針目錄（`test/xlsx-isolate.test.js`；它**必須**寫在 lib/ 與 public/ 底下，
+# 否則護欄範圍被縮窄時那一題看不出來）。正常路徑上開頭與 finally 各清一次；
+# 測試被硬砍時會殘留——這兩行是為了**不讓它被 git add 收進去**。
+# ⚠️ **一定要綁死這兩個位置**：Grok 複審後掃 #2 抓到——原本寫成不帶斜線的 `_xlsx_guard_probes/`，
+# 那樣**每一層都生效**（`scripts/`、`test/`、`docs/`、倉庫根…）。後果：在那些位置放一支
+# **不引入 xlsx** 的檔，git status 看不到、ESLint 也 0 錯 ⇒ 一個真的藏身處（實測過）。
+/lib/_xlsx_guard_probes/
+/public/_xlsx_guard_probes/

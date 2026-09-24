@@ -516,7 +516,9 @@
     "/skills-lock.json",
     "/meeting.sh",
     "/meeting_0724_1414.md",
-    "*.grok-bump-tmp"
+    "*.grok-bump-tmp",
+    "/lib/_xlsx_guard_probes/",
+    "/public/_xlsx_guard_probes/"
    ]
   },
   {

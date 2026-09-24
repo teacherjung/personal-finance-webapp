@@ -109,13 +109,16 @@ const MAX_PATH = 2048;
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'host']);
 
 /**
- * 請求的 path（absolute-form `GET http://other-host/x` 只留 path——不然 path 本身就能帶走整個 URL）
-/**
- * request-target → 路徑。回 `{ path, bad, absolute }`。
+ * request-target → 路徑。回 `{ path, bad, absolute }`。absolute-form（`GET http://other-host/x`）
+ * 只留 path——不然 path 本身就能帶走整個 URL。
  *
- * ⚠️ **解析失敗不可以退化成 `/`**（#635 r1 #1）：`GET http://x:bad/other` 這種 Node 的 HTTP parser
- * 收得下、`new URL()` 卻拋錯的形狀，更早的版本 catch 把它變成 `/`，拒絕行就跟真正的根路徑逐字相同、
- * 被容許清單一起吃掉（審查者用真沙箱端到端重現：本來該退 2 的兩種異常都變成退 0）。`bad` 走自己的原因碼。
+ * ⚠️ **`bad` 旗標必須導向獨立的 `bad-target` 拒絕原因碼，不可以借用一個看起來正常的路徑**（#635 r1 #1）。
+ *   （`bad` 是本函式回的**布林旗標**、`bad-target` 才是 `REFUSE_CODES.BAD_TARGET` 的值——#640 r1 #3 指出我把名字叫錯。）
+ *   ⚠️ 首句原本寫「解析失敗不可以退化成 `/`」——那句話**把路徑與判決混在一起講**（#635 r10 #3 指出，
+ *   當時判進待辦，本支改）：要守的不是「`path` 這一格填什麼」，是「**這個請求最後被判成什麼**」。
+ *   具體的病：`GET http://x:bad/other` 這種 Node 的 HTTP parser 收得下、`new URL()` 卻拋錯的形狀，
+ *   更早的版本 catch 把 path 變成 `/`，於是拒絕行跟真正的根路徑**逐字相同**、被容許判斷一起吃掉
+ *   （審查者用真沙箱端到端重現：本來該退 2 的兩種異常都變成退 0）。
  * ⚠️ **`absolute` 是第二道**（Grok 複審後掃 #1①）：`new URL()` **成功**的時候也會正規化——
  * `http://evil/a/b/../../` 的 pathname 就是 `/`，跟真的根路徑分不出來。所以 absolute-form 的
  * **表外請求**另給一個碼，永遠不在容許範圍。
