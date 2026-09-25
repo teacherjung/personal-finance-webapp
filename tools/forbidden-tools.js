@@ -16,7 +16,8 @@
 //     不只開頭那一段）；在唯讀名單上也不直接放行，照樣走下面的家族網（雙保險）；
 //   ④工具名逐字在拒絕清單上＝拒絕；
 //   ⑤家族網：工具名正規化（駝峰拆底線、點與連字號換底線、轉小寫）後，動詞接名詞、或名詞接動詞、
-//     或額外樣式命中＝拒絕；唯讀前綴開頭的跳過家族網（get／list／search 那一類）。
+//     或額外樣式命中＝拒絕。⚠️ **哪一道吃唯讀前綴的豁免、代價與射程＝「兩張樣式表」**
+//     （正本＝`docs/money-guard-two-pattern-tables.md`；本檔一律只指路、不重述）。
 //   其餘放行（不印任何東西）。
 //
 // 誠實劃界：只認工具名，不看參數；家族網是列舉的詞表，沒列到的動詞或名詞擋不住（詞表由專案維護）；
@@ -45,6 +46,7 @@ const GRAMMAR = {
   nouns: /^[a-z0-9]+(?:_[a-z0-9]+)*$/u,
   readPrefixes: /^[a-z0-9]+$/u,
   patterns: /^\S+$/u,                    // 正規式另外試編譯
+  patternsReadSafe: /^\S+$/u,           // 同上；這一欄的作用＝見「兩張樣式表」（2026-09-24 裁庚）
 };
 
 /**
@@ -62,6 +64,12 @@ function listField(f, key) {
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
+ * ⚠️ **唯讀前綴豁免的範圍、代價與射程＝「兩張樣式表」**，正本在
+ *    `docs/money-guard-two-pattern-tables.md`（裁示者 2026-09-25 裁丙：正本住自己的檔，
+ *    本檔與別處一律只指路、不重述——⑭ 只有一份那一題釘住）。
+ */
+
+/**
  * 純判斷層。回 { deny: true, why } 或 { deny: false }。
  * @param {unknown} toolName 鉤子傳來的工具名
  * @param {object} forbidden 專案設定的 forbidden 那一塊
@@ -72,18 +80,20 @@ function decide(toolName, forbidden) {
   const f = forbidden && typeof forbidden === 'object' ? forbidden : {};
   if (!f.name || f.name === UNSET) return { deny: true, why: '專案設定裡的禁區清單還沒填：裝了攔截器卻沒填清單，一律拒絕' };
   const lists = {};
-  for (const key of ['servers', 'allowlist', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns']) {
+  for (const key of ['servers', 'allowlist', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe']) {
     lists[key] = listField(f, key);
     if (lists[key] === null) return { deny: true, why: `專案設定裡禁區清單的「${key}」不是字串陣列、或有一項不合文法（空白、非法字元）：設定壞掉，一律拒絕` };
   }
   const { servers, verbs, nouns, readPrefixes } = lists;
   const allow = new Set(lists.allowlist);
   const deny = new Set(lists.deny);
-  let patterns;
+  let patterns, patternsReadSafe;
   try { patterns = lists.patterns.map((p) => new RegExp(p, 'u')); }
   catch { return { deny: true, why: '專案設定裡禁區清單的額外樣式不是合法的正規式：設定壞掉，一律拒絕' }; }
+  try { patternsReadSafe = lists.patternsReadSafe.map((p) => new RegExp(p, 'u')); }
+  catch { return { deny: true, why: '專案設定裡禁區清單的「連唯讀前綴也擋」樣式不是合法的正規式：設定壞掉，一律拒絕' }; }
   // 只填名字、沒有任何一條有效規則＝跟沒填一樣（r1 High③：原本只看 name，其餘全空就全部放行）
-  const hasRule = servers.length || deny.size || (verbs.length && nouns.length) || patterns.length;
+  const hasRule = servers.length || deny.size || (verbs.length && nouns.length) || patterns.length || patternsReadSafe.length;
   if (!hasRule) return { deny: true, why: `禁區「${f.name}」沒有任何一條有效規則（連接器、拒絕清單、家族網、額外樣式都是空的）：裝了攔截器卻沒有規則，一律拒絕` };
 
   if (deny.has(toolName)) return { deny: true, why: `工具「${toolName}」在拒絕清單上` };
@@ -111,12 +121,16 @@ function decide(toolName, forbidden) {
   const readRe = readPrefixes.length ? new RegExp(`^(?:${readPrefixes.map(esc).join('|')})_`, 'u') : null;
   for (const c of cands) {
     const t = normalize(c);
-    if (readRe && readRe.test(t)) continue;
+    // 判準、代價、射程、沿革＝「**兩張樣式表**」（正本＝`docs/money-guard-two-pattern-tables.md`）。**這裡不重述。**
+    const 讀名 = readRe ? readRe.test(t) : false;
+    const 但書 = 讀名 ? '；唯讀前綴不替它脫罪' : '';
     if (verb && noun) {
-      if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}）` };
-      if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}）` };
+      if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
+      if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
     }
-    for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
+    // ⚠️ 這兩行為什麼不一樣＝見「兩張樣式表」。**這裡不重述。**
+    for (const re of patternsReadSafe) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}${但書}）` };
+    if (!讀名) for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
   }
   return { deny: false };
 }

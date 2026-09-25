@@ -3,7 +3,9 @@
 // 守得到的：
 //   ①輸入拿不到工具名、工具名不合法＝拒絕；②禁區清單沒設＝拒絕（裝了卻沒填比沒裝更危險）；
 //   ③動禁區的連接器採白名單制；④逐字拒絕清單；⑤家族網（動詞名詞、名詞動詞、額外樣式），
-//     唯讀前綴跳過；駝峰、點、連字號都正規化；連接器前綴不同、工具名相同一起擋；
+//     ⚠️ 唯讀前綴的豁免範圍與代價＝「**兩張樣式表**」（正本＝`docs/money-guard-two-pattern-tables.md`，這裡不重述）；
+//     駝峰、點、連字號都正規化；
+//     連接器前綴不同、工具名相同一起擋；
 //   ⑥四份接線範本（Claude 活讀、Claude 釘指紋、Codex 專案層、Codex 全域層）都只呼叫同一支判斷（不抄判斷＝不會漂）；指令入口：壞輸入也拒絕、放行不印；
 //   ⑩連接器在名字的任何一段都認得（多一層前綴照樣白名單制；邊界要真的是邊界）；
 //   ⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣擋；
@@ -36,6 +38,8 @@ const FORBIDDEN = {
   nouns: ['order', 'trade', 'position', 'stock', 'fund'],
   readPrefixes: ['get', 'list', 'search', 'view'],
   patterns: ['(^|_)(withdraw|deposit)(_|$)'],
+  // 「連唯讀前綴也擋」的那一組（裁示者 2026-09-24 裁庚）：動作字**緊接**錢名詞的精確片語。
+  patternsReadSafe: ['(^|_)(convert|swap)_(fund|money|cash|crypto)s?(_|$)'],
 };
 
 test('①輸入不合法＝拒絕；②清單沒設＝拒絕', () => {
@@ -127,13 +131,77 @@ test('⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣�
   assert.equal(decide('mcp__broker-x__create_order_instruction', misfilled).deny, true, '名單上有它，家族網還是要擋');
   assert.equal(decide('mcp__prefix__broker-x__create_order_instruction', misfilled).deny, true, '多一層前綴也一樣');
   assert.equal(decide('mcp__broker-x__get_watchlist', misfilled).deny, false, '對照組：名單內、家族網接不到的照常放行');
+  // ⚠️ **這一顆是「雙保險」真正該接住的那一種**（2026-09-24 全庫護欄稽核抓到）：
+  //    沿革與現行範圍＝「**兩張樣式表**」那一段。當時誤填進唯讀名單的 `view_create_order`
+  //    一路放行——上面那句「雙保險」對它是假的。舊版這一行會紅。
+  const 誤填唯讀開頭 = { ...FORBIDDEN, allowlist: [...FORBIDDEN.allowlist, 'view_create_order'] };
+  assert.equal(decide('mcp__broker-x__view_create_order', 誤填唯讀開頭).deny, true,
+    '唯讀前綴開頭也一樣：名單誤填了它，家族網要接住');
+});
+
+test('⑫「動作名」不因為前面掛了查詢字就放行：命中**家族網**就擋（範圍＝「兩張樣式表」）', () => {
+  // ## 這一題在防什麼
+  // 這一題守的是「**兩張樣式表**」那一段裡「家族網不豁免」那一列。
+  // ⚠️ 下面那句「完全不受檢查」講的是**修正前**的行為（r6 #3 抓到它讀起來跟上一行相反）。
+  // 於是 `view_create_order` 這種「查詢的皮、下單的骨」完全不受檢查。
+  // ⚠️ 這一題自己就是那個破口的絆線：把那個無條件 `continue` 放回去，下面每一發都會紅。
+  for (const t of ['view_create_order', 'get_place_trade', 'list_cancel_position', 'search_submit_stock',
+    'view_order_create']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：唯讀前綴不可以替動作名脫罪`);
+  }
+  // ── 以下兩組都是**現況特徵測試（現況／待裁）**，不是安全規格 ───────────────────────
+  // ⚠️ **它們證明的是「這一版是這樣」，不證明「這樣是安全的」**（#641 r1 #4）。
+  //    將來裁准收緊時，**應該同步改掉這幾行**——不可以拿「考題紅了」當理由拒絕安全修正。
+  //
+  // 現況 A：對應「**兩張樣式表**」那一段的 `patterns` 那一列。
+  //   ⚠️ **本檔夾具的樣式是 `(^|_)(withdraw|deposit)(_|$)`——它要詞界**，不是「出現就算」
+  //      （掃描 #1 更正我上一版的寫法：`withdrawal`／`get_withdrawing`／`prewithdraw`
+  //       就算清空唯讀前綴也仍然放行）。
+  //   ⚠️ **「拆掉閥會誤擋 `get_transfer_log`」那句話是正式設定的後果，不是本夾具的**
+  //      （掃描 #1 抓到我又把兩份設定混在一起）：本夾具把 `transfer` 列為**動詞**、
+  //      樣式裡也沒有 `transfer` ⇒ 清空 `readPrefixes` 之後 `get_transfer_log` 在這裡**仍然放行**。
+  //      正式設定才有那一條，`test/money-kit-hook.test.js` 的矩陣也在那邊要求它放行。
+  for (const t of ['search_withdraw', 'get_deposit']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false,
+      `${t}：命中本夾具的額外樣式、沒命中家族網 ⇒ **目前**仍放行（現況，非安全保證；要收＝拆 patterns＝動判準，待裁）`);
+  }
+  assert.equal(decide('mcp__any__withdraw', FORBIDDEN).deny, true, '對照：沒有唯讀前綴時，額外樣式照擋');
+  assert.equal(decide('mcp__any__get_withdrawing', { ...FORBIDDEN, readPrefixes: [] }).deny, false,
+    '對照（掃描 #1）：樣式要詞界——`get_withdrawing` 連把前綴表清空都不中，所以它不是靠「兩張樣式表」的那個閥才放行的');
+
+  // 現況 B：**本支新造出來的拒絕面**（#641 r1 #3 找到、我逐一複驗；主幹放行、本版拒絕）。
+  //   這幾個都是**合理的唯讀名字**，被擋是本支偏安全的取捨要付的代價，不是「零代價」。
+  //   釘在這裡是為了讓代價**看得見**：哪天判準改了、或誰想放寬，這幾行會先紅、逼人正面處理。
+  //   ⚠️ **用本檔夾具真的成立的例子**：審查者舉的 `list_open_positions`／`get_closed_positions`
+  //      是**正式設定**才擋（`open`／`close` 在正式動詞表裡、夾具沒有），已另外直接呼叫 `decide()`
+  //      對正式設定複驗過——**兩份設定不可互換當證據**（#641 r1 #4 點名，我在這裡又差點犯一次）。
+  for (const t of ['buy_orders_get', 'sell_trades_view']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：對照——不帶唯讀前綴時本來就擋`);
+  }
+  for (const t of ['get_buy_orders', 'view_sell_trades']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true,
+      `${t}：本支**新增**的拒絕（主幹放行）。「查我的買單」是合理的唯讀名字，屬刻意付出的誤擋代價（現況，踩到照裁示流程處理）`);
+  }
+  // ⚠️ **對照組（沒有這幾發，上面那七發證明不了「不是全部都擋」）**：真正的唯讀名字仍要放行，
+  //    否則這一題可以靠「把所有唯讀前綴的東西都擋掉」作弊通過。
+  for (const t of ['get_order', 'list_positions', 'search_stocks', 'view_trade_history', 'get_account_balances']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false, `${t}：真的唯讀工具不可以被誤擋`);
+  }
+  // 訊息要說得出「有唯讀前綴、但不算數」，否則踩到的人看不懂為什麼一個 get_ 開頭的東西被擋
+  assert.match(decide('mcp__any__view_create_order', FORBIDDEN).why, /唯讀前綴不替它脫罪/u);
+  assert.doesNotMatch(decide('mcp__any__create_order', FORBIDDEN).why, /唯讀前綴/u, '沒有唯讀前綴的不要多印那句');
 });
 
 test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連字號正規化', () => {
   assert.equal(decide('mcp__other__place_order_now', FORBIDDEN).deny, true, '逐字在清單上');
   assert.equal(decide('mcp__other__harmless_looking_tool', FORBIDDEN).deny, true, '逐字在清單上，家族網抓不到它——只有逐字清單擋得住');
   assert.equal(decide('mcp__other__harmless_looking_tool_v2', FORBIDDEN).deny, false, '逐字就是逐字，不做前綴比對');
-  // ⚠️ 唯讀前綴只認**開頭**：中段或尾段出現 get 不可以替前面的動詞名詞脫罪（突變驗過：不錨定開頭的話這一個會被放行）
+  // ⚠️ 唯讀前綴只認**開頭**：中段或尾段出現 get 不可以替前面的動詞名詞脫罪。
+  // ⚠️ **原本這裡寫「突變驗過：不錨定開頭的話這一個會被放行」——2026-09-24 收緊之後那句已失效**
+  //    （#641 r2 #1 抓到）：這一行現在根本不吃家族網豁免，把 `readRe` 的 `^` 拿掉，這一題照樣 pass。
+  //    真正守那件事的是題名關鍵字「不因為前面掛了查詢字就放行」那一題（K3 指路：
+  //    r3／r4 都抓到我原本寫「下面的 ⑫」——方向錯（它在上面），而且下面另有一題也叫 ⑫）。
+  //    這一行留著只是「唯讀字在後面不算唯讀」的例子。
   assert.equal(decide('mcp__any__create_order_get_confirmation', FORBIDDEN).deny, true, '唯讀字在後面不算唯讀');
   for (const t of ['mcp__any__create_order', 'mcp__any__order_create', 'mcp__any__placeOrder', 'mcp__any__submit-trade', 'mcp__any__sell.stock', 'mcp__any__cancel_open_position', 'mcp__any__transfer_funds', 'mcp__any__withdraw_cash']) {
     assert.equal(decide(t, FORBIDDEN).deny, true, `${t} 應該被擋`);
@@ -144,6 +212,178 @@ test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連�
   assert.equal(normalize('placeOrderNow'), 'place_order_now');
   assert.equal(normalize('HTTPOrder'), 'http_order');
   assert.equal(normalize('a.b-c'), 'a_b_c');
+});
+
+test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚）', () => {
+  // ## 為什麼要兩張表
+  // 為什麼要兩張表、哪一張吃豁免、代價與射程＝「**兩張樣式表**」那一段（正本）。**這裡不重述。**
+  // 下面的輸入與斷言才是這一題的內容。
+  //
+  // ⚠️ **這一題也是「不可能變鬆」那個結構性質的絆線**（見下面第三段）。
+
+  // ①有唯讀前綴時，`patternsReadSafe` 仍然擋
+  // ⚠️ 四發都必須真的帶**本夾具的**唯讀前綴（`get`／`list`／`search`／`view`）——
+  //    原本第四發寫 `download_swap_cash`，`download` 不在本夾具的前綴表裡 ⇒ 它證明不了「有前綴也擋」（r4 #1）。
+  for (const t of ['get_convert_funds', 'view_swap_crypto', 'list_convert_money', 'search_swap_cash']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：patternsReadSafe 連唯讀前綴也要擋`);
+  }
+  // ②對應「**兩張樣式表**」那一段的 `patterns` 那一列（`get_transfer_log` 不被誤擋的原因）
+  for (const t of ['search_withdraw', 'get_deposit']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, false, `${t}：patterns 那一張仍吃豁免（現況，見上面 ⑫）`);
+  }
+  // ③**沒有唯讀前綴時，兩張表的聯集一律生效**——這是「不可能變鬆」的那一半：
+  //   拆表之前那五條全部無條件生效，拆完之後沒有前綴的路徑跑的是聯集 ⊇ 原本五條。
+  for (const t of ['withdraw', 'deposit', 'convert_funds', 'swap_crypto']) {
+    assert.equal(decide(`mcp__any__${t}`, FORBIDDEN).deny, true, `${t}：沒有唯讀前綴 ⇒ 兩張表都要生效`);
+  }
+  // ④**空的新表不可以讓判斷變寬**（相容性：別處的夾具沒填這一欄）
+  const 沒填 = { ...FORBIDDEN };
+  delete 沒填.patternsReadSafe;
+  // ⚠️ **兩條路都要走**（r4 #1：原本只測「本來就不命中」的名字 ⇒ 突變成「缺欄就放行」仍全綠；
+  //    r5 #1：只測「缺欄」還不夠 ⇒ 突變成「**明填空陣列**就放行」也仍全綠。
+  //    明填 `[]` 不是杜撰的非法設定——本倉庫 `tests/filled-settings.test.js` 就是明填 `[]`）。
+  const 空表 = { ...FORBIDDEN, patternsReadSafe: [] };
+  for (const [名, 設定] of [['缺欄', 沒填], ['明填空陣列', 空表]]) {
+    assert.equal(decide('mcp__any__create_order', 設定).deny, true, `${名}時，家族網照樣要擋（不可以變成全部放行）`);
+    assert.equal(decide('mcp__any__withdraw', 設定).deny, true, `${名}時，舊 patterns 照樣要擋`);
+    assert.equal(decide('mcp__any__get_convert_funds', 設定).deny, false, `${名}＝回到舊行為（前綴豁免），不是報錯`);
+    assert.equal(decide('mcp__any__convert_funds', 設定).deny, false, `${名}時 convert_funds 不在舊 patterns 裡 ⇒ 放行（對照組，證明上面那發不是碰巧）`);
+  }
+  // ⑤新表壞掉＝設定壞掉＝拒絕（fail-closed，跟舊表同一個口徑）
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['('] }).deny, true, '新表是壞正規式＝拒絕');
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 'not-an-array' }).deny, true, '新表不是陣列＝拒絕');
+  // ⚠️ **這一段換過形狀**（r11：審查者判「逐個突變補對照**是**跑步機」）。
+  //
+  // 原本是「他舉一種退化、我補一組對照」，**連七輪**：缺欄／trim 刪空項／trim-only／
+  // 子字串包含／任一 vs 全部（文法層）／陣列元素包含／任一 vs 全部（型別層）／
+  // 正則錨點加 `m`（`^`、`$` 變行邊界 ⇒ 含換行的非法項漏過）。
+  // 那跟 ⑭ 連四輪被打穿是同一個形狀：**問題不在「還有一種沒想到」，在問錯了問題。**
+  //
+  // ⇒ 換成**性質**：**構造一個非法項，插進合法陣列的任何位置，結果都必須拒絕。**
+  //    ⚠️ 預期值由**輸入的構造**決定，**不抄正式的 `GRAMMAR` 正則來算答案**
+  //    （抄了就會跟著它一起錯，那正是上面第七種退化能藏住的原因）。
+  //    ⚠️ 這是**有界**的組合驗證，不是「所有 JS 值、所有未來退化都證明了」。
+  const 非法項 = [
+    // 空白字元（含換行族——第七種退化就藏在這裡）放在頭／中／尾
+    ...[' ', '\t', '\n', '\r', ' ', ' ', '\f', '\v', ' ', '　']
+      .flatMap((w) => [`${w}unrelated`, `unre${w}lated`, `unrelated${w}`]),
+    '',                       // 空字串
+    '(',                      // 文法合格、**編譯**失敗（下一層擋，但整體仍必須拒絕）
+    '未設定(',                 // 含佔位文字、但不等於佔位值
+    123, true, false, null, undefined, {}, [],   // 非字串
+  ];
+  const 合法背景 = ['unrelated', '未設定'];
+  const 背景組合 = [[]];
+  for (let n = 1; n <= 3; n += 1) {
+    for (const 前 of 背景組合.filter((b) => b.length === n - 1)) {
+      for (const x of 合法背景) 背景組合.push([...前, x]);
+    }
+  }
+  let 驗了 = 0;
+  for (const 壞 of 非法項) {
+    for (const 背景 of 背景組合) {
+      for (let 位 = 0; 位 <= 背景.length; 位 += 1) {
+        const 表 = [...背景.slice(0, 位), 壞, ...背景.slice(位)];
+        assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 表 }).deny, true,
+          `新表 ${JSON.stringify(表)} 含一個非法項（位置 ${位}）⇒ 必須拒絕`);
+        驗了 += 1;
+      }
+    }
+  }
+  assert.ok(驗了 > 500, `只驗了 ${驗了} 組，組合產生器壞了？`);
+  // ⚠️ **反向對照**：全部合法的背景（長度 0〜4）一律**放行**——
+  //    沒有這一組，上面幾百發可以靠「一律拒絕」全部作弊通過。
+  const 全合法 = [[]];
+  for (let n = 1; n <= 4; n += 1) {
+    for (const 前 of 全合法.filter((b) => b.length === n - 1)) {
+      for (const x of 合法背景) 全合法.push([...前, x]);
+    }
+  }
+  for (const 表 of 全合法) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 表 }).deny, false,
+      `新表 ${JSON.stringify(表)} 全部合法 ⇒ 不命中的名字必須放行`);
+  }
+  // 整欄層的壞設定（不是陣列項的問題）
+  for (const 壞 of ['', null, 'not-an-array', 0, false]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表整欄是 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（fail-closed）`);
+  }
+  // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
+    '佔位值是合法的，不可以誤判成壞設定（對照組，跟上面的「全合法背景一律放行」一起，證明那幾百發不是靠「一律拒絕」作弊）');
+  // ⑥只填新表也算「有規則」（不可以因為舊表空了就當成沒設清單）
+  // ⚠️ **必須有對照組**（r4 #1 抓到）：只斷言「命中者被擋」的話，`hasRule` 那個條件被拿掉時
+  //    會走 fail-closed（沒規則＝一律拒絕），命中者照樣被擋 ⇒ **fail-closed 冒充了「新表生效」**。
+  //    加上「不命中者要放行」才分得出「真的有規則」與「當成沒規則所以全擋」。
+  const 只有新表 = { name: '錢', patternsReadSafe: ['(^|_)convert_funds(_|$)'] };
+  assert.equal(decide('mcp__any__convert_funds', 只有新表).deny, true, '只有新表也要生效');
+  assert.equal(decide('mcp__any__harmless', 只有新表).deny, false,
+    '同一份設定下不命中者必須放行——這一發才證明是「新表生效」而不是「當成沒有規則所以全擋」');
+});
+
+// ⚠️ **巢狀整卷裡跳過**（跟 `tests/filled-settings.test.js` 同一個旗標）：那份複本只帶
+//    `tools`／`tests`／`templates` 三個目錄——**正本檔（在 `docs/`）根本不在複本裡**，
+//    而且 `AGENTS.md`／`test/`／`docs/` 也都不在 ⇒ 全庫散文掃描在部分複本裡會**空跑成假綠**。
+//    真正的一輪＝倉庫根目錄那次 `npm test`，那一次它一定跑。
+test('⑭ 只有一份：這個機制的現在式描述只准住在正本那一支檔，別處一律指路（裁示者 2026-09-25 裁丙）',
+  { skip: process.env.KIT_NESTED_SUITE === '1' ? '巢狀複本不帶 docs/，全庫散文掃描沒有意義' : false }, () => {
+  // ## 這一題在防什麼
+  //
+  // #641 改過兩次行為，**前四輪複審＋一次掃描，每一輪都有一條發現是同一件事**：
+  // 我改了行為、別處的說明還用現在式留在原地——因為同一句話被寫在九個地方。
+  // 本倉庫早有這條規矩（RULES K1／K3）：**正本只有一份，別處只指路**。這一題把它變成機器。
+  //
+  // ## ⚠️ 為什麼正本住在自己的檔（裁示者 2026-09-25 裁丙）
+  //
+  // 原本正本是程式裡的一段註解，這一題要判「這一行在不在那段註解裡」＝**手寫 JS 註解剖析器**，
+  // **連四輪被打穿**（排除整支檔／`*/` 要獨佔一行／整行排除／裸 scanner 被 `void /[/*]/;` 騙過）。
+  // ⇒ 正本自己一支檔＝**沒有「檔案裡的一段」要算，就沒有邊界可以算錯**。
+  // 這一題現在只做一件事：**正本那一支檔整份免檢，其餘受版控的 js／md／json 全掃。**
+  //
+  // ⚠️ **射程三條（照舊，沒有因為換做法而變大）**：
+  //    ①認的是「機制字＋動作字同一行」⇒ **換句話說重述抓不到**。
+  //    ②**指路關鍵字是全域豁免**：任何受管行帶上它就免檢，**含錯誤的重述**。
+  //    ③範圍只到已追蹤的 js／md／json、排除 `data/`；不讀 PR 說明；讀檔失敗直接略過。
+  //       「受管檔數 > 50」證明不了完整性。
+  const { execFileSync } = require('node:child_process');
+  const { readFileSync, existsSync } = require('node:fs');
+  const { join, dirname } = require('node:path');
+  const ROOT = join(dirname(__filename), '..');
+  const 正本檔 = 'docs/money-guard-two-pattern-tables.md';
+  const 指路詞 = '兩張樣式表';
+  const 標題 = '## 兩張樣式表';
+  const 機制 = /唯讀[^，。、\n]{0,4}前綴/u;
+  const 動作 = /豁免|跳過/u;
+  const 違規 = (line) => 機制.test(line) && 動作.test(line) && !line.includes(指路詞);
+
+  // ⓪偵測器自我測試（含**指路詞豁免那條分支**——r5 #3 抓到前三發測不到它）
+  assert.equal(違規('唯讀前綴會跳過額外樣式那一道'), true, '偵測器對「重述」要回 true');  // 兩張樣式表
+  assert.equal(違規(`唯讀前綴的範圍＝見「${指路詞}」`), false, '偵測器對「指路」要回 false');
+  assert.equal(違規('這一行跟這個機制無關'), false, '偵測器不可以亂抓');
+  assert.equal(違規(`唯讀前綴會跳過額外樣式那一道（見「${指路詞}」）`), false,  // 兩張樣式表
+    '同時有機制字、動作字與指路詞 ⇒ 放行（刻意的全域豁免，見上面射程②）');
+
+  // ①正本那一支檔必須在，而且帶著那個標題（指路指得到）
+  assert.ok(existsSync(join(ROOT, 正本檔)), `找不到正本檔 ${正本檔} ⇒ 別處的指路全部斷掉`);
+  const 正本 = readFileSync(join(ROOT, 正本檔), 'utf8');
+  assert.ok(正本.includes(標題), `${正本檔} 裡找不到「${標題}」這個標題`);
+
+  // ②其餘受版控的文字檔一律只准指路（**含 `tools/forbidden-tools.js` 自己**）
+  const 受管 = execFileSync('git', ['ls-files'], { cwd: ROOT, env: gitEnv(), encoding: 'utf8' })
+    .split('\n')
+    .filter((f) => f && /\.(js|md|json)$/u.test(f) && f !== 正本檔 && !f.startsWith('data/'));
+  assert.ok(受管.length > 50, `只列到 ${受管.length} 個檔，git ls-files 壞了？`);
+  assert.ok(!受管.includes(正本檔), '正本檔不可以出現在受掃清單裡');
+  const 犯規 = [];
+  for (const f of 受管) {
+    let txt;
+    try { txt = readFileSync(join(ROOT, f), 'utf8'); } catch { continue; }
+    txt.split('\n').forEach((l, i) => { if (違規(l)) 犯規.push(`${f}:${i + 1}　${l.trim().slice(0, 70)}`); });
+  }
+  assert.deepEqual(犯規, [],
+    `這些地方重述了「唯讀前綴豁免到哪一道」（正本＝「兩張樣式表」，在 ${正本檔}）。\n`
+    + `**改成指路**（句子裡帶上那個關鍵字），不要在這裡重寫一份會漂的副本：\n`
+    + 犯規.join('\n'));
 });
 
 test('⑤連接器前綴不同、工具名相同也一起擋（尾段逐一試）', () => {

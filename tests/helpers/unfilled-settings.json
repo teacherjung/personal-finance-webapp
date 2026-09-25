@@ -130,7 +130,8 @@
   "verbs": [],
   "nouns": [],
   "readPrefixes": [],
-  "patterns": []
+  "patterns": [],
+  "patternsReadSafe": []
  },
  "acceptance": {
   "tiers": [

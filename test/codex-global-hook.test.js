@@ -111,7 +111,7 @@ const DENY_SMOKE = [
   ['mcp__x__buyShares', '駝峰式買股——正規化要拆得開'], ['mcp__x__swap_crypto_coins', '換幣'],
 ];
 const PASS_SMOKE = [
-  ['mcp__ib__get_account_positions', '唯讀查持倉'], ['mcp__ib__get_account_orders', '唯讀查委託（get_ 開頭豁免）'],
+  ['mcp__ib__get_account_positions', '唯讀查持倉'], ['mcp__ib__get_account_orders', '唯讀查委託（⚠️ **不是靠前綴豁免**：它本來就沒命中任何拒絕規則——把 readPrefixes 清空也照樣放行，#641 r2 #1）'],
   ['mcp__ib__search_contracts', '唯讀搜尋合約'], ['mcp__notion__create_pages', '建 Notion 頁（非錢）'],
   ['mcp__slack__slack_send_message', '發訊息（send 是家族動詞、名詞不像）'], ['mcp__ib__create_watchlist', '觀察清單＝明文允許'],
   ['mcp__ib__create_alert', '提醒＝明文允許'], ['mcp__ib__update_alert', '改提醒'],
