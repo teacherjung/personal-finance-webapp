@@ -252,60 +252,65 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
   // ⑤新表壞掉＝設定壞掉＝拒絕（fail-closed，跟舊表同一個口徑）
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['('] }).deny, true, '新表是壞正規式＝拒絕');
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 'not-an-array' }).deny, true, '新表不是陣列＝拒絕');
-  // ⚠️ **非法陣列項也要擋**（r4 #1：我原本只測壞正規式與非陣列 ⇒ 跳過新欄的 GRAMMAR 驗證仍全綠）：
-  //    `'a b'` 可以編譯成正規式，但不合這一欄的文法（不准有空白）。
-  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['a b'] }).deny, true, '新表有不合文法的項＝拒絕');
-  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: [123] }).deny, true, '新表有非字串項＝拒絕');
-  // ⚠️ **兩種「常見的容錯改法」會靜靜取消這裡承諾的 fail-closed，各放過兩個壞值**（r6 #2；r8 #3 抓到我這句寫成「四種改法」）：
-  //    ・把 falsy 當缺欄（`if (!f[key]) return [];`）⇒ `''`、`null` 被放過
-  //    ・把非法空項靜靜清掉（`.map(x => x.trim()).filter(Boolean)`）⇒ `[' ']`、`['']` 被放過
-  //    對照名字用 `harmless`（不被任何其他規則碰巧擋住），所以紅一定是因為「壞設定沒被擋」。
-  for (const 壞 of ['', null, [' '], ['']]) {
-    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表是 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（fail-closed）`);
+  // ⚠️ **這一段換過形狀**（r11：審查者判「逐個突變補對照**是**跑步機」）。
+  //
+  // 原本是「他舉一種退化、我補一組對照」，**連七輪**：缺欄／trim 刪空項／trim-only／
+  // 子字串包含／任一 vs 全部（文法層）／陣列元素包含／任一 vs 全部（型別層）／
+  // 正則錨點加 `m`（`^`、`$` 變行邊界 ⇒ 含換行的非法項漏過）。
+  // 那跟 ⑭ 連四輪被打穿是同一個形狀：**問題不在「還有一種沒想到」，在問錯了問題。**
+  //
+  // ⇒ 換成**性質**：**構造一個非法項，插進合法陣列的任何位置，結果都必須拒絕。**
+  //    ⚠️ 預期值由**輸入的構造**決定，**不抄正式的 `GRAMMAR` 正則來算答案**
+  //    （抄了就會跟著它一起錯，那正是上面第七種退化能藏住的原因）。
+  //    ⚠️ 這是**有界**的組合驗證，不是「所有 JS 值、所有未來退化都證明了」。
+  const 非法項 = [
+    // 空白字元（含換行族——第七種退化就藏在這裡）放在頭／中／尾
+    ...[' ', '\t', '\n', '\r', ' ', ' ', '\f', '\v', ' ', '　']
+      .flatMap((w) => [`${w}unrelated`, `unre${w}lated`, `unrelated${w}`]),
+    '',                       // 空字串
+    '(',                      // 文法合格、**編譯**失敗（下一層擋，但整體仍必須拒絕）
+    '未設定(',                 // 含佔位文字、但不等於佔位值
+    123, true, false, null, undefined, {}, [],   // 非字串
+  ];
+  const 合法背景 = ['unrelated', '未設定'];
+  const 背景組合 = [[]];
+  for (let n = 1; n <= 3; n += 1) {
+    for (const 前 of 背景組合.filter((b) => b.length === n - 1)) {
+      for (const x of 合法背景) 背景組合.push([...前, x]);
+    }
   }
-  // ⚠️ **第三種退化**（r7 #2）：只 `trim()` 每一項、**不刪空項** ⇒ 把本來不合法的
-  //    「非空但帶前後空白」的項靜靜正規化成合法 regex。`[' ']` 變 `['']` 仍被 GRAMMAR 擋、
-  //    `['a b']` 內部有空白也仍被擋 ⇒ 上面四發都辨別不出來。
-  for (const 壞 of [[' unrelated '], ['\tunrelated\t']]) {
-    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表有「非空但帶前後空白」的項 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（不可以靜靜 trim 成合法）`);
+  let 驗了 = 0;
+  for (const 壞 of 非法項) {
+    for (const 背景 of 背景組合) {
+      for (let 位 = 0; 位 <= 背景.length; 位 += 1) {
+        const 表 = [...背景.slice(0, 位), 壞, ...背景.slice(位)];
+        assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 表 }).deny, true,
+          `新表 ${JSON.stringify(表)} 含一個非法項（位置 ${位}）⇒ 必須拒絕`);
+        驗了 += 1;
+      }
+    }
   }
-  // ⚠️ **第四種退化**（r8 #2）：把佔位值的**精確相等**改成**包含判斷**
-  //    （`filter((x) => x !== UNSET)` → `filter((x) => !x.includes(UNSET))`）
-  //    ⇒ 非法項先被刪掉，後面的文法與編譯驗證就看不到它。
-  //    下面兩發是「**含佔位文字、但不等於佔位值**」的壞設定，精確相等會擋、包含判斷會放行。
-  for (const 壞 of [['未設定('], [' 未設定 ']]) {
-    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表有 ${JSON.stringify(壞)}（含佔位文字但不等於它）＝壞設定，一律拒絕`);
+  assert.ok(驗了 > 500, `只驗了 ${驗了} 組，組合產生器壞了？`);
+  // ⚠️ **反向對照**：全部合法的背景（長度 0〜4）一律**放行**——
+  //    沒有這一組，上面幾百發可以靠「一律拒絕」全部作弊通過。
+  const 全合法 = [[]];
+  for (let n = 1; n <= 4; n += 1) {
+    for (const 前 of 全合法.filter((b) => b.length === n - 1)) {
+      for (const x of 合法背景) 全合法.push([...前, x]);
+    }
   }
-  // ⚠️ **第五種退化**（r9 #1）：把「**任一**非法項就拒絕」錯成「非空且**全部**非法才拒絕」
-  //    （`items.some(壞)` → `items.length > 0 && items.every(壞)`；`length > 0` 保住合法空表語意，
-  //     所以空表對照抓不到它）。現有非法案例都是**單項**，分不出「任一」與「全部」。
-  //    ⚠️ 壞項要挑**帶空白但仍編得起來**的（`'a b'`）：壞 regex（`'('`）會被後面的編譯檢查接住，
-  //    測不到文法這道防線。
-  for (const 壞 of [['unrelated', 'a b'], ['a b', 'unrelated']]) {
-    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表 ${JSON.stringify(壞)} 裡**只要有一項**不合文法就拒絕（不可以「全部壞才算壞」）`);
+  for (const 表 of 全合法) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 表 }).deny, false,
+      `新表 ${JSON.stringify(表)} 全部合法 ⇒ 不命中的名字必須放行`);
   }
-  // ⚠️ **第六種退化**（r10 #1A）：遇到合法佔位就**把整欄清空**
-  //    （`if (f[key].includes(UNSET)) return [];`）。這跟 r8 那個「子字串包含」不一樣——
-  //    這裡是**陣列元素的精確包含**：單獨 `['未設定']` 的合法對照照樣過，
-  //    卻把**旁邊的其他項全部吞掉** ⇒ 混合了非法項也看不到。
-  for (const 壞 of [['未設定', 'a b'], ['a b', '未設定'], ['未設定', '(']]) {
+  // 整欄層的壞設定（不是陣列項的問題）
+  for (const 壞 of ['', null, 'not-an-array', 0, false]) {
     assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表 ${JSON.stringify(壞)}（合法佔位＋非法項）＝壞設定，佔位不可以把旁邊的項吞掉`);
-  }
-  // ⚠️ **型別層也有同一種量詞退化**（r10 #1B）：`some(非字串)` → `length > 0 && every(非字串)`。
-  //    上面那些混合項**都是字串**，抓得到文法層、抓不到型別層；而數字 `123` 之後會被
-  //    regex 隱式轉成字串，**文法與編譯都接不住它**。
-  for (const 壞 of [['unrelated', 123], [123, 'unrelated']]) {
-    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
-      `新表 ${JSON.stringify(壞)}（字串＋非字串）＝壞設定，型別檢查也要是「任一」不是「全部」`);
+      `新表整欄是 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（fail-closed）`);
   }
   // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
-    '佔位值是合法的，不可以誤判成壞設定（對照組，證明上面那四發不是靠「一律拒絕」作弊）');
+    '佔位值是合法的，不可以誤判成壞設定（對照組，跟上面的「全合法背景一律放行」一起，證明那幾百發不是靠「一律拒絕」作弊）');
   // ⑥只填新表也算「有規則」（不可以因為舊表空了就當成沒設清單）
   // ⚠️ **必須有對照組**（r4 #1 抓到）：只斷言「命中者被擋」的話，`hasRule` 那個條件被拿掉時
   //    會走 fail-closed（沒規則＝一律拒絕），命中者照樣被擋 ⇒ **fail-closed 冒充了「新表生效」**。
