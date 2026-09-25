@@ -127,7 +127,7 @@ function build(data) {
   out.push(`- 會動到禁區的連接器（白名單制）：${plain(joinList(fb.servers), '禁區連接器')}`);
   out.push(`- 那些連接器上准用的唯讀工具：${plain(joinList(fb.allowlist), '唯讀名單')}`);
   out.push(`- 逐字拒絕的工具名：${plain(joinList(fb.deny), '拒絕清單')}`);
-  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（豁免到哪一道、代價與射程＝\`tools/forbidden-tools.js\` 的「兩張樣式表」那一段，本檔不重述）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}\n- 兩張樣式表的條數：額外樣式 ${fb.patterns ? fb.patterns.length : 0} 條、patternsReadSafe ${fb.patternsReadSafe ? fb.patternsReadSafe.length : 0} 條（分工＝見「兩張樣式表」）`);
+  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（豁免到哪一道、代價與射程＝「兩張樣式表」，正本＝\`docs/money-guard-two-pattern-tables.md\`，本檔不重述）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}\n- 兩張樣式表的條數：額外樣式 ${fb.patterns ? fb.patterns.length : 0} 條、patternsReadSafe ${fb.patternsReadSafe ? fb.patternsReadSafe.length : 0} 條（分工＝見「兩張樣式表」）`);
   out.push(`- 額外樣式（patterns）：${plain(joinList(fb.patterns), '額外樣式')}`);
   out.push(`- 額外樣式（patternsReadSafe）：${plain(joinList(fb.patternsReadSafe), 'patternsReadSafe')}`);
   out.push('', '## 八、合併後驗收分級（規矩 H6；分級工具讀這裡，只算不擋）', '');

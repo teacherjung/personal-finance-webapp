@@ -293,38 +293,37 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
 });
 
 // ⚠️ **巢狀整卷裡跳過**（跟 `tests/filled-settings.test.js` 同一個旗標）：那份複本只帶
-//    `tools`／`tests`／`templates` 三個目錄、也沒有 `node_modules`。①全庫散文掃描在部分複本裡
-//    **本來就沒有意義**（`AGENTS.md`、`test/`、`docs/` 都不在，會空跑成假綠）②`typescript` 載不進來。
+//    `tools`／`tests`／`templates` 三個目錄——**正本檔（在 `docs/`）根本不在複本裡**，
+//    而且 `AGENTS.md`／`test/`／`docs/` 也都不在 ⇒ 全庫散文掃描在部分複本裡會**空跑成假綠**。
 //    真正的一輪＝倉庫根目錄那次 `npm test`，那一次它一定跑。
-test('⑭ 只有一份：這個機制的現在式描述只准住在正本，別處一律指路（#641 r7 的 F10：邊界問解析器）',
-  { skip: process.env.KIT_NESTED_SUITE === '1' ? '巢狀複本只帶部分檔案、且無 node_modules ⇒ 全庫散文掃描沒有意義' : false }, () => {
+test('⑭ 只有一份：這個機制的現在式描述只准住在正本那一支檔，別處一律指路（裁示者 2026-09-25 裁丙）',
+  { skip: process.env.KIT_NESTED_SUITE === '1' ? '巢狀複本不帶 docs/，全庫散文掃描沒有意義' : false }, () => {
   // ## 這一題在防什麼
   //
-  // #641 改過兩次行為。**前四輪複審＋一次掃描，每一輪都有一條發現是同一件事**：
-  // 我改了行為，別處的說明還用現在式留在原地。原因不是忘記 grep，是同一句話被寫在九個地方。
+  // #641 改過兩次行為，**前四輪複審＋一次掃描，每一輪都有一條發現是同一件事**：
+  // 我改了行為、別處的說明還用現在式留在原地——因為同一句話被寫在九個地方。
   // 本倉庫早有這條規矩（RULES K1／K3）：**正本只有一份，別處只指路**。這一題把它變成機器。
   //
-  // ## ⚠️ 邊界不自己算，問解析器（r5→r6→r7 連三輪被打穿之後的 F10 換法）
+  // ## ⚠️ 為什麼正本住在自己的檔（裁示者 2026-09-25 裁丙）
   //
-  // 我原本用「行」當單位判「這一行在不在正本註解裡」——那是**手寫一個 JS 註解剖析器**。
-  // 三輪三種打法：①排除整支正本檔 ②`*/` 要獨佔一行 ③**整行**排除（`*/ // 重述`）、
-  // `*//* 重述 */`、標題行自己結束註解、假的早期標題、連字串字面值裡的標題都能擴張免檢範圍。
-  // ⇒ 單位錯了：**註解的邊界是字元位置，不是行號**。改成用 `ts` 取註解範圍、比對命中的字元位置。
+  // 原本正本是程式裡的一段註解，這一題要判「這一行在不在那段註解裡」＝**手寫 JS 註解剖析器**，
+  // **連四輪被打穿**（排除整支檔／`*/` 要獨佔一行／整行排除／裸 scanner 被 `void /[/*]/;` 騙過）。
+  // ⇒ 正本自己一支檔＝**沒有「檔案裡的一段」要算，就沒有邊界可以算錯**。
+  // 這一題現在只做一件事：**正本那一支檔整份免檢，其餘受版控的 js／md／json 全掃。**
   //
-  // ⚠️ **這一題的射程沒有因此變大**（三條照舊）：
-  //    ①它認的是「機制字＋動作字同一行」⇒ **換句話說重述抓不到**。
-  //    ②**指路詞是全域豁免**：任何受管行帶上「兩張樣式表」就免檢，**含錯誤的重述**。
-  //    ③範圍只到「已追蹤的 js／md／json、排除 data」；不讀 PR 說明，讀檔失敗直接略過。
-  //       「受管檔數 > 50」證明不了完整性。解析器只回答「哪裡是註解」，不判斷語意。
+  // ⚠️ **射程三條（照舊，沒有因為換做法而變大）**：
+  //    ①認的是「機制字＋動作字同一行」⇒ **換句話說重述抓不到**。
+  //    ②**指路關鍵字是全域豁免**：任何受管行帶上它就免檢，**含錯誤的重述**。
+  //    ③範圍只到已追蹤的 js／md／json、排除 `data/`；不讀 PR 說明；讀檔失敗直接略過。
+  //       「受管檔數 > 50」證明不了完整性。
   const { execFileSync } = require('node:child_process');
-  const { readFileSync } = require('node:fs');
+  const { readFileSync, existsSync } = require('node:fs');
   const { join, dirname } = require('node:path');
-  const ts = require('typescript');
   const ROOT = join(dirname(__filename), '..');
-  const 正本檔 = 'tools/forbidden-tools.js';
+  const 正本檔 = 'docs/money-guard-two-pattern-tables.md';
   const 指路詞 = '兩張樣式表';
   const 標題 = '## 兩張樣式表';
-  const 機制 = /唯讀[^，。、\n]{0,4}前綴/gu;
+  const 機制 = /唯讀[^，。、\n]{0,4}前綴/u;
   const 動作 = /豁免|跳過/u;
   const 違規 = (line) => 機制.test(line) && 動作.test(line) && !line.includes(指路詞);
 
@@ -335,49 +334,25 @@ test('⑭ 只有一份：這個機制的現在式描述只准住在正本，別�
   assert.equal(違規(`唯讀前綴會跳過額外樣式那一道（見「${指路詞}」）`), false,  // 兩張樣式表
     '同時有機制字、動作字與指路詞 ⇒ 放行（刻意的全域豁免，見上面射程②）');
 
-  /** 用解析器取出一份原始碼裡所有註解的字元範圍。 */
-  const 註解範圍 = (src) => {
-    const out = [];
-    const sc = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, src);
-    for (let k = sc.scan(); k !== ts.SyntaxKind.EndOfFileToken; k = sc.scan()) {
-      if (k === ts.SyntaxKind.SingleLineCommentTrivia || k === ts.SyntaxKind.MultiLineCommentTrivia) {
-        out.push([sc.getTokenStart(), sc.getTokenEnd()]);
-      }
-    }
-    return out;
-  };
+  // ①正本那一支檔必須在，而且帶著那個標題（指路指得到）
+  assert.ok(existsSync(join(ROOT, 正本檔)), `找不到正本檔 ${正本檔} ⇒ 別處的指路全部斷掉`);
+  const 正本 = readFileSync(join(ROOT, 正本檔), 'utf8');
+  assert.ok(正本.includes(標題), `${正本檔} 裡找不到「${標題}」這個標題`);
 
-  // ①正本必須是**剛好一個**帶那個標題的註解（這一步同時驗起點：
-  //   假的早期標題會變成兩個 ⇒ 這裡先紅；字串字面值不是註解 ⇒ 不會被當起點）
-  const 正本原文 = readFileSync(join(ROOT, 正本檔), 'utf8');
-  const 帶標題的註解 = 註解範圍(正本原文).filter(([a, b]) => 正本原文.slice(a, b).includes(標題));
-  assert.equal(帶標題的註解.length, 1,
-    `${正本檔} 裡帶「${標題}」的**註解**要剛好一個，實得 ${帶標題的註解.length} 個 ⇒ 正本起點不唯一，免檢範圍算不準`);
-  const [免檢起, 免檢迄] = 帶標題的註解[0];
-
-  // ②受版控的文字檔一律只准指路；正本檔只有**那個註解節點的字元範圍內**免檢
+  // ②其餘受版控的文字檔一律只准指路（**含 `tools/forbidden-tools.js` 自己**）
   const 受管 = execFileSync('git', ['ls-files'], { cwd: ROOT, env: gitEnv(), encoding: 'utf8' })
     .split('\n')
-    .filter((f) => f && /\.(js|md|json)$/u.test(f) && !f.startsWith('data/'));
+    .filter((f) => f && /\.(js|md|json)$/u.test(f) && f !== 正本檔 && !f.startsWith('data/'));
   assert.ok(受管.length > 50, `只列到 ${受管.length} 個檔，git ls-files 壞了？`);
+  assert.ok(!受管.includes(正本檔), '正本檔不可以出現在受掃清單裡');
   const 犯規 = [];
   for (const f of 受管) {
     let txt;
     try { txt = readFileSync(join(ROOT, f), 'utf8'); } catch { continue; }
-    機制.lastIndex = 0;
-    for (let m = 機制.exec(txt); m; m = 機制.exec(txt)) {
-      if (f === 正本檔 && m.index >= 免檢起 && m.index < 免檢迄) continue;   // 註解節點內：這裡才准用現在式
-      const 行首 = txt.lastIndexOf('\n', m.index) + 1;
-      let 行尾 = txt.indexOf('\n', m.index); if (行尾 < 0) 行尾 = txt.length;
-      const line = txt.slice(行首, 行尾);
-      if (!動作.test(line) || line.includes(指路詞)) continue;
-      const n = txt.slice(0, 行首).split('\n').length;
-      const 記 = `${f}:${n}　${line.trim().slice(0, 70)}`;
-      if (!犯規.includes(記)) 犯規.push(記);
-    }
+    txt.split('\n').forEach((l, i) => { if (違規(l)) 犯規.push(`${f}:${i + 1}　${l.trim().slice(0, 70)}`); });
   }
   assert.deepEqual(犯規, [],
-    `這些地方重述了「唯讀前綴豁免到哪一道」，而正本在 ${正本檔} 的「兩張樣式表」那一段。\n`
+    `這些地方重述了「唯讀前綴豁免到哪一道」（正本＝「兩張樣式表」，在 ${正本檔}）。\n`
     + `**改成指路**（句子裡帶上那個關鍵字），不要在這裡重寫一份會漂的副本：\n`
     + 犯規.join('\n'));
 });
