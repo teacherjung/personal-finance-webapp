@@ -213,14 +213,10 @@ test('④逐字拒絕清單；⑤家族網與唯讀前綴；駝峰、點、連�
   assert.equal(normalize('a.b-c'), 'a_b_c');
 });
 
-test('⑬兩張樣式表：`patternsReadSafe` 連唯讀前綴也擋，`patterns` 只在沒有前綴時擋（裁示者 2026-09-24 裁庚）', () => {
+test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚）', () => {
   // ## 為什麼要兩張表
-  // 沿革＝「**兩張樣式表**」那一段的最後一節。當時 `get_send_money`、`get_move_funds`、
-  // `view_convert_currency` 這種「查詢的皮、動錢的骨」一路放行（Grok 複審後掃 #2 抓到）。
-  // 但那張表裡**有兩條不能一律生效**：①單獨成詞的 transfer／withdraw… （`get_transfer_log` 靠閥才不被誤擋）
-  // ②寬版的 `(convert|exchange|swap)_\w*?<錢名詞>`——它把 `exchange` 當動作，而本領域 `exchange`
-  // 幾乎都是名詞（**交易所**、ETF 的 exchange **traded** fund），又沒詞界、通配符還跨底線。
-  // ⇒ 拆成兩張：精確的搬進 `patternsReadSafe`（一律跑），寬的留在 `patterns`（只在沒前綴時跑）。
+  // 為什麼要兩張表、哪一張吃豁免、代價與射程＝「**兩張樣式表**」那一段（正本）。**這裡不重述。**
+  // 下面的輸入與斷言才是這一題的內容。
   //
   // ⚠️ **這一題也是「不可能變鬆」那個結構性質的絆線**（見下面第三段）。
 
@@ -242,13 +238,16 @@ test('⑬兩張樣式表：`patternsReadSafe` 連唯讀前綴也擋，`patterns`
   // ④**空的新表不可以讓判斷變寬**（相容性：別處的夾具沒填這一欄）
   const 沒填 = { ...FORBIDDEN };
   delete 沒填.patternsReadSafe;
-  // ⚠️ **關鍵的那一發**（r4 #1 抓到我漏了）：要測**本來應該被擋的**名字。
-  //    原本我只測兩個「本來就不命中舊規則」的名字、兩發都期待放行 ⇒ 把實作突變成
-  //    「缺這一欄就直接 `{ deny:false }`」時，這一題照樣全綠＝證明不了「不可以變寬」。
-  assert.equal(decide('mcp__any__create_order', 沒填).deny, true, '沒填新表時，家族網照樣要擋（缺欄不可以變成全部放行）');
-  assert.equal(decide('mcp__any__withdraw', 沒填).deny, true, '沒填新表時，舊 patterns 照樣要擋');
-  assert.equal(decide('mcp__any__get_convert_funds', 沒填).deny, false, '沒填新表＝回到舊行為（前綴豁免），不是報錯');
-  assert.equal(decide('mcp__any__convert_funds', 沒填).deny, false, '沒填新表時 convert_funds 不在舊 patterns 裡 ⇒ 放行（對照組，證明上面那發不是碰巧）');
+  // ⚠️ **兩條路都要走**（r4 #1：原本只測「本來就不命中」的名字 ⇒ 突變成「缺欄就放行」仍全綠；
+  //    r5 #1：只測「缺欄」還不夠 ⇒ 突變成「**明填空陣列**就放行」也仍全綠。
+  //    明填 `[]` 不是杜撰的非法設定——本倉庫 `tests/filled-settings.test.js` 就是明填 `[]`）。
+  const 空表 = { ...FORBIDDEN, patternsReadSafe: [] };
+  for (const [名, 設定] of [['缺欄', 沒填], ['明填空陣列', 空表]]) {
+    assert.equal(decide('mcp__any__create_order', 設定).deny, true, `${名}時，家族網照樣要擋（不可以變成全部放行）`);
+    assert.equal(decide('mcp__any__withdraw', 設定).deny, true, `${名}時，舊 patterns 照樣要擋`);
+    assert.equal(decide('mcp__any__get_convert_funds', 設定).deny, false, `${名}＝回到舊行為（前綴豁免），不是報錯`);
+    assert.equal(decide('mcp__any__convert_funds', 設定).deny, false, `${名}時 convert_funds 不在舊 patterns 裡 ⇒ 放行（對照組，證明上面那發不是碰巧）`);
+  }
   // ⑤新表壞掉＝設定壞掉＝拒絕（fail-closed，跟舊表同一個口徑）
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['('] }).deny, true, '新表是壞正規式＝拒絕');
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 'not-an-array' }).deny, true, '新表不是陣列＝拒絕');
@@ -277,8 +276,12 @@ test('⑭ 只有一份：這個機制的現在式描述只准住在正本，別�
   // 本倉庫早就有這條規矩（RULES K1／K3）：**正本只有一份，別處只指路**。
   // 我一直把它用在「規則」上，沒有用在自己的解釋性散文上。這一題把它變成機器。
   //
-  // ⚠️ **它是絆線不是保證**：它認的是「機制字＋動作字同一行、而且沒有指路關鍵字」。
-  //    換句話說重述（不用那幾個字）它抓不到。不要把這一題讀成「以後不可能漂」。
+  // ⚠️ **它是絆線不是保證**，三個已知射程（r5 #3 要求我把第三個講清楚，不要縮成「測試字串的怪癖」）：
+  //    ①它認的是「機制字＋動作字同一行」⇒ **換句話說重述**（不用那幾個字）抓不到。
+  //    ②**指路詞是全域豁免**：任何一行只要帶上「兩張樣式表」就免檢——包括**錯誤的重述**。
+  //       實測（審查者做的）：同一句重述尾端加四個字就從紅變綠。這不是只豁免本題自己的測試字串。
+  //    ③範圍只到「已追蹤的 js／md／json、排除 data、排除正本區塊」；不讀 PR 說明，讀檔失敗直接略過。
+  //       「受管檔數 > 50」證明不了完整性。
   const { execFileSync } = require('node:child_process');
   const { readFileSync } = require('node:fs');
   const { join, dirname } = require('node:path');
@@ -291,26 +294,36 @@ test('⑭ 只有一份：這個機制的現在式描述只准住在正本，別�
 
   // ⓪**先證明這支偵測器真的會偵測到**（否則下面「0 處」可能只是它什麼都沒做）
   // ⚠️ 下一行的字串**故意是一段重述**，所以這一行會被自己的偵測器抓到 ⇒ 行尾補上指路詞「兩張樣式表」豁免它。
-  //    這是這一題已知的怪癖（絆線認的是同一行的字，分不出「重述」與「在講重述」），照實記，不假裝沒有。
   assert.equal(違規('唯讀前綴會跳過額外樣式那一道'), true, '偵測器對「重述」要回 true');  // 兩張樣式表
   assert.equal(違規(`唯讀前綴的範圍＝見「${指路詞}」`), false, '偵測器對「指路」要回 false');
   assert.equal(違規('這一行跟這個機制無關'), false, '偵測器不可以亂抓');
+  // ⚠️ **這一發才真的測到「指路詞豁免」那條分支**（r5 #3 抓到前三發測不到它：
+  //    第二發沒有動作字，所以把 `!line.includes(指路詞)` 整段刪掉，前三發照樣成立）。
+  assert.equal(違規(`唯讀前綴會跳過額外樣式那一道（見「${指路詞}」）`), false,  // 兩張樣式表
+    '同時有機制字、動作字與指路詞 ⇒ 必須放行（這是刻意的全域豁免，見上面「代價」）');
 
   // ①正本必須存在，而且真的帶著那個標題（指路指得到）
-  const 正本 = readFileSync(join(ROOT, 正本檔), 'utf8');
-  assert.ok(正本.includes(`## 兩張樣式表`),
-    `${正本檔} 找不到「兩張樣式表」那個正本標題 ⇒ 別處的指路全部斷掉`);
+  const 正本全文 = readFileSync(join(ROOT, 正本檔), 'utf8').split('\n');
+  const 正本起 = 正本全文.findIndex((l) => l.includes('## 兩張樣式表'));
+  assert.ok(正本起 >= 0, `${正本檔} 找不到「兩張樣式表」那個正本標題 ⇒ 別處的指路全部斷掉`);
+  const 正本迄 = 正本全文.findIndex((l, i) => i > 正本起 && l.trim() === '*/');
+  assert.ok(正本迄 > 正本起, `${正本檔} 的正本區塊沒有結尾 \`*/\` ⇒ 範圍算不出來`);
 
-  // ②其餘受版控的文字檔一律只准指路
+  // ②受版控的文字檔一律只准指路。
+  // ⚠️ **只排除正本那個區塊，不排除整支正本檔**（r5 #2 抓到：原本整檔排除 ⇒ 擋不住
+  //    正本檔**裡面**長出第二份現在式描述，而它真的長了兩處：GRAMMAR 那一行與迴圈裡那一行）。
   const 受管 = execFileSync('git', ['ls-files'], { cwd: ROOT, env: gitEnv(), encoding: 'utf8' })
     .split('\n')
-    .filter((f) => f && /\.(js|md|json)$/u.test(f) && f !== 正本檔 && !f.startsWith('data/'));
+    .filter((f) => f && /\.(js|md|json)$/u.test(f) && !f.startsWith('data/'));
   assert.ok(受管.length > 50, `只列到 ${受管.length} 個檔，git ls-files 壞了？`);
   const 犯規 = [];
   for (const f of 受管) {
     let txt;
     try { txt = readFileSync(join(ROOT, f), 'utf8'); } catch { continue; }
-    txt.split('\n').forEach((l, i) => { if (違規(l)) 犯規.push(`${f}:${i + 1}　${l.trim().slice(0, 70)}`); });
+    txt.split('\n').forEach((l, i) => {
+      if (f === 正本檔 && i >= 正本起 && i <= 正本迄) return;   // 正本區塊本身：這裡才准用現在式
+      if (違規(l)) 犯規.push(`${f}:${i + 1}　${l.trim().slice(0, 70)}`);
+    });
   }
   assert.deepEqual(犯規, [],
     `這些地方重述了「唯讀前綴豁免到哪一道」，而正本在 ${正本檔} 的「兩張樣式表」那一段。\n`

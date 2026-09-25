@@ -46,7 +46,7 @@ const GRAMMAR = {
   nouns: /^[a-z0-9]+(?:_[a-z0-9]+)*$/u,
   readPrefixes: /^[a-z0-9]+$/u,
   patterns: /^\S+$/u,                    // 正規式另外試編譯
-  patternsReadSafe: /^\S+$/u,           // 同上；**連唯讀前綴也擋**的那一組（2026-09-24 裁庚）
+  patternsReadSafe: /^\S+$/u,           // 同上；這一欄的作用＝見「兩張樣式表」（2026-09-24 裁庚）
 };
 
 /**
@@ -90,10 +90,13 @@ const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  *
  * ### 代價：這是「偏安全、願意付誤擋」的取捨，**不是零代價**
  *
- * `patternsReadSafe` 一律生效 ⇒ 下列**合理的唯讀名字現在會被擋**（主幹放行、本版拒絕，逐一實測）：
- * `list_open_positions`、`get_closed_positions`、`get_create_order_status`、
- * `view_order_create_history`、`get_convert_currency_rate`、`get_send_money_status`、
- * `list_swap_crypto_quotes`。**踩到了照既定裁示流程處理，不要在這裡自己開洞。**
+ * 本支**兩次**收緊合起來的代價 ⇒ 下列**合理的唯讀名字現在會被擋**（主幹放行、本版拒絕，逐一實測）。
+ * ⚠️ **歸因要分清**（r5 #2 更正我原本把七個全記在新表頭上）——把 `patternsReadSafe` 清空再測就分得出來：
+ *   ・**家族網**擋的（清空新表照樣擋）：`list_open_positions`、`get_closed_positions`、
+ *     `get_create_order_status`、`view_order_create_history`
+ *   ・**新表**擋的（清空新表就放行）：`get_convert_currency_rate`、`get_send_money_status`、
+ *     `list_swap_crypto_quotes`
+ * **踩到了照既定裁示流程處理，不要在這裡自己開洞。**
  *
  * 誤擋有**兩個不同來源，不可以算成同一個**：㈠動詞表裡有 `open`／`close`／`buy`／`sell`
  * 這種「既是動作也是狀態」的字（`list_open_positions` 屬這一類，跟比對是否完整 token 無關）
@@ -187,7 +190,7 @@ function decide(toolName, forbidden) {
       if (new RegExp(`(^|_)${verb}_?\\w*?${noun}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
       if (new RegExp(`(^|_)${noun}_${verb}(_|$)`, 'u').test(t)) return { deny: true, why: `工具名命中${f.name}的家族網（${t}${但書}）` };
     }
-    // ⚠️ 這兩行的差別（`patternsReadSafe` 一律跑、`patterns` 只在沒有唯讀前綴時跑）＝見「兩張樣式表」。
+    // ⚠️ 這兩行為什麼不一樣＝見「兩張樣式表」。**這裡不重述。**
     for (const re of patternsReadSafe) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}${但書}）` };
     if (!讀名) for (const re of patterns) if (re.test(t)) return { deny: true, why: `工具名命中${f.name}的額外樣式（${t}）` };
   }

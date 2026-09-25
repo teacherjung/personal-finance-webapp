@@ -127,7 +127,7 @@ function build(data) {
   out.push(`- 會動到禁區的連接器（白名單制）：${plain(joinList(fb.servers), '禁區連接器')}`);
   out.push(`- 那些連接器上准用的唯讀工具：${plain(joinList(fb.allowlist), '唯讀名單')}`);
   out.push(`- 逐字拒絕的工具名：${plain(joinList(fb.deny), '拒絕清單')}`);
-  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（豁免到哪一道、代價與射程＝\`tools/forbidden-tools.js\` 的「兩張樣式表」那一段，本檔不重述）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}\n- 額外樣式（**只在沒有唯讀前綴時生效**）：${fb.patterns ? fb.patterns.length : 0} 條；連唯讀前綴也擋的額外樣式：${fb.patternsReadSafe ? fb.patternsReadSafe.length : 0} 條（樣式本身不抄進來，正本在 settings.json）`);
+  out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（豁免到哪一道、代價與射程＝\`tools/forbidden-tools.js\` 的「兩張樣式表」那一段，本檔不重述）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}\n- 額外樣式：${fb.patterns ? fb.patterns.length : 0} 條；另一張 patternsReadSafe：${fb.patternsReadSafe ? fb.patternsReadSafe.length : 0} 條（兩張的分工＝見「兩張樣式表」；樣式本身不抄進來，正本在 settings.json）`);
   out.push(`- 額外樣式：${plain(joinList(fb.patterns), '額外樣式')}`);
   out.push('', '## 八、合併後驗收分級（規矩 H6；分級工具讀這裡，只算不擋）', '');
   const acc = data.acceptance || {};
