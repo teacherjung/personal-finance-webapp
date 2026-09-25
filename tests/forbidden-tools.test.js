@@ -288,6 +288,21 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
     assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
       `新表 ${JSON.stringify(壞)} 裡**只要有一項**不合文法就拒絕（不可以「全部壞才算壞」）`);
   }
+  // ⚠️ **第六種退化**（r10 #1A）：遇到合法佔位就**把整欄清空**
+  //    （`if (f[key].includes(UNSET)) return [];`）。這跟 r8 那個「子字串包含」不一樣——
+  //    這裡是**陣列元素的精確包含**：單獨 `['未設定']` 的合法對照照樣過，
+  //    卻把**旁邊的其他項全部吞掉** ⇒ 混合了非法項也看不到。
+  for (const 壞 of [['未設定', 'a b'], ['a b', '未設定'], ['未設定', '(']]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表 ${JSON.stringify(壞)}（合法佔位＋非法項）＝壞設定，佔位不可以把旁邊的項吞掉`);
+  }
+  // ⚠️ **型別層也有同一種量詞退化**（r10 #1B）：`some(非字串)` → `length > 0 && every(非字串)`。
+  //    上面那些混合項**都是字串**，抓得到文法層、抓不到型別層；而數字 `123` 之後會被
+  //    regex 隱式轉成字串，**文法與編譯都接不住它**。
+  for (const 壞 of [['unrelated', 123], [123, 'unrelated']]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表 ${JSON.stringify(壞)}（字串＋非字串）＝壞設定，型別檢查也要是「任一」不是「全部」`);
+  }
   // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
     '佔位值是合法的，不可以誤判成壞設定（對照組，證明上面那四發不是靠「一律拒絕」作弊）');
