@@ -142,6 +142,7 @@ test('⑪雙保險：唯讀名單誤放了動禁區的工具，家族網照樣�
 test('⑫「動作名」不因為前面掛了查詢字就放行：命中**家族網**就擋（範圍＝「兩張樣式表」）', () => {
   // ## 這一題在防什麼
   // 這一題守的是「**兩張樣式表**」那一段裡「家族網不豁免」那一列。
+  // ⚠️ 下面那句「完全不受檢查」講的是**修正前**的行為（r6 #3 抓到它讀起來跟上一行相反）。
   // 於是 `view_create_order` 這種「查詢的皮、下單的骨」完全不受檢查。
   // ⚠️ 這一題自己就是那個破口的絆線：把那個無條件 `continue` 放回去，下面每一發都會紅。
   for (const t of ['view_create_order', 'get_place_trade', 'list_cancel_position', 'search_submit_stock',
@@ -255,6 +256,17 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
   //    `'a b'` 可以編譯成正規式，但不合這一欄的文法（不准有空白）。
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['a b'] }).deny, true, '新表有不合文法的項＝拒絕');
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: [123] }).deny, true, '新表有非字串項＝拒絕');
+  // ⚠️ **四種「常見的容錯改法」會靜靜取消這裡承諾的 fail-closed**（r6 #2 抓到；他各做了一個突變證明）：
+  //    ・把 falsy 當缺欄（`if (!f[key]) return [];`）⇒ `''`、`null` 被放過
+  //    ・把非法空項靜靜清掉（`.map(x => x.trim()).filter(Boolean)`）⇒ `[' ']`、`['']` 被放過
+  //    對照名字用 `harmless`（不被任何其他規則碰巧擋住），所以紅一定是因為「壞設定沒被擋」。
+  for (const 壞 of ['', null, [' '], ['']]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表是 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（fail-closed）`);
+  }
+  // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
+  assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
+    '佔位值是合法的，不可以誤判成壞設定（對照組，證明上面那四發不是靠「一律拒絕」作弊）');
   // ⑥只填新表也算「有規則」（不可以因為舊表空了就當成沒設清單）
   // ⚠️ **必須有對照組**（r4 #1 抓到）：只斷言「命中者被擋」的話，`hasRule` 那個條件被拿掉時
   //    會走 fail-closed（沒規則＝一律拒絕），命中者照樣被擋 ⇒ **fail-closed 冒充了「新表生效」**。
@@ -306,8 +318,19 @@ test('⑭ 只有一份：這個機制的現在式描述只准住在正本，別�
   const 正本全文 = readFileSync(join(ROOT, 正本檔), 'utf8').split('\n');
   const 正本起 = 正本全文.findIndex((l) => l.includes('## 兩張樣式表'));
   assert.ok(正本起 >= 0, `${正本檔} 找不到「兩張樣式表」那個正本標題 ⇒ 別處的指路全部斷掉`);
-  const 正本迄 = 正本全文.findIndex((l, i) => i > 正本起 && l.trim() === '*/');
-  assert.ok(正本迄 > 正本起, `${正本檔} 的正本區塊沒有結尾 \`*/\` ⇒ 範圍算不出來`);
+  // ⚠️ 找「**第一個含註解結尾記號的行**」，不是「獨佔一行的那種」（r6 #1 抓到）：
+  //    原本寫 `l.trim() === '*/'` ⇒ 正本結尾若寫成 `*/ // 尾註`（合法 JS）就配不到，
+  //    排除範圍會一路吃到**下一段** JSDoc 的獨立結尾，把真正在區塊外的重述一起吞進免檢。
+  //    審查者實測：那個形狀下整支 15/15 全綠。
+  const 正本迄 = 正本全文.findIndex((l, i) => i > 正本起 && l.includes('*/'));
+  assert.ok(正本迄 > 正本起, `${正本檔} 的正本區塊找不到註解結尾 ⇒ 範圍算不出來`);
+  // ⚠️ 邊界自我測試：兩種結尾形狀都要算得出同一個結尾行
+  for (const 尾 of ['   */', '   */ // 尾註']) {
+    const 假 = ['/**', ' * ## 兩張樣式表', ' * 內容', 尾, '// 區塊外'];
+    const 起 = 假.findIndex((l) => l.includes('## 兩張樣式表'));
+    assert.equal(假.findIndex((l, i) => i > 起 && l.includes('*/')), 3,
+      `結尾形狀 ${JSON.stringify(尾)} 算錯 ⇒ 區塊外的東西會被吞進免檢範圍`);
+  }
 
   // ②受版控的文字檔一律只准指路。
   // ⚠️ **只排除正本那個區塊，不排除整支正本檔**（r5 #2 抓到：原本整檔排除 ⇒ 擋不住
