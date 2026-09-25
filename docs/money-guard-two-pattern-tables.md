@@ -42,7 +42,7 @@
 
 只命中 `patterns`、又帶唯讀前綴的名字仍然放行：`download_transfer_funds`、
 `read_withdraw_cash`。已宣告連接器上的白名單仍會擋它們，但**誤填進白名單之後就放行**
-——上面連接器那段答應的「雙保險」對它們不存在（對命中家族網的 `view_create_order` 才存在）。
+——`tools/forbidden-tools.js` 裡連接器那段答應的「雙保險」對它們不存在（對命中家族網的 `view_create_order` 才存在）。
 
 ⚠️ `patternsReadSafe` **不是**「全部都是動作緊接錢名詞」：搬進去的原第 4、5 條仍有
 `_?\w*?securit[a-z]*` 與反向的「名詞→動詞」式（`get_preview_cached_securities_status`、

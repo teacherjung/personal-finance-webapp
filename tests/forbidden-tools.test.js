@@ -3,7 +3,7 @@
 // 守得到的：
 //   ①輸入拿不到工具名、工具名不合法＝拒絕；②禁區清單沒設＝拒絕（裝了卻沒填比沒裝更危險）；
 //   ③動禁區的連接器採白名單制；④逐字拒絕清單；⑤家族網（動詞名詞、名詞動詞、額外樣式），
-//     ⚠️ 唯讀前綴的豁免範圍與代價＝`tools/forbidden-tools.js` 的「**兩張樣式表**」那一段（正本，這裡不重述）；
+//     ⚠️ 唯讀前綴的豁免範圍與代價＝「**兩張樣式表**」（正本＝`docs/money-guard-two-pattern-tables.md`，這裡不重述）；
 //     駝峰、點、連字號都正規化；
 //     連接器前綴不同、工具名相同一起擋；
 //   ⑥四份接線範本（Claude 活讀、Claude 釘指紋、Codex 專案層、Codex 全域層）都只呼叫同一支判斷（不抄判斷＝不會漂）；指令入口：壞輸入也拒絕、放行不印；
@@ -278,6 +278,15 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
   for (const 壞 of [['未設定('], [' 未設定 ']]) {
     assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
       `新表有 ${JSON.stringify(壞)}（含佔位文字但不等於它）＝壞設定，一律拒絕`);
+  }
+  // ⚠️ **第五種退化**（r9 #1）：把「**任一**非法項就拒絕」錯成「非空且**全部**非法才拒絕」
+  //    （`items.some(壞)` → `items.length > 0 && items.every(壞)`；`length > 0` 保住合法空表語意，
+  //     所以空表對照抓不到它）。現有非法案例都是**單項**，分不出「任一」與「全部」。
+  //    ⚠️ 壞項要挑**帶空白但仍編得起來**的（`'a b'`）：壞 regex（`'('`）會被後面的編譯檢查接住，
+  //    測不到文法這道防線。
+  for (const 壞 of [['unrelated', 'a b'], ['a b', 'unrelated']]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表 ${JSON.stringify(壞)} 裡**只要有一項**不合文法就拒絕（不可以「全部壞才算壞」）`);
   }
   // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
