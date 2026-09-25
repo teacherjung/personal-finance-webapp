@@ -442,28 +442,89 @@ test('畸形 PDF 的錯誤也要原味帶回來（另一條錯誤路徑）', asy
 // ============================================================================
 
 test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀得到）——Codex #350 r1 抓到的 PII 洩漏', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
-  const { join, dirname } = await import('node:path');
-  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const parent = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
+  // ⚠️ **這一題 v1 是字面絆線、擋不住換個變數名**（2026-09-25 全庫稽核實測）：
+  //    原本三條斷言全是**搜父行程的原始碼**、只認 `password` 這個字。實測把密碼換個名字塞進
+  //    spawn 的參數陣列，**39 題全綠、exit 0（跑兩次）**，而 `ps -A -o args=` 真的讀到明碼。
+  //    更根本的是：父行程的 spawn **沒有給 `env` 選項**，子行程整份環境變數是**繼承**的
+  //    ——那條 `/env\s*:\s*\{[^}]*password/` 連「先寫進 `process.env` 再 spawn」都搜不到。
+  //    ⇒ 改成**由子行程自己看它實際拿到的 argv 與 env**（替身＝`test-doubles/pdf-child-echo-io.js`）。
+  //    ⚠️ 射程：量的是 `runInChild` 這一條路（argv 只在那裡組一次、種類只是參數），
+  //    **不宣稱**「密碼在整個系統裡不會以任何方式外流」。
+  // ⚠️ **四種 kind 全跑，不抽代表**（本倉庫自己的教訓：抽一發會抽到唯一有覆蓋的那格）：
+  //    `kind` 只是同一段 argv 組法的參數，四種都走完＝「只有某一種才洩」的分支躲不過去。
+  //    ⚠️ 誠實劃界：`xlsx` 的正式路徑（`extractXlsxRows`）**根本不傳密碼**；這裡用
+  //    `extractPdfLines` 餵它只是為了把 `kind` 這個維度走完，不代表正式 xlsx 路徑有密碼可洩。
+  const CANARY = 'canary-env-value-8f3a1c';
+  const prevCanary = process.env.PDF_ECHO_CANARY;
+  process.env.PDF_ECHO_CANARY = CANARY;
+  setPdfChildScriptForTest(fakeChild('pdf-child-echo-io.js'));
+  const { createHash } = await import('node:crypto');
+  let 驗了 = 0;
+  try {
+    for (const kind of PDF_ISOLATE_KINDS) {
+      // 每一種用**不一樣**的密碼：這樣「父行程把上一次的密碼快取起來」也會被抓到
+      const SECRET = `A12345678${驗了}-sentinel-${kind}`;   // 形狀像身分證字號；**不含 password 這個字**，字面絆線抓不到
+      /** @type {any} */
+      const echo = await extractPdfLines(kind, async () => { throw new Error('不該走行程內'); }, normalPdf(), SECRET);
+
+      // ⓪ 三個前置條件——少了它們，下面「沒找到」可能只是因為什麼都沒發生
+      assert.equal(echo.needleSha, createHash('sha256').update(SECRET).digest('hex').slice(0, 16),
+        `前提①（${kind}）：密碼沒有原封不動經由 stdin 標頭到子行程——那下面的「argv／env 裡找不到」證明不了任何事`);
+      assert.ok(echo.canaryInEnvValues.includes('PDF_ECHO_CANARY'),
+        `前提②（${kind}）：替身的環境變數搜尋沒在跑（正對照找不到 PDF_ECHO_CANARY，實際 ${JSON.stringify(echo.canaryInEnvValues)}）`
+        + '——一支永遠回空陣列的壞替身會讓這一題永遠綠');
+      assert.ok(echo.envCount > 5, `前提③（${kind}）：子行程的環境變數只有 ${echo.envCount} 筆，不像真的繼承到了`);
+
+      // ① 命令列：子行程實際拿到的參數裡不可以有密碼。
+      //    ⚠️ **`argv` 與 `execArgv` 都要看**：`process.argv` 不含 node 自己的旗標
+      //    （`--max-old-space-size=…` 在 `execArgv`），所以把密碼塞進旗標位置
+      //    （`--title=<密碼>` 是合法的 node 旗標）只看 argv 會漏掉——而 `ps` 看得見。
+      const 命令列 = [...echo.argv, ...echo.execArgv];
+      assert.ok(!命令列.some((/** @type {string} */ a) => a.includes(SECRET)),
+        `子行程的命令列帶著密碼（${kind}）：${JSON.stringify(命令列)}\n`
+        + 'PDF 密碼＝身分證字號，命令列會出現在 `ps` 的行程清單裡、同機任何程式都讀得到。只能走 stdin 首行標頭。');
+      // ①b 作業系統實際看到的那一行（Linux 才讀得到；CI 跑的就是 Linux）。
+      //    ⚠️ 讀不到時**不當成乾淨**，只是少一層對照——替身回 null 並附原因。
+      if (echo.osCmdline !== null) {
+        assert.ok(echo.osCmdline.includes(kind),
+          `前提④（${kind}）：讀到的作業系統命令列不含這次的種類，不像是這個行程的`
+          + `（實際 ${JSON.stringify(String(echo.osCmdline).slice(0, 200))}）`);
+        assert.ok(!echo.osCmdline.includes(SECRET),
+          `作業系統看到的命令列帶著密碼（${kind}）——這就是 \`ps\` 會印出來的那一行`);
+      }
+
+      // ② env：值與鍵名都不可以有密碼（/proc/<pid>/environ 一樣讀得到；環境變數是**繼承**的，先寫 process.env 再 spawn 也算）
+      assert.deepEqual(echo.needleInEnvValues, [],
+        `子行程的環境變數帶著密碼（${kind}；這幾個鍵的值含密碼：${JSON.stringify(echo.needleInEnvValues)}）`
+        + '——/proc/<pid>/environ 讀得到');
+      assert.deepEqual(echo.needleInEnvKeys, [],
+        `密碼被當成環境變數的**鍵名**（${kind}）：${JSON.stringify(echo.needleInEnvKeys)}`);
+      驗了 += 1;
+    }
+  } finally {
+    if (prevCanary === undefined) delete process.env.PDF_ECHO_CANARY;
+    else process.env.PDF_ECHO_CANARY = prevCanary;
+  }
+  // 數量絆線：迴圈一個都沒跑到（清單空了、或提早 break）不可以算過
+  assert.equal(驗了, PDF_ISOLATE_KINDS.length, `只驗了 ${驗了} 種 kind，應該是 ${PDF_ISOLATE_KINDS.length} 種`);
+
+});
+
+test('子行程的**原始碼**不從 argv／env 取密碼、也不自己開子行程（字面絆線，不是行為保證）', () => {
+  // ⚠️ **這是絆線、不是上一題的替代品**：它只搜正式子行程的原始碼字面，改個寫法就繞過。
+  //    留著的理由是它管的是**另一端**：上一題證明「父行程沒把密碼放進 argv／env」，
+  //    這一題讀的是「子行程有沒有打算從那裡拿」。父端不放、子端就拿不到，所以真正的保證在上一題；
+  //    這一支的價值是把 stdin 協定**寫在會紅的地方**，讓有人改協定時至少有一處出聲。
   const child = readFileSync(join(ROOT, 'lib/pdf-isolate-child.js'), 'utf8');
-
-  // ① 父端：spawn 的 argv 陣列裡不准出現 password
-  const m = parent.match(/spawn\(process\.execPath,\s*\n?\s*\[([^\]]*)\]/);
-  assert.ok(m, '找不到 spawn 的 argv 陣列（結構變了就要重寫本題）');
-  assert.ok(!/password/i.test(m[1]),
-    `spawn 的 argv 出現 password：${m[1].trim()}\n` +
-    'PDF 密碼＝身分證字號，argv 會出現在 `ps` 的行程清單裡、同機任何程式都讀得到。改走 stdin 首行標頭。');
-
-  // ② 父端：也不准用環境變數（/proc/<pid>/environ 一樣讀得到）
-  assert.ok(!/env\s*:\s*\{[^}]*password/i.test(parent), 'spawn 的 env 出現 password（environ 讀得到）');
-
-  // ③ 子端：密碼只能從 stdin 標頭來，不准讀 argv／env
   assert.ok(!/process\.argv\[\d\]\s*\|\|?[^\n]*[Pp]assword/.test(child) && !/PASSWORD\s*=\s*process\.argv/.test(child),
     '子行程從 argv 讀密碼');
   assert.ok(!/process\.env\.[A-Z_]*PASSWORD/.test(child), '子行程從 env 讀密碼');
   assert.match(child, /header\.password/, '子行程應從 stdin 首行標頭取密碼');
+  // ⚠️ 正式子行程**自己不開子行程**：它若再 spawn，上一題量到的那一面就不是唯一的命令列面。
+  //    只認 import／require／動態 import 三種寫法（**刻意不搜裸字串**——那會讓「註解裡提到
+  //    child_process」誤紅，逼下一個人把護欄放寬，那比現在更糟）。
+  assert.doesNotMatch(child, /(?:from|import|require)\s*\(?\s*['"]node:child_process['"]/,
+    '正式子行程引入了 child_process');
 });
 
 test('`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一個＝那條路悄悄不隔離）', () => {
