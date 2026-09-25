@@ -256,7 +256,7 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
   //    `'a b'` 可以編譯成正規式，但不合這一欄的文法（不准有空白）。
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['a b'] }).deny, true, '新表有不合文法的項＝拒絕');
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: [123] }).deny, true, '新表有非字串項＝拒絕');
-  // ⚠️ **四種「常見的容錯改法」會靜靜取消這裡承諾的 fail-closed**（r6 #2 抓到；他各做了一個突變證明）：
+  // ⚠️ **兩種「常見的容錯改法」會靜靜取消這裡承諾的 fail-closed，各放過兩個壞值**（r6 #2；r8 #3 抓到我這句寫成「四種改法」）：
   //    ・把 falsy 當缺欄（`if (!f[key]) return [];`）⇒ `''`、`null` 被放過
   //    ・把非法空項靜靜清掉（`.map(x => x.trim()).filter(Boolean)`）⇒ `[' ']`、`['']` 被放過
   //    對照名字用 `harmless`（不被任何其他規則碰巧擋住），所以紅一定是因為「壞設定沒被擋」。
@@ -270,6 +270,14 @@ test('⑬兩張樣式表照正本的分工生效（裁示者 2026-09-24 裁庚�
   for (const 壞 of [[' unrelated '], ['\tunrelated\t']]) {
     assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
       `新表有「非空但帶前後空白」的項 ${JSON.stringify(壞)} ＝壞設定，一律拒絕（不可以靜靜 trim 成合法）`);
+  }
+  // ⚠️ **第四種退化**（r8 #2）：把佔位值的**精確相等**改成**包含判斷**
+  //    （`filter((x) => x !== UNSET)` → `filter((x) => !x.includes(UNSET))`）
+  //    ⇒ 非法項先被刪掉，後面的文法與編譯驗證就看不到它。
+  //    下面兩發是「**含佔位文字、但不等於佔位值**」的壞設定，精確相等會擋、包含判斷會放行。
+  for (const 壞 of [['未設定('], [' 未設定 ']]) {
+    assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: 壞 }).deny, true,
+      `新表有 ${JSON.stringify(壞)}（含佔位文字但不等於它）＝壞設定，一律拒絕`);
   }
   // 對照：`['未設定']` 是既有的合法佔位語意，**不可以**被當成壞設定
   assert.equal(decide('mcp__any__harmless', { ...FORBIDDEN, patternsReadSafe: ['未設定'] }).deny, false,
