@@ -506,7 +506,10 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
 
       // ⚠️ 下面的失敗訊息**刻意只印索引、鍵名與數量，不印命令列也不印值**（Codex r1 #2）：
       //    失敗輸出會進 CI 的公開日誌，把整條命令列回聲出去等於把絕對路徑印上去。
-      // ① 命令列（argv ∪ execArgv）：不可以出現這一題用到的任何一個假密碼
+      // ① 命令列（**`argv0` ∪ `argv` ∪ `execArgv`**）：不可以出現這一題用到的任何一個假密碼。
+      //    ⚠️ 三個少看任何一個，`ps` 看得見的東西就有一塊量不到：旗標在 `execArgv`、
+      //    父端指定的**原始 argv[0]** 在 `argv0`（`argv[0]` 放的是執行檔路徑）。
+      //    `--title=<密碼>` 與 `argv0: <密碼>` 兩種都實測過會漏（後者＝Codex r3 #1）。
       assert.deepEqual(echo.argvHits, [],
         `子行程的命令列帶著密碼（${kind}）：命中 ${echo.argvHits.length} 處，`
         + `第幾個密碼→參數位置＝${JSON.stringify(echo.argvHits)}（共 ${echo.argvLen} 個參數）\n`

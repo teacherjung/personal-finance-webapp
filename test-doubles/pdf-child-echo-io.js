@@ -24,13 +24,14 @@
 //
 // ⚠️ **刻意不回傳任何環境變數的值、也不回傳整條命令列**（審查者 r1 #2）：
 //    失敗訊息會進 CI 的公開日誌。回傳的只有**索引、鍵名、布林**這種去內容的診斷。
-//    密碼本身只回 SHA-256 前 16 碼，讓父端證明「原封不動到了」而不必看到它。
+//    密碼本身只回**完整** SHA-256（Codex r3 #2：這裡原本寫「前 16 碼」，跟程式不一樣了），
+//    讓父端證明「原封不動到了」而不必看到它。
 //
 // ⚠️ **正對照都在這支裡面**：`canaryInEnvValues`（`PDF_ECHO_CANARY` 的值一定在 env 裡，
 //    所以必須命中——否則代表搜尋根本沒在跑）、`searched`（實際走過幾個 needle）。
 //    少了它們，一支永遠回空陣列的壞替身會讓那一題永遠綠。
 import { readFileSync } from 'node:fs';
-import { stdout, env, argv, execArgv } from 'node:process';
+import { stdout, env, argv, execArgv, argv0 } from 'node:process';
 import { createHash } from 'node:crypto';
 
 // 首行＝JSON 標頭（含 password），換行之後＝base64 內容；照正式協定讀，不然父行程會 EPIPE。
@@ -50,8 +51,13 @@ try {
 
 // ⚠️ **`process.argv` 不含 node 自己的旗標**（`--max-old-space-size=…` 在 `execArgv`）：
 //    只看 argv 的話，把密碼塞進旗標位置（`--title=<密碼>` 是合法 node 旗標）
-//    會在 `ps` 裡看得見、而量測看不見。⇒ 兩個都搜。
-const 命令列 = [...argv, ...execArgv];
+//    會在 `ps` 裡看得見、而量測看不見。
+// ⚠️ **`process.argv0` 也要**（Codex r3 #1，阻擋級）：Node 把**原始的 argv[0]** 另外存在
+//    `process.argv0`；`process.argv[0]` 放的是執行檔路徑，**不是**父端指定的那個值。
+//    父端只要在現有的 spawn 選項加 `argv0: 密碼`，`ps -p <pid> -o args=` 就讀得到它，
+//    而 `argv` ∪ `execArgv` **兩個都不含**——他實測整檔連續兩次 40/40、exit 0（假綠）。
+//    這是**父端 spawn 指定的 argv 交付面**上的一個沒被觀察到的位置，不是新的外流管道。
+const 命令列 = [String(argv0), ...argv, ...execArgv];
 // ⚠️ 再一層更接近真相的：**作業系統實際看到的那一行**。Linux（CI 跑的就是）讀得到
 //    `/proc/self/cmdline`；macOS 沒有 /proc，讀不到就回 null 並說明原因——**不假裝讀到了**。
 let osCmdline = null;
