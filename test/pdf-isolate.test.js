@@ -468,15 +468,21 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
   const CANARY = 'canary-env-value-8f3a1c';
   // 形狀像身分證字號；**不含 password 這個字**，字面絆線抓不到。四種各不同＝順便驗跨種串音。
   const SECRETS = PDF_ISOLATE_KINDS.map((k, n) => `A12345678${n}-sentinel-${k}`);
+  // ⚠️ **建目錄之後的每一步都要在 try 裡面**（Codex r2 #2）：上一版把寫檔、設 env、裝替身
+  //    放在 try **之前**，所以那幾步只要拋錯就跳過 `finally`、暫存目錄留在磁碟上。
+  //    他實測（裝替身前注入同步例外）兩次都各留下 1 個目錄。⇒ 只有 `mkdtempSync` 留在外面
+  //    （它自己失敗就沒有東西要清），其餘全部搬進來。
   const needleDir = mkdtempSync(join(tmpdir(), 'pdf-echo-needles-'));
-  const needleFile = join(needleDir, 'needles.txt');
-  writeFileSync(needleFile, `${SECRETS.join('\n')}\n`);
+  // ⚠️ `prev` 的擷取是**純讀取、不會拋錯**，所以留在 try 外面：這樣「setup 拋錯」時
+  //    `finally` 還原到的是**真正的原值**，不會把原本就存在的值誤刪成 undefined。
   const prev = { canary: process.env.PDF_ECHO_CANARY, needles: process.env.PDF_ECHO_NEEDLES };
-  process.env.PDF_ECHO_CANARY = CANARY;
-  process.env.PDF_ECHO_NEEDLES = needleFile;
-  setPdfChildScriptForTest(fakeChild('pdf-child-echo-io.js'));
   let 驗了 = 0;
   try {
+    const needleFile = join(needleDir, 'needles.txt');
+    writeFileSync(needleFile, `${SECRETS.join('\n')}\n`);
+    process.env.PDF_ECHO_CANARY = CANARY;
+    process.env.PDF_ECHO_NEEDLES = needleFile;
+    setPdfChildScriptForTest(fakeChild('pdf-child-echo-io.js'));
     for (const [n, kind] of PDF_ISOLATE_KINDS.entries()) {
       const SECRET = SECRETS[n];
       /** @type {any} */
@@ -520,7 +526,10 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
     for (const [k, v] of [['PDF_ECHO_CANARY', prev.canary], ['PDF_ECHO_NEEDLES', prev.needles]]) {
       if (v === undefined) delete process.env[String(k)]; else process.env[String(k)] = String(v);
     }
-    rmSync(needleDir, { recursive: true, force: true });   // 假密碼不留在磁碟上
+    // 假密碼不留在磁碟上——⚠️ **射程＝清理路徑有跑到的時候**：SIGKILL／關掉終端機／
+    //    機器斷電時 `finally` 本來就不會跑，這句不保證那些情況（Codex r2 #2 的語意邊界）。
+    //    檔案裡只有考題固定生成的假密碼，沒有任何真密碼。
+    rmSync(needleDir, { recursive: true, force: true });
   }
   // 數量絆線：迴圈一個都沒跑到（提早 break）不可以算過。
   // ⚠️ **它守不住「`PDF_ISOLATE_KINDS` 本身被改成空的」**（Codex r1 #4）：那時 0 === 0 會綠。

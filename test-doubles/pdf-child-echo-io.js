@@ -96,7 +96,9 @@ stdout.write(JSON.stringify({
     canaryInEnvValues: keysWhoseValueHas(canary),
     // 這一輪 stdin 標頭真的收到什麼（只回雜湊，不回值）
     headerSha: header.password ? createHash('sha256').update(String(header.password)).digest('hex').slice(0, 16) : '',
-    // 作業系統那一行有沒有含本輪的 kind（父端用來確認讀到的是這個行程的）
+    // 作業系統那一行**有沒有含本行程的任何一個參數**（父端用來確認讀到的是這個行程的）。
+    // ⚠️ Codex r2 #1：上一版註解寫「含本輪的 kind」——**跟程式不一樣**，`some()` 是
+    //    「任一個 argv／execArgv 項目出現在 OS 命令列裡」就算。已改成跟實作對得上。
     osHasArg: osCmdline !== null ? 命令列.some((a) => osCmdline !== null && osCmdline.includes(a)) : null,
   },
 }));
