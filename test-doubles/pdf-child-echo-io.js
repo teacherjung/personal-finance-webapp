@@ -115,7 +115,8 @@ stdout.write(JSON.stringify({
     headerSha: header.password ? createHash('sha256').update(String(header.password)).digest('hex') : '',
     // 作業系統那一行**有沒有含本行程的任何一個參數**（父端用來確認讀到的是這個行程的）。
     // ⚠️ Codex r2 #1：上一版註解寫「含本輪的 kind」——**跟程式不一樣**，`some()` 是
-    //    「任一個 argv／execArgv 項目出現在 OS 命令列裡」就算。已改成跟實作對得上。
+    //    「**`命令列` 裡任一項**（＝`argv0` ∪ `argv` ∪ `execArgv`）出現在 OS 命令列裡」就算。
+    //    ⚠️ Codex r4 #1：`argv0` 加進來之後這句只寫 argv／execArgv 就又變成假話了，已補。
     osHasArg: osCmdline !== null ? 命令列.some((a) => osCmdline !== null && osCmdline.includes(a)) : null,
   },
 }));
