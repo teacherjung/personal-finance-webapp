@@ -442,28 +442,131 @@ test('畸形 PDF 的錯誤也要原味帶回來（另一條錯誤路徑）', asy
 // ============================================================================
 
 test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀得到）——Codex #350 r1 抓到的 PII 洩漏', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
-  const { join, dirname } = await import('node:path');
-  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const parent = readFileSync(join(ROOT, 'lib/pdf-isolate.js'), 'utf8');
+  // ⚠️ **這一題 v1 是字面絆線、擋不住換個變數名**（2026-09-25 全庫稽核實測）：
+  //    原本三條斷言全是**搜父行程的原始碼**、只認 `password` 這個字。實測把密碼換個名字塞進
+  //    spawn 的參數陣列，**39 題全綠、exit 0（跑兩次）**，而 `ps -A -o args=` 真的讀到明碼。
+  //    更根本的是：父行程的 spawn **沒有給 `env` 選項**，子行程整份環境變數是**繼承**的
+  //    ——那條 `/env\s*:\s*\{[^}]*password/` 連「先寫進 `process.env` 再 spawn」都搜不到。
+  //    ⇒ 改成**由子行程自己看它實際拿到的 argv 與 env**（替身＝`test-doubles/pdf-child-echo-io.js`）。
+  //    ⚠️ 射程：量的是 `runInChild` 這一條路（argv 只在那裡組一次、種類只是參數），
+  //    **不宣稱**「密碼在整個系統裡不會以任何方式外流」。
+  // ⚠️ **四種 kind 全跑，不抽代表**（本倉庫自己的教訓：抽一發會抽到唯一有覆蓋的那格）：
+  //    `kind` 只是同一段 argv 組法的參數，四種都走完＝「只有某一種才洩」的分支躲不過去。
+  //    ⚠️ 誠實劃界：`xlsx` 的正式路徑（`extractXlsxIsolated`，`runInChild('xlsx', data, undefined)`）
+  //    **根本不傳密碼**（Grok 複審後掃 §1③：我原本把它寫成 `extractXlsxRows`，那個名字全庫不存在）；這裡用
+  //    `extractPdfLines` 餵它只是為了把 `kind` 這個維度走完，不代表正式 xlsx 路徑有密碼可洩。
+  // ⚠️ **每一輪都要搜「這一題用到的全部四個假密碼」，不是只搜本輪那一個**（Codex r1 #1 阻擋級）：
+  //    上一版每輪只搜本輪的 SECRET。他的突變＝父行程把**上一輪**的密碼放進本輪 argv
+  //    （stdin 仍傳本輪的）⇒ **40 題全綠、exit 0**；放進 env 也全綠。那正是本題宣稱要守的
+  //    同一個面。⇒ 整組假密碼先寫進暫存檔，**只把路徑**給替身（路徑不是機密），替身逐一搜。
+  //    ⚠️ 精確地說：替身**每一輪都搜全部四個**（不只「已經送過的」）——比 r1 要求的更嚴，
+  //    連「父行程把還沒送的密碼先洩出去」也會紅。這是刻意的，不是把範圍寫寬。
+  //    ⚠️ 上一版的註解還寫著「每種用不一樣的密碼，這樣父行程快取上一次的密碼也會被抓到」
+  //    ——**那句是反的**：不同密碼加上「只搜本輪」正好讓那一種看不見。已撤掉那句。
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { createHash } = await import('node:crypto');
+  const CANARY = 'canary-env-value-8f3a1c';
+  // 形狀像身分證字號；**不含 password 這個字**，字面絆線抓不到。四種各不同＝順便驗跨種串音。
+  const SECRETS = PDF_ISOLATE_KINDS.map((k, n) => `A12345678${n}-sentinel-${k}`);
+  // ⚠️ **建目錄之後的每一步都要在 try 裡面**（Codex r2 #2）：上一版把寫檔、設 env、裝替身
+  //    放在 try **之前**，所以那幾步只要拋錯就跳過 `finally`、暫存目錄留在磁碟上。
+  //    他實測（裝替身前注入同步例外）兩次都各留下 1 個目錄。⇒ 只有 `mkdtempSync` 留在外面
+  //    （它自己失敗就沒有東西要清），其餘全部搬進來。
+  const needleDir = mkdtempSync(join(tmpdir(), 'pdf-echo-needles-'));
+  // ⚠️ `prev` 的擷取是**純讀取、不會拋錯**，所以留在 try 外面：這樣「setup 拋錯」時
+  //    `finally` 還原到的是**真正的原值**，不會把原本就存在的值誤刪成 undefined。
+  const prev = { canary: process.env.PDF_ECHO_CANARY, needles: process.env.PDF_ECHO_NEEDLES };
+  let 驗了 = 0;
+  try {
+    const needleFile = join(needleDir, 'needles.txt');
+    writeFileSync(needleFile, `${SECRETS.join('\n')}\n`);
+    process.env.PDF_ECHO_CANARY = CANARY;
+    process.env.PDF_ECHO_NEEDLES = needleFile;
+    setPdfChildScriptForTest(fakeChild('pdf-child-echo-io.js'));
+    for (const [n, kind] of PDF_ISOLATE_KINDS.entries()) {
+      const SECRET = SECRETS[n];
+      /** @type {any} */
+      const echo = await extractPdfLines(kind, async () => { throw new Error('不該走行程內'); }, normalPdf(), SECRET);
+
+      // ⓪ 前置條件——少了它們，下面「沒命中」可能只是因為什麼都沒發生
+      // ⚠️ 比**完整** SHA-256（Grok 複審後掃 §3）：只比前 16 個十六進位字＝64 bit，前綴相同仍可以是兩條不同字串。
+      assert.equal(echo.headerSha, createHash('sha256').update(SECRET).digest('hex'),
+        `前提①（${kind}）：本輪密碼沒有原封不動經由 stdin 標頭到子行程——那下面的「沒命中」證明不了任何事`);
+      assert.equal(echo.needleCount, SECRETS.length,
+        `前提②（${kind}）：替身只拿到 ${echo.needleCount} 個要搜的密碼，應該是 ${SECRETS.length} 個`
+        + '——拿不到整組就等於少搜幾個，命令列／env 裡出現沒搜到的那幾個時這一題會靜靜通過'
+        + '（Grok 複審後掃 §1④：我原本寫「退化成只搜本輪」，那是上一版替身的機制，這一版沒有「本輪」這個模式）');
+      assert.equal(echo.searched, SECRETS.length,
+        `前提③（${kind}）：替身只真的搜過 ${echo.searched} 個，應該是 ${SECRETS.length} 個`);
+      assert.ok(echo.canaryInEnvValues.includes('PDF_ECHO_CANARY'),
+        `前提④（${kind}）：替身的環境變數搜尋沒在跑（正對照找不到 PDF_ECHO_CANARY）`
+        + '——一支永遠回空陣列的壞替身會讓這一題永遠綠');
+      assert.ok(echo.envCount > 5, `前提⑤（${kind}）：子行程的環境變數只有 ${echo.envCount} 筆，不像真的繼承到了`);
+
+      // ⚠️ 下面的失敗訊息**刻意只印索引、鍵名與數量，不印命令列也不印值**（Codex r1 #2）：
+      //    失敗輸出會進 CI 的公開日誌，把整條命令列回聲出去等於把絕對路徑印上去。
+      // ① 命令列（**`argv0` ∪ `argv` ∪ `execArgv`**）：不可以出現這一題用到的任何一個假密碼。
+      //    ⚠️ 三個少看任何一個，`ps` 看得見的東西就有一塊量不到：旗標在 `execArgv`、
+      //    父端指定的**原始 argv[0]** 在 `argv0`（`argv[0]` 放的是執行檔路徑）。
+      //    `--title=<密碼>` 與 `argv0: <密碼>` 兩種都實測過會漏（後者＝Codex r3 #1）。
+      assert.deepEqual(echo.argvHits, [],
+        `子行程的命令列帶著密碼（${kind}）：命中 ${echo.argvHits.length} 處，`
+        + `第幾個密碼→參數位置＝${JSON.stringify(echo.argvHits)}（共 ${echo.argvLen} 個參數）\n`
+        + 'PDF 密碼會出現在 `ps` 的行程清單裡、同機任何程式都讀得到。只能走 stdin 首行標頭。');
+      // ①b 作業系統實際看到的那一行（Linux 才讀得到）。讀不到時**不當成乾淨**，只是少一層對照。
+      if (echo.osAvailable) {
+        assert.ok(echo.osHasArg, `前提⑥（${kind}）：讀到的作業系統命令列跟本行程的參數對不上，不像是這個行程的`);
+        assert.deepEqual(echo.osHits, [],
+          `作業系統看到的命令列帶著密碼（${kind}）：命中 ${echo.osHits.length} 處——這就是 \`ps\` 會印出來的那一行`);
+      }
+      // ② env：值與鍵名都不可以出現這一題用到的任何一個假密碼（環境變數是**繼承**的，先寫 process.env 再 spawn 也算）
+      assert.deepEqual(echo.envValueHits, [],
+        `子行程的環境變數帶著密碼（${kind}）：命中 ${echo.envValueHits.length} 處，`
+        + `第幾個密碼→鍵名＝${JSON.stringify(echo.envValueHits)}——/proc/<pid>/environ 讀得到`);
+      assert.deepEqual(echo.envKeyHits, [],
+        `密碼被當成環境變數的**鍵名**（${kind}）：命中第 ${JSON.stringify(echo.envKeyHits.map((h) => h.i))} 個密碼`);
+      驗了 += 1;
+    }
+  } finally {
+    for (const [k, v] of [['PDF_ECHO_CANARY', prev.canary], ['PDF_ECHO_NEEDLES', prev.needles]]) {
+      if (v === undefined) delete process.env[String(k)]; else process.env[String(k)] = String(v);
+    }
+    // 假密碼不留在磁碟上——⚠️ **射程＝清理路徑有跑到的時候**：SIGKILL／關掉終端機／
+    //    機器斷電時 `finally` 本來就不會跑，這句不保證那些情況（Codex r2 #2 的語意邊界）。
+    //    檔案裡只有考題固定生成的假密碼，沒有任何真密碼。
+    rmSync(needleDir, { recursive: true, force: true });
+  }
+  // 數量絆線：迴圈一個都沒跑到（提早 break）不可以算過。
+  // ⚠️ **這條等式自己守不住「`PDF_ISOLATE_KINDS` 被改成空的」**（Codex r1 #4）：那時 `0 === 0`。
+  //    ⚠️ **但本題不會因此變綠**（Grok 複審後掃 §1②：我原本寫「會綠」，寫反了）——下面那條
+  //    `assert.ok(驗了 > 0)` 會紅。另外還有一題也會紅，它的題名逐字是：
+  //    「`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一個＝那條路悄悄不隔離）」。
+  assert.equal(驗了, PDF_ISOLATE_KINDS.length, `只驗了 ${驗了} 種 kind，應該是 ${PDF_ISOLATE_KINDS.length} 種`);
+  assert.ok(驗了 > 0, '一種都沒驗到');
+});
+
+test('子行程的**原始碼**不從 argv／env 取密碼、也不自己開子行程（**字面絆線**：抓得到的只是幾種寫法，不是行為保證）', () => {
+  // ⚠️ **這是絆線、不是上一題的替代品**：它只搜正式子行程的原始碼字面，改個寫法就繞過。
+  //    留著的理由是它管的是**另一端**：上一題證明「父行程沒把密碼放進 argv／env」，
+  //    這一題讀的是「子行程有沒有打算從那裡拿」。父端不放、子端就拿不到，所以真正的保證在上一題；
+  //    這一支的價值是把 stdin 協定**寫在會紅的地方**，讓有人改協定時至少有一處出聲。
   const child = readFileSync(join(ROOT, 'lib/pdf-isolate-child.js'), 'utf8');
-
-  // ① 父端：spawn 的 argv 陣列裡不准出現 password
-  const m = parent.match(/spawn\(process\.execPath,\s*\n?\s*\[([^\]]*)\]/);
-  assert.ok(m, '找不到 spawn 的 argv 陣列（結構變了就要重寫本題）');
-  assert.ok(!/password/i.test(m[1]),
-    `spawn 的 argv 出現 password：${m[1].trim()}\n` +
-    'PDF 密碼＝身分證字號，argv 會出現在 `ps` 的行程清單裡、同機任何程式都讀得到。改走 stdin 首行標頭。');
-
-  // ② 父端：也不准用環境變數（/proc/<pid>/environ 一樣讀得到）
-  assert.ok(!/env\s*:\s*\{[^}]*password/i.test(parent), 'spawn 的 env 出現 password（environ 讀得到）');
-
-  // ③ 子端：密碼只能從 stdin 標頭來，不准讀 argv／env
   assert.ok(!/process\.argv\[\d\]\s*\|\|?[^\n]*[Pp]assword/.test(child) && !/PASSWORD\s*=\s*process\.argv/.test(child),
     '子行程從 argv 讀密碼');
   assert.ok(!/process\.env\.[A-Z_]*PASSWORD/.test(child), '子行程從 env 讀密碼');
   assert.match(child, /header\.password/, '子行程應從 stdin 首行標頭取密碼');
+  // ⚠️ 正式子行程**自己不開子行程**：它若再 spawn，上一題量到的那一面就不是唯一的命令列面。
+  // ⚠️ **這一條的射程比它看起來窄，Codex r1 #3 實測過兩件事**：
+  //    ①`import 'child_process';`（**不帶 `node:` 前綴**，合法寫法）**抓不到**——兩題 2/2 綠。
+  //    ②純註解 `// import 'node:child_process';` **會誤紅**。
+  //    ⇒ 所以它**不保證「沒引入」，也沒有完全避開註解誤紅**。它是一條「會出聲的字面絆線」，
+  //      偵測的是**帶 `node:` 前綴的引入字面形狀**，僅此而已。
+  //    ⇒ **刻意不再往上補**（`createRequire`、字串組合、不帶前綴的形狀…）：那是列舉出口、補不完。
+  //      真要升格成架構禁令，另案用既有的 lint／語法樹機制做（本檔的接縫就是那樣守的）。
+  assert.doesNotMatch(child, /(?:from|import|require)\s*\(?\s*['"]node:child_process['"]/,
+    '正式子行程出現「帶 node: 前綴的 child_process 引入字面」'
+    + '——射程只到這個形狀，不代表沒有別的引入寫法');
 });
 
 test('`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一個＝那條路悄悄不隔離）', () => {
