@@ -1,5 +1,5 @@
 // @ts-check
-// 假子行程⑧：**回報自己的命令列與環境變數裡有沒有出現「考題到目前為止送過的任何一個密碼」**
+// 假子行程⑧：**回報自己的命令列與環境變數裡有沒有出現「考題這一題用到的任何一個假密碼」**
 //            ——給「PDF 密碼不可進 argv／env」那一題用。
 //
 // 為什麼要有這支（2026-09-25 全庫稽核實測）：那一題原本是**搜父行程的原始碼字面**，
@@ -41,7 +41,7 @@ try {
   if (nl > 0) header = JSON.parse(raw.slice(0, nl));
 } catch { /* 父行程先關 stdin 也無所謂——下面照樣回報 */ }
 
-/** 考題送過的全部假密碼（一行一個）。讀不到就是空陣列——父端的數量斷言會紅。 @type {string[]} */
+/** 考題這一題用到的全部假密碼（一行一個，**每一輪都搜全部**，不只已經送過的）。讀不到就是空陣列——父端的數量斷言會紅。 @type {string[]} */
 let needles = [];
 try {
   needles = readFileSync(String(env.PDF_ECHO_NEEDLES || ''), 'utf8')
@@ -64,15 +64,23 @@ try {
 /** 值裡含 s 的環境變數鍵名（s 是空字串就回空陣列——不然會命中全部）。 @param {string} s */
 const keysWhoseValueHas = (s) => (s ? Object.keys(env).filter((k) => String(env[k]).includes(s)) : []);
 
+// ⚠️ **鍵名本身就是密碼時不可以把鍵名回傳出去**（Grok 複審後掃 §2）：
+//    `envValueHits` 原本一律回 `{i, key}`，而「把密碼當成環境變數鍵名、值裡也含它」
+//    的形狀會讓那個鍵名（＝密碼本身）被父端 `JSON.stringify` 印進公開的測試日誌。
+//    ⇒ 鍵名含任何一個 needle 就只回 `{i, keyRedacted: true}`。
+/** 這個鍵名可以印嗎（不含任何一個 needle 才可以）。 @param {string} k */
+const 鍵名可印 = (k) => !needles.some((n) => n && k.includes(n));
 /** @type {{i: number, at: number}[]} */ const argvHits = [];
-/** @type {{i: number, key: string}[]} */ const envValueHits = [];
+/** @type {{i: number, key?: string, keyRedacted?: boolean}[]} */ const envValueHits = [];
 /** @type {{i: number}[]} */ const envKeyHits = [];
 /** @type {{i: number}[]} */ const osHits = [];
 let searched = 0;
 needles.forEach((n, i) => {
   searched += 1;
   命令列.forEach((a, at) => { if (a.includes(n)) argvHits.push({ i, at }); });
-  for (const key of keysWhoseValueHas(n)) envValueHits.push({ i, key });
+  for (const key of keysWhoseValueHas(n)) {
+    envValueHits.push(鍵名可印(key) ? { i, key } : { i, keyRedacted: true });
+  }
   // 鍵名命中時**只回索引不回鍵名**——那個鍵名就是密碼本身。
   if (Object.keys(env).some((k) => k.includes(n))) envKeyHits.push({ i });
   if (osCmdline !== null && osCmdline.includes(n)) osHits.push({ i });
@@ -93,9 +101,12 @@ stdout.write(JSON.stringify({
     osAvailable: osCmdline !== null,
     osCmdlineWhy,
     // 正對照：`PDF_ECHO_CANARY` 的值一定在 env 裡 ⇒ 必須非空
-    canaryInEnvValues: keysWhoseValueHas(canary),
+    // 同一條規則：鍵名含 needle 的不回傳（`PDF_ECHO_CANARY` 這個固定鍵名不含，所以正對照不受影響）。
+    canaryInEnvValues: keysWhoseValueHas(canary).filter(鍵名可印),
     // 這一輪 stdin 標頭真的收到什麼（只回雜湊，不回值）
-    headerSha: header.password ? createHash('sha256').update(String(header.password)).digest('hex').slice(0, 16) : '',
+    // ⚠️ **完整 SHA-256，不截斷**（Grok 複審後掃 §3）：前 16 個十六進位字＝只有 64 bit，
+    //    前綴相同仍可以是兩條不同的字串，撐不起「原封不動」那句話。
+    headerSha: header.password ? createHash('sha256').update(String(header.password)).digest('hex') : '',
     // 作業系統那一行**有沒有含本行程的任何一個參數**（父端用來確認讀到的是這個行程的）。
     // ⚠️ Codex r2 #1：上一版註解寫「含本輪的 kind」——**跟程式不一樣**，`some()` 是
     //    「任一個 argv／execArgv 項目出現在 OS 命令列裡」就算。已改成跟實作對得上。

@@ -452,7 +452,8 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
   //    **不宣稱**「密碼在整個系統裡不會以任何方式外流」。
   // ⚠️ **四種 kind 全跑，不抽代表**（本倉庫自己的教訓：抽一發會抽到唯一有覆蓋的那格）：
   //    `kind` 只是同一段 argv 組法的參數，四種都走完＝「只有某一種才洩」的分支躲不過去。
-  //    ⚠️ 誠實劃界：`xlsx` 的正式路徑（`extractXlsxRows`）**根本不傳密碼**；這裡用
+  //    ⚠️ 誠實劃界：`xlsx` 的正式路徑（`extractXlsxIsolated`，`runInChild('xlsx', data, undefined)`）
+  //    **根本不傳密碼**（Grok 複審後掃 §1③：我原本把它寫成 `extractXlsxRows`，那個名字全庫不存在）；這裡用
   //    `extractPdfLines` 餵它只是為了把 `kind` 這個維度走完，不代表正式 xlsx 路徑有密碼可洩。
   // ⚠️ **每一輪都要搜「這一題用到的全部四個假密碼」，不是只搜本輪那一個**（Codex r1 #1 阻擋級）：
   //    上一版每輪只搜本輪的 SECRET。他的突變＝父行程把**上一輪**的密碼放進本輪 argv
@@ -489,11 +490,13 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
       const echo = await extractPdfLines(kind, async () => { throw new Error('不該走行程內'); }, normalPdf(), SECRET);
 
       // ⓪ 前置條件——少了它們，下面「沒命中」可能只是因為什麼都沒發生
-      assert.equal(echo.headerSha, createHash('sha256').update(SECRET).digest('hex').slice(0, 16),
+      // ⚠️ 比**完整** SHA-256（Grok 複審後掃 §3）：只比前 16 個十六進位字＝64 bit，前綴相同仍可以是兩條不同字串。
+      assert.equal(echo.headerSha, createHash('sha256').update(SECRET).digest('hex'),
         `前提①（${kind}）：本輪密碼沒有原封不動經由 stdin 標頭到子行程——那下面的「沒命中」證明不了任何事`);
       assert.equal(echo.needleCount, SECRETS.length,
         `前提②（${kind}）：替身只拿到 ${echo.needleCount} 個要搜的密碼，應該是 ${SECRETS.length} 個`
-        + '——拿不到整組就退化成「只搜本輪」，那正是 r1 #1 的假綠');
+        + '——拿不到整組就等於少搜幾個，命令列／env 裡出現沒搜到的那幾個時這一題會靜靜通過'
+        + '（Grok 複審後掃 §1④：我原本寫「退化成只搜本輪」，那是上一版替身的機制，這一版沒有「本輪」這個模式）');
       assert.equal(echo.searched, SECRETS.length,
         `前提③（${kind}）：替身只真的搜過 ${echo.searched} 個，應該是 ${SECRETS.length} 個`);
       assert.ok(echo.canaryInEnvValues.includes('PDF_ECHO_CANARY'),
@@ -503,7 +506,7 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
 
       // ⚠️ 下面的失敗訊息**刻意只印索引、鍵名與數量，不印命令列也不印值**（Codex r1 #2）：
       //    失敗輸出會進 CI 的公開日誌，把整條命令列回聲出去等於把絕對路徑印上去。
-      // ① 命令列（argv ∪ execArgv）：不可以出現任何一個送過的密碼
+      // ① 命令列（argv ∪ execArgv）：不可以出現這一題用到的任何一個假密碼
       assert.deepEqual(echo.argvHits, [],
         `子行程的命令列帶著密碼（${kind}）：命中 ${echo.argvHits.length} 處，`
         + `第幾個密碼→參數位置＝${JSON.stringify(echo.argvHits)}（共 ${echo.argvLen} 個參數）\n`
@@ -514,7 +517,7 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
         assert.deepEqual(echo.osHits, [],
           `作業系統看到的命令列帶著密碼（${kind}）：命中 ${echo.osHits.length} 處——這就是 \`ps\` 會印出來的那一行`);
       }
-      // ② env：值與鍵名都不可以出現任何一個送過的密碼（環境變數是**繼承**的，先寫 process.env 再 spawn 也算）
+      // ② env：值與鍵名都不可以出現這一題用到的任何一個假密碼（環境變數是**繼承**的，先寫 process.env 再 spawn 也算）
       assert.deepEqual(echo.envValueHits, [],
         `子行程的環境變數帶著密碼（${kind}）：命中 ${echo.envValueHits.length} 處，`
         + `第幾個密碼→鍵名＝${JSON.stringify(echo.envValueHits)}——/proc/<pid>/environ 讀得到`);
@@ -532,8 +535,10 @@ test('**PDF 密碼絕不可進 argv／env**（＝身分證字號；`ps` 就讀�
     rmSync(needleDir, { recursive: true, force: true });
   }
   // 數量絆線：迴圈一個都沒跑到（提早 break）不可以算過。
-  // ⚠️ **它守不住「`PDF_ISOLATE_KINDS` 本身被改成空的」**（Codex r1 #4）：那時 0 === 0 會綠。
-  //    那一種由另一題「`PDF_ISOLATE_KINDS` 與子行程 EXTRACTORS 必須一一對應」抓（實測會紅）。
+  // ⚠️ **這條等式自己守不住「`PDF_ISOLATE_KINDS` 被改成空的」**（Codex r1 #4）：那時 `0 === 0`。
+  //    ⚠️ **但本題不會因此變綠**（Grok 複審後掃 §1②：我原本寫「會綠」，寫反了）——下面那條
+  //    `assert.ok(驗了 > 0)` 會紅。另外還有一題也會紅，它的題名逐字是：
+  //    「`PDF_ISOLATE_KINDS` 與子行程的 EXTRACTORS 必須一一對應（漏一個＝那條路悄悄不隔離）」。
   assert.equal(驗了, PDF_ISOLATE_KINDS.length, `只驗了 ${驗了} 種 kind，應該是 ${PDF_ISOLATE_KINDS.length} 種`);
   assert.ok(驗了 > 0, '一種都沒驗到');
 });
