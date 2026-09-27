@@ -311,7 +311,7 @@ test('③--claude 落地：位置、四個唯讀檔、沒有暫存殘留；再�
     return { bad, badHome };
   };
   const crash = failsWith(editFile('tools/settings-data.js', () => "'use strict';\nthrow new Error('載入就崩');\n"), /沒有被乾淨地放行[\s\S]*退 2/u, '攔截器載入就崩');
-  failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("return { code: 0, output: d.deny ? hookOutput(d.why, name) : '' };", "return { code: 0, output: '' };")), /沒有一個被擋下/u, '攔截器被改成什麼都放');
+  failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("return { code: 0, output: d.deny ? hookOutput(d.why, name, d.kind) : '' };", "return { code: 0, output: '' };")), /沒有一個被擋下/u, '攔截器被改成什麼都放');
   failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("if (r.output) process.stdout.write(`${r.output}\\n`);", "process.stdout.write(r.output ? `${r.output}\\n` : 'hello\\n');")), /沒有被乾淨地放行/u, '放行時往標準輸出印字');
   failsWith(editFile(CLAUDE_TEMPLATE_REL, (c) => { const out = c.replace(FP_FAIL, FP_FAIL.replace('exit 2', 'exit 0')); assert.notEqual(out, c, '前提：真的改到範本'); return out; }), /指紋檢查沒有作用/u, '範本的指紋檢查被改成不擋（提交進版本）');
   const cliBad = tool(crash.bad, ['--claude'], { home: crash.badHome });
@@ -555,7 +555,8 @@ test('⑥核心宣稱：樹裡改清單沒有用——工作樹改弱、切到�
   fs.writeFileSync(settingsFile, strict);
 
   // (c) 環境指向另一個清單很鬆的倉庫：那一行根本不問 git
-  const loose = sourceRepo(scratch, { forbidden: { name: '測試禁區', deny: ['mcp__z__only'] } });
+  // 登記制之後「鬆的清單」要把 DENIED 那個假連接器登記成不碰禁區才真的鬆（沒登記照樣擋、對照組就證明不了讀到它）
+  const loose = sourceRepo(scratch, { forbidden: { name: '測試禁區', deny: ['mcp__z__only'], safeServers: ['fakebroker', 'other'] } });
   const looseEnv = { GIT_DIR: path.join(loose, '.git'), GIT_WORK_TREE: loose };
   const withoutClearing = live.replace(/^root="\$\(.*?git rev-parse/u, 'root="$(git rev-parse');
   allows(inTree(withoutClearing, looseEnv), '對照組：會問 git 又不清環境的寫法，真的讀到鬆的清單而放行');

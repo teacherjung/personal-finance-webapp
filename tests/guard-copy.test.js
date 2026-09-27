@@ -36,7 +36,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { gitEnv } = require('../tools/git-env.js');
 const { cli } = require('../tools/forbidden-tools.js');
-const { COPY_FILES, PLACEHOLDERS, ALLOW_PROBES, fingerprintDir, build, Refusal } = require('../tools/guard-copy.js');
+const { COPY_FILES, PLACEHOLDERS, allowProbes, fingerprintDir, build, Refusal } = require('../tools/guard-copy.js');
 
 const KIT = path.join(__dirname, '..');
 const SHASUM = '/usr/bin/shasum';
@@ -44,8 +44,10 @@ const CRASH = /require is not defined in ES module scope/u;
 const MISMATCH = /指紋對不上/u;
 const STARTUP = /起不來/u;
 // 全是假名（連接器、工具名都是編的）
+// 登記制（2026-09-26）之後 mcp__ 名字所屬的連接器沒登記一律擋：ALLOWED 那個假連接器 other 登記為不碰禁區，
+// 自我試跑的放行假名也接在它後面（tools/guard-copy.js 的 allowProbes 從 safeServers 產）。
 const FAKE = {
-  name: '測試禁區', servers: ['fakebroker'], allowlist: ['get_quote'], deny: ['mcp__other__harmless_named_thing'],
+  name: '測試禁區', servers: ['fakebroker'], safeServers: ['other'], allowlist: ['get_quote'], deny: ['mcp__other__harmless_named_thing'],
   verbs: ['create', 'place'], nouns: ['widget'], readPrefixes: ['get'], patterns: [],
 };
 const DENIED = 'mcp__fakebroker__place_widget';
@@ -175,7 +177,8 @@ test('②③④印出來的指令真的跑一遍：擋、放、改一個位元�
   const loose = path.join(scratch, 'loose-copy');
   fs.cpSync(copyDir, loose, { recursive: true });
   for (const p of walk(loose)) fs.chmodSync(p, 0o755);
-  fs.writeFileSync(path.join(loose, 'settings.json'), `${JSON.stringify({ forbidden: { ...FAKE, servers: ['nothing_here'], verbs: ['nothing_here'] } }, null, 2)}\n`);
+  // 登記制之後「放寬」得把 DENIED 那個假連接器登記成不碰禁區，不然沒登記照樣擋、這一段證明不了讀到放寬的清單
+  fs.writeFileSync(path.join(loose, 'settings.json'), `${JSON.stringify({ forbidden: { ...FAKE, servers: ['nothing_here'], safeServers: [...FAKE.safeServers, 'fakebroker'], verbs: ['nothing_here'] } }, null, 2)}\n`);
   const swapToLink = (rel, target) => {
     const at = path.join(copyDir, rel);
     const saved = `${at}.saved`;
@@ -453,11 +456,14 @@ test('⑨自我試跑真的抓得到：什麼都放、什麼都擋、指紋檢�
     assert.match(r.failure, re, `${why}：${r.failure}`);
   };
   const editFile = (rel, fn) => ({ edit: (dir) => fs.writeFileSync(path.join(dir, rel), fn(fs.readFileSync(path.join(dir, rel), 'utf8'))) });
-  failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("return { code: 0, output: d.deny ? hookOutput(d.why, name) : '' };", "return { code: 0, output: '' };")),
+  failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("return { code: 0, output: d.deny ? hookOutput(d.why, name, d.kind) : '' };", "return { code: 0, output: '' };")),
     /沒有一個被擋成退 2/u, '指令入口被改成什麼都放（判斷層照常）');
   failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace('function decide(toolName, forbidden) {', 'function decide() { return { deny: false };\n}\nfunction decideOriginal(toolName, forbidden) {')),
     /沒有一個被擋成退 2/u, '判斷層被改成什麼都放');
-  failsWith({ forbidden: { name: '測試禁區', servers: ['fake broker with space'] } }, /沒有被乾淨地放行[\s\S]*設定壞掉/u, '清單壞到什麼都擋');
+  failsWith({ forbidden: { name: '測試禁區', servers: ['fake broker with space'], safeServers: ['other'] } }, /沒有被乾淨地放行[\s\S]*設定壞掉/u, '清單壞到什麼都擋');
+  // 登記制（2026-09-26）：沒登記任何不碰禁區的連接器＝試跑找不到能放行的假名＝自我試跑失敗、照實說要先登記
+  //（兩側各留下什麼、碰禁區白名單上的工具仍放行＝guard-copy.js 檔頭；這一題只驗訊息）
+  failsWith({ forbidden: { ...FAKE, safeServers: [] } }, /safeServers 是空的[\s\S]*先把不碰禁區的連接器登記進 safeServers/u, 'safeServers 空');
   failsWith(editFile('templates/hook-codex-global.json', (c) => c.replace("指紋對不上）：一律當成拒絕' >&2; exit 2; }", "指紋對不上）：一律當成拒絕' >&2; exit 0; }")),
     /指紋檢查沒有作用/u, '範本的指紋檢查被拿掉（提交進版本）');
   failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("if (r.output) process.stdout.write(`${r.output}\\n`);", "process.stdout.write(r.output ? `${r.output}\\n` : 'hello\\n');")),
@@ -480,23 +486,26 @@ test('⑨自我試跑真的抓得到：什麼都放、什麼都擋、指紋檢�
   }
 
   // 試跑的第一個無害名字剛好在專案的拒絕清單上：換下一個，照樣過
-  const src = sourceRepo(scratch, { forbidden: { ...FAKE, deny: [ALLOW_PROBES[0], ...FAKE.deny] } });
+  const src = sourceRepo(scratch, { forbidden: { ...FAKE, deny: [allowProbes(FAKE)[0], ...FAKE.deny] } });
   const r = build({ root: src, home, allowTemp: true, from: 'HEAD', to: path.join(scratch, 'st-collide') });
   assert.equal(r.failure, null, `試跑名字被清單擋到時要換一個（${r.failure}）`);
 }));
 
 test('⑩只靠樣式規則的清單：沒給 --deny-probe 就拒絕（什麼都不寫）；給了照清單該擋的假名就能裝，給的名字不擋或不合法就不過', () => withScratch((scratch) => {
   const home = fs.mkdtempSync(path.join(scratch, 'home-'));
-  const patternsOnly = { name: '測試禁區', patterns: ['^create_widget$'] };
+  // 登記制（2026-09-26）之後：mcp__ 名字只有碰禁區連接器白名單上的工具靠樣式規則決定擋不擋；沒登記的連接器一律擋、
+  // 登記為不碰禁區的整個放行。所以「只靠樣式規則」的清單仍要有 safeServers（試跑的放行假名從那裡產），
+  // 「照清單該擋」的假名＝沒登記的連接器（登記制擋）、「照清單不擋」的假名＝不碰禁區連接器上的。
+  const patternsOnly = { name: '測試禁區', safeServers: ['other'], patterns: ['^create_widget$'] };
   const src = sourceRepo(scratch, { forbidden: patternsOnly });
   const to = path.join(scratch, 'p-none');
   assert.throws(() => build({ root: src, home, from: 'HEAD', allowTemp: true, to }), (e) => e instanceof Refusal && /--deny-probe/u.test(e.message), '沒給 --deny-probe');
   assert.ok(!fs.existsSync(to), '沒給 --deny-probe：不可以留下目的地');
   const ok = build({ root: src, home, from: 'HEAD', allowTemp: true, to: path.join(scratch, 'p-ok'), denyProbe: 'mcp__guard_copy_selftest__create_widget' });
   assert.equal(ok.failure, null, `給了照清單該擋的假名就能裝（${ok.failure}）`);
-  denies(hook(ok.group.hooks[0].command, { tool: 'mcp__other__create_widget' }), '裝好的指令照樣式擋');
+  denies(hook(ok.group.hooks[0].command, { tool: 'mcp__unregistered_zz__create_widget' }), '裝好的指令照清單擋（沒登記的連接器）');
   allows(hook(ok.group.hooks[0].command, { tool: 'mcp__other__get_widget' }), '裝好的指令照常放行');
-  const wrong = build({ root: src, home, from: 'HEAD', allowTemp: true, to: path.join(scratch, 'p-wrong'), denyProbe: 'mcp__guard_copy_selftest__get_widget' });
+  const wrong = build({ root: src, home, from: 'HEAD', allowTemp: true, to: path.join(scratch, 'p-wrong'), denyProbe: 'mcp__other__get_widget' });
   assert.match(wrong.failure || '', /沒有一個被擋成退 2/u, '給的名字照清單不擋：不過（不改試別的）');
   assert.throws(() => build({ root: src, home, from: 'HEAD', allowTemp: true, to: path.join(scratch, 'p-illegal'), denyProbe: 'mcp__has space__x' }), (e) => e instanceof Refusal && /合法的假工具名/u.test(e.message), '--deny-probe 不合法');
   // 指令入口也收這個參數

@@ -58,7 +58,11 @@ function fakeFilled({ log, box, zones }) {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),
   };
-  s.forbidden = { name: '錢', servers: ['broker-x'], allowlist: ['get_watchlist'], deny: ['mcp__o__x'], verbs: ['create', 'place'], nouns: ['order'], readPrefixes: ['get'], patterns: [], patternsReadSafe: [] };
+  // 禁區清單：從空白範本的預設名單出發、再疊上假的（2026-09-27 起範本帶預設；tests/forbidden-defaults.test.js 要求專案 ⊇ 預設，
+  // 巢狀那一輪也要過，而且它在那一輪才真的跑到比對）。預設裡的連接器登記名與工具名只是字串、只進 decide() 比對，
+  // 這一輪不會呼叫任何工具——錄音機零次與零寫入的斷言照樣釘著（它們釘的是平台動作、合併、三關、隔離、gh，不是這一塊）
+  const fb = s.forbidden;
+  s.forbidden = { ...fb, name: '錢', servers: [...fb.servers, 'broker-x'], safeServers: [...fb.safeServers, 'other'], deny: [...fb.deny, 'mcp__o__x'] };
   s.acceptance = { tiers: [{ id: '重', action: '重啟' }, { id: '輕', action: '看一眼' }], families: [{ pattern: '^lib/', tier: '重' }, { pattern: '^docs/', tier: '輕' }], unknownTier: '重' };
   s.checks = { prepareWorktree: recorder(log, 'prepare'), commands: [recorder(log, 'check')], mainWorktree: '一般工作樹', indexAnchors: ['README.md'] };   // 準備指令也填成有動作的（r1 T1：填「無」＝這一格沒考到）；兩個選填登記也填成登記了的樣子
   s.gates = s.gates.map((g) => ({ ...g, state: '已啟用' }));
@@ -91,7 +95,9 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     for (const { file, patterns } of settings.ignoreLists) fs.writeFileSync(path.join(copy, file), `${patterns.join('\n')}\n`);
     fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\necho "gh $*" >> ${JSON.stringify(log)}\nexit 97\n`, { mode: 0o755 });
 
-    const env = { ...gitEnv(), HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, KIT_NESTED_SUITE: '1' };
+    // KIT_FILLED_SUITE＝「這一輪的設定是 fakeFilled」：誘餌倉庫那題也會整卷重跑、也帶 KIT_NESTED_SUITE，但它用的是根目錄的真設定；
+    // tests/forbidden-defaults.test.js ②b 只在這一輪檢查（① 在套件倉庫只有這一輪真的比對）
+    const env = { ...gitEnv(), HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, KIT_NESTED_SUITE: '1', KIT_FILLED_SUITE: '1' };
     delete env.NODE_TEST_CONTEXT;   // 不拿掉的話子行程的 node --test 不管紅不紅都退 0
     const sh = (args) => spawnSync(args[0], args.slice(1), { cwd: copy, env, encoding: 'utf8' });
     assert.ok(!fs.existsSync(path.join(copy, 'cases')), '前提：複本不帶案例簿');

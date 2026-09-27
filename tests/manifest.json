@@ -11,6 +11,7 @@
   "data-contract.test.js",
   "file-names.test.js",
   "filled-settings.test.js",
+  "forbidden-defaults.test.js",
   "forbidden-tools.test.js",
   "git-env.test.js",
   "guard-copy-claude.test.js",

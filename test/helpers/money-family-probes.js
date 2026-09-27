@@ -18,7 +18,14 @@
  * 探針的**行為**正確性另由兩張考卷的實跑斷言把守；**不准在別處複抄清單本體**。
  *
  * 內容逐字自 money-boundary.test.js 搬入，沿革註解原樣保留；增刪探針時
- * 兩個字面數量釘（EXPECTED_*）要跟著有意識地改。
+ * 字面數量釘（EXPECTED_*）要跟著有意識地改。
+ *
+ * 2026-09-27（⑧，套件登記制同步進來）起本檔另住三樣東西，同樣全專案只有這一份：
+ *   ・`familyNetFixture()`＝家族網夾具：登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具才走到家族網——
+ *     掛在沒登記的連接器上＝整個被登記制擋、掛在不碰錢的連接器上＝整個放行，兩種都**沒有問到家族網**。
+ *     要驗「家族網對各種寫法都擋、對長得像的名字不誤殺」，就得讓探針走碰錢白名單那條路（說明在函式上方）；
+ *   ・`reasonClass()`＝拒絕理由的類別：登記制之後有一批探針「照樣擋、但擋的理由換了」，只斷言擋＝假綠，所以每一組斷言理由類別；
+ *   ・`HARMLESS`＝「這一組不是全擋」的對照名字（原本三支考題各寫死一份）。
  */
 export const FORBIDDEN_TOOLS = [
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__create_order_instruction',
@@ -33,10 +40,15 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 
 // 家族攔截（William 2026-08-04 指示擴編；r2 改為 per-branch 生成——Codex #404 r1 M②）：
 // 下面四張清單是家族網詞表的**承重字表複本**，考題用它們機械生成探針：
-// 清單裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅；
+// 清單裡少任何一個動詞→「{動詞}_order」轉紅；少任何一個名詞→「place_{名詞}」轉紅（security 除外：place_security 另由 patternsReadSafe 那一張接住）；
 // 少任何一個出入金詞→「initiate_{詞}」轉紅；唯讀豁免名單少任何一個→對應放行探針轉紅。
+// ⚠️ 2026-09-27 起（登記制）上面這幾個「轉紅」要分開讀：這些探針掛在沒登記的假連接器上，真清單下**擋不擋由登記制決定**
+// （詞表少一個詞照樣擋）；家族網在那裡只決定理由是不是名字像錢、尾句照接規則 3 那一種（kind 'registry-money'），
+// 唯讀豁免那幾支放行探針在真清單下根本不放行。「擋的理由是家族網」「唯讀豁免真的放行」這兩件**只在 familyNetFixture()
+// 那一份夾具下量得到**——承重的考題＝走夾具的那幾題（test/money-boundary.test.js 的家族網矩陣題、
+// test/codex-global-hook.test.js ③ 的夾具那一輪與 ② 煙霧測的夾具那一輪）。
 // ⚠️ 詞表正本（2026-09-18 第 8 步起只有一份）＝根目錄 settings.json 的 forbidden（verbs／nouns／readPrefixes／patterns），
-// 判斷＝套件的 tools/forbidden-tools.js；本檔與那份清單之間是**單向行為耦合**——清單少一個詞幹會讓探針轉紅，
+// 判斷＝套件的 tools/forbidden-tools.js；本檔與那份清單之間是**單向行為耦合**——清單少一個詞幹會讓夾具下的探針轉紅，
 // 但判斷程式裡多出來的語法或更窄的形態不必然有題目扣著（Claude 自審 2026-09-01 實證：
 // 把那些語法逐項收窄之後兩張考卷仍全綠；已補下面四支探針把它們扣住）。
 // 本檔是**探針的**唯一住所，不是詞表的正本。（09-01〜09-18 詞表曾住在 python 指令裡、而且有兩份，靠身分互鎖考題鎖同步。）
@@ -69,7 +81,12 @@ export const FORBIDDEN_FAMILY = [
 ].map((t) => `${FAKE_UUID}${t}`).concat([
   // r3 H①：CLI 實測可註冊叫 broker__get 的 server ⇒ 切分歧義；歧義處置偏 deny——
   // 每個 __ 後綴都當候選工具查一次，任何候選命中家族網就攔。
+  // ⚠️ #641 之後這一支第一個候選 get__place_order 就命中動詞×名詞，**不再扣住「逐一試」那個迴圈**（2026-09-28 懷疑者突變：
+  // 判斷改成只試第一個候選，錢的相關考題全綠）。要扣住它，得有第一個候選以唯讀字開頭、後面那段只有額外樣式接得住的名字——
+  // 下面那一支就是（#643 的 Codex r1 與 Grok 複審後掃都抓到這個缺口；本專案先補探針，套件那邊的考題仍是待辦）：
+  // 第一個候選 get__initiate_transfer 以唯讀字開頭、額外樣式那一張表替它脫罪，只有後面那段 initiate_transfer 接得住。
   'mcp__broker__get__place_order',
+  'mcp__broker__get__initiate_transfer',
 ]);
 
 // Claude 自審（2026-09-01）：指令的正規式有四個語法**沒有探針承重**——把它們逐項收窄之後
@@ -81,12 +98,18 @@ FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}initiate_remittance`,    // 出入金 `remit(tance)?` 的長形
   `${FAKE_UUID}initiate_disbursement`,  // 出入金 `disburse(ment)?` 的長形
 );
+/** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。 */
+export const EXPECTED_FORBIDDEN_FAMILY = 89;
 
-// 名字長得像、但依規則 2 明文可用的工具——對這些名字「matcher 命中且回 deny」都算誤傷
-// （誤擋跟漏擋一樣是病，#384 誤擋事故）。涵蓋 IBKR 現役唯讀＋提醒/觀察清單全家，
-// 加上跨連接器的高危形狀（create_draft／preview_start／send_message——動詞像、名詞不像，
-// 家族網若寫壞最先誤殺的就是這幾型）。
-export const ALLOWED_LOOKALIKES = [
+// 名字長得像、但不該被家族網擋的工具——對這些名字「matcher 命中且回 deny」都算誤傷
+// （誤擋跟漏擋一樣是病，#384 誤擋事故）。2026-09-27（⑧，登記制）起分成兩組，因為它們在真清單下的命運不同：
+//   ・LOOKALIKES_REGISTERED（掛在真清單登記過的連接器上）＝真清單下要放行：IBKR 現役唯讀＋提醒/觀察清單全家
+//     （碰錢白名單上、照樣走家族網雙保險），加上跨連接器的高危形狀（create_draft／update_scheduled_task／preview_start／
+//     send_message——動詞像、名詞不像）。⚠️ 後四支的連接器在真清單登記為**不碰錢**＝整個放行、**家族網沒被問到**：
+//     家族網若寫壞最先誤殺的就是這幾型，所以夾具把它們的連接器搬進碰錢那一欄，讓家族網真的被問到（familyNetFixture）。
+//   ・LOOKALIKES_UNREGISTERED（掛在沒登記的假連接器上）＝真清單下被登記制擋（理由「沒有登記」）；
+//     夾具下要放行＝家族網不誤殺（撞名、伺服器名帶錢詞、唯讀豁免逐動詞）。
+export const LOOKALIKES_REGISTERED = [
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_order_instructions', // 唯讀：查已存在的委託指示
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_orders',     // 唯讀：查歷史委託
   'mcp__deda1d5d-1ccc-4551-9617-156b9658d236__get_account_trades',     // 唯讀：名字帶 trade 也不准誤殺
@@ -105,18 +128,21 @@ export const ALLOWED_LOOKALIKES = [
   'mcp__scheduled-tasks__update_scheduled_task',                        // 排程：動詞像、不涉錢
   'mcp__Claude_Browser__preview_start',                                 // preview 是家族動詞、名詞不像
   'mcp__ccd_session_mgmt__send_message',                                // send 是家族動詞、名詞不像
+];
+export const LOOKALIKES_UNREGISTERED = [
   `${FAKE_UUID}create_trademark`,                                       // trade+mark 撞名（名詞邊界要接住，r1 M③）
   `${FAKE_UUID}update_sharepoint_page`,                                 // share+point 撞名
   `${FAKE_UUID}firmware_update`,                                        // firm+wire 撞名
   'mcp__payments__create_customer',                                     // 伺服器名帶 payment 不牽連工具（r2 M③）
-  // 唯讀豁免逐動詞探針：指令的豁免名單少掉任何一個，對應這支就會被誤攔＝本考題轉紅。
+  // 唯讀豁免逐動詞探針：指令的豁免名單少掉任何一個，對應這支在夾具下就會被誤攔＝走夾具的那幾題轉紅（真清單下它們被登記制擋）。
   ...READ_VERBS.map((v) => `${FAKE_UUID}${v}_transfer_log`),
 ];
 
 // 數量釘（r1 M②「宣稱 19 實際 18」＋r2 M④「加法式的釘會跟著清單一起縮」——兩面教訓）：
-// 兩個都是**字面數字**，改任何一張清單＝這裡要跟著手改，兩邊對得上才綠。
+// 全是**字面數字**，改任何一張清單＝這裡要跟著手改，兩邊對得上才綠。
 export const EXPECTED_READ_VERBS_COUNT = 14;
-export const EXPECTED_ALLOWED_COUNT = 36;
+export const EXPECTED_LOOKALIKES_REGISTERED = 18;
+export const EXPECTED_LOOKALIKES_UNREGISTERED = 18;
 
 
 // ── 2026-09-02 v6：輸入衛生與姿態閘的探針（Claude／Codex 兩張考卷共用）──────────
@@ -185,8 +211,9 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 隨 python 那組退役），比對前**不做任何正規化**（Codex #540 r1 H2：
  * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
- * ⚠️ 誠實劃界：連接器身分是那串 UUID，**重連換 UUID 這一層就失效、退回家族網**——
- * 那時要回來更新 MONEY_SERVERS（AGENTS「錢的絕對邊界」規則 4 的通報義務接住這件事）。
+ * ⚠️ 誠實劃界：連接器身分是那串 UUID。**重連換了 UUID＝新編號沒登記＝整個連接器被登記制擋**（連唯讀查詢也擋；
+ * 名字像錢的那幾支，理由的尾句照接規則 3 那一句（當誤觸或冒名、回報裁示者）——FORBIDDEN_AFTER_RECONNECT 那兩支就是這個情境）。
+ * 那時的手續（新編號登記進哪一欄、下單類新全名補到哪幾層、登記前先問 William）＝AGENTS「錢的絕對邊界」機械層。
  * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
  * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
  */
@@ -233,3 +260,92 @@ export const MONEY_SERVER_ALLOW = [
   'set_alert_status', 'create_watchlist', 'edit_watchlist', 'delete_watchlist',
 ];
 export const EXPECTED_MONEY_SERVER_ALLOW = 32;
+
+
+// ── 2026-09-27（⑧，套件登記制同步進來）：對照名字、家族網夾具、理由類別 ────────────────
+
+/**
+ * 「這一組不是全擋」的對照名字：掛在真清單登記為**不碰錢**的 terminal 底下＝整個放行（只是字串、只餵攔截器，不會真的叫任何工具）。
+ * 用到它的考題先斷言前提「真清單的 safeServers 有 HARMLESS_SERVER」——拿掉了，失敗訊息才看得懂是前提變了、不是攔截器壞了。
+ * （2026-09-27 之前三支考題各寫死一份 mcp__other__get_widget：登記制之後 other 沒登記＝被擋，對照組不成立。）
+ */
+export const HARMLESS_SERVER = 'terminal';
+export const HARMLESS = `mcp__${HARMLESS_SERVER}__get_widget`;
+
+/**
+ * 探針名字拆成「連接器登記名」與「工具名那一段」：登記名＝mcp__ 後面、下一個 __ 前面那一段（套件登記制的同一把尺），
+ * 工具名那一段＝其後的全部（可以還含 __，例如 mcp__broker__get__place_order 的 get__place_order）。不是這個形狀＝當場丟錯。
+ * @param {string} name
+ */
+export function splitProbe(name) {
+  const m = /^mcp__(.+?)__(.+)$/u.exec(name);
+  if (!m) throw new Error(`探針「${name}」不是 mcp__<登記名>__<工具名> 的形狀，夾具接不住它`);
+  return { server: m[1], tool: m[2] };
+}
+
+/** 夾具預設要讓它走家族網的名字＝家族矩陣全部（該擋的兩組、該放的兩組）。 */
+export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY, ...LOOKALIKES_REGISTERED, ...LOOKALIKES_UNREGISTERED];
+
+/**
+ * 家族網夾具（全專案只有這一份；AGENTS「錢的絕對邊界」考題那一則指到這裡）。
+ * 為什麼：登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具才走到家族網（沒登記＝整個擋、不碰錢＝整個放行，都沒問到它）。
+ * 做法：把 names 裡每個名字的連接器登記成**碰錢**（servers）、工具名那一段放上白名單（allowlist），讓每個名字都走
+ * 「碰錢白名單 → 家族網雙保險」那條路。原本登記在 safeServers 的連接器（跨連接器那四支）**從那一欄搬走**——
+ * 只加進 servers、不從 safeServers 拿掉＝同名兩欄＝設定壞掉、全擋（大小寫不分，跟攔截器同一把尺）。
+ * 詞表（verbs／nouns／readPrefixes／patterns／patternsReadSafe）、拒絕清單、名稱**照真清單一字不動**（用到的考題另外斷言這幾欄等於真清單）：
+ * 真清單的 verbs 少了 FAMILY_VERBS 的任何一個、readPrefixes 少了 READ_VERBS 的任何一個、nouns 少了 FAMILY_NOUNS 裡 security 以外的任何一個
+ * ＝走夾具的題就紅（2026-09-28 逐字拿掉、用行程內 decide() 照那一題的斷言量過：動詞 25/25、名詞 17/18、唯讀前綴 14/14；
+ * 拿掉 security 時 place_security 改由 patternsReadSafe 那一張接住、照樣擋）。套件 #17 加進詞表的 13 個動詞、11 個名詞，加上 securities，
+ * 少一個**不會**讓任何走夾具的題轉紅（其中有幾個有探針，例如 initiate_withdraw、send_money、move_securities，但 patterns 或
+ * patternsReadSafe 也接得住它們，所以不承重；同一次量：動詞 25/38、名詞 17/30）——少一個由 tests/forbidden-defaults.test.js ① 抓
+ * （擋的方向那六欄不准少於範本）。
+ * ⚠️ 只給考題用：只進行程內 decide()、或考題自己在暫存目錄抽的複本，**不進正式清單**（把假連接器登記進正式清單＝
+ * 那些名字在真的對話裡的判法跟著變）。
+ * ⚠️ 預設的 names 含 FORBIDDEN_AFTER_RECONNECT＝create_order_instruction／delete_order_instruction 也被放上白名單：
+ * **不可以拿這一份去跑「白名單是精確集合」或券商白名單矩陣**（那兩種要用真清單）。
+ * @param {any} forbidden 真清單（settings.json 的 forbidden 那一塊）
+ * @param {string[]} [names]
+ */
+export function familyNetFixture(forbidden, names = FAMILY_NET_PROBES) {
+  const parts = names.map(splitProbe);
+  const servers = [...new Set(parts.map((p) => p.server))];
+  const moved = new Set(servers.map((s) => s.toLowerCase()));
+  const tools = [...new Set(parts.map((p) => p.tool))];
+  return {
+    ...forbidden,
+    servers: [...forbidden.servers, ...servers.filter((s) => !forbidden.servers.includes(s))],
+    safeServers: forbidden.safeServers.filter((s) => !moved.has(s.toLowerCase())),
+    allowlist: [...forbidden.allowlist, ...tools.filter((t) => !forbidden.allowlist.includes(t))],
+  };
+}
+
+/**
+ * 拒絕理由的類別。認的是套件 tools/forbidden-tools.js 的理由文字（decide() 只有登記制那一種拒絕帶 kind，其他類別只能用文字認）；
+ * 給 decide() 的 why、或鉤子輸出的 permissionDecisionReason 都可以（後者開頭多了「<禁區名>的絕對邊界：」，reasonClass 先剝掉）。
+ * 都只認**開頭**：登記制的理由中段會引述家族網命中了什麼，開頭才分得出是哪一層擋的。
+ *   denylist＝逐字拒絕清單；whitelist＝碰錢連接器的白名單制；registry＝登記制「沒有登記」（名字像不像錢都是這一類，差在 kind 與尾句）；
+ *   family＝家族網或額外樣式；charset＝工具名不合法字元集；badInput＝輸入壞到沒有工具名。
+ */
+export const REASON_CLASSES = Object.freeze({
+  denylist: /^工具「[^」]*」在拒絕清單上/u,
+  whitelist: /^連接器「[^」]+」會動到[^，]+，採白名單制；「[^」]+」不在唯讀名單上/u,
+  registry: /^連接器工具「[^」]+」沒有登記：/u,
+  family: /^工具名命中[^（]+的(?:家族網|額外樣式)（/u,
+  charset: /^工具名不符合合法字元集（fail-closed）/u,
+  badInput: /^輸入(?:缺工具名|無法解析)（fail-closed）/u,
+});
+/**
+ * 回理由的類別（REASON_CLASSES 的鍵），一個都對不上回 null。
+ * @param {unknown} reason
+ */
+export function reasonClass(reason) {
+  const text = String(reason).replace(/^[^：]{1,20}的絕對邊界：/u, '');
+  const hit = Object.entries(REASON_CLASSES).find(([, re]) => re.test(text));
+  return hit ? hit[0] : null;
+}
+/**
+ * 鉤子輸出的尾句（套件 hookOutput）分兩種：名字像錢或碰到錢＝規矩 B2 那一句（當誤觸或冒名、立即回報裁示者），就是這一個；
+ * 登記制拒絕、名字看不出像錢的＝另一種（逐字以 hookOutput 為準，這裡刻意不抄——套件 #18 送審前改過那一句，抄了會在同步之後變成空斷言）。
+ * 換了編號的下單工具必須是這一種（本專案 AGENTS 規則 3）。錨在字串結尾（$）：尾句是理由的最後一句，對上這一個就不是另一種。
+ */
+export const IMPERSONATION_TAIL = /此類指令一律視為誤觸或冒名，拒絕執行並立即回報裁示者。$/u;
