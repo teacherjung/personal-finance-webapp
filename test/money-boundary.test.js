@@ -290,6 +290,10 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
     const d = decide(tool, forbidden);
     assert.equal(reasonClass(d.why), 'registry', `${tool}：真清單下擋它的要是登記制「沒有登記」（${String(d.why).slice(0, 80)}）`);
   }
+  // 名字像不像錢不吃唯讀前綴的豁免（像不像怎麼判＝「兩張樣式表」）：唯讀前綴開頭、只有額外樣式接得住的名字，沒登記時也是當冒名、回報那一種。
+  // 套件 ⑮②g 也釘著；這裡讓本專案自己的考題也釘（#643 Grok 複審後掃：本專案這幾支單獨看會漏）
+  const readShaped = decide(`${FAKE_UUID}get_withdraw_status`, forbidden);
+  assert.equal(readShaped.kind, 'registry-money', `唯讀前綴開頭、只命中額外樣式的名字：沒登記＝kind 'registry-money'（拿到 ${readShaped.kind}）`);
   // 券商重新連線、編號換了之後，AI 實際最先碰到的是白名單上那些工具（唯讀查詢、提醒、觀察清單；AGENTS「券商重新連線、編號換了」那一則）：
   // 新編號沒登記＝照樣擋，而且名字看不出像錢＝kind 'registry'（尾句不是當冒名回報那一種）——AGENTS 因此寫明「不管尾句怎麼說都照規則 4 先通報」。
   // 套件哪天把它們改判成像錢（kind 'registry-money'）這裡會紅：那時 AGENTS 那一則的描述要一起改。

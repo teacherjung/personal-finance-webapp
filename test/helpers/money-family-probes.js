@@ -82,9 +82,11 @@ export const FORBIDDEN_FAMILY = [
   // r3 H①：CLI 實測可註冊叫 broker__get 的 server ⇒ 切分歧義；歧義處置偏 deny——
   // 每個 __ 後綴都當候選工具查一次，任何候選命中家族網就攔。
   // ⚠️ #641 之後這一支第一個候選 get__place_order 就命中動詞×名詞，**不再扣住「逐一試」那個迴圈**（2026-09-28 懷疑者突變：
-  // 判斷改成只試第一個候選，錢的相關考題全綠）。要扣住它，得有第一個候選以唯讀字開頭、後面那段只有額外樣式接得住的名字
-  // （例如 mcp__broker__get__initiate_transfer）——補這種探針＝套件待辦（判斷程式是套件的，考題該在那邊）。
+  // 判斷改成只試第一個候選，錢的相關考題全綠）。要扣住它，得有第一個候選以唯讀字開頭、後面那段只有額外樣式接得住的名字——
+  // 下面那一支就是（#643 的 Codex r1 與 Grok 複審後掃都抓到這個缺口；本專案先補探針，套件那邊的考題仍是待辦）：
+  // 第一個候選 get__initiate_transfer 以唯讀字開頭、額外樣式那一張表替它脫罪，只有後面那段 initiate_transfer 接得住。
   'mcp__broker__get__place_order',
+  'mcp__broker__get__initiate_transfer',
 ]);
 
 // Claude 自審（2026-09-01）：指令的正規式有四個語法**沒有探針承重**——把它們逐項收窄之後
@@ -97,7 +99,7 @@ FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}initiate_disbursement`,  // 出入金 `disburse(ment)?` 的長形
 );
 /** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。 */
-export const EXPECTED_FORBIDDEN_FAMILY = 88;
+export const EXPECTED_FORBIDDEN_FAMILY = 89;
 
 // 名字長得像、但不該被家族網擋的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。2026-09-27（⑧，登記制）起分成兩組，因為它們在真清單下的命運不同：
