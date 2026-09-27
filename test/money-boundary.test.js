@@ -49,13 +49,17 @@
  *     William 機器上那一份（`--claude` 從已合併版本抽的）有沒有、是不是同一個指紋，只有在真的對話按測試鈕量得到；
  *     `.claude/settings.json` 那兩組有沒有逐字等於「範本＋這棵樹的指紋」＝test/money-kit-hook.test.js ①。
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
- *     會漏接——第二層 hook（家族網那一層）只認工具名、不認 UUID，正是補這個洞；
- *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」。
+ *     會漏接——第二層 hook 接住它：2026-09-27（⑧，套件登記制同步進來）起是**登記制**（新編號沒登記＝整個連接器擋，
+ *     名字像錢的，理由的尾句照接規則 3 那一句）；在那之前是家族網只認工具名、不認 UUID。
+ *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」；換了編號之後的登記手續＝AGENTS「錢的絕對邊界」機械層。
  *   - 正則自 2026-08-04 起擴編為**家族攔截**（William 指示「所有轉帳相關詞都進攔截器」）：
  *     動詞×名詞鎖（place/submit/cancel…×order/trade/position…）＋出入金關鍵詞
  *     （transfer/withdraw/deposit…；唯讀動詞前綴 get_/list_/search_… 放行）＋換匯三動詞。
  *     即便如此**仍列舉不完所有未來名字**（起怪名的工具照樣漏網）——規則 1 的語意
  *     （「任何現在或未來…的工具」）＋規則 4 的通報義務仍是最後防線，這層不變。
+ *     ⚠️ 2026-09-27（⑧，登記制）起家族網**只問得到**碰錢連接器白名單上的工具（與不是 mcp__ 開頭的名字）：沒登記的連接器整個擋
+ *     （不管叫什麼）、登記為不碰錢的連接器整個放行（家族網不管——William 2026-09-26 裁示的代價）。所以「列舉不完」現在落在
+ *     「不碰錢的連接器登記錯了、或它自己長出會動錢的工具」這一類，仍由規則 1＋規則 4 接住；家族網本身的擋與不誤殺改走夾具量（下面「家族網矩陣走夾具」那一題）。
  *   - r2 改造（Codex #404 r1）：判斷主體從 matcher 正則移進 hook 指令（grep -iE 兩段式），
  *     **大小寫與 _ / - / . 分隔符不敏感**（MCP 名字規格允許大寫、連字號、句點——小寫底線
  *     只是慣例；Place_Order／placeOrder／place-order 全都攔）；動詞前可帶前綴詞
@@ -71,7 +75,11 @@
  *     server 名帶 __ 且工具帶錢詞的唯讀工具會被誤攔，照舊寧可誤殺）；②縮寫駝峰
  *     TRANSFERFunds 型補 acronym→Word 邊界正規化；③考題的 matcher 判定改用 Claude
  *     混合語意（純文字＝全等、含特殊字元才是正規式）＋ '^mcp__' 字面釘＋非 MCP 反向探針。
- *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。真實誤攔面（照實劃界，r1 抓過
+ *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。
+ *     ⚠️ 2026-09-27（⑧，登記制）起真實誤攔面的第一名是**「沒有登記」**：沒登記的連接器上什麼名字都擋、理由是登記制不是家族網
+ *     （處置＝AGENTS「錢的絕對邊界」機械層的登記手續，碰不碰錢由 William 裁）；登記為不碰錢的連接器上，下面①②那種名字整個放行、
+ *     根本不經過家族網。**下面①②只剩碰錢連接器白名單上的工具（與不是 mcp__ 開頭的名字）會遇到。**
+ *     家族網本身的誤攔面（照實劃界，r1 抓過
  *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
  *     名單外的讀取動詞（如 obtain_）帶錢詞會被誤攔，處置＝報 William 加名單。
  *     ⚠️ **2026-09-24 起這個補救的射程變窄**（#641 r2 #1）：範圍＝「**兩張樣式表**」
@@ -97,8 +105,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // 承重字表與探針清單＝test/helpers/money-family-probes.js（唯一住所；Codex #536 r2 H 抽出，
 // 讓 Codex 側的考題（現在＝codex-global-hook.test.js）把完整矩陣直接跑在同一份清單上——不准在別處複抄）。
 import {
-  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, READ_VERBS, FORBIDDEN_FAMILY,
-  ALLOWED_LOOKALIKES, EXPECTED_READ_VERBS_COUNT, EXPECTED_ALLOWED_COUNT,
+  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FAKE_UUID, READ_VERBS, FORBIDDEN_FAMILY, EXPECTED_FORBIDDEN_FAMILY,
+  LOOKALIKES_REGISTERED, EXPECTED_LOOKALIKES_REGISTERED, LOOKALIKES_UNREGISTERED, EXPECTED_LOOKALIKES_UNREGISTERED,
+  EXPECTED_READ_VERBS_COUNT, HARMLESS, HARMLESS_SERVER,
+  FAMILY_NET_PROBES, familyNetFixture, splitProbe, reasonClass,
   IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, HANDLER_ONLY_DENY, EXPECTED_HANDLER_ONLY_DENY,
   OUT_OF_MATCHER, EXPECTED_OUT_OF_MATCHER,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY,
@@ -108,8 +118,10 @@ import {
 } from './helpers/money-family-probes.js';
 import { makePinnedHome, makeEmptyHome, removeHome, pinMismatchHint } from './helpers/pinned-home.js';
 import claudePin from '../tools/claude-pin.js';
+import forbiddenTools from '../tools/forbidden-tools.js';
 
 const { PINNED_MARK } = claudePin;
+const { decide } = forbiddenTools;
 /** 釘指紋那一行在「複本不在／被改過」時印的那一句裡的字樣。 */
 const MISMATCH = /指紋對不上/u;
 
@@ -120,6 +132,10 @@ const MISMATCH = /指紋對不上/u;
 
 function loadSettings() {
   return JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
+}
+/** 本專案的真清單（根目錄 settings.json 的 forbidden 那一塊）：行程內 decide() 斷言理由類別、以及家族網夾具的底。 */
+function projectForbidden() {
+  return JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8')).forbidden;
 }
 
 /**
@@ -232,27 +248,87 @@ test('.claude/settings.json：deny 清單精確點名兩支下單工具、拆護
     'disableAllHooks:true 會把第二層 hook 整個關掉——那是拆護欄的開關，不准出現在專案設定。');
 });
 
-test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實跑回 deny 的組、可用名一律不誤傷', () => {
+test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實跑回 deny 的組、登記過的可用名一律不誤傷、沒登記的連接器整個擋（換了編號的券商連唯讀查詢也擋）；理由類別另用行程內 decide() 對真清單斷言', () => {
   const settings = loadSettings();
   // ⚠️ 正反兩面都是「matcher ∧ handler 決策」成對驗證（Codex #392 r2 important）：
   //    只驗 matcher 會被「看輸入決定」的 handler 假綠（create 擋、delete 放）；
   //    只驗 handler 會漏掉 matcher 涵蓋不到的名字。兩者對同一個名字同時成立才算數。
-  for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
+  assert.equal(FORBIDDEN_FAMILY.length, EXPECTED_FORBIDDEN_FAMILY, 'FORBIDDEN_FAMILY 被增刪時字面釘要一起改');
+  // 2026-09-27（⑧，登記制）：長得像的名字分兩組——掛在沒登記的假連接器上的那一組，真清單下要被擋（登記制），
+  // 它們「家族網不誤殺」的承重搬到下一題（走夾具）
+  for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY, ...LOOKALIKES_UNREGISTERED]) {
     assert.ok(entriesBlocking(settings, tool).length >= 1,
       `沒有任何 hook 組對 ${tool} 是「matcher 接得住＋handler 實跑回 deny」——`
-      + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（連接器換 UUID 也必須擋得住）。');
+      + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（連接器換 UUID、沒登記的連接器也必須擋得住）。');
   }
   // 誤傷＝matcher 命中「且」對該名字實跑回 deny。純記錄的良性 hook（不 deny）不歸本考題管，
   // 不會被錯殺（Codex #392 r1 minor②）。
   assert.equal(READ_VERBS.length, EXPECTED_READ_VERBS_COUNT,
     `READ_VERBS 數量（${READ_VERBS.length}）與字面釘（${EXPECTED_READ_VERBS_COUNT}）不符——`
     + '唯讀豁免名單被增刪時兩邊一起改（#404 r2 M④：自我縮放的釘不是釘）。');
-  assert.equal(ALLOWED_LOOKALIKES.length, EXPECTED_ALLOWED_COUNT,
-    `ALLOWED_LOOKALIKES 數量（${ALLOWED_LOOKALIKES.length}）與宣告（${EXPECTED_ALLOWED_COUNT}）不符——`
+  assert.equal(LOOKALIKES_REGISTERED.length, EXPECTED_LOOKALIKES_REGISTERED,
+    `LOOKALIKES_REGISTERED 數量（${LOOKALIKES_REGISTERED.length}）與宣告（${EXPECTED_LOOKALIKES_REGISTERED}）不符——`
     + '清單被增刪時兩邊要一起改（#404 r1：宣稱 19 實際 18 的現場教訓）。');
-  for (const tool of ALLOWED_LOOKALIKES) {
+  assert.equal(LOOKALIKES_UNREGISTERED.length, EXPECTED_LOOKALIKES_UNREGISTERED,
+    `LOOKALIKES_UNREGISTERED 數量（${LOOKALIKES_UNREGISTERED.length}）與宣告（${EXPECTED_LOOKALIKES_UNREGISTERED}）不符`);
+  for (const tool of LOOKALIKES_REGISTERED) {
     assert.equal(entriesBlocking(settings, tool).length, 0,
-      `有 hook 組對規則 2 明文可用的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
+      `有 hook 組對規則 2 明文可用、或不涉錢的 ${tool} 實跑回 deny——誤擋跟漏擋一樣是壞。`);
+  }
+  // 理由類別（probe() 只回三態、拿不到理由，所以用行程內 decide() 對同一份真清單斷言；鉤子層的理由類別＝money-kit-hook ⓪）。
+  // 登記制之後有一批「照樣擋、但擋的理由換了」：只斷言擋＝假綠
+  const forbidden = projectForbidden();
+  for (const tool of FORBIDDEN_TOOLS) {
+    assert.equal(reasonClass(decide(tool, forbidden).why), 'denylist', `${tool}：擋下的要是逐字拒絕清單`);
+  }
+  for (const tool of [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
+    const d = decide(tool, forbidden);
+    assert.equal(reasonClass(d.why), 'registry', `${tool}：真清單下擋它的要是登記制「沒有登記」（${String(d.why).slice(0, 80)}）`);
+    assert.equal(d.kind, 'registry-money', `${tool}：名字像錢、沒登記＝kind 'registry-money'（當冒名、回報那一種；拿到 ${d.kind}）`);
+  }
+  for (const tool of LOOKALIKES_UNREGISTERED) {
+    const d = decide(tool, forbidden);
+    assert.equal(reasonClass(d.why), 'registry', `${tool}：真清單下擋它的要是登記制「沒有登記」（${String(d.why).slice(0, 80)}）`);
+  }
+  // 券商重新連線、編號換了之後，AI 實際最先碰到的是白名單上那些工具（唯讀查詢、提醒、觀察清單；AGENTS「券商重新連線、編號換了」那一則）：
+  // 新編號沒登記＝照樣擋，而且名字看不出像錢＝kind 'registry'（尾句不是當冒名回報那一種）——AGENTS 因此寫明「不管尾句怎麼說都照規則 4 先通報」。
+  // 套件哪天把它們改判成像錢（kind 'registry-money'）這裡會紅：那時 AGENTS 那一則的描述要一起改。
+  assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, 'MONEY_SERVER_ALLOW 被增刪時字面釘要一起改');
+  for (const t of MONEY_SERVER_ALLOW) {
+    const d = decide(FAKE_UUID + t, forbidden);
+    assert.equal(reasonClass(d.why), 'registry', `換了編號的券商白名單工具「${t}」：真清單下擋它的要是登記制「沒有登記」（${String(d.why).slice(0, 80)}）`);
+    assert.equal(d.kind, 'registry', `換了編號的券商白名單工具「${t}」：名字看不出像錢＝kind 'registry'（拿到 ${d.kind}；變了就要改 AGENTS 那一則）`);
+  }
+});
+
+test('家族網矩陣走夾具（familyNetFixture，行程內 decide()）：真清單的詞表對各種寫法都擋、理由是家族網或額外樣式；兩組長得像的名字都不誤殺', () => {
+  // 為什麼要夾具（2026-09-27 ⑧，登記制）：真清單下，上一題那些名字不是被登記制整個擋（沒登記的假連接器）、就是整個放行
+  // （登記為不碰錢的連接器），**家族網一個都沒被問到**。原本「少一個動詞→{動詞}_order 轉紅」「少一個唯讀前綴→對應探針誤擋」
+  // 的承重住在這裡：夾具把每個名字的連接器登記成碰錢、工具名那一段放上白名單，讓它走「碰錢白名單 → 家族網雙保險」那條路；
+  // 詞表照真清單一字不動（下面先斷言）。鉤子指令真的跑一遍夾具＝test/codex-global-hook.test.js ③ 的夾具那一輪。
+  const forbidden = projectForbidden();
+  const fixture = familyNetFixture(forbidden);
+  for (const key of ['name', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe']) {
+    assert.deepEqual(fixture[key], forbidden[key], `前提：夾具的「${key}」要等於真清單（承重是真清單的詞表）`);
+  }
+  // 前提：每個名字都真的走碰錢白名單那條路——連接器在 servers、不在 safeServers（同名兩欄＝設定壞掉）、工具名那一段在白名單上
+  const safeLower = new Set(fixture.safeServers.map((s) => s.toLowerCase()));
+  for (const name of FAMILY_NET_PROBES) {
+    const { server, tool } = splitProbe(name);
+    assert.ok(fixture.servers.includes(server) && !safeLower.has(server.toLowerCase()),
+      `前提：夾具要把「${name}」的連接器「${server}」登記成碰錢（servers），而且不在 safeServers——不然家族網沒被問到`);
+    assert.ok(fixture.allowlist.includes(tool), `前提：夾具要把「${tool}」放上白名單——不然擋它的是白名單制、不是家族網`);
+  }
+  for (const tool of [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
+    const d = decide(tool, fixture);
+    assert.equal(d.deny, true, `夾具下家族網沒擋「${tool}」：真清單的詞表少了承重的詞？`);
+    assert.equal(reasonClass(d.why), 'family', `夾具下擋「${tool}」的要是家族網或額外樣式（不是登記制、白名單制、拒絕清單）：${String(d.why).slice(0, 100)}`);
+    assert.equal(d.kind, undefined, `夾具下「${tool}」不該走到登記制（kind ${d.kind}）`);
+  }
+  // 不誤殺：兩組長得像的名字（跨連接器那四支在真清單下登記為不碰錢、根本不經過家族網；READ_VERBS 的 transfer_log 那幾支＝唯讀豁免逐動詞的承重）
+  for (const tool of [...LOOKALIKES_REGISTERED, ...LOOKALIKES_UNREGISTERED]) {
+    const d = decide(tool, fixture);
+    assert.equal(d.deny, false, `夾具下家族網誤殺「${tool}」：${d.why}`);
   }
 });
 
@@ -369,7 +445,9 @@ test('探針真的把 HOME 帶進子行程：同一個 probe 指到空的暫存�
   const pinnedHooks = (settings?.hooks?.PreToolUse ?? []).flatMap((e) => e.hooks ?? [])
     .filter((h) => h?.type === 'command' && typeof h.command === 'string' && h.command.includes(PINNED_MARK));
   assert.ok(pinnedHooks.length >= 1, '找不到釘指紋那一行（指令提到固定複本位置的那一組）：test/money-kit-hook.test.js ① 會說是哪裡不對');
-  const payload = JSON.stringify({ tool_name: 'mcp__other__get_widget', tool_input: {} });
+  assert.ok(projectForbidden().safeServers.includes(HARMLESS_SERVER),
+    `前提：settings.json 的 forbidden.safeServers 要有「${HARMLESS_SERVER}」（對照名字 ${HARMLESS} 掛在它底下；沒有它＝下面的對照組不成立）`);
+  const payload = JSON.stringify({ tool_name: HARMLESS, tool_input: {} });
   const empty = makeEmptyHome();
   try {
     for (const hook of pinnedHooks) {

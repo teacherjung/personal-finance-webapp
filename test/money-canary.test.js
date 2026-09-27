@@ -11,7 +11,11 @@
  *   ①那個名字永久在 `settings.json` 的 `forbidden.deny` 上；
  *   ②拿本專案的真清單跑套件的判斷，它會被拒絕，理由含「在拒絕清單上」；
  *   ③**對照組**：把它從拒絕清單拿掉就放行——證明擋住它的是那一行登記，不是家族網剛好掃到，
- *     所以按下去看到拒絕＝那一組攔截器真的讀到了這份清單（這正是它當測試鈕的資格）；
+ *     所以按下去看到拒絕＝那一組攔截器真的讀到了這份清單（這正是它當測試鈕的資格）。
+ *     2026-09-27（⑧，登記制）起「拿掉就放行」要連它的連接器一起登記成不碰錢才成立（照套件 tests/canary-server.test.js 同一招，
+ *     只在這一題的夾具裡登記、不進正式清單＝William 2026-09-27 裁）：真清單沒登記 guard_canary，拿掉拒絕清單那一行它照樣被
+ *     登記制擋（理由「沒有登記」、kind 'registry'）——這一題也把這件事記下來（第二層：沒登記也擋）；
+ *     「真清單不是全放行」那一句改走碰錢白名單那條路量家族網（沒登記的名字在真清單下是登記制擋、量不到家族網）；
  *   ④它不是禁區連接器上的工具（⓪的條件：連那台連接器上唯讀的查詢都不可以拿來當測試鈕）；
  *   ⑤`.mcp.json` 的登記跟套件安裝說明裡那一段**逐字相同**，而且只登記這一支；
  *   ⑥`.claude/settings.json` 的 `permissions.deny` 沒有任何一條**蓋到**它（完整名、整台伺服器、伺服器底下全部三種
@@ -66,11 +70,26 @@ test('②拿本專案的真清單判它＝拒絕，理由指名「在拒絕清�
 });
 
 test('③對照組：把它從拒絕清單拿掉就放行＝擋住它的是那一行登記，不是別的規則剛好掃到', () => {
-  const without = { ...forbidden, deny: forbidden.deny.filter((n) => n !== CANARY) };
+  const withoutDeny = forbidden.deny.filter((n) => n !== CANARY);
+  // 夾具：拿掉拒絕清單那一行、另把它的連接器登記成不碰錢（只在這裡，不進正式清單）
+  const without = { ...forbidden, deny: withoutDeny, safeServers: [...forbidden.safeServers, CANARY_SERVER] };
   const d = decide(CANARY, without);
-  assert.equal(d.deny, false, `名字不在清單上也被擋＝它不能當測試鈕（擋它的是別的規則：${d.why}）`);
-  // 這份真清單不是全放行：真的會動到錢的名字照樣擋（證明對照組不是因為清單壞掉才放行）
-  assert.equal(decide('mcp__canary_control__submit_order', forbidden).deny, true);
+  assert.equal(d.deny, false, `名字不在清單上、連接器也登記了還被擋＝它不能當測試鈕（擋它的是別的規則：${d.why}）`);
+  // 第二層（登記制）：真清單沒登記它的連接器——只拿掉拒絕清單那一行，照樣被「沒有登記」擋；名字不像錢＝kind 'registry'
+  const unregistered = decide(CANARY, { ...forbidden, deny: withoutDeny });
+  assert.equal(unregistered.deny, true, '真清單只拿掉拒絕清單那一行：連接器沒登記，要被登記制擋');
+  assert.equal(unregistered.kind, 'registry', `擋它的要是登記制、名字不像錢那一種（kind 拿到 ${unregistered.kind}：${unregistered.why}）`);
+  assert.match(unregistered.why, /^連接器工具「mcp__guard_canary__ping」沒有登記/u);
+  // 這份真清單不是全放行：真的會動到錢的名字照樣擋（證明對照組不是因為清單壞掉才放行）——
+  // 走碰錢白名單那條路量**家族網**：把 submit_order 誤放上白名單，券商連接器上的它仍被家族網擋
+  const onMoney = `mcp__${forbidden.servers[0]}__submit_order`;
+  const leaky = decide(onMoney, { ...forbidden, allowlist: [...forbidden.allowlist, 'submit_order'] });
+  assert.equal(leaky.deny, true, `白名單誤放 submit_order：家族網要兜底擋「${onMoney}」`);
+  assert.match(leaky.why, /家族網/u, `擋它的要是家族網：${leaky.why}`);
+  // 沒登記的連接器上、名字像錢的：真清單下是登記制擋、kind 'registry-money'（當冒名、回報那一種；套件 #18）
+  const stranger = decide('mcp__canary_control__submit_order', forbidden);
+  assert.equal(stranger.deny, true);
+  assert.equal(stranger.kind, 'registry-money', `沒登記、名字像錢＝kind 'registry-money'（拿到 ${stranger.kind}：${stranger.why}）`);
 });
 
 test('④它不是禁區連接器上的工具（那上面連唯讀的查詢都不可以拿來試）', () => {

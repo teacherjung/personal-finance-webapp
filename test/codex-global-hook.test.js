@@ -10,9 +10,14 @@
  *   ①從這棵樹（tools/ 四檔＋範本＋settings.json 只留 forbidden）造一個暫存倉庫、當成已合併，用 `tools/guard-copy.js` 的 `build()`
  *     抽固定複本＋算指紋＋印接線——跟人安裝時跑的是同一支程式、同一份範本；
  *   ②真的用 `/bin/sh -lc` 跑印出來的那條指令：測試鈕與兩支下單工具＝退 2＋錯誤輸出是合規 deny（含「在拒絕清單上」）；
- *     無害工具＝退 0 零輸出；煙霧探針 11 擋 8 放；壞輸入 fail-closed；複本改一個位元組＝退 2「指紋對不上」；
+ *     無害工具＝退 0 零輸出；煙霧探針分兩輪（2026-09-27 ⑧，登記制）：真清單那一輪 19 個全在沒登記的連接器上＝全擋、理由「沒有登記」，
+ *     家族網夾具那一輪（`familyNetFixture()`：把煙霧名的連接器登記成碰錢、工具名放上白名單）11 擋（理由是家族網或額外樣式）8 放；
+ *     壞輸入 fail-closed；複本改一個位元組＝退 2「指紋對不上」；
  *   ③整張家族矩陣（`test/helpers/money-family-probes.js`，位元組由另一支考題釘）**兩路都跑**：真的餵印出來的指令（每一個名字
  *     一次 sh＋node；舊題「完整矩陣直接餵 command、誰都不能代考」那一格照留），再餵複本裡那份清單的行程內 `decide()` 對照；
+ *     每一組斷言理由類別（登記制之後有一批「照樣擋、理由換了」）；另外**用家族網夾具再抽一份複本、真跑一遍家族矩陣**——
+ *     Claude 側那一行釘了指紋、換不了清單，所以「整張家族矩陣經過鉤子指令、擋的理由是家族網」只在這一支量（行程內 decide() 的同一件事＝money-boundary 的家族網矩陣題）。夾具那一份不拿去跑白名單精確集合與雙保險（它把
+ *     create／delete_order_instruction 也放上了白名單）；
  *     白名單集合＝探針的 MONEY_SERVER_ALLOW（JSON 逐字集合，多列少列都紅）；白名單誤放建單工具時**家族網**仍擋（變因只留家族網：
  *     逐字拒絕清單清空、servers 留著）——**壞清單真的寫進來源倉庫、抽第二份複本、用印出來的指令再跑一次**（不只行程內 decide()），
  *     對照組＝名單內、家族網接不到的仍放行。
@@ -29,7 +34,8 @@
  * ⚠️ 誠實劃界——這支考題證明不了的事：
  *   - **Codex 會不會真的執行家目錄那一組**：要 William 在 Codex 介面（/hooks）按過「信任」才會跑，信任狀態在 ~/.codex/config.toml、
  *     不在 repo；家目錄那份實際長什麼樣、複本抽的是哪個版本，repo 的考題看不到（人做的驗收＝按測試鈕看到「在拒絕清單上」）。
- *   - 這裡抽的複本來自**這棵樹當下的檔**（造暫存倉庫、當成已合併），不是 William 機器上那份 de1cfb4 複本；
+ *   - 這裡抽的複本來自**這棵樹當下的檔**（造暫存倉庫、當成已合併），不是 William 機器上從某個已合併版本抽的那一份
+ *     （是哪一版看 ~/.codex/hooks.json 那一組的路徑，repo 看不到——這裡刻意不寫版本碼，寫死的會過時）；
  *     兩者若不同（forbidden 改了還沒重抽），只有重抽＋重按信任那條人的流程會補上、沒有機器提醒。
  */
 import { test } from 'node:test';
@@ -43,15 +49,16 @@ import { build, COPY_FILES } from '../tools/guard-copy.js';
 import { decide } from '../tools/forbidden-tools.js';
 import { gitEnv } from '../lib/git-env.js';
 import {
-  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, ALLOWED_LOOKALIKES, EXPECTED_ALLOWED_COUNT,
+  FORBIDDEN_TOOLS, FORBIDDEN_AFTER_RECONNECT, FORBIDDEN_FAMILY, EXPECTED_FORBIDDEN_FAMILY,
+  LOOKALIKES_REGISTERED, EXPECTED_LOOKALIKES_REGISTERED, LOOKALIKES_UNREGISTERED, EXPECTED_LOOKALIKES_UNREGISTERED,
   IN_MATCHER_DENY, EXPECTED_IN_MATCHER_DENY, HANDLER_ONLY_DENY, EXPECTED_HANDLER_ONLY_DENY,
   MONEY_SERVER, MONEY_SERVER_DENY, EXPECTED_MONEY_SERVER_DENY, MONEY_SERVER_ALLOW, EXPECTED_MONEY_SERVER_ALLOW,
   MONEY_SERVER_MULTISEG_DENY, EXPECTED_MONEY_SERVER_MULTISEG_DENY, MONEY_SERVER_MULTISEG_ALLOW, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW,
+  HARMLESS, HARMLESS_SERVER, familyNetFixture, reasonClass, IMPERSONATION_TAIL,
 } from './helpers/money-family-probes.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CANARY = 'mcp__guard_canary__ping';
-const HARMLESS = 'mcp__other__get_widget';
 const MISMATCH = /指紋對不上/u;
 
 /** 沙盒 git 的環境從零組（鐵則 11）：只給 PATH／HOME 與提交身分；不是 process.env 扣掉幾個。 */
@@ -118,6 +125,13 @@ const PASS_SMOKE = [
 ];
 const EXPECTED_DENY_SMOKE = 11;
 const EXPECTED_PASS_SMOKE = 8;
+/** 煙霧名的家族網夾具（連接器登記成碰錢、工具名放上白名單；做法與限制＝探針 helper 的 familyNetFixture）。 */
+const smokeFixture = (/** @type {any} */ f) => familyNetFixture(f, [...DENY_SMOKE, ...PASS_SMOKE].map(([name]) => name));
+/** 本專案的真清單（根目錄 settings.json 的 forbidden 那一塊）：夾具那兩輪的前提「詞表照真清單」拿它比。 */
+const realForbidden = () => JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8')).forbidden;
+/** HARMLESS 的前提：它的連接器在真清單登記為不碰錢（拿掉了＝前提變了，不是攔截器壞了）。 */
+const harmlessPremise = (/** @type {any} */ forbidden) => assert.ok(forbidden.safeServers.includes(HARMLESS_SERVER),
+  `前提：settings.json 的 forbidden.safeServers 要有「${HARMLESS_SERVER}」（對照名字 ${HARMLESS} 掛在它底下）`);
 
 /**
  * @param {(ctx: { copyDir: string, command: string, forbidden: any, copyForbidden: any }) => void} fn
@@ -148,21 +162,47 @@ test('①②接線印得出來、真的跑一遍：測試鈕與兩支下單工�
   const reason = denies(hook(command, asTool(CANARY)), '測試鈕要被這一組擋');
   assert.match(reason, /在拒絕清單上/u, '理由要指名是逐字清單擋的（安裝順序第⑤步認這句）');
   for (const name of FORBIDDEN_TOOLS) denies(hook(command, asTool(name)), `真下單工具 ${name}`);
-  for (const name of FORBIDDEN_AFTER_RECONNECT) denies(hook(command, asTool(name)), `換了 UUID 的下單工具 ${name}`);
+  for (const name of FORBIDDEN_AFTER_RECONNECT) {
+    const why = denies(hook(command, asTool(name)), `換了 UUID 的下單工具 ${name}`);
+    assert.equal(reasonClass(why), 'registry', `換了 UUID 的下單工具要被登記制擋（新編號沒登記）：${why.slice(0, 100)}`);
+    assert.match(why, IMPERSONATION_TAIL, '換了 UUID 的下單工具：尾句要是規則 3 那一句（當誤觸或冒名、立即回報裁示者）');
+  }
+  harmlessPremise(forbidden);
   allows(hook(command, asTool(HARMLESS)), '對照組：無害工具');
   assert.ok(forbidden.deny.includes(CANARY), '對照斷言：測試鈕真的在 forbidden.deny 上（不然上面那題擋它的是別的規則）');
 }));
 
-test('②煙霧測：錢的形狀 11 擋、唯讀與非錢 8 放、壞輸入 fail-closed（全都真的跑那條指令）', () => withCopy(({ command }) => {
+test('②煙霧測（真清單那一輪）：煙霧名全掛在沒登記的連接器上＝19 個全擋、理由「沒有登記」（錢的形狀那 11 個尾句是當冒名回報）；壞輸入 fail-closed（全都真的跑那條指令）', () => withCopy(({ command }) => {
   assert.equal(DENY_SMOKE.length, EXPECTED_DENY_SMOKE); assert.equal(PASS_SMOKE.length, EXPECTED_PASS_SMOKE);
-  for (const [name, why] of DENY_SMOKE) denies(hook(command, asTool(name)), `${name}（${why}）`);
-  for (const [name, why] of PASS_SMOKE) allows(hook(command, asTool(name)), `${name}（${why}）`);
+  for (const [name, why] of DENY_SMOKE) {
+    const reason = denies(hook(command, asTool(name)), `${name}（${why}）`);
+    assert.equal(reasonClass(reason), 'registry', `${name}：真清單下擋它的要是登記制（${reason.slice(0, 100)}）`);
+    assert.match(reason, IMPERSONATION_TAIL, `${name}：名字像錢＝尾句要是規則 3 那一句（當誤觸或冒名、立即回報裁示者）`);
+  }
+  // 名字不像錢的也擋（登記制：連接器沒登記＝整個擋）——它們「家族網不誤殺」的承重在下一題（夾具那一輪）
+  for (const [name, why] of PASS_SMOKE) {
+    const reason = denies(hook(command, asTool(name)), `${name}（${why}；真清單下連接器沒登記）`);
+    assert.equal(reasonClass(reason), 'registry', `${name}：真清單下擋它的要是登記制（${reason.slice(0, 100)}）`);
+  }
   assert.equal(IN_MATCHER_DENY.length, EXPECTED_IN_MATCHER_DENY); assert.equal(HANDLER_ONLY_DENY.length, EXPECTED_HANDLER_ONLY_DENY);
-  for (const [payload, why] of IN_MATCHER_DENY) denies(hook(command, payload), `輸入衛生：${why}`);
-  for (const [payload, why] of HANDLER_ONLY_DENY) denies(hook(command, payload), `壞輸入 fail-closed：${why}`);
+  for (const [payload, why] of IN_MATCHER_DENY) assert.equal(reasonClass(denies(hook(command, payload), `輸入衛生：${why}`)), 'charset', `輸入衛生（${why}）：理由要是字元集那一層`);
+  for (const [payload, why] of HANDLER_ONLY_DENY) assert.equal(reasonClass(denies(hook(command, payload), `壞輸入 fail-closed：${why}`)), 'badInput', `壞輸入（${why}）：理由要是 fail-closed 那一句`);
 }));
 
-test('②複本改一個位元組＝退 2「指紋對不上」、放回去就恢復（指紋是寫死在指令裡的，不信任 node）', () => withCopy(({ copyDir, command }) => {
+test('②煙霧測（家族網夾具那一輪）：煙霧名的連接器登記成碰錢、工具名放上白名單，錢的形狀 11 擋（理由是家族網或額外樣式）、唯讀與非錢 8 放（全都真的跑那條指令）', () => withCopy(({ command, copyForbidden }) => {
+  const real = realForbidden();
+  for (const key of ['verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe', 'deny']) {
+    assert.deepEqual(copyForbidden[key], real[key], `前提：夾具複本的「${key}」要等於真清單（承重是真清單的詞表）`);
+  }
+  for (const [name, why] of DENY_SMOKE) {
+    const reason = denies(hook(command, asTool(name)), `${name}（${why}）`);
+    assert.equal(reasonClass(reason), 'family', `${name}：夾具下擋它的要是家族網或額外樣式（不是登記制、白名單制）：${reason.slice(0, 100)}`);
+  }
+  for (const [name, why] of PASS_SMOKE) allows(hook(command, asTool(name)), `${name}（${why}）`);
+}, smokeFixture));
+
+test('②複本改一個位元組＝退 2「指紋對不上」、放回去就恢復（指紋是寫死在指令裡的，不信任 node）', () => withCopy(({ copyDir, command, forbidden }) => {
+  harmlessPremise(forbidden);
   const file = join(copyDir, 'settings.json');
   const original = readFileSync(file);
   const flipped = Buffer.from(original); flipped[Math.floor(flipped.length / 2)] ^= 0x01;
@@ -173,20 +213,48 @@ test('②複本改一個位元組＝退 2「指紋對不上」、放回去就恢
   allows(hook(command, asTool(HARMLESS)), '對照組：放回去就恢復');
 }));
 
-test('③整張家族矩陣直接餵印出來的指令（每個名字一次 sh＋node）：該擋的都擋、該放的都放；行程內 decide() 對複本清單再對照一次', () => withCopy(({ command, copyForbidden }) => {
-  assert.equal(ALLOWED_LOOKALIKES.length, EXPECTED_ALLOWED_COUNT);
+test('③整張家族矩陣直接餵印出來的指令（每個名字一次 sh＋node）：該擋的都擋、每一組擋的理由類別對、該放的都放；行程內 decide() 對複本清單再對照一次', () => withCopy(({ command, copyForbidden }) => {
+  assert.equal(FORBIDDEN_FAMILY.length, EXPECTED_FORBIDDEN_FAMILY);
+  assert.equal(LOOKALIKES_REGISTERED.length, EXPECTED_LOOKALIKES_REGISTERED); assert.equal(LOOKALIKES_UNREGISTERED.length, EXPECTED_LOOKALIKES_UNREGISTERED);
   assert.equal(MONEY_SERVER_DENY.length, EXPECTED_MONEY_SERVER_DENY); assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW);
   assert.equal(MONEY_SERVER_MULTISEG_DENY.length, EXPECTED_MONEY_SERVER_MULTISEG_DENY); assert.equal(MONEY_SERVER_MULTISEG_ALLOW.length, EXPECTED_MONEY_SERVER_MULTISEG_ALLOW);
-  const mustDeny = [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY,
-    ...MONEY_SERVER_DENY.map((t) => MONEY_SERVER + t), ...MONEY_SERVER_MULTISEG_DENY.map(([name]) => name)];
-  const mustAllow = [...ALLOWED_LOOKALIKES, ...MONEY_SERVER_ALLOW.map((t) => MONEY_SERVER + t), ...MONEY_SERVER_MULTISEG_ALLOW.map(([name]) => name)];
+  // 期望的理由類別（2026-09-27 ⑧：只斷言擋會假綠——登記制之後有一批「照樣擋、理由換了」）
+  /** @type {[string, (name: string) => string][]} */
+  const mustDeny = [
+    ...FORBIDDEN_TOOLS.map((n) => /** @type {[string, () => string]} */ ([n, () => 'denylist'])),
+    ...[...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY, ...LOOKALIKES_UNREGISTERED].map((n) => /** @type {[string, () => string]} */ ([n, () => 'registry'])),
+    ...MONEY_SERVER_DENY.map((t) => /** @type {[string, (n: string) => string]} */ ([MONEY_SERVER + t, (n) => (copyForbidden.deny.includes(n) ? 'denylist' : 'whitelist')])),
+    ...MONEY_SERVER_MULTISEG_DENY.map(([n]) => /** @type {[string, () => string]} */ ([n, () => 'whitelist'])),
+  ];
+  const mustAllow = [...LOOKALIKES_REGISTERED, ...MONEY_SERVER_ALLOW.map((t) => MONEY_SERVER + t), ...MONEY_SERVER_MULTISEG_ALLOW.map(([name]) => name)];
   // 主承重：真的餵印出來的指令（舊題「誰都不能代考」那一格）
-  for (const name of mustDeny) denies(hook(command, asTool(name)), `全域層指令沒擋「${name}」`);
+  for (const [name, expected] of mustDeny) {
+    const reason = denies(hook(command, asTool(name)), `全域層指令沒擋「${name}」`);
+    assert.equal(reasonClass(reason), expected(name), `全域層指令擋「${name}」的理由類別不對：${reason.slice(0, 120)}`);
+  }
   for (const name of mustAllow) allows(hook(command, asTool(name)), `全域層指令誤擋「${name}」`);
   // 對照：複本裡那份清單的行程內判斷要跟指令一致（指令包裝層不看名字；兩路不同＝包裝層或複本壞了）
-  for (const name of mustDeny) assert.equal(decide(name, copyForbidden).deny, true, `複本裡的清單沒擋「${name}」`);
+  for (const [name, expected] of mustDeny) {
+    const d = decide(name, copyForbidden);
+    assert.equal(d.deny, true, `複本裡的清單沒擋「${name}」`);
+    assert.equal(reasonClass(d.why), expected(name), `複本裡的清單擋「${name}」的理由類別不對：${String(d.why).slice(0, 120)}`);
+  }
   for (const name of mustAllow) assert.equal(decide(name, copyForbidden).deny, false, `複本裡的清單誤擋「${name}」：${decide(name, copyForbidden).why}`);
 }));
+
+test('③家族網夾具那一輪：夾具清單真的抽成複本、用印出來的指令真跑家族矩陣——該擋的理由是家族網或額外樣式、兩組長得像的名字都不誤殺', () => withCopy(({ command, copyForbidden }) => {
+  // Claude 側那一行釘了指紋、換不了清單，所以「整張家族矩陣經過鉤子指令、擋的理由是家族網」只在這一支量。夾具＝探針 helper 的 familyNetFixture()：
+  // 每個名字的連接器登記成碰錢、工具名放上白名單、詞表照真清單不動（下面先斷言）。⚠️ 這一份不拿去跑白名單精確集合與雙保險
+  const real = realForbidden();
+  for (const key of ['verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe', 'deny']) {
+    assert.deepEqual(copyForbidden[key], real[key], `前提：夾具複本的「${key}」要等於真清單（承重是真清單的詞表）`);
+  }
+  for (const name of [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY]) {
+    const reason = denies(hook(command, asTool(name)), `夾具下全域層指令沒擋「${name}」：真清單的詞表少了承重的詞？`);
+    assert.equal(reasonClass(reason), 'family', `夾具下擋「${name}」的要是家族網或額外樣式（不是登記制、白名單制、拒絕清單）：${reason.slice(0, 120)}`);
+  }
+  for (const name of [...LOOKALIKES_REGISTERED, ...LOOKALIKES_UNREGISTERED]) allows(hook(command, asTool(name)), `夾具下全域層指令誤殺「${name}」`);
+}, (f) => familyNetFixture(f)));
 
 test('③白名單是精確集合（JSON 逐字＝探針清單）', () => withCopy(({ copyForbidden }) => {
   // 白名單集合：JSON 陣列逐字比（比舊制的 python AST 抽值更緊——沒有綁定形式可以繞）

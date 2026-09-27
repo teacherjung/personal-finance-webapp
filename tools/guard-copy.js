@@ -162,8 +162,20 @@ const CONFIG_CHANGE_MATCHER = 'project_settings';
 /** Claude 側複本的目錄名＝指紋：64 碼十六進位小寫。Codex 全域層那種人取的短名字不符合＝--retire 碰不到。 */
 const FP_NAME = /^[0-9a-f]{64}$/u;
 const UNSET = '未設定';
-/** 自我試跑用的無害假名：依序試，有一個被乾淨地放行就算過（專案清單剛好擋到其中一個也不會誤判安裝失敗）。 */
-const ALLOW_PROBES = ['mcp__guard_copy_selftest__noop', 'mcp__guard_copy_selftest__ping', 'mcp__kit_selftest_zz__hello'];
+/** 自我試跑用的無害假工具名（接在登記為不碰禁區的連接器後面）：依序試，有一個被乾淨地放行就算過（專案清單剛好擋到其中一個也不會誤判安裝失敗）。 */
+const ALLOW_PROBE_TOOLS = ['guard_copy_selftest_noop', 'guard_copy_selftest_ping', 'kit_selftest_zz_hello'];
+/**
+ * 從清單產生「照清單該放行」的試跑名字：每一個登記為不碰禁區的連接器（safeServers）各配上面那幾個假工具名。
+ * 為什麼不再用固定的假連接器名：登記制（2026-09-26）之後沒登記的連接器一律擋，固定假名永遠放不了行；
+ * 清單沒登記任何不碰禁區的連接器（safeServers 空）＝試跑找不到能放行的名字＝拒絕完成安裝：--claude 什麼都不落地；
+ * --to 已經把四個檔寫進目的目錄（先寫再試跑）、留著給人檢查、不印接線。這時碰禁區連接器白名單上的工具仍放行、其餘 mcp__ 名字全擋，
+ * 所以訊息不寫成「全擋」。放行的假名接在 safeServers 之後、形狀是標準的 mcp__<登記名>__<假工具名>。
+ */
+function allowProbes(forbidden) {
+  const f = forbidden && typeof forbidden === 'object' ? forbidden : {};
+  const safe = Array.isArray(f.safeServers) ? f.safeServers.filter((s) => typeof s === 'string' && s !== UNSET) : [];
+  return safe.flatMap((srv) => ALLOW_PROBE_TOOLS.map((t) => `mcp__${srv}__${t}`)).filter((n) => PROBE_NAME.test(n));
+}
 /** 暫存區：作業系統會清，複本放那裡哪天被清掉＝所有 mcp__ 工具突然全擋。 */
 const TEMP_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp', '/var/folders', '/private/var/folders'];
 /** 放不進單引號的字元：單引號本身與控制字元（會把指令切壞）。 */
@@ -461,7 +473,9 @@ function selfTest({ copyDir, fp, template, forbidden, denyProbe = null, rig = co
 
     let allowName = null;
     let lastAllow = null;
-    for (const name of ALLOW_PROBES) {
+    const allowCandidates = allowProbes(forbidden);
+    if (!allowCandidates.length) return `${tag}清單沒有登記任何不碰禁區的連接器（settings.json 的 forbidden.safeServers 是空的）：試跑找不到任何該放行的假名、拒絕完成安裝（--claude 不落地；--to 已寫進目的目錄的四個檔留著給人看、不印接線）。此時碰禁區連接器白名單上的工具仍放行、其餘 mcp__ 名字全擋——先把不碰禁區的連接器登記進 safeServers（碰禁區的登記進 servers 並配 allowlist），合併之後再抽`;
+    for (const name of allowCandidates) {
       lastAllow = runHook(command, name, { flag, env });
       if (lastAllow.status === 0 && lastAllow.stdout === '' && lastAllow.stderr === '') { allowName = name; break; }
     }
@@ -841,7 +855,7 @@ function main(argv = process.argv.slice(2), env = process.env) {
 if (require.main === module) process.exit(main());
 
 module.exports = {
-  COPY_FILES, PLACEHOLDERS, ALLOW_PROBES, TEMP_ROOTS, autoDenyProbes, fingerprint, fingerprintDir, checkTarget, extract, hookGroup, selfTest, build, main, Refusal,
+  COPY_FILES, PLACEHOLDERS, ALLOW_PROBE_TOOLS, allowProbes, TEMP_ROOTS, autoDenyProbes, fingerprint, fingerprintDir, checkTarget, extract, hookGroup, selfTest, build, main, Refusal,
   CLAUDE_TEMPLATE_REL, CLAUDE_PLACEHOLDERS, CLAUDE_BASE, CLAUDE_MAX_FILE_BYTES, CONFIG_CHANGE_MATCHER, CLAUDE_GROUP_KEYS, CLAUDE_HOOK_KEYS, groupExtraKeys,
   treeFingerprint, claudeGroups, claudeLine, copyProblem, buildClaude, retire, parseArgs,
 };

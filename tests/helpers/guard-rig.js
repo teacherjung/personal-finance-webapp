@@ -38,12 +38,14 @@ const { gitEnv } = require('../../tools/git-env.js');
 
 const KIT = path.join(__dirname, '..', '..');
 // 全是假名（連接器、工具名都是編的）
+// 登記制（2026-09-26）之後 mcp__ 名字所屬的連接器沒登記一律擋：ALLOWED 那個假連接器 other 登記為不碰禁區，
+// 自我試跑的放行假名也接在它後面（tools/guard-copy.js 的 allowProbes 從 safeServers 產）。
 const FAKE = {
-  name: '測試禁區', servers: ['fakebroker'], allowlist: ['get_quote'], deny: ['mcp__other__harmless_named_thing'],
+  name: '測試禁區', servers: ['fakebroker'], safeServers: ['other'], allowlist: ['get_quote'], deny: ['mcp__other__harmless_named_thing'],
   verbs: ['create', 'place'], nouns: ['widget'], readPrefixes: ['get'], patterns: [],
 };
-/** 同一份清單改弱：原本照清單該擋的 DENIED，照這一份不擋。 */
-const LOOSE = { ...FAKE, servers: ['nothing_here'], verbs: ['nothing_here'] };
+/** 同一份清單改弱：原本照清單該擋的 DENIED，照這一份不擋（登記制之後要「改弱」得把那個假連接器登記成不碰禁區，不然沒登記照樣擋）。 */
+const LOOSE = { ...FAKE, servers: ['nothing_here'], safeServers: [...FAKE.safeServers, 'fakebroker'], verbs: ['nothing_here'] };
 const DENIED = 'mcp__fakebroker__place_widget';
 const ALLOWED = 'mcp__other__get_widget';
 const MISMATCH = /指紋對不上/u;
