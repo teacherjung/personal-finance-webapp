@@ -73,7 +73,7 @@ test('套件閘｜模板原封不動送出去也必須不通過；角括號換�
   assert.ok(gateProblemsOf(tpl, usable).length > 0, '範本原封不動送出去竟然通過了套件閘——閘等於沒有');
   // 對照組：同一份範本、只把四個欄位行冒號後的佔位字換成合法值，就要通過——
   // 證明上面那條「不通過」是因為值不合法，不是因為欄位根本讀不到（那樣填什麼都會擋）。
-  const value = (/** @type {string} */ f) => (f === '實作者' ? usable[0] : f === '獨立審查者' ? usable[1] : '無');
+  const value = (/** @type {string} */ f) => (f === '實作者' ? usable[0] : f === '複審者' ? usable[1] : '無');
   const filled = tpl.replace(/\r\n?/g, '\n').split('\n').map((l) => {
     const f = GATE_FIELDS.find((x) => fieldLineRe(x).test(l));
     return f ? l.replace(/[:：].*$/u, `：${value(f)}`) : l;
@@ -138,12 +138,12 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
     ['AGENTS.md', '-C "/private/tmp/codex-review-pr<N>"', 1],   // 發射審查的指令列裡那一處
     ['AGENTS.md', '釘住受審 commit', 2],
-    ['AGENTS.md', '審查樹由發射者備與收，審查者不得自建 worktree', 1],
-    ['AGENTS.md', '由發射者備樹時建、收尾時 unlink，審查者不得自行建立／安裝／移除', 1],
+    ['AGENTS.md', '審查樹由實作者備與收，複審者不得自建 worktree', 1],
+    ['AGENTS.md', '由實作者備樹時建、收尾時 unlink，複審者不得自行建立／安裝／移除', 1],
     // 審查模型＝William 的裁示（2026-09-07）。**這一列守的是「全檔出現幾次」，不是「出現在哪裡」**。
     // 哪天換模型：把這一列改成新模型名、次數照附則實際次數——它買到的是：單純增刪任一個模型名一定會紅。
     ['AGENTS.md', 'gpt-6-astra', 1],
-    ['CLAUDE.md', '正式審查的 symlink 一律由發射者備樹時處理', 1],
+    ['CLAUDE.md', '正式審查的 symlink 一律由實作者備樹時處理', 1],
   ];
   for (const [file, pin, expected] of PINS) {
     const got = count(docs[file], pin);

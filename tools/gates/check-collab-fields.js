@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// 協作欄位閘（規矩 A2、E1）：變更說明的四個欄位要齊全，而且實作者不可以等於獨立審查者。
+// 協作欄位閘（規矩 A2、E1）：PR說明的四個欄位要齊全，而且實作者不可以等於複審者。
 //
 // 為什麼要有它：「沒有任何一份產出由寫它的人放行」這條在版本控制與平台上**不留任何痕跡**——
-// 原專案量過：四十支已合併變更的「誰按的鍵」全是同一個帳號（兩個 AI 共用），平台的審查紀錄全部是零。
-// 唯一還看得見分工的地方就是變更說明裡那幾欄，而它靠記憶維持，實測連續三支漏填。
+// 原專案量過：四十支已合併的PR的「誰按的鍵」全是同一個帳號（兩個 AI 共用），平台的審查紀錄全部是零。
+// 唯一還看得見分工的地方就是PR說明裡那幾欄，而它靠記憶維持，實測連續三支漏填。
 // 所以範本管「寫得出來」，這支管「沒寫就合不了」。兩個都沒有的話，那條不變量只是一句話。
 //
 // ## 這支被繞過的每一種寫法，都對應下面一段程式碼，**不要簡化掉**
@@ -32,15 +32,15 @@ const { leadingText, stopNote } = require('../markdown-effective.js');
 const UNSET = '未設定';
 
 /** 必填欄位。這份清單是單一真相，範本 templates/pr-body.md 照它寫。 */
-const REQUIRED_FIELDS = ['實作者', '獨立審查者', '預計修改的共享檔案', '這支若完全失敗，最糟失去什麼'];
+const REQUIRED_FIELDS = ['實作者', '複審者', '預計修改的檔案', '這支若完全失敗，最糟失去什麼'];
 
 /**
  * 讀一個欄位的值。見檔頭①②③。
  * ⑧（r2 Medium③）：讀哪一段只有一份定義——程式碼圍欄裡的「範例欄位」、引用裡的「範例欄位」都不算填了（r5 之後：只讀開頭那一段）；
- *    否則整份說明只有一段範例就能通過這道閘，還替結論閘提供一位假的「指定審查者」。
+ *    否則整份說明只有一段範例就能通過這道閘，還替結論閘提供一位假的「指定的複審者」。
  */
 function fieldValue(body, field) {
-  // ①：只讀開頭那一段（結論聯集閘也用這支讀「獨立審查者」，守在這裡就不會有呼叫點漏接）
+  // ①：只讀開頭那一段（結論聯集閘也用這支讀「複審者」，守在這裡就不會有呼叫點漏接）
   const clean = leadingText(body);
   const esc = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 行首可有項目符號（含有序清單）與水平空白，欄名可被粗體記號包住，然後才是冒號。
@@ -78,7 +78,7 @@ function canonicalRole(raw, roles) {
 
 /**
  * 純判斷層。回傳問題清單（空陣列＝通過）。
- * @param {string} body 變更說明
+ * @param {string} body PR說明
  * @param {string[]} roles 專案設定裡的參與者識別值
  */
 function problemsOf(body, roles) {
@@ -90,16 +90,16 @@ function problemsOf(body, roles) {
   }
   if (problems.length && stopNote(body)) problems.push(stopNote(body));
   const implRaw = got['實作者'];
-  const revRaw = got['獨立審查者'];
+  const revRaw = got['複審者'];
   const impl = canonicalRole(implRaw, roles);
   const rev = canonicalRole(revRaw, roles);
-  for (const [label, raw, role] of [['實作者', implRaw, impl], ['獨立審查者', revRaw, rev]]) {
+  for (const [label, raw, role] of [['實作者', implRaw, impl], ['複審者', revRaw, rev]]) {
     if (raw && !role) {
       problems.push(`「${label}」寫成「${raw}」，必須剛好是 ${roles.join('／')} 的其中一個（不接受加註、多人並列、或看不出是誰的寫法）`);
     }
   }
   if (impl && rev && impl === rev) {
-    problems.push(`實作者與獨立審查者都是「${impl}」——沒有任何一份產出可以由寫它的人放行`);
+    problems.push(`實作者與複審者都是「${impl}」——沒有任何一份產出可以由寫它的人放行`);
   }
   return problems;
 }
@@ -121,7 +121,7 @@ function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {
     return {
       code: 2,
       lines: [`專案設定裡可用的參與者識別值只有 ${usable.length} 個（登記了 ${ids.length} 個）：`
-        + '至少要兩個純拉丁字母的識別值，才判得出「實作者不等於獨立審查者」，不放行。'],
+        + '至少要兩個純拉丁字母的識別值，才判得出「實作者不等於複審者」，不放行。'],
     };
   }
   let change;
@@ -141,7 +141,7 @@ function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {
     lines.push('補齊再合併。範本在 templates/pr-body.md。');
     return { code: 1, lines };
   }
-  lines.push(`協作欄位閘｜變更 ${changeId}：四欄齊全，實作者與獨立審查者不是同一位`);
+  lines.push(`協作欄位閘｜變更 ${changeId}：四欄齊全，實作者與複審者不是同一位`);
   return { code: 0, lines };
 }
 

@@ -2,10 +2,10 @@
 // 平台介面：閘要問平台的每一個問題，都只透過這一支。
 //
 // 為什麼需要它（2026-09-13 量出來的）：原專案那七支閘全部直接呼叫 GitHub 的指令列工具，
-// 合計三千多行、裡面散著讀變更、列變更、讀留言、讀檢查場次那些呼叫。照搬等於把套件釘死在一個平台上，
+// 合計三千多行、裡面散著讀PR、列PR、讀留言、讀檢查場次那些呼叫。照搬等於把套件釘死在一個平台上，
 // 而這個套件的整個賣點是搬得動。但實際量過，它們只用到平台的**九個動作**——所以不是搬三千行，
-// 是定九個問題。（2026-09-14 加第十個 allComments：待裁清單要掃整個專案的留言，題目所屬的變更關了，題目還在——
-// 搬家驗屋抓到只掃開著的變更，真語料 12 題裡 4 題會從清單消失。）
+// 是定九個問題。（2026-09-14 加第十個 allComments：待裁清單要掃整個專案的留言，題目所屬的PR關了，題目還在——
+// 搬家驗屋抓到只掃開著的PR，真語料 12 題裡 4 題會從清單消失。）
 //
 // ## 分工：套件定問題，專案定怎麼問
 //
@@ -35,7 +35,7 @@ const LINE_BREAK = new RegExp('[\\n\\r\\u0085\\u2028\\u2029\\v\\f]', 'u');
 
 /** 欄位型別：套件只認這幾種，形狀表就只靠它們描述。 */
 const LINE = 'line';        // 單行非空字串
-const TEXT = 'text';        // 可以多行、可以空（變更說明、留言內文）
+const TEXT = 'text';        // 可以多行、可以空（PR說明、留言內文）
 const BOOL = 'bool';
 const MAYBE = 'maybe-line'; // 單行字串或 null（例如還沒有結論的檢查）
 
@@ -48,33 +48,33 @@ const OPERATIONS = {
   change: {
     kind: 'object',
     params: ['change'],
-    what: '讀一支變更的基本資料',
+    what: '讀一支PR的基本資料',
     // changedFileCount：平台自報這支動了幾個檔（數字寫成字串），沒有就 null——驗收分級拿它對帳清單有沒有少給
     shape: { id: LINE, title: LINE, body: TEXT, baseBranch: LINE, headBranch: LINE, headSha: LINE, state: LINE, isDraft: BOOL, isCrossRepo: BOOL, autoMergeOn: BOOL, changedFileCount: MAYBE, author: LINE },
   },
   openChanges: {
     kind: 'list',
     params: [],
-    what: '列出目前開著的每一支變更（⚠️ 必須是全部，分頁要在這條指令裡處理完；套件驗不到少給了幾支）',
+    what: '列出目前開著的每一支PR（⚠️ 必須是全部，分頁要在這條指令裡處理完；套件驗不到少給了幾支）',
     shape: { id: LINE, baseBranch: LINE, headBranch: LINE, headSha: LINE, isDraft: BOOL, author: LINE },
   },
   comments: {
     kind: 'list',
     params: ['change'],
-    what: '讀一支變更底下的留言（結論、裁示、撤回都靠它）',
+    what: '讀一支PR底下的留言（結論、裁示、撤回都靠它）',
     shape: { id: LINE, author: LINE, body: TEXT, createdAt: LINE },
   },
   allComments: {
     kind: 'list',
     params: [],
-    what: '讀整個專案的每一則一般留言，各帶它所屬的變更編號（⚠️ 必須是全部、含已關的變更，分頁要在這條指令裡處理完）',
-    // change：這則留言掛在哪一支變更底下。待裁清單靠它把「問」與「裁」配起來，不管那一支還開不開著。
+    what: '讀整個專案的每一則一般留言，各帶它所屬的PR編號（⚠️ 必須是全部、含已關的PR，分頁要在這條指令裡處理完）',
+    // change：這則留言掛在哪一支PR底下。待裁清單靠它把「問」與「裁」配起來，不管那一支還開不開著。
     shape: { id: LINE, author: LINE, body: TEXT, createdAt: LINE, change: LINE },
   },
   changedFiles: {
     kind: 'list',
     params: ['change'],
-    what: '讀一支變更動了哪些檔',
+    what: '讀一支PR動了哪些檔',
     // previousPath：改名或複製前的舊路徑，沒有就是 null——分級要連舊路徑一起看
     shape: { path: LINE, status: LINE, previousPath: MAYBE },
   },
@@ -99,14 +99,14 @@ const OPERATIONS = {
     what: '讀一個分支現在指到哪一顆',
     shape: { sha: LINE },
   },
-  markReady: { kind: 'action', params: ['change'], what: '把一支變更從草稿轉成正式' },
+  markReady: { kind: 'action', params: ['change'], what: '把一支PR從草稿轉成正式' },
   merge: { kind: 'action', params: ['change'], what: '按下合併鍵' },
 };
 
 /**
  * 預設執行器。起不來或被訊號殺掉都回 status null——呼叫端一律當查不到。
  * ⚠️ 環境先清掉 GIT_ 那一族（規矩 E4）：平台工具會自己再去叫 git，繼承來的 GIT_DIR 指到另一棵倉庫時，
- *    問到的是**那一棵**的變更與留言，而輸出看起來完全正常（里程碑 3 r1 High①，PFW 原版早就防過）。
+ *    問到的是**那一棵**的PR與留言，而輸出看起來完全正常（里程碑 3 r1 High①，PFW 原版早就防過）。
  *    GITHUB_、GH_TOKEN 不是 GIT_ 前綴，不受影響。
  */
 function runCommand(command, args, { clearEnv = [] } = {}) {
@@ -154,7 +154,7 @@ function checkShape(value, shape, where) {
 
 /**
  * 把指令樣板裡的記號換掉。用不到的參數、沒填的參數都當錯，不默默跑一條半成品的指令。
- * 另有一個全域記號 {project}＝專案設定的 platform.project（例如「擁有者/倉庫名」）：用了它就等於把身分釘死在
+ * 另有一個全域記號 {project}＝專案設定的 platform.project（例如「帳號/倉庫名」）：用了它就等於把身分釘死在
  * 指令裡，不再由環境變數決定問哪個倉庫（r2 High①）。樣板用了 {project} 而設定沒填＝丟錯。
  */
 function fill(parts, params, args, opName, project) {

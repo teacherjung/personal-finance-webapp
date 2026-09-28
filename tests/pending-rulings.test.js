@@ -6,8 +6,8 @@
 //   ③撤回要有三選一的理由（附依據）與自報句；缺一＝疑似；
 //   ④配對：裁示或撤回要引到原 ❓ 的留言編號、在引用區塊以外、而且比 ❓ 晚；引在引用區塊裡不算；先貼的不算；
 //   ⑤已裁與已撤回一定印出來、附配對；長得像但形狀不合＝疑似；
-//   ⑥裁示者沒填、平台問不到＝退 2；不擋任何事（沒有退 1）；掃**整個專案**的留言（allComments），題目所屬的變更關了照樣列、
-//     裁示貼在別支變更上照樣配得起來（搬家驗屋 09-13：原本只掃開著的變更，真語料 12 題裡 4 題會從清單消失）；
+//   ⑥裁示者沒填、平台問不到＝退 2；不擋任何事（沒有退 1）；掃**整個專案**的留言（allComments），題目所屬的PR關了照樣列、
+//     裁示貼在別支PR上照樣配得起來（搬家驗屋 09-13：原本只掃開著的PR，真語料 12 題裡 4 題會從清單消失）；
 //   ⑦三種留痕都只採計登記的貼文帳號（r1 Medium⑧：外人不可以撤掉待裁、外人的問也不入）；
 //   ⑧轉述者要是登記的識別值、不帶記號；藏在 HTML 註解裡的原話行與網址不算；引用區塊的懶續行也算引用（r1 Medium⑨）；
 //     原話、撤回理由、自報句、配對只讀開頭那一段（r5 之後）：碰到引用、圍欄、註解等特殊行就停，疑似的原因附停在第幾行；
@@ -100,10 +100,10 @@ test('⑥裁示者沒填＝退 2；平台問不到＝退 2；算出來＝退 0�
   const platform = { ask(op) { asked.push(op); if (op !== 'allComments') throw new Error(`不該問 ${op}`); return [q]; } };
   const r = run({ settings, platform });
   assert.equal(r.code, 0);
-  assert.deepEqual(asked, ['allComments'], '一次問整個專案，不是逐支問開著的變更');
-  assert.match(r.lines.join('\n'), /還沒回：1 則/u, '所屬的變更關了，題目還在');
+  assert.deepEqual(asked, ['allComments'], '一次問整個專案，不是逐支問開著的PR');
+  assert.match(r.lines.join('\n'), /還沒回：1 則/u, '所屬的PR關了，題目還在');
   assert.match(r.lines.join('\n'), /含已關的變更/u);
-  // 裁示貼在別支變更上（原專案真語料的形狀：問在 #577、裁在 #578）照樣配得起來
+  // 裁示貼在別支PR上（原專案真語料的形狀：問在 #577、裁在 #578）照樣配得起來
   const answered = run({ settings, platform: { ask: () => [q, { ...ruling(q.id), change: '6' }] } });
   assert.match(answered.lines.join('\n'), /還沒回：0 則/u);
   assert.match(answered.lines.join('\n'), /已裁：1 則/u);
@@ -247,7 +247,7 @@ test('⑬只讀開頭那一段（r5 之後）：原話與網址寫在特殊行�
   const earlyWithQuote = { ...second, id: 'early1', createdAt: '2026-09-12T00:00:00Z' };
   assert.ok(evaluate([q, earlyWithQuote], D).near.some((x) => x.id === 'early1' && /沒有配到/u.test(x.why)), '引到的問題比它晚＝不算配到（先後要看）');
   const unmatchedNoStop = c('## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n別的變更上的題', { author: 'boss-acct' });
-  assert.equal(evaluate([q, unmatchedNoStop], D).near.length, 0, '對照組：沒配到、但讀的那段沒停＝照舊不列（可能在回答已關掉的變更上的題）');
+  assert.equal(evaluate([q, unmatchedNoStop], D).near.length, 0, '對照組：沒配到、但讀的那段沒停＝照舊不列（可能在回答已關掉的PR上的題）');
   const tagInTitle = c('## ❓ 待裁（2026-09-13）：要不要用 <details> 收合');
   assert.equal(evaluate([tagInTitle], D).open.length, 1, '第一行讀原文、不經過「開頭那一段」：標題裡有特殊記號也照樣是問');
   const mention = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n背景：\`<!--\` 那個記號的事\n原話（對話中，Alpha 轉述）：**「甲」**\n${q.id}`, { author: 'boss-acct' });

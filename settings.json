@@ -18,6 +18,10 @@
  ],
  "accountRule": "只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。",
  "identityDomain": "現階段只准純拉丁字母：結論標頭的正則只收 A 到 Z 的字母，協作欄位閘收得寬，兩道機器值域不同——要放寬就得標頭、欄位閘整族一起改。",
+ "defaultDivision": {
+  "implementer": "Claude",
+  "reviewer": "Codex"
+ },
  "sources": [
   {
    "tool": "本機 codex CLI 起的審查 session",
@@ -64,7 +68,7 @@
   {
    "item": "三關的實際命令、執行環境版本、稽核等級（或唯一設定檔位置）",
    "rules": "E2、E3",
-   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（三關前後的工作樹、主目錄布局與索引錨點由執行器自己驗；鉤子只叫執行器、本專案不再有第二支工作樹體檢＝William 2026-09-20 裁 a（拿掉本專案那支 scripts/check-worktree-integrity.js、只留套件那支，分兩支），落點＝https://github.com/teacherjung/personal-finance-webapp/pull/622#issuecomment-5743466843 ；執行順序照同一支的 https://github.com/teacherjung/personal-finance-webapp/pull/622#issuecomment-5743476335 調整，兩支都已合併：第一支 #623（7612485）拿掉鉤子前後那兩次呼叫、把 08-09 事故的病理與證據鏈搬到 docs/bare-repo-incident.md；第二支 #624（7fdb8fe）刪掉那支腳本與只考它的考題（事故的原地重現題留著，改成不依賴它）。沿革：William 2026-09-18 裁搬家第 13 題 a＝兩支一起跑到搬家完工驗收、再拿掉本專案那支，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/614#issuecomment-5724981414；2026-09-19 再裁 a＝先不拿：套件那支補上這支擋得住、它原本放行的四種壞法，本專案登記 checks.mainWorktree＝一般工作樹、checks.indexAnchors＝package.json、AGENTS.md、server.js〔當時的依據是那支的 REQUIRED_TRACKED；那支 2026-09-20 刪掉之後，改由 test/kit-check-registration.test.js 直接釘這三個字面值〕，同步之後在暫存倉庫把同一批壞法各造一次、兩支結果一致才拿〔結果一致＝照套件 ai-collab-kit issue #6 本文事先寫好的期待表：兩支不是逐一等價，表上登記的差異（這支多擋的，例如共用 core.bare=true 而每棵樹連主目錄都覆寫 false、store.git 裸儲存庫；套件守不到的，例如 --separate-git-dir 布局）之外逐列相同；跑出表上沒有的差異＝不拿〕，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/617#issuecomment-5739129893；照期待表的對照結果＝套件 ai-collab-kit issue #6 留言 5741036750）；跨變更試合併閘＝tools/gates/check-cross-merge.js：在臨時樹先跑 checks.prepareWorktree（npm ci；臨時樹已有 node_modules 就退 3、不跑）再跑同一份 checks.commands（舊的 scripts/check-cross-pr-merge.js 已於 2026-09-18 搬家第 7 步刪除）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
+   "where": "搬家第 4 步（2026-09-17）起＝settings.json 的 checks 是三關命令的正本：本機門 scripts/git-hooks/pre-push 與雲端 .github/workflows/ci.yml「上線用的 Node（.node-version）」job 都呼叫 tools/run-checks.js（三關前後的工作樹、主目錄布局與索引錨點由執行器自己驗；鉤子只叫執行器、本專案不再有第二支工作樹體檢＝William 2026-09-20 裁 a（拿掉本專案那支 scripts/check-worktree-integrity.js、只留套件那支，分兩支），落點＝https://github.com/teacherjung/personal-finance-webapp/pull/622#issuecomment-5743466843 ；執行順序照同一支的 https://github.com/teacherjung/personal-finance-webapp/pull/622#issuecomment-5743476335 調整，兩支都已合併：第一支 #623（7612485）拿掉鉤子前後那兩次呼叫、把 08-09 事故的病理與證據鏈搬到 docs/bare-repo-incident.md；第二支 #624（7fdb8fe）刪掉那支腳本與只考它的考題（事故的原地重現題留著，改成不依賴它）。沿革：William 2026-09-18 裁搬家第 13 題 a＝兩支一起跑到搬家完工驗收、再拿掉本專案那支，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/614#issuecomment-5724981414；2026-09-19 再裁 a＝先不拿：套件那支補上這支擋得住、它原本放行的四種壞法，本專案登記 checks.mainWorktree＝一般工作樹、checks.indexAnchors＝package.json、AGENTS.md、server.js〔當時的依據是那支的 REQUIRED_TRACKED；那支 2026-09-20 刪掉之後，改由 test/kit-check-registration.test.js 直接釘這三個字面值〕，同步之後在暫存倉庫把同一批壞法各造一次、兩支結果一致才拿〔結果一致＝照套件 ai-collab-kit issue #6 本文事先寫好的期待表：兩支不是逐一等價，表上登記的差異（這支多擋的，例如共用 core.bare=true 而每棵樹連主目錄都覆寫 false、store.git 裸儲存庫；套件守不到的，例如 --separate-git-dir 布局）之外逐列相同；跑出表上沒有的差異＝不拿〕，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/617#issuecomment-5739129893；照期待表的對照結果＝套件 ai-collab-kit issue #6 留言 5741036750）；跨PR試合併閘＝tools/gates/check-cross-merge.js：在臨時樹先跑 checks.prepareWorktree（npm ci；臨時樹已有 node_modules 就退 3、不跑）再跑同一份 checks.commands（舊的 scripts/check-cross-pr-merge.js 已於 2026-09-18 搬家第 7 步刪除）；執行環境版本＝.node-version（CI 與 Render 部署同讀；package.json 的 engines 是 start.command 啟動時驗的下限；本機門不驗版本）；稽核等級＝ci.yml 上線用 Node 那個 job 的 npm audit --audit-level=high（只在雲端跑）"
   },
   {
    "item": "必要檢查名單與分支保護設定（指向平台上的設定正本與驗證入口，不另抄一份會漂的名單）",
@@ -77,9 +81,9 @@
    "where": "settings.json 的 gates（登記；每筆＝name／rules／command／args／state）；各閘腳本＝tools/gates/*.js；對帳考題＝tests/settings.test.js（磁碟上的閘 vs 登記的閘）；合併指令 tools/merge.js 只跑登記為已啟用的閘、任一非零就停。切換日（2026-09-17）之前＝舊程序文件的合併步驟清單＋scripts/check-*.js 自報的 MERGE_GATE；舊閘腳本已於 2026-09-18 搬家第 7 步（#614）刪除；切換日到刪除之間不在任何合併路徑上"
   },
   {
-   "item": "合併前必做的驗收依據",
+   "item": "「按合併鍵」前要查的三種例外（裁示者叫停、本支還沒回的待裁、改到禁區清單的PR要擁有者點頭）",
    "rules": "A5",
-   "where": "本檔 mergeAuthorization 那一格（高風險與新功能照 AGENTS.md「PR 分級與契約」節的標準全流程，William 實測驗收後才合；分級看 PR 說明的「最糟失去什麼」欄）＋每支 PR 說明「怎麼驗收」的三句白話（開哪一頁、做什麼、看到什麼算對；同一節的級別與動作屬合併後驗收分級＝H6 那一格，不是這一格）（.github/pull_request_template.md）"
+   "where": "靠自覺、沒有專屬清單：叫停＝看對話與本支PR的留言；本支還沒回的待裁＝node tools/pending-rulings.js 列出、掛在本支的那幾題；改到禁區清單的PR＝先等擁有者點頭（本專案的禁區清單見 B1 那一列）。三種都沒有＝按合併鍵前不用問裁示者；高風險與新功能也不在合併前另做實測（裁示者 2026-09-28 裁 ④ 第 D2 題 b：合併後照 H6 那一列分級驗收、驗不過就退回；某一支要先測就叫停）"
   },
   {
    "item": "合併後驗收分級與動作的正本（路徑家族表＋各級動作）",
@@ -90,9 +94,9 @@
  "mainBranch": "main",
  "scanner": {
   "tool": "Grok CLI（xAI）：一律經 node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> --out <回覆檔> 發射（呼叫紀律與三個失效條件＝scripts/grok-scan.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本；grok 自己會升版（裁示者 2026-09-22 裁「auto_update 維持開著」），升版＝在倉庫根目錄跑 `npm run grok:bump`（重驗必要字串→改釘值與考題 fixture；不 commit、不 push；重驗不過就退 2 不寫），細節與劃界＝`scripts/grok-bump.js` 檔頭",
-  "assignedBy": "掃描發射者＝起得了掃描器的那一方（William 2026-09-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William",
-  "tieBreak": "本專案沒有：今天只有一方起得了掃描器，平手規則刻意不預寫（本格即正本）；出現兩方都起得了時要補一條——由誰定沒有寫明（換現況要先實測、再問 William，見 assignedBy）",
-  "fallback": "本專案沒有另立：掃不成一律由掃描發射者（現況 Claude）在變更說明固定小標「### 複審後掃」下逐字寫「未執行：<原因>」、不擋合併，轉正式也由掃描發射者做；「沒有任何一方起得了」這個情形本專案沒有條文（未裁）",
+  "assignedBy": "掃描發射者＝起得了掃描者的那一方（William 2026-09-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William",
+  "tieBreak": "實作者（裁示者 2026-09-25 裁、第二輪 A1：兩方都起得了掃描者時，預設是實作者；原本這一格寫「出現兩方都起得了時要補一條」，這就是那一條）；本專案今天只有一方起得了（見 assignedBy），這一格要到兩方都起得了才用得到",
+  "fallback": "實作者（第二輪 G4：專案沒有掃描者、或沒有任何一方起得了時，由實作者寫未執行並轉正式）；掃得起但掃不成時，一律由掃描發射者（現況 Claude）在PR說明固定小標「### 複審後掃」下逐字寫「未執行：<原因>」、不擋合併，轉正式也由掃描發射者做",
   "isolation": {
    "provider": "專案自建",
    "wrap": [
@@ -114,7 +118,6 @@
    ]
   }
  },
- "mergeAuthorization": "有，常設（裁示者 William 2026-08-13 口頭拍板；2026-09-05 在協作系統體檢第 1 題回「a」確認整條——含 08-13 那句與對稱適用，落點＝personal-finance-webapp #571 那則裁示留言（Claude 轉述他在對話中的回答）；本格即正本）：Claude 實作的支由 Codex 留下合規「通過」、Codex 實作的支由 Claude 複審通過，且變更說明的「### 複審後掃」小標已填（逐條判定完、或逐字「未執行：原因」，未執行不擋合併）＝視同裁示者於送審時已預先決定「要合、而且閘綠了就合」，由審過這支的那一方照登記的閘與合併指令合併、不必再問；其中「Codex 實作的支也要小標已填」那半句是 Claude 的操作化、現在生效，不是裁示者原話，也不在 09-05 確認整條的範圍（裁示者 2026-09-09 只裁「掃要對稱」）；裁示者隨時可收回，也可對個案說先不要合；不改變審查回饋處置的停問規則、錢的絕對邊界，也不改變高風險與新功能支依標準全流程要先由裁示者實測驗收、驗收前不合",
  "platform": {
   "name": "GitHub",
   "project": "teacherjung/personal-finance-webapp",
@@ -386,11 +389,11 @@
    },
    {
     "id": "B（相依套件）",
-    "action": "先裝再重啟：桌面捷徑「重啟理財網頁.command」（住桌面、不在 repo）pull 到動 package*.json 的版本時會自動 npm install；走 repo 裡的 start.command（不 pull、只在沒有 node_modules 時裝）或主目錄已是最新版（沒有 pull 可做）就要在主目錄手動 npm install；裝完不可以停在這裡，接著照做：William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。"
+    "action": "先裝再重啟：桌面捷徑「重啟理財網頁.command」（住桌面、不在 repo）pull 到動 package*.json 的版本時會自動 npm install；走 repo 裡的 start.command（不 pull、只在沒有 node_modules 時裝）或主目錄已是最新版（沒有 pull 可做）就要在主目錄手動 npm install；裝完不可以停在這裡，接著照做：擁有者 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。"
    },
    {
     "id": "C（要重啟＋走核心流程）",
-    "action": "William 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。"
+    "action": "擁有者 重啟 App、以實際操作走完最核心的一條流程（PR 說明「怎麼驗收」那三句）；HOSTED 等 Render 重新部署後在線上走同一條。"
    },
    {
     "id": "D（只動前端）",
@@ -615,7 +618,7 @@
  },
  "gates": [
   {
-   "name": "協作欄位（四欄齊全、實作者不等於獨立審查者）",
+   "name": "協作欄位（四欄齊全、實作者不等於複審者）",
    "rules": "A2、E1",
    "command": "node",
    "args": [
@@ -651,7 +654,7 @@
    "state": "已啟用"
   },
   {
-   "name": "跨變更試合併（與每支以主幹為底的開著變更真合起來跑三關）",
+   "name": "跨PR試合併（與每支以主幹為底的開著PR真合起來跑三關）",
    "rules": "H4",
    "command": "node",
    "args": [
@@ -690,7 +693,7 @@
    "verified": "2026-09-14"
   },
   {
-   "name": "協作欄位閘（四欄齊全、實作者不等於獨立審查者）",
+   "name": "協作欄位閘（四欄齊全、實作者不等於複審者）",
    "rules": "A2、E1",
    "state": "已啟用",
    "verified": "2026-09-14"
@@ -714,7 +717,7 @@
    "verified": "2026-09-15"
   },
   {
-   "name": "推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作樹）",
+   "name": "推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作資料夾（樹））",
    "rules": "E2",
    "state": "已啟用",
    "verified": "2026-09-17"
@@ -774,7 +777,7 @@
    "verified": "2026-09-14"
   },
   {
-   "name": "跨變更試合併閘（與每支以主幹為底的開著變更真合起來跑三關）",
+   "name": "跨PR試合併閘（與每支以主幹為底的開著PR真合起來跑三關）",
    "rules": "H4",
    "state": "已啟用",
    "verified": "2026-09-18"

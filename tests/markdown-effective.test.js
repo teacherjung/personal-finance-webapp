@@ -77,10 +77,10 @@ test('射程外照實釘住：表格標題列裡跨格的反引號，標題列�
 });
 
 test('射程外照實釘住：行中開始的連結標題或網址帶反引號、跨行參照標籤、跨行註腳標籤，目前讀得到（r8 待辦；語料沒有實例）', () => {
-  const fields = ['實作者：Alpha', '獨立審查者：Beta'];
+  const fields = ['實作者：Alpha', '複審者：Beta'];
   assert.equal(leadingLines(['說明：[文件](https://example.com "版本 `") <!-- `', ...fields, '-->'].join('\n')).stopAt, 0, '連結標題裡的反引號跟註解裡的配成一對，註解開頭被遮掉');
   assert.equal(leadingLines(['說明：[文件](https://example.com/`) <!-- `', ...fields, '-->'].join('\n')).stopAt, 0, '網址裡的反引號同型');
-  assert.equal(leadingLines(['說明：[文件][', ...fields, ']', '', '[實作者：Alpha 獨立審查者：Beta]: https://example.com'].join('\n')).stopAt, 6, '跨行參照標籤：讀到定義那一行才停，前面的標籤行讀得到');
+  assert.equal(leadingLines(['說明：[文件][', ...fields, ']', '', '[實作者：Alpha 複審者：Beta]: https://example.com'].join('\n')).stopAt, 6, '跨行參照標籤：讀到定義那一行才停，前面的標籤行讀得到');
   assert.equal(leadingLines(['說明[^', ...fields, ']'].join('\n')).stopAt, 0, 'GitHub 跨行註腳標籤');
   // 哪天補進特殊行清單，這一題會紅，檔頭的誠實劃界要一起改
 });

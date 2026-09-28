@@ -1,4 +1,4 @@
-// 守合併指令（規矩 A5、H1；裁示者 2026-09-12 裁「丙′」）。
+// 守合併指令（規矩 A4、H1；裁示者 2026-09-12 裁「丙′」）。
 //
 // 守得到的：
 //   ①沒有任何一道閘登記成「已啟用」＝不放行（fail-closed）——一支什麼都沒檢查就按合併鍵的
@@ -13,7 +13,7 @@
 //   ⑦按完合併鍵印的結論，量詞只蓋到這一趟真的跑過的那幾道閘；
 //   ⑧**版本鎖**（搬家驗屋 09-13）：開跑前記下變更的版本、按鍵前再讀一次，不一樣＝不按（原本五道閘各自重讀、
 //     彼此不比對，跑閘途中推上來的新版本照樣被合併）；問不到版本＝不放行；
-//   ⑨**合併指令的記號**：{change}、{sha}、{project}、{reviewer}（說明的「獨立審查者」欄）、{merger}（--merger 自報、
+//   ⑨**合併指令的記號**：{change}、{sha}、{project}、{reviewer}（PR說明的「複審者」欄）、{merger}（--merger 自報、
 //     要是登記過的參與者）；認不得的記號、該填填不出來＝不放行；跑閘前驗得了的先驗；沒帶誰審誰合／版本要提醒；
 //   ⑩閘退 1＝擋下（退 1）；退 2 或其他非零（含起不來）＝查不清楚（退 2），不叫人去找「紅的是哪一題」；
 //   ⑪按合併鍵那一步也清掉 platform.clearEnv 登記的變數；合併指令裡沒有 {change}＝不放行（搬家前準備）。
@@ -29,7 +29,7 @@ const { mergeRun: realMergeRun, runCommand, parseArgs, UNSET, ENABLED } = requir
 const HEAD = 'a'.repeat(40);
 const PEOPLE = [{ role: 'AI 甲', id: 'Alpha' }, { role: 'AI 乙', id: 'Beta' }];
 /** 假平台：change 依序回 shas 裡的版本（用完就一直回最後一個）；記下被問了什麼。 */
-function fakePlatform({ shas = [HEAD], body = '實作者：Alpha\n獨立審查者：Beta\n', fail = [] } = {}) {
+function fakePlatform({ shas = [HEAD], body = '實作者：Alpha\n複審者：Beta\n', fail = [] } = {}) {
   const asked = [];
   return {
     asked,
@@ -236,7 +236,7 @@ test('⑨記號填不出來就不放行；跑閘前驗得了的先驗', () => {
     assert.deepEqual(calls, [], `${why}：跑閘前就該停`);
     assert.match(r.lines.join('\n'), re, why);
   }
-  // 審查者要讀變更說明，只能在按鍵前驗：讀不出來＝閘跑了、鍵不按
+  // 複審者要讀PR說明，只能在按鍵前驗：讀不出來＝閘跑了、鍵不按
   const { run, calls } = fakeRunner([0]);
   const r = realMergeRun('7', { settings: withArgs(['merge', '{change}', '{reviewer}']), run, platform: fakePlatform({ body: '實作者：Alpha\n' }) });
   assert.equal(r.code, 2);

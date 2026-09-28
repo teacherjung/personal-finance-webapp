@@ -29,12 +29,12 @@ test('合併程序真的把聯集閘登記成一道（settings.json 的 gates；
   assert.ok(existsSync(join(ROOT, 'tools/gates/check-review-verdicts.js')), '登記的閘檔不存在＝登記了也跑不到');
   // 登記的規矩條號要指回結論標頭那兩條（RULES F4、F5）——閘與規矩對不上，讀登記表的人會找錯條
   assert.match(String(gate.rules || ''), /F4/, '聯集閘的登記沒有指回 RULES F4（標頭形狀）');
-  assert.match(String(gate.rules || ''), /F5/, '聯集閘的登記沒有指回 RULES F5（各自解除、放行只認指定那一位）');
+  assert.match(String(gate.rules || ''), /F5/, '聯集閘的登記沒有指回 RULES F5（只有同一位能解除、放行只認指定那一位）');
   // 合併指令本身要登記著（沒有 mergeCommand 的話執行器停在閘後、不會合併——那時「閘在合併前」是空話）
   assert.ok(settings.mergeCommand && settings.mergeCommand.command, 'settings.json 沒有登記 mergeCommand');
 });
 
-test('套件範本與規矩本文要寫下「各自解除」與自報來歷的格式（切換日起改綁 templates/verdict-header.md 與 RULES F4／F5）', () => {
+test('套件範本與規矩本文要寫下「只有同一位能解除」與自報來歷的格式（切換日起改綁 templates/verdict-header.md 與 RULES F4／F5）', () => {
   // ⚠️ **剝掉 HTML 註解再比對**（Codex #385 r1 Medium⑤）：
   //    不剝的話，把整段規則包進 `<!-- -->` 就能讓「文件寫了」變成假的——
   //    而這支 PR 自己新增的固定維度第 2 條講的就是這件事，我在自己的考題裡違反了它。
@@ -44,10 +44,10 @@ test('套件範本與規矩本文要寫下「各自解除」與自報來歷的�
   const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
   assert.ok(tmpl.includes('🤖 <角色識別值>｜來源：<來源字串>｜審 `<短版本碼>`｜r<輪次>｜結論：<通過｜需修改後再審｜不可合併>'),
     'templates/verdict-header.md 沒有寫出來歷標頭的逐字格式行（含 🤖、全形｜、反引號版本碼、三選一），寫的人只能猜');
-  assert.ok(tmpl.includes('各自解除'), 'templates/verdict-header.md 找不到「各自解除」——聯集規則只寫在腳本裡＝讀範本的人不會知道');
+  assert.ok(tmpl.includes('只有同一位能解除'), 'templates/verdict-header.md 找不到「只有同一位能解除」——聯集規則只寫在腳本裡＝讀範本的人不會知道');
   const rules = strip(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
-  assert.match(rules, /^- F4 .*機器標頭/mu, 'RULES F4 沒有寫「結論留言第一行是機器標頭」');
-  assert.match(rules, /^- F5 .*各自解除/mu, 'RULES F5 沒有寫「每位審查者的阻擋各自解除」——那正是「取聯集、不取最後一則」的規矩版');
+  assert.match(rules, /^【F4】.*給機器讀的標頭/mu, 'RULES F4 沒有寫「結論留言第一行是給機器讀的標頭」');
+  assert.match(rules, /^【F5】.*只有同一位能解除/mu, 'RULES F5 沒有寫「每位複審者的阻擋只有同一位能解除」——那正是「取聯集、不取最後一則」的規矩版');
   const agents = strip(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
   assert.ok(agents.includes('templates/verdict-header.md'),
     'AGENTS.md 沒有指向 templates/verdict-header.md——只讀 AGENTS 的人找不到標頭格式');
@@ -61,7 +61,7 @@ test('範本與規矩｜「放行只認指定的那一位」在兩處要一致�
   const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
   const rules = strip(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
   for (const [name, text] of [['templates/verdict-header.md', tmpl], ['RULES.md', rules]]) {
-    assert.ok(/放行只認變更說明指定的那一位/.test(text), `${name} 沒寫清楚「放行只認變更說明指定的那一位」`);
+    assert.ok(/「放行」只認「PR說明」裡指定的那一位/.test(text), `${name} 沒寫清楚「「放行」只認「PR說明」裡指定的那一位」`);
     assert.ok(!/也\*\*不構成放行\*\*/.test(text),
       `${name} 出現「也不構成放行」——與「放行只認指定那一位」矛盾，讀者無法判斷哪句才是規則`);
   }
@@ -107,7 +107,7 @@ test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本
   // 壞標頭的救法：套件把舊閘的三級救濟收成「作廢上一則」一行（範本第 8 行）——普通補發救不了壞標頭，這句要在
   assert.ok(tmpl.includes('作廢上一則：<那則留言的編號>'), '範本少了「作廢上一則」那行的逐字格式——標頭寫壞的人不知道怎麼自救');
   assert.ok(tmpl.includes('壞留言原地保留'), '範本少了「壞留言原地保留」——會有人照舊例去刪留言、洗掉稽核軌跡');
-  // 各自解除：同一身分、更高輪次、對目前受審版本——這正是「照原輪次補發撤銷不掉」與「每個身分各自算」的規矩版
-  assert.ok(tmpl.includes('各自解除：同一身分、更高輪次'),
-    '範本少了「各自解除：同一身分、更高輪次」——照原輪次補發撤銷不掉，而規則是每個身分各自算');
+  // 只有同一位能解除：同一身分、更後面的輪次、對目前版本——這正是「照原輪次補發撤銷不掉」與「每個身分各自算」的規矩版
+  assert.ok(tmpl.includes('只有同一位能解除（同一位＝角色和來源字串都一樣）：用更後面的輪次'),
+    '範本少了「只有同一位能解除（同一位＝角色和來源字串都一樣）：用更後面的輪次」——照原輪次補發撤銷不掉，而規則是每個身分各自算');
 });

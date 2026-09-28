@@ -4,7 +4,7 @@
 // 守得到的：
 //   ①取聯集：任一位的阻擋在同一位用更高輪次撤銷前都有效，別人說通過解不掉；
 //   ②同一位同輪次相反結論＝fail-closed（結果不可以取決於留言順序）；
-//   ③版本一變舊通過失效；放行只認變更說明指定的那一位；讀不出指定誰＝不放行；沒有任何結論＝不放行；
+//   ③版本一變舊通過失效；放行只認PR說明指定的那一位；讀不出指定誰＝不放行；沒有任何結論＝不放行；
 //   ④標頭：只認第一行、不認引用、來源不可空、角色要在名單上、結論只認三種；
 //   ⑤有 🤖 記號但標頭讀不出＝擋；作廢行（緊跟合規標頭之後）可把它降為提醒——
 //     但作廢不了合規留言、作廢不了不存在的、作廢不了比自己晚的，而且作廢不產生任何結論；
@@ -13,11 +13,11 @@
 //   ⑧先後看留言時間不看清單順序（r1 Medium⑩）：清單反過來給也判得一樣；同一刻證明不了先後＝作廢不生效；時間讀不出＝退 2。
 //   ⑨同一位同輪次對**不同版本**各給結論＝不明、擋（r2 Medium⑤：原本同為通過時先遇到哪一則就用哪一則，
 //     清單順序改變判決）；判決與清單順序無關，每一種排列都要判一樣。
-//   ⑩找 🤖 讀整份原文、什麼都不剝（r5：每一種剝法都在正常寫法上吞過看得見的 🤖）；「像不像結論」的提醒與指定審查者
+//   ⑩找 🤖 讀整份原文、什麼都不剝（r5：每一種剝法都在正常寫法上吞過看得見的 🤖）；「像不像結論」的提醒與指定的複審者
 //     只讀開頭那一段（tools/markdown-effective.js）；圍欄與引用裡的標頭不是結論，但裡面的 🤖 算壞標頭（救法是作廢）；
 //   ⑪同輪的版本碼用集合聚合（r3 Medium③）：短碼相容不可傳遞，三則短長碼的六種排列都要判一樣；
 //   ⑫時間沒帶時區不收（r3 High①）：同一份留言在不同執行時區判一樣。
-// ⚠️ 更正一句錯的自陳：上一版這裡寫「拿掉排序是等價突變」。獨立審查者用反例推翻（舊版本 01:00、目前版本 02:00、
+// ⚠️ 更正一句錯的自陳：上一版這裡寫「拿掉排序是等價突變」。複審者用反例推翻（舊版本 01:00、目前版本 02:00、
 //    反序餵入：有排序退 1、沒排序退 0）——當時同輪同結論異版本是「先遇到哪一則就用哪一則」，排序決定了誰先。
 //    現在同輪異版本一律判不明，**判決**跟順序無關（⑨那題把每一種排列都跑一遍、比對整份 problems）。
 //    排序仍然不是等價突變：它決定訊息裡兩個版本的先後（照時間），拿掉會讓 ⑨ 的訊息比對紅——
@@ -180,9 +180,9 @@ function fakePlatform(answers) {
   };
 }
 const settings = { participants: ROLES.map((id) => ({ id })) };
-const change = (over = {}) => ({ headSha: HEAD, body: '- **實作者**：Alpha\n- **獨立審查者**：Beta', ...over });
+const change = (over = {}) => ({ headSha: HEAD, body: '- **實作者**：Alpha\n- **複審者**：Beta', ...over });
 
-test('端到端：指定審查者從變更說明讀；通過＝0、有阻擋＝1、提醒不影響退出碼', () => {
+test('端到端：指定的複審者從PR說明讀；通過＝0、有阻擋＝1、提醒不影響退出碼', () => {
   const ok = gateRun('7', { settings, platform: fakePlatform({ change: change(), comments: [verdict(), c('不可合併？我只是問')] }) });
   assert.equal(ok.code, 0, ok.lines.join('\n'));
   assert.ok(ok.lines.some((l) => l.startsWith('提醒')), '提醒要印出來');
@@ -268,13 +268,13 @@ test('⑩r4、r5 反例：看得見的 🤖 不可以被任何容器判斷吞掉
   assert.ok(!blocked('說明\n沒有記號'), '控制組：沒有 🤖 就不擋');
 });
 
-test('⑩指定審查者只從說明開頭那一段讀；讀不到就不放行', () => {
+test('⑩指定的複審者只從說明開頭那一段讀；讀不到就不放行', () => {
   const run = (body) => gateRun('7', { settings, platform: fakePlatform({ change: change({ body }), comments: [verdict()] }) });
-  const quoteFirst = run('> 上輪建議\n## 協作欄位\n- **實作者**：Alpha\n- **獨立審查者**：Beta');
+  const quoteFirst = run('> 上輪建議\n## 協作欄位\n- **實作者**：Alpha\n- **複審者**：Beta');
   assert.equal(quoteFirst.code, 1, quoteFirst.lines.join('\n'));
-  assert.match(quoteFirst.lines.join('\n'), /讀不出變更說明指定的獨立審查者/u);
+  assert.match(quoteFirst.lines.join('\n'), /讀不出PR說明指定的複審者/u);
   assert.match(quoteFirst.lines.join('\n'), /第 1 行就停了/u, 'r6 Low②：結論閘自己也說停在第幾行');
-  const later = run('- **實作者**：Alpha\n- **獨立審查者**：Beta\n<!-- 附註 -->');
+  const later = run('- **實作者**：Alpha\n- **複審者**：Beta\n<!-- 附註 -->');
   assert.equal(later.code, 0, `控制組：欄位在前、註解在後：${later.lines.join('\n')}`);
 });
 

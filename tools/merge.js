@@ -3,13 +3,13 @@
 //
 // 裁示者 2026-09-12 裁「丙′」：閘照舊在本機跑，但包成這一支指令。理由（實作者的操作化）：
 // 這幾道閘問的是「合併那一刻」的狀態——有沒有未撤銷的阻擋、有沒有別支疊在上面、其他開著的
-// 變更合起來會不會撞、必要檢查是不是真的跑過。推送時跑出來的結果到合併那一刻已經過期，
+// PR合起來會不會撞、必要檢查是不是真的跑過。推送時跑出來的結果到合併那一刻已經過期，
 // 所以「推上去就自動跑」不是同一件事；要做對得上平台的合併佇列，那是另一件工程。
 //
 // 這支指令擋得住什麼、擋不住什麼，照實說：
 //   擋得住：忘了跑其中一道、跑了沒看退出碼、紅了還往下走；跑閘途中被推了新版本（開跑前記下版本、按鍵前再核一次，
 //     合併指令帶 {sha} 時平台也會替你擋最後一刻的新版本——搬家驗屋 09-13 補的）。
-//   合併紀錄寫得出誰審、誰合：合併指令認 {reviewer}（說明的「獨立審查者」欄）與 {merger}（--merger 自報）。
+//   合併紀錄寫得出誰審、誰合：合併指令認 {reviewer}（PR說明的「複審者」欄）與 {merger}（--merger 自報）。
 //   擋不住：**不用這支指令、直接按平台的合併鍵**。要擋那個只有平台級的分支保護。
 //     {merger} 是自報的：驗得到「是登記過的參與者」，驗不到「真的是他」。版本只比頭尾兩次，途中推了新版又推回原版看不出來。
 //
@@ -52,7 +52,7 @@ function runCommand(command, args, { clearEnv = [] } = {}) {
   return { code: result.status === null ? 2 : result.status, output: `${result.stdout || ''}${result.stderr || ''}` };
 }
 
-/** 讀這支變更現在的版本與說明；問不到回 null（呼叫端當查不清楚）。 */
+/** 讀這支PR現在的版本與說明；問不到回 null（呼叫端當查不清楚）。 */
 function readChange(changeId, settings, platform) {
   try {
     const c = platform.ask('change', { change: String(changeId) }, { settings });
@@ -84,7 +84,7 @@ function mergeRun(changeId, { settings = readSettings(), run = runCommand, platf
   const enabled = gates.filter((gate) => gate.state === ENABLED);
   if (enabled.length === 0) {
     say(`專案設定裡沒有任何一道閘登記成「${ENABLED}」：一支什麼都沒檢查就按合併鍵的指令比沒有更危險，不放行。`);
-    say('要嘛把閘搬進來並登記啟用，要嘛照規矩本文 H1 用人工逐道跑完再自己按鍵。');
+    say('先把閘搬進來並登記啟用再合併：規矩本文 H1 合併一律經合併指令、A4 不直接按平台的合併鍵。');
     return { code: 2, lines };
   }
 
@@ -167,9 +167,9 @@ function mergeRun(changeId, { settings = readSettings(), run = runCommand, platf
   }
   const values = { change: String(changeId), sha: after.headSha, project, merger: mergerId };
   if (used.has('reviewer')) {
-    values.reviewer = canonicalRole(fieldValue(after.body, '獨立審查者'), usable);
+    values.reviewer = canonicalRole(fieldValue(after.body, '複審者'), usable);
     if (!values.reviewer) {
-      say('合併指令要寫「誰審」（{reviewer}），但變更說明的「獨立審查者」欄讀不出一位登記過的參與者：不放行。');
+      say('合併指令要寫「誰審」（{reviewer}），但PR說明的「複審者」欄讀不出一位登記過的參與者：不放行。');
       return { code: 2, lines };
     }
   }
