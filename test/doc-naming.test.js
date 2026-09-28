@@ -106,6 +106,8 @@ const DOCS = {
   'RULES.md': { readers: 'all', title: '協作規矩本文' },
   'MACHINES.md': { readers: 'all', title: '機器索引' },
   'PROJECT-SETTINGS.md': { readers: 'all', title: '專案設定' },
+  // 用語對照表（套件第二輪第 1 批，2026-09-28 同步進來）：規矩本文的版面約定與關鍵詞，跟 RULES.md 一起搬
+  'GLOSSARY.md': { readers: 'all', title: '用語對照表' },
 };
 
 test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是工具規定的檔名）', () => {

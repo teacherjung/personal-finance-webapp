@@ -32,7 +32,7 @@
 | └ **Require approvals**（`required_approving_review_count`） | **0** | ✅ 已取消（2026-08-02 William 執行；2026-08-05 API 覆核） |
 | └ Dismiss stale reviews | ⬜ 關 | ✅ |
 | Require status checks to pass | ✅ 開 | ✅ |
-| └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 獨立審查者）` | ✅ 兩個都在（2026-08-05 API 覆核） |
+| └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 獨立審查者）`（2026-08-05 覆核時的名字；2026-09-28 ④ 起 job 改名成「協作欄位（實作者 ≠ 複審者）」，這一格等擁有者在平台換完、唯讀重讀後另補） | ✅ 兩個都在（2026-08-05 API 覆核） |
 | └ **Require branches to be up to date**（`strict`） | ⬜ **關** | ✅ 已與 B 節設計意圖一致（2026-08-05 API 覆核） |
 | Require linear history | ✅ 開 | ✅ |
 | Require conversation resolution | ✅ 開 | ✅ |
@@ -49,7 +49,7 @@
 所以「需要 1 個核准」在單一身分下 ＝ **需要一個永遠不會出現的核准**。
 
 ⇒ **William 當日已把 Require approvals 取消勾選**（Settings → Branches → 編輯 `main` 的規則）。
-這不是降低標準：實作者 ≠ 審查者這條，現在改由 `協作欄位` 這道 check 在**平台層**擋
+這不是降低標準：實作者 ≠ 複審者這條，現在改由 `協作欄位` 這道 check 在**平台層**擋
 （C 節），而它不需要第二個帳號就能運作。
 **等分身分之後再把 Require approvals 開回來**（見文末「第二步」）——那時它才有意義。
 
@@ -67,7 +67,7 @@
 | Require a pull request before merging | ✅ 開 | 不准直接推 main |
 | └ Require approvals | ⬜ **關**（暫時） | 單一身分下開了＝誰都合不了。分身分之後再開 |
 | Require status checks to pass before merging | ✅ 開 | CI 沒綠不准合併 |
-| └ 必過的 check | `上線用的 Node（.node-version）`<br>`協作欄位（實作者 ≠ 獨立審查者）` | ⚠️ **`開發機的 Node（最新版，前瞻｜不擋部署）` 刻意不列**——它是探照燈不是門（見 `.github/workflows/ci.yml` 檔頭）。列了它，下一個大版本 Node 出狀況時連安全更新都上不去 |
+| └ 必過的 check | `上線用的 Node（.node-version）`<br>`協作欄位（實作者 ≠ 複審者）`（2026-09-28 起的名字；之前叫「協作欄位（實作者 ≠ 獨立審查者）」） | ⚠️ **`開發機的 Node（最新版，前瞻｜不擋部署）` 刻意不列**——它是探照燈不是門（見 `.github/workflows/ci.yml` 檔頭）。列了它，下一個大版本 Node 出狀況時連安全更新都上不去 |
 | └ Require branches to be up to date | ⬜ 關 | 會強迫每支 PR 合併前 rebase，堆疊 PR 時很痛 |
 | Require linear history | ✅ 開 | 一律 squash（本專案慣例），禁 merge commit |
 | Require conversation resolution | ✅ 開 | 審查留言沒回完不准合併 |
@@ -122,7 +122,7 @@ Settings → Branches → 編輯 `main` 的規則：
 但**預設不是必過的**。要讓它有牙齒：
 
 1. 在 **Require status checks** 的搜尋框輸入 `協作欄位`
-2. 選取 **`協作欄位（實作者 ≠ 獨立審查者）`**
+2. 選取 **`協作欄位（實作者 ≠ 複審者）`**
 3. Save
 
 ⚠️ **check 名稱必須跟 workflow 裡的 `name:` 完全一致**——改了 job 名稱，
@@ -130,7 +130,7 @@ Settings → Branches → 編輯 `main` 的規則：
 （`test/branch-protection-docs.test.js` 有考題盯著兩邊字串一致。）
 
 ⚠️ 這個 check 之所以能取代 `Require approvals` 的**部分**功能，是因為它在**平台層**擋
-「實作者＝獨立審查者」，而且不需要第二個帳號。**但它擋的是 PR 說明寫了誰，
+「實作者＝複審者」，而且不需要第二個帳號。**但它擋的是 PR 說明寫了誰，
 不是實際上是誰按的**——那個差別只有分身分能補（見文末第二步）。
 
 ## ⚠️ 這道閘的守備範圍（誠實劃界，Codex #382 r2 查證）
@@ -168,7 +168,7 @@ Settings → Branches → 編輯 `main` 的規則：
 - `tools/gates/check-stacked.js` — 堆疊閘（RULES H2；由 `tools/merge.js` 執行、未進 CI）
 - `tools/gates/check-checks-really-ran.js` — 真考卷閘（RULES H3；由 `tools/merge.js` 執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
 - `tools/gates/check-review-verdicts.js` — 複審結論聯集閘（RULES F4、F5；由 `tools/merge.js` 執行、未進 CI）
-- `tools/gates/check-cross-merge.js` — 跨變更試合併閘（RULES H4；由 `tools/merge.js` 執行、未進 CI；備臨時樹那句＝`settings.json` 的 checks.prepareWorktree）
+- `tools/gates/check-cross-merge.js` — 跨PR試合併閘（RULES H4；由 `tools/merge.js` 執行、未進 CI；備臨時樹那句＝`settings.json` 的 checks.prepareWorktree）
 - `tools/merge.js`＋`settings.json` 的 gates — 合併程序（RULES H1〜H4）
 - `RULES.md` A 節 — 唯一不變量與角色分工
 

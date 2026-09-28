@@ -3,11 +3,11 @@
 //
 // 這一支的每一題，都對應原專案實際被繞過的一種寫法。**刪掉任何一題之前，先去讀閘的檔頭。**
 //
-// 守得到的：四欄齊全；實作者與獨立審查者不是同一位；只讀說明開頭那一段（碰到註解、圍欄、引用等特殊行就停、指出行號）；欄名要錨在行首；
+// 守得到的：四欄齊全；實作者與複審者不是同一位；只讀說明開頭那一段（碰到註解、圍欄、引用等特殊行就停、指出行號）；欄名要錨在行首；
 //   冒號後不吃換行；角色要剛好命中一個（不是「包含」）；括號裡藏第二個角色不算；
 //   混用文字系統＝看不出是誰；平台問不到或設定沒填＝退 2。
 // ⚠️ 守不到的：欄位填的內容是不是真的（寫「某某」不代表真的是某某複審的）；
-//   「預計修改的共享檔案」「最糟失去什麼」兩欄只驗非空，不驗內容。
+//   「預計修改的檔案」「最糟失去什麼」兩欄只驗非空，不驗內容。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,7 +19,7 @@ const ROLES = ['Alpha', 'Beta', 'Gamma'];
 
 /** 一份四欄齊全、實作者不等於審查者的說明。 */
 function goodBody(over = {}) {
-  const f = { 實作者: 'Alpha', 獨立審查者: 'Beta', 預計修改的共享檔案: 'a.js', '這支若完全失敗，最糟失去什麼': '一句話', ...over };
+  const f = { 實作者: 'Alpha', 複審者: 'Beta', 預計修改的檔案: 'a.js', '這支若完全失敗，最糟失去什麼': '一句話', ...over };
   return REQUIRED_FIELDS.map((k) => `- **${k}**：${f[k]}`).join('\n');
 }
 
@@ -87,7 +87,7 @@ test('②欄名要錨在行首（「非實作者」不可以命中「實作者�
 });
 
 test('③冒號後不吃換行（留空的欄位不可以抓到下一行）', () => {
-  const body = '- **實作者**：\n- **獨立審查者**：Beta';
+  const body = '- **實作者**：\n- **複審者**：Beta';
   assert.equal(fieldValue(body, '實作者'), '', '留空就是留空，不可以抓到下一行的 Beta');
   assert.ok(problemsOf(body, ROLES).some((p) => p.includes('實作者')));
 });
@@ -104,11 +104,11 @@ test('④角色要剛好命中一個，不可以用「包含」判斷', () => {
   assert.equal(canonicalRole(' alpha ', ROLES), 'Alpha', '大小寫不計');
 });
 
-test('④核心那一條：同一位不可以既是實作者又是獨立審查者', () => {
-  const same = problemsOf(goodBody({ 獨立審查者: 'Alpha' }), ROLES);
+test('④核心那一條：同一位不可以既是實作者又是複審者', () => {
+  const same = problemsOf(goodBody({ 複審者: 'Alpha' }), ROLES);
   assert.ok(same.some((p) => p.includes('沒有任何一份產出可以由寫它的人放行')));
   // 「甲（已看過）」不可以因為字串不同就被當成另一個人
-  const annotated = problemsOf(goodBody({ 獨立審查者: 'Alpha（已看過）' }), ROLES);
+  const annotated = problemsOf(goodBody({ 複審者: 'Alpha（已看過）' }), ROLES);
   assert.ok(annotated.length > 0, '加註過的同一人不可以通過');
 });
 
@@ -141,7 +141,7 @@ test('⑤自審藏在藏字元裡：折回來之後要被抓到，不是被放�
   // ⚠️ 最後那個用的是「預設不顯示」的填充字元（不是組合記號、也不是格式控制字元）——
   //    正規化少掉那一層的話，它會變成「看不出是誰」而不是「自審」，訊息會把人指向錯的方向。
   for (const reviewer of ['Ａｌｐｈａ', 'Alph́a', 'A​lpha', 'Aㅤlpha']) {
-    const problems = problemsOf(goodBody({ 獨立審查者: reviewer }), ROLES);
+    const problems = problemsOf(goodBody({ 複審者: reviewer }), ROLES);
     assert.ok(problems.length > 0, `${JSON.stringify(reviewer)} 不可以通過`);
     assert.ok(
       problems.some((p) => p.includes('由寫它的人放行')),
@@ -187,7 +187,7 @@ test('端到端：四欄齊全＝退 0；自審＝退 1 並說明理由', () => 
   const settings = { participants: ROLES.map((id) => ({ id })) };
   const ok = gateRun('7', { settings, platform: { ask: () => ({ body: goodBody() }) } });
   assert.equal(ok.code, 0, ok.lines.join('\n'));
-  const self = gateRun('7', { settings, platform: { ask: () => ({ body: goodBody({ 獨立審查者: 'Alpha' }) }) } });
+  const self = gateRun('7', { settings, platform: { ask: () => ({ body: goodBody({ 複審者: 'Alpha' }) }) } });
   assert.equal(self.code, 1);
   assert.match(self.lines.join('\n'), /由寫它的人放行/u);
 });

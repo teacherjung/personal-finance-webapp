@@ -145,7 +145,7 @@ test('參數真的被換進指令裡（不是換了個地方寫死）', () => {
   const seen = [];
   const settings = allRegistered();
   ask('comments', { change: '12345' }, { settings, run: (cmd, args) => { seen.push([cmd, ...args]); return { status: 0, stdout: '[]', stderr: '' }; } });
-  assert.ok(seen[0].includes('12345'), `指令裡應該出現變更編號：${JSON.stringify(seen[0])}`);
+  assert.ok(seen[0].includes('12345'), `指令裡應該出現PR編號：${JSON.stringify(seen[0])}`);
   assert.ok(!seen[0].some((x) => x.includes('{change}')), '記號要被換掉');
 });
 

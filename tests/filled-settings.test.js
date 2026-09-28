@@ -1,9 +1,9 @@
 // 設定污染反證（搬家前準備）：專案填了真設定之後，整份考卷在「每一欄都填了」的設定底下跑，不可以碰到外面。
 //
-// 為什麼：套件搬進專案後，這份考卷會跟著專案的推送前檢查、雲端、跨變更臨時樹一起跑，而工具的預設參數讀的是
+// 為什麼：套件搬進專案後，這份考卷會跟著專案的推送前檢查、雲端、跨PR試合併的臨時樹一起跑，而工具的預設參數讀的是
 // 根目錄那份設定。哪一題（或它叫的工具）漏了自己帶設定，就會照真設定去問平台、跑三關、在禁區埋假機密、按合併鍵
 // ——2026-09-13 端到端實際發生過（在真家目錄埋假機密約十次）。目前靠「在空白設定的複本裡跑指令入口」
-// （tests/helpers/kit-copy.js）與審查守著，沒有機器保證；這一題就是那個機器。
+// （tests/helpers/kit-copy.js）與複審守著，沒有機器保證；這一題就是那個機器。
 //
 // 做法：在暫存目錄搭一份套件複本，設定**每一欄都填成假的**——對外的指令（平台動作、合併指令、三關、隔離前綴）
 // 換成只記錄、退 97 的錄音機，禁區與家目錄換成暫存目錄，PATH 最前面放一個只記錄的假 gh——整份考卷跑一遍。
@@ -38,7 +38,7 @@ const { MACHINE: CASEBOOK, NOT_CARRIED_REASON } = require('../tools/build-casebo
 
 const ROOT = path.join(__dirname, '..');
 const NESTED = process.env.KIT_NESTED_SUITE === '1';
-/** 工具與考題從根目錄讀的那幾份（套件倉庫 README「搬進一個專案」第 1 步同一份清單）。 */
+/** 工具與考題從根目錄讀的那幾份；複本裡的 settings.json 會換成下面填了假值的那一份，PROJECT-SETTINGS.md 由它重新產生。 */
 const ROOT_FILES = ['settings.json', 'rules.json', 'RULES.md', 'MACHINES.md', 'PROJECT-SETTINGS.md'];
 const ROOT_DIRS = ['tools', 'tests', 'templates'];   // cases/ 刻意不帶（上面「案例簿」那段）
 
@@ -52,8 +52,8 @@ function fakeFilled({ log, box, zones }) {
   s.sources = [{ tool: '假的 CLI', string: 'CLI' }];
   for (const loc of s.locations) loc.where = '假的位置';
   s.mainBranch = 'main';
-  s.mergeAuthorization = '假的授權';
-  s.scanner = { tool: '假的掃描器', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', isolation: { provider: '專案自建', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
+  s.defaultDivision = { implementer: 'Alpha', reviewer: 'Beta' };
+  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', isolation: { provider: '專案自建', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
   s.platform = {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),

@@ -36,6 +36,20 @@ const path = require('node:path');
 const { build, read, outFile, STATES } = require('../tools/build-settings.js');
 const { read: readRules } = require('../tools/build-rules.js');
 const { unfilled, UNFILLED_FILE } = require('./helpers/kit-copy.js');
+const { spawnSync } = require('node:child_process');
+const { gitEnv } = require('../tools/git-env.js');
+
+/**
+ * 把遠端網址拆成路徑的每一段（去掉 .git、小寫）：https://host/a/b.git、ssh://user@host/a/b.git、
+ * user@host:a/b.git（scp 簡寫）、本機路徑都收。只在「倉庫身分對得上遠端」那一題用。
+ */
+function remoteSegments(url) {
+  let p = url.trim();
+  const scp = /^[^/@:]+@[^/:]+:(.+)$/u.exec(p);
+  if (scp) p = scp[1];
+  else { try { p = new URL(p).pathname; } catch { /* 不是網址＝本機路徑，照原樣拆 */ } }
+  return p.replace(/\.git\/?$/u, '').split('/').filter(Boolean).map((s) => s.toLowerCase());
+}
 
 test('PROJECT-SETTINGS.md 與 settings.json 產生的結果逐字元相同（設定說明是產物、不要手改）', () => {
   assert.equal(
@@ -229,6 +243,49 @@ test('⑨考題用的空白設定跟 settings.json 形狀一致，而且對外�
   assert.equal(u.checks.mainWorktree, UNSET, '主目錄布局要沒登記（三關執行器照舊放行、全綠那一行說沒驗）');
   assert.deepEqual(u.checks.indexAnchors, [UNSET], '索引錨點要沒登記');
   for (const p of u.participants) assert.equal(p.id, UNSET, `身分「${p.role}」要沒填`);
+  assert.deepEqual(u.defaultDivision, { implementer: UNSET, reviewer: UNSET }, '預設分工要沒填（空白範本不可以帶套件倉庫自己的分工）');
+});
+
+test('⑨b 空白設定跟 settings.json 在套件共用的欄位逐字相同（只准專案自己的值不同）', () => {
+  // 為什麼（2026-09-26 套件倉庫填了自己的設定之後）：根目錄那份從此是套件倉庫自己的值、空白範本是給新專案的正本，
+  // 變成兩份。⑨ 只比形狀、陣列只看「是陣列」，所以套件共用的東西（機器表的名字與條號、閘的名字／條號／指令、
+  // 位置表的項目與條號、貼文帳號資格）在其中一份改了、另一份沒跟上，⑨ 不會紅——新專案會拿到少一列機器或指錯條號的範本。
+  // 刻意不比的：識別值值域（使用專案可以放寬）、參與者、預設分工、來源字串、位置的值、掃描發射者、機器與閘的狀態——那些本來就是專案自己的值。
+  // 閘的順序各專案可以不同（合併指令照登記順序跑），所以排序後比。
+  const a = read();
+  const u = unfilled();
+  assert.deepEqual(u.machines.map((m) => [m.name, m.rules]), a.machines.map((m) => [m.name, m.rules]), '機器表的名字或條號兩份不一樣：改了一份要一起改另一份');
+  const gateKey = (g) => JSON.stringify([g.name, g.rules, g.command, g.args]);
+  assert.deepEqual(u.gates.map(gateKey).sort(), a.gates.map(gateKey).sort(), '閘的名字、條號或指令兩份不一樣');
+  assert.deepEqual(u.locations.map((l) => [l.item, l.rules]), a.locations.map((l) => [l.item, l.rules]), '位置表的項目或條號兩份不一樣');
+  assert.equal(u.accountRule, a.accountRule, '貼文帳號資格兩份不一樣');
+});
+
+test('設定的倉庫身分要跟這棵樹的遠端倉庫對得上（照舊習慣抄了套件根目錄那份設定卡＝紅）', (t) => {
+  // 為什麼（裁示者 2026-09-27 要的）：套件倉庫根目錄的 settings.json 填了套件自己的值之後，新專案照舊習慣抄它，
+  // 合併指令就會去問、甚至合併套件倉庫的PR；而從設定到按鍵之前，沒有任何一處核對「設定寫的倉庫」跟「這棵樹連到哪個倉庫」。
+  // 判法：platform.project 的每一段，要等於 origin 網址路徑最後的那幾段（去掉 .git；大小寫不分——多數平台不分）。
+  // 守不到的：沒有 origin、或 settings.json 不在某個倉庫的根目錄（考題在複本裡跑）＝跳過並寫明；
+  //   它只比「兩者一致」，origin 本身指錯倉庫看不出來；倉庫身分沒填（空白設定）也跳過。
+  const project = read().platform && read().platform.project;
+  if (!project || project === '未設定') { t.skip('倉庫身分沒填（空白設定）：沒有東西可以比'); return; }
+  const root = path.join(__dirname, '..');
+  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnv() });
+  const top = git('rev-parse', '--show-toplevel');
+  if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== fs.realpathSync(root)) { t.skip('settings.json 所在的目錄不是某個倉庫的根目錄（考題在複本裡跑）：沒有遠端可以比'); return; }
+  const url = git('remote', 'get-url', 'origin');
+  if (url.status !== 0) { t.skip('這個倉庫沒有 origin 遠端：沒有東西可以比'); return; }
+  const want = project.split('/').filter(Boolean).map((s) => s.toLowerCase());
+  assert.ok(want.length >= 1, '倉庫身分要至少有一段');
+  assert.deepEqual(
+    remoteSegments(url.stdout).slice(-want.length),
+    want,
+    `settings.json 的 platform.project 是「${project}」，這棵樹的 origin 卻是 ${url.stdout.trim()}：設定卡指向別的倉庫（抄到套件根目錄那份？），合併指令與閘會去動那個倉庫`,
+  );
+  // 對照組：拆網址的那一支要認得三種寫法
+  assert.deepEqual(remoteSegments('git@github.com:Owner/Repo.git'), ['owner', 'repo'], 'scp 簡寫要拆得出來');
+  assert.deepEqual(remoteSegments('https://example.com/a/b/c.git/'), ['a', 'b', 'c'], 'https 多層路徑要拆得出來');
+  assert.deepEqual(remoteSegments('ssh://git@example.com/x/y.git'), ['x', 'y'], 'ssh 網址要拆得出來');
 });
 
 test('照 GitHub 範本填完平台動作與合併指令，設定說明書照樣產得出來；合併訊息的換行留在指令裡（搬家修正 r1 B1）', () => {

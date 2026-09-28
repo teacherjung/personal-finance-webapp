@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // 結論聯集閘（規矩 F4、F5）：每一位審查者的阻擋，在同一位用更高輪次撤銷之前都有效；
-// 放行只認變更說明指定的那一位對**目前版本**說的「通過」。
+// 放行只認PR說明指定的那一位對**目前版本**說的「通過」。
 //
-// 為什麼要有它：原專案實測，同一支變更上出現兩則都自稱同一角色的複審、結論相反，平台上兩則
+// 為什麼要有它：原專案實測，同一支PR上出現兩則都自稱同一角色的複審、結論相反，平台上兩則
 // 顯示同一個帳號，沒有任何辦法分辨。危險的不是有兩份，是「看起來一樣有效而結論相反」，於是
 // 「最後一則說通過」就變成事實上的放行。所以：①每則結論第一行是機器讀得懂的標頭；②取聯集，
-// 沒有「最後一則說了算」；③放行只認指定的那一位——否則實作者自己說一句通過就放行了自己的變更。
+// 沒有「最後一則說了算」；③放行只認指定的那一位——否則實作者自己說一句通過就放行了自己的PR。
 //
 // 這支讓裁示者不必自己讀審查串：機器替他回答「有沒有人還在喊停、指定的那位有沒有對現在這一版點頭」。
 //
@@ -21,7 +21,7 @@
 // 誠實劃界：它讀的是留言裡的自我宣告，不是身分證明。要繞過它，改標頭裡的來源就好——
 // 那要靠獨立帳號才擋得住。它防的是混淆與遺漏，不是惡意。
 //
-// 退出碼：0＝指定審查者對目前版本說通過、且沒有未撤銷的阻擋／1＝未通過／2＝查不清楚（一律當未通過）。
+// 退出碼：0＝指定的複審者對目前版本說通過、且沒有未撤銷的阻擋／1＝未通過／2＝查不清楚（一律當未通過）。
 'use strict';
 const { ask, PlatformError } = require('../platform.js');
 const { read: readSettings } = require('../settings-data.js');
@@ -117,7 +117,7 @@ function sourceLookalike(a, b) {
  * 純判斷層。
  * @param {Array<{id:string, body:string}>} comments 依時間排序的留言
  * @param {string} head 目前版本
- * @param {string|null} reviewerRole 變更說明指定的獨立審查者；null＝讀不出來
+ * @param {string|null} reviewerRole PR說明指定的複審者；null＝讀不出來
  * @param {string[]} roles 專案設定的參與者識別值
  */
 function evaluate(comments, head, reviewerRole, roles) {
@@ -201,10 +201,10 @@ function evaluate(comments, head, reviewerRole, roles) {
 
   const passers = ids.filter((h) => !h.blocking && head.startsWith(h.sha));
   if (!reviewerRole) {
-    problems.push('讀不出變更說明指定的獨立審查者是誰——放行只認指定的那一位，讀不出就不放行。');
+    problems.push('讀不出PR說明指定的複審者是誰——放行只認指定的那一位，讀不出就不放行。');
   } else if (!passers.some((h) => h.role === reviewerRole)) {
     problems.push(passers.length
-      ? `對目前版本說「通過」的是 ${passers.map((h) => h.who).join('、')}，但變更說明指定的獨立審查者是「${reviewerRole}」——放行只認指定的那一位，否則實作者自己說一句通過就放行了自己的變更。`
+      ? `對目前版本說「通過」的是 ${passers.map((h) => h.who).join('、')}，但PR說明指定的複審者是「${reviewerRole}」——放行只認指定的那一位，否則實作者自己說一句通過就放行了自己的PR。`
       : `沒有「${reviewerRole}」對目前版本（${head.slice(0, 7)}）下過「通過」的正式結論。協作欄位只證明有人被寫成審查者，證明不了審查真的發生過。`);
   }
   for (const h of ids) {
@@ -230,18 +230,18 @@ function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {
     }
     throw e;
   }
-  const reviewerRole = canonicalRole(fieldValue(change.body, '獨立審查者'), usable);
+  const reviewerRole = canonicalRole(fieldValue(change.body, '複審者'), usable);
   const { problems, warnings, reviewers, unsure } = evaluate(comments, change.headSha, reviewerRole, usable);
   if (unsure) return { code: 2, lines: [`結論聯集閘：${problems[0]}——查不清楚一律當未通過。`] };
   const who = Object.values(reviewers).map((r) => `${r.who}=${r.verdict}`).join('、') || '（沒有任何帶標頭的結論）';
   for (const w of warnings) lines.push(`提醒（不影響結果）：${w}`);
   if (!problems.length) {
-    lines.push(`結論聯集閘｜變更 ${changeId}：指定審查者對目前版本說通過、沒有未撤銷的阻擋。現況：${who}`);
+    lines.push(`結論聯集閘｜變更 ${changeId}：指定的複審者對目前版本說通過、沒有未撤銷的阻擋。現況：${who}`);
     return { code: 0, lines };
   }
   lines.push(`結論聯集閘｜變更 ${changeId}：未通過`);
   for (const p of problems) lines.push(`   ・${p}`);
-  if (!reviewerRole && stopNote(change.body)) lines.push(`   ↳ 讀不出指定審查者：${stopNote(change.body)}`);
+  if (!reviewerRole && stopNote(change.body)) lines.push(`   ↳ 讀不出指定的複審者：${stopNote(change.body)}`);
   lines.push(`現況：${who}`);
   return { code: 1, lines };
 }

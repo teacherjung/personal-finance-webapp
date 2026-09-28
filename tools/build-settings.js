@@ -52,7 +52,7 @@ function build(data) {
     '',
     '## 一、參與者識別值',
     '',
-    '變更說明的「實作者」「獨立審查者」兩欄、結論標頭與自評的角色格，填的是這裡的識別值，不是職稱。',
+    'PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色格，填的是這裡的識別值，不是職稱。參與者可以登記三個以上：多一位就在下表多加一列（例如第三個 AI）。',
     '',
     `值域：${plain(data.identityDomain, '識別值值域')}`,
     '',
@@ -63,6 +63,9 @@ function build(data) {
     out.push(`| ${plain(p.role, '參與者角色')} | ${plain(p.id, '識別值')} | ${plain(p.account, '貼文帳號')} |`);
   }
   out.push('', `貼文帳號資格：${plain(data.accountRule, '貼文帳號資格')}`, '');
+  // 預設分工（A1）只排版、沒有機器讀它；要在這裡明寫——產生器不認得的欄位不會自己出現在說明書裡
+  const division = data.defaultDivision || {};
+  out.push(`預設分工（規矩 A1；裁示者沒有逐支指定時，PR說明的「實作者」「複審者」兩欄照這個填）：實作者＝${plain(division.implementer, '預設分工的實作者')}；複審者＝${plain(division.reviewer, '預設分工的複審者')}`, '');
   out.push('## 二、來源字串標準表（結論標頭的來源欄；寫作義務：跨輪次一字不改、不含會變的東西）', '');
   out.push('| 審查工具或工作階段 | 逐字來源字串 |', '|---|---|');
   for (const s of data.sources) {
@@ -75,7 +78,7 @@ function build(data) {
   }
   out.push('', `主幹分支名（原閘寫死 main，規矩 H2、H3、H4）：${plain(data.mainBranch, '主幹分支名')}`, '');
   out.push('## 四、掃描發射者（規矩 A1、G4）', '');
-  out.push(`- 掃描器：${plain(data.scanner.tool, '掃描器')}（沒有掃描器＝每支的掃描紀錄寫「未執行：本專案無掃描器」，由下面指定的那一方記錄並轉正式）`);
+  out.push(`- 掃描者：${plain(data.scanner.tool, '掃描者')}（沒有掃描者＝每支的掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式）`);
   out.push(`- 誰指派、登記在哪：${plain(data.scanner.assignedBy, '掃描發射者的指派方式')}`);
   out.push(`- 兩方都起得了時：${plain(data.scanner.tieBreak, '平手規則')}`);
   out.push(`- 沒有合格者時，誰記錄未執行、誰轉正式：${plain(data.scanner.fallback, '無合格者時的替代')}`);
@@ -83,15 +86,15 @@ function build(data) {
   if (!PROVIDERS.includes(iso.provider)) throw new Error(`隔離提供者「${iso.provider}」不在 ${PROVIDERS.join('／')} 裡`);
   const wrap = Array.isArray(iso.wrap) ? iso.wrap : [];
   const forbidden = Array.isArray(iso.forbidden) ? iso.forbidden : [];
-  out.push('', '隔離（規矩 G2；裁示者 2026-09-12 裁「丙」：隔離本身不在套件裡，由這裡指定誰提供；套件只帶掃前試探與掃後比對兩支小工具）：', '');
+  out.push('', '隔離（規矩 G2；裁示者 2026-09-12 裁「丙」：隔離本身不在套件裡，由這裡指定誰提供；套件只帶掃前檢查與掃後檢查兩支小工具）：', '');
   out.push(`- 由誰提供：${plain(iso.provider, '隔離提供者')}（「無」或「未設定」＝不掃，掃描紀錄寫「未執行：無隔離」）`);
   out.push(`- 從盒內跑一條指令的前綴（{box} 會換成盒子路徑、{projectRoot} 會換成專案根目錄）：${plain(wrap.length ? argvText(wrap) : '未設定', '隔離指令前綴')}`);
   out.push(`- 盒子建在：${plain(iso.boxRoot || '未設定', '盒子位置')}（未設定＝系統暫存區）`);
-  out.push(`- 盒內必須讀不到也寫不進的目錄（~ 代表家目錄；試探在每一個各埋一個假機密）：${plain(forbidden.length ? forbidden.join('、') : '未設定', '禁區清單')}`);
+  out.push(`- 盒內必須讀不到也寫不進的目錄（~ 代表家目錄；掃前檢查在每一個各埋一個假機密）：${plain(forbidden.length ? forbidden.join('、') : '未設定', '禁區清單')}`);
   out.push('- 整條鏈（每一步退非零就停，掃描紀錄寫未執行）：');
   out.push('  1. node tools/scan-probe.js：任一禁區用它的讀寫機制碰得到＝隔離是假的，不掃；連試探都做不成（含盒內起不了那個機制）＝不掃。');
   out.push('  2. node tools/scan-probe.js --plant <清單檔>：在每個禁區埋一個掃描期間才有的假機密。清單檔不要貼進任何紀錄。');
-  out.push('  3. 跑掃描器（本套件不代跑）。');
+  out.push('  3. 起掃描者（本套件不代跑）。');
   out.push('  4. node tools/scan-postmortem.js --secrets <清單檔> --reply <回覆檔> --logs <日誌目錄>：假機密或未給盒子的真值出現在任何輸出（含檔名）＝事故。');
   out.push('  5. node tools/scan-probe.js --sweep <清單檔>：把埋下去的收掉。這一步一定要跑。');
   out.push('', '## 五、平台介面（規矩 E5、H1；閘要問平台的每一件事都走這裡）', '');
@@ -105,12 +108,12 @@ function build(data) {
     const cmd = Array.isArray(ops[name]) && ops[name].length ? argvText(ops[name]) : '未設定';
     out.push(`| ${plain(name, '動作名稱')} | ${plain(op.what, '動作說明')} | ${plain(cmd, `動作 ${name} 的指令`)} |`);
   }
-  out.push('', '## 六、三關（規矩 E2、E3、H4；跨變更試合併閘在臨時樹裡跑的就是這幾條）', '');
+  out.push('', '## 六、三關（規矩 E2、E3、H4；跨PR試合併閘在臨時工作資料夾（樹）裡跑的就是這幾條）', '');
   const checks = data.checks || {};
   const prep = Array.isArray(checks.prepareWorktree) ? checks.prepareWorktree : [];
   const cmds = Array.isArray(checks.commands) ? checks.commands : [];
-  out.push(`- 臨時樹的準備指令（在新開的臨時樹裡跑一次，例如安裝相依；沒有就填「無」）：${plain(prep.length && prep[0] !== '未設定' ? argvText(prep) : (prep[0] || '未設定'), '臨時樹準備指令')}`);
-  out.push('- 三關指令（依序跑、任一非零＝紅；每一條要自己保證執行環境跟合併後的樹一致——套件驗不到這件事）：');
+  out.push(`- 臨時工作資料夾（樹）的準備指令（在新開的那一份裡跑一次，例如安裝相依；沒有就填「無」）：${plain(prep.length && prep[0] !== '未設定' ? argvText(prep) : (prep[0] || '未設定'), '臨時樹準備指令')}`);
+  out.push('- 三關指令（依序跑、任一非零＝紅；每一條要自己保證執行環境跟合併後的工作資料夾（樹）一致——套件驗不到這件事）：');
   cmds.forEach((cmd, i) => {
     const argv = Array.isArray(cmd) ? cmd : [String(cmd)];
     out.push(`  ${i + 1}. ${plain(argvText(argv), `第 ${i + 1} 條三關指令`)}`);
@@ -152,13 +155,11 @@ function build(data) {
   const merge = data.mergeCommand || {};
   const mergeCmd = argvText([merge.command, ...(merge.args || [])]);
   out.push('', `全綠之後執行的合併指令：${plain(mergeCmd, '合併指令')}`, '');
-  out.push('合併指令認得的記號：{change}（變更編號）、{sha}（按鍵前核過的版本）、{project}（platform.project）、'
-    + '{reviewer}（變更說明「獨立審查者」欄那一位）、{merger}（跑 node tools/merge.js <編號> --merger <識別值> 自報的那一位）。'
-    + '帶上 {reviewer}／{merger} 合併紀錄才留得下誰審、誰合（H5）；帶上 {sha} 平台才會替你擋最後一刻被推上來的新版本。認不得的記號＝不放行。', '');
+  out.push('合併指令認得的記號：{change}（PR編號）、{sha}（按鍵前核過的版本）、{project}（platform.project）、'
+    + '{reviewer}（PR說明「複審者」欄那一位）、{merger}（跑 node tools/merge.js <編號> --merger <識別值> 自報的那一位）。'
+    + '帶上 {reviewer}／{merger} 合併紀錄才留得下誰複審、誰按合併鍵（H5）；帶上 {sha} 平台才會替你擋最後一刻被推上來的新版本。認不得的記號＝不放行。', '');
   out.push('⚠️ 沒有任何一道閘登記成「已啟用」時，合併指令不放行：一支什麼都沒檢查就按合併鍵的指令比沒有更危險。', '');
-  out.push('## 十一、合併預授權（規矩 A5）', '');
-  out.push(`${plain(data.mergeAuthorization, '合併預授權')}。預授權不取代 A5 列的其餘條件。`, '');
-  out.push('## 十二、機器啟用狀態（逐支登記；「已啟用」以外的一律當靠自覺）', '');
+  out.push('## 十一、機器啟用狀態（逐支登記；「已啟用」以外的一律當靠自覺）', '');
   out.push('| 機器 | 規矩 | 狀態 | 驗過的日期 |', '|---|---|---|---|');
   for (const m of data.machines) {
     if (!STATES.includes(m.state)) throw new Error(`機器「${m.name}」的狀態「${m.state}」不在 ${STATES.join('／')} 裡`);
