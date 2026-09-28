@@ -22,10 +22,10 @@
 //   而它的正式通道都在站外＝材料制；主目錄有 data/store.db，連在那裡啟動都算違規）。
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
 //
-// ## 三個失效條件（判成「當未跑／不掃」的，一律在變更說明固定小標下逐字寫「未執行：<原因>」，不擋合併）
+// ## 三個失效條件（判成「當未跑／不掃」的，一律在 PR說明固定小標下逐字寫「未執行：<原因>」，不擋合併）
 //   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05（PR #564）與 1.0.40 於 2026-09-22 各重驗相同，升版要重驗。
 //   ・金絲雀非 0＝不掃（取代舊的「驗屍非 0＝該掃作廢」：驗屍現在記足跡、查破口，破口＝沙箱破了＝事故，不只是作廢）。
-//   ・缺掃描時序一行＝當未跑（整條「複審後掃」的推論靠先後：獨立審查者「通過」之後才掃；先後沒記＝這一遍不成立）。
+//   ・缺掃描時序一行＝當未跑（整條「複審後掃」的推論靠先後：複審者「通過」之後才掃；先後沒記＝這一遍不成立）。
 //
 // 退出碼：0＝掃完、驗屍乾淨／1＝驗屍查到破口線索（**沙箱破了＝事故**，回報 William）／2＝沒掃成（fail-closed）。
 //
@@ -42,7 +42,7 @@
 //   另加 lsof 掃蕩（best-effort，找 cwd／txt 在盒內的程序殺掉並記數）。
 // ・資源上限是 ulimit（單檔 64MB、程序數＝啟動時同 uid 程序數＋256、CPU 1800 秒）＋父程序讀 sessions 的上限；
 //   **沒有總磁碟配額**（/private/tmp 沒有 quota）——盒內程式寫很多個 64MB 檔仍能塞滿磁碟，那會讓本掃退 2，不會讓它拿到什麼。
-// ・本腳本不決定掃描時機（條款：獨立審查者通過之後、gh pr ready 之前，不論誰實作——2026-09-09 起對稱）；它只負責「掃的時候有圍欄」。
+// ・本腳本不決定掃描時機（條款：複審者通過之後、gh pr ready 之前，不論誰實作——2026-09-09 起對稱）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';

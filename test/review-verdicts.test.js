@@ -3,7 +3,7 @@
 //
 // 起因是一場**真實事故**：#383 上出現兩份都自稱「Claude 複審」、結論相反的留言（GitHub 上兩則都是 `teacherjung`）。
 // 危險的不是有兩份，是**看起來一樣有效而結論相反**，於是「最後一則說通過」等於放行。
-// 判斷本身（標頭怎麼讀、各自解除、作廢上一則、放行只認指定那一位）從切換日（2026-09-17）起住套件
+// 判斷本身（標頭怎麼讀、只有同一位能解除、作廢上一則、放行只認指定那一位）從切換日（2026-09-17）起住套件
 // `tools/gates/check-review-verdicts.js`，行為題在套件 `tests/check-review-verdicts.test.js`；舊閘 `scripts/check-review-verdicts.js`
 // 與它的 121 題行為題（重述／豁免／缺 sha／雜湊四族救濟、真實語料 25 份）2026-09-18 搬家第 7 步退役。
 // 本檔只守本專案這一側：閘登記為已啟用且指回 RULES F4／F5、範本與 RULES 的逐字句、來源字串表（settings.json 的 sources
@@ -75,7 +75,7 @@ test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本
   // 切換前這一題讀舊程序文件的「發審查提示」節（標頭格式行、角色名單指路、來源字串表、「補發、不可編輯舊留言」
   // 的補救程序）與 AGENTS 的「來源是機械身分」指路句；那份文件與那一節 2026-09-17 隨切換日拿掉。
   // 現在的家：機器讀的來源清單＝根目錄 settings.json 的 sources；人讀的同一張表＝PROJECT-SETTINGS.md
-  // 「來源字串標準表」；標頭格式、來源欄的寫作義務、各自解除、壞標頭的救法＝templates/verdict-header.md。
+  // 「來源字串標準表」；標頭格式、來源欄的寫作義務、只有同一位能解除、壞標頭的救法＝templates/verdict-header.md。
   const settings = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
   const sources = Array.isArray(settings.sources) ? settings.sources : [];
   // ⚠️ **斷言整筆（工具＋字串），不是只斷言那個字串**：切換前第一版只寫 `doc.includes('`codex CLI`')`，
