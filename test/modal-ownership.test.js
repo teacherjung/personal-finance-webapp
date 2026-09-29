@@ -687,6 +687,27 @@ test('共用彈窗｜openForm 四種欄位都明確標記，動作按鈕一律�
   document.querySelector('#modal-root .x-close')?.click();
 });
 
+test('共用彈窗｜沒有欄位的 openForm 停在對話框，不把同意送出鈕當初始焦點', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: 'AI 同意確認',
+    fields: [],
+    submitLabel: '同意，送出去讀',
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  assert.equal(
+    document.querySelectorAll('#modalForm [autofocus], #modalForm [data-modal-initial]').length,
+    0,
+    '沒有編輯欄位時，取消與送出都不可自行取得初始焦點標記',
+  );
+  assert.equal(document.activeElement, dialog,
+    '沒有欄位的同意窗要先停在 dialog，避免第一個 Enter 直接送出');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
 test('共用彈窗｜返回型叉叉可用明確名稱覆寫預設的關閉語意', async () => {
   const app = await bootAccessibilityApp();
   const root = /** @type {HTMLElement} */ (document.getElementById('modal-root'));
