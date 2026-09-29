@@ -53,7 +53,7 @@ test('UI5 暖米橘色票：紙張底不偏綠，品牌互動與主要按鈕拆�
   assert.equal(token('pos-soft').toLowerCase(), '#e3edcf');
 });
 
-test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus 與提示走品牌橘', () => {
+test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、按鈕連結 focus 與提示走品牌橘', () => {
   assert.match(ruleBody(styles, '.btn'), /background:\s*var\(--action\)/);
   assert.match(ruleBody(styles, '.btn:hover'), /background:\s*var\(--action-hover\)/);
   assert.doesNotMatch(ruleBody(styles, '.btn'), /var\(--accent\)/);
@@ -87,7 +87,17 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus �
     'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
-test('UI5 暖米橘色票：橘色文字、橘色 focus 與綠色按鈕維持可讀對比', () => {
+test('表單欄位焦點只留單一道深褐框，不疊橘色內外框', () => {
+  const formFocus = ruleBody(styles, 'input:focus, select:focus, textarea:focus');
+  assert.match(formFocus, /outline:\s*none/);
+  assert.match(formFocus, /border-color:\s*var\(--frame\)/);
+  assert.match(formFocus, /box-shadow:\s*none/);
+  assert.doesNotMatch(formFocus, /var\(--accent(?:-soft)?\)/);
+  assert.ok(contrast(token('frame'), token('card')) >= 3,
+    'single dark focus border must remain visible on form controls');
+});
+
+test('UI5 暖米橘色票：橘色文字、按鈕連結的橘色 focus 與綠色按鈕維持可讀對比', () => {
   for (const background of ['bg', 'card', 'card-2']) {
     assert.ok(contrast(token('accent-ink'), token(background)) >= 4.5,
       `--accent-ink must keep 4.5:1 contrast on --${background}`);
