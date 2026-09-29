@@ -88,29 +88,32 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、按鈕�
     'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
-test('表單欄位焦點在各頁覆蓋規則後仍只顯示單一道深褐框', () => {
-  // jsdom 不會把 :focus 套進 getComputedStyle；換成等價測試 class 後，讓 CSSOM
-  // 實際計算全站樣式與頁面覆蓋規則的 cascade，而不是只比對一段 CSS 字串。
-  const testCss = `${styles}\n${securitiesCss}`
+test('代表性表單欄位在全站無條件樣式覆蓋後仍維持單一道深褐框', () => {
+  // 依 index.html 順序載入全部樣式，並用測試 class 模擬 :focus 與 :focus-visible。
+  // jsdom 不計算 media features，也不可靠地拆解 outline longhands；這題只守無條件
+  // shorthand cascade，真實瀏覽器呈現另由 Chromium 驗收。
+  const testCss = [
+    styles, bankAccounts, cards, insurance, subscriptionsCss, securitiesCss, tabs, stockResearch,
+  ].join('\n')
     .replaceAll(':focus-visible', '.__test_focus_visible')
     .replaceAll(':focus', '.__test_focus')
     .replaceAll('var(--frame)', token('frame'));
   const dom = new JSDOM(`
     <style>${testCss}</style>
-    <input id="plain" class="__test_focus">
-    <input id="file" class="__test_focus" type="file">
-    <select id="select" class="__test_focus"><option>全部</option></select>
-    <textarea id="textarea" class="__test_focus"></textarea>
+    <input id="plain" class="__test_focus __test_focus_visible">
+    <input id="file" class="__test_focus __test_focus_visible" type="file">
+    <select id="select" class="__test_focus __test_focus_visible"><option>全部</option></select>
+    <textarea id="textarea" class="__test_focus __test_focus_visible"></textarea>
     <div class="securities-filter-section"><div class="sec-toolbar">
-      <input id="security-input" class="__test_focus">
-      <select id="security-select" class="__test_focus"><option>全部</option></select>
+      <input id="security-input" class="__test_focus __test_focus_visible">
+      <select id="security-select" class="__test_focus __test_focus_visible"><option>全部</option></select>
     </div></div>
     <div class="rule-row">
-      <input id="rule-input" class="__test_focus">
-      <select id="rule-select" class="__test_focus"><option>包含</option></select>
+      <input id="rule-input" class="__test_focus __test_focus_visible">
+      <select id="rule-select" class="__test_focus __test_focus_visible"><option>包含</option></select>
     </div>
-    <input id="sub-name" class="sub-name __test_focus">
-    <input id="checkbox" class="__test_focus" type="checkbox">
+    <input id="sub-name" class="sub-name __test_focus __test_focus_visible">
+    <input id="checkbox" class="__test_focus __test_focus_visible" type="checkbox">
   `);
   const frame = token('frame').toLowerCase();
 
