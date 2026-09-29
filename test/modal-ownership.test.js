@@ -5,11 +5,13 @@
 // owns() 用兩個判準判「這一格還是不是我的」：世代章（開窗/關窗都蓋章）＋**換頁**序號。
 // ⚠️ r9 的核心教訓：判準②吃的必須是「換頁」序號，不是「重繪」序號。r7 接成重繪序號（routeSeq），
 //   開機報價更新這種**同頁背景重繪**就把擁有權撤掉了——存檔成功卻不關窗、儲存鈕永遠灰。
+/* global document, KeyboardEvent */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
 import { makeModalOwnership } from '../public/modules/modal-ownership.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -393,6 +395,17 @@ test('⭐ 接線｜六個開窗點**逐一**驗「先 claim 再寫入」（中�
   }
 });
 
+test('⭐ 接線｜六個開窗點都接上同一份鍵盤與焦點管理，不可只修中央外殼', () => {
+  for (const [rel, fnName] of OPENERS) {
+    const src = readFileSync(join(ROOT, rel), 'utf8');
+    const segment = topLevelSegments(src).find(s => s.name === fnName);
+    assert.ok(segment, `${rel}：找不到 ${fnName} 的頂層段落`);
+    const block = blankNonCode(src).split('\n').slice(segment.from, segment.to).join('\n');
+    assert.match(block, /bindModalAccessibility\(/,
+      `${rel}:${fnName} 要接 bindModalAccessibility，否則手刻彈窗會漏掉 Esc、Tab 與焦點歸還`);
+  }
+});
+
 /** 遞迴列出 public/ 底下所有 .js。 @param {string} dir @returns {string[]} */
 function listJs(dir) {
   /** @type {string[]} */ const out = [];
@@ -461,4 +474,78 @@ test('關門題的已知盲點（characterization）：同一段裡的第二個�
   assert.deepEqual(scanned.map(o => o.ok), [true],
     '⚠️ 已知盲點：物件方法共用一段，第二個未 claim 的開窗掃不出來。' +
     '改成 AST／唯一寫入 API（候選 8-16）之後，這一題會轉紅——那時請把它改寫成 ok:false 的正向斷言。');
+});
+
+let accessibilityApp;
+async function bootAccessibilityApp() {
+  if (accessibilityApp) return accessibilityApp;
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <nav id="nav"><a href="#dashboard" data-route="dashboard">總覽</a></nav>
+    <button id="modalOpener">開啟說明</button><button id="snapshotBtn"></button>
+    <main id="view"></main><div id="modal-root"></div><div id="toast-root"></div>
+  </body></html>`, { url: 'http://localhost/#dashboard', pretendToBeVisual: true });
+  const win = dom.window;
+  const set = (key, value) => Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  for (const key of ['document', 'window', 'location', 'localStorage', 'HTMLElement', 'Element', 'Node', 'Event',
+    'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'MutationObserver', 'requestAnimationFrame', 'getComputedStyle']) {
+    set(key, win[key]);
+  }
+  set('fetch', async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  accessibilityApp = await import('../public/app.js');
+  await accessibilityApp.bootSettled;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  return accessibilityApp;
+}
+
+test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關閉並把焦點還給開窗按鈕', async () => {
+  const app = await bootAccessibilityApp();
+  const opener = document.getElementById('modalOpener');
+  opener.focus();
+  app.openInfo('鍵盤測試', '<p>說明內容</p>', {
+    actionsHtml: '<span style="display:none"><button type="button" id="hiddenAction">隱藏操作</button></span>',
+  });
+  await Promise.resolve();
+
+  const dialog = document.querySelector('#modal-root .modal');
+  const close = dialog.querySelector('.x-close');
+  const confirm = dialog.querySelector('[data-close]');
+  assert.equal(dialog.getAttribute('role'), 'dialog');
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  const labelledBy = dialog.getAttribute('aria-labelledby');
+  assert.ok(labelledBy, '彈窗要由標題提供可讀名稱');
+  assert.equal(document.getElementById(labelledBy)?.textContent, '鍵盤測試');
+  assert.equal(close.getAttribute('aria-label'), '關閉');
+  assert.equal(document.activeElement, confirm, '資訊窗打開後焦點先到主要操作，不留在背景頁');
+
+  confirm.focus();
+  confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, close, '隱藏容器裡的控制項不算 Tab 順序；最後一格按 Tab 要回到第一格');
+  close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, confirm, '在第一個控制項按 Shift+Tab 要回到最後一個控制項');
+
+  confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await new Promise(resolve => setTimeout(resolve, 0));   // 等 MutationObserver 看見 root 真的關空後歸還焦點
+  assert.equal(document.querySelector('#modal-root .modal'), null, 'Esc 要關閉目前彈窗');
+  assert.equal(document.activeElement, opener, '關窗後焦點要回到原本的開窗按鈕');
+
+  app.openForm({
+    title: '隱藏欄位測試',
+    fields: [{ key: 'hidden', label: '隱藏' }, { key: 'visible', label: '可見' }],
+    onSubmit: async () => {},
+    onMount: root => { root.querySelector('#f_hidden').parentElement.style.display = 'none'; },
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'f_visible', '第一個欄位若被 onMount 隱藏，焦點要跳到下一個可見欄位');
+  document.querySelector('#modal-root .x-close').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.activeElement, opener, '表單關閉後也要把焦點還給開窗按鈕');
+
+  app.openInfo('第一窗', '<p>先預覽</p>', { actionsHtml: '<button type="button" id="openNext">下一窗</button>' });
+  await Promise.resolve();
+  document.getElementById('openNext').focus();
+  app.openInfo('第二窗', '<p>已接管第一窗</p>');
+  await Promise.resolve();
+  document.querySelector('#modal-root [data-close]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.activeElement, opener, '彈窗接管鏈全部結束後，要回到最初的頁面按鈕，不是已移除的上一窗按鈕');
 });

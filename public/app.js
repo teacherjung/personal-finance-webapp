@@ -183,6 +183,91 @@ export function bindBackdropClose(root, close) {
   bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
 }
 
+let modalTitleSeq = 0;
+const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** @type {WeakMap<Element, Element>} */
+const modalReturnFocus = new WeakMap();
+/**
+ * 補齊共用彈窗的 dialog 語意與鍵盤焦點管理；關閉方式仍由各彈窗自己的 close/onBack 決定。
+ * @param {Element} root 內含 .modal 的共用根節點
+ * @param {() => void} close Esc 時沿用的既有關閉／返回行為
+ * @param {Element|null} returnFocusTo 開窗前的焦點；只有關窗後 root 真的空了才歸還
+ */
+export function bindModalAccessibility(root, close, returnFocusTo = document.activeElement) {
+  const dialog = /** @type {HTMLElement|null} */ (root.querySelector('.modal'));
+  if (!dialog) return;
+  const previousReturnTarget = modalReturnFocus.get(root);
+  const returnTarget = previousReturnTarget?.isConnected ? previousReturnTarget : returnFocusTo;
+  if (returnTarget) modalReturnFocus.set(root, returnTarget);
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.tabIndex = -1;
+
+  const title = /** @type {HTMLElement|null} */ (dialog.querySelector('.modal-head h2'));
+  if (title) {
+    if (!title.id) title.id = `modal-title-${++modalTitleSeq}`;
+    dialog.setAttribute('aria-labelledby', title.id);
+  } else {
+    dialog.setAttribute('aria-label', '對話框');
+  }
+  const xClose = /** @type {HTMLButtonElement|null} */ (dialog.querySelector('.x-close'));
+  if (xClose) { xClose.type = 'button'; xClose.setAttribute('aria-label', '關閉'); }
+
+  const isVisible = (/** @type {Element} */ el) => {
+    for (let node = /** @type {Element|null} */ (el); node && node !== dialog; node = node.parentElement) {
+      if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') return false;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  };
+  const focusables = () => [...dialog.querySelectorAll(MODAL_FOCUSABLE)].filter(isVisible);
+  const firstVisible = (/** @type {string} */ selector) => [...dialog.querySelectorAll(selector)].find(isVisible);
+  const onKeydown = (/** @type {KeyboardEvent} */ event) => {
+    if (event.defaultPrevented) return;
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); close(); return;
+    }
+    if (event.key !== 'Tab') return;
+    const items = focusables();
+    if (!items.length) { event.preventDefault(); dialog.focus(); return; }
+    const first = /** @type {HTMLElement} */ (items[0]);
+    const last = /** @type {HTMLElement} */ (items[items.length - 1]);
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault(); first.focus();
+    }
+  };
+  dialog.addEventListener('keydown', onKeydown);
+
+  // 若另一個彈窗直接接管 root，就讓新彈窗自己接焦點；只有真的關空才回到原按鈕。
+  const observer = new MutationObserver(() => {
+    if (dialog.isConnected) return;
+    observer.disconnect(); dialog.removeEventListener('keydown', onKeydown);
+    if (root.querySelector('.modal')) return;
+    const target = /** @type {HTMLElement|null} */ (modalReturnFocus.get(root) || returnTarget);
+    modalReturnFocus.delete(root);
+    queueMicrotask(() => {
+      if (root.querySelector('.modal')) return;
+      if (target?.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    });
+  });
+  observer.observe(root, { childList: true });
+
+  queueMicrotask(() => {
+    if (!dialog.isConnected) return;
+    const initial = /** @type {HTMLElement} */ (
+      firstVisible('[autofocus]')
+      || firstVisible('.modal-body input:not([disabled]), .modal-body select:not([disabled]), .modal-body textarea:not([disabled])')
+      || firstVisible('[data-close], [data-back], [data-cancel], .modal-body button:not([disabled]), .modal-body a[href]')
+      || focusables()[0]
+      || dialog
+    );
+    initial.focus({ preventScroll: true });
+  });
+}
+
 // #modal-root 是全站表單/彈窗共用的一格（r6→r9）。表單 onSubmit 有 await，回來時可能已換頁或開了新彈窗——
 // 舊的成功 continuation 若無條件 close() 會清掉**後開的**彈窗、毀掉未存輸入；舊的失敗會報過期錯誤。
 // 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset 與換頁序號。
@@ -220,6 +305,7 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any, setProgress?:(t:string)=>void})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
   const fieldHtml = fields.map(f => {
     const v = values[f.key] ?? f.default ?? '';
@@ -262,6 +348,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
   bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
   root.querySelector('#modalForm').onsubmit = async (e) => {
     e.preventDefault();
     const submitBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#modalForm button[type="submit"], #modalForm .btn'));
@@ -307,6 +394,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
  * 動作列還不夠，`.modal` 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底才按得到）。 */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
@@ -317,6 +405,7 @@ export function openInfo(title, bodyHtml, opts = {}) {
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-close]').onclick = close;
   bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
 }
 
 // ---------- 列印報表共用外殼（訂閱/投組報表） ----------
@@ -420,7 +509,14 @@ export async function router() {
   const navKey = location.hash;
   if (navKey !== lastNavKey) { lastNavKey = navKey; navSeq++; }
   document.body.classList.toggle('stock-research-route', route === 'stock');
-  document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
+  /** @type {HTMLElement|null} */ let activeNav = null;
+  document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
+    const active = a.dataset.route === route;
+    a.classList.toggle('active', active);
+    if (active) { a.setAttribute('aria-current', 'page'); activeNav = a; }
+    else a.removeAttribute('aria-current');
+  });
+  keepActiveNavVisible(activeNav);
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }
@@ -429,9 +525,22 @@ export async function router() {
   hydrateIcons(view());
 }
 
-document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
-  a.addEventListener('click', () => { location.hash = a.dataset.route || ''; });
-});
+/** 手機導覽是水平捲動列；直達深層頁面時把目前項目露出，桌機無溢位時不動。 @param {HTMLElement|null} activeNav */
+function keepActiveNavVisible(activeNav) {
+  const nav = /** @type {HTMLElement|null} */ ($('#nav'));
+  if (!nav || !activeNav) return;
+  requestAnimationFrame(() => {
+    const maxScroll = nav.scrollWidth - nav.clientWidth;
+    if (maxScroll <= 0) return;
+    const navRect = nav.getBoundingClientRect(), itemRect = activeNav.getBoundingClientRect();
+    const leftEdge = navRect.left + 6, rightEdge = navRect.right - 34;
+    let next = nav.scrollLeft;
+    if (itemRect.left < leftEdge) next += itemRect.left - leftEdge;
+    else if (itemRect.right > rightEdge) next += itemRect.right - rightEdge;
+    next = Math.max(0, Math.min(maxScroll, next));
+    if (Math.abs(next - nav.scrollLeft) > 1) nav.scrollTo({ left: next, behavior: 'auto' });
+  });
+}
 window.addEventListener('hashchange', router);
 
 $('#snapshotBtn').addEventListener('click', async () => {

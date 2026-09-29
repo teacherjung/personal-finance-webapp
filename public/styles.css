@@ -67,7 +67,7 @@ body {
   display: flex; align-items: center; gap: 11px;
   padding: 8px 11px; border: 2px solid transparent; border-radius: 7px;
   color: var(--text-dim); cursor: pointer; user-select: none;
-  font-size: 15.5px; font-weight: 600; transition: .12s;
+  font-size: 15.5px; font-weight: 600; transition: .12s; text-decoration: none;
 }
 .ic { display: inline-block; vertical-align: -.18em; }
 .nav-ic { display: inline-flex; opacity: .9; }

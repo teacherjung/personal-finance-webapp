@@ -5,7 +5,7 @@
 // settings.js 只留設定頁本體；儲存成功後經 renderSettings 接縫回頭重繪設定頁。
 // 循環 import 安全：本檔 ↔ settings.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記；本檔頂層只有常數字面量與函式宣告）。
-import { api, byId, esc, toast, modalSizeClass, claimModalRoot } from '../app.js';
+import { api, byId, esc, toast, modalSizeClass, bindModalAccessibility, claimModalRoot } from '../app.js';
 import { openModalShell } from './modal-shell.js';
 import { renderSettings } from './settings.js';
 
@@ -187,6 +187,7 @@ function openRulePreview(r, onBack) {
   // 不是關閉，且**沒有**背景點擊關閉——防止使用者點到背景把「編輯到一半的規則」整窗弄丟。
   // 外殼會接管 x-close 與 bindBackdropClose，語意不同不可硬套（Codex U3 修訂點名的情況）。
   const root = byId('modal-root');
+  const returnFocusTo = document.activeElement;
   const rows = r.changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
   // 學習表衝突＝整個自助化唯一「刪掉規則也救不回來」的效果：兩把鑰匙併成一把時，
   // 兩邊手動教過的分類只留得下一個。不講出來的話，使用者看到「4 筆顯示名會變」就按下去了。
@@ -226,4 +227,5 @@ function openRulePreview(r, onBack) {
     </div></div></div>`;
   root.querySelector('.x-close').onclick = onBack;
   root.querySelector('[data-back]').onclick = onBack;
+  bindModalAccessibility(root, onBack, returnFocusTo);
 }

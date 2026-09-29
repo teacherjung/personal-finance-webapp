@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, openInfo, confirmDelete, toast, modalSizeClass, bindBackdropClose, currentRouteSeq, claimModalRoot } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, openInfo, confirmDelete, toast, modalSizeClass, bindBackdropClose, bindModalAccessibility, currentRouteSeq, claimModalRoot } from '../app.js';
 import { PALETTE, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -300,6 +300,7 @@ function bankAccRow(x, ibLastSync) {
 // 再平衡計算器（3-13）：唯讀試算、不改任何資料。預設「只買不賣」（符合投資原則：加碼只用新資金）。
 function openRebalance(allocRows) {
   const root = byId('modal-root');
+  const returnFocusTo = document.activeElement;
   let buyOnly = true;
   const owns = claimModalRoot();   // r7：接管 modal-root＝蓋新章，任何在途的 openForm(async) 就失去擁有權、不會回來清掉這個窗
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
@@ -319,6 +320,7 @@ function openRebalance(allocRows) {
   const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤）
   root.querySelector('.x-close').onclick = close;
   bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
   const render = () => {
     const cash = Number(/** @type {any} */ (byId('rebCash')).value || 0);
     const plan = rebalancePlan(allocRows, { buyOnly, cash });
@@ -355,6 +357,7 @@ function openRebalance(allocRows) {
 
 function openTargets(targets) {
   const root = byId('modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r7：同 openRebalance，接管 modal-root＝作廢在途的 openForm(async)
   const rows = () => targets.map((t, i) => `<div class="form-grid" style="margin-bottom:8px" data-i="${i}">
     <input data-k="class" value="${esc(t.class || '')}" placeholder="類別 (例：股票)" />
@@ -374,6 +377,7 @@ function openTargets(targets) {
   })).filter(x => x.class);
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
+  bindModalAccessibility(root, close, returnFocusTo);
   root.querySelector('#addRow').onclick = () => { targets = collect(); targets.push({ class: '', targetPct: 0 }); root.querySelector('#tRows').innerHTML = rows(); bind(); };
   function bind() { root.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { targets = collect(); targets.splice(Number(b.dataset.rm), 1); root.querySelector('#tRows').innerHTML = rows(); bind(); }); }
   bind();
