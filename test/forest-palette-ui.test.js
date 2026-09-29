@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 const tabs = readFileSync(new URL('../public/workspace-tabs.css', import.meta.url), 'utf8');
@@ -87,14 +88,45 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、按鈕�
     'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
-test('表單欄位焦點只留單一道深褐框，不疊橘色內外框', () => {
-  const formFocus = ruleBody(styles, 'input:focus, select:focus, textarea:focus');
-  assert.match(formFocus, /outline:\s*none/);
-  assert.match(formFocus, /border-color:\s*var\(--frame\)/);
-  assert.match(formFocus, /box-shadow:\s*none/);
-  assert.doesNotMatch(formFocus, /var\(--accent(?:-soft)?\)/);
+test('表單欄位焦點在各頁覆蓋規則後仍只顯示單一道深褐框', () => {
+  // jsdom 不會把 :focus 套進 getComputedStyle；換成等價測試 class 後，讓 CSSOM
+  // 實際計算全站樣式與頁面覆蓋規則的 cascade，而不是只比對一段 CSS 字串。
+  const testCss = `${styles}\n${securitiesCss}`
+    .replaceAll(':focus-visible', '.__test_focus_visible')
+    .replaceAll(':focus', '.__test_focus')
+    .replaceAll('var(--frame)', token('frame'));
+  const dom = new JSDOM(`
+    <style>${testCss}</style>
+    <input id="plain" class="__test_focus">
+    <input id="file" class="__test_focus" type="file">
+    <select id="select" class="__test_focus"><option>全部</option></select>
+    <textarea id="textarea" class="__test_focus"></textarea>
+    <div class="securities-filter-section"><div class="sec-toolbar">
+      <input id="security-input" class="__test_focus">
+      <select id="security-select" class="__test_focus"><option>全部</option></select>
+    </div></div>
+    <div class="rule-row">
+      <input id="rule-input" class="__test_focus">
+      <select id="rule-select" class="__test_focus"><option>包含</option></select>
+    </div>
+    <input id="sub-name" class="sub-name __test_focus">
+    <input id="checkbox" class="__test_focus" type="checkbox">
+  `);
+  const frame = token('frame').toLowerCase();
+
+  for (const id of [
+    'plain', 'file', 'select', 'textarea', 'security-input', 'security-select',
+    'rule-input', 'rule-select', 'sub-name', 'checkbox',
+  ]) {
+    const control = dom.window.document.getElementById(id);
+    const computed = dom.window.getComputedStyle(control);
+    assert.match(computed.outline.toLowerCase(), new RegExp(`2px solid ${frame}`), `${id} focus line`);
+    assert.equal(computed.outlineOffset, '-2px', `${id} focus line must replace, not stack outside, its border`);
+    assert.equal(computed.boxShadow, 'none', `${id} must not regain the pale orange glow`);
+  }
+
   assert.ok(contrast(token('frame'), token('card')) >= 3,
-    'single dark focus border must remain visible on form controls');
+    'single dark focus line must remain visible on form controls');
 });
 
 test('UI5 暖米橘色票：橘色文字、按鈕連結的橘色 focus 與綠色按鈕維持可讀對比', () => {
