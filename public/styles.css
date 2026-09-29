@@ -67,7 +67,7 @@ body {
   display: flex; align-items: center; gap: 11px;
   padding: 8px 11px; border: 2px solid transparent; border-radius: 7px;
   color: var(--text-dim); cursor: pointer; user-select: none;
-  font-size: 15.5px; font-weight: 600; transition: .12s;
+  font-size: 15.5px; font-weight: 600; transition: .12s; text-decoration: none;
 }
 .ic { display: inline-block; vertical-align: -.18em; }
 .nav-ic { display: inline-flex; opacity: .9; }
@@ -256,6 +256,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* ---------- Modal ---------- */
 .modal-bg { position: fixed; inset: 0; background: rgba(40,34,28,.32); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 100; padding: 20px; }
 .modal { background: var(--card); border: 2px solid var(--frame); border-radius: 8px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+.modal:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
 .modal-sm { max-width: 520px; }   /* ＝ .modal 基底預設，保留供明確指定 */
 .modal-md { max-width: 640px; }
 .modal-lg { max-width: 760px; }

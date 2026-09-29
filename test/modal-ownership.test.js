@@ -5,11 +5,13 @@
 // owns() 用兩個判準判「這一格還是不是我的」：世代章（開窗/關窗都蓋章）＋**換頁**序號。
 // ⚠️ r9 的核心教訓：判準②吃的必須是「換頁」序號，不是「重繪」序號。r7 接成重繪序號（routeSeq），
 //   開機報價更新這種**同頁背景重繪**就把擁有權撤掉了——存檔成功卻不關窗、儲存鈕永遠灰。
+/* global document, KeyboardEvent */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
 import { makeModalOwnership } from '../public/modules/modal-ownership.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -199,8 +201,12 @@ test('⭐ 接線｜navSeq 只在使用者眼前的網址改變時才前進（同
   assert.match(app, /export const currentNavSeq = \(\) => navSeq;/, 'currentNavSeq 存在且回傳換頁序號');
   assert.match(app, /const navKey = location\.hash;/,
     '換頁鑰匙要用**完整 hash**（r10：個股頁的身分含 ?symbol=&tab=，只比 route 會漏掉換股票）');
-  assert.match(app, /if \(navKey !== lastNavKey\) \{ lastNavKey = navKey; navSeq\+\+; \}/,
+  assert.match(app, /const navChanged = navKey !== lastNavKey;/,
+    '是否換頁要留下單一判定，供換頁序號與手機導覽共用');
+  assert.match(app, /if \(navChanged\) \{ lastNavKey = navKey; navSeq\+\+; \}/,
     'navSeq 只在使用者眼前的網址變了才前進（背景重繪不動網址＝照樣不前進）');
+  assert.match(app, /if \(navChanged\) keepActiveNavVisible\(activeNav\);/,
+    '手機導覽只在真的換頁時露出目前項目，同頁重繪不可搶回手動捲動位置');
   // routeSeq 仍要每次前進——它管的是「別覆蓋新頁面的畫面」，同頁重繪也該作廢舊寫入。
   assert.match(app, /const seq = \+\+routeSeq;/, 'routeSeq 維持每次 router() 都前進（重繪世代，勿一起改掉）');
 });
@@ -393,6 +399,17 @@ test('⭐ 接線｜六個開窗點**逐一**驗「先 claim 再寫入」（中�
   }
 });
 
+test('⭐ 接線｜六個開窗點都接上同一份鍵盤與焦點管理，不可只修中央外殼', () => {
+  for (const [rel, fnName] of OPENERS) {
+    const src = readFileSync(join(ROOT, rel), 'utf8');
+    const segment = topLevelSegments(src).find(s => s.name === fnName);
+    assert.ok(segment, `${rel}：找不到 ${fnName} 的頂層段落`);
+    const block = blankNonCode(src).split('\n').slice(segment.from, segment.to).join('\n');
+    assert.match(block, /bindModalAccessibility\(/,
+      `${rel}:${fnName} 要接 bindModalAccessibility，否則手刻彈窗會漏掉 Esc、Tab 與焦點歸還`);
+  }
+});
+
 /** 遞迴列出 public/ 底下所有 .js。 @param {string} dir @returns {string[]} */
 function listJs(dir) {
   /** @type {string[]} */ const out = [];
@@ -461,4 +478,312 @@ test('關門題的已知盲點（characterization）：同一段裡的第二個�
   assert.deepEqual(scanned.map(o => o.ok), [true],
     '⚠️ 已知盲點：物件方法共用一段，第二個未 claim 的開窗掃不出來。' +
     '改成 AST／唯一寫入 API（候選 8-16）之後，這一題會轉紅——那時請把它改寫成 ok:false 的正向斷言。');
+});
+
+let accessibilityApp;
+async function bootAccessibilityApp() {
+  if (accessibilityApp) return accessibilityApp;
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <nav id="nav"><a href="#dashboard" data-route="dashboard">總覽</a></nav>
+    <button id="modalOpener">開啟說明</button><button id="snapshotBtn"></button>
+    <main id="view"></main><div id="modal-root"></div><div id="toast-root"></div>
+  </body></html>`, { url: 'http://localhost/#dashboard', pretendToBeVisual: true });
+  const win = dom.window;
+  const set = (key, value) => Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  for (const key of ['document', 'window', 'location', 'localStorage', 'HTMLElement', 'Element', 'Node', 'Event',
+    'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'MutationObserver', 'requestAnimationFrame', 'getComputedStyle']) {
+    set(key, win[key]);
+  }
+  set('fetch', async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  accessibilityApp = await import('../public/app.js');
+  await accessibilityApp.bootSettled;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  return accessibilityApp;
+}
+
+test('主導覽｜路由只標目前頁並在手機溢位時把目前項目捲進可見範圍', async () => {
+  const app = await bootAccessibilityApp();
+  const nav = /** @type {HTMLElement} */ (document.getElementById('nav'));
+  nav.innerHTML = `<a href="#dashboard" data-route="dashboard" class="active" aria-current="page">總覽</a>
+    <a href="#settings" data-route="settings">設定</a>`;
+  const dashboard = /** @type {HTMLElement} */ (nav.querySelector('[data-route="dashboard"]'));
+  const settings = /** @type {HTMLElement} */ (nav.querySelector('[data-route="settings"]'));
+  Object.defineProperties(nav, {
+    scrollWidth: { value: 600, configurable: true },
+    clientWidth: { value: 300, configurable: true },
+    scrollLeft: { value: 0, writable: true, configurable: true },
+  });
+  nav.getBoundingClientRect = () => /** @type {any} */ ({ left: 0, right: 300 });
+  settings.getBoundingClientRect = () => /** @type {any} */ ({ left: 400, right: 500 });
+  let scrolledTo = null;
+  nav.scrollTo = (/** @type {{left:number}} */ options) => {
+    scrolledTo = options.left;
+    nav.scrollLeft = options.left;
+  };
+
+  globalThis.window.history.replaceState(null, '', '#settings');
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  const current = [...nav.querySelectorAll('[aria-current="page"]')];
+  assert.equal(current.length, 1, '切頁後只准目前頁保留 aria-current，離開的頁面要移除');
+  assert.equal(current[0], settings, 'aria-current 與 active 都要落在真正的目前頁');
+  assert.ok(settings.classList.contains('active'));
+  assert.equal(nav.querySelector('[data-route="dashboard"]')?.classList.contains('active'), false);
+  assert.equal(scrolledTo, 234, '目前項目在右側可視區外時，要把它捲回右側保留區之內');
+
+  nav.scrollLeft = 0;
+  scrolledTo = null;
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(scrolledTo, null, '同一頁背景重畫時，不可把使用者手動捲開的導覽拉回目前項目');
+
+  nav.scrollLeft = 234;
+  scrolledTo = null;
+  dashboard.getBoundingClientRect = () => /** @type {any} */ ({ left: -228, right: -128 });
+  globalThis.window.history.replaceState(null, '', '#dashboard');
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  assert.equal(document.querySelector('#nav [aria-current="page"]'), dashboard,
+    '從深層頁回到左側頁面時，aria-current 也要跟著換回來');
+  assert.equal(scrolledTo, 0, '目前項目在左側可視區外時，要把導覽捲回最左邊');
+});
+
+test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關閉並把焦點還給開窗按鈕', async () => {
+  const app = await bootAccessibilityApp();
+  const opener = document.getElementById('modalOpener');
+  opener.focus();
+  app.openInfo('鍵盤測試', '<p>說明內容 <a id="insideLink" href="#help">延伸說明</a></p>', {
+    actionsHtml: '<span style="display:none"><button type="button" id="hiddenAction">隱藏操作</button></span>',
+  });
+  await Promise.resolve();
+
+  const dialog = document.querySelector('#modal-root .modal');
+  const close = dialog.querySelector('.x-close');
+  const confirm = dialog.querySelector('[data-close]');
+  assert.equal(dialog.getAttribute('role'), 'dialog');
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  const labelledBy = dialog.getAttribute('aria-labelledby');
+  assert.ok(labelledBy, '彈窗要由標題提供可讀名稱');
+  assert.equal(document.getElementById(labelledBy)?.textContent, '鍵盤測試');
+  assert.equal(close.getAttribute('aria-label'), '關閉');
+  assert.equal(document.activeElement, dialog,
+    '資訊窗沒有明確標記初始目標時，焦點要停在有名稱的對話框，不可從連結或按鈕猜語意');
+
+  confirm.focus();
+  confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, close, '隱藏容器裡的控制項不算 Tab 順序；最後一格按 Tab 要回到第一格');
+  close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, confirm, '在第一個控制項按 Shift+Tab 要回到最後一個控制項');
+
+  confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await new Promise(resolve => setTimeout(resolve, 0));   // 等 MutationObserver 看見 root 真的關空後歸還焦點
+  assert.equal(document.querySelector('#modal-root .modal'), null, 'Esc 要關閉目前彈窗');
+  assert.equal(document.activeElement, opener, '關窗後焦點要回到原本的開窗按鈕');
+
+  app.openForm({
+    title: '隱藏欄位測試',
+    fields: [{ key: 'hidden', label: '隱藏' }, { key: 'visible', label: '可見' }],
+    onSubmit: async () => {},
+    onMount: root => { root.querySelector('#f_hidden').parentElement.style.display = 'none'; },
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'f_visible', '第一個欄位若被 onMount 隱藏，焦點要跳到下一個可見欄位');
+  document.querySelector('#modal-root .x-close').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.activeElement, opener, '表單關閉後也要把焦點還給開窗按鈕');
+
+  app.openInfo('第一窗', '<p>先預覽</p>', { actionsHtml: '<button type="button" id="openNext">下一窗</button>' });
+  await Promise.resolve();
+  document.getElementById('openNext').focus();
+  app.openInfo('第二窗', '<p>已接管第一窗</p>');
+  await Promise.resolve();
+  document.querySelector('#modal-root [data-close]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.activeElement, opener, '彈窗接管鏈全部結束後，要回到最初的頁面按鈕，不是已移除的上一窗按鈕');
+});
+
+test('共用彈窗｜焦點落在彈窗本體時，Shift+Tab 仍留在窗內', async () => {
+  const app = await bootAccessibilityApp();
+  app.openInfo('焦點本體', '<p>滑鼠點過的內文</p>');
+  await Promise.resolve();
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  const last = document.querySelector('#modal-root [data-close]');
+  dialog.focus();
+  dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, last, '彈窗本體也算焦點陷阱的邊界，Shift+Tab 要回最後一格');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜焦點意外跑到背景時，下一次 Tab 立即收回窗內', async () => {
+  const app = await bootAccessibilityApp();
+  const opener = /** @type {HTMLElement} */ (document.getElementById('modalOpener'));
+  app.openInfo('背景回收', '<p>焦點不可留在遮罩後面</p>');
+  await Promise.resolve();
+  const first = document.querySelector('#modal-root .x-close');
+  opener.focus();
+  opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, first, '窗開著時，背景元素送出的 Tab 也要由共用陷阱接回來');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜沒有明確標記時，初始焦點留在對話框本體', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  const { root } = openModalShell({
+    title: '匯入完成',
+    bodyHtml: '<button type="button" data-reassign>改到其他卡片</button><button type="button" data-done>完成</button>',
+  });
+  await Promise.resolve();
+  const dialog = /** @type {HTMLElement} */ (root.querySelector('.modal'));
+  assert.equal(document.activeElement, dialog,
+    '沒有明確初始焦點標記時，不可把 Enter 預設導向第一個一般操作');
+  root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜只有明確標記可接初始焦點，而且 autofocus 優先', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  let opened = openModalShell({
+    title: '明確標記',
+    bodyHtml: '<input id="declaredFocus" data-modal-initial><button id="nativeFocus" autofocus>原生優先</button>',
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'nativeFocus', 'autofocus 要優先於專案自己的初始焦點標記');
+  opened.root.querySelector('.x-close')?.click();
+
+  opened = openModalShell({
+    title: '專案標記',
+    bodyHtml: '<button type="button" id="unmarkedAction">未標記</button><input id="declaredOnly" data-modal-initial>',
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'declaredOnly', '沒有 autofocus 時，只接明確的 data-modal-initial');
+  opened.root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜openForm 四種欄位都明確標記，動作按鈕一律不冒充初始焦點', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: '欄位標記',
+    fields: [
+      { key: 'kind', label: '類型', type: 'select', options: ['甲', '乙'] },
+      { key: 'note', label: '備註', type: 'textarea' },
+      { key: 'applyAll', label: '全部套用', type: 'checkbox' },
+      { key: 'name', label: '名稱' },
+    ],
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(
+    [...document.querySelectorAll('#modalForm [data-modal-initial]')].map(el => el.id),
+    ['f_kind', 'f_note', 'f_applyAll', 'f_name'],
+    'select、textarea、是／否下拉與一般 input 都要標記，且只有真正編輯欄位可帶標記',
+  );
+  assert.equal(document.activeElement?.id, 'f_kind', '第一個可見的明確標記欄位仍是開窗焦點');
+  assert.equal(document.querySelector('#modalForm [type="submit"]')?.hasAttribute('data-modal-initial'), false);
+  assert.equal(document.querySelector('#modalForm [data-cancel]')?.hasAttribute('data-modal-initial'), false);
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜沒有欄位的 openForm 停在對話框，不把同意送出鈕當初始焦點', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: 'AI 同意確認',
+    fields: [],
+    submitLabel: '同意，送出去讀',
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  assert.equal(
+    document.querySelectorAll('#modalForm [autofocus], #modalForm [data-modal-initial]').length,
+    0,
+    '沒有編輯欄位時，取消與送出都不可自行取得初始焦點標記',
+  );
+  assert.equal(document.activeElement, dialog,
+    '沒有欄位的同意窗要先停在 dialog，避免第一個 Enter 直接送出');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜返回型叉叉可用明確名稱覆寫預設的關閉語意', async () => {
+  const app = await bootAccessibilityApp();
+  const root = /** @type {HTMLElement} */ (document.getElementById('modal-root'));
+  const owns = app.claimModalRoot();
+  root.innerHTML = '<div class="modal-bg"><div class="modal"><div class="modal-head"><h2>預覽</h2><button class="x-close">×</button></div></div></div>';
+  const close = () => { root.innerHTML = ''; owns.release(); };
+  root.querySelector('.x-close').onclick = close;
+  app.bindModalAccessibility(root, close, document.getElementById('modalOpener'), '回去繼續編輯');
+  await Promise.resolve();
+  assert.equal(root.querySelector('.x-close')?.getAttribute('aria-label'), '回去繼續編輯');
+  const rules = strip(readFileSync(join(ROOT, 'public/modules/settings-store-rules.js'), 'utf8'));
+  assert.match(rules, /bindModalAccessibility\(root, onBack, returnFocusTo, '回去繼續編輯'\);/,
+    '規則預覽要把真正的返回語意接進共用 helper，不可退回預設的「關閉」');
+  root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜動作列的保護選項不是初始焦點', async () => {
+  const app = await bootAccessibilityApp();
+  app.openInfo('銀行對帳單預覽', '<p>請先核對內容</p>', {
+    actionsHtml: '<label><input id="skipSimilarChk" type="checkbox" checked> 這次不匯入疑似重複</label><button type="button" id="bankApply">確認匯入</button>',
+  });
+  await Promise.resolve();
+
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  assert.equal(document.activeElement, dialog,
+    '預覽窗未明確標記初始目標時要停在 dialog，不可把動作列勾選框當成主要欄位');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜輸入法組字中的兩種 Esc 訊號都不關窗、不丟掉尚未儲存的輸入', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: '組字測試',
+    fields: [{ key: 'note', label: '備註' }],
+    values: { note: '已經打好的字' },
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+  const input = /** @type {HTMLInputElement} */ (document.getElementById('f_note'));
+  const dialog = document.querySelector('#modal-root .modal');
+  const composingEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  Object.defineProperty(composingEscape, 'isComposing', { value: true });
+  input.dispatchEvent(composingEscape);
+  assert.equal(document.querySelector('#modal-root .modal'), dialog, '正在組字的 Esc 不可觸發關窗');
+  assert.equal(input.value, '已經打好的字');
+
+  const legacyComposingEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  Object.defineProperty(legacyComposingEscape, 'keyCode', { value: 229 });
+  input.dispatchEvent(legacyComposingEscape);
+  assert.equal(document.querySelector('#modal-root .modal'), dialog,
+    '只回報舊式 keyCode 229 的組字事件也不可觸發關窗');
+  assert.equal(input.value, '已經打好的字');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗外殼｜呼叫端覆寫叉叉為取消後，Esc 要走最新語意並收掉等待中的 Promise', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  /** @type {boolean|'pending'} */ let answer = 'pending';
+  let finish;
+  const settled = new Promise(resolve => { finish = resolve; }).then(value => {
+    answer = /** @type {boolean} */ (value);
+    return value;
+  });
+  const { root, close } = openModalShell({
+    title: '匯出備份', size: 'sm', backdrop: false,
+    bodyHtml: '<button type="button" data-cancel>取消</button><button type="button">確認匯出</button>',
+  });
+  const cancel = () => { close(); finish(false); };
+  root.querySelector('[data-cancel]').onclick = cancel;
+  root.querySelector('.x-close').onclick = cancel;
+  await Promise.resolve();
+
+  document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const raced = await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve('still-pending'), 30))]);
+  assert.equal(raced, false, 'Esc 不可只清空外殼，必須走呼叫端最新的取消處理把 Promise 收掉');
+  assert.equal(answer, false);
+  assert.equal(root.innerHTML, '');
 });

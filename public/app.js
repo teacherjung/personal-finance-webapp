@@ -183,6 +183,99 @@ export function bindBackdropClose(root, close) {
   bg.addEventListener('click', () => { if (downOnBg && upOnBg) close(); });
 }
 
+let modalTitleSeq = 0;
+const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** @type {WeakMap<Element, Element>} */
+const modalReturnFocus = new WeakMap();
+/**
+ * 補齊共用彈窗的 dialog 語意與鍵盤焦點管理；關閉方式仍由各彈窗自己的 close/onBack 決定。
+ * @param {Element} root 內含 .modal 的共用根節點
+ * @param {() => void} fallbackClose 找不到 × 時，Esc 沿用的既有關閉／返回行為
+ * @param {Element|null} returnFocusTo 開窗前的焦點；只有關窗後 root 真的空了才歸還
+ * @param {string} closeLabel × 的動作名稱；預設是關閉，返回型彈窗要明確傳入返回語意
+ */
+export function bindModalAccessibility(root, fallbackClose, returnFocusTo = document.activeElement, closeLabel = '關閉') {
+  const dialog = /** @type {HTMLElement|null} */ (root.querySelector('.modal'));
+  if (!dialog) return;
+  const previousReturnTarget = modalReturnFocus.get(root);
+  const returnTarget = previousReturnTarget?.isConnected ? previousReturnTarget : returnFocusTo;
+  if (returnTarget) modalReturnFocus.set(root, returnTarget);
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.tabIndex = -1;
+
+  const title = /** @type {HTMLElement|null} */ (dialog.querySelector('.modal-head h2'));
+  if (title) {
+    if (!title.id) title.id = `modal-title-${++modalTitleSeq}`;
+    dialog.setAttribute('aria-labelledby', title.id);
+  } else {
+    dialog.setAttribute('aria-label', '對話框');
+  }
+  const xClose = /** @type {HTMLButtonElement|null} */ (dialog.querySelector('.x-close'));
+  if (xClose) { xClose.type = 'button'; xClose.setAttribute('aria-label', closeLabel); }
+
+  const isVisible = (/** @type {Element} */ el) => {
+    for (let node = /** @type {Element|null} */ (el); node && node !== dialog; node = node.parentElement) {
+      if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') return false;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  };
+  const focusables = () => [...dialog.querySelectorAll(MODAL_FOCUSABLE)].filter(isVisible);
+  const firstVisible = (/** @type {string} */ selector) => [...dialog.querySelectorAll(selector)].find(isVisible);
+  const onKeydown = (/** @type {KeyboardEvent} */ event) => {
+    if (!dialog.isConnected || event.defaultPrevented) return;
+    if (event.key === 'Escape') {
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault(); event.stopPropagation();
+      const currentClose = /** @type {HTMLElement|null} */ (dialog.querySelector('.x-close'));
+      if (currentClose && typeof currentClose.click === 'function') currentClose.click();
+      else fallbackClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const items = focusables();
+    if (!items.length) { event.preventDefault(); dialog.focus(); return; }
+    const first = /** @type {HTMLElement} */ (items[0]);
+    const last = /** @type {HTMLElement} */ (items[items.length - 1]);
+    const outside = document.activeElement === dialog || !dialog.contains(document.activeElement);
+    if (event.shiftKey && (document.activeElement === first || outside)) {
+      event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+      event.preventDefault(); first.focus();
+    }
+  };
+  // 掛在 document 才接得回意外落到遮罩後方的焦點；只在這顆 dialog 仍連著時處理。
+  document.addEventListener('keydown', onKeydown);
+
+  // 若另一個彈窗直接接管 root，就讓新彈窗自己接焦點；只有真的關空才回到原按鈕。
+  const observer = new MutationObserver(() => {
+    if (dialog.isConnected) return;
+    observer.disconnect(); document.removeEventListener('keydown', onKeydown);
+    if (root.querySelector('.modal')) return;
+    const target = /** @type {HTMLElement|null} */ (modalReturnFocus.get(root) || returnTarget);
+    modalReturnFocus.delete(root);
+    queueMicrotask(() => {
+      if (root.querySelector('.modal')) return;
+      if (target?.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    });
+  });
+  observer.observe(root, { childList: true });
+
+  queueMicrotask(() => {
+    if (!dialog.isConnected) return;
+    // 初始焦點只認開窗者明說的目標；不要從控制項種類或 DOM 順序猜語意。
+    // 預覽窗的勾選框／確認鈕可能改資料，猜錯後一個空白鍵或 Enter 就會誤觸。
+    const initial = /** @type {HTMLElement} */ (
+      firstVisible('[autofocus]')
+      || firstVisible('[data-modal-initial]')
+      || dialog
+    );
+    initial.focus({ preventScroll: true });
+  });
+}
+
 // #modal-root 是全站表單/彈窗共用的一格（r6→r9）。表單 onSubmit 有 await，回來時可能已換頁或開了新彈窗——
 // 舊的成功 continuation 若無條件 close() 會清掉**後開的**彈窗、毀掉未存輸入；舊的失敗會報過期錯誤。
 // 世代擁有權的**純邏輯**在 modal-ownership.js（可測）；這裡只把它接到 #modal-root 的 dataset 與換頁序號。
@@ -220,6 +313,7 @@ export function watchModalRoot() { return _claimModalRoot.watch(); }
 /** @param {{title:string, fields:FormField[], values?:Record<string,any>, onSubmit:(out:Record<string,any>, ctx?:{owns:any, setProgress?:(t:string)=>void})=>any, onMount?:(root:HTMLElement)=>void, size?:string, bodyHtml?:string, submitLabel?:string, busyLabel?:string}} cfg */
 export function openForm({ title, fields, values = {}, onSubmit, onMount, size = 'md', bodyHtml = '', submitLabel = '儲存', busyLabel = '' }) {
   const root = $('#modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r6：async onSubmit 回來時只在仍擁有 modal-root 才 close/toast（切頁或開新窗都作廢）
   const fieldHtml = fields.map(f => {
     const v = values[f.key] ?? f.default ?? '';
@@ -229,9 +323,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       // 選項一律由 modules/form-options.js 產（**不要在這裡再抄一份**）：它負責「忘給 options 時顯示空下拉、
       // 不整頁掛掉」，也負責「現在的值不在選項裡時保留它」——沒有那道保留，瀏覽器會自動選第一項，
       // 使用者只改別的欄位按儲存就會把這欄靜靜改掉（帳戶型別踩過：50 萬負債變 50 萬資產）。
-      input = `<select id="${id}">${selectOptionsHtml(f.options, v)}</select>`;
+      input = `<select id="${id}" data-modal-initial>${selectOptionsHtml(f.options, v)}</select>`;
     } else if (f.type === 'textarea') {
-      input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
+      input = `<textarea id="${id}" data-modal-initial rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
     } else if (f.type === 'checkbox') {
       // ⚠️ 這個自製下拉**刻意不套用 form-options.js 的「保留現值」機制**，理由是它沒有那個病
       //（#409 逐條查證，不是憑印象）：①它的值域只有是／否兩項，而送出時 `val = raw === 'true'`
@@ -240,9 +334,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       // 都是**不落資料庫的一次性旗標**，`values` 從不帶值 ⇒ 這裡的 v 永遠是 ''（空值本來就不算「值」）。
       // 預設「否」（自主體檢，高）：只有明確 v===true 才選「是」——否則新表單的 applyAll（同時套用整店分類）
       // 會預設勾選，編輯單筆就默默整店改分類＋種品牌學習。opt-in 型旗標寧可預設關。
-      input = `<select id="${id}"><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
+      input = `<select id="${id}" data-modal-initial><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
     } else {
-      input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
+      input = `<input id="${id}" data-modal-initial type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
     }
     return `<div class="${f.full ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
   }).join('');
@@ -262,6 +356,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-cancel]').onclick = close;
   bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
   root.querySelector('#modalForm').onsubmit = async (e) => {
     e.preventDefault();
     const submitBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#modalForm button[type="submit"], #modalForm .btn'));
@@ -307,6 +402,7 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
  * 動作列還不夠，`.modal` 是 max-height:90vh + overflow-y:auto，長預覽仍要捲到最底才按得到）。 */
 export function openInfo(title, bodyHtml, opts = {}) {
   const root = $('#modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，任何舊表單的 async close 就作廢（不會清掉這個資訊窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(opts.size || 'sm')}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
@@ -317,6 +413,7 @@ export function openInfo(title, bodyHtml, opts = {}) {
   root.querySelector('.x-close').onclick = close;
   root.querySelector('[data-close]').onclick = close;
   bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
 }
 
 // ---------- 列印報表共用外殼（訂閱/投組報表） ----------
@@ -418,9 +515,18 @@ export async function router() {
   //   從 AAPL 上一頁跳到 GOOGL 不算換頁，AAPL 表單的舊 continuation 會在 GOOGL 畫面上關窗／報錯。
   //   用完整 hash 反而更單純：背景重繪不會動到網址，所以同頁重繪照樣不前進（原本要防的事沒破）。
   const navKey = location.hash;
-  if (navKey !== lastNavKey) { lastNavKey = navKey; navSeq++; }
+  const navChanged = navKey !== lastNavKey;
+  if (navChanged) { lastNavKey = navKey; navSeq++; }
   document.body.classList.toggle('stock-research-route', route === 'stock');
-  document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => a.classList.toggle('active', a.dataset.route === route));
+  /** @type {HTMLElement|null} */ let activeNav = null;
+  document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
+    const active = a.dataset.route === route;
+    a.classList.toggle('active', active);
+    if (active) { a.setAttribute('aria-current', 'page'); activeNav = a; }
+    else a.removeAttribute('aria-current');
+  });
+  // 只在真的換頁時露出目前項目；同頁資料重畫不可搶走使用者手動捲到別處的位置。
+  if (navChanged) keepActiveNavVisible(activeNav);
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }
@@ -429,9 +535,22 @@ export async function router() {
   hydrateIcons(view());
 }
 
-document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
-  a.addEventListener('click', () => { location.hash = a.dataset.route || ''; });
-});
+/** 手機導覽是水平捲動列；直達深層頁面時把目前項目露出，桌機無溢位時不動。 @param {HTMLElement|null} activeNav */
+function keepActiveNavVisible(activeNav) {
+  const nav = /** @type {HTMLElement|null} */ ($('#nav'));
+  if (!nav || !activeNav) return;
+  requestAnimationFrame(() => {
+    const maxScroll = nav.scrollWidth - nav.clientWidth;
+    if (maxScroll <= 0) return;
+    const navRect = nav.getBoundingClientRect(), itemRect = activeNav.getBoundingClientRect();
+    const leftEdge = navRect.left + 6, rightEdge = navRect.right - 34;
+    let next = nav.scrollLeft;
+    if (itemRect.left < leftEdge) next += itemRect.left - leftEdge;
+    else if (itemRect.right > rightEdge) next += itemRect.right - rightEdge;
+    next = Math.max(0, Math.min(maxScroll, next));
+    if (Math.abs(next - nav.scrollLeft) > 1) nav.scrollTo({ left: next, behavior: 'auto' });
+  });
+}
 window.addEventListener('hashchange', router);
 
 $('#snapshotBtn').addEventListener('click', async () => {

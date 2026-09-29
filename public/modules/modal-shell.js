@@ -1,11 +1,12 @@
 // @ts-check
 // 彈窗外殼共用件（系統優化 U3，**試點中**）：13 處手刻彈窗都重複同一段外殼——
 // modal-bg＋modalSizeClass、modal-head（標題＋×）、close 閉包、x-close 接線、bindBackdropClose。
-// 本檔只收斂「外殼」這五行；**彈窗內容與事件生命週期（送出鎖、非同步重畫、還原鈕…）各窗自理**，
-// 呼叫端拿回 { root, close } 自行接線——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
+// 本檔只收斂外殼骨架與共用鍵盤／焦點接線；**彈窗內容與事件生命週期（送出鎖、非同步重畫、還原鈕…）各窗自理**，
+// 呼叫端拿回 { root, close } 自行接線；Esc 會在按下當下啟用目前的 .x-close，因此呼叫端覆寫 ×
+// （例如先收掉等待中的 Promise）後仍沿用該窗語意——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
 // 實測 關閉/背景點擊/送出/返回 都正常再決定是否擴大到其餘 11 處）。
 // 循環 import 安全：對 app.js 的綁定只在函式內取用（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）。
-import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot } from '../app.js';
+import { byId, esc, modalSizeClass, bindBackdropClose, bindModalAccessibility, claimModalRoot } from '../app.js';
 
 /**
  * 開一個彈窗外殼：title 經 esc、bodyHtml 為呼叫端組好的內容（含各自的 form-actions 按鈕）。
@@ -17,6 +18,7 @@ import { byId, esc, modalSizeClass, bindBackdropClose, claimModalRoot } from '..
  */
 export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }) {
   const root = byId('modal-root');
+  const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r6：接管 modal-root＝蓋新世代章，舊表單的 async close 作廢（不會清掉這個窗）
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass(size)}">
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
@@ -25,5 +27,6 @@ export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }
   const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤，與 openForm 一致）
   root.querySelector('.x-close').onclick = close;
   if (backdrop) bindBackdropClose(root, close);
+  bindModalAccessibility(root, close, returnFocusTo);
   return { root, close };
 }
