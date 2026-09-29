@@ -57,7 +57,8 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 //   `tests/forbidden-defaults.test.js` ① 只擋「專案比範本少」，`test/money-family-probes-integrity.test.js`
 //   只比本檔自己的位元組。補上的守門＝`test/money-vocab-probe-coverage.test.js`（正本每個詞都要有探針扣著它）。
 //   下面兩張表加的字＝那一次補的（動詞 6 個、名詞 7 個，逐一實測都擋且都承重）；
-//   **正本還有 13 個字扣不住**（兩張樣式表永遠先接住，屬冗餘不是缺口），那一份名單在涵蓋題裡逐字釘著。
+//   剩下 13 個詞在這兩張表生成的兩種形狀下不承重，改用別的形狀補在 FORBIDDEN_FAMILY 底部（見那一段）
+//   ⇒ 現況：正本 verbs 38/38、nouns 30/30 每一個都有探針扣著，涵蓋題沒有例外。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
   'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay',
@@ -66,8 +67,9 @@ export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'prev
 export const FAMILY_NOUNS = ['order', 'trade', 'position', 'instruction', 'stock', 'share', 'security',
   'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin', 'locate', 'invoice', 'bill',
   // 2026-09-29 補（同上）：這 7 個原本沒有任何探針扣著。
-  // 刻意**不補** securities／transfer／withdrawal／payment／payout——它們的 place_{名詞} 被兩張樣式表先接住＝
-  // 補了也不承重（補進來只會讓涵蓋題的「扣不住」名單看起來變短、實際沒多守到東西）
+  // securities／transfer／withdrawal／payment／payout **不放在這裡**：它們的 `place_{名詞}` 被兩張樣式表接走，
+  // 加進本表不會多出任何承重（r1 #1 實測：加進去之後未承重名單完全不變）——所以改用別的形狀補，見 FORBIDDEN_FAMILY 底部。
+  // ⚠️ 上一版這裡寫「補了只會讓扣不住名單看起來變短」，那句是錯的（名單根本不變），r1 #1 反駁掉了。
   'cash', 'money', 'wallet', 'cheque', 'payee', 'loan', 'settlement'];
 export const FUND_KEYWORDS = ['transfer', 'withdraw', 'deposit', 'remit', 'payout', 'disburse', 'payment', 'wire'];
 export const READ_VERBS = ['get', 'list', 'search', 'fetch', 'read', 'query', 'view', 'show', 'describe',
@@ -110,9 +112,28 @@ FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}initiate_remittance`,    // 出入金 `remit(tance)?` 的長形
   `${FAKE_UUID}initiate_disbursement`,  // 出入金 `disburse(ment)?` 的長形
 );
+// 2026-09-29（複審 r1 #1）：上面那兩張表只生成 `{動詞}_order` 與 `place_{名詞}` 兩種形狀，
+// 正本有 13 個詞在**那兩種形狀下**沒有承重——原因不只一種，逐一量過：
+//   ・被兩張樣式表接走（例如 `place_payment` 命中出入金那張 `patterns`）；
+//   ・**被更短的同族動詞接走**（`withdrawal_order` 由 `withdraw` 接住＝詞表互相涵蓋，跟樣式表無關；
+//     把兩張樣式表都清空，`withdrawal` 在 `{動詞}_order` 下照樣不承重——r1 的反駁實測）。
+// 換一種形狀就各自承重得起來（下面 13 支，逐一量過：完整設定下都擋，只刪該欄該詞就放行）。
+// ⚠️ 所以「這些詞天生扣不住／補了也不承重」是錯的——上一版這樣寫，r1 #1 反駁掉了。
+FORBIDDEN_FAMILY.push(
+  // 出入金那族動詞：加唯讀前綴讓出入金那張 patterns 不再替整個名字脫罪，動詞×order 才承重
+  `${FAKE_UUID}get_withdraw_order`, `${FAKE_UUID}get_transfer_order`, `${FAKE_UUID}get_deposit_order`,
+  `${FAKE_UUID}get_remit_order`, `${FAKE_UUID}get_wire_order`, `${FAKE_UUID}get_disburse_order`,
+  // `withdrawal` 在動詞位會被更短的 `withdraw` 接走 ⇒ 換成名詞位倒裝
+  `${FAKE_UUID}get_order_withdrawal`,
+  // security／securities 的 `place_{名詞}` 由 patternsReadSafe 接走 ⇒ 換一個不在那張表上的動詞
+  `${FAKE_UUID}xfer_security`, `${FAKE_UUID}xfer_securities`,
+  // 這四個名詞的 `place_{名詞}` 命中出入金那張 patterns ⇒ 加唯讀前綴讓那張不再脫罪
+  `${FAKE_UUID}get_place_transfer`, `${FAKE_UUID}get_place_withdrawal`,
+  `${FAKE_UUID}get_place_payment`, `${FAKE_UUID}get_place_payout`,
+);
 /** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。
- *  2026-09-29：89 → 102（動詞表 +6、名詞表 +7；詳見兩張表上面那段）。 */
-export const EXPECTED_FORBIDDEN_FAMILY = 102;
+ *  2026-09-29：89 → 102（動詞表 +6、名詞表 +7）→ 115（上面那 13 支換形狀的；複審 r1 #1）。 */
+export const EXPECTED_FORBIDDEN_FAMILY = 115;
 
 // 名字長得像、但不該被家族網擋的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。2026-09-27（⑧，登記制）起分成兩組，因為它們在真清單下的命運不同：
@@ -310,10 +331,11 @@ export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAM
  * ＝走夾具的題就紅（2026-09-29 逐字拿掉、用行程內 decide() 照那一題的斷言重量：動詞 31/31、名詞 24/25、唯讀前綴 14/14；
  * 拿掉 security 時 place_security 改由 patternsReadSafe 那一張接住、照樣擋）。
  * ⚠️ **2026-09-29 撤掉上一版這裡寫的「套件 #17 加進的 13 個動詞、11 個名詞，加上 securities，少一個不會讓任何走夾具的題轉紅
- * （動詞 25/38、名詞 17/30）」**——那一版是 09-28 的實況，本次把其中 13 個字補進上面兩張表之後**已經不成立**。
- * 重量後的現況：正本 verbs 承重 **31/38**、nouns 承重 **24/30**；仍然不承重的 13 個（扣不住＝兩張樣式表先接住，冗餘不是缺口）
- * 逐字釘在 `test/money-vocab-probe-coverage.test.js` 的 UNCARRIABLE，正本加了新字而這兩張表沒跟上也由那一題抓
- * （裁示者 2026-09-29 裁 a）。正本比空白範本少一個字，仍由 `tests/forbidden-defaults.test.js` ① 抓（擋的方向那六欄不准少於範本）。
+ * （動詞 25/38、名詞 17/30）」**——那一版是 09-28 的實況，本次補完探針之後**已經不成立**。
+ * 重量後的現況：正本 **verbs 38/38、nouns 30/30** 每一個詞都有探針扣著（刪掉那個詞就有探針從擋翻成放行），
+ * 沒有例外。守門＝`test/money-vocab-probe-coverage.test.js`（裁示者 2026-09-29 裁 a）：正本加了新字而探針沒跟上、
+ * 或有人刪掉某個詞唯一的那支探針，那一題就紅。正本比空白範本少一個字，仍由 `tests/forbidden-defaults.test.js` ① 抓
+ * （擋的方向那六欄不准少於範本）。
  * ⚠️ 只給考題用：只進行程內 decide()、或考題自己在暫存目錄抽的複本，**不進正式清單**（把假連接器登記進正式清單＝
  * 那些名字在真的對話裡的判法跟著變）。
  * ⚠️ 預設的 names 含 FORBIDDEN_AFTER_RECONNECT＝create_order_instruction／delete_order_instruction 也被放上白名單：
