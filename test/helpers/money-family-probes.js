@@ -52,11 +52,23 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 // 但判斷程式裡多出來的語法或更窄的形態不必然有題目扣著（Claude 自審 2026-09-01 實證：
 // 把那些語法逐項收窄之後兩張考卷仍全綠；已補下面四支探針把它們扣住）。
 // 本檔是**探針的**唯一住所，不是詞表的正本。（09-01〜09-18 詞表曾住在 python 指令裡、而且有兩份，靠身分互鎖考題鎖同步。）
+// ⚠️ **這份複本會落後正本**（2026-09-29 量到、裁示者裁「加一道題」）：套件 #17 的預設字彙表把正本加到
+//   verbs 38／nouns 30，本檔當時停在 25／18，而且**沒有任何考題會因為正本長大而轉紅**——
+//   `tests/forbidden-defaults.test.js` ① 只擋「專案比範本少」，`test/money-family-probes-integrity.test.js`
+//   只比本檔自己的位元組。補上的守門＝`test/money-vocab-probe-coverage.test.js`（正本每個詞都要有探針扣著它）。
+//   下面兩張表加的字＝那一次補的（動詞 6 個、名詞 7 個，逐一實測都擋且都承重）；
+//   **正本還有 13 個字扣不住**（兩張樣式表永遠先接住，屬冗餘不是缺口），那一份名單在涵蓋題裡逐字釘著。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
-  'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay'];
+  'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay',
+  // 2026-09-29 補（套件 #17 的預設字彙表加進正本、本檔漏了）：這 6 個原本沒有任何探針扣著
+  'xfer', 'cash_out', 'cashout', 'encash', 'sweep', 'repay'];
 export const FAMILY_NOUNS = ['order', 'trade', 'position', 'instruction', 'stock', 'share', 'security',
-  'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin', 'locate', 'invoice', 'bill'];
+  'etf', 'option', 'future', 'bond', 'asset', 'fund', 'crypto', 'coin', 'locate', 'invoice', 'bill',
+  // 2026-09-29 補（同上）：這 7 個原本沒有任何探針扣著。
+  // 刻意**不補** securities／transfer／withdrawal／payment／payout——它們的 place_{名詞} 被兩張樣式表先接住＝
+  // 補了也不承重（補進來只會讓涵蓋題的「扣不住」名單看起來變短、實際沒多守到東西）
+  'cash', 'money', 'wallet', 'cheque', 'payee', 'loan', 'settlement'];
 export const FUND_KEYWORDS = ['transfer', 'withdraw', 'deposit', 'remit', 'payout', 'disburse', 'payment', 'wire'];
 export const READ_VERBS = ['get', 'list', 'search', 'fetch', 'read', 'query', 'view', 'show', 'describe',
   'has', 'check', 'retrieve', 'export', 'download'];
@@ -98,8 +110,9 @@ FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}initiate_remittance`,    // 出入金 `remit(tance)?` 的長形
   `${FAKE_UUID}initiate_disbursement`,  // 出入金 `disburse(ment)?` 的長形
 );
-/** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。 */
-export const EXPECTED_FORBIDDEN_FAMILY = 89;
+/** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。
+ *  2026-09-29：89 → 102（動詞表 +6、名詞表 +7；詳見兩張表上面那段）。 */
+export const EXPECTED_FORBIDDEN_FAMILY = 102;
 
 // 名字長得像、但不該被家族網擋的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。2026-09-27（⑧，登記制）起分成兩組，因為它們在真清單下的命運不同：
@@ -294,11 +307,13 @@ export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAM
  * 只加進 servers、不從 safeServers 拿掉＝同名兩欄＝設定壞掉、全擋（大小寫不分，跟攔截器同一把尺）。
  * 詞表（verbs／nouns／readPrefixes／patterns／patternsReadSafe）、拒絕清單、名稱**照真清單一字不動**（用到的考題另外斷言這幾欄等於真清單）：
  * 真清單的 verbs 少了 FAMILY_VERBS 的任何一個、readPrefixes 少了 READ_VERBS 的任何一個、nouns 少了 FAMILY_NOUNS 裡 security 以外的任何一個
- * ＝走夾具的題就紅（2026-09-28 逐字拿掉、用行程內 decide() 照那一題的斷言量過：動詞 25/25、名詞 17/18、唯讀前綴 14/14；
- * 拿掉 security 時 place_security 改由 patternsReadSafe 那一張接住、照樣擋）。套件 #17 加進詞表的 13 個動詞、11 個名詞，加上 securities，
- * 少一個**不會**讓任何走夾具的題轉紅（其中有幾個有探針，例如 initiate_withdraw、send_money、move_securities，但 patterns 或
- * patternsReadSafe 也接得住它們，所以不承重；同一次量：動詞 25/38、名詞 17/30）——少一個由 tests/forbidden-defaults.test.js ① 抓
- * （擋的方向那六欄不准少於範本）。
+ * ＝走夾具的題就紅（2026-09-29 逐字拿掉、用行程內 decide() 照那一題的斷言重量：動詞 31/31、名詞 24/25、唯讀前綴 14/14；
+ * 拿掉 security 時 place_security 改由 patternsReadSafe 那一張接住、照樣擋）。
+ * ⚠️ **2026-09-29 撤掉上一版這裡寫的「套件 #17 加進的 13 個動詞、11 個名詞，加上 securities，少一個不會讓任何走夾具的題轉紅
+ * （動詞 25/38、名詞 17/30）」**——那一版是 09-28 的實況，本次把其中 13 個字補進上面兩張表之後**已經不成立**。
+ * 重量後的現況：正本 verbs 承重 **31/38**、nouns 承重 **24/30**；仍然不承重的 13 個（扣不住＝兩張樣式表先接住，冗餘不是缺口）
+ * 逐字釘在 `test/money-vocab-probe-coverage.test.js` 的 UNCARRIABLE，正本加了新字而這兩張表沒跟上也由那一題抓
+ * （裁示者 2026-09-29 裁 a）。正本比空白範本少一個字，仍由 `tests/forbidden-defaults.test.js` ① 抓（擋的方向那六欄不准少於範本）。
  * ⚠️ 只給考題用：只進行程內 decide()、或考題自己在暫存目錄抽的複本，**不進正式清單**（把假連接器登記進正式清單＝
  * 那些名字在真的對話裡的判法跟著變）。
  * ⚠️ 預設的 names 含 FORBIDDEN_AFTER_RECONNECT＝create_order_instruction／delete_order_instruction 也被放上白名單：
