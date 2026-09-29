@@ -88,15 +88,15 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、按鈕�
     'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
-test('代表性表單欄位在全站無條件樣式覆蓋後仍維持單一道深褐框', () => {
-  // 依 index.html 順序載入全部樣式，並用測試 class 模擬 :focus 與 :focus-visible。
-  // jsdom 不計算 media features，也不可靠地拆解 outline longhands；這題只守無條件
-  // shorthand cascade，真實瀏覽器呈現另由 Chromium 驗收。
+test('10 種代表性表單欄位的 jsdom 計算值符合單線焦點設計', () => {
+  // 輸入明列目前 8 份 CSS，並用測試 class 模擬 :focus 與 :focus-visible。
+  // 這題只斷言下列測試 DOM 的 getComputedStyle 結果；未建模的偽類、條件規則、
+  // jsdom 與瀏覽器不同的 cascade 或繪製行為一律不在保證範圍。
   const testCss = [
     styles, bankAccounts, cards, insurance, subscriptionsCss, securitiesCss, tabs, stockResearch,
   ].join('\n')
     .replaceAll(':focus-visible', '.__test_focus_visible')
-    .replaceAll(':focus', '.__test_focus')
+    .replace(/:focus(?![-\w])/g, '.__test_focus')
     .replaceAll('var(--frame)', token('frame'));
   const dom = new JSDOM(`
     <style>${testCss}</style>
@@ -123,7 +123,7 @@ test('代表性表單欄位在全站無條件樣式覆蓋後仍維持單一道�
   ]) {
     const control = dom.window.document.getElementById(id);
     const computed = dom.window.getComputedStyle(control);
-    assert.match(computed.outline.toLowerCase(), new RegExp(`2px solid ${frame}`), `${id} focus line`);
+    assert.equal(computed.outline.toLowerCase(), `2px solid ${frame}`, `${id} focus line`);
     assert.equal(computed.outlineOffset, '-2px', `${id} focus line must replace, not stack outside, its border`);
     assert.equal(computed.boxShadow, 'none', `${id} must not regain the pale orange glow`);
   }
