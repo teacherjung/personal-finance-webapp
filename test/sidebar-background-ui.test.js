@@ -33,6 +33,13 @@ test('側邊導覽選取標籤維持原有卡片樣式', () => {
   assert.doesNotMatch(active[0], /var\(--action(?:-hover)?\)/, '側欄選取是品牌橘色，不是主要按鈕綠');
 });
 
+test('共用對話框本體接到初始焦點時使用品牌橘色外框', () => {
+  const focused = ruleBodies('.modal:focus');
+  assert.equal(focused.length, 1);
+  assert.match(focused[0], /outline:\s*3px solid var\(--accent\)/);
+  assert.match(focused[0], /outline-offset:\s*3px/);
+});
+
 test('側邊導覽是可由鍵盤直接啟用的真正連結，並標出目前頁面', () => {
   assert.match(html, /<nav id="nav" aria-label="主要功能">/);
   const links = [...html.matchAll(/<a href="#([a-z]+)" data-route="([a-z]+)"([^>]*)>/g)];

@@ -192,8 +192,9 @@ const modalReturnFocus = new WeakMap();
  * @param {Element} root 內含 .modal 的共用根節點
  * @param {() => void} fallbackClose 找不到 × 時，Esc 沿用的既有關閉／返回行為
  * @param {Element|null} returnFocusTo 開窗前的焦點；只有關窗後 root 真的空了才歸還
+ * @param {string} closeLabel × 的動作名稱；預設是關閉，返回型彈窗要明確傳入返回語意
  */
-export function bindModalAccessibility(root, fallbackClose, returnFocusTo = document.activeElement) {
+export function bindModalAccessibility(root, fallbackClose, returnFocusTo = document.activeElement, closeLabel = '關閉') {
   const dialog = /** @type {HTMLElement|null} */ (root.querySelector('.modal'));
   if (!dialog) return;
   const previousReturnTarget = modalReturnFocus.get(root);
@@ -211,7 +212,7 @@ export function bindModalAccessibility(root, fallbackClose, returnFocusTo = docu
     dialog.setAttribute('aria-label', '對話框');
   }
   const xClose = /** @type {HTMLButtonElement|null} */ (dialog.querySelector('.x-close'));
-  if (xClose) { xClose.type = 'button'; xClose.setAttribute('aria-label', '關閉'); }
+  if (xClose) { xClose.type = 'button'; xClose.setAttribute('aria-label', closeLabel); }
 
   const isVisible = (/** @type {Element} */ el) => {
     for (let node = /** @type {Element|null} */ (el); node && node !== dialog; node = node.parentElement) {
@@ -514,7 +515,8 @@ export async function router() {
   //   從 AAPL 上一頁跳到 GOOGL 不算換頁，AAPL 表單的舊 continuation 會在 GOOGL 畫面上關窗／報錯。
   //   用完整 hash 反而更單純：背景重繪不會動到網址，所以同頁重繪照樣不前進（原本要防的事沒破）。
   const navKey = location.hash;
-  if (navKey !== lastNavKey) { lastNavKey = navKey; navSeq++; }
+  const navChanged = navKey !== lastNavKey;
+  if (navChanged) { lastNavKey = navKey; navSeq++; }
   document.body.classList.toggle('stock-research-route', route === 'stock');
   /** @type {HTMLElement|null} */ let activeNav = null;
   document.querySelectorAll('#nav a').forEach((/** @type {HTMLElement} */ a) => {
@@ -523,7 +525,8 @@ export async function router() {
     if (active) { a.setAttribute('aria-current', 'page'); activeNav = a; }
     else a.removeAttribute('aria-current');
   });
-  keepActiveNavVisible(activeNav);
+  // 只在真的換頁時露出目前項目；同頁資料重畫不可搶走使用者手動捲到別處的位置。
+  if (navChanged) keepActiveNavVisible(activeNav);
   const fn = Object.hasOwn(ROUTES, route) ? ROUTES[route] : renderDashboard;   // hasOwn（Codex r7#4）：#toString 這種網址會撈到原型函式、頁面卡在「載入中」
   view().innerHTML = '<div class="loading">載入中…</div>';
   try { await fn(); }

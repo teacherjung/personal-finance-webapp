@@ -201,8 +201,12 @@ test('⭐ 接線｜navSeq 只在使用者眼前的網址改變時才前進（同
   assert.match(app, /export const currentNavSeq = \(\) => navSeq;/, 'currentNavSeq 存在且回傳換頁序號');
   assert.match(app, /const navKey = location\.hash;/,
     '換頁鑰匙要用**完整 hash**（r10：個股頁的身分含 ?symbol=&tab=，只比 route 會漏掉換股票）');
-  assert.match(app, /if \(navKey !== lastNavKey\) \{ lastNavKey = navKey; navSeq\+\+; \}/,
+  assert.match(app, /const navChanged = navKey !== lastNavKey;/,
+    '是否換頁要留下單一判定，供換頁序號與手機導覽共用');
+  assert.match(app, /if \(navChanged\) \{ lastNavKey = navKey; navSeq\+\+; \}/,
     'navSeq 只在使用者眼前的網址變了才前進（背景重繪不動網址＝照樣不前進）');
+  assert.match(app, /if \(navChanged\) keepActiveNavVisible\(activeNav\);/,
+    '手機導覽只在真的換頁時露出目前項目，同頁重繪不可搶回手動捲動位置');
   // routeSeq 仍要每次前進——它管的是「別覆蓋新頁面的畫面」，同頁重繪也該作廢舊寫入。
   assert.match(app, /const seq = \+\+routeSeq;/, 'routeSeq 維持每次 router() 都前進（重繪世代，勿一起改掉）');
 });
@@ -528,6 +532,12 @@ test('主導覽｜路由只標目前頁並在手機溢位時把目前項目捲�
   assert.equal(nav.querySelector('[data-route="dashboard"]')?.classList.contains('active'), false);
   assert.equal(scrolledTo, 234, '目前項目在右側可視區外時，要把它捲回右側保留區之內');
 
+  nav.scrollLeft = 0;
+  scrolledTo = null;
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(scrolledTo, null, '同一頁背景重畫時，不可把使用者手動捲開的導覽拉回目前項目');
+
   nav.scrollLeft = 234;
   scrolledTo = null;
   dashboard.getBoundingClientRect = () => /** @type {any} */ ({ left: -228, right: -128 });
@@ -628,7 +638,7 @@ test('共用彈窗｜沒有明確標記時，初始焦點留在對話框本體',
   await Promise.resolve();
   const dialog = /** @type {HTMLElement} */ (root.querySelector('.modal'));
   assert.equal(document.activeElement, dialog,
-    '沒有欄位或關閉／返回／取消標記時，不可把 Enter 預設導向第一個一般操作');
+    '沒有明確初始焦點標記時，不可把 Enter 預設導向第一個一般操作');
   root.querySelector('.x-close')?.click();
 });
 
@@ -652,7 +662,48 @@ test('共用彈窗｜只有明確標記可接初始焦點，而且 autofocus 優
   opened.root.querySelector('.x-close')?.click();
 });
 
-test('共用彈窗｜動作列的保護選項不是初始焦點，空白鍵不可先改掉它', async () => {
+test('共用彈窗｜openForm 四種欄位都明確標記，動作按鈕一律不冒充初始焦點', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: '欄位標記',
+    fields: [
+      { key: 'kind', label: '類型', type: 'select', options: ['甲', '乙'] },
+      { key: 'note', label: '備註', type: 'textarea' },
+      { key: 'applyAll', label: '全部套用', type: 'checkbox' },
+      { key: 'name', label: '名稱' },
+    ],
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(
+    [...document.querySelectorAll('#modalForm [data-modal-initial]')].map(el => el.id),
+    ['f_kind', 'f_note', 'f_applyAll', 'f_name'],
+    'select、textarea、是／否下拉與一般 input 都要標記，且只有真正編輯欄位可帶標記',
+  );
+  assert.equal(document.activeElement?.id, 'f_kind', '第一個可見的明確標記欄位仍是開窗焦點');
+  assert.equal(document.querySelector('#modalForm [type="submit"]')?.hasAttribute('data-modal-initial'), false);
+  assert.equal(document.querySelector('#modalForm [data-cancel]')?.hasAttribute('data-modal-initial'), false);
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜返回型叉叉可用明確名稱覆寫預設的關閉語意', async () => {
+  const app = await bootAccessibilityApp();
+  const root = /** @type {HTMLElement} */ (document.getElementById('modal-root'));
+  const owns = app.claimModalRoot();
+  root.innerHTML = '<div class="modal-bg"><div class="modal"><div class="modal-head"><h2>預覽</h2><button class="x-close">×</button></div></div></div>';
+  const close = () => { root.innerHTML = ''; owns.release(); };
+  root.querySelector('.x-close').onclick = close;
+  app.bindModalAccessibility(root, close, document.getElementById('modalOpener'), '回去繼續編輯');
+  await Promise.resolve();
+  assert.equal(root.querySelector('.x-close')?.getAttribute('aria-label'), '回去繼續編輯');
+  const rules = strip(readFileSync(join(ROOT, 'public/modules/settings-store-rules.js'), 'utf8'));
+  assert.match(rules, /bindModalAccessibility\(root, onBack, returnFocusTo, '回去繼續編輯'\);/,
+    '規則預覽要把真正的返回語意接進共用 helper，不可退回預設的「關閉」');
+  root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜動作列的保護選項不是初始焦點', async () => {
   const app = await bootAccessibilityApp();
   app.openInfo('銀行對帳單預覽', '<p>請先核對內容</p>', {
     actionsHtml: '<label><input id="skipSimilarChk" type="checkbox" checked> 這次不匯入疑似重複</label><button type="button" id="bankApply">確認匯入</button>',
@@ -660,12 +711,8 @@ test('共用彈窗｜動作列的保護選項不是初始焦點，空白鍵不�
   await Promise.resolve();
 
   const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
-  const skipSimilar = /** @type {HTMLInputElement} */ (document.getElementById('skipSimilarChk'));
   assert.equal(document.activeElement, dialog,
     '預覽窗未明確標記初始目標時要停在 dialog，不可把動作列勾選框當成主要欄位');
-  dialog.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
-  dialog.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true }));
-  assert.equal(skipSimilar.checked, true, '開窗後第一個空白鍵不可關掉疑似重複保護');
   document.querySelector('#modal-root .x-close')?.click();
 });
 

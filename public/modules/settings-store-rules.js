@@ -227,5 +227,5 @@ function openRulePreview(r, onBack) {
     </div></div></div>`;
   root.querySelector('.x-close').onclick = onBack;
   root.querySelector('[data-back]').onclick = onBack;
-  bindModalAccessibility(root, onBack, returnFocusTo);
+  bindModalAccessibility(root, onBack, returnFocusTo, '回去繼續編輯');
 }
