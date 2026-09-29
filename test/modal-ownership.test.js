@@ -497,11 +497,42 @@ async function bootAccessibilityApp() {
   return accessibilityApp;
 }
 
+test('主導覽｜路由只標目前頁並在手機溢位時把目前項目捲進可見範圍', async () => {
+  const app = await bootAccessibilityApp();
+  const nav = /** @type {HTMLElement} */ (document.getElementById('nav'));
+  nav.innerHTML = `<a href="#dashboard" data-route="dashboard" class="active" aria-current="page">總覽</a>
+    <a href="#settings" data-route="settings">設定</a>`;
+  const settings = /** @type {HTMLElement} */ (nav.querySelector('[data-route="settings"]'));
+  Object.defineProperties(nav, {
+    scrollWidth: { value: 600, configurable: true },
+    clientWidth: { value: 300, configurable: true },
+    scrollLeft: { value: 0, writable: true, configurable: true },
+  });
+  nav.getBoundingClientRect = () => /** @type {any} */ ({ left: 0, right: 300 });
+  settings.getBoundingClientRect = () => /** @type {any} */ ({ left: 400, right: 500 });
+  let scrolledTo = null;
+  nav.scrollTo = (/** @type {{left:number}} */ options) => {
+    scrolledTo = options.left;
+    nav.scrollLeft = options.left;
+  };
+
+  globalThis.window.history.replaceState(null, '', '#settings');
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  const current = [...nav.querySelectorAll('[aria-current="page"]')];
+  assert.equal(current.length, 1, '切頁後只准目前頁保留 aria-current，離開的頁面要移除');
+  assert.equal(current[0], settings, 'aria-current 與 active 都要落在真正的目前頁');
+  assert.ok(settings.classList.contains('active'));
+  assert.equal(nav.querySelector('[data-route="dashboard"]')?.classList.contains('active'), false);
+  assert.equal(scrolledTo, 234, '目前項目在右側可視區外時，要把它捲回右側保留區之內');
+});
+
 test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關閉並把焦點還給開窗按鈕', async () => {
   const app = await bootAccessibilityApp();
   const opener = document.getElementById('modalOpener');
   opener.focus();
-  app.openInfo('鍵盤測試', '<p>說明內容</p>', {
+  app.openInfo('鍵盤測試', '<p>說明內容 <a id="insideLink" href="#help">延伸說明</a></p>', {
     actionsHtml: '<span style="display:none"><button type="button" id="hiddenAction">隱藏操作</button></span>',
   });
   await Promise.resolve();
@@ -515,7 +546,7 @@ test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關�
   assert.ok(labelledBy, '彈窗要由標題提供可讀名稱');
   assert.equal(document.getElementById(labelledBy)?.textContent, '鍵盤測試');
   assert.equal(close.getAttribute('aria-label'), '關閉');
-  assert.equal(document.activeElement, confirm, '資訊窗打開後焦點先到主要操作，不留在背景頁');
+  assert.equal(document.activeElement, confirm, '資訊窗即使內文有連結，焦點仍要先到主要操作，不留在背景頁');
 
   confirm.focus();
   confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
@@ -548,4 +579,72 @@ test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關�
   document.querySelector('#modal-root [data-close]').click();
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.activeElement, opener, '彈窗接管鏈全部結束後，要回到最初的頁面按鈕，不是已移除的上一窗按鈕');
+});
+
+test('共用彈窗｜焦點落在彈窗本體時，Shift+Tab 仍留在窗內', async () => {
+  const app = await bootAccessibilityApp();
+  app.openInfo('焦點本體', '<p>滑鼠點過的內文</p>');
+  await Promise.resolve();
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  const last = document.querySelector('#modal-root [data-close]');
+  dialog.focus();
+  dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, last, '彈窗本體也算焦點陷阱的邊界，Shift+Tab 要回最後一格');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜焦點意外跑到背景時，下一次 Tab 立即收回窗內', async () => {
+  const app = await bootAccessibilityApp();
+  const opener = /** @type {HTMLElement} */ (document.getElementById('modalOpener'));
+  app.openInfo('背景回收', '<p>焦點不可留在遮罩後面</p>');
+  await Promise.resolve();
+  const first = document.querySelector('#modal-root .x-close');
+  opener.focus();
+  opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement, first, '窗開著時，背景元素送出的 Tab 也要由共用陷阱接回來');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗｜輸入法組字中的 Esc 不關窗、不丟掉尚未儲存的輸入', async () => {
+  const app = await bootAccessibilityApp();
+  app.openForm({
+    title: '組字測試',
+    fields: [{ key: 'note', label: '備註' }],
+    values: { note: '已經打好的字' },
+    onSubmit: async () => {},
+  });
+  await Promise.resolve();
+  const input = /** @type {HTMLInputElement} */ (document.getElementById('f_note'));
+  const dialog = document.querySelector('#modal-root .modal');
+  const composingEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  Object.defineProperty(composingEscape, 'isComposing', { value: true });
+  input.dispatchEvent(composingEscape);
+  assert.equal(document.querySelector('#modal-root .modal'), dialog, '正在組字的 Esc 不可觸發關窗');
+  assert.equal(input.value, '已經打好的字');
+  document.querySelector('#modal-root .x-close')?.click();
+});
+
+test('共用彈窗外殼｜呼叫端覆寫叉叉為取消後，Esc 要走最新語意並收掉等待中的 Promise', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  /** @type {boolean|'pending'} */ let answer = 'pending';
+  let finish;
+  const settled = new Promise(resolve => { finish = resolve; }).then(value => {
+    answer = /** @type {boolean} */ (value);
+    return value;
+  });
+  const { root, close } = openModalShell({
+    title: '匯出備份', size: 'sm', backdrop: false,
+    bodyHtml: '<button type="button" data-cancel>取消</button><button type="button">確認匯出</button>',
+  });
+  const cancel = () => { close(); finish(false); };
+  root.querySelector('[data-cancel]').onclick = cancel;
+  root.querySelector('.x-close').onclick = cancel;
+  await Promise.resolve();
+
+  document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const raced = await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve('still-pending'), 30))]);
+  assert.equal(raced, false, 'Esc 不可只清空外殼，必須走呼叫端最新的取消處理把 Promise 收掉');
+  assert.equal(answer, false);
+  assert.equal(root.innerHTML, '');
 });

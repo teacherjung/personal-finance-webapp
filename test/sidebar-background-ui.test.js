@@ -42,7 +42,7 @@ test('側邊導覽是可由鍵盤直接啟用的真正連結，並標出目前�
     '靜態首屏的總覽要先標成目前頁，避免路由尚未完成時語意空白');
 });
 
-test('路由同步 active 與 aria-current，手機窄畫面會把目前項目捲進可視區', () => {
+test('接線｜路由有 active、aria-current 與手機可視化呼叫；完整行為另由真 DOM 題守', () => {
   assert.match(app, /a\.setAttribute\('aria-current', 'page'\)/, '目前頁要同步 aria-current=page');
   assert.match(app, /a\.removeAttribute\('aria-current'\)/, '離開的頁面要移除 aria-current');
   assert.equal((app.match(/keepActiveNavVisible\(activeNav\)/g) || []).length, 2,

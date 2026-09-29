@@ -190,10 +190,10 @@ const modalReturnFocus = new WeakMap();
 /**
  * 補齊共用彈窗的 dialog 語意與鍵盤焦點管理；關閉方式仍由各彈窗自己的 close/onBack 決定。
  * @param {Element} root 內含 .modal 的共用根節點
- * @param {() => void} close Esc 時沿用的既有關閉／返回行為
+ * @param {() => void} fallbackClose 找不到 × 時，Esc 沿用的既有關閉／返回行為
  * @param {Element|null} returnFocusTo 開窗前的焦點；只有關窗後 root 真的空了才歸還
  */
-export function bindModalAccessibility(root, close, returnFocusTo = document.activeElement) {
+export function bindModalAccessibility(root, fallbackClose, returnFocusTo = document.activeElement) {
   const dialog = /** @type {HTMLElement|null} */ (root.querySelector('.modal'));
   if (!dialog) return;
   const previousReturnTarget = modalReturnFocus.get(root);
@@ -224,27 +224,34 @@ export function bindModalAccessibility(root, close, returnFocusTo = document.act
   const focusables = () => [...dialog.querySelectorAll(MODAL_FOCUSABLE)].filter(isVisible);
   const firstVisible = (/** @type {string} */ selector) => [...dialog.querySelectorAll(selector)].find(isVisible);
   const onKeydown = (/** @type {KeyboardEvent} */ event) => {
-    if (event.defaultPrevented) return;
+    if (!dialog.isConnected || event.defaultPrevented) return;
     if (event.key === 'Escape') {
-      event.preventDefault(); event.stopPropagation(); close(); return;
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault(); event.stopPropagation();
+      const currentClose = /** @type {HTMLElement|null} */ (dialog.querySelector('.x-close'));
+      if (currentClose && typeof currentClose.click === 'function') currentClose.click();
+      else fallbackClose();
+      return;
     }
     if (event.key !== 'Tab') return;
     const items = focusables();
     if (!items.length) { event.preventDefault(); dialog.focus(); return; }
     const first = /** @type {HTMLElement} */ (items[0]);
     const last = /** @type {HTMLElement} */ (items[items.length - 1]);
-    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+    const outside = document.activeElement === dialog || !dialog.contains(document.activeElement);
+    if (event.shiftKey && (document.activeElement === first || outside)) {
       event.preventDefault(); last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+    } else if (!event.shiftKey && (document.activeElement === last || outside)) {
       event.preventDefault(); first.focus();
     }
   };
-  dialog.addEventListener('keydown', onKeydown);
+  // 掛在 document 才接得回意外落到遮罩後方的焦點；只在這顆 dialog 仍連著時處理。
+  document.addEventListener('keydown', onKeydown);
 
   // 若另一個彈窗直接接管 root，就讓新彈窗自己接焦點；只有真的關空才回到原按鈕。
   const observer = new MutationObserver(() => {
     if (dialog.isConnected) return;
-    observer.disconnect(); dialog.removeEventListener('keydown', onKeydown);
+    observer.disconnect(); document.removeEventListener('keydown', onKeydown);
     if (root.querySelector('.modal')) return;
     const target = /** @type {HTMLElement|null} */ (modalReturnFocus.get(root) || returnTarget);
     modalReturnFocus.delete(root);
@@ -260,7 +267,8 @@ export function bindModalAccessibility(root, close, returnFocusTo = document.act
     const initial = /** @type {HTMLElement} */ (
       firstVisible('[autofocus]')
       || firstVisible('.modal-body input:not([disabled]), .modal-body select:not([disabled]), .modal-body textarea:not([disabled])')
-      || firstVisible('[data-close], [data-back], [data-cancel], .modal-body button:not([disabled]), .modal-body a[href]')
+      || firstVisible('[data-close], [data-back], [data-cancel]')
+      || firstVisible('.modal-body button:not([disabled]), .modal-body a[href]')
       || focusables()[0]
       || dialog
     );

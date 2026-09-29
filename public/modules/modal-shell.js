@@ -2,7 +2,8 @@
 // 彈窗外殼共用件（系統優化 U3，**試點中**）：13 處手刻彈窗都重複同一段外殼——
 // modal-bg＋modalSizeClass、modal-head（標題＋×）、close 閉包、x-close 接線、bindBackdropClose。
 // 本檔只收斂「外殼」這五行；**彈窗內容與事件生命週期（送出鎖、非同步重畫、還原鈕…）各窗自理**，
-// 呼叫端拿回 { root, close } 自行接線——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
+// 呼叫端拿回 { root, close } 自行接線；Esc 會在按下當下啟用目前的 .x-close，因此呼叫端覆寫 ×
+// （例如先收掉等待中的 Promise）後仍沿用該窗語意——這是刻意的淺抽象（Codex 修訂：先試點 securities 兩窗，
 // 實測 關閉/背景點擊/送出/返回 都正常再決定是否擴大到其餘 11 處）。
 // 循環 import 安全：對 app.js 的綁定只在函式內取用（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記）。
 import { byId, esc, modalSizeClass, bindBackdropClose, bindModalAccessibility, claimModalRoot } from '../app.js';

@@ -564,7 +564,8 @@ export async function renderSettings() {
     // ⚠️ `backdrop: false`（r4 阻擋③）：openModalShell 內建的點背景關窗只會呼叫 `close`，
     //    **不會**把這顆 Promise 收掉——上一版於是每點一次背景就留下一顆永遠不 settle 的 Promise
     //    （複驗者用真 DOM 抓到：窗關了、API 0 次、落檔 0 次，但呼叫端 50ms 後仍 pending）。
-    //    所以三條退出路（取消鈕／×／點背景）**一律走同一個 cancel()**，沒有第二種關窗方式。
+    //    所以四條退出路（取消鈕／×／點背景／Esc）**一律走同一個 cancel()**：Esc 由共用 helper
+    //    啟用當下的 .x-close，會跟著下方覆寫後的 × 走 cancel，不另開只關外殼的路。
     const { root, close } = openModalShell({
       title: '匯出備份', size: 'sm', backdrop: false,
       bodyHtml: `<p style="font-size:13px;margin:0 0 16px">${esc(notice)}</p>
