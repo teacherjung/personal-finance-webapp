@@ -29,17 +29,32 @@
 //   ①正本加了新詞、探針矩陣沒跟上 ⇒ 那個詞變成沒有探針扣著 ⇒ 紅；
 //   ②有人刪掉某個詞**所有**承重探針 ⇒ 紅；
 //   ③出現第二條拒絕路徑把某個詞的承重探針接走（新增一條樣式、或詞表多一個更短的同族詞）⇒ 紅；
-//   ④判準自己（②b／②c 兩個對照組）：往正本塞一個誰都接不住的假詞要被抓到、
-//     拿掉某個詞的所有承重探針也要被抓到——證明這一題不是空包彈。
-//     ⚠️ 誠實劃界（r1 #2 量過）：這兩個對照組**攔不到**「把判準換成字串比對」那種突變，
-//     攔到那一種的是涵蓋題本身。對照組證明的是量測有在動，不是量測不會被換掉。
+//   ④判準自己（三個對照組）：
+//     ・②b 往正本塞一個誰都接不住的假詞要被抓到；
+//     ・②c 拿掉某個詞的所有承重探針要被抓到；
+//     ・②d **把判準退化成「名字裡有沒有出現這個詞」要被抓到**——這一個是 r2 #1 之後補的：
+//       r2 實測把 `carriersOf` 換成 `probes.filter((p) => p.includes(word))`，那時候四題**全綠**
+//       （因為兩欄的期望都是空集合、而每個詞都在某支探針名字裡出現過，字串查找跟行為量測剛好同答案）。
+//       ②d 用一個「名字裡有、行為上不承重」的案例把那個反差重新做出來，所以那種突變會紅。
+//       2026-09-29 自己在暫存複本做過這兩個突變、看的是 node --test 的退出碼（不是管線尾端的）：
+//         ・換成字串查找 ⇒ 5 題裡只有 ②d 紅（基準／涵蓋／②b／②c 全綠），退出碼 1；
+//         ・讓量測永遠回一支（每個詞都算「有涵蓋」）⇒ ②b／②c／②d 三題都紅，退出碼 1。
+//       ⇒ 三個對照組抓的是不同的東西，②d 是唯一擋得住「退化成字串查找」的那一個。
 //
 // ⚠️ **這一題紅了不可以解讀成「攔截器變鬆」或「變嚴」**（r1 #2 抓到上一版把方向寫反）：
-//   承重集合變化只說明「某個詞的第二條拒絕路徑新增或消失」，跟整體擋放的鬆緊是兩件事。r1 的實測反例：
-//     ・臨時加一條樣式 `(^|_)xfer_[a-z]+(_|$)` ⇒ `xfer` 變成未承重，可是 `xfer_widget` 是**放行→拒絕**（更嚴）；
-//     ・移除 patternsReadSafe 那兩條 securit 樣式 ⇒ `security` 變成承重，可是 `place_securitization`
-//       是**拒絕→放行**（更鬆）。
-//   所以紅的意思是「承重關係變了，去看為什麼」，不是任何方向的結論。
+//   紅的意思只有一個——**某個詞的承重關係變了，去看為什麼**。可能的原因不只一種（r2 #4 抓到上一版
+//   把原因寫得太窄，只列了「第二條拒絕路徑新增或消失」）：
+//     ・正本加了新詞、探針沒跟上；
+//     ・某個詞的承重探針被刪掉（r2 實測：只刪 `xfer_security` 一支，樣式表與判斷程式都沒動，
+//       `security` 的承重集合就從一支變成空集合）；
+//     ・出現或消失一條第二拒絕路徑（新增樣式、詞表多一個更短的同族詞）。
+//   ⚠️ 而且「第二條拒絕路徑多一條」不等於整體變鬆、「少一條」不等於整體變嚴。r1 的實測反例：
+//     ・臨時加一條樣式 `(^|_)xfer_[a-z]+(_|$)` ⇒ `xfer` 在**當時 102 支的矩陣下**變成未承重，
+//       可是 `xfer_widget` 是**放行→拒絕**（更嚴）；
+//     ・移除 patternsReadSafe 那兩條 securit 樣式 ⇒ `security` 在**當時 102 支的矩陣下**變成承重，
+//       可是 `place_securitization` 是**拒絕→放行**（更鬆）。
+//     （r2 提醒：這兩例的「承重變化」是 102 支那一版的狀態，本版 115 支下 `security` 本來就由
+//      `xfer_security` 承重——所以這兩例要當歷史反例讀，不是本版的狀態轉換。方向那個結論不受影響。）
 //
 // 證不到的（照實寫）：
 //   ・**正本自己對不對**：正本少一個該有的詞（例如某天出現新的出入金說法），本題不會紅——
@@ -48,7 +63,11 @@
 //   ・**只涵蓋 verbs 與 nouns**：`readPrefixes` 由 `test/money-boundary.test.js` 的字面數字釘著，
 //     `patterns`／`patternsReadSafe` 兩欄本題沒驗。
 //   ・**不窮舉工具名**：每個詞只要有一支探針扣著就算涵蓋，不保證那個詞在所有寫法下都擋得住。
-//   ・**某個詞有多支承重探針時**，刪掉其中一支本題不會紅（只有全刪才紅）。
+//   ・**多支承重探針**：對**那個詞**來說，只要還剩一支承重探針，就不會因為「那個詞沒涵蓋」而紅。
+//     ⚠️ 但**整題仍可能紅**——被刪的那一支可能同時是**別的詞**唯一的承重探針。
+//     r2 #1 實測：`xfer` 有三支（`xfer_order`、`xfer_security`、`xfer_securities`），只刪 `xfer_security`
+//     雖然 xfer 還剩兩支，涵蓋題立刻紅、訊息指的是 `nouns: ["security"]`；只刪 `xfer_order` 才全綠。
+//     上一版這裡寫「刪掉其中一支本題不會紅（只有全刪才紅）」，那是被本版資料直接反駁的全稱。
 //   ・這一題跑的是行程內 `decide()`，**不是**真的鉤子：鉤子那一層在 `test/money-kit-hook.test.js`
 //     與 `test/codex-global-hook.test.js`。
 import { test } from 'node:test';
@@ -57,7 +76,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { FORBIDDEN_FAMILY, familyNetFixture } from './helpers/money-family-probes.js';
+import { FORBIDDEN_FAMILY, familyNetFixture, FAKE_UUID } from './helpers/money-family-probes.js';
 import forbiddenTools from '../tools/forbidden-tools.js';
 
 const { decide } = forbiddenTools;
@@ -127,6 +146,23 @@ test('②b 判準自己：往正本塞一個誰都接不住的假詞，要被抓
       `塞進 forbidden.${field} 的假詞「${FAKE_WORD}」沒有被量成「沒有探針扣著」`
       + '——量測失效（例如把整欄當成一定有涵蓋），這一題會變成空包彈');
   }
+});
+
+test('②d 判準自己：判準退化成「名字裡有沒有出現這個詞」要被抓到（對照組）', () => {
+  const forbidden = projectForbidden();
+  // 一個「名字裡有、行為上不承重」的案例——這個反差就是抓字串查找的鑰匙（r2 #1 之後補的）：
+  //   ・探針名字裡出現 "security" ⇒ 換成字串查找會說 security 有涵蓋；
+  //   ・但刪掉 nouns.security 之後這一支改由 patternsReadSafe 那張備援接住、照樣被擋
+  //     ⇒ 行為量測說 security 沒有探針扣著。兩邊答案相反。
+  const PROBE = [`${FAKE_UUID}place_security`];
+  assert.ok(PROBE[0].toLowerCase().includes('security'),
+    '對照組的前提壞了：探針名字裡要真的出現 security，字串查找才會給出相反的答案');
+
+  const { leaked, uncarried } = measure(forbidden, PROBE);
+  assert.deepEqual(leaked, [], '對照組的前提壞了：那一支探針在家族網夾具下要先被擋');
+  assert.ok(uncarried.nouns.includes('security'),
+    '行為量測沒有把 security 判成「沒有探針扣著」——判準可能已經退化成「名字裡有沒有出現這個詞」'
+    + '（r2 #1：那種退化在補完探針之後不會被涵蓋題本身抓到，要靠這一題）');
 });
 
 test('②c 判準自己：拿掉某個詞的所有承重探針，那個詞要變成沒有探針扣著（對照組）', () => {

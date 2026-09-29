@@ -119,15 +119,23 @@ FORBIDDEN_FAMILY.push(
 //     把兩張樣式表都清空，`withdrawal` 在 `{動詞}_order` 下照樣不承重——r1 的反駁實測）。
 // 換一種形狀就各自承重得起來（下面 13 支，逐一量過：完整設定下都擋，只刪該欄該詞就放行）。
 // ⚠️ 所以「這些詞天生扣不住／補了也不承重」是錯的——上一版這樣寫，r1 #1 反駁掉了。
+//
+// 為什麼加唯讀前綴就承重得起來（2026-09-29 讀 decide() 的理由字串逐一確認，**上一版這段的方向寫反了**）：
+//   ・`place_payment` 完整設定下由**家族網**擋；刪掉 nouns.payment 之後改由**額外樣式**擋（那張表接住 payment）
+//     ⇒ 照樣擋 ⇒ 不承重。額外樣式在這裡是「備援」，不是替名字脫罪的那一方。
+//   ・`get_place_payment` 完整設定下仍由**家族網**擋，理由字串多一句「唯讀前綴不替它脫罪」（那是 #641 收掉的洞）；
+//     刪掉 nouns.payment 之後**放行**——因為家族網不再命中，而剩下的額外樣式**被唯讀前綴豁免掉了**。
+//   ⇒ 唯讀前綴的作用是**關掉「額外樣式」那條備援**（前綴對額外樣式有豁免、對家族網沒有），只剩家族網在擋，才量得出承重。
+//   ⚠️ 所以這 13 支被擋**不是**靠額外樣式：把兩張樣式表都清空，13 支仍然全部被家族網擋（逐一量過）。
 FORBIDDEN_FAMILY.push(
-  // 出入金那族動詞：加唯讀前綴讓出入金那張 patterns 不再替整個名字脫罪，動詞×order 才承重
+  // 出入金那族動詞：加唯讀前綴關掉額外樣式那條備援，動詞×order 才量得出承重
   `${FAKE_UUID}get_withdraw_order`, `${FAKE_UUID}get_transfer_order`, `${FAKE_UUID}get_deposit_order`,
   `${FAKE_UUID}get_remit_order`, `${FAKE_UUID}get_wire_order`, `${FAKE_UUID}get_disburse_order`,
-  // `withdrawal` 在動詞位會被更短的 `withdraw` 接走 ⇒ 換成名詞位倒裝
+  // `withdrawal` 在動詞位會被更短的 `withdraw` 接走（詞表互相涵蓋，與樣式表無關）⇒ 換成名詞位倒裝
   `${FAKE_UUID}get_order_withdrawal`,
-  // security／securities 的 `place_{名詞}` 由 patternsReadSafe 接走 ⇒ 換一個不在那張表上的動詞
+  // security／securities 的 `place_{名詞}` 由 patternsReadSafe 那張備援接住 ⇒ 換一個不在那張表上的動詞
   `${FAKE_UUID}xfer_security`, `${FAKE_UUID}xfer_securities`,
-  // 這四個名詞的 `place_{名詞}` 命中出入金那張 patterns ⇒ 加唯讀前綴讓那張不再脫罪
+  // 這四個名詞的 `place_{名詞}` 由出入金那張 patterns 備援接住 ⇒ 加唯讀前綴關掉那條備援
   `${FAKE_UUID}get_place_transfer`, `${FAKE_UUID}get_place_withdrawal`,
   `${FAKE_UUID}get_place_payment`, `${FAKE_UUID}get_place_payout`,
 );
@@ -327,15 +335,17 @@ export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAM
  * 「碰錢白名單 → 家族網雙保險」那條路。原本登記在 safeServers 的連接器（跨連接器那四支）**從那一欄搬走**——
  * 只加進 servers、不從 safeServers 拿掉＝同名兩欄＝設定壞掉、全擋（大小寫不分，跟攔截器同一把尺）。
  * 詞表（verbs／nouns／readPrefixes／patterns／patternsReadSafe）、拒絕清單、名稱**照真清單一字不動**（用到的考題另外斷言這幾欄等於真清單）：
- * 真清單的 verbs 少了 FAMILY_VERBS 的任何一個、readPrefixes 少了 READ_VERBS 的任何一個、nouns 少了 FAMILY_NOUNS 裡 security 以外的任何一個
- * ＝走夾具的題就紅（2026-09-29 逐字拿掉、用行程內 decide() 照那一題的斷言重量：動詞 31/31、名詞 24/25、唯讀前綴 14/14；
- * 拿掉 security 時 place_security 改由 patternsReadSafe 那一張接住、照樣擋）。
- * ⚠️ **2026-09-29 撤掉上一版這裡寫的「套件 #17 加進的 13 個動詞、11 個名詞，加上 securities，少一個不會讓任何走夾具的題轉紅
+ * 真清單的 verbs 少了 FAMILY_VERBS 的任何一個、readPrefixes 少了 READ_VERBS 的任何一個、nouns 少了 FAMILY_NOUNS 的任何一個
+ * ＝走夾具的題就紅（2026-09-29 逐字拿掉、用行程內 decide() 照那一題的斷言重量、**走的是本版完整的 115 支矩陣**：
+ * 動詞 31/31、名詞 **25/25**、唯讀前綴 14/14）。
+ * ⚠️ 上一版這裡寫「名詞 24/25、security 除外（place_security 改由 patternsReadSafe 接住、照樣擋）」——
+ * **補完探針之後那個例外沒了**：`security` 由新補的 `xfer_security` 承重（複審 r2 #3 抓到這個數字沒跟上）。
+ * 只看 `place_{名詞}` 那一組時 security 仍不承重，那句話只在那個較窄的範圍成立，不是本段所指的完整夾具。
+ * ⚠️ **2026-09-29 也撤掉上一版寫的「套件 #17 加進的 13 個動詞、11 個名詞，加上 securities，少一個不會讓任何走夾具的題轉紅
  * （動詞 25/38、名詞 17/30）」**——那一版是 09-28 的實況，本次補完探針之後**已經不成立**。
  * 重量後的現況：正本 **verbs 38/38、nouns 30/30** 每一個詞都有探針扣著（刪掉那個詞就有探針從擋翻成放行），
- * 沒有例外。守門＝`test/money-vocab-probe-coverage.test.js`（裁示者 2026-09-29 裁 a）：正本加了新字而探針沒跟上、
- * 或有人刪掉某個詞唯一的那支探針，那一題就紅。正本比空白範本少一個字，仍由 `tests/forbidden-defaults.test.js` ① 抓
- * （擋的方向那六欄不准少於範本）。
+ * 沒有例外。守門＝`test/money-vocab-probe-coverage.test.js`（裁示者 2026-09-29 裁 a）。
+ * 正本比空白範本少一個字，仍由 `tests/forbidden-defaults.test.js` ① 抓（擋的方向那六欄不准少於範本）。
  * ⚠️ 只給考題用：只進行程內 decide()、或考題自己在暫存目錄抽的複本，**不進正式清單**（把假連接器登記進正式清單＝
  * 那些名字在真的對話裡的判法跟著變）。
  * ⚠️ 預設的 names 含 FORBIDDEN_AFTER_RECONNECT＝create_order_instruction／delete_order_instruction 也被放上白名單：
