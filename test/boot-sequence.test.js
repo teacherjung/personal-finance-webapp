@@ -97,14 +97,14 @@ function bootBlock() {
 
 /**
  * 在 vm 裡跑那一段；api 每叫一次就開一個可控的 promise。
- * @param {Record<string, (d: ReturnType<typeof deferred>) => void>} [answer] 每個端點怎麼回（沒給＝等測試手動放行）
+ * @param {Record<string, (d: ReturnType<typeof deferred>, state: {settled: boolean}) => void>} [answer] 每個端點怎麼回（沒給＝等測試手動放行；state＝當下 bootSettled 落定了沒）
  */
 function startBoot(answer = {}) {
   /** @type {{path: string, d: ReturnType<typeof deferred>}[]} */ const calls = [];
   /** @type {{msg: string, isErr: boolean}[]} */ const toasts = [];
   const settled = { value: false };
   const ctx = vm.createContext({
-    api: (/** @type {string} */ path) => { const d = deferred(); calls.push({ path, d }); answer[path]?.(d); return d.promise; },
+    api: (/** @type {string} */ path) => { const d = deferred(); calls.push({ path, d }); answer[path]?.(d, { settled: settled.value }); return d.promise; },
     toast: (/** @type {string} */ msg, isErr = false) => { toasts.push({ msg, isErr }); },
     router: () => {},
     _bootResolve: () => { settled.value = true; },
@@ -148,4 +148,23 @@ test('app.js 開機那一段：出錯的步驟只集中說一次（紅色），�
     msg: '開機時有 2 項自動更新出了問題：自動對齊帳戶名、店名規則自動整理。下次開 App 會再檢查一次。',
     isErr: true,
   });
+});
+
+test('app.js 開機那一段：前半段（報價、快照）出錯也要收到、跨兩組累積；快照出錯時 bootSettled 照樣在它結束時落定', async () => {
+  /** @type {boolean|null} */ let settledWhenBackupStarts = null;
+  const boot = startBoot({
+    '/quotes/refresh-auto': (d) => d.reject(new Error('報價那一步的錯')),
+    '/snapshot/auto': (d) => d.reject(conflict()),
+    '/backup/daily': (d, state) => { settledWhenBackupStarts = state.settled; d.resolve({}); },
+    '/accounts/reconcile-names': (d) => d.reject(conflict()),
+    '/statement/normalize-auto': (d) => d.resolve({ ran: false }),
+  });
+  await boot.done;
+  assert.deepEqual(boot.calls.map((c) => c.path), ENDPOINTS, '前面出錯，後面照樣要跑');
+  assert.equal(settledWhenBackupStarts, true,
+    '快照那一步出錯時也要在它結束時落定 bootSettled（否則洞察永遠等不到；#651 r2 #1 的突變②）');
+  assert.deepEqual(boot.toasts, [{
+    msg: '開機時有 3 項自動更新出了問題：自動更新報價、自動記錄快照、自動對齊帳戶名。下次開 App 會再檢查一次。',
+    isErr: true,
+  }], '前半段的錯不可以被後半段蓋掉（#651 r2 #1 的突變①）');
 });
