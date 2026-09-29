@@ -502,6 +502,7 @@ test('主導覽｜路由只標目前頁並在手機溢位時把目前項目捲�
   const nav = /** @type {HTMLElement} */ (document.getElementById('nav'));
   nav.innerHTML = `<a href="#dashboard" data-route="dashboard" class="active" aria-current="page">總覽</a>
     <a href="#settings" data-route="settings">設定</a>`;
+  const dashboard = /** @type {HTMLElement} */ (nav.querySelector('[data-route="dashboard"]'));
   const settings = /** @type {HTMLElement} */ (nav.querySelector('[data-route="settings"]'));
   Object.defineProperties(nav, {
     scrollWidth: { value: 600, configurable: true },
@@ -526,6 +527,17 @@ test('主導覽｜路由只標目前頁並在手機溢位時把目前項目捲�
   assert.ok(settings.classList.contains('active'));
   assert.equal(nav.querySelector('[data-route="dashboard"]')?.classList.contains('active'), false);
   assert.equal(scrolledTo, 234, '目前項目在右側可視區外時，要把它捲回右側保留區之內');
+
+  nav.scrollLeft = 234;
+  scrolledTo = null;
+  dashboard.getBoundingClientRect = () => /** @type {any} */ ({ left: -228, right: -128 });
+  globalThis.window.history.replaceState(null, '', '#dashboard');
+  await app.router();
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  assert.equal(document.querySelector('#nav [aria-current="page"]'), dashboard,
+    '從深層頁回到左側頁面時，aria-current 也要跟著換回來');
+  assert.equal(scrolledTo, 0, '目前項目在左側可視區外時，要把導覽捲回最左邊');
 });
 
 test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關閉並把焦點還給開窗按鈕', async () => {
@@ -605,7 +617,21 @@ test('共用彈窗｜焦點意外跑到背景時，下一次 Tab 立即收回窗
   document.querySelector('#modal-root .x-close')?.click();
 });
 
-test('共用彈窗｜輸入法組字中的 Esc 不關窗、不丟掉尚未儲存的輸入', async () => {
+test('共用彈窗｜沒有主要欄位或明確操作時，初始焦點留在對話框本體', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  const { root } = openModalShell({
+    title: '匯入完成',
+    bodyHtml: '<button type="button" data-reassign>改到其他卡片</button><button type="button" data-done>完成</button>',
+  });
+  await Promise.resolve();
+  const dialog = /** @type {HTMLElement} */ (root.querySelector('.modal'));
+  assert.equal(document.activeElement, dialog,
+    '沒有欄位或關閉／返回／取消標記時，不可把 Enter 預設導向第一個一般操作');
+  root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜輸入法組字中的兩種 Esc 訊號都不關窗、不丟掉尚未儲存的輸入', async () => {
   const app = await bootAccessibilityApp();
   app.openForm({
     title: '組字測試',
@@ -620,6 +646,13 @@ test('共用彈窗｜輸入法組字中的 Esc 不關窗、不丟掉尚未儲存
   Object.defineProperty(composingEscape, 'isComposing', { value: true });
   input.dispatchEvent(composingEscape);
   assert.equal(document.querySelector('#modal-root .modal'), dialog, '正在組字的 Esc 不可觸發關窗');
+  assert.equal(input.value, '已經打好的字');
+
+  const legacyComposingEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  Object.defineProperty(legacyComposingEscape, 'keyCode', { value: 229 });
+  input.dispatchEvent(legacyComposingEscape);
+  assert.equal(document.querySelector('#modal-root .modal'), dialog,
+    '只回報舊式 keyCode 229 的組字事件也不可觸發關窗');
   assert.equal(input.value, '已經打好的字');
   document.querySelector('#modal-root .x-close')?.click();
 });

@@ -268,8 +268,6 @@ export function bindModalAccessibility(root, fallbackClose, returnFocusTo = docu
       firstVisible('[autofocus]')
       || firstVisible('.modal-body input:not([disabled]), .modal-body select:not([disabled]), .modal-body textarea:not([disabled])')
       || firstVisible('[data-close], [data-back], [data-cancel]')
-      || firstVisible('.modal-body button:not([disabled]), .modal-body a[href]')
-      || focusables()[0]
       || dialog
     );
     initial.focus({ preventScroll: true });
