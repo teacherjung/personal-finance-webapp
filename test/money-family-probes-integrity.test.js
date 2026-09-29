@@ -40,10 +40,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HELPER = path.join(ROOT, 'test', 'helpers', 'money-family-probes.js');
 
 // helper 檔案位元組的 sha256（William 2026-09-01 裁示的那顆釘）。
-// 2026-09-29 重算（動詞表 +6、名詞表 +7，另在 FORBIDDEN_FAMILY 底部補 13 支換形狀的探針；
-//   EXPECTED_FORBIDDEN_FAMILY 89→102→115。第二次重算＝照複審 r1 #1 補那 13 支；
-//   第三次＝照 r2 #3／#4 改註解裡的承重數字與因果說明，矩陣張數沒變）。
-const HELPER_BYTES_SHA256 = '77264075e68e39643becd9c69270e57cbee8f86dff3991ba415b75c0adadb7b7';
+// 2026-09-29 重算（探針矩陣 89→115；沿革在變更 647 的 PR 說明）。
+const HELPER_BYTES_SHA256 = '671cb70f2433c2f435dd83bcf4e9b07482e6830e9c9f12bec36990b0c9323d70';
 
 test('承重字表 helper 的位元組與釘相符（本行程不載入它＝它的程式碼在這裡沒有執行機會）', () => {
   const actual = createHash('sha256').update(readFileSync(HELPER)).digest('hex');
