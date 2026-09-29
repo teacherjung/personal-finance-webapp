@@ -325,6 +325,32 @@ test('CAS：整包寫入一定要有版本戳來源——`overwrite: true` 也�
   });
 });
 
+// 2026-09-29 讀→寫窗口稽核補的一題：櫃檯的射程比 `overwrite` 契約的文字窄，誠實釘住、不假裝擋了。
+test('射程劃界：櫃檯只驗「有版本戳」，驗不到「那個戳是不是呼叫端最早那次讀取的」', async () => {
+  await runWithTenant({ userId: A.id, supabase: fakeClientFor('tokA') }, async () => {
+    const earliest = await repo.getDb();                  // 呼叫端真正需要保護的起點
+    const before = earliest.settings?.usdTwd;
+    assert.equal(typeof before, 'number',
+      '對照斷言：起點那個值要是真數字，否則最後那一行會 undefined == undefined 假綠');
+    await repo.updateSettings({ usdTwd: 32 });            // 別人（另一個分頁／手機）在窗口中間寫了一次
+    const midway = await repo.getDb();                    // 呼叫端中途重讀＝拿到「新」戳
+    const merged = JSON.parse(JSON.stringify(earliest));  // 要寫回去的資料仍是起點那一版
+
+    // 對照組：交出**真正的起點** ⇒ CAS 擋下。沒有這一半，下面那一半證不了東西。
+    /** @type {any} */
+    let err = null;
+    try { await repo.saveDb(merged, { overwrite: true, from: earliest }); } catch (e) { err = e; }
+    assert.equal(err?.status, 409, '交出起點版本時 CAS 要擋下');
+
+    // 劃界：交出**中途重讀**的戳 ⇒ 櫃檯放行，而且中間那次寫入真的被蓋掉了。
+    await repo.saveDb(merged, { overwrite: true, from: midway });
+    assert.equal((await repo.getDb()).settings?.usdTwd, before,
+      '這一題要看到的就是「中間那次寫入被蓋掉」——櫃檯攔不住它；'
+      + '整段窗口有沒有被保護靠呼叫端交對 from（見 lib/repo.js 的射程註解）。'
+      + '⚠️ 這一行反過來紅＝櫃檯被收緊了（好事），把 repo.js 的射程註解一起改掉');
+  });
+});
+
 test('409 送到瀏覽器時是原味訊息，不是「請求格式不正確」', async () => {
   const err = Object.assign(new Error('資料在你操作期間被另一個裝置或分頁改過，請重新整理後再存一次'), { status: 409 });
   // 直接驗全域錯誤中介的分支（比湊出真實競態穩定得多）
