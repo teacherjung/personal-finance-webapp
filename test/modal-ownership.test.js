@@ -558,7 +558,8 @@ test('共用彈窗｜有 dialog 語意、焦點進入、Tab 不逸出、Esc 關�
   assert.ok(labelledBy, '彈窗要由標題提供可讀名稱');
   assert.equal(document.getElementById(labelledBy)?.textContent, '鍵盤測試');
   assert.equal(close.getAttribute('aria-label'), '關閉');
-  assert.equal(document.activeElement, confirm, '資訊窗即使內文有連結，焦點仍要先到主要操作，不留在背景頁');
+  assert.equal(document.activeElement, dialog,
+    '資訊窗沒有明確標記初始目標時，焦點要停在有名稱的對話框，不可從連結或按鈕猜語意');
 
   confirm.focus();
   confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
@@ -617,7 +618,7 @@ test('共用彈窗｜焦點意外跑到背景時，下一次 Tab 立即收回窗
   document.querySelector('#modal-root .x-close')?.click();
 });
 
-test('共用彈窗｜沒有主要欄位或明確操作時，初始焦點留在對話框本體', async () => {
+test('共用彈窗｜沒有明確標記時，初始焦點留在對話框本體', async () => {
   await bootAccessibilityApp();
   const { openModalShell } = await import('../public/modules/modal-shell.js');
   const { root } = openModalShell({
@@ -629,6 +630,43 @@ test('共用彈窗｜沒有主要欄位或明確操作時，初始焦點留在�
   assert.equal(document.activeElement, dialog,
     '沒有欄位或關閉／返回／取消標記時，不可把 Enter 預設導向第一個一般操作');
   root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜只有明確標記可接初始焦點，而且 autofocus 優先', async () => {
+  await bootAccessibilityApp();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  let opened = openModalShell({
+    title: '明確標記',
+    bodyHtml: '<input id="declaredFocus" data-modal-initial><button id="nativeFocus" autofocus>原生優先</button>',
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'nativeFocus', 'autofocus 要優先於專案自己的初始焦點標記');
+  opened.root.querySelector('.x-close')?.click();
+
+  opened = openModalShell({
+    title: '專案標記',
+    bodyHtml: '<button type="button" id="unmarkedAction">未標記</button><input id="declaredOnly" data-modal-initial>',
+  });
+  await Promise.resolve();
+  assert.equal(document.activeElement?.id, 'declaredOnly', '沒有 autofocus 時，只接明確的 data-modal-initial');
+  opened.root.querySelector('.x-close')?.click();
+});
+
+test('共用彈窗｜動作列的保護選項不是初始焦點，空白鍵不可先改掉它', async () => {
+  const app = await bootAccessibilityApp();
+  app.openInfo('銀行對帳單預覽', '<p>請先核對內容</p>', {
+    actionsHtml: '<label><input id="skipSimilarChk" type="checkbox" checked> 這次不匯入疑似重複</label><button type="button" id="bankApply">確認匯入</button>',
+  });
+  await Promise.resolve();
+
+  const dialog = /** @type {HTMLElement} */ (document.querySelector('#modal-root .modal'));
+  const skipSimilar = /** @type {HTMLInputElement} */ (document.getElementById('skipSimilarChk'));
+  assert.equal(document.activeElement, dialog,
+    '預覽窗未明確標記初始目標時要停在 dialog，不可把動作列勾選框當成主要欄位');
+  dialog.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+  dialog.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true }));
+  assert.equal(skipSimilar.checked, true, '開窗後第一個空白鍵不可關掉疑似重複保護');
+  document.querySelector('#modal-root .x-close')?.click();
 });
 
 test('共用彈窗｜輸入法組字中的兩種 Esc 訊號都不關窗、不丟掉尚未儲存的輸入', async () => {

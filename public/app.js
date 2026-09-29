@@ -264,10 +264,11 @@ export function bindModalAccessibility(root, fallbackClose, returnFocusTo = docu
 
   queueMicrotask(() => {
     if (!dialog.isConnected) return;
+    // 初始焦點只認開窗者明說的目標；不要從控制項種類或 DOM 順序猜語意。
+    // 預覽窗的勾選框／確認鈕可能改資料，猜錯後一個空白鍵或 Enter 就會誤觸。
     const initial = /** @type {HTMLElement} */ (
       firstVisible('[autofocus]')
-      || firstVisible('.modal-body input:not([disabled]), .modal-body select:not([disabled]), .modal-body textarea:not([disabled])')
-      || firstVisible('[data-close], [data-back], [data-cancel]')
+      || firstVisible('[data-modal-initial]')
       || dialog
     );
     initial.focus({ preventScroll: true });
@@ -321,9 +322,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       // 選項一律由 modules/form-options.js 產（**不要在這裡再抄一份**）：它負責「忘給 options 時顯示空下拉、
       // 不整頁掛掉」，也負責「現在的值不在選項裡時保留它」——沒有那道保留，瀏覽器會自動選第一項，
       // 使用者只改別的欄位按儲存就會把這欄靜靜改掉（帳戶型別踩過：50 萬負債變 50 萬資產）。
-      input = `<select id="${id}">${selectOptionsHtml(f.options, v)}</select>`;
+      input = `<select id="${id}" data-modal-initial>${selectOptionsHtml(f.options, v)}</select>`;
     } else if (f.type === 'textarea') {
-      input = `<textarea id="${id}" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
+      input = `<textarea id="${id}" data-modal-initial rows="2" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
     } else if (f.type === 'checkbox') {
       // ⚠️ 這個自製下拉**刻意不套用 form-options.js 的「保留現值」機制**，理由是它沒有那個病
       //（#409 逐條查證，不是憑印象）：①它的值域只有是／否兩項，而送出時 `val = raw === 'true'`
@@ -332,9 +333,9 @@ export function openForm({ title, fields, values = {}, onSubmit, onMount, size =
       // 都是**不落資料庫的一次性旗標**，`values` 從不帶值 ⇒ 這裡的 v 永遠是 ''（空值本來就不算「值」）。
       // 預設「否」（自主體檢，高）：只有明確 v===true 才選「是」——否則新表單的 applyAll（同時套用整店分類）
       // 會預設勾選，編輯單筆就默默整店改分類＋種品牌學習。opt-in 型旗標寧可預設關。
-      input = `<select id="${id}"><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
+      input = `<select id="${id}" data-modal-initial><option value="true" ${v === true ? 'selected' : ''}>是</option><option value="false" ${v !== true ? 'selected' : ''}>否</option></select>`;
     } else {
-      input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
+      input = `<input id="${id}" data-modal-initial type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
     }
     return `<div class="${f.full ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
   }).join('');
