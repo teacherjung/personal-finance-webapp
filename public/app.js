@@ -1,6 +1,7 @@
 // @ts-check
 // 個人理財中心 — 前端主程式
 import { makeNdjsonParser, reduceFrames, TRUNCATED } from './modules/ndjson-stream.js';   // 串流協議解讀（純模組＝可直測）
+import { runBootSteps, bootFailureMessage } from './modules/boot-sequence.js';   // 開機自動更新依序跑＋集中出聲（純模組＝可直測）
 import { renderDashboard } from './modules/dashboard.js';
 import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
@@ -570,88 +571,100 @@ let _bootResolve = () => {};
 /** @type {Promise<void>} */
 export const bootSettled = new Promise(res => { _bootResolve = () => res(); });
 
-// 1-1：開 app 自動刷新報價（D1）＋記錄本月快照。順序：先刷報價（>1 小時舊才抓，失敗靜默用舊價），
-// 日線才反映新價；再記月快照/日線。真的寫入了或報價有更新才提示＋刷新目前頁面；失敗不打擾（手動鈕仍可用）。
+// 開機自動更新（裁示者 2026-09-29 裁「乙」，#649 留言 5893103735）：下面五步原本分四段同時送出，
+// 雲端模式下會互相撞出 409，而錯誤又全被吞掉＝有時沒生效、畫面不出聲。現在一步一步跑、某一步失敗不擋後面，
+// 伺服器回了錯誤的步驟最後集中出聲一次（連不上伺服器的不算，理由在 modules/boot-sequence.js；每日備份不進，理由在它那一段）。
+// 每一步成功時的行為照舊。bootSettled 仍在「自動記錄快照」那一步結束時落定——洞察的時機不變。
 (async () => {
   let refreshed = false;
-  try { const q = await api('/quotes/refresh-auto', { method: 'POST' }); refreshed = !!(q && q.refreshed); } catch { /* 報價自動更新失敗靜默：用舊價 */ }
-  // ↑ 用 q.refreshed（不是 q.updated）：只更新匯率、沒動持股價時 updated 為 0，但外幣持股的台幣估值仍變了、要重繪
-  try {
-    const r = await api('/snapshot/auto', { method: 'POST' });
-    if (r && r.recorded) toast('已自動記錄本月快照 📸');
-    // 續費日自動推進（Codex 複審 2026-07-26）：資料庫已經改了，畫面也要跟上——
-    // 今天已記過快照、報價也還新鮮時，原本兩個條件都不成立，訂閱頁會停在舊日期直到切頁。
-    const rolled = Array.isArray(r?.subsRolled) ? r.subsRolled.length : 0;
-    if (rolled) toast(`已把 ${rolled} 筆訂閱的續費日更新到下一期 🔄`);
-    if ((r && r.recorded) || refreshed || rolled) router();   // 月快照寫入／報價更新／續費日推進 → 重繪反映最新
-  } catch { if (refreshed) router(); /* 自動快照失敗靜默略過，不影響 app 使用 */ }
-  finally { _bootResolve(); }   // 開機序列落定 → 洞察引擎現在抓才反映最新報價/日線
-})();
-
-// 每日滾動備份（階段四 A）：開 app 檢查今天備份過沒有，沒有就備一份、保留 30 天。
-// **失敗不影響 app 使用**（後端自己吞例外），但畫面要明顯警告、連續失敗提高強度（裁決 2026-07-24）。
-// 抓不到回應（伺服器沒開/網路錯）＝**不警告**：分不出是備份壞了還是連不上，硬報會變狼來了。
-(async () => {
-  let status = null;
-  try { status = await api('/backup/daily', { method: 'POST' }); }
-  catch { /* 連不上就當沒這回事，下次開 app 再說 */ }
-  const v = backupAlertView(status);
-  const box = document.getElementById('backup-alert');
-  if (!box) return;
-  box.hidden = !v.show;
-  box.innerHTML = v.show ? `<div class="backup-alert ${v.level}">
+  const failures = await runBootSteps([
+    // 1-1：開 app 自動刷新報價（D1）＋記錄本月快照。順序：先刷報價（>1 小時舊才抓；外部報價抓不到時伺服器回「沒更新」、
+    // 不算失敗、照用舊價），日線才反映新價；再記月快照/日線。真的寫入了或報價有更新才提示＋刷新目前頁面。
+    { name: '自動更新報價', run: async () => {
+      const q = await api('/quotes/refresh-auto', { method: 'POST' });
+      refreshed = !!(q && q.refreshed);
+      // ↑ 用 q.refreshed（不是 q.updated）：只更新匯率、沒動持股價時 updated 為 0，但外幣持股的台幣估值仍變了、要重繪
+    } },
+    { name: '自動記錄快照', run: async () => {
+      try {
+        const r = await api('/snapshot/auto', { method: 'POST' });
+        if (r && r.recorded) toast('已自動記錄本月快照 📸');
+        // 續費日自動推進（Codex 複審 2026-07-26）：資料庫已經改了，畫面也要跟上——
+        // 今天已記過快照、報價也還新鮮時，原本兩個條件都不成立，訂閱頁會停在舊日期直到切頁。
+        const rolled = Array.isArray(r?.subsRolled) ? r.subsRolled.length : 0;
+        if (rolled) toast(`已把 ${rolled} 筆訂閱的續費日更新到下一期 🔄`);
+        if ((r && r.recorded) || refreshed || rolled) router();   // 月快照寫入／報價更新／續費日推進 → 重繪反映最新
+      } catch (e) { if (refreshed) router(); throw e; }   // 快照失敗時報價仍可能更新過 → 照樣重繪，再交給上面集中出聲
+      finally { _bootResolve(); }   // 開機序列落定 → 洞察引擎現在抓才反映最新報價/日線
+    } },
+  ]);
+  // 每日滾動備份（階段四 A）：開 app 檢查今天備份過沒有，沒有就備一份、保留 30 天。**只排進同一條隊，不進集中提示**：
+  // 它有自己的專屬警告（backup-alert.js；後端吞例外、把失敗寫進狀態，畫面明顯警告、連續失敗提高強度——裁決 2026-07-24），
+  // 而且雲端模式根本不做備份，放進「沒完成」的提示就等於暗示有備份（test/vault-and-backup-integrity.test.js 那一題擋這個）。
+  // 抓不到回應（伺服器沒開/網路錯）＝**不警告**：分不出是備份壞了還是連不上，硬報會變狼來了。
+  {
+    let status = null;
+    try { status = await api('/backup/daily', { method: 'POST' }); }
+    catch { /* 連不上就當沒這回事，下次開 app 再說 */ }
+    const v = backupAlertView(status);
+    const box = document.getElementById('backup-alert');
+    if (box) {
+      box.hidden = !v.show;
+      box.innerHTML = v.show ? `<div class="backup-alert ${v.level}">
     ${icon('alert', 18)}
     <div><b>${esc(v.title)}</b><div>${esc(v.body)}</div>${v.why ? `<div class="backup-alert-why">錯誤訊息：${esc(v.why)}</div>` : ''}</div>
   </div>` : '';
-})();
-
-// 開 app 自動對齊帳戶名（使用者定 2026-07-21「改一次、處處同步」）：修「帳戶改名後、既有交易顯示名沒跟上」的舊資料。
-// 零操作、有變動才重繪；失敗靜默（帳戶儲存時的 beforeSave 仍會對齊）。
-(async () => {
-  try { const r = await api('/accounts/reconcile-names', { method: 'POST' }); if (r?.changed) router(); }
-  catch { /* 靜默：自動對齊失敗不影響 app 使用 */ }
-})();
-
-// 店名規則更新後自動整理（使用者定 2026-07-19）：規則住在程式碼裡，以前要「合併→重啟→**記得手動按整理**」，
-// 少一步就沒生效（使用者實際踩過）。改成開 app 自動比對規則指紋，同一版只跑一次；有動到才出聲。
-(async () => {
-  try {
-    // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用：平時無感自動跑，
-    // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
-    // ⚠️ 迴圈而不是單次 if：後端的 needsConfirmation 是**單一個 truthy 旗標**（形狀與理由見
-    // lib/services/statement-import.js 的 normalizeIfRulesChanged），這裡照著它的通則接——
-    // 認得的原因問完再送一次，不認得的走下面的 else 出聲，不會靜靜掉進「沒事發生」。
-    // ⚠️ 不要在這裡接「備份沒存成也要繼續」那一類確認：不可逆操作前的自動備份是本專案刻意不做的
-    // （理由見 lib/services/backup.js 的設計註解），test/vault-and-backup-integrity.test.js
-    // 的〈裁決〉那一題釘著這條路不得認那種旗標。
-    /** @type {{force?: boolean}} */
-    const answers = {};
-    let r = await api('/statement/normalize-auto', { method: 'POST' });
-    for (let asked = 0; r?.needsConfirmation && asked < 3; asked++) {
-      if (r.needsConfirmation === true) {
-        const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
-        // 真實總數：明細只截 50 筆，計數必須用 Total——否則會把截斷後的筆數冒充成完整總數
-        const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
-        const lines = [
-          ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
-          ...nc.slice(0, 4).map((/** @type {any} */ c) => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)];
-        const ok = confirm('店名規則有更新，套用後會蓋掉以下你教過／取過的東西（刪掉規則也救不回來）：\n\n'
-          + lines.join('\n') + `\n\n共 ${total} 項。要現在套用嗎？（選取消可稍後到設定頁處理）`);
-        if (!ok) return;
-        answers.force = true;
-      } else {
-        // 不認得的原因＝前後端版本走散。**不替使用者猜、也不安靜跳過**：什麼都沒做要說出來。
-        return toast('店名規則這次沒有套用（伺服器回了一個目前看不懂的狀況），資料沒有變動', true);
-      }
-      r = await api('/statement/normalize-auto', { method: 'POST', body: answers });
     }
-    if (r?.needsConfirmation) return toast('店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動', true);
-    if (!r?.ran) return;
-    const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
-      r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
-    // ⚠️ 問過使用者就**一定要回話**（他剛按下的是不可逆的那一步）：
-    // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
-    if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
-    else if (answers.force) { toast('店名規則已更新並套用 ✨'); router(); }
-  } catch { /* 自動整理失敗靜默略過；設定頁的手動「整理店名格式」仍可用 */ }
+  }
+  failures.push(...await runBootSteps([
+    // 開 app 自動對齊帳戶名（使用者定 2026-07-21「改一次、處處同步」）：修「帳戶改名後、既有交易顯示名沒跟上」的舊資料。
+    // 零操作、有變動才重繪（帳戶儲存時的 beforeSave 也會對齊）。
+    { name: '自動對齊帳戶名', run: async () => {
+      const r = await api('/accounts/reconcile-names', { method: 'POST' });
+      if (r?.changed) router();
+    } },
+    // 店名規則更新後自動整理（使用者定 2026-07-19）：規則住在程式碼裡，以前要「合併→重啟→**記得手動按整理**」，
+    // 少一步就沒生效（使用者實際踩過）。改成開 app 自動比對規則指紋，同一版只跑一次；有動到才出聲。
+    { name: '店名規則自動整理', run: async () => {
+      // 會動到「學過的分類/自訂名」＝不可逆，先問過再套用：平時無感自動跑，
+      // 只有這種會覆蓋心血的情況才停下來確認——呼應「平靜日不造噪音，有事才出聲」。
+      // ⚠️ 迴圈而不是單次 if：後端的 needsConfirmation 是**單一個 truthy 旗標**（形狀與理由見
+      // lib/services/statement-import.js 的 normalizeIfRulesChanged），這裡照著它的通則接——
+      // 認得的原因問完再送一次，不認得的走下面的 else 出聲，不會靜靜掉進「沒事發生」。
+      // ⚠️ 不要在這裡接「備份沒存成也要繼續」那一類確認：不可逆操作前的自動備份是本專案刻意不做的
+      // （理由見 lib/services/backup.js 的設計註解），test/vault-and-backup-integrity.test.js
+      // 的〈裁決〉那一題釘著這條路不得認那種旗標。
+      /** @type {{force?: boolean}} */
+      const answers = {};
+      let r = await api('/statement/normalize-auto', { method: 'POST' });
+      for (let asked = 0; r?.needsConfirmation && asked < 3; asked++) {
+        if (r.needsConfirmation === true) {
+          const cf = r.learnedConflicts || [], nc = r.learnedNameChanges || [];
+          // 真實總數：明細只截 50 筆，計數必須用 Total——否則會把截斷後的筆數冒充成完整總數
+          const total = (r.learnedConflictTotal ?? cf.length) + (r.learnedNameChangeTotal ?? nc.length);
+          const lines = [
+            ...cf.slice(0, 4).map((/** @type {any} */ c) => `・「${c.key}」的設定：留下 ${c.kept}，捨棄 ${c.dropped}`),
+            ...nc.slice(0, 4).map((/** @type {any} */ c) => `・你取的店名「${c.before}」→ ${c.after || '清除'}`)];
+          const ok = confirm('店名規則有更新，套用後會蓋掉以下你教過／取過的東西（刪掉規則也救不回來）：\n\n'
+            + lines.join('\n') + `\n\n共 ${total} 項。要現在套用嗎？（選取消可稍後到設定頁處理）`);
+          if (!ok) return;
+          answers.force = true;
+        } else {
+          // 不認得的原因＝前後端版本走散。**不替使用者猜、也不安靜跳過**：什麼都沒做要說出來。
+          return toast('店名規則這次沒有套用（伺服器回了一個目前看不懂的狀況），資料沒有變動', true);
+        }
+        r = await api('/statement/normalize-auto', { method: 'POST', body: answers });
+      }
+      if (r?.needsConfirmation) return toast('店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動', true);
+      if (!r?.ran) return;
+      const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
+        r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
+      // ⚠️ 問過使用者就**一定要回話**（他剛按下的是不可逆的那一步）：
+      // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
+      if (bits.length) { toast(`店名規則已更新，自動整理了 ${bits.join('、')} ✨`); router(); }
+      else if (answers.force) { toast('店名規則已更新並套用 ✨'); router(); }
+    } },
+  ]));
+  const msg = bootFailureMessage(failures);
+  if (msg) toast(msg, true);
 })();
