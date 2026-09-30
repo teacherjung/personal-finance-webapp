@@ -85,7 +85,9 @@ test('自動推進（服務層）：只動續費日、金額一分不變、沒�
   const before = db.subscriptions.map(s => ['2026-06', '2026-07', '2026-08'].map(m => costForMonth(s, m)));
   const cardBefore = buildSummary(await getDb()).subscriptions.monthly;   // ⚠️ 真欄位在 summary.subscriptions.monthly（寫錯名字會變 undefined===undefined 的假斷言）
 
+  const t0 = Date.now();
   const r = await rollDueSubscriptions(TODAY);
+  const t1 = Date.now();
   assert.deepEqual(r.rolled, [{ id: 's1', name: '月繳過期', from: '2026-07-05', to: '2026-08-05' }],
     '只有 s1 該推；有停用日／未來／終身都不可被動到');
   const after = (await getDb()).subscriptions;
@@ -100,7 +102,8 @@ test('自動推進（服務層）：只動續費日、金額一分不變、沒�
   assert.equal(buildSummary(await getDb()).subscriptions.monthly, cardBefore, '總覽的訂閱月費也不可變');
   // 記下「上次真的推進」的時間（#653 留言 5905965930「開始記錄」）：ISO 時間、跟這次推進同一次寫檔
   const stamp = (await getDb()).settings?.subsLastRolledAt;
-  assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `真的推了就要記 ISO 時間（實得 ${stamp}）`);
+  assert.ok(typeof stamp === 'string' && Date.parse(stamp) >= t0 && Date.parse(stamp) <= t1,
+    `真的推了就要記**這一次**的 ISO 時間（實得 ${stamp}；要落在 ${new Date(t0).toISOString()}〜${new Date(t1).toISOString()}）`);
   // 冪等：再跑一次沒有任何一筆要推。「時間不動」比對一個不可能是現在的值，不靠兩次呼叫之間時鐘有沒有走
   const SENTINEL = '2000-01-01T00:00:00.000Z';
   { const d = await getDb(); d.settings.subsLastRolledAt = SENTINEL; await saveDb(d); }

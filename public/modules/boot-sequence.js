@@ -117,7 +117,8 @@ function problemText(r) {
  *   同一個帳號對到兩個帳戶的交易不在這條路裡（lib/services/bank-import.js reconcileBankTxAccountNames）。
  * - 「更新報價」只看持股漏抓（skipped），匯率全沒抓到但持股有抓到時仍是 ✓；一小時內再開寫「一小時內不重抓」，
  *   上一次漏抓了哪幾檔不會留下來。
- * - 「更新洞察」看的是 /insights 有沒有存好書籤回來；CAPE／實質殖利率抓不到而洞察照常回來時仍是 ✓（那一區用上次的值）。
+ * - 「更新洞察」看的是 /insights 有沒有存好書籤回來；CAPE／實質殖利率抓不到而洞察照常回來時仍是 ✓——那兩個數字
+ *   12 小時內用快取，過期又抓不到就退回手動填的值，沒填就缺值（market-data.js getCape／getRealYield）。
  * - 「紀錄快照」的時間是這次開機檢查的時間（日線在這次開機裡寫入），不是伺服器寫檔的那一刻。
  * @param {BootReport} report
  * @param {InsightsStatus} [insights] 沒給＝還沒抓到

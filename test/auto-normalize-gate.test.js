@@ -54,11 +54,13 @@ test('會動到學習表 → 停下來回報 needsConfirmation，且不套用、
 test('確認後（force）才真的套用並記指紋', async () => {
   seedConflicting();
   await normalizeIfRulesChanged();                 // 第一次：擋下
+  const t0 = Date.now();
   const r = await normalizeIfRulesChanged(true);   // 使用者按了確認
+  const t1 = Date.now();
   assert.equal(r.ran, true, 'force 之後照常套用');
   assert.ok(store.load().settings?.storeRulesHash, '這次要記指紋（不會每次開 app 重問）');
   const stamp = store.load().settings?.storeNamesLastNormalizedAt;
-  assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `真的整理到資料就要記 ISO 時間（實得 ${stamp}）`);
+  assert.ok(typeof stamp === 'string' && Date.parse(stamp) >= t0 && Date.parse(stamp) <= t1, `真的整理到資料就要記**這一次**的 ISO 時間（實得 ${stamp}）`);
   assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙'], '兩家併成一把鑰匙');
 });
 

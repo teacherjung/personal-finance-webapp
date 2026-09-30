@@ -629,6 +629,8 @@ test('帳戶對齊的「上次」時間（#653 留言 5905965930「開始記錄�
     await saveDb(db);
   };
   const aligned = async () => (await GET('/settings')).accountNamesLastAlignedAt;
+  /** 記的是不是**這一次**動作的時間（不是只看解析得了——固定寫錯的日期也解析得了，#653 r1 #1） @param {unknown} iso @param {number} t0 @param {number} t1 */
+  const isBetween = (iso, t0, t1) => typeof iso === 'string' && Date.parse(iso) >= t0 && Date.parse(iso) <= t1;
   const orig = await GET('/export');   // 完整備份，收尾還原免污染
   try {
     const db = await getDb();
@@ -637,9 +639,11 @@ test('帳戶對齊的「上次」時間（#653 留言 5905965930「開始記錄�
     // ①帳戶儲存（改名）：舊的銀行交易靠遮罩帳號對齊到現名 → 記時間
     const acc = await (await POST('/accounts', { name: '記時間測試 5555', type: 'cash', currency: 'TWD', balance: 0, accountNo: '900500****5555' })).json();
     await seedTx({ source: 'bank', account: '過期名 5555', type: 'expense', category: '其他', subcategory: '未分類', amount: 3, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900500****5555|2026-06-01|out|3||跨轉手續費|' });
+    const t0 = Date.now();
     await PUT('/accounts/' + acc.id, { name: '記時間測試改名 5555' });
+    const t1 = Date.now();
     const afterRename = await aligned();
-    assert.ok(typeof afterRename === 'string' && !Number.isNaN(Date.parse(afterRename)), `改名對齊了交易就要記 ISO 時間（實得 ${afterRename}）`);
+    assert.ok(isBetween(afterRename, t0, t1), `改名對齊了交易就要記**這一次**的 ISO 時間（實得 ${afterRename}）`);
     // ②開 app 自動對齊：先跑一次清掉同檔其他考題留下的過期名，之後沒有東西要對齊＝時間不動
     await POST('/accounts/reconcile-names', {});
     await setAligned(SENTINEL);
@@ -653,9 +657,11 @@ test('帳戶對齊的「上次」時間（#653 留言 5905965930「開始記錄�
     const cash = await (await POST('/accounts', { name: '手動記時間測試', type: 'cash', currency: 'TWD', balance: 0 })).json();
     await POST('/transactions', { type: 'expense', date: '2026-06-03', amount: 50, account: '手動記時間測試', note: '午餐', category: '飲食', subcategory: '' });
     await setAligned(SENTINEL);
+    const t2 = Date.now();
     await PUT('/accounts/' + cash.id, { name: '手動記時間測試改名' });
+    const t3 = Date.now();
     const afterManual = await aligned();
-    assert.ok(afterManual !== SENTINEL && !Number.isNaN(Date.parse(String(afterManual))), `手動記帳的字串連動也算對齊（實得 ${afterManual}）`);
+    assert.ok(isBetween(afterManual, t2, t3), `手動記帳的字串連動也算對齊，記**這一次**的時間（實得 ${afterManual}）`);
     // 前端寫不進：三個都是服務層擁有的欄位
     await setAligned(SENTINEL);
     await PUT('/settings', Object.fromEntries(STAMPS.map((k) => [k, '2011-01-01T00:00:00.000Z'])));
@@ -742,11 +748,13 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   assert.equal((await GET('/transactions')).find(t => t.id === tx.id).note, '統一超商-百福', '被擋下＝資料不動');
   assert.ok(!('storeNamesLastNormalizedAt' in await GET('/settings')), '預覽與被擋下都不可記「上次整理」');
   // 正式套用（明確帶 force）：note 與 storeKey 一併正規化
+  const t0 = Date.now();
   const applied = await (await POST('/statement/normalize-branches', { force: true })).json();
+  const t1 = Date.now();
   assert.ok(applied.changed >= 1);
   const normalizedAt = (await GET('/settings')).storeNamesLastNormalizedAt;
-  assert.ok(typeof normalizedAt === 'string' && !Number.isNaN(Date.parse(normalizedAt)),
-    `維護端點真的改到資料也要記「上次整理」（這條路不經規則指紋那次寫入；實得 ${normalizedAt}）`);
+  assert.ok(typeof normalizedAt === 'string' && Date.parse(normalizedAt) >= t0 && Date.parse(normalizedAt) <= t1,
+    `維護端點真的改到資料也要記**這一次**的「上次整理」時間（這條路不經規則指紋那次寫入；實得 ${normalizedAt}）`);
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '統一超商（百福）', '套用後 note 已正規化');
   assert.equal(after.storeKey, '統一超商', 'storeKey＝身分鑰匙（品牌層、不含分店）');

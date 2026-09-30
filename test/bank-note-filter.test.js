@@ -112,11 +112,13 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
   const db2 = await getDb();
   db2.transactions = [{ ...mk('t9', '轉帳支取', '轉入288810****8791', '轉帳支取・轉入288810****8791'), account: '過期的舊名' }];
   await saveDb(db2);
+  const before = Date.now();
   const r2 = await reconcileAccountNamesAuto();
+  const after = Date.now();
   assert.equal(r2.aligned, 1, '回報帳戶名真的對齊了幾筆（總覽「帳戶對齊」那一行用它）');
   assert.equal((await getDb()).transactions?.[0].account, '台新活儲（Richart）', '前置條件：帳戶名真的被對齊了');
   const stamp = (await getDb()).settings?.accountNamesLastAlignedAt;
-  assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `帳戶名真的對齊了就要記 ISO 時間（實得 ${stamp}）`);
+  assert.ok(typeof stamp === 'string' && Date.parse(stamp) >= before && Date.parse(stamp) <= after, `帳戶名真的對齊了就要記**這一次**的 ISO 時間（實得 ${stamp}）`);
 });
 
 test('learnFromBankEdit 清空回復：autoNote 欄同步跟上（Codex #307 r1——不同步會留下 note≠autoNote 的孤兒，下次改版被誤判自訂）', async () => {
