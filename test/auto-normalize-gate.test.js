@@ -48,6 +48,7 @@ test('會動到學習表 → 停下來回報 needsConfirmation，且不套用、
   assert.deepEqual(Object.keys(db.learnedCategories || {}).sort(), ['鮮芋仙新店店', '鮮芋仙林口店'].sort(),
     '學習表原封不動——兩家的分類都還在');
   assert.ok(!db.settings?.storeRulesHash, '不可記指紋（維持待決，下次開 app 會再問）');
+  assert.ok(!db.settings?.storeNamesLastNormalizedAt, '沒套用＝不可記「上次整理」的時間');
 });
 
 test('確認後（force）才真的套用並記指紋', async () => {
@@ -56,6 +57,8 @@ test('確認後（force）才真的套用並記指紋', async () => {
   const r = await normalizeIfRulesChanged(true);   // 使用者按了確認
   assert.equal(r.ran, true, 'force 之後照常套用');
   assert.ok(store.load().settings?.storeRulesHash, '這次要記指紋（不會每次開 app 重問）');
+  const stamp = store.load().settings?.storeNamesLastNormalizedAt;
+  assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `真的整理到資料就要記 ISO 時間（實得 ${stamp}）`);
   assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙'], '兩家併成一把鑰匙');
 });
 
@@ -78,4 +81,15 @@ test('同一版規則只跑一次（記過指紋就不再問、不再跑）', as
   const r = await normalizeIfRulesChanged();       // 再開一次 app
   assert.equal(r.ran, false);
   assert.equal(r.needsConfirmation, undefined, '指紋沒變＝這版已處理過，不該再問');
+});
+
+test('規則換了一版、但沒有任何資料要改 → 記指紋、不記「上次整理」的時間（William 2026-09-30「開始記錄」：記的是真的改到資料）', async () => {
+  store.save({ ...store.emptyDb(),
+    settings: { ...store.emptyDb().settings,
+      storeRules: { chains: ['鮮芋仙'], canon: [], brand: [], rename: [], parkExempt: [] } } });
+  const r = await normalizeIfRulesChanged();
+  assert.equal(r.ran, true, '前置條件：新一版規則照常套用');
+  assert.equal(r.changed + r.keyChanged + (r.learnedRemapped || 0) + (r.learnedNamesFixed || 0), 0, '前置條件：沒有任何資料要改');
+  assert.ok(store.load().settings?.storeRulesHash, '指紋照記');
+  assert.ok(!store.load().settings?.storeNamesLastNormalizedAt, '沒有改到資料＝不記「上次整理」');
 });

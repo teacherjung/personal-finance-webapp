@@ -18,7 +18,7 @@
 2. **平靜日不造噪音**：沒新鮮事就大方說「今天很平靜 ✓」——安心本身是價值，不製造假緊急。
 3. **報喜也報憂**：警示解除要慶祝（「✓ 已解除：本月現金流轉正」），正向回饋只出現一次、不重播。
 4. **教育不建議**：訊號解讀用「規則說…」口吻＋`.info-link` 白話彈窗，不給個人化投資建議。
-5. **失敗靜默降級**：報價／CAPE 抓不到＝用上次的值照常顯示（本機優先、離線可用），絕不擋開機、絕不跳錯誤打擾。
+5. **失敗靜默降級**：報價／CAPE 抓不到＝用上次的值照常顯示（本機優先、離線可用），絕不擋開機、絕不跳錯誤打擾。（2026-09-30 起總覽最下面「開 App 自動更新檢查」的「更新洞察」一行會在這次沒抓成功時標 ⚠️——寫在頁面上，不跳提示。）
 
 ## 三、完工後的總覽長相（文字示意）
 
@@ -86,6 +86,7 @@
 ## 八、變更紀錄
 
 - 2026-07-18　建立 v1（「天天愛用」體檢之後；使用者指示：先做功能微調、計畫隨變化滾動更新）。
+- 2026-09-30　總覽最下面新增「開 App 自動更新檢查」區塊（William 給的格式），其中「更新洞察」一行讀同一次 `/insights` 抓取的結果；原則 5 補一句。
 - 2026-07-22　**D4 完工**（總覽新聞牆，純前端）。hero Δ chips（今天/本週/自上次）＋「上次開啟 N 天前」；動態三段（🆕→✓已解除→持續中收合）＋跳檔卡白話彈窗＋平靜行；投組 KPI 加「自上次 Δ」小字。當前提醒以 summary 為準（含 detail）、insights key 集合分新/持續，insights 失敗整段退回舊「需要處理」。**實作重點差異**：`/insights` **一次 app-open 只抓一次（快取 Promise）**——開機自動流程（snapshot/auto…）資料變動會重繪總覽，每次重抓會讓第二次抓把剛冒出的 🆕 秒吸收（合成資料瀏覽器實測抓到），故快取整份、書籤只更新一次；重整頁面才重抓。**合成資料唯讀實測**：news wall（🆕×6/✓/🔀）、Δ chips、上次開啟、KPI Δ、跳檔白話彈窗全正確、零 console error（用 finance-test 啟動設定指向 /tmp 合成 store，不碰真實資料、不污染真實書籤）。**每日洞察引擎 D0–D4 全數完工。**
 - 2026-07-22　**D3 完工**（純後端＋前端 signal-tiers 抽出，無新可見 UI，D4 才接畫面）。實作與計畫的重點：①`insightState` 書籤存**提醒輕量快照 `{key,title,module,level}`** 而非只存 `reminderKeys[]`——「✓ 已解除」要顯示「解除了什麼」，只有 key 給不出人看得懂的字（計畫原文只寫 keys，這裡務實加 title）。②`signal-tiers.js` 純模組抽出（前端 portfolio.js＋後端 insights.js 共用；估值檔位門檻收斂成一份，AGENTS.md 同步點更新）。③後端自呼 `getCape`/`getRealYield` 算 ECY 跳檔，失敗靜默 null。④read-await-write：先 await 報價、再 getDb→算→saveDb。⑤**踩到 store 坑**：頂層 map 型鍵要同時進 `KV_KEYS`＋`KV_MAP_KEYS`，漏了 save 靜默不寫（已補註解警告）。16 考題（signal-tiers 門檻 6＋差異引擎五情境/固定窗/自上次/同日二開/sanitizer 10）。**真資料唯讀驗證留待 D4**（D3 無畫面）。
 - 2026-07-22　**D2 完工**。19 條提醒都配了穩定 `key`（規則代號＋實體 id/代號）：singleton 用規則代號（cashflow-negative／emergency-fund-low／emergency-fund-optimistic／conc-equity-total／ib-underwater／ib-leverage／ib-idle-cash／fx-usd-high／fx-usd-low）；per-entity 用實體 id 或穩定代號（alloc-drift-{class}／sub-ending|charge|charge-overdue-{id}／card-due-{id}／ins-pay|pay-overdue|ending-{id}／conc-stock-{symbol}／conc-country-{region}）。同一底層狀況跨次計算 key 相同（不含金額/百分比，標題才含），同次互異——差異引擎（D3）就靠這個判 🆕/✓/持續中。純加欄、UI 不變；`Reminder` typedef＋`Insurance` typedef（補 id）同步。考題在 `test/derive-reminders.test.js`（穩定/互異/含實體識別/不隨數字變動）。

@@ -90,6 +90,7 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
     // 所以 note===autoNote＝仍是自動名 → 這一版再升級成全名版；不會被誤判成使用者自訂。
     { ...mk('t3', '轉帳支取', '轉入288810****8791', t3note), autoNote: t3note },
   ];
+  delete db.settings.accountNamesLastAlignedAt;
   await saveDb(db);
   const { changed } = await reconcileAccountNamesAuto();
   assert.ok(changed >= 3, `三筆的 note/autoNote 至少各有一處更新（實得 ${changed}）`);
@@ -104,6 +105,16 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
   // 冪等：再跑一次不再有變動
   const again = await reconcileAccountNamesAuto();
   assert.equal(again.changed, 0, '第二輪不可再報變動（冪等）');
+  // 帳戶名本來就對、只修了說明＝不記「上次對齊」（William 2026-09-30「開始記錄」記的是帳戶名真的對齊）
+  assert.ok(!(await getDb()).settings?.accountNamesLastAlignedAt, '只修說明不可記「上次對齊」的時間');
+  // 帳戶名真的過期 → 對齊並記 ISO 時間
+  const db2 = await getDb();
+  db2.transactions = [{ ...mk('t9', '轉帳支取', '轉入288810****8791', '轉帳支取・轉入288810****8791'), account: '過期的舊名' }];
+  await saveDb(db2);
+  await reconcileAccountNamesAuto();
+  assert.equal((await getDb()).transactions?.[0].account, '台新活儲（Richart）', '前置條件：帳戶名真的被對齊了');
+  const stamp = (await getDb()).settings?.accountNamesLastAlignedAt;
+  assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `帳戶名真的對齊了就要記 ISO 時間（實得 ${stamp}）`);
 });
 
 test('learnFromBankEdit 清空回復：autoNote 欄同步跟上（Codex #307 r1——不同步會留下 note≠autoNote 的孤兒，下次改版被誤判自訂）', async () => {

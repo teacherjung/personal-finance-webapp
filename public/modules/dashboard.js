@@ -13,7 +13,7 @@ import {
   dashboardNetWorthChange,
   dashboardSnapshotSeries,
 } from './dashboard-forest.js';
-import { bootStatusView } from './boot-sequence.js';   // 「開 App 自動更新」區塊的文字（裁示 2026-09-30，#651 留言 5903711899）
+import { bootStatusView, insightsStatusOf, withTimeout, BOOT_REQUEST_TIMEOUT_MS } from './boot-sequence.js';   // 「開 App 自動更新檢查」區塊的文字（裁示 2026-09-30，#651 留言 5903711899；格式＝William 同日下午給的）
 
 let chartRefs = [];
 let monthlyReviewChart = null;
@@ -32,26 +32,43 @@ function fetchInsightsOnce() {
   return insightsPromise;
 }
 
-// 開 App 自動更新（裁示者 2026-09-30，#651 留言 5903711899）：開機那幾步不跳提示，改在總覽最下面寫出這次的結果。
+// 開 App 自動更新檢查（裁示者 2026-09-30，#651 留言 5903711899；格式＝William 同日下午給的）：開機那幾步不跳提示，
+// 改在總覽最下面寫出這次的結果，外加第六行「更新洞察」（洞察是總覽自己抓的，不在開機那一串裡）。
 // 文字全在 boot-sequence.js 的 bootStatusView（有考題）；這裡只負責畫。開機還沒跑完＝先寫「檢查中」，落定後就地補上。
 /** @type {import('./boot-sequence.js').BootReport|null} */
-let bootReport = null;   // ⚠️ 不可在模組頂層碰 bootSettled：本模組被 app.js import、那時它還沒宣告（循環 import）
-/** @param {import('./boot-sequence.js').BootReport|null} report */
-function bootStatusHtml(report) {
-  if (!report) return `<div class="dash-h">開 App 自動更新</div><p class="muted boot-status-note">檢查中…</p>`;
-  const { checkedAt, rows } = bootStatusView(report);
-  return `<div class="dash-h">開 App 自動更新${checkedAt ? ` <span class="boot-status-when">${esc(checkedAt)} 檢查</span>` : ''}</div>
-    <p class="muted boot-status-note">每次打開 App 會自動做這幾件事；標 ⚠ 的是這次沒有照常做完、值得看一下的。</p>
-    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.ok ? 'ok' : 'warn'}"><span class="boot-status-label">${r.ok ? '✓' : '⚠'} ${esc(r.label)}</span><span>${esc(r.text)}</span></li>`).join('')}</ul>`;
-}
-/** @param {number} seq */
-function patchBootStatus(seq) {
+let bootReport = null;
+/** @type {import('./boot-sequence.js').InsightsStatus} */
+let insightsStatus = { state: 'pending' };
+let bootWatched = false;
+/** 第一次畫總覽時才掛上。⚠️ 不可在模組頂層碰 bootSettled：本模組被 app.js import、那時它還沒宣告（循環 import）。 */
+function watchBoot() {
+  if (bootWatched) return;
+  bootWatched = true;
   bootSettled.then((r) => {
     bootReport = r;
-    if (seq !== currentRouteSeq()) return;
-    const block = byId('bootStatusBlock');
-    if (block) block.innerHTML = bootStatusHtml(r);
+    repaintBootStatus();
+    // 「更新洞察」那一行的等待上限只管這一行：洞察那一區自己的退回邏輯（fetchInsightsOnce）不動。
+    // 逾時先標 ⚠️；之後真的回來了就改成實際結果。
+    const p = fetchInsightsOnce();
+    withTimeout(p, BOOT_REQUEST_TIMEOUT_MS).catch((e) => {
+      if (insightsStatus.state === 'pending') { insightsStatus = { state: 'fail', error: e }; repaintBootStatus(); }
+    });
+    p.then((ins) => { insightsStatus = insightsStatusOf(ins); repaintBootStatus(); });
   });
+}
+/** 區塊只在總覽上；不在總覽時找不到就不動（內容來自同一份全域狀態，任何一代總覽畫出來都一樣）。 */
+function repaintBootStatus() {
+  const block = byId('bootStatusBlock');
+  if (block) block.innerHTML = bootStatusHtml();
+}
+const BOOT_MARKS = { ok: '✓', warn: '⚠️', pending: '…' };
+function bootStatusHtml() {
+  if (!bootReport) return `<div class="boot-status-title">開 App 自動更新檢查</div><p class="muted boot-status-intro">檢查中…</p>`;
+  const { title, rows } = bootStatusView(bootReport, insightsStatus);
+  return `<div class="boot-status-title">${esc(title)}</div>
+    <p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>
+    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.level}"><span class="boot-status-mark">${BOOT_MARKS[r.level]}</span><span class="boot-status-label">${esc(r.label)}</span><span class="boot-status-text">${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</span></li>`).join('')}</ul>
+    <p class="muted boot-status-foot">標 ⚠️ 的是這次沒有檢查成功的項目。</p>`;
 }
 
 function currentMonthKey() {
@@ -387,7 +404,7 @@ export async function renderDashboard() {
 
     <div id="monthlyReviewBlock">${monthlyReviewCardHtml(review, { esc, money, wan, pct })}</div>
 
-    <section class="dash-block boot-status" id="bootStatusBlock" aria-live="polite">${bootStatusHtml(bootReport)}</section>
+    <section class="dash-block boot-status" id="bootStatusBlock" aria-live="polite">${bootStatusHtml()}</section>
   `;
 
   drawTrend(snapshots);
@@ -398,7 +415,7 @@ export async function renderDashboard() {
   drawMonthlyReview(review, seq);
   // 洞察在開機序列（五步全部）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
-  if (!bootReport) patchBootStatus(seq);
+  watchBoot();
 }
 
 /** 匯率就地標註（丙）：用了預設匯率＝照常計入、只提示；不支援的幣別＝無法換算、要講方向。 @param {any} defaultFx @param {any} missingFx */

@@ -1,7 +1,7 @@
 // @ts-check
 // 個人理財中心 — 前端主程式
 import { makeNdjsonParser, reduceFrames, TRUNCATED } from './modules/ndjson-stream.js';   // 串流協議解讀（純模組＝可直測）
-import { runBootSteps, withTimeout, BOOT_REQUEST_TIMEOUT_MS } from './modules/boot-sequence.js';   // 開機自動更新依序跑＋等待上限（純模組＝可直測）
+import { runBootSteps, withTimeout, pickStamps, BOOT_REQUEST_TIMEOUT_MS } from './modules/boot-sequence.js';   // 開機自動更新依序跑＋等待上限（純模組＝可直測）
 import { renderDashboard } from './modules/dashboard.js';
 import { renderCashflow } from './modules/cashflow.js';
 import { renderTransactions } from './modules/transactions.js';
@@ -583,8 +583,7 @@ export const bootSettled = new Promise(res => { _bootResolve = res; });
   let refreshed = false;
   /** @type {Record<string, import('./modules/boot-sequence.js').BootResult>} */
   let results = {};
-  /** @type {string|null} */
-  let quotesLastAt = null;
+  let stamps = pickStamps(null);
   try {
     results = await runBootSteps([
       // 1-1：開 app 自動刷新報價（D1）＋記錄本月快照。順序：先刷報價（>1 小時舊才抓；外部報價抓不到時伺服器回「沒更新」、
@@ -688,9 +687,9 @@ export const bootSettled = new Promise(res => { _bootResolve = res; });
         return { outcome: 'applied', bits, forced: !!answers.force };
       } },
     ]);
-    // 報價時間給狀態區塊用（伺服器擁有的欄位，refresh-auto 不回傳它）；讀不到就不寫時間。
-    try { quotesLastAt = (await bootApi('/settings'))?.quotesLastAt ?? null; } catch { /* 讀不到就不寫時間 */ }
+    // 狀態區塊要的四個時間（報價時間＋上次真的推進／對齊／整理；都是伺服器擁有的欄位，各步驟不回傳）；讀不到就不寫時間。
+    try { stamps = pickStamps(await bootApi('/settings')); } catch { /* 讀不到就不寫時間 */ }
   } finally {
-    _bootResolve({ at, results, quotesLastAt });
+    _bootResolve({ at, results, stamps });
   }
 })();

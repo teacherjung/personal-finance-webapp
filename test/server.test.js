@@ -620,6 +620,41 @@ test('POST /accounts/reconcile-names（開 app 自動）：既有 stale 銀行�
   await DELETE_('/transactions/' + bt.id); await DELETE_('/accounts/' + acc.id);
 });
 
+test('帳戶對齊的「上次」時間（William 2026-09-30「開始記錄」）：改名真的對齊到交易才記；再跑一次沒改就不動；前端寫不進；還原備份不保留', async () => {
+  const STAMPS = ['subsLastRolledAt', 'accountNamesLastAlignedAt', 'storeNamesLastNormalizedAt'];
+  const orig = await GET('/export');   // 完整備份，收尾還原免污染
+  try {
+    const db = await getDb();
+    for (const k of STAMPS) delete db.settings[k];
+    await saveDb(db);
+    // 改名那條路（onAccountSave）：舊的銀行交易靠遮罩帳號對齊到現名 → 記時間
+    const acc = await (await POST('/accounts', { name: '記時間測試 5555', type: 'cash', currency: 'TWD', balance: 0, accountNo: '900500****5555' })).json();
+    await seedTx({ source: 'bank', account: '過期名 5555', type: 'expense', category: '其他', subcategory: '未分類', amount: 3, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900500****5555|2026-06-01|out|3||跨轉手續費|' });
+    await PUT('/accounts/' + acc.id, { name: '記時間測試改名 5555' });
+    const afterRename = (await GET('/settings')).accountNamesLastAlignedAt;
+    assert.ok(typeof afterRename === 'string' && !Number.isNaN(Date.parse(afterRename)), `改名對齊了交易就要記 ISO 時間（實得 ${afterRename}）`);
+    // 開 app 自動對齊：跑到沒有變動為止，時間只在真的對齊時前進；最後一輪沒改就不動
+    await POST('/accounts/reconcile-names', {});
+    const settled = (await GET('/settings')).accountNamesLastAlignedAt;
+    const again = await (await POST('/accounts/reconcile-names', {})).json();
+    assert.equal(again.changed, 0, '前置條件：第二輪沒有任何變動');
+    assert.equal((await GET('/settings')).accountNamesLastAlignedAt, settled, '沒有對齊到任何交易＝時間不動');
+    // 前端寫不進：三個都是服務層擁有的欄位
+    await PUT('/settings', Object.fromEntries(STAMPS.map((k) => [k, '2000-01-01T00:00:00.000Z'])));
+    const s = await GET('/settings');
+    assert.equal(s.accountNamesLastAlignedAt, settled, 'PUT /settings 不可改掉伺服器記的時間');
+    assert.ok(!('subsLastRolledAt' in s) && !('storeNamesLastNormalizedAt' in s), 'PUT /settings 不可寫進沒記過的時間');
+    // 還原備份不保留（同 storeRulesHash 的先例：記的是伺服器對「這一份」資料做過的事，還原後重新開始記）
+    const backup = await GET('/export');
+    backup.settings = { ...backup.settings, subsLastRolledAt: '2026-01-01T00:00:00.000Z', storeNamesLastNormalizedAt: '2026-01-01T00:00:00.000Z' };
+    assert.equal((await POST('/import', backup)).status, 200);
+    const restored = await GET('/settings');
+    for (const k of STAMPS) assert.ok(!(k in restored), `還原備份後不可留下 ${k}`);
+  } finally {
+    await POST('/import', orig);
+  }
+});
+
 test('POST /accounts/reconcile-names：順手補回被洗空的銀行交易說明（存款息，使用者回報 2026-07-22）', async () => {
   const bt = await seedTx({ source: 'bank', account: '台新', note: '', type: 'income', category: '被動', subcategory: '利息', amount: 7, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900999****3301|2026-06-01|in|7||存款息|' });
   await POST('/accounts/reconcile-names', {});
