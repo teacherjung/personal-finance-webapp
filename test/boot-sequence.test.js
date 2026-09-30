@@ -133,7 +133,7 @@ test('狀態區塊：那張圖的六行照原文重現（沒有東西要改的�
     { label: '帳戶對齊', level: 'ok', text: '所有帳戶名都已是最新' },
     { label: '店名整理', level: 'ok', text: '店名規則沒變（不整理）' },
     { label: '更新洞察', level: 'ok', text: '9/30 13:38 已更新' },
-  ], '三個日期都沒記過時不寫小字——不拿別的日期頂替');
+  ], '三個日期都沒記過時不寫「上次…」——不拿別的日期頂替');
   assert.ok(!JSON.stringify(v).includes('備份'));
 });
 
@@ -143,7 +143,7 @@ test('狀態區塊：三行的時間各有各的來源——報價＝伺服器�
   assert.equal(view(QUIET, {}, undefined, localIso(2026, 10, 5, 9, 0)).title, '開 App 自動更新檢查（2026-10-05）', '月、日補兩位');
 });
 
-test('狀態區塊：這次有改到東西——寫出改了什麼、不附「上次」小字；洞察還沒回來＝更新中', () => {
+test('狀態區塊：這次有改到東西——寫出改了什麼、不附「上次…」；洞察還沒回來＝更新中', () => {
   const v = view(ALL_CHANGED, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows, [
     { label: '更新報價', level: 'ok', text: '9/30 13:38 已更新' },
@@ -158,7 +158,7 @@ test('狀態區塊：這次有改到東西——寫出改了什麼、不附「�
     '只修了說明或隱藏的 autoNote（aligned 0）不算帳戶名有改');
 });
 
-test('狀態區塊：這次沒有要改的——小字補上伺服器記的「上次真的做」的日期；不同年要寫年份（#653 留言 5905965930「開始記錄」）', () => {
+test('狀態區塊：這次沒有要改的——補上伺服器記的「上次真的做」的日期（畫在那一行右邊括號裡）；不同年要寫年份（#653 留言 5905965930「開始記錄」）', () => {
   const v = view(QUIET, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows.slice(2, 5), [
     { label: '更新訂閱', level: 'ok', text: '續費日沒有需要推進的', note: '上次推進 9/15' },
@@ -250,12 +250,12 @@ test('insightsStatusOf：存完書籤回了 seenAt 才算成功；路由接住�
 /** 測試用的轉義（跟 app.js 的 esc 同一件事：擋 HTML）。 @param {string} s */
 const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-test('bootStatusHtml：開頭那句、結尾那句照 #653 留言 5905965930；記號是 ✓／⚠（文字樣式，不是彩色 ⚠️）；「上次」寫在右邊括號；開機還沒跑完＝檢查中', () => {
+test('bootStatusHtml：開頭那句照 #653 留言 5905965930、結尾那句照同一則但記號依 #654 留言 5912470107 改；記號是 ✓／⚠（不帶 U+FE0F）；「上次」寫在右邊括號；開機還沒跑完＝檢查中', () => {
   const html = bootStatusHtml({ at: AT, results: { ...QUIET, quotes: bad(conflict()) }, stamps: { ...NO_STAMPS, ...OLD_STAMPS } }, { state: 'ok', at: AT }, escHtml);
   assert.ok(html.includes('開 App 自動更新檢查（2026-09-30）'));
   assert.ok(html.includes('<p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>'));
   assert.ok(html.includes('標 ⚠ 的是這次沒有檢查成功的項目。'));
-  assert.ok(!html.includes('\uFE0F'), '⚠ 不可以帶彩色圖示的變體符號（#654 留言 5912470107「請把⚠️改成⚠」）');
+  assert.ok(!html.includes('\uFE0F'), '⚠ 不可以帶 U+FE0F（要求彩色圖示的變體符號；#654 留言 5912470107「請把⚠️改成⚠」）');
   assert.ok(html.includes('<li class="warn"><span class="boot-status-mark">⚠</span><span class="boot-status-label">更新報價</span>'));
   assert.ok(html.includes('<li class="ok"><span class="boot-status-mark">✓</span><span class="boot-status-label">更新訂閱</span><span class="boot-status-text">續費日沒有需要推進的<span class="boot-status-note">（上次推進 9/15）</span></span></li>'));
   assert.equal((html.match(/<li /g) || []).length, 6, '六行');

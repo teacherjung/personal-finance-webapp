@@ -225,11 +225,12 @@ export function insightsStatusOf(ins) {
   return ins && typeof ins.seenAt === 'string' && !('error' in ins) ? { state: 'ok', at: ins.seenAt } : { state: 'fail', error: ins?.error };
 }
 
-// ⚠ 用文字樣式（不帶 U+FE0F，不變成彩色圖示）；出處＝#654 留言 5912470107「請把⚠️改成⚠」
+// ⚠ 不帶 U+FE0F（要的是文字樣式、不是彩色圖示；實際怎麼畫看字型，沒有逐一實測）；出處＝#654 留言 5912470107「請把⚠️改成⚠」
 const MARKS = { ok: '✓', warn: '⚠', pending: '…' };
 
 /**
- * 那一塊的 HTML（開頭那句與結尾那句逐字照 #653 留言 5905965930）。report 還沒到＝「檢查中…」。
+ * 那一塊的 HTML。開頭那句照 #653 留言 5905965930；結尾那句照同一則，但記號依 #654 留言 5912470107 改成不帶 U+FE0F 的 ⚠。
+ * report 還沒到＝「檢查中…」。
  * @param {BootReport|null} report
  * @param {InsightsStatus|undefined} insights
  * @param {(s: string) => string} esc 轉義（dashboard.js 傳 app.js 的 esc）
