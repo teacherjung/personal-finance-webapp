@@ -547,7 +547,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* 月度回顧：一張卡、兩個閱讀區；內部用分隔線，不再疊小卡。 */
 #monthlyReviewBlock { margin-top: 16px; }
 #monthlyReviewBlock[aria-busy="true"] { opacity: .68; pointer-events: none; }
-/* 開 App 自動更新檢查（總覽最下面；裁示 2026-09-30，#651；格式＝William 同日下午給的）：開機那幾步不跳提示，結果寫在這裡 */
+/* 開 App 自動更新檢查（總覽最下面；裁示 2026-09-30，#651；格式出處＝#653 留言 5905965930）：開機那幾步不跳提示，結果寫在這裡 */
 .boot-status { margin-top: 16px; }
 .boot-status-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .boot-status-intro { font-size: 13px; margin: 0 0 10px; }

@@ -565,7 +565,7 @@ router();
 // 開機序列落定信號（每日洞察引擎 D3/D4，Codex r14#1/#2）：開機自動更新五步全部結束才 resolve，帶著各步結果。
 // **洞察引擎要在這之後才抓 /insights**——否則會用開機前的舊淨值/舊日線算差異，跟重繪後的總覽對不上（#2）；
 // 而且抓 /insights 要等外部估值 API（最長各 8 秒），若擋在總覽首屏會卡「載入中」（#1）。故：總覽先用 /summary
-// 即時出畫面，洞察與「開 App 自動更新」區塊在 bootSettled 之後非阻塞地補上。**finally 保證即使開機流程出錯也會 resolve**（不會永遠卡住）。
+// 即時出畫面，洞察與「開 App 自動更新檢查」區塊在 bootSettled 之後非阻塞地補上。**finally 保證即使開機流程出錯也會 resolve**（不會永遠卡住）。
 /** @type {(report: import('./modules/boot-sequence.js').BootReport) => void} */
 let _bootResolve = () => {};
 /** @type {Promise<import('./modules/boot-sequence.js').BootReport>} */
@@ -573,7 +573,7 @@ export const bootSettled = new Promise(res => { _bootResolve = res; });
 
 // 開機自動更新（裁示者 2026-09-29 裁「乙」，#649 留言 5893103735；2026-09-30 再裁兩則，#651 留言 5903711899、5903712093）：
 // 五步一步一步跑（同時送出在雲端模式會互撞 409）、某一步出錯不擋後面、每次向伺服器要東西最多等 BOOT_REQUEST_TIMEOUT_MS。
-// **不跳提示**：各步結果交給 bootSettled，由總覽最下面的「開 App 自動更新」區塊寫出來（文字在 modules/boot-sequence.js）。
+// **不跳提示**：各步結果交給 bootSettled，由總覽最下面的「開 App 自動更新檢查」區塊寫出來（文字與畫法在 modules/boot-sequence.js）。
 // 唯一例外＝店名整理**問過使用者之後**回他一句（他剛按下不可逆的那一步）。
 // bootSettled 在五步全部結束後才落定——洞察等它，才不會跟後面幾步搶同一次寫入（#651 複審後掃）。
 (async () => {
@@ -674,7 +674,7 @@ export const bootSettled = new Promise(res => { _bootResolve = res; });
         }
         if (!r?.ran) {   // ran:false 又沒要確認＝規則指紋已經對上（例如別的分頁剛套用過）
           if (answers.force) toast('店名規則已經是最新的，這次不用套用');
-          return { outcome: 'unchanged' };
+          return { outcome: 'unchanged', forced: !!answers.force };
         }
         const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
           r.learnedRemapped && `${r.learnedRemapped} 筆學過的設定改掛到新的店家身分`,

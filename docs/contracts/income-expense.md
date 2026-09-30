@@ -61,7 +61,7 @@
 
 **改這裡**：**帳戶顯示名 denormalized 到 `transactions.account`**（使用者定 2026-07-21「改一次、處處同步」）
 
-**記得同步這裡**：交易存的是帳戶**顯示名字串**（匯入時 `accountNameForTx` 給的，如「台新 8791」；P1a 起機構名取自 `parsed.bank`、不再寫死台新），帳戶改名後會 stale。同步靠**身分比對**：**銀行交易**＝`reconcileBankTxAccountNames`（用 `bankRef` 的遮罩帳號＋`matchAccount` 對到現有帳戶現名，**不靠可能過期的顯示字串**——所以匯入叫「台新 8791」、之後改成「【台新】活儲」仍對得上。⚠️ P1a 雙格式：舊格式 `bank|…` 帳號在第 2 段、機構視同台新；他行 `bank2|機構|…` 帳號在第 3 段、機構讀第 2 段——兩軌都把機構傳進 `matchAccount`，他行同字樣帳號的帳戶不可被錯認收編改名）；**手動記帳**（無 bankRef）退用「舊名→新名」字串連動（`crud.js onAccountSave`）。跑三處：①帳戶儲存 beforeSave ②開 app `POST /api/accounts/reconcile-names`（比照 snapshot/normalize-auto，修既有 stale、僅有變動寫檔）③匯入時 `accountNameForTx` 本就取現名。**新增別處存帳戶名＝一併納入 reconcile。**。**真的對齊到交易時同一次寫檔記 `settings.accountNamesLastAlignedAt`**（ISO、服務層擁有、匯入不保留；William 2026-09-30「開始記錄」，總覽「開 App 自動更新檢查」的「上次對齊」讀它）：帳戶儲存那條算手動記帳字串連動＋銀行交易身分對齊的筆數；開 app 那條只算帳戶名，只修說明或 autoNote 不記；匯入時取現名那條不記
+**記得同步這裡**：交易存的是帳戶**顯示名字串**（匯入時 `accountNameForTx` 給的，如「台新 8791」；P1a 起機構名取自 `parsed.bank`、不再寫死台新），帳戶改名後會 stale。同步靠**身分比對**：**銀行交易**＝`reconcileBankTxAccountNames`（用 `bankRef` 的遮罩帳號＋`matchAccount` 對到現有帳戶現名，**不靠可能過期的顯示字串**——所以匯入叫「台新 8791」、之後改成「【台新】活儲」仍對得上。⚠️ P1a 雙格式：舊格式 `bank|…` 帳號在第 2 段、機構視同台新；他行 `bank2|機構|…` 帳號在第 3 段、機構讀第 2 段——兩軌都把機構傳進 `matchAccount`，他行同字樣帳號的帳戶不可被錯認收編改名）；**手動記帳**（無 bankRef）退用「舊名→新名」字串連動（`crud.js onAccountSave`）。跑三處：①帳戶儲存 beforeSave ②開 app `POST /api/accounts/reconcile-names`（比照 snapshot/normalize-auto，修既有 stale、僅有變動寫檔）③匯入時 `accountNameForTx` 本就取現名。**新增別處存帳戶名＝一併納入 reconcile。**。**真的對齊到交易時同一次寫檔記 `settings.accountNamesLastAlignedAt`**（ISO、服務層擁有、匯入不保留；#653 留言 5905965930「開始記錄」，總覽「開 App 自動更新檢查」的「上次對齊」讀它）：帳戶儲存那條算手動記帳字串連動＋銀行交易身分對齊的筆數；開 app 那條只算帳戶名，只修說明或 autoNote 不記；匯入時取現名那條不記
 
 ## 支出分類兩層與使用者自訂
 
@@ -110,7 +110,7 @@
 
 **改這裡**：規則指紋 `settings.storeRulesHash`（開 app 自動整理的依據）
 
-**記得同步這裡**：現在＝**內建規則（程式碼）＋使用者規則（資料）**：`lib/statement.js`＋`lib/store-rules.js` 的內容雜湊（只讀一次、可快取）＋`settings.storeRules` 的正規化字串（**每次重算**，規則隨時會被編輯）。使用者自己加一條規則也要像「Claude 改了程式」一樣觸發整理，否則自助改完舊資料不動＝第一帖要解的病復發。⚠️`normalizeIfRulesChanged` 內**必須先 `getDb()` 再算指紋**（指紋含使用者規則，而使用者規則是 getDb 才餵進單例的；順序對調會拿到上一版、剛編輯完的那版不觸發）。。⚠️ **「上次整理」的時間不記在指紋這裡**：指紋每換一版規則就寫（含 0 筆變動，只改那兩支程式的註解也算），而 `settings.storeNamesLastNormalizedAt` 記的是真的改到資料——寫在 normalizeBranches 正式寫入且有變動的那一次寫檔（開 app、設定頁儲存並套用、維護端點三條路共用；ISO、服務層擁有、匯入不保留；William 2026-09-30「開始記錄」）
+**記得同步這裡**：現在＝**內建規則（程式碼）＋使用者規則（資料）**：`lib/statement.js`＋`lib/store-rules.js` 的內容雜湊（只讀一次、可快取）＋`settings.storeRules` 的正規化字串（**每次重算**，規則隨時會被編輯）。使用者自己加一條規則也要像「Claude 改了程式」一樣觸發整理，否則自助改完舊資料不動＝第一帖要解的病復發。⚠️`normalizeIfRulesChanged` 內**必須先 `getDb()` 再算指紋**（指紋含使用者規則，而使用者規則是 getDb 才餵進單例的；順序對調會拿到上一版、剛編輯完的那版不觸發）。。⚠️ **「上次整理」的時間不記在指紋這裡**：指紋每換一版規則就寫（含 0 筆變動，只改那兩支程式的註解也算），而 `settings.storeNamesLastNormalizedAt` 記的是真的改到資料——寫在 normalizeBranches 正式寫入且有變動的那一次寫檔（開 app、設定頁儲存並套用、維護端點三條路共用；ISO、服務層擁有、匯入不保留；#653 留言 5905965930「開始記錄」）
 
 ## 店名規則的 API 與 UI
 

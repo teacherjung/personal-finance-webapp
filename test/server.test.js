@@ -620,29 +620,47 @@ test('POST /accounts/reconcile-names（開 app 自動）：既有 stale 銀行�
   await DELETE_('/transactions/' + bt.id); await DELETE_('/accounts/' + acc.id);
 });
 
-test('帳戶對齊的「上次」時間（William 2026-09-30「開始記錄」）：改名真的對齊到交易才記；再跑一次沒改就不動；前端寫不進；還原備份不保留', async () => {
+test('帳戶對齊的「上次」時間（#653 留言 5905965930「開始記錄」）：帳戶儲存真的對齊到交易才記、沒對齊到就不動；開 app 對齊沒改不動；前端寫不進；還原備份不保留', async () => {
   const STAMPS = ['subsLastRolledAt', 'accountNamesLastAlignedAt', 'storeNamesLastNormalizedAt'];
+  const SENTINEL = '2000-01-01T00:00:00.000Z';   // 「沒動」要比對一個不可能是現在的值，不靠兩次呼叫之間時鐘有沒有走
+  const setAligned = async (/** @type {string|undefined} */ v) => {
+    const db = await getDb();
+    if (v === undefined) delete db.settings.accountNamesLastAlignedAt; else db.settings.accountNamesLastAlignedAt = v;
+    await saveDb(db);
+  };
+  const aligned = async () => (await GET('/settings')).accountNamesLastAlignedAt;
   const orig = await GET('/export');   // 完整備份，收尾還原免污染
   try {
     const db = await getDb();
     for (const k of STAMPS) delete db.settings[k];
     await saveDb(db);
-    // 改名那條路（onAccountSave）：舊的銀行交易靠遮罩帳號對齊到現名 → 記時間
+    // ①帳戶儲存（改名）：舊的銀行交易靠遮罩帳號對齊到現名 → 記時間
     const acc = await (await POST('/accounts', { name: '記時間測試 5555', type: 'cash', currency: 'TWD', balance: 0, accountNo: '900500****5555' })).json();
     await seedTx({ source: 'bank', account: '過期名 5555', type: 'expense', category: '其他', subcategory: '未分類', amount: 3, date: '2026-06-01', ledger: 'cashflow', bankRef: 'bank|900500****5555|2026-06-01|out|3||跨轉手續費|' });
     await PUT('/accounts/' + acc.id, { name: '記時間測試改名 5555' });
-    const afterRename = (await GET('/settings')).accountNamesLastAlignedAt;
+    const afterRename = await aligned();
     assert.ok(typeof afterRename === 'string' && !Number.isNaN(Date.parse(afterRename)), `改名對齊了交易就要記 ISO 時間（實得 ${afterRename}）`);
-    // 開 app 自動對齊：跑到沒有變動為止，時間只在真的對齊時前進；最後一輪沒改就不動
+    // ②開 app 自動對齊：先跑一次清掉同檔其他考題留下的過期名，之後沒有東西要對齊＝時間不動
     await POST('/accounts/reconcile-names', {});
-    const settled = (await GET('/settings')).accountNamesLastAlignedAt;
+    await setAligned(SENTINEL);
     const again = await (await POST('/accounts/reconcile-names', {})).json();
-    assert.equal(again.changed, 0, '前置條件：第二輪沒有任何變動');
-    assert.equal((await GET('/settings')).accountNamesLastAlignedAt, settled, '沒有對齊到任何交易＝時間不動');
+    assert.equal(again.aligned, 0, '前置條件：這一輪沒有帳戶名要對齊');
+    assert.equal(await aligned(), SENTINEL, '開 app 對齊沒改到帳戶名＝時間不動');
+    // ③帳戶儲存但沒有任何交易要對齊（只改餘額）＝時間不動
+    await PUT('/accounts/' + acc.id, { name: '記時間測試改名 5555', balance: 10 });
+    assert.equal(await aligned(), SENTINEL, '帳戶儲存沒對齊到任何交易＝時間不動');
+    // ④只有手動記帳用到的帳戶改名：字串連動改到手動交易 → 記時間
+    const cash = await (await POST('/accounts', { name: '手動記時間測試', type: 'cash', currency: 'TWD', balance: 0 })).json();
+    await POST('/transactions', { type: 'expense', date: '2026-06-03', amount: 50, account: '手動記時間測試', note: '午餐', category: '飲食', subcategory: '' });
+    await setAligned(SENTINEL);
+    await PUT('/accounts/' + cash.id, { name: '手動記時間測試改名' });
+    const afterManual = await aligned();
+    assert.ok(afterManual !== SENTINEL && !Number.isNaN(Date.parse(String(afterManual))), `手動記帳的字串連動也算對齊（實得 ${afterManual}）`);
     // 前端寫不進：三個都是服務層擁有的欄位
-    await PUT('/settings', Object.fromEntries(STAMPS.map((k) => [k, '2000-01-01T00:00:00.000Z'])));
+    await setAligned(SENTINEL);
+    await PUT('/settings', Object.fromEntries(STAMPS.map((k) => [k, '2011-01-01T00:00:00.000Z'])));
     const s = await GET('/settings');
-    assert.equal(s.accountNamesLastAlignedAt, settled, 'PUT /settings 不可改掉伺服器記的時間');
+    assert.equal(s.accountNamesLastAlignedAt, SENTINEL, 'PUT /settings 不可改掉伺服器記的時間');
     assert.ok(!('subsLastRolledAt' in s) && !('storeNamesLastNormalizedAt' in s), 'PUT /settings 不可寫進沒記過的時間');
     // 還原備份不保留（同 storeRulesHash 的先例：記的是伺服器對「這一份」資料做過的事，還原後重新開始記）
     const backup = await GET('/export');
@@ -711,6 +729,7 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
     date: '2026-07-08', type: 'expense', category: '飲食', subcategory: '超市',
     amount: 55, note: '統一超商-百福', storeKey: '統一超商-百福', source: 'stmt',
   });
+  { const db = await getDb(); delete db.settings.storeNamesLastNormalizedAt; await saveDb(db); }
   // 預覽（dryRun）：回 before→after，且不改資料
   const prev = await (await POST('/statement/normalize-branches', { dryRun: true })).json();
   assert.ok(prev.changed >= 1);
@@ -721,9 +740,13 @@ test('店名格式整理（HTTP 全鏈路）：預覽不寫檔、套用改 note�
   const noForce = await POST('/statement/normalize-branches', {});
   assert.equal(noForce.status, 400, '空 body 不可默默套用');
   assert.equal((await GET('/transactions')).find(t => t.id === tx.id).note, '統一超商-百福', '被擋下＝資料不動');
+  assert.ok(!('storeNamesLastNormalizedAt' in await GET('/settings')), '預覽與被擋下都不可記「上次整理」');
   // 正式套用（明確帶 force）：note 與 storeKey 一併正規化
   const applied = await (await POST('/statement/normalize-branches', { force: true })).json();
   assert.ok(applied.changed >= 1);
+  const normalizedAt = (await GET('/settings')).storeNamesLastNormalizedAt;
+  assert.ok(typeof normalizedAt === 'string' && !Number.isNaN(Date.parse(normalizedAt)),
+    `維護端點真的改到資料也要記「上次整理」（這條路不經規則指紋那次寫入；實得 ${normalizedAt}）`);
   const after = (await GET('/transactions')).find(t => t.id === tx.id);
   assert.equal(after.note, '統一超商（百福）', '套用後 note 已正規化');
   assert.equal(after.storeKey, '統一超商', 'storeKey＝身分鑰匙（品牌層、不含分店）');

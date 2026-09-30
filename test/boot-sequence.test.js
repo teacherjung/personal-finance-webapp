@@ -1,17 +1,18 @@
 // @ts-check
 // 開機自動更新（public/modules/boot-sequence.js 與 public/app.js 最後那一段；裁示者 2026-09-29 裁「乙」、2026-09-30 再裁兩則：
 // 不跳提示、改在總覽寫出狀態（#651 留言 5903711899）；每次請求有等待上限、洞察等五步全部做完（#651 留言 5903712093）；
-// 同日下午 William 給了區塊格式、要「開始記錄」上次真的推進／對齊／整理的日期）。
+// 區塊格式與「開始記錄」上次真的推進／對齊／整理的日期＝#653 留言 5905965930）。
 // app.js 那一段**原封不動**抽出來（連同 bootSettled 的宣告），配假的 api／toast／router 在 node:vm 裡真的跑——驗的是行為，不是字面。
-// 守不到的：真瀏覽器、真伺服器（那一層是隔離伺服器實開與合併後驗收）；總覽那一塊怎麼畫、總覽何時抓洞察（dashboard.js 等 bootSettled）——
-// 這兩件在 dashboard.js，這份考卷沒有載入它（#651 r4 的抽驗：拿掉「等 bootSettled」這裡仍全綠）。
+// 那一塊的 HTML（bootStatusHtml）與「等開機、等洞察」（createBootStatusWatcher）在模組裡直接考。
+// 守不到的：真瀏覽器、真伺服器（那一層是隔離伺服器實開與合併後驗收）；dashboard.js 有沒有把 watcher 接上 bootSettled 與
+// fetchInsightsOnce、有沒有在畫總覽時叫它——那幾行在 dashboard.js，這份考卷沒有載入它。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { runBootSteps, withTimeout, bootStatusView, pickStamps, insightsStatusOf, BOOT_REQUEST_TIMEOUT_MS } from '../public/modules/boot-sequence.js';
+import { runBootSteps, withTimeout, bootStatusView, bootStatusHtml, createBootStatusWatcher, pickStamps, insightsStatusOf, BOOT_REQUEST_TIMEOUT_MS } from '../public/modules/boot-sequence.js';
 import { backupAlertView } from '../public/modules/backup-alert.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -93,26 +94,26 @@ test('withTimeout：等太久就丟 BootTimeoutError；先回來的照原樣回�
   assert.equal(BOOT_REQUEST_TIMEOUT_MS, 30_000, '上限＝30 秒（裁示操作化，#651 留言 5903712093）');
 });
 
-// ─── 模組：總覽「開 App 自動更新檢查」區塊的文字（格式＝William 2026-09-30 下午給的） ─────────────
+// ─── 模組：總覽「開 App 自動更新檢查」那一塊（格式出處＝#653 留言 5905965930） ─────────────────────
 
 const AT = localIso(2026, 9, 30, 13, 38);
 const NO_STAMPS = pickStamps(null);
-/** @param {Record<string, any>} results @param {Record<string, string|null>} [stamps] @param {any} [insights] */
-const view = (results, stamps = {}, insights = undefined) => bootStatusView({ at: AT, results, stamps: { ...NO_STAMPS, ...stamps } }, insights);
+/** @param {Record<string, any>} results @param {Record<string, string|null>} [stamps] @param {any} [insights] @param {string} [at] */
+const view = (results, stamps = {}, insights = undefined, at = AT) => bootStatusView({ at, results, stamps: { ...NO_STAMPS, ...stamps } }, insights);
 const ok = (/** @type {any} */ value) => ({ ok: true, value });
 const bad = (/** @type {unknown} */ error) => ({ ok: false, error });
-/** 沒有東西要改的一天（William 給的範例就是這種）。 */
+/** 沒有東西要改的一天（#653 留言 5905965930 那張圖就是這種）。 */
 const QUIET = {
   quotes: ok({ refreshed: true, updated: 3 }),
   snapshot: ok({ recorded: false, snap: { date: '2026-09-01' }, daily: { date: '2026-09-30' }, subsRolled: [] }),
   backup: ok(undefined),
-  accounts: ok({ changed: 0 }),
+  accounts: ok({ changed: 0, aligned: 0 }),
   storeNames: ok({ outcome: 'unchanged' }),
 };
 const ALL_CHANGED = {
   ...QUIET,
   snapshot: ok({ recorded: true, snap: { date: '2026-09-30' }, daily: { date: '2026-09-30' }, subsRolled: [{}, {}] }),
-  accounts: ok({ changed: 3 }),
+  accounts: ok({ changed: 5, aligned: 3 }),
   storeNames: ok({ outcome: 'applied', bits: ['12 筆說明', '2 筆店家身分'], forced: false }),
 };
 /** 三個「上次真的做」的日期都有記。 */
@@ -122,7 +123,7 @@ const OLD_STAMPS = {
   storeNamesLastNormalizedAt: localIso(2025, 12, 3, 10, 0),
 };
 
-test('狀態區塊：William 給的格式逐字重現（沒有東西要改的一天）；每日備份不列（雲端不做備份，列了就等於暗示有）', () => {
+test('狀態區塊：那張圖的六行照原文重現（沒有東西要改的一天）；每日備份不列（雲端不做備份，列了就等於暗示有）', () => {
   const v = view(QUIET, { quotesLastAt: AT }, { state: 'ok', at: AT });
   assert.equal(v.title, '開 App 自動更新檢查（2026-09-30）');
   assert.deepEqual(v.rows, [
@@ -136,19 +137,28 @@ test('狀態區塊：William 給的格式逐字重現（沒有東西要改的一
   assert.ok(!JSON.stringify(v).includes('備份'));
 });
 
-test('狀態區塊：這次有改到東西——寫出改了什麼；這時不附「上次」（上次就是這次）；洞察還沒回來＝更新中', () => {
+test('狀態區塊：三行的時間各有各的來源——報價＝伺服器記的報價時間、快照＝這次檢查的時間、洞察＝存書籤回的時間', () => {
+  const v = view(QUIET, { quotesLastAt: localIso(2026, 9, 30, 13, 5) }, { state: 'ok', at: localIso(2026, 9, 30, 13, 41) });
+  assert.deepEqual([v.rows[0].text, v.rows[1].text, v.rows[5].text], ['9/30 13:05 已更新', '9/30 13:38 已紀錄', '9/30 13:41 已更新']);
+  assert.equal(view(QUIET, {}, undefined, localIso(2026, 10, 5, 9, 0)).title, '開 App 自動更新檢查（2026-10-05）', '月、日補兩位');
+});
+
+test('狀態區塊：這次有改到東西——寫出改了什麼、不附「上次」小字；洞察還沒回來＝更新中', () => {
   const v = view(ALL_CHANGED, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows, [
     { label: '更新報價', level: 'ok', text: '9/30 13:38 已更新' },
     { label: '紀錄快照', level: 'ok', text: '9/30 13:38 已紀錄' },
     { label: '更新訂閱', level: 'ok', text: '續費日推進了 2 筆' },
-    { label: '帳戶對齊', level: 'ok', text: '更新了 3 處帳戶名或說明' },
+    { label: '帳戶對齊', level: 'ok', text: '更新了 3 筆交易的帳戶名' },
     { label: '店名整理', level: 'ok', text: '店名規則有更新，整理了 12 筆說明、2 筆店家身分' },
     { label: '更新洞察', level: 'pending', text: '更新中…' },
   ]);
+  const notesOnly = view({ ...QUIET, accounts: ok({ changed: 4, aligned: 0 }) }, OLD_STAMPS).rows[3];
+  assert.deepEqual(notesOnly, { label: '帳戶對齊', level: 'ok', text: '所有帳戶名都已是最新', note: '上次對齊 9/20' },
+    '只修了說明或隱藏的 autoNote（aligned 0）不算帳戶名有改');
 });
 
-test('狀態區塊：這次沒有要改的——小字補上伺服器記的「上次真的做」的日期；不同年要寫年份（William 2026-09-30「開始記錄」）', () => {
+test('狀態區塊：這次沒有要改的——小字補上伺服器記的「上次真的做」的日期；不同年要寫年份（#653 留言 5905965930「開始記錄」）', () => {
   const v = view(QUIET, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows.slice(2, 5), [
     { label: '更新訂閱', level: 'ok', text: '續費日沒有需要推進的', note: '上次推進 9/15' },
@@ -179,12 +189,12 @@ test('狀態區塊：出錯的那一行標 ⚠️（warn），只說「沒有檢
   assert.doesNotMatch(JSON.stringify(v), /沒做成|沒完成|再跑一次|再檢查一次/);
 });
 
-test('狀態區塊：報價只更新了一部分、抓不到新的、報價時間讀不到；快照遇到電腦日期倒退', () => {
+test('狀態區塊：報價只更新了一部分、抓不到新的、報價時間讀不到；快照遇到電腦日期倒退、日線沒回來', () => {
   /** @param {any} value @param {string|null} t */
   const quote = (value, t) => view({ ...QUIET, quotes: ok(value) }, { quotesLastAt: t }).rows[0];
   assert.deepEqual(quote({ refreshed: true, updated: 0, skipped: 2 }, AT),
-    { label: '更新報價', level: 'warn', text: '9/30 13:38 已更新，但有 2 檔持股沒抓到新價格' },
-    '只抓到匯率、持股沒抓到也是 refreshed:true——不可以寫成全部更新了（#651 r4 #2）');
+    { label: '更新報價', level: 'warn', text: '9/30 13:38 已更新，但有 2 檔持股沒有更新價格' },
+    '只抓到匯率、持股沒更新也是 refreshed:true——不可以寫成全部更新了（#651 r4 #2）；幣別對不上也算在 skipped 裡，所以不說「沒抓到」');
   assert.deepEqual(quote({ refreshed: false, updated: 0, reason: 'no-data' }, localIso(2026, 9, 28, 9, 5)),
     { label: '更新報價', level: 'warn', text: '這次抓不到新報價（沿用 9/28 09:05 的價格）' });
   assert.deepEqual(quote({ refreshed: false, reason: 'error' }, null), { label: '更新報價', level: 'warn', text: '這次抓不到新報價（沿用舊的價格）' });
@@ -195,15 +205,22 @@ test('狀態區塊：報價只更新了一部分、抓不到新的、報價時�
     ['warn', '電腦日期比已紀錄的資料還早，這次沒有紀錄（請確認電腦時間）', undefined],
     ['warn', '這次沒有檢查（電腦日期比已紀錄的資料還早）', undefined],
   ]);
+  const noDaily = view({ ...QUIET, snapshot: ok({ recorded: true, snap: { date: '2026-09-01' }, daily: null, subsRolled: [] }) });
+  assert.deepEqual(noDaily.rows[1], { label: '紀錄快照', level: 'ok', text: '本月快照 9/1' }, '日線沒回來時退回本月快照的日期');
+  const nothing = view({ ...QUIET, snapshot: ok({ recorded: false, snap: null, daily: null, subsRolled: [] }) });
+  assert.deepEqual(nothing.rows[1], { label: '紀錄快照', level: 'ok', text: '本月還沒有快照' });
 });
 
-test('狀態區塊：店名規則的每一種結果', () => {
+test('狀態區塊：店名規則的每一種結果；使用者自己選「先不套用」不算沒檢查成功（標 ✓，照樣寫出他的選擇）', () => {
   /** @param {any} value */
   const store = (value) => view({ ...QUIET, storeNames: ok(value) }, OLD_STAMPS).rows[4];
   assert.deepEqual(store({ outcome: 'applied', bits: [], forced: true }), { label: '店名整理', level: 'ok', text: '店名規則有更新，已套用' });
   assert.deepEqual(store({ outcome: 'applied', bits: [], forced: false }), { label: '店名整理', level: 'ok', text: '店名規則有更新，已套用' },
     '計數都是 0 也不說「沒有需要整理」——計數不一定涵蓋每一種改動（#651 r4 #5）');
-  assert.deepEqual(store({ outcome: 'declined' }), { label: '店名整理', level: 'warn', text: '店名規則有更新，你選了先不套用（下次開 App 會再問你）' });
+  assert.deepEqual(store({ outcome: 'declined' }), { label: '店名整理', level: 'ok', text: '店名規則有更新，你選了先不套用（下次開 App 會再問你）' },
+    '底下那句說 ⚠️＝沒有檢查成功；按取消是他的選擇、不是檢查失敗');
+  assert.deepEqual(store({ outcome: 'unchanged', forced: true }), { label: '店名整理', level: 'ok', text: '店名規則已經是最新的（不整理）', note: '上次整理 2025/12/3' },
+    '按了確定、伺服器卻說這版已套用過（別的分頁先套用）——不寫成「沒變」');
   assert.deepEqual(store({ outcome: 'blocked' }), { label: '店名整理', level: 'warn', text: '店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動' });
   assert.deepEqual(store({ outcome: 'unknown' }), { label: '店名整理', level: 'warn', text: '店名規則這次沒有套用（伺服器回了一個目前看不懂的狀況），資料沒有變動' });
 });
@@ -216,10 +233,71 @@ test('pickStamps：只挑四個時間、不是字串（或空字串）就當沒�
 
 test('insightsStatusOf：存完書籤回了 seenAt 才算成功；路由接住錯誤回的 200（帶 error）、網路錯誤、缺 seenAt 都算沒成功', () => {
   assert.deepEqual(insightsStatusOf({ seenAt: AT, calm: true }), { state: 'ok', at: AT });
+  assert.equal(insightsStatusOf({ seenAt: AT, error: 'x' }).state, 'fail', '有 seenAt 但也帶 error＝沒成功');
   assert.equal(insightsStatusOf({ firstRun: true, calm: true, error: '資料在你操作期間被另一個裝置或分頁改過' }).state, 'fail');
   assert.equal(insightsStatusOf({ error: true }).state, 'fail');
   assert.equal(insightsStatusOf({ calm: true }).state, 'fail');
   assert.equal(insightsStatusOf(null).state, 'fail');
+});
+
+/** 測試用的轉義（跟 app.js 的 esc 同一件事：擋 HTML）。 @param {string} s */
+const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+test('bootStatusHtml：開頭那句、結尾那句、✓／⚠️ 記號、小字照 #653 留言 5905965930；開機還沒跑完＝檢查中', () => {
+  const html = bootStatusHtml({ at: AT, results: { ...QUIET, quotes: bad(conflict()) }, stamps: { ...NO_STAMPS, ...OLD_STAMPS } }, { state: 'ok', at: AT }, escHtml);
+  assert.ok(html.includes('開 App 自動更新檢查（2026-09-30）'));
+  assert.ok(html.includes('<p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>'));
+  assert.ok(html.includes('標 ⚠️ 的是這次沒有檢查成功的項目。'));
+  assert.ok(html.includes('<li class="warn"><span class="boot-status-mark">⚠️</span><span class="boot-status-label">更新報價</span>'));
+  assert.ok(html.includes('<li class="ok"><span class="boot-status-mark">✓</span><span class="boot-status-label">更新訂閱</span><span class="boot-status-text">續費日沒有需要推進的<small>上次推進 9/15</small></span></li>'));
+  assert.equal((html.match(/<li /g) || []).length, 6, '六行');
+  assert.equal(bootStatusHtml(null, undefined, escHtml), '<div class="boot-status-title">開 App 自動更新檢查</div><p class="muted boot-status-intro">檢查中…</p>');
+});
+
+test('bootStatusHtml：每一段字都經過轉義（伺服器回來的字不可以變成網頁元素）', () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const html = bootStatusHtml({ at: AT, results: { ...QUIET, storeNames: ok({ outcome: 'applied', bits: [evil] }) }, stamps: NO_STAMPS }, undefined, escHtml);
+  assert.ok(!html.includes('<img'), '店名整理的那段字沒有轉義');
+  assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+});
+
+test('createBootStatusWatcher：開機落定→畫一次；洞察很快回來→✓；start() 多叫也只抓一次洞察', async () => {
+  const settled = deferred(), ins = deferred();
+  let fetches = 0, changes = 0;
+  const w = createBootStatusWatcher({ settled: /** @type {any} */ (settled.promise), fetchInsights: () => { fetches++; return ins.promise; }, timeoutMs: 1000, onChange: () => { changes++; } });
+  w.start(); w.start(); w.start();
+  await flush();
+  assert.equal(w.state.report, null, '開機還沒落定就不可以有結果');
+  assert.equal(fetches, 0, '開機還沒落定就不可以抓洞察');
+  const report = { at: AT, results: QUIET, stamps: NO_STAMPS };
+  settled.resolve(report); await flush();
+  assert.equal(w.state.report, report);
+  assert.equal(w.state.insights.state, 'pending');
+  assert.equal(fetches, 1, 'start() 叫三次也只抓一次');
+  ins.resolve({ seenAt: AT }); await flush();
+  assert.deepEqual(w.state.insights, { state: 'ok', at: AT });
+  assert.ok(changes >= 2, '落定、洞察回來各要叫一次重畫');
+});
+
+test('createBootStatusWatcher：洞察一直不回→到上限標 ⚠️（逾時）；之後真的回來→改成實際結果', async () => {
+  const ins = deferred();
+  const w = createBootStatusWatcher({ settled: Promise.resolve(/** @type {any} */ ({ at: AT, results: QUIET, stamps: NO_STAMPS })), fetchInsights: () => ins.promise, timeoutMs: 20, onChange: () => {} });
+  w.start();
+  await within(new Promise((r) => setTimeout(r, 60)), 2000, '等不到');
+  await flush();
+  assert.equal(w.state.insights.state, 'fail', '到上限還沒回來要標 ⚠️');
+  assert.equal(/** @type {any} */ (w.state.insights).error?.name, 'BootTimeoutError');
+  ins.resolve({ seenAt: AT }); await flush();
+  assert.deepEqual(w.state.insights, { state: 'ok', at: AT }, '晚一點真的回來了，就改成 ✓');
+});
+
+test('createBootStatusWatcher：洞察回了錯誤（帶 error）或直接失敗→⚠️', async () => {
+  const w1 = createBootStatusWatcher({ settled: Promise.resolve(/** @type {any} */ ({ at: AT, results: QUIET, stamps: NO_STAMPS })), fetchInsights: async () => ({ error: true }), timeoutMs: 1000, onChange: () => {} });
+  w1.start(); await flush();
+  assert.equal(w1.state.insights.state, 'fail');
+  const w2 = createBootStatusWatcher({ settled: Promise.resolve(/** @type {any} */ ({ at: AT, results: QUIET, stamps: NO_STAMPS })), fetchInsights: () => Promise.reject(new TypeError('Failed to fetch')), timeoutMs: 1000, onChange: () => {} });
+  w2.start(); await flush();
+  assert.equal(w2.state.insights.state, 'fail');
 });
 
 // ─── app.js 最後那一段，真的跑 ──────────────────────────────────────────────
@@ -408,7 +486,7 @@ test('app.js：按了確定之後，每一條結束的路都回他一句（出�
   const same = confirmedBoot((d) => d.resolve({ ran: false }));
   const r3 = await same.settled; await same.done;
   assert.deepEqual(same.toasts, [{ msg: '店名規則已經是最新的，這次不用套用', isErr: false }]);
-  assert.deepEqual(plain(r3.results.storeNames.value), { outcome: 'unchanged' });
+  assert.deepEqual(plain(r3.results.storeNames.value), { outcome: 'unchanged', forced: true });
 
   const remapped = confirmedBoot((d) => d.resolve({ ran: true, changed: 0, keyChanged: 0, learnedRemapped: 1, learnedNamesFixed: 0 }));
   const r4 = await remapped.settled; await remapped.done;

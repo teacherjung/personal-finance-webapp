@@ -98,12 +98,14 @@ test('自動推進（服務層）：只動續費日、金額一分不變、沒�
     '推續費日不可改動任何一個月的攤提金額');
   assert.ok(cardBefore > 0, '前置條件：這批合成訂閱本月確實有金額（否則下一行是空斷言）');
   assert.equal(buildSummary(await getDb()).subscriptions.monthly, cardBefore, '總覽的訂閱月費也不可變');
-  // 記下「上次真的推進」的時間（William 2026-09-30「開始記錄」）：ISO 時間、跟這次推進同一次寫檔
+  // 記下「上次真的推進」的時間（#653 留言 5905965930「開始記錄」）：ISO 時間、跟這次推進同一次寫檔
   const stamp = (await getDb()).settings?.subsLastRolledAt;
   assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `真的推了就要記 ISO 時間（實得 ${stamp}）`);
-  // 冪等：再跑一次沒有任何一筆要推
+  // 冪等：再跑一次沒有任何一筆要推。「時間不動」比對一個不可能是現在的值，不靠兩次呼叫之間時鐘有沒有走
+  const SENTINEL = '2000-01-01T00:00:00.000Z';
+  { const d = await getDb(); d.settings.subsLastRolledAt = SENTINEL; await saveDb(d); }
   assert.deepEqual((await rollDueSubscriptions(TODAY)).rolled, [], '推完再跑＝零變動（每次開 app 都會跑）');
-  assert.equal((await getDb()).settings?.subsLastRolledAt, stamp, '沒推任何一筆＝時間不動');
+  assert.equal((await getDb()).settings?.subsLastRolledAt, SENTINEL, '沒推任何一筆＝時間不動');
 });
 
 test('過期提醒沒有 30 天下限（使用者要求補漏洞 2026-07-26）', async () => {

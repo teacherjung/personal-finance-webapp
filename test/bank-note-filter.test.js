@@ -92,7 +92,8 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
   ];
   delete db.settings.accountNamesLastAlignedAt;
   await saveDb(db);
-  const { changed } = await reconcileAccountNamesAuto();
+  const { changed, aligned } = await reconcileAccountNamesAuto();
+  assert.equal(aligned, 0, '帳戶名本來就對：只修說明，aligned 要是 0');
   assert.ok(changed >= 3, `三筆的 note/autoNote 至少各有一處更新（實得 ${changed}）`);
   const fresh = await getDb();
   const t1 = (fresh.transactions || []).find(t => t.id === 't1');
@@ -105,13 +106,14 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
   // 冪等：再跑一次不再有變動
   const again = await reconcileAccountNamesAuto();
   assert.equal(again.changed, 0, '第二輪不可再報變動（冪等）');
-  // 帳戶名本來就對、只修了說明＝不記「上次對齊」（William 2026-09-30「開始記錄」記的是帳戶名真的對齊）
+  // 帳戶名本來就對、只修了說明＝不記「上次對齊」（#653 留言 5905965930「開始記錄」記的是帳戶名真的對齊）
   assert.ok(!(await getDb()).settings?.accountNamesLastAlignedAt, '只修說明不可記「上次對齊」的時間');
   // 帳戶名真的過期 → 對齊並記 ISO 時間
   const db2 = await getDb();
   db2.transactions = [{ ...mk('t9', '轉帳支取', '轉入288810****8791', '轉帳支取・轉入288810****8791'), account: '過期的舊名' }];
   await saveDb(db2);
-  await reconcileAccountNamesAuto();
+  const r2 = await reconcileAccountNamesAuto();
+  assert.equal(r2.aligned, 1, '回報帳戶名真的對齊了幾筆（總覽「帳戶對齊」那一行用它）');
   assert.equal((await getDb()).transactions?.[0].account, '台新活儲（Richart）', '前置條件：帳戶名真的被對齊了');
   const stamp = (await getDb()).settings?.accountNamesLastAlignedAt;
   assert.ok(typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp)), `帳戶名真的對齊了就要記 ISO 時間（實得 ${stamp}）`);

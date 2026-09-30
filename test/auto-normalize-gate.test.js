@@ -83,7 +83,7 @@ test('同一版規則只跑一次（記過指紋就不再問、不再跑）', as
   assert.equal(r.needsConfirmation, undefined, '指紋沒變＝這版已處理過，不該再問');
 });
 
-test('規則換了一版、但沒有任何資料要改 → 記指紋、不記「上次整理」的時間（William 2026-09-30「開始記錄」：記的是真的改到資料）', async () => {
+test('規則換了一版、但沒有任何資料要改 → 記指紋、不記「上次整理」的時間（#653 留言 5905965930「開始記錄」：記的是真的改到資料）', async () => {
   store.save({ ...store.emptyDb(),
     settings: { ...store.emptyDb().settings,
       storeRules: { chains: ['鮮芋仙'], canon: [], brand: [], rename: [], parkExempt: [] } } });
