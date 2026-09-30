@@ -547,6 +547,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* 月度回顧：一張卡、兩個閱讀區；內部用分隔線，不再疊小卡。 */
 #monthlyReviewBlock { margin-top: 16px; }
 #monthlyReviewBlock[aria-busy="true"] { opacity: .68; pointer-events: none; }
+/* 開 App 自動更新（總覽最下面；裁示 2026-09-30，#651）：開機那幾步不跳提示，結果寫在這裡 */
+.boot-status { margin-top: 16px; }
+.boot-status .dash-h { margin-bottom: 4px; }
+.boot-status-when { font-weight: 400; }
+.boot-status-note { font-size: 12px; margin: 0 0 10px; }
+.boot-status-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.boot-status-list li { display: grid; grid-template-columns: 8em minmax(0, 1fr); gap: 12px; }
+.boot-status-list li.warn { color: var(--warn); font-weight: 700; }
+.boot-status-label { color: var(--text-dim); }
+.boot-status-list li.warn .boot-status-label { color: var(--warn); }
 .monthly-review { padding: 22px 24px; }
 .mr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .mr-head .dash-h { margin-bottom: 4px; }
