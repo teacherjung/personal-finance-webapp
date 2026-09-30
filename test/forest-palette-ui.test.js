@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 const tabs = readFileSync(new URL('../public/workspace-tabs.css', import.meta.url), 'utf8');
@@ -53,7 +54,7 @@ test('UI5 暖米橘色票：紙張底不偏綠，品牌互動與主要按鈕拆�
   assert.equal(token('pos-soft').toLowerCase(), '#e3edcf');
 });
 
-test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus 與提示走品牌橘', () => {
+test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、按鈕連結 focus 與提示走品牌橘', () => {
   assert.match(ruleBody(styles, '.btn'), /background:\s*var\(--action\)/);
   assert.match(ruleBody(styles, '.btn:hover'), /background:\s*var\(--action-hover\)/);
   assert.doesNotMatch(ruleBody(styles, '.btn'), /var\(--accent\)/);
@@ -87,7 +88,51 @@ test('UI5 暖米橘色票：綠色只供主要按鈕，導覽、排序、focus �
     'securities containers and selection effects must stay in the warm beige-orange palette');
 });
 
-test('UI5 暖米橘色票：橘色文字、橘色 focus 與綠色按鈕維持可讀對比', () => {
+test('10 種代表性表單欄位的 jsdom 計算值符合單線焦點設計', () => {
+  // 輸入明列目前 8 份 CSS，並用測試 class 模擬 :focus 與 :focus-visible。
+  // 這題只斷言下列測試 DOM 的 getComputedStyle 結果；未建模的偽類、條件規則、
+  // jsdom 與瀏覽器不同的 cascade 或繪製行為一律不在保證範圍。
+  const testCss = [
+    styles, bankAccounts, cards, insurance, subscriptionsCss, securitiesCss, tabs, stockResearch,
+  ].join('\n')
+    .replaceAll(':focus-visible', '.__test_focus_visible')
+    .replace(/:focus(?![-\w])/g, '.__test_focus')
+    .replaceAll('var(--frame)', token('frame'));
+  const dom = new JSDOM(`
+    <style>${testCss}</style>
+    <input id="plain" class="__test_focus __test_focus_visible">
+    <input id="file" class="__test_focus __test_focus_visible" type="file">
+    <select id="select" class="__test_focus __test_focus_visible"><option>全部</option></select>
+    <textarea id="textarea" class="__test_focus __test_focus_visible"></textarea>
+    <div class="securities-filter-section"><div class="sec-toolbar">
+      <input id="security-input" class="__test_focus __test_focus_visible">
+      <select id="security-select" class="__test_focus __test_focus_visible"><option>全部</option></select>
+    </div></div>
+    <div class="rule-row">
+      <input id="rule-input" class="__test_focus __test_focus_visible">
+      <select id="rule-select" class="__test_focus __test_focus_visible"><option>包含</option></select>
+    </div>
+    <input id="sub-name" class="sub-name __test_focus __test_focus_visible">
+    <input id="checkbox" class="__test_focus __test_focus_visible" type="checkbox">
+  `);
+  const frame = token('frame').toLowerCase();
+
+  for (const id of [
+    'plain', 'file', 'select', 'textarea', 'security-input', 'security-select',
+    'rule-input', 'rule-select', 'sub-name', 'checkbox',
+  ]) {
+    const control = dom.window.document.getElementById(id);
+    const computed = dom.window.getComputedStyle(control);
+    assert.equal(computed.outline.toLowerCase(), `2px solid ${frame}`, `${id} focus line`);
+    assert.equal(computed.outlineOffset, '-2px', `${id} focus line must replace, not stack outside, its border`);
+    assert.equal(computed.boxShadow, 'none', `${id} must not regain the pale orange glow`);
+  }
+
+  assert.ok(contrast(token('frame'), token('card')) >= 3,
+    'single dark focus line must remain visible on form controls');
+});
+
+test('UI5 暖米橘色票：橘色文字、按鈕連結的橘色 focus 與綠色按鈕維持可讀對比', () => {
   for (const background of ['bg', 'card', 'card-2']) {
     assert.ok(contrast(token('accent-ink'), token(background)) >= 4.5,
       `--accent-ink must keep 4.5:1 contrast on --${background}`);
