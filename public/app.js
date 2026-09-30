@@ -663,18 +663,27 @@ export const bootSettled = new Promise(res => { _bootResolve = res; });
             if (answers.force) toast('店名規則這次沒有套用（伺服器回了一個目前看不懂的狀況），資料沒有變動', true);
             return { outcome: 'unknown' };
           }
-          r = await bootApi('/statement/normalize-auto', { method: 'POST', body: answers });
+          try { r = await bootApi('/statement/normalize-auto', { method: 'POST', body: answers }); }
+          catch (e) {   // 他剛按了確定：出錯或逾時也要回話；逾時時伺服器可能還在做，所以不說「沒有套用」（#651 r4 #1）
+            toast('店名規則這次出了問題，不確定有沒有套用', true);
+            throw e;
+          }
         }
         if (r?.needsConfirmation) {   // 只有連問三次都確認了還被擋才會到這裡＝一定問過他
           toast('店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動', true);
           return { outcome: 'blocked' };
         }
-        if (!r?.ran) return { outcome: 'unchanged' };
+        if (!r?.ran) {   // ran:false 又沒要確認＝規則指紋已經對上（例如別的分頁剛套用過）
+          if (answers.force) toast('店名規則已經是最新的，這次不用套用');
+          return { outcome: 'unchanged' };
+        }
         const bits = [r.changed && `${r.changed} 筆說明`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
+          r.learnedRemapped && `${r.learnedRemapped} 筆學過的設定改掛到新的店家身分`,
           r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
         // ⚠️ 問過使用者就**一定要回話**（他剛按下的是不可逆的那一步）：
         // 只有學習表衝突、沒有其他變動時 bits 是空的，靜靜結束會讓剛按下「確定」的人不知道到底做了沒。
         if (answers.force) toast(bits.length ? `店名規則已更新，自動整理了 ${bits.join('、')} ✨` : '店名規則已更新並套用 ✨');
+        // ↑ 問過他之後的每一條結束路徑都要回話：成功（這裡）、出錯或逾時、已是最新、看不懂、確認後仍被擋
         if (bits.length || answers.force) router();
         return { outcome: 'applied', bits, forced: !!answers.force };
       } },

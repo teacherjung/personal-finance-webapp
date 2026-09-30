@@ -80,6 +80,7 @@ function problemText(r) {
 /**
  * 總覽最下面「開 App 自動更新」那一塊的文字（零 DOM；dashboard.js 負責畫）。
  * 每日備份不列：它有自己的警告框，而且雲端版不做備份（列出來就等於暗示有備份）。
+ * ok:false（畫面標 ⚠）＝這次沒有照常做完：出錯、逾時、只做了一部分、或使用者在確認視窗選了先不套用——不全是「出錯」（#651 r4 #7）。
  * 訂閱續費日、帳戶名、店名規則寫的是**這次開 App 檢查的結果**，不是跨次的歷史（裁示操作化，#651 留言 5903711899）。
  * @param {BootReport} report
  * @returns {{ checkedAt: string, rows: BootStatusRow[] }}
@@ -90,11 +91,18 @@ export function bootStatusView(report) {
   /** @type {BootStatusRow[]} */
   const rows = [];
 
+  // 報價時間＝settings.quotesLastAt＝「上次自動更新抓到任何一筆報價或匯率」的時間（market-data.js），
+  // 不代表每一檔持股都是那個時間的價格；讀不到就不寫時間（不拿這次開機的時間頂替，#651 r4 #2）。
   const q = res.quotes;
-  if (!q?.ok) rows.push({ label: '報價', ok: false, text: problemText(q) + (lastQuote ? `；目前是 ${lastQuote} 的報價` : '') });
-  else if (q.value?.refreshed) rows.push({ label: '報價', ok: true, text: `已更新（${lastQuote ?? whenText(report.at)}）` });
-  else if (q.value?.reason === 'fresh') rows.push({ label: '報價', ok: true, text: lastQuote ? `${lastQuote} 更新過，一小時內不重抓` : '一小時內更新過，不重抓' });
-  else rows.push({ label: '報價', ok: false, text: `這次抓不到新報價，沿用${lastQuote ? ` ${lastQuote} 的` : '舊的'}報價` });
+  const lastNote = lastQuote ? `（上次自動更新是 ${lastQuote}）` : '';
+  if (!q?.ok) rows.push({ label: '報價', ok: false, text: problemText(q) + lastNote });
+  else if (q.value?.refreshed) {
+    const skipped = Number(q.value.skipped) || 0;   // 抓不到、或幣別對不上而沒更新價格的持股
+    rows.push({ label: '報價', ok: !skipped,
+      text: (lastQuote ? `已自動更新（${lastQuote}）` : '已自動更新') + (skipped ? `；有 ${skipped} 檔持股這次沒有更新價格` : '') });
+  }
+  else if (q.value?.reason === 'fresh') rows.push({ label: '報價', ok: true, text: lastQuote ? `${lastQuote} 自動更新過，一小時內不重抓` : '一小時內自動更新過，不重抓' });
+  else rows.push({ label: '報價', ok: false, text: `這次抓不到新報價，沿用舊的價格${lastNote}` });
 
   const s = res.snapshot;
   const snap = s?.ok ? (s.value || {}) : null;
@@ -108,14 +116,16 @@ export function bootStatusView(report) {
     const d = dayText(snap.snap?.date);
     rows.push({ label: '快照', ok: true, text: (d ? `本月快照 ${d}` : '本月還沒有快照') + (snap.daily ? '；今天的淨資產已記' : '') });
     const n = Array.isArray(snap.subsRolled) ? snap.subsRolled.length : 0;
-    rows.push({ label: '訂閱續費日', ok: true, text: n ? `這次把 ${n} 筆過期的推到下一期` : '沒有過期的' });
+    // subsRolled＝這次真的推進的；即將停用、填了停用日等刻意不推的過期日期不在裡面（#651 r4 #4）
+    rows.push({ label: '訂閱續費日', ok: true, text: n ? `這次把 ${n} 筆過期的推到下一期` : '這次沒有需要自動推進的' });
   }
 
   const a = res.accounts;
   if (!a?.ok) rows.push({ label: '帳戶名', ok: false, text: problemText(a) });
   else {
+    // changed＝改動的處數，不是交易筆數：同一筆交易的帳戶名與說明都改會算兩處（bank-import.js；#651 r4 #3）
     const n = Number(a.value?.changed) || 0;
-    rows.push({ label: '帳戶名', ok: true, text: n ? `這次更新了 ${n} 筆交易的帳戶名或說明` : '都已是最新' });
+    rows.push({ label: '帳戶名', ok: true, text: n ? `這次做了 ${n} 處更新（帳戶名或交易說明）` : '都已是最新' });
   }
 
   const st = res.storeNames;
@@ -124,8 +134,8 @@ export function bootStatusView(report) {
   else if (o.outcome === 'unchanged') rows.push({ label: '店名規則', ok: true, text: '規則沒變，不用整理' });
   else if (o.outcome === 'applied') {
     const bits = Array.isArray(o.bits) ? o.bits : [];
-    rows.push({ label: '店名規則', ok: true,
-      text: bits.length ? `規則有更新，整理了 ${bits.join('、')}` : (o.forced ? '規則有更新，已套用' : '規則有更新，沒有需要整理的') });
+    // bits 空＝已知的幾個計數都是 0，但不能據此說「沒有整理」（計數不一定涵蓋每一種改動，#651 r4 #5）
+    rows.push({ label: '店名規則', ok: true, text: bits.length ? `規則有更新，整理了 ${bits.join('、')}` : '規則有更新，已套用' });
   }
   else if (o.outcome === 'declined') rows.push({ label: '店名規則', ok: false, text: '規則有更新，你選了先不套用（下次開 App 會再問你）' });
   else if (o.outcome === 'blocked') rows.push({ label: '店名規則', ok: false, text: '這次沒有套用（確認過了仍被擋下），資料沒有變動' });

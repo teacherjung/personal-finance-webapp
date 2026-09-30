@@ -41,7 +41,7 @@ function bootStatusHtml(report) {
   if (!report) return `<div class="dash-h">開 App 自動更新</div><p class="muted boot-status-note">檢查中…</p>`;
   const { checkedAt, rows } = bootStatusView(report);
   return `<div class="dash-h">開 App 自動更新${checkedAt ? ` <span class="boot-status-when">${esc(checkedAt)} 檢查</span>` : ''}</div>
-    <p class="muted boot-status-note">每次打開 App 會自動做這幾件事；標 ⚠ 的是這次出了問題。</p>
+    <p class="muted boot-status-note">每次打開 App 會自動做這幾件事；標 ⚠ 的是這次沒有照常做完、值得看一下的。</p>
     <ul class="boot-status-list">${rows.map((r) => `<li class="${r.ok ? 'ok' : 'warn'}"><span class="boot-status-label">${r.ok ? '✓' : '⚠'} ${esc(r.label)}</span><span>${esc(r.text)}</span></li>`).join('')}</ul>`;
 }
 /** @param {number} seq */
