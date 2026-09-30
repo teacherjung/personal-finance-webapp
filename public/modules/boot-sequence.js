@@ -119,7 +119,8 @@ function problemText(r) {
  *   上一次漏抓了哪幾檔不會留下來。
  * - 「更新洞察」看的是 /insights 有沒有存好書籤回來；CAPE／實質殖利率抓不到而洞察照常回來時仍是 ✓——那兩個數字
  *   12 小時內用快取，過期又抓不到就退回手動填的值，沒填就缺值（market-data.js getCape／getRealYield）。
- * - 「紀錄快照」的時間是這次開機檢查的時間（日線在這次開機裡寫入），不是伺服器寫檔的那一刻。
+ * - 「紀錄快照」的時間是這次開機檢查的時間（日線在這次開機裡寫入），不是伺服器寫檔的那一刻；日線記成哪一天
+ *   跟本地日期不同時（雲端伺服器時區）會在後面寫出來。
  * @param {BootReport} report
  * @param {InsightsStatus} [insights] 沒給＝還沒抓到
  * @returns {{ title: string, rows: BootStatusRow[] }}
@@ -156,7 +157,12 @@ export function bootStatusView(report, insights = { state: 'pending' }) {
   } else {
     const checked = whenText(report.at, ref);
     const snapDay = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(snap.snap?.date ?? ''));
-    push('紀錄快照', true, snap.daily && checked ? `${checked} 已紀錄`
+    // 日線記在伺服器的「今天」（snapshot.js nowLocal，伺服器時區）；雲端伺服器不在台灣時區時，台灣清晨會記成前一天——
+    // 跟這次檢查的本地日期不同就照實寫出記成哪一天（#653 複審後掃）。
+    const dailyDay = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(snap.daily?.date ?? ''));
+    const refDay = ref ? `${ref.getFullYear()}-${pad2(ref.getMonth() + 1)}-${pad2(ref.getDate())}` : '';
+    const filedAs = dailyDay && snap.daily.date !== refDay ? `（記成 ${Number(dailyDay[1])}/${Number(dailyDay[2])} 那一天）` : '';
+    push('紀錄快照', true, snap.daily && checked ? `${checked} 已紀錄${filedAs}`
       : (snapDay ? `本月快照 ${Number(snapDay[1])}/${Number(snapDay[2])}` : '本月還沒有快照'));
     // subsRolled＝這次真的推進的；即將停用、填了停用日等刻意不推的過期日期不在裡面（#651 r4 #4）
     const n = Array.isArray(snap.subsRolled) ? snap.subsRolled.length : 0;
