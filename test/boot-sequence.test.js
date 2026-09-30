@@ -210,6 +210,10 @@ test('狀態區塊：報價只更新了一部分、抓不到新的、報價時�
   const serverYesterday = view({ ...QUIET, snapshot: ok({ recorded: false, snap: { date: '2026-09-01' }, daily: { date: '2026-09-29' }, subsRolled: [] }) });
   assert.deepEqual(serverYesterday.rows[1], { label: '紀錄快照', level: 'ok', text: '9/30 13:38 已紀錄（記成 9/29 那一天）' },
     '雲端伺服器時區不是台灣：清晨的日線記成前一天——照實寫出來（#653 複審後掃）');
+  /** @param {string} at @param {string} dailyDate */
+  const filed = (at, dailyDate) => view({ ...QUIET, snapshot: ok({ recorded: false, snap: null, daily: { date: dailyDate }, subsRolled: [] }) }, {}, undefined, at).rows[1].text;
+  assert.equal(filed(localIso(2027, 1, 1, 0, 1), '2026-12-31'), '1/1 00:01 已紀錄（記成 2026/12/31 那一天）', '跨年要寫年份（#653 r4 #3）');
+  assert.equal(filed(localIso(2025, 9, 30, 0, 1), '2026-09-30'), '9/30 00:01 已紀錄（記成 2026/9/30 那一天）', '月日相同、年不同也要看得出差異');
   const nothing = view({ ...QUIET, snapshot: ok({ recorded: false, snap: null, daily: null, subsRolled: [] }) });
   assert.deepEqual(nothing.rows[1], { label: '紀錄快照', level: 'ok', text: '本月還沒有快照' });
 });

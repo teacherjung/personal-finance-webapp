@@ -85,6 +85,16 @@ test('同一版規則只跑一次（記過指紋就不再問、不再跑）', as
   assert.equal(r.needsConfirmation, undefined, '指紋沒變＝這版已處理過，不該再問');
 });
 
+test('時鐘倒退（今天比資料庫裡最新的一天還早）：確認後照樣整理，但不記「上次整理」的時間（#653 r4 #1）', async () => {
+  seedConflicting();
+  const db = store.load();
+  store.save({ ...db, dailyValues: [{ date: '2099-01-01', netWorth: 0, assets: 0, liabilities: 0, pfCost: 0, pfValue: 0 }] });
+  const r = await normalizeIfRulesChanged(true);
+  assert.equal(r.ran, true, '前置條件：確認後照常套用');
+  assert.deepEqual(Object.keys(store.load().learnedCategories || {}), ['鮮芋仙'], '前置條件：真的改到了資料');
+  assert.ok(!store.load().settings?.storeNamesLastNormalizedAt, '時鐘倒退時不可以記「上次整理」');
+});
+
 test('規則換了一版、但沒有任何資料要改 → 記指紋、不記「上次整理」的時間（#653 留言 5905965930「開始記錄」：記的是真的改到資料）', async () => {
   store.save({ ...store.emptyDb(),
     settings: { ...store.emptyDb().settings,

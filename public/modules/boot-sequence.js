@@ -87,6 +87,14 @@ function dayOf(d, ref) {
   return ref && ref.getFullYear() === d.getFullYear() ? md : `${d.getFullYear()}/${md}`;
 }
 
+/** 伺服器給的日曆日字面 YYYY-MM-DD → 「9/1」或不同年時「2026/12/31」（照字面、不換時區）；讀不出來回 null。 @param {unknown} ymd @param {Date|null} ref */
+function literalDay(ymd, ref) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? ''));
+  if (!m) return null;
+  const md = `${Number(m[2])}/${Number(m[3])}`;
+  return ref && ref.getFullYear() === Number(m[1]) ? md : `${m[1]}/${md}`;
+}
+
 /** 時間字串 → 本地「9/30 13:38」；toDate 讀不出來回 null。 @param {unknown} iso @param {Date|null} ref */
 function whenText(iso, ref) {
   const d = toDate(iso);
@@ -156,14 +164,14 @@ export function bootStatusView(report, insights = { state: 'pending' }) {
     push('更新訂閱', false, '這次沒有檢查（電腦日期比已紀錄的資料還早）');
   } else {
     const checked = whenText(report.at, ref);
-    const snapDay = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(snap.snap?.date ?? ''));
+    const snapDay = literalDay(snap.snap?.date, ref);
     // 日線記在伺服器的「今天」（snapshot.js nowLocal，伺服器時區）；雲端伺服器不在台灣時區時，台灣清晨會記成前一天——
-    // 跟這次檢查的本地日期不同就照實寫出記成哪一天（#653 複審後掃）。
-    const dailyDay = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(snap.daily?.date ?? ''));
+    // 跟這次檢查的本地日期不同就照實寫出記成哪一天（#653 複審後掃；不同年連年份一起寫，#653 r4 #3）。
+    const dailyDay = literalDay(snap.daily?.date, ref);
     const refDay = ref ? `${ref.getFullYear()}-${pad2(ref.getMonth() + 1)}-${pad2(ref.getDate())}` : '';
-    const filedAs = dailyDay && snap.daily.date !== refDay ? `（記成 ${Number(dailyDay[1])}/${Number(dailyDay[2])} 那一天）` : '';
+    const filedAs = dailyDay && snap.daily.date !== refDay ? `（記成 ${dailyDay} 那一天）` : '';
     push('紀錄快照', true, snap.daily && checked ? `${checked} 已紀錄${filedAs}`
-      : (snapDay ? `本月快照 ${Number(snapDay[1])}/${Number(snapDay[2])}` : '本月還沒有快照'));
+      : (snapDay ? `本月快照 ${snapDay}` : '本月還沒有快照'));
     // subsRolled＝這次真的推進的；即將停用、填了停用日等刻意不推的過期日期不在裡面（#651 r4 #4）
     const n = Array.isArray(snap.subsRolled) ? snap.subsRolled.length : 0;
     const last = dateText(stamps.subsLastRolledAt, ref);

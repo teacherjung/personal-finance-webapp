@@ -16,25 +16,27 @@ function deferred() {
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); };
 const localIso = (/** @type {number[]} */ ...p) => new Date(p[0], p[1] - 1, p[2], p[3], p[4]).toISOString();
-const SEEN_AT = localIso(2026, 9, 30, 13, 41);
+// 夾具的年份跟著執行當下走：app.js 的檢查時間是真的「現在」，同一年才省略年份（#653 r4 #2：寫死 2026，跨年就把對的程式判紅）
+const Y = new Date().getFullYear();
+const SEEN_AT = localIso(Y, 9, 30, 13, 41);
 
 const holdStore = deferred();   // 店名整理那一步先卡著：開機還沒落定時那一塊要是「檢查中…」、洞察不可以先抓
 const insights = deferred();    // 洞察先不回：那一行要是「更新中…」
 /** @type {string[]} */
 const calls = [];
 const SUMMARY = {
-  cashflow: { month: '2026-09', income: 0, expense: 0, net: 0 }, cashflowHistory: [], snapshots: [], reminders: [],
+  cashflow: { month: `${Y}-09`, income: 0, expense: 0, net: 0 }, cashflowHistory: [], snapshots: [], reminders: [],
   goalTrack: null, ib: { totalPnl: 0, totalValue: 0, count: 0, hasLoan: false }, subscriptions: { monthly: 0, count: 0, yearly: 0 },
   netWorth: 0, assets: 0, liabilities: 0, byClass: {}, defaultFx: [], missingFx: [],
 };
 /** @type {Record<string, () => unknown | Promise<unknown>>} */
 const API = {
   '/api/quotes/refresh-auto': () => ({ refreshed: false, reason: 'fresh' }),
-  '/api/snapshot/auto': () => ({ recorded: false, snap: { date: '2026-09-01' }, daily: { date: '2026-09-30' }, subsRolled: [] }),
+  '/api/snapshot/auto': () => ({ recorded: false, snap: { date: `${Y}-09-01` }, daily: { date: `${Y}-09-30` }, subsRolled: [] }),
   '/api/backup/daily': () => ({}),
   '/api/accounts/reconcile-names': () => ({ changed: 0, aligned: 0 }),
   '/api/statement/normalize-auto': async () => { await holdStore.promise; return { ran: false }; },
-  '/api/settings': () => ({ quotesLastAt: localIso(2026, 9, 30, 13, 5), subsLastRolledAt: localIso(2026, 9, 15, 8, 0) }),
+  '/api/settings': () => ({ quotesLastAt: localIso(Y, 9, 30, 13, 5), subsLastRolledAt: localIso(Y, 9, 15, 8, 0) }),
   '/api/summary': () => SUMMARY,
   '/api/insights': async () => insights.promise,
 };

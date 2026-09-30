@@ -662,6 +662,13 @@ test('帳戶對齊的「上次」時間（#653 留言 5905965930「開始記錄�
     const t3 = Date.now();
     const afterManual = await aligned();
     assert.ok(isBetween(afterManual, t2, t3), `手動記帳的字串連動也算對齊，記**這一次**的時間（實得 ${afterManual}）`);
+    // ⑤時鐘倒退（今天比資料庫裡最新的一天還早）：改名照樣連動，但不記時間（#653 r4 #1）
+    { const d = await getDb(); d.dailyValues = [...(d.dailyValues || []), { date: '2099-01-01', netWorth: 0, assets: 0, liabilities: 0, pfCost: 0, pfValue: 0 }]; await saveDb(d); }
+    await setAligned(SENTINEL);
+    await PUT('/accounts/' + cash.id, { name: '手動記時間測試再改名' });
+    assert.equal((await GET('/transactions')).filter((t) => t.account === '手動記時間測試再改名').length, 1, '前置條件：時鐘倒退時交易照樣連動');
+    assert.equal(await aligned(), SENTINEL, '時鐘倒退時不可以記「上次對齊」');
+    { const d = await getDb(); d.dailyValues = (d.dailyValues || []).filter((v) => v.date !== '2099-01-01'); await saveDb(d); }
     // 前端寫不進：三個都是服務層擁有的欄位
     await setAligned(SENTINEL);
     await PUT('/settings', Object.fromEntries(STAMPS.map((k) => [k, '2011-01-01T00:00:00.000Z'])));

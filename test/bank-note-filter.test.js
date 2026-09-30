@@ -119,6 +119,16 @@ test('遷移（開 app 護欄）：自動名升級成好讀版、使用者自訂
   assert.equal((await getDb()).transactions?.[0].account, '台新活儲（Richart）', '前置條件：帳戶名真的被對齊了');
   const stamp = (await getDb()).settings?.accountNamesLastAlignedAt;
   assert.ok(typeof stamp === 'string' && Date.parse(stamp) >= before && Date.parse(stamp) <= after, `帳戶名真的對齊了就要記**這一次**的 ISO 時間（實得 ${stamp}）`);
+  // 時鐘倒退（今天比資料庫裡最新的一天還早）：名字照樣對齊，但不可以把「上次對齊」蓋成錯的時間（#653 r4 #1）
+  const SENTINEL = '2000-01-01T00:00:00.000Z';
+  const db3 = await getDb();
+  db3.dailyValues = [{ date: '2099-01-01', netWorth: 0, assets: 0, liabilities: 0, pfCost: 0, pfValue: 0 }];
+  db3.settings.accountNamesLastAlignedAt = SENTINEL;
+  db3.transactions = [{ ...mk('t8', '轉帳支取', '轉入288810****8791', '轉帳支取・轉入288810****8791'), account: '又一個舊名' }];
+  await saveDb(db3);
+  const r3 = await reconcileAccountNamesAuto();
+  assert.equal(r3.aligned, 1, '前置條件：時鐘倒退時名字照樣對齊');
+  assert.equal((await getDb()).settings?.accountNamesLastAlignedAt, SENTINEL, '時鐘倒退時不可以記「上次對齊」');
 });
 
 test('learnFromBankEdit 清空回復：autoNote 欄同步跟上（Codex #307 r1——不同步會留下 note≠autoNote 的孤兒，下次改版被誤判自訂）', async () => {
