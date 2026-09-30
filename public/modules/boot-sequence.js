@@ -25,7 +25,7 @@ export const BOOT_REQUEST_TIMEOUT_MS = 30_000;
  * @typedef {{ state: 'pending' } | { state: 'ok', at: string } | { state: 'fail', error?: unknown }} InsightsStatus
  *   總覽抓 /insights 的結果；ok 的 at＝伺服器存書籤時回的 seenAt
  * @typedef {{ label: string, level: 'ok'|'warn'|'pending', text: string, note?: string }} BootStatusRow
- *   level：ok＝✓、warn＝⚠️、pending＝還在跑；note＝小字補充（上次真的做的日期）
+ *   level：ok＝✓、warn＝⚠、pending＝還在跑；note＝寫在那一行右邊括號裡的補充（上次真的做的日期）
  */
 
 /**
@@ -116,10 +116,10 @@ function problemText(r) {
 
 /**
  * 「開 App 自動更新檢查」那一塊的標題與六行（零 DOM）。格式出處：#653 留言 5905965930（William 給的圖）。
- * ⚠️（warn）＝這一項這次沒有順利完成：出錯、逾時、只更新到一部分、被伺服器擋下、電腦日期比資料舊而沒紀錄；
+ * ⚠（warn）＝這一項這次沒有順利完成：出錯、逾時、只更新到一部分、被伺服器擋下、電腦日期比資料舊而沒紀錄；
  * 使用者在確認視窗自己選「先不套用」不算（那一行照樣寫出他的選擇，但標 ✓），對上底下那句「沒有檢查成功」。
  * 每日備份不列：它有自己的警告框，而且雲端版不做備份（列出來就等於暗示有備份）。
- * 訂閱／帳戶／店名三行在「這次沒有要改的」時，小字補上伺服器記的「上次真的做」的日期；沒記過就不寫（不拿別的日期頂替）。
+ * 訂閱／帳戶／店名三行在「這次沒有要改的」時，右邊括號補上伺服器記的「上次真的做」的日期；沒記過就不寫（不拿別的日期頂替）。
  * 誠實劃界（這幾行的 ✓ 守不到的）：
  * - 「帳戶對齊」只看得到開 app 自動對齊那條路——銀行匯入交易的遮罩帳號剛好對到一個帳戶的才會被改；手動記帳、
  *   同一個帳號對到兩個帳戶的交易不在這條路裡（lib/services/bank-import.js reconcileBankTxAccountNames）。
@@ -225,7 +225,8 @@ export function insightsStatusOf(ins) {
   return ins && typeof ins.seenAt === 'string' && !('error' in ins) ? { state: 'ok', at: ins.seenAt } : { state: 'fail', error: ins?.error };
 }
 
-const MARKS = { ok: '✓', warn: '⚠️', pending: '…' };
+// ⚠ 用文字樣式（不帶 U+FE0F，不變成彩色圖示）：William 2026-09-30 要求「請把⚠️改成⚠」
+const MARKS = { ok: '✓', warn: '⚠', pending: '…' };
 
 /**
  * 那一塊的 HTML（開頭那句與結尾那句逐字照 #653 留言 5905965930）。report 還沒到＝「檢查中…」。
@@ -239,13 +240,13 @@ export function bootStatusHtml(report, insights, esc) {
   const { title, rows } = bootStatusView(report, insights);
   return `<div class="boot-status-title">${esc(title)}</div>
     <p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>
-    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.level}"><span class="boot-status-mark">${MARKS[r.level]}</span><span class="boot-status-label">${esc(r.label)}</span><span class="boot-status-text">${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</span></li>`).join('')}</ul>
-    <p class="muted boot-status-foot">標 ⚠️ 的是這次沒有檢查成功的項目。</p>`;
+    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.level}"><span class="boot-status-mark">${MARKS[r.level]}</span><span class="boot-status-label">${esc(r.label)}</span><span class="boot-status-text">${esc(r.text)}${r.note ? `<span class="boot-status-note">（${esc(r.note)}）</span>` : ''}</span></li>`).join('')}</ul>
+    <p class="muted boot-status-foot">標 ⚠ 的是這次沒有檢查成功的項目。</p>`;
 }
 
 /**
  * 等開機落定、再等洞察，每次有新結果就叫 onChange（總覽拿去重畫那一塊）。start() 多叫幾次也只掛一次。
- * 洞察那一行有自己的等待上限：逾時先標 ⚠️，之後真的回來了就改成實際結果；上限只管這一行，不改 fetchInsights 本身。
+ * 洞察那一行有自己的等待上限：逾時先標 ⚠，之後真的回來了就改成實際結果；上限只管這一行，不改 fetchInsights 本身。
  * @param {{ settled: Promise<BootReport>, fetchInsights: () => Promise<any>, timeoutMs: number, onChange: () => void }} deps
  */
 export function createBootStatusWatcher({ settled, fetchInsights, timeoutMs, onChange }) {
