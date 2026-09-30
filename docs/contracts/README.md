@@ -83,7 +83,7 @@
 - `public/app.js`（重繪／`parseLocalDate`）
 - `public/modules/assets.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/backup-export.js`（匯出「先驗再存」與提示文案——#417）
-- `public/modules/boot-sequence.js`（開機自動更新依序跑＋等待上限＋總覽「開 App 自動更新」區塊的文字——裁示 2026-09-29 乙、2026-09-30 兩則）
+- `public/modules/boot-sequence.js`（開機自動更新依序跑＋等待上限＋總覽「開 App 自動更新檢查」區塊的文字——裁示 2026-09-29 乙、2026-09-30 兩則、#653 留言 5905965930 的格式）
 - `public/modules/cards.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/cashflow.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/dashboard.js`（重繪／`parseLocalDate`）

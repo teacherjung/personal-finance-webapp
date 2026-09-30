@@ -13,7 +13,7 @@ import {
   dashboardNetWorthChange,
   dashboardSnapshotSeries,
 } from './dashboard-forest.js';
-import { bootStatusView } from './boot-sequence.js';   // 「開 App 自動更新」區塊的文字（裁示 2026-09-30，#651 留言 5903711899）
+import { bootStatusHtml, createBootStatusWatcher, BOOT_REQUEST_TIMEOUT_MS } from './boot-sequence.js';   // 「開 App 自動更新檢查」那一塊（格式出處＝#653 留言 5905965930）
 
 let chartRefs = [];
 let monthlyReviewChart = null;
@@ -32,26 +32,23 @@ function fetchInsightsOnce() {
   return insightsPromise;
 }
 
-// 開 App 自動更新（裁示者 2026-09-30，#651 留言 5903711899）：開機那幾步不跳提示，改在總覽最下面寫出這次的結果。
-// 文字全在 boot-sequence.js 的 bootStatusView（有考題）；這裡只負責畫。開機還沒跑完＝先寫「檢查中」，落定後就地補上。
-/** @type {import('./boot-sequence.js').BootReport|null} */
-let bootReport = null;   // ⚠️ 不可在模組頂層碰 bootSettled：本模組被 app.js import、那時它還沒宣告（循環 import）
-/** @param {import('./boot-sequence.js').BootReport|null} report */
-function bootStatusHtml(report) {
-  if (!report) return `<div class="dash-h">開 App 自動更新</div><p class="muted boot-status-note">檢查中…</p>`;
-  const { checkedAt, rows } = bootStatusView(report);
-  return `<div class="dash-h">開 App 自動更新${checkedAt ? ` <span class="boot-status-when">${esc(checkedAt)} 檢查</span>` : ''}</div>
-    <p class="muted boot-status-note">每次打開 App 會自動做這幾件事；標 ⚠ 的是這次沒有照常做完、值得看一下的。</p>
-    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.ok ? 'ok' : 'warn'}"><span class="boot-status-label">${r.ok ? '✓' : '⚠'} ${esc(r.label)}</span><span>${esc(r.text)}</span></li>`).join('')}</ul>`;
+// 開 App 自動更新檢查（裁示者 2026-09-30，#651 留言 5903711899；格式出處＝#653 留言 5905965930）：開機那幾步不跳提示，
+// 改在總覽最下面寫出這次的結果，外加一行「更新洞察」（洞察是總覽自己抓的，不在開機那一串裡）。
+// 畫法與「等開機、等洞察」的邏輯都在 boot-sequence.js（有考題）；這裡只接上 bootSettled、fetchInsightsOnce 與重畫。
+/** @type {ReturnType<typeof createBootStatusWatcher>|null} */
+let bootWatcher = null;
+/** 第一次畫總覽時才建立。⚠️ 不可在模組頂層碰 bootSettled：本模組被 app.js import、那時它還沒宣告（循環 import）。 */
+function watchBoot() {
+  if (!bootWatcher) {
+    bootWatcher = createBootStatusWatcher({
+      settled: bootSettled, fetchInsights: fetchInsightsOnce, timeoutMs: BOOT_REQUEST_TIMEOUT_MS, onChange: repaintBootStatus });
+  }
+  bootWatcher.start();
 }
-/** @param {number} seq */
-function patchBootStatus(seq) {
-  bootSettled.then((r) => {
-    bootReport = r;
-    if (seq !== currentRouteSeq()) return;
-    const block = byId('bootStatusBlock');
-    if (block) block.innerHTML = bootStatusHtml(r);
-  });
+/** 那一塊只在總覽上；不在總覽時找不到就不動（內容只看 watcher 的狀態，不看是哪一次畫出來的總覽）。 */
+function repaintBootStatus() {
+  const block = byId('bootStatusBlock');
+  if (block) block.innerHTML = bootStatusHtml(bootWatcher?.state.report ?? null, bootWatcher?.state.insights, esc);
 }
 
 function currentMonthKey() {
@@ -387,7 +384,7 @@ export async function renderDashboard() {
 
     <div id="monthlyReviewBlock">${monthlyReviewCardHtml(review, { esc, money, wan, pct })}</div>
 
-    <section class="dash-block boot-status" id="bootStatusBlock" aria-live="polite">${bootStatusHtml(bootReport)}</section>
+    <section class="dash-block boot-status" id="bootStatusBlock" aria-live="polite">${bootStatusHtml(bootWatcher?.state.report ?? null, bootWatcher?.state.insights, esc)}</section>
   `;
 
   drawTrend(snapshots);
@@ -398,7 +395,7 @@ export async function renderDashboard() {
   drawMonthlyReview(review, seq);
   // 洞察在開機序列（五步全部）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
-  if (!bootReport) patchBootStatus(seq);
+  watchBoot();
 }
 
 /** 匯率就地標註（丙）：用了預設匯率＝照常計入、只提示；不支援的幣別＝無法換算、要講方向。 @param {any} defaultFx @param {any} missingFx */

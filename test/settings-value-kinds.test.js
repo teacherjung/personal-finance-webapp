@@ -67,7 +67,7 @@ test('設定型別｜兩個消毒器對同一個值不可以給出不同答案�
 test('設定型別｜認不得的欄位一律擋掉（fail-closed，不是靜靜放行）', () => {
   // 判準的 default 分支若改成放行，沒登記型別的東西就會直接進資料庫——**沒驗過的值**。
   // 這一題就是那句「認不得的 kind 一律 false」的保證本身（沒有它，那句話沒人撐）。
-  for (const key of ['沒登記的欄位', 'aiApiKeySet', 'quotesLastAt', 'lastSync']) {
+  for (const key of ['沒登記的欄位', 'aiApiKeySet', 'quotesLastAt', 'lastSync', 'subsLastRolledAt', 'accountNamesLastAlignedAt', 'storeNamesLastNormalizedAt']) {
     const out = sanitizeSettings({ [key]: 'x' });
     assert.ok(!Object.hasOwn(out, key),
       `★「${key}」不在 SETTINGS_FIELD_TYPES 裡，卻通過了消毒——判準的 default 變成放行了`);
