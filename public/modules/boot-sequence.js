@@ -25,7 +25,7 @@ export const BOOT_REQUEST_TIMEOUT_MS = 30_000;
  * @typedef {{ state: 'pending' } | { state: 'ok', at: string } | { state: 'fail', error?: unknown }} InsightsStatus
  *   總覽抓 /insights 的結果；ok 的 at＝伺服器存書籤時回的 seenAt
  * @typedef {{ label: string, level: 'ok'|'warn'|'pending', text: string, note?: string }} BootStatusRow
- *   level：ok＝✓、warn＝⚠、pending＝還在跑；note＝寫在那一行右邊括號裡的補充（上次真的做的日期）
+ *   level：ok＝✓、warn＝⚠、pending＝還在跑；note＝寫在那一行右邊括號裡的補充（上次真的做的日期；位置出處＝#654 留言 5912470107）
  */
 
 /**
@@ -225,7 +225,7 @@ export function insightsStatusOf(ins) {
   return ins && typeof ins.seenAt === 'string' && !('error' in ins) ? { state: 'ok', at: ins.seenAt } : { state: 'fail', error: ins?.error };
 }
 
-// ⚠ 用文字樣式（不帶 U+FE0F，不變成彩色圖示）：William 2026-09-30 要求「請把⚠️改成⚠」
+// ⚠ 用文字樣式（不帶 U+FE0F，不變成彩色圖示）；出處＝#654 留言 5912470107「請把⚠️改成⚠」
 const MARKS = { ok: '✓', warn: '⚠', pending: '…' };
 
 /**

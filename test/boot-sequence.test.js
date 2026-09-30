@@ -255,7 +255,7 @@ test('bootStatusHtml：開頭那句、結尾那句照 #653 留言 5905965930；�
   assert.ok(html.includes('開 App 自動更新檢查（2026-09-30）'));
   assert.ok(html.includes('<p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>'));
   assert.ok(html.includes('標 ⚠ 的是這次沒有檢查成功的項目。'));
-  assert.ok(!html.includes('\uFE0F'), '⚠ 不可以帶彩色圖示的變體符號（William 2026-09-30「請把⚠️改成⚠」）');
+  assert.ok(!html.includes('\uFE0F'), '⚠ 不可以帶彩色圖示的變體符號（#654 留言 5912470107「請把⚠️改成⚠」）');
   assert.ok(html.includes('<li class="warn"><span class="boot-status-mark">⚠</span><span class="boot-status-label">更新報價</span>'));
   assert.ok(html.includes('<li class="ok"><span class="boot-status-mark">✓</span><span class="boot-status-label">更新訂閱</span><span class="boot-status-text">續費日沒有需要推進的<span class="boot-status-note">（上次推進 9/15）</span></span></li>'));
   assert.equal((html.match(/<li /g) || []).length, 6, '六行');
