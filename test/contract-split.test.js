@@ -655,6 +655,7 @@ const MANIFEST = {
       'public/app.js',
       'public/modules/assets.js',
       'public/modules/backup-export.js',
+      'public/modules/boot-sequence.js',
       'public/modules/cards.js',
       'public/modules/cashflow.js',
       'public/modules/dashboard.js',

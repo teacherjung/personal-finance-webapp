@@ -13,21 +13,45 @@ import {
   dashboardNetWorthChange,
   dashboardSnapshotSeries,
 } from './dashboard-forest.js';
+import { bootStatusView } from './boot-sequence.js';   // 「開 App 自動更新」區塊的文字（裁示 2026-09-30，#651 留言 5903711899）
 
 let chartRefs = [];
 let monthlyReviewChart = null;
 let monthlyReviewRequest = 0;
 function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; monthlyReviewChart = null; }
 
-// 每日洞察（D4）：**一次 app-open 只抓一次 /insights**，且**等開機序列（bootSettled：報價+快照）落定後才抓**。
+// 每日洞察（D4）：**一次 app-open 只抓一次 /insights**，且**等開機序列（bootSettled：開機自動更新五步全部結束）落定後才抓**。
 // - 一次只抓：讀取＝更新書籤（看過了），開機重繪若每次重抓會把剛冒出的 🆕 秒吸收掉——快取整個 Promise，書籤只更新一次。
 // - 等 boot 落定（Codex r14#1/#2）：①不擋總覽首屏——總覽用 /summary 即時出畫面，洞察慢慢補（不被外部估值 API 卡住）；
 //   ②反映最新資料——在報價更新＋今天日線寫入之後才算差異，才不會「舊洞察＋新總覽」混用。抓失敗＝退回舊「需要處理」。
+//   ③不跟開機後面幾步搶寫入——讀洞察會寫書籤，雲端模式下跟帳戶名對齊、店名整理同時寫會撞（#651 複審後掃）。
 // 重新整理頁面（真正的「再次開啟」）＝模組重載→快取重置→重抓，語意正確。
 let insightsPromise = null;
 function fetchInsightsOnce() {
   if (!insightsPromise) insightsPromise = bootSettled.then(() => api('/insights')).catch(() => ({ error: true }));
   return insightsPromise;
+}
+
+// 開 App 自動更新（裁示者 2026-09-30，#651 留言 5903711899）：開機那幾步不跳提示，改在總覽最下面寫出這次的結果。
+// 文字全在 boot-sequence.js 的 bootStatusView（有考題）；這裡只負責畫。開機還沒跑完＝先寫「檢查中」，落定後就地補上。
+/** @type {import('./boot-sequence.js').BootReport|null} */
+let bootReport = null;   // ⚠️ 不可在模組頂層碰 bootSettled：本模組被 app.js import、那時它還沒宣告（循環 import）
+/** @param {import('./boot-sequence.js').BootReport|null} report */
+function bootStatusHtml(report) {
+  if (!report) return `<div class="dash-h">開 App 自動更新</div><p class="muted boot-status-note">檢查中…</p>`;
+  const { checkedAt, rows } = bootStatusView(report);
+  return `<div class="dash-h">開 App 自動更新${checkedAt ? ` <span class="boot-status-when">${esc(checkedAt)} 檢查</span>` : ''}</div>
+    <p class="muted boot-status-note">每次打開 App 會自動做這幾件事；標 ⚠ 的是這次沒有照常做完、值得看一下的。</p>
+    <ul class="boot-status-list">${rows.map((r) => `<li class="${r.ok ? 'ok' : 'warn'}"><span class="boot-status-label">${r.ok ? '✓' : '⚠'} ${esc(r.label)}</span><span>${esc(r.text)}</span></li>`).join('')}</ul>`;
+}
+/** @param {number} seq */
+function patchBootStatus(seq) {
+  bootSettled.then((r) => {
+    bootReport = r;
+    if (seq !== currentRouteSeq()) return;
+    const block = byId('bootStatusBlock');
+    if (block) block.innerHTML = bootStatusHtml(r);
+  });
 }
 
 function currentMonthKey() {
@@ -362,6 +386,8 @@ export async function renderDashboard() {
     </div>
 
     <div id="monthlyReviewBlock">${monthlyReviewCardHtml(review, { esc, money, wan, pct })}</div>
+
+    <section class="dash-block boot-status" id="bootStatusBlock" aria-live="polite">${bootStatusHtml(bootReport)}</section>
   `;
 
   drawTrend(snapshots);
@@ -370,8 +396,9 @@ export async function renderDashboard() {
   wireFxInfo();
   wireMonthlyReviewInfo(review);
   drawMonthlyReview(review, seq);
-  // 洞察在開機序列（報價+快照）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
+  // 洞察在開機序列（五步全部）落定後才抓、抓到就地補上 hero Δ／KPI Δ／動態三段（不阻塞首屏、反映最新資料）。
   fetchInsightsOnce().then(ins => patchInsights(ins, s, seq));
+  if (!bootReport) patchBootStatus(seq);
 }
 
 /** 匯率就地標註（丙）：用了預設匯率＝照常計入、只提示；不支援的幣別＝無法換算、要講方向。 @param {any} defaultFx @param {any} missingFx */
