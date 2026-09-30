@@ -3,6 +3,7 @@
 // 拿掉 watchBoot()、不接 bootSettled／fetchInsightsOnce、區塊 id 改掉，那份考卷照樣全綠）。
 // 做法＝jsdom 給全域、fetch 假櫃檯、真的 import 整張 app.js 路由圖停在 #dashboard，讀畫面上的那一塊。
 // 守不到的：真瀏覽器排版（手機寬度、字型）；30 秒上限本身（那個時序在 boot-sequence.test.js 用小上限直接考）。
+/* global document */   // boot() 把 jsdom 的 document 定到 globalThis（node --test 每檔一個行程）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';

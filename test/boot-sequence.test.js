@@ -4,8 +4,8 @@
 // 區塊格式與「開始記錄」上次真的推進／對齊／整理的日期＝#653 留言 5905965930）。
 // app.js 那一段**原封不動**抽出來（連同 bootSettled 的宣告），配假的 api／toast／router 在 node:vm 裡真的跑——驗的是行為，不是字面。
 // 那一塊的 HTML（bootStatusHtml）與「等開機、等洞察」（createBootStatusWatcher）在模組裡直接考。
-// 守不到的：真瀏覽器、真伺服器（那一層是隔離伺服器實開與合併後驗收）；dashboard.js 有沒有把 watcher 接上 bootSettled 與
-// fetchInsightsOnce、有沒有在畫總覽時叫它——那幾行在 dashboard.js，這份考卷沒有載入它。
+// 守不到的：真瀏覽器、真伺服器（那一層是隔離伺服器實開與合併後驗收）；dashboard.js 的接線（畫總覽時建立 watcher、
+// 接上 bootSettled 與 fetchInsightsOnce、重畫那一塊）這份考卷沒有載入——那一層在 test/boot-status-dashboard.test.js。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
