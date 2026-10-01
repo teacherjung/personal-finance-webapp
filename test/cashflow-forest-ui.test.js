@@ -78,7 +78,14 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.ok(source.indexOf('class="cashflow-summary"') < source.indexOf('class="cashflow-controls"'),
     '摘要區塊要排在年／月／金流篩選上方');
   assert.match(source, /const periodLabel = cashflowPeriodLabel\(monthFilter\);/);
-  assert.match(source, /收支期間/);
+  assert.match(source, /以銀行對帳單為準的真實現金流：收入、支出、內轉/);
+  assert.doesNotMatch(source, /以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉/);
+  assert.match(source, /<strong>\$\{esc\(periodLabel\)\}<\/strong>/);
+  assert.match(source, />內轉不列入收入與支出<\/p>/);
+  for (const removedCopy of ['收支期間', '以銀行對帳單為準；內轉不列入收入與支出',
+    '匯入與手動記錄', '不含帳戶內轉', '收入減支出']) {
+    assert.doesNotMatch(source, new RegExp(removedCopy));
+  }
   assert.match(source, /cashflow-control-label">金流</);
   assert.doesNotMatch(source, /明細金流/);
   assert.match(source, /th\('date', '日期'\)/);
