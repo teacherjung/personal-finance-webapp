@@ -133,7 +133,7 @@ test('狀態區塊：那張圖的六行照原文重現（沒有東西要改的�
     { label: '帳戶對齊', level: 'ok', text: '所有帳戶名都已是最新' },
     { label: '店名整理', level: 'ok', text: '店名規則沒變（不整理）' },
     { label: '更新洞察', level: 'ok', text: '9/30 13:38 已更新' },
-  ], '三個日期都沒記過時不寫小字——不拿別的日期頂替');
+  ], '三個日期都沒記過時不寫「上次…」——不拿別的日期頂替');
   assert.ok(!JSON.stringify(v).includes('備份'));
 });
 
@@ -143,7 +143,7 @@ test('狀態區塊：三行的時間各有各的來源——報價＝伺服器�
   assert.equal(view(QUIET, {}, undefined, localIso(2026, 10, 5, 9, 0)).title, '開 App 自動更新檢查（2026-10-05）', '月、日補兩位');
 });
 
-test('狀態區塊：這次有改到東西——寫出改了什麼、不附「上次」小字；洞察還沒回來＝更新中', () => {
+test('狀態區塊：這次有改到東西——寫出改了什麼、不附「上次…」；洞察還沒回來＝更新中', () => {
   const v = view(ALL_CHANGED, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows, [
     { label: '更新報價', level: 'ok', text: '9/30 13:38 已更新' },
@@ -158,7 +158,7 @@ test('狀態區塊：這次有改到東西——寫出改了什麼、不附「�
     '只修了說明或隱藏的 autoNote（aligned 0）不算帳戶名有改');
 });
 
-test('狀態區塊：這次沒有要改的——小字補上伺服器記的「上次真的做」的日期；不同年要寫年份（#653 留言 5905965930「開始記錄」）', () => {
+test('狀態區塊：這次沒有要改的——補上伺服器記的「上次真的做」的日期（畫在那一行右邊括號裡）；不同年要寫年份（#653 留言 5905965930「開始記錄」）', () => {
   const v = view(QUIET, { quotesLastAt: AT, ...OLD_STAMPS });
   assert.deepEqual(v.rows.slice(2, 5), [
     { label: '更新訂閱', level: 'ok', text: '續費日沒有需要推進的', note: '上次推進 9/15' },
@@ -169,7 +169,7 @@ test('狀態區塊：這次沒有要改的——小字補上伺服器記的「�
   assert.equal(lastYearQuote.rows[0].text, '2025/12/31 23:59 已更新（一小時內不重抓）');
 });
 
-test('狀態區塊：出錯的那一行標 ⚠️（warn），只說「沒有檢查成功」不說「沒做成」；逾時寫出等了多久', () => {
+test('狀態區塊：出錯的那一行標 ⚠（warn），只說「沒有檢查成功」不說「沒做成」；逾時寫出等了多久', () => {
   const v = view({
     quotes: bad(timeoutError()),
     snapshot: bad(conflict()),
@@ -225,7 +225,7 @@ test('狀態區塊：店名規則的每一種結果；使用者自己選「先�
   assert.deepEqual(store({ outcome: 'applied', bits: [], forced: false }), { label: '店名整理', level: 'ok', text: '店名規則有更新，已套用' },
     '計數都是 0 也不說「沒有需要整理」——計數不一定涵蓋每一種改動（#651 r4 #5）');
   assert.deepEqual(store({ outcome: 'declined' }), { label: '店名整理', level: 'ok', text: '店名規則有更新，你選了先不套用（下次開 App 會再問你）' },
-    '底下那句說 ⚠️＝沒有檢查成功；按取消是他的選擇、不是檢查失敗');
+    '底下那句說 ⚠＝沒有檢查成功；按取消是他的選擇、不是檢查失敗');
   assert.deepEqual(store({ outcome: 'unchanged', forced: true }), { label: '店名整理', level: 'ok', text: '店名規則已經是最新的（不整理）', note: '上次整理 2025/12/3' },
     '按了確定、伺服器卻說這版已套用過（別的分頁先套用）——不寫成「沒變」');
   assert.deepEqual(store({ outcome: 'blocked' }), { label: '店名整理', level: 'warn', text: '店名規則這次沒有套用（確認過了仍被擋下），資料沒有變動' });
@@ -250,13 +250,14 @@ test('insightsStatusOf：存完書籤回了 seenAt 才算成功；路由接住�
 /** 測試用的轉義（跟 app.js 的 esc 同一件事：擋 HTML）。 @param {string} s */
 const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-test('bootStatusHtml：開頭那句、結尾那句、✓／⚠️ 記號、小字照 #653 留言 5905965930；開機還沒跑完＝檢查中', () => {
+test('bootStatusHtml：開頭那句照 #653 留言 5905965930、結尾那句照同一則但記號依 #654 留言 5912470107 改；記號是 ✓／⚠（不帶 U+FE0F）；「上次」寫在右邊括號；開機還沒跑完＝檢查中', () => {
   const html = bootStatusHtml({ at: AT, results: { ...QUIET, quotes: bad(conflict()) }, stamps: { ...NO_STAMPS, ...OLD_STAMPS } }, { state: 'ok', at: AT }, escHtml);
   assert.ok(html.includes('開 App 自動更新檢查（2026-09-30）'));
   assert.ok(html.includes('<p class="boot-status-intro">每次打開 App 會自動做這幾件事：</p>'));
-  assert.ok(html.includes('標 ⚠️ 的是這次沒有檢查成功的項目。'));
-  assert.ok(html.includes('<li class="warn"><span class="boot-status-mark">⚠️</span><span class="boot-status-label">更新報價</span>'));
-  assert.ok(html.includes('<li class="ok"><span class="boot-status-mark">✓</span><span class="boot-status-label">更新訂閱</span><span class="boot-status-text">續費日沒有需要推進的<small>上次推進 9/15</small></span></li>'));
+  assert.ok(html.includes('標 ⚠ 的是這次沒有檢查成功的項目。'));
+  assert.ok(!html.includes('\uFE0F'), '⚠ 不可以帶 U+FE0F（要求彩色圖示的變體符號；#654 留言 5912470107「請把⚠️改成⚠」）');
+  assert.ok(html.includes('<li class="warn"><span class="boot-status-mark">⚠</span><span class="boot-status-label">更新報價</span>'));
+  assert.ok(html.includes('<li class="ok"><span class="boot-status-mark">✓</span><span class="boot-status-label">更新訂閱</span><span class="boot-status-text">續費日沒有需要推進的<span class="boot-status-note">（上次推進 9/15）</span></span></li>'));
   assert.equal((html.match(/<li /g) || []).length, 6, '六行');
   assert.equal(bootStatusHtml(null, undefined, escHtml), '<div class="boot-status-title">開 App 自動更新檢查</div><p class="muted boot-status-intro">檢查中…</p>');
 });
@@ -286,19 +287,19 @@ test('createBootStatusWatcher：開機落定→畫一次；洞察很快回來→
   assert.ok(changes >= 2, '落定、洞察回來各要叫一次重畫');
 });
 
-test('createBootStatusWatcher：洞察一直不回→到上限標 ⚠️（逾時）；之後真的回來→改成實際結果', async () => {
+test('createBootStatusWatcher：洞察一直不回→到上限標 ⚠（逾時）；之後真的回來→改成實際結果', async () => {
   const ins = deferred();
   const w = createBootStatusWatcher({ settled: Promise.resolve(/** @type {any} */ ({ at: AT, results: QUIET, stamps: NO_STAMPS })), fetchInsights: () => ins.promise, timeoutMs: 20, onChange: () => {} });
   w.start();
   await within(new Promise((r) => setTimeout(r, 60)), 2000, '等不到');
   await flush();
-  assert.equal(w.state.insights.state, 'fail', '到上限還沒回來要標 ⚠️');
+  assert.equal(w.state.insights.state, 'fail', '到上限還沒回來要標 ⚠');
   assert.equal(/** @type {any} */ (w.state.insights).error?.name, 'BootTimeoutError');
   ins.resolve({ seenAt: AT }); await flush();
   assert.deepEqual(w.state.insights, { state: 'ok', at: AT }, '晚一點真的回來了，就改成 ✓');
 });
 
-test('createBootStatusWatcher：洞察回了錯誤（帶 error）或直接失敗→⚠️', async () => {
+test('createBootStatusWatcher：洞察回了錯誤（帶 error）或直接失敗→⚠', async () => {
   const w1 = createBootStatusWatcher({ settled: Promise.resolve(/** @type {any} */ ({ at: AT, results: QUIET, stamps: NO_STAMPS })), fetchInsights: async () => ({ error: true }), timeoutMs: 1000, onChange: () => {} });
   w1.start(); await flush();
   assert.equal(w1.state.insights.state, 'fail');

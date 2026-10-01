@@ -75,9 +75,9 @@ test('總覽那一塊：開機還沒落定＝檢查中、洞察還沒抓；落�
   assert.match(text, /開 App 自動更新檢查（\d{4}-\d{2}-\d{2}）/);
   assert.match(text, /每次打開 App 會自動做這幾件事：/);
   assert.match(text, /更新報價9\/30 13:05 已更新（一小時內不重抓）/, '報價時間要從 /settings 讀到、畫進那一行');
-  assert.match(text, /更新訂閱續費日沒有需要推進的上次推進 9\/15/, '「上次推進」小字要從 /settings 讀到、畫進那一行');
+  assert.match(text, /更新訂閱續費日沒有需要推進的（上次推進 9\/15）/, '「上次推進」要從 /settings 讀到、寫在那一行右邊括號裡');
   assert.match(text, /更新洞察更新中…/);
-  assert.match(text, /標 ⚠️ 的是這次沒有檢查成功的項目。/);
+  assert.match(text, /標 ⚠ 的是這次沒有檢查成功的項目。/);
   assert.equal(block()?.querySelectorAll('li').length, 6);
   assert.equal(insightCalls(), 1, '開機落定後抓一次洞察');
 
