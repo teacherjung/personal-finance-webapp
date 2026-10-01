@@ -197,6 +197,7 @@
 - `test/card-issuers.test.js`（清單紀律／代號紀律（精確集合）／判準／表單行為／升級提示／接線／突變）
 - `test/card-last-four.test.js`（helper／後綴 builder 行為題＋行級接線掃描）
 - `test/cashflow-bank-upload.test.js`（跨版式疑似重複的預覽文案與接線——**與雲端多重命中**）〔疑似重複提醒（2026-08-12）〕
+- `test/cashflow-forest-ui.test.js`
 - `test/cd-split.test.js`（定存分開列管：解析 kind/period／cdKey 建戶與精確更新／到期不動／matchAccount 護欄／預覽＝套用／對帳閘跳過定存列）〔疑似重複提醒（2026-08-12）〕
 - `test/codex-r10.test.js`（types/server 類＝**多重命中**）〔籃C 補搬點名檔〕〔帳號 UI／型別／直接考題〕
 - `test/debit-card-ledger-http.test.js`（Stage 5b：單筆 DELETE 守門）

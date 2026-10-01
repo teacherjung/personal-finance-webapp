@@ -6,8 +6,8 @@
 // 匯入後保存的卻是整理後 `note`＝同名欄位、內容不同。修正＝樣板改讀 `x.note`
 // （服務層的 displayNote 與匯入保存的 noteText 是**同一條產生式**），預覽所見＝匯入所得。
 //
-// 定案＝預覽表與收支頁**統一叫「收支說明」**；帳單用語（摘要／備註）與 app 說明的關係
-// 由 ⓘ 講清楚，並明講「核對請用日期＋金額」。
+// 2026-10-01 更新：兩處欄名仍叫「收支說明」，但內容刻意分工：預覽表顯示整理後的白話，
+// 收支明細改成兩行顯示帳單原始「摘要／備註」，方便逐字核對。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -47,12 +47,12 @@ const SHELL = Object.freeze({
 const wrap = (/** @type {any[]} */ rows) =>
   ({ ...SHELL, transactions: { counts: { expense: rows.length }, rows } });
 
-test('統一欄名｜預覽表與收支頁同叫「收支說明」', () => {
+test('統一欄名｜預覽表與收支頁同叫「收支說明」，明細內文可拆成原始兩行', () => {
   assert.match(src(), /<th>日期<\/th><th>帳戶<\/th><th>收支說明<\/th><th>金流・分類<\/th>/u,
     '★預覽表欄名＝「收支說明」（與收支頁同名＝真正的統一）');
   assert.match(src(), /th\('note', '收支說明'\)/u, '★收支頁欄名不變');
-  assert.doesNotMatch(src(), /摘要・備註/u,
-    '★「摘要・備註」不可出現——那個名字宣稱內容是帳單照抄，r1 已證偽');
+  assert.match(src(), /cashflowDescriptionLines\(t\)/u,
+    '★收支明細要透過兩行顯示函式讀帳單原始摘要與備註');
 });
 
 test('跨層｜預覽顯示的＝匯入後會保存的那份文字（走真的 previewBankTxForDb，不手塞想像值）', () => {
@@ -91,21 +91,17 @@ test('行為｜已學列顯示自訂名＋「已學」標籤；沒有 note 的�
   assert.match(html, /合成無整理摘要/u, '★note 缺席的列退回 summary——留白比顯示原文更糟');
 });
 
-test('就地解釋｜三種出身講清楚，而且不說 r1/r2 證偽的那些話', () => {
+test('就地解釋｜預覽與收支明細的內容分工講清楚', () => {
   const s = src();
   assert.match(s, /byId\('noteNamingInfo'\)\.onclick = openNoteNamingInfo;/u, '按鈕要綁上');
   const start = s.indexOf('function openNoteNamingInfo()');
   assert.ok(start >= 0);
   const body = s.slice(start, s.indexOf('\n}', start));
-  assert.match(body, /整理成白話/u, '★要講「整理」——真相：翻譯銀行代碼、刪通路詞');
-  assert.match(body, /「CD轉出」→「現金轉出」/u, '★給一個真實形狀的例子');
-  assert.match(body, /核對請用日期＋金額/u, '★字面與帳單不同，要給可靠的核對方法');
-  assert.match(body, /同名欄位＝同一份內容/u,
-    '★「同一份內容」現在成立了（r2：樣板改讀 note＝與匯入保存同一條產生式）——但它是被下面'
-    + '的跨層考題撐著的宣稱，不是裝飾');
-  assert.match(body, /（預覽窗會標「已學」）/u,
-    '★「已學」標籤只存在於預覽窗——ⓘ 要說對地方（r4：寫成「收支明細會標」＝對著沒有標籤的畫面找標籤）');
-  assert.doesNotMatch(body, /收支明細會標|明細會標「已學」/u, '★不可宣稱收支明細有已學標籤（它沒有）');
-  assert.match(body, /清空自訂名會回到 app 整理的預設說明/u, '★不可說「隨時可改回帳單原文」');
-  assert.doesNotMatch(body, /照抄|逐字對得上|帳單原文還在/u, '★r1 證偽的三種說法禁令');
+  assert.match(body, /預覽窗/u, '★要點出預覽窗顯示的是另一種用途');
+  assert.match(body, /整理後的白話/u, '★預覽仍然顯示整理後文字');
+  assert.match(body, /第一行.*「摘要」原文/u, '★收支明細第一行的來源要講清楚');
+  assert.match(body, /第二行.*「備註」原文/u, '★收支明細第二行的來源要講清楚');
+  assert.match(body, /舊資料/u, '★舊資料沒有原文欄時的退路要誠實說明');
+  assert.match(body, /手動記帳/u, '★手動記帳沒有銀行原文時也要說明');
+  assert.doesNotMatch(body, /同名欄位＝同一份內容/u, '★兩處內容已不相同，不可留下舊宣稱');
 });

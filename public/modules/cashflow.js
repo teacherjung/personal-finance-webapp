@@ -10,9 +10,9 @@ import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
-import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
+import { deriveMonths, deriveYears, fallbackMonth, monthNumbersForYear, monthNumberOptionsHtml, yearOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml, bankCardLedgerNote, bankBatchCountText, bankBatchDeleteConfirmText } from './cashflow-model.js';
+import { cashflowDateLabel, cashflowDescriptionLines, cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml, bankCardLedgerNote, bankBatchCountText, bankBatchDeleteConfirmText } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -45,14 +45,23 @@ export async function renderCashflow() {
   const all = allRaw.filter(t => !isCardTx(t));   // 只吃現金流帳本
   const months = deriveMonths(all);
   monthFilter = fallbackMonth(monthFilter, months);
+  const selectedYear = monthFilter.slice(0, 4);
+  const selectedMonth = monthFilter.slice(5, 7);
+  const years = deriveYears(months);
+  const monthsInYear = monthNumbersForYear(months, selectedYear);
 
   const th = thBuilder(listSort);
   // 所選月份摘要（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
   const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
   const periodLabel = cashflowPeriodLabel(monthFilter);
   // 篩選金流後再排序
-  const rows = sortRows(monthRows.filter(t => flowFilter === 'all'
-    || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter)), listSort);
+  const filteredRows = monthRows.filter(t => flowFilter === 'all'
+    || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter));
+  // 這頁的「收支說明」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
+  const sortableRows = listSort.key === 'note'
+    ? filteredRows.map(t => ({ ...t, note: cashflowDescriptionLines(t).summary }))
+    : filteredRows;
+  const rows = sortRows(sortableRows, listSort);
 
   const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
 
@@ -67,17 +76,6 @@ export async function renderCashflow() {
         </div>
       </div>
 
-      <section class="cashflow-controls" aria-label="銀行收支篩選">
-        <div class="cashflow-control">
-          <label for="monthSel">月份</label>
-          <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
-        </div>
-        <div class="cashflow-control cashflow-flow-control">
-          <span class="cashflow-control-label">明細金流</span>
-          <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
-        </div>
-      </section>
-
       <section class="cashflow-summary" aria-label="${esc(periodLabel)}銀行收支摘要">
         <div class="cashflow-summary-head">
           <div><span>收支期間</span><strong>${esc(periodLabel)}</strong></div>
@@ -90,12 +88,27 @@ export async function renderCashflow() {
         </div>
       </section>
 
+      <section class="cashflow-controls" aria-label="銀行收支篩選">
+        <div class="cashflow-control">
+          <label for="yearSel">年份</label>
+          <select id="yearSel">${yearOptionsHtml(years, selectedYear, esc)}</select>
+        </div>
+        <div class="cashflow-control">
+          <label for="monthSel">月份</label>
+          <select id="monthSel">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select>
+        </div>
+        <div class="cashflow-control cashflow-flow-control">
+          <span class="cashflow-control-label">金流</span>
+          <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
+        </div>
+      </section>
+
       <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
         <div class="cashflow-ledger-head">
           <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span><button type="button" class="info-link" id="noteNamingInfo">「收支說明」是什麼？</button></div>
         </div>
         <div class="tbl-wrap cashflow-ledger">
-          <table><thead><tr>${th('date', '收支日')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+          <table><thead><tr>${th('date', '日期')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
           <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>${esc(periodLabel)}尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
         </div>
       </section>
@@ -103,10 +116,20 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
-  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 名詞統一（William 2026-08-14）：這欄混三種出身，就地講清楚
+  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 預覽與明細同名但用途不同，就地講清楚
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
-  byId('monthSel').onchange = (e) => { monthFilter = /** @type {any} */ (e.target).value; renderCashflow(); };
+  byId('yearSel').onchange = (e) => {
+    const year = /** @type {HTMLSelectElement} */ (e.target).value;
+    const availableMonths = monthNumbersForYear(months, year);
+    const month = availableMonths.includes(selectedMonth) ? selectedMonth : (availableMonths[0] || selectedMonth);
+    monthFilter = `${year}-${month}`;
+    renderCashflow();
+  };
+  byId('monthSel').onchange = (e) => {
+    monthFilter = `${selectedYear}-${/** @type {HTMLSelectElement} */ (e.target).value}`;
+    renderCashflow();
+  };
   view().querySelectorAll('[data-flow]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
   });
@@ -120,10 +143,12 @@ export async function renderCashflow() {
 
 function rowHtml(t) {
   const f = flowOf(t);
+  const description = cashflowDescriptionLines(t);
+  const descriptionTitle = [description.summary, description.note].filter(Boolean).join('｜');
   return `<tr>
-    <td class="nowrap">${esc(t.date)}</td>
-    <td class="muted">${esc(t.account || '—')}</td>
-    <td class="muted"><div class="cf-note" title="${esc(t.note || '')}">${esc(t.note || '—')}</div></td>
+    <td class="nowrap">${esc(cashflowDateLabel(t.date))}</td>
+    <td class="muted nowrap cashflow-account-cell" title="${esc(t.account || '')}">${esc(t.account || '—')}</td>
+    <td class="muted cashflow-description-cell"><div class="cf-note" title="${esc(descriptionTitle)}"><span class="cf-note-summary">${esc(description.summary || '—')}</span><span class="cf-note-remark">${esc(description.note || '—')}</span></div></td>
     <td>${esc(t.category || '—')}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
     <td class="num nowrap ${f.cls}">${f.sign}${money(t.amount)}</td>
@@ -166,14 +191,13 @@ function subOptionsFor(flow, parent, cur = '') {
 // 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
 let bankUploadBusy = false;
 
-// 就地解釋（使用者鐵則）：「收支說明」一欄混三種出身——不講清楚，銀行匯入的「整理後說明」
-// 會被當成帳單原文（其實摘要被翻譯過、備註被整理過；r1 證偽了「照抄」）。預覽窗同名同內容。
+// 就地解釋（使用者鐵則）：預覽是匯入判讀用的整理後白話；明細改為帳單原始摘要／備註兩行。
 function openNoteNamingInfo() {
   openInfo('「收支說明」是什麼？', `
-    <p>這一欄的內容有三種來源（對帳單預覽窗的同名欄位＝同一份內容）：</p>
-    <p><strong>你手動記的帳</strong>：就是你自己打的描述（房租、鐘點費…）。</p>
-    <p><strong>銀行匯入的</strong>：app 把帳單上「摘要」「備註」兩欄<strong>整理成白話</strong>——銀行代碼翻成人話（例如「CD轉出」→「現金轉出」）、通路代號去掉。所以字面可能跟帳單不完全一樣，<strong>核對請用日期＋金額</strong>。</p>
-    <p><strong>你改過名的</strong>：顯示你取的名字（預覽窗會標「已學」），之後同一種交易自動套用；清空自訂名會回到 app 整理的預設說明。</p>
+    <p><strong>銀行匯入：</strong>收支明細第一行顯示帳單「摘要」原文，第二行顯示帳單「備註」原文，方便直接與帳單核對。</p>
+    <p><strong>預覽窗：</strong>匯入前仍顯示 app 整理後的白話，讓你先判斷每一筆交易；它不會取代明細裡保留的帳單原文。</p>
+    <p><strong>舊資料：</strong>如果當時尚未分開保存兩欄，第一行顯示既有收支說明，第二行顯示「—」；不從內部去重資料推測帳單原文。</p>
+    <p><strong>手動記帳：</strong>第一行顯示你輸入的說明，第二行以「—」表示沒有帳單備註。</p>
   `, { size: 'md' });
 }
 

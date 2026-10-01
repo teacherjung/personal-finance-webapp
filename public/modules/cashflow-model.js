@@ -30,6 +30,30 @@ export function cashflowPeriodLabel(month) {
   return `${match[1]} 年 ${monthNumber} 月`;
 }
 
+/** 收支明細只顯示月／日；壞值原樣保留，避免把資料問題藏起來。 @param {unknown} date */
+export function cashflowDateLabel(date) {
+  const raw = String(date || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const month = Number(match?.[2]);
+  const day = Number(match?.[3]);
+  if (!match || month < 1 || month > 12 || day < 1 || day > 31) return raw || '—';
+  return `${month}/${day}`;
+}
+
+/**
+ * 收支明細的兩行文字。只做前端顯示，不改寫交易、分類或加總。
+ * 新匯入列使用帳單原始摘要／備註；沒有完整兩欄的舊列與手動列顯示既有說明。
+ * @param {any} transaction
+ * @returns {{summary: string, note: string}}
+ */
+export function cashflowDescriptionLines(transaction) {
+  if (typeof transaction?.bankSummary === 'string' && typeof transaction?.bankNote === 'string') {
+    return { summary: transaction.bankSummary, note: transaction.bankNote };
+  }
+
+  return { summary: typeof transaction?.note === 'string' ? transaction.note : '', note: '' };
+}
+
 // ---- 上傳銀行對帳單：密碼欄的告知文案（依模式分流）----
 //
 // 為什麼要分兩句（#437 r2 審查者抓到的 main 既有問題）：預覽與套用都是把 PDF 與密碼
