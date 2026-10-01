@@ -68,7 +68,7 @@ export async function renderCashflow() {
   view().innerHTML = `
     <div class="cashflow-workspace">
       <div class="page-head cashflow-head">
-        <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉</p></div>
+        <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、內轉</p></div>
         <div class="page-actions">
           ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
           <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
@@ -78,13 +78,13 @@ export async function renderCashflow() {
 
       <section class="cashflow-summary" aria-label="${esc(periodLabel)}銀行收支摘要">
         <div class="cashflow-summary-head">
-          <div><span>收支期間</span><strong>${esc(periodLabel)}</strong></div>
-          <p>以銀行對帳單為準；內轉不列入收入與支出</p>
+          <div><strong>${esc(periodLabel)}</strong></div>
+          <p>內轉不列入收入與支出</p>
         </div>
         <div class="cashflow-summary-grid">
-          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div><p>匯入與手動記錄</p></div>
-          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div><p>不含帳戶內轉</p></div>
-          <div class="cashflow-stat" data-kind="net"><h3>結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div><p>收入減支出</p></div>
+          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div></div>
+          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
+          <div class="cashflow-stat" data-kind="net"><h3>結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div></div>
         </div>
       </section>
 
