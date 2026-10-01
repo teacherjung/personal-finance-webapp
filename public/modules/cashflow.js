@@ -116,7 +116,7 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
-  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 名詞統一（William 2026-08-14）：這欄混三種出身，就地講清楚
+  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 預覽與明細同名但用途不同，就地講清楚
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
   byId('yearSel').onchange = (e) => {
