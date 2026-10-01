@@ -183,8 +183,11 @@ main { flex: 1; min-width: 0; width: 100%; min-height: 100vh; padding: 32px 38px
   -webkit-overflow-scrolling: touch;
 }
 .nowrap { white-space: nowrap; }
-/* 收支說明欄：截短一截、超出以省略號收尾（滑鼠移上去 title 看全文）——避免長備註（含對方帳號）把表格撐太寬 */
-.cf-note { max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 收支說明欄：帳單摘要／備註各占一行；單行過長仍可由 title 看全文。 */
+.cf-note { min-width: 180px; max-width: 330px; }
+.cf-note-summary, .cf-note-remark { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-note-summary { color: var(--text); font-weight: 650; }
+.cf-note-remark { margin-top: 3px; color: var(--text-dim); font-size: 11px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line); }
 th { font-size: 11.5px; color: var(--text-dim); font-weight: 700; letter-spacing: 0; background: var(--card-2); }
@@ -910,7 +913,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .cashflow-stat .stat { line-height: 1.2; }
 .cashflow-stat p { color: var(--text-dim); font-size: 11.5px; margin-top: 5px; }
 .cashflow-controls {
-  display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 22px;
+  display: grid; grid-template-columns: minmax(130px, 180px) minmax(130px, 180px) minmax(0, 1fr); gap: 16px;
   align-items: end; margin: 0 0 24px; padding: 14px 16px;
   background: rgba(255, 253, 246, .82); border: 2px solid var(--frame); border-radius: var(--radius); box-shadow: var(--shadow);
 }
@@ -938,6 +941,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
 .cashflow-ledger th { border-bottom: 2px solid var(--frame); }
 .cashflow-ledger td { padding-top: 13px; padding-bottom: 13px; }
 .cashflow-ledger th { white-space: nowrap; }
+.cashflow-account-cell { white-space: nowrap; }
+.cashflow-description-cell { min-width: 220px; }
 .cashflow-empty-state { display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-align: left; }
 .cashflow-empty-state img {
   width: 54px; height: 54px; border-radius: 50%; object-fit: cover; border: 2px solid var(--frame);

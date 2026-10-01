@@ -82,7 +82,8 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   await boot();
   const { renderCashflow } = await import('../public/modules/cashflow.js');
   await renderCashflow();
-  assert.equal(document.querySelector('#monthSel').value, MONTH);
+  assert.equal(document.querySelector('#yearSel').value, MONTH.slice(0, 4));
+  assert.equal(document.querySelector('#monthSel').value, MONTH.slice(5, 7));
   assert.equal(text('[data-kind="expense"] .stat'), '2.7 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋b5＋手動聚餐；任何一筆刷卡混進來就不是 2.7`);
   assert.equal(text('[data-kind="income"] .stat'), '6.0 萬', `收入＝wan(${BANK_INCOME})`);
   assert.equal(text('[data-kind="net"] .stat'), '+3.3 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
