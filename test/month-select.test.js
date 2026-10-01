@@ -13,9 +13,10 @@ import {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 
-test('deriveMonths：去重、新→舊、缺日期/非字串跳過', () => {
+test('deriveMonths：去重、新→舊、缺日期／非字串／不合格月份跳過', () => {
   assert.deepEqual(deriveMonths([
     { date: '2026-06-15' }, { date: '2026-07-01' }, { date: '2026-06-02' },
+    { date: '2026-13-01' }, { date: '2026-00-20' }, { date: '壞日期' },
     { date: null }, {}, { date: 123 },
   ]), ['2026-07', '2026-06']);
   assert.deepEqual(deriveMonths([]), []);

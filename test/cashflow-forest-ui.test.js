@@ -41,13 +41,19 @@ test('銀行收支明細：日期只顯示月日，壞值保留原字避免猜�
   assert.equal(cashflowDateLabel(''), '—');
 });
 
-test('銀行收支明細：銀行匯入顯示原始摘要與備註，舊資料與手動記帳有退路', () => {
+test('銀行收支明細：銀行匯入顯示原始摘要與備註，舊資料與手動記帳只退回既有說明', () => {
   assert.deepEqual(cashflowDescriptionLines({
     note: '整理後說明', bankSummary: '原始摘要', bankNote: '原始備註',
   }), { summary: '原始摘要', note: '原始備註' });
   assert.deepEqual(cashflowDescriptionLines({
+    note: '整理後說明', bankSummary: '', bankNote: '',
+  }), { summary: '', note: '' }, '兩個原文欄位都是空字串仍是合法原文');
+  assert.deepEqual(cashflowDescriptionLines({
     note: '整理後說明', bankRef: 'bank|900100****1234|2026-08-26|out|300|9000|舊摘要|舊備註',
-  }), { summary: '舊摘要', note: '舊備註' });
+  }), { summary: '整理後說明', note: '' }, '本支不讓前端依賴 bankRef 的內部格式');
+  assert.deepEqual(cashflowDescriptionLines({
+    note: '半份原文退路', bankSummary: '只有摘要', bankNote: null,
+  }), { summary: '半份原文退路', note: '' }, '兩欄沒有同時存在時不把半份資料冒充原文');
   assert.deepEqual(cashflowDescriptionLines({ note: '手動輸入說明' }), {
     summary: '手動輸入說明', note: '',
   });
@@ -94,6 +100,7 @@ test('銀行收支樣式：摘要共用粗框、三組篩選、帳戶單行與�
   assert.match(css, /\.cashflow-stat \+ \.cashflow-stat \{ border-left: 2px solid var\(--frame\); \}/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*border: 2px solid var\(--frame\)/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*grid-template-columns: minmax\(130px, 180px\) minmax\(130px, 180px\) minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(min-width: 641px\) and \(max-width: 960px\) \{[\s\S]*\.cashflow-flow-control \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.cashflow-flow-control \.chip-row \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.cashflow-flow-control \.chip:hover \{ background: var\(--card\); \}/);
   assert.match(css, /\.cashflow-account-cell \{[^}]*white-space: nowrap/);

@@ -42,25 +42,13 @@ export function cashflowDateLabel(date) {
 
 /**
  * 收支明細的兩行文字。只做前端顯示，不改寫交易、分類或加總。
- * 新匯入列優先使用帳單原始摘要／備註；舊列盡量從 bankRef 還原，手動列顯示原本說明。
+ * 新匯入列使用帳單原始摘要／備註；沒有完整兩欄的舊列與手動列顯示既有說明。
  * @param {any} transaction
  * @returns {{summary: string, note: string}}
  */
 export function cashflowDescriptionLines(transaction) {
   if (typeof transaction?.bankSummary === 'string' && typeof transaction?.bankNote === 'string') {
     return { summary: transaction.bankSummary, note: transaction.bankNote };
-  }
-
-  const parts = String(transaction?.bankRef || '').split('|');
-  const isBankV2 = parts[0] === 'bank2';
-  const hasLegacyRaw = (parts[0] === 'bank' && parts.length >= 8) || (isBankV2 && parts.length >= 9);
-  if (hasLegacyRaw) {
-    const summaryIndex = isBankV2 ? 7 : 6;
-    const noteIndex = isBankV2 ? 8 : 7;
-    return {
-      summary: String(parts[summaryIndex] || ''),
-      note: parts.slice(noteIndex).join('|').replace(/#\d+$/u, ''),
-    };
   }
 
   return { summary: typeof transaction?.note === 'string' ? transaction.note : '', note: '' };

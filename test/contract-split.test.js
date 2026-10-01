@@ -802,6 +802,7 @@ const MANIFEST = {
       'test/card-issuers.test.js',   // 發卡行可選清單（2026-08-28）
       'test/card-last-four.test.js',
       'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
+      'test/cashflow-forest-ui.test.js',
       'test/cd-split.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/codex-r10.test.js',
       'test/debit-card-ledger-http.test.js',   // Stage 5b：兩本帳互為條件的單筆 DELETE 守門（走正式 HTTP）
@@ -1823,4 +1824,3 @@ test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（�
     }
   }
 });
-

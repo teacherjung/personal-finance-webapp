@@ -55,8 +55,13 @@ export async function renderCashflow() {
   const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
   const periodLabel = cashflowPeriodLabel(monthFilter);
   // 篩選金流後再排序
-  const rows = sortRows(monthRows.filter(t => flowFilter === 'all'
-    || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter)), listSort);
+  const filteredRows = monthRows.filter(t => flowFilter === 'all'
+    || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter));
+  // 這頁的「收支說明」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
+  const sortableRows = listSort.key === 'note'
+    ? filteredRows.map(t => ({ ...t, note: cashflowDescriptionLines(t).summary }))
+    : filteredRows;
+  const rows = sortRows(sortableRows, listSort);
 
   const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
 
@@ -191,7 +196,7 @@ function openNoteNamingInfo() {
   openInfo('「收支說明」是什麼？', `
     <p><strong>銀行匯入：</strong>收支明細第一行顯示帳單「摘要」原文，第二行顯示帳單「備註」原文，方便直接與帳單核對。</p>
     <p><strong>預覽窗：</strong>匯入前仍顯示 app 整理後的白話，讓你先判斷每一筆交易；它不會取代明細裡保留的帳單原文。</p>
-    <p><strong>舊資料：</strong>如果當時尚未分開保存兩欄，會盡量從既有匯入資訊還原；無法還原時顯示原本的收支說明。</p>
+    <p><strong>舊資料：</strong>如果當時尚未分開保存兩欄，第一行顯示既有收支說明，第二行顯示「—」；不從內部去重資料推測帳單原文。</p>
     <p><strong>手動記帳：</strong>第一行顯示你輸入的說明，第二行以「—」表示沒有帳單備註。</p>
   `, { size: 'md' });
 }
