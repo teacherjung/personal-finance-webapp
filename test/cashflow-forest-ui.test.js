@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { applyLearnedBankToDb } from '../lib/services/bank-import.js';
+import { emptyDb } from '../lib/store.js';
 import {
   cashflowDateLabel,
   cashflowDescriptionLines,
@@ -42,6 +44,28 @@ test('銀行收支月摘要：舊銀行方向優先於可改的子分類；手�
   ];
   const subs = [{ label: '改名轉出', role: 'out' }, { label: '自訂內轉' }];
   assert.equal(cashflowMonthSummary(rows, '2026-08', subs).transfer, 1500);
+});
+
+test('舊銀行內轉方向：前端月摘要與後端同類套用對兩種識別格式的判斷一致', () => {
+  const rows = [
+    { id: 'old-out', date: '2026-08-01', type: 'transfer', subcategory: '內轉入', amount: 100,
+      bankRef: 'bank|900100****3301|2026-08-01|out|100|', bankKey: '合成鑰匙', source: 'bank' },
+    { id: 'old-in', date: '2026-08-02', type: 'transfer', subcategory: '內轉出', amount: 200,
+      bankRef: 'bank|900100****3301|2026-08-02|in|200|', bankKey: '合成鑰匙', source: 'bank' },
+    { id: 'other-out', date: '2026-08-03', type: 'transfer', subcategory: '內轉入', amount: 300,
+      bankRef: 'bank2|合成銀行|900100****3301|2026-08-03|out|300|', bankKey: '合成鑰匙', source: 'bank' },
+    { id: 'other-in', date: '2026-08-04', type: 'transfer', subcategory: '內轉出', amount: 400,
+      bankRef: 'bank2|合成銀行|900100****3301|2026-08-04|in|400|', bankKey: '合成鑰匙', source: 'bank' },
+  ];
+  const db = emptyDb();
+  db.transactions = structuredClone(rows);
+  db.learnedBank = { 合成鑰匙: { type: 'income', category: '其他', subcategory: '其他收入' } };
+  const front = cashflowMonthSummary(rows, '2026-08');
+  const back = applyLearnedBankToDb(db, '合成鑰匙');
+  assert.equal(front.transfer, 400);
+  assert.equal(back.skipped, 2, '後端應拒絕將兩筆轉出當收入');
+  assert.deepEqual(db.transactions.filter(t => t.type === 'transfer').map(t => t.id),
+    ['old-out', 'other-out'], '前端計入的轉出集合須與後端拒絕改收入的集合相同');
 });
 
 test('銀行收支期間：月份鍵轉成中文年月，壞值不硬猜', () => {
@@ -93,7 +117,6 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /class="cashflow-workspace"/);
   assert.match(source, /class="cashflow-summary"/);
   assert.match(source, /cashflowMonthSummary\(all, monthFilter, Array\.isArray\(transferRes\) \? transferRes : \[\]\)/);
-  assert.match(source, /data-kind="transfer"><h3>內轉<\/h3>/);
   assert.match(source, /const netTone = net >= 0 \? 'pos' : 'neg';/);
   assert.match(source, /data-kind="net" data-tone="\$\{netTone\}"/);
   assert.match(source, /class="stat sm \$\{netTone\}"/);
@@ -104,6 +127,7 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.doesNotMatch(source, /以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}<\/strong>/);
   assert.match(source, />內轉不列入收入與支出<\/p>/);
+  assert.match(source, /<h3>內轉 <small>只計轉出<\/small><\/h3>/);
   for (const removedCopy of ['收支期間', '以銀行對帳單為準；內轉不列入收入與支出',
     '匯入與手動記錄', '不含帳戶內轉', '收入減支出']) {
     assert.doesNotMatch(source, new RegExp(removedCopy));
@@ -119,7 +143,7 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /class="cf-note-remark"/);
   assert.match(source, /<th>日期<\/th><th>銀行帳戶<\/th><th>摘要＋備註<\/th><th>分類<\/th><th class="num">金額<\/th>/);
   assert.match(source, /cashflowDateLabel\(x\.date\)/);
-  assert.match(source, /cashflowDescriptionLines\(\{ \.\.\.x/);
+  assert.match(source, /cashflowDescriptionLines\(x\)/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}尚無銀行收支<\/strong>/);
   assert.doesNotMatch(source, /本月尚無銀行收支/);
   assert.doesNotMatch(source, /<div class="card cashflow-stat"/);

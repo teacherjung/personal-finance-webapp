@@ -67,7 +67,11 @@ async function boot() {
       const current = API['/api/transactions'].find(t => t.id === id);
       const updated = { ...current, ...stored };
       API['/api/transactions'] = API['/api/transactions'].map(t => t.id === id ? updated : t);
-      return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const appliedText = lastWrite.body.applySameSummary || lastWrite.body.applySameRemark
+        ? { summary: Number(Boolean(lastWrite.body.applySameSummary)), remark: Number(Boolean(lastWrite.body.applySameRemark)) }
+        : undefined;
+      return new Response(JSON.stringify({ ...updated, ...(appliedText ? { appliedText } : {}) }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     const body = Object.hasOwn(API, path) ? API[path] : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -105,10 +109,20 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   assert.equal(document.querySelector('#monthSel').value, MONTH.slice(5, 7));
   assert.equal(text('[data-kind="expense"] .stat'), '2.7 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋b5＋手動聚餐；任何一筆刷卡混進來就不是 2.7`);
   assert.equal(text('[data-kind="income"] .stat'), '6.0 萬', `收入＝wan(${BANK_INCOME})`);
+  assert.equal(text('[data-kind="transfer"] .stat'), '2.0 萬', '月摘要的內轉卡要顯示轉出金額');
   assert.equal(text('[data-kind="net"] .stat'), '+3.3 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
+  assert.match(text('.cashflow-stat[data-kind="transfer"] h3'), /內轉 只計轉出/);
   assert.deepEqual(rowIds(), CASH_MONTH_IDS, '明細＝所選月份六筆現金流；繳卡費 b3 留在這頁、去年 y1 不混進來');
   assert.match(text('.cashflow-ledger-title [aria-live]'), /^6 筆$/);
   assert.ok(document.querySelector('.cashflow-summary').nextElementSibling?.classList.contains('cashflow-controls'), '摘要 DOM 要直接排在篩選前面');
+
+  API['/api/transactions'].push({ id: 'b6', date: '2026-08-19', ledger: 'cashflow', source: 'bank',
+    type: 'transfer', dir: 'in', category: '內轉', subcategory: '內轉入', amount: 30000,
+    account: '台新活存', bankSummary: '合成轉入', bankNote: '' });
+  await renderCashflow();
+  assert.equal(text('[data-kind="transfer"] .stat'), '2.0 萬', '同月轉入不應把內轉卡加大');
+  API['/api/transactions'] = API['/api/transactions'].filter(t => t.id !== 'b6');
+  await renderCashflow();
 
   const b3 = document.querySelector('[data-edit="b3"]')?.closest('tr');
   assert.equal(b3?.querySelector('td')?.textContent, '8/12', '日期格真的接上月／日格式器');
@@ -227,4 +241,46 @@ test('舊版服務忽略新欄位時不可誤報儲存成功，編輯窗須保�
   assert.equal(row?.querySelector('.cf-note-summary')?.textContent, 'A-summary');
   assert.equal(row?.querySelector('.cf-note-remark')?.textContent, 'A-note');
   legacyDropCashflowText = false;
+});
+
+test('勾選相同摘要與備註後，編輯請求確實帶上兩個明確選項', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  API['/api/transactions'].push({ ...FIXTURE.find(t => t.id === 'b2'), id: 'b2-sibling', date: '2026-08-07' });
+  await renderCashflow();
+  document.querySelector('[data-edit="b2"]')?.click();
+  assert.equal(document.querySelector('#f_applySameSummary')?.closest('.full')?.querySelector('label')?.textContent,
+    '相同摘要是否一起修改（目前 1 筆）');
+  assert.equal(document.querySelector('#f_applySameRemark')?.closest('.full')?.querySelector('label')?.textContent,
+    '相同備註是否一起修改（目前 1 筆）');
+  document.querySelector('#f_summary').value = '同步後摘要';
+  document.querySelector('#f_remark').value = '同步後備註';
+  document.querySelector('#f_applySameSummary').value = 'true';
+  document.querySelector('#f_applySameRemark').value = 'true';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.equal(lastWrite?.body.applySameSummary, true);
+  assert.equal(lastWrite?.body.applySameRemark, true);
+  API['/api/transactions'] = API['/api/transactions'].filter(t => t.id !== 'b2-sibling');
+});
+
+test('只有帶完整帳單原文的編輯提示才宣稱未來相同原文匯入會套用', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  document.querySelector('[data-edit="b2"]')?.click();
+  document.querySelector('#f_summary').value = '再改摘要';
+  document.querySelector('#f_applySameSummary').value = 'true';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.match(text('#toast-root .toast:last-child'), /未來相同帳單原文匯入也適用/);
+
+  document.querySelector('[data-edit="m1"]')?.click();
+  document.querySelector('#f_summary').value = '手動改摘要';
+  document.querySelector('#f_applySameSummary').value = 'true';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  const manualToast = text('#toast-root .toast:last-child');
+  assert.match(manualToast, /摘要同步 1 筆/);
+  assert.doesNotMatch(manualToast, /未來相同帳單原文匯入也適用/);
 });

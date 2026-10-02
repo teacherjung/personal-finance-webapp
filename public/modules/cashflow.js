@@ -85,7 +85,7 @@ export async function renderCashflow() {
         <div class="cashflow-summary-grid">
           <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div></div>
           <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
-          <div class="cashflow-stat" data-kind="transfer"><h3>內轉</h3><div class="stat sm">${wan(transfer)}</div></div>
+          <div class="cashflow-stat" data-kind="transfer"><h3>內轉 <small>只計轉出</small></h3><div class="stat sm">${wan(transfer)}</div></div>
           <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3>結餘</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div></div>
         </div>
       </section>
@@ -372,8 +372,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     ${c.similar ? bankSimilarWarningHtml(c.similar) : ''}
     ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>銀行帳戶</th><th>摘要＋備註</th><th>分類</th><th class="num">金額</th></tr></thead>
     <tbody>${previewTx.map((/** @type {any} */ x) => {
-      const description = cashflowDescriptionLines({ ...x, summary: undefined, remark: undefined,
-        note: typeof x.note === 'string' ? x.note : String(x.summary || '') });
+      const description = cashflowDescriptionLines(x);
       const descriptionTitle = [description.summary, description.note].filter(Boolean).join('｜');
       const learnedBadge = x.learned ? '<span class="flow-tag" title="用你之前教過的金流與分類自動套用">已學</span>' : '';
       const amountSign = x.type === 'income' ? '+' : x.type === 'transfer' ? '' : '−';
@@ -505,7 +504,7 @@ function openCashflowForm(tx, accounts = [], all = []) {
   const description = tx ? cashflowDescriptionLines(tx) : { summary: '', note: '' };
   const summaryKey = tx ? cashflowTextKey(tx, 'summary') : '';
   const remarkKey = tx ? cashflowTextKey(tx, 'remark') : '';
-  const sameTextCount = (part, key) => key ? (all || []).filter(x => x.id !== tx.id && !isCardTx(x)
+  const sameTextCount = (part, key) => key.trim() ? (all || []).filter(x => x.id !== tx.id && !isCardTx(x)
     && cashflowTextKey(x, part) === key).length : 0;
   const sameSummaryCount = tx ? sameTextCount('summary', summaryKey) : 0;
   const sameRemarkCount = tx ? sameTextCount('remark', remarkKey) : 0;
@@ -520,9 +519,9 @@ function openCashflowForm(tx, accounts = [], all = []) {
       { key: 'category', label: '分類', type: 'select', options: [] },       // onMount 依金流連動
       { key: 'subcategory', label: '子分類', type: 'select', options: [] },   // onMount 依分類連動
       { key: 'summary', label: '摘要', type: 'text', full: true, required: !tx, placeholder: '例：房租、薪水、利息' },
-      ...(summaryKey ? [{ key: 'applySameSummary', label: `相同摘要是否一起修改（目前 ${sameSummaryCount} 筆）`, type: 'checkbox', full: true }] : []),
+      ...(summaryKey.trim() ? [{ key: 'applySameSummary', label: `相同摘要是否一起修改（目前 ${sameSummaryCount} 筆）`, type: 'checkbox', full: true }] : []),
       { key: 'remark', label: '備註', type: 'text', full: true, placeholder: '可留空' },
-      ...(remarkKey ? [{ key: 'applySameRemark', label: `相同備註是否一起修改（目前 ${sameRemarkCount} 筆）`, type: 'checkbox', full: true }] : []),
+      ...(remarkKey.trim() ? [{ key: 'applySameRemark', label: `相同備註是否一起修改（目前 ${sameRemarkCount} 筆）`, type: 'checkbox', full: true }] : []),
       ...(propagable ? [{ key: 'applyAll', label: `將金流與分類套用到其他 ${propagable} 筆同類（摘要、備註不包含）`, type: 'checkbox', full: true }] : []),
     ],
     values: tx ? { ...tx, flow: initFlow, summary: description.summary, remark: description.note } : {},
@@ -578,8 +577,9 @@ function openCashflowForm(tx, accounts = [], all = []) {
         }
         const changes = [];
         if (r.applied) changes.push(`分類同步 ${r.applied.changed} 筆${r.applied.skipped ? `（${r.applied.skipped} 筆方向不符）` : ''}`);
-        if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆，未來匯入也適用`);
-        if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆，未來匯入也適用`);
+        const hasBankOriginal = typeof tx.bankSummary === 'string' && typeof tx.bankNote === 'string';
+        if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
+        if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
         toast(changes.length ? `已儲存；${changes.join('；')}` : '已儲存');
       } else {
         await api('/transactions', { method: 'POST', body });

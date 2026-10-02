@@ -814,7 +814,7 @@ const MANIFEST = {
       'test/ib-cash-freshness.test.js',   // #454 r1：用真的 syncIb 釘住那句文案的前提
       'test/ledger-split-behavior.test.js',   // 批四 4A：兩頁分堆的行為考題（jsdom 載整張路由圖）
       'test/multi-currency-account.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
-      'test/note-naming.test.js',   // 名詞統一（William 2026-10-02）：預覽與收支明細統一「摘要＋備註」＋帳單原文兩行
+      'test/note-naming.test.js',   // 預覽與收支明細統一「摘要＋備註」，顯示值與帳單原文分開
       'test/parse-recipe-card.test.js',
       'test/parse-recipe-store.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/parse-recipe.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）

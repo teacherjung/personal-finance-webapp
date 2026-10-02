@@ -124,3 +124,15 @@ test('預覽窗行為｜Stage 1：金融卡帳戶列照常出現在表格；ambi
   const normal = renderPreviewBody(RESULT);
   assert.match(normal, /將更新 1 個、新建 0 個/, '正常路線照舊出統計句');
 });
+
+test('預覽窗文字顯示實際會入帳的摘要與備註，而非尚未套用規則的帳單原文', () => {
+  const html = renderPreviewBody({ ...RESULT, transactions: {
+    counts: { income: 0, expense: 1, transfer: 0, duplicate: 0, foreign: 0 },
+    rows: [{ date: '2026-05-02', account: '合成帳戶', type: 'expense', amount: 100,
+      category: '其他', bankSummary: '帳單原摘要', bankNote: '帳單原備註',
+      summary: '規則後摘要', remark: '規則後備註', note: '舊相容說明' }],
+  } });
+  assert.match(html, /<span class="cf-note-summary">規則後摘要<\/span><span class="cf-note-remark">規則後備註<\/span>/);
+  assert.doesNotMatch(html, /cf-note-summary">帳單原摘要/);
+  assert.doesNotMatch(html, /cf-note-remark">帳單原備註/);
+});

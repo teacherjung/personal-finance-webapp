@@ -12,7 +12,7 @@ process.env.STORE_FILE = TEST_STORE;
 
 const { app } = await import('../server.js');
 const { getDb, saveDb } = await import('../lib/repo.js');
-const { importBankTxToDb } = await import('../lib/services/bank-import.js');
+const { importBankTxToDb, previewBankTxForDb } = await import('../lib/services/bank-import.js');
 const { emptyDb } = await import('../lib/store.js');
 const { sanitizeSettings, sanitizeSettingsDeep } = await import('../lib/schema.js');
 
@@ -118,6 +118,29 @@ test('新匯入套用已選擇的摘要與備註規則，但分類、原文與�
   assert.equal(row.amount, plain.amount);
 });
 
+test('銀行預覽的兩行文字與實際入帳一致，原始帳單文字仍完整保留', async () => {
+  await reset([bank('a')]);
+  assert.equal((await request('PUT', '/transactions/a', {
+    summary: '現金轉出', remark: '付房租', applySameSummary: true, applySameRemark: true,
+  })).status, 200);
+  const db = await getDb();
+  db.transactions = [];
+  db.accounts = [{ id: 'acct', name: '合成帳戶', type: 'cash', currency: 'TWD', accountNo: '900100****3301' }];
+  const parsed = { accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [
+    { acctSuffix: '3301', acctMasked: '900100****3301', date: '2026-07-10',
+      summary: 'CD轉出', note: '轉入帳號 1234', direction: 'out', amount: 100, balance: null },
+  ] };
+  const preview = previewBankTxForDb(db, parsed).rows[0];
+  importBankTxToDb(db, parsed);
+  const saved = db.transactions[0];
+  assert.equal(preview.summary, saved.summary);
+  assert.equal(preview.remark, saved.remark);
+  assert.equal(preview.bankSummary, saved.bankSummary);
+  assert.equal(preview.bankNote, saved.bankNote);
+  assert.equal(preview.summary, '現金轉出');
+  assert.equal(preview.remark, '付房租');
+});
+
 test('手動記帳只寫入摘要與備註，不再寫入舊收支說明', async () => {
   await reset([]);
   const res = await request('POST', '/transactions', {
@@ -184,6 +207,20 @@ test('備份保留兩組規則；不合法的原型鍵和非字串值在存檔�
   const checked = sanitizeSettingsDeep({ cashflowTextRules: rules });
   assert.ok(checked.bad.some(x => x.startsWith('settings.cashflowTextRules')));
   assert.equal(checked.value.cashflowTextRules.summary['CD轉出'], '現金轉出');
+});
+
+test('還原含空白原文規則的備份必須拒絕，原有銀行紀錄不變', async () => {
+  await reset([bank('a')]);
+  const res = await request('POST', '/import', { settings: { cashflowTextRules: { summary: { '   ': '改名' } } } });
+  assert.equal(res.status, 400);
+  assert.equal((await getDb()).transactions[0].bankSummary, 'CD轉出');
+});
+
+test('空白原文不可建立一起修改規則，應回報輸入錯誤而非伺服器錯誤', async () => {
+  await reset([bank('a', '   ')]);
+  const res = await request('PUT', '/transactions/a', { summary: '新摘要', applySameSummary: true });
+  assert.equal(res.status, 400);
+  assert.equal((await getDb()).transactions[0].summary, undefined);
 });
 
 test('新匯入的摘要、備註各用自己的原文比對，不因另一欄不同而漏套或誤套', async () => {

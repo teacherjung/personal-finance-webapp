@@ -1,5 +1,5 @@
 // 名詞統一（William 2026-10-02 更新）：銀行預覽與收支明細都叫「摘要＋備註」。
-// 預覽顯示帳單原文；明細的第二行可由另存的使用者備註覆蓋。
+// 預覽顯示套用文字規則後會入帳的兩行；帳單原文另行留底。
 // 整理後的 `note` 仍供匯入與學習使用，不冒充帳單原文。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,10 +47,10 @@ test('統一欄名｜預覽表與收支頁都叫「摘要＋備註」，預覽�
     '★預覽表＝日期、銀行帳戶、摘要＋備註、分類、金額');
   assert.match(src(), /th\('note', '摘要＋備註'\)/u, '★收支頁欄名同步更新');
   assert.match(src(), /cashflowDescriptionLines\(t\)/u,
-    '★收支明細要透過兩行顯示函式讀帳單原始摘要與備註');
+    '★收支明細要透過兩行顯示函式讀可編輯文字，未設定時才讀帳單原文');
 });
 
-test('跨層｜預覽同時拿到原始摘要／備註與整理後說明，畫面只用原文兩行', () => {
+test('跨層｜預覽保留原始摘要／備註，沒有文字規則時顯示相同原文', () => {
   const raw = { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-05-02',
     summary: 'CD轉出', direction: 'out', amount: 100, balance: null, note: '合成分行 0000123 Wei' };
   const db = { transactions: [], accounts: [], settings: {} };
@@ -68,7 +68,7 @@ test('跨層｜預覽同時拿到原始摘要／備註與整理後說明，畫�
   assert.match(html, />合成分行 0000123 Wei<\/span>/u, '★預覽第二行顯示帳單原始備註');
   assert.doesNotMatch(html, />現金轉出[^<]*<\/span>/u, '★整理後說明不可取代帳單原文');
   assert.match(html, />5\/2<\/td>/u, '★預覽日期只顯示月／日');
-  // 整理後說明仍是正式匯入保存的 note，這次只改預覽呈現，不改帳本資料語意。
+  // 整理後說明仍是正式匯入保存的相容欄；沒有文字規則時，預覽顯示帳單原文。
   const db2 = { transactions: [], accounts: [], settings: {} };
   importBankTxToDb(db2, {
     bank: '台新', accounts: [], accountCurrency: { '999900****0001': 'TWD' }, transactions: [raw] });
@@ -77,14 +77,15 @@ test('跨層｜預覽同時拿到原始摘要／備註與整理後說明，畫�
     '★既有整理後 note 的保存語意不因預覽改顯示原文而改變');
 });
 
-test('行為｜已學列保留「已學」標籤，但摘要與備註仍顯示帳單原文', () => {
+test('行為｜已學列保留「已學」標籤，文字規則後的摘要與備註優先顯示', () => {
   const html = renderPreviewBody(wrap([
-    { date: '2026-05-03', account: '合成帳戶', summary: '轉帳支出', note: '合成鋼琴課', bankSummary: '原始支出', bankNote: '原始備註', learned: true, type: 'expense', amount: 200, category: '教育' },
+    { date: '2026-05-03', account: '合成帳戶', summary: '規則後摘要', remark: '規則後備註', note: '合成鋼琴課', bankSummary: '原始支出', bankNote: '原始備註', learned: true, type: 'expense', amount: 200, category: '教育' },
     { date: '2026-05-04', account: '合成帳戶', summary: '合成無整理摘要', learned: false, type: 'expense', amount: 50, category: '（不分類）' },
   ]));
-  assert.match(html, />已學<\/span> 原始支出/u, '★已學標籤保留，但後面接帳單原始摘要');
-  assert.match(html, />原始備註<\/span>/u);
-  assert.doesNotMatch(html, />合成鋼琴課<\/span>/u, '★自訂／整理後名稱不可蓋掉帳單原文');
+  assert.match(html, />已學<\/span> 規則後摘要/u, '★已學標籤保留，後面接真正會入帳的摘要');
+  assert.match(html, />規則後備註<\/span>/u);
+  assert.doesNotMatch(html, />原始支出<\/span>|>原始備註<\/span>|>合成鋼琴課<\/span>/u,
+    '★原文與舊整理後說明不可蓋掉會入帳的文字');
   assert.match(html, /合成無整理摘要/u, '★note 缺席的列退回 summary——留白比顯示原文更糟');
 });
 
